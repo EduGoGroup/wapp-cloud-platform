@@ -1,0 +1,27 @@
+# Binarios compilados
+platform
+wapp-cloud-platform
+*.exe
+*.exe~
+*.test
+*.out
+
+# Directorios de salida
+bin/
+dist/
+
+# Entornos y secretos
+.env
+.env.*
+
+# Vendor (descomentar si se usa go mod vendor)
+# vendor/
+
+# macOS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
