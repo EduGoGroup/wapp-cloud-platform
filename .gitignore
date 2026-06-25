@@ -1,6 +1,6 @@
-# Binarios compilados
-platform
-wapp-cloud-platform
+# Binarios compilados (anclados a la raíz para no ignorar cmd/platform/)
+/platform
+/wapp-cloud-platform
 *.exe
 *.exe~
 *.test
