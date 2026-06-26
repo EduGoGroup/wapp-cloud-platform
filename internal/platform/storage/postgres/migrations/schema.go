@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS public.schema_version (
     description  TEXT
 )`
 
+// execer abstrae las operaciones que necesitan los helpers de migración. Lo
+// satisfacen tanto *sql.DB (pool) como *sql.Conn (conexión dedicada). Migrate
+// usa una *sql.Conn para que el advisory lock y las queries compartan la misma
+// sesión; Status usa el pool directamente.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // schemaRecord es el último registro de public.schema_version.
 type schemaRecord struct {
 	Version     string
@@ -30,7 +39,7 @@ type schemaRecord struct {
 }
 
 // ensureSchemaVersionTable crea la tabla de tracking si no existe.
-func ensureSchemaVersionTable(ctx context.Context, db *sql.DB) error {
+func ensureSchemaVersionTable(ctx context.Context, db execer) error {
 	if _, err := db.ExecContext(ctx, createSchemaVersionTable); err != nil {
 		return fmt.Errorf("creando schema_version: %w", err)
 	}
@@ -39,7 +48,7 @@ func ensureSchemaVersionTable(ctx context.Context, db *sql.DB) error {
 
 // readSchemaVersion lee el último registro de schema_version. Devuelve
 // sql.ErrNoRows envuelto si la tabla está vacía.
-func readSchemaVersion(ctx context.Context, db *sql.DB) (schemaRecord, error) {
+func readSchemaVersion(ctx context.Context, db execer) (schemaRecord, error) {
 	var r schemaRecord
 	err := db.QueryRowContext(ctx, `
 		SELECT version, content_hash, execution_id::text
@@ -55,7 +64,7 @@ func readSchemaVersion(ctx context.Context, db *sql.DB) (schemaRecord, error) {
 
 // writeSchemaVersion inserta un registro de versión. execution_id lo genera
 // PostgreSQL.
-func writeSchemaVersion(ctx context.Context, db *sql.DB, version, contentHash, description string) (schemaRecord, error) {
+func writeSchemaVersion(ctx context.Context, db execer, version, contentHash, description string) (schemaRecord, error) {
 	var r schemaRecord
 	err := db.QueryRowContext(ctx, `
 		INSERT INTO public.schema_version (version, content_hash, description)
