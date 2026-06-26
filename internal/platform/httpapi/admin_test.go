@@ -2,12 +2,17 @@ package httpapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -92,5 +97,178 @@ func TestRevokeLeaseHandler_RevokerError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// fakeSender registra la última llamada a SendText y permite devolver un Ack o
+// forzar un error.
+type fakeSender struct {
+	gotSession string
+	gotTo      string
+	gotText    string
+	calls      int
+	ack        *cloudlinkv1.Ack
+	err        error
+}
+
+func (f *fakeSender) SendText(_ context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
+	f.calls++
+	f.gotSession = sessionID
+	f.gotTo = to
+	f.gotText = text
+	return f.ack, f.err
+}
+
+func TestSendMessageHandler_OK(t *testing.T) {
+	snd := &fakeSender{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-1", Ok: true}}
+	h := httpapi.SendMessageHandler(snd)
+
+	body := `{"session_id":"s-1","to":"5491100000000","text":"hola"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if snd.calls != 1 || snd.gotSession != "s-1" || snd.gotTo != "5491100000000" || snd.gotText != "hola" {
+		t.Fatalf("argumentos: got (%q,%q,%q) calls=%d", snd.gotSession, snd.gotTo, snd.gotText, snd.calls)
+	}
+
+	var resp struct {
+		AckedCommandID string `json:"acked_command_id"`
+		OK             bool   `json:"ok"`
+		Error          string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decodificando respuesta: %v", err)
+	}
+	if resp.AckedCommandID != "cmd-1" || !resp.OK {
+		t.Fatalf("respuesta: got %+v, want acked_command_id=cmd-1 ok=true", resp)
+	}
+}
+
+// TestSendMessageHandler_AckNotOK documenta la decisión: un Ack con ok=false (el
+// Edge recibió el comando pero su ejecución falló) sigue siendo 200; el fallo se
+// refleja en el cuerpo JSON (ok=false + error), no en el código HTTP.
+func TestSendMessageHandler_AckNotOK(t *testing.T) {
+	snd := &fakeSender{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-2", Ok: false, Error: "envío rechazado"}}
+	h := httpapi.SendMessageHandler(snd)
+
+	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decodificando respuesta: %v", err)
+	}
+	if resp.OK || resp.Error != "envío rechazado" {
+		t.Fatalf("respuesta: got %+v, want ok=false error=envío rechazado", resp)
+	}
+}
+
+func TestSendMessageHandler_Offline(t *testing.T) {
+	snd := &fakeSender{err: fmt.Errorf("push: %w", session.ErrSessionOffline)}
+	h := httpapi.SendMessageHandler(snd)
+
+	body := `{"session_id":"s-x","to":"549110","text":"hola"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+func TestSendMessageHandler_Timeout(t *testing.T) {
+	snd := &fakeSender{err: fmt.Errorf("esperando ack: %w", context.DeadlineExceeded)}
+	h := httpapi.SendMessageHandler(snd)
+
+	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusGatewayTimeout)
+	}
+}
+
+func TestSendMessageHandler_SenderError(t *testing.T) {
+	snd := &fakeSender{err: errors.New("boom")}
+	h := httpapi.SendMessageHandler(snd)
+
+	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestSendMessageHandler_MissingFields(t *testing.T) {
+	snd := &fakeSender{}
+	h := httpapi.SendMessageHandler(snd)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(`{"session_id":"s-1","to":"549110"}`))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if snd.calls != 0 {
+		t.Fatalf("SendText NO debería invocarse con campos faltantes (calls=%d)", snd.calls)
+	}
+}
+
+func TestSendMessageHandler_InvalidBody(t *testing.T) {
+	snd := &fakeSender{}
+	h := httpapi.SendMessageHandler(snd)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(`{not-json`))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if snd.calls != 0 {
+		t.Fatalf("SendText NO debería invocarse con body inválido (calls=%d)", snd.calls)
+	}
+}
+
+func TestSendMessageHandler_WrongMethod(t *testing.T) {
+	snd := &fakeSender{}
+	h := httpapi.SendMessageHandler(snd)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/messages/send", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if snd.calls != 0 {
+		t.Fatalf("SendText NO debería invocarse con método incorrecto (calls=%d)", snd.calls)
 	}
 }

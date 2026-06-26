@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-cloudlink/mtls"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"google.golang.org/grpc"
@@ -108,6 +109,24 @@ func run() error {
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 	)
 
+	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
+	// fijan antes de servir: cada IncomingMessage se loguea a Info y cada
+	// Heartbeat a Debug (la renovación del lease la hace el propio Server).
+	gw.OnIncoming = func(sessionID string, m *cloudlinkv1.IncomingMessage) {
+		log.Info("mensaje entrante",
+			"session_id", sessionID,
+			"from", m.GetFrom(),
+			"text", m.GetText(),
+			"wa_message_id", m.GetWaMessageId(),
+		)
+	}
+	gw.OnHeartbeat = func(sessionID string, m *cloudlinkv1.Heartbeat) {
+		log.Debug("heartbeat",
+			"session_id", sessionID,
+			"lease_counter", m.GetLeaseCounter(),
+		)
+	}
+
 	// --- Servidor Enrollment: TLS de servidor SOLAMENTE (sin cert de cliente). ---
 	enrollGS := grpc.NewServer(grpc.Creds(enrollServerCreds(serverCert)))
 	enrollSrv.Register(enrollGS)
@@ -130,6 +149,7 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", httpapi.HealthHandler(checker))
 	mux.Handle("/admin/leases/revoke", httpapi.RevokeLeaseHandler(gw))
+	mux.Handle("/admin/messages/send", httpapi.SendMessageHandler(gw))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
