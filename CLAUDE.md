@@ -33,27 +33,51 @@ Cuatro módulos de dominio cohesivos, cada uno con frontera, tablas y API:
 
 ---
 
-## Arquitectura hexagonal
+## Arquitectura real (Plan 005 — monolito modular por capacidad)
+
+> El layout es **modular por capacidad**, NO una hexagonal domain/app/adapters.
+> La meta de IAM/Negocio/Flujos sigue vigente, pero todavía no hay código; lo que
+> existe hoy es el **Gateway CloudLink** y su plataforma de soporte.
 
 ```
+cmd/server/         → binario único: orquesta arranque, DOS listeners gRPC + HTTP,
+                      migraciones, lease pubkey en log, graceful shutdown.
 internal/
-  domain/
-    iam/       → Tenant, User, Role, Permission
-    business/  → Contact, Segment, Template, Campaign, CampaignItem
-    flows/     → FlowDef, FlowInstance, Node, Transition
-    gateway/   → EdgeRecord, Session, Lease
-  app/
-    iam/       → Register, Login, RefreshToken, CheckPermission
-    business/  → UpsertContact, CreateCampaign, DispatchCampaign (fan-out goroutines)
-    flows/     → ProcessIncomingEvent, AdvanceFlowStep, RenderNode (ProcessorRegistry)
-    gateway/   → EnrollEdge, AcceptStream, EmitLease, RevokeLease
-  adapters/
-    postgres/  → repositorios relacionales (PG: tenants, contactos, campañas, fleet, leases)
-    mongo/     → repositorios documentales (flow_defs, flow_state, flow_results)
-    s3/        → almacenamiento de media + URLs prefirmadas (S3/MinIO)
-    grpcserver/→ servidor CloudLink bidi-stream con mTLS (ver pieza 02)
-    http/      → Gin: rutas Consola/BFF + health-checks
+  gateway/
+    grpc/      → package gatewaygrpc: servidor CloudLink (Connect bidi),
+                 SendText/Ping/RevokeLease, identidad mTLS del peer, hooks.
+    enroll/    → CA (SignCSR/IssueServerCert/Pool), Service + Server EnrollEdge,
+                 CodeStore + EdgeCertRepository (memory + postgres).
+    lease/     → Manager (kill-switch ADR-0007): issue/renew/revoke, TTL,
+                 ResolveSigningKey, PublicKeyBase64; Repository memory + postgres.
+    fleet/     → estado online/offline por sesión; Repository memory + postgres.
+    session/   → Registry en memoria de streams vivos (push por session_id).
+  platform/
+    config/    → AppConfig (env WAPP_*) + defaults dev.
+    logging/   → adaptador de wapp-shared/logger.
+    httpapi/   → /healthz + /admin/leases/revoke (kill-switch interno).
+    storage/postgres/ → Open, health, runner de migraciones (structure/000N.sql).
 ```
+
+### Dos listeners (decisión Plan 005 · T5)
+
+El arranque levanta **dos** servidores gRPC que comparten cert de servidor y CA dev:
+
+- **Enrollment** (`WAPP_GRPC_ENROLL_ADDR`, dev `:8444`) — **TLS de servidor
+  SOLAMENTE** (sin exigir cert de cliente): el Edge enrola aquí *antes* de tener
+  cert. Sirve `EnrollmentServer` (CSR -> código -> cert firmado por la CA).
+- **CloudLink** (`WAPP_GRPC_CONNECT_ADDR`, dev `:8443`) — **mTLS estricto**
+  (`mtls.ServerCreds`, RequireAndVerifyClientCert, clientCAs = Pool de la CA de
+  enroll): el Edge conecta aquí con el cert emitido. Sirve `CloudLinkServer`.
+
+Más un **HTTP** (`WAPP_HTTP_ADDR`, dev `:8080`) con `/healthz` (incluye check de
+BD) y `/admin/leases/revoke` (kill-switch interno, **auth diferida a la fase IAM**).
+
+PKI de dev: `scripts/gen-dev-certs.sh` genera `certs/{ca,server}.{crt,key}`
+(rutas en `WAPP_PKI_*`). `certs/` está fuera de git.
+
+> Pendiente de fases siguientes: módulos IAM / Negocio / Motor de Flujos
+> (MongoDB/S3 aún no cableados).
 
 ---
 

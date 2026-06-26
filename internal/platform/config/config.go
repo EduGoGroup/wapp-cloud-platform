@@ -27,15 +27,41 @@ const fileEnvKey = "CONFIG_FILE"
 type AppConfig struct {
 	// HTTPAddr es la dirección de escucha del servidor HTTP de health/admin.
 	HTTPAddr string `yaml:"http_addr"`
+	// GRPCEnrollAddr es la dirección del servidor gRPC de Enrolamiento (TLS de
+	// servidor SOLAMENTE: el Edge enrola aquí SIN cert de cliente).
+	GRPCEnrollAddr string `yaml:"grpc_enroll_addr"`
+	// GRPCConnectAddr es la dirección del servidor gRPC CloudLink (mTLS estricto:
+	// el Edge conecta aquí con el cert emitido en el enrolamiento).
+	GRPCConnectAddr string `yaml:"grpc_connect_addr"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
 	LogJSON bool `yaml:"log_json"`
 	// DB es la configuración de conexión a PostgreSQL.
 	DB DatabaseConfig `yaml:"db"`
+	// PKI son las rutas a la CA y el cert de servidor (los genera
+	// scripts/gen-dev-certs.sh).
+	PKI PKIConfig `yaml:"pki"`
 	// Lease es la configuración del kill-switch (clave de firma y TTL). La
 	// consume el Gateway al construir el lease.Manager (cableado en T5).
 	Lease LeaseConfig `yaml:"lease"`
+}
+
+// PKIConfig agrupa las rutas de la PKI del Gateway. El cert de servidor es
+// compartido por ambos listeners (enroll y connect); la CA firma los certs de
+// Edge en el enrolamiento y valida a los Edges en el mTLS de CloudLink. La clave
+// de la CA (CAKeyFile) la necesita el servicio de enrolamiento para firmar CSRs.
+// Los defaults coinciden con scripts/gen-dev-certs.sh (directorio certs/). Se
+// leen con prefijo WAPP_PKI_ (p. ej. WAPP_PKI_CA_KEY_FILE).
+type PKIConfig struct {
+	// ServerCertFile es el PEM del cert de servidor (SAN localhost en dev).
+	ServerCertFile string `yaml:"server_cert_file"`
+	// ServerKeyFile es el PEM de la clave privada del cert de servidor.
+	ServerKeyFile string `yaml:"server_key_file"`
+	// CACertFile es el PEM del cert de la CA (firma certs de Edge y los valida).
+	CACertFile string `yaml:"ca_cert_file"`
+	// CAKeyFile es el PEM de la clave privada de la CA (firma CSRs en el enroll).
+	CAKeyFile string `yaml:"ca_key_file"`
 }
 
 // LeaseConfig agrupa la configuración del lease del Gateway (ADR-0007). La clave
@@ -85,9 +111,11 @@ func (d DatabaseConfig) DSN() string {
 // defaults devuelve la configuración con valores por defecto sensatos.
 func defaults() AppConfig {
 	return AppConfig{
-		HTTPAddr: ":8080",
-		LogLevel: "info",
-		LogJSON:  false,
+		HTTPAddr:        ":8080",
+		GRPCEnrollAddr:  ":8444",
+		GRPCConnectAddr: ":8443",
+		LogLevel:        "info",
+		LogJSON:         false,
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -95,6 +123,12 @@ func defaults() AppConfig {
 			Password: "wapp",
 			Name:     "wapp_cloud",
 			SSLMode:  "disable",
+		},
+		PKI: PKIConfig{
+			ServerCertFile: "certs/server.crt",
+			ServerKeyFile:  "certs/server.key",
+			CACertFile:     "certs/ca.crt",
+			CAKeyFile:      "certs/ca.key",
 		},
 	}
 }
@@ -119,6 +153,8 @@ func Load() (AppConfig, error) {
 
 	// Overlay de entorno: usa el valor actual (default o YAML) como fallback.
 	cfg.HTTPAddr = loader.GetString("HTTP_ADDR", cfg.HTTPAddr)
+	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
+	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 
@@ -128,6 +164,11 @@ func Load() (AppConfig, error) {
 	cfg.DB.Password = loader.GetString("DB_PASSWORD", cfg.DB.Password)
 	cfg.DB.Name = loader.GetString("DB_NAME", cfg.DB.Name)
 	cfg.DB.SSLMode = loader.GetString("DB_SSLMODE", cfg.DB.SSLMode)
+
+	cfg.PKI.ServerCertFile = loader.GetString("PKI_SERVER_CERT_FILE", cfg.PKI.ServerCertFile)
+	cfg.PKI.ServerKeyFile = loader.GetString("PKI_SERVER_KEY_FILE", cfg.PKI.ServerKeyFile)
+	cfg.PKI.CACertFile = loader.GetString("PKI_CA_CERT_FILE", cfg.PKI.CACertFile)
+	cfg.PKI.CAKeyFile = loader.GetString("PKI_CA_KEY_FILE", cfg.PKI.CAKeyFile)
 
 	cfg.Lease.PrivateKeyFile = loader.GetString("LEASE_PRIVATE_KEY_FILE", cfg.Lease.PrivateKeyFile)
 	cfg.Lease.PrivateKeyB64 = loader.GetString("LEASE_PRIVATE_KEY_B64", cfg.Lease.PrivateKeyB64)
