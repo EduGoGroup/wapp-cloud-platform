@@ -1,0 +1,16 @@
+github.com/EduGoGroup/wapp-shared/config v0.1.0 h1:junTHwFZRm/jvQQY1xJBe3lrYDJT3etu7wSEsb7DvF8=
+github.com/EduGoGroup/wapp-shared/config v0.1.0/go.mod h1:WCDy0MET1u/9rnKAWZwEHa1JQ7HA7rxXwWLqBJHS92w=
+github.com/EduGoGroup/wapp-shared/health v0.1.0 h1:Zgc1TNcKIE6otw58I6UIIDSbuR6kalVnSMcJKOMALbk=
+github.com/EduGoGroup/wapp-shared/health v0.1.0/go.mod h1:U2yDan8f0SyLitwrjYcAq9HM8xLZ67lYwbv9Jku/1rw=
+github.com/EduGoGroup/wapp-shared/logger v0.1.0 h1:TvhP//jWzX14fD9uM2ghl6M0lpMhyUDZ8uQfEvR8154=
+github.com/EduGoGroup/wapp-shared/logger v0.1.0/go.mod h1:jZ8GH59HUREHIEJv21jNpCdLm1P2NthGqTN/s8SrZTg=
+github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
+github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
+github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
