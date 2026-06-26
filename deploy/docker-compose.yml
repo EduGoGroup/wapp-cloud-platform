@@ -1,0 +1,42 @@
+# Entorno de desarrollo local para wapp-cloud-platform.
+#
+# Levanta un PostgreSQL 16 para desarrollo y tests de integración.
+#
+# Credenciales de DESARROLLO (NO usar en producción):
+#   usuario:    wapp
+#   contraseña: wapp
+#   base:       wapp_cloud
+#   host:port:  localhost:5432
+#
+# Estas credenciales coinciden con los defaults de internal/platform/config
+# (WAPP_DB_*), de modo que el binario arranca sin configuración extra.
+#
+# Uso:
+#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml down        # conserva el volumen
+#   docker compose -f deploy/docker-compose.yml down -v     # borra el volumen
+#
+# Tests de integración (desde la raíz del repo):
+#   export WAPP_TEST_DB_DSN="host=localhost port=5432 user=wapp password=wapp dbname=wapp_cloud sslmode=disable"
+#   go test -race ./...
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wapp-cloud-postgres
+    environment:
+      POSTGRES_USER: wapp
+      POSTGRES_PASSWORD: wapp
+      POSTGRES_DB: wapp_cloud
+    ports:
+      - "5432:5432"
+    volumes:
+      - wapp_cloud_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wapp -d wapp_cloud"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  wapp_cloud_pgdata:

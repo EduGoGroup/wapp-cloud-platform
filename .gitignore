@@ -14,6 +14,14 @@ dist/
 .env
 .env.*
 
+# PKI de desarrollo (scripts/gen-dev-certs.sh) — NUNCA committear claves ni certs
+certs/
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+
 # Vendor (descomentar si se usa go mod vendor)
 # vendor/
 
