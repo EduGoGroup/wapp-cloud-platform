@@ -5,10 +5,20 @@
 // colisión con el paquete google.golang.org/grpc, que se importa con su nombre
 // natural.
 //
-// Este corte (Plan 005 · T2) implementa el núcleo del Connect EN MEMORIA:
-// registro de sesiones vivas, ruteo de los EdgeToCloud por tipo, correlación de
-// Acks por command_id y empuje de comandos (SendText, Ping). mTLS, lease,
-// enrolamiento y persistencia entran en tareas posteriores.
+// Sobre el núcleo en memoria del Connect (Plan 005 · T2: registro de sesiones,
+// ruteo de EdgeToCloud, correlación de Acks, empuje de SendText/Ping) T4 cablea
+// además la identidad mTLS, el lease (kill-switch, ADR-0007) y el fleet:
+//   - La identidad (tenantID, edgeID) se extrae del cert de cliente mTLS del
+//     peer. Si NO hay TLS (tests bufconn de T2), Connect degrada: no emite lease
+//     ni toca fleet, conservando el comportamiento de T2 intacto.
+//   - Al registrar una sesión: fleet online + lease inicial empujado al Edge.
+//   - En cada Heartbeat: renovación del lease (counter = heartbeatCounter+1).
+//   - Al caer el stream: fleet offline.
+//   - RevokeLease dispara el kill-switch: persiste revocado y empuja el
+//     LeaseUpdate(Revoked) a TODAS las sesiones vivas del Edge.
+//
+// Las dependencias de lease y fleet son OPCIONALES (WithLease/WithFleet): nil =
+// comportamiento T2 (sin lease/fleet), lo que mantiene los tests sin TLS verdes.
 package gatewaygrpc
 
 import (
@@ -18,13 +28,22 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 )
+
+// offlinePersistTimeout acota la persistencia de fleet-offline tras la caída del
+// stream (el contexto del stream ya está cancelado; se usa uno desacoplado).
+const offlinePersistTimeout = 5 * time.Second
 
 // Server implementa cloudlinkv1.CloudLinkServer. Es seguro para uso concurrente.
 //
@@ -36,24 +55,57 @@ type Server struct {
 	registry *session.Registry
 	log      logger.Logger
 
+	// leaseMgr y fleet son OPCIONALES. nil => degradación a comportamiento T2
+	// (sin lease ni fleet). Se inyectan con WithLease/WithFleet.
+	leaseMgr *lease.Manager
+	fleet    fleet.Repository
+
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
 	OnIncoming func(sessionID string, m *cloudlinkv1.IncomingMessage)
-	// OnHeartbeat, si no es nil, se invoca por cada Heartbeat recibido. El uso
-	// del lease_counter para la lógica de lease entra en una tarea posterior.
+	// OnHeartbeat, si no es nil, se invoca por cada Heartbeat recibido. La
+	// renovación del lease a partir del lease_counter la hace el propio servidor.
 	OnHeartbeat func(sessionID string, m *cloudlinkv1.Heartbeat)
 
 	acksMu sync.Mutex
 	acks   map[string]chan *cloudlinkv1.Ack
+
+	// edgeSessions mapea cada Edge (tenant+edge) al conjunto de sus sesiones
+	// vivas, para que RevokeLease pueda empujar el kill-switch a todas ellas.
+	trackMu      sync.Mutex
+	edgeSessions map[edgeKey]map[string]struct{}
 }
 
-// New construye un Server con el registro de sesiones y el logger dados.
-func New(registry *session.Registry, log logger.Logger) *Server {
-	return &Server{
-		registry: registry,
-		log:      log,
-		acks:     make(map[string]chan *cloudlinkv1.Ack),
+// edgeKey identifica un Edge dentro de un tenant.
+type edgeKey struct {
+	tenantID string
+	edgeID   string
+}
+
+// Option configura el Server al construirlo.
+type Option func(*Server)
+
+// WithLease inyecta el gestor de leases. Sin él, Connect no emite ni renueva
+// leases (comportamiento T2).
+func WithLease(m *lease.Manager) Option { return func(s *Server) { s.leaseMgr = m } }
+
+// WithFleet inyecta el repositorio de fleet. Sin él, Connect no persiste el
+// estado online/offline (comportamiento T2).
+func WithFleet(r fleet.Repository) Option { return func(s *Server) { s.fleet = r } }
+
+// New construye un Server con el registro de sesiones y el logger dados. Las
+// dependencias opcionales (lease, fleet) se pasan como Option.
+func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
+	s := &Server{
+		registry:     registry,
+		log:          log,
+		acks:         make(map[string]chan *cloudlinkv1.Ack),
+		edgeSessions: make(map[edgeKey]map[string]struct{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Register registra este servidor en el ServiceRegistrar gRPC dado.
@@ -61,15 +113,31 @@ func (s *Server) Register(reg grpc.ServiceRegistrar) {
 	cloudlinkv1.RegisterCloudLinkServer(reg, s)
 }
 
-// Connect atiende el stream bidireccional CloudLink. Registra la sesión en el
-// primer mensaje con session_id no vacío y la marca offline al cerrarse el
-// stream (EOF o error). Rutea cada EdgeToCloud por el tipo de su payload.
+// connCtx agrupa la identidad de un stream Connect, derivada del cert mTLS.
+type connCtx struct {
+	sessionID string
+	tenantID  string
+	edgeID    string
+	// hasIdentity es true solo si se extrajo (tenantID, edgeID) del cert mTLS.
+	// false en streams sin TLS (tests T2): se degrada sin lease ni fleet.
+	hasIdentity bool
+}
+
+// Connect atiende el stream bidireccional CloudLink. Extrae la identidad mTLS
+// del peer, registra la sesión en el primer mensaje con session_id no vacío
+// (emitiendo lease inicial y marcando fleet online) y la marca offline al
+// cerrarse el stream. Rutea cada EdgeToCloud por el tipo de su payload.
 func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud, cloudlinkv1.CloudToEdge]) error {
+	streamCtx := stream.Context()
+	tenantID, edgeID, hasIdentity := peerIdentity(streamCtx)
+
+	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity}
 	var release func()
 	defer func() {
 		if release != nil {
 			release()
 		}
+		s.onStreamClosed(streamCtx, cc)
 	}()
 
 	for {
@@ -83,34 +151,161 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 
 		sessionID := msg.GetSessionId()
 		if release == nil && sessionID != "" {
+			cc.sessionID = sessionID
 			release = s.registry.Register(sessionID, stream)
-			s.log.Info("sesión CloudLink registrada", "session_id", sessionID)
+			s.log.Info("sesión CloudLink registrada",
+				"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
+			s.onSessionRegistered(streamCtx, cc)
 		}
 
-		s.route(sessionID, msg)
+		s.route(streamCtx, cc, msg)
 	}
 }
 
 // route despacha un EdgeToCloud según el tipo de su payload.
-func (s *Server) route(sessionID string, msg *cloudlinkv1.EdgeToCloud) {
+func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToCloud) {
 	switch p := msg.GetPayload().(type) {
 	case *cloudlinkv1.EdgeToCloud_Incoming:
 		if s.OnIncoming != nil {
-			s.OnIncoming(sessionID, p.Incoming)
+			s.OnIncoming(cc.sessionID, p.Incoming)
 		}
 	case *cloudlinkv1.EdgeToCloud_Ack:
 		s.deliverAck(p.Ack)
 	case *cloudlinkv1.EdgeToCloud_Heartbeat:
 		if s.OnHeartbeat != nil {
-			s.OnHeartbeat(sessionID, p.Heartbeat)
+			s.OnHeartbeat(cc.sessionID, p.Heartbeat)
 		}
+		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
-		s.log.Debug("pong recibido", "session_id", sessionID, "nonce", p.Pong.GetNonce())
+		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
 	case *cloudlinkv1.EdgeToCloud_Delivery:
-		s.log.Debug("delivery status recibido", "session_id", sessionID)
+		s.log.Debug("delivery status recibido", "session_id", cc.sessionID)
 	default:
-		s.log.Debug("payload EdgeToCloud desconocido", "session_id", sessionID)
+		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}
+}
+
+// onSessionRegistered marca la sesión online en fleet, la rastrea para el
+// kill-switch y empuja el lease inicial al Edge. No hace nada sin identidad mTLS.
+func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
+	if !cc.hasIdentity {
+		return
+	}
+	s.trackSession(cc)
+
+	if s.fleet != nil {
+		if err := s.fleet.MarkOnline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
+			s.log.Error("fleet: marcar online", "error", err,
+				"edge_id", cc.edgeID, "session_id", cc.sessionID)
+		}
+	}
+
+	if s.leaseMgr == nil {
+		return
+	}
+	lu, err := s.leaseMgr.IssueInitial(ctx, cc.tenantID, cc.edgeID)
+	if err != nil {
+		s.log.Error("lease: emitir inicial", "error", err, "edge_id", cc.edgeID)
+		return
+	}
+	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
+		s.log.Error("lease: push inicial", "error", err, "session_id", cc.sessionID)
+	}
+}
+
+// renewLease renueva el lease del Edge a partir del counter del Heartbeat y
+// empuja el LeaseUpdate. No hace nada sin lease o sin identidad.
+func (s *Server) renewLease(ctx context.Context, cc connCtx, heartbeatCounter int64) {
+	if s.leaseMgr == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	lu, err := s.leaseMgr.Renew(ctx, cc.tenantID, cc.edgeID, heartbeatCounter)
+	if err != nil {
+		s.log.Error("lease: renovar", "error", err, "edge_id", cc.edgeID)
+		return
+	}
+	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
+		s.log.Debug("lease: push renovación", "error", err, "session_id", cc.sessionID)
+	}
+}
+
+// onStreamClosed marca la sesión offline en fleet y deja de rastrearla. Usa un
+// contexto desacoplado del stream (ya cancelado) para que la persistencia no
+// falle por cancelación.
+func (s *Server) onStreamClosed(streamCtx context.Context, cc connCtx) {
+	if !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	s.untrackSession(cc)
+
+	if s.fleet == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(streamCtx), offlinePersistTimeout)
+	defer cancel()
+	if err := s.fleet.MarkOffline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
+		s.log.Error("fleet: marcar offline", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+	}
+}
+
+// RevokeLease dispara el kill-switch del Edge: persiste la revocación y empuja
+// el LeaseUpdate(Revoked) a TODAS sus sesiones vivas. Devuelve error si el lease
+// no está configurado. El endpoint admin HTTP que lo invoca es T5.
+func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	lu, err := s.leaseMgr.Revoke(ctx, tenantID, edgeID)
+	if err != nil {
+		return err
+	}
+	for _, sid := range s.sessionsForEdge(tenantID, edgeID) {
+		if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
+			s.log.Debug("revoke: push a sesión", "session_id", sid, "error", pushErr)
+		}
+	}
+	return nil
+}
+
+// trackSession añade la sesión al conjunto vivo de su Edge.
+func (s *Server) trackSession(cc connCtx) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	k := edgeKey{tenantID: cc.tenantID, edgeID: cc.edgeID}
+	set := s.edgeSessions[k]
+	if set == nil {
+		set = make(map[string]struct{})
+		s.edgeSessions[k] = set
+	}
+	set[cc.sessionID] = struct{}{}
+}
+
+// untrackSession quita la sesión del conjunto vivo de su Edge.
+func (s *Server) untrackSession(cc connCtx) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	k := edgeKey{tenantID: cc.tenantID, edgeID: cc.edgeID}
+	set := s.edgeSessions[k]
+	if set == nil {
+		return
+	}
+	delete(set, cc.sessionID)
+	if len(set) == 0 {
+		delete(s.edgeSessions, k)
+	}
+}
+
+// sessionsForEdge devuelve una copia de las sesiones vivas del Edge dado.
+func (s *Server) sessionsForEdge(tenantID, edgeID string) []string {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	set := s.edgeSessions[edgeKey{tenantID: tenantID, edgeID: edgeID}]
+	out := make([]string, 0, len(set))
+	for sid := range set {
+		out = append(out, sid)
+	}
+	return out
 }
 
 // deliverAck entrega un Ack al chan pendiente correlacionado por
@@ -194,6 +389,43 @@ func (s *Server) clearAck(cmdID string) {
 	s.acksMu.Lock()
 	delete(s.acks, cmdID)
 	s.acksMu.Unlock()
+}
+
+// leaseToCloud envuelve un LeaseUpdate en un CloudToEdge dirigido a la sesión
+// dada. No lleva command_id: es un push del servidor, no un comando con Ack.
+func leaseToCloud(sessionID string, lu *cloudlinkv1.LeaseUpdate) *cloudlinkv1.CloudToEdge {
+	return &cloudlinkv1.CloudToEdge{
+		SessionId: sessionID,
+		Payload:   &cloudlinkv1.CloudToEdge_LeaseUpdate{LeaseUpdate: lu},
+	}
+}
+
+// peerIdentity extrae (tenantID, edgeID) del cert de cliente mTLS del peer:
+// CN = edgeID, Organization[0] = tenantID (como los firma la CA de enrolamiento,
+// T3). Devuelve ok=false si no hay TLS o el cert no trae ambos campos: en ese
+// caso Connect degrada sin lease ni fleet (compatibilidad con tests T2 sin TLS).
+func peerIdentity(ctx context.Context) (tenantID, edgeID string, ok bool) {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.AuthInfo == nil {
+		return "", "", false
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", "", false
+	}
+	certs := tlsInfo.State.PeerCertificates
+	if len(certs) == 0 {
+		return "", "", false
+	}
+	leaf := certs[0]
+	edgeID = leaf.Subject.CommonName
+	if len(leaf.Subject.Organization) > 0 {
+		tenantID = leaf.Subject.Organization[0]
+	}
+	if edgeID == "" || tenantID == "" {
+		return "", "", false
+	}
+	return tenantID, edgeID, true
 }
 
 // newCommandID genera un identificador único de comando con el formato UUIDv4,

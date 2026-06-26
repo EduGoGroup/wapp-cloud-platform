@@ -33,6 +33,26 @@ type AppConfig struct {
 	LogJSON bool `yaml:"log_json"`
 	// DB es la configuración de conexión a PostgreSQL.
 	DB DatabaseConfig `yaml:"db"`
+	// Lease es la configuración del kill-switch (clave de firma y TTL). La
+	// consume el Gateway al construir el lease.Manager (cableado en T5).
+	Lease LeaseConfig `yaml:"lease"`
+}
+
+// LeaseConfig agrupa la configuración del lease del Gateway (ADR-0007). La clave
+// privada Ed25519 firma los leases; precedencia: archivo PEM > base64 >
+// generación efímera de dev (si ambos quedan vacíos). Se lee con prefijo
+// WAPP_LEASE_ (p. ej. WAPP_LEASE_PRIVATE_KEY_B64).
+type LeaseConfig struct {
+	// PrivateKeyFile es la ruta a un PEM PKCS#8 con la clave Ed25519. Tiene
+	// prioridad sobre PrivateKeyB64. Vacío = no usar archivo.
+	PrivateKeyFile string `yaml:"private_key_file"`
+	// PrivateKeyB64 es la clave Ed25519 (semilla de 32B o clave de 64B) en base64.
+	// Vacío = no usar base64. Si también PrivateKeyFile está vacío, se genera una
+	// clave de dev efímera (NO apta para producción).
+	PrivateKeyB64 string `yaml:"private_key_b64"`
+	// TTLMinutes es la vigencia del lease en minutos. <=0 usa el default del
+	// gestor (5 min). Se renueva en cada Heartbeat del Edge.
+	TTLMinutes int `yaml:"ttl_minutes"`
 }
 
 // DatabaseConfig agrupa los parámetros de conexión a PostgreSQL. Se lee de las
@@ -108,6 +128,10 @@ func Load() (AppConfig, error) {
 	cfg.DB.Password = loader.GetString("DB_PASSWORD", cfg.DB.Password)
 	cfg.DB.Name = loader.GetString("DB_NAME", cfg.DB.Name)
 	cfg.DB.SSLMode = loader.GetString("DB_SSLMODE", cfg.DB.SSLMode)
+
+	cfg.Lease.PrivateKeyFile = loader.GetString("LEASE_PRIVATE_KEY_FILE", cfg.Lease.PrivateKeyFile)
+	cfg.Lease.PrivateKeyB64 = loader.GetString("LEASE_PRIVATE_KEY_B64", cfg.Lease.PrivateKeyB64)
+	cfg.Lease.TTLMinutes = loader.GetInt("LEASE_TTL_MINUTES", cfg.Lease.TTLMinutes)
 
 	return cfg, nil
 }
