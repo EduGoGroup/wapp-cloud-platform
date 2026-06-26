@@ -2,6 +2,43 @@ package config
 
 import "testing"
 
+func TestDatabaseConfig_DSN(t *testing.T) {
+	db := DatabaseConfig{
+		Host:     "db.example",
+		Port:     5433,
+		User:     "u",
+		Password: "p",
+		Name:     "n",
+		SSLMode:  "require",
+	}
+	want := "host=db.example port=5433 user=u password=p dbname=n sslmode=require"
+	if got := db.DSN(); got != want {
+		t.Fatalf("DSN: got %q, want %q", got, want)
+	}
+}
+
+func TestLoad_DBEnvOverrides(t *testing.T) {
+	t.Setenv(EnvPrefix+"DB_HOST", "pg")
+	t.Setenv(EnvPrefix+"DB_PORT", "6000")
+	t.Setenv(EnvPrefix+"DB_USER", "admin")
+	t.Setenv(EnvPrefix+"DB_PASSWORD", "secret")
+	t.Setenv(EnvPrefix+"DB_NAME", "mydb")
+	t.Setenv(EnvPrefix+"DB_SSLMODE", "require")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+
+	want := DatabaseConfig{
+		Host: "pg", Port: 6000, User: "admin",
+		Password: "secret", Name: "mydb", SSLMode: "require",
+	}
+	if cfg.DB != want {
+		t.Fatalf("DB: got %+v, want %+v", cfg.DB, want)
+	}
+}
+
 func TestLoad_Defaults(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
