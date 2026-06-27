@@ -248,6 +248,11 @@ func (h *itHarness) connect(ctx context.Context, t *testing.T, resp *cloudlinkv1
 type edgeSim struct {
 	stream cloudlinkv1.CloudLink_ConnectClient
 
+	// sentText, si no es nil, recibe cada SendText empujado por el servidor
+	// (además de ackearlo). Lo usa el test de flujos para asertar el texto del
+	// menú y de los nodos destino. nil en los tests que no lo necesitan.
+	sentText chan *cloudlinkv1.SendText
+
 	sendMu sync.Mutex
 
 	vMu sync.Mutex
@@ -317,7 +322,13 @@ func (e *edgeSim) handle(cmd *cloudlinkv1.CloudToEdge) {
 	case cmd.GetLeaseUpdate() != nil:
 		e.applyLease(cmd.GetLeaseUpdate())
 	case cmd.GetSendText() != nil:
+		// Ackea ANTES de publicar el texto: el SendText del servidor se
+		// desbloquea con el Ack, y el texto queda disponible en el canal
+		// bufferizado para que el test lo asierte sin carrera.
 		e.ackCommand(cmd)
+		if e.sentText != nil {
+			e.sentText <- cmd.GetSendText()
+		}
 	}
 }
 
