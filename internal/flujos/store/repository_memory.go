@@ -102,6 +102,23 @@ func (r *MemoryRepository) LatestDefinition(_ context.Context, tenantID, flowID 
 	return r.defs[dk][max], nil
 }
 
+// GetDefinition implementa Repository: devuelve la definición de la versión
+// exacta indicada. ErrDefinitionNotFound si no existe.
+func (r *MemoryRepository) GetDefinition(_ context.Context, tenantID, flowID string, version int) (model.Flow, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dk := defKey(tenantID, flowID)
+	byVer, ok := r.defs[dk]
+	if !ok {
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s", ErrDefinitionNotFound, tenantID, flowID)
+	}
+	f, ok := byVer[version]
+	if !ok {
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s version=%d", ErrDefinitionNotFound, tenantID, flowID, version)
+	}
+	return f, nil
+}
+
 // InsertDefinition implementa Repository: asigna version = max+1 por
 // (tenant_id, flow_id) y devuelve la versión asignada.
 func (r *MemoryRepository) InsertDefinition(_ context.Context, tenantID string, f model.Flow) (int, error) {

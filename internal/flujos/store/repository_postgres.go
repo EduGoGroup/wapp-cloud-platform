@@ -135,6 +135,30 @@ func (r *PostgresRepository) LatestDefinition(ctx context.Context, tenantID, flo
 	return f, nil
 }
 
+// GetDefinition devuelve la definición de la versión EXACTA indicada para
+// (tenant, flow). ErrDefinitionNotFound si no existe esa versión.
+func (r *PostgresRepository) GetDefinition(ctx context.Context, tenantID, flowID string, version int) (model.Flow, error) {
+	var defRaw []byte
+	err := r.db.QueryRowContext(ctx, `
+		SELECT definition
+		FROM public.flow_definitions
+		WHERE tenant_id = $1 AND flow_id = $2 AND version = $3
+	`, tenantID, flowID, version).Scan(&defRaw)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s version=%d", ErrDefinitionNotFound, tenantID, flowID, version)
+	case err != nil:
+		return model.Flow{}, fmt.Errorf("store: leer definición por versión: %w", err)
+	}
+	f, err := model.UnmarshalDefinition(defRaw)
+	if err != nil {
+		return model.Flow{}, fmt.Errorf("store: deserializar definición: %w", err)
+	}
+	// La columna version es la autoritativa (la asigna InsertDefinition).
+	f.Version = version
+	return f, nil
+}
+
 // InsertDefinition persiste la definición como versión nueva: asigna
 // version = COALESCE(max(version),0)+1 por (tenant_id, flow_id) de forma atómica
 // y devuelve la versión asignada. El campo f.Version del argumento se ignora.

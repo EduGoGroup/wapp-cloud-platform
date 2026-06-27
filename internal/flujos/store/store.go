@@ -31,6 +31,12 @@ type Repository interface {
 	Save(ctx context.Context, state model.Conversation) error
 	// LatestDefinition devuelve la versión vigente de la definición del flujo.
 	LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error)
+	// GetDefinition devuelve la definición de una versión EXACTA. El runtime lo
+	// usa para avanzar una conversación con la versión con la que arrancó
+	// (Conversation.FlowVersion), de modo que publicar una versión nueva no
+	// "salte" una conversación en curso (versionado, design.md §4). Devuelve
+	// ErrDefinitionNotFound si no existe esa (tenant_id, flow_id, version).
+	GetDefinition(ctx context.Context, tenantID, flowID string, version int) (model.Flow, error)
 	// InsertDefinition persiste una definición como versión nueva (no muta la
 	// vigente; versionado design.md §4). La versión la asigna el repositorio
 	// (version = COALESCE(max(version),0)+1 por (tenant_id, flow_id)); el campo
