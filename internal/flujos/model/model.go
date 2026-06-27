@@ -1,21 +1,33 @@
 // Package model define los tipos de la definición de flujo (Flow/Node) y del
-// estado conversacional (Conversation), junto con su (de)serialización JSON.
+// estado conversacional (Conversation), junto con su (de)serialización JSON y
+// la validación de esquema.
 //
 // Esquema B (resuelto 2026-06-26, design.md §10.B): `Nodes` es un mapa
 // id→nodo; los tipos de nodo son "menu" (Prompt + Options) y "message"
 // (Text + Next). `Next == nil` termina el flujo.
-//
-// La VALIDACIÓN de esquema y la lógica de la máquina viven en T1; aquí solo
-// están los tipos, sus tags JSON y una firma `Validate` sin lógica real.
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
 
 // Tipos de nodo soportados en este corte (Menú). Ver design.md §4.
 const (
 	NodeTypeMenu    = "menu"
 	NodeTypeMessage = "message"
 )
+
+// NodeTerminal es el valor centinela de Conversation.CurrentNode que marca el
+// fin de la conversación (un nodo "message" con Next == nil). No puede colisionar
+// con un id real de nodo: la validación rechaza cualquier flujo cuyo mapa de
+// nodos contenga esta clave. Ver design.md §6 y el método Finished.
+const NodeTerminal = "\x00__flow_end__"
+
+// ErrInvalidFlow es el error base (envoltura) de toda definición de flujo que
+// no cumple el esquema. Se inspecciona con errors.Is.
+var ErrInvalidFlow = errors.New("definición de flujo inválida")
 
 // Flow es la definición declarativa y versionada de un flujo (datos, no
 // código; Pieza 05 §3). La unidad persistida es (tenant_id, flow_id, version).
@@ -38,8 +50,8 @@ type Node struct {
 }
 
 // Conversation es el estado vivo de una conversación ligada a la clave lógica
-// (TenantID, SessionID, Contact) (Pieza 05 §3). `Vars` guardará en T1 el
-// contador de reprompt (design.md §10.E) y variables recolectadas.
+// (TenantID, SessionID, Contact) (Pieza 05 §3). `Vars` guarda el contador de
+// reprompt (design.md §10.E) y variables recolectadas.
 type Conversation struct {
 	TenantID        string         `json:"tenant_id"`
 	SessionID       string         `json:"session_id"`
@@ -51,6 +63,11 @@ type Conversation struct {
 	LastWaMessageID string         `json:"last_wa_message_id,omitempty"`
 }
 
+// Finished indica si la conversación llegó al fin del flujo (CurrentNode quedó
+// en el centinela NodeTerminal). Un Step sobre una conversación terminada no
+// avanza (ver engine.Step).
+func (c Conversation) Finished() bool { return c.CurrentNode == NodeTerminal }
+
 // MarshalDefinition serializa una definición de flujo a JSON (cuerpo JSONB).
 func MarshalDefinition(f Flow) ([]byte, error) { return json.Marshal(f) }
 
@@ -61,10 +78,70 @@ func UnmarshalDefinition(data []byte) (Flow, error) {
 	return f, err
 }
 
-// Validate comprobará el esquema de la definición (initial existe, opciones y
-// `next` apuntan a nodos existentes, tipos conocidos por un módulo registrado).
+// ParseAndValidate deserializa y valida en un paso: rechaza JSON mal formado y
+// definiciones que no cumplen el esquema. Es el punto de entrada del handler
+// admin (T3) para publicar una definición.
+func ParseAndValidate(data []byte) (Flow, error) {
+	f, err := UnmarshalDefinition(data)
+	if err != nil {
+		return Flow{}, fmt.Errorf("%w: JSON mal formado: %w", ErrInvalidFlow, err)
+	}
+	if err := Validate(f); err != nil {
+		return Flow{}, err
+	}
+	return f, nil
+}
+
+// Validate comprueba el esquema de la definición (design.md §4):
+//   - flow_id no vacío y version >= 1 (unidad persistida (tenant,flow_id,version));
+//   - nodes no vacío y sin la clave centinela NodeTerminal;
+//   - initial no vacío y presente en nodes;
+//   - cada nodo "menu" tiene Options no vacío y cada destino existe en nodes;
+//   - cada nodo "message" con Next != nil apunta a un nodo existente;
+//   - el Type de cada nodo está en {menu, message}.
 //
-// TODO(T1): implementar la validación real. En T0 no tiene lógica.
-func Validate(_ Flow) error {
+// Devuelve errores envueltos sobre ErrInvalidFlow (inspeccionables con errors.Is).
+func Validate(f Flow) error {
+	if f.FlowID == "" {
+		return fmt.Errorf("%w: flow_id vacío", ErrInvalidFlow)
+	}
+	if f.Version < 1 {
+		return fmt.Errorf("%w: version %d inválida (debe ser >= 1)", ErrInvalidFlow, f.Version)
+	}
+	if len(f.Nodes) == 0 {
+		return fmt.Errorf("%w: nodes vacío", ErrInvalidFlow)
+	}
+	if _, reserved := f.Nodes[NodeTerminal]; reserved {
+		return fmt.Errorf("%w: un id de nodo usa la clave reservada de fin de flujo", ErrInvalidFlow)
+	}
+	if f.Initial == "" {
+		return fmt.Errorf("%w: initial vacío", ErrInvalidFlow)
+	}
+	if _, ok := f.Nodes[f.Initial]; !ok {
+		return fmt.Errorf("%w: initial %q no existe en nodes", ErrInvalidFlow, f.Initial)
+	}
+	for id, n := range f.Nodes {
+		switch n.Type {
+		case NodeTypeMenu:
+			if len(n.Options) == 0 {
+				return fmt.Errorf("%w: nodo menu %q sin options", ErrInvalidFlow, id)
+			}
+			for opt, target := range n.Options {
+				if _, ok := f.Nodes[target]; !ok {
+					return fmt.Errorf("%w: nodo menu %q: opción %q apunta a nodo inexistente %q",
+						ErrInvalidFlow, id, opt, target)
+				}
+			}
+		case NodeTypeMessage:
+			if n.Next != nil {
+				if _, ok := f.Nodes[*n.Next]; !ok {
+					return fmt.Errorf("%w: nodo message %q: next apunta a nodo inexistente %q",
+						ErrInvalidFlow, id, *n.Next)
+				}
+			}
+		default:
+			return fmt.Errorf("%w: nodo %q: tipo desconocido %q", ErrInvalidFlow, id, n.Type)
+		}
+	}
 	return nil
 }
