@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"errors"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
@@ -31,6 +32,13 @@ type Repository interface {
 	// LatestDefinition devuelve la versión vigente de la definición del flujo.
 	LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error)
 	// InsertDefinition persiste una definición como versión nueva (no muta la
-	// vigente; versionado design.md §4).
-	InsertDefinition(ctx context.Context, tenantID string, f model.Flow) error
+	// vigente; versionado design.md §4). La versión la asigna el repositorio
+	// (version = COALESCE(max(version),0)+1 por (tenant_id, flow_id)); el campo
+	// f.Version del argumento se ignora. Devuelve la versión asignada.
+	InsertDefinition(ctx context.Context, tenantID string, f model.Flow) (version int, err error)
 }
+
+// ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna
+// versión de la definición para (tenant_id, flow_id). Se inspecciona con
+// errors.Is.
+var ErrDefinitionNotFound = errors.New("definición de flujo no encontrada")
