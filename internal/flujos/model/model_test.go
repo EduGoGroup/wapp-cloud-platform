@@ -2,10 +2,41 @@ package model_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
+
+// TestNodeTerminalIsTextSafe blinda el centinela de fin de flujo: cuando una
+// conversación termina, Conversation.CurrentNode = model.NodeTerminal se persiste
+// en la columna TEXT flow_state.current_node. PostgreSQL rechaza el byte nulo
+// 0x00 ("invalid byte sequence for encoding UTF8", SQLSTATE 22021). El
+// MemoryRepository (mapas Go) toleraba un centinela con \x00 y enmascaró el bug;
+// solo el e2e real contra PostgreSQL lo destapó. Este guard (sin BD, CI-safe)
+// evita que recurra: el centinela debe ser UTF-8 válido, sin byte nulo ni
+// caracteres de control.
+func TestNodeTerminalIsTextSafe(t *testing.T) {
+	if model.NodeTerminal == "" {
+		t.Fatal("NodeTerminal no debe ser vacío (debe distinguirse de un id de nodo ausente)")
+	}
+	if i := strings.IndexByte(model.NodeTerminal, 0); i != -1 {
+		t.Fatalf("NodeTerminal contiene byte nulo 0x00 en %d: PostgreSQL lo rechaza en columnas TEXT (SQLSTATE 22021)", i)
+	}
+	if !utf8.ValidString(model.NodeTerminal) {
+		t.Fatalf("NodeTerminal no es UTF-8 válido: %q", model.NodeTerminal)
+	}
+	for i, r := range model.NodeTerminal {
+		if unicode.IsControl(r) {
+			t.Fatalf("NodeTerminal contiene carácter de control %U en %d: %q", r, i, model.NodeTerminal)
+		}
+		if !unicode.IsPrint(r) {
+			t.Fatalf("NodeTerminal contiene carácter no imprimible %U en %d: %q", r, i, model.NodeTerminal)
+		}
+	}
+}
 
 func ptr(s string) *string { return &s }
 

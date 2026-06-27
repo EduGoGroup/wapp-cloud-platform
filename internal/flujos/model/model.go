@@ -23,7 +23,13 @@ const (
 // fin de la conversación (un nodo "message" con Next == nil). No puede colisionar
 // con un id real de nodo: la validación rechaza cualquier flujo cuyo mapa de
 // nodos contenga esta clave. Ver design.md §6 y el método Finished.
-const NodeTerminal = "\x00__flow_end__"
+//
+// IMPORTANTE: NO usar bytes nulos (0x00) ni de control aquí. Este valor se
+// persiste en la columna TEXT flow_state.current_node y PostgreSQL rechaza el
+// 0x00 ("invalid byte sequence for encoding UTF8"). El MemoryRepository (mapas Go)
+// lo toleraba y enmascaraba el fallo; solo el e2e real contra PostgreSQL lo
+// destapó. Mantener un sentinel imprimible.
+const NodeTerminal = "__wapp_flow_end__"
 
 // ErrInvalidFlow es el error base (envoltura) de toda definición de flujo que
 // no cumple el esquema. Se inspecciona con errors.Is.

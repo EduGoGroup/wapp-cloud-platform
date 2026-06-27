@@ -120,6 +120,47 @@ func assertUpserted(t *testing.T, up model.Conversation) {
 	}
 }
 
+// TestIntegration_FlowStateTerminalSentinelRoundtrip es el test de regresión del
+// bug que el e2e real destapó: cuando una conversación llega a un nodo terminal,
+// CurrentNode = model.NodeTerminal se persiste en la columna TEXT
+// flow_state.current_node. El centinela viejo llevaba un byte nulo 0x00 y
+// PostgreSQL lo rechazaba ("invalid byte sequence for encoding UTF8", SQLSTATE
+// 22021); el MemoryRepository (mapas Go) lo toleraba y enmascaró el fallo. Este
+// test HABRÍA FALLADO con el centinela viejo y PASA con el actual (imprimible).
+func TestIntegration_FlowStateTerminalSentinelRoundtrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	repo := store.NewPostgresRepository(db)
+
+	key := store.Key{TenantID: tenantID, SessionID: "sess-terminal", Contact: "573009998877"}
+
+	st := model.Conversation{
+		TenantID:    tenantID,
+		SessionID:   key.SessionID,
+		Contact:     key.Contact,
+		FlowID:      "menu-soporte",
+		FlowVersion: 1,
+		CurrentNode: model.NodeTerminal, // <- el centinela que rompía PostgreSQL
+		Vars:        map[string]any{"reprompt": float64(0)},
+	}
+	// Save NO debe fallar por encoding: el centinela tiene que ser TEXT-safe.
+	if err := repo.Save(ctx, st); err != nil {
+		t.Fatalf("Save con CurrentNode=NodeTerminal falló (¿centinela con byte nulo?): %v", err)
+	}
+
+	got, found, err := repo.Load(ctx, key)
+	if err != nil || !found {
+		t.Fatalf("Load tras Save: found=%v err=%v", found, err)
+	}
+	if got.CurrentNode != model.NodeTerminal {
+		t.Fatalf("centinela terminal no hizo round-trip: got %q, want %q", got.CurrentNode, model.NodeTerminal)
+	}
+	if !got.Finished() {
+		t.Fatalf("estado leído debería estar Finished(): %+v", got)
+	}
+}
+
 func TestIntegration_FlowDefinitionVersioning(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
