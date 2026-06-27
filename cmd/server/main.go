@@ -33,6 +33,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
+	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
+	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
@@ -109,17 +115,21 @@ func run() error {
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 	)
 
+	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
+	// runtime, sobre el *sql.DB ya abierto. Se enchufa a gw.OnIncoming (cada
+	// entrante avanza la conversación viva; sin estado se ignora, decisión C) y
+	// expone los endpoints admin /admin/flows y /admin/flows/start (más abajo). ---
+	flowReg := modules.NewRegistry()
+	flowReg.Register(menu.New())
+	flowEngine := engine.New(flowReg)
+	flowStore := flowstore.NewPostgresRepository(db)
+	flowResolver := flowruntime.NewPostgresTenantResolver(db)
+	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, log)
+
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
-	// fijan antes de servir: cada IncomingMessage se loguea a Info y cada
-	// Heartbeat a Debug (la renovación del lease la hace el propio Server).
-	gw.OnIncoming = func(sessionID string, m *cloudlinkv1.IncomingMessage) {
-		log.Info("mensaje entrante",
-			"session_id", sessionID,
-			"from", m.GetFrom(),
-			"text", m.GetText(),
-			"wa_message_id", m.GetWaMessageId(),
-		)
-	}
+	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y
+	// cada Heartbeat se loguea a Debug (la renovación del lease la hace el Server).
+	gw.OnIncoming = flowRuntime.OnIncoming
 	gw.OnHeartbeat = func(sessionID string, m *cloudlinkv1.Heartbeat) {
 		log.Debug("heartbeat",
 			"session_id", sessionID,
@@ -150,6 +160,7 @@ func run() error {
 	mux.Handle("/healthz", httpapi.HealthHandler(checker))
 	mux.Handle("/admin/leases/revoke", httpapi.RevokeLeaseHandler(gw))
 	mux.Handle("/admin/messages/send", httpapi.SendMessageHandler(gw))
+	flowadmin.Register(mux, flowStore, flowRuntime)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

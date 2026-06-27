@@ -132,16 +132,26 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 }
 
 // OnIncoming es el wrapper que T5 asigna a (*gatewaygrpc.Server).OnIncoming
-// (func(sessionID string, m *cloudlinkv1.IncomingMessage), sin error). Llama a
-// HandleIncoming y LOGUEA el error sin propagarlo ni panickear.
+// (func(sessionID string, m *cloudlinkv1.IncomingMessage), sin error).
+//
+// Despacha HandleIncoming en una goroutine y NO bloquea al llamante: el Gateway
+// invoca este hook de forma SÍNCRONA dentro del loop Recv del stream del Edge
+// (internal/gateway/grpc/server.go, route), y HandleIncoming hace un SendText
+// que espera el Ack —Ack que ese MISMO loop Recv debe entregar (deliverAck).
+// Procesar inline bloquearía el loop y causaría un deadlock por sesión. La
+// serialización por conversación la sigue garantizando el keyedMutex dentro de
+// HandleIncoming (cada clave se procesa de a una). Los errores se LOGUEAN sin
+// propagarse ni panickear.
 func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) {
-	if err := rt.HandleIncoming(context.Background(), sessionID, m); err != nil {
-		rt.log.Error("runtime: procesar entrante",
-			"error", err,
-			"session_id", sessionID,
-			"wa_message_id", m.GetWaMessageId(),
-		)
-	}
+	go func() {
+		if err := rt.HandleIncoming(context.Background(), sessionID, m); err != nil {
+			rt.log.Error("runtime: procesar entrante",
+				"error", err,
+				"session_id", sessionID,
+				"wa_message_id", m.GetWaMessageId(),
+			)
+		}
+	}()
 }
 
 // send empuja cada salida por el Sender en orden y devuelve el último Ack. Ante
