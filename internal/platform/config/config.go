@@ -45,6 +45,25 @@ type AppConfig struct {
 	// Lease es la configuración del kill-switch (clave de firma y TTL). La
 	// consume el Gateway al construir el lease.Manager (cableado en T5).
 	Lease LeaseConfig `yaml:"lease"`
+	// Crypto es la configuración del fundamento criptográfico de PII (Plan 011,
+	// ADR-0017): la KEK maestra y la indexKey del índice ciego. Se expone aquí;
+	// el cableado a los repos/main entra en tramos posteriores (T1/T3).
+	Crypto CryptoConfig `yaml:"crypto"`
+}
+
+// CryptoConfig agrupa el material de clave del cifrado de PII en reposo (Plan
+// 011). La KEK maestra (KEKMasterB64) envuelve las DEKs por-valor; la indexKey
+// (KEKIndexB64) alimenta el índice ciego HMAC. Ambas van en base64 estándar y
+// SEPARADAS del dato de negocio (no viven en la BD; §10.A). Se leen con prefijo
+// WAPP_ (p. ej. WAPP_KEK_MASTER_B64), en paralelo a la clave del lease.
+type CryptoConfig struct {
+	// KEKMasterB64 es la KEK maestra (32B, AES-256) en base64. Obligatoria para
+	// operar el cifrado; su ausencia hace fallar-rápido al construir el
+	// KeyProvider (cableado en T3), no aquí.
+	KEKMasterB64 string `yaml:"kek_master_b64"`
+	// KEKIndexB64 es la indexKey del índice ciego (32B) en base64. Opcional: si
+	// queda vacía, se deriva de la KEK maestra vía HKDF-SHA256.
+	KEKIndexB64 string `yaml:"kek_index_b64"`
 }
 
 // PKIConfig agrupa las rutas de la PKI del Gateway. El cert de servidor es
@@ -173,6 +192,9 @@ func Load() (AppConfig, error) {
 	cfg.Lease.PrivateKeyFile = loader.GetString("LEASE_PRIVATE_KEY_FILE", cfg.Lease.PrivateKeyFile)
 	cfg.Lease.PrivateKeyB64 = loader.GetString("LEASE_PRIVATE_KEY_B64", cfg.Lease.PrivateKeyB64)
 	cfg.Lease.TTLMinutes = loader.GetInt("LEASE_TTL_MINUTES", cfg.Lease.TTLMinutes)
+
+	cfg.Crypto.KEKMasterB64 = loader.GetString("KEK_MASTER_B64", cfg.Crypto.KEKMasterB64)
+	cfg.Crypto.KEKIndexB64 = loader.GetString("KEK_INDEX_B64", cfg.Crypto.KEKIndexB64)
 
 	return cfg, nil
 }
