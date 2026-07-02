@@ -224,7 +224,7 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	if res.Version != migrations.SchemaVersion {
 		t.Fatalf("versión: got %q, want %q", res.Version, migrations.SchemaVersion)
 	}
-	if res.Version != "0.5.0" {
-		t.Fatalf("SchemaVersion: got %q, want 0.5.0", res.Version)
+	if res.Version != "0.6.0" {
+		t.Fatalf("SchemaVersion: got %q, want 0.6.0", res.Version)
 	}
 }

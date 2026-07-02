@@ -289,3 +289,116 @@ func TestPG_ValueCifradoEnReposo(t *testing.T) {
 		t.Fatal("el número aparece EN CLARO dentro de value_enc")
 	}
 }
+
+// TestPG_ValueKekID_PersistidoYLeido verifica el discriminador de KEK del Plan 012
+// (T1): el INSERT escribe value_kek_id con el key_id de la KEK que envolvió la DEK
+// (en modo compat = "1"), la migración 0007 fijó el DEFAULT/backfill a ese mismo
+// valor, y Destino descifra leyendo el value_kek_id de la fila (no la current). El
+// dedup/lookup por value_bidx queda intacto (no depende del key_id).
+func TestPG_ValueKekID_PersistidoYLeido(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenant := seedTenant(t, db)
+	r := newTestResolver(t, db)
+	const phoneNum = "573004445566"
+	phone := mustRef(t, contact.KindPhoneE164, phoneNum)
+	lid := mustRef(t, contact.KindWALID, "44443333")
+
+	id, err := r.Resolve(ctx, tenant, []contact.Ref{phone, lid}, "Kek")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	// (a) Ambas filas (insertNewContact + attachRef) escribieron value_kek_id="1"
+	// (compatKeyID de la KEK maestra única del modo compat, = DEFAULT de 0007).
+	rows, err := db.QueryContext(ctx, `
+		SELECT kind, value_kek_id FROM public.contacts
+		WHERE tenant_id = $1 AND contact_id = $2
+		ORDER BY kind
+	`, tenant, id)
+	if err != nil {
+		t.Fatalf("leer value_kek_id: %v", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Logf("cerrando filas: %v", cerr)
+		}
+	}()
+	got := 0
+	for rows.Next() {
+		var kind, kekID string
+		if err := rows.Scan(&kind, &kekID); err != nil {
+			t.Fatalf("escanear: %v", err)
+		}
+		if kekID != "1" {
+			t.Fatalf("kind %q: value_kek_id=%q, quiero \"1\" (compatKeyID)", kind, kekID)
+		}
+		got++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterar: %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("esperaba 2 filas (phone+lid) con value_kek_id, hubo %d", got)
+	}
+
+	// (b) Destino descifra usando el value_kek_id leído de la fila (round-trip).
+	dst, err := r.Destino(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("Destino: %v", err)
+	}
+	if dst.Kind != contact.KindPhoneE164 || dst.Value != phoneNum {
+		t.Fatalf("Destino = %+v, quiero phone_e164 %q", dst, phoneNum)
+	}
+
+	// (c) Dedup por value_bidx INTACTO: re-resolver la misma phone reusa el id.
+	id2, err := r.Resolve(ctx, tenant, []contact.Ref{phone}, "")
+	if err != nil || id2 != id {
+		t.Fatalf("dedup por value_bidx roto: id2=%q err=%v (quiero %q)", id2, err, id)
+	}
+}
+
+// TestPG_Migracion0007_Reaplicable comprueba que re-correr las migraciones (el
+// runner es hash-replay full) tras 0007 es inocuo (aditiva + backfill idempotente),
+// que la columna value_kek_id existe y que el backfill dejó las filas en "1".
+func TestPG_Migracion0007_Reaplicable(t *testing.T) {
+	db := openTestDB(t) // openTestDB ya corre Migrate una vez.
+	ctx := context.Background()
+
+	// La columna value_kek_id existe tras 0007.
+	var hasCol bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'contacts' AND column_name = 'value_kek_id'
+		)
+	`).Scan(&hasCol); err != nil {
+		t.Fatalf("consultar columna: %v", err)
+	}
+	if !hasCol {
+		t.Fatal("0007 no creó la columna value_kek_id")
+	}
+
+	// Re-aplicar es inocuo: el runner marca Skipped (hash ya registrado) y no
+	// altera datos. Insertamos un contacto, re-migramos y verificamos que su
+	// value_kek_id sigue siendo el key_id inicial (backfill no lo pisa).
+	tenant := seedTenant(t, db)
+	r := newTestResolver(t, db)
+	phone := mustRef(t, contact.KindPhoneE164, "573006667788")
+	if _, err := r.Resolve(ctx, tenant, []contact.Ref{phone}, ""); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := migrations.Migrate(ctx, db); err != nil {
+		t.Fatalf("re-migración: %v", err)
+	}
+	var kekID string
+	if err := db.QueryRowContext(ctx, `
+		SELECT value_kek_id FROM public.contacts
+		WHERE tenant_id = $1 AND kind = $2
+	`, tenant, contact.KindPhoneE164).Scan(&kekID); err != nil {
+		t.Fatalf("leer value_kek_id tras re-migración: %v", err)
+	}
+	if kekID != "1" {
+		t.Fatalf("re-migración pisó value_kek_id: %q (quiero \"1\")", kekID)
+	}
+}

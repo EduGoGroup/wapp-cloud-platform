@@ -106,17 +106,17 @@ func (r *PostgresResolver) lookupContactIDs(ctx context.Context, tx *sql.Tx, ten
 // contact_id existente en lugar de fallar con duplicate key (23505), igual que
 // el hermano attachRef.
 func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
-	bidx, enc, dek, err := r.encodeRef(tenantID, refs[0])
+	bidx, enc, dek, kekID, err := r.encodeRef(tenantID, refs[0])
 	if err != nil {
 		return "", err
 	}
 	var cid string
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, push_name)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id, push_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (tenant_id, kind, value_bidx) DO UPDATE SET updated_at = now()
 		RETURNING contact_id::text
-	`, tenantID, refs[0].Kind, bidx, enc, dek, nullStr(pushName)).Scan(&cid)
+	`, tenantID, refs[0].Kind, bidx, enc, dek, kekID, nullStr(pushName)).Scan(&cid)
 	if err != nil {
 		return "", fmt.Errorf("contact: insertar contacto: %w", err)
 	}
@@ -129,18 +129,16 @@ func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, ten
 }
 
 // encodeRef prepara las columnas cifradas de una ref: value_bidx (índice ciego),
-// value_enc (envelope) y value_dek (DEK envuelta). El value en claro no sale de
-// aquí (design.md §4, §5).
-func (r *PostgresResolver) encodeRef(tenantID string, ref Ref) (bidx string, enc, dek []byte, err error) {
+// value_enc (envelope), value_dek (DEK envuelta) y kekID (el key_id de la KEK que
+// envolvió la DEK, para persistir en value_kek_id y saber con qué KEK desenvolver
+// tras una rotación, design.md §5, §6). El value en claro no sale de aquí.
+func (r *PostgresResolver) encodeRef(tenantID string, ref Ref) (bidx string, enc, dek []byte, kekID string, err error) {
 	bidx = r.kp.BlindIndex(tenantID, ref.Value)
-	// TODO(Plan 012 T1 / Bloque B): persistir el key_id devuelto por Encrypt en la
-	// columna value_kek_id (INSERT/attach). Shim de compilación del Bloque A: se
-	// descarta hasta cablear la columna.
-	enc, dek, _, err = r.cipher.Encrypt(ref.Value)
+	enc, dek, kekID, err = r.cipher.Encrypt(ref.Value)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("contact: cifrar value: %w", err)
+		return "", nil, nil, "", fmt.Errorf("contact: cifrar value: %w", err)
 	}
-	return bidx, enc, dek, nil
+	return bidx, enc, dek, kekID, nil
 }
 
 // resolveExisting reusa (un solo contact_id) o funde (varios) los contact_id ya
@@ -189,15 +187,15 @@ func nullStr(s string) sql.NullString {
 // attachRef ata una ref (cifrada) al contact_id dado; si ya existe (dedup por
 // (tenant, kind, value_bidx)) no hace nada.
 func (r *PostgresResolver) attachRef(ctx context.Context, tx *sql.Tx, tenantID, contactID string, ref Ref, pushName string) error {
-	bidx, enc, dek, err := r.encodeRef(tenantID, ref)
+	bidx, enc, dek, kekID, err := r.encodeRef(tenantID, ref)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, contact_id, push_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id, contact_id, push_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (tenant_id, kind, value_bidx) DO NOTHING
-	`, tenantID, ref.Kind, bidx, enc, dek, contactID, nullStr(pushName))
+	`, tenantID, ref.Kind, bidx, enc, dek, kekID, contactID, nullStr(pushName))
 	if err != nil {
 		return fmt.Errorf("contact: adjuntar ref: %w", err)
 	}
@@ -263,7 +261,7 @@ func fuseDB(ctx context.Context, tx *sql.Tx, tenantID, orphan, canonical string)
 // Destino implementa Resolver (design.md §10.E).
 func (r *PostgresResolver) Destino(ctx context.Context, tenantID, contactID string) (ref Ref, err error) {
 	rows, qerr := r.db.QueryContext(ctx, `
-		SELECT kind, value_enc, value_dek FROM public.contacts
+		SELECT kind, value_enc, value_dek, value_kek_id FROM public.contacts
 		WHERE tenant_id = $1 AND contact_id = $2
 	`, tenantID, contactID)
 	if qerr != nil {
@@ -280,16 +278,17 @@ func (r *PostgresResolver) Destino(ctx context.Context, tenantID, contactID stri
 		var (
 			kind     string
 			enc, dek []byte
+			kekID    string
 		)
-		if serr := rows.Scan(&kind, &enc, &dek); serr != nil {
+		if serr := rows.Scan(&kind, &enc, &dek, &kekID); serr != nil {
 			return Ref{}, fmt.Errorf("contact: escanear ref: %w", serr)
 		}
 		// Descifra el value SOLO en memoria (borde de la app) para armar el
-		// destino enviable (design.md §5). No se loguea (§8).
-		// TODO(Plan 012 T1 / Bloque B): leer value_kek_id de la fila y pasarlo aquí.
-		// Shim de compilación del Bloque A: en el mundo de una sola KEK todas las
-		// filas están envueltas por la current, así que CurrentKeyID() es correcto.
-		value, derr := r.cipher.Decrypt(enc, dek, r.kp.CurrentKeyID())
+		// destino enviable (design.md §5). No se loguea (§8). Se desenvuelve con la
+		// KEK que envolvió ESTA fila (value_kek_id), no con la current: tras una
+		// rotación parcial coexisten filas de varias KEK (design.md §6, §8, §10.F).
+		// Si esa KEK no está en el keyring, Decrypt falla claro (fail-safe §10.J).
+		value, derr := r.cipher.Decrypt(enc, dek, kekID)
 		if derr != nil {
 			return Ref{}, fmt.Errorf("contact: descifrar value: %w", derr)
 		}
