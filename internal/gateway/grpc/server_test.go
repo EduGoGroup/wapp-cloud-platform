@@ -1,10 +1,12 @@
 package gatewaygrpc_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,19 +22,41 @@ import (
 
 const bufSize = 1024 * 1024
 
+// syncBuffer es un io.Writer seguro para uso concurrente: el logger del Server
+// escribe desde el goroutine de Recv mientras el test lee para inspeccionarlo.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// count devuelve cuántas veces aparece substr en lo escrito hasta ahora.
+func (b *syncBuffer) count(substr string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.Count(b.buf.String(), substr)
+}
+
 // harness levanta el Server sobre un bufconn.Listener y devuelve un cliente
 // CloudLink ya conectado, junto con el Registry y el Server para inspección.
 type harness struct {
 	srv      *gatewaygrpc.Server
 	registry *session.Registry
 	client   cloudlinkv1.CloudLinkClient
+	logBuf   *syncBuffer
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
 	reg := session.NewRegistry()
-	log := logger.New(logger.WithWriter(io.Discard))
+	logBuf := &syncBuffer{}
+	log := logger.New(logger.WithWriter(logBuf))
 	srv := gatewaygrpc.New(reg, log)
 
 	lis := bufconn.Listen(bufSize)
@@ -72,6 +96,7 @@ func newHarness(t *testing.T) *harness {
 		srv:      srv,
 		registry: reg,
 		client:   cloudlinkv1.NewCloudLinkClient(conn),
+		logBuf:   logBuf,
 	}
 }
 
@@ -414,4 +439,162 @@ func TestConnectStreamDownGoesOffline(t *testing.T) {
 			t.Fatalf("error de %q = %v, quiero envolver ErrSessionOffline", sid, sendErr)
 		}
 	}
+}
+
+// TestConnectHotJoinSegundaSesion cubre el hot-join: una 2ª sesión que aparece
+// en un frame POSTERIOR (cuando la 1ª ya está viva) se registra igual, en vez de
+// descartarse como hacía el guard release==nil (Plan 009 · R4).
+func TestConnectHotJoinSegundaSesion(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Primera sesión; se confirma online ANTES de que aparezca la segunda.
+	if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
+		t.Fatalf("Send s1: %v", sendErr)
+	}
+	waitOnline(t, h.registry, "s1", true)
+
+	// Hot-join: la 2ª sesión llega después, por el mismo stream.
+	if sendErr := stream.Send(heartbeat("s2")); sendErr != nil {
+		t.Fatalf("Send s2: %v", sendErr)
+	}
+	waitOnline(t, h.registry, "s2", true)
+
+	// La 1ª sigue viva y ambas cuentan.
+	waitOnline(t, h.registry, "s1", true)
+	if got := h.registry.Count(); got != 2 {
+		t.Fatalf("Count() = %d, quiero 2", got)
+	}
+}
+
+// TestConnectReconexionIdempotente verifica que re-enviar frames del MISMO
+// session_id ya vivo no re-registra: el map local hace no-op para el sid ya
+// presente (la última-gana la resuelve el registry). Se cuenta el log de
+// registro, que debe dispararse una vez por sid distinto, no por frame.
+func TestConnectReconexionIdempotente(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	beats := make(chan struct{}, 8)
+	h.srv.OnHeartbeat = func(string, *cloudlinkv1.Heartbeat) { beats <- struct{}{} }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// s1 tres veces (heartbeats repetidos / reconexión del mismo sid) + s2 una.
+	for i := 0; i < 3; i++ {
+		if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
+			t.Fatalf("Send s1 #%d: %v", i, sendErr)
+		}
+	}
+	if sendErr := stream.Send(heartbeat("s2")); sendErr != nil {
+		t.Fatalf("Send s2: %v", sendErr)
+	}
+
+	// Barrera: OnHeartbeat corre DESPUÉS del registro de su frame; esperar los 4
+	// beats garantiza que los 4 frames pasaron por el registro (y su log).
+	for i := 0; i < 4; i++ {
+		select {
+		case <-beats:
+		case <-ctx.Done():
+			t.Fatalf("timeout esperando heartbeats (recibidos %d/4)", i)
+		}
+	}
+
+	waitOnline(t, h.registry, "s1", true)
+	waitOnline(t, h.registry, "s2", true)
+
+	if n := h.logBuf.count("sesión CloudLink registrada"); n != 2 {
+		t.Fatalf("registros = %d, quiero 2 (s1 y s2 una vez cada uno)", n)
+	}
+	if got := h.registry.Count(); got != 2 {
+		t.Fatalf("Count() = %d, quiero 2", got)
+	}
+}
+
+// TestConnectMultiSesionRace ejercita el Recv del Connect concurrente con Push
+// desde otros goroutines (Ping) sobre 2 sesiones, mientras el Edge sigue
+// multiplexando heartbeats. Debe quedar limpio bajo -race: el map local lo muta
+// solo el goroutine de Recv (D1) y el estado cross-goroutine vive en el registry.
+func TestConnectMultiSesionRace(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
+		t.Fatalf("Send s1: %v", sendErr)
+	}
+	if sendErr := stream.Send(heartbeat("s2")); sendErr != nil {
+		t.Fatalf("Send s2: %v", sendErr)
+	}
+	waitOnline(t, h.registry, "s1", true)
+	waitOnline(t, h.registry, "s2", true)
+
+	// El cliente drena lo que el servidor empuja, para no bloquear los Send.
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		for {
+			if _, recvErr := stream.Recv(); recvErr != nil {
+				return
+			}
+		}
+	}()
+
+	// Push concurrente (Ping) a ambas sesiones desde varios goroutines.
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			sid := "s1"
+			if n%2 == 0 {
+				sid = "s2"
+			}
+			// Ambas sesiones siguen vivas hasta el CloseSend (tras wg.Wait), así
+			// que el Push no debe fallar. t.Errorf es seguro concurrentemente.
+			if pingErr := h.srv.Ping(ctx, sid, int64(n)); pingErr != nil {
+				t.Errorf("Ping %q: %v", sid, pingErr)
+			}
+		}(i)
+	}
+	// A la vez, el Edge sigue mandando heartbeats de ambas sesiones (Recv activo).
+	for i := 0; i < 20; i++ {
+		sid := "s1"
+		if i%2 == 0 {
+			sid = "s2"
+		}
+		if sendErr := stream.Send(heartbeat(sid)); sendErr != nil {
+			t.Fatalf("Send heartbeat concurrente: %v", sendErr)
+		}
+	}
+	wg.Wait()
+
+	if closeErr := stream.CloseSend(); closeErr != nil {
+		t.Fatalf("CloseSend: %v", closeErr)
+	}
+	<-drainDone
+
+	waitOnline(t, h.registry, "s1", false)
+	waitOnline(t, h.registry, "s2", false)
 }
