@@ -68,6 +68,12 @@ type Server struct {
 	// no se intenta abrir (los IncomingMessage llegan siempre en claro, compat).
 	cloudEncPriv []byte
 
+	// receiptSink es el enganche por el que se entrega cada MessageReceipt
+	// (acuse de entrega/lectura) recibido del Edge (Plan 013 §10.F). Nunca es nil:
+	// New() lo inicializa a un LogReceiptSink (log-only) si no se inyecta otro con
+	// WithReceiptSink.
+	receiptSink ReceiptSink
+
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
 	OnIncoming func(sessionID string, m *cloudlinkv1.IncomingMessage)
@@ -106,6 +112,10 @@ func WithFleet(r fleet.Repository) Option { return func(s *Server) { s.fleet = r
 // al ingreso; sin ella los mensajes se procesan tal como llegan (compat §10.H).
 func WithCloudEncPrivKey(priv []byte) Option { return func(s *Server) { s.cloudEncPriv = priv } }
 
+// WithReceiptSink inyecta el sink de acuses (MessageReceipt) del Plan 013 §10.F.
+// Sin él, New() usa el LogReceiptSink log-only por defecto (v1: sin persistencia).
+func WithReceiptSink(sink ReceiptSink) Option { return func(s *Server) { s.receiptSink = sink } }
+
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
 func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
@@ -117,6 +127,10 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// El sink de acuses (Plan 013 §10.F) nunca es nil: log-only por defecto.
+	if s.receiptSink == nil {
+		s.receiptSink = NewLogReceiptSink(log)
 	}
 	return s
 }
@@ -215,6 +229,8 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
 	case *cloudlinkv1.EdgeToCloud_Delivery:
 		s.log.Debug("delivery status recibido", "session_id", cc.sessionID)
+	case *cloudlinkv1.EdgeToCloud_Receipt:
+		s.handleReceipt(ctx, cc, p.Receipt)
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}
@@ -409,6 +425,38 @@ func (s *Server) deliverAck(ack *cloudlinkv1.Ack) {
 	select {
 	case ch <- ack:
 	default:
+	}
+}
+
+// handleReceipt procesa un MessageReceipt (acuse de entrega/lectura) recibido del
+// Edge (Plan 013 §10.F/§10.G). Correlaciona por command_id con el SendText
+// original y lo entrega al receiptSink.
+//
+// Sobre la correlación: la nube NO mantiene un registro persistente
+// command_id -> destino. El único registro (s.acks) es efímero: SendText lo crea
+// y deliverAck lo BORRA al llegar el Ack, mucho antes de que WhatsApp emita el
+// delivered/read. Por tanto la correlación aquí es por metadato: el command_id
+// (opaco) que el Edge propaga desde el SendText original, más los message_ids.
+// Se loguea correlacionado y se pasa al sink; una fase futura con tabla podrá
+// unir command_id con el mensaje enviado. Higiene §10.G: SOLO metadatos
+// (session_id, command_id, status, message_ids, timestamp); NUNCA texto/JID.
+func (s *Server) handleReceipt(ctx context.Context, cc connCtx, receipt *cloudlinkv1.MessageReceipt) {
+	if receipt == nil {
+		return
+	}
+	s.log.Info("acuse recibido del Edge",
+		"session_id", cc.sessionID,
+		"command_id", receipt.GetCommandId(),
+		"status", receipt.GetStatus().String(),
+		"message_ids", receipt.GetMessageIds(),
+		"timestamp", receipt.GetTimestamp(),
+	)
+	if err := s.receiptSink.Record(ctx, receipt); err != nil {
+		s.log.Error("acuse: el sink no pudo registrar el receipt",
+			"session_id", cc.sessionID,
+			"command_id", receipt.GetCommandId(),
+			"error", err,
+		)
 	}
 }
 

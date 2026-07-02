@@ -598,3 +598,59 @@ func TestConnectMultiSesionRace(t *testing.T) {
 	waitOnline(t, h.registry, "s1", false)
 	waitOnline(t, h.registry, "s2", false)
 }
+
+// waitLog espera hasta que substr aparezca al menos want veces en el log o falla.
+func waitLog(t *testing.T, logBuf *syncBuffer, substr string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if logBuf.count(substr) >= want {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando %d apariciones de %q en el log", want, substr)
+}
+
+// TestConnectReceipt verifica que un MessageReceipt recibido por el stream se
+// rutea, se loguea correlacionado por command_id y se entrega al receiptSink
+// (log-only por defecto). Higiene §10.G: solo metadatos en el log.
+func TestConnectReceipt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	const cmdID = "cmd-abc-123"
+	receipt := &cloudlinkv1.MessageReceipt{
+		SessionId:  "s1",
+		MessageIds: []string{"wamid.SENT.1"},
+		Status:     cloudlinkv1.ReceiptStatus_RECEIPT_STATUS_DELIVERED,
+		Timestamp:  1700000000,
+		CommandId:  cmdID,
+	}
+	if sendErr := stream.Send(&cloudlinkv1.EdgeToCloud{
+		SessionId: "s1",
+		Payload:   &cloudlinkv1.EdgeToCloud_Receipt{Receipt: receipt},
+	}); sendErr != nil {
+		t.Fatalf("Send receipt: %v", sendErr)
+	}
+
+	// El case del route loguea la recepción y el sink log-only persiste (log).
+	waitLog(t, h.logBuf, "acuse recibido del Edge", 1)
+	waitLog(t, h.logBuf, "acuse persistido (log-only)", 1)
+
+	// La correlación por command_id debe aparecer en el log; nunca contenido.
+	if h.logBuf.count(cmdID) < 2 {
+		t.Fatalf("el command_id %q debía aparecer correlacionado en ambos logs", cmdID)
+	}
+	if h.logBuf.count("RECEIPT_STATUS_DELIVERED") < 1 {
+		t.Fatal("el status DELIVERED debía loguearse")
+	}
+}
