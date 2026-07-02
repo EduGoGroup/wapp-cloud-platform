@@ -121,7 +121,7 @@ func incoming(from, text, waID string) *cloudlinkv1.IncomingMessage {
 
 func loadState(t *testing.T, repo *store.MemoryRepository, contact string) model.Conversation {
 	t.Helper()
-	st, ok, err := repo.Load(context.Background(), store.Key{TenantID: testTenant, SessionID: testSession, Contact: contact})
+	st, ok, err := repo.Load(context.Background(), store.Key{TenantID: testTenant, SessionID: testSession, ContactID: contact})
 	if err != nil || !ok {
 		t.Fatalf("Load(%s): ok=%v err=%v", contact, ok, err)
 	}
@@ -330,7 +330,7 @@ func TestConcurrencia_ClavesDistintasEnParalelo(t *testing.T) {
 	}
 	for i := 0; i < m; i++ {
 		contact := fmt.Sprintf("5730000000%02d", i)
-		if ok, err := repo.Exists(ctx, store.Key{TenantID: testTenant, SessionID: testSession, Contact: contact}); err != nil || !ok {
+		if ok, err := repo.Exists(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: contact}); err != nil || !ok {
 			t.Fatalf("conversación de %s no creada", contact)
 		}
 	}

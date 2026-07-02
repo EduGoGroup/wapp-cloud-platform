@@ -52,7 +52,11 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 // envía. Devuelve el último Ack del envío (el del último texto emitido) o nil
 // si no hubo salidas.
 func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID, contact string) (*cloudlinkv1.Ack, error) {
-	key := store.Key{TenantID: tenantID, SessionID: sessionID, Contact: contact}
+	// TODO(T4): `contact` es aún el JID/ref crudo del admin; el runtime debe
+	// resolverlo a un contact_id opaco (contact.Resolver) antes de clavar la key
+	// (Plan 010, design.md §6). Por ahora se pasa crudo como ContactID para que
+	// la capa store opere por contact_id sin cambiar el comportamiento actual.
+	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contact}
 	unlock := rt.locks.lock(key)
 	defer unlock()
 
@@ -69,7 +73,7 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID, conta
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
 	}
 
-	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, Contact: contact}
+	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contact} // TODO(T4): resolver contact_id
 	st, outs, err := rt.engine.Enter(def, st)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: enter: %w", err)
@@ -97,7 +101,11 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
 	}
-	key := store.Key{TenantID: tenantID, SessionID: sessionID, Contact: m.GetFrom()}
+	// TODO(T4): resolver m.GetFrom() (+ from_pn/from_lid) a un contact_id opaco
+	// con contact.Resolver antes de clavar la key (Plan 010, design.md §5, §6).
+	// Por ahora se pasa el JID crudo como ContactID para no cambiar el
+	// comportamiento; la capa store ya opera por contact_id.
+	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: m.GetFrom()}
 	unlock := rt.locks.lock(key)
 	defer unlock()
 

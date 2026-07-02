@@ -56,12 +56,14 @@ type Node struct {
 }
 
 // Conversation es el estado vivo de una conversación ligada a la clave lógica
-// (TenantID, SessionID, Contact) (Pieza 05 §3). `Vars` guarda el contador de
-// reprompt (design.md §10.E) y variables recolectadas.
+// (TenantID, SessionID, ContactID) (Pieza 05 §3). ContactID es la identidad
+// OPACA del contacto (contacts.contact_id, UUID como texto), NO el JID crudo
+// (Plan 010, design.md §1, §3). `Vars` guarda el contador de reprompt
+// (design.md §10.E) y variables recolectadas.
 type Conversation struct {
 	TenantID        string         `json:"tenant_id"`
 	SessionID       string         `json:"session_id"`
-	Contact         string         `json:"contact"`
+	ContactID       string         `json:"contact_id"`
 	FlowID          string         `json:"flow_id"`
 	FlowVersion     int            `json:"flow_version"`
 	CurrentNode     string         `json:"current_node"`

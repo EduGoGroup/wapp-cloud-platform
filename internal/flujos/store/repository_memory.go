@@ -33,7 +33,7 @@ func NewMemoryRepository() *MemoryRepository {
 }
 
 func stateKey(k Key) string {
-	return k.TenantID + "\x00" + k.SessionID + "\x00" + k.Contact
+	return k.TenantID + "\x00" + k.SessionID + "\x00" + k.ContactID
 }
 
 func defKey(tenantID, flowID string) string {
@@ -83,7 +83,7 @@ func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) err
 	if err != nil {
 		return fmt.Errorf("store: clonar estado: %w", err)
 	}
-	key := Key{TenantID: state.TenantID, SessionID: state.SessionID, Contact: state.Contact}
+	key := Key{TenantID: state.TenantID, SessionID: state.SessionID, ContactID: state.ContactID}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state[stateKey(key)] = clone

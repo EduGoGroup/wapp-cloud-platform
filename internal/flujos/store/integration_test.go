@@ -59,7 +59,9 @@ func TestIntegration_FlowStatePersistAndUpsert(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	repo := store.NewPostgresRepository(db)
 
-	key := store.Key{TenantID: tenantID, SessionID: "sess-1", Contact: "573001112233"}
+	// contact_id es UUID (contacts.contact_id): la key opera por el id opaco ya
+	// resuelto (Plan 010 T1), no por el JID crudo.
+	key := store.Key{TenantID: tenantID, SessionID: "sess-1", ContactID: "11111111-1111-1111-1111-111111111111"}
 
 	if exists, err := repo.Exists(ctx, key); err != nil || exists {
 		t.Fatalf("Exists inicial: exists=%v err=%v", exists, err)
@@ -71,7 +73,7 @@ func TestIntegration_FlowStatePersistAndUpsert(t *testing.T) {
 	st := model.Conversation{
 		TenantID:        tenantID,
 		SessionID:       "sess-1",
-		Contact:         "573001112233",
+		ContactID:       "11111111-1111-1111-1111-111111111111",
 		FlowID:          "menu-soporte",
 		FlowVersion:     1,
 		CurrentNode:     "root",
@@ -133,12 +135,12 @@ func TestIntegration_FlowStateTerminalSentinelRoundtrip(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	repo := store.NewPostgresRepository(db)
 
-	key := store.Key{TenantID: tenantID, SessionID: "sess-terminal", Contact: "573009998877"}
+	key := store.Key{TenantID: tenantID, SessionID: "sess-terminal", ContactID: "22222222-2222-2222-2222-222222222222"}
 
 	st := model.Conversation{
 		TenantID:    tenantID,
 		SessionID:   key.SessionID,
-		Contact:     key.Contact,
+		ContactID:   key.ContactID,
 		FlowID:      "menu-soporte",
 		FlowVersion: 1,
 		CurrentNode: model.NodeTerminal, // <- el centinela que rompía PostgreSQL
@@ -199,7 +201,7 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	db := openTestDB(t) // ya migró una vez
 	ctx := context.Background()
 
-	for _, table := range []string{"flow_definitions", "flow_state"} {
+	for _, table := range []string{"flow_definitions", "flow_state", "contacts"} {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT FROM information_schema.tables
@@ -222,7 +224,7 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	if res.Version != migrations.SchemaVersion {
 		t.Fatalf("versión: got %q, want %q", res.Version, migrations.SchemaVersion)
 	}
-	if res.Version != "0.4.0" {
-		t.Fatalf("SchemaVersion: got %q, want 0.4.0", res.Version)
+	if res.Version != "0.5.0" {
+		t.Fatalf("SchemaVersion: got %q, want 0.5.0", res.Version)
 	}
 }

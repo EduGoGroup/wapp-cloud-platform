@@ -13,10 +13,14 @@ import (
 )
 
 // Key es la clave lógica de una conversación (Pieza 05 §3, design.md §5).
+// ContactID es la identidad OPACA del contacto (contacts.contact_id, UUID como
+// texto), NO el JID crudo: el motor se clava por contact_id (Plan 010, design.md
+// §1, §3). La resolución JID→contact_id la hace el runtime (T4); esta capa opera
+// sobre el contact_id ya resuelto.
 type Key struct {
 	TenantID  string
 	SessionID string
-	Contact   string
+	ContactID string
 }
 
 // Repository persiste el estado conversacional y las definiciones de flujo

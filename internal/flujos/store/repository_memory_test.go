@@ -24,7 +24,7 @@ func sampleFlow(flowID string) model.Flow {
 func TestMemory_SaveLoadExists(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()
-	key := store.Key{TenantID: "t1", SessionID: "s1", Contact: "573001112233"}
+	key := store.Key{TenantID: "t1", SessionID: "s1", ContactID: "573001112233"}
 
 	exists, err := repo.Exists(ctx, key)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestMemory_SaveLoadExists(t *testing.T) {
 	st := model.Conversation{
 		TenantID:        key.TenantID,
 		SessionID:       key.SessionID,
-		Contact:         key.Contact,
+		ContactID:       key.ContactID,
 		FlowID:          "menu-soporte",
 		FlowVersion:     3,
 		CurrentNode:     "root",
@@ -70,9 +70,9 @@ func TestMemory_SaveLoadExists(t *testing.T) {
 func TestMemory_LoadClonesVars(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()
-	key := store.Key{TenantID: "t1", SessionID: "s1", Contact: "c1"}
+	key := store.Key{TenantID: "t1", SessionID: "s1", ContactID: "c1"}
 	if err := repo.Save(ctx, model.Conversation{
-		TenantID: "t1", SessionID: "s1", Contact: "c1",
+		TenantID: "t1", SessionID: "s1", ContactID: "c1",
 		FlowID: "f", FlowVersion: 1, CurrentNode: "root",
 		Vars: map[string]any{"reprompt": float64(2)},
 	}); err != nil {
@@ -98,7 +98,7 @@ func TestMemory_SaveUpsert(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()
 	st := model.Conversation{
-		TenantID: "t1", SessionID: "s1", Contact: "c1",
+		TenantID: "t1", SessionID: "s1", ContactID: "c1",
 		FlowID: "f", FlowVersion: 1, CurrentNode: "root", Vars: map[string]any{},
 	}
 	if err := repo.Save(ctx, st); err != nil {
@@ -109,7 +109,7 @@ func TestMemory_SaveUpsert(t *testing.T) {
 	if err := repo.Save(ctx, st); err != nil {
 		t.Fatalf("Save 2 (upsert): %v", err)
 	}
-	got, _, err := repo.Load(ctx, store.Key{TenantID: "t1", SessionID: "s1", Contact: "c1"})
+	got, _, err := repo.Load(ctx, store.Key{TenantID: "t1", SessionID: "s1", ContactID: "c1"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

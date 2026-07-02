@@ -29,9 +29,9 @@ func (r *PostgresRepository) Exists(ctx context.Context, key Key) (bool, error) 
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM public.flow_state
-			WHERE tenant_id = $1 AND session_id = $2 AND contact = $3
+			WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
 		)
-	`, key.TenantID, key.SessionID, key.Contact).Scan(&exists)
+	`, key.TenantID, key.SessionID, key.ContactID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("store: exists estado: %w", err)
 	}
@@ -46,12 +46,12 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 		lastWa  sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT tenant_id::text, session_id, contact, flow_id, flow_version,
+		SELECT tenant_id::text, session_id, contact_id::text, flow_id, flow_version,
 		       current_node, vars, last_wa_message_id
 		FROM public.flow_state
-		WHERE tenant_id = $1 AND session_id = $2 AND contact = $3
-	`, key.TenantID, key.SessionID, key.Contact).Scan(
-		&c.TenantID, &c.SessionID, &c.Contact, &c.FlowID, &c.FlowVersion,
+		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+	`, key.TenantID, key.SessionID, key.ContactID).Scan(
+		&c.TenantID, &c.SessionID, &c.ContactID, &c.FlowID, &c.FlowVersion,
 		&c.CurrentNode, &varsRaw, &lastWa,
 	)
 	switch {
@@ -88,16 +88,16 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO public.flow_state
-			(tenant_id, session_id, contact, flow_id, flow_version, current_node, vars, last_wa_message_id, updated_at)
+			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-		ON CONFLICT (tenant_id, session_id, contact) DO UPDATE
+		ON CONFLICT (tenant_id, session_id, contact_id) DO UPDATE
 		SET flow_id = EXCLUDED.flow_id,
 		    flow_version = EXCLUDED.flow_version,
 		    current_node = EXCLUDED.current_node,
 		    vars = EXCLUDED.vars,
 		    last_wa_message_id = EXCLUDED.last_wa_message_id,
 		    updated_at = now()
-	`, state.TenantID, state.SessionID, state.Contact, state.FlowID, state.FlowVersion,
+	`, state.TenantID, state.SessionID, state.ContactID, state.FlowID, state.FlowVersion,
 		state.CurrentNode, varsRaw, lastWa)
 	if err != nil {
 		return fmt.Errorf("store: upsert estado: %w", err)
