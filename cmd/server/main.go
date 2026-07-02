@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	stdlog "log"
@@ -29,7 +30,9 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-cloudlink/mtls"
+	"github.com/EduGoGroup/wapp-shared/envelope"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+	"golang.org/x/crypto/curve25519"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -85,23 +88,18 @@ func run() error {
 	defer closeDB(db, log)
 
 	// --- PKI: CA firmante (enroll) + Pool (mTLS) + cert de servidor (ambos). ---
-	ca, err := loadCA(cfg)
+	ca, serverCert, err := loadPKI(cfg)
 	if err != nil {
 		return err
 	}
-	serverCert, err := tls.LoadX509KeyPair(cfg.PKI.ServerCertFile, cfg.PKI.ServerKeyFile)
-	if err != nil {
-		return fmt.Errorf("cargando cert de servidor (%s / %s): %w",
-			cfg.PKI.ServerCertFile, cfg.PKI.ServerKeyFile, err)
-	}
 
-	// --- Enrolamiento: códigos + certs en PostgreSQL, firma con la CA. ---
-	enrollSvc := enroll.NewService(
-		enroll.NewPostgresCodeStore(db),
-		ca,
-		enroll.NewPostgresEdgeCertRepository(db),
-	)
-	enrollSrv := enroll.NewServer(enrollSvc, log)
+	// --- Enrolamiento + par X25519 de cifrado de tránsito de la nube (Plan 011
+	// §10.F): el enrolamiento publica la pública al Edge; la privada la usa el
+	// gateway para abrir el enc_payload sellado al ingreso. ---
+	enrollSrv, cloudEncPriv, err := buildEnrollServer(cfg, db, ca, log)
+	if err != nil {
+		return err
+	}
 
 	// --- Lease (kill-switch): clave de firma + persistencia en PostgreSQL. ---
 	leaseMgr, err := buildLeaseManager(cfg, db, log)
@@ -115,6 +113,7 @@ func run() error {
 		log,
 		gatewaygrpc.WithLease(leaseMgr),
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
+		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
 	)
 
 	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
@@ -226,6 +225,21 @@ func enrollServerCreds(serverCert tls.Certificate) credentials.TransportCredenti
 	})
 }
 
+// loadPKI carga la CA firmante y el cert de servidor desde las rutas de config,
+// las dos piezas PKI que comparten los listeners de enroll y CloudLink.
+func loadPKI(cfg config.AppConfig) (*enroll.CA, tls.Certificate, error) {
+	ca, err := loadCA(cfg)
+	if err != nil {
+		return nil, tls.Certificate{}, err
+	}
+	serverCert, err := tls.LoadX509KeyPair(cfg.PKI.ServerCertFile, cfg.PKI.ServerKeyFile)
+	if err != nil {
+		return nil, tls.Certificate{}, fmt.Errorf("cargando cert de servidor (%s / %s): %w",
+			cfg.PKI.ServerCertFile, cfg.PKI.ServerKeyFile, err)
+	}
+	return ca, serverCert, nil
+}
+
 // loadCA carga la CA (cert + clave PEM) desde las rutas de config. La clave es
 // necesaria para firmar CSRs en el enrolamiento; el cert alimenta el Pool del
 // mTLS de CloudLink.
@@ -272,6 +286,61 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 		log.Warn("clave de lease EFÍMERA de dev: cambia en cada arranque (no apta para producción)")
 	}
 	return mgr, nil
+}
+
+// buildEnrollServer construye el servidor de enrolamiento y resuelve el par
+// X25519 de cifrado de tránsito de la nube (Plan 011 §10.F): publica la pública
+// al Edge en el enrolamiento y devuelve la privada para que el gateway abra el
+// enc_payload al ingreso.
+func buildEnrollServer(cfg config.AppConfig, db *sql.DB, ca *enroll.CA, log sharedlogger.Logger) (*enroll.Server, []byte, error) {
+	cloudEncPub, cloudEncPriv, err := buildCloudEncKeypair(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	enrollSvc := enroll.NewService(
+		enroll.NewPostgresCodeStore(db),
+		ca,
+		enroll.NewPostgresEdgeCertRepository(db),
+	)
+	return enroll.NewServer(enrollSvc, log, enroll.WithCloudEncPubkey(cloudEncPub)), cloudEncPriv, nil
+}
+
+// buildCloudEncKeypair resuelve el par X25519 de cifrado de tránsito de la nube
+// (Plan 011 §10.F). Si WAPP_CLOUD_ENC_PRIVKEY_B64 está, decodifica la privada
+// (32B) y deriva la pública multiplicando por el punto base de la curva; si falta,
+// genera un par efímero de dev (con warning, como la clave del lease). Loguea la
+// pública en base64 para diagnóstico y para configurar el Edge fuera de banda.
+func buildCloudEncKeypair(cfg config.AppConfig, log sharedlogger.Logger) (pub, priv []byte, err error) {
+	if b64 := cfg.Crypto.CloudEncPrivKeyB64; b64 != "" {
+		priv, err = base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("clave de cifrado de la nube: base64 inválido: %w", err)
+		}
+		if len(priv) != envelope.PrivateKeySize {
+			return nil, nil, fmt.Errorf("clave de cifrado de la nube: debe medir %d bytes (X25519), mide %d",
+				envelope.PrivateKeySize, len(priv))
+		}
+		pub, err = curve25519.X25519(priv, curve25519.Basepoint)
+		if err != nil {
+			return nil, nil, fmt.Errorf("derivando pública de cifrado de la nube: %w", err)
+		}
+		log.Info("clave pública de cifrado de la nube (publicada al Edge en el enrolamiento)",
+			"key_source", "config",
+			"public_key_base64", base64.StdEncoding.EncodeToString(pub),
+		)
+		return pub, priv, nil
+	}
+
+	pub, priv, err = envelope.GenerateKeyPair()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generando par de cifrado de la nube: %w", err)
+	}
+	log.Info("clave pública de cifrado de la nube (publicada al Edge en el enrolamiento)",
+		"key_source", "generated",
+		"public_key_base64", base64.StdEncoding.EncodeToString(pub),
+	)
+	log.Warn("clave de cifrado de la nube EFÍMERA de dev: cambia en cada arranque (no apta para producción)")
+	return pub, priv, nil
 }
 
 // setupDatabase abre la conexión a PostgreSQL y corre las migraciones de

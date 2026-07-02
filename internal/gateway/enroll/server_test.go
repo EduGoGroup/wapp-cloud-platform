@@ -1,6 +1,7 @@
 package enroll_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -20,11 +21,11 @@ import (
 
 // startEnrollServer levanta el Enrollment SIN mTLS (insecure sobre bufconn): el
 // Edge aún no tiene cert. Devuelve un EnrollmentClient ya conectado.
-func startEnrollServer(t *testing.T, svc *enroll.Service) cloudlinkv1.EnrollmentClient {
+func startEnrollServer(t *testing.T, svc *enroll.Service, opts ...enroll.ServerOption) cloudlinkv1.EnrollmentClient {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	gs := grpc.NewServer()
-	srv := enroll.NewServer(svc, logger.New(logger.WithWriter(io.Discard)))
+	srv := enroll.NewServer(svc, logger.New(logger.WithWriter(io.Discard)), opts...)
 	srv.Register(gs)
 
 	serveErrc := make(chan error, 1)
@@ -89,6 +90,56 @@ func TestEnrollEdge_ValidCode(t *testing.T) {
 	}
 	if got := certs.Records(); len(got) != 1 || got[0].TenantID != "tenant-42" {
 		t.Fatalf("debería haberse persistido 1 edge_cert para tenant-42: %+v", got)
+	}
+}
+
+// TestEnrollEdge_IncluyeCloudEncPubkey verifica que, cableado con
+// WithCloudEncPubkey, el enrolamiento publica la pública X25519 de cifrado de la
+// nube en la respuesta (Plan 011 §6.4) para que el Edge selle el ingreso.
+func TestEnrollEdge_IncluyeCloudEncPubkey(t *testing.T) {
+	svc, store, _ := newService(t)
+	store.Add("CODE-ENC", "tenant-42", time.Now().Add(time.Hour))
+
+	pub := make([]byte, 32)
+	for i := range pub {
+		pub[i] = byte(i + 1)
+	}
+	cli := startEnrollServer(t, svc, enroll.WithCloudEncPubkey(pub))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := cli.EnrollEdge(ctx, &cloudlinkv1.EnrollEdgeRequest{
+		ActivationCode: "CODE-ENC",
+		CsrPem:         newTestCSR(t, "edge-enc"),
+	})
+	if err != nil {
+		t.Fatalf("EnrollEdge (enc): %v", err)
+	}
+	if got := resp.GetCloudEncPubkey(); !bytes.Equal(got, pub) {
+		t.Fatalf("cloud_enc_pubkey = %x, quiero %x", got, pub)
+	}
+}
+
+// TestEnrollEdge_SinCloudEncPubkey verifica el fallback (§10.H): sin la opción,
+// la respuesta no trae cloud_enc_pubkey (el Edge sube en claro, mTLS protege).
+func TestEnrollEdge_SinCloudEncPubkey(t *testing.T) {
+	svc, store, _ := newService(t)
+	store.Add("CODE-NOENC", "tenant-42", time.Now().Add(time.Hour))
+	cli := startEnrollServer(t, svc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := cli.EnrollEdge(ctx, &cloudlinkv1.EnrollEdgeRequest{
+		ActivationCode: "CODE-NOENC",
+		CsrPem:         newTestCSR(t, "edge-noenc"),
+	})
+	if err != nil {
+		t.Fatalf("EnrollEdge (sin enc): %v", err)
+	}
+	if got := resp.GetCloudEncPubkey(); len(got) != 0 {
+		t.Fatalf("cloud_enc_pubkey debería venir vacío, got %x", got)
 	}
 }
 

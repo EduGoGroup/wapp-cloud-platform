@@ -64,6 +64,13 @@ type CryptoConfig struct {
 	// KEKIndexB64 es la indexKey del índice ciego (32B) en base64. Opcional: si
 	// queda vacía, se deriva de la KEK maestra vía HKDF-SHA256.
 	KEKIndexB64 string `yaml:"kek_index_b64"`
+	// CloudEncPrivKeyB64 es la clave privada X25519 (32B) del par de cifrado de
+	// tránsito de la nube (Plan 011 §10.F), en base64 estándar. Con ella la nube
+	// abre (OpenWith) el enc_payload sellado por el Edge; su pública se publica al
+	// Edge en el enrolamiento. Es DISTINTA de la Ed25519 del lease y de la DEK.
+	// Vacía = se genera un par efímero de dev (no apta para producción), como la
+	// clave del lease. Se lee de WAPP_CLOUD_ENC_PRIVKEY_B64.
+	CloudEncPrivKeyB64 string `yaml:"cloud_enc_privkey_b64"`
 }
 
 // PKIConfig agrupa las rutas de la PKI del Gateway. El cert de servidor es
@@ -195,6 +202,7 @@ func Load() (AppConfig, error) {
 
 	cfg.Crypto.KEKMasterB64 = loader.GetString("KEK_MASTER_B64", cfg.Crypto.KEKMasterB64)
 	cfg.Crypto.KEKIndexB64 = loader.GetString("KEK_INDEX_B64", cfg.Crypto.KEKIndexB64)
+	cfg.Crypto.CloudEncPrivKeyB64 = loader.GetString("CLOUD_ENC_PRIVKEY_B64", cfg.Crypto.CloudEncPrivKeyB64)
 
 	return cfg, nil
 }

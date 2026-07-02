@@ -31,10 +31,12 @@ import (
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+	"github.com/EduGoGroup/wapp-shared/envelope"
 	"github.com/EduGoGroup/wapp-shared/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
@@ -59,6 +61,12 @@ type Server struct {
 	// (sin lease ni fleet). Se inyectan con WithLease/WithFleet.
 	leaseMgr *lease.Manager
 	fleet    fleet.Repository
+
+	// cloudEncPriv es la privada X25519 (32B) del par de cifrado de tránsito de la
+	// nube (Plan 011 §10.F). Con ella se abre (OpenWith) el enc_payload sellado por
+	// el Edge al ingreso y se repueblan los campos sensibles en memoria. Vacía =
+	// no se intenta abrir (los IncomingMessage llegan siempre en claro, compat).
+	cloudEncPriv []byte
 
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
@@ -92,6 +100,11 @@ func WithLease(m *lease.Manager) Option { return func(s *Server) { s.leaseMgr = 
 // WithFleet inyecta el repositorio de fleet. Sin él, Connect no persiste el
 // estado online/offline (comportamiento T2).
 func WithFleet(r fleet.Repository) Option { return func(s *Server) { s.fleet = r } }
+
+// WithCloudEncPrivKey inyecta la privada X25519 de cifrado de tránsito de la nube
+// (Plan 011 §10.F). Con ella el servidor abre el enc_payload sellado por el Edge
+// al ingreso; sin ella los mensajes se procesan tal como llegan (compat §10.H).
+func WithCloudEncPrivKey(priv []byte) Option { return func(s *Server) { s.cloudEncPriv = priv } }
 
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
@@ -184,7 +197,12 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 	switch p := msg.GetPayload().(type) {
 	case *cloudlinkv1.EdgeToCloud_Incoming:
 		if s.OnIncoming != nil {
-			s.OnIncoming(cc.sessionID, p.Incoming)
+			// Abre el enc_payload sellado (si viene) y repuebla los campos
+			// sensibles en memoria ANTES del motor. Un sellado corrupto se
+			// descarta sin tumbar el stream (§10.I).
+			if s.decodeIncoming(p.Incoming) {
+				s.OnIncoming(cc.sessionID, p.Incoming)
+			}
 		}
 	case *cloudlinkv1.EdgeToCloud_Ack:
 		s.deliverAck(p.Ack)
@@ -200,6 +218,44 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}
+}
+
+// decodeIncoming abre el enc_payload sellado del IncomingMessage (Plan 011 §6.5)
+// y repuebla los campos sensibles (text/push_name/from_pn/from_lid) EN MEMORIA
+// antes de pasarlo al motor. Devuelve false si el mensaje debe descartarse.
+//
+// Compat (§10.H): si no hay enc_payload, los campos planos se usan tal cual.
+// Descifrado defensivo (§10.I): si el sellado no puede abrirse o deserializarse,
+// se descarta el mensaje con log del wa_message_id (NUNCA del contenido) y SIN
+// tumbar el stream. Sin clave privada configurada pero con enc_payload presente,
+// el mensaje también se descarta (no se puede recuperar el contenido).
+func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
+	enc := msg.GetEncPayload()
+	if len(enc) == 0 {
+		return true // compat: campos planos tal cual
+	}
+	if len(s.cloudEncPriv) == 0 {
+		s.log.Error("ingreso: enc_payload presente pero la nube no tiene clave de cifrado; mensaje descartado",
+			"wa_message_id", msg.GetWaMessageId())
+		return false
+	}
+	raw, err := envelope.OpenWith(s.cloudEncPriv, enc)
+	if err != nil {
+		s.log.Error("ingreso: no se pudo abrir enc_payload; mensaje descartado",
+			"wa_message_id", msg.GetWaMessageId(), "error", err)
+		return false
+	}
+	var sp cloudlinkv1.SensitivePayload
+	if err := proto.Unmarshal(raw, &sp); err != nil {
+		s.log.Error("ingreso: enc_payload abierto pero no deserializa; mensaje descartado",
+			"wa_message_id", msg.GetWaMessageId(), "error", err)
+		return false
+	}
+	msg.Text = sp.GetText()
+	msg.PushName = sp.GetPushName()
+	msg.FromPn = sp.GetFromPn()
+	msg.FromLid = sp.GetFromLid()
+	return true
 }
 
 // onSessionRegistered marca la sesión online en fleet, la rastrea para el

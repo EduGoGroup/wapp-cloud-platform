@@ -20,11 +20,31 @@ type Server struct {
 
 	svc *Service
 	log logger.Logger
+
+	// cloudEncPubkey es la pública X25519 (32B) del par de cifrado de tránsito de
+	// la nube (Plan 011 §10.F): se entrega al Edge en EnrollEdgeResponse para que
+	// selle los campos sensibles del ingreso. Vacía = no se publica (compat §10.H:
+	// el Edge sube en claro, el mTLS sigue protegiendo el canal).
+	cloudEncPubkey []byte
+}
+
+// ServerOption configura el Server de enrolamiento al construirlo.
+type ServerOption func(*Server)
+
+// WithCloudEncPubkey inyecta la pública X25519 de cifrado de la nube que se
+// publica al Edge en el enrolamiento (Plan 011 §6.4). Sin ella, la respuesta no
+// incluye cloud_enc_pubkey.
+func WithCloudEncPubkey(pub []byte) ServerOption {
+	return func(s *Server) { s.cloudEncPubkey = pub }
 }
 
 // NewServer construye el servidor de enrolamiento sobre el Service y el logger.
-func NewServer(svc *Service, log logger.Logger) *Server {
-	return &Server{svc: svc, log: log}
+func NewServer(svc *Service, log logger.Logger, opts ...ServerOption) *Server {
+	s := &Server{svc: svc, log: log}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Register registra este servidor en el ServiceRegistrar gRPC dado.
@@ -59,8 +79,9 @@ func (s *Server) EnrollEdge(ctx context.Context, req *cloudlinkv1.EnrollEdgeRequ
 
 	s.log.Info("Edge enrolado", "tenant_id", tenantID)
 	return &cloudlinkv1.EnrollEdgeResponse{
-		EdgeCertPem: edgeCertPEM,
-		CaChainPem:  caChainPEM,
-		TenantId:    tenantID,
+		EdgeCertPem:    edgeCertPEM,
+		CaChainPem:     caChainPEM,
+		TenantId:       tenantID,
+		CloudEncPubkey: s.cloudEncPubkey,
 	}, nil
 }
