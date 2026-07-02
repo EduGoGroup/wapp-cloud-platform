@@ -41,6 +41,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
@@ -122,6 +123,7 @@ func run() error {
 	// expone los endpoints admin /admin/flows y /admin/flows/start (más abajo). ---
 	flowReg := modules.NewRegistry()
 	flowReg.Register(menu.New())
+	flowReg.Register(survey.New())
 	flowEngine := engine.New(flowReg)
 	flowStore := flowstore.NewPostgresRepository(db)
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
