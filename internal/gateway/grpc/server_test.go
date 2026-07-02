@@ -386,10 +386,15 @@ func TestConnectStreamDownGoesOffline(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 
+	// Dos sesiones sobre el mismo stream: al caer, AMBAS deben quedar offline.
 	if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
-		t.Fatalf("Send heartbeat: %v", sendErr)
+		t.Fatalf("Send heartbeat s1: %v", sendErr)
+	}
+	if sendErr := stream.Send(heartbeat("s2")); sendErr != nil {
+		t.Fatalf("Send heartbeat s2: %v", sendErr)
 	}
 	waitOnline(t, h.registry, "s1", true)
+	waitOnline(t, h.registry, "s2", true)
 
 	// Caída del stream: cerrar el envío y cancelar el contexto del stream.
 	if closeErr := stream.CloseSend(); closeErr != nil {
@@ -398,12 +403,15 @@ func TestConnectStreamDownGoesOffline(t *testing.T) {
 	streamCancel()
 
 	waitOnline(t, h.registry, "s1", false)
+	waitOnline(t, h.registry, "s2", false)
 
-	_, err = h.srv.SendText(ctx, "s1", "57303", "ya offline")
-	if err == nil {
-		t.Fatal("SendText a sesión offline debería fallar")
-	}
-	if !errors.Is(err, session.ErrSessionOffline) {
-		t.Fatalf("error = %v, quiero envolver ErrSessionOffline", err)
+	for _, sid := range []string{"s1", "s2"} {
+		_, sendErr := h.srv.SendText(ctx, sid, "57303", "ya offline")
+		if sendErr == nil {
+			t.Fatalf("SendText a %q offline debería fallar", sid)
+		}
+		if !errors.Is(sendErr, session.ErrSessionOffline) {
+			t.Fatalf("error de %q = %v, quiero envolver ErrSessionOffline", sid, sendErr)
+		}
 	}
 }

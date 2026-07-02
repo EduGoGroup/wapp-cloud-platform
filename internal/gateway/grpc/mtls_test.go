@@ -182,6 +182,23 @@ func waitFleetOnline(t *testing.T, repo *fleet.MemoryRepository, sessionID strin
 	t.Fatalf("timeout esperando fleet online de %q", sessionID)
 }
 
+// waitFleetOffline espera a que la sesión figure offline en el fleet repo.
+func waitFleetOffline(t *testing.T, repo *fleet.MemoryRepository, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok, err := repo.Get(context.Background(), testTenantID, testEdgeID, sessionID)
+		if err != nil {
+			t.Fatalf("fleet Get: %v", err)
+		}
+		if ok && s.State == fleet.StateOffline {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando fleet offline de %q", sessionID)
+}
+
 func mtlsHeartbeat(sessionID string, counter int64) *cloudlinkv1.EdgeToCloud {
 	return &cloudlinkv1.EdgeToCloud{
 		SessionId: sessionID,
@@ -377,6 +394,41 @@ func TestMTLSFleetOnlineThenOffline(t *testing.T) {
 		time.Sleep(3 * time.Millisecond)
 	}
 	t.Fatal("timeout esperando fleet offline tras caída del stream")
+}
+
+// TestMTLSMultiSesionCierreTodasOffline verifica el cierre multi-sesión: con dos
+// session_id sobre un stream mTLS, al caer el stream AMBAS quedan offline en el
+// fleet (fleet.MarkOffline por cada una), no solo una (Plan 009 · R3 / D4).
+func TestMTLSMultiSesionCierreTodasOffline(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	stream, err := h.client.Connect(streamCtx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeat("s1", 1)); err != nil {
+		t.Fatalf("Send s1: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeat("s2", 1)); err != nil {
+		t.Fatalf("Send s2: %v", err)
+	}
+	waitFleetOnline(t, h.fleetRepo, "s1")
+	waitFleetOnline(t, h.fleetRepo, "s2")
+
+	// Caída del stream -> ambas sesiones offline en el fleet.
+	if closeErr := stream.CloseSend(); closeErr != nil {
+		t.Fatalf("CloseSend: %v", closeErr)
+	}
+	streamCancel()
+
+	waitFleetOffline(t, h.fleetRepo, "s1")
+	waitFleetOffline(t, h.fleetRepo, "s2")
 }
 
 func TestMTLSHeartbeatRenewsLeaseCounter(t *testing.T) {

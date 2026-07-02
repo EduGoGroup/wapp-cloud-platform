@@ -138,10 +138,15 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 	// sobre un solo stream CloudLink por Edge).
 	releases := make(map[string]func())
 	defer func() {
-		for _, release := range releases {
+		// Cierre multi-sesión: libera y marca offline CADA sesión del stream
+		// (mismo patrón que RevokeLease, que itera las sesiones del Edge). El
+		// map local se recorre en el goroutine de Recv, sin lock (D1/D4).
+		for sid, release := range releases {
 			release()
+			cc2 := cc
+			cc2.sessionID = sid
+			s.onStreamClosed(streamCtx, cc2)
 		}
-		s.onStreamClosed(streamCtx, cc)
 	}()
 
 	for {
@@ -167,11 +172,6 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 				s.log.Info("sesión CloudLink registrada",
 					"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
 				s.onSessionRegistered(streamCtx, frameCC)
-			}
-			// Conserva la 1ª sesión para el cierre (defer/onStreamClosed); se
-			// traslada a por-frame en T3 del Plan 009.
-			if cc.sessionID == "" {
-				cc.sessionID = sessionID
 			}
 		}
 
