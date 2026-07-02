@@ -99,7 +99,12 @@ func (r *PostgresResolver) lookupContactIDs(ctx context.Context, tx *sql.Tx, ten
 }
 
 // insertNewContact crea un contact_id nuevo (UUID por DEFAULT) con la primera
-// ref (cifrada) y ata las restantes al mismo id.
+// ref (cifrada) y ata las restantes al mismo id. El INSERT es idempotente sobre
+// la PK (tenant_id, kind, value_bidx): si otra transacción ya insertó la ref
+// entre nuestro lookup y este INSERT (carrera get-or-create; p.ej. el Start del
+// flujo y un entrante concurrentes), ON CONFLICT DO UPDATE devuelve el
+// contact_id existente en lugar de fallar con duplicate key (23505), igual que
+// el hermano attachRef.
 func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
 	bidx, enc, dek, err := r.encodeRef(tenantID, refs[0])
 	if err != nil {
@@ -109,6 +114,7 @@ func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, ten
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, push_name)
 		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (tenant_id, kind, value_bidx) DO UPDATE SET updated_at = now()
 		RETURNING contact_id::text
 	`, tenantID, refs[0].Kind, bidx, enc, dek, nullStr(pushName)).Scan(&cid)
 	if err != nil {

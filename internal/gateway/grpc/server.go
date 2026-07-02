@@ -251,6 +251,14 @@ func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
 			"wa_message_id", msg.GetWaMessageId(), "error", err)
 		return false
 	}
+	// Observabilidad del sellado en tránsito (Plan 011 §6.5): registra que el
+	// entrante llegó sellado y que los campos planos viajaron VACÍOS por el cable
+	// (text_plano_en_cable_len == 0). NUNCA loguea el contenido, solo su tamaño y
+	// ausencia — evidencia del criterio 4 sin filtrar PII.
+	s.log.Info("ingreso: enc_payload sellado abierto",
+		"wa_message_id", msg.GetWaMessageId(),
+		"enc_payload_bytes", len(enc),
+		"text_plano_en_cable_len", len(msg.GetText()))
 	msg.Text = sp.GetText()
 	msg.PushName = sp.GetPushName()
 	msg.FromPn = sp.GetFromPn()
