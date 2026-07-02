@@ -326,6 +326,53 @@ func TestConnectMultiSesionMismoStream(t *testing.T) {
 	}
 }
 
+// TestConnectRuteoPorSessionIDDelFrame verifica que cada frame se despacha bajo
+// SU propio session_id (no el de la 1ª sesión clavada): dos IncomingMessage con
+// session_id distintos por un mismo stream llegan a OnIncoming con su sid.
+func TestConnectRuteoPorSessionIDDelFrame(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	sids := make(chan string, 2)
+	h.srv.OnIncoming = func(sessionID string, _ *cloudlinkv1.IncomingMessage) {
+		sids <- sessionID
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	incoming := func(sid string) *cloudlinkv1.EdgeToCloud {
+		return &cloudlinkv1.EdgeToCloud{
+			SessionId: sid,
+			Payload:   &cloudlinkv1.EdgeToCloud_Incoming{Incoming: &cloudlinkv1.IncomingMessage{From: sid, Text: "hola"}},
+		}
+	}
+	if sendErr := stream.Send(incoming("s1")); sendErr != nil {
+		t.Fatalf("Send s1: %v", sendErr)
+	}
+	if sendErr := stream.Send(incoming("s2")); sendErr != nil {
+		t.Fatalf("Send s2: %v", sendErr)
+	}
+
+	got := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case sid := <-sids:
+			got[sid] = true
+		case <-ctx.Done():
+			t.Fatalf("timeout esperando OnIncoming (recibidos: %v)", got)
+		}
+	}
+	if !got["s1"] || !got["s2"] {
+		t.Fatalf("OnIncoming ruteó %v, quiero s1 y s2 con su propio session_id", got)
+	}
+}
+
 func TestConnectStreamDownGoesOffline(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

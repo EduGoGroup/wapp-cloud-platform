@@ -154,6 +154,11 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 		}
 
 		sessionID := msg.GetSessionId()
+		// connCtx por-frame: identidad de stream (tenant/edge/hasIdentity) + el
+		// session_id de ESTE frame. route/renewLease/onSessionRegistered operan
+		// sobre él, no sobre una 1ª sesión clavada (D3).
+		frameCC := cc
+		frameCC.sessionID = sessionID
 		if sessionID != "" {
 			// Registro perezoso por-frame (register-on-first-frame): la primera
 			// vez que aparece un session_id se registra; idempotente después.
@@ -161,18 +166,16 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 				releases[sessionID] = s.registry.Register(sessionID, stream)
 				s.log.Info("sesión CloudLink registrada",
 					"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
-				frameCC := cc
-				frameCC.sessionID = sessionID
 				s.onSessionRegistered(streamCtx, frameCC)
 			}
-			// Conserva la 1ª sesión para el ruteo/cierre (se traslada a por-frame
-			// en T2/T3 del Plan 009).
+			// Conserva la 1ª sesión para el cierre (defer/onStreamClosed); se
+			// traslada a por-frame en T3 del Plan 009.
 			if cc.sessionID == "" {
 				cc.sessionID = sessionID
 			}
 		}
 
-		s.route(streamCtx, cc, msg)
+		s.route(streamCtx, frameCC, msg)
 	}
 }
 

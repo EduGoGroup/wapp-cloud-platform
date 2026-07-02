@@ -228,6 +228,51 @@ func TestMTLSHandshakeIdentityAndInitialLease(t *testing.T) {
 	}
 }
 
+// TestMTLSMultiSesionCadaUnaRecibeLease verifica que, con dos session_id sobre
+// UN mismo stream mTLS, AMBAS quedan online en el fleet y CADA una recibe su
+// LeaseUpdate push (correlacionado por el SessionId del CloudToEdge que fija
+// leaseToCloud por sesión). El lease subyacente es del Edge (tenant, edge) pero
+// el push es por session_id (Plan 009 · R2 / D2).
+func TestMTLSMultiSesionCadaUnaRecibeLease(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeat("s1", 1)); err != nil {
+		t.Fatalf("Send s1: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeat("s2", 1)); err != nil {
+		t.Fatalf("Send s2: %v", err)
+	}
+
+	// Ambas sesiones online en el fleet (MarkOnline por sesión).
+	waitFleetOnline(t, h.fleetRepo, "s1")
+	waitFleetOnline(t, h.fleetRepo, "s2")
+
+	// Cada session_id recibe su LeaseUpdate push.
+	got := map[string]bool{}
+	deadline := time.Now().Add(3 * time.Second)
+	for !got["s1"] || !got["s2"] {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout esperando LeaseUpdate por sesión (recibidos: %v)", got)
+		}
+		cmd, recvErr := stream.Recv()
+		if recvErr != nil {
+			t.Fatalf("Recv: %v", recvErr)
+		}
+		if cmd.GetLeaseUpdate() != nil {
+			got[cmd.GetSessionId()] = true
+		}
+	}
+}
+
 func TestMTLSRejectsForeignCert(t *testing.T) {
 	t.Parallel()
 	ca := newDevCA(t)
