@@ -133,7 +133,10 @@ func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, ten
 // aquí (design.md §4, §5).
 func (r *PostgresResolver) encodeRef(tenantID string, ref Ref) (bidx string, enc, dek []byte, err error) {
 	bidx = r.kp.BlindIndex(tenantID, ref.Value)
-	enc, dek, err = r.cipher.Encrypt(ref.Value)
+	// TODO(Plan 012 T1 / Bloque B): persistir el key_id devuelto por Encrypt en la
+	// columna value_kek_id (INSERT/attach). Shim de compilación del Bloque A: se
+	// descarta hasta cablear la columna.
+	enc, dek, _, err = r.cipher.Encrypt(ref.Value)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("contact: cifrar value: %w", err)
 	}
@@ -283,7 +286,10 @@ func (r *PostgresResolver) Destino(ctx context.Context, tenantID, contactID stri
 		}
 		// Descifra el value SOLO en memoria (borde de la app) para armar el
 		// destino enviable (design.md §5). No se loguea (§8).
-		value, derr := r.cipher.Decrypt(enc, dek)
+		// TODO(Plan 012 T1 / Bloque B): leer value_kek_id de la fila y pasarlo aquí.
+		// Shim de compilación del Bloque A: en el mundo de una sola KEK todas las
+		// filas están envueltas por la current, así que CurrentKeyID() es correcto.
+		value, derr := r.cipher.Decrypt(enc, dek, r.kp.CurrentKeyID())
 		if derr != nil {
 			return Ref{}, fmt.Errorf("contact: descifrar value: %w", derr)
 		}

@@ -128,7 +128,13 @@ func run() error {
 	// KeyProvider + FieldCipher del cifrado de PII en reposo (Plan 011, ADR-0017):
 	// la KEK maestra vive en env/secret store (§10.A), separada del dato. Fail-fast
 	// si falta, igual que la clave del lease.
-	contactKP, err := crypto.NewEnvKeyProvider(cfg.Crypto.KEKMasterB64, cfg.Crypto.KEKIndexB64)
+	contactKP, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: cfg.Crypto.KEKKeyring,
+		CurrentID:  cfg.Crypto.KEKCurrent,
+		MasterB64:  cfg.Crypto.KEKMasterB64,
+		IndexB64:   cfg.Crypto.KEKIndexB64,
+		Prod:       cfg.Env == "prod",
+	})
 	if err != nil {
 		return fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
 	}

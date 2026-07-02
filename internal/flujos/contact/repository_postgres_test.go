@@ -28,7 +28,9 @@ func newTestKeyProvider(t *testing.T) crypto.KeyProvider {
 	for i := range master {
 		master[i] = byte(i + 1)
 	}
-	kp, err := crypto.NewEnvKeyProvider(base64.StdEncoding.EncodeToString(master), "")
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		MasterB64: base64.StdEncoding.EncodeToString(master),
+	})
 	if err != nil {
 		t.Fatalf("KeyProvider de test: %v", err)
 	}

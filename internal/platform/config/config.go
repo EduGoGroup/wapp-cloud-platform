@@ -25,6 +25,11 @@ const fileEnvKey = "CONFIG_FILE"
 
 // AppConfig agrupa los parámetros mínimos de arranque de la Plataforma Cloud.
 type AppConfig struct {
+	// Env es la señal de entorno de ejecución: "prod" o "dev" (default "dev",
+	// seguro para desarrollo). En "prod" el KeyProvider EXIGE la indexKey
+	// explícita (WAPP_KEK_INDEX_B64) y falla-rápido si falta (Plan 012 §10.C).
+	// Se lee de WAPP_APP_ENV.
+	Env string `yaml:"env"`
 	// HTTPAddr es la dirección de escucha del servidor HTTP de health/admin.
 	HTTPAddr string `yaml:"http_addr"`
 	// GRPCEnrollAddr es la dirección del servidor gRPC de Enrolamiento (TLS de
@@ -57,12 +62,25 @@ type AppConfig struct {
 // SEPARADAS del dato de negocio (no viven en la BD; §10.A). Se leen con prefijo
 // WAPP_ (p. ej. WAPP_KEK_MASTER_B64), en paralelo a la clave del lease.
 type CryptoConfig struct {
-	// KEKMasterB64 es la KEK maestra (32B, AES-256) en base64. Obligatoria para
-	// operar el cifrado; su ausencia hace fallar-rápido al construir el
-	// KeyProvider (cableado en T3), no aquí.
+	// KEKKeyring es el keyring versionado del Plan 012: entradas "id:base64"
+	// (cada KEK 32B AES-256) separadas por coma. Con él, WrapDEK usa la KEK
+	// KEKCurrent y UnwrapDEK selecciona por key_id, habilitando la rotación sin
+	// re-cifrar. Vacío = camino compat con KEKMasterB64 (key_id "1"). Se lee de
+	// WAPP_KEK_KEYRING.
+	KEKKeyring string `yaml:"kek_keyring"`
+	// KEKCurrent es el key_id de la KEK current dentro de KEKKeyring (la que
+	// envuelve las DEK nuevas). Obligatorio cuando KEKKeyring viene y debe existir
+	// en él. Se lee de WAPP_KEK_CURRENT.
+	KEKCurrent string `yaml:"kek_current"`
+	// KEKMasterB64 es la KEK maestra única del Plan 011 (32B, AES-256) en base64.
+	// Camino de compatibilidad: si no hay keyring, se carga como el key_id inicial
+	// "1" y es la current. Su ausencia (junto con KEKKeyring) hace fallar-rápido al
+	// construir el KeyProvider. Se lee de WAPP_KEK_MASTER_B64.
 	KEKMasterB64 string `yaml:"kek_master_b64"`
-	// KEKIndexB64 es la indexKey del índice ciego (32B) en base64. Opcional: si
-	// queda vacía, se deriva de la KEK maestra vía HKDF-SHA256.
+	// KEKIndexB64 es la indexKey del índice ciego (32B) en base64, INDEPENDIENTE de
+	// la KEK (Plan 012 §10.C). OBLIGATORIA en prod (fail-fast si falta) y estable de
+	// por vida (cambiarla = reindexar value_bidx, que es PK). En dev, si queda vacía
+	// se deriva de la KEK por HKDF-SHA256 con warning. Se lee de WAPP_KEK_INDEX_B64.
 	KEKIndexB64 string `yaml:"kek_index_b64"`
 	// CloudEncPrivKeyB64 es la clave privada X25519 (32B) del par de cifrado de
 	// tránsito de la nube (Plan 011 §10.F), en base64 estándar. Con ella la nube
@@ -137,6 +155,7 @@ func (d DatabaseConfig) DSN() string {
 // defaults devuelve la configuración con valores por defecto sensatos.
 func defaults() AppConfig {
 	return AppConfig{
+		Env:             "dev",
 		HTTPAddr:        ":8080",
 		GRPCEnrollAddr:  ":8444",
 		GRPCConnectAddr: ":8443",
@@ -178,6 +197,7 @@ func Load() (AppConfig, error) {
 	}
 
 	// Overlay de entorno: usa el valor actual (default o YAML) como fallback.
+	cfg.Env = loader.GetString("APP_ENV", cfg.Env)
 	cfg.HTTPAddr = loader.GetString("HTTP_ADDR", cfg.HTTPAddr)
 	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
@@ -200,6 +220,8 @@ func Load() (AppConfig, error) {
 	cfg.Lease.PrivateKeyB64 = loader.GetString("LEASE_PRIVATE_KEY_B64", cfg.Lease.PrivateKeyB64)
 	cfg.Lease.TTLMinutes = loader.GetInt("LEASE_TTL_MINUTES", cfg.Lease.TTLMinutes)
 
+	cfg.Crypto.KEKKeyring = loader.GetString("KEK_KEYRING", cfg.Crypto.KEKKeyring)
+	cfg.Crypto.KEKCurrent = loader.GetString("KEK_CURRENT", cfg.Crypto.KEKCurrent)
 	cfg.Crypto.KEKMasterB64 = loader.GetString("KEK_MASTER_B64", cfg.Crypto.KEKMasterB64)
 	cfg.Crypto.KEKIndexB64 = loader.GetString("KEK_INDEX_B64", cfg.Crypto.KEKIndexB64)
 	cfg.Crypto.CloudEncPrivKeyB64 = loader.GetString("CLOUD_ENC_PRIVKEY_B64", cfg.Crypto.CloudEncPrivKeyB64)
