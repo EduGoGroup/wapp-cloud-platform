@@ -314,6 +314,16 @@ func TestConnectMultiSesionMismoStream(t *testing.T) {
 	if sendErr := <-sendDone; sendErr != nil {
 		t.Fatalf("SendText a s2 devolvió error: %v", sendErr)
 	}
+
+	// Idempotencia: re-enviar el heartbeat de s1 no registra una sesión nueva
+	// (register-on-first-frame); siguen siendo exactamente 2 sesiones online.
+	if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
+		t.Fatalf("Send s1 (repetido): %v", sendErr)
+	}
+	waitOnline(t, h.registry, "s1", true)
+	if got := h.registry.Count(); got != 2 {
+		t.Fatalf("registry.Count() = %d tras reenviar s1, quiero 2 (idempotente)", got)
+	}
 }
 
 func TestConnectStreamDownGoesOffline(t *testing.T) {

@@ -132,9 +132,13 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 	tenantID, edgeID, hasIdentity := peerIdentity(streamCtx)
 
 	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity}
-	var release func()
+	// releases mapea cada session_id registrado en ESTE stream a su release. Es
+	// local al stream y lo muta un ÚNICO goroutine (el bucle Recv de abajo), por
+	// lo que no necesita lock (ADR-0008: N sesiones multiplexadas por session_id
+	// sobre un solo stream CloudLink por Edge).
+	releases := make(map[string]func())
 	defer func() {
-		if release != nil {
+		for _, release := range releases {
 			release()
 		}
 		s.onStreamClosed(streamCtx, cc)
@@ -150,12 +154,22 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 		}
 
 		sessionID := msg.GetSessionId()
-		if release == nil && sessionID != "" {
-			cc.sessionID = sessionID
-			release = s.registry.Register(sessionID, stream)
-			s.log.Info("sesión CloudLink registrada",
-				"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
-			s.onSessionRegistered(streamCtx, cc)
+		if sessionID != "" {
+			// Registro perezoso por-frame (register-on-first-frame): la primera
+			// vez que aparece un session_id se registra; idempotente después.
+			if _, ok := releases[sessionID]; !ok {
+				releases[sessionID] = s.registry.Register(sessionID, stream)
+				s.log.Info("sesión CloudLink registrada",
+					"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
+				frameCC := cc
+				frameCC.sessionID = sessionID
+				s.onSessionRegistered(streamCtx, frameCC)
+			}
+			// Conserva la 1ª sesión para el ruteo/cierre (se traslada a por-frame
+			// en T2/T3 del Plan 009).
+			if cc.sessionID == "" {
+				cc.sessionID = sessionID
+			}
 		}
 
 		s.route(streamCtx, cc, msg)
