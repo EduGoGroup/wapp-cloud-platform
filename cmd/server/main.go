@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
@@ -124,7 +125,8 @@ func run() error {
 	flowEngine := engine.New(flowReg)
 	flowStore := flowstore.NewPostgresRepository(db)
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
-	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, log)
+	contactResolver := contact.NewPostgresResolver(db)
+	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log)
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y

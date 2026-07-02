@@ -7,6 +7,7 @@ require (
 	github.com/EduGoGroup/wapp-shared/config v0.1.0
 	github.com/EduGoGroup/wapp-shared/health v0.1.0
 	github.com/EduGoGroup/wapp-shared/logger v0.1.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	google.golang.org/grpc v1.81.1
 )

@@ -90,6 +90,31 @@ func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) err
 	return nil
 }
 
+// MigrateContactID re-clava el estado conversacional del contact_id `from` al
+// `to` dentro del tenant (satisface contact.StateMigrator; lo usa el
+// MemoryResolver en la fusión, design.md §5). Política de conflicto idéntica al
+// PostgresResolver: si `to` ya tiene estado en esa sesión se CONSERVA el de `to`
+// (identidad canónica autoritativa) y se descarta el de `from`.
+func (r *MemoryRepository) MigrateContactID(_ context.Context, tenantID, from, to string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, st := range r.state {
+		if st.TenantID != tenantID || st.ContactID != from {
+			continue
+		}
+		dstKey := stateKey(Key{TenantID: tenantID, SessionID: st.SessionID, ContactID: to})
+		if _, clash := r.state[dstKey]; clash {
+			// El canónico ya tiene estado en esa sesión: conservar el suyo.
+			delete(r.state, k)
+			continue
+		}
+		st.ContactID = to
+		delete(r.state, k)
+		r.state[dstKey] = st
+	}
+	return nil
+}
+
 // LatestDefinition implementa Repository: devuelve la mayor versión existente.
 func (r *MemoryRepository) LatestDefinition(_ context.Context, tenantID, flowID string) (model.Flow, error) {
 	r.mu.Lock()

@@ -8,6 +8,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
@@ -23,24 +24,28 @@ var ErrConversationExists = errors.New("ya existe una conversación viva para la
 // estado ANTES de enviar (orden Save-antes-de-SendText, design.md §6).
 //
 // Las dependencias se inyectan: el store (durabilidad), el engine (máquina de
-// estados pura), el Sender (salida hacia el Gateway) y el TenantResolver
-// (session_id → tenant_id, design.md §10.A). Es seguro para uso concurrente.
+// estados pura), el Sender (salida hacia el Gateway), el TenantResolver
+// (session_id → tenant_id, design.md §10.A) y el contact.Resolver (identidad
+// del contacto: JID/ref → contact_id opaco y contact_id → destino enviable,
+// Plan 010, design.md §4-§6). Es seguro para uso concurrente.
 type Runtime struct {
 	store    store.Repository
 	engine   *engine.Engine
 	sender   Sender
 	resolver TenantResolver
+	contacts contact.Resolver
 	log      logger.Logger
 	locks    *keyedMutex
 }
 
 // New construye el Runtime con sus dependencias.
-func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver TenantResolver, log logger.Logger) *Runtime {
+func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver TenantResolver, contacts contact.Resolver, log logger.Logger) *Runtime {
 	return &Runtime{
 		store:    repo,
 		engine:   eng,
 		sender:   sender,
 		resolver: resolver,
+		contacts: contacts,
 		log:      log,
 		locks:    newKeyedMutex(),
 	}
@@ -51,12 +56,14 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 // no, fija la versión vigente, renderiza el nodo inicial (el menú), persiste y
 // envía. Devuelve el último Ack del envío (el del último texto emitido) o nil
 // si no hubo salidas.
-func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID, contact string) (*cloudlinkv1.Ack, error) {
-	// TODO(T4): `contact` es aún el JID/ref crudo del admin; el runtime debe
-	// resolverlo a un contact_id opaco (contact.Resolver) antes de clavar la key
-	// (Plan 010, design.md §6). Por ahora se pasa crudo como ContactID para que
-	// la capa store opere por contact_id sin cambiar el comportamiento actual.
-	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contact}
+func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string, ref contact.Ref) (*cloudlinkv1.Ack, error) {
+	// Resuelve la ref del admin a un contact_id OPACO antes de clavar la key: el
+	// motor opera por contact_id, no por el JID/ref crudo (Plan 010, design.md §6).
+	contactID, err := rt.contacts.Resolve(ctx, tenantID, []contact.Ref{ref}, "")
+	if err != nil {
+		return nil, fmt.Errorf("runtime: resolver contacto: %w", err)
+	}
+	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
 
@@ -73,7 +80,7 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID, conta
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
 	}
 
-	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contact} // TODO(T4): resolver contact_id
+	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	st, outs, err := rt.engine.Enter(def, st)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: enter: %w", err)
@@ -81,7 +88,11 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID, conta
 	if err := rt.store.Save(ctx, st); err != nil {
 		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
 	}
-	return rt.send(ctx, sessionID, contact, outs)
+	to, err := rt.destino(ctx, tenantID, contactID)
+	if err != nil {
+		return nil, err
+	}
+	return rt.send(ctx, sessionID, to, outs)
 }
 
 // HandleIncoming avanza una conversación EXISTENTE con un entrante (design.md
@@ -101,11 +112,16 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
 	}
-	// TODO(T4): resolver m.GetFrom() (+ from_pn/from_lid) a un contact_id opaco
-	// con contact.Resolver antes de clavar la key (Plan 010, design.md §5, §6).
-	// Por ahora se pasa el JID crudo como ContactID para no cambiar el
-	// comportamiento; la capa store ya opera por contact_id.
-	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: m.GetFrom()}
+	// Resuelve la identidad enriquecida del entrante (from_pn/from_lid, con
+	// fallback al JID crudo) a un contact_id OPACO antes de clavar la key: así el
+	// mismo contacto casa el MISMO estado aunque el JID llegue como número o LID
+	// (Plan 010, design.md §5, §6).
+	refs := contact.RefsFrom(m.GetFromPn(), m.GetFromLid(), m.GetFrom())
+	contactID, err := rt.contacts.Resolve(ctx, tenantID, refs, m.GetPushName())
+	if err != nil {
+		return fmt.Errorf("runtime: resolver contacto: %w", err)
+	}
+	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
 
@@ -135,8 +151,26 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
 	}
-	_, err = rt.send(ctx, sessionID, m.GetFrom(), outs)
+	to, err := rt.destino(ctx, tenantID, contactID)
+	if err != nil {
+		return err
+	}
+	_, err = rt.send(ctx, sessionID, to, outs)
 	return err
+}
+
+// destino resuelve el contact_id a una cadena de destino DIRECCIONABLE por el
+// Edge (design.md §10.E): desacopla el envío del JID entrante (doble rol, R4).
+func (rt *Runtime) destino(ctx context.Context, tenantID, contactID string) (string, error) {
+	dst, err := rt.contacts.Destino(ctx, tenantID, contactID)
+	if err != nil {
+		return "", fmt.Errorf("runtime: resolver destino: %w", err)
+	}
+	to, err := dst.Sendable()
+	if err != nil {
+		return "", fmt.Errorf("runtime: destino no direccionable: %w", err)
+	}
+	return to, nil
 }
 
 // OnIncoming es el wrapper que T5 asigna a (*gatewaygrpc.Server).OnIncoming
@@ -164,10 +198,10 @@ func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) 
 
 // send empuja cada salida por el Sender en orden y devuelve el último Ack. Ante
 // el primer error de envío corta y lo devuelve (con el último Ack logrado).
-func (rt *Runtime) send(ctx context.Context, sessionID, contact string, outs []engine.Output) (*cloudlinkv1.Ack, error) {
+func (rt *Runtime) send(ctx context.Context, sessionID, to string, outs []engine.Output) (*cloudlinkv1.Ack, error) {
 	var last *cloudlinkv1.Ack
 	for _, out := range outs {
-		ack, err := rt.sender.SendText(ctx, sessionID, contact, out.Text)
+		ack, err := rt.sender.SendText(ctx, sessionID, to, out.Text)
 		if err != nil {
 			return last, fmt.Errorf("runtime: enviar texto: %w", err)
 		}

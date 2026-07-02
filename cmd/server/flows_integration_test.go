@@ -9,6 +9,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
@@ -89,7 +90,8 @@ func TestInProcessFlowsMenu(t *testing.T) {
 	reg.Register(menu.New())
 	eng := engine.New(reg)
 	flowStore := flowstore.NewMemoryRepository()
-	rt := flowruntime.New(flowStore, eng, h.gw, fakeTenantResolver{tenantID: itTenantID}, logger.New(logger.WithWriter(io.Discard)))
+	contactResolver := contact.NewMemoryResolver(flowStore)
+	rt := flowruntime.New(flowStore, eng, h.gw, fakeTenantResolver{tenantID: itTenantID}, contactResolver, logger.New(logger.WithWriter(io.Discard)))
 	// Se enchufa ANTES de inyectar entrantes (el setup solo mandó heartbeats).
 	h.gw.OnIncoming = rt.OnIncoming
 
@@ -103,11 +105,19 @@ func TestInProcessFlowsMenu(t *testing.T) {
 	}
 
 	// 2. Start (decisión C) de DOS conversaciones -> cada Edge recibe el prompt.
-	if _, err := rt.Start(ctx, itTenantID, itFlowID, itSessionID, itContactA); err != nil {
+	refA, err := contact.NewRef(contact.KindPhoneE164, itContactA)
+	if err != nil {
+		t.Fatalf("NewRef A: %v", err)
+	}
+	refB, err := contact.NewRef(contact.KindPhoneE164, itContactB)
+	if err != nil {
+		t.Fatalf("NewRef B: %v", err)
+	}
+	if _, err := rt.Start(ctx, itTenantID, itFlowID, itSessionID, refA); err != nil {
 		t.Fatalf("rt.Start A: %v", err)
 	}
 	requireSendText(ctx, t, edge.sentText, itContactA, itMenuPrompt)
-	if _, err := rt.Start(ctx, itTenantID, itFlowID, itSessionID, itContactB); err != nil {
+	if _, err := rt.Start(ctx, itTenantID, itFlowID, itSessionID, refB); err != nil {
 		t.Fatalf("rt.Start B: %v", err)
 	}
 	requireSendText(ctx, t, edge.sentText, itContactB, itMenuPrompt)

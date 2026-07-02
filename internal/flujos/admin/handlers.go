@@ -19,6 +19,7 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
@@ -33,9 +34,10 @@ type DefinitionStore interface {
 
 // Starter abre una conversación por API (crea el estado en el nodo inicial y
 // envía el menú) y devuelve el Ack del último texto emitido. Lo satisface
-// *runtime.Runtime (su método Start encaja).
+// *runtime.Runtime (su método Start encaja). Recibe la identidad del contacto
+// como contact.Ref ya validada/normalizada (Plan 010, design.md §7).
 type Starter interface {
-	Start(ctx context.Context, tenantID, flowID, sessionID, contact string) (*cloudlinkv1.Ack, error)
+	Start(ctx context.Context, tenantID, flowID, sessionID string, ref contact.Ref) (*cloudlinkv1.Ack, error)
 }
 
 // definitionRequest es el cuerpo JSON de POST /admin/flows. El tenant_id viaja
@@ -102,13 +104,40 @@ func DefinitionHandler(store DefinitionStore) http.Handler {
 	})
 }
 
-// startRequest es el cuerpo JSON de POST /admin/flows/start (decisión C). Los
-// cuatro campos componen la clave conversacional + el flujo a abrir.
+// contactRefBody es la identidad FLEXIBLE del contacto en el cuerpo JSON
+// (Plan 010, design.md §7): {kind, value}, con kind ∈ {phone_e164, wa_lid,
+// wa_username}.
+type contactRefBody struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// startRequest es el cuerpo JSON de POST /admin/flows/start (decisión C).
+// La identidad del contacto se aporta como contact_ref {kind,value}; por
+// COMPAT (design.md §10.F) se acepta además un `contact` string plano, que se
+// interpreta como {kind: phone_e164, value: contact}.
 type startRequest struct {
-	TenantID  string `json:"tenant_id"`
-	FlowID    string `json:"flow_id"`
-	SessionID string `json:"session_id"`
-	Contact   string `json:"contact"`
+	TenantID   string          `json:"tenant_id"`
+	FlowID     string          `json:"flow_id"`
+	SessionID  string          `json:"session_id"`
+	ContactRef *contactRefBody `json:"contact_ref"`
+	Contact    string          `json:"contact"` // alias compat = phone_e164
+}
+
+// ref deriva la contact.Ref (validada y normalizada) del cuerpo: prioriza
+// contact_ref y, si no viene, usa el alias `contact` como phone_e164 (§10.F).
+// Devuelve ok=false si no se aportó ninguna identidad.
+func (req startRequest) ref() (ref contact.Ref, ok bool, err error) {
+	switch {
+	case req.ContactRef != nil && req.ContactRef.Value != "":
+		r, rerr := contact.NewRef(req.ContactRef.Kind, req.ContactRef.Value)
+		return r, true, rerr
+	case req.Contact != "":
+		r, rerr := contact.NewRef(contact.KindPhoneE164, req.Contact)
+		return r, true, rerr
+	default:
+		return contact.Ref{}, false, nil
+	}
 }
 
 // startResponse refleja el Ack del envío del menú (acked_command_id, ok) y, si
@@ -121,8 +150,9 @@ type startResponse struct {
 }
 
 // StartHandler devuelve el handler de POST /admin/flows/start: decodifica el
-// cuerpo {tenant_id, flow_id, session_id, contact}, abre la conversación por API
-// (crea el estado en el nodo inicial fijando la versión vigente y envía el menú).
+// cuerpo {tenant_id, flow_id, session_id, contact_ref{kind,value}} (o el alias
+// compat `contact` como phone_e164, §10.F), abre la conversación por API (crea el
+// estado en el nodo inicial fijando la versión vigente y envía el menú).
 // Respuestas:
 //
 //   - 200 con {acked_command_id, ok, error} cuando se recibió el Ack del envío.
@@ -143,12 +173,21 @@ func StartHandler(starter Starter) http.Handler {
 			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
 			return
 		}
-		if req.TenantID == "" || req.FlowID == "" || req.SessionID == "" || req.Contact == "" {
-			http.Error(w, "tenant_id, flow_id, session_id y contact son requeridos", http.StatusBadRequest)
+		if req.TenantID == "" || req.FlowID == "" || req.SessionID == "" {
+			http.Error(w, "tenant_id, flow_id y session_id son requeridos", http.StatusBadRequest)
+			return
+		}
+		ref, ok, err := req.ref()
+		if !ok {
+			http.Error(w, "se requiere contact_ref {kind,value} o contact (alias phone_e164)", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, "contact_ref inválida: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		ack, err := starter.Start(r.Context(), req.TenantID, req.FlowID, req.SessionID, req.Contact)
+		ack, err := starter.Start(r.Context(), req.TenantID, req.FlowID, req.SessionID, ref)
 		if err != nil {
 			writeStartError(w, err)
 			return

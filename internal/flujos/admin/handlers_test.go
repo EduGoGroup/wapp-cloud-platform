@@ -12,6 +12,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
@@ -48,15 +49,15 @@ type fakeStarter struct {
 	gotTenant string
 	gotFlow   string
 	gotSess   string
-	gotTo     string
+	gotRef    contact.Ref
 }
 
-func (f *fakeStarter) Start(_ context.Context, tenantID, flowID, sessionID, contact string) (*cloudlinkv1.Ack, error) {
+func (f *fakeStarter) Start(_ context.Context, tenantID, flowID, sessionID string, ref contact.Ref) (*cloudlinkv1.Ack, error) {
 	f.called = true
 	f.gotTenant = tenantID
 	f.gotFlow = flowID
 	f.gotSess = sessionID
-	f.gotTo = contact
+	f.gotRef = ref
 	return f.ack, f.err
 }
 
@@ -228,7 +229,9 @@ func TestDefinitionHandler_StoreError(t *testing.T) {
 
 // --- StartHandler ---
 
-const validStartBody = `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1","contact":"c1"}`
+// validStartBody usa el alias `contact` plano (compat §10.F) con un número real
+// (debe normalizar a phone_e164).
+const validStartBody = `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1","contact":"573001112233"}`
 
 func TestStartHandler_OK(t *testing.T) {
 	starter := &fakeStarter{ack: &cloudlinkv1.Ack{
@@ -243,9 +246,12 @@ func TestStartHandler_OK(t *testing.T) {
 	if !starter.called {
 		t.Fatal("no se llamó a Start")
 	}
-	if starter.gotTenant != "t1" || starter.gotFlow != "menu-soporte" ||
-		starter.gotSess != "s1" || starter.gotTo != "c1" {
+	if starter.gotTenant != "t1" || starter.gotFlow != "menu-soporte" || starter.gotSess != "s1" {
 		t.Fatalf("Start recibió args inesperados: %+v", starter)
+	}
+	// El alias `contact` plano se interpreta como phone_e164 normalizado (§10.F).
+	if starter.gotRef.Kind != contact.KindPhoneE164 || starter.gotRef.Value != "573001112233" {
+		t.Fatalf("ref recibida = %+v, quiero {phone_e164 573001112233}", starter.gotRef)
 	}
 
 	var resp struct {
@@ -258,6 +264,60 @@ func TestStartHandler_OK(t *testing.T) {
 	}
 	if resp.AckedCommandID != "cmd-1" || !resp.OK {
 		t.Fatalf("resp = %+v, quiero {cmd-1 true}", resp)
+	}
+}
+
+func TestStartHandler_ContactRef(t *testing.T) {
+	starter := &fakeStarter{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-1", Ok: true}}
+	body := `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1","contact_ref":{"kind":"wa_lid","value":"88887777@lid"}}`
+	rec := do(admin.StartHandler(starter), http.MethodPost, "/admin/flows/start", body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// wa_lid se normaliza (se descarta el servidor @lid).
+	if starter.gotRef.Kind != contact.KindWALID || starter.gotRef.Value != "88887777" {
+		t.Fatalf("ref recibida = %+v, quiero {wa_lid 88887777}", starter.gotRef)
+	}
+}
+
+func TestStartHandler_ContactRefPrevaleceSobreAlias(t *testing.T) {
+	starter := &fakeStarter{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-1", Ok: true}}
+	// Vienen ambos: contact_ref (wa_lid) debe ganar al alias `contact` (phone).
+	body := `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1","contact":"573001112233","contact_ref":{"kind":"wa_lid","value":"88887777"}}`
+	rec := do(admin.StartHandler(starter), http.MethodPost, "/admin/flows/start", body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if starter.gotRef.Kind != contact.KindWALID || starter.gotRef.Value != "88887777" {
+		t.Fatalf("ref recibida = %+v, quiero {wa_lid 88887777}", starter.gotRef)
+	}
+}
+
+func TestStartHandler_ContactRefInvalida(t *testing.T) {
+	starter := &fakeStarter{}
+	body := `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1","contact_ref":{"kind":"email","value":"a@b.c"}}`
+	rec := do(admin.StartHandler(starter), http.MethodPost, "/admin/flows/start", body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, quiero 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if starter.called {
+		t.Fatal("kind desconocido no debió llamar a Start")
+	}
+}
+
+func TestStartHandler_SinContactNiRef(t *testing.T) {
+	starter := &fakeStarter{}
+	body := `{"tenant_id":"t1","flow_id":"menu-soporte","session_id":"s1"}`
+	rec := do(admin.StartHandler(starter), http.MethodPost, "/admin/flows/start", body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, quiero 400", rec.Code)
+	}
+	if starter.called {
+		t.Fatal("sin identidad de contacto no debió llamar a Start")
 	}
 }
 
