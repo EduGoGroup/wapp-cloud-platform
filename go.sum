@@ -1,5 +1,5 @@
-github.com/EduGoGroup/wapp-cloudlink v0.2.0 h1:K0hKLW8BIv4un/1hBu6ktg65/ovxaO7NLCS1owrgPSM=
-github.com/EduGoGroup/wapp-cloudlink v0.2.0/go.mod h1:vVFFWQKhUoObtiGED0iXPGlpBgWU6tvgyjkgx2GQoJU=
+github.com/EduGoGroup/wapp-cloudlink v0.3.0 h1:Z27PYizBJsByyuQqlQBUgiQUee7pIafT0ZEgaVMy6Lc=
+github.com/EduGoGroup/wapp-cloudlink v0.3.0/go.mod h1:vVFFWQKhUoObtiGED0iXPGlpBgWU6tvgyjkgx2GQoJU=
 github.com/EduGoGroup/wapp-shared/config v0.1.0 h1:junTHwFZRm/jvQQY1xJBe3lrYDJT3etu7wSEsb7DvF8=
 github.com/EduGoGroup/wapp-shared/config v0.1.0/go.mod h1:WCDy0MET1u/9rnKAWZwEHa1JQ7HA7rxXwWLqBJHS92w=
 github.com/EduGoGroup/wapp-shared/envelope v0.1.0 h1:iLpgN5t8NHRbJhp65RlF8jk4etWtHkKIn86MCTi68/o=
