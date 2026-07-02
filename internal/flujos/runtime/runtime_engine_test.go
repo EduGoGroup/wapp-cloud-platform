@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -17,15 +18,17 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
 const (
-	testTenant  = "tenant-1"
-	testFlow    = "menu-soporte"
-	testSession = "sess-1"
-	testContact = "573001112233"
+	testTenant     = "tenant-1"
+	testFlow       = "menu-soporte"
+	testSurveyFlow = "encuesta-nps"
+	testSession    = "sess-1"
+	testContact    = "573001112233"
 )
 
 // --- dobles ---
@@ -97,6 +100,53 @@ func newEngine() *engine.Engine {
 	reg := modules.NewRegistry()
 	reg.Register(menu.New())
 	return engine.New(reg)
+}
+
+// surveyFlow arma una encuesta de DOS preguntas de opción cerrada encadenadas
+// que terminan en un nodo message (hoja → NodeTerminal). Cada pregunta registra
+// como answer_code la CLAVE de la opción tecleada (§10.D).
+func surveyFlow() model.Flow {
+	return model.Flow{
+		FlowID:  testSurveyFlow,
+		Initial: "q1",
+		Nodes: map[string]model.Node{
+			"q1": {
+				Type:       model.NodeTypeSurveyQuestion,
+				Prompt:     "¿Nos recomendarías?\n1) Sí\n2) No",
+				QuestionID: "q1",
+				Options:    map[string]string{"1": "q2", "2": "q2"},
+			},
+			"q2": {
+				Type:       model.NodeTypeSurveyQuestion,
+				Prompt:     "¿Qué tal la atención?\n1) Buena\n2) Mala",
+				QuestionID: "q2",
+				Options:    map[string]string{"1": "gracias", "2": "gracias"},
+			},
+			"gracias": {Type: model.NodeTypeMessage, Text: "¡Gracias por responder!"},
+		},
+	}
+}
+
+// newSurveyEngine registra menú Y encuesta (el engine delega por tipo de nodo).
+func newSurveyEngine() *engine.Engine {
+	reg := modules.NewRegistry()
+	reg.Register(menu.New())
+	reg.Register(survey.New())
+	return engine.New(reg)
+}
+
+// newSurveyRuntime es el gemelo de newRuntime pero con la definición de encuesta
+// ya publicada (versión 1) y un engine que maneja survey_question.
+func newSurveyRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
+	t.Helper()
+	repo := store.NewMemoryRepository()
+	if _, err := repo.InsertDefinition(context.Background(), testTenant, surveyFlow()); err != nil {
+		t.Fatalf("sembrar definición survey: %v", err)
+	}
+	sender := &fakeSender{}
+	contacts := contact.NewMemoryResolver(repo)
+	rt := runtime.New(repo, newSurveyEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger())
+	return rt, repo, sender, contacts
 }
 
 func discardLogger() logger.Logger {
@@ -369,6 +419,97 @@ func TestConcurrencia_MismaClaveSeSerializa(t *testing.T) {
 	st := loadState(t, repo, resolveID(t, contacts, testContact))
 	if st.CurrentNode != "root" {
 		t.Fatalf("estado final incoherente: %+v", st)
+	}
+}
+
+// TestHandleIncoming_Encuesta_FlushDosRespuestas recorre una encuesta de 2
+// preguntas end-to-end en el runtime: Start renderiza P1, un entrante avanza a
+// P2 y el segundo entrante llega a la hoja (Finished). Al terminar, el runtime
+// hace UN flush a survey_results con las 2 respuestas correctas (§10.G).
+func TestHandleIncoming_Encuesta_FlushDosRespuestas(t *testing.T) {
+	rt, repo, sender, contacts := newSurveyRuntime(t)
+	ctx := context.Background()
+	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Aún nada: la encuesta no ha terminado (sólo se renderizó P1).
+	if got := repo.SurveyResults(); len(got) != 0 {
+		t.Fatalf("no debería haber resultados antes de terminar, hubo %d", len(got))
+	}
+
+	// Responde P1 con "1" → registra q1=1 y avanza a P2.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.q1")); err != nil {
+		t.Fatalf("responder P1: %v", err)
+	}
+	if got := repo.SurveyResults(); len(got) != 0 {
+		t.Fatalf("no debería haber flush a mitad de la encuesta, hubo %d", len(got))
+	}
+	if last := sender.texts()[sender.count()-1]; !strings.Contains(last, "atención") {
+		t.Fatalf("tras P1 debería renderizarse P2, se obtuvo: %q", last)
+	}
+
+	// Responde P2 con "2" → registra q2=2, cae en la hoja message y TERMINA.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "2", "wamid.q2")); err != nil {
+		t.Fatalf("responder P2: %v", err)
+	}
+	cid := resolveID(t, contacts, testContact)
+	if st := loadState(t, repo, cid); !st.Finished() {
+		t.Fatalf("la encuesta debería haber terminado: %+v", st)
+	}
+
+	got := repo.SurveyResults()
+	want := []store.SurveyResult{
+		{TenantID: testTenant, ContactID: cid, FlowID: testSurveyFlow, FlowVersion: 1, QuestionID: "q1", AnswerCode: "1"},
+		{TenantID: testTenant, ContactID: cid, FlowID: testSurveyFlow, FlowVersion: 1, QuestionID: "q2", AnswerCode: "2"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resultados del flush inesperados:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+// TestHandleIncoming_Encuesta_FlushIdempotente comprueba que reprocesar el MISMO
+// entrante final (mismo wa_message_id) NO duplica filas: la dedupe por
+// last_wa_message_id corta antes del Step, así que el flush no se re-ejecuta.
+func TestHandleIncoming_Encuesta_FlushIdempotente(t *testing.T) {
+	rt, repo, _, _ := newSurveyRuntime(t)
+	ctx := context.Background()
+	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.q1")); err != nil {
+		t.Fatalf("responder P1: %v", err)
+	}
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "2", "wamid.final")); err != nil {
+		t.Fatalf("responder P2 (final): %v", err)
+	}
+	if got := repo.SurveyResults(); len(got) != 2 {
+		t.Fatalf("el primer flush debería dejar 2 filas, hubo %d", len(got))
+	}
+
+	// Re-entrega del MISMO entrante final → idempotencia: ni avanza ni re-flusha.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "2", "wamid.final")); err != nil {
+		t.Fatalf("re-entrega del final: %v", err)
+	}
+	if got := repo.SurveyResults(); len(got) != 2 {
+		t.Fatalf("la re-entrega NO debe duplicar resultados, hubo %d", len(got))
+	}
+}
+
+// TestHandleIncoming_MenuPuro_NoEscribeResultados verifica que un flujo sin
+// nodos survey_question llega a Finished con `answers` vacío → el flush es un
+// no-op (nada en survey_results).
+func TestHandleIncoming_MenuPuro_NoEscribeResultados(t *testing.T) {
+	rt, repo, _, _ := newRuntime(t)
+	ctx := context.Background()
+	if _, err := rt.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// "1" → hoja message "Te paso con Ventas." (Next nil) → termina el flujo.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.menu")); err != nil {
+		t.Fatalf("HandleIncoming: %v", err)
+	}
+	if got := repo.SurveyResults(); len(got) != 0 {
+		t.Fatalf("un menú puro no debe escribir resultados, hubo %d: %+v", len(got), got)
 	}
 }
 
