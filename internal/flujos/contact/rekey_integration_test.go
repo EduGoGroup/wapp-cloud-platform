@@ -12,6 +12,14 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
+// IMPORTANTE (higiene de BD compartida): Rekey escanea GLOBALMENTE (WHERE
+// value_kek_id <> current, sin filtrar tenant — así rota TODA la flota, correcto
+// en producción). Bajo `go test ./...` con un WAPP_TEST_DB_DSN único, otros
+// paquetes de integración escriben en `contacts` en PARALELO y una fila ajena
+// (envuelta por una KEK ausente de este keyring) haría abortar el scan por
+// fail-safe §10.J. Por eso la integración se corre SERIALIZADA: `go test -race -p 1`.
+// wipeContacts + la serialización garantizan un tablero exclusivo durante el scan.
+
 // kek32 devuelve el base64 de una KEK de 32B rellena con fill (determinista).
 func kek32(fill byte) string {
 	b := make([]byte, 32)
@@ -87,7 +95,7 @@ func TestRekey_Integration(t *testing.T) {
 	const n = 5
 	phones := make([]string, n)
 	ids := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		phones[i] = fmt.Sprintf("57300111%04d", i)
 		ref := mustRef(t, contact.KindPhoneE164, phones[i])
 		id, err := resolverA.Resolve(ctx, tenant, []contact.Ref{ref}, "")
@@ -179,7 +187,7 @@ func TestRekey_Resumable(t *testing.T) {
 	kpA := mustKP(t, keyringA(), "A")
 	resolverA := contact.NewPostgresResolver(db, crypto.NewFieldCipher(kpA), kpA)
 	const firstBatch = 3
-	for i := 0; i < firstBatch; i++ {
+	for i := range firstBatch {
 		ref := mustRef(t, contact.KindPhoneE164, fmt.Sprintf("57300222%04d", i))
 		if _, err := resolverA.Resolve(ctx, tenant, []contact.Ref{ref}, ""); err != nil {
 			t.Fatalf("Resolve lote1(%d): %v", i, err)
@@ -193,7 +201,7 @@ func TestRekey_Resumable(t *testing.T) {
 
 	// Segundo lote nuevo cifrado con A (el tablero queda mezclado A + B).
 	const secondBatch = 2
-	for i := 0; i < secondBatch; i++ {
+	for i := range secondBatch {
 		ref := mustRef(t, contact.KindPhoneE164, fmt.Sprintf("57300333%04d", i))
 		if _, err := resolverA.Resolve(ctx, tenant, []contact.Ref{ref}, ""); err != nil {
 			t.Fatalf("Resolve lote2(%d): %v", i, err)

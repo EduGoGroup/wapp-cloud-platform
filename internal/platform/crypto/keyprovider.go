@@ -183,7 +183,7 @@ func buildKeyring(cfg KeyringConfig) (map[string][]byte, string, error) {
 // Cada entrada se parte por el PRIMER ':' (el base64 estándar no lo contiene).
 func parseKeyring(spec string) (map[string][]byte, error) {
 	keys := make(map[string][]byte)
-	for _, entry := range strings.Split(spec, ",") {
+	for entry := range strings.SplitSeq(spec, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
