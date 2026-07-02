@@ -21,6 +21,10 @@ type MemoryRepository struct {
 	defs map[string]map[int]model.Flow
 	// maxVer guarda la versión máxima asignada por (tenant_id, flow_id).
 	maxVer map[string]int
+	// results acumula (append-only) las respuestas de encuesta persistidas por
+	// InsertResults; imita survey_results (Plan 014 §10.D). Consultable en tests
+	// vía SurveyResults().
+	results []SurveyResult
 }
 
 // NewMemoryRepository crea un repositorio en memoria vacío.
@@ -159,4 +163,29 @@ func (r *MemoryRepository) InsertDefinition(_ context.Context, tenantID string, 
 	r.defs[dk][version] = stored
 	r.maxVer[dk] = version
 	return version, nil
+}
+
+// InsertResults implementa Repository: acumula las respuestas de encuesta en un
+// slice interno (append-only), imitando el INSERT en survey_results. len(rows)==0
+// es un no-op. Las filas se copian para no compartir el backing array con el
+// llamante.
+func (r *MemoryRepository) InsertResults(_ context.Context, rows []SurveyResult) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.results = append(r.results, rows...)
+	return nil
+}
+
+// SurveyResults devuelve una copia de las respuestas de encuesta acumuladas por
+// InsertResults. Es un helper de test (los tests inspeccionan/agregan el
+// resultado); devuelve una copia para no exponer el slice interno.
+func (r *MemoryRepository) SurveyResults() []SurveyResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SurveyResult, len(r.results))
+	copy(out, r.results)
+	return out
 }

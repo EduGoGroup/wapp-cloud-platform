@@ -46,6 +46,26 @@ type Repository interface {
 	// (version = COALESCE(max(version),0)+1 por (tenant_id, flow_id)); el campo
 	// f.Version del argumento se ignora. Devuelve la versión asignada.
 	InsertDefinition(ctx context.Context, tenantID string, f model.Flow) (version int, err error)
+	// InsertResults persiste (en lote) las respuestas de una encuesta como datos
+	// de negocio EN CLARO en survey_results (Plan 014 §10.D, ADR-0009). El
+	// runtime (T3) lo llama al terminar la conversación (flush). len(rows)==0 es
+	// un no-op. answer_code NO se cifra: es un código de opción agregable, no PII
+	// (la identidad la protege el contact_id opaco, ADR-0010).
+	InsertResults(ctx context.Context, rows []SurveyResult) error
+}
+
+// SurveyResult es una respuesta de encuesta lista para persistir EN CLARO en
+// survey_results (Plan 014 §10.D). ContactID es la identidad OPACA del contacto
+// (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.
+// AnswerCode es el código de la opción elegida (dato de negocio agregable, no
+// PII). created_at lo pone el DEFAULT de la tabla.
+type SurveyResult struct {
+	TenantID    string
+	ContactID   string
+	FlowID      string
+	FlowVersion int
+	QuestionID  string
+	AnswerCode  string
 }
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna

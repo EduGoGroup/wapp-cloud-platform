@@ -6,9 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
+
+// surveyResultCols es el número de columnas por fila que escribe InsertResults
+// (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
+const surveyResultCols = 6
 
 // PostgresRepository implementa Repository con SQL raw sobre public.flow_state y
 // public.flow_definitions. Los cuerpos flexibles (vars del estado, definition
@@ -179,4 +184,36 @@ func (r *PostgresRepository) InsertDefinition(ctx context.Context, tenantID stri
 		return 0, fmt.Errorf("store: insertar definición: %w", err)
 	}
 	return version, nil
+}
+
+// InsertResults persiste en lote las respuestas de encuesta EN CLARO en
+// survey_results (Plan 014 §10.D, ADR-0009). Un solo INSERT multi-fila con
+// placeholders; created_at usa el DEFAULT now() de la tabla. len(rows)==0 es un
+// no-op.
+func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyResult) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(rows))
+	args := make([]any, 0, len(rows)*surveyResultCols)
+	for i, row := range rows {
+		base := i * surveyResultCols
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6,
+		))
+		args = append(args,
+			row.TenantID, row.ContactID, row.FlowID, row.FlowVersion, row.QuestionID, row.AnswerCode,
+		)
+	}
+	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
+	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
+	query := `
+		INSERT INTO survey_results
+			(tenant_id, contact_id, flow_id, flow_version, question_id, answer_code)
+		VALUES ` + strings.Join(placeholders, ", ")
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("store: insertar resultados de encuesta: %w", err)
+	}
+	return nil
 }

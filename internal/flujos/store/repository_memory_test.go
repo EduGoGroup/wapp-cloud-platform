@@ -147,6 +147,54 @@ func TestMemory_InsertDefinitionIncrementsVersion(t *testing.T) {
 	}
 }
 
+func TestMemory_InsertResultsAccumulates(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemoryRepository()
+
+	// len==0 es no-op: ni escribe ni falla.
+	if err := repo.InsertResults(ctx, nil); err != nil {
+		t.Fatalf("InsertResults nil (no-op): %v", err)
+	}
+	if got := repo.SurveyResults(); len(got) != 0 {
+		t.Fatalf("no-op no debería acumular filas: %+v", got)
+	}
+
+	rows := []store.SurveyResult{
+		{TenantID: "t1", ContactID: "c1", FlowID: "enc", FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
+		{TenantID: "t1", ContactID: "c2", FlowID: "enc", FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
+		{TenantID: "t1", ContactID: "c3", FlowID: "enc", FlowVersion: 1, QuestionID: "q1", AnswerCode: "no"},
+	}
+	if err := repo.InsertResults(ctx, rows); err != nil {
+		t.Fatalf("InsertResults: %v", err)
+	}
+	// Segunda tanda: acumula (append-only), no reemplaza.
+	if err := repo.InsertResults(ctx, []store.SurveyResult{
+		{TenantID: "t1", ContactID: "c4", FlowID: "enc", FlowVersion: 1, QuestionID: "q1", AnswerCode: "no"},
+	}); err != nil {
+		t.Fatalf("InsertResults 2: %v", err)
+	}
+
+	got := repo.SurveyResults()
+	if len(got) != 4 {
+		t.Fatalf("filas acumuladas: got %d, want 4", len(got))
+	}
+
+	// GROUP BY simulado en memoria: cuenta por answer_code.
+	counts := make(map[string]int)
+	for _, r := range got {
+		counts[r.AnswerCode]++
+	}
+	if counts["si"] != 2 || counts["no"] != 2 {
+		t.Fatalf("conteo por answer_code inesperado: %+v", counts)
+	}
+
+	// SurveyResults devuelve una copia: mutarla no afecta el estado interno.
+	got[0].AnswerCode = "MUTADO"
+	if again := repo.SurveyResults(); again[0].AnswerCode == "MUTADO" {
+		t.Fatal("SurveyResults debería devolver una copia, no el slice interno")
+	}
+}
+
 func TestMemory_LatestDefinition(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()

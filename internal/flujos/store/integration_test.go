@@ -224,7 +224,73 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	if res.Version != migrations.SchemaVersion {
 		t.Fatalf("versión: got %q, want %q", res.Version, migrations.SchemaVersion)
 	}
-	if res.Version != "0.6.0" {
-		t.Fatalf("SchemaVersion: got %q, want 0.6.0", res.Version)
+	if res.Version != "0.7.0" {
+		t.Fatalf("SchemaVersion: got %q, want 0.7.0", res.Version)
 	}
+}
+
+// TestIntegration_SurveyResultsPersistAndAggregate valida el TRAMO T2 del Plan
+// 014: InsertResults escribe filas EN CLARO en survey_results (answer_code sin
+// cifrar, design.md §10.D) y un GROUP BY agrega correctamente por opción. Es la
+// prueba de que la tabla sirve su propósito de negocio (agregación de encuesta).
+func TestIntegration_SurveyResultsPersistAndAggregate(t *testing.T) {
+	db := openTestDB(t) // migra incl. 0008_survey_results
+	ctx := context.Background()
+	repo := store.NewPostgresRepository(db)
+
+	// tenant_id/contact_id como TEXT opaco (la tabla no tiene FK; el runtime pasa
+	// el contact_id ya resuelto). Aislamos por un flow_id único de este test.
+	flowID := fmt.Sprintf("encuesta-%d", time.Now().UnixNano())
+	tenantID := "tenant-survey-t2"
+	rows := []store.SurveyResult{
+		{TenantID: tenantID, ContactID: "c-1", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
+		{TenantID: tenantID, ContactID: "c-2", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
+		{TenantID: tenantID, ContactID: "c-3", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "no"},
+	}
+	if err := repo.InsertResults(ctx, rows); err != nil {
+		t.Fatalf("InsertResults: %v", err)
+	}
+
+	// len==0 es no-op (no debe escribir ni fallar).
+	if err := repo.InsertResults(ctx, nil); err != nil {
+		t.Fatalf("InsertResults nil (no-op): %v", err)
+	}
+
+	got := aggregateAnswers(t, db, flowID)
+	if got["si"] != 2 || got["no"] != 1 {
+		t.Fatalf("agregación por answer_code inesperada: %+v", got)
+	}
+}
+
+// aggregateAnswers ejecuta el GROUP BY de negocio (respuestas por opción) para el
+// flow dado y devuelve answer_code → conteo.
+func aggregateAnswers(t *testing.T, db *sql.DB, flowID string) map[string]int {
+	t.Helper()
+	agg, err := db.QueryContext(context.Background(), `
+		SELECT answer_code, COUNT(*)
+		FROM survey_results
+		WHERE flow_id = $1
+		GROUP BY answer_code
+	`, flowID)
+	if err != nil {
+		t.Fatalf("GROUP BY survey_results: %v", err)
+	}
+	defer func() {
+		if cerr := agg.Close(); cerr != nil {
+			t.Logf("cerrando rows: %v", cerr)
+		}
+	}()
+	out := make(map[string]int)
+	for agg.Next() {
+		var code string
+		var n int
+		if err := agg.Scan(&code, &n); err != nil {
+			t.Fatalf("scan agregación: %v", err)
+		}
+		out[code] = n
+	}
+	if err := agg.Err(); err != nil {
+		t.Fatalf("iterando agregación: %v", err)
+	}
+	return out
 }
