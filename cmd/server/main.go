@@ -138,7 +138,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
 	}
-	contactResolver := contact.NewPostgresResolver(db, crypto.NewFieldCipher(contactKP), contactKP)
+	contactCipher := crypto.NewFieldCipher(contactKP)
+	contactResolver := contact.NewPostgresResolver(db, contactCipher, contactKP)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log)
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
@@ -175,6 +176,13 @@ func run() error {
 	mux.Handle("/healthz", httpapi.HealthHandler(checker))
 	mux.Handle("/admin/leases/revoke", httpapi.RevokeLeaseHandler(gw))
 	mux.Handle("/admin/messages/send", httpapi.SendMessageHandler(gw))
+	// Rotación de KEK (Plan 012 §7): re-wrap incremental por batch, reanudable e
+	// idempotente. El cierre cablea db+cipher+kp del scope a crypto.Rekey.
+	mux.Handle("/admin/crypto/rekey", httpapi.CryptoRekeyHandler(
+		func(ctx context.Context, batch int) (crypto.Report, error) {
+			return crypto.Rekey(ctx, db, contactCipher, contactKP, batch)
+		},
+	))
 	flowadmin.Register(mux, flowStore, flowRuntime)
 
 	httpSrv := &http.Server{
