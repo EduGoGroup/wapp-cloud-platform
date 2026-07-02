@@ -262,6 +262,60 @@ func TestConnectMultiplexado(t *testing.T) {
 	}
 }
 
+// TestConnectMultiSesionMismoStream es el reproductor del bug del Plan 009: dos
+// session_id distintos multiplexados sobre UN MISMO stream CloudLink (ADR-0008).
+// Hoy el Connect clava la 1ª sesión que ve y descarta las demás, así que solo
+// una queda online; el fix (registro por-frame) debe dejar ambas online.
+func TestConnectMultiSesionMismoStream(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Dos sesiones distintas por EL MISMO stream (el Edge las multiplexa, Plan 008).
+	if sendErr := stream.Send(heartbeat("s1")); sendErr != nil {
+		t.Fatalf("Send s1: %v", sendErr)
+	}
+	if sendErr := stream.Send(heartbeat("s2")); sendErr != nil {
+		t.Fatalf("Send s2: %v", sendErr)
+	}
+
+	// Ambas deben quedar online. Hoy solo la 1ª se registra (bug) → la 2ª falla.
+	waitOnline(t, h.registry, "s1", true)
+	waitOnline(t, h.registry, "s2", true)
+
+	// Ruteo: SendText a s2 no debe fallar con ErrSessionOffline.
+	sendDone := make(chan error, 1)
+	go func() {
+		_, sendErr := h.srv.SendText(ctx, "s2", "57302", "para s2")
+		sendDone <- sendErr
+	}()
+
+	cmd, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv s2: %v", err)
+	}
+	st := cmd.GetSendText()
+	if st == nil || st.GetText() != "para s2" {
+		t.Fatalf("s2 recibió comando inesperado: %+v", cmd)
+	}
+	if sendErr := stream.Send(&cloudlinkv1.EdgeToCloud{
+		SessionId: "s2",
+		Payload:   &cloudlinkv1.EdgeToCloud_Ack{Ack: &cloudlinkv1.Ack{AckedCommandId: cmd.GetCommandId(), Ok: true}},
+	}); sendErr != nil {
+		t.Fatalf("Send ack s2: %v", sendErr)
+	}
+	if sendErr := <-sendDone; sendErr != nil {
+		t.Fatalf("SendText a s2 devolvió error: %v", sendErr)
+	}
+}
+
 func TestConnectStreamDownGoesOffline(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
