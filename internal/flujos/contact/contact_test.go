@@ -149,3 +149,29 @@ func TestErrInvalidRef_Mensaje(t *testing.T) {
 		t.Fatalf("mensaje de ErrInvalidRef inesperado: %q", ErrInvalidRef.Error())
 	}
 }
+
+// TestNormalize_ErrorNoFiltraValue verifica la higiene de logs (design.md
+// §8/§10.I): el mensaje de error de un value inválido NUNCA embebe el value
+// crudo (PII), porque sube tal cual a runtime_engine.go como ("error", err).
+func TestNormalize_ErrorNoFiltraValue(t *testing.T) {
+	cases := []struct {
+		name  string
+		kind  string
+		value string
+	}{
+		{"phone sin dígitos", KindPhoneE164, "abc-xyz"},
+		{"phone excede máximo", KindPhoneE164, "12345678901234567890"},
+		{"lid no numérico", KindWALID, "abcdef123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Normalize(tc.kind, tc.value)
+			if err == nil {
+				t.Fatalf("Normalize(%q, %q) = nil, quiero error", tc.kind, tc.value)
+			}
+			if strings.Contains(err.Error(), tc.value) {
+				t.Fatalf("el error filtra el value crudo (PII): %q contiene %q", err.Error(), tc.value)
+			}
+		})
+	}
+}

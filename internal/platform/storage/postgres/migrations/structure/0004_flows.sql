@@ -58,7 +58,19 @@ CREATE INDEX IF NOT EXISTS idx_flow_state_tenant
 COMMENT ON TABLE  public.flow_state IS 'Estado conversacional por (tenant, sesión, contacto). Solo contenido de negocio (ADR-0009); nunca DEK ni store.';
 COMMENT ON COLUMN public.flow_state.tenant_id          IS 'Tenant dueño de la conversación (FK a tenants).';
 COMMENT ON COLUMN public.flow_state.session_id         IS 'Sesión CloudLink en la que vive la conversación (la provee el Edge).';
-COMMENT ON COLUMN public.flow_state.contact            IS 'Número del contacto (dato de NEGOCIO, no credencial; Pieza 05 §7).';
+-- La columna `contact` la SUPERSEDE 0005 (re-claveo a contact_id). En un
+-- FULL-REPLAY posterior (0005/0006 ya aplicados) `contact` ya no existe; se
+-- guarda el COMMENT para que el replay siga siendo N-veces idempotente.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'flow_state'
+          AND column_name = 'contact'
+    ) THEN
+        COMMENT ON COLUMN public.flow_state.contact IS 'Número del contacto (dato de NEGOCIO, no credencial; Pieza 05 §7).';
+    END IF;
+END $$;
 COMMENT ON COLUMN public.flow_state.flow_id            IS 'Flujo que ejecuta la conversación.';
 COMMENT ON COLUMN public.flow_state.flow_version       IS 'Versión con la que arrancó la conversación (no salta de versión; design.md §4).';
 COMMENT ON COLUMN public.flow_state.current_node       IS 'Nodo actual de la máquina de estados (centinela de fin = conversación terminada).';

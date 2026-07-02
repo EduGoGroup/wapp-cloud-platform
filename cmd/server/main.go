@@ -46,6 +46,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
@@ -125,7 +126,14 @@ func run() error {
 	flowEngine := engine.New(flowReg)
 	flowStore := flowstore.NewPostgresRepository(db)
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
-	contactResolver := contact.NewPostgresResolver(db)
+	// KeyProvider + FieldCipher del cifrado de PII en reposo (Plan 011, ADR-0017):
+	// la KEK maestra vive en env/secret store (§10.A), separada del dato. Fail-fast
+	// si falta, igual que la clave del lease.
+	contactKP, err := crypto.NewEnvKeyProvider(cfg.Crypto.KEKMasterB64, cfg.Crypto.KEKIndexB64)
+	if err != nil {
+		return fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
+	}
+	contactResolver := contact.NewPostgresResolver(db, crypto.NewFieldCipher(contactKP), contactKP)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log)
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se

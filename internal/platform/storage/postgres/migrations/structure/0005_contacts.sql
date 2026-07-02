@@ -42,7 +42,19 @@ COMMENT ON TABLE  public.contacts IS 'Identidad flexible de contacto: resuelve (
 COMMENT ON COLUMN public.contacts.contact_id IS 'Identidad OPACA y estable del contacto (UUID); con ella opera el motor. Varias filas (kinds) comparten contact_id (fusión, design.md §5).';
 COMMENT ON COLUMN public.contacts.tenant_id  IS 'Tenant dueño del contacto (FK a tenants).';
 COMMENT ON COLUMN public.contacts.kind       IS 'Tipo de referencia: phone_e164 | wa_lid | wa_username (extensible; design.md §10.B).';
-COMMENT ON COLUMN public.contacts.value      IS 'Valor NORMALIZADO de la referencia, EN CLARO en este corte (a cifrar en Plan 011). Dedup por (tenant_id, kind, value).';
+-- La columna `value` (plano) la SUPERSEDE 0006 (cifrado: value_bidx/value_enc/
+-- value_dek). En un FULL-REPLAY posterior (0006 ya aplicado) `value` ya no
+-- existe; se guarda el COMMENT para que el replay siga siendo N-veces idempotente.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'contacts'
+          AND column_name = 'value'
+    ) THEN
+        COMMENT ON COLUMN public.contacts.value IS 'Valor NORMALIZADO de la referencia, EN CLARO en este corte (a cifrar en Plan 011). Dedup por (tenant_id, kind, value).';
+    END IF;
+END $$;
 COMMENT ON COLUMN public.contacts.push_name  IS 'Último push_name visto (dato de negocio, opcional).';
 COMMENT ON COLUMN public.contacts.created_at IS 'Alta de la referencia.';
 COMMENT ON COLUMN public.contacts.updated_at IS 'Última actualización de la referencia.';

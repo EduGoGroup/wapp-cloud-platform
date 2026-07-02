@@ -6,19 +6,30 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
 // PostgresResolver implementa Resolver con SQL raw sobre public.contacts (y, en
 // la fusión, public.flow_state). Toda una Resolve corre en UNA transacción: así
 // la fusión (re-apuntar refs + migrar flow_state del huérfano al canónico) es
 // atómica (design.md §5, §10.D).
+//
+// El identificador del contacto va CIFRADO en reposo (Plan 011, ADR-0017): la
+// fila guarda value_bidx (índice ciego para buscar/deduplicar), value_enc
+// (envelope) y value_dek (DEK envuelta). El value en claro solo vive en memoria
+// en el borde de la app. cipher cifra/descifra; kp calcula el índice ciego.
 type PostgresResolver struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+	kp     crypto.KeyProvider
 }
 
-// NewPostgresResolver construye el resolver sobre el pool dado.
-func NewPostgresResolver(db *sql.DB) *PostgresResolver {
-	return &PostgresResolver{db: db}
+// NewPostgresResolver construye el resolver sobre el pool dado. cipher y kp
+// aportan el cifrado en reposo del value (design.md §5): cipher hace el envelope
+// encrypt/decrypt y kp calcula el índice ciego (value_bidx).
+func NewPostgresResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider) *PostgresResolver {
+	return &PostgresResolver{db: db, cipher: cipher, kp: kp}
 }
 
 // Resolve implementa Resolver (design.md §4, §5) de forma atómica.
@@ -39,15 +50,15 @@ func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []
 		}
 	}()
 
-	found, err := lookupContactIDs(ctx, tx, tenantID, refs)
+	found, err := r.lookupContactIDs(ctx, tx, tenantID, refs)
 	if err != nil {
 		return "", err
 	}
 
 	if len(found) == 0 {
-		contactID, err = insertNewContact(ctx, tx, tenantID, refs, pushName)
+		contactID, err = r.insertNewContact(ctx, tx, tenantID, refs, pushName)
 	} else {
-		contactID, err = resolveExisting(ctx, tx, tenantID, found, refs, pushName)
+		contactID, err = r.resolveExisting(ctx, tx, tenantID, found, refs, pushName)
 	}
 	if err != nil {
 		return "", err
@@ -60,18 +71,19 @@ func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []
 }
 
 // lookupContactIDs devuelve, en orden estable, los contact_id distintos ya
-// mapeados por alguna ref. Bloquea las filas encontradas (FOR UPDATE) para
-// serializar fusiones concurrentes del mismo contacto.
-func lookupContactIDs(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref) ([]string, error) {
+// mapeados por alguna ref. Busca por el índice ciego (value_bidx), no por el
+// value en claro (que ya no vive en la fila). Bloquea las filas encontradas
+// (FOR UPDATE) para serializar fusiones concurrentes del mismo contacto.
+func (r *PostgresResolver) lookupContactIDs(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref) ([]string, error) {
 	seen := make(map[string]struct{})
 	var ids []string
 	for _, ref := range refs {
 		var cid string
 		err := tx.QueryRowContext(ctx, `
 			SELECT contact_id::text FROM public.contacts
-			WHERE tenant_id = $1 AND kind = $2 AND value = $3
+			WHERE tenant_id = $1 AND kind = $2 AND value_bidx = $3
 			FOR UPDATE
-		`, tenantID, ref.Kind, ref.Value).Scan(&cid)
+		`, tenantID, ref.Kind, r.kp.BlindIndex(tenantID, ref.Value)).Scan(&cid)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			continue
@@ -87,28 +99,44 @@ func lookupContactIDs(ctx context.Context, tx *sql.Tx, tenantID string, refs []R
 }
 
 // insertNewContact crea un contact_id nuevo (UUID por DEFAULT) con la primera
-// ref y ata las restantes al mismo id.
-func insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
+// ref (cifrada) y ata las restantes al mismo id.
+func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
+	bidx, enc, dek, err := r.encodeRef(tenantID, refs[0])
+	if err != nil {
+		return "", err
+	}
 	var cid string
-	err := tx.QueryRowContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value, push_name)
-		VALUES ($1, $2, $3, $4)
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, push_name)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING contact_id::text
-	`, tenantID, refs[0].Kind, refs[0].Value, nullStr(pushName)).Scan(&cid)
+	`, tenantID, refs[0].Kind, bidx, enc, dek, nullStr(pushName)).Scan(&cid)
 	if err != nil {
 		return "", fmt.Errorf("contact: insertar contacto: %w", err)
 	}
 	for _, ref := range refs[1:] {
-		if err := attachRef(ctx, tx, tenantID, cid, ref, pushName); err != nil {
+		if err := r.attachRef(ctx, tx, tenantID, cid, ref, pushName); err != nil {
 			return "", err
 		}
 	}
 	return cid, nil
 }
 
+// encodeRef prepara las columnas cifradas de una ref: value_bidx (índice ciego),
+// value_enc (envelope) y value_dek (DEK envuelta). El value en claro no sale de
+// aquí (design.md §4, §5).
+func (r *PostgresResolver) encodeRef(tenantID string, ref Ref) (bidx string, enc, dek []byte, err error) {
+	bidx = r.kp.BlindIndex(tenantID, ref.Value)
+	enc, dek, err = r.cipher.Encrypt(ref.Value)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("contact: cifrar value: %w", err)
+	}
+	return bidx, enc, dek, nil
+}
+
 // resolveExisting reusa (un solo contact_id) o funde (varios) los contact_id ya
 // existentes en el canónico, ata las refs faltantes y actualiza el push_name.
-func resolveExisting(ctx context.Context, tx *sql.Tx, tenantID string, found []string, refs []Ref, pushName string) (string, error) {
+func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tenantID string, found []string, refs []Ref, pushName string) (string, error) {
 	canonical := found[0]
 	if len(found) > 1 {
 		var err error
@@ -126,7 +154,7 @@ func resolveExisting(ctx context.Context, tx *sql.Tx, tenantID string, found []s
 		}
 	}
 	for _, ref := range refs {
-		if err := attachRef(ctx, tx, tenantID, canonical, ref, pushName); err != nil {
+		if err := r.attachRef(ctx, tx, tenantID, canonical, ref, pushName); err != nil {
 			return "", err
 		}
 	}
@@ -149,14 +177,18 @@ func nullStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
-// attachRef ata una ref al contact_id dado; si ya existe (dedup por (tenant,
-// kind, value)) no hace nada.
-func attachRef(ctx context.Context, tx *sql.Tx, tenantID, contactID string, ref Ref, pushName string) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value, contact_id, push_name)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, kind, value) DO NOTHING
-	`, tenantID, ref.Kind, ref.Value, contactID, nullStr(pushName))
+// attachRef ata una ref (cifrada) al contact_id dado; si ya existe (dedup por
+// (tenant, kind, value_bidx)) no hace nada.
+func (r *PostgresResolver) attachRef(ctx context.Context, tx *sql.Tx, tenantID, contactID string, ref Ref, pushName string) error {
+	bidx, enc, dek, err := r.encodeRef(tenantID, ref)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, contact_id, push_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant_id, kind, value_bidx) DO NOTHING
+	`, tenantID, ref.Kind, bidx, enc, dek, contactID, nullStr(pushName))
 	if err != nil {
 		return fmt.Errorf("contact: adjuntar ref: %w", err)
 	}
@@ -222,7 +254,7 @@ func fuseDB(ctx context.Context, tx *sql.Tx, tenantID, orphan, canonical string)
 // Destino implementa Resolver (design.md §10.E).
 func (r *PostgresResolver) Destino(ctx context.Context, tenantID, contactID string) (ref Ref, err error) {
 	rows, qerr := r.db.QueryContext(ctx, `
-		SELECT kind, value FROM public.contacts
+		SELECT kind, value_enc, value_dek FROM public.contacts
 		WHERE tenant_id = $1 AND contact_id = $2
 	`, tenantID, contactID)
 	if qerr != nil {
@@ -236,11 +268,20 @@ func (r *PostgresResolver) Destino(ctx context.Context, tenantID, contactID stri
 
 	var refs []Ref
 	for rows.Next() {
-		var r Ref
-		if serr := rows.Scan(&r.Kind, &r.Value); serr != nil {
+		var (
+			kind     string
+			enc, dek []byte
+		)
+		if serr := rows.Scan(&kind, &enc, &dek); serr != nil {
 			return Ref{}, fmt.Errorf("contact: escanear ref: %w", serr)
 		}
-		refs = append(refs, r)
+		// Descifra el value SOLO en memoria (borde de la app) para armar el
+		// destino enviable (design.md §5). No se loguea (§8).
+		value, derr := r.cipher.Decrypt(enc, dek)
+		if derr != nil {
+			return Ref{}, fmt.Errorf("contact: descifrar value: %w", derr)
+		}
+		refs = append(refs, Ref{Kind: kind, Value: value})
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return Ref{}, fmt.Errorf("contact: iterar refs: %w", rerr)

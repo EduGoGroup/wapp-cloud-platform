@@ -1,8 +1,10 @@
 package contact_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -10,12 +12,36 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
 
 // dsnEnv habilita los tests de integración con BD real (igual que en store/lease).
 const dsnEnv = "WAPP_TEST_DB_DSN"
+
+// newTestKeyProvider construye un KeyProvider con una KEK de test fija (32B) para
+// que los tests cifren/deduzcan el índice ciego de forma determinista.
+func newTestKeyProvider(t *testing.T) crypto.KeyProvider {
+	t.Helper()
+	master := make([]byte, 32)
+	for i := range master {
+		master[i] = byte(i + 1)
+	}
+	kp, err := crypto.NewEnvKeyProvider(base64.StdEncoding.EncodeToString(master), "")
+	if err != nil {
+		t.Fatalf("KeyProvider de test: %v", err)
+	}
+	return kp
+}
+
+// newTestResolver construye el PostgresResolver con el cifrado de PII cableado
+// (KEK de test), como en producción pero con clave fija.
+func newTestResolver(t *testing.T, db *sql.DB) *contact.PostgresResolver {
+	t.Helper()
+	kp := newTestKeyProvider(t)
+	return contact.NewPostgresResolver(db, crypto.NewFieldCipher(kp), kp)
+}
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -94,7 +120,7 @@ func TestPG_Resolve_ReusaYAta(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenant := seedTenant(t, db)
-	r := contact.NewPostgresResolver(db)
+	r := newTestResolver(t, db)
 	phone := mustRef(t, contact.KindPhoneE164, "573001112233")
 	lid := mustRef(t, contact.KindWALID, "88887777")
 
@@ -122,7 +148,7 @@ func TestPG_Resolve_FusionMigraFlowState(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenant := seedTenant(t, db)
-	r := contact.NewPostgresResolver(db)
+	r := newTestResolver(t, db)
 	phone := mustRef(t, contact.KindPhoneE164, "573009998877")
 	lid := mustRef(t, contact.KindWALID, "77776666")
 
@@ -161,7 +187,7 @@ func TestPG_Resolve_FusionConflictoConservaCanonico(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenant := seedTenant(t, db)
-	r := contact.NewPostgresResolver(db)
+	r := newTestResolver(t, db)
 	phone := mustRef(t, contact.KindPhoneE164, "573001110000")
 	lid := mustRef(t, contact.KindWALID, "66665555")
 
@@ -192,7 +218,7 @@ func TestPG_Destino_Preferencia(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenant := seedTenant(t, db)
-	r := contact.NewPostgresResolver(db)
+	r := newTestResolver(t, db)
 	phone := mustRef(t, contact.KindPhoneE164, "573002223344")
 	lid := mustRef(t, contact.KindWALID, "55554444")
 
@@ -206,5 +232,58 @@ func TestPG_Destino_Preferencia(t *testing.T) {
 	}
 	if dst.Kind != contact.KindPhoneE164 {
 		t.Fatalf("destino = %+v, quiero phone_e164", dst)
+	}
+	// Round-trip: el value descifrado por Destino coincide con el número original.
+	if dst.Value != "573002223344" {
+		t.Fatalf("Destino descifró %q, quiero 573002223344", dst.Value)
+	}
+}
+
+// TestPG_ValueCifradoEnReposo verifica que la fila NO guarda el value en claro:
+// no existe la columna `value` plano, value_enc/value_dek están poblados y el
+// número original NO aparece en value_enc (design.md §4, criterio T1).
+func TestPG_ValueCifradoEnReposo(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenant := seedTenant(t, db)
+	r := newTestResolver(t, db)
+	const phoneNum = "573007776655"
+	phone := mustRef(t, contact.KindPhoneE164, phoneNum)
+
+	if _, err := r.Resolve(ctx, tenant, []contact.Ref{phone}, "Ana"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	// (a) El esquema NO tiene columna `value` plano.
+	var hasValue bool
+	if err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'contacts' AND column_name = 'value'
+		)
+	`).Scan(&hasValue); err != nil {
+		t.Fatalf("consultar columnas: %v", err)
+	}
+	if hasValue {
+		t.Fatal("la tabla contacts todavía tiene la columna `value` en claro (debe ser value_enc/value_dek/value_bidx)")
+	}
+
+	// (b) La fila guarda value_bidx/value_enc/value_dek poblados y el número NO
+	// aparece en claro dentro de value_enc.
+	var (
+		bidx     string
+		enc, dek []byte
+	)
+	if err := db.QueryRowContext(ctx, `
+		SELECT value_bidx, value_enc, value_dek FROM public.contacts
+		WHERE tenant_id = $1 AND kind = $2
+	`, tenant, contact.KindPhoneE164).Scan(&bidx, &enc, &dek); err != nil {
+		t.Fatalf("leer fila cifrada: %v", err)
+	}
+	if bidx == "" || len(enc) == 0 || len(dek) == 0 {
+		t.Fatalf("columnas cifradas vacías: bidx=%q len(enc)=%d len(dek)=%d", bidx, len(enc), len(dek))
+	}
+	if bytes.Contains(enc, []byte(phoneNum)) {
+		t.Fatal("el número aparece EN CLARO dentro de value_enc")
 	}
 }

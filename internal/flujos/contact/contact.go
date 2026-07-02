@@ -118,12 +118,15 @@ func normalizePhone(value string) (string, error) {
 		}
 	}
 	digits := b.String()
+	// Higiene (design.md §8/§10.I): los mensajes de error NO embeben el value
+	// crudo (PII); suben a runtime_engine.go como "error", err. Se describe la
+	// causa con métricas no reversibles (longitud), nunca el número.
 	if digits == "" {
-		return "", fmt.Errorf("%w: phone_e164 sin dígitos: %q", ErrInvalidRef, value)
+		return "", fmt.Errorf("%w: phone_e164 sin dígitos", ErrInvalidRef)
 	}
 	if len(digits) > maxE164Digits {
-		return "", fmt.Errorf("%w: phone_e164 con %d dígitos excede el máximo %d: %q",
-			ErrInvalidRef, len(digits), maxE164Digits, value)
+		return "", fmt.Errorf("%w: phone_e164 con %d dígitos excede el máximo %d",
+			ErrInvalidRef, len(digits), maxE164Digits)
 	}
 	return digits, nil
 }
@@ -145,12 +148,13 @@ func normalizeLID(value string) (string, error) {
 		v = v[:colon]
 	}
 	v = strings.TrimSpace(v)
+	// Higiene (design.md §8/§10.I): sin el value crudo (PII) en el error.
 	if v == "" {
-		return "", fmt.Errorf("%w: wa_lid vacío: %q", ErrInvalidRef, value)
+		return "", fmt.Errorf("%w: wa_lid vacío", ErrInvalidRef)
 	}
 	for _, r := range v {
 		if r < '0' || r > '9' {
-			return "", fmt.Errorf("%w: wa_lid con parte de usuario no numérica: %q", ErrInvalidRef, value)
+			return "", fmt.Errorf("%w: wa_lid con parte de usuario no numérica (longitud %d)", ErrInvalidRef, len(v))
 		}
 	}
 	return v, nil
