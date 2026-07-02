@@ -69,28 +69,24 @@ func (e *Engine) Step(def model.Flow, st model.Conversation, in Input) (model.Co
 		return st, nil, fmt.Errorf("%w: nodo actual %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
 	}
 
-	switch node.Type {
-	case model.NodeTypeMenu:
-		m, ok := e.reg.Get(node.Type)
-		if !ok {
-			return st, nil, fmt.Errorf("módulo no registrado para tipo de nodo %q", node.Type)
-		}
-		res := m.Step(node, st, in.Text)
-		st.Vars = res.Vars
-		if res.Next != nil {
-			// Transición válida: renderiza el destino (encadenando messages).
-			st.CurrentNode = *res.Next
-			return e.renderFrom(def, st)
-		}
-		// Permanece: reprompt o ayuda.
-		return st, toOutputs(res.Outputs), nil
-
-	default:
-		// Tras un Enter/renderFrom el estado siempre queda en un menú o en el
-		// centinela; un nodo "message" como nodo actual indica definición o
-		// estado inconsistente.
+	// Delegación genérica: cualquier módulo interactivo (menu, survey_question,
+	// …) recorre la misma ruta. Si el nodo actual no tiene módulo registrado o
+	// su módulo no espera input (p. ej. "message"), es un estado inconsistente:
+	// tras un Enter/renderFrom el estado siempre queda en un nodo interactivo o
+	// en el centinela.
+	mod, ok := e.reg.Get(node.Type)
+	if !ok || !mod.WaitsForInput() {
 		return st, nil, fmt.Errorf("%w: nodo actual %q de tipo %q no espera entrada", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 	}
+	res := mod.Step(node, st, in.Text)
+	st.Vars = res.Vars
+	if res.Next != nil {
+		// Transición válida: renderiza el destino (encadenando messages).
+		st.CurrentNode = *res.Next
+		return e.renderFrom(def, st)
+	}
+	// Permanece: reprompt o ayuda.
+	return st, toOutputs(res.Outputs), nil
 }
 
 // renderFrom produce la salida desde st.CurrentNode: emite los "message"
@@ -104,26 +100,26 @@ func (e *Engine) renderFrom(def model.Flow, st model.Conversation) (model.Conver
 		if !ok {
 			return st, outs, fmt.Errorf("%w: nodo %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
 		}
-		switch node.Type {
-		case model.NodeTypeMessage:
+		// El tipo "message" es trivial y NO es un módulo: su lógica (emitir el
+		// texto y encadenar por Next o terminar) vive inline aquí. Cualquier
+		// otro tipo se delega al módulo registrado; si es interactivo, se
+		// renderiza y el flujo se detiene esperando input.
+		if node.Type == model.NodeTypeMessage {
 			outs = append(outs, Output{Text: node.Text})
 			if node.Next == nil {
 				st.CurrentNode = model.NodeTerminal
 				return st, outs, nil
 			}
 			st.CurrentNode = *node.Next
+			continue
+		}
 
-		case model.NodeTypeMenu:
-			m, ok := e.reg.Get(node.Type)
-			if !ok {
-				return st, outs, fmt.Errorf("módulo no registrado para tipo de nodo %q", node.Type)
-			}
-			outs = append(outs, toOutputs(m.Render(node))...)
-			return st, outs, nil
-
-		default:
+		mod, ok := e.reg.Get(node.Type)
+		if !ok || !mod.WaitsForInput() {
 			return st, outs, fmt.Errorf("%w: nodo %q: tipo desconocido %q", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 		}
+		outs = append(outs, toOutputs(mod.Render(node))...)
+		return st, outs, nil
 	}
 	return st, outs, fmt.Errorf("%w: cadena de mensajes demasiado larga (¿ciclo?) desde %q", model.ErrInvalidFlow, st.CurrentNode)
 }

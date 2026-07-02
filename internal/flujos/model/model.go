@@ -15,8 +15,9 @@ import (
 
 // Tipos de nodo soportados en este corte (Menú). Ver design.md §4.
 const (
-	NodeTypeMenu    = "menu"
-	NodeTypeMessage = "message"
+	NodeTypeMenu           = "menu"
+	NodeTypeMessage        = "message"
+	NodeTypeSurveyQuestion = "survey_question"
 )
 
 // NodeTerminal es el valor centinela de Conversation.CurrentNode que marca el
@@ -48,11 +49,12 @@ type Flow struct {
 //   - "menu":    Prompt + Options (opción→id de nodo destino).
 //   - "message": Text + Next (id de nodo siguiente; nil termina el flujo).
 type Node struct {
-	Type    string            `json:"type"`
-	Prompt  string            `json:"prompt,omitempty"`
-	Text    string            `json:"text,omitempty"`
-	Options map[string]string `json:"options,omitempty"`
-	Next    *string           `json:"next,omitempty"`
+	Type       string            `json:"type"`
+	Prompt     string            `json:"prompt,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Options    map[string]string `json:"options,omitempty"`
+	Next       *string           `json:"next,omitempty"`
+	QuestionID string            `json:"question_id,omitempty"`
 }
 
 // Conversation es el estado vivo de una conversación ligada a la clave lógica
@@ -129,26 +131,50 @@ func Validate(f Flow) error {
 		return fmt.Errorf("%w: initial %q no existe en nodes", ErrInvalidFlow, f.Initial)
 	}
 	for id, n := range f.Nodes {
-		switch n.Type {
-		case NodeTypeMenu:
-			if len(n.Options) == 0 {
-				return fmt.Errorf("%w: nodo menu %q sin options", ErrInvalidFlow, id)
+		if err := validateNode(f, id, n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNode valida un nodo individual según su Type (extraído de Validate
+// para mantener acotada la complejidad ciclomática). Los tipos interactivos
+// (menu, survey_question) comparten la validación de options→destino existente;
+// survey_question exige además question_id.
+func validateNode(f Flow, id string, n Node) error {
+	switch n.Type {
+	case NodeTypeMenu:
+		return validateOptions(f, id, "menu", n.Options)
+	case NodeTypeSurveyQuestion:
+		if n.QuestionID == "" {
+			return fmt.Errorf("%w: nodo %q survey sin question_id", ErrInvalidFlow, id)
+		}
+		return validateOptions(f, id, "survey", n.Options)
+	case NodeTypeMessage:
+		if n.Next != nil {
+			if _, ok := f.Nodes[*n.Next]; !ok {
+				return fmt.Errorf("%w: nodo message %q: next apunta a nodo inexistente %q",
+					ErrInvalidFlow, id, *n.Next)
 			}
-			for opt, target := range n.Options {
-				if _, ok := f.Nodes[target]; !ok {
-					return fmt.Errorf("%w: nodo menu %q: opción %q apunta a nodo inexistente %q",
-						ErrInvalidFlow, id, opt, target)
-				}
-			}
-		case NodeTypeMessage:
-			if n.Next != nil {
-				if _, ok := f.Nodes[*n.Next]; !ok {
-					return fmt.Errorf("%w: nodo message %q: next apunta a nodo inexistente %q",
-						ErrInvalidFlow, id, *n.Next)
-				}
-			}
-		default:
-			return fmt.Errorf("%w: nodo %q: tipo desconocido %q", ErrInvalidFlow, id, n.Type)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: nodo %q: tipo desconocido %q", ErrInvalidFlow, id, n.Type)
+	}
+}
+
+// validateOptions comprueba que un nodo interactivo tenga options no vacío y que
+// cada destino exista en la definición. kind es la etiqueta del tipo para el
+// mensaje de error (p. ej. "menu", "survey").
+func validateOptions(f Flow, id, kind string, options map[string]string) error {
+	if len(options) == 0 {
+		return fmt.Errorf("%w: nodo %s %q sin options", ErrInvalidFlow, kind, id)
+	}
+	for opt, target := range options {
+		if _, ok := f.Nodes[target]; !ok {
+			return fmt.Errorf("%w: nodo %s %q: opción %q apunta a nodo inexistente %q",
+				ErrInvalidFlow, kind, id, opt, target)
 		}
 	}
 	return nil

@@ -23,3 +23,15 @@ func TestRegistryRegisterAndGet(t *testing.T) {
 		t.Fatalf("Get(desconocido): no esperaba módulo para un tipo no registrado")
 	}
 }
+
+func TestRegistryWaitsForInput(t *testing.T) {
+	r := modules.NewRegistry()
+	r.Register(menu.New())
+
+	if !r.WaitsForInput("menu") {
+		t.Fatalf("WaitsForInput(menu) = false, quiero true (el menú es interactivo)")
+	}
+	if r.WaitsForInput("desconocido") {
+		t.Fatalf("WaitsForInput(desconocido) = true, quiero false (tipo no registrado)")
+	}
+}

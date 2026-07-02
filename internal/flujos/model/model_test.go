@@ -125,6 +125,48 @@ func TestValidate(t *testing.T) {
 			mutate:  func(f *model.Flow) { f.Nodes[model.NodeTerminal] = model.Node{Type: model.NodeTypeMessage, Text: "x"} },
 			wantErr: true,
 		},
+		{
+			name: "survey_question válido aceptado",
+			mutate: func(f *model.Flow) {
+				n := f.Nodes["root"]
+				n.Type = model.NodeTypeSurveyQuestion
+				n.QuestionID = "q1"
+				f.Nodes["root"] = n
+			},
+			wantErr: false,
+		},
+		{
+			name: "survey_question sin question_id",
+			mutate: func(f *model.Flow) {
+				n := f.Nodes["root"]
+				n.Type = model.NodeTypeSurveyQuestion
+				n.QuestionID = ""
+				f.Nodes["root"] = n
+			},
+			wantErr: true,
+		},
+		{
+			name: "survey_question sin options",
+			mutate: func(f *model.Flow) {
+				n := f.Nodes["root"]
+				n.Type = model.NodeTypeSurveyQuestion
+				n.QuestionID = "q1"
+				n.Options = nil
+				f.Nodes["root"] = n
+			},
+			wantErr: true,
+		},
+		{
+			name: "survey_question con destino inexistente",
+			mutate: func(f *model.Flow) {
+				n := f.Nodes["root"]
+				n.Type = model.NodeTypeSurveyQuestion
+				n.QuestionID = "q1"
+				n.Options["9"] = "fantasma"
+				f.Nodes["root"] = n
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {

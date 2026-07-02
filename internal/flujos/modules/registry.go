@@ -39,6 +39,11 @@ type Module interface {
 	// Step procesa la entrada del usuario sobre el nodo y devuelve el veredicto
 	// (transición o permanencia con reprompt/ayuda). Puro.
 	Step(node model.Node, conv model.Conversation, input string) Result
+	// WaitsForInput indica si el nodo manejado por el módulo es interactivo: se
+	// renderiza y detiene el flujo a la espera de la entrada del usuario (menu,
+	// survey_question). El engine lo consulta para delegar Render/Step sin
+	// cablear tipos concretos.
+	WaitsForInput() bool
 }
 
 // Registry asocia tipos de nodo con su Module. Seguro para uso concurrente.
@@ -66,4 +71,15 @@ func (r *Registry) Get(nodeType string) (Module, bool) {
 	defer r.mu.RUnlock()
 	m, ok := r.modules[nodeType]
 	return m, ok
+}
+
+// WaitsForInput indica si el tipo dado está registrado y su módulo es
+// interactivo (espera entrada del usuario). Un tipo no registrado devuelve
+// false. Lo usa el engine para decidir si un nodo detiene el flujo esperando
+// input, sin cablear tipos concretos.
+func (r *Registry) WaitsForInput(typ string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.modules[typ]
+	return ok && m.WaitsForInput()
 }

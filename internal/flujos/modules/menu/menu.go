@@ -34,6 +34,10 @@ func New() Module { return Module{} }
 // Type devuelve el identificador del tipo de nodo manejado.
 func (Module) Type() string { return model.NodeTypeMenu }
 
+// WaitsForInput indica que el menú es interactivo: se renderiza y detiene el
+// flujo esperando la opción del usuario.
+func (Module) WaitsForInput() bool { return true }
+
 // Render devuelve el prompt del menú tal cual (las opciones numeradas ya vienen
 // embebidas en el texto del Prompt en este corte).
 func (Module) Render(node model.Node) []string {
