@@ -153,7 +153,21 @@ func run() error {
 	contactResolver := contact.NewPostgresResolver(db, contactCipher, contactKP)
 	// Fan-out de efectos EN PROCESO (ADR-0003, sin broker): el PersistSink
 	// materializa cada Effect en flow_events y proyecta survey_answer →
-	// survey_results (Plan 015 · T3, releva al flush viejo del Plan 014).
+	// survey_results (Plan 015 · T3, releva al flush viejo del Plan 014) y el
+	// carrito → orders/order_items (Plan 016 · T2).
+	//
+	// PUNTO DE INYECCIÓN del CRM/POS (Plan 016 · T4, design.md §9.I): el runtime
+	// admite MÚLTIPLES sinks (WithEventSink se acumula; el dispatch hace fan-out a
+	// todos). Un CRM real se enchufa AQUÍ añadiendo otro EventSink, SIN tocar el
+	// módulo ni el flujo. Hoy queda DOCUMENTADO pero NO activo: en 016 todo va a la
+	// BD (PersistSink). Para activarlo se añadiría —una vez que el WebhookSink haga
+	// POST real + outbox durable/reintentos + tenant_integrations con credenciales
+	// cifradas (todo DIFERIDO)— la opción:
+	//
+	//   flowruntime.WithEventSink(flowruntime.NewWebhookSink(log)),
+	//
+	// (registrar hoy el stub no-op no alteraría el comportamiento observable, pero
+	// se deja fuera para no introducir ruido de logs en el camino feliz).
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)))
 
