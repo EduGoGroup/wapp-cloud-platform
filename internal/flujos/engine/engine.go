@@ -25,9 +25,16 @@ type Input struct {
 	Text string
 }
 
-// Output es una orden de respuesta. En este corte, texto a enviar por SendText.
+// Output es una orden de respuesta: texto a enviar por SendText o —si Media no es
+// nil— un adjunto a despachar por SendMedia.
 type Output struct {
 	Text string
+	// Media, si no es nil, es un adjunto DECLARADO por un módulo de SALIDA (p. ej.
+	// "media") que el runtime debe presignar y despachar por Sender.SendMedia en
+	// vez de SendText (Plan 017 §9.C, seam consumido en T4). El engine lo transporta
+	// OPACO: no lo interpreta (igual que hoy transporta Text). Es un tipo de model
+	// (neutral) para no importar el paquete del módulo (dirección hexagonal).
+	Media *model.MediaRef
 }
 
 // Engine es la máquina de estados. Mantiene el registro de módulos para delegar
@@ -136,9 +143,11 @@ func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation
 	return st, toOutputs(res.Outputs), res.Effects, nil
 }
 
-// renderFrom produce la salida desde st.CurrentNode: emite los "message"
-// encadenados por Next y se detiene al llegar a un "menu" (cuyo render delega
-// en el módulo) o a Next == nil (marca el fin con el centinela NodeTerminal).
+// renderFrom produce la salida desde st.CurrentNode: emite los "message" (y los
+// nodos de SALIDA no interactivos, p. ej. "media": Render + adjunto declarado)
+// encadenados por Next y se detiene al llegar a un nodo INTERACTIVO (menu/survey/
+// cart, cuyo render delega en el módulo) o a Next == nil (marca el fin con el
+// centinela NodeTerminal).
 //
 // El content de cada nodo interactivo lo RESUELVE la fuente inyectada (puerto
 // ContentSource, Plan 015 T1) ANTES del Render; por defecto es el adapter estático
@@ -166,7 +175,7 @@ func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conver
 		}
 
 		mod, ok := e.reg.Get(node.Type)
-		if !ok || !mod.WaitsForInput() {
+		if !ok {
 			return st, outs, fmt.Errorf("%w: nodo %q: tipo desconocido %q", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 		}
 		// Resolución de contenido por fuente (Plan 015, T1): la Source inyectada
@@ -177,7 +186,31 @@ func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conver
 			return st, outs, fmt.Errorf("%w: resolver contenido de %q: %w", model.ErrInvalidFlow, st.CurrentNode, err)
 		}
 		outs = append(outs, toOutputs(mod.Render(node, content))...)
-		return st, outs, nil
+		if mod.WaitsForInput() {
+			// Nodo INTERACTIVO (menu, survey, cart): se renderiza y el flujo se
+			// detiene aquí esperando la entrada del usuario.
+			return st, outs, nil
+		}
+		// Nodo de SALIDA (emite y avanza), NO interactivo (p. ej. "media", Plan 017
+		// §9.A): además del texto de Render puede DECLARAR un adjunto opaco
+		// (model.MediaRef) por la capacidad OPCIONAL modules.MediaEmitter; el runtime
+		// lo interpreta (presign + SendMedia, §9.C). El engine consulta la CAPACIDAD,
+		// no node.Type ⇒ sigue genérico (sin switch por tipo). Tras emitir, encadena
+		// por Next (o termina con el centinela) igual que un "message".
+		if em, ok := mod.(modules.MediaEmitter); ok {
+			ref, merr := em.EmitMedia(node, content)
+			if merr != nil {
+				return st, outs, fmt.Errorf("%w: emitir media de %q: %w", model.ErrInvalidFlow, st.CurrentNode, merr)
+			}
+			if ref != nil {
+				outs = append(outs, Output{Media: ref})
+			}
+		}
+		if node.Next == nil {
+			st.CurrentNode = model.NodeTerminal
+			return st, outs, nil
+		}
+		st.CurrentNode = *node.Next
 	}
 	return st, outs, fmt.Errorf("%w: cadena de mensajes demasiado larga (¿ciclo?) desde %q", model.ErrInvalidFlow, st.CurrentNode)
 }

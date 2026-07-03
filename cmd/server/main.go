@@ -42,6 +42,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/media"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
@@ -127,6 +128,7 @@ func run() error {
 	flowReg.Register(menu.New())
 	flowReg.Register(survey.New())
 	flowReg.Register(cart.New())
+	flowReg.Register(media.New()) // Plan 017: nodo "media" (envía archivos por WhatsApp)
 	flowStore := flowstore.NewPostgresRepository(db)
 	// Fuente de contenido enrutada POR-NODO (Plan 015 T4a): el Router compone el
 	// adapter Static (PURO, default de menú/encuesta) con el adapter JSON

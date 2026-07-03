@@ -72,6 +72,20 @@ type Module interface {
 	WaitsForInput() bool
 }
 
+// MediaEmitter es la capacidad OPCIONAL de un módulo de SALIDA (no interactivo,
+// WaitsForInput()==false) para DECLARAR un adjunto (model.MediaRef) además del
+// texto de Render, de modo que el runtime lo presigne y despache por
+// Sender.SendMedia en vez de SendText (Plan 017 §9.C).
+//
+// El engine la consulta por ASERCIÓN DE CAPACIDAD (mod.(MediaEmitter)), NO por
+// node.Type: cualquier módulo que la implemente participa del canal de archivos y
+// el engine sigue GENÉRICO (sin switch por tipo). PURO: el módulo PARSEA y DECLARA
+// el descriptor (Key/Filename/Mime/Kind/Caption); no presigna, no hace red, no
+// conoce el almacén ni la URL. Un descriptor inválido produce un error controlado.
+type MediaEmitter interface {
+	EmitMedia(node model.Node, content model.Content) (*model.MediaRef, error)
+}
+
 // Registry asocia tipos de nodo con su Module. Seguro para uso concurrente.
 type Registry struct {
 	mu      sync.RWMutex

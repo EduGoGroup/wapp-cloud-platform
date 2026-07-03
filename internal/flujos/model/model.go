@@ -93,6 +93,35 @@ type ContentItem struct {
 type ContentRef struct {
 	Source string `json:"source"` // "static" | "inline" | "json"
 	Ref    string `json:"ref"`
+
+	// Descriptor INLINE del nodo "media" (Plan 017 §4.1/§9.B): cuando el nodo es
+	// {"type":"media","content":{"source":"static", …}}, estos campos viajan en el
+	// MISMO objeto `content` y el módulo media los lee para construir un MediaRef.
+	// Son ADITIVOS y OPCIONALES (omitempty): los nodos menu/message/survey/cart no
+	// los declaran ⇒ retro-compatibles, sin tocar el adapter static ni el Router
+	// (el descriptor no pasa por model.Content; el módulo lo lee del `node`).
+	Key      string `json:"key,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Mime     string `json:"mime,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+}
+
+// MediaRef es el descriptor PURO de un archivo a enviar por un nodo "media"
+// (Plan 017 §4.1): identifica el objeto en el almacén (Key) y los metadatos que
+// el Edge fija en WhatsApp (Filename/Mime/Kind/Caption). Es un tipo de DOMINIO
+// neutral (vive en model, hoja del grafo de imports del Motor) para que el módulo
+// media lo DECLARE y el engine lo transporte OPACO en Output.Media SIN que el
+// engine importe el paquete del módulo (dirección hexagonal, §9.C).
+//
+// PURO: no lleva URL ni credenciales. El runtime presigna la Key (T4) y el Edge
+// descarga y sube el binario; el módulo solo describe QUÉ archivo mandar.
+type MediaRef struct {
+	Key      string // key del objeto en el almacén (p. ej. "wapp/media/lista-precios.pdf")
+	Filename string // nombre que verá el usuario en WhatsApp
+	Mime     string // "application/pdf", "image/png", …
+	Kind     string // "document" | "image" (mapea a MediaKind del proto, T4)
+	Caption  string // texto que ACOMPAÑA al archivo en el MISMO mensaje (§9.I)
 }
 
 // Conversation es el estado vivo de una conversación ligada a la clave lógica
