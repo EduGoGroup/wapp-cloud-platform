@@ -74,7 +74,18 @@ func (Module) Step(node model.Node, conv model.Conversation, input string) modul
 		vars["answers"] = answers
 		delete(vars, RepromptKey) // reiniciar el contador para la siguiente pregunta.
 		dest := target
-		return modules.Result{Next: &dest, Vars: vars}
+		res := modules.Result{Next: &dest, Vars: vars}
+		// DECLARA el efecto de persistir la respuesta (Plan 015 · T3): el módulo
+		// sigue PURO —solo lo anota; el runtime lo despacha al PersistSink, que
+		// escribe flow_events y proyecta survey_results (la MISMA fila que producía
+		// el flush del Plan 014). answer_code = la clave elegida, idéntico a
+		// answers[QuestionID]. question_id/answer_code son códigos de negocio, no PII.
+		res.Effects = append(res.Effects, modules.Effect{
+			Kind:    "persist",
+			Name:    "survey_answer",
+			Payload: map[string]any{"question_id": node.QuestionID, "answer_code": trimmed},
+		})
+		return res
 	}
 
 	// Opción inválida.

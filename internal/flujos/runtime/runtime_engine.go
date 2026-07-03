@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -184,6 +183,16 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// sinks/efectos. En T2 nadie emite (effects vacío) ⇒ el bucle no itera ⇒
 	// no-regresión total (Menú/Encuesta idénticos); el flush viejo sigue por su
 	// vía hasta T3.
+	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el
+	// módulo (Plan 015 · T3). Es AHORA la única vía por la que survey_results se
+	// materializa: el módulo survey DECLARA un Effect{persist,survey_answer} por
+	// cada respuesta válida y el PersistSink inyectado (main) escribe flow_events y
+	// proyecta survey_results (la MISMA fila que producía el flush del Plan 014).
+	// Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
+	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por
+	// last_wa_message_id (reprocesar el mismo entrante corta antes del Step). Un
+	// fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
+	// sinks/efectos.
 	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
 	for _, eff := range effects {
 		for _, sink := range rt.sinks {
@@ -197,14 +206,6 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 			}
 		}
 	}
-	// Flush ÚNICO de resultados de encuesta al terminar la conversación (Plan
-	// 014 §7, §10.G): los módulos son PUROS y solo anotan las respuestas en
-	// Vars["answers"]; el runtime —único con store/tenant/contact— las vuelca a
-	// survey_results cuando el flujo llega a Finished(). Va DESPUÉS del Save (el
-	// estado ya está persistido) y respeta el orden Save-antes-de-Send. La
-	// idempotencia es HEREDADA de la dedupe por last_wa_message_id (reprocesar el
-	// mismo entrante corta antes del Step y no re-ejecuta el flush).
-	rt.flushSurveyResults(ctx, st, sessionID)
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {
 		return err
@@ -248,78 +249,6 @@ func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) 
 			)
 		}
 	}()
-}
-
-// flushSurveyResults vuelca las respuestas de encuesta acumuladas a
-// survey_results cuando la conversación TERMINÓ (Plan 014 §10.G). Un flujo sin
-// nodos survey_question (p. ej. un menú puro) deja `answers` vacío → no escribe
-// (no-op). Un fallo aquí se LOGUEA pero NO aborta el manejo del entrante: son
-// métricas de negocio, no el avance del flujo (el estado ya quedó persistido).
-func (rt *Runtime) flushSurveyResults(ctx context.Context, st model.Conversation, sessionID string) {
-	if !st.Finished() {
-		return
-	}
-	rows := extractAnswers(st)
-	if len(rows) == 0 {
-		return
-	}
-	if err := rt.store.InsertResults(ctx, rows); err != nil {
-		rt.log.Error("runtime: flush de resultados de encuesta",
-			"error", err,
-			"session_id", sessionID,
-		)
-	}
-}
-
-// extractAnswers recolecta las respuestas que el módulo survey anotó en
-// Vars["answers"] y las convierte en filas listas para survey_results. Tolera el
-// round-trip JSON: `answers` puede ser map[string]string (recién salido del
-// módulo en memoria) o map[string]any (revivido de JSONB por Load); los valores
-// no-string se ignoran. Sin respuestas → nil. Ordena por QuestionID para una
-// salida DETERMINISTA (evita flakiness en los asserts de los tests).
-func extractAnswers(conv model.Conversation) []store.SurveyResult {
-	answers := asAnswers(conv.Vars["answers"])
-	if len(answers) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(answers))
-	for qid := range answers {
-		ids = append(ids, qid)
-	}
-	sort.Strings(ids)
-	rows := make([]store.SurveyResult, 0, len(ids))
-	for _, qid := range ids {
-		rows = append(rows, store.SurveyResult{
-			TenantID:    conv.TenantID,
-			ContactID:   conv.ContactID,
-			FlowID:      conv.FlowID,
-			FlowVersion: conv.FlowVersion,
-			QuestionID:  qid,
-			AnswerCode:  answers[qid],
-		})
-	}
-	return rows
-}
-
-// asAnswers devuelve el mapa de respuestas tolerando el round-trip JSON
-// (map[string]any tras Load de JSONB) o el tipo nativo (map[string]string recién
-// salido del módulo) o nil, ignorando valores no-string. Réplica del patrón
-// `asMap` del módulo survey (allí es no exportado).
-func asAnswers(v any) map[string]string {
-	out := map[string]string{}
-	switch m := v.(type) {
-	case map[string]string:
-		for k, val := range m {
-			out[k] = val
-		}
-	case map[string]any:
-		for k, val := range m {
-			if s, ok := val.(string); ok {
-				out[k] = s
-			}
-		}
-	}
-	return out
 }
 
 // send empuja cada salida por el Sender en orden y devuelve el último Ack. Ante

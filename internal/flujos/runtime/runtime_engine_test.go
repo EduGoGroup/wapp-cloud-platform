@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -145,7 +144,27 @@ func newSurveyRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, 
 	}
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
-	rt := runtime.New(repo, newSurveyEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger())
+	// PersistSink cableado (Plan 015 · T3): es la vía por la que survey_results se
+	// materializa ahora (releva al flush viejo). El módulo survey declara el Effect
+	// y este sink escribe flow_events + proyecta survey_results.
+	rt := runtime.New(repo, newSurveyEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
+		runtime.WithEventSink(runtime.NewPersistSink(repo)))
+	return rt, repo, sender, contacts
+}
+
+// newMenuRuntimePersist es newRuntime (flujo de menú puro) pero con el PersistSink
+// cableado: sirve para verificar que un flujo SIN nodos survey no declara efectos
+// y por tanto no escribe flow_events ni survey_results (no-regresión T3).
+func newMenuRuntimePersist(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
+	t.Helper()
+	repo := store.NewMemoryRepository()
+	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
+		t.Fatalf("sembrar definición: %v", err)
+	}
+	sender := &fakeSender{}
+	contacts := contact.NewMemoryResolver(repo)
+	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
+		runtime.WithEventSink(runtime.NewPersistSink(repo)))
 	return rt, repo, sender, contacts
 }
 
@@ -422,33 +441,39 @@ func TestConcurrencia_MismaClaveSeSerializa(t *testing.T) {
 	}
 }
 
-// TestHandleIncoming_Encuesta_FlushDosRespuestas recorre una encuesta de 2
+// TestHandleIncoming_Encuesta_DosRespuestasViaSink recorre una encuesta de 2
 // preguntas end-to-end en el runtime: Start renderiza P1, un entrante avanza a
-// P2 y el segundo entrante llega a la hoja (Finished). Al terminar, el runtime
-// hace UN flush a survey_results con las 2 respuestas correctas (§10.G).
-func TestHandleIncoming_Encuesta_FlushDosRespuestas(t *testing.T) {
+// P2 y el segundo entrante llega a la hoja (Finished). Cada respuesta válida se
+// materializa por la costura de efectos (Plan 015 · T3): el módulo declara un
+// Effect{persist,survey_answer} y el PersistSink escribe flow_events y proyecta
+// survey_results. Al terminar hay 2 filas en cada tabla, IDÉNTICAS a las que
+// producía el flush del Plan 014 (se compara el CONJUNTO, no el orden).
+func TestHandleIncoming_Encuesta_DosRespuestasViaSink(t *testing.T) {
 	rt, repo, sender, contacts := newSurveyRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Aún nada: la encuesta no ha terminado (sólo se renderizó P1).
+	// Aún nada: no se ha respondido ninguna pregunta.
 	if got := repo.SurveyResults(); len(got) != 0 {
-		t.Fatalf("no debería haber resultados antes de terminar, hubo %d", len(got))
+		t.Fatalf("no debería haber resultados antes de responder, hubo %d", len(got))
+	}
+	if got := repo.FlowEvents(); len(got) != 0 {
+		t.Fatalf("no debería haber flow_events antes de responder, hubo %d", len(got))
 	}
 
-	// Responde P1 con "1" → registra q1=1 y avanza a P2.
+	// Responde P1 con "1" → declara efecto q1=1 (por-respuesta) y avanza a P2.
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.q1")); err != nil {
 		t.Fatalf("responder P1: %v", err)
 	}
-	if got := repo.SurveyResults(); len(got) != 0 {
-		t.Fatalf("no debería haber flush a mitad de la encuesta, hubo %d", len(got))
+	if got := repo.SurveyResults(); len(got) != 1 {
+		t.Fatalf("tras P1 debería haber 1 fila (por-respuesta), hubo %d", len(got))
 	}
 	if last := sender.texts()[sender.count()-1]; !strings.Contains(last, "atención") {
 		t.Fatalf("tras P1 debería renderizarse P2, se obtuvo: %q", last)
 	}
 
-	// Responde P2 con "2" → registra q2=2, cae en la hoja message y TERMINA.
+	// Responde P2 con "2" → declara efecto q2=2, cae en la hoja message y TERMINA.
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "2", "wamid.q2")); err != nil {
 		t.Fatalf("responder P2: %v", err)
 	}
@@ -457,20 +482,53 @@ func TestHandleIncoming_Encuesta_FlushDosRespuestas(t *testing.T) {
 		t.Fatalf("la encuesta debería haber terminado: %+v", st)
 	}
 
-	got := repo.SurveyResults()
+	// survey_results: 2 filas, IDÉNTICAS a Plan 014 (comparación por conjunto).
 	want := []store.SurveyResult{
 		{TenantID: testTenant, ContactID: cid, FlowID: testSurveyFlow, FlowVersion: 1, QuestionID: "q1", AnswerCode: "1"},
 		{TenantID: testTenant, ContactID: cid, FlowID: testSurveyFlow, FlowVersion: 1, QuestionID: "q2", AnswerCode: "2"},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("resultados del flush inesperados:\n got=%+v\nwant=%+v", got, want)
+	if got := repo.SurveyResults(); !sameResultSet(got, want) {
+		t.Fatalf("survey_results inesperados:\n got=%+v\nwant=%+v", got, want)
+	}
+	// flow_events: 2 filas append-only survey_answer, una por respuesta.
+	evs := repo.FlowEvents()
+	if len(evs) != 2 {
+		t.Fatalf("deberían quedar 2 flow_events (uno por respuesta), hubo %d", len(evs))
+	}
+	for _, ev := range evs {
+		if ev.Kind != "persist" || ev.Name != "survey_answer" {
+			t.Fatalf("flow_event inesperado: kind=%q name=%q", ev.Kind, ev.Name)
+		}
 	}
 }
 
-// TestHandleIncoming_Encuesta_FlushIdempotente comprueba que reprocesar el MISMO
-// entrante final (mismo wa_message_id) NO duplica filas: la dedupe por
-// last_wa_message_id corta antes del Step, así que el flush no se re-ejecuta.
-func TestHandleIncoming_Encuesta_FlushIdempotente(t *testing.T) {
+// sameResultSet compara dos slices de SurveyResult como CONJUNTOS (ignora el
+// orden): el sink escribe por-respuesta según llega el entrante, así que el orden
+// de inserción es determinista pero el contrato es el conjunto de filas.
+func sameResultSet(a, b []store.SurveyResult) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	count := map[store.SurveyResult]int{}
+	for _, r := range a {
+		count[r]++
+	}
+	for _, r := range b {
+		count[r]--
+	}
+	for _, c := range count {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// TestHandleIncoming_Encuesta_IdempotenteViaSink comprueba que reprocesar el
+// MISMO entrante final (mismo wa_message_id) NO duplica filas: la dedupe por
+// last_wa_message_id corta antes del Step, así que el módulo no re-declara el
+// efecto y el PersistSink no re-escribe (idempotencia HEREDADA, Plan 015 · T3).
+func TestHandleIncoming_Encuesta_IdempotenteViaSink(t *testing.T) {
 	rt, repo, _, _ := newSurveyRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
@@ -483,23 +541,29 @@ func TestHandleIncoming_Encuesta_FlushIdempotente(t *testing.T) {
 		t.Fatalf("responder P2 (final): %v", err)
 	}
 	if got := repo.SurveyResults(); len(got) != 2 {
-		t.Fatalf("el primer flush debería dejar 2 filas, hubo %d", len(got))
+		t.Fatalf("las 2 respuestas deberían dejar 2 filas, hubo %d", len(got))
+	}
+	if got := repo.FlowEvents(); len(got) != 2 {
+		t.Fatalf("las 2 respuestas deberían dejar 2 flow_events, hubo %d", len(got))
 	}
 
-	// Re-entrega del MISMO entrante final → idempotencia: ni avanza ni re-flusha.
+	// Re-entrega del MISMO entrante final → idempotencia: ni avanza ni re-escribe.
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "2", "wamid.final")); err != nil {
 		t.Fatalf("re-entrega del final: %v", err)
 	}
 	if got := repo.SurveyResults(); len(got) != 2 {
-		t.Fatalf("la re-entrega NO debe duplicar resultados, hubo %d", len(got))
+		t.Fatalf("la re-entrega NO debe duplicar survey_results, hubo %d", len(got))
+	}
+	if got := repo.FlowEvents(); len(got) != 2 {
+		t.Fatalf("la re-entrega NO debe duplicar flow_events, hubo %d", len(got))
 	}
 }
 
 // TestHandleIncoming_MenuPuro_NoEscribeResultados verifica que un flujo sin
-// nodos survey_question llega a Finished con `answers` vacío → el flush es un
-// no-op (nada en survey_results).
+// nodos survey_question no declara efectos → aun con el PersistSink cableado no
+// escribe flow_events ni survey_results (no-regresión T3).
 func TestHandleIncoming_MenuPuro_NoEscribeResultados(t *testing.T) {
-	rt, repo, _, _ := newRuntime(t)
+	rt, repo, _, _ := newMenuRuntimePersist(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -509,7 +573,10 @@ func TestHandleIncoming_MenuPuro_NoEscribeResultados(t *testing.T) {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
 	if got := repo.SurveyResults(); len(got) != 0 {
-		t.Fatalf("un menú puro no debe escribir resultados, hubo %d: %+v", len(got), got)
+		t.Fatalf("un menú puro no debe escribir survey_results, hubo %d: %+v", len(got), got)
+	}
+	if got := repo.FlowEvents(); len(got) != 0 {
+		t.Fatalf("un menú puro no debe escribir flow_events, hubo %d: %+v", len(got), got)
 	}
 }
 

@@ -9,13 +9,13 @@ import (
 
 // PersistSink es la implementación de EventSink que MATERIALIZA cada efecto en el
 // outbox append-only flow_events y, para el efecto de negocio "survey_answer",
-// PROYECTA la misma fila a survey_results (Plan 015 · T2). survey_results se
+// PROYECTA la misma fila a survey_results (Plan 015 · T2/T3). survey_results se
 // conserva como proyección para el GROUP BY answer_code (Plan 014 §10.D); es la
-// MISMA fila que hoy produce extractAnswers por la vía del flush.
+// MISMA fila que producía el flush del Plan 014, ahora materializada por-respuesta.
 //
-// En T2 este sink se codea y unit-testea pero NO se cablea en main (el default es
-// LogSink): su ejercicio real por el módulo survey llega en T3 (cuando survey
-// emita el Effect y se retire el flush viejo), para no duplicar filas.
+// Desde T3 este sink es la ÚNICA vía de survey_results: el módulo survey declara
+// un Effect{persist,survey_answer} por respuesta válida y main cablea este sink
+// (WithEventSink), retirado ya el flush viejo (sin doble escritura).
 type PersistSink struct {
 	repo store.Repository
 }

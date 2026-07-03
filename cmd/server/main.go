@@ -145,7 +145,11 @@ func run() error {
 	}
 	contactCipher := crypto.NewFieldCipher(contactKP)
 	contactResolver := contact.NewPostgresResolver(db, contactCipher, contactKP)
-	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log)
+	// Fan-out de efectos EN PROCESO (ADR-0003, sin broker): el PersistSink
+	// materializa cada Effect en flow_events y proyecta survey_answer →
+	// survey_results (Plan 015 · T3, releva al flush viejo del Plan 014).
+	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log,
+		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y

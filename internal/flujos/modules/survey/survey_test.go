@@ -82,6 +82,23 @@ func TestStepValidRegistersAnswerAndTransitions(t *testing.T) {
 	if answers["q1"] != "1" {
 		t.Fatalf("la respuesta previa q1 no debe pisarse; got=%q", answers["q1"])
 	}
+
+	// La rama válida DECLARA exactamente 1 Effect{persist,survey_answer} con la
+	// pregunta y el answer_code correctos (Plan 015 · T3). El módulo es PURO: solo
+	// lo anota; no persiste.
+	if len(res.Effects) != 1 {
+		t.Fatalf("la opción válida debe declarar 1 efecto; got=%d (%+v)", len(res.Effects), res.Effects)
+	}
+	eff := res.Effects[0]
+	if eff.Kind != "persist" || eff.Name != "survey_answer" {
+		t.Fatalf("efecto inesperado: kind=%q name=%q", eff.Kind, eff.Name)
+	}
+	if qid, ok := eff.Payload["question_id"].(string); !ok || qid != "q2" {
+		t.Fatalf("question_id del efecto = %v, quiero q2", eff.Payload["question_id"])
+	}
+	if code, ok := eff.Payload["answer_code"].(string); !ok || code != "2" {
+		t.Fatalf("answer_code del efecto = %v, quiero 2 (la clave elegida)", eff.Payload["answer_code"])
+	}
 }
 
 func TestStepValidDoesNotMutateInput(t *testing.T) {
@@ -112,6 +129,9 @@ func TestStepInvalidReprompt(t *testing.T) {
 	if _, ok := res.Vars["answers"]; ok {
 		t.Fatalf("una opción inválida no debe registrar respuesta")
 	}
+	if len(res.Effects) != 0 {
+		t.Fatalf("la rama de reprompt NO debe declarar efectos; got=%+v", res.Effects)
+	}
 	if len(res.Outputs) != 1 || !strings.Contains(res.Outputs[0], "¿Qué tal?") {
 		t.Fatalf("reprompt debe reincluir el prompt; got=%q", res.Outputs)
 	}
@@ -126,6 +146,9 @@ func TestStepInvalidExhaustsStays(t *testing.T) {
 	}
 	if _, ok := res.Vars[survey.RepromptKey]; ok {
 		t.Fatalf("tras la ayuda el contador debe reiniciarse")
+	}
+	if len(res.Effects) != 0 {
+		t.Fatalf("la rama de ayuda (intentos agotados) NO debe declarar efectos; got=%+v", res.Effects)
 	}
 	if len(res.Outputs) != 1 || !strings.Contains(res.Outputs[0], "elige una de las opciones") {
 		t.Fatalf("esperaba mensaje de ayuda; got=%q", res.Outputs)
