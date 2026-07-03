@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestDatabaseConfig_DSN(t *testing.T) {
 	db := DatabaseConfig{
@@ -69,5 +72,59 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if !cfg.LogJSON {
 		t.Errorf("LogJSON: got false, want true")
+	}
+}
+
+func TestLoad_StorageDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+
+	want := StorageConfig{
+		Region:        "us-east-1",
+		Bucket:        "edugo-materials",
+		PresignExpiry: 15 * time.Minute,
+	}
+	if cfg.Storage != want {
+		t.Fatalf("Storage defaults: got %+v, want %+v", cfg.Storage, want)
+	}
+}
+
+func TestLoad_StorageEnvOverrides(t *testing.T) {
+	t.Setenv(EnvPrefix+"STORAGE_S3_REGION", "auto")
+	t.Setenv(EnvPrefix+"STORAGE_S3_BUCKET", "wapp-media")
+	t.Setenv(EnvPrefix+"STORAGE_S3_ACCESS_KEY_ID", "AKIA")
+	t.Setenv(EnvPrefix+"STORAGE_S3_SECRET_ACCESS_KEY", "s3cr3t")
+	t.Setenv(EnvPrefix+"STORAGE_S3_ENDPOINT", "https://acc.r2.cloudflarestorage.com")
+	t.Setenv(EnvPrefix+"STORAGE_S3_PRESIGN_EXPIRY", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+
+	want := StorageConfig{
+		Region:          "auto",
+		Bucket:          "wapp-media",
+		AccessKeyID:     "AKIA",
+		SecretAccessKey: "s3cr3t",
+		Endpoint:        "https://acc.r2.cloudflarestorage.com",
+		PresignExpiry:   30 * time.Minute,
+	}
+	if cfg.Storage != want {
+		t.Fatalf("Storage overrides: got %+v, want %+v", cfg.Storage, want)
+	}
+}
+
+func TestLoad_StoragePresignExpiryInvalidFallsBack(t *testing.T) {
+	t.Setenv(EnvPrefix+"STORAGE_S3_PRESIGN_EXPIRY", "no-es-duracion")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+	if cfg.Storage.PresignExpiry != 15*time.Minute {
+		t.Fatalf("PresignExpiry inválido debería caer al default 15m, got %v", cfg.Storage.PresignExpiry)
 	}
 }

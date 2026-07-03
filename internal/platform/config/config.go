@@ -11,6 +11,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	sharedconfig "github.com/EduGoGroup/wapp-shared/config"
 )
@@ -54,6 +55,34 @@ type AppConfig struct {
 	// ADR-0017): la KEK maestra y la indexKey del índice ciego. Se expone aquí;
 	// el cableado a los repos/main entra en tramos posteriores (T1/T3).
 	Crypto CryptoConfig `yaml:"crypto"`
+	// Storage es la configuración del almacén de objetos Cloudflare R2 (Plan 017):
+	// credenciales, endpoint y vigencia de las URLs prefirmadas. La consume el
+	// main al construir el objectstore.PresignClient (cableado en tramos
+	// posteriores). Se lee con prefijo WAPP_STORAGE_S3_.
+	Storage StorageConfig `yaml:"storage"`
+}
+
+// StorageConfig agrupa los parámetros del almacén de objetos Cloudflare R2
+// (S3-compatible; NO AWS) del Plan 017. R2 se apunta por Endpoint (BaseEndpoint
+// del SDK) y comparte cuenta/bucket con EduGo en alpha (bucket edugo-materials,
+// prefijo wapp/ en las keys). Las credenciales (AccessKeyID/SecretAccessKey) y
+// el Endpoint NO tienen default: van en el .env NO versionado. Se leen con
+// prefijo WAPP_STORAGE_S3_ (p. ej. WAPP_STORAGE_S3_BUCKET).
+type StorageConfig struct {
+	// Region es la región del SDK. R2 la ignora, pero aws-sdk-go-v2 la exige.
+	Region string `yaml:"region"`
+	// Bucket es el bucket de R2 (alpha: edugo-materials, compartido con EduGo).
+	Bucket string `yaml:"bucket"`
+	// AccessKeyID es la Access Key ID del token R2 (sin default; va en .env).
+	AccessKeyID string `yaml:"access_key_id"`
+	// SecretAccessKey es la Secret Access Key del token R2 (sin default; .env).
+	SecretAccessKey string `yaml:"secret_access_key"`
+	// Endpoint es el endpoint S3 de R2 (https://<accountid>.r2.cloudflarestorage.com;
+	// sin default, va en .env).
+	Endpoint string `yaml:"endpoint"`
+	// PresignExpiry es la vigencia de las URLs prefirmadas (default 15m). Se lee
+	// como cadena time.Duration de WAPP_STORAGE_S3_PRESIGN_EXPIRY.
+	PresignExpiry time.Duration `yaml:"presign_expiry"`
 }
 
 // CryptoConfig agrupa el material de clave del cifrado de PII en reposo (Plan
@@ -175,6 +204,11 @@ func defaults() AppConfig {
 			CACertFile:     "certs/ca.crt",
 			CAKeyFile:      "certs/ca.key",
 		},
+		Storage: StorageConfig{
+			Region:        "us-east-1",
+			Bucket:        "edugo-materials",
+			PresignExpiry: 15 * time.Minute,
+		},
 	}
 }
 
@@ -226,5 +260,27 @@ func Load() (AppConfig, error) {
 	cfg.Crypto.KEKIndexB64 = loader.GetString("KEK_INDEX_B64", cfg.Crypto.KEKIndexB64)
 	cfg.Crypto.CloudEncPrivKeyB64 = loader.GetString("CLOUD_ENC_PRIVKEY_B64", cfg.Crypto.CloudEncPrivKeyB64)
 
+	cfg.Storage.Region = loader.GetString("STORAGE_S3_REGION", cfg.Storage.Region)
+	cfg.Storage.Bucket = loader.GetString("STORAGE_S3_BUCKET", cfg.Storage.Bucket)
+	cfg.Storage.AccessKeyID = loader.GetString("STORAGE_S3_ACCESS_KEY_ID", cfg.Storage.AccessKeyID)
+	cfg.Storage.SecretAccessKey = loader.GetString("STORAGE_S3_SECRET_ACCESS_KEY", cfg.Storage.SecretAccessKey)
+	cfg.Storage.Endpoint = loader.GetString("STORAGE_S3_ENDPOINT", cfg.Storage.Endpoint)
+	cfg.Storage.PresignExpiry = getDuration(loader, "STORAGE_S3_PRESIGN_EXPIRY", cfg.Storage.PresignExpiry)
+
 	return cfg, nil
+}
+
+// getDuration lee una clave como cadena time.Duration (p. ej. "15m", "30s") y la
+// parsea. El loader de wapp-shared solo expone GetString/GetInt/GetBool (no un
+// GetDuration), así que se parsea aquí: vacío o inválido cae al default def.
+func getDuration(loader *sharedconfig.Loader, key string, def time.Duration) time.Duration {
+	raw := loader.GetString(key, "")
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return def
+	}
+	return d
 }
