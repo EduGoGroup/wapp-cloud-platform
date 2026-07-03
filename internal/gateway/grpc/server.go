@@ -494,6 +494,65 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 	}
 }
 
+// SendMedia empuja un comando SendMedia (adjunto por URL prefirmada) hacia la
+// sesión y espera su Ack, correlacionado por command_id — idéntico patrón a
+// SendText, así el acuse delivered/read del Plan 013 funciona sin cambios. El
+// binario NO viaja por gRPC: va la presignedURL (design.md §6.1) que el Edge
+// descarga (GET sin credenciales) y sube a WhatsApp. kind ("document"|"image")
+// elige la rama DocumentMessage/ImageMessage vía mapKind.
+func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, filename, mime, caption, kind string) (*cloudlinkv1.Ack, error) {
+	cmdID, err := newCommandID()
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *cloudlinkv1.Ack, 1)
+	s.acksMu.Lock()
+	s.acks[cmdID] = ch
+	s.acksMu.Unlock()
+	defer s.clearAck(cmdID)
+
+	msg := &cloudlinkv1.CloudToEdge{
+		CommandId: cmdID,
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.CloudToEdge_SendMedia{
+			SendMedia: &cloudlinkv1.SendMedia{
+				To:       to,
+				Caption:  caption,
+				Mime:     mime,
+				Filename: filename,
+				Kind:     mapKind(kind),
+				Src:      &cloudlinkv1.SendMedia_PresignedUrl{PresignedUrl: presignedURL},
+			},
+		},
+	}
+	if pushErr := s.registry.Push(sessionID, msg); pushErr != nil {
+		return nil, pushErr
+	}
+
+	select {
+	case ack := <-ch:
+		return ack, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("esperando ack de %q: %w", cmdID, ctx.Err())
+	}
+}
+
+// mapKind traduce el kind del descriptor (MediaRef.Kind) al enum MediaKind del
+// proto. Un kind desconocido cae a UNSPECIFIED (el Edge decide el fallback);
+// "document" e "image" son los soportados en 017. Se usan literales (no el paquete
+// media) para no acoplar el Gateway al módulo del Motor.
+func mapKind(kind string) cloudlinkv1.MediaKind {
+	switch kind {
+	case "document":
+		return cloudlinkv1.MediaKind_MEDIA_KIND_DOCUMENT
+	case "image":
+		return cloudlinkv1.MediaKind_MEDIA_KIND_IMAGE
+	default:
+		return cloudlinkv1.MediaKind_MEDIA_KIND_UNSPECIFIED
+	}
+}
+
 // Ping empuja un comando Ping hacia la sesión dada. No espera el Pong (mínimo
 // del corte): el Pong recibido se registra en nivel debug.
 func (s *Server) Ping(_ context.Context, sessionID string, nonce int64) error {

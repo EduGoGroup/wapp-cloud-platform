@@ -58,6 +58,12 @@ type Runtime struct {
 	// un módulo declara al avanzar (Plan 015 · T2). New lo deja en LogSink por
 	// defecto si no se inyecta otro con WithEventSink.
 	sinks []EventSink
+	// presigner genera la URL prefirmada de descarga de un adjunto cuando una
+	// salida trae Media (nodo media, Plan 017 §4.2). nil si no se cablea
+	// WithPresignClient (entornos sin media): un output de media con presigner nil
+	// devuelve error CONTROLADO en send (no pánico), coherente con el orden
+	// Save-antes-de-Send (el estado ya quedó persistido).
+	presigner Presigner
 }
 
 // Option configura el Runtime al construirlo (patrón funcional-options, igual que
@@ -68,6 +74,13 @@ type Option func(*Runtime)
 // T2). Se puede pasar varias veces (se acumulan).
 func WithEventSink(sink EventSink) Option {
 	return func(rt *Runtime) { rt.sinks = append(rt.sinks, sink) }
+}
+
+// WithPresignClient inyecta el Presigner que el runtime usa para firmar la key de
+// un adjunto antes de despacharlo por Sender.SendMedia (Plan 017 · T4). Sin él, un
+// nodo media produce un error controlado en el envío (no un pánico).
+func WithPresignClient(p Presigner) Option {
+	return func(rt *Runtime) { rt.presigner = p }
 }
 
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de
@@ -454,11 +467,23 @@ func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) 
 	}()
 }
 
-// send empuja cada salida por el Sender en orden y devuelve el último Ack. Ante
-// el primer error de envío corta y lo devuelve (con el último Ack logrado).
+// send empuja cada salida por el Sender en orden y devuelve el último Ack. Una
+// salida con Media (nodo media, Plan 017 §4.2) se PRESIGNA y despacha por
+// SendMedia; el resto por SendText. Ante el primer error corta y lo devuelve
+// (con el último Ack logrado). El estado ya se persistió antes de llamar a send
+// (orden Save-antes-de-Send), así que un fallo aquí NO corrompe el estado: se
+// devuelve para que el llamante lo LOGUEE (OnIncoming) o lo surface (Start).
 func (rt *Runtime) send(ctx context.Context, sessionID, to string, outs []engine.Output) (*cloudlinkv1.Ack, error) {
 	var last *cloudlinkv1.Ack
 	for _, out := range outs {
+		if out.Media != nil {
+			ack, err := rt.sendMedia(ctx, sessionID, to, out.Media)
+			if err != nil {
+				return last, err
+			}
+			last = ack
+			continue
+		}
 		ack, err := rt.sender.SendText(ctx, sessionID, to, out.Text)
 		if err != nil {
 			return last, fmt.Errorf("runtime: enviar texto: %w", err)
@@ -466,4 +491,24 @@ func (rt *Runtime) send(ctx context.Context, sessionID, to string, outs []engine
 		last = ack
 	}
 	return last, nil
+}
+
+// sendMedia presigna la key del adjunto y lo despacha por Sender.SendMedia (Plan
+// 017 §4.2/§9.C): el runtime presigna, el módulo no. Exige un Presigner cableado
+// (WithPresignClient); su ausencia es un error de configuración explícito (un nodo
+// media sin almacén), no un pánico. La URL prefirmada es un capability token de
+// corta vida; el binario nunca viaja por la nube ni por gRPC (zero-knowledge).
+func (rt *Runtime) sendMedia(ctx context.Context, sessionID, to string, ref *model.MediaRef) (*cloudlinkv1.Ack, error) {
+	if rt.presigner == nil {
+		return nil, fmt.Errorf("runtime: nodo media sin PresignClient configurado (usa WithPresignClient)")
+	}
+	url, _, err := rt.presigner.GenerateDownloadURL(ctx, ref.Key)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: presignar media %q: %w", ref.Key, err)
+	}
+	ack, err := rt.sender.SendMedia(ctx, sessionID, to, url, ref.Filename, ref.Mime, ref.Caption, ref.Kind)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: enviar media %q: %w", ref.Key, err)
+	}
+	return ack, nil
 }

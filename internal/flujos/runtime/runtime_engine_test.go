@@ -34,11 +34,15 @@ const (
 
 type sentText struct{ sessionID, to, text string }
 
+type sentMedia struct{ sessionID, to, url, filename, mime, caption, kind string }
+
 type fakeSender struct {
-	mu   sync.Mutex
-	sent []sentText
-	err  error
-	n    int
+	mu       sync.Mutex
+	sent     []sentText
+	media    []sentMedia
+	err      error
+	mediaErr error
+	n        int
 }
 
 func (f *fakeSender) SendText(_ context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
@@ -50,6 +54,25 @@ func (f *fakeSender) SendText(_ context.Context, sessionID, to, text string) (*c
 	f.n++
 	f.sent = append(f.sent, sentText{sessionID, to, text})
 	return &cloudlinkv1.Ack{AckedCommandId: fmt.Sprintf("cmd-%d", f.n), Ok: true}, nil
+}
+
+func (f *fakeSender) SendMedia(_ context.Context, sessionID, to, url, filename, mime, caption, kind string) (*cloudlinkv1.Ack, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mediaErr != nil {
+		return nil, f.mediaErr
+	}
+	f.n++
+	f.media = append(f.media, sentMedia{sessionID, to, url, filename, mime, caption, kind})
+	return &cloudlinkv1.Ack{AckedCommandId: fmt.Sprintf("cmd-%d", f.n), Ok: true}, nil
+}
+
+func (f *fakeSender) mediaSent() []sentMedia {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]sentMedia, len(f.media))
+	copy(out, f.media)
+	return out
 }
 
 func (f *fakeSender) count() int {

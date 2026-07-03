@@ -56,6 +56,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
@@ -138,21 +139,13 @@ func run() error {
 	flowEngine := engine.New(flowReg, engine.WithContentSource(
 		content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))))
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
-	// KeyProvider + FieldCipher del cifrado de PII en reposo (Plan 011, ADR-0017):
-	// la KEK maestra vive en env/secret store (§10.A), separada del dato. Fail-fast
-	// si falta, igual que la clave del lease.
-	contactKP, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
-		KeyringB64: cfg.Crypto.KEKKeyring,
-		CurrentID:  cfg.Crypto.KEKCurrent,
-		MasterB64:  cfg.Crypto.KEKMasterB64,
-		IndexB64:   cfg.Crypto.KEKIndexB64,
-		Prod:       cfg.Env == "prod",
-	})
+	// Dependencias del Motor que se construyen con fail-fast: el resolver de
+	// contactos (cifrado de PII, Plan 011) y el almacén de objetos R2 (Plan 017).
+	// Se agrupan para no cargar el arranque con dos ramas de error separadas.
+	flowDeps, err := buildFlowRuntimeDeps(ctx, cfg, db)
 	if err != nil {
-		return fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
+		return err
 	}
-	contactCipher := crypto.NewFieldCipher(contactKP)
-	contactResolver := contact.NewPostgresResolver(db, contactCipher, contactKP)
 	// Fan-out de efectos EN PROCESO (ADR-0003, sin broker): el PersistSink
 	// materializa cada Effect en flow_events y proyecta survey_answer →
 	// survey_results (Plan 015 · T3, releva al flush viejo del Plan 014) y el
@@ -170,8 +163,9 @@ func run() error {
 	//
 	// (registrar hoy el stub no-op no alteraría el comportamiento observable, pero
 	// se deja fuera para no introducir ruido de logs en el camino feliz).
-	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, contactResolver, log,
-		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)))
+	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
+		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)),
+		flowruntime.WithPresignClient(flowDeps.presign))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y
@@ -211,7 +205,7 @@ func run() error {
 	// idempotente. El cierre cablea db+cipher+kp del scope a crypto.Rekey.
 	mux.Handle("/admin/crypto/rekey", httpapi.CryptoRekeyHandler(
 		func(ctx context.Context, batch int) (crypto.Report, error) {
-			return crypto.Rekey(ctx, db, contactCipher, contactKP, batch)
+			return crypto.Rekey(ctx, db, flowDeps.cipher, flowDeps.kp, batch)
 		},
 	))
 	// flowReg aporta a la validación del alta los tipos de nodo de los módulos
@@ -388,6 +382,59 @@ func buildCloudEncKeypair(cfg config.AppConfig, log sharedlogger.Logger) (pub, p
 	)
 	log.Warn("clave de cifrado de la nube EFÍMERA de dev: cambia en cada arranque (no apta para producción)")
 	return pub, priv, nil
+}
+
+// flowRuntimeDeps agrupa las dependencias del Motor de Flujos que se construyen
+// con fail-fast a partir de secretos de config: el stack de cifrado de PII (Plan
+// 011) y el almacén de objetos R2 (Plan 017). Se devuelven juntas para que el
+// arranque tenga UNA sola rama de error (cualquier fallo aborta el proceso).
+type flowRuntimeDeps struct {
+	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII).
+	contacts contact.Resolver
+	// cipher y kp son el stack de cifrado de PII (Plan 011); el runtime los usa vía
+	// el resolver, y el endpoint admin /admin/crypto/rekey los necesita en crudo
+	// para la rotación de KEK (Plan 012).
+	cipher *crypto.FieldCipher
+	kp     crypto.KeyProvider
+	// presign firma la key de un adjunto al despachar un nodo media (Plan 017).
+	presign objectstore.PresignClient
+}
+
+// buildFlowRuntimeDeps construye, con fail-fast, las dependencias anteriores: el
+// KeyProvider de PII (ADR-0017: la KEK maestra vive en env/secret store, separada
+// del dato) y el PresignClient de Cloudflare R2 (§3/§8: valida el bucket con
+// HeadBucket; sin bucket/credenciales el proceso no levanta). Mismo R2 en dev y
+// prod (sin MinIO local); credenciales por WAPP_STORAGE_S3_* (.env, no versionado).
+func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB) (flowRuntimeDeps, error) {
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: cfg.Crypto.KEKKeyring,
+		CurrentID:  cfg.Crypto.KEKCurrent,
+		MasterB64:  cfg.Crypto.KEKMasterB64,
+		IndexB64:   cfg.Crypto.KEKIndexB64,
+		Prod:       cfg.Env == "prod",
+	})
+	if err != nil {
+		return flowRuntimeDeps{}, fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
+	}
+	cipher := crypto.NewFieldCipher(kp)
+
+	presignClient, err := objectstore.NewR2PresignClient(ctx, objectstore.R2Config{
+		Region:          cfg.Storage.Region,
+		Bucket:          cfg.Storage.Bucket,
+		AccessKeyID:     cfg.Storage.AccessKeyID,
+		SecretAccessKey: cfg.Storage.SecretAccessKey,
+		Endpoint:        cfg.Storage.Endpoint,
+		PresignExpiry:   cfg.Storage.PresignExpiry,
+	})
+	if err != nil {
+		return flowRuntimeDeps{}, fmt.Errorf("construyendo PresignClient R2 (Plan 017): %w", err)
+	}
+	return flowRuntimeDeps{
+		contacts: contact.NewPostgresResolver(db, cipher, kp),
+		cipher:   cipher,
+		kp:       kp,
+		presign:  presignClient,
+	}, nil
 }
 
 // setupDatabase abre la conexión a PostgreSQL y corre las migraciones de
