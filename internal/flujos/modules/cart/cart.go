@@ -87,9 +87,14 @@ func (m Module) Render(_ model.Node, content model.Content) []string {
 
 // Step procesa la entrada del usuario sobre el nodo carrito: carga el catálogo
 // (snapshot en Vars) y el cartState, aplica la transición de la sub-máquina
-// (advance) y guarda el nuevo estado en Vars. El carrito permanece en el mismo
-// nodo (Next==nil) durante toda la navegación; devuelve la pantalla del nuevo
-// nivel en Outputs. En T1 no declara efectos (Result.Effects vacío).
+// (advance), guarda el nuevo estado en Vars y DECLARA los efectos de negocio
+// (design.md §3.3). El carrito permanece en el mismo nodo (Next==nil) durante
+// toda la navegación; devuelve la pantalla del nuevo nivel en Outputs.
+//
+// cart_started se emite EXACTAMENTE UNA vez, en el primer Step (flag Started): la
+// pureza del módulo y el contrato de efectos impiden emitirlo en el Enter/Render
+// (Render no declara Effects). Es lo más cercano a "al arranque" (design.md §3.3)
+// sin tocar el contrato del engine.
 func (m Module) Step(_ model.Node, conv model.Conversation, input string) modules.Result {
 	vars := cloneVars(conv.Vars)
 	cat, err := loadCatalog(vars)
@@ -97,15 +102,22 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 		return modules.Result{Vars: vars, Outputs: []string{catalogUnavailable}}
 	}
 	st := loadState(vars)
-	newSt, outs := advance(cat, st, input, m.pageSize)
+	var effects []modules.Effect
+	if !st.Started {
+		st.Started = true
+		effects = append(effects, event(EffectCartStarted, map[string]any{}))
+	}
+	newSt, outs, stepEffects := advance(cat, st, input, m.pageSize)
+	effects = append(effects, stepEffects...)
 	storeState(vars, newSt)
-	return modules.Result{Vars: vars, Outputs: outs}
+	return modules.Result{Vars: vars, Outputs: outs, Effects: effects}
 }
 
 // advance es el CORAZÓN PURO de la sub-máquina: dada la topología fija, el
-// estado actual y la entrada, produce el nuevo estado y la pantalla a emitir
-// (design.md §4.2). No toca Vars ni BD; el Module la envuelve.
-func advance(cat Catalog, st cartState, input string, size int) (cartState, []string) {
+// estado actual y la entrada, produce el nuevo estado, la pantalla a emitir y los
+// efectos declarados por la transición (design.md §4.2). No toca Vars ni BD; el
+// Module la envuelve.
+func advance(cat Catalog, st cartState, input string, size int) (cartState, []string, []modules.Effect) {
 	in := strings.TrimSpace(input)
 	switch st.Level {
 	case LevelCategories:
@@ -122,142 +134,166 @@ func advance(cat Catalog, st cartState, input string, size int) (cartState, []st
 		return stepSummary(cat, st, in, size)
 	case LevelClosed, LevelCancelled:
 		// Terminal: la entrada se ignora, se re-muestra la pantalla final.
-		return st, []string{terminalScreen(st)}
+		return st, []string{terminalScreen(st)}, nil
 	default:
-		// Estado inconsistente: reencauzar a la raíz.
-		st = cartState{Level: LevelCategories, Lines: st.Lines, OrderID: st.OrderID}
-		return st, []string{screenCategories(cat, st, size)}
+		// Estado inconsistente: reencauzar a la raíz (preservando Started).
+		st = cartState{Level: LevelCategories, Lines: st.Lines, OrderID: st.OrderID, Started: st.Started}
+		return st, []string{screenCategories(cat, st, size)}, nil
 	}
 }
 
 // --- L1 · Categorías -------------------------------------------------------
 
-func stepCategories(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepCategories(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	codes := categoryCodes(cat)
 	if in == moreCode(codes) && hasMore(len(cat.Categories), st.Page, size) {
 		st.Page++
-		return st, []string{screenCategories(cat, st, size)}
+		return st, []string{screenCategories(cat, st, size)}, nil
 	}
 	if c, ok := findCategory(cat, in); ok {
 		st.Level = LevelArticles
 		st.CatCode = c.Code
 		st.Page = 0
-		return st, []string{screenArticles(c, st, size)}
+		eff := event(EffectCategorySelected, map[string]any{"category_code": c.Code})
+		return st, []string{screenArticles(c, st, size)}, []modules.Effect{eff}
 	}
-	return reprompt(st, screenCategories(cat, st, size))
+	st, outs := reprompt(st, screenCategories(cat, st, size))
+	return st, outs, nil
 }
 
 // --- L2 · Artículos de la categoría ---------------------------------------
 
-func stepArticles(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepArticles(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	category, ok := findCategory(cat, st.CatCode)
 	if !ok {
-		return toCategories(cat, st, size)
+		st, outs := toCategories(cat, st, size)
+		return st, outs, nil
 	}
 	if in == codeVolver {
-		return toCategories(cat, st, size)
+		st, outs := toCategories(cat, st, size)
+		return st, outs, nil
 	}
 	codes := articleCodes(category)
 	if in == moreCode(codes) && hasMore(len(category.Items), st.Page, size) {
 		st.Page++
-		return st, []string{screenArticles(category, st, size)}
+		return st, []string{screenArticles(category, st, size)}, nil
 	}
 	if a, ok := findArticle(category, in); ok {
 		st.Level = LevelArticle
 		st.SKU = a.SKU
 		st.Page = 0
-		return st, []string{screenArticle(a, false)}
+		return st, []string{screenArticle(a, false)}, nil
 	}
-	return reprompt(st, screenArticles(category, st, size))
+	st, outs := reprompt(st, screenArticles(category, st, size))
+	return st, outs, nil
 }
 
 // --- L3 · Menú del artículo ------------------------------------------------
 
-func stepArticle(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepArticle(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	category, a, ok := locate(cat, st.CatCode, st.SKU)
 	if !ok {
-		return toArticles(cat, st, size)
+		st, outs := toArticles(cat, st, size)
+		return st, outs, nil
 	}
 	switch in {
-	case "1": // Ver descripción → item_viewed (efecto en T2); re-muestra L3 con desc.
-		return st, []string{screenArticle(a, true)}
+	case "1": // Ver descripción → item_viewed{sku}; re-muestra L3 con la descripción.
+		eff := event(EffectItemViewed, map[string]any{"sku": a.SKU})
+		return st, []string{screenArticle(a, true)}, []modules.Effect{eff}
 	case "2": // Agregar al pedido → L4 cantidad.
 		st.Level = LevelQuantity
-		return st, []string{screenQuantity(a)}
+		return st, []string{screenQuantity(a)}, nil
 	case codeVolver:
-		return toArticlesOf(category, st, size)
+		st, outs := toArticlesOf(category, st, size)
+		return st, outs, nil
 	default:
-		return reprompt(st, screenArticle(a, false))
+		st, outs := reprompt(st, screenArticle(a, false))
+		return st, outs, nil
 	}
 }
 
 // --- L4 · Cantidad ---------------------------------------------------------
 
-func stepQuantity(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepQuantity(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	category, a, ok := locate(cat, st.CatCode, st.SKU)
 	if !ok {
-		return toArticles(cat, st, size)
+		st, outs := toArticles(cat, st, size)
+		return st, outs, nil
 	}
 	if in == codeVolver {
 		st.Level = LevelArticle
-		return st, []string{screenArticle(a, false)}
+		return st, []string{screenArticle(a, false)}, nil
 	}
 	qty, err := strconv.Atoi(in)
 	if err != nil || qty < 1 {
 		// Entrada no numérica o < 1 → reprompt del MISMO paso (design.md §9.D).
-		return st, []string{"Escribe una cantidad válida (un número mayor o igual a 1).\n\n" + screenQuantity(a)}
+		return st, []string{"Escribe una cantidad válida (un número mayor o igual a 1).\n\n" + screenQuantity(a)}, nil
 	}
-	// item_added (efecto en T2): agrega la línea y pasa a L5 continuar.
+	// item_added: agrega la línea y pasa a L5 continuar. El runtime, al recibir
+	// este efecto, ASEGURA una orden "open" por (tenant, contact) (design.md §3.4).
 	st.Lines = append(cloneLines(st.Lines), cartLine{SKU: a.SKU, Label: a.Label, Qty: qty, UnitPrice: a.Price})
 	st.Level = LevelContinue
-	return st, []string{screenContinue(category)}
+	eff := event(EffectItemAdded, map[string]any{
+		"sku":        a.SKU,
+		"label":      a.Label,
+		"qty":        qty,
+		"unit_price": a.Price,
+	})
+	return st, []string{screenContinue(category)}, []modules.Effect{eff}
 }
 
 // --- L5 · Continuar --------------------------------------------------------
 
-func stepContinue(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepContinue(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	category, hasCat := findCategory(cat, st.CatCode)
 	switch in {
 	case "1": // Agregar más de la MISMA categoría → L2 (CatCode intacto, design.md §9.C).
 		if !hasCat {
-			return toCategories(cat, st, size)
+			st, outs := toCategories(cat, st, size)
+			return st, outs, nil
 		}
-		return toArticlesOf(category, st, size)
+		st, outs := toArticlesOf(category, st, size)
+		return st, outs, nil
 	case "2": // Finalizar → L6 resumen.
 		st.Level = LevelSummary
-		return st, []string{screenSummary(st.Lines)}
-	case codeCancelar: // Cancelar pedido completo (design.md §1.2).
+		return st, []string{screenSummary(st.Lines)}, nil
+	case codeCancelar: // Cancelar pedido completo (design.md §1.2) → cart_cancelled.
 		st.Level = LevelCancelled
-		return st, []string{screenCancelled()}
+		return st, []string{screenCancelled()}, []modules.Effect{event(EffectCartCancelled, map[string]any{})}
 	case codeVolver: // Volver al artículo en foco (L3).
 		if _, a, ok := locate(cat, st.CatCode, st.SKU); ok {
 			st.Level = LevelArticle
-			return st, []string{screenArticle(a, false)}
+			return st, []string{screenArticle(a, false)}, nil
 		}
-		return toArticles(cat, st, size)
+		st, outs := toArticles(cat, st, size)
+		return st, outs, nil
 	default:
 		category = mustCategory(category, hasCat)
-		return reprompt(st, screenContinue(category))
+		st, outs := reprompt(st, screenContinue(category))
+		return st, outs, nil
 	}
 }
 
 // --- L6 · Resumen y confirmar ---------------------------------------------
 
-func stepSummary(cat Catalog, st cartState, in string, size int) (cartState, []string) {
+func stepSummary(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	switch in {
-	case "1": // Confirmar → cierra (T1: solo estado/pantalla; efecto+persistencia en T2).
+	case "1": // Confirmar → cierra: cart_closed (persist) proyecta orders/order_items.
 		st.Level = LevelClosed
-		return st, []string{screenClosed(total(st.Lines))}
+		return st, []string{screenClosed(total(st.Lines))}, []modules.Effect{closedEffect(st.Lines)}
 	case "2": // Seguir agregando → L2 misma categoría, o L1 si no hay categoría en foco.
 		if category, ok := findCategory(cat, st.CatCode); ok {
-			return toArticlesOf(category, st, size)
+			st, outs := toArticlesOf(category, st, size)
+			return st, outs, nil
 		}
-		return toCategories(cat, st, size)
+		st, outs := toCategories(cat, st, size)
+		return st, outs, nil
 	case codeCancelar:
 		st.Level = LevelCancelled
-		return st, []string{screenCancelled()}
+		return st, []string{screenCancelled()}, []modules.Effect{event(EffectCartCancelled, map[string]any{})}
 	default:
-		return reprompt(st, screenSummary(st.Lines))
+		st, outs := reprompt(st, screenSummary(st.Lines))
+		return st, outs, nil
 	}
 }
 

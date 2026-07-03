@@ -193,7 +193,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// last_wa_message_id (reprocesar el mismo entrante corta antes del Step). Un
 	// fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
 	// sinks/efectos.
-	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
 	for _, eff := range effects {
 		for _, sink := range rt.sinks {
 			if err := sink.Handle(ctx, ec, eff); err != nil {

@@ -34,6 +34,15 @@ type Result struct {
 	Effects []Effect
 }
 
+// VarContentRaw es la clave de Conversation.Vars bajo la que el engine EXPONE el
+// blob crudo (model.Content.Raw) del contenido resuelto de un nodo ANTES de
+// llamar a Step, para que un módulo cuya sub-máquina navega en Step —que NO
+// recibe el content resuelto, a diferencia de Render— pueda leer datos de dominio
+// sin hacer I/O (Plan 016 · T2, design.md §4.1). Solo se siembra si
+// Content.Raw != nil: menú/encuesta usan contenido static (Raw nil) y NO la ven
+// (sin regresión). Es una clave del contrato engine↔módulos, no del dominio cart.
+const VarContentRaw = "cart_catalog"
+
 // Effect es un efecto de lado DECLARADO por un módulo para que lo despache el
 // runtime (Plan 015). Kind clasifica el efecto (p. ej. "persist", "emit"), Name
 // lo nombra dentro de su clase (p. ej. "survey_answer") y Payload lleva los

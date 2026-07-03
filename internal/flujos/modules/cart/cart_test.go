@@ -31,13 +31,12 @@ func seededVars() map[string]any {
 }
 
 // drive aplica un Step y devuelve el nuevo estado, los outputs y las Vars
-// resultantes (para encadenar). Falla si el módulo declara efectos en T1.
+// resultantes (para encadenar). Los efectos declarados (T2) no se inspeccionan
+// aquí: las pantallas/estado son idénticos al T1; los efectos se prueban aparte
+// (cart_effects_test.go).
 func drive(t *testing.T, m Module, vars map[string]any, input string) (cartState, []string, map[string]any) {
 	t.Helper()
 	res := m.Step(model.Node{}, model.Conversation{Vars: vars}, input)
-	if len(res.Effects) != 0 {
-		t.Fatalf("T1 no debe declarar efectos, se obtuvieron %d", len(res.Effects))
-	}
 	return loadState(res.Vars), res.Outputs, res.Vars
 }
 

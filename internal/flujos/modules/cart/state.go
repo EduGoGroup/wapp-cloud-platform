@@ -10,7 +10,11 @@
 // fija (categories ↔ articles ↔ article ↔ quantity/continue/summary).
 package cart
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+)
 
 // Niveles de la sub-máquina (design.md §3.2/§4.2). Level es el "nodo" interno
 // del carrito. Los dos últimos (closed/cancelled) son terminales: la
@@ -54,8 +58,11 @@ const DefaultPageSize = 5
 // model.Content.Raw) para que Step —que NO recibe el content resuelto, a
 // diferencia de Render— pueda navegar sin hacer I/O (design.md §3.2/§4.1).
 const (
-	stateVarKey   = "cart"
-	catalogVarKey = "cart_catalog"
+	stateVarKey = "cart"
+	// catalogVarKey reusa la clave del contrato engine↔módulos (modules.VarContentRaw):
+	// el engine siembra ahí el blob crudo del catálogo (model.Content.Raw) antes del
+	// Step (design.md §4.1). No es una clave inventada por el módulo.
+	catalogVarKey = modules.VarContentRaw
 )
 
 // cartState es el estado serializable de la sub-máquina (design.md §3.2). Forma
@@ -67,7 +74,12 @@ type cartState struct {
 	SKU     string     `json:"sku,omitempty"`      // SKU del artículo en foco (L3/L4)
 	Page    int        `json:"page,omitempty"`     // página del nivel de lista actual
 	Lines   []cartLine `json:"lines,omitempty"`    // líneas acumuladas del pedido
-	OrderID string     `json:"order_id,omitempty"` // uuid de la orden open (se asigna en T2)
+	OrderID string     `json:"order_id,omitempty"` // uuid de la orden open (la abre el runtime; §3.4)
+	// Started marca que ya se emitió el efecto cart_started. La pureza del módulo
+	// y el contrato de efectos (solo Step declara Effects, no Render) impiden
+	// emitirlo en el Enter/Render; se emite EXACTAMENTE UNA vez en el primer Step
+	// (design.md §3.3: cart_started al arranque — aquí, primera interacción).
+	Started bool `json:"started,omitempty"`
 }
 
 // cartLine es una línea del pedido (design.md §3.2). SKU/Label son códigos de

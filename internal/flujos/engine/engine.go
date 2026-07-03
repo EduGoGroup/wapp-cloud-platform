@@ -111,6 +111,19 @@ func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation
 	if !ok || !mod.WaitsForInput() {
 		return st, nil, nil, fmt.Errorf("%w: nodo actual %q de tipo %q no espera entrada", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 	}
+	// Best-effort: resuelve el contenido del nodo y EXPONE su blob crudo
+	// (Content.Raw) en Vars ANTES del Step, para que un módulo cuya sub-máquina
+	// navega en Step —que NO recibe el content resuelto, a diferencia de Render—
+	// pueda leer datos de dominio sin hacer I/O (Plan 015/016, design.md §4.1).
+	// Genérico: el engine no conoce el dominio (cart parsea su catálogo desde ahí).
+	// Un error de resolución NO aborta el Step (se degrada: el módulo verá Raw
+	// ausente); Raw nil (static: menú/encuesta) no siembra nada ⇒ sin regresión.
+	if resolved, rerr := e.content.Resolve(ctx, st.TenantID, node); rerr == nil && resolved.Raw != nil {
+		if st.Vars == nil {
+			st.Vars = map[string]any{}
+		}
+		st.Vars[modules.VarContentRaw] = resolved.Raw
+	}
 	res := mod.Step(node, st, in.Text)
 	st.Vars = res.Vars
 	if res.Next != nil {
