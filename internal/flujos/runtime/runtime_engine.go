@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -11,12 +12,29 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
 // ErrConversationExists lo devuelve Start cuando ya hay una conversación viva
 // para la clave (T3 lo mapea a HTTP 409). Se inspecciona con errors.Is.
 var ErrConversationExists = errors.New("ya existe una conversación viva para la clave")
+
+// Constantes del carrito que el runtime inspecciona por su FORMA (tipo de nodo,
+// claves/valores serializados de la sub-máquina, nombre de efecto), replicadas
+// como literales para NO acoplar el runtime al paquete cart — mismo criterio de
+// desacople que los literales de nombre de efecto del PersistSink. El TTL y el
+// auto-reinicio del carrito (design.md §4.3/§9.H) se GATEAN por estas señales:
+// menú/encuesta nunca las igualan ⇒ su comportamiento queda intacto.
+const (
+	cartNodeType       = "cart"           // model.Node.Type que maneja el módulo cart
+	cartStateVarKey    = "cart"           // Conversation.Vars[cart] = sub-estado del carrito
+	cartLevelKey       = "level"          // cartState.Level serializado (json)
+	cartLevelClosed    = "closed"         // terminal · pedido confirmado
+	cartLevelCancelled = "cancelled"      // terminal · pedido cancelado
+	cartPageSizeVarKey = "cart_page_size" // == cart.VarPageSize
+	effNameCartExpired = "cart_expired"   // == cart.EffectCartExpired
+)
 
 // Runtime orquesta el motor de flujos vivo (design.md §6): inicio por API
 // (Start) y avance por entrante (HandleIncoming/OnIncoming). Serializa por
@@ -92,17 +110,30 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	unlock := rt.locks.lock(key)
 	defer unlock()
 
+	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
+	}
+
 	exists, err := rt.store.Exists(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: comprobar existencia: %w", err)
 	}
 	if exists {
-		return nil, ErrConversationExists
-	}
-
-	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
-	if err != nil {
-		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
+		// Gotcha 409 (design.md §3.4): una conversación de CARRITO cuyo pedido ya
+		// TERMINÓ (sub-máquina cerrada/cancelada, o con una orden "open" vencida por
+		// TTL) NO debe bloquear un pedido nuevo. Solo el carrito se reinicia, y solo
+		// si está terminado: un carrito EN CURSO (navegando, u orden abierta vigente)
+		// y cualquier conversación de menú/encuesta siguen devolviendo 409. Al
+		// reiniciar, el Save de Enter (upsert por la misma clave) SOBRESCRIBE el
+		// estado viejo con uno limpio.
+		restart, rerr := rt.cartRestartable(ctx, def, key, tenantID, contactID, sessionID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if !restart {
+			return nil, ErrConversationExists
+		}
 	}
 
 	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
@@ -168,6 +199,15 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
+	// Carrito (Plan 016 · T3): TTL perezoso + auto-reinicio + siembra de page_size,
+	// GATEADO por tipo de nodo (prepareCart es un no-op para menú/encuesta ⇒
+	// comportamiento idéntico). handled=true ⇒ el turno se consumió reseteando.
+	if handled, cerr := rt.prepareCart(ctx, sessionID, &st, def, m, tenantID, contactID); cerr != nil {
+		return cerr
+	} else if handled {
+		return nil
+	}
+
 	st, outs, effects, err := rt.engine.Step(ctx, def, st, engine.Input{Text: m.GetText()})
 	if err != nil {
 		return fmt.Errorf("runtime: step: %w", err)
@@ -194,6 +234,21 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
 	// sinks/efectos.
 	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+	rt.dispatch(ctx, ec, effects, sessionID)
+	to, err := rt.destino(ctx, tenantID, contactID)
+	if err != nil {
+		return err
+	}
+	_, err = rt.send(ctx, sessionID, to, outs)
+	return err
+}
+
+// dispatch hace el fan-out EN PROCESO (ADR-0003, sin broker) de los efectos por
+// cada EventSink registrado. Un fallo de un sink se LOGUEA y NO aborta el avance
+// ni corta el resto de sinks/efectos (el estado ya quedó persistido antes del
+// dispatch). Lo comparten HandleIncoming (efectos que DECLARA el módulo) y el TTL
+// perezoso del carrito (cart_expired SINTETIZADO por el runtime, design.md §4.3).
+func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []modules.Effect, sessionID string) {
 	for _, eff := range effects {
 		for _, sink := range rt.sinks {
 			if err := sink.Handle(ctx, ec, eff); err != nil {
@@ -206,12 +261,160 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 			}
 		}
 	}
+}
+
+// prepareCart aplica, SOLO para nodos de carrito, la lógica de reanudación del
+// Plan 016 · T3: TTL perezoso + auto-reinicio (resumeCart) y, si el carrito sigue
+// vivo en navegación, la siembra del page_size REAL del tenant para que la
+// paginación use tenant_settings en vez del default del módulo (design.md §9.E).
+// Devuelve handled=true si el turno ya se resolvió (reinicio: se avisó y se mostró
+// L1). Para nodos que NO son carrito es un no-op total (handled=false, sin tocar
+// Vars) ⇒ menú/encuesta quedan intactos (no-regresión). Extraído de HandleIncoming
+// para acotar su complejidad ciclomática.
+func (rt *Runtime) prepareCart(ctx context.Context, sessionID string, st *model.Conversation, def model.Flow, m *cloudlinkv1.IncomingMessage, tenantID, contactID string) (bool, error) {
+	node, ok := def.Nodes[st.CurrentNode]
+	if !ok || node.Type != cartNodeType {
+		return false, nil
+	}
+	handled, err := rt.resumeCart(ctx, sessionID, st, def, m, tenantID, contactID)
+	if err != nil || handled {
+		return handled, err
+	}
+	if err := rt.seedCartPageSize(ctx, st, tenantID); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// resumeCart aplica, al REANUDAR una conversación de carrito, la evaluación
+// PEREZOSA del TTL y el auto-reinicio tras terminar (design.md §4.3/§9.H). Si el
+// carrito debe empezar de cero (orden "open" vencida, o sub-máquina en un nivel
+// terminal cerrado/cancelado) lo reinicia POR COMPLETO: descarta el estado de la
+// sub-máquina, re-entra el flujo (renderiza L1 categorías fresco), persiste y
+// avisa; devuelve handled=true (el llamante NO procesa el entrante como avance).
+// En navegación normal devuelve handled=false (el flujo sigue por engine.Step).
+//
+// Coherencia BD↔conversación (design.md §3.4): cuando vence una orden abierta se
+// SINTETIZA el efecto cart_expired y se despacha por el MISMO PersistSink, que lo
+// registra en flow_events y transiciona la orden a "expired". Así un pedido nuevo
+// queda habilitado en la MISMA conversación (sin exigir un /start nuevo) y la
+// orden no queda "open" colgada (evita el gotcha 409).
+func (rt *Runtime) resumeCart(ctx context.Context, sessionID string, st *model.Conversation, def model.Flow, m *cloudlinkv1.IncomingMessage, tenantID, contactID string) (bool, error) {
+	order, found, err := rt.store.GetOpenOrder(ctx, tenantID, contactID)
+	if err != nil {
+		return false, fmt.Errorf("runtime: orden abierta del carrito: %w", err)
+	}
+	expired := found && orderExpired(order, time.Now())
+	terminal := cartTerminal(st.Vars)
+	if !expired && !terminal {
+		return false, nil // carrito vivo en navegación normal.
+	}
+
+	var notice string
+	if expired {
+		// El runtime DETECTA el vencimiento; el PersistSink PERSISTE (flow_events +
+		// orders.status=expired). Fan-out best-effort: un fallo se loguea, no aborta.
+		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+		rt.dispatch(ctx, ec, []modules.Effect{{Kind: "event", Name: effNameCartExpired, Payload: map[string]any{}}}, sessionID)
+		notice = "⌛ Tu pedido anterior expiró. Empezamos de nuevo."
+	}
+
+	// Arranca LIMPIO: descarta las Vars (sub-máquina del carrito) y re-entra el
+	// flujo con la MISMA versión con la que corría (def viene de GetDefinition).
+	fresh := *st
+	fresh.Vars = nil
+	fresh, outs, err := rt.engine.Enter(ctx, def, fresh)
+	if err != nil {
+		return false, fmt.Errorf("runtime: reentrar carrito: %w", err)
+	}
+	fresh.LastWaMessageID = m.GetWaMessageId()
+	if err := rt.store.Save(ctx, fresh); err != nil {
+		return false, fmt.Errorf("runtime: guardar carrito reiniciado: %w", err)
+	}
+	*st = fresh
+
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = rt.send(ctx, sessionID, to, outs)
-	return err
+	texts := outs
+	if notice != "" {
+		texts = append([]engine.Output{{Text: notice}}, outs...)
+	}
+	if _, err := rt.send(ctx, sessionID, to, texts); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// seedCartPageSize inyecta en Vars el page_size REAL del tenant
+// (tenant_settings.page_size, default 5 si no hay fila) para que el módulo pagine
+// con la config del tenant sin hacer I/O (design.md §9.E). Solo lo llama el camino
+// del carrito ⇒ nunca añade claves a las Vars de menú/encuesta (no-regresión).
+func (rt *Runtime) seedCartPageSize(ctx context.Context, st *model.Conversation, tenantID string) error {
+	settings, err := rt.store.GetTenantSettings(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("runtime: config de tenant (page_size): %w", err)
+	}
+	if st.Vars == nil {
+		st.Vars = map[string]any{}
+	}
+	st.Vars[cartPageSizeVarKey] = settings.PageSize
+	return nil
+}
+
+// cartRestartable decide si un Start sobre una conversación EXISTENTE puede
+// reiniciar el carrito en vez de devolver 409 (gotcha, design.md §3.4). Solo el
+// carrito TERMINADO se reinicia:
+//   - nodo inicial NO es "cart" (menú/encuesta) ⇒ false (409 intacto);
+//   - sub-máquina en nivel terminal (cerrado/cancelado) ⇒ true (reiniciable);
+//   - orden "open" VENCIDA por TTL ⇒ la marca "expired" (coherencia BD↔conv) y
+//     devuelve true (reiniciable);
+//   - en cualquier otro caso (carrito NAVEGANDO, u orden abierta vigente) ⇒ false
+//     (409: no se clobbea un pedido en curso).
+func (rt *Runtime) cartRestartable(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, error) {
+	node, ok := def.Nodes[def.Initial]
+	if !ok || node.Type != cartNodeType {
+		return false, nil
+	}
+	if st, found, err := rt.store.Load(ctx, key); err != nil {
+		return false, fmt.Errorf("runtime: cargar estado del carrito: %w", err)
+	} else if found && cartTerminal(st.Vars) {
+		return true, nil
+	}
+	order, found, err := rt.store.GetOpenOrder(ctx, tenantID, contactID)
+	if err != nil {
+		return false, fmt.Errorf("runtime: orden abierta del carrito: %w", err)
+	}
+	if found && orderExpired(order, time.Now()) {
+		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: def.FlowID, FlowVersion: def.Version}
+		rt.dispatch(ctx, ec, []modules.Effect{{Kind: "event", Name: effNameCartExpired, Payload: map[string]any{}}}, sessionID)
+		return true, nil
+	}
+	return false, nil
+}
+
+// orderExpired indica si una orden tiene TTL fijado (expires_at no-cero) y ya
+// venció respecto a now. Sin expires_at (zero) NUNCA expira.
+func orderExpired(o store.Order, now time.Time) bool {
+	return !o.ExpiresAt.IsZero() && o.ExpiresAt.Before(now)
+}
+
+// cartTerminal lee el nivel serializado de la sub-máquina del carrito en Vars y
+// dice si quedó en un estado terminal (pedido confirmado o cancelado). Inspecciona
+// la FORMA del sub-estado (Vars["cart"]["level"]) sin importar el paquete cart
+// (mismo desacople que los literales de efecto del PersistSink). Ausente/otro tipo
+// ⇒ false (carrito en navegación).
+func cartTerminal(vars map[string]any) bool {
+	sub, ok := vars[cartStateVarKey].(map[string]any)
+	if !ok {
+		return false
+	}
+	level, ok := sub[cartLevelKey].(string)
+	if !ok {
+		return false
+	}
+	return level == cartLevelClosed || level == cartLevelCancelled
 }
 
 // destino resuelve el contact_id a una cadena de destino DIRECCIONABLE por el

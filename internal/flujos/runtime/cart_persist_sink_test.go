@@ -170,6 +170,61 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	assertOrderStatus(t, db, tenant, ec2.ContactID, "cancelled")
 }
 
+// TestCartTTL_Integracion_ExpiresAtAndExpire ejercita el ciclo de vida del TTL
+// contra Postgres real (gated por WAPP_TEST_DB_DSN): item_added fija expires_at a
+// futuro (now + order_ttl); forzado el vencimiento (expires_at al pasado), el
+// efecto cart_expired transiciona la orden a "expired" y deja la fila en
+// flow_events. SKIP limpio sin DSN.
+func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
+	db := openTestDB(t) // migra incl. 0011/0012/0013
+	repo := store.NewPostgresRepository(db)
+	sink := runtime.NewPersistSink(repo)
+	ctx := context.Background()
+
+	suffix := time.Now().UnixNano()
+	tenant := fmt.Sprintf("tenant-ttl-%d", suffix)
+	contactID := "c-opaco-ttl"
+	flowID := fmt.Sprintf("carrito-ttl-%d", suffix)
+	ec := cartEC(tenant, contactID, "sess-ttl", flowID)
+
+	// item_added abre la orden y fija expires_at a futuro (TTL default 1h).
+	if err := sink.Handle(ctx, ec, itemAdded("CAFE", "Café", 1, 2.5)); err != nil {
+		t.Fatalf("Handle item_added: %v", err)
+	}
+	order, found, err := repo.GetOpenOrder(ctx, tenant, contactID)
+	if err != nil || !found {
+		t.Fatalf("GetOpenOrder tras item_added: found=%v err=%v", found, err)
+	}
+	if order.ExpiresAt.IsZero() || !order.ExpiresAt.After(time.Now()) {
+		t.Fatalf("expires_at debe ser futuro tras item_added: %v", order.ExpiresAt)
+	}
+
+	// Fuerza el vencimiento: expires_at al pasado (misma semántica que el paso del
+	// tiempo). UpsertOrder es idempotente por id.
+	order.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := repo.UpsertOrder(ctx, order); err != nil {
+		t.Fatalf("forzar vencimiento (UpsertOrder): %v", err)
+	}
+
+	// cart_expired (lo sintetiza el runtime al reanudar) → orden "expired" + fila
+	// en flow_events (el mismo PersistSink lo materializa).
+	expired := modules.Effect{Kind: "event", Name: "cart_expired", Payload: map[string]any{}}
+	if err := sink.Handle(ctx, ec, expired); err != nil {
+		t.Fatalf("Handle cart_expired: %v", err)
+	}
+	assertOrderStatus(t, db, tenant, contactID, "expired")
+
+	var nExpired int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM public.flow_events WHERE flow_id = $1 AND name = 'cart_expired'`,
+		flowID).Scan(&nExpired); err != nil {
+		t.Fatalf("SELECT flow_events cart_expired: %v", err)
+	}
+	if nExpired != 1 {
+		t.Fatalf("esperaba 1 flow_event cart_expired, got %d", nExpired)
+	}
+}
+
 // assertClosedOrder verifica 1 orden closed con total 8.00 y session_id cableado.
 func assertClosedOrder(t *testing.T, db *sql.DB, tenant, contact string) {
 	t.Helper()

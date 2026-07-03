@@ -101,13 +101,18 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	if err != nil {
 		return modules.Result{Vars: vars, Outputs: []string{catalogUnavailable}}
 	}
+	// page_size REAL del tenant: el runtime lo siembra en Vars[VarPageSize]
+	// (tenant_settings.page_size); sin sembrar cae al default del Module (design.md
+	// §9.E). Toda la paginación de la sub-máquina (que ocurre en Step) lo respeta;
+	// Render (una sola pantalla, al arranque) usa el default del Module.
+	size := pageSizeFromVars(vars, m.pageSize)
 	st := loadState(vars)
 	var effects []modules.Effect
 	if !st.Started {
 		st.Started = true
 		effects = append(effects, event(EffectCartStarted, map[string]any{}))
 	}
-	newSt, outs, stepEffects := advance(cat, st, input, m.pageSize)
+	newSt, outs, stepEffects := advance(cat, st, input, size)
 	effects = append(effects, stepEffects...)
 	storeState(vars, newSt)
 	return modules.Result{Vars: vars, Outputs: outs, Effects: effects}

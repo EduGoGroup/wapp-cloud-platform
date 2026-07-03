@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -101,16 +102,29 @@ func (s *PersistSink) projectSurveyAnswer(ctx context.Context, ec EffectContext,
 }
 
 // ensureOpenOrder garantiza que exista UNA orden "open" para (tenant, contact) al
-// primer item_added (design.md §3.4). Idempotente: si ya hay una abierta, no crea
-// otra (los item_added siguientes son no-op sobre orders; las líneas se proyectan
-// en cart_closed). El TTL (expires_at) se fija en T3.
+// primer item_added (design.md §3.4) y FIJA/REFRESCA su TTL (design.md §4.3/§9.H):
+// expires_at = now + tenant_settings.order_ttl (default 1h si el tenant no tiene
+// fila; GetTenantSettings devuelve los defaults sin error). Idempotente por
+// identidad de negocio: si ya hay una abierta NO crea otra, pero la "toca"
+// (refresca expires_at) en cada item_added para que el pedido activo no venza
+// mientras el usuario sigue agregando. La evaluación del vencimiento es PEREZOSA
+// (al reanudar, en el runtime); aquí solo se fija la marca.
 func (s *PersistSink) ensureOpenOrder(ctx context.Context, ec EffectContext) error {
-	_, found, err := s.repo.GetOpenOrder(ctx, ec.TenantID, ec.ContactID)
+	settings, err := s.repo.GetTenantSettings(ctx, ec.TenantID)
+	if err != nil {
+		return err
+	}
+	expiresAt := time.Now().Add(settings.OrderTTL)
+	existing, found, err := s.repo.GetOpenOrder(ctx, ec.TenantID, ec.ContactID)
 	if err != nil {
 		return err
 	}
 	if found {
-		return nil
+		// Touch: refresca expires_at conservando id/created_at/total (UpsertOrder es
+		// idempotente por ID; MemoryRepository preserva created_at, Postgres hace
+		// ON CONFLICT (id) DO UPDATE).
+		existing.ExpiresAt = expiresAt
+		return s.repo.UpsertOrder(ctx, existing)
 	}
 	return s.repo.UpsertOrder(ctx, store.Order{
 		ID:        uuid.NewString(),
@@ -118,6 +132,7 @@ func (s *PersistSink) ensureOpenOrder(ctx context.Context, ec EffectContext) err
 		ContactID: ec.ContactID,
 		SessionID: ec.SessionID,
 		Status:    orderStatusOpen,
+		ExpiresAt: expiresAt,
 	})
 }
 

@@ -65,6 +65,13 @@ const (
 	catalogVarKey = modules.VarContentRaw
 )
 
+// VarPageSize es la clave de Conversation.Vars bajo la que el RUNTIME (T3) siembra
+// el tamaño de página REAL del tenant (tenant_settings.page_size) antes del Step,
+// igual que el engine siembra el catálogo. Así la paginación usa la config del
+// tenant SIN que el módulo haga I/O (design.md §9.E): el módulo sigue PURO y el
+// cableado a tenant_settings vive en el runtime. Ausente ⇒ default del Module.
+const VarPageSize = "cart_page_size"
+
 // cartState es el estado serializable de la sub-máquina (design.md §3.2). Forma
 // EXACTA del contrato para T2/T3. Las etiquetas json garantizan el round-trip
 // JSONB (números como float64, structs como map[string]any) sin bytes nulos.
@@ -127,6 +134,27 @@ func storeState(vars map[string]any, st cartState) {
 		return
 	}
 	vars[stateVarKey] = m
+}
+
+// pageSizeFromVars lee el page_size que el runtime sembró en Vars[VarPageSize]
+// (tenant_settings.page_size); si está ausente o es <= 0, cae al default recibido
+// (el del Module). Tolera el round-trip JSONB (float64) y el tipo nativo int.
+func pageSizeFromVars(vars map[string]any, def int) int {
+	switch n := vars[VarPageSize].(type) {
+	case int:
+		if n > 0 {
+			return n
+		}
+	case int64:
+		if n > 0 {
+			return int(n)
+		}
+	case float64:
+		if int(n) > 0 {
+			return int(n)
+		}
+	}
+	return def
 }
 
 // cloneLines copia las líneas para no mutar el estado de entrada (pureza).

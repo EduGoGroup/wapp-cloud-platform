@@ -445,3 +445,36 @@ func mustCatalog(t *testing.T) Catalog {
 	}
 	return c
 }
+
+// --- page_size REAL del tenant (sembrado en Vars por el runtime, T3) ---------
+
+// TestPageSizeFromVarsOverridesDefault: el default del Module (5) muestra las 2
+// categorías en una página; sembrando Vars[VarPageSize]=1 (lo que hace el runtime
+// desde tenant_settings.page_size) la sub-máquina pagina de a 1 y ofrece "Más ▾".
+func TestPageSizeFromVarsOverridesDefault(t *testing.T) {
+	m := New() // default pageSize=5 (design.md §9.E).
+	vars := seededVars()
+	vars[VarPageSize] = 1 // el runtime siembra el page_size del tenant.
+
+	// Una entrada inválida re-muestra L1 con el page_size del tenant (1): solo
+	// Bebidas + "Más ▾" (código 3), SIN Postres.
+	_, outs, _ := drive(t, m, vars, "no-numérico")
+	mustContain(t, outs, "1) Bebidas", "3) Más ▾")
+	if strings.Contains(joined(outs), "Postres") {
+		t.Fatalf("con page_size=1 Postres no debe salir en la página 0: %q", joined(outs))
+	}
+}
+
+// TestPageSizeFromVarsFloatRoundTrip: tras el round-trip JSONB el page_size llega
+// como float64; pageSizeFromVars debe tolerarlo (igual que el resto del estado).
+func TestPageSizeFromVarsFloatRoundTrip(t *testing.T) {
+	if got := pageSizeFromVars(map[string]any{VarPageSize: float64(3)}, 5); got != 3 {
+		t.Fatalf("float64(3) → %d, quiero 3", got)
+	}
+	if got := pageSizeFromVars(map[string]any{VarPageSize: 0}, 5); got != 5 {
+		t.Fatalf("0 (inválido) debe caer al default 5, got %d", got)
+	}
+	if got := pageSizeFromVars(map[string]any{}, 5); got != 5 {
+		t.Fatalf("ausente debe caer al default 5, got %d", got)
+	}
+}
