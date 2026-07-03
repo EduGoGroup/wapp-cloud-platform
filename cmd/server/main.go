@@ -125,10 +125,14 @@ func run() error {
 	flowReg := modules.NewRegistry()
 	flowReg.Register(menu.New())
 	flowReg.Register(survey.New())
-	// Fuente de contenido estática (PURA) por defecto (Plan 015 T1): observable
-	// idéntico al render inline previo. El adapter json se cablea en T4/e2e.
-	flowEngine := engine.New(flowReg, engine.WithContentSource(content.NewStatic()))
 	flowStore := flowstore.NewPostgresRepository(db)
+	// Fuente de contenido enrutada POR-NODO (Plan 015 T4a): el Router compone el
+	// adapter Static (PURO, default de menú/encuesta) con el adapter JSON
+	// (tenant_content). El engine ve UN puerto content.Source; el switch por
+	// fuente vive SOLO en el Router (el dominio no conoce orígenes). Menú/encuesta
+	// sin `content` siguen resolviéndose byte-a-byte por la rama static.
+	flowEngine := engine.New(flowReg, engine.WithContentSource(
+		content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))))
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
 	// KeyProvider + FieldCipher del cifrado de PII en reposo (Plan 011, ADR-0017):
 	// la KEK maestra vive en env/secret store (§10.A), separada del dato. Fail-fast
