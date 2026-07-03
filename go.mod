@@ -19,7 +19,10 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
+require github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+
 require (
+	github.com/EduGoGroup/wapp-shared/auth v0.1.0
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
@@ -47,3 +50,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/EduGoGroup/wapp-shared/auth => ../../shared/wapp-shared/auth
