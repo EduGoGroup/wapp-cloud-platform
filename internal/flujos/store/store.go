@@ -101,6 +101,17 @@ type FlowSummary struct {
 	CreatedAt time.Time
 }
 
+// TenantContentSummary es la cabecera de un blob de contenido por-tenant
+// (public.tenant_content, Plan 018 · T6): su ref lógica y las marcas de tiempo. NO
+// incluye el blob (se obtiene con GetTenantContent). La devuelve ListTenantContent
+// para alimentar el listado de la API pública (GET /api/v1/tenant-content). CERO
+// PII: ref es un identificador de negocio (ADR-0009).
+type TenantContentSummary struct {
+	Ref       string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // SurveyResult es una respuesta de encuesta lista para persistir EN CLARO en
 // survey_results (Plan 014 §10.D). ContactID es la identidad OPACA del contacto
 // (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.

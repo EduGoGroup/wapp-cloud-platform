@@ -301,6 +301,79 @@ func (r *PostgresRepository) GetTenantContent(ctx context.Context, tenantID, ref
 	return content, nil
 }
 
+// UpsertTenantContent inserta o actualiza (upsert por PK (tenant_id, ref)) el blob
+// de contenido de negocio en public.tenant_content (Plan 018 · T6, ADR-0009). El
+// blob se persiste como JSONB (debe ser JSON válido; lo valida el transporte).
+// created_at usa el DEFAULT now() en el alta; updated_at se refresca en cada
+// escritura. Acotado al tenant (INV-8).
+func (r *PostgresRepository) UpsertTenantContent(ctx context.Context, tenantID, ref string, blob []byte) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.tenant_content (tenant_id, ref, content, created_at, updated_at)
+		VALUES ($1, $2, $3, now(), now())
+		ON CONFLICT (tenant_id, ref) DO UPDATE
+		SET content = EXCLUDED.content, updated_at = now()
+	`, tenantID, ref, blob)
+	if err != nil {
+		return fmt.Errorf("store: upsert contenido de tenant: %w", err)
+	}
+	return nil
+}
+
+// ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs de
+// public.tenant_content del tenant, ordenadas por ref (Plan 018 · T6). NO trae el
+// blob (se obtiene con GetTenantContent). Acotado al tenant (INV-8): el WHERE
+// tenant_id garantiza que un blob ajeno nunca aparece.
+func (r *PostgresRepository) ListTenantContent(ctx context.Context, tenantID string) (out []TenantContentSummary, err error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ref, created_at, updated_at
+		FROM public.tenant_content
+		WHERE tenant_id = $1
+		ORDER BY ref
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar contenido de tenant: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("store: cerrar filas: %w", cerr)
+		}
+	}()
+
+	out = make([]TenantContentSummary, 0)
+	for rows.Next() {
+		var s TenantContentSummary
+		if scanErr := rows.Scan(&s.Ref, &s.CreatedAt, &s.UpdatedAt); scanErr != nil {
+			return nil, fmt.Errorf("store: escanear contenido de tenant: %w", scanErr)
+		}
+		out = append(out, s)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("store: iterar contenido de tenant: %w", rowsErr)
+	}
+	return out, nil
+}
+
+// DeleteTenantContent borra el blob (tenant_id, ref) de public.tenant_content
+// (Plan 018 · T6). Devuelve ErrTenantContentNotFound si no existía (simetría con
+// GetTenantContent → 404 en el transporte). Acotado al tenant (INV-8).
+func (r *PostgresRepository) DeleteTenantContent(ctx context.Context, tenantID, ref string) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM public.tenant_content
+		WHERE tenant_id = $1 AND ref = $2
+	`, tenantID, ref)
+	if err != nil {
+		return fmt.Errorf("store: borrar contenido de tenant: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: filas afectadas al borrar contenido: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	return nil
+}
+
 // UpsertOrder inserta o actualiza (upsert por id) la orden en public.orders
 // (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
 // NULL. created_at/updated_at usan now() (updated_at se refresca en el UPDATE).

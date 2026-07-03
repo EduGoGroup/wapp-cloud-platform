@@ -25,17 +25,21 @@ const (
 	tenantA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	tenantB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
-	keyAFull = "key-a-full" // tenantA, scopes flows.* + messages.send
-	keyARead = "key-a-read" // tenantA, scope flows.read (sin escritura)
-	keyBFull = "key-b-full" // tenantB, scopes flows.* + messages.send
+	keyAFull    = "key-a-full"    // tenantA, scopes flows.* + messages.send
+	keyARead    = "key-a-read"    // tenantA, scope flows.read (sin escritura)
+	keyBFull    = "key-b-full"    // tenantB, scopes flows.* + messages.send
+	keyAContent = "key-a-content" // tenantA, scopes media.upload + content.*
+	keyBContent = "key-b-content" // tenantB, scopes media.upload + content.*
 )
 
 // apiKeys mapea api-key → identidad M2M (tenant + scopes), como haría el store IAM.
 func apiKeys() map[string]in.ServiceIdentity {
 	return map[string]in.ServiceIdentity{
-		keyAFull: {TenantID: tenantA, ClientID: "crm-a", Scopes: []string{"flows.*", "messages.send"}},
-		keyARead: {TenantID: tenantA, ClientID: "ro-a", Scopes: []string{"flows.read"}},
-		keyBFull: {TenantID: tenantB, ClientID: "crm-b", Scopes: []string{"flows.*", "messages.send"}},
+		keyAFull:    {TenantID: tenantA, ClientID: "crm-a", Scopes: []string{"flows.*", "messages.send"}},
+		keyARead:    {TenantID: tenantA, ClientID: "ro-a", Scopes: []string{"flows.read"}},
+		keyBFull:    {TenantID: tenantB, ClientID: "crm-b", Scopes: []string{"flows.*", "messages.send"}},
+		keyAContent: {TenantID: tenantA, ClientID: "cms-a", Scopes: []string{"media.upload", "content.write", "content.read"}},
+		keyBContent: {TenantID: tenantB, ClientID: "cms-b", Scopes: []string{"media.upload", "content.write", "content.read"}},
 	}
 }
 

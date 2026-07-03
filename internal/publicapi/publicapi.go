@@ -62,6 +62,8 @@ type Deps struct {
 	Flows    FlowStore                  // store de definiciones (CRUD lectura/alta)
 	Modules  flowadmin.ModuleTypeSource // tipos de nodo de módulos (validación del alta)
 	Starter  flowadmin.Starter          // motor de flujos (arranque de conversación)
+	Media    PresignUploader            // presign R2 (upload-url, Plan 017/018 · T6)
+	Content  TenantContentStore         // blobs JSONB por-tenant (tenant_content, T6)
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -96,6 +98,28 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// motor de flujos (Starter) que también sirve /admin/flows/start.
 	mux.Handle("POST /api/v1/flows/{id}/start", protect(mw, auditor, log,
 		"flows.start", "flow", startFlowHandler(d.Starter)))
+
+	// Media por API (escritura auditada, R7): presigna una URL PUT de corta vida
+	// para subir a R2 un archivo (PDF/imagen) que luego se referencia en un flujo
+	// (nodo media / tenant_content). Reusa el PresignClient del Plan 017; el objeto
+	// se namespacea por tenant (INV-8). CERO PII en la auditoría (action/resource).
+	mux.Handle("POST /api/v1/media/upload-url", protect(mw, auditor, log,
+		"media.upload", "media", uploadURLHandler(d.Media)))
+
+	// CRUD de contenido dinámico por-tenant (tenant_content, R7): blobs JSONB que
+	// alimentan el adapter content.JSON del Motor (source:json,ref) o una ref de
+	// media por-tenant. Escrituras auditadas (content.write); lecturas sin auditoría
+	// (content.read). Todo acotado al tenant del token (INV-8). Sin cambios en el Motor.
+	mux.Handle("PUT /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
+		"content.write", "tenant_content", upsertTenantContentHandler(d.Content)))
+	mux.Handle("POST /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
+		"content.write", "tenant_content", upsertTenantContentHandler(d.Content)))
+	mux.Handle("DELETE /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
+		"content.write", "tenant_content", deleteTenantContentHandler(d.Content)))
+	mux.Handle("GET /api/v1/tenant-content", protectRead(mw,
+		"content.read", listTenantContentHandler(d.Content)))
+	mux.Handle("GET /api/v1/tenant-content/{ref}", protectRead(mw,
+		"content.read", getTenantContentHandler(d.Content)))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del

@@ -36,6 +36,10 @@ type MemoryRepository struct {
 	// (Plan 015 · T2). Sembrable en tests vía SetTenantContent; leído por
 	// GetTenantContent.
 	content map[string][]byte
+	// contentMeta indexa (tenant_id, ref) → marcas de tiempo del blob de
+	// tenant_content (Plan 018 · T6), en paralelo a content. Lo escribe
+	// UpsertTenantContent y lo lee ListTenantContent (created/updated_at).
+	contentMeta map[string]tcMeta
 	// orders indexa order_id → orden; imita public.orders (Plan 016 · T0).
 	// Consultable en tests vía Orders().
 	orders map[string]Order
@@ -51,13 +55,14 @@ type MemoryRepository struct {
 // NewMemoryRepository crea un repositorio en memoria vacío.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		state:      make(map[string]model.Conversation),
-		defs:       make(map[string]map[int]model.Flow),
-		maxVer:     make(map[string]int),
-		content:    make(map[string][]byte),
-		orders:     make(map[string]Order),
-		orderItems: make(map[string][]OrderItem),
-		settings:   make(map[string]TenantSettings),
+		state:       make(map[string]model.Conversation),
+		defs:        make(map[string]map[int]model.Flow),
+		maxVer:      make(map[string]int),
+		content:     make(map[string][]byte),
+		contentMeta: make(map[string]tcMeta),
+		orders:      make(map[string]Order),
+		orderItems:  make(map[string][]OrderItem),
+		settings:    make(map[string]TenantSettings),
 	}
 }
 
@@ -292,6 +297,74 @@ func (r *MemoryRepository) SetTenantContent(tenantID, ref string, blob []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.content[contentKey(tenantID, ref)] = stored
+}
+
+// tcMeta son las marcas de tiempo de un blob de tenant_content en el repo memoria
+// (Plan 018 · T6): created se fija en el alta, updated en cada escritura.
+type tcMeta struct {
+	created time.Time
+	updated time.Time
+}
+
+// UpsertTenantContent inserta o actualiza (upsert por (tenant_id, ref)) el blob de
+// contenido de negocio, imitando el upsert en public.tenant_content (Plan 018 ·
+// T6). Copia el blob para no compartir el backing array con el llamante; created_at
+// solo se fija en el alta, updated_at se refresca en cada escritura. Acotado al
+// tenant (INV-8).
+func (r *MemoryRepository) UpsertTenantContent(_ context.Context, tenantID, ref string, blob []byte) error {
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	k := contentKey(tenantID, ref)
+	now := time.Now().UTC()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.content[k] = stored
+	meta := r.contentMeta[k]
+	if meta.created.IsZero() {
+		meta.created = now
+	}
+	meta.updated = now
+	r.contentMeta[k] = meta
+	return nil
+}
+
+// ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs del
+// tenant, ordenadas por ref, imitando el listado por tenant_id de
+// public.tenant_content (Plan 018 · T6). Solo del tenant dado (aislamiento INV-8):
+// un blob de OTRO tenant nunca aparece.
+func (r *MemoryRepository) ListTenantContent(_ context.Context, tenantID string) ([]TenantContentSummary, error) {
+	prefix := tenantID + "\x00"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]TenantContentSummary, 0)
+	for k := range r.content {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		meta := r.contentMeta[k]
+		out = append(out, TenantContentSummary{
+			Ref:       strings.TrimPrefix(k, prefix),
+			CreatedAt: meta.created,
+			UpdatedAt: meta.updated,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out, nil
+}
+
+// DeleteTenantContent borra el blob (tenant_id, ref). Devuelve
+// ErrTenantContentNotFound si no existía (simetría con GetTenantContent → 404 en el
+// transporte). Acotado al tenant (INV-8).
+func (r *MemoryRepository) DeleteTenantContent(_ context.Context, tenantID, ref string) error {
+	k := contentKey(tenantID, ref)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.content[k]; !ok {
+		return fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	delete(r.content, k)
+	delete(r.contentMeta, k)
+	return nil
 }
 
 // UpsertOrder implementa Repository: inserta o actualiza (por ID) la orden,

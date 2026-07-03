@@ -212,6 +212,8 @@ func run() error {
 		Flows:    flowStore,
 		Modules:  flowReg,
 		Starter:  flowRuntime,
+		Media:    flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
+		Content:  flowStore,        // CRUD tenant_content (Plan 018 · T6)
 	})
 	if err != nil {
 		return err
