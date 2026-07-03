@@ -31,8 +31,14 @@ type AppConfig struct {
 	// explícita (WAPP_KEK_INDEX_B64) y falla-rápido si falta (Plan 012 §10.C).
 	// Se lee de WAPP_APP_ENV.
 	Env string `yaml:"env"`
-	// HTTPAddr es la dirección de escucha del servidor HTTP de health/admin.
+	// HTTPAddr es la dirección de escucha del servidor HTTP de health/admin
+	// (interno). Se lee de WAPP_HTTP_ADDR (default :8100).
 	HTTPAddr string `yaml:"http_addr"`
+	// PublicHTTPAddr es la dirección del SEGUNDO servidor HTTP: la API pública
+	// /api/v1 para terceros (Plan 018, Decisión D/INV-7). Mismo binario, un solo
+	// proceso; separado del admin para no exponer la red de administración. Se lee
+	// de WAPP_PUBLIC_HTTP_ADDR (default :8103, banda 81xx).
+	PublicHTTPAddr string `yaml:"public_http_addr"`
 	// GRPCEnrollAddr es la dirección del servidor gRPC de Enrolamiento (TLS de
 	// servidor SOLAMENTE: el Edge enrola aquí SIN cert de cliente).
 	GRPCEnrollAddr string `yaml:"grpc_enroll_addr"`
@@ -60,6 +66,27 @@ type AppConfig struct {
 	// main al construir el objectstore.PresignClient (cableado en tramos
 	// posteriores). Se lee con prefijo WAPP_STORAGE_S3_.
 	Storage StorageConfig `yaml:"storage"`
+	// JWT es la configuración de firma/validación de los tokens del IAM (Plan
+	// 018): secreto HS256, issuer esperado y audiencia del service token M2M. El
+	// secreto NUNCA se hardcodea ni se loguea (zero-knowledge); en dev, si falta,
+	// se genera uno efímero con warning (como la clave del lease). Se lee con
+	// prefijo WAPP_ (WAPP_JWT_SECRET, WAPP_JWT_ISSUER, WAPP_SERVICE_JWT_AUDIENCE).
+	JWT JWTConfig `yaml:"jwt"`
+}
+
+// JWTConfig agrupa el material de firma del IAM (Plan 018 §6). El Secret firma
+// tanto el JWT de usuario como el service token M2M (HS256); Issuer es el emisor
+// esperado en la validación; ServiceAudience es la `aud` exigida al service
+// token (evita que un token de usuario se cuele por rutas M2M y viceversa).
+type JWTConfig struct {
+	// Secret es el secreto HS256. SIN default: en prod es obligatorio (fail-fast);
+	// en dev, vacío ⇒ secreto efímero generado con warning. NUNCA se loguea.
+	Secret string `yaml:"secret"`
+	// Issuer es el emisor (`iss`) que se firma y se valida. Default "wapp-cloud".
+	Issuer string `yaml:"issuer"`
+	// ServiceAudience es la audiencia (`aud`) del service token M2M. Default
+	// "wapp-public-api".
+	ServiceAudience string `yaml:"service_audience"`
 }
 
 // StorageConfig agrupa los parámetros del almacén de objetos Cloudflare R2
@@ -186,10 +213,15 @@ func defaults() AppConfig {
 	return AppConfig{
 		Env:             "dev",
 		HTTPAddr:        ":8100",
+		PublicHTTPAddr:  ":8103",
 		GRPCEnrollAddr:  ":8102",
 		GRPCConnectAddr: ":8101",
 		LogLevel:        "info",
 		LogJSON:         false,
+		JWT: JWTConfig{
+			Issuer:          "wapp-cloud",
+			ServiceAudience: "wapp-public-api",
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -233,6 +265,7 @@ func Load() (AppConfig, error) {
 	// Overlay de entorno: usa el valor actual (default o YAML) como fallback.
 	cfg.Env = loader.GetString("APP_ENV", cfg.Env)
 	cfg.HTTPAddr = loader.GetString("HTTP_ADDR", cfg.HTTPAddr)
+	cfg.PublicHTTPAddr = loader.GetString("PUBLIC_HTTP_ADDR", cfg.PublicHTTPAddr)
 	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
@@ -266,6 +299,10 @@ func Load() (AppConfig, error) {
 	cfg.Storage.SecretAccessKey = loader.GetString("STORAGE_S3_SECRET_ACCESS_KEY", cfg.Storage.SecretAccessKey)
 	cfg.Storage.Endpoint = loader.GetString("STORAGE_S3_ENDPOINT", cfg.Storage.Endpoint)
 	cfg.Storage.PresignExpiry = getDuration(loader, "STORAGE_S3_PRESIGN_EXPIRY", cfg.Storage.PresignExpiry)
+
+	cfg.JWT.Secret = loader.GetString("JWT_SECRET", cfg.JWT.Secret)
+	cfg.JWT.Issuer = loader.GetString("JWT_ISSUER", cfg.JWT.Issuer)
+	cfg.JWT.ServiceAudience = loader.GetString("SERVICE_JWT_AUDIENCE", cfg.JWT.ServiceAudience)
 
 	return cfg, nil
 }

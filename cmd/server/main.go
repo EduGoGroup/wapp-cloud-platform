@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
@@ -30,6 +31,7 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-cloudlink/mtls"
+	"github.com/EduGoGroup/wapp-shared/auth"
 	"github.com/EduGoGroup/wapp-shared/envelope"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/crypto/curve25519"
@@ -52,6 +54,9 @@ import (
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
+	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
+	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -194,6 +199,15 @@ func run() error {
 		return fmt.Errorf("escuchando cloudlink en %s: %w", cfg.GRPCConnectAddr, err)
 	}
 
+	// --- IAM (Plan 018 · T3): API pública en el SEGUNDO listener HTTP :8103
+	// (Decisión D, INV-7): MISMO binario, un solo proceso. Todo el cableado
+	// (repos Postgres + usecases + middleware + rutas /api/v1/auth) vive en
+	// buildPublicAPIServer para no engordar run(). ---
+	publicSrv, err := buildPublicAPIServer(cfg, db, log)
+	if err != nil {
+		return err
+	}
+
 	// --- HTTP: health + admin interno de revocación. ---
 	checker := httpapi.NewHealthChecker()
 	checker.Register(postgres.NewHealthCheck(db))
@@ -221,39 +235,72 @@ func run() error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	// --- Arranque de los tres servidores; el primer fallo aborta. ---
-	errCh := make(chan error, 3)
-	go func() {
-		log.Info("servidor gRPC Enrollment iniciado (TLS de servidor)", "addr", cfg.GRPCEnrollAddr)
-		if serveErr := enrollGS.Serve(enrollLis); serveErr != nil {
-			errCh <- fmt.Errorf("enrollment gRPC: %w", serveErr)
-		}
-	}()
-	go func() {
-		log.Info("servidor gRPC CloudLink iniciado (mTLS)", "addr", cfg.GRPCConnectAddr)
-		if serveErr := connectGS.Serve(connectLis); serveErr != nil {
-			errCh <- fmt.Errorf("cloudlink gRPC: %w", serveErr)
-		}
-	}()
-	go func() {
-		log.Info("servidor HTTP iniciado", "addr", cfg.HTTPAddr)
-		if serveErr := httpSrv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("http: %w", serveErr)
-		}
-	}()
+	// --- Arranque de los cuatro servidores (2 gRPC + 2 HTTP) y espera de parada
+	// o del primer fallo; shutdown ordenado en cualquiera de los dos caminos. ---
+	return serveAndWait(ctx.Done(), log,
+		httpServer{srv: httpSrv, name: "admin/health"},
+		httpServer{srv: publicSrv, name: "API pública"},
+		grpcServer{gs: enrollGS, lis: enrollLis, addr: cfg.GRPCEnrollAddr, name: "Enrollment (TLS de servidor)"},
+		grpcServer{gs: connectGS, lis: connectLis, addr: cfg.GRPCConnectAddr, name: "CloudLink (mTLS)"},
+	)
+}
+
+// httpServer y grpcServer agrupan cada listener con su nombre para el arranque
+// concurrente y el shutdown ordenado (evitan que run() acumule las ramas de las
+// cuatro goroutines).
+type httpServer struct {
+	srv  *http.Server
+	name string
+}
+
+type grpcServer struct {
+	gs   *grpc.Server
+	lis  net.Listener
+	addr string
+	name string
+}
+
+// serveAndWait arranca los cuatro servidores en goroutines, espera a la señal de
+// parada (done, típicamente ctx.Done()) o al primer error de arranque, y hace
+// shutdown ordenado en ambos casos. Recibe done (no el context) a propósito: el
+// shutdown deriva su PROPIO timeout de background porque el context de arranque
+// ya está cancelado cuando toca cerrar. Devuelve el error del servidor que falló,
+// o nil si fue parada limpia.
+func serveAndWait(done <-chan struct{}, log sharedlogger.Logger, admin, public httpServer, enroll, connect grpcServer) error {
+	errCh := make(chan error, 4)
+	go serveGRPC(errCh, log, enroll)
+	go serveGRPC(errCh, log, connect)
+	go serveHTTP(errCh, log, admin)
+	go serveHTTP(errCh, log, public)
 
 	select {
-	case <-ctx.Done():
+	case <-done:
 		log.Info("señal de parada recibida, cerrando")
 	case serveErr := <-errCh:
 		log.Error("fallo de un servidor", "error", serveErr)
-		shutdownAll(httpSrv, enrollGS, connectGS, log)
+		shutdownAll(admin.srv, public.srv, enroll.gs, connect.gs, log)
 		return serveErr
 	}
-
-	shutdownAll(httpSrv, enrollGS, connectGS, log)
+	shutdownAll(admin.srv, public.srv, enroll.gs, connect.gs, log)
 	log.Info("servidor detenido limpiamente")
 	return nil
+}
+
+// serveGRPC sirve un servidor gRPC y reporta el error al canal (salvo cierre).
+func serveGRPC(errCh chan<- error, log sharedlogger.Logger, s grpcServer) {
+	log.Info("servidor gRPC iniciado", "name", s.name, "addr", s.addr)
+	if err := s.gs.Serve(s.lis); err != nil {
+		errCh <- fmt.Errorf("%s gRPC: %w", s.name, err)
+	}
+}
+
+// serveHTTP sirve un servidor HTTP y reporta el error al canal (ErrServerClosed
+// es cierre ordenado, no error).
+func serveHTTP(errCh chan<- error, log sharedlogger.Logger, s httpServer) {
+	log.Info("servidor HTTP iniciado", "name", s.name, "addr", s.srv.Addr)
+	if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		errCh <- fmt.Errorf("http %s: %w", s.name, err)
+	}
 }
 
 // enrollServerCreds construye credentials de TLS de servidor SOLAMENTE (sin
@@ -327,6 +374,87 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 		log.Warn("clave de lease EFÍMERA de dev: cambia en cada arranque (no apta para producción)")
 	}
 	return mgr, nil
+}
+
+// buildPublicAPIServer cablea el módulo IAM (Plan 018 · T3) y devuelve el
+// segundo servidor HTTP (API pública, :8103). Construye los repos Postgres sobre
+// el *sql.DB ya abierto, los usecases (que consumen wapp-shared/auth:
+// JWT/bcrypt/glob-RBAC), el middleware reutilizable (Authenticate/
+// RequirePermission, listo para que T4 envuelva /admin/* y T5 monte negocio) y
+// monta /api/v1/auth/*. En T3 la única ruta protegida es /api/v1/auth/whoami
+// (humo de extremo a extremo del middleware). gRPC (:8101/:8102) y el admin
+// (:8100) quedan intactos: este servidor es aparte.
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*http.Server, error) {
+	jwtMgr, svcJWTMgr, err := buildJWTManagers(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	authSvc, err := iamusecase.NewAuthService(
+		iampostgres.NewUserRepo(db),
+		iampostgres.NewRoleRepo(db),
+		iampostgres.NewGrantRepo(db),
+		iampostgres.NewRefreshRepo(db),
+		iampostgres.NewAuditRepo(db),
+		jwtMgr,
+		iamusecase.Config{},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
+	}
+	m2mSvc, err := iamusecase.NewM2MService(iampostgres.NewAPIKeyRepo(db), svcJWTMgr, iamusecase.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
+	}
+	authMW := httpapi.NewMiddleware(jwtMgr, m2mSvc, log)
+
+	publicMux := http.NewServeMux()
+	iamhttp.Register(publicMux, authSvc, m2mSvc, log)
+	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
+	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
+	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
+
+	return &http.Server{
+		Addr:              cfg.PublicHTTPAddr,
+		Handler:           publicMux,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}, nil
+}
+
+// buildJWTManagers construye el JWTManager de usuario y el ServiceJWTManager
+// M2M del IAM (Plan 018 §6) a partir del secreto de config. Zero-knowledge: el
+// secreto sale de env (WAPP_JWT_SECRET), NUNCA se hardcodea ni se loguea. En
+// prod es obligatorio (fail-fast si falta); en dev, vacío ⇒ secreto efímero
+// generado con warning (como la clave del lease). Ambos managers comparten
+// secreto pero el service token exige `aud` propia (aísla los planos usuario/M2M).
+func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*auth.JWTManager, *auth.ServiceJWTManager, error) {
+	secret := cfg.JWT.Secret
+	if secret == "" {
+		if cfg.Env == "prod" {
+			return nil, nil, errors.New("WAPP_JWT_SECRET es obligatorio en prod (zero-knowledge: sin default)")
+		}
+		gen, err := randomSecret()
+		if err != nil {
+			return nil, nil, fmt.Errorf("generando secreto JWT de dev: %w", err)
+		}
+		secret = gen
+		log.Warn("secreto JWT EFÍMERO de dev: cambia en cada arranque; los tokens no sobreviven a un reinicio (no apto para producción)")
+	}
+	userMgr := auth.NewJWTManager(secret, cfg.JWT.Issuer)
+	svcMgr := auth.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
+	return userMgr, svcMgr, nil
+}
+
+// randomSecret genera 32 bytes aleatorios en base64 (secreto HS256 efímero de
+// dev). No apto para producción: no persiste entre arranques.
+func randomSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
 }
 
 // buildEnrollServer construye el servidor de enrolamiento y resuelve el par
@@ -459,12 +587,16 @@ func setupDatabase(ctx context.Context, cfg config.AppConfig, log sharedlogger.L
 	return db, nil
 }
 
-// shutdownAll detiene los tres servidores de forma ordenada.
-func shutdownAll(httpSrv *http.Server, enrollGS, connectGS *grpc.Server, log sharedlogger.Logger) {
+// shutdownAll detiene los cuatro servidores de forma ordenada (los dos HTTP con
+// timeout de drenado; los dos gRPC con GracefulStop).
+func shutdownAll(httpSrv, publicSrv *http.Server, enrollGS, connectGS *grpc.Server, log sharedlogger.Logger) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Error("error en shutdown HTTP", "error", err)
+		log.Error("error en shutdown HTTP admin", "error", err)
+	}
+	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
+		log.Error("error en shutdown HTTP público", "error", err)
 	}
 	enrollGS.GracefulStop()
 	connectGS.GracefulStop()
