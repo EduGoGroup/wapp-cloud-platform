@@ -48,6 +48,12 @@ type Flow struct {
 // Node es un nodo del flujo. Según Type usa unos u otros campos:
 //   - "menu":    Prompt + Options (opción→id de nodo destino).
 //   - "message": Text + Next (id de nodo siguiente; nil termina el flujo).
+//
+// Content es OPCIONAL (puntero): describe DE DÓNDE sale el contenido a renderizar
+// (fuente + referencia). Ausente/nil ⇒ contenido estático inline (Prompt/Options),
+// retro-compatible con las definiciones existentes. Es la primera costura del
+// refactor hexagonal del Motor de Flujos (Plan 015): en T0 solo se abre la firma;
+// la resolución real por fuente llega en T1.
 type Node struct {
 	Type       string            `json:"type"`
 	Prompt     string            `json:"prompt,omitempty"`
@@ -55,6 +61,38 @@ type Node struct {
 	Options    map[string]string `json:"options,omitempty"`
 	Next       *string           `json:"next,omitempty"`
 	QuestionID string            `json:"question_id,omitempty"`
+	Content    *ContentRef       `json:"content,omitempty"`
+}
+
+// Content es el contenido RESUELTO que un módulo renderiza en un nodo (tipos
+// PUROS, sin dependencias externas). Es la vista que el engine entrega a
+// Module.Render tras resolver la fuente (Plan 015): Prompt/Options para nodos
+// interactivos, Items para catálogos (pedido) y Raw para el resto de la carga
+// específica de la fuente. En T0 el engine lo construye como un placeholder
+// inline (copia de Prompt/Options del nodo); la resolución real llega en T1.
+type Content struct {
+	Prompt  string
+	Options map[string]string
+	Items   []ContentItem
+	Raw     map[string]any `json:"-"`
+}
+
+// ContentItem es un ítem de catálogo (p. ej. una línea del menú de un pedido):
+// código de selección, SKU, etiqueta y precio. Tipo PURO de dominio (Plan 015).
+type ContentItem struct {
+	Code  string  `json:"code"`
+	SKU   string  `json:"sku"`
+	Label string  `json:"label"`
+	Price float64 `json:"price"`
+}
+
+// ContentRef es la referencia declarativa a la fuente del contenido de un nodo
+// (Plan 015): Source indica el origen ("static" | "inline" | "json") y Ref la
+// clave/identificador dentro de esa fuente. Vive en la definición del flujo
+// (Node.Content) y la resuelve el engine a un Content antes de renderizar.
+type ContentRef struct {
+	Source string `json:"source"` // "static" | "inline" | "json"
+	Ref    string `json:"ref"`
 }
 
 // Conversation es el estado vivo de una conversación ligada a la clave lógica

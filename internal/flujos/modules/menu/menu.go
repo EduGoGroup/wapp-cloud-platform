@@ -39,9 +39,11 @@ func (Module) Type() string { return model.NodeTypeMenu }
 func (Module) WaitsForInput() bool { return true }
 
 // Render devuelve el prompt del menú tal cual (las opciones numeradas ya vienen
-// embebidas en el texto del Prompt en este corte).
-func (Module) Render(node model.Node) []string {
-	return []string{node.Prompt}
+// embebidas en el texto del Prompt en este corte). Recibe el contenido YA
+// RESUELTO por el engine (Plan 015); en T0 es un placeholder inline con
+// content.Prompt == node.Prompt, de observable idéntico.
+func (Module) Render(_ model.Node, content model.Content) []string {
+	return []string{content.Prompt}
 }
 
 // Step valida la opción tecleada y decide la transición o el reprompt:

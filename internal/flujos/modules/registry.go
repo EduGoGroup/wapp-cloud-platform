@@ -27,6 +27,21 @@ type Result struct {
 	Outputs []string
 	// Vars es el mapa de variables actualizado (incluye el contador de reprompt).
 	Vars map[string]any
+	// Effects son los efectos de lado que el módulo DECLARA (puro: no los
+	// ejecuta) para que el runtime los despache (persistir una respuesta, emitir
+	// un evento, …). Es la segunda costura del refactor hexagonal (Plan 015). En
+	// T0 nadie los emite (siempre vacío); el dispatch llega en T2.
+	Effects []Effect
+}
+
+// Effect es un efecto de lado DECLARADO por un módulo para que lo despache el
+// runtime (Plan 015). Kind clasifica el efecto (p. ej. "persist", "emit"), Name
+// lo nombra dentro de su clase (p. ej. "survey_answer") y Payload lleva los
+// datos. Tipo PURO: los módulos lo producen, nunca lo ejecutan.
+type Effect struct {
+	Kind    string
+	Name    string
+	Payload map[string]any
 }
 
 // Module es un módulo enchufable que maneja un tipo de nodo (p. ej. "menu").
@@ -34,8 +49,10 @@ type Module interface {
 	// Type devuelve el identificador del tipo de nodo que maneja.
 	Type() string
 	// Render produce los textos a emitir al mostrar el nodo (p. ej. el prompt
-	// del menú). Es puro: no depende de transporte ni BD.
-	Render(node model.Node) []string
+	// del menú), a partir del contenido YA RESUELTO que le entrega el engine. Es
+	// puro: no depende de transporte ni BD ni conoce la fuente del contenido
+	// (Plan 015: el engine resuelve Node.Content a model.Content antes de llamar).
+	Render(node model.Node, content model.Content) []string
 	// Step procesa la entrada del usuario sobre el nodo y devuelve el veredicto
 	// (transición o permanencia con reprompt/ayuda). Puro.
 	Step(node model.Node, conv model.Conversation, input string) Result

@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -22,19 +23,23 @@ func newEngine() *engine.Engine {
 // mustEnter ejecuta Enter y falla el test si hay error (azúcar para el setup).
 func mustEnter(t *testing.T, e *engine.Engine, f model.Flow) model.Conversation {
 	t.Helper()
-	st, _, err := e.Enter(f, model.Conversation{})
+	st, _, err := e.Enter(context.Background(), f, model.Conversation{})
 	if err != nil {
 		t.Fatalf("Enter: %v", err)
 	}
 	return st
 }
 
-// mustStep ejecuta Step y falla el test si hay error.
+// mustStep ejecuta Step y falla el test si hay error. Verifica de paso que en T0
+// el módulo no declara efectos (slice vacío).
 func mustStep(t *testing.T, e *engine.Engine, f model.Flow, st model.Conversation, in string) model.Conversation {
 	t.Helper()
-	st2, _, err := e.Step(f, st, engine.Input{Text: in})
+	st2, _, effects, err := e.Step(context.Background(), f, st, engine.Input{Text: in})
 	if err != nil {
 		t.Fatalf("Step(%q): %v", in, err)
+	}
+	if len(effects) != 0 {
+		t.Fatalf("Step(%q): en T0 no debe declarar efectos, got=%d", in, len(effects))
 	}
 	return st2
 }
@@ -131,7 +136,7 @@ func TestEnter(t *testing.T) {
 	e := newEngine()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st, outs, err := e.Enter(tc.flow, model.Conversation{})
+			st, outs, err := e.Enter(context.Background(), tc.flow, model.Conversation{})
 			if err != nil {
 				t.Fatalf("Enter: %v", err)
 			}
@@ -156,9 +161,12 @@ func TestStepValidOptionAdvances(t *testing.T) {
 	flow := flowMenu()
 	st := mustEnter(t, e, flow)
 
-	st2, outs, err := e.Step(flow, st, engine.Input{Text: "2"})
+	st2, outs, effects, err := e.Step(context.Background(), flow, st, engine.Input{Text: "2"})
 	if err != nil {
 		t.Fatalf("Step: %v", err)
+	}
+	if len(effects) != 0 {
+		t.Fatalf("en T0 Step no debe declarar efectos; got=%d", len(effects))
 	}
 	if got := texts(outs); !slices.Equal(got, []string{"Cuéntame tu problema."}) {
 		t.Fatalf("outs = %q, quiero el texto destino", got)
@@ -173,7 +181,7 @@ func TestStepValidOptionTrimsInput(t *testing.T) {
 	flow := flowMenu()
 	st := mustEnter(t, e, flow)
 
-	st2, outs, err := e.Step(flow, st, engine.Input{Text: "  1 \n"})
+	st2, outs, _, err := e.Step(context.Background(), flow, st, engine.Input{Text: "  1 \n"})
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
@@ -190,7 +198,7 @@ func TestStepInvalidOptionReprompts(t *testing.T) {
 	flow := flowMenu()
 	st := mustEnter(t, e, flow)
 
-	st2, outs, err := e.Step(flow, st, engine.Input{Text: "9"})
+	st2, outs, _, err := e.Step(context.Background(), flow, st, engine.Input{Text: "9"})
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
@@ -213,7 +221,7 @@ func TestStepThirdInvalidSendsHelpAndStays(t *testing.T) {
 	var outs []engine.Output
 	for i := 0; i < 3; i++ {
 		var err error
-		st, outs, err = e.Step(flow, st, engine.Input{Text: "x"})
+		st, outs, _, err = e.Step(context.Background(), flow, st, engine.Input{Text: "x"})
 		if err != nil {
 			t.Fatalf("Step #%d: %v", i+1, err)
 		}
@@ -269,7 +277,7 @@ func TestStepOnTerminalIsNeutral(t *testing.T) {
 	if !st.Finished() {
 		t.Fatalf("precondición: debía estar terminado")
 	}
-	st2, outs, err := e.Step(flow, st, engine.Input{Text: "cualquier cosa"})
+	st2, outs, _, err := e.Step(context.Background(), flow, st, engine.Input{Text: "cualquier cosa"})
 	if err != nil {
 		t.Fatalf("Step terminal: %v", err)
 	}

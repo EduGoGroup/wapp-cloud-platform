@@ -23,7 +23,10 @@ func TestModuleType(t *testing.T) {
 }
 
 func TestModuleRender(t *testing.T) {
-	out := menu.New().Render(menuNode())
+	// El engine entrega el contenido YA resuelto; en T0 es un placeholder inline
+	// con content.Prompt == node.Prompt, de observable idéntico (byte-a-byte).
+	content := model.Content{Prompt: menuNode().Prompt, Options: menuNode().Options}
+	out := menu.New().Render(menuNode(), content)
 	if len(out) != 1 || out[0] != menuNode().Prompt {
 		t.Fatalf("Render debe devolver el prompt tal cual; got=%q", out)
 	}

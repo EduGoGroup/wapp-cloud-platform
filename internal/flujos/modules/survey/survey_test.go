@@ -47,7 +47,10 @@ func TestModuleWaitsForInput(t *testing.T) {
 }
 
 func TestModuleRender(t *testing.T) {
-	out := survey.New().Render(surveyNode())
+	// El engine entrega el contenido YA resuelto; en T0 es un placeholder inline
+	// con content.Prompt == node.Prompt, de observable idéntico (byte-a-byte).
+	content := model.Content{Prompt: surveyNode().Prompt, Options: surveyNode().Options}
+	out := survey.New().Render(surveyNode(), content)
 	if len(out) != 1 || out[0] != surveyNode().Prompt {
 		t.Fatalf("Render debe devolver el prompt tal cual; got=%q", out)
 	}

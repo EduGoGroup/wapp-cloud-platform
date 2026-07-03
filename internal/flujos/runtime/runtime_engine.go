@@ -82,7 +82,7 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	}
 
 	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
-	st, outs, err := rt.engine.Enter(def, st)
+	st, outs, err := rt.engine.Enter(ctx, def, st)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: enter: %w", err)
 	}
@@ -144,10 +144,13 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
-	st, outs, err := rt.engine.Step(def, st, engine.Input{Text: m.GetText()})
+	st, outs, effects, err := rt.engine.Step(ctx, def, st, engine.Input{Text: m.GetText()})
 	if err != nil {
 		return fmt.Errorf("runtime: step: %w", err)
 	}
+	// Efectos declarados por el módulo (Plan 015, segunda costura). En T0 nadie
+	// los emite (siempre vacío); el dispatch al EventSink/persistencia es T2.
+	_ = effects
 	st.LastWaMessageID = m.GetWaMessageId()
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)

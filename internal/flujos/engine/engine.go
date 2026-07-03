@@ -11,6 +11,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -44,11 +45,14 @@ func New(reg *modules.Registry) *Engine {
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su
 // render, encadenando nodos "message" hasta el primer "menu" o el fin
 // (design.md §6, Start). No muta el estado recibido (devuelve uno nuevo).
-func (e *Engine) Enter(def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
+//
+// ctx se propaga hacia la resolución de contenido del render (Plan 015): en T0
+// la resolución es un placeholder inline y no lo usa todavía.
+func (e *Engine) Enter(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
 	st.FlowID = def.FlowID
 	st.FlowVersion = def.Version
 	st.CurrentNode = def.Initial
-	return e.renderFrom(def, st)
+	return e.renderFrom(ctx, def, st)
 }
 
 // Step evalúa el nodo actual con la entrada del usuario (design.md §3):
@@ -58,15 +62,20 @@ func (e *Engine) Enter(def model.Flow, st model.Conversation) (model.Conversatio
 //   - conversación terminada (centinela): ignora la entrada (salida neutra).
 //
 // No muta el estado recibido.
-func (e *Engine) Step(def model.Flow, st model.Conversation, in Input) (model.Conversation, []Output, error) {
+//
+// Devuelve además los []modules.Effect que el módulo DECLARÓ para que el runtime
+// los despache (Plan 015, segunda costura). En T0 ningún módulo emite efectos:
+// el slice llega siempre vacío y los returns tempranos/error devuelven nil. ctx
+// se propaga al render del destino (resolución de contenido, T1).
+func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation, in Input) (model.Conversation, []Output, []modules.Effect, error) {
 	if st.Finished() {
 		// Nodo terminal: la entrada se ignora, sin salida (documentado §6).
-		return st, nil, nil
+		return st, nil, nil, nil
 	}
 
 	node, ok := def.Nodes[st.CurrentNode]
 	if !ok {
-		return st, nil, fmt.Errorf("%w: nodo actual %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
+		return st, nil, nil, fmt.Errorf("%w: nodo actual %q no existe en la definición", model.ErrInvalidFlow, st.CurrentNode)
 	}
 
 	// Delegación genérica: cualquier módulo interactivo (menu, survey_question,
@@ -76,23 +85,29 @@ func (e *Engine) Step(def model.Flow, st model.Conversation, in Input) (model.Co
 	// en el centinela.
 	mod, ok := e.reg.Get(node.Type)
 	if !ok || !mod.WaitsForInput() {
-		return st, nil, fmt.Errorf("%w: nodo actual %q de tipo %q no espera entrada", model.ErrInvalidFlow, st.CurrentNode, node.Type)
+		return st, nil, nil, fmt.Errorf("%w: nodo actual %q de tipo %q no espera entrada", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 	}
 	res := mod.Step(node, st, in.Text)
 	st.Vars = res.Vars
 	if res.Next != nil {
 		// Transición válida: renderiza el destino (encadenando messages).
 		st.CurrentNode = *res.Next
-		return e.renderFrom(def, st)
+		st2, outs, err := e.renderFrom(ctx, def, st)
+		return st2, outs, res.Effects, err
 	}
 	// Permanece: reprompt o ayuda.
-	return st, toOutputs(res.Outputs), nil
+	return st, toOutputs(res.Outputs), res.Effects, nil
 }
 
 // renderFrom produce la salida desde st.CurrentNode: emite los "message"
 // encadenados por Next y se detiene al llegar a un "menu" (cuyo render delega
 // en el módulo) o a Next == nil (marca el fin con el centinela NodeTerminal).
-func (e *Engine) renderFrom(def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
+//
+// ctx se reserva para la resolución de contenido por fuente (Plan 015, T1); en
+// T0 el content se construye como un placeholder inline (copia de Prompt/Options
+// del nodo), de observable IDÉNTICO al render previo.
+func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
+	_ = ctx // reservado para la resolución de contenido (T1).
 	var outs []Output
 	// Cota de seguridad ante ciclos message→message no detectables por Validate.
 	for guard := 0; guard <= len(def.Nodes); guard++ {
@@ -118,7 +133,11 @@ func (e *Engine) renderFrom(def model.Flow, st model.Conversation) (model.Conver
 		if !ok || !mod.WaitsForInput() {
 			return st, outs, fmt.Errorf("%w: nodo %q: tipo desconocido %q", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 		}
-		outs = append(outs, toOutputs(mod.Render(node))...)
+		// Content PLACEHOLDER inline (Plan 015, T0): copia directa de los campos
+		// estáticos del nodo. La resolución real por Node.Content llega en T1;
+		// aquí el observable es idéntico al render previo (content.Prompt == node.Prompt).
+		content := model.Content{Prompt: node.Prompt, Options: node.Options}
+		outs = append(outs, toOutputs(mod.Render(node, content))...)
 		return st, outs, nil
 	}
 	return st, outs, fmt.Errorf("%w: cadena de mensajes demasiado larga (¿ciclo?) desde %q", model.ErrInvalidFlow, st.CurrentNode)

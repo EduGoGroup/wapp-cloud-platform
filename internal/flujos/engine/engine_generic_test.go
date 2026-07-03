@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -21,7 +22,9 @@ type fakeSurvey struct{}
 func (fakeSurvey) Type() string        { return model.NodeTypeSurveyQuestion }
 func (fakeSurvey) WaitsForInput() bool { return true }
 
-func (fakeSurvey) Render(node model.Node) []string { return []string{node.Prompt} }
+func (fakeSurvey) Render(_ model.Node, content model.Content) []string {
+	return []string{content.Prompt}
+}
 
 func (fakeSurvey) Step(node model.Node, conv model.Conversation, input string) modules.Result {
 	if target, ok := node.Options[strings.TrimSpace(input)]; ok {
@@ -79,7 +82,7 @@ func TestGenericRouteMenuAndSurvey(t *testing.T) {
 	e := newEngineWithSurvey()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st, outs, err := e.Enter(tc.flow, model.Conversation{})
+			st, outs, err := e.Enter(context.Background(), tc.flow, model.Conversation{})
 			if err != nil {
 				t.Fatalf("Enter: %v", err)
 			}
@@ -90,9 +93,12 @@ func TestGenericRouteMenuAndSurvey(t *testing.T) {
 				t.Fatalf("Enter debe detenerse en el nodo interactivo %q; node=%q", tc.flow.Initial, st.CurrentNode)
 			}
 
-			st2, outs2, err := e.Step(tc.flow, st, engine.Input{Text: tc.input})
+			st2, outs2, effects, err := e.Step(context.Background(), tc.flow, st, engine.Input{Text: tc.input})
 			if err != nil {
 				t.Fatalf("Step: %v", err)
+			}
+			if len(effects) != 0 {
+				t.Fatalf("en T0 Step no debe declarar efectos; got=%d", len(effects))
 			}
 			if got := texts(outs2); !slices.Equal(got, []string{tc.wantOut}) {
 				t.Fatalf("Step outs = %q, quiero %q (render del destino)", got, tc.wantOut)
@@ -113,7 +119,7 @@ func TestStepUnregisteredTypeIsControlledError(t *testing.T) {
 	t.Run("nodo message como nodo actual", func(t *testing.T) {
 		flow := flowChain() // nodos message
 		st := model.Conversation{CurrentNode: "m1"}
-		_, _, err := e.Step(flow, st, engine.Input{Text: "hola"})
+		_, _, _, err := e.Step(context.Background(), flow, st, engine.Input{Text: "hola"})
 		if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
 			t.Fatalf("esperaba ErrInvalidFlow controlado, obtuve: %v", err)
 		}
@@ -127,7 +133,7 @@ func TestStepUnregisteredTypeIsControlledError(t *testing.T) {
 			Nodes:   map[string]model.Node{"n": {Type: "carrusel"}},
 		}
 		st := model.Conversation{CurrentNode: "n"}
-		_, _, err := e.Step(flow, st, engine.Input{Text: "hola"})
+		_, _, _, err := e.Step(context.Background(), flow, st, engine.Input{Text: "hola"})
 		if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
 			t.Fatalf("esperaba ErrInvalidFlow controlado, obtuve: %v", err)
 		}
@@ -145,7 +151,7 @@ func TestRenderFromUnregisteredTypeIsControlledError(t *testing.T) {
 		Initial: "n",
 		Nodes:   map[string]model.Node{"n": {Type: "carrusel"}},
 	}
-	_, _, err := e.Enter(flow, model.Conversation{})
+	_, _, err := e.Enter(context.Background(), flow, model.Conversation{})
 	if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
 		t.Fatalf("esperaba ErrInvalidFlow controlado, obtuve: %v", err)
 	}
