@@ -212,7 +212,9 @@ func run() error {
 			return crypto.Rekey(ctx, db, contactCipher, contactKP, batch)
 		},
 	))
-	flowadmin.Register(mux, flowStore, flowRuntime)
+	// flowReg aporta a la validación del alta los tipos de nodo de los módulos
+	// enchufables (p. ej. "cart"), para que un flujo que los usa pase POST /admin/flows.
+	flowadmin.Register(mux, flowStore, flowRuntime, flowReg)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

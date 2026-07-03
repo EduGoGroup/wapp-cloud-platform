@@ -99,6 +99,21 @@ func (r *Registry) Get(nodeType string) (Module, bool) {
 	return m, ok
 }
 
+// Types devuelve los tipos de nodo actualmente registrados (orden no garantizado).
+// Lo consume la validación de esquema del alta admin (model.Validate) para aceptar
+// de forma LAXA los nodos manejados por un módulo enchufable (p. ej. "cart"): el
+// modelo NO conoce los módulos concretos (evita el ciclo model→modules), los tipos
+// se le INYECTAN como strings.
+func (r *Registry) Types() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	types := make([]string, 0, len(r.modules))
+	for t := range r.modules {
+		types = append(types, t)
+	}
+	return types
+}
+
 // WaitsForInput indica si el tipo dado está registrado y su módulo es
 // interactivo (espera entrada del usuario). Un tipo no registrado devuelve
 // false. Lo usa el engine para decidir si un nodo detiene el flujo esperando

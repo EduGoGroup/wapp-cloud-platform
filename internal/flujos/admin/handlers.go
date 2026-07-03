@@ -32,6 +32,15 @@ type DefinitionStore interface {
 	InsertDefinition(ctx context.Context, tenantID string, f model.Flow) (version int, err error)
 }
 
+// ModuleTypeSource expone los tipos de nodo registrados por los módulos
+// enchufables (Registry). La validación de esquema del alta (model.ParseAndValidate)
+// los acepta de forma LAXA, de modo que un flujo con un nodo de módulo (p. ej.
+// "cart") pasa el alta admin sin acoplar `model` a los módulos concretos. Lo
+// satisface *modules.Registry (su método Types encaja).
+type ModuleTypeSource interface {
+	Types() []string
+}
+
 // Starter abre una conversación por API (crea el estado en el nodo inicial y
 // envía el menú) y devuelve el Ack del último texto emitido. Lo satisface
 // *runtime.Runtime (su método Start encaja). Recibe la identidad del contacto
@@ -64,7 +73,15 @@ type definitionResponse struct {
 //     definición no cumple el esquema (ErrInvalidFlow).
 //   - 405 si el método no es POST.
 //   - 500 ante un fallo de persistencia.
-func DefinitionHandler(store DefinitionStore) http.Handler {
+//
+// mods aporta los tipos de nodo de los módulos enchufables (Registry) para que la
+// validación acepte los flujos que los usan (p. ej. "cart"). Puede ser nil (sin
+// módulos: solo tipos core).
+func DefinitionHandler(store DefinitionStore, mods ModuleTypeSource) http.Handler {
+	var moduleTypes []string
+	if mods != nil {
+		moduleTypes = mods.Types()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
@@ -85,7 +102,7 @@ func DefinitionHandler(store DefinitionStore) http.Handler {
 			return
 		}
 
-		flow, err := model.ParseAndValidate(req.Definition)
+		flow, err := model.ParseAndValidate(req.Definition, moduleTypes...)
 		if err != nil {
 			http.Error(w, "definición de flujo inválida: "+err.Error(), http.StatusBadRequest)
 			return
@@ -220,8 +237,8 @@ func writeStartError(w http.ResponseWriter, err error) {
 // Register monta ambos endpoints admin del motor de flujos en el mux indicado.
 // Lo invoca cmd/server/main.go (T5); aquí no se decide dónde se expone el mux
 // (red de administración, no público; ver nota de seguridad del paquete).
-func Register(mux *http.ServeMux, store DefinitionStore, starter Starter) {
-	mux.Handle("/admin/flows", DefinitionHandler(store))
+func Register(mux *http.ServeMux, store DefinitionStore, starter Starter, mods ModuleTypeSource) {
+	mux.Handle("/admin/flows", DefinitionHandler(store, mods))
 	mux.Handle("/admin/flows/start", StartHandler(starter))
 }
 

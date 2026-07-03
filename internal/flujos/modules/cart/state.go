@@ -41,9 +41,12 @@ const (
 )
 
 // NodeTypeCart es el tipo de nodo que maneja este módulo. Se mantiene local al
-// paquete (no se añade a model.NodeType* ni a model.Validate) para no tocar el
-// contrato compartido en T1; el cableado del flujo real y su validación llegan
-// con el seed del catálogo (T5).
+// paquete (no se añade a model.NodeType*): el modelo NO conoce los tipos de los
+// módulos, para no acoplarse a ellos. La validación del alta admin sí lo acepta,
+// pero por INYECCIÓN: el módulo se registra en el Registry (modules.Register) y el
+// handler pasa Registry.Types() a model.ParseAndValidate, que acepta laxo cualquier
+// tipo de módulo. Así un flujo con nodo "cart" pasa POST /admin/flows sin tocar
+// `model` (follow-up del Plan 016).
 const NodeTypeCart = "cart"
 
 // DefaultPageSize es el tamaño de página por defecto de los niveles de lista

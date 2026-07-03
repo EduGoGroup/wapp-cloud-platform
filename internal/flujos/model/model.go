@@ -129,12 +129,17 @@ func UnmarshalDefinition(data []byte) (Flow, error) {
 // ParseAndValidate deserializa y valida en un paso: rechaza JSON mal formado y
 // definiciones que no cumplen el esquema. Es el punto de entrada del handler
 // admin (T3) para publicar una definición.
-func ParseAndValidate(data []byte) (Flow, error) {
+//
+// moduleTypes son los tipos de nodo que aportan los MÓDULOS enchufables (Registry):
+// nodos de esos tipos se aceptan de forma LAXA (la validación profunda del contenido
+// la hace el módulo en runtime). Así el modelo NO se acopla a los módulos concretos
+// (los tipos se inyectan como strings, evitando el ciclo model→modules).
+func ParseAndValidate(data []byte, moduleTypes ...string) (Flow, error) {
 	f, err := UnmarshalDefinition(data)
 	if err != nil {
 		return Flow{}, fmt.Errorf("%w: JSON mal formado: %w", ErrInvalidFlow, err)
 	}
-	if err := Validate(f); err != nil {
+	if err := Validate(f, moduleTypes...); err != nil {
 		return Flow{}, err
 	}
 	return f, nil
@@ -146,10 +151,17 @@ func ParseAndValidate(data []byte) (Flow, error) {
 //   - initial no vacío y presente en nodes;
 //   - cada nodo "menu" tiene Options no vacío y cada destino existe en nodes;
 //   - cada nodo "message" con Next != nil apunta a un nodo existente;
-//   - el Type de cada nodo está en {menu, message}.
+//   - el Type de cada nodo es un tipo CORE (menu, message, survey_question) o un
+//     tipo de MÓDULO declarado en moduleTypes (Registry), que se acepta laxo.
+//
+// moduleTypes son los tipos de nodo registrados por los módulos enchufables
+// (p. ej. "cart"): un nodo de ese tipo pasa la validación sin exigir el esquema
+// de los tipos core (options/question_id); su contenido lo valida el módulo en
+// runtime. El rechazo de "tipo desconocido" se conserva para todo lo que no sea
+// ni core ni de módulo (protege contra typos).
 //
 // Devuelve errores envueltos sobre ErrInvalidFlow (inspeccionables con errors.Is).
-func Validate(f Flow) error {
+func Validate(f Flow, moduleTypes ...string) error {
 	if f.FlowID == "" {
 		return fmt.Errorf("%w: flow_id vacío", ErrInvalidFlow)
 	}
@@ -168,8 +180,12 @@ func Validate(f Flow) error {
 	if _, ok := f.Nodes[f.Initial]; !ok {
 		return fmt.Errorf("%w: initial %q no existe en nodes", ErrInvalidFlow, f.Initial)
 	}
+	mods := make(map[string]struct{}, len(moduleTypes))
+	for _, t := range moduleTypes {
+		mods[t] = struct{}{}
+	}
 	for id, n := range f.Nodes {
-		if err := validateNode(f, id, n); err != nil {
+		if err := validateNode(f, id, n, mods); err != nil {
 			return err
 		}
 	}
@@ -179,8 +195,10 @@ func Validate(f Flow) error {
 // validateNode valida un nodo individual según su Type (extraído de Validate
 // para mantener acotada la complejidad ciclomática). Los tipos interactivos
 // (menu, survey_question) comparten la validación de options→destino existente;
-// survey_question exige además question_id.
-func validateNode(f Flow, id string, n Node) error {
+// survey_question exige además question_id. Un tipo que no es core pero sí está
+// en moduleTypes (Registry) se acepta LAXO (lo valida el módulo en runtime); solo
+// se rechaza como "tipo desconocido" lo que no es ni core ni de módulo.
+func validateNode(f Flow, id string, n Node, moduleTypes map[string]struct{}) error {
 	switch n.Type {
 	case NodeTypeMenu:
 		return validateOptions(f, id, "menu", n.Options)
@@ -198,6 +216,11 @@ func validateNode(f Flow, id string, n Node) error {
 		}
 		return nil
 	default:
+		if _, ok := moduleTypes[n.Type]; ok {
+			// Tipo manejado por un módulo enchufable (p. ej. "cart"): validación
+			// laxa; el módulo valida su contenido en runtime.
+			return nil
+		}
 		return fmt.Errorf("%w: nodo %q: tipo desconocido %q", ErrInvalidFlow, id, n.Type)
 	}
 }

@@ -97,7 +97,7 @@ func do(h http.Handler, method, target, body string) *httptest.ResponseRecorder 
 
 func TestDefinitionHandler_OK(t *testing.T) {
 	store := &fakeDefinitionStore{version: 3}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		definitionBody(t, "tenant-1", validFlowJSON))
 
 	if rec.Code != http.StatusCreated {
@@ -130,7 +130,7 @@ func TestDefinitionHandler_OK(t *testing.T) {
 
 func TestDefinitionHandler_MalformedJSON(t *testing.T) {
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows", "{not json")
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows", "{not json")
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, quiero 400", rec.Code)
@@ -148,7 +148,7 @@ func TestDefinitionHandler_InvalidFlow_MissingInitial(t *testing.T) {
       "nodes": {"root": {"type": "message", "text": "hola", "next": null}}
     }`
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		definitionBody(t, "tenant-1", noInitial))
 
 	if rec.Code != http.StatusBadRequest {
@@ -168,7 +168,7 @@ func TestDefinitionHandler_InvalidFlow_OptionToMissingNode(t *testing.T) {
       "nodes": {"root": {"type": "menu", "prompt": "p", "options": {"1": "fantasma"}}}
     }`
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		definitionBody(t, "tenant-1", badOption))
 
 	if rec.Code != http.StatusBadRequest {
@@ -181,7 +181,7 @@ func TestDefinitionHandler_InvalidFlow_OptionToMissingNode(t *testing.T) {
 
 func TestDefinitionHandler_MissingTenant(t *testing.T) {
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		definitionBody(t, "", validFlowJSON))
 
 	if rec.Code != http.StatusBadRequest {
@@ -194,7 +194,7 @@ func TestDefinitionHandler_MissingTenant(t *testing.T) {
 
 func TestDefinitionHandler_MissingDefinition(t *testing.T) {
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		`{"tenant_id": "tenant-1"}`)
 
 	if rec.Code != http.StatusBadRequest {
@@ -207,7 +207,7 @@ func TestDefinitionHandler_MissingDefinition(t *testing.T) {
 
 func TestDefinitionHandler_MethodNotAllowed(t *testing.T) {
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store), http.MethodGet, "/admin/flows", "")
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodGet, "/admin/flows", "")
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("code = %d, quiero 405", rec.Code)
@@ -219,11 +219,56 @@ func TestDefinitionHandler_MethodNotAllowed(t *testing.T) {
 
 func TestDefinitionHandler_StoreError(t *testing.T) {
 	store := &fakeDefinitionStore{err: errors.New("boom")}
-	rec := do(admin.DefinitionHandler(store), http.MethodPost, "/admin/flows",
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
 		definitionBody(t, "tenant-1", validFlowJSON))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("code = %d, quiero 500", rec.Code)
+	}
+}
+
+// fakeModuleTypes satisface admin.ModuleTypeSource devolviendo una lista fija de
+// tipos de módulo (como haría *modules.Registry.Types()).
+type fakeModuleTypes struct{ types []string }
+
+func (f fakeModuleTypes) Types() []string { return f.types }
+
+// cartFlowJSON usa un nodo de tipo de MÓDULO ("cart"), no core. Su validación es
+// laxa: el módulo valida el contenido en runtime.
+const cartFlowJSON = `{
+  "flow_id": "tienda",
+  "version": 1,
+  "initial": "root",
+  "nodes": {
+    "root": {"type": "cart"}
+  }
+}`
+
+// TestDefinitionHandler_ModuleTypeAccepted: con el Registry (mods) que declara
+// "cart", un flujo con nodo cart PASA el alta (follow-up Plan 016). Sin mods, el
+// mismo flujo se rechaza como tipo desconocido (400).
+func TestDefinitionHandler_ModuleTypeAccepted(t *testing.T) {
+	store := &fakeDefinitionStore{version: 1}
+	mods := fakeModuleTypes{types: []string{"cart"}}
+	rec := do(admin.DefinitionHandler(store, mods), http.MethodPost, "/admin/flows",
+		definitionBody(t, "tenant-1", cartFlowJSON))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("con Registry(cart) el flujo cart debe validar: code = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.called {
+		t.Fatal("no se persistió el flujo cart")
+	}
+}
+
+func TestDefinitionHandler_ModuleTypeRejectedWithoutRegistry(t *testing.T) {
+	store := &fakeDefinitionStore{version: 1}
+	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
+		definitionBody(t, "tenant-1", cartFlowJSON))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("sin Registry, el tipo cart es desconocido: code = %d, quiero 400", rec.Code)
+	}
+	if store.called {
+		t.Fatal("no debió persistir un flujo con tipo desconocido")
 	}
 }
 
@@ -409,7 +454,7 @@ func TestRegister_RoutesBothEndpoints(t *testing.T) {
 	store := &fakeDefinitionStore{version: 1}
 	starter := &fakeStarter{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd", Ok: true}}
 	mux := http.NewServeMux()
-	admin.Register(mux, store, starter)
+	admin.Register(mux, store, starter, nil)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

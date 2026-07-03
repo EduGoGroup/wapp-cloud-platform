@@ -190,6 +190,46 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestValidate_ModuleType cubre el follow-up del Plan 016: un nodo cuyo Type es de
+// un MÓDULO enchufable (p. ej. "cart") valida cuando ese tipo se declara en
+// moduleTypes (validación laxa: sin exigir options/question_id), pero se rechaza si
+// no se declara. Un tipo que no es ni core ni de módulo sigue fallando.
+func TestValidate_ModuleType(t *testing.T) {
+	// Un nodo "cart" (tipo de módulo, no core) en lugar de un message terminal.
+	cartFlow := func() model.Flow {
+		f := validFlow()
+		n := f.Nodes["ventas"]
+		n.Type = "cart"
+		n.Text = ""
+		f.Nodes["ventas"] = n
+		return f
+	}
+
+	t.Run("cart aceptado cuando se declara como módulo", func(t *testing.T) {
+		if err := model.Validate(cartFlow(), "cart"); err != nil {
+			t.Fatalf("cart declarado como módulo debe validar; obtuve: %v", err)
+		}
+	})
+
+	t.Run("cart rechazado si no se declara", func(t *testing.T) {
+		err := model.Validate(cartFlow())
+		if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
+			t.Fatalf("sin declararlo, cart es tipo desconocido: esperaba ErrInvalidFlow, obtuve: %v", err)
+		}
+	})
+
+	t.Run("tipo ni core ni módulo sigue fallando", func(t *testing.T) {
+		f := validFlow()
+		n := f.Nodes["ventas"]
+		n.Type = "carrusel"
+		f.Nodes["ventas"] = n
+		err := model.Validate(f, "cart") // se declaran otros módulos, pero no "carrusel"
+		if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
+			t.Fatalf("un tipo desconocido debe fallar aunque haya módulos declarados; obtuve: %v", err)
+		}
+	})
+}
+
 func TestParseAndValidate(t *testing.T) {
 	t.Run("JSON mal formado rechazado", func(t *testing.T) {
 		_, err := model.ParseAndValidate([]byte("{no es json"))
@@ -204,6 +244,16 @@ func TestParseAndValidate(t *testing.T) {
 		_, err := model.ParseAndValidate(data)
 		if err == nil || !errors.Is(err, model.ErrInvalidFlow) {
 			t.Fatalf("esperaba ErrInvalidFlow por esquema, obtuve: %v", err)
+		}
+	})
+
+	t.Run("nodo de tipo módulo aceptado al declararlo", func(t *testing.T) {
+		data := []byte(`{"flow_id":"tienda","version":1,"initial":"root","nodes":{"root":{"type":"cart"}}}`)
+		if _, err := model.ParseAndValidate(data, "cart"); err != nil {
+			t.Fatalf("con 'cart' declarado como módulo debe validar; obtuve: %v", err)
+		}
+		if _, err := model.ParseAndValidate(data); err == nil || !errors.Is(err, model.ErrInvalidFlow) {
+			t.Fatalf("sin declarar 'cart' debe rechazar; obtuve: %v", err)
 		}
 	})
 
