@@ -63,14 +63,18 @@ internal/
 
 El arranque levanta **dos** servidores gRPC que comparten cert de servidor y CA dev:
 
-- **Enrollment** (`WAPP_GRPC_ENROLL_ADDR`, dev `:8444`) — **TLS de servidor
+> **Puertos: banda wApp 81xx** (aparte de EduGo 80xx; ver `../../docs/CONVENCIONES.md`).
+> Los valores dev van en `.env.example` (fuente de despliegue, patrón EduGo); los literales
+> en `internal/platform/config` son solo el fallback. Override por `WAPP_*`.
+
+- **Enrollment** (`WAPP_GRPC_ENROLL_ADDR`, dev `:8102`) — **TLS de servidor
   SOLAMENTE** (sin exigir cert de cliente): el Edge enrola aquí *antes* de tener
   cert. Sirve `EnrollmentServer` (CSR -> código -> cert firmado por la CA).
-- **CloudLink** (`WAPP_GRPC_CONNECT_ADDR`, dev `:8443`) — **mTLS estricto**
+- **CloudLink** (`WAPP_GRPC_CONNECT_ADDR`, dev `:8101`) — **mTLS estricto**
   (`mtls.ServerCreds`, RequireAndVerifyClientCert, clientCAs = Pool de la CA de
   enroll): el Edge conecta aquí con el cert emitido. Sirve `CloudLinkServer`.
 
-Más un **HTTP** (`WAPP_HTTP_ADDR`, dev `:8080`) con `/healthz` (incluye check de
+Más un **HTTP** (`WAPP_HTTP_ADDR`, dev `:8100`) con `/healthz` (incluye check de
 BD) y `/admin/leases/revoke` (kill-switch interno, **auth diferida a la fase IAM**).
 
 PKI de dev: `scripts/gen-dev-certs.sh` genera `certs/{ca,server}.{crt,key}`

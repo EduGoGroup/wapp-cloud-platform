@@ -156,9 +156,9 @@ func (d DatabaseConfig) DSN() string {
 func defaults() AppConfig {
 	return AppConfig{
 		Env:             "dev",
-		HTTPAddr:        ":8080",
-		GRPCEnrollAddr:  ":8444",
-		GRPCConnectAddr: ":8443",
+		HTTPAddr:        ":8100",
+		GRPCEnrollAddr:  ":8102",
+		GRPCConnectAddr: ":8101",
 		LogLevel:        "info",
 		LogJSON:         false,
 		DB: DatabaseConfig{
