@@ -37,11 +37,27 @@ type Runtime struct {
 	contacts contact.Resolver
 	log      logger.Logger
 	locks    *keyedMutex
+	// sinks recibe en fan-out EN PROCESO (ADR-0003, sin broker) cada Effect que
+	// un módulo declara al avanzar (Plan 015 · T2). New lo deja en LogSink por
+	// defecto si no se inyecta otro con WithEventSink.
+	sinks []EventSink
 }
 
-// New construye el Runtime con sus dependencias.
-func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver TenantResolver, contacts contact.Resolver, log logger.Logger) *Runtime {
-	return &Runtime{
+// Option configura el Runtime al construirlo (patrón funcional-options, igual que
+// gatewaygrpc.Server).
+type Option func(*Runtime)
+
+// WithEventSink añade un EventSink al fan-out de efectos del runtime (Plan 015 ·
+// T2). Se puede pasar varias veces (se acumulan).
+func WithEventSink(sink EventSink) Option {
+	return func(rt *Runtime) { rt.sinks = append(rt.sinks, sink) }
+}
+
+// New construye el Runtime con sus dependencias. Las opcionales (sinks de
+// efectos) se pasan como Option; sin ninguna, el fan-out queda en LogSink
+// (log-only) por defecto.
+func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver TenantResolver, contacts contact.Resolver, log logger.Logger, opts ...Option) *Runtime {
+	rt := &Runtime{
 		store:    repo,
 		engine:   eng,
 		sender:   sender,
@@ -50,6 +66,15 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 		log:      log,
 		locks:    newKeyedMutex(),
 	}
+	for _, opt := range opts {
+		opt(rt)
+	}
+	// El fan-out de efectos nunca es nil: log-only por defecto (NO PersistSink,
+	// para no duplicar survey_results con el flush viejo hasta T3).
+	if len(rt.sinks) == 0 {
+		rt.sinks = []EventSink{NewLogSink(log)}
+	}
+	return rt
 }
 
 // Start abre una conversación por API (design.md §6, decisión C): bajo el
@@ -148,12 +173,29 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err != nil {
 		return fmt.Errorf("runtime: step: %w", err)
 	}
-	// Efectos declarados por el módulo (Plan 015, segunda costura). En T0 nadie
-	// los emite (siempre vacío); el dispatch al EventSink/persistencia es T2.
-	_ = effects
 	st.LastWaMessageID = m.GetWaMessageId()
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
+	}
+	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el
+	// módulo (Plan 015 · T2, segunda costura). Va DESPUÉS del Save (el estado ya
+	// está persistido) y respeta el orden Save-antes-de-Send, igual que el flush.
+	// Un fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
+	// sinks/efectos. En T2 nadie emite (effects vacío) ⇒ el bucle no itera ⇒
+	// no-regresión total (Menú/Encuesta idénticos); el flush viejo sigue por su
+	// vía hasta T3.
+	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+	for _, eff := range effects {
+		for _, sink := range rt.sinks {
+			if err := sink.Handle(ctx, ec, eff); err != nil {
+				rt.log.Error("runtime: sink de efecto falló",
+					"error", err,
+					"kind", eff.Kind,
+					"name", eff.Name,
+					"session_id", sessionID,
+				)
+			}
+		}
 	}
 	// Flush ÚNICO de resultados de encuesta al terminar la conversación (Plan
 	// 014 §7, §10.G): los módulos son PUROS y solo anotan las respuestas en
