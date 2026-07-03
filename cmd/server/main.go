@@ -35,6 +35,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/envelope"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/crypto/curve25519"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -61,10 +62,12 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 )
 
 const (
@@ -88,6 +91,11 @@ func run() error {
 	}
 
 	log := logging.New(cfg)
+
+	// Observabilidad Prometheus (Plan 018 · T10, R11): registry propio compartido
+	// por los dos listeners HTTP (métricas de request/latencia/login/rate-limit) y
+	// el sink de acuses. /metrics se sirve en el listener admin (:8100), más abajo.
+	mtx := metrics.New()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -118,6 +126,12 @@ func run() error {
 		return err
 	}
 
+	// --- Acuses persistidos (Plan 018 · T10, R11): los MessageReceipt del Edge
+	// (Plan 013) se materializan en message_receipts (migración 0022) de forma
+	// idempotente, reemplazando el LogReceiptSink log-only. onRecord alimenta la
+	// métrica wapp_receipts_total (delivered|read). CERO PII: solo metadatos. ---
+	receiptSink := receipts.NewSink(receipts.NewPostgresStore(db), mtx.Receipt)
+
 	// --- Fleet + Gateway CloudLink. ---
 	gw := gatewaygrpc.New(
 		session.NewRegistry(),
@@ -125,6 +139,7 @@ func run() error {
 		gatewaygrpc.WithLease(leaseMgr),
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
+		gatewaygrpc.WithReceiptSink(receiptSink),
 	)
 
 	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
@@ -206,7 +221,7 @@ func run() error {
 	// buildPublicAPIServer para no engordar run(). Devuelve además el middleware
 	// de auth y el auditor, que T4 REUSA para blindar /admin/* (mismo secreto JWT
 	// ⇒ los tokens valen en ambos listeners). ---
-	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, publicapi.Deps{
+	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, mtx, publicapi.Deps{
 		Sender:   gw,
 		Sessions: fleet.NewPostgresRepository(db),
 		Flows:    flowStore,
@@ -214,6 +229,8 @@ func run() error {
 		Starter:  flowRuntime,
 		Media:    flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
 		Content:  flowStore,        // CRUD tenant_content (Plan 018 · T6)
+		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
+		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
 	if err != nil {
 		return err
@@ -228,6 +245,11 @@ func run() error {
 	checker.Register(postgres.NewHealthCheck(db))
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", httpapi.HealthHandler(checker))
+	// Métricas Prometheus (Plan 018 · T10, R11): banda de observabilidad del
+	// ecosistema. Se sirve en el listener admin (interno, :8100), NO en el público
+	// (:8103): las métricas no se exponen a terceros. Sin auth ni rate-limit (sonda
+	// interna, como /healthz). Sus labels son CERO PII (patrón de ruta, no valores).
+	mux.Handle("/metrics", mtx.PromHandler())
 	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
 		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
 	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
@@ -248,8 +270,11 @@ func run() error {
 		"flows.start", "flow", flowadmin.StartHandler(flowRuntime)))
 
 	httpSrv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Addr: cfg.HTTPAddr,
+		// InstrumentHTTP envuelve el mux ENTERO: cuenta request/latencia por patrón
+		// de ruta (r.Pattern, CERO PII) del listener admin. No añade rate-limit
+		// (red interna). /metrics y /healthz quedan cubiertos por la métrica también.
+		Handler:           mtx.InstrumentHTTP("admin", mux),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -406,7 +431,7 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 // mensajes + flujos CRUD/arranque) que reciben en `pub` las dependencias de
 // negocio (gateway, store, motor). gRPC (:8101/:8102) y el admin (:8100) quedan
 // intactos: este servidor es aparte.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	jwtMgr, svcJWTMgr, err := buildJWTManagers(cfg, log)
 	if err != nil {
 		return nil, nil, nil, err
@@ -415,6 +440,9 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
 	}
+	// El mismo AuditService sirve la consulta GET /api/v1/audit (Plan 018 · T10):
+	// lee la bitácora del tenant del token (audit.read). CERO PII (eventos opacos).
+	pub.Audit = auditor
 	authSvc, err := iamusecase.NewAuthService(
 		iampostgres.NewUserRepo(db),
 		iampostgres.NewRoleRepo(db),
@@ -441,12 +469,23 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por api-key/scope (mismo authMW) y las escrituras auditadas (mismo
-	// auditor). El tenant SIEMPRE sale del token (INV-8).
+	// auditor). El tenant SIEMPRE sale del token (INV-8). T10 añade GET /api/v1/audit.
 	publicapi.Register(publicMux, pub, authMW, auditor, log)
+
+	// Blindaje transversal de la API pública (Plan 018 · T10, R11): rate-limit por
+	// credencial (api-key/tenant) y por IP en el login (anti fuerza bruta) +
+	// métricas de request/latencia. Envuelven el mux ENTERO. Orden de ejecución:
+	// métricas (siempre cuenta, incluso un 429) → rate-limit → mux. NO tocan
+	// /healthz/metrics (viven en el listener admin).
+	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
+	loginLim := httpapi.NewLimiter(rate.Limit(float64(cfg.RateLimit.LoginPerMin)/60.0), cfg.RateLimit.LoginBurst)
+	var handler http.Handler = publicMux
+	handler = httpapi.PublicRateLimit(handler, publicLim, loginLim, mtx, log)
+	handler = mtx.InstrumentHTTP("public", handler)
 
 	srv := &http.Server{
 		Addr:              cfg.PublicHTTPAddr,
-		Handler:           publicMux,
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

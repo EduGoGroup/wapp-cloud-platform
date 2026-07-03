@@ -26,6 +26,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -53,6 +54,13 @@ type FlowStore interface {
 	ListDefinitions(ctx context.Context, tenantID string) ([]store.FlowSummary, error)
 }
 
+// AuditReader lista la bitácora de auditoría de un tenant (Plan 018 · T10, R11).
+// Lo satisface *iamusecase.AuditService (ListAudit). Se declara aquí para no
+// acoplar publicapi al usecase concreto.
+type AuditReader interface {
+	ListAudit(ctx context.Context, tenantID string, limit, offset int) ([]domain.AuditEvent, error)
+}
+
 // Deps agrupa las dependencias de negocio que la API pública envuelve. Se
 // construyen una sola vez en cmd/server (los MISMOS objetos que sirven a
 // gRPC/admin): esta capa solo añade transporte + autorización pública.
@@ -64,6 +72,7 @@ type Deps struct {
 	Starter  flowadmin.Starter          // motor de flujos (arranque de conversación)
 	Media    PresignUploader            // presign R2 (upload-url, Plan 017/018 · T6)
 	Content  TenantContentStore         // blobs JSONB por-tenant (tenant_content, T6)
+	Audit    AuditReader                // bitácora de auditoría (GET /api/v1/audit, T10)
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -120,6 +129,14 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		"content.read", listTenantContentHandler(d.Content)))
 	mux.Handle("GET /api/v1/tenant-content/{ref}", protectRead(mw,
 		"content.read", getTenantContentHandler(d.Content)))
+
+	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada
+	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
+	// Lectura sin auditoría (no tiene efecto). Los eventos ya son OPACOS (CERO PII).
+	if d.Audit != nil {
+		mux.Handle("GET /api/v1/audit", protectRead(mw,
+			"audit.read", listAuditHandler(d.Audit)))
+	}
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del

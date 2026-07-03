@@ -72,6 +72,30 @@ type AppConfig struct {
 	// se genera uno efímero con warning (como la clave del lease). Se lee con
 	// prefijo WAPP_ (WAPP_JWT_SECRET, WAPP_JWT_ISSUER, WAPP_SERVICE_JWT_AUDIENCE).
 	JWT JWTConfig `yaml:"jwt"`
+	// RateLimit es la configuración del rate-limit de la API pública (Plan 018 ·
+	// T10, R11): límite por api-key/tenant y límite por IP en el login. Se lee con
+	// prefijo WAPP_RATELIMIT_.
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+}
+
+// RateLimitConfig gobierna el token-bucket EN MEMORIA de la API pública (Plan
+// 018 · T10). PublicRPS/PublicBurst acotan cada credencial (api-key/tenant) en
+// las rutas de operación; LoginPerMin/LoginBurst acotan por IP el
+// /api/v1/auth/login (anti fuerza bruta). Defaults sanos; cero o negativo cae al
+// default (nunca desactiva el límite por accidente).
+type RateLimitConfig struct {
+	// PublicRPS es el ritmo sostenido (peticiones/seg) por credencial en la API
+	// pública. Default 20. Se lee de WAPP_RATELIMIT_PUBLIC_RPS.
+	PublicRPS int `yaml:"public_rps"`
+	// PublicBurst es la ráfaga admitida por credencial. Default 40. Se lee de
+	// WAPP_RATELIMIT_PUBLIC_BURST.
+	PublicBurst int `yaml:"public_burst"`
+	// LoginPerMin es el ritmo sostenido (peticiones/min) por IP en el login.
+	// Default 10. Se lee de WAPP_RATELIMIT_LOGIN_PER_MIN.
+	LoginPerMin int `yaml:"login_per_min"`
+	// LoginBurst es la ráfaga admitida por IP en el login. Default 5. Se lee de
+	// WAPP_RATELIMIT_LOGIN_BURST.
+	LoginBurst int `yaml:"login_burst"`
 }
 
 // JWTConfig agrupa el material de firma del IAM (Plan 018 §6). El Secret firma
@@ -222,6 +246,12 @@ func defaults() AppConfig {
 			Issuer:          "wapp-cloud",
 			ServiceAudience: "wapp-public-api",
 		},
+		RateLimit: RateLimitConfig{
+			PublicRPS:   20,
+			PublicBurst: 40,
+			LoginPerMin: 10,
+			LoginBurst:  5,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -303,6 +333,11 @@ func Load() (AppConfig, error) {
 	cfg.JWT.Secret = loader.GetString("JWT_SECRET", cfg.JWT.Secret)
 	cfg.JWT.Issuer = loader.GetString("JWT_ISSUER", cfg.JWT.Issuer)
 	cfg.JWT.ServiceAudience = loader.GetString("SERVICE_JWT_AUDIENCE", cfg.JWT.ServiceAudience)
+
+	cfg.RateLimit.PublicRPS = loader.GetInt("RATELIMIT_PUBLIC_RPS", cfg.RateLimit.PublicRPS)
+	cfg.RateLimit.PublicBurst = loader.GetInt("RATELIMIT_PUBLIC_BURST", cfg.RateLimit.PublicBurst)
+	cfg.RateLimit.LoginPerMin = loader.GetInt("RATELIMIT_LOGIN_PER_MIN", cfg.RateLimit.LoginPerMin)
+	cfg.RateLimit.LoginBurst = loader.GetInt("RATELIMIT_LOGIN_BURST", cfg.RateLimit.LoginBurst)
 
 	return cfg, nil
 }
