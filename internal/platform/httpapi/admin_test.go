@@ -31,12 +31,19 @@ func (f *fakeRevoker) RevokeLease(_ context.Context, tenantID, edgeID string) er
 	return f.err
 }
 
+// asOperator devuelve una copia del request con una Identity de operador (tenant
+// del token) inyectada, como haría Authenticate en producción (Plan 018 · T4).
+func asOperator(req *http.Request, tenant string) *http.Request {
+	return req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: tenant, Subject: "user-1"}))
+}
+
 func TestRevokeLeaseHandler_OK(t *testing.T) {
 	rev := &fakeRevoker{}
 	h := httpapi.RevokeLeaseHandler(rev)
 
-	body := `{"tenant_id":"t-1","edge_id":"edge-1"}`
-	req := httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(body))
+	// El tenant sale del TOKEN (INV-8); el cuerpo solo lleva edge_id.
+	body := `{"edge_id":"edge-1"}`
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(body)), "t-1")
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -56,7 +63,8 @@ func TestRevokeLeaseHandler_MissingFields(t *testing.T) {
 	rev := &fakeRevoker{}
 	h := httpapi.RevokeLeaseHandler(rev)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(`{"tenant_id":"t-1"}`))
+	// Identidad presente pero sin edge_id en el cuerpo → 400.
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(`{}`)), "t-1")
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -66,6 +74,25 @@ func TestRevokeLeaseHandler_MissingFields(t *testing.T) {
 	}
 	if rev.calls != 0 {
 		t.Fatalf("RevokeLease NO debería invocarse con campos faltantes (calls=%d)", rev.calls)
+	}
+}
+
+// TestRevokeLeaseHandler_NoIdentity: sin Identity en el contexto (request que no
+// pasó por Authenticate) el handler responde 401 y NO revoca (INV-8).
+func TestRevokeLeaseHandler_NoIdentity(t *testing.T) {
+	rev := &fakeRevoker{}
+	h := httpapi.RevokeLeaseHandler(rev)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(`{"edge_id":"edge-1"}`))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if rev.calls != 0 {
+		t.Fatalf("RevokeLease NO debería invocarse sin identidad (calls=%d)", rev.calls)
 	}
 }
 
@@ -90,7 +117,7 @@ func TestRevokeLeaseHandler_RevokerError(t *testing.T) {
 	rev := &fakeRevoker{err: errors.New("boom")}
 	h := httpapi.RevokeLeaseHandler(rev)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(`{"tenant_id":"t-1","edge_id":"edge-1"}`))
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/leases/revoke", strings.NewReader(`{"edge_id":"edge-1"}`)), "t-1")
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)

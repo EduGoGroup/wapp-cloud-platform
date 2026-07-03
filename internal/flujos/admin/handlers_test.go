@@ -16,7 +16,12 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
+
+// ctxTenant es el tenant que las pruebas inyectan como Identity del token (Plan
+// 018 · T4): el handler lo lee de IdentityFromContext (INV-8), NO del cuerpo.
+const ctxTenant = "ctx-tenant"
 
 // --- dobles ---
 
@@ -86,8 +91,19 @@ func definitionBody(t *testing.T, tenant string, def string) string {
 	return string(b)
 }
 
+// do ejecuta el handler con una Identity de operador (tenant=ctxTenant) ya
+// inyectada en el contexto, como haría el middleware Authenticate en producción.
 func do(h http.Handler, method, target, body string) *httptest.ResponseRecorder {
+	return doAs(h, ctxTenant, method, target, body)
+}
+
+// doAs es como do pero con un tenant explícito; tenant="" simula un request SIN
+// identidad (no pasó por Authenticate) para ejercitar el 401.
+func doAs(h http.Handler, tenant, method, target, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if tenant != "" {
+		req = req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: tenant, Subject: "user-1"}))
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -106,8 +122,10 @@ func TestDefinitionHandler_OK(t *testing.T) {
 	if !store.called {
 		t.Fatal("no se llamó a InsertDefinition")
 	}
-	if store.gotTenant != "tenant-1" {
-		t.Fatalf("tenant = %q, quiero tenant-1", store.gotTenant)
+	// El tenant sale del TOKEN (INV-8), no del cuerpo: el body trae "tenant-1"
+	// pero el handler usa el de la Identity inyectada (ctxTenant).
+	if store.gotTenant != ctxTenant {
+		t.Fatalf("tenant = %q, quiero %q (del token)", store.gotTenant, ctxTenant)
 	}
 	if store.gotFlow.FlowID != "menu-soporte" {
 		t.Fatalf("flow_id = %q, quiero menu-soporte", store.gotFlow.FlowID)
@@ -179,16 +197,18 @@ func TestDefinitionHandler_InvalidFlow_OptionToMissingNode(t *testing.T) {
 	}
 }
 
-func TestDefinitionHandler_MissingTenant(t *testing.T) {
+// TestDefinitionHandler_NoIdentity: sin Identity en el contexto (request que no
+// pasó por Authenticate) el handler responde 401 y NO persiste (INV-8).
+func TestDefinitionHandler_NoIdentity(t *testing.T) {
 	store := &fakeDefinitionStore{}
-	rec := do(admin.DefinitionHandler(store, nil), http.MethodPost, "/admin/flows",
-		definitionBody(t, "", validFlowJSON))
+	rec := doAs(admin.DefinitionHandler(store, nil), "", http.MethodPost, "/admin/flows",
+		definitionBody(t, "tenant-1", validFlowJSON))
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code = %d, quiero 400", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, quiero 401", rec.Code)
 	}
 	if store.called {
-		t.Fatal("no debió persistir sin tenant_id")
+		t.Fatal("no debió persistir sin identidad")
 	}
 }
 
@@ -291,7 +311,8 @@ func TestStartHandler_OK(t *testing.T) {
 	if !starter.called {
 		t.Fatal("no se llamó a Start")
 	}
-	if starter.gotTenant != "t1" || starter.gotFlow != "menu-soporte" || starter.gotSess != "s1" {
+	// El tenant sale del TOKEN (INV-8): el body trae "t1" pero se usa ctxTenant.
+	if starter.gotTenant != ctxTenant || starter.gotFlow != "menu-soporte" || starter.gotSess != "s1" {
 		t.Fatalf("Start recibió args inesperados: %+v", starter)
 	}
 	// El alias `contact` plano se interpreta como phone_e164 normalizado (§10.F).
@@ -378,12 +399,26 @@ func TestStartHandler_MalformedJSON(t *testing.T) {
 	}
 }
 
+// TestStartHandler_NoIdentity: sin Identity en el contexto → 401 y no arranca.
+func TestStartHandler_NoIdentity(t *testing.T) {
+	starter := &fakeStarter{}
+	rec := doAs(admin.StartHandler(starter), "", http.MethodPost, "/admin/flows/start", validStartBody)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, quiero 401", rec.Code)
+	}
+	if starter.called {
+		t.Fatal("sin identidad no debió llamar a Start")
+	}
+}
+
 func TestStartHandler_MissingField(t *testing.T) {
+	// El tenant_id ya NO viaja en el cuerpo (sale del token, INV-8): solo se
+	// validan flow_id/session_id/contact.
 	cases := map[string]string{
-		"sin tenant_id":  `{"flow_id":"f","session_id":"s","contact":"c"}`,
-		"sin flow_id":    `{"tenant_id":"t","session_id":"s","contact":"c"}`,
-		"sin session_id": `{"tenant_id":"t","flow_id":"f","contact":"c"}`,
-		"sin contact":    `{"tenant_id":"t","flow_id":"f","session_id":"s"}`,
+		"sin flow_id":    `{"session_id":"s","contact":"c"}`,
+		"sin session_id": `{"flow_id":"f","contact":"c"}`,
+		"sin contact":    `{"flow_id":"f","session_id":"s"}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -456,7 +491,10 @@ func TestRegister_RoutesBothEndpoints(t *testing.T) {
 	mux := http.NewServeMux()
 	admin.Register(mux, store, starter, nil)
 
-	srv := httptest.NewServer(mux)
+	// Register monta los handlers "desnudos"; en producción cmd/server los envuelve
+	// con Authenticate. Aquí simulamos esa capa inyectando una Identity de operador
+	// para que el tenant (INV-8) esté disponible en el contexto.
+	srv := httptest.NewServer(injectIdentity("t1", mux))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/admin/flows", "application/json",
@@ -487,4 +525,13 @@ func TestRegister_RoutesBothEndpoints(t *testing.T) {
 // para verificar que el handler usa errors.Is y no comparación directa.
 func errWrap(target error) error {
 	return errors.Join(errors.New("runtime: enviar texto"), target)
+}
+
+// injectIdentity simula el middleware Authenticate: mete una Identity de operador
+// (tenant del token) en el contexto de cada request antes de llegar al handler.
+func injectIdentity(tenant string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := httpapi.WithIdentity(r.Context(), httpapi.Identity{TenantID: tenant, Subject: "user-1"})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

@@ -202,29 +202,41 @@ func run() error {
 	// --- IAM (Plan 018 · T3): API pública en el SEGUNDO listener HTTP :8103
 	// (Decisión D, INV-7): MISMO binario, un solo proceso. Todo el cableado
 	// (repos Postgres + usecases + middleware + rutas /api/v1/auth) vive en
-	// buildPublicAPIServer para no engordar run(). ---
-	publicSrv, err := buildPublicAPIServer(cfg, db, log)
+	// buildPublicAPIServer para no engordar run(). Devuelve además el middleware
+	// de auth y el auditor, que T4 REUSA para blindar /admin/* (mismo secreto JWT
+	// ⇒ los tokens valen en ambos listeners). ---
+	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log)
 	if err != nil {
 		return err
 	}
 
-	// --- HTTP: health + admin interno de revocación. ---
+	// --- HTTP: health + admin interno. Plan 018 · T4: TODO /admin/* se monta
+	// DETRÁS de Authenticate → RequirePermission(perm) → AuditMiddleware; el
+	// tenant sale del token (INV-8), NUNCA del cuerpo. /healthz queda ABIERTO
+	// (sonda de vida sin tenant). El kill-switch (INV-2) conserva su semántica:
+	// solo gana autenticación. ---
 	checker := httpapi.NewHealthChecker()
 	checker.Register(postgres.NewHealthCheck(db))
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", httpapi.HealthHandler(checker))
-	mux.Handle("/admin/leases/revoke", httpapi.RevokeLeaseHandler(gw))
-	mux.Handle("/admin/messages/send", httpapi.SendMessageHandler(gw))
+	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
+		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
+	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
+		"messages.send", "message", httpapi.SendMessageHandler(gw)))
 	// Rotación de KEK (Plan 012 §7): re-wrap incremental por batch, reanudable e
 	// idempotente. El cierre cablea db+cipher+kp del scope a crypto.Rekey.
-	mux.Handle("/admin/crypto/rekey", httpapi.CryptoRekeyHandler(
-		func(ctx context.Context, batch int) (crypto.Report, error) {
-			return crypto.Rekey(ctx, db, flowDeps.cipher, flowDeps.kp, batch)
-		},
-	))
+	mux.Handle("/admin/crypto/rekey", adminHandler(authMW, auditor, log,
+		"crypto.rekey", "kek", httpapi.CryptoRekeyHandler(
+			func(ctx context.Context, batch int) (crypto.Report, error) {
+				return crypto.Rekey(ctx, db, flowDeps.cipher, flowDeps.kp, batch)
+			},
+		)))
 	// flowReg aporta a la validación del alta los tipos de nodo de los módulos
 	// enchufables (p. ej. "cart"), para que un flujo que los usa pase POST /admin/flows.
-	flowadmin.Register(mux, flowStore, flowRuntime, flowReg)
+	mux.Handle("/admin/flows", adminHandler(authMW, auditor, log,
+		"flows.create", "flow", flowadmin.DefinitionHandler(flowStore, flowReg)))
+	mux.Handle("/admin/flows/start", adminHandler(authMW, auditor, log,
+		"flows.start", "flow", flowadmin.StartHandler(flowRuntime)))
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -384,10 +396,14 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 // monta /api/v1/auth/*. En T3 la única ruta protegida es /api/v1/auth/whoami
 // (humo de extremo a extremo del middleware). gRPC (:8101/:8102) y el admin
 // (:8100) quedan intactos: este servidor es aparte.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*http.Server, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	jwtMgr, svcJWTMgr, err := buildJWTManagers(cfg, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
+	}
+	auditor, err := iamusecase.NewAuditService(iampostgres.NewAuditRepo(db))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
 	}
 	authSvc, err := iamusecase.NewAuthService(
 		iampostgres.NewUserRepo(db),
@@ -399,11 +415,11 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		iamusecase.Config{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
+		return nil, nil, nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
 	}
 	m2mSvc, err := iamusecase.NewM2MService(iampostgres.NewAPIKeyRepo(db), svcJWTMgr, iamusecase.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
+		return nil, nil, nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
 	}
 	authMW := httpapi.NewMiddleware(jwtMgr, m2mSvc, log)
 
@@ -413,14 +429,27 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
 
-	return &http.Server{
+	srv := &http.Server{
 		Addr:              cfg.PublicHTTPAddr,
 		Handler:           publicMux,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
-	}, nil
+	}
+	return srv, authMW, auditor, nil
+}
+
+// adminHandler blinda un endpoint /admin/* con la cadena de la fase IAM (Plan
+// 018 · T4): Authenticate (identidad del token) → RequirePermission(perm) →
+// AuditMiddleware(action=perm, resource) → handler. El tenant SIEMPRE sale del
+// token (INV-8, lo lee el handler con IdentityFromContext) y la operación queda
+// auditada sin PII (actor/resource opacos). El nombre del permiso se reutiliza
+// como `action` de la bitácora (p. ej. "flows.create").
+func adminHandler(mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger, perm, resource string, h http.Handler) http.Handler {
+	h = httpapi.AuditMiddleware(auditor, perm, resource, log)(h)
+	h = mw.RequirePermission(perm)(h)
+	return mw.Authenticate(h)
 }
 
 // buildJWTManagers construye el JWTManager de usuario y el ServiceJWTManager

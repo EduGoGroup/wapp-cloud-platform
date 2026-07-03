@@ -23,24 +23,31 @@ type MessageSender interface {
 	SendText(ctx context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error)
 }
 
-// revokeLeaseRequest es el cuerpo JSON del endpoint de revocación.
+// revokeLeaseRequest es el cuerpo JSON del endpoint de revocación. El tenant_id
+// NO viaja en el cuerpo (INV-8, Plan 018 · T4): sale de la Identity del token.
 type revokeLeaseRequest struct {
-	TenantID string `json:"tenant_id"`
-	EdgeID   string `json:"edge_id"`
+	EdgeID string `json:"edge_id"`
 }
 
 // RevokeLeaseHandler devuelve el handler del endpoint admin de revocación de
-// leases (kill-switch). Acepta POST con cuerpo JSON {tenant_id, edge_id} y, al
-// éxito, responde 204 No Content.
+// leases (kill-switch, ADR-0007). Acepta POST con cuerpo JSON {edge_id} y, al
+// éxito, responde 204 No Content. La semántica del kill-switch (INV-2) NO cambia:
+// solo gana autenticación.
 //
-// SEGURIDAD — auth DIFERIDA: este corte (Plan 005) aún NO tiene IAM, por lo que
-// el endpoint NO está autenticado. Es un endpoint INTERNO: debe exponerse solo
-// en la red de administración (mismo http.Server de /healthz, no público) hasta
-// que la fase IAM añada autenticación/RBAC. No montar de cara a Internet.
+// SEGURIDAD (Plan 018 · T4): el endpoint se monta DETRÁS de Authenticate →
+// RequirePermission("leases.revoke"); el tenant_id sale de IdentityFromContext
+// (INV-8), NUNCA del cuerpo, de modo que un operador solo puede revocar Edges de
+// su propio tenant.
 func RevokeLeaseHandler(revoker LeaseRevoker) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
+			return
+		}
+
+		id, ok := IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
 			return
 		}
 
@@ -49,12 +56,12 @@ func RevokeLeaseHandler(revoker LeaseRevoker) http.Handler {
 			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
 			return
 		}
-		if req.TenantID == "" || req.EdgeID == "" {
-			http.Error(w, "tenant_id y edge_id son requeridos", http.StatusBadRequest)
+		if req.EdgeID == "" {
+			http.Error(w, "edge_id es requerido", http.StatusBadRequest)
 			return
 		}
 
-		if err := revoker.RevokeLease(r.Context(), req.TenantID, req.EdgeID); err != nil {
+		if err := revoker.RevokeLease(r.Context(), id.TenantID, req.EdgeID); err != nil {
 			http.Error(w, "no se pudo revocar el lease", http.StatusInternalServerError)
 			return
 		}
@@ -91,10 +98,9 @@ type sendMessageResponse struct {
 //   - 400 si el cuerpo JSON es inválido o falta algún campo; 405 si el método no
 //     es POST.
 //
-// SEGURIDAD — auth DIFERIDA a la fase IAM: este endpoint INTERNO NO está
-// autenticado. Debe exponerse solo en la red de administración (mismo http.Server
-// de /healthz, no público). No montar de cara a Internet hasta que IAM añada
-// autenticación/RBAC.
+// SEGURIDAD (Plan 018 · T4): el endpoint se monta DETRÁS de Authenticate →
+// RequirePermission("messages.send"). El envío se dirige por session_id (no lleva
+// tenant en el cuerpo); la autorización la impone el middleware.
 func SendMessageHandler(sender MessageSender) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

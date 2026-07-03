@@ -3,12 +3,12 @@
 // POST /admin/flows/start (iniciar una conversación + enviar el menú, decisión C).
 //
 // Modelan internal/platform/httpapi/admin.go (decode JSON, validación, mapeo de
-// errores a códigos) y se registran con Register desde cmd/server/main.go (T5).
+// errores a códigos) y se registran con Register desde cmd/server/main.go.
 //
-// SEGURIDAD — auth DIFERIDA a la fase IAM: estos endpoints son INTERNOS y NO
-// están autenticados. El tenant_id se aporta en el cuerpo (decisión A, no hay
-// IAM aún). Deben exponerse solo en la red de administración (mismo http.Server
-// de /healthz, no público) hasta que IAM añada autenticación/RBAC.
+// SEGURIDAD (Plan 018 · T4): estos endpoints se montan DETRÁS de Authenticate →
+// RequirePermission (flows.create / flows.start) en cmd/server/main.go. El
+// tenant_id sale de httpapi.IdentityFromContext (INV-8), NUNCA del cuerpo: un
+// tenant_id en el JSON se IGNORA. La auditoría la aporta el AuditMiddleware.
 package admin
 
 import (
@@ -23,6 +23,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // DefinitionStore persiste una definición de flujo como versión nueva y devuelve
@@ -49,11 +50,10 @@ type Starter interface {
 	Start(ctx context.Context, tenantID, flowID, sessionID string, ref contact.Ref) (*cloudlinkv1.Ack, error)
 }
 
-// definitionRequest es el cuerpo JSON de POST /admin/flows. El tenant_id viaja
-// en el cuerpo (decisión A: aún no hay IAM); definition es el objeto-flujo crudo
-// (mismo esquema que model.Flow), que se valida con model.ParseAndValidate.
+// definitionRequest es el cuerpo JSON de POST /admin/flows. definition es el
+// objeto-flujo crudo (mismo esquema que model.Flow), que se valida con
+// model.ParseAndValidate. El tenant_id NO viaja aquí (INV-8): sale del token.
 type definitionRequest struct {
-	TenantID   string          `json:"tenant_id"`
 	Definition json.RawMessage `json:"definition"`
 }
 
@@ -65,12 +65,14 @@ type definitionResponse struct {
 }
 
 // DefinitionHandler devuelve el handler de POST /admin/flows: decodifica el
-// cuerpo {tenant_id, definition}, valida la definición (model.ParseAndValidate)
-// y la persiste como versión nueva. Respuestas:
+// cuerpo {definition}, toma el tenant_id de la Identity del token (INV-8), valida
+// la definición (model.ParseAndValidate) y la persiste como versión nueva.
+// Respuestas:
 //
 //   - 201 con {flow_id, version} al publicar.
-//   - 400 si el cuerpo JSON es inválido, falta tenant_id/definition o la
-//     definición no cumple el esquema (ErrInvalidFlow).
+//   - 400 si el cuerpo JSON es inválido, falta definition o la definición no
+//     cumple el esquema (ErrInvalidFlow).
+//   - 401 si el request no llegó autenticado (sin Identity en el contexto).
 //   - 405 si el método no es POST.
 //   - 500 ante un fallo de persistencia.
 //
@@ -88,13 +90,15 @@ func DefinitionHandler(store DefinitionStore, mods ModuleTypeSource) http.Handle
 			return
 		}
 
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			http.Error(w, "autenticación requerida", http.StatusUnauthorized)
+			return
+		}
+
 		var req definitionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
-			return
-		}
-		if req.TenantID == "" {
-			http.Error(w, "tenant_id es requerido", http.StatusBadRequest)
 			return
 		}
 		if len(req.Definition) == 0 {
@@ -108,7 +112,7 @@ func DefinitionHandler(store DefinitionStore, mods ModuleTypeSource) http.Handle
 			return
 		}
 
-		version, err := store.InsertDefinition(r.Context(), req.TenantID, flow)
+		version, err := store.InsertDefinition(r.Context(), id.TenantID, flow)
 		if err != nil {
 			http.Error(w, "no se pudo persistir la definición", http.StatusInternalServerError)
 			return
@@ -132,9 +136,9 @@ type contactRefBody struct {
 // startRequest es el cuerpo JSON de POST /admin/flows/start (decisión C).
 // La identidad del contacto se aporta como contact_ref {kind,value}; por
 // COMPAT (design.md §10.F) se acepta además un `contact` string plano, que se
-// interpreta como {kind: phone_e164, value: contact}.
+// interpreta como {kind: phone_e164, value: contact}. El tenant_id NO viaja aquí
+// (INV-8): sale del token.
 type startRequest struct {
-	TenantID   string          `json:"tenant_id"`
 	FlowID     string          `json:"flow_id"`
 	SessionID  string          `json:"session_id"`
 	ContactRef *contactRefBody `json:"contact_ref"`
@@ -167,16 +171,17 @@ type startResponse struct {
 }
 
 // StartHandler devuelve el handler de POST /admin/flows/start: decodifica el
-// cuerpo {tenant_id, flow_id, session_id, contact_ref{kind,value}} (o el alias
-// compat `contact` como phone_e164, §10.F), abre la conversación por API (crea el
-// estado en el nodo inicial fijando la versión vigente y envía el menú).
-// Respuestas:
+// cuerpo {flow_id, session_id, contact_ref{kind,value}} (o el alias compat
+// `contact` como phone_e164, §10.F), toma el tenant_id de la Identity del token
+// (INV-8), abre la conversación por API (crea el estado en el nodo inicial
+// fijando la versión vigente y envía el menú). Respuestas:
 //
 //   - 200 con {acked_command_id, ok, error} cuando se recibió el Ack del envío.
 //   - 409 si ya hay una conversación viva para la clave (ErrConversationExists).
 //   - 502 si la sesión está offline (no hay stream vivo para el Edge).
 //   - 504 si se agota el contexto/timeout esperando el Ack del Edge.
 //   - 500 ante cualquier otro error.
+//   - 401 si el request no llegó autenticado (sin Identity en el contexto).
 //   - 400 si el cuerpo JSON es inválido o falta algún campo; 405 si no es POST.
 func StartHandler(starter Starter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,13 +190,19 @@ func StartHandler(starter Starter) http.Handler {
 			return
 		}
 
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			http.Error(w, "autenticación requerida", http.StatusUnauthorized)
+			return
+		}
+
 		var req startRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
 			return
 		}
-		if req.TenantID == "" || req.FlowID == "" || req.SessionID == "" {
-			http.Error(w, "tenant_id, flow_id y session_id son requeridos", http.StatusBadRequest)
+		if req.FlowID == "" || req.SessionID == "" {
+			http.Error(w, "flow_id y session_id son requeridos", http.StatusBadRequest)
 			return
 		}
 		ref, ok, err := req.ref()
@@ -204,7 +215,7 @@ func StartHandler(starter Starter) http.Handler {
 			return
 		}
 
-		ack, err := starter.Start(r.Context(), req.TenantID, req.FlowID, req.SessionID, ref)
+		ack, err := starter.Start(r.Context(), id.TenantID, req.FlowID, req.SessionID, ref)
 		if err != nil {
 			writeStartError(w, err)
 			return

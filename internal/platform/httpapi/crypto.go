@@ -31,10 +31,9 @@ type rekeyResponse struct {
 // Ejecutarlo repetidamente hasta pending_by_key_id vacío deja la rotación completa;
 // una KEK con 0 pendientes es retirable del keyring (§10.F).
 //
-// SEGURIDAD — auth DIFERIDA a la fase IAM: este endpoint INTERNO NO está
-// autenticado. Debe exponerse solo en la red de administración (mismo http.Server
-// de /healthz, no público). No montar de cara a Internet hasta que IAM añada
-// autenticación/RBAC.
+// SEGURIDAD (Plan 018 · T4): el endpoint se monta DETRÁS de Authenticate →
+// RequirePermission("crypto.rekey") (solo tenant_admin, grant '*'). La rotación
+// es una operación de mantenimiento global; no toma tenant del cuerpo.
 func CryptoRekeyHandler(rekey RekeyFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
