@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,6 +154,24 @@ func (r *MemoryRepository) LatestDefinition(_ context.Context, tenantID, flowID 
 		return model.Flow{}, fmt.Errorf("%w: tenant=%s flow=%s", ErrDefinitionNotFound, tenantID, flowID)
 	}
 	return r.defs[dk][max], nil
+}
+
+// ListDefinitions devuelve el resumen de cada flujo del tenant (flow_id + última
+// versión), ordenado por flow_id (Plan 018 · T5). Acota por tenant_id (INV-8). El
+// repositorio en memoria no rastrea created_at: FlowSummary.CreatedAt queda en cero.
+func (r *MemoryRepository) ListDefinitions(_ context.Context, tenantID string) ([]FlowSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prefix := tenantID + "\x00"
+	out := make([]FlowSummary, 0)
+	for dk, max := range r.maxVer {
+		if !strings.HasPrefix(dk, prefix) {
+			continue
+		}
+		out = append(out, FlowSummary{FlowID: strings.TrimPrefix(dk, prefix), Version: max})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FlowID < out[j].FlowID })
+	return out, nil
 }
 
 // GetDefinition implementa Repository: devuelve la definición de la versión

@@ -64,6 +64,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
 const (
@@ -205,7 +206,13 @@ func run() error {
 	// buildPublicAPIServer para no engordar run(). Devuelve además el middleware
 	// de auth y el auditor, que T4 REUSA para blindar /admin/* (mismo secreto JWT
 	// ⇒ los tokens valen en ambos listeners). ---
-	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log)
+	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, publicapi.Deps{
+		Sender:   gw,
+		Sessions: fleet.NewPostgresRepository(db),
+		Flows:    flowStore,
+		Modules:  flowReg,
+		Starter:  flowRuntime,
+	})
 	if err != nil {
 		return err
 	}
@@ -393,10 +400,11 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 // el *sql.DB ya abierto, los usecases (que consumen wapp-shared/auth:
 // JWT/bcrypt/glob-RBAC), el middleware reutilizable (Authenticate/
 // RequirePermission, listo para que T4 envuelva /admin/* y T5 monte negocio) y
-// monta /api/v1/auth/*. En T3 la única ruta protegida es /api/v1/auth/whoami
-// (humo de extremo a extremo del middleware). gRPC (:8101/:8102) y el admin
-// (:8100) quedan intactos: este servidor es aparte.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+// monta /api/v1/auth/* (T3) y las rutas de operación pública /api/v1 (T5:
+// mensajes + flujos CRUD/arranque) que reciben en `pub` las dependencias de
+// negocio (gateway, store, motor). gRPC (:8101/:8102) y el admin (:8100) quedan
+// intactos: este servidor es aparte.
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	jwtMgr, svcJWTMgr, err := buildJWTManagers(cfg, log)
 	if err != nil {
 		return nil, nil, nil, err
@@ -428,6 +436,11 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
+
+	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
+	// autenticada por api-key/scope (mismo authMW) y las escrituras auditadas (mismo
+	// auditor). El tenant SIEMPRE sale del token (INV-8).
+	publicapi.Register(publicMux, pub, authMW, auditor, log)
 
 	srv := &http.Server{
 		Addr:              cfg.PublicHTTPAddr,

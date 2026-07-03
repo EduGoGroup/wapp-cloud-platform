@@ -90,6 +90,17 @@ type Repository interface {
 	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
 
+// FlowSummary es el resumen de UN flujo publicado por un tenant: su flow_id y la
+// última versión vigente (más su fecha de alta). Lo devuelve ListDefinitions para
+// alimentar el listado de la API pública (GET /api/v1/flows, Plan 018 · T5). No
+// incluye la definición completa (solo la cabecera); el detalle se obtiene con
+// LatestDefinition. CERO PII: flow_id es un identificador de negocio (ADR-0009).
+type FlowSummary struct {
+	FlowID    string
+	Version   int
+	CreatedAt time.Time
+}
+
 // SurveyResult es una respuesta de encuesta lista para persistir EN CLARO en
 // survey_results (Plan 014 §10.D). ContactID es la identidad OPACA del contacto
 // (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.

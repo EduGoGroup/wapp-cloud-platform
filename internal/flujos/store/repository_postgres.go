@@ -145,6 +145,41 @@ func (r *PostgresRepository) LatestDefinition(ctx context.Context, tenantID, flo
 	return f, nil
 }
 
+// ListDefinitions devuelve el resumen (flow_id, última versión, alta) de cada
+// flujo publicado por el tenant, ordenado por flow_id (Plan 018 · T5). Acota SIEMPRE
+// por tenant_id (INV-8): un tenant NUNCA ve los flujos de otro. DISTINCT ON toma la
+// fila de mayor versión por flow_id (la vigente). Lista vacía sin error si el tenant
+// no tiene flujos.
+func (r *PostgresRepository) ListDefinitions(ctx context.Context, tenantID string) (out []FlowSummary, err error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT ON (flow_id) flow_id, version, created_at
+		FROM public.flow_definitions
+		WHERE tenant_id = $1
+		ORDER BY flow_id, version DESC
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar definiciones: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("store: cerrar filas: %w", cerr)
+		}
+	}()
+
+	out = make([]FlowSummary, 0)
+	for rows.Next() {
+		var fs FlowSummary
+		if scanErr := rows.Scan(&fs.FlowID, &fs.Version, &fs.CreatedAt); scanErr != nil {
+			return nil, fmt.Errorf("store: escanear resumen de definición: %w", scanErr)
+		}
+		out = append(out, fs)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("store: iterar definiciones: %w", rowsErr)
+	}
+	return out, nil
+}
+
 // GetDefinition devuelve la definición de la versión EXACTA indicada para
 // (tenant, flow). ErrDefinitionNotFound si no existe esa versión.
 func (r *PostgresRepository) GetDefinition(ctx context.Context, tenantID, flowID string, version int) (model.Flow, error) {
