@@ -61,9 +61,21 @@ func (j *JSON) Resolve(ctx context.Context, tenantID string, node model.Node) (m
 		return model.Content{}, fmt.Errorf("%w: blob de contenido %q mal formado: %w", model.ErrInvalidFlow, ref, err)
 	}
 
+	// Además de los campos tipados (Prompt/Options/Items), volcamos el blob crudo
+	// completo en Content.Raw (map[string]any). Extensión ADITIVA y retro-compatible
+	// (Plan 016 §3.1): menú/encuesta no leen Raw y siguen idénticos; los módulos que
+	// necesitan estructura propia del dominio (p. ej. el carrito parsea su árbol de
+	// catálogo desde Raw) la decodifican ahí. Si el unmarshal a map falla, Raw queda
+	// nil sin abortar la resolución de los campos tipados.
+	var rawMap map[string]any
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		rawMap = nil
+	}
+
 	return model.Content{
 		Prompt:  blob.Prompt,
 		Options: blob.Options,
 		Items:   blob.Items,
+		Raw:     rawMap,
 	}, nil
 }

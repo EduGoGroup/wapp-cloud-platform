@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
@@ -33,15 +34,28 @@ type MemoryRepository struct {
 	// (Plan 015 · T2). Sembrable en tests vía SetTenantContent; leído por
 	// GetTenantContent.
 	content map[string][]byte
+	// orders indexa order_id → orden; imita public.orders (Plan 016 · T0).
+	// Consultable en tests vía Orders().
+	orders map[string]Order
+	// orderItems indexa order_id → líneas (append-only); imita public.order_items
+	// (Plan 016 · T0). Consultable en tests vía OrderItems(orderID).
+	orderItems map[string][]OrderItem
+	// settings indexa tenant_id → config; imita public.tenant_settings (Plan 016 ·
+	// T0). Sembrable en tests vía SetTenantSettings; leído por GetTenantSettings
+	// (defaults si no hay fila).
+	settings map[string]TenantSettings
 }
 
 // NewMemoryRepository crea un repositorio en memoria vacío.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		state:   make(map[string]model.Conversation),
-		defs:    make(map[string]map[int]model.Flow),
-		maxVer:  make(map[string]int),
-		content: make(map[string][]byte),
+		state:      make(map[string]model.Conversation),
+		defs:       make(map[string]map[int]model.Flow),
+		maxVer:     make(map[string]int),
+		content:    make(map[string][]byte),
+		orders:     make(map[string]Order),
+		orderItems: make(map[string][]OrderItem),
+		settings:   make(map[string]TenantSettings),
 	}
 }
 
@@ -258,4 +272,122 @@ func (r *MemoryRepository) SetTenantContent(tenantID, ref string, blob []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.content[contentKey(tenantID, ref)] = stored
+}
+
+// UpsertOrder implementa Repository: inserta o actualiza (por ID) la orden,
+// imitando el upsert en public.orders (Plan 016 · T0). Idempotente por o.ID: en el
+// alta fija created_at/updated_at a now(); en la actualización preserva el
+// created_at almacenado y refresca updated_at (misma semántica que el DEFAULT +
+// ON CONFLICT del Postgres).
+func (r *MemoryRepository) UpsertOrder(_ context.Context, o Order) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if prev, ok := r.orders[o.ID]; ok {
+		o.CreatedAt = prev.CreatedAt
+	} else {
+		o.CreatedAt = now
+	}
+	o.UpdatedAt = now
+	r.orders[o.ID] = o
+	return nil
+}
+
+// InsertOrderItems implementa Repository: acumula las líneas de la orden en un
+// slice interno (append-only), imitando el INSERT en public.order_items (Plan 016
+// · T0). len(items)==0 es un no-op. Fija OrderID y AddedAt (DEFAULT now()) en cada
+// línea; copia por valor (structs sin punteros) para no compartir estado.
+func (r *MemoryRepository) InsertOrderItems(_ context.Context, orderID string, items []OrderItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for _, it := range items {
+		it.OrderID = orderID
+		if it.AddedAt.IsZero() {
+			it.AddedAt = now
+		}
+		r.orderItems[orderID] = append(r.orderItems[orderID], it)
+	}
+	return nil
+}
+
+// GetOpenOrder implementa Repository: devuelve la orden "open" del contacto para
+// (tenantID, contactID); found=false sin error si no hay (Plan 016 · T2/T3).
+// Identidad de negocio: UNA orden "open" por (tenant_id, contact_id) (design.md
+// §3.4), así que devuelve la primera coincidente.
+func (r *MemoryRepository) GetOpenOrder(_ context.Context, tenantID, contactID string) (Order, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, o := range r.orders {
+		if o.TenantID == tenantID && o.ContactID == contactID && o.Status == "open" {
+			return o, true, nil
+		}
+	}
+	return Order{}, false, nil
+}
+
+// MarkOrderStatus implementa Repository: transiciona el estado de la orden (por
+// ID) y fija su total, refrescando updated_at (Plan 016 · T2/T3). Si la orden no
+// existe es un no-op sin error (misma semántica que el UPDATE sin filas).
+func (r *MemoryRepository) MarkOrderStatus(_ context.Context, orderID, status string, total float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if o, ok := r.orders[orderID]; ok {
+		o.Status = status
+		o.Total = total
+		o.UpdatedAt = time.Now()
+		r.orders[orderID] = o
+	}
+	return nil
+}
+
+// GetTenantSettings implementa Repository: devuelve la config sembrada para
+// tenantID o los DEFAULTS (DefaultPageSize, DefaultOrderTTL) si no hay fila, SIN
+// error (design.md §9.E/§9.G).
+func (r *MemoryRepository) GetTenantSettings(_ context.Context, tenantID string) (TenantSettings, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s, ok := r.settings[tenantID]; ok {
+		return s, nil
+	}
+	return TenantSettings{
+		TenantID: tenantID,
+		PageSize: DefaultPageSize,
+		OrderTTL: DefaultOrderTTL,
+	}, nil
+}
+
+// Orders devuelve una copia de las órdenes acumuladas por UpsertOrder. Es un
+// helper de test; devuelve una copia para no exponer el mapa interno.
+func (r *MemoryRepository) Orders() []Order {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Order, 0, len(r.orders))
+	for _, o := range r.orders {
+		out = append(out, o)
+	}
+	return out
+}
+
+// OrderItems devuelve una copia de las líneas persistidas para orderID por
+// InsertOrderItems. Es un helper de test; devuelve una copia para no exponer el
+// slice interno.
+func (r *MemoryRepository) OrderItems(orderID string) []OrderItem {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.orderItems[orderID]
+	out := make([]OrderItem, len(src))
+	copy(out, src)
+	return out
+}
+
+// SetTenantSettings siembra la config del carrito para un tenant. Es un helper de
+// test (imita el alta en tenant_settings).
+func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settings[s.TenantID] = s
 }

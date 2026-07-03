@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
@@ -14,6 +15,10 @@ import (
 // surveyResultCols es el número de columnas por fila que escribe InsertResults
 // (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
 const surveyResultCols = 6
+
+// orderItemCols es el número de columnas por fila que escribe InsertOrderItems
+// (orden de order_items salvo id y added_at, que usan sus DEFAULT).
+const orderItemCols = 5
 
 // PostgresRepository implementa Repository con SQL raw sobre public.flow_state y
 // public.flow_definitions. Los cuerpos flexibles (vars del estado, definition
@@ -259,4 +264,135 @@ func (r *PostgresRepository) GetTenantContent(ctx context.Context, tenantID, ref
 		return nil, fmt.Errorf("store: leer contenido de tenant: %w", err)
 	}
 	return content, nil
+}
+
+// UpsertOrder inserta o actualiza (upsert por id) la orden en public.orders
+// (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
+// NULL. created_at/updated_at usan now() (updated_at se refresca en el UPDATE).
+func (r *PostgresRepository) UpsertOrder(ctx context.Context, o Order) error {
+	var expires sql.NullTime
+	if !o.ExpiresAt.IsZero() {
+		expires = sql.NullTime{Time: o.ExpiresAt, Valid: true}
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.orders
+			(id, tenant_id, contact_id, session_id, status, total, expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+		ON CONFLICT (id) DO UPDATE
+		SET tenant_id  = EXCLUDED.tenant_id,
+		    contact_id = EXCLUDED.contact_id,
+		    session_id = EXCLUDED.session_id,
+		    status     = EXCLUDED.status,
+		    total      = EXCLUDED.total,
+		    expires_at = EXCLUDED.expires_at,
+		    updated_at = now()
+	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires)
+	if err != nil {
+		return fmt.Errorf("store: upsert orden: %w", err)
+	}
+	return nil
+}
+
+// InsertOrderItems persiste en lote las líneas de una orden en public.order_items
+// (Plan 016 · T0/T2). Un solo INSERT multi-fila con placeholders; added_at usa el
+// DEFAULT now() de la tabla. len(items)==0 es un no-op.
+func (r *PostgresRepository) InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(items))
+	args := make([]any, 0, len(items)*orderItemCols)
+	for i, it := range items {
+		base := i * orderItemCols
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5,
+		))
+		args = append(args, orderID, it.SKU, it.Label, it.Qty, it.UnitPrice)
+	}
+	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
+	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
+	query := `
+		INSERT INTO public.order_items
+			(order_id, sku, label, qty, unit_price)
+		VALUES ` + strings.Join(placeholders, ", ")
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("store: insertar líneas de orden: %w", err)
+	}
+	return nil
+}
+
+// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID);
+// found=false sin error si no hay (Plan 016 · T2/T3). Usa el índice orders_open_idx.
+func (r *PostgresRepository) GetOpenOrder(ctx context.Context, tenantID, contactID string) (Order, bool, error) {
+	var (
+		o       Order
+		expires sql.NullTime
+	)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id::text, tenant_id, contact_id, session_id, status, total,
+		       created_at, updated_at, expires_at
+		FROM public.orders
+		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, contactID).Scan(
+		&o.ID, &o.TenantID, &o.ContactID, &o.SessionID, &o.Status, &o.Total,
+		&o.CreatedAt, &o.UpdatedAt, &expires,
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Order{}, false, nil
+	case err != nil:
+		return Order{}, false, fmt.Errorf("store: leer orden abierta: %w", err)
+	}
+	if expires.Valid {
+		o.ExpiresAt = expires.Time
+	}
+	return o, true, nil
+}
+
+// MarkOrderStatus transiciona el estado de una orden (por id) y fija su total,
+// refrescando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled" |
+// "expired".
+func (r *PostgresRepository) MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.orders
+		SET status = $2, total = $3, updated_at = now()
+		WHERE id = $1
+	`, orderID, status, total)
+	if err != nil {
+		return fmt.Errorf("store: marcar estado de orden: %w", err)
+	}
+	return nil
+}
+
+// GetTenantSettings devuelve la config del carrito para tenantID desde
+// public.tenant_settings (Plan 016 · T0). Si el tenant no tiene fila, devuelve los
+// DEFAULTS (DefaultPageSize, DefaultOrderTTL) SIN error (design.md §9.E/§9.G).
+func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
+	var (
+		pageSize int
+		ttlSecs  int
+	)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT page_size, order_ttl_seconds
+		FROM public.tenant_settings
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&pageSize, &ttlSecs)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return TenantSettings{
+			TenantID: tenantID,
+			PageSize: DefaultPageSize,
+			OrderTTL: DefaultOrderTTL,
+		}, nil
+	case err != nil:
+		return TenantSettings{}, fmt.Errorf("store: leer config de tenant: %w", err)
+	}
+	return TenantSettings{
+		TenantID: tenantID,
+		PageSize: pageSize,
+		OrderTTL: time.Duration(ttlSecs) * time.Second,
+	}, nil
 }

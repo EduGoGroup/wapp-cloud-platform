@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
@@ -61,6 +62,32 @@ type Repository interface {
 	// EXACTAMENTE con content.Store (structural typing): el PostgresRepository lo
 	// satisface. Devuelve ErrTenantContentNotFound si la ref no existe.
 	GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error)
+
+	// UpsertOrder inserta o actualiza (upsert por ID) una orden del carrito en
+	// public.orders (Plan 016 · T0/T2, ADR-0009). Idempotente por o.ID: crea el
+	// "open" una vez (primer item_added) y no lo duplica si se reprocesa el mismo
+	// entrante. Las transiciones de estado posteriores van por MarkOrderStatus.
+	// CERO PII: o.ContactID es la identidad OPACA (ADR-0010).
+	UpsertOrder(ctx context.Context, o Order) error
+	// InsertOrderItems persiste (en lote) las líneas de una orden en
+	// public.order_items (Plan 016 · T0/T2). len(items)==0 es un no-op. added_at
+	// usa el DEFAULT now() de la tabla. sku/label son códigos de negocio, NO PII.
+	InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error
+	// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID),
+	// si existe (found=false sin error si no hay). Identidad de negocio: UNA orden
+	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
+	// reanudar y para evaluar el TTL (design.md §4.3).
+	GetOpenOrder(ctx context.Context, tenantID, contactID string) (order Order, found bool, err error)
+	// MarkOrderStatus transiciona el estado de una orden (por ID) y fija su total,
+	// actualizando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled"
+	// | "expired". Reprocesar el mismo entrante no cambia la semántica (idempotente
+	// por el last_wa_message_id del runtime).
+	MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error
+	// GetTenantSettings devuelve la config del carrito para tenantID desde
+	// public.tenant_settings (Plan 016 · T0). Si el tenant NO tiene fila, devuelve
+	// los DEFAULTS (PageSize=5, OrderTTL=3600s) SIN error: el carrito funciona sin
+	// configurar nada (design.md §9.E/§9.G).
+	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
 
 // SurveyResult es una respuesta de encuesta lista para persistir EN CLARO en
@@ -93,6 +120,56 @@ type FlowEvent struct {
 	Name        string         // "survey_answer" | ...
 	Payload     map[string]any // se serializa a JSONB en el repo postgres
 }
+
+// Order es una orden del módulo Carrito, proyección tipada de cart_closed sobre
+// public.orders (Plan 016 · design.md §3.4). ContactID es la identidad OPACA del
+// contacto (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.
+// Status es "open" | "closed" | "cancelled" | "expired". ExpiresAt es now +
+// order_ttl (nulo/zero si no aplica). CreatedAt/UpdatedAt los pone el DEFAULT de
+// la tabla en el alta.
+type Order struct {
+	ID        string // uuid (asignado al abrir la orden "open")
+	TenantID  string
+	ContactID string // OPACO (Plan 010 / ADR-0010); NUNCA número/JID en claro
+	SessionID string
+	Status    string // "open" | "closed" | "cancelled" | "expired"
+	Total     float64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ExpiresAt time.Time // now + tenant_settings.order_ttl; zero si no aplica
+}
+
+// OrderItem es una línea de una orden del carrito, lista para persistir en
+// public.order_items (Plan 016 · design.md §3.4). SKU/Label son códigos de
+// negocio (catálogo del tenant), NO PII. AddedAt lo pone el DEFAULT de la tabla.
+type OrderItem struct {
+	OrderID   string
+	SKU       string
+	Label     string
+	Qty       int
+	UnitPrice float64
+	AddedAt   time.Time
+}
+
+// TenantSettings es la config del carrito por-tenant (public.tenant_settings,
+// Plan 016 · design.md §3.4/§9.G). PageSize es el tamaño de página de la
+// paginación (default 5); OrderTTL es el TTL de la orden (persistido como
+// order_ttl_seconds INTEGER, default 3600s). GetTenantSettings devuelve los
+// defaults si el tenant no tiene fila.
+type TenantSettings struct {
+	TenantID string
+	PageSize int           // default DefaultPageSize
+	OrderTTL time.Duration // persistido como order_ttl_seconds; default DefaultOrderTTL
+}
+
+// Defaults de tenant_settings (design.md §9.E/§9.G): valen cuando el tenant no
+// tiene fila en public.tenant_settings. Espejan los DEFAULT de la migración 0013.
+const (
+	// DefaultPageSize es el tamaño de página por defecto de la paginación del carrito.
+	DefaultPageSize = 5
+	// DefaultOrderTTL es el TTL por defecto de una orden (3600s = 1h).
+	DefaultOrderTTL = time.Hour
+)
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna
 // versión de la definición para (tenant_id, flow_id). Se inspecciona con
