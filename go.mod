@@ -61,5 +61,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/EduGoGroup/wapp-shared/auth => ../../shared/wapp-shared/auth
