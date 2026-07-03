@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -224,8 +226,8 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	if res.Version != migrations.SchemaVersion {
 		t.Fatalf("versión: got %q, want %q", res.Version, migrations.SchemaVersion)
 	}
-	if res.Version != "0.7.0" {
-		t.Fatalf("SchemaVersion: got %q, want 0.7.0", res.Version)
+	if res.Version != "0.8.0" {
+		t.Fatalf("SchemaVersion: got %q, want 0.8.0", res.Version)
 	}
 }
 
@@ -259,6 +261,109 @@ func TestIntegration_SurveyResultsPersistAndAggregate(t *testing.T) {
 	got := aggregateAnswers(t, db, flowID)
 	if got["si"] != 2 || got["no"] != 1 {
 		t.Fatalf("agregación por answer_code inesperada: %+v", got)
+	}
+}
+
+// TestIntegration_FlowEventsPersistAndRead valida el TRAMO T2 del Plan 015: la
+// migración 0009 crea el outbox flow_events, InsertFlowEvent escribe un efecto
+// (payload como JSONB) y se lee de vuelta con un SELECT directo. CERO PII: el
+// contact_id es opaco.
+func TestIntegration_FlowEventsPersistAndRead(t *testing.T) {
+	db := openTestDB(t) // migra incl. 0009_flow_events
+	ctx := context.Background()
+	repo := store.NewPostgresRepository(db)
+
+	flowID := fmt.Sprintf("flow-ev-%d", time.Now().UnixNano())
+	ev := store.FlowEvent{
+		TenantID:    "tenant-flow-events",
+		ContactID:   "33333333-3333-3333-3333-333333333333",
+		FlowID:      flowID,
+		FlowVersion: 2,
+		Kind:        "persist",
+		Name:        "survey_answer",
+		Payload:     map[string]any{"question_id": "q1", "answer_code": "si"},
+	}
+	if err := repo.InsertFlowEvent(ctx, ev); err != nil {
+		t.Fatalf("InsertFlowEvent: %v", err)
+	}
+	// Payload nil se materializa como '{}' por el repo.
+	evNil := ev
+	evNil.Name = "sin_payload"
+	evNil.Payload = nil
+	if err := repo.InsertFlowEvent(ctx, evNil); err != nil {
+		t.Fatalf("InsertFlowEvent payload nil: %v", err)
+	}
+
+	var (
+		kind    string
+		name    string
+		payload []byte
+	)
+	err := db.QueryRowContext(ctx, `
+		SELECT kind, name, payload
+		FROM public.flow_events
+		WHERE flow_id = $1 AND name = 'survey_answer'
+	`, flowID).Scan(&kind, &name, &payload)
+	if err != nil {
+		t.Fatalf("SELECT flow_events: %v", err)
+	}
+	if kind != "persist" || name != "survey_answer" {
+		t.Fatalf("efecto leído inesperado: kind=%q name=%q", kind, name)
+	}
+	var body map[string]any
+	if uerr := json.Unmarshal(payload, &body); uerr != nil {
+		t.Fatalf("payload JSONB mal formado: %v", uerr)
+	}
+	if body["answer_code"] != "si" || body["question_id"] != "q1" {
+		t.Fatalf("payload JSONB ida y vuelta inesperado: %+v", body)
+	}
+
+	// El efecto con payload nil quedó como '{}'.
+	var nilPayload []byte
+	if err := db.QueryRowContext(ctx, `
+		SELECT payload FROM public.flow_events WHERE flow_id = $1 AND name = 'sin_payload'
+	`, flowID).Scan(&nilPayload); err != nil {
+		t.Fatalf("SELECT flow_events (nil): %v", err)
+	}
+	if string(nilPayload) != "{}" {
+		t.Fatalf("payload nil debería materializarse como '{}': got %q", nilPayload)
+	}
+}
+
+// TestIntegration_TenantContentSeedAndGet valida el TRAMO T2 del Plan 015: la
+// migración 0010 crea tenant_content; sembramos un blob y GetTenantContent lo
+// devuelve. La firma coincide con content.Store (structural typing).
+func TestIntegration_TenantContentSeedAndGet(t *testing.T) {
+	db := openTestDB(t) // migra incl. 0010_tenant_content
+	ctx := context.Background()
+	repo := store.NewPostgresRepository(db)
+
+	tenantID := fmt.Sprintf("tenant-content-%d", time.Now().UnixNano())
+	ref := "saludo"
+	blob := `{"prompt":"Hola","options":{"1":"a","2":"b"}}`
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.tenant_content (tenant_id, ref, content)
+		VALUES ($1, $2, $3::jsonb)
+	`, tenantID, ref, blob); err != nil {
+		t.Fatalf("sembrar tenant_content: %v", err)
+	}
+
+	got, err := repo.GetTenantContent(ctx, tenantID, ref)
+	if err != nil {
+		t.Fatalf("GetTenantContent: %v", err)
+	}
+	var body map[string]any
+	if uerr := json.Unmarshal(got, &body); uerr != nil {
+		t.Fatalf("blob JSONB mal formado: %v", uerr)
+	}
+	if body["prompt"] != "Hola" {
+		t.Fatalf("blob leído inesperado: %+v", body)
+	}
+
+	// ref ausente → ErrTenantContentNotFound.
+	if _, err := repo.GetTenantContent(ctx, tenantID, "no-existe"); !errors.Is(err, store.ErrTenantContentNotFound) {
+		t.Fatalf("ref ausente: want ErrTenantContentNotFound, got %v", err)
 	}
 }
 

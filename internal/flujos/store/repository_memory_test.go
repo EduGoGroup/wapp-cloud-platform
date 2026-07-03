@@ -195,6 +195,85 @@ func TestMemory_InsertResultsAccumulates(t *testing.T) {
 	}
 }
 
+func TestMemory_InsertFlowEventAccumulates(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemoryRepository()
+
+	if got := repo.FlowEvents(); len(got) != 0 {
+		t.Fatalf("repo nuevo no debería tener efectos: %+v", got)
+	}
+
+	ev1 := store.FlowEvent{
+		TenantID: "t1", ContactID: "c-opaco-1", FlowID: "enc", FlowVersion: 1,
+		Kind: "persist", Name: "survey_answer",
+		Payload: map[string]any{"question_id": "q1", "answer_code": "si"},
+	}
+	if err := repo.InsertFlowEvent(ctx, ev1); err != nil {
+		t.Fatalf("InsertFlowEvent 1: %v", err)
+	}
+	// Payload nil también se acepta (el repo Postgres lo materializa a {}).
+	ev2 := store.FlowEvent{
+		TenantID: "t1", ContactID: "c-opaco-2", FlowID: "enc", FlowVersion: 1,
+		Kind: "event", Name: "order_placed", Payload: nil,
+	}
+	if err := repo.InsertFlowEvent(ctx, ev2); err != nil {
+		t.Fatalf("InsertFlowEvent 2: %v", err)
+	}
+
+	got := repo.FlowEvents()
+	if len(got) != 2 {
+		t.Fatalf("efectos acumulados: got %d, want 2", len(got))
+	}
+	if got[0].Name != "survey_answer" || got[0].Payload["answer_code"] != "si" {
+		t.Fatalf("primer efecto inesperado: %+v", got[0])
+	}
+	if got[1].Kind != "event" || got[1].Name != "order_placed" {
+		t.Fatalf("segundo efecto inesperado: %+v", got[1])
+	}
+
+	// Mutar el Payload del argumento tras insertar no afecta lo almacenado (clon).
+	ev1.Payload["answer_code"] = "MUTADO"
+	if again := repo.FlowEvents(); again[0].Payload["answer_code"] != "si" {
+		t.Fatalf("InsertFlowEvent debería clonar el Payload: %+v", again[0].Payload)
+	}
+}
+
+func TestMemory_TenantContentRoundtrip(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemoryRepository()
+
+	// ref ausente → ErrTenantContentNotFound.
+	if _, err := repo.GetTenantContent(ctx, "t1", "ausente"); !errors.Is(err, store.ErrTenantContentNotFound) {
+		t.Fatalf("ref ausente: want ErrTenantContentNotFound, got %v", err)
+	}
+
+	blob := []byte(`{"prompt":"Hola","options":{"1":"a"}}`)
+	repo.SetTenantContent("t1", "saludo", blob)
+
+	got, err := repo.GetTenantContent(ctx, "t1", "saludo")
+	if err != nil {
+		t.Fatalf("GetTenantContent: %v", err)
+	}
+	if string(got) != string(blob) {
+		t.Fatalf("blob round-trip inesperado: got %q, want %q", got, blob)
+	}
+
+	// GetTenantContent devuelve una copia: mutarla no afecta lo sembrado.
+	got[0] = 'X'
+	again, err := repo.GetTenantContent(ctx, "t1", "saludo")
+	if err != nil {
+		t.Fatalf("GetTenantContent 2: %v", err)
+	}
+	if string(again) != string(blob) {
+		t.Fatalf("GetTenantContent debería devolver una copia: got %q", again)
+	}
+
+	// Aislamiento por tenant: otro tenant no ve la ref.
+	if _, err := repo.GetTenantContent(ctx, "t2", "saludo"); !errors.Is(err, store.ErrTenantContentNotFound) {
+		t.Fatalf("otro tenant no debería ver la ref: got %v", err)
+	}
+}
+
 func TestMemory_LatestDefinition(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()

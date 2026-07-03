@@ -25,14 +25,23 @@ type MemoryRepository struct {
 	// InsertResults; imita survey_results (Plan 014 §10.D). Consultable en tests
 	// vía SurveyResults().
 	results []SurveyResult
+	// flowEvents acumula (append-only) los efectos persistidos por
+	// InsertFlowEvent; imita el outbox flow_events (Plan 015 · T2). Consultable en
+	// tests vía FlowEvents().
+	flowEvents []FlowEvent
+	// content indexa (tenant_id, ref) → blob JSON crudo; imita tenant_content
+	// (Plan 015 · T2). Sembrable en tests vía SetTenantContent; leído por
+	// GetTenantContent.
+	content map[string][]byte
 }
 
 // NewMemoryRepository crea un repositorio en memoria vacío.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		state:  make(map[string]model.Conversation),
-		defs:   make(map[string]map[int]model.Flow),
-		maxVer: make(map[string]int),
+		state:   make(map[string]model.Conversation),
+		defs:    make(map[string]map[int]model.Flow),
+		maxVer:  make(map[string]int),
+		content: make(map[string][]byte),
 	}
 }
 
@@ -188,4 +197,65 @@ func (r *MemoryRepository) SurveyResults() []SurveyResult {
 	out := make([]SurveyResult, len(r.results))
 	copy(out, r.results)
 	return out
+}
+
+// contentKey compone la clave (tenant_id, ref) del índice de contenido, imitando
+// la PK compuesta de tenant_content.
+func contentKey(tenantID, ref string) string {
+	return tenantID + "\x00" + ref
+}
+
+// InsertFlowEvent implementa Repository: acumula el efecto en un slice interno
+// (append-only), imitando el INSERT en el outbox flow_events (Plan 015 · T2). El
+// Payload nil se conserva tal cual (la materialización a '{}' es del repo
+// Postgres); la copia por valor de la struct no comparte el mapa con el llamante
+// solo si este no lo muta, así que se clona el Payload defensivamente.
+func (r *MemoryRepository) InsertFlowEvent(_ context.Context, ev FlowEvent) error {
+	stored := ev
+	if ev.Payload != nil {
+		clone := make(map[string]any, len(ev.Payload))
+		for k, v := range ev.Payload {
+			clone[k] = v
+		}
+		stored.Payload = clone
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.flowEvents = append(r.flowEvents, stored)
+	return nil
+}
+
+// FlowEvents devuelve una copia de los efectos acumulados por InsertFlowEvent. Es
+// un helper de test; devuelve una copia para no exponer el slice interno.
+func (r *MemoryRepository) FlowEvents() []FlowEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]FlowEvent, len(r.flowEvents))
+	copy(out, r.flowEvents)
+	return out
+}
+
+// GetTenantContent implementa Repository / content.Store: devuelve el blob JSON
+// crudo sembrado para (tenantID, ref). ErrTenantContentNotFound si no existe.
+func (r *MemoryRepository) GetTenantContent(_ context.Context, tenantID, ref string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	blob, ok := r.content[contentKey(tenantID, ref)]
+	if !ok {
+		return nil, fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	}
+	out := make([]byte, len(blob))
+	copy(out, blob)
+	return out, nil
+}
+
+// SetTenantContent siembra un blob de contenido para (tenantID, ref). Es un
+// helper de test (imita el alta en tenant_content); copia el blob para no
+// compartir el backing array con el llamante.
+func (r *MemoryRepository) SetTenantContent(tenantID, ref string, blob []byte) {
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.content[contentKey(tenantID, ref)] = stored
 }

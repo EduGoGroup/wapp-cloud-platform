@@ -217,3 +217,46 @@ func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyRes
 	}
 	return nil
 }
+
+// InsertFlowEvent persiste UN efecto del motor en el outbox append-only
+// flow_events (Plan 015 · T2, ADR-0009). El Payload viaja como JSONB serializado
+// con json.Marshal ↔ []byte (mismo patrón que vars/definition); Payload nil se
+// materializa como '{}'. created_at usa el DEFAULT now() de la tabla.
+func (r *PostgresRepository) InsertFlowEvent(ctx context.Context, ev FlowEvent) error {
+	payload := ev.Payload
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payloadRaw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("store: serializar payload de efecto: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO public.flow_events
+			(tenant_id, contact_id, flow_id, flow_version, kind, name, payload)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, ev.TenantID, ev.ContactID, ev.FlowID, ev.FlowVersion, ev.Kind, ev.Name, payloadRaw)
+	if err != nil {
+		return fmt.Errorf("store: insertar efecto de flujo: %w", err)
+	}
+	return nil
+}
+
+// GetTenantContent devuelve el blob JSON crudo de public.tenant_content para
+// (tenantID, ref) (Plan 015 · T2). Firma EXACTA de content.Store (structural
+// typing). Devuelve ErrTenantContentNotFound si la ref no existe. Cero pánico.
+func (r *PostgresRepository) GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error) {
+	var content []byte
+	err := r.db.QueryRowContext(ctx, `
+		SELECT content
+		FROM public.tenant_content
+		WHERE tenant_id = $1 AND ref = $2
+	`, tenantID, ref).Scan(&content)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("%w: tenant=%s ref=%s", ErrTenantContentNotFound, tenantID, ref)
+	case err != nil:
+		return nil, fmt.Errorf("store: leer contenido de tenant: %w", err)
+	}
+	return content, nil
+}
