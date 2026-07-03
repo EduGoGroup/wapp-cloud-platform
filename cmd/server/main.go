@@ -38,6 +38,7 @@ import (
 
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
@@ -124,7 +125,9 @@ func run() error {
 	flowReg := modules.NewRegistry()
 	flowReg.Register(menu.New())
 	flowReg.Register(survey.New())
-	flowEngine := engine.New(flowReg)
+	// Fuente de contenido estática (PURA) por defecto (Plan 015 T1): observable
+	// idéntico al render inline previo. El adapter json se cablea en T4/e2e.
+	flowEngine := engine.New(flowReg, engine.WithContentSource(content.NewStatic()))
 	flowStore := flowstore.NewPostgresRepository(db)
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
 	// KeyProvider + FieldCipher del cifrado de PII en reposo (Plan 011, ADR-0017):

@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 )
@@ -35,11 +36,34 @@ type Output struct {
 // Conversation que recibe cada llamada).
 type Engine struct {
 	reg *modules.Registry
+	// content resuelve el model.Content de cada nodo ANTES del Render (Plan 015,
+	// T1). Nunca es nil: New lo inicializa al adapter estático (PURO) si no se
+	// inyecta otro con WithContentSource, de modo que el engine sigue testeable
+	// sin BD y el observable es idéntico al placeholder inline de T0.
+	content content.Source
 }
 
-// New construye el engine con el registro de módulos ya poblado.
-func New(reg *modules.Registry) *Engine {
-	return &Engine{reg: reg}
+// Option configura el Engine al construirlo (patrón functional-options, igual
+// que gatewaygrpc.Server).
+type Option func(*Engine)
+
+// WithContentSource inyecta la fuente de contenido (puerto ContentSource). Sin
+// ella, New usa el adapter estático (PURO) por defecto: contenido copiado del
+// propio nodo, sin I/O.
+func WithContentSource(src content.Source) Option { return func(e *Engine) { e.content = src } }
+
+// New construye el engine con el registro de módulos ya poblado. La fuente de
+// contenido es OPCIONAL (WithContentSource); por defecto es el adapter estático.
+func New(reg *modules.Registry, opts ...Option) *Engine {
+	e := &Engine{reg: reg}
+	for _, opt := range opts {
+		opt(e)
+	}
+	// La fuente de contenido nunca es nil: estática (PURA) por defecto (T1).
+	if e.content == nil {
+		e.content = content.NewStatic()
+	}
+	return e
 }
 
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su
@@ -103,11 +127,10 @@ func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation
 // encadenados por Next y se detiene al llegar a un "menu" (cuyo render delega
 // en el módulo) o a Next == nil (marca el fin con el centinela NodeTerminal).
 //
-// ctx se reserva para la resolución de contenido por fuente (Plan 015, T1); en
-// T0 el content se construye como un placeholder inline (copia de Prompt/Options
-// del nodo), de observable IDÉNTICO al render previo.
+// El content de cada nodo interactivo lo RESUELVE la fuente inyectada (puerto
+// ContentSource, Plan 015 T1) ANTES del Render; por defecto es el adapter estático
+// (PURO), cuyo observable es idéntico al render previo.
 func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, error) {
-	_ = ctx // reservado para la resolución de contenido (T1).
 	var outs []Output
 	// Cota de seguridad ante ciclos message→message no detectables por Validate.
 	for guard := 0; guard <= len(def.Nodes); guard++ {
@@ -133,10 +156,13 @@ func (e *Engine) renderFrom(ctx context.Context, def model.Flow, st model.Conver
 		if !ok || !mod.WaitsForInput() {
 			return st, outs, fmt.Errorf("%w: nodo %q: tipo desconocido %q", model.ErrInvalidFlow, st.CurrentNode, node.Type)
 		}
-		// Content PLACEHOLDER inline (Plan 015, T0): copia directa de los campos
-		// estáticos del nodo. La resolución real por Node.Content llega en T1;
-		// aquí el observable es idéntico al render previo (content.Prompt == node.Prompt).
-		content := model.Content{Prompt: node.Prompt, Options: node.Options}
+		// Resolución de contenido por fuente (Plan 015, T1): la Source inyectada
+		// produce el model.Content del nodo ANTES del Render. El default (static,
+		// PURO) copia Prompt/Options del propio nodo ⇒ observable idéntico a T0.
+		content, err := e.content.Resolve(ctx, st.TenantID, node)
+		if err != nil {
+			return st, outs, fmt.Errorf("%w: resolver contenido de %q: %w", model.ErrInvalidFlow, st.CurrentNode, err)
+		}
 		outs = append(outs, toOutputs(mod.Render(node, content))...)
 		return st, outs, nil
 	}
