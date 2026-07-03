@@ -226,9 +226,6 @@ func TestIntegration_Migrate0004Idempotent(t *testing.T) {
 	if res.Version != migrations.SchemaVersion {
 		t.Fatalf("versión: got %q, want %q", res.Version, migrations.SchemaVersion)
 	}
-	if res.Version != "0.9.0" {
-		t.Fatalf("SchemaVersion: got %q, want 0.9.0", res.Version)
-	}
 }
 
 // TestIntegration_SurveyResultsPersistAndAggregate valida el TRAMO T2 del Plan
