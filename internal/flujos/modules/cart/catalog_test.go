@@ -20,6 +20,85 @@ func rawFromJSON(t *testing.T, s string) map[string]any {
 	return m
 }
 
+// parseCatalogCase es un caso de tabla de TestParseCatalog. validate (cuando
+// no es nil) hace las aserciones de negocio sobre el catálogo parseado en el
+// camino feliz; wantErr cubre los caminos de error.
+type parseCatalogCase struct {
+	name     string
+	content  model.Content
+	wantErr  bool
+	validate func(t *testing.T, got Catalog)
+}
+
+// validateMultiLevelCatalog es el validate del caso "catálogo válido
+// multinivel": vive en una función con nombre (no un closure inline) para que
+// su complejidad ciclomática se contabilice aparte de TestParseCatalog.
+func validateMultiLevelCatalog(t *testing.T, got Catalog) {
+	t.Helper()
+	if len(got.Categories) != 2 {
+		t.Fatalf("categorías = %d, quiero 2", len(got.Categories))
+	}
+	bebidas := got.Categories[0]
+	if bebidas.Code != "1" || bebidas.Label != "Bebidas" {
+		t.Errorf("categoría[0] = %+v", bebidas)
+	}
+	if len(bebidas.Items) != 2 {
+		t.Fatalf("items de Bebidas = %d, quiero 2", len(bebidas.Items))
+	}
+	cafe := bebidas.Items[0]
+	if cafe.Code != "1" || cafe.SKU != "CAFE" || cafe.Label != "Café" || cafe.Price != 2.5 || cafe.Description != "Espresso doble" {
+		t.Errorf("artículo café = %+v", cafe)
+	}
+	postres := got.Categories[1]
+	if postres.Code != "2" || len(postres.Items) != 1 || postres.Items[0].SKU != "FLAN" {
+		t.Errorf("categoría Postres = %+v", postres)
+	}
+}
+
+// validateArticleWithoutDescription es el validate del caso "artículo sin
+// description".
+func validateArticleWithoutDescription(t *testing.T, got Catalog) {
+	t.Helper()
+	if got.Categories[0].Items[0].Description != "" {
+		t.Errorf("Description debería ser vacía, got %q", got.Categories[0].Items[0].Description)
+	}
+}
+
+// validateCategoryWithoutItems es el validate del caso "categoría sin items".
+func validateCategoryWithoutItems(t *testing.T, got Catalog) {
+	t.Helper()
+	if len(got.Categories) != 1 {
+		t.Fatalf("categorías = %d, quiero 1", len(got.Categories))
+	}
+	if len(got.Categories[0].Items) != 0 {
+		t.Errorf("items = %d, quiero 0", len(got.Categories[0].Items))
+	}
+}
+
+// runParseCatalogCase ejecuta un parseCatalogCase: separada de TestParseCatalog
+// por la misma razón que las funciones validate* de arriba (aísla la
+// complejidad ciclomática de los `if` de camino feliz/error en su propia
+// función).
+func runParseCatalogCase(t *testing.T, tt parseCatalogCase) {
+	t.Helper()
+	got, err := ParseCatalog(tt.content)
+	if tt.wantErr {
+		if err == nil {
+			t.Fatalf("quería error, got nil (catalog=%+v)", got)
+		}
+		if !errors.Is(err, model.ErrInvalidFlow) {
+			t.Errorf("error no envuelve model.ErrInvalidFlow: %v", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if tt.validate != nil {
+		tt.validate(t, got)
+	}
+}
+
 func TestParseCatalog(t *testing.T) {
 	validBlob := `{
 	  "categories": [
@@ -33,56 +112,21 @@ func TestParseCatalog(t *testing.T) {
 	  ]
 	}`
 
-	tests := []struct {
-		name     string
-		content  model.Content
-		wantErr  bool
-		validate func(t *testing.T, got Catalog)
-	}{
+	tests := []parseCatalogCase{
 		{
-			name:    "catálogo válido multinivel con números float64 (round-trip JSONB)",
-			content: model.Content{Raw: rawFromJSON(t, validBlob)},
-			validate: func(t *testing.T, got Catalog) {
-				if len(got.Categories) != 2 {
-					t.Fatalf("categorías = %d, quiero 2", len(got.Categories))
-				}
-				bebidas := got.Categories[0]
-				if bebidas.Code != "1" || bebidas.Label != "Bebidas" {
-					t.Errorf("categoría[0] = %+v", bebidas)
-				}
-				if len(bebidas.Items) != 2 {
-					t.Fatalf("items de Bebidas = %d, quiero 2", len(bebidas.Items))
-				}
-				cafe := bebidas.Items[0]
-				if cafe.Code != "1" || cafe.SKU != "CAFE" || cafe.Label != "Café" || cafe.Price != 2.5 || cafe.Description != "Espresso doble" {
-					t.Errorf("artículo café = %+v", cafe)
-				}
-				postres := got.Categories[1]
-				if postres.Code != "2" || len(postres.Items) != 1 || postres.Items[0].SKU != "FLAN" {
-					t.Errorf("categoría Postres = %+v", postres)
-				}
-			},
+			name:     "catálogo válido multinivel con números float64 (round-trip JSONB)",
+			content:  model.Content{Raw: rawFromJSON(t, validBlob)},
+			validate: validateMultiLevelCatalog,
 		},
 		{
-			name:    "artículo sin description (campo opcional ausente)",
-			content: model.Content{Raw: rawFromJSON(t, `{"categories":[{"code":"1","label":"X","items":[{"code":"1","sku":"A","label":"A","price":1}]}]}`)},
-			validate: func(t *testing.T, got Catalog) {
-				if got.Categories[0].Items[0].Description != "" {
-					t.Errorf("Description debería ser vacía, got %q", got.Categories[0].Items[0].Description)
-				}
-			},
+			name:     "artículo sin description (campo opcional ausente)",
+			content:  model.Content{Raw: rawFromJSON(t, `{"categories":[{"code":"1","label":"X","items":[{"code":"1","sku":"A","label":"A","price":1}]}]}`)},
+			validate: validateArticleWithoutDescription,
 		},
 		{
-			name:    "categoría sin items (items ausente → slice vacío, sin error)",
-			content: model.Content{Raw: rawFromJSON(t, `{"categories":[{"code":"1","label":"Vacía"}]}`)},
-			validate: func(t *testing.T, got Catalog) {
-				if len(got.Categories) != 1 {
-					t.Fatalf("categorías = %d, quiero 1", len(got.Categories))
-				}
-				if len(got.Categories[0].Items) != 0 {
-					t.Errorf("items = %d, quiero 0", len(got.Categories[0].Items))
-				}
-			},
+			name:     "categoría sin items (items ausente → slice vacío, sin error)",
+			content:  model.Content{Raw: rawFromJSON(t, `{"categories":[{"code":"1","label":"Vacía"}]}`)},
+			validate: validateCategoryWithoutItems,
 		},
 		{
 			name:    "Raw nil → error",
@@ -108,22 +152,7 @@ func TestParseCatalog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseCatalog(tt.content)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("quería error, got nil (catalog=%+v)", got)
-				}
-				if !errors.Is(err, model.ErrInvalidFlow) {
-					t.Errorf("error no envuelve model.ErrInvalidFlow: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("error inesperado: %v", err)
-			}
-			if tt.validate != nil {
-				tt.validate(t, got)
-			}
+			runParseCatalogCase(t, tt)
 		})
 	}
 }

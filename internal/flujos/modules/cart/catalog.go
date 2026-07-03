@@ -117,15 +117,28 @@ func ParseCatalog(c model.Content) (Catalog, error) {
 			Items: make([]Article, 0, len(cb.Items)),
 		}
 		for _, ab := range cb.Items {
-			category.Items = append(category.Items, Article{
-				Code:        ab.Code,
-				SKU:         ab.SKU,
-				Label:       ab.Label,
-				Price:       ab.Price,
-				Description: ab.Description,
-			})
+			// articleBlob y Article tienen los mismos campos, mismo orden y
+			// mismos tipos (solo difieren en los tags json de articleBlob):
+			// la conversión de tipo es válida y evita el struct literal.
+			category.Items = append(category.Items, Article(ab))
 		}
 		cat.Categories = append(cat.Categories, category)
 	}
 	return cat, nil
+}
+
+// loadCatalog reconstruye el catálogo desde el snapshot que vive en
+// Vars["cart_catalog"] (misma forma que model.Content.Raw). Es la vía por la que
+// Step —que NO recibe el content resuelto, a diferencia de Render— accede al
+// catálogo sin hacer I/O (design.md §4.1, nota de ejecución). En T1 lo siembran
+// los tests; en T2 el runtime. Un snapshot ausente/mal formado deriva en el
+// mismo error que ParseCatalog (envuelto sobre model.ErrInvalidFlow).
+func loadCatalog(vars map[string]any) (Catalog, error) {
+	raw, ok := vars[catalogVarKey].(map[string]any)
+	if !ok {
+		// Ausente o de otro tipo: se trata igual que Raw nil (ParseCatalog
+		// devuelve el error de "catálogo ausente").
+		raw = nil
+	}
+	return ParseCatalog(model.Content{Raw: raw})
 }

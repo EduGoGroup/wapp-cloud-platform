@@ -41,6 +41,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
@@ -125,6 +126,7 @@ func run() error {
 	flowReg := modules.NewRegistry()
 	flowReg.Register(menu.New())
 	flowReg.Register(survey.New())
+	flowReg.Register(cart.New())
 	flowStore := flowstore.NewPostgresRepository(db)
 	// Fuente de contenido enrutada POR-NODO (Plan 015 T4a): el Router compone el
 	// adapter Static (PURO, default de menú/encuesta) con el adapter JSON
