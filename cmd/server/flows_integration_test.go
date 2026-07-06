@@ -48,8 +48,8 @@ const itMenuDefinition = `{
 // (decisión §10.A); evita el PostgresTenantResolver, que requiere BD real.
 type fakeTenantResolver struct{ tenantID string }
 
-func (f fakeTenantResolver) ResolveTenant(_ context.Context, _ string) (string, error) {
-	return f.tenantID, nil
+func (f fakeTenantResolver) ResolveTenant(_ context.Context, _ string) (string, string, error) {
+	return f.tenantID, "bot", nil
 }
 
 // TestInProcessFlowsMenu ejerce el CAMINO DE FLUJOS de extremo a extremo con el

@@ -93,11 +93,12 @@ func (f *fakeSender) texts() []string {
 
 type fakeResolver struct {
 	tenantID string
+	role     string // "" ⇒ bot (no-regresión); "passive" activa la guarda T1.
 	err      error
 }
 
-func (f fakeResolver) ResolveTenant(_ context.Context, _ string) (string, error) {
-	return f.tenantID, f.err
+func (f fakeResolver) ResolveTenant(_ context.Context, _ string) (string, string, error) {
+	return f.tenantID, f.role, f.err
 }
 
 // --- helpers ---

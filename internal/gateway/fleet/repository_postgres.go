@@ -50,10 +50,33 @@ func (r *PostgresRepository) MarkOffline(ctx context.Context, tenantID, edgeID, 
 	return nil
 }
 
+// SetRole fija el rol (bot|passive) de la sesión del tenant. UPDATE acotado por
+// tenant_id + session_id (aislamiento multi-tenant, INV-8): toca TODAS las filas
+// de esa sesión bajo el tenant. found=false si 0 filas (sesión inexistente o de
+// otro tenant ⇒ 404 opaco). Valida el rol en el dominio antes de tocar la BD.
+func (r *PostgresRepository) SetRole(ctx context.Context, tenantID, sessionID string, role Role) (bool, error) {
+	if !ValidRole(role) {
+		return false, ErrInvalidRole
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET role = $3, updated_at = now()
+		WHERE tenant_id = $1 AND session_id = $2
+	`, tenantID, sessionID, string(role))
+	if err != nil {
+		return false, fmt.Errorf("fleet: fijar rol: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al fijar rol: %w", err)
+	}
+	return n > 0, nil
+}
+
 // Get devuelve la sesión, o found=false si no existe.
 func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionID string) (Session, bool, error) {
 	s, err := scanSession(r.db.QueryRowContext(ctx, `
-		SELECT tenant_id::text, edge_id, session_id, state,
+		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
@@ -70,7 +93,7 @@ func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionI
 // List devuelve las sesiones de un tenant.
 func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []Session, err error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT tenant_id::text, edge_id, session_id, state,
+		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1
@@ -105,10 +128,11 @@ type rowScanner interface {
 
 func scanSession(sc rowScanner) (Session, error) {
 	var s Session
-	var state string
-	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &s.LastConnectedAt, &s.LastSeenAt); err != nil {
+	var state, role string
+	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.LastConnectedAt, &s.LastSeenAt); err != nil {
 		return Session{}, err
 	}
 	s.State = State(state)
+	s.Role = Role(role)
 	return s, nil
 }

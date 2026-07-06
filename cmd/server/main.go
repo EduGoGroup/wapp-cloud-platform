@@ -234,15 +234,19 @@ func run() error {
 	// buildPublicAPIServer para no engordar run(). Devuelve además el middleware
 	// de auth y el auditor, que T4 REUSA para blindar /admin/* (mismo secreto JWT
 	// ⇒ los tokens valen en ambos listeners). ---
+	// fleetRepo: reusado por el aislamiento del envío (SessionLister) y por el
+	// admin de rol de sesión (SessionRoleStore, Plan 020 · T1) en ambos listeners.
+	fleetRepo := fleet.NewPostgresRepository(db)
 	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, mtx, publicapi.Deps{
-		Sender:   gw,
-		Sessions: fleet.NewPostgresRepository(db),
-		Flows:    flowStore,
-		Modules:  flowReg,
-		Starter:  flowRuntime,
-		Media:    flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
-		Content:  flowStore,        // CRUD tenant_content (Plan 018 · T6)
-		Triggers: triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
+		Sender:       gw,
+		Sessions:     fleetRepo,
+		Flows:        flowStore,
+		Modules:      flowReg,
+		Starter:      flowRuntime,
+		Media:        flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
+		Content:      flowStore,        // CRUD tenant_content (Plan 018 · T6)
+		Triggers:     triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
+		SessionRoles: fleetRepo,        // rol bot|passive de la sesión (Plan 020 · T1)
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
@@ -292,6 +296,11 @@ func run() error {
 		"triggers.read", "trigger", flowadmin.ListTriggersHandler(triggerStore)))
 	mux.Handle("DELETE /admin/triggers/{id}", adminHandler(authMW, auditor, log,
 		"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(triggerStore)))
+	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
+	// pero NO dispara triggers ni auto-responde. Mismo handler que /api/v1/sessions;
+	// el tenant sale del token (INV-8) y la mutación se acota a él.
+	mux.Handle("POST /admin/sessions/{id}/role", adminHandler(authMW, auditor, log,
+		"sessions.write", "session", flowadmin.SetSessionRoleHandler(fleetRepo)))
 
 	httpSrv := &http.Server{
 		Addr: cfg.HTTPAddr,

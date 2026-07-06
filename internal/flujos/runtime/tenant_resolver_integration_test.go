@@ -74,19 +74,22 @@ func TestIntegration_PostgresTenantResolver_Resuelve(t *testing.T) {
 	seedFleetSession(t, db, tenantID, "edge-A", sessionID)
 
 	res := runtime.NewPostgresTenantResolver(db)
-	got, err := res.ResolveTenant(ctx, sessionID)
+	got, role, err := res.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("ResolveTenant: %v", err)
 	}
 	if got != tenantID {
 		t.Fatalf("tenant resuelto: got %q, want %q", got, tenantID)
 	}
+	if role != "bot" {
+		t.Fatalf("rol por defecto: got %q, want bot", role)
+	}
 }
 
 func TestIntegration_PostgresTenantResolver_CeroFilas(t *testing.T) {
 	db := openTestDB(t)
 	res := runtime.NewPostgresTenantResolver(db)
-	_, err := res.ResolveTenant(context.Background(), fmt.Sprintf("inexistente-%d", time.Now().UnixNano()))
+	_, _, err := res.ResolveTenant(context.Background(), fmt.Sprintf("inexistente-%d", time.Now().UnixNano()))
 	if !errors.Is(err, runtime.ErrTenantNotResolved) {
 		t.Fatalf("0 filas debería dar ErrTenantNotResolved, dio: %v", err)
 	}
@@ -103,7 +106,7 @@ func TestIntegration_PostgresTenantResolver_MismoTenantVariosEdges(t *testing.T)
 	seedFleetSession(t, db, tenantID, "edge-B", sessionID)
 
 	res := runtime.NewPostgresTenantResolver(db)
-	got, err := res.ResolveTenant(ctx, sessionID)
+	got, _, err := res.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("ResolveTenant: %v", err)
 	}

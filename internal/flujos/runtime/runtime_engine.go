@@ -251,9 +251,21 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 // en este corte: si el SendText falla, el paso NO se reenvía porque el estado
 // ya avanzó (preferimos no duplicar el avance a costa de un texto perdido).
 func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *cloudlinkv1.IncomingMessage) error {
-	tenantID, err := rt.resolver.ResolveTenant(ctx, sessionID)
+	tenantID, role, err := rt.resolver.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
+	}
+	// Guarda passive (Plan 020 · T1): una sesión passive escucha/transporta pero NO
+	// entra al motor reactivo (ni trigger/arranque, ni escape, ni avance con
+	// auto-envío). Es el BORDE del motor: se corta ANTES de resolver contacto, tomar
+	// el keyedMutex o cargar estado; la escucha y los acuses (vía separada del
+	// Gateway) no se ven afectados. Una conversación ya EN CURSO en una sesión que
+	// pasa a passive deja de avanzar mientras siga passive (no se borra su estado):
+	// criterio conservador "passive no auto-responde"; vuelve a avanzar si se
+	// re-marca bot. rol vacío/desconocido ⇒ bot (no-regresión).
+	if role == rolePassive {
+		rt.log.Debug("runtime: sesión passive; motor reactivo omitido", "session_id", sessionID)
+		return nil
 	}
 	// Resuelve la identidad enriquecida del entrante (from_pn/from_lid, con
 	// fallback al JID crudo) a un contact_id OPACO antes de clavar la key: así el

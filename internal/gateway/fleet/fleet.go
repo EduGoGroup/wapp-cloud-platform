@@ -9,6 +9,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -23,6 +24,25 @@ const (
 	StateOffline State = "offline"
 )
 
+// Role es el rol operativo de una sesión (Plan 020 · T1). Gobierna si el motor
+// reactivo de flujos actúa sobre sus entrantes.
+type Role string
+
+const (
+	// RoleBot ejecuta el motor de flujos: dispara triggers y auto-responde. Es el
+	// DEFAULT (columna role DEFAULT 'bot') ⇒ no-regresión de todo lo previo al 020.
+	RoleBot Role = "bot"
+	// RolePassive solo escucha/transporta: NO dispara triggers ni auto-responde.
+	RolePassive Role = "passive"
+)
+
+// ErrInvalidRole lo devuelve SetRole cuando el rol pedido no es bot|passive. Se
+// inspecciona con errors.Is.
+var ErrInvalidRole = errors.New("rol de sesión inválido (usar bot|passive)")
+
+// ValidRole indica si r es un rol conocido (bot|passive).
+func ValidRole(r Role) bool { return r == RoleBot || r == RolePassive }
+
 // Session refleja una fila de public.fleet_sessions. Capabilities se omite a
 // propósito: el contrato CloudLink v0.1.0 no transporta capacidades aún.
 type Session struct {
@@ -30,6 +50,7 @@ type Session struct {
 	EdgeID          string
 	SessionID       string
 	State           State
+	Role            Role
 	LastConnectedAt time.Time
 	LastSeenAt      time.Time
 }
@@ -47,6 +68,13 @@ type Repository interface {
 	Get(ctx context.Context, tenantID, edgeID, sessionID string) (s Session, found bool, err error)
 	// List devuelve las sesiones de un tenant (para tests/diagnóstico).
 	List(ctx context.Context, tenantID string) ([]Session, error)
+	// SetRole fija el rol (bot|passive) de la sesión sessionID del tenant tenantID
+	// (Plan 020 · T1). Acota por tenant_id + session_id (aislamiento multi-tenant,
+	// INV-8): actualiza TODAS las filas de esa sesión bajo el tenant (un mismo
+	// session_id puede colgar de varios edge_id del MISMO tenant). found=false si
+	// ninguna fila del tenant casa el session_id (una sesión de otro tenant queda
+	// invisible ⇒ 404 opaco). Devuelve ErrInvalidRole si role ∉ {bot,passive}.
+	SetRole(ctx context.Context, tenantID, sessionID string, role Role) (found bool, err error)
 }
 
 // MemoryRepository es una implementación en memoria de Repository, segura
@@ -66,19 +94,22 @@ func memKey(tenantID, edgeID, sessionID string) string {
 	return tenantID + "\x00" + edgeID + "\x00" + sessionID
 }
 
-// MarkOnline implementa Repository.
+// MarkOnline implementa Repository. Preserva el rol existente (el rol lo gobierna
+// SetRole, no la señal de conexión): una sesión que reconecta conserva su bot|passive.
 func (r *MemoryRepository) MarkOnline(_ context.Context, tenantID, edgeID, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now().UTC()
-	r.sessions[memKey(tenantID, edgeID, sessionID)] = Session{
-		TenantID:        tenantID,
-		EdgeID:          edgeID,
-		SessionID:       sessionID,
-		State:           StateOnline,
-		LastConnectedAt: now,
-		LastSeenAt:      now,
-	}
+	key := memKey(tenantID, edgeID, sessionID)
+	s := r.sessions[key] // rol/valores previos si existía; zero-Session si no.
+	s.TenantID = tenantID
+	s.EdgeID = edgeID
+	s.SessionID = sessionID
+	s.State = StateOnline
+	s.Role = defaultRole(s.Role)
+	s.LastConnectedAt = now
+	s.LastSeenAt = now
+	r.sessions[key] = s
 	return nil
 }
 
@@ -93,9 +124,37 @@ func (r *MemoryRepository) MarkOffline(_ context.Context, tenantID, edgeID, sess
 		s = Session{TenantID: tenantID, EdgeID: edgeID, SessionID: sessionID}
 	}
 	s.State = StateOffline
+	s.Role = defaultRole(s.Role)
 	s.LastSeenAt = now
 	r.sessions[key] = s
 	return nil
+}
+
+// defaultRole normaliza un rol vacío a RoleBot (espeja la columna DEFAULT 'bot').
+func defaultRole(r Role) Role {
+	if r == "" {
+		return RoleBot
+	}
+	return r
+}
+
+// SetRole implementa Repository: fija el rol de todas las filas de la sesión bajo
+// el tenant. found=false si ninguna casa (aislamiento por tenant).
+func (r *MemoryRepository) SetRole(_ context.Context, tenantID, sessionID string, role Role) (bool, error) {
+	if !ValidRole(role) {
+		return false, ErrInvalidRole
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	found := false
+	for k, s := range r.sessions {
+		if s.TenantID == tenantID && s.SessionID == sessionID {
+			s.Role = role
+			r.sessions[k] = s
+			found = true
+		}
+	}
+	return found, nil
 }
 
 // Get implementa Repository.

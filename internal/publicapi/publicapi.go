@@ -74,6 +74,9 @@ type Deps struct {
 	Content  TenantContentStore         // blobs JSONB por-tenant (tenant_content, T6)
 	Audit    AuditReader                // bitácora de auditoría (GET /api/v1/audit, T10)
 	Triggers flowadmin.TriggerStore     // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
+	// SessionRoles administra el rol bot|passive de una sesión (Plan 020 · T1).
+	// Lo satisface *fleet.PostgresRepository (SetRole). nil ⇒ no se monta la ruta.
+	SessionRoles flowadmin.SessionRoleStore
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -142,6 +145,14 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 			"triggers.read", flowadmin.ListTriggersHandler(d.Triggers)))
 		mux.Handle("DELETE /api/v1/triggers/{id}", protect(mw, auditor, log,
 			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers)))
+	}
+
+	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
+	// pero NO dispara triggers ni auto-responde. Escritura auditada (sessions.write),
+	// acotada al tenant del token (INV-8); reusa el MISMO handler que /admin/sessions.
+	if d.SessionRoles != nil {
+		mux.Handle("POST /api/v1/sessions/{id}/role", protect(mw, auditor, log,
+			"sessions.write", "session", flowadmin.SetSessionRoleHandler(d.SessionRoles)))
 	}
 
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada

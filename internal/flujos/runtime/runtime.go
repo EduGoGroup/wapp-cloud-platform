@@ -35,9 +35,20 @@ type Presigner interface {
 	GenerateDownloadURL(ctx context.Context, key string) (url string, expiresAt time.Time, err error)
 }
 
-// TenantResolver resuelve el tenant_id a partir del session_id, porque el hook
-// OnIncoming solo entrega session_id (design.md §10.A, a confirmar). Lo
-// implementa el fleet repo o equivalente.
+// Roles de sesión que gobiernan el motor reactivo (Plan 020 · T1). Se declaran
+// como literales en runtime (no se importa fleet) para no acoplar el motor al
+// gateway: el resolver entrega el rol ya resuelto como string.
+const (
+	roleBot     = "bot"     // ejecuta el motor de flujos (dispara triggers / auto-responde).
+	rolePassive = "passive" // solo escucha/transporta: NO dispara triggers ni auto-responde.
+)
+
+// TenantResolver resuelve el tenant_id y el ROL (bot|passive, Plan 020 · T1) de
+// la sesión receptora a partir del session_id, porque el hook OnIncoming solo
+// entrega session_id (design.md §10.A). Devuelve ambos en UNA llamada (una query
+// por entrante). Lo implementa el resolver Postgres (o un doble en tests). Un rol
+// vacío o desconocido se trata como bot (no-regresión). Ante error, tenant/rol
+// vacíos y el llamante aborta el avance sin tocar el motor reactivo.
 type TenantResolver interface {
-	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, err error)
+	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, role string, err error)
 }
