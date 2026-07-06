@@ -20,9 +20,29 @@ type State string
 const (
 	// StateOnline indica que el stream de la sesión está vivo.
 	StateOnline State = "online"
-	// StateOffline indica que el stream de la sesión cayó.
+	// StateOffline indica que el stream de la sesión cayó (offline por red). Es
+	// DERIVADO del cierre del stream (onStreamClosed): recuperable al reconectar.
 	StateOffline State = "offline"
+	// StateLoggedOut indica una sesión ZOMBIE: WhatsApp cerró el device (el Edge lo
+	// reporta explícitamente con un Heartbeat State=LOGGED_OUT, Plan 020 · T3). Se
+	// distingue del offline-por-red (que produce el cierre del stream): un zombie no
+	// vuelve solo, hay que reemparejar el device. No renueva su lease (sesión muerta).
+	StateLoggedOut State = "loggedout"
 )
+
+// DeviceLimit es el tope de dispositivos vinculados por número de WhatsApp
+// (REQ-D4). Al superarlo, WhatsApp rechaza nuevos emparejamientos; el Cloud emite
+// un aviso (sin PII) cuando cuenta más sesiones VIVAS con el mismo self_pn.
+const DeviceLimit = 4
+
+// ErrInvalidState lo devuelve SetState cuando el estado pedido no pertenece al
+// conjunto que un admin puede fijar (offline|loggedout). Se inspecciona con errors.Is.
+var ErrInvalidState = errors.New("estado de sesión inválido (usar offline|loggedout)")
+
+// ValidAdminState indica si s pertenece al conjunto de estados que un admin puede
+// fijar a mano (offline|loggedout): retirar/limpiar una sesión zombie o dejarla
+// offline. StateOnline NO se admite: es DERIVADO del stream vivo (no se falsea).
+func ValidAdminState(s State) bool { return s == StateOffline || s == StateLoggedOut }
 
 // Role es el rol operativo de una sesión (Plan 020 · T1). Gobierna si el motor
 // reactivo de flujos actúa sobre sus entrantes.
@@ -68,6 +88,22 @@ type Repository interface {
 	// MarkOffline marca la sesión como offline (last_seen_at = ahora). No falla si
 	// la sesión no existía.
 	MarkOffline(ctx context.Context, tenantID, edgeID, sessionID string) error
+	// MarkLoggedOut marca la sesión como zombie (StateLoggedOut): WhatsApp cerró el
+	// device (Plan 020 · T3). Es distinto de MarkOffline (offline por red): el zombie
+	// lo dispara la señal explícita del Edge (Heartbeat State=LOGGED_OUT), no la
+	// caída del stream. No falla si la sesión no existía (UPDATE de 0 filas es válido).
+	MarkLoggedOut(ctx context.Context, tenantID, edgeID, sessionID string) error
+	// SetState fija el estado de la sesión sessionID del tenant a uno del conjunto
+	// admin-admitido (offline|loggedout), para retirar/limpiar una sesión zombie
+	// (Plan 020 · T3). Acota por tenant_id + session_id (aislamiento multi-tenant,
+	// INV-8): toca TODAS las filas de esa sesión bajo el tenant. found=false si
+	// ninguna casa (sesión de otro tenant ⇒ 404 opaco). Devuelve ErrInvalidState si
+	// state ∉ {offline,loggedout}.
+	SetState(ctx context.Context, tenantID, sessionID string, state State) (found bool, err error)
+	// CountLiveBySelfPn cuenta las sesiones VIVAS (state != loggedout) del tenant que
+	// reportan el mismo self_pn. Alimenta el aviso del tope de dispositivos (REQ-D4).
+	// Un selfPn vacío devuelve 0 (sin número no hay número que contar).
+	CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error)
 	// Get devuelve la sesión y si existe.
 	Get(ctx context.Context, tenantID, edgeID, sessionID string) (s Session, found bool, err error)
 	// List devuelve las sesiones de un tenant (para tests/diagnóstico).
@@ -138,6 +174,63 @@ func (r *MemoryRepository) MarkOffline(_ context.Context, tenantID, edgeID, sess
 	s.LastSeenAt = now
 	r.sessions[key] = s
 	return nil
+}
+
+// MarkLoggedOut implementa Repository: marca la sesión zombie (StateLoggedOut).
+// Como MarkOffline, no falla si la sesión no existía (la crea marcada zombie).
+func (r *MemoryRepository) MarkLoggedOut(_ context.Context, tenantID, edgeID, sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now().UTC()
+	key := memKey(tenantID, edgeID, sessionID)
+	s, ok := r.sessions[key]
+	if !ok {
+		s = Session{TenantID: tenantID, EdgeID: edgeID, SessionID: sessionID}
+	}
+	s.State = StateLoggedOut
+	s.Role = defaultRole(s.Role)
+	s.LastSeenAt = now
+	r.sessions[key] = s
+	return nil
+}
+
+// SetState implementa Repository: fija el estado de todas las filas de la sesión
+// bajo el tenant a un estado admin-admitido. found=false si ninguna casa
+// (aislamiento por tenant). Devuelve ErrInvalidState si state no es admitido.
+func (r *MemoryRepository) SetState(_ context.Context, tenantID, sessionID string, state State) (bool, error) {
+	if !ValidAdminState(state) {
+		return false, ErrInvalidState
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now().UTC()
+	found := false
+	for k, s := range r.sessions {
+		if s.TenantID == tenantID && s.SessionID == sessionID {
+			s.State = state
+			s.LastSeenAt = now
+			r.sessions[k] = s
+			found = true
+		}
+	}
+	return found, nil
+}
+
+// CountLiveBySelfPn implementa Repository: cuenta las sesiones vivas (no zombie)
+// del tenant con el self_pn dado. selfPn vacío ⇒ 0.
+func (r *MemoryRepository) CountLiveBySelfPn(_ context.Context, tenantID, selfPn string) (int, error) {
+	if selfPn == "" {
+		return 0, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, s := range r.sessions {
+		if s.TenantID == tenantID && s.SelfPn == selfPn && s.State != StateLoggedOut {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // defaultRole normaliza un rol vacío a RoleBot (espeja la columna DEFAULT 'bot').

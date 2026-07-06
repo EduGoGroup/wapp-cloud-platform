@@ -206,6 +206,107 @@ func mtlsHeartbeat(sessionID string, counter int64) *cloudlinkv1.EdgeToCloud {
 	}
 }
 
+// mtlsHeartbeatState construye un Heartbeat con un State explícito (Plan 020 · T3:
+// LOGGED_OUT anuncia una sesión zombie).
+func mtlsHeartbeatState(sessionID string, counter int64, state cloudlinkv1.SessionState) *cloudlinkv1.EdgeToCloud {
+	return &cloudlinkv1.EdgeToCloud{
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.EdgeToCloud_Heartbeat{
+			Heartbeat: &cloudlinkv1.Heartbeat{LeaseCounter: counter, State: state},
+		},
+	}
+}
+
+// waitFleetState espera a que la sesión figure en el estado dado en el fleet repo.
+func waitFleetState(t *testing.T, repo *fleet.MemoryRepository, sessionID string, want fleet.State) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok, err := repo.Get(context.Background(), testTenantID, testEdgeID, sessionID)
+		if err != nil {
+			t.Fatalf("fleet Get: %v", err)
+		}
+		if ok && s.State == want {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando fleet %q de %q", want, sessionID)
+}
+
+// TestMTLSHeartbeatLoggedOutMarksZombie verifica (Plan 020 · T3) que un Heartbeat
+// con State=LOGGED_OUT marca la sesión loggedout (zombie) SIN renovar el lease
+// (sesión muerta): el counter del lease queda en el inicial (1), no avanza al
+// counter alto del Heartbeat. Contrasta con TestMTLSHeartbeatRenewsLeaseCounter
+// (un Heartbeat normal SÍ renueva): confirma que loggedout NO sigue ese camino.
+func TestMTLSHeartbeatLoggedOutMarksZombie(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	// Heartbeat zombie con un counter ALTO: si (por error) renovara el lease, el
+	// counter saltaría a hbCounter+1; como no debe renovar, se queda en el inicial.
+	const hbCounter int64 = 99
+	if err := stream.Send(mtlsHeartbeatState("s1", hbCounter, cloudlinkv1.SessionState_SESSION_STATE_LOGGED_OUT)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// La sesión queda loggedout (zombie), distinta de offline.
+	waitFleetState(t, h.fleetRepo, "s1", fleet.StateLoggedOut)
+
+	// El lease NO se renovó: sigue en el counter inicial (1) que fijó
+	// onSessionRegistered, no en hbCounter+1. Se comprueba tras un margen para
+	// descartar una renovación tardía.
+	time.Sleep(50 * time.Millisecond)
+	st, ok, getErr := h.leaseRepo.Get(context.Background(), testTenantID, testEdgeID)
+	if getErr != nil {
+		t.Fatalf("leaseRepo.Get: %v", getErr)
+	}
+	if !ok {
+		t.Fatal("se esperaba el lease inicial del registro de la sesión")
+	}
+	if st.Counter == hbCounter+1 {
+		t.Fatalf("un Heartbeat LOGGED_OUT NO debe renovar el lease (counter=%d)", st.Counter)
+	}
+}
+
+// TestMTLSHeartbeatUnspecifiedStaysOnline verifica la NO-regresión (INV): un
+// Heartbeat sin State (UNSPECIFIED = 0, default de proto) sigue el camino de
+// siempre → la sesión queda online, nunca zombie.
+func TestMTLSHeartbeatUnspecifiedStaysOnline(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	// mtlsHeartbeat no fija State ⇒ UNSPECIFIED (0).
+	if err := stream.Send(mtlsHeartbeat("s1", 1)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFleetOnline(t, h.fleetRepo, "s1")
+
+	s, _, err := h.fleetRepo.Get(context.Background(), testTenantID, testEdgeID, "s1")
+	if err != nil {
+		t.Fatalf("fleet Get: %v", err)
+	}
+	if s.State == fleet.StateLoggedOut {
+		t.Fatal("un Heartbeat UNSPECIFIED nunca debe marcar zombie")
+	}
+}
+
 // --- tests ---
 
 func TestMTLSHandshakeIdentityAndInitialLease(t *testing.T) {

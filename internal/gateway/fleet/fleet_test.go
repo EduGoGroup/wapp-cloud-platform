@@ -143,6 +143,122 @@ func TestMemorySetRoleTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestMemoryMarkLoggedOut: MarkLoggedOut deja la sesión en StateLoggedOut, un
+// estado DISTINTO de offline (zombie por señal explícita, no offline por red).
+func TestMemoryMarkLoggedOut(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+	if err := repo.MarkLoggedOut(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkLoggedOut: %v", err)
+	}
+	s, found, err := repo.Get(ctx, "t", "e", "s1")
+	if err != nil || !found {
+		t.Fatalf("Get: found=%v err=%v", found, err)
+	}
+	if s.State != fleet.StateLoggedOut {
+		t.Fatalf("estado: got %q, want loggedout", s.State)
+	}
+	if s.State == fleet.StateOffline {
+		t.Fatal("loggedout no debe confundirse con offline")
+	}
+}
+
+// TestMemoryMarkLoggedOutUnknownIsNoError: marcar zombie una sesión inexistente
+// no falla (mismo contrato que MarkOffline).
+func TestMemoryMarkLoggedOutUnknownIsNoError(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	if err := repo.MarkLoggedOut(context.Background(), "t", "e", "missing"); err != nil {
+		t.Fatalf("MarkLoggedOut de sesión inexistente no debería fallar: %v", err)
+	}
+}
+
+// TestMemorySetStateValidationAndIsolation: SetState rechaza estados no admin
+// (online / arbitrario) con ErrInvalidState, y solo toca sesiones del tenant dado
+// (aislamiento INV-8; found=false para un tenant ajeno).
+func TestMemorySetStateValidationAndIsolation(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t1", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline t1: %v", err)
+	}
+	if err := repo.MarkOnline(ctx, "t2", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline t2: %v", err)
+	}
+
+	// online NO es admin-admitido: ErrInvalidState.
+	if _, err := repo.SetState(ctx, "t1", "s1", fleet.StateOnline); !errors.Is(err, fleet.ErrInvalidState) {
+		t.Fatalf("StateOnline debería dar ErrInvalidState, dio: %v", err)
+	}
+	// loggedout sí: retira la sesión de t1.
+	found, err := repo.SetState(ctx, "t1", "s1", fleet.StateLoggedOut)
+	if err != nil || !found {
+		t.Fatalf("SetState loggedout: found=%v err=%v", found, err)
+	}
+	// La sesión de t2 (mismo session_id) NO se ve afectada: sigue online.
+	s2, _, err := repo.Get(ctx, "t2", "e", "s1")
+	if err != nil {
+		t.Fatalf("Get t2: %v", err)
+	}
+	if s2.State != fleet.StateOnline {
+		t.Fatalf("aislamiento roto: la sesión de t2 cambió a %q", s2.State)
+	}
+	// Un tenant ajeno no encuentra la sesión (found=false).
+	found, err = repo.SetState(ctx, "t-otro", "s1", fleet.StateOffline)
+	if err != nil {
+		t.Fatalf("SetState t-otro: %v", err)
+	}
+	if found {
+		t.Fatal("un tenant ajeno no debería encontrar la sesión (found=true)")
+	}
+}
+
+// TestMemoryCountLiveBySelfPn: cuenta sesiones vivas por self_pn dentro del tenant;
+// una sesión zombie (loggedout) NO cuenta; otro tenant no contamina el conteo.
+func TestMemoryCountLiveBySelfPn(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	const pn = "593999000111"
+
+	// Tres sesiones del mismo tenant con el mismo self_pn: dos vivas, una zombie.
+	for _, sess := range []string{"s1", "s2", "s3"} {
+		if err := repo.MarkOnline(ctx, "t", "e", sess); err != nil {
+			t.Fatalf("MarkOnline %s: %v", sess, err)
+		}
+		if err := repo.SetSelfPn(ctx, "t", "e", sess, pn); err != nil {
+			t.Fatalf("SetSelfPn %s: %v", sess, err)
+		}
+	}
+	if err := repo.MarkLoggedOut(ctx, "t", "e", "s3"); err != nil {
+		t.Fatalf("MarkLoggedOut s3: %v", err)
+	}
+	// Otro tenant con el mismo número no debe contaminar.
+	if err := repo.MarkOnline(ctx, "t2", "e", "x1"); err != nil {
+		t.Fatalf("MarkOnline t2: %v", err)
+	}
+	if err := repo.SetSelfPn(ctx, "t2", "e", "x1", pn); err != nil {
+		t.Fatalf("SetSelfPn t2: %v", err)
+	}
+
+	n, err := repo.CountLiveBySelfPn(ctx, "t", pn)
+	if err != nil {
+		t.Fatalf("CountLiveBySelfPn: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("conteo vivas: got %d, want 2 (s3 zombie no cuenta; t2 es otro tenant)", n)
+	}
+	// selfPn vacío ⇒ 0 sin error.
+	if n, err := repo.CountLiveBySelfPn(ctx, "t", ""); err != nil || n != 0 {
+		t.Fatalf("CountLiveBySelfPn vacío: n=%d err=%v, want 0/nil", n, err)
+	}
+}
+
 func TestMemoryListByTenant(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()

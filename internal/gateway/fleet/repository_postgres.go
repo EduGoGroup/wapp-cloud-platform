@@ -50,6 +50,63 @@ func (r *PostgresRepository) MarkOffline(ctx context.Context, tenantID, edgeID, 
 	return nil
 }
 
+// MarkLoggedOut marca la sesión como zombie (StateLoggedOut): WhatsApp cerró el
+// device (Plan 020 · T3). Como MarkOffline es un UPDATE acotado por identidad; no
+// falla si la sesión no existía (UPDATE de 0 filas es válido). Se distingue del
+// offline-por-red por el estado escrito, no por el camino de código.
+func (r *PostgresRepository) MarkLoggedOut(ctx context.Context, tenantID, edgeID, sessionID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET state = 'loggedout', last_seen_at = now(), updated_at = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+	`, tenantID, edgeID, sessionID)
+	if err != nil {
+		return fmt.Errorf("fleet: marcar loggedout: %w", err)
+	}
+	return nil
+}
+
+// SetState fija el estado (offline|loggedout) de la sesión del tenant. UPDATE
+// acotado por tenant_id + session_id (aislamiento multi-tenant, INV-8): toca TODAS
+// las filas de esa sesión bajo el tenant. found=false si 0 filas (sesión
+// inexistente o de otro tenant ⇒ 404 opaco). Valida el estado antes de tocar la BD.
+func (r *PostgresRepository) SetState(ctx context.Context, tenantID, sessionID string, state State) (bool, error) {
+	if !ValidAdminState(state) {
+		return false, ErrInvalidState
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET state = $3, last_seen_at = now(), updated_at = now()
+		WHERE tenant_id = $1 AND session_id = $2
+	`, tenantID, sessionID, string(state))
+	if err != nil {
+		return false, fmt.Errorf("fleet: fijar estado: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al fijar estado: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CountLiveBySelfPn cuenta las sesiones vivas (state != 'loggedout') del tenant con
+// el self_pn dado (REQ-D4, aviso del tope de dispositivos). selfPn vacío ⇒ 0 sin
+// tocar la BD.
+func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error) {
+	if selfPn == "" {
+		return 0, nil
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM public.fleet_sessions
+		WHERE tenant_id = $1 AND self_pn = $2 AND state <> 'loggedout'
+	`, tenantID, selfPn).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("fleet: contar sesiones vivas por self_pn: %w", err)
+	}
+	return n, nil
+}
+
 // SetSelfPn persiste el self_pn reportado en el Heartbeat (Plan 020 · T2). UPDATE
 // acotado por (tenant_id, edge_id, session_id). selfPn vacío es un no-op: NO
 // sobrescribe un valor previo bueno (protege el dato). Un UPDATE de 0 filas

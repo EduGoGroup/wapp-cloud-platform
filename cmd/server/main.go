@@ -242,15 +242,16 @@ func run() error {
 	// admin de rol de sesión (SessionRoleStore, Plan 020 · T1) en ambos listeners.
 	fleetRepo := fleet.NewPostgresRepository(db)
 	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, mtx, publicapi.Deps{
-		Sender:       gw,
-		Sessions:     fleetRepo,
-		Flows:        flowStore,
-		Modules:      flowReg,
-		Starter:      flowRuntime,
-		Media:        flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
-		Content:      flowStore,        // CRUD tenant_content (Plan 018 · T6)
-		Triggers:     triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
-		SessionRoles: fleetRepo,        // rol bot|passive de la sesión (Plan 020 · T1)
+		Sender:        gw,
+		Sessions:      fleetRepo,
+		Flows:         flowStore,
+		Modules:       flowReg,
+		Starter:       flowRuntime,
+		Media:         flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
+		Content:       flowStore,        // CRUD tenant_content (Plan 018 · T6)
+		Triggers:      triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
+		SessionRoles:  fleetRepo,        // rol bot|passive de la sesión (Plan 020 · T1)
+		SessionStatus: fleetRepo,        // estatus offline|loggedout (retiro de zombie, Plan 020 · T3)
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
@@ -305,6 +306,11 @@ func run() error {
 	// el tenant sale del token (INV-8) y la mutación se acota a él.
 	mux.Handle("POST /admin/sessions/{id}/role", adminHandler(authMW, auditor, log,
 		"sessions.write", "session", flowadmin.SetSessionRoleHandler(fleetRepo)))
+	// Estatus de sesión (Plan 020 · T3): retirar/limpiar un zombie (loggedout) o
+	// dejar offline. Mismo handler que /api/v1/sessions/{id}/status; el tenant sale
+	// del token (INV-8) y la mutación se acota a él. Reusa el scope sessions.write.
+	mux.Handle("POST /admin/sessions/{id}/status", adminHandler(authMW, auditor, log,
+		"sessions.write", "session", flowadmin.SetSessionStatusHandler(fleetRepo)))
 
 	httpSrv := &http.Server{
 		Addr: cfg.HTTPAddr,

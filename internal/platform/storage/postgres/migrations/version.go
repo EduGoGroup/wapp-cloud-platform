@@ -12,7 +12,7 @@ import (
 // OBLIGATORIO: incrementar este valor cuando se modifique cualquier archivo en
 // structure/*.sql. El runner valida que esta versión coincida con la registrada
 // en public.schema_version para decidir si debe (re)aplicar.
-const SchemaVersion = "0.16.0"
+const SchemaVersion = "0.17.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

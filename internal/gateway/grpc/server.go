@@ -225,6 +225,15 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		if s.OnHeartbeat != nil {
 			s.OnHeartbeat(cc.sessionID, p.Heartbeat)
 		}
+		// Plan 020 · T3: un Heartbeat con State=LOGGED_OUT anuncia que WhatsApp
+		// cerró el device ⇒ sesión ZOMBIE. Se marca loggedout y NO se renueva el
+		// lease (sesión muerta) ni se toca self_pn. Un State=UNSPECIFIED (default de
+		// proto, 0) sigue EXACTAMENTE el camino de siempre (online normal): sin
+		// regresión para toda sesión que nunca reporte LOGGED_OUT.
+		if p.Heartbeat.GetState() == cloudlinkv1.SessionState_SESSION_STATE_LOGGED_OUT {
+			s.markLoggedOut(ctx, cc)
+			return
+		}
 		s.persistSelfPn(ctx, cc, p.Heartbeat)
 		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
@@ -338,6 +347,45 @@ func (s *Server) persistSelfPn(ctx context.Context, cc connCtx, hb *cloudlinkv1.
 	}
 	if err := s.fleet.SetSelfPn(ctx, cc.tenantID, cc.edgeID, cc.sessionID, norm); err != nil {
 		s.log.Error("fleet: persistir self_pn", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+		return
+	}
+	s.warnDeviceLimit(ctx, cc, norm)
+}
+
+// warnDeviceLimit avisa (Warn, sin PII) cuando el número self_pn recién persistido
+// tiene más sesiones VIVAS que el tope de dispositivos de WhatsApp (REQ-D4). Es
+// solo DETECCIÓN: no bloquea (WhatsApp ya rechaza la 5.ª vinculación en origen; un
+// bloqueo duro aquí sería frágil y podría cortar sesiones legítimas por un conteo
+// desincronizado). NUNCA loguea el número (PII): solo el conteo, el tope y los IDs
+// opacos. Best-effort: un fallo del conteo se traga en Debug (no tumba el stream).
+func (s *Server) warnDeviceLimit(ctx context.Context, cc connCtx, selfPn string) {
+	n, err := s.fleet.CountLiveBySelfPn(ctx, cc.tenantID, selfPn)
+	if err != nil {
+		s.log.Debug("fleet: contar sesiones por self_pn para aviso de tope", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+		return
+	}
+	if n > fleet.DeviceLimit {
+		s.log.Warn("un número supera el tope de dispositivos de WhatsApp",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"sesiones_vivas", n, "tope", fleet.DeviceLimit)
+	}
+}
+
+// markLoggedOut marca la sesión como ZOMBIE (StateLoggedOut) en fleet: WhatsApp
+// cerró el device (Plan 020 · T3). NO renueva el lease (sesión muerta) y se
+// distingue del offline-por-red (que produce onStreamClosed→MarkOffline al caer el
+// stream). No hace nada sin fleet, sin identidad mTLS o sin session_id. Usa el
+// contexto del stream (aún vivo: el Edge sigue conectado, solo anuncia el logout).
+func (s *Server) markLoggedOut(ctx context.Context, cc connCtx) {
+	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	s.log.Info("heartbeat: la sesión reportó logout de WhatsApp; marcada zombie",
+		"session_id", cc.sessionID, "edge_id", cc.edgeID)
+	if err := s.fleet.MarkLoggedOut(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
+		s.log.Error("fleet: marcar loggedout", "error", err,
 			"edge_id", cc.edgeID, "session_id", cc.sessionID)
 	}
 }

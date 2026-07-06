@@ -77,6 +77,10 @@ type Deps struct {
 	// SessionRoles administra el rol bot|passive de una sesión (Plan 020 · T1).
 	// Lo satisface *fleet.PostgresRepository (SetRole). nil ⇒ no se monta la ruta.
 	SessionRoles flowadmin.SessionRoleStore
+	// SessionStatus administra el estatus offline|loggedout de una sesión, para
+	// retirar/limpiar un zombie (Plan 020 · T3). Lo satisface *fleet.PostgresRepository
+	// (SetState). nil ⇒ no se monta la ruta.
+	SessionStatus flowadmin.SessionStatusStore
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -153,6 +157,14 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	if d.SessionRoles != nil {
 		mux.Handle("POST /api/v1/sessions/{id}/role", protect(mw, auditor, log,
 			"sessions.write", "session", flowadmin.SetSessionRoleHandler(d.SessionRoles)))
+	}
+
+	// Estatus de sesión (Plan 020 · T3): retirar/limpiar un zombie (loggedout) o
+	// dejar offline. Escritura auditada (sessions.write), acotada al tenant del token
+	// (INV-8); reusa el MISMO handler que /admin/sessions/{id}/status.
+	if d.SessionStatus != nil {
+		mux.Handle("POST /api/v1/sessions/{id}/status", protect(mw, auditor, log,
+			"sessions.write", "session", flowadmin.SetSessionStatusHandler(d.SessionStatus)))
 	}
 
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada

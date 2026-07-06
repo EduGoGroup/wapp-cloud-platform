@@ -119,3 +119,96 @@ func TestSetSessionRole_404_Unknown(t *testing.T) {
 		t.Fatalf("code=%d, quiero 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// --- Plan 020 · T3: estatus de sesión (retiro de zombie) ---
+
+// doSessionStatus ejecuta el handler de estatus vía un mux con el patrón real (para
+// que r.PathValue("id") funcione), con una Identity del tenant inyectada como haría
+// Authenticate. withID=false ejercita el 401.
+func doSessionStatus(store admin.SessionStatusStore, tenant, sessionID, body string, withID bool) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	mux.Handle("POST /admin/sessions/{id}/status", admin.SetSessionStatusHandler(store))
+	req := httptest.NewRequest(http.MethodPost, "/admin/sessions/"+sessionID+"/status", strings.NewReader(body))
+	if withID {
+		req = req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: tenant, Subject: "user-1"}))
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestSetSessionStatus_OK_RetireZombie: el dueño retira un zombie (loggedout) → 200
+// y persiste.
+func TestSetSessionStatus_OK_RetireZombie(t *testing.T) {
+	repo := fleet.NewMemoryRepository()
+	seedSession(t, repo, ctxTenant, "sess-1")
+
+	rec := doSessionStatus(repo, ctxTenant, "sess-1", `{"state":"loggedout"}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+		State     string `json:"state"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.SessionID != "sess-1" || out.State != "loggedout" {
+		t.Fatalf("respuesta inesperada: %+v", out)
+	}
+	s, _, err := repo.Get(context.Background(), ctxTenant, "edge-1", "sess-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.State != fleet.StateLoggedOut {
+		t.Fatalf("no persistió loggedout: %q", s.State)
+	}
+}
+
+// TestSetSessionStatus_400_InvalidState: JSON roto o estado NO admin-admitido
+// (online / arbitrario) → 400.
+func TestSetSessionStatus_400_InvalidState(t *testing.T) {
+	repo := fleet.NewMemoryRepository()
+	seedSession(t, repo, ctxTenant, "sess-1")
+	for name, body := range map[string]string{
+		"json roto":         `{`,
+		"online (derivado)": `{"state":"online"}`,
+		"estado arbitrario": `{"state":"banana"}`,
+		"estado vacío":      `{"state":""}`,
+	} {
+		rec := doSessionStatus(repo, ctxTenant, "sess-1", body, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d, quiero 400; body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestSetSessionStatus_401_NoIdentity: sin Identity en el contexto → 401.
+func TestSetSessionStatus_401_NoIdentity(t *testing.T) {
+	repo := fleet.NewMemoryRepository()
+	seedSession(t, repo, ctxTenant, "sess-1")
+	rec := doSessionStatus(repo, ctxTenant, "sess-1", `{"state":"offline"}`, false)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code=%d, quiero 401", rec.Code)
+	}
+}
+
+// TestSetSessionStatus_404_CrossTenant: un tenant AJENO no puede tocar la sesión de
+// otro (aislamiento INV-8) → 404 opaco, y la sesión del dueño queda intacta (online).
+func TestSetSessionStatus_404_CrossTenant(t *testing.T) {
+	repo := fleet.NewMemoryRepository()
+	seedSession(t, repo, ctxTenant, "sess-1")
+
+	rec := doSessionStatus(repo, "otro-tenant", "sess-1", `{"state":"loggedout"}`, true)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant code=%d, quiero 404; body=%s", rec.Code, rec.Body.String())
+	}
+	s, _, err := repo.Get(context.Background(), ctxTenant, "edge-1", "sess-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.State != fleet.StateOnline {
+		t.Fatalf("aislamiento roto: la sesión del dueño cambió a %q", s.State)
+	}
+}
