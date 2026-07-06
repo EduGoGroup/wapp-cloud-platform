@@ -50,6 +50,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
@@ -184,9 +185,15 @@ func run() error {
 	//
 	// (registrar hoy el stub no-op no alteraría el comportamiento observable, pero
 	// se deja fuera para no introducir ruido de logs en el camino feliz).
+	// Reglas de disparo (Plan 019): el ConfigResolver lee 100% de BD (flow_triggers)
+	// las palabras clave, el fallback y los escapes por tenant; sin filas se comporta
+	// como el Noop (no arranca nada ⇒ no-regresión, INV-6).
+	// triggerStore: reusado por los handlers /admin/triggers y /api/v1/triggers (Plan 019 T5)
+	triggerStore := trigger.NewPostgresStore(db)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)),
-		flowruntime.WithPresignClient(flowDeps.presign))
+		flowruntime.WithPresignClient(flowDeps.presign),
+		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y

@@ -14,6 +14,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 )
 
 // ErrConversationExists lo devuelve Start cuando ya hay una conversación viva
@@ -64,6 +65,12 @@ type Runtime struct {
 	// devuelve error CONTROLADO en send (no pánico), coherente con el orden
 	// Save-antes-de-Send (el estado ya quedó persistido).
 	presigner Presigner
+	// triggers decide, ante un entrante SIN conversación viva, si se arranca un
+	// flujo por palabra clave/fallback (Resolve) y, sobre una conversación viva,
+	// si el texto es una señal de escape que la corta (IsEscape) (Plan 019 · T3/T4).
+	// New lo deja en NoopResolver si no se inyecta WithTriggerResolver: sin resolver
+	// real el comportamiento es idéntico al previo al Plan 019 (INV-6 no-regresión).
+	triggers trigger.Resolver
 }
 
 // Option configura el Runtime al construirlo (patrón funcional-options, igual que
@@ -81,6 +88,14 @@ func WithEventSink(sink EventSink) Option {
 // nodo media produce un error controlado en el envío (no un pánico).
 func WithPresignClient(p Presigner) Option {
 	return func(rt *Runtime) { rt.presigner = p }
+}
+
+// WithTriggerResolver inyecta el trigger.Resolver que el runtime consulta ante un
+// entrante sin conversación viva (arranque por palabra clave/fallback) y para el
+// escape global (Plan 019 · T3/T4). Sin él, New usa trigger.NewNoopResolver()
+// (no-regresión total, INV-6: un entrante sin estado se ignora igual que antes).
+func WithTriggerResolver(r trigger.Resolver) Option {
+	return func(rt *Runtime) { rt.triggers = r }
 }
 
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de
@@ -104,6 +119,12 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 	if len(rt.sinks) == 0 {
 		rt.sinks = []EventSink{NewLogSink(log)}
 	}
+	// El resolver de disparos nunca es nil: NoopResolver por defecto (INV-6
+	// no-regresión: sin WithTriggerResolver el comportamiento es idéntico al previo
+	// al Plan 019 — un entrante sin conversación viva se ignora, decisión C).
+	if rt.triggers == nil {
+		rt.triggers = trigger.NewNoopResolver()
+	}
 	return rt
 }
 
@@ -122,7 +143,16 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
+	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID)
+}
 
+// startLocked es el cuerpo de Start SIN tomar el keyedMutex: asume que el llamante
+// YA lo tiene tomado sobre `key`, con el contact_id ya resuelto. Lo comparten Start
+// (API /admin/flows/start, /api/v1/.../start — toma el mutex y delega) y el enganche
+// por palabra clave de HandleIncoming (Plan 019 · T3), que YA tomó el mutex sobre la
+// misma clave: re-llamar a Start ahí causaría un auto-deadlock. Reglas de arranque
+// (guard 409, reinicio de carrito, orden Save-antes-de-Send) son idénticas.
+func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID string) (*cloudlinkv1.Ack, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
@@ -199,8 +229,11 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		return fmt.Errorf("runtime: cargar estado: %w", err)
 	}
 	if !ok {
-		// Sin estado vivo → se ignora (no inicia flujo, decisión C).
-		return nil
+		// Sin conversación viva: consulta el resolver de disparos (Plan 019 · T3).
+		// Con NoopResolver (default) devuelve Ignore ⇒ return nil idéntico a la
+		// decisión C histórica (INV-6). El contexto (tenantID, contactID, key,
+		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto.
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, m)
 	}
 	if st.LastWaMessageID != "" && st.LastWaMessageID == m.GetWaMessageId() {
 		// Re-entrega del mismo mensaje → no avanzar ni reenviar (idempotencia).
@@ -254,6 +287,36 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	}
 	_, err = rt.send(ctx, sessionID, to, outs)
 	return err
+}
+
+// handleTrigger resuelve un entrante SIN conversación viva contra el trigger.Resolver
+// (Plan 019 · T3). Con el resolver por defecto (Noop) devuelve Ignore ⇒ return nil,
+// idéntico a la decisión C histórica (INV-6). Un error del resolver se LOGUEA y NO
+// aborta la recepción (REQ-A7: el entrante simplemente se ignora). Ante Start/Fallback
+// arranca el flujo por startLocked (el keyedMutex de la clave YA está tomado por
+// HandleIncoming; llamar a Start re-tomaría el mutex y causaría auto-deadlock). Un
+// ErrConversationExists (carrera con otro entrante) se trata como benigno (log + nil).
+func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, m *cloudlinkv1.IncomingMessage) error {
+	dec, err := rt.triggers.Resolve(ctx, tenantID, m.GetText())
+	if err != nil {
+		rt.log.Warn("runtime: resolver de disparos falló; se ignora el entrante",
+			"error", err, "session_id", sessionID)
+		return nil
+	}
+	switch dec.Action {
+	case trigger.Start, trigger.Fallback:
+		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID); serr != nil {
+			if errors.Is(serr, ErrConversationExists) {
+				rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
+					"session_id", sessionID)
+				return nil
+			}
+			return serr
+		}
+		return nil
+	default: // trigger.Ignore (o cualquier otro): decisión C, no arranca nada.
+		return nil
+	}
 }
 
 // dispatch hace el fan-out EN PROCESO (ADR-0003, sin broker) de los efectos por
