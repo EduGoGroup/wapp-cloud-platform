@@ -68,6 +68,11 @@ type Rule struct {
 	// y corta la conversación viva (Plan 019 · T4b). Solo tiene sentido para escape;
 	// vacío ⇒ el runtime usa su aviso por defecto. NULL en flow_triggers ⇔ "".
 	Message string
+	// SessionID acota la regla a una sesión concreta (Plan 020 · T4). Vacío ("") ⇒
+	// regla GLOBAL del tenant (aplica a todas las sesiones; NULL en flow_triggers).
+	// En el desempate, una regla específica de sesión gana a la global cuando ambas
+	// casan. Retrocompatible: las reglas del 019 no traían SessionID ⇒ globales.
+	SessionID string
 }
 
 // Decision es el resultado de Resolve.
@@ -81,16 +86,20 @@ type Decision struct {
 // viva (IsEscape).
 //
 // El parámetro text es la SEÑAL DE ENTRADA REUBICABLE: hoy es el texto crudo del
-// entrante; en Fase 2 será la intención resuelta por el Edge (LLM). La firma se
-// mantiene estable para no comprometer ese salto futuro: el adapter decide cómo
+// entrante; en Fase 2 será la intención resuelta por el Edge (LLM). Se mantiene
+// ÚLTIMO en la firma para no comprometer ese salto futuro: el adapter decide cómo
 // interpretar la señal, el runtime solo la pasa.
+//
+// sessionID es la sesión del entrante (Plan 020 · T4): permite acotar una regla a
+// una sesión concreta. sessionID vacío ("") ⇒ solo casan las reglas GLOBALES del
+// tenant (session_id NULL), comportamiento idéntico al 019 (INV-6).
 type Resolver interface {
 	// Resolve decide qué hacer con un entrante sin conversación viva.
-	Resolve(ctx context.Context, tenantID, text string) (Decision, error)
-	// IsEscape indica si el texto es una señal de escape para el tenant y, si lo es,
-	// devuelve el aviso configurado en la regla que casó (message; vacío si la regla
-	// no define uno ⇒ el runtime cae a su aviso por defecto).
-	IsEscape(ctx context.Context, tenantID, text string) (matched bool, message string, err error)
+	Resolve(ctx context.Context, tenantID, sessionID, text string) (Decision, error)
+	// IsEscape indica si el texto es una señal de escape para el tenant/sesión y, si
+	// lo es, devuelve el aviso configurado en la regla que casó (message; vacío si la
+	// regla no define uno ⇒ el runtime cae a su aviso por defecto).
+	IsEscape(ctx context.Context, tenantID, sessionID, text string) (matched bool, message string, err error)
 }
 
 // NoopResolver es el adapter por DEFAULT: nunca arranca nada y nunca es escape.
@@ -102,11 +111,11 @@ type NoopResolver struct{}
 func NewNoopResolver() NoopResolver { return NoopResolver{} }
 
 // Resolve siempre ignora.
-func (NoopResolver) Resolve(context.Context, string, string) (Decision, error) {
+func (NoopResolver) Resolve(context.Context, string, string, string) (Decision, error) {
 	return Decision{Action: Ignore}, nil
 }
 
 // IsEscape siempre es false (sin mensaje).
-func (NoopResolver) IsEscape(context.Context, string, string) (bool, string, error) {
+func (NoopResolver) IsEscape(context.Context, string, string, string) (bool, string, error) {
 	return false, "", nil
 }

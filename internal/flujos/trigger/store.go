@@ -24,8 +24,10 @@ type Store interface {
 	Insert(ctx context.Context, r Rule) (Rule, error)
 	// List devuelve todas las reglas del tenant.
 	List(ctx context.Context, tenantID string) ([]Rule, error)
-	// ListByKind devuelve las reglas del tenant de un kind dado (keyword|fallback|escape).
-	ListByKind(ctx context.Context, tenantID string, k Kind) ([]Rule, error)
+	// ListByKind devuelve las reglas del tenant de un kind dado (keyword|fallback|escape)
+	// que aplican a la sesión dada: session_id = sessionID O session_id NULL (globales).
+	// sessionID vacío ("") ⇒ solo las globales (Plan 020 · T4).
+	ListByKind(ctx context.Context, tenantID, sessionID string, k Kind) ([]Rule, error)
 	// Get devuelve una regla por (tenant_id, trigger_id); ErrTriggerNotFound si no existe.
 	Get(ctx context.Context, tenantID, triggerID string) (Rule, error)
 	// Delete borra una regla por (tenant_id, trigger_id); ErrTriggerNotFound si no existía.

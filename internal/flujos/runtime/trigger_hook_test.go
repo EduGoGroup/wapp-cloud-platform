@@ -16,11 +16,11 @@ import (
 // para verificar que un error del resolver NO aborta la recepción (REQ-A7).
 type errTriggerResolver struct{}
 
-func (errTriggerResolver) Resolve(context.Context, string, string) (trigger.Decision, error) {
+func (errTriggerResolver) Resolve(context.Context, string, string, string) (trigger.Decision, error) {
 	return trigger.Decision{}, errors.New("boom")
 }
 
-func (errTriggerResolver) IsEscape(context.Context, string, string) (bool, string, error) {
+func (errTriggerResolver) IsEscape(context.Context, string, string, string) (bool, string, error) {
 	return false, "", nil
 }
 

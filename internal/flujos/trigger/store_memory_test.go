@@ -66,14 +66,14 @@ func TestMemoryStore_ListAndListByKind(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("List t1 esperaba 2, got %d", len(all))
 	}
-	kws, err := s.ListByKind(ctx, "t1", trigger.KindKeyword)
+	kws, err := s.ListByKind(ctx, "t1", "", trigger.KindKeyword)
 	if err != nil {
 		t.Fatalf("listByKind: %v", err)
 	}
 	if len(kws) != 1 || kws[0].Keyword != "a" {
 		t.Fatalf("ListByKind keyword t1 inesperado: %+v", kws)
 	}
-	fbs, err := s.ListByKind(ctx, "t1", trigger.KindFallback)
+	fbs, err := s.ListByKind(ctx, "t1", "", trigger.KindFallback)
 	if err != nil {
 		t.Fatalf("listByKind fallback: %v", err)
 	}

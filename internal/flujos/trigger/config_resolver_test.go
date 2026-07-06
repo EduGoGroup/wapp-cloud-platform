@@ -19,20 +19,29 @@ func seed(t *testing.T, rules ...trigger.Rule) *trigger.ConfigResolver {
 	return trigger.NewConfigResolver(s)
 }
 
-// mustResolve ejecuta Resolve y falla si hay error.
+// mustResolve ejecuta Resolve para una sesión GLOBAL (sessionID="") y falla si hay
+// error. Los tests que ejercen reglas por-sesión usan mustResolveIn.
 func mustResolve(t *testing.T, r *trigger.ConfigResolver, tenantID, text string) trigger.Decision {
 	t.Helper()
-	dec, err := r.Resolve(context.Background(), tenantID, text)
+	return mustResolveIn(t, r, tenantID, "", text)
+}
+
+// mustResolveIn ejecuta Resolve para una sesión concreta (Plan 020 · T4) y falla si
+// hay error.
+func mustResolveIn(t *testing.T, r *trigger.ConfigResolver, tenantID, sessionID, text string) trigger.Decision {
+	t.Helper()
+	dec, err := r.Resolve(context.Background(), tenantID, sessionID, text)
 	if err != nil {
-		t.Fatalf("resolve(%q,%q): %v", tenantID, text, err)
+		t.Fatalf("resolve(%q,%q,%q): %v", tenantID, sessionID, text, err)
 	}
 	return dec
 }
 
-// mustEscape ejecuta IsEscape y falla si hay error, devolviendo también el message.
+// mustEscape ejecuta IsEscape (sesión global) y falla si hay error, devolviendo
+// también el message.
 func mustEscape(t *testing.T, r *trigger.ConfigResolver, tenantID, text string) (bool, string) {
 	t.Helper()
-	esc, msg, err := r.IsEscape(context.Background(), tenantID, text)
+	esc, msg, err := r.IsEscape(context.Background(), tenantID, "", text)
 	if err != nil {
 		t.Fatalf("isEscape(%q,%q): %v", tenantID, text, err)
 	}
@@ -169,13 +178,50 @@ func TestConfigResolver_IsEscapeDisabledIgnored(t *testing.T) {
 	}
 }
 
+// TestConfigResolver_SessionSpecificBeatsGlobal (Plan 020 · T4, caso a): cuando
+// una regla acotada a la sesión y una global casan el mismo texto, gana la
+// ESPECÍFICA aunque tenga menor priority (la especificidad es el criterio maestro).
+func TestConfigResolver_SessionSpecificBeatsGlobal(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "global", Priority: 9, Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "sesion", Priority: 0, Enabled: true, SessionID: "sX"},
+	)
+	dec := mustResolveIn(t, r, "t1", "sX", "hola")
+	if dec.Action != trigger.Start || dec.FlowID != "sesion" {
+		t.Fatalf("regla específica de sesión debe ganar a la global, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_GlobalAppliesToAllSessions (Plan 020 · T4, caso b): una regla
+// global (SessionID="") sigue aplicando a cualquier sesión (no-regresión del 019).
+func TestConfigResolver_GlobalAppliesToAllSessions(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "global", Enabled: true})
+	dec := mustResolveIn(t, r, "t1", "sX", "hola")
+	if dec.Action != trigger.Start || dec.FlowID != "global" {
+		t.Fatalf("regla global debe aplicar a la sesión sX, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_SessionSpecificDoesNotLeak (Plan 020 · T4, caso c): una regla
+// acotada a la sesión sX NO aplica a otra sesión sY (y sin global ⇒ Ignore).
+func TestConfigResolver_SessionSpecificDoesNotLeak(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "sesion", Enabled: true, SessionID: "sX"})
+	if dec := mustResolveIn(t, r, "t1", "sY", "hola"); dec.Action != trigger.Ignore {
+		t.Fatalf("regla de sX no debe aplicar a sY, got %+v", dec)
+	}
+	// La MISMA regla sí arranca en su propia sesión sX.
+	if dec := mustResolveIn(t, r, "t1", "sX", "hola"); dec.Action != trigger.Start || dec.FlowID != "sesion" {
+		t.Fatalf("regla de sX debe aplicar a sX, got %+v", dec)
+	}
+}
+
 func TestNoopResolver_NoRegression(t *testing.T) {
 	var r trigger.Resolver = trigger.NewNoopResolver()
-	dec, err := r.Resolve(context.Background(), "t1", "pedido")
+	dec, err := r.Resolve(context.Background(), "t1", "", "pedido")
 	if err != nil || dec.Action != trigger.Ignore {
 		t.Fatalf("Noop debe Ignore sin error, got %+v err=%v", dec, err)
 	}
-	esc, msg, err := r.IsEscape(context.Background(), "t1", "salir")
+	esc, msg, err := r.IsEscape(context.Background(), "t1", "", "salir")
 	if err != nil || esc || msg != "" {
 		t.Fatalf("Noop IsEscape debe ser (false,\"\") sin error, got esc=%v msg=%q err=%v", esc, msg, err)
 	}

@@ -33,6 +33,9 @@ type triggerRequest struct {
 	// Message es el aviso de escape configurable (Plan 019 · T4b). Solo válido para
 	// kind=escape; si llega en keyword/fallback el cuerpo se rechaza (400).
 	Message string `json:"message"`
+	// SessionID acota la regla a una sesión concreta (Plan 020 · T4). Opcional; si se
+	// omite (o vacío) la regla es GLOBAL del tenant (aplica a todas las sesiones).
+	SessionID string `json:"session_id"`
 }
 
 // triggerDTO es la proyección pública de una regla (respuesta de create/list).
@@ -47,6 +50,7 @@ type triggerDTO struct {
 	Priority  int    `json:"priority"`
 	Enabled   bool   `json:"enabled"`
 	Message   string `json:"message,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // dtoFromRule proyecta una trigger.Rule al DTO de respuesta.
@@ -60,6 +64,7 @@ func dtoFromRule(r trigger.Rule) triggerDTO {
 		Priority:  r.Priority,
 		Enabled:   r.Enabled,
 		Message:   r.Message,
+		SessionID: r.SessionID,
 	}
 }
 
@@ -117,6 +122,7 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 		Priority:  req.Priority,
 		Enabled:   enabled,
 		Message:   message,
+		SessionID: strings.TrimSpace(req.SessionID),
 	}, ""
 }
 

@@ -31,30 +31,32 @@ func (s *MemoryStore) Insert(_ context.Context, r Rule) (Rule, error) {
 	return r, nil
 }
 
-// List devuelve todas las reglas del tenant, ordenadas de forma estable por
-// trigger_id para dar un orden determinista al llamante.
+// List devuelve todas las reglas del tenant (sin filtro de kind ni sesión: es la
+// vista de administración), ordenadas de forma estable por trigger_id para dar un
+// orden determinista al llamante.
 func (s *MemoryStore) List(_ context.Context, tenantID string) ([]Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.collect(tenantID, ""), nil
+	return s.filter(tenantID, func(Rule) bool { return true }), nil
 }
 
-// ListByKind devuelve las reglas del tenant de un kind dado.
-func (s *MemoryStore) ListByKind(_ context.Context, tenantID string, k Kind) ([]Rule, error) {
+// ListByKind devuelve las reglas del tenant de un kind dado aplicables a la sesión:
+// SessionID == sessionID (específica) O SessionID == "" (global). sessionID vacío
+// ⇒ solo las globales (Plan 020 · T4).
+func (s *MemoryStore) ListByKind(_ context.Context, tenantID, sessionID string, k Kind) ([]Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.collect(tenantID, k), nil
+	return s.filter(tenantID, func(r Rule) bool {
+		return r.Kind == k && (r.SessionID == sessionID || r.SessionID == "")
+	}), nil
 }
 
-// collect recoge las reglas del tenant (opcionalmente filtradas por kind si k!="")
-// en orden determinista por trigger_id. Requiere el mutex tomado.
-func (s *MemoryStore) collect(tenantID string, k Kind) []Rule {
+// filter recoge las reglas del tenant que satisfacen keep, en orden determinista
+// por trigger_id. Requiere el mutex tomado.
+func (s *MemoryStore) filter(tenantID string, keep func(Rule) bool) []Rule {
 	out := make([]Rule, 0)
 	for _, r := range s.rules {
-		if r.TenantID != tenantID {
-			continue
-		}
-		if k != "" && r.Kind != k {
+		if r.TenantID != tenantID || !keep(r) {
 			continue
 		}
 		out = append(out, r)

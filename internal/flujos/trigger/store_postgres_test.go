@@ -115,12 +115,60 @@ func TestIntegration_TriggerStore_NullMappingAndList(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("List esperaba 3, got %d", len(all))
 	}
-	kws, err := s.ListByKind(ctx, tid, trigger.KindKeyword)
+	kws, err := s.ListByKind(ctx, tid, "", trigger.KindKeyword)
 	if err != nil {
 		t.Fatalf("listByKind: %v", err)
 	}
 	if len(kws) != 1 {
 		t.Fatalf("ListByKind keyword esperaba 1, got %d", len(kws))
+	}
+}
+
+// TestIntegration_TriggerStore_SessionScope verifica el filtro por-sesión de
+// ListByKind (Plan 020 · T4): con una regla global (session_id NULL) y una
+// específica de sesión, la consulta por sesión sX devuelve ambas; por sY solo la
+// global; y la vista global ("") solo la global. Round-trip de session_id incluido.
+func TestIntegration_TriggerStore_SessionScope(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	s := trigger.NewPostgresStore(db)
+	tid := seedTenant(t, db)
+
+	glob := mustInsert(t, s, trigger.Rule{TenantID: tid, Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "g", Enabled: true})
+	spec := mustInsert(t, s, trigger.Rule{TenantID: tid, Kind: trigger.KindKeyword, Keyword: "hola", MatchType: trigger.MatchExact, FlowID: "s", Enabled: true, SessionID: "sX"})
+
+	// round-trip de session_id por Get.
+	gotSpec, err := s.Get(ctx, tid, spec.TriggerID)
+	if err != nil {
+		t.Fatalf("get spec: %v", err)
+	}
+	if gotSpec.SessionID != "sX" {
+		t.Fatalf("session_id no hizo round-trip: %+v", gotSpec)
+	}
+	if gotGlob, gerr := s.Get(ctx, tid, glob.TriggerID); gerr != nil || gotGlob.SessionID != "" {
+		t.Fatalf("regla global debe leer session_id vacío, got %+v err=%v", gotGlob, gerr)
+	}
+
+	inSX, err := s.ListByKind(ctx, tid, "sX", trigger.KindKeyword)
+	if err != nil {
+		t.Fatalf("listByKind sX: %v", err)
+	}
+	if len(inSX) != 2 {
+		t.Fatalf("sesión sX debe ver global+específica (2), got %d", len(inSX))
+	}
+	inSY, err := s.ListByKind(ctx, tid, "sY", trigger.KindKeyword)
+	if err != nil {
+		t.Fatalf("listByKind sY: %v", err)
+	}
+	if len(inSY) != 1 || inSY[0].FlowID != "g" {
+		t.Fatalf("sesión sY solo debe ver la global, got %+v", inSY)
+	}
+	inGlob, err := s.ListByKind(ctx, tid, "", trigger.KindKeyword)
+	if err != nil {
+		t.Fatalf("listByKind global: %v", err)
+	}
+	if len(inGlob) != 1 || inGlob[0].FlowID != "g" {
+		t.Fatalf("vista global solo debe ver la global, got %+v", inGlob)
 	}
 }
 

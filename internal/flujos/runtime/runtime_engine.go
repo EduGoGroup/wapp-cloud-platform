@@ -296,7 +296,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// tenant se corta la conversación y se avisa. Bloque autocontenido: si NO es
 	// escape, el camino normal queda idéntico (INV-5 no-regresión). Un fallo de
 	// IsEscape es best-effort: se LOGUEA y NO bloquea el avance normal (no aborta).
-	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, m.GetText()); escErr != nil {
+	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, sessionID, m.GetText()); escErr != nil {
 		rt.log.Warn("runtime: IsEscape falló; se ignora el escape", "error", escErr, "session_id", sessionID)
 	} else if esc {
 		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
@@ -378,7 +378,7 @@ func (rt *Runtime) sendReply(ctx context.Context, tenantID, sessionID, contactID
 // HandleIncoming; llamar a Start re-tomaría el mutex y causaría auto-deadlock). Un
 // ErrConversationExists (carrera con otro entrante) se trata como benigno (log + nil).
 func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, m *cloudlinkv1.IncomingMessage) error {
-	dec, err := rt.triggers.Resolve(ctx, tenantID, m.GetText())
+	dec, err := rt.triggers.Resolve(ctx, tenantID, sessionID, m.GetText())
 	if err != nil {
 		rt.log.Warn("runtime: resolver de disparos falló; se ignora el entrante",
 			"error", err, "session_id", sessionID)

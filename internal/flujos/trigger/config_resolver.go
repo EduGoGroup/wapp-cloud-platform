@@ -23,13 +23,17 @@ func NewConfigResolver(store Store) *ConfigResolver {
 	return &ConfigResolver{store: store}
 }
 
-// Resolve decide qué hacer con un entrante sin conversación viva:
+// Resolve decide qué hacer con un entrante sin conversación viva (sessionID = la
+// sesión del entrante; el store ya filtró a reglas específicas de esa sesión O
+// globales, Plan 020 · T4):
 //   - Si alguna regla keyword habilitada casa → {Start, FlowID} (colisión
-//     determinista: priority desc, exact antes que contains, keyword asc).
-//   - Si ninguna casa pero hay fallback habilitado → {Fallback, FlowID} (mayor priority).
+//     determinista: específica-de-sesión antes que global, priority desc, exact
+//     antes que contains, keyword asc).
+//   - Si ninguna casa pero hay fallback habilitado → {Fallback, FlowID} (mejor por
+//     el mismo orden).
 //   - Si tampoco → {Ignore}.
-func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, text string) (Decision, error) {
-	keywords, err := c.store.ListByKind(ctx, tenantID, KindKeyword)
+func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID, text string) (Decision, error) {
+	keywords, err := c.store.ListByKind(ctx, tenantID, sessionID, KindKeyword)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -44,7 +48,7 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, text string) (De
 		return Decision{Action: Start, FlowID: matches[0].FlowID}, nil
 	}
 
-	fallbacks, err := c.store.ListByKind(ctx, tenantID, KindFallback)
+	fallbacks, err := c.store.ListByKind(ctx, tenantID, sessionID, KindFallback)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -56,26 +60,50 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, text string) (De
 }
 
 // IsEscape indica si el texto casa alguna regla kind=escape habilitada del tenant
-// y, de casar, devuelve el aviso configurado en esa regla (r.Message; vacío si la
-// regla no define uno ⇒ el runtime cae a su aviso por defecto).
-func (c *ConfigResolver) IsEscape(ctx context.Context, tenantID, text string) (bool, string, error) {
-	escapes, err := c.store.ListByKind(ctx, tenantID, KindEscape)
+// aplicable a la sesión y, de casar, devuelve el aviso configurado en esa regla
+// (r.Message; vacío si la regla no define uno ⇒ el runtime cae a su aviso por
+// defecto). Si casan una regla específica de sesión y una global, gana la
+// ESPECÍFICA (su message).
+func (c *ConfigResolver) IsEscape(ctx context.Context, tenantID, sessionID, text string) (bool, string, error) {
+	escapes, err := c.store.ListByKind(ctx, tenantID, sessionID, KindEscape)
 	if err != nil {
 		return false, "", err
 	}
-	for _, r := range escapes {
-		if r.Enabled && match(r, text) {
-			return true, r.Message, nil
+	var best *Rule
+	for i := range escapes {
+		r := escapes[i]
+		if !r.Enabled || !match(r, text) {
+			continue
 		}
+		if best == nil || moreSpecific(r, *best) {
+			rc := r
+			best = &rc
+		}
+	}
+	if best != nil {
+		return true, best.Message, nil
 	}
 	return false, "", nil
 }
 
+// moreSpecific reporta si a debe preferirse sobre b únicamente por ESPECIFICIDAD de
+// sesión: una regla acotada a una sesión (SessionID != "") gana a una global
+// (SessionID == ""). Es el criterio maestro del desempate (Plan 020 · T4): la
+// regla específica de sesión gana a la global cuando ambas casan.
+func moreSpecific(a, b Rule) bool {
+	return a.SessionID != "" && b.SessionID == ""
+}
+
 // sortByPriority ordena las reglas que casan de forma determinista:
-// priority desc → exact antes que contains → keyword asc (orden estable final).
+// específica-de-sesión antes que global → priority desc → exact antes que contains
+// → keyword asc (orden estable final). La especificidad de sesión es el criterio
+// MAESTRO: una regla de sesión gana a una global aunque tenga menor priority.
 func sortByPriority(rules []Rule) {
 	sort.SliceStable(rules, func(i, j int) bool {
 		a, b := rules[i], rules[j]
+		if sa, sb := a.SessionID != "", b.SessionID != ""; sa != sb {
+			return sa // específica de sesión gana a global
+		}
 		if a.Priority != b.Priority {
 			return a.Priority > b.Priority
 		}
@@ -86,8 +114,9 @@ func sortByPriority(rules []Rule) {
 	})
 }
 
-// bestEnabled devuelve la regla habilitada de mayor priority (empate → keyword asc,
-// luego trigger_id asc para total determinismo), o nil si no hay ninguna.
+// bestEnabled devuelve la mejor regla habilitada por el mismo orden que
+// sortByPriority (específica-de-sesión → priority desc → keyword asc → trigger_id
+// asc para total determinismo), o nil si no hay ninguna.
 func bestEnabled(rules []Rule) *Rule {
 	var best *Rule
 	for i := range rules {
@@ -95,15 +124,28 @@ func bestEnabled(rules []Rule) *Rule {
 		if !r.Enabled {
 			continue
 		}
-		if best == nil ||
-			r.Priority > best.Priority ||
-			(r.Priority == best.Priority && r.Keyword < best.Keyword) ||
-			(r.Priority == best.Priority && r.Keyword == best.Keyword && r.TriggerID < best.TriggerID) {
+		if best == nil || fallbackBetter(r, *best) {
 			rc := r
 			best = &rc
 		}
 	}
 	return best
+}
+
+// fallbackBetter reporta si a debe ganar a b como fallback elegido:
+// específica-de-sesión antes que global → mayor priority → keyword asc →
+// trigger_id asc. Cuando la especificidad es igual, conserva el desempate del 019.
+func fallbackBetter(a, b Rule) bool {
+	if sa, sb := a.SessionID != "", b.SessionID != ""; sa != sb {
+		return sa
+	}
+	if a.Priority != b.Priority {
+		return a.Priority > b.Priority
+	}
+	if a.Keyword != b.Keyword {
+		return a.Keyword < b.Keyword
+	}
+	return a.TriggerID < b.TriggerID
 }
 
 // match evalúa una regla contra el texto entrante según su MatchType. Ambos
