@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
@@ -224,6 +225,7 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		if s.OnHeartbeat != nil {
 			s.OnHeartbeat(cc.sessionID, p.Heartbeat)
 		}
+		s.persistSelfPn(ctx, cc, p.Heartbeat)
 		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
@@ -307,6 +309,36 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 	}
 	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
 		s.log.Error("lease: push inicial", "error", err, "session_id", cc.sessionID)
+	}
+}
+
+// persistSelfPn durabiliza el número propio (self_pn) que el Edge reporta en el
+// Heartbeat (Plan 020 · T2). Lo NORMALIZA a E.164 (mismo normalizador que el
+// motor de flujos usa al comparar el remitente) para que el conjunto persistido
+// sea canónico, y lo escribe acotado por la identidad mTLS de la sesión. Es
+// best-effort: sin fleet, sin identidad, sin self_pn o si no normaliza, es un
+// no-op silencioso (NUNCA loguea el número: PII); un fallo de BD se LOGUEA con
+// IDs opacos y no tumba el stream. Un self_pn vacío NO sobrescribe el previo
+// (la impl de fleet lo trata como no-op).
+func (s *Server) persistSelfPn(ctx context.Context, cc connCtx, hb *cloudlinkv1.Heartbeat) {
+	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	raw := hb.GetSelfPn()
+	if raw == "" {
+		return // sesión sin emparejar aún: no se toca el valor previo.
+	}
+	norm, err := contact.Normalize(contact.KindPhoneE164, raw)
+	if err != nil {
+		// Un self_pn no normalizable (formato inesperado) se descarta: no se
+		// persiste basura. Sin el número crudo en el log (PII), solo el hecho.
+		s.log.Debug("heartbeat: self_pn no normalizable; se descarta",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID)
+		return
+	}
+	if err := s.fleet.SetSelfPn(ctx, cc.tenantID, cc.edgeID, cc.sessionID, norm); err != nil {
+		s.log.Error("fleet: persistir self_pn", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
 	}
 }
 

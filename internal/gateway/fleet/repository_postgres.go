@@ -50,6 +50,25 @@ func (r *PostgresRepository) MarkOffline(ctx context.Context, tenantID, edgeID, 
 	return nil
 }
 
+// SetSelfPn persiste el self_pn reportado en el Heartbeat (Plan 020 · T2). UPDATE
+// acotado por (tenant_id, edge_id, session_id). selfPn vacío es un no-op: NO
+// sobrescribe un valor previo bueno (protege el dato). Un UPDATE de 0 filas
+// (sesión aún sin registrar) es válido: el próximo Heartbeat lo fijará.
+func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error {
+	if selfPn == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET self_pn = $4, updated_at = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+	`, tenantID, edgeID, sessionID, selfPn)
+	if err != nil {
+		return fmt.Errorf("fleet: fijar self_pn: %w", err)
+	}
+	return nil
+}
+
 // SetRole fija el rol (bot|passive) de la sesión del tenant. UPDATE acotado por
 // tenant_id + session_id (aislamiento multi-tenant, INV-8): toca TODAS las filas
 // de esa sesión bajo el tenant. found=false si 0 filas (sesión inexistente o de
@@ -77,6 +96,7 @@ func (r *PostgresRepository) SetRole(ctx context.Context, tenantID, sessionID st
 func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionID string) (Session, bool, error) {
 	s, err := scanSession(r.db.QueryRowContext(ctx, `
 		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
+		       COALESCE(self_pn, ''),
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
@@ -94,6 +114,7 @@ func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionI
 func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []Session, err error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
+		       COALESCE(self_pn, ''),
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1
@@ -129,7 +150,7 @@ type rowScanner interface {
 func scanSession(sc rowScanner) (Session, error) {
 	var s Session
 	var state, role string
-	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.LastConnectedAt, &s.LastSeenAt); err != nil {
+	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.SelfPn, &s.LastConnectedAt, &s.LastSeenAt); err != nil {
 		return Session{}, err
 	}
 	s.State = State(state)

@@ -52,3 +52,15 @@ const (
 type TenantResolver interface {
 	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, role string, err error)
 }
+
+// SelfNumberLister devuelve el CONJUNTO de números propios (self_pn, E.164
+// normalizado) de las sesiones de un tenant (Plan 020 · T2). Lo consume la guarda
+// anti-self-loop de HandleIncoming: si el remitente de un entrante casa uno de
+// estos números, es una sesión propia del tenant hablando y NO se auto-responde
+// (rompe el bucle sesión↔sesión del Plan 019). Se define en el paquete runtime
+// (interfaz estrecha) para NO acoplar el motor al paquete fleet: lo implementa un
+// resolver Postgres (o un doble en tests). Devuelve la lista tal cual (puede traer
+// duplicados entre edges); la guarda compara por igualdad exacta.
+type SelfNumberLister interface {
+	SelfNumbers(ctx context.Context, tenantID string) ([]string, error)
+}

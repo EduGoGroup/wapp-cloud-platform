@@ -2,6 +2,11 @@ module github.com/EduGoGroup/wapp-cloud-platform
 
 go 1.26.0
 
+// Plan 020 · T2 (TEMPORAL): consumir el proto local con los campos aditivos del
+// Heartbeat (self_pn/self_jid/state) mientras wapp-cloudlink v0.6.0 no tiene tag.
+// SE QUITA en la publicación final (realineación a la versión etiquetada).
+replace github.com/EduGoGroup/wapp-cloudlink => ../wapp-cloudlink
+
 require (
 	github.com/EduGoGroup/wapp-cloudlink v0.5.0
 	github.com/EduGoGroup/wapp-shared/config v0.1.0

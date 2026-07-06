@@ -199,7 +199,11 @@ func run() error {
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
-		flowruntime.WithReplyLimiter(replyLimiter))
+		flowruntime.WithReplyLimiter(replyLimiter),
+		// Guarda anti-self-loop (Plan 020 · T2): el conjunto de self_pn del tenant sale
+		// de fleet_sessions (lo persiste el Gateway en cada Heartbeat). Un entrante de un
+		// número propio de otra sesión del mismo tenant NO auto-responde.
+		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y

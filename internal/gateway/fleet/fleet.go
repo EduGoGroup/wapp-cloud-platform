@@ -46,11 +46,15 @@ func ValidRole(r Role) bool { return r == RoleBot || r == RolePassive }
 // Session refleja una fila de public.fleet_sessions. Capabilities se omite a
 // propósito: el contrato CloudLink v0.1.0 no transporta capacidades aún.
 type Session struct {
-	TenantID        string
-	EdgeID          string
-	SessionID       string
-	State           State
-	Role            Role
+	TenantID  string
+	EdgeID    string
+	SessionID string
+	State     State
+	Role      Role
+	// SelfPn es el número propio (E.164 sin '+', normalizado) que la sesión
+	// reporta en su Heartbeat (Plan 020 · T2). Vacío mientras la sesión no reporte
+	// uno (sin emparejar). Lo consume el anti-self-loop del runtime.
+	SelfPn          string
 	LastConnectedAt time.Time
 	LastSeenAt      time.Time
 }
@@ -68,6 +72,12 @@ type Repository interface {
 	Get(ctx context.Context, tenantID, edgeID, sessionID string) (s Session, found bool, err error)
 	// List devuelve las sesiones de un tenant (para tests/diagnóstico).
 	List(ctx context.Context, tenantID string) ([]Session, error)
+	// SetSelfPn persiste el número propio (self_pn) que la sesión reporta en su
+	// Heartbeat (Plan 020 · T2). Acota por (tenant_id, edge_id, session_id). Un
+	// selfPn VACÍO es un no-op: NO sobrescribe un valor previo bueno (protege el
+	// dato ante Heartbeats de una sesión que aún no se emparejó). No falla si la
+	// fila no existe todavía (UPDATE de 0 filas es válido).
+	SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error
 	// SetRole fija el rol (bot|passive) de la sesión sessionID del tenant tenantID
 	// (Plan 020 · T1). Acota por tenant_id + session_id (aislamiento multi-tenant,
 	// INV-8): actualiza TODAS las filas de esa sesión bajo el tenant (un mismo
@@ -155,6 +165,24 @@ func (r *MemoryRepository) SetRole(_ context.Context, tenantID, sessionID string
 		}
 	}
 	return found, nil
+}
+
+// SetSelfPn implementa Repository: fija el self_pn de la sesión. selfPn vacío es
+// un no-op (protege un valor previo bueno). No falla si la sesión no existe aún.
+func (r *MemoryRepository) SetSelfPn(_ context.Context, tenantID, edgeID, sessionID, selfPn string) error {
+	if selfPn == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := memKey(tenantID, edgeID, sessionID)
+	s, ok := r.sessions[key]
+	if !ok {
+		return nil
+	}
+	s.SelfPn = selfPn
+	r.sessions[key] = s
+	return nil
 }
 
 // Get implementa Repository.

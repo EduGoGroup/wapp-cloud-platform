@@ -83,6 +83,12 @@ type Runtime struct {
 	// runtime consume un token; agotado ⇒ NO responde (corta cualquier bucle). nil
 	// (sin WithReplyLimiter) desactiva el tope: no-regresión total.
 	replyLimiter ReplyLimiter
+	// selfNumbers entrega el conjunto de números propios (self_pn) del tenant para
+	// la guarda anti-self-loop (Plan 020 · T2): un entrante cuyo from_pn casa un
+	// número propio de OTRA sesión del MISMO tenant NO auto-responde. nil (sin
+	// WithSelfNumbers) desactiva la guarda: no-regresión total (sin self_pn poblado
+	// el comportamiento es idéntico al previo al 020).
+	selfNumbers SelfNumberLister
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -124,6 +130,64 @@ func WithTriggerResolver(r trigger.Resolver) Option {
 // (nil ⇒ no-regresión: se responde igual que antes del Plan 020).
 func WithReplyLimiter(l ReplyLimiter) Option {
 	return func(rt *Runtime) { rt.replyLimiter = l }
+}
+
+// WithSelfNumbers inyecta el lister del conjunto de números propios del tenant que
+// alimenta la guarda anti-self-loop (Plan 020 · T2). Sin él, el runtime no aplica
+// la guarda (nil ⇒ no-regresión: se procesa igual que antes del Plan 020).
+func WithSelfNumbers(l SelfNumberLister) Option {
+	return func(rt *Runtime) { rt.selfNumbers = l }
+}
+
+// reactiveBlocked agrupa las guardas de BORDE que impiden entrar al motor reactivo
+// (Plan 020). Devuelve true (y NO se procesa el entrante) si:
+//   - la sesión es PASSIVE (T1): escucha/transporta pero no dispara triggers, no
+//     avanza con auto-envío ni escapa. Una conversación EN CURSO deja de avanzar
+//     mientras siga passive (no se borra su estado; vuelve si se re-marca bot). Rol
+//     vacío/desconocido ⇒ bot (no-regresión).
+//   - el remitente es un número PROPIO del tenant (T2, anti-self-loop): una sesión
+//     propia hablando; no se auto-responde (defensa semántica contra el bucle
+//     sesión↔sesión del Plan 019).
+//
+// Sin rol passive y sin self_pn poblado, devuelve false ⇒ no-regresión total.
+func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
+	if role == rolePassive {
+		rt.log.Debug("runtime: sesión passive; motor reactivo omitido", "session_id", sessionID)
+		return true
+	}
+	return rt.isSelfLoop(ctx, tenantID, sessionID, fromPn)
+}
+
+// isSelfLoop decide si un entrante proviene de un número PROPIO del tenant (una
+// sesión propia hablando), en cuyo caso NO se debe auto-responder (Plan 020 · T2,
+// defensa semántica contra el bucle sesión↔sesión del Plan 019). Normaliza el
+// remitente (from_pn) con el MISMO normalizador que el paquete contact y lo compara
+// contra el conjunto de self_pn del tenant. Es CONSERVADORA hacia procesar: sin
+// lister (nil), sin from_pn, si el número no normaliza o si el lookup falla ⇒
+// devuelve false (no bloquea: la ausencia de dato no debe silenciar tráfico
+// legítimo). NUNCA loguea el número (PII): solo el hecho y IDs opacos.
+func (rt *Runtime) isSelfLoop(ctx context.Context, tenantID, sessionID, fromPn string) bool {
+	if rt.selfNumbers == nil || fromPn == "" {
+		return false
+	}
+	norm, err := contact.Normalize(contact.KindPhoneE164, fromPn)
+	if err != nil {
+		return false // sin número normalizable no se puede afirmar self-loop.
+	}
+	nums, err := rt.selfNumbers.SelfNumbers(ctx, tenantID)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo cargar self_pn del tenant; guarda anti-self-loop omitida",
+			"error", err, "session_id", sessionID)
+		return false
+	}
+	for _, n := range nums {
+		if n == norm {
+			rt.log.Warn("runtime: entrante de un número propio del tenant; auto-respuesta evitada (anti-self-loop)",
+				"tenant_id", tenantID, "session_id", sessionID)
+			return true
+		}
+	}
+	return false
 }
 
 // replyAllowed comprueba el token-bucket de auto-respuestas para la clave (Plan
@@ -255,16 +319,10 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
 	}
-	// Guarda passive (Plan 020 · T1): una sesión passive escucha/transporta pero NO
-	// entra al motor reactivo (ni trigger/arranque, ni escape, ni avance con
-	// auto-envío). Es el BORDE del motor: se corta ANTES de resolver contacto, tomar
-	// el keyedMutex o cargar estado; la escucha y los acuses (vía separada del
-	// Gateway) no se ven afectados. Una conversación ya EN CURSO en una sesión que
-	// pasa a passive deja de avanzar mientras siga passive (no se borra su estado):
-	// criterio conservador "passive no auto-responde"; vuelve a avanzar si se
-	// re-marca bot. rol vacío/desconocido ⇒ bot (no-regresión).
-	if role == rolePassive {
-		rt.log.Debug("runtime: sesión passive; motor reactivo omitido", "session_id", sessionID)
+	// Guardas de BORDE del motor reactivo (Plan 020 · T1 passive + T2 anti-self-loop):
+	// se cortan ANTES de resolver contacto, tomar el keyedMutex o cargar estado; la
+	// escucha y los acuses (vía separada del Gateway) no se ven afectados.
+	if rt.reactiveBlocked(ctx, tenantID, sessionID, role, m.GetFromPn()) {
 		return nil
 	}
 	// Resuelve la identidad enriquecida del entrante (from_pn/from_lid, con
