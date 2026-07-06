@@ -151,6 +151,16 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers)))
 	}
 
+	// Listar las sesiones/teléfonos vinculados del tenant (Plan 021 · T0, R-A1).
+	// Lectura sin auditoría (idempotente), acotada al tenant del token (INV-8):
+	// fleet.List filtra por tenant, así que una sesión ajena NUNCA aparece. Reusa
+	// el MISMO SessionLister que ya alimenta el aislamiento del envío (sin nueva
+	// dependencia). Solo expone metadatos de operación (CERO credenciales/PII).
+	if d.Sessions != nil {
+		mux.Handle("GET /api/v1/sessions", protectRead(mw,
+			"sessions.read", listSessionsHandler(d.Sessions)))
+	}
+
 	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
 	// pero NO dispara triggers ni auto-responde. Escritura auditada (sessions.write),
 	// acotada al tenant del token (INV-8); reusa el MISMO handler que /admin/sessions.
