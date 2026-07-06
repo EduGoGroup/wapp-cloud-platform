@@ -64,6 +64,10 @@ type Rule struct {
 	FlowID    string    // vacío para escape
 	Priority  int
 	Enabled   bool
+	// Message es el aviso que el runtime envía cuando esta regla kind=escape casa
+	// y corta la conversación viva (Plan 019 · T4b). Solo tiene sentido para escape;
+	// vacío ⇒ el runtime usa su aviso por defecto. NULL en flow_triggers ⇔ "".
+	Message string
 }
 
 // Decision es el resultado de Resolve.
@@ -83,8 +87,10 @@ type Decision struct {
 type Resolver interface {
 	// Resolve decide qué hacer con un entrante sin conversación viva.
 	Resolve(ctx context.Context, tenantID, text string) (Decision, error)
-	// IsEscape indica si el texto es una señal de escape para el tenant.
-	IsEscape(ctx context.Context, tenantID, text string) (bool, error)
+	// IsEscape indica si el texto es una señal de escape para el tenant y, si lo es,
+	// devuelve el aviso configurado en la regla que casó (message; vacío si la regla
+	// no define uno ⇒ el runtime cae a su aviso por defecto).
+	IsEscape(ctx context.Context, tenantID, text string) (matched bool, message string, err error)
 }
 
 // NoopResolver es el adapter por DEFAULT: nunca arranca nada y nunca es escape.
@@ -100,7 +106,7 @@ func (NoopResolver) Resolve(context.Context, string, string) (Decision, error) {
 	return Decision{Action: Ignore}, nil
 }
 
-// IsEscape siempre es false.
-func (NoopResolver) IsEscape(context.Context, string, string) (bool, error) {
-	return false, nil
+// IsEscape siempre es false (sin mensaje).
+func (NoopResolver) IsEscape(context.Context, string, string) (bool, string, error) {
+	return false, "", nil
 }

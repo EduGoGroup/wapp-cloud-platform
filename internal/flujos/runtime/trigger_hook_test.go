@@ -20,8 +20,8 @@ func (errTriggerResolver) Resolve(context.Context, string, string) (trigger.Deci
 	return trigger.Decision{}, errors.New("boom")
 }
 
-func (errTriggerResolver) IsEscape(context.Context, string, string) (bool, error) {
-	return false, nil
+func (errTriggerResolver) IsEscape(context.Context, string, string) (bool, string, error) {
+	return false, "", nil
 }
 
 // newTriggerRuntime arma un runtime con el flujo de menú publicado (v1) y un
@@ -161,6 +161,31 @@ func TestHandleIncoming_Escape_CierraYAvisa(t *testing.T) {
 	// La clave quedó libre: la conversación ya no existe.
 	if _, ok, lerr := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: resolveID(t, contacts, testContact)}); lerr != nil || ok {
 		t.Fatalf("escape debería borrar el estado (liberar la clave) (ok=%v err=%v)", ok, lerr)
+	}
+}
+
+// TestHandleIncoming_Escape_UsaMessageDelTenant: una regla de escape con message
+// configurado envía ESE aviso (Plan 019 · T4b) en vez del default del runtime.
+func TestHandleIncoming_Escape_UsaMessageDelTenant(t *testing.T) {
+	rule := trigger.Rule{
+		TenantID: testTenant, Kind: trigger.KindEscape,
+		Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true,
+		Message: "Gracias por tu tiempo, vuelve pronto.",
+	}
+	rt, _, sender, _ := newTriggerRuntime(t, rule)
+	ctx := context.Background()
+
+	if _, err := rt.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "salir", "wamid.escmsg")); err != nil {
+		t.Fatalf("HandleIncoming escape: %v", err)
+	}
+	if sender.count() != 2 {
+		t.Fatalf("escape debería enviar 1 aviso extra, total %d", sender.count())
+	}
+	if got := sender.texts()[1]; got != "Gracias por tu tiempo, vuelve pronto." {
+		t.Fatalf("escape debe usar el message del tenant, got %q", got)
 	}
 }
 

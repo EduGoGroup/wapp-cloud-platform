@@ -55,18 +55,20 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, text string) (De
 	return Decision{Action: Ignore}, nil
 }
 
-// IsEscape indica si el texto casa alguna regla kind=escape habilitada del tenant.
-func (c *ConfigResolver) IsEscape(ctx context.Context, tenantID, text string) (bool, error) {
+// IsEscape indica si el texto casa alguna regla kind=escape habilitada del tenant
+// y, de casar, devuelve el aviso configurado en esa regla (r.Message; vacío si la
+// regla no define uno ⇒ el runtime cae a su aviso por defecto).
+func (c *ConfigResolver) IsEscape(ctx context.Context, tenantID, text string) (bool, string, error) {
 	escapes, err := c.store.ListByKind(ctx, tenantID, KindEscape)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	for _, r := range escapes {
 		if r.Enabled && match(r, text) {
-			return true, nil
+			return true, r.Message, nil
 		}
 	}
-	return false, nil
+	return false, "", nil
 }
 
 // sortByPriority ordena las reglas que casan de forma determinista:

@@ -30,6 +30,9 @@ type triggerRequest struct {
 	FlowID    string `json:"flow_id"`
 	Priority  int    `json:"priority"`
 	Enabled   *bool  `json:"enabled"`
+	// Message es el aviso de escape configurable (Plan 019 · T4b). Solo válido para
+	// kind=escape; si llega en keyword/fallback el cuerpo se rechaza (400).
+	Message string `json:"message"`
 }
 
 // triggerDTO es la proyección pública de una regla (respuesta de create/list).
@@ -43,6 +46,7 @@ type triggerDTO struct {
 	FlowID    string `json:"flow_id,omitempty"`
 	Priority  int    `json:"priority"`
 	Enabled   bool   `json:"enabled"`
+	Message   string `json:"message,omitempty"`
 }
 
 // dtoFromRule proyecta una trigger.Rule al DTO de respuesta.
@@ -55,6 +59,7 @@ func dtoFromRule(r trigger.Rule) triggerDTO {
 		FlowID:    r.FlowID,
 		Priority:  r.Priority,
 		Enabled:   r.Enabled,
+		Message:   r.Message,
 	}
 }
 
@@ -64,6 +69,7 @@ func dtoFromRule(r trigger.Rule) triggerDTO {
 //   - match_type ∉ {exact,contains} (vacío → default exact)
 //   - keyword/escape sin keyword
 //   - keyword/fallback sin flow_id
+//   - message presente en kind ≠ escape (el aviso solo aplica al escape, T4b)
 func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string) {
 	kind := trigger.Kind(strings.TrimSpace(req.Kind))
 	switch kind {
@@ -92,6 +98,11 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 		return trigger.Rule{}, "flow_id es requerido para kind keyword|fallback"
 	}
 
+	message := strings.TrimSpace(req.Message)
+	if message != "" && kind != trigger.KindEscape {
+		return trigger.Rule{}, "message solo es válido para kind escape"
+	}
+
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -105,6 +116,7 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 		FlowID:    flowID,
 		Priority:  req.Priority,
 		Enabled:   enabled,
+		Message:   message,
 	}, ""
 }
 

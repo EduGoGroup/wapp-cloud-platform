@@ -103,6 +103,47 @@ func TestCreateTrigger_OK_FallbackAndEscape(t *testing.T) {
 	}
 }
 
+// TestCreateTrigger_OK_EscapeWithMessage: un escape con message se acepta (201),
+// lo devuelve en la respuesta y lo persiste (Plan 019 · T4b).
+func TestCreateTrigger_OK_EscapeWithMessage(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	h := admin.CreateTriggerHandler(store)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"escape","keyword":"SALIR","message":"Hasta pronto"}`, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Message != "Hasta pronto" {
+		t.Fatalf("respuesta debe traer el message, got %q", out.Message)
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Message != "Hasta pronto" {
+		t.Fatalf("message no persistió: %+v", rules)
+	}
+}
+
+// TestCreateTrigger_400_MessageOnNonEscape: message en kind ≠ escape se rechaza (400).
+func TestCreateTrigger_400_MessageOnNonEscape(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	h := admin.CreateTriggerHandler(store)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"keyword","keyword":"pedido","flow_id":"carrito","message":"nope"}`, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d, quiero 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListTriggers_OK_TenantScoped(t *testing.T) {
 	store := trigger.NewMemoryStore()
 	if _, err := store.Insert(context.Background(), trigger.Rule{

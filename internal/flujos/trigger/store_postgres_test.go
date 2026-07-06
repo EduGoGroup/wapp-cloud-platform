@@ -94,16 +94,26 @@ func TestIntegration_TriggerStore_NullMappingAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fallback: %v", err)
 	}
-	if gotFb.Keyword != "" || gotFb.FlowID != "menu" {
-		t.Fatalf("fallback mapea NULL keyword mal: %+v", gotFb)
+	if gotFb.Keyword != "" || gotFb.FlowID != "menu" || gotFb.Message != "" {
+		t.Fatalf("fallback mapea NULL keyword/message mal: %+v", gotFb)
+	}
+
+	// escape con message: round-trip por la columna message (Plan 019 · T4b).
+	esc := mustInsert(t, s, trigger.Rule{TenantID: tid, Kind: trigger.KindEscape, Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true, Message: "Hasta pronto"})
+	gotEsc, err := s.Get(ctx, tid, esc.TriggerID)
+	if err != nil {
+		t.Fatalf("get escape: %v", err)
+	}
+	if gotEsc.Message != "Hasta pronto" {
+		t.Fatalf("message no hizo round-trip: %+v", gotEsc)
 	}
 
 	all, err := s.List(ctx, tid)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("List esperaba 2, got %d", len(all))
+	if len(all) != 3 {
+		t.Fatalf("List esperaba 3, got %d", len(all))
 	}
 	kws, err := s.ListByKind(ctx, tid, trigger.KindKeyword)
 	if err != nil {

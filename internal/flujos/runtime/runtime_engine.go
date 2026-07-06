@@ -18,10 +18,9 @@ import (
 )
 
 // defaultEscapeMessage es el aviso corto que se envía al cortar una conversación
-// viva por escape global (Plan 019 · T4). TODO(Plan 019): hacerlo configurable
-// por tenant (p.ej. tenant_settings.escape_message); hoy es un default fijo (ver
-// rt.escapeMessage). Se dejó como default para no ampliar el alcance del tramo
-// con otra migración de esquema (decisión pragmática permitida por el plan).
+// viva por escape global (Plan 019 · T4) cuando la regla de escape que casó NO
+// define un aviso propio. Si la regla trae message (columna flow_triggers.message,
+// Plan 019 · T4b), handleEscape lo usa en su lugar.
 const defaultEscapeMessage = "Listo, cerramos esto. Escribe una palabra clave cuando quieras empezar de nuevo."
 
 // ErrConversationExists lo devuelve Start cuando ya hay una conversación viva
@@ -247,10 +246,10 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// tenant se corta la conversación y se avisa. Bloque autocontenido: si NO es
 	// escape, el camino normal queda idéntico (INV-5 no-regresión). Un fallo de
 	// IsEscape es best-effort: se LOGUEA y NO bloquea el avance normal (no aborta).
-	if esc, escErr := rt.triggers.IsEscape(ctx, tenantID, m.GetText()); escErr != nil {
+	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, m.GetText()); escErr != nil {
 		rt.log.Warn("runtime: IsEscape falló; se ignora el escape", "error", escErr, "session_id", sessionID)
 	} else if esc {
-		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID)
+		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
 	}
 	if st.LastWaMessageID != "" && st.LastWaMessageID == m.GetWaMessageId() {
 		// Re-entrega del mismo mensaje → no avanzar ni reenviar (idempotencia).
@@ -338,10 +337,12 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 
 // handleEscape corta una conversación viva por escape global (Plan 019 · T4): libera
 // la clave borrando el flow_state (idempotente) y envía un aviso corto por el MISMO
-// mecanismo de salida del runtime (send). Tras el borrado, un entrante posterior
-// vuelve a pasar por el resolver (Resolve), no por escape. El estado ya se borró
-// (equivalente al orden Save-antes-de-Send): un fallo del envío se surface al llamante.
-func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string) error {
+// mecanismo de salida del runtime (send). El aviso es el configurado en la regla de
+// escape que casó (message, Plan 019 · T4b); si viene vacío se usa defaultEscapeMessage.
+// Tras el borrado, un entrante posterior vuelve a pasar por el resolver (Resolve), no
+// por escape. El estado ya se borró (equivalente al orden Save-antes-de-Send): un
+// fallo del envío se surface al llamante.
+func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string) error {
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
 	}
@@ -349,18 +350,14 @@ func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string,
 	if err != nil {
 		return err
 	}
-	if _, err := rt.send(ctx, sessionID, to, []engine.Output{{Text: rt.escapeMessage(ctx, tenantID)}}); err != nil {
+	notice := message
+	if notice == "" {
+		notice = defaultEscapeMessage
+	}
+	if _, err := rt.send(ctx, sessionID, to, []engine.Output{{Text: notice}}); err != nil {
 		return err
 	}
 	return nil
-}
-
-// escapeMessage devuelve el aviso corto que se envía al cortar una conversación por
-// escape (Plan 019 · T4). TODO(Plan 019): resolver por tenant
-// (tenant_settings.escape_message) cuando se añada esa columna; hoy es el default fijo
-// defaultEscapeMessage (decisión pragmática: no ampliar el tramo con otra migración).
-func (rt *Runtime) escapeMessage(_ context.Context, _ string) string {
-	return defaultEscapeMessage
 }
 
 // dispatch hace el fan-out EN PROCESO (ADR-0003, sin broker) de los efectos por

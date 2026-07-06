@@ -13,7 +13,8 @@
 -- Semántica por kind:
 --   keyword  -> requiere keyword + flow_id; arranca flow_id si el entrante casa.
 --   fallback -> requiere flow_id (keyword NULL); uno por tenant (gana priority).
---   escape   -> requiere keyword (flow_id NULL); corta la conversación viva.
+--   escape   -> requiere keyword (flow_id NULL); corta la conversación viva y envía
+--               'message' como aviso (NULL ⇒ el runtime usa su aviso por defecto).
 --
 -- ADITIVA e IDEMPOTENTE: el runner es hash-based FULL-REPLAY (re-aplica todos
 -- los structure/*.sql al cambiar el hash); CREATE TABLE/INDEX IF NOT EXISTS
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS public.flow_triggers (
     flow_id     TEXT        NULL,                        -- requerido kind IN ('keyword','fallback')
     priority    INTEGER     NOT NULL DEFAULT 0,
     enabled     BOOLEAN     NOT NULL DEFAULT true,
+    message     TEXT        NULL,                        -- aviso de escape (kind='escape'); NULL ⇒ default del runtime
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, trigger_id)
@@ -46,3 +48,4 @@ COMMENT ON COLUMN public.flow_triggers.match_type IS 'exact | contains: estrateg
 COMMENT ON COLUMN public.flow_triggers.flow_id    IS 'Flujo objetivo a arrancar (kind keyword/fallback); NULL para escape.';
 COMMENT ON COLUMN public.flow_triggers.priority   IS 'Desempate determinista: mayor priority gana entre reglas que casan.';
 COMMENT ON COLUMN public.flow_triggers.enabled    IS 'La regla solo aplica si enabled=true (borrado lógico / apagado).';
+COMMENT ON COLUMN public.flow_triggers.message    IS 'Aviso a enviar al cortar la conversación (kind escape); NULL ⇒ el runtime usa su aviso por defecto.';

@@ -29,14 +29,14 @@ func mustResolve(t *testing.T, r *trigger.ConfigResolver, tenantID, text string)
 	return dec
 }
 
-// mustEscape ejecuta IsEscape y falla si hay error.
-func mustEscape(t *testing.T, r *trigger.ConfigResolver, tenantID, text string) bool {
+// mustEscape ejecuta IsEscape y falla si hay error, devolviendo también el message.
+func mustEscape(t *testing.T, r *trigger.ConfigResolver, tenantID, text string) (bool, string) {
 	t.Helper()
-	esc, err := r.IsEscape(context.Background(), tenantID, text)
+	esc, msg, err := r.IsEscape(context.Background(), tenantID, text)
 	if err != nil {
 		t.Fatalf("isEscape(%q,%q): %v", tenantID, text, err)
 	}
-	return esc
+	return esc, msg
 }
 
 func TestConfigResolver_ExactMatchStarts(t *testing.T) {
@@ -136,20 +136,35 @@ func TestConfigResolver_TenantIsolation(t *testing.T) {
 
 func TestConfigResolver_IsEscape(t *testing.T) {
 	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindEscape, Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true})
-	if !mustEscape(t, r, "t1", "SALIR") {
+	if esc, _ := mustEscape(t, r, "t1", "SALIR"); !esc {
 		t.Fatal("SALIR debe ser escape (normalizado)")
 	}
-	if mustEscape(t, r, "t1", "hola") {
+	if esc, _ := mustEscape(t, r, "t1", "hola"); esc {
 		t.Fatal("hola no debe ser escape")
 	}
-	if mustEscape(t, r, "t2", "salir") {
+	if esc, _ := mustEscape(t, r, "t2", "salir"); esc {
 		t.Fatal("escape de t1 no debe verse desde t2")
+	}
+}
+
+// TestConfigResolver_IsEscapeReturnsMessage: una regla escape con message devuelve
+// ese aviso al casar; una regla sin message devuelve "" (⇒ default del runtime).
+func TestConfigResolver_IsEscapeReturnsMessage(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindEscape, Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true, Message: "Hasta pronto 👋"})
+	esc, msg := mustEscape(t, r, "t1", "SALIR")
+	if !esc || msg != "Hasta pronto 👋" {
+		t.Fatalf("esperaba escape con message configurado, got esc=%v msg=%q", esc, msg)
+	}
+
+	r2 := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindEscape, Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true})
+	if esc, msg := mustEscape(t, r2, "t1", "salir"); !esc || msg != "" {
+		t.Fatalf("regla sin message debe devolver \"\", got esc=%v msg=%q", esc, msg)
 	}
 }
 
 func TestConfigResolver_IsEscapeDisabledIgnored(t *testing.T) {
 	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindEscape, Keyword: "salir", MatchType: trigger.MatchExact, Enabled: false})
-	if mustEscape(t, r, "t1", "salir") {
+	if esc, _ := mustEscape(t, r, "t1", "salir"); esc {
 		t.Fatal("escape deshabilitado no debe casar")
 	}
 }
@@ -160,8 +175,8 @@ func TestNoopResolver_NoRegression(t *testing.T) {
 	if err != nil || dec.Action != trigger.Ignore {
 		t.Fatalf("Noop debe Ignore sin error, got %+v err=%v", dec, err)
 	}
-	esc, err := r.IsEscape(context.Background(), "t1", "salir")
-	if err != nil || esc {
-		t.Fatalf("Noop IsEscape debe ser false sin error, got %v err=%v", esc, err)
+	esc, msg, err := r.IsEscape(context.Background(), "t1", "salir")
+	if err != nil || esc || msg != "" {
+		t.Fatalf("Noop IsEscape debe ser (false,\"\") sin error, got esc=%v msg=%q err=%v", esc, msg, err)
 	}
 }
