@@ -124,6 +124,15 @@ func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) err
 	return nil
 }
 
+// Delete implementa Repository: elimina el estado de la clave (idempotente; si no
+// existe es un no-op sin error, misma semántica que el DELETE sin filas).
+func (r *MemoryRepository) Delete(_ context.Context, key Key) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.state, stateKey(key))
+	return nil
+}
+
 // MigrateContactID re-clava el estado conversacional del contact_id `from` al
 // `to` dentro del tenant (satisface contact.StateMigrator; lo usa el
 // MemoryResolver en la fusión, design.md §5). Política de conflicto idéntica al

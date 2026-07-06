@@ -129,3 +129,68 @@ func TestHandleIncoming_ResolverError_SeIgnora(t *testing.T) {
 		t.Fatalf("error del resolver no debería arrancar nada, envió %d", sender.count())
 	}
 }
+
+// TestHandleIncoming_Escape_CierraYAvisa: con una conversación viva, un texto de
+// escape borra el estado (libera la clave) y envía el aviso de cierre.
+func TestHandleIncoming_Escape_CierraYAvisa(t *testing.T) {
+	rule := trigger.Rule{
+		TenantID: testTenant, Kind: trigger.KindEscape,
+		Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true,
+	}
+	rt, repo, sender, contacts := newTriggerRuntime(t, rule)
+	ctx := context.Background()
+
+	// Conversación viva (menú enviado, estado en "root").
+	if _, err := rt.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("Start debería enviar el menú, envió %d", sender.count())
+	}
+
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "salir", "wamid.esc")); err != nil {
+		t.Fatalf("HandleIncoming escape: %v", err)
+	}
+	// Se envió el aviso de cierre (segundo texto).
+	if sender.count() != 2 {
+		t.Fatalf("escape debería enviar 1 aviso extra, total %d", sender.count())
+	}
+	if got := sender.texts()[1]; !strings.Contains(strings.ToLower(got), "cerramos") {
+		t.Fatalf("aviso de escape inesperado: %q", got)
+	}
+	// La clave quedó libre: la conversación ya no existe.
+	if _, ok, lerr := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: resolveID(t, contacts, testContact)}); lerr != nil || ok {
+		t.Fatalf("escape debería borrar el estado (liberar la clave) (ok=%v err=%v)", ok, lerr)
+	}
+}
+
+// TestHandleIncoming_TextoNormal_ConEscapeConfigurado_SigueFlujo: con escape
+// configurado pero un texto que NO casa, el camino normal queda idéntico
+// (no-regresión): la conversación avanza por engine.Step.
+func TestHandleIncoming_TextoNormal_ConEscapeConfigurado_SigueFlujo(t *testing.T) {
+	rule := trigger.Rule{
+		TenantID: testTenant, Kind: trigger.KindEscape,
+		Keyword: "salir", MatchType: trigger.MatchExact, Enabled: true,
+	}
+	rt, repo, sender, contacts := newTriggerRuntime(t, rule)
+	ctx := context.Background()
+
+	if _, err := rt.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Opción válida "1" (ventas): no es escape → avanza.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.opt")); err != nil {
+		t.Fatalf("HandleIncoming opción válida: %v", err)
+	}
+	if sender.count() != 2 {
+		t.Fatalf("el flujo debería avanzar (menú + respuesta), total %d", sender.count())
+	}
+	if got := sender.texts()[1]; !strings.Contains(got, "Ventas") {
+		t.Fatalf("respuesta del flujo inesperada: %q", got)
+	}
+	// El estado sigue vivo (avanzó, no se borró): loadState falla si no existe.
+	st := loadState(t, repo, resolveID(t, contacts, testContact))
+	if !st.Finished() {
+		t.Fatalf("tras elegir una hoja message el flujo debería terminar: %+v", st)
+	}
+}

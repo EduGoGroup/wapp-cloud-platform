@@ -115,6 +115,19 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 	return nil
 }
 
+// Delete elimina la conversación viva de la clave (Plan 019 · T4, escape global).
+// Idempotente: un DELETE sin filas NO es error (la clave ya estaba libre).
+func (r *PostgresRepository) Delete(ctx context.Context, key Key) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM public.flow_state
+		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+	`, key.TenantID, key.SessionID, key.ContactID)
+	if err != nil {
+		return fmt.Errorf("store: borrar estado: %w", err)
+	}
+	return nil
+}
+
 // LatestDefinition devuelve la definición de la mayor version para (tenant, flow).
 // Devuelve ErrDefinitionNotFound si no existe ninguna versión.
 func (r *PostgresRepository) LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error) {

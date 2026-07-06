@@ -34,6 +34,12 @@ type Repository interface {
 	Load(ctx context.Context, key Key) (state model.Conversation, found bool, err error)
 	// Save inserta o actualiza (upsert) el estado de la conversación.
 	Save(ctx context.Context, state model.Conversation) error
+	// Delete elimina la conversación viva de la clave (libera la clave para que
+	// un entrante posterior pueda volver a disparar un flujo). Idempotente: si no
+	// había fila, NO es error. Lo usa el escape global (Plan 019 · T4) para cortar
+	// una conversación viva, misma liberación de clave que se hacía por SQL manual
+	// en e2e previos (design.md §6).
+	Delete(ctx context.Context, key Key) error
 	// LatestDefinition devuelve la versión vigente de la definición del flujo.
 	LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error)
 	// GetDefinition devuelve la definición de una versión EXACTA. El runtime lo
