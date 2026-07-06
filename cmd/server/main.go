@@ -236,6 +236,7 @@ func run() error {
 		Starter:  flowRuntime,
 		Media:    flowDeps.presign, // presign R2 (upload-url, Plan 018 · T6)
 		Content:  flowStore,        // CRUD tenant_content (Plan 018 · T6)
+		Triggers: triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
@@ -275,6 +276,16 @@ func run() error {
 		"flows.create", "flow", flowadmin.DefinitionHandler(flowStore, flowReg)))
 	mux.Handle("/admin/flows/start", adminHandler(authMW, auditor, log,
 		"flows.start", "flow", flowadmin.StartHandler(flowRuntime)))
+	// Reglas de disparo (Plan 019 · T5): CRUD keyword/fallback/escape. Mismos
+	// handlers que /api/v1/triggers; el tenant sale del token (INV-8). Patrones
+	// método+ruta (Go 1.22+) para separar POST/GET en /admin/triggers y extraer
+	// {id} en el DELETE.
+	mux.Handle("POST /admin/triggers", adminHandler(authMW, auditor, log,
+		"triggers.create", "trigger", flowadmin.CreateTriggerHandler(triggerStore)))
+	mux.Handle("GET /admin/triggers", adminHandler(authMW, auditor, log,
+		"triggers.read", "trigger", flowadmin.ListTriggersHandler(triggerStore)))
+	mux.Handle("DELETE /admin/triggers/{id}", adminHandler(authMW, auditor, log,
+		"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(triggerStore)))
 
 	httpSrv := &http.Server{
 		Addr: cfg.HTTPAddr,

@@ -73,6 +73,7 @@ type Deps struct {
 	Media    PresignUploader            // presign R2 (upload-url, Plan 017/018 · T6)
 	Content  TenantContentStore         // blobs JSONB por-tenant (tenant_content, T6)
 	Audit    AuditReader                // bitácora de auditoría (GET /api/v1/audit, T10)
+	Triggers flowadmin.TriggerStore     // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -129,6 +130,19 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		"content.read", listTenantContentHandler(d.Content)))
 	mux.Handle("GET /api/v1/tenant-content/{ref}", protectRead(mw,
 		"content.read", getTenantContentHandler(d.Content)))
+
+	// CRUD de reglas de disparo (Plan 019 · T5): keyword/fallback/escape por-tenant
+	// que alimentan al ConfigResolver del Motor. Escrituras auditadas
+	// (triggers.create/delete); lectura sin auditoría (triggers.read). Todo acotado
+	// al tenant del token (INV-8); reusa los MISMOS handlers que /admin/triggers.
+	if d.Triggers != nil {
+		mux.Handle("POST /api/v1/triggers", protect(mw, auditor, log,
+			"triggers.create", "trigger", flowadmin.CreateTriggerHandler(d.Triggers)))
+		mux.Handle("GET /api/v1/triggers", protectRead(mw,
+			"triggers.read", flowadmin.ListTriggersHandler(d.Triggers)))
+		mux.Handle("DELETE /api/v1/triggers/{id}", protect(mw, auditor, log,
+			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers)))
+	}
 
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada
 	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
