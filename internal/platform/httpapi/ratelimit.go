@@ -7,19 +7,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/time/rate"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 )
-
-// maxBuckets acota el número de cubos vivos por Limiter: al superarlo se hace una
-// barrida de los inactivos (evita crecimiento no acotado ante muchas claves).
-const maxBuckets = 10000
-
-// bucketIdleTTL es la inactividad tras la cual un cubo es candidato a evicción.
-const bucketIdleTTL = 10 * time.Minute
 
 // RateLimitObserver recibe una señal por cada rechazo de rate-limit (para
 // métricas). Lo satisface *metrics.Metrics (RateLimitHit). Se declara aquí para
@@ -28,57 +21,16 @@ type RateLimitObserver interface {
 	RateLimitHit(scope string)
 }
 
-// Limiter es un token-bucket EN MEMORIA (sin broker, INV-3 no aplica al cloud
-// pero mantenemos el proceso simple) por clave (api-key/tenant o IP). Usa
-// golang.org/x/time/rate: r tokens/seg con ráfaga burst. Es seguro para uso
-// concurrente.
-type Limiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    rate.Limit
-	burst   int
-}
+// Limiter es el token-bucket EN MEMORIA por clave (api-key/tenant o IP). El tipo
+// vive en internal/platform/ratelimit (neutro) para que lo compartan httpapi y el
+// runtime del Motor de Flujos sin ciclo de imports; aquí se re-exporta por alias
+// para no tocar los llamantes (main.go, tests).
+type Limiter = ratelimit.Limiter
 
-type bucket struct {
-	lim      *rate.Limiter
-	lastSeen time.Time
-}
-
-// NewLimiter construye un limiter de r peticiones/seg con ráfaga burst. burst<=0
-// se normaliza a 1 (siempre permite al menos una).
+// NewLimiter construye un Limiter de r peticiones/seg con ráfaga burst (delega en
+// el paquete ratelimit). burst<=0 se normaliza a 1.
 func NewLimiter(r rate.Limit, burst int) *Limiter {
-	if burst <= 0 {
-		burst = 1
-	}
-	return &Limiter{buckets: map[string]*bucket{}, rate: r, burst: burst}
-}
-
-// Allow consume un token para la clave dada; false si el cubo está agotado.
-func (l *Limiter) Allow(key string) bool {
-	l.mu.Lock()
-	b, ok := l.buckets[key]
-	if !ok {
-		if len(l.buckets) >= maxBuckets {
-			l.evictStaleLocked()
-		}
-		b = &bucket{lim: rate.NewLimiter(l.rate, l.burst)}
-		l.buckets[key] = b
-	}
-	b.lastSeen = time.Now()
-	lim := b.lim
-	l.mu.Unlock()
-	return lim.Allow()
-}
-
-// evictStaleLocked borra los cubos inactivos más allá del TTL. Debe llamarse con
-// el lock tomado.
-func (l *Limiter) evictStaleLocked() {
-	cutoff := time.Now().Add(-bucketIdleTTL)
-	for k, b := range l.buckets {
-		if b.lastSeen.Before(cutoff) {
-			delete(l.buckets, k)
-		}
-	}
+	return ratelimit.NewLimiter(r, burst)
 }
 
 // PublicRateLimit envuelve el mux de la API pública (:8103) con rate-limit:
@@ -120,10 +72,10 @@ func PublicRateLimit(next http.Handler, public, login *Limiter, obs RateLimitObs
 // retryAfterSeconds estima el tiempo de espera sugerido a partir de la tasa (al
 // menos 1s). Es orientativo (el cliente puede reintentar antes si hay ráfaga).
 func retryAfterSeconds(l *Limiter) int {
-	if l == nil || l.rate <= 0 {
+	if l == nil || l.Rate() <= 0 {
 		return 1
 	}
-	secs := int(1 / float64(l.rate))
+	secs := int(1 / float64(l.Rate()))
 	if secs < 1 {
 		return 1
 	}

@@ -11,6 +11,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	sharedconfig "github.com/EduGoGroup/wapp-shared/config"
@@ -76,6 +77,23 @@ type AppConfig struct {
 	// T10, R11): límite por api-key/tenant y límite por IP en el login. Se lee con
 	// prefijo WAPP_RATELIMIT_.
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	// Flow es la configuración del runtime del Motor de Flujos (Plan 020 · T0): el
+	// tope de auto-respuestas por conversación (red anti-loop). Se lee con prefijo
+	// WAPP_FLOW_.
+	Flow FlowConfig `yaml:"flow"`
+}
+
+// FlowConfig gobierna el token-bucket EN MEMORIA de auto-respuestas por
+// conversación del Motor de Flujos (Plan 020 · T0, red anti-loop). Defaults
+// holgados: matan un bucle (~1 msg/2.6s del e2e 019) sin frenar un flujo legítimo.
+type FlowConfig struct {
+	// ReplyRate es el ritmo sostenido de auto-respuestas por conversación
+	// (respuestas/seg). Default 0.5 (1 cada 2s). <=0 cae al default (nunca desactiva
+	// el tope por accidente). Se lee de WAPP_FLOW_REPLY_RATE.
+	ReplyRate float64 `yaml:"reply_rate"`
+	// ReplyBurst es la ráfaga admitida por conversación. Default 3. <=0 cae al
+	// default. Se lee de WAPP_FLOW_REPLY_BURST.
+	ReplyBurst int `yaml:"reply_burst"`
 }
 
 // RateLimitConfig gobierna el token-bucket EN MEMORIA de la API pública (Plan
@@ -252,6 +270,10 @@ func defaults() AppConfig {
 			LoginPerMin: 10,
 			LoginBurst:  5,
 		},
+		Flow: FlowConfig{
+			ReplyRate:  0.5,
+			ReplyBurst: 3,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -339,7 +361,27 @@ func Load() (AppConfig, error) {
 	cfg.RateLimit.LoginPerMin = loader.GetInt("RATELIMIT_LOGIN_PER_MIN", cfg.RateLimit.LoginPerMin)
 	cfg.RateLimit.LoginBurst = loader.GetInt("RATELIMIT_LOGIN_BURST", cfg.RateLimit.LoginBurst)
 
+	cfg.Flow.ReplyRate = getFloat(loader, "FLOW_REPLY_RATE", cfg.Flow.ReplyRate)
+	if b := loader.GetInt("FLOW_REPLY_BURST", cfg.Flow.ReplyBurst); b > 0 {
+		cfg.Flow.ReplyBurst = b
+	}
+
 	return cfg, nil
+}
+
+// getFloat lee una clave como float64 (p. ej. "0.5"). El loader de wapp-shared no
+// expone un GetFloat, así que se parsea aquí: vacío, inválido o <=0 cae al default
+// (nunca desactiva el tope por accidente).
+func getFloat(loader *sharedconfig.Loader, key string, def float64) float64 {
+	raw := loader.GetString(key, "")
+	if raw == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil || f <= 0 {
+		return def
+	}
+	return f
 }
 
 // getDuration lee una clave como cadena time.Duration (p. ej. "15m", "30s") y la

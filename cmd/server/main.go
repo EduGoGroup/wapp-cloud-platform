@@ -64,6 +64,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
@@ -190,10 +191,15 @@ func run() error {
 	// como el Noop (no arranca nada ⇒ no-regresión, INV-6).
 	// triggerStore: reusado por los handlers /admin/triggers y /api/v1/triggers (Plan 019 T5)
 	triggerStore := trigger.NewPostgresStore(db)
+	// Red anti-loop (Plan 020 · T0): token-bucket EN MEMORIA por conversación que
+	// acota las auto-respuestas del runtime. Defaults holgados (WAPP_FLOW_REPLY_RATE /
+	// WAPP_FLOW_REPLY_BURST) matan un bucle sin frenar un flujo legítimo.
+	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
-		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)))
+		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
+		flowruntime.WithReplyLimiter(replyLimiter))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y

@@ -24,6 +24,13 @@ type Key struct {
 	ContactID string
 }
 
+// String devuelve una representación estable y OPACA de la clave, apta como índice
+// de mapa fuera de este paquete (p. ej. el token-bucket de auto-respuestas del
+// runtime, Plan 020 · T0). Son IDs opacos (tenant/session/contact): no expone PII.
+func (k Key) String() string {
+	return k.TenantID + "|" + k.SessionID + "|" + k.ContactID
+}
+
 // Repository persiste el estado conversacional y las definiciones de flujo
 // versionadas. Implementaciones (T2): MemoryRepository (unit CI-safe) y
 // PostgresRepository (integración, JSONB vía json.Marshal/Unmarshal).

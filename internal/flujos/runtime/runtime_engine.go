@@ -77,6 +77,21 @@ type Runtime struct {
 	// New lo deja en NoopResolver si no se inyecta WithTriggerResolver: sin resolver
 	// real el comportamiento es idéntico al previo al Plan 019 (INV-6 no-regresión).
 	triggers trigger.Resolver
+	// replyLimiter acota las auto-respuestas por conversación (Plan 020 · T0, red
+	// anti-loop): un token-bucket EN MEMORIA por store.Key. Antes de CADA auto-envío
+	// (arranque por disparo, avance por Step, aviso de escape, reinicio de carrito) el
+	// runtime consume un token; agotado ⇒ NO responde (corta cualquier bucle). nil
+	// (sin WithReplyLimiter) desactiva el tope: no-regresión total.
+	replyLimiter ReplyLimiter
+}
+
+// ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
+// Allow consume un token para la clave dada y devuelve false si la conversación
+// excedió su tope. Lo satisface *ratelimit.Limiter (token-bucket EN MEMORIA, sin
+// broker, ADR-0003); se declara como interfaz para no acoplar el runtime al
+// paquete concreto y facilitar los tests deterministas.
+type ReplyLimiter interface {
+	Allow(key string) bool
 }
 
 // Option configura el Runtime al construirlo (patrón funcional-options, igual que
@@ -102,6 +117,29 @@ func WithPresignClient(p Presigner) Option {
 // (no-regresión total, INV-6: un entrante sin estado se ignora igual que antes).
 func WithTriggerResolver(r trigger.Resolver) Option {
 	return func(rt *Runtime) { rt.triggers = r }
+}
+
+// WithReplyLimiter inyecta el token-bucket que acota las auto-respuestas por
+// conversación (Plan 020 · T0, red anti-loop). Sin él, el runtime no aplica tope
+// (nil ⇒ no-regresión: se responde igual que antes del Plan 020).
+func WithReplyLimiter(l ReplyLimiter) Option {
+	return func(rt *Runtime) { rt.replyLimiter = l }
+}
+
+// replyAllowed comprueba el token-bucket de auto-respuestas para la clave (Plan
+// 020 · T0). Devuelve true si se puede auto-responder; false (y loguea el hecho SIN
+// PII: solo IDs opacos tenant/session/contact, nunca el texto ni el número) si la
+// conversación excedió su tope. Con replyLimiter nil siempre permite (no-regresión).
+func (rt *Runtime) replyAllowed(key store.Key) bool {
+	if rt.replyLimiter == nil || rt.replyLimiter.Allow(key.String()) {
+		return true
+	}
+	rt.log.Warn("runtime: auto-respuesta limitada por rate-limit de conversación",
+		"tenant_id", key.TenantID,
+		"session_id", key.SessionID,
+		"contact_id", key.ContactID,
+	)
+	return false
 }
 
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de
@@ -297,6 +335,21 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// sinks/efectos.
 	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
 	rt.dispatch(ctx, ec, effects, sessionID)
+	return rt.sendReply(ctx, tenantID, sessionID, contactID, key, outs)
+}
+
+// sendReply auto-responde al avance de un entrante respetando el tope anti-loop
+// (Plan 020 · T0): SOLO si hay salidas consume un token de la conversación antes de
+// resolver el destino y enviar; agotado ⇒ no envía (corta el bucle; el estado ya
+// avanzó y se persistió, así que no se corrompe). Sin salidas es un no-op que NO
+// gasta cuota. Extraído de HandleIncoming para acotar su complejidad ciclomática.
+func (rt *Runtime) sendReply(ctx context.Context, tenantID, sessionID, contactID string, key store.Key, outs []engine.Output) error {
+	if len(outs) == 0 {
+		return nil
+	}
+	if !rt.replyAllowed(key) {
+		return nil
+	}
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {
 		return err
@@ -321,6 +374,13 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 	}
 	switch dec.Action {
 	case trigger.Start, trigger.Fallback:
+		// Red anti-loop (Plan 020 · T0): el arranque por disparo SIEMPRE auto-responde
+		// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
+		// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
+		// aquí ⇒ no gasta cuota.
+		if !rt.replyAllowed(key) {
+			return nil
+		}
 		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID); serr != nil {
 			if errors.Is(serr, ErrConversationExists) {
 				rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
@@ -343,6 +403,12 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 // por escape. El estado ya se borró (equivalente al orden Save-antes-de-Send): un
 // fallo del envío se surface al llamante.
 func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string) error {
+	// Red anti-loop (Plan 020 · T0): el aviso de escape es una auto-respuesta ⇒
+	// consume un token. Agotado ⇒ no se corta ni se avisa (la conversación sigue
+	// viva); rompe cualquier bucle en el que un aviso de escape realimente al peer.
+	if !rt.replyAllowed(key) {
+		return nil
+	}
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
 	}
@@ -425,6 +491,14 @@ func (rt *Runtime) resumeCart(ctx context.Context, sessionID string, st *model.C
 	terminal := cartTerminal(st.Vars)
 	if !expired && !terminal {
 		return false, nil // carrito vivo en navegación normal.
+	}
+
+	// Red anti-loop (Plan 020 · T0): el reinicio del carrito auto-responde (aviso +
+	// L1), así que consume un token. Agotado ⇒ turno consumido SIN responder ni
+	// reiniciar (el carrito queda como está; un entrante posterior reevalúa): corta un
+	// bucle carrito↔carrito que no pasa por el Step principal.
+	if !rt.replyAllowed(store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}) {
+		return true, nil
 	}
 
 	var notice string
