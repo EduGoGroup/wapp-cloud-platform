@@ -7,8 +7,26 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
+
+// pgDeadlock es el SQLSTATE que Postgres devuelve al abortar una transacción para
+// romper un ciclo de locks (deadlock detected).
+const pgDeadlock = "40P01"
+
+// maxResolveAttempts acota los reintentos de Resolve ante un deadlock (40P01).
+// Ver Resolve para el porqué del retry (Plan 026 · T4).
+const maxResolveAttempts = 8
+
+// isDeadlock reporta si err (o algún error envuelto) es un deadlock 40P01 de
+// Postgres. El driver pgx expone el código vía *pgconn.PgError; Resolve envuelve
+// con %w, así que se recupera con errors.As.
+func isDeadlock(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == pgDeadlock
+}
 
 // PostgresResolver implementa Resolver con SQL raw sobre public.contacts (y, en
 // la fusión, public.flow_state). Toda una Resolve corre en UNA transacción: así
@@ -32,12 +50,63 @@ func NewPostgresResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyPr
 	return &PostgresResolver{db: db, cipher: cipher, kp: kp}
 }
 
-// Resolve implementa Resolver (design.md §4, §5) de forma atómica.
-func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []Ref, pushName string) (contactID string, err error) {
+// Resolve implementa Resolver (design.md §4, §5) de forma atómica, con REINTENTO
+// ante deadlock (Plan 026 · T4).
+//
+// Bajo inundación de historial (número nuevo → WhatsApp vuelca su historial) el
+// procesado de entrantes lanza una goroutine por mensaje (runtime OnIncoming) y
+// cada una llama a Resolve FUERA del keyedMutex por conversación (ese lock se toma
+// DESPUÉS, con el contact_id ya resuelto). Así, N transacciones de contactos
+// corren de verdad en paralelo. El deadlock 40P01 aparece cuando dos entrantes del
+// MISMO contacto llegan con identidad PARCIAL y DISJUNTA (whatsmeow enriquece
+// desigual: uno trae solo from_pn, otro solo from_lid): cada transacción bloquea
+// con FOR UPDATE solo la fila de SU ref (lookupContactIDs), pero el UPDATE de
+// push_name (`WHERE contact_id = X`) toca TODAS las filas del contacto en orden de
+// scan → una retiene la fila phone y pide la lid, la otra al revés → ciclo.
+//
+// No hay clave común conocida a priori para serializarlas (la identidad unificada
+// solo se descubre a mitad de transacción), así que ni ordenar refs ni un lock
+// previo lo evita: el remedio canónico es dejar que Postgres rompa el ciclo (aborta
+// una) y REINTENTAR la transacción, que converge porque el upsert es idempotente
+// (ON CONFLICT) y atómico. El guard `IS DISTINCT FROM` en el UPDATE de push_name
+// (resolveExisting) reduce la ventana: en el estado estable de la ráfaga (mismo
+// push_name repetido) el UPDATE no toca ninguna fila y no toma locks.
+func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []Ref, pushName string) (string, error) {
 	refs = dedupeRefs(refs)
 	if len(refs) == 0 {
 		return "", ErrNoRefs
 	}
+	var lastErr error
+	for attempt := 0; attempt < maxResolveAttempts; attempt++ {
+		contactID, err := r.resolveOnce(ctx, tenantID, refs, pushName)
+		if err == nil {
+			return contactID, nil
+		}
+		if !isDeadlock(err) {
+			return "", err
+		}
+		lastErr = err
+		// Backoff exponencial acotado + jitter antes de reintentar: espacia a los
+		// contendientes para que el ganador confirme y libere sus locks. El jitter
+		// (0-4ms, del reloj) de-correlaciona a dos perdedores que reintentarían en
+		// lockstep; no necesita un RNG criptográfico. Respeta la cancelación del ctx.
+		backoff := time.Duration(1<<attempt) * time.Millisecond
+		if backoff > 50*time.Millisecond {
+			backoff = 50 * time.Millisecond
+		}
+		jitter := time.Duration(time.Now().UnixNano()%5) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(backoff + jitter):
+		}
+	}
+	return "", fmt.Errorf("contact: resolver tras %d intentos (último deadlock): %w", maxResolveAttempts, lastErr)
+}
+
+// resolveOnce ejecuta UNA transacción de resolución (design.md §4, §5). La
+// atomicidad hace que reintentarla ante 40P01 sea seguro (Resolve).
+func (r *PostgresResolver) resolveOnce(ctx context.Context, tenantID string, refs []Ref, pushName string) (contactID string, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("contact: iniciar transacción: %w", err)
@@ -166,9 +235,13 @@ func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tena
 		}
 	}
 	if pushName != "" {
+		// El guard `IS DISTINCT FROM` evita tomar row-locks cuando el push_name no
+		// cambia: en la ráfaga de historial el mismo contacto repite su push_name en
+		// cada entrante, así que tras el primero este UPDATE no toca ninguna fila
+		// (cero locks) y no puede entrar en el ciclo de deadlock (Plan 026 · T4).
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE public.contacts SET push_name = $1, updated_at = now()
-			WHERE tenant_id = $2 AND contact_id = $3
+			WHERE tenant_id = $2 AND contact_id = $3 AND push_name IS DISTINCT FROM $1
 		`, pushName, tenantID, canonical); err != nil {
 			return "", fmt.Errorf("contact: actualizar push_name: %w", err)
 		}

@@ -38,6 +38,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
@@ -225,7 +226,26 @@ func run() error {
 	}
 
 	// --- Servidor CloudLink: mTLS estricto contra la MISMA CA. ---
-	connectGS := grpc.NewServer(grpc.Creds(mtls.ServerCreds(serverCert, ca.Pool())))
+	// Keepalive de transporte (Plan 026 · T3, design.md §4.a): el stream Connect es
+	// bidi long-lived 24/7 detrás de NAT/firewalls domésticos. Sin keepalive, un
+	// corte silencioso de NAT deja el stream medio-abierto hasta que un envío falla.
+	// El servidor hace PING cada Time=30s (Timeout=10s para declarar muerto el
+	// transporte) y la EnforcementPolicy admite los PING del cliente con
+	// MinTime=15s + PermitWithoutStream (el Edge puede pinguear entre streams sin ser
+	// expulsado con GOAWAY too_many_pings; el cliente edge usa Time=30s > 15s). Esto
+	// NO sustituye el Ping app-level (server.go) ni el backoff del Edge: solo detecta
+	// el corte de transporte antes; la reconexión la sigue gobernando el backoff.
+	connectGS := grpc.NewServer(
+		grpc.Creds(mtls.ServerCreds(serverCert, ca.Pool())),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    30 * time.Second,
+			Timeout: 10 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	gw.Register(connectGS)
 	connectLis, err := net.Listen("tcp", cfg.GRPCConnectAddr)
 	if err != nil {
