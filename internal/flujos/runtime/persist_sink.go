@@ -38,11 +38,24 @@ const (
 // verdad de las líneas es cart_closed (no se insertan incrementalmente). La
 // idempotencia es HEREDADA de la dedupe por last_wa_message_id del runtime.
 type PersistSink struct {
-	repo store.Repository
+	repo persistStore
+}
+
+// persistStore es el subconjunto SEGREGADO de store.Repository que el PersistSink
+// necesita (ISP, Plan 027 · Ola 2 · T9, cierra H12): materializa efectos y
+// resultados, y proyecta órdenes (lee la abierta, escribe transiciones y el cierre
+// atómico). NO incluye estado conversacional ni definiciones —eso lo consume el
+// Runtime—. Un *store.PostgresRepository / *store.MemoryRepository lo satisface.
+type persistStore interface {
+	store.FlowEventStore
+	store.SurveyResultStore
+	store.OrderReader
+	store.OrderWriter
+	store.TenantSettingsReader
 }
 
 // NewPersistSink construye el sink de persistencia con el repositorio dado.
-func NewPersistSink(repo store.Repository) *PersistSink {
+func NewPersistSink(repo persistStore) *PersistSink {
 	return &PersistSink{repo: repo}
 }
 

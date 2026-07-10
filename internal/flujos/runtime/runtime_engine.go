@@ -63,6 +63,19 @@ const (
 	effNameCartExpired = "cart_expired"   // == cart.EffectCartExpired
 )
 
+// FlowStore es el subconjunto SEGREGADO de store.Repository que el Runtime
+// necesita (ISP, Plan 027 · Ola 2 · T9, cierra H12): estado conversacional +
+// lectura de definiciones + lectura de la orden abierta y de los ajustes del carrito
+// (para el TTL/reanudación). NO incluye las ESCRITURAS de órdenes/efectos/resultados
+// —eso lo consume el PersistSink—, así el runtime declara solo lo que usa. Un
+// *store.PostgresRepository / *store.MemoryRepository lo satisface sin cambios.
+type FlowStore interface {
+	store.ConversationStore
+	store.DefinitionReader
+	store.OrderReader
+	store.TenantSettingsReader
+}
+
 // Runtime orquesta el motor de flujos vivo (design.md §6): inicio por API
 // (Start) y avance por entrante (HandleIncoming/OnIncoming). Serializa por
 // conversación con un single-flight en memoria (keyedMutex) y persiste el
@@ -74,7 +87,7 @@ const (
 // del contacto: JID/ref → contact_id opaco y contact_id → destino enviable,
 // Plan 010, design.md §4-§6). Es seguro para uso concurrente.
 type Runtime struct {
-	store    store.Repository
+	store    FlowStore
 	engine   *engine.Engine
 	sender   Sender
 	resolver TenantResolver
@@ -256,7 +269,7 @@ func (rt *Runtime) replyAllowed(key store.Key) bool {
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de
 // efectos) se pasan como Option; sin ninguna, el fan-out queda en LogSink
 // (log-only) por defecto.
-func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver TenantResolver, contacts contact.Resolver, log logger.Logger, opts ...Option) *Runtime {
+func New(repo FlowStore, eng *engine.Engine, sender Sender, resolver TenantResolver, contacts contact.Resolver, log logger.Logger, opts ...Option) *Runtime {
 	rt := &Runtime{
 		store:    repo,
 		engine:   eng,

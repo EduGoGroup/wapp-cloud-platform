@@ -31,10 +31,16 @@ func (k Key) String() string {
 	return k.TenantID + "|" + k.SessionID + "|" + k.ContactID
 }
 
-// Repository persiste el estado conversacional y las definiciones de flujo
-// versionadas. Implementaciones (T2): MemoryRepository (unit CI-safe) y
-// PostgresRepository (integración, JSONB vía json.Marshal/Unmarshal).
-type Repository interface {
+// Interfaces SEGREGADAS por subdominio (ISP, Plan 027 · Ola 2 · T9, cierra H12).
+// Antes Repository era una única interfaz "gorda" (7 tablas, ~5 subdominios) que
+// obligaba a cada consumidor a depender de métodos que no usa. Ahora cada
+// subdominio tiene su interfaz pequeña; los consumidores declaran SOLO lo que
+// necesitan (el runtime compone su FlowStore; el PersistSink su almacén de
+// proyección) y Repository queda como la COMPOSICIÓN de todas (retrocompat: las
+// implementaciones Postgres/Memory la satisfacen entera sin cambios).
+
+// ConversationStore persiste el estado conversacional vivo por Key (design.md §5/§6).
+type ConversationStore interface {
 	// Exists indica si ya hay una conversación viva para la clave.
 	Exists(ctx context.Context, key Key) (bool, error)
 	// Load carga el estado de la conversación; found=false sin error si no hay.
@@ -47,6 +53,10 @@ type Repository interface {
 	// una conversación viva, misma liberación de clave que se hacía por SQL manual
 	// en e2e previos (design.md §6).
 	Delete(ctx context.Context, key Key) error
+}
+
+// DefinitionReader lee definiciones de flujo versionadas (lo que necesita el runtime).
+type DefinitionReader interface {
 	// LatestDefinition devuelve la versión vigente de la definición del flujo.
 	LatestDefinition(ctx context.Context, tenantID, flowID string) (model.Flow, error)
 	// GetDefinition devuelve la definición de una versión EXACTA. El runtime lo
@@ -55,27 +65,56 @@ type Repository interface {
 	// "salte" una conversación en curso (versionado, design.md §4). Devuelve
 	// ErrDefinitionNotFound si no existe esa (tenant_id, flow_id, version).
 	GetDefinition(ctx context.Context, tenantID, flowID string, version int) (model.Flow, error)
+}
+
+// DefinitionStore es DefinitionReader + el alta de versiones (lo usa el admin).
+type DefinitionStore interface {
+	DefinitionReader
 	// InsertDefinition persiste una definición como versión nueva (no muta la
 	// vigente; versionado design.md §4). La versión la asigna el repositorio
 	// (version = COALESCE(max(version),0)+1 por (tenant_id, flow_id)); el campo
 	// f.Version del argumento se ignora. Devuelve la versión asignada.
 	InsertDefinition(ctx context.Context, tenantID string, f model.Flow) (version int, err error)
+}
+
+// SurveyResultStore proyecta las respuestas de encuesta EN CLARO (Plan 014/015).
+type SurveyResultStore interface {
 	// InsertResults persiste (en lote) las respuestas de una encuesta como datos
 	// de negocio EN CLARO en survey_results (Plan 014 §10.D, ADR-0009). El
 	// runtime (T3) lo llama al terminar la conversación (flush). len(rows)==0 es
 	// un no-op. answer_code NO se cifra: es un código de opción agregable, no PII
 	// (la identidad la protege el contact_id opaco, ADR-0010).
 	InsertResults(ctx context.Context, rows []SurveyResult) error
+}
+
+// FlowEventStore materializa el outbox append-only de efectos (Plan 015 · T2).
+type FlowEventStore interface {
 	// InsertFlowEvent persiste UN efecto del motor de flujos en el outbox
 	// append-only flow_events (Plan 015 · T2, ADR-0009). CERO PII: ContactID es la
 	// identidad OPACA (ADR-0010). El Payload (map) se serializa a JSONB; nil → {}.
 	InsertFlowEvent(ctx context.Context, ev FlowEvent) error
+}
+
+// TenantContentReader lee el contenido de negocio por-tenant (Plan 015 · T2).
+type TenantContentReader interface {
 	// GetTenantContent devuelve el blob JSON crudo de contenido de negocio para
 	// (tenantID, ref) de public.tenant_content (Plan 015 · T2). Su firma coincide
 	// EXACTAMENTE con content.Store (structural typing): el PostgresRepository lo
 	// satisface. Devuelve ErrTenantContentNotFound si la ref no existe.
 	GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error)
+}
 
+// OrderReader lee la orden abierta del carrito (reanudación/TTL en el runtime).
+type OrderReader interface {
+	// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID),
+	// si existe (found=false sin error si no hay). Identidad de negocio: UNA orden
+	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
+	// reanudar y para evaluar el TTL (design.md §4.3).
+	GetOpenOrder(ctx context.Context, tenantID, contactID string) (order Order, found bool, err error)
+}
+
+// OrderWriter escribe/transiciona órdenes del carrito (proyección del PersistSink).
+type OrderWriter interface {
 	// UpsertOrder inserta o actualiza (upsert por ID) una orden del carrito en
 	// public.orders (Plan 016 · T0/T2, ADR-0009). Idempotente por o.ID: crea el
 	// "open" una vez (primer item_added) y no lo duplica si se reprocesa el mismo
@@ -86,11 +125,6 @@ type Repository interface {
 	// public.order_items (Plan 016 · T0/T2). len(items)==0 es un no-op. added_at
 	// usa el DEFAULT now() de la tabla. sku/label son códigos de negocio, NO PII.
 	InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error
-	// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID),
-	// si existe (found=false sin error si no hay). Identidad de negocio: UNA orden
-	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
-	// reanudar y para evaluar el TTL (design.md §4.3).
-	GetOpenOrder(ctx context.Context, tenantID, contactID string) (order Order, found bool, err error)
 	// MarkOrderStatus transiciona el estado de una orden (por ID) y fija su total,
 	// actualizando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled"
 	// | "expired". Reprocesar el mismo entrante no cambia la semántica (idempotente
@@ -105,12 +139,46 @@ type Repository interface {
 	// orden abierta con FOR UPDATE para serializar cierres concurrentes del mismo
 	// contacto y reintenta ante deadlock/serialización (postgres.WithTx).
 	CloseOrder(ctx context.Context, in OrderClose) error
+}
+
+// OrderStore es la lectura + escritura de órdenes.
+type OrderStore interface {
+	OrderReader
+	OrderWriter
+}
+
+// TenantSettingsReader lee la config del carrito por-tenant (Plan 016 · T0).
+type TenantSettingsReader interface {
 	// GetTenantSettings devuelve la config del carrito para tenantID desde
 	// public.tenant_settings (Plan 016 · T0). Si el tenant NO tiene fila, devuelve
 	// los DEFAULTS (PageSize=5, OrderTTL=3600s) SIN error: el carrito funciona sin
 	// configurar nada (design.md §9.E/§9.G).
 	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
+
+// Repository es la COMPOSICIÓN de las interfaces segregadas: persiste el estado
+// conversacional, las definiciones versionadas, los resultados/efectos y las
+// órdenes del carrito. Implementaciones: MemoryRepository (unit CI-safe) y
+// PostgresRepository (integración, JSONB vía json.Marshal/Unmarshal). Se conserva
+// para retrocompat y para quien necesite el conjunto completo; los consumidores
+// concretos deben preferir la interfaz segregada que realmente usan (ISP).
+type Repository interface {
+	ConversationStore
+	DefinitionStore
+	SurveyResultStore
+	FlowEventStore
+	TenantContentReader
+	OrderStore
+	TenantSettingsReader
+}
+
+// Ambas implementaciones satisfacen la composición completa (retrocompat tras la
+// segregación por subdominio, Plan 027 · Ola 2 · T9): un método que falte en
+// cualquiera rompe aquí en compilación, no en un consumidor lejano.
+var (
+	_ Repository = (*PostgresRepository)(nil)
+	_ Repository = (*MemoryRepository)(nil)
+)
 
 // FlowSummary es el resumen de UN flujo publicado por un tenant: su flow_id y la
 // última versión vigente (más su fecha de alta). Lo devuelve ListDefinitions para
