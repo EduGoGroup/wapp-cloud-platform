@@ -199,7 +199,17 @@ func run() error {
 	// WAPP_FLOW_REPLY_BURST) matan un bucle sin frenar un flujo legítimo.
 	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
-		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore)),
+		// Proyección POR-MÓDULO (Plan 027 · Ola 3 · T8, cierra H10): el PersistSink ya
+		// no conoce cart/survey; cada módulo aporta su Projector (wired con el store) y
+		// el sink los ejecuta genéricamente tras flow_events. Mismas filas orders/
+		// order_items/survey_results.
+		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
+			cart.NewProjector(flowStore),
+			survey.NewProjector(flowStore))),
+		// Reanudación POR-MÓDULO (Plan 027 · Ola 3 · T8, cierra H9): el carrito aporta su
+		// ResumePolicy (TTL perezoso + auto-reinicio + siembra de page_size); el runtime
+		// la consulta por tipo de nodo, sin literales cart en el engine.
+		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
 		flowruntime.WithReplyLimiter(replyLimiter),

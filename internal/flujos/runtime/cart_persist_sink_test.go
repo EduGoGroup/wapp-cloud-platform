@@ -38,7 +38,7 @@ func cartClosed(items []map[string]any, total float64) modules.Effect {
 // efectos.
 func TestPersistSink_Cart_MemoryProjection(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	ctx := context.Background()
 	ec := cartEC("t-cart", "c-1", "sess-1", "carrito")
 
@@ -85,7 +85,7 @@ func TestPersistSink_Cart_MemoryProjection(t *testing.T) {
 // cancelled.
 func TestPersistSink_Cart_MemoryCancel(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	ctx := context.Background()
 	ec := cartEC("t-cancel", "c-2", "sess-2", "carrito")
 
@@ -106,7 +106,7 @@ func TestPersistSink_Cart_MemoryCancel(t *testing.T) {
 // tocan orders (no-regresión: solo el carrito proyecta orders).
 func TestPersistSink_Cart_MemoryMenuSurveyNoOrders(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	ctx := context.Background()
 	ec := cartEC("t-mix", "c-3", "sess-3", "flujo")
 
@@ -131,7 +131,7 @@ func TestPersistSink_Cart_MemoryMenuSurveyNoOrders(t *testing.T) {
 func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	db := openTestDB(t) // migra incl. 0011/0012/0013
 	repo := store.NewPostgresRepository(db)
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	ctx := context.Background()
 
 	// Aislamiento: tenant/contact/flow únicos por corrida.
@@ -178,7 +178,7 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	db := openTestDB(t) // migra incl. 0011/0012/0013
 	repo := store.NewPostgresRepository(db)
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	ctx := context.Background()
 
 	suffix := time.Now().UnixNano()

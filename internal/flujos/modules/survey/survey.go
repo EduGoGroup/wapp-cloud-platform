@@ -77,7 +77,7 @@ func (Module) Step(node model.Node, conv model.Conversation, input string) modul
 			res := modules.Result{Next: &dest, Vars: vars}
 			res.Effects = append(res.Effects, modules.Effect{
 				Kind:    "persist",
-				Name:    "survey_answer",
+				Name:    EffectSurveyAnswer,
 				Payload: map[string]any{"question_id": node.QuestionID, "answer_code": choice},
 			})
 			return res

@@ -61,13 +61,19 @@ import (
 // escribe BD, no envía WhatsApp, solo loguea.
 type WebhookSink struct {
 	log logger.Logger
+	// deliverEffect es el NOMBRE del efecto que este punto de inyección entregaría al
+	// CRM (hoy cart_closed). Se INYECTA (no se hardcodea el literal de un módulo): el
+	// runtime/sink no conoce los efectos de cart (Plan 027 · Ola 3 · T8). main.go lo
+	// cablea con cart.EffectCartClosed.
+	deliverEffect string
 }
 
-// NewWebhookSink construye el stub del punto de inyección del CRM con el logger
-// dado. Se registra como cualquier EventSink: flowruntime.WithEventSink(
-// flowruntime.NewWebhookSink(log)) en main.go. Por defecto NO se registra (§9.I).
-func NewWebhookSink(log logger.Logger) *WebhookSink {
-	return &WebhookSink{log: log}
+// NewWebhookSink construye el stub del punto de inyección del CRM con el logger dado
+// y el nombre del efecto a entregar. Se registra como cualquier EventSink:
+// flowruntime.WithEventSink(flowruntime.NewWebhookSink(log, cart.EffectCartClosed)).
+// Por defecto NO se registra (§9.I).
+func NewWebhookSink(log logger.Logger, deliverEffect string) *WebhookSink {
+	return &WebhookSink{log: log, deliverEffect: deliverEffect}
 }
 
 // crmItem es una línea del pedido en el contrato JSON hacia el CRM (§9.I).
@@ -98,7 +104,7 @@ func (s *WebhookSink) Handle(_ context.Context, ec EffectContext, eff modules.Ef
 	if s == nil || s.log == nil {
 		return nil
 	}
-	if eff.Name != effCartClosed {
+	if eff.Name != s.deliverEffect {
 		// Navegación/telemetría/otros efectos: el punto de inyección no los entrega
 		// (un CRM real filtraría por interés). Solo deja rastro de que existe.
 		s.log.Debug("webhook (stub): efecto NO entregado al CRM (punto de inyección diferido)",
@@ -129,27 +135,47 @@ func (s *WebhookSink) Handle(_ context.Context, ec EffectContext, eff modules.Ef
 }
 
 // buildCRMOrderPayload arma el contrato JSON hacia el CRM (§9.I) a partir del
-// EffectContext (tenant + contact opaco) y el payload de cart_closed (items +
-// total). Reutiliza el parseo tolerante del PersistSink (cartItems/asFloat/
-// asString) para casar la misma forma del efecto (in-process y round-trip JSON).
+// EffectContext (tenant + contact opaco) y el payload del efecto de cierre (items +
+// total). Parsea la MISMA forma del efecto (in-process y round-trip JSON) con las
+// coerciones tolerantes compartidas (modules.As*), SIN acoplarse al paquete cart.
 // now se inyecta para poder verificar la serialización de forma determinista.
 func buildCRMOrderPayload(ec EffectContext, eff modules.Effect, now time.Time) crmOrderPayload {
-	items := cartItems(eff.Payload, "")
+	items := effectItems(eff.Payload)
 	crmItems := make([]crmItem, 0, len(items))
-	for _, it := range items {
+	for _, m := range items {
 		crmItems = append(crmItems, crmItem{
-			SKU:       it.SKU,
-			Label:     it.Label,
-			Qty:       it.Qty,
-			UnitPrice: it.UnitPrice,
+			SKU:       modules.AsString(m["sku"]),
+			Label:     modules.AsString(m["label"]),
+			Qty:       modules.AsInt(m["qty"]),
+			UnitPrice: modules.AsFloat(m["unit_price"]),
 		})
 	}
 	return crmOrderPayload{
 		Tenant:    ec.TenantID,
 		Contact:   ec.ContactID,
-		OrderID:   asString(eff.Payload["order_id"]),
+		OrderID:   modules.AsString(eff.Payload["order_id"]),
 		Items:     crmItems,
-		Total:     asFloat(eff.Payload["total"]),
+		Total:     modules.AsFloat(eff.Payload["total"]),
 		Timestamp: now.Format(time.RFC3339),
+	}
+}
+
+// effectItems extrae la lista de líneas del payload como []map[string]any, tolerando
+// el camino en-proceso ([]map[string]any) y el round-trip JSON ([]any de map). Es
+// genérico (no conoce el módulo): parsea la forma del payload, no su semántica.
+func effectItems(payload map[string]any) []map[string]any {
+	switch items := payload["items"].(type) {
+	case []map[string]any:
+		return items
+	case []any:
+		out := make([]map[string]any, 0, len(items))
+		for _, e := range items {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }

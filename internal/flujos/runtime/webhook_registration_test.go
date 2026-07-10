@@ -6,6 +6,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
@@ -34,7 +35,7 @@ func runCartClosed(t *testing.T, extra ...runtime.Option) *store.MemoryRepositor
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
 		t.Fatalf("sembrar definición: %v", err)
 	}
-	opts := append([]runtime.Option{runtime.WithEventSink(runtime.NewPersistSink(repo))}, extra...)
+	opts := append([]runtime.Option{runtime.WithEventSink(runtime.NewPersistSink(repo, cart.NewProjector(repo)))}, extra...)
 	rt := runtime.New(repo, newEffectEngine([]modules.Effect{cartClosedEmit()}), &fakeSender{},
 		fakeResolver{tenantID: testTenant}, contact.NewMemoryResolver(repo), discardLogger(), opts...)
 	if err := startAndStep(t, rt); err != nil {
@@ -49,7 +50,7 @@ func runCartClosed(t *testing.T, extra ...runtime.Option) *store.MemoryRepositor
 // (flow_events, orders, order_items) debe ser equivalente.
 func TestWebhookSink_Registrado_NoAlteraPersistSink(t *testing.T) {
 	repoSolo := runCartClosed(t)
-	repoConWebhook := runCartClosed(t, runtime.WithEventSink(runtime.NewWebhookSink(discardLogger())))
+	repoConWebhook := runCartClosed(t, runtime.WithEventSink(runtime.NewWebhookSink(discardLogger(), cart.EffectCartClosed)))
 
 	if got := len(repoSolo.FlowEvents()); got != len(repoConWebhook.FlowEvents()) {
 		t.Fatalf("flow_events difieren: solo=%d con-webhook=%d", got, len(repoConWebhook.FlowEvents()))

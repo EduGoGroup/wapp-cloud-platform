@@ -61,7 +61,7 @@ func newCartRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *f
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
 	rt := runtime.New(repo, eng, sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
-		runtime.WithEventSink(runtime.NewPersistSink(repo)))
+		runtime.WithEventSink(persistSinkWith(repo)), cartResumeOpt(repo))
 	return rt, repo, sender, contacts
 }
 

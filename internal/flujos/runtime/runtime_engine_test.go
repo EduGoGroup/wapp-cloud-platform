@@ -172,7 +172,7 @@ func newSurveyRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, 
 	// materializa ahora (releva al flush viejo). El módulo survey declara el Effect
 	// y este sink escribe flow_events + proyecta survey_results.
 	rt := runtime.New(repo, newSurveyEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
-		runtime.WithEventSink(runtime.NewPersistSink(repo)))
+		runtime.WithEventSink(persistSinkWith(repo)))
 	return rt, repo, sender, contacts
 }
 
@@ -188,7 +188,7 @@ func newMenuRuntimePersist(t *testing.T) (*runtime.Runtime, *store.MemoryReposit
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
 	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
-		runtime.WithEventSink(runtime.NewPersistSink(repo)))
+		runtime.WithEventSink(persistSinkWith(repo)))
 	return rt, repo, sender, contacts
 }
 

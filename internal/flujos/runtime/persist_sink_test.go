@@ -20,7 +20,7 @@ func persistEC() runtime.EffectContext {
 // (misma fila que el flush del Plan 014).
 func TestPersistSink_SurveyAnswer_EscribeEventoYProyecta(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	eff := modules.Effect{Kind: "persist", Name: "survey_answer", Payload: map[string]any{"question_id": "q1", "answer_code": "a"}}
 
 	if err := sink.Handle(context.Background(), persistEC(), eff); err != nil {
@@ -44,7 +44,7 @@ func TestPersistSink_SurveyAnswer_EscribeEventoYProyecta(t *testing.T) {
 // survey_answer solo escribe flow_events (no proyecta a survey_results).
 func TestPersistSink_OtroNombre_SoloEvento(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	eff := modules.Effect{Kind: "event", Name: "menu_selected", Payload: map[string]any{"option": "1"}}
 
 	if err := sink.Handle(context.Background(), persistEC(), eff); err != nil {
@@ -63,7 +63,7 @@ func TestPersistSink_OtroNombre_SoloEvento(t *testing.T) {
 // panica (aserción de tipo defensiva).
 func TestPersistSink_PayloadSinClaves_NoPanica(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 	// Payload sin question_id/answer_code y con un valor de tipo no-string.
 	eff := modules.Effect{Kind: "persist", Name: "survey_answer", Payload: map[string]any{"question_id": 42}}
 
@@ -84,7 +84,7 @@ func TestPersistSink_PayloadSinClaves_NoPanica(t *testing.T) {
 func TestPersistSink_Integracion_EscribeFlowEvents(t *testing.T) {
 	db := openTestDB(t) // hace t.Skip si no hay DSN/BD
 	repo := store.NewPostgresRepository(db)
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 
 	ctx := context.Background()
 	tenant := "tenant-persist-sink"
@@ -118,7 +118,7 @@ func TestPersistSink_Integracion_EscribeFlowEvents(t *testing.T) {
 func TestPersistSink_Integracion_EncuestaDosRespuestas(t *testing.T) {
 	db := openTestDB(t) // hace t.Skip si no hay DSN/BD
 	repo := store.NewPostgresRepository(db)
-	sink := runtime.NewPersistSink(repo)
+	sink := persistSinkWith(repo)
 
 	ctx := context.Background()
 	tenant := "tenant-t3-encuesta"

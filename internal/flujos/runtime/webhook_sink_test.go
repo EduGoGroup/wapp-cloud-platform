@@ -21,7 +21,7 @@ func discardWebhookLogger() logger.Logger {
 func cartClosedEffect() modules.Effect {
 	return modules.Effect{
 		Kind: "persist",
-		Name: effCartClosed,
+		Name: "cart_closed",
 		Payload: map[string]any{
 			"items": []map[string]any{
 				{"sku": "A1", "label": "Café", "qty": 2, "unit_price": 9.9},
@@ -35,7 +35,7 @@ func cartClosedEffect() modules.Effect {
 // TestWebhookSink_Handle_NoEntregaNiAborta: el stub no entrega nada por red y
 // NUNCA aborta (devuelve nil) para cart_closed y para un efecto de navegación.
 func TestWebhookSink_Handle_NoEntregaNiAborta(t *testing.T) {
-	sink := NewWebhookSink(discardWebhookLogger())
+	sink := NewWebhookSink(discardWebhookLogger(), "cart_closed")
 	ec := EffectContext{TenantID: "t-1", ContactID: "c-opaco", FlowID: "f-1", FlowVersion: 1}
 
 	if err := sink.Handle(context.Background(), ec, cartClosedEffect()); err != nil {
@@ -87,7 +87,7 @@ func TestBuildCRMOrderPayload_Contrato(t *testing.T) {
 func TestBuildCRMOrderPayload_RoundTripJSON(t *testing.T) {
 	eff := modules.Effect{
 		Kind: "persist",
-		Name: effCartClosed,
+		Name: "cart_closed",
 		Payload: map[string]any{
 			"items": []any{
 				map[string]any{"sku": "A1", "label": "Café", "qty": float64(2), "unit_price": float64(9.9)},
