@@ -94,6 +94,12 @@ type FlowConfig struct {
 	// ReplyBurst es la ráfaga admitida por conversación. Default 3. <=0 cae al
 	// default. Se lee de WAPP_FLOW_REPLY_BURST.
 	ReplyBurst int `yaml:"reply_burst"`
+	// IncomingTimeout acota el procesamiento de CADA entrante reactivo (Plan 027 ·
+	// Ola 0 · T1, cierra H1): sin deadline, la goroutine de OnIncoming se fuga
+	// esperando un Ack que nunca llega y retiene el keyedMutex de la conversación.
+	// Default 30s. <=0 cae al default. Se lee como cadena time.Duration de
+	// WAPP_FLOW_INCOMING_TIMEOUT.
+	IncomingTimeout time.Duration `yaml:"incoming_timeout"`
 }
 
 // RateLimitConfig gobierna el token-bucket EN MEMORIA de la API pública (Plan
@@ -271,8 +277,9 @@ func defaults() AppConfig {
 			LoginBurst:  5,
 		},
 		Flow: FlowConfig{
-			ReplyRate:  0.5,
-			ReplyBurst: 3,
+			ReplyRate:       0.5,
+			ReplyBurst:      3,
+			IncomingTimeout: 30 * time.Second,
 		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
@@ -365,6 +372,7 @@ func Load() (AppConfig, error) {
 	if b := loader.GetInt("FLOW_REPLY_BURST", cfg.Flow.ReplyBurst); b > 0 {
 		cfg.Flow.ReplyBurst = b
 	}
+	cfg.Flow.IncomingTimeout = getDuration(loader, "FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
 
 	return cfg, nil
 }

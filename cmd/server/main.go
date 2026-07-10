@@ -201,6 +201,10 @@ func run() error {
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
 		flowruntime.WithReplyLimiter(replyLimiter),
+		// Deadline del entrante reactivo (Plan 027 · Ola 0 · T1, cierra H1): acota cada
+		// goroutine de OnIncoming para que un Edge mudo no fugue la goroutine ni retenga
+		// el keyedMutex de la conversación (env WAPP_FLOW_INCOMING_TIMEOUT, default 30s).
+		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		// Guarda anti-self-loop (Plan 020 · T2): el conjunto de self_pn del tenant sale
 		// de fleet_sessions (lo persiste el Gateway en cada Heartbeat). Un entrante de un
 		// número propio de otra sesión del mismo tenant NO auto-responde.
@@ -734,7 +738,7 @@ func setupDatabase(ctx context.Context, cfg config.AppConfig, log sharedlogger.L
 }
 
 // shutdownAll detiene los cuatro servidores de forma ordenada (los dos HTTP con
-// timeout de drenado; los dos gRPC con GracefulStop).
+// timeout de drenado; los dos gRPC con GracefulStop acotado por shutdownTimeout).
 func shutdownAll(httpSrv, publicSrv *http.Server, enrollGS, connectGS *grpc.Server, log sharedlogger.Logger) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -744,8 +748,30 @@ func shutdownAll(httpSrv, publicSrv *http.Server, enrollGS, connectGS *grpc.Serv
 	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("error en shutdown HTTP público", "error", err)
 	}
-	enrollGS.GracefulStop()
-	connectGS.GracefulStop()
+	gracefulStopGRPC(enrollGS, "enroll", log)
+	gracefulStopGRPC(connectGS, "cloudlink", log)
+}
+
+// gracefulStopGRPC drena un servidor gRPC con GracefulStop pero ACOTADO por
+// shutdownTimeout (Plan 027 · Ola 0 · T2, cierra H3): CloudLink mantiene streams
+// Connect 24/7 vivos, y GracefulStop bloquea hasta que TODOS terminen ⇒ cada
+// SIGTERM colgaría el deploy hasta el SIGKILL del orquestador. Se lanza el drenado
+// en una goroutine y, si no completa a tiempo, se fuerza con Stop() (cierra los
+// streams en curso). Así SIGTERM SIEMPRE termina en < shutdownTimeout.
+func gracefulStopGRPC(gs *grpc.Server, name string, log sharedlogger.Logger) {
+	done := make(chan struct{})
+	go func() {
+		gs.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(shutdownTimeout):
+		log.Warn("shutdown gRPC: GracefulStop excedió el timeout; forzando Stop()",
+			"servidor", name, "timeout", shutdownTimeout)
+		gs.Stop()
+		<-done // GracefulStop retorna en cuanto Stop() cierra los streams.
+	}
 }
 
 // closeDB cierra el pool de conexiones registrando cualquier error.

@@ -23,6 +23,16 @@ import (
 // Plan 019 · T4b), handleEscape lo usa en su lugar.
 const defaultEscapeMessage = "Listo, cerramos esto. Escribe una palabra clave cuando quieras empezar de nuevo."
 
+// defaultIncomingTimeout acota el procesamiento de CADA entrante reactivo (Plan
+// 027 · Ola 0 · T1, cierra H1). OnIncoming despacha HandleIncoming en una
+// goroutine con context.Background() (desacoplado del stream); sin deadline, el
+// SendText interno espera el Ack contra un ctx.Done() que nunca dispara ⇒ la
+// goroutine se fuga para siempre reteniendo el keyedMutex y cuñando la
+// conversación. 30s es holgado para un round-trip Cloud→Edge→WhatsApp→Ack y a la
+// vez garantiza que un Edge mudo libere la clave. Se sobreescribe con
+// WithIncomingTimeout (env WAPP_FLOW_INCOMING_TIMEOUT).
+const defaultIncomingTimeout = 30 * time.Second
+
 // ErrConversationExists lo devuelve Start cuando ya hay una conversación viva
 // para la clave (T3 lo mapea a HTTP 409). Se inspecciona con errors.Is.
 var ErrConversationExists = errors.New("ya existe una conversación viva para la clave")
@@ -89,6 +99,11 @@ type Runtime struct {
 	// WithSelfNumbers) desactiva la guarda: no-regresión total (sin self_pn poblado
 	// el comportamiento es idéntico al previo al 020).
 	selfNumbers SelfNumberLister
+	// incomingTimeout acota el procesamiento de cada entrante reactivo despachado
+	// por OnIncoming (Plan 027 · Ola 0 · T1, cierra H1). New lo deja en
+	// defaultIncomingTimeout si no se inyecta WithIncomingTimeout (o si el valor es
+	// <=0): el camino caliente NUNCA queda sin deadline.
+	incomingTimeout time.Duration
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -137,6 +152,13 @@ func WithReplyLimiter(l ReplyLimiter) Option {
 // la guarda (nil ⇒ no-regresión: se procesa igual que antes del Plan 020).
 func WithSelfNumbers(l SelfNumberLister) Option {
 	return func(rt *Runtime) { rt.selfNumbers = l }
+}
+
+// WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante
+// reactivo (Plan 027 · Ola 0 · T1, cierra H1). Un valor <=0 se ignora y New cae a
+// defaultIncomingTimeout (el camino caliente nunca queda sin deadline).
+func WithIncomingTimeout(d time.Duration) Option {
+	return func(rt *Runtime) { rt.incomingTimeout = d }
 }
 
 // reactiveBlocked agrupa las guardas de BORDE que impiden entrar al motor reactivo
@@ -232,6 +254,11 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 	// al Plan 019 — un entrante sin conversación viva se ignora, decisión C).
 	if rt.triggers == nil {
 		rt.triggers = trigger.NewNoopResolver()
+	}
+	// El deadline del entrante reactivo nunca es <=0: sin WithIncomingTimeout (o con
+	// un valor no positivo) cae a defaultIncomingTimeout (Plan 027 · Ola 0 · T1).
+	if rt.incomingTimeout <= 0 {
+		rt.incomingTimeout = defaultIncomingTimeout
 	}
 	return rt
 }
@@ -703,9 +730,17 @@ func (rt *Runtime) destino(ctx context.Context, tenantID, contactID string) (str
 // serialización por conversación la sigue garantizando el keyedMutex dentro de
 // HandleIncoming (cada clave se procesa de a una). Los errores se LOGUEAN sin
 // propagarse ni panickear.
+//
+// El contexto es context.Background() (desacoplado del stream Recv, que ya
+// retornó) pero ACOTADO por rt.incomingTimeout (Plan 027 · Ola 0 · T1, cierra
+// H1): sin deadline, el SendText interno esperaría el Ack contra un ctx.Done()
+// que nunca dispara ⇒ goroutine fugada reteniendo el keyedMutex y cuñando la
+// conversación. El timeout garantiza que un Edge mudo libere la clave.
 func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) {
 	go func() {
-		if err := rt.HandleIncoming(context.Background(), sessionID, m); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), rt.incomingTimeout)
+		defer cancel()
+		if err := rt.HandleIncoming(ctx, sessionID, m); err != nil {
 			rt.log.Error("runtime: procesar entrante",
 				"error", err,
 				"session_id", sessionID,
