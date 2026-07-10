@@ -523,12 +523,28 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// PUNTO DE CONMUTACIÓN DEL EMISOR (Plan 028 · T3, ADR-0019): hoy los tokens de
-	// usuario se emiten en HS256 (jwtBundle.hs256, legacy sin `kid`). En T3 esta
-	// única línea pasa a jwtBundle.es256 (ES256 con `kid`) para CORTAR la emisión
-	// a asimétrico; el MultiVerifier de más abajo ya acepta ambos, así que el
-	// corte se reduce a este cambio.
-	userTokenIssuer := jwtBundle.hs256
+	// PUNTO DE CONMUTACIÓN DEL EMISOR (Plan 028 · T3, ADR-0019): la emisión de
+	// tokens de usuario CORTA aquí a ES256 (jwtBundle.es256, con `kid`). El emisor
+	// HS256 legacy (jwtBundle.hs256) deja de emitir; el MultiVerifier de abajo lo
+	// sigue aceptando por default durante la ventana dual (hasta que T4 lo retire).
+	userTokenIssuer := jwtBundle.es256
+	// Validación dual-alg del :8103 (Plan 028 · T2, ADR-0019): un MultiVerifier
+	// que valida los tokens ES256 nuevos por su `kid` (entrada con la pública
+	// derivada) y, por default, los tokens legacy HS256 sin `kid` (secreto
+	// compartido). *auth.MultiVerifier satisface la interface UserTokenValidator
+	// del middleware (authmw.go no cambia) y también el TokenValidator del
+	// AuthService: el mismo objeto valida el :8103 y el path Verify del IAM (una
+	// sola política de aceptación durante la ventana dual). El guard anti
+	// alg-confusion es transitivo (un HS256 con el kid de ES256 —o viceversa— se
+	// rechaza), cubriendo la confusión de algoritmos de extremo a extremo.
+	userValidator, err := auth.NewMultiVerifier(
+		cfg.JWT.Issuer,
+		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
+		auth.HS256VerifierKey(jwtBundle.secret),
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (dual-alg): %w", err)
+	}
 	auditor, err := iamusecase.NewAuditService(iampostgres.NewAuditRepo(db))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
@@ -543,6 +559,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		iampostgres.NewRefreshRepo(db),
 		iampostgres.NewAuditRepo(db),
 		userTokenIssuer,
+		userValidator,
 		iamusecase.Config{},
 	)
 	if err != nil {
@@ -551,22 +568,6 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	m2mSvc, err := iamusecase.NewM2MService(iampostgres.NewAPIKeyRepo(db), svcJWTMgr, iamusecase.Config{})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
-	}
-	// Validación dual-alg del :8103 (Plan 028 · T2, ADR-0019): un MultiVerifier
-	// que valida los tokens ES256 nuevos por su `kid` (entrada con la pública
-	// derivada) y, por default, los tokens legacy HS256 sin `kid` (secreto
-	// compartido). Reemplaza al JWTManager único inyectado antes: *auth.MultiVerifier
-	// satisface la misma interface UserTokenValidator, así que authmw.go no cambia.
-	// El guard anti alg-confusion es transitivo (un HS256 con el kid de ES256 —o
-	// viceversa— se rechaza), cubriendo la confusión de algoritmos de extremo a
-	// extremo del middleware.
-	userValidator, err := auth.NewMultiVerifier(
-		cfg.JWT.Issuer,
-		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
-		auth.HS256VerifierKey(jwtBundle.secret),
-	)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (dual-alg): %w", err)
 	}
 	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
 
