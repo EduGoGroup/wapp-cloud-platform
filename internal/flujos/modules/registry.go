@@ -8,6 +8,7 @@
 package modules
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -86,6 +87,17 @@ type MediaEmitter interface {
 	EmitMedia(node model.Node, content model.Content) (*model.MediaRef, error)
 }
 
+// NodeValidator es la capacidad OPCIONAL de un módulo para validar la ESTRUCTURA de
+// sus nodos en el alta admin (Plan 027 · Ola 1 · T6, cierra H11), simétrica con la
+// validación core de menú/encuesta que hace model.Validate. Se consulta por ASERCIÓN
+// DE CAPACIDAD (no por Type), igual que MediaEmitter: un módulo que NO la implemente
+// conserva la validación laxa previa (su tipo se acepta sin inspeccionar la
+// estructura). Cierra la asimetría del Plan 016 (un nodo de módulo inválido —p. ej.
+// un cart sin catálogo— se publicaba sin error y degradaba en runtime).
+type NodeValidator interface {
+	ValidateNode(node model.Node) error
+}
+
 // Registry asocia tipos de nodo con su Module. Seguro para uso concurrente.
 type Registry struct {
 	mu      sync.RWMutex
@@ -126,6 +138,32 @@ func (r *Registry) Types() []string {
 		types = append(types, t)
 	}
 	return types
+}
+
+// ValidateModuleNodes valida la ESTRUCTURA de los nodos de MÓDULO del flujo cuyo
+// módulo implementa NodeValidator (Plan 027 · Ola 1 · T6, cierra H11). Los nodos
+// core (menu/message/survey) ya los validó model.Validate; aquí solo se inspeccionan
+// los tipos de módulo. Un nodo cuyo tipo no está registrado, o cuyo módulo no
+// implementa NodeValidator, se acepta laxo (no-regresión). Devuelve el primer error,
+// envuelto con el id del nodo (inspeccionable con errors.Is sobre el error base del
+// módulo). Lo invoca el handler del alta admin tras model.ParseAndValidate.
+func (r *Registry) ValidateModuleNodes(f model.Flow) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, n := range f.Nodes {
+		m, ok := r.modules[n.Type]
+		if !ok {
+			continue
+		}
+		v, ok := m.(NodeValidator)
+		if !ok {
+			continue
+		}
+		if err := v.ValidateNode(n); err != nil {
+			return fmt.Errorf("nodo %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // WaitsForInput indica si el tipo dado está registrado y su módulo es

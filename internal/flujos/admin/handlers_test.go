@@ -253,6 +253,41 @@ type fakeModuleTypes struct{ types []string }
 
 func (f fakeModuleTypes) Types() []string { return f.types }
 
+// fakeModuleValidator añade la capacidad estructural ValidateModuleNodes (Plan 027 ·
+// Ola 1 · T6): rechaza cualquier flujo que contenga un nodo del tipo vetado, para
+// probar que el handler invoca la validación de módulo (sin acoplarse al cart real).
+type fakeModuleValidator struct {
+	types  []string
+	reject string
+}
+
+func (f fakeModuleValidator) Types() []string { return f.types }
+
+func (f fakeModuleValidator) ValidateModuleNodes(fl model.Flow) error {
+	for id, n := range fl.Nodes {
+		if n.Type == f.reject {
+			return errors.New("nodo " + id + ": estructura de módulo inválida")
+		}
+	}
+	return nil
+}
+
+// TestDefinitionHandler_ModuleStructuralValidationRejects: el handler invoca la
+// validación estructural de módulo (T6) y rechaza (400) un flujo cuyo nodo de módulo
+// es inválido, ANTES de persistir (cierra H11 en el borde del alta).
+func TestDefinitionHandler_ModuleStructuralValidationRejects(t *testing.T) {
+	store := &fakeDefinitionStore{version: 1}
+	mods := fakeModuleValidator{types: []string{"cart"}, reject: "cart"}
+	rec := do(admin.DefinitionHandler(store, mods), http.MethodPost, "/admin/flows",
+		definitionBody(t, "tenant-1", cartFlowJSON))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("un nodo de módulo estructuralmente inválido debe rechazarse: code=%d, quiero 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if store.called {
+		t.Fatal("no debió persistir un flujo con nodo de módulo inválido")
+	}
+}
+
 // cartFlowJSON usa un nodo de tipo de MÓDULO ("cart"), no core. Su validación es
 // laxa: el módulo valida el contenido en runtime.
 const cartFlowJSON = `{

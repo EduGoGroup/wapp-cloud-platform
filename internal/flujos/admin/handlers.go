@@ -112,6 +112,21 @@ func DefinitionHandler(store DefinitionStore, mods ModuleTypeSource) http.Handle
 			return
 		}
 
+		// Validación estructural de los nodos de MÓDULO (Plan 027 · Ola 1 · T6, cierra
+		// H11): model.ParseAndValidate acepta los tipos de módulo de forma laxa; aquí
+		// cada módulo que expone la capacidad valida la estructura de SUS nodos (p. ej.
+		// un cart sin catálogo se rechaza en el alta, no degrada en runtime). Se consulta
+		// por aserción de capacidad: una fuente que no la implemente conserva el
+		// comportamiento previo (sin validación estructural de módulo).
+		if v, ok := mods.(interface {
+			ValidateModuleNodes(model.Flow) error
+		}); ok {
+			if verr := v.ValidateModuleNodes(flow); verr != nil {
+				http.Error(w, "definición de flujo inválida: "+verr.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+
 		version, err := store.InsertDefinition(r.Context(), id.TenantID, flow)
 		if err != nil {
 			http.Error(w, "no se pudo persistir la definición", http.StatusInternalServerError)
