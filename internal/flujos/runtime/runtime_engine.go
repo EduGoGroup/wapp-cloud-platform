@@ -23,6 +23,16 @@ import (
 // Plan 019 · T4b), handleEscape lo usa en su lugar.
 const defaultEscapeMessage = "Listo, cerramos esto. Escribe una palabra clave cuando quieras empezar de nuevo."
 
+// defaultMaxConcurrentIncoming acota cuántos entrantes reactivos procesa el runtime
+// A LA VEZ (Plan 027 · Ola 1 · T5, cierra H5). Antes OnIncoming lanzaba una
+// goroutine por entrante SIN techo: bajo una inundación de historial esto arranca
+// cientos de HandleIncoming en paralelo (cada uno con su transacción de contactos y
+// su SendText), saturando la BD y el gRPC. Un semáforo acotado limita la
+// concurrencia REAL; el resto de goroutines esperan cupo baratas. 64 es holgado
+// para el piloto. Se sobreescribe con WithMaxConcurrentIncoming (env
+// WAPP_FLOW_MAX_CONCURRENT_INCOMING); un valor negativo lo desactiva (sin techo).
+const defaultMaxConcurrentIncoming = 64
+
 // defaultIncomingTimeout acota el procesamiento de CADA entrante reactivo (Plan
 // 027 · Ola 0 · T1, cierra H1). OnIncoming despacha HandleIncoming en una
 // goroutine con context.Background() (desacoplado del stream); sin deadline, el
@@ -104,6 +114,14 @@ type Runtime struct {
 	// defaultIncomingTimeout si no se inyecta WithIncomingTimeout (o si el valor es
 	// <=0): el camino caliente NUNCA queda sin deadline.
 	incomingTimeout time.Duration
+	// incomingSem es el semáforo que acota la concurrencia de HandleIncoming
+	// despachado por OnIncoming (Plan 027 · Ola 1 · T5, cierra H5). nil ⇒ sin techo
+	// (opt-out explícito con WithMaxConcurrentIncoming(<0)); en New se materializa a
+	// defaultMaxConcurrentIncoming si no se configuró.
+	incomingSem chan struct{}
+	// maxConcurrentIncoming es el tope configurado (lo fija WithMaxConcurrentIncoming
+	// antes de que New construya incomingSem). 0 ⇒ default; <0 ⇒ sin techo.
+	maxConcurrentIncoming int
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -159,6 +177,13 @@ func WithSelfNumbers(l SelfNumberLister) Option {
 // defaultIncomingTimeout (el camino caliente nunca queda sin deadline).
 func WithIncomingTimeout(d time.Duration) Option {
 	return func(rt *Runtime) { rt.incomingTimeout = d }
+}
+
+// WithMaxConcurrentIncoming fija el tope de entrantes procesados a la vez (Plan 027
+// · Ola 1 · T5, cierra H5). n==0 cae al default; n<0 desactiva el techo (sin
+// semáforo, comportamiento previo). New construye el semáforo a partir de este valor.
+func WithMaxConcurrentIncoming(n int) Option {
+	return func(rt *Runtime) { rt.maxConcurrentIncoming = n }
 }
 
 // reactiveBlocked agrupa las guardas de BORDE que impiden entrar al motor reactivo
@@ -259,6 +284,14 @@ func New(repo store.Repository, eng *engine.Engine, sender Sender, resolver Tena
 	// un valor no positivo) cae a defaultIncomingTimeout (Plan 027 · Ola 0 · T1).
 	if rt.incomingTimeout <= 0 {
 		rt.incomingTimeout = defaultIncomingTimeout
+	}
+	// Semáforo de entrantes (Plan 027 · Ola 1 · T5): 0 ⇒ default; <0 ⇒ sin techo
+	// (incomingSem queda nil y OnIncoming no acota la concurrencia).
+	switch {
+	case rt.maxConcurrentIncoming == 0:
+		rt.incomingSem = make(chan struct{}, defaultMaxConcurrentIncoming)
+	case rt.maxConcurrentIncoming > 0:
+		rt.incomingSem = make(chan struct{}, rt.maxConcurrentIncoming)
 	}
 	return rt
 }
@@ -740,6 +773,21 @@ func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), rt.incomingTimeout)
 		defer cancel()
+		// Semáforo de concurrencia (Plan 027 · Ola 1 · T5, cierra H5): se adquiere el
+		// cupo DENTRO de la goroutine para no bloquear el loop Recv del stream. Si no
+		// hay cupo dentro del incomingTimeout, se descarta el entrante con log (sin
+		// PII): bajo saturación sostenida es preferible soltar uno a acumular
+		// goroutines colgadas sin techo. Sin semáforo (incomingSem nil) no acota.
+		if rt.incomingSem != nil {
+			select {
+			case rt.incomingSem <- struct{}{}:
+				defer func() { <-rt.incomingSem }()
+			case <-ctx.Done():
+				rt.log.Warn("runtime: entrante descartado por saturación (sin cupo en el pool a tiempo)",
+					"session_id", sessionID, "wa_message_id", m.GetWaMessageId())
+				return
+			}
+		}
 		if err := rt.HandleIncoming(ctx, sessionID, m); err != nil {
 			rt.log.Error("runtime: procesar entrante",
 				"error", err,

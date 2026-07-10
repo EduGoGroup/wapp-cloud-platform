@@ -4,11 +4,44 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 )
+
+// blockingSender bloquea en Send hasta que se cierra release: simula un Edge lento
+// que no lee su stream (control de flujo gRPC), para ejercitar el deadline de Push.
+type blockingSender struct {
+	release <-chan struct{}
+}
+
+func (b *blockingSender) Send(*cloudlinkv1.CloudToEdge) error {
+	<-b.release
+	return nil
+}
+
+// TestRegistryPushTimeout comprueba que Push NO se cuelga con un Edge que no lee su
+// stream: devuelve ErrPushTimeout dentro del sendTimeout (Plan 027 · Ola 1 · T5,
+// cierra H6). Es la garantía de que el kill-switch (RevokeLease) no se atasca.
+func TestRegistryPushTimeout(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	defer close(release) // libera la goroutine de send al terminar el test.
+
+	reg := session.NewRegistry(session.WithSendTimeout(20 * time.Millisecond))
+	reg.Register("s1", &blockingSender{release: release})
+
+	start := time.Now()
+	err := reg.Push("s1", newSendText("57300", "hola"))
+	if !errors.Is(err, session.ErrPushTimeout) {
+		t.Fatalf("Push a Edge bloqueado devolvió %v, quiero ErrPushTimeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Push tardó %v: no respetó el sendTimeout", elapsed)
+	}
+}
 
 // fakeSender captura los mensajes enviados, de forma segura para concurrencia.
 type fakeSender struct {

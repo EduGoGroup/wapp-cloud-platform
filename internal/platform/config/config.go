@@ -46,6 +46,11 @@ type AppConfig struct {
 	// GRPCConnectAddr es la dirección del servidor gRPC CloudLink (mTLS estricto:
 	// el Edge conecta aquí con el cert emitido en el enrolamiento).
 	GRPCConnectAddr string `yaml:"grpc_connect_addr"`
+	// GRPCPushTimeout acota cada Send hacia un Edge por el stream CloudLink (Plan
+	// 027 · Ola 1 · T5, cierra H6): un Edge lento que no lee su stream no debe
+	// retener al llamante ni atascar el kill-switch (RevokeLease). Default 10s. <=0
+	// cae al default. Se lee como cadena time.Duration de WAPP_GRPC_PUSH_TIMEOUT.
+	GRPCPushTimeout time.Duration `yaml:"grpc_push_timeout"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
@@ -94,6 +99,11 @@ type FlowConfig struct {
 	// ReplyBurst es la ráfaga admitida por conversación. Default 3. <=0 cae al
 	// default. Se lee de WAPP_FLOW_REPLY_BURST.
 	ReplyBurst int `yaml:"reply_burst"`
+	// MaxConcurrentIncoming acota cuántos entrantes reactivos procesa el runtime a la
+	// vez (Plan 027 · Ola 1 · T5, cierra H5): un semáforo evita que una inundación de
+	// historial arranque cientos de HandleIncoming en paralelo. Default 64. 0 cae al
+	// default; <0 desactiva el techo. Se lee de WAPP_FLOW_MAX_CONCURRENT_INCOMING.
+	MaxConcurrentIncoming int `yaml:"max_concurrent_incoming"`
 	// IncomingTimeout acota el procesamiento de CADA entrante reactivo (Plan 027 ·
 	// Ola 0 · T1, cierra H1): sin deadline, la goroutine de OnIncoming se fuga
 	// esperando un Ack que nunca llega y retiene el keyedMutex de la conversación.
@@ -264,6 +274,7 @@ func defaults() AppConfig {
 		PublicHTTPAddr:  ":8103",
 		GRPCEnrollAddr:  ":8102",
 		GRPCConnectAddr: ":8101",
+		GRPCPushTimeout: 10 * time.Second,
 		LogLevel:        "info",
 		LogJSON:         false,
 		JWT: JWTConfig{
@@ -277,9 +288,10 @@ func defaults() AppConfig {
 			LoginBurst:  5,
 		},
 		Flow: FlowConfig{
-			ReplyRate:       0.5,
-			ReplyBurst:      3,
-			IncomingTimeout: 30 * time.Second,
+			ReplyRate:             0.5,
+			ReplyBurst:            3,
+			IncomingTimeout:       30 * time.Second,
+			MaxConcurrentIncoming: 64,
 		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
@@ -327,6 +339,7 @@ func Load() (AppConfig, error) {
 	cfg.PublicHTTPAddr = loader.GetString("PUBLIC_HTTP_ADDR", cfg.PublicHTTPAddr)
 	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
+	cfg.GRPCPushTimeout = getDuration(loader, "GRPC_PUSH_TIMEOUT", cfg.GRPCPushTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 
@@ -373,6 +386,7 @@ func Load() (AppConfig, error) {
 		cfg.Flow.ReplyBurst = b
 	}
 	cfg.Flow.IncomingTimeout = getDuration(loader, "FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
+	cfg.Flow.MaxConcurrentIncoming = loader.GetInt("FLOW_MAX_CONCURRENT_INCOMING", cfg.Flow.MaxConcurrentIncoming)
 
 	return cfg, nil
 }

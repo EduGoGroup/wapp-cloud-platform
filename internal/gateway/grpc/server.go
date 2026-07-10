@@ -470,11 +470,22 @@ func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error
 	if err != nil {
 		return err
 	}
+	// Push CONCURRENTE del LeaseUpdate(Revoked) a todas las sesiones del Edge (Plan
+	// 027 · Ola 1 · T5, cierra H6): cada Push ya está acotado por sendTimeout, y
+	// paralelizarlos evita que una sesión bloqueada retrase la revocación en el resto
+	// (el kill-switch debe llegar a TODAS cuanto antes). La revocación en el lease.
+	// Manager ya está persistida; estos push son la notificación best-effort.
+	var wg sync.WaitGroup
 	for _, sid := range s.sessionsForEdge(tenantID, edgeID) {
-		if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
-			s.log.Debug("revoke: push a sesión", "session_id", sid, "error", pushErr)
-		}
+		wg.Add(1)
+		go func(sid string) {
+			defer wg.Done()
+			if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
+				s.log.Debug("revoke: push a sesión", "session_id", sid, "error", pushErr)
+			}
+		}(sid)
 	}
+	wg.Wait()
 	return nil
 }
 

@@ -137,7 +137,9 @@ func run() error {
 
 	// --- Fleet + Gateway CloudLink. ---
 	gw := gatewaygrpc.New(
-		session.NewRegistry(),
+		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
+		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
+		session.NewRegistry(session.WithSendTimeout(cfg.GRPCPushTimeout)),
 		log,
 		gatewaygrpc.WithLease(leaseMgr),
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
@@ -205,6 +207,10 @@ func run() error {
 		// goroutine de OnIncoming para que un Edge mudo no fugue la goroutine ni retenga
 		// el keyedMutex de la conversación (env WAPP_FLOW_INCOMING_TIMEOUT, default 30s).
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
+		// Semáforo de concurrencia de entrantes (Plan 027 · Ola 1 · T5, cierra H5): un
+		// techo evita que una inundación de historial arranque cientos de HandleIncoming
+		// en paralelo (env WAPP_FLOW_MAX_CONCURRENT_INCOMING, default 64).
+		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
 		// Guarda anti-self-loop (Plan 020 · T2): el conjunto de self_pn del tenant sale
 		// de fleet_sessions (lo persiste el Gateway en cada Heartbeat). Un entrante de un
 		// número propio de otra sesión del mismo tenant NO auto-responde.

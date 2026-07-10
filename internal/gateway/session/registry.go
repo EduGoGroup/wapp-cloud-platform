@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 )
@@ -18,6 +19,17 @@ import (
 // ErrSessionOffline indica que no hay un stream vivo para la sesión solicitada,
 // por lo que no es posible empujar un comando hacia el Edge.
 var ErrSessionOffline = errors.New("sesión offline")
+
+// ErrPushTimeout indica que el envío a un Edge no completó dentro del sendTimeout:
+// un Edge lento/atascado (que no lee su stream) no debe retener al llamante
+// indefinidamente (Plan 027 · Ola 1 · T5, cierra H6). Es clave para el kill-switch
+// (RevokeLease), que no puede quedar atascado en la primera sesión bloqueada.
+var ErrPushTimeout = errors.New("timeout empujando comando al Edge")
+
+// defaultSendTimeout acota cada Send hacia un Edge cuando no se configura otro con
+// WithSendTimeout. 10s es holgado para un stream sano y a la vez desatasca al
+// llamante si el Edge dejó de leer (control de flujo gRPC).
+const defaultSendTimeout = 10 * time.Second
 
 // Sender es el contrato mínimo que el Registry necesita para empujar mensajes
 // hacia un Edge. DEBE ser seguro para Send concurrente: un stream gRPC crudo NO
@@ -43,13 +55,30 @@ func (s *liveSession) send(msg *cloudlinkv1.CloudToEdge) error {
 // Registry es el registro concurrente de sesiones online, indexadas por
 // session_id. Es seguro para uso concurrente.
 type Registry struct {
-	mu       sync.Mutex
-	sessions map[string]*liveSession
+	mu          sync.Mutex
+	sessions    map[string]*liveSession
+	sendTimeout time.Duration
+}
+
+// RegistryOption configura el Registry al construirlo (functional-options).
+type RegistryOption func(*Registry)
+
+// WithSendTimeout fija el deadline de cada Send hacia un Edge (Plan 027 · Ola 1 ·
+// T5, cierra H6). Un valor <=0 se ignora y cae a defaultSendTimeout.
+func WithSendTimeout(d time.Duration) RegistryOption {
+	return func(r *Registry) { r.sendTimeout = d }
 }
 
 // NewRegistry construye un Registry vacío listo para usar.
-func NewRegistry() *Registry {
-	return &Registry{sessions: make(map[string]*liveSession)}
+func NewRegistry(opts ...RegistryOption) *Registry {
+	r := &Registry{sessions: make(map[string]*liveSession)}
+	for _, opt := range opts {
+		opt(r)
+	}
+	if r.sendTimeout <= 0 {
+		r.sendTimeout = defaultSendTimeout
+	}
+	return r
 }
 
 // Register asocia un Sender a la sesión dada y devuelve una función release que
@@ -74,8 +103,13 @@ func (r *Registry) Register(sessionID string, s Sender) (release func()) {
 	}
 }
 
-// Push envía un comando hacia el Edge de la sesión dada. Devuelve un error que
-// envuelve ErrSessionOffline si la sesión no está online.
+// Push envía un comando hacia el Edge de la sesión dada, ACOTADO por sendTimeout
+// (Plan 027 · Ola 1 · T5, cierra H6). Devuelve un error que envuelve
+// ErrSessionOffline si la sesión no está online, o ErrPushTimeout si el Send no
+// completó a tiempo (Edge lento que no lee su stream). El Send se ejecuta en una
+// goroutine con un canal bufferizado (cap 1): si expira el timeout, la goroutine
+// no se bloquea al entregar el resultado y termina en cuanto el stream se
+// desatasca o el Edge cae (fuga acotada, no indefinida).
 func (r *Registry) Push(sessionID string, msg *cloudlinkv1.CloudToEdge) error {
 	r.mu.Lock()
 	ls := r.sessions[sessionID]
@@ -84,7 +118,17 @@ func (r *Registry) Push(sessionID string, msg *cloudlinkv1.CloudToEdge) error {
 	if ls == nil {
 		return fmt.Errorf("%w: %q", ErrSessionOffline, sessionID)
 	}
-	return ls.send(msg)
+
+	done := make(chan error, 1)
+	go func() { done <- ls.send(msg) }()
+	timer := time.NewTimer(r.sendTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return fmt.Errorf("%w: %q", ErrPushTimeout, sessionID)
+	}
 }
 
 // Online indica si hay un stream vivo para la sesión dada.
