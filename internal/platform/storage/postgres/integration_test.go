@@ -24,6 +24,9 @@ func openTestDB(t *testing.T) *sql.DB {
 
 	dsn := os.Getenv(dsnEnv)
 	if dsn == "" {
+		if os.Getenv("WAPP_TEST_REQUIRE_DB") != "" {
+			t.Fatalf("%s no definido pero WAPP_TEST_REQUIRE_DB exige BD (Plan 027 · Ola 1 · T7): la integración DEBE correr", dsnEnv)
+		}
 		t.Skipf("%s no definido: se omiten los tests de integración con BD", dsnEnv)
 	}
 
@@ -32,6 +35,9 @@ func openTestDB(t *testing.T) *sql.DB {
 
 	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn})
 	if err != nil {
+		if os.Getenv("WAPP_TEST_REQUIRE_DB") != "" {
+			t.Fatalf("BD no disponible en %s (%v) pero WAPP_TEST_REQUIRE_DB exige BD (Plan 027 · Ola 1 · T7)", dsnEnv, err)
+		}
 		t.Skipf("BD no disponible en %s (%v): se omiten los tests de integración", dsnEnv, err)
 	}
 	t.Cleanup(func() {

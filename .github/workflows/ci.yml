@@ -48,6 +48,49 @@ jobs:
       - name: Build
         run: go build ./...
 
+  integration:
+    name: Integración (Postgres efímero)
+    runs-on: ubuntu-latest
+    # Levanta un PostgreSQL efímero (service container) para que los
+    # *_integration_test.go DSN-gated CORRAN SIEMPRE en CI (Plan 027 · Ola 1 · T7,
+    # cierra H13): antes se saltaban en silencio sin BD y la única prueba real del
+    # fix de deadlock 40P01 nunca corría.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wapp
+          POSTGRES_PASSWORD: wapp
+          POSTGRES_DB: wapp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wapp -d wapp_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Habilita la integración y hace RUIDOSO el skip: con WAPP_TEST_REQUIRE_DB los
+      # helpers openTestDB FALLAN (t.Fatal) en vez de saltar si la BD no está, así un
+      # servicio caído no deja pasar el job en verde con todo saltado.
+      WAPP_TEST_DB_DSN: postgres://wapp:wapp@localhost:5432/wapp_test?sslmode=disable
+      WAPP_TEST_REQUIRE_DB: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Descargar dependencias
+        run: go mod download
+      # GOTCHA histórico (journal 2026-07): la integración corre con -p 1. Los tests
+      # comparten UNA sola BD y el runner de migraciones hace un scan GLOBAL hash-based
+      # (full-replay); en paralelo, los paquetes colisionan (migraciones y wipes/seed
+      # globales). -p 1 serializa los binarios de test por paquete.
+      - name: Tests de integración (Postgres real, -p 1)
+        run: go test -p 1 ./...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
