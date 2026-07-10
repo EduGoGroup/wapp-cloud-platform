@@ -102,7 +102,9 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - name: golangci-lint
+        # v2.12.2 está COMPILADO con go1.26 (v2.4.0 iba con go1.25 y no podía cargar
+        # un go.mod que apunta a go 1.26.0 → exit 3 "can't load config"). Plan 027.
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.4.0
+          version: v2.12.2
           args: --timeout=5m

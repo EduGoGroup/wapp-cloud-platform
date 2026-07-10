@@ -151,10 +151,6 @@ type connCtx struct {
 	hasIdentity bool
 }
 
-// Connect atiende el stream bidireccional CloudLink. Extrae la identidad mTLS
-// del peer, registra la sesión en el primer mensaje con session_id no vacío
-// (emitiendo lease inicial y marcando fleet online) y la marca offline al
-// cerrarse el stream. Rutea cada EdgeToCloud por el tipo de su payload.
 // cloudToEdgeSender es la cara de escritura de un stream Connect: el único
 // método que streamSender necesita del stream gRPC (facilita el test con un fake).
 type cloudToEdgeSender interface {
@@ -183,6 +179,10 @@ func (s *streamSender) Send(msg *cloudlinkv1.CloudToEdge) error {
 	return s.stream.Send(msg)
 }
 
+// Connect atiende el stream bidireccional CloudLink. Extrae la identidad mTLS
+// del peer, registra la sesión en el primer mensaje con session_id no vacío
+// (emitiendo lease inicial y marcando fleet online) y la marca offline al
+// cerrarse el stream. Rutea cada EdgeToCloud por el tipo de su payload.
 func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud, cloudlinkv1.CloudToEdge]) error {
 	streamCtx := stream.Context()
 	tenantID, edgeID, hasIdentity := peerIdentity(streamCtx)
