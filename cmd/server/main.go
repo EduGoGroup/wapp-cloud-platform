@@ -15,10 +15,14 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	stdlog "log"
@@ -60,6 +64,7 @@ import (
 	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -224,7 +229,12 @@ func run() error {
 		// Guarda anti-self-loop (Plan 020 · T2): el conjunto de self_pn del tenant sale
 		// de fleet_sessions (lo persiste el Gateway en cada Heartbeat). Un entrante de un
 		// número propio de otra sesión del mismo tenant NO auto-responde.
-		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)))
+		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)),
+		// Dedupe PERSISTENTE de entrantes (Plan 028 · T6, ADR-0003): el outbox durable
+		// del Edge da semántica at-least-once (reenvía tras reconexión); la tabla
+		// ingest_dedupe (migración 0031) corta el MISMO mensaje llegado dos veces por la
+		// clave (session_id, wa_message_id), incluso intercalado, ANTES de tocar el motor.
+		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y
@@ -515,9 +525,28 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 // negocio (gateway, store, motor). gRPC (:8101/:8102) y el admin (:8100) quedan
 // intactos: este servidor es aparte.
 func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
-	jwtMgr, svcJWTMgr, err := buildJWTManagers(cfg, log)
+	jwtBundle, svcJWTMgr, err := buildJWTManagers(cfg, log)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	// EMISOR DEL PLANO DE USUARIO (Plan 028 · T3/T4, ADR-0019): ES256 con `kid`
+	// (jwtBundle.es256). El emisor HS256 legacy quedó RETIRADO del plano de usuario
+	// (T4): WAPP_JWT_SECRET solo sobrevive para el ServiceJWTManager M2M (más abajo).
+	userTokenIssuer := jwtBundle.es256
+	// Validación del :8103 (Plan 028 · T4, ADR-0019): un MultiVerifier con la ÚNICA
+	// entrada ES256 por su `kid` (pública derivada) y SIN default, de modo que un
+	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *auth.MultiVerifier
+	// satisface la interface UserTokenValidator del middleware (authmw.go no cambia)
+	// y también el TokenValidator del AuthService: el mismo objeto valida el :8103 y
+	// el path Verify del IAM (una sola política de aceptación). El guard anti
+	// alg-confusion es transitivo (un HS256 con el kid de ES256 se rechaza).
+	userValidator, err := auth.NewMultiVerifier(
+		cfg.JWT.Issuer,
+		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
+		auth.VerifierKey{},
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (ES256): %w", err)
 	}
 	auditor, err := iamusecase.NewAuditService(iampostgres.NewAuditRepo(db))
 	if err != nil {
@@ -532,7 +561,8 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		iampostgres.NewGrantRepo(db),
 		iampostgres.NewRefreshRepo(db),
 		iampostgres.NewAuditRepo(db),
-		jwtMgr,
+		userTokenIssuer,
+		userValidator,
 		iamusecase.Config{},
 	)
 	if err != nil {
@@ -542,7 +572,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
 	}
-	authMW := httpapi.NewMiddleware(jwtMgr, m2mSvc, log)
+	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
 
 	publicMux := http.NewServeMux()
 	iamhttp.Register(publicMux, authSvc, m2mSvc, log)
@@ -589,13 +619,31 @@ func adminHandler(mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sha
 	return mw.Authenticate(h)
 }
 
-// buildJWTManagers construye el JWTManager de usuario y el ServiceJWTManager
-// M2M del IAM (Plan 018 §6) a partir del secreto de config. Zero-knowledge: el
-// secreto sale de env (WAPP_JWT_SECRET), NUNCA se hardcodea ni se loguea. En
-// prod es obligatorio (fail-fast si falta); en dev, vacío ⇒ secreto efímero
-// generado con warning (como la clave del lease). Ambos managers comparten
-// secreto pero el service token exige `aud` propia (aísla los planos usuario/M2M).
-func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*auth.JWTManager, *auth.ServiceJWTManager, error) {
+// defaultES256Kid es el `kid` por defecto cuando WAPP_JWT_KID está vacío (solo
+// dev; en producción se define un kid con la convención es256-YYYYMMDD).
+const defaultES256Kid = "es256-dev"
+
+// userJWTBundle agrupa el material de tokens de USUARIO del IAM (ADR-0019, Plan
+// 028). Tras el retiro de HS256 del plano de usuario (T4), ES256 es el único
+// emisor: reúne el emisor ES256 (con `kid`) y el material derivado que necesita
+// el MultiVerifier del middleware (la pública ES256 y el `kid` para su entrada).
+// El secreto HS256 (WAPP_JWT_SECRET) ya NO forma parte del plano de usuario;
+// sobrevive solo para el ServiceJWTManager M2M (ver buildJWTManagers).
+type userJWTBundle struct {
+	es256 *auth.JWTManager // emisor ES256 con `kid` estampado (único emisor de usuario).
+	esPub *ecdsa.PublicKey // pública ES256 derivada (entrada `kid` del MultiVerifier).
+	kid   string           // key id activo ES256.
+}
+
+// buildJWTManagers construye el material de tokens de usuario (emisor ES256) y el
+// ServiceJWTManager M2M del IAM (Plan 018 §6, ADR-0019) a partir de la config.
+// Zero-knowledge: los secretos/claves salen de env, NUNCA se hardcodean ni se
+// loguean. La clave EC (WAPP_JWT_EC_PRIVATE_KEY_FILE) firma los tokens de usuario
+// y el secreto HS256 (WAPP_JWT_SECRET) firma el service token M2M; ambos son
+// obligatorios en prod (fail-fast) y efímeros con warning en dev. El service
+// token exige `aud` propia (aísla los planos usuario/M2M). Tras T4 el secreto
+// HS256 NO firma ni valida tokens de usuario: es exclusivo del plano M2M.
+func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, *auth.ServiceJWTManager, error) {
 	secret := cfg.JWT.Secret
 	if secret == "" {
 		if cfg.Env == "prod" {
@@ -608,9 +656,37 @@ func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*auth.JWTM
 		secret = gen
 		log.Warn("secreto JWT EFÍMERO de dev: cambia en cada arranque; los tokens no sobreviven a un reinicio (no apto para producción)")
 	}
-	userMgr := auth.NewJWTManager(secret, cfg.JWT.Issuer)
+
+	// Par ES256 (F1, ADR-0019): emisor asimétrico que convive con HS256. En T1 se
+	// construye pero NO corta la emisión todavía (ver punto de conmutación).
+	priv, err := buildES256Key(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	kid := cfg.JWT.Kid
+	if kid == "" {
+		// Con ES256 como único emisor de usuario (T4), el `kid` es obligatorio en
+		// prod: es lo que ata el token a su entrada de verificación en el rotado.
+		if cfg.Env == "prod" {
+			return nil, nil, errors.New("WAPP_JWT_KID es obligatorio en prod (ADR-0019: ES256 es el único emisor de usuario)")
+		}
+		kid = defaultES256Kid
+		log.Warn("WAPP_JWT_KID vacío: usando kid por defecto \"" + defaultES256Kid + "\" (define uno con convención es256-YYYYMMDD)")
+	}
+	es256Mgr, err := auth.NewJWTManagerES256(priv, cfg.JWT.Issuer)
+	if err != nil {
+		return nil, nil, fmt.Errorf("construyendo emisor ES256: %w", err)
+	}
+	es256Mgr = es256Mgr.WithKid(kid)
+
+	bundle := &userJWTBundle{
+		es256: es256Mgr,
+		esPub: &priv.PublicKey,
+		kid:   kid,
+	}
+	// El secreto HS256 ya no firma tokens de usuario (T4): solo el service token M2M.
 	svcMgr := auth.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
-	return userMgr, svcMgr, nil
+	return bundle, svcMgr, nil
 }
 
 // randomSecret genera 32 bytes aleatorios en base64 (secreto HS256 efímero de
@@ -621,6 +697,78 @@ func randomSecret() (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+// buildES256Key resuelve la clave privada EC P-256 que firma los tokens de
+// usuario en ES256 (ADR-0019, Plan 028). Reglas por entorno (espejo del secreto
+// HS256): con WAPP_JWT_EC_PRIVATE_KEY_FILE lee el PEM, en prod exige permisos
+// <=0600, parsea PKCS#8 o SEC1 y valida curva P-256; en prod sin archivo (o
+// inválido/permisos laxos) hace fail-fast; en dev sin archivo genera un par
+// EFÍMERO en memoria con warning (permite `go run` sin fricción).
+func buildES256Key(cfg config.AppConfig, log sharedlogger.Logger) (*ecdsa.PrivateKey, error) {
+	path := cfg.JWT.ECPrivateKeyFile
+	if path == "" {
+		if cfg.Env == "prod" {
+			return nil, errors.New("WAPP_JWT_EC_PRIVATE_KEY_FILE es obligatorio en prod (ADR-0019: emisión ES256 sin default)")
+		}
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("generando par ES256 efímero de dev: %w", err)
+		}
+		log.Warn("clave ES256 EFÍMERA de dev: cambia en cada arranque; los tokens no sobreviven a un reinicio (no apto para producción)")
+		return key, nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("leyendo la clave ES256 %q: %w", path, err)
+	}
+	// En prod exige permisos estrictos (<=0600): cualquier bit de grupo/otros
+	// delata una clave privada expuesta.
+	if cfg.Env == "prod" && info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("permisos laxos en la clave ES256 %q: %#o (exige <=0600 en prod)", path, info.Mode().Perm())
+	}
+	pemBytes, err := os.ReadFile(path) // #nosec G304 -- ruta provista por la config de confianza del operador
+	if err != nil {
+		return nil, fmt.Errorf("leyendo la clave ES256 %q: %w", path, err)
+	}
+	key, err := parseECP256PrivateKeyPEM(pemBytes)
+	if err != nil {
+		return nil, fmt.Errorf("clave ES256 %q: %w", path, err)
+	}
+	return key, nil
+}
+
+// parseECP256PrivateKeyPEM decodifica un PEM con una clave privada EC en formato
+// PKCS#8 o SEC1 y exige la curva P-256 (la de ES256). Función pura (sin E/S) para
+// poder testear el parseo y la validación de curva de forma aislada.
+func parseECP256PrivateKeyPEM(pemBytes []byte) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("no contiene un bloque PEM válido")
+	}
+	// PKCS#8 primero (formato del openssl pkcs8 -topk8 documentado); si no, SEC1.
+	if parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		ec, ok := parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("la clave PKCS#8 no es ECDSA (es %T)", parsed)
+		}
+		return validateP256(ec)
+	}
+	ec, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("no es una clave EC PKCS#8 ni SEC1: %w", err)
+	}
+	return validateP256(ec)
+}
+
+// validateP256 comprueba que la clave EC use la curva P-256 (obligatoria para
+// ES256, ADR-0019); cualquier otra curva se rechaza.
+func validateP256(ec *ecdsa.PrivateKey) (*ecdsa.PrivateKey, error) {
+	if ec.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("curva %q no soportada: ES256 exige P-256", ec.Curve.Params().Name)
+	}
+	return ec, nil
 }
 
 // buildEnrollServer construye el servidor de enrolamiento y resuelve el par

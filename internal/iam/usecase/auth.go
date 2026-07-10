@@ -14,17 +14,29 @@ import (
 // tokenTypeBearer es el único esquema de autorización que emite el IAM.
 const tokenTypeBearer = "Bearer"
 
+// TokenValidator valida un access token de usuario y devuelve sus claims. Lo
+// satisfacen *auth.JWTManager (emisor único) y *auth.MultiVerifier (validación
+// dual-alg durante la coexistencia HS256↔ES256, ADR-0019). El AuthService lo
+// mantiene DESACOPLADO del emisor (s.jwt) para que Verify acepte en la ventana
+// dual exactamente los mismos tokens que el middleware del :8103 (mismo
+// MultiVerifier inyectado), incluso cuando el emisor ya cortó a ES256.
+type TokenValidator interface {
+	ValidateToken(token string) (*auth.Claims, error)
+}
+
 // AuthService implementa in.Authenticator: login/refresh/logout/verify de
 // usuario. Resuelve los grants efectivos al emitir (resolveEffectiveGrants),
-// firma con el JWTManager de wapp-shared/auth y persiste el hash del refresh.
+// firma con el JWTManager de wapp-shared/auth (s.jwt, emisor) y valida los
+// access tokens con s.validator (dual-alg), y persiste el hash del refresh.
 type AuthService struct {
-	users   out.UserRepo
-	roles   out.RoleRepo
-	grants  out.GrantRepo
-	refresh out.RefreshRepo
-	audit   out.AuditRepo
-	jwt     *auth.JWTManager
-	cfg     Config
+	users     out.UserRepo
+	roles     out.RoleRepo
+	grants    out.GrantRepo
+	refresh   out.RefreshRepo
+	audit     out.AuditRepo
+	jwt       *auth.JWTManager
+	validator TokenValidator
+	cfg       Config
 }
 
 // compile-time: AuthService satisface el puerto de entrada.
@@ -39,22 +51,27 @@ func NewAuthService(
 	refresh out.RefreshRepo,
 	audit out.AuditRepo,
 	jwt *auth.JWTManager,
+	validator TokenValidator,
 	cfg Config,
 ) (*AuthService, error) {
 	if users == nil || roles == nil || grants == nil || refresh == nil || audit == nil {
 		return nil, errors.New("iam: AuthService requiere todos los repositorios")
 	}
 	if jwt == nil {
-		return nil, errors.New("iam: AuthService requiere un JWTManager")
+		return nil, errors.New("iam: AuthService requiere un JWTManager emisor")
+	}
+	if validator == nil {
+		return nil, errors.New("iam: AuthService requiere un TokenValidator")
 	}
 	return &AuthService{
-		users:   users,
-		roles:   roles,
-		grants:  grants,
-		refresh: refresh,
-		audit:   audit,
-		jwt:     jwt,
-		cfg:     cfg.withDefaults(),
+		users:     users,
+		roles:     roles,
+		grants:    grants,
+		refresh:   refresh,
+		audit:     audit,
+		jwt:       jwt,
+		validator: validator,
+		cfg:       cfg.withDefaults(),
 	}, nil
 }
 
@@ -160,7 +177,7 @@ func (s *AuthService) Logout(ctx context.Context, req in.LogoutInput) error {
 // Valid=false SIN error (semántica del endpoint /verify, design.md §8); solo
 // los errores inesperados se propagan.
 func (s *AuthService) Verify(_ context.Context, accessToken string) (in.VerifyResult, error) {
-	claims, err := s.jwt.ValidateToken(accessToken)
+	claims, err := s.validator.ValidateToken(accessToken)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrTokenExpired) {
 			return in.VerifyResult{Valid: false}, nil

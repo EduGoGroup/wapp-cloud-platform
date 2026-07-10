@@ -145,6 +145,17 @@ type JWTConfig struct {
 	// ServiceAudience es la audiencia (`aud`) del service token M2M. Default
 	// "wapp-public-api".
 	ServiceAudience string `yaml:"service_audience"`
+	// ECPrivateKeyFile es la ruta al PEM de la clave privada EC P-256 que firma
+	// los tokens de usuario en ES256 (ADR-0019, Plan 028). Acepta PKCS#8 y SEC1.
+	// SIN default: en prod es obligatorio (fail-fast si falta, si los permisos son
+	// más laxos que 0600 o si la clave es inválida); en dev, vacío ⇒ par efímero
+	// generado en memoria con warning. Genera uno con:
+	//   openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt -out jwt-es256.pem && chmod 600 jwt-es256.pem
+	ECPrivateKeyFile string `yaml:"ec_private_key_file"`
+	// Kid es el key id (`kid`) que el emisor ES256 estampa en cada token y que el
+	// MultiVerifier usa para seleccionar la pública en la coexistencia de
+	// algoritmos. Convención es256-YYYYMMDD. Vacío en dev ⇒ default "es256-dev".
+	Kid string `yaml:"kid"`
 }
 
 // StorageConfig agrupa los parámetros del almacén de objetos Cloudflare R2
@@ -375,6 +386,8 @@ func Load() (AppConfig, error) {
 	cfg.JWT.Secret = loader.GetString("JWT_SECRET", cfg.JWT.Secret)
 	cfg.JWT.Issuer = loader.GetString("JWT_ISSUER", cfg.JWT.Issuer)
 	cfg.JWT.ServiceAudience = loader.GetString("SERVICE_JWT_AUDIENCE", cfg.JWT.ServiceAudience)
+	cfg.JWT.ECPrivateKeyFile = loader.GetString("JWT_EC_PRIVATE_KEY_FILE", cfg.JWT.ECPrivateKeyFile)
+	cfg.JWT.Kid = loader.GetString("JWT_KID", cfg.JWT.Kid)
 
 	cfg.RateLimit.PublicRPS = loader.GetInt("RATELIMIT_PUBLIC_RPS", cfg.RateLimit.PublicRPS)
 	cfg.RateLimit.PublicBurst = loader.GetInt("RATELIMIT_PUBLIC_BURST", cfg.RateLimit.PublicBurst)

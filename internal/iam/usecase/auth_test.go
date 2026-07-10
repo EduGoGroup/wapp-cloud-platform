@@ -2,7 +2,13 @@ package usecase_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
@@ -34,7 +40,7 @@ func mustUserSvc(t *testing.T, s *memory.Store) *usecase.UserService {
 
 func mustAuthSvc(t *testing.T, s *memory.Store, jwt *auth.JWTManager) *usecase.AuthService {
 	t.Helper()
-	svc, err := usecase.NewAuthService(s.Users, s.Roles, s.Grants, s.Refresh, s.Audit, jwt, usecase.Config{})
+	svc, err := usecase.NewAuthService(s.Users, s.Roles, s.Grants, s.Refresh, s.Audit, jwt, jwt, usecase.Config{})
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}
@@ -62,7 +68,7 @@ func fixture(t *testing.T) (*usecase.AuthService, *usecase.UserService, *memory.
 	if err != nil {
 		t.Fatalf("NewUserService: %v", err)
 	}
-	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, usecase.Config{})
+	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, jwt, usecase.Config{})
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}
@@ -123,6 +129,84 @@ func TestLogin_OK_EmitsTokensAndEffectiveGrants(t *testing.T) {
 	if _, err := store.Refresh.GetByHash(ctx, auth.HashToken(res.RefreshToken)); err != nil {
 		t.Fatalf("refresh no persistido: %v", err)
 	}
+}
+
+// TestLogin_ES256_EmitsAsymmetricTokenWithKid cubre el corte de emisión a ES256
+// (Plan 028 · T3, ADR-0019): con un emisor ES256 el login emite un access token
+// cuyo header declara alg=ES256 y el `kid` activo, y el path Verify (validador
+// dual = MultiVerifier) lo acepta. El refresh sigue opaco.
+func TestLogin_ES256_EmitsAsymmetricTokenWithKid(t *testing.T) {
+	t.Parallel()
+	_, _, store, _ := fixture(t)
+	ctx := context.Background()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generando clave ES256: %v", err)
+	}
+	const kid = "es256-test"
+	es256, err := auth.NewJWTManagerES256(priv, testIssuer)
+	if err != nil {
+		t.Fatalf("NewJWTManagerES256: %v", err)
+	}
+	es256 = es256.WithKid(kid)
+	// Validador dual: ES256 por kid + HS256 legacy por default (ventana dual T3).
+	mv, err := auth.NewMultiVerifier(testIssuer,
+		map[string]auth.VerifierKey{kid: auth.ES256VerifierKey(&priv.PublicKey)},
+		auth.HS256VerifierKey(testSigningKey))
+	if err != nil {
+		t.Fatalf("NewMultiVerifier: %v", err)
+	}
+	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, es256, mv, usecase.Config{})
+	if err != nil {
+		t.Fatalf("NewAuthService: %v", err)
+	}
+
+	res, err := authSvc.Login(ctx, in.LoginInput{Email: testEmail, Password: testLoginPhrase})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	alg, gotKid := jwtHeader(t, res.AccessToken)
+	if alg != "ES256" {
+		t.Errorf("alg del access token = %q, want ES256", alg)
+	}
+	if gotKid != kid {
+		t.Errorf("kid del access token = %q, want %q", gotKid, kid)
+	}
+
+	v, err := authSvc.Verify(ctx, res.AccessToken)
+	if err != nil {
+		t.Fatalf("Verify(ES256): %v", err)
+	}
+	if !v.Valid || v.TenantID != testTenant {
+		t.Fatalf("Verify(ES256) inesperado: %+v", v)
+	}
+
+	// El refresh es opaco (no un JWS): no tiene header ES256, pero sí quedó
+	// persistido por su hash.
+	if _, err := store.Refresh.GetByHash(ctx, auth.HashToken(res.RefreshToken)); err != nil {
+		t.Fatalf("refresh no persistido: %v", err)
+	}
+}
+
+// jwtHeader decodifica el header (1.er segmento) de un JWS compacto y devuelve
+// alg y kid SIN verificar la firma (basta para aseverar el algoritmo emitido).
+func jwtHeader(t *testing.T, token string) (alg, kid string) {
+	t.Helper()
+	seg := strings.SplitN(token, ".", 2)[0]
+	raw, err := base64.RawURLEncoding.DecodeString(seg)
+	if err != nil {
+		t.Fatalf("decodificando header JWT: %v", err)
+	}
+	var h struct {
+		Alg string `json:"alg"`
+		Kid string `json:"kid"`
+	}
+	if err := json.Unmarshal(raw, &h); err != nil {
+		t.Fatalf("parseando header JWT: %v", err)
+	}
+	return h.Alg, h.Kid
 }
 
 func TestLogin_BadPassword(t *testing.T) {

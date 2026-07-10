@@ -38,7 +38,7 @@ func newHarness(t *testing.T) harness {
 	jwt := auth.NewJWTManager(tSecret, tIssuer)
 	svcJWT := auth.NewServiceJWTManager(tSecret, tIssuer, tAudience)
 
-	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, usecase.Config{})
+	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, jwt, usecase.Config{})
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}
