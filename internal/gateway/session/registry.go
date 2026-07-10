@@ -20,23 +20,23 @@ import (
 var ErrSessionOffline = errors.New("sesión offline")
 
 // Sender es el contrato mínimo que el Registry necesita para empujar mensajes
-// hacia un Edge. Un stream gRPC del servidor CloudLink lo satisface con su
-// método Send(*CloudToEdge) error.
+// hacia un Edge. DEBE ser seguro para Send concurrente: un stream gRPC crudo NO
+// lo es (grpc-go prohíbe SendMsg concurrente sobre el mismo stream), así que el
+// Gateway registra un envoltorio serializado POR-STREAM (por-Edge, ADR-0008), no
+// el stream crudo (Plan 027 · Ola 0 · T3, cierra H2). El Registry NO añade su
+// propio candado: serializar por session_id sería la granularidad EQUIVOCADA
+// —dos sesiones del mismo Edge comparten un solo stream— y daría falsa seguridad.
 type Sender interface {
 	Send(*cloudlinkv1.CloudToEdge) error
 }
 
-// liveSession envuelve un Sender y serializa los Send de esa sesión: un stream
-// gRPC no admite llamadas a Send concurrentes, así que cada envío toma el mutex
-// de la sesión.
+// liveSession asocia un session_id a su Sender. No serializa: la seguridad de
+// concurrencia del Send es responsabilidad del Sender (ver el contrato de Sender).
 type liveSession struct {
-	sendMu sync.Mutex
 	sender Sender
 }
 
 func (s *liveSession) send(msg *cloudlinkv1.CloudToEdge) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
 	return s.sender.Send(msg)
 }
 

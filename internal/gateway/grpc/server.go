@@ -155,9 +155,42 @@ type connCtx struct {
 // del peer, registra la sesión en el primer mensaje con session_id no vacío
 // (emitiendo lease inicial y marcando fleet online) y la marca offline al
 // cerrarse el stream. Rutea cada EdgeToCloud por el tipo de su payload.
+// cloudToEdgeSender es la cara de escritura de un stream Connect: el único
+// método que streamSender necesita del stream gRPC (facilita el test con un fake).
+type cloudToEdgeSender interface {
+	Send(*cloudlinkv1.CloudToEdge) error
+}
+
+// streamSender serializa las escrituras al stream Connect de UN Edge. grpc-go
+// prohíbe SendMsg concurrente sobre el mismo stream, y un Edge multiplexa N
+// sesiones sobre UN solo stream (ADR-0008): por eso el candado es POR-STREAM
+// (por-Edge), no por-session_id. Connect crea UNA instancia por stream y la
+// registra para TODAS sus sesiones, de modo que los Push de dos sesiones del
+// mismo Edge se serializan sobre el único mutex del stream (Plan 027 · Ola 0 ·
+// T3, cierra H2). Satisface session.Sender.
+type streamSender struct {
+	mu     sync.Mutex
+	stream cloudToEdgeSender
+}
+
+func newStreamSender(stream cloudToEdgeSender) *streamSender {
+	return &streamSender{stream: stream}
+}
+
+func (s *streamSender) Send(msg *cloudlinkv1.CloudToEdge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(msg)
+}
+
 func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud, cloudlinkv1.CloudToEdge]) error {
 	streamCtx := stream.Context()
 	tenantID, edgeID, hasIdentity := peerIdentity(streamCtx)
+
+	// Envoltorio serializado POR-STREAM: todas las sesiones de este Edge registran
+	// ESTA misma instancia, así ningún par de sesiones hace SendMsg concurrente
+	// sobre el stream (Plan 027 · Ola 0 · T3, cierra H2).
+	sender := newStreamSender(stream)
 
 	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity}
 	// releases mapea cada session_id registrado en ESTE stream a su release. Es
@@ -196,7 +229,7 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 			// Registro perezoso por-frame (register-on-first-frame): la primera
 			// vez que aparece un session_id se registra; idempotente después.
 			if _, ok := releases[sessionID]; !ok {
-				releases[sessionID] = s.registry.Register(sessionID, stream)
+				releases[sessionID] = s.registry.Register(sessionID, sender)
 				s.log.Info("sesión CloudLink registrada",
 					"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
 				s.onSessionRegistered(streamCtx, frameCC)
