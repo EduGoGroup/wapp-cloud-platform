@@ -523,27 +523,24 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// PUNTO DE CONMUTACIÓN DEL EMISOR (Plan 028 · T3, ADR-0019): la emisión de
-	// tokens de usuario CORTA aquí a ES256 (jwtBundle.es256, con `kid`). El emisor
-	// HS256 legacy (jwtBundle.hs256) deja de emitir; el MultiVerifier de abajo lo
-	// sigue aceptando por default durante la ventana dual (hasta que T4 lo retire).
+	// EMISOR DEL PLANO DE USUARIO (Plan 028 · T3/T4, ADR-0019): ES256 con `kid`
+	// (jwtBundle.es256). El emisor HS256 legacy quedó RETIRADO del plano de usuario
+	// (T4): WAPP_JWT_SECRET solo sobrevive para el ServiceJWTManager M2M (más abajo).
 	userTokenIssuer := jwtBundle.es256
-	// Validación dual-alg del :8103 (Plan 028 · T2, ADR-0019): un MultiVerifier
-	// que valida los tokens ES256 nuevos por su `kid` (entrada con la pública
-	// derivada) y, por default, los tokens legacy HS256 sin `kid` (secreto
-	// compartido). *auth.MultiVerifier satisface la interface UserTokenValidator
-	// del middleware (authmw.go no cambia) y también el TokenValidator del
-	// AuthService: el mismo objeto valida el :8103 y el path Verify del IAM (una
-	// sola política de aceptación durante la ventana dual). El guard anti
-	// alg-confusion es transitivo (un HS256 con el kid de ES256 —o viceversa— se
-	// rechaza), cubriendo la confusión de algoritmos de extremo a extremo.
+	// Validación del :8103 (Plan 028 · T4, ADR-0019): un MultiVerifier con la ÚNICA
+	// entrada ES256 por su `kid` (pública derivada) y SIN default, de modo que un
+	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *auth.MultiVerifier
+	// satisface la interface UserTokenValidator del middleware (authmw.go no cambia)
+	// y también el TokenValidator del AuthService: el mismo objeto valida el :8103 y
+	// el path Verify del IAM (una sola política de aceptación). El guard anti
+	// alg-confusion es transitivo (un HS256 con el kid de ES256 se rechaza).
 	userValidator, err := auth.NewMultiVerifier(
 		cfg.JWT.Issuer,
 		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
-		auth.HS256VerifierKey(jwtBundle.secret),
+		auth.VerifierKey{},
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (dual-alg): %w", err)
+		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (ES256): %w", err)
 	}
 	auditor, err := iamusecase.NewAuditService(iampostgres.NewAuditRepo(db))
 	if err != nil {
@@ -620,28 +617,26 @@ func adminHandler(mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sha
 // dev; en producción se define un kid con la convención es256-YYYYMMDD).
 const defaultES256Kid = "es256-dev"
 
-// userJWTBundle agrupa el material de tokens de USUARIO del IAM durante la
-// coexistencia de algoritmos HS256↔ES256 (ADR-0019, Plan 028). Reúne el emisor
-// HS256 legacy y el emisor ES256 nuevo (con `kid`), más el material derivado que
-// necesita el MultiVerifier del middleware (secreto HS256 para el default y la
-// pública ES256 para la entrada por `kid`). El corte de la emisión de HS256 a
-// ES256 es un cambio de una línea (T3): ver el punto de conmutación en
-// buildPublicAPIServer.
+// userJWTBundle agrupa el material de tokens de USUARIO del IAM (ADR-0019, Plan
+// 028). Tras el retiro de HS256 del plano de usuario (T4), ES256 es el único
+// emisor: reúne el emisor ES256 (con `kid`) y el material derivado que necesita
+// el MultiVerifier del middleware (la pública ES256 y el `kid` para su entrada).
+// El secreto HS256 (WAPP_JWT_SECRET) ya NO forma parte del plano de usuario;
+// sobrevive solo para el ServiceJWTManager M2M (ver buildJWTManagers).
 type userJWTBundle struct {
-	hs256  *auth.JWTManager // emisor/validador HS256 legacy (secreto simétrico).
-	es256  *auth.JWTManager // emisor ES256 con `kid` estampado (F1); aún NO corta la emisión (T3).
-	secret string           // secreto HS256 resuelto (default del MultiVerifier: tokens legacy sin kid).
-	esPub  *ecdsa.PublicKey // pública ES256 derivada (entrada `kid` del MultiVerifier).
-	kid    string           // key id activo ES256.
+	es256 *auth.JWTManager // emisor ES256 con `kid` estampado (único emisor de usuario).
+	esPub *ecdsa.PublicKey // pública ES256 derivada (entrada `kid` del MultiVerifier).
+	kid   string           // key id activo ES256.
 }
 
-// buildJWTManagers construye el material de tokens de usuario (HS256 legacy +
-// ES256 nuevo) y el ServiceJWTManager M2M del IAM (Plan 018 §6, ADR-0019) a
-// partir de la config. Zero-knowledge: los secretos/claves salen de env, NUNCA
-// se hardcodean ni se loguean. El secreto HS256 (WAPP_JWT_SECRET) y la clave EC
-// (WAPP_JWT_EC_PRIVATE_KEY_FILE) son obligatorios en prod (fail-fast) y efímeros
-// con warning en dev. El service token comparte el secreto HS256 pero exige
-// `aud` propia (aísla los planos usuario/M2M).
+// buildJWTManagers construye el material de tokens de usuario (emisor ES256) y el
+// ServiceJWTManager M2M del IAM (Plan 018 §6, ADR-0019) a partir de la config.
+// Zero-knowledge: los secretos/claves salen de env, NUNCA se hardcodean ni se
+// loguean. La clave EC (WAPP_JWT_EC_PRIVATE_KEY_FILE) firma los tokens de usuario
+// y el secreto HS256 (WAPP_JWT_SECRET) firma el service token M2M; ambos son
+// obligatorios en prod (fail-fast) y efímeros con warning en dev. El service
+// token exige `aud` propia (aísla los planos usuario/M2M). Tras T4 el secreto
+// HS256 NO firma ni valida tokens de usuario: es exclusivo del plano M2M.
 func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, *auth.ServiceJWTManager, error) {
 	secret := cfg.JWT.Secret
 	if secret == "" {
@@ -664,6 +659,11 @@ func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBu
 	}
 	kid := cfg.JWT.Kid
 	if kid == "" {
+		// Con ES256 como único emisor de usuario (T4), el `kid` es obligatorio en
+		// prod: es lo que ata el token a su entrada de verificación en el rotado.
+		if cfg.Env == "prod" {
+			return nil, nil, errors.New("WAPP_JWT_KID es obligatorio en prod (ADR-0019: ES256 es el único emisor de usuario)")
+		}
 		kid = defaultES256Kid
 		log.Warn("WAPP_JWT_KID vacío: usando kid por defecto \"" + defaultES256Kid + "\" (define uno con convención es256-YYYYMMDD)")
 	}
@@ -674,12 +674,11 @@ func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBu
 	es256Mgr = es256Mgr.WithKid(kid)
 
 	bundle := &userJWTBundle{
-		hs256:  auth.NewJWTManager(secret, cfg.JWT.Issuer),
-		es256:  es256Mgr,
-		secret: secret,
-		esPub:  &priv.PublicKey,
-		kid:    kid,
+		es256: es256Mgr,
+		esPub: &priv.PublicKey,
+		kid:   kid,
 	}
+	// El secreto HS256 ya no firma tokens de usuario (T4): solo el service token M2M.
 	svcMgr := auth.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
 	return bundle, svcMgr, nil
 }
