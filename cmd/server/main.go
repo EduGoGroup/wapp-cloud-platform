@@ -728,7 +728,7 @@ func buildES256Key(cfg config.AppConfig, log sharedlogger.Logger) (*ecdsa.Privat
 	if cfg.Env == "prod" && info.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("permisos laxos en la clave ES256 %q: %#o (exige <=0600 en prod)", path, info.Mode().Perm())
 	}
-	pemBytes, err := os.ReadFile(path)
+	pemBytes, err := os.ReadFile(path) // #nosec G304 -- ruta provista por la config de confianza del operador
 	if err != nil {
 		return nil, fmt.Errorf("leyendo la clave ES256 %q: %w", path, err)
 	}
