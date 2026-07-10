@@ -124,6 +124,12 @@ type Runtime struct {
 	// expiración + siembra de Vars. Un nodo sin política (menú/encuesta) NO reanuda
 	// nada (no-regresión). Se registra con WithResumePolicy; el carrito la aporta.
 	resumePolicies map[string]modules.ResumePolicy
+	// deduper deduplica los entrantes ante los reenvíos del outbox durable del Edge
+	// (Plan 028 · T6, ADR-0003): antes de tocar el motor, un frame ya visto (misma
+	// session_id + wa_message_id) se ignora. nil (sin WithIngestDeduper) desactiva la
+	// dedupe persistente: no-regresión total (queda solo la consecutiva por
+	// last_wa_message_id).
+	deduper IngestDeduper
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -172,6 +178,13 @@ func WithReplyLimiter(l ReplyLimiter) Option {
 // la guarda (nil ⇒ no-regresión: se procesa igual que antes del Plan 020).
 func WithSelfNumbers(l SelfNumberLister) Option {
 	return func(rt *Runtime) { rt.selfNumbers = l }
+}
+
+// WithIngestDeduper inyecta el deduper persistente de entrantes (Plan 028 · T6,
+// ADR-0003). Sin él, el runtime no deduplica los reenvíos del outbox (nil ⇒
+// no-regresión: queda solo la idempotencia consecutiva por last_wa_message_id).
+func WithIngestDeduper(d IngestDeduper) Option {
+	return func(rt *Runtime) { rt.deduper = d }
 }
 
 // WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante
@@ -377,6 +390,48 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	return rt.send(ctx, sessionID, to, outs)
 }
 
+// duplicateIngest es la guarda de dedupe PERSISTENTE de entrantes (Plan 028 · T6,
+// ADR-0003): el outbox durable del Edge (Plan 027 Ola 3) reenvía frames tras
+// reconexión ⇒ semántica at-least-once. La idempotencia consecutiva por
+// last_wa_message_id (dentro de HandleIncoming) solo corta la RE-ENTREGA INMEDIATA;
+// un duplicado INTERCALADO (A, B, A) o el reenvío de un entrante que dispara/escapa
+// un flujo (caminos que NO tocan last_wa_message_id) se colaría. Aquí, ANTES de
+// tocar el motor (resolver tenant/contacto, tomar el keyedMutex, cargar estado o
+// correr efectos), se registra la clave (session_id, wa_message_id) en una tabla
+// idempotente: si ya se vio ⇒ true (el llamante descarta el frame sin re-procesar
+// efectos ni auto-responder). La clave única de la tabla resuelve además dos
+// duplicados CONCURRENTES (cada entrante corre en su goroutine): exactamente uno
+// inserta y procesa. Un wa_message_id vacío (evento sintético, no esperable en
+// entrantes reales) NO se deduplica: cae al camino de siempre. Sin deduper cableado
+// (nil) tampoco deduplica (no-regresión). Un fallo del deduper es best-effort
+// (fail-open): se LOGUEA y devuelve false (se prefiere reprocesar a perder el
+// entrante), coherente con las guardas best-effort del motor (p.ej. IsEscape).
+func (rt *Runtime) duplicateIngest(ctx context.Context, sessionID string, m *cloudlinkv1.IncomingMessage) bool {
+	if rt.deduper == nil || m.GetWaMessageId() == "" {
+		return false
+	}
+	seen, err := rt.deduper.Seen(ctx, sessionID, m.GetWaMessageId())
+	if err != nil {
+		rt.log.Warn("runtime: dedupe de ingesta falló; se continúa (fail-open)",
+			"error", err, "session_id", sessionID, "wa_message_id", m.GetWaMessageId())
+		return false
+	}
+	if seen {
+		rt.log.Debug("runtime: entrante duplicado ignorado (dedupe de ingesta)",
+			"session_id", sessionID, "wa_message_id", m.GetWaMessageId())
+	}
+	return seen
+}
+
+// consecutiveReplay es la idempotencia CONSECUTIVA (design.md §10.G): corta la
+// re-entrega INMEDIATA de un mensaje comparándolo con el último procesado en el
+// estado del flujo (last_wa_message_id). Complementa —no reemplaza— el dedupe
+// persistente (duplicateIngest), que cubre además los duplicados intercalados y los
+// caminos que no tocan last_wa_message_id (disparo/escape).
+func consecutiveReplay(st model.Conversation, m *cloudlinkv1.IncomingMessage) bool {
+	return st.LastWaMessageID != "" && st.LastWaMessageID == m.GetWaMessageId()
+}
+
 // HandleIncoming avanza una conversación EXISTENTE con un entrante (design.md
 // §6). Resuelve el tenant, serializa por clave y:
 //   - si no hay estado vivo → lo IGNORA (return nil; decisión C: un entrante no
@@ -390,6 +445,11 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 // en este corte: si el SendText falla, el paso NO se reenvía porque el estado
 // ya avanzó (preferimos no duplicar el avance a costa de un texto perdido).
 func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *cloudlinkv1.IncomingMessage) error {
+	// Dedupe PERSISTENTE de ingesta (Plan 028 · T6, ADR-0003): un reenvío del outbox
+	// del Edge se corta ANTES de tocar el motor. Ver duplicateIngest.
+	if rt.duplicateIngest(ctx, sessionID, m) {
+		return nil
+	}
 	tenantID, role, err := rt.resolver.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
@@ -434,8 +494,8 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	} else if esc {
 		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
 	}
-	if st.LastWaMessageID != "" && st.LastWaMessageID == m.GetWaMessageId() {
-		// Re-entrega del mismo mensaje → no avanzar ni reenviar (idempotencia).
+	if consecutiveReplay(st, m) {
+		// Re-entrega INMEDIATA del mismo mensaje → no avanzar ni reenviar.
 		return nil
 	}
 
