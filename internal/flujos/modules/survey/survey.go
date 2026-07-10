@@ -16,8 +16,6 @@
 package survey
 
 import (
-	"strings"
-
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 )
@@ -53,7 +51,8 @@ func (Module) Render(_ model.Node, content model.Content) []string {
 	return []string{content.Prompt}
 }
 
-// Step valida la opción tecleada y decide la transición o el reprompt:
+// Step valida la opción tecleada y decide la transición o el reprompt, sobre la
+// base común de opción numerada (modules.NumberedStep, Plan 027 · Ola 2 · T9):
 //   - opción válida (coincide, tras TrimSpace, con una clave de Options):
 //     registra la respuesta (answer_code = la clave elegida) bajo
 //     Vars["answers"][QuestionID], transiciona al nodo destino y reinicia el
@@ -63,73 +62,26 @@ func (Module) Render(_ model.Node, content model.Content) []string {
 //     respuesta).
 //   - al alcanzar MaxReprompts intentos inválidos: emite un mensaje de ayuda,
 //     reinicia el contador (para no spamear) y permanece en el nodo.
+//
+// La ÚNICA diferencia con el menú vive en el callback de opción válida: la encuesta
+// anota la respuesta en Vars["answers"] y DECLARA el efecto survey_answer (el módulo
+// sigue PURO: solo lo anota; el runtime lo despacha al PersistSink, misma fila
+// survey_results del Plan 014). El reprompt y la tolerancia de entrada son comunes.
 func (Module) Step(node model.Node, conv model.Conversation, input string) modules.Result {
-	vars := cloneVars(conv.Vars)
-	trimmed := strings.TrimSpace(input)
-
-	if target, ok := node.Options[trimmed]; ok {
-		// Opción válida → registrar respuesta y transicionar.
-		answers := asMap(vars["answers"])
-		answers[node.QuestionID] = trimmed // answer_code = la clave elegida (§10.D).
-		vars["answers"] = answers
-		delete(vars, RepromptKey) // reiniciar el contador para la siguiente pregunta.
-		dest := target
-		res := modules.Result{Next: &dest, Vars: vars}
-		// DECLARA el efecto de persistir la respuesta (Plan 015 · T3): el módulo
-		// sigue PURO —solo lo anota; el runtime lo despacha al PersistSink, que
-		// escribe flow_events y proyecta survey_results (la MISMA fila que producía
-		// el flush del Plan 014). answer_code = la clave elegida, idéntico a
-		// answers[QuestionID]. question_id/answer_code son códigos de negocio, no PII.
-		res.Effects = append(res.Effects, modules.Effect{
-			Kind:    "persist",
-			Name:    "survey_answer",
-			Payload: map[string]any{"question_id": node.QuestionID, "answer_code": trimmed},
+	return modules.NumberedStep(node, conv, input, RepromptKey, MaxReprompts,
+		func(vars map[string]any, choice, target string) modules.Result {
+			answers := asMap(vars["answers"])
+			answers[node.QuestionID] = choice // answer_code = la clave elegida (§10.D).
+			vars["answers"] = answers
+			dest := target
+			res := modules.Result{Next: &dest, Vars: vars}
+			res.Effects = append(res.Effects, modules.Effect{
+				Kind:    "persist",
+				Name:    "survey_answer",
+				Payload: map[string]any{"question_id": node.QuestionID, "answer_code": choice},
+			})
+			return res
 		})
-		return res
-	}
-
-	// Opción inválida.
-	attempts := getInt(vars, RepromptKey) + 1
-	if attempts >= MaxReprompts {
-		// Tercer intento inválido: mensaje de ayuda + permanecer + reinicio.
-		delete(vars, RepromptKey)
-		return modules.Result{Vars: vars, Outputs: []string{helpText(node)}}
-	}
-	vars[RepromptKey] = attempts
-	return modules.Result{Vars: vars, Outputs: []string{invalidText(node)}}
-}
-
-func invalidText(node model.Node) string {
-	return "Opción no válida. Responde con el número de una de las opciones.\n\n" + node.Prompt
-}
-
-func helpText(node model.Node) string {
-	return "No logré entender tu respuesta. Por favor elige una de las opciones escribiendo solo su número.\n\n" + node.Prompt
-}
-
-// cloneVars copia el mapa de variables para mantener la pureza (no mutar el
-// estado de entrada). nil → mapa nuevo.
-func cloneVars(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in)+1)
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// getInt lee un entero tolerando el tipo que deja un round-trip por JSON
-// (float64) además de int/int64.
-func getInt(vars map[string]any, key string) int {
-	switch v := vars[key].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
 }
 
 // asMap devuelve el mapa de respuestas mutable, tolerando el round-trip JSON

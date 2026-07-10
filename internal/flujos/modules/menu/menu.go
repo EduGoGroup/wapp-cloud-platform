@@ -10,8 +10,6 @@
 package menu
 
 import (
-	"strings"
-
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 )
@@ -46,64 +44,21 @@ func (Module) Render(_ model.Node, content model.Content) []string {
 	return []string{content.Prompt}
 }
 
-// Step valida la opción tecleada y decide la transición o el reprompt:
+// Step valida la opción tecleada y decide la transición o el reprompt, sobre la
+// base común de opción numerada (modules.NumberedStep, Plan 027 · Ola 2 · T9):
 //   - opción válida (coincide, tras TrimSpace, con una clave de Options):
 //     transiciona al nodo destino y reinicia el contador de reprompt.
 //   - opción inválida con < MaxReprompts intentos: re-emite el prompt precedido
 //     de un aviso, e incrementa el contador (permanece en el nodo).
 //   - al alcanzar MaxReprompts intentos inválidos: emite un mensaje de ayuda,
 //     reinicia el contador (para no spamear) y permanece en el nodo.
+//
+// El menú no registra nada extra en la opción válida: solo transiciona (a
+// diferencia de la encuesta, que anota la respuesta y declara un efecto).
 func (Module) Step(node model.Node, conv model.Conversation, input string) modules.Result {
-	vars := cloneVars(conv.Vars)
-	trimmed := strings.TrimSpace(input)
-
-	if target, ok := node.Options[trimmed]; ok {
-		// Opción válida → transición. El contador se reinicia al transicionar.
-		delete(vars, RepromptKey)
-		dest := target
-		return modules.Result{Next: &dest, Vars: vars}
-	}
-
-	// Opción inválida.
-	attempts := getInt(vars, RepromptKey) + 1
-	if attempts >= MaxReprompts {
-		// Tercer intento inválido: mensaje de ayuda + permanecer + reinicio.
-		delete(vars, RepromptKey)
-		return modules.Result{Vars: vars, Outputs: []string{helpText(node)}}
-	}
-	vars[RepromptKey] = attempts
-	return modules.Result{Vars: vars, Outputs: []string{invalidText(node)}}
-}
-
-func invalidText(node model.Node) string {
-	return "Opción no válida. Responde con el número de una de las opciones.\n\n" + node.Prompt
-}
-
-func helpText(node model.Node) string {
-	return "No logré entender tu respuesta. Por favor elige una de las opciones escribiendo solo su número.\n\n" + node.Prompt
-}
-
-// cloneVars copia el mapa de variables para mantener la pureza (no mutar el
-// estado de entrada). nil → mapa nuevo.
-func cloneVars(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in)+1)
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// getInt lee un entero tolerando el tipo que deja un round-trip por JSON
-// (float64) además de int/int64.
-func getInt(vars map[string]any, key string) int {
-	switch v := vars[key].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
+	return modules.NumberedStep(node, conv, input, RepromptKey, MaxReprompts,
+		func(vars map[string]any, _ /* choice */, target string) modules.Result {
+			dest := target
+			return modules.Result{Next: &dest, Vars: vars}
+		})
 }
