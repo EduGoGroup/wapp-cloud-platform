@@ -64,3 +64,20 @@ type TenantResolver interface {
 type SelfNumberLister interface {
 	SelfNumbers(ctx context.Context, tenantID string) ([]string, error)
 }
+
+// IngestDeduper deduplica los mensajes ENTRANTES ante la semántica at-least-once
+// del outbox durable del Edge (Plan 028 · T6, ADR-0003): tras una reconexión el
+// mismo mensaje de WhatsApp puede reenviarse (los MISMOS bytes). Seen registra de
+// forma persistente e IDEMPOTENTE la clave (session_id, wa_message_id) del entrante
+// y devuelve true si YA se había visto (⇒ el runtime lo ignora ANTES de tocar el
+// motor: sin re-procesar efectos ni auto-responder). Se declara en el paquete
+// runtime (interfaz estrecha, como SelfNumberLister) para NO acoplar el motor al
+// paquete de ingesta: lo implementa *ingest.PostgresDeduper (o un doble en tests).
+// La idempotencia previa por last_wa_message_id es CONSECUTIVA (solo la re-entrega
+// inmediata); esta cubre además los duplicados INTERCALADOS y los reenvíos que
+// disparan/escapan un flujo (caminos que no tocan last_wa_message_id). nil (sin
+// WithIngestDeduper) desactiva la dedupe persistente: no-regresión total (queda
+// solo la consecutiva).
+type IngestDeduper interface {
+	Seen(ctx context.Context, sessionID, waMessageID string) (bool, error)
+}

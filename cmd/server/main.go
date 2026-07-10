@@ -64,6 +64,7 @@ import (
 	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -228,7 +229,12 @@ func run() error {
 		// Guarda anti-self-loop (Plan 020 · T2): el conjunto de self_pn del tenant sale
 		// de fleet_sessions (lo persiste el Gateway en cada Heartbeat). Un entrante de un
 		// número propio de otra sesión del mismo tenant NO auto-responde.
-		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)))
+		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)),
+		// Dedupe PERSISTENTE de entrantes (Plan 028 · T6, ADR-0003): el outbox durable
+		// del Edge da semántica at-least-once (reenvía tras reconexión); la tabla
+		// ingest_dedupe (migración 0031) corta el MISMO mensaje llegado dos veces por la
+		// clave (session_id, wa_message_id), incluso intercalado, ANTES de tocar el motor.
+		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)))
 
 	// Observabilidad de la recepción 24/7 (T6 e2e con el Edge real). Los hooks se
 	// fijan antes de servir: cada IncomingMessage lo procesa el Motor de Flujos y
