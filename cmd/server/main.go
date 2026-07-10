@@ -552,7 +552,23 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
 	}
-	authMW := httpapi.NewMiddleware(jwtBundle.hs256, m2mSvc, log)
+	// Validación dual-alg del :8103 (Plan 028 · T2, ADR-0019): un MultiVerifier
+	// que valida los tokens ES256 nuevos por su `kid` (entrada con la pública
+	// derivada) y, por default, los tokens legacy HS256 sin `kid` (secreto
+	// compartido). Reemplaza al JWTManager único inyectado antes: *auth.MultiVerifier
+	// satisface la misma interface UserTokenValidator, así que authmw.go no cambia.
+	// El guard anti alg-confusion es transitivo (un HS256 con el kid de ES256 —o
+	// viceversa— se rechaza), cubriendo la confusión de algoritmos de extremo a
+	// extremo del middleware.
+	userValidator, err := auth.NewMultiVerifier(
+		cfg.JWT.Issuer,
+		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
+		auth.HS256VerifierKey(jwtBundle.secret),
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (dual-alg): %w", err)
+	}
+	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
 
 	publicMux := http.NewServeMux()
 	iamhttp.Register(publicMux, authSvc, m2mSvc, log)
