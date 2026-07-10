@@ -9,8 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
+
+// execer es la cara de escritura común de *sql.DB y *sql.Tx (ExecContext), para
+// que los INSERT en lote se reusen tanto en el camino autocommit como dentro de
+// una transacción (CloseOrder).
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 // surveyResultCols es el número de columnas por fila que escribe InsertResults
 // (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
@@ -418,6 +428,12 @@ func (r *PostgresRepository) UpsertOrder(ctx context.Context, o Order) error {
 // (Plan 016 · T0/T2). Un solo INSERT multi-fila con placeholders; added_at usa el
 // DEFAULT now() de la tabla. len(items)==0 es un no-op.
 func (r *PostgresRepository) InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error {
+	return insertOrderItems(ctx, r.db, orderID, items)
+}
+
+// insertOrderItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer
+// (*sql.DB autocommit o *sql.Tx dentro de CloseOrder). len(items)==0 es un no-op.
+func insertOrderItems(ctx context.Context, ex execer, orderID string, items []OrderItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -437,10 +453,51 @@ func (r *PostgresRepository) InsertOrderItems(ctx context.Context, orderID strin
 		INSERT INTO public.order_items
 			(order_id, sku, label, qty, unit_price)
 		VALUES ` + strings.Join(placeholders, ", ")
-	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := ex.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: insertar líneas de orden: %w", err)
 	}
 	return nil
+}
+
+// CloseOrder cierra ATÓMICAMENTE la orden abierta del contacto e inserta sus
+// líneas en la MISMA transacción (Plan 027 · Ola 1 · T4, cierra H4), vía el helper
+// único postgres.WithTx (rollback inmune a panic + retry 40P01/40001). Bloquea la
+// orden "open" con FOR UPDATE: dos cierres concurrentes del mismo contacto se
+// serializan (el segundo la ve ya "closed" y no crea otra). Si no había orden
+// abierta, crea una "closed" coherente. Garantiza que una orden closed nunca quede
+// sin líneas.
+func (r *PostgresRepository) CloseOrder(ctx context.Context, in OrderClose) error {
+	return postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		var orderID string
+		err := tx.QueryRowContext(ctx, `
+			SELECT id::text FROM public.orders
+			WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
+			ORDER BY created_at DESC
+			LIMIT 1
+			FOR UPDATE
+		`, in.TenantID, in.ContactID).Scan(&orderID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			orderID = uuid.NewString()
+			if _, ierr := tx.ExecContext(ctx, `
+				INSERT INTO public.orders
+					(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, 'closed', $5, now(), now())
+			`, orderID, in.TenantID, in.ContactID, in.SessionID, in.Total); ierr != nil {
+				return fmt.Errorf("store: insertar orden cerrada: %w", ierr)
+			}
+		case err != nil:
+			return fmt.Errorf("store: bloquear orden abierta: %w", err)
+		default:
+			if _, uerr := tx.ExecContext(ctx, `
+				UPDATE public.orders SET status = 'closed', total = $2, updated_at = now()
+				WHERE id = $1
+			`, orderID, in.Total); uerr != nil {
+				return fmt.Errorf("store: cerrar orden: %w", uerr)
+			}
+		}
+		return insertOrderItems(ctx, tx, orderID, in.Items)
+	})
 }
 
 // GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID);

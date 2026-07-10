@@ -138,33 +138,19 @@ func (s *PersistSink) ensureOpenOrder(ctx context.Context, ec EffectContext) err
 
 // closeOrder proyecta cart_closed: cierra la orden "open" (o crea una "closed"
 // coherente si no hubiera abierta) con el total del payload e inserta TODAS las
-// líneas (fuente de verdad). Es la proyección tipada análoga a survey_results.
+// líneas (fuente de verdad). Delega en repo.CloseOrder para que la transición de
+// estado y la inserción de líneas sean ATÓMICAS (Plan 027 · Ola 1 · T4, cierra H4):
+// antes eran GetOpenOrder + MarkOrderStatus/UpsertOrder + InsertOrderItems sueltos,
+// y un fallo entre medias dejaba una orden "closed" sin líneas. El orderID lo fija
+// CloseOrder, así que las líneas se pasan sin él (cartItems con "" ).
 func (s *PersistSink) closeOrder(ctx context.Context, ec EffectContext, eff modules.Effect) error {
-	total := asFloat(eff.Payload["total"])
-	order, found, err := s.repo.GetOpenOrder(ctx, ec.TenantID, ec.ContactID)
-	if err != nil {
-		return err
-	}
-	var orderID string
-	if found {
-		orderID = order.ID
-		if err := s.repo.MarkOrderStatus(ctx, orderID, orderStatusClosed, total); err != nil {
-			return err
-		}
-	} else {
-		orderID = uuid.NewString()
-		if err := s.repo.UpsertOrder(ctx, store.Order{
-			ID:        orderID,
-			TenantID:  ec.TenantID,
-			ContactID: ec.ContactID,
-			SessionID: ec.SessionID,
-			Status:    orderStatusClosed,
-			Total:     total,
-		}); err != nil {
-			return err
-		}
-	}
-	return s.repo.InsertOrderItems(ctx, orderID, cartItems(eff.Payload, orderID))
+	return s.repo.CloseOrder(ctx, store.OrderClose{
+		TenantID:  ec.TenantID,
+		ContactID: ec.ContactID,
+		SessionID: ec.SessionID,
+		Total:     asFloat(eff.Payload["total"]),
+		Items:     cartItems(eff.Payload, ""),
+	})
 }
 
 // transitionOpenOrder lleva la orden "open" a cancelled/expired (design.md §3.4).

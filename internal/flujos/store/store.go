@@ -96,6 +96,15 @@ type Repository interface {
 	// | "expired". Reprocesar el mismo entrante no cambia la semántica (idempotente
 	// por el last_wa_message_id del runtime).
 	MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error
+	// CloseOrder cierra ATÓMICAMENTE (una sola transacción) la orden "open" del
+	// contacto —o crea una "closed" coherente si no la hubiera— fijando su total e
+	// insertando TODAS sus líneas (Plan 027 · Ola 1 · T4, cierra H4). Garantiza la
+	// invariante "una orden closed SIEMPRE tiene sus líneas": nunca deja una orden
+	// cerrada sin líneas por un fallo entre dos escrituras (antes eran MarkOrderStatus
+	// + InsertOrderItems sueltos, sin transacción). El PostgresRepository bloquea la
+	// orden abierta con FOR UPDATE para serializar cierres concurrentes del mismo
+	// contacto y reintenta ante deadlock/serialización (postgres.WithTx).
+	CloseOrder(ctx context.Context, in OrderClose) error
 	// GetTenantSettings devuelve la config del carrito para tenantID desde
 	// public.tenant_settings (Plan 016 · T0). Si el tenant NO tiene fila, devuelve
 	// los DEFAULTS (PageSize=5, OrderTTL=3600s) SIN error: el carrito funciona sin
@@ -184,6 +193,20 @@ type OrderItem struct {
 	Qty       int
 	UnitPrice float64
 	AddedAt   time.Time
+}
+
+// OrderClose es la entrada del cierre atómico de una orden del carrito
+// (Repository.CloseOrder, Plan 027 · Ola 1 · T4). Total es el total agregado del
+// pedido; Items son TODAS sus líneas (fuente de verdad, se insertan de una vez en
+// la misma transacción que la transición a "closed"). ContactID es la identidad
+// OPACA (Plan 010 / ADR-0010); SessionID solo se usa si hay que crear la orden
+// "closed" desde cero (no había abierta). El OrderID de cada Item lo fija CloseOrder.
+type OrderClose struct {
+	TenantID  string
+	ContactID string
+	SessionID string
+	Total     float64
+	Items     []OrderItem
 }
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,

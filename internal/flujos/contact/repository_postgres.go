@@ -7,26 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
-
-// pgDeadlock es el SQLSTATE que Postgres devuelve al abortar una transacción para
-// romper un ciclo de locks (deadlock detected).
-const pgDeadlock = "40P01"
-
-// maxResolveAttempts acota los reintentos de Resolve ante un deadlock (40P01).
-// Ver Resolve para el porqué del retry (Plan 026 · T4).
-const maxResolveAttempts = 8
-
-// isDeadlock reporta si err (o algún error envuelto) es un deadlock 40P01 de
-// Postgres. El driver pgx expone el código vía *pgconn.PgError; Resolve envuelve
-// con %w, así que se recupera con errors.As.
-func isDeadlock(err error) bool {
-	var pg *pgconn.PgError
-	return errors.As(err, &pg) && pg.Code == pgDeadlock
-}
 
 // PostgresResolver implementa Resolver con SQL raw sobre public.contacts (y, en
 // la fusión, public.flow_state). Toda una Resolve corre en UNA transacción: así
@@ -76,65 +59,26 @@ func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []
 	if len(refs) == 0 {
 		return "", ErrNoRefs
 	}
-	var lastErr error
-	for attempt := 0; attempt < maxResolveAttempts; attempt++ {
-		contactID, err := r.resolveOnce(ctx, tenantID, refs, pushName)
-		if err == nil {
-			return contactID, nil
+	// Toda la resolución corre en UNA transacción con retry ante deadlock/serialización
+	// vía el helper único postgres.WithTx (Plan 027 · Ola 1 · T4, cierra H7/H8): el
+	// rollback es inmune a panic (flag committed) y el reintento es seguro porque la
+	// resolución es atómica e idempotente (ON CONFLICT). Antes esto vivía en un retry
+	// artesanal con rollback condicionado a `err != nil` (no cubría panic).
+	var contactID string
+	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		found, lErr := r.lookupContactIDs(ctx, tx, tenantID, refs)
+		if lErr != nil {
+			return lErr
 		}
-		if !isDeadlock(err) {
-			return "", err
+		if len(found) == 0 {
+			contactID, lErr = r.insertNewContact(ctx, tx, tenantID, refs, pushName)
+		} else {
+			contactID, lErr = r.resolveExisting(ctx, tx, tenantID, found, refs, pushName)
 		}
-		lastErr = err
-		// Backoff exponencial acotado + jitter antes de reintentar: espacia a los
-		// contendientes para que el ganador confirme y libere sus locks. El jitter
-		// (0-4ms, del reloj) de-correlaciona a dos perdedores que reintentarían en
-		// lockstep; no necesita un RNG criptográfico. Respeta la cancelación del ctx.
-		backoff := time.Duration(1<<attempt) * time.Millisecond
-		if backoff > 50*time.Millisecond {
-			backoff = 50 * time.Millisecond
-		}
-		jitter := time.Duration(time.Now().UnixNano()%5) * time.Millisecond
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(backoff + jitter):
-		}
-	}
-	return "", fmt.Errorf("contact: resolver tras %d intentos (último deadlock): %w", maxResolveAttempts, lastErr)
-}
-
-// resolveOnce ejecuta UNA transacción de resolución (design.md §4, §5). La
-// atomicidad hace que reintentarla ante 40P01 sea seguro (Resolve).
-func (r *PostgresResolver) resolveOnce(ctx context.Context, tenantID string, refs []Ref, pushName string) (contactID string, err error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("contact: iniciar transacción: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rerr := tx.Rollback(); rerr != nil {
-				err = errors.Join(err, rerr)
-			}
-		}
-	}()
-
-	found, err := r.lookupContactIDs(ctx, tx, tenantID, refs)
+		return lErr
+	})
 	if err != nil {
 		return "", err
-	}
-
-	if len(found) == 0 {
-		contactID, err = r.insertNewContact(ctx, tx, tenantID, refs, pushName)
-	} else {
-		contactID, err = r.resolveExisting(ctx, tx, tenantID, found, refs, pushName)
-	}
-	if err != nil {
-		return "", err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return "", fmt.Errorf("contact: confirmar transacción: %w", err)
 	}
 	return contactID, nil
 }

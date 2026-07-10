@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 )
 
@@ -442,6 +444,47 @@ func (r *MemoryRepository) MarkOrderStatus(_ context.Context, orderID, status st
 		o.Total = total
 		o.UpdatedAt = time.Now()
 		r.orders[orderID] = o
+	}
+	return nil
+}
+
+// CloseOrder implementa Repository: cierra atómicamente (bajo el mutex del repo) la
+// orden "open" del contacto —o crea una "closed" si no la hubiera— e inserta sus
+// líneas, imitando la transacción del PostgresRepository (Plan 027 · Ola 1 · T4).
+func (r *MemoryRepository) CloseOrder(_ context.Context, in OrderClose) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	var orderID string
+	for id, o := range r.orders {
+		if o.TenantID == in.TenantID && o.ContactID == in.ContactID && o.Status == "open" {
+			orderID = id
+			o.Status = "closed"
+			o.Total = in.Total
+			o.UpdatedAt = now
+			r.orders[id] = o
+			break
+		}
+	}
+	if orderID == "" {
+		orderID = uuid.NewString()
+		r.orders[orderID] = Order{
+			ID:        orderID,
+			TenantID:  in.TenantID,
+			ContactID: in.ContactID,
+			SessionID: in.SessionID,
+			Status:    "closed",
+			Total:     in.Total,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
+	for _, it := range in.Items {
+		it.OrderID = orderID
+		if it.AddedAt.IsZero() {
+			it.AddedAt = now
+		}
+		r.orderItems[orderID] = append(r.orderItems[orderID], it)
 	}
 	return nil
 }
