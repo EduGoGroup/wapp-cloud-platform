@@ -554,7 +554,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// decisión C histórica (INV-6). El contexto (tenantID, contactID, key,
 		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
 		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM.
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, m, rt.buildSignal(ctx, tenantID, m))
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
 	// TTL conversacional genérico (Plan 029 · T9): si el tenant configuró un
 	// conversation_ttl_seconds > 0 y el estado vivo lleva más tiempo que eso sin
@@ -567,7 +567,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		if derr := rt.store.Delete(ctx, key); derr != nil {
 			return fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", derr)
 		}
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, m, rt.buildSignal(ctx, tenantID, m))
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
 	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
 }
@@ -654,7 +654,9 @@ func (rt *Runtime) sendReply(ctx context.Context, tenantID, sessionID, contactID
 // arranca el flujo por startLocked (el keyedMutex de la clave YA está tomado por
 // HandleIncoming; llamar a Start re-tomaría el mutex y causaría auto-deadlock). Un
 // ErrConversationExists (carrera con otro entrante) se trata como benigno (log + nil).
-func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, m *cloudlinkv1.IncomingMessage, sig trigger.Signal) error {
+// La señal ya viene construida por el llamante (buildSignal, con el gate de
+// entitlements aplicado); handleTrigger solo la resuelve.
+func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, sig trigger.Signal) error {
 	dec, err := rt.triggers.Resolve(ctx, tenantID, sessionID, sig)
 	if err != nil {
 		rt.log.Warn("runtime: resolver de disparos falló; se ignora el entrante",

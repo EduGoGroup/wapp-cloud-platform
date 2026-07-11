@@ -143,8 +143,9 @@ type Conversation struct {
 	// La ESTAMPA el store en cada Save (no el llamante); Load la devuelve. La consume
 	// el TTL conversacional del runtime (Plan 029 · T9) para decidir si un estado vivo
 	// venció. Zero (sin marca) ⇒ el TTL no lo vence. No viaja en la columna vars (es
-	// una columna propia); la etiqueta json solo sirve al clon en memoria.
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// una columna propia); la etiqueta json solo sirve al clon en memoria (omitempty
+	// no aplica a time.Time, que no es "vacío" en JSON).
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Finished indica si la conversación llegó al fin del flujo (CurrentNode quedó
