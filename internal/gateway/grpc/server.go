@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
@@ -80,6 +81,12 @@ type Server struct {
 	// WithReceiptSink.
 	receiptSink ReceiptSink
 
+	// diag recibe los DiagnosticsBundle que sube el Edge (Plan 031 · T5, ADR-0023):
+	// los correlaciona con su solicitud pendiente por command_id. nil = no se procesa
+	// el diagnóstico remoto (un bundle recibido se ignora). Se inyecta con
+	// WithDiagnosticsSink.
+	diag diagnostics.BundleReceiver
+
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
 	OnIncoming func(sessionID string, m *cloudlinkv1.IncomingMessage)
@@ -121,6 +128,10 @@ func WithCloudEncPrivKey(priv []byte) Option { return func(s *Server) { s.cloudE
 // WithReceiptSink inyecta el sink de acuses (MessageReceipt) del Plan 013 §10.F.
 // Sin él, New() usa el LogReceiptSink log-only por defecto (v1: sin persistencia).
 func WithReceiptSink(sink ReceiptSink) Option { return func(s *Server) { s.receiptSink = sink } }
+
+// WithDiagnosticsSink inyecta el receptor de DiagnosticsBundle (Plan 031 · T5,
+// ADR-0023). Sin él, un bundle recibido del Edge se ignora (no hay dónde almacenarlo).
+func WithDiagnosticsSink(r diagnostics.BundleReceiver) Option { return func(s *Server) { s.diag = r } }
 
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
@@ -281,6 +292,10 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		s.log.Debug("delivery status recibido", "session_id", cc.sessionID)
 	case *cloudlinkv1.EdgeToCloud_Receipt:
 		s.handleReceipt(ctx, cc, p.Receipt)
+	case *cloudlinkv1.EdgeToCloud_DiagnosticsBundle:
+		// Diagnóstico remoto (Plan 031 · T5, ADR-0023): el Edge responde a un
+		// DiagnosticsRequest con su bundle; se correlaciona por command_id y se almacena.
+		s.storeDiagnosticsBundle(ctx, cc, p.DiagnosticsBundle)
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}
