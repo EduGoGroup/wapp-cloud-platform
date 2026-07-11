@@ -3,7 +3,7 @@ module github.com/EduGoGroup/wapp-cloud-platform
 go 1.26.0
 
 require (
-	github.com/EduGoGroup/wapp-cloudlink v0.7.0
+	github.com/EduGoGroup/wapp-cloudlink v0.8.0
 	github.com/EduGoGroup/wapp-shared/config v0.2.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.1.1
 	github.com/EduGoGroup/wapp-shared/health v0.1.1
@@ -62,10 +62,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Fase pre-release del Plan 029 (Ola 1): el contrato de config de intents y el
-// frame ConfigUpdate/ClassifiedIntent viven en ramas locales aún sin tag. Se
-// consumen por replace hasta cortar sus releases.
-replace github.com/EduGoGroup/wapp-shared/intents => ../../shared/wapp-shared/intents // TODO(029): retirar al cortar intents/v0.1.0
-
-replace github.com/EduGoGroup/wapp-cloudlink => ../wapp-cloudlink // TODO(029): retirar al cortar cloudlink v0.8.0
