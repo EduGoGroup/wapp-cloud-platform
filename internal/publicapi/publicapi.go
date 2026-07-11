@@ -93,6 +93,13 @@ type Deps struct {
 	// (ADR-0021, best-effort). Lo satisface *gatewaygrpc.Server (PushConfig). nil ⇒
 	// no se empuja (solo se persiste; el push al conectar reconcilia).
 	ConfigPush ConfigPusher
+	// Health son los umbrales de la derivación de salud (degraded>N, stale>M) que
+	// GET /api/v1/sessions aplica al servir (Plan 031 · T4, ADR-0023). Cero-valor ⇒
+	// defaults (5m/2m). Se cablea desde config.HealthConfig.
+	Health HealthRules
+	// Alerter es el punto de extensión del alerting push sobre la salud derivada
+	// (ADR-0023). nil ⇒ NoopAlerter (nada se empuja; el estado queda consultable).
+	Alerter Alerter
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -169,8 +176,12 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// el MISMO SessionLister que ya alimenta el aislamiento del envío (sin nueva
 	// dependencia). Solo expone metadatos de operación (CERO credenciales/PII).
 	if d.Sessions != nil {
+		alerter := d.Alerter
+		if alerter == nil {
+			alerter = NoopAlerter{} // ADR-0023: seam del alerting push, no-op por defecto.
+		}
 		mux.Handle("GET /api/v1/sessions", protectRead(mw,
-			"sessions.read", listSessionsHandler(d.Sessions)))
+			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, log)))
 	}
 
 	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta

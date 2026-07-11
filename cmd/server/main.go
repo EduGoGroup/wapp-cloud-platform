@@ -322,6 +322,13 @@ func run() error {
 		Intents:       intentStore,      // config de intenciones por tenant (Plan 029 · T5)
 		Entitlements:  entResolver,      // gate de verdad del PUT de intents (ADR-0022)
 		ConfigPush:    gw,               // push del ConfigUpdate a las sesiones vivas (ADR-0021)
+		// Umbrales de la derivación de salud de flota (Plan 031 · T4, ADR-0023):
+		// degraded>N / stale>M, configurables por WAPP_HEALTH_*. Alerter queda en su
+		// no-op por defecto (seam del alerting push, sin implementar).
+		Health: publicapi.HealthRules{
+			DegradedAfter: cfg.Health.DegradedAfter,
+			StaleAfter:    cfg.Health.StaleAfter,
+		},
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
