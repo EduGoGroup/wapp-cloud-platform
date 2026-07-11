@@ -113,12 +113,16 @@ func (r *MemoryRepository) Load(_ context.Context, key Key) (model.Conversation,
 	return clone, true, nil
 }
 
-// Save implementa Repository (upsert por la clave conversacional).
+// Save implementa Repository (upsert por la clave conversacional). Estampa
+// UpdatedAt = ahora en cada escritura, igual que la columna updated_at = now() del
+// repositorio Postgres, para que el TTL conversacional (Plan 029 · T9) tenga una
+// marca real de última actividad.
 func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) error {
 	clone, err := cloneConversation(state)
 	if err != nil {
 		return fmt.Errorf("store: clonar estado: %w", err)
 	}
+	clone.UpdatedAt = time.Now()
 	key := Key{TenantID: state.TenantID, SessionID: state.SessionID, ContactID: state.ContactID}
 	r.mu.Lock()
 	defer r.mu.Unlock()
