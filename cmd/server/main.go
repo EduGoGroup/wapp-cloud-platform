@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
@@ -149,6 +150,12 @@ func run() error {
 	entResolver := entitlements.NewPostgres(db)
 	intentStore := intentcfg.NewPostgresStore(db)
 
+	// --- Diagnóstico remoto (Plan 031 · T5, ADR-0023 capa 3): el store persiste las
+	// solicitudes/bundles y el consentimiento por tenant. Se comparte entre el Gateway
+	// (recibe el DiagnosticsBundle por el demux) y la API pública (emite el request y
+	// sirve la descarga). ---
+	diagStore := diagnostics.NewPostgres(db)
+
 	// --- Fleet + Gateway CloudLink. ---
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
@@ -162,6 +169,9 @@ func run() error {
 		// Push de config al conectar (ADR-0021): entrega la config de intents vigente
 		// del tenant SOLO si tiene la feature llm_intent y hay config persistida.
 		gatewaygrpc.WithConfigProvider(intentsConfigProvider{store: intentStore, ents: entResolver}),
+		// Recepción del DiagnosticsBundle (Plan 031 · T5, ADR-0023): el demux correlaciona
+		// el bundle con su solicitud pendiente por command_id y lo almacena.
+		gatewaygrpc.WithDiagnosticsSink(diagStore),
 	)
 
 	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
@@ -329,6 +339,11 @@ func run() error {
 			DegradedAfter: cfg.Health.DegradedAfter,
 			StaleAfter:    cfg.Health.StaleAfter,
 		},
+		// Diagnóstico remoto (Plan 031 · T5, ADR-0023): el mismo store que recibe el
+		// bundle en el Gateway sirve la emisión/descarga; gw emite el DiagnosticsRequest.
+		Diagnostics:          diagStore,
+		DiagnosticsRequester: gw,
+		DiagnosticsBundleTTL: cfg.Diagnostics.BundleTTL,
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})

@@ -90,6 +90,20 @@ type AppConfig struct {
 	// ADR-0023): los umbrales N (degradado sostenido) y M (sin salud ⇒ stale) que
 	// GET /api/v1/sessions aplica al servir. Se lee con prefijo WAPP_HEALTH_.
 	Health HealthConfig `yaml:"health"`
+	// Diagnostics gobierna el diagnóstico remoto (Plan 031 · T5, ADR-0023): la
+	// retención del bundle. Se lee con prefijo WAPP_DIAGNOSTICS_.
+	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+}
+
+// DiagnosticsConfig gobierna el diagnóstico remoto bajo demanda (Plan 031 · T5,
+// ADR-0023 capa 3). Default sano; <=0 cae al default (nunca desactiva la retención
+// por accidente).
+type DiagnosticsConfig struct {
+	// BundleTTL es la retención del bundle: expires_at = requested_at + BundleTTL. Cubre
+	// tanto la espera del bundle (el Edge puede tardar/estar offline) como su vida útil
+	// tras recibirlo. Default 30m. Se lee como cadena time.Duration de
+	// WAPP_DIAGNOSTICS_BUNDLE_TTL.
+	BundleTTL time.Duration `yaml:"bundle_ttl"`
 }
 
 // HealthConfig gobierna la derivación de estados de salud de flota que expone
@@ -329,6 +343,9 @@ func defaults() AppConfig {
 			DegradedAfter: 5 * time.Minute,
 			StaleAfter:    2 * time.Minute,
 		},
+		Diagnostics: DiagnosticsConfig{
+			BundleTTL: 30 * time.Minute,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -428,6 +445,8 @@ func Load() (AppConfig, error) {
 
 	cfg.Health.DegradedAfter = getDuration(loader, "HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
 	cfg.Health.StaleAfter = getDuration(loader, "HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
+
+	cfg.Diagnostics.BundleTTL = getDuration(loader, "DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
 
 	return cfg, nil
 }
