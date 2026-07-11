@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
@@ -80,6 +81,12 @@ type Server struct {
 	// WithReceiptSink.
 	receiptSink ReceiptSink
 
+	// diag recibe los DiagnosticsBundle que sube el Edge (Plan 031 · T5, ADR-0023):
+	// los correlaciona con su solicitud pendiente por command_id. nil = no se procesa
+	// el diagnóstico remoto (un bundle recibido se ignora). Se inyecta con
+	// WithDiagnosticsSink.
+	diag diagnostics.BundleReceiver
+
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
 	OnIncoming func(sessionID string, m *cloudlinkv1.IncomingMessage)
@@ -121,6 +128,10 @@ func WithCloudEncPrivKey(priv []byte) Option { return func(s *Server) { s.cloudE
 // WithReceiptSink inyecta el sink de acuses (MessageReceipt) del Plan 013 §10.F.
 // Sin él, New() usa el LogReceiptSink log-only por defecto (v1: sin persistencia).
 func WithReceiptSink(sink ReceiptSink) Option { return func(s *Server) { s.receiptSink = sink } }
+
+// WithDiagnosticsSink inyecta el receptor de DiagnosticsBundle (Plan 031 · T5,
+// ADR-0023). Sin él, un bundle recibido del Edge se ignora (no hay dónde almacenarlo).
+func WithDiagnosticsSink(r diagnostics.BundleReceiver) Option { return func(s *Server) { s.diag = r } }
 
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
@@ -273,6 +284,7 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 			return
 		}
 		s.persistSelfPn(ctx, cc, p.Heartbeat)
+		s.persistHealth(ctx, cc, p.Heartbeat)
 		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
@@ -280,6 +292,10 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		s.log.Debug("delivery status recibido", "session_id", cc.sessionID)
 	case *cloudlinkv1.EdgeToCloud_Receipt:
 		s.handleReceipt(ctx, cc, p.Receipt)
+	case *cloudlinkv1.EdgeToCloud_DiagnosticsBundle:
+		// Diagnóstico remoto (Plan 031 · T5, ADR-0023): el Edge responde a un
+		// DiagnosticsRequest con su bundle; se correlaciona por command_id y se almacena.
+		s.storeDiagnosticsBundle(ctx, cc, p.DiagnosticsBundle)
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}
@@ -438,6 +454,55 @@ func (s *Server) markLoggedOut(ctx context.Context, cc connCtx) {
 	if err := s.fleet.MarkLoggedOut(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
 		s.log.Error("fleet: marcar loggedout", "error", err,
 			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+	}
+}
+
+// persistHealth durabiliza el snapshot de salud (SessionHealth) que el Edge adjunta
+// al Heartbeat (Plan 031 · T3, ADR-0023). Es la ingesta que cierra el HUECO del
+// incidente del 2026-07-11: el Cloud gana la verdad del socket (whatsapp_state),
+// SEPARADA del estado del stream CloudLink (fleet.State). Best-effort: sin fleet, sin
+// identidad, sin session_id o sin SessionHealth (Edge viejo) es un no-op silencioso
+// que NO pisa los campos de salud previos; un fallo de BD se LOGUEA con IDs opacos y
+// no tumba el stream. Solo metadatos de salud: CERO PII/llaves/credenciales.
+func (s *Server) persistHealth(ctx context.Context, cc connCtx, hb *cloudlinkv1.Heartbeat) {
+	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	sh := hb.GetSessionHealth()
+	if sh == nil {
+		return // Edge viejo (sin salud): no se tocan los campos de salud.
+	}
+	snap := fleet.HealthSnapshot{
+		WhatsappState:     whatsappStateString(sh.GetWhatsappSocketState()),
+		DegradedReason:    sh.GetDegradedReason(),
+		LastEventAgeS:     sh.GetLastInboundEventAgeS(),
+		DekLoadDurationMs: sh.GetDekLoadDurationMs(),
+		IntentCircuit:     sh.GetIntentCircuit(),
+		OutboxDepth:       sh.GetOutboxDepth(),
+		BinaryVersion:     sh.GetBinaryVersion(),
+		UptimeS:           sh.GetDaemonUptimeS(),
+	}
+	if err := s.fleet.SaveHealth(ctx, cc.tenantID, cc.edgeID, cc.sessionID, snap); err != nil {
+		s.log.Error("fleet: persistir salud", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+	}
+}
+
+// whatsappStateString mapea el enum WhatsappSocketState del contrato CloudLink al
+// texto canónico que persiste fleet (el dominio no importa el proto). UNSPECIFIED
+// (Edge que aún no mide) cae a "" para que la API lo omita.
+func whatsappStateString(st cloudlinkv1.WhatsappSocketState) string {
+	switch st {
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_CONNECTED:
+		return "connected"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_CONNECTING:
+		return "connecting"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_DEGRADED:
+		return "degraded"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_DEAD:
+		return "dead"
+	default:
+		return ""
 	}
 }
 
