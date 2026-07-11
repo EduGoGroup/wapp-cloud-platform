@@ -77,6 +77,61 @@ type Session struct {
 	SelfPn          string
 	LastConnectedAt time.Time
 	LastSeenAt      time.Time
+
+	// --- Salud real del socket (Plan 031 · T3, ADR-0023). SEPARADA de State (que
+	// es el registro del stream CloudLink): un Edge viejo no reporta salud y estos
+	// campos quedan en su cero (WhatsappState "", timestamps IsZero). ---
+
+	// WhatsappState es la verdad del socket whatsmeow que el Edge reporta en el
+	// SessionHealth de su Heartbeat: connected|connecting|degraded|dead. Vacío si
+	// la sesión aún no reportó salud. NO se confunde con State (link CloudLink).
+	WhatsappState string
+	// DegradedReason es el motivo del degradado (p. ej. dek_load_timeout); vacío si
+	// el socket está sano.
+	DegradedReason string
+	// DegradedSince marca cuándo la sesión ENTRÓ en degradado (IsZero si sana). La
+	// gobierna SaveHealth: se fija al entrar y se limpia al salir.
+	DegradedSince time.Time
+	// LastHealthAt es la marca del último snapshot de salud recibido (IsZero si
+	// nunca reportó). Alimenta la derivación de stale en la API (T4).
+	LastHealthAt time.Time
+	// LastEventAgeS es la prueba de vida: segundos desde el último evento entrante.
+	LastEventAgeS int64
+	// OutboxDepth es la profundidad del outbox del Edge (ADR-0003).
+	OutboxDepth int64
+	// BinaryVersion es la versión del binario del Edge (la consumirá el auto-update).
+	BinaryVersion string
+	// UptimeS es el uptime del daemon del Edge en segundos.
+	UptimeS int64
+	// DekLoadDurationMs es la duración de la última carga de la DEK en ms.
+	DekLoadDurationMs int64
+	// IntentCircuit es el estado del circuito del clasificador (closed|open|half_open);
+	// vacío si el 029 no aplica.
+	IntentCircuit string
+}
+
+// HealthSnapshot es el último estado de salud que una sesión reporta en el
+// SessionHealth adjunto a su Heartbeat (Plan 031 · T3, ADR-0023). El Gateway lo
+// arma desde el proto (mapeando el enum del socket a texto) y se lo pasa a
+// SaveHealth; el dominio fleet no importa el contrato CloudLink. Lista CERRADA de
+// campos: solo metadatos de salud, CERO PII/llaves/credenciales.
+type HealthSnapshot struct {
+	WhatsappState     string
+	DegradedReason    string
+	LastEventAgeS     int64
+	DekLoadDurationMs int64
+	IntentCircuit     string
+	OutboxDepth       int64
+	BinaryVersion     string
+	UptimeS           int64
+}
+
+// Degraded indica si el snapshot representa un socket NO sano (degraded o dead, o
+// con un motivo de degradado presente). Gobierna la marca degraded_since: se fija
+// al entrar en este estado y se limpia al salir. Un socket connected/connecting sin
+// motivo es sano.
+func (h HealthSnapshot) Degraded() bool {
+	return h.DegradedReason != "" || h.WhatsappState == "degraded" || h.WhatsappState == "dead"
 }
 
 // Repository persiste el estado de las sesiones. La clave lógica es
@@ -104,6 +159,13 @@ type Repository interface {
 	// reportan el mismo self_pn. Alimenta el aviso del tope de dispositivos (REQ-D4).
 	// Un selfPn vacío devuelve 0 (sin número no hay número que contar).
 	CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error)
+	// SaveHealth persiste el último snapshot de salud (SessionHealth) que la sesión
+	// reporta en su Heartbeat (Plan 031 · T3). UPDATE acotado por (tenant_id, edge_id,
+	// session_id): SEPARA whatsapp_state (verdad del socket) del State (link CloudLink),
+	// que NO toca. Fija degraded_since al ENTRAR en degradado y lo limpia al salir
+	// (h.Degraded()); refresca last_health_at. No falla si la fila aún no existe
+	// (UPDATE de 0 filas es válido: el próximo Heartbeat, tras el registro, la fijará).
+	SaveHealth(ctx context.Context, tenantID, edgeID, sessionID string, h HealthSnapshot) error
 	// Get devuelve la sesión y si existe.
 	Get(ctx context.Context, tenantID, edgeID, sessionID string) (s Session, found bool, err error)
 	// List devuelve las sesiones de un tenant (para tests/diagnóstico).
@@ -274,6 +336,38 @@ func (r *MemoryRepository) SetSelfPn(_ context.Context, tenantID, edgeID, sessio
 		return nil
 	}
 	s.SelfPn = selfPn
+	r.sessions[key] = s
+	return nil
+}
+
+// SaveHealth implementa Repository: persiste el snapshot de salud en la sesión.
+// No-op si la sesión no existe aún (espeja el UPDATE de 0 filas de Postgres).
+// Fija degraded_since al entrar en degradado y lo limpia al salir.
+func (r *MemoryRepository) SaveHealth(_ context.Context, tenantID, edgeID, sessionID string, h HealthSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := memKey(tenantID, edgeID, sessionID)
+	s, ok := r.sessions[key]
+	if !ok {
+		return nil
+	}
+	now := r.now().UTC()
+	s.WhatsappState = h.WhatsappState
+	s.DegradedReason = h.DegradedReason
+	s.LastEventAgeS = h.LastEventAgeS
+	s.DekLoadDurationMs = h.DekLoadDurationMs
+	s.IntentCircuit = h.IntentCircuit
+	s.OutboxDepth = h.OutboxDepth
+	s.BinaryVersion = h.BinaryVersion
+	s.UptimeS = h.UptimeS
+	s.LastHealthAt = now
+	if h.Degraded() {
+		if s.DegradedSince.IsZero() {
+			s.DegradedSince = now
+		}
+	} else {
+		s.DegradedSince = time.Time{}
+	}
 	r.sessions[key] = s
 	return nil
 }

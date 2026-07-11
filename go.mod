@@ -2,6 +2,9 @@ module github.com/EduGoGroup/wapp-cloud-platform
 
 go 1.26.0
 
+// TODO(031): retirar al cortar cloudlink v0.9.0
+replace github.com/EduGoGroup/wapp-cloudlink => ../wapp-cloudlink
+
 require (
 	github.com/EduGoGroup/wapp-cloudlink v0.8.0
 	github.com/EduGoGroup/wapp-shared/config v0.2.0

@@ -217,6 +217,63 @@ func mtlsHeartbeatState(sessionID string, counter int64, state cloudlinkv1.Sessi
 	}
 }
 
+// mtlsHeartbeatHealth construye un Heartbeat con un SessionHealth adjunto (Plan 031
+// · T3): la salud REAL del socket que el Cloud debe ingerir y persistir.
+func mtlsHeartbeatHealth(sessionID string, counter int64, sh *cloudlinkv1.SessionHealth) *cloudlinkv1.EdgeToCloud {
+	return &cloudlinkv1.EdgeToCloud{
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.EdgeToCloud_Heartbeat{
+			Heartbeat: &cloudlinkv1.Heartbeat{LeaseCounter: counter, SessionHealth: sh},
+		},
+	}
+}
+
+// waitFleetHealth espera a que la sesión tenga un snapshot de salud persistido
+// (last_health_at poblado) y lo devuelve.
+func waitFleetHealth(t *testing.T, repo *fleet.MemoryRepository, sessionID string) fleet.Session {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok, err := repo.Get(context.Background(), testTenantID, testEdgeID, sessionID)
+		if err != nil {
+			t.Fatalf("fleet Get: %v", err)
+		}
+		if ok && !s.LastHealthAt.IsZero() {
+			return s
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando snapshot de salud de %q", sessionID)
+	return fleet.Session{}
+}
+
+// waitFleetWhatsappState espera a que el snapshot de salud alcance el whatsapp_state
+// dado y devuelve la sesión.
+func waitFleetWhatsappState(t *testing.T, repo *fleet.MemoryRepository, sessionID, want string) fleet.Session {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok, err := repo.Get(context.Background(), testTenantID, testEdgeID, sessionID)
+		if err != nil {
+			t.Fatalf("fleet Get: %v", err)
+		}
+		if ok && s.WhatsappState == want {
+			return s
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando whatsapp_state=%q de %q", want, sessionID)
+	return fleet.Session{}
+}
+
+// healthSnapshotOK compara los escalares del snapshot degradado esperado del primer
+// Heartbeat de TestMTLSHeartbeatPersistsHealth.
+func healthSnapshotOK(s fleet.Session) bool {
+	return s.WhatsappState == "dead" && s.DegradedReason == "dek_load_timeout" &&
+		s.LastEventAgeS == 1860 && s.OutboxDepth == 3 &&
+		s.BinaryVersion == "v0.9.0" && s.UptimeS == 7200 && s.DekLoadDurationMs == 10000
+}
+
 // waitFleetState espera a que la sesión figure en el estado dado en el fleet repo.
 func waitFleetState(t *testing.T, repo *fleet.MemoryRepository, sessionID string, want fleet.State) {
 	t.Helper()
@@ -530,6 +587,92 @@ func TestMTLSMultiSesionCierreTodasOffline(t *testing.T) {
 
 	waitFleetOffline(t, h.fleetRepo, "s1")
 	waitFleetOffline(t, h.fleetRepo, "s2")
+}
+
+// TestMTLSHeartbeatPersistsHealth verifica la ingesta del Plan 031 · T3: un
+// Heartbeat con SessionHealth degradado ⇒ el Cloud persiste la salud del SOCKET
+// (whatsapp_state=dead + motivo) SEPARADA del estado del stream (State=online), y
+// fija degraded_since. Un segundo Heartbeat sano (connected, sin motivo) limpia
+// degraded_since sin borrar el resto del snapshot.
+func TestMTLSHeartbeatPersistsHealth(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeatHealth("s1", 1, &cloudlinkv1.SessionHealth{
+		WhatsappSocketState:  cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_DEAD,
+		DegradedReason:       "dek_load_timeout",
+		LastInboundEventAgeS: 1860,
+		DekLoadDurationMs:    10000,
+		OutboxDepth:          3,
+		BinaryVersion:        "v0.9.0",
+		DaemonUptimeS:        7200,
+	})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	s := waitFleetHealth(t, h.fleetRepo, "s1")
+	// El link CloudLink figura online (stream registrado); la salud del socket dice
+	// otra cosa: es EXACTAMENTE el hueco del incidente del 2026-07-11.
+	if s.State != fleet.StateOnline {
+		t.Fatalf("link state: got %q, want online", s.State)
+	}
+	if !healthSnapshotOK(s) || s.DegradedSince.IsZero() {
+		t.Fatalf("snapshot degradado inesperado: %+v", s)
+	}
+
+	// Segundo Heartbeat sano: whatsapp_state=connected y sin motivo ⇒ degraded_since
+	// se limpia (salió de degradado).
+	if err := stream.Send(mtlsHeartbeatHealth("s1", 2, &cloudlinkv1.SessionHealth{
+		WhatsappSocketState:  cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_CONNECTED,
+		LastInboundEventAgeS: 2,
+		BinaryVersion:        "v0.9.0",
+		DaemonUptimeS:        7260,
+	})); err != nil {
+		t.Fatalf("Send 2: %v", err)
+	}
+	s2 := waitFleetWhatsappState(t, h.fleetRepo, "s1", "connected")
+	if !s2.DegradedSince.IsZero() || s2.DegradedReason != "" {
+		t.Fatalf("degraded_since/reason deberían limpiarse al salir de degradado: %+v", s2)
+	}
+}
+
+// TestMTLSHeartbeatNoHealthLeavesFieldsUntouched verifica la NO-regresión con Edge
+// viejo (Plan 031 · T3): un Heartbeat SIN SessionHealth no crea ni pisa campos de
+// salud; whatsapp_state queda vacío y no hay marca de salud.
+func TestMTLSHeartbeatNoHealthLeavesFieldsUntouched(t *testing.T) {
+	t.Parallel()
+	ca := newDevCA(t)
+	h := newMTLSHarness(t, ca, issueEdgeCert(t, ca, testTenantID, testEdgeID))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if err := stream.Send(mtlsHeartbeat("s1", 1)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFleetOnline(t, h.fleetRepo, "s1")
+
+	// Margen para descartar una escritura de salud tardía y confirmar que NO ocurre.
+	time.Sleep(50 * time.Millisecond)
+	s, _, err := h.fleetRepo.Get(context.Background(), testTenantID, testEdgeID, "s1")
+	if err != nil {
+		t.Fatalf("fleet Get: %v", err)
+	}
+	if s.WhatsappState != "" || !s.LastHealthAt.IsZero() || !s.DegradedSince.IsZero() {
+		t.Fatalf("un Heartbeat sin salud no debe tocar los campos de salud: %+v", s)
+	}
 }
 
 func TestMTLSHeartbeatRenewsLeaseCounter(t *testing.T) {

@@ -48,6 +48,86 @@ func TestMemoryOfflineUnknownIsNoError(t *testing.T) {
 	}
 }
 
+// getSession lee la sesión y falla el test si no está o hay error. Toma la interfaz
+// Repository ⇒ sirve a la impl en memoria y a la de Postgres (integración).
+func getSession(t *testing.T, repo fleet.Repository, tenantID, edgeID, sessionID string) fleet.Session {
+	t.Helper()
+	s, found, err := repo.Get(context.Background(), tenantID, edgeID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("Get(%s): found=%v err=%v", sessionID, found, err)
+	}
+	return s
+}
+
+// snapshotMatches compara los campos escalares del snapshot de salud persistido.
+func snapshotMatches(s fleet.Session, w fleet.HealthSnapshot) bool {
+	return s.WhatsappState == w.WhatsappState && s.DegradedReason == w.DegradedReason &&
+		s.LastEventAgeS == w.LastEventAgeS && s.DekLoadDurationMs == w.DekLoadDurationMs &&
+		s.IntentCircuit == w.IntentCircuit && s.OutboxDepth == w.OutboxDepth &&
+		s.BinaryVersion == w.BinaryVersion && s.UptimeS == w.UptimeS
+}
+
+// TestMemorySaveHealthDegradedTransitions verifica la marca degraded_since: se fija
+// al ENTRAR en degradado y se limpia al SALIR (Plan 031 · T3).
+func TestMemorySaveHealthDegradedTransitions(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+
+	// Entra en degradado (dead + motivo) ⇒ degraded_since se fija, snapshot completo.
+	want := fleet.HealthSnapshot{
+		WhatsappState: "dead", DegradedReason: "dek_load_timeout",
+		LastEventAgeS: 1860, OutboxDepth: 2, BinaryVersion: "v0.9.0", UptimeS: 60,
+	}
+	if err := repo.SaveHealth(ctx, "t", "e", "s1", want); err != nil {
+		t.Fatalf("SaveHealth degradado: %v", err)
+	}
+	s := getSession(t, repo, "t", "e", "s1")
+	if !snapshotMatches(s, want) || s.DegradedSince.IsZero() || s.LastHealthAt.IsZero() {
+		t.Fatalf("snapshot degradado inesperado: %+v", s)
+	}
+	if s.State != fleet.StateOnline {
+		t.Fatalf("SaveHealth no debe tocar el link state: got %q", s.State)
+	}
+	since := s.DegradedSince
+
+	// Sigue degradado ⇒ degraded_since NO se mueve (preserva el instante de entrada).
+	if err := repo.SaveHealth(ctx, "t", "e", "s1", fleet.HealthSnapshot{
+		WhatsappState: "degraded", DegradedReason: "ws_dial_timeout",
+	}); err != nil {
+		t.Fatalf("SaveHealth sigue degradado: %v", err)
+	}
+	if s = getSession(t, repo, "t", "e", "s1"); !s.DegradedSince.Equal(since) {
+		t.Fatalf("degraded_since no debe moverse si sigue degradado: %v != %v", s.DegradedSince, since)
+	}
+
+	// Sale de degradado (connected sin motivo) ⇒ degraded_since se limpia.
+	if err := repo.SaveHealth(ctx, "t", "e", "s1", fleet.HealthSnapshot{
+		WhatsappState: "connected",
+	}); err != nil {
+		t.Fatalf("SaveHealth sano: %v", err)
+	}
+	if s = getSession(t, repo, "t", "e", "s1"); !s.DegradedSince.IsZero() || s.DegradedReason != "" {
+		t.Fatalf("degraded_since/reason deberían limpiarse al salir: %+v", s)
+	}
+}
+
+// TestMemorySaveHealthUnknownIsNoOp verifica que persistir salud de una sesión que
+// no existe aún no falla (espeja el UPDATE de 0 filas de Postgres).
+func TestMemorySaveHealthUnknownIsNoOp(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	if err := repo.SaveHealth(context.Background(), "t", "e", "missing", fleet.HealthSnapshot{WhatsappState: "dead"}); err != nil {
+		t.Fatalf("SaveHealth de sesión inexistente no debería fallar: %v", err)
+	}
+	if _, found, err := repo.Get(context.Background(), "t", "e", "missing"); err != nil || found {
+		t.Fatalf("SaveHealth no debe crear la sesión: found=%v err=%v", found, err)
+	}
+}
+
 // TestMemoryDefaultRoleIsBot: una sesión recién marcada online nace con rol bot
 // (espeja la columna DEFAULT 'bot' ⇒ no-regresión).
 func TestMemoryDefaultRoleIsBot(t *testing.T) {

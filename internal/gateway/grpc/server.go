@@ -273,6 +273,7 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 			return
 		}
 		s.persistSelfPn(ctx, cc, p.Heartbeat)
+		s.persistHealth(ctx, cc, p.Heartbeat)
 		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
@@ -438,6 +439,55 @@ func (s *Server) markLoggedOut(ctx context.Context, cc connCtx) {
 	if err := s.fleet.MarkLoggedOut(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
 		s.log.Error("fleet: marcar loggedout", "error", err,
 			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+	}
+}
+
+// persistHealth durabiliza el snapshot de salud (SessionHealth) que el Edge adjunta
+// al Heartbeat (Plan 031 · T3, ADR-0023). Es la ingesta que cierra el HUECO del
+// incidente del 2026-07-11: el Cloud gana la verdad del socket (whatsapp_state),
+// SEPARADA del estado del stream CloudLink (fleet.State). Best-effort: sin fleet, sin
+// identidad, sin session_id o sin SessionHealth (Edge viejo) es un no-op silencioso
+// que NO pisa los campos de salud previos; un fallo de BD se LOGUEA con IDs opacos y
+// no tumba el stream. Solo metadatos de salud: CERO PII/llaves/credenciales.
+func (s *Server) persistHealth(ctx context.Context, cc connCtx, hb *cloudlinkv1.Heartbeat) {
+	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	sh := hb.GetSessionHealth()
+	if sh == nil {
+		return // Edge viejo (sin salud): no se tocan los campos de salud.
+	}
+	snap := fleet.HealthSnapshot{
+		WhatsappState:     whatsappStateString(sh.GetWhatsappSocketState()),
+		DegradedReason:    sh.GetDegradedReason(),
+		LastEventAgeS:     sh.GetLastInboundEventAgeS(),
+		DekLoadDurationMs: sh.GetDekLoadDurationMs(),
+		IntentCircuit:     sh.GetIntentCircuit(),
+		OutboxDepth:       sh.GetOutboxDepth(),
+		BinaryVersion:     sh.GetBinaryVersion(),
+		UptimeS:           sh.GetDaemonUptimeS(),
+	}
+	if err := s.fleet.SaveHealth(ctx, cc.tenantID, cc.edgeID, cc.sessionID, snap); err != nil {
+		s.log.Error("fleet: persistir salud", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID)
+	}
+}
+
+// whatsappStateString mapea el enum WhatsappSocketState del contrato CloudLink al
+// texto canónico que persiste fleet (el dominio no importa el proto). UNSPECIFIED
+// (Edge que aún no mide) cae a "" para que la API lo omita.
+func whatsappStateString(st cloudlinkv1.WhatsappSocketState) string {
+	switch st {
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_CONNECTED:
+		return "connected"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_CONNECTING:
+		return "connecting"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_DEGRADED:
+		return "degraded"
+	case cloudlinkv1.WhatsappSocketState_WHATSAPP_SOCKET_STATE_DEAD:
+		return "dead"
+	default:
+		return ""
 	}
 }
 

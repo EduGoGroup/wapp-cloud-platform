@@ -149,12 +149,39 @@ func (r *PostgresRepository) SetRole(ctx context.Context, tenantID, sessionID st
 	return n > 0, nil
 }
 
+// SaveHealth persiste el snapshot de salud reportado en el Heartbeat (Plan 031 ·
+// T3). UPDATE acotado por (tenant_id, edge_id, session_id): NO toca `state` (link
+// CloudLink), solo las columnas de salud. degraded_since se calcula en SQL con un
+// CASE que preserva el instante de entrada: al entrar en degradado usa el valor
+// previo o now() (COALESCE) y al salir lo pone NULL — atómico contra el valor
+// actual de la fila. Un UPDATE de 0 filas (sesión aún sin registrar) es válido.
+func (r *PostgresRepository) SaveHealth(ctx context.Context, tenantID, edgeID, sessionID string, h HealthSnapshot) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET whatsapp_state       = $4,
+		    degraded_reason      = $5,
+		    last_event_age_s     = $6,
+		    dek_load_duration_ms = $7,
+		    intent_circuit       = $8,
+		    outbox_depth         = $9,
+		    binary_version       = $10,
+		    uptime_s             = $11,
+		    last_health_at       = now(),
+		    degraded_since       = CASE WHEN $12 THEN COALESCE(degraded_since, now()) ELSE NULL END,
+		    updated_at           = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+	`, tenantID, edgeID, sessionID,
+		h.WhatsappState, h.DegradedReason, h.LastEventAgeS, h.DekLoadDurationMs,
+		h.IntentCircuit, h.OutboxDepth, h.BinaryVersion, h.UptimeS, h.Degraded())
+	if err != nil {
+		return fmt.Errorf("fleet: persistir salud: %w", err)
+	}
+	return nil
+}
+
 // Get devuelve la sesión, o found=false si no existe.
 func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionID string) (Session, bool, error) {
-	s, err := scanSession(r.db.QueryRowContext(ctx, `
-		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
-		       COALESCE(self_pn, ''),
-		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
+	s, err := scanSession(r.db.QueryRowContext(ctx, selectSessionCols+`
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
 	`, tenantID, edgeID, sessionID))
@@ -169,10 +196,7 @@ func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionI
 
 // List devuelve las sesiones de un tenant.
 func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []Session, err error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
-		       COALESCE(self_pn, ''),
-		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch')
+	rows, err := r.db.QueryContext(ctx, selectSessionCols+`
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1
 		ORDER BY edge_id, session_id
@@ -199,6 +223,21 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 	return out, nil
 }
 
+// selectSessionCols es la lista de columnas (con COALESCE para las nullable) que
+// Get y List comparten; el orden DEBE casar con scanSession. Las columnas de salud
+// (Plan 031 · T3) van al final: degraded_since/last_health_at se escanean como
+// NullTime (NULL ⇒ time.Time cero, que la API lee con IsZero); el resto colapsa a
+// su cero con COALESCE.
+const selectSessionCols = `
+		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
+		       COALESCE(self_pn, ''),
+		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch'),
+		       COALESCE(whatsapp_state, ''), COALESCE(degraded_reason, ''),
+		       degraded_since, last_health_at,
+		       COALESCE(last_event_age_s, 0), COALESCE(outbox_depth, 0),
+		       COALESCE(binary_version, ''), COALESCE(uptime_s, 0),
+		       COALESCE(dek_load_duration_ms, 0), COALESCE(intent_circuit, '')`
+
 // rowScanner abstrae *sql.Row y *sql.Rows para reusar el escaneo.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -207,10 +246,21 @@ type rowScanner interface {
 func scanSession(sc rowScanner) (Session, error) {
 	var s Session
 	var state, role string
-	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.SelfPn, &s.LastConnectedAt, &s.LastSeenAt); err != nil {
+	var degradedSince, lastHealthAt sql.NullTime
+	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.SelfPn,
+		&s.LastConnectedAt, &s.LastSeenAt,
+		&s.WhatsappState, &s.DegradedReason, &degradedSince, &lastHealthAt,
+		&s.LastEventAgeS, &s.OutboxDepth, &s.BinaryVersion, &s.UptimeS,
+		&s.DekLoadDurationMs, &s.IntentCircuit); err != nil {
 		return Session{}, err
 	}
 	s.State = State(state)
 	s.Role = Role(role)
+	if degradedSince.Valid {
+		s.DegradedSince = degradedSince.Time
+	}
+	if lastHealthAt.Valid {
+		s.LastHealthAt = lastHealthAt.Time
+	}
 	return s, nil
 }
