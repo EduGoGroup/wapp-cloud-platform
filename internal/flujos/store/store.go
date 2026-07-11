@@ -286,6 +286,12 @@ type TenantSettings struct {
 	TenantID string
 	PageSize int           // default DefaultPageSize
 	OrderTTL time.Duration // persistido como order_ttl_seconds; default DefaultOrderTTL
+	// ConversationTTL es el TTL CONVERSACIONAL genérico (Plan 029 · T9, migración
+	// 0034): tiempo tras el cual un estado vivo sin tocar se descarta y el entrante
+	// arranca de nuevo. Persistido como conversation_ttl_seconds; 0 (DEFAULT) ⇒ sin
+	// vencimiento (tenants existentes intactos). Semántica DISTINTA a OrderTTL (que
+	// es de la ORDEN del carrito, no de la conversación).
+	ConversationTTL time.Duration
 }
 
 // Defaults de tenant_settings (design.md §9.E/§9.G): valen cuando el tenant no

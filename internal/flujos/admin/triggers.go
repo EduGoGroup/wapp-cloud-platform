@@ -5,11 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
+
+// intentNameRe es el formato del NOMBRE de intención de una regla kind='llm' (Plan
+// 029 · T7): el MISMO contrato que valida wapp-shared/intents para los nombres del
+// catálogo (van a flow_triggers.keyword y al enum del schema del clasificador). Un
+// keyword de una regla llm que no lo cumpla no podría casar jamás una intención real.
+var intentNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 // TriggerStore es el subconjunto de trigger.Store que consumen los handlers CRUD
 // de reglas de disparo. Lo satisface *trigger.PostgresStore y *trigger.MemoryStore.
@@ -70,17 +77,18 @@ func dtoFromRule(r trigger.Rule) triggerDTO {
 
 // ruleFromRequest valida el cuerpo (REQ-D5) y construye la Rule con el tenant del
 // token. Devuelve un mensaje de error (no vacío) si el cuerpo es incoherente:
-//   - kind ∉ {keyword,fallback,escape}
+//   - kind ∉ {keyword,fallback,escape,llm}
 //   - match_type ∉ {exact,contains} (vacío → default exact)
-//   - keyword/escape sin keyword
-//   - keyword/fallback sin flow_id
+//   - keyword/escape/llm sin keyword
+//   - keyword/fallback/llm sin flow_id
+//   - kind=llm con keyword que no cumple el formato de NOMBRE de intención
 //   - message presente en kind ≠ escape (el aviso solo aplica al escape, T4b)
 func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string) {
 	kind := trigger.Kind(strings.TrimSpace(req.Kind))
 	switch kind {
-	case trigger.KindKeyword, trigger.KindFallback, trigger.KindEscape:
+	case trigger.KindKeyword, trigger.KindFallback, trigger.KindEscape, trigger.KindLLM:
 	default:
-		return trigger.Rule{}, "kind inválido (usar keyword|fallback|escape)"
+		return trigger.Rule{}, "kind inválido (usar keyword|fallback|escape|llm)"
 	}
 
 	matchType := trigger.MatchExact
@@ -95,12 +103,8 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 
 	keyword := strings.TrimSpace(req.Keyword)
 	flowID := strings.TrimSpace(req.FlowID)
-
-	if (kind == trigger.KindKeyword || kind == trigger.KindEscape) && keyword == "" {
-		return trigger.Rule{}, "keyword es requerido para kind keyword|escape"
-	}
-	if (kind == trigger.KindKeyword || kind == trigger.KindFallback) && flowID == "" {
-		return trigger.Rule{}, "flow_id es requerido para kind keyword|fallback"
+	if msg := requiredFieldsByKind(kind, keyword, flowID); msg != "" {
+		return trigger.Rule{}, msg
 	}
 
 	message := strings.TrimSpace(req.Message)
@@ -124,6 +128,26 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 		Message:   message,
 		SessionID: strings.TrimSpace(req.SessionID),
 	}, ""
+}
+
+// requiredFieldsByKind valida los campos obligatorios según el kind (extraído de
+// ruleFromRequest para acotar su complejidad ciclomática): keyword para keyword|
+// escape|llm; flow_id para keyword|fallback|llm; y, para llm, el keyword debe ser un
+// nombre de intención válido (casa flow_triggers.keyword con el enum del clasificador).
+// Devuelve "" si todo está bien.
+func requiredFieldsByKind(kind trigger.Kind, keyword, flowID string) string {
+	needsKeyword := kind == trigger.KindKeyword || kind == trigger.KindEscape || kind == trigger.KindLLM
+	if needsKeyword && keyword == "" {
+		return "keyword es requerido para kind keyword|escape|llm"
+	}
+	needsFlow := kind == trigger.KindKeyword || kind == trigger.KindFallback || kind == trigger.KindLLM
+	if needsFlow && flowID == "" {
+		return "flow_id es requerido para kind keyword|fallback|llm"
+	}
+	if kind == trigger.KindLLM && !intentNameRe.MatchString(keyword) {
+		return "keyword de kind llm debe ser un nombre de intención válido (^[a-z][a-z0-9_]{1,63}$)"
+	}
+	return ""
 }
 
 // CreateTriggerHandler devuelve el handler de POST .../triggers: decodifica el

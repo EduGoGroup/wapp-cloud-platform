@@ -9,6 +9,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -130,6 +131,15 @@ type Runtime struct {
 	// dedupe persistente: no-regresión total (queda solo la consecutiva por
 	// last_wa_message_id).
 	deduper IngestDeduper
+	// entitlements es el GATE DE VERDAD del servidor (ADR-0022, Plan 029 · T7): una
+	// intención LLM del entrante SOLO alimenta la Signal si el tenant tiene la feature
+	// llm_intent habilitada. nil (sin WithEntitlements) ⇒ el intent se DESCARTA siempre
+	// (camino actual sin clasificador): un gate que solo viviera en el Edge sería
+	// decorativo (corre en la máquina del cliente).
+	entitlements entitlements.Resolver
+	// now entrega la hora actual para el TTL conversacional (Plan 029 · T9). Inyectable
+	// (WithClock) para tests deterministas; New lo deja en time.Now.
+	now func() time.Time
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -187,6 +197,25 @@ func WithIngestDeduper(d IngestDeduper) Option {
 	return func(rt *Runtime) { rt.deduper = d }
 }
 
+// WithEntitlements inyecta el resolver de features del tenant (ADR-0022, Plan 029 ·
+// T7): el gate de VERDAD que decide si una intención LLM del entrante alimenta la
+// Signal del resolver de disparos. Sin él (nil), el runtime DESCARTA el intent
+// siempre (no-regresión: comportamiento idéntico al previo al clasificador).
+func WithEntitlements(r entitlements.Resolver) Option {
+	return func(rt *Runtime) { rt.entitlements = r }
+}
+
+// WithClock inyecta el reloj que el TTL conversacional usa para decidir si un estado
+// vivo venció (Plan 029 · T9). Sin él, New usa time.Now. Existe para tests
+// deterministas del TTL.
+func WithClock(now func() time.Time) Option {
+	return func(rt *Runtime) {
+		if now != nil {
+			rt.now = now
+		}
+	}
+}
+
 // WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante
 // reactivo (Plan 027 · Ola 0 · T1, cierra H1). Un valor <=0 se ignora y New cae a
 // defaultIncomingTimeout (el camino caliente nunca queda sin deadline).
@@ -222,7 +251,10 @@ func WithResumePolicy(nodeType string, p modules.ResumePolicy) Option {
 //     vacío/desconocido ⇒ bot (no-regresión).
 //   - el remitente es un número PROPIO del tenant (T2, anti-self-loop): una sesión
 //     propia hablando; no se auto-responde (defensa semántica contra el bucle
-//     sesión↔sesión del Plan 019).
+//     sesión↔sesión del Plan 019). Consciente del rol: solo cuentan como "propios"
+//     los números de sesiones NO passive — un passive nunca auto-responde, así que
+//     una sesión bot SÍ puede responder a mensajes que llegan desde el número
+//     personal (passive) del mismo tenant sin riesgo de loop.
 //
 // Sin rol passive y sin self_pn poblado, devuelve false ⇒ no-regresión total.
 func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
@@ -237,7 +269,11 @@ func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, rol
 // sesión propia hablando), en cuyo caso NO se debe auto-responder (Plan 020 · T2,
 // defensa semántica contra el bucle sesión↔sesión del Plan 019). Normaliza el
 // remitente (from_pn) con el MISMO normalizador que el paquete contact y lo compara
-// contra el conjunto de self_pn del tenant. Es CONSERVADORA hacia procesar: sin
+// contra el conjunto de self_pn del tenant. El conjunto es CONSCIENTE DEL ROL: el
+// lister excluye los números de sesiones passive — un passive nunca auto-responde
+// (reactiveBlocked lo corta), así que un mensaje desde ese número no puede cerrar
+// un bucle; bloquear ahí solo impediría atender al número personal del tenant. El
+// rate-limit por conversación (T0) sigue como red. Es CONSERVADORA hacia procesar: sin
 // lister (nil), sin from_pn, si el número no normaliza o si el lookup falla ⇒
 // devuelve false (no bloquea: la ausencia de dato no debe silenciar tráfico
 // legítimo). NUNCA loguea el número (PII): solo el hecho y IDs opacos.
@@ -313,6 +349,10 @@ func New(repo FlowStore, eng *engine.Engine, sender Sender, resolver TenantResol
 	if rt.incomingTimeout <= 0 {
 		rt.incomingTimeout = defaultIncomingTimeout
 	}
+	// El reloj del TTL conversacional nunca es nil: time.Now por defecto (Plan 029 · T9).
+	if rt.now == nil {
+		rt.now = time.Now
+	}
 	// Semáforo de entrantes (Plan 027 · Ola 1 · T5): 0 ⇒ default; <0 ⇒ sin techo
 	// (incomingSem queda nil y OnIncoming no acota la concurrencia).
 	switch {
@@ -339,7 +379,9 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
-	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID)
+	// Arranque por API (admin / /api/v1/.../start): sin intención LLM ⇒ sin params
+	// (el pre-carga del carrito solo aplica al arranque por decisión llm, T8).
+	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, nil, "")
 }
 
 // startLocked es el cuerpo de Start SIN tomar el keyedMutex: asume que el llamante
@@ -348,7 +390,7 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 // por palabra clave de HandleIncoming (Plan 019 · T3), que YA tomó el mutex sobre la
 // misma clave: re-llamar a Start ahí causaría un auto-deadlock. Reglas de arranque
 // (guard 409, reinicio de carrito, orden Save-antes-de-Send) son idénticas.
-func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID string) (*cloudlinkv1.Ack, error) {
+func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID string, intentParams map[string]string, intentName string) (*cloudlinkv1.Ack, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
@@ -376,18 +418,54 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	}
 
 	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
-	st, outs, err := rt.engine.Enter(ctx, def, st)
+	// Params iniciales (Plan 029 · T8): al arrancar por decisión llm se siembran los
+	// intent_params en Vars ANTES del primer paso, para que un módulo pre-cargue el
+	// flujo (p. ej. el carrito con el producto pedido). EnterPrimed consulta la
+	// capacidad Primer del nodo inicial; sin params sembrados equivale a Enter.
+	seedIntentParams(&st, intentParams, intentName)
+	st, outs, effects, err := rt.engine.EnterPrimed(ctx, def, st)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: enter: %w", err)
 	}
 	if err := rt.store.Save(ctx, st); err != nil {
 		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
 	}
+	// Efectos DECLARADOS por el pre-add del módulo (p. ej. item_added del carrito):
+	// mismo fan-out EN PROCESO que HandleIncoming, DESPUÉS del Save. Un fallo de un
+	// sink se loguea y no aborta (el estado ya quedó persistido).
+	if len(effects) > 0 {
+		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+		rt.dispatch(ctx, ec, effects, sessionID)
+	}
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {
 		return nil, err
 	}
 	return rt.send(ctx, sessionID, to, outs)
+}
+
+// seedIntentParams siembra en el estado recién creado los parámetros de la intención
+// que originó el arranque (Plan 029 · T8): Vars["intent_params"] (map de strings del
+// clasificador) y Vars["intent_name"]. Sin params (arranque por keyword/fallback/API)
+// es un no-op ⇒ no-regresión. El módulo los CONSUME una sola vez (los limpia de Vars
+// tras usarlos) en su Prime.
+func seedIntentParams(st *model.Conversation, params map[string]string, name string) {
+	if len(params) == 0 && name == "" {
+		return
+	}
+	if st.Vars == nil {
+		st.Vars = map[string]any{}
+	}
+	if len(params) > 0 {
+		p := make(map[string]any, len(params))
+		for k, v := range params {
+			p[k] = v
+		}
+		st.Vars[modules.VarIntentParams] = p
+	}
+	if name != "" {
+		st.Vars[modules.VarIntentName] = name
+	}
 }
 
 // duplicateIngest es la guarda de dedupe PERSISTENTE de entrantes (Plan 028 · T6,
@@ -481,14 +559,36 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// Sin conversación viva: consulta el resolver de disparos (Plan 019 · T3).
 		// Con NoopResolver (default) devuelve Ignore ⇒ return nil idéntico a la
 		// decisión C histórica (INV-6). El contexto (tenantID, contactID, key,
-		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto.
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, m)
+		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
+		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM.
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
-	// Escape global (Plan 019 · T4): sobre una conversación viva, ANTES de
-	// despachar el entrante al engine, si el texto casa una regla de escape del
-	// tenant se corta la conversación y se avisa. Bloque autocontenido: si NO es
-	// escape, el camino normal queda idéntico (INV-5 no-regresión). Un fallo de
-	// IsEscape es best-effort: se LOGUEA y NO bloquea el avance normal (no aborta).
+	// TTL conversacional genérico (Plan 029 · T9): si el tenant configuró un
+	// conversation_ttl_seconds > 0 y el estado vivo lleva más tiempo que eso sin
+	// tocarse, se DESCARTA silenciosamente y el entrante se trata como un arranque
+	// nuevo (camino handleTrigger, donde la señal LLM aplica). Va ANTES de IsEscape /
+	// consecutiveReplay / prepareResume: un estado vencido no debe escapar ni avanzar.
+	// El TTL de la ORDEN del carrito (order_ttl_seconds) es aparte y se evalúa después
+	// (prepareResume), como hoy. ttl<=0 o error de settings ⇒ no vence (no-regresión).
+	if rt.conversationExpired(ctx, tenantID, st) {
+		if derr := rt.store.Delete(ctx, key); derr != nil {
+			return fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", derr)
+		}
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+	}
+	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
+}
+
+// advanceLive avanza una conversación VIVA (estado ya cargado y no vencido) con un
+// entrante: escape global → idempotencia consecutiva → reanudación por módulo →
+// engine.Step → persistir → fan-out de efectos → auto-respuesta. Extraído de
+// HandleIncoming (Plan 029 · T9) para acotar su complejidad ciclomática; el orden y la
+// semántica son idénticos al camino previo (INV-5/INV-6 no-regresión).
+func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) error {
+	// Escape global (Plan 019 · T4): sobre una conversación viva, ANTES de despachar el
+	// entrante al engine, si el texto casa una regla de escape del tenant se corta la
+	// conversación y se avisa. Un fallo de IsEscape es best-effort: se LOGUEA y NO
+	// bloquea el avance normal (no aborta).
 	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, sessionID, m.GetText()); escErr != nil {
 		rt.log.Warn("runtime: IsEscape falló; se ignora el escape", "error", escErr, "session_id", sessionID)
 	} else if esc {
@@ -504,10 +604,11 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
-	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso + auto-reinicio +
-	// siembra de Vars, GATEADO por la ResumePolicy registrada para el tipo de nodo (un
-	// no-op para menú/encuesta ⇒ comportamiento idéntico). handled=true ⇒ el turno se
-	// consumió reiniciando.
+	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso DE LA ORDEN +
+	// auto-reinicio + siembra de Vars, GATEADO por la ResumePolicy registrada para el
+	// tipo de nodo (un no-op para menú/encuesta ⇒ comportamiento idéntico). handled=true
+	// ⇒ el turno se consumió reiniciando. Es DISTINTO del TTL conversacional (T9), que
+	// ya se evaluó antes en HandleIncoming.
 	if handled, cerr := rt.prepareResume(ctx, sessionID, &st, def, m, tenantID, contactID); cerr != nil {
 		return cerr
 	} else if handled {
@@ -522,23 +623,12 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
 	}
-	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el
-	// módulo (Plan 015 · T2, segunda costura). Va DESPUÉS del Save (el estado ya
-	// está persistido) y respeta el orden Save-antes-de-Send, igual que el flush.
-	// Un fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
-	// sinks/efectos. En T2 nadie emite (effects vacío) ⇒ el bucle no itera ⇒
-	// no-regresión total (Menú/Encuesta idénticos); el flush viejo sigue por su
-	// vía hasta T3.
-	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el
-	// módulo (Plan 015 · T3). Es AHORA la única vía por la que survey_results se
-	// materializa: el módulo survey DECLARA un Effect{persist,survey_answer} por
-	// cada respuesta válida y el PersistSink inyectado (main) escribe flow_events y
-	// proyecta survey_results (la MISMA fila que producía el flush del Plan 014).
-	// Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
-	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por
-	// last_wa_message_id (reprocesar el mismo entrante corta antes del Step). Un
-	// fallo de un sink se LOGUEA y NO aborta el avance ni corta el resto de
-	// sinks/efectos.
+	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el módulo
+	// (Plan 015 · T3): el PersistSink escribe flow_events y proyecta survey_results /
+	// orders. Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
+	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por last_wa_message_id
+	// (reprocesar el mismo entrante corta antes del Step). Un fallo de un sink se LOGUEA
+	// y NO aborta el avance ni corta el resto de sinks/efectos.
 	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
 	rt.dispatch(ctx, ec, effects, sessionID)
 	return rt.sendReply(ctx, tenantID, sessionID, contactID, key, outs)
@@ -571,8 +661,10 @@ func (rt *Runtime) sendReply(ctx context.Context, tenantID, sessionID, contactID
 // arranca el flujo por startLocked (el keyedMutex de la clave YA está tomado por
 // HandleIncoming; llamar a Start re-tomaría el mutex y causaría auto-deadlock). Un
 // ErrConversationExists (carrera con otro entrante) se trata como benigno (log + nil).
-func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, m *cloudlinkv1.IncomingMessage) error {
-	dec, err := rt.triggers.Resolve(ctx, tenantID, sessionID, m.GetText())
+// La señal ya viene construida por el llamante (buildSignal, con el gate de
+// entitlements aplicado); handleTrigger solo la resuelve.
+func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, sig trigger.Signal) error {
+	dec, err := rt.triggers.Resolve(ctx, tenantID, sessionID, sig)
 	if err != nil {
 		rt.log.Warn("runtime: resolver de disparos falló; se ignora el entrante",
 			"error", err, "session_id", sessionID)
@@ -587,7 +679,9 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 		if !rt.replyAllowed(key) {
 			return nil
 		}
-		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID); serr != nil {
+		// dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
+		// kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
+		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName); serr != nil {
 			if errors.Is(serr, ErrConversationExists) {
 				rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
 					"session_id", sessionID)
@@ -599,6 +693,57 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 	default: // trigger.Ignore (o cualquier otro): decisión C, no arranca nada.
 		return nil
 	}
+}
+
+// buildSignal arma la señal de entrada del resolver de disparos (Plan 029 · T7): el
+// texto crudo del entrante y, SOLO si el mensaje trae una intención LLM Y el tenant
+// tiene la feature llm_intent habilitada (gate de verdad, ADR-0022), la intención
+// resuelta. Sin resolver de entitlements cableado (nil) o sin la feature, la señal
+// lleva SOLO texto ⇒ una regla kind='llm' nunca dispara sin derecho (camino actual).
+// Un fallo del resolver de entitlements es best-effort: se loguea y se descarta la
+// intención (se prefiere no abrir la capacidad por un fallo transitorio).
+func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage) trigger.Signal {
+	sig := trigger.Signal{Text: m.GetText()}
+	ci := m.GetIntent()
+	if ci == nil || rt.entitlements == nil {
+		return sig
+	}
+	has, err := rt.entitlements.Has(ctx, tenantID, entitlements.FeatureLLMIntent)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo resolver la feature llm_intent; se descarta la intención",
+			"error", err, "tenant_id", tenantID)
+		return sig
+	}
+	if !has {
+		return sig
+	}
+	sig.Intent = &trigger.IntentSignal{
+		Name:          ci.GetIntent(),
+		Params:        ci.GetParams(),
+		Confidence:    float64(ci.GetConfidence()),
+		ConfigVersion: ci.GetConfigVersion(),
+	}
+	return sig
+}
+
+// conversationExpired decide si un estado vivo venció por el TTL conversacional del
+// tenant (Plan 029 · T9). Lee conversation_ttl_seconds de tenant_settings (mismo
+// store/camino que page_size/order_ttl); ttl<=0 ⇒ nunca vence (tenants sin configurar
+// intactos). Un fallo de settings es best-effort: se loguea y devuelve false (no
+// vence — se prefiere no descartar una conversación por un fallo transitorio). La
+// comparación usa rt.now() (inyectable en tests) contra st.UpdatedAt (lo estampa el
+// store en cada Save). Con UpdatedAt cero (estado sin marca) no vence.
+func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st model.Conversation) bool {
+	settings, err := rt.store.GetTenantSettings(ctx, tenantID)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo leer el TTL conversacional; no se vence el estado",
+			"error", err, "tenant_id", tenantID)
+		return false
+	}
+	if settings.ConversationTTL <= 0 || st.UpdatedAt.IsZero() {
+		return false
+	}
+	return rt.now().Sub(st.UpdatedAt) > settings.ConversationTTL
 }
 
 // handleEscape corta una conversación viva por escape global (Plan 019 · T4): libera

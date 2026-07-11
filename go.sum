@@ -1,5 +1,5 @@
-github.com/EduGoGroup/wapp-cloudlink v0.7.0 h1:MAZiS5JckNtr5JxXLBJo3lGruVPud9npA6BPyiLdSqY=
-github.com/EduGoGroup/wapp-cloudlink v0.7.0/go.mod h1:vVFFWQKhUoObtiGED0iXPGlpBgWU6tvgyjkgx2GQoJU=
+github.com/EduGoGroup/wapp-cloudlink v0.8.0 h1:zKxrEmouzS6AwBfh7vgoARw7yoE0CrMD7sOyFGB0GPI=
+github.com/EduGoGroup/wapp-cloudlink v0.8.0/go.mod h1:vVFFWQKhUoObtiGED0iXPGlpBgWU6tvgyjkgx2GQoJU=
 github.com/EduGoGroup/wapp-shared/auth v0.2.0 h1:9l+m23WntmxQLSd/UjXQmQxFw6Tm48hx4CTrA1XKsns=
 github.com/EduGoGroup/wapp-shared/auth v0.2.0/go.mod h1:GoGrP951B4CrDZ8yOcF64+JiVp6KsRQr2BYduiPN0kw=
 github.com/EduGoGroup/wapp-shared/config v0.2.0 h1:1vymPAXFgX/KyhImAT4CZ8ldt5KfTTGEG+V/LIYLRik=
@@ -8,6 +8,8 @@ github.com/EduGoGroup/wapp-shared/envelope v0.1.1 h1:LUYC2bxIpO0koiVKE1mlidezGQ5
 github.com/EduGoGroup/wapp-shared/envelope v0.1.1/go.mod h1:AjqFpIyGuTc8hEJsmu8s13QclWU4OBKQ8MJ9gZICDv8=
 github.com/EduGoGroup/wapp-shared/health v0.1.1 h1:ZiNqKCJY1qwzQjFzo1qZUei+CggxOa/G6YJqcVEZNFM=
 github.com/EduGoGroup/wapp-shared/health v0.1.1/go.mod h1:U2yDan8f0SyLitwrjYcAq9HM8xLZ67lYwbv9Jku/1rw=
+github.com/EduGoGroup/wapp-shared/intents v0.1.0 h1:4CXTKyQi/bR3YCgLjLU/uf2fpMBPvaBO9WcwKHeF7SQ=
+github.com/EduGoGroup/wapp-shared/intents v0.1.0/go.mod h1:JkiGzsfb6jVQ3Uxs3FwV4g2tDd5RXxtg2Lx0kO3ef6g=
 github.com/EduGoGroup/wapp-shared/logger v0.1.0 h1:TvhP//jWzX14fD9uM2ghl6M0lpMhyUDZ8uQfEvR8154=
 github.com/EduGoGroup/wapp-shared/logger v0.1.0/go.mod h1:jZ8GH59HUREHIEJv21jNpCdLm1P2NthGqTN/s8SrZTg=
 github.com/aws/aws-sdk-go-v2 v1.41.5 h1:dj5kopbwUsVUVFgO4Fi5BIT3t4WyqIDjGKCangnV/yY=

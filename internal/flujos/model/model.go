@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Tipos de nodo soportados en este corte (Menú). Ver design.md §4.
@@ -138,6 +139,13 @@ type Conversation struct {
 	CurrentNode     string         `json:"current_node"`
 	Vars            map[string]any `json:"vars"`
 	LastWaMessageID string         `json:"last_wa_message_id,omitempty"`
+	// UpdatedAt es la marca de la última escritura del estado (flow_state.updated_at).
+	// La ESTAMPA el store en cada Save (no el llamante); Load la devuelve. La consume
+	// el TTL conversacional del runtime (Plan 029 · T9) para decidir si un estado vivo
+	// venció. Zero (sin marca) ⇒ el TTL no lo vence. No viaja en la columna vars (es
+	// una columna propia); la etiqueta json solo sirve al clon en memoria (omitempty
+	// no aplica a time.Time, que no es "vacío" en JSON).
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Finished indica si la conversación llegó al fin del flujo (CurrentNode quedó

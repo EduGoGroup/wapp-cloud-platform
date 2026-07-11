@@ -18,6 +18,9 @@ const selfPnA = "573001110000"
 
 // fakeSelfNumbers es un doble de runtime.SelfNumberLister: devuelve los self_pn
 // sembrados por tenant (aislamiento estricto). Un tenant sin entrada devuelve [].
+// El filtrado por ROL (excluir sesiones passive) es responsabilidad del lister
+// real (PostgresSelfNumbers) y se cubre en self_numbers_integration_test.go; aquí
+// el doble representa el conjunto YA filtrado.
 type fakeSelfNumbers struct {
 	byTenant map[string][]string
 	err      error
