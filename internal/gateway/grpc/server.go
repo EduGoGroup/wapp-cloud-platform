@@ -69,6 +69,11 @@ type Server struct {
 	// no se intenta abrir (los IncomingMessage llegan siempre en claro, compat).
 	cloudEncPriv []byte
 
+	// configProvider entrega las configs vigentes a empujar al Edge al conectar
+	// (ADR-0021), ya gateadas por entitlements. nil = sin push de config al conectar
+	// (comportamiento previo). Se inyecta con WithConfigProvider.
+	configProvider ConfigProvider
+
 	// receiptSink es el enganche por el que se entrega cada MessageReceipt
 	// (acuse de entrega/lectura) recibido del Edge (Plan 013 §10.F). Nunca es nil:
 	// New() lo inicializa a un LogReceiptSink (log-only) si no se inyecta otro con
@@ -323,6 +328,12 @@ func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
 	msg.PushName = sp.GetPushName()
 	msg.FromPn = sp.GetFromPn()
 	msg.FromLid = sp.GetFromLid()
+	// Intención LLM sellada (Plan 029 · T7): el clasificador del Edge la manda dentro
+	// del SensitivePayload (sus params pueden llevar texto literal del cliente). Sin
+	// esta copia el intent sellado jamás llegaría al runtime (que la lee de
+	// IncomingMessage.Intent). El gate de VERDAD sigue en el runtime (entitlements):
+	// aquí solo se transporta. nil si el Edge no clasificó ⇒ campo vacío, sin cambio.
+	msg.Intent = sp.GetIntent()
 	return true
 }
 
@@ -342,6 +353,9 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 	}
 
 	if s.leaseMgr == nil {
+		// Sin lease no hay identidad de kill-switch, pero el push de config al
+		// conectar (ADR-0021) es independiente: se intenta igual.
+		s.pushConfigsOnConnect(ctx, cc)
 		return
 	}
 	lu, err := s.leaseMgr.IssueInitial(ctx, cc.tenantID, cc.edgeID)
@@ -352,6 +366,10 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
 		s.log.Error("lease: push inicial", "error", err, "session_id", cc.sessionID)
 	}
+
+	// Push de la config vigente del tenant (ADR-0021) tras el lease inicial, en el
+	// MISMO punto donde ya se reconcilia estado del servidor al conectar.
+	s.pushConfigsOnConnect(ctx, cc)
 }
 
 // persistSelfPn durabiliza el número propio (self_pn) que el Edge reporta en el

@@ -11,6 +11,16 @@ import (
 // tenant (INV-8): la consulta filtra por tenant_id, así los números de un tenant
 // nunca cruzan a otro.
 //
+// Consciente del ROL (Plan 020 · T1+T2): los números de sesiones PASSIVE se
+// EXCLUYEN — un passive nunca auto-responde (reactiveBlocked lo corta antes del
+// motor), así que un mensaje que llega DESDE ese número no puede realimentar un
+// bucle; bloquearlo solo impediría que una sesión bot atienda al número personal
+// del mismo tenant. El predicado es role <> 'passive' (y no role = 'bot') a
+// propósito: si mañana existe un tercer rol, sus números SIGUEN bloqueando por
+// defecto (no sabemos si auto-responde ⇒ conservador hacia bloquear, misma
+// convención que "rol desconocido ⇒ bot"). El rate-limit por conversación (T0)
+// queda como red de contención adicional.
+//
 // Coste: se invoca UNA vez por entrante (dentro de la guarda anti-self-loop). Es
 // una query trivial e indexada por tenant_id; para el MVP se acepta SIN caché
 // (correcto siempre, sin invalidación que mantener). Si el volumen de entrantes lo
@@ -25,12 +35,14 @@ func NewPostgresSelfNumbers(db *sql.DB) *PostgresSelfNumbers {
 	return &PostgresSelfNumbers{db: db}
 }
 
-// SelfNumbers devuelve los self_pn no vacíos de las sesiones del tenant.
+// SelfNumbers devuelve los self_pn no vacíos de las sesiones NO passive del
+// tenant (los passive no bloquean: nunca auto-responden ⇒ sin riesgo de loop).
 func (r *PostgresSelfNumbers) SelfNumbers(ctx context.Context, tenantID string) (out []string, err error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT self_pn
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND self_pn IS NOT NULL AND self_pn <> ''
+		  AND role <> 'passive'
 	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("self_numbers: consulta fleet_sessions: %w", err)

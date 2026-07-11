@@ -67,12 +67,12 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT tenant_id::text, session_id, contact_id::text, flow_id, flow_version,
-		       current_node, vars, last_wa_message_id
+		       current_node, vars, last_wa_message_id, updated_at
 		FROM public.flow_state
 		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
 	`, key.TenantID, key.SessionID, key.ContactID).Scan(
 		&c.TenantID, &c.SessionID, &c.ContactID, &c.FlowID, &c.FlowVersion,
-		&c.CurrentNode, &varsRaw, &lastWa,
+		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -550,27 +550,31 @@ func (r *PostgresRepository) MarkOrderStatus(ctx context.Context, orderID, statu
 // DEFAULTS (DefaultPageSize, DefaultOrderTTL) SIN error (design.md §9.E/§9.G).
 func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
 	var (
-		pageSize int
-		ttlSecs  int
+		pageSize    int
+		ttlSecs     int
+		convTTLSecs int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT page_size, order_ttl_seconds
+		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
-	`, tenantID).Scan(&pageSize, &ttlSecs)
+	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return TenantSettings{
 			TenantID: tenantID,
 			PageSize: DefaultPageSize,
 			OrderTTL: DefaultOrderTTL,
+			// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila
+			// nunca vencen su conversación, no-regresión).
 		}, nil
 	case err != nil:
 		return TenantSettings{}, fmt.Errorf("store: leer config de tenant: %w", err)
 	}
 	return TenantSettings{
-		TenantID: tenantID,
-		PageSize: pageSize,
-		OrderTTL: time.Duration(ttlSecs) * time.Second,
+		TenantID:        tenantID,
+		PageSize:        pageSize,
+		OrderTTL:        time.Duration(ttlSecs) * time.Second,
+		ConversationTTL: time.Duration(convTTLSecs) * time.Second,
 	}, nil
 }

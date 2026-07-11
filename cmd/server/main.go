@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
@@ -65,6 +66,7 @@ import (
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -140,6 +142,13 @@ func run() error {
 	// métrica wapp_receipts_total (delivered|read). CERO PII: solo metadatos. ---
 	receiptSink := receipts.NewSink(receipts.NewPostgresStore(db), mtx.Receipt)
 
+	// --- Entitlements (ADR-0022) + config de intenciones (Plan 029): el resolver de
+	// features (con caché) es el gate de VERDAD del servidor; el store del blob de
+	// intents alimenta el push de config y la API /api/v1/intents. El provider ata el
+	// kind "intents" al push al conectar (el Gateway queda genérico). ---
+	entResolver := entitlements.NewPostgres(db)
+	intentStore := intentcfg.NewPostgresStore(db)
+
 	// --- Fleet + Gateway CloudLink. ---
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
@@ -150,6 +159,9 @@ func run() error {
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
 		gatewaygrpc.WithReceiptSink(receiptSink),
+		// Push de config al conectar (ADR-0021): entrega la config de intents vigente
+		// del tenant SOLO si tiene la feature llm_intent y hay config persistida.
+		gatewaygrpc.WithConfigProvider(intentsConfigProvider{store: intentStore, ents: entResolver}),
 	)
 
 	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
@@ -217,6 +229,11 @@ func run() error {
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
+		// Gate de VERDAD del clasificador (ADR-0022, Plan 029 · T7): una intención LLM
+		// del entrante SOLO alimenta la Signal del resolver si el tenant tiene la feature
+		// llm_intent. Reusa el mismo entResolver (con caché) que el push de config y la
+		// API de intents.
+		flowruntime.WithEntitlements(entResolver),
 		flowruntime.WithReplyLimiter(replyLimiter),
 		// Deadline del entrante reactivo (Plan 027 · Ola 0 · T1, cierra H1): acota cada
 		// goroutine de OnIncoming para que un Edge mudo no fugue la goroutine ni retenga
@@ -302,6 +319,9 @@ func run() error {
 		Triggers:      triggerStore,     // CRUD reglas de disparo (Plan 019 · T5)
 		SessionRoles:  fleetRepo,        // rol bot|passive de la sesión (Plan 020 · T1)
 		SessionStatus: fleetRepo,        // estatus offline|loggedout (retiro de zombie, Plan 020 · T3)
+		Intents:       intentStore,      // config de intenciones por tenant (Plan 029 · T5)
+		Entitlements:  entResolver,      // gate de verdad del PUT de intents (ADR-0022)
+		ConfigPush:    gw,               // push del ConfigUpdate a las sesiones vivas (ADR-0021)
 		// Audit se cablea DENTRO de buildPublicAPIServer (el AuditService concreto
 		// se construye allí; expone GET /api/v1/audit, Plan 018 · T10).
 	})
@@ -936,6 +956,37 @@ func gracefulStopGRPC(gs *grpc.Server, name string, log sharedlogger.Logger) {
 		gs.Stop()
 		<-done // GracefulStop retorna en cuanto Stop() cierra los streams.
 	}
+}
+
+// intentsConfigProvider adapta el store de config de intents + los entitlements al
+// puerto gatewaygrpc.ConfigProvider (ADR-0021): al conectar un Edge, entrega la
+// config de intents vigente del tenant SOLO si tiene la feature llm_intent (gate de
+// verdad, ADR-0022) y hay config persistida. Es el ÚNICO punto que ata el kind
+// "intents" al push al conectar; el Gateway permanece genérico (no conoce kinds).
+type intentsConfigProvider struct {
+	store *intentcfg.PostgresStore
+	ents  *entitlements.Postgres
+}
+
+// ConfigsForConnect resuelve el gate y devuelve la config de intents del tenant, o
+// nil si no aplica (sin feature o sin config). Un fallo de infraestructura se
+// propaga para que el Gateway lo loguee (no se empuja config a medias).
+func (p intentsConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
+	has, err := p.ents.Has(ctx, tenantID, entitlements.FeatureLLMIntent)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, nil
+	}
+	cfg, err := p.store.Get(ctx, tenantID)
+	if err != nil {
+		if errors.Is(err, intentcfg.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return []gatewaygrpc.ConfigPayload{{Kind: intentcfg.Kind, Version: cfg.Version, Payload: cfg.Blob}}, nil
 }
 
 // closeDB cierra el pool de conexiones registrando cualquier error.

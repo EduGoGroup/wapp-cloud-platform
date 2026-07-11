@@ -25,21 +25,48 @@ func NewConfigResolver(store Store) *ConfigResolver {
 
 // Resolve decide qué hacer con un entrante sin conversación viva (sessionID = la
 // sesión del entrante; el store ya filtró a reglas específicas de esa sesión O
-// globales, Plan 020 · T4):
-//   - Si alguna regla keyword habilitada casa → {Start, FlowID} (colisión
-//     determinista: específica-de-sesión antes que global, priority desc, exact
-//     antes que contains, keyword asc).
-//   - Si ninguna casa pero hay fallback habilitado → {Fallback, FlowID} (mejor por
-//     el mismo orden).
-//   - Si tampoco → {Ignore}.
-func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID, text string) (Decision, error) {
+// globales, Plan 020 · T4). ORDEN de resolución (design.md §4.c, INV-5: todo el
+// switch de interpretación de la señal vive AQUÍ):
+//  1. Si la señal trae intención (sig.Intent != nil): reglas kind='llm' cuyo
+//     keyword (nombre de intent) casa EXACTO-normalizado el nombre de la intención
+//     → {Start, FlowID, Params, IntentName} (mismas reglas de session_id/priority/
+//     enabled que keyword). Los Params viajan a la decisión para que el runtime
+//     pre-cargue el flujo (T8).
+//  2. Si no hay intención o ninguna regla llm casa: keyword por sig.Text →
+//     {Start, FlowID} (colisión determinista: específica-de-sesión antes que
+//     global, priority desc, exact antes que contains, keyword asc).
+//  3. Si tampoco: fallback habilitado → {Fallback, FlowID} (mejor por el mismo orden).
+//  4. Si nada → {Ignore}.
+func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string, sig Signal) (Decision, error) {
+	if sig.Intent != nil {
+		llm, err := c.store.ListByKind(ctx, tenantID, sessionID, KindLLM)
+		if err != nil {
+			return Decision{}, err
+		}
+		matches := make([]Rule, 0, len(llm))
+		for _, r := range llm {
+			if r.Enabled && matchIntent(r, sig.Intent.Name) {
+				matches = append(matches, r)
+			}
+		}
+		if len(matches) > 0 {
+			sortByPriority(matches)
+			return Decision{
+				Action:     Start,
+				FlowID:     matches[0].FlowID,
+				Params:     sig.Intent.Params,
+				IntentName: sig.Intent.Name,
+			}, nil
+		}
+	}
+
 	keywords, err := c.store.ListByKind(ctx, tenantID, sessionID, KindKeyword)
 	if err != nil {
 		return Decision{}, err
 	}
 	matches := make([]Rule, 0, len(keywords))
 	for _, r := range keywords {
-		if r.Enabled && match(r, text) {
+		if r.Enabled && match(r, sig.Text) {
 			matches = append(matches, r)
 		}
 	}
@@ -146,6 +173,18 @@ func fallbackBetter(a, b Rule) bool {
 		return a.Keyword < b.Keyword
 	}
 	return a.TriggerID < b.TriggerID
+}
+
+// matchIntent evalúa una regla kind='llm' contra el NOMBRE de la intención
+// resuelta: match EXACTO tras normalizar ambos lados (design.md §4.c). No usa
+// MatchType (el clasificador ya resolvió la intención; el nombre es un
+// identificador, no texto libre a contener). Una keyword vacía nunca casa.
+func matchIntent(r Rule, intentName string) bool {
+	nk := normalize(r.Keyword)
+	if nk == "" {
+		return false
+	}
+	return nk == normalize(intentName)
 }
 
 // match evalúa una regla contra el texto entrante según su MatchType. Ambos

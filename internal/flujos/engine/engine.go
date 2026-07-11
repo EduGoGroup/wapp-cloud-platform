@@ -86,6 +86,67 @@ func (e *Engine) Enter(ctx context.Context, def model.Flow, st model.Conversatio
 	return e.renderFrom(ctx, def, st)
 }
 
+// EnterPrimed es como Enter pero, si el nodo inicial es interactivo, su módulo
+// implementa la capacidad modules.Primer y hay intent_params sembrados en st.Vars,
+// deja que el módulo PRE-CARGUE su estado (Plan 029 · T8, design.md §4.c): p. ej. el
+// carrito agrega la línea del producto pedido y salta a la confirmación en vez de
+// mostrar el listado vacío. En CUALQUIER otro caso (sin params, sin Primer, o el
+// módulo no consume la señal) equivale EXACTAMENTE a Enter (no-regresión total): por
+// eso el arranque por API —que nunca siembra params— es idéntico al de siempre.
+//
+// A diferencia de Enter, devuelve los []modules.Effect que el pre-carga DECLARÓ (p.
+// ej. item_added), para que el runtime los despache por el mismo fan-out que un Step.
+// No muta el estado recibido salvo por reasignación de campos (devuelve el nuevo).
+func (e *Engine) EnterPrimed(ctx context.Context, def model.Flow, st model.Conversation) (model.Conversation, []Output, []modules.Effect, error) {
+	st.FlowID = def.FlowID
+	st.FlowVersion = def.Version
+	st.CurrentNode = def.Initial
+	if outs, effects, handled, err := e.tryPrime(ctx, def, &st); err != nil {
+		return st, nil, nil, err
+	} else if handled {
+		// El módulo consumió la señal y produjo su propio estado/pantalla. El carrito
+		// es de un solo nodo (Next==nil): permanece en el nodo inicial esperando input.
+		return st, outs, effects, nil
+	}
+	st, outs, err := e.renderFrom(ctx, def, st)
+	return st, outs, nil, err
+}
+
+// tryPrime intenta la pre-carga del nodo inicial (EnterPrimed). Devuelve handled=true
+// solo si hay intent_params en Vars, el nodo tiene un módulo con capacidad Primer y
+// ese módulo consumió la señal. Un error de resolución de contenido NO aborta: degrada
+// a handled=false ⇒ renderFrom resuelve el contenido por su camino uniforme (si falla,
+// devuelve el mismo error una sola vez).
+func (e *Engine) tryPrime(ctx context.Context, def model.Flow, st *model.Conversation) ([]Output, []modules.Effect, bool, error) {
+	if _, ok := st.Vars[modules.VarIntentParams]; !ok {
+		return nil, nil, false, nil
+	}
+	node, ok := def.Nodes[st.CurrentNode]
+	if !ok {
+		return nil, nil, false, nil
+	}
+	mod, ok := e.reg.Get(node.Type)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	primer, ok := mod.(modules.Primer)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	content, err := e.content.Resolve(ctx, st.TenantID, node)
+	if err != nil {
+		//nolint:nilerr // degradación intencional: sin content, renderFrom lo resuelve por su
+		// camino uniforme y devuelve el mismo error una sola vez (no se pre-carga, no se aborta).
+		return nil, nil, false, nil
+	}
+	res, handled := primer.Prime(node, content, st.Vars)
+	if !handled {
+		return nil, nil, false, nil
+	}
+	st.Vars = res.Vars
+	return toOutputs(res.Outputs), res.Effects, true, nil
+}
+
 // Step evalúa el nodo actual con la entrada del usuario (design.md §3):
 //   - nodo "menu": delega en el módulo; si transiciona, renderiza el destino
 //     encadenando "message" como en Enter; si no, emite el reprompt/ayuda y

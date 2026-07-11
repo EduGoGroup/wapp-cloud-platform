@@ -30,9 +30,16 @@ func mustResolve(t *testing.T, r *trigger.ConfigResolver, tenantID, text string)
 // hay error.
 func mustResolveIn(t *testing.T, r *trigger.ConfigResolver, tenantID, sessionID, text string) trigger.Decision {
 	t.Helper()
-	dec, err := r.Resolve(context.Background(), tenantID, sessionID, text)
+	return mustResolveSig(t, r, tenantID, sessionID, trigger.Signal{Text: text})
+}
+
+// mustResolveSig ejecuta Resolve con una Signal cualquiera (texto y/o intención) y
+// falla si hay error (Plan 029 · T7).
+func mustResolveSig(t *testing.T, r *trigger.ConfigResolver, tenantID, sessionID string, sig trigger.Signal) trigger.Decision {
+	t.Helper()
+	dec, err := r.Resolve(context.Background(), tenantID, sessionID, sig)
 	if err != nil {
-		t.Fatalf("resolve(%q,%q,%q): %v", tenantID, sessionID, text, err)
+		t.Fatalf("resolve(%q,%q,%+v): %v", tenantID, sessionID, sig, err)
 	}
 	return dec
 }
@@ -217,12 +224,80 @@ func TestConfigResolver_SessionSpecificDoesNotLeak(t *testing.T) {
 
 func TestNoopResolver_NoRegression(t *testing.T) {
 	var r trigger.Resolver = trigger.NewNoopResolver()
-	dec, err := r.Resolve(context.Background(), "t1", "", "pedido")
+	dec, err := r.Resolve(context.Background(), "t1", "", trigger.Signal{Text: "pedido"})
 	if err != nil || dec.Action != trigger.Ignore {
 		t.Fatalf("Noop debe Ignore sin error, got %+v err=%v", dec, err)
 	}
 	esc, msg, err := r.IsEscape(context.Background(), "t1", "", "salir")
 	if err != nil || esc || msg != "" {
 		t.Fatalf("Noop IsEscape debe ser (false,\"\") sin error, got esc=%v msg=%q err=%v", esc, msg, err)
+	}
+}
+
+// TestConfigResolver_IntentStartsLLMRule (Plan 029 · T7): una señal con intención
+// casa una regla kind='llm' por el NOMBRE del intent (no por texto) y devuelve los
+// Params en la decisión (para el pre-carga del módulo, T8).
+func TestConfigResolver_IntentStartsLLMRule(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", Enabled: true})
+	sig := trigger.Signal{Text: "quiero 2 pizzas", Intent: &trigger.IntentSignal{Name: "pedido", Params: map[string]string{"producto": "pizza", "cantidad": "2"}}}
+	dec := mustResolveSig(t, r, "t1", "", sig)
+	if dec.Action != trigger.Start || dec.FlowID != "carrito" {
+		t.Fatalf("intent pedido debe arrancar carrito, got %+v", dec)
+	}
+	if dec.IntentName != "pedido" || dec.Params["producto"] != "pizza" || dec.Params["cantidad"] != "2" {
+		t.Fatalf("la decisión llm debe llevar IntentName y Params, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_LLMBeatsKeyword (Plan 029 · T7): con intención presente, la
+// regla llm gana aunque el texto también casaría una keyword (orden llm > keyword).
+func TestConfigResolver_LLMBeatsKeyword(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "pedido", MatchType: trigger.MatchContains, FlowID: "byKeyword", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "byLLM", Enabled: true},
+	)
+	sig := trigger.Signal{Text: "quiero un pedido", Intent: &trigger.IntentSignal{Name: "pedido"}}
+	if dec := mustResolveSig(t, r, "t1", "", sig); dec.FlowID != "byLLM" {
+		t.Fatalf("la regla llm debe ganar a la keyword cuando hay intención, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_IntentFallsBackToKeyword (Plan 029 · T7): si la intención no
+// casa ninguna regla llm, la resolución continúa por keyword sobre el texto.
+func TestConfigResolver_IntentFallsBackToKeyword(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "menu", MatchType: trigger.MatchExact, FlowID: "menu", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", Enabled: true},
+	)
+	sig := trigger.Signal{Text: "menu", Intent: &trigger.IntentSignal{Name: "saludo"}}
+	dec := mustResolveSig(t, r, "t1", "", sig)
+	if dec.Action != trigger.Start || dec.FlowID != "menu" {
+		t.Fatalf("intent sin regla llm debe caer a keyword por texto, got %+v", dec)
+	}
+	if dec.Params != nil {
+		t.Fatalf("una decisión por keyword no debe llevar Params, got %+v", dec.Params)
+	}
+}
+
+// TestConfigResolver_LLMSessionSpecificBeatsGlobal (Plan 029 · T7 + Plan 020 · T4):
+// una regla llm acotada a la sesión gana a la global, igual que keyword.
+func TestConfigResolver_LLMSessionSpecificBeatsGlobal(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "global", Priority: 9, Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "sesion", Priority: 0, Enabled: true, SessionID: "sX"},
+	)
+	sig := trigger.Signal{Intent: &trigger.IntentSignal{Name: "pedido"}}
+	if dec := mustResolveSig(t, r, "t1", "sX", sig); dec.FlowID != "sesion" {
+		t.Fatalf("regla llm específica de sesión debe ganar a la global, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_DisabledLLMIgnored (Plan 029 · T7): una regla llm deshabilitada
+// no casa; sin otra regla ⇒ Ignore.
+func TestConfigResolver_DisabledLLMIgnored(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", Enabled: false})
+	sig := trigger.Signal{Intent: &trigger.IntentSignal{Name: "pedido"}}
+	if dec := mustResolveSig(t, r, "t1", "", sig); dec.Action != trigger.Ignore {
+		t.Fatalf("regla llm deshabilitada no debe casar, got %+v", dec)
 	}
 }

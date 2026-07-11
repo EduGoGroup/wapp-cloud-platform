@@ -81,6 +81,18 @@ type Deps struct {
 	// retirar/limpiar un zombie (Plan 020 · T3). Lo satisface *fleet.PostgresRepository
 	// (SetState). nil ⇒ no se monta la ruta.
 	SessionStatus flowadmin.SessionStatusStore
+	// Intents persiste el blob de config del clasificador de intenciones por tenant
+	// (Plan 029 · T5). Lo satisface *intentcfg.PostgresStore. nil ⇒ no se montan las
+	// rutas /api/v1/intents.
+	Intents IntentConfigStore
+	// Entitlements resuelve las features del tenant (ADR-0022); es el gate de verdad
+	// del PUT de intents (sin llm_intent ⇒ 403). Lo satisface *entitlements.Postgres.
+	// nil ⇒ no se montan las rutas /api/v1/intents.
+	Entitlements FeatureChecker
+	// ConfigPush empuja el ConfigUpdate a las sesiones vivas del tenant tras el PUT
+	// (ADR-0021, best-effort). Lo satisface *gatewaygrpc.Server (PushConfig). nil ⇒
+	// no se empuja (solo se persiste; el push al conectar reconcilia).
+	ConfigPush ConfigPusher
 }
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
@@ -175,6 +187,20 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	if d.SessionStatus != nil {
 		mux.Handle("POST /api/v1/sessions/{id}/status", protect(mw, auditor, log,
 			"sessions.write", "session", flowadmin.SetSessionStatusHandler(d.SessionStatus)))
+	}
+
+	// Config del clasificador de intenciones por-tenant (Plan 029 · T5, ADR-0020/
+	// 0021/0022). GET lee el blob vigente (intents.read); PUT valida el contrato
+	// (wapp-shared/intents), exige la feature llm_intent (gate de verdad ⇒ 403 sin
+	// ella), persiste y empuja el ConfigUpdate a las sesiones vivas del tenant. Todo
+	// acotado al tenant del token (INV-8). Escritura auditada (intents.write); lectura
+	// sin auditoría (intents.read). Solo se montan si el store y el checker están
+	// cableados (fase pre-release).
+	if d.Intents != nil && d.Entitlements != nil {
+		mux.Handle("GET /api/v1/intents", protectRead(mw,
+			"intents.read", getIntentsHandler(d.Intents)))
+		mux.Handle("PUT /api/v1/intents", protect(mw, auditor, log,
+			"intents.write", "intents", putIntentsHandler(d.Intents, d.Entitlements, d.ConfigPush, log)))
 	}
 
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada

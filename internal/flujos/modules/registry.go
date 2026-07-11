@@ -44,6 +44,17 @@ type Result struct {
 // (sin regresión). Es una clave del contrato engine↔módulos, no del dominio cart.
 const VarContentRaw = "cart_catalog"
 
+// VarIntentParams es la clave de Conversation.Vars bajo la que el runtime SIEMBRA los
+// parámetros extraídos por el clasificador (map de strings) al arrancar un flujo por
+// decisión kind='llm' (Plan 029 · T8, design.md §4.c). Un módulo con la capacidad
+// Primer los lee para pre-cargarse (p. ej. el carrito con el producto pedido) y los
+// CONSUME una sola vez (los limpia de Vars tras usarlos). Ausente ⇒ arranque normal.
+const VarIntentParams = "intent_params"
+
+// VarIntentName es la clave de Conversation.Vars con el nombre de la intención que
+// originó el arranque (Plan 029 · T8), sembrada junto a VarIntentParams.
+const VarIntentName = "intent_name"
+
 // Effect es un efecto de lado DECLARADO por un módulo para que lo despache el
 // runtime (Plan 015). Kind clasifica el efecto (p. ej. "persist", "emit"), Name
 // lo nombra dentro de su clase (p. ej. "survey_answer") y Payload lleva los
@@ -85,6 +96,20 @@ type Module interface {
 // conoce el almacén ni la URL. Un descriptor inválido produce un error controlado.
 type MediaEmitter interface {
 	EmitMedia(node model.Node, content model.Content) (*model.MediaRef, error)
+}
+
+// Primer es la capacidad OPCIONAL de un módulo INTERACTIVO para PRE-CARGARSE al
+// entrar al nodo a partir de los intent_params sembrados en Vars por el runtime
+// (Plan 029 · T8, design.md §4.c: "el LLM extrae, el código resuelve"). El engine la
+// consulta por ASERCIÓN DE CAPACIDAD (mod.(Primer)) en el Enter primado, NO por
+// node.Type: sigue GENÉRICO. Recibe el contenido YA RESUELTO del nodo (p. ej. el
+// catálogo del carrito) y las Vars (con VarIntentParams). Devuelve handled=true si
+// consumió los params y produjo su propio estado/pantalla (Result.Vars/Outputs/
+// Effects); handled=false ⇒ el engine hace el Render normal (sin pre-carga, sin
+// inventar nada). PURO: el módulo resuelve en memoria (fuzzy match contra el catálogo)
+// y DECLARA los efectos (p. ej. item_added); no hace I/O ni los ejecuta.
+type Primer interface {
+	Prime(node model.Node, content model.Content, vars map[string]any) (res Result, handled bool)
 }
 
 // NodeValidator es la capacidad OPCIONAL de un módulo para validar la ESTRUCTURA de
