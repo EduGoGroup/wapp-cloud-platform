@@ -1,11 +1,12 @@
 package intentcfg_test
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -45,10 +46,28 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// jsonEqual compara dos blobs JSON por CONTENIDO (no por bytes): la columna
+// config es JSONB y Postgres canonicaliza (reordena claves, normaliza espacios),
+// así que el texto leído no es byte-idéntico al escrito. En producción nada
+// depende de la identidad de bytes: la version de entidad (idempotencia del push,
+// ADR-0021) se calcula del blob normalizado en el PUT y se persiste junto al blob.
+func jsonEqual(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		t.Fatalf("JSON inválido en comparación: %v", err)
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		t.Fatalf("JSON inválido en comparación: %v", err)
+	}
+	return reflect.DeepEqual(va, vb)
+}
+
 // TestIntegration_IntentConfig_UpsertGet valida el roundtrip contra la tabla real
 // intent_configs (migración 0033): ErrNotFound sin fila, Upsert+Get devuelve el
-// blob y la version, y un segundo Upsert reemplaza. tenant_id es TEXT (no exige un
-// tenant real), coherente con el aislamiento por tenant_id.
+// blob (equivalencia JSON: JSONB canonicaliza) y la version, y un segundo Upsert
+// reemplaza. tenant_id es TEXT (no exige un tenant real), coherente con el
+// aislamiento por tenant_id.
 func TestIntegration_IntentConfig_UpsertGet(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
@@ -72,7 +91,7 @@ func TestIntegration_IntentConfig_UpsertGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Version != "hash-1" || !bytes.Equal(got.Blob, blob) || got.UpdatedAt.IsZero() {
+	if got.Version != "hash-1" || !jsonEqual(t, got.Blob, blob) || got.UpdatedAt.IsZero() {
 		t.Fatalf("config recuperada inesperada: %+v", got)
 	}
 
@@ -84,7 +103,7 @@ func TestIntegration_IntentConfig_UpsertGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get tras reemplazo: %v", err)
 	}
-	if got2.Version != "hash-2" || !bytes.Equal(got2.Blob, newBlob) {
+	if got2.Version != "hash-2" || !jsonEqual(t, got2.Blob, newBlob) {
 		t.Fatalf("Upsert no reemplazó: %+v", got2)
 	}
 
