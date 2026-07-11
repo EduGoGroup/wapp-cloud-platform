@@ -251,7 +251,10 @@ func WithResumePolicy(nodeType string, p modules.ResumePolicy) Option {
 //     vacío/desconocido ⇒ bot (no-regresión).
 //   - el remitente es un número PROPIO del tenant (T2, anti-self-loop): una sesión
 //     propia hablando; no se auto-responde (defensa semántica contra el bucle
-//     sesión↔sesión del Plan 019).
+//     sesión↔sesión del Plan 019). Consciente del rol: solo cuentan como "propios"
+//     los números de sesiones NO passive — un passive nunca auto-responde, así que
+//     una sesión bot SÍ puede responder a mensajes que llegan desde el número
+//     personal (passive) del mismo tenant sin riesgo de loop.
 //
 // Sin rol passive y sin self_pn poblado, devuelve false ⇒ no-regresión total.
 func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
@@ -266,7 +269,11 @@ func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, rol
 // sesión propia hablando), en cuyo caso NO se debe auto-responder (Plan 020 · T2,
 // defensa semántica contra el bucle sesión↔sesión del Plan 019). Normaliza el
 // remitente (from_pn) con el MISMO normalizador que el paquete contact y lo compara
-// contra el conjunto de self_pn del tenant. Es CONSERVADORA hacia procesar: sin
+// contra el conjunto de self_pn del tenant. El conjunto es CONSCIENTE DEL ROL: el
+// lister excluye los números de sesiones passive — un passive nunca auto-responde
+// (reactiveBlocked lo corta), así que un mensaje desde ese número no puede cerrar
+// un bucle; bloquear ahí solo impediría atender al número personal del tenant. El
+// rate-limit por conversación (T0) sigue como red. Es CONSERVADORA hacia procesar: sin
 // lister (nil), sin from_pn, si el número no normaliza o si el lookup falla ⇒
 // devuelve false (no bloquea: la ausencia de dato no debe silenciar tráfico
 // legítimo). NUNCA loguea el número (PII): solo el hecho y IDs opacos.
