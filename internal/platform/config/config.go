@@ -86,6 +86,41 @@ type AppConfig struct {
 	// tope de auto-respuestas por conversación (red anti-loop). Se lee con prefijo
 	// WAPP_FLOW_.
 	Flow FlowConfig `yaml:"flow"`
+	// Health gobierna la derivación de estados de salud de flota (Plan 031 · T4,
+	// ADR-0023): los umbrales N (degradado sostenido) y M (sin salud ⇒ stale) que
+	// GET /api/v1/sessions aplica al servir. Se lee con prefijo WAPP_HEALTH_.
+	Health HealthConfig `yaml:"health"`
+	// Diagnostics gobierna el diagnóstico remoto (Plan 031 · T5, ADR-0023): la
+	// retención del bundle. Se lee con prefijo WAPP_DIAGNOSTICS_.
+	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+}
+
+// DiagnosticsConfig gobierna el diagnóstico remoto bajo demanda (Plan 031 · T5,
+// ADR-0023 capa 3). Default sano; <=0 cae al default (nunca desactiva la retención
+// por accidente).
+type DiagnosticsConfig struct {
+	// BundleTTL es la retención del bundle: expires_at = requested_at + BundleTTL. Cubre
+	// tanto la espera del bundle (el Edge puede tardar/estar offline) como su vida útil
+	// tras recibirlo. Default 30m. Se lee como cadena time.Duration de
+	// WAPP_DIAGNOSTICS_BUNDLE_TTL.
+	BundleTTL time.Duration `yaml:"bundle_ttl"`
+}
+
+// HealthConfig gobierna la derivación de estados de salud de flota que expone
+// GET /api/v1/sessions (Plan 031 · T4, ADR-0023). Global por ahora; una capa
+// por-tenant es la extensión natural (los valores concretos se afinan con el e2e
+// real, ADR-0023 §Puntos abiertos). Defaults sanos; <=0 cae al default (nunca
+// desactiva la derivación por accidente).
+type HealthConfig struct {
+	// DegradedAfter es el umbral N: una sesión con degraded_since sostenido por más
+	// de este tiempo se sirve como derived "degraded". Default 5m. Se lee como cadena
+	// time.Duration de WAPP_HEALTH_DEGRADED_AFTER.
+	DegradedAfter time.Duration `yaml:"degraded_after"`
+	// StaleAfter es el umbral M: si el último snapshot de salud (last_health_at)
+	// envejeció más de este tiempo, el dato deja de ser confiable y la sesión se
+	// sirve como derived "stale". Default 2m. Se lee como cadena time.Duration de
+	// WAPP_HEALTH_STALE_AFTER.
+	StaleAfter time.Duration `yaml:"stale_after"`
 }
 
 // FlowConfig gobierna el token-bucket EN MEMORIA de auto-respuestas por
@@ -304,6 +339,13 @@ func defaults() AppConfig {
 			IncomingTimeout:       30 * time.Second,
 			MaxConcurrentIncoming: 64,
 		},
+		Health: HealthConfig{
+			DegradedAfter: 5 * time.Minute,
+			StaleAfter:    2 * time.Minute,
+		},
+		Diagnostics: DiagnosticsConfig{
+			BundleTTL: 30 * time.Minute,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -400,6 +442,11 @@ func Load() (AppConfig, error) {
 	}
 	cfg.Flow.IncomingTimeout = getDuration(loader, "FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
 	cfg.Flow.MaxConcurrentIncoming = loader.GetInt("FLOW_MAX_CONCURRENT_INCOMING", cfg.Flow.MaxConcurrentIncoming)
+
+	cfg.Health.DegradedAfter = getDuration(loader, "HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
+	cfg.Health.StaleAfter = getDuration(loader, "HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
+
+	cfg.Diagnostics.BundleTTL = getDuration(loader, "DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
 
 	return cfg, nil
 }

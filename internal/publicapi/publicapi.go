@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
@@ -93,7 +94,29 @@ type Deps struct {
 	// (ADR-0021, best-effort). Lo satisface *gatewaygrpc.Server (PushConfig). nil ⇒
 	// no se empuja (solo se persiste; el push al conectar reconcilia).
 	ConfigPush ConfigPusher
+	// Health son los umbrales de la derivación de salud (degraded>N, stale>M) que
+	// GET /api/v1/sessions aplica al servir (Plan 031 · T4, ADR-0023). Cero-valor ⇒
+	// defaults (5m/2m). Se cablea desde config.HealthConfig.
+	Health HealthRules
+	// Alerter es el punto de extensión del alerting push sobre la salud derivada
+	// (ADR-0023). nil ⇒ NoopAlerter (nada se empuja; el estado queda consultable).
+	Alerter Alerter
+	// Diagnostics persiste las solicitudes/bundles del diagnóstico remoto y resuelve
+	// el consentimiento por tenant (Plan 031 · T5, ADR-0023). Lo satisface
+	// *diagnostics.Postgres. nil ⇒ no se montan las rutas de diagnóstico.
+	Diagnostics DiagnosticsStore
+	// DiagnosticsRequester emite el DiagnosticsRequest por el stream a la sesión. Lo
+	// satisface *gatewaygrpc.Server (mismo objeto que Sender/ConfigPush). nil ⇒ no se
+	// montan las rutas de diagnóstico.
+	DiagnosticsRequester DiagnosticsRequester
+	// DiagnosticsBundleTTL es la retención del bundle (requested_at + TTL). Cero-valor
+	// ⇒ default 30m. Se cablea desde config.DiagnosticsConfig.
+	DiagnosticsBundleTTL time.Duration
 }
+
+// defaultDiagnosticsTTL es la retención del bundle cuando Deps.DiagnosticsBundleTTL
+// llega en cero (mismo criterio defensivo que los umbrales de salud).
+const defaultDiagnosticsTTL = 30 * time.Minute
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
 // público (:8103), reutilizando el middleware de T3 (mw) y el auditor de T4. Cada
@@ -169,8 +192,12 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// el MISMO SessionLister que ya alimenta el aislamiento del envío (sin nueva
 	// dependencia). Solo expone metadatos de operación (CERO credenciales/PII).
 	if d.Sessions != nil {
+		alerter := d.Alerter
+		if alerter == nil {
+			alerter = NoopAlerter{} // ADR-0023: seam del alerting push, no-op por defecto.
+		}
 		mux.Handle("GET /api/v1/sessions", protectRead(mw,
-			"sessions.read", listSessionsHandler(d.Sessions)))
+			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, log)))
 	}
 
 	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
@@ -179,6 +206,26 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	if d.SessionRoles != nil {
 		mux.Handle("POST /api/v1/sessions/{id}/role", protect(mw, auditor, log,
 			"sessions.write", "session", flowadmin.SetSessionRoleHandler(d.SessionRoles)))
+	}
+
+	// Diagnóstico remoto bajo demanda (Plan 031 · T5, ADR-0023 capa 3). POST emite un
+	// DiagnosticsRequest a la sesión {id} (gate de consentimiento por tenant default
+	// ON ⇒ 403 si opt-out; aislamiento session→tenant ⇒ 404); GET descarga el bundle
+	// por command_id (202 pendiente / 200 listo / 410 expirado / 404 no encontrado).
+	// AMBAS rutas exigen el grant diagnostics.request y se AUDITAN (protect: la descarga
+	// se audita a propósito, es una lectura sensible). Solo se montan con el store, el
+	// emisor y el listador de sesiones cableados.
+	if d.Diagnostics != nil && d.DiagnosticsRequester != nil && d.Sessions != nil {
+		ttl := d.DiagnosticsBundleTTL
+		if ttl <= 0 {
+			ttl = defaultDiagnosticsTTL
+		}
+		mux.Handle("POST /api/v1/sessions/{id}/diagnostics", protect(mw, auditor, log,
+			"diagnostics.request", "session",
+			requestDiagnosticsHandler(d.DiagnosticsRequester, d.Diagnostics, d.Sessions, ttl, log)))
+		mux.Handle("GET /api/v1/diagnostics/{command_id}", protect(mw, auditor, log,
+			"diagnostics.request", "diagnostics",
+			getDiagnosticsHandler(d.Diagnostics, log)))
 	}
 
 	// Estatus de sesión (Plan 020 · T3): retirar/limpiar un zombie (loggedout) o
