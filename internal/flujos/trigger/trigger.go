@@ -37,6 +37,12 @@ const (
 	KindFallback Kind = "fallback"
 	// KindEscape corta una conversación viva cuando el entrante casa la keyword.
 	KindEscape Kind = "escape"
+	// KindLLM arranca un flujo cuando la INTENCIÓN resuelta por el clasificador
+	// (ADR-0020, Plan 029 · T7) casa el nombre de intent guardado en Keyword. Es la
+	// primera señal que NO es texto crudo: la resolución vive SOLO en el resolver
+	// (INV-5), no en el engine ni el runtime. Comparte tabla flow_triggers con los
+	// demás kinds (crecer por casos, no por código nuevo).
+	KindLLM Kind = "llm"
 )
 
 // Action es la decisión que toma el Resolver para un entrante sin conversación
@@ -79,26 +85,63 @@ type Rule struct {
 type Decision struct {
 	Action Action
 	FlowID string // poblado para Start / Fallback
+	// Params son los parámetros extraídos por el clasificador que ORIGINÓ el
+	// arranque (Plan 029 · T8). Se poblan SOLO cuando la decisión provino de una
+	// regla kind='llm' (una regla keyword/fallback los deja nil): el runtime los
+	// siembra en Conversation.Vars["intent_params"] antes del primer paso, de modo
+	// que un módulo (p. ej. cart) pueda pre-cargarse. "el LLM extrae, el código
+	// resuelve".
+	Params map[string]string
+	// IntentName es el nombre de la intención que casó (kind='llm'); vacío para
+	// keyword/fallback. El runtime lo siembra en Vars["intent_name"] junto a Params.
+	IntentName string
+}
+
+// IntentSignal es la intención resuelta por el clasificador local (ADR-0020) que
+// viaja en la Signal de entrada (Plan 029 · T7). Name es la etiqueta de intención
+// (casa flow_triggers.keyword en las reglas kind='llm'); Params son los datos
+// extraídos (pueden llevar texto literal del cliente); Confidence es la confianza
+// reportada; ConfigVersion es la versión del catálogo con la que se clasificó. El
+// runtime SOLO la construye si el mensaje trae intent Y el tenant tiene la feature
+// (gate de verdad, entitlements): así una regla llm nunca dispara sin derecho.
+type IntentSignal struct {
+	Name          string
+	Params        map[string]string
+	Confidence    float64
+	ConfigVersion string
+}
+
+// Signal es la SEÑAL DE ENTRADA del Resolver (Plan 029 · T7): el salto que el
+// docstring del Resolver reservó. Text es el texto crudo del entrante (la señal
+// histórica); Intent, si no es nil, es la intención resuelta por el Edge. El
+// resolver decide cómo interpretarla (INV-5); el runtime solo la transporta.
+type Signal struct {
+	Text   string
+	Intent *IntentSignal
 }
 
 // Resolver es el puerto que consulta el runtime cuando llega un entrante SIN
 // conversación viva (Resolve) y para detectar el escape sobre una conversación
 // viva (IsEscape).
 //
-// El parámetro text es la SEÑAL DE ENTRADA REUBICABLE: hoy es el texto crudo del
-// entrante; en Fase 2 será la intención resuelta por el Edge (LLM). Se mantiene
-// ÚLTIMO en la firma para no comprometer ese salto futuro: el adapter decide cómo
-// interpretar la señal, el runtime solo la pasa.
+// El parámetro sig es la SEÑAL DE ENTRADA (Plan 029 · T7): el salto que la firma
+// reservó. sig.Text es el texto crudo del entrante (la señal histórica); sig.Intent,
+// si no es nil, es la intención resuelta por el Edge (LLM). El adapter decide cómo
+// interpretar la señal (INV-5: todo el switch de interpretación vive en el resolver),
+// el runtime solo la pasa.
 //
 // sessionID es la sesión del entrante (Plan 020 · T4): permite acotar una regla a
 // una sesión concreta. sessionID vacío ("") ⇒ solo casan las reglas GLOBALES del
 // tenant (session_id NULL), comportamiento idéntico al 019 (INV-6).
 type Resolver interface {
-	// Resolve decide qué hacer con un entrante sin conversación viva.
-	Resolve(ctx context.Context, tenantID, sessionID, text string) (Decision, error)
+	// Resolve decide qué hacer con un entrante sin conversación viva a partir de la
+	// señal (texto y, opcionalmente, intención resuelta).
+	Resolve(ctx context.Context, tenantID, sessionID string, sig Signal) (Decision, error)
 	// IsEscape indica si el texto es una señal de escape para el tenant/sesión y, si
 	// lo es, devuelve el aviso configurado en la regla que casó (message; vacío si la
-	// regla no define uno ⇒ el runtime cae a su aviso por defecto).
+	// regla no define uno ⇒ el runtime cae a su aviso por defecto). Opera SIEMPRE
+	// sobre texto: una conversación viva la corta el usuario escribiendo, no el
+	// clasificador (design.md §4.c: con conversación viva el texto manda).
 	IsEscape(ctx context.Context, tenantID, sessionID, text string) (matched bool, message string, err error)
 }
 
@@ -111,7 +154,7 @@ type NoopResolver struct{}
 func NewNoopResolver() NoopResolver { return NoopResolver{} }
 
 // Resolve siempre ignora.
-func (NoopResolver) Resolve(context.Context, string, string, string) (Decision, error) {
+func (NoopResolver) Resolve(context.Context, string, string, Signal) (Decision, error) {
 	return Decision{Action: Ignore}, nil
 }
 

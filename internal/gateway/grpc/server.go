@@ -328,6 +328,12 @@ func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
 	msg.PushName = sp.GetPushName()
 	msg.FromPn = sp.GetFromPn()
 	msg.FromLid = sp.GetFromLid()
+	// Intención LLM sellada (Plan 029 · T7): el clasificador del Edge la manda dentro
+	// del SensitivePayload (sus params pueden llevar texto literal del cliente). Sin
+	// esta copia el intent sellado jamás llegaría al runtime (que la lee de
+	// IncomingMessage.Intent). El gate de VERDAD sigue en el runtime (entitlements):
+	// aquí solo se transporta. nil si el Edge no clasificó ⇒ campo vacío, sin cambio.
+	msg.Intent = sp.GetIntent()
 	return true
 }
 

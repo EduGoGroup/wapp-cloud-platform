@@ -229,6 +229,11 @@ func run() error {
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
+		// Gate de VERDAD del clasificador (ADR-0022, Plan 029 · T7): una intención LLM
+		// del entrante SOLO alimenta la Signal del resolver si el tenant tiene la feature
+		// llm_intent. Reusa el mismo entResolver (con caché) que el push de config y la
+		// API de intents.
+		flowruntime.WithEntitlements(entResolver),
 		flowruntime.WithReplyLimiter(replyLimiter),
 		// Deadline del entrante reactivo (Plan 027 · Ola 0 · T1, cierra H1): acota cada
 		// goroutine de OnIncoming para que un Edge mudo no fugue la goroutine ni retenga

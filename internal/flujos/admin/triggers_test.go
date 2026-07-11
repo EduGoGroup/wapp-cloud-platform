@@ -72,13 +72,17 @@ func TestCreateTrigger_400_InvalidBody(t *testing.T) {
 	store := trigger.NewMemoryStore()
 	h := admin.CreateTriggerHandler(store)
 	cases := map[string]string{
-		"json roto":            `{`,
-		"kind desconocido":     `{"kind":"regex","keyword":"x","flow_id":"f"}`,
-		"match_type inválido":  `{"kind":"keyword","keyword":"x","flow_id":"f","match_type":"prefix"}`,
-		"keyword sin keyword":  `{"kind":"keyword","flow_id":"f"}`,
-		"keyword sin flow_id":  `{"kind":"keyword","keyword":"x"}`,
-		"fallback sin flow_id": `{"kind":"fallback"}`,
-		"escape sin keyword":   `{"kind":"escape"}`,
+		"json roto":               `{`,
+		"kind desconocido":        `{"kind":"regex","keyword":"x","flow_id":"f"}`,
+		"match_type inválido":     `{"kind":"keyword","keyword":"x","flow_id":"f","match_type":"prefix"}`,
+		"keyword sin keyword":     `{"kind":"keyword","flow_id":"f"}`,
+		"keyword sin flow_id":     `{"kind":"keyword","keyword":"x"}`,
+		"fallback sin flow_id":    `{"kind":"fallback"}`,
+		"escape sin keyword":      `{"kind":"escape"}`,
+		"llm sin keyword":         `{"kind":"llm","flow_id":"carrito"}`,
+		"llm sin flow_id":         `{"kind":"llm","keyword":"pedido"}`,
+		"llm keyword con mayús":   `{"kind":"llm","keyword":"Pedido","flow_id":"carrito"}`,
+		"llm keyword con espacio": `{"kind":"llm","keyword":"quiero pedido","flow_id":"carrito"}`,
 	}
 	for name, body := range cases {
 		rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant, body, true)
@@ -100,6 +104,25 @@ func TestCreateTrigger_OK_FallbackAndEscape(t *testing.T) {
 	if rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"escape","keyword":"SALIR"}`, true); rec.Code != http.StatusCreated {
 		t.Fatalf("escape code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateTrigger_OK_LLM (Plan 029 · T7): una regla kind='llm' con keyword=nombre de
+// intención válido y flow_id se acepta (201) y persiste con su kind.
+func TestCreateTrigger_OK_LLM(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	h := admin.CreateTriggerHandler(store)
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"llm","keyword":"pedido","flow_id":"carrito"}`, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("llm code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Kind != trigger.KindLLM || rules[0].Keyword != "pedido" || rules[0].FlowID != "carrito" {
+		t.Fatalf("regla llm no persistió como se esperaba: %+v", rules)
 	}
 }
 
