@@ -2,6 +2,12 @@ module github.com/EduGoGroup/wapp-cloud-platform
 
 go 1.26.0
 
+// TEMPORAL (Plan 033 · Ola 2, ADR-0025): apunta a la copia local de wapp-cloudlink
+// que ya trae los tipos UserLogin/UserRefresh/UserLogout + UserAuthResponse del
+// contrato de auth de usuario. Se ELIMINA en cuanto cloudlink publique el tag
+// v0.10.0 con esos tipos y este go.mod suba el require a esa versión.
+replace github.com/EduGoGroup/wapp-cloudlink => ../wapp-cloudlink
+
 require (
 	github.com/EduGoGroup/wapp-cloudlink v0.9.0
 	github.com/EduGoGroup/wapp-shared/config v0.2.0

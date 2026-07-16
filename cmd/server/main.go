@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -156,6 +157,23 @@ func run() error {
 	// sirve la descarga). ---
 	diagStore := diagnostics.NewPostgres(db)
 
+	// --- Plano de auth de usuario del IAM (Plan 018 · T3, ADR-0019). Se construye
+	// AQUÍ (antes que el gateway y que el servidor público) porque el gateway
+	// CloudLink lo consume para las RPCs UserLogin/Refresh/Logout del Edge (Plan
+	// 033 · T2.2, ADR-0025) y el servidor :8103 lo reusa tal cual. ---
+	authStk, err := buildAuthStack(cfg, db, log)
+	if err != nil {
+		return err
+	}
+	// Config kind:"jwks" (ADR-0025 dec.2): la pública ES256 del emisor de usuario,
+	// que el Edge verifica offline. Es GLOBAL del emisor ⇒ se entrega a todo Edge
+	// que conecta (jwksConfigProvider), delegando el kind "intents" al provider
+	// existente. La rotación reusa gw.PushConfig(ctx, tenant, "jwks", version, payload).
+	jwksCfg, err := buildJWKSConfig(authStk.jwtBundle.esPub, authStk.jwtBundle.kid)
+	if err != nil {
+		return err
+	}
+
 	// --- Fleet + Gateway CloudLink. ---
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
@@ -166,12 +184,21 @@ func run() error {
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
 		gatewaygrpc.WithReceiptSink(receiptSink),
-		// Push de config al conectar (ADR-0021): entrega la config de intents vigente
-		// del tenant SOLO si tiene la feature llm_intent y hay config persistida.
-		gatewaygrpc.WithConfigProvider(intentsConfigProvider{store: intentStore, ents: entResolver}),
+		// Push de config al conectar (ADR-0021): entrega SIEMPRE la pública ES256
+		// (kind:"jwks", ADR-0025) y, encadenado, la config de intents vigente del tenant
+		// SOLO si tiene la feature llm_intent y hay config persistida.
+		gatewaygrpc.WithConfigProvider(jwksConfigProvider{
+			jwks: jwksCfg,
+			next: intentsConfigProvider{store: intentStore, ents: entResolver},
+		}),
 		// Recepción del DiagnosticsBundle (Plan 031 · T5, ADR-0023): el demux correlaciona
 		// el bundle con su solicitud pendiente por command_id y lo almacena.
 		gatewaygrpc.WithDiagnosticsSink(diagStore),
+		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025): el
+		// gateway delega UserLogin/Refresh/Logout en el AuthService del IAM y audita
+		// edge.auth.* (CERO PII) con el mismo auditor del :8103.
+		gatewaygrpc.WithAuthenticator(authStk.authSvc),
+		gatewaygrpc.WithAuthAuditor(authStk.auditor),
 	)
 
 	// --- Motor de Flujos (Pieza 05): registro de módulos + engine + store +
@@ -318,7 +345,7 @@ func run() error {
 	// fleetRepo: reusado por el aislamiento del envío (SessionLister) y por el
 	// admin de rol de sesión (SessionRoleStore, Plan 020 · T1) en ambos listeners.
 	fleetRepo := fleet.NewPostgresRepository(db)
-	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, mtx, publicapi.Deps{
+	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, log, mtx, authStk, publicapi.Deps{
 		Sender:        gw,
 		Sessions:      fleetRepo,
 		Flows:         flowStore,
@@ -566,37 +593,51 @@ func buildLeaseManager(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger
 // mensajes + flujos CRUD/arranque) que reciben en `pub` las dependencias de
 // negocio (gateway, store, motor). gRPC (:8101/:8102) y el admin (:8100) quedan
 // intactos: este servidor es aparte.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+// authStack agrupa el material del plano de autenticación de usuario del IAM que
+// hoy consumen DOS piezas: el servidor de la API pública (:8103) y el gateway
+// CloudLink (Plan 033 · T2.2, ADR-0025 — RPCs UserLogin/Refresh/Logout del Edge).
+// Se construye UNA vez en run() para que ambos planos compartan EXACTAMENTE el
+// mismo emisor/validador ES256, el mismo AuthService y el mismo auditor.
+type authStack struct {
+	jwtBundle *userJWTBundle
+	validator *auth.MultiVerifier
+	auditor   *iamusecase.AuditService
+	authSvc   *iamusecase.AuthService
+	m2mSvc    *iamusecase.M2MService
+	authMW    *httpapi.Middleware
+}
+
+// buildAuthStack cablea el material de auth de usuario del IAM (Plan 018 · T3,
+// ADR-0019) sobre el *sql.DB ya abierto. Antes vivía embebido en
+// buildPublicAPIServer; se extrajo (Plan 033 · T2.2) para poder inyectar el mismo
+// AuthService/auditor en el gateway CloudLink, que se construye antes que el
+// servidor público.
+func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*authStack, error) {
 	jwtBundle, svcJWTMgr, err := buildJWTManagers(cfg, log)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	// EMISOR DEL PLANO DE USUARIO (Plan 028 · T3/T4, ADR-0019): ES256 con `kid`
 	// (jwtBundle.es256). El emisor HS256 legacy quedó RETIRADO del plano de usuario
-	// (T4): WAPP_JWT_SECRET solo sobrevive para el ServiceJWTManager M2M (más abajo).
+	// (T4): WAPP_JWT_SECRET solo sobrevive para el ServiceJWTManager M2M.
 	userTokenIssuer := jwtBundle.es256
 	// Validación del :8103 (Plan 028 · T4, ADR-0019): un MultiVerifier con la ÚNICA
 	// entrada ES256 por su `kid` (pública derivada) y SIN default, de modo que un
 	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *auth.MultiVerifier
-	// satisface la interface UserTokenValidator del middleware (authmw.go no cambia)
-	// y también el TokenValidator del AuthService: el mismo objeto valida el :8103 y
-	// el path Verify del IAM (una sola política de aceptación). El guard anti
-	// alg-confusion es transitivo (un HS256 con el kid de ES256 se rechaza).
+	// satisface la interface UserTokenValidator del middleware y el TokenValidator
+	// del AuthService: una sola política de aceptación para el :8103 y el IAM.
 	userValidator, err := auth.NewMultiVerifier(
 		cfg.JWT.Issuer,
 		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
 		auth.VerifierKey{},
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo MultiVerifier de usuario (ES256): %w", err)
+		return nil, fmt.Errorf("construyendo MultiVerifier de usuario (ES256): %w", err)
 	}
 	auditor, err := iamusecase.NewAuditService(iampostgres.NewAuditRepo(db))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
+		return nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
 	}
-	// El mismo AuditService sirve la consulta GET /api/v1/audit (Plan 018 · T10):
-	// lee la bitácora del tenant del token (audit.read). CERO PII (eventos opacos).
-	pub.Audit = auditor
 	authSvc, err := iamusecase.NewAuthService(
 		iampostgres.NewUserRepo(db),
 		iampostgres.NewRoleRepo(db),
@@ -608,16 +649,87 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		iamusecase.Config{},
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
+		return nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
 	}
 	m2mSvc, err := iamusecase.NewM2MService(iampostgres.NewAPIKeyRepo(db), svcJWTMgr, iamusecase.Config{})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
+		return nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
 	}
 	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
+	return &authStack{
+		jwtBundle: jwtBundle,
+		validator: userValidator,
+		auditor:   auditor,
+		authSvc:   authSvc,
+		m2mSvc:    m2mSvc,
+		authMW:    authMW,
+	}, nil
+}
+
+// buildJWKSConfig arma la config kind:"jwks" (ADR-0025 dec.2) que se empuja al Edge
+// por ConfigUpdate: un JWK Set estándar con la pública ES256 del emisor de usuario
+// y su `kid`. Con ella el Edge verifica OFFLINE los access tokens del operador
+// (mismo MultiVerifier por `kid` de wapp-shared/auth). La llave pública NO es
+// secreta. Se versiona por `kid` (Version=kid): una rotación de llave ⇒ nuevo kid ⇒
+// nueva version ⇒ el push idempotente del Edge la adopta.
+func buildJWKSConfig(pub *ecdsa.PublicKey, kid string) (gatewaygrpc.ConfigPayload, error) {
+	xb := make([]byte, 32)
+	yb := make([]byte, 32)
+	pub.X.FillBytes(xb)
+	pub.Y.FillBytes(yb)
+	jwks := map[string]any{
+		"keys": []map[string]any{{
+			"kty": "EC",
+			"crv": "P-256",
+			"x":   base64.RawURLEncoding.EncodeToString(xb),
+			"y":   base64.RawURLEncoding.EncodeToString(yb),
+			"kid": kid,
+			"use": "sig",
+			"alg": "ES256",
+		}},
+	}
+	payload, err := json.Marshal(jwks)
+	if err != nil {
+		return gatewaygrpc.ConfigPayload{}, fmt.Errorf("serializando JWKS: %w", err)
+	}
+	return gatewaygrpc.ConfigPayload{Kind: "jwks", Version: kid, Payload: payload}, nil
+}
+
+// jwksConfigProvider entrega SIEMPRE la config kind:"jwks" (la pública ES256 del
+// emisor, ADR-0025 dec.2) a TODO Edge que conecta y delega el resto de kinds al
+// provider siguiente (intents). La llave ES256 es GLOBAL del emisor (un solo par
+// por proceso, no por-tenant): el mismo JWKS vale para todos los tenants, así que
+// se entrega sin mirar el tenantID.
+type jwksConfigProvider struct {
+	jwks gatewaygrpc.ConfigPayload
+	next gatewaygrpc.ConfigProvider
+}
+
+func (p jwksConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
+	out := []gatewaygrpc.ConfigPayload{p.jwks}
+	if p.next != nil {
+		rest, err := p.next.ConfigsForConnect(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rest...)
+	}
+	return out, nil
+}
+
+func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+	// El material de auth (emisor/validador ES256, AuthService, M2M, middleware,
+	// auditor) se construye UNA vez en buildAuthStack y se COMPARTE con el gateway
+	// CloudLink (Plan 033 · T2.2, ADR-0025): el mismo AuthService atiende tanto el
+	// :8103 como las RPCs UserLogin/Refresh/Logout del Edge.
+	authMW := as.authMW
+	auditor := as.auditor
+	// El mismo AuditService sirve la consulta GET /api/v1/audit (Plan 018 · T10):
+	// lee la bitácora del tenant del token (audit.read). CERO PII (eventos opacos).
+	pub.Audit = auditor
 
 	publicMux := http.NewServeMux()
-	iamhttp.Register(publicMux, authSvc, m2mSvc, log)
+	iamhttp.Register(publicMux, as.authSvc, as.m2mSvc, log)
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
