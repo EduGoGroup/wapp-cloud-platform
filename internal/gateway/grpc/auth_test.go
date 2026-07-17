@@ -133,10 +133,14 @@ func newAuthHarness(t *testing.T, ca *enroll.CA, edgeCert tls.Certificate, authn
 	}
 
 	t.Cleanup(func() {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Logf("conn.Close: %v", closeErr)
+		}
 		gs.Stop()
 		<-serveErrc
-		_ = lis.Close()
+		if closeErr := lis.Close(); closeErr != nil {
+			t.Logf("lis.Close: %v", closeErr)
+		}
 	})
 
 	return &authHarness{

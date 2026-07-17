@@ -16,7 +16,7 @@ import (
 // exacto): los errores del IAM ya son opacos por diseño (ErrInvalidCredentials no
 // distingue usuario inexistente de password mala).
 const (
-	authCodeInvalidCredentials = "invalid_credentials"
+	authCodeInvalidCredentials = "invalid_credentials" //nolint:gosec // no es una credencial, es un código de error del contrato
 	authCodeUserInactive       = "user_inactive"
 	authCodeRefreshInvalid     = "refresh_invalid"
 	authCodeInvalidInput       = "invalid_input"

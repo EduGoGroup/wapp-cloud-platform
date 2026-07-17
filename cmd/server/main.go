@@ -673,10 +673,13 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 // secreta. Se versiona por `kid` (Version=kid): una rotación de llave ⇒ nuevo kid ⇒
 // nueva version ⇒ el push idempotente del Edge la adopta.
 func buildJWKSConfig(pub *ecdsa.PublicKey, kid string) (gatewaygrpc.ConfigPayload, error) {
-	xb := make([]byte, 32)
-	yb := make([]byte, 32)
-	pub.X.FillBytes(xb)
-	pub.Y.FillBytes(yb)
+	// Bytes() devuelve el punto sin comprimir: 0x04 || X(32) || Y(32) (P-256).
+	uncompressed, err := pub.Bytes()
+	if err != nil {
+		return gatewaygrpc.ConfigPayload{}, fmt.Errorf("serializando llave pública EC: %w", err)
+	}
+	xb := uncompressed[1:33]
+	yb := uncompressed[33:65]
 	jwks := map[string]any{
 		"keys": []map[string]any{{
 			"kty": "EC",
