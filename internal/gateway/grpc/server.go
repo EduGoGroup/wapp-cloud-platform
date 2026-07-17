@@ -43,6 +43,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 )
 
 // offlinePersistTimeout acota la persistencia de fleet-offline tras la caída del
@@ -86,6 +87,16 @@ type Server struct {
 	// el diagnóstico remoto (un bundle recibido se ignora). Se inyecta con
 	// WithDiagnosticsSink.
 	diag diagnostics.BundleReceiver
+
+	// authn delega las RPCs de auth de usuario del Edge (UserLogin/UserRefresh/
+	// UserLogout, Plan 033 · T2.2, ADR-0025) en el AuthService del IAM. nil = auth
+	// no disponible (esas RPCs responden UserAuthError{internal}). Se inyecta con
+	// WithAuthenticator.
+	authn in.Authenticator
+
+	// authAuditor registra los eventos edge.auth.* en audit_events (CERO PII). nil =
+	// la auth funciona pero no se audita. Se inyecta con WithAuthAuditor.
+	authAuditor in.Auditor
 
 	// OnIncoming, si no es nil, se invoca por cada IncomingMessage recibido del
 	// Edge. Lo consume la app/los tests para observar la recepción.
@@ -296,6 +307,15 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		// Diagnóstico remoto (Plan 031 · T5, ADR-0023): el Edge responde a un
 		// DiagnosticsRequest con su bundle; se correlaciona por command_id y se almacena.
 		s.storeDiagnosticsBundle(ctx, cc, p.DiagnosticsBundle)
+	case *cloudlinkv1.EdgeToCloud_UserLogin:
+		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025):
+		// el Edge relaya credenciales/tokens; se delega en el IAM y se responde con un
+		// UserAuthResponse correlacionado por command_id/session_id.
+		s.handleUserLogin(ctx, cc, p.UserLogin)
+	case *cloudlinkv1.EdgeToCloud_UserRefresh:
+		s.handleUserRefresh(ctx, cc, p.UserRefresh)
+	case *cloudlinkv1.EdgeToCloud_UserLogout:
+		s.handleUserLogout(ctx, cc, p.UserLogout)
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
 	}

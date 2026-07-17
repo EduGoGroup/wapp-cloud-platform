@@ -3,7 +3,7 @@ module github.com/EduGoGroup/wapp-cloud-platform
 go 1.26.0
 
 require (
-	github.com/EduGoGroup/wapp-cloudlink v0.9.0
+	github.com/EduGoGroup/wapp-cloudlink v0.10.0
 	github.com/EduGoGroup/wapp-shared/config v0.2.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.1.1
 	github.com/EduGoGroup/wapp-shared/health v0.1.1
