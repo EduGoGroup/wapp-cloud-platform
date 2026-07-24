@@ -27,6 +27,9 @@ certs/
 # Vendor (descomentar si se usa go mod vendor)
 # vendor/
 
+# Logs
+*.log
+
 # macOS
 .DS_Store
 
