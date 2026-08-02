@@ -85,7 +85,7 @@ func TestNormalize_LID(t *testing.T) {
 		{"solo user", "123456789012345", "123456789012345"},
 		{"con dispositivo", "123456789012345:2@lid", "123456789012345"},
 		{"con agente y dispositivo", "123456789012345_1:2@lid", "123456789012345"},
-		{"con espacios de borde", "  987654321@lid  ", "987654321"},
+		{"con espacios de borde", "  981054321@lid  ", "981054321"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

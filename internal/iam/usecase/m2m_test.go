@@ -9,7 +9,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
 const testAudience = "wapp-public-api"
@@ -17,7 +17,7 @@ const testAudience = "wapp-public-api"
 func m2mFixture(t *testing.T) (*usecase.M2MService, *usecase.APIKeyService) {
 	t.Helper()
 	store := memory.NewStore()
-	svcJWT := auth.NewServiceJWTManager(testSigningKey, testIssuer, testAudience)
+	svcJWT := sharedjwt.NewServiceJWTManager(testSigningKey, testIssuer, testAudience)
 	m2m, err := usecase.NewM2MService(store.APIKeys, svcJWT, usecase.Config{})
 	if err != nil {
 		t.Fatalf("NewM2MService: %v", err)

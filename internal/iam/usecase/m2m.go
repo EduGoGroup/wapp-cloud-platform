@@ -8,16 +8,17 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // M2MService implementa in.M2MAuthenticator: autenticación máquina-a-máquina por
 // api-key (lookup por key_hash) y por service token (ServiceJWTManager de
 // wapp-shared/auth). La autorización por scope reutiliza el matcher glob
-// (auth.PermissionMatches), sin re-implementarlo.
+// (sharedrbac.PermissionMatches), sin re-implementarlo.
 type M2MService struct {
 	apikeys out.APIKeyRepo
-	svcJWT  *auth.ServiceJWTManager
+	svcJWT  *sharedjwt.ServiceJWTManager
 	cfg     Config
 }
 
@@ -25,7 +26,7 @@ type M2MService struct {
 var _ in.M2MAuthenticator = (*M2MService)(nil)
 
 // NewM2MService construye el servicio M2M. Valida deps nil.
-func NewM2MService(apikeys out.APIKeyRepo, svcJWT *auth.ServiceJWTManager, cfg Config) (*M2MService, error) {
+func NewM2MService(apikeys out.APIKeyRepo, svcJWT *sharedjwt.ServiceJWTManager, cfg Config) (*M2MService, error) {
 	if apikeys == nil {
 		return nil, errors.New("iam: M2MService requiere el repositorio de api-keys")
 	}
@@ -42,7 +43,7 @@ func (s *M2MService) AuthenticateAPIKey(ctx context.Context, rawKey string) (in.
 	if rawKey == "" {
 		return in.ServiceIdentity{}, domain.ErrAPIKeyInvalid
 	}
-	k, err := s.apikeys.GetByHash(ctx, auth.HashToken(rawKey))
+	k, err := s.apikeys.GetByHash(ctx, sharedjwt.HashToken(rawKey))
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return in.ServiceIdentity{}, domain.ErrAPIKeyInvalid
@@ -85,7 +86,7 @@ func (s *M2MService) VerifyServiceToken(_ context.Context, token string) (in.Ser
 // el mismo matcher glob que los grants (allow-only: los scopes no llevan deny).
 func (s *M2MService) AuthorizeScope(scopes []string, required string) bool {
 	for _, sc := range scopes {
-		if auth.PermissionMatches(sc, required) {
+		if sharedrbac.PermissionMatches(sc, required) {
 			return true
 		}
 	}

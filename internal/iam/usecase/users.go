@@ -7,7 +7,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedpassword "github.com/EduGoGroup/wapp-shared/auth/password"
 )
 
 // UserService implementa in.UserManager: alta/consulta/baja de usuarios y su
@@ -38,7 +38,7 @@ func (s *UserService) CreateUser(ctx context.Context, req in.CreateUserInput) (d
 	if req.TenantID == "" || req.Email == "" || req.Password == "" {
 		return domain.User{}, domain.ErrInvalidInput
 	}
-	hash, err := auth.HashPassword(req.Password)
+	hash, err := sharedpassword.HashPassword(req.Password)
 	if err != nil {
 		return domain.User{}, err
 	}

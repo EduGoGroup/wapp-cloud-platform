@@ -62,19 +62,16 @@ type AuditReader interface {
 	ListAudit(ctx context.Context, tenantID string, limit, offset int) ([]domain.AuditEvent, error)
 }
 
-// Deps agrupa las dependencias de negocio que la API pública envuelve. Se
-// construyen una sola vez en cmd/server (los MISMOS objetos que sirven a
-// gRPC/admin): esta capa solo añade transporte + autorización pública.
-type Deps struct {
-	Sender   MessageSender              // gateway CloudLink (SendText)
-	Sessions SessionLister              // fleet: sesiones del tenant (aislamiento)
-	Flows    FlowStore                  // store de definiciones (CRUD lectura/alta)
-	Modules  flowadmin.ModuleTypeSource // tipos de nodo de módulos (validación del alta)
-	Starter  flowadmin.Starter          // motor de flujos (arranque de conversación)
-	Media    PresignUploader            // presign R2 (upload-url, Plan 017/018 · T6)
-	Content  TenantContentStore         // blobs JSONB por-tenant (tenant_content, T6)
-	Audit    AuditReader                // bitácora de auditoría (GET /api/v1/audit, T10)
-	Triggers flowadmin.TriggerStore     // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
+// FlowDeps agrupa las dependencias del motor de flujos.
+type FlowDeps struct {
+	Flows   FlowStore                  // store de definiciones (CRUD lectura/alta)
+	Modules flowadmin.ModuleTypeSource // tipos de nodo de módulos (validación del alta)
+	Starter flowadmin.Starter          // motor de flujos (arranque de conversación)
+}
+
+// SessionDeps agrupa las dependencias de gestión de sesiones del Edge.
+type SessionDeps struct {
+	Sessions SessionLister // fleet: sesiones del tenant (aislamiento)
 	// SessionRoles administra el rol bot|passive de una sesión (Plan 020 · T1).
 	// Lo satisface *fleet.PostgresRepository (SetRole). nil ⇒ no se monta la ruta.
 	SessionRoles flowadmin.SessionRoleStore
@@ -82,6 +79,41 @@ type Deps struct {
 	// retirar/limpiar un zombie (Plan 020 · T3). Lo satisface *fleet.PostgresRepository
 	// (SetState). nil ⇒ no se monta la ruta.
 	SessionStatus flowadmin.SessionStatusStore
+}
+
+// DiagDeps agrupa las dependencias de diagnóstico remoto.
+type DiagDeps struct {
+	// Diagnostics persiste las solicitudes/bundles del diagnóstico remoto y resuelve
+	// el consentimiento por tenant (Plan 031 · T5, ADR-0023). Lo satisface
+	// *diagnostics.Postgres. nil ⇒ no se montan las rutas de diagnóstico.
+	Diagnostics DiagnosticsStore
+	// DiagnosticsRequester emite el DiagnosticsRequest por el stream a la sesión. Lo
+	// satisface *gatewaygrpc.Server (mismo objeto que Sender/ConfigPush). nil ⇒ no se
+	// montan las rutas de diagnóstico.
+	DiagnosticsRequester DiagnosticsRequester
+	// DiagnosticsBundleTTL es la retención del bundle (requested_at + TTL). Cero-valor
+	// ⇒ default 30m. Se cablea desde config.DiagnosticsConfig.
+	DiagnosticsBundleTTL time.Duration
+}
+
+// MediaDeps agrupa las dependencias de gestión de contenido y presign de media.
+type MediaDeps struct {
+	Media   PresignUploader    // presign R2 (upload-url, Plan 017/018 · T6)
+	Content TenantContentStore // blobs JSONB por-tenant (tenant_content, T6)
+}
+
+// Deps agrupa las dependencias de negocio que la API pública envuelve. Se
+// construyen una sola vez en cmd/server (los MISMOS objetos que sirven a
+// gRPC/admin): esta capa solo añade transporte + autorización pública.
+type Deps struct {
+	FlowDeps
+	SessionDeps
+	DiagDeps
+	MediaDeps
+
+	Sender   MessageSender          // gateway CloudLink (SendText)
+	Audit    AuditReader            // bitácora de auditoría (GET /api/v1/audit, T10)
+	Triggers flowadmin.TriggerStore // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
 	// Intents persiste el blob de config del clasificador de intenciones por tenant
 	// (Plan 029 · T5). Lo satisface *intentcfg.PostgresStore. nil ⇒ no se montan las
 	// rutas /api/v1/intents.
@@ -101,17 +133,6 @@ type Deps struct {
 	// Alerter es el punto de extensión del alerting push sobre la salud derivada
 	// (ADR-0023). nil ⇒ NoopAlerter (nada se empuja; el estado queda consultable).
 	Alerter Alerter
-	// Diagnostics persiste las solicitudes/bundles del diagnóstico remoto y resuelve
-	// el consentimiento por tenant (Plan 031 · T5, ADR-0023). Lo satisface
-	// *diagnostics.Postgres. nil ⇒ no se montan las rutas de diagnóstico.
-	Diagnostics DiagnosticsStore
-	// DiagnosticsRequester emite el DiagnosticsRequest por el stream a la sesión. Lo
-	// satisface *gatewaygrpc.Server (mismo objeto que Sender/ConfigPush). nil ⇒ no se
-	// montan las rutas de diagnóstico.
-	DiagnosticsRequester DiagnosticsRequester
-	// DiagnosticsBundleTTL es la retención del bundle (requested_at + TTL). Cero-valor
-	// ⇒ default 30m. Se cablea desde config.DiagnosticsConfig.
-	DiagnosticsBundleTTL time.Duration
 }
 
 // defaultDiagnosticsTTL es la retención del bundle cuando Deps.DiagnosticsBundleTTL

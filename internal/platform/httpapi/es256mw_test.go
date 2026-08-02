@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // mwActiveKid es el key id de la clave ES256 activa en el MultiVerifier bajo prueba.
@@ -27,25 +28,25 @@ func newES256MW(t *testing.T) (*httpapi.Middleware, *ecdsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("generando clave ES256: %v", err)
 	}
-	mv, err := auth.NewMultiVerifier(
+	mv, err := sharedjwt.NewMultiVerifier(
 		mwIssuer,
-		map[string]auth.VerifierKey{mwActiveKid: auth.ES256VerifierKey(&priv.PublicKey)},
-		auth.VerifierKey{},
+		map[string]sharedjwt.VerifierKey{mwActiveKid: sharedjwt.ES256VerifierKey(&priv.PublicKey)},
+		sharedjwt.VerifierKey{},
 	)
 	if err != nil {
 		t.Fatalf("NewMultiVerifier: %v", err)
 	}
-	svc := fakeM2M{svcJWT: auth.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
+	svc := fakeM2M{svcJWT: sharedjwt.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
 	return httpapi.NewMiddleware(mv, svc, nil), priv
 }
 
 func es256UserToken(t *testing.T, priv *ecdsa.PrivateKey, kid string) string {
 	t.Helper()
-	mgr, err := auth.NewJWTManagerES256(priv, mwIssuer)
+	mgr, err := sharedjwt.NewJWTManagerES256(priv, mwIssuer)
 	if err != nil {
 		t.Fatalf("NewJWTManagerES256: %v", err)
 	}
-	tok, _, err := mgr.WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, auth.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := mgr.WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken ES256: %v", err)
 	}
@@ -56,7 +57,7 @@ func es256UserToken(t *testing.T, priv *ecdsa.PrivateKey, kid string) string {
 // tal como los emitía el plano de usuario antes del corte a ES256.
 func hs256UserToken(t *testing.T) string {
 	t.Helper()
-	tok, _, err := auth.NewJWTManager(mwSecret, mwIssuer).GenerateToken(mwUser, mwTenant, []string{"operator"}, auth.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken HS256: %v", err)
 	}
@@ -67,7 +68,7 @@ func hs256UserToken(t *testing.T) string {
 // forjar el ataque de confusión de algoritmos: HS256 disfrazado del kid de ES256).
 func hs256UserTokenWithKid(t *testing.T, kid string) string {
 	t.Helper()
-	tok, _, err := auth.NewJWTManager(mwSecret, mwIssuer).WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, auth.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken HS256+kid: %v", err)
 	}

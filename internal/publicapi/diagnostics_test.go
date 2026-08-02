@@ -42,9 +42,13 @@ func (f *fakeDiagRequester) RequestDiagnostics(_ context.Context, sessionID, com
 // la sesión sess-a bajo tenantA (para el aislamiento).
 func diagDeps(store publicapi.DiagnosticsStore, gw publicapi.DiagnosticsRequester) publicapi.Deps {
 	return publicapi.Deps{
-		Sessions:             fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
-		Diagnostics:          store,
-		DiagnosticsRequester: gw,
+		SessionDeps: publicapi.SessionDeps{
+			Sessions: fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
+		},
+		DiagDeps: publicapi.DiagDeps{
+			Diagnostics:          store,
+			DiagnosticsRequester: gw,
+		},
 	}
 }
 

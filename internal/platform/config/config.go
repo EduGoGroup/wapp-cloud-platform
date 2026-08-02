@@ -392,7 +392,7 @@ func Load() (AppConfig, error) {
 	cfg.PublicHTTPAddr = loader.GetString("PUBLIC_HTTP_ADDR", cfg.PublicHTTPAddr)
 	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
-	cfg.GRPCPushTimeout = getDuration(loader, "GRPC_PUSH_TIMEOUT", cfg.GRPCPushTimeout)
+	cfg.GRPCPushTimeout = loader.GetDuration("GRPC_PUSH_TIMEOUT", cfg.GRPCPushTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 
@@ -423,7 +423,7 @@ func Load() (AppConfig, error) {
 	cfg.Storage.AccessKeyID = loader.GetString("STORAGE_S3_ACCESS_KEY_ID", cfg.Storage.AccessKeyID)
 	cfg.Storage.SecretAccessKey = loader.GetString("STORAGE_S3_SECRET_ACCESS_KEY", cfg.Storage.SecretAccessKey)
 	cfg.Storage.Endpoint = loader.GetString("STORAGE_S3_ENDPOINT", cfg.Storage.Endpoint)
-	cfg.Storage.PresignExpiry = getDuration(loader, "STORAGE_S3_PRESIGN_EXPIRY", cfg.Storage.PresignExpiry)
+	cfg.Storage.PresignExpiry = loader.GetDuration("STORAGE_S3_PRESIGN_EXPIRY", cfg.Storage.PresignExpiry)
 
 	cfg.JWT.Secret = loader.GetString("JWT_SECRET", cfg.JWT.Secret)
 	cfg.JWT.Issuer = loader.GetString("JWT_ISSUER", cfg.JWT.Issuer)
@@ -440,13 +440,13 @@ func Load() (AppConfig, error) {
 	if b := loader.GetInt("FLOW_REPLY_BURST", cfg.Flow.ReplyBurst); b > 0 {
 		cfg.Flow.ReplyBurst = b
 	}
-	cfg.Flow.IncomingTimeout = getDuration(loader, "FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
+	cfg.Flow.IncomingTimeout = loader.GetDuration("FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
 	cfg.Flow.MaxConcurrentIncoming = loader.GetInt("FLOW_MAX_CONCURRENT_INCOMING", cfg.Flow.MaxConcurrentIncoming)
 
-	cfg.Health.DegradedAfter = getDuration(loader, "HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
-	cfg.Health.StaleAfter = getDuration(loader, "HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
+	cfg.Health.DegradedAfter = loader.GetDuration("HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
+	cfg.Health.StaleAfter = loader.GetDuration("HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
 
-	cfg.Diagnostics.BundleTTL = getDuration(loader, "DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
+	cfg.Diagnostics.BundleTTL = loader.GetDuration("DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
 
 	return cfg, nil
 }
@@ -464,19 +464,4 @@ func getFloat(loader *sharedconfig.Loader, key string, def float64) float64 {
 		return def
 	}
 	return f
-}
-
-// getDuration lee una clave como cadena time.Duration (p. ej. "15m", "30s") y la
-// parsea. El loader de wapp-shared solo expone GetString/GetInt/GetBool (no un
-// GetDuration), así que se parsea aquí: vacío o inválido cae al default def.
-func getDuration(loader *sharedconfig.Loader, key string, def time.Duration) time.Duration {
-	raw := loader.GetString(key, "")
-	if raw == "" {
-		return def
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return def
-	}
-	return d
 }
