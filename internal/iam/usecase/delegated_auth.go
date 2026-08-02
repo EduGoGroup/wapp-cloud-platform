@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
@@ -32,17 +34,25 @@ type DelegatedAuthService struct {
 	// validator valida Context Tokens de wApp: los emite wApp, así que Verify no
 	// necesita salir a identity.
 	validator TokenValidator
+	// log deja rastro de los estados a medias que este servicio puede producir y
+	// nadie más ve (ver closeRotatedSession). Es OPCIONAL —nil no loguea— porque
+	// el resto del paquete no depende de un logger; aquí existe porque hay un
+	// caso en el que el error devuelto no cuenta la historia completa. NUNCA
+	// recibe tokens enteros (ver truncateSecret) ni contraseñas.
+	log sharedlogger.Logger
 }
 
 // compile-time: el delegado es intercambiable con el AuthService local.
 var _ in.Authenticator = (*DelegatedAuthService)(nil)
 
-// NewDelegatedAuthService construye el autenticador delegado.
+// NewDelegatedAuthService construye el autenticador delegado. log es opcional
+// (nil = sin rastro); todo lo demás es obligatorio.
 func NewDelegatedAuthService(
 	identity out.IdentityClient,
 	exchange in.Exchanger,
 	validator TokenValidator,
 	system string,
+	log sharedlogger.Logger,
 ) (*DelegatedAuthService, error) {
 	if identity == nil {
 		return nil, errors.New("iam: DelegatedAuthService requiere un cliente de identity")
@@ -56,7 +66,13 @@ func NewDelegatedAuthService(
 	if system != SystemWappBFF && system != SystemWappEdge {
 		return nil, errors.New("iam: DelegatedAuthService requiere una aplicación de wApp (wapp.bff o wapp.edge)")
 	}
-	return &DelegatedAuthService{identity: identity, exchange: exchange, validator: validator, system: system}, nil
+	return &DelegatedAuthService{
+		identity:  identity,
+		exchange:  exchange,
+		validator: validator,
+		system:    system,
+		log:       log,
+	}, nil
 }
 
 // Login autentica contra identity y canjea la identidad resultante por el
@@ -99,9 +115,7 @@ func (s *DelegatedAuthService) Refresh(ctx context.Context, req in.RefreshInput)
 // Con AllSessions, la revocación global es competencia de identity y el titular
 // tiene que salir de un Identity Token, nunca de un user_id transportado por
 // quien pide el logout. Como aquí solo se presenta un refresh, se rota primero
-// para obtener ese Identity Token y con él se revoca todo. El refresh rotado
-// muere en la misma operación, así que no queda ninguna sesión viva por el
-// camino.
+// para obtener ese Identity Token y con él se revoca todo.
 func (s *DelegatedAuthService) Logout(ctx context.Context, req in.LogoutInput) error {
 	if req.RefreshToken == "" {
 		return domain.ErrInvalidInput
@@ -113,7 +127,55 @@ func (s *DelegatedAuthService) Logout(ctx context.Context, req in.LogoutInput) e
 	if err != nil {
 		return err
 	}
-	return s.identity.LogoutAll(ctx, session.IdentityToken)
+	if err := s.identity.LogoutAll(ctx, session.IdentityToken); err != nil {
+		s.closeRotatedSession(ctx, session.RefreshToken, err)
+		return err
+	}
+	return nil
+}
+
+// closeRotatedSession cierra la ventana de fallo parcial de la revocación
+// global: entre el refresh y el logout-all hay un instante en el que el refresh
+// presentado YA se consumió en la rotación —identity lo revoca al rotar— y las
+// demás sesiones siguen vivas. Si el logout-all falla ahí, quien pidió el
+// logout se queda sin credencial para reintentar y con todo abierto.
+//
+// No se puede deshacer la rotación, pero sí cerrar lo único que aún se puede
+// cerrar: la sesión recién rotada. Es best-effort —si también falla, el error
+// que sale hacia fuera sigue siendo el del logout-all, que es el que describe
+// lo que el usuario pidió y no consiguió— y deja rastro en el log del estado
+// real en el que quedó la cuenta.
+//
+// Hacia el Edge esto NO se disfraza de éxito: una revocación global que no
+// ocurrió tiene que verse. Silenciarla dejaría a una persona creyendo que cerró
+// todas sus sesiones sin haber cerrado ninguna, que es peor que un error.
+func (s *DelegatedAuthService) closeRotatedSession(ctx context.Context, rotatedRefresh string, cause error) {
+	// El intento de cierre va SIEMPRE: es la mitigación, no la traza. Solo el
+	// rastro depende de que haya logger.
+	err := s.identity.Logout(ctx, rotatedRefresh)
+	if s.log == nil {
+		return
+	}
+	if err != nil {
+		s.log.Error("revocación global fallida y la sesión rotada tampoco se pudo cerrar: quedan sesiones vivas",
+			"causa", cause, "error_cierre", err, "refresh_rotado", truncateSecret(rotatedRefresh))
+		return
+	}
+	s.log.Warn("revocación global fallida: solo se cerró la sesión rotada; las demás siguen vivas",
+		"causa", cause, "refresh_rotado", truncateSecret(rotatedRefresh))
+}
+
+// secretLogPrefix es cuánto de un token se deja ver en un log. Lo justo para
+// correlacionar dos líneas de la misma operación y ni un carácter más: un token
+// completo en un log es un token filtrado.
+const secretLogPrefix = 12
+
+// truncateSecret recorta un token para poder nombrarlo en un log sin exponerlo.
+func truncateSecret(token string) string {
+	if len(token) <= secretLogPrefix {
+		return "…"
+	}
+	return token[:secretLogPrefix] + "…"
 }
 
 // Verify valida un Context Token de wApp. No sale a identity a propósito: el

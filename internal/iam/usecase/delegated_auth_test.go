@@ -3,10 +3,12 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
@@ -77,6 +79,12 @@ func (s *spyExchanger) Exchange(_ context.Context, req in.ExchangeInput) (in.Exc
 	return s.res, nil
 }
 
+// quietLogger es un logger real que no escribe: el delegado registra el estado
+// a medias de un fallo parcial y no queremos ese ruido en la salida del test.
+func quietLogger() sharedlogger.Logger {
+	return sharedlogger.New(sharedlogger.WithWriter(io.Discard))
+}
+
 type delegatedFixture struct {
 	svc      *usecase.DelegatedAuthService
 	identity *spyIdentity
@@ -98,7 +106,7 @@ func newDelegatedFixture(t *testing.T) delegatedFixture {
 		Context:      domain.IdentityContext{TenantID: testTenant, UserID: "user-1", Roles: []string{"operator"}},
 	}}
 	validator := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	svc, err := usecase.NewDelegatedAuthService(identity, exchange, validator, usecase.SystemWappEdge)
+	svc, err := usecase.NewDelegatedAuthService(identity, exchange, validator, usecase.SystemWappEdge, quietLogger())
 	if err != nil {
 		t.Fatalf("NewDelegatedAuthService: %v", err)
 	}
@@ -277,19 +285,92 @@ func TestNewDelegatedAuthService_ExigeUnaAplicacionDeWapp(t *testing.T) {
 	validator := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 
 	for _, system := range []string{"", "edugo.kmp", "wapp"} {
-		if _, err := usecase.NewDelegatedAuthService(identity, exchange, validator, system); err == nil {
+		if _, err := usecase.NewDelegatedAuthService(identity, exchange, validator, system, nil); err == nil {
 			t.Errorf("system %q debería rechazarse", system)
 		}
 	}
 	for _, system := range []string{usecase.SystemWappBFF, usecase.SystemWappEdge} {
-		if _, err := usecase.NewDelegatedAuthService(identity, exchange, validator, system); err != nil {
+		if _, err := usecase.NewDelegatedAuthService(identity, exchange, validator, system, nil); err != nil {
 			t.Errorf("system %q: %v", system, err)
 		}
 	}
-	if _, err := usecase.NewDelegatedAuthService(nil, exchange, validator, usecase.SystemWappEdge); err == nil {
+	if _, err := usecase.NewDelegatedAuthService(nil, exchange, validator, usecase.SystemWappEdge, nil); err == nil {
 		t.Error("sin cliente de identity debería fallar")
 	}
-	if _, err := usecase.NewDelegatedAuthService(identity, nil, validator, usecase.SystemWappEdge); err == nil {
+	if _, err := usecase.NewDelegatedAuthService(identity, nil, validator, usecase.SystemWappEdge, nil); err == nil {
 		t.Error("sin canje debería fallar")
+	}
+}
+
+// TestDelegatedLogout_AllSessionsConFalloParcialCierraLaSesionRotada cubre la
+// ventana que abre la cadena refresh→logout-all: el refresh presentado ya se
+// consumió en la rotación, así que si el logout-all falla ahí, quien pidió el
+// logout se queda sin credencial para reintentar y con todas las sesiones
+// vivas. Lo único que aún se puede cerrar es la sesión recién rotada, y se
+// cierra.
+func TestDelegatedLogout_AllSessionsConFalloParcialCierraLaSesionRotada(t *testing.T) {
+	t.Parallel()
+	f := newDelegatedFixture(t)
+	f.identity.logoutAllErr = domain.ErrIdentityUnavailable
+
+	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_presentado", AllSessions: true})
+
+	// El fallo NO se disfraza de éxito: una revocación global que no ocurrió
+	// tiene que verse, o la persona cree que cerró todo sin cerrar nada.
+	if !errors.Is(err, domain.ErrIdentityUnavailable) {
+		t.Fatalf("err = %v, want el error del logout-all", err)
+	}
+	// Y la mitigación: se intentó cerrar la sesión rotada, con el refresh NUEVO
+	// (el presentado ya no vale).
+	if len(f.identity.calls) != 3 || f.identity.calls[2] != "logout" {
+		t.Fatalf("llamadas a identity = %v, want [refresh logout-all logout]", f.identity.calls)
+	}
+	if f.identity.lastRefresh != "rft_de_identity" {
+		t.Errorf("el cierre usó %q, want el refresh rotado", f.identity.lastRefresh)
+	}
+}
+
+// TestDelegatedLogout_FalloParcialTotalSigueDevolviendoElErrorDelUsuario: si ni
+// siquiera la sesión rotada se puede cerrar, el error que sale es el del
+// logout-all —el que describe lo que se pidió y no se consiguió—, no el del
+// intento de mitigación.
+func TestDelegatedLogout_FalloParcialTotalSigueDevolviendoElErrorDelUsuario(t *testing.T) {
+	t.Parallel()
+	f := newDelegatedFixture(t)
+	f.identity.logoutAllErr = domain.ErrIdentityUnavailable
+	f.identity.logoutErr = domain.ErrRefreshInvalid
+
+	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_presentado", AllSessions: true})
+	if !errors.Is(err, domain.ErrIdentityUnavailable) {
+		t.Fatalf("err = %v, want el error del logout-all, no el del cierre best-effort", err)
+	}
+	if len(f.identity.calls) != 3 {
+		t.Fatalf("llamadas a identity = %v, want los tres intentos", f.identity.calls)
+	}
+}
+
+// TestDelegatedLogout_LaMitigacionNoDependeDelLogger: el cierre de la sesión
+// rotada es la mitigación, no la traza. Un despliegue sin logger no puede
+// quedarse sin ella.
+func TestDelegatedLogout_LaMitigacionNoDependeDelLogger(t *testing.T) {
+	t.Parallel()
+	identity := &spyIdentity{session: domain.IdentitySession{
+		IdentityToken: "identity.token.firmado",
+		RefreshToken:  "rft_rotado",
+		ExpiresAt:     time.Now().Add(15 * time.Minute),
+	}}
+	identity.logoutAllErr = domain.ErrIdentityUnavailable
+	svc, err := usecase.NewDelegatedAuthService(
+		identity, &spyExchanger{}, sharedjwt.NewJWTManager(testSigningKey, testIssuer), usecase.SystemWappEdge, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewDelegatedAuthService: %v", err)
+	}
+
+	if lerr := svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_presentado", AllSessions: true}); lerr == nil {
+		t.Fatal("el fallo del logout-all debía propagarse")
+	}
+	if len(identity.calls) != 3 || identity.calls[2] != "logout" {
+		t.Fatalf("sin logger la mitigación desapareció: %v", identity.calls)
 	}
 }

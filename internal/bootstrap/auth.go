@@ -205,7 +205,7 @@ func (s *authStack) wireDelegatedAuth(cfg config.AppConfig, validator iamusecase
 	if err != nil {
 		return fmt.Errorf("construyendo el cliente de identity-api: %w", err)
 	}
-	delegated, err := iamusecase.NewDelegatedAuthService(client, s.exchangeSvc, validator, iamusecase.SystemWappEdge)
+	delegated, err := iamusecase.NewDelegatedAuthService(client, s.exchangeSvc, validator, iamusecase.SystemWappEdge, log)
 	if err != nil {
 		return fmt.Errorf("construyendo el autenticador delegado del Edge: %w", err)
 	}
