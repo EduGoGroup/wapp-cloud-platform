@@ -63,6 +63,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // writeDomainError mapea los errores tipados del dominio IAM a códigos HTTP:
 //   - ErrInvalidInput      → 400
 //   - credenciales/refresh/api-key/usuario inactivo → 401 (opacos, no filtran)
+//   - identity token no aceptable / sujeto sin migrar → 401 (con motivo: el
+//     cliente es el BFF o el gateway, no un anónimo probando contraseñas, y
+//     necesita distinguir "refresca" de "este usuario no está en wApp")
+//   - más de un tenant     → 409 (estado de datos que esta ola no resuelve)
+//   - identity inalcanzable → 503 (indisponibilidad, NO rechazo)
 //   - resto (infra)        → 500
 func writeDomainError(w http.ResponseWriter, err error) {
 	switch {
@@ -73,6 +78,16 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrRefreshInvalid),
 		errors.Is(err, domain.ErrAPIKeyInvalid):
 		writeError(w, http.StatusUnauthorized, "no autorizado")
+	case errors.Is(err, domain.ErrIdentityTokenInvalid):
+		writeError(w, http.StatusUnauthorized, "identity token inválido")
+	case errors.Is(err, domain.ErrIdentityTokenExpiring):
+		writeError(w, http.StatusUnauthorized, "al identity token le queda muy poca vida: refresca antes de canjearlo")
+	case errors.Is(err, domain.ErrUserNotMigrated):
+		writeError(w, http.StatusUnauthorized, "usuario no migrado")
+	case errors.Is(err, domain.ErrMultipleTenants):
+		writeError(w, http.StatusConflict, "el usuario pertenece a más de un tenant: sin resolución hasta el Plan 005")
+	case errors.Is(err, domain.ErrIdentityUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "identity no está disponible")
 	default:
 		writeError(w, http.StatusInternalServerError, "error interno")
 	}

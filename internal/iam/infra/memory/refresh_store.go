@@ -62,6 +62,14 @@ func (s *RefreshStore) Revoke(_ context.Context, tokenHash string) error {
 	return nil
 }
 
+// Count devuelve cuántos refresh tokens hay persistidos (helper de tests: sirve
+// para afirmar que un flujo NO emitió ninguno).
+func (s *RefreshStore) Count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.tokens)
+}
+
 // RevokeAllForUser implementa out.RefreshRepo.
 func (s *RefreshStore) RevokeAllForUser(_ context.Context, userID string) error {
 	s.mu.Lock()

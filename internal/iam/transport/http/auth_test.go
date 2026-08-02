@@ -62,7 +62,9 @@ func newHarness(t *testing.T) harness {
 	}
 
 	mux := http.NewServeMux()
-	iamhttp.Register(mux, authSvc, m2mSvc, nil)
+	// Sin canje (nil): este harness ejercita el plano de auth propio de wApp y,
+	// de paso, el 503 del exchange con el modo dual apagado.
+	iamhttp.Register(mux, authSvc, m2mSvc, nil, nil)
 	return harness{mux: mux, store: store}
 }
 

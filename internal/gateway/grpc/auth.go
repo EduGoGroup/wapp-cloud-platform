@@ -33,10 +33,40 @@ const (
 	auditActionLogout  = "edge.auth.logout"
 	auditResourceAuth  = "edge.auth"
 
+	// auditActionSessionOpen es la apertura de una sesión CloudLink por un Edge:
+	// el evento del plano de MÁQUINA, amparado por el mTLS del canal.
+	auditActionSessionOpen = "edge.session.open"
+	auditResourceSession   = "edge.session"
+
 	// resultOK/resultError son los dos valores del campo Result de audit_events
 	// (mismo vocabulario que AuthService.record del IAM).
 	resultOK    = "ok"
 	resultError = "error"
+)
+
+// Tipos de actor de la auditoría (identity Plan 003 · design.md Ola 3 §1.3).
+//
+// El Edge tiene DOS identidades separadas y esta ola las reparte, no las crea.
+// Cada evento se etiqueta con cuál de las dos lo originó, y ese es el criterio
+// de aceptación de T3.3: no basta con que cada llamada viaje con su identidad,
+// tiene que poder distinguirse después «lo hizo el operador X» de «lo hizo el
+// edge Y».
+//
+//   - actorOperator: la acción nace de una PERSONA en la consola local. El actor
+//     es su `sub` —el UUID que le da identity— y el edge_id de meta dice
+//     únicamente por qué canal entró.
+//   - actorDaemon: la acción nace del PROCESO del Edge. El actor es el EdgeID,
+//     que es el `CN` de su certificado mTLS: identidad criptográfica por-Edge, no
+//     una credencial compartida. Ninguna llamada del daemon lleva jamás el token
+//     de una persona.
+const (
+	actorTypeOperator = "operator"
+	actorTypeDaemon   = "daemon"
+
+	// metaActorType es la clave de meta (JSONB) donde va la etiqueta. Es lo que
+	// permite filtrar la bitácora por tipo de actor sin adivinar por el formato
+	// del campo actor.
+	metaActorType = "actor_type"
 )
 
 // WithAuthenticator inyecta el puerto de autenticación de usuario del IAM (Plan
@@ -53,10 +83,19 @@ func WithAuthAuditor(a in.Auditor) Option { return func(s *Server) { s.authAudit
 
 // handleUserLogin atiende un UserLogin relayado por el Edge (ADR-0025 dec.1): el
 // Edge transporta las credenciales del operador; el tenant es IMPLÍCITO del canal
-// mTLS (nunca del mensaje). Delega en el IAM acotando el login al tenant del canal
-// y, tras autenticar, VERIFICA que el tenant de la identidad emitida coincida con
-// el del canal (guard tenant cruzado, defensa en profundidad). Nunca entrega
-// tokens de un tenant distinto al enrolado.
+// mTLS (nunca del mensaje). Delega en el puerto de autenticación acotando el login
+// al tenant del canal y, tras autenticar, VERIFICA que el tenant de la identidad
+// emitida coincida con el del canal (guard tenant cruzado, defensa en profundidad).
+// Nunca entrega tokens de un tenant distinto al enrolado.
+//
+// Quién hay detrás del puerto lo decide el arranque (identity Plan 003 · Ola 3):
+// con URL de identity, un delegado que valida las credenciales en el SSO del grupo
+// y canjea la identidad por un Context Token; sin ella, el IAM local de siempre.
+// El Edge no distingue los dos casos y no cambia ni una línea (REQ-A4): recibe el
+// mismo par de tokens, y el access sigue siendo un Context Token que valida offline
+// por `kid`. Con el delegado, el TenantID del input se ignora —identity no conoce
+// tenants— pero el guard de abajo sigue comparando el tenant resuelto en wApp con
+// el del canal, que es donde de verdad se sostiene la defensa.
 func (s *Server) handleUserLogin(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLoginRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
@@ -122,13 +161,14 @@ func (s *Server) handleUserRefresh(ctx context.Context, cc connCtx, req *cloudli
 }
 
 // handleUserLogout atiende un UserLogout relayado por el Edge: revoca el/los
-// refresh token(s) en el IAM (idempotente). Convención del contrato: éxito ⇒ rama
-// Tokens con UserTokens VACÍO (todos los campos en cero); fallo ⇒ rama Error.
+// refresh token(s) (idempotente). Convención del contrato: éxito ⇒ rama Tokens
+// con UserTokens VACÍO (todos los campos en cero); fallo ⇒ rama Error.
 //
-// NOTA (limitación conocida, follow-up Ola 3/4): el IAM revoca TODAS las sesiones
-// del usuario solo con UserID informado, y el proto UserLogoutRequest no lo lleva
-// (ni el puerto expone resolver el userID desde el refresh token). Por eso
-// AllSessions se relaya pero hoy degrada a revocar el único refresh presentado.
+// El follow-up del Plan 033 («all_sessions degradado en el relé») queda disuelto
+// con la delegación: la revocación global es competencia central de identity, que
+// resuelve el titular server-side, así que el proto NO necesita ganar un user_id
+// —que era justo lo que aquel follow-up temía tener que añadir—. El campo
+// AllSessions sigue expresando la intención y ahora se honra.
 func (s *Server) handleUserLogout(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLogoutRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
@@ -212,6 +252,11 @@ func (s *Server) pushAuthResponse(cc connCtx, resp *cloudlinkv1.UserAuthResponse
 // PII (INV-5): actor = userID OPACO (o "" cuando el fallo es pre-identidad); el
 // tenant va a su columna y edge_id/session_id/command_id/channel a meta (JSONB).
 // NUNCA se registran email, password ni tokens.
+//
+// Estos eventos son SIEMPRE de OPERADOR: nacen de una persona que se autentica
+// en la consola local, y el Edge solo relaya. Por eso el actor es su `sub` y la
+// etiqueta es actorTypeOperator incluso cuando el sujeto no llegó a resolverse
+// (un login fallido sigue siendo el intento de una persona, no del daemon).
 func (s *Server) recordEdgeAuth(ctx context.Context, cc connCtx, action, result, commandID, actor string) {
 	if s.authAuditor == nil {
 		return
@@ -223,13 +268,44 @@ func (s *Server) recordEdgeAuth(ctx context.Context, cc connCtx, action, result,
 		Resource: auditResourceAuth,
 		Result:   result,
 		Meta: map[string]any{
-			"edge_id":    cc.edgeID,
-			"session_id": cc.sessionID,
-			"command_id": commandID,
-			"channel":    "cloudlink",
+			metaActorType: actorTypeOperator,
+			"edge_id":     cc.edgeID,
+			"session_id":  cc.sessionID,
+			"command_id":  commandID,
+			"channel":     "cloudlink",
 		},
 	})
 	if err != nil {
 		s.log.Debug("auth: registrar auditoría", "action", action, "error", err)
+	}
+}
+
+// recordEdgeSession registra la apertura de una sesión CloudLink: el evento del
+// plano de MÁQUINA (best-effort, CERO PII).
+//
+// Aquí el actor es el EdgeID —el `CN` del certificado mTLS con el que el daemon
+// se presentó—, no una persona. Es la contraparte que hace verificable la
+// frontera del §1.3: con estos eventos y los edge.auth.* en la misma bitácora,
+// «lo hizo el edge Y» y «lo hizo el operador X» se distinguen por el actor y su
+// etiqueta, sin tener que interpretar el formato del identificador.
+func (s *Server) recordEdgeSession(ctx context.Context, cc connCtx) {
+	if s.authAuditor == nil || !cc.hasIdentity {
+		return
+	}
+	err := s.authAuditor.Record(ctx, in.AuditInput{
+		TenantID: cc.tenantID,
+		Actor:    cc.edgeID,
+		Action:   auditActionSessionOpen,
+		Resource: auditResourceSession,
+		Result:   resultOK,
+		Meta: map[string]any{
+			metaActorType: actorTypeDaemon,
+			"edge_id":     cc.edgeID,
+			"session_id":  cc.sessionID,
+			"channel":     "cloudlink",
+		},
+	})
+	if err != nil {
+		s.log.Debug("auth: registrar auditoría de sesión", "error", err)
 	}
 }

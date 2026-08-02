@@ -40,6 +40,42 @@ type UserRepo interface {
 	SoftDelete(ctx context.Context, tenantID, id string) error
 }
 
+// IdentityClient habla con identity-api, el SSO del grupo (identity Plan 003 ·
+// Ola 3). Es el ÚNICO puerto de este módulo que sale del proceso hacia otro
+// servicio: los demás son almacenamiento.
+//
+// A partir de la delegación, las credenciales de una persona se validan AHÍ y no
+// aquí. Lo que wApp sigue decidiendo —el tenant y los grants— viaja en el
+// Context Token que se emite después, con el canje.
+type IdentityClient interface {
+	// Login autentica a la persona contra identity para una aplicación concreta
+	// (`system`: wapp.bff o wapp.edge). El System Gate de identity puede negar el
+	// acceso a esa aplicación aunque las credenciales sean correctas.
+	Login(ctx context.Context, email, password, system string) (domain.IdentitySession, error)
+	// Refresh rota la sesión en identity a partir del refresh presentado. La
+	// aplicación NO se manda: sale de la fila de la sesión, y mandarla sortearía
+	// el System Gate.
+	Refresh(ctx context.Context, refreshToken string) (domain.IdentitySession, error)
+	// Logout revoca en identity la sesión de ESE refresh. Idempotente: revocar
+	// una sesión que ya no existe no es error.
+	Logout(ctx context.Context, refreshToken string) error
+	// LogoutAll revoca TODAS las sesiones de la persona que acredita el Identity
+	// Token presentado, en todas sus aplicaciones.
+	LogoutAll(ctx context.Context, identityToken string) error
+}
+
+// MembershipRepo lee la membresía usuario↔tenant (tabla public.tenant_members,
+// migración 0037). Es el vínculo de NEGOCIO que se queda en wApp cuando los
+// usuarios pasan a identity (identity ADR-0001, INV-1): identity dice QUIÉN es
+// la persona y esta tabla a QUÉ tenant pertenece. Solo lectura: la escritura la
+// hacen la migración y la administración de tenants, no el plano de auth.
+type MembershipRepo interface {
+	// TenantsOfUser devuelve los tenants de los que el usuario es miembro, en
+	// orden estable. Una lista VACÍA no es error: significa que ese usuario no
+	// tiene membresía en wApp (quien lo llame decide qué hacer con eso).
+	TenantsOfUser(ctx context.Context, userID string) ([]string, error)
+}
+
 // RoleRepo persiste roles, sus grants y la asignación usuario↔rol (tablas
 // iam_roles, iam_role_grants, iam_user_roles).
 type RoleRepo interface {

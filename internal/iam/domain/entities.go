@@ -115,6 +115,22 @@ type IdentityContext struct {
 	Roles    []string
 }
 
+// IdentitySession es la sesión que identity-core abre para una persona: lo que
+// devuelve su login o su refresh (identity Plan 003 · Ola 3).
+//
+// El IdentityToken NO se persiste NUNCA en wApp: vive solo el instante
+// server-side que dura el canje por un Context Token. Lo que se conserva y se
+// entrega al cliente es el RefreshToken, que es de identity y solo identity
+// puede rotar o revocar.
+type IdentitySession struct {
+	SessionID     string
+	IdentityToken string
+	RefreshToken  string
+	// ExpiresAt es la expiración del IdentityToken, la que acota al Context
+	// Token que salga de canjearlo.
+	ExpiresAt time.Time
+}
+
 // AuthResult es el resultado de un login/refresh: el par de tokens y el
 // contexto de identidad. RefreshToken es el token OPACO en CLARO, entregado UNA
 // vez al cliente (en BD solo vive su hash). ExpiresAt es la expiración del

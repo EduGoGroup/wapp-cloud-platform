@@ -184,7 +184,15 @@ func (s *AuthService) Logout(ctx context.Context, req in.LogoutInput) error {
 // Valid=false SIN error (semántica del endpoint /verify, design.md §8); solo
 // los errores inesperados se propagan.
 func (s *AuthService) Verify(_ context.Context, accessToken string) (in.VerifyResult, error) {
-	claims, err := s.validator.ValidateToken(accessToken)
+	return verifyWithValidator(s.validator, accessToken)
+}
+
+// verifyWithValidator es la semántica de /verify sobre cualquier validador de
+// Context Tokens. Vive como función libre porque la comparten el AuthService
+// local y el delegado: el token que se mira lo emite wApp en los dos casos, así
+// que la política de aceptación tiene que ser exactamente la misma.
+func verifyWithValidator(validator TokenValidator, accessToken string) (in.VerifyResult, error) {
+	claims, err := validator.ValidateToken(accessToken)
 	if err != nil {
 		if errors.Is(err, sharedjwt.ErrInvalidToken) || errors.Is(err, sharedjwt.ErrTokenExpired) {
 			return in.VerifyResult{Valid: false}, nil

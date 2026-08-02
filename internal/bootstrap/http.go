@@ -34,7 +34,7 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 	pub.Audit = auditor
 
 	publicMux := http.NewServeMux()
-	iamhttp.Register(publicMux, as.authSvc, as.m2mSvc, log)
+	iamhttp.Register(publicMux, as.authSvc, as.m2mSvc, as.exchanger(), log)
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
