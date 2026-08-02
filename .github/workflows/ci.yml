@@ -1,16 +1,18 @@
 name: CI
 
-# CI de PR/push para wapp-cloud-platform (monolito modular Go, público).
-# Homólogo a wapp-cloudlink/edge (Go 1.26, golangci-lint v2.4.0).
+# Régimen CI/CD nuevo (decisión del dueño, 2026-08-01): NO se abren PRs y
+# GitHub Actions NO se dispara automáticamente con push/PR. La validación real
+# es LOCAL — `make ci-local` (fmt+vet+lint+test+build) y `make ci-docker`
+# (mismo toolchain que este workflow, en contenedor) antes de mergear y
+# pushear. Este workflow queda como corrida MANUAL (workflow_dispatch): sirve
+# para verificación puntual y de base para los releases futuros.
+# Homólogo a wapp-cloudlink/edge (Go 1.26.5, golangci-lint v2.12.2 — Plan 027).
 # SIN deploy a GCP ni GitHub Packages. Módulo PÚBLICO: sin GOPRIVATE ni token.
 on:
-  pull_request:
-    branches: [main, dev]
-  push:
-    branches: [main] # red de seguridad
+  workflow_dispatch:
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.5'
 
 jobs:
   test:
@@ -104,7 +106,7 @@ jobs:
       - name: golangci-lint
         # v2.12.2 está COMPILADO con go1.26 (v2.4.0 iba con go1.25 y no podía cargar
         # un go.mod que apunta a go 1.26.0 → exit 3 "can't load config"). Plan 027.
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m
