@@ -128,3 +128,27 @@ func TestLoad_StoragePresignExpiryInvalidFallsBack(t *testing.T) {
 		t.Fatalf("PresignExpiry inválido debería caer al default 15m, got %v", cfg.Storage.PresignExpiry)
 	}
 }
+
+func TestLoad_IdentityJWKSURLIsOffByDefault(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+	// Sin la variable, el modo dual con identity queda apagado: cloud-platform
+	// arranca sin depender de identity-core (identity Plan 003 · T1.2).
+	if cfg.Identity.JWKSURL != "" {
+		t.Fatalf("Identity.JWKSURL debería nacer vacía (modo dual apagado), got %q", cfg.Identity.JWKSURL)
+	}
+}
+
+func TestLoad_IdentityJWKSURLEnvOverride(t *testing.T) {
+	t.Setenv(EnvPrefix+"IDENTITY_JWKS_URL", "http://localhost:8200/.well-known/jwks.json")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load devolvió error inesperado: %v", err)
+	}
+	if cfg.Identity.JWKSURL != "http://localhost:8200/.well-known/jwks.json" {
+		t.Fatalf("Identity.JWKSURL: got %q", cfg.Identity.JWKSURL)
+	}
+}

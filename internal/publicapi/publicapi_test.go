@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -67,7 +67,7 @@ func (f fakeM2M) VerifyServiceToken(_ context.Context, _ string) (in.ServiceIden
 
 func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 	for _, s := range scopes {
-		if sharedrbac.PermissionMatches(s, required) {
+		if identityrbac.PermissionMatches(s, required) {
 			return true
 		}
 	}

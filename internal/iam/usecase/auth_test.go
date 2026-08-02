@@ -11,12 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	identityjwt "github.com/EduGoGroup/identity-shared/auth/jwt"
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 const (
@@ -116,18 +117,18 @@ func TestLogin_OK_EmitsTokensAndEffectiveGrants(t *testing.T) {
 	if claims.TenantID != testTenant {
 		t.Fatalf("claim tenant inesperado: %s", claims.TenantID)
 	}
-	if !sharedrbac.EvaluateGrants(claims.Grants, "flows.create") {
+	if !identityrbac.EvaluateGrants(claims.Grants, "flows.create") {
 		t.Error("se esperaba allow de flows.create (grant flows.*)")
 	}
-	if !sharedrbac.EvaluateGrants(claims.Grants, "messages.send") {
+	if !identityrbac.EvaluateGrants(claims.Grants, "messages.send") {
 		t.Error("se esperaba allow de messages.send")
 	}
-	if sharedrbac.EvaluateGrants(claims.Grants, "leases.revoke") {
+	if identityrbac.EvaluateGrants(claims.Grants, "leases.revoke") {
 		t.Error("no se esperaba allow de leases.revoke (default DENY)")
 	}
 
 	// El refresh quedó persistido por su hash.
-	if _, err := store.Refresh.GetByHash(ctx, sharedjwt.HashToken(res.RefreshToken)); err != nil {
+	if _, err := store.Refresh.GetByHash(ctx, identityjwt.HashRefreshToken(res.RefreshToken)); err != nil {
 		t.Fatalf("refresh no persistido: %v", err)
 	}
 }
@@ -186,7 +187,7 @@ func TestLogin_ES256_EmitsAsymmetricTokenWithKid(t *testing.T) {
 
 	// El refresh es opaco (no un JWS): no tiene header ES256, pero sí quedó
 	// persistido por su hash.
-	if _, err := store.Refresh.GetByHash(ctx, sharedjwt.HashToken(res.RefreshToken)); err != nil {
+	if _, err := store.Refresh.GetByHash(ctx, identityjwt.HashRefreshToken(res.RefreshToken)); err != nil {
 		t.Fatalf("refresh no persistido: %v", err)
 	}
 }

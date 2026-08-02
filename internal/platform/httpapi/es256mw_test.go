@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // mwActiveKid es el key id de la clave ES256 activa en el MultiVerifier bajo prueba.
@@ -46,7 +46,7 @@ func es256UserToken(t *testing.T, priv *ecdsa.PrivateKey, kid string) string {
 	if err != nil {
 		t.Fatalf("NewJWTManagerES256: %v", err)
 	}
-	tok, _, err := mgr.WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := mgr.WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, identityrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken ES256: %v", err)
 	}
@@ -57,7 +57,7 @@ func es256UserToken(t *testing.T, priv *ecdsa.PrivateKey, kid string) string {
 // tal como los emitía el plano de usuario antes del corte a ES256.
 func hs256UserToken(t *testing.T) string {
 	t.Helper()
-	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).GenerateToken(mwUser, mwTenant, []string{"operator"}, identityrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken HS256: %v", err)
 	}
@@ -68,7 +68,7 @@ func hs256UserToken(t *testing.T) string {
 // forjar el ataque de confusión de algoritmos: HS256 disfrazado del kid de ES256).
 func hs256UserTokenWithKid(t *testing.T, kid string) string {
 	t.Helper()
-	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, sharedrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
+	tok, _, err := sharedjwt.NewJWTManager(mwSecret, mwIssuer).WithKid(kid).GenerateToken(mwUser, mwTenant, []string{"operator"}, identityrbac.Grants{Allow: []string{"flows.*"}}, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateToken HS256+kid: %v", err)
 	}

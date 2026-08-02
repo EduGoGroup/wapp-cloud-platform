@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 )
 
@@ -32,7 +32,7 @@ type Identity struct {
 	Roles []string
 	// Grants son los permisos efectivos del usuario, ya resueltos al emitir el
 	// token (vacío en M2M).
-	Grants sharedrbac.Grants
+	Grants identityrbac.Grants
 	// Scopes son los permisos concedidos a la api-key/service token (vacío en
 	// usuario).
 	Scopes []string
@@ -145,7 +145,7 @@ func (m *Middleware) resolve(r *http.Request) (Identity, bool) {
 }
 
 // RequirePermission devuelve un middleware que exige el permiso `recurso.accion`
-// (glob RBAC). Para usuario evalúa los grants con sharedrbac.EvaluateGrants
+// (glob RBAC). Para usuario evalúa los grants con identityrbac.EvaluateGrants
 // (default DENY, deny precede allow); para M2M evalúa el scope con
 // AuthorizeScope. Debe montarse DESPUÉS de Authenticate (necesita la Identity en
 // el contexto): 401 si no hay identidad, 403 si el permiso no se cumple.
@@ -163,7 +163,7 @@ func (m *Middleware) RequirePermission(perm string) func(http.Handler) http.Hand
 			if id.IsService {
 				allowed = m.svc.AuthorizeScope(id.Scopes, perm)
 			} else {
-				allowed = sharedrbac.EvaluateGrants(id.Grants, perm)
+				allowed = identityrbac.EvaluateGrants(id.Grants, perm)
 			}
 			if !allowed {
 				m.deny(r, http.StatusForbidden)

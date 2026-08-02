@@ -4,17 +4,17 @@ import (
 	"context"
 	"testing"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // grantsFromToken hace login y devuelve los grants efectivos embebidos en el
 // access token.
-func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password string) sharedrbac.Grants {
+func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password string) identityrbac.Grants {
 	t.Helper()
 	res, err := authSvc.Login(context.Background(), in.LoginInput{Email: email, Password: password})
 	if err != nil {
@@ -51,10 +51,10 @@ func TestEffectiveGrants_RoleChain(t *testing.T) {
 	_ = u
 
 	grants := grantsFromToken(t, authSvc, "chain@x.example", testLoginPhrase)
-	if !sharedrbac.EvaluateGrants(grants, "messages.send") {
+	if !identityrbac.EvaluateGrants(grants, "messages.send") {
 		t.Error("se esperaba el grant propio del hijo")
 	}
-	if !sharedrbac.EvaluateGrants(grants, "contacts.read") {
+	if !identityrbac.EvaluateGrants(grants, "contacts.read") {
 		t.Error("se esperaba el grant heredado del padre")
 	}
 }
@@ -83,10 +83,10 @@ func TestEffectiveGrants_UserOverrideDeny(t *testing.T) {
 	}
 
 	grants := grantsFromToken(t, authSvc, "deny@x.example", testLoginPhrase)
-	if !sharedrbac.EvaluateGrants(grants, "flows.create") {
+	if !identityrbac.EvaluateGrants(grants, "flows.create") {
 		t.Error("flows.create debía seguir permitido por flows.*")
 	}
-	if sharedrbac.EvaluateGrants(grants, "flows.delete") {
+	if identityrbac.EvaluateGrants(grants, "flows.delete") {
 		t.Error("flows.delete debía estar denegado por el override deny")
 	}
 }

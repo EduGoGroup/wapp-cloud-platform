@@ -93,6 +93,26 @@ type AppConfig struct {
 	// Diagnostics gobierna el diagnóstico remoto (Plan 031 · T5, ADR-0023): la
 	// retención del bundle. Se lee con prefijo WAPP_DIAGNOSTICS_.
 	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+	// Identity es la puerta al SSO del grupo (identity-core, Plan 003 · Ola 1):
+	// de dónde se toman las claves públicas con las que verificar sus Identity
+	// Tokens. Vacía = wApp arranca sin identity, como hasta ahora. Se lee con
+	// prefijo WAPP_IDENTITY_.
+	Identity IdentityConfig `yaml:"identity"`
+}
+
+// IdentityConfig apunta al microecosistema identity, emisor de los Identity
+// Tokens del grupo (identity ADR-0001/ADR-0002). Es distinto del bloque JWT, que
+// gobierna los tokens que wApp emite por su cuenta: aquí wApp solo VERIFICA lo
+// que firma otro.
+type IdentityConfig struct {
+	// JWKSURL es el endpoint JWKS de identity-api del que salen las claves
+	// públicas ES256 del emisor. SIN default y con semántica de INTERRUPTOR: vacía
+	// ⇒ el verificador de Identity Tokens no se construye y el arranque no depende
+	// de identity. Con valor, el arranque FALLA si el JWKS no responde
+	// (fail-closed: el verificador nunca nace con cero claves). En dev
+	// http://localhost:8200/.well-known/jwks.json; fuera de loopback se exige
+	// https.
+	JWKSURL string `yaml:"jwks_url"`
 }
 
 // DiagnosticsConfig gobierna el diagnóstico remoto bajo demanda (Plan 031 · T5,
@@ -447,6 +467,8 @@ func Load() (AppConfig, error) {
 	cfg.Health.StaleAfter = loader.GetDuration("HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
 
 	cfg.Diagnostics.BundleTTL = loader.GetDuration("DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
+
+	cfg.Identity.JWKSURL = loader.GetString("IDENTITY_JWKS_URL", cfg.Identity.JWKSURL)
 
 	return cfg, nil
 }
