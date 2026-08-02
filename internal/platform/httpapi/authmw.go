@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 )
 
@@ -31,7 +32,7 @@ type Identity struct {
 	Roles []string
 	// Grants son los permisos efectivos del usuario, ya resueltos al emitir el
 	// token (vacío en M2M).
-	Grants auth.Grants
+	Grants sharedrbac.Grants
 	// Scopes son los permisos concedidos a la api-key/service token (vacío en
 	// usuario).
 	Scopes []string
@@ -58,12 +59,12 @@ func IdentityFromContext(ctx context.Context) (Identity, bool) {
 }
 
 // UserTokenValidator valida un access token de USUARIO y devuelve sus claims
-// (incluidos los grants efectivos). Lo satisface *auth.JWTManager de
+// (incluidos los grants efectivos). Lo satisface *sharedjwt.JWTManager de
 // wapp-shared/auth. Se usa directamente la primitiva de validación (no el
 // usecase Verify) porque el middleware necesita los GRANTS para autorizar, y
 // VerifyResult los omite a propósito (design.md §7).
 type UserTokenValidator interface {
-	ValidateToken(token string) (*auth.Claims, error)
+	ValidateToken(token string) (*sharedjwt.Claims, error)
 }
 
 // ServiceAuthenticator resuelve identidades M2M (api-key o service token) y
@@ -126,7 +127,7 @@ func (m *Middleware) resolve(r *http.Request) (Identity, bool) {
 
 	// Token de usuario primero: si valida y NO es un service token, es un usuario
 	// con sus grants efectivos embebidos.
-	if claims, err := m.users.ValidateToken(tok); err == nil && claims.TokenUse != auth.TokenUseService {
+	if claims, err := m.users.ValidateToken(tok); err == nil && claims.TokenUse != sharedjwt.TokenUseService {
 		return Identity{
 			TenantID: claims.TenantID,
 			Subject:  claims.UserID,
@@ -144,7 +145,7 @@ func (m *Middleware) resolve(r *http.Request) (Identity, bool) {
 }
 
 // RequirePermission devuelve un middleware que exige el permiso `recurso.accion`
-// (glob RBAC). Para usuario evalúa los grants con auth.EvaluateGrants
+// (glob RBAC). Para usuario evalúa los grants con sharedrbac.EvaluateGrants
 // (default DENY, deny precede allow); para M2M evalúa el scope con
 // AuthorizeScope. Debe montarse DESPUÉS de Authenticate (necesita la Identity en
 // el contexto): 401 si no hay identidad, 403 si el permiso no se cumple.
@@ -162,7 +163,7 @@ func (m *Middleware) RequirePermission(perm string) func(http.Handler) http.Hand
 			if id.IsService {
 				allowed = m.svc.AuthorizeScope(id.Scopes, perm)
 			} else {
-				allowed = auth.EvaluateGrants(id.Grants, perm)
+				allowed = sharedrbac.EvaluateGrants(id.Grants, perm)
 			}
 			if !allowed {
 				m.deny(r, http.StatusForbidden)

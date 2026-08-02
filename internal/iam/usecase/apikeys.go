@@ -8,11 +8,11 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
 // apiKeySecretTTL es un TTL nominal (ignorado) que se pasa a
-// auth.GenerateRefreshToken para reutilizar su CSPRNG como generador del secreto
+// sharedjwt.GenerateRefreshToken para reutilizar su CSPRNG como generador del secreto
 // de la api-key: nos quedamos con el token opaco (secreto) y su SHA256 (key_hash),
 // no con la expiración que calcula.
 const apiKeySecretTTL = time.Hour
@@ -42,7 +42,7 @@ func (s *APIKeyService) IssueAPIKey(ctx context.Context, req in.IssueAPIKeyInput
 	if req.TenantID == "" || req.ClientID == "" {
 		return in.IssueAPIKeyResult{}, domain.ErrInvalidInput
 	}
-	gen, err := auth.GenerateRefreshToken(apiKeySecretTTL)
+	gen, err := sharedjwt.GenerateRefreshToken(apiKeySecretTTL)
 	if err != nil {
 		return in.IssueAPIKeyResult{}, err
 	}

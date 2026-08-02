@@ -10,7 +10,8 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 const (
@@ -25,7 +26,7 @@ const (
 // fakeM2M implementa httpapi.ServiceAuthenticator sin BD: reconoce una única
 // api-key ("valid-key") y usa un ServiceJWTManager real para los service tokens.
 type fakeM2M struct {
-	svcJWT *auth.ServiceJWTManager
+	svcJWT *sharedjwt.ServiceJWTManager
 }
 
 func (f fakeM2M) AuthenticateAPIKey(_ context.Context, rawKey string) (in.ServiceIdentity, error) {
@@ -45,7 +46,7 @@ func (f fakeM2M) VerifyServiceToken(_ context.Context, token string) (in.Service
 
 func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 	for _, s := range scopes {
-		if auth.PermissionMatches(s, required) {
+		if sharedrbac.PermissionMatches(s, required) {
 			return true
 		}
 	}
@@ -53,7 +54,7 @@ func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 }
 
 // userToken firma un access token de usuario con los grants dados.
-func userToken(t *testing.T, jwt *auth.JWTManager, grants auth.Grants) string {
+func userToken(t *testing.T, jwt *sharedjwt.JWTManager, grants sharedrbac.Grants) string {
 	t.Helper()
 	tok, _, err := jwt.GenerateToken(mwUser, mwTenant, []string{"operator"}, grants, time.Hour)
 	if err != nil {
@@ -62,9 +63,9 @@ func userToken(t *testing.T, jwt *auth.JWTManager, grants auth.Grants) string {
 	return tok
 }
 
-func newMW() (*httpapi.Middleware, *auth.JWTManager, fakeM2M) {
-	jwt := auth.NewJWTManager(mwSecret, mwIssuer)
-	svc := fakeM2M{svcJWT: auth.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
+func newMW() (*httpapi.Middleware, *sharedjwt.JWTManager, fakeM2M) {
+	jwt := sharedjwt.NewJWTManager(mwSecret, mwIssuer)
+	svc := fakeM2M{svcJWT: sharedjwt.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
 	return httpapi.NewMiddleware(jwt, svc, nil), jwt, svc
 }
 
@@ -95,7 +96,7 @@ func TestAuthenticate_NoToken401(t *testing.T) {
 func TestAuthenticate_ValidUserToken_InjectsIdentity(t *testing.T) {
 	t.Parallel()
 	mw, jwt, _ := newMW()
-	tok := userToken(t, jwt, auth.Grants{Allow: []string{"flows.*"}})
+	tok := userToken(t, jwt, sharedrbac.Grants{Allow: []string{"flows.*"}})
 
 	var got httpapi.Identity
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -172,7 +173,7 @@ func TestRequirePermission_AllowedAndDenied(t *testing.T) {
 	mw, jwt, _ := newMW()
 
 	// Usuario con grant flows.* → allow flows.create, deny messages.send.
-	tok := userToken(t, jwt, auth.Grants{Allow: []string{"flows.*"}})
+	tok := userToken(t, jwt, sharedrbac.Grants{Allow: []string{"flows.*"}})
 
 	run := func(perm string) int {
 		final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

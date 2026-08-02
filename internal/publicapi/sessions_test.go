@@ -54,7 +54,7 @@ func sessionsFixture() fakeSessions {
 }
 
 func TestSessionsList_OK_WithScope(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Sessions: sessionsFixture()}, apiKeys())
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}}, apiKeys())
 
 	rec := call(mux, keyASessions, http.MethodGet, "/api/v1/sessions", "")
 	if rec.Code != http.StatusOK {
@@ -78,7 +78,7 @@ func TestSessionsList_OK_WithScope(t *testing.T) {
 }
 
 func TestSessionsList_401_NoToken(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Sessions: sessionsFixture()}, apiKeys())
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}}, apiKeys())
 
 	rec := call(mux, "", http.MethodGet, "/api/v1/sessions", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -87,7 +87,7 @@ func TestSessionsList_401_NoToken(t *testing.T) {
 }
 
 func TestSessionsList_403_NoScope(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Sessions: sessionsFixture()}, apiKeys())
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}}, apiKeys())
 
 	// keyARead solo tiene flows.read → sessions.read denegado.
 	rec := call(mux, keyARead, http.MethodGet, "/api/v1/sessions", "")
@@ -116,9 +116,9 @@ func TestSessionsList_HealthEnriched(t *testing.T) {
 	}}
 	alerter := &recordingAlerter{}
 	mux := newAPI(publicapi.Deps{
-		Sessions: sessions,
-		Health:   publicapi.HealthRules{DegradedAfter: 5 * time.Minute, StaleAfter: 2 * time.Minute, Now: func() time.Time { return now }},
-		Alerter:  alerter,
+		SessionDeps: publicapi.SessionDeps{Sessions: sessions},
+		Health:      publicapi.HealthRules{DegradedAfter: 5 * time.Minute, StaleAfter: 2 * time.Minute, Now: func() time.Time { return now }},
+		Alerter:     alerter,
 	}, apiKeys())
 
 	rec := call(mux, keyASessions, http.MethodGet, "/api/v1/sessions", "")
@@ -153,7 +153,7 @@ func TestSessionsList_HealthEnriched(t *testing.T) {
 // reportada (Edge viejo) NO trae campos de salud ni estado derivado.
 func TestSessionsList_HealthOmittedWhenAbsent(t *testing.T) {
 	alerter := &recordingAlerter{}
-	mux := newAPI(publicapi.Deps{Sessions: sessionsFixture(), Alerter: alerter}, apiKeys())
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}, Alerter: alerter}, apiKeys())
 
 	rec := call(mux, keyASessions, http.MethodGet, "/api/v1/sessions", "")
 	if rec.Code != http.StatusOK {
@@ -175,7 +175,7 @@ func TestSessionsList_HealthOmittedWhenAbsent(t *testing.T) {
 }
 
 func TestSessionsList_TenantIsolation(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Sessions: sessionsFixture()}, apiKeys())
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}}, apiKeys())
 
 	// tenantB (con sessions.read) SOLO ve sus propias sesiones, nunca las de A.
 	rec := call(mux, keyBSessions, http.MethodGet, "/api/v1/sessions", "")

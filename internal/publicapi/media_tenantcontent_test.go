@@ -36,7 +36,7 @@ func (f *fakePresign) GenerateUploadURL(_ context.Context, key string) (string, 
 
 func TestUploadURL_OK_WithScope_TenantInKey(t *testing.T) {
 	pres := &fakePresign{}
-	mux := newAPI(publicapi.Deps{Media: pres}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Media: pres}}, apiKeys())
 
 	rec := call(mux, keyAContent, http.MethodPost, "/api/v1/media/upload-url",
 		`{"filename":"lista precios.pdf","mime":"application/pdf"}`)
@@ -73,7 +73,7 @@ func TestUploadURL_OK_WithScope_TenantInKey(t *testing.T) {
 
 func TestUploadURL_403_NoScope(t *testing.T) {
 	pres := &fakePresign{}
-	mux := newAPI(publicapi.Deps{Media: pres}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Media: pres}}, apiKeys())
 
 	// keyARead: flows.read NO cubre media.upload.
 	rec := call(mux, keyARead, http.MethodPost, "/api/v1/media/upload-url",
@@ -88,7 +88,7 @@ func TestUploadURL_403_NoScope(t *testing.T) {
 }
 
 func TestUploadURL_401_NoToken(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Media: &fakePresign{}}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Media: &fakePresign{}}}, apiKeys())
 
 	rec := call(mux, "", http.MethodPost, "/api/v1/media/upload-url",
 		`{"filename":"x.pdf","mime":"application/pdf"}`)
@@ -99,7 +99,7 @@ func TestUploadURL_401_NoToken(t *testing.T) {
 }
 
 func TestUploadURL_400_MissingFields(t *testing.T) {
-	mux := newAPI(publicapi.Deps{Media: &fakePresign{}}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Media: &fakePresign{}}}, apiKeys())
 
 	rec := call(mux, keyAContent, http.MethodPost, "/api/v1/media/upload-url",
 		`{"filename":"","mime":""}`)
@@ -113,7 +113,7 @@ func TestUploadURL_400_MissingFields(t *testing.T) {
 
 func TestTenantContent_Upsert_Get_List_OK(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	blob := `{"prompt":"Elige","options":{"1":"a"}}`
 	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/menu-x", blob); rec.Code != http.StatusOK {
@@ -149,7 +149,7 @@ func TestTenantContent_Upsert_Get_List_OK(t *testing.T) {
 
 func TestTenantContent_Post_AliasUpsert(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	if rec := call(mux, keyAContent, http.MethodPost, "/api/v1/tenant-content/cat", `{"a":1}`); rec.Code != http.StatusOK {
 		t.Fatalf("post upsert code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
@@ -161,7 +161,7 @@ func TestTenantContent_Post_AliasUpsert(t *testing.T) {
 
 func TestTenantContent_CrossTenant_Isolation(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	// tenantA registra un blob.
 	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/secret", `{"x":1}`); rec.Code != http.StatusOK {
@@ -193,7 +193,7 @@ func TestTenantContent_CrossTenant_Isolation(t *testing.T) {
 
 func TestTenantContent_Delete_OK_Then_404(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/tmp", `{"a":1}`)
 
@@ -215,7 +215,7 @@ func TestTenantContent_Delete_OK_Then_404(t *testing.T) {
 
 func TestTenantContent_Upsert_403_NoScope(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	// keyARead: flows.read NO cubre content.write.
 	rec := call(mux, keyARead, http.MethodPut, "/api/v1/tenant-content/x", `{"a":1}`)
@@ -226,7 +226,7 @@ func TestTenantContent_Upsert_403_NoScope(t *testing.T) {
 
 func TestTenantContent_Upsert_401_NoToken(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	rec := call(mux, "", http.MethodPut, "/api/v1/tenant-content/x", `{"a":1}`)
 	if rec.Code != http.StatusUnauthorized {
@@ -236,7 +236,7 @@ func TestTenantContent_Upsert_401_NoToken(t *testing.T) {
 
 func TestTenantContent_Upsert_400_InvalidJSON(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Content: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
 
 	rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/x", `no-es-json`)
 	if rec.Code != http.StatusBadRequest {

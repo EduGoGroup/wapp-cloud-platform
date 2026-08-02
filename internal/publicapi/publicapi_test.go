@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -66,7 +67,7 @@ func (f fakeM2M) VerifyServiceToken(_ context.Context, _ string) (in.ServiceIden
 
 func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 	for _, s := range scopes {
-		if auth.PermissionMatches(s, required) {
+		if sharedrbac.PermissionMatches(s, required) {
 			return true
 		}
 	}
@@ -119,7 +120,7 @@ func (f *fakeStarter) Start(_ context.Context, tenantID, flowID, sessionID strin
 // --- Harness ---
 
 func newAPI(d publicapi.Deps, keys map[string]in.ServiceIdentity) *http.ServeMux {
-	mw := httpapi.NewMiddleware(auth.NewJWTManager("secret-hs256-de-test", "wapp-test"), fakeM2M{keys: keys}, nil)
+	mw := httpapi.NewMiddleware(sharedjwt.NewJWTManager("secret-hs256-de-test", "wapp-test"), fakeM2M{keys: keys}, nil)
 	mux := http.NewServeMux()
 	publicapi.Register(mux, d, mw, noopAuditor{}, nil)
 	return mux
@@ -178,8 +179,10 @@ func seedFlow(t *testing.T, repo *flowstore.MemoryRepository, tenantID string) {
 func TestMessages_OK_WithScope(t *testing.T) {
 	sender := &fakeSender{ack: okAck()}
 	d := publicapi.Deps{
-		Sender:   sender,
-		Sessions: fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
+		Sender: sender,
+		SessionDeps: publicapi.SessionDeps{
+			Sessions: fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
+		},
 	}
 	mux := newAPI(d, apiKeys())
 
@@ -196,7 +199,7 @@ func TestMessages_OK_WithScope(t *testing.T) {
 
 func TestMessages_401_NoToken(t *testing.T) {
 	sender := &fakeSender{ack: okAck()}
-	mux := newAPI(publicapi.Deps{Sender: sender, Sessions: fakeSessions{}}, apiKeys())
+	mux := newAPI(publicapi.Deps{Sender: sender, SessionDeps: publicapi.SessionDeps{Sessions: fakeSessions{}}}, apiKeys())
 
 	rec := call(mux, "", http.MethodPost, "/api/v1/messages",
 		`{"session_id":"sess-a","to":"+15551234567","text":"hola"}`)
@@ -212,8 +215,10 @@ func TestMessages_401_NoToken(t *testing.T) {
 func TestMessages_403_NoScope(t *testing.T) {
 	sender := &fakeSender{ack: okAck()}
 	d := publicapi.Deps{
-		Sender:   sender,
-		Sessions: fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
+		Sender: sender,
+		SessionDeps: publicapi.SessionDeps{
+			Sessions: fakeSessions{byTenant: map[string][]fleet.Session{tenantA: {{TenantID: tenantA, SessionID: "sess-a"}}}},
+		},
 	}
 	mux := newAPI(d, apiKeys())
 
@@ -234,10 +239,12 @@ func TestMessages_CrossTenant_Isolation_404(t *testing.T) {
 	// tenantA solo tiene sess-a; sess-b es de tenantB.
 	d := publicapi.Deps{
 		Sender: sender,
-		Sessions: fakeSessions{byTenant: map[string][]fleet.Session{
-			tenantA: {{TenantID: tenantA, SessionID: "sess-a"}},
-			tenantB: {{TenantID: tenantB, SessionID: "sess-b"}},
-		}},
+		SessionDeps: publicapi.SessionDeps{
+			Sessions: fakeSessions{byTenant: map[string][]fleet.Session{
+				tenantA: {{TenantID: tenantA, SessionID: "sess-a"}},
+				tenantB: {{TenantID: tenantB, SessionID: "sess-b"}},
+			}},
+		},
 	}
 	mux := newAPI(d, apiKeys())
 
@@ -257,7 +264,7 @@ func TestMessages_CrossTenant_Isolation_404(t *testing.T) {
 
 func TestFlowsCreate_OK_WithScope(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Flows: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Flows: repo}}, apiKeys())
 
 	rec := call(mux, keyAFull, http.MethodPost, "/api/v1/flows", flowCreateBody(t))
 
@@ -275,7 +282,7 @@ func TestFlowsCreate_OK_WithScope(t *testing.T) {
 
 func TestFlowsCreate_403_NoScope(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
-	mux := newAPI(publicapi.Deps{Flows: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Flows: repo}}, apiKeys())
 
 	// keyARead: flows.read NO cubre flows.create.
 	rec := call(mux, keyARead, http.MethodPost, "/api/v1/flows", flowCreateBody(t))
@@ -290,7 +297,7 @@ func TestFlowsCreate_403_NoScope(t *testing.T) {
 func TestFlowsList_OK_And_TenantIsolation(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
 	seedFlow(t, repo, tenantA)
-	mux := newAPI(publicapi.Deps{Flows: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Flows: repo}}, apiKeys())
 
 	// tenantA ve su flujo.
 	rec := call(mux, keyAFull, http.MethodGet, "/api/v1/flows", "")
@@ -322,7 +329,7 @@ func TestFlowsList_OK_And_TenantIsolation(t *testing.T) {
 func TestFlowsGet_OK_NotFound_CrossTenant(t *testing.T) {
 	repo := flowstore.NewMemoryRepository()
 	seedFlow(t, repo, tenantA)
-	mux := newAPI(publicapi.Deps{Flows: repo}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Flows: repo}}, apiKeys())
 
 	// A lee su flujo.
 	if rec := call(mux, keyAFull, http.MethodGet, "/api/v1/flows/menu-soporte", ""); rec.Code != http.StatusOK {
@@ -342,7 +349,7 @@ func TestFlowsGet_OK_NotFound_CrossTenant(t *testing.T) {
 
 func TestFlowsStart_OK_WithScope(t *testing.T) {
 	starter := &fakeStarter{ack: okAck()}
-	mux := newAPI(publicapi.Deps{Starter: starter}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Starter: starter}}, apiKeys())
 
 	rec := call(mux, keyAFull, http.MethodPost, "/api/v1/flows/menu-soporte/start",
 		`{"session_id":"sess-a","contact":"+15551234567"}`)
@@ -357,7 +364,7 @@ func TestFlowsStart_OK_WithScope(t *testing.T) {
 
 func TestFlowsStart_403_NoScope(t *testing.T) {
 	starter := &fakeStarter{ack: okAck()}
-	mux := newAPI(publicapi.Deps{Starter: starter}, apiKeys())
+	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Starter: starter}}, apiKeys())
 
 	// keyARead: flows.read NO cubre flows.start.
 	rec := call(mux, keyARead, http.MethodPost, "/api/v1/flows/menu-soporte/start",

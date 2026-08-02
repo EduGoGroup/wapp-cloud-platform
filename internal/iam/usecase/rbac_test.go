@@ -8,18 +8,19 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // grantsFromToken hace login y devuelve los grants efectivos embebidos en el
 // access token.
-func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password string) auth.Grants {
+func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password string) sharedrbac.Grants {
 	t.Helper()
 	res, err := authSvc.Login(context.Background(), in.LoginInput{Email: email, Password: password})
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	jwt := auth.NewJWTManager(testSigningKey, testIssuer)
+	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 	claims, err := jwt.ValidateToken(res.AccessToken)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -32,7 +33,7 @@ func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password
 func TestEffectiveGrants_RoleChain(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
-	jwt := auth.NewJWTManager(testSigningKey, testIssuer)
+	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 	users := mustUserSvc(t, store)
 	authSvc := mustAuthSvc(t, store, jwt)
 
@@ -50,10 +51,10 @@ func TestEffectiveGrants_RoleChain(t *testing.T) {
 	_ = u
 
 	grants := grantsFromToken(t, authSvc, "chain@x.example", testLoginPhrase)
-	if !auth.EvaluateGrants(grants, "messages.send") {
+	if !sharedrbac.EvaluateGrants(grants, "messages.send") {
 		t.Error("se esperaba el grant propio del hijo")
 	}
-	if !auth.EvaluateGrants(grants, "contacts.read") {
+	if !sharedrbac.EvaluateGrants(grants, "contacts.read") {
 		t.Error("se esperaba el grant heredado del padre")
 	}
 }
@@ -63,7 +64,7 @@ func TestEffectiveGrants_RoleChain(t *testing.T) {
 func TestEffectiveGrants_UserOverrideDeny(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
-	jwt := auth.NewJWTManager(testSigningKey, testIssuer)
+	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 	users := mustUserSvc(t, store)
 	authSvc := mustAuthSvc(t, store, jwt)
 
@@ -82,10 +83,10 @@ func TestEffectiveGrants_UserOverrideDeny(t *testing.T) {
 	}
 
 	grants := grantsFromToken(t, authSvc, "deny@x.example", testLoginPhrase)
-	if !auth.EvaluateGrants(grants, "flows.create") {
+	if !sharedrbac.EvaluateGrants(grants, "flows.create") {
 		t.Error("flows.create debía seguir permitido por flows.*")
 	}
-	if auth.EvaluateGrants(grants, "flows.delete") {
+	if sharedrbac.EvaluateGrants(grants, "flows.delete") {
 		t.Error("flows.delete debía estar denegado por el override deny")
 	}
 }

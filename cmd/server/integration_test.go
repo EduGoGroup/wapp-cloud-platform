@@ -24,6 +24,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/bootstrap"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
@@ -155,7 +157,7 @@ func startHarness(t *testing.T) *itHarness {
 
 	// Listener Enrollment: TLS de servidor SOLAMENTE (reusa el helper de main).
 	enrollLis := bufconn.Listen(itBufSize)
-	enrollGS := grpc.NewServer(grpc.Creds(enrollServerCreds(serverCert)))
+	enrollGS := grpc.NewServer(grpc.Creds(bootstrap.EnrollServerCreds(serverCert)))
 	enrollSrv.Register(enrollGS)
 	enrollErrc := serve(enrollGS, enrollLis)
 
