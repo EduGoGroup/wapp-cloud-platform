@@ -190,6 +190,9 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 		return
 	}
 	s.trackSession(cc)
+	// Evento del plano de máquina (identity Plan 003 · design.md Ola 3 §1.3): el
+	// actor es el EdgeID del cert mTLS, no una persona.
+	s.recordEdgeSession(ctx, cc)
 
 	if s.fleet != nil {
 		if err := s.fleet.MarkOnline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
