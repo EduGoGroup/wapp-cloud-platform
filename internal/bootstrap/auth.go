@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
@@ -37,7 +37,7 @@ const defaultES256Kid = "es256-dev"
 // mismo emisor/validador ES256, el mismo AuthService y el mismo auditor.
 type authStack struct {
 	jwtBundle *userJWTBundle
-	validator *auth.MultiVerifier
+	validator *sharedjwt.MultiVerifier
 	auditor   *iamusecase.AuditService
 	authSvc   *iamusecase.AuthService
 	m2mSvc    *iamusecase.M2MService
@@ -51,9 +51,9 @@ type authStack struct {
 // El secreto HS256 (WAPP_JWT_SECRET) ya NO forma parte del plano de usuario;
 // sobrevive solo para el ServiceJWTManager M2M (ver buildJWTManagers).
 type userJWTBundle struct {
-	es256 *auth.JWTManager // emisor ES256 con `kid` estampado (único emisor de usuario).
-	esPub *ecdsa.PublicKey // pública ES256 derivada (entrada `kid` del MultiVerifier).
-	kid   string           // key id activo ES256.
+	es256 *sharedjwt.JWTManager // emisor ES256 con `kid` estampado (único emisor de usuario).
+	esPub *ecdsa.PublicKey      // pública ES256 derivada (entrada `kid` del MultiVerifier).
+	kid   string                // key id activo ES256.
 }
 
 // buildAuthStack cablea el material de auth de usuario del IAM (Plan 018 · T3,
@@ -72,13 +72,13 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 	userTokenIssuer := jwtBundle.es256
 	// Validación del :8103 (Plan 028 · T4, ADR-0019): un MultiVerifier con la ÚNICA
 	// entrada ES256 por su `kid` (pública derivada) y SIN default, de modo que un
-	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *auth.MultiVerifier
+	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *sharedjwt.MultiVerifier
 	// satisface la interface UserTokenValidator del middleware y el TokenValidator
 	// del AuthService: una sola política de aceptación para el :8103 y el IAM.
-	userValidator, err := auth.NewMultiVerifier(
+	userValidator, err := sharedjwt.NewMultiVerifier(
 		cfg.JWT.Issuer,
-		map[string]auth.VerifierKey{jwtBundle.kid: auth.ES256VerifierKey(jwtBundle.esPub)},
-		auth.VerifierKey{},
+		map[string]sharedjwt.VerifierKey{jwtBundle.kid: sharedjwt.ES256VerifierKey(jwtBundle.esPub)},
+		sharedjwt.VerifierKey{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construyendo MultiVerifier de usuario (ES256): %w", err)
@@ -123,7 +123,7 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 // obligatorios en prod (fail-fast) y efímeros con warning en dev. El service
 // token exige `aud` propia (aísla los planos usuario/M2M). Tras T4 el secreto
 // HS256 NO firma ni valida tokens de usuario: es exclusivo del plano M2M.
-func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, *auth.ServiceJWTManager, error) {
+func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, *sharedjwt.ServiceJWTManager, error) {
 	secret := cfg.JWT.Secret
 	if secret == "" {
 		if cfg.Env == "prod" {
@@ -153,7 +153,7 @@ func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBu
 		kid = defaultES256Kid
 		log.Warn("WAPP_JWT_KID vacío: usando kid por defecto \"" + defaultES256Kid + "\" (define uno con convención es256-YYYYMMDD)")
 	}
-	es256Mgr, err := auth.NewJWTManagerES256(priv, cfg.JWT.Issuer)
+	es256Mgr, err := sharedjwt.NewJWTManagerES256(priv, cfg.JWT.Issuer)
 	if err != nil {
 		return nil, nil, fmt.Errorf("construyendo emisor ES256: %w", err)
 	}
@@ -165,7 +165,7 @@ func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBu
 		kid:   kid,
 	}
 	// El secreto HS256 ya no firma tokens de usuario (T4): solo el service token M2M.
-	svcMgr := auth.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
+	svcMgr := sharedjwt.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
 	return bundle, svcMgr, nil
 }
 

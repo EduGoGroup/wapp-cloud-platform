@@ -15,7 +15,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 const (
@@ -38,7 +39,7 @@ func mustUserSvc(t *testing.T, s *memory.Store) *usecase.UserService {
 	return svc
 }
 
-func mustAuthSvc(t *testing.T, s *memory.Store, jwt *auth.JWTManager) *usecase.AuthService {
+func mustAuthSvc(t *testing.T, s *memory.Store, jwt *sharedjwt.JWTManager) *usecase.AuthService {
 	t.Helper()
 	svc, err := usecase.NewAuthService(s.Users, s.Roles, s.Grants, s.Refresh, s.Audit, jwt, jwt, usecase.Config{})
 	if err != nil {
@@ -62,7 +63,7 @@ func mustRoleSvc(t *testing.T, s *memory.Store) *usecase.RoleService {
 func fixture(t *testing.T) (*usecase.AuthService, *usecase.UserService, *memory.Store, domain.User) {
 	t.Helper()
 	store := memory.NewStore()
-	jwt := auth.NewJWTManager(testSigningKey, testIssuer)
+	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 
 	users, err := usecase.NewUserService(store.Users, store.Roles, store.Grants)
 	if err != nil {
@@ -107,7 +108,7 @@ func TestLogin_OK_EmitsTokensAndEffectiveGrants(t *testing.T) {
 	}
 
 	// El access token embebe los grants efectivos del rol operator.
-	jwt := auth.NewJWTManager(testSigningKey, testIssuer)
+	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
 	claims, err := jwt.ValidateToken(res.AccessToken)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -115,18 +116,18 @@ func TestLogin_OK_EmitsTokensAndEffectiveGrants(t *testing.T) {
 	if claims.TenantID != testTenant {
 		t.Fatalf("claim tenant inesperado: %s", claims.TenantID)
 	}
-	if !auth.EvaluateGrants(claims.Grants, "flows.create") {
+	if !sharedrbac.EvaluateGrants(claims.Grants, "flows.create") {
 		t.Error("se esperaba allow de flows.create (grant flows.*)")
 	}
-	if !auth.EvaluateGrants(claims.Grants, "messages.send") {
+	if !sharedrbac.EvaluateGrants(claims.Grants, "messages.send") {
 		t.Error("se esperaba allow de messages.send")
 	}
-	if auth.EvaluateGrants(claims.Grants, "leases.revoke") {
+	if sharedrbac.EvaluateGrants(claims.Grants, "leases.revoke") {
 		t.Error("no se esperaba allow de leases.revoke (default DENY)")
 	}
 
 	// El refresh quedó persistido por su hash.
-	if _, err := store.Refresh.GetByHash(ctx, auth.HashToken(res.RefreshToken)); err != nil {
+	if _, err := store.Refresh.GetByHash(ctx, sharedjwt.HashToken(res.RefreshToken)); err != nil {
 		t.Fatalf("refresh no persistido: %v", err)
 	}
 }
@@ -145,15 +146,15 @@ func TestLogin_ES256_EmitsAsymmetricTokenWithKid(t *testing.T) {
 		t.Fatalf("generando clave ES256: %v", err)
 	}
 	const kid = "es256-test"
-	es256, err := auth.NewJWTManagerES256(priv, testIssuer)
+	es256, err := sharedjwt.NewJWTManagerES256(priv, testIssuer)
 	if err != nil {
 		t.Fatalf("NewJWTManagerES256: %v", err)
 	}
 	es256 = es256.WithKid(kid)
 	// Validador dual: ES256 por kid + HS256 legacy por default (ventana dual T3).
-	mv, err := auth.NewMultiVerifier(testIssuer,
-		map[string]auth.VerifierKey{kid: auth.ES256VerifierKey(&priv.PublicKey)},
-		auth.HS256VerifierKey(testSigningKey))
+	mv, err := sharedjwt.NewMultiVerifier(testIssuer,
+		map[string]sharedjwt.VerifierKey{kid: sharedjwt.ES256VerifierKey(&priv.PublicKey)},
+		sharedjwt.HS256VerifierKey(testSigningKey))
 	if err != nil {
 		t.Fatalf("NewMultiVerifier: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestLogin_ES256_EmitsAsymmetricTokenWithKid(t *testing.T) {
 
 	// El refresh es opaco (no un JWS): no tiene header ES256, pero sí quedó
 	// persistido por su hash.
-	if _, err := store.Refresh.GetByHash(ctx, auth.HashToken(res.RefreshToken)); err != nil {
+	if _, err := store.Refresh.GetByHash(ctx, sharedjwt.HashToken(res.RefreshToken)); err != nil {
 		t.Fatalf("refresh no persistido: %v", err)
 	}
 }

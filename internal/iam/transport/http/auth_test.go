@@ -13,7 +13,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
 const (
@@ -35,8 +35,8 @@ type harness struct {
 func newHarness(t *testing.T) harness {
 	t.Helper()
 	store := memory.NewStore()
-	jwt := auth.NewJWTManager(tSecret, tIssuer)
-	svcJWT := auth.NewServiceJWTManager(tSecret, tIssuer, tAudience)
+	jwt := sharedjwt.NewJWTManager(tSecret, tIssuer)
+	svcJWT := sharedjwt.NewServiceJWTManager(tSecret, tIssuer, tAudience)
 
 	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, jwt, usecase.Config{})
 	if err != nil {

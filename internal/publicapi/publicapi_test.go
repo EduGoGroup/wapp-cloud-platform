@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
-	"github.com/EduGoGroup/wapp-shared/auth"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -66,7 +67,7 @@ func (f fakeM2M) VerifyServiceToken(_ context.Context, _ string) (in.ServiceIden
 
 func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 	for _, s := range scopes {
-		if auth.PermissionMatches(s, required) {
+		if sharedrbac.PermissionMatches(s, required) {
 			return true
 		}
 	}
@@ -119,7 +120,7 @@ func (f *fakeStarter) Start(_ context.Context, tenantID, flowID, sessionID strin
 // --- Harness ---
 
 func newAPI(d publicapi.Deps, keys map[string]in.ServiceIdentity) *http.ServeMux {
-	mw := httpapi.NewMiddleware(auth.NewJWTManager("secret-hs256-de-test", "wapp-test"), fakeM2M{keys: keys}, nil)
+	mw := httpapi.NewMiddleware(sharedjwt.NewJWTManager("secret-hs256-de-test", "wapp-test"), fakeM2M{keys: keys}, nil)
 	mux := http.NewServeMux()
 	publicapi.Register(mux, d, mw, noopAuditor{}, nil)
 	return mux
