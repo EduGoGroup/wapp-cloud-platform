@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	identityjwt "github.com/EduGoGroup/identity-shared/auth/jwt"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
@@ -30,6 +32,12 @@ import (
 // dev; en producción se define un kid con la convención es256-YYYYMMDD).
 const defaultES256Kid = "es256-dev"
 
+// identityTokenIssuer es el `iss` que identity-core estampa en sus Identity
+// Tokens y que el verificador exige (identity ADR-0002). Es el nombre del emisor
+// del grupo, no un parámetro de despliegue: lo que cambia entre ambientes es la
+// URL del JWKS (WAPP_IDENTITY_JWKS_URL), no quién firma.
+const identityTokenIssuer = "identity-core"
+
 // authStack agrupa el material del plano de autenticación de usuario del IAM que
 // hoy consumen DOS piezas: el servidor de la API pública (:8103) y el gateway
 // CloudLink (Plan 033 · T2.2, ADR-0025 — RPCs UserLogin/Refresh/Logout del Edge).
@@ -42,6 +50,20 @@ type authStack struct {
 	authSvc   *iamusecase.AuthService
 	m2mSvc    *iamusecase.M2MService
 	authMW    *httpapi.Middleware
+	// identityVerifier valida los Identity Tokens que emite identity-core, con
+	// las claves de su JWKS. Es nil mientras WAPP_IDENTITY_JWKS_URL esté vacía.
+	//
+	// Son DOS verificadores por TIPO de token, no uno fusionado (Plan 003 de
+	// identity, design.md Ola 1 §6): `validator` mira Context Tokens de wApp
+	// (tenant/roles/grants, clave local) y este mira Identity Tokens de identity
+	// (system/email/token_version, clave remota). Cada tipo devuelve claims de un
+	// tipo distinto, así que no hay verificador único posible.
+	//
+	// Todavía NINGÚN flujo lo consulta: la delegación de la autenticación llega
+	// en la Ola 3. Aquí solo se construye para que el arranque acredite —hoy, no
+	// el día del corte— que wApp alcanza el JWKS de identity y entiende sus
+	// claves.
+	identityVerifier *identityjwt.MultiVerifier
 }
 
 // userJWTBundle agrupa el material de tokens de USUARIO del IAM (ADR-0019, Plan
@@ -105,14 +127,50 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 		return nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
 	}
 	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
-	return &authStack{
+	stack := &authStack{
 		jwtBundle: jwtBundle,
 		validator: userValidator,
 		auditor:   auditor,
 		authSvc:   authSvc,
 		m2mSvc:    m2mSvc,
 		authMW:    authMW,
-	}, nil
+	}
+	// Puerta del modo dual (Plan 003 de identity · T1.2): con la variable vacía,
+	// cloud-platform arranca exactamente como hasta ahora.
+	if jwksURL := strings.TrimSpace(cfg.Identity.JWKSURL); jwksURL != "" {
+		identityVerifier, ierr := buildIdentityVerifier(jwksURL)
+		if ierr != nil {
+			return nil, ierr
+		}
+		stack.identityVerifier = identityVerifier
+		log.Info("verificador de Identity Tokens activo",
+			"jwks_url", jwksURL,
+			"issuer", identityTokenIssuer,
+			"kids", stack.identityVerifier.Kids())
+	} else {
+		log.Info("modo dual con identity APAGADO: WAPP_IDENTITY_JWKS_URL vacía (wApp arranca sin identity-core)")
+	}
+	return stack, nil
+}
+
+// buildIdentityVerifier construye el verificador de los Identity Tokens de
+// identity-core (Plan 003 de identity · T1.2) contra su JWKS. Solo se llama con
+// una URL no vacía: la puerta la abre el llamador.
+//
+// Que la puerta exista NO es comodidad. El constructor JWKS de identity-shared
+// es EAGER y FAIL-CLOSED —hace el primer fetch en el arranque y falla si no
+// puede completarlo, para no nacer nunca con cero claves—, así que sin la puerta
+// un identity-api apagado dejaría a cloud-platform sin arrancar. La Ola 1 no
+// puede introducir esa dependencia de arranque: eso llega en la Ola 3, cuando
+// wApp de verdad delegue la autenticación. Con la variable puesta, en cambio, el
+// fallo de arranque es el comportamiento QUERIDO: quien la define está
+// declarando que identity tiene que estar ahí.
+func buildIdentityVerifier(jwksURL string) (*identityjwt.MultiVerifier, error) {
+	mv, err := identityjwt.NewMultiVerifierFromJWKS(identityTokenIssuer, identityjwt.JWKSOptions{URL: jwksURL})
+	if err != nil {
+		return nil, fmt.Errorf("construyendo el verificador de Identity Tokens contra %s: %w", jwksURL, err)
+	}
+	return mv, nil
 }
 
 // buildJWTManagers construye el material de tokens de usuario (emisor ES256) y el
