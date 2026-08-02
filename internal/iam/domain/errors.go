@@ -35,4 +35,39 @@ var (
 	// ErrAPIKeyInvalid indica que una api-key M2M no autentica: no existe, está
 	// inactiva, revocada o expirada.
 	ErrAPIKeyInvalid = errors.New("iam: api-key inválida")
+
+	// ---------------------------------------------------------------------
+	// Canje de Identity Token por Context Token (identity Plan 003 · T3.1)
+	// ---------------------------------------------------------------------
+
+	// ErrIdentityTokenInvalid indica que el Identity Token presentado al canje no
+	// se acepta: firma/emisor/`kid` que no cuadran, `token_use` distinto de
+	// "identity", o emitido para una aplicación que no es de wApp. Opaco por
+	// diseño (no distingue el motivo hacia fuera).
+	ErrIdentityTokenInvalid = errors.New("iam: identity token inválido")
+
+	// ErrIdentityTokenExpiring indica que el Identity Token es válido pero le
+	// queda menos vida que el mínimo emitible de un Context Token. No se emite
+	// uno más largo que su origen (identity ADR-0003, «pasaporte > visa»): el
+	// cliente tiene que refrescar contra identity antes de volver a canjear.
+	ErrIdentityTokenExpiring = errors.New("iam: al identity token le queda muy poca vida para canjearlo")
+
+	// ErrUserNotMigrated indica que el `sub` del Identity Token no corresponde a
+	// ningún usuario de wApp, o que ese usuario no tiene membresía de tenant. Los
+	// UUID se preservaron en la migración EXACTAMENTE para que esto no pase: un
+	// sujeto desconocido es un usuario sin migrar, no un usuario que crear al
+	// vuelo.
+	ErrUserNotMigrated = errors.New("iam: el sujeto del identity token no existe en wApp")
+
+	// ErrMultipleTenants indica que el usuario es miembro de más de un tenant y
+	// el canje no puede decidir cuál va en el Context Token. Falla explícitamente
+	// en vez de elegir el primero en silencio: la resolución (¿tenant en el
+	// request? ¿selector?) es materia del Plan 005, que remodela la tenencia.
+	ErrMultipleTenants = errors.New("iam: el usuario pertenece a más de un tenant")
+
+	// ErrIdentityUnavailable indica que no se pudo decidir sobre el Identity
+	// Token porque identity no está alcanzable (JWKS sin claves frescas). Es
+	// indisponibilidad de una dependencia, NO un rechazo de la credencial: se
+	// distingue para no contestar "no autorizado" a quien traía un token bueno.
+	ErrIdentityUnavailable = errors.New("iam: identity no está disponible")
 )

@@ -71,6 +71,37 @@ type Authenticator interface {
 }
 
 // ---------------------------------------------------------------------------
+// Canje de Identity Token por Context Token (identity Plan 003 · T3.1)
+// ---------------------------------------------------------------------------
+
+// ExchangeInput porta el Identity Token que emitió identity-core. Es la ÚNICA
+// entrada del canje: el tenant no se pide ni se acepta del cliente (se resuelve
+// de la membresía, INV-8) y el sujeto sale del `sub` firmado, nunca del cuerpo.
+type ExchangeInput struct {
+	IdentityToken string
+}
+
+// ExchangeResult es el Context Token de wApp emitido a cambio. NO lleva refresh:
+// el refresh es de identity y vive donde vive la sesión (identity ADR-0003). Su
+// ExpiresAt está acotado por el `exp` del Identity Token de origen.
+type ExchangeResult struct {
+	ContextToken string
+	ExpiresAt    time.Time
+	Context      domain.IdentityContext
+}
+
+// Exchanger canjea la identidad que emite el SSO del grupo por el contexto de
+// negocio de wApp. Es la frontera entre los dos mundos: identity acredita QUIÉN
+// es la persona y wApp le pone encima SU tenant y SUS grants.
+type Exchanger interface {
+	// Exchange valida el Identity Token, resuelve tenant y grants efectivos del
+	// sujeto y emite el Context Token. Devuelve domain.ErrIdentityTokenInvalid,
+	// ErrIdentityTokenExpiring, ErrUserNotMigrated, ErrMultipleTenants,
+	// ErrUserInactive o ErrIdentityUnavailable en fallo.
+	Exchange(ctx context.Context, in ExchangeInput) (ExchangeResult, error)
+}
+
+// ---------------------------------------------------------------------------
 // Autenticación M2M (api-key / service token) — design.md §7/§8
 // ---------------------------------------------------------------------------
 

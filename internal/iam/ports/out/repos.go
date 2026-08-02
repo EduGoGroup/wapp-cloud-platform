@@ -40,6 +40,18 @@ type UserRepo interface {
 	SoftDelete(ctx context.Context, tenantID, id string) error
 }
 
+// MembershipRepo lee la membresía usuario↔tenant (tabla public.tenant_members,
+// migración 0037). Es el vínculo de NEGOCIO que se queda en wApp cuando los
+// usuarios pasan a identity (identity ADR-0001, INV-1): identity dice QUIÉN es
+// la persona y esta tabla a QUÉ tenant pertenece. Solo lectura: la escritura la
+// hacen la migración y la administración de tenants, no el plano de auth.
+type MembershipRepo interface {
+	// TenantsOfUser devuelve los tenants de los que el usuario es miembro, en
+	// orden estable. Una lista VACÍA no es error: significa que ese usuario no
+	// tiene membresía en wApp (quien lo llame decide qué hacer con eso).
+	TenantsOfUser(ctx context.Context, userID string) ([]string, error)
+}
+
 // RoleRepo persiste roles, sus grants y la asignación usuario↔rol (tablas
 // iam_roles, iam_role_grants, iam_user_roles).
 type RoleRepo interface {

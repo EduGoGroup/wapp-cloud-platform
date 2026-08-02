@@ -23,24 +23,29 @@ import (
 type AuthHandler struct {
 	authn in.Authenticator
 	m2m   in.M2MAuthenticator
-	log   sharedlogger.Logger
+	// exchange canjea Identity Tokens de identity-core por Context Tokens de
+	// wApp (identity Plan 003 · T3.1). Es nil cuando el modo dual está apagado
+	// (WAPP_IDENTITY_JWKS_URL vacía): el endpoint existe igual y responde 503.
+	exchange in.Exchanger
+	log      sharedlogger.Logger
 }
 
 // NewAuthHandler construye el handler de autenticación.
-func NewAuthHandler(authn in.Authenticator, m2m in.M2MAuthenticator, log sharedlogger.Logger) *AuthHandler {
-	return &AuthHandler{authn: authn, m2m: m2m, log: log}
+func NewAuthHandler(authn in.Authenticator, m2m in.M2MAuthenticator, exchange in.Exchanger, log sharedlogger.Logger) *AuthHandler {
+	return &AuthHandler{authn: authn, m2m: m2m, exchange: exchange, log: log}
 }
 
 // Register monta las rutas /api/v1/auth/* en el mux dado (listener público
 // :8103). Sigue el idiom del repo: paths planos + verificación de método dentro
 // de cada handler.
-func Register(mux *http.ServeMux, authn in.Authenticator, m2m in.M2MAuthenticator, log sharedlogger.Logger) {
-	h := NewAuthHandler(authn, m2m, log)
+func Register(mux *http.ServeMux, authn in.Authenticator, m2m in.M2MAuthenticator, exchange in.Exchanger, log sharedlogger.Logger) {
+	h := NewAuthHandler(authn, m2m, exchange, log)
 	mux.Handle("/api/v1/auth/login", h.Login())
 	mux.Handle("/api/v1/auth/refresh", h.Refresh())
 	mux.Handle("/api/v1/auth/logout", h.Logout())
 	mux.Handle("/api/v1/auth/verify", h.Verify())
 	mux.Handle("/api/v1/auth/token", h.ServiceToken())
+	mux.Handle("/api/v1/auth/exchange", h.Exchange())
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +69,20 @@ type logoutRequest struct {
 
 type verifyRequest struct {
 	Token string `json:"token,omitempty"`
+}
+
+type exchangeRequest struct {
+	IdentityToken string `json:"identity_token"`
+}
+
+// exchangeResultDTO es la salida del canje: SOLO el Context Token. No lleva
+// refresh a propósito (identity Plan 003 · design.md Ola 3 §3): el refresh es de
+// identity y vive donde vive la sesión.
+type exchangeResultDTO struct {
+	ContextToken string             `json:"context_token"`
+	TokenType    string             `json:"token_type"`
+	ExpiresAt    string             `json:"expires_at"`
+	Context      identityContextDTO `json:"context"`
 }
 
 type identityContextDTO struct {
@@ -206,6 +225,48 @@ func (h *AuthHandler) Verify() http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, toVerifyResultDTO(v))
+	})
+}
+
+// Exchange canjea un Identity Token de identity-core por un Context Token de
+// wApp (identity Plan 003 · T3.1). 200 éxito; 400 cuerpo inválido; 401 token no
+// aceptable o sujeto sin migrar; 409 sujeto con más de un tenant; 503 con el
+// modo dual apagado o identity inalcanzable.
+//
+// Es la puerta por la que entra la identidad del SSO: aquí NO se validan
+// credenciales (eso ya es de identity) ni se emite refresh (eso es de la sesión
+// que identity custodia).
+func (h *AuthHandler) Exchange() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		if h.exchange == nil {
+			// La misma puerta que dejó la Ola 1, ahora con alguien detrás: sin
+			// WAPP_IDENTITY_JWKS_URL no hay verificador y no hay canje posible.
+			writeError(w, http.StatusServiceUnavailable, "modo dual apagado: identity no está configurado en este despliegue")
+			return
+		}
+		var req exchangeRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		res, err := h.exchange.Exchange(r.Context(), in.ExchangeInput{IdentityToken: req.IdentityToken})
+		if err != nil {
+			writeDomainError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, exchangeResultDTO{
+			ContextToken: res.ContextToken,
+			TokenType:    "Bearer",
+			ExpiresAt:    res.ExpiresAt.UTC().Format(rfc3339),
+			Context: identityContextDTO{
+				TenantID: res.Context.TenantID,
+				UserID:   res.Context.UserID,
+				Roles:    res.Context.Roles,
+			},
+		})
 	})
 }
 
