@@ -13,7 +13,9 @@ func TestHealthCheck_Table(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open err: %v", err)
 	}
-	dbClosed.Close()
+	if err := dbClosed.Close(); err != nil {
+		t.Fatalf("dbClosed.Close err: %v", err)
+	}
 
 	tests := []struct {
 		name          string
@@ -51,7 +53,11 @@ func TestApplyPool_Table(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open err: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("db.Close err: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name string

@@ -115,7 +115,9 @@ func TestBuildJWTManagers_Table(t *testing.T) {
 func TestPKILoaders_Table(t *testing.T) {
 	tmpDir := t.TempDir()
 	caCertFile := filepath.Join(tmpDir, "ca.crt")
-	os.WriteFile(caCertFile, []byte("fake-cert"), 0600)
+	if err := os.WriteFile(caCertFile, []byte("fake-cert"), 0600); err != nil {
+		t.Fatalf("WriteFile ca.crt err: %v", err)
+	}
 
 	tests := []struct {
 		name    string

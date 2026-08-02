@@ -8,9 +8,9 @@ import (
 
 // connCtx agrupa la identidad de un stream Connect, derivada del cert mTLS.
 type connCtx struct {
-	sessionID   string
-	tenantID    string
-	edgeID      string
+	sessionID string
+	tenantID  string
+	edgeID    string
 	// hasIdentity es true solo si se extrajo (tenantID, edgeID) del cert mTLS.
 	// false en streams sin TLS (tests T2): se degrada sin lease ni fleet.
 	hasIdentity bool

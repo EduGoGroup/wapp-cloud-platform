@@ -388,8 +388,6 @@ func locate(cat Catalog, catCode, sku string) (Category, Article, bool) {
 	return category, Article{}, false
 }
 
-
-
 // cloneVars copia el mapa de variables para mantener la pureza (no mutar el
 // estado de entrada). nil → mapa nuevo. Mismo patrón que menu/survey.
 func cloneVars(in map[string]any) map[string]any {

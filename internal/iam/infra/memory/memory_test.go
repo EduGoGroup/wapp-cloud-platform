@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestUserStore_CRUD(t *testing.T) {
 	}
 
 	// Duplicado email -> ErrConflict
-	if _, err := s.Create(ctx, u); err != domain.ErrConflict {
+	if _, err := s.Create(ctx, u); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("Create email duplicado err=%v, quiero ErrConflict", err)
 	}
 
@@ -48,7 +49,7 @@ func TestUserStore_CRUD(t *testing.T) {
 	}
 
 	// Inexistente -> ErrNotFound
-	if _, err := s.GetByID(ctx, "nonexistent"); err != domain.ErrNotFound {
+	if _, err := s.GetByID(ctx, "nonexistent"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetByID inexistente err=%v, quiero ErrNotFound", err)
 	}
 
@@ -63,7 +64,7 @@ func TestUserStore_CRUD(t *testing.T) {
 		t.Fatalf("SoftDelete err: %v", err)
 	}
 	gotDeact, err := s.GetByID(ctx, created.ID)
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("tras SoftDelete, GetByID debió dar ErrNotFound, dio err=%v, u=%+v", err, gotDeact)
 	}
 }
@@ -116,15 +117,23 @@ func TestRoleStore_CRUD(t *testing.T) {
 	if err := s.UnassignFromUser(ctx, "user-1", seeded.ID); err != nil {
 		t.Fatalf("UnassignFromUser err: %v", err)
 	}
+}
 
-	// ParentOf
+func TestRoleStore_ParentOf(t *testing.T) {
+	ctx := context.Background()
+	s := NewRoleStore()
+
+	tID := "tenant-a"
 	parentID := "role-parent"
 	rChild := domain.Role{
 		TenantID:     &tID,
 		Name:         "child",
 		ParentRoleID: &parentID,
 	}
-	childCreated, _ := s.Create(ctx, rChild)
+	childCreated, err := s.Create(ctx, rChild)
+	if err != nil {
+		t.Fatalf("Create rol hijo err: %v", err)
+	}
 	pID, hasParent, err := s.ParentOf(ctx, childCreated.ID)
 	if err != nil || !hasParent || pID != "role-parent" {
 		t.Fatalf("ParentOf err=%v, has=%v, pID=%s", err, hasParent, pID)
@@ -156,7 +165,10 @@ func TestGrantStore_CRUD(t *testing.T) {
 	if err := s.RemoveUserGrant(ctx, "user-1", grant); err != nil {
 		t.Fatalf("RemoveUserGrant err: %v", err)
 	}
-	grantsAfter, _ := s.GrantsOfUser(ctx, "user-1")
+	grantsAfter, err := s.GrantsOfUser(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("GrantsOfUser tras remove err: %v", err)
+	}
 	if len(grantsAfter) != 0 {
 		t.Fatalf("len tras remove = %d, quiero 0", len(grantsAfter))
 	}
@@ -185,7 +197,10 @@ func TestRefreshStore_CRUD(t *testing.T) {
 	if err := s.Revoke(ctx, "hash-123"); err != nil {
 		t.Fatalf("Revoke err: %v", err)
 	}
-	gotRev, _ := s.GetByHash(ctx, "hash-123")
+	gotRev, err := s.GetByHash(ctx, "hash-123")
+	if err != nil {
+		t.Fatalf("GetByHash tras Revoke err: %v", err)
+	}
 	if gotRev.RevokedAt == nil {
 		t.Fatal("RevokedAt no debe ser nil tras Revoke")
 	}
@@ -196,7 +211,9 @@ func TestRefreshStore_CRUD(t *testing.T) {
 		TokenHash: "hash-456",
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
-	s.Save(ctx, rt2)
+	if err := s.Save(ctx, rt2); err != nil {
+		t.Fatalf("Save rt2 err: %v", err)
+	}
 	if err := s.RevokeAllForUser(ctx, "user-2"); err != nil {
 		t.Fatalf("RevokeAllForUser err: %v", err)
 	}
@@ -220,7 +237,7 @@ func TestAPIKeyStore_CRUD(t *testing.T) {
 	}
 
 	// Duplicado -> ErrConflict
-	if _, err := s.Create(ctx, key); err != domain.ErrConflict {
+	if _, err := s.Create(ctx, key); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("Create duplicado err=%v, quiero ErrConflict", err)
 	}
 
@@ -243,7 +260,7 @@ func TestAPIKeyStore_CRUD(t *testing.T) {
 	}
 
 	// Revoke inexistente -> ErrNotFound
-	if err := s.Revoke(ctx, "tenant-a", "nonexistent"); err != domain.ErrNotFound {
+	if err := s.Revoke(ctx, "tenant-a", "nonexistent"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("Revoke inexistente err=%v, quiero ErrNotFound", err)
 	}
 }

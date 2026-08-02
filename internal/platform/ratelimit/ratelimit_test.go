@@ -53,27 +53,27 @@ func TestNewLimiter_Table(t *testing.T) {
 
 func TestLimiter_Allow_Table(t *testing.T) {
 	tests := []struct {
-		name         string
-		rate         rate.Limit
-		burst        int
-		key          string
-		attempts     int
+		name        string
+		rate        rate.Limit
+		burst       int
+		key         string
+		attempts    int
 		wantResults []bool
 	}{
 		{
-			name:         "rate 1 burst 2 allows exactly 2 immediate calls",
-			rate:         rate.Limit(1),
-			burst:        2,
-			key:          "tenant-a",
-			attempts:     3,
+			name:        "rate 1 burst 2 allows exactly 2 immediate calls",
+			rate:        rate.Limit(1),
+			burst:       2,
+			key:         "tenant-a",
+			attempts:    3,
 			wantResults: []bool{true, true, false},
 		},
 		{
-			name:         "normalized burst 1 allows 1 call",
-			rate:         rate.Limit(10),
-			burst:        0,
-			key:          "tenant-b",
-			attempts:     2,
+			name:        "normalized burst 1 allows 1 call",
+			rate:        rate.Limit(10),
+			burst:       0,
+			key:         "tenant-b",
+			attempts:    2,
 			wantResults: []bool{true, false},
 		},
 	}
@@ -93,18 +93,18 @@ func TestLimiter_Allow_Table(t *testing.T) {
 
 func TestLimiter_Eviction_Table(t *testing.T) {
 	tests := []struct {
-		name           string
-		staleAge       time.Duration
+		name             string
+		staleAge         time.Duration
 		staleShouldEvict bool
 	}{
 		{
-			name:           "buckets older than 10m are evicted",
-			staleAge:       15 * time.Minute,
+			name:             "buckets older than 10m are evicted",
+			staleAge:         15 * time.Minute,
 			staleShouldEvict: true,
 		},
 		{
-			name:           "recent buckets are preserved",
-			staleAge:       1 * time.Minute,
+			name:             "recent buckets are preserved",
+			staleAge:         1 * time.Minute,
 			staleShouldEvict: false,
 		},
 	}

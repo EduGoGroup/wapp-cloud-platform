@@ -13,7 +13,9 @@ func TestRekey_ClosedDB_FailsGracefully(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open err: %v", err)
 	}
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close err: %v", err)
+	}
 
 	kp, err := NewEnvKeyProvider(KeyringConfig{
 		MasterB64: masterB64(),

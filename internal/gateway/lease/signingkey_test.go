@@ -20,10 +20,10 @@ func TestParsePrivateKeyBase64_Table(t *testing.T) {
 	b64Short := base64.StdEncoding.EncodeToString([]byte("corto"))
 
 	tests := []struct {
-		name      string
-		b64       string
-		wantErr   bool
-		wantLen   int
+		name    string
+		b64     string
+		wantErr bool
+		wantLen int
 	}{
 		{
 			name:    "full 64-byte private key",
@@ -64,7 +64,10 @@ func TestParsePrivateKeyBase64_Table(t *testing.T) {
 }
 
 func TestResolveSigningKey_Table(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey err: %v", err)
+	}
 	validB64 := base64.StdEncoding.EncodeToString(priv)
 
 	tests := []struct {
@@ -117,7 +120,9 @@ func TestResolveSigningKey_Table(t *testing.T) {
 func TestLoadPrivateKeyPEM_Table(t *testing.T) {
 	tmpDir := t.TempDir()
 	invalidPEMFile := filepath.Join(tmpDir, "invalid.pem")
-	os.WriteFile(invalidPEMFile, []byte("contenido invalido no pem"), 0600)
+	if err := os.WriteFile(invalidPEMFile, []byte("contenido invalido no pem"), 0600); err != nil {
+		t.Fatalf("WriteFile PEM invalido err: %v", err)
+	}
 
 	tests := []struct {
 		name    string

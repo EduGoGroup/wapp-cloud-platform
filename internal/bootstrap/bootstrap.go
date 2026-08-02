@@ -302,6 +302,8 @@ func Run(ctx context.Context) error {
 		IdleTimeout:       idleTimeout,
 	}
 
+	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
+	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.
 	return serveAndWait(ctx.Done(), log,
 		httpServer{srv: httpSrv, name: "admin/health"},
 		httpServer{srv: publicSrv, name: "API pública"},
