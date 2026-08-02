@@ -83,10 +83,19 @@ func WithAuthAuditor(a in.Auditor) Option { return func(s *Server) { s.authAudit
 
 // handleUserLogin atiende un UserLogin relayado por el Edge (ADR-0025 dec.1): el
 // Edge transporta las credenciales del operador; el tenant es IMPLÍCITO del canal
-// mTLS (nunca del mensaje). Delega en el IAM acotando el login al tenant del canal
-// y, tras autenticar, VERIFICA que el tenant de la identidad emitida coincida con
-// el del canal (guard tenant cruzado, defensa en profundidad). Nunca entrega
-// tokens de un tenant distinto al enrolado.
+// mTLS (nunca del mensaje). Delega en el puerto de autenticación acotando el login
+// al tenant del canal y, tras autenticar, VERIFICA que el tenant de la identidad
+// emitida coincida con el del canal (guard tenant cruzado, defensa en profundidad).
+// Nunca entrega tokens de un tenant distinto al enrolado.
+//
+// Quién hay detrás del puerto lo decide el arranque (identity Plan 003 · Ola 3):
+// con URL de identity, un delegado que valida las credenciales en el SSO del grupo
+// y canjea la identidad por un Context Token; sin ella, el IAM local de siempre.
+// El Edge no distingue los dos casos y no cambia ni una línea (REQ-A4): recibe el
+// mismo par de tokens, y el access sigue siendo un Context Token que valida offline
+// por `kid`. Con el delegado, el TenantID del input se ignora —identity no conoce
+// tenants— pero el guard de abajo sigue comparando el tenant resuelto en wApp con
+// el del canal, que es donde de verdad se sostiene la defensa.
 func (s *Server) handleUserLogin(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLoginRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
@@ -152,13 +161,14 @@ func (s *Server) handleUserRefresh(ctx context.Context, cc connCtx, req *cloudli
 }
 
 // handleUserLogout atiende un UserLogout relayado por el Edge: revoca el/los
-// refresh token(s) en el IAM (idempotente). Convención del contrato: éxito ⇒ rama
-// Tokens con UserTokens VACÍO (todos los campos en cero); fallo ⇒ rama Error.
+// refresh token(s) (idempotente). Convención del contrato: éxito ⇒ rama Tokens
+// con UserTokens VACÍO (todos los campos en cero); fallo ⇒ rama Error.
 //
-// NOTA (limitación conocida, follow-up Ola 3/4): el IAM revoca TODAS las sesiones
-// del usuario solo con UserID informado, y el proto UserLogoutRequest no lo lleva
-// (ni el puerto expone resolver el userID desde el refresh token). Por eso
-// AllSessions se relaya pero hoy degrada a revocar el único refresh presentado.
+// El follow-up del Plan 033 («all_sessions degradado en el relé») queda disuelto
+// con la delegación: la revocación global es competencia central de identity, que
+// resuelve el titular server-side, así que el proto NO necesita ganar un user_id
+// —que era justo lo que aquel follow-up temía tener que añadir—. El campo
+// AllSessions sigue expresando la intención y ahora se honra.
 func (s *Server) handleUserLogout(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLogoutRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {

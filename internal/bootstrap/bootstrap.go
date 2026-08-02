@@ -148,9 +148,11 @@ func Run(ctx context.Context) error {
 		// el bundle con su solicitud pendiente por command_id y lo almacena.
 		gatewaygrpc.WithDiagnosticsSink(diagStore),
 		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025): el
-		// gateway delega UserLogin/Refresh/Logout en el AuthService del IAM y audita
-		// edge.auth.* (CERO PII) con el mismo auditor del :8103.
-		gatewaygrpc.WithAuthenticator(authStk.authSvc),
+		// gateway delega UserLogin/Refresh/Logout en un puerto de autenticación y audita
+		// edge.auth.* (CERO PII) con el mismo auditor del :8103. Detrás del puerto está
+		// identity-core si la delegación de la Ola 3 está encendida (WAPP_IDENTITY_URL),
+		// o el IAM local si no; el gateway no distingue los dos casos.
+		gatewaygrpc.WithAuthenticator(authStk.edgeAuthenticator()),
 		gatewaygrpc.WithAuthAuditor(authStk.auditor),
 	)
 

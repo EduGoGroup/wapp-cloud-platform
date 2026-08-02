@@ -21,6 +21,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
+	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/identity"
 	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
@@ -65,6 +66,12 @@ type authStack struct {
 	// exactamente cuando identityVerifier es nil, y entonces
 	// /api/v1/auth/exchange responde 503.
 	exchangeSvc *iamusecase.ExchangeService
+	// edgeAuthSvc es el autenticador DELEGADO que atiende las RPCs de auth del
+	// Edge cuando hay WAPP_IDENTITY_URL (Plan 003 de identity · T3.3): valida las
+	// credenciales en identity y canjea. nil = el relé sigue con el IAM local.
+	// Los endpoints propios del :8103 NO cambian: quedan sin tráfico, y su
+	// eliminación es la Ola 5.
+	edgeAuthSvc *iamusecase.DelegatedAuthService
 }
 
 // userJWTBundle agrupa el material de tokens de USUARIO del IAM (ADR-0019, Plan
@@ -168,7 +175,55 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 	} else {
 		log.Info("modo dual con identity APAGADO: WAPP_IDENTITY_JWKS_URL vacía (wApp arranca sin identity-core; /api/v1/auth/exchange responde 503)")
 	}
+
+	// Segunda puerta (Plan 003 de identity · T3.3): con URL de identity, el relé
+	// del Edge deja de resolver credenciales aquí y delega en el SSO del grupo.
+	if err := stack.wireDelegatedAuth(cfg, userValidator, log); err != nil {
+		return nil, err
+	}
 	return stack, nil
+}
+
+// wireDelegatedAuth construye el autenticador delegado que usará el gateway
+// CloudLink cuando haya URL de identity (identity Plan 003 · design.md Ola 3 §6).
+//
+// Las dos variables son ejes distintos de la misma transición y por eso se
+// comprueban juntas: JWKS_URL enseña a wApp a VERIFICAR lo que identity firma, y
+// URL le dice a quién PREGUNTAR por las credenciales. Delegar sin poder verificar
+// es imposible —el canje necesita el verificador—, así que esa combinación no
+// arranca en vez de fallar en el primer login.
+func (s *authStack) wireDelegatedAuth(cfg config.AppConfig, validator iamusecase.TokenValidator, log sharedlogger.Logger) error {
+	identityURL := strings.TrimSpace(cfg.Identity.URL)
+	if identityURL == "" {
+		log.Info("delegación de la auth del Edge APAGADA: WAPP_IDENTITY_URL vacía (el relé sigue resolviendo credenciales en el IAM local)")
+		return nil
+	}
+	if s.exchangeSvc == nil {
+		return errors.New("WAPP_IDENTITY_URL exige WAPP_IDENTITY_JWKS_URL: sin verificador no hay canje, y sin canje la delegación no puede emitir Context Tokens")
+	}
+	client, err := iamidentity.New(identityURL, cfg.Identity.Timeout)
+	if err != nil {
+		return fmt.Errorf("construyendo el cliente de identity-api: %w", err)
+	}
+	delegated, err := iamusecase.NewDelegatedAuthService(client, s.exchangeSvc, validator, iamusecase.SystemWappEdge)
+	if err != nil {
+		return fmt.Errorf("construyendo el autenticador delegado del Edge: %w", err)
+	}
+	s.edgeAuthSvc = delegated
+	log.Info("delegación de la auth del Edge ACTIVA: login/refresh/logout del operador van a identity-core",
+		"identity_url", identityURL,
+		"system", iamusecase.SystemWappEdge)
+	return nil
+}
+
+// edgeAuthenticator devuelve el autenticador que atiende las RPCs de auth del
+// Edge: el delegado si la delegación está encendida, el IAM local si no. Es el
+// único punto donde se decide, y por eso el gateway no conoce la diferencia.
+func (s *authStack) edgeAuthenticator() in.Authenticator {
+	if s.edgeAuthSvc != nil {
+		return s.edgeAuthSvc
+	}
+	return s.authSvc
 }
 
 // exchanger expone el canje como puerto in, o un nil DE VERDAD cuando el modo

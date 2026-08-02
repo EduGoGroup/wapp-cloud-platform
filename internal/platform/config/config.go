@@ -111,8 +111,19 @@ type IdentityConfig struct {
 	// de identity. Con valor, el arranque FALLA si el JWKS no responde
 	// (fail-closed: el verificador nunca nace con cero claves). En dev
 	// http://localhost:8200/.well-known/jwks.json; fuera de loopback se exige
-	// https.
+	// https. Es lo que habilita POST /api/v1/auth/exchange.
 	JWKSURL string `yaml:"jwks_url"`
+	// URL es la base de identity-api con la que el gateway CloudLink DELEGA el
+	// login/refresh/logout del operador (identity Plan 003 · Ola 3, T3.3). SIN
+	// default y con semántica de INTERRUPTOR, igual que JWKSURL: vacía ⇒ el relé
+	// sigue resolviendo las credenciales con el IAM local, como hasta ahora. Es
+	// el segundo eje de la transición: con las dos variables puestas, wApp
+	// delega de verdad; con ninguna, el flujo legacy queda intacto. En dev
+	// http://localhost:8200. Se lee de WAPP_IDENTITY_URL.
+	URL string `yaml:"url"`
+	// Timeout acota cada llamada a identity-api. Default 10s; <=0 cae al default.
+	// Se lee como cadena time.Duration de WAPP_IDENTITY_TIMEOUT.
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // DiagnosticsConfig gobierna el diagnóstico remoto bajo demanda (Plan 031 · T5,
@@ -469,6 +480,8 @@ func Load() (AppConfig, error) {
 	cfg.Diagnostics.BundleTTL = loader.GetDuration("DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
 
 	cfg.Identity.JWKSURL = loader.GetString("IDENTITY_JWKS_URL", cfg.Identity.JWKSURL)
+	cfg.Identity.URL = loader.GetString("IDENTITY_URL", cfg.Identity.URL)
+	cfg.Identity.Timeout = loader.GetDuration("IDENTITY_TIMEOUT", cfg.Identity.Timeout)
 
 	return cfg, nil
 }
