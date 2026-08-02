@@ -203,3 +203,57 @@ func TestIntegration_Audit(t *testing.T) {
 		t.Fatalf("List: %+v err=%v", events, err)
 	}
 }
+
+// TestIntegration_Memberships ejercita el SQL que lee tenant_members (migración
+// 0037): la tabla que resuelve el tenant del canje cuando los usuarios ya viven
+// en identity. La siembra imita a la del propio 0037 —la membresía se hereda del
+// usuario— pero la escribe a mano, porque lo que se prueba aquí es la LECTURA.
+func TestIntegration_Memberships(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	members := iampostgres.NewMembershipRepo(env.db)
+
+	u, err := iampostgres.NewUserRepo(env.db).Create(ctx, domain.User{
+		TenantID: env.tenantID, Email: "miembro@it.example", PasswordHash: "hash", IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+
+	// Sin fila en tenant_members la lista viene vacía, y eso NO es un error: es
+	// el caso «usuario sin membresía», que el canje traduce a «no migrado».
+	tenants, err := members.TenantsOfUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("TenantsOfUser (sin membresía): %v", err)
+	}
+	if len(tenants) != 0 {
+		t.Fatalf("sin membresía debería devolver lista vacía, got %v", tenants)
+	}
+
+	if _, err := env.db.ExecContext(ctx,
+		`INSERT INTO public.tenant_members (user_id, tenant_id) VALUES ($1, $2)`,
+		u.ID, env.tenantID); err != nil {
+		t.Fatalf("sembrar membresía: %v", err)
+	}
+
+	tenants, err = members.TenantsOfUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("TenantsOfUser: %v", err)
+	}
+	if len(tenants) != 1 || tenants[0] != env.tenantID {
+		t.Fatalf("membresías = %v, want [%s]", tenants, env.tenantID)
+	}
+
+	// Re-insertar la misma pareja no duplica (PK compuesta): el canje seguiría
+	// viendo UN tenant, no dos.
+	if _, err := env.db.ExecContext(ctx,
+		`INSERT INTO public.tenant_members (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		u.ID, env.tenantID); err != nil {
+		t.Fatalf("re-sembrar membresía: %v", err)
+	}
+	tenants, err = members.TenantsOfUser(ctx, u.ID)
+	if err != nil || len(tenants) != 1 {
+		t.Fatalf("membresías tras el duplicado = %v err=%v", tenants, err)
+	}
+}
