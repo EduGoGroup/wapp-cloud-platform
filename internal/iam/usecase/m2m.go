@@ -5,17 +5,17 @@ import (
 	"errors"
 	"time"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 // M2MService implementa in.M2MAuthenticator: autenticación máquina-a-máquina por
 // api-key (lookup por key_hash) y por service token (ServiceJWTManager de
-// wapp-shared/auth). La autorización por scope reutiliza el matcher glob
-// (sharedrbac.PermissionMatches), sin re-implementarlo.
+// wapp-shared/auth). La autorización por scope reutiliza el matcher glob de
+// identity-shared (identityrbac.PermissionMatches), sin re-implementarlo.
 type M2MService struct {
 	apikeys out.APIKeyRepo
 	svcJWT  *sharedjwt.ServiceJWTManager
@@ -86,7 +86,7 @@ func (s *M2MService) VerifyServiceToken(_ context.Context, token string) (in.Ser
 // el mismo matcher glob que los grants (allow-only: los scopes no llevan deny).
 func (s *M2MService) AuthorizeScope(scopes []string, required string) bool {
 	for _, sc := range scopes {
-		if sharedrbac.PermissionMatches(sc, required) {
+		if identityrbac.PermissionMatches(sc, required) {
 			return true
 		}
 	}

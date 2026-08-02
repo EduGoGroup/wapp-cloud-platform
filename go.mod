@@ -3,6 +3,7 @@ module github.com/EduGoGroup/wapp-cloud-platform
 go 1.26.5
 
 require (
+	github.com/EduGoGroup/identity-shared/auth v0.3.0
 	github.com/EduGoGroup/wapp-cloudlink v0.10.0
 	github.com/EduGoGroup/wapp-shared/config v0.3.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.2.0
@@ -34,7 +35,7 @@ require (
 )
 
 require (
-	github.com/EduGoGroup/wapp-shared/auth v0.3.0
+	github.com/EduGoGroup/wapp-shared/auth v0.4.0
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect

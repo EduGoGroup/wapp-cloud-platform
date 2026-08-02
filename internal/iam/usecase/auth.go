@@ -5,11 +5,12 @@ import (
 	"errors"
 	"time"
 
+	identityjwt "github.com/EduGoGroup/identity-shared/auth/jwt"
+	identitypassword "github.com/EduGoGroup/identity-shared/auth/password"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedpassword "github.com/EduGoGroup/wapp-shared/auth/password"
 )
 
 // tokenTypeBearer es el único esquema de autorización que emite el IAM.
@@ -28,7 +29,8 @@ type TokenValidator interface {
 // AuthService implementa in.Authenticator: login/refresh/logout/verify de
 // usuario. Resuelve los grants efectivos al emitir (resolveEffectiveGrants),
 // firma con el JWTManager de wapp-shared/auth (s.jwt, emisor) y valida los
-// access tokens con s.validator (dual-alg), y persiste el hash del refresh.
+// access tokens con s.validator (dual-alg), y persiste el hash del refresh
+// opaco de identity-shared (identityjwt, formato `rft_`).
 type AuthService struct {
 	users     out.UserRepo
 	roles     out.RoleRepo
@@ -106,7 +108,11 @@ func (s *AuthService) Login(ctx context.Context, req in.LoginInput) (domain.Auth
 		return domain.AuthResult{}, domain.ErrUserInactive
 	}
 
-	if verr := sharedpassword.VerifyPassword(u.PasswordHash, req.Password); verr != nil {
+	// Todo fallo de verificación se colapsa a credenciales inválidas: tanto el
+	// desajuste esperado (envuelve auth.ErrPasswordMismatch de identity-shared)
+	// como un hash no verificable (auth.ErrInvalidInput). Distinguirlos hacia
+	// fuera le diría al cliente en qué estado está el hash del usuario.
+	if verr := identitypassword.VerifyPassword(u.PasswordHash, req.Password); verr != nil {
 		s.record(ctx, u.TenantID, u.ID, "auth.login", "auth", "error")
 		return domain.AuthResult{}, domain.ErrInvalidCredentials
 	}
@@ -127,7 +133,7 @@ func (s *AuthService) Refresh(ctx context.Context, req in.RefreshInput) (domain.
 		return domain.AuthResult{}, domain.ErrInvalidInput
 	}
 
-	hash := sharedjwt.HashToken(req.RefreshToken)
+	hash := identityjwt.HashRefreshToken(req.RefreshToken)
 	rec, err := s.refresh.GetByHash(ctx, hash)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -171,7 +177,7 @@ func (s *AuthService) Logout(ctx context.Context, req in.LogoutInput) error {
 	if req.RefreshToken == "" {
 		return domain.ErrInvalidInput
 	}
-	return s.refresh.Revoke(ctx, sharedjwt.HashToken(req.RefreshToken))
+	return s.refresh.Revoke(ctx, identityjwt.HashRefreshToken(req.RefreshToken))
 }
 
 // Verify valida un access token. Un token inválido/expirado devuelve
@@ -211,7 +217,7 @@ func (s *AuthService) issue(ctx context.Context, u domain.User) (domain.AuthResu
 		return domain.AuthResult{}, err
 	}
 
-	rt, err := sharedjwt.GenerateRefreshToken(s.cfg.RefreshTTL)
+	rt, err := identityjwt.GenerateRefreshToken(s.cfg.RefreshTTL)
 	if err != nil {
 		return domain.AuthResult{}, err
 	}

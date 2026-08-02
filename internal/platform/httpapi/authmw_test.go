@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
-	sharedrbac "github.com/EduGoGroup/wapp-shared/auth/rbac"
 )
 
 const (
@@ -46,7 +46,7 @@ func (f fakeM2M) VerifyServiceToken(_ context.Context, token string) (in.Service
 
 func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 	for _, s := range scopes {
-		if sharedrbac.PermissionMatches(s, required) {
+		if identityrbac.PermissionMatches(s, required) {
 			return true
 		}
 	}
@@ -54,7 +54,7 @@ func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
 }
 
 // userToken firma un access token de usuario con los grants dados.
-func userToken(t *testing.T, jwt *sharedjwt.JWTManager, grants sharedrbac.Grants) string {
+func userToken(t *testing.T, jwt *sharedjwt.JWTManager, grants identityrbac.Grants) string {
 	t.Helper()
 	tok, _, err := jwt.GenerateToken(mwUser, mwTenant, []string{"operator"}, grants, time.Hour)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestAuthenticate_NoToken401(t *testing.T) {
 func TestAuthenticate_ValidUserToken_InjectsIdentity(t *testing.T) {
 	t.Parallel()
 	mw, jwt, _ := newMW()
-	tok := userToken(t, jwt, sharedrbac.Grants{Allow: []string{"flows.*"}})
+	tok := userToken(t, jwt, identityrbac.Grants{Allow: []string{"flows.*"}})
 
 	var got httpapi.Identity
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -173,7 +173,7 @@ func TestRequirePermission_AllowedAndDenied(t *testing.T) {
 	mw, jwt, _ := newMW()
 
 	// Usuario con grant flows.* → allow flows.create, deny messages.send.
-	tok := userToken(t, jwt, sharedrbac.Grants{Allow: []string{"flows.*"}})
+	tok := userToken(t, jwt, identityrbac.Grants{Allow: []string{"flows.*"}})
 
 	run := func(perm string) int {
 		final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
