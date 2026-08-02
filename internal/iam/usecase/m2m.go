@@ -43,7 +43,7 @@ func (s *M2MService) AuthenticateAPIKey(ctx context.Context, rawKey string) (in.
 	if rawKey == "" {
 		return in.ServiceIdentity{}, domain.ErrAPIKeyInvalid
 	}
-	k, err := s.apikeys.GetByHash(ctx, sharedjwt.HashToken(rawKey))
+	k, err := s.apikeys.GetByHash(ctx, hashAPIKeySecret(rawKey))
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return in.ServiceIdentity{}, domain.ErrAPIKeyInvalid

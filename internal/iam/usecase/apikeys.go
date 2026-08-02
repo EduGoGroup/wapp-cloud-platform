@@ -2,20 +2,21 @@ package usecase
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
-	"time"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
-// apiKeySecretTTL es un TTL nominal (ignorado) que se pasa a
-// sharedjwt.GenerateRefreshToken para reutilizar su CSPRNG como generador del secreto
-// de la api-key: nos quedamos con el token opaco (secreto) y su SHA256 (key_hash),
-// no con la expiración que calcula.
-const apiKeySecretTTL = time.Hour
+// apiKeySecretBytes es la entropía del secreto de una api-key: 32 bytes (256
+// bits) de crypto/rand, fuera del alcance de cualquier búsqueda exhaustiva.
+const apiKeySecretBytes = 32
 
 // APIKeyService implementa in.APIKeyManager: emisión (secreto devuelto UNA vez),
 // listado y revocación de credenciales M2M. En BD solo vive el hash del secreto
@@ -42,14 +43,14 @@ func (s *APIKeyService) IssueAPIKey(ctx context.Context, req in.IssueAPIKeyInput
 	if req.TenantID == "" || req.ClientID == "" {
 		return in.IssueAPIKeyResult{}, domain.ErrInvalidInput
 	}
-	gen, err := sharedjwt.GenerateRefreshToken(apiKeySecretTTL)
+	secret, err := generateAPIKeySecret()
 	if err != nil {
 		return in.IssueAPIKeyResult{}, err
 	}
 	created, err := s.apikeys.Create(ctx, domain.APIKey{
 		TenantID:  req.TenantID,
 		ClientID:  req.ClientID,
-		KeyHash:   gen.TokenHash,
+		KeyHash:   hashAPIKeySecret(secret),
 		Scopes:    req.Scopes,
 		IsActive:  true,
 		ExpiresAt: req.ExpiresAt,
@@ -57,7 +58,31 @@ func (s *APIKeyService) IssueAPIKey(ctx context.Context, req in.IssueAPIKeyInput
 	if err != nil {
 		return in.IssueAPIKeyResult{}, err
 	}
-	return in.IssueAPIKeyResult{APIKey: created, Secret: gen.Token}, nil
+	return in.IssueAPIKeyResult{APIKey: created, Secret: secret}, nil
+}
+
+// generateAPIKeySecret produce el secreto opaco de una api-key: apiKeySecretBytes
+// de crypto/rand en base64 URL-safe.
+//
+// El secreto de una credencial M2M es una primitiva PROPIA del IAM de wApp, no un
+// refresh token: no se canjea, no rota y no lleva el prefijo `rft_` con que
+// identity-shared marca los suyos. Antes se tomaba prestado su CSPRNG pasándole un
+// TTL nominal que se descartaba; que el préstamo funcionara no lo hacía correcto:
+// ataba el formato del secreto a la evolución de otro concepto.
+func generateAPIKeySecret() (string, error) {
+	buf := make([]byte, apiKeySecretBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("iam: no se pudo generar entropía para el secreto de la api-key: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(buf), nil
+}
+
+// hashAPIKeySecret devuelve el SHA256 hex del secreto: lo ÚNICO que se persiste
+// (key_hash), de modo que un volcado de la tabla no entregue credenciales usables.
+// Es la contrapartida de generateAPIKeySecret y la usa el lookup de m2m.go.
+func hashAPIKeySecret(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
 }
 
 // ListAPIKeys devuelve las api-keys del tenant (metadatos, sin secreto).
