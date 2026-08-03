@@ -19,7 +19,16 @@ operabilidad de flota; se despliega hoy contra Neon en el piloto multi-Edge
 (planes 005–031). Antes de afirmar que algo "no existe todavía", **verifica en
 `internal/`**: casi todo el dominio ya está construido.
 
-Binario único `cmd/server`, Go **1.26**, module `github.com/EduGoGroup/wapp-cloud-platform`.
+Binarios `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale),
+Go **1.26**, module `github.com/EduGoGroup/wapp-cloud-platform`.
+
+⚠️ **wApp NO autentica personas.** Desde la Ola 5 del Plan 003 de identity, las
+credenciales las valida **identity-core** (el SSO del grupo) y aquí no queda
+padrón, ni contraseñas, ni sesiones, ni credenciales M2M. Lo que wApp hace es
+**canjear** el Identity Token por un **Context Token** propio con el tenant y los
+grants de negocio. Si vas a proponer algo que valide una contraseña, resuelva un
+usuario o emita un refresh en este repo, estás reintroduciendo lo que la Ola 5
+eliminó.
 
 ---
 
@@ -43,12 +52,16 @@ Binario único `cmd/server`, Go **1.26**, module `github.com/EduGoGroup/wapp-clo
 > del módulo** que corresponda; no crees capas transversales nuevas sin consenso.
 
 ```
-cmd/server/    → binario único: orquesta arranque, CUATRO listeners (2 HTTP + 2 gRPC),
+cmd/server/    → binario principal: orquesta arranque, CUATRO listeners (2 HTTP + 2 gRPC),
                  migraciones al arranque, lease pubkey en log, graceful shutdown.
+cmd/migrate/   → aplica las migraciones y SALE (sin listeners). `make migrate` /
+                 `make migrate-status`. Contra Neon: host DIRECTO, nunca el -pooler.
 internal/
-  iam/          → autenticación (JWT) + autorización (RBAC glob multi-tenant): usuarios,
-                  roles, grants, refresh tokens, api-keys. Capas domain/usecase/ports/infra/transport.
-  publicapi/    → API pública /api/v1 para terceros (JWT usuario ES256 + RBAC): sesiones,
+  iam/          → canje Identity Token → Context Token (exchange), delegación del relé del
+                  Edge en identity, verificación del Context Token propio y RBAC glob
+                  multi-tenant (roles, grants, membresías). NO hay usuarios ni contraseñas.
+                  Capas domain/usecase/ports/infra/transport.
+  publicapi/    → API pública /api/v1 para terceros (Context Token ES256 + RBAC): sesiones,
                   mensajes, flows, triggers, media, intents, diagnostics, health, audit.
   flujos/       → Motor de Flujos (Pieza 05): motor dinámico por puertos ContentSource +
                   EventSink, Registry de módulos enchufables (modules/{menu,survey,cart,media}),
@@ -101,20 +114,35 @@ durabilidad la da el `outbox` del Edge.
 ### Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0036_diagnostics.sql`).
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0038_retiro_iam_propio.sql`).
 El runner los aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy
-**0.21.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
+**0.23.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
 aunque no se suba la versión. **Obligatorio incrementar `SchemaVersion` al tocar cualquier
 `structure/*.sql`.**
+
+El runner es **full-replay**: al detectar cambio de hash reejecuta TODOS los
+`structure/*.sql`, no solo los nuevos. Consecuencia que muerde: un `INSERT ... SELECT`
+sobre una tabla que otra migración borra revienta el ARRANQUE del servidor en la
+siguiente corrida. Por eso lo destructivo y lo que depende de tablas retiradas va con
+guard `IF EXISTS` (ver `0037_tenant_members.sql` y `0038_retiro_iam_propio.sql`).
+
+⚠️ Las tablas `iam_roles`, `iam_role_grants`, `iam_user_roles` e `iam_user_grants`
+**NO son identidad**: son el RBAC de negocio de wApp y se quedan. Su prefijo `iam_` es
+herencia del Plan 018 y hoy engaña. `iam_users`, `iam_refresh_tokens` e `iam_api_keys`
+murieron en la 0038. Su `user_id` es un UUID SIN FK: la persona vive en otra base.
 
 ---
 
 ## Seguridad
 
-- **Tokens de usuario en ES256** (ECDSA P-256) con `kid` + `MultiVerifier` para coexistencia
-  de algoritmos (ADR-0019, Plan 028); la clave EC privada se lee de un PEM `0600`.
-- **Service tokens M2M en HS256** con audiencia acotada (`aud`), separando rutas de máquina
-  de las de usuario. (El corte a ES256 es solo para el token de **usuario**; M2M sigue HS256.)
+- **Las credenciales las valida identity-core**, no wApp. Aquí no hay `password_hash`,
+  ni refresh tokens, ni api-keys: el Plan 003 de identity se los llevó.
+- **Context Tokens en ES256** (ECDSA P-256) con `kid` + `MultiVerifier` (ADR-0019, Plan
+  028); la clave EC privada se lee de un PEM `0600`. Es el ÚNICO algoritmo de firma que
+  le queda a wApp — el HS256 se retiró con el plano M2M.
+- **Sin plano M2M**: `X-API-Key` y los service tokens se eliminaron (0 credenciales
+  emitidas, 0 consumidores). Reconstruirlo es por el ADR-0025 de identity: la credencial
+  de máquina **se canjea, no se presenta**.
 - **RBAC por grants glob** multi-tenant; el tenant se deriva del token (INV-8).
 - **Dedupe de ingesta** por `(session_id, wa_message_id)` para no reprocesar entrantes repetidos.
 - **PII cifrada en reposo** con KEK versionada y rotación sin re-cifrar (ADR-0017, Plan 012),
@@ -173,7 +201,7 @@ vive en `github.com/EduGoGroup/wapp-shared` (módulo propio, **no** `edugo-share
 | ADR-0009 | Datos de negocio en la nube; DEK y store solo en el Edge | PostgreSQL/R2 solo con metadatos y contenido de negocio |
 | ADR-0010 | Monolito modular; extraer a servicio solo cuando duela | No partir módulos por adelantado |
 | ADR-0017 | Cifrado de PII en reposo con KEK versionada | Rotación sin re-cifrar (Plan 012) |
-| ADR-0019 | JWT de usuario HS256 → **ES256** (`kid` + `MultiVerifier`) | Corte solo del token de usuario; M2M sigue HS256 |
+| ADR-0019 | JWT de usuario HS256 → **ES256** (`kid` + `MultiVerifier`) | Hoy ES256 es el único: el HS256 se fue con el plano M2M |
 | ADR-0020/0021/0022 | Clasificador LLM (entitlements, contrato `intents`, config e ingesta) | El clasificador vive en el Edge; aquí el soporte |
 | ADR-0023 | Operabilidad de flota (salud derivada + diagnóstico remoto) | Módulo `diagnostics` con TTL (Plan 031) |
 

@@ -12,10 +12,10 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 )
 
-// stackForDelegation arma el mínimo authStack que wireDelegatedAuth necesita: el
-// AuthService local (el de siempre) y, opcionalmente, un canje ya construido.
+// stackForDelegation arma el mínimo authStack que wireDelegatedAuth necesita:
+// opcionalmente, un canje ya construido.
 func stackForDelegation(withExchange bool) *authStack {
-	s := &authStack{authSvc: &iamusecase.AuthService{}}
+	s := &authStack{}
 	if withExchange {
 		s.exchangeSvc = &iamusecase.ExchangeService{}
 	}
@@ -26,7 +26,14 @@ func quietLogger() sharedlogger.Logger {
 	return sharedlogger.New(sharedlogger.WithWriter(io.Discard))
 }
 
-func TestWireDelegatedAuth_SinURLElReleSigueEnLocal(t *testing.T) {
+// TestWireDelegatedAuth_SinURLElReleSeQuedaSinAutenticador: tras la Ola 5 no hay
+// IAM local al que caer, así que sin WAPP_IDENTITY_URL el relé del Edge se queda
+// SIN autenticador y el gateway responde "auth no disponible".
+//
+// El nil tiene que ser un nil DE VERDAD, no un puntero nil dentro de una
+// interface: el gateway decide comparando contra nil, y el clásico tropiezo de
+// Go convertiría ese guard en un nil-pointer dereference en el primer login.
+func TestWireDelegatedAuth_SinURLElReleSeQuedaSinAutenticador(t *testing.T) {
 	s := stackForDelegation(true)
 	if err := s.wireDelegatedAuth(config.AppConfig{}, sharedjwt.NewJWTManager("s", "i"), quietLogger()); err != nil {
 		t.Fatalf("wireDelegatedAuth: %v", err)
@@ -34,9 +41,8 @@ func TestWireDelegatedAuth_SinURLElReleSigueEnLocal(t *testing.T) {
 	if s.edgeAuthSvc != nil {
 		t.Error("sin WAPP_IDENTITY_URL no debe construirse el delegado")
 	}
-	// Y el gateway sigue atendido por el IAM local, exactamente como hasta ahora.
-	if got := s.edgeAuthenticator(); got != s.authSvc {
-		t.Errorf("edgeAuthenticator = %T, want el AuthService local", got)
+	if got := s.edgeAuthenticator(); got != nil {
+		t.Errorf("edgeAuthenticator = %T (%v), want un nil de verdad", got, got)
 	}
 }
 

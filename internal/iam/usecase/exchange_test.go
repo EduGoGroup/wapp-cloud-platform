@@ -12,7 +12,9 @@ import (
 
 	identityauth "github.com/EduGoGroup/identity-shared/auth"
 	identityjwt "github.com/EduGoGroup/identity-shared/auth/jwt"
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
@@ -26,8 +28,14 @@ const (
 	identityKid    = "es256-test"
 )
 
-// exchangeFixture arma un ExchangeService sobre un Store en memoria con un
-// usuario activo, su membresía de tenant y un rol operator.
+// exchangeFixture arma un ExchangeService sobre un Store en memoria con una
+// membresía de tenant y un rol operator asignado.
+//
+// Fíjate en lo que NO hay: ningún padrón local de usuarios. Desde la Ola 5 del
+// Plan 003 de identity, "pertenecer a wApp" es tener membresía y nada más — la
+// persona vive en identity-core y wApp no guarda ni una fila suya (design.md
+// Ola 5 §2). El fixture lo refleja: el sujeto es un UUID que solo aparece en
+// tenant_members y en la asignación de rol.
 //
 // La verificación del Identity Token es REAL: se emite con el emisor de
 // identity-shared y se comprueba con su MultiVerifier sobre la clave pública del
@@ -44,12 +52,27 @@ type exchangeFixture struct {
 func newExchangeFixture(t *testing.T) exchangeFixture {
 	t.Helper()
 	store := memory.NewStore()
+	issuerMgr, verifier := newIdentityPair(t)
 
+	contexts := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
+	userID := seedMember(t, store, testTenant, "operator", []domain.Grant{
+		{Pattern: "flows.*", Effect: domain.EffectAllow},
+		{Pattern: "messages.send", Effect: domain.EffectAllow},
+	})
+
+	svc := mustExchangeSvc(t, verifier, store, contexts)
+	return exchangeFixture{svc: svc, issuer: issuerMgr, contexts: contexts, store: store, userID: userID}
+}
+
+// newIdentityPair devuelve el emisor de Identity Tokens de prueba y el
+// verificador que lo acepta (mismo par de claves).
+func newIdentityPair(t *testing.T) (*identityjwt.Manager, *identityjwt.MultiVerifier) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generando clave ES256 de prueba: %v", err)
 	}
-	identityIssuerMgr, err := identityjwt.NewManager(key, identityIssuer, identityKid)
+	issuerMgr, err := identityjwt.NewManager(key, identityIssuer, identityKid)
 	if err != nil {
 		t.Fatalf("NewManager (identity): %v", err)
 	}
@@ -59,29 +82,29 @@ func newExchangeFixture(t *testing.T) exchangeFixture {
 	if err != nil {
 		t.Fatalf("NewMultiVerifier (identity): %v", err)
 	}
+	return issuerMgr, verifier
+}
 
-	contexts := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	users := mustUserSvc(t, store)
-	role := store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "operator"}, []domain.Grant{
-		{Pattern: "flows.*", Effect: domain.EffectAllow},
-		{Pattern: "messages.send", Effect: domain.EffectAllow},
-	})
-	u, err := users.CreateUser(context.Background(), in.CreateUserInput{
-		TenantID: testTenant, Email: testEmail, Password: testLoginPhrase, RoleIDs: []string{role.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+// seedMember da de alta un sujeto de wApp como lo hace la realidad tras la Ola
+// 5: un UUID de identity con membresía de tenant y un rol asignado. Devuelve ese
+// UUID. roleName vacío = miembro sin rol.
+func seedMember(t *testing.T, store *memory.Store, tenantID, roleName string, grants []domain.Grant) string {
+	t.Helper()
+	userID := uuid.NewString()
+	if roleName != "" {
+		role := store.Roles.Seed(domain.Role{TenantID: ptr(tenantID), Name: roleName}, grants)
+		if err := store.Roles.AssignToUser(context.Background(), userID, role.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
 	}
-	store.Memberships.Seed(u.ID, testTenant)
-
-	svc := mustExchangeSvc(t, verifier, store, contexts)
-	return exchangeFixture{svc: svc, issuer: identityIssuerMgr, contexts: contexts, store: store, userID: u.ID}
+	store.Memberships.Seed(userID, tenantID)
+	return userID
 }
 
 func mustExchangeSvc(t *testing.T, verifier usecase.IdentityTokenVerifier, store *memory.Store, jwt *sharedjwt.JWTManager) *usecase.ExchangeService {
 	t.Helper()
 	svc, err := usecase.NewExchangeService(
-		verifier, store.Users, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
+		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
 	)
 	if err != nil {
 		t.Fatalf("NewExchangeService: %v", err)
@@ -254,25 +277,71 @@ func TestExchange_SujetoDesconocidoEsUsuarioNoMigrado(t *testing.T) {
 
 	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
 	if !errors.Is(err, domain.ErrUserNotMigrated) {
-		t.Fatalf("err = %v, want ErrUserNotMigrated (no se crea el usuario al vuelo)", err)
+		t.Fatalf("err = %v, want ErrUserNotMigrated (no se crea la membresía al vuelo)", err)
 	}
 }
 
 func TestExchange_SinMembresiaEsUsuarioNoMigrado(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)
-	// Usuario que existe en wApp pero cuya membresía no llegó a tenant_members.
-	huerfano, err := mustUserSvc(t, f.store).CreateUser(context.Background(), in.CreateUserInput{
-		TenantID: testTenant, Email: "sin-membresia@tenant.example", Password: testLoginPhrase,
-	})
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	// Sujeto con rol asignado en wApp pero SIN membresía: tener permisos no es
+	// pertenecer. La puerta es tenant_members, y está cerrada.
+	huerfano := uuid.NewString()
+	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "sin-membresia"},
+		[]domain.Grant{{Pattern: "flows.read", Effect: domain.EffectAllow}})
+	if err := f.store.Roles.AssignToUser(context.Background(), huerfano, role.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
 	}
-	token, _ := f.identityToken(t, huerfano.ID, usecase.SystemWappBFF, 15*time.Minute)
+	token, _ := f.identityToken(t, huerfano, usecase.SystemWappBFF, 15*time.Minute)
 
-	_, err = f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
 	if !errors.Is(err, domain.ErrUserNotMigrated) {
 		t.Fatalf("err = %v, want ErrUserNotMigrated", err)
+	}
+}
+
+// TestExchange_CanjeaSinPadronLocalYConservaLosRolesDeWapp es el test de la Ola
+// 5 (regla D14: se verifica comportamiento, no texto). Comprueba las DOS mitades
+// de la limpieza en un solo movimiento, y cada una falla por su lado:
+//
+//  1. El sujeto NO existe en ningún padrón local de wApp y aun así canjea. Con
+//     el código anterior —que consultaba `iam_users` antes de resolver el
+//     tenant— esto devolvía ErrUserNotMigrated. Es la prueba de que el chequeo
+//     se fue de verdad, no de que el texto lo diga.
+//  2. El Context Token emitido sigue llevando SUS roles y SUS grants. Eso es
+//     justo lo que un `DROP TABLE iam_users CASCADE` mal apuntado destruiría en
+//     silencio: se llevaría iam_user_roles por delante, el login seguiría en
+//     verde y la persona se quedaría sin poder hacer lo que sí podía.
+func TestExchange_CanjeaSinPadronLocalYConservaLosRolesDeWapp(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
+	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v (un sujeto sin fila local pero con membresía DEBE canjear)", err)
+	}
+
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	// Los roles, en el token y en el contexto devuelto.
+	if len(claims.Roles) != 1 || claims.Roles[0] != "operator" {
+		t.Errorf("roles del context token = %v, want [operator] (el RBAC de wApp no sobrevivió)", claims.Roles)
+	}
+	if len(res.Context.Roles) != 1 || res.Context.Roles[0] != "operator" {
+		t.Errorf("roles del contexto devuelto = %v, want [operator]", res.Context.Roles)
+	}
+	// Y los grants de ese rol, evaluados de verdad con el matcher glob.
+	if !identityrbac.EvaluateGrants(claims.Grants, "flows.create") {
+		t.Error("se esperaba allow de flows.create (grant flows.* del rol operator)")
+	}
+	if !identityrbac.EvaluateGrants(claims.Grants, "messages.send") {
+		t.Error("se esperaba allow de messages.send")
+	}
+	if identityrbac.EvaluateGrants(claims.Grants, "leases.revoke") {
+		t.Error("no se esperaba allow de leases.revoke (default DENY)")
 	}
 }
 
@@ -288,20 +357,6 @@ func TestExchange_ConVariosTenantsFallaEnVezDeElegir(t *testing.T) {
 	}
 }
 
-func TestExchange_UsuarioInactivoNoCanjea(t *testing.T) {
-	t.Parallel()
-	f := newExchangeFixture(t)
-	if err := mustUserSvc(t, f.store).DeleteUser(context.Background(), testTenant, f.userID); err != nil {
-		t.Fatalf("DeleteUser: %v", err)
-	}
-	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
-
-	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
-	if !errors.Is(err, domain.ErrUserNotMigrated) && !errors.Is(err, domain.ErrUserInactive) {
-		t.Fatalf("err = %v, want ErrUserNotMigrated o ErrUserInactive", err)
-	}
-}
-
 func TestExchange_SinTokenEsEntradaInvalida(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)
@@ -311,18 +366,34 @@ func TestExchange_SinTokenEsEntradaInvalida(t *testing.T) {
 	}
 }
 
-func TestExchange_NoEmiteRefreshToken(t *testing.T) {
+// TestExchange_NoAbreSesionEnWapp sustituye al viejo TestExchange_NoEmiteRefreshToken,
+// que miraba el almacén de refresh de wApp — un almacén que ya no existe (la
+// tabla murió en la Ola 5). Lo que se sigue verificando es lo mismo: canjear no
+// abre sesión aquí. La sesión la custodia identity, y el único rastro que el
+// canje deja en wApp es su línea de auditoría.
+func TestExchange_NoAbreSesionEnWapp(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)
 	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
 
-	if _, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token}); err != nil {
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	// El refresh es de identity y vive donde vive la sesión: el canje no debe
-	// haber persistido ninguno en wApp.
-	if n := f.store.Refresh.Count(); n != 0 {
-		t.Fatalf("el canje persistió %d refresh tokens; no debe emitir ninguno", n)
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	if claims.TokenUse == sharedjwt.TokenUseService {
+		t.Fatalf("el canje emitió un token que no es de usuario: token_use=%q", claims.TokenUse)
+	}
+
+	events := f.store.Audit.Events()
+	if len(events) != 1 {
+		t.Fatalf("el canje dejó %d eventos, quiero exactamente 1 (el del canje)", len(events))
+	}
+	if events[0].Action != "auth.exchange" || events[0].Result != "ok" {
+		t.Fatalf("evento inesperado: %+v", events[0])
 	}
 }
 
@@ -351,13 +422,13 @@ func TestNewExchangeService_ExigeSusDependencias(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
 	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	if _, err := usecase.NewExchangeService(nil, store.Users, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(nil, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
 		t.Error("sin verificador debería fallar: el modo dual apagado NO se expresa con un servicio a medias")
 	}
-	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Users, nil, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(unavailableVerifier{}, nil, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
 		t.Error("sin repositorio de membresías debería fallar")
 	}
-	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Users, store.Memberships, store.Roles, store.Grants, store.Audit, nil, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Memberships, store.Roles, store.Grants, store.Audit, nil, usecase.Config{}); err == nil {
 		t.Error("sin emisor debería fallar")
 	}
 }

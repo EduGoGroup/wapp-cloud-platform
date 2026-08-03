@@ -56,7 +56,6 @@ type IdentityTokenVerifier interface {
 // no es competencia de wApp.
 type ExchangeService struct {
 	verifier IdentityTokenVerifier
-	users    out.UserRepo
 	members  out.MembershipRepo
 	roles    out.RoleRepo
 	grants   out.GrantRepo
@@ -76,7 +75,6 @@ var _ in.Exchanger = (*ExchangeService)(nil)
 // servicio, no construyéndolo a medias.
 func NewExchangeService(
 	verifier IdentityTokenVerifier,
-	users out.UserRepo,
 	members out.MembershipRepo,
 	roles out.RoleRepo,
 	grants out.GrantRepo,
@@ -87,7 +85,7 @@ func NewExchangeService(
 	if verifier == nil {
 		return nil, errors.New("iam: ExchangeService requiere un verificador de Identity Tokens")
 	}
-	if users == nil || members == nil || roles == nil || grants == nil || audit == nil {
+	if members == nil || roles == nil || grants == nil || audit == nil {
 		return nil, errors.New("iam: ExchangeService requiere todos los repositorios")
 	}
 	if jwt == nil {
@@ -95,7 +93,6 @@ func NewExchangeService(
 	}
 	return &ExchangeService{
 		verifier: verifier,
-		users:    users,
 		members:  members,
 		roles:    roles,
 		grants:   grants,
@@ -123,21 +120,15 @@ func (s *ExchangeService) Exchange(ctx context.Context, req in.ExchangeInput) (i
 		return in.ExchangeResult{}, domain.ErrIdentityTokenInvalid
 	}
 
-	// El sujeto tiene que existir en wApp: los UUID se preservaron en la
-	// migración justamente para que el `sub` de identity sea la PK de aquí.
-	u, err := s.users.GetByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			s.record(ctx, "", userID, "error")
-			return in.ExchangeResult{}, domain.ErrUserNotMigrated
-		}
-		return in.ExchangeResult{}, err
-	}
-	if !u.IsActive || u.DeletedAt != nil {
-		s.record(ctx, "", userID, "error")
-		return in.ExchangeResult{}, domain.ErrUserInactive
-	}
-
+	// Aquí NO se comprueba que la persona esté activa, y no es un olvido
+	// (design.md Ola 5 §2): quien la acredita es identity, y un usuario
+	// desactivado allí no obtiene Identity Token, así que no llega hasta este
+	// punto. Repetir la comprobación exigiría una bandera propia, o sea DOS
+	// sitios donde desactivar a alguien — y desactivarlo en uno no lo
+	// desactivaría en el otro, con el fallo en la dirección peligrosa: se cree
+	// cerrado un acceso que sigue abierto.
+	//
+	// Lo que wApp sí decide es la pertenencia, y eso lo dice la membresía.
 	tenantID, err := s.resolveTenant(ctx, userID)
 	if err != nil {
 		s.record(ctx, "", userID, "error")
@@ -215,6 +206,10 @@ func (s *ExchangeService) validate(token string) (*identityjwt.Claims, error) {
 // resolveTenant traduce el sujeto de identity al tenant de wApp por la tabla de
 // membresías. Hoy la relación es 1:1; más de un tenant es un caso que esta ola
 // NO resuelve y que por tanto falla con nombre propio.
+//
+// Desde la Ola 5 es también la ÚNICA puerta de entrada: sin membresía no hay
+// canje, y ese es el significado entero de "pertenecer a wApp" (design.md Ola 5
+// §2). El 401 «usuario no migrado» nace aquí, no de un padrón local.
 func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (string, error) {
 	tenants, err := s.members.TenantsOfUser(ctx, userID)
 	if err != nil {

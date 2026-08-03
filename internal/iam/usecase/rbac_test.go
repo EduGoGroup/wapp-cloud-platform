@@ -3,25 +3,52 @@ package usecase_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
-	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
-// grantsFromToken hace login y devuelve los grants efectivos embebidos en el
-// access token.
-func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password string) identityrbac.Grants {
+// rbacFixture arma un canje sobre un store en memoria y devuelve lo necesario
+// para sembrar roles/overrides y leer los grants que acaban en el token.
+//
+// El RBAC se ejercita por el CANJE, no por un login: desde la Ola 5 del Plan 003
+// de identity, el canje es el único momento en que wApp resuelve los grants
+// efectivos de una persona. Probarlos por otro camino sería probar un camino que
+// ya no existe.
+type rbacFixture struct {
+	exchangeFixture
+	store *memory.Store
+}
+
+func newRBACFixture(t *testing.T) rbacFixture {
 	t.Helper()
-	res, err := authSvc.Login(context.Background(), in.LoginInput{Email: email, Password: password})
-	if err != nil {
-		t.Fatalf("Login: %v", err)
+	store := memory.NewStore()
+	issuerMgr, verifier := newIdentityPair(t)
+	contexts := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
+	svc := mustExchangeSvc(t, verifier, store, contexts)
+	return rbacFixture{
+		exchangeFixture: exchangeFixture{svc: svc, issuer: issuerMgr, contexts: contexts, store: store},
+		store:           store,
 	}
-	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	claims, err := jwt.ValidateToken(res.AccessToken)
+}
+
+// grantsOf canjea la identidad del sujeto y devuelve los grants efectivos
+// embebidos en el Context Token resultante.
+func (f rbacFixture) grantsOf(t *testing.T, userID string) identityrbac.Grants {
+	t.Helper()
+	token, _ := f.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
 	}
@@ -32,25 +59,20 @@ func grantsFromToken(t *testing.T, authSvc *usecase.AuthService, email, password
 // (parent_role_id) se agrega: un rol hijo hereda los grants del padre.
 func TestEffectiveGrants_RoleChain(t *testing.T) {
 	t.Parallel()
-	store := memory.NewStore()
-	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	users := mustUserSvc(t, store)
-	authSvc := mustAuthSvc(t, store, jwt)
+	f := newRBACFixture(t)
 
-	parent := store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "base"},
+	parent := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "base"},
 		[]domain.Grant{{Pattern: "contacts.read", Effect: domain.EffectAllow}})
-	child := store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "child", ParentRoleID: ptr(parent.ID)},
+	child := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "child", ParentRoleID: ptr(parent.ID)},
 		[]domain.Grant{{Pattern: "messages.send", Effect: domain.EffectAllow}})
 
-	u, err := users.CreateUser(context.Background(), in.CreateUserInput{
-		TenantID: testTenant, Email: "chain@x.example", Password: testLoginPhrase, RoleIDs: []string{child.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	userID := uuid.NewString()
+	if err := f.store.Roles.AssignToUser(context.Background(), userID, child.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
 	}
-	_ = u
+	f.store.Memberships.Seed(userID, testTenant)
 
-	grants := grantsFromToken(t, authSvc, "chain@x.example", testLoginPhrase)
+	grants := f.grantsOf(t, userID)
 	if !identityrbac.EvaluateGrants(grants, "messages.send") {
 		t.Error("se esperaba el grant propio del hijo")
 	}
@@ -63,26 +85,23 @@ func TestEffectiveGrants_RoleChain(t *testing.T) {
 // effect=deny prevalece sobre un allow del rol (deny-precede-allow del matcher).
 func TestEffectiveGrants_UserOverrideDeny(t *testing.T) {
 	t.Parallel()
-	store := memory.NewStore()
-	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	users := mustUserSvc(t, store)
-	authSvc := mustAuthSvc(t, store, jwt)
+	f := newRBACFixture(t)
 
-	role := store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "wide"},
+	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "wide"},
 		[]domain.Grant{{Pattern: "flows.*", Effect: domain.EffectAllow}})
-	u, err := users.CreateUser(context.Background(), in.CreateUserInput{
-		TenantID: testTenant, Email: "deny@x.example", Password: testLoginPhrase, RoleIDs: []string{role.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	userID := uuid.NewString()
+	if err := f.store.Roles.AssignToUser(context.Background(), userID, role.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
 	}
+	f.store.Memberships.Seed(userID, testTenant)
+
 	// Override deny sobre flows.delete.
-	if err := users.AddUserGrant(context.Background(), testTenant, u.ID,
+	if err := f.store.Grants.AddUserGrant(context.Background(), userID,
 		domain.Grant{Pattern: "flows.delete", Effect: domain.EffectDeny}); err != nil {
 		t.Fatalf("AddUserGrant: %v", err)
 	}
 
-	grants := grantsFromToken(t, authSvc, "deny@x.example", testLoginPhrase)
+	grants := f.grantsOf(t, userID)
 	if !identityrbac.EvaluateGrants(grants, "flows.create") {
 		t.Error("flows.create debía seguir permitido por flows.*")
 	}

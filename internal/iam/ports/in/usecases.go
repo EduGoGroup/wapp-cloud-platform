@@ -54,20 +54,33 @@ type VerifyResult struct {
 	ExpiresAt time.Time
 }
 
-// Authenticator es el puerto de autenticación de usuario.
-type Authenticator interface {
-	// Login valida email+password, resuelve los grants EFECTIVOS al emitir
-	// (cadena de roles ⊕ overrides), firma el access token y persiste el refresh.
-	// Devuelve domain.ErrInvalidCredentials/ErrUserInactive en fallo.
-	Login(ctx context.Context, in LoginInput) (domain.AuthResult, error)
-	// Refresh valida el refresh (hash, no revocado, no expirado), RE-RESUELVE los
-	// grants, emite un access nuevo y ROTA el refresh. domain.ErrRefreshInvalid en
-	// fallo.
-	Refresh(ctx context.Context, in RefreshInput) (domain.AuthResult, error)
-	// Logout revoca el/los refresh token(s). Idempotente.
-	Logout(ctx context.Context, in LogoutInput) error
-	// Verify valida un access token y devuelve sus claims (Valid=false si no vale).
+// TokenVerifier inspecciona un Context Token de wApp. Es un puerto PROPIO y no
+// un método suelto de Authenticator porque son dos superficies con vidas
+// distintas: el canje delegó fuera el login/refresh/logout, pero el token que
+// wApp emite lo sigue firmando wApp y solo wApp puede decir si vale.
+//
+// Lo consume /api/v1/auth/verify (el listener público) y lo satisfacen tanto
+// ContextTokenService como DelegatedAuthService.
+type TokenVerifier interface {
+	// Verify valida un Context Token y devuelve sus claims. Un token inválido o
+	// expirado devuelve Valid=false SIN error: no es un fallo de la operación,
+	// es su respuesta.
 	Verify(ctx context.Context, accessToken string) (VerifyResult, error)
+}
+
+// Authenticator es el puerto de autenticación de usuario: lo consume el gateway
+// CloudLink, que relaya el login/refresh/logout del operador del Edge, y lo
+// implementa DelegatedAuthService contra identity-core.
+type Authenticator interface {
+	// Login acredita a la persona y devuelve el par de tokens con su contexto de
+	// negocio. Devuelve domain.ErrInvalidCredentials/ErrUserInactive en fallo.
+	Login(ctx context.Context, in LoginInput) (domain.AuthResult, error)
+	// Refresh rota la sesión y RE-RESUELVE los grants, de modo que un cambio de
+	// rol entra sin volver a pedir la contraseña. domain.ErrRefreshInvalid en fallo.
+	Refresh(ctx context.Context, in RefreshInput) (domain.AuthResult, error)
+	// Logout revoca la sesión (o todas, con AllSessions). Idempotente.
+	Logout(ctx context.Context, in LogoutInput) error
+	TokenVerifier
 }
 
 // ---------------------------------------------------------------------------
@@ -99,110 +112,6 @@ type Exchanger interface {
 	// ErrIdentityTokenExpiring, ErrUserNotMigrated, ErrMultipleTenants,
 	// ErrUserInactive o ErrIdentityUnavailable en fallo.
 	Exchange(ctx context.Context, in ExchangeInput) (ExchangeResult, error)
-}
-
-// ---------------------------------------------------------------------------
-// Autenticación M2M (api-key / service token) — design.md §7/§8
-// ---------------------------------------------------------------------------
-
-// ServiceIdentity es la identidad M2M resuelta desde una api-key o un service
-// token: el tenant al que se acota y los scopes concedidos.
-type ServiceIdentity struct {
-	TenantID string
-	ClientID string
-	Scopes   []string
-}
-
-// IssueServiceTokenInput pide un service token para un cliente M2M ya validado.
-type IssueServiceTokenInput struct {
-	ClientID string
-	TenantID string
-	Scopes   []string
-}
-
-// ServiceTokenResult es el service token firmado y su expiración.
-type ServiceTokenResult struct {
-	Token     string
-	ExpiresAt time.Time
-}
-
-// M2MAuthenticator es el puerto de autenticación máquina-a-máquina.
-type M2MAuthenticator interface {
-	// AuthenticateAPIKey valida el secreto en claro de una api-key (por su hash),
-	// verifica que esté activa/no revocada/no expirada, refresca last_used y
-	// devuelve la identidad+scopes. domain.ErrAPIKeyInvalid en fallo.
-	AuthenticateAPIKey(ctx context.Context, rawKey string) (ServiceIdentity, error)
-	// IssueServiceToken firma un service token de corta vida con los scopes dados.
-	IssueServiceToken(ctx context.Context, in IssueServiceTokenInput) (ServiceTokenResult, error)
-	// VerifyServiceToken valida un service token y devuelve su identidad+scopes.
-	VerifyServiceToken(ctx context.Context, token string) (ServiceIdentity, error)
-	// AuthorizeScope decide si los scopes cubren el permiso pedido (glob RBAC,
-	// mismo matcher que los grants).
-	AuthorizeScope(scopes []string, required string) bool
-}
-
-// ---------------------------------------------------------------------------
-// Gestión de usuarios/roles/api-keys (CRUD mínimo) — design.md §8
-// ---------------------------------------------------------------------------
-
-// CreateUserInput crea un operador del tenant. Password se hashea con bcrypt
-// (nunca se persiste en claro). RoleIDs asigna roles de arranque (opcional).
-type CreateUserInput struct {
-	TenantID string
-	Email    string
-	Password string
-	RoleIDs  []string
-}
-
-// UserManager gestiona el ciclo de vida de usuarios y su relación con roles.
-type UserManager interface {
-	CreateUser(ctx context.Context, in CreateUserInput) (domain.User, error)
-	GetUser(ctx context.Context, tenantID, id string) (domain.User, error)
-	ListUsers(ctx context.Context, tenantID string) ([]domain.User, error)
-	DeleteUser(ctx context.Context, tenantID, id string) error
-	AssignRole(ctx context.Context, tenantID, userID, roleID string) error
-	UnassignRole(ctx context.Context, tenantID, userID, roleID string) error
-	AddUserGrant(ctx context.Context, tenantID, userID string, g domain.Grant) error
-	RemoveUserGrant(ctx context.Context, tenantID, userID string, g domain.Grant) error
-}
-
-// CreateRoleInput crea un rol custom del tenant con sus grants iniciales.
-type CreateRoleInput struct {
-	TenantID     string
-	Name         string
-	ParentRoleID *string
-	Grants       []domain.Grant
-}
-
-// RoleManager gestiona roles custom del tenant y sus grants.
-type RoleManager interface {
-	CreateRole(ctx context.Context, in CreateRoleInput) (domain.Role, error)
-	ListRoles(ctx context.Context, tenantID string) ([]domain.Role, error)
-	AddGrant(ctx context.Context, tenantID, roleID string, g domain.Grant) error
-	RemoveGrant(ctx context.Context, tenantID, roleID string, g domain.Grant) error
-}
-
-// IssueAPIKeyInput emite una api-key M2M. ExpiresAt opcional (nil = sin caducar).
-type IssueAPIKeyInput struct {
-	TenantID  string
-	ClientID  string
-	Scopes    []string
-	ExpiresAt *time.Time
-}
-
-// IssueAPIKeyResult devuelve la api-key creada MÁS el secreto en claro. El
-// secreto se devuelve UNA sola vez (en BD solo vive su hash); el caller debe
-// entregarlo al cliente y NO persistirlo.
-type IssueAPIKeyResult struct {
-	APIKey domain.APIKey
-	Secret string
-}
-
-// APIKeyManager gestiona el ciclo de vida de las api-keys M2M.
-type APIKeyManager interface {
-	IssueAPIKey(ctx context.Context, in IssueAPIKeyInput) (IssueAPIKeyResult, error)
-	ListAPIKeys(ctx context.Context, tenantID string) ([]domain.APIKey, error)
-	RevokeAPIKey(ctx context.Context, tenantID, id string) error
 }
 
 // ---------------------------------------------------------------------------

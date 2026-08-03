@@ -3,11 +3,11 @@ package publicapi_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
@@ -26,53 +26,47 @@ const (
 	tenantA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	tenantB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
-	keyAFull    = "key-a-full"    // tenantA, scopes flows.* + messages.send
-	keyARead    = "key-a-read"    // tenantA, scope flows.read (sin escritura)
-	keyBFull    = "key-b-full"    // tenantB, scopes flows.* + messages.send
-	keyAContent = "key-a-content" // tenantA, scopes media.upload + content.*
-	keyBContent = "key-b-content" // tenantB, scopes media.upload + content.*
+	keyAFull    = "key-a-full"    // tenantA, grants flows.* + messages.send
+	keyARead    = "key-a-read"    // tenantA, grant flows.read (sin escritura)
+	keyBFull    = "key-b-full"    // tenantB, grants flows.* + messages.send
+	keyAContent = "key-a-content" // tenantA, grants media.upload + content.*
+	keyBContent = "key-b-content" // tenantB, grants media.upload + content.*
 
-	keyASessions = "key-a-sessions" // tenantA, scope sessions.read
-	keyBSessions = "key-b-sessions" // tenantB, scope sessions.read
+	keyASessions = "key-a-sessions" // tenantA, grant sessions.read
+	keyBSessions = "key-b-sessions" // tenantB, grant sessions.read
+
+	// tokenIssuer/tokenSecret firman los Context Tokens de estos tests.
+	tokenIssuer = "wapp-test"
+	//nolint:gosec // no es una credencial: es material de firma de un test
+	tokenSecret = "secret-hs256-de-test"
 )
 
-// apiKeys mapea api-key → identidad M2M (tenant + scopes), como haría el store IAM.
-func apiKeys() map[string]in.ServiceIdentity {
-	return map[string]in.ServiceIdentity{
-		keyAFull:     {TenantID: tenantA, ClientID: "crm-a", Scopes: []string{"flows.*", "messages.send"}},
-		keyARead:     {TenantID: tenantA, ClientID: "ro-a", Scopes: []string{"flows.read"}},
-		keyBFull:     {TenantID: tenantB, ClientID: "crm-b", Scopes: []string{"flows.*", "messages.send"}},
-		keyAContent:  {TenantID: tenantA, ClientID: "cms-a", Scopes: []string{"media.upload", "content.write", "content.read"}},
-		keyBContent:  {TenantID: tenantB, ClientID: "cms-b", Scopes: []string{"media.upload", "content.write", "content.read"}},
-		keyASessions: {TenantID: tenantA, ClientID: "guardian-a", Scopes: []string{"sessions.read"}},
-		keyBSessions: {TenantID: tenantB, ClientID: "guardian-b", Scopes: []string{"sessions.read"}},
+// testIdentity es una persona con contexto de wApp: su tenant, su subject y sus
+// grants efectivos. Sustituye al mapa de api-keys que usaban estos tests antes
+// de la Ola 5 del Plan 003 de identity — el plano M2M se retiró entero y la API
+// pública se autentica con el Context Token que emite el canje.
+type testIdentity struct {
+	TenantID string
+	Subject  string
+	Grants   []string
+}
+
+// apiKeys mapea nombre de credencial → identidad de quien la porta. El nombre
+// se conserva (lo usan seis archivos de test) aunque ya no haya api-keys: lo que
+// viaja en el cable es un Bearer.
+func apiKeys() map[string]testIdentity {
+	return map[string]testIdentity{
+		keyAFull:     {TenantID: tenantA, Subject: "crm-a", Grants: []string{"flows.*", "messages.send"}},
+		keyARead:     {TenantID: tenantA, Subject: "ro-a", Grants: []string{"flows.read"}},
+		keyBFull:     {TenantID: tenantB, Subject: "crm-b", Grants: []string{"flows.*", "messages.send"}},
+		keyAContent:  {TenantID: tenantA, Subject: "cms-a", Grants: []string{"media.upload", "content.write", "content.read"}},
+		keyBContent:  {TenantID: tenantB, Subject: "cms-b", Grants: []string{"media.upload", "content.write", "content.read"}},
+		keyASessions: {TenantID: tenantA, Subject: "guardian-a", Grants: []string{"sessions.read"}},
+		keyBSessions: {TenantID: tenantB, Subject: "guardian-b", Grants: []string{"sessions.read"}},
 	}
 }
 
-// --- Fakes M2M / auditor ---
-
-type fakeM2M struct{ keys map[string]in.ServiceIdentity }
-
-func (f fakeM2M) AuthenticateAPIKey(_ context.Context, rawKey string) (in.ServiceIdentity, error) {
-	si, ok := f.keys[rawKey]
-	if !ok {
-		return in.ServiceIdentity{}, errors.New("api-key inválida")
-	}
-	return si, nil
-}
-
-func (f fakeM2M) VerifyServiceToken(_ context.Context, _ string) (in.ServiceIdentity, error) {
-	return in.ServiceIdentity{}, errors.New("no aplica")
-}
-
-func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
-	for _, s := range scopes {
-		if identityrbac.PermissionMatches(s, required) {
-			return true
-		}
-	}
-	return false
-}
+// --- Auditor ---
 
 type noopAuditor struct{}
 
@@ -119,22 +113,51 @@ func (f *fakeStarter) Start(_ context.Context, tenantID, flowID, sessionID strin
 
 // --- Harness ---
 
-func newAPI(d publicapi.Deps, keys map[string]in.ServiceIdentity) *http.ServeMux {
-	mw := httpapi.NewMiddleware(sharedjwt.NewJWTManager("secret-hs256-de-test", "wapp-test"), fakeM2M{keys: keys}, nil)
-	mux := http.NewServeMux()
-	publicapi.Register(mux, d, mw, noopAuditor{}, nil)
-	return mux
+// testAPI es el mux de la API pública más lo necesario para emitir los Context
+// Tokens de sus llamantes.
+type testAPI struct {
+	mux        *http.ServeMux
+	jwt        *sharedjwt.JWTManager
+	identities map[string]testIdentity
 }
 
-// call ejecuta una request contra el mux con la api-key dada (vacía = sin auth).
-func call(mux *http.ServeMux, apiKey, method, target, body string) *httptest.ResponseRecorder {
+func newAPI(d publicapi.Deps, keys map[string]testIdentity) *testAPI {
+	jwt := sharedjwt.NewJWTManager(tokenSecret, tokenIssuer)
+	mw := httpapi.NewMiddleware(jwt, nil)
+	mux := http.NewServeMux()
+	publicapi.Register(mux, d, mw, noopAuditor{}, nil)
+	return &testAPI{mux: mux, jwt: jwt, identities: keys}
+}
+
+// call ejecuta una request contra la API en nombre de la credencial dada (vacía
+// = sin auth). La credencial se traduce a un Context Token FIRMADO de verdad: es
+// el mismo camino que en producción, donde el token sale del canje.
+func call(api *testAPI, credential, method, target, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
+	if credential != "" {
+		req.Header.Set("Authorization", "Bearer "+api.token(credential))
 	}
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	api.mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// token firma el Context Token de una credencial conocida. Una credencial que no
+// está en el mapa produce una cadena que NO es un token: el middleware la
+// rechaza, que es lo que el test quiere expresar.
+func (a *testAPI) token(credential string) string {
+	id, ok := a.identities[credential]
+	if !ok {
+		return "credencial-desconocida"
+	}
+	tok, _, err := a.jwt.GenerateToken(id.Subject, id.TenantID, []string{"operator"},
+		identityrbac.Grants{Allow: id.Grants}, time.Hour)
+	if err != nil {
+		// Sin token no hay test posible; el panic delata el fixture roto en el
+		// acto en vez de disfrazarse de 401.
+		panic("firmando el context token de prueba: " + err.Error())
+	}
+	return tok
 }
 
 func okAck() *cloudlinkv1.Ack {

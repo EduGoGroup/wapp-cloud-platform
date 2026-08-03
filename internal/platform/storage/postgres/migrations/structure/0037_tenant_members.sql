@@ -50,11 +50,28 @@ CREATE INDEX IF NOT EXISTS idx_tenant_members_tenant
 -- Población desde el vínculo actual. Solo usuarios vivos: los soft-deleted no
 -- migran a identity. Se conserva su created_at para no inventar una antigüedad
 -- de membresía más nueva que la del propio usuario.
-INSERT INTO public.tenant_members (user_id, tenant_id, created_at)
-SELECT id, tenant_id, created_at
-FROM public.iam_users
-WHERE deleted_at IS NULL
-ON CONFLICT (user_id, tenant_id) DO NOTHING;
+--
+-- ⚠️ GUARD `IF EXISTS` (identity Plan 003 · T5.1): la 0038 BORRA `iam_users`, y
+-- este runner es full-replay —reejecuta todos los structure/*.sql en cada
+-- corrida con cambios—, así que sin el guard este SELECT reventaría con
+-- «relation does not exist» y ABORTARÍA EL ARRANQUE del servidor (fail-fast de
+-- bootstrap/database.go), no en un momento lejano sino en el primer arranque
+-- después del DROP. Con el guard, la población inicial sigue siendo reproducible
+-- sobre una base que aún tenga la tabla, y es un no-op sobre una que ya no.
+-- Precedente del mismo patrón en el repo: 0005_contacts.sql.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'iam_users'
+    ) THEN
+        INSERT INTO public.tenant_members (user_id, tenant_id, created_at)
+        SELECT id, tenant_id, created_at
+        FROM public.iam_users
+        WHERE deleted_at IS NULL
+        ON CONFLICT (user_id, tenant_id) DO NOTHING;
+    END IF;
+END $$;
 
 COMMENT ON TABLE  public.tenant_members IS 'Membresía usuario↔tenant: el vínculo de NEGOCIO que se queda en wApp cuando los usuarios pasan a identity (identity ADR-0001, INV-1). La lee /auth/exchange para resolver el tenant del Context Token. CERO PII ni llaves.';
 COMMENT ON COLUMN public.tenant_members.user_id    IS 'Usuario en identity (iam.users, otra BD). SIN FK a propósito: la frontera no lleva integridad referencial física.';

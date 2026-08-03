@@ -1,15 +1,21 @@
 # wapp-cloud-platform (Piezas 03 y 05)
 
 Plataforma cloud modular de wApp en Go: el **monolito modular** (ADR-0010) que
-aloja todo lo que gestiona el equipo de wApp. Agrupa el IAM, el dominio de
-negocio, el Motor de Flujos conversacionales y el gateway CloudLink que habla con
-cada Edge. La nube **piensa** y arma el payload completo; el Edge despacha
-(ADR-0005).
+aloja todo lo que gestiona el equipo de wApp. Agrupa el contexto de identidad y
+su RBAC, el dominio de negocio, el Motor de Flujos conversacionales y el gateway
+CloudLink que habla con cada Edge. La nube **piensa** y arma el payload completo;
+el Edge despacha (ADR-0005).
+
+**Quién autentica**: desde el Plan 003 de identity, las credenciales de las
+personas las valida **identity-core**, el SSO del grupo. wApp no tiene padrón de
+usuarios ni valida contraseñas: recibe un Identity Token, lo **canjea** por un
+Context Token propio con el tenant y los grants de negocio, y eso es lo único que
+firma. Ver `docs/adr/` y el ADR local de adopción.
 
 - Módulo Go: `github.com/EduGoGroup/wapp-cloud-platform`
 - Go **1.26**
-- Binario único: `cmd/server`
-- SchemaVersion **0.21.0** (última migración `0036_diagnostics.sql`)
+- Binarios: `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale)
+- SchemaVersion **0.23.0** (última migración `0038_retiro_iam_propio.sql`)
 
 ## Estado
 
@@ -24,7 +30,7 @@ frontera, sus tablas y su API.
 
 | Módulo | Responsabilidad |
 |---|---|
-| `iam` | Autenticación (JWT) y autorización (RBAC glob multi-tenant): usuarios, roles, grants, refresh tokens, api-keys. Capas `domain`/`usecase`/`ports`/`infra`/`transport`. |
+| `iam` | Canje de Identity Token → Context Token, verificación del Context Token propio y autorización (RBAC glob multi-tenant: roles, grants, membresías). Ya NO hay usuarios, contraseñas, refresh tokens ni api-keys: viven en identity-core. Capas `domain`/`usecase`/`ports`/`infra`/`transport`. |
 | `publicapi` | API pública `/api/v1` para terceros: sesiones, mensajes, flows, triggers, media, intents, diagnostics, health, audit. Protegida con JWT ES256 + RBAC. |
 | `flujos` | Motor de Flujos (Pieza 05): motor dinámico por puertos `ContentSource` + `EventSink` con un `Registry` de módulos enchufables (`modules/menu`, `modules/survey`, `modules/cart`, `modules/media`) más `engine`, `runtime`, `trigger`, `content`, `contact`, `store`, `admin`. |
 | `gateway` | Terminación gRPC de los Edges (Pieza 02): `grpc` (CloudLink bidi), `enroll` (CA + EnrollEdge), `lease` (kill-switch ADR-0007), `fleet` (online/offline por sesión), `session` (registro de streams vivos). |
@@ -50,11 +56,30 @@ channels), nunca RabbitMQ ni Redis (ADR-0003).
 
 Los scripts SQL embebidos viven en
 `internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` …
-`0036_diagnostics.sql`). El runner de `platform/storage/postgres` los aplica al
-arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.21.0**) contra
-`public.schema_version`; además calcula un hash de los archivos para detectar
-cambios aunque no se haya subido la versión. **Obligatorio incrementar
+`0038_retiro_iam_propio.sql`). El runner de `platform/storage/postgres` los aplica
+al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.23.0**)
+contra `public.schema_version`; además calcula un hash de los archivos para
+detectar cambios aunque no se haya subido la versión. **Obligatorio incrementar
 `SchemaVersion` al tocar cualquier `structure/*.sql`.**
+
+El runner es **full-replay**: cuando detecta cambio de hash reejecuta TODOS los
+`structure/*.sql`, no solo los nuevos. Por eso el DDL es idempotente
+(`CREATE ... IF NOT EXISTS`) y lo destructivo va con guard.
+
+### Aplicar migraciones sin levantar la plataforma
+
+```bash
+make migrate         # aplica y sale
+make migrate-status  # solo consulta (no escribe)
+```
+
+`cmd/migrate` usa la MISMA config que el servidor (`WAPP_DB_*`) e imprime a qué
+base se ha conectado antes de tocarla. Existe porque aplicar DDL no debería exigir
+abrir listeners HTTP, gRPC y el plano de control del Edge.
+
+⚠️ **Contra Neon, apunta al host DIRECTO, nunca al `-pooler`**: el runner
+serializa con `pg_advisory_lock` sobre una conexión dedicada, y un pooler en modo
+transacción puede repartir el lock y el unlock en sesiones distintas.
 
 ## Listeners y puertos (banda 81xx)
 
@@ -78,7 +103,8 @@ Principales (ver `config.go` para el conjunto completo):
 | `WAPP_APP_ENV` | `dev` o `prod`; en `prod` exige material de clave explícito (fail-fast) |
 | `WAPP_HTTP_ADDR` · `WAPP_PUBLIC_HTTP_ADDR` · `WAPP_GRPC_ENROLL_ADDR` · `WAPP_GRPC_CONNECT_ADDR` | Direcciones de los cuatro listeners |
 | `WAPP_DB_HOST` · `WAPP_DB_PORT` · `WAPP_DB_USER` · `WAPP_DB_PASSWORD` · `WAPP_DB_NAME` · `WAPP_DB_SSLMODE` | Conexión a PostgreSQL |
-| `WAPP_JWT_EC_PRIVATE_KEY_FILE` · `WAPP_JWT_KID` · `WAPP_JWT_ISSUER` · `WAPP_SERVICE_JWT_AUDIENCE` · `WAPP_JWT_SECRET` | Firma/validación de tokens (ES256 usuario, HS256 M2M) |
+| `WAPP_JWT_EC_PRIVATE_KEY_FILE` · `WAPP_JWT_KID` · `WAPP_JWT_ISSUER` | Firma/validación del **Context Token** de wApp (ES256) |
+| `WAPP_IDENTITY_URL` · `WAPP_IDENTITY_JWKS_URL` · `WAPP_IDENTITY_TIMEOUT` | El SSO del grupo: a quién preguntar por las credenciales y con qué claves verificar sus Identity Tokens |
 | `WAPP_KEK_KEYRING` · `WAPP_KEK_CURRENT` · `WAPP_KEK_MASTER_B64` · `WAPP_KEK_INDEX_B64` · `WAPP_CLOUD_ENC_PRIVKEY_B64` | Cifrado de PII (KEK versionada, ADR-0017) y clave de tránsito de la nube |
 | `WAPP_LEASE_PRIVATE_KEY_FILE` · `WAPP_LEASE_PRIVATE_KEY_B64` · `WAPP_LEASE_TTL_MINUTES` | Firma y vigencia del lease (kill-switch, ADR-0007) |
 | `WAPP_PKI_*` | Rutas de la CA y el cert de servidor de la PKI del gateway |
@@ -96,6 +122,9 @@ scripts/gen-dev-certs.sh
 
 # Arranque
 go run ./cmd/server
+
+# Solo migrar (sin levantar listeners)
+go run ./cmd/migrate
 ```
 
 Requisitos locales:
@@ -108,11 +137,16 @@ Requisitos locales:
 
 ## Seguridad
 
-- **Tokens de usuario en ES256** (ECDSA P-256) con `kid` + `MultiVerifier` para la
-  coexistencia de algoritmos (ADR-0019, Plan 028); la clave EC privada se lee de un
-  PEM con permisos `0600`.
-- **Service tokens M2M en HS256** con audiencia acotada (`aud`), separando las
-  rutas de máquina de las de usuario.
+- **Las credenciales no se validan aquí.** Login, refresh, logout y revocación
+  global son de identity-core; wApp canjea el Identity Token resultante. No queda
+  ni un `password_hash` en esta base.
+- **Context Tokens en ES256** (ECDSA P-256) con `kid` + `MultiVerifier`
+  (ADR-0019, Plan 028); la clave EC privada se lee de un PEM con permisos `0600`.
+  Es el único algoritmo de firma que le queda a wApp: el HS256 del plano M2M se
+  retiró con él.
+- **Sin plano M2M.** `X-API-Key` y los service tokens se retiraron (nadie tenía
+  credencial). Cuando haga falta, se construye por el modelo del ADR-0025 de
+  identity: la credencial de máquina **se canjea, no se presenta**.
 - **RBAC por grants glob** multi-tenant; el tenant se deriva del token.
 - **Dedupe de ingesta** por `(session_id, wa_message_id)` para no reprocesar entrantes repetidos.
 - **PII cifrada en reposo** con KEK versionada y rotación sin re-cifrar (ADR-0017,

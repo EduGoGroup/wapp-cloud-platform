@@ -22,7 +22,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: fmt-check vet lint build test test-integration ci-local ci-docker
+.PHONY: fmt-check vet lint build test test-integration ci-local ci-docker migrate migrate-status
 
 fmt-check: ## gofmt -l vacío (sin archivos sin formatear)
 	@unformatted=$$(gofmt -l .); \
@@ -60,6 +60,21 @@ test-integration: ## Tests de integración con Postgres efímero en Docker — e
 	exit $$status
 
 ci-local: fmt-check vet lint test build ## Pre-push: fmt + vet + lint + test + build (sin integración: correr test-integration aparte)
+
+# ── Esquema ───────────────────────────────────────────────────────────────────
+# cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control
+# del Edge. La conexión sale de las MISMAS variables que el servidor (WAPP_DB_*),
+# nunca de un argumento, para que no haya dos formas de decir a qué base se apunta.
+#
+# ⚠️ Contra Neon: apunta al host DIRECTO, NUNCA al `-pooler`. El runner serializa
+# con pg_advisory_lock sobre una conexión dedicada y un pooler en modo transacción
+# puede repartir el lock y el unlock en sesiones distintas.
+
+migrate: ## Aplica las migraciones de esquema y sale (lee WAPP_DB_*)
+	$(GO) run ./cmd/migrate
+
+migrate-status: ## Consulta la versión/hash del esquema SIN escribir nada
+	$(GO) run ./cmd/migrate -status
 
 ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VERSION)) — requiere Docker
 	@docker run --rm \
