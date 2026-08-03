@@ -2,72 +2,10 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"testing"
-	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 )
-
-func TestUserStore_CRUD(t *testing.T) {
-	ctx := context.Background()
-	s := NewUserStore()
-
-	u := domain.User{
-		TenantID:     "tenant-a",
-		Email:        "user@example.com",
-		PasswordHash: "secret-hash",
-		IsActive:     true,
-	}
-
-	created, err := s.Create(ctx, u)
-	if err != nil || created.ID == "" {
-		t.Fatalf("Create user err=%v, id=%s", err, created.ID)
-	}
-
-	// Duplicado email -> ErrConflict
-	if _, err := s.Create(ctx, u); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("Create email duplicado err=%v, quiero ErrConflict", err)
-	}
-
-	// GetByID
-	got, err := s.GetByID(ctx, created.ID)
-	if err != nil || got.Email != u.Email {
-		t.Fatalf("GetByID err=%v, email=%s", err, got.Email)
-	}
-
-	// FindByEmail
-	gotFind, err := s.FindByEmail(ctx, "user@example.com")
-	if err != nil || gotFind.ID != created.ID {
-		t.Fatalf("FindByEmail err=%v, id=%s", err, gotFind.ID)
-	}
-
-	// GetByEmail
-	gotEmail, err := s.GetByEmail(ctx, "tenant-a", "user@example.com")
-	if err != nil || gotEmail.ID != created.ID {
-		t.Fatalf("GetByEmail err=%v, id=%s", err, gotEmail.ID)
-	}
-
-	// Inexistente -> ErrNotFound
-	if _, err := s.GetByID(ctx, "nonexistent"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("GetByID inexistente err=%v, quiero ErrNotFound", err)
-	}
-
-	// List
-	list, err := s.List(ctx, "tenant-a")
-	if err != nil || len(list) != 1 {
-		t.Fatalf("List err=%v, len=%d", err, len(list))
-	}
-
-	// SoftDelete
-	if err := s.SoftDelete(ctx, "tenant-a", created.ID); err != nil {
-		t.Fatalf("SoftDelete err: %v", err)
-	}
-	gotDeact, err := s.GetByID(ctx, created.ID)
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("tras SoftDelete, GetByID debió dar ErrNotFound, dio err=%v, u=%+v", err, gotDeact)
-	}
-}
 
 func TestRoleStore_CRUD(t *testing.T) {
 	ctx := context.Background()
@@ -174,97 +112,6 @@ func TestGrantStore_CRUD(t *testing.T) {
 	}
 }
 
-func TestRefreshStore_CRUD(t *testing.T) {
-	ctx := context.Background()
-	s := NewRefreshStore()
-
-	rt := domain.RefreshToken{
-		UserID:    "user-1",
-		TokenHash: "hash-123",
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}
-
-	if err := s.Save(ctx, rt); err != nil {
-		t.Fatalf("Save refresh token err: %v", err)
-	}
-
-	got, err := s.GetByHash(ctx, "hash-123")
-	if err != nil || got.UserID != "user-1" {
-		t.Fatalf("GetByHash err=%v, userID=%s", err, got.UserID)
-	}
-
-	// Revoke single
-	if err := s.Revoke(ctx, "hash-123"); err != nil {
-		t.Fatalf("Revoke err: %v", err)
-	}
-	gotRev, err := s.GetByHash(ctx, "hash-123")
-	if err != nil {
-		t.Fatalf("GetByHash tras Revoke err: %v", err)
-	}
-	if gotRev.RevokedAt == nil {
-		t.Fatal("RevokedAt no debe ser nil tras Revoke")
-	}
-
-	// RevokeAllForUser
-	rt2 := domain.RefreshToken{
-		UserID:    "user-2",
-		TokenHash: "hash-456",
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}
-	if err := s.Save(ctx, rt2); err != nil {
-		t.Fatalf("Save rt2 err: %v", err)
-	}
-	if err := s.RevokeAllForUser(ctx, "user-2"); err != nil {
-		t.Fatalf("RevokeAllForUser err: %v", err)
-	}
-}
-
-func TestAPIKeyStore_CRUD(t *testing.T) {
-	ctx := context.Background()
-	s := NewAPIKeyStore()
-
-	key := domain.APIKey{
-		TenantID: "tenant-a",
-		ClientID: "client-1",
-		KeyHash:  "hash-key-1",
-		Scopes:   []string{"flows.read"},
-		IsActive: true,
-	}
-
-	created, err := s.Create(ctx, key)
-	if err != nil || created.ID == "" {
-		t.Fatalf("Create APIKey err=%v", err)
-	}
-
-	// Duplicado -> ErrConflict
-	if _, err := s.Create(ctx, key); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("Create duplicado err=%v, quiero ErrConflict", err)
-	}
-
-	got, err := s.GetByHash(ctx, "hash-key-1")
-	if err != nil || got.ID != created.ID {
-		t.Fatalf("GetByHash err=%v, id=%s", err, got.ID)
-	}
-
-	list, err := s.List(ctx, "tenant-a")
-	if err != nil || len(list) != 1 {
-		t.Fatalf("List APIKey err=%v, len=%d", err, len(list))
-	}
-
-	if err := s.TouchLastUsed(ctx, created.ID); err != nil {
-		t.Fatalf("TouchLastUsed err: %v", err)
-	}
-
-	if err := s.Revoke(ctx, "tenant-a", created.ID); err != nil {
-		t.Fatalf("Revoke APIKey err: %v", err)
-	}
-
-	// Revoke inexistente -> ErrNotFound
-	if err := s.Revoke(ctx, "tenant-a", "nonexistent"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("Revoke inexistente err=%v, quiero ErrNotFound", err)
-	}
-}
-
 func TestAuditStore_CRUD(t *testing.T) {
 	ctx := context.Background()
 	s := NewAuditStore()
@@ -293,7 +140,7 @@ func TestAuditStore_CRUD(t *testing.T) {
 
 func TestStoreAggregator(t *testing.T) {
 	st := NewStore()
-	if st.Users == nil || st.Roles == nil || st.Grants == nil || st.Refresh == nil || st.APIKeys == nil || st.Audit == nil {
-		t.Fatal("NewStore debe inicializar los 6 repositorios")
+	if st.Roles == nil || st.Grants == nil || st.Audit == nil || st.Memberships == nil {
+		t.Fatal("NewStore debe inicializar los 4 repositorios")
 	}
 }

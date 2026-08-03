@@ -10,16 +10,15 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
 const keyADiag = "key-a-diag" // tenantA, scope diagnostics.request
 
 // diagKeys extiende apiKeys() con la credencial de diagnóstico remoto de tenantA.
-func diagKeys() map[string]in.ServiceIdentity {
+func diagKeys() map[string]testIdentity {
 	keys := apiKeys()
-	keys[keyADiag] = in.ServiceIdentity{TenantID: tenantA, ClientID: "guardian-a", Scopes: []string{"diagnostics.request"}}
+	keys[keyADiag] = testIdentity{TenantID: tenantA, Subject: "guardian-a", Grants: []string{"diagnostics.request"}}
 	return keys
 }
 
@@ -200,7 +199,7 @@ func TestDiagnostics_Download_CrossTenant_404(t *testing.T) {
 	gw := &fakeDiagRequester{}
 	// tenantB también tiene su credencial y su sesión, para intentar leer el ajeno.
 	keys := diagKeys()
-	keys["key-b-diag"] = in.ServiceIdentity{TenantID: tenantB, ClientID: "guardian-b", Scopes: []string{"diagnostics.request"}}
+	keys["key-b-diag"] = testIdentity{TenantID: tenantB, Subject: "guardian-b", Grants: []string{"diagnostics.request"}}
 	d := diagDeps(store, gw)
 	mux := newAPI(d, keys)
 

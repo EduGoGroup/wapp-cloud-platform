@@ -74,21 +74,12 @@ func TestBuildJWTManagers_Table(t *testing.T) {
 			wantKid: defaultES256Kid,
 		},
 		{
-			name: "prod missing WAPP_JWT_SECRET returns error",
-			cfg: config.AppConfig{
-				Env: "prod",
-				JWT: config.JWTConfig{Secret: ""},
-			},
-			wantErr: true,
-		},
-		{
+			// En prod el `kid` es obligatorio: es lo que ata cada token a su
+			// entrada de verificación cuando la clave rota.
 			name: "prod missing WAPP_JWT_KID returns error",
 			cfg: config.AppConfig{
 				Env: "prod",
-				JWT: config.JWTConfig{
-					Secret: "super-secret-key-1234567890123456",
-					Kid:    "",
-				},
+				JWT: config.JWTConfig{Kid: ""},
 			},
 			wantErr: true,
 		},
@@ -96,14 +87,14 @@ func TestBuildJWTManagers_Table(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bundle, svcMgr, err := buildJWTManagers(tt.cfg, log)
+			bundle, err := buildJWTManagers(tt.cfg, log)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("buildJWTManagers() error = %v, wantErr = %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr {
-				if bundle == nil || svcMgr == nil {
-					t.Errorf("bundle o svcMgr son nil")
+				if bundle == nil {
+					t.Error("bundle es nil")
 				} else if bundle.kid != tt.wantKid {
 					t.Errorf("bundle.kid = %s, quiero %s", bundle.kid, tt.wantKid)
 				}
@@ -187,16 +178,5 @@ func TestEnrollServerCreds(t *testing.T) {
 	}
 	if creds.Info().SecurityProtocol != "tls" {
 		t.Fatalf("SecurityProtocol = %s, quiero tls", creds.Info().SecurityProtocol)
-	}
-}
-
-func TestRandomSecret(t *testing.T) {
-	s1, err1 := randomSecret()
-	s2, err2 := randomSecret()
-	if err1 != nil || err2 != nil {
-		t.Fatalf("randomSecret err: %v / %v", err1, err2)
-	}
-	if s1 == "" || s2 == "" || s1 == s2 {
-		t.Fatal("randomSecret debe generar cadenas aleatorias no vacías y distintas")
 	}
 }

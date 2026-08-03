@@ -21,22 +21,6 @@ const (
 	EffectDeny Effect = "deny"
 )
 
-// User es un operador del tenant que se autentica contra la Plataforma Cloud
-// (tabla public.iam_users, migración 0014). El email es dato OPERATIVO del
-// tenant EN CLARO (permite el login por email), NO un contacto WhatsApp
-// (design.md §4, INV-5). PasswordHash es bcrypt (wapp-shared/auth); NUNCA la
-// contraseña en claro. DeletedAt nil = usuario activo (soft-delete).
-type User struct {
-	ID           string
-	TenantID     string
-	Email        string
-	PasswordHash string
-	IsActive     bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    *time.Time
-}
-
 // Role es un rol RBAC (tabla public.iam_roles, migración 0015). TenantID nil =
 // PLANTILLA global canónica (tenant_admin/operator/viewer sembrados en T1),
 // referenciable por cualquier tenant; TenantID set = rol custom del tenant.
@@ -56,37 +40,6 @@ type Role struct {
 type Grant struct {
 	Pattern string
 	Effect  Effect
-}
-
-// RefreshToken es un refresh token OPACO persistido (tabla
-// public.iam_refresh_tokens, migración 0017). SOLO se guarda el TokenHash
-// (SHA256, wapp-shared/auth), NUNCA el token en claro. RevokedAt nil = vigente;
-// set = revocado (logout). ExpiresAt marca el vencimiento natural.
-type RefreshToken struct {
-	ID        string
-	UserID    string
-	TokenHash string
-	ExpiresAt time.Time
-	RevokedAt *time.Time
-	CreatedAt time.Time
-}
-
-// APIKey es una credencial M2M de terceros de la API pública (tabla
-// public.iam_api_keys, migración 0018). SOLO se guarda el KeyHash (SHA256) del
-// secreto, NUNCA el secreto en claro (se devuelve UNA vez al emitir, design.md
-// §8). Scopes[] gobierna los permisos M2M (glob recurso.accion). RevokedAt/
-// ExpiresAt/LastUsedAt nil = sin revocar / sin caducidad / nunca usada.
-type APIKey struct {
-	ID         string
-	TenantID   string
-	ClientID   string
-	KeyHash    string
-	Scopes     []string
-	IsActive   bool
-	CreatedAt  time.Time
-	LastUsedAt *time.Time
-	ExpiresAt  *time.Time
-	RevokedAt  *time.Time
 }
 
 // AuditEvent es una fila de la bitácora append-only de auditoría (tabla

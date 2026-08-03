@@ -18,22 +18,22 @@ func scrape(t *testing.T, m *Metrics) string {
 	return rec.Body.String()
 }
 
-// TestInstrumentHTTP_CountsRequestsAndLogin verifica que /metrics expone los
-// contadores y que la ruta de login deriva el acuse ok/fallo del status.
-func TestInstrumentHTTP_CountsRequestsAndLogin(t *testing.T) {
+// TestInstrumentHTTP_CountsRequests verifica que /metrics expone los contadores
+// con el PATRÓN de ruta como etiqueta, y que el contador de logins ya no existe
+// (murió con el login en la Ola 5 del Plan 003 de identity).
+func TestInstrumentHTTP_CountsRequests(t *testing.T) {
 	m := New()
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/auth/login", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized) // login fallido
+	mux.Handle("/api/v1/auth/exchange", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	mux.Handle("/api/v1/flows/{id}", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	h := m.InstrumentHTTP("public", mux)
 
-	// Login fallido.
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/auth/exchange", nil))
 	// Ruta con {id}: el patrón (no el valor) debe ser la etiqueta.
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/flows/abc-123", nil))
 
@@ -42,8 +42,8 @@ func TestInstrumentHTTP_CountsRequestsAndLogin(t *testing.T) {
 	if !strings.Contains(body, "wapp_http_requests_total") {
 		t.Fatal("falta wapp_http_requests_total en /metrics")
 	}
-	if !strings.Contains(body, `wapp_auth_logins_total{result="failure"} 1`) {
-		t.Errorf("no se contó el login fallido:\n%s", body)
+	if strings.Contains(body, "wapp_auth_logins_total") {
+		t.Errorf("wapp_auth_logins_total sigue publicándose: wApp ya no valida credenciales\n%s", body)
 	}
 	// CERO PII: la etiqueta route usa el PATRÓN {id}, nunca el valor real "abc-123".
 	if strings.Contains(body, "abc-123") {

@@ -1,57 +1,22 @@
 package httpapi_test
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 )
 
 const (
-	mwSecret   = "material-de-firma-hs256-para-el-middleware"
-	mwIssuer   = "wapp-iam-test"
-	mwAudience = "wapp-public-api"
-	mwTenant   = "11111111-1111-1111-1111-111111111111"
-	mwUser     = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	mwClient   = "acme-crm"
+	mwSecret = "material-de-firma-hs256-para-el-middleware"
+	mwIssuer = "wapp-iam-test"
+	mwTenant = "11111111-1111-1111-1111-111111111111"
+	mwUser   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 )
-
-// fakeM2M implementa httpapi.ServiceAuthenticator sin BD: reconoce una única
-// api-key ("valid-key") y usa un ServiceJWTManager real para los service tokens.
-type fakeM2M struct {
-	svcJWT *sharedjwt.ServiceJWTManager
-}
-
-func (f fakeM2M) AuthenticateAPIKey(_ context.Context, rawKey string) (in.ServiceIdentity, error) {
-	if rawKey != "valid-key" {
-		return in.ServiceIdentity{}, errors.New("api-key inválida")
-	}
-	return in.ServiceIdentity{TenantID: mwTenant, ClientID: mwClient, Scopes: []string{"messages.send"}}, nil
-}
-
-func (f fakeM2M) VerifyServiceToken(_ context.Context, token string) (in.ServiceIdentity, error) {
-	claims, err := f.svcJWT.ValidateServiceToken(token)
-	if err != nil {
-		return in.ServiceIdentity{}, err
-	}
-	return in.ServiceIdentity{TenantID: claims.TenantID, ClientID: claims.ClientID, Scopes: claims.Scopes}, nil
-}
-
-func (f fakeM2M) AuthorizeScope(scopes []string, required string) bool {
-	for _, s := range scopes {
-		if identityrbac.PermissionMatches(s, required) {
-			return true
-		}
-	}
-	return false
-}
 
 // userToken firma un access token de usuario con los grants dados.
 func userToken(t *testing.T, jwt *sharedjwt.JWTManager, grants identityrbac.Grants) string {
@@ -63,10 +28,9 @@ func userToken(t *testing.T, jwt *sharedjwt.JWTManager, grants identityrbac.Gran
 	return tok
 }
 
-func newMW() (*httpapi.Middleware, *sharedjwt.JWTManager, fakeM2M) {
+func newMW() (*httpapi.Middleware, *sharedjwt.JWTManager) {
 	jwt := sharedjwt.NewJWTManager(mwSecret, mwIssuer)
-	svc := fakeM2M{svcJWT: sharedjwt.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
-	return httpapi.NewMiddleware(jwt, svc, nil), jwt, svc
+	return httpapi.NewMiddleware(jwt, nil), jwt
 }
 
 // captureIdentity es un handler terminal que guarda la Identity del contexto y
@@ -82,7 +46,7 @@ func captureIdentity(dst *httpapi.Identity) http.Handler {
 
 func TestAuthenticate_NoToken401(t *testing.T) {
 	t.Parallel()
-	mw, _, _ := newMW()
+	mw, _ := newMW()
 	rec := httptest.NewRecorder()
 	mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("next no debe ejecutarse sin credencial")
@@ -95,7 +59,7 @@ func TestAuthenticate_NoToken401(t *testing.T) {
 
 func TestAuthenticate_ValidUserToken_InjectsIdentity(t *testing.T) {
 	t.Parallel()
-	mw, jwt, _ := newMW()
+	mw, jwt := newMW()
 	tok := userToken(t, jwt, identityrbac.Grants{Allow: []string{"flows.*"}})
 
 	var got httpapi.Identity
@@ -113,64 +77,31 @@ func TestAuthenticate_ValidUserToken_InjectsIdentity(t *testing.T) {
 	if got.Subject != mwUser {
 		t.Errorf("subject = %q, want %q", got.Subject, mwUser)
 	}
-	if got.IsService {
-		t.Error("un token de usuario no debe marcar IsService")
-	}
 }
 
-func TestAuthenticate_APIKey_InjectsServiceIdentity(t *testing.T) {
+// TestAuthenticate_APIKeyYaNoAutentica fija la retirada del plano M2M (identity
+// Plan 003 · design.md Ola 5 §7). Se verifica por AUSENCIA: la cabecera que
+// antes bastaba para entrar ya no abre nada, ni siquiera con un valor que el
+// middleware viejo habría aceptado. Sin este caso, reintroducir la rama
+// X-API-Key no rompería ningún test.
+func TestAuthenticate_APIKeyYaNoAutentica(t *testing.T) {
 	t.Parallel()
-	mw, _, _ := newMW()
-
-	var got httpapi.Identity
+	mw, _ := newMW()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set("X-API-Key", "valid-key")
 	rec := httptest.NewRecorder()
-	mw.Authenticate(captureIdentity(&got)).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200", rec.Code)
-	}
-	if !got.IsService || got.Subject != mwClient || got.TenantID != mwTenant {
-		t.Fatalf("identidad M2M inesperada: %+v", got)
-	}
-}
-
-func TestAuthenticate_BadAPIKey401(t *testing.T) {
-	t.Parallel()
-	mw, _, _ := newMW()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req.Header.Set("X-API-Key", "nope")
-	rec := httptest.NewRecorder()
-	mw.Authenticate(captureIdentity(new(httpapi.Identity))).ServeHTTP(rec, req)
+	mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("next no debe ejecutarse: el plano M2M se retiró")
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("code = %d, want 401", rec.Code)
-	}
-}
-
-func TestAuthenticate_ServiceToken_Bearer(t *testing.T) {
-	t.Parallel()
-	mw, _, svc := newMW()
-	tok, _, err := svc.svcJWT.GenerateServiceToken(mwClient, mwTenant, []string{"messages.send"}, time.Hour)
-	if err != nil {
-		t.Fatalf("GenerateServiceToken: %v", err)
-	}
-	var got httpapi.Identity
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	mw.Authenticate(captureIdentity(&got)).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200", rec.Code)
-	}
-	if !got.IsService || got.TenantID != mwTenant {
-		t.Fatalf("service token no resuelto: %+v", got)
+		t.Fatalf("code = %d, want 401 (X-API-Key ya no es una credencial de wApp)", rec.Code)
 	}
 }
 
 func TestRequirePermission_AllowedAndDenied(t *testing.T) {
 	t.Parallel()
-	mw, jwt, _ := newMW()
+	mw, jwt := newMW()
 
 	// Usuario con grant flows.* → allow flows.create, deny messages.send.
 	tok := userToken(t, jwt, identityrbac.Grants{Allow: []string{"flows.*"}})
@@ -195,7 +126,7 @@ func TestRequirePermission_AllowedAndDenied(t *testing.T) {
 
 func TestRequirePermission_NoIdentity401(t *testing.T) {
 	t.Parallel()
-	mw, _, _ := newMW()
+	mw, _ := newMW()
 	// Sin Authenticate delante: no hay Identity en el contexto.
 	h := mw.RequirePermission("flows.create")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("next no debe ejecutarse sin identidad")
@@ -205,28 +136,5 @@ func TestRequirePermission_NoIdentity401(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("code = %d, want 401", rec.Code)
-	}
-}
-
-func TestRequirePermission_M2MScope(t *testing.T) {
-	t.Parallel()
-	mw, _, _ := newMW()
-	// api-key con scope messages.send: allow messages.send, deny flows.create.
-	newReq := func() *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/x", nil)
-		req.Header.Set("X-API-Key", "valid-key")
-		return req
-	}
-	final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	recOK := httptest.NewRecorder()
-	mw.Authenticate(mw.RequirePermission("messages.send")(final)).ServeHTTP(recOK, newReq())
-	if recOK.Code != http.StatusOK {
-		t.Errorf("messages.send: code = %d, want 200", recOK.Code)
-	}
-	recDeny := httptest.NewRecorder()
-	mw.Authenticate(mw.RequirePermission("flows.create")(final)).ServeHTTP(recDeny, newReq())
-	if recDeny.Code != http.StatusForbidden {
-		t.Errorf("flows.create: code = %d, want 403 (fuera de scope)", recDeny.Code)
 	}
 }

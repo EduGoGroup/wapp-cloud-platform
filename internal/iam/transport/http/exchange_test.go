@@ -12,10 +12,10 @@ import (
 
 	identityjwt "github.com/EduGoGroup/identity-shared/auth/jwt"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
+	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 )
@@ -38,19 +38,10 @@ func newExchangeHarness(t *testing.T) exchangeHarness {
 	t.Helper()
 	store := memory.NewStore()
 	jwt := sharedjwt.NewJWTManager(tSecret, tIssuer)
-	svcJWT := sharedjwt.NewServiceJWTManager(tSecret, tIssuer, tAudience)
 
-	authSvc, err := usecase.NewAuthService(store.Users, store.Roles, store.Grants, store.Refresh, store.Audit, jwt, jwt, usecase.Config{})
+	verifierSvc, err := usecase.NewContextTokenService(jwt)
 	if err != nil {
-		t.Fatalf("NewAuthService: %v", err)
-	}
-	m2mSvc, err := usecase.NewM2MService(store.APIKeys, svcJWT, usecase.Config{})
-	if err != nil {
-		t.Fatalf("NewM2MService: %v", err)
-	}
-	users, err := usecase.NewUserService(store.Users, store.Roles, store.Grants)
-	if err != nil {
-		t.Fatalf("NewUserService: %v", err)
+		t.Fatalf("NewContextTokenService: %v", err)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -68,29 +59,29 @@ func newExchangeHarness(t *testing.T) exchangeHarness {
 		t.Fatalf("NewMultiVerifier (identity): %v", err)
 	}
 	exchangeSvc, err := usecase.NewExchangeService(
-		verifier, store.Users, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
+		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
 	)
 	if err != nil {
 		t.Fatalf("NewExchangeService: %v", err)
 	}
 
+	// El sujeto es un UUID de identity con membresía y rol en wApp: no hay
+	// usuario local que crear (identity Plan 003 · Ola 5).
 	role := store.Roles.Seed(domain.Role{TenantID: ptr(tTenant), Name: "operator"}, []domain.Grant{
 		{Pattern: "flows.*", Effect: domain.EffectAllow},
 	})
-	u, err := users.CreateUser(context.Background(), in.CreateUserInput{
-		TenantID: tTenant, Email: tEmail, Password: tLoginPhrase, RoleIDs: []string{role.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	userID := uuid.NewString()
+	if err := store.Roles.AssignToUser(context.Background(), userID, role.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
 	}
-	store.Memberships.Seed(u.ID, tTenant)
+	store.Memberships.Seed(userID, tTenant)
 
 	mux := http.NewServeMux()
-	iamhttp.Register(mux, authSvc, m2mSvc, exchangeSvc, nil)
+	iamhttp.Register(mux, verifierSvc, exchangeSvc, nil)
 	return exchangeHarness{
-		harness:  harness{mux: mux, store: store},
+		harness:  harness{mux: mux, store: store, jwt: jwt},
 		identity: identityIssuer,
-		userID:   u.ID,
+		userID:   userID,
 	}
 }
 

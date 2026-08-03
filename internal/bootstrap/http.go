@@ -23,10 +23,10 @@ const (
 )
 
 func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
-	// El material de auth (emisor/validador ES256, AuthService, M2M, middleware,
-	// auditor) se construye UNA vez en buildAuthStack y se COMPARTE con el gateway
-	// CloudLink (Plan 033 · T2.2, ADR-0025): el mismo AuthService atiende tanto el
-	// :8103 como las RPCs UserLogin/Refresh/Logout del Edge.
+	// El material de auth (emisor/validador ES256, middleware, auditor) se
+	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
+	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
+	// exactamente los tokens que acepta el relé del Edge.
 	authMW := as.authMW
 	auditor := as.auditor
 	// El mismo AuditService sirve la consulta GET /api/v1/audit (Plan 018 · T10):
@@ -34,25 +34,25 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 	pub.Audit = auditor
 
 	publicMux := http.NewServeMux()
-	iamhttp.Register(publicMux, as.authSvc, as.m2mSvc, as.exchanger(), log)
+	iamhttp.Register(publicMux, as.contextTokens, as.exchanger(), log)
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
-	// autenticada por api-key/scope (mismo authMW) y las escrituras auditadas (mismo
-	// auditor). El tenant SIEMPRE sale del token (INV-8). T10 añade GET /api/v1/audit.
+	// autenticada por Context Token + grants (mismo authMW) y las escrituras
+	// auditadas (mismo auditor). El tenant SIEMPRE sale del token (INV-8). T10
+	// añade GET /api/v1/audit.
 	publicapi.Register(publicMux, pub, authMW, auditor, log)
 
 	// Blindaje transversal de la API pública (Plan 018 · T10, R11): rate-limit por
-	// credencial (api-key/tenant) y por IP en el login (anti fuerza bruta) +
-	// métricas de request/latencia. Envuelven el mux ENTERO. Orden de ejecución:
-	// métricas (siempre cuenta, incluso un 429) → rate-limit → mux. NO tocan
-	// /healthz/metrics (viven en el listener admin).
+	// credencial + métricas de request/latencia. Envuelven el mux ENTERO. Orden de
+	// ejecución: métricas (siempre cuenta, incluso un 429) → rate-limit → mux. NO
+	// tocan /healthz/metrics (viven en el listener admin). El cubo por IP del
+	// login se fue con el login (identity Plan 003 · Ola 5).
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
-	loginLim := httpapi.NewLimiter(rate.Limit(float64(cfg.RateLimit.LoginPerMin)/60.0), cfg.RateLimit.LoginBurst)
 	var handler http.Handler = publicMux
-	handler = httpapi.PublicRateLimit(handler, publicLim, loginLim, mtx, log)
+	handler = httpapi.PublicRateLimit(handler, publicLim, mtx, log)
 	handler = mtx.InstrumentHTTP("public", handler)
 
 	srv := &http.Server{

@@ -1,25 +1,24 @@
 // Package memory provee implementaciones EN MEMORIA de los puertos out del IAM
-// (UserRepo, RoleRepo, GrantRepo, RefreshRepo, APIKeyRepo, AuditRepo,
-// MembershipRepo), seguras para concurrencia. Pensadas para tests unitarios
-// CI-safe de los usecases (sin BD), imitando la semántica de la implementación
-// Postgres: unicidad → domain.ErrConflict, ausencia → domain.ErrNotFound,
-// filtrado por tenant.
+// (RoleRepo, GrantRepo, AuditRepo, MembershipRepo), seguras para concurrencia.
+// Pensadas para tests unitarios CI-safe de los usecases (sin BD), imitando la
+// semántica de la implementación Postgres: unicidad → domain.ErrConflict,
+// ausencia → domain.ErrNotFound, filtrado por tenant.
 //
 // Cada tabla tiene su propio store (no un único tipo): los puertos declaran
-// métodos homónimos con firmas distintas (Create/GetByID/List/Revoke/GetByHash),
-// que Go no permite convivir en un mismo tipo. Store los agrega para un wiring
-// cómodo en los tests.
+// métodos homónimos con firmas distintas (Create/GetByID/List), que Go no
+// permite convivir en un mismo tipo. Store los agrega para un wiring cómodo en
+// los tests.
+//
+// Ya no hay dobles de usuarios, refresh ni api-keys: esos puertos murieron con
+// el IAM propio de wApp (identity Plan 003 · Ola 5).
 package memory
 
 import "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 
 // Store agrega los repositorios en memoria para el wiring de tests.
 type Store struct {
-	Users       *UserStore
 	Roles       *RoleStore
 	Grants      *GrantStore
-	Refresh     *RefreshStore
-	APIKeys     *APIKeyStore
 	Audit       *AuditStore
 	Memberships *MembershipStore
 }
@@ -27,11 +26,8 @@ type Store struct {
 // NewStore crea el agregado con todos los repositorios vacíos.
 func NewStore() *Store {
 	return &Store{
-		Users:       NewUserStore(),
 		Roles:       NewRoleStore(),
 		Grants:      NewGrantStore(),
-		Refresh:     NewRefreshStore(),
-		APIKeys:     NewAPIKeyStore(),
 		Audit:       NewAuditStore(),
 		Memberships: NewMembershipStore(),
 	}

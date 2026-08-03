@@ -62,7 +62,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // writeDomainError mapea los errores tipados del dominio IAM a códigos HTTP:
 //   - ErrInvalidInput      → 400
-//   - credenciales/refresh/api-key/usuario inactivo → 401 (opacos, no filtran)
+//   - credenciales/refresh/usuario inactivo → 401 (opacos, no filtran)
 //   - identity token no aceptable / sujeto sin migrar → 401 (con motivo: el
 //     cliente es el BFF o el gateway, no un anónimo probando contraseñas, y
 //     necesita distinguir "refresca" de "este usuario no está en wApp")
@@ -75,8 +75,7 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "entrada inválida")
 	case errors.Is(err, domain.ErrInvalidCredentials),
 		errors.Is(err, domain.ErrUserInactive),
-		errors.Is(err, domain.ErrRefreshInvalid),
-		errors.Is(err, domain.ErrAPIKeyInvalid):
+		errors.Is(err, domain.ErrRefreshInvalid):
 		writeError(w, http.StatusUnauthorized, "no autorizado")
 	case errors.Is(err, domain.ErrIdentityTokenInvalid):
 		writeError(w, http.StatusUnauthorized, "identity token inválido")
@@ -90,21 +89,6 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusServiceUnavailable, "identity no está disponible")
 	default:
 		writeError(w, http.StatusInternalServerError, "error interno")
-	}
-}
-
-// toAuthResultDTO proyecta el AuthResult del dominio al wire format.
-func toAuthResultDTO(res domain.AuthResult) authResultDTO {
-	return authResultDTO{
-		AccessToken:  res.AccessToken,
-		RefreshToken: res.RefreshToken,
-		TokenType:    res.TokenType,
-		ExpiresAt:    res.ExpiresAt.UTC().Format(rfc3339),
-		Context: identityContextDTO{
-			TenantID: res.Context.TenantID,
-			UserID:   res.Context.UserID,
-			Roles:    res.Context.Roles,
-		},
 	}
 }
 

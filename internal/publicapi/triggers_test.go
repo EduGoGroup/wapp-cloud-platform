@@ -7,16 +7,15 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
 // triggerKeys añade a las api-keys base un juego con scopes triggers.* para
 // tenantA/tenantB y una key de solo lectura de flujos (sin triggers).
-func triggerKeys() map[string]in.ServiceIdentity {
+func triggerKeys() map[string]testIdentity {
 	keys := apiKeys()
-	keys["key-a-trig"] = in.ServiceIdentity{TenantID: tenantA, ClientID: "trig-a", Scopes: []string{"triggers.create", "triggers.read", "triggers.delete"}}
-	keys["key-b-trig"] = in.ServiceIdentity{TenantID: tenantB, ClientID: "trig-b", Scopes: []string{"triggers.create", "triggers.read", "triggers.delete"}}
+	keys["key-a-trig"] = testIdentity{TenantID: tenantA, Subject: "trig-a", Grants: []string{"triggers.create", "triggers.read", "triggers.delete"}}
+	keys["key-b-trig"] = testIdentity{TenantID: tenantB, Subject: "trig-b", Grants: []string{"triggers.create", "triggers.read", "triggers.delete"}}
 	return keys
 }
 
@@ -143,7 +142,7 @@ func TestTriggersRead_ViewerGlob(t *testing.T) {
 	store := trigger.NewMemoryStore()
 	seedTrigger(t, store, tenantA, "pedido")
 	keys := triggerKeys()
-	keys["key-a-viewer"] = in.ServiceIdentity{TenantID: tenantA, ClientID: "viewer-a", Scopes: []string{"*.read"}}
+	keys["key-a-viewer"] = testIdentity{TenantID: tenantA, Subject: "viewer-a", Grants: []string{"*.read"}}
 	mux := newAPI(publicapi.Deps{Triggers: store}, keys)
 
 	if rec := call(mux, "key-a-viewer", http.MethodGet, "/api/v1/triggers", ""); rec.Code != http.StatusOK {

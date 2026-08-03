@@ -40,18 +40,19 @@ const defaultES256Kid = "es256-dev"
 // URL del JWKS (WAPP_IDENTITY_JWKS_URL), no quién firma.
 const identityTokenIssuer = "identity-core"
 
-// authStack agrupa el material del plano de autenticación de usuario del IAM que
-// hoy consumen DOS piezas: el servidor de la API pública (:8103) y el gateway
+// authStack agrupa el material del plano de autenticación de usuario que hoy
+// consumen DOS piezas: el servidor de la API pública (:8103) y el gateway
 // CloudLink (Plan 033 · T2.2, ADR-0025 — RPCs UserLogin/Refresh/Logout del Edge).
 // Se construye UNA vez en run() para que ambos planos compartan EXACTAMENTE el
-// mismo emisor/validador ES256, el mismo AuthService y el mismo auditor.
+// mismo emisor/validador ES256 y el mismo auditor.
 type authStack struct {
 	jwtBundle *userJWTBundle
 	validator *sharedjwt.MultiVerifier
 	auditor   *iamusecase.AuditService
-	authSvc   *iamusecase.AuthService
-	m2mSvc    *iamusecase.M2MService
-	authMW    *httpapi.Middleware
+	// contextTokens inspecciona los Context Tokens que emite wApp: es lo único
+	// que sirve el :8103 por su cuenta desde la Ola 5 (/api/v1/auth/verify).
+	contextTokens *iamusecase.ContextTokenService
+	authMW        *httpapi.Middleware
 	// identityVerifier valida los Identity Tokens que emite identity-core, con
 	// las claves de su JWKS. Es nil mientras WAPP_IDENTITY_JWKS_URL esté vacía.
 	//
@@ -67,44 +68,46 @@ type authStack struct {
 	// /api/v1/auth/exchange responde 503.
 	exchangeSvc *iamusecase.ExchangeService
 	// edgeAuthSvc es el autenticador DELEGADO que atiende las RPCs de auth del
-	// Edge cuando hay WAPP_IDENTITY_URL (Plan 003 de identity · T3.3): valida las
-	// credenciales en identity y canjea. nil = el relé sigue con el IAM local.
-	// Los endpoints propios del :8103 NO cambian: quedan sin tráfico, y su
-	// eliminación es la Ola 5.
+	// Edge (Plan 003 de identity · T3.3): valida las credenciales en identity y
+	// canjea. Desde la Ola 5 NO hay alternativa local a la que caer —el IAM
+	// propio se eliminó—, así que sin WAPP_IDENTITY_URL el relé se queda SIN
+	// autenticador y el gateway contesta "auth no disponible". Es la respuesta
+	// correcta: un despliegue sin identity es un despliegue donde nadie puede
+	// autenticarse, y decirlo es mejor que tener un camino propio de reserva.
 	edgeAuthSvc *iamusecase.DelegatedAuthService
 }
 
-// userJWTBundle agrupa el material de tokens de USUARIO del IAM (ADR-0019, Plan
-// 028). Tras el retiro de HS256 del plano de usuario (T4), ES256 es el único
-// emisor: reúne el emisor ES256 (con `kid`) y el material derivado que necesita
-// el MultiVerifier del middleware (la pública ES256 y el `kid` para su entrada).
-// El secreto HS256 (WAPP_JWT_SECRET) ya NO forma parte del plano de usuario;
-// sobrevive solo para el ServiceJWTManager M2M (ver buildJWTManagers).
+// userJWTBundle agrupa el material de tokens de USUARIO (ADR-0019, Plan 028).
+// Tras el retiro de HS256 del plano de usuario (T4), ES256 es el único emisor:
+// reúne el emisor ES256 (con `kid`) y el material derivado que necesita el
+// MultiVerifier del middleware (la pública ES256 y el `kid` para su entrada).
+// El secreto HS256 (WAPP_JWT_SECRET) se retiró del todo con el plano M2M
+// (identity Plan 003 · Ola 5 §7): wApp ya no firma nada en HS256.
 type userJWTBundle struct {
 	es256 *sharedjwt.JWTManager // emisor ES256 con `kid` estampado (único emisor de usuario).
 	esPub *ecdsa.PublicKey      // pública ES256 derivada (entrada `kid` del MultiVerifier).
 	kid   string                // key id activo ES256.
 }
 
-// buildAuthStack cablea el material de auth de usuario del IAM (Plan 018 · T3,
+// buildAuthStack cablea el material de auth de usuario (Plan 018 · T3,
 // ADR-0019) sobre el *sql.DB ya abierto. Antes vivía embebido en
-// buildPublicAPIServer; se extrajo (Plan 033 · T2.2) para poder inyectar el mismo
-// AuthService/auditor en el gateway CloudLink, que se construye antes que el
-// servidor público.
+// buildPublicAPIServer; se extrajo (Plan 033 · T2.2) para poder inyectar el
+// mismo material en el gateway CloudLink, que se construye antes que el servidor
+// público.
 func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (*authStack, error) {
-	jwtBundle, svcJWTMgr, err := buildJWTManagers(cfg, log)
+	jwtBundle, err := buildJWTManagers(cfg, log)
 	if err != nil {
 		return nil, err
 	}
-	// EMISOR DEL PLANO DE USUARIO (Plan 028 · T3/T4, ADR-0019): ES256 con `kid`
-	// (jwtBundle.es256). El emisor HS256 legacy quedó RETIRADO del plano de usuario
-	// (T4): WAPP_JWT_SECRET solo sobrevive para el ServiceJWTManager M2M.
+	// EMISOR DEL CONTEXT TOKEN (Plan 028 · T3/T4, ADR-0019): ES256 con `kid`
+	// (jwtBundle.es256). Es el ÚNICO emisor que le queda a wApp: las credenciales
+	// las valida identity y lo que wApp firma es el contexto de negocio.
 	userTokenIssuer := jwtBundle.es256
 	// Validación del :8103 (Plan 028 · T4, ADR-0019): un MultiVerifier con la ÚNICA
 	// entrada ES256 por su `kid` (pública derivada) y SIN default, de modo que un
 	// token HS256 de usuario (con o sin `kid`) se RECHAZA. *sharedjwt.MultiVerifier
 	// satisface la interface UserTokenValidator del middleware y el TokenValidator
-	// del AuthService: una sola política de aceptación para el :8103 y el IAM.
+	// del usecase: una sola política de aceptación para todo el proceso.
 	userValidator, err := sharedjwt.NewMultiVerifier(
 		cfg.JWT.Issuer,
 		map[string]sharedjwt.VerifierKey{jwtBundle.kid: sharedjwt.ES256VerifierKey(jwtBundle.esPub)},
@@ -117,31 +120,17 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 	if err != nil {
 		return nil, fmt.Errorf("construyendo AuditService (IAM): %w", err)
 	}
-	authSvc, err := iamusecase.NewAuthService(
-		iampostgres.NewUserRepo(db),
-		iampostgres.NewRoleRepo(db),
-		iampostgres.NewGrantRepo(db),
-		iampostgres.NewRefreshRepo(db),
-		iampostgres.NewAuditRepo(db),
-		userTokenIssuer,
-		userValidator,
-		iamusecase.Config{},
-	)
+	contextTokens, err := iamusecase.NewContextTokenService(userValidator)
 	if err != nil {
-		return nil, fmt.Errorf("construyendo AuthService (IAM): %w", err)
+		return nil, fmt.Errorf("construyendo ContextTokenService (IAM): %w", err)
 	}
-	m2mSvc, err := iamusecase.NewM2MService(iampostgres.NewAPIKeyRepo(db), svcJWTMgr, iamusecase.Config{})
-	if err != nil {
-		return nil, fmt.Errorf("construyendo M2MService (IAM): %w", err)
-	}
-	authMW := httpapi.NewMiddleware(userValidator, m2mSvc, log)
+	authMW := httpapi.NewMiddleware(userValidator, log)
 	stack := &authStack{
-		jwtBundle: jwtBundle,
-		validator: userValidator,
-		auditor:   auditor,
-		authSvc:   authSvc,
-		m2mSvc:    m2mSvc,
-		authMW:    authMW,
+		jwtBundle:     jwtBundle,
+		validator:     userValidator,
+		auditor:       auditor,
+		contextTokens: contextTokens,
+		authMW:        authMW,
 	}
 	// Puerta del modo dual (Plan 003 de identity · T1.2): con la variable vacía,
 	// cloud-platform arranca exactamente como hasta ahora.
@@ -156,7 +145,6 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 		// declararse indisponible a existir a medias.
 		exchangeSvc, xerr := iamusecase.NewExchangeService(
 			identityVerifier,
-			iampostgres.NewUserRepo(db),
 			iampostgres.NewMembershipRepo(db),
 			iampostgres.NewRoleRepo(db),
 			iampostgres.NewGrantRepo(db),
@@ -195,7 +183,7 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 func (s *authStack) wireDelegatedAuth(cfg config.AppConfig, validator iamusecase.TokenValidator, log sharedlogger.Logger) error {
 	identityURL := strings.TrimSpace(cfg.Identity.URL)
 	if identityURL == "" {
-		log.Info("delegación de la auth del Edge APAGADA: WAPP_IDENTITY_URL vacía (el relé sigue resolviendo credenciales en el IAM local)")
+		log.Warn("WAPP_IDENTITY_URL vacía: el relé de auth del Edge se queda SIN autenticador (el IAM local se eliminó en la Ola 5; login/refresh/logout del operador responderán \"auth no disponible\")")
 		return nil
 	}
 	if s.exchangeSvc == nil {
@@ -217,13 +205,15 @@ func (s *authStack) wireDelegatedAuth(cfg config.AppConfig, validator iamusecase
 }
 
 // edgeAuthenticator devuelve el autenticador que atiende las RPCs de auth del
-// Edge: el delegado si la delegación está encendida, el IAM local si no. Es el
-// único punto donde se decide, y por eso el gateway no conoce la diferencia.
+// Edge: el delegado, o un nil DE VERDAD si no hay delegación (mismo cuidado que
+// exchanger con las interfaces nil de Go). El gateway ya sabe responder "auth no
+// disponible" ante un puerto ausente, que es lo honesto: sin identity no hay
+// quien valide credenciales, y wApp dejó de tener un camino propio.
 func (s *authStack) edgeAuthenticator() in.Authenticator {
-	if s.edgeAuthSvc != nil {
-		return s.edgeAuthSvc
+	if s.edgeAuthSvc == nil {
+		return nil
 	}
-	return s.authSvc
+	return s.edgeAuthSvc
 }
 
 // exchanger expone el canje como puerto in, o un nil DE VERDAD cuando el modo
@@ -257,73 +247,46 @@ func buildIdentityVerifier(jwksURL string) (*identityjwt.MultiVerifier, error) {
 	return mv, nil
 }
 
-// buildJWTManagers construye el material de tokens de usuario (emisor ES256) y el
-// ServiceJWTManager M2M del IAM (Plan 018 §6, ADR-0019) a partir de la config.
-// Zero-knowledge: los secretos/claves salen de env, NUNCA se hardcodean ni se
-// loguean. La clave EC (WAPP_JWT_EC_PRIVATE_KEY_FILE) firma los tokens de usuario
-// y el secreto HS256 (WAPP_JWT_SECRET) firma el service token M2M; ambos son
-// obligatorios en prod (fail-fast) y efímeros con warning en dev. El service
-// token exige `aud` propia (aísla los planos usuario/M2M). Tras T4 el secreto
-// HS256 NO firma ni valida tokens de usuario: es exclusivo del plano M2M.
-func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, *sharedjwt.ServiceJWTManager, error) {
-	secret := cfg.JWT.Secret
-	if secret == "" {
-		if cfg.Env == "prod" {
-			return nil, nil, errors.New("WAPP_JWT_SECRET es obligatorio en prod (zero-knowledge: sin default)")
-		}
-		gen, err := randomSecret()
-		if err != nil {
-			return nil, nil, fmt.Errorf("generando secreto JWT de dev: %w", err)
-		}
-		secret = gen
-		log.Warn("secreto JWT EFÍMERO de dev: cambia en cada arranque; los tokens no sobreviven a un reinicio (no apto para producción)")
-	}
-
-	// Par ES256 (F1, ADR-0019): emisor asimétrico que convive con HS256. En T1 se
-	// construye pero NO corta la emisión todavía (ver punto de conmutación).
+// buildJWTManagers construye el material del emisor del Context Token (ES256,
+// ADR-0019) a partir de la config. Zero-knowledge: la clave sale de env, NUNCA
+// se hardcodea ni se loguea. La clave EC (WAPP_JWT_EC_PRIVATE_KEY_FILE) es
+// obligatoria en prod (fail-fast) y efímera con warning en dev.
+//
+// El secreto HS256 (WAPP_JWT_SECRET) desapareció con el plano M2M en la Ola 5
+// (identity Plan 003 · design.md Ola 5 §7): era lo único que seguía firmando en
+// simétrico y llevaba dos olas sobreviviendo a su fecha de muerte declarada.
+func buildJWTManagers(cfg config.AppConfig, log sharedlogger.Logger) (*userJWTBundle, error) {
+	// Par ES256 (ADR-0019): el emisor asimétrico, hoy único.
 	priv, err := buildES256Key(cfg, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	kid := cfg.JWT.Kid
 	if kid == "" {
 		// Con ES256 como único emisor de usuario (T4), el `kid` es obligatorio en
 		// prod: es lo que ata el token a su entrada de verificación en el rotado.
 		if cfg.Env == "prod" {
-			return nil, nil, errors.New("WAPP_JWT_KID es obligatorio en prod (ADR-0019: ES256 es el único emisor de usuario)")
+			return nil, errors.New("WAPP_JWT_KID es obligatorio en prod (ADR-0019: ES256 es el único emisor de usuario)")
 		}
 		kid = defaultES256Kid
 		log.Warn("WAPP_JWT_KID vacío: usando kid por defecto \"" + defaultES256Kid + "\" (define uno con convención es256-YYYYMMDD)")
 	}
 	es256Mgr, err := sharedjwt.NewJWTManagerES256(priv, cfg.JWT.Issuer)
 	if err != nil {
-		return nil, nil, fmt.Errorf("construyendo emisor ES256: %w", err)
+		return nil, fmt.Errorf("construyendo emisor ES256: %w", err)
 	}
 	es256Mgr = es256Mgr.WithKid(kid)
 
-	bundle := &userJWTBundle{
+	return &userJWTBundle{
 		es256: es256Mgr,
 		esPub: &priv.PublicKey,
 		kid:   kid,
-	}
-	// El secreto HS256 ya no firma tokens de usuario (T4): solo el service token M2M.
-	svcMgr := sharedjwt.NewServiceJWTManager(secret, cfg.JWT.Issuer, cfg.JWT.ServiceAudience)
-	return bundle, svcMgr, nil
-}
-
-// randomSecret genera 32 bytes aleatorios en base64 (secreto HS256 efímero de
-// dev). No apto para producción: no persiste entre arranques.
-func randomSecret() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(b), nil
+	}, nil
 }
 
 // buildES256Key resuelve la clave privada EC P-256 que firma los tokens de
-// usuario en ES256 (ADR-0019, Plan 028). Reglas por entorno (espejo del secreto
-// HS256): con WAPP_JWT_EC_PRIVATE_KEY_FILE lee el PEM, en prod exige permisos
+// usuario en ES256 (ADR-0019, Plan 028). Reglas por entorno: con
+// WAPP_JWT_EC_PRIVATE_KEY_FILE lee el PEM, en prod exige permisos
 // <=0600, parsea PKCS#8 o SEC1 y valida curva P-256; en prod sin archivo (o
 // inválido/permisos laxos) hace fail-fast; en dev sin archivo genera un par
 // EFÍMERO en memoria con warning (permite `go run` sin fricción).

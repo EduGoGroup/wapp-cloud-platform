@@ -36,8 +36,7 @@ func newES256MW(t *testing.T) (*httpapi.Middleware, *ecdsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("NewMultiVerifier: %v", err)
 	}
-	svc := fakeM2M{svcJWT: sharedjwt.NewServiceJWTManager(mwSecret, mwIssuer, mwAudience)}
-	return httpapi.NewMiddleware(mv, svc, nil), priv
+	return httpapi.NewMiddleware(mv, nil), priv
 }
 
 func es256UserToken(t *testing.T, priv *ecdsa.PrivateKey, kid string) string {

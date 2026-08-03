@@ -28,7 +28,6 @@ type Metrics struct {
 	reg           *prometheus.Registry
 	httpRequests  *prometheus.CounterVec
 	httpDuration  *prometheus.HistogramVec
-	logins        *prometheus.CounterVec
 	rateLimitHits *prometheus.CounterVec
 	receipts      *prometheus.CounterVec
 }
@@ -48,13 +47,9 @@ func New() *Metrics {
 			Help:    "Latencia de las peticiones HTTP por listener, ruta (patrón) y método.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"listener", "route", "method"}),
-		logins: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "wapp_auth_logins_total",
-			Help: "Total de intentos de login por resultado (success|failure).",
-		}, []string{"result"}),
 		rateLimitHits: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_ratelimit_hits_total",
-			Help: "Total de peticiones rechazadas por rate-limit, por ámbito (public|login).",
+			Help: "Total de peticiones rechazadas por rate-limit, por ámbito (public).",
 		}, []string{"scope"}),
 		receipts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_receipts_total",
@@ -64,7 +59,7 @@ func New() *Metrics {
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		m.httpRequests, m.httpDuration, m.logins, m.rateLimitHits, m.receipts,
+		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts,
 	)
 	return m
 }
@@ -94,9 +89,13 @@ func (s *statusRecorder) WriteHeader(code int) {
 // InstrumentHTTP envuelve un mux ENTERO (no cada ruta) y registra petición +
 // latencia usando el PATRÓN del ServeMux, que Go fija en r.Pattern DURANTE el
 // ruteo (accesible tras next.ServeHTTP). El patrón es de baja cardinalidad y no
-// porta PII (los {id} van como plantilla). Además deriva el acuse de login
-// (ruta /api/v1/auth/login) del código de estado. listener distingue "admin" de
+// porta PII (los {id} van como plantilla). listener distingue "admin" de
 // "public".
+//
+// El contador wapp_auth_logins_total se retiró con el login (identity Plan 003 ·
+// Ola 5): wApp ya no valida credenciales, así que una métrica de logins aquí
+// marcaría cero para siempre — y un cero que parece un dato es peor que la
+// ausencia del dato. Quien mida logins los mide en identity-core.
 func (m *Metrics) InstrumentHTTP(listener string, next http.Handler) http.Handler {
 	if m == nil {
 		return next
@@ -113,23 +112,10 @@ func (m *Metrics) InstrumentHTTP(listener string, next http.Handler) http.Handle
 		status := strconv.Itoa(sr.status)
 		m.httpRequests.WithLabelValues(listener, route, r.Method, status).Inc()
 		m.httpDuration.WithLabelValues(listener, route, r.Method).Observe(elapsed)
-
-		if route == "/api/v1/auth/login" {
-			m.observeLogin(sr.status < http.StatusBadRequest)
-		}
 	})
 }
 
-// observeLogin incrementa el contador de login por resultado.
-func (m *Metrics) observeLogin(success bool) {
-	result := "failure"
-	if success {
-		result = "success"
-	}
-	m.logins.WithLabelValues(result).Inc()
-}
-
-// RateLimitHit registra un rechazo por rate-limit en el ámbito dado (public|login).
+// RateLimitHit registra un rechazo por rate-limit en el ámbito dado (public).
 func (m *Metrics) RateLimitHit(scope string) {
 	if m == nil {
 		return

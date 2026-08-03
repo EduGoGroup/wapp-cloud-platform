@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
@@ -19,9 +18,9 @@ const keyAIntents = "key-a-intents"
 const validIntentsJSON = `{"version":"v1","umbral_confianza":0.7,"intents":[{"name":"pedir_pizza","descripcion":"pedir comida","params":["cantidad"],"ejemplos":[{"mensaje":"quiero una pizza"}]}]}`
 
 // intentsKeys extiende apiKeys() con la credencial de administración de intents.
-func intentsKeys() map[string]in.ServiceIdentity {
+func intentsKeys() map[string]testIdentity {
 	keys := apiKeys()
-	keys[keyAIntents] = in.ServiceIdentity{TenantID: tenantA, ClientID: "admin-a", Scopes: []string{"intents.read", "intents.write"}}
+	keys[keyAIntents] = testIdentity{TenantID: tenantA, Subject: "admin-a", Grants: []string{"intents.read", "intents.write"}}
 	return keys
 }
 

@@ -72,15 +72,14 @@ type AppConfig struct {
 	// main al construir el objectstore.PresignClient (cableado en tramos
 	// posteriores). Se lee con prefijo WAPP_STORAGE_S3_.
 	Storage StorageConfig `yaml:"storage"`
-	// JWT es la configuración de firma/validación de los tokens del IAM (Plan
-	// 018): secreto HS256, issuer esperado y audiencia del service token M2M. El
-	// secreto NUNCA se hardcodea ni se loguea (zero-knowledge); en dev, si falta,
-	// se genera uno efímero con warning (como la clave del lease). Se lee con
-	// prefijo WAPP_ (WAPP_JWT_SECRET, WAPP_JWT_ISSUER, WAPP_SERVICE_JWT_AUDIENCE).
+	// JWT es la configuración de firma/validación del Context Token de wApp
+	// (ADR-0019): clave EC P-256, su `kid` y el issuer esperado. La clave NUNCA
+	// se hardcodea ni se loguea (zero-knowledge); en dev, si falta, se genera un
+	// par efímero con warning (como la clave del lease). Se lee con prefijo WAPP_
+	// (WAPP_JWT_EC_PRIVATE_KEY_FILE, WAPP_JWT_KID, WAPP_JWT_ISSUER).
 	JWT JWTConfig `yaml:"jwt"`
 	// RateLimit es la configuración del rate-limit de la API pública (Plan 018 ·
-	// T10, R11): límite por api-key/tenant y límite por IP en el login. Se lee con
-	// prefijo WAPP_RATELIMIT_.
+	// T10, R11): límite por credencial. Se lee con prefijo WAPP_RATELIMIT_.
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	// Flow es la configuración del runtime del Motor de Flujos (Plan 020 · T0): el
 	// tope de auto-respuestas por conversación (red anti-loop). Se lee con prefijo
@@ -179,10 +178,13 @@ type FlowConfig struct {
 }
 
 // RateLimitConfig gobierna el token-bucket EN MEMORIA de la API pública (Plan
-// 018 · T10). PublicRPS/PublicBurst acotan cada credencial (api-key/tenant) en
-// las rutas de operación; LoginPerMin/LoginBurst acotan por IP el
-// /api/v1/auth/login (anti fuerza bruta). Defaults sanos; cero o negativo cae al
-// default (nunca desactiva el límite por accidente).
+// 018 · T10). PublicRPS/PublicBurst acotan cada credencial en las rutas de
+// operación. Defaults sanos; cero o negativo cae al default (nunca desactiva el
+// límite por accidente).
+//
+// El freno por IP del login (LoginPerMin/LoginBurst) se retiró en la Ola 5 del
+// Plan 003 de identity, junto con el propio login: la fuerza bruta de
+// contraseñas se frena donde se validan, y eso es identity-core.
 type RateLimitConfig struct {
 	// PublicRPS es el ritmo sostenido (peticiones/seg) por credencial en la API
 	// pública. Default 20. Se lee de WAPP_RATELIMIT_PUBLIC_RPS.
@@ -190,27 +192,17 @@ type RateLimitConfig struct {
 	// PublicBurst es la ráfaga admitida por credencial. Default 40. Se lee de
 	// WAPP_RATELIMIT_PUBLIC_BURST.
 	PublicBurst int `yaml:"public_burst"`
-	// LoginPerMin es el ritmo sostenido (peticiones/min) por IP en el login.
-	// Default 10. Se lee de WAPP_RATELIMIT_LOGIN_PER_MIN.
-	LoginPerMin int `yaml:"login_per_min"`
-	// LoginBurst es la ráfaga admitida por IP en el login. Default 5. Se lee de
-	// WAPP_RATELIMIT_LOGIN_BURST.
-	LoginBurst int `yaml:"login_burst"`
 }
 
-// JWTConfig agrupa el material de firma del IAM (Plan 018 §6). El Secret firma
-// tanto el JWT de usuario como el service token M2M (HS256); Issuer es el emisor
-// esperado en la validación; ServiceAudience es la `aud` exigida al service
-// token (evita que un token de usuario se cuele por rutas M2M y viceversa).
+// JWTConfig agrupa el material de firma del Context Token de wApp (ADR-0019).
+// Issuer es el emisor esperado en la validación; la clave EC P-256 y su `kid`
+// son lo que firma y lo que ata cada token a su entrada de verificación.
+//
+// El secreto HS256 (Secret) y la audiencia del service token (ServiceAudience)
+// desaparecieron con el plano M2M en la Ola 5: wApp ya no firma nada simétrico.
 type JWTConfig struct {
-	// Secret es el secreto HS256. SIN default: en prod es obligatorio (fail-fast);
-	// en dev, vacío ⇒ secreto efímero generado con warning. NUNCA se loguea.
-	Secret string `yaml:"secret"`
 	// Issuer es el emisor (`iss`) que se firma y se valida. Default "wapp-cloud".
 	Issuer string `yaml:"issuer"`
-	// ServiceAudience es la audiencia (`aud`) del service token M2M. Default
-	// "wapp-public-api".
-	ServiceAudience string `yaml:"service_audience"`
 	// ECPrivateKeyFile es la ruta al PEM de la clave privada EC P-256 que firma
 	// los tokens de usuario en ES256 (ADR-0019, Plan 028). Acepta PKCS#8 y SEC1.
 	// SIN default: en prod es obligatorio (fail-fast si falta, si los permisos son
@@ -355,14 +347,11 @@ func defaults() AppConfig {
 		LogLevel:        "info",
 		LogJSON:         false,
 		JWT: JWTConfig{
-			Issuer:          "wapp-cloud",
-			ServiceAudience: "wapp-public-api",
+			Issuer: "wapp-cloud",
 		},
 		RateLimit: RateLimitConfig{
 			PublicRPS:   20,
 			PublicBurst: 40,
-			LoginPerMin: 10,
-			LoginBurst:  5,
 		},
 		Flow: FlowConfig{
 			ReplyRate:             0.5,
@@ -456,16 +445,12 @@ func Load() (AppConfig, error) {
 	cfg.Storage.Endpoint = loader.GetString("STORAGE_S3_ENDPOINT", cfg.Storage.Endpoint)
 	cfg.Storage.PresignExpiry = loader.GetDuration("STORAGE_S3_PRESIGN_EXPIRY", cfg.Storage.PresignExpiry)
 
-	cfg.JWT.Secret = loader.GetString("JWT_SECRET", cfg.JWT.Secret)
 	cfg.JWT.Issuer = loader.GetString("JWT_ISSUER", cfg.JWT.Issuer)
-	cfg.JWT.ServiceAudience = loader.GetString("SERVICE_JWT_AUDIENCE", cfg.JWT.ServiceAudience)
 	cfg.JWT.ECPrivateKeyFile = loader.GetString("JWT_EC_PRIVATE_KEY_FILE", cfg.JWT.ECPrivateKeyFile)
 	cfg.JWT.Kid = loader.GetString("JWT_KID", cfg.JWT.Kid)
 
 	cfg.RateLimit.PublicRPS = loader.GetInt("RATELIMIT_PUBLIC_RPS", cfg.RateLimit.PublicRPS)
 	cfg.RateLimit.PublicBurst = loader.GetInt("RATELIMIT_PUBLIC_BURST", cfg.RateLimit.PublicBurst)
-	cfg.RateLimit.LoginPerMin = loader.GetInt("RATELIMIT_LOGIN_PER_MIN", cfg.RateLimit.LoginPerMin)
-	cfg.RateLimit.LoginBurst = loader.GetInt("RATELIMIT_LOGIN_BURST", cfg.RateLimit.LoginBurst)
 
 	cfg.Flow.ReplyRate = getFloat(loader, "FLOW_REPLY_RATE", cfg.Flow.ReplyRate)
 	if b := loader.GetInt("FLOW_REPLY_BURST", cfg.Flow.ReplyBurst); b > 0 {

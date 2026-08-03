@@ -11,30 +11,30 @@ var (
 	// para el tenant del contexto). Lo devuelven los repos GetByID/GetByEmail/…
 	ErrNotFound = errors.New("iam: recurso no encontrado")
 
-	// ErrConflict indica una violación de unicidad (email por tenant, client_id,
-	// key_hash, …). Lo mapean los repos desde el unique_violation de Postgres.
+	// ErrConflict indica una violación de unicidad (nombre de rol por tenant, …).
+	// Lo mapean los repos desde el unique_violation de Postgres.
 	ErrConflict = errors.New("iam: conflicto de unicidad")
 
 	// ErrInvalidInput indica un argumento de entrada inválido (vacío/mal formado)
 	// detectado por un usecase antes de tocar el repositorio.
 	ErrInvalidInput = errors.New("iam: entrada inválida")
 
-	// ErrInvalidCredentials indica que el par (email, password) no autentica. Es
-	// deliberadamente OPACO (no distingue "usuario inexistente" de "password
-	// incorrecta") para no filtrar la existencia de cuentas.
+	// ErrInvalidCredentials indica que el par (email, password) no autentica. Lo
+	// devuelve identity-core, que es quien las valida desde la Ola 3; wApp solo
+	// lo traduce. Es deliberadamente OPACO (no distingue "usuario inexistente" de
+	// "password incorrecta") para no filtrar la existencia de cuentas.
 	ErrInvalidCredentials = errors.New("iam: credenciales inválidas")
 
-	// ErrUserInactive indica que el usuario existe pero está deshabilitado
-	// (is_active=false) o dado de baja (deleted_at set).
+	// ErrUserInactive indica que identity acreditó a la persona pero le negó
+	// ESTA aplicación: usuario deshabilitado o System Gate cerrado. NO nace de
+	// una bandera local — desde la Ola 5 wApp no guarda ninguna (design.md Ola 5
+	// §2: dos banderas de "activo" en dos bases dan dos sitios donde desactivar).
 	ErrUserInactive = errors.New("iam: usuario inactivo")
 
 	// ErrRefreshInvalid indica que un refresh token no es utilizable: no existe,
-	// está revocado o expiró. Opaco por diseño (no distingue el motivo).
+	// está revocado o expiró. Lo dictamina identity, dueño de la sesión. Opaco
+	// por diseño (no distingue el motivo).
 	ErrRefreshInvalid = errors.New("iam: refresh token inválido")
-
-	// ErrAPIKeyInvalid indica que una api-key M2M no autentica: no existe, está
-	// inactiva, revocada o expirada.
-	ErrAPIKeyInvalid = errors.New("iam: api-key inválida")
 
 	// ---------------------------------------------------------------------
 	// Canje de Identity Token por Context Token (identity Plan 003 · T3.1)
@@ -52,12 +52,13 @@ var (
 	// cliente tiene que refrescar contra identity antes de volver a canjear.
 	ErrIdentityTokenExpiring = errors.New("iam: al identity token le queda muy poca vida para canjearlo")
 
-	// ErrUserNotMigrated indica que el `sub` del Identity Token no corresponde a
-	// ningún usuario de wApp, o que ese usuario no tiene membresía de tenant. Los
+	// ErrUserNotMigrated indica que el `sub` del Identity Token no tiene
+	// membresía de tenant en wApp (tabla tenant_members). Desde la Ola 5 esa es
+	// la ÚNICA forma de pertenecer a wApp: el padrón local murió con
+	// `iam_users`, así que "ser de wApp" es tener membresía, no tener fila. Los
 	// UUID se preservaron en la migración EXACTAMENTE para que esto no pase: un
-	// sujeto desconocido es un usuario sin migrar, no un usuario que crear al
-	// vuelo.
-	ErrUserNotMigrated = errors.New("iam: el sujeto del identity token no existe en wApp")
+	// sujeto sin membresía es un usuario sin migrar, no uno que crear al vuelo.
+	ErrUserNotMigrated = errors.New("iam: el sujeto del identity token no es miembro de ningún tenant de wApp")
 
 	// ErrMultipleTenants indica que el usuario es miembro de más de un tenant y
 	// el canje no puede decidir cuál va en el Context Token. Falla explícitamente

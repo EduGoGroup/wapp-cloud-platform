@@ -21,7 +21,7 @@ type RateLimitObserver interface {
 	RateLimitHit(scope string)
 }
 
-// Limiter es el token-bucket EN MEMORIA por clave (api-key/tenant o IP). El tipo
+// Limiter es el token-bucket EN MEMORIA por clave (credencial o IP). El tipo
 // vive en internal/platform/ratelimit (neutro) para que lo compartan httpapi y el
 // runtime del Motor de Flujos sin ciclo de imports; aquí se re-exporta por alias
 // para no tocar los llamantes (main.go, tests).
@@ -33,26 +33,21 @@ func NewLimiter(r rate.Limit, burst int) *Limiter {
 	return ratelimit.NewLimiter(r, burst)
 }
 
-// PublicRateLimit envuelve el mux de la API pública (:8103) con rate-limit:
-//   - /api/v1/auth/login → por IP (frena la fuerza bruta de credenciales).
-//   - resto de /api/v1   → por credencial (api-key/tenant): hash de X-API-Key o
-//     del Bearer; sin credencial, cae a la IP.
+// PublicRateLimit envuelve el mux de la API pública (:8103) con rate-limit por
+// credencial (hash del Bearer; sin credencial, cae a la IP).
+//
+// El freno por IP del login se retiró con el propio login (identity Plan 003 ·
+// Ola 5): la fuerza bruta de contraseñas se frena donde se validan, que desde la
+// Ola 3 es identity-core. Mantener aquí un cubo para una ruta que responde 404
+// solo daba la impresión de que wApp seguía protegiendo algo.
 //
 // Al exceder responde 429 con Retry-After y registra el hit en el observer. NO
-// limita /healthz ni /metrics (viven en el listener admin, no en este). login y
-// public son *Limiter independientes (defaults/env distintos).
-func PublicRateLimit(next http.Handler, public, login *Limiter, obs RateLimitObserver, log sharedlogger.Logger) http.Handler {
+// limita /healthz ni /metrics (viven en el listener admin, no en este).
+func PublicRateLimit(next http.Handler, public *Limiter, obs RateLimitObserver, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		scope := "public"
+		const scope = "public"
 		lim := public
-		var key string
-		if r.URL.Path == "/api/v1/auth/login" {
-			scope = "login"
-			lim = login
-			key = clientIP(r)
-		} else {
-			key = credentialKey(r)
-		}
+		key := credentialKey(r)
 		if lim != nil && !lim.Allow(key) {
 			if obs != nil {
 				obs.RateLimitHit(scope)
@@ -82,13 +77,10 @@ func retryAfterSeconds(l *Limiter) int {
 	return secs
 }
 
-// credentialKey deriva una clave OPACA de la credencial del request: SHA256 de
-// la api-key (X-API-Key) o del Bearer. Se hashea para NO retener el secreto en
-// claro como clave del mapa (higiene zero-knowledge). Sin credencial, cae a la IP.
+// credentialKey deriva una clave OPACA de la credencial del request: SHA256 del
+// Bearer. Se hashea para NO retener el secreto en claro como clave del mapa
+// (higiene zero-knowledge). Sin credencial, cae a la IP.
 func credentialKey(r *http.Request) string {
-	if k := strings.TrimSpace(r.Header.Get("X-API-Key")); k != "" {
-		return "k:" + hashKey(k)
-	}
 	if tok, ok := bearerToken(r); ok {
 		return "b:" + hashKey(tok)
 	}

@@ -7,37 +7,32 @@ import (
 	"strings"
 
 	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 )
 
 // Identity es la identidad autenticada que Authenticate inyecta en el contexto
 // del request. Es la representación PLANA multi-tenant de wApp (Decisión C): el
-// tenant SIEMPRE sale del token (INV-8), nunca del cuerpo. Un mismo tipo cubre
-// las dos caras del middleware:
+// tenant SIEMPRE sale del token (INV-8), nunca del cuerpo.
 //
-//   - Usuario (JWT Bearer): Subject = user_id, Roles + Grants efectivos (RBAC glob).
-//   - Servicio M2M (X-API-Key o service token): Subject = client_id, Scopes;
-//     IsService = true.
+// Desde la Ola 5 del Plan 003 de identity tiene UNA sola forma —la persona que
+// porta un Context Token de wApp— porque el plano M2M se retiró entero: nadie
+// tenía credencial y arrastrarlo era conservar un IAM propio sin uso (design.md
+// Ola 5 §7). Cablear M2M contra identity, cuando haga falta, es el modelo del
+// ADR-0025: se canjea una credencial, no se presenta.
 //
-// Los consumidores (T4/T5) la leen con IdentityFromContext y autorizan con
+// Los consumidores la leen con IdentityFromContext y autorizan con
 // RequirePermission; NO deben re-derivar el tenant de otra fuente.
 type Identity struct {
 	// TenantID es el tenant al que se acota TODA la operación (del token, INV-8).
 	TenantID string
-	// Subject es el user_id (usuario) o el client_id (M2M).
+	// Subject es el user_id de la persona (el `sub` que acreditó identity).
 	Subject string
-	// Roles son los roles del usuario (vacío en M2M).
+	// Roles son los roles del usuario EN WAPP (los resuelve el canje).
 	Roles []string
 	// Grants son los permisos efectivos del usuario, ya resueltos al emitir el
-	// token (vacío en M2M).
+	// token.
 	Grants identityrbac.Grants
-	// Scopes son los permisos concedidos a la api-key/service token (vacío en
-	// usuario).
-	Scopes []string
-	// IsService distingue la identidad M2M (true) de la de usuario (false).
-	IsService bool
 }
 
 // identityCtxKey es la clave PRIVADA del contexto (evita colisiones entre
@@ -67,36 +62,24 @@ type UserTokenValidator interface {
 	ValidateToken(token string) (*sharedjwt.Claims, error)
 }
 
-// ServiceAuthenticator resuelve identidades M2M (api-key o service token) y
-// autoriza scopes. Lo satisface *usecase.M2MService (superset de
-// in.M2MAuthenticator).
-type ServiceAuthenticator interface {
-	AuthenticateAPIKey(ctx context.Context, rawKey string) (in.ServiceIdentity, error)
-	VerifyServiceToken(ctx context.Context, token string) (in.ServiceIdentity, error)
-	AuthorizeScope(scopes []string, required string) bool
-}
-
-// Middleware agrupa la autenticación (Bearer usuario | X-API-Key | service
-// token) y la autorización RBAC/scope de la API pública. Es REUTILIZABLE: T4
-// envuelve /admin/* y T5 las rutas /api/v1 con Authenticate → RequirePermission.
+// Middleware agrupa la autenticación (Bearer con Context Token de wApp) y la
+// autorización RBAC de la API pública. Es REUTILIZABLE: envuelve /admin/* y las
+// rutas /api/v1 con Authenticate → RequirePermission.
 type Middleware struct {
 	users UserTokenValidator
-	svc   ServiceAuthenticator
 	log   sharedlogger.Logger
 }
 
-// NewMiddleware construye el middleware con el validador de tokens de usuario y
-// el autenticador M2M. El logger es opcional (puede ser nil: los rechazos se
-// registran a Debug si está presente; JAMÁS se loguea el token ni el secreto).
-func NewMiddleware(users UserTokenValidator, svc ServiceAuthenticator, log sharedlogger.Logger) *Middleware {
-	return &Middleware{users: users, svc: svc, log: log}
+// NewMiddleware construye el middleware con el validador de Context Tokens. El
+// logger es opcional (puede ser nil: los rechazos se registran a Debug si está
+// presente; JAMÁS se loguea el token ni el secreto).
+func NewMiddleware(users UserTokenValidator, log sharedlogger.Logger) *Middleware {
+	return &Middleware{users: users, log: log}
 }
 
-// Authenticate resuelve la identidad del request y la inyecta en el contexto.
-// Distingue: X-API-Key → AuthenticateAPIKey; Authorization: Bearer <jwt> →
-// primero como token de usuario (ValidateToken), y si no es de usuario
-// (token_use=service o firma no válida) cae a service token
-// (VerifyServiceToken). Sin credencial válida responde 401 y NO llama a next.
+// Authenticate resuelve la identidad del request y la inyecta en el contexto:
+// Authorization: Bearer <context-token> validado con ValidateToken. Sin
+// credencial válida responde 401 y NO llama a next.
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := m.resolve(r)
@@ -112,43 +95,31 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 // resolve deriva la Identity de las credenciales del request (sin efectos de
 // escritura). ok=false si no hay credencial o no valida.
 func (m *Middleware) resolve(r *http.Request) (Identity, bool) {
-	if key := strings.TrimSpace(r.Header.Get("X-API-Key")); key != "" {
-		si, err := m.svc.AuthenticateAPIKey(r.Context(), key)
-		if err != nil {
-			return Identity{}, false
-		}
-		return serviceIdentity(si), true
-	}
-
 	tok, ok := bearerToken(r)
 	if !ok {
 		return Identity{}, false
 	}
 
-	// Token de usuario primero: si valida y NO es un service token, es un usuario
-	// con sus grants efectivos embebidos.
-	if claims, err := m.users.ValidateToken(tok); err == nil && claims.TokenUse != sharedjwt.TokenUseService {
-		return Identity{
-			TenantID: claims.TenantID,
-			Subject:  claims.UserID,
-			Roles:    claims.Roles,
-			Grants:   claims.Grants,
-		}, true
+	// El `token_use` se exige explícitamente en vez de darse por hecho: aceptar
+	// cualquier token bien firmado sería aceptar también los que un día se
+	// emitan para otra cosa.
+	claims, err := m.users.ValidateToken(tok)
+	if err != nil || claims.TokenUse == sharedjwt.TokenUseService {
+		return Identity{}, false
 	}
-
-	// Si no era de usuario, se prueba como service token M2M.
-	if si, err := m.svc.VerifyServiceToken(r.Context(), tok); err == nil {
-		return serviceIdentity(si), true
-	}
-
-	return Identity{}, false
+	return Identity{
+		TenantID: claims.TenantID,
+		Subject:  claims.UserID,
+		Roles:    claims.Roles,
+		Grants:   claims.Grants,
+	}, true
 }
 
 // RequirePermission devuelve un middleware que exige el permiso `recurso.accion`
-// (glob RBAC). Para usuario evalúa los grants con identityrbac.EvaluateGrants
-// (default DENY, deny precede allow); para M2M evalúa el scope con
-// AuthorizeScope. Debe montarse DESPUÉS de Authenticate (necesita la Identity en
-// el contexto): 401 si no hay identidad, 403 si el permiso no se cumple.
+// (glob RBAC): evalúa los grants con identityrbac.EvaluateGrants (default DENY,
+// deny precede allow). Debe montarse DESPUÉS de Authenticate (necesita la
+// Identity en el contexto): 401 si no hay identidad, 403 si el permiso no se
+// cumple.
 func (m *Middleware) RequirePermission(perm string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -159,13 +130,7 @@ func (m *Middleware) RequirePermission(perm string) func(http.Handler) http.Hand
 				return
 			}
 
-			var allowed bool
-			if id.IsService {
-				allowed = m.svc.AuthorizeScope(id.Scopes, perm)
-			} else {
-				allowed = identityrbac.EvaluateGrants(id.Grants, perm)
-			}
-			if !allowed {
+			if !identityrbac.EvaluateGrants(id.Grants, perm) {
 				m.deny(r, http.StatusForbidden)
 				writeAuthError(w, http.StatusForbidden, "permiso denegado")
 				return
@@ -176,7 +141,7 @@ func (m *Middleware) RequirePermission(perm string) func(http.Handler) http.Hand
 }
 
 // WhoAmIHandler devuelve la Identity autenticada del contexto (tenant, subject,
-// roles/scopes). Es el ejemplo de referencia de cómo un handler protegido lee la
+// roles). Es el ejemplo de referencia de cómo un handler protegido lee la
 // identidad (IdentityFromContext) sin tocar el cuerpo; se monta detrás de
 // Authenticate. Sirve además de humo de extremo a extremo del middleware.
 func WhoAmIHandler() http.Handler {
@@ -187,23 +152,11 @@ func WhoAmIHandler() http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"tenant_id":  id.TenantID,
-			"subject":    id.Subject,
-			"roles":      id.Roles,
-			"scopes":     id.Scopes,
-			"is_service": id.IsService,
+			"tenant_id": id.TenantID,
+			"subject":   id.Subject,
+			"roles":     id.Roles,
 		})
 	})
-}
-
-// serviceIdentity mapea una identidad M2M del IAM a la Identity del contexto.
-func serviceIdentity(si in.ServiceIdentity) Identity {
-	return Identity{
-		TenantID:  si.TenantID,
-		Subject:   si.ClientID,
-		Scopes:    si.Scopes,
-		IsService: true,
-	}
 }
 
 // bearerToken extrae el token del header Authorization: Bearer <token>. ok=false
