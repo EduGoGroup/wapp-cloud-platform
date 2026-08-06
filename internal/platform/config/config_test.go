@@ -1,9 +1,41 @@
 package config
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+// isolateEnv deja el proceso SIN ninguna variable WAPP_* mientras dura el test y
+// restaura el entorno original al terminar.
+//
+// Sin esto, Load() lee el entorno REAL de quien corre los tests y los casos de
+// default comparan contra valores que el test nunca puso. No es hipotético: el
+// arranque documentado del repo es `set -a; . ./.env; set +a` (deploy/README.md),
+// así que correr `go test ./...` en esa misma shell hacía fallar los defaults de
+// storage e identity con las credenciales del .env.
+//
+// Se UNSETea, no se pone "": el loader resuelve con os.LookupEnv
+// (wapp-shared/config/provider.go:20), donde una variable definida y vacía SÍ
+// existe y gana al default — poner "" cambiaría el fallo, no lo quitaría.
+func isolateEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		key, val, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(key, EnvPrefix) {
+			continue
+		}
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("aislar entorno: unset %s: %v", key, err)
+		}
+		t.Cleanup(func() {
+			if err := os.Setenv(key, val); err != nil {
+				t.Errorf("restaurar entorno: set %s: %v", key, err)
+			}
+		})
+	}
+}
 
 func TestDatabaseConfig_DSN(t *testing.T) {
 	db := DatabaseConfig{
@@ -21,6 +53,7 @@ func TestDatabaseConfig_DSN(t *testing.T) {
 }
 
 func TestLoad_DBEnvOverrides(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(EnvPrefix+"DB_HOST", "pg")
 	t.Setenv(EnvPrefix+"DB_PORT", "6000")
 	t.Setenv(EnvPrefix+"DB_USER", "admin")
@@ -43,6 +76,7 @@ func TestLoad_DBEnvOverrides(t *testing.T) {
 }
 
 func TestLoad_Defaults(t *testing.T) {
+	isolateEnv(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load devolvió error inesperado: %v", err)
@@ -55,6 +89,7 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(EnvPrefix+"HTTP_ADDR", ":9090")
 	t.Setenv(EnvPrefix+"LOG_LEVEL", "debug")
 	t.Setenv(EnvPrefix+"LOG_JSON", "true")
@@ -76,6 +111,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 }
 
 func TestLoad_StorageDefaults(t *testing.T) {
+	isolateEnv(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load devolvió error inesperado: %v", err)
@@ -92,6 +128,7 @@ func TestLoad_StorageDefaults(t *testing.T) {
 }
 
 func TestLoad_StorageEnvOverrides(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(EnvPrefix+"STORAGE_S3_REGION", "auto")
 	t.Setenv(EnvPrefix+"STORAGE_S3_BUCKET", "wapp-media")
 	t.Setenv(EnvPrefix+"STORAGE_S3_ACCESS_KEY_ID", "AKIA")
@@ -118,6 +155,7 @@ func TestLoad_StorageEnvOverrides(t *testing.T) {
 }
 
 func TestLoad_StoragePresignExpiryInvalidFallsBack(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(EnvPrefix+"STORAGE_S3_PRESIGN_EXPIRY", "no-es-duracion")
 
 	cfg, err := Load()
@@ -130,6 +168,7 @@ func TestLoad_StoragePresignExpiryInvalidFallsBack(t *testing.T) {
 }
 
 func TestLoad_IdentityJWKSURLIsOffByDefault(t *testing.T) {
+	isolateEnv(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load devolvió error inesperado: %v", err)
@@ -142,6 +181,7 @@ func TestLoad_IdentityJWKSURLIsOffByDefault(t *testing.T) {
 }
 
 func TestLoad_IdentityJWKSURLEnvOverride(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(EnvPrefix+"IDENTITY_JWKS_URL", "http://localhost:8200/.well-known/jwks.json")
 
 	cfg, err := Load()
