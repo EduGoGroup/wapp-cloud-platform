@@ -125,7 +125,8 @@ Principales (ver `config.go` para el conjunto completo):
 | `WAPP_PKI_*` | Rutas de la CA y el cert de servidor de la PKI del gateway |
 | `WAPP_STORAGE_S3_*` (`BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `PRESIGN_EXPIRY`) | Almacén de objetos R2 (media/PDF) |
 | `WAPP_RATELIMIT_*` · `WAPP_FLOW_*` · `WAPP_HEALTH_*` · `WAPP_DIAGNOSTICS_*` | Rate-limit de la API pública, runtime del Motor de Flujos, derivación de salud de flota y retención de diagnósticos |
-| `WAPP_IMPORT_MAX_JSON_BYTES` · `WAPP_IMPORT_MAX_ITEMS` | Topes del import de catálogo (1 MiB / 500 artículos). El de bytes se aplica **antes de deserializar** y gobierna **también** `PUT /api/v1/tenant-content` — los dos escriben en la misma tabla y dos techos distintos dejarían un blob importable que el PUT rechaza |
+| `WAPP_TENANT_CONTENT_MAX_BYTES` | Peso máximo de un blob de `tenant_content` (1 MiB), aplicado **antes de deserializar**. Cuelga de la tabla y no del camino: gobierna **igual** al import de catálogo y a `PUT /api/v1/tenant-content`, porque dos techos distintos dejarían un blob importable que el PUT rechaza |
+| `WAPP_IMPORT_MAX_ITEMS` | Artículos máximos por importación de catálogo (500). Este sí es propio del import: el `PUT` genérico no cuenta artículos |
 
 Los secretos (JWT, KEK, lease, credenciales R2) **nunca** se hardcodean ni se
 loguean; en `dev`, si faltan, se generan valores efímeros con warning.

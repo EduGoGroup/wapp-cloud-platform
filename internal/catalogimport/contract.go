@@ -47,7 +47,8 @@ const DefaultMaxJSONBytes int64 = 1 << 20
 const DefaultMaxItems = 500
 
 // Limits son los topes anti-abuso del import. Los sirve la configuración
-// (WAPP_IMPORT_MAX_JSON_BYTES / WAPP_IMPORT_MAX_ITEMS); este paquete no lee el
+// (WAPP_TENANT_CONTENT_MAX_BYTES / WAPP_IMPORT_MAX_ITEMS — el de bytes gobierna la
+// TABLA, no el import, y por eso no lleva su nombre); este paquete no lee el
 // entorno, lo recibe. Un valor <= 0 cae al default: igual que en el resto del
 // repo, la configuración nunca DESACTIVA un tope por accidente.
 type Limits struct {

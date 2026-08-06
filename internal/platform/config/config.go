@@ -92,7 +92,11 @@ type AppConfig struct {
 	// Diagnostics gobierna el diagnóstico remoto (Plan 031 · T5, ADR-0023): la
 	// retención del bundle. Se lee con prefijo WAPP_DIAGNOSTICS_.
 	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
-	// Import son los topes anti-abuso del import de catálogo (Plan 041 · Ola 3,
+	// TenantContent acota el peso de un blob de tenant_content, para TODOS los que
+	// escriben en esa tabla (Plan 041 · Ola 3). Se lee con prefijo
+	// WAPP_TENANT_CONTENT_.
+	TenantContent TenantContentConfig `yaml:"tenant_content"`
+	// Import son los topes propios del import de catálogo (Plan 041 · Ola 3,
 	// D-041.5). Se lee con prefijo WAPP_IMPORT_.
 	Import ImportConfig `yaml:"import"`
 	// Identity es la puerta al SSO del grupo (identity-core, Plan 003 · Ola 1):
@@ -139,22 +143,32 @@ type DiagnosticsConfig struct {
 	BundleTTL time.Duration `yaml:"bundle_ttl"`
 }
 
-// ImportConfig son los topes anti-abuso del import de catálogo (Plan 041 · Ola 3,
-// D-041.5; patrón EduGo D-038: límites por env con default). El de bytes se aplica
-// ANTES de deserializar, que es lo que impide que un documento absurdo se
-// materialice en memoria. Defaults sanos; <=0 cae al default (nunca desactiva un
-// tope por accidente).
+// TenantContentConfig acota lo que puede pesar un blob de public.tenant_content
+// (Plan 041 · Ola 3; patrón EduGo D-038: límites por env con default).
 //
-// Los valores por defecto son los mismos que declara internal/catalogimport, que
-// es donde se aplican; un test amarra las dos parejas para que no puedan divergir.
+// El techo cuelga del OBJETO y no del camino a propósito: escriben en esa tabla
+// tanto el import de catálogo como el PUT /api/v1/tenant-content genérico, así que
+// un techo por camino permitiría subir el del import y que el PUT rechazara
+// después el mismo blob que el import acaba de aceptar — dos verdades sobre el
+// mismo dato. Por eso no vive en ImportConfig.
+//
+// El default es el mismo que declara internal/catalogimport, que es donde se
+// aplica; un test amarra los dos para que no puedan divergir.
+type TenantContentConfig struct {
+	// MaxBytes es el tamaño máximo del blob crudo, en bytes. Default 1 MiB (el que
+	// PUT /api/v1/tenant-content ya tenía fijo en el código). Se aplica LEYENDO,
+	// antes de deserializar, que es lo que impide que un documento absurdo se
+	// materialice en memoria. Se lee de WAPP_TENANT_CONTENT_MAX_BYTES; <=0 cae al
+	// default (nunca desactiva el tope por accidente).
+	MaxBytes int64 `yaml:"max_bytes"`
+}
+
+// ImportConfig son los topes propios del import de catálogo (Plan 041 · Ola 3,
+// D-041.5). El techo de bytes NO está aquí: gobierna la tabla, no el import (ver
+// TenantContentConfig).
 type ImportConfig struct {
-	// MaxJSONBytes es el tamaño máximo del documento crudo de import, en bytes.
-	// Default 1 MiB, el mismo techo que ya aplica PUT /api/v1/tenant-content al
-	// blob de catálogo: un documento que pasa el import cabe en su destino. Se lee
-	// de WAPP_IMPORT_MAX_JSON_BYTES.
-	MaxJSONBytes int64 `yaml:"max_json_bytes"`
 	// MaxItems es el número máximo de artículos por importación, sumando todas las
-	// categorías. Default 500. Se lee de WAPP_IMPORT_MAX_ITEMS.
+	// categorías. Default 500. <=0 cae al default. Se lee de WAPP_IMPORT_MAX_ITEMS.
 	MaxItems int `yaml:"max_items"`
 }
 
@@ -388,9 +402,11 @@ func defaults() AppConfig {
 		Diagnostics: DiagnosticsConfig{
 			BundleTTL: 30 * time.Minute,
 		},
+		TenantContent: TenantContentConfig{
+			MaxBytes: 1 << 20, // 1 MiB
+		},
 		Import: ImportConfig{
-			MaxJSONBytes: 1 << 20, // 1 MiB
-			MaxItems:     500,
+			MaxItems: 500,
 		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
@@ -490,8 +506,8 @@ func Load() (AppConfig, error) {
 
 	cfg.Diagnostics.BundleTTL = loader.GetDuration("DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
 
-	if n := loader.GetInt("IMPORT_MAX_JSON_BYTES", int(cfg.Import.MaxJSONBytes)); n > 0 {
-		cfg.Import.MaxJSONBytes = int64(n)
+	if n := loader.GetInt("TENANT_CONTENT_MAX_BYTES", int(cfg.TenantContent.MaxBytes)); n > 0 {
+		cfg.TenantContent.MaxBytes = int64(n)
 	}
 	if n := loader.GetInt("IMPORT_MAX_ITEMS", cfg.Import.MaxItems); n > 0 {
 		cfg.Import.MaxItems = n

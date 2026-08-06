@@ -103,7 +103,7 @@ type MediaDeps struct {
 	Content TenantContentStore // blobs JSONB por-tenant (tenant_content, T6)
 	// ContentMaxBytes es el techo del blob de tenant_content. Cero-valor ⇒ default de
 	// catalogimport (1 MiB, el que este endpoint tenía hardcodeado). Se cablea desde
-	// config.ImportConfig: es el MISMO número que gobierna el import de catálogo,
+	// config.TenantContentConfig: es el MISMO número que gobierna el import de catálogo,
 	// porque los dos escriben en la misma tabla y dos techos distintos dejarían un
 	// blob importable que el PUT genérico rechaza (Plan 041 · Ola 3).
 	ContentMaxBytes int64

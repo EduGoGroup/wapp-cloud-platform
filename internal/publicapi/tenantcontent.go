@@ -17,7 +17,7 @@ import (
 // UNA SOLA FUENTE, A PROPÓSITO. Este PUT y el import de catálogo (Plan 041 · Ola 3)
 // escriben en la MISMA tabla, así que dos techos independientes abren una trampa
 // concreta: subir el límite del import a 4 MiB, importar bien, y que después este
-// PUT rechace ESE MISMO blob. Por eso los dos salen de WAPP_IMPORT_MAX_JSON_BYTES y
+// PUT rechace ESE MISMO blob. Por eso los dos salen de WAPP_TENANT_CONTENT_MAX_BYTES y
 // comparten el default de catalogimport (1 MiB, el valor que este endpoint ya tenía
 // hardcodeado: por defecto no cambia nada).
 func tenantContentBytes(configured int64) int64 {

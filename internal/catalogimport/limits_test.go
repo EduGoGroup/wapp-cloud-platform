@@ -3,6 +3,7 @@ package catalogimport_test
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,7 +116,7 @@ func TestReadLimited_JustoEnElTecho_Pasa(t *testing.T) {
 }
 
 // TestReadLimited_TechoPropio respeta un límite configurado más bajo que el
-// default: es lo que hace WAPP_IMPORT_MAX_JSON_BYTES útil.
+// default: es lo que hace WAPP_TENANT_CONTENT_MAX_BYTES útil.
 func TestReadLimited_TechoPropio(t *testing.T) {
 	límites := catalogimport.Limits{MaxJSONBytes: 64, MaxItems: 10}
 	if _, err := catalogimport.ReadLimited(strings.NewReader(strings.Repeat("x", 65)), límites); !errors.Is(err, catalogimport.ErrDocumentTooLarge) {
@@ -128,7 +129,7 @@ func TestReadLimited_TechoPropio(t *testing.T) {
 
 // TestLimits_NoPositivosCaenAlDefault: una configuración a 0 —o negativa— no
 // DESACTIVA el tope. Es la misma regla que el resto de la configuración del repo, y
-// aquí es de seguridad: un WAPP_IMPORT_MAX_JSON_BYTES mal escrito abriría la puerta
+// aquí es de seguridad: un WAPP_TENANT_CONTENT_MAX_BYTES mal escrito abriría la puerta
 // a subir cualquier cosa.
 func TestLimits_NoPositivosCaenAlDefault(t *testing.T) {
 	for _, límites := range []catalogimport.Limits{{}, {MaxJSONBytes: -1, MaxItems: -1}} {
@@ -136,6 +137,40 @@ func TestLimits_NoPositivosCaenAlDefault(t *testing.T) {
 			t.Errorf("con %+v el techo debe caer al default y rechazar; llegó %v", límites, err)
 		}
 	}
+}
+
+// TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo comprueba las dos mitades
+// del renombre WAPP_IMPORT_MAX_JSON_BYTES → WAPP_TENANT_CONTENT_MAX_BYTES: que el
+// nombre nuevo se lee de verdad, y que el viejo NO quedó como alias.
+//
+// La segunda mitad es la que importa y la que se olvida: un alias existiría para
+// no romper a nadie, y aquí no hay nadie —el env nace sin publicar, sin ningún
+// entorno que lo tenga puesto—, así que conservarlo sería mantener viva la mentira
+// que el renombre quita (el techo cuelga de la TABLA, no del import).
+func TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo(t *testing.T) {
+	const cuatroMiB = 4 << 20
+
+	t.Run("el nombre nuevo manda", func(t *testing.T) {
+		t.Setenv("WAPP_TENANT_CONTENT_MAX_BYTES", strconv.Itoa(cuatroMiB))
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("no se pudo cargar la configuración: %v", err)
+		}
+		if cfg.TenantContent.MaxBytes != cuatroMiB {
+			t.Errorf("MaxBytes=%d; se esperaba %d leído de WAPP_TENANT_CONTENT_MAX_BYTES", cfg.TenantContent.MaxBytes, cuatroMiB)
+		}
+	})
+
+	t.Run("el nombre viejo ya no existe", func(t *testing.T) {
+		t.Setenv("WAPP_IMPORT_MAX_JSON_BYTES", strconv.Itoa(cuatroMiB))
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("no se pudo cargar la configuración: %v", err)
+		}
+		if cfg.TenantContent.MaxBytes != catalogimport.DefaultMaxJSONBytes {
+			t.Errorf("MaxBytes=%d: el nombre viejo sigue teniendo efecto y se decidió NO dejar alias", cfg.TenantContent.MaxBytes)
+		}
+	})
 }
 
 // TestDefaultsDelValidadorYDeLaConfiguraciónCoinciden amarra las dos parejas de
@@ -147,15 +182,15 @@ func TestLimits_NoPositivosCaenAlDefault(t *testing.T) {
 // depender de lo que tenga el entorno de quien corre el test, y de paso comprueba
 // que un valor no positivo del entorno no desactiva el tope.
 func TestDefaultsDelValidadorYDeLaConfiguraciónCoinciden(t *testing.T) {
-	t.Setenv("WAPP_IMPORT_MAX_JSON_BYTES", "0")
+	t.Setenv("WAPP_TENANT_CONTENT_MAX_BYTES", "0")
 	t.Setenv("WAPP_IMPORT_MAX_ITEMS", "0")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("no se pudo cargar la configuración: %v", err)
 	}
-	if cfg.Import.MaxJSONBytes != catalogimport.DefaultMaxJSONBytes {
-		t.Errorf("config dice %d bytes y el validador %d", cfg.Import.MaxJSONBytes, catalogimport.DefaultMaxJSONBytes)
+	if cfg.TenantContent.MaxBytes != catalogimport.DefaultMaxJSONBytes {
+		t.Errorf("config dice %d bytes y el validador %d", cfg.TenantContent.MaxBytes, catalogimport.DefaultMaxJSONBytes)
 	}
 	if cfg.Import.MaxItems != catalogimport.DefaultMaxItems {
 		t.Errorf("config dice %d artículos y el validador %d", cfg.Import.MaxItems, catalogimport.DefaultMaxItems)
