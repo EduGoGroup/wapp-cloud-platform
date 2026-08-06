@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
@@ -30,12 +31,31 @@ func projectorMeta() modules.EffectMeta {
 	return modules.EffectMeta{TenantID: "tenant-1", ContactID: "contacto-opaco-1", SessionID: "sesion-1"}
 }
 
+// envíoEspía registra las peticiones de línea de envío del proyector. Es un espía
+// y no el store de solicitudes de verdad porque en estos tests la solicitud vive
+// en el repositorio de flujos: lo que aquí se prueba es QUÉ pide el carrito y
+// SOBRE QUÉ solicitud, no cómo se materializa la línea (eso son los tests del
+// paquete intakes y el de integración contra Postgres).
+type envíoEspía struct {
+	llamadas int
+	tenantID string
+	intakeID string
+	política intakes.ShippingPolicy
+	falla    error
+}
+
+func (e *envíoEspía) EnsureShippingLine(_ context.Context, tenantID, intakeID string, policy intakes.ShippingPolicy) error {
+	e.llamadas++
+	e.tenantID, e.intakeID, e.política = tenantID, intakeID, policy
+	return e.falla
+}
+
 // TestProjector_CartClosed_EscribeRevisionUno: al cerrar el carrito nace la
 // revisión 1 de la solicitud (ADR-0031 §3), con la foto de lo que se cerró.
 func TestProjector_CartClosed_EscribeRevisionUno(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	revisions := intakes.NewMemoryStore()
-	p := NewProjector(repo, revisions)
+	p := NewProjector(repo, revisions, &envíoEspía{})
 	ctx := context.Background()
 
 	if err := p.Project(ctx, projectorMeta(), cartClosedEffect()); err != nil {
@@ -90,7 +110,7 @@ func TestProjector_CartClosed_EscribeRevisionUno(t *testing.T) {
 func TestProjector_CartClosed_CuelgaLaRevisionDeLaSolicitudAbierta(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	revisions := intakes.NewMemoryStore()
-	p := NewProjector(repo, revisions)
+	p := NewProjector(repo, revisions, &envíoEspía{})
 	ctx := context.Background()
 	meta := projectorMeta()
 
@@ -129,7 +149,7 @@ func (revisionRota) InsertRevision(context.Context, intakes.Revision) (intakes.R
 // (la solicitud y sus líneas sobreviven), pero el error sube en vez de tragarse.
 func TestProjector_CartClosed_FalloDeRevisionSePropaga(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, revisionRota{})
+	p := NewProjector(repo, revisionRota{}, &envíoEspía{})
 
 	err := p.Project(context.Background(), projectorMeta(), cartClosedEffect())
 	if !errors.Is(err, errRevisionRota) {
@@ -150,7 +170,7 @@ func TestProjector_CartClosed_FalloDeRevisionSePropaga(t *testing.T) {
 // estado conversacional que se tira al cerrar.
 func TestProjector_CartClosed_PersisteLaNotaDelPedido(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, intakes.NewMemoryStore())
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{})
 
 	eff := cartClosedEffect()
 	eff.Payload["customer_note"] = "dejarlo en portería"
@@ -176,7 +196,7 @@ func TestProjector_CartClosed_PersisteLaNotaDelPedido(t *testing.T) {
 // misma tolerancia que ya tenía `customization` por línea.
 func TestProjector_CartClosed_SinNotaEsCadenaVacía(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, intakes.NewMemoryStore())
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{})
 
 	if err := p.Project(context.Background(), projectorMeta(), cartClosedEffect()); err != nil {
 		t.Fatalf("Project(cart_closed): %v", err)
@@ -184,5 +204,66 @@ func TestProjector_CartClosed_SinNotaEsCadenaVacía(t *testing.T) {
 	cerradas := repo.Intakes()
 	if len(cerradas) != 1 || cerradas[0].CustomerNote != "" {
 		t.Fatalf("sin indicación, la cabecera guarda la cadena vacía: %+v", cerradas)
+	}
+}
+
+// TestProjector_CartClosed_PideLaLíneaDeEnvío: el cierre pide la línea de envío
+// SOBRE LA SOLICITUD QUE CERRÓ y con la política del carrito
+// (ShippingOnlyIfZones, D-041.11). El id importa tanto como la política: pedirla
+// sobre otra solicitud le cobraría el envío a un pedido ajeno.
+func TestProjector_CartClosed_PideLaLíneaDeEnvío(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	envío := &envíoEspía{}
+	p := NewProjector(repo, intakes.NewMemoryStore(), envío)
+
+	if err := p.Project(context.Background(), projectorMeta(), cartClosedEffect()); err != nil {
+		t.Fatalf("Project(cart_closed): %v", err)
+	}
+
+	cerradas := repo.Intakes()
+	if len(cerradas) != 1 {
+		t.Fatalf("solicitudes cerradas: got %d, want 1", len(cerradas))
+	}
+	if envío.llamadas != 1 {
+		t.Fatalf("peticiones de línea de envío: got %d, want 1", envío.llamadas)
+	}
+	if envío.intakeID != cerradas[0].ID || envío.tenantID != projectorMeta().TenantID {
+		t.Errorf("se pidió el envío de (tenant=%q, solicitud=%q); quiero (%q, %q)",
+			envío.tenantID, envío.intakeID, projectorMeta().TenantID, cerradas[0].ID)
+	}
+	if envío.política != intakes.ShippingOnlyIfZones {
+		t.Errorf("política=%v; el cierre del carrito NO mete línea «por confirmar» a quien no cobra envío",
+			envío.política)
+	}
+}
+
+// TestProjector_CartClosed_FalloDelEnvíoSePropaga: como el de la revisión, el
+// cierre ya está confirmado pero el error sube (el dispatcher lo loguea) en vez de
+// tragarse. Un envío que no se pudo poner y nadie ve es un pedido mal cobrado.
+func TestProjector_CartClosed_FalloDelEnvíoSePropaga(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	errEnvío := errors.New("envío caído")
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{falla: errEnvío})
+
+	err := p.Project(context.Background(), projectorMeta(), cartClosedEffect())
+	if !errors.Is(err, errEnvío) {
+		t.Fatalf("error: got %v, want errEnvío", err)
+	}
+	if cerradas := repo.Intakes(); len(cerradas) != 1 || cerradas[0].Status != intakeStatusClosed {
+		t.Fatalf("el cierre debe sobrevivir al fallo del envío: %+v", cerradas)
+	}
+}
+
+// TestShippingSKU_VaBajoElPrefijoReservado ata los dos literales que hacen segura
+// la línea de envío y que viven en paquetes distintos por fuerza (el carrito
+// importa solicitudes, así que solicitudes no puede importar al carrito).
+//
+// Si alguien cambiara el prefijo reservado sin mover el sku, el validador del
+// import dejaría de proteger `_shipping` y un catálogo podría declarar un artículo
+// que se hace pasar por la línea del sistema. Esto lo muerde aquí.
+func TestShippingSKU_VaBajoElPrefijoReservado(t *testing.T) {
+	if !strings.HasPrefix(intakes.ShippingSKU, SystemSKUPrefix) {
+		t.Fatalf("el sku de envío %q no cae bajo el prefijo reservado %q",
+			intakes.ShippingSKU, SystemSKUPrefix)
 	}
 }

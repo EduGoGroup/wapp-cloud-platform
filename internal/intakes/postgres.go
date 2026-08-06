@@ -404,12 +404,46 @@ func nullableText(s string) any {
 // si el estado almacenado sigue siendo uno de los esperados. Sin esa condición, dos
 // operadores simultáneos podrían encadenar dos transiciones que por separado eran
 // válidas y juntas saltan un paso del ciclo.
+//
+// Va en TRANSACCIÓN porque entrar a `pending_approval` arrastra la línea de envío
+// (D-041.11) y las dos cosas son un solo hecho: o la solicitud queda por aprobar
+// CON su envío, o no queda por aprobar. El CAS toma el candado de la fila, así que
+// el paso del envío no necesita bloquearla otra vez.
 func (p *Postgres) UpdateStatus(ctx context.Context, tenantID, intakeID, to string, expected []string) (Intake, error) {
 	if _, err := uuid.Parse(intakeID); err != nil {
 		return Intake{}, ErrNotFound
 	}
 
-	updated, err := scanIntake(p.db.QueryRowContext(ctx, `
+	// Se declara FUERA de la clausura porque WithTx puede REEJECUTARLA ante un
+	// deadlock: cada intento la reasigna y vale la del intento que confirmó.
+	var out Intake
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		updated, err := casStatusTx(ctx, tx, tenantID, intakeID, to, expected)
+		if err != nil {
+			return err
+		}
+		out = updated
+		if NormalizeStatus(to) != StatusPendingApproval {
+			return nil
+		}
+		changed, err := ensureShippingTx(ctx, tx, tenantID, intakeID, ShippingAlways)
+		if err != nil || !changed {
+			return err
+		}
+		out, err = recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		return err
+	})
+	if err != nil {
+		return Intake{}, err
+	}
+	return out, nil
+}
+
+// casStatusTx ejecuta el compare-and-swap del estado dentro de la transacción y
+// distingue "no es del tenant" (ErrNotFound) de "otro operador se adelantó"
+// (ErrConflict) con una relectura: sin ella, las dos serían el mismo silencio.
+func casStatusTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID, to string, expected []string) (Intake, error) {
+	updated, err := scanIntake(tx.QueryRowContext(ctx, `
 		UPDATE public.intakes
 		SET status = $3, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2 AND status = ANY($4)
@@ -417,10 +451,8 @@ func (p *Postgres) UpdateStatus(ctx context.Context, tenantID, intakeID, to stri
 		tenantID, intakeID, to, expected))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// Nada se escribió: o la solicitud no es del tenant, o su estado cambió
-		// entre la validación y esta escritura. Se distingue con una relectura.
 		var exists bool
-		if qerr := p.db.QueryRowContext(ctx,
+		if qerr := tx.QueryRowContext(ctx,
 			`SELECT true FROM public.intakes WHERE tenant_id = $1 AND id = $2`,
 			tenantID, intakeID).Scan(&exists); qerr != nil {
 			if errors.Is(qerr, sql.ErrNoRows) {
@@ -433,4 +465,121 @@ func (p *Postgres) UpdateStatus(ctx context.Context, tenantID, intakeID, to stri
 		return Intake{}, err
 	}
 	return updated, nil
+}
+
+// EnsureShippingLine implementa Store: una transacción propia que BLOQUEA la
+// cabecera (el mismo punto de serialización que toma el CAS de UpdateStatus) y
+// deja la línea de envío puesta y el total cuadrado. Dos llamadas simultáneas
+// sobre la misma solicitud se serializan; la segunda ve la línea de la primera y
+// no escribe otra.
+func (p *Postgres) EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return ErrNotFound
+	}
+	return postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		var exists bool
+		err := tx.QueryRowContext(ctx,
+			`SELECT true FROM public.intakes WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			tenantID, intakeID).Scan(&exists)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("intakes: bloquear la solicitud: %w", err)
+		}
+
+		changed, err := ensureShippingTx(ctx, tx, tenantID, intakeID, policy)
+		if err != nil || !changed {
+			return err
+		}
+		_, err = recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		return err
+	})
+}
+
+// ensureShippingTx deja EXACTAMENTE una línea de envío en la solicitud y dice si
+// escribió algo. No recalcula el total: eso lo hace el llamante, que es quien sabe
+// si necesita la cabecera de vuelta.
+//
+// El orden importa: primero la política —si no aplica no se toca nada y no se lee
+// una línea que no va a cambiar— y solo después la fila.
+func ensureShippingTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, policy ShippingPolicy) (bool, error) {
+	zones, err := shippingZonesTx(ctx, tx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if !policy.applies(zones) {
+		return false, nil
+	}
+	desired := DesiredShippingLine(zones)
+
+	var (
+		rowID  int64
+		stored Item
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, label, qty, unit_price
+		FROM public.intake_items
+		WHERE intake_id = $1 AND sku = $2
+	`, intakeID, ShippingSKU).Scan(&rowID, &stored.Label, &stored.Qty, &stored.UnitPrice)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		it := desired.item()
+		if _, ierr := tx.ExecContext(ctx, `
+			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+			VALUES ($1, $2, $3, '', $4, $5)
+		`, intakeID, it.SKU, it.Label, it.Qty, it.UnitPrice); ierr != nil {
+			return false, fmt.Errorf("intakes: insertar la línea de envío: %w", ierr)
+		}
+		return true, nil
+	case err != nil:
+		return false, fmt.Errorf("intakes: leer la línea de envío: %w", err)
+	}
+
+	if !desired.Supersedes(stored) {
+		return false, nil
+	}
+	// Se ACTUALIZA la fila en vez de borrarla e insertar otra: así la línea conserva
+	// su added_at y su sitio en el pedido, y en ningún instante hay dos envíos.
+	it := desired.item()
+	if _, uerr := tx.ExecContext(ctx, `
+		UPDATE public.intake_items SET label = $2, qty = $3, unit_price = $4 WHERE id = $1
+	`, rowID, it.Label, it.Qty, it.UnitPrice); uerr != nil {
+		return false, fmt.Errorf("intakes: actualizar la línea de envío: %w", uerr)
+	}
+	return true, nil
+}
+
+// shippingZonesTx lee tenant_settings.shipping_zones. Un tenant SIN fila de config
+// no es un error: es un tenant que no configuró nada (mismo criterio que
+// GetTenantSettings del módulo de flujos) y por tanto no tiene zonas.
+func shippingZonesTx(ctx context.Context, tx *sql.Tx, tenantID string) ([]ShippingZone, error) {
+	var raw []byte
+	err := tx.QueryRowContext(ctx,
+		`SELECT shipping_zones FROM public.tenant_settings WHERE tenant_id = $1`,
+		tenantID).Scan(&raw)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("intakes: leer las zonas de envío del tenant: %w", err)
+	}
+	return ParseShippingZones(raw)
+}
+
+// recomputeTotalTx recalcula el total de la cabecera como la SUMA de sus líneas y
+// devuelve la solicitud ya coherente. Se recalcula entero en vez de sumarle el
+// envío: sumar deja el total dependiendo de cuántas veces se llamó, y el criterio
+// de esta tarea es justamente que llamar N veces dé lo mismo que llamar una.
+func recomputeTotalTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string) (Intake, error) {
+	return scanIntake(tx.QueryRowContext(ctx, `
+		UPDATE public.intakes i
+		SET total = COALESCE((
+			    SELECT SUM(it.qty * it.unit_price)
+			    FROM public.intake_items it
+			    WHERE it.intake_id = i.id), 0),
+		    updated_at = now()
+		WHERE i.tenant_id = $1 AND i.id = $2
+		RETURNING `+intakeCols,
+		tenantID, intakeID))
 }

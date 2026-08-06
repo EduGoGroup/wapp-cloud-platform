@@ -17,6 +17,8 @@
 --      el «sin cebolla» que quien prepara tiene que leer (T4.1b, D-041.17).
 --   6. public.intakes gana la INDICACIÓN del cliente para todo el pedido
 --      (customer_note): el «dejarlo en portería» (T4.1c, D-041.19).
+--   7. public.intake_items gana el índice ÚNICO PARCIAL que hace estructural la
+--      regla «una solicitud tiene como mucho UNA línea de envío» (T4.3, D-041.11).
 --
 -- LO QUE ESTA MIGRACIÓN NO HACE, a propósito:
 --   * NO añade un CHECK de status a public.intakes. La 0041 lo dejó fuera
@@ -232,3 +234,26 @@ ALTER TABLE public.intakes ADD COLUMN IF NOT EXISTS customer_note TEXT NOT NULL 
 
 COMMENT ON COLUMN public.intakes.customer_note IS
     'Indicacion del CLIENTE para TODO el pedido ("sin gluten", "dejar en porteria"). Instruccion de PRODUCCION/ENTREGA, no facturable: jamas entra en total. En claro a proposito (ADR-0034 nivel 1). Max 280 runas, saneado (sin controles, sin saltos de linea). NO es un cajon de texto libre: direcciones y datos del comprador van a intake_buyer_data, cifrados.';
+
+-- ------------------------------------------------------------
+-- 7. Una sola línea de envío por solicitud (D-041.11, T4.3)
+-- ------------------------------------------------------------
+-- La línea de envío es un intake_items normal con sku '_shipping'. Que esté
+-- EXACTAMENTE UNA VEZ es el criterio entero de la tarea, y el código lo sostiene
+-- serializando por la cabecera de la solicitud (SELECT ... FOR UPDATE) antes de
+-- decidir si inserta. Este índice es la otra mitad: convierte «dos envíos en el
+-- mismo pedido» —el cliente pagando el reparto dos veces— en un error de escritura
+-- en vez de en una fila de más que nadie mira.
+--
+-- Es PARCIAL a propósito: solo mira las líneas del sistema. Un pedido puede tener
+-- dos líneas del mismo artículo de catálogo (dos empanadas pedidas por separado, o
+-- la misma con dos personalizaciones distintas — D-041.20 parte líneas justo para
+-- eso), así que un UNIQUE sobre (intake_id, sku) a secas rompería el carrito.
+--
+-- El prefijo '_' está reservado (el validador del import lo rechaza, T3.1): ningún
+-- catálogo de tenant puede producir este sku, así que el índice no puede morder a
+-- una línea de cliente. Y no puede fallar al crearse sobre una base viva: antes de
+-- esta tarea NADIE escribía '_shipping', luego no hay duplicados históricos que
+-- reventaran el replay.
+CREATE UNIQUE INDEX IF NOT EXISTS intake_items_shipping_uniq
+    ON public.intake_items (intake_id) WHERE sku = '_shipping';

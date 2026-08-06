@@ -1,12 +1,24 @@
 package runtime_test
 
 import (
+	"context"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
+
+// sinEnvío es un ShippingEnsurer que no hace nada. Estos tests miran las filas que
+// proyecta el carrito (intakes/intake_items del repositorio de flujos), y la línea
+// de envío se decide en el dominio de solicitudes —otro almacén— con sus propios
+// tests (Plan 041 · T4.3). Un nil aquí haría estallar el cierre.
+type sinEnvío struct{}
+
+func (sinEnvío) EnsureShippingLine(context.Context, string, string, intakes.ShippingPolicy) error {
+	return nil
+}
 
 // persistSinkWith construye el PersistSink con los proyectores por-módulo (cart +
 // survey), como hace el arranque real (main.go), para que los tests que verifican la
@@ -19,7 +31,7 @@ import (
 // pasarle un nil lo haría estallar (ADR-0031 §3, Plan 041 · T4.1).
 func persistSinkWith(repo store.Repository) *runtime.PersistSink {
 	return runtime.NewPersistSink(repo,
-		cart.NewProjector(repo, intakes.NewMemoryStore()),
+		cart.NewProjector(repo, intakes.NewMemoryStore(), sinEnvío{}),
 		survey.NewProjector(repo))
 }
 

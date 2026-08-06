@@ -45,6 +45,17 @@ type RevisionWriter interface {
 	InsertRevision(ctx context.Context, rev intakes.Revision) (intakes.Revision, error)
 }
 
+// ShippingEnsurer es lo ÚNICO que el proyector necesita para la línea estándar de
+// envío (D-041.11): pedir que esté. Lo satisfacen *intakes.Postgres,
+// *intakes.MemoryStore y *intakes.Service.
+//
+// El carrito NO decide el precio del envío ni conoce las zonas del tenant: eso lo
+// resuelve el dominio de solicitudes, que es de quien es la línea. Aquí solo se
+// dice CUÁNDO —al cerrar— y con qué política.
+type ShippingEnsurer interface {
+	EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy intakes.ShippingPolicy) error
+}
+
 // Projector implementa modules.Projector para los efectos del carrito (Plan 027 ·
 // Ola 3 · T8, cierra H10): item_added asegura la solicitud "open", cart_closed
 // cierra atómicamente solicitud+líneas, y cart_cancelled/cart_expired transicionan
@@ -56,16 +67,19 @@ type RevisionWriter interface {
 type Projector struct {
 	store     ProjectionStore
 	revisions RevisionWriter
+	shipping  ShippingEnsurer
 }
 
-// NewProjector construye el proyector del carrito sobre el almacén de solicitudes
-// y el escritor de revisiones.
+// NewProjector construye el proyector del carrito sobre el almacén de solicitudes,
+// el escritor de revisiones y el garante de la línea de envío.
 //
-// `revisions` es un parámetro OBLIGATORIO y no una opción con cero-valor a
-// propósito: un proyector sin escritor de revisiones cerraría carritos sin dejar
-// rastro y ningún test lo notaría. Si falta, que rompa en compilación.
-func NewProjector(s ProjectionStore, revisions RevisionWriter) *Projector {
-	return &Projector{store: s, revisions: revisions}
+// `revisions` y `shipping` son parámetros OBLIGATORIOS y no opciones con
+// cero-valor a propósito: un proyector sin escritor de revisiones cerraría
+// carritos sin dejar rastro, y uno sin garante de envío cerraría pedidos sin
+// cobrar el envío del tenant que sí lo cobra. Ninguna de las dos cosas la notaría
+// un test. Si faltan, que rompa en compilación.
+func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping ShippingEnsurer) *Projector {
+	return &Projector{store: s, revisions: revisions, shipping: shipping}
 }
 
 // Handles reconoce los efectos que el carrito PROYECTA a tablas tipadas. Los efectos
@@ -172,6 +186,16 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 		CreatedBy: intakes.RevisionBySystem,
 	}); err != nil {
 		return fmt.Errorf("cart: revisión del cierre de la solicitud %s: %w", intakeID, err)
+	}
+
+	// La línea de envío va DESPUÉS de la revisión, y no antes, para que la revisión
+	// 1 siga siendo la foto FIEL de lo que armó el cliente: el envío lo pone la
+	// plataforma encima, no el carrito. Con ShippingOnlyIfZones, un tenant que no
+	// cobra envío cierra exactamente igual que antes de esta tarea — este cierre no
+	// pasa por ningún ciclo de aprobación (va directo a `confirmed`), así que una
+	// línea «por confirmar» que nadie va a precificar solo sería ruido (D-041.11).
+	if err := p.shipping.EnsureShippingLine(ctx, meta.TenantID, intakeID, intakes.ShippingOnlyIfZones); err != nil {
+		return fmt.Errorf("cart: línea de envío de la solicitud %s: %w", intakeID, err)
 	}
 	return nil
 }

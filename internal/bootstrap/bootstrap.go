@@ -191,13 +191,15 @@ func Run(ctx context.Context) error {
 	triggerStore := trigger.NewPostgresStore(db)
 	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
 	// El store de SOLICITUDES lo comparten dos consumidores: el proyector del
-	// carrito, que le cuelga la revisión 1 al cerrar (ADR-0031 §3), y la API
-	// pública, que lee la bandeja. Es el mismo pool y el mismo dominio: dos
-	// instancias solo serían dos nombres para lo mismo.
+	// carrito, que le cuelga la revisión 1 al cerrar (ADR-0031 §3) y le pone la
+	// línea de envío (D-041.11), y la API pública, que lee la bandeja. Es el mismo
+	// pool y el mismo dominio: dos instancias solo serían dos nombres para lo mismo.
+	// Por eso el proyector lo recibe DOS VECES: satisface sus dos puertos —escritor
+	// de revisiones y garante del envío— sin que el carrito conozca el store entero.
 	intakeStore := intakes.NewPostgres(db)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
-			cart.NewProjector(flowStore, intakeStore),
+			cart.NewProjector(flowStore, intakeStore, intakeStore),
 			survey.NewProjector(flowStore))),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),

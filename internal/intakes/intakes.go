@@ -203,5 +203,23 @@ type Store interface {
 	// variantes en BD del estado que se validó, StoredVariants). Devuelve
 	// ErrNotFound si la solicitud no es del tenant y ErrConflict si existe pero su
 	// estado ya no es el esperado.
+	//
+	// Cuando el destino es `pending_approval` garantiza ADEMÁS la línea de envío
+	// (D-041.11) en la MISMA unidad de trabajo, y la cabecera que devuelve ya trae
+	// el total con ella. No es un efecto colateral escondido: «toda solicitud en
+	// pending_approval lleva su línea de envío» es un INVARIANTE del estado, y el
+	// único sitio donde se puede sostener sin ventana es donde se escribe el
+	// estado. Hacerlo en dos pasos dejaría presupuestos sin envío cada vez que el
+	// segundo fallara, y el reintento del operador chocaría con un 422 por estar ya
+	// en pending_approval.
 	UpdateStatus(ctx context.Context, tenantID, intakeID, to string, expected []string) (Intake, error)
+
+	// EnsureShippingLine garantiza que la solicitud tenga EXACTAMENTE UNA línea de
+	// envío (sku ShippingSKU, D-041.11) y deja el total de la cabecera coherente
+	// con sus líneas. Es IDEMPOTENTE: aplicarla N veces deja una sola línea.
+	//
+	// `policy` decide si la línea se materializa siempre o solo cuando el tenant
+	// tiene zonas configuradas (ver ShippingPolicy). Devuelve ErrNotFound si la
+	// solicitud no es del tenant.
+	EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error
 }

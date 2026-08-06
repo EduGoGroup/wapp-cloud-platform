@@ -18,7 +18,8 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	rows      map[string][]row // por tenant
 	items     map[string][]Item
-	revisions map[string][]Revision // por solicitud, en orden de escritura
+	revisions map[string][]Revision     // por solicitud, en orden de escritura
+	zones     map[string][]ShippingZone // por tenant; imita tenant_settings.shipping_zones
 }
 
 // row es una solicitud almacenada con su estado tal cual (sin normalizar).
@@ -33,6 +34,40 @@ func NewMemoryStore() *MemoryStore {
 		rows:      map[string][]row{},
 		items:     map[string][]Item{},
 		revisions: map[string][]Revision{},
+		zones:     map[string][]ShippingZone{},
+	}
+}
+
+// SetShippingZones siembra las zonas de envío del tenant, como haría un UPDATE de
+// tenant_settings.shipping_zones. Sin llamarla, el tenant no tiene zonas — que es
+// el DEFAULT de la columna y el estado de arranque de cualquier tenant real.
+func (m *MemoryStore) SetShippingZones(tenantID string, zones ...ShippingZone) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.zones[tenantID] = slices.Clone(zones)
+}
+
+// SetShippingPrice precifica a mano la línea de envío de una solicitud y cuadra el
+// total, que es lo que hará el dueño desde la consola cuando le ponga precio a un
+// «Envío por confirmar» (D-041.11: v1, el dueño precifica). Es un mutador para los
+// tests —como Add—, no parte de ningún puerto. Sin línea de envío no hace nada.
+func (m *MemoryStore) SetShippingPrice(tenantID, intakeID string, price float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		for j, it := range m.items[intakeID] {
+			if it.SKU != ShippingSKU {
+				continue
+			}
+			m.items[intakeID][j].UnitPrice = price
+			m.recomputeTotalLocked(tenantID, i, intakeID)
+			return
+		}
+		return
 	}
 }
 
@@ -179,7 +214,11 @@ func (m *MemoryStore) Revisions(intakeID string) []Revision {
 	return slices.Clone(m.revisions[intakeID])
 }
 
-// UpdateStatus implementa Store con el mismo compare-and-swap que el Postgres.
+// UpdateStatus implementa Store con el mismo compare-and-swap que el Postgres —y,
+// como él, deja puesta la línea de envío al entrar a `pending_approval` (D-041.11).
+// Esa paridad es la razón de ser de este store: un test de handler contra él solo
+// dice algo verdadero sobre producción si las dos escrituras van juntas aquí
+// también.
 func (m *MemoryStore) UpdateStatus(_ context.Context, tenantID, intakeID, to string, expected []string) (Intake, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -193,9 +232,73 @@ func (m *MemoryStore) UpdateStatus(_ context.Context, tenantID, intakeID, to str
 		}
 		m.rows[tenantID][i].status = to
 		m.rows[tenantID][i].intake.Status = to
+		if NormalizeStatus(to) == StatusPendingApproval {
+			if _, err := m.ensureShippingLocked(tenantID, i, ShippingAlways); err != nil {
+				return Intake{}, err
+			}
+		}
 		updated := m.rows[tenantID][i].intake
 		updated.Status = NormalizeStatus(to)
 		return updated, nil
 	}
 	return Intake{}, ErrNotFound
+}
+
+// EnsureShippingLine implementa Store con las MISMAS reglas que el Postgres: una
+// sola línea de envío, la política decide si se materializa, y el total de la
+// cabecera queda cuadrado con las líneas.
+func (m *MemoryStore) EnsureShippingLine(_ context.Context, tenantID, intakeID string, policy ShippingPolicy) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		_, err := m.ensureShippingLocked(tenantID, i, policy)
+		return err
+	}
+	return ErrNotFound
+}
+
+// ensureShippingLocked es el cuerpo compartido por UpdateStatus y
+// EnsureShippingLine; el llamante tiene el candado tomado y ya resolvió la fila
+// (índice `i` dentro de m.rows[tenantID]).
+func (m *MemoryStore) ensureShippingLocked(tenantID string, i int, policy ShippingPolicy) (bool, error) {
+	zones := m.zones[tenantID]
+	if !policy.applies(zones) {
+		return false, nil
+	}
+	desired := DesiredShippingLine(zones)
+
+	intakeID := m.rows[tenantID][i].intake.ID
+	items := m.items[intakeID]
+	for j, it := range items {
+		if it.SKU != ShippingSKU {
+			continue
+		}
+		if !desired.Supersedes(it) {
+			return false, nil
+		}
+		line := desired.item()
+		items[j].Label, items[j].Qty, items[j].UnitPrice = line.Label, line.Qty, line.UnitPrice
+		m.recomputeTotalLocked(tenantID, i, intakeID)
+		return true, nil
+	}
+
+	line := desired.item()
+	line.AddedAt = time.Now()
+	m.items[intakeID] = append(items, line)
+	m.recomputeTotalLocked(tenantID, i, intakeID)
+	return true, nil
+}
+
+// recomputeTotalLocked cuadra el total de la cabecera con la suma de sus líneas,
+// igual que el UPDATE del store Postgres.
+func (m *MemoryStore) recomputeTotalLocked(tenantID string, i int, intakeID string) {
+	var total float64
+	for _, it := range m.items[intakeID] {
+		total += float64(it.Qty) * it.UnitPrice
+	}
+	m.rows[tenantID][i].intake.Total = total
 }

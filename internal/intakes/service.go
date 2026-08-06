@@ -83,8 +83,13 @@ func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, e
 //  3. escribe con compare-and-swap sobre el estado leído (ErrConflict si otro
 //     operador se adelantó entre 1 y 3).
 //
-// Los EFECTOS COLATERALES de la transición —plantilla de seña, notificación al
-// cliente, fila de intake_revisions— NO se disparan aquí: llegan en la Ola 4. Esta
+// La LÍNEA DE ENVÍO de `pending_approval` (D-041.11) no se ve en este método a
+// propósito: no es un efecto colateral que se dispare después, sino parte de la
+// escritura del estado, y por eso vive dentro de la misma transacción del store
+// (ver Store.UpdateStatus). La Intake que se devuelve ya trae el total con ella.
+//
+// Los EFECTOS COLATERALES de verdad —plantilla de seña, notificación al cliente,
+// fila de intake_revisions— NO se disparan aquí: llegan en la Ola 4. Esta
 // operación solo persiste la transición válida.
 func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) (Intake, error) {
 	to = NormalizeStatus(to)
@@ -99,4 +104,15 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 	}
 
 	return s.store.UpdateStatus(ctx, tenantID, intakeID, to, StoredVariants(from))
+}
+
+// EnsureShippingLine garantiza la línea estándar de envío de una solicitud
+// (D-041.11) y deja su total cuadrado con las líneas. Es idempotente.
+//
+// Existe suelta —y no solo dentro de SetStatus— porque hay un segundo momento en
+// que la línea tiene que aparecer y no hay transición de por medio: el cierre del
+// carrito, que va directo a `confirmed`. Ese llamante usa ShippingOnlyIfZones; el
+// del presupuesto, ShippingAlways.
+func (s *Service) EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error {
+	return s.store.EnsureShippingLine(ctx, tenantID, intakeID, policy)
 }

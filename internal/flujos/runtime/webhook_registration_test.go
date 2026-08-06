@@ -37,7 +37,7 @@ func runCartClosed(t *testing.T, extra ...runtime.Option) *store.MemoryRepositor
 		t.Fatalf("sembrar definición: %v", err)
 	}
 	opts := append([]runtime.Option{
-		runtime.WithEventSink(runtime.NewPersistSink(repo, cart.NewProjector(repo, intakes.NewMemoryStore()))),
+		runtime.WithEventSink(runtime.NewPersistSink(repo, cart.NewProjector(repo, intakes.NewMemoryStore(), sinEnvío{}))),
 	}, extra...)
 	rt := runtime.New(repo, newEffectEngine([]modules.Effect{cartClosedEmit()}), &fakeSender{},
 		fakeResolver{tenantID: testTenant}, contact.NewMemoryResolver(repo), discardLogger(), opts...)

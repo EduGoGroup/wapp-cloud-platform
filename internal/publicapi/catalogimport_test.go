@@ -13,6 +13,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
@@ -536,5 +537,51 @@ func TestCatalogImport_SinVersionador_NoSeMonta(t *testing.T) {
 	rec := call(api, keyAContent, http.MethodPost, "/api/v1/catalog/import?mode=validate", docNuevo)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("code=%d, quiero 404 (ruta no montada); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCatalogImport_SkuDeEnvíoReservado_400ConMensajeClaro cierra el círculo de la
+// línea estándar de envío (Plan 041 · T4.3, D-041.11): el espacio de nombres
+// `_shipping` es seguro PORQUE ningún catálogo puede reclamarlo. Si esta puerta se
+// abriera, un artículo del tenant sería indistinguible de la línea que pone wApp y
+// el dueño no sabría cuál de las dos cobra el reparto.
+//
+// Se prueba por el ENDPOINT y con el sku exacto —no con un `_` cualquiera, que ya
+// tiene su test unitario en el validador—: lo que aquí importa es que el rechazo
+// llegue hasta quien sube el archivo, con el motivo que le dice qué arreglar.
+func TestCatalogImport_SkuDeEnvíoReservado_400ConMensajeClaro(t *testing.T) {
+	api, repo := importAPI()
+	repo.SetTenantContent(tenantA, "catalogo", []byte(catalogoVigente))
+
+	conEnvío := `{"format":"wapp.catalog_import","version":1,"catalog":{"categories":[
+	  {"code":"1","label":"Bebidas","items":[
+	    {"code":"1","sku":"` + intakes.ShippingSKU + `","label":"Despacho a domicilio","price":3000}
+	  ]}
+	]}}`
+	rec := call(api, keyAContent, http.MethodPost, "/api/v1/catalog/import?mode=apply", conEnvío)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d, quiero 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Error  string `json:"error"`
+		Errors []struct {
+			Field  string `json:"field"`
+			Reason string `json:"reason"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal del 400: %v; body=%s", err, rec.Body.String())
+	}
+	if body.Error != "validation_failed" || len(body.Errors) == 0 {
+		t.Fatalf("respuesta=%+v; quiero validation_failed con el defecto detallado", body)
+	}
+	motivo := body.Errors[0].Reason
+	if !strings.Contains(motivo, intakes.ShippingSKU) || !strings.Contains(motivo, "reservado") {
+		t.Fatalf("motivo=%q; tiene que citar el sku %q y decir que está reservado",
+			motivo, intakes.ShippingSKU)
+	}
+	if blob := currentBlob(t, repo, tenantA); blob != catalogoVigente {
+		t.Fatalf("un apply rechazado escribió en tenant_content:\n%s", blob)
 	}
 }
