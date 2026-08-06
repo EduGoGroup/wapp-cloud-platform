@@ -512,6 +512,109 @@ func TestPostgres_ListDetails_CorteFiltroYTenant(t *testing.T) {
 	}
 }
 
+// bandejaAbandonada siembra dos solicitudes ABIERTAS del mismo tenant —la primera
+// con dos líneas y una revisión— y abandona esa primera con el MISMO
+// compare-and-swap que ejecuta POST /api/v1/intakes/{id}/status. Devuelve el store,
+// el tenant y los dos ids (la abandonada y la que sigue viva).
+//
+// La transición se aplica por el CAS y no con un UPDATE a mano porque lo que se
+// valida es el camino por el que el Plan 043 va a abandonar de verdad. Y se hace
+// contra la BD REAL porque el store en memoria no puede demostrar lo que aquí
+// importa: que la columna `status` ACEPTA la clave nueva —la 0041 dejó fuera el
+// CHECK a propósito y la 0045 no lo añadió—. Si alguien añadiera algún día un CHECK
+// sin `abandoned`, esto es lo que lo delata; hoy lo descubriría el Plan 043 en
+// producción.
+func bandejaAbandonada(t *testing.T) (*intakes.Postgres, string, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	store := intakes.NewPostgres(db)
+	tenant := uuid.NewString()
+	ctx := context.Background()
+
+	abandonada, viva := uuid.NewString(), uuid.NewString()
+	seedPG(t, db, tenant, []fixture{
+		{abandonada, intakes.StatusOpen, "sess-a", 1},
+		{viva, intakes.StatusOpen, "sess-a", 2},
+	})
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price, added_at)
+		VALUES ($1, 'torta-v1', 'Torta 10-12 porciones', 'sin sal', 1, 18000, now()),
+		       ($1, 'vela-num', 'Vela número 3',         '',        1,  3000, now() + interval '1 second')
+	`, abandonada); err != nil {
+		t.Fatalf("sembrando las líneas: %v", err)
+	}
+	// Una revisión: el rastro de lo negociado tiene que sobrevivir al abandono.
+	if _, err := store.InsertRevision(ctx, intakes.Revision{
+		IntakeID: abandonada, Kind: intakes.RevisionKindCart,
+		Payload:   []byte(`{"version":1,"items":[{"sku":"torta-v1","qty":1}]}`),
+		CreatedBy: intakes.RevisionBySystem,
+	}); err != nil {
+		t.Fatalf("sembrando la revisión: %v", err)
+	}
+
+	updated, err := store.UpdateStatus(ctx, tenant, abandonada, intakes.StatusAbandoned,
+		intakes.StoredVariants(intakes.StatusOpen))
+	if err != nil {
+		t.Fatalf("UpdateStatus a abandoned contra la tabla real: %v", err)
+	}
+	if updated.Status != intakes.StatusAbandoned {
+		t.Fatalf("status=%q, quiero abandoned", updated.Status)
+	}
+	return store, tenant, abandonada, viva
+}
+
+// TestPostgres_Abandoned_SeFiltraEnElListado: el WHERE del listado alcanza la clave
+// nueva, y la solicitud que sigue abierta no se contamina. Las dos mitades juntas:
+// un filtro que devolviera la fila en los dos cubos pasaría la primera y mentiría.
+func TestPostgres_Abandoned_SeFiltraEnElListado(t *testing.T) {
+	store, tenant, abandonada, viva := bandejaAbandonada(t)
+	ctx := context.Background()
+
+	got, total, err := store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusAbandoned})
+	if err != nil {
+		t.Fatalf("List(abandoned): %v", err)
+	}
+	if total != 1 || !slices.Equal(ids(got), []string{abandonada}) {
+		t.Fatalf("List(abandoned): total=%d ids=%v; quiero solo la abandonada", total, ids(got))
+	}
+
+	got, total, err = store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusOpen})
+	if err != nil {
+		t.Fatalf("List(open): %v", err)
+	}
+	if total != 1 || !slices.Equal(ids(got), []string{viva}) {
+		t.Fatalf("List(open): total=%d ids=%v; quiero solo la que sigue abierta", total, ids(got))
+	}
+}
+
+// TestPostgres_Abandoned_ConservaLíneasYRevisiones: abandonar cambia el ESTADO y
+// nada más. Se comprueban las DOS consultas de lectura, que no comparten SQL:
+// ListDetails —la que alimenta el export y el summary— y Get, el detalle.
+func TestPostgres_Abandoned_ConservaLíneasYRevisiones(t *testing.T) {
+	store, tenant, abandonada, _ := bandejaAbandonada(t)
+	ctx := context.Background()
+
+	details, err := store.ListDetails(ctx, tenant,
+		intakes.Filter{Status: intakes.StatusAbandoned}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails(abandoned): %v", err)
+	}
+	if len(details) != 1 || len(details[0].Items) != 2 {
+		t.Fatalf("ListDetails(abandoned)=%+v; quiero UNA solicitud con sus DOS líneas", details)
+	}
+	if details[0].Items[0].Customization != "sin sal" {
+		t.Fatalf("la personalización se perdió al abandonar: %+v", details[0].Items[0])
+	}
+
+	detail, err := store.Get(ctx, tenant, abandonada)
+	if err != nil {
+		t.Fatalf("Get de la abandonada: %v", err)
+	}
+	if len(detail.Revisions) != 1 || detail.Revisions[0].Kind != intakes.RevisionKindCart {
+		t.Fatalf("revisions=%+v; la negociación auditada sobrevive al abandono", detail.Revisions)
+	}
+}
+
 func ids(in []intakes.Intake) []string {
 	out := make([]string, 0, len(in))
 	for _, i := range in {

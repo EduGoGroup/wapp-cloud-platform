@@ -105,6 +105,40 @@ func TestCanTransition_ExpiredNuncaEsDestino(t *testing.T) {
 	}
 }
 
+// TestCanTransition_AbandonedEsAbsorbente es el criterio de T4.6 escrito como RED,
+// no como trabajo: `abandoned` ya era terminal por construcción —es una clave
+// AUSENTE del mapa `transitions`— y esto pasa sin tocar producción.
+//
+// Se deja igualmente porque la ausencia es una propiedad frágil y los tests de
+// arriba no la cubren entera: solo miran `abandoned → open`. Quien añadiera una
+// salida para "poder reabrir un abandonado" no rompería ninguno de ellos, y el Plan
+// 043 se apoya justo en lo contrario — abandona lo que colgaba de un evento
+// cancelado dando por hecho que no revive solo.
+func TestCanTransition_AbandonedEsAbsorbente(t *testing.T) {
+	// La lista va escrita a mano, como todo en este fichero: derivarla del mapa de
+	// producción haría que el test se moviera con lo que debe vigilar.
+	destinos := []string{
+		intakes.StatusOpen, intakes.StatusPendingApproval, intakes.StatusConfirmed,
+		intakes.StatusClosedLegacy, intakes.StatusDepositRequested, intakes.StatusDepositPaid,
+		intakes.StatusSettled, intakes.StatusCancelled, intakes.StatusExpired,
+		intakes.StatusAbandoned, intakes.StatusRejected, intakes.StatusNeedsInfo,
+		"en_camino", "",
+	}
+	for _, to := range destinos {
+		if intakes.CanTransition(intakes.StatusAbandoned, to) {
+			t.Fatalf("CanTransition(\"abandoned\",%q)=true; es terminal ABSORBENTE (D-041.10)", to)
+		}
+	}
+	if got := intakes.AllowedTransitions(intakes.StatusAbandoned); len(got) != 0 {
+		t.Fatalf("AllowedTransitions(abandoned)=%v; una solicitud abandonada no ofrece destinos", got)
+	}
+	// La ENTRADA es la otra mitad y es la que el Plan 043 invoca al cancelar el
+	// evento: lo que estaba abierto se abandona.
+	if !intakes.CanTransition(intakes.StatusOpen, intakes.StatusAbandoned) {
+		t.Fatal("CanTransition(\"open\",\"abandoned\")=false; el evento cancelado abandona lo abierto")
+	}
+}
+
 // TestCanDiscard_OpenYExpired: el descarte manual (D-041.18) es una pregunta
 // APARTE de la máquina de transiciones, y este test fija las dos mitades a la vez
 // —lo que CanDiscard permite y lo que CanTransition sigue negando— porque la
