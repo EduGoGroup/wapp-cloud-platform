@@ -22,6 +22,12 @@ type IntakeService interface {
 	Get(ctx context.Context, tenantID, intakeID string) (intakes.Detail, error)
 	// SetStatus aplica una transición del ciclo de vida (D-041.10).
 	SetStatus(ctx context.Context, tenantID, intakeID, status string) (intakes.Intake, error)
+	// ListDetails devuelve las solicitudes del filtro CON sus líneas y sin
+	// paginar: es lo que desnormaliza el export (T1.2). intakes.ErrTooLarge si el
+	// filtro abarca más de intakes.MaxExportIntakes.
+	ListDetails(ctx context.Context, tenantID string, f intakes.Filter) ([]intakes.Detail, error)
+	// Summary agrega esas mismas solicitudes para summary.json (T1.3).
+	Summary(ctx context.Context, tenantID string, f intakes.Filter) (intakes.Summary, error)
 }
 
 // intakeDTO es la proyección al wire de una cabecera de solicitud.

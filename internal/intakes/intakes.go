@@ -41,6 +41,20 @@ const (
 	MaxPageSize     = 200
 )
 
+// MaxExportIntakes acota cuántas solicitudes puede abarcar UN export o UN summary.
+// El export no pagina —una hoja de cálculo partida en páginas no sirve para nada— y
+// esa es exactamente la razón por la que necesita su propia cota: sin ella, un GET
+// sin filtros materializa la bandeja entera con sus líneas en memoria.
+//
+// Al superarla NO se recorta en silencio (ErrTooLarge): un export truncado es peor
+// que uno rechazado, porque quien lo abre cree que tiene todos sus pedidos.
+const MaxExportIntakes = 5000
+
+// ErrTooLarge lo devuelven ListDetails y Summary cuando el filtro abarca más de
+// MaxExportIntakes solicitudes. Se resuelve acotando el rango (from/to), no
+// reintentando.
+var ErrTooLarge = errors.New("el filtro abarca demasiadas solicitudes para un solo export")
+
 // Intake es la CABECERA de una solicitud tal como se lee. Status viene siempre
 // NORMALIZADO (el `closed` que escribe el cart se lee `confirmed`); TenantID no
 // viaja porque quien lee ya es el dueño del tenant (INV-8).
@@ -143,6 +157,15 @@ type Store interface {
 	// Get devuelve la solicitud con sus líneas, o ErrNotFound si no existe en
 	// ESE tenant (404 opaco: no se distingue de "es de otro tenant").
 	Get(ctx context.Context, tenantID, intakeID string) (Detail, error)
+
+	// ListDetails devuelve las solicitudes que casan con el filtro CON sus líneas,
+	// en el mismo orden que List (más recientes primero) y hasta `limit`
+	// cabeceras. Es lo que consumen el export y el summary: el MISMO predicado que
+	// la lista —si divergiera, el CSV no contendría lo que la bandeja muestra— pero
+	// sin paginar y sin una consulta por solicitud.
+	//
+	// Page/PageSize del filtro se IGNORAN aquí: la cota es `limit`.
+	ListDetails(ctx context.Context, tenantID string, f Filter, limit int) ([]Detail, error)
 
 	// UpdateStatus aplica la transición de forma ATÓMICA (compare-and-swap): solo
 	// escribe `to` si el estado almacenado sigue siendo uno de `expected` (las

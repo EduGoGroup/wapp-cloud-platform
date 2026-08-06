@@ -83,6 +83,94 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 	return out, total, nil
 }
 
+// listIntakeDetailsQuery trae las cabeceras que casan con el filtro Y sus líneas
+// en UNA sola consulta. Dos decisiones que no son de estilo:
+//
+//   - La cota (`LIMIT $6`) va DENTRO del CTE, sobre las cabeceras: si estuviera
+//     fuera cortaría filas del join y devolvería solicitudes con las líneas a
+//     medias, que es exactamente el error que un export no puede permitirse.
+//   - El join es LEFT: una solicitud sin líneas (una `open` que nadie llegó a
+//     llenar) sigue apareciendo, con las columnas de línea en NULL. Con INNER JOIN
+//     desaparecería del export sin que nadie se enterara.
+//
+// El predicado es el MISMO de la lista (intakeFilterWhere), así que el export no
+// puede divergir de lo que la bandeja muestra. `p.id` es text (intakeCols lo
+// castea) y por eso el join lo devuelve a uuid.
+const listIntakeDetailsQuery = `
+	WITH page AS (
+		SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere + `
+		ORDER BY created_at DESC, id DESC
+		LIMIT $6
+	)
+	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
+	       it.sku, it.label, it.qty, it.unit_price, it.added_at
+	FROM page p
+	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid
+	ORDER BY p.created_at DESC, p.id DESC, it.added_at, it.id`
+
+// ListDetails implementa Store: cabeceras + líneas del filtro, sin paginar y sin
+// N+1 (una consulta, no una por solicitud).
+func (p *Postgres) ListDetails(ctx context.Context, tenantID string, f Filter, limit int) (out []Detail, err error) {
+	if limit <= 0 {
+		return []Detail{}, nil
+	}
+	rows, err := p.db.QueryContext(ctx, listIntakeDetailsQuery,
+		append(filterArgs(tenantID, f.Normalized()), limit)...)
+	if err != nil {
+		return nil, fmt.Errorf("intakes: listar solicitudes con líneas: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("intakes: cerrar filas del export: %w", cerr)
+		}
+	}()
+
+	out = []Detail{}
+	for rows.Next() {
+		head, item, hasItem, serr := scanDetailRow(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		// Las filas llegan agrupadas por solicitud (ORDER BY de la consulta): basta
+		// comparar con la última para saber si empieza una cabecera nueva.
+		if len(out) == 0 || out[len(out)-1].ID != head.ID {
+			out = append(out, Detail{Intake: head, Items: []Item{}})
+		}
+		if hasItem {
+			last := &out[len(out)-1]
+			last.Items = append(last.Items, item)
+		}
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("intakes: recorrer el export: %w", rerr)
+	}
+	return out, nil
+}
+
+// scanDetailRow lee una fila del join: cabecera (siempre) + línea (NULL cuando la
+// solicitud no tiene ninguna). Normaliza el estado en el mismo punto que scanIntake.
+func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
+	var (
+		in         Intake
+		sku, label sql.NullString
+		qty        sql.NullInt64
+		unitPrice  sql.NullFloat64
+		addedAt    sql.NullTime
+	)
+	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
+		&in.CreatedAt, &in.UpdatedAt, &sku, &label, &qty, &unitPrice, &addedAt); err != nil {
+		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
+	}
+	in.Status = NormalizeStatus(in.Status)
+	if !sku.Valid && !label.Valid && !qty.Valid {
+		return in, Item{}, false, nil // solicitud sin líneas (LEFT JOIN)
+	}
+	return in, Item{
+		SKU: sku.String, Label: label.String,
+		Qty: int(qty.Int64), UnitPrice: unitPrice.Float64, AddedAt: addedAt.Time,
+	}, true, nil
+}
+
 // filterArgs arma los cinco argumentos del predicado compartido. Un filtro sin
 // valor viaja como NULL (any(nil)) para que la rama "$n IS NULL" lo desactive.
 func filterArgs(tenantID string, f Filter) []any {

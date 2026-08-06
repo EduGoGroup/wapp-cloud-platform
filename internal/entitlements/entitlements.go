@@ -50,6 +50,17 @@ const FeatureLLMIntent = "llm_intent"
 // real (hasta el Plan 041 el gate solo vivía en checks in-code).
 const FeatureCartBasic = "cart_basic"
 
+// FeatureIntakesExport es la feature de SACAR las solicitudes del sistema (Plan
+// 041 · T1.2/T1.3): el export CSV/XLSX y el summary.json.
+//
+// Es una feature APARTE de FeatureCartBasic a propósito, no un detalle de
+// granularidad: ver la bandeja y poder llevarse los datos son dos capacidades
+// comerciales distintas, y la taxonomía del Plan 040 (migración 0039) las siembra
+// por separado en cada plan. Componerla sobre la otra —o dar por hecho que quien
+// tiene cart_basic exporta— borraría esa distinción en el código aunque la BD la
+// mantenga.
+const FeatureIntakesExport = "intakes_export"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).

@@ -267,6 +267,91 @@ func TestPostgres_UpdateStatus_CAS(t *testing.T) {
 	}
 }
 
+// bandejaConLíneas siembra tres solicitudes —una CON dos líneas, dos SIN ninguna—
+// y devuelve el store, el tenant y los ids de la más nueva a la más vieja. Es el
+// fixture de los tests de ListDetails (la consulta que alimenta export y summary).
+func bandejaConLíneas(t *testing.T) (*intakes.Postgres, string, [3]string) {
+	t.Helper()
+	db := openTestDB(t)
+	tenant := uuid.NewString()
+	conLíneas, sinLíneas, vieja := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	seedPG(t, db, tenant, []fixture{
+		{vieja, intakes.StatusCancelled, "sess-b", 1},
+		{sinLíneas, intakes.StatusOpen, "sess-a", 2},
+		{conLíneas, intakes.StatusClosedLegacy, "sess-a", 3},
+	})
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO public.intake_items (intake_id, sku, label, qty, unit_price, added_at)
+		VALUES ($1, 'torta-v1',  'Torta 10-12 porciones', 1, 18000, now()),
+		       ($1, '_shipping', 'Envío — Providencia',   2,  3000, now() + interval '1 second')
+	`, conLíneas); err != nil {
+		t.Fatalf("sembrando líneas: %v", err)
+	}
+	return intakes.NewPostgres(db), tenant, [3]string{conLíneas, sinLíneas, vieja}
+}
+
+// TestPostgres_ListDetails_CabecerasYLíneas valida contra la BD real la consulta
+// que alimenta el export y el summary. Dos cosas que el store en memoria no puede
+// demostrar: que el LEFT JOIN deja pasar las solicitudes SIN líneas (con un INNER
+// JOIN desaparecerían del export sin ruido) y que cada línea queda colgada de SU
+// cabecera, en orden de alta.
+func TestPostgres_ListDetails_CabecerasYLíneas(t *testing.T) {
+	store, tenant, id := bandejaConLíneas(t)
+
+	got, err := store.ListDetails(context.Background(), tenant, intakes.Filter{}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("solicitudes=%d, quiero 3 (las que no tienen líneas también salen)", len(got))
+	}
+	if got[0].ID != id[0] || got[1].ID != id[1] || got[2].ID != id[2] {
+		t.Fatalf("orden=%v; quiero descendente por created_at",
+			[]string{got[0].ID, got[1].ID, got[2].ID})
+	}
+	if got[0].Status != intakes.StatusConfirmed {
+		t.Fatalf("status=%q; el `closed` de BD se lee normalizado", got[0].Status)
+	}
+	if len(got[0].Items) != 2 || got[0].Items[0].SKU != "torta-v1" || got[0].Items[1].Qty != 2 {
+		t.Fatalf("líneas de la primera=%+v; quiero las dos en orden de alta", got[0].Items)
+	}
+	if len(got[1].Items) != 0 || len(got[2].Items) != 0 {
+		t.Fatalf("solicitudes sin líneas con líneas colgadas: %+v / %+v", got[1].Items, got[2].Items)
+	}
+}
+
+// TestPostgres_ListDetails_CorteFiltroYTenant: el LIMIT corta CABECERAS, no filas
+// del join —si estuviera fuera del CTE, pedir una devolvería una solicitud con las
+// líneas a medias—, el predicado es el mismo de List y el tenant acota (INV-8).
+func TestPostgres_ListDetails_CorteFiltroYTenant(t *testing.T) {
+	store, tenant, id := bandejaConLíneas(t)
+	ctx := context.Background()
+
+	got, err := store.ListDetails(ctx, tenant, intakes.Filter{}, 1)
+	if err != nil {
+		t.Fatalf("ListDetails con limit: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != id[0] || len(got[0].Items) != 2 {
+		t.Fatalf("limit=1 devolvió %+v; quiero UNA solicitud con sus DOS líneas", got)
+	}
+
+	got, err = store.ListDetails(ctx, tenant, intakes.Filter{SessionID: "sess-a"}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails con filtro: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("solicitudes de sess-a=%d, quiero 2", len(got))
+	}
+
+	got, err = store.ListDetails(ctx, uuid.NewString(), intakes.Filter{}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails de un tenant ajeno: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("un tenant ajeno ve %d solicitudes", len(got))
+	}
+}
+
 func ids(in []intakes.Intake) []string {
 	out := make([]string, 0, len(in))
 	for _, i := range in {

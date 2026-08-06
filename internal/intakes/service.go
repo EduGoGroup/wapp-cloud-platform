@@ -2,6 +2,7 @@ package intakes
 
 import (
 	"context"
+	"time"
 )
 
 // Service es la capa de dominio de las solicitudes: aplica las reglas (paginación
@@ -30,6 +31,36 @@ func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, er
 		items = []Intake{} // la UI itera sin ramificar por el nulo
 	}
 	return Page{Intakes: items, Page: f.Page, PageSize: f.PageSize, Total: total}, nil
+}
+
+// ListDetails devuelve TODAS las solicitudes del filtro con sus líneas, sin
+// paginar: es lo que consumen el export y el summary. La cota de paginación no
+// aplica aquí (una hoja de cálculo partida en páginas no sirve), así que la pone
+// MaxExportIntakes.
+//
+// Se pide UNA solicitud MÁS que la cota justamente para poder distinguir "cabe
+// justo" de "se pasa": si el store devolviera exactamente la cota no habría forma
+// de saber si sobraban filas, y el export saldría recortado sin avisar.
+func (s *Service) ListDetails(ctx context.Context, tenantID string, f Filter) ([]Detail, error) {
+	details, err := s.store.ListDetails(ctx, tenantID, f, MaxExportIntakes+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(details) > MaxExportIntakes {
+		return nil, ErrTooLarge
+	}
+	return details, nil
+}
+
+// Summary agrega las solicitudes del filtro (totales, desglose por estado, ranking
+// de artículos y el detalle crudo). Lee por el MISMO camino que el export —misma
+// cota incluida— y delega la aritmética en BuildSummary, que es pura.
+func (s *Service) Summary(ctx context.Context, tenantID string, f Filter) (Summary, error) {
+	details, err := s.ListDetails(ctx, tenantID, f)
+	if err != nil {
+		return Summary{}, err
+	}
+	return BuildSummary(details, f.Normalized(), time.Now()), nil
 }
 
 // Get devuelve la solicitud con sus líneas. ErrNotFound si no es del tenant (404

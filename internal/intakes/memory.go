@@ -47,6 +47,50 @@ func (m *MemoryStore) List(_ context.Context, tenantID string, f Filter) ([]Inta
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	matched := m.matching(tenantID, f)
+	total := len(matched)
+	start := f.Offset()
+	if start >= total {
+		return []Intake{}, total, nil
+	}
+	end := min(start+f.PageSize, total)
+	return matched[start:end], total, nil
+}
+
+// ListDetails implementa Store: el MISMO predicado y orden que List —comparten
+// `matching`, así que no pueden divergir— sin paginar, acotado a `limit`, con las
+// líneas de cada solicitud colgadas.
+func (m *MemoryStore) ListDetails(_ context.Context, tenantID string, f Filter, limit int) ([]Detail, error) {
+	if limit <= 0 {
+		return []Detail{}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Ojo con Normalized(): acota PageSize a MaxPageSize, y la cota del export es
+	// otra (MaxExportIntakes). Aquí solo interesa la normalización del ESTADO, así
+	// que la paginación se descarta y el corte lo hace `limit`.
+	matched := m.matching(tenantID, f.Normalized())
+	if len(matched) > limit {
+		matched = matched[:limit]
+	}
+
+	out := make([]Detail, 0, len(matched))
+	for _, in := range matched {
+		items := slices.Clone(m.items[in.ID])
+		if items == nil {
+			items = []Item{}
+		}
+		out = append(out, Detail{Intake: in, Items: items})
+	}
+	return out, nil
+}
+
+// matching filtra y ordena las solicitudes del tenant SIN paginar. Reproduce el
+// predicado del store Postgres: rango [From, To), variantes legadas del estado,
+// sesión exacta, más recientes primero con desempate por id. El llamante tiene el
+// candado tomado.
+func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
 	var variants []string
 	if f.Status != "" {
 		variants = StoredVariants(f.Status)
@@ -77,14 +121,7 @@ func (m *MemoryStore) List(_ context.Context, tenantID string, f Filter) ([]Inta
 		}
 		return strings.Compare(b.ID, a.ID)
 	})
-
-	total := len(matched)
-	start := f.Offset()
-	if start >= total {
-		return []Intake{}, total, nil
-	}
-	end := min(start+f.PageSize, total)
-	return matched[start:end], total, nil
+	return matched
 }
 
 // Get implementa Store.

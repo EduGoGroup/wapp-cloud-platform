@@ -310,19 +310,33 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 // solicitud ajena responde 404, nunca 403 — un 403 confirmaría que el id existe.
 //
 // DOS guardias por ruta, y ninguno sustituye al otro: el scope
-// (intakes.read/intakes.write) dice "puedes operar esto"; la feature cart_basic
-// dice "tu plan lo incluye". RequireFeature se compone SIEMPRE después de
-// Authenticate y RequirePermission — antes no habría identidad de la que sacar el
-// tenant y el gate cortaría fail-closed a todo el mundo.
+// (intakes.read/intakes.write) dice "puedes operar esto"; la feature dice "tu plan
+// lo incluye". RequireFeature se compone SIEMPRE después de Authenticate y
+// RequirePermission — antes no habría identidad de la que sacar el tenant y el
+// gate cortaría fail-closed a todo el mundo.
+//
+// DOS features distintas, no una: `cart_basic` abre la bandeja (ver los pedidos);
+// `intakes_export` abre el sacarlos del sistema —CSV/XLSX y summary.json—, que es
+// una capacidad comercial aparte y se vende aparte (taxonomía del Plan 040). Un
+// tenant puede tener la primera y no la segunda; por eso el gate del export NO
+// hereda del de la lista.
+//
+// El scope de las tres LECTURAS es el mismo (intakes.read): el export no enseña
+// nada que la bandeja no enseñe ya, solo lo empaqueta.
 //
 // Sin el servicio o sin el resolver de features las rutas NO se montan: es
 // preferible un 404 de ruta inexistente a una bandeja que responde 500 a medio
 // camino (o, peor, que se abre sin poder comprobar el plan).
+//
+// Las rutas literales (…/export, …/summary.json) conviven con …/{id} sin ambigüedad:
+// el mux de Go 1.22+ prefiere el patrón MÁS específico, y un segmento literal lo es
+// más que un comodín.
 func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
 	if d.Intakes == nil || d.Entitlements == nil {
 		return
 	}
 	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
+	canExport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureIntakesExport)
 
 	mux.Handle("GET /api/v1/intakes", protectRead(mw,
 		"intakes.read", cartBasic(listIntakesHandler(d.Intakes))))
@@ -330,6 +344,12 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 		"intakes.read", cartBasic(getIntakeHandler(d.Intakes))))
 	mux.Handle("POST /api/v1/intakes/{id}/status", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(setIntakeStatusHandler(d.Intakes))))
+
+	// Export y resumen (Plan 041 · T1.2/T1.3, REQ-03/REQ-04).
+	mux.Handle("GET /api/v1/intakes/export", protectRead(mw,
+		"intakes.read", canExport(exportIntakesHandler(d.Intakes))))
+	mux.Handle("GET /api/v1/intakes/summary.json", protectRead(mw,
+		"intakes.read", canExport(intakeSummaryHandler(d.Intakes))))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del
