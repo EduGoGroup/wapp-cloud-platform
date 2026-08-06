@@ -3,59 +3,51 @@ package cart
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
-// expiryNotice antecede al reinicio del carrito cuando la solicitud abierta venció por
-// TTL (design.md §4.3/§9.H). Vive aquí (no en el runtime) porque es cart-específico.
-const expiryNotice = "⌛ Tu pedido anterior expiró. Empezamos de nuevo."
-
 // ResumeStore es lo que la política de reanudación del carrito necesita LEER del
-// almacén: la solicitud abierta (para el TTL) y los ajustes del tenant (page_size).
-// Interfaz mínima (ISP) que satisface *store.PostgresRepository / *MemoryRepository.
+// almacén: los ajustes del tenant (page_size). Interfaz mínima (ISP) que
+// satisface *store.PostgresRepository / *MemoryRepository.
+//
+// Hasta T4.7 también leía la solicitud abierta, para decidir si había VENCIDO.
+// D-041.16 derogó ese reloj —nada vence por tiempo— y con él la única razón por
+// la que esta política tocaba public.intakes: hoy la reanudación se decide solo
+// con el sub-estado del carrito, que ya viene en Vars.
 type ResumeStore interface {
-	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	GetTenantSettings(ctx context.Context, tenantID string) (store.TenantSettings, error)
 }
 
 // ResumePolicy implementa modules.ResumePolicy para el carrito (Plan 027 · Ola 3 ·
-// T8, cierra H9): TTL perezoso + auto-reinicio tras nivel terminal o expiración +
-// siembra del page_size del tenant. Es un adaptador IMPURO (lee la BD); el Module
-// (Render/Step) sigue PURO. Extrae del runtime toda la lógica cart-específica de
-// reanudación (antes prepareCart/resumeCart/cartRestartable/cartTerminal literales).
+// T8, cierra H9): auto-reinicio tras nivel terminal + siembra del page_size del
+// tenant. Es un adaptador IMPURO (lee la BD); el Module (Render/Step) sigue PURO.
+// Extrae del runtime toda la lógica cart-específica de reanudación (antes
+// prepareCart/resumeCart/cartRestartable/cartTerminal literales).
 type ResumePolicy struct {
 	store ResumeStore
-	now   func() time.Time
 }
 
 // NewResumePolicy construye la política sobre el almacén dado.
 func NewResumePolicy(s ResumeStore) *ResumePolicy {
-	return &ResumePolicy{store: s, now: time.Now}
+	return &ResumePolicy{store: s}
 }
 
-// Restart decide el reinicio del carrito: si la solicitud abierta venció por TTL o la
-// sub-máquina quedó en nivel terminal (cerrado/cancelado). Ante vencimiento sintetiza
-// el efecto cart_expired (para que el proyector transicione la solicitud a "expired",
-// coherencia BD↔conversación) y devuelve el aviso. Un carrito terminal NO tiene
-// solicitud "open" (el cierre/cancelación ya la transicionó), así que ambos criterios no
-// colisionan. En navegación normal devuelve restart=false.
-func (p *ResumePolicy) Restart(ctx context.Context, tenantID, contactID string, vars map[string]any) (bool, string, []modules.Effect, error) {
-	intake, found, err := p.store.GetOpenIntake(ctx, tenantID, contactID)
-	if err != nil {
-		return false, "", nil, fmt.Errorf("cart: solicitud abierta: %w", err)
-	}
-	expired := found && intakeExpired(intake, p.now())
-	terminal := isTerminal(vars)
-	if !expired && !terminal {
-		return false, "", nil, nil
-	}
-	if expired {
-		return true, expiryNotice, []modules.Effect{event(EffectCartExpired, map[string]any{})}, nil
-	}
-	return true, "", nil, nil
+// Restart decide el reinicio del carrito: SOLO si la sub-máquina quedó en nivel
+// terminal (cerrado/cancelado). En navegación normal devuelve restart=false.
+//
+// El otro criterio que vivía aquí —la solicitud abierta VENCIDA por TTL, que
+// sintetizaba cart_expired y avisaba «tu pedido anterior expiró»— quedó DEROGADO
+// por D-041.16 (T4.7): los objetos de negocio no mueren por tiempo, mueren por
+// acción humana. Un carrito armado el lunes sigue ahí el miércoles, con sus
+// líneas, y el pedido que nadie rescata lo descarta el dueño a mano (D-041.18),
+// nunca un reloj. Por eso esta política ya no lee la solicitud, ya no consulta el
+// tiempo y ya no sintetiza efectos: la firma conserva los dos huecos porque el
+// puerto es genérico (otra política sí podría usarlos), no porque el carrito los
+// llene.
+func (p *ResumePolicy) Restart(_ context.Context, _, _ string, vars map[string]any) (bool, string, []modules.Effect, error) {
+	return isTerminal(vars), "", nil, nil
 }
 
 // Seed inyecta en Vars el page_size REAL del tenant (tenant_settings.page_size,
@@ -76,10 +68,4 @@ func (p *ResumePolicy) Seed(ctx context.Context, tenantID string, vars map[strin
 func isTerminal(vars map[string]any) bool {
 	lvl := loadState(vars).Level
 	return lvl == LevelClosed || lvl == LevelCancelled
-}
-
-// intakeExpired indica si una solicitud tiene TTL fijado (expires_at no-cero) y ya venció
-// respecto a now. Sin expires_at (zero) NUNCA expira.
-func intakeExpired(o store.Intake, now time.Time) bool {
-	return !o.ExpiresAt.IsZero() && o.ExpiresAt.Before(now)
 }

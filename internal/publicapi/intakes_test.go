@@ -27,6 +27,11 @@ const (
 	intakeA3 = "33333333-3333-3333-3333-333333333333" // cancelled,        sess-b, 08-03
 	intakeA4 = "44444444-4444-4444-4444-444444444444" // closed (legado), sess-a, 08-04
 	intakeA5 = "55555555-5555-5555-5555-555555555555" // confirmed,        sess-b, 08-05
+	// intakeA6 NO está en seedIntakes: es la fila LEGADA en `expired` que solo
+	// siembra quien la necesita (T4.7). Fuera del fixture común a propósito —el
+	// reloj que la creó está derogado, así que no representa nada que el sistema
+	// produzca hoy, y meterla en la bandeja de todos falsearía cada conteo.
+	intakeA6 = "66666666-6666-6666-6666-666666666666" // expired (histórica), sess-a, 08-06
 	intakeB1 = "bbbbbbb1-bbbb-bbbb-bbbb-bbbbbbbbbbbb" // del tenant B
 )
 
@@ -599,6 +604,44 @@ func TestIntakeStatus_422_ExpiredNoEsDestino(t *testing.T) {
 	}
 	if slices.Contains(body.Allowed, intakes.StatusExpired) {
 		t.Fatalf("allowed=%v ofrece expired", body.Allowed)
+	}
+}
+
+// TestIntakeStatus_422_ExpiredNoSeAbandonaPorEstaPuerta es LA red de T4.7. El
+// dueño SÍ puede descartar una solicitud vencida (CanDiscard, D-041.18), pero por
+// POST /api/v1/intakes/discard (T4.8), NO cambiándole el estado a mano: si
+// expired→abandoned entrara en el mapa de transiciones, aparecería en
+// allowed_transitions, el <select> de la consola la ofrecería y esta ruta la
+// aceptaría. El test unitario de CanDiscard no detecta esa regresión —solo este—,
+// porque el fallo estaría en el OTRO predicado.
+func TestIntakeStatus_422_ExpiredNoSeAbandonaPorEstaPuerta(t *testing.T) {
+	store := seedIntakes()
+	store.Add(tenantA, intakes.Intake{
+		ID: intakeA6, ContactID: contactoOpaco, SessionID: "sess-a",
+		Status: intakes.StatusExpired, Total: 18000, CreatedAt: día(6), UpdatedAt: día(6),
+	})
+	api := newAPI(intakesDeps(store), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodPost,
+		"/api/v1/intakes/"+intakeA6+"/status", `{"status":"abandoned"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code=%d, quiero 422; body=%s", rec.Code, rec.Body.String())
+	}
+	var body invalidTransitionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal del 422: %v; body=%s", err, rec.Body.String())
+	}
+	if body.Status != intakes.StatusExpired || body.Requested != intakes.StatusAbandoned {
+		t.Fatalf("cuerpo=%+v; quiero el estado ACTUAL (expired) y el pedido (abandoned)", body)
+	}
+	if len(body.Allowed) != 0 {
+		t.Fatalf("allowed=%v; una fila vencida no ofrece NINGÚN destino por esta ruta", body.Allowed)
+	}
+
+	// Y sigue estando ahí, legible y filtrable: derogar el reloj no borra su rastro.
+	lista := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes?status=expired", "")
+	if got := idsDe(decodeList(t, lista.Body.Bytes())); !slices.Equal(got, []string{intakeA6}) {
+		t.Fatalf("status=expired devuelve %v; la fila histórica debe seguir saliendo", got)
 	}
 }
 

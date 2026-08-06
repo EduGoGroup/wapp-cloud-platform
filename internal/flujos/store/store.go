@@ -316,9 +316,10 @@ type FlowEvent struct {
 // Intake es una solicitud del módulo Carrito, proyección tipada de cart_closed sobre
 // public.intakes (Plan 016 · design.md §3.4). ContactID es la identidad OPACA del
 // contacto (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.
-// Status es "open" | "closed" | "cancelled" | "expired". ExpiresAt es now +
-// order_ttl (nulo/zero si no aplica). CreatedAt/UpdatedAt los pone el DEFAULT de
-// la tabla en el alta.
+// Status es "open" | "closed" | "cancelled" | "expired". ExpiresAt es HISTÓRICA:
+// desde T4.7 (D-041.16) no la escribe nadie y nadie la obedece — las solicitudes
+// nuevas nacen con zero y las viejas conservan su valor. CreatedAt/UpdatedAt los
+// pone el DEFAULT de la tabla en el alta.
 type Intake struct {
 	ID        string // uuid (asignado al abrir la solicitud "open")
 	TenantID  string
@@ -328,7 +329,7 @@ type Intake struct {
 	Total     float64
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	ExpiresAt time.Time // now + tenant_settings.order_ttl; zero si no aplica
+	ExpiresAt time.Time // HISTÓRICA (T4.7): ya no se escribe ni se obedece; zero en lo nuevo
 	// CustomerNote la escribe SOLO el cierre (CloseIntake, D-041.19): el cliente la
 	// teclea en el resumen, que es el último paso antes de confirmar, así que una
 	// solicitud "open" nunca la tiene. Por eso GetOpenIntake no la lee y
@@ -380,18 +381,22 @@ type IntakeClose struct {
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,
 // Plan 016 · design.md §3.4/§9.G). PageSize es el tamaño de página de la
-// paginación (default 5); OrderTTL es el TTL de la solicitud (persistido como
-// order_ttl_seconds INTEGER, default 3600s). GetTenantSettings devuelve los
-// defaults si el tenant no tiene fila.
+// paginación (default 5); OrderTTL se LEE y no se obedece (ver su campo).
+// GetTenantSettings devuelve los defaults si el tenant no tiene fila.
 type TenantSettings struct {
 	TenantID string
-	PageSize int           // default DefaultPageSize
-	OrderTTL time.Duration // persistido como order_ttl_seconds; default DefaultOrderTTL
+	PageSize int // default DefaultPageSize
+	// OrderTTL es el TTL de la solicitud (order_ttl_seconds INTEGER, default
+	// 3600s), DEROGADO como causa de muerte por D-041.16 (T4.7): se sigue leyendo
+	// por compatibilidad y NINGÚN código actúa sobre él. Si vuelves a consumirlo
+	// para matar algo, estás reintroduciendo el reloj que este plan derogó.
+	OrderTTL time.Duration
 	// ConversationTTL es el TTL CONVERSACIONAL genérico (Plan 029 · T9, migración
 	// 0034): tiempo tras el cual un estado vivo sin tocar se descarta y el entrante
 	// arranca de nuevo. Persistido como conversation_ttl_seconds; 0 (DEFAULT) ⇒ sin
-	// vencimiento (tenants existentes intactos). Semántica DISTINTA a OrderTTL (que
-	// es de la SOLICITUD del carrito, no de la conversación).
+	// vencimiento (tenants existentes intactos). Es el ÚNICO TTL vivo de este
+	// struct: OrderTTL quedó derogado (D-041.16) y este no lo sustituye — vencer
+	// la conversación descarta el estado conversacional, jamás la solicitud.
 	ConversationTTL time.Duration
 }
 
@@ -400,7 +405,9 @@ type TenantSettings struct {
 const (
 	// DefaultPageSize es el tamaño de página por defecto de la paginación del carrito.
 	DefaultPageSize = 5
-	// DefaultOrderTTL es el TTL por defecto de una solicitud (3600s = 1h).
+	// DefaultOrderTTL es el default de order_ttl_seconds (3600s = 1h) que espeja la
+	// migración 0013. DEROGADO como causa de muerte (D-041.16): es el valor que se
+	// devuelve cuando el tenant no tiene fila, no un plazo que alguien aplique.
 	DefaultOrderTTL = time.Hour
 )
 

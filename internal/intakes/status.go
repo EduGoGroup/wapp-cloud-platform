@@ -66,6 +66,32 @@ var transitions = map[string][]string{
 	StatusDepositPaid:      {StatusSettled, StatusCancelled},
 }
 
+// discardable es el conjunto de estados desde los que el DUEÑO puede descartar
+// una solicitud a mano (D-041.18, decisión de Jhoan del 2026-08-06). Es un mapa
+// APARTE de `transitions` a propósito, y esa separación es la tarea entera:
+//
+//   - `transitions` responde «¿adónde puede ir esta solicitud?» y es lo que se
+//     publica en allowed_transitions y lo que pinta el <select> de la consola. Meter
+//     ahí expired → abandoned abriría esa transición en la API y en la pantalla,
+//     que es justo lo que el dueño del producto cerró.
+//   - `discardable` responde «¿es descartable?». Un destino (abandoned), dos
+//     orígenes, y una sola puerta: el descarte manual por lotes.
+//
+// `expired` está aquí y NO en transitions porque es el legado del reloj derogado
+// (D-041.16): nadie entra ya en él, pero las filas históricas que quedaron dentro
+// tienen que poder limpiarse de la bandeja — si no, serían las únicas inmortales
+// del sistema.
+//
+// ⚠️ Nace SIN LLAMANTES: su primer y único cliente es POST /api/v1/intakes/discard
+// (T4.8), que consulta ESTO y jamás CanTransition. El riesgo es futuro: que alguien
+// «unifique» el descarte sobre SetStatus y abra la transición en la API sin que
+// nadie lo note. Lo que lo detiene no es este comentario sino el test de handler
+// que exige 422 al pedir abandoned sobre una fila expired.
+var discardable = map[string]bool{
+	StatusOpen:    true,
+	StatusExpired: true,
+}
+
 // known es el conjunto de claves de estado que el sistema reconoce como origen
 // legible (incluye los terminales y el legado expired, que siguen siendo
 // filtrables y exportables aunque nadie pueda entrar ni salir de ellos).
@@ -148,6 +174,19 @@ func AllowedTransitions(from string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// CanDiscard responde si una solicitud en el estado `from` puede ser DESCARTADA a
+// mano por el dueño (destino siempre abandoned, D-041.18). Normaliza el alias
+// legado igual que el resto del fichero, así que una fila guardada como `closed`
+// se evalúa como `confirmed` — y no es descartable, que es lo correcto: lo
+// confirmado se cancela, no se descarta.
+//
+// NO es una transición del ciclo de vida y por eso no sale en AllowedTransitions:
+// no se le ofrece al operador en el selector de estado, se ejecuta por su propio
+// endpoint por lotes. Ver el comentario de `discardable`.
+func CanDiscard(from string) bool {
+	return discardable[NormalizeStatus(from)]
 }
 
 // TransitionError es el rechazo de una transición inválida: dice DESDE dónde

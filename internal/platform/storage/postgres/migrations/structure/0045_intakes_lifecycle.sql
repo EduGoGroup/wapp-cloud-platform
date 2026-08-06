@@ -25,7 +25,13 @@
 --     (internal/intakes/status.go), no en la tabla. Meterlo aquí obligaría a una
 --     migración por cada estado nuevo y rompería las filas históricas.
 --   * NO toca expires_at ni order_ttl_seconds. Su derogación como causa de muerte
---     (D-041.16) es de T4.7, que reescribe sus COMMENT en este mismo archivo.
+--     (D-041.16) la ejecutó T4.7, que reescribió sus COMMENT en el archivo que las
+--     CREÓ —0013 para tenant_settings.order_ttl_seconds, 0041 para
+--     public.intakes.expires_at— y no aquí: un COMMENT es last-writer-wins en el
+--     replay, así que las dos opciones dan la misma base, pero dejarlo aquí habría
+--     dejado mintiendo al archivo donde cualquiera busca la columna. Es el mismo
+--     criterio por el que el CHECK de `kind` de abajo va en DROP+ADD: cada archivo
+--     manda sobre lo suyo en CADA replay.
 --
 -- CERO PII EN CLARO: intake_revisions guarda estado de NEGOCIO (skus, cantidades,
 -- precios, el texto que se le renderizó al cliente) — jamás un número, un JID ni

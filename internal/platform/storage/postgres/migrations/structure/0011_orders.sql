@@ -48,8 +48,9 @@ BEGIN
         expires_at  TIMESTAMPTZ
     );
 
-    -- Índice de REANUDACIÓN / TTL: recupera la orden "open" del contacto al reanudar
-    -- la conversación y sirve la evaluación perezosa de expiración (design.md §4.3).
+    -- Índice de REANUDACIÓN: recupera la orden "open" del contacto al reanudar la
+    -- conversación. (Servía además la evaluación perezosa de expiración, derogada
+    -- por el Plan 041 · T4.7 / D-041.16: nada vence por tiempo.)
     CREATE INDEX IF NOT EXISTS orders_open_idx
         ON public.orders (tenant_id, contact_id, status);
 END $$;

@@ -21,8 +21,13 @@ const (
 	// D-041.19/D-041.20). Es navegación/telemetría: sirve para saber cuánto se usa
 	// la tecla 3 y cuántas veces obliga a partir una línea.
 	EffectNoteAdded = "note_added"
-	// EffectCartExpired queda DEFINIDO aquí; su emisión es del runtime al reanudar
-	// una solicitud vencida por TTL (design.md §4.3, T3), no del módulo puro.
+	// EffectCartExpired es un efecto SIN PRODUCTOR desde T4.7: D-041.16 derogó el
+	// vencimiento por tiempo y con él la política que lo sintetizaba al reanudar
+	// (cart/resume.go). Se conserva la DEFINICIÓN —y el case del proyector— porque
+	// hay filas históricas en public.flow_events con este nombre y un replay tiene
+	// que seguir sabiendo materializarlas; lo que murió es quien lo emitía, no lo
+	// que significa. Nadie debe volver a emitirlo: si una solicitud tiene que morir,
+	// la mata una persona (D-041.18), no un reloj.
 	EffectCartExpired = "cart_expired"
 )
 

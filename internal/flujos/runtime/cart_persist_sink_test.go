@@ -177,12 +177,23 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	assertIntakeStatus(t, db, tenant, ec2.ContactID, "cancelled")
 }
 
-// TestCartTTL_Integracion_ExpiresAtAndExpire ejercita el ciclo de vida del TTL
-// contra Postgres real (gated por WAPP_TEST_DB_DSN): item_added fija expires_at a
-// futuro (now + order_ttl); forzado el vencimiento (expires_at al pasado), el
-// efecto cart_expired transiciona la solicitud a "expired" y deja la fila en
-// flow_events. SKIP limpio sin DSN.
-func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
+// TestCartIntegracion_SinVencimientoYReplayHistorico es lo que queda del viejo
+// TestCartTTL_Integracion_ExpiresAtAndExpire contra Postgres real (gated por
+// WAPP_TEST_DB_DSN), partido en dos por T4.7 (D-041.16) — porque el ciclo que
+// probaba tenía una mitad derogada y otra que sobrevive:
+//
+//   - la que MURIÓ y aquí se invierte: item_added ya no fecha expires_at. El
+//     aserto viejo («debe ser futuro») pedía la conducta que este plan prohíbe, así
+//     que se cambia por su contrario en vez de borrarse: la columna tiene que quedar
+//     NULL en la fila nueva, y eso solo lo ve un test contra la tabla real.
+//   - la que SOBREVIVE: el efecto cart_expired ya no lo emite nadie, pero su
+//     constante y el case del proyector se conservan para el REPLAY de flow_events
+//     históricos (punto 3 de T4.7). Que un replay siga materializando la transición
+//     es exactamente lo que esa decisión promete, y sin este tramo la promesa no
+//     tendría quien la vigile.
+//
+// SKIP limpio sin DSN.
+func TestCartIntegracion_SinVencimientoYReplayHistorico(t *testing.T) {
 	db := openTestDB(t) // migra incl. 0011/0012/0013
 	repo := store.NewPostgresRepository(db)
 	sink := persistSinkWith(repo)
@@ -194,7 +205,8 @@ func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	flowID := fmt.Sprintf("carrito-ttl-%d", suffix)
 	ec := cartEC(tenant, contactID, "sess-ttl", flowID)
 
-	// item_added abre la solicitud y fija expires_at a futuro (TTL default 1h).
+	// item_added abre la solicitud SIN fechar vencimiento: expires_at NULL en la
+	// tabla ⇒ zero al leer.
 	if err := sink.Handle(ctx, ec, itemAdded("CAFE", "Café", 1, 2.5)); err != nil {
 		t.Fatalf("Handle item_added: %v", err)
 	}
@@ -202,22 +214,40 @@ func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("GetOpenIntake tras item_added: found=%v err=%v", found, err)
 	}
-	if intake.ExpiresAt.IsZero() || !intake.ExpiresAt.After(time.Now()) {
-		t.Fatalf("expires_at debe ser futuro tras item_added: %v", intake.ExpiresAt)
+	if !intake.ExpiresAt.IsZero() {
+		t.Fatalf("item_added no debe fechar expires_at (D-041.16): %v", intake.ExpiresAt)
+	}
+	// Y en la COLUMNA, que es donde vive la verdad: NULL, no un cero disfrazado.
+	var expiresNull bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT expires_at IS NULL FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2`,
+		tenant, contactID).Scan(&expiresNull); err != nil {
+		t.Fatalf("SELECT intakes.expires_at: %v", err)
+	}
+	if !expiresNull {
+		t.Fatal("intakes.expires_at debe quedar NULL en una solicitud nueva")
 	}
 
-	// Fuerza el vencimiento: expires_at al pasado (misma semántica que el paso del
-	// tiempo). UpsertIntake es idempotente por id.
-	intake.ExpiresAt = time.Now().Add(-time.Minute)
-	if err := repo.UpsertIntake(ctx, intake); err != nil {
-		t.Fatalf("forzar vencimiento (UpsertIntake): %v", err)
+	// Un segundo item_added TOCA la fila y sigue sin fechar nada (la escritura vieja
+	// refrescaba el TTL en CADA línea: es el camino por el que volvería a colarse).
+	if err := sink.Handle(ctx, ec, itemAdded("FLAN", "Flan", 1, 3.0)); err != nil {
+		t.Fatalf("Handle item_added (2ª línea): %v", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT expires_at IS NULL FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2`,
+		tenant, contactID).Scan(&expiresNull); err != nil {
+		t.Fatalf("SELECT intakes.expires_at (2ª línea): %v", err)
+	}
+	if !expiresNull {
+		t.Fatal("un item_added posterior tampoco debe fechar expires_at")
 	}
 
-	// cart_expired (lo sintetiza el runtime al reanudar) → solicitud "expired" + fila
-	// en flow_events (el mismo PersistSink lo materializa).
+	// REPLAY de un flow_event histórico: nadie sintetiza ya cart_expired, pero si
+	// llega uno de los que quedaron escritos, el proyector sigue sabiendo
+	// materializarlo (transición + fila en flow_events). Regresión cero.
 	expired := modules.Effect{Kind: "event", Name: "cart_expired", Payload: map[string]any{}}
 	if err := sink.Handle(ctx, ec, expired); err != nil {
-		t.Fatalf("Handle cart_expired: %v", err)
+		t.Fatalf("Handle cart_expired (replay histórico): %v", err)
 	}
 	assertIntakeStatus(t, db, tenant, contactID, "expired")
 

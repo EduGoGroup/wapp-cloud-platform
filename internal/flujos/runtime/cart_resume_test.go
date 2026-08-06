@@ -97,12 +97,24 @@ func openIntakeCount(repo *store.MemoryRepository, status string) int {
 	return n
 }
 
-// TestCartResume_IntakeExpired_ResetsAndNotifies (design.md §4.3/§9.H): con una
-// solicitud "open" vencida por TTL, el siguiente entrante NO se procesa como avance:
-// el runtime transiciona la solicitud a "expired", registra cart_expired en
-// flow_events, AVISA al usuario y arranca limpio (L1 categorías, sub-estado
-// borrado). Evaluación PEREZOSA, sin cron.
-func TestCartResume_IntakeExpired_ResetsAndNotifies(t *testing.T) {
+// TestCartResume_NadaVencePorTiempo es LA ESCENA DE MARTA (D-041.16, T4.7), y
+// sustituye al viejo TestCartResume_IntakeExpired_ResetsAndNotifies, que probaba la
+// regla CONTRARIA: aquella daba por bueno que una solicitud "open" muriera sola al
+// pasar su expires_at, y esa regla está DEROGADA. No se parcheó para que pasara: se
+// invirtió, porque lo que hay que proteger ahora es justo lo que antes se rompía.
+//
+// Marta arma el carrito el lunes y vuelve el miércoles. El primer item_added abre la
+// solicitud SIN vencimiento (expires_at zero); aun forzando en BD un expires_at
+// pasado —una fila histórica del reloj viejo, que es el caso hostil— el entrante del
+// miércoles NO reinicia nada: la solicitud sigue "open" con su contenido, el
+// sub-estado del carrito sobrevive, nadie avisa de ningún vencimiento y cart_expired
+// no aparece en flow_events.
+//
+// Sin reloj inyectado a propósito: la política de reanudación ya no tiene reloj que
+// inyectar (T4.7 le quitó el campo `now`). Adelantar dos días es exactamente dejar
+// expires_at en el pasado, y hacerlo así prueba de paso que ni siquiera un valor
+// heredado del reloj viejo resucita el vencimiento.
+func TestCartResume_NadaVencePorTiempo(t *testing.T) {
 	rt, repo, sender, contacts := newCartRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
@@ -115,16 +127,22 @@ func TestCartResume_IntakeExpired_ResetsAndNotifies(t *testing.T) {
 	if len(intakes) != 1 || intakes[0].Status != "open" {
 		t.Fatalf("esperaba 1 solicitud open, got %+v", intakes)
 	}
-	// expires_at debe estar fijado a futuro (now + TTL default 1h).
-	if intakes[0].ExpiresAt.IsZero() || !intakes[0].ExpiresAt.After(time.Now()) {
-		t.Fatalf("expires_at debe ser futuro tras item_added: %v", intakes[0].ExpiresAt)
+	// La solicitud nace SIN vencimiento: item_added ya no fecha nada (D-041.16).
+	if !intakes[0].ExpiresAt.IsZero() {
+		t.Fatalf("item_added no debe fechar vencimiento; expires_at=%v", intakes[0].ExpiresAt)
+	}
+	// El carrito quedó armado: el sub-estado con su línea es lo que Marta espera
+	// encontrar el miércoles.
+	if _, ok := loadState(t, repo, cid).Vars["cart"]; !ok {
+		t.Fatal("el carrito armado debe dejar sub-estado en Vars")
 	}
 
-	// Fuerza el vencimiento (simula el paso del tiempo) llevando expires_at al pasado.
+	// Dos días después, con el peor dato posible: expires_at en el pasado (fila
+	// heredada del reloj derogado).
 	o := intakes[0]
-	o.ExpiresAt = time.Now().Add(-time.Minute)
+	o.ExpiresAt = time.Now().Add(-48 * time.Hour)
 	if err := repo.UpsertIntake(ctx, o); err != nil {
-		t.Fatalf("forzar vencimiento: %v", err)
+		t.Fatalf("sembrar expires_at histórico: %v", err)
 	}
 
 	before := sender.count()
@@ -132,18 +150,45 @@ func TestCartResume_IntakeExpired_ResetsAndNotifies(t *testing.T) {
 		t.Fatalf("resume: %v", err)
 	}
 	joined := strings.Join(sender.texts()[before:], "\n")
-	if !strings.Contains(joined, "expiró") || !strings.Contains(joined, "Elige una categoría") {
-		t.Fatalf("resume debía avisar del vencimiento y mostrar L1 fresco: %q", joined)
+	if strings.Contains(joined, "expiró") {
+		t.Fatalf("nadie debe avisar de un vencimiento que ya no existe: %q", joined)
 	}
-	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "expired" {
-		t.Fatalf("esperaba la solicitud en expired, got %+v", os)
+	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "open" {
+		t.Fatalf("la solicitud debe seguir open, got %+v", os)
 	}
-	if !hasFlowEvent(repo, "cart_expired") {
-		t.Fatalf("esperaba flow_event cart_expired, got %+v", repo.FlowEvents())
+	if hasFlowEvent(repo, "cart_expired") {
+		t.Fatalf("cart_expired ya no tiene productor, got %+v", repo.FlowEvents())
 	}
-	st := loadState(t, repo, cid)
-	if _, ok := st.Vars["cart"]; ok {
-		t.Fatalf("el sub-estado del carrito debe borrarse en el reset: %+v", st.Vars)
+	if _, ok := loadState(t, repo, cid).Vars["cart"]; !ok {
+		t.Fatalf("el sub-estado del carrito debe SOBREVIVIR: %+v", loadState(t, repo, cid).Vars)
+	}
+}
+
+// TestCartStart_ConPedidoVencido_SigueDando409 es la otra puerta del mismo reloj:
+// restartableOnStart consultaba la MISMA política, así que un /start sobre un
+// pedido "vencido" reiniciaba en vez de dar 409. Derogado el vencimiento, un pedido
+// en curso es un pedido en curso por viejo que sea, y el 409 protege sus líneas de
+// un clobber. Sin este test, alguien podría reintroducir el reloj por este lado sin
+// que nada se pusiera rojo.
+func TestCartStart_ConPedidoVencido_SigueDando409(t *testing.T) {
+	rt, repo, _, _ := newCartRuntime(t)
+	ctx := context.Background()
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cartAddCafe(t, rt, "add")
+
+	o := repo.Intakes()[0]
+	o.ExpiresAt = time.Now().Add(-48 * time.Hour)
+	if err := repo.UpsertIntake(ctx, o); err != nil {
+		t.Fatalf("sembrar expires_at histórico: %v", err)
+	}
+
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errIsConvExists(err) {
+		t.Fatalf("Start sobre un pedido en curso debe dar 409 aunque su expires_at sea viejo, dio: %v", err)
+	}
+	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "open" {
+		t.Fatalf("la solicitud debe seguir open e intacta, got %+v", os)
 	}
 }
 

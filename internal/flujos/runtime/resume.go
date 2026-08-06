@@ -13,8 +13,8 @@ import (
 )
 
 // prepareResume aplica, al REANUDAR una conversación en un nodo cuyo módulo declaró
-// una ResumePolicy, el reinicio por estado terminal/expiración y la siembra de Vars
-// de navegación (Plan 027 · Ola 3 · T8, cierra H9): saca del engine la lógica
+// una ResumePolicy, el reinicio por estado terminal y la siembra de Vars de
+// navegación (Plan 027 · Ola 3 · T8, cierra H9): saca del engine la lógica
 // cart-específica. Para nodos SIN política (menú/encuesta) es un no-op total
 // (handled=false, sin tocar Vars) ⇒ no-regresión. handled=true ⇒ el turno se consumió
 // reiniciando (se avisó y se mostró el nodo inicial fresco).
@@ -47,9 +47,11 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	if !rt.replyAllowed(store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}) {
 		return true, nil
 	}
-	// Efectos SINTETIZADOS por la política (p. ej. cart_expired) por el MISMO fan-out:
-	// el proyector del módulo los materializa (intakes.status=expired). Best-effort: un
-	// fallo se loguea, no aborta (coherencia BD↔conversación, design.md §3.4).
+	// Efectos SINTETIZADOS por la política, por el MISMO fan-out: el proyector del
+	// módulo los materializa. Best-effort: un fallo se loguea, no aborta (coherencia
+	// BD↔conversación, design.md §3.4). Camino sin uso desde T4.7 —el único que lo
+	// recorría era cart_expired, derogado por D-041.16— pero el fan-out es del
+	// puerto, no del carrito, y se queda para la próxima política que lo necesite.
 	if len(effects) > 0 {
 		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
 		rt.dispatch(ctx, ec, effects, sessionID)
@@ -85,8 +87,8 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 // restartableOnStart decide si un Start sobre una conversación EXISTENTE puede
 // reiniciarse en vez de devolver 409 (gotcha, design.md §3.4), consultando la
 // ResumePolicy del nodo inicial (Plan 027 · Ola 3 · T8). Sin política (menú/encuesta)
-// ⇒ false (409 intacto). Si la política sintetiza efectos (p. ej. cart_expired al
-// vencer la solicitud), se despachan (coherencia BD↔conversación) y devuelve true.
+// ⇒ false (409 intacto). Si la política sintetizara efectos se despachan (coherencia
+// BD↔conversación) y devuelve true; ninguna lo hace hoy (ver prepareResume).
 func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, error) {
 	node, ok := def.Nodes[def.Initial]
 	if !ok {
@@ -119,8 +121,8 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 // dispatch hace el fan-out EN PROCESO (ADR-0003, sin broker) de los efectos por
 // cada EventSink registrado. Un fallo de un sink se LOGUEA y NO aborta el avance
 // ni corta el resto de sinks/efectos (el estado ya quedó persistido antes del
-// dispatch). Lo comparten HandleIncoming (efectos que DECLARA el módulo) y el TTL
-// perezoso del carrito (cart_expired SINTETIZADO por el runtime, design.md §4.3).
+// dispatch). Hoy lo usa HandleIncoming (efectos que DECLARA el módulo); el otro
+// llamante era el TTL perezoso del carrito, derogado en T4.7 (D-041.16).
 func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []modules.Effect, sessionID string) {
 	for _, eff := range effects {
 		for _, sink := range rt.sinks {

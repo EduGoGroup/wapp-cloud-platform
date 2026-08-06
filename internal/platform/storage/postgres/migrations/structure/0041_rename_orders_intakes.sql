@@ -117,7 +117,8 @@ COMMENT ON COLUMN public.intakes.status     IS 'Estado del ciclo de vida: "open"
 COMMENT ON COLUMN public.intakes.total      IS 'Total agregado de la solicitud (suma de qty*unit_price de intake_items). Dato de negocio.';
 COMMENT ON COLUMN public.intakes.created_at IS 'Momento del alta (apertura de la solicitud). Usa el DEFAULT now().';
 COMMENT ON COLUMN public.intakes.updated_at IS 'Momento de la última transición de estado. Usa el DEFAULT now() en el alta.';
-COMMENT ON COLUMN public.intakes.expires_at IS 'Instante de expiración por TTL (now + tenant_settings.order_ttl_seconds); NULL si no aplica. Evaluado perezosamente al reanudar (Plan 016 design.md §4.3).';
+COMMENT ON COLUMN public.intakes.expires_at IS
+    'HISTORICA. Ya NO se escribe (2026-08-05, noche) y NADIE la obedece: ninguna solicitud vence por tiempo. Las filas viejas conservan su valor tal cual.';
 
 COMMENT ON TABLE  public.intake_items IS 'Líneas de la solicitud (una por artículo), proyección de cart_closed. Nació como `order_items` en el Plan 016 y se renombró en la 0041. Dato de NEGOCIO EN CLARO (ADR-0009): sku/label son códigos del catálogo del tenant, NO PII; la identidad la protege el contact_id opaco de intakes (ADR-0010). NUNCA DEK, store cifrado ni número/JID en claro.';
 COMMENT ON COLUMN public.intake_items.id         IS 'Identidad técnica de la fila (append-only; sin significado de negocio).';

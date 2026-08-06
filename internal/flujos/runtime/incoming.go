@@ -125,8 +125,11 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// tocarse, se DESCARTA silenciosamente y el entrante se trata como un arranque
 	// nuevo (camino handleTrigger, donde la señal LLM aplica). Va ANTES de IsEscape /
 	// consecutiveReplay / prepareResume: un estado vencido no debe escapar ni avanzar.
-	// El TTL de la SOLICITUD del carrito (order_ttl_seconds) es aparte y se evalúa después
-	// (prepareResume), como hoy. ttl<=0 o error de settings ⇒ no vence (no-regresión).
+	// Es el ÚNICO reloj que queda en este camino: el de la SOLICITUD del carrito
+	// (order_ttl_seconds) se derogó en T4.7 (D-041.16) y prepareResume ya no lo
+	// evalúa. Vencer aquí descarta el ESTADO CONVERSACIONAL; la solicitud sobrevive
+	// con sus líneas y solo la mata una persona (D-041.18). ttl<=0 o error de
+	// settings ⇒ no vence (no-regresión).
 	if rt.conversationExpired(ctx, tenantID, st) {
 		if derr := rt.store.Delete(ctx, key); derr != nil {
 			return fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", derr)

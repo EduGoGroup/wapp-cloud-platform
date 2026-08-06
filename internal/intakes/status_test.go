@@ -105,6 +105,42 @@ func TestCanTransition_ExpiredNuncaEsDestino(t *testing.T) {
 	}
 }
 
+// TestCanDiscard_OpenYExpired: el descarte manual (D-041.18) es una pregunta
+// APARTE de la máquina de transiciones, y este test fija las dos mitades a la vez
+// —lo que CanDiscard permite y lo que CanTransition sigue negando— porque la
+// tentación futura es exactamente fundirlas.
+//
+// `expired` es descartable: son las filas que dejó el reloj derogado (D-041.16) y,
+// si no se pudieran descartar, serían las únicas inmortales de la bandeja. Pero
+// descartarlas NO es una transición ofrecida: no sale en allowed_transitions y
+// POST /intakes/{id}/status la rechaza (ver el test de handler en publicapi).
+func TestCanDiscard_OpenYExpired(t *testing.T) {
+	for _, from := range []string{intakes.StatusOpen, intakes.StatusExpired} {
+		if !intakes.CanDiscard(from) {
+			t.Fatalf("CanDiscard(%q)=false; el dueño tiene que poder descartarlo (D-041.18)", from)
+		}
+	}
+	for _, from := range []string{
+		intakes.StatusPendingApproval, intakes.StatusConfirmed, intakes.StatusClosedLegacy,
+		intakes.StatusDepositRequested, intakes.StatusDepositPaid, intakes.StatusSettled,
+		intakes.StatusCancelled, intakes.StatusAbandoned, intakes.StatusRejected,
+		intakes.StatusNeedsInfo, "en_camino", "",
+	} {
+		if intakes.CanDiscard(from) {
+			t.Fatalf("CanDiscard(%q)=true; solo se descarta lo abierto y lo vencido", from)
+		}
+	}
+	// La otra mitad: abrirlo por CanDiscard NO abrió la transición. Si esto se pone
+	// verde al revés, el <select> de la consola empezaría a ofrecer «abandonar»
+	// sobre filas vencidas, que es justo lo que la decisión del 2026-08-06 prohíbe.
+	if intakes.CanTransition(intakes.StatusExpired, intakes.StatusAbandoned) {
+		t.Fatal("expired→abandoned NO es transición: el descarte va por su propia puerta (T4.8)")
+	}
+	if got := intakes.AllowedTransitions(intakes.StatusExpired); len(got) != 0 {
+		t.Fatalf("AllowedTransitions(expired)=%v; una fila vencida no ofrece destinos", got)
+	}
+}
+
 // TestCanTransition_ClosedLegado: la clave con la que el módulo cart cierra desde
 // el Plan 016 se comporta EXACTAMENTE como `confirmed`, en los dos extremos de la
 // transición. Es lo que permite no migrar las filas históricas.

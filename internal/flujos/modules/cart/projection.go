@@ -3,7 +3,6 @@ package cart
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -24,8 +23,11 @@ const (
 // ProjectionStore es lo que el proyector del carrito necesita del almacén para
 // materializar sus efectos en intakes/intake_items. Interfaz mínima (ISP) que
 // satisface *store.PostgresRepository / *MemoryRepository.
+//
+// Ya NO incluye GetTenantSettings: lo único que el proyector leía de la config del
+// tenant era order_ttl_seconds, para fechar el vencimiento de la solicitud, y ese
+// reloj quedó derogado (D-041.16, T4.7).
 type ProjectionStore interface {
-	GetTenantSettings(ctx context.Context, tenantID string) (store.TenantSettings, error)
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
@@ -44,14 +46,16 @@ type RevisionWriter interface {
 }
 
 // Projector implementa modules.Projector para los efectos del carrito (Plan 027 ·
-// Ola 3 · T8, cierra H10): item_added asegura la solicitud "open" (+refresca TTL),
-// cart_closed cierra atómicamente solicitud+líneas, y cart_cancelled/cart_expired
-// transicionan la solicitud. Es un adaptador IMPURO; produce EXACTAMENTE las mismas
+// Ola 3 · T8, cierra H10): item_added asegura la solicitud "open", cart_closed
+// cierra atómicamente solicitud+líneas, y cart_cancelled/cart_expired transicionan
+// la solicitud. Es un adaptador IMPURO; produce EXACTAMENTE las mismas
 // filas que producía el switch central del PersistSink (retrofit por efectos, §9.D).
+//
+// Sin reloj a propósito (T4.7): el único uso que tenía era fechar expires_at, y
+// nada vence por tiempo (D-041.16).
 type Projector struct {
 	store     ProjectionStore
 	revisions RevisionWriter
-	now       func() time.Time
 }
 
 // NewProjector construye el proyector del carrito sobre el almacén de solicitudes
@@ -61,7 +65,7 @@ type Projector struct {
 // propósito: un proyector sin escritor de revisiones cerraría carritos sin dejar
 // rastro y ningún test lo notaría. Si falta, que rompa en compilación.
 func NewProjector(s ProjectionStore, revisions RevisionWriter) *Projector {
-	return &Projector{store: s, revisions: revisions, now: time.Now}
+	return &Projector{store: s, revisions: revisions}
 }
 
 // Handles reconoce los efectos que el carrito PROYECTA a tablas tipadas. Los efectos
@@ -87,6 +91,9 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 	case EffectCartCancelled:
 		return p.transitionOpenIntake(ctx, meta, intakeStatusCancelled)
 	case EffectCartExpired:
+		// Rama sin productor vivo (T4.7): solo la alcanza el REPLAY de un
+		// flow_event histórico. Se queda para que ese replay no reviente ni
+		// deje la fila a medias; ningún camino de hoy la sintetiza.
 		return p.transitionOpenIntake(ctx, meta, intakeStatusExpired)
 	default:
 		return nil
@@ -94,23 +101,21 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 }
 
 // ensureOpenIntake garantiza UNA solicitud "open" para (tenant, contact) al primer
-// item_added (design.md §3.4) y FIJA/REFRESCA su TTL (expires_at = now +
-// tenant_settings.order_ttl). Idempotente por identidad de negocio: si ya hay abierta
-// NO crea otra, pero la "toca" (refresca expires_at) para que el pedido activo no
-// venza mientras el usuario sigue agregando. La evaluación del vencimiento es
-// perezosa (al reanudar, en la ResumePolicy); aquí solo se fija la marca.
+// item_added (design.md §3.4). Idempotente por identidad de negocio: si ya hay
+// abierta NO crea otra, y la "toca" tal cual está.
+//
+// Hasta T4.7 esto fijaba y REFRESCABA un vencimiento (expires_at = now +
+// tenant_settings.order_ttl) en CADA item_added. D-041.16 lo derogó: ninguna
+// solicitud vence por tiempo, así que la solicitud nace con expires_at ZERO (NULL
+// en la tabla) y la fila que ya existía se reescribe con el valor que tuviera —las
+// históricas conservan el suyo tal cual, que es justo lo que promete el COMMENT de
+// la columna.
 func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) error {
-	settings, err := p.store.GetTenantSettings(ctx, meta.TenantID)
-	if err != nil {
-		return err
-	}
-	expiresAt := p.now().Add(settings.OrderTTL)
 	existing, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
 		return err
 	}
 	if found {
-		existing.ExpiresAt = expiresAt
 		return p.store.UpsertIntake(ctx, existing)
 	}
 	return p.store.UpsertIntake(ctx, store.Intake{
@@ -119,7 +124,6 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Status:    intakeStatusOpen,
-		ExpiresAt: expiresAt,
 	})
 }
 

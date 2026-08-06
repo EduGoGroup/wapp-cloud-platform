@@ -23,9 +23,10 @@ func persistSinkWith(repo store.Repository) *runtime.PersistSink {
 		survey.NewProjector(repo))
 }
 
-// cartResumeOpt registra la ResumePolicy del carrito (TTL perezoso + auto-reinicio +
-// siembra de page_size), como el arranque real, para los tests del runtime que
-// ejercen la reanudación del carrito.
+// cartResumeOpt registra la ResumePolicy del carrito (auto-reinicio tras nivel
+// terminal + siembra de page_size), como el arranque real, para los tests del
+// runtime que ejercen la reanudación del carrito. El TTL perezoso que también
+// gobernaba se derogó en T4.7 (D-041.16).
 func cartResumeOpt(repo store.Repository) runtime.Option {
 	return runtime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(repo))
 }
