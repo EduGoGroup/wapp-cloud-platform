@@ -243,3 +243,49 @@ func TestTenantContent_Upsert_400_InvalidJSON(t *testing.T) {
 		t.Fatalf("code=%d, quiero 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// blobDe fabrica un JSON válido de exactamente n bytes.
+func blobDe(t *testing.T, n int) string {
+	t.Helper()
+	const envoltura = `{"a":""}`
+	if n < len(envoltura) {
+		t.Fatalf("no se puede fabricar un blob de %d bytes: el mínimo es %d", n, len(envoltura))
+	}
+	blob := `{"a":"` + strings.Repeat("x", n-len(envoltura)) + `"}`
+	if len(blob) != n {
+		t.Fatalf("el blob fabricado mide %d bytes y se pedían %d", len(blob), n)
+	}
+	return blob
+}
+
+// TestTenantContent_TechoDeBytes_Configurado comprueba que el techo del PUT es el
+// que se le cablea, no un número fijo. Es lo que cierra la trampa de tener DOS
+// techos sobre la misma tabla: subir el del import y que este endpoint rechazara
+// después el mismo blob que el import acaba de aceptar.
+func TestTenantContent_TechoDeBytes_Configurado(t *testing.T) {
+	repo := flowstore.NewMemoryRepository()
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo, ContentMaxBytes: 64}}, apiKeys())
+
+	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/x", blobDe(t, 65)); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("65 bytes con el techo en 64: code=%d, quiero 413; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/x", blobDe(t, 64)); rec.Code != http.StatusOK {
+		t.Fatalf("64 bytes con el techo en 64: code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTenantContent_TechoDeBytes_PorDefecto: sin cablear, el techo sigue siendo 1
+// MiB, exactamente el que este endpoint tenía hardcodeado antes de compartir el
+// número con el import. Cero cambio de comportamiento por defecto.
+func TestTenantContent_TechoDeBytes_PorDefecto(t *testing.T) {
+	repo := flowstore.NewMemoryRepository()
+	mux := newAPI(publicapi.Deps{MediaDeps: publicapi.MediaDeps{Content: repo}}, apiKeys())
+
+	const mib = 1 << 20
+	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/x", blobDe(t, mib+1)); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("1 MiB+1: code=%d, quiero 413; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := call(mux, keyAContent, http.MethodPut, "/api/v1/tenant-content/x", blobDe(t, mib)); rec.Code != http.StatusOK {
+		t.Fatalf("1 MiB exacto: code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+}

@@ -543,6 +543,13 @@ func (v *validation) itemCode(l loc, cc *categoryCtx, j int, subject string, raw
 
 // itemSKU valida el identificador de negocio: obligatorio, único en TODO el
 // catálogo y fuera del prefijo reservado del sistema.
+//
+// El alcance de la unicidad es GLOBAL, no por categoría, y el mensaje lo dice: el
+// design se contradice (la regla de D-041.5 dice «único en el catálogo» y su
+// ejemplo de motivo dice «repetido en la categoría %q»), y manda la regla. Por eso
+// el motivo cita al artículo que se lo llevó primero CON SU categoría: si el
+// choque es entre dos categorías distintas, mandar a buscar dentro de una sola es
+// mandar a buscar donde no está.
 func (v *validation) itemSKU(l loc, subject string, raw json.RawMessage) string {
 	sku := v.requiredText(l, subject, "sku", "el sku", raw)
 	if sku == "" {
@@ -553,7 +560,7 @@ func (v *validation) itemSKU(l loc, subject string, raw json.RawMessage) string 
 		return ""
 	}
 	if prev, dup := v.skus[sku]; dup {
-		v.c.at(l, "sku", subject+": el sku "+strconv.Quote(sku)+" ya lo usa "+prev+"; el sku identifica al artículo en el pedido y no puede repetirse.")
+		v.c.at(l, "sku", subject+": el sku "+strconv.Quote(sku)+" ya lo usa "+prev+"; el sku identifica al artículo en el pedido y tiene que ser único en TODO el catálogo, no solo dentro de su categoría.")
 		return sku
 	}
 	v.skus[sku] = subject

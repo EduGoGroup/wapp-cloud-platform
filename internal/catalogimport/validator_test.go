@@ -435,6 +435,98 @@ func TestValidate_TopeDeDefectos_NoDevuelveMilesYAvisa(t *testing.T) {
 	}
 }
 
+// TestValidate_VariantsYComponentsALaVez_ElImportLoRechaza cumple una promesa
+// escrita en OTRO archivo: internal/flujos/modules/cart/catalog.go conserva las
+// variantes, ignora los components y avisa «(el import lo rechazará)». Este test
+// es esa frase; sin él, el comentario del runtime sería una mentira en el código.
+func TestValidate_VariantsYComponentsALaVez_ElImportLoRechaza(t *testing.T) {
+	doc := `{"format":"wapp.catalog_import","version":1,"catalog":{"categories":[` +
+		`{"code":"1","label":"Combos","items":[` +
+		`{"code":"1","sku":"HAMB","label":"Hamburguesa","price":6000},` +
+		`{"code":"2","sku":"COMBO","label":"Combo","price":9000,` +
+		`"variants":[{"code":"V1","label":"Chico","price":9000}],` +
+		`"components":[{"sku":"HAMB","qty":1}]}` +
+		`]}]}}`
+
+	_, verr := catalogimport.Validate([]byte(doc), catalogimport.DefaultLimits())
+	if verr == nil {
+		t.Fatal("variants + components a la vez debe RECHAZARSE en el import (D-041.2)")
+	}
+	if len(verr.Errors) != 1 {
+		t.Fatalf("se esperaba 1 defecto; llegaron %d: %+v", len(verr.Errors), verr.Errors)
+	}
+	got := verr.Errors[0]
+	if idx(got.CategoryIndex) != 0 || idx(got.ItemIndex) != 1 || got.Field != "variants" {
+		t.Errorf("el defecto debe señalar el artículo del combo: %+v", got)
+	}
+	if !strings.Contains(got.Reason, "declara variantes y componentes a la vez") {
+		t.Errorf("el motivo %q no explica la incompatibilidad", got.Reason)
+	}
+
+	// El MISMO documento en el runtime NO se rompe: conserva las variantes y suelta
+	// los componentes. Los dos rigores conviven; el import es el que corta.
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(`{"categories":[{"code":"1","label":"Combos","items":[`+
+		`{"code":"2","sku":"COMBO","label":"Combo","price":9000,`+
+		`"variants":[{"code":"V1","label":"Chico","price":9000}],`+
+		`"components":[{"sku":"HAMB","qty":1}]}]}]}`), &raw); err != nil {
+		t.Fatalf("fixture ilegible: %v", err)
+	}
+	cat, err := cart.ParseCatalog(model.Content{Raw: raw})
+	if err != nil {
+		t.Fatalf("el runtime no debe fallar por esto: %v", err)
+	}
+	art := cat.Categories[0].Items[0]
+	if !art.HasVariants() || art.IsCombo() {
+		t.Errorf("el runtime debe conservar las variantes y soltar los components: %+v", art)
+	}
+}
+
+// TestValidate_SKURepetidoEntreCategorías: la unicidad del sku es de TODO el
+// catálogo, así que el motivo tiene que nombrar la categoría del artículo que se lo
+// llevó primero. Mandar al operador a buscar dentro de la categoría equivocada es
+// peor que no decir nada.
+func TestValidate_SKURepetidoEntreCategorías(t *testing.T) {
+	doc := `{"format":"wapp.catalog_import","version":1,"catalog":{"categories":[` +
+		`{"code":"1","label":"Bebidas","items":[{"code":"1","sku":"CAFE","label":"Café","price":2500}]},` +
+		`{"code":"2","label":"Postres","items":[{"code":"1","sku":"CAFE","label":"Café con leche","price":3000}]}]}}`
+
+	_, verr := catalogimport.Validate([]byte(doc), catalogimport.DefaultLimits())
+	if verr == nil || len(verr.Errors) != 1 {
+		t.Fatalf("se esperaba 1 defecto por sku repetido entre categorías; llegó %+v", verr)
+	}
+	got := verr.Errors[0]
+	if idx(got.CategoryIndex) != 1 || idx(got.ItemIndex) != 0 {
+		t.Errorf("el defecto debe señalar la SEGUNDA aparición: %+v", got)
+	}
+	for _, quiere := range []string{
+		`de la categoría "Postres"`, // dónde está el duplicado
+		`de la categoría "Bebidas"`, // dónde está el original
+		"único en TODO el catálogo", // la regla, para que no se busque solo en una categoría
+	} {
+		if !strings.Contains(got.Reason, quiere) {
+			t.Errorf("el motivo %q no dice %q", got.Reason, quiere)
+		}
+	}
+}
+
+// TestValidate_PrefijoReservado_SaleDeLaConstanteDelCart: el prefijo del sistema no
+// se re-declara aquí. Si alguien cambiara cart.SystemSKUPrefix, este test seguiría
+// midiendo la regla de verdad en vez de una copia envejecida.
+func TestValidate_PrefijoReservado_SaleDeLaConstanteDelCart(t *testing.T) {
+	sku := cart.SystemSKUPrefix + "loquesea"
+	doc := `{"format":"wapp.catalog_import","version":1,"catalog":{"categories":[` +
+		`{"code":"1","label":"Bebidas","items":[{"code":"1","sku":"` + sku + `","label":"Café","price":2500}]}]}}`
+
+	_, verr := catalogimport.Validate([]byte(doc), catalogimport.DefaultLimits())
+	if verr == nil || len(verr.Errors) != 1 {
+		t.Fatalf("un sku con el prefijo reservado debe rechazarse; llegó %+v", verr)
+	}
+	if !strings.Contains(verr.Errors[0].Reason, strconv.Quote(cart.SystemSKUPrefix)) {
+		t.Errorf("el motivo %q no cita el prefijo reservado %q", verr.Errors[0].Reason, cart.SystemSKUPrefix)
+	}
+}
+
 // idx desenvuelve un índice opcional (nil = cabecera) para poder compararlo.
 func idx(p *int) int {
 	if p == nil {

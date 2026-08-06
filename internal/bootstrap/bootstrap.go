@@ -252,8 +252,9 @@ func Run(ctx context.Context) error {
 			SessionStatus: fleetRepo,
 		},
 		MediaDeps: publicapi.MediaDeps{
-			Media:   flowDeps.presign,
-			Content: flowStore,
+			Media:           flowDeps.presign,
+			Content:         flowStore,
+			ContentMaxBytes: cfg.Import.MaxJSONBytes,
 		},
 		DiagDeps: publicapi.DiagDeps{
 			Diagnostics:          diagStore,

@@ -4,16 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/catalogimport"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
-// maxTenantContentBytes acota el tamaño del blob JSONB de tenant_content (defensa
-// DoS). 1 MiB cubre catálogos/menús grandes sin permitir cargas abusivas.
-const maxTenantContentBytes = 1 << 20
+// tenantContentBytes resuelve el techo del blob JSONB de tenant_content (defensa
+// DoS): el configurado, o el default si no se cableó.
+//
+// UNA SOLA FUENTE, A PROPÓSITO. Este PUT y el import de catálogo (Plan 041 · Ola 3)
+// escriben en la MISMA tabla, así que dos techos independientes abren una trampa
+// concreta: subir el límite del import a 4 MiB, importar bien, y que después este
+// PUT rechace ESE MISMO blob. Por eso los dos salen de WAPP_IMPORT_MAX_JSON_BYTES y
+// comparten el default de catalogimport (1 MiB, el valor que este endpoint ya tenía
+// hardcodeado: por defecto no cambia nada).
+func tenantContentBytes(configured int64) int64 {
+	if configured <= 0 {
+		return catalogimport.DefaultMaxJSONBytes
+	}
+	return configured
+}
 
 // TenantContentStore es el puerto MÍNIMO del CRUD de contenido dinámico por-tenant
 // (public.tenant_content) que la API pública consume. Lo satisfacen
@@ -46,7 +58,10 @@ const rfc3339 = "2006-01-02T15:04:05Z07:00"
 //   - 200 con {ref} al persistir.
 //   - 400 si falta ref, el cuerpo está vacío o NO es JSON válido.
 //   - 401 sin identidad; 413 si el blob excede el límite; 500 en fallo del store.
-func upsertTenantContentHandler(cs TenantContentStore) http.Handler {
+//
+// El techo se aplica LEYENDO, antes de que encoding/json vea nada: se reusa
+// catalogimport.ReadLimited, el mismo mecanismo (y el mismo número) que el import.
+func upsertTenantContentHandler(cs TenantContentStore, maxBytes int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -63,13 +78,13 @@ func upsertTenantContentHandler(cs TenantContentStore) http.Handler {
 			return
 		}
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxTenantContentBytes+1))
+		body, err := catalogimport.ReadLimited(r.Body, catalogimport.Limits{MaxJSONBytes: tenantContentBytes(maxBytes)})
 		if err != nil {
+			if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "el contenido excede el tamaño máximo")
+				return
+			}
 			writeError(w, http.StatusBadRequest, "no se pudo leer el cuerpo")
-			return
-		}
-		if len(body) > maxTenantContentBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, "el contenido excede el tamaño máximo")
 			return
 		}
 		if len(body) == 0 || !json.Valid(body) {

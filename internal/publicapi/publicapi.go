@@ -101,6 +101,12 @@ type DiagDeps struct {
 type MediaDeps struct {
 	Media   PresignUploader    // presign R2 (upload-url, Plan 017/018 · T6)
 	Content TenantContentStore // blobs JSONB por-tenant (tenant_content, T6)
+	// ContentMaxBytes es el techo del blob de tenant_content. Cero-valor ⇒ default de
+	// catalogimport (1 MiB, el que este endpoint tenía hardcodeado). Se cablea desde
+	// config.ImportConfig: es el MISMO número que gobierna el import de catálogo,
+	// porque los dos escriben en la misma tabla y dos techos distintos dejarían un
+	// blob importable que el PUT genérico rechaza (Plan 041 · Ola 3).
+	ContentMaxBytes int64
 }
 
 // Deps agrupa las dependencias de negocio que la API pública envuelve. Se
@@ -195,9 +201,9 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// media por-tenant. Escrituras auditadas (content.write); lecturas sin auditoría
 	// (content.read). Todo acotado al tenant del token (INV-8). Sin cambios en el Motor.
 	mux.Handle("PUT /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
-		"content.write", "tenant_content", upsertTenantContentHandler(d.Content)))
+		"content.write", "tenant_content", upsertTenantContentHandler(d.Content, d.ContentMaxBytes)))
 	mux.Handle("POST /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
-		"content.write", "tenant_content", upsertTenantContentHandler(d.Content)))
+		"content.write", "tenant_content", upsertTenantContentHandler(d.Content, d.ContentMaxBytes)))
 	mux.Handle("DELETE /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
 		"content.write", "tenant_content", deleteTenantContentHandler(d.Content)))
 	mux.Handle("GET /api/v1/tenant-content", protectRead(mw,
