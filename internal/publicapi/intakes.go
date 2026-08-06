@@ -65,15 +65,28 @@ type intakeListResponse struct {
 }
 
 // intakeDetailResponse es el contrato de GET /api/v1/intakes/{id}: la cabecera
-// (campos promovidos) más sus líneas.
+// (campos promovidos), sus líneas y los destinos a los que la solicitud puede ir
+// desde donde está.
+//
+// `allowed_transitions` sale de la MISMA fuente que el cuerpo del 422
+// (intakes.AllowedTransitions) y en el mismo orden determinista. Sin él, una
+// consola que quiera pintar el selector de cambio de estado tendría dos salidas y
+// las dos son malas: provocar un 422 para averiguar qué puede hacer, o duplicar el
+// mapa de estados en el cliente y desincronizarlo en cuanto la Ola 4 lo amplíe.
+//
+// Un estado TERMINAL devuelve `[]`, nunca `null`: "no hay acciones" y "no sé" son
+// respuestas distintas y la UI pinta cosas distintas con cada una.
 //
 // Las REVISIONES (design §3, intake_revisions) NO aparecen: esa tabla nace en T4.1
 // (Ola 4) y publicar un `"revisions": []` afirmaría "esta solicitud no tiene
 // revisiones" cuando la verdad es "todavía no se registran". El hueco está
-// previsto —el campo entra aquí cuando la tabla exista— pero no se finge.
+// previsto —el campo entra aquí cuando la tabla exista— pero no se finge. La
+// diferencia con `allowed_transitions` es que este SÍ se puede responder hoy con
+// la verdad completa: la máquina de estados ya existe.
 type intakeDetailResponse struct {
 	intakeDTO
-	Items []intakeItemDTO `json:"items"`
+	Items              []intakeItemDTO `json:"items"`
+	AllowedTransitions []string        `json:"allowed_transitions"`
 }
 
 // invalidTransitionResponse es el cuerpo del 422 de POST …/status: dónde está la
@@ -153,6 +166,9 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 		writeJSON(w, http.StatusOK, intakeDetailResponse{
 			intakeDTO: toIntakeDTO(detail.Intake),
 			Items:     items,
+			// detail.Status ya viene normalizado del dominio: una solicitud
+			// guardada como `closed` ofrece los destinos de `confirmed`.
+			AllowedTransitions: intakes.AllowedTransitions(detail.Status),
 		})
 	})
 }

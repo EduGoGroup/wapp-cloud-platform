@@ -68,7 +68,8 @@ type intakeItemDTO struct {
 
 type intakeDetailDTO struct {
 	intakeDTO
-	Items []intakeItemDTO `json:"items"`
+	Items              []intakeItemDTO `json:"items"`
+	AllowedTransitions []string        `json:"allowed_transitions"`
 }
 
 type invalidTransitionDTO struct {
@@ -282,6 +283,64 @@ func TestIntakes_403_SinFeature(t *testing.T) {
 }
 
 // ========================== GET /api/v1/intakes/{id} ==========================
+
+// TestIntakeDetail_AllowedTransitions: el detalle publica los destinos válidos
+// desde donde está la solicitud, para que la consola pinte su selector sin
+// duplicar la máquina de estados ni provocar un 422 para averiguarlos.
+//
+// A1 está en BD con el `closed` legado: sus destinos son los de `confirmed`, lo
+// que prueba de paso que la normalización llega también a este campo.
+func TestIntakeDetail_AllowedTransitions(t *testing.T) {
+	api := newAPI(intakesDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA1, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var detail intakeDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal del detalle: %v; body=%s", err, rec.Body.String())
+	}
+	quiero := []string{"cancelled", "deposit_requested", "pending_approval", "settled"}
+	if !slices.Equal(detail.AllowedTransitions, quiero) {
+		t.Fatalf("allowed_transitions=%v, quiero %v (orden alfabético determinista)",
+			detail.AllowedTransitions, quiero)
+	}
+	// Misma fuente que el 422: lo que el detalle ofrece es exactamente lo que la
+	// escritura acepta. Si divergieran, la consola pintaría un botón que falla.
+	for _, destino := range detail.AllowedTransitions {
+		if !intakes.CanTransition(detail.Status, destino) {
+			t.Fatalf("el detalle ofrece %q pero CanTransition lo rechaza", destino)
+		}
+	}
+}
+
+// TestIntakeDetail_AllowedTransitionsTerminalEsListaVacía: una solicitud cancelada
+// no va a ninguna parte, y eso se dice con `[]`, NUNCA con `null`. La diferencia
+// entre "no hay acciones" y "no sé" es la diferencia entre pintar un selector
+// vacío y no pintarlo.
+func TestIntakeDetail_AllowedTransitionsTerminalEsListaVacía(t *testing.T) {
+	api := newAPI(intakesDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA3, "") // cancelled
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Sobre el JSON CRUDO: un `null` deserializa a un slice nil y el test de
+	// longitud no lo distinguiría de `[]`.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal crudo: %v", err)
+	}
+	got, ok := raw["allowed_transitions"]
+	if !ok {
+		t.Fatal("el detalle no publica allowed_transitions")
+	}
+	if string(got) != "[]" {
+		t.Fatalf("allowed_transitions=%s en un estado terminal; quiero [] (nunca null)", got)
+	}
+}
 
 // TestIntakeDetail_200_ConLíneasYContactoOpaco: el detalle trae las líneas y el
 // contact_id sale TAL CUAL está en BD — ni descifrado, ni enriquecido, ni omitido
