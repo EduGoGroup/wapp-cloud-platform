@@ -1,0 +1,133 @@
+
+=== variantes · elegir la presentación antes de la cantidad ===
+
+--- RENDER (arranque del nodo) ---
+🛒 Elige una categoría:
+01) Tortas
+02) Bebidas
+
+--- STEP <01> ---
+Tortas:
+1) Torta de chocolate · desde $18000.00
+2) Combo hamburguesa · $9500.00
+0) ← Volver
+efecto: kind=event name=cart_started payload={}
+efecto: kind=event name=category_selected payload={"category_code":"01"}
+estado: {"level":"articles","cat_code":"01","started":true}
+
+--- STEP <1> ---
+Torta de chocolate · desde $18000.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <2> ---
+Torta de chocolate · elige una opción:
+1) 10-12 porciones · $18000.00
+2) 25-30 porciones · $32000.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"variant","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <0> ---
+Torta de chocolate · desde $18000.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <2> ---
+Torta de chocolate · elige una opción:
+1) 10-12 porciones · $18000.00
+2) 25-30 porciones · $32000.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"variant","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <9> ---
+Opción no válida. Responde con el número de una de las opciones.
+
+Torta de chocolate · elige una opción:
+1) 10-12 porciones · $18000.00
+2) 25-30 porciones · $32000.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"variant","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <2> ---
+¿Cuántos "Torta de chocolate — 25-30 porciones"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"01","sku":"TORTA-CHOC","variant_code":"V2","started":true}
+
+--- STEP <0> ---
+Torta de chocolate · elige una opción:
+1) 10-12 porciones · $18000.00
+2) 25-30 porciones · $32000.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"variant","cat_code":"01","sku":"TORTA-CHOC","started":true}
+
+--- STEP <2> ---
+¿Cuántos "Torta de chocolate — 25-30 porciones"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"01","sku":"TORTA-CHOC","variant_code":"V2","started":true}
+
+--- STEP <3> ---
+Añadido al pedido ✅
+1) Agregar más de Tortas
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Torta de chocolate — 25-30 porciones","qty":3,"sku":"TORTA-CHOC#V2","unit_price":32000}
+estado: {"level":"continue","cat_code":"01","sku":"TORTA-CHOC","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000}],"started":true}
+
+=== combo · una sola línea al precio del combo ===
+
+--- STEP <1> ---
+Tortas:
+1) Torta de chocolate · desde $18000.00
+2) Combo hamburguesa · $9500.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"articles","cat_code":"01","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000}],"started":true}
+
+--- STEP <2> ---
+Combo hamburguesa · $9500.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000}],"started":true}
+
+--- STEP <2> ---
+¿Cuántos "Combo hamburguesa"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000}],"started":true}
+
+--- STEP <1> ---
+Añadido al pedido ✅
+1) Agregar más de Tortas
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Combo hamburguesa","qty":1,"sku":"COMBO-1","unit_price":9500}
+estado: {"level":"continue","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000},{"sku":"COMBO-1","label":"Combo hamburguesa","qty":1,"unit_price":9500}],"started":true}
+
+--- STEP <2> ---
+🧾 Resumen del pedido:
+Torta de chocolate — 25-30 porciones x3  $96000.00
+Combo hamburguesa x1  $9500.00
+TOTAL  $105500.00
+1) Confirmar y finalizar
+2) Seguir agregando
+9) Cancelar pedido
+efectos: (ninguno)
+estado: {"level":"summary","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000},{"sku":"COMBO-1","label":"Combo hamburguesa","qty":1,"unit_price":9500}],"started":true}
+
+--- STEP <1> ---
+✅ ¡Pedido confirmado! Total $105500.00.
+efecto: kind=persist name=cart_closed payload={"items":[{"label":"Torta de chocolate — 25-30 porciones","qty":3,"sku":"TORTA-CHOC#V2","unit_price":32000},{"label":"Combo hamburguesa","qty":1,"sku":"COMBO-1","unit_price":9500}],"total":105500}
+estado: {"level":"closed","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000},{"sku":"COMBO-1","label":"Combo hamburguesa","qty":1,"unit_price":9500}],"started":true}

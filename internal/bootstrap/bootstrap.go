@@ -165,7 +165,11 @@ func Run(ctx context.Context) error {
 	flowReg := modules.NewRegistry()
 	flowReg.Register(menu.New())
 	flowReg.Register(survey.New())
-	flowReg.Register(cart.New())
+	// El carrito recibe el logger para AVISAR de los campos del catálogo v2 que
+	// su parseo tolerante descarta (Plan 041 · T2.2): en runtime un catálogo a
+	// medias sigue vendiendo, pero el dueño tiene que poder enterarse de qué
+	// parte suya quedó fuera. Sin logger el módulo funciona igual, en silencio.
+	flowReg.Register(cart.New(cart.WithLogger(log)))
 	flowReg.Register(media.New()) // Plan 017: nodo "media" (envía archivos por WhatsApp)
 	flowStore := flowstore.NewPostgresRepository(db)
 	// Fuente de contenido enrutada POR-NODO (Plan 015 T4a): el Router compone el

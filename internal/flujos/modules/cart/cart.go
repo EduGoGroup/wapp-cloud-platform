@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/EduGoGroup/wapp-shared/logger"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 )
@@ -39,10 +41,24 @@ const catalogUnavailable = "El catálogo no está disponible en este momento. In
 // Module implementa modules.Module para el tipo de nodo "cart".
 type Module struct {
 	pageSize int
+	log      logger.Logger
 }
 
 // Option configura el Module al construirlo (patrón functional-options).
 type Option func(*Module)
+
+// WithLogger le da al módulo un logger para AVISAR de los campos del catálogo v2
+// que el parseo tolerante descartó (Plan 041 · T2.2). Es OPCIONAL y solo
+// observabilidad: sin él, el módulo se comporta exactamente igual —los avisos
+// siguen en Catalog.Warnings— y la pureza no se toca, porque un aviso no lee ni
+// escribe nada del mundo.
+func WithLogger(l logger.Logger) Option {
+	return func(m *Module) {
+		if l != nil {
+			m.log = l
+		}
+	}
+}
 
 // WithPageSize fija el tamaño de página de los niveles de lista. Un valor <= 0
 // se ignora (se mantiene el default). En T1 es la vía PURA para probar la
@@ -81,7 +97,24 @@ func (m Module) Render(_ model.Node, content model.Content) []string {
 	if err != nil {
 		return []string{catalogUnavailable}
 	}
+	m.warnCatalog(cat)
 	return []string{screenCategories(cat, cartState{Level: LevelCategories}, m.pageSize)}
+}
+
+// warnCatalog vuelca por el log los campos v2 que el parseo tolerante descartó
+// (Plan 041 · T2.2). Se llama SOLO donde el catálogo se resuelve al ENTRAR al
+// nodo (Render y Prime), no en Step: Step re-parsea el snapshot en cada mensaje
+// del cliente y avisar ahí repetiría el mismo defecto una vez por tecleo, hasta
+// enterrar el log del resto de la flota. Un aviso por conversación basta para
+// que el dueño se entere de que su catálogo tiene una parte ilegible.
+func (m Module) warnCatalog(cat Catalog) {
+	if m.log == nil {
+		return
+	}
+	for _, w := range cat.Warnings {
+		m.log.Warn("cart: campo del catálogo v2 descartado",
+			"categoria", w.Category, "sku", w.SKU, "campo", w.Field, "motivo", w.Reason)
+	}
 }
 
 // Step procesa la entrada del usuario sobre el nodo carrito: carga el catálogo
@@ -130,6 +163,8 @@ func advance(cat Catalog, st cartState, input string, size int) (cartState, []st
 		return stepArticles(cat, st, in, size)
 	case LevelArticle:
 		return stepArticle(cat, st, in, size)
+	case LevelVariant:
+		return stepVariant(cat, st, in, size)
 	case LevelQuantity:
 		return stepQuantity(cat, st, in, size)
 	case LevelContinue:
@@ -204,9 +239,9 @@ func stepArticle(cat Catalog, st cartState, in string, size int) (cartState, []s
 	case "1": // Ver descripción → item_viewed{sku}; re-muestra L3 con la descripción.
 		eff := event(EffectItemViewed, map[string]any{"sku": a.SKU})
 		return st, []string{screenArticle(a, true)}, []modules.Effect{eff}
-	case "2": // Agregar al pedido → L4 cantidad.
-		st.Level = LevelQuantity
-		return st, []string{screenQuantity(a)}, nil
+	case "2": // Agregar al pedido → L3b variante (si tiene) o L4 cantidad.
+		st, screen := toAdd(st, a)
+		return st, []string{screen}, nil
 	case codeVolver:
 		st, outs := toArticlesOf(category, st, size)
 		return st, outs, nil
@@ -214,6 +249,39 @@ func stepArticle(cat Catalog, st cartState, in string, size int) (cartState, []s
 		st, outs := reprompt(st, screenArticle(a, false))
 		return st, outs, nil
 	}
+}
+
+// --- L3b · Variante del artículo (Plan 041 · D-041.4) ----------------------
+
+// stepVariant resuelve la elección de variante: la lista va numerada POR
+// POSICIÓN (1..N), "0" vuelve a la ficha del artículo y cualquier otra cosa
+// reprompt. Este nivel SOLO existe para artículos con variantes; uno sin ellas
+// nunca lo pisa (REQ-08: el flujo v1 no gana un paso).
+func stepVariant(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
+	_, a, ok := locate(cat, st.CatCode, st.SKU)
+	if !ok {
+		st, outs := toArticles(cat, st, size)
+		return st, outs, nil
+	}
+	if !a.HasVariants() {
+		// El catálogo cambió bajo los pies (el artículo perdió sus variantes):
+		// se sigue por el camino sin variante en vez de quedar atrapado.
+		st.Level = LevelQuantity
+		st.VariantCode = ""
+		return st, []string{screenQuantity(a)}, nil
+	}
+	if in == codeVolver {
+		st.Level = LevelArticle
+		st.VariantCode = ""
+		return st, []string{screenArticle(a, false)}, nil
+	}
+	if v, ok := variantByPosition(a, in); ok {
+		st.Level = LevelQuantity
+		st.VariantCode = v.Code
+		return st, []string{screenQuantityOf(lineLabel(a, v, true))}, nil
+	}
+	st, outs := reprompt(st, screenVariants(a))
+	return st, outs, nil
 }
 
 // --- L4 · Cantidad ---------------------------------------------------------
@@ -224,24 +292,38 @@ func stepQuantity(cat Catalog, st cartState, in string, size int) (cartState, []
 		st, outs := toArticles(cat, st, size)
 		return st, outs, nil
 	}
+	v, hasVariant := selectedVariant(a, st)
 	if in == codeVolver {
-		st.Level = LevelArticle
-		return st, []string{screenArticle(a, false)}, nil
+		st, screen := backFromQuantity(st, a)
+		return st, []string{screen}, nil
+	}
+	if a.HasVariants() && !hasVariant {
+		// Estado incoherente (la variante elegida ya no existe en el catálogo):
+		// se vuelve a preguntar en vez de cobrar el precio de referencia, que es
+		// justo lo que el contrato v2 prohíbe.
+		st.Level = LevelVariant
+		st.VariantCode = ""
+		return st, []string{screenVariants(a)}, nil
 	}
 	qty, err := strconv.Atoi(in)
 	if err != nil || qty < 1 {
 		// Entrada no numérica o < 1 → reprompt del MISMO paso (design.md §9.D).
-		return st, []string{"Escribe una cantidad válida (un número mayor o igual a 1).\n\n" + screenQuantity(a)}, nil
+		return st, []string{"Escribe una cantidad válida (un número mayor o igual a 1).\n\n" + screenQuantityOf(lineLabel(a, v, hasVariant))}, nil
 	}
 	// item_added: agrega la línea y pasa a L5 continuar. El runtime, al recibir
 	// este efecto, ASEGURA una solicitud "open" por (tenant, contact) (design.md §3.4).
-	st.Lines = append(cloneLines(st.Lines), cartLine{SKU: a.SKU, Label: a.Label, Qty: qty, UnitPrice: a.Price})
+	// Con variante la línea lleva SU precio y SU etiqueta y el sku compuesto; el
+	// combo (components) es UNA línea al precio del artículo, sin nada especial:
+	// sus componentes son información del dueño, no artículos que se cobren.
+	line := newLine(a, v, hasVariant, qty)
+	st.Lines = append(cloneLines(st.Lines), line)
 	st.Level = LevelContinue
+	st.VariantCode = ""
 	eff := event(EffectItemAdded, map[string]any{
-		"sku":        a.SKU,
-		"label":      a.Label,
-		"qty":        qty,
-		"unit_price": a.Price,
+		"sku":        line.SKU,
+		"label":      line.Label,
+		"qty":        line.Qty,
+		"unit_price": line.UnitPrice,
 	})
 	return st, []string{screenContinue(category)}, []modules.Effect{eff}
 }
@@ -310,6 +392,7 @@ func toCategories(cat Catalog, st cartState, size int) (cartState, []string) {
 	st.CatCode = ""
 	st.SKU = ""
 	st.Page = 0
+	st.VariantCode = "" // sin artículo en foco no hay variante en curso
 	return st, []string{screenCategories(cat, st, size)}
 }
 
@@ -327,6 +410,7 @@ func toArticlesOf(category Category, st cartState, size int) (cartState, []strin
 	st.CatCode = category.Code
 	st.SKU = ""
 	st.Page = 0
+	st.VariantCode = "" // se suelta el artículo en foco: la variante muere con él
 	return st, []string{screenArticles(category, st, size)}
 }
 

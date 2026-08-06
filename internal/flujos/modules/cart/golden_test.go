@@ -44,6 +44,7 @@ func assertGolden(t *testing.T, name, got string) {
 		t.Logf("golden regenerado: %s", path)
 		return
 	}
+	//nolint:gosec // G304: la ruta es un nombre de golden bajo testdata/, no entrada externa
 	want, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("leyendo golden %s (¿falta generarlo con -update?): %v", path, err)

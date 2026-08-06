@@ -24,7 +24,7 @@ func screenArticles(category Category, st cartState, size int) string {
 	b.WriteString(category.Label + ":")
 	start, end := pageBounds(len(category.Items), st.Page, size)
 	for _, a := range category.Items[start:end] {
-		b.WriteString("\n" + a.Code + ") " + a.Label + " · " + money(a.Price))
+		b.WriteString("\n" + a.Code + ") " + a.Label + " · " + articlePrice(a))
 	}
 	if end < len(category.Items) {
 		b.WriteString("\n" + moreCode(articleCodes(category)) + ") Más ▾")
@@ -35,7 +35,7 @@ func screenArticles(category Category, st cartState, size int) string {
 
 func screenArticle(a Article, showDesc bool) string {
 	var b strings.Builder
-	b.WriteString(a.Label + " · " + money(a.Price))
+	b.WriteString(a.Label + " · " + articlePrice(a))
 	if showDesc {
 		desc := a.Description
 		if desc == "" {
@@ -49,8 +49,51 @@ func screenArticle(a Article, showDesc bool) string {
 	return b.String()
 }
 
+// screenVariants es el nivel de variante (L3b, D-041.4): lista NUMERADA POR
+// POSICIÓN —no por Variant.Code, que es un identificador de negocio ("V2") y no
+// algo que nadie vaya a teclear— más el "volver" de siempre. Sin paginación: las
+// variantes de un artículo son un puñado por definición (una presentación, un
+// tamaño), no un catálogo dentro del catálogo.
+func screenVariants(a Article) string {
+	var b strings.Builder
+	b.WriteString(a.Label + " · elige una opción:")
+	for i, v := range a.Variants {
+		b.WriteString("\n" + strconv.Itoa(i+1) + ") " + v.Label + " · " + money(v.Price))
+	}
+	b.WriteString("\n" + codeVolver + ") ← Volver")
+	return b.String()
+}
+
 func screenQuantity(a Article) string {
-	return "¿Cuántos \"" + a.Label + "\"? Escribe la cantidad (" + codeVolver + " ← volver)"
+	return screenQuantityOf(a.Label)
+}
+
+// screenQuantityOf pide la cantidad de algo ya nombrado: el artículo a secas, o
+// el artículo con su variante ("Torta de chocolate — 25-30 porciones"). Con un
+// artículo sin variantes produce EXACTAMENTE el texto de siempre.
+func screenQuantityOf(label string) string {
+	return "¿Cuántos \"" + label + "\"? Escribe la cantidad (" + codeVolver + " ← volver)"
+}
+
+// articlePrice es el precio que se muestra en las listas y en la ficha. Con
+// variantes el Price del artículo es solo una referencia (D-041.2), así que se
+// enseña "desde" el más barato: prometer un precio fijo y cobrar otro al elegir
+// la presentación sería mentir en pantalla. Sin variantes, el precio de siempre.
+func articlePrice(a Article) string {
+	if !a.HasVariants() {
+		return money(a.Price)
+	}
+	return "desde " + money(minVariantPrice(a.Variants))
+}
+
+func minVariantPrice(vs []Variant) float64 {
+	lowest := vs[0].Price
+	for _, v := range vs[1:] {
+		if v.Price < lowest {
+			lowest = v.Price
+		}
+	}
+	return lowest
 }
 
 func screenContinue(category Category) string {

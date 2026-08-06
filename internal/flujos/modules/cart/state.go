@@ -24,12 +24,22 @@ const (
 	LevelCategories = "categories" // L1 · lista de categorías (raíz, sin "volver")
 	LevelArticles   = "articles"   // L2 · artículos de la categoría en foco
 	LevelArticle    = "article"    // L3 · menú del artículo (ver desc./agregar/volver)
+	LevelVariant    = "variant"    // L3b · variante del artículo (SOLO si tiene; Plan 041 · D-041.4)
 	LevelQuantity   = "quantity"   // L4 · cantidad libre (qty>=1)
 	LevelContinue   = "continue"   // L5 · agregar más / finalizar / cancelar / volver
 	LevelSummary    = "summary"    // L6 · resumen + confirmar / seguir / cancelar
 	LevelClosed     = "closed"     // terminal · pedido confirmado
 	LevelCancelled  = "cancelled"  // terminal · pedido cancelado
 )
+
+// variantSKUSuffix separa el sku del artículo del code de la variante en el sku
+// de la LÍNEA ("TORTA-CHOC#V2", D-041.4): el pedido dice qué presentación se
+// vendió sin necesidad de un sku distinto por variante en el catálogo.
+const variantSKUSuffix = "#"
+
+// variantLabelSep une la etiqueta del artículo con la de la variante en la línea
+// ("Torta de chocolate — 25-30 porciones", D-041.4).
+const variantLabelSep = " — "
 
 // Códigos de control fijos (design.md §4.2). "volver" es 0 en cada nivel (L1 es
 // la raíz y no lo ofrece); "cancelar" es 9 en los niveles de decisión (L5/L6).
@@ -91,6 +101,12 @@ type cartState struct {
 	// `omitempty` un valor cero jamás llega a escribirse en el JSONB. No hay un solo
 	// `order_id` guardado que quede huérfano.
 	IntakeID string `json:"intake_id,omitempty"` // uuid de la solicitud open (la abre el runtime; §3.4)
+	// VariantCode es la variante elegida del artículo en foco (Plan 041 ·
+	// D-041.4). Es TRANSITORIO: vive entre el nivel de variante y el de cantidad,
+	// y se limpia al agregar la línea o al salir del artículo. Un artículo sin
+	// variantes nunca lo escribe (omitempty ⇒ el JSONB de los tenants v1 no
+	// cambia ni un byte).
+	VariantCode string `json:"variant_code,omitempty"`
 	// Started marca que ya se emitió el efecto cart_started. La pureza del módulo
 	// y el contrato de efectos (solo Step declara Effects, no Render) impiden
 	// emitirlo en el Enter/Render; se emite EXACTAMENTE UNA vez en el primer Step
