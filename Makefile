@@ -15,8 +15,13 @@ GO           := GOWORK=off go
 # Postgres efímero para integración — mismo usuario/contraseña/BD/puerto que
 # el service container de ci.yml. Se levanta y se destruye en el propio
 # target: nunca depende de un contenedor de otro proyecto ya corriendo.
+#
+# El puerto es sobrescribible (`?=`) porque el 5432 del host suele estar ocupado
+# por otro Postgres —en la máquina de desarrollo, el compartido con EduGo— y
+# entonces el `docker run` falla por entorno, no por el código:
+#   INTEGRATION_PG_PORT=55441 make test-integration
 INTEGRATION_PG_CONTAINER := wapp-cloud-platform-pg-test
-INTEGRATION_PG_PORT      := 5432
+INTEGRATION_PG_PORT      ?= 5432
 INTEGRATION_PG_USER      := wapp
 INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
