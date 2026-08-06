@@ -182,6 +182,15 @@ type ImportComponent struct {
 // («el artículo 3 de la categoría …» es el TERCERO): son dos lenguajes distintos
 // para dos lectores distintos, y por eso no coinciden.
 type ImportFieldError struct {
+	// Row es la fila de la PLANILLA que produjo el defecto, en el número que la hoja
+	// enseña en su margen izquierdo (la cabecera es la 1). Solo la rellena el camino
+	// tabular (ParseTabular): quien sube un JSON no ha visto ninguna fila. Cero = el
+	// defecto no es de una fila concreta —o el documento vino en JSON— y entonces
+	// mandan los índices.
+	//
+	// Es int y no *int a propósito, al revés que los índices: una fila 0 no existe,
+	// así que el cero-valor ya significa «ninguna» sin necesidad de un puntero.
+	Row int `json:"row,omitempty"`
 	// CategoryIndex es la posición de la categoría afectada; nil = error de cabecera
 	// (format, version, límites) o del documento entero.
 	CategoryIndex *int `json:"category_index,omitempty"`

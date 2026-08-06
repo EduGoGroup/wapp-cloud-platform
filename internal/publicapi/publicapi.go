@@ -461,6 +461,15 @@ func registerCatalogImport(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, a
 		"content.write", "catalog_import",
 		canImport(catalogImportHandler(d.Content, d.ContentVersions, limits))))
 
+	// La planilla (T3.4, D-041.9) es la MISMA operación por otra puerta: sube el
+	// CSV/XLSX que el dueño llenó en su hoja en vez del JSON del contrato. Va con
+	// los mismos tres guardias y con el MISMO recurso de auditoría —lo que se hace
+	// es lo mismo, y por dónde entró queda anotado en `source` de la versión, que es
+	// donde de verdad significa algo.
+	mux.Handle("POST /api/v1/catalog/import/tabular", protect(mw, auditor, log,
+		"content.write", "catalog_import",
+		canImport(catalogImportTabularHandler(d.Content, d.ContentVersions, limits))))
+
 	// La plantilla y el prompt son LECTURA (content.read) y no tocan la BD: son el
 	// contrato dicho de dos maneras. Cuelgan de este mismo registro —y por tanto
 	// aparecen y desaparecen con el POST— porque son la primera mitad del mismo

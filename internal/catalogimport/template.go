@@ -149,18 +149,23 @@ const (
 // JSON») sería imposible de cumplir. Va junto a `tags` porque las dos son
 // clasificación informativa, y antes de `variantes`/`componentes`, que son
 // estructura.
+//
+// Los nombres salen de las constantes que declara el LECTOR (tabular.go): el
+// emisor y el parser tienen que decir exactamente lo mismo, y con el literal
+// escrito dos veces bastaría una errata en una de ellas para emitir una planilla
+// que este servidor no sabe releer.
 var tabularColumns = []string{
-	"categoria",
-	"subcategoria",
-	"codigo",
-	"sku",
-	"nombre",
-	"precio",
-	"descripcion",
-	"tags",
-	"atributos",
-	"variantes",
-	"componentes",
+	colCategoria,
+	colSubcategoria,
+	colCodigo,
+	colSKU,
+	colNombre,
+	colPrecio,
+	colDescripcion,
+	colTags,
+	colAtributos,
+	colVariantes,
+	colComponentes,
 }
 
 // TabularColumns devuelve las columnas de la planilla canónica, en orden. Devuelve

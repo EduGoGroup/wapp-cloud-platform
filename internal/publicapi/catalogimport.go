@@ -92,60 +92,98 @@ type catalogImportErrors struct {
 //     500 en fallo del store.
 func catalogImportHandler(cs TenantContentStore, vw CatalogVersionWriter, limits catalogimport.Limits) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := httpapi.IdentityFromContext(r.Context())
-		if !ok || id.TenantID == "" {
-			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+		target, ok := catalogImportTargetFrom(w, r, cs, vw, flowstore.VersionSourceImportJSON)
+		if !ok {
 			return
 		}
-		if cs == nil || vw == nil {
-			writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
-			return
-		}
-		mode, ref, msg := importParams(r)
-		if msg != "" {
-			writeError(w, http.StatusBadRequest, msg)
-			return
-		}
-
 		doc, code, errBody := decodeImportBody(r, limits)
 		if errBody != nil {
 			writeJSON(w, code, errBody)
 			return
 		}
-
-		current, warning, err := currentCatalog(r.Context(), cs, id.TenantID, ref)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "no se pudo leer el catálogo vigente")
-			return
-		}
-		diff := catalogimport.DiffCatalog(current, doc.Catalog)
-		if warning != "" {
-			diff.CurrentWarnings = append(diff.CurrentWarnings, warning)
-		}
-		resp := catalogImportResponse{Mode: mode, Ref: ref, Items: countItems(doc), Diff: diff}
-		if mode == importModeValidate {
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		// El blob que se escribe es doc.Catalog serializado TAL CUAL: misma forma
-		// v2 que consume el motor, sin traducción intermedia (D-041.5). Lo que
-		// queda guardado es el documento ya normalizado por el validador, no los
-		// bytes que llegaron: sin `format`, sin `source` y sin campos ajenos.
-		blob, err := json.Marshal(doc.Catalog)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "no se pudo serializar el catálogo")
-			return
-		}
-		archived, err := vw.ReplaceTenantContentVersioned(r.Context(), id.TenantID, ref, blob, flowstore.VersionSourceImportJSON)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "no se pudo aplicar el catálogo")
-			return
-		}
-		resp.Applied = true
-		resp.ArchivedVersion = archived
-		writeJSON(w, http.StatusOK, resp)
+		finishCatalogImport(w, r, cs, vw, target, doc)
 	})
+}
+
+// catalogImportTarget es el destino resuelto de un import: de quién, a dónde y con
+// qué procedencia se escribe. El tenant sale SIEMPRE del token (INV-8); la ref y el
+// modo, del query; la procedencia la fija el camino (JSON o planilla), no el
+// llamante — que un cliente pudiera declarar de dónde vino su catálogo convertiría
+// la columna `source` de las versiones en una etiqueta que no significa nada.
+type catalogImportTarget struct {
+	tenantID string
+	mode     string
+	ref      string
+	source   string
+}
+
+// catalogImportTargetFrom resuelve identidad, dependencias y query de un import, y
+// responde ÉL MISMO cuando algo falta (ok=false ⇒ la respuesta ya está escrita).
+//
+// Los dos caminos del import comparten este preámbulo ENTERO, y por eso está aquí y
+// no copiado en cada handler: escrito dos veces, bastaría con que un día uno de los
+// dos dejara de comprobar el tenant para que un import escribiera donde no debe.
+func catalogImportTargetFrom(w http.ResponseWriter, r *http.Request,
+	cs TenantContentStore, vw CatalogVersionWriter, source string) (catalogImportTarget, bool) {
+	id, ok := httpapi.IdentityFromContext(r.Context())
+	if !ok || id.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "autenticación requerida")
+		return catalogImportTarget{}, false
+	}
+	if cs == nil || vw == nil {
+		writeError(w, http.StatusInternalServerError, "store de contenido no configurado")
+		return catalogImportTarget{}, false
+	}
+	mode, ref, msg := importParams(r)
+	if msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return catalogImportTarget{}, false
+	}
+	return catalogImportTarget{tenantID: id.TenantID, mode: mode, ref: ref, source: source}, true
+}
+
+// finishCatalogImport es el tramo COMÚN de los dos imports, y empieza donde acaba la
+// diferencia entre ellos: con el documento ya validado. Calcula el diff contra el
+// catálogo vigente y, en apply, archiva la versión anterior y escribe la nueva.
+//
+// El diff se calcula SIEMPRE (también en apply) porque es lo que se responde: la
+// pantalla enseña lo mismo que se confirmó. Que un JSON y una planilla con el mismo
+// catálogo produzcan el mismo diff, la misma versión y el mismo blob no es una
+// coincidencia afortunada: es que a partir de aquí es literalmente el mismo código.
+func finishCatalogImport(w http.ResponseWriter, r *http.Request,
+	cs TenantContentStore, vw CatalogVersionWriter, t catalogImportTarget, doc catalogimport.CatalogImport) {
+	current, warning, err := currentCatalog(r.Context(), cs, t.tenantID, t.ref)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "no se pudo leer el catálogo vigente")
+		return
+	}
+	diff := catalogimport.DiffCatalog(current, doc.Catalog)
+	if warning != "" {
+		diff.CurrentWarnings = append(diff.CurrentWarnings, warning)
+	}
+	resp := catalogImportResponse{Mode: t.mode, Ref: t.ref, Items: countItems(doc), Diff: diff}
+	if t.mode == importModeValidate {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// El blob que se escribe es doc.Catalog serializado TAL CUAL: misma forma v2
+	// que consume el motor, sin traducción intermedia (D-041.5). Lo que queda
+	// guardado es el documento ya normalizado por el validador, no los bytes que
+	// llegaron: sin `format`, sin `source` y sin campos ajenos.
+	blob, err := json.Marshal(doc.Catalog)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "no se pudo serializar el catálogo")
+		return
+	}
+	archived, err := vw.ReplaceTenantContentVersioned(r.Context(), t.tenantID, t.ref, blob, t.source)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "no se pudo aplicar el catálogo")
+		return
+	}
+	resp.Applied = true
+	resp.ArchivedVersion = archived
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // importParams resuelve el modo y la ref del query string. Devuelve el mensaje de
