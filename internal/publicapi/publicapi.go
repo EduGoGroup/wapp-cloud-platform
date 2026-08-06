@@ -118,10 +118,12 @@ type Deps struct {
 	// (Plan 029 · T5). Lo satisface *intentcfg.PostgresStore. nil ⇒ no se montan las
 	// rutas /api/v1/intents.
 	Intents IntentConfigStore
-	// Entitlements resuelve las features del tenant (ADR-0022); es el gate de verdad
-	// del PUT de intents (sin llm_intent ⇒ 403). Lo satisface *entitlements.Postgres.
-	// nil ⇒ no se montan las rutas /api/v1/intents.
-	Entitlements FeatureChecker
+	// Entitlements resuelve los derechos comerciales del tenant (ADR-0022): es el
+	// gate de verdad del PUT de intents (sin llm_intent ⇒ 403) y la fuente de
+	// GET /api/v1/entitlements (Plan 040 · T2.2). Lo satisface
+	// *entitlements.Postgres. nil ⇒ no se montan ni /api/v1/intents ni
+	// /api/v1/entitlements.
+	Entitlements EntitlementsResolver
 	// ConfigPush empuja el ConfigUpdate a las sesiones vivas del tenant tras el PUT
 	// (ADR-0021, best-effort). Lo satisface *gatewaygrpc.Server (PushConfig). nil ⇒
 	// no se empuja (solo se persiste; el push al conectar reconcilia).
@@ -255,6 +257,18 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	if d.SessionStatus != nil {
 		mux.Handle("POST /api/v1/sessions/{id}/status", protect(mw, auditor, log,
 			"sessions.write", "session", flowadmin.SetSessionStatusHandler(d.SessionStatus)))
+	}
+
+	// Derechos comerciales del tenant (Plan 040 · T2.2, ADR-0022/ADR-0033): plan
+	// efectivo + features encendidas + el TTL con el que se cachean. Lectura sin
+	// auditoría, acotada al tenant del token (INV-8): NO hay consulta cross-tenant,
+	// el tenant no viaja en la URL. Scope entitlements.read — que tenant_admin ('*')
+	// y viewer ('*.read') ya cubren por glob, y operator recibe explícito en la
+	// migración 0040 (design §D-040.4). Toda UI que pinte capacidades depende de
+	// esta ruta.
+	if d.Entitlements != nil {
+		mux.Handle("GET /api/v1/entitlements", protectRead(mw,
+			"entitlements.read", listEntitlementsHandler(d.Entitlements)))
 	}
 
 	// Config del clasificador de intenciones por-tenant (Plan 029 · T5, ADR-0020/
