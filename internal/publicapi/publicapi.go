@@ -386,6 +386,19 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	mux.Handle("PUT /api/v1/intakes/{id}/items", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(putIntakeItemsHandler(d.Intakes))))
 
+	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
+	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es
+	// del LOTE, no de una solicitud, y colgarla de un id obligaría a N llamadas —
+	// justo lo que la tarea existe para evitar. El mux de Go 1.22+ prefiere el
+	// segmento literal, así que no compite con …/{id}/… (que además usan otros verbos).
+	//
+	// Mismo scope y misma feature que el resto de la bandeja: descartar es operar
+	// SOBRE la bandeja, no una capacidad que se venda aparte. Auditado como escritura
+	// (`intakes.write`) — y es la escritura de esta ola que MÁS falta hace en la
+	// bitácora, porque no se puede deshacer.
+	mux.Handle("POST /api/v1/intakes/discard", protect(mw, auditor, log,
+		"intakes.write", "intake", cartBasic(discardIntakesHandler(d.Intakes))))
+
 	// Export y resumen (Plan 041 · T1.2/T1.3, REQ-03/REQ-04).
 	mux.Handle("GET /api/v1/intakes/export", protectRead(mw,
 		"intakes.read", canExport(exportIntakesHandler(d.Intakes))))

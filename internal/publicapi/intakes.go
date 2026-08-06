@@ -26,6 +26,9 @@ type IntakeService interface {
 	Get(ctx context.Context, tenantID, intakeID string) (intakes.Detail, error)
 	// SetStatus aplica una transición del ciclo de vida (D-041.10).
 	SetStatus(ctx context.Context, tenantID, intakeID, status string) (intakes.Intake, error)
+	// Discard DESCARTA a mano un lote de solicitudes huérfanas dejándolas en
+	// `abandoned` (T4.8, D-041.18). Contesta por ítem: no es todo-o-nada.
+	Discard(ctx context.Context, tenantID string, intakeIDs []string) (intakes.DiscardResult, error)
 	// ReplaceItems sustituye las líneas de cliente de una solicitud en
 	// `pending_approval` y deja la revisión `corrected` del dueño (T4.10, REQ-36).
 	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item) (intakes.Detail, error)
@@ -280,6 +283,99 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 			writeJSON(w, http.StatusOK, toIntakeDTO(updated))
 		}
 	})
+}
+
+// discardIntakesRequest es el cuerpo de POST /api/v1/intakes/discard: los ids que
+// el dueño quiere sacar de su bandeja.
+//
+// Es una lista EXPLÍCITA de ids y no un filtro, y eso es la decisión de fondo de
+// esta puerta: el descarte es irreversible y no hay papelera (D-041.22), así que
+// quien descarta tiene que NOMBRAR lo que descarta. Un filtro dejaría el conjunto
+// afectado a merced de lo que hubiera cambiado entre la pantalla y el POST.
+type discardIntakesRequest struct {
+	IntakeIDs []string `json:"intake_ids"`
+}
+
+// discardSkipDTO es UNA solicitud que no se descartó, con su razón. Las razones son
+// las claves del dominio (intakes.DiscardSkip*) y viajan tal cual: la pantalla las
+// traduce a la voz del dueño, el contrato no.
+type discardSkipDTO struct {
+	IntakeID string `json:"intake_id"`
+	Reason   string `json:"reason"`
+}
+
+// discardIntakesResponse es el contrato del 200: qué se descartó y qué no.
+//
+// Un lote MIXTO —unos válidos y otros no— es el caso NORMAL, no el excepcional, y
+// por eso la respuesta tiene dos listas en vez de un código de error: descartar
+// veinte huérfanos no puede fallar entero porque uno de ellos ya lo estuviera.
+type discardIntakesResponse struct {
+	Discarded []string         `json:"discarded"`
+	Skipped   []discardSkipDTO `json:"skipped"`
+}
+
+// discardIntakesHandler sirve POST /api/v1/intakes/discard: el DESCARTE MANUAL por
+// lotes del pedido huérfano (T4.8, REQ-32 / D-041.18). 200 con el desglose por ítem;
+// 400 solo por cuerpo malformado, lista vacía o más de intakes.MaxDiscardBatch ids.
+//
+// NO hay 404 ni 422 aquí, y no es un olvido: un lote no tiene UN recurso ni UN
+// estado. Un id inexistente —o de otro tenant, que es indistinguible (INV-8)— sale
+// como `not_found` DENTRO del 200, junto a los que sí se descartaron.
+//
+// ⚠️ Lo que este endpoint NO hace todavía: CERRAR el evento conversacional
+// (`conversation_events` a `cancelled`, `flow_state.event_id` a NULL — REQ-32e,
+// criterios (g)/(h) del plan). No es una omisión de alcance: ninguna de las dos
+// piezas existe en ninguna base, las crea el **Plan 043**, y ese plan a su vez
+// necesita el `abandoned` que publica éste. Dueño declarado: **043 · T4.3**. El
+// detalle de por qué tampoco se entrega el filtro `orphan=true` está en la cabecera
+// de internal/intakes/discard.go.
+func discardIntakesHandler(svc IntakeService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req discardIntakesRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+
+		res, err := svc.Discard(r.Context(), id.TenantID, req.IntakeIDs)
+		var tooLarge *intakes.TooLargeBatchError
+		switch {
+		case errors.Is(err, intakes.ErrEmptyDiscardBatch):
+			writeError(w, http.StatusBadRequest,
+				"intake_ids es obligatorio: manda entre 1 y "+strconv.Itoa(intakes.MaxDiscardBatch)+" ids")
+		case errors.As(err, &tooLarge):
+			writeError(w, http.StatusBadRequest,
+				"el lote trae "+strconv.Itoa(tooLarge.Count)+" solicitudes y el máximo es "+strconv.Itoa(tooLarge.Max))
+		case err != nil:
+			// Lo ya descartado QUEDA descartado (cada solicitud es su propia unidad
+			// de trabajo). Reintentar el mismo lote es seguro: lo hecho vuelve como
+			// `already_discarded` y el resto se termina.
+			writeError(w, http.StatusInternalServerError, "no se pudieron descartar las solicitudes")
+		default:
+			writeJSON(w, http.StatusOK, toDiscardResponse(res))
+		}
+	})
+}
+
+// toDiscardResponse proyecta el resultado del lote al wire. Las dos listas salen
+// SIEMPRE, también vacías (`[]`, nunca `null`): quien pinta la pantalla no tiene que
+// ramificar por el nulo para decir "no se descartó nada".
+func toDiscardResponse(res intakes.DiscardResult) discardIntakesResponse {
+	skipped := make([]discardSkipDTO, 0, len(res.Skipped))
+	for _, s := range res.Skipped {
+		skipped = append(skipped, discardSkipDTO{IntakeID: s.IntakeID, Reason: s.Reason})
+	}
+	discarded := res.Discarded
+	if discarded == nil {
+		discarded = []string{}
+	}
+	return discardIntakesResponse{Discarded: discarded, Skipped: skipped}
 }
 
 // editIntakeItemDTO es UNA línea tal como la manda el dueño al editar a mano

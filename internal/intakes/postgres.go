@@ -691,6 +691,143 @@ func replaceClientItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, item
 	return nil
 }
 
+// Discard implementa Store: el descarte manual del dueño (T4.8, D-041.18). Todo
+// ocurre en UNA transacción que empieza bloqueando la cabecera, y el orden importa:
+//
+//  1. BLOQUEAR + leer estado, sesión y contacto (FOR UPDATE): el mismo punto de
+//     serialización que toman el CAS de UpdateStatus, EnsureShippingLine y
+//     ReplaceItems.
+//  2. Comprobar el estado contra `discardable`. Si no está, se sale SIN ESCRIBIR y
+//     sin llegar a mirar la conversación: el estado explica el rechazo mejor.
+//  3. Comprobar la conversación viva (aproximación provisional, ver
+//     hasLiveCartTx). También sale sin escribir.
+//  4. UPDATE a `abandoned` + revisión `discarded`, en esta misma transacción.
+//
+// El `WHERE status = ANY(...)` del UPDATE es redundante bajo el candado y va igual:
+// es lo que garantiza —en el propio SQL, no en una lectura anterior— que este
+// camino JAMÁS puede mover una solicitud desde un estado no descartable. Quien
+// audite esta tabla puede leer la sentencia sola. Si alguna vez NO casara, el
+// ErrNoRows sale como error envuelto (⇒ 500) y no como un rechazo silencioso: sería
+// la rotura de un invariante, no una respuesta de negocio.
+func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return DiscardOutcome{}, ErrNotFound
+	}
+
+	// Fuera de la clausura: WithTx puede REEJECUTARLA ante un deadlock y vale el
+	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
+	var out DiscardOutcome
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		var stored, sessionID, contactID string
+		err := tx.QueryRowContext(ctx, `
+			SELECT status, session_id, contact_id
+			FROM public.intakes
+			WHERE tenant_id = $1 AND id = $2
+			FOR UPDATE
+		`, tenantID, intakeID).Scan(&stored, &sessionID, &contactID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrNotFound // no es del tenant o no existe: lo mismo (INV-8)
+		case err != nil:
+			return fmt.Errorf("intakes: bloquear la solicitud para descartarla: %w", err)
+		}
+
+		out = DiscardOutcome{Status: NormalizeStatus(stored)}
+		if !slices.Contains(discardable, stored) {
+			return nil
+		}
+
+		live, err := hasLiveCartTx(ctx, tx, tenantID, sessionID, contactID)
+		if err != nil {
+			return err
+		}
+		if live {
+			out.LiveCart = true
+			return nil
+		}
+
+		head, err := scanIntake(tx.QueryRowContext(ctx, `
+			UPDATE public.intakes
+			SET status = $3, updated_at = now()
+			WHERE tenant_id = $1 AND id = $2 AND status = ANY($4)
+			RETURNING `+intakeCols,
+			tenantID, intakeID, StatusAbandoned, discardable))
+		if err != nil {
+			return fmt.Errorf("intakes: descartar la solicitud: %w", err)
+		}
+
+		rev, err := discardedRevision(intakeID, stored, head.Total)
+		if err != nil {
+			return err
+		}
+		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+			return err
+		}
+		out.Discarded = true
+		return nil
+	})
+	if err != nil {
+		return DiscardOutcome{}, err
+	}
+	return out, nil
+}
+
+// hasLiveCartTx dice si hay una conversación viva con carrito para
+// (tenant, sesión, contacto). Es la APROXIMACIÓN PROVISIONAL de "hay evento vivo"
+// del contrato de Store.Discard, y estas son sus tres verdades incómodas:
+//
+//   - La FUENTE es interina. Lo que debería contestar esto es el evento
+//     conversacional del Plan 043 (public.conversation_events + flow_state.event_id),
+//     que hoy no existe en ninguna base. Cuando aterrice, ESTA función se sustituye;
+//     el contrato del puerto no cambia. Dueño de esa sustitución: 043 · T4.3.
+//   - Sobre-protege. Un contacto que empezó un carrito NUEVO en la misma sesión
+//     bloquea el descarte de una solicitud vieja y huérfana suya. Es el error que se
+//     elige: al otro lado hay una acción irreversible y sin papelera (D-041.22).
+//   - Los TIPOS NO CASAN y por eso se parsea antes de consultar: flow_state.tenant_id
+//     y .contact_id son UUID (0005_contacts.sql:88,90) mientras que los de intakes
+//     son TEXT (0011_orders.sql:41-42). Un valor que no es UUID no puede estar
+//     almacenado en esas columnas, así que "no parsea" ⇒ no hay fila ⇒ no hay
+//     conversación viva; no es una concesión, es lo que dice el esquema. Se parsea en
+//     Go en vez de castear la columna (`tenant_id::text = $1`) por dos motivos: el
+//     cast del parámetro deja usable la PK (tenant_id, session_id, contact_id), y
+//     comparar como texto fallaría ante un UUID escrito en mayúsculas.
+//
+// "Con carrito" se mira por la presencia de la clave `cart` en `vars` — la que
+// serializa el módulo (cart/state.go:90, `stateVarKey`). El literal se repite aquí
+// porque el cart importa este paquete (projection.go) y volver a importarlo sería un
+// ciclo; es la misma atadura que ya existe entre ReservedSKUPrefix y
+// cart.SystemSKUPrefix. `->> 'cart' IS NOT NULL` trata un `null` JSON como ausencia,
+// que es lo correcto: un carrito nulo no es una conversación viva.
+func hasLiveCartTx(ctx context.Context, tx *sql.Tx, tenantID, sessionID, contactID string) (bool, error) {
+	if !isUUID(tenantID) || !isUUID(contactID) {
+		return false, nil
+	}
+
+	var live bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT true
+		FROM public.flow_state
+		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+		  AND vars ->> 'cart' IS NOT NULL
+	`, tenantID, sessionID, contactID).Scan(&live)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("intakes: comprobar la conversación viva de la solicitud: %w", err)
+	}
+	return live, nil
+}
+
+// isUUID dice si el valor PODRÍA estar almacenado en una columna UUID. No es una
+// validación de entrada: es la pregunta que hay que hacerse antes de cruzar una
+// columna TEXT con una UUID, porque el parámetro se manda tal cual y Postgres
+// reventaría con "invalid input syntax for type uuid" en vez de no encontrar nada.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
 // recomputeTotalTx recalcula el total de la cabecera como la SUMA de sus líneas y
 // devuelve la solicitud ya coherente. Se recalcula entero en vez de sumarle el
 // envío: sumar deja el total dependiendo de cuántas veces se llamó, y el criterio

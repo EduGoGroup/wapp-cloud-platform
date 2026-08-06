@@ -241,4 +241,30 @@ type Store interface {
 	// (ErrConflict si no, ErrNotFound si no es del tenant). Devuelve el detalle ya
 	// coherente, revisión nueva incluida.
 	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error)
+
+	// Discard aplica el DESCARTE MANUAL del dueño sobre UNA solicitud (D-041.18,
+	// T4.8) en una sola unidad de trabajo: la deja en `abandoned` y escribe su
+	// revisión `discarded`. ErrNotFound si no es del tenant (404 opaco).
+	//
+	// La CONDICIÓN de escritura es toda del llamante y va en `discardable` (las
+	// claves almacenadas desde las que se puede descartar, DiscardableStatuses):
+	// esta operación no consulta la máquina de estados ni decide qué es descartable.
+	// Lo que sí es contrato de este puerto es el ORDEN en que se rechaza —primero el
+	// estado, después la conversación viva— y que un rechazo NO escribe NADA.
+	//
+	// Ambas comprobaciones y la escritura ocurren bajo el MISMO candado de la
+	// cabecera: sin eso, entre "está descartable y sin conversación" y el UPDATE
+	// cabría un carrito nuevo, y el descarte mataría un pedido que ya había vuelto a
+	// la vida.
+	//
+	// ⚠️ "Conversación viva" (DiscardOutcome.LiveCart) es hoy una APROXIMACIÓN
+	// PROVISIONAL, y quien la herede tiene que saberlo: se deriva de la única señal
+	// que existe —una fila de public.flow_state para (tenant, sesión, contacto) cuyo
+	// `vars` traiga el estado del carrito—, porque el EVENTO conversacional que
+	// debería contestar esto (public.conversation_events, flow_state.event_id) lo
+	// crea el Plan 043 y hoy no existe en ninguna base. Su FUENTE cambia cuando ese
+	// plan aterrice; su semántica no. Se acepta porque falla del lado seguro: si se
+	// equivoca, PROTEGE DE MÁS (no descarta algo descartable), nunca de menos — y lo
+	// que está al otro lado es una acción irreversible y sin papelera (D-041.22).
+	Discard(ctx context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error)
 }

@@ -20,6 +20,10 @@ type MemoryStore struct {
 	items     map[string][]Item
 	revisions map[string][]Revision     // por solicitud, en orden de escritura
 	zones     map[string][]ShippingZone // por tenant; imita tenant_settings.shipping_zones
+	// liveCarts imita las filas de public.flow_state con carrito en `vars`, por la
+	// clave (tenant, sesión, contacto). Es la aproximación provisional de
+	// "conversación viva" que consume Discard (ver Store.Discard).
+	liveCarts map[string]bool
 }
 
 // row es una solicitud almacenada con su estado tal cual (sin normalizar).
@@ -35,7 +39,24 @@ func NewMemoryStore() *MemoryStore {
 		items:     map[string][]Item{},
 		revisions: map[string][]Revision{},
 		zones:     map[string][]ShippingZone{},
+		liveCarts: map[string]bool{},
 	}
+}
+
+// SetLiveCart marca que (tenant, sesión, contacto) tiene una conversación viva con
+// carrito, como haría una fila de public.flow_state con `cart` en su `vars`. Es un
+// mutador para los tests —como Add o SetShippingZones—, no parte de ningún puerto.
+func (m *MemoryStore) SetLiveCart(tenantID, sessionID, contactID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.liveCarts[liveCartKey(tenantID, sessionID, contactID)] = true
+}
+
+// liveCartKey compone la clave de la conversación. El separador es "\x00" porque no
+// puede aparecer en un id: con un guion, un tenant acabado en guion y una sesión que
+// empieza por otro producirían la misma clave que otro par.
+func liveCartKey(tenantID, sessionID, contactID string) string {
+	return tenantID + "\x00" + sessionID + "\x00" + contactID
 }
 
 // SetShippingZones siembra las zonas de envío del tenant, como haría un UPDATE de
@@ -339,6 +360,44 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 		}, nil
 	}
 	return Detail{}, ErrNotFound
+}
+
+// Discard implementa Store con el MISMO orden de rechazo que el Postgres —estado
+// primero, conversación viva después— y la misma escritura: `abandoned` más su
+// revisión `discarded`, o nada en absoluto. Esa paridad es la razón de ser de este
+// store: un test de handler contra él solo dice algo verdadero sobre producción si
+// las dos implementaciones rechazan por lo mismo y escriben lo mismo.
+func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		out := DiscardOutcome{Status: NormalizeStatus(r.status)}
+		if !slices.Contains(discardable, r.status) {
+			return out, nil
+		}
+		if m.liveCarts[liveCartKey(tenantID, r.intake.SessionID, r.intake.ContactID)] {
+			out.LiveCart = true
+			return out, nil
+		}
+
+		m.rows[tenantID][i].status = StatusAbandoned
+		m.rows[tenantID][i].intake.Status = StatusAbandoned
+		rev, err := discardedRevision(intakeID, r.status, m.rows[tenantID][i].intake.Total)
+		if err != nil {
+			return DiscardOutcome{}, err
+		}
+		rev.RevisionNo = len(m.revisions[intakeID]) + 1
+		rev.CreatedAt = time.Now()
+		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+
+		out.Discarded = true
+		return out, nil
+	}
+	return DiscardOutcome{}, ErrNotFound
 }
 
 // recomputeTotalLocked cuadra el total de la cabecera con la suma de sus líneas,
