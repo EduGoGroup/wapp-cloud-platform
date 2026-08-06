@@ -30,6 +30,14 @@ const (
 	LevelSummary    = "summary"    // L6 · resumen + confirmar / seguir / cancelar
 	LevelClosed     = "closed"     // terminal · pedido confirmado
 	LevelCancelled  = "cancelled"  // terminal · pedido cancelado
+
+	// Los tres niveles de INDICACIÓN (Plan 041 · T4.1c, D-041.19 + D-041.20). NO
+	// son pasos del recorrido: son ramas OPCIONALES colgadas de dos menús que ya
+	// se imprimían (L5 y L6), y se vuelve al nivel de origen en cuanto se resuelven.
+	// Quien no pulsa 3 no los pisa jamás (INV-15).
+	LevelItemNoteScope = "item_note_scope" // alcance de la indicación de línea cuando qty > 1 (D-041.20)
+	LevelItemNote      = "item_note"       // texto de la indicación de la ÚLTIMA línea agregada
+	LevelOrderNote     = "order_note"      // texto de la indicación de TODO el pedido
 )
 
 // variantSKUSuffix separa el sku del artículo del code de la variante en el sku
@@ -45,9 +53,17 @@ const variantLabelSep = " — "
 // la raíz y no lo ofrece); "cancelar" es 9 en los niveles de decisión (L5/L6).
 // El código de "Más ▾" es DINÁMICO (moreCode, cart.go): el siguiente entero
 // fuera del rango de códigos del nivel, para no colisionar con ningún ítem.
+// codeIndicacion es la tecla de las DOS ranuras de indicación (D-041.19). Es 3 y
+// no 7 ni 8 por una razón verificable en este mismo archivo: L5 y L6 son los
+// únicos niveles de decisión con conjunto FIJO y corto de opciones (1, 2, 9 y en
+// L5 además 0) y JAMÁS paginan, así que "Más ▾" —cuyo código es dinámico
+// (moreCode)— no aparece ahí y no puede colisionar sea cual sea el page_size del
+// tenant. Una tecla para las dos ranuras: el alcance lo da el nivel desde el que
+// se pulsa, no una tecla distinta que el cliente tendría que aprender.
 const (
-	codeVolver   = "0"
-	codeCancelar = "9"
+	codeVolver     = "0"
+	codeCancelar   = "9"
+	codeIndicacion = "3"
 )
 
 // NodeTypeCart es el tipo de nodo que maneja este módulo. Se mantiene local al
@@ -112,15 +128,35 @@ type cartState struct {
 	// emitirlo en el Enter/Render; se emite EXACTAMENTE UNA vez en el primer Step
 	// (design.md §3.3: cart_started al arranque — aquí, primera interacción).
 	Started bool `json:"started,omitempty"`
+	// Note es la indicación del cliente para TODO el pedido (D-041.19): "dejarlo
+	// en portería". Se captura en LevelOrderNote y viaja al cierre, donde acaba en
+	// intakes.customer_note. NO es facturable y jamás toca el total (INV-13).
+	Note string `json:"note,omitempty"`
+	// NoteSplit marca que la indicación que se está escribiendo va a UNA sola
+	// unidad de una línea con qty > 1, y que por tanto hay que partirla al guardar
+	// (D-041.20). Es TRANSITORIO —vive entre el nivel de alcance y el de texto— y
+	// se limpia siempre al salir del nivel de nota, se guarde o no.
+	//
+	// Existe porque el alcance se elige en una pantalla y el texto en la siguiente:
+	// sin él, quien guarda el texto no sabría si el cliente dijo "para las 2" o
+	// "solo para 1". Con `omitempty` un carrito que nunca comenta no escribe ni un
+	// byte más en el JSONB.
+	NoteSplit bool `json:"note_split,omitempty"`
 }
 
 // cartLine es una línea del pedido (design.md §3.2). SKU/Label son códigos de
 // negocio (cero PII); UnitPrice es el precio al momento de agregar.
+// Customization es la indicación del cliente para ESA línea (D-041.19): el «sin
+// cebolla» que quien prepara tiene que leer. Va con `omitempty` a propósito: un
+// carrito sin indicaciones serializa EXACTAMENTE el mismo JSONB que antes de
+// T4.1c, y un estado guardado antes de que el campo existiera carga con "" sin
+// rama especial (round-trip JSONB, cero regresión).
 type cartLine struct {
-	SKU       string  `json:"sku"`
-	Label     string  `json:"label"`
-	Qty       int     `json:"qty"`
-	UnitPrice float64 `json:"unit_price"`
+	SKU           string  `json:"sku"`
+	Label         string  `json:"label"`
+	Qty           int     `json:"qty"`
+	UnitPrice     float64 `json:"unit_price"`
+	Customization string  `json:"customization,omitempty"`
 }
 
 // loadState reconstruye el cartState desde Vars tolerando el round-trip JSONB

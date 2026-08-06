@@ -55,8 +55,11 @@ func TestIntakesExport_CSV_Golden(t *testing.T) {
 		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
 	}
 
+	// La cabecera de la solicitud se repite en cada fila, `customer_note` incluida
+	// (D-041.15): es desnormalizada como `intake_total`, y quien filtre por líneas
+	// en la hoja sigue viendo a qué pedido pertenece cada una y qué pidió el cliente.
 	const cabecera = "11111111-1111-1111-1111-111111111111,2026-08-01T12:00:00Z,confirmed,sess-a," +
-		"9f1c0a7e-0000-4000-8000-000000000abc,18000,"
+		"9f1c0a7e-0000-4000-8000-000000000abc,18000,dejar en portería"
 	quiero := csvGolden(
 		csvHeader,
 		cabecera+",torta-v1,Torta 10-12 porciones,sin sal,1,18000,18000",
@@ -267,6 +270,10 @@ func seedInyección() *intakes.MemoryStore {
 	st.Add(tenantA, intakes.Intake{
 		ID: intakeA1, ContactID: contactoOpaco, SessionID: "sess-a",
 		Status: intakes.StatusConfirmed, Total: 100, CreatedAt: día(1), UpdatedAt: día(1),
+		// La nota del PEDIDO la escribe el mismo desconocido que la personalización,
+		// y por eso va aquí con pinta de fórmula: son las DOS únicas celdas del
+		// archivo que teclea el cliente final.
+		CustomerNote: "=SUM(A1:A9)",
 	}, intakes.Item{SKU: "=1+1", Label: "@sospechoso", Customization: "-sin cebolla",
 		Qty: 1, UnitPrice: 100})
 	return st
@@ -298,10 +305,10 @@ func TestIntakesExport_XLSX_SeReabreConTildes(t *testing.T) {
 	}
 	quiero := [][]string{
 		{"11111111-1111-1111-1111-111111111111", "2026-08-01T12:00:00Z", "confirmed", "sess-a",
-			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "",
+			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "dejar en portería",
 			"torta-v1", "Torta 10-12 porciones", "sin sal", "1", "18000", "18000"},
 		{"11111111-1111-1111-1111-111111111111", "2026-08-01T12:00:00Z", "confirmed", "sess-a",
-			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "",
+			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "dejar en portería",
 			"_shipping", "Envío — Providencia", "", "1", "3000", "3000"},
 	}
 	for i, fila := range quiero {
@@ -546,4 +553,86 @@ func idsDelCSV(body string) []string {
 		}
 	}
 	return out
+}
+
+// TestIntakesExport_CSV_NotaDelPedido es el SEGUNDO de los cinco caminos de T4.1c
+// (D-041.19, REQ-33f): la indicación del PEDIDO viaja en el CSV como columna
+// propia tras `intake_total`, y DESNORMALIZADA —repetida en cada línea de la
+// solicitud, como el total—, porque una hoja de cálculo no tiene cabeceras: tiene
+// filas, y quien filtre las líneas de un día tiene que seguir viendo la indicación
+// que acompaña a cada una.
+//
+// La posición se afirma por ÍNDICE de la cabecera y no por "aparece en el texto":
+// en un CSV el sitio ES el significado, y una columna corrida rompe cualquier
+// plantilla montada encima.
+func TestIntakesExport_CSV_NotaDelPedido(t *testing.T) {
+	api := newAPI(exportDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet,
+		"/api/v1/intakes/export?status=closed&session=sess-a&from=2026-08-01&to=2026-08-02", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	filas := camposCSV(t, rec.Body.String())
+	iNota := slices.Index(filas[0], "customer_note")
+	switch {
+	case iNota < 0:
+		t.Fatalf("la cabecera no trae `customer_note`: %v", filas[0])
+	case filas[0][iNota-1] != "intake_total":
+		t.Fatalf("`customer_note` va TRAS `intake_total`, no tras %q", filas[0][iNota-1])
+	}
+	for i, fila := range filas[1:] {
+		if fila[iNota] != "dejar en portería" {
+			t.Fatalf("fila %d: customer_note=%q; se repite en TODAS las líneas de la solicitud",
+				i+1, fila[iNota])
+		}
+	}
+	// INV-13: el dinero de la línea es el mismo con indicación o sin ella.
+	iTotal := slices.Index(filas[0], "line_total")
+	if filas[1][iTotal] != "18000" {
+		t.Fatalf("line_total=%q; la indicación del pedido movió el dinero", filas[1][iTotal])
+	}
+}
+
+// TestIntakesExport_CSV_EscapaLaNotaDelPedido: `customer_note` y `customization`
+// son las DOS únicas celdas del archivo que teclea el cliente final, y Excel
+// ejecuta lo que parece fórmula. Las dos salen prefijadas con apóstrofo (D-041.15).
+func TestIntakesExport_CSV_EscapaLaNotaDelPedido(t *testing.T) {
+	api := newAPI(exportDeps(seedInyección()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/export", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	filas := camposCSV(t, rec.Body.String())
+	iNota := slices.Index(filas[0], "customer_note")
+	if got := filas[1][iNota]; got != "\u0027=SUM(A1:A9)" {
+		t.Fatalf("la nota del pedido no salió escapada: %q", got)
+	}
+}
+
+// TestIntakesExport_XLSX_NotaDelPedido es el TERCERO de los cinco caminos de
+// T4.1c: la misma columna, en el mismo sitio, en el libro de Excel. El XLSX lo
+// escribe otro serializador celda a celda, así que llevarla en el CSV no prueba
+// nada de él.
+func TestIntakesExport_XLSX_NotaDelPedido(t *testing.T) {
+	api := newAPI(exportDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet,
+		"/api/v1/intakes/export?format=xlsx&status=closed&session=sess-a&from=2026-08-01&to=2026-08-02", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rows := leerXLSX(t, rec.Body.Bytes())
+	iNota := slices.Index(rows[0], "customer_note")
+	if iNota < 0 || rows[0][iNota-1] != "intake_total" {
+		t.Fatalf("`customer_note` no está tras `intake_total` en la cabecera: %v", rows[0])
+	}
+	for i, fila := range rows[1:] {
+		if fila[iNota] != "dejar en portería" {
+			t.Fatalf("fila %d del XLSX: customer_note=%q", i+1, fila[iNota])
+		}
+	}
 }

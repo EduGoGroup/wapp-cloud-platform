@@ -25,9 +25,9 @@ import (
 // —no se escribe a mano— y añadir una columna no puede dejar esas filas con un
 // hueco de menos, que es un desajuste que el CSV no delata al abrirlo.
 //
-// `customer_note` sale VACÍA todavía (la escribe T4.1c) y su hueco está reservado
-// a propósito: las columnas de una hoja son POSICIONALES para quien la llena, así
-// que añadirla luego EN MEDIO correría todo lo que viene detrás y rompería
+// `customer_note` ocupa el hueco que T4.1b le dejó reservado tras `intake_total`
+// (D-041.15): las columnas de una hoja son POSICIONALES para quien la llena, así
+// que meterla EN MEDIO más adelante habría corrido todo lo que viene detrás y roto
 // cualquier plantilla o macro ya armada sobre el archivo.
 var (
 	// exportHeadColumns son las columnas de la SOLICITUD (se repiten por línea).
@@ -77,7 +77,11 @@ func exportRows(details []intakes.Detail) [][]any {
 			d.SessionID,
 			d.ContactID, // contact_ref: el opaco TAL CUAL (ADR-0010), nunca número ni JID
 			d.Total,
-			"", // customer_note — Ola 4 (T4.1c)
+			// La indicación del PEDIDO (D-041.19), desnormalizada como el total: se
+			// repite en cada línea de la solicitud. Sale como texto —lo escribe el
+			// cliente final— y por eso pasa por el escape de fórmulas, igual que la
+			// personalización de la línea. No toca el dinero (INV-13).
+			d.CustomerNote,
 		}
 		if len(d.Items) == 0 {
 			rows = append(rows, append(head, make([]any, len(exportLineColumns))...))

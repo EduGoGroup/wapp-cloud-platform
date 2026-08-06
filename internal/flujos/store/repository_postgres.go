@@ -562,18 +562,24 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 			intakeID = uuid.NewString()
 			if _, ierr := tx.ExecContext(ctx, `
 				INSERT INTO public.intakes
-					(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, 'closed', $5, now(), now())
-			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total); ierr != nil {
+					(id, tenant_id, contact_id, session_id, status, total, customer_note, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, 'closed', $5, $6, now(), now())
+			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote); ierr != nil {
 				return fmt.Errorf("store: insertar solicitud cerrada: %w", ierr)
 			}
 		case err != nil:
 			return fmt.Errorf("store: bloquear solicitud abierta: %w", err)
 		default:
+			// customer_note se escribe en el CIERRE y no al abrir la solicitud: el
+			// cliente la teclea en el resumen, que es el último paso antes de
+			// confirmar. La columna es NOT NULL, así que el vacío viaja igual que el
+			// texto —"sin indicación" es un valor, no una omisión— y una solicitud
+			// cerrada dos veces (reintento del 40P01) acaba con el mismo contenido.
 			if _, uerr := tx.ExecContext(ctx, `
-				UPDATE public.intakes SET status = 'closed', total = $2, updated_at = now()
+				UPDATE public.intakes
+				SET status = 'closed', total = $2, customer_note = $3, updated_at = now()
 				WHERE id = $1
-			`, intakeID, in.Total); uerr != nil {
+			`, intakeID, in.Total, in.CustomerNote); uerr != nil {
 				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
 			}
 		}

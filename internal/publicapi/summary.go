@@ -54,11 +54,12 @@ type summaryTopItemDTO struct {
 // reusa intakeDTO para la cabecera, y esa es la diferencia que importa: intakeDTO
 // lleva contact_id y session_id.
 type summaryIntakeDTO struct {
-	ID        string          `json:"id"`
-	Status    string          `json:"status"`
-	CreatedAt string          `json:"created_at"`
-	Total     float64         `json:"total"`
-	Items     []intakeItemDTO `json:"items"`
+	ID           string          `json:"id"`
+	Status       string          `json:"status"`
+	CreatedAt    string          `json:"created_at"`
+	Total        float64         `json:"total"`
+	CustomerNote string          `json:"customer_note"`
+	Items        []intakeItemDTO `json:"items"`
 }
 
 // intakeSummaryHandler sirve GET /api/v1/intakes/summary.json: los mismos filtros
@@ -128,11 +129,12 @@ func toSummaryResponse(sum intakes.Summary) intakeSummaryResponse {
 			})
 		}
 		list = append(list, summaryIntakeDTO{
-			ID:        d.ID,
-			Status:    d.Status,
-			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
-			Total:     d.Total,
-			Items:     items,
+			ID:           d.ID,
+			Status:       d.Status,
+			CreatedAt:    d.CreatedAt.UTC().Format(time.RFC3339),
+			Total:        d.Total,
+			CustomerNote: d.CustomerNote,
+			Items:        items,
 		})
 	}
 

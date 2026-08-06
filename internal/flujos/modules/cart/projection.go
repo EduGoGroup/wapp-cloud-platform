@@ -146,7 +146,12 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Total:     total,
-		Items:     items,
+		// La indicación del pedido (D-041.19) viaja en la cabecera del efecto y su
+		// AUSENCIA da la cadena vacía, igual que la personalización de cada línea: un
+		// cierre emitido antes de que el campo existiera —o por un carrito sin
+		// indicaciones, que es la mayoría— cierra exactamente igual.
+		CustomerNote: modules.AsString(eff.Payload["customer_note"]),
+		Items:        items,
 	})
 	if err != nil {
 		return err

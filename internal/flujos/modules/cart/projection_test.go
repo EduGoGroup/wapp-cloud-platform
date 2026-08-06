@@ -143,3 +143,46 @@ func TestProjector_CartClosed_FalloDeRevisionSePropaga(t *testing.T) {
 		t.Errorf("las líneas del cierre deben estar: got %d, want 1", len(items))
 	}
 }
+
+// TestProjector_CartClosed_PersisteLaNotaDelPedido: la indicación del pedido
+// (D-041.19) llega desde el efecto hasta la CABECERA de la solicitud, en la misma
+// transacción del cierre. Sin este paso, la tecla 3 del resumen escribiría en un
+// estado conversacional que se tira al cerrar.
+func TestProjector_CartClosed_PersisteLaNotaDelPedido(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	p := NewProjector(repo, intakes.NewMemoryStore())
+
+	eff := cartClosedEffect()
+	eff.Payload["customer_note"] = "dejarlo en portería"
+	if err := p.Project(context.Background(), projectorMeta(), eff); err != nil {
+		t.Fatalf("Project(cart_closed): %v", err)
+	}
+
+	cerradas := repo.Intakes()
+	if len(cerradas) != 1 {
+		t.Fatalf("solicitudes cerradas: got %d, want 1", len(cerradas))
+	}
+	if cerradas[0].CustomerNote != "dejarlo en portería" {
+		t.Fatalf("customer_note persistida = %q", cerradas[0].CustomerNote)
+	}
+	// INV-13: el total de la cabecera es el del payload, sin sumar nada por indicar.
+	if cerradas[0].Total != 5000 {
+		t.Fatalf("total=%v; la indicación movió el dinero", cerradas[0].Total)
+	}
+}
+
+// TestProjector_CartClosed_SinNotaEsCadenaVacía: un cierre sin la clave (el
+// carrito que no comentó, y todos los emitidos antes de T4.1c) cierra igual. Es la
+// misma tolerancia que ya tenía `customization` por línea.
+func TestProjector_CartClosed_SinNotaEsCadenaVacía(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	p := NewProjector(repo, intakes.NewMemoryStore())
+
+	if err := p.Project(context.Background(), projectorMeta(), cartClosedEffect()); err != nil {
+		t.Fatalf("Project(cart_closed): %v", err)
+	}
+	cerradas := repo.Intakes()
+	if len(cerradas) != 1 || cerradas[0].CustomerNote != "" {
+		t.Fatalf("sin indicación, la cabecera guarda la cadena vacía: %+v", cerradas)
+	}
+}

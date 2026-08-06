@@ -69,6 +69,7 @@ estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
 Añadido al pedido ✅
 1) Agregar más de Bebidas
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Café","qty":2,"sku":"CAFE","unit_price":2.5}
@@ -121,6 +122,7 @@ estado: {"level":"quantity","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","
 Añadido al pedido ✅
 1) Agregar más de Postres
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Flan","qty":1,"sku":"FLAN","unit_price":3}
@@ -133,6 +135,7 @@ Flan x1  $3.00
 TOTAL  $8.00
 1) Confirmar y finalizar
 2) Seguir agregando
+3) ✏️ Indicación para todo el pedido
 9) Cancelar pedido
 efectos: (ninguno)
 estado: {"level":"summary","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
@@ -176,6 +179,7 @@ estado: {"level":"quantity","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","la
 Añadido al pedido ✅
 1) Agregar más de Bebidas
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Té","qty":1,"sku":"TE","unit_price":2}
@@ -189,6 +193,7 @@ Té x1  $2.00
 TOTAL  $10.00
 1) Confirmar y finalizar
 2) Seguir agregando
+3) ✏️ Indicación para todo el pedido
 9) Cancelar pedido
 efectos: (ninguno)
 estado: {"level":"summary","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3},{"sku":"TE","label":"Té","qty":1,"unit_price":2}],"started":true}
@@ -231,6 +236,7 @@ estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
 Añadido al pedido ✅
 1) Agregar más de Bebidas
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Café","qty":1,"sku":"CAFE","unit_price":2.5}

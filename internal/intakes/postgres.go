@@ -28,7 +28,12 @@ func NewPostgres(db *sql.DB) *Postgres {
 
 // intakeCols es la proyección de la cabecera. tenant_id NO se lee: quien consulta
 // ya es el dueño del tenant (INV-8) y repetirlo en la respuesta no informa de nada.
-const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at`
+//
+// customer_note (D-041.19) va al final y no en medio: el orden de esta lista es el
+// de los Scan de scanIntake y scanDetailRow, y meter una columna entre dos ya
+// existentes obligaría a mover los destinos de los dos escaneos a la vez —un
+// descuadre que compila y devuelve el estado en el total—.
+const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note`
 
 // intakeFilterWhere es el predicado COMPARTIDO por la página y por su total: si
 // divergieran, el paginador mentiría. Cada filtro es opcional por el patrón
@@ -107,6 +112,7 @@ const listIntakeDetailsQuery = `
 		LIMIT $6
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
+	       p.customer_note,
 	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
 	FROM page p
 	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid
@@ -162,7 +168,8 @@ func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 		addedAt            sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote,
+		&sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
 		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
@@ -208,7 +215,7 @@ type rowScanner interface {
 func scanIntake(sc rowScanner) (Intake, error) {
 	var in Intake
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Intake{}, err // lo traduce el llamante (ErrNotFound)
 		}

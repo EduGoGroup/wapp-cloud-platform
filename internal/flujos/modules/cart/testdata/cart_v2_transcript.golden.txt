@@ -79,6 +79,7 @@ estado: {"level":"quantity","cat_code":"01","sku":"TORTA-CHOC","variant_code":"V
 Añadido al pedido ✅
 1) Agregar más de Tortas
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Torta de chocolate — 25-30 porciones","qty":3,"sku":"TORTA-CHOC#V2","unit_price":32000}
@@ -111,6 +112,7 @@ estado: {"level":"quantity","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TOR
 Añadido al pedido ✅
 1) Agregar más de Tortas
 2) Finalizar pedido
+3) ✏️ Indicación para este artículo
 9) Cancelar pedido
 0) ← Volver
 efecto: kind=event name=item_added payload={"label":"Combo hamburguesa","qty":1,"sku":"COMBO-1","unit_price":9500}
@@ -123,6 +125,7 @@ Combo hamburguesa x1  $9500.00
 TOTAL  $105500.00
 1) Confirmar y finalizar
 2) Seguir agregando
+3) ✏️ Indicación para todo el pedido
 9) Cancelar pedido
 efectos: (ninguno)
 estado: {"level":"summary","cat_code":"01","sku":"COMBO-1","lines":[{"sku":"TORTA-CHOC#V2","label":"Torta de chocolate — 25-30 porciones","qty":3,"unit_price":32000},{"sku":"COMBO-1","label":"Combo hamburguesa","qty":1,"unit_price":9500}],"started":true}

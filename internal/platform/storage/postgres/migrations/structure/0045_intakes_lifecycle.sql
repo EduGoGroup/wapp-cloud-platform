@@ -1,6 +1,6 @@
 -- ============================================================
--- 0045: Ciclo de vida extendido de la SOLICITUD (Plan 041 · O4 · T4.1 + T4.1b,
--- ADR-0031, design.md §3). Cinco cosas, todas ADITIVAS sobre tablas vivas:
+-- 0045: Ciclo de vida extendido de la SOLICITUD (Plan 041 · O4 · T4.1 + T4.1b +
+-- T4.1c, ADR-0031, design.md §3). Seis cosas, todas ADITIVAS sobre tablas vivas:
 --
 --   1. public.intakes gana las dos marcas de la SEÑA (deposit_due_at,
 --      deposit_reminded_at). Son marcas de tiempo, NO un reloj: nadie las barre con
@@ -15,6 +15,8 @@
 --   4. Nace public.intake_buyer_data: los datos mínimos del comprador, CIFRADOS.
 --   5. public.intake_items gana la PERSONALIZACIÓN de la línea (customization):
 --      el «sin cebolla» que quien prepara tiene que leer (T4.1b, D-041.17).
+--   6. public.intakes gana la INDICACIÓN del cliente para todo el pedido
+--      (customer_note): el «dejarlo en portería» (T4.1c, D-041.19).
 --
 -- LO QUE ESTA MIGRACIÓN NO HACE, a propósito:
 --   * NO añade un CHECK de status a public.intakes. La 0041 lo dejó fuera
@@ -194,3 +196,33 @@ ALTER TABLE public.intake_items ADD COLUMN IF NOT EXISTS customization TEXT NOT 
 
 COMMENT ON COLUMN public.intake_items.customization IS
     'Personalización de la línea: instrucción de PRODUCCIÓN, no facturable ("sin sal", "sin cebolla"). En claro a propósito (ADR-0034 nivel 1). Quien recibe el pedido y quien lo prepara son personas distintas: si esto no viaja con la línea hasta quien prepara, se pierde y el cliente recibe el producto mal hecho. NO es un cajón de texto libre: lo que identifique a una persona va a intake_buyer_data, cifrado.';
+
+-- ------------------------------------------------------------
+-- 6. Indicación del cliente para TODO el pedido (D-041.19, REQ-33, T4.1c)
+-- ------------------------------------------------------------
+-- La HERMANA de customization, y son dos columnas y no una porque son dos cosas:
+-- «sin cebolla» es RECETA y viaja pegada a SU línea (si estuviera aquí, nadie
+-- sabría a cuál de las dos hamburguesas se refería); «dejarlo en portería» es
+-- ENTREGA y no es de ninguna línea en particular (si estuviera allí, quedaría
+-- escondida bajo un artículo cualquiera).
+--
+-- La escribe el cart numérico por la tecla 3 desde el resumen (nivel order_note) —
+-- su primer productor SIN LLM, que es justo el tenant que la necesita— y mañana
+-- también el pipeline del Plan 044. Las dos puertas comparten UNA regla de saneo:
+-- cart.SanitizeNote (280 runas, sin controles, sin invisibles, una sola línea).
+--
+-- EN CLARO, pero POR COSTE y no por doctrina (D-041.23): es donde de verdad se
+-- cuela la PII —«dejarlo en portería, calle Mayor 14»— y cifrarla exigiría tres
+-- columnas más, generalizar el Rekey del Plan 012 (hoy clavado en public.contacts)
+-- y descifrar en seis lectores. Queda como deuda anotada con disparador; la
+-- contención de hoy es de DISEÑO: ranura corta, propósito declarado en pantalla,
+-- advertencia explícita de no escribir datos personales (ADR-0034 §Decisión 1) y
+-- la poda por retención del Plan 046.
+--
+-- NOT NULL DEFAULT '' por la misma razón que customization: "sin indicación" es la
+-- cadena vacía, no un desconocido, y las solicitudes ya escritas quedan válidas
+-- sin tocar una sola fila. INV-13: JAMÁS entra en el cálculo de total.
+ALTER TABLE public.intakes ADD COLUMN IF NOT EXISTS customer_note TEXT NOT NULL DEFAULT '';
+
+COMMENT ON COLUMN public.intakes.customer_note IS
+    'Indicacion del CLIENTE para TODO el pedido ("sin gluten", "dejar en porteria"). Instruccion de PRODUCCION/ENTREGA, no facturable: jamas entra en total. En claro a proposito (ADR-0034 nivel 1). Max 280 runas, saneado (sin controles, sin saltos de linea). NO es un cajon de texto libre: direcciones y datos del comprador van a intake_buyer_data, cifrados.';

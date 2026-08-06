@@ -529,6 +529,7 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			intakeID = id
 			o.Status = "closed"
 			o.Total = in.Total
+			o.CustomerNote = in.CustomerNote
 			o.UpdatedAt = now
 			r.intakes[id] = o
 			break
@@ -537,14 +538,15 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 	if intakeID == "" {
 		intakeID = uuid.NewString()
 		r.intakes[intakeID] = Intake{
-			ID:        intakeID,
-			TenantID:  in.TenantID,
-			ContactID: in.ContactID,
-			SessionID: in.SessionID,
-			Status:    "closed",
-			Total:     in.Total,
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:           intakeID,
+			TenantID:     in.TenantID,
+			ContactID:    in.ContactID,
+			SessionID:    in.SessionID,
+			Status:       "closed",
+			Total:        in.Total,
+			CustomerNote: in.CustomerNote,
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
 	}
 	for _, it := range in.Items {

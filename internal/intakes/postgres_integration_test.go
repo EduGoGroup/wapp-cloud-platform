@@ -288,6 +288,105 @@ func TestPostgres_Customization_RoundTrip(t *testing.T) {
 	}
 }
 
+// notaDePedido es la indicación que siembran y esperan los tres caminos de
+// lectura de TestPostgres_CustomerNote_RoundTrip.
+const notaDePedido = "dejarlo en portería"
+
+// assertNotaEnLista comprueba el camino de la BANDEJA (List): la nota viaja en la
+// cabecera, así que la lista la trae sin abrir cada solicitud.
+func assertNotaEnLista(t *testing.T, store *intakes.Postgres, tenant string) {
+	t.Helper()
+	page, total, err := store.List(context.Background(), tenant, intakes.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(page) != 2 {
+		t.Fatalf("List devolvió %d de %d; quiero 2 de 2", len(page), total)
+	}
+	// Orden: más recientes primero ⇒ la del día 2 (con nota) va delante.
+	if page[0].CustomerNote != notaDePedido || page[1].CustomerNote != "" {
+		t.Fatalf("customer_note=%q/%q; quiero la nota y luego vacío",
+			page[0].CustomerNote, page[1].CustomerNote)
+	}
+	// Un Scan corrido se delata aquí: el estado o la sesión traerían el texto de
+	// otra columna, y el total (INV-13) dejaría de ser el que se sembró.
+	if page[0].Status != intakes.StatusConfirmed || page[0].SessionID != "sess-a" ||
+		page[0].Total != 18000 {
+		t.Fatalf("la proyección de la cabecera se descuadró: %+v", page[0])
+	}
+}
+
+// assertNotaEnDetalle comprueba el camino del DETALLE (Get), en las dos
+// solicitudes: la que indicó algo y la sembrada antes de que la columna existiera.
+func assertNotaEnDetalle(t *testing.T, store *intakes.Postgres, tenant, conNota, sinNota string) {
+	t.Helper()
+	ctx := context.Background()
+	detail, err := store.Get(ctx, tenant, conNota)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.CustomerNote != notaDePedido || detail.Total != 18000 {
+		t.Fatalf("Get: customer_note=%q total=%v", detail.CustomerNote, detail.Total)
+	}
+	heredada, err := store.Get(ctx, tenant, sinNota)
+	if err != nil {
+		t.Fatalf("Get (heredada): %v", err)
+	}
+	if heredada.CustomerNote != "" {
+		t.Fatalf("una solicitud anterior a la columna se lee vacía, no %q", heredada.CustomerNote)
+	}
+}
+
+// assertNotaEnListDetails comprueba el camino del EXPORT y el SUMMARY
+// (ListDetails), que tiene su propio SQL y su propio Scan.
+func assertNotaEnListDetails(t *testing.T, store *intakes.Postgres, tenant string) {
+	t.Helper()
+	got, err := store.ListDetails(context.Background(), tenant, intakes.Filter{}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListDetails devolvió %d solicitudes; quiero 2", len(got))
+	}
+	if got[0].CustomerNote != notaDePedido || got[1].CustomerNote != "" {
+		t.Fatalf("customer_note=%q/%q", got[0].CustomerNote, got[1].CustomerNote)
+	}
+	if got[0].Total != 18000 {
+		t.Fatalf("la indicación del pedido movió el dinero: %v", got[0].Total)
+	}
+}
+
+// TestPostgres_CustomerNote_RoundTrip valida contra la COLUMNA REAL (migración
+// 0045, T4.1c) los TRES caminos de lectura de la cabecera: la lista (List), el
+// detalle (Get) y el que alimenta export y summary (ListDetails). Los tres tienen
+// su propio Scan y ninguno comparte destinos con los otros, así que un desajuste
+// de columnas —el error clásico al añadir una a la proyección— solo se ve
+// probándolos por separado y contra Postgres, no contra un store en memoria.
+//
+// Cada camino es un subtest para que un fallo diga CUÁL de los tres se descuadró.
+// Y los tres prueban a la vez la no-regresión: la solicitud sembrada SIN nombrar
+// la columna —como todas las que ya están en la base— se lee con la cadena vacía
+// del DEFAULT, no con NULL ni con la nota de la vecina.
+func TestPostgres_CustomerNote_RoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	store := intakes.NewPostgres(db)
+	tenant := uuid.NewString()
+
+	conNota, sinNota := uuid.NewString(), uuid.NewString()
+	seedPG(t, db, tenant, []fixture{
+		{conNota, intakes.StatusConfirmed, "sess-a", 2},
+		{sinNota, intakes.StatusConfirmed, "sess-a", 1},
+	})
+	if _, err := db.ExecContext(context.Background(),
+		`UPDATE public.intakes SET customer_note = $2 WHERE id = $1`, conNota, notaDePedido); err != nil {
+		t.Fatalf("sembrando la indicación del pedido: %v", err)
+	}
+
+	t.Run("lista", func(t *testing.T) { assertNotaEnLista(t, store, tenant) })
+	t.Run("detalle", func(t *testing.T) { assertNotaEnDetalle(t, store, tenant, conNota, sinNota) })
+	t.Run("export y summary", func(t *testing.T) { assertNotaEnListDetails(t, store, tenant) })
+}
+
 // TestPostgres_UpdateStatus_CAS valida el compare-and-swap contra la BD real.
 func TestPostgres_UpdateStatus_CAS(t *testing.T) {
 	db := openTestDB(t)

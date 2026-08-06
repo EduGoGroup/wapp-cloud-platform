@@ -29,11 +29,12 @@ type summaryDTO struct {
 		Revenue  float64 `json:"revenue"`
 	} `json:"top_items"`
 	Intakes []struct {
-		ID        string  `json:"id"`
-		Status    string  `json:"status"`
-		CreatedAt string  `json:"created_at"`
-		Total     float64 `json:"total"`
-		Items     []struct {
+		ID           string  `json:"id"`
+		Status       string  `json:"status"`
+		CreatedAt    string  `json:"created_at"`
+		Total        float64 `json:"total"`
+		CustomerNote string  `json:"customer_note"`
+		Items        []struct {
 			SKU           string  `json:"sku"`
 			Label         string  `json:"label"`
 			Customization string  `json:"customization"`
@@ -286,5 +287,33 @@ func TestIntakeSummary_VacíoNoEsNulo(t *testing.T) {
 	sum := decodeSummary(t, rec.Body.Bytes())
 	if sum.Totals.Intakes != 0 || sum.Totals.Revenue != 0 {
 		t.Fatalf("totals=%+v, quiero ceros", sum.Totals)
+	}
+}
+
+// TestIntakeSummary_PublicaLaNotaDelPedido es el CUARTO de los cinco caminos de
+// T4.1c (D-041.19, REQ-33f): el `summary.json` publica la indicación del pedido a
+// nivel de solicitud.
+//
+// Merece decirse por qué no contradice el CERO PII de este endpoint —que se genera
+// para pegárselo a un LLM externo—: es una instrucción de producción y entrega, la
+// misma clase de dato que `customization`. Lo que la contiene no es el cifrado sino
+// el diseño de la ranura: 280 runas, propósito declarado en pantalla y advertencia
+// explícita de no escribir ahí datos personales (D-041.23).
+func TestIntakeSummary_PublicaLaNotaDelPedido(t *testing.T) {
+	sum := summaryDeTenantA(t)
+
+	a1 := sum.Intakes[4] // la más antigua: la única con líneas y con indicación
+	if a1.CustomerNote != "dejar en portería" {
+		t.Fatalf("customer_note=%q, quiero %q", a1.CustomerNote, "dejar en portería")
+	}
+	// Las demás solicitudes no la heredan: el campo viaja con SU solicitud.
+	for i, in := range sum.Intakes[:4] {
+		if in.CustomerNote != "" {
+			t.Fatalf("intakes[%d].customer_note=%q; esa solicitud no indicó nada", i, in.CustomerNote)
+		}
+	}
+	// INV-13: el revenue agregado es el mismo con indicación o sin ella.
+	if sum.Totals.Revenue != 90000 {
+		t.Fatalf("revenue=%v; la indicación del pedido movió el dinero", sum.Totals.Revenue)
 	}
 }

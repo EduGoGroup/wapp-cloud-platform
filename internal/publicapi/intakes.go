@@ -35,14 +35,22 @@ type IntakeService interface {
 // contact_id viaja OPACO TAL CUAL está en BD (INV-04 / ADR-0010): es un
 // identificador sin número ni JID, y esta capa no lo descifra ni lo enriquece con
 // nombre o teléfono. tenant_id NO viaja: siempre es el del token.
+// `customer_note` es la indicación del cliente para todo el pedido (D-041.19).
+// Viaja SIEMPRE, también vacía, por la misma razón que `customization` en la
+// línea: quien consume tiene que poder pintar la cabecera sin preguntarse si la
+// clave falta porque el cliente no indicó nada o porque este servidor todavía no
+// la publica. Va en el DTO de la cabecera y no solo en el del detalle, así que la
+// lista la trae igual: es un campo de la solicitud, y una bandeja que muestra
+// «dejarlo en portería» junto al pedido es exactamente para lo que existe.
 type intakeDTO struct {
-	ID        string  `json:"id"`
-	ContactID string  `json:"contact_id"`
-	SessionID string  `json:"session_id"`
-	Status    string  `json:"status"`
-	Total     float64 `json:"total"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID           string  `json:"id"`
+	ContactID    string  `json:"contact_id"`
+	SessionID    string  `json:"session_id"`
+	Status       string  `json:"status"`
+	Total        float64 `json:"total"`
+	CustomerNote string  `json:"customer_note"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
 }
 
 // intakeItemDTO es una línea de la solicitud. sku/label son códigos del catálogo
@@ -263,13 +271,14 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 // dominio (el `closed` legado del módulo cart sale como `confirmed`).
 func toIntakeDTO(in intakes.Intake) intakeDTO {
 	return intakeDTO{
-		ID:        in.ID,
-		ContactID: in.ContactID,
-		SessionID: in.SessionID,
-		Status:    in.Status,
-		Total:     in.Total,
-		CreatedAt: in.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: in.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:           in.ID,
+		ContactID:    in.ContactID,
+		SessionID:    in.SessionID,
+		Status:       in.Status,
+		Total:        in.Total,
+		CustomerNote: in.CustomerNote,
+		CreatedAt:    in.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:    in.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

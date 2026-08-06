@@ -154,7 +154,12 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 		{"sku": "CAFE", "label": "Café", "customization": "sin azúcar", "qty": 2, "unit_price": 2.5},
 		{"sku": "FLAN", "label": "Flan", "qty": 1, "unit_price": 3.0},
 	}
-	must(cartClosed(items, 8.0))
+	closed := cartClosed(items, 8.0)
+	// La indicación del PEDIDO (D-041.19) viaja en la CABECERA del efecto, no en
+	// las líneas: es lo que distingue «sin azúcar» —receta de una línea— de
+	// «dejarlo en portería» —entrega del pedido entero—.
+	closed.Payload["customer_note"] = "dejarlo en portería"
+	must(closed)
 
 	assertClosedIntake(t, db, tenant, contact)
 	assertIntakeItems(t, db, tenant, contact)
@@ -244,6 +249,20 @@ func assertClosedIntake(t *testing.T, db *sql.DB, tenant, contact string) {
 	}
 	if nIntakes != 1 || status != "closed" || totalNum != 8.0 || sessionID != "sess-cart" {
 		t.Fatalf("solicitud inesperada: n=%d status=%q total=%v session=%q", nIntakes, status, totalNum, sessionID)
+	}
+
+	// La indicación del pedido llegó HASTA LA COLUMNA de la cabecera (D-041.19),
+	// en la misma transacción que el cierre. Es la mitad que `assertIntakeItems` no
+	// puede ver: aquella mira las líneas, y esta nota no es de ninguna. Y el total
+	// de arriba, leído de la MISMA fila, sigue siendo 8.00 (INV-13).
+	var nota string
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT customer_note FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2
+	`, tenant, contact).Scan(&nota); err != nil {
+		t.Fatalf("SELECT customer_note: %v", err)
+	}
+	if nota != "dejarlo en portería" {
+		t.Fatalf("customer_note en BD = %q, quiero %q", nota, "dejarlo en portería")
 	}
 }
 

@@ -329,6 +329,14 @@ type Intake struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt time.Time // now + tenant_settings.order_ttl; zero si no aplica
+	// CustomerNote la escribe SOLO el cierre (CloseIntake, D-041.19): el cliente la
+	// teclea en el resumen, que es el último paso antes de confirmar, así que una
+	// solicitud "open" nunca la tiene. Por eso GetOpenIntake no la lee y
+	// UpsertIntake no la escribe —su UPDATE ni menciona la columna, de modo que un
+	// upsert sobre una solicitud ya cerrada tampoco podría borrarla—. Para LEER la
+	// nota de una solicitud, el camino es el dominio de solicitudes
+	// (intakes.Intake), que sí la trae.
+	CustomerNote string
 }
 
 // IntakeItem es una línea de una solicitud del carrito, lista para persistir en
@@ -355,12 +363,19 @@ type IntakeItem struct {
 // la misma transacción que la transición a "closed"). ContactID es la identidad
 // OPACA (Plan 010 / ADR-0010); SessionID solo se usa si hay que crear la solicitud
 // "closed" desde cero (no había abierta). El IntakeID de cada Item lo fija CloseIntake.
+//
+// CustomerNote es la indicación del cliente para TODO el pedido (D-041.19): el
+// «dejarlo en portería». Se escribe en la MISMA transacción que la cabecera —es un
+// campo suyo, no una tabla aparte— y no toca el total (INV-13). Su cero-valor es
+// exactamente lo que cierra un carrito sin indicación, igual que el DEFAULT de la
+// columna.
 type IntakeClose struct {
-	TenantID  string
-	ContactID string
-	SessionID string
-	Total     float64
-	Items     []IntakeItem
+	TenantID     string
+	ContactID    string
+	SessionID    string
+	Total        float64
+	CustomerNote string
+	Items        []IntakeItem
 }
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,

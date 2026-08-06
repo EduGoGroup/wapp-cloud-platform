@@ -33,6 +33,7 @@ import (
 //	  "items": [ { "sku": "...", "label": "...", "customization": "sin cebolla",
 //	              "qty": 2, "unit_price": 9.9 }, ... ],
 //	  "total":     29.7,
+//	  "customer_note": "dejarlo en portería",   // indicación de TODO el pedido
 //	  "timestamp": "2026-07-03T10:00:00Z"  // RFC3339 UTC del cierre
 //	}
 //
@@ -106,13 +107,18 @@ type crmItem struct {
 
 // crmOrderPayload es el cuerpo JSON que un WebhookSink REAL enviaría al CRM/POS al
 // cerrar un pedido (§9.I). CERO PII: contact es OPACO, el resto es dato de negocio.
+// `customer_note` es la indicación del cliente para TODO el pedido (D-041.19): el
+// «dejarlo en portería». Cruza esta frontera por la misma razón que la
+// personalización de la línea —quien prepara y entrega es otro que quien recibió
+// el pedido—, y va SIEMPRE, también vacía.
 type crmOrderPayload struct {
-	Tenant    string    `json:"tenant"`
-	Contact   string    `json:"contact"`
-	OrderID   string    `json:"order_id"`
-	Items     []crmItem `json:"items"`
-	Total     float64   `json:"total"`
-	Timestamp string    `json:"timestamp"`
+	Tenant       string    `json:"tenant"`
+	Contact      string    `json:"contact"`
+	OrderID      string    `json:"order_id"`
+	Items        []crmItem `json:"items"`
+	Total        float64   `json:"total"`
+	CustomerNote string    `json:"customer_note"`
+	Timestamp    string    `json:"timestamp"`
 }
 
 // Handle es el NO-OP funcional del punto de inyección: NO entrega nada por red y
@@ -174,12 +180,15 @@ func buildCRMOrderPayload(ec EffectContext, eff modules.Effect, now time.Time) c
 		})
 	}
 	return crmOrderPayload{
-		Tenant:    ec.TenantID,
-		Contact:   ec.ContactID,
-		OrderID:   modules.AsString(eff.Payload["order_id"]),
-		Items:     crmItems,
-		Total:     modules.AsFloat(eff.Payload["total"]),
-		Timestamp: now.Format(time.RFC3339),
+		Tenant:  ec.TenantID,
+		Contact: ec.ContactID,
+		OrderID: modules.AsString(eff.Payload["order_id"]),
+		Items:   crmItems,
+		Total:   modules.AsFloat(eff.Payload["total"]),
+		// Ausente ⇒ cadena vacía, igual que la personalización de la línea: un cierre
+		// sin indicación (la mayoría) no trae la clave y cruza exactamente igual.
+		CustomerNote: modules.AsString(eff.Payload["customer_note"]),
+		Timestamp:    now.Format(time.RFC3339),
 	}
 }
 

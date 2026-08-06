@@ -66,6 +66,19 @@ type Intake struct {
 	Total     float64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// CustomerNote es la indicación del cliente para TODO el pedido (D-041.19):
+	// «dejarlo en portería». Es la HERMANA de Item.Customization y son dos campos
+	// distintos a propósito: la de la línea es RECETA y solo significa algo pegada a
+	// su línea; esta es de ENTREGA y no es de ningún artículo en particular.
+	//
+	// Como aquélla, jamás entra en el cálculo del Total (INV-13) y viaja EN CLARO —
+	// pero por COSTE, no por doctrina (D-041.23): es donde de verdad se cuela la
+	// PII, y lo que la contiene hoy es el saneo de la puerta (cart.SanitizeNote), el
+	// límite de 280 runas y la poda por retención del Plan 046. Quien añada un
+	// consumidor nuevo de este campo hereda ese contexto.
+	//
+	// Cadena vacía = el cliente no indicó nada (es el DEFAULT de la columna).
+	CustomerNote string
 }
 
 // Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del

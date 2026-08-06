@@ -78,7 +78,10 @@ func TestBuildCRMOrderPayload_Contrato(t *testing.T) {
 	want := `{"tenant":"tenant-abc","contact":"contact-opaco-xyz","order_id":"",` +
 		`"items":[{"sku":"A1","label":"Café","customization":"sin azúcar","qty":2,"unit_price":9.9},` +
 		`{"sku":"B2","label":"Té","customization":"","qty":1,"unit_price":5}],` +
-		`"total":24.8,"timestamp":"2026-07-03T10:00:00Z"}`
+		// `customer_note` es la indicación del PEDIDO (D-041.19, T4.1c). Sale vacía
+		// aquí porque el efecto del fixture no la trae, y esa es justo la garantía
+		// retro-compatible: la clave existe siempre, el valor solo si el cliente lo dijo.
+		`"total":24.8,"customer_note":"","timestamp":"2026-07-03T10:00:00Z"}`
 	if string(body) != want {
 		t.Fatalf("payload del CRM no coincide con el contrato §9.I\n got: %s\nwant: %s", body, want)
 	}
@@ -166,5 +169,51 @@ func TestBuildCRMOrderPayload_RoundTripJSON(t *testing.T) {
 	}
 	if got.OrderID != "ord-123" {
 		t.Fatalf("order_id: got %q want ord-123", got.OrderID)
+	}
+}
+
+// TestBuildCRMOrderPayload_NotaDelPedido es el QUINTO de los cinco caminos de
+// T4.1c (D-041.19, REQ-33f): la indicación del PEDIDO cruza la frontera hacia el
+// CRM/POS. Cuando el pedido lo prepara y lo entrega un sistema de terceros, este
+// JSON es TODO lo que ve quien lo lleva a la puerta: sin `customer_note`, «dejarlo
+// en portería» se queda en wApp y el repartidor toca el timbre a las tres de la
+// mañana.
+func TestBuildCRMOrderPayload_NotaDelPedido(t *testing.T) {
+	eff := cartClosedEffect()
+	eff.Payload["customer_note"] = "dejarlo en portería"
+
+	got := buildCRMOrderPayload(
+		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
+		eff,
+		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
+	)
+
+	if got.CustomerNote != "dejarlo en portería" {
+		t.Fatalf("customer_note=%q, quiero %q: el CRM no recibe la instrucción de entrega",
+			got.CustomerNote, "dejarlo en portería")
+	}
+	// Las dos indicaciones conviven SIN mezclarse: la de receta pegada a su línea,
+	// la de entrega en la cabecera. Meterlas en el mismo campo habría perdido a cuál
+	// artículo se refería la primera.
+	if got.Items[0].Customization != "sin azúcar" {
+		t.Fatalf("items[0].customization=%q", got.Items[0].Customization)
+	}
+	// INV-13: indicar no cobra.
+	if got.Total != 24.8 {
+		t.Fatalf("total=%v; la indicación del pedido movió el dinero", got.Total)
+	}
+}
+
+// TestBuildCRMOrderPayload_SinNotaDelPedido: un cierre que no trae la clave —la
+// inmensa mayoría, y todos los emitidos antes de T4.1c— cruza igual, con la nota
+// vacía. Es la garantía retro-compatible del contrato.
+func TestBuildCRMOrderPayload_SinNotaDelPedido(t *testing.T) {
+	got := buildCRMOrderPayload(
+		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
+		cartClosedEffect(),
+		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
+	)
+	if got.CustomerNote != "" {
+		t.Fatalf("customer_note=%q, quiero vacía", got.CustomerNote)
 	}
 }

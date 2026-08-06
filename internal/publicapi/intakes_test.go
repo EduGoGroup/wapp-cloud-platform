@@ -1,6 +1,7 @@
 package publicapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -44,13 +45,14 @@ func intakesKeys() map[string]testIdentity {
 
 // intakeDTO espeja el contrato de la cabecera en el wire.
 type intakeDTO struct {
-	ID        string  `json:"id"`
-	ContactID string  `json:"contact_id"`
-	SessionID string  `json:"session_id"`
-	Status    string  `json:"status"`
-	Total     float64 `json:"total"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID           string  `json:"id"`
+	ContactID    string  `json:"contact_id"`
+	SessionID    string  `json:"session_id"`
+	Status       string  `json:"status"`
+	Total        float64 `json:"total"`
+	CustomerNote string  `json:"customer_note"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
 }
 
 type intakeListDTO struct {
@@ -103,11 +105,20 @@ func seedIntakes() *intakes.MemoryStore {
 			Total: 18000, CreatedAt: día(day), UpdatedAt: día(day),
 		}, items...)
 	}
+	// addConNota siembra una solicitud con INDICACIÓN DE PEDIDO (D-041.19). Solo la
+	// tiene A1: las demás quedan con la cadena vacía, que es lo que hace verificable
+	// que el campo viaja con SU solicitud y no se pega a todas por el camino.
+	addConNota := func(tenant, id, status, session string, day int, nota string, items ...intakes.Item) {
+		st.Add(tenant, intakes.Intake{
+			ID: id, ContactID: contactoOpaco, SessionID: session, Status: status,
+			Total: 18000, CreatedAt: día(day), UpdatedAt: día(day), CustomerNote: nota,
+		}, items...)
+	}
 	// La primera línea de A1 lleva PERSONALIZACIÓN y la segunda no: el fixture es
 	// el mismo en los cinco caminos (detalle, CSV, XLSX, summary y el payload del
 	// CRM), así que cada uno tiene que enseñar el «sin sal» en su línea y dejar la
 	// otra vacía. Una sola línea personalizada no probaría que la vacía sigue vacía.
-	add(tenantA, intakeA1, intakes.StatusClosedLegacy, "sess-a", 1,
+	addConNota(tenantA, intakeA1, intakes.StatusClosedLegacy, "sess-a", 1, "dejar en portería",
 		intakes.Item{SKU: "torta-v1", Label: "Torta 10-12 porciones",
 			Customization: "sin sal", Qty: 1, UnitPrice: 18000},
 		intakes.Item{SKU: "_shipping", Label: "Envío — Providencia", Qty: 1, UnitPrice: 3000})
@@ -652,5 +663,66 @@ func TestIntakes_RutasNoMontadasSinDependencias(t *testing.T) {
 
 	if rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("code=%d, quiero 404 (ruta no montada)", rec.Code)
+	}
+}
+
+// TestIntakeDetail_PublicaLaNotaDelPedido es el PRIMERO de los cinco caminos de
+// T4.1c (D-041.19, REQ-33f): la indicación del PEDIDO sale por el detalle de la
+// API. Es la hermana de la personalización de la línea y viaja aparte a propósito:
+// «dejar en portería» no es de ningún artículo, y meterla en una línea la habría
+// escondido bajo un producto cualquiera.
+func TestIntakeDetail_PublicaLaNotaDelPedido(t *testing.T) {
+	api := newAPI(intakesDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA1, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var detail intakeDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal del detalle: %v; body=%s", err, rec.Body.String())
+	}
+	if detail.CustomerNote != "dejar en portería" {
+		t.Fatalf("customer_note=%q, quiero %q: sin esto, quien entrega no sabe dónde dejarlo",
+			detail.CustomerNote, "dejar en portería")
+	}
+	// INV-13: la nota no toca el dinero de la cabecera.
+	if detail.Total != 18000 {
+		t.Fatalf("total=%v; la indicación del pedido movió el dinero", detail.Total)
+	}
+
+	// La clave viaja SIEMPRE, también en una solicitud que no indicó nada: quien
+	// consume no debe distinguir "no dijo nada" de "este servidor no me lo cuenta".
+	rec = call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA4, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"customer_note":""`)) {
+		t.Fatalf("una solicitud sin indicación publica la clave vacía; body=%s", rec.Body.String())
+	}
+}
+
+// TestIntakeList_PublicaLaNotaDelPedido: la nota va en el DTO de la CABECERA, así
+// que la bandeja la trae sin abrir cada solicitud. Es lo que permite a una consola
+// enseñar «dejar en portería» en la fila del listado.
+func TestIntakeList_PublicaLaNotaDelPedido(t *testing.T) {
+	api := newAPI(intakesDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes?status=confirmed", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	lista := decodeList(t, rec.Body.Bytes())
+	var visto bool
+	for _, in := range lista.Intakes {
+		if in.ID == intakeA1 {
+			visto = true
+			if in.CustomerNote != "dejar en portería" {
+				t.Fatalf("customer_note en la lista=%q", in.CustomerNote)
+			}
+		}
+	}
+	if !visto {
+		t.Fatalf("A1 no está en la lista: %+v", lista.Intakes)
 	}
 }

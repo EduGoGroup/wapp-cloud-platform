@@ -105,22 +105,121 @@ func screenContinue(category Category) string {
 		b.WriteString("\n1) Agregar más")
 	}
 	b.WriteString("\n2) Finalizar pedido")
+	// La ranura de indicación de LÍNEA (D-041.19). Es una línea de menú AÑADIDA a
+	// una pantalla que ya se imprimía, no un paso nuevo: quien no la pulsa teclea
+	// exactamente lo mismo que ayer (INV-15).
+	b.WriteString("\n" + codeIndicacion + ") ✏️ Indicación para este artículo")
 	b.WriteString("\n" + codeCancelar + ") Cancelar pedido")
 	b.WriteString("\n" + codeVolver + ") ← Volver")
 	return b.String()
 }
 
-func screenSummary(lines []cartLine) string {
+// screenSummary pinta el resumen antes de confirmar. Las indicaciones se ven AQUÍ
+// (REQ-33c) y por eso la firma lleva la nota del pedido: el cliente confirma
+// viendo lo que pidió, incluido lo que anotó. La de cada línea va como sub-línea
+// bajo ella (pegada a lo que describe) y la del pedido como línea propia bajo el
+// total (es del pedido entero, no de un artículo).
+func screenSummary(lines []cartLine, note string) string {
 	var b strings.Builder
 	b.WriteString("🧾 Resumen del pedido:")
 	for _, l := range lines {
 		b.WriteString("\n" + l.Label + " x" + strconv.Itoa(l.Qty) + "  " + money(lineTotal(l)))
+		if l.Customization != "" {
+			b.WriteString("\n   ✏️ " + l.Customization)
+		}
 	}
+	// El total NO cambia por ninguna indicación (INV-13): se calcula de qty ×
+	// unit_price y de nada más.
 	b.WriteString("\nTOTAL  " + money(total(lines)))
+	if note != "" {
+		b.WriteString("\n✏️ Para todo el pedido: " + note)
+	}
 	b.WriteString("\n1) Confirmar y finalizar")
 	b.WriteString("\n2) Seguir agregando")
+	b.WriteString("\n" + codeIndicacion + ") ✏️ Indicación para todo el pedido")
 	b.WriteString("\n" + codeCancelar + ") Cancelar pedido")
 	return b.String()
+}
+
+// --- pantallas de indicación (D-041.19 / D-041.20) -------------------------
+
+// noteRules son las tres líneas que se repiten en las dos pantallas de texto: qué
+// es la ranura, qué NO se debe escribir en ella y cuánto cabe. No es decoración:
+// el ADR-0034 §Decisión 1 exige que una UI que captura un campo de nivel 1 diga
+// para qué sirve, y la advertencia de no escribir datos personales es la
+// CONTENCIÓN de esta ranura —wApp no puede detectar PII aquí, porque el cart
+// numérico tiene prohibido llamar al LLM (REQ-21 del Plan 043)—.
+func noteRules() string {
+	return "\nEs una instrucción para quien lo prepara y NO cambia el precio." +
+		"\nNo escribas aquí datos personales, direcciones ni datos de pago." +
+		"\nMáx. " + strconv.Itoa(MaxNoteRunes) + " caracteres."
+}
+
+// noteCurrent antepone la indicación ya anotada, si la hubiera. Con ella en
+// pantalla, el 0 deja de significar "sin indicación" para significar "déjala como
+// está": misma tecla, misma idea de volver sin cambiar nada.
+func noteCurrent(current string) string {
+	if current == "" {
+		return ""
+	}
+	return "Indicación actual: \"" + current + "\" — escribe otra para reemplazarla.\n"
+}
+
+// screenItemNoteScope pregunta el ALCANCE de la indicación cuando la línea trae
+// más de una unidad (D-041.20). Sin esta pregunta, «dos hamburguesas, una sin
+// cebolla» anotaría las dos y nadie se enteraría hasta la cocina; y como el cart
+// no tiene edición de líneas por chat (INV-03), el cliente no tendría forma de
+// arreglarlo salvo cancelar el pedido entero.
+func screenItemNoteScope(l cartLine) string {
+	n := strconv.Itoa(l.Qty)
+	return "✏️ Indicación para \"" + l.Label + "\" (pediste " + n + "):" +
+		"\n1) Para las " + n +
+		"\n2) Solo para 1 (la separo en dos líneas)" +
+		"\n" + codeVolver + ") ← Volver sin indicación"
+}
+
+// screenItemNote pide el texto de la indicación de una línea. `split` cambia solo
+// el encabezado: con él, el cliente ya eligió que la indicación es para UNA de las
+// N unidades, y la pantalla lo repite para que no haya duda de qué está anotando.
+func screenItemNote(l cartLine, split bool) string {
+	head := "✏️ Escribe la indicación para \"" + l.Label + "\"."
+	if split {
+		head = "✏️ Escribe la indicación para 1 de las " + strconv.Itoa(l.Qty) + " \"" + l.Label + "\"."
+	}
+	return noteCurrent(l.Customization) + head + noteRules() +
+		"\n" + codeVolver + ") ← Volver sin indicación"
+}
+
+// screenOrderNote pide el texto de la indicación de TODO el pedido. Los ejemplos
+// son de ENTREGA además de receta («dejar en portería»): a nivel de pedido la
+// indicación no siempre es personalización de producto, y por eso la columna se
+// llama customer_note y no customization.
+func screenOrderNote(current string) string {
+	return noteCurrent(current) +
+		"✏️ Escribe una indicación para todo el pedido." + noteRules() +
+		"\n" + codeVolver + ") ← Volver sin indicación"
+}
+
+// noteAck es el acuse que se antepone a la pantalla del nivel de origen tras
+// capturar una indicación (REQ-33c): el cliente tiene que ver que se anotó, y
+// verlo CON el texto, porque es su única confirmación de que se entendió.
+func noteAck(text string, scope noteScope, qty int) string {
+	switch scope {
+	case scopeOrder:
+		return "Anotado para todo el pedido: \"" + text + "\" ✅"
+	case scopeItemSplit:
+		return "Anotado para 1 de las " + strconv.Itoa(qty) + ": \"" + text + "\" ✅"
+	default:
+		return "Anotado: \"" + text + "\" ✅"
+	}
+}
+
+// noteTooLongMsg es el reprompt del MISMO paso cuando el texto se pasa del límite
+// (§9.D). Dice el número REAL para que el cliente sepa cuánto sobra: la indicación
+// NO se trunca (REQ-33e), así que sin ese número no sabría qué recortar.
+func noteTooLongMsg(err NoteTooLongError) string {
+	return "Esa indicación es muy larga (" + strconv.Itoa(err.Runes) + " de " +
+		strconv.Itoa(err.Max) + " caracteres). Escríbela más corta."
 }
 
 func screenClosed(t float64) string {
