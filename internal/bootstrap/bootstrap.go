@@ -34,6 +34,7 @@ import (
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
@@ -257,6 +258,7 @@ func Run(ctx context.Context) error {
 		Triggers:     triggerStore,
 		Intents:      intentStore,
 		Entitlements: entResolver,
+		Intakes:      intakes.NewService(intakes.NewPostgres(db)),
 		ConfigPush:   gw,
 		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 	})

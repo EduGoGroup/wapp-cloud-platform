@@ -1,0 +1,153 @@
+// Package intakes es el dominio de las SOLICITUDES del tenant (ADR-0031, Plan 041
+// D-12): la cabecera que el módulo conversacional `cart` proyecta al cerrar, las
+// líneas que la componen y la máquina de estados que gobierna su ciclo de vida
+// (status.go, D-041.10).
+//
+// El objeto se llama SOLICITUD porque pedido y presupuesto son EL MISMO OBJETO; el
+// mecanismo que la arma se sigue llamando `cart`. Este paquete NO toca el módulo
+// cart: lo LEE. En particular, el cart sigue cerrando en `closed` (Plan 016) y aquí
+// esa clave se lee NORMALIZADA a `confirmed` en un único punto (NormalizeStatus) —
+// cero migración de datos, cero regresión en el motor.
+//
+// CERO PII (INV-04 / ADR-0010): ContactID es la identidad OPACA del contacto tal
+// como está en BD. Este paquete NUNCA la descifra ni la enriquece: la mueve tal
+// cual del store al wire.
+//
+// Aislamiento por tenant (INV-8): el tenant llega SIEMPRE como argumento —lo saca
+// del token quien llama, jamás de un parámetro de la petición— y toda consulta lo
+// lleva en el WHERE. Una solicitud de otro tenant es indistinguible de una
+// inexistente: ErrNotFound (⇒ 404), nunca un 403 que confirmaría que existe.
+package intakes
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// ErrNotFound lo devuelven Get y SetStatus cuando no hay ninguna solicitud del
+// tenant con ese id: no existe, o existe pero es de otro tenant (404 opaco, INV-8).
+var ErrNotFound = errors.New("solicitud no encontrada")
+
+// ErrConflict lo devuelve SetStatus cuando la solicitud cambió de estado entre la
+// lectura que validó la transición y la escritura que iba a aplicarla (dos
+// operadores a la vez). La transición NO se aplica: el llamante relee y decide.
+var ErrConflict = errors.New("la solicitud cambió de estado durante la transición")
+
+// Paginación del listado (design §4): tamaño por defecto y cota superior. La cota
+// no es cosmética — sin ella una página de 100k filas es un DoS de un solo GET.
+const (
+	DefaultPageSize = 50
+	MaxPageSize     = 200
+)
+
+// Intake es la CABECERA de una solicitud tal como se lee. Status viene siempre
+// NORMALIZADO (el `closed` que escribe el cart se lee `confirmed`); TenantID no
+// viaja porque quien lee ya es el dueño del tenant (INV-8).
+type Intake struct {
+	ID        string
+	ContactID string // OPACO (ADR-0010); NUNCA número/JID en claro
+	SessionID string
+	Status    string // clave canónica de D-041.10 (ya normalizada)
+	Total     float64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del
+// tenant (dato de negocio), NO PII.
+type Item struct {
+	SKU       string
+	Label     string
+	Qty       int
+	UnitPrice float64
+	AddedAt   time.Time
+}
+
+// Detail es la solicitud completa: cabecera + líneas.
+//
+// Las REVISIONES del ciclo extendido (design §3, tabla intake_revisions) NO están
+// aquí a propósito: esa tabla la crea T4.1 (Ola 4) y este paquete no inventa un
+// campo vacío que fingiría "esta solicitud no tiene revisiones" cuando la verdad
+// es "todavía no se registran". Cuando la tabla exista, el campo se añade aquí y
+// el detalle lo publica.
+type Detail struct {
+	Intake
+	Items []Item
+}
+
+// Filter acota el listado de solicitudes. Todos los campos son opcionales: el
+// cero-valor lista todo el tenant.
+//
+// Extensible sin rediseño: el filtro `orphan=true` del design §4 es una condición
+// DERIVADA (se recalcula al leer, D-041.16) y la trae T4.8 (Ola 4). Cuando llegue,
+// entra como un campo más de este struct y una cláusula más en el store — ni la
+// firma de Service.List ni la del puerto Store cambian.
+type Filter struct {
+	// From/To acotan por created_at. From es INCLUSIVO y To EXCLUSIVO: quien
+	// traduce una fecha del usuario a este rango decide qué significa "hasta"
+	// (el handler suma un día a una fecha suelta para que el día pedido entre
+	// entero). Zero-valor ⇒ sin cota por ese lado.
+	From time.Time
+	To   time.Time
+	// Status es la clave CANÓNICA por la que se filtra (ya normalizada). Vacío ⇒
+	// todos. Filtrar por `confirmed` alcanza también las filas históricas escritas
+	// como `closed`: de eso se encarga StoredVariants en el store.
+	Status string
+	// SessionID acota a la sesión (Edge/WhatsApp) que originó la solicitud.
+	SessionID string
+	// Page es 1-based; PageSize se acota a [1, MaxPageSize].
+	Page     int
+	PageSize int
+}
+
+// Normalized devuelve el filtro con la paginación saneada (página ≥ 1, tamaño en
+// [1, MaxPageSize] con DefaultPageSize si no se pidió) y el estado normalizado.
+// Es idempotente.
+func (f Filter) Normalized() Filter {
+	out := f
+	if out.Page < 1 {
+		out.Page = 1
+	}
+	switch {
+	case out.PageSize <= 0:
+		out.PageSize = DefaultPageSize
+	case out.PageSize > MaxPageSize:
+		out.PageSize = MaxPageSize
+	}
+	out.Status = NormalizeStatus(out.Status)
+	return out
+}
+
+// Offset es el desplazamiento SQL que corresponde a la página del filtro.
+func (f Filter) Offset() int {
+	return (f.Page - 1) * f.PageSize
+}
+
+// Page es una página del listado con el total de coincidencias del filtro (no de
+// la página): sin él la UI no puede pintar el paginador.
+type Page struct {
+	Intakes  []Intake
+	Page     int
+	PageSize int
+	Total    int
+}
+
+// Store es el puerto de persistencia de solicitudes. Lo satisface *Postgres
+// (producción) y *MemoryStore (tests). Toda operación va acotada al tenant (INV-8).
+type Store interface {
+	// List devuelve la página de solicitudes que casan con el filtro (más
+	// recientes primero) y el TOTAL de coincidencias del filtro sin paginar.
+	List(ctx context.Context, tenantID string, f Filter) (items []Intake, total int, err error)
+
+	// Get devuelve la solicitud con sus líneas, o ErrNotFound si no existe en
+	// ESE tenant (404 opaco: no se distingue de "es de otro tenant").
+	Get(ctx context.Context, tenantID, intakeID string) (Detail, error)
+
+	// UpdateStatus aplica la transición de forma ATÓMICA (compare-and-swap): solo
+	// escribe `to` si el estado almacenado sigue siendo uno de `expected` (las
+	// variantes en BD del estado que se validó, StoredVariants). Devuelve
+	// ErrNotFound si la solicitud no es del tenant y ErrConflict si existe pero su
+	// estado ya no es el esperado.
+	UpdateStatus(ctx context.Context, tenantID, intakeID, to string, expected []string) (Intake, error)
+}

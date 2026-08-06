@@ -23,6 +23,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
@@ -128,6 +129,10 @@ type Deps struct {
 	// (ADR-0021, best-effort). Lo satisface *gatewaygrpc.Server (PushConfig). nil ⇒
 	// no se empuja (solo se persiste; el push al conectar reconcilia).
 	ConfigPush ConfigPusher
+	// Intakes es el dominio de SOLICITUDES (pedidos/presupuestos, ADR-0031): la
+	// bandeja del dueño y la máquina de estados del Plan 041. Lo satisface
+	// *intakes.Service. nil ⇒ no se montan las rutas /api/v1/intakes.
+	Intakes IntakeService
 	// Health son los umbrales de la derivación de salud (degraded>N, stale>M) que
 	// GET /api/v1/sessions aplica al servir (Plan 031 · T4, ADR-0023). Cero-valor ⇒
 	// defaults (5m/2m). Se cablea desde config.HealthConfig.
@@ -285,6 +290,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 			"intents.write", "intents", putIntentsHandler(d.Intents, d.Entitlements, d.ConfigPush, log)))
 	}
 
+	// Bandeja de SOLICITUDES (Plan 041, ADR-0031). Va en su propia función: las
+	// rutas de la bandeja crecen con el plan (export, summary) y aquí solo se ve
+	// que existen.
+	registerIntakes(mux, d, mw, auditor, log)
+
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada
 	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
 	// Lectura sin auditoría (no tiene efecto). Los eventos ya son OPACOS (CERO PII).
@@ -292,6 +302,34 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		mux.Handle("GET /api/v1/audit", protectRead(mw,
 			"audit.read", listAuditHandler(d.Audit)))
 	}
+}
+
+// registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4,
+// ADR-0031): listado con filtros y paginación, detalle con líneas, y transición
+// del ciclo de vida (D-041.10). Todo acotado al tenant del token (INV-8): una
+// solicitud ajena responde 404, nunca 403 — un 403 confirmaría que el id existe.
+//
+// DOS guardias por ruta, y ninguno sustituye al otro: el scope
+// (intakes.read/intakes.write) dice "puedes operar esto"; la feature cart_basic
+// dice "tu plan lo incluye". RequireFeature se compone SIEMPRE después de
+// Authenticate y RequirePermission — antes no habría identidad de la que sacar el
+// tenant y el gate cortaría fail-closed a todo el mundo.
+//
+// Sin el servicio o sin el resolver de features las rutas NO se montan: es
+// preferible un 404 de ruta inexistente a una bandeja que responde 500 a medio
+// camino (o, peor, que se abre sin poder comprobar el plan).
+func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
+	if d.Intakes == nil || d.Entitlements == nil {
+		return
+	}
+	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
+
+	mux.Handle("GET /api/v1/intakes", protectRead(mw,
+		"intakes.read", cartBasic(listIntakesHandler(d.Intakes))))
+	mux.Handle("GET /api/v1/intakes/{id}", protectRead(mw,
+		"intakes.read", cartBasic(getIntakeHandler(d.Intakes))))
+	mux.Handle("POST /api/v1/intakes/{id}/status", protect(mw, auditor, log,
+		"intakes.write", "intake", cartBasic(setIntakeStatusHandler(d.Intakes))))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del

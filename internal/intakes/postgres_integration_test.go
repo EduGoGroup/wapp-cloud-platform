@@ -1,0 +1,276 @@
+package intakes_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
+)
+
+const dsnEnv = "WAPP_TEST_DB_DSN"
+
+// openTestDB abre la BD de integración y aplica el esquema. Sin DSN se salta (el
+// mismo contrato que el resto de los *_integration_test.go del repo).
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := os.Getenv(dsnEnv)
+	if dsn == "" {
+		if os.Getenv("WAPP_TEST_REQUIRE_DB") != "" {
+			t.Fatalf("%s no definido pero WAPP_TEST_REQUIRE_DB exige BD", dsnEnv)
+		}
+		t.Skipf("%s no definido: se omiten los tests de integración con BD", dsnEnv)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn})
+	if err != nil {
+		if os.Getenv("WAPP_TEST_REQUIRE_DB") != "" {
+			t.Fatalf("BD no disponible en %s (%v) pero WAPP_TEST_REQUIRE_DB exige BD", dsnEnv, err)
+		}
+		t.Skipf("BD no disponible en %s (%v): se omiten", dsnEnv, err)
+	}
+	t.Cleanup(func() {
+		if cerr := db.Close(); cerr != nil {
+			t.Logf("cerrando BD de test: %v", cerr)
+		}
+	})
+	if _, err := migrations.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrando BD de test: %v", err)
+	}
+	return db
+}
+
+// fixture es una solicitud sembrada directamente en SQL: el test escribe como
+// escribe el módulo cart (incluido el `closed` legado) y lee por el store nuevo.
+type fixture struct {
+	id      string
+	status  string
+	session string
+	day     int
+}
+
+// seedPG inserta las solicitudes del tenant y devuelve sus ids. Limpia al terminar.
+func seedPG(t *testing.T, db *sql.DB, tenantID string, rows []fixture) {
+	t.Helper()
+	ctx := context.Background()
+	for _, r := range rows {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		`, r.id, tenantID, "contacto-opaco-"+r.id[:8], r.session, r.status, 18000,
+			time.Date(2026, 8, r.day, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("sembrando solicitud %s: %v", r.id, err)
+		}
+	}
+	t.Cleanup(func() {
+		if _, err := db.ExecContext(context.Background(), `
+			DELETE FROM public.intake_items WHERE intake_id IN (
+				SELECT id FROM public.intakes WHERE tenant_id = $1)
+		`, tenantID); err != nil {
+			t.Logf("limpiando líneas: %v", err)
+		}
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.intakes WHERE tenant_id = $1`, tenantID); err != nil {
+			t.Logf("limpiando solicitudes: %v", err)
+		}
+	})
+}
+
+// bandeja siembra cuatro solicitudes del mismo tenant repartidas en fechas,
+// estados y sesiones, y devuelve el store, el tenant y sus ids (del más viejo al
+// más nuevo). Es el fixture compartido de los tests de listado.
+func bandeja(t *testing.T) (*intakes.Postgres, string, [4]string) {
+	t.Helper()
+	db := openTestDB(t)
+	tenant := uuid.NewString()
+	ids := [4]string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	seedPG(t, db, tenant, []fixture{
+		{ids[0], intakes.StatusClosedLegacy, "sess-a", 1},
+		{ids[1], intakes.StatusOpen, "sess-a", 2},
+		{ids[2], intakes.StatusCancelled, "sess-b", 3},
+		{ids[3], intakes.StatusConfirmed, "sess-a", 4},
+	})
+	return intakes.NewPostgres(db), tenant, ids
+}
+
+// TestPostgres_List_SinFiltros: todo el tenant, más recientes primero.
+func TestPostgres_List_SinFiltros(t *testing.T) {
+	store, tenant, id := bandeja(t)
+
+	got, total, err := store.List(context.Background(), tenant, intakes.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 4 || len(got) != 4 {
+		t.Fatalf("total=%d filas=%d, quiero 4 y 4", total, len(got))
+	}
+	if !slices.Equal(ids(got), []string{id[3], id[2], id[1], id[0]}) {
+		t.Fatalf("orden=%v; quiero descendente por created_at", ids(got))
+	}
+}
+
+// TestPostgres_List_StatusAlcanzaElLegado: filtrar por `confirmed` devuelve
+// también las filas que el módulo cart escribió como `closed`. Es la prueba de
+// que no hace falta migrar el dato histórico.
+func TestPostgres_List_StatusAlcanzaElLegado(t *testing.T) {
+	store, tenant, id := bandeja(t)
+
+	got, total, err := store.List(context.Background(), tenant,
+		intakes.Filter{Status: intakes.StatusConfirmed})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || !slices.Equal(ids(got), []string{id[3], id[0]}) {
+		t.Fatalf("total=%d ids=%v; quiero la confirmed y la closed legada", total, ids(got))
+	}
+	for _, in := range got {
+		if in.Status != intakes.StatusConfirmed {
+			t.Fatalf("status=%q; el store normaliza al leer", in.Status)
+		}
+	}
+}
+
+// TestPostgres_List_FiltrosCombinados: rango de fechas [From, To) + sesión.
+func TestPostgres_List_FiltrosCombinados(t *testing.T) {
+	store, tenant, id := bandeja(t)
+
+	got, total, err := store.List(context.Background(), tenant, intakes.Filter{
+		From:      time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		To:        time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC), // exclusivo
+		SessionID: "sess-a",
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || !slices.Equal(ids(got), []string{id[1], id[0]}) {
+		t.Fatalf("total=%d ids=%v; quiero las dos de sess-a del 1 y el 2", total, ids(got))
+	}
+}
+
+// TestPostgres_List_TotalCuentaElFiltro: `total` es el de las coincidencias, no
+// el de la página — si divergieran, el paginador mentiría.
+func TestPostgres_List_TotalCuentaElFiltro(t *testing.T) {
+	store, tenant, id := bandeja(t)
+
+	got, total, err := store.List(context.Background(), tenant, intakes.Filter{Page: 2, PageSize: 3})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 4 || !slices.Equal(ids(got), []string{id[0]}) {
+		t.Fatalf("total=%d ids=%v; quiero total=4 con la fila suelta de la página 2", total, ids(got))
+	}
+}
+
+// TestPostgres_List_AisladoPorTenant: el WHERE por tenant no es opcional (INV-8).
+func TestPostgres_List_AisladoPorTenant(t *testing.T) {
+	store, _, _ := bandeja(t)
+
+	got, total, err := store.List(context.Background(), uuid.NewString(), intakes.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 0 || len(got) != 0 {
+		t.Fatalf("total=%d filas=%d; un tenant ajeno no ve nada", total, len(got))
+	}
+}
+
+// TestPostgres_Get_LíneasYAislamiento valida el detalle contra la tabla real.
+func TestPostgres_Get_LíneasYAislamiento(t *testing.T) {
+	db := openTestDB(t)
+	store := intakes.NewPostgres(db)
+	tenant := uuid.NewString()
+	ctx := context.Background()
+
+	id := uuid.NewString()
+	seedPG(t, db, tenant, []fixture{{id, intakes.StatusClosedLegacy, "sess-a", 1}})
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_items (intake_id, sku, label, qty, unit_price)
+		VALUES ($1, 'torta-v1', 'Torta 10-12 porciones', 1, 18000),
+		       ($1, '_shipping', 'Envío — Providencia', 1, 3000)
+	`, id); err != nil {
+		t.Fatalf("sembrando líneas: %v", err)
+	}
+
+	detail, err := store.Get(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.Status != intakes.StatusConfirmed {
+		t.Fatalf("status=%q; el `closed` de BD se lee normalizado", detail.Status)
+	}
+	if len(detail.Items) != 2 || detail.Items[0].SKU != "torta-v1" {
+		t.Fatalf("items=%+v; quiero las dos líneas en orden de alta", detail.Items)
+	}
+	if detail.ContactID == "" {
+		t.Fatal("contact_id vacío: el opaco viaja tal cual desde BD")
+	}
+
+	if _, err := store.Get(ctx, uuid.NewString(), id); !errors.Is(err, intakes.ErrNotFound) {
+		t.Fatalf("cross-tenant err=%v, quiero ErrNotFound", err)
+	}
+	if _, err := store.Get(ctx, tenant, uuid.NewString()); !errors.Is(err, intakes.ErrNotFound) {
+		t.Fatalf("id inexistente err=%v, quiero ErrNotFound", err)
+	}
+	// Un id que ni siquiera es UUID no puede reventar la consulta (la columna es
+	// UUID): es un 404 como cualquier otro.
+	if _, err := store.Get(ctx, tenant, "no-soy-un-uuid"); !errors.Is(err, intakes.ErrNotFound) {
+		t.Fatalf("id malformado err=%v, quiero ErrNotFound", err)
+	}
+}
+
+// TestPostgres_UpdateStatus_CAS valida el compare-and-swap contra la BD real.
+func TestPostgres_UpdateStatus_CAS(t *testing.T) {
+	db := openTestDB(t)
+	store := intakes.NewPostgres(db)
+	tenant := uuid.NewString()
+	ctx := context.Background()
+
+	id := uuid.NewString()
+	seedPG(t, db, tenant, []fixture{{id, intakes.StatusClosedLegacy, "sess-a", 1}})
+
+	// Escribe sobre la fila legada usando las variantes del estado canónico.
+	updated, err := store.UpdateStatus(ctx, tenant, id, intakes.StatusDepositRequested,
+		intakes.StoredVariants(intakes.StatusConfirmed))
+	if err != nil {
+		t.Fatalf("UpdateStatus sobre la fila legada: %v", err)
+	}
+	if updated.Status != intakes.StatusDepositRequested {
+		t.Fatalf("status=%q, quiero deposit_requested", updated.Status)
+	}
+
+	// El mismo CAS otra vez ya no casa: la fila cambió de estado.
+	if _, err := store.UpdateStatus(ctx, tenant, id, intakes.StatusDepositPaid,
+		intakes.StoredVariants(intakes.StatusConfirmed)); !errors.Is(err, intakes.ErrConflict) {
+		t.Fatalf("err=%v, quiero ErrConflict (el estado ya no es el esperado)", err)
+	}
+
+	// Cross-tenant: ni escribe ni revela que existe.
+	if _, err := store.UpdateStatus(ctx, uuid.NewString(), id, intakes.StatusCancelled,
+		intakes.StoredVariants(intakes.StatusDepositRequested)); !errors.Is(err, intakes.ErrNotFound) {
+		t.Fatalf("err=%v, quiero ErrNotFound", err)
+	}
+	after, err := store.Get(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("Get tras el intento cross-tenant: %v", err)
+	}
+	if after.Status != intakes.StatusDepositRequested {
+		t.Fatalf("status=%q; el intento ajeno no puede haber escrito", after.Status)
+	}
+}
+
+func ids(in []intakes.Intake) []string {
+	out := make([]string, 0, len(in))
+	for _, i := range in {
+		out = append(out, i.ID)
+	}
+	return out
+}

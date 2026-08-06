@@ -44,6 +44,12 @@ import (
 // primera capacidad gateada por entitlements (ADR-0022).
 const FeatureLLMIntent = "llm_intent"
 
+// FeatureCartBasic es la feature del carrito y sus SOLICITUDES (Plan 041, ADR-0031):
+// gatea la bandeja de pedidos —listado, detalle y cambio de estado— de la API
+// pública. Es la primera capacidad que usa el middleware RequireFeature en una ruta
+// real (hasta el Plan 041 el gate solo vivía en checks in-code).
+const FeatureCartBasic = "cart_basic"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).
