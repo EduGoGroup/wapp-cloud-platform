@@ -13,10 +13,12 @@
 **Monolito modular Go** (ADR-0010) que aloja todo lo que gestiona el equipo de wApp
 (plataforma SaaS). La nube **piensa**; el Edge despacha (ADR-0005).
 
-**Estado: implementada y en piloto** (HEAD ~`2ff6b27`). NO es scaffold ni greenfield:
+**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.24.0` —
+`internal/platform/storage/postgres/migrations/version.go`; no fijamos aquí un SHA porque
+caduca al commit siguiente). NO es scaffold ni greenfield:
 cubre IAM, API pública, Motor de Flujos con sus módulos, gateway CloudLink y la
 operabilidad de flota; se despliega hoy contra Neon en el piloto multi-Edge
-(planes 005–031). Antes de afirmar que algo "no existe todavía", **verifica en
+(planes 005–031, 033 y 040). Antes de afirmar que algo "no existe todavía", **verifica en
 `internal/`**: casi todo el dominio ya está construido.
 
 Binarios `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale),
@@ -62,14 +64,15 @@ internal/
                   multi-tenant (roles, grants, membresías). NO hay usuarios ni contraseñas.
                   Capas domain/usecase/ports/infra/transport.
   publicapi/    → API pública /api/v1 para terceros (Context Token ES256 + RBAC): sesiones,
-                  mensajes, flows, triggers, media, intents, diagnostics, health, audit.
+                  mensajes, flows, triggers, media, intents, entitlements, diagnostics, health, audit.
   flujos/       → Motor de Flujos (Pieza 05): motor dinámico por puertos ContentSource +
                   EventSink, Registry de módulos enchufables (modules/{menu,survey,cart,media}),
                   más engine, runtime, trigger, content, contact, store, admin.
   gateway/      → terminación gRPC de los Edges (Pieza 02): grpc (CloudLink bidi),
                   enroll (CA + EnrollEdge), lease (kill-switch ADR-0007),
                   fleet (online/offline por sesión), session (streams vivos).
-  entitlements/ → derechos/capacidades por tenant (gate de features, p. ej. clasificador LLM).
+  entitlements/ → derechos/capacidades por tenant: Resolver (Has/ListEffective/CacheTTL) + el
+                  middleware RequireFeature que gatea rutas. Ver "Gate de capacidades" abajo.
   intentcfg/    → config de intenciones por tenant (contrato del módulo intents de wapp-shared).
   ingest/       → ingesta de entrantes con dedupe por (session_id, wa_message_id) (tabla ingest_dedupe).
   receipts/     → acuses delivered/read extremo a extremo edge→nube.
@@ -114,9 +117,9 @@ durabilidad la da el `outbox` del Edge.
 ### Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0038_retiro_iam_propio.sql`).
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0040_entitlements_read_grant.sql`).
 El runner los aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy
-**0.23.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
+**0.24.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
 aunque no se suba la versión. **Obligatorio incrementar `SchemaVersion` al tocar cualquier
 `structure/*.sql`.**
 
@@ -125,6 +128,25 @@ El runner es **full-replay**: al detectar cambio de hash reejecuta TODOS los
 sobre una tabla que otra migración borra revienta el ARRANQUE del servidor en la
 siguiente corrida. Por eso lo destructivo y lo que depende de tablas retiradas va con
 guard `IF EXISTS` (ver `0037_tenant_members.sql` y `0038_retiro_iam_propio.sql`).
+
+### Taxonomía de planes y features (Plan 040)
+
+**5 planes × 12 features**, sembrados en `0039_seed_plan_taxonomy.sql`: los comerciales `basic`,
+`commerce`, `advisor_ai`, `advisor_ai_pro`, más `pro` = plan **interno de laboratorio** con las 12
+claves. `basic` y `pro` ya existían desde la `0032` y se **reutilizan** (no se re-crean ni se
+renombran); la `0039` solo inserta los tres nuevos.
+
+Dos cosas que se malinterpretan al tocar esto:
+
+- **No hay herencia en BD.** La composición está denormalizada: cada plan lista TODAS sus features,
+  y la notación «Comercio + …» del design es documental. El lookup es un JOIN plano
+  (`internal/entitlements/postgres.go:235`); una herencia implícita obligaría al Resolver a recursión.
+- **El override manda** (ADR-0022): `tenant_features` gana sobre el plan; sin override mandan las del
+  plan, y un tenant sin `plan_id` se trata como `basic` (`COALESCE`, `postgres.go:151`).
+  `passive_profiles` y `multi_empresa` no están en ningún paquete comercial: son add-on por tenant.
+
+El Resolver cachea en memoria (`Has` por (tenant,feature) y `ListEffective` por tenant), TTL 60 s por
+defecto (`postgres.go:15`), y publica ese TTL por `CacheTTL()` para que los clientes lo respeten.
 
 ⚠️ Las tablas `iam_roles`, `iam_role_grants`, `iam_user_roles` e `iam_user_grants`
 **NO son identidad**: son el RBAC de negocio de wApp y se quedan. Su prefijo `iam_` es
@@ -144,6 +166,15 @@ murieron en la 0038. Su `user_id` es un UUID SIN FK: la persona vive en otra bas
   emitidas, 0 consumidores). Reconstruirlo es por el ADR-0025 de identity: la credencial
   de máquina **se canjea, no se presenta**.
 - **RBAC por grants glob** multi-tenant; el tenant se deriva del token (INV-8).
+- **Gate de capacidades — no lo confundas con el RBAC.** El grant dice "puedes operar esto"; la
+  feature dice "tu plan lo incluye". Son dos preguntas distintas y **ninguna sustituye a la otra**:
+  una ruta de pago lleva las dos. Se aplica con `entitlements.RequireFeature(resolver, feature)`
+  (`internal/entitlements/middleware.go:33`), que sin la feature corta con `403` y
+  `{"error":"feature_not_enabled","feature":"<clave>"}`. Es **FAIL-CLOSED** en los tres modos de
+  no-resolución —sin identidad (o sin tenant en ella), resolver caído, resolver `nil`—: los tres dan
+  403, nunca 500. No lo "arregles" devolviendo 5xx cuando el resolver falla: el llamante no debe
+  poder distinguir "no lo tienes" de "no pude averiguarlo", y un 5xx invita a reintentar hasta
+  colarse.
 - **Dedupe de ingesta** por `(session_id, wa_message_id)` para no reprocesar entrantes repetidos.
 - **PII cifrada en reposo** con KEK versionada y rotación sin re-cifrar (ADR-0017, Plan 012),
   más índice ciego HMAC con `indexKey` independiente.

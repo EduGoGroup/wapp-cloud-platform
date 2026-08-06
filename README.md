@@ -15,13 +15,13 @@ firma. Ver `docs/adr/` y el ADR local de adopción.
 - Módulo Go: `github.com/EduGoGroup/wapp-cloud-platform`
 - Go **1.26**
 - Binarios: `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale)
-- SchemaVersion **0.23.0** (última migración `0038_retiro_iam_propio.sql`)
+- SchemaVersion **0.24.0** (última migración `0040_entitlements_read_grant.sql`)
 
 ## Estado
 
 **Implementada y operando.** No es un scaffold: cubre desde el IAM y la API
 pública hasta el Motor de Flujos con sus módulos y la operabilidad de flota
-(planes 005–031). Se despliega hoy contra Neon en el piloto multi-Edge.
+(planes 005–031, 033 y 040). Se despliega hoy contra Neon en el piloto multi-Edge.
 
 ## Módulos (`internal/`)
 
@@ -31,15 +31,30 @@ frontera, sus tablas y su API.
 | Módulo | Responsabilidad |
 |---|---|
 | `iam` | Canje de Identity Token → Context Token, verificación del Context Token propio y autorización (RBAC glob multi-tenant: roles, grants, membresías). Ya NO hay usuarios, contraseñas, refresh tokens ni api-keys: viven en identity-core. Capas `domain`/`usecase`/`ports`/`infra`/`transport`. |
-| `publicapi` | API pública `/api/v1` para terceros: sesiones, mensajes, flows, triggers, media, intents, diagnostics, health, audit. Protegida con JWT ES256 + RBAC. |
+| `publicapi` | API pública `/api/v1` para terceros: sesiones, mensajes, flows, triggers, media, intents, entitlements, diagnostics, health, audit. Protegida con JWT ES256 + RBAC. |
 | `flujos` | Motor de Flujos (Pieza 05): motor dinámico por puertos `ContentSource` + `EventSink` con un `Registry` de módulos enchufables (`modules/menu`, `modules/survey`, `modules/cart`, `modules/media`) más `engine`, `runtime`, `trigger`, `content`, `contact`, `store`, `admin`. |
 | `gateway` | Terminación gRPC de los Edges (Pieza 02): `grpc` (CloudLink bidi), `enroll` (CA + EnrollEdge), `lease` (kill-switch ADR-0007), `fleet` (online/offline por sesión), `session` (registro de streams vivos). |
-| `entitlements` | Derechos/capacidades habilitadas por tenant (gate de features, p. ej. el clasificador LLM). |
+| `entitlements` | Derechos/capacidades habilitadas por tenant. `Resolver` con `Has` / `ListEffective` / `CacheTTL` (`postgres.go:94/120/89`, caché en memoria de 60 s por defecto), el middleware `RequireFeature` que gatea rutas (ver *Seguridad*) y la taxonomía comercial sembrada en la migración `0039`. |
 | `intentcfg` | Almacén de la configuración de intenciones por tenant (contrato del módulo `intents` de wapp-shared) que alimenta al clasificador. |
 | `ingest` | Ingesta de eventos entrantes del Edge con **dedupe** por `(session_id, wa_message_id)` (Plan 028, migración 0031, tabla `ingest_dedupe`). |
 | `receipts` | Acuses de mensaje (`delivered`/`read`) extremo a extremo edge→nube. |
 | `diagnostics` | Diagnóstico remoto bajo demanda de la flota (Plan 031, ADR-0023): bundle con retención (TTL). |
 | `platform` | Plataforma de soporte transversal: `config`, `logging`, `httpapi` (health/admin), `storage/postgres` (runner de migraciones) y `storage/objectstore` (R2). No es un módulo de dominio. |
+
+### Planes y features (Plan 040)
+
+**5 planes × 12 features**, sembrados en `0039_seed_plan_taxonomy.sql`: `basic`, `commerce`,
+`advisor_ai` y `advisor_ai_pro` son los paquetes comerciales, y `pro` es el plan **interno de
+laboratorio** con las 12 claves. `basic` y `pro` venían de la `0032` y se reutilizan; la `0039` solo
+crea los tres nuevos. La composición está **denormalizada** —cada plan lista todas sus features— y
+no hay herencia en BD: la notación «Comercio + …» del design es documental, el lookup es un JOIN
+plano (`postgres.go:235`). `passive_profiles` y `multi_empresa` no entran en ningún paquete
+comercial: son **add-on** por tenant.
+
+Resolución (ADR-0022): el override de `tenant_features` **gana**; sin override mandan las del plan,
+y un tenant sin `plan_id` se trata como `basic` (`COALESCE`, `postgres.go:151`). Quien quiera leer
+el plan efectivo usa `GET /api/v1/entitlements` (scope `entitlements.read`, `publicapi.go:270`),
+acotado al tenant del token (INV-8): el tenant no viaja en la URL y no hay consulta cross-tenant.
 
 ## Almacenes
 
@@ -56,8 +71,8 @@ channels), nunca RabbitMQ ni Redis (ADR-0003).
 
 Los scripts SQL embebidos viven en
 `internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` …
-`0038_retiro_iam_propio.sql`). El runner de `platform/storage/postgres` los aplica
-al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.23.0**)
+`0040_entitlements_read_grant.sql`). El runner de `platform/storage/postgres` los aplica
+al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.24.0**)
 contra `public.schema_version`; además calcula un hash de los archivos para
 detectar cambios aunque no se haya subido la versión. **Obligatorio incrementar
 `SchemaVersion` al tocar cualquier `structure/*.sql`.**
@@ -148,6 +163,12 @@ Requisitos locales:
   credencial). Cuando haga falta, se construye por el modelo del ADR-0025 de
   identity: la credencial de máquina **se canjea, no se presenta**.
 - **RBAC por grants glob** multi-tenant; el tenant se deriva del token.
+- **Gate de capacidades** (`entitlements.RequireFeature`, `internal/entitlements/middleware.go:33`):
+  el grant dice «puedes operar esto», la feature dice «tu plan lo incluye» — dos preguntas
+  distintas, ninguna sustituye a la otra. Sin la feature corta con `403` y
+  `{"error":"feature_not_enabled","feature":"<clave>"}`. Es **fail-closed** en los tres modos de
+  no-resolución (sin identidad o sin tenant, resolver caído, resolver `nil`): los tres dan 403 y no
+  500, porque un 5xx invitaría a reintentar hasta colarse.
 - **Dedupe de ingesta** por `(session_id, wa_message_id)` para no reprocesar entrantes repetidos.
 - **PII cifrada en reposo** con KEK versionada y rotación sin re-cifrar (ADR-0017,
   Plan 012), más índice ciego HMAC con `indexKey` independiente.
