@@ -63,17 +63,29 @@ const maxTabularUnzipBytes = 32 << 20
 // firma de un ZIP). Fiarse de la extensión sería fiarse de algo que el usuario puede
 // cambiar sin cambiar el archivo.
 //
-// Respuestas: 200 con {mode, ref, applied, items, diff, archived_version?} —el mismo
-// cuerpo que el import JSON—; 400 con {error:"validation_failed", errors:[…]} si la
-// planilla no se puede leer o no valida; 400 si el modo es desconocido o no viene el
-// archivo; 401 sin identidad; 403 sin la feature catalog_import (lo corta el gate);
-// 413 si el archivo excede el techo de bytes; 500 en fallo del store.
+// LA RESPUESTA TRAE ADEMÁS EL DOCUMENTO NORMALIZADO (`document`), que es lo que
+// permite confirmar en dos pasos sin volver a pedir el archivo: la pantalla enseña el
+// diff del validate y manda ESE documento al import JSON de siempre para aplicarlo.
+// Un .xlsx no cabe en un campo oculto —es binario— y volver a pedirlo rompería la
+// garantía de que se aplica exactamente lo que se enseñó (ver
+// catalogImportResponse.Document).
+//
+// Respuestas: 200 con {mode, ref, applied, items, diff, archived_version?, document}
+// —el mismo objeto que el import JSON, con `document` como único añadido—; 400 con
+// {error:"validation_failed", errors:[…]} si la planilla no se puede leer o no valida
+// (y entonces NO hay documento: uno a medias sería peor que ninguno); 400 si el modo
+// es desconocido o no viene el archivo; 401 sin identidad; 403 sin la feature
+// catalog_import (lo corta el gate); 413 si el archivo excede el techo de bytes; 500
+// en fallo del store.
 func catalogImportTabularHandler(cs TenantContentStore, vw CatalogVersionWriter, limits catalogimport.Limits) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		target, ok := catalogImportTargetFrom(w, r, cs, vw, flowstore.VersionSourceImportTabular)
 		if !ok {
 			return
 		}
+		// La planilla devuelve el documento normalizado; el JSON no lo necesita.
+		target.echoDocument = true
+
 		doc, code, errBody := decodeTabularBody(w, r, limits)
 		if errBody != nil {
 			writeJSON(w, code, errBody)

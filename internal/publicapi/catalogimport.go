@@ -54,6 +54,23 @@ type catalogImportResponse struct {
 	// Se omite cuando no se archivó nada: en validate (no se escribe) y en el
 	// primer import de una ref (no había nada que archivar).
 	ArchivedVersion int `json:"archived_version,omitempty"`
+	// Document es el documento LEÍDO Y NORMALIZADO, listo para volver a enviarse tal
+	// cual a POST /api/v1/catalog/import. Lo rellena el camino TABULAR y no el JSON:
+	// quien sube un JSON ya lo tiene, y devolvérselo duplicaría el peso de cada
+	// respuesta para no decirle nada que no supiera.
+	//
+	// EXISTE PARA QUE LA CONFIRMACIÓN EN DOS PASOS SIGA SIENDO FIEL. La pantalla del
+	// import enseña el diff del validate y luego pide confirmación; para garantizar
+	// que se aplica EXACTAMENTE lo que se enseñó, el paso 2 tiene que llevar consigo
+	// el documento. Con un JSON eso es texto y cabe en un campo oculto; con un .xlsx
+	// no, porque es binario. Sin esto, las salidas serían pedir el archivo otra vez
+	// (y entonces el operador puede subir otro distinto del que confirmó), inflarlo a
+	// base64 contra dos techos de bytes, o guardar el archivo entre pasos, que es
+	// meterle estado a un BFF que no lo tiene.
+	//
+	// De regalo, es la traducción de la planilla a JSON: quien empezó en Excel se
+	// lleva el contrato de su propio catálogo en vez de quedarse encerrado en la hoja.
+	Document *catalogimport.CatalogImport `json:"document,omitempty"`
 }
 
 // catalogImportErrors es el cuerpo del 400 por documento inválido: el código
@@ -115,6 +132,11 @@ type catalogImportTarget struct {
 	mode     string
 	ref      string
 	source   string
+	// echoDocument pide que la respuesta lleve el documento ya normalizado (ver
+	// catalogImportResponse.Document). Lo enciende el camino que lo necesita —la
+	// planilla—, no el modo ni el llamante: si dependiera de un parámetro de la URL,
+	// el peso de la respuesta lo decidiría quien llama.
+	echoDocument bool
 }
 
 // catalogImportTargetFrom resuelve identidad, dependencias y query de un import, y
@@ -162,6 +184,14 @@ func finishCatalogImport(w http.ResponseWriter, r *http.Request,
 		diff.CurrentWarnings = append(diff.CurrentWarnings, warning)
 	}
 	resp := catalogImportResponse{Mode: t.mode, Ref: t.ref, Items: countItems(doc), Diff: diff}
+	if t.echoDocument {
+		// También en apply, y no solo en validate: la respuesta de este endpoint es
+		// UN objeto con Applied como única diferencia semántica (ver
+		// catalogImportResponse), y un campo que aparece y desaparece según el modo
+		// obligaría a la pantalla a tener dos formas de leer lo mismo. Devolverlo en
+		// apply además le da su JSON a quien aplica la planilla de una sola vez.
+		resp.Document = &doc
+	}
 	if t.mode == importModeValidate {
 		writeJSON(w, http.StatusOK, resp)
 		return

@@ -215,6 +215,124 @@ func TestCatalogImportTabular_Validate_NoEscribeYEnseñaElDiff(t *testing.T) {
 	}
 }
 
+// ============================ el documento normalizado ============================
+
+// tabularConDocumento espeja la respuesta quedándose con el documento normalizado en
+// CRUDO: lo que la pantalla guarda en su campo oculto y reenvía tal cual es ese texto,
+// no un struct que ella vuelva a serializar.
+type tabularConDocumento struct {
+	Mode     string          `json:"mode"`
+	Applied  bool            `json:"applied"`
+	Document json.RawMessage `json:"document"`
+}
+
+// TestCatalogImportTabular_ElDocumentoDelValidateEsLoQueElApplyEscribe recorre el
+// camino EXACTO de la pantalla del import, que confirma en dos pasos: sube la planilla
+// en validate, se queda con el `document` de la respuesta y lo manda al import JSON en
+// apply, sin volver a tocar el archivo.
+//
+// Lo que se afirma es la FIDELIDAD de esa confirmación: el blob que queda escrito es
+// el mismo, byte a byte, que si la planilla se hubiera aplicado de una sola vez. Si no
+// lo fuera, el operador estaría confirmando un diff y aplicando otra cosa —y no habría
+// forma de que se enterase—.
+//
+// Un .xlsx a propósito: es el caso que obliga a que esto exista. El binario no cabe en
+// un campo oculto de un formulario sin JavaScript, y volver a pedir el archivo en el
+// paso 2 permitiría subir uno distinto del que se confirmó.
+func TestCatalogImportTabular_ElDocumentoDelValidateEsLoQueElApplyEscribe(t *testing.T) {
+	api, repo := importAPI()
+	xlsx := plantilla(t, api, "xlsx")
+
+	// Paso 1: el operador sube su planilla y ve el diff. No se escribe nada.
+	rec := subirPlanilla(t, api, keyAContent, "?mode=validate&ref=dos-pasos", "catalogo.xlsx", xlsx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("validate: code=%d; body=%s", rec.Code, rec.Body.String())
+	}
+	var paso1 tabularConDocumento
+	if err := json.Unmarshal(rec.Body.Bytes(), &paso1); err != nil {
+		t.Fatalf("unmarshal del validate: %v", err)
+	}
+	if len(paso1.Document) == 0 {
+		t.Fatal("el validate no devolvió el documento normalizado: la pantalla no tiene qué confirmar")
+	}
+
+	// Paso 2: confirma. Va por el import JSON de siempre, que re-valida stateless.
+	postImport(t, api, keyAContent, "?mode=apply&ref=dos-pasos", string(paso1.Document))
+
+	// Y en una ref aparte, la misma planilla aplicada de una sola vez.
+	postTabular(t, api, "?mode=apply&ref=de-una", "catalogo.xlsx", xlsx)
+
+	if enDosPasos, deUna := blobVigente(t, repo, tenantA, "dos-pasos"), blobVigente(t, repo, tenantA, "de-una"); enDosPasos != deUna {
+		t.Fatalf("confirmar en dos pasos escribió otra cosa.\ndos pasos: %s\nde una:    %s", enDosPasos, deUna)
+	}
+}
+
+// TestCatalogImportTabular_ElDocumentoTambienVieneEnApply: la respuesta de este
+// endpoint es UN objeto con `applied` como única diferencia semántica. Un campo que
+// aparece y desaparece según el modo obligaría a la pantalla a tener dos formas de
+// leer lo mismo — y quien aplica de una sola vez se lleva igualmente el JSON de su
+// catálogo, que es la salida de Excel que antes no tenía.
+func TestCatalogImportTabular_ElDocumentoTambienVieneEnApply(t *testing.T) {
+	api, _ := importAPI()
+
+	rec := subirPlanilla(t, api, keyAContent, "?mode=apply", "catalogo.csv", plantilla(t, api, "csv"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d; body=%s", rec.Code, rec.Body.String())
+	}
+	var got tabularConDocumento
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.Applied || len(got.Document) == 0 {
+		t.Fatalf("applied=%v document=%d bytes: el apply también devuelve el documento", got.Applied, len(got.Document))
+	}
+
+	// Y es un documento del contrato, no el catálogo pelado: la pantalla lo reenvía
+	// TAL CUAL al import JSON, que exige format y version.
+	var doc catalogimport.CatalogImport
+	if err := json.Unmarshal(got.Document, &doc); err != nil {
+		t.Fatalf("el documento no es del contrato: %v", err)
+	}
+	if doc.Format != catalogimport.ImportFormat || doc.Version != catalogimport.ImportVersion {
+		t.Fatalf("format=%q version=%d: el documento no se puede reenviar tal cual", doc.Format, doc.Version)
+	}
+}
+
+// TestCatalogImportTabular_ConDefectosNoHayDocumento: si la planilla no valida no hay
+// documento normalizado que devolver. Mandar uno a medias sería peor que no mandar
+// ninguno: la pantalla podría llegar a confirmar un catálogo que el servidor nunca
+// aceptó.
+func TestCatalogImportTabular_ConDefectosNoHayDocumento(t *testing.T) {
+	api, _ := importAPI()
+
+	rows := [][]string{
+		catalogimport.TabularColumns(),
+		filaDe("1|Bebidas", "", "1", "CAFE", "Café", "gratis"),
+	}
+	rec := subirPlanilla(t, api, keyAContent, "?mode=validate", "catalogo.csv", csvDe(t, ',', rows))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d, quiero 400", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `"document"`) {
+		t.Fatalf("el 400 trae un documento: %s", rec.Body.String())
+	}
+}
+
+// TestCatalogImport_JSON_NoRepiteElDocumento: el camino JSON no lo devuelve. Quien
+// sube un documento ya lo tiene, y devolvérselo duplicaría el peso de cada respuesta
+// —hasta el techo de bytes del import— para no decirle nada que no supiera.
+func TestCatalogImport_JSON_NoRepiteElDocumento(t *testing.T) {
+	api, _ := importAPI()
+
+	rec := call(api, keyAContent, http.MethodPost, "/api/v1/catalog/import?mode=validate", docNuevo)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"document"`) {
+		t.Fatalf("el import JSON devolvió el documento: %s", rec.Body.String())
+	}
+}
+
 // ============================ defectos que lee una persona ============================
 
 // TestCatalogImportTabular_PrecioNoNumerico_400ConFilaYMotivo: el segundo criterio de
