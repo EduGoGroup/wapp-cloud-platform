@@ -113,8 +113,12 @@ type RevisionLine struct {
 	UnitPrice float64 `json:"unit_price"`
 }
 
-// cartRevisionPayload es la forma canónica del payload de RevisionKindCart.
-type cartRevisionPayload struct {
+// linesRevisionPayload es la forma canónica del payload de las revisiones que
+// retratan un conjunto de líneas con su total: RevisionKindCart (lo que armó el
+// carrito) y RevisionKindCorrected (cómo quedó tras la corrección del dueño). Es
+// UNA forma y no dos porque es la misma pregunta —qué líneas y por cuánto—
+// contestada por dos puertas; `kind` es lo que dice cuál fue.
+type linesRevisionPayload struct {
 	Version int            `json:"version"`
 	Total   float64        `json:"total"`
 	Items   []RevisionLine `json:"items"`
@@ -127,16 +131,30 @@ type cartRevisionPayload struct {
 // distinguir "se cerró sin líneas" de "aquí no se registró la lista", y `null` no
 // dice cuál de las dos es.
 func CartRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
+	return linesPayload("del carrito", total, lines)
+}
+
+// CorrectedRevisionPayload arma el payload de la revisión de CORRECCIÓN MANUAL
+// del dueño (T4.10 / REQ-36): la misma forma versionada que la del carrito, para
+// que quien lea la negociación entera compare revisión con revisión sin cambiar de
+// parser a media lista.
+func CorrectedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
+	return linesPayload("de la corrección manual", total, lines)
+}
+
+// linesPayload serializa la forma compartida. `what` solo entra en el mensaje de
+// error: sin él, un fallo de serialización no diría qué revisión se perdió.
+func linesPayload(what string, total float64, lines []RevisionLine) (json.RawMessage, error) {
 	if lines == nil {
 		lines = []RevisionLine{}
 	}
-	raw, err := json.Marshal(cartRevisionPayload{
+	raw, err := json.Marshal(linesRevisionPayload{
 		Version: RevisionPayloadVersion,
 		Total:   total,
 		Items:   lines,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("intakes: serializar payload de la revisión del carrito: %w", err)
+		return nil, fmt.Errorf("intakes: serializar payload de la revisión %s: %w", what, err)
 	}
 	return raw, nil
 }

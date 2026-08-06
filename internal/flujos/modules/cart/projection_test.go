@@ -266,4 +266,13 @@ func TestShippingSKU_VaBajoElPrefijoReservado(t *testing.T) {
 		t.Fatalf("el sku de envío %q no cae bajo el prefijo reservado %q",
 			intakes.ShippingSKU, SystemSKUPrefix)
 	}
+	// El MISMO prefijo lo declara el dominio de solicitudes para su edición manual
+	// (T4.10): es lo que decide qué líneas sobreviven a un reemplazo. Si los dos
+	// literales divergieran, editar un presupuesto borraría su línea de envío —o
+	// dejaría al dueño colar una segunda— sin que nadie lo notara hasta el pedido
+	// mal cobrado.
+	if intakes.ReservedSKUPrefix != SystemSKUPrefix {
+		t.Fatalf("el prefijo reservado de solicitudes (%q) y el del catálogo (%q) tienen que ser el mismo",
+			intakes.ReservedSKUPrefix, SystemSKUPrefix)
+	}
 }

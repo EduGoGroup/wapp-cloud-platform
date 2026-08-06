@@ -222,4 +222,23 @@ type Store interface {
 	// tiene zonas configuradas (ver ShippingPolicy). Devuelve ErrNotFound si la
 	// solicitud no es del tenant.
 	EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error
+
+	// ReplaceItems sustituye las líneas de CLIENTE de la solicitud por `items`,
+	// PRESERVA las del sistema (la línea de envío, ReservedSKUPrefix), deja el
+	// total cuadrado con lo que quedó y escribe la revisión `corrected` del dueño
+	// — todo en la MISMA unidad de trabajo (T4.10, REQ-36).
+	//
+	// La revisión NO es un efecto colateral que se dispare después, y por eso
+	// entra en este puerto en vez de dejarse al llamante: una corrección aplicada
+	// sin su rastro es exactamente el agujero de auditoría que D-041.26 pide
+	// cerrar, y en dos pasos ese agujero se abre cada vez que falle el segundo.
+	// El llamante no elige el `kind` ni el autor: esta operación es LA corrección
+	// manual del dueño, no una escritura genérica de revisiones (para eso está
+	// RevisionWriter).
+	//
+	// `expected` son las variantes en BD del estado que el dominio validó
+	// (StoredVariants): la escritura solo ocurre si la solicitud sigue ahí
+	// (ErrConflict si no, ErrNotFound si no es del tenant). Devuelve el detalle ya
+	// coherente, revisión nueva incluida.
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error)
 }

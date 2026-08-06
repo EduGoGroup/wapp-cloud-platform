@@ -293,6 +293,54 @@ func (m *MemoryStore) ensureShippingLocked(tenantID string, i int, policy Shippi
 	return true, nil
 }
 
+// ReplaceItems implementa Store con las MISMAS reglas que el Postgres: las líneas
+// del sistema (prefijo reservado) sobreviven, el total se recalcula ENTERO desde
+// las líneas que quedan y la revisión `corrected` se escribe con la foto de lo
+// persistido. La paridad es lo que hace que un test de handler contra este store
+// diga algo verdadero sobre producción.
+func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		if !slices.Contains(expected, r.status) {
+			return Detail{}, ErrConflict
+		}
+
+		// Las del sistema primero y en su orden: es lo que hace el store real, que
+		// las conserva con su added_at original mientras las nuevas se fechan ahora.
+		system := systemItems(m.items[intakeID])
+		lines := make([]Item, 0, len(system)+len(items))
+		lines = append(lines, system...)
+		for _, it := range items {
+			it.AddedAt = time.Now()
+			lines = append(lines, it)
+		}
+		m.items[intakeID] = lines
+		m.rows[tenantID][i].intake.Total = editedTotal(lines)
+
+		head := m.rows[tenantID][i].intake
+		head.Status = NormalizeStatus(r.status)
+		rev, err := correctedRevision(intakeID, head.Total, lines)
+		if err != nil {
+			return Detail{}, err
+		}
+		rev.RevisionNo = len(m.revisions[intakeID]) + 1
+		rev.CreatedAt = time.Now()
+		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+
+		return Detail{
+			Intake:    head,
+			Items:     slices.Clone(lines),
+			Revisions: slices.Clone(m.revisions[intakeID]),
+		}, nil
+	}
+	return Detail{}, ErrNotFound
+}
+
 // recomputeTotalLocked cuadra el total de la cabecera con la suma de sus líneas,
 // igual que el UPDATE del store Postgres.
 func (m *MemoryStore) recomputeTotalLocked(tenantID string, i int, intakeID string) {

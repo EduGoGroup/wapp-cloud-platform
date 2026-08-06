@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
@@ -22,6 +26,9 @@ type IntakeService interface {
 	Get(ctx context.Context, tenantID, intakeID string) (intakes.Detail, error)
 	// SetStatus aplica una transición del ciclo de vida (D-041.10).
 	SetStatus(ctx context.Context, tenantID, intakeID, status string) (intakes.Intake, error)
+	// ReplaceItems sustituye las líneas de cliente de una solicitud en
+	// `pending_approval` y deja la revisión `corrected` del dueño (T4.10, REQ-36).
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item) (intakes.Detail, error)
 	// ListDetails devuelve las solicitudes del filtro CON sus líneas y sin
 	// paginar: es lo que desnormaliza el export (T1.2). intakes.ErrTooLarge si el
 	// filtro abarca más de intakes.MaxExportIntakes.
@@ -191,33 +198,41 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		items := make([]intakeItemDTO, 0, len(detail.Items))
-		for _, it := range detail.Items {
-			items = append(items, intakeItemDTO{
-				SKU: it.SKU, Label: it.Label, Customization: it.Customization,
-				Qty: it.Qty, UnitPrice: it.UnitPrice,
-			})
-		}
-		revisions := make([]intakeRevisionDTO, 0, len(detail.Revisions))
-		for _, rev := range detail.Revisions {
-			revisions = append(revisions, intakeRevisionDTO{
-				RevisionNo:   rev.RevisionNo,
-				Kind:         rev.Kind,
-				Payload:      rev.Payload,
-				RenderedText: rev.RenderedText,
-				CreatedBy:    rev.CreatedBy,
-				CreatedAt:    rev.CreatedAt.UTC().Format(time.RFC3339),
-			})
-		}
-		writeJSON(w, http.StatusOK, intakeDetailResponse{
-			intakeDTO: toIntakeDTO(detail.Intake),
-			Items:     items,
-			Revisions: revisions,
-			// detail.Status ya viene normalizado del dominio: una solicitud
-			// guardada como `closed` ofrece los destinos de `confirmed`.
-			AllowedTransitions: intakes.AllowedTransitions(detail.Status),
-		})
+		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
 	})
+}
+
+// toIntakeDetailResponse proyecta la solicitud completa al wire. Es UN punto y no
+// dos porque la edición manual (T4.10) responde EXACTAMENTE el mismo cuerpo que el
+// detalle: la consola repinta con lo que le devuelve el PUT, sin un segundo GET, y
+// dos proyecciones separadas empezarían a divergir en el primer campo nuevo.
+func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
+	items := make([]intakeItemDTO, 0, len(detail.Items))
+	for _, it := range detail.Items {
+		items = append(items, intakeItemDTO{
+			SKU: it.SKU, Label: it.Label, Customization: it.Customization,
+			Qty: it.Qty, UnitPrice: it.UnitPrice,
+		})
+	}
+	revisions := make([]intakeRevisionDTO, 0, len(detail.Revisions))
+	for _, rev := range detail.Revisions {
+		revisions = append(revisions, intakeRevisionDTO{
+			RevisionNo:   rev.RevisionNo,
+			Kind:         rev.Kind,
+			Payload:      rev.Payload,
+			RenderedText: rev.RenderedText,
+			CreatedBy:    rev.CreatedBy,
+			CreatedAt:    rev.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return intakeDetailResponse{
+		intakeDTO: toIntakeDTO(detail.Intake),
+		Items:     items,
+		Revisions: revisions,
+		// detail.Status ya viene normalizado del dominio: una solicitud
+		// guardada como `closed` ofrece los destinos de `confirmed`.
+		AllowedTransitions: intakes.AllowedTransitions(detail.Status),
+	}
 }
 
 // setIntakeStatusHandler sirve POST /api/v1/intakes/{id}/status: aplica una
@@ -265,6 +280,190 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 			writeJSON(w, http.StatusOK, toIntakeDTO(updated))
 		}
 	})
+}
+
+// editIntakeItemDTO es UNA línea tal como la manda el dueño al editar a mano
+// (T4.10). Es la MISMA forma que devuelve el detalle (intakeItemDTO) menos lo que
+// no le toca poner: `added_at` lo fecha la BD.
+//
+// `unit_price` viaja en el cuerpo y NO se resuelve contra el catálogo, y esa es la
+// decisión de fondo de esta puerta: la edición manual existe precisamente para
+// cobrar lo que el catálogo NO tiene todavía (la escena del queso extra,
+// D-041.26 §e). Resolver el precio contra el catálogo dejaría al dueño sin poder
+// hacer lo único que esta ruta existe para hacer, y además exigiría adivinar CUÁL
+// de las refs de contenido del tenant es «su» catálogo. Quien quiera el precio del
+// catálogo lo lee de ahí y lo manda: es su UI la que tiene el catálogo delante.
+type editIntakeItemDTO struct {
+	SKU           string  `json:"sku"`
+	Label         string  `json:"label"`
+	Customization string  `json:"customization"`
+	Qty           int     `json:"qty"`
+	UnitPrice     float64 `json:"unit_price"`
+}
+
+// editIntakeItemsRequest es el cuerpo de PUT /api/v1/intakes/{id}/items: el
+// conjunto COMPLETO de líneas de cliente que debe quedar.
+//
+// `Items` es un puntero para distinguir «no mandaste la clave» (cuerpo mal formado
+// ⇒ 400) de «mandaste la lista vacía» (quitar todas las líneas ⇒ se aplica). La
+// diferencia importa: sin ella, un cuerpo `{}` por un fallo de la UI vaciaría el
+// presupuesto en silencio.
+type editIntakeItemsRequest struct {
+	Items *[]editIntakeItemDTO `json:"items"`
+}
+
+// invalidItemsResponse es el cuerpo del 400 por líneas mal formadas: TODOS los
+// defectos de una vez, con su posición y su campo (mismo criterio que el validador
+// del import). Quien llena diez líneas no puede descubrir sus errores de uno en
+// uno.
+type invalidItemsResponse struct {
+	Error  string               `json:"error"`
+	Errors []intakes.LineDefect `json:"errors"`
+}
+
+// notEditableResponse es el cuerpo del 422 de una edición sobre una solicitud que
+// no está por aprobar: dónde está y desde dónde SÍ se edita, que es lo que el
+// llamante necesita para arreglarlo (mover a `pending_approval`, D-041.26) sin
+// adivinar.
+type notEditableResponse struct {
+	Error      string   `json:"error"`
+	Status     string   `json:"status"`
+	EditableIn []string `json:"editable_in"`
+}
+
+// putIntakeItemsHandler sirve PUT /api/v1/intakes/{id}/items: la EDICIÓN MANUAL de
+// las líneas de un presupuesto por su dueño (REQ-36 / D-041.26), sin LLM de por
+// medio. Responde el detalle completo —con la revisión `corrected` recién escrita—
+// para que la consola repinte sin un segundo GET.
+//
+// PUT y no POST: el cuerpo es el conjunto COMPLETO de líneas de cliente que debe
+// quedar, así que mandar dos veces el mismo cuerpo deja la solicitud igual. Lo que
+// NO es idempotente es la AUDITORÍA: cada PUT deja su revisión, porque dos
+// ediciones son dos actos del dueño aunque el resultado coincida (misma regla que
+// InsertRevision).
+//
+// Códigos: 200 con el detalle; 400 si el cuerpo o las líneas están mal; 404 si la
+// solicitud no es del tenant (nunca 403: confirmaría que existe); 422 si no está en
+// `pending_approval`; 409 si alguien la movió entre la lectura y la escritura.
+func putIntakeItemsHandler(svc IntakeService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req editIntakeItemsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+		if req.Items == nil {
+			writeError(w, http.StatusBadRequest, "items es obligatorio (manda [] para dejar la solicitud sin líneas)")
+			return
+		}
+
+		items, defects := decodeEditItems(*req.Items)
+		if len(defects) > 0 {
+			writeJSON(w, http.StatusBadRequest, invalidItemsResponse{
+				Error: "invalid_items", Errors: mergeItemDefects(defects, items),
+			})
+			return
+		}
+
+		detail, err := svc.ReplaceItems(r.Context(), id.TenantID, r.PathValue("id"), items)
+		if err != nil {
+			writeEditItemsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
+	})
+}
+
+// decodeEditItems traduce las líneas del wire a líneas de dominio SANEANDO su
+// texto libre por la MISMA puerta que el carrito: cart.SanitizeNote (D-041.19).
+// No se copia la regla —se llama—, porque `customization` es una columna con UN
+// contrato y ya tiene dos productores (el cart y el pipeline del 044); éste es el
+// tercero.
+//
+// La etiqueta pasa por el mismo saneo que la personalización, y no por parecido:
+// las dos acaban en una CELDA del CSV y en una LÍNEA de la comanda, así que un
+// salto de línea o un carácter invisible rompen exactamente lo mismo.
+//
+// El único defecto que produce el saneo es el LARGO (SanitizeNote no trunca a
+// propósito: recortar «…y sin maní» pierde justo el alérgeno). El resto de la
+// validación —sku, cantidad, precio— es del dominio, que no se fía de esta puerta.
+func decodeEditItems(raw []editIntakeItemDTO) ([]intakes.Item, []intakes.LineDefect) {
+	items := make([]intakes.Item, 0, len(raw))
+	var defects []intakes.LineDefect
+
+	for i, in := range raw {
+		it := intakes.Item{SKU: strings.TrimSpace(in.SKU), Qty: in.Qty, UnitPrice: in.UnitPrice}
+
+		label, err := cart.SanitizeNote(in.Label)
+		if err != nil {
+			defects = append(defects, intakes.LineDefect{
+				Index: i, Field: "label",
+				Message: "la etiqueta pasa del máximo de " + strconv.Itoa(cart.MaxNoteRunes) + " caracteres",
+			})
+		}
+		custom, err := cart.SanitizeNote(in.Customization)
+		if err != nil {
+			defects = append(defects, intakes.LineDefect{
+				Index: i, Field: "customization",
+				Message: "la personalización pasa del máximo de " + strconv.Itoa(cart.MaxNoteRunes) + " caracteres",
+			})
+		}
+
+		it.Label, it.Customization = label, custom
+		items = append(items, it)
+	}
+	return items, defects
+}
+
+// mergeItemDefects añade a los defectos del saneo los que ve el dominio, ordenados
+// por línea. Es lo que hace que un cuerpo con la etiqueta demasiado larga Y la
+// cantidad en cero se conteste UNA vez con los dos problemas, en vez de mandar al
+// llamante a descubrirlos por turnos.
+func mergeItemDefects(defects []intakes.LineDefect, items []intakes.Item) []intakes.LineDefect {
+	var invalid *intakes.InvalidItemsError
+	if err := intakes.ValidateEditableItems(items); errors.As(err, &invalid) {
+		defects = append(defects, invalid.Defects...)
+	}
+	slices.SortStableFunc(defects, func(a, b intakes.LineDefect) int { return a.Index - b.Index })
+	return defects
+}
+
+// writeEditItemsError traduce el fallo del dominio al código y al cuerpo que le
+// sirven a quien llama. La política de códigos vive aquí y no en el dominio: el
+// dominio dice QUÉ pasó, el transporte decide cómo se cuenta.
+func writeEditItemsError(w http.ResponseWriter, err error) {
+	var (
+		invalid     *intakes.InvalidItemsError
+		tooMany     *intakes.TooManyItemsError
+		notEditable *intakes.NotEditableError
+	)
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusBadRequest, invalidItemsResponse{
+			Error: "invalid_items", Errors: invalid.Defects,
+		})
+	case errors.As(err, &tooMany):
+		writeError(w, http.StatusBadRequest,
+			"la edición trae "+strconv.Itoa(tooMany.Count)+" líneas y el máximo es "+strconv.Itoa(tooMany.Max))
+	case errors.As(err, &notEditable):
+		writeJSON(w, http.StatusUnprocessableEntity, notEditableResponse{
+			Error:      "not_editable",
+			Status:     notEditable.Status,
+			EditableIn: []string{intakes.EditableStatus},
+		})
+	case errors.Is(err, intakes.ErrConflict):
+		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudieron guardar las líneas de la solicitud")
+	}
 }
 
 // toIntakeDTO proyecta una cabecera al wire. El estado ya viene NORMALIZADO del

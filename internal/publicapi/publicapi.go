@@ -334,10 +334,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	}
 }
 
-// registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4,
-// ADR-0031): listado con filtros y paginación, detalle con líneas, y transición
-// del ciclo de vida (D-041.10). Todo acotado al tenant del token (INV-8): una
-// solicitud ajena responde 404, nunca 403 — un 403 confirmaría que el id existe.
+// registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4/T4.10,
+// ADR-0031): listado con filtros y paginación, detalle con líneas, transición del
+// ciclo de vida (D-041.10) y edición manual de las líneas del presupuesto
+// (D-041.26). Todo acotado al tenant del token (INV-8): una solicitud ajena
+// responde 404, nunca 403 — un 403 confirmaría que el id existe.
 //
 // DOS guardias por ruta, y ninguno sustituye al otro: el scope
 // (intakes.read/intakes.write) dice "puedes operar esto"; la feature dice "tu plan
@@ -374,6 +375,16 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 		"intakes.read", cartBasic(getIntakeHandler(d.Intakes))))
 	mux.Handle("POST /api/v1/intakes/{id}/status", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(setIntakeStatusHandler(d.Intakes))))
+
+	// Edición MANUAL de las líneas del presupuesto (Plan 041 · T4.10, REQ-36 /
+	// D-041.26): el dueño añade, quita o corrige líneas de una solicitud en
+	// `pending_approval` SIN LLM de por medio, y cada edición deja su revisión
+	// `corrected`. Va con `cart_basic` y NO con la feature del pipeline del 044:
+	// re-presupuestar es del OBJETO, no de la máquina que lo redacta sola — un
+	// tenant sin LLM que llegara a `pending_approval` sin poder editar se quedaría
+	// encerrado en un estado editable que nadie puede editar.
+	mux.Handle("PUT /api/v1/intakes/{id}/items", protect(mw, auditor, log,
+		"intakes.write", "intake", cartBasic(putIntakeItemsHandler(d.Intakes))))
 
 	// Export y resumen (Plan 041 · T1.2/T1.3, REQ-03/REQ-04).
 	mux.Handle("GET /api/v1/intakes/export", protectRead(mw,

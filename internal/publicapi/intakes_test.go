@@ -288,6 +288,10 @@ func TestIntakes_403_SinScope(t *testing.T) {
 // TestIntakes_403_SinFeature: el scope no basta. Con intakes.read pero sin
 // cart_basic en el plan, la bandeja no se abre — y el cuerpo dice cuál falta para
 // que la UI pueda ofrecer el upgrade sin adivinar.
+//
+// Las CUATRO puertas de la bandeja, con peticiones reales: lista, detalle, cambio
+// de estado y edición manual de líneas (T4.10). Leer el middleware no prueba nada;
+// lo que prueba es que el 403 salga por cada una de las rutas montadas.
 func TestIntakes_403_SinFeature(t *testing.T) {
 	d := publicapi.Deps{
 		Intakes:      intakes.NewService(seedIntakes()),
@@ -299,6 +303,7 @@ func TestIntakes_403_SinFeature(t *testing.T) {
 		{http.MethodGet, "/api/v1/intakes", ""},
 		{http.MethodGet, "/api/v1/intakes/" + intakeA1, ""},
 		{http.MethodPost, "/api/v1/intakes/" + intakeA1 + "/status", `{"status":"cancelled"}`},
+		{http.MethodPut, "/api/v1/intakes/" + intakeA1 + "/items", `{"items":[]}`},
 	} {
 		rec := call(api, keyAIntakes, ruta.method, ruta.target, ruta.body)
 		if rec.Code != http.StatusForbidden {

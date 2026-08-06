@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -210,6 +211,14 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// querier abstrae *sql.DB y *sql.Tx: las MISMAS lecturas (líneas, revisiones) se
+// hacen sueltas desde Get y dentro de la transacción de una edición, y duplicarlas
+// dejaría dos consultas que tendrían que envejecer juntas.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // scanIntake lee una cabecera y NORMALIZA su estado: el `closed` que sigue
 // escribiendo el módulo cart sale de aquí como `confirmed`, en un único punto.
 func scanIntake(sc rowScanner) (Intake, error) {
@@ -244,22 +253,22 @@ func (p *Postgres) Get(ctx context.Context, tenantID, intakeID string) (Detail, 
 		return Detail{}, err
 	}
 
-	items, err := p.items(ctx, intakeID)
+	items, err := itemsOf(ctx, p.db, intakeID)
 	if err != nil {
 		return Detail{}, err
 	}
-	revs, err := p.revisions(ctx, intakeID)
+	revs, err := revisionsOf(ctx, p.db, intakeID)
 	if err != nil {
 		return Detail{}, err
 	}
 	return Detail{Intake: head, Items: items, Revisions: revs}, nil
 }
 
-// items lee las líneas de una solicitud en el orden en que se añadieron. No filtra
-// por tenant: la cabecera ya se validó contra el tenant y la FK garantiza que estas
-// líneas son suyas.
-func (p *Postgres) items(ctx context.Context, intakeID string) (out []Item, err error) {
-	rows, err := p.db.QueryContext(ctx, `
+// itemsOf lee las líneas de una solicitud en el orden en que se añadieron. No
+// filtra por tenant: la cabecera ya se validó contra el tenant y la FK garantiza
+// que estas líneas son suyas.
+func itemsOf(ctx context.Context, q querier, intakeID string) (out []Item, err error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT sku, label, customization, qty, unit_price, added_at
 		FROM public.intake_items
 		WHERE intake_id = $1
@@ -292,11 +301,11 @@ func (p *Postgres) items(ctx context.Context, intakeID string) (out []Item, err 
 // significa algo fuera de la BD es (intake_id, revision_no).
 const revisionCols = `revision_no, kind, payload, rendered_text, created_by, created_at`
 
-// revisions lee las revisiones de una solicitud en orden cronológico. No filtra por
-// tenant: la cabecera ya se validó contra el tenant y la FK garantiza que estas
-// revisiones son suyas (mismo criterio que items).
-func (p *Postgres) revisions(ctx context.Context, intakeID string) (out []Revision, err error) {
-	rows, err := p.db.QueryContext(ctx, `
+// revisionsOf lee las revisiones de una solicitud en orden cronológico. No filtra
+// por tenant: la cabecera ya se validó contra el tenant y la FK garantiza que estas
+// revisiones son suyas (mismo criterio que itemsOf).
+func revisionsOf(ctx context.Context, q querier, intakeID string) (out []Revision, err error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT `+revisionCols+`
 		FROM public.intake_revisions
 		WHERE intake_id = $1
@@ -358,7 +367,7 @@ func (p *Postgres) InsertRevision(ctx context.Context, rev Revision) (Revision, 
 
 	var lastErr error
 	for attempt := 0; attempt < maxRevisionAttempts; attempt++ {
-		out, err := p.insertRevisionOnce(ctx, rev)
+		out, err := insertRevisionOnce(ctx, p.db, rev)
 		switch {
 		case err == nil:
 			return out, nil
@@ -373,11 +382,15 @@ func (p *Postgres) InsertRevision(ctx context.Context, rev Revision) (Revision, 
 	return Revision{}, fmt.Errorf("intakes: numerar la revisión tras %d intentos: %w", maxRevisionAttempts, lastErr)
 }
 
-// insertRevisionOnce ejecuta UN intento de numeración+escritura.
-func (p *Postgres) insertRevisionOnce(ctx context.Context, rev Revision) (Revision, error) {
+// insertRevisionOnce ejecuta UN intento de numeración+escritura. Toma un querier
+// porque la corrección manual la escribe DENTRO de su transacción (ReplaceItems):
+// allí no hay reintento posible —un 23505 aborta la transacción entera— y es el
+// precio correcto, porque lo que se compra es que la edición y su rastro se
+// confirmen juntos o no se confirme ninguno.
+func insertRevisionOnce(ctx context.Context, q querier, rev Revision) (Revision, error) {
 	out := Revision{IntakeID: rev.IntakeID}
 	var rendered, createdBy sql.NullString
-	err := p.db.QueryRowContext(ctx, insertRevisionQuery,
+	err := q.QueryRowContext(ctx, insertRevisionQuery,
 		rev.IntakeID, rev.Kind, []byte(rev.Payload),
 		nullableText(rev.RenderedText), nullableText(rev.CreatedBy),
 	).Scan(&out.RevisionNo, &out.Kind, &out.Payload, &rendered, &createdBy, &out.CreatedAt)
@@ -565,6 +578,117 @@ func shippingZonesTx(ctx context.Context, tx *sql.Tx, tenantID string) ([]Shippi
 		return nil, fmt.Errorf("intakes: leer las zonas de envío del tenant: %w", err)
 	}
 	return ParseShippingZones(raw)
+}
+
+// ReplaceItems implementa Store: la edición manual del dueño (T4.10). Todo ocurre
+// en UNA transacción que empieza bloqueando la cabecera, y el orden no es
+// negociable:
+//
+//  1. BLOQUEAR + comprobar el estado (FOR UPDATE): es el mismo punto de
+//     serialización que toman el CAS de UpdateStatus y EnsureShippingLine, así que
+//     una edición y la materialización del envío no pueden solaparse. Sin él, dos
+//     ediciones simultáneas se pisarían y ganaría la última en escribir sin que la
+//     otra se enterara.
+//  2. Sustituir las líneas de cliente (las del sistema ni se leen).
+//  3. Recalcular el total ENTERO desde las líneas —nunca sumando o restando lo
+//     editado—, que es lo que mantiene la cabecera cuadrada con el envío incluido.
+//  4. Escribir la revisión `corrected` con la foto de lo que quedó.
+//
+// La revisión va al final a propósito: es el retrato de lo YA persistido, no de lo
+// que se pretendía escribir.
+func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Detail{}, ErrNotFound
+	}
+
+	// Fuera de la clausura: WithTx puede REEJECUTARLA ante un deadlock y vale el
+	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
+	var out Detail
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		if err := lockEditableTx(ctx, tx, tenantID, intakeID, expected); err != nil {
+			return err
+		}
+		if err := replaceClientItemsTx(ctx, tx, intakeID, items); err != nil {
+			return err
+		}
+		head, err := recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		if err != nil {
+			return err
+		}
+		lines, err := itemsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		rev, err := correctedRevision(intakeID, head.Total, lines)
+		if err != nil {
+			return err
+		}
+		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+			return err
+		}
+		revs, err := revisionsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		out = Detail{Intake: head, Items: lines, Revisions: revs}
+		return nil
+	})
+	if err != nil {
+		return Detail{}, err
+	}
+	return out, nil
+}
+
+// lockEditableTx toma el candado de la cabecera y comprueba que su estado siga
+// siendo uno de los esperados. Distingue "no es del tenant" (ErrNotFound) de
+// "alguien la movió" (ErrConflict) porque son dos respuestas distintas para quien
+// llama: la primera no se reintenta nunca y la segunda se resuelve releyendo.
+func lockEditableTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, expected []string) error {
+	var status string
+	err := tx.QueryRowContext(ctx,
+		`SELECT status FROM public.intakes WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+		tenantID, intakeID).Scan(&status)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
+		return fmt.Errorf("intakes: bloquear la solicitud para editarla: %w", err)
+	}
+	if !slices.Contains(expected, status) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// replaceClientItemsTx borra las líneas de CLIENTE y escribe las nuevas. Las del
+// sistema (prefijo reservado: hoy la de envío, D-041.11) sobreviven intactas — con
+// su precio puesto a mano, su etiqueta y su sitio—, y por eso el DELETE las excluye
+// por el prefijo y no por el sku exacto: cuando la plataforma añada otra línea
+// suya, esta puerta seguirá sin tocarla.
+//
+// El INSERT no puede colar una segunda línea de envío ni por accidente: la
+// validación del dominio rechaza el prefijo reservado en la entrada y el índice
+// único parcial de la 0045 lo convertiría en un error de escritura.
+func replaceClientItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, items []Item) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM public.intake_items
+		WHERE intake_id = $1 AND left(sku, 1) <> $2
+	`, intakeID, ReservedSKUPrefix); err != nil {
+		return fmt.Errorf("intakes: retirar las líneas de la solicitud: %w", err)
+	}
+
+	// Una sentencia por línea: N está acotado por MaxEditableItems y van todas
+	// dentro de la misma transacción, así que el coste es un puñado de viajes y no
+	// una escritura parcial posible.
+	for _, it := range items {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, intakeID, it.SKU, it.Label, it.Customization, it.Qty, it.UnitPrice); err != nil {
+			return fmt.Errorf("intakes: escribir la línea %q de la solicitud: %w", it.SKU, err)
+		}
+	}
+	return nil
 }
 
 // recomputeTotalTx recalcula el total de la cabecera como la SUMA de sus líneas y
