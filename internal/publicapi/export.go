@@ -86,17 +86,22 @@ func exportRows(details []intakes.Detail) [][]any {
 const csvBOM = "\xef\xbb\xbf"
 
 // writeCSV serializa las filas como CSV RFC-4180 (CRLF) precedido del BOM.
-func writeCSV(w io.Writer, rows [][]any) error {
+//
+// Las columnas se reciben, no se leen de una global: este escritor sirve al export
+// de solicitudes y a la plantilla del import de catálogo, que tienen cabeceras
+// distintas. Lo que comparten —BOM, CRLF, el escape de fórmulas, el formato de los
+// números— es exactamente lo que no conviene tener escrito dos veces.
+func writeCSV(w io.Writer, columns []string, rows [][]any) error {
 	if _, err := io.WriteString(w, csvBOM); err != nil {
 		return fmt.Errorf("export: escribir BOM: %w", err)
 	}
 	cw := csv.NewWriter(w)
 	cw.UseCRLF = true
 
-	if err := cw.Write(exportColumns); err != nil {
+	if err := cw.Write(columns); err != nil {
 		return fmt.Errorf("export: escribir cabecera CSV: %w", err)
 	}
-	record := make([]string, len(exportColumns))
+	record := make([]string, len(columns))
 	for _, row := range rows {
 		for i, cell := range row {
 			record[i] = csvCell(cell)
@@ -155,7 +160,7 @@ func escapeFormula(s string) string {
 // (`<f>`) — Excel no la evalúa. El apóstrofo, que en un CSV es un escape que el
 // importador consume, en un XLSX sería un carácter MÁS dentro del dato y el
 // usuario lo vería en pantalla.
-func writeXLSX(w io.Writer, rows [][]any) (err error) {
+func writeXLSX(w io.Writer, sheet string, columns []string, rows [][]any) (err error) {
 	f := excelize.NewFile()
 	defer func() {
 		if cerr := f.Close(); cerr != nil && err == nil {
@@ -163,17 +168,17 @@ func writeXLSX(w io.Writer, rows [][]any) (err error) {
 		}
 	}()
 
-	if rerr := f.SetSheetName(f.GetSheetName(0), exportSheet); rerr != nil {
+	if rerr := f.SetSheetName(f.GetSheetName(0), sheet); rerr != nil {
 		return fmt.Errorf("export: nombrar la hoja: %w", rerr)
 	}
-	for i, col := range exportColumns {
-		if cerr := setXLSXCell(f, i+1, 1, col); cerr != nil {
+	for i, col := range columns {
+		if cerr := setXLSXCell(f, sheet, i+1, 1, col); cerr != nil {
 			return cerr
 		}
 	}
 	for r, row := range rows {
 		for i, cell := range row {
-			if cerr := setXLSXCell(f, i+1, r+2, cell); cerr != nil {
+			if cerr := setXLSXCell(f, sheet, i+1, r+2, cell); cerr != nil {
 				return cerr
 			}
 		}
@@ -187,7 +192,7 @@ func writeXLSX(w io.Writer, rows [][]any) (err error) {
 // setXLSXCell escribe una celda en (col, fila), 1-based. Una celda nil se deja sin
 // escribir: en una hoja de cálculo "vacía" y "cero" no son lo mismo, y un cero
 // fantasma en qty o line_total falsearía cualquier suma que alguien arrastre.
-func setXLSXCell(f *excelize.File, col, row int, cell any) error {
+func setXLSXCell(f *excelize.File, sheet string, col, row int, cell any) error {
 	if cell == nil {
 		return nil
 	}
@@ -196,12 +201,12 @@ func setXLSXCell(f *excelize.File, col, row int, cell any) error {
 		return fmt.Errorf("export: coordenada (%d,%d): %w", col, row, err)
 	}
 	if s, ok := cell.(string); ok {
-		if serr := f.SetCellStr(exportSheet, name, s); serr != nil {
+		if serr := f.SetCellStr(sheet, name, s); serr != nil {
 			return fmt.Errorf("export: escribir celda %s: %w", name, serr)
 		}
 		return nil
 	}
-	if serr := f.SetCellValue(exportSheet, name, cell); serr != nil {
+	if serr := f.SetCellValue(sheet, name, cell); serr != nil {
 		return fmt.Errorf("export: escribir celda %s: %w", name, serr)
 	}
 	return nil
@@ -253,9 +258,9 @@ func exportIntakesHandler(svc IntakeService) http.Handler {
 		var buf bytes.Buffer
 		rows := exportRows(details)
 		if format == formatCSV {
-			err = writeCSV(&buf, rows)
+			err = writeCSV(&buf, exportColumns, rows)
 		} else {
-			err = writeXLSX(&buf, rows)
+			err = writeXLSX(&buf, exportSheet, exportColumns, rows)
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "no se pudo generar el archivo")

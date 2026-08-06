@@ -414,9 +414,13 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
 }
 
-// registerCatalogImport monta el import de catálogo (Plan 041 · T3.3, D-041.6):
-// POST /api/v1/catalog/import?mode=validate|apply&ref=…, con el documento como
-// JSON crudo en el cuerpo. Acotado al tenant del token (INV-8).
+// registerCatalogImport monta el import de catálogo (Plan 041 · T3.2/T3.3,
+// D-041.6): POST /api/v1/catalog/import?mode=validate|apply&ref=… con el documento
+// como JSON crudo en el cuerpo, más las dos rutas que lo hacen usable sin leerse el
+// contrato —GET .../import/template (la plantilla de ejemplo) y GET
+// .../import/prompt (el prompt-plantilla para el LLM del dueño)—. La escritura va
+// acotada al tenant del token (INV-8); la plantilla y el prompt son idénticos para
+// todos y no tocan la BD.
 //
 // TRES GUARDIAS, Y NINGUNO SUSTITUYE A OTRO. El scope (content.write) dice
 // "puedes tocar el contenido de este tenant"; la feature (catalog_import) dice "tu
@@ -456,6 +460,16 @@ func registerCatalogImport(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, a
 	mux.Handle("POST /api/v1/catalog/import", protect(mw, auditor, log,
 		"content.write", "catalog_import",
 		canImport(catalogImportHandler(d.Content, d.ContentVersions, limits))))
+
+	// La plantilla y el prompt son LECTURA (content.read) y no tocan la BD: son el
+	// contrato dicho de dos maneras. Cuelgan de este mismo registro —y por tanto
+	// aparecen y desaparecen con el POST— porque son la primera mitad del mismo
+	// acto: repartir la plantilla de un import que no está montado mandaría al
+	// operador a llenarla para encontrarse un 404 al subirla (T3.2).
+	mux.Handle("GET /api/v1/catalog/import/template", protectRead(mw,
+		"content.read", canImport(catalogTemplateHandler())))
+	mux.Handle("GET /api/v1/catalog/import/prompt", protectRead(mw,
+		"content.read", canImport(catalogPromptHandler())))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del
