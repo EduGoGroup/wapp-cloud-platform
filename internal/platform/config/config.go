@@ -92,6 +92,9 @@ type AppConfig struct {
 	// Diagnostics gobierna el diagnóstico remoto (Plan 031 · T5, ADR-0023): la
 	// retención del bundle. Se lee con prefijo WAPP_DIAGNOSTICS_.
 	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+	// Import son los topes anti-abuso del import de catálogo (Plan 041 · Ola 3,
+	// D-041.5). Se lee con prefijo WAPP_IMPORT_.
+	Import ImportConfig `yaml:"import"`
 	// Identity es la puerta al SSO del grupo (identity-core, Plan 003 · Ola 1):
 	// de dónde se toman las claves públicas con las que verificar sus Identity
 	// Tokens. Vacía = wApp arranca sin identity, como hasta ahora. Se lee con
@@ -134,6 +137,25 @@ type DiagnosticsConfig struct {
 	// tras recibirlo. Default 30m. Se lee como cadena time.Duration de
 	// WAPP_DIAGNOSTICS_BUNDLE_TTL.
 	BundleTTL time.Duration `yaml:"bundle_ttl"`
+}
+
+// ImportConfig son los topes anti-abuso del import de catálogo (Plan 041 · Ola 3,
+// D-041.5; patrón EduGo D-038: límites por env con default). El de bytes se aplica
+// ANTES de deserializar, que es lo que impide que un documento absurdo se
+// materialice en memoria. Defaults sanos; <=0 cae al default (nunca desactiva un
+// tope por accidente).
+//
+// Los valores por defecto son los mismos que declara internal/catalogimport, que
+// es donde se aplican; un test amarra las dos parejas para que no puedan divergir.
+type ImportConfig struct {
+	// MaxJSONBytes es el tamaño máximo del documento crudo de import, en bytes.
+	// Default 1 MiB, el mismo techo que ya aplica PUT /api/v1/tenant-content al
+	// blob de catálogo: un documento que pasa el import cabe en su destino. Se lee
+	// de WAPP_IMPORT_MAX_JSON_BYTES.
+	MaxJSONBytes int64 `yaml:"max_json_bytes"`
+	// MaxItems es el número máximo de artículos por importación, sumando todas las
+	// categorías. Default 500. Se lee de WAPP_IMPORT_MAX_ITEMS.
+	MaxItems int `yaml:"max_items"`
 }
 
 // HealthConfig gobierna la derivación de estados de salud de flota que expone
@@ -366,6 +388,10 @@ func defaults() AppConfig {
 		Diagnostics: DiagnosticsConfig{
 			BundleTTL: 30 * time.Minute,
 		},
+		Import: ImportConfig{
+			MaxJSONBytes: 1 << 20, // 1 MiB
+			MaxItems:     500,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -463,6 +489,13 @@ func Load() (AppConfig, error) {
 	cfg.Health.StaleAfter = loader.GetDuration("HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
 
 	cfg.Diagnostics.BundleTTL = loader.GetDuration("DIAGNOSTICS_BUNDLE_TTL", cfg.Diagnostics.BundleTTL)
+
+	if n := loader.GetInt("IMPORT_MAX_JSON_BYTES", int(cfg.Import.MaxJSONBytes)); n > 0 {
+		cfg.Import.MaxJSONBytes = int64(n)
+	}
+	if n := loader.GetInt("IMPORT_MAX_ITEMS", cfg.Import.MaxItems); n > 0 {
+		cfg.Import.MaxItems = n
+	}
 
 	cfg.Identity.JWKSURL = loader.GetString("IDENTITY_JWKS_URL", cfg.Identity.JWKSURL)
 	cfg.Identity.URL = loader.GetString("IDENTITY_URL", cfg.Identity.URL)
