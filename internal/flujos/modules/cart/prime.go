@@ -69,7 +69,7 @@ func (m Module) Prime(_ model.Node, content model.Content, vars map[string]any) 
 
 	// Match claro: pre-agrega la línea y salta a la confirmación de ítem (LevelContinue,
 	// el MISMO estado al que lleva stepQuantity tras un add). cantidad ausente/inválida
-	// ⇒ 1. Emite cart_started (arranque) + item_added (el runtime ASEGURA la orden
+	// ⇒ 1. Emite cart_started (arranque) + item_added (el runtime ASEGURA la solicitud
 	// "open" con este efecto, design.md §3.4): mismo contrato que el add manual.
 	qty := parseQty(params[paramCantidad])
 	st := cartState{

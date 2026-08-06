@@ -1,6 +1,6 @@
 // state.go define el estado de la sub-máquina del carrito (design.md §3.2): el
 // nivel de navegación en curso, la categoría/artículo en foco, la página de
-// paginación, las líneas acumuladas del pedido y el id de la orden. Todo el
+// paginación, las líneas acumuladas del pedido y el id de la solicitud. Todo el
 // estado vive serializado en Conversation.Vars["cart"] (JSONB), de modo que el
 // engine lo persiste tras cada Step sin que el módulo toque BD (PURO).
 //
@@ -84,7 +84,13 @@ type cartState struct {
 	SKU     string     `json:"sku,omitempty"`      // SKU del artículo en foco (L3/L4)
 	Page    int        `json:"page,omitempty"`     // página del nivel de lista actual
 	Lines   []cartLine `json:"lines,omitempty"`    // líneas acumuladas del pedido
-	OrderID string     `json:"order_id,omitempty"` // uuid de la orden open (la abre el runtime; §3.4)
+	// IntakeID se llamaba OrderID (tag `order_id`) hasta el Plan 041 · T1.0. Cambiar
+	// un tag json de estado PERSISTIDO normalmente exige migrar las conversaciones
+	// vivas; aquí no, y por una razón verificable: NADIE le asigna nunca un valor
+	// (el único uso es copiarlo a sí mismo al reencauzar a L1, cart.go), y con
+	// `omitempty` un valor cero jamás llega a escribirse en el JSONB. No hay un solo
+	// `order_id` guardado que quede huérfano.
+	IntakeID string `json:"intake_id,omitempty"` // uuid de la solicitud open (la abre el runtime; §3.4)
 	// Started marca que ya se emitió el efecto cart_started. La pureza del módulo
 	// y el contrato de efectos (solo Step declara Effects, no Render) impiden
 	// emitirlo en el Enter/Render; se emite EXACTAMENTE UNA vez en el primer Step

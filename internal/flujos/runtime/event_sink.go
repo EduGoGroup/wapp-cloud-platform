@@ -13,7 +13,7 @@ type EffectContext struct {
 	TenantID  string
 	ContactID string // OPACO (Plan 010 / ADR-0010); NUNCA número/JID en claro
 	// SessionID identifica la sesión de WhatsApp que produjo el efecto; el
-	// PersistSink lo persiste como orders.session_id (metadato de trazabilidad,
+	// PersistSink lo persiste como intakes.session_id (metadato de trazabilidad,
 	// Plan 016 · design.md §3.4). No es PII.
 	SessionID   string
 	FlowID      string

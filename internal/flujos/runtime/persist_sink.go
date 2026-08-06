@@ -17,7 +17,7 @@ type flowEventStore interface {
 // PersistSink es el EventSink que MATERIALIZA cada efecto en el outbox append-only
 // flow_events y delega la PROYECCIÓN tipada a los modules.Projector registrados (Plan
 // 027 · Ola 3 · T8, cierra H10). Ya NO conoce los efectos de ningún módulo: el switch
-// central (survey_answer→survey_results, cart_*→orders/order_items) se movió a cada
+// central (survey_answer→survey_results, cart_*→intakes/intake_items) se movió a cada
 // módulo (modules/survey, modules/cart). Añadir un módulo con proyección NO obliga a
 // tocar este archivo (OCP): basta registrar su Projector en el arranque.
 //

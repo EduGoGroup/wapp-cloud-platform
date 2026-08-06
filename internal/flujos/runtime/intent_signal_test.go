@@ -84,7 +84,7 @@ func newIntentRuntime(t *testing.T, feature bool, now func() time.Time, rules ..
 
 // TestIntent_LLMRule_PreLoadsCart (T7 + T8): con la feature activa, un entrante con
 // intención "pedido" casa la regla llm y arranca el carrito PRE-CARGADO con el
-// producto extraído, saltando a la confirmación de ítem y abriendo la orden.
+// producto extraído, saltando a la confirmación de ítem y abriendo la solicitud.
 func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
 	rt, repo, sender, contacts := newIntentRuntime(t, true, nil, llmRule("pedido", testCartFlow))
 	ctx := context.Background()
@@ -107,9 +107,9 @@ func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
 	if !ok || cs["level"] != "continue" {
 		t.Fatalf("el carrito debe quedar en la confirmación de ítem (continue), got %+v", st.Vars["cart"])
 	}
-	// item_added abrió la orden "open" (design.md §3.4) y quedó en flow_events.
-	if openOrderCount(repo, "open") != 1 {
-		t.Fatalf("el pre-add debe abrir 1 orden open, got %+v", repo.Orders())
+	// item_added abrió la solicitud "open" (design.md §3.4) y quedó en flow_events.
+	if openIntakeCount(repo, "open") != 1 {
+		t.Fatalf("el pre-add debe abrir 1 solicitud open, got %+v", repo.Intakes())
 	}
 	if !hasFlowEvent(repo, "item_added") {
 		t.Fatalf("el pre-add debe declarar item_added, got %+v", repo.FlowEvents())
@@ -137,8 +137,8 @@ func TestIntent_GateOff_IntentIgnored(t *testing.T) {
 	if _, ok, lerr := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: resolveID(t, contacts, testContact)}); lerr != nil || ok {
 		t.Fatalf("sin la feature no debe arrancar ni crear estado (ok=%v err=%v)", ok, lerr)
 	}
-	if len(repo.Orders()) != 0 {
-		t.Fatalf("sin la feature no debe abrir órdenes, got %+v", repo.Orders())
+	if len(repo.Intakes()) != 0 {
+		t.Fatalf("sin la feature no debe abrir solicitudes, got %+v", repo.Intakes())
 	}
 }
 
@@ -165,8 +165,8 @@ func TestIntent_LiveConversation_TextWins(t *testing.T) {
 	if !ok || cs["level"] != "articles" || cs["cat_code"] != "1" {
 		t.Fatalf("el texto '1' debe avanzar a artículos de Bebidas, got %+v", st.Vars["cart"])
 	}
-	if len(repo.Orders()) != 0 {
-		t.Fatalf("navegar no debe abrir órdenes (la intención no pre-cargó), got %+v", repo.Orders())
+	if len(repo.Intakes()) != 0 {
+		t.Fatalf("navegar no debe abrir solicitudes (la intención no pre-cargó), got %+v", repo.Intakes())
 	}
 }
 
@@ -201,7 +201,7 @@ func TestConversationTTL_Expired_RestartsViaLLM(t *testing.T) {
 	rt, repo, sender, contacts := newIntentRuntime(t, true, clock, llmRule("pedido", testCartFlow))
 	repo.SetTenantSettings(store.TenantSettings{TenantID: testTenant, PageSize: store.DefaultPageSize, OrderTTL: store.DefaultOrderTTL, ConversationTTL: time.Hour})
 	ctx := context.Background()
-	// Conversación vieja: un carrito recién iniciado en L1 (sin líneas ni orden).
+	// Conversación vieja: un carrito recién iniciado en L1 (sin líneas ni solicitud).
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start cart: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestConversationTTL_Expired_RestartsViaLLM(t *testing.T) {
 	if !ok || cs["level"] != "continue" {
 		t.Fatalf("el estado viejo debe descartarse y arrancar pre-cargado (continue), got %+v", st.Vars["cart"])
 	}
-	if openOrderCount(repo, "open") != 1 {
-		t.Fatalf("el pre-add tras el TTL debe abrir 1 orden, got %+v", repo.Orders())
+	if openIntakeCount(repo, "open") != 1 {
+		t.Fatalf("el pre-add tras el TTL debe abrir 1 solicitud, got %+v", repo.Intakes())
 	}
 }

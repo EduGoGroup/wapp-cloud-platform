@@ -36,7 +36,7 @@ func IsSerializationFailure(err error) bool {
 // ante un deadlock/serialización (40P01/40001), con backoff exponencial acotado +
 // jitter que respeta la cancelación del ctx. Es el helper ÚNICO y reutilizable que
 // cierra H8 (antes el retry vivía aislado en contact/): lo adoptan contact.Resolve
-// (fusión de contactos) y store.CloseOrder (cierre atómico de orden+líneas).
+// (fusión de contactos) y store.CloseIntake (cierre atómico de solicitud+líneas).
 //
 // Seguridad ante panic (cierra H7): el rollback se dispara con un flag
 // `committed bool` en un defer, NO condicionado a `err != nil`. Si fn hace panic,

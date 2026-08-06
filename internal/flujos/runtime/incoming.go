@@ -125,7 +125,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// tocarse, se DESCARTA silenciosamente y el entrante se trata como un arranque
 	// nuevo (camino handleTrigger, donde la señal LLM aplica). Va ANTES de IsEscape /
 	// consecutiveReplay / prepareResume: un estado vencido no debe escapar ni avanzar.
-	// El TTL de la ORDEN del carrito (order_ttl_seconds) es aparte y se evalúa después
+	// El TTL de la SOLICITUD del carrito (order_ttl_seconds) es aparte y se evalúa después
 	// (prepareResume), como hoy. ttl<=0 o error de settings ⇒ no vence (no-regresión).
 	if rt.conversationExpired(ctx, tenantID, st) {
 		if derr := rt.store.Delete(ctx, key); derr != nil {
@@ -161,7 +161,7 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
-	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso DE LA ORDEN +
+	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso DE LA SOLICITUD +
 	// auto-reinicio + siembra de Vars, GATEADO por la ResumePolicy registrada para el
 	// tipo de nodo (un no-op para menú/encuesta ⇒ comportamiento idéntico). handled=true
 	// ⇒ el turno se consumió reiniciando. Es DISTINTO del TTL conversacional (T9), que
@@ -182,7 +182,7 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	}
 	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el módulo
 	// (Plan 015 · T3): el PersistSink escribe flow_events y proyecta survey_results /
-	// orders. Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
+	// intakes. Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
 	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por last_wa_message_id
 	// (reprocesar el mismo entrante corta antes del Step). Un fallo de un sink se LOGUEA
 	// y NO aborta el avance ni corta el resto de sinks/efectos.

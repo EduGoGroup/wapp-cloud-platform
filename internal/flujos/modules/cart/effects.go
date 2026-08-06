@@ -2,7 +2,7 @@
 // Result.Effects (design.md §3.3/§9.J). El módulo es PURO: DECLARA los efectos,
 // no los ejecuta; el runtime los despacha por el EventSink (Plan 015) y el
 // PersistSink los materializa en flow_events y proyecta cart_closed a
-// orders/order_items. contact_id OPACO, payload de CÓDIGOS de negocio, cero PII.
+// intakes/intake_items. contact_id OPACO, payload de CÓDIGOS de negocio, cero PII.
 package cart
 
 import "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
@@ -18,13 +18,13 @@ const (
 	EffectCartClosed       = "cart_closed"
 	EffectCartCancelled    = "cart_cancelled"
 	// EffectCartExpired queda DEFINIDO aquí; su emisión es del runtime al reanudar
-	// una orden vencida por TTL (design.md §4.3, T3), no del módulo puro.
+	// una solicitud vencida por TTL (design.md §4.3, T3), no del módulo puro.
 	EffectCartExpired = "cart_expired"
 )
 
 // Kinds de los efectos (design.md §3.3): "event" = navegación/telemetría (el
 // PersistSink solo lo escribe en flow_events); "persist" = además proyecta una
-// tabla tipada (cart_closed → orders/order_items).
+// tabla tipada (cart_closed → intakes/intake_items).
 const (
 	kindEvent   = "event"
 	kindPersist = "persist"
@@ -37,7 +37,7 @@ func event(name string, payload map[string]any) modules.Effect {
 
 // closedEffect construye el efecto cart_closed (Kind "persist"): lleva las líneas
 // del pedido y el total (design.md §3.3). Incluye "label" además de
-// sku/qty/unit_price porque el destino order_items.label es NOT NULL y el módulo
+// sku/qty/unit_price porque el destino intake_items.label es NOT NULL y el módulo
 // es el único que conoce la etiqueta del catálogo (el PersistSink no lo resuelve);
 // enriquecimiento retro-compatible sobre el payload mínimo del diseño.
 func closedEffect(lines []cartLine) modules.Effect {

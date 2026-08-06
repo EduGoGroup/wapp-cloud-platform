@@ -48,7 +48,7 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 		return true, nil
 	}
 	// Efectos SINTETIZADOS por la política (p. ej. cart_expired) por el MISMO fan-out:
-	// el proyector del módulo los materializa (orders.status=expired). Best-effort: un
+	// el proyector del módulo los materializa (intakes.status=expired). Best-effort: un
 	// fallo se loguea, no aborta (coherencia BD↔conversación, design.md §3.4).
 	if len(effects) > 0 {
 		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
@@ -86,7 +86,7 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 // reiniciarse en vez de devolver 409 (gotcha, design.md §3.4), consultando la
 // ResumePolicy del nodo inicial (Plan 027 · Ola 3 · T8). Sin política (menú/encuesta)
 // ⇒ false (409 intacto). Si la política sintetiza efectos (p. ej. cart_expired al
-// vencer la orden), se despachan (coherencia BD↔conversación) y devuelve true.
+// vencer la solicitud), se despachan (coherencia BD↔conversación) y devuelve true.
 func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, error) {
 	node, ok := def.Nodes[def.Initial]
 	if !ok {

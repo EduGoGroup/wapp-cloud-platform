@@ -104,47 +104,47 @@ type TenantContentReader interface {
 	GetTenantContent(ctx context.Context, tenantID, ref string) ([]byte, error)
 }
 
-// OrderReader lee la orden abierta del carrito (reanudación/TTL en el runtime).
-type OrderReader interface {
-	// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID),
-	// si existe (found=false sin error si no hay). Identidad de negocio: UNA orden
+// IntakeReader lee la solicitud abierta del carrito (reanudación/TTL en el runtime).
+type IntakeReader interface {
+	// GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID),
+	// si existe (found=false sin error si no hay). Identidad de negocio: UNA solicitud
 	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
 	// reanudar y para evaluar el TTL (design.md §4.3).
-	GetOpenOrder(ctx context.Context, tenantID, contactID string) (order Order, found bool, err error)
+	GetOpenIntake(ctx context.Context, tenantID, contactID string) (intake Intake, found bool, err error)
 }
 
-// OrderWriter escribe/transiciona órdenes del carrito (proyección del PersistSink).
-type OrderWriter interface {
-	// UpsertOrder inserta o actualiza (upsert por ID) una orden del carrito en
-	// public.orders (Plan 016 · T0/T2, ADR-0009). Idempotente por o.ID: crea el
+// IntakeWriter escribe/transiciona solicitudes del carrito (proyección del PersistSink).
+type IntakeWriter interface {
+	// UpsertIntake inserta o actualiza (upsert por ID) una solicitud del carrito en
+	// public.intakes (Plan 016 · T0/T2, ADR-0009). Idempotente por o.ID: crea el
 	// "open" una vez (primer item_added) y no lo duplica si se reprocesa el mismo
-	// entrante. Las transiciones de estado posteriores van por MarkOrderStatus.
+	// entrante. Las transiciones de estado posteriores van por MarkIntakeStatus.
 	// CERO PII: o.ContactID es la identidad OPACA (ADR-0010).
-	UpsertOrder(ctx context.Context, o Order) error
-	// InsertOrderItems persiste (en lote) las líneas de una orden en
-	// public.order_items (Plan 016 · T0/T2). len(items)==0 es un no-op. added_at
+	UpsertIntake(ctx context.Context, o Intake) error
+	// InsertIntakeItems persiste (en lote) las líneas de una solicitud en
+	// public.intake_items (Plan 016 · T0/T2). len(items)==0 es un no-op. added_at
 	// usa el DEFAULT now() de la tabla. sku/label son códigos de negocio, NO PII.
-	InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error
-	// MarkOrderStatus transiciona el estado de una orden (por ID) y fija su total,
+	InsertIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error
+	// MarkIntakeStatus transiciona el estado de una solicitud (por ID) y fija su total,
 	// actualizando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled"
 	// | "expired". Reprocesar el mismo entrante no cambia la semántica (idempotente
 	// por el last_wa_message_id del runtime).
-	MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error
-	// CloseOrder cierra ATÓMICAMENTE (una sola transacción) la orden "open" del
+	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
+	// CloseIntake cierra ATÓMICAMENTE (una sola transacción) la solicitud "open" del
 	// contacto —o crea una "closed" coherente si no la hubiera— fijando su total e
 	// insertando TODAS sus líneas (Plan 027 · Ola 1 · T4, cierra H4). Garantiza la
-	// invariante "una orden closed SIEMPRE tiene sus líneas": nunca deja una orden
-	// cerrada sin líneas por un fallo entre dos escrituras (antes eran MarkOrderStatus
-	// + InsertOrderItems sueltos, sin transacción). El PostgresRepository bloquea la
-	// orden abierta con FOR UPDATE para serializar cierres concurrentes del mismo
+	// invariante "una solicitud closed SIEMPRE tiene sus líneas": nunca deja una solicitud
+	// cerrada sin líneas por un fallo entre dos escrituras (antes eran MarkIntakeStatus
+	// + InsertIntakeItems sueltos, sin transacción). El PostgresRepository bloquea la
+	// solicitud abierta con FOR UPDATE para serializar cierres concurrentes del mismo
 	// contacto y reintenta ante deadlock/serialización (postgres.WithTx).
-	CloseOrder(ctx context.Context, in OrderClose) error
+	CloseIntake(ctx context.Context, in IntakeClose) error
 }
 
-// OrderStore es la lectura + escritura de órdenes.
-type OrderStore interface {
-	OrderReader
-	OrderWriter
+// IntakeStore es la lectura + escritura de solicitudes.
+type IntakeStore interface {
+	IntakeReader
+	IntakeWriter
 }
 
 // TenantSettingsReader lee la config del carrito por-tenant (Plan 016 · T0).
@@ -158,7 +158,7 @@ type TenantSettingsReader interface {
 
 // Repository es la COMPOSICIÓN de las interfaces segregadas: persiste el estado
 // conversacional, las definiciones versionadas, los resultados/efectos y las
-// órdenes del carrito. Implementaciones: MemoryRepository (unit CI-safe) y
+// solicitudes del carrito. Implementaciones: MemoryRepository (unit CI-safe) y
 // PostgresRepository (integración, JSONB vía json.Marshal/Unmarshal). Se conserva
 // para retrocompat y para quien necesite el conjunto completo; los consumidores
 // concretos deben preferir la interfaz segregada que realmente usan (ISP).
@@ -168,7 +168,7 @@ type Repository interface {
 	SurveyResultStore
 	FlowEventStore
 	TenantContentReader
-	OrderStore
+	IntakeStore
 	TenantSettingsReader
 }
 
@@ -233,14 +233,14 @@ type FlowEvent struct {
 	Payload     map[string]any // se serializa a JSONB en el repo postgres
 }
 
-// Order es una orden del módulo Carrito, proyección tipada de cart_closed sobre
-// public.orders (Plan 016 · design.md §3.4). ContactID es la identidad OPACA del
+// Intake es una solicitud del módulo Carrito, proyección tipada de cart_closed sobre
+// public.intakes (Plan 016 · design.md §3.4). ContactID es la identidad OPACA del
 // contacto (contacts.contact_id, Plan 010 / ADR-0010), NUNCA el número/JID crudo.
 // Status es "open" | "closed" | "cancelled" | "expired". ExpiresAt es now +
 // order_ttl (nulo/zero si no aplica). CreatedAt/UpdatedAt los pone el DEFAULT de
 // la tabla en el alta.
-type Order struct {
-	ID        string // uuid (asignado al abrir la orden "open")
+type Intake struct {
+	ID        string // uuid (asignado al abrir la solicitud "open")
 	TenantID  string
 	ContactID string // OPACO (Plan 010 / ADR-0010); NUNCA número/JID en claro
 	SessionID string
@@ -251,11 +251,11 @@ type Order struct {
 	ExpiresAt time.Time // now + tenant_settings.order_ttl; zero si no aplica
 }
 
-// OrderItem es una línea de una orden del carrito, lista para persistir en
-// public.order_items (Plan 016 · design.md §3.4). SKU/Label son códigos de
+// IntakeItem es una línea de una solicitud del carrito, lista para persistir en
+// public.intake_items (Plan 016 · design.md §3.4). SKU/Label son códigos de
 // negocio (catálogo del tenant), NO PII. AddedAt lo pone el DEFAULT de la tabla.
-type OrderItem struct {
-	OrderID   string
+type IntakeItem struct {
+	IntakeID  string
 	SKU       string
 	Label     string
 	Qty       int
@@ -263,23 +263,23 @@ type OrderItem struct {
 	AddedAt   time.Time
 }
 
-// OrderClose es la entrada del cierre atómico de una orden del carrito
-// (Repository.CloseOrder, Plan 027 · Ola 1 · T4). Total es el total agregado del
+// IntakeClose es la entrada del cierre atómico de una solicitud del carrito
+// (Repository.CloseIntake, Plan 027 · Ola 1 · T4). Total es el total agregado del
 // pedido; Items son TODAS sus líneas (fuente de verdad, se insertan de una vez en
 // la misma transacción que la transición a "closed"). ContactID es la identidad
-// OPACA (Plan 010 / ADR-0010); SessionID solo se usa si hay que crear la orden
-// "closed" desde cero (no había abierta). El OrderID de cada Item lo fija CloseOrder.
-type OrderClose struct {
+// OPACA (Plan 010 / ADR-0010); SessionID solo se usa si hay que crear la solicitud
+// "closed" desde cero (no había abierta). El IntakeID de cada Item lo fija CloseIntake.
+type IntakeClose struct {
 	TenantID  string
 	ContactID string
 	SessionID string
 	Total     float64
-	Items     []OrderItem
+	Items     []IntakeItem
 }
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,
 // Plan 016 · design.md §3.4/§9.G). PageSize es el tamaño de página de la
-// paginación (default 5); OrderTTL es el TTL de la orden (persistido como
+// paginación (default 5); OrderTTL es el TTL de la solicitud (persistido como
 // order_ttl_seconds INTEGER, default 3600s). GetTenantSettings devuelve los
 // defaults si el tenant no tiene fila.
 type TenantSettings struct {
@@ -290,7 +290,7 @@ type TenantSettings struct {
 	// 0034): tiempo tras el cual un estado vivo sin tocar se descarta y el entrante
 	// arranca de nuevo. Persistido como conversation_ttl_seconds; 0 (DEFAULT) ⇒ sin
 	// vencimiento (tenants existentes intactos). Semántica DISTINTA a OrderTTL (que
-	// es de la ORDEN del carrito, no de la conversación).
+	// es de la SOLICITUD del carrito, no de la conversación).
 	ConversationTTL time.Duration
 }
 
@@ -299,7 +299,7 @@ type TenantSettings struct {
 const (
 	// DefaultPageSize es el tamaño de página por defecto de la paginación del carrito.
 	DefaultPageSize = 5
-	// DefaultOrderTTL es el TTL por defecto de una orden (3600s = 1h).
+	// DefaultOrderTTL es el TTL por defecto de una solicitud (3600s = 1h).
 	DefaultOrderTTL = time.Hour
 )
 

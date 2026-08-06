@@ -44,7 +44,7 @@ func cartFlow(flowID string) model.Flow {
 
 // newCartRuntime arma un runtime con el módulo cart registrado, el catálogo
 // sembrado en tenant_content, el content Router (static+json) y el PersistSink
-// cableado (proyecta orders + flow_events). Igual patrón que newSurveyRuntime.
+// cableado (proyecta intakes + flow_events). Igual patrón que newSurveyRuntime.
 func newCartRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
 	t.Helper()
 	repo := store.NewMemoryRepository()
@@ -66,7 +66,7 @@ func newCartRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *f
 }
 
 // cartAddCafe navega Bebidas→Café→Agregar→cantidad(2), dejando el carrito en L5
-// (continue) con una orden "open" (el primer item_added la abre). base da waIDs
+// (continue) con una solicitud "open" (el primer item_added la abre). base da waIDs
 // únicos por invocación para no chocar con la dedupe por last_wa_message_id.
 func cartAddCafe(t *testing.T, rt *runtime.Runtime, base string) {
 	t.Helper()
@@ -87,9 +87,9 @@ func hasFlowEvent(repo *store.MemoryRepository, name string) bool {
 	return false
 }
 
-func openOrderCount(repo *store.MemoryRepository, status string) int {
+func openIntakeCount(repo *store.MemoryRepository, status string) int {
 	n := 0
-	for _, o := range repo.Orders() {
+	for _, o := range repo.Intakes() {
 		if o.Status == status {
 			n++
 		}
@@ -97,12 +97,12 @@ func openOrderCount(repo *store.MemoryRepository, status string) int {
 	return n
 }
 
-// TestCartResume_OrderExpired_ResetsAndNotifies (design.md §4.3/§9.H): con una
-// orden "open" vencida por TTL, el siguiente entrante NO se procesa como avance:
-// el runtime transiciona la orden a "expired", registra cart_expired en
+// TestCartResume_IntakeExpired_ResetsAndNotifies (design.md §4.3/§9.H): con una
+// solicitud "open" vencida por TTL, el siguiente entrante NO se procesa como avance:
+// el runtime transiciona la solicitud a "expired", registra cart_expired en
 // flow_events, AVISA al usuario y arranca limpio (L1 categorías, sub-estado
 // borrado). Evaluación PEREZOSA, sin cron.
-func TestCartResume_OrderExpired_ResetsAndNotifies(t *testing.T) {
+func TestCartResume_IntakeExpired_ResetsAndNotifies(t *testing.T) {
 	rt, repo, sender, contacts := newCartRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
@@ -111,19 +111,19 @@ func TestCartResume_OrderExpired_ResetsAndNotifies(t *testing.T) {
 	cartAddCafe(t, rt, "add")
 	cid := resolveID(t, contacts, testContact)
 
-	orders := repo.Orders()
-	if len(orders) != 1 || orders[0].Status != "open" {
-		t.Fatalf("esperaba 1 orden open, got %+v", orders)
+	intakes := repo.Intakes()
+	if len(intakes) != 1 || intakes[0].Status != "open" {
+		t.Fatalf("esperaba 1 solicitud open, got %+v", intakes)
 	}
 	// expires_at debe estar fijado a futuro (now + TTL default 1h).
-	if orders[0].ExpiresAt.IsZero() || !orders[0].ExpiresAt.After(time.Now()) {
-		t.Fatalf("expires_at debe ser futuro tras item_added: %v", orders[0].ExpiresAt)
+	if intakes[0].ExpiresAt.IsZero() || !intakes[0].ExpiresAt.After(time.Now()) {
+		t.Fatalf("expires_at debe ser futuro tras item_added: %v", intakes[0].ExpiresAt)
 	}
 
 	// Fuerza el vencimiento (simula el paso del tiempo) llevando expires_at al pasado.
-	o := orders[0]
+	o := intakes[0]
 	o.ExpiresAt = time.Now().Add(-time.Minute)
-	if err := repo.UpsertOrder(ctx, o); err != nil {
+	if err := repo.UpsertIntake(ctx, o); err != nil {
 		t.Fatalf("forzar vencimiento: %v", err)
 	}
 
@@ -135,8 +135,8 @@ func TestCartResume_OrderExpired_ResetsAndNotifies(t *testing.T) {
 	if !strings.Contains(joined, "expiró") || !strings.Contains(joined, "Elige una categoría") {
 		t.Fatalf("resume debía avisar del vencimiento y mostrar L1 fresco: %q", joined)
 	}
-	if os := repo.Orders(); len(os) != 1 || os[0].Status != "expired" {
-		t.Fatalf("esperaba la orden en expired, got %+v", os)
+	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "expired" {
+		t.Fatalf("esperaba la solicitud en expired, got %+v", os)
 	}
 	if !hasFlowEvent(repo, "cart_expired") {
 		t.Fatalf("esperaba flow_event cart_expired, got %+v", repo.FlowEvents())
@@ -147,22 +147,22 @@ func TestCartResume_OrderExpired_ResetsAndNotifies(t *testing.T) {
 	}
 }
 
-// TestCartResume_AfterCancel_RestartsAndEnablesNewOrder (design.md §3.4/§4.2):
-// tras cancelar (9), la orden queda "cancelled" y la conversación NO se queda
+// TestCartResume_AfterCancel_RestartsAndEnablesNewIntake (design.md §3.4/§4.2):
+// tras cancelar (9), la solicitud queda "cancelled" y la conversación NO se queda
 // bloqueada: el siguiente entrante arranca un carrito limpio (L1) y un pedido
-// nuevo es posible (abre otra orden "open").
-func TestCartResume_AfterCancel_RestartsAndEnablesNewOrder(t *testing.T) {
+// nuevo es posible (abre otra solicitud "open").
+func TestCartResume_AfterCancel_RestartsAndEnablesNewIntake(t *testing.T) {
 	rt, repo, sender, _ := newCartRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	cartAddCafe(t, rt, "add") // carrito en L5 con orden open
+	cartAddCafe(t, rt, "add") // carrito en L5 con solicitud open
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "9", "cancel-1")); err != nil {
 		t.Fatalf("cancelar: %v", err)
 	}
-	if os := repo.Orders(); len(os) != 1 || os[0].Status != "cancelled" {
-		t.Fatalf("esperaba la orden en cancelled, got %+v", os)
+	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "cancelled" {
+		t.Fatalf("esperaba la solicitud en cancelled, got %+v", os)
 	}
 
 	// Reanudar tras cancelar → arranca limpio (L1), sin conversación viva bloqueando.
@@ -174,23 +174,23 @@ func TestCartResume_AfterCancel_RestartsAndEnablesNewOrder(t *testing.T) {
 		t.Fatalf("tras cancelar, reanudar debe mostrar L1 fresco: %q", got)
 	}
 
-	// Pedido NUEVO posible: agregar otro artículo abre una segunda orden "open".
+	// Pedido NUEVO posible: agregar otro artículo abre una segunda solicitud "open".
 	cartAddCafe(t, rt, "add2")
-	if open, cancelled := openOrderCount(repo, "open"), openOrderCount(repo, "cancelled"); open != 1 || cancelled != 1 {
-		t.Fatalf("esperaba 1 open (pedido nuevo) + 1 cancelled, got %+v", repo.Orders())
+	if open, cancelled := openIntakeCount(repo, "open"), openIntakeCount(repo, "cancelled"); open != 1 || cancelled != 1 {
+		t.Fatalf("esperaba 1 open (pedido nuevo) + 1 cancelled, got %+v", repo.Intakes())
 	}
 }
 
 // TestCartStart_AfterCancel_NoBlocking409 (gotcha 409): un /start sobre un carrito
 // TERMINADO (cancelado) NO devuelve 409 sino que reinicia; pero mientras el pedido
-// está EN CURSO (orden open vigente) sí bloquea con 409 (no se clobbea).
+// está EN CURSO (solicitud open vigente) sí bloquea con 409 (no se clobbea).
 func TestCartStart_AfterCancel_NoBlocking409(t *testing.T) {
 	rt, _, sender, _ := newCartRuntime(t)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start 1: %v", err)
 	}
-	cartAddCafe(t, rt, "add") // orden open vigente
+	cartAddCafe(t, rt, "add") // solicitud open vigente
 
 	// Con un pedido en curso, un segundo Start debe seguir devolviendo 409.
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errIsConvExists(err) {
@@ -235,7 +235,7 @@ func TestCartNoRegression_MenuNotResetNorPaged(t *testing.T) {
 	if _, ok := st.Vars["cart_page_size"]; ok {
 		t.Fatalf("un flujo de menú NO debe ganar cart_page_size en sus Vars: %+v", st.Vars)
 	}
-	if len(repo.Orders()) != 0 {
-		t.Fatalf("el menú NO debe crear orders: %+v", repo.Orders())
+	if len(repo.Intakes()) != 0 {
+		t.Fatalf("el menú NO debe crear intakes: %+v", repo.Intakes())
 	}
 }

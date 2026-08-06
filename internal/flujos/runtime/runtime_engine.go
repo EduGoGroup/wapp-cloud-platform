@@ -35,14 +35,14 @@ const defaultIncomingTimeout = 30 * time.Second
 
 // FlowStore es el subconjunto SEGREGADO de store.Repository que el Runtime
 // necesita (ISP, Plan 027 · Ola 2 · T9, cierra H12): estado conversacional +
-// lectura de definiciones + lectura de la orden abierta y de los ajustes del carrito
-// (para el TTL/reanudación). NO incluye las ESCRITURAS de órdenes/efectos/resultados
+// lectura de definiciones + lectura de la solicitud abierta y de los ajustes del carrito
+// (para el TTL/reanudación). NO incluye las ESCRITURAS de solicitudes/efectos/resultados
 // —eso lo consume el PersistSink—, así el runtime declara solo lo que usa. Un
 // *store.PostgresRepository / *store.MemoryRepository lo satisface sin cambios.
 type FlowStore interface {
 	store.ConversationStore
 	store.DefinitionReader
-	store.OrderReader
+	store.IntakeReader
 	store.TenantSettingsReader
 }
 

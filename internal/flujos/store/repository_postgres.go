@@ -17,7 +17,7 @@ import (
 
 // execer es la cara de escritura común de *sql.DB y *sql.Tx (ExecContext), para
 // que los INSERT en lote se reusen tanto en el camino autocommit como dentro de
-// una transacción (CloseOrder).
+// una transacción (CloseIntake).
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -26,9 +26,9 @@ type execer interface {
 // (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
 const surveyResultCols = 6
 
-// orderItemCols es el número de columnas por fila que escribe InsertOrderItems
-// (orden de order_items salvo id y added_at, que usan sus DEFAULT).
-const orderItemCols = 5
+// intakeItemCols es el número de columnas por fila que escribe InsertIntakeItems
+// (orden de intake_items salvo id y added_at, que usan sus DEFAULT).
+const intakeItemCols = 5
 
 // PostgresRepository implementa Repository con SQL raw sobre public.flow_state y
 // public.flow_definitions. Los cuerpos flexibles (vars del estado, definition
@@ -397,16 +397,16 @@ func (r *PostgresRepository) DeleteTenantContent(ctx context.Context, tenantID, 
 	return nil
 }
 
-// UpsertOrder inserta o actualiza (upsert por id) la orden en public.orders
+// UpsertIntake inserta o actualiza (upsert por id) la solicitud en public.intakes
 // (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
 // NULL. created_at/updated_at usan now() (updated_at se refresca en el UPDATE).
-func (r *PostgresRepository) UpsertOrder(ctx context.Context, o Order) error {
+func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 	var expires sql.NullTime
 	if !o.ExpiresAt.IsZero() {
 		expires = sql.NullTime{Time: o.ExpiresAt, Valid: true}
 	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.orders
+		INSERT INTO public.intakes
 			(id, tenant_id, contact_id, session_id, status, total, expires_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
 		ON CONFLICT (id) DO UPDATE
@@ -419,98 +419,98 @@ func (r *PostgresRepository) UpsertOrder(ctx context.Context, o Order) error {
 		    updated_at = now()
 	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires)
 	if err != nil {
-		return fmt.Errorf("store: upsert orden: %w", err)
+		return fmt.Errorf("store: upsert solicitud: %w", err)
 	}
 	return nil
 }
 
-// InsertOrderItems persiste en lote las líneas de una orden en public.order_items
+// InsertIntakeItems persiste en lote las líneas de una solicitud en public.intake_items
 // (Plan 016 · T0/T2). Un solo INSERT multi-fila con placeholders; added_at usa el
 // DEFAULT now() de la tabla. len(items)==0 es un no-op.
-func (r *PostgresRepository) InsertOrderItems(ctx context.Context, orderID string, items []OrderItem) error {
-	return insertOrderItems(ctx, r.db, orderID, items)
+func (r *PostgresRepository) InsertIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
+	return insertIntakeItems(ctx, r.db, intakeID, items)
 }
 
-// insertOrderItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer
-// (*sql.DB autocommit o *sql.Tx dentro de CloseOrder). len(items)==0 es un no-op.
-func insertOrderItems(ctx context.Context, ex execer, orderID string, items []OrderItem) error {
+// insertIntakeItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer
+// (*sql.DB autocommit o *sql.Tx dentro de CloseIntake). len(items)==0 es un no-op.
+func insertIntakeItems(ctx context.Context, ex execer, intakeID string, items []IntakeItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 	placeholders := make([]string, 0, len(items))
-	args := make([]any, 0, len(items)*orderItemCols)
+	args := make([]any, 0, len(items)*intakeItemCols)
 	for i, it := range items {
-		base := i * orderItemCols
+		base := i * intakeItemCols
 		placeholders = append(placeholders, fmt.Sprintf(
 			"($%d, $%d, $%d, $%d, $%d)",
 			base+1, base+2, base+3, base+4, base+5,
 		))
-		args = append(args, orderID, it.SKU, it.Label, it.Qty, it.UnitPrice)
+		args = append(args, intakeID, it.SKU, it.Label, it.Qty, it.UnitPrice)
 	}
 	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
 	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
 	query := `
-		INSERT INTO public.order_items
-			(order_id, sku, label, qty, unit_price)
+		INSERT INTO public.intake_items
+			(intake_id, sku, label, qty, unit_price)
 		VALUES ` + strings.Join(placeholders, ", ")
 	if _, err := ex.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("store: insertar líneas de orden: %w", err)
+		return fmt.Errorf("store: insertar líneas de solicitud: %w", err)
 	}
 	return nil
 }
 
-// CloseOrder cierra ATÓMICAMENTE la orden abierta del contacto e inserta sus
+// CloseIntake cierra ATÓMICAMENTE la solicitud abierta del contacto e inserta sus
 // líneas en la MISMA transacción (Plan 027 · Ola 1 · T4, cierra H4), vía el helper
 // único postgres.WithTx (rollback inmune a panic + retry 40P01/40001). Bloquea la
-// orden "open" con FOR UPDATE: dos cierres concurrentes del mismo contacto se
-// serializan (el segundo la ve ya "closed" y no crea otra). Si no había orden
-// abierta, crea una "closed" coherente. Garantiza que una orden closed nunca quede
+// solicitud "open" con FOR UPDATE: dos cierres concurrentes del mismo contacto se
+// serializan (el segundo la ve ya "closed" y no crea otra). Si no había solicitud
+// abierta, crea una "closed" coherente. Garantiza que una solicitud closed nunca quede
 // sin líneas.
-func (r *PostgresRepository) CloseOrder(ctx context.Context, in OrderClose) error {
+func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) error {
 	return postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
-		var orderID string
+		var intakeID string
 		err := tx.QueryRowContext(ctx, `
-			SELECT id::text FROM public.orders
+			SELECT id::text FROM public.intakes
 			WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
 			ORDER BY created_at DESC
 			LIMIT 1
 			FOR UPDATE
-		`, in.TenantID, in.ContactID).Scan(&orderID)
+		`, in.TenantID, in.ContactID).Scan(&intakeID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			orderID = uuid.NewString()
+			intakeID = uuid.NewString()
 			if _, ierr := tx.ExecContext(ctx, `
-				INSERT INTO public.orders
+				INSERT INTO public.intakes
 					(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, 'closed', $5, now(), now())
-			`, orderID, in.TenantID, in.ContactID, in.SessionID, in.Total); ierr != nil {
-				return fmt.Errorf("store: insertar orden cerrada: %w", ierr)
+			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total); ierr != nil {
+				return fmt.Errorf("store: insertar solicitud cerrada: %w", ierr)
 			}
 		case err != nil:
-			return fmt.Errorf("store: bloquear orden abierta: %w", err)
+			return fmt.Errorf("store: bloquear solicitud abierta: %w", err)
 		default:
 			if _, uerr := tx.ExecContext(ctx, `
-				UPDATE public.orders SET status = 'closed', total = $2, updated_at = now()
+				UPDATE public.intakes SET status = 'closed', total = $2, updated_at = now()
 				WHERE id = $1
-			`, orderID, in.Total); uerr != nil {
-				return fmt.Errorf("store: cerrar orden: %w", uerr)
+			`, intakeID, in.Total); uerr != nil {
+				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
 			}
 		}
-		return insertOrderItems(ctx, tx, orderID, in.Items)
+		return insertIntakeItems(ctx, tx, intakeID, in.Items)
 	})
 }
 
-// GetOpenOrder devuelve la orden "open" del contacto para (tenantID, contactID);
-// found=false sin error si no hay (Plan 016 · T2/T3). Usa el índice orders_open_idx.
-func (r *PostgresRepository) GetOpenOrder(ctx context.Context, tenantID, contactID string) (Order, bool, error) {
+// GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID);
+// found=false sin error si no hay (Plan 016 · T2/T3). Usa el índice intakes_open_idx.
+func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contactID string) (Intake, bool, error) {
 	var (
-		o       Order
+		o       Intake
 		expires sql.NullTime
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id::text, tenant_id, contact_id, session_id, status, total,
 		       created_at, updated_at, expires_at
-		FROM public.orders
+		FROM public.intakes
 		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -520,9 +520,9 @@ func (r *PostgresRepository) GetOpenOrder(ctx context.Context, tenantID, contact
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return Order{}, false, nil
+		return Intake{}, false, nil
 	case err != nil:
-		return Order{}, false, fmt.Errorf("store: leer orden abierta: %w", err)
+		return Intake{}, false, fmt.Errorf("store: leer solicitud abierta: %w", err)
 	}
 	if expires.Valid {
 		o.ExpiresAt = expires.Time
@@ -530,17 +530,17 @@ func (r *PostgresRepository) GetOpenOrder(ctx context.Context, tenantID, contact
 	return o, true, nil
 }
 
-// MarkOrderStatus transiciona el estado de una orden (por id) y fija su total,
+// MarkIntakeStatus transiciona el estado de una solicitud (por id) y fija su total,
 // refrescando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled" |
 // "expired".
-func (r *PostgresRepository) MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error {
+func (r *PostgresRepository) MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE public.orders
+		UPDATE public.intakes
 		SET status = $2, total = $3, updated_at = now()
 		WHERE id = $1
-	`, orderID, status, total)
+	`, intakeID, status, total)
 	if err != nil {
-		return fmt.Errorf("store: marcar estado de orden: %w", err)
+		return fmt.Errorf("store: marcar estado de solicitud: %w", err)
 	}
 	return nil
 }

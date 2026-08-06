@@ -16,28 +16,37 @@
 -- ADITIVA e IDEMPOTENTE: el runner es hash-based FULL-REPLAY (re-aplica todos
 -- los structure/*.sql al cambiar el hash); CREATE TABLE/INDEX IF NOT EXISTS
 -- garantizan re-aplicación N veces sin daño. NO clean-slate.
+--
+-- ⚠️ GUARD `public.intake_items` (Plan 041 · T1.0): esta tabla YA NO SE LLAMA
+-- `order_items`, y su FK ya no se llama `order_id`. La 0041 renombra ambas cosas
+-- (D-12). El guard es obligatorio por la misma razón que en la 0011: el runner es
+-- FULL-REPLAY y sin él este archivo resucitaría una `order_items` vacía en cada
+-- corrida, dejando a la 0041 sin poder renombrar y abortando el arranque. Ver la
+-- nota larga en 0011_orders.sql.
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS public.order_items (
-    id          BIGSERIAL   PRIMARY KEY,
-    order_id    UUID        NOT NULL REFERENCES public.orders(id),
-    sku         TEXT        NOT NULL,          -- código de negocio; cero PII
-    label       TEXT        NOT NULL,
-    qty         INTEGER     NOT NULL,
-    unit_price  NUMERIC     NOT NULL,
-    added_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+DO $$
+BEGIN
+    -- Ya renombrada por la 0041: nada que crear (y nada que resucitar).
+    IF to_regclass('public.intake_items') IS NOT NULL THEN
+        RETURN;
+    END IF;
 
--- Índice de JOIN / AGREGACIÓN: sirve la lectura de las líneas por orden y el
--- GROUP BY del total — el valor consultable de la tabla (design.md §9.F).
-CREATE INDEX IF NOT EXISTS order_items_order_idx
-    ON public.order_items (order_id);
+    CREATE TABLE IF NOT EXISTS public.order_items (
+        id          BIGSERIAL   PRIMARY KEY,
+        order_id    UUID        NOT NULL REFERENCES public.orders(id),
+        sku         TEXT        NOT NULL,      -- código de negocio; cero PII
+        label       TEXT        NOT NULL,
+        qty         INTEGER     NOT NULL,
+        unit_price  NUMERIC     NOT NULL,
+        added_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
 
-COMMENT ON TABLE  public.order_items IS 'Líneas de orden del módulo Carrito (proyección de cart_closed) como datos de NEGOCIO EN CLARO (ADR-0009). sku/label son códigos de negocio, NO PII; la identidad la protege el contact_id opaco de orders (ADR-0010). NUNCA DEK, store cifrado ni número/JID en claro.';
-COMMENT ON COLUMN public.order_items.id         IS 'Identidad técnica de la fila (append-only; sin significado de negocio).';
-COMMENT ON COLUMN public.order_items.order_id   IS 'Orden (orders.id) a la que pertenece la línea.';
-COMMENT ON COLUMN public.order_items.sku        IS 'Código de artículo (catálogo del tenant), dato de negocio. NUNCA PII.';
-COMMENT ON COLUMN public.order_items.label      IS 'Etiqueta legible del artículo (catálogo del tenant). NUNCA PII.';
-COMMENT ON COLUMN public.order_items.qty        IS 'Cantidad pedida del artículo (qty>=1; sin validación de stock, design.md §9.D).';
-COMMENT ON COLUMN public.order_items.unit_price IS 'Precio unitario del artículo al momento del pedido. Dato de negocio.';
-COMMENT ON COLUMN public.order_items.added_at   IS 'Momento en que se añadió la línea. Usa el DEFAULT now().';
+    -- Índice de JOIN / AGREGACIÓN: sirve la lectura de las líneas por orden y el
+    -- GROUP BY del total — el valor consultable de la tabla (design.md §9.F).
+    CREATE INDEX IF NOT EXISTS order_items_order_idx
+        ON public.order_items (order_id);
+END $$;
+
+-- Los COMMENT definitivos viven en la 0041, sobre los nombres finales
+-- (public.intake_items): esta tabla nace aquí y se renombra allí en la misma corrida.

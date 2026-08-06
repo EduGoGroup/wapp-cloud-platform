@@ -55,9 +55,9 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	}
 	if exists {
 		// Gotcha 409 (design.md §3.4): una conversación de CARRITO cuyo pedido ya
-		// TERMINÓ (sub-máquina cerrada/cancelada, o con una orden "open" vencida por
+		// TERMINÓ (sub-máquina cerrada/cancelada, o con una solicitud "open" vencida por
 		// TTL) NO debe bloquear un pedido nuevo. Solo el carrito se reinicia, y solo
-		// si está terminado: un carrito EN CURSO (navegando, u orden abierta vigente)
+		// si está terminado: un carrito EN CURSO (navegando, u solicitud abierta vigente)
 		// y cualquier conversación de menú/encuesta siguen devolviendo 409. Al
 		// reiniciar, el Save de Enter (upsert por la misma clave) SOBRESCRIBE el
 		// estado viejo con uno limpio.

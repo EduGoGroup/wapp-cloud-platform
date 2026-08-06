@@ -31,7 +31,7 @@ type Projector interface {
 
 // ResumePolicy es la capacidad IMPURA de un módulo para gobernar la REANUDACIÓN de
 // una conversación en uno de sus nodos (Plan 027 · Ola 3 · T8, cierra H9): reinicio
-// por estado terminal o por expiración de un recurso externo (p. ej. la orden del
+// por estado terminal o por expiración de un recurso externo (p. ej. la solicitud del
 // carrito por TTL) y siembra de Vars de navegación. El runtime la consulta por tipo
 // de nodo REGISTRADO, sacando del engine el conocimiento cart-específico. El Module
 // sigue puro; la política es un adaptador que lee el store.

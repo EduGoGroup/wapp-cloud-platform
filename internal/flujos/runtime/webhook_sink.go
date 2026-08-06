@@ -17,7 +17,7 @@ import (
 // enviaría (para dejar documentado y probado el contrato), pero NO hace POST.
 //
 // Por qué existe ya (y no el POST real): en 016 TODO va a la BD (PersistSink →
-// orders/order_items). El WebhookSink deja el "asiento" del CRM listo para el
+// intakes/intake_items). El WebhookSink deja el "asiento" del CRM listo para el
 // futuro sin comprometer credenciales, red ni durabilidad. Un CRM real se
 // enchufa registrando este (u otro) EventSink en main.go SIN tocar el módulo ni
 // el flujo (extensibilidad del hexágono del Plan 015).
@@ -29,7 +29,7 @@ import (
 //	{
 //	  "tenant":    "<tenant_id>",          // identificador del tenant
 //	  "contact":   "<contact_id opaco>",   // OPACO (Plan 010 / ADR-0010); NUNCA número/JID
-//	  "order_id":  "<uuid de la orden>",   // correlación con orders (ver nota abajo)
+//	  "order_id":  "<uuid de la solicitud>",   // correlación con intakes (ver nota abajo)
 //	  "items": [ { "sku": "...", "label": "...", "qty": 2, "unit_price": 9.9 }, ... ],
 //	  "total":     29.7,
 //	  "timestamp": "2026-07-03T10:00:00Z"  // RFC3339 UTC del cierre
@@ -40,10 +40,17 @@ import (
 // no se incluye ningún dato del store cifrado del Edge.
 //
 // Nota sobre order_id: el fan-out entrega el MISMO modules.Effect a todos los
-// sinks; el order_id lo materializa el PersistSink al proyectar orders. Este stub
+// sinks; el order_id lo materializa el PersistSink al proyectar intakes. Este stub
 // lo toma de eff.Payload["order_id"] si el efecto lo llevara (hoy cart_closed no
 // lo incluye — design.md §9.J — así que queda vacío). Un WebhookSink real lo
-// correlacionaría (efecto que lo transporte, o consulta a orders); DIFERIDO.
+// correlacionaría (efecto que lo transporte, o consulta a intakes); DIFERIDO.
+//
+// La clave sigue llamándose `order_id` a propósito, y NO se renombró con las
+// tablas en el Plan 041 · T1.0: es un CONTRATO HACIA AFUERA, no un nombre interno.
+// Renombrarlo aquí cambiaría el JSON que un tercero parsea, sin que nadie lo haya
+// pedido y sin versión de contrato que lo anuncie — y el contrato bueno del CRM ya
+// no es este stub, es `intake.push` del Plan 042. Lo interno (tablas, tipos Go,
+// columnas) sí habla de `intake`; esta caja es la frontera.
 //
 // # Qué faltaría para hacerlo REAL (TODO DIFERIDO — §9.I / §10, no implementar aquí)
 //

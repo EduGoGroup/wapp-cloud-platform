@@ -23,7 +23,7 @@ func TestIsSerializationFailure(t *testing.T) {
 	}{
 		{"deadlock 40P01", &pgconn.PgError{Code: "40P01"}, true},
 		{"serialization 40001", &pgconn.PgError{Code: "40001"}, true},
-		{"deadlock envuelto", fmt.Errorf("store: cerrar orden: %w", &pgconn.PgError{Code: "40P01"}), true},
+		{"deadlock envuelto", fmt.Errorf("store: cerrar solicitud: %w", &pgconn.PgError{Code: "40P01"}), true},
 		{"unique_violation 23505", &pgconn.PgError{Code: "23505"}, false},
 		{"error no-pg", errors.New("boom"), false},
 		{"nil", nil, false},

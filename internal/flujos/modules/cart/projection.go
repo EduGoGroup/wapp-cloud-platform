@@ -10,30 +10,30 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
-// Estados del ciclo de vida de una orden (public.orders). Viven aquí porque la
+// Estados del ciclo de vida de una solicitud (public.intakes). Viven aquí porque la
 // proyección del carrito es su dueña (design.md §3.4).
 const (
-	orderStatusOpen      = "open"
-	orderStatusClosed    = "closed"
-	orderStatusCancelled = "cancelled"
-	orderStatusExpired   = "expired"
+	intakeStatusOpen      = "open"
+	intakeStatusClosed    = "closed"
+	intakeStatusCancelled = "cancelled"
+	intakeStatusExpired   = "expired"
 )
 
 // ProjectionStore es lo que el proyector del carrito necesita del almacén para
-// materializar sus efectos en orders/order_items. Interfaz mínima (ISP) que
+// materializar sus efectos en intakes/intake_items. Interfaz mínima (ISP) que
 // satisface *store.PostgresRepository / *MemoryRepository.
 type ProjectionStore interface {
 	GetTenantSettings(ctx context.Context, tenantID string) (store.TenantSettings, error)
-	GetOpenOrder(ctx context.Context, tenantID, contactID string) (store.Order, bool, error)
-	UpsertOrder(ctx context.Context, o store.Order) error
-	MarkOrderStatus(ctx context.Context, orderID, status string, total float64) error
-	CloseOrder(ctx context.Context, in store.OrderClose) error
+	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
+	UpsertIntake(ctx context.Context, o store.Intake) error
+	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
+	CloseIntake(ctx context.Context, in store.IntakeClose) error
 }
 
 // Projector implementa modules.Projector para los efectos del carrito (Plan 027 ·
-// Ola 3 · T8, cierra H10): item_added asegura la orden "open" (+refresca TTL),
-// cart_closed cierra atómicamente orden+líneas, y cart_cancelled/cart_expired
-// transicionan la orden. Es un adaptador IMPURO; produce EXACTAMENTE las mismas
+// Ola 3 · T8, cierra H10): item_added asegura la solicitud "open" (+refresca TTL),
+// cart_closed cierra atómicamente solicitud+líneas, y cart_cancelled/cart_expired
+// transicionan la solicitud. Es un adaptador IMPURO; produce EXACTAMENTE las mismas
 // filas que producía el switch central del PersistSink (retrofit por efectos, §9.D).
 type Projector struct {
 	store ProjectionStore
@@ -62,53 +62,53 @@ func (Projector) Handles(name string) bool {
 func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
 	switch eff.Name {
 	case EffectItemAdded:
-		return p.ensureOpenOrder(ctx, meta)
+		return p.ensureOpenIntake(ctx, meta)
 	case EffectCartClosed:
-		return p.closeOrder(ctx, meta, eff)
+		return p.closeIntake(ctx, meta, eff)
 	case EffectCartCancelled:
-		return p.transitionOpenOrder(ctx, meta, orderStatusCancelled)
+		return p.transitionOpenIntake(ctx, meta, intakeStatusCancelled)
 	case EffectCartExpired:
-		return p.transitionOpenOrder(ctx, meta, orderStatusExpired)
+		return p.transitionOpenIntake(ctx, meta, intakeStatusExpired)
 	default:
 		return nil
 	}
 }
 
-// ensureOpenOrder garantiza UNA orden "open" para (tenant, contact) al primer
+// ensureOpenIntake garantiza UNA solicitud "open" para (tenant, contact) al primer
 // item_added (design.md §3.4) y FIJA/REFRESCA su TTL (expires_at = now +
 // tenant_settings.order_ttl). Idempotente por identidad de negocio: si ya hay abierta
 // NO crea otra, pero la "toca" (refresca expires_at) para que el pedido activo no
 // venza mientras el usuario sigue agregando. La evaluación del vencimiento es
 // perezosa (al reanudar, en la ResumePolicy); aquí solo se fija la marca.
-func (p *Projector) ensureOpenOrder(ctx context.Context, meta modules.EffectMeta) error {
+func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) error {
 	settings, err := p.store.GetTenantSettings(ctx, meta.TenantID)
 	if err != nil {
 		return err
 	}
 	expiresAt := p.now().Add(settings.OrderTTL)
-	existing, found, err := p.store.GetOpenOrder(ctx, meta.TenantID, meta.ContactID)
+	existing, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
 		return err
 	}
 	if found {
 		existing.ExpiresAt = expiresAt
-		return p.store.UpsertOrder(ctx, existing)
+		return p.store.UpsertIntake(ctx, existing)
 	}
-	return p.store.UpsertOrder(ctx, store.Order{
+	return p.store.UpsertIntake(ctx, store.Intake{
 		ID:        uuid.NewString(),
 		TenantID:  meta.TenantID,
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
-		Status:    orderStatusOpen,
+		Status:    intakeStatusOpen,
 		ExpiresAt: expiresAt,
 	})
 }
 
-// closeOrder proyecta cart_closed: cierra ATÓMICAMENTE la orden abierta (o crea una
+// closeIntake proyecta cart_closed: cierra ATÓMICAMENTE la solicitud abierta (o crea una
 // "closed" coherente) con el total del payload e inserta TODAS las líneas (fuente de
-// verdad). Delega en store.CloseOrder (una transacción, Plan 027 · Ola 1 · T4).
-func (p *Projector) closeOrder(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
-	return p.store.CloseOrder(ctx, store.OrderClose{
+// verdad). Delega en store.CloseIntake (una transacción, Plan 027 · Ola 1 · T4).
+func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
+	return p.store.CloseIntake(ctx, store.IntakeClose{
 		TenantID:  meta.TenantID,
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
@@ -117,42 +117,42 @@ func (p *Projector) closeOrder(ctx context.Context, meta modules.EffectMeta, eff
 	})
 }
 
-// transitionOpenOrder lleva la orden "open" a cancelled/expired (design.md §3.4).
-// Sin orden abierta es un no-op sin error (idempotente / nada que transicionar).
-func (p *Projector) transitionOpenOrder(ctx context.Context, meta modules.EffectMeta, status string) error {
-	order, found, err := p.store.GetOpenOrder(ctx, meta.TenantID, meta.ContactID)
+// transitionOpenIntake lleva la solicitud "open" a cancelled/expired (design.md §3.4).
+// Sin solicitud abierta es un no-op sin error (idempotente / nada que transicionar).
+func (p *Projector) transitionOpenIntake(ctx context.Context, meta modules.EffectMeta, status string) error {
+	intake, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return nil
 	}
-	return p.store.MarkOrderStatus(ctx, order.ID, status, order.Total)
+	return p.store.MarkIntakeStatus(ctx, intake.ID, status, intake.Total)
 }
 
-// cartItems extrae las líneas del payload de cart_closed a []store.OrderItem. Tolera
+// cartItems extrae las líneas del payload de cart_closed a []store.IntakeItem. Tolera
 // ambas formas de la lista: el camino en-proceso ([]map[string]any que construye el
 // módulo) y el round-trip JSON ([]any de map[string]any). Ítems mal formados se
-// omiten sin panica. El OrderID lo fija store.CloseOrder.
-func cartItems(payload map[string]any) []store.OrderItem {
-	var out []store.OrderItem
+// omiten sin panica. El IntakeID lo fija store.CloseIntake.
+func cartItems(payload map[string]any) []store.IntakeItem {
+	var out []store.IntakeItem
 	switch items := payload["items"].(type) {
 	case []map[string]any:
 		for _, m := range items {
-			out = append(out, orderItemFromMap(m))
+			out = append(out, intakeItemFromMap(m))
 		}
 	case []any:
 		for _, e := range items {
 			if m, ok := e.(map[string]any); ok {
-				out = append(out, orderItemFromMap(m))
+				out = append(out, intakeItemFromMap(m))
 			}
 		}
 	}
 	return out
 }
 
-func orderItemFromMap(m map[string]any) store.OrderItem {
-	return store.OrderItem{
+func intakeItemFromMap(m map[string]any) store.IntakeItem {
+	return store.IntakeItem{
 		SKU:       modules.AsString(m["sku"]),
 		Label:     modules.AsString(m["label"]),
 		Qty:       modules.AsInt(m["qty"]),

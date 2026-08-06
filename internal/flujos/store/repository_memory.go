@@ -42,12 +42,12 @@ type MemoryRepository struct {
 	// tenant_content (Plan 018 · T6), en paralelo a content. Lo escribe
 	// UpsertTenantContent y lo lee ListTenantContent (created/updated_at).
 	contentMeta map[string]tcMeta
-	// orders indexa order_id → orden; imita public.orders (Plan 016 · T0).
-	// Consultable en tests vía Orders().
-	orders map[string]Order
-	// orderItems indexa order_id → líneas (append-only); imita public.order_items
-	// (Plan 016 · T0). Consultable en tests vía OrderItems(orderID).
-	orderItems map[string][]OrderItem
+	// intakes indexa intake_id → solicitud; imita public.intakes (Plan 016 · T0).
+	// Consultable en tests vía Intakes().
+	intakes map[string]Intake
+	// intakeItems indexa intake_id → líneas (append-only); imita public.intake_items
+	// (Plan 016 · T0). Consultable en tests vía IntakeItems(intakeID).
+	intakeItems map[string][]IntakeItem
 	// settings indexa tenant_id → config; imita public.tenant_settings (Plan 016 ·
 	// T0). Sembrable en tests vía SetTenantSettings; leído por GetTenantSettings
 	// (defaults si no hay fila).
@@ -62,8 +62,8 @@ func NewMemoryRepository() *MemoryRepository {
 		maxVer:      make(map[string]int),
 		content:     make(map[string][]byte),
 		contentMeta: make(map[string]tcMeta),
-		orders:      make(map[string]Order),
-		orderItems:  make(map[string][]OrderItem),
+		intakes:     make(map[string]Intake),
+		intakeItems: make(map[string][]IntakeItem),
 		settings:    make(map[string]TenantSettings),
 	}
 }
@@ -382,30 +382,30 @@ func (r *MemoryRepository) DeleteTenantContent(_ context.Context, tenantID, ref 
 	return nil
 }
 
-// UpsertOrder implementa Repository: inserta o actualiza (por ID) la orden,
-// imitando el upsert en public.orders (Plan 016 · T0). Idempotente por o.ID: en el
+// UpsertIntake implementa Repository: inserta o actualiza (por ID) la solicitud,
+// imitando el upsert en public.intakes (Plan 016 · T0). Idempotente por o.ID: en el
 // alta fija created_at/updated_at a now(); en la actualización preserva el
 // created_at almacenado y refresca updated_at (misma semántica que el DEFAULT +
 // ON CONFLICT del Postgres).
-func (r *MemoryRepository) UpsertOrder(_ context.Context, o Order) error {
+func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
-	if prev, ok := r.orders[o.ID]; ok {
+	if prev, ok := r.intakes[o.ID]; ok {
 		o.CreatedAt = prev.CreatedAt
 	} else {
 		o.CreatedAt = now
 	}
 	o.UpdatedAt = now
-	r.orders[o.ID] = o
+	r.intakes[o.ID] = o
 	return nil
 }
 
-// InsertOrderItems implementa Repository: acumula las líneas de la orden en un
-// slice interno (append-only), imitando el INSERT en public.order_items (Plan 016
-// · T0). len(items)==0 es un no-op. Fija OrderID y AddedAt (DEFAULT now()) en cada
+// InsertIntakeItems implementa Repository: acumula las líneas de la solicitud en un
+// slice interno (append-only), imitando el INSERT en public.intake_items (Plan 016
+// · T0). len(items)==0 es un no-op. Fija IntakeID y AddedAt (DEFAULT now()) en cada
 // línea; copia por valor (structs sin punteros) para no compartir estado.
-func (r *MemoryRepository) InsertOrderItems(_ context.Context, orderID string, items []OrderItem) error {
+func (r *MemoryRepository) InsertIntakeItems(_ context.Context, intakeID string, items []IntakeItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -413,67 +413,67 @@ func (r *MemoryRepository) InsertOrderItems(_ context.Context, orderID string, i
 	defer r.mu.Unlock()
 	now := time.Now()
 	for _, it := range items {
-		it.OrderID = orderID
+		it.IntakeID = intakeID
 		if it.AddedAt.IsZero() {
 			it.AddedAt = now
 		}
-		r.orderItems[orderID] = append(r.orderItems[orderID], it)
+		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
 	}
 	return nil
 }
 
-// GetOpenOrder implementa Repository: devuelve la orden "open" del contacto para
+// GetOpenIntake implementa Repository: devuelve la solicitud "open" del contacto para
 // (tenantID, contactID); found=false sin error si no hay (Plan 016 · T2/T3).
-// Identidad de negocio: UNA orden "open" por (tenant_id, contact_id) (design.md
+// Identidad de negocio: UNA solicitud "open" por (tenant_id, contact_id) (design.md
 // §3.4), así que devuelve la primera coincidente.
-func (r *MemoryRepository) GetOpenOrder(_ context.Context, tenantID, contactID string) (Order, bool, error) {
+func (r *MemoryRepository) GetOpenIntake(_ context.Context, tenantID, contactID string) (Intake, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, o := range r.orders {
+	for _, o := range r.intakes {
 		if o.TenantID == tenantID && o.ContactID == contactID && o.Status == "open" {
 			return o, true, nil
 		}
 	}
-	return Order{}, false, nil
+	return Intake{}, false, nil
 }
 
-// MarkOrderStatus implementa Repository: transiciona el estado de la orden (por
-// ID) y fija su total, refrescando updated_at (Plan 016 · T2/T3). Si la orden no
+// MarkIntakeStatus implementa Repository: transiciona el estado de la solicitud (por
+// ID) y fija su total, refrescando updated_at (Plan 016 · T2/T3). Si la solicitud no
 // existe es un no-op sin error (misma semántica que el UPDATE sin filas).
-func (r *MemoryRepository) MarkOrderStatus(_ context.Context, orderID, status string, total float64) error {
+func (r *MemoryRepository) MarkIntakeStatus(_ context.Context, intakeID, status string, total float64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if o, ok := r.orders[orderID]; ok {
+	if o, ok := r.intakes[intakeID]; ok {
 		o.Status = status
 		o.Total = total
 		o.UpdatedAt = time.Now()
-		r.orders[orderID] = o
+		r.intakes[intakeID] = o
 	}
 	return nil
 }
 
-// CloseOrder implementa Repository: cierra atómicamente (bajo el mutex del repo) la
-// orden "open" del contacto —o crea una "closed" si no la hubiera— e inserta sus
+// CloseIntake implementa Repository: cierra atómicamente (bajo el mutex del repo) la
+// solicitud "open" del contacto —o crea una "closed" si no la hubiera— e inserta sus
 // líneas, imitando la transacción del PostgresRepository (Plan 027 · Ola 1 · T4).
-func (r *MemoryRepository) CloseOrder(_ context.Context, in OrderClose) error {
+func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
-	var orderID string
-	for id, o := range r.orders {
+	var intakeID string
+	for id, o := range r.intakes {
 		if o.TenantID == in.TenantID && o.ContactID == in.ContactID && o.Status == "open" {
-			orderID = id
+			intakeID = id
 			o.Status = "closed"
 			o.Total = in.Total
 			o.UpdatedAt = now
-			r.orders[id] = o
+			r.intakes[id] = o
 			break
 		}
 	}
-	if orderID == "" {
-		orderID = uuid.NewString()
-		r.orders[orderID] = Order{
-			ID:        orderID,
+	if intakeID == "" {
+		intakeID = uuid.NewString()
+		r.intakes[intakeID] = Intake{
+			ID:        intakeID,
 			TenantID:  in.TenantID,
 			ContactID: in.ContactID,
 			SessionID: in.SessionID,
@@ -484,11 +484,11 @@ func (r *MemoryRepository) CloseOrder(_ context.Context, in OrderClose) error {
 		}
 	}
 	for _, it := range in.Items {
-		it.OrderID = orderID
+		it.IntakeID = intakeID
 		if it.AddedAt.IsZero() {
 			it.AddedAt = now
 		}
-		r.orderItems[orderID] = append(r.orderItems[orderID], it)
+		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
 	}
 	return nil
 }
@@ -509,26 +509,26 @@ func (r *MemoryRepository) GetTenantSettings(_ context.Context, tenantID string)
 	}, nil
 }
 
-// Orders devuelve una copia de las órdenes acumuladas por UpsertOrder. Es un
+// Intakes devuelve una copia de las solicitudes acumuladas por UpsertIntake. Es un
 // helper de test; devuelve una copia para no exponer el mapa interno.
-func (r *MemoryRepository) Orders() []Order {
+func (r *MemoryRepository) Intakes() []Intake {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]Order, 0, len(r.orders))
-	for _, o := range r.orders {
+	out := make([]Intake, 0, len(r.intakes))
+	for _, o := range r.intakes {
 		out = append(out, o)
 	}
 	return out
 }
 
-// OrderItems devuelve una copia de las líneas persistidas para orderID por
-// InsertOrderItems. Es un helper de test; devuelve una copia para no exponer el
+// IntakeItems devuelve una copia de las líneas persistidas para intakeID por
+// InsertIntakeItems. Es un helper de test; devuelve una copia para no exponer el
 // slice interno.
-func (r *MemoryRepository) OrderItems(orderID string) []OrderItem {
+func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	src := r.orderItems[orderID]
-	out := make([]OrderItem, len(src))
+	src := r.intakeItems[intakeID]
+	out := make([]IntakeItem, len(src))
 	copy(out, src)
 	return out
 }

@@ -16,32 +16,43 @@
 -- ADITIVA e IDEMPOTENTE: el runner es hash-based FULL-REPLAY (re-aplica todos
 -- los structure/*.sql al cambiar el hash); CREATE TABLE/INDEX IF NOT EXISTS
 -- garantizan re-aplicación N veces sin daño. NO clean-slate.
+--
+-- ⚠️ GUARD `public.intakes` (Plan 041 · T1.0): esta tabla YA NO SE LLAMA `orders`.
+-- La 0041 la renombra a `intakes` (D-12: el objeto de dominio es la SOLICITUD; el
+-- módulo conversacional sigue siendo `cart`). Como el runner es FULL-REPLAY, sin
+-- este guard el `CREATE TABLE IF NOT EXISTS public.orders` de abajo RESUCITARÍA
+-- una `orders` VACÍA en cada corrida posterior al renombre, y acto seguido la 0041
+-- reventaría al intentar renombrarla sobre una `intakes` que ya existe —
+-- ABORTANDO EL ARRANQUE del servidor (fail-fast de bootstrap/database.go). Con el
+-- guard, este archivo sigue siendo la definición reproducible de la tabla sobre
+-- una base que aún no la tiene, y es un no-op limpio sobre una ya renombrada.
+-- Mismo patrón que 0037_tenant_members.sql frente a la 0038.
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS public.orders (
-    id          UUID        PRIMARY KEY,
-    tenant_id   TEXT        NOT NULL,
-    contact_id  TEXT        NOT NULL,          -- OPACO (Plan 010); NUNCA número/JID en claro
-    session_id  TEXT        NOT NULL,
-    status      TEXT        NOT NULL,          -- "open" | "closed" | "cancelled" | "expired"
-    total       NUMERIC     NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at  TIMESTAMPTZ
-);
+DO $$
+BEGIN
+    -- Ya renombrada por la 0041: nada que crear (y nada que resucitar).
+    IF to_regclass('public.intakes') IS NOT NULL THEN
+        RETURN;
+    END IF;
 
--- Índice de REANUDACIÓN / TTL: recupera la orden "open" del contacto al reanudar
--- la conversación y sirve la evaluación perezosa de expiración (design.md §4.3).
-CREATE INDEX IF NOT EXISTS orders_open_idx
-    ON public.orders (tenant_id, contact_id, status);
+    CREATE TABLE IF NOT EXISTS public.orders (
+        id          UUID        PRIMARY KEY,
+        tenant_id   TEXT        NOT NULL,
+        contact_id  TEXT        NOT NULL,      -- OPACO (Plan 010); NUNCA número/JID en claro
+        session_id  TEXT        NOT NULL,
+        status      TEXT        NOT NULL,      -- "open" | "closed" | "cancelled" | "expired"
+        total       NUMERIC     NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at  TIMESTAMPTZ
+    );
 
-COMMENT ON TABLE  public.orders IS 'Órdenes del módulo Carrito (proyección tipada de cart_closed) como datos de NEGOCIO EN CLARO (ADR-0009). CERO PII: la identidad la protege el contact_id opaco (ADR-0010). NUNCA DEK, store cifrado ni número/JID en claro.';
-COMMENT ON COLUMN public.orders.id         IS 'Identidad de la orden (UUID; asignada al abrir la orden "open").';
-COMMENT ON COLUMN public.orders.tenant_id  IS 'Tenant dueño de la orden.';
-COMMENT ON COLUMN public.orders.contact_id IS 'Identidad OPACA del contacto (contacts.contact_id, Plan 010 / ADR-0010). NUNCA el número/JID en claro.';
-COMMENT ON COLUMN public.orders.session_id IS 'Sesión (Edge/WhatsApp) que originó la orden; metadato de trazabilidad.';
-COMMENT ON COLUMN public.orders.status     IS 'Estado del ciclo de vida: "open" | "closed" | "cancelled" | "expired".';
-COMMENT ON COLUMN public.orders.total      IS 'Total agregado del pedido (suma de qty*unit_price de order_items). Dato de negocio.';
-COMMENT ON COLUMN public.orders.created_at IS 'Momento del alta (apertura de la orden). Usa el DEFAULT now().';
-COMMENT ON COLUMN public.orders.updated_at IS 'Momento de la última transición de estado. Usa el DEFAULT now() en el alta.';
-COMMENT ON COLUMN public.orders.expires_at IS 'Instante de expiración por TTL (now + tenant_settings.order_ttl_seconds); NULL si no aplica. Evaluado perezosamente al reanudar (design.md §4.3).';
+    -- Índice de REANUDACIÓN / TTL: recupera la orden "open" del contacto al reanudar
+    -- la conversación y sirve la evaluación perezosa de expiración (design.md §4.3).
+    CREATE INDEX IF NOT EXISTS orders_open_idx
+        ON public.orders (tenant_id, contact_id, status);
+END $$;
+
+-- Los COMMENT definitivos viven en la 0041, sobre los nombres finales
+-- (public.intakes): esta tabla nace aquí y se renombra allí en la misma corrida.

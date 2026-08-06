@@ -9,7 +9,7 @@ import (
 
 // persistSinkWith construye el PersistSink con los proyectores por-módulo (cart +
 // survey), como hace el arranque real (main.go), para que los tests que verifican la
-// proyección (orders/order_items/survey_results) sigan escribiendo las MISMAS filas
+// proyección (intakes/intake_items/survey_results) sigan escribiendo las MISMAS filas
 // tras extraer la proyección a los módulos (Plan 027 · Ola 3 · T8). Solo cambia el
 // CABLEADO del sink; las expectativas de cada test son idénticas.
 func persistSinkWith(repo store.Repository) *runtime.PersistSink {

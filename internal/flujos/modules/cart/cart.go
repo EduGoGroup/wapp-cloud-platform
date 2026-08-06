@@ -7,7 +7,7 @@
 // PUREZA (invariante, design.md §2/§4.1): el módulo NO hace I/O. Recibe el
 // catálogo ya resuelto y navega en memoria; todo su estado vive en
 // Conversation.Vars (JSONB) y lo persiste el engine. En T1 no emite efectos ni
-// persiste órdenes (Result.Effects vacío); los efectos llegan en T2 y la
+// persiste solicitudes (Result.Effects vacío); los efectos llegan en T2 y la
 // persistencia/TTL en T2/T3.
 //
 // UN SOLO NODO (design.md §9.A): la definición del flujo tiene un único nodo
@@ -141,7 +141,7 @@ func advance(cat Catalog, st cartState, input string, size int) (cartState, []st
 		return st, []string{terminalScreen(st)}, nil
 	default:
 		// Estado inconsistente: reencauzar a la raíz (preservando Started).
-		st = cartState{Level: LevelCategories, Lines: st.Lines, OrderID: st.OrderID, Started: st.Started}
+		st = cartState{Level: LevelCategories, Lines: st.Lines, IntakeID: st.IntakeID, Started: st.Started}
 		return st, []string{screenCategories(cat, st, size)}, nil
 	}
 }
@@ -234,7 +234,7 @@ func stepQuantity(cat Catalog, st cartState, in string, size int) (cartState, []
 		return st, []string{"Escribe una cantidad válida (un número mayor o igual a 1).\n\n" + screenQuantity(a)}, nil
 	}
 	// item_added: agrega la línea y pasa a L5 continuar. El runtime, al recibir
-	// este efecto, ASEGURA una orden "open" por (tenant, contact) (design.md §3.4).
+	// este efecto, ASEGURA una solicitud "open" por (tenant, contact) (design.md §3.4).
 	st.Lines = append(cloneLines(st.Lines), cartLine{SKU: a.SKU, Label: a.Label, Qty: qty, UnitPrice: a.Price})
 	st.Level = LevelContinue
 	eff := event(EffectItemAdded, map[string]any{
@@ -282,7 +282,7 @@ func stepContinue(cat Catalog, st cartState, in string, size int) (cartState, []
 
 func stepSummary(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
 	switch in {
-	case "1": // Confirmar → cierra: cart_closed (persist) proyecta orders/order_items.
+	case "1": // Confirmar → cierra: cart_closed (persist) proyecta intakes/intake_items.
 		st.Level = LevelClosed
 		return st, []string{screenClosed(total(st.Lines))}, []modules.Effect{closedEffect(st.Lines)}
 	case "2": // Seguir agregando → L2 misma categoría, o L1 si no hay categoría en foco.
@@ -303,7 +303,7 @@ func stepSummary(cat Catalog, st cartState, in string, size int) (cartState, []s
 
 // --- transiciones auxiliares ----------------------------------------------
 
-// toCategories reencauza a L1 conservando las líneas y la orden (design.md §9.C:
+// toCategories reencauza a L1 conservando las líneas y la solicitud (design.md §9.C:
 // "volver" desde artículos sube a categorías con el carrito intacto).
 func toCategories(cat Catalog, st cartState, size int) (cartState, []string) {
 	st.Level = LevelCategories

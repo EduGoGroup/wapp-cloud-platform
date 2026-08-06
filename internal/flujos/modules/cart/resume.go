@@ -9,15 +9,15 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
-// expiryNotice antecede al reinicio del carrito cuando la orden abierta venció por
+// expiryNotice antecede al reinicio del carrito cuando la solicitud abierta venció por
 // TTL (design.md §4.3/§9.H). Vive aquí (no en el runtime) porque es cart-específico.
 const expiryNotice = "⌛ Tu pedido anterior expiró. Empezamos de nuevo."
 
 // ResumeStore es lo que la política de reanudación del carrito necesita LEER del
-// almacén: la orden abierta (para el TTL) y los ajustes del tenant (page_size).
+// almacén: la solicitud abierta (para el TTL) y los ajustes del tenant (page_size).
 // Interfaz mínima (ISP) que satisface *store.PostgresRepository / *MemoryRepository.
 type ResumeStore interface {
-	GetOpenOrder(ctx context.Context, tenantID, contactID string) (store.Order, bool, error)
+	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	GetTenantSettings(ctx context.Context, tenantID string) (store.TenantSettings, error)
 }
 
@@ -36,18 +36,18 @@ func NewResumePolicy(s ResumeStore) *ResumePolicy {
 	return &ResumePolicy{store: s, now: time.Now}
 }
 
-// Restart decide el reinicio del carrito: si la orden abierta venció por TTL o la
+// Restart decide el reinicio del carrito: si la solicitud abierta venció por TTL o la
 // sub-máquina quedó en nivel terminal (cerrado/cancelado). Ante vencimiento sintetiza
-// el efecto cart_expired (para que el proyector transicione la orden a "expired",
+// el efecto cart_expired (para que el proyector transicione la solicitud a "expired",
 // coherencia BD↔conversación) y devuelve el aviso. Un carrito terminal NO tiene
-// orden "open" (el cierre/cancelación ya la transicionó), así que ambos criterios no
+// solicitud "open" (el cierre/cancelación ya la transicionó), así que ambos criterios no
 // colisionan. En navegación normal devuelve restart=false.
 func (p *ResumePolicy) Restart(ctx context.Context, tenantID, contactID string, vars map[string]any) (bool, string, []modules.Effect, error) {
-	order, found, err := p.store.GetOpenOrder(ctx, tenantID, contactID)
+	intake, found, err := p.store.GetOpenIntake(ctx, tenantID, contactID)
 	if err != nil {
-		return false, "", nil, fmt.Errorf("cart: orden abierta: %w", err)
+		return false, "", nil, fmt.Errorf("cart: solicitud abierta: %w", err)
 	}
-	expired := found && orderExpired(order, p.now())
+	expired := found && intakeExpired(intake, p.now())
 	terminal := isTerminal(vars)
 	if !expired && !terminal {
 		return false, "", nil, nil
@@ -78,8 +78,8 @@ func isTerminal(vars map[string]any) bool {
 	return lvl == LevelClosed || lvl == LevelCancelled
 }
 
-// orderExpired indica si una orden tiene TTL fijado (expires_at no-cero) y ya venció
+// intakeExpired indica si una solicitud tiene TTL fijado (expires_at no-cero) y ya venció
 // respecto a now. Sin expires_at (zero) NUNCA expira.
-func orderExpired(o store.Order, now time.Time) bool {
+func intakeExpired(o store.Intake, now time.Time) bool {
 	return !o.ExpiresAt.IsZero() && o.ExpiresAt.Before(now)
 }

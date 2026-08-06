@@ -13,7 +13,7 @@ import (
 )
 
 // cartEC construye un EffectContext del carrito (incluye SessionID, que aterriza
-// en orders.session_id).
+// en intakes.session_id).
 func cartEC(tenant, contact, session, flow string) runtime.EffectContext {
 	return runtime.EffectContext{
 		TenantID: tenant, ContactID: contact, SessionID: session, FlowID: flow, FlowVersion: 1,
@@ -33,7 +33,7 @@ func cartClosed(items []map[string]any, total float64) modules.Effect {
 }
 
 // TestPersistSink_Cart_MemoryProjection valida la proyección del carrito con el
-// MemoryRepository (sin BD): dos item_added abren UNA sola orden "open"; cart_closed
+// MemoryRepository (sin BD): dos item_added abren UNA sola solicitud "open"; cart_closed
 // la cierra con el total e inserta las 2 líneas; flow_events acumula todos los
 // efectos.
 func TestPersistSink_Cart_MemoryProjection(t *testing.T) {
@@ -48,31 +48,31 @@ func TestPersistSink_Cart_MemoryProjection(t *testing.T) {
 		}
 	}
 
-	// Dos item_added → UNA orden open (idempotencia de la identidad de negocio).
+	// Dos item_added → UNA solicitud open (idempotencia de la identidad de negocio).
 	must(itemAdded("CAFE", "Café", 2, 2.5))
 	must(itemAdded("FLAN", "Flan", 1, 3.0))
-	orders := repo.Orders()
-	if len(orders) != 1 || orders[0].Status != "open" {
-		t.Fatalf("esperaba 1 orden open, got %+v", orders)
+	intakes := repo.Intakes()
+	if len(intakes) != 1 || intakes[0].Status != "open" {
+		t.Fatalf("esperaba 1 solicitud open, got %+v", intakes)
 	}
-	if orders[0].SessionID != "sess-1" {
-		t.Fatalf("session_id no cableado en orders: %+v", orders[0])
+	if intakes[0].SessionID != "sess-1" {
+		t.Fatalf("session_id no cableado en intakes: %+v", intakes[0])
 	}
 
-	// cart_closed → cierra la orden con total 8.00 e inserta las 2 líneas.
+	// cart_closed → cierra la solicitud con total 8.00 e inserta las 2 líneas.
 	items := []map[string]any{
 		{"sku": "CAFE", "label": "Café", "qty": 2, "unit_price": 2.5},
 		{"sku": "FLAN", "label": "Flan", "qty": 1, "unit_price": 3.0},
 	}
 	must(cartClosed(items, 8.0))
 
-	orders = repo.Orders()
-	if len(orders) != 1 || orders[0].Status != "closed" || orders[0].Total != 8.0 {
-		t.Fatalf("esperaba 1 orden closed total 8.0, got %+v", orders)
+	intakes = repo.Intakes()
+	if len(intakes) != 1 || intakes[0].Status != "closed" || intakes[0].Total != 8.0 {
+		t.Fatalf("esperaba 1 solicitud closed total 8.0, got %+v", intakes)
 	}
-	lines := repo.OrderItems(orders[0].ID)
+	lines := repo.IntakeItems(intakes[0].ID)
 	if len(lines) != 2 {
-		t.Fatalf("esperaba 2 order_items, got %d (%+v)", len(lines), lines)
+		t.Fatalf("esperaba 2 intake_items, got %d (%+v)", len(lines), lines)
 	}
 
 	// flow_events: 2 item_added + 1 cart_closed = 3 (bitácora completa).
@@ -81,7 +81,7 @@ func TestPersistSink_Cart_MemoryProjection(t *testing.T) {
 	}
 }
 
-// TestPersistSink_Cart_MemoryCancel: cart_cancelled transiciona la orden open a
+// TestPersistSink_Cart_MemoryCancel: cart_cancelled transiciona la solicitud open a
 // cancelled.
 func TestPersistSink_Cart_MemoryCancel(t *testing.T) {
 	repo := store.NewMemoryRepository()
@@ -96,15 +96,15 @@ func TestPersistSink_Cart_MemoryCancel(t *testing.T) {
 	if err := sink.Handle(ctx, ec, cancel); err != nil {
 		t.Fatalf("Handle cart_cancelled: %v", err)
 	}
-	orders := repo.Orders()
-	if len(orders) != 1 || orders[0].Status != "cancelled" {
-		t.Fatalf("esperaba orden cancelled, got %+v", orders)
+	intakes := repo.Intakes()
+	if len(intakes) != 1 || intakes[0].Status != "cancelled" {
+		t.Fatalf("esperaba solicitud cancelled, got %+v", intakes)
 	}
 }
 
-// TestPersistSink_Cart_MemoryMenuSurveyNoOrders: efectos de menú/encuesta NO
-// tocan orders (no-regresión: solo el carrito proyecta orders).
-func TestPersistSink_Cart_MemoryMenuSurveyNoOrders(t *testing.T) {
+// TestPersistSink_Cart_MemoryMenuSurveyNoIntakes: efectos de menú/encuesta NO
+// tocan intakes (no-regresión: solo el carrito proyecta intakes).
+func TestPersistSink_Cart_MemoryMenuSurveyNoIntakes(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	sink := persistSinkWith(repo)
 	ctx := context.Background()
@@ -119,15 +119,15 @@ func TestPersistSink_Cart_MemoryMenuSurveyNoOrders(t *testing.T) {
 			t.Fatalf("Handle %s: %v", eff.Name, err)
 		}
 	}
-	if orders := repo.Orders(); len(orders) != 0 {
-		t.Fatalf("menú/encuesta NO deben crear orders, got %+v", orders)
+	if intakes := repo.Intakes(); len(intakes) != 0 {
+		t.Fatalf("menú/encuesta NO deben crear intakes, got %+v", intakes)
 	}
 }
 
 // TestPersistSink_Integracion_CartPedidoCompleto ejercita la proyección del
 // carrito contra Postgres real (gated por WAPP_TEST_DB_DSN): un pedido de 2 líneas
-// deja 1 fila en orders (closed, total 8.00) + 2 en order_items + 3 en flow_events;
-// cancelar deja la orden en cancelled. SKIP limpio sin DSN.
+// deja 1 fila en intakes (closed, total 8.00) + 2 en intake_items + 3 en flow_events;
+// cancelar deja la solicitud en cancelled. SKIP limpio sin DSN.
 func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	db := openTestDB(t) // migra incl. 0011/0012/0013
 	repo := store.NewPostgresRepository(db)
@@ -154,11 +154,11 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	}
 	must(cartClosed(items, 8.0))
 
-	assertClosedOrder(t, db, tenant, contact)
-	assertOrderItems(t, db, tenant, contact)
+	assertClosedIntake(t, db, tenant, contact)
+	assertIntakeItems(t, db, tenant, contact)
 	assertEventCount(t, db, flowID, 3)
 
-	// Cancelar: nueva orden open + cart_cancelled → cancelled.
+	// Cancelar: nueva solicitud open + cart_cancelled → cancelled.
 	ec2 := cartEC(tenant, fmt.Sprintf("c-cancel-%d", suffix), "sess-cart-2", flowID)
 	if err := sink.Handle(ctx, ec2, itemAdded("TE", "Té", 1, 2.0)); err != nil {
 		t.Fatalf("Handle item_added (cancel): %v", err)
@@ -167,13 +167,13 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	if err := sink.Handle(ctx, ec2, cancel); err != nil {
 		t.Fatalf("Handle cart_cancelled: %v", err)
 	}
-	assertOrderStatus(t, db, tenant, ec2.ContactID, "cancelled")
+	assertIntakeStatus(t, db, tenant, ec2.ContactID, "cancelled")
 }
 
 // TestCartTTL_Integracion_ExpiresAtAndExpire ejercita el ciclo de vida del TTL
 // contra Postgres real (gated por WAPP_TEST_DB_DSN): item_added fija expires_at a
 // futuro (now + order_ttl); forzado el vencimiento (expires_at al pasado), el
-// efecto cart_expired transiciona la orden a "expired" y deja la fila en
+// efecto cart_expired transiciona la solicitud a "expired" y deja la fila en
 // flow_events. SKIP limpio sin DSN.
 func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	db := openTestDB(t) // migra incl. 0011/0012/0013
@@ -187,32 +187,32 @@ func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	flowID := fmt.Sprintf("carrito-ttl-%d", suffix)
 	ec := cartEC(tenant, contactID, "sess-ttl", flowID)
 
-	// item_added abre la orden y fija expires_at a futuro (TTL default 1h).
+	// item_added abre la solicitud y fija expires_at a futuro (TTL default 1h).
 	if err := sink.Handle(ctx, ec, itemAdded("CAFE", "Café", 1, 2.5)); err != nil {
 		t.Fatalf("Handle item_added: %v", err)
 	}
-	order, found, err := repo.GetOpenOrder(ctx, tenant, contactID)
+	intake, found, err := repo.GetOpenIntake(ctx, tenant, contactID)
 	if err != nil || !found {
-		t.Fatalf("GetOpenOrder tras item_added: found=%v err=%v", found, err)
+		t.Fatalf("GetOpenIntake tras item_added: found=%v err=%v", found, err)
 	}
-	if order.ExpiresAt.IsZero() || !order.ExpiresAt.After(time.Now()) {
-		t.Fatalf("expires_at debe ser futuro tras item_added: %v", order.ExpiresAt)
+	if intake.ExpiresAt.IsZero() || !intake.ExpiresAt.After(time.Now()) {
+		t.Fatalf("expires_at debe ser futuro tras item_added: %v", intake.ExpiresAt)
 	}
 
 	// Fuerza el vencimiento: expires_at al pasado (misma semántica que el paso del
-	// tiempo). UpsertOrder es idempotente por id.
-	order.ExpiresAt = time.Now().Add(-time.Minute)
-	if err := repo.UpsertOrder(ctx, order); err != nil {
-		t.Fatalf("forzar vencimiento (UpsertOrder): %v", err)
+	// tiempo). UpsertIntake es idempotente por id.
+	intake.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := repo.UpsertIntake(ctx, intake); err != nil {
+		t.Fatalf("forzar vencimiento (UpsertIntake): %v", err)
 	}
 
-	// cart_expired (lo sintetiza el runtime al reanudar) → orden "expired" + fila
+	// cart_expired (lo sintetiza el runtime al reanudar) → solicitud "expired" + fila
 	// en flow_events (el mismo PersistSink lo materializa).
 	expired := modules.Effect{Kind: "event", Name: "cart_expired", Payload: map[string]any{}}
 	if err := sink.Handle(ctx, ec, expired); err != nil {
 		t.Fatalf("Handle cart_expired: %v", err)
 	}
-	assertOrderStatus(t, db, tenant, contactID, "expired")
+	assertIntakeStatus(t, db, tenant, contactID, "expired")
 
 	var nExpired int
 	if err := db.QueryRowContext(ctx,
@@ -225,44 +225,44 @@ func TestCartTTL_Integracion_ExpiresAtAndExpire(t *testing.T) {
 	}
 }
 
-// assertClosedOrder verifica 1 orden closed con total 8.00 y session_id cableado.
-func assertClosedOrder(t *testing.T, db *sql.DB, tenant, contact string) {
+// assertClosedIntake verifica 1 solicitud closed con total 8.00 y session_id cableado.
+func assertClosedIntake(t *testing.T, db *sql.DB, tenant, contact string) {
 	t.Helper()
 	var (
-		nOrders   int
+		nIntakes  int
 		status    string
 		totalNum  float64
 		sessionID string
 	)
 	if err := db.QueryRowContext(context.Background(), `
 		SELECT count(*), max(status), max(total), max(session_id)
-		FROM public.orders WHERE tenant_id = $1 AND contact_id = $2
-	`, tenant, contact).Scan(&nOrders, &status, &totalNum, &sessionID); err != nil {
-		t.Fatalf("SELECT orders: %v", err)
+		FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2
+	`, tenant, contact).Scan(&nIntakes, &status, &totalNum, &sessionID); err != nil {
+		t.Fatalf("SELECT intakes: %v", err)
 	}
-	if nOrders != 1 || status != "closed" || totalNum != 8.0 || sessionID != "sess-cart" {
-		t.Fatalf("orden inesperada: n=%d status=%q total=%v session=%q", nOrders, status, totalNum, sessionID)
+	if nIntakes != 1 || status != "closed" || totalNum != 8.0 || sessionID != "sess-cart" {
+		t.Fatalf("solicitud inesperada: n=%d status=%q total=%v session=%q", nIntakes, status, totalNum, sessionID)
 	}
 }
 
-// assertOrderItems verifica 2 líneas y la agregación de negocio SUM(qty*unit_price).
-func assertOrderItems(t *testing.T, db *sql.DB, tenant, contact string) {
+// assertIntakeItems verifica 2 líneas y la agregación de negocio SUM(qty*unit_price).
+func assertIntakeItems(t *testing.T, db *sql.DB, tenant, contact string) {
 	t.Helper()
 	var (
-		orderID string
-		nItems  int
-		sumTot  float64
+		intakeID string
+		nItems   int
+		sumTot   float64
 	)
 	if err := db.QueryRowContext(context.Background(), `
 		SELECT o.id::text, count(oi.*), COALESCE(SUM(oi.qty * oi.unit_price), 0)
-		FROM public.orders o JOIN public.order_items oi ON oi.order_id = o.id
+		FROM public.intakes o JOIN public.intake_items oi ON oi.intake_id = o.id
 		WHERE o.tenant_id = $1 AND o.contact_id = $2
 		GROUP BY o.id
-	`, tenant, contact).Scan(&orderID, &nItems, &sumTot); err != nil {
-		t.Fatalf("SELECT order_items: %v", err)
+	`, tenant, contact).Scan(&intakeID, &nItems, &sumTot); err != nil {
+		t.Fatalf("SELECT intake_items: %v", err)
 	}
 	if nItems != 2 || sumTot != 8.0 {
-		t.Fatalf("order_items inesperado: n=%d suma=%v", nItems, sumTot)
+		t.Fatalf("intake_items inesperado: n=%d suma=%v", nItems, sumTot)
 	}
 }
 
@@ -279,16 +279,16 @@ func assertEventCount(t *testing.T, db *sql.DB, flowID string, want int) {
 	}
 }
 
-// assertOrderStatus verifica el status de la (única) orden de un contacto.
-func assertOrderStatus(t *testing.T, db *sql.DB, tenant, contact, want string) {
+// assertIntakeStatus verifica el status de la (única) solicitud de un contacto.
+func assertIntakeStatus(t *testing.T, db *sql.DB, tenant, contact, want string) {
 	t.Helper()
 	var status string
 	if err := db.QueryRowContext(context.Background(), `
-		SELECT status FROM public.orders WHERE tenant_id = $1 AND contact_id = $2
+		SELECT status FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2
 	`, tenant, contact).Scan(&status); err != nil {
-		t.Fatalf("SELECT orden (%s): %v", want, err)
+		t.Fatalf("SELECT solicitud (%s): %v", want, err)
 	}
 	if status != want {
-		t.Fatalf("esperaba orden %q, got %q", want, status)
+		t.Fatalf("esperaba solicitud %q, got %q", want, status)
 	}
 }
