@@ -518,7 +518,8 @@ func (r *MemoryRepository) MarkIntakeStatus(_ context.Context, intakeID, status 
 // CloseIntake implementa Repository: cierra atómicamente (bajo el mutex del repo) la
 // solicitud "open" del contacto —o crea una "closed" si no la hubiera— e inserta sus
 // líneas, imitando la transacción del PostgresRepository (Plan 027 · Ola 1 · T4).
-func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) error {
+// Devuelve el id de la solicitud cerrada, igual que el store real.
+func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
@@ -553,7 +554,7 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) error 
 		}
 		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
 	}
-	return nil
+	return intakeID, nil
 }
 
 // GetTenantSettings implementa Repository: devuelve la config sembrada para

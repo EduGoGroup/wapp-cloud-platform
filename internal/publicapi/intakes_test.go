@@ -1,6 +1,7 @@
 package publicapi_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -66,10 +67,20 @@ type intakeItemDTO struct {
 	UnitPrice float64 `json:"unit_price"`
 }
 
+type intakeRevisionDTO struct {
+	RevisionNo   int             `json:"revision_no"`
+	Kind         string          `json:"kind"`
+	Payload      json.RawMessage `json:"payload"`
+	RenderedText string          `json:"rendered_text"`
+	CreatedBy    string          `json:"created_by"`
+	CreatedAt    string          `json:"created_at"`
+}
+
 type intakeDetailDTO struct {
 	intakeDTO
-	Items              []intakeItemDTO `json:"items"`
-	AllowedTransitions []string        `json:"allowed_transitions"`
+	Items              []intakeItemDTO     `json:"items"`
+	Revisions          []intakeRevisionDTO `json:"revisions"`
+	AllowedTransitions []string            `json:"allowed_transitions"`
 }
 
 type invalidTransitionDTO struct {
@@ -366,17 +377,64 @@ func TestIntakeDetail_200_ConLíneasYContactoOpaco(t *testing.T) {
 		t.Fatalf("items=%+v; quiero las dos líneas en el orden en que se añadieron", detail.Items)
 	}
 
-	// El detalle NO inventa revisiones: intake_revisions nace en T4.1 (Ola 4).
+	// Una solicitud sin revisiones publica `[]`, nunca `null`: desde que la tabla
+	// existe (migración 0045) el vacío significa "no tiene", no "no sé".
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("unmarshal crudo: %v", err)
 	}
-	if _, ok := raw["revisions"]; ok {
-		t.Fatal("el detalle publica `revisions` sin que exista la tabla: es fingir el hueco")
+	revs, ok := raw["revisions"]
+	if !ok {
+		t.Fatal("el detalle no publica `revisions`")
+	}
+	if string(revs) != "[]" {
+		t.Fatalf("revisions=%s en una solicitud sin revisiones; quiero [] (nunca null)", revs)
 	}
 	// Ni el tenant: siempre es el del token (INV-8).
 	if _, ok := raw["tenant_id"]; ok {
 		t.Fatal("el detalle no debe devolver tenant_id: es el del token")
+	}
+}
+
+// TestIntakeDetail_200_PublicaLasRevisiones: la revisión que escribió el cierre del
+// carrito es CONSULTABLE por GET /api/v1/intakes/{id} (ADR-0031 §3, Plan 041 T4.1).
+// El payload viaja crudo, con su `version` dentro.
+func TestIntakeDetail_200_PublicaLasRevisiones(t *testing.T) {
+	store := seedIntakes()
+	if _, err := store.InsertRevision(context.Background(), intakes.Revision{
+		IntakeID:  intakeA1,
+		Kind:      intakes.RevisionKindCart,
+		Payload:   json.RawMessage(`{"version":1,"total":48000,"items":[{"sku":"torta-v1","qty":1}]}`),
+		CreatedBy: intakes.RevisionBySystem,
+	}); err != nil {
+		t.Fatalf("sembrar revisión: %v", err)
+	}
+	api := newAPI(intakesDeps(store), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA1, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var detail intakeDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal del detalle: %v; body=%s", err, rec.Body.String())
+	}
+	if len(detail.Revisions) != 1 {
+		t.Fatalf("revisions=%+v; quiero exactamente la revisión 1", detail.Revisions)
+	}
+	rev := detail.Revisions[0]
+	if rev.RevisionNo != 1 || rev.Kind != intakes.RevisionKindCart || rev.CreatedBy != intakes.RevisionBySystem {
+		t.Fatalf("revisión publicada mal: %+v", rev)
+	}
+	var payload struct {
+		Version int     `json:"version"`
+		Total   float64 `json:"total"`
+	}
+	if err := json.Unmarshal(rev.Payload, &payload); err != nil {
+		t.Fatalf("payload crudo no es JSON (%s): %v", rev.Payload, err)
+	}
+	if payload.Version != intakes.RevisionPayloadVersion || payload.Total != 48000 {
+		t.Fatalf("payload=%s; se publica TAL CUAL se guardó", rev.Payload)
 	}
 }
 

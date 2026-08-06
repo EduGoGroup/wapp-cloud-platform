@@ -5,6 +5,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // persistSinkWith construye el PersistSink con los proyectores por-módulo (cart +
@@ -12,8 +13,14 @@ import (
 // proyección (intakes/intake_items/survey_results) sigan escribiendo las MISMAS filas
 // tras extraer la proyección a los módulos (Plan 027 · Ola 3 · T8). Solo cambia el
 // CABLEADO del sink; las expectativas de cada test son idénticas.
+//
+// El escritor de revisiones va en memoria: estos tests miran la proyección a
+// intakes/intake_items, no la revisión, pero el carrito ya no cierra sin dejarla y
+// pasarle un nil lo haría estallar (ADR-0031 §3, Plan 041 · T4.1).
 func persistSinkWith(repo store.Repository) *runtime.PersistSink {
-	return runtime.NewPersistSink(repo, cart.NewProjector(repo), survey.NewProjector(repo))
+	return runtime.NewPersistSink(repo,
+		cart.NewProjector(repo, intakes.NewMemoryStore()),
+		survey.NewProjector(repo))
 }
 
 // cartResumeOpt registra la ResumePolicy del carrito (TTL perezoso + auto-reinicio +

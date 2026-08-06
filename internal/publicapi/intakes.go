@@ -77,16 +77,35 @@ type intakeListResponse struct {
 // Un estado TERMINAL devuelve `[]`, nunca `null`: "no hay acciones" y "no sé" son
 // respuestas distintas y la UI pinta cosas distintas con cada una.
 //
-// Las REVISIONES (design §3, intake_revisions) NO aparecen: esa tabla nace en T4.1
-// (Ola 4) y publicar un `"revisions": []` afirmaría "esta solicitud no tiene
-// revisiones" cuando la verdad es "todavía no se registran". El hueco está
-// previsto —el campo entra aquí cuando la tabla exista— pero no se finge. La
-// diferencia con `allowed_transitions` es que este SÍ se puede responder hoy con
-// la verdad completa: la máquina de estados ya existe.
+// `revisions` es la NEGOCIACIÓN auditada (ADR-0031 §3, tabla intake_revisions de la
+// migración 0045). Va aparte de `items` porque son cosas distintas: `items` es lo
+// VENDIDO y `revisions` el rastro de cómo se llegó a ello. Un `[]` aquí ya no es
+// una respuesta fingida como lo habría sido antes de que la tabla existiera:
+// significa literalmente "esta solicitud no tiene revisiones registradas".
 type intakeDetailResponse struct {
 	intakeDTO
-	Items              []intakeItemDTO `json:"items"`
-	AllowedTransitions []string        `json:"allowed_transitions"`
+	Items              []intakeItemDTO     `json:"items"`
+	Revisions          []intakeRevisionDTO `json:"revisions"`
+	AllowedTransitions []string            `json:"allowed_transitions"`
+}
+
+// intakeRevisionDTO es una revisión al wire.
+//
+// `payload` viaja como JSON CRUDO (json.RawMessage), no como un objeto tipado: su
+// forma depende de `kind` y del `version` que lleva dentro, y tiparlo aquí
+// obligaría a esta capa a conocer todas las formas presentes y futuras — incluida
+// la del Plan 044, que aún no existe. El `version` dentro del blob es lo que
+// permite a un cliente saber si entiende lo que lee.
+//
+// CERO PII: ni el payload ni el texto renderizado llevan datos del comprador (esos
+// viven cifrados en intake_buyer_data); `created_by` es un ROL, nunca una persona.
+type intakeRevisionDTO struct {
+	RevisionNo   int             `json:"revision_no"`
+	Kind         string          `json:"kind"`
+	Payload      json.RawMessage `json:"payload"`
+	RenderedText string          `json:"rendered_text,omitempty"`
+	CreatedBy    string          `json:"created_by,omitempty"`
+	CreatedAt    string          `json:"created_at"`
 }
 
 // invalidTransitionResponse es el cuerpo del 422 de POST …/status: dónde está la
@@ -163,9 +182,21 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 				SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice,
 			})
 		}
+		revisions := make([]intakeRevisionDTO, 0, len(detail.Revisions))
+		for _, rev := range detail.Revisions {
+			revisions = append(revisions, intakeRevisionDTO{
+				RevisionNo:   rev.RevisionNo,
+				Kind:         rev.Kind,
+				Payload:      rev.Payload,
+				RenderedText: rev.RenderedText,
+				CreatedBy:    rev.CreatedBy,
+				CreatedAt:    rev.CreatedAt.UTC().Format(time.RFC3339),
+			})
+		}
 		writeJSON(w, http.StatusOK, intakeDetailResponse{
 			intakeDTO: toIntakeDTO(detail.Intake),
 			Items:     items,
+			Revisions: revisions,
 			// detail.Status ya viene normalizado del dominio: una solicitud
 			// guardada como `closed` ofrece los destinos de `confirmed`.
 			AllowedTransitions: intakes.AllowedTransitions(detail.Status),

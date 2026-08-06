@@ -190,9 +190,14 @@ func Run(ctx context.Context) error {
 
 	triggerStore := trigger.NewPostgresStore(db)
 	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
+	// El store de SOLICITUDES lo comparten dos consumidores: el proyector del
+	// carrito, que le cuelga la revisión 1 al cerrar (ADR-0031 §3), y la API
+	// pública, que lee la bandeja. Es el mismo pool y el mismo dominio: dos
+	// instancias solo serían dos nombres para lo mismo.
+	intakeStore := intakes.NewPostgres(db)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
-			cart.NewProjector(flowStore),
+			cart.NewProjector(flowStore, intakeStore),
 			survey.NewProjector(flowStore))),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
@@ -266,7 +271,7 @@ func Run(ctx context.Context) error {
 		Triggers:        triggerStore,
 		Intents:         intentStore,
 		Entitlements:    entResolver,
-		Intakes:         intakes.NewService(intakes.NewPostgres(db)),
+		Intakes:         intakes.NewService(intakeStore),
 		TenantVariables: tenantvars.NewPostgres(db),
 		ConfigPush:      gw,
 		Health:          publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},

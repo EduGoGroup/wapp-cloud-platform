@@ -2,12 +2,14 @@ package cart
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // Estados del ciclo de vida de una solicitud (public.intakes). Viven aquí porque la
@@ -27,7 +29,18 @@ type ProjectionStore interface {
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
-	CloseIntake(ctx context.Context, in store.IntakeClose) error
+	CloseIntake(ctx context.Context, in store.IntakeClose) (string, error)
+}
+
+// RevisionWriter es lo ÚNICO que el proyector necesita del dominio de solicitudes:
+// dejar constancia de la versión que acaba de cerrar. Lo satisfacen
+// *intakes.Postgres y *intakes.MemoryStore.
+//
+// Se declara aquí, del lado del consumidor (idioma Go), en vez de importar el
+// puerto entero: el carrito no lista solicitudes, no las transiciona y no debe
+// poder hacerlo.
+type RevisionWriter interface {
+	InsertRevision(ctx context.Context, rev intakes.Revision) (intakes.Revision, error)
 }
 
 // Projector implementa modules.Projector para los efectos del carrito (Plan 027 ·
@@ -36,13 +49,19 @@ type ProjectionStore interface {
 // transicionan la solicitud. Es un adaptador IMPURO; produce EXACTAMENTE las mismas
 // filas que producía el switch central del PersistSink (retrofit por efectos, §9.D).
 type Projector struct {
-	store ProjectionStore
-	now   func() time.Time
+	store     ProjectionStore
+	revisions RevisionWriter
+	now       func() time.Time
 }
 
-// NewProjector construye el proyector del carrito sobre el almacén dado.
-func NewProjector(s ProjectionStore) *Projector {
-	return &Projector{store: s, now: time.Now}
+// NewProjector construye el proyector del carrito sobre el almacén de solicitudes
+// y el escritor de revisiones.
+//
+// `revisions` es un parámetro OBLIGATORIO y no una opción con cero-valor a
+// propósito: un proyector sin escritor de revisiones cerraría carritos sin dejar
+// rastro y ningún test lo notaría. Si falta, que rompa en compilación.
+func NewProjector(s ProjectionStore, revisions RevisionWriter) *Projector {
+	return &Projector{store: s, revisions: revisions, now: time.Now}
 }
 
 // Handles reconoce los efectos que el carrito PROYECTA a tablas tipadas. Los efectos
@@ -106,15 +125,59 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 
 // closeIntake proyecta cart_closed: cierra ATÓMICAMENTE la solicitud abierta (o crea una
 // "closed" coherente) con el total del payload e inserta TODAS las líneas (fuente de
-// verdad). Delega en store.CloseIntake (una transacción, Plan 027 · Ola 1 · T4).
+// verdad). Delega en store.CloseIntake (una transacción, Plan 027 · Ola 1 · T4) y
+// después le cuelga la REVISIÓN 1 (ADR-0031 §3): la foto de lo que el carrito armó.
+//
+// La revisión se escribe FUERA de la transacción del cierre, y eso es una decisión
+// consciente con un costo asumido: si su INSERT falla, queda una solicitud cerrada
+// y coherente —líneas incluidas— sin su revisión 1, y el error sube al dispatcher,
+// que lo LOGUEA sin abortar el avance de la conversación (ver PersistSink.Handle).
+// Se acepta porque la verdad de lo vendido es intake_items, no la revisión: perder
+// el rastro de la negociación degrada la auditoría, mientras que meter el escritor
+// de revisiones dentro de la transacción del motor obligaría al carrito a compartir
+// la conexión con otro módulo. Lo que NO ocurre es que se pierdan las dos: el
+// cierre ya está confirmado cuando esto se intenta.
 func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
-	return p.store.CloseIntake(ctx, store.IntakeClose{
+	items := cartItems(eff.Payload)
+	total := modules.AsFloat(eff.Payload["total"])
+
+	intakeID, err := p.store.CloseIntake(ctx, store.IntakeClose{
 		TenantID:  meta.TenantID,
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
-		Total:     modules.AsFloat(eff.Payload["total"]),
-		Items:     cartItems(eff.Payload),
+		Total:     total,
+		Items:     items,
 	})
+	if err != nil {
+		return err
+	}
+
+	payload, err := intakes.CartRevisionPayload(total, revisionLines(items))
+	if err != nil {
+		return err
+	}
+	if _, err := p.revisions.InsertRevision(ctx, intakes.Revision{
+		IntakeID:  intakeID,
+		Kind:      intakes.RevisionKindCart,
+		Payload:   payload,
+		CreatedBy: intakes.RevisionBySystem,
+	}); err != nil {
+		return fmt.Errorf("cart: revisión del cierre de la solicitud %s: %w", intakeID, err)
+	}
+	return nil
+}
+
+// revisionLines congela las líneas del cierre en la forma del payload de la
+// revisión. No lleva added_at: la revisión ya está fechada entera y el instante de
+// cada línea es del carrito, no de la foto.
+func revisionLines(items []store.IntakeItem) []intakes.RevisionLine {
+	out := make([]intakes.RevisionLine, 0, len(items))
+	for _, it := range items {
+		out = append(out, intakes.RevisionLine{
+			SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice,
+		})
+	}
+	return out
 }
 
 // transitionOpenIntake lleva la solicitud "open" a cancelled/expired (design.md §3.4).

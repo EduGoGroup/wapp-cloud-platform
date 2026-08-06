@@ -78,16 +78,21 @@ type Item struct {
 	AddedAt   time.Time
 }
 
-// Detail es la solicitud completa: cabecera + líneas.
+// Detail es la solicitud completa: cabecera + líneas + revisiones.
 //
-// Las REVISIONES del ciclo extendido (design §3, tabla intake_revisions) NO están
-// aquí a propósito: esa tabla la crea T4.1 (Ola 4) y este paquete no inventa un
-// campo vacío que fingiría "esta solicitud no tiene revisiones" cuando la verdad
-// es "todavía no se registran". Cuando la tabla exista, el campo se añade aquí y
-// el detalle lo publica.
+// Items es la verdad de lo VENDIDO; Revisions es el rastro de cómo se llegó a ello
+// (ADR-0031 §3). Son cosas distintas y por eso viajan por separado: corregir el
+// borrador no reescribe lo vendido, y ver lo vendido no obliga a leer la
+// negociación entera.
+//
+// Revisions solo lo puebla Get. El export (ListDetails) NO las trae: una hoja de
+// cálculo de la bandeja del día no es el sitio donde se audita una negociación, y
+// arrastrarlas multiplicaría por N el volumen de un camino que ya tiene su cota en
+// MaxExportIntakes.
 type Detail struct {
 	Intake
-	Items []Item
+	Items     []Item
+	Revisions []Revision
 }
 
 // Filter acota el listado de solicitudes. Todos los campos son opcionales: el
@@ -154,8 +159,8 @@ type Store interface {
 	// recientes primero) y el TOTAL de coincidencias del filtro sin paginar.
 	List(ctx context.Context, tenantID string, f Filter) (items []Intake, total int, err error)
 
-	// Get devuelve la solicitud con sus líneas, o ErrNotFound si no existe en
-	// ESE tenant (404 opaco: no se distingue de "es de otro tenant").
+	// Get devuelve la solicitud con sus líneas y sus revisiones, o ErrNotFound si
+	// no existe en ESE tenant (404 opaco: no se distingue de "es de otro tenant").
 	Get(ctx context.Context, tenantID, intakeID string) (Detail, error)
 
 	// ListDetails devuelve las solicitudes que casan con el filtro CON sus líneas,

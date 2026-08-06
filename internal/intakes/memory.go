@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemoryStore es un Store en memoria para tests. Reproduce las MISMAS semánticas
@@ -14,9 +15,10 @@ import (
 // Guarda el estado EN CRUDO (como la BD, con su `closed` legado) y normaliza al
 // leer: así el camino de normalización se ejercita de verdad.
 type MemoryStore struct {
-	mu    sync.Mutex
-	rows  map[string][]row // por tenant
-	items map[string][]Item
+	mu        sync.Mutex
+	rows      map[string][]row // por tenant
+	items     map[string][]Item
+	revisions map[string][]Revision // por solicitud, en orden de escritura
 }
 
 // row es una solicitud almacenada con su estado tal cual (sin normalizar).
@@ -27,7 +29,11 @@ type row struct {
 
 // NewMemoryStore construye un store en memoria vacío.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{rows: map[string][]row{}, items: map[string][]Item{}}
+	return &MemoryStore{
+		rows:      map[string][]row{},
+		items:     map[string][]Item{},
+		revisions: map[string][]Revision{},
+	}
 }
 
 // Add siembra una solicitud del tenant con sus líneas. `in.Status` se guarda tal
@@ -135,9 +141,42 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, intakeID string) (Detail,
 		}
 		in := r.intake
 		in.Status = NormalizeStatus(r.status)
-		return Detail{Intake: in, Items: slices.Clone(m.items[intakeID])}, nil
+		return Detail{
+			Intake:    in,
+			Items:     slices.Clone(m.items[intakeID]),
+			Revisions: slices.Clone(m.revisions[intakeID]),
+		}, nil
 	}
 	return Detail{}, ErrNotFound
+}
+
+// InsertRevision implementa RevisionWriter con la MISMA numeración que el store
+// Postgres: el siguiente correlativo de esa solicitud, 1 para la primera.
+//
+// No comprueba que la solicitud exista: la FK de la tabla real sí lo hace, pero un
+// store de tests que exigiera sembrar la cabecera obligaría a montar media bandeja
+// para probar una revisión suelta.
+func (m *MemoryStore) InsertRevision(_ context.Context, rev Revision) (Revision, error) {
+	if len(rev.Payload) == 0 {
+		return Revision{}, ErrEmptyRevisionPayload
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rev.RevisionNo = len(m.revisions[rev.IntakeID]) + 1
+	if rev.CreatedAt.IsZero() {
+		rev.CreatedAt = time.Now()
+	}
+	m.revisions[rev.IntakeID] = append(m.revisions[rev.IntakeID], rev)
+	return rev, nil
+}
+
+// Revisions devuelve las revisiones sembradas/escritas para una solicitud, en
+// orden. Es un mirador para los tests, no parte de ningún puerto.
+func (m *MemoryStore) Revisions(intakeID string) []Revision {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.revisions[intakeID])
 }
 
 // UpdateStatus implementa Store con el mismo compare-and-swap que el Postgres.

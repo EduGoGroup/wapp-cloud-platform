@@ -18,6 +18,12 @@ const (
 	sqlstateSerialization = "40001" // serialization_failure
 )
 
+// sqlstateUniqueViolation es el conflicto con un índice único (23505). NO es
+// transitorio en el sentido de WithTx —reejecutar la MISMA sentencia vuelve a
+// chocar—, pero sí lo es para quien calcula el valor a insertar leyendo el máximo
+// actual: ahí el reintento relee y converge. Por eso vive aparte.
+const sqlstateUniqueViolation = "23505"
+
 // maxTxAttempts acota los reintentos de WithTx ante un fallo transitorio. 8
 // intentos con backoff exponencial acotado convergen de sobra en la práctica;
 // agotarlos devuelve el último error envuelto (no se cuelga indefinidamente).
@@ -30,6 +36,15 @@ const maxTxAttempts = 8
 func IsSerializationFailure(err error) bool {
 	var pg *pgconn.PgError
 	return errors.As(err, &pg) && (pg.Code == sqlstateDeadlock || pg.Code == sqlstateSerialization)
+}
+
+// IsUniqueViolation reporta si err (o alguno envuelto) es una violación de índice
+// único (23505). Lo usa quien numera una fila leyendo el máximo actual: dos
+// escritores concurrentes calculan el mismo número, uno pierde con 23505 y al
+// reintentar relee un máximo ya mayor.
+func IsUniqueViolation(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == sqlstateUniqueViolation
 }
 
 // WithTx ejecuta fn dentro de UNA transacción y REINTENTA la transacción completa

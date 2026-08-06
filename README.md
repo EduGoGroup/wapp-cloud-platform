@@ -15,7 +15,7 @@ firma. Ver `docs/adr/` y el ADR local de adopción.
 - Módulo Go: `github.com/EduGoGroup/wapp-cloud-platform`
 - Go **1.26**
 - Binarios: `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale)
-- SchemaVersion **0.24.0** (última migración `0040_entitlements_read_grant.sql`)
+- SchemaVersion **0.25.0** (última migración `0045_intakes_lifecycle.sql`)
 
 ## Estado
 
@@ -71,15 +71,31 @@ channels), nunca RabbitMQ ni Redis (ADR-0003).
 
 Los scripts SQL embebidos viven en
 `internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` …
-`0044_tenant_content_versions.sql`). El runner de `platform/storage/postgres` los aplica
-al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.24.0**)
+`0045_intakes_lifecycle.sql`). El runner de `platform/storage/postgres` los aplica
+al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.25.0**)
 contra `public.schema_version`; además calcula un hash de los archivos para
-detectar cambios aunque no se haya subido la versión. **Obligatorio incrementar
-`SchemaVersion` al tocar cualquier `structure/*.sql`.**
+detectar cambios aunque no se haya subido la versión.
 
 El runner es **full-replay**: cuando detecta cambio de hash reejecuta TODOS los
 `structure/*.sql`, no solo los nuevos. Por eso el DDL es idempotente
 (`CREATE ... IF NOT EXISTS`) y lo destructivo va con guard.
+
+### Cuándo subir `SchemaVersion`
+
+La decisión de reaplicar la toma `isUpToDate`, que exige **versión Y hash**
+(`migrations/schema.go:82`). Como tocar un `.sql` ya cambia el hash, el replay
+ocurre igual sin bump — verificado contra Postgres real (Plan 041 · T3.3): con la
+misma versión y el hash alterado, **todos** los `structure/*.sql` se reejecutaron
+sobre una BD **con datos** sin perder filas. Por eso la regla tiene dos mitades:
+
+- Una **ola intermedia** de un plan puede añadir migraciones **sin bump**. Es seguro
+  y evita una ristra de versiones que no significan nada: el Plan 041 añadió
+  `0041`–`0045` en cuatro olas con **un solo** incremento.
+- **Publicar un plan sin su bump, no.** Al salir a `dev`/`main`, `SchemaVersion` debe
+  reflejar el esquema nuevo: es lo único que un operador puede comparar contra
+  `public.schema_version` para saber qué esquema corre en esa base.
+
+Regla operativa: **un bump por plan**, en el commit que el plan designe.
 
 ### Aplicar migraciones sin levantar la plataforma
 

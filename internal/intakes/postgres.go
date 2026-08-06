@@ -7,12 +7,16 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
-// Postgres implementa Store con SQL raw sobre public.intakes y public.intake_items
-// (tablas del Plan 016 renombradas por la migración 0041). Es SOLO LECTURA sobre lo
-// que escribe el módulo cart, más la transición de estado del ciclo extendido: aquí
-// no se crean solicitudes ni se tocan líneas.
+// Postgres implementa Store y RevisionWriter con SQL raw sobre public.intakes,
+// public.intake_items y public.intake_revisions (las dos primeras del Plan 016,
+// renombradas por la migración 0041; la tercera nace en la 0045). Sobre solicitudes
+// y líneas es SOLO LECTURA más la transición de estado —aquí no se crean solicitudes
+// ni se tocan líneas, eso es del módulo cart—; lo único que ESCRIBE de cero son
+// revisiones.
 type Postgres struct {
 	db *sql.DB
 }
@@ -235,7 +239,11 @@ func (p *Postgres) Get(ctx context.Context, tenantID, intakeID string) (Detail, 
 	if err != nil {
 		return Detail{}, err
 	}
-	return Detail{Intake: head, Items: items}, nil
+	revs, err := p.revisions(ctx, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	return Detail{Intake: head, Items: items, Revisions: revs}, nil
 }
 
 // items lee las líneas de una solicitud en el orden en que se añadieron. No filtra
@@ -269,6 +277,118 @@ func (p *Postgres) items(ctx context.Context, intakeID string) (out []Item, err 
 		return nil, fmt.Errorf("intakes: recorrer líneas: %w", rerr)
 	}
 	return out, nil
+}
+
+// revisionCols es la proyección de una revisión. `id` NO se lee: la identidad que
+// significa algo fuera de la BD es (intake_id, revision_no).
+const revisionCols = `revision_no, kind, payload, rendered_text, created_by, created_at`
+
+// revisions lee las revisiones de una solicitud en orden cronológico. No filtra por
+// tenant: la cabecera ya se validó contra el tenant y la FK garantiza que estas
+// revisiones son suyas (mismo criterio que items).
+func (p *Postgres) revisions(ctx context.Context, intakeID string) (out []Revision, err error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT `+revisionCols+`
+		FROM public.intake_revisions
+		WHERE intake_id = $1
+		ORDER BY revision_no
+	`, intakeID)
+	if err != nil {
+		return nil, fmt.Errorf("intakes: listar revisiones: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("intakes: cerrar filas de revisiones: %w", cerr)
+		}
+	}()
+
+	out = []Revision{}
+	for rows.Next() {
+		rev := Revision{IntakeID: intakeID}
+		var rendered, createdBy sql.NullString
+		if serr := rows.Scan(&rev.RevisionNo, &rev.Kind, &rev.Payload,
+			&rendered, &createdBy, &rev.CreatedAt); serr != nil {
+			return nil, fmt.Errorf("intakes: leer revisión: %w", serr)
+		}
+		rev.RenderedText, rev.CreatedBy = rendered.String, createdBy.String
+		out = append(out, rev)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("intakes: recorrer revisiones: %w", rerr)
+	}
+	return out, nil
+}
+
+// insertRevisionQuery numera y escribe la revisión en UNA sentencia: el
+// `COALESCE(MAX(revision_no), 0) + 1` se evalúa DENTRO del INSERT, así que entre el
+// cálculo y la escritura no cabe una lectura ajena. Lo que sí cabe es otro INSERT
+// concurrente que calcule el mismo número: ese pierde contra el UNIQUE (23505) y lo
+// resuelve el reintento de InsertRevision, no un candado que serializaría a todos.
+const insertRevisionQuery = `
+	INSERT INTO public.intake_revisions
+		(intake_id, revision_no, kind, payload, rendered_text, created_by)
+	SELECT $1::uuid, COALESCE(MAX(revision_no), 0) + 1, $2, $3::jsonb, $4, $5
+	FROM public.intake_revisions WHERE intake_id = $1::uuid
+	RETURNING ` + revisionCols
+
+// maxRevisionAttempts acota los reintentos por colisión de numeración. Los
+// escritores de revisiones de UNA solicitud son pocos y esporádicos (un cierre de
+// carrito, una corrección del dueño, una revalidación): 5 intentos sobran, y
+// agotarlos devuelve el error en vez de girar indefinidamente.
+const maxRevisionAttempts = 5
+
+// InsertRevision implementa RevisionWriter: numera la revisión con el siguiente
+// correlativo de esa solicitud y la escribe. rev.RevisionNo de entrada se ignora.
+func (p *Postgres) InsertRevision(ctx context.Context, rev Revision) (Revision, error) {
+	if len(rev.Payload) == 0 {
+		return Revision{}, ErrEmptyRevisionPayload
+	}
+	if _, err := uuid.Parse(rev.IntakeID); err != nil {
+		return Revision{}, ErrNotFound
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxRevisionAttempts; attempt++ {
+		out, err := p.insertRevisionOnce(ctx, rev)
+		switch {
+		case err == nil:
+			return out, nil
+		case postgres.IsUniqueViolation(err):
+			// Otro escritor se llevó ese revision_no: reintentar relee un máximo
+			// ya mayor y converge.
+			lastErr = err
+		default:
+			return Revision{}, err
+		}
+	}
+	return Revision{}, fmt.Errorf("intakes: numerar la revisión tras %d intentos: %w", maxRevisionAttempts, lastErr)
+}
+
+// insertRevisionOnce ejecuta UN intento de numeración+escritura.
+func (p *Postgres) insertRevisionOnce(ctx context.Context, rev Revision) (Revision, error) {
+	out := Revision{IntakeID: rev.IntakeID}
+	var rendered, createdBy sql.NullString
+	err := p.db.QueryRowContext(ctx, insertRevisionQuery,
+		rev.IntakeID, rev.Kind, []byte(rev.Payload),
+		nullableText(rev.RenderedText), nullableText(rev.CreatedBy),
+	).Scan(&out.RevisionNo, &out.Kind, &out.Payload, &rendered, &createdBy, &out.CreatedAt)
+	if err != nil {
+		// Se envuelve SIEMPRE, incluida la colisión de numeración: quien la
+		// distingue arriba usa errors.As, que atraviesa el %w.
+		return Revision{}, fmt.Errorf("intakes: insertar revisión: %w", err)
+	}
+	out.RenderedText, out.CreatedBy = rendered.String, createdBy.String
+	return out, nil
+}
+
+// nullableText manda NULL en vez de cadena vacía a una columna opcional: "no hubo
+// texto renderizado" y "el texto renderizado fue la cadena vacía" son cosas
+// distintas, y la columna admite la diferencia.
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // UpdateStatus implementa Store con un COMPARE-AND-SWAP: la escritura solo ocurre

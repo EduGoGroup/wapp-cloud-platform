@@ -536,8 +536,17 @@ func insertIntakeItems(ctx context.Context, ex execer, intakeID string, items []
 // serializan (el segundo la ve ya "closed" y no crea otra). Si no había solicitud
 // abierta, crea una "closed" coherente. Garantiza que una solicitud closed nunca quede
 // sin líneas.
-func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) error {
-	return postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+//
+// Devuelve el ID de la solicitud cerrada porque quien cierra necesita saber SOBRE
+// QUÉ cerró: es lo que permite colgarle la revisión 1 (ADR-0031 §3). Sin él, el
+// llamante tendría que releer "la última cerrada de este contacto", que es una
+// carrera con el siguiente carrito.
+func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (string, error) {
+	// Se declara FUERA de la clausura porque WithTx puede REEJECUTARLA ante un
+	// deadlock: cada intento reasigna el id y el que sobrevive es el del intento
+	// que confirmó.
+	var closedID string
+	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
 		var intakeID string
 		err := tx.QueryRowContext(ctx, `
 			SELECT id::text FROM public.intakes
@@ -566,8 +575,13 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) er
 				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
 			}
 		}
+		closedID = intakeID
 		return insertIntakeItems(ctx, tx, intakeID, in.Items)
 	})
+	if err != nil {
+		return "", err
+	}
+	return closedID, nil
 }
 
 // GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID);

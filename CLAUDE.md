@@ -13,7 +13,7 @@
 **Monolito modular Go** (ADR-0010) que aloja todo lo que gestiona el equipo de wApp
 (plataforma SaaS). La nube **piensa**; el Edge despacha (ADR-0005).
 
-**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.24.0` —
+**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.25.0` —
 `internal/platform/storage/postgres/migrations/version.go`; no fijamos aquí un SHA porque
 caduca al commit siguiente). NO es scaffold ni greenfield:
 cubre IAM, API pública, Motor de Flujos con sus módulos, gateway CloudLink y la
@@ -117,11 +117,25 @@ durabilidad la da el `outbox` del Edge.
 ### Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0040_entitlements_read_grant.sql`).
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0045_intakes_lifecycle.sql`).
 El runner los aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy
-**0.24.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
-aunque no se suba la versión. **Obligatorio incrementar `SchemaVersion` al tocar cualquier
-`structure/*.sql`.**
+**0.25.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
+aunque no se suba la versión.
+
+**Cuándo hay que subir `SchemaVersion` — la regla honesta.** El runner reaplica por **hash de
+contenido**: `isUpToDate` exige versión **Y** hash (`migrations/schema.go:82`), así que tocar un
+`structure/*.sql` ya dispara el replay aunque la constante no se mueva. Verificado contra Postgres
+real (Plan 041 · T3.3): con la misma versión y el hash alterado, el runner reejecutó **todos** los
+`structure/*.sql` sobre una BD **con datos** y las filas sobrevivieron. De ahí las dos mitades:
+
+- Una **ola intermedia** de un plan puede añadir migraciones **sin bump**: es seguro y evita una
+  ristra de versiones que no significan nada (el Plan 041 añadió `0041`–`0045` en cuatro olas con
+  **un solo** incremento).
+- **Publicar un plan sin su bump, no.** Cuando el trabajo sale a `dev`/`main`, `SchemaVersion` tiene
+  que reflejar el esquema nuevo: es lo único que un operador puede comparar contra
+  `public.schema_version` para saber qué esquema corre en esa base.
+
+En la práctica: **un bump por plan**, en el commit que el plan designe, no uno por migración.
 
 El runner es **full-replay**: al detectar cambio de hash reejecuta TODOS los
 `structure/*.sql`, no solo los nuevos. Consecuencia que muerde: un `INSERT ... SELECT`

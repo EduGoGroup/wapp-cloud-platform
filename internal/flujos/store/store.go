@@ -138,7 +138,12 @@ type IntakeWriter interface {
 	// + InsertIntakeItems sueltos, sin transacción). El PostgresRepository bloquea la
 	// solicitud abierta con FOR UPDATE para serializar cierres concurrentes del mismo
 	// contacto y reintenta ante deadlock/serialización (postgres.WithTx).
-	CloseIntake(ctx context.Context, in IntakeClose) error
+	//
+	// Devuelve el ID de la solicitud cerrada: quien cierra necesita saber sobre
+	// qué cerró para poder colgarle la revisión 1 del ciclo extendido (ADR-0031
+	// §3). Releerlo por "la última cerrada de este contacto" sería una carrera con
+	// el carrito siguiente.
+	CloseIntake(ctx context.Context, in IntakeClose) (intakeID string, err error)
 }
 
 // IntakeStore es la lectura + escritura de solicitudes.

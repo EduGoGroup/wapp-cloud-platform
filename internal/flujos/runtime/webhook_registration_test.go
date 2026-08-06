@@ -9,6 +9,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // cartClosedEmit es el efecto cart_closed que declara el módulo de test para
@@ -35,7 +36,9 @@ func runCartClosed(t *testing.T, extra ...runtime.Option) *store.MemoryRepositor
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
 		t.Fatalf("sembrar definición: %v", err)
 	}
-	opts := append([]runtime.Option{runtime.WithEventSink(runtime.NewPersistSink(repo, cart.NewProjector(repo)))}, extra...)
+	opts := append([]runtime.Option{
+		runtime.WithEventSink(runtime.NewPersistSink(repo, cart.NewProjector(repo, intakes.NewMemoryStore()))),
+	}, extra...)
 	rt := runtime.New(repo, newEffectEngine([]modules.Effect{cartClosedEmit()}), &fakeSender{},
 		fakeResolver{tenantID: testTenant}, contact.NewMemoryResolver(repo), discardLogger(), opts...)
 	if err := startAndStep(t, rt); err != nil {
