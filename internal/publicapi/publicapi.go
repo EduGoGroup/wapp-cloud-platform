@@ -133,6 +133,10 @@ type Deps struct {
 	// bandeja del dueño y la máquina de estados del Plan 041. Lo satisface
 	// *intakes.Service. nil ⇒ no se montan las rutas /api/v1/intakes.
 	Intakes IntakeService
+	// TenantVariables son las variables de empresa clave→valor que wApp NO
+	// interpreta (Plan 041 · T2.1, D-041.1). Lo satisface *tenantvars.Postgres.
+	// nil ⇒ no se montan las rutas /api/v1/tenant-variables.
+	TenantVariables TenantVariableStore
 	// Health son los umbrales de la derivación de salud (degraded>N, stale>M) que
 	// GET /api/v1/sessions aplica al servir (Plan 031 · T4, ADR-0023). Cero-valor ⇒
 	// defaults (5m/2m). Se cablea desde config.HealthConfig.
@@ -295,6 +299,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// que existen.
 	registerIntakes(mux, d, mw, auditor, log)
 
+	// Variables de empresa (Plan 041 · T2.1, D-041.1). También en su propia
+	// función: no por tamaño, sino porque el `if` de montaje sumaría uno más a la
+	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
+	registerTenantVariables(mux, d, mw, auditor, log)
+
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada
 	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
 	// Lectura sin auditoría (no tiene efecto). Los eventos ya son OPACOS (CERO PII).
@@ -350,6 +359,38 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 		"intakes.read", canExport(exportIntakesHandler(d.Intakes))))
 	mux.Handle("GET /api/v1/intakes/summary.json", protectRead(mw,
 		"intakes.read", canExport(intakeSummaryHandler(d.Intakes))))
+}
+
+// registerTenantVariables monta las variables de empresa por-tenant (Plan 041 ·
+// T2.1, D-041.1): pares clave→valor de texto que el tenant define y que wApp NO
+// interpreta. GET lee el conjunto; PUT lo REEMPLAZA entero (ver
+// putTenantVariablesHandler). Todo acotado al tenant del token (INV-8).
+//
+// MISMO scope que /api/v1/tenant-content (content.read / content.write), y no por
+// parecido de nombre: es literalmente el mismo público. tenant_content guarda el
+// contenido dinámico que el tenant redacta —catálogos, prompts— y estas variables
+// son el resto de esa configuración de presentación (`moneda=Bs`). Quien puede
+// reescribir el catálogo del tenant puede reescribir su símbolo de moneda; separar
+// los scopes inventaría un permiso que nadie tiene sembrado y dejaría la pantalla
+// inaccesible hasta una migración de grants. Reparto que hereda: tenant_admin ('*')
+// escribe, viewer ('*.read') solo lee, operator NO escribe — correcto: cambiar la
+// configuración de la empresa no es la faena del turno.
+//
+// SIN gate de feature, a diferencia de la bandeja: esto es CAPA TÉCNICA (ADR-0035),
+// no una capacidad que se venda. Ponerle RequireFeature dejaría a un tenant del
+// plan más simple sin poder decir cómo se llama su moneda.
+//
+// Escritura auditada (content.write) sin PII: se audita la acción, jamás claves ni
+// valores. Sin store cableado las rutas NO se montan (404 de ruta inexistente,
+// mejor que un 500 a medio camino).
+func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
+	if d.TenantVariables == nil {
+		return
+	}
+	mux.Handle("GET /api/v1/tenant-variables", protectRead(mw,
+		"content.read", getTenantVariablesHandler(d.TenantVariables)))
+	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
+		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del

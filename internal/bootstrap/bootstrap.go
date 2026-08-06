@@ -45,6 +45,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
 
 // Run ejecuta el ciclo de vida completo del servidor: carga de config,
@@ -255,12 +256,13 @@ func Run(ctx context.Context) error {
 			DiagnosticsRequester: gw,
 			DiagnosticsBundleTTL: cfg.Diagnostics.BundleTTL,
 		},
-		Triggers:     triggerStore,
-		Intents:      intentStore,
-		Entitlements: entResolver,
-		Intakes:      intakes.NewService(intakes.NewPostgres(db)),
-		ConfigPush:   gw,
-		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		Triggers:        triggerStore,
+		Intents:         intentStore,
+		Entitlements:    entResolver,
+		Intakes:         intakes.NewService(intakes.NewPostgres(db)),
+		TenantVariables: tenantvars.NewPostgres(db),
+		ConfigPush:      gw,
+		Health:          publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 	})
 	if err != nil {
 		return err
