@@ -28,7 +28,7 @@ const surveyResultCols = 6
 
 // intakeItemCols es el número de columnas por fila que escribe InsertIntakeItems
 // (orden de intake_items salvo id y added_at, que usan sus DEFAULT).
-const intakeItemCols = 5
+const intakeItemCols = 6
 
 // PostgresRepository implementa Repository con SQL raw sobre public.flow_state y
 // public.flow_definitions. Los cuerpos flexibles (vars del estado, definition
@@ -512,16 +512,18 @@ func insertIntakeItems(ctx context.Context, ex execer, intakeID string, items []
 	for i, it := range items {
 		base := i * intakeItemCols
 		placeholders = append(placeholders, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5,
+			"($%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6,
 		))
-		args = append(args, intakeID, it.SKU, it.Label, it.Qty, it.UnitPrice)
+		// Customization viaja SIEMPRE, aunque esté vacía: la columna es NOT NULL y
+		// su vacío significa "sin personalización" (D-041.17), no "no sé".
+		args = append(args, intakeID, it.SKU, it.Label, it.Customization, it.Qty, it.UnitPrice)
 	}
 	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
 	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
 	query := `
 		INSERT INTO public.intake_items
-			(intake_id, sku, label, qty, unit_price)
+			(intake_id, sku, label, customization, qty, unit_price)
 		VALUES ` + strings.Join(placeholders, ", ")
 	if _, err := ex.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: insertar líneas de solicitud: %w", err)

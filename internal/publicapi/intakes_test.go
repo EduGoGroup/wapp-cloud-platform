@@ -61,10 +61,11 @@ type intakeListDTO struct {
 }
 
 type intakeItemDTO struct {
-	SKU       string  `json:"sku"`
-	Label     string  `json:"label"`
-	Qty       int     `json:"qty"`
-	UnitPrice float64 `json:"unit_price"`
+	SKU           string  `json:"sku"`
+	Label         string  `json:"label"`
+	Customization string  `json:"customization"`
+	Qty           int     `json:"qty"`
+	UnitPrice     float64 `json:"unit_price"`
 }
 
 type intakeRevisionDTO struct {
@@ -102,8 +103,13 @@ func seedIntakes() *intakes.MemoryStore {
 			Total: 18000, CreatedAt: día(day), UpdatedAt: día(day),
 		}, items...)
 	}
+	// La primera línea de A1 lleva PERSONALIZACIÓN y la segunda no: el fixture es
+	// el mismo en los cinco caminos (detalle, CSV, XLSX, summary y el payload del
+	// CRM), así que cada uno tiene que enseñar el «sin sal» en su línea y dejar la
+	// otra vacía. Una sola línea personalizada no probaría que la vacía sigue vacía.
 	add(tenantA, intakeA1, intakes.StatusClosedLegacy, "sess-a", 1,
-		intakes.Item{SKU: "torta-v1", Label: "Torta 10-12 porciones", Qty: 1, UnitPrice: 18000},
+		intakes.Item{SKU: "torta-v1", Label: "Torta 10-12 porciones",
+			Customization: "sin sal", Qty: 1, UnitPrice: 18000},
 		intakes.Item{SKU: "_shipping", Label: "Envío — Providencia", Qty: 1, UnitPrice: 3000})
 	add(tenantA, intakeA2, intakes.StatusOpen, "sess-a", 2)
 	add(tenantA, intakeA3, intakes.StatusCancelled, "sess-b", 3)
@@ -350,6 +356,57 @@ func TestIntakeDetail_AllowedTransitionsTerminalEsListaVacía(t *testing.T) {
 	}
 	if string(got) != "[]" {
 		t.Fatalf("allowed_transitions=%s en un estado terminal; quiero [] (nunca null)", got)
+	}
+}
+
+// TestIntakeDetail_PublicaLaPersonalización es el PRIMERO de los cinco caminos de
+// T4.1b (D-041.17, REQ-31b): la personalización de la línea sale por el detalle de
+// la API. Quien recibe el pedido y quien lo prepara son personas distintas — si el
+// «sin sal» no cruza esta frontera, no llega a la cocina (INV-12).
+//
+// Comprueba las TRES cosas de un tirón: que la línea personalizada la trae, que la
+// que no lo está publica la clave con la cadena vacía (nunca ausente ni `null`: el
+// consumidor no debe distinguir "no pidió nada" de "este servidor no me lo cuenta")
+// y que el dinero no se movió (INV-13).
+func TestIntakeDetail_PublicaLaPersonalización(t *testing.T) {
+	api := newAPI(intakesDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/"+intakeA1, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var detail intakeDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal del detalle: %v; body=%s", err, rec.Body.String())
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("items=%d, quiero 2", len(detail.Items))
+	}
+	if detail.Items[0].Customization != "sin sal" {
+		t.Fatalf("items[0].customization=%q, quiero %q: la personalización no llega a quien prepara",
+			detail.Items[0].Customization, "sin sal")
+	}
+	if detail.Items[1].Customization != "" {
+		t.Fatalf("items[1].customization=%q; esa línea no tenía personalización", detail.Items[1].Customization)
+	}
+	// INV-13: personalizar no cobra. El precio de la línea y el total de la
+	// cabecera son los mismos que sin ella.
+	if detail.Items[0].UnitPrice != 18000 || detail.Total != 18000 {
+		t.Fatalf("unit_price=%v total=%v; la personalización movió el dinero",
+			detail.Items[0].UnitPrice, detail.Total)
+	}
+
+	// La clave está PRESENTE aunque el valor sea vacío: con `omitempty`
+	// desaparecería de la línea sin personalizar y el consumidor no podría
+	// distinguirla de un servidor que no publica el campo.
+	var raw struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal crudo: %v", err)
+	}
+	if v, ok := raw.Items[1]["customization"]; !ok || string(v) != `""` {
+		t.Fatalf(`items[1].customization = %s (presente=%v); quiero ""`, v, ok)
 	}
 }
 

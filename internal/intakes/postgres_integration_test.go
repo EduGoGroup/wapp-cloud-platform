@@ -227,6 +227,67 @@ func TestPostgres_Get_LíneasYAislamiento(t *testing.T) {
 	}
 }
 
+// TestPostgres_Customization_RoundTrip valida contra la COLUMNA REAL (migración
+// 0045, T4.1b) los dos caminos de lectura de una línea: el detalle (Get) y el que
+// alimenta export y summary (ListDetails). Ninguno de los dos comparte SQL con el
+// otro, así que llevarla en uno no dice nada del otro.
+//
+// Y prueba la no-regresión que el plan exige: la línea sembrada SIN la columna
+// —como todas las que ya están en la base— se lee con la cadena vacía del DEFAULT,
+// no con NULL ni con la personalización de la línea vecina.
+func TestPostgres_Customization_RoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	store := intakes.NewPostgres(db)
+	tenant := uuid.NewString()
+	ctx := context.Background()
+
+	id := uuid.NewString()
+	seedPG(t, db, tenant, []fixture{{id, intakes.StatusClosedLegacy, "sess-a", 1}})
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price, added_at)
+		VALUES ($1, 'hotdog', 'Hot dog', 'sin cebolla', 2, 2500, now())
+	`, id); err != nil {
+		t.Fatalf("sembrando la línea personalizada: %v", err)
+	}
+	// La segunda se inserta SIN nombrar la columna: es literalmente la sentencia
+	// que escribía el repo antes de esta tarea.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_items (intake_id, sku, label, qty, unit_price, added_at)
+		VALUES ($1, 'bebida', 'Bebida', 1, 1000, now() + interval '1 second')
+	`, id); err != nil {
+		t.Fatalf("sembrando la línea heredada: %v", err)
+	}
+
+	detail, err := store.Get(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("items=%d, quiero 2", len(detail.Items))
+	}
+	if detail.Items[0].Customization != "sin cebolla" || detail.Items[1].Customization != "" {
+		t.Fatalf("Get: customization=%q/%q; quiero 'sin cebolla' y vacío",
+			detail.Items[0].Customization, detail.Items[1].Customization)
+	}
+
+	got, err := store.ListDetails(ctx, tenant, intakes.Filter{}, intakes.MaxExportIntakes)
+	if err != nil {
+		t.Fatalf("ListDetails: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Items) != 2 {
+		t.Fatalf("ListDetails devolvió %d solicitudes; quiero 1 con 2 líneas", len(got))
+	}
+	if got[0].Items[0].Customization != "sin cebolla" || got[0].Items[1].Customization != "" {
+		t.Fatalf("ListDetails: customization=%q/%q; quiero 'sin cebolla' y vacío",
+			got[0].Items[0].Customization, got[0].Items[1].Customization)
+	}
+	// INV-13: la personalización no cobra. Los precios que leen el export y el
+	// summary son los que se sembraron.
+	if got[0].Items[0].UnitPrice != 2500 || got[0].Items[0].Qty != 2 {
+		t.Fatalf("la línea personalizada cambió de precio o cantidad: %+v", got[0].Items[0])
+	}
+}
+
 // TestPostgres_UpdateStatus_CAS valida el compare-and-swap contra la BD real.
 func TestPostgres_UpdateStatus_CAS(t *testing.T) {
 	db := openTestDB(t)

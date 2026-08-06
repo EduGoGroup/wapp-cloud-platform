@@ -107,7 +107,7 @@ const listIntakeDetailsQuery = `
 		LIMIT $6
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
-	       it.sku, it.label, it.qty, it.unit_price, it.added_at
+	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
 	FROM page p
 	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid
 	ORDER BY p.created_at DESC, p.id DESC, it.added_at, it.id`
@@ -155,22 +155,24 @@ func (p *Postgres) ListDetails(ctx context.Context, tenantID string, f Filter, l
 // solicitud no tiene ninguna). Normaliza el estado en el mismo punto que scanIntake.
 func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	var (
-		in         Intake
-		sku, label sql.NullString
-		qty        sql.NullInt64
-		unitPrice  sql.NullFloat64
-		addedAt    sql.NullTime
+		in                 Intake
+		sku, label, custom sql.NullString
+		qty                sql.NullInt64
+		unitPrice          sql.NullFloat64
+		addedAt            sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &sku, &label, &qty, &unitPrice, &addedAt); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
 		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
 	if !sku.Valid && !label.Valid && !qty.Valid {
 		return in, Item{}, false, nil // solicitud sin líneas (LEFT JOIN)
 	}
+	// La columna es NOT NULL DEFAULT '': el sql.NullString es por el LEFT JOIN, no
+	// porque la fila pueda tener NULL. Sin línea, custom.String ya es "".
 	return in, Item{
-		SKU: sku.String, Label: label.String,
+		SKU: sku.String, Label: label.String, Customization: custom.String,
 		Qty: int(qty.Int64), UnitPrice: unitPrice.Float64, AddedAt: addedAt.Time,
 	}, true, nil
 }
@@ -251,7 +253,7 @@ func (p *Postgres) Get(ctx context.Context, tenantID, intakeID string) (Detail, 
 // líneas son suyas.
 func (p *Postgres) items(ctx context.Context, intakeID string) (out []Item, err error) {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT sku, label, qty, unit_price, added_at
+		SELECT sku, label, customization, qty, unit_price, added_at
 		FROM public.intake_items
 		WHERE intake_id = $1
 		ORDER BY added_at, id
@@ -268,7 +270,7 @@ func (p *Postgres) items(ctx context.Context, intakeID string) (out []Item, err 
 	out = []Item{}
 	for rows.Next() {
 		var it Item
-		if serr := rows.Scan(&it.SKU, &it.Label, &it.Qty, &it.UnitPrice, &it.AddedAt); serr != nil {
+		if serr := rows.Scan(&it.SKU, &it.Label, &it.Customization, &it.Qty, &it.UnitPrice, &it.AddedAt); serr != nil {
 			return nil, fmt.Errorf("intakes: leer línea: %w", serr)
 		}
 		out = append(out, it)

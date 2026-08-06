@@ -34,10 +34,11 @@ type summaryDTO struct {
 		CreatedAt string  `json:"created_at"`
 		Total     float64 `json:"total"`
 		Items     []struct {
-			SKU       string  `json:"sku"`
-			Label     string  `json:"label"`
-			Qty       int     `json:"qty"`
-			UnitPrice float64 `json:"unit_price"`
+			SKU           string  `json:"sku"`
+			Label         string  `json:"label"`
+			Customization string  `json:"customization"`
+			Qty           int     `json:"qty"`
+			UnitPrice     float64 `json:"unit_price"`
 		} `json:"items"`
 	} `json:"intakes"`
 }
@@ -133,6 +134,39 @@ func TestIntakeSummary_200_DetalleCrudo(t *testing.T) {
 	}
 	if a1.Status != "confirmed" {
 		t.Fatalf("status=%q; el `closed` legado sale normalizado", a1.Status)
+	}
+}
+
+// TestIntakeSummary_PublicaLaPersonalización es el CUARTO de los cinco caminos de
+// T4.1b (D-041.17): el `summary.json` publica la personalización por línea.
+//
+// No contradice el CERO PII de este endpoint, y merece decirse: `customization` es
+// dato de PRODUCTO —«sin sal»—, no de persona. Es justamente lo que le da valor al
+// resumen que el dueño le pega a un LLM: «cuántos me piden sin sal» no se puede
+// contestar si el campo se queda fuera.
+//
+// Y comprueba el reverso: el dinero no se mueve. Con una línea personalizada, el
+// revenue total y el del ranking por SKU son los mismos (INV-13).
+func TestIntakeSummary_PublicaLaPersonalización(t *testing.T) {
+	sum := summaryDeTenantA(t)
+
+	a1 := sum.Intakes[4] // la más antigua: la única con líneas en el fixture
+	if len(a1.Items) != 2 {
+		t.Fatalf("líneas de A1=%d, quiero 2", len(a1.Items))
+	}
+	if a1.Items[0].Customization != "sin sal" {
+		t.Fatalf("items[0].customization=%q, quiero %q", a1.Items[0].Customization, "sin sal")
+	}
+	if a1.Items[1].Customization != "" {
+		t.Fatalf("items[1].customization=%q; esa línea no tenía personalización", a1.Items[1].Customization)
+	}
+	// INV-13: ni el total de la solicitud, ni el revenue agregado, ni el del
+	// ranking de ese SKU se enteran de la personalización.
+	if a1.Total != 18000 || sum.Totals.Revenue != 90000 {
+		t.Fatalf("total=%v revenue=%v; personalizar movió el dinero", a1.Total, sum.Totals.Revenue)
+	}
+	if sum.TopItems[0].SKU != "torta-v1" || sum.TopItems[0].Revenue != 18000 {
+		t.Fatalf("top_items[0]=%+v; el ranking cambió por una personalización", sum.TopItems[0])
 	}
 }
 

@@ -214,11 +214,17 @@ func cartItems(payload map[string]any) []store.IntakeItem {
 	return out
 }
 
+// intakeItemFromMap traduce UNA línea del payload del cierre a la fila que se
+// persiste. `customization` (D-041.17) se lee como cualquier otra clave y su
+// AUSENCIA da la cadena vacía: un blob de carrito escrito antes de que el campo
+// existiera —o por un productor que no lo escribe— cierra exactamente igual, sin
+// rama especial ni versión de payload.
 func intakeItemFromMap(m map[string]any) store.IntakeItem {
 	return store.IntakeItem{
-		SKU:       modules.AsString(m["sku"]),
-		Label:     modules.AsString(m["label"]),
-		Qty:       modules.AsInt(m["qty"]),
-		UnitPrice: modules.AsFloat(m["unit_price"]),
+		SKU:           modules.AsString(m["sku"]),
+		Label:         modules.AsString(m["label"]),
+		Customization: modules.AsString(m["customization"]),
+		Qty:           modules.AsInt(m["qty"]),
+		UnitPrice:     modules.AsFloat(m["unit_price"]),
 	}
 }

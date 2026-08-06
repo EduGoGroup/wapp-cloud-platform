@@ -1,6 +1,6 @@
 -- ============================================================
--- 0045: Ciclo de vida extendido de la SOLICITUD (Plan 041 · O4 · T4.1, ADR-0031,
--- design.md §3). Cuatro cosas, todas ADITIVAS sobre tablas vivas:
+-- 0045: Ciclo de vida extendido de la SOLICITUD (Plan 041 · O4 · T4.1 + T4.1b,
+-- ADR-0031, design.md §3). Cinco cosas, todas ADITIVAS sobre tablas vivas:
 --
 --   1. public.intakes gana las dos marcas de la SEÑA (deposit_due_at,
 --      deposit_reminded_at). Son marcas de tiempo, NO un reloj: nadie las barre con
@@ -13,6 +13,8 @@
 --      interpretó el LLM, lo que corrigió el dueño, lo que se aprobó). NO sustituye
 --      a intake_items, que sigue siendo la verdad de LO VENDIDO.
 --   4. Nace public.intake_buyer_data: los datos mínimos del comprador, CIFRADOS.
+--   5. public.intake_items gana la PERSONALIZACIÓN de la línea (customization):
+--      el «sin cebolla» que quien prepara tiene que leer (T4.1b, D-041.17).
 --
 -- LO QUE ESTA MIGRACIÓN NO HACE, a propósito:
 --   * NO añade un CHECK de status a public.intakes. La 0041 lo dejó fuera
@@ -170,3 +172,25 @@ COMMENT ON COLUMN public.intake_buyer_data.created_at IS
     'Momento de la primera captura. Usa el DEFAULT now().';
 COMMENT ON COLUMN public.intake_buyer_data.updated_at IS
     'Última escritura de la fila. La refresca tanto una corrección del dato como el re-wrap de la rotación de KEK (que NO descifra nada).';
+
+-- ------------------------------------------------------------
+-- 5. Personalización por línea (D-041.17, REQ-31, T4.1b)
+-- ------------------------------------------------------------
+-- «Sin cebolla» no es un ítem del catálogo ni un añadido facturable: es una
+-- característica del producto de ESA línea que quien prepara tiene que leer. Va
+-- aquí y no en una tabla hija porque una personalización no tiene vida propia —no
+-- existe sin su línea y muere con ella—, y va EN CLARO (nivel 1 del ADR-0034)
+-- porque es dato de negocio cuantificable: cifrarla destruiría su valor sin
+-- proteger a nadie.
+--
+-- NOT NULL DEFAULT '' y no NULLable a propósito: "sin personalización" es la
+-- cadena vacía, no un desconocido. Ninguna lectura tiene que distinguir dos formas
+-- del mismo hecho, y las líneas ya escritas quedan válidas sin tocar una sola fila
+-- (cero regresión: el blob del carrito viejo sigue cerrando igual).
+--
+-- INV-13: esta columna JAMÁS entra en el cálculo de unit_price, line_total ni
+-- total. El perro caliente no es más barato por quitarle la cebolla.
+ALTER TABLE public.intake_items ADD COLUMN IF NOT EXISTS customization TEXT NOT NULL DEFAULT '';
+
+COMMENT ON COLUMN public.intake_items.customization IS
+    'Personalización de la línea: instrucción de PRODUCCIÓN, no facturable ("sin sal", "sin cebolla"). En claro a propósito (ADR-0034 nivel 1). Quien recibe el pedido y quien lo prepara son personas distintas: si esto no viaja con la línea hasta quien prepara, se pierde y el cliente recibe el producto mal hecho. NO es un cajón de texto libre: lo que identifique a una persona va a intake_buyer_data, cifrado.';

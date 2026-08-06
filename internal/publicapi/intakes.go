@@ -47,11 +47,18 @@ type intakeDTO struct {
 
 // intakeItemDTO es una línea de la solicitud. sku/label son códigos del catálogo
 // del tenant (dato de negocio), NUNCA PII.
+//
+// `customization` es la personalización no facturable de la línea (D-041.17): el
+// «sin cebolla». Viaja SIEMPRE, también vacía (sin `omitempty`), y eso es
+// deliberado: quien consume el detalle —la consola del dueño, el puente del CRM—
+// tiene que poder pintar la línea sin preguntarse si la clave falta porque no hay
+// personalización o porque este servidor todavía no la publica.
 type intakeItemDTO struct {
-	SKU       string  `json:"sku"`
-	Label     string  `json:"label"`
-	Qty       int     `json:"qty"`
-	UnitPrice float64 `json:"unit_price"`
+	SKU           string  `json:"sku"`
+	Label         string  `json:"label"`
+	Customization string  `json:"customization"`
+	Qty           int     `json:"qty"`
+	UnitPrice     float64 `json:"unit_price"`
 }
 
 // intakeListResponse es el contrato de GET /api/v1/intakes (design §4): la página
@@ -179,7 +186,8 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 		items := make([]intakeItemDTO, 0, len(detail.Items))
 		for _, it := range detail.Items {
 			items = append(items, intakeItemDTO{
-				SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice,
+				SKU: it.SKU, Label: it.Label, Customization: it.Customization,
+				Qty: it.Qty, UnitPrice: it.UnitPrice,
 			})
 		}
 		revisions := make([]intakeRevisionDTO, 0, len(detail.Revisions))

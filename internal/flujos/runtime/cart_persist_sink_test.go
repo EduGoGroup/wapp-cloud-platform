@@ -148,8 +148,10 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	}
 	must(itemAdded("CAFE", "Café", 2, 2.5))
 	must(itemAdded("FLAN", "Flan", 1, 3.0))
+	// La primera línea va PERSONALIZADA y la segunda no (D-041.17): así el aserto
+	// de assertIntakeItems distingue "se guardó" de "se guardó en todas las filas".
 	items := []map[string]any{
-		{"sku": "CAFE", "label": "Café", "qty": 2, "unit_price": 2.5},
+		{"sku": "CAFE", "label": "Café", "customization": "sin azúcar", "qty": 2, "unit_price": 2.5},
 		{"sku": "FLAN", "label": "Flan", "qty": 1, "unit_price": 3.0},
 	}
 	must(cartClosed(items, 8.0))
@@ -263,6 +265,37 @@ func assertIntakeItems(t *testing.T, db *sql.DB, tenant, contact string) {
 	}
 	if nItems != 2 || sumTot != 8.0 {
 		t.Fatalf("intake_items inesperado: n=%d suma=%v", nItems, sumTot)
+	}
+
+	// La personalización de la línea llegó HASTA LA COLUMNA (D-041.17): el efecto
+	// la traía en `items[0]` y la fila del café la tiene; la del flan, que no la
+	// pedía, queda con el vacío del DEFAULT — no con la del vecino. Y el SUM de
+	// arriba, calculado sobre las mismas filas, no se movió (INV-13).
+	rows, err := db.QueryContext(context.Background(), `
+		SELECT sku, customization FROM public.intake_items
+		WHERE intake_id = $1::uuid ORDER BY sku
+	`, intakeID)
+	if err != nil {
+		t.Fatalf("SELECT customization: %v", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Logf("cerrando filas: %v", cerr)
+		}
+	}()
+	got := map[string]string{}
+	for rows.Next() {
+		var sku, custom string
+		if serr := rows.Scan(&sku, &custom); serr != nil {
+			t.Fatalf("leer customization: %v", serr)
+		}
+		got[sku] = custom
+	}
+	if rerr := rows.Err(); rerr != nil {
+		t.Fatalf("recorrer customization: %v", rerr)
+	}
+	if got["CAFE"] != "sin azúcar" || got["FLAN"] != "" {
+		t.Fatalf("customization en BD = %v; quiero CAFE=%q y FLAN vacía", got, "sin azúcar")
 	}
 }
 

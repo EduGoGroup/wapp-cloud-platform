@@ -2,6 +2,7 @@ package publicapi_test
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -58,7 +59,7 @@ func TestIntakesExport_CSV_Golden(t *testing.T) {
 		"9f1c0a7e-0000-4000-8000-000000000abc,18000,"
 	quiero := csvGolden(
 		csvHeader,
-		cabecera+",torta-v1,Torta 10-12 porciones,,1,18000,18000",
+		cabecera+",torta-v1,Torta 10-12 porciones,sin sal,1,18000,18000",
 		cabecera+",_shipping,Envío — Providencia,,1,3000,3000",
 	)
 	if got := rec.Body.String(); got != quiero {
@@ -72,6 +73,130 @@ func TestIntakesExport_CSV_Golden(t *testing.T) {
 	if !strings.HasPrefix(cd, `attachment; filename="intakes-`) || !strings.HasSuffix(cd, `.csv"`) {
 		t.Fatalf("Content-Disposition=%q; quiero una descarga con nombre .csv", cd)
 	}
+}
+
+// TestIntakesExport_CSV_Personalización es el SEGUNDO de los cinco caminos de
+// T4.1b (D-041.17): el «sin sal» viaja en el CSV como columna propia, entre `label`
+// y `qty`. El export es el camino por el que una cocina que no usa la consola
+// recibe la comanda: si la personalización no está aquí, no llega (INV-12).
+//
+// La posición se afirma por ÍNDICE de la cabecera, no por "aparece en el texto":
+// una cadena suelta también estaría si la columna se hubiera colado en otro sitio,
+// y en un CSV el sitio es el significado.
+func TestIntakesExport_CSV_Personalización(t *testing.T) {
+	api := newAPI(exportDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet,
+		"/api/v1/intakes/export?status=closed&session=sess-a&from=2026-08-01&to=2026-08-02", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// El BOM sigue delante (Excel en español lo necesita para las tildes) y no se
+	// coló ni un byte antes de él.
+	if !strings.HasPrefix(body, "\xef\xbb\xbf") {
+		t.Fatalf("el CSV perdió el BOM: %q", body[:min(8, len(body))])
+	}
+
+	filas := camposCSV(t, body)
+	iCustom := slices.Index(filas[0], "customization")
+	switch {
+	case iCustom < 0:
+		t.Fatalf("la cabecera no trae `customization`: %v", filas[0])
+	case filas[0][iCustom-1] != "label" || filas[0][iCustom+1] != "qty":
+		t.Fatalf("`customization` está entre %q y %q; la quiero entre `label` y `qty`",
+			filas[0][iCustom-1], filas[0][iCustom+1])
+	}
+
+	if got := filas[1][iCustom]; got != "sin sal" {
+		t.Fatalf("la línea personalizada exporta customization=%q, quiero %q", got, "sin sal")
+	}
+	if got := filas[2][iCustom]; got != "" {
+		t.Fatalf("la línea SIN personalización exporta customization=%q, quiero vacío", got)
+	}
+	// INV-13: el dinero de esa línea es el mismo que sin personalizar.
+	iTotal := slices.Index(filas[0], "line_total")
+	if filas[1][iTotal] != "18000" {
+		t.Fatalf("line_total=%q; personalizar no puede mover el dinero", filas[1][iTotal])
+	}
+}
+
+// TestIntakesExport_CSV_EscapaLaPersonalización: la personalización la escribe el
+// CLIENTE FINAL por WhatsApp, así que es —con `customer_note`— la celda más
+// expuesta del archivo. Una que empiece por `-` la ejecutaría Excel al abrirlo, y
+// por eso sale prefijada con `'` como cualquier otro texto (D-041.15).
+func TestIntakesExport_CSV_EscapaLaPersonalización(t *testing.T) {
+	api := newAPI(exportDeps(seedInyección()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/export", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), ",'-sin cebolla,") {
+		t.Fatalf("la personalización no salió escapada:\n%s", rec.Body.String())
+	}
+}
+
+// TestIntakesExport_CSV_CabeceraCanónica fija el CONTRATO completo de columnas en
+// un solo sitio y en su orden exacto. Quien añada una columna (T4.1c pone
+// `customer_note` tras `intake_total`; T4.6 toca estados) rompe ESTE test, que es
+// barato de leer y de actualizar, en vez de romper en silencio el archivo que el
+// operador ya abre con sus filtros y sus macros montados encima.
+//
+// Y afirma lo que ninguna cabecera enseña: que TODAS las filas miden lo mismo que
+// ella —incluida la de una solicitud sin líneas—. Una fila corta no sale corta del
+// escritor de CSV: sale con celdas heredadas de la fila anterior, y el archivo se
+// abre tan campante con el importe de otro pedido en la última columna.
+func TestIntakesExport_CSV_CabeceraCanónica(t *testing.T) {
+	api := newAPI(exportDeps(seedIntakes()), intakesKeys())
+
+	// Sin filtro: entran las solicitudes CON líneas y las que no tienen ninguna,
+	// que es la combinación que destapa el desajuste de anchura.
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes/export", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	filas := camposCSV(t, rec.Body.String())
+	if got := strings.Join(filas[0], ","); got != csvHeader {
+		t.Fatalf("cabecera del export:\n got=%q\nquiero=%q", got, csvHeader)
+	}
+	for i, fila := range filas {
+		if len(fila) != len(filas[0]) {
+			t.Fatalf("la fila %d trae %d celdas y la cabecera %d: %q",
+				i, len(fila), len(filas[0]), fila)
+		}
+	}
+
+	// La solicitud A2 no tiene líneas: sus seis celdas de línea salen VACÍAS, no
+	// con lo que hubiera en la fila anterior.
+	for _, fila := range filas[1:] {
+		if fila[0] != intakeA2 {
+			continue
+		}
+		if vacías := fila[len(fila)-6:]; slices.ContainsFunc(vacías, func(c string) bool { return c != "" }) {
+			t.Fatalf("la solicitud sin líneas arrastró celdas de la fila anterior: %q", fila)
+		}
+		return
+	}
+	t.Fatalf("el export no trae la solicitud sin líneas %s; el test perdería sentido", intakeA2)
+}
+
+// camposCSV parsea el archivo servido como lo haría una hoja de cálculo (sin el
+// BOM) y devuelve sus filas. Parsear en vez de partir por comas no es lujo: una
+// celda con coma o comillas viaja entrecomillada y un `strings.Split` la partiría
+// en dos, dando por buena una columna corrida.
+func camposCSV(t *testing.T, body string) [][]string {
+	t.Helper()
+	filas, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(body, "\xef\xbb\xbf"))).ReadAll()
+	if err != nil {
+		t.Fatalf("el CSV no se puede parsear: %v", err)
+	}
+	if len(filas) < 2 {
+		t.Fatalf("el CSV solo trae %d filas; el test necesita cabecera y datos", len(filas))
+	}
+	return filas
 }
 
 // TestIntakesExport_CSV_EstadoNormalizado: el `closed` legado del módulo cart sale
@@ -133,13 +258,17 @@ func TestIntakesExport_CSV_EscapaFórmulas(t *testing.T) {
 	}
 }
 
-// seedInyección siembra una solicitud cuyo sku y label parecen fórmulas.
+// seedInyección siembra una solicitud cuyo sku, label y personalización parecen
+// fórmulas. La personalización es la que de verdad importa aquí: sku y label salen
+// del catálogo del tenant, pero `customization` la escribe el CLIENTE FINAL desde
+// WhatsApp, así que es la celda que un desconocido controla.
 func seedInyección() *intakes.MemoryStore {
 	st := intakes.NewMemoryStore()
 	st.Add(tenantA, intakes.Intake{
 		ID: intakeA1, ContactID: contactoOpaco, SessionID: "sess-a",
 		Status: intakes.StatusConfirmed, Total: 100, CreatedAt: día(1), UpdatedAt: día(1),
-	}, intakes.Item{SKU: "=1+1", Label: "@sospechoso", Qty: 1, UnitPrice: 100})
+	}, intakes.Item{SKU: "=1+1", Label: "@sospechoso", Customization: "-sin cebolla",
+		Qty: 1, UnitPrice: 100})
 	return st
 }
 
@@ -170,7 +299,7 @@ func TestIntakesExport_XLSX_SeReabreConTildes(t *testing.T) {
 	quiero := [][]string{
 		{"11111111-1111-1111-1111-111111111111", "2026-08-01T12:00:00Z", "confirmed", "sess-a",
 			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "",
-			"torta-v1", "Torta 10-12 porciones", "", "1", "18000", "18000"},
+			"torta-v1", "Torta 10-12 porciones", "sin sal", "1", "18000", "18000"},
 		{"11111111-1111-1111-1111-111111111111", "2026-08-01T12:00:00Z", "confirmed", "sess-a",
 			"9f1c0a7e-0000-4000-8000-000000000abc", "18000", "",
 			"_shipping", "Envío — Providencia", "", "1", "3000", "3000"},
@@ -184,6 +313,40 @@ func TestIntakesExport_XLSX_SeReabreConTildes(t *testing.T) {
 	// intacto tras serializar el libro, mandarlo por HTTP y reabrirlo.
 	if rows[2][8] != "Envío — Providencia" {
 		t.Fatalf("la etiqueta acentuada llegó como %q", rows[2][8])
+	}
+}
+
+// TestIntakesExport_XLSX_Personalización es el TERCERO de los cinco caminos de
+// T4.1b (D-041.17): la misma columna, en el mismo sitio, en el libro de Excel. El
+// XLSX es su propio camino y no un derivado del CSV —lo escribe otro serializador,
+// celda a celda—, así que llevarla en uno no prueba nada del otro.
+//
+// Se REABRE el libro (lo que hace Excel) en vez de mirar los bytes: es la única
+// forma de saber que la celda quedó donde se cree.
+func TestIntakesExport_XLSX_Personalización(t *testing.T) {
+	api := newAPI(exportDeps(seedIntakes()), intakesKeys())
+
+	rec := call(api, keyAIntakes, http.MethodGet,
+		"/api/v1/intakes/export?format=xlsx&status=closed&session=sess-a&from=2026-08-01&to=2026-08-02", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rows := leerXLSX(t, rec.Body.Bytes())
+	iCustom := slices.Index(rows[0], "customization")
+	if iCustom < 0 || rows[0][iCustom-1] != "label" || rows[0][iCustom+1] != "qty" {
+		t.Fatalf("`customization` no está entre `label` y `qty` en la cabecera: %v", rows[0])
+	}
+	if got := rows[1][iCustom]; got != "sin sal" {
+		t.Fatalf("la línea personalizada del XLSX trae %q, quiero %q", got, "sin sal")
+	}
+	if got := rows[2][iCustom]; got != "" {
+		t.Fatalf("la línea sin personalización del XLSX trae %q, quiero vacío", got)
+	}
+	// INV-13: la hoja sigue sumando lo mismo.
+	iTotal := slices.Index(rows[0], "line_total")
+	if rows[1][iTotal] != "18000" {
+		t.Fatalf("line_total=%q; personalizar no puede mover el dinero", rows[1][iTotal])
 	}
 }
 

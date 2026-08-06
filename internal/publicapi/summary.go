@@ -97,12 +97,14 @@ func intakeSummaryHandler(svc IntakeService) http.Handler {
 // Detail, NUNCA reusando el DTO de la lista, para que añadir mañana un campo a la
 // cabecera del dominio no lo cuele aquí de rebote.
 //
-// `customer_note` y `customization` (D-041.19/D-041.17) no aparecen todavía: sus
-// columnas nacen en la Ola 4 (T4.1b/T4.1c). Al contrario que en el CSV —donde el
-// hueco se reserva porque las columnas son posicionales— aquí las claves tienen
-// nombre, así que la Ola 4 las añade sin romper a nadie y hoy no se publica una
-// cadena vacía que aparentaría "el cliente no indicó nada" cuando la verdad es
-// "todavía no se registra".
+// `customization` SÍ entra (D-041.17, T4.1b) y no contradice el CERO PII: es dato
+// de PRODUCTO —«sin sal»—, no de persona, y es justo lo que hace útil el resumen
+// para el LLM del dueño («cuántos piden sin cebolla»). Lo que sigue sin aparecer es
+// `customer_note` (D-041.19), cuya columna nace en T4.1c: al contrario que en el
+// CSV —donde el hueco se reserva porque las columnas son posicionales— aquí las
+// claves tienen nombre, así que esa tarea la añade sin romper a nadie y hoy no se
+// publica una cadena vacía que aparentaría "el cliente no indicó nada" cuando la
+// verdad es "todavía no se registra".
 func toSummaryResponse(sum intakes.Summary) intakeSummaryResponse {
 	byStatus := sum.ByStatus
 	if byStatus == nil {
@@ -121,7 +123,8 @@ func toSummaryResponse(sum intakes.Summary) intakeSummaryResponse {
 		items := make([]intakeItemDTO, 0, len(d.Items))
 		for _, it := range d.Items {
 			items = append(items, intakeItemDTO{
-				SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice,
+				SKU: it.SKU, Label: it.Label, Customization: it.Customization,
+				Qty: it.Qty, UnitPrice: it.UnitPrice,
 			})
 		}
 		list = append(list, summaryIntakeDTO{

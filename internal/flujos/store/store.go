@@ -334,13 +334,19 @@ type Intake struct {
 // IntakeItem es una línea de una solicitud del carrito, lista para persistir en
 // public.intake_items (Plan 016 · design.md §3.4). SKU/Label son códigos de
 // negocio (catálogo del tenant), NO PII. AddedAt lo pone el DEFAULT de la tabla.
+//
+// Customization es la personalización NO FACTURABLE de la línea (D-041.17): el
+// «sin cebolla» que quien prepara tiene que leer. JAMÁS entra en el cálculo del
+// precio (INV-13) y su cero-valor —cadena vacía— es exactamente lo que escribe una
+// línea sin personalizar, igual que el DEFAULT de la columna.
 type IntakeItem struct {
-	IntakeID  string
-	SKU       string
-	Label     string
-	Qty       int
-	UnitPrice float64
-	AddedAt   time.Time
+	IntakeID      string
+	SKU           string
+	Label         string
+	Customization string
+	Qty           int
+	UnitPrice     float64
+	AddedAt       time.Time
 }
 
 // IntakeClose es la entrada del cierre atómico de una solicitud del carrito

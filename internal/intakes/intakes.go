@@ -70,12 +70,25 @@ type Intake struct {
 
 // Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del
 // tenant (dato de negocio), NO PII.
+//
+// Customization es la personalización NO FACTURABLE de esa línea —«sin sal», «sin
+// cebolla»— (D-041.17). Dos cosas que no son de estilo:
+//
+//   - NUNCA entra en ningún cálculo de dinero (INV-13): ni en UnitPrice, ni en el
+//     line_total que derivan el export y el ranking, ni en el Total de la
+//     cabecera. El perro caliente no es más barato por quitarle la cebolla.
+//   - Un añadido FACTURABLE no se guarda aquí: si el catálogo tiene un ítem para
+//     eso, es su propia línea con su SKU y su precio. La regla es una — ¿hay ítem
+//     para eso? sí ⇒ línea; no ⇒ Customization.
+//
+// Cadena vacía = sin personalización (es el DEFAULT de la columna, no un "no sé").
 type Item struct {
-	SKU       string
-	Label     string
-	Qty       int
-	UnitPrice float64
-	AddedAt   time.Time
+	SKU           string
+	Label         string
+	Customization string
+	Qty           int
+	UnitPrice     float64
+	AddedAt       time.Time
 }
 
 // Detail es la solicitud completa: cabecera + líneas + revisiones.

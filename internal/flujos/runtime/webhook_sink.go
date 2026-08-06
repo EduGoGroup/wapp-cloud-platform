@@ -30,10 +30,18 @@ import (
 //	  "tenant":    "<tenant_id>",          // identificador del tenant
 //	  "contact":   "<contact_id opaco>",   // OPACO (Plan 010 / ADR-0010); NUNCA número/JID
 //	  "order_id":  "<uuid de la solicitud>",   // correlación con intakes (ver nota abajo)
-//	  "items": [ { "sku": "...", "label": "...", "qty": 2, "unit_price": 9.9 }, ... ],
+//	  "items": [ { "sku": "...", "label": "...", "customization": "sin cebolla",
+//	              "qty": 2, "unit_price": 9.9 }, ... ],
 //	  "total":     29.7,
 //	  "timestamp": "2026-07-03T10:00:00Z"  // RFC3339 UTC del cierre
 //	}
+//
+// `items[].customization` es la PERSONALIZACIÓN no facturable de la línea
+// (D-041.17, T4.1b) y viaja aquí porque este payload es el ESBOZO del `intake.push`
+// del Plan 042: es la salida por la que un CRM/POS recibe el pedido, y quien
+// prepara el producto es otro que quien lo recibió. Si el «sin cebolla» no cruza
+// esta frontera, se pierde (INV-12). No toca el dinero: `total` y el precio de la
+// línea son los mismos con o sin ella (INV-13).
 //
 // Coherente con el zero-knowledge (ADR-0007/0009): son DATOS DE NEGOCIO, no PII
 // ni credenciales. El contacto viaja OPACO (contact_id, jamás el teléfono/JID) y
@@ -84,11 +92,16 @@ func NewWebhookSink(log logger.Logger, deliverEffect string) *WebhookSink {
 }
 
 // crmItem es una línea del pedido en el contrato JSON hacia el CRM (§9.I).
+//
+// `customization` va SIEMPRE, también vacía: el receptor no debería tener que
+// distinguir "el cliente no pidió nada especial" de "esta plataforma no me lo
+// cuenta" para decidir si imprime la comanda entera.
 type crmItem struct {
-	SKU       string  `json:"sku"`
-	Label     string  `json:"label"`
-	Qty       int     `json:"qty"`
-	UnitPrice float64 `json:"unit_price"`
+	SKU           string  `json:"sku"`
+	Label         string  `json:"label"`
+	Customization string  `json:"customization"`
+	Qty           int     `json:"qty"`
+	UnitPrice     float64 `json:"unit_price"`
 }
 
 // crmOrderPayload es el cuerpo JSON que un WebhookSink REAL enviaría al CRM/POS al
@@ -151,10 +164,13 @@ func buildCRMOrderPayload(ec EffectContext, eff modules.Effect, now time.Time) c
 	crmItems := make([]crmItem, 0, len(items))
 	for _, m := range items {
 		crmItems = append(crmItems, crmItem{
-			SKU:       modules.AsString(m["sku"]),
-			Label:     modules.AsString(m["label"]),
-			Qty:       modules.AsInt(m["qty"]),
-			UnitPrice: modules.AsFloat(m["unit_price"]),
+			SKU:   modules.AsString(m["sku"]),
+			Label: modules.AsString(m["label"]),
+			// Ausente ⇒ cadena vacía: un efecto de cierre escrito antes de que el
+			// campo existiera cruza igual, sin rama especial (D-041.17).
+			Customization: modules.AsString(m["customization"]),
+			Qty:           modules.AsInt(m["qty"]),
+			UnitPrice:     modules.AsFloat(m["unit_price"]),
 		})
 	}
 	return crmOrderPayload{

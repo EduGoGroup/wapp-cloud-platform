@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -16,21 +17,35 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
-// exportColumns es el CONTRATO de columnas del export (design D-041.15), en este
-// orden exacto. Es desnormalizado: una fila por LÍNEA de solicitud, con la
-// cabecera repetida en cada una — así el archivo se abre y se filtra en una hoja
-// de cálculo sin que nadie tenga que cruzar dos pestañas.
+// Las columnas del export van en DOS mitades declaradas por separado, y no en una
+// lista suelta, porque cada fila del archivo se arma con esa misma división: la
+// cabecera de la solicitud se REPITE en cada una de sus líneas (desnormalizado,
+// D-041.15) y detrás van las columnas de la línea. Teniendo las dos mitades, el
+// relleno de una solicitud sin líneas se DERIVA de cuántas columnas de línea hay
+// —no se escribe a mano— y añadir una columna no puede dejar esas filas con un
+// hueco de menos, que es un desajuste que el CSV no delata al abrirlo.
 //
-// `customer_note` y `customization` salen VACÍAS por ahora, y la columna existe a
-// propósito: las columnas de un CSV son POSICIONALES. Las escribe el cliente final
-// y nacen en la Ola 4 (T4.1b/T4.1c, D-041.17/D-041.19); si se omitieran hoy,
-// añadirlas después las metería EN MEDIO y correría todo lo que viene detrás,
-// rompiendo cualquier plantilla o macro que alguien ya hubiera armado sobre el
-// archivo. Reservado el hueco, la Ola 4 solo tiene que llenar el valor.
-var exportColumns = []string{
-	"intake_id", "created_at", "status", "session_id", "contact_ref", "intake_total",
-	"customer_note", "sku", "label", "customization", "qty", "unit_price", "line_total",
-}
+// `customer_note` sale VACÍA todavía (la escribe T4.1c) y su hueco está reservado
+// a propósito: las columnas de una hoja son POSICIONALES para quien la llena, así
+// que añadirla luego EN MEDIO correría todo lo que viene detrás y rompería
+// cualquier plantilla o macro ya armada sobre el archivo.
+var (
+	// exportHeadColumns son las columnas de la SOLICITUD (se repiten por línea).
+	exportHeadColumns = []string{
+		"intake_id", "created_at", "status", "session_id", "contact_ref",
+		"intake_total", "customer_note",
+	}
+	// exportLineColumns son las columnas de la LÍNEA. `customization` va entre
+	// `label` y `qty` (D-041.15): pegada a lo que describe y antes de lo que se
+	// cobra, porque no se cobra (INV-13).
+	exportLineColumns = []string{
+		"sku", "label", "customization", "qty", "unit_price", "line_total",
+	}
+	// exportColumns es el CONTRATO de columnas del export, en este orden exacto.
+	// ES LA ÚNICA definición del orden: quien lo cambie rompe el test que afirma
+	// la cabecera completa, no el archivo que abre el operador.
+	exportColumns = slices.Concat(exportHeadColumns, exportLineColumns)
+)
 
 // exportFormats son los formatos aceptados por ?format=. El default es csv.
 const (
@@ -46,9 +61,12 @@ const exportSheet = "solicitudes"
 // distintas: el CSV las formatea a texto y el XLSX escribe los números COMO
 // números (si fueran texto, la hoja no los sumaría).
 //
-// Una solicitud SIN líneas produce igualmente una fila, con las cinco columnas de
-// línea vacías. Es deliberado: con "una fila por línea" a rajatabla, una solicitud
+// Una solicitud SIN líneas produce igualmente una fila, con las columnas de línea
+// vacías. Es deliberado: con "una fila por línea" a rajatabla, una solicitud
 // abierta que nadie llegó a llenar desaparecería del export sin dejar rastro.
+//
+// Toda fila mide EXACTAMENTE len(exportColumns): el relleno de la solicitud sin
+// líneas se dimensiona con len(exportLineColumns) en vez de contar `nil` a mano.
 func exportRows(details []intakes.Detail) [][]any {
 	rows := make([][]any, 0, len(details))
 	for _, d := range details {
@@ -62,7 +80,7 @@ func exportRows(details []intakes.Detail) [][]any {
 			"", // customer_note — Ola 4 (T4.1c)
 		}
 		if len(d.Items) == 0 {
-			rows = append(rows, append(head, nil, nil, nil, nil, nil))
+			rows = append(rows, append(head, make([]any, len(exportLineColumns))...))
 			continue
 		}
 		for _, it := range d.Items {
@@ -71,10 +89,15 @@ func exportRows(details []intakes.Detail) [][]any {
 			rows = append(rows, append(row,
 				it.SKU,
 				it.Label,
-				"", // customization — Ola 4 (T4.1b)
+				// La personalización de la línea (D-041.17): quien prepara la lee
+				// AQUÍ. Sale como texto —lo escribe el cliente final— y por eso
+				// pasa por el escape de fórmulas del formateador, igual que label.
+				it.Customization,
 				it.Qty,
 				it.UnitPrice,
-				float64(it.Qty)*it.UnitPrice, // line_total
+				// line_total sale de qty × unit_price y de NADA más: la
+				// personalización no toca el dinero (INV-13).
+				float64(it.Qty)*it.UnitPrice,
 			))
 		}
 	}
@@ -92,6 +115,9 @@ const csvBOM = "\xef\xbb\xbf"
 // distintas. Lo que comparten —BOM, CRLF, el escape de fórmulas, el formato de los
 // números— es exactamente lo que no conviene tener escrito dos veces.
 func writeCSV(w io.Writer, columns []string, rows [][]any) error {
+	if err := checkRowWidth(columns, rows); err != nil {
+		return err
+	}
 	if _, err := io.WriteString(w, csvBOM); err != nil {
 		return fmt.Errorf("export: escribir BOM: %w", err)
 	}
@@ -113,6 +139,22 @@ func writeCSV(w io.Writer, columns []string, rows [][]any) error {
 	cw.Flush()
 	if err := cw.Error(); err != nil {
 		return fmt.Errorf("export: volcar CSV: %w", err)
+	}
+	return nil
+}
+
+// checkRowWidth exige que cada fila traiga UNA celda por columna. No es una
+// paranoia de estilo: el escritor de CSV reutiliza el mismo buffer de registro
+// entre filas, así que una fila corta no sale corta — sale con las celdas que
+// sobran HEREDADAS de la fila anterior, y el archivo se abre perfectamente con un
+// dato de otro pedido en la última columna. Un desajuste es un error del
+// generador, y vale mucho más un 500 que una hoja de cálculo que miente.
+func checkRowWidth(columns []string, rows [][]any) error {
+	for i, row := range rows {
+		if len(row) != len(columns) {
+			return fmt.Errorf("export: la fila %d trae %d celdas para %d columnas",
+				i+1, len(row), len(columns))
+		}
 	}
 	return nil
 }
@@ -161,6 +203,9 @@ func escapeFormula(s string) string {
 // importador consume, en un XLSX sería un carácter MÁS dentro del dato y el
 // usuario lo vería en pantalla.
 func writeXLSX(w io.Writer, sheet string, columns []string, rows [][]any) (err error) {
+	if werr := checkRowWidth(columns, rows); werr != nil {
+		return werr
+	}
 	f := excelize.NewFile()
 	defer func() {
 		if cerr := f.Close(); cerr != nil && err == nil {

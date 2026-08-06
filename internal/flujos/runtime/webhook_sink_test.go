@@ -18,13 +18,16 @@ func discardWebhookLogger() logger.Logger {
 	return logger.New(logger.WithWriter(io.Discard))
 }
 
+// cartClosedEffect es el efecto de cierre con DOS líneas, una personalizada y otra
+// no (D-041.17): el contrato tiene que llevar el «sin azúcar» de la primera y dejar
+// la segunda vacía.
 func cartClosedEffect() modules.Effect {
 	return modules.Effect{
 		Kind: "persist",
 		Name: "cart_closed",
 		Payload: map[string]any{
 			"items": []map[string]any{
-				{"sku": "A1", "label": "Café", "qty": 2, "unit_price": 9.9},
+				{"sku": "A1", "label": "Café", "customization": "sin azúcar", "qty": 2, "unit_price": 9.9},
 				{"sku": "B2", "label": "Té", "qty": 1, "unit_price": 5.0},
 			},
 			"total": 24.8,
@@ -73,11 +76,68 @@ func TestBuildCRMOrderPayload_Contrato(t *testing.T) {
 	}
 
 	want := `{"tenant":"tenant-abc","contact":"contact-opaco-xyz","order_id":"",` +
-		`"items":[{"sku":"A1","label":"Café","qty":2,"unit_price":9.9},` +
-		`{"sku":"B2","label":"Té","qty":1,"unit_price":5}],` +
+		`"items":[{"sku":"A1","label":"Café","customization":"sin azúcar","qty":2,"unit_price":9.9},` +
+		`{"sku":"B2","label":"Té","customization":"","qty":1,"unit_price":5}],` +
 		`"total":24.8,"timestamp":"2026-07-03T10:00:00Z"}`
 	if string(body) != want {
 		t.Fatalf("payload del CRM no coincide con el contrato §9.I\n got: %s\nwant: %s", body, want)
+	}
+}
+
+// TestBuildCRMOrderPayload_Personalización es el QUINTO de los cinco caminos de
+// T4.1b (D-041.17, REQ-31b): la personalización cruza la frontera hacia el CRM/POS
+// —el esbozo del `intake.push` del Plan 042—. Es el camino que más importa del
+// invariante INV-12: cuando el pedido lo prepara un sistema de terceros, este JSON
+// es TODO lo que la cocina va a ver.
+//
+// El golden de arriba ya fija la forma entera; esto lo afirma por separado para que
+// romperlo diga QUÉ se perdió y no solo "el JSON cambió", y añade lo que el golden
+// no puede decir: que el dinero es el mismo.
+func TestBuildCRMOrderPayload_Personalización(t *testing.T) {
+	got := buildCRMOrderPayload(
+		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
+		cartClosedEffect(),
+		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
+	)
+
+	if len(got.Items) != 2 {
+		t.Fatalf("items=%d, quiero 2", len(got.Items))
+	}
+	if got.Items[0].Customization != "sin azúcar" {
+		t.Fatalf("items[0].customization=%q, quiero %q: el CRM no recibe la instrucción de producción",
+			got.Items[0].Customization, "sin azúcar")
+	}
+	if got.Items[1].Customization != "" {
+		t.Fatalf("items[1].customization=%q; esa línea no llevaba personalización", got.Items[1].Customization)
+	}
+	// INV-13: personalizar no cobra, ni en la línea ni en el total del pedido.
+	if got.Items[0].UnitPrice != 9.9 || got.Total != 24.8 {
+		t.Fatalf("unit_price=%v total=%v; la personalización movió el dinero",
+			got.Items[0].UnitPrice, got.Total)
+	}
+}
+
+// TestBuildCRMOrderPayload_SinPersonalización: un efecto de cierre SIN la clave
+// —el que produce hoy el carrito, hasta que T4.1c le dé la tecla 3, y el que
+// escribió cualquier conversación anterior a esta tarea— cruza igual, con la
+// personalización vacía. Cero regresión: no hay rama especial ni versión de payload
+// que mantener.
+func TestBuildCRMOrderPayload_SinPersonalización(t *testing.T) {
+	eff := modules.Effect{
+		Kind: "persist",
+		Name: "cart_closed",
+		Payload: map[string]any{
+			"items": []map[string]any{{"sku": "A1", "label": "Café", "qty": 1, "unit_price": 9.9}},
+			"total": 9.9,
+		},
+	}
+	got := buildCRMOrderPayload(EffectContext{TenantID: "t", ContactID: "c"}, eff, time.Unix(0, 0).UTC())
+
+	if len(got.Items) != 1 || got.Items[0].Customization != "" {
+		t.Fatalf("items=%+v; sin la clave, la personalización debe salir vacía", got.Items)
+	}
+	if got.Items[0].SKU != "A1" || got.Total != 9.9 {
+		t.Fatalf("el resto del payload se degradó: %+v", got)
 	}
 }
 
