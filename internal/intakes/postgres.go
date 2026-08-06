@@ -580,6 +580,37 @@ func shippingZonesTx(ctx context.Context, tx *sql.Tx, tenantID string) ([]Shippi
 	return ParseShippingZones(raw)
 }
 
+// NotifySettings implementa SettingsReader: la config comercial del tenant que el
+// aviso al cliente necesita (T4.2). Sale de la MISMA fila de tenant_settings de la
+// que sale shipping_zones — un solo origen de config, no dos.
+//
+// Un tenant SIN fila no es un error (mismo criterio que shippingZonesTx): es un
+// tenant que no configuró nada, y lo que devuelve dice exactamente eso — sin
+// plantilla de seña (no puede pedir seña) y con el plazo por defecto.
+//
+// NO va dentro de una transacción como shippingZonesTx: esto se lee FUERA de la
+// escritura del estado, después de que la transición ya esté aplicada, y meterlo en
+// la transacción del CAS alargaría el candado de la cabecera por un texto.
+func (p *Postgres) NotifySettings(ctx context.Context, tenantID string) (NotifySettings, error) {
+	var (
+		template string
+		dueDays  int
+	)
+	err := p.db.QueryRowContext(ctx,
+		`SELECT deposit_template, deposit_due_days FROM public.tenant_settings WHERE tenant_id = $1`,
+		tenantID).Scan(&template, &dueDays)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return NotifySettings{DepositDueDays: DefaultDepositDueDays}, nil
+	case err != nil:
+		return NotifySettings{}, fmt.Errorf("intakes: leer la config de notificación del tenant: %w", err)
+	}
+	if dueDays <= 0 {
+		dueDays = DefaultDepositDueDays
+	}
+	return NotifySettings{DepositTemplate: template, DepositDueDays: dueDays}, nil
+}
+
 // ReplaceItems implementa Store: la edición manual del dueño (T4.10). Todo ocurre
 // en UNA transacción que empieza bloqueando la cabecera, y el orden no es
 // negociable:

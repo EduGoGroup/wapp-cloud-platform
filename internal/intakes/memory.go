@@ -20,6 +20,9 @@ type MemoryStore struct {
 	items     map[string][]Item
 	revisions map[string][]Revision     // por solicitud, en orden de escritura
 	zones     map[string][]ShippingZone // por tenant; imita tenant_settings.shipping_zones
+	// notify indexa tenant_id → config del aviso al cliente; imita las columnas
+	// deposit_template / deposit_due_days de tenant_settings (T4.2).
+	notify map[string]NotifySettings
 	// liveCarts imita las filas de public.flow_state con carrito en `vars`, por la
 	// clave (tenant, sesión, contacto). Es la aproximación provisional de
 	// "conversación viva" que consume Discard (ver Store.Discard).
@@ -39,8 +42,33 @@ func NewMemoryStore() *MemoryStore {
 		items:     map[string][]Item{},
 		revisions: map[string][]Revision{},
 		zones:     map[string][]ShippingZone{},
+		notify:    map[string]NotifySettings{},
 		liveCarts: map[string]bool{},
 	}
+}
+
+// SetDepositTemplate siembra la plantilla de seña del tenant y su plazo, como haría
+// un UPDATE de tenant_settings.deposit_template / deposit_due_days. Sin llamarla el
+// tenant no tiene plantilla —el DEFAULT de la columna y el estado de arranque de
+// cualquier tenant real—, y por tanto no puede pedir seña (ver depositText).
+func (m *MemoryStore) SetDepositTemplate(tenantID, template string, dueDays int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notify[tenantID] = NotifySettings{DepositTemplate: template, DepositDueDays: dueDays}
+}
+
+// NotifySettings implementa SettingsReader. Un tenant sin sembrar devuelve la
+// config de arranque: sin plantilla y con el plazo por defecto, igual que el store
+// Postgres cuando no hay fila en tenant_settings.
+func (m *MemoryStore) NotifySettings(_ context.Context, tenantID string) (NotifySettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cfg, ok := m.notify[tenantID]
+	if !ok || cfg.DepositDueDays <= 0 {
+		cfg.DepositDueDays = DefaultDepositDueDays
+	}
+	return cfg, nil
 }
 
 // SetLiveCart marca que (tenant, sesión, contacto) tiene una conversación viva con

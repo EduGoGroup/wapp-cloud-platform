@@ -86,9 +86,58 @@ func (s *Server) handleReceipt(ctx context.Context, cc connCtx, receipt *cloudli
 	}
 }
 
+// SendError es el fallo de un comando que YA tenía command_id asignado, con ese
+// identificador a mano del llamante. Envuelve la causa (session.ErrSessionOffline,
+// context.DeadlineExceeded…), así que `errors.Is` sigue diciendo lo mismo que antes
+// de que este tipo existiera: los `writeSendError` de los handlers no cambian.
+//
+// Existe porque el command_id se genera DENTRO del envío y hasta ahora se perdía
+// justo cuando más falta hace. Con el Ack no hay problema —lo trae él—, pero un
+// envío que falla no devuelve Ack, y entonces el operador se queda sin el único
+// hilo que correlaciona lo que la nube intentó con el outbox del Edge y con los
+// acuses del Plan 013. La distinción que eso permite no es cosmética: si el fallo
+// fue empujar (sesión offline) el mensaje NO salió, pero si fue esperar el ack, el
+// comando ya viajó y el cliente pudo haberlo recibido — y saber cuál de las dos
+// cosas pasó es exactamente lo que se busca cuando alguien pregunta «¿le llegó?».
+type SendError struct {
+	commandID string
+	sessionID string
+	err       error
+}
+
+// CommandID devuelve el command_id del comando que falló. Se consume por
+// duck-typing (`interface{ CommandID() string }`) para que un llamante pueda
+// loguearlo sin importar este paquete.
+func (e *SendError) CommandID() string { return e.commandID }
+
+// SessionID devuelve la sesión a la que iba dirigido el comando.
+func (e *SendError) SessionID() string { return e.sessionID }
+
+// Error implementa error. NO incluye el destino ni el texto: un log de error no es
+// sitio para PII ni para el contenido del mensaje.
+func (e *SendError) Error() string {
+	return fmt.Sprintf("gatewaygrpc: comando %s a la sesión %s: %v", e.commandID, e.sessionID, e.err)
+}
+
+// Unwrap expone la causa para errors.Is/As.
+func (e *SendError) Unwrap() error { return e.err }
+
+// sendErr envuelve la causa de un envío fallido con su command_id. Un err nil
+// devuelve nil: así el llamante puede envolver sin ramificar.
+func sendErr(cmdID, sessionID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &SendError{commandID: cmdID, sessionID: sessionID, err: err}
+}
+
 // SendText empuja un comando SendText hacia la sesión dada y espera su Ack,
-// correlacionado por command_id. Devuelve el Ack recibido o un error si la
+// correlacionado por command_id. Devuelve el Ack recibido o un *SendError si la
 // sesión está offline o si el contexto se cancela/expira antes del Ack.
+//
+// ⚠️ Un Ack devuelto NO significa "entregado": el Edge puede acusar con Ok=false y
+// su motivo en Error. Quien necesite saber si el mensaje salió de verdad tiene que
+// mirar ack.GetOk(), no solo el error.
 func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
 	cmdID, err := newCommandID()
 	if err != nil {
@@ -109,14 +158,14 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 		},
 	}
 	if pushErr := s.registry.Push(sessionID, msg); pushErr != nil {
-		return nil, pushErr
+		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
 	select {
 	case ack := <-ch:
 		return ack, nil
 	case <-ctx.Done():
-		return nil, fmt.Errorf("esperando ack de %q: %w", cmdID, ctx.Err())
+		return nil, sendErr(cmdID, sessionID, ctx.Err())
 	}
 }
 
@@ -153,14 +202,14 @@ func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, fil
 		},
 	}
 	if pushErr := s.registry.Push(sessionID, msg); pushErr != nil {
-		return nil, pushErr
+		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
 	select {
 	case ack := <-ch:
 		return ack, nil
 	case <-ctx.Done():
-		return nil, fmt.Errorf("esperando ack de %q: %w", cmdID, ctx.Err())
+		return nil, sendErr(cmdID, sessionID, ctx.Err())
 	}
 }
 

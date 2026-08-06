@@ -270,10 +270,16 @@ func Run(ctx context.Context) error {
 			DiagnosticsRequester: gw,
 			DiagnosticsBundleTTL: cfg.Diagnostics.BundleTTL,
 		},
-		Triggers:        triggerStore,
-		Intents:         intentStore,
-		Entitlements:    entResolver,
-		Intakes:         intakes.NewService(intakeStore),
+		Triggers:     triggerStore,
+		Intents:      intentStore,
+		Entitlements: entResolver,
+		// El notificador (D-041.14 · T4.2) usa las MISMAS tres piezas que ya usa el
+		// motor para hablarle a un contacto: el Gateway como sender, el resolver
+		// custodiado de PII para el destino y el store de solicitudes para la config
+		// del tenant. No hay un segundo camino de salida hacia WhatsApp.
+		Intakes: intakes.NewService(intakeStore, intakes.WithNotifier(
+			intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log),
+		)),
 		TenantVariables: tenantvars.NewPostgres(db),
 		ConfigPush:      gw,
 		Health:          publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},

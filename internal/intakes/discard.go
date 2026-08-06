@@ -150,6 +150,12 @@ func DiscardableStatuses() []string {
 // "un rechazo no revierte los otros" prohíbe. Lo que hace segura esa situación es la
 // idempotencia: repetir el mismo lote devuelve `already_discarded` para lo ya hecho
 // y termina el resto.
+//
+// NO NOTIFICA AL CLIENTE, y no por olvido: el descarte es higiene interna del dueño
+// —está limpiando su bandeja de pedidos que nadie terminó— y avisar de eso sería
+// una forma rara de despedirse (design.md §D-041.18: «no borra y no notifica»). Por
+// eso pasa por el store directamente y no por SetStatus, que sí avisa: el aviso
+// cuelga de esa otra puerta, no de esta. Ver notifier.go.
 func (s *Service) Discard(ctx context.Context, tenantID string, intakeIDs []string) (DiscardResult, error) {
 	switch {
 	case len(intakeIDs) == 0:

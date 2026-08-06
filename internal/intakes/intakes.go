@@ -13,6 +13,15 @@
 // como está en BD. Este paquete NUNCA la descifra ni la enriquece: la mueve tal
 // cual del store al wire.
 //
+// Con UNA excepción, y conviene que esté escrita aquí y no escondida: el
+// notificador de cambio de estado (notifier.go, D-041.14) tiene que mandarle un
+// WhatsApp a una persona, y para eso hace falta su número. No lo descifra él —se lo
+// pide a la vía custodiada de PII (contact.Resolver, ADR-0017), que es la misma que
+// usa el motor de flujos—, lo pasa al Sender y lo suelta: no lo loguea, no lo
+// persiste y no lo devuelve a ningún llamante. Lo que sigue siendo cierto sin
+// matices es que ninguna LECTURA de este paquete (lista, detalle, export, summary)
+// enriquece jamás el contacto: ahí el opaco viaja opaco.
+//
 // Aislamiento por tenant (INV-8): el tenant llega SIEMPRE como argumento —lo saca
 // del token quien llama, jamás de un parámetro de la petición— y toda consulta lo
 // lleva en el WHERE. Una solicitud de otro tenant es indistinguible de una

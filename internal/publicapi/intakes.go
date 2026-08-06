@@ -243,8 +243,11 @@ func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
 // 404 si no es del tenant; 422 con el estado actual y los destinos permitidos si
 // la transición no es válida; 409 si otro operador se adelantó.
 //
-// Los efectos colaterales (seña, notificación, revisión) NO se disparan aquí:
-// llegan en la Ola 4. Esta ruta solo persiste la transición válida.
+// El AVISO AL CLIENTE (D-041.14, T4.2) lo dispara el servicio DESPUÉS de escribir,
+// y no puede cambiar lo que devuelve esta ruta: un 200 significa «la transición se
+// aplicó», nunca «el cliente recibió el mensaje». Con la sesión del negocio offline
+// el dueño sigue viendo su 200 y su bandeja al día; el envío fallido queda en el
+// log del servidor con su command_id. Ver intakes.Service.notify.
 func setIntakeStatusHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())

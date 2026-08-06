@@ -10,12 +10,39 @@ import (
 // de HTTP y no toma decisiones de transporte; el handler traduce sus errores a
 // códigos.
 type Service struct {
-	store Store
+	store    Store
+	notifier StatusNotifier
+}
+
+// StatusNotifier avisa al CLIENTE de que su solicitud cambió de estado (D-041.14).
+// Lo satisface *Notifier.
+//
+// NO devuelve error, y eso es el contrato entero: un aviso que no sale no puede
+// tumbar una transición que ya está escrita en la base. Si esta firma ganara un
+// error, el primer llamante que lo propagara le devolvería un 500 al dueño por un
+// pedido que SÍ cambió de estado — y el dueño reintentaría, chocaría con un 422 por
+// estar ya en el destino, y acabaría creyendo que no se aplicó. Ver notifier.go.
+type StatusNotifier interface {
+	NotifyStatus(ctx context.Context, tenantID string, in Intake, from string)
+}
+
+// Option configura el Service al construirlo.
+type Option func(*Service)
+
+// WithNotifier cablea el aviso al cliente de cada transición aplicada (T4.2). Sin
+// esta opción el servicio funciona igual y NO manda nada: es lo que hace que un
+// test de dominio no le haga sonar el teléfono a nadie por accidente.
+func WithNotifier(n StatusNotifier) Option {
+	return func(s *Service) { s.notifier = n }
 }
 
 // NewService construye el servicio sobre el store dado.
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func NewService(store Store, opts ...Option) *Service {
+	s := &Service{store: store}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // List devuelve la página de solicitudes del tenant que casan con el filtro, con
@@ -88,9 +115,10 @@ func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, e
 // escritura del estado, y por eso vive dentro de la misma transacción del store
 // (ver Store.UpdateStatus). La Intake que se devuelve ya trae el total con ella.
 //
-// Los EFECTOS COLATERALES de verdad —plantilla de seña, notificación al cliente,
-// fila de intake_revisions— NO se disparan aquí: llegan en la Ola 4. Esta
-// operación solo persiste la transición válida.
+// El AVISO AL CLIENTE (D-041.14, T4.2) es el paso 4 y va DESPUÉS de la escritura,
+// nunca antes ni en paralelo: solo se le cuenta a alguien lo que ya es verdad en la
+// base. No puede fallar hacia arriba —NotifyStatus no devuelve error— porque una
+// transición aplicada no se deshace porque el teléfono del cliente esté apagado.
 func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) (Intake, error) {
 	to = NormalizeStatus(to)
 
@@ -103,7 +131,36 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 		return Intake{}, &TransitionError{From: from, To: to, Allowed: AllowedTransitions(from)}
 	}
 
-	return s.store.UpdateStatus(ctx, tenantID, intakeID, to, StoredVariants(from))
+	updated, err := s.store.UpdateStatus(ctx, tenantID, intakeID, to, StoredVariants(from))
+	if err != nil {
+		return Intake{}, err
+	}
+	s.notify(ctx, tenantID, updated, from)
+	return updated, nil
+}
+
+// notify dispara el aviso al cliente de UNA transición efectivamente aplicada.
+//
+// Es el punto donde se sostiene «como mucho un mensaje por transición», y lo hace
+// colgando el aviso de la ESCRITURA y no de la petición:
+//
+//   - la transición ya pasó por CanTransition, que rechaza from == to: pedir dos
+//     veces `confirmed` sobre algo ya confirmado no llega hasta aquí;
+//   - UpdateStatus es un compare-and-swap sobre el estado leído, así que de dos
+//     operadores que piden lo mismo a la vez solo UNO escribe; el otro se lleva
+//     ErrConflict y sale por el `return` de arriba sin avisar a nadie;
+//   - y si aun así el store devolviera algo que no es el destino, la guarda de
+//     abajo calla. Es defensa barata contra un store futuro que "arregle" una
+//     transición imposible devolviendo el estado actual: al cliente le llegaría un
+//     WhatsApp que no corresponde a ningún cambio.
+func (s *Service) notify(ctx context.Context, tenantID string, updated Intake, from string) {
+	if s.notifier == nil {
+		return
+	}
+	if NormalizeStatus(updated.Status) == from {
+		return
+	}
+	s.notifier.NotifyStatus(ctx, tenantID, updated, from)
 }
 
 // EnsureShippingLine garantiza la línea estándar de envío de una solicitud
