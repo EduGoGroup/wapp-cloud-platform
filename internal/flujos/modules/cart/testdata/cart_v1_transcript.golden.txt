@@ -1,0 +1,279 @@
+
+=== escenario 1 · recorrido completo (page_size por defecto) ===
+
+--- RENDER (arranque del nodo) ---
+🛒 Elige una categoría:
+1) Bebidas
+2) Postres
+
+--- STEP <8> ---
+Opción no válida. Responde con el número de una de las opciones.
+
+🛒 Elige una categoría:
+1) Bebidas
+2) Postres
+efecto: kind=event name=cart_started payload={}
+estado: {"level":"categories","started":true}
+
+--- STEP <1> ---
+Bebidas:
+1) Café · $2.50
+2) Té · $2.00
+0) ← Volver
+efecto: kind=event name=category_selected payload={"category_code":"1"}
+estado: {"level":"articles","cat_code":"1","started":true}
+
+--- STEP <1> ---
+Café · $2.50
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <1> ---
+Café · $2.50
+Espresso doble
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efecto: kind=event name=item_viewed payload={"sku":"CAFE"}
+estado: {"level":"article","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <2> ---
+¿Cuántos "Café"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <abc> ---
+Escribe una cantidad válida (un número mayor o igual a 1).
+
+¿Cuántos "Café"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <0> ---
+Café · $2.50
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <2> ---
+¿Cuántos "Café"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <2> ---
+Añadido al pedido ✅
+1) Agregar más de Bebidas
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Café","qty":2,"sku":"CAFE","unit_price":2.5}
+estado: {"level":"continue","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <0> ---
+Café · $2.50
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <0> ---
+Bebidas:
+1) Café · $2.50
+2) Té · $2.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"articles","cat_code":"1","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <0> ---
+🛒 Elige una categoría:
+1) Bebidas
+2) Postres
+efectos: (ninguno)
+estado: {"level":"categories","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <2> ---
+Postres:
+1) Flan · $3.00
+0) ← Volver
+efecto: kind=event name=category_selected payload={"category_code":"2"}
+estado: {"level":"articles","cat_code":"2","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <1> ---
+Flan · $3.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <2> ---
+¿Cuántos "Flan"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5}],"started":true}
+
+--- STEP <1> ---
+Añadido al pedido ✅
+1) Agregar más de Postres
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Flan","qty":1,"sku":"FLAN","unit_price":3}
+estado: {"level":"continue","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <2> ---
+🧾 Resumen del pedido:
+Café x2  $5.00
+Flan x1  $3.00
+TOTAL  $8.00
+1) Confirmar y finalizar
+2) Seguir agregando
+9) Cancelar pedido
+efectos: (ninguno)
+estado: {"level":"summary","cat_code":"2","sku":"FLAN","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <2> ---
+Postres:
+1) Flan · $3.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"articles","cat_code":"2","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <0> ---
+🛒 Elige una categoría:
+1) Bebidas
+2) Postres
+efectos: (ninguno)
+estado: {"level":"categories","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <1> ---
+Bebidas:
+1) Café · $2.50
+2) Té · $2.00
+0) ← Volver
+efecto: kind=event name=category_selected payload={"category_code":"1"}
+estado: {"level":"articles","cat_code":"1","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <2> ---
+Té · $2.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <2> ---
+¿Cuántos "Té"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3}],"started":true}
+
+--- STEP <1> ---
+Añadido al pedido ✅
+1) Agregar más de Bebidas
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Té","qty":1,"sku":"TE","unit_price":2}
+estado: {"level":"continue","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3},{"sku":"TE","label":"Té","qty":1,"unit_price":2}],"started":true}
+
+--- STEP <2> ---
+🧾 Resumen del pedido:
+Café x2  $5.00
+Flan x1  $3.00
+Té x1  $2.00
+TOTAL  $10.00
+1) Confirmar y finalizar
+2) Seguir agregando
+9) Cancelar pedido
+efectos: (ninguno)
+estado: {"level":"summary","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3},{"sku":"TE","label":"Té","qty":1,"unit_price":2}],"started":true}
+
+--- STEP <1> ---
+✅ ¡Pedido confirmado! Total $10.00.
+efecto: kind=persist name=cart_closed payload={"items":[{"label":"Café","qty":2,"sku":"CAFE","unit_price":2.5},{"label":"Flan","qty":1,"sku":"FLAN","unit_price":3},{"label":"Té","qty":1,"sku":"TE","unit_price":2}],"total":10}
+estado: {"level":"closed","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3},{"sku":"TE","label":"Té","qty":1,"unit_price":2}],"started":true}
+
+--- STEP <1> ---
+✅ ¡Pedido confirmado! Total $10.00.
+efectos: (ninguno)
+estado: {"level":"closed","cat_code":"1","sku":"TE","lines":[{"sku":"CAFE","label":"Café","qty":2,"unit_price":2.5},{"sku":"FLAN","label":"Flan","qty":1,"unit_price":3},{"sku":"TE","label":"Té","qty":1,"unit_price":2}],"started":true}
+
+=== escenario 2 · cancelar con 9 desde continuar ===
+
+--- STEP <1> ---
+Bebidas:
+1) Café · $2.50
+2) Té · $2.00
+0) ← Volver
+efecto: kind=event name=cart_started payload={}
+efecto: kind=event name=category_selected payload={"category_code":"1"}
+estado: {"level":"articles","cat_code":"1","started":true}
+
+--- STEP <1> ---
+Café · $2.50
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <2> ---
+¿Cuántos "Café"? Escribe la cantidad (0 ← volver)
+efectos: (ninguno)
+estado: {"level":"quantity","cat_code":"1","sku":"CAFE","started":true}
+
+--- STEP <1> ---
+Añadido al pedido ✅
+1) Agregar más de Bebidas
+2) Finalizar pedido
+9) Cancelar pedido
+0) ← Volver
+efecto: kind=event name=item_added payload={"label":"Café","qty":1,"sku":"CAFE","unit_price":2.5}
+estado: {"level":"continue","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":1,"unit_price":2.5}],"started":true}
+
+--- STEP <9> ---
+Pedido cancelado. Puedes iniciar uno nuevo cuando quieras.
+efecto: kind=event name=cart_cancelled payload={}
+estado: {"level":"cancelled","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":1,"unit_price":2.5}],"started":true}
+
+=== escenario 3 · paginación Más ▾ (page_size = 1) ===
+
+--- RENDER (arranque del nodo) ---
+🛒 Elige una categoría:
+1) Bebidas
+3) Más ▾
+
+--- STEP <3> ---
+🛒 Elige una categoría:
+2) Postres
+efecto: kind=event name=cart_started payload={}
+estado: {"level":"categories","page":1,"started":true}
+
+--- STEP <2> ---
+Postres:
+1) Flan · $3.00
+0) ← Volver
+efecto: kind=event name=category_selected payload={"category_code":"2"}
+estado: {"level":"articles","cat_code":"2","started":true}
+
+--- STEP <2> ---
+Opción no válida. Responde con el número de una de las opciones.
+
+Postres:
+1) Flan · $3.00
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"articles","cat_code":"2","started":true}
+
+--- STEP <1> ---
+Flan · $3.00
+1) Ver descripción
+2) Agregar al pedido
+0) ← Volver
+efectos: (ninguno)
+estado: {"level":"article","cat_code":"2","sku":"FLAN","started":true}
