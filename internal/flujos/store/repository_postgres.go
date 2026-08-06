@@ -342,6 +342,76 @@ func (r *PostgresRepository) UpsertTenantContent(ctx context.Context, tenantID, 
 	return nil
 }
 
+// ReplaceTenantContentVersioned implementa TenantContentVersioner sobre Postgres:
+// archiva el blob vigente en public.tenant_content_versions y escribe el nuevo en
+// public.tenant_content DENTRO DE UNA SOLA TRANSACCIÓN (Plan 041 · T3.3,
+// D-041.8), vía el helper postgres.WithTx (rollback inmune a panic + retry
+// 40P01/40001).
+//
+// EL ORDEN NO ES LO QUE DA LA ATOMICIDAD, LA TRANSACCIÓN SÍ. Fuera de ella no hay
+// secuencia buena: archivar-y-caer deja una versión de un catálogo que sigue
+// vigente; escribir-y-caer pierde para siempre el que se sustituyó.
+//
+// Bloquea la fila vigente con FOR UPDATE antes de calcular MAX(version)+1: dos
+// imports simultáneos sobre la MISMA (tenant, ref) se serializan y numeran 1 y 2,
+// en vez de pelearse por el mismo número y violar la PK. Si no hay fila vigente no
+// hay nada que bloquear ni que archivar —el upsert final resuelve la carrera— y se
+// devuelve archived=0.
+func (r *PostgresRepository) ReplaceTenantContentVersioned(ctx context.Context, tenantID, ref string, blob []byte, source string) (int, error) {
+	if !validVersionSource(source) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidVersionSource, source)
+	}
+	var archived int
+	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		archived = 0 // WithTx reintenta ante deadlock: el acumulador se recalcula entero.
+		var current []byte
+		err := tx.QueryRowContext(ctx, `
+			SELECT content
+			FROM public.tenant_content
+			WHERE tenant_id = $1 AND ref = $2
+			FOR UPDATE
+		`, tenantID, ref).Scan(&current)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Sin contenido vigente no se versiona nada (D-041.8): la versión 1
+			// nacerá del PRÓXIMO import, con lo que este escriba.
+		case err != nil:
+			return fmt.Errorf("store: leer contenido vigente para versionar: %w", err)
+		default:
+			var next int
+			if verr := tx.QueryRowContext(ctx, `
+				SELECT COALESCE(MAX(version), 0) + 1
+				FROM public.tenant_content_versions
+				WHERE tenant_id = $1 AND ref = $2
+			`, tenantID, ref).Scan(&next); verr != nil {
+				return fmt.Errorf("store: calcular siguiente versión de contenido: %w", verr)
+			}
+			if _, ierr := tx.ExecContext(ctx, `
+				INSERT INTO public.tenant_content_versions
+					(tenant_id, ref, version, content, source)
+				VALUES ($1, $2, $3, $4, $5)
+			`, tenantID, ref, next, current, source); ierr != nil {
+				return fmt.Errorf("store: archivar versión de contenido: %w", ierr)
+			}
+			archived = next
+		}
+
+		if _, uerr := tx.ExecContext(ctx, `
+			INSERT INTO public.tenant_content (tenant_id, ref, content, created_at, updated_at)
+			VALUES ($1, $2, $3, now(), now())
+			ON CONFLICT (tenant_id, ref) DO UPDATE
+			SET content = EXCLUDED.content, updated_at = now()
+		`, tenantID, ref, blob); uerr != nil {
+			return fmt.Errorf("store: escribir contenido versionado: %w", uerr)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return archived, nil
+}
+
 // ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs de
 // public.tenant_content del tenant, ordenadas por ref (Plan 018 · T6). NO trae el
 // blob (se obtiene con GetTenantContent). Acotado al tenant (INV-8): el WHERE

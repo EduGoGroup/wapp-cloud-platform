@@ -23,6 +23,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/catalogimport"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -107,6 +108,16 @@ type MediaDeps struct {
 	// porque los dos escriben en la misma tabla y dos techos distintos dejarían un
 	// blob importable que el PUT genérico rechaza (Plan 041 · Ola 3).
 	ContentMaxBytes int64
+	// ContentVersions archiva el catálogo vigente y escribe el nuevo en un solo acto
+	// (Plan 041 · T3.3, D-041.8). Lo satisface el MISMO *store.PostgresRepository que
+	// Content; se declara aparte porque el PUT genérico no versiona. nil ⇒ no se
+	// montan las rutas de import.
+	ContentVersions CatalogVersionWriter
+	// ImportMaxItems es el tope de artículos de UN documento de import. Cero-valor ⇒
+	// default de catalogimport (500). Se cablea desde config.ImportConfig. A
+	// diferencia del techo de bytes, este SÍ es del import: el PUT genérico no cuenta
+	// artículos porque no sabe qué hay dentro del blob.
+	ImportMaxItems int
 }
 
 // Deps agrupa las dependencias de negocio que la API pública envuelve. Se
@@ -310,6 +321,10 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
 	registerTenantVariables(mux, d, mw, auditor, log)
 
+	// Import de catálogo (Plan 041 · T3.3, D-041.6). Misma razón para vivir aparte:
+	// su montaje tiene tres condiciones y aquí solo se ve que existe.
+	registerCatalogImport(mux, d, mw, auditor, log)
+
 	// Lectura de la bitácora de auditoría (Plan 018 · T10, R11). Paginada, acotada
 	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
 	// Lectura sin auditoría (no tiene efecto). Los eventos ya son OPACOS (CERO PII).
@@ -397,6 +412,50 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 		"content.read", getTenantVariablesHandler(d.TenantVariables)))
 	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
+}
+
+// registerCatalogImport monta el import de catálogo (Plan 041 · T3.3, D-041.6):
+// POST /api/v1/catalog/import?mode=validate|apply&ref=…, con el documento como
+// JSON crudo en el cuerpo. Acotado al tenant del token (INV-8).
+//
+// TRES GUARDIAS, Y NINGUNO SUSTITUYE A OTRO. El scope (content.write) dice
+// "puedes tocar el contenido de este tenant"; la feature (catalog_import) dice "tu
+// plan incluye cargarlo de golpe"; y la auditoría deja constancia. RequireFeature
+// se compone SIEMPRE después de Authenticate y RequirePermission: antes no habría
+// identidad de la que sacar el tenant y el gate cortaría fail-closed a todo el
+// mundo.
+//
+// MISMO SCOPE QUE tenant-content, y por lo mismo que las variables de empresa: el
+// import escribe exactamente donde escribe el PUT genérico (public.tenant_content),
+// así que inventarle un scope propio no protegería nada nuevo y dejaría la ruta
+// inaccesible hasta una migración de grants.
+//
+// content.write TAMBIÉN PARA mode=validate, que no escribe. Elegir el permiso
+// según un parámetro de la URL haría que la autorización dependiera de una entrada
+// del usuario, y bastaría cambiar una letra del query para pasar de la puerta
+// laxa a la operación de escritura. Una ruta, un permiso: el más fuerte de los
+// que puede ejercer.
+//
+// A DIFERENCIA de tenant-variables, esto SÍ lleva gate de feature: cargar el
+// catálogo entero validado, con diff y versión, es una capacidad que se vende
+// (taxonomía del Plan 040). Quien no la tenga sigue pudiendo escribir su blob a
+// mano por PUT /api/v1/tenant-content/{ref}.
+//
+// Sin store de contenido, sin versionador o sin resolver de features las rutas NO
+// se montan: mejor un 404 de ruta inexistente que un import que responde 500 a
+// medio camino o, peor, que se aplica sin poder comprobar el plan.
+func registerCatalogImport(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
+	if d.Content == nil || d.ContentVersions == nil || d.Entitlements == nil {
+		return
+	}
+	canImport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCatalogImport)
+	limits := catalogimport.Limits{
+		MaxJSONBytes: tenantContentBytes(d.ContentMaxBytes),
+		MaxItems:     d.ImportMaxItems,
+	}
+	mux.Handle("POST /api/v1/catalog/import", protect(mw, auditor, log,
+		"content.write", "catalog_import",
+		canImport(catalogImportHandler(d.Content, d.ContentVersions, limits))))
 }
 
 // protect compone la cadena de una ESCRITURA pública: Authenticate → identidad del

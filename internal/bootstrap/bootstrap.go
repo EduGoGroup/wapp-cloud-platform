@@ -255,6 +255,8 @@ func Run(ctx context.Context) error {
 			Media:           flowDeps.presign,
 			Content:         flowStore,
 			ContentMaxBytes: cfg.TenantContent.MaxBytes,
+			ContentVersions: flowStore,
+			ImportMaxItems:  cfg.Import.MaxItems,
 		},
 		DiagDeps: publicapi.DiagDeps{
 			Diagnostics:          diagStore,

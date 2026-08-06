@@ -61,6 +61,21 @@ const FeatureCartBasic = "cart_basic"
 // mantenga.
 const FeatureIntakesExport = "intakes_export"
 
+// FeatureCatalogImport es la feature de CARGAR el catálogo de golpe (Plan 041 ·
+// T3.3): el POST /api/v1/catalog/import y todo lo que cuelgue de esa ruta.
+//
+// La clave lleva sembrada desde la taxonomía del Plan 040 (migración 0039); lo
+// que faltaba —y añade esta línea— era la constante Go, sin la cual el gate no se
+// podía escribir. Que la clave exista en BD y no en el código NO es un gate a
+// medias: es NINGÚN gate, porque la ruta se monta igual.
+//
+// Cargar el catálogo es una capacidad comercial aparte de tocarlo a mano: quien
+// no la tenga sigue pudiendo escribir su contenido por
+// PUT /api/v1/tenant-content/{ref}, que es capa técnica y no se gatea (ADR-0035).
+// Lo que se vende aquí es el atajo —validar, ver el diff y versionar de una
+// pasada—, no el derecho a tener catálogo.
+const FeatureCatalogImport = "catalog_import"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).

@@ -71,7 +71,7 @@ channels), nunca RabbitMQ ni Redis (ADR-0003).
 
 Los scripts SQL embebidos viven en
 `internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` …
-`0040_entitlements_read_grant.sql`). El runner de `platform/storage/postgres` los aplica
+`0044_tenant_content_versions.sql`). El runner de `platform/storage/postgres` los aplica
 al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.24.0**)
 contra `public.schema_version`; además calcula un hash de los archivos para
 detectar cambios aunque no se haya subido la versión. **Obligatorio incrementar

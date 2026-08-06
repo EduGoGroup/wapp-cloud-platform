@@ -42,6 +42,11 @@ type MemoryRepository struct {
 	// tenant_content (Plan 018 · T6), en paralelo a content. Lo escribe
 	// UpsertTenantContent y lo lee ListTenantContent (created/updated_at).
 	contentMeta map[string]tcMeta
+	// contentVersions indexa (tenant_id, ref) → versiones archivadas en orden de
+	// archivado; imita public.tenant_content_versions (Plan 041 · T3.3). Lo escribe
+	// ReplaceTenantContentVersioned y lo consultan los tests vía
+	// TenantContentVersions.
+	contentVersions map[string][]TenantContentVersion
 	// intakes indexa intake_id → solicitud; imita public.intakes (Plan 016 · T0).
 	// Consultable en tests vía Intakes().
 	intakes map[string]Intake
@@ -57,14 +62,15 @@ type MemoryRepository struct {
 // NewMemoryRepository crea un repositorio en memoria vacío.
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		state:       make(map[string]model.Conversation),
-		defs:        make(map[string]map[int]model.Flow),
-		maxVer:      make(map[string]int),
-		content:     make(map[string][]byte),
-		contentMeta: make(map[string]tcMeta),
-		intakes:     make(map[string]Intake),
-		intakeItems: make(map[string][]IntakeItem),
-		settings:    make(map[string]TenantSettings),
+		state:           make(map[string]model.Conversation),
+		defs:            make(map[string]map[int]model.Flow),
+		maxVer:          make(map[string]int),
+		content:         make(map[string][]byte),
+		contentMeta:     make(map[string]tcMeta),
+		contentVersions: make(map[string][]TenantContentVersion),
+		intakes:         make(map[string]Intake),
+		intakeItems:     make(map[string][]IntakeItem),
+		settings:        make(map[string]TenantSettings),
 	}
 }
 
@@ -341,6 +347,63 @@ func (r *MemoryRepository) UpsertTenantContent(_ context.Context, tenantID, ref 
 	meta.updated = now
 	r.contentMeta[k] = meta
 	return nil
+}
+
+// ReplaceTenantContentVersioned implementa TenantContentVersioner en memoria:
+// archiva el blob vigente como la siguiente versión y escribe el nuevo, todo bajo
+// EL MISMO mutex. Es la contraparte fiel de la transacción de Postgres: nadie
+// puede observar el estado intermedio (versión escrita, contenido aún viejo).
+//
+// Sin blob vigente NO archiva y devuelve 0, igual que el camino real: la versión 1
+// nace del segundo import sobre una ref (D-041.8).
+func (r *MemoryRepository) ReplaceTenantContentVersioned(_ context.Context, tenantID, ref string, blob []byte, source string) (int, error) {
+	if !validVersionSource(source) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidVersionSource, source)
+	}
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	k := contentKey(tenantID, ref)
+	now := time.Now().UTC()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	archived := 0
+	if current, ok := r.content[k]; ok {
+		archived = len(r.contentVersions[k]) + 1
+		kept := make([]byte, len(current))
+		copy(kept, current)
+		r.contentVersions[k] = append(r.contentVersions[k], TenantContentVersion{
+			Version: archived, Content: kept, Source: source, CreatedAt: now,
+		})
+	}
+
+	r.content[k] = stored
+	meta := r.contentMeta[k]
+	if meta.created.IsZero() {
+		meta.created = now
+	}
+	meta.updated = now
+	r.contentMeta[k] = meta
+	return archived, nil
+}
+
+// TenantContentVersions devuelve las versiones archivadas de (tenantID, ref) en
+// orden de archivado. Helper de test (imita un SELECT ... ORDER BY version);
+// copia los blobs para no compartir el backing array con el llamante.
+func (r *MemoryRepository) TenantContentVersions(tenantID, ref string) []TenantContentVersion {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored := r.contentVersions[contentKey(tenantID, ref)]
+	out := make([]TenantContentVersion, 0, len(stored))
+	for _, v := range stored {
+		content := make([]byte, len(v.Content))
+		copy(content, v.Content)
+		out = append(out, TenantContentVersion{
+			Version: v.Version, Content: content, Source: v.Source, CreatedAt: v.CreatedAt,
+		})
+	}
+	return out
 }
 
 // ListTenantContent devuelve las cabeceras (ref + timestamps) de los blobs del
