@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -134,6 +135,21 @@ type Runtime struct {
 	// NO es un reloj (ADR-0003): no hay barrido ni goroutine de fondo; es este
 	// entrante, que ya estaba pasando por aquí, el que hace de disparador.
 	deposits DepositReminder
+	// onReactiveBlocked cuenta cada entrante que NO entra al motor reactivo, con el
+	// motivo (reasonPassive|reasonSelfLoop|reasonRateLimit). Hook NIL-SAFE inyectado
+	// con WithReactiveBlockedHook —típicamente metrics.FlowReactiveBlocked— para no
+	// acoplar el motor a prometheus, igual que el onRecord del sink de acuses. nil
+	// (default) ⇒ no se cuenta nada: los cortes se comportan igual.
+	onReactiveBlocked func(reason string)
+	// passiveAnnounced recuerda qué sesiones ya anunciaron a INFO su corte por rol
+	// passive, para decirlo UNA vez por sesión y las siguientes a Debug. El corte
+	// salta en CADA entrante de una sesión passive (~2.000/hora en el e2e del
+	// 2026-08-06): a INFO siempre inundaría el log, y solo a Debug es invisible con
+	// el nivel por defecto —que fue justo lo que hizo diagnosticar mal un escenario
+	// que no corrió—. Crece acotado por el nº de sesiones passive del despliegue
+	// (decenas) y se vacía al reiniciar, que es cuando el operador quiere volver a
+	// verlas. sync.Map porque OnIncoming procesa entrantes concurrentes.
+	passiveAnnounced sync.Map
 }
 
 // DepositReminder evalúa si a un contacto hay que recordarle la seña de alguna
@@ -255,6 +271,14 @@ func WithResumePolicy(nodeType string, p modules.ResumePolicy) Option {
 		}
 		rt.resumePolicies[nodeType] = p
 	}
+}
+
+// WithReactiveBlockedHook inyecta el contador de entrantes que NO entran al motor
+// reactivo (motivo passive|self_loop|rate_limit). Se cablea con
+// metrics.FlowReactiveBlocked; sin él no se cuenta nada y los cortes se comportan
+// igual (el hook NO decide: solo observa).
+func WithReactiveBlockedHook(fn func(reason string)) Option {
+	return func(rt *Runtime) { rt.onReactiveBlocked = fn }
 }
 
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de

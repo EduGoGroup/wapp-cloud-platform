@@ -43,6 +43,17 @@ const (
 	rolePassive = "passive" // solo escucha/transporta: NO dispara triggers ni auto-responde.
 )
 
+// Motivos por los que un entrante NO llega al motor reactivo. Son la etiqueta del
+// contador wapp_flow_reactive_blocked_total (cardinalidad FIJA: tres valores) y la
+// respuesta a «¿por qué no contesta?». Los tres cortes son deliberados —dos son
+// configuración (rol, números propios) y uno es contención—, así que ninguno es un
+// error: se cuentan, no se alarman.
+const (
+	reasonPassive   = "passive"    // la sesión receptora está marcada passive (T1).
+	reasonSelfLoop  = "self_loop"  // el remitente es un número propio del tenant (T2).
+	reasonRateLimit = "rate_limit" // la conversación agotó su cupo de auto-respuestas (T0).
+)
+
 // TenantResolver resuelve el tenant_id y el ROL (bot|passive, Plan 020 · T1) de
 // la sesión receptora a partir del session_id, porque el hook OnIncoming solo
 // entrega session_id (design.md §10.A). Devuelve ambos en UNA llamada (una query

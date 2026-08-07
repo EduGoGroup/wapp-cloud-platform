@@ -25,11 +25,12 @@ import (
 // observabilidad). Se construye una vez en el arranque y se comparte entre los
 // dos listeners HTTP y el sink de acuses.
 type Metrics struct {
-	reg           *prometheus.Registry
-	httpRequests  *prometheus.CounterVec
-	httpDuration  *prometheus.HistogramVec
-	rateLimitHits *prometheus.CounterVec
-	receipts      *prometheus.CounterVec
+	reg            *prometheus.Registry
+	httpRequests   *prometheus.CounterVec
+	httpDuration   *prometheus.HistogramVec
+	rateLimitHits  *prometheus.CounterVec
+	receipts       *prometheus.CounterVec
+	reactiveBlocks *prometheus.CounterVec
 }
 
 // New construye el registry propio y registra los colectores. Incluye los
@@ -55,11 +56,15 @@ func New() *Metrics {
 			Name: "wapp_receipts_total",
 			Help: "Total de acuses persistidos por estado (delivered|read).",
 		}, []string{"status"}),
+		reactiveBlocks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "wapp_flow_reactive_blocked_total",
+			Help: "Entrantes que NO entraron al motor reactivo, por motivo (passive|self_loop|rate_limit).",
+		}, []string{"reason"}),
 	}
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts,
+		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks,
 	)
 	return m
 }
@@ -130,4 +135,23 @@ func (m *Metrics) Receipt(status string) {
 		return
 	}
 	m.receipts.WithLabelValues(status).Inc()
+}
+
+// FlowReactiveBlocked registra un entrante que NO llegó al motor reactivo, por
+// motivo (passive|self_loop|rate_limit). Responde la pregunta que el operador hace
+// de verdad —«¿por qué no contesta?»— sin depender del nivel debug: los tres
+// cortes son estados/decisiones, no incidencias, y a INFO inundarían el log (en el
+// e2e del 2026-08-06 el corte por passive saltaba ~2.000 veces/hora).
+//
+// El motivo es de cardinalidad FIJA (tres valores). NO se etiqueta la sesión ni el
+// tenant: misma regla dura del paquete (cero PII, cardinalidad acotada). Para saber
+// QUÉ sesión, el runtime deja una línea a INFO la primera vez que corta cada una.
+//
+// Se pasa como callback al runtime de flujos (que NO importa este paquete: queda
+// desacoplado, igual que el sink de acuses).
+func (m *Metrics) FlowReactiveBlocked(reason string) {
+	if m == nil {
+		return
+	}
+	m.reactiveBlocks.WithLabelValues(reason).Inc()
 }
