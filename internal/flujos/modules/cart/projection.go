@@ -56,6 +56,21 @@ type ShippingEnsurer interface {
 	EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy intakes.ShippingPolicy) error
 }
 
+// BuyerDataWriter es lo ÚNICO que el proyector necesita para los datos del
+// comprador (T4.5, D-041.13): guardar UN campo. Lo satisfacen
+// *intakes.PostgresBuyerData y *intakes.MemoryStore.
+//
+// El puerto es de una sola función y eso es deliberado: el carrito ESCRIBE datos
+// personales y no puede leerlos. Un puerto con `Get` le daría al módulo la
+// capacidad de sacar del cifrado lo que acaba de meter, y el descifrado de esta
+// tabla está custodiado (ver intakes/buyerdata.go).
+//
+// El CIFRADO no está aquí ni en el módulo: está detrás de este puerto. El carrito
+// no conoce KEKs, DEKs ni envelopes — igual que no conoce el SQL del cierre.
+type BuyerDataWriter interface {
+	PutBuyerField(ctx context.Context, intakeID, key, value string) error
+}
+
 // Projector implementa modules.Projector para los efectos del carrito (Plan 027 ·
 // Ola 3 · T8, cierra H10): item_added asegura la solicitud "open", cart_closed
 // cierra atómicamente solicitud+líneas, y cart_cancelled/cart_expired transicionan
@@ -68,26 +83,33 @@ type Projector struct {
 	store     ProjectionStore
 	revisions RevisionWriter
 	shipping  ShippingEnsurer
+	buyer     BuyerDataWriter
 }
 
 // NewProjector construye el proyector del carrito sobre el almacén de solicitudes,
-// el escritor de revisiones y el garante de la línea de envío.
+// el escritor de revisiones, el garante de la línea de envío y el escritor de datos
+// del comprador.
 //
-// `revisions` y `shipping` son parámetros OBLIGATORIOS y no opciones con
-// cero-valor a propósito: un proyector sin escritor de revisiones cerraría
-// carritos sin dejar rastro, y uno sin garante de envío cerraría pedidos sin
-// cobrar el envío del tenant que sí lo cobra. Ninguna de las dos cosas la notaría
-// un test. Si faltan, que rompa en compilación.
-func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping ShippingEnsurer) *Projector {
-	return &Projector{store: s, revisions: revisions, shipping: shipping}
+// Los cuatro son parámetros OBLIGATORIOS y no opciones con cero-valor a propósito:
+// un proyector sin escritor de revisiones cerraría carritos sin dejar rastro, uno
+// sin garante de envío cerraría pedidos sin cobrar el envío del tenant que sí lo
+// cobra, y uno sin escritor de datos del comprador le pediría al cliente su RUT
+// para tirarlo a la basura. Ninguna de las tres cosas la notaría un test. Si
+// faltan, que rompa en compilación.
+func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping ShippingEnsurer, buyer BuyerDataWriter) *Projector {
+	return &Projector{store: s, revisions: revisions, shipping: shipping, buyer: buyer}
 }
 
 // Handles reconoce los efectos que el carrito PROYECTA a tablas tipadas. Los efectos
 // de navegación/telemetría (cart_started, category_selected, …) NO se proyectan (ya
 // quedan en flow_events por el sink) y devuelven false.
+//
+// buyer_data_captured es el caso INVERSO y el único: se proyecta precisamente
+// porque NO queda en flow_events (Kind modules.KindPrivate). Si este proyector no
+// lo reconociera, el dato del cliente no se guardaría en ningún sitio.
 func (Projector) Handles(name string) bool {
 	switch name {
-	case EffectItemAdded, EffectCartClosed, EffectCartCancelled, EffectCartExpired:
+	case EffectItemAdded, EffectCartClosed, EffectCartCancelled, EffectCartExpired, EffectBuyerDataCaptured:
 		return true
 	default:
 		return false
@@ -104,6 +126,8 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 		return p.closeIntake(ctx, meta, eff)
 	case EffectCartCancelled:
 		return p.transitionOpenIntake(ctx, meta, intakeStatusCancelled)
+	case EffectBuyerDataCaptured:
+		return p.putBuyerField(ctx, meta, eff)
 	case EffectCartExpired:
 		// Rama sin productor vivo (T4.7): solo la alcanza el REPLAY de un
 		// flow_event histórico. Se queda para que ese replay no reviente ni
@@ -211,6 +235,42 @@ func revisionLines(items []store.IntakeItem) []intakes.RevisionLine {
 		})
 	}
 	return out
+}
+
+// putBuyerField materializa UN campo del checklist del comprador en la fila
+// CIFRADA de la solicitud (T4.5, D-041.13). Es el único punto del carrito por el
+// que un dato personal llega a la base, y por eso conviene tener claro qué hace y
+// qué no:
+//
+//   - Cuelga el dato de la solicitud ABIERTA de (tenant, contacto), la misma que
+//     abrió el primer item_added. Es también el motivo por el que el módulo emite
+//     estos efectos ANTES de cart_closed: después no habría solicitud abierta.
+//   - SIN solicitud abierta devuelve ERROR en vez de tragárselo en silencio. El
+//     dispatcher lo loguea sin abortar la conversación (mismo trato que la revisión
+//     del cierre), pero queda constancia: un checklist que el cliente rellenó y no
+//     se guardó tiene que ser visible, no un hueco.
+//   - El valor NO se loguea, NO se devuelve y NO entra en ningún mensaje de error.
+//     Lo que puede aparecer en un log de fallo es la clave del campo ("rut"), que
+//     es configuración del tenant, jamás lo que el cliente escribió.
+func (p *Projector) putBuyerField(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
+	key := modules.AsString(eff.Payload["key"])
+	value := modules.AsString(eff.Payload["value"])
+	if key == "" || value == "" {
+		// Efecto vacío o mal formado: nada que guardar. No es un error — el módulo no
+		// los produce así, y un replay de un payload viejo no debe reventar.
+		return nil
+	}
+	intake, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("cart: campo %q del comprador sin solicitud abierta que lo reciba", key)
+	}
+	if err := p.buyer.PutBuyerField(ctx, intake.ID, key, value); err != nil {
+		return fmt.Errorf("cart: guardar el campo %q del comprador de la solicitud %s: %w", key, intake.ID, err)
+	}
+	return nil
 }
 
 // transitionOpenIntake lleva la solicitud "open" a cancelled/expired (design.md §3.4).

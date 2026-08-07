@@ -27,6 +27,15 @@ type MemoryStore struct {
 	// clave (tenant, sesión, contacto). Es la aproximación provisional de
 	// "conversación viva" que consume Discard (ver Store.Discard).
 	liveCarts map[string]bool
+	// buyerData imita public.intake_buyer_data por solicitud (T4.5). ⚠️ Guarda los
+	// valores EN CLARO, y es correcto que lo haga: este store es un doble de tests
+	// que vive en memoria y muere con el proceso. Lo que reproduce del store real es
+	// la SEMÁNTICA que los tests tienen que poder comprobar —fusión campo a campo y
+	// una fila por solicitud—, no el cifrado, que se prueba contra Postgres de
+	// verdad (buyerdata_integration_test.go). Nadie debe cablear esto en producción:
+	// el proyector recibe un escritor, y en el arranque ese escritor es
+	// PostgresBuyerData.
+	buyerData map[string]BuyerData
 	// now es el reloj con el que se fija deposit_due_at al pedir seña, el equivalente
 	// del now() de la transacción en el store real (T4.4). Inyectable con SetClock
 	// para que un test pueda fijar un plazo y luego cruzar la fecha sin esperar días.
@@ -48,8 +57,40 @@ func NewMemoryStore() *MemoryStore {
 		zones:     map[string][]ShippingZone{},
 		notify:    map[string]NotifySettings{},
 		liveCarts: map[string]bool{},
+		buyerData: map[string]BuyerData{},
 		now:       time.Now,
 	}
+}
+
+// PutBuyerField imita PostgresBuyerData.PutBuyerField: FUSIONA el campo en el
+// checklist de la solicitud (no lo sustituye) y crea la entrada si no la había.
+// Sin cifrar — ver el campo buyerData.
+func (m *MemoryStore) PutBuyerField(_ context.Context, intakeID, key, value string) error {
+	if key == "" {
+		return ErrBuyerFieldEmpty
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.buyerData[intakeID]
+	if !ok {
+		data = BuyerData{}
+		m.buyerData[intakeID] = data
+	}
+	data[key] = value
+	return nil
+}
+
+// BuyerDataOf devuelve una COPIA del checklist guardado para la solicitud. Es un
+// mirador de tests (el store real no publica ninguna lectura en claro: el
+// descifrado está custodiado, ver buyerdata.go).
+func (m *MemoryStore) BuyerDataOf(intakeID string) BuyerData {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := BuyerData{}
+	for k, v := range m.buyerData[intakeID] {
+		out[k] = v
+	}
+	return out
 }
 
 // SetClock fija el reloj del store, como WithReminderClock hace con el del
@@ -241,9 +282,10 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, intakeID string) (Detail,
 		in := r.intake
 		in.Status = NormalizeStatus(r.status)
 		return Detail{
-			Intake:    in,
-			Items:     slices.Clone(m.items[intakeID]),
-			Revisions: slices.Clone(m.revisions[intakeID]),
+			Intake:           in,
+			Items:            slices.Clone(m.items[intakeID]),
+			Revisions:        slices.Clone(m.revisions[intakeID]),
+			BuyerDataPresent: len(m.buyerData[intakeID]) > 0,
 		}, nil
 	}
 	return Detail{}, ErrNotFound

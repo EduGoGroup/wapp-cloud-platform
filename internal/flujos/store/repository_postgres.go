@@ -645,12 +645,13 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		pageSize    int
 		ttlSecs     int
 		convTTLSecs int
+		buyerFields []byte
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds
+		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
-	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs)
+	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return TenantSettings{
@@ -658,7 +659,8 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 			PageSize: DefaultPageSize,
 			OrderTTL: DefaultOrderTTL,
 			// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila
-			// nunca vencen su conversación, no-regresión).
+			// nunca vencen su conversación, no-regresión). BuyerFields nil ⇒ el
+			// carrito no pregunta nada, que es el comportamiento previo a T4.5.
 		}, nil
 	case err != nil:
 		return TenantSettings{}, fmt.Errorf("store: leer config de tenant: %w", err)
@@ -668,5 +670,25 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		PageSize:        pageSize,
 		OrderTTL:        time.Duration(ttlSecs) * time.Second,
 		ConversationTTL: time.Duration(convTTLSecs) * time.Second,
+		BuyerFields:     parseBuyerFields(buyerFields),
 	}, nil
+}
+
+// parseBuyerFields decodifica la columna buyer_fields (JSONB, D-041.13). Es
+// TOLERANTE a propósito: un blob ilegible o de otra forma devuelve el checklist
+// VACÍO en vez de un error, y el carrito sigue vendiendo sin preguntar nada.
+//
+// La alternativa —propagar el error— dejaría al tenant sin poder cerrar un pedido
+// por una config mal escrita a mano, que es exactamente el fallo que no se quiere:
+// esta lectura está en el camino de CADA mensaje del cliente (la siembra de
+// reanudación), no en un endpoint de administración donde un 400 sería útil.
+func parseBuyerFields(raw []byte) []BuyerField {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []BuyerField
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }

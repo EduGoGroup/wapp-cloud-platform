@@ -55,7 +55,7 @@ func (e *envíoEspía) EnsureShippingLine(_ context.Context, tenantID, intakeID 
 func TestProjector_CartClosed_EscribeRevisionUno(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	revisions := intakes.NewMemoryStore()
-	p := NewProjector(repo, revisions, &envíoEspía{})
+	p := NewProjector(repo, revisions, &envíoEspía{}, intakes.NewMemoryStore())
 	ctx := context.Background()
 
 	if err := p.Project(ctx, projectorMeta(), cartClosedEffect()); err != nil {
@@ -110,7 +110,7 @@ func TestProjector_CartClosed_EscribeRevisionUno(t *testing.T) {
 func TestProjector_CartClosed_CuelgaLaRevisionDeLaSolicitudAbierta(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	revisions := intakes.NewMemoryStore()
-	p := NewProjector(repo, revisions, &envíoEspía{})
+	p := NewProjector(repo, revisions, &envíoEspía{}, intakes.NewMemoryStore())
 	ctx := context.Background()
 	meta := projectorMeta()
 
@@ -149,7 +149,7 @@ func (revisionRota) InsertRevision(context.Context, intakes.Revision) (intakes.R
 // (la solicitud y sus líneas sobreviven), pero el error sube en vez de tragarse.
 func TestProjector_CartClosed_FalloDeRevisionSePropaga(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, revisionRota{}, &envíoEspía{})
+	p := NewProjector(repo, revisionRota{}, &envíoEspía{}, intakes.NewMemoryStore())
 
 	err := p.Project(context.Background(), projectorMeta(), cartClosedEffect())
 	if !errors.Is(err, errRevisionRota) {
@@ -170,7 +170,7 @@ func TestProjector_CartClosed_FalloDeRevisionSePropaga(t *testing.T) {
 // estado conversacional que se tira al cerrar.
 func TestProjector_CartClosed_PersisteLaNotaDelPedido(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{})
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{}, intakes.NewMemoryStore())
 
 	eff := cartClosedEffect()
 	eff.Payload["customer_note"] = "dejarlo en portería"
@@ -196,7 +196,7 @@ func TestProjector_CartClosed_PersisteLaNotaDelPedido(t *testing.T) {
 // misma tolerancia que ya tenía `customization` por línea.
 func TestProjector_CartClosed_SinNotaEsCadenaVacía(t *testing.T) {
 	repo := store.NewMemoryRepository()
-	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{})
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{}, intakes.NewMemoryStore())
 
 	if err := p.Project(context.Background(), projectorMeta(), cartClosedEffect()); err != nil {
 		t.Fatalf("Project(cart_closed): %v", err)
@@ -214,7 +214,7 @@ func TestProjector_CartClosed_SinNotaEsCadenaVacía(t *testing.T) {
 func TestProjector_CartClosed_PideLaLíneaDeEnvío(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	envío := &envíoEspía{}
-	p := NewProjector(repo, intakes.NewMemoryStore(), envío)
+	p := NewProjector(repo, intakes.NewMemoryStore(), envío, intakes.NewMemoryStore())
 
 	if err := p.Project(context.Background(), projectorMeta(), cartClosedEffect()); err != nil {
 		t.Fatalf("Project(cart_closed): %v", err)
@@ -243,7 +243,7 @@ func TestProjector_CartClosed_PideLaLíneaDeEnvío(t *testing.T) {
 func TestProjector_CartClosed_FalloDelEnvíoSePropaga(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	errEnvío := errors.New("envío caído")
-	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{falla: errEnvío})
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{falla: errEnvío}, intakes.NewMemoryStore())
 
 	err := p.Project(context.Background(), projectorMeta(), cartClosedEffect())
 	if !errors.Is(err, errEnvío) {

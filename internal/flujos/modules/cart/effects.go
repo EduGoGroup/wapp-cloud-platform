@@ -21,6 +21,11 @@ const (
 	// D-041.19/D-041.20). Es navegación/telemetría: sirve para saber cuánto se usa
 	// la tecla 3 y cuántas veces obliga a partir una línea.
 	EffectNoteAdded = "note_added"
+	// EffectBuyerDataCaptured lleva UN campo del checklist del comprador (T4.5,
+	// D-041.13). Es el ÚNICO efecto del carrito con Kind modules.KindPrivate, y por
+	// tanto el único que NO se escribe en flow_events: su payload es dato personal
+	// y su destino es la fila cifrada de intake_buyer_data.
+	EffectBuyerDataCaptured = "buyer_data_captured"
 	// EffectCartExpired es un efecto SIN PRODUCTOR desde T4.7: D-041.16 derogó el
 	// vencimiento por tiempo y con él la política que lo sintetizaba al reanudar
 	// (cart/resume.go). Se conserva la DEFINICIÓN —y el case del proyector— porque
@@ -42,6 +47,25 @@ const (
 // event construye un efecto de navegación/telemetría (Kind "event").
 func event(name string, payload map[string]any) modules.Effect {
 	return modules.Effect{Kind: kindEvent, Name: name, Payload: payload}
+}
+
+// buyerDataEffect declara UN campo del checklist del comprador ya capturado (T4.5,
+// D-041.13). Es lo ÚNICO que saca del módulo el valor que tecleó el cliente, y por
+// eso lleva Kind modules.KindPrivate: con ese Kind el PersistSink NO lo escribe en
+// flow_events y lo pasa directo al proyector, que lo cifra.
+//
+// Compárese con noteAddedEffect, justo arriba: aquélla publica el texto de una
+// indicación de línea porque es dato de PRODUCCIÓN (nivel 1 del ADR-0034,
+// cuantificable, no identifica a nadie). Esto es lo contrario —el RUT y la
+// dirección identifican a una persona— y por eso no hay aquí ninguna variante que
+// publique nada: ni el valor, ni su largo, ni un contador. Lo único que se sabrá
+// del checklist fuera de la fila cifrada es que existe (buyer_data_present).
+func buyerDataEffect(key, value string) modules.Effect {
+	return modules.Effect{
+		Kind:    modules.KindPrivate,
+		Name:    EffectBuyerDataCaptured,
+		Payload: map[string]any{"key": key, "value": value},
+	}
 }
 
 // noteScope es el ÁMBITO de una indicación del cliente (D-041.19): la línea o el

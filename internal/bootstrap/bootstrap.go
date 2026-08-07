@@ -197,6 +197,13 @@ func Run(ctx context.Context) error {
 	// Por eso el proyector lo recibe DOS VECES: satisface sus dos puertos —escritor
 	// de revisiones y garante del envío— sin que el carrito conozca el store entero.
 	intakeStore := intakes.NewPostgres(db)
+	// Los DATOS DEL COMPRADOR van por su propio escritor y no por intakeStore (T4.5,
+	// D-041.13): es el único componente del dominio de solicitudes que necesita el
+	// cipher de PII, y tenerlo aparte hace que el store normal —que lo consumen la
+	// API pública, el notificador y el proyector— no pueda cifrar ni descifrar nada.
+	// Reusa el MISMO stack de claves que los contactos (flowDeps.cipher, KEK del
+	// keyring versionado del Plan 012): dos ciphers serían dos rotaciones.
+	buyerDataStore := intakes.NewPostgresBuyerData(db, flowDeps.cipher)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
 	// vez y el recordatorio lo reusa entero —texto de la seña, vía custodiada de PII y
@@ -208,7 +215,7 @@ func Run(ctx context.Context) error {
 	depositReminder := intakes.NewDepositReminder(intakeNotifier, intakeStore)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
-			cart.NewProjector(flowStore, intakeStore, intakeStore),
+			cart.NewProjector(flowStore, intakeStore, intakeStore, buyerDataStore),
 			survey.NewProjector(flowStore))),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),

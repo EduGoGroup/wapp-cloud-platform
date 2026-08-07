@@ -37,23 +37,32 @@ func NewPersistSink(repo flowEventStore, projectors ...modules.Projector) *Persi
 	return &PersistSink{repo: repo, projectors: projectors}
 }
 
-// Handle persiste el efecto en flow_events (SIEMPRE) y, si algún Projector registrado
-// lo reconoce (Handles), delega en él la proyección tipada. Un fallo del
+// Handle persiste el efecto en flow_events y, si algún Projector registrado lo
+// reconoce (Handles), delega en él la proyección tipada. Un fallo del
 // INSERT/proyección se devuelve (el dispatcher del runtime lo LOGUEA; NO aborta el
 // avance: el estado ya está persistido). Efectos sin proyector (navegación/telemetría)
 // solo quedan en flow_events.
+//
+// La ÚNICA excepción a "siempre en flow_events" es modules.KindPrivate (Plan 041 ·
+// T4.5): ese efecto lleva datos personales y flow_events es un outbox append-only,
+// en claro y sin poda. Se salta el INSERT y va DIRECTO al proyector, que lo cifra.
+// La regla vive aquí y no en el módulo a propósito: si dependiera de que cada
+// módulo se acuerde de no emitir PII, bastaría un módulo nuevo distraído para
+// escribirla; siendo del sink, la garantía es de la plataforma.
 func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
-	fe := store.FlowEvent{
-		TenantID:    ec.TenantID,
-		ContactID:   ec.ContactID,
-		FlowID:      ec.FlowID,
-		FlowVersion: ec.FlowVersion,
-		Kind:        eff.Kind,
-		Name:        eff.Name,
-		Payload:     eff.Payload,
-	}
-	if err := s.repo.InsertFlowEvent(ctx, fe); err != nil {
-		return err
+	if eff.Kind != modules.KindPrivate {
+		fe := store.FlowEvent{
+			TenantID:    ec.TenantID,
+			ContactID:   ec.ContactID,
+			FlowID:      ec.FlowID,
+			FlowVersion: ec.FlowVersion,
+			Kind:        eff.Kind,
+			Name:        eff.Name,
+			Payload:     eff.Payload,
+		}
+		if err := s.repo.InsertFlowEvent(ctx, fe); err != nil {
+			return err
+		}
 	}
 
 	meta := modules.EffectMeta{

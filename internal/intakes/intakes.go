@@ -141,6 +141,21 @@ type Detail struct {
 	Intake
 	Items     []Item
 	Revisions []Revision
+	// BuyerDataPresent dice si la solicitud tiene datos del comprador guardados
+	// (D-041.13, T4.5). Un BOOLEANO y nada más: es TODO lo que este dominio publica
+	// del checklist del comprador.
+	//
+	// No es una simplificación provisional. Los valores están cifrados en
+	// public.intake_buyer_data y su descifrado está CUSTODIADO: llega con su
+	// consumidor real (el puente del Plan 042 o una pantalla), no por si acaso. Este
+	// booleano es lo que permite a una consola decir «este pedido trae los datos que
+	// pediste» sin que el dato salga de la fila.
+	//
+	// Lo puebla Get. ListDetails (export y summary) lo deja en false a propósito y
+	// eso NO es un descuido: ni el CSV ni el summary.json publican nada del
+	// comprador —ni siquiera su existencia— y calcularlo ahí solo serviría para que
+	// alguien lo colara en una columna.
+	BuyerDataPresent bool
 }
 
 // Filter acota el listado de solicitudes. Todos los campos son opcionales: el

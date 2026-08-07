@@ -65,6 +65,22 @@ type Effect struct {
 	Payload map[string]any
 }
 
+// KindPrivate marca un efecto cuyo PAYLOAD contiene datos personales del cliente
+// (Plan 041 · T4.5, D-041.13 / ADR-0017). Es el ÚNICO Kind con significado para el
+// runtime, y lo tiene por una razón que no es de estilo:
+//
+//	public.flow_events es un outbox APPEND-ONLY, EN CLARO y sin poda — la bitácora
+//	de la que sale la telemetría. Un dato personal escrito ahí sobrevive a la
+//	solicitud que lo motivó, a su retención y a cualquier borrado posterior. Por eso
+//	el PersistSink NO escribe en flow_events los efectos de este Kind: solo los pasa
+//	al Projector del módulo, que es quien sabe cifrarlos y dónde guardarlos.
+//
+// Ningún sink genérico puede loguear el Payload de un efecto (higiene §10.G, que ya
+// cumplen LogSink y el dispatcher); con este Kind, además, el efecto tampoco se
+// PERSISTE en claro. Los otros valores de Kind ("event", "persist") los define cada
+// módulo y el runtime no los interpreta.
+const KindPrivate = "private"
+
 // Module es un módulo enchufable que maneja un tipo de nodo (p. ej. "menu").
 type Module interface {
 	// Type devuelve el identificador del tipo de nodo que maneja.

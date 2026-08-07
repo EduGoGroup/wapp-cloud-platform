@@ -50,15 +50,23 @@ func (p *ResumePolicy) Restart(_ context.Context, _, _ string, vars map[string]a
 	return isTerminal(vars), "", nil, nil
 }
 
-// Seed inyecta en Vars el page_size REAL del tenant (tenant_settings.page_size,
-// default 5) para que el módulo pagine con la config del tenant sin hacer I/O
-// (design.md §9.E). El runtime lo llama solo en navegación normal del carrito.
+// Seed inyecta en Vars la config del tenant que el módulo PURO necesita y no puede
+// leer: el page_size de la paginación (tenant_settings.page_size, default 5,
+// design.md §9.E) y el CHECKLIST del comprador (buyer_fields, T4.5 · D-041.13). El
+// runtime lo llama solo en navegación normal del carrito, así que el checklist se
+// relee en cada mensaje: cambiarlo en la config alcanza a las conversaciones vivas
+// sin migrar su estado.
+//
+// Lo que se siembra es CONFIGURACIÓN —claves y etiquetas de lo que se va a pedir—,
+// nunca respuestas: Vars acaba en public.flow_state, JSONB en claro, y lo que el
+// cliente conteste no pasa por ahí (ver buyer.go).
 func (p *ResumePolicy) Seed(ctx context.Context, tenantID string, vars map[string]any) error {
 	settings, err := p.store.GetTenantSettings(ctx, tenantID)
 	if err != nil {
-		return fmt.Errorf("cart: config de tenant (page_size): %w", err)
+		return fmt.Errorf("cart: config de tenant (page_size, buyer_fields): %w", err)
 	}
 	vars[VarPageSize] = settings.PageSize
+	vars[VarBuyerFields] = settings.BuyerFields
 	return nil
 }
 

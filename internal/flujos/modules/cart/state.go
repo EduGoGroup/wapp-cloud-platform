@@ -38,6 +38,13 @@ const (
 	LevelItemNoteScope = "item_note_scope" // alcance de la indicación de línea cuando qty > 1 (D-041.20)
 	LevelItemNote      = "item_note"       // texto de la indicación de la ÚLTIMA línea agregada
 	LevelOrderNote     = "order_note"      // texto de la indicación de TODO el pedido
+
+	// LevelBuyerData es el checklist de DATOS DEL COMPRADOR (Plan 041 · T4.5,
+	// D-041.13): un campo `required` por mensaje, entre el resumen y el cierre. Solo
+	// existe para los tenants que configuraron buyer_fields; con la lista vacía —el
+	// default de la columna y el caso de todos los tenants de hoy— el 1 del resumen
+	// cierra el pedido exactamente igual que antes de esta tarea (INV-15).
+	LevelBuyerData = "buyer_data"
 )
 
 // variantSKUSuffix separa el sku del artículo del code de la variante en el sku
@@ -142,6 +149,18 @@ type cartState struct {
 	// "solo para 1". Con `omitempty` un carrito que nunca comenta no escribe ni un
 	// byte más en el JSONB.
 	NoteSplit bool `json:"note_split,omitempty"`
+	// BuyerIdx es CUÁNTOS campos del checklist del comprador ya se capturaron
+	// (D-041.13, T4.5). Es un CONTADOR, y lo que NO es —ni aquí ni en ningún otro
+	// campo de este struct— es el sitio donde vivan las respuestas.
+	//
+	// Esa ausencia es la tarea entera. cartState se serializa a
+	// public.flow_state.vars, JSONB EN CLARO: guardar aquí el RUT o la dirección
+	// del cliente sería exactamente el dato personal en claro que la fila cifrada de
+	// intake_buyer_data existe para evitar, y además duraría lo que dure la
+	// conversación. Por eso cada respuesta sale del módulo EN EL MISMO Step en que
+	// se teclea —dentro de un efecto modules.KindPrivate que el sink no persiste— y
+	// lo único que queda en el estado es este entero: cuántas van.
+	BuyerIdx int `json:"buyer_idx,omitempty"`
 }
 
 // cartLine es una línea del pedido (design.md §3.2). SKU/Label son códigos de

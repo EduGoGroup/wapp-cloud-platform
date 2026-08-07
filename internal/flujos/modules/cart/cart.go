@@ -32,6 +32,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 )
 
 // catalogUnavailable es la pantalla que se muestra cuando no hay catálogo con el
@@ -139,13 +140,17 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	// §9.E). Toda la paginación de la sub-máquina (que ocurre en Step) lo respeta;
 	// Render (una sola pantalla, al arranque) usa el default del Module.
 	size := pageSizeFromVars(vars, m.pageSize)
+	// Checklist del comprador REAL del tenant (tenant_settings.buyer_fields, T4.5),
+	// sembrado por la misma vía que el page_size. Ausente ⇒ lista vacía ⇒ el carrito
+	// no pregunta nada y el recorrido es el de siempre (INV-15).
+	fields := loadBuyerFields(vars)
 	st := loadState(vars)
 	var effects []modules.Effect
 	if !st.Started {
 		st.Started = true
 		effects = append(effects, event(EffectCartStarted, map[string]any{}))
 	}
-	newSt, outs, stepEffects := advance(cat, st, input, size)
+	newSt, outs, stepEffects := advance(cat, st, input, size, fields)
 	effects = append(effects, stepEffects...)
 	storeState(vars, newSt)
 	return modules.Result{Vars: vars, Outputs: outs, Effects: effects}
@@ -155,7 +160,7 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 // estado actual y la entrada, produce el nuevo estado, la pantalla a emitir y los
 // efectos declarados por la transición (design.md §4.2). No toca Vars ni BD; el
 // Module la envuelve.
-func advance(cat Catalog, st cartState, input string, size int) (cartState, []string, []modules.Effect) {
+func advance(cat Catalog, st cartState, input string, size int, fields []store.BuyerField) (cartState, []string, []modules.Effect) {
 	in := strings.TrimSpace(input)
 	switch st.Level {
 	case LevelCategories:
@@ -175,9 +180,11 @@ func advance(cat Catalog, st cartState, input string, size int) (cartState, []st
 	case LevelItemNote:
 		return stepItemNote(cat, st, in)
 	case LevelSummary:
-		return stepSummary(cat, st, in, size)
+		return stepSummary(cat, st, in, size, fields)
 	case LevelOrderNote:
 		return stepOrderNote(st, in)
+	case LevelBuyerData:
+		return stepBuyerData(st, in, fields)
 	case LevelClosed, LevelCancelled:
 		// Terminal: la entrada se ignora, se re-muestra la pantalla final.
 		return st, []string{terminalScreen(st)}, nil
@@ -185,8 +192,11 @@ func advance(cat Catalog, st cartState, input string, size int) (cartState, []st
 		// Estado inconsistente: reencauzar a la raíz (preservando Started). La nota
 		// del pedido se conserva por la misma razón que las líneas: es algo que el
 		// cliente ya dijo, y un nivel que no existe no es motivo para olvidarlo.
+		// BuyerIdx viaja con ellas por una razón más dura: los campos que cuenta YA
+		// están escritos y cifrados, y reiniciarlo volvería a pedirle al cliente un
+		// dato personal que ya dio.
 		st = cartState{Level: LevelCategories, Lines: st.Lines, IntakeID: st.IntakeID,
-			Started: st.Started, Note: st.Note}
+			Started: st.Started, Note: st.Note, BuyerIdx: st.BuyerIdx}
 		return st, []string{screenCategories(cat, st, size)}, nil
 	}
 }
@@ -374,11 +384,18 @@ func stepContinue(cat Catalog, st cartState, in string, size int) (cartState, []
 
 // --- L6 · Resumen y confirmar ---------------------------------------------
 
-func stepSummary(cat Catalog, st cartState, in string, size int) (cartState, []string, []modules.Effect) {
+func stepSummary(cat Catalog, st cartState, in string, size int, fields []store.BuyerField) (cartState, []string, []modules.Effect) {
 	switch in {
-	case "1": // Confirmar → cierra: cart_closed (persist) proyecta intakes/intake_items.
-		st.Level = LevelClosed
-		return st, []string{screenClosed(total(st.Lines))}, []modules.Effect{closedEffect(st.Lines, st.Note)}
+	case "1": // Confirmar → checklist del comprador si lo hay, y si no cierra.
+		// El checklist (D-041.13) se intercala AQUÍ y en ningún otro sitio: entre
+		// "confirmo" y el pedido cerrado. Con buyer_fields vacío —el default de la
+		// columna y el caso de todos los tenants de hoy— esta rama es literalmente el
+		// cierre de siempre, misma pantalla y mismo efecto (INV-15).
+		if pending := pendingBuyerFields(fields, st.BuyerIdx); len(pending) > 0 {
+			st.Level = LevelBuyerData
+			return st, []string{screenBuyerData(pending[0], st.BuyerIdx, len(fields))}, nil
+		}
+		return closeCart(st)
 	case "2": // Seguir agregando → L2 misma categoría, o L1 si no hay categoría en foco.
 		if category, ok := findCategory(cat, st.CatCode); ok {
 			st, outs := toArticlesOf(category, st, size)

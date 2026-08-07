@@ -96,8 +96,14 @@ COMMENT ON COLUMN public.tenant_settings.deposit_template IS
     'Plantilla de texto de la SEÑA del tenant (datos de la cuenta + instrucciones), con marcadores que la plataforma rellena. Vacía ⇒ el tenant no puede pedir seña. wApp NUNCA cobra ni concilia: esto es texto que se le manda al cliente (ADR-0031, fronteras duras).';
 COMMENT ON COLUMN public.tenant_settings.deposit_due_days IS
     'Días de plazo de la seña (default 3): fija intakes.deposit_due_at al pasar a deposit_requested. Vencerlo NO mata la solicitud (D-041.16); solo habilita el recordatorio perezoso.';
+-- El COMMENT de buyer_fields se corrigió al implementar T4.5: la migración lo
+-- describía como una lista de cadenas (["rut","direccion"]) y el contrato real —el
+-- del design D-041.13 y el que lee el código— es una lista de OBJETOS. La diferencia
+-- no es cosmética: sin `label` no hay forma de preguntar en español («Escribe tu
+-- RUT» frente a «Escribe tu rut»), y sin `required` no se distingue lo que bloquea
+-- el cierre de lo que solo se declara. Manda el código, y el código lee objetos.
 COMMENT ON COLUMN public.tenant_settings.buyer_fields IS
-    'Checklist de datos mínimos del comprador que se piden antes de cerrar, como JSON (p. ej. ["rut","direccion"]). wApp los recolecta SIN validación semántica (ADR-0031 §5) y los guarda CIFRADOS en intake_buyer_data. Vacío ⇒ no se pregunta nada.';
+    'Checklist de datos mínimos del comprador que se piden antes de cerrar, como lista JSON de objetos: [{"key":"rut","label":"RUT","required":true}]. key es el identificador estable con el que se guarda el dato; label es lo que se le enseña al cliente; required marca lo que el carrito EXIGE antes de cerrar (hoy solo se preguntan los required). wApp los recolecta SIN validación semántica (ADR-0031 §5) y los guarda CIFRADOS en intake_buyer_data. Vacío ⇒ no se pregunta nada y el recorrido de compra no cambia.';
 
 -- ------------------------------------------------------------
 -- 3. Revisiones: la negociación auditada (ADR-0031 §3, D-041.25, D-041.18)

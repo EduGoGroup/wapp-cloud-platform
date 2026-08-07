@@ -398,6 +398,40 @@ type TenantSettings struct {
 	// struct: OrderTTL quedó derogado (D-041.16) y este no lo sustituye — vencer
 	// la conversación descarta el estado conversacional, jamás la solicitud.
 	ConversationTTL time.Duration
+	// BuyerFields es el CHECKLIST de datos mínimos del comprador que el dueño
+	// configura (buyer_fields JSONB, migración 0045 · D-041.13). Vacío ⇒ el carrito
+	// no pregunta nada y el recorrido de compra es EXACTAMENTE el de antes (INV-15).
+	//
+	// Es CONFIGURACIÓN, no dato: aquí viven las etiquetas de lo que se va a pedir
+	// («RUT», «Dirección de entrega»), jamás lo que el cliente responde. Lo que el
+	// cliente responde es PII y no pasa por este struct ni por Vars: viaja en un
+	// efecto privado y acaba CIFRADO en intake_buyer_data (T4.5).
+	BuyerFields []BuyerField
+}
+
+// BuyerField es UN campo del checklist del comprador (D-041.13, ADR-0031 §5).
+//
+// wApp NO valida la semántica (REQ-25): no sabe qué es un RUT ni si una dirección
+// existe. Recolecta lo que el dueño pide y lo pasa. Por eso el campo no tiene tipo
+// ni patrón — inventarlos sería prometer una validación que no se hace.
+//
+// Las etiquetas json son el CONTRATO con la columna JSONB y con el round-trip por
+// Conversation.Vars: el runtime siembra estos campos para que el módulo puro los
+// lea sin tocar la BD, y ese viaje pasa por JSONB (map[string]any) en cuanto la
+// conversación se guarda.
+type BuyerField struct {
+	// Key es el identificador ESTABLE del dato ("rut"): es la clave con la que se
+	// guarda dentro del blob cifrado. Renombrarla en la config no renombra lo ya
+	// guardado.
+	Key string `json:"key"`
+	// Label es lo que se le enseña al cliente por WhatsApp ("RUT"). Vacío ⇒ se
+	// pregunta por la Key, que siempre existe.
+	Label string `json:"label"`
+	// Required distingue lo que el carrito PIDE antes de cerrar de lo que solo
+	// declara. Hoy el cart numérico pregunta EXCLUSIVAMENTE los required (D-041.13):
+	// un campo opcional en un menú numérico obligaría a inventar una tecla de
+	// "saltar" en cada paso, y quien no quiera pedir algo simplemente no lo pone.
+	Required bool `json:"required"`
 }
 
 // Defaults de tenant_settings (design.md §9.E/§9.G): valen cuando el tenant no

@@ -31,7 +31,7 @@ func (sinEnvío) EnsureShippingLine(context.Context, string, string, intakes.Shi
 // pasarle un nil lo haría estallar (ADR-0031 §3, Plan 041 · T4.1).
 func persistSinkWith(repo store.Repository) *runtime.PersistSink {
 	return runtime.NewPersistSink(repo,
-		cart.NewProjector(repo, intakes.NewMemoryStore(), sinEnvío{}),
+		cart.NewProjector(repo, intakes.NewMemoryStore(), sinEnvío{}, intakes.NewMemoryStore()),
 		survey.NewProjector(repo))
 }
 

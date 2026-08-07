@@ -275,7 +275,30 @@ func (p *Postgres) Get(ctx context.Context, tenantID, intakeID string) (Detail, 
 	if err != nil {
 		return Detail{}, err
 	}
-	return Detail{Intake: head, Items: items, Revisions: revs}, nil
+	present, err := buyerDataPresent(ctx, p.db, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	return Detail{Intake: head, Items: items, Revisions: revs, BuyerDataPresent: present}, nil
+}
+
+// buyerDataPresent dice si la solicitud tiene fila en public.intake_buyer_data
+// (D-041.13, T4.5). Es una consulta suelta y NO una columna más de intakeCols por
+// dos motivos: intakeCols lo comparten el listado, el export y el detalle —y solo
+// el detalle publica esto (ver Detail.BuyerDataPresent)—, y su comentario advierte
+// de lo que cuesta tocar esa lista, porque el orden es el de dos Scan distintos.
+//
+// EXISTS y no un SELECT de las columnas: aquí no se lee data_enc ni se toca el
+// cipher. Saber que el dato está no requiere poder leerlo, y esta consulta es la
+// prueba de que el detalle no lo lee.
+func buyerDataPresent(ctx context.Context, q querier, intakeID string) (bool, error) {
+	var present bool
+	if err := q.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.intake_buyer_data WHERE intake_id = $1)
+	`, intakeID).Scan(&present); err != nil {
+		return false, fmt.Errorf("intakes: comprobar datos del comprador: %w", err)
+	}
+	return present, nil
 }
 
 // itemsOf lee las líneas de una solicitud en el orden en que se añadieron. No

@@ -107,11 +107,21 @@ type intakeListResponse struct {
 // VENDIDO y `revisions` el rastro de cómo se llegó a ello. Un `[]` aquí ya no es
 // una respuesta fingida como lo habría sido antes de que la tabla existiera:
 // significa literalmente "esta solicitud no tiene revisiones registradas".
+// `buyer_data_present` (D-041.13, T4.5) es TODO lo que esta API publica del
+// checklist del comprador: un booleano. Los valores —RUT, dirección de entrega—
+// están cifrados en public.intake_buyer_data y su descifrado está CUSTODIADO: llega
+// con su consumidor real (el puente del Plan 042 o una pantalla que lo justifique),
+// no por si acaso.
+//
+// Sirve para lo que una consola necesita de verdad sin exponer a nadie: saber si el
+// pedido trae los datos que el dueño pidió antes de ponerse a prepararlo. Quien
+// añada aquí el contenido está deshaciendo la tarea entera, no ampliando un DTO.
 type intakeDetailResponse struct {
 	intakeDTO
 	Items              []intakeItemDTO     `json:"items"`
 	Revisions          []intakeRevisionDTO `json:"revisions"`
 	AllowedTransitions []string            `json:"allowed_transitions"`
+	BuyerDataPresent   bool                `json:"buyer_data_present"`
 }
 
 // intakeRevisionDTO es una revisión al wire.
@@ -235,6 +245,7 @@ func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
 		// detail.Status ya viene normalizado del dominio: una solicitud
 		// guardada como `closed` ofrece los destinos de `confirmed`.
 		AllowedTransitions: intakes.AllowedTransitions(detail.Status),
+		BuyerDataPresent:   detail.BuyerDataPresent,
 	}
 }
 
