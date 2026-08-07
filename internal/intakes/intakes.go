@@ -279,6 +279,28 @@ type Store interface {
 	// coherente, revisión nueva incluida.
 	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error)
 
+	// ApplyRevalidation escribe el resultado de una revalidación contra el catálogo
+	// vigente (D-041.25, T4.9) en UNA sola unidad de trabajo: re-precia las líneas
+	// que cambiaron, borra las que se retiraron, cuadra el total de la cabecera y
+	// escribe la revisión `revalidated` con el texto exacto que se le mandó al
+	// cliente.
+	//
+	// El diff llega YA CALCULADO (Revalidate, que es pura): este puerto no consulta
+	// el catálogo ni decide qué se retira. Lo que sí es contrato suyo es que la
+	// escritura sea SURGICAL —UPDATE de las líneas repreciadas y DELETE de las
+	// retiradas, jamás un borrado y alta del conjunto—, porque el orden de las
+	// líneas del pedido es su `added_at` y reescribirlas todas le cambiaría al
+	// cliente el orden de su propio pedido sin que nadie lo tocara.
+	//
+	// Las líneas de LA PLATAFORMA (ReservedSKUPrefix: hoy el envío) no se tocan ni
+	// para bien: ni se re-precian, ni se borran, ni se reescriben con su mismo
+	// valor. El diff ya las excluye; esto es la segunda cerradura.
+	//
+	// El `status` NO se toca: aunque se retiren todas las líneas, la solicitud se
+	// queda donde estaba (E-7). `expected` son las variantes en BD del estado que el
+	// dominio validó: ErrConflict si ya no está ahí, ErrNotFound si no es del tenant.
+	ApplyRevalidation(ctx context.Context, tenantID, intakeID string, rv Revalidation, renderedText string, expected []string) (Detail, error)
+
 	// Discard aplica el DESCARTE MANUAL del dueño sobre UNA solicitud (D-041.18,
 	// T4.8) en una sola unidad de trabajo: la deja en `abandoned` y escribe su
 	// revisión `discarded`. ErrNotFound si no es del tenant (404 opaco).

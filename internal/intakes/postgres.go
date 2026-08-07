@@ -916,6 +916,94 @@ func replaceClientItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, item
 	return nil
 }
 
+// ApplyRevalidation implementa Store (T4.9, D-041.25). Toma el MISMO candado que
+// ReplaceItems —la cabecera con FOR UPDATE y su CAS de estado— y por la misma razón:
+// entre calcular el diff y escribirlo cabe un carrito que agregue una línea, y sin
+// candado el total recalculado se quedaría sin ella.
+//
+// El orden es el de ReplaceItems porque el invariante es el mismo: primero las
+// líneas, después el total (que se deriva de ellas) y al final la revisión, que
+// retrata el resultado. Una revisión escrita antes contaría un total que todavía no
+// existe.
+func (p *Postgres) ApplyRevalidation(ctx context.Context, tenantID, intakeID string, rv Revalidation, renderedText string, expected []string) (Detail, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Detail{}, ErrNotFound
+	}
+
+	// Fuera de la clausura: WithTx puede REEJECUTARLA ante un deadlock y vale el
+	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
+	var out Detail
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		if err := lockEditableTx(ctx, tx, tenantID, intakeID, expected); err != nil {
+			return err
+		}
+		if err := applyRevalidationItemsTx(ctx, tx, intakeID, rv); err != nil {
+			return err
+		}
+		head, err := recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		if err != nil {
+			return err
+		}
+		rev, err := revalidatedRevision(intakeID, rv, renderedText)
+		if err != nil {
+			return err
+		}
+		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+			return err
+		}
+		lines, err := itemsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		revs, err := revisionsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		out = Detail{Intake: head, Items: lines, Revisions: revs}
+		return nil
+	})
+	if err != nil {
+		return Detail{}, err
+	}
+	return out, nil
+}
+
+// applyRevalidationItemsTx aplica el diff sobre las líneas: UPDATE de lo repreciado
+// y DELETE de lo retirado. NUNCA un DELETE+INSERT del conjunto, y no es una
+// optimización: el orden en que el cliente ve su pedido es el `added_at` de sus
+// líneas (itemsOf ordena por él), así que reescribirlas todas le reordenaría el
+// pedido por dentro sin que nadie lo hubiera tocado.
+//
+// Los dos WHERE excluyen el prefijo reservado aunque el diff ya excluya las líneas
+// de la plataforma. Es redundante a propósito: en el propio SQL —no en una función
+// pura que hay que ir a buscar— queda dicho que por este camino la línea de envío no
+// se puede re-preciar ni borrar JAMÁS (criterio (d) del plan). Es la misma cerradura
+// doble, y con el mismo literal, que el DELETE de replaceClientItemsTx.
+//
+// El UPDATE va por SKU y no por id, y eso alcanza a las DOS líneas cuando una se
+// partió en dos por sus indicaciones (D-041.20). Es lo correcto: es el mismo
+// artículo y el precio nuevo es el mismo para las dos.
+func applyRevalidationItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, rv Revalidation) error {
+	for _, c := range rv.Repriced() {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.intake_items
+			SET label = $3, unit_price = $4
+			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $5
+		`, intakeID, c.SKU, c.Label, c.To, ReservedSKUPrefix); err != nil {
+			return fmt.Errorf("intakes: re-preciar la línea %q de la solicitud: %w", c.SKU, err)
+		}
+	}
+	for _, c := range rv.Removed() {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM public.intake_items
+			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $3
+		`, intakeID, c.SKU, ReservedSKUPrefix); err != nil {
+			return fmt.Errorf("intakes: retirar la línea %q de la solicitud: %w", c.SKU, err)
+		}
+	}
+	return nil
+}
+
 // Discard implementa Store: el descarte manual del dueño (T4.8, D-041.18). Todo
 // ocurre en UNA transacción que empieza bloqueando la cabecera, y el orden importa:
 //

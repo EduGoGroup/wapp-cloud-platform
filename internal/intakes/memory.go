@@ -456,6 +456,72 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 	return Detail{}, ErrNotFound
 }
 
+// ApplyRevalidation implementa Store con la MISMA escritura QUIRÚRGICA que el store
+// Postgres (T4.9, D-041.25): re-precia por sku, borra por sku y conserva el ORDEN y
+// el `added_at` de las líneas que sobreviven. Reconstruir la lista desde rv.Items
+// habría sido más corto y habría mentido: el store real no las reescribe, y un test
+// que pasara aquí y fallara en producción no vale nada.
+//
+// Las líneas de la plataforma (prefijo reservado) se saltan explícitamente, igual
+// que el `left(sku,1) <> $n` del SQL real.
+func (m *MemoryStore) ApplyRevalidation(_ context.Context, tenantID, intakeID string, rv Revalidation, renderedText string, expected []string) (Detail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		if !slices.Contains(expected, r.status) {
+			return Detail{}, ErrConflict
+		}
+
+		repriced := map[string]LineChange{}
+		removed := map[string]bool{}
+		for _, c := range rv.Changes {
+			if c.Removed {
+				removed[c.SKU] = true
+				continue
+			}
+			repriced[c.SKU] = c
+		}
+
+		lines := make([]Item, 0, len(m.items[intakeID]))
+		for _, it := range m.items[intakeID] {
+			if strings.HasPrefix(it.SKU, ReservedSKUPrefix) {
+				lines = append(lines, it)
+				continue
+			}
+			if removed[it.SKU] {
+				continue
+			}
+			if c, ok := repriced[it.SKU]; ok {
+				it.Label, it.UnitPrice = c.Label, c.To
+			}
+			lines = append(lines, it)
+		}
+		m.items[intakeID] = lines
+		m.rows[tenantID][i].intake.Total = editedTotal(lines)
+
+		head := m.rows[tenantID][i].intake
+		head.Status = NormalizeStatus(r.status)
+		rev, err := revalidatedRevision(intakeID, rv, renderedText)
+		if err != nil {
+			return Detail{}, err
+		}
+		rev.RevisionNo = len(m.revisions[intakeID]) + 1
+		rev.CreatedAt = time.Now()
+		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+
+		return Detail{
+			Intake:    head,
+			Items:     slices.Clone(lines),
+			Revisions: slices.Clone(m.revisions[intakeID]),
+		}, nil
+	}
+	return Detail{}, ErrNotFound
+}
+
 // Discard implementa Store con el MISMO orden de rechazo que el Postgres —estado
 // primero, conversación viva después— y la misma escritura: `abandoned` más su
 // revisión `discarded`, o nada en absoluto. Esa paridad es la razón de ser de este

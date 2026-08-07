@@ -120,6 +120,16 @@ func screenContinue(category Category) string {
 // bajo ella (pegada a lo que describe) y la del pedido como línea propia bajo el
 // total (es del pedido entero, no de un artículo).
 func screenSummary(lines []cartLine, note string) string {
+	return summaryWith(lines, note, "")
+}
+
+// summaryWith es el resumen con un SUFIJO opcional pegado a la línea del TOTAL. Es
+// lo ÚNICO que la revalidación del rescate (D-041.25, T4.9) añade al renderizador:
+// «TOTAL  $5.00   (antes $7.00)». El resto del resumen —los renglones, las
+// indicaciones, el menú— se renderiza EXACTAMENTE igual que siempre, y por eso la
+// función que ya existía delega aquí con el sufijo vacío en vez de duplicarse: dos
+// resúmenes distintos para el mismo pedido serían dos verdades.
+func summaryWith(lines []cartLine, note, totalSuffix string) string {
 	var b strings.Builder
 	b.WriteString("🧾 Resumen del pedido:")
 	for _, l := range lines {
@@ -130,7 +140,7 @@ func screenSummary(lines []cartLine, note string) string {
 	}
 	// El total NO cambia por ninguna indicación (INV-13): se calcula de qty ×
 	// unit_price y de nada más.
-	b.WriteString("\nTOTAL  " + money(total(lines)))
+	b.WriteString("\nTOTAL  " + money(total(lines)) + totalSuffix)
 	if note != "" {
 		b.WriteString("\n✏️ Para todo el pedido: " + note)
 	}
