@@ -133,7 +133,9 @@ func sendErr(cmdID, sessionID string, err error) error {
 
 // SendText empuja un comando SendText hacia la sesión dada y espera su Ack,
 // correlacionado por command_id. Devuelve el Ack recibido o un *SendError si la
-// sesión está offline o si el contexto se cancela/expira antes del Ack.
+// sesión está offline, si el contexto del llamante se cancela, o si se agota
+// s.ackTimeout esperando el acuse (ver awaitAck: la espera tiene reloj PROPIO, no
+// depende de que el llamante traiga deadline — un handler HTTP no lo trae).
 //
 // ⚠️ Un Ack devuelto NO significa "entregado": el Edge puede acusar con Ok=false y
 // su motivo en Error. Quien necesite saber si el mensaje salió de verdad tiene que
@@ -161,17 +163,50 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
+	return s.awaitAck(ctx, ch, cmdID, sessionID)
+}
+
+// awaitAck espera el Ack correlacionado CON RELOJ PROPIO (s.ackTimeout), no solo
+// contra el contexto del llamante. La distinción es la que costó el incidente del
+// 2026-08-06: el ctx de un handler HTTP no trae deadline —el WriteTimeout del
+// http.Server no interrumpe al handler ni cancela su contexto, solo hace fallar el
+// Write posterior—, así que esperar únicamente por ctx.Done() significaba esperar
+// indefinidamente. Un POST /api/v1/messages colgó 88s contra un Edge saturado y el
+// servidor cerró la conexión sin responder ni loguear nada.
+//
+// Hay un segundo motivo, independiente del llamante: si el stream del Edge muere
+// sin acusar, NADA limpia la entrada de s.acks (deliverAck solo corre al recibir el
+// Ack), de modo que sin este reloj el select se quedaría colgado para siempre
+// aunque el Edge ya no exista.
+//
+// El error viaja envuelto en *SendError, así que el llamante conserva el command_id
+// —el único hilo que correlaciona lo que la nube intentó con el outbox del Edge y
+// con los acuses del Plan 013— y errors.Is(err, context.DeadlineExceeded) sigue
+// diciendo la verdad.
+func (s *Server) awaitAck(ctx context.Context, ch <-chan *cloudlinkv1.Ack, cmdID, sessionID string) (*cloudlinkv1.Ack, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.ackTimeout)
+	defer cancel()
+
 	select {
 	case ack := <-ch:
 		return ack, nil
 	case <-ctx.Done():
+		// El comando YA viajó al Edge: esto NO dice que el mensaje no saliera, dice
+		// que no sabemos si salió. De ahí que el command_id sea obligatorio aquí.
+		s.log.Warn("gateway: se agotó la espera del ack del Edge",
+			"command_id", cmdID,
+			"session_id", sessionID,
+			"ack_timeout", s.ackTimeout.String(),
+			"error", ctx.Err(),
+		)
 		return nil, sendErr(cmdID, sessionID, ctx.Err())
 	}
 }
 
 // SendMedia empuja un comando SendMedia (adjunto por URL prefirmada) hacia la
 // sesión y espera su Ack, correlacionado por command_id — idéntico patrón a
-// SendText, así el acuse delivered/read del Plan 013 funciona sin cambios. El
+// SendText (mismo awaitAck, mismo reloj propio), así el acuse delivered/read del
+// Plan 013 funciona sin cambios. El
 // binario NO viaja por gRPC: va la presignedURL (design.md §6.1) que el Edge
 // descarga (GET sin credenciales) y sube a WhatsApp. kind ("document"|"image")
 // elige la rama DocumentMessage/ImageMessage vía mapKind.
@@ -205,12 +240,7 @@ func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, fil
 		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
-	select {
-	case ack := <-ch:
-		return ack, nil
-	case <-ctx.Done():
-		return nil, sendErr(cmdID, sessionID, ctx.Err())
-	}
+	return s.awaitAck(ctx, ch, cmdID, sessionID)
 }
 
 // mapKind traduce el kind del descriptor (MediaRef.Kind) al enum MediaKind del

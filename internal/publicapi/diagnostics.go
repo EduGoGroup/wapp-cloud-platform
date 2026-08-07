@@ -164,7 +164,7 @@ func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, 
 				log.Warn("diagnóstico: rollback de solicitud tras push fallido falló",
 					"tenant_id", id.TenantID, "command_id", commandID, "error", derr)
 			}
-			writeSendError(w, err)
+			writeSendError(w, err, log, sessionID)
 			return
 		}
 

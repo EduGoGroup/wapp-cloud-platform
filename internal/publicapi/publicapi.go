@@ -181,7 +181,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// Envío de mensajes (escritura auditada). Reusa el gateway; añade el guardia
 	// session→tenant que /admin/messages/send (T4) no tenía.
 	mux.Handle("POST /api/v1/messages", protect(mw, auditor, log,
-		"messages.send", "message", messagesHandler(d.Sender, d.Sessions)))
+		"messages.send", "message", messagesHandler(d.Sender, d.Sessions, log)))
 
 	// Publicar definición de flujo (escritura auditada). Reusa TAL CUAL el handler
 	// de /admin/flows: ya toma el tenant del token y valida el esquema.
@@ -521,16 +521,27 @@ func protectRead(mw *httpapi.Middleware, perm string, h http.Handler) http.Handl
 }
 
 // writeJSON serializa v como JSON con el código dado (mismo patrón que
-// httpapi/flujos-admin). Ante fallo de codificación responde 500.
+// httpapi/flujos-admin). Ante fallo de codificación responde 500. El fallo de
+// ESCRITURA se descarta: quien necesite enterarse usa writeJSONErr.
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	//nolint:errcheck // el descarte es el contrato de writeJSON: quien necesite
+	// enterarse del fallo de escritura llama a writeJSONErr, que lo devuelve.
+	_ = writeJSONErr(w, code, v)
+}
+
+// writeJSONErr es writeJSON pero DEVUELVE el fallo de escritura en vez de
+// tragárselo. Existe porque ese error silencioso fue lo que dejó el incidente del
+// 2026-08-06 sin una sola línea de log: el handler creía haber respondido 200 y el
+// cliente veía la conexión cerrada sin cuerpo. Un Write que falla es justo el
+// evento que hay que registrar, no el que hay que ignorar.
+func writeJSONErr(w http.ResponseWriter, code int, v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		http.Error(w, "codificando respuesta", http.StatusInternalServerError)
-		return
+		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	if _, werr := w.Write(body); werr != nil {
-		return
-	}
+	_, werr := w.Write(body)
+	return werr
 }

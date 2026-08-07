@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 )
@@ -101,7 +103,7 @@ type sendMessageResponse struct {
 // SEGURIDAD (Plan 018 · T4): el endpoint se monta DETRÁS de Authenticate →
 // RequirePermission("messages.send"). El envío se dirige por session_id (no lleva
 // tenant en el cuerpo); la autorización la impone el middleware.
-func SendMessageHandler(sender MessageSender) http.Handler {
+func SendMessageHandler(sender MessageSender, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
@@ -120,7 +122,7 @@ func SendMessageHandler(sender MessageSender) http.Handler {
 
 		ack, err := sender.SendText(r.Context(), req.SessionID, req.To, req.Text)
 		if err != nil {
-			writeSendError(w, err)
+			writeSendError(w, err, log, req.SessionID)
 			return
 		}
 
@@ -144,13 +146,37 @@ func SendMessageHandler(sender MessageSender) http.Handler {
 
 // writeSendError traduce el error de SendText a un código HTTP claro: sesión
 // offline -> 502, timeout/cancelación esperando el Ack -> 504, resto -> 500.
-func writeSendError(w http.ResponseWriter, err error) {
+// Adjunta el command_id al mensaje cuando ya estaba asignado: un 504 sin él no
+// permite averiguar después si el mensaje llegó a salir (ver el gemelo público en
+// publicapi/messages.go, que responde JSON con el mismo dato).
+func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, sessionID string) {
+	cmdID := commandIDFrom(err)
+	code, msg := http.StatusInternalServerError, "no se pudo enviar el texto"
 	switch {
 	case errors.Is(err, session.ErrSessionOffline):
-		http.Error(w, "sesión offline: no hay stream vivo para el Edge", http.StatusBadGateway)
+		code, msg = http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge"
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		http.Error(w, "timeout esperando el ack del Edge", http.StatusGatewayTimeout)
-	default:
-		http.Error(w, "no se pudo enviar el texto", http.StatusInternalServerError)
+		code, msg = http.StatusGatewayTimeout, "timeout esperando el ack del Edge"
 	}
+	if cmdID != "" {
+		msg = fmt.Sprintf("%s (command_id: %s)", msg, cmdID)
+	}
+	if log != nil {
+		// CERO PII: ni el destino ni el texto del mensaje.
+		log.Error("envío admin fallido",
+			"status", code, "command_id", cmdID, "session_id", sessionID, "error", err)
+	}
+	http.Error(w, msg, code)
+}
+
+// commandIDFrom extrae el command_id de un error de envío por duck-typing, sin
+// importar el paquete del Gateway. Está duplicado a propósito en publicapi: el
+// contrato es la interfaz anónima, no un tipo compartido, y ese es justamente el
+// desacople que permite al Gateway no aparecer en los imports de los handlers.
+func commandIDFrom(err error) string {
+	var withID interface{ CommandID() string }
+	if errors.As(err, &withID) {
+		return withID.CommandID()
+	}
+	return ""
 }

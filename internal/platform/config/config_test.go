@@ -110,6 +110,56 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 }
 
+// TestLoad_GRPCAckTimeout cubre el reloj de la espera del Ack (env
+// WAPP_GRPC_ACK_TIMEOUT). Sin él, el select del Ack esperaba contra un contexto
+// sin deadline y un Edge saturado colgaba al llamante HTTP indefinidamente
+// (incidente del 2026-08-06: 88s sin respuesta ni log).
+func TestLoad_GRPCAckTimeout(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		isolateEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GRPCAckTimeout != 8*time.Second {
+			t.Errorf("GRPCAckTimeout: got %v, want 8s", cfg.GRPCAckTimeout)
+		}
+		// INVARIANTE: por debajo del WriteTimeout del servidor HTTP (10s,
+		// internal/bootstrap/http.go). Si no, el 504 se genera con el deadline de
+		// escritura vencido y el cliente sigue viendo la conexión cerrada sin cuerpo.
+		if cfg.GRPCAckTimeout >= 10*time.Second {
+			t.Errorf("GRPCAckTimeout=%v >= WriteTimeout HTTP (10s): el 504 no llegaría a escribirse", cfg.GRPCAckTimeout)
+		}
+	})
+
+	t.Run("override por env", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"GRPC_ACK_TIMEOUT", "3s")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GRPCAckTimeout != 3*time.Second {
+			t.Errorf("GRPCAckTimeout: got %v, want 3s", cfg.GRPCAckTimeout)
+		}
+	})
+
+	// Un valor no parseable cae al default en vez de dejar el campo en cero: cero
+	// sería "sin reloj", exactamente el bug que este ajuste elimina. La red de
+	// seguridad final está en gatewaygrpc.New, que también materializa <=0.
+	t.Run("valor inválido cae al default", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"GRPC_ACK_TIMEOUT", "no-es-duracion")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GRPCAckTimeout != 8*time.Second {
+			t.Errorf("GRPCAckTimeout: got %v, want 8s (default)", cfg.GRPCAckTimeout)
+		}
+	})
+}
+
 func TestLoad_StorageDefaults(t *testing.T) {
 	isolateEnv(t)
 	cfg, err := Load()

@@ -133,6 +133,7 @@ Principales (ver `config.go` para el conjunto completo):
 |---|---|
 | `WAPP_APP_ENV` | `dev` o `prod`; en `prod` exige material de clave explícito (fail-fast) |
 | `WAPP_HTTP_ADDR` · `WAPP_PUBLIC_HTTP_ADDR` · `WAPP_GRPC_ENROLL_ADDR` · `WAPP_GRPC_CONNECT_ADDR` | Direcciones de los cuatro listeners |
+| `WAPP_GRPC_PUSH_TIMEOUT` · `WAPP_GRPC_ACK_TIMEOUT` | Los dos relojes de un envío al Edge: el primero acota el **empuje** por el stream (10s), el segundo la **espera del Ack** (8s). ⚠️ El del ack tiene que quedar **por debajo del `WriteTimeout` HTTP** (10s): en Go ese timeout no interrumpe al handler ni cancela su contexto, solo hace fallar el `Write` posterior, así que un ack timeout mayor devolvería un 504 que el cliente nunca llega a leer |
 | `WAPP_DB_HOST` · `WAPP_DB_PORT` · `WAPP_DB_USER` · `WAPP_DB_PASSWORD` · `WAPP_DB_NAME` · `WAPP_DB_SSLMODE` | Conexión a PostgreSQL |
 | `WAPP_JWT_EC_PRIVATE_KEY_FILE` · `WAPP_JWT_KID` · `WAPP_JWT_ISSUER` | Firma/validación del **Context Token** de wApp (ES256) |
 | `WAPP_IDENTITY_URL` · `WAPP_IDENTITY_JWKS_URL` · `WAPP_IDENTITY_TIMEOUT` | El SSO del grupo: a quién preguntar por las credenciales y con qué claves verificar sus Identity Tokens |
