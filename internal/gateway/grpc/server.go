@@ -40,6 +40,11 @@ import (
 // stream (el contexto del stream ya está cancelado; se usa uno desacoplado).
 const offlinePersistTimeout = 5 * time.Second
 
+// defaultAckTimeout acota la espera del Ack del Edge cuando no se configura otro
+// con WithAckTimeout. Ver el porqué del valor —y la invariante contra el
+// WriteTimeout del servidor HTTP— en config.AppConfig.GRPCAckTimeout.
+const defaultAckTimeout = 8 * time.Second
+
 // Server implementa cloudlinkv1.CloudLinkServer. Es seguro para uso concurrente.
 //
 // Los hooks observables (OnIncoming, OnHeartbeat) deben asignarse antes de poner
@@ -98,6 +103,12 @@ type Server struct {
 	acksMu sync.Mutex
 	acks   map[string]chan *cloudlinkv1.Ack
 
+	// ackTimeout acota cuánto espera SendText/SendMedia el Ack del Edge. Nunca es
+	// cero: New() lo materializa a defaultAckTimeout. Es lo que impide que un Edge
+	// saturado —o un stream que muere sin acusar, caso en el que NADA limpia la
+	// entrada de s.acks— retenga para siempre al llamante.
+	ackTimeout time.Duration
+
 	// edgeSessions mapea cada Edge (tenant+edge) al conjunto de sus sesiones
 	// vivas, para que RevokeLease pueda empujar el kill-switch a todas ellas.
 	trackMu      sync.Mutex
@@ -128,6 +139,12 @@ func WithReceiptSink(sink ReceiptSink) Option { return func(s *Server) { s.recei
 // ADR-0023). Sin él, un bundle recibido del Edge se ignora (no hay dónde almacenarlo).
 func WithDiagnosticsSink(r diagnostics.BundleReceiver) Option { return func(s *Server) { s.diag = r } }
 
+// WithAckTimeout fija cuánto espera SendText/SendMedia el Ack del Edge antes de
+// rendirse con context.DeadlineExceeded (env WAPP_GRPC_ACK_TIMEOUT). Un valor <=0
+// se ignora y New cae a defaultAckTimeout: el camino caliente NUNCA queda sin
+// deadline. Mismo criterio que session.WithSendTimeout para el empuje.
+func WithAckTimeout(d time.Duration) Option { return func(s *Server) { s.ackTimeout = d } }
+
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
 func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
@@ -143,6 +160,10 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	// El sink de acuses (Plan 013 §10.F) nunca es nil: log-only por defecto.
 	if s.receiptSink == nil {
 		s.receiptSink = NewLogReceiptSink(log)
+	}
+	// La espera del Ack nunca queda sin reloj (ver ackTimeout).
+	if s.ackTimeout <= 0 {
+		s.ackTimeout = defaultAckTimeout
 	}
 	return s
 }

@@ -51,6 +51,22 @@ type AppConfig struct {
 	// retener al llamante ni atascar el kill-switch (RevokeLease). Default 10s. <=0
 	// cae al default. Se lee como cadena time.Duration de WAPP_GRPC_PUSH_TIMEOUT.
 	GRPCPushTimeout time.Duration `yaml:"grpc_push_timeout"`
+	// GRPCAckTimeout acota la ESPERA DEL ACK del Edge tras empujar un comando
+	// (SendText/SendMedia). Es el hermano de GRPCPushTimeout —que acota el empuje,
+	// no la respuesta— y cierra el hueco que dejó abierto el Plan 027 · Ola 1 · T5
+	// (H6: "Push/Send sin deadline bloquea al llamante"): sin este reloj, el select
+	// del Ack espera contra un ctx SIN deadline y un Edge saturado cuelga al
+	// llamante HTTP indefinidamente (incidente del 2026-08-06: 88s sin respuesta ni
+	// log). Default 8s. <=0 cae al default. Env WAPP_GRPC_ACK_TIMEOUT.
+	//
+	// ⚠️ INVARIANTE: tiene que ser MENOR que el WriteTimeout del servidor HTTP
+	// (10s, internal/bootstrap/http.go). En Go el WriteTimeout NO interrumpe al
+	// handler ni cancela su contexto: solo hace fallar el Write posterior. Si este
+	// timeout lo igualara o superara, el 504 se generaría con el deadline de
+	// escritura ya vencido y el cliente seguiría viendo una conexión cerrada sin
+	// respuesta — exactamente el síntoma que este reloj viene a eliminar. 8s deja
+	// ~2s de margen para serializar y escribir la respuesta.
+	GRPCAckTimeout time.Duration `yaml:"grpc_ack_timeout"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
@@ -380,6 +396,7 @@ func defaults() AppConfig {
 		GRPCEnrollAddr:  ":8102",
 		GRPCConnectAddr: ":8101",
 		GRPCPushTimeout: 10 * time.Second,
+		GRPCAckTimeout:  8 * time.Second,
 		LogLevel:        "info",
 		LogJSON:         false,
 		JWT: JWTConfig{
@@ -455,6 +472,7 @@ func Load() (AppConfig, error) {
 	cfg.GRPCEnrollAddr = loader.GetString("GRPC_ENROLL_ADDR", cfg.GRPCEnrollAddr)
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
 	cfg.GRPCPushTimeout = loader.GetDuration("GRPC_PUSH_TIMEOUT", cfg.GRPCPushTimeout)
+	cfg.GRPCAckTimeout = loader.GetDuration("GRPC_ACK_TIMEOUT", cfg.GRPCAckTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 

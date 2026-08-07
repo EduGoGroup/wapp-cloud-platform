@@ -135,6 +135,10 @@ func Run(ctx context.Context) error {
 		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
 		session.NewRegistry(session.WithSendTimeout(cfg.GRPCPushTimeout)),
 		log,
+		// Deadline por ESPERA DEL ACK (env WAPP_GRPC_ACK_TIMEOUT): el hermano del
+		// anterior. Aquel acota el empuje; este, la respuesta. Sin él, un Edge
+		// saturado cuelga al llamante HTTP indefinidamente (2026-08-06).
+		gatewaygrpc.WithAckTimeout(cfg.GRPCAckTimeout),
 		gatewaygrpc.WithLease(leaseMgr),
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
@@ -320,7 +324,7 @@ func Run(ctx context.Context) error {
 	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
 		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
 	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
-		"messages.send", "message", httpapi.SendMessageHandler(gw)))
+		"messages.send", "message", httpapi.SendMessageHandler(gw, log)))
 	mux.Handle("/admin/crypto/rekey", adminHandler(authMW, auditor, log,
 		"crypto.rekey", "kek", httpapi.CryptoRekeyHandler(
 			func(ctx context.Context, batch int) (crypto.Report, error) {

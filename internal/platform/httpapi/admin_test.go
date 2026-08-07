@@ -5,16 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
+
+// testLogger devuelve un logger real que escribe a la nada: ejercita el camino de
+// logging de los handlers (que ahora registran cada envío fallido) sin ensuciar la
+// salida del test ni depender de la guarda nil.
+func testLogger() sharedlogger.Logger {
+	return sharedlogger.New(sharedlogger.WithWriter(io.Discard))
+}
 
 // fakeRevoker registra la última llamada a RevokeLease y permite forzar un error.
 type fakeRevoker struct {
@@ -148,7 +157,7 @@ func (f *fakeSender) SendText(_ context.Context, sessionID, to, text string) (*c
 
 func TestSendMessageHandler_OK(t *testing.T) {
 	snd := &fakeSender{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-1", Ok: true}}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-1","to":"5491100000000","text":"hola"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
@@ -181,7 +190,7 @@ func TestSendMessageHandler_OK(t *testing.T) {
 // refleja en el cuerpo JSON (ok=false + error), no en el código HTTP.
 func TestSendMessageHandler_AckNotOK(t *testing.T) {
 	snd := &fakeSender{ack: &cloudlinkv1.Ack{AckedCommandId: "cmd-2", Ok: false, Error: "envío rechazado"}}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
@@ -206,7 +215,7 @@ func TestSendMessageHandler_AckNotOK(t *testing.T) {
 
 func TestSendMessageHandler_Offline(t *testing.T) {
 	snd := &fakeSender{err: fmt.Errorf("push: %w", session.ErrSessionOffline)}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-x","to":"549110","text":"hola"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
@@ -221,7 +230,7 @@ func TestSendMessageHandler_Offline(t *testing.T) {
 
 func TestSendMessageHandler_Timeout(t *testing.T) {
 	snd := &fakeSender{err: fmt.Errorf("esperando ack: %w", context.DeadlineExceeded)}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
@@ -236,7 +245,7 @@ func TestSendMessageHandler_Timeout(t *testing.T) {
 
 func TestSendMessageHandler_SenderError(t *testing.T) {
 	snd := &fakeSender{err: errors.New("boom")}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	body := `{"session_id":"s-1","to":"549110","text":"hola"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(body))
@@ -251,7 +260,7 @@ func TestSendMessageHandler_SenderError(t *testing.T) {
 
 func TestSendMessageHandler_MissingFields(t *testing.T) {
 	snd := &fakeSender{}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(`{"session_id":"s-1","to":"549110"}`))
 	rec := httptest.NewRecorder()
@@ -268,7 +277,7 @@ func TestSendMessageHandler_MissingFields(t *testing.T) {
 
 func TestSendMessageHandler_InvalidBody(t *testing.T) {
 	snd := &fakeSender{}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/messages/send", strings.NewReader(`{not-json`))
 	rec := httptest.NewRecorder()
@@ -285,7 +294,7 @@ func TestSendMessageHandler_InvalidBody(t *testing.T) {
 
 func TestSendMessageHandler_WrongMethod(t *testing.T) {
 	snd := &fakeSender{}
-	h := httpapi.SendMessageHandler(snd)
+	h := httpapi.SendMessageHandler(snd, testLogger())
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/messages/send", nil)
 	rec := httptest.NewRecorder()
