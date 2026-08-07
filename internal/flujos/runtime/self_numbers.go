@@ -21,6 +21,15 @@ import (
 // convención que "rol desconocido ⇒ bot"). El rate-limit por conversación (T0)
 // queda como red de contención adicional.
 //
+// La decisión es POR NÚMERO, no por fila (GROUP BY self_pn + HAVING). Un mismo
+// self_pn puede aparecer en varias filas —otro edge_id, o la fila que dejó un
+// emparejamiento anterior— y con el filtro por fila bastaba UNA fila bot para
+// bloquear el número aunque la sesión VIVA estuviese en passive: marcar passive
+// desde la consola no surtía efecto y el bot no podía atender al teléfono
+// personal. Ahora un número bloquea solo si ALGUNA de sus sesiones NO retiradas
+// es no-passive (mismo criterio agregado que PostgresTenantResolver, que usa
+// bool_or para el rol efectivo de una sesión repartida entre edges).
+//
 // Coste: se invoca UNA vez por entrante (dentro de la guarda anti-self-loop). Es
 // una query trivial e indexada por tenant_id; para el MVP se acepta SIN caché
 // (correcto siempre, sin invalidación que mantener). Si el volumen de entrantes lo
@@ -35,14 +44,25 @@ func NewPostgresSelfNumbers(db *sql.DB) *PostgresSelfNumbers {
 	return &PostgresSelfNumbers{db: db}
 }
 
-// SelfNumbers devuelve los self_pn no vacíos de las sesiones NO passive del
-// tenant (los passive no bloquean: nunca auto-responden ⇒ sin riesgo de loop).
+// SelfNumbers devuelve los self_pn no vacíos del tenant que pertenecen a alguna
+// sesión NO retirada y NO passive (los passive no bloquean: nunca auto-responden
+// ⇒ sin riesgo de loop). El resultado ya viene deduplicado por la agregación.
+//
+// ⚠️ El filtro de vida es state <> 'loggedout', NO state = 'online'. Son cosas
+// distintas (0029_fleet_sessions_state_loggedout.sql): 'offline' es el stream
+// CloudLink caído y RECUPERABLE —el socket de WhatsApp sigue vivo y la sesión
+// auto-responde en cuanto reconecta, drenando el outbox del Plan 027—, mientras
+// que 'loggedout' es terminal (WhatsApp cerró el device; no vuelve sin re-QR).
+// Estrechar esto a 'online' dejaría de bloquear números que SÍ auto-responden y
+// reabriría justo el bucle sesión↔sesión que esta guarda existe para cerrar.
 func (r *PostgresSelfNumbers) SelfNumbers(ctx context.Context, tenantID string) (out []string, err error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT self_pn
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND self_pn IS NOT NULL AND self_pn <> ''
-		  AND role <> 'passive'
+		  AND state <> 'loggedout'
+		GROUP BY self_pn
+		HAVING bool_or(role <> 'passive')
 	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("self_numbers: consulta fleet_sessions: %w", err)

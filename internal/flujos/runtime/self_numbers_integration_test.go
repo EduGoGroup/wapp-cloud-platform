@@ -15,20 +15,39 @@ import (
 // fleet_sessions real. Reutilizan openTestDB/seedTenant (mismo gate WAPP_TEST_DB_DSN
 // que el resto de la integración: sin DSN se saltan en local, corren en CI/e2e).
 
-// seedFleetSessionRolePn siembra una fila de fleet_sessions con rol y self_pn
-// explícitos (extiende el patrón de seedFleetSession con las columnas 0025/0028).
-func seedFleetSessionRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, role, selfPn string) {
+// seedFleetSessionStateRolePn siembra una fila de fleet_sessions con state, rol y
+// self_pn explícitos (extiende el patrón de seedFleetSession con las columnas
+// 0025/0028/0029). El STATE pesa tanto como el rol: la query separa la sesión
+// RETIRADA (loggedout, no vuelve sin re-QR) de la meramente desconectada (offline,
+// recuperable).
+func seedFleetSessionStateRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, state, role, selfPn string) {
 	t.Helper()
 	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.fleet_sessions
 			(tenant_id, edge_id, session_id, state, role, self_pn, last_connected_at, last_seen_at, updated_at)
-		VALUES ($1, $2, $3, 'online', $4, $5, now(), now(), now())
+		VALUES ($1, $2, $3, $4, $5, $6, now(), now(), now())
 		ON CONFLICT (tenant_id, edge_id, session_id)
-			DO UPDATE SET state = 'online', role = EXCLUDED.role, self_pn = EXCLUDED.self_pn
-	`, tenantID, edgeID, sessionID, role, selfPn)
+			DO UPDATE SET state = EXCLUDED.state, role = EXCLUDED.role, self_pn = EXCLUDED.self_pn
+	`, tenantID, edgeID, sessionID, state, role, selfPn)
 	if err != nil {
-		t.Fatalf("sembrar fleet_sessions (role=%s): %v", role, err)
+		t.Fatalf("sembrar fleet_sessions (state=%s role=%s): %v", state, role, err)
 	}
+}
+
+// seedFleetSessionRolePn siembra una sesión VIVA (online) con rol y self_pn dados.
+func seedFleetSessionRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, role, selfPn string) {
+	t.Helper()
+	seedFleetSessionStateRolePn(t, db, tenantID, edgeID, sessionID, "online", role, selfPn)
+}
+
+// contiene dice si el número está en el conjunto devuelto por SelfNumbers.
+func contiene(nums []string, pn string) bool {
+	for _, n := range nums {
+		if n == pn {
+			return true
+		}
+	}
+	return false
 }
 
 // El self_pn de una sesión BOT sí cuenta como número propio (bloquea el
@@ -78,5 +97,108 @@ func TestIntegration_PostgresSelfNumbers_SoloPassiveConjuntoVacio(t *testing.T) 
 	}
 	if len(nums) != 0 {
 		t.Fatalf("un tenant solo-passive debería devolver conjunto vacío, devolvió %v", nums)
+	}
+}
+
+// Una sesión RETIRADA (loggedout) no aporta su número: es un zombi que no vuelve
+// sin re-emparejar, así que no puede auto-responder y no puede cerrar un bucle.
+// Muerde el filtro state <> 'loggedout': sin él, la fila fantasma bloquearía.
+func TestIntegration_PostgresSelfNumbers_SesionRetiradaNoBloquea(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+
+	suffix := time.Now().UnixNano()
+	zombiPn := fmt.Sprintf("57303%010d", suffix%1e10)
+	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-zombi-%d", suffix),
+		"loggedout", "bot", zombiPn)
+
+	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("SelfNumbers: %v", err)
+	}
+	if contiene(nums, zombiPn) {
+		t.Fatalf("una sesión loggedout NO debe aportar su self_pn (no auto-responde ⇒ no hay bucle que cerrar), devolvió %v", nums)
+	}
+}
+
+// EL BUG QUE MOTIVA EL CAMBIO: el número está en DOS filas —la sesión viva marcada
+// passive y la fila muerta (loggedout) de un emparejamiento anterior, que quedó en
+// bot—. Marcar passive desde la consola tiene que surtir efecto: el número NO debe
+// bloquear, o el bot nunca podrá atender al teléfono personal del tenant.
+func TestIntegration_PostgresSelfNumbers_PassiveVivaConZombiBotDelMismoNumero(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+
+	suffix := time.Now().UnixNano()
+	pn := fmt.Sprintf("57304%010d", suffix%1e10)
+	// La sesión VIVA de ese número, ya marcada passive por el operador.
+	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-viva-%d", suffix),
+		"online", "passive", pn)
+	// El fantasma del emparejamiento anterior: MISMO número, retirado, aún en bot.
+	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-muerta-%d", suffix),
+		"loggedout", "bot", pn)
+
+	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("SelfNumbers: %v", err)
+	}
+	if contiene(nums, pn) {
+		t.Fatalf("una fila loggedout en bot NO debe mantener bloqueado el número de una sesión viva passive "+
+			"(el cambio de rol quedaría sin efecto), devolvió %v", nums)
+	}
+}
+
+// ⚠️ NO-REGRESIÓN CONTRA LA "OPTIMIZACIÓN" EQUIVOCADA: una sesión bot en OFFLINE
+// sigue bloqueando. offline es el stream CloudLink caído y RECUPERABLE —el socket
+// de WhatsApp sigue vivo y la sesión auto-responde al reconectar, drenando el
+// outbox—, así que su número sí puede cerrar un bucle. Este test falla si alguien
+// estrecha el filtro a state = 'online'.
+func TestIntegration_PostgresSelfNumbers_SesionOfflineSigueBloqueando(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+
+	suffix := time.Now().UnixNano()
+	offlinePn := fmt.Sprintf("57305%010d", suffix%1e10)
+	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-off-%d", suffix),
+		"offline", "bot", offlinePn)
+
+	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("SelfNumbers: %v", err)
+	}
+	if !contiene(nums, offlinePn) {
+		t.Fatalf("una sesión bot OFFLINE (stream caído pero recuperable) SÍ debe seguir bloqueando su número "+
+			"—filtrar por state='online' reabriría el bucle—, devolvió %v", nums)
+	}
+}
+
+// La decisión es por NÚMERO, no por fila: el mismo self_pn repartido en dos edges
+// se devuelve UNA sola vez. Muerde la agregación (sin GROUP BY salía duplicado, y
+// el consumidor recorre el conjunto por cada entrante).
+func TestIntegration_PostgresSelfNumbers_DeduplicaElMismoNumeroEnVariosEdges(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+
+	suffix := time.Now().UnixNano()
+	pn := fmt.Sprintf("57306%010d", suffix%1e10)
+	seedFleetSessionRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-a-%d", suffix), "bot", pn)
+	seedFleetSessionRolePn(t, db, tenantID, "edge-B", fmt.Sprintf("sess-b-%d", suffix), "bot", pn)
+
+	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("SelfNumbers: %v", err)
+	}
+	var veces int
+	for _, n := range nums {
+		if n == pn {
+			veces++
+		}
+	}
+	if veces != 1 {
+		t.Fatalf("el mismo self_pn en dos edges debe devolverse UNA vez (agregado por número), apareció %d veces en %v", veces, nums)
 	}
 }

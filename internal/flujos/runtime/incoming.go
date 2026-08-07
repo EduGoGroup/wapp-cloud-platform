@@ -406,10 +406,34 @@ func consecutiveReplay(st model.Conversation, m *cloudlinkv1.IncomingMessage) bo
 // Sin rol passive y sin self_pn poblado, devuelve false ⇒ no-regresión total.
 func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
 	if role == rolePassive {
-		rt.log.Debug("runtime: sesión passive; motor reactivo omitido", "session_id", sessionID)
+		rt.countReactiveBlocked(reasonPassive)
+		rt.logPassiveSkip(sessionID)
 		return true
 	}
 	return rt.isSelfLoop(ctx, tenantID, sessionID, fromPn)
+}
+
+// countReactiveBlocked registra el corte en el contador inyectado (nil-safe: sin
+// WithReactiveBlockedHook no cuenta nada). Observa; NUNCA decide.
+func (rt *Runtime) countReactiveBlocked(reason string) {
+	if rt.onReactiveBlocked != nil {
+		rt.onReactiveBlocked(reason)
+	}
+}
+
+// logPassiveSkip anuncia el corte por rol passive UNA vez por sesión a INFO y las
+// siguientes a Debug. El corte es un ESTADO configurado, no un evento: repetirlo a
+// INFO en cada entrante inunda el log, pero dejarlo solo en Debug lo hace invisible
+// con el nivel por defecto y el operador acaba diagnosticando otra cosa. La primera
+// línea lleva el session_id —que el contador no puede etiquetar sin disparar la
+// cardinalidad— y es justo lo que hace falta para saber QUÉ sesión marcar como bot.
+func (rt *Runtime) logPassiveSkip(sessionID string) {
+	if _, anunciada := rt.passiveAnnounced.LoadOrStore(sessionID, struct{}{}); anunciada {
+		rt.log.Debug("runtime: sesión passive; motor reactivo omitido", "session_id", sessionID)
+		return
+	}
+	rt.log.Info("runtime: sesión passive; motor reactivo omitido — no auto-responderá mientras siga passive (se anuncia una vez por sesión; el resto en debug)",
+		"session_id", sessionID)
 }
 
 // isSelfLoop decide si un entrante proviene de un número PROPIO del tenant (una
@@ -440,6 +464,7 @@ func (rt *Runtime) isSelfLoop(ctx context.Context, tenantID, sessionID, fromPn s
 	}
 	for _, n := range nums {
 		if n == norm {
+			rt.countReactiveBlocked(reasonSelfLoop)
 			rt.log.Warn("runtime: entrante de un número propio del tenant; auto-respuesta evitada (anti-self-loop)",
 				"tenant_id", tenantID, "session_id", sessionID)
 			return true
@@ -456,6 +481,7 @@ func (rt *Runtime) replyAllowed(key store.Key) bool {
 	if rt.replyLimiter == nil || rt.replyLimiter.Allow(key.String()) {
 		return true
 	}
+	rt.countReactiveBlocked(reasonRateLimit)
 	rt.log.Warn("runtime: auto-respuesta limitada por rate-limit de conversación",
 		"tenant_id", key.TenantID,
 		"session_id", key.SessionID,

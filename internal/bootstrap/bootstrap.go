@@ -226,6 +226,11 @@ func Run(ctx context.Context) error {
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
 		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)),
 		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)),
+		// Contador de los entrantes que NO llegan al motor reactivo (passive /
+		// self-loop / rate-limit): los tres cortes son silenciosos por diseño, así que
+		// sin esto la única respuesta a «¿por qué no contesta?» era subir el log a
+		// debug e inundarlo. Va por callback para que el motor no importe prometheus.
+		flowruntime.WithReactiveBlockedHook(mtx.FlowReactiveBlocked),
 		// Tercer toque del recordatorio perezoso de la seña (T4.4): el cliente vuelve
 		// a escribir. No añade reloj ninguno — el disparador es el entrante.
 		flowruntime.WithDepositReminder(depositReminder))
