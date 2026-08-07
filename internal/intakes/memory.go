@@ -27,6 +27,10 @@ type MemoryStore struct {
 	// clave (tenant, sesión, contacto). Es la aproximación provisional de
 	// "conversación viva" que consume Discard (ver Store.Discard).
 	liveCarts map[string]bool
+	// now es el reloj con el que se fija deposit_due_at al pedir seña, el equivalente
+	// del now() de la transacción en el store real (T4.4). Inyectable con SetClock
+	// para que un test pueda fijar un plazo y luego cruzar la fecha sin esperar días.
+	now func() time.Time
 }
 
 // row es una solicitud almacenada con su estado tal cual (sin normalizar).
@@ -44,6 +48,17 @@ func NewMemoryStore() *MemoryStore {
 		zones:     map[string][]ShippingZone{},
 		notify:    map[string]NotifySettings{},
 		liveCarts: map[string]bool{},
+		now:       time.Now,
+	}
+}
+
+// SetClock fija el reloj del store, como WithReminderClock hace con el del
+// recordatorio. Es un mutador para los tests, no parte de ningún puerto.
+func (m *MemoryStore) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if now != nil {
+		m.now = now
 	}
 }
 
@@ -281,10 +296,19 @@ func (m *MemoryStore) UpdateStatus(_ context.Context, tenantID, intakeID, to str
 		}
 		m.rows[tenantID][i].status = to
 		m.rows[tenantID][i].intake.Status = to
-		if NormalizeStatus(to) == StatusPendingApproval {
+		switch NormalizeStatus(to) {
+		case StatusPendingApproval:
 			if _, err := m.ensureShippingLocked(tenantID, i, ShippingAlways); err != nil {
 				return Intake{}, err
 			}
+		case StatusDepositRequested:
+			// La MISMA regla del store real: pedir seña fija su plazo en la misma
+			// escritura del estado, y limpia el recordatorio para que la marca de una
+			// seña anterior no silencie la nueva (T4.4).
+			cfg := m.notify[tenantID]
+			m.rows[tenantID][i].intake.DepositDueAt =
+				m.now().AddDate(0, 0, depositDueDays(cfg.DepositDueDays))
+			m.rows[tenantID][i].intake.DepositRemindedAt = time.Time{}
 		}
 		updated := m.rows[tenantID][i].intake
 		updated.Status = NormalizeStatus(to)
@@ -426,6 +450,59 @@ func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, disc
 		return out, nil
 	}
 	return DiscardOutcome{}, ErrNotFound
+}
+
+// MarkDepositReminded implementa DepositStore con el MISMO compare-and-swap que el
+// Postgres: las cuatro condiciones se evalúan y la marca se escribe SIN soltar el
+// candado, así que dos toques simultáneos no pueden ganar los dos. Esa paridad es lo
+// que hace que un test de "un solo recordatorio" contra este store diga algo
+// verdadero sobre producción.
+func (m *MemoryStore) MarkDepositReminded(_ context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		in := r.intake
+		in.Status = NormalizeStatus(r.status)
+		if !candidate(in, at) {
+			return Intake{}, false, nil
+		}
+		m.rows[tenantID][i].intake.DepositRemindedAt = at
+		in.DepositRemindedAt = at
+		return in, true, nil
+	}
+	return Intake{}, false, nil
+}
+
+// PendingDepositReminders implementa DepositStore: las señas vencidas y sin
+// recordar de un contacto, lo más vencido primero y acotadas a `limit`, igual que la
+// consulta real.
+func (m *MemoryStore) PendingDepositReminders(_ context.Context, tenantID, contactID string, at time.Time, limit int) ([]Intake, error) {
+	if limit <= 0 {
+		return []Intake{}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := []Intake{}
+	for _, r := range m.rows[tenantID] {
+		if r.intake.ContactID != contactID {
+			continue
+		}
+		in := r.intake
+		in.Status = NormalizeStatus(r.status)
+		if candidate(in, at) {
+			out = append(out, in)
+		}
+	}
+	slices.SortFunc(out, func(a, b Intake) int { return a.DepositDueAt.Compare(b.DepositDueAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // recomputeTotalLocked cuadra el total de la cabecera con la suma de sus líneas,

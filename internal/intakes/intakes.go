@@ -88,6 +88,19 @@ type Intake struct {
 	//
 	// Cadena vacía = el cliente no indicó nada (es el DEFAULT de la columna).
 	CustomerNote string
+	// DepositDueAt es la fecha límite de la SEÑA (D-041.12). La fija la entrada en
+	// `deposit_requested` —dentro de la MISMA escritura del estado— como
+	// `now + tenant_settings.deposit_due_days`.
+	//
+	// NO es un TTL y esa distinción es la tarea entera: pasarse de esta fecha NO
+	// mata la solicitud (D-041.16, nada vence por tiempo); lo único que habilita es
+	// el RECORDATORIO. Zero = no se ha pedido seña (NULL en la columna).
+	DepositDueAt time.Time
+	// DepositRemindedAt marca que al cliente YA se le recordó la seña. Es lo que
+	// hace que el recordatorio sea uno y no un goteo: se escribe con un
+	// compare-and-swap contra NULL, así que de N toques simultáneos solo uno manda
+	// (D-041.12: «un solo recordatorio en v1»). Zero = nunca se le recordó.
+	DepositRemindedAt time.Time
 }
 
 // Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del

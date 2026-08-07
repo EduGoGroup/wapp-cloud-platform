@@ -12,6 +12,7 @@ import (
 type Service struct {
 	store    Store
 	notifier StatusNotifier
+	deposits DepositTouch
 }
 
 // StatusNotifier avisa al CLIENTE de que su solicitud cambió de estado (D-041.14).
@@ -26,6 +27,17 @@ type StatusNotifier interface {
 	NotifyStatus(ctx context.Context, tenantID string, in Intake, from string)
 }
 
+// DepositTouch evalúa el recordatorio PEREZOSO de la seña sobre las solicitudes que
+// una lectura acaba de tocar (D-041.12, T4.4). Lo satisface *DepositReminder.
+//
+// NO devuelve error, exactamente por lo mismo que StatusNotifier: si pudiera, el
+// primer llamante que lo propagara convertiría el LISTADO del dueño en un 500 porque
+// el teléfono de un cliente estaba apagado. Una lectura no puede fallar por un
+// mensaje que no salió.
+type DepositTouch interface {
+	Remind(ctx context.Context, tenantID string, touched []Intake)
+}
+
 // Option configura el Service al construirlo.
 type Option func(*Service)
 
@@ -34,6 +46,24 @@ type Option func(*Service)
 // test de dominio no le haga sonar el teléfono a nadie por accidente.
 func WithNotifier(n StatusNotifier) Option {
 	return func(s *Service) { s.notifier = n }
+}
+
+// WithDepositReminder cablea el recordatorio PEREZOSO de la seña a las LECTURAS del
+// dueño (T4.4). Sin esta opción, List y Get son exactamente las lecturas puras que
+// eran —ni una sentencia de más, ni un mensaje—, que es lo que mantiene honestos
+// tanto los tests de dominio como cualquier consumidor que solo quiera leer.
+//
+// POR QUÉ AQUÍ Y NO EN EL HANDLER. «Tocar la solicitud dispara el recordatorio» es
+// una regla del DOMINIO de las solicitudes, no del transporte: colgarla del handler
+// HTTP la dejaría fuera de cualquier otro lector (el puente del Plan 042, una
+// pantalla futura, un caso de uso interno) y la haría depender de que cada uno se
+// acuerde de copiar la llamada. Colgada de la lectura, viaja con ella.
+//
+// El precio —una lectura deja de ser pura— se paga con la MISMA moneda que ya paga
+// SetStatus con su notificador: colaborador opcional, no puede devolver error, no
+// puede tumbar al llamante, y sin cablear no existe.
+func WithDepositReminder(d DepositTouch) Option {
+	return func(s *Service) { s.deposits = d }
 }
 
 // NewService construye el servicio sobre el store dado.
@@ -48,6 +78,11 @@ func NewService(store Store, opts ...Option) *Service {
 // List devuelve la página de solicitudes del tenant que casan con el filtro, con
 // el total de coincidencias sin paginar. Sanea la paginación (Filter.Normalized)
 // antes de consultar: el llamante no puede pedir 100k filas de un golpe.
+//
+// Es además uno de los tres TOQUES que evalúan el recordatorio de la seña (D-041.12,
+// T4.4): el dueño abriendo su bandeja es lo que hace de reloj, porque en esta
+// plataforma no hay ninguno (ADR-0003). El toque va DESPUÉS de tener la página —solo
+// se evalúa lo que de verdad se leyó— y no puede alterar lo que se devuelve.
 func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, error) {
 	f = f.Normalized()
 	items, total, err := s.store.List(ctx, tenantID, f)
@@ -57,6 +92,7 @@ func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, er
 	if items == nil {
 		items = []Intake{} // la UI itera sin ramificar por el nulo
 	}
+	s.touch(ctx, tenantID, items)
 	return Page{Intakes: items, Page: f.Page, PageSize: f.PageSize, Total: total}, nil
 }
 
@@ -92,8 +128,33 @@ func (s *Service) Summary(ctx context.Context, tenantID string, f Filter) (Summa
 
 // Get devuelve la solicitud con sus líneas. ErrNotFound si no es del tenant (404
 // opaco, INV-8).
+//
+// Es el segundo TOQUE del recordatorio de la seña (ver List): abrir la solicitud
+// concreta es la lectura más específica que existe y, si esa es justo la que tiene
+// la seña vencida, es donde antes se nota.
 func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, error) {
-	return s.store.Get(ctx, tenantID, intakeID)
+	detail, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	s.touch(ctx, tenantID, []Intake{detail.Intake})
+	return detail, nil
+}
+
+// touch evalúa el recordatorio de la seña sobre lo que una lectura acaba de leer.
+// Sin la opción cableada (el default, y lo que usan todos los tests de dominio) no
+// hace nada: la lectura sigue siendo tan pura como antes de T4.4.
+//
+// NO se llama desde ListDetails ni Summary a propósito, aunque también leen
+// solicitudes: son el EXPORT y el resumen, caminos de datos masivos que un dueño
+// dispara para llevarse una hoja de cálculo. Que descargar un CSV le mande WhatsApps
+// a sus clientes sería una sorpresa desagradable, y encima sin cota útil (ahí no hay
+// página: son hasta MaxExportIntakes solicitudes).
+func (s *Service) touch(ctx context.Context, tenantID string, touched []Intake) {
+	if s.deposits == nil || len(touched) == 0 {
+		return
+	}
+	s.deposits.Remind(ctx, tenantID, touched)
 }
 
 // SetStatus aplica una transición del ciclo de vida y devuelve la solicitud ya

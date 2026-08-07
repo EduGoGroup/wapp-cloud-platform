@@ -39,7 +39,9 @@ import (
 //
 // ⚠️ CERO RELOJ (ADR-0003, D-041.16). Esto es SÍNCRONO a la transición: no hay
 // cron, ni ticker, ni barrido. El recordatorio PEREZOSO de la seña —que se evalúa
-// cuando el contacto vuelve a hablar— es de T4.4 y no vive aquí.
+// cuando alguien TOCA la solicitud— vive en deposit.go y hereda estas tres reglas
+// reusando este mismo Notifier: el texto de la seña, la vía custodiada y la entrega
+// son las de aquí, no una segunda salida hacia WhatsApp.
 // ============================================================================
 
 // MessageSender empuja un texto por una sesión viva del Edge y espera su Ack. La
@@ -99,13 +101,29 @@ const DefaultDepositDueDays = 3
 // la del tenant. Son deliberadamente pocos y con nombre en español: quien escribe
 // deposit_template es la dueña del negocio desde la consola, no un programador.
 //
-// {fecha_limite} NO existe todavía a propósito: la fecha sale de
-// intakes.deposit_due_at, que la escribe T4.4. Añadirlo aquí antes de que alguien
-// la escriba pondría una fecha vacía en el mensaje de un cliente.
+// {fecha_limite} lo estrena T4.4 y solo tiene valor porque la fecha ya se escribe:
+// la entrada en `deposit_requested` fija intakes.deposit_due_at dentro de la MISMA
+// transacción que cambia el estado (Store.UpdateStatus), así que la solicitud que
+// llega aquí ya la trae. Con la fecha sin fijar el marcador se deja SIN sustituir
+// —tal cual, visible— en vez de rellenarse con una fecha inventada: un mensaje que
+// enseña «{fecha_limite}» delata el fallo, y uno que dice «01/01/0001» le miente al
+// cliente.
 const (
-	placeholderTotal = "{total}"
-	placeholderPlazo = "{plazo}"
+	placeholderTotal       = "{total}"
+	placeholderPlazo       = "{plazo}"
+	placeholderFechaLímite = "{fecha_limite}"
 )
+
+// dueDateLayout es el formato de {fecha_limite}: día/mes/año, que es como lee una
+// fecha quien recibe el WhatsApp.
+//
+// Se formatea en UTC porque el sistema NO tiene zona horaria del tenant (no hay
+// columna, ni en tenant_settings ni en tenants) y el resto del repo ya publica sus
+// fechas en UTC (publicapi/export.go). La consecuencia hay que saberla: con un
+// plazo en DÍAS, un tenant lejos de UTC puede ver la fecha corrida un día. Se
+// acepta porque el plazo es grueso —tres días por defecto— y porque inventar una
+// zona sería peor que no tenerla; el día que exista la del tenant, se cambia aquí.
+const dueDateLayout = "02/01/2006"
 
 // statusTemplates es el texto por estado DESTINO, en español (D-041.14). Un estado
 // AUSENTE de este mapa no notifica, y esa ausencia es la decisión:
@@ -230,17 +248,35 @@ func (n *Notifier) text(ctx context.Context, tenantID string, in Intake, to stri
 // Un fallo LEYENDO la config sí es una avería (nivel error) y también acaba en
 // silencio: preferimos no mandar a mandar un texto con marcadores sin rellenar.
 func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, log logger.Logger) (string, bool) {
+	cfg, ok := n.depositSettings(ctx, tenantID, log)
+	if !ok {
+		return "", false
+	}
+	return render(cfg.DepositTemplate, in, cfg.DepositDueDays), true
+}
+
+// depositSettings resuelve la config de la seña y responde a UNA pregunta: ¿puede
+// este tenant decirle algo al cliente sobre la seña? Está separada del render porque
+// el recordatorio (deposit.go) necesita preguntarlo ANTES de gastar la marca de «ya
+// recordado»: si se marcara primero, un tenant que todavía no configuró su plantilla
+// dejaría a ese cliente sin recordatorio para siempre, incluso después de
+// configurarla.
+//
+// Los dos `false` son los de siempre: sin plantilla es un silencio NORMAL (Warn con
+// la causa) y un fallo de lectura es una avería (Error) que también acaba en
+// silencio, porque mandar un texto con marcadores sin rellenar es peor que no mandar.
+func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger) (NotifySettings, bool) {
 	cfg, err := n.settings.NotifySettings(ctx, tenantID)
 	if err != nil {
 		log.Error("notificación: no se pudo leer la config del tenant; no se envía", "error", err)
-		return "", false
+		return NotifySettings{}, false
 	}
 	if strings.TrimSpace(cfg.DepositTemplate) == "" {
 		log.Warn("notificación: el tenant no tiene plantilla de seña (tenant_settings.deposit_template); " +
 			"la transición se aplicó pero al cliente no se le manda nada")
-		return "", false
+		return NotifySettings{}, false
 	}
-	return render(cfg.DepositTemplate, in, cfg.DepositDueDays), true
+	return cfg, true
 }
 
 // deliver resuelve el destino por la vía custodiada y despacha. Es la parte que
@@ -301,11 +337,28 @@ func commandIDOf(err error) string {
 // conversacional por un formateador de una línea — a cambio, quien cambie el del
 // carrito tiene que acordarse de este (lo fija un test).
 func render(tpl string, in Intake, dueDays int) string {
-	if dueDays <= 0 {
-		dueDays = DefaultDepositDueDays
-	}
-	return strings.NewReplacer(
+	replacements := []string{
 		placeholderTotal, fmt.Sprintf("$%.2f", in.Total),
-		placeholderPlazo, strconv.Itoa(dueDays),
-	).Replace(tpl)
+		placeholderPlazo, strconv.Itoa(depositDueDays(dueDays)),
+	}
+	// Sin fecha fijada el marcador NO se toca (ver el comentario de la constante):
+	// se prefiere un texto que delata el fallo a uno que le da al cliente una fecha
+	// que nadie escribió.
+	if !in.DepositDueAt.IsZero() {
+		replacements = append(replacements,
+			placeholderFechaLímite, in.DepositDueAt.UTC().Format(dueDateLayout))
+	}
+	return strings.NewReplacer(replacements...).Replace(tpl)
+}
+
+// depositDueDays aplica la regla del plazo en UN solo sitio: un valor no positivo
+// —columna sin configurar, tenant sin fila— es el plazo por defecto. La usan el
+// render del marcador {plazo} y el cálculo de deposit_due_at, y tienen que decir lo
+// mismo: sería absurdo prometerle al cliente «3 días» y fijar el vencimiento a otra
+// cosa.
+func depositDueDays(days int) int {
+	if days <= 0 {
+		return DefaultDepositDueDays
+	}
+	return days
 }

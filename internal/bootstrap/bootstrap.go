@@ -197,6 +197,15 @@ func Run(ctx context.Context) error {
 	// Por eso el proyector lo recibe DOS VECES: satisface sus dos puertos —escritor
 	// de revisiones y garante del envío— sin que el carrito conozca el store entero.
 	intakeStore := intakes.NewPostgres(db)
+	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
+	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
+	// vez y el recordatorio lo reusa entero —texto de la seña, vía custodiada de PII y
+	// SendText del Gateway—. Se arma AQUÍ, antes del runtime, porque el recordatorio
+	// tiene tres disparadores y dos de ellos están en sitios distintos: el motor
+	// (cuando el cliente escribe) y las lecturas del dueño (más abajo, en el Service).
+	// Es un solo objeto: dos serían dos criterios de "ya recordé".
+	intakeNotifier := intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log)
+	depositReminder := intakes.NewDepositReminder(intakeNotifier, intakeStore)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
 			cart.NewProjector(flowStore, intakeStore, intakeStore),
@@ -209,7 +218,10 @@ func Run(ctx context.Context) error {
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
 		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)),
-		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)))
+		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)),
+		// Tercer toque del recordatorio perezoso de la seña (T4.4): el cliente vuelve
+		// a escribir. No añade reloj ninguno — el disparador es el entrante.
+		flowruntime.WithDepositReminder(depositReminder))
 
 	gw.OnIncoming = flowRuntime.OnIncoming
 	gw.OnHeartbeat = func(sessionID string, m *cloudlinkv1.Heartbeat) {
@@ -277,9 +289,13 @@ func Run(ctx context.Context) error {
 		// motor para hablarle a un contacto: el Gateway como sender, el resolver
 		// custodiado de PII para el destino y el store de solicitudes para la config
 		// del tenant. No hay un segundo camino de salida hacia WhatsApp.
-		Intakes: intakes.NewService(intakeStore, intakes.WithNotifier(
-			intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log),
-		)),
+		//
+		// El recordatorio de la seña (D-041.12 · T4.4) entra por su propia opción
+		// porque cuelga de otro sitio: no de la transición, sino de las LECTURAS del
+		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
+		Intakes: intakes.NewService(intakeStore,
+			intakes.WithNotifier(intakeNotifier),
+			intakes.WithDepositReminder(depositReminder)),
 		TenantVariables: tenantvars.NewPostgres(db),
 		ConfigPush:      gw,
 		Health:          publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},

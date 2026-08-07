@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -125,6 +126,26 @@ type Runtime struct {
 	// now entrega la hora actual para el TTL conversacional (Plan 029 · T9). Inyectable
 	// (WithClock) para tests deterministas; New lo deja en time.Now.
 	now func() time.Time
+	// deposits evalúa el recordatorio PEREZOSO de la seña cuando el CLIENTE vuelve a
+	// escribir (Plan 041 · T4.4, D-041.12). Es uno de los tres toques del
+	// recordatorio y el único que no nace de una lectura del dueño. nil (sin
+	// WithDepositReminder) ⇒ el motor no lo evalúa: no-regresión total.
+	//
+	// NO es un reloj (ADR-0003): no hay barrido ni goroutine de fondo; es este
+	// entrante, que ya estaba pasando por aquí, el que hace de disparador.
+	deposits DepositReminder
+}
+
+// DepositReminder evalúa si a un contacto hay que recordarle la seña de alguna
+// solicitud suya (Plan 041 · T4.4). Lo satisface *intakes.DepositReminder.
+//
+// Se declara aquí como puerto —y no se importa el tipo concreto— por lo de siempre:
+// el motor de flujos no tiene por qué conocer el dominio de solicitudes para
+// avisarle de que alguien habló. NO devuelve error a propósito: un recordatorio que
+// no sale no puede tumbar el procesamiento del mensaje que el cliente acaba de
+// mandar (misma regla que el notificador de estados).
+type DepositReminder interface {
+	RemindContact(ctx context.Context, tenantID, contactID string)
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -199,6 +220,14 @@ func WithClock(now func() time.Time) Option {
 			rt.now = now
 		}
 	}
+}
+
+// WithDepositReminder cablea el recordatorio perezoso de la seña al camino del
+// entrante (Plan 041 · T4.4): cuando un contacto vuelve a escribir, se evalúa si
+// alguna solicitud suya tiene la seña vencida y sin recordar. Sin él (nil), el motor
+// no evalúa nada — no-regresión total.
+func WithDepositReminder(d DepositReminder) Option {
+	return func(rt *Runtime) { rt.deposits = d }
 }
 
 // WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante

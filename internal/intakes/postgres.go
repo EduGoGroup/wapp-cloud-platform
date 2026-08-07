@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -33,8 +34,10 @@ func NewPostgres(db *sql.DB) *Postgres {
 // customer_note (D-041.19) va al final y no en medio: el orden de esta lista es el
 // de los Scan de scanIntake y scanDetailRow, y meter una columna entre dos ya
 // existentes obligaría a mover los destinos de los dos escaneos a la vez —un
-// descuadre que compila y devuelve el estado en el total—.
-const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note`
+// descuadre que compila y devuelve el estado en el total—. Las dos marcas de la
+// SEÑA (T4.4) se añaden al final por la misma razón.
+const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at`
 
 // intakeFilterWhere es el predicado COMPARTIDO por la página y por su total: si
 // divergieran, el paginador mentiría. Cada filtro es opcional por el patrón
@@ -113,7 +116,7 @@ const listIntakeDetailsQuery = `
 		LIMIT $6
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
-	       p.customer_note,
+	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at,
 	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
 	FROM page p
 	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid
@@ -163,17 +166,19 @@ func (p *Postgres) ListDetails(ctx context.Context, tenantID string, f Filter, l
 func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	var (
 		in                 Intake
+		dueAt, remindedAt  sql.NullTime
 		sku, label, custom sql.NullString
 		qty                sql.NullInt64
 		unitPrice          sql.NullFloat64
 		addedAt            sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote,
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt,
 		&sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
 		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
+	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
 	if !sku.Valid && !label.Valid && !qty.Valid {
 		return in, Item{}, false, nil // solicitud sin líneas (LEFT JOIN)
 	}
@@ -221,16 +226,25 @@ type querier interface {
 
 // scanIntake lee una cabecera y NORMALIZA su estado: el `closed` que sigue
 // escribiendo el módulo cart sale de aquí como `confirmed`, en un único punto.
+//
+// Las dos marcas de la seña son NULLables en la tabla (la inmensa mayoría de las
+// solicitudes no llega a pedir seña) y se leen por sql.NullTime: un NULL sale como
+// tiempo CERO, que es lo que el dominio entiende por "no se ha pedido" / "nunca se
+// recordó". No hay un tercer significado que distinguir.
 func scanIntake(sc rowScanner) (Intake, error) {
-	var in Intake
+	var (
+		in                Intake
+		dueAt, remindedAt sql.NullTime
+	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Intake{}, err // lo traduce el llamante (ErrNotFound)
 		}
 		return Intake{}, fmt.Errorf("intakes: leer solicitud: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
+	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
 	return in, nil
 }
 
@@ -422,6 +436,14 @@ func nullableText(s string) any {
 // (D-041.11) y las dos cosas son un solo hecho: o la solicitud queda por aprobar
 // CON su envío, o no queda por aprobar. El CAS toma el candado de la fila, así que
 // el paso del envío no necesita bloquearla otra vez.
+//
+// Entrar a `deposit_requested` arrastra lo suyo por el MISMO motivo (D-041.12, T4.4):
+// la FECHA LÍMITE de la seña. «Toda solicitud con la seña pedida tiene su plazo» es
+// un invariante del estado, no un efecto que se dispara después — y encima el texto
+// que sale hacia el cliente lleva esa fecha dentro ({fecha_limite}), así que fijarla
+// en un segundo paso dejaría un hueco en el que el aviso se manda sin fecha o con la
+// de nadie. La Intake que se devuelve ya la trae, y es la que el notificador
+// renderiza.
 func (p *Postgres) UpdateStatus(ctx context.Context, tenantID, intakeID, to string, expected []string) (Intake, error) {
 	if _, err := uuid.Parse(intakeID); err != nil {
 		return Intake{}, ErrNotFound
@@ -436,18 +458,167 @@ func (p *Postgres) UpdateStatus(ctx context.Context, tenantID, intakeID, to stri
 			return err
 		}
 		out = updated
-		if NormalizeStatus(to) != StatusPendingApproval {
+		switch NormalizeStatus(to) {
+		case StatusDepositRequested:
+			out, err = setDepositDueTx(ctx, tx, tenantID, intakeID)
+			return err
+		case StatusPendingApproval:
+			changed, err := ensureShippingTx(ctx, tx, tenantID, intakeID, ShippingAlways)
+			if err != nil || !changed {
+				return err
+			}
+			out, err = recomputeTotalTx(ctx, tx, tenantID, intakeID)
+			return err
+		default:
 			return nil
 		}
-		changed, err := ensureShippingTx(ctx, tx, tenantID, intakeID, ShippingAlways)
-		if err != nil || !changed {
-			return err
-		}
-		out, err = recomputeTotalTx(ctx, tx, tenantID, intakeID)
-		return err
 	})
 	if err != nil {
 		return Intake{}, err
+	}
+	return out, nil
+}
+
+// setDepositDueTx fija la fecha límite de la seña de la solicitud que ACABA de
+// entrar en `deposit_requested`. Corre bajo el candado que ya tomó el CAS.
+//
+// La base del cálculo es el now() de la TRANSACCIÓN, no un instante que venga de la
+// aplicación: la fecha se compara después contra otros tiempos de esta misma base y
+// una plataforma con varios procesos no tiene un reloj común. (El reloj INYECTABLE
+// de T4.4 es el del recordatorio, que es quien tiene que poder viajar en el tiempo
+// para probarse; el plazo se fija una vez y no se re-evalúa.)
+//
+// Limpia deposit_reminded_at para que el estado quede COHERENTE consigo mismo: si
+// algún día se pudiera volver a pedir seña sobre la misma solicitud, una marca vieja
+// dejaría al cliente sin recordatorio del plazo nuevo, en silencio. Hoy no hay
+// camino de vuelta a `deposit_requested` (status.go), así que esto no cambia nada;
+// mañana evita un fallo mudo.
+func setDepositDueTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string) (Intake, error) {
+	days, err := depositDueDaysTx(ctx, tx, tenantID)
+	if err != nil {
+		return Intake{}, err
+	}
+	return scanIntake(tx.QueryRowContext(ctx, `
+		UPDATE public.intakes
+		SET deposit_due_at = now() + make_interval(days => $3::int),
+		    deposit_reminded_at = NULL,
+		    updated_at = now()
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING `+intakeCols,
+		tenantID, intakeID, days))
+}
+
+// depositDueDaysTx lee el plazo de la seña del tenant. Un tenant SIN fila de config
+// no es un error (mismo criterio que shippingZonesTx y NotifySettings): es el plazo
+// por defecto. La regla de "valor no positivo ⇒ default" se aplica con el MISMO
+// helper que usa el marcador {plazo} del texto, para no prometer un plazo y fijar
+// otro.
+func depositDueDaysTx(ctx context.Context, tx *sql.Tx, tenantID string) (int, error) {
+	var days int
+	err := tx.QueryRowContext(ctx,
+		`SELECT deposit_due_days FROM public.tenant_settings WHERE tenant_id = $1`,
+		tenantID).Scan(&days)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return DefaultDepositDueDays, nil
+	case err != nil:
+		return 0, fmt.Errorf("intakes: leer el plazo de la seña del tenant: %w", err)
+	}
+	return depositDueDays(days), nil
+}
+
+// markDepositRemindedQuery es el COMPARE-AND-SWAP que reparte el derecho a recordar
+// (D-041.12, T4.4). Las cuatro condiciones son la regla entera y por eso viven en el
+// WHERE y no en un `if` de Go: entre un `if` y el UPDATE cabe otro toque.
+//
+//   - status = ANY(...): si el dueño ya marcó la seña recibida (deposit_paid) o
+//     canceló, la fila deja de casar. Nadie recuerda algo que ya se hizo.
+//   - deposit_due_at IS NOT NULL AND <= $3: solo lo VENCIDO, y contra el reloj que
+//     manda el llamante (el mismo con el que decidió que era candidata).
+//   - deposit_reminded_at IS NULL: el que llega segundo no escribe. Ahí está el «un
+//     solo recordatorio», sostenido por la BD y no por una comprobación en memoria.
+//
+// NO toca updated_at, y es deliberado: updated_at de esta tabla significa "la
+// solicitud cambió" —su estado, sus líneas, su total— y un recordatorio no cambia
+// nada de eso. Marcarlo pondría toda la bandeja del dueño como recién tocada por
+// mensajes que él no mandó. El momento del recordatorio ya tiene su propia columna.
+const markDepositRemindedQuery = `
+	UPDATE public.intakes
+	SET deposit_reminded_at = $3
+	WHERE tenant_id = $1 AND id = $2
+	  AND status = ANY($4)
+	  AND deposit_due_at IS NOT NULL
+	  AND deposit_due_at <= $3
+	  AND deposit_reminded_at IS NULL
+	RETURNING ` + intakeCols
+
+// MarkDepositReminded implementa DepositStore: gana (o no) el derecho a recordar.
+// `false` sin error es la respuesta NORMAL —no vencida, ya recordada, seña resuelta—
+// y no una avería: quien llama se calla y sigue.
+func (p *Postgres) MarkDepositReminded(ctx context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Intake{}, false, ErrNotFound
+	}
+	in, err := scanIntake(p.db.QueryRowContext(ctx, markDepositRemindedQuery,
+		tenantID, intakeID, at, StoredVariants(StatusDepositRequested)))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Intake{}, false, nil
+	case err != nil:
+		return Intake{}, false, err
+	}
+	return in, true, nil
+}
+
+// pendingDepositRemindersQuery lista las señas vencidas y sin recordar de UN
+// contacto. El predicado es el MISMO del compare-and-swap (menos el id): si
+// divergieran, este camino traería candidatas que el CAS rechaza siempre y el toque
+// del cliente no recordaría nunca nada.
+//
+// Ordena por la fecha límite ascendente —lo más vencido primero—: con la cota de
+// maxRemindersPerTouch, quien lleva más tiempo esperando es a quien primero se le
+// avisa.
+const pendingDepositRemindersQuery = `
+	SELECT ` + intakeCols + `
+	FROM public.intakes
+	WHERE tenant_id = $1 AND contact_id = $2
+	  AND status = ANY($5)
+	  AND deposit_due_at IS NOT NULL
+	  AND deposit_due_at <= $3
+	  AND deposit_reminded_at IS NULL
+	ORDER BY deposit_due_at
+	LIMIT $4`
+
+// PendingDepositReminders implementa DepositStore: las candidatas de un contacto.
+// Es lo que consume el toque del mensaje entrante, que no tiene ninguna solicitud
+// delante. El índice parcial de la 0045 (idx_intakes_deposit_pending) es lo que hace
+// que esta consulta —que corre en el camino caliente de CADA entrante— no mire más
+// que un puñado de filas.
+func (p *Postgres) PendingDepositReminders(ctx context.Context, tenantID, contactID string, at time.Time, limit int) (out []Intake, err error) {
+	if limit <= 0 {
+		return []Intake{}, nil
+	}
+	rows, err := p.db.QueryContext(ctx, pendingDepositRemindersQuery,
+		tenantID, contactID, at, limit, StoredVariants(StatusDepositRequested))
+	if err != nil {
+		return nil, fmt.Errorf("intakes: listar señas vencidas del contacto: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("intakes: cerrar filas de señas vencidas: %w", cerr)
+		}
+	}()
+
+	out = []Intake{}
+	for rows.Next() {
+		in, serr := scanIntake(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, in)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("intakes: recorrer señas vencidas: %w", rerr)
 	}
 	return out, nil
 }

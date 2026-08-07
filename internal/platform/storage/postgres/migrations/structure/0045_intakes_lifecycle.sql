@@ -19,6 +19,9 @@
 --      (customer_note): el «dejarlo en portería» (T4.1c, D-041.19).
 --   7. public.intake_items gana el índice ÚNICO PARCIAL que hace estructural la
 --      regla «una solicitud tiene como mucho UNA línea de envío» (T4.3, D-041.11).
+--   8. public.intakes gana el índice PARCIAL que hace barato el toque del
+--      recordatorio de la seña (T4.4): sin él, cada mensaje entrante pagaría un
+--      recorrido de la tabla para preguntar por algo que casi nunca hay.
 --
 -- LO QUE ESTA MIGRACIÓN NO HACE, a propósito:
 --   * NO añade un CHECK de status a public.intakes. La 0041 lo dejó fuera
@@ -58,6 +61,22 @@ COMMENT ON COLUMN public.intakes.deposit_due_at IS
     'Fecha límite de la SEÑA, fijada al pasar a deposit_requested (now + tenant_settings.deposit_due_days). NULL mientras no se haya pedido seña. NO es un TTL: pasarse de la fecha NO mata la solicitud (D-041.16, nada vence por tiempo); solo habilita el recordatorio.';
 COMMENT ON COLUMN public.intakes.deposit_reminded_at IS
     'Último recordatorio de seña enviado al cliente. El recordatorio es PEREZOSO (D-041.12): se evalúa cuando el contacto vuelve a hablar, JAMÁS con un cron ni un barrido (ADR-0003). Esta marca es lo que impide recordarle dos veces en la misma conversación.';
+
+-- El índice que hace barato el TOQUE del recordatorio (T4.4). Es PARCIAL sobre lo
+-- que se busca —seña pedida y todavía sin recordar—, así que solo contiene las
+-- poquísimas filas que pueden producir un mensaje; las demás no entran ni pesan.
+--
+-- Sirve a los dos caminos que preguntan: el del mensaje entrante, que busca por
+-- (tenant, contacto) y corre en el camino CALIENTE de cada entrante del motor de
+-- flujos, y el compare-and-swap por id. Sin él, cada mensaje de cualquier cliente
+-- costaría un recorrido de public.intakes.
+--
+-- El predicado usa literales (no now()): un índice parcial exige expresiones
+-- inmutables, y por eso el vencimiento se filtra fuera del índice, sobre el puñado
+-- de filas que ya quedan.
+CREATE INDEX IF NOT EXISTS idx_intakes_deposit_pending
+    ON public.intakes (tenant_id, contact_id)
+    WHERE status = 'deposit_requested' AND deposit_reminded_at IS NULL;
 
 -- ------------------------------------------------------------
 -- 2. Config comercial por tenant (D-041.11, D-041.12, D-041.13)

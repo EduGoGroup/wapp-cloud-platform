@@ -104,6 +104,12 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if err != nil {
 		return fmt.Errorf("runtime: resolver contacto: %w", err)
 	}
+	// TOQUE del recordatorio de la seña (Plan 041 · T4.4): el cliente acaba de
+	// hablar. Va en DEFER —y registrado ANTES del candado, así que corre el último—
+	// para que ocurra después de haberle contestado y con la clave ya libre: primero
+	// se atiende lo que la persona vino a hacer, y solo entonces se le recuerda lo que
+	// debe. Sin cablear (deposits nil) esto no existe.
+	defer rt.touchDeposit(ctx, tenantID, contactID)
 	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
@@ -348,6 +354,31 @@ func (rt *Runtime) duplicateIngest(ctx context.Context, sessionID string, m *clo
 			"session_id", sessionID, "wa_message_id", m.GetWaMessageId())
 	}
 	return seen
+}
+
+// touchDeposit evalúa el recordatorio perezoso de la seña para el contacto que
+// acaba de escribir (Plan 041 · T4.4, D-041.12). Tres cosas que no son de estilo:
+//
+//   - Es el ÚNICO reloj admisible aquí: no barre nada ni corre de fondo (ADR-0003).
+//     El disparador es este entrante, que ya venía; si nadie escribe y nadie mira,
+//     no se recuerda nada, y eso es exactamente lo perezoso.
+//   - Pregunta por el CONTACTO, no por la conversación: el cliente puede escribir
+//     "hola" sin carrito abierto y seguir debiendo la seña de un pedido de la semana
+//     pasada. Por eso la consulta va por (tenant, contacto) y no por la clave del
+//     flujo.
+//   - Va DESPUÉS de las guardas de borde (passive, anti-self-loop) porque las hereda:
+//     una sesión pasiva no auto-responde nada, tampoco esto, y un entrante que es un
+//     número propio del tenant no es un cliente al que recordarle nada.
+//
+// No consume token del rate-limit de auto-respuestas (replyAllowed): ese tope existe
+// para cortar BUCLES, y aquí no puede haberlos — cada solicitud se recuerda como
+// mucho una vez en su vida, y quien lo garantiza es el compare-and-swap de la marca
+// en la BD, no un contador en memoria.
+func (rt *Runtime) touchDeposit(ctx context.Context, tenantID, contactID string) {
+	if rt.deposits == nil {
+		return
+	}
+	rt.deposits.RemindContact(ctx, tenantID, contactID)
 }
 
 // consecutiveReplay es la idempotencia CONSECUTIVA (design.md §10.G): corta la
