@@ -24,9 +24,12 @@ import (
 //     afirmando una versión vieja sobre un esquema que ya cambió.
 //
 // En la práctica: UN bump por plan, en el commit del plan que decide dónde ponerlo,
-// no uno por migración. (Este valor lo subió el Plan 041, que añadió las
-// migraciones 0041-0045 a lo largo de cuatro olas con un solo incremento.)
-const SchemaVersion = "0.25.0"
+// no uno por migración. (El Plan 041 subió este valor a 0.25.0 añadiendo las
+// migraciones 0041-0045 a lo largo de cuatro olas con un solo incremento; el
+// Plan 042 lo sube a 0.26.0 añadiendo las 0046-0048 —webhook_outbox,
+// tenant_integrations y el reflejo del CRM sobre intakes— también con un ÚNICO
+// incremento para todo el plan.)
+const SchemaVersion = "0.26.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
