@@ -221,6 +221,14 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 	if err := p.shipping.EnsureShippingLine(ctx, meta.TenantID, intakeID, intakes.ShippingOnlyIfZones); err != nil {
 		return fmt.Errorf("cart: línea de envío de la solicitud %s: %w", intakeID, err)
 	}
+
+	// Anota el ID recién generado de vuelta en el Payload (mapa compartido, no una
+	// copia): el fan-out de PersistSink.Handle ya escribió flow_events con el
+	// payload ORIGINAL antes de llegar aquí, así que esto no lo toca. Lo que sí ve
+	// esta escritura es el WebhookSink (Plan 042), que corre DESPUÉS en el mismo
+	// dispatch() sobre el mismo eff — es la única forma de correlacionar sin que el
+	// sink del CRM tenga que volver a consultar la BD.
+	eff.Payload["intake_id"] = intakeID
 	return nil
 }
 

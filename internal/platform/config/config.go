@@ -120,6 +120,25 @@ type AppConfig struct {
 	// Tokens. Vacía = wApp arranca sin identity, como hasta ahora. Se lee con
 	// prefijo WAPP_IDENTITY_.
 	Identity IdentityConfig `yaml:"identity"`
+	// Webhook gobierna el worker del puente CRM (Plan 042 · Ola 3, D-042.4):
+	// cadencia del poll, tope de reintentos y timeout de cada entrega. Se lee
+	// con prefijo WAPP_WEBHOOK_.
+	Webhook WebhookConfig `yaml:"webhook"`
+}
+
+// WebhookConfig son los parámetros del worker de entregas del puente CRM
+// (Plan 042, D-042.4). Los tres caen a su default con <= 0 (nunca un poll a 0
+// ni un tope de intentos nulo por accidente, mismo criterio que FlowConfig).
+type WebhookConfig struct {
+	// PollInterval es la cadencia del loop de reclamo (FOR UPDATE SKIP LOCKED).
+	// Default 5s. Se lee de WAPP_WEBHOOK_POLL_INTERVAL.
+	PollInterval time.Duration `yaml:"poll_interval"`
+	// MaxAttempts es el tope de intentos antes de pasar a dead (~8-10h con el
+	// backoff de D-042.4). Default 10. Se lee de WAPP_WEBHOOK_MAX_ATTEMPTS.
+	MaxAttempts int `yaml:"max_attempts"`
+	// Timeout es el timeout HTTP de CADA entrega individual. Default 10s. Se
+	// lee como cadena time.Duration de WAPP_WEBHOOK_TIMEOUT.
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // IdentityConfig apunta al microecosistema identity, emisor de los Identity
@@ -425,6 +444,11 @@ func defaults() AppConfig {
 		Import: ImportConfig{
 			MaxItems: 500,
 		},
+		Webhook: WebhookConfig{
+			PollInterval: 5 * time.Second,
+			MaxAttempts:  10,
+			Timeout:      10 * time.Second,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -534,6 +558,12 @@ func Load() (AppConfig, error) {
 	cfg.Identity.JWKSURL = loader.GetString("IDENTITY_JWKS_URL", cfg.Identity.JWKSURL)
 	cfg.Identity.URL = loader.GetString("IDENTITY_URL", cfg.Identity.URL)
 	cfg.Identity.Timeout = loader.GetDuration("IDENTITY_TIMEOUT", cfg.Identity.Timeout)
+
+	cfg.Webhook.PollInterval = loader.GetDuration("WEBHOOK_POLL_INTERVAL", cfg.Webhook.PollInterval)
+	if n := loader.GetInt("WEBHOOK_MAX_ATTEMPTS", cfg.Webhook.MaxAttempts); n > 0 {
+		cfg.Webhook.MaxAttempts = n
+	}
+	cfg.Webhook.Timeout = loader.GetDuration("WEBHOOK_TIMEOUT", cfg.Webhook.Timeout)
 
 	return cfg, nil
 }
