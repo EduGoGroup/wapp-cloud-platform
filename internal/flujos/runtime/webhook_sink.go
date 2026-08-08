@@ -58,6 +58,14 @@ func NewWebhookSink(log logger.Logger, deliverEffect string, sender WebhookQueue
 	return &WebhookSink{log: log, sender: sender, gate: gate, deliverEffect: deliverEffect}
 }
 
+// Phase implementa PhasedSink: este sink corre en PhaseNotify, DESPUÉS de toda la
+// proyección (Plan 042 · Ola 3.1). No es una preferencia, es un requisito de
+// corrección: `intake_id` no existe hasta que cart.Projector.closeIntake lo genera
+// y lo anota en eff.Payload, y este sink lo LEE (ver buildIntakePushTemplate).
+// Declararlo aquí hace que el orden lo garantice el runtime y no el orden de las
+// llamadas a WithEventSink en bootstrap.go, que era lo único que lo sostenía antes.
+func (*WebhookSink) Phase() SinkPhase { return PhaseNotify }
+
 // Handle evalúa el gate para el efecto que este sink entrega (hoy cart_closed) y,
 // si pasa, arma la plantilla de intake.push y la encola. Cualquier otro efecto
 // (navegación/telemetría) no se entrega — un CRM real solo quiere el cierre.

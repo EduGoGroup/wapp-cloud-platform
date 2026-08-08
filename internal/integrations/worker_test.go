@@ -3,6 +3,8 @@ package integrations
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,60 +59,83 @@ func (s *fakeStore) EnqueueWebhook(_ context.Context, tenantID, kind string, pay
 	return s.nextID, nil
 }
 
+// ClaimWebhookBatch reproduce la semántica del store real tras la Ola 3.1: marca
+// delivering Y SELLA el claim con la marca de tiempo que después hace de valla.
 func (s *fakeStore) ClaimWebhookBatch(_ context.Context, limit int) ([]WebhookOutbox, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ahora := time.Now()
 	var out []WebhookOutbox
 	for _, r := range s.rows {
 		if len(out) >= limit {
 			break
 		}
-		if r.Status == StatusPending && !r.NextAttemptAt.After(time.Now()) {
+		if r.Status == StatusPending && !r.NextAttemptAt.After(ahora) {
 			r.Status = StatusDelivering
+			r.ClaimedAt = ahora
 			out = append(out, *r)
 		}
 	}
 	return out, nil
 }
 
-func (s *fakeStore) MarkWebhookDelivered(_ context.Context, id int64) error {
+// markClosed reproduce la valla optimista del store real: solo cierra la fila si
+// sigue en delivering CON el claim que presenta el llamante. Sin esto, el fake
+// sería más permisivo que Postgres y los tests del worker no dirían nada
+// verdadero sobre el caso multi-réplica.
+func (s *fakeStore) markClosed(claim WebhookOutbox, apply func(*WebhookOutbox)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.rows[id].Status = StatusDelivered
+	r, ok := s.rows[claim.ID]
+	if !ok || r.Status != StatusDelivering || !r.ClaimedAt.Equal(claim.ClaimedAt) {
+		return fmt.Errorf("fakeStore: entrega %d: %w", claim.ID, ErrClaimLost)
+	}
+	apply(r)
+	r.ClaimedAt = time.Time{} // el claim se cierra
 	return nil
 }
 
-func (s *fakeStore) MarkWebhookFailed(_ context.Context, id int64, nextAttemptAt time.Time, lastErr string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.rows[id]
-	r.Status = StatusPending
-	r.Attempts++
-	r.NextAttemptAt = nextAttemptAt
-	r.LastError = lastErr
-	return nil
+func (s *fakeStore) MarkWebhookDelivered(_ context.Context, claim WebhookOutbox) error {
+	return s.markClosed(claim, func(r *WebhookOutbox) { r.Status = StatusDelivered })
 }
 
-func (s *fakeStore) MarkWebhookDead(_ context.Context, id int64, lastErr string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.rows[id]
-	r.Status = StatusDead
-	r.Attempts++
-	r.LastError = lastErr
-	return nil
+func (s *fakeStore) MarkWebhookFailed(_ context.Context, claim WebhookOutbox, nextAttemptAt time.Time, lastErr string) error {
+	return s.markClosed(claim, func(r *WebhookOutbox) {
+		r.Status = StatusPending
+		r.Attempts++
+		r.NextAttemptAt = nextAttemptAt
+		r.LastError = lastErr
+	})
 }
 
-func (s *fakeStore) RecoverOrphanDeliveries(_ context.Context) (int, error) {
+func (s *fakeStore) MarkWebhookDead(_ context.Context, claim WebhookOutbox, lastErr string) error {
+	return s.markClosed(claim, func(r *WebhookOutbox) {
+		r.Status = StatusDead
+		r.Attempts++
+		r.LastError = lastErr
+	})
+}
+
+// RecoverOrphanDeliveries rescata SOLO los claims vencidos (o sin sellar, que es
+// como quedaron las filas del código anterior a la migración 0049).
+func (s *fakeStore) RecoverOrphanDeliveries(_ context.Context, lease time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orphansCall++
+	corte := time.Now().Add(-lease)
 	n := 0
 	for _, r := range s.rows {
-		if r.Status == StatusDelivering {
-			r.Status = StatusPending
-			n++
+		if r.Status != StatusDelivering {
+			continue
 		}
+		if !r.ClaimedAt.IsZero() && r.ClaimedAt.After(corte) {
+			continue // claim VIGENTE: alguien la está entregando ahora mismo
+		}
+		r.Status = StatusPending
+		r.Attempts++
+		r.LastError = "claim vencido"
+		r.ClaimedAt = time.Time{}
+		n++
 	}
 	return n, nil
 }
@@ -480,6 +505,120 @@ func TestWorker_RecordCallback_LlamadoConElStatusCorrecto(t *testing.T) {
 	}
 }
 
+// storeConClaimRobado simula que, entre el POST con 2xx y el cierre de la fila,
+// el lease de este worker venció y OTRO la reclamó: el cierre llega tarde.
+type storeConClaimRobado struct{ *fakeStore }
+
+func (storeConClaimRobado) MarkWebhookDelivered(_ context.Context, _ WebhookOutbox) error {
+	return fmt.Errorf("simulado: %w", ErrClaimLost)
+}
+
+// TestWorker_RecuperaSoloLosClaimsVencidos es el test de regresión del hallazgo
+// #2 del review de las Olas 1-3: la recuperación de huérfanas NO puede tocar una
+// entrega que alguien está entregando ahora mismo. Antes del lease, la condición
+// (next_attempt_at <= now()) era cierta para TODA fila en vuelo, así que con dos
+// réplicas el arranque de una revertía el trabajo de la otra.
+func TestWorker_RecuperaSoloLosClaimsVencidos(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	id := mustEnqueue(t, store, "t-1", "i-1")
+
+	batch, err := store.ClaimWebhookBatch(ctx, 10)
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("ClaimWebhookBatch: len=%d err=%v", len(batch), err)
+	}
+	if batch[0].ClaimedAt.IsZero() {
+		t.Fatal("el claim debe venir SELLADO con claimed_at: es la valla de las tres transiciones")
+	}
+
+	// Lease holgado ⇒ el claim está VIGENTE ⇒ no se toca.
+	n, err := store.RecoverOrphanDeliveries(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("RecoverOrphanDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("se rescataron %d entregas VIVAS; el lease existe justo para protegerlas", n)
+	}
+	if got := store.statusOf(id); got != StatusDelivering {
+		t.Fatalf("status=%q, una entrega en vuelo debe seguir en delivering", got)
+	}
+
+	// Lease cero ⇒ todo claim está vencido ⇒ se rescata Y cuenta el intento.
+	n, err = store.RecoverOrphanDeliveries(ctx, 0)
+	if err != nil {
+		t.Fatalf("RecoverOrphanDeliveries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("rescatadas=%d, quiero 1 (el claim ya venció)", n)
+	}
+	if got := store.statusOf(id); got != StatusPending {
+		t.Fatalf("status=%q, quiero pending tras el rescate", got)
+	}
+	if got := store.attemptsOf(id); got != 1 {
+		t.Fatalf("attempts=%d, quiero 1: un claim vencido FUE un intento, y sin contarlo "+
+			"una entrega que tumba a su worker giraría para siempre sin llegar a dead", got)
+	}
+}
+
+// TestWorker_ClaimPerdido_NoCuentaComoEntrega: si el cierre llega tarde, el
+// worker NO debe apuntarse la entrega (la resolverá quien tenga el claim) ni
+// tratarlo como un fallo del puente. Se cuenta aparte, en claim_lost.
+func TestWorker_ClaimPerdido_NoCuentaComoEntrega(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	base := newFakeStore()
+	base.integrations["t-1"] = enabledIntegration("t-1", srv.URL)
+	base.secrets["t-1"] = "s3cr3t"
+	mustEnqueue(t, base, "t-1", "i-1")
+
+	var recorded []string
+	w := NewWorker(storeConClaimRobado{base}, fakeBuyerData{}, fakeTenantVars{}, discardLogger(),
+		WorkerConfig{MaxAttempts: 5}, func(status string) { recorded = append(recorded, status) })
+	w.pollOnce(context.Background())
+
+	if len(recorded) != 1 || recorded[0] != statusClaimLost {
+		t.Fatalf("recorded=%v, quiero [%s] — un claim perdido no es ni delivered ni failed",
+			recorded, statusClaimLost)
+	}
+}
+
+// TestWorker_ClaimLostSeReconoceEnvuelto protege el contrato de ErrClaimLost: el
+// store real lo devuelve ENVUELTO con %w y el worker lo reconoce con errors.Is.
+// Si alguien lo devolviera con %v, este test se pone rojo antes de que el worker
+// empiece a tratar un claim perdido como un fallo de entrega.
+func TestWorker_ClaimLostSeReconoceEnvuelto(t *testing.T) {
+	store := newFakeStore()
+	mustEnqueue(t, store, "t-1", "i-1")
+	if _, err := store.ClaimWebhookBatch(context.Background(), 1); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	// Un claim con un sello que no casa: el mismo id, otro claimed_at.
+	ajeno := WebhookOutbox{ID: 1, ClaimedAt: time.Now().Add(-time.Hour)}
+	err := store.MarkWebhookDelivered(context.Background(), ajeno)
+	if !errors.Is(err, ErrClaimLost) {
+		t.Fatalf("err=%v, quiero que errors.Is(err, ErrClaimLost) sea true", err)
+	}
+}
+
+// TestWorkerConfig_ClaimLeaseSiempreSuperaElTimeout es la invariante que impide
+// reintroducir el bug por configuración: un lease por debajo del timeout HTTP
+// rescataría entregas que siguen legítimamente en vuelo.
+func TestWorkerConfig_ClaimLeaseSiempreSuperaElTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, time.Second, 10 * time.Second, 2 * time.Minute} {
+		cfg := WorkerConfig{Timeout: timeout}.withDefaults()
+		if cfg.ClaimLease <= cfg.Timeout {
+			t.Fatalf("Timeout=%v ⇒ ClaimLease=%v: por debajo del timeout se rescatarían entregas VIVAS",
+				timeout, cfg.ClaimLease)
+		}
+		if cfg.ClaimLease <= 0 {
+			t.Fatalf("ClaimLease=%v: time.NewTicker entra en pánico con <= 0", cfg.ClaimLease)
+		}
+	}
+}
+
 func TestBackoffDuration_CreceYRespetaElTope(t *testing.T) {
 	for attempt := 1; attempt <= 6; attempt++ {
 		d := backoffDuration(attempt)
@@ -501,5 +640,33 @@ func TestBackoffDuration_CreceYRespetaElTope(t *testing.T) {
 	d := backoffDuration(50)
 	if d > time.Hour+time.Hour/5 {
 		t.Fatalf("backoffDuration(50)=%v, no debe superar el tope de 1h + jitter", d)
+	}
+}
+
+// TestBackoffDuration_ElJitterDispersaDeVerdad blinda la corrección del
+// 2026-08-08. La versión anterior derivaba el jitter de time.Now().UnixNano()%400
+// y en darwin/arm64 —resolución de reloj de 1 µs— colapsaba a DOS valores
+// ({0.800, 1.000}), pero seguía pasando TestBackoffDuration_CreceYRespetaElTope
+// porque ese test solo comprueba cotas sobre UNA llamada por intento. Un jitter
+// de dos valores no des-correlaciona reintentos: es justo la tormenta que el
+// jitter existe para evitar.
+//
+// El umbral es deliberadamente flojo (50 de 400 posibles): con crypto/rand lo
+// esperable son ~390 valores distintos en 2000 muestras, así que 50 deja
+// margen sobrado para no ser flaky y aun así falla estrepitosamente si alguien
+// vuelve a atar el jitter a la resolución del reloj.
+func TestBackoffDuration_ElJitterDispersaDeVerdad(t *testing.T) {
+	const muestras = 2000
+	const minDistintos = 50
+
+	vistos := make(map[time.Duration]struct{}, muestras)
+	for range muestras {
+		vistos[backoffDuration(1)] = struct{}{}
+	}
+
+	if len(vistos) < minDistintos {
+		t.Fatalf("backoffDuration(1) devolvió solo %d valores distintos en %d llamadas "+
+			"(esperaba al menos %d): el jitter no dispersa, mira si volvió a depender del reloj",
+			len(vistos), muestras, minDistintos)
 	}
 }
