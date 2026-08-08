@@ -15,11 +15,13 @@
 // sabría con cuál desenvolverla. Ese es el motivo por el que la tabla no siguió el
 // `data_encrypted TEXT` que esbozaba el design §3.
 //
-// LO QUE ESTE ARCHIVO NO TIENE, a propósito: una lectura en claro. El descifrado
-// existe —lo hace el propio cipher— pero está CUSTODIADO y llega con su consumidor
-// real (el puente del Plan 042 o una pantalla), no antes. Publicar hoy un
-// `GetBuyerData` sin nadie que lo use sería abrir la puerta y dejarla abierta. Lo
-// que sí se publica es si la fila EXISTE (buyer_data_present, ver Store.Get).
+// LECTURA EN CLARO: `GetBuyerData` (Plan 042 · Ola 3 · T3.3) es SU CONSUMIDOR
+// REAL, no una anticipación — el worker del puente CRM la llama justo antes del
+// POST para completar `buyer_data` en el payload (D-042.9: "el builder la
+// descifra... dentro del worker, nunca en línea con el mensaje", INV-02). Hasta
+// esa tarea este archivo no publicaba ninguna lectura en claro a propósito: abrir
+// la puerta sin nadie que la usara habría sido el error. Lo que además se publica
+// aparte es si la fila EXISTE (buyer_data_present, ver Store.Get).
 package intakes
 
 import (
@@ -140,6 +142,40 @@ func (p *PostgresBuyerData) PutBuyerField(ctx context.Context, intakeID, key, va
 		return fmt.Errorf("intakes: confirmando los datos del comprador: %w", err)
 	}
 	return nil
+}
+
+// GetBuyerData lee y DESCIFRA el checklist de UNA solicitud fuera de transacción
+// (Plan 042 · Ola 3 · T3.3): a diferencia de currentBuyerData, no toma FOR UPDATE
+// porque el worker del puente CRM solo LEE, nunca fusiona — no hay carrera que
+// cuidar. found=false si la solicitud no tiene fila (el checklist quedó vacío).
+func (p *PostgresBuyerData) GetBuyerData(ctx context.Context, intakeID string) (BuyerData, bool, error) {
+	var (
+		enc, dek []byte
+		kekID    string
+	)
+	err := p.db.QueryRowContext(ctx, `
+		SELECT data_enc, data_dek, data_kek_id
+		FROM public.intake_buyer_data
+		WHERE intake_id = $1
+	`, intakeID).Scan(&enc, &dek, &kekID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return BuyerData{}, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("intakes: leer los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+
+	// Misma regla que currentBuyerData: se descifra con la KEK que envolvió ESTA
+	// fila (data_kek_id), no con la current.
+	plain, err := p.cipher.Decrypt(enc, dek, kekID)
+	if err != nil {
+		return nil, false, fmt.Errorf("intakes: descifrando los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+	data := BuyerData{}
+	if err := json.Unmarshal([]byte(plain), &data); err != nil {
+		return nil, false, fmt.Errorf("intakes: los datos del comprador de la solicitud %s no son un objeto JSON", intakeID)
+	}
+	return data, true, nil
 }
 
 // currentBuyerData lee y DESCIFRA la fila dentro de la transacción, bloqueándola

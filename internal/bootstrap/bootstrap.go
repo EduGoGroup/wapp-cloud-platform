@@ -35,6 +35,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
@@ -208,6 +209,12 @@ func Run(ctx context.Context) error {
 	// Reusa el MISMO stack de claves que los contactos (flowDeps.cipher, KEK del
 	// keyring versionado del Plan 012): dos ciphers serían dos rotaciones.
 	buyerDataStore := intakes.NewPostgresBuyerData(db, flowDeps.cipher)
+	// El puente CRM (Plan 042 · Ola 3) reusa el MISMO cipher que buyerDataStore
+	// (mismo keyring versionado del Plan 012): el secreto HMAC de
+	// tenant_integrations y los datos del comprador comparten el stack de
+	// claves, no hay una tercera rotación que gestionar.
+	integrationsStore := integrations.NewPostgres(db, flowDeps.cipher)
+	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
 	// vez y el recordatorio lo reusa entero —texto de la seña, vía custodiada de PII y
@@ -221,6 +228,9 @@ func Run(ctx context.Context) error {
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
 			cart.NewProjector(flowStore, intakeStore, intakeStore, buyerDataStore),
 			survey.NewProjector(flowStore))),
+		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
+		// entrega de verdad se arranca más abajo, después de serveAndWait.
+		flowruntime.WithEventSink(flowruntime.NewWebhookSink(log, cart.EffectCartClosed, integrationsStore, webhookGate)),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
@@ -359,6 +369,21 @@ func Run(ctx context.Context) error {
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       idleTimeout,
 	}
+
+	// Worker del puente CRM (Plan 042 · Ola 3, D-042.4): primera goroutine de
+	// polling de larga vida de este repo. Arranca sobre el MISMO ctx derivado de
+	// signal.NotifyContext (línea ~68) que cierra todo lo demás — un solo
+	// Ctrl+C también para el worker, sin un segundo mecanismo de shutdown.
+	webhookWorker := integrations.NewWorker(
+		integrationsStore, buyerDataStore, tenantvars.NewPostgres(db), log,
+		integrations.WorkerConfig{
+			PollInterval: cfg.Webhook.PollInterval,
+			MaxAttempts:  cfg.Webhook.MaxAttempts,
+			Timeout:      cfg.Webhook.Timeout,
+		},
+		mtx.WebhookDelivery,
+	)
+	go webhookWorker.Run(ctx)
 
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.

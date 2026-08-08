@@ -53,7 +53,10 @@ func runCartClosed(t *testing.T, extra ...runtime.Option) *store.MemoryRepositor
 // (flow_events, intakes, intake_items) debe ser equivalente.
 func TestWebhookSink_Registrado_NoAlteraPersistSink(t *testing.T) {
 	repoSolo := runCartClosed(t)
-	repoConWebhook := runCartClosed(t, runtime.WithEventSink(runtime.NewWebhookSink(discardLogger(), cart.EffectCartClosed)))
+	// sender/gate nil: mismo no-op seguro que el stub que este test verificaba
+	// antes del Plan 042 · Ola 3 (aquí lo que importa es que REGISTRAR el sink
+	// no cambia lo que persiste PersistSink, no ejercer el encolado real).
+	repoConWebhook := runCartClosed(t, runtime.WithEventSink(runtime.NewWebhookSink(discardLogger(), cart.EffectCartClosed, nil, nil)))
 
 	if got := len(repoSolo.FlowEvents()); got != len(repoConWebhook.FlowEvents()) {
 		t.Fatalf("flow_events difieren: solo=%d con-webhook=%d", got, len(repoConWebhook.FlowEvents()))

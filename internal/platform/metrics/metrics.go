@@ -25,12 +25,13 @@ import (
 // observabilidad). Se construye una vez en el arranque y se comparte entre los
 // dos listeners HTTP y el sink de acuses.
 type Metrics struct {
-	reg            *prometheus.Registry
-	httpRequests   *prometheus.CounterVec
-	httpDuration   *prometheus.HistogramVec
-	rateLimitHits  *prometheus.CounterVec
-	receipts       *prometheus.CounterVec
-	reactiveBlocks *prometheus.CounterVec
+	reg               *prometheus.Registry
+	httpRequests      *prometheus.CounterVec
+	httpDuration      *prometheus.HistogramVec
+	rateLimitHits     *prometheus.CounterVec
+	receipts          *prometheus.CounterVec
+	reactiveBlocks    *prometheus.CounterVec
+	webhookDeliveries *prometheus.CounterVec
 }
 
 // New construye el registry propio y registra los colectores. Incluye los
@@ -60,11 +61,15 @@ func New() *Metrics {
 			Name: "wapp_flow_reactive_blocked_total",
 			Help: "Entrantes que NO entraron al motor reactivo, por motivo (passive|self_loop|rate_limit).",
 		}, []string{"reason"}),
+		webhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "wapp_webhook_deliveries_total",
+			Help: "Entregas del worker del puente CRM (Plan 042 · T3.4), por resultado (delivered|failed|dead).",
+		}, []string{"status"}),
 	}
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks,
+		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks, m.webhookDeliveries,
 	)
 	return m
 }
@@ -154,4 +159,17 @@ func (m *Metrics) FlowReactiveBlocked(reason string) {
 		return
 	}
 	m.reactiveBlocks.WithLabelValues(reason).Inc()
+}
+
+// WebhookDelivery registra el resultado de UN intento de entrega del worker del
+// puente CRM (Plan 042 · T3.4, visibilidad de dead): status es "delivered"
+// (2xx), "failed" (reintentará) o "dead" (reintentos agotados, terminal).
+// Cardinalidad FIJA (tres valores); el tenant NO se etiqueta (misma regla dura
+// del paquete). Se pasa como callback al Worker (que NO importa este paquete:
+// mismo desacoplo que Receipt/FlowReactiveBlocked).
+func (m *Metrics) WebhookDelivery(status string) {
+	if m == nil {
+		return
+	}
+	m.webhookDeliveries.WithLabelValues(status).Inc()
 }
