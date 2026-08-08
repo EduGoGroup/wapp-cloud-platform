@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:wapp:contracts:wapp-crm-v1:intake.push",
+  "title": "wapp-crm-v1 · intake.push (wApp → puente)",
+  "description": "Empuje de una solicitud (pedido = presupuesto, ADR-0031) desde wApp hacia el puente CRM. Contrato CONGELADO: cualquier cambio de forma es wapp-crm-v2 (INV-07). Sin campo `currency` en ningún nivel (INV-09).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "verb",
+    "tenant",
+    "contact",
+    "intake_id",
+    "lifecycle_status",
+    "revision_no",
+    "variables",
+    "buyer_data",
+    "customer_note",
+    "items",
+    "total",
+    "timestamp"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1",
+      "description": "Versión del contrato. Siempre la cadena \"1\" en wapp-crm-v1."
+    },
+    "verb": {
+      "const": "intake.push",
+      "description": "Verbo del contrato."
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador del tenant emisor."
+    },
+    "contact": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador OPACO y estable del contacto (contacts.contact_id). JAMÁS un teléfono ni un JID (ADR-0017, INV-01). El puente lo trata como cadena opaca: no debe parsearlo ni deducir nada de su forma."
+    },
+    "intake_id": {
+      "type": "string",
+      "format": "uuid",
+      "minLength": 1,
+      "description": "Identificador de la solicitud. Es la clave de correlación del contrato: la vuelta (intake.status) clavea por él."
+    },
+    "lifecycle_status": {
+      "type": "string",
+      "description": "Estado del ciclo de vida de la solicitud en wApp (ADR-0031 / Plan 041 D-041.10). `expired` es terminal LEGADO: se conserva porque hay filas históricas, pero nadie entra ya en él (D-041.16). El contrato JAMÁS emite `closed`: es la clave legada con la que el módulo cart cierra y se normaliza a `confirmed` al leer.",
+      "enum": [
+        "open",
+        "pending_approval",
+        "needs_info",
+        "confirmed",
+        "deposit_requested",
+        "deposit_paid",
+        "settled",
+        "cancelled",
+        "rejected",
+        "abandoned",
+        "expired"
+      ]
+    },
+    "revision_no": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Número de revisión de la negociación (intake_revisions). Mientras solo exista la revisión del carrito, se emite 1; el Plan 044 añadirá revisiones."
+    },
+    "variables": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Snapshot literal de las tenant_variables del tenant al momento de la ENTREGA (D-042.11, decisión 2026-08-07: prevalece INV-02 sobre la redacción original 'al momento del push'). wApp NO interpreta claves ni valores: no hay lista blanca, no hay tipos, no hay moneda tipada. Si el puente necesita símbolo, tasa o cualquier otra cosa, la toma de aquí. Puede diferir entre el primer intento y un reintento si las variables del tenant cambiaron mientras tanto; `timestamp` no se mueve con eso."
+    },
+    "buyer_data": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Datos que el comprador entregó VOLUNTARIAMENTE en el flujo (checklist configurado por el tenant, Plan 041 D-041.13). Las claves las define el tenant; wApp no valida su semántica. Objeto vacío si el tenant no configuró checklist."
+    },
+    "customer_note": {
+      "type": "string",
+      "maxLength": 280,
+      "description": "Indicación del CLIENTE FINAL para todo el pedido («dejarlo en portería», Plan 041 D-041.19). Texto libre en claro, saneado en origen (cart.SanitizeNote, 280 runas). JAMÁS suma al total. Va SIEMPRE, también como cadena vacía."
+    },
+    "items": {
+      "type": "array",
+      "description": "Líneas de la solicitud. Label y precio se COPIAN a la línea al agregarla: un cambio de catálogo no reescribe un pedido ya tomado.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sku", "label", "customization", "qty", "unit_price"],
+        "properties": {
+          "sku": { "type": "string", "description": "SKU del artículo tal como lo publica el catálogo del tenant." },
+          "label": { "type": "string", "description": "Etiqueta del artículo congelada al agregar la línea." },
+          "customization": {
+            "type": "string",
+            "maxLength": 280,
+            "description": "Personalización NO facturable de la línea («sin cebolla», Plan 041 D-041.17). Texto libre en claro, saneado en origen. JAMÁS suma al total ni al unit_price. Va SIEMPRE, también como cadena vacía."
+          },
+          "qty": { "type": "integer", "minimum": 1, "description": "Cantidad de unidades de la línea." },
+          "unit_price": { "type": "number", "minimum": 0, "description": "Precio unitario congelado al agregar la línea. Número sin moneda tipada (INV-09)." }
+        }
+      }
+    },
+    "total": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total de la solicitud. Número sin moneda tipada (INV-09). Ni customer_note ni items[].customization lo alteran."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instante RFC3339 (UTC) en que wApp construyó este push."
+    },
+    "event_history_id": {
+      "type": "string",
+      "description": "Resuelto MD-042.1 (decisión 2026-08-07): campo INFORMATIVO opcional, soporte humano únicamente («el carrito de las 13:45»). NO ES ÚNICO y NO es clave: nunca lo uses para correlacionar ni para dedupe (esa función es de intake_id + revision_no). Ausente cuando la solicitud no tiene evento conversacional asociado (Plan 043, INV-16)."
+    }
+  }
+}

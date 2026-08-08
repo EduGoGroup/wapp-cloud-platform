@@ -1,0 +1,37 @@
+{
+  "contract_version": "1",
+  "categories": [
+    {
+      "code": "empanadas",
+      "label": "Empanadas",
+      "items": [
+        {
+          "code": "emp-que",
+          "sku": "EMP-QUE",
+          "label": "Empanada de queso",
+          "price": 10.5,
+          "description": "Horneada, masa de trigo"
+        },
+        {
+          "code": "emp-pol",
+          "sku": "EMP-POL",
+          "label": "Empanada de pollo",
+          "price": 11
+        }
+      ]
+    },
+    {
+      "code": "bebidas",
+      "label": "Bebidas",
+      "items": [
+        {
+          "code": "beb-cola-350",
+          "sku": "BEB-COLA-350",
+          "label": "Refresco cola 350 ml",
+          "price": 3,
+          "description": ""
+        }
+      ]
+    }
+  ]
+}

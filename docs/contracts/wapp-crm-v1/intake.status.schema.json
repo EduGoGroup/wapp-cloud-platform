@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:wapp:contracts:wapp-crm-v1:intake.status",
+  "title": "wapp-crm-v1 · intake.status (puente → wApp)",
+  "description": "Vuelta del puente: el estado del CRM sobre una solicitud ya empujada. Los cuatro estados canónicos son un vocabulario PROPIO de esta frontera y NO son estados del ciclo de vida de wApp (lifecycle_status): no se mapean sobre intakes.status, se reflejan en columnas propias. El tenant NO viaja en el cuerpo: sale del header X-Wapp-Tenant autenticado por HMAC (INV-05).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "verb", "intake_id", "status", "occurred_at"],
+  "properties": {
+    "contract_version": {
+      "const": "1",
+      "description": "Versión del contrato. Siempre la cadena \"1\" en wapp-crm-v1."
+    },
+    "verb": {
+      "const": "intake.status",
+      "description": "Verbo del contrato."
+    },
+    "intake_id": {
+      "type": "string",
+      "format": "uuid",
+      "minLength": 1,
+      "description": "Solicitud a la que se refiere el estado. Es el mismo intake_id que llegó en el intake.push. Un intake_id que no pertenece al tenant autenticado y uno inexistente responden IGUAL (404), a propósito."
+    },
+    "status": {
+      "type": "string",
+      "description": "Estado canónico del CRM. Cada puente mapea el vocabulario de SU CRM a estos cuatro; wApp no conoce el vocabulario de ningún CRM (INV-08). Ojo: `rejected` existe también en lifecycle_status y significa OTRA cosa allí.",
+      "enum": ["paid", "preparing", "delivered", "rejected"]
+    },
+    "external_ref": {
+      "type": "string",
+      "description": "Referencia del CRM (número de orden, folio, lo que sea). OPACA para wApp: se guarda y se muestra, jamás se interpreta ni se usa como clave. Opcional."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instante RFC3339 en que el hecho ocurrió EN EL CRM (no cuando se envió el callback)."
+    }
+  }
+}

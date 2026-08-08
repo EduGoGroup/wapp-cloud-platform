@@ -1,0 +1,38 @@
+{
+  "contract_version": "1",
+  "verb": "intake.push",
+  "tenant": "acme-panaderia",
+  "contact": "c_7f3a9c41d8e24b6fa0517e93b2c4d5e6",
+  "intake_id": "3f2a1c9e-5b7d-4a10-9c3e-8d16b4f2a077",
+  "lifecycle_status": "confirmed",
+  "revision_no": 1,
+  "variables": {
+    "moneda": "Bs",
+    "tasa_dia": "36,50",
+    "pie_de_nota": "Gracias por su compra"
+  },
+  "buyer_data": {
+    "documento": "12.345.678-5",
+    "direccion_entrega": "Av. Libertador 742, piso 3"
+  },
+  "customer_note": "dejarlo en portería",
+  "items": [
+    {
+      "sku": "EMP-QUE",
+      "label": "Empanada de queso",
+      "customization": "sin cebolla",
+      "qty": 2,
+      "unit_price": 10.5
+    },
+    {
+      "sku": "BEB-COLA-350",
+      "label": "Refresco cola 350 ml",
+      "customization": "",
+      "qty": 1,
+      "unit_price": 3
+    }
+  ],
+  "total": 24,
+  "timestamp": "2026-08-07T13:45:12Z",
+  "event_history_id": "evt-2026-08-07-1345"
+}
