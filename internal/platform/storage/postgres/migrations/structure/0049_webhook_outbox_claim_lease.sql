@@ -1,0 +1,83 @@
+-- ============================================================
+-- 0049: Lease del claim sobre public.webhook_outbox (Plan 042 · Ola 3.1,
+-- endurecimiento post-review de la Ola 3).
+--
+-- ------------------------------------------------------------
+-- QUÉ ESTABA MAL (hallazgo #2 del review de las Olas 1-3, 2026-08-08)
+-- ------------------------------------------------------------
+-- La recuperación de huérfanas de la Ola 3 preguntaba:
+--
+--     UPDATE ... SET status='pending'
+--     WHERE status='delivering' AND next_attempt_at <= now()
+--
+-- y la premisa de esa consulta es FALSA. `next_attempt_at` NO se toca al reclamar
+-- una fila: el claim solo cambia `status`. Y para que una fila fuera reclamable,
+-- `next_attempt_at <= now()` ya tenía que ser cierto. Conclusión: **toda** fila en
+-- vuelo satisface la condición de «huérfana», esté su worker vivo o muerto.
+--
+-- Con una sola instancia del proceso eso no se nota (la recuperación corría una
+-- vez, al arrancar, cuando por definición no hay nadie entregando). Con DOS —un
+-- rolling deploy, o la segunda réplica que el propio D-042.4 dice que `SKIP
+-- LOCKED` existe para permitir «mañana»— sí: el arranque de la réplica B devolvía
+-- a `pending` las filas que la réplica A estaba entregando en ese instante, y el
+-- siguiente poll las reclamaba y las entregaba OTRA VEZ, en paralelo con la
+-- entrega original. El contrato es at-least-once y el receptor debe ser
+-- idempotente, así que no se pierde nada — pero es precisamente el duplicado que
+-- `FOR UPDATE SKIP LOCKED` existe para evitar, reintroducido por la otra puerta.
+--
+-- ------------------------------------------------------------
+-- QUÉ ARREGLA ESTA COLUMNA
+-- ------------------------------------------------------------
+-- `claimed_at` es el instante en que el claim VIGENTE empezó. Con ella se puede
+-- distinguir lo que antes era indistinguible:
+--
+--   * `claimed_at` reciente  → alguien la está entregando AHORA. No se toca.
+--   * `claimed_at` viejo     → su worker murió sin resolverla. Se recupera.
+--
+-- El umbral («viejo») es el LEASE, y lo fija el worker en Go a partir de su propio
+-- timeout HTTP (3× con piso de 1 min): una entrega legítima no puede durar más que
+-- ese timeout, así que pasado el lease la fila está huérfana con certeza, no por
+-- probabilidad. No es una constante de esta migración a propósito — el lease
+-- depende de la config del proceso, no del esquema.
+--
+-- INVARIANTE: `claimed_at IS NOT NULL` ⟺ hay un claim vigente. Las tres
+-- transiciones que cierran un claim (delivered / failed / dead) la vuelven a NULL.
+-- Por eso NO sirve como «cuándo se entregó»: para eso están created_at, attempts y
+-- last_error. Es un lease, no una bitácora.
+--
+-- SEGUNDO USO — VALLA CONTRA EL CLAIM ROBADO: `claimed_at` es además el testigo
+-- optimista con el que el worker cierra la fila (`WHERE id=$1 AND status=
+-- 'delivering' AND claimed_at=$2`). Si entre el POST y el cierre otra réplica
+-- reclamó la fila —porque el lease venció—, el UPDATE afecta 0 filas y el worker
+-- viejo se entera (ErrClaimLost) en vez de pisar el resultado del nuevo. Sin este
+-- testigo, «gana el último que escriba», que con dos réplicas es una lotería.
+--
+-- ------------------------------------------------------------
+-- LA RUTA DE ACTUALIZACIÓN (filas que ya existen)
+-- ------------------------------------------------------------
+-- Una base que ya corrió la Ola 3 puede tener filas en `delivering` SIN
+-- `claimed_at` (las reclamó el código viejo, que no la escribía). Esas quedarían
+-- fuera del lease para siempre. Por eso la consulta de recuperación trata
+-- `claimed_at IS NULL AND status='delivering'` como huérfana INMEDIATA: es
+-- correcto porque ningún worker de la versión nueva deja esa combinación, así que
+-- solo puede venir del código viejo, y ese proceso ya no existe.
+--
+-- ÍNDICE: `webhook_outbox_lease_idx (status, claimed_at)` sirve exactamente a la
+-- consulta de recuperación, igual que `webhook_outbox_claim_idx (status,
+-- next_attempt_at)` sirve a la del claim. Son dos preguntas distintas sobre la
+-- misma tabla y cada una quiere su índice.
+--
+-- CERO PII / CERO llaves: una marca de tiempo. Nada más.
+--
+-- ADITIVA e IDEMPOTENTE: el runner es hash-based FULL-REPLAY; ADD COLUMN IF NOT
+-- EXISTS + CREATE INDEX IF NOT EXISTS ⇒ re-aplicable N veces sin daño ni pérdida
+-- de filas. NO clean-slate.
+-- ============================================================
+
+ALTER TABLE public.webhook_outbox ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS webhook_outbox_lease_idx
+    ON public.webhook_outbox (status, claimed_at);
+
+COMMENT ON COLUMN public.webhook_outbox.claimed_at IS
+    'Instante en que empezó el claim VIGENTE de esta entrega (Plan 042 · Ola 3.1). NULL = no hay claim vigente; las tres transiciones que cierran un claim (delivered/failed/dead) la devuelven a NULL. Sirve para DOS cosas: (1) el lease — la recuperación de huérfanas solo revierte filas cuyo claim venció, en vez de revertir toda fila delivering como hacía la Ola 3 (que rompía con más de una réplica); (2) la valla optimista con la que el worker cierra la fila (WHERE claimed_at = <el suyo>), para que un worker cuyo claim expiró no pise el resultado del que la reclamó después. NO es «cuándo se entregó»: es un lease, no una bitácora.';

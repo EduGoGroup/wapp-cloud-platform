@@ -230,6 +230,13 @@ func Run(ctx context.Context) error {
 			survey.NewProjector(flowStore))),
 		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
 		// entrega de verdad se arranca más abajo, después de serveAndWait.
+		//
+		// Este sink LEE el `intake_id` que el proyector del carrito anota en
+		// eff.Payload al cerrar, así que tiene que correr DESPUÉS del PersistSink.
+		// Eso ya NO depende de que esta línea vaya debajo de la anterior: el sink
+		// declara PhaseNotify y Runtime.New ordena el fan-out por fase (Plan 042 ·
+		// Ola 3.1, ver SinkPhase en flujos/runtime/event_sink.go). El orden de
+		// estas dos líneas es legible, no load-bearing.
 		flowruntime.WithEventSink(flowruntime.NewWebhookSink(log, cart.EffectCartClosed, integrationsStore, webhookGate)),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),

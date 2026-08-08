@@ -63,7 +63,7 @@ func New() *Metrics {
 		}, []string{"reason"}),
 		webhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_webhook_deliveries_total",
-			Help: "Entregas del worker del puente CRM (Plan 042 · T3.4), por resultado (delivered|failed|dead).",
+			Help: "Entregas del worker del puente CRM (Plan 042 · T3.4), por resultado (delivered|failed|dead|claim_lost).",
 		}, []string{"status"}),
 	}
 	reg.MustRegister(
@@ -163,8 +163,11 @@ func (m *Metrics) FlowReactiveBlocked(reason string) {
 
 // WebhookDelivery registra el resultado de UN intento de entrega del worker del
 // puente CRM (Plan 042 · T3.4, visibilidad de dead): status es "delivered"
-// (2xx), "failed" (reintentará) o "dead" (reintentos agotados, terminal).
-// Cardinalidad FIJA (tres valores); el tenant NO se etiqueta (misma regla dura
+// (2xx), "failed" (reintentará), "dead" (reintentos agotados, terminal) o
+// "claim_lost" (Plan 042 · Ola 3.1: el lease del claim expiró antes de que este
+// worker cerrara la fila, y la resolverá quien la reclamó después — un valor
+// sostenidamente > 0 dice que ClaimLease se quedó corto para la carga real).
+// Cardinalidad FIJA (cuatro valores); el tenant NO se etiqueta (misma regla dura
 // del paquete). Se pasa como callback al Worker (que NO importa este paquete:
 // mismo desacoplo que Receipt/FlowReactiveBlocked).
 func (m *Metrics) WebhookDelivery(status string) {

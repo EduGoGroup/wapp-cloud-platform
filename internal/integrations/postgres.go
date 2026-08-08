@@ -40,70 +40,44 @@ func (p *Postgres) EnqueueWebhook(ctx context.Context, tenantID, kind string, pa
 	return id, nil
 }
 
-// ClaimWebhookBatch reclama hasta `limit` filas listas para reintentar
-// (status='pending', next_attempt_at vencido) con FOR UPDATE SKIP LOCKED —
-// múltiples réplicas del worker pueden llamarse a la vez sin pisarse ni
-// bloquearse entre sí — y las marca 'delivering' en la MISMA transacción antes
-// de devolverlas: si el proceso muere entre el claim y el POST,
-// RecoverOrphanDeliveries las recupera al rearrancar (D-042.4).
-func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) (out []WebhookOutbox, err error) {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("integrations: iniciar transacción del claim: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			if rerr := tx.Rollback(); rerr != nil {
-				log.Printf("[wapp][integrations][WARN] claim: rollback: %v", rerr)
-			}
-		}
-	}()
+// orphanReason es el last_error que deja la recuperación por lease vencido. Es
+// diagnóstico, no un error del puente: distingue "el CRM respondió 500" de "nadie
+// resolvió esta entrega y hubo que rescatarla".
+const orphanReason = "claim vencido: el worker que reclamó la entrega no la resolvió dentro del lease"
 
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id, tenant_id, kind, payload, status, attempts, next_attempt_at, created_at, COALESCE(last_error, '')
-		FROM public.webhook_outbox
-		WHERE status = $1 AND next_attempt_at <= now()
-		ORDER BY next_attempt_at
-		LIMIT $2
-		FOR UPDATE SKIP LOCKED
-	`, StatusPending, limit)
+// ClaimWebhookBatch reclama hasta `limit` filas listas para entregar
+// (status='pending', next_attempt_at vencido) en UNA SOLA sentencia atómica:
+// el SELECT interno toma FOR UPDATE SKIP LOCKED —varias réplicas del worker
+// pueden reclamar a la vez sin pisarse ni bloquearse— y el UPDATE que lo envuelve
+// marca 'delivering' y SELLA el claim con claimed_at = now(). El RETURNING
+// devuelve las filas ya con ese claimed_at: es el testigo que el worker tiene que
+// presentar para cerrarlas (ver closeClaim).
+//
+// Antes esto eran dos sentencias dentro de una transacción explícita con su
+// rollback a mano. Una sola sentencia es equivalente en garantías (Postgres la
+// ejecuta atómicamente), no necesita gestionar la transacción, y sobre todo puede
+// devolver el claimed_at RECIÉN escrito — que con el SELECT-luego-UPDATE habría
+// que leer en una tercera consulta.
+func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookOutbox, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		UPDATE public.webhook_outbox AS o
+		SET status = $1, claimed_at = now()
+		FROM (
+			SELECT id
+			FROM public.webhook_outbox
+			WHERE status = $2 AND next_attempt_at <= now()
+			ORDER BY next_attempt_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		) AS c
+		WHERE o.id = c.id
+		RETURNING o.id, o.tenant_id, o.kind, o.payload, o.status, o.attempts,
+		          o.next_attempt_at, o.created_at, COALESCE(o.last_error, ''), o.claimed_at
+	`, StatusDelivering, StatusPending, limit)
 	if err != nil {
 		return nil, fmt.Errorf("integrations: reclamar lote: %w", err)
 	}
-	claimed, err := scanWebhookRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(claimed) == 0 {
-		if cerr := tx.Commit(); cerr != nil {
-			return nil, fmt.Errorf("integrations: confirmar claim vacío: %w", cerr)
-		}
-		committed = true
-		return nil, nil
-	}
-
-	ids := make([]int64, len(claimed))
-	for i, w := range claimed {
-		ids[i] = w.ID
-	}
-	// pgx (driver real bajo database/sql en este repo) codifica un []int64 Go
-	// como un array de Postgres de forma nativa: no hace falta un wrapper tipo
-	// pq.Array (eso es lib/pq, no el driver de aquí).
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE public.webhook_outbox SET status = $1 WHERE id = ANY($2)
-	`, StatusDelivering, ids); err != nil {
-		return nil, fmt.Errorf("integrations: marcar lote delivering: %w", err)
-	}
-	for i := range claimed {
-		claimed[i].Status = StatusDelivering
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("integrations: confirmar claim: %w", err)
-	}
-	committed = true
-	return claimed, nil
+	return scanWebhookRows(rows)
 }
 
 // scanWebhookRows agota y cierra rows, devolviendo las filas escaneadas. Extraído
@@ -111,13 +85,18 @@ func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) (out []Webh
 func scanWebhookRows(rows *sql.Rows) ([]WebhookOutbox, error) {
 	var claimed []WebhookOutbox
 	for rows.Next() {
-		var w WebhookOutbox
-		if serr := rows.Scan(&w.ID, &w.TenantID, &w.Kind, &w.Payload, &w.Status, &w.Attempts, &w.NextAttemptAt, &w.CreatedAt, &w.LastError); serr != nil {
+		var (
+			w         WebhookOutbox
+			claimedAt sql.NullTime
+		)
+		if serr := rows.Scan(&w.ID, &w.TenantID, &w.Kind, &w.Payload, &w.Status, &w.Attempts,
+			&w.NextAttemptAt, &w.CreatedAt, &w.LastError, &claimedAt); serr != nil {
 			if cerr := rows.Close(); cerr != nil {
 				log.Printf("[wapp][integrations][WARN] claim: cerrar filas tras error de escaneo: %v", cerr)
 			}
 			return nil, fmt.Errorf("integrations: escanear fila del lote: %w", serr)
 		}
+		w.ClaimedAt = claimedAt.Time // NULL ⇒ cero (no hay claim vigente)
 		claimed = append(claimed, w)
 	}
 	rerr := rows.Err()
@@ -130,51 +109,81 @@ func scanWebhookRows(rows *sql.Rows) ([]WebhookOutbox, error) {
 	return claimed, nil
 }
 
-// MarkWebhookDelivered implementa Store.MarkWebhookDelivered.
-func (p *Postgres) MarkWebhookDelivered(ctx context.Context, id int64) error {
-	if _, err := p.db.ExecContext(ctx, `
-		UPDATE public.webhook_outbox SET status = $1 WHERE id = $2
-	`, StatusDelivered, id); err != nil {
-		return fmt.Errorf("integrations: marcar entrega %d delivered: %w", id, err)
+// closeClaim ejecuta una transición que CIERRA el claim vigente de una entrega.
+// Centraliza la valla optimista de las tres: la sentencia siempre lleva
+// `WHERE id = $1 AND claimed_at = $2` con el testigo que devolvió el claim, así
+// que si el lease venció y otro worker reclamó la fila mientras tanto, el UPDATE
+// afecta 0 filas y esto devuelve ErrClaimLost en vez de pisar el resultado ajeno.
+//
+// Los argumentos propios de cada transición van a partir de $3.
+func (p *Postgres) closeClaim(ctx context.Context, claim WebhookOutbox, what, query string, args ...any) error {
+	full := append([]any{claim.ID, claim.ClaimedAt}, args...)
+	res, err := p.db.ExecContext(ctx, query, full...)
+	if err != nil {
+		return fmt.Errorf("integrations: marcar entrega %d %s: %w", claim.ID, what, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("integrations: filas afectadas al marcar la entrega %d %s: %w", claim.ID, what, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("integrations: entrega %d hacia %s: %w", claim.ID, what, ErrClaimLost)
 	}
 	return nil
+}
+
+// MarkWebhookDelivered implementa Store.MarkWebhookDelivered.
+func (p *Postgres) MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error {
+	return p.closeClaim(ctx, claim, "delivered", `
+		UPDATE public.webhook_outbox
+		SET status = $3, claimed_at = NULL
+		WHERE id = $1 AND claimed_at = $2 AND status = $4
+	`, StatusDelivered, StatusDelivering)
 }
 
 // MarkWebhookFailed implementa Store.MarkWebhookFailed.
-func (p *Postgres) MarkWebhookFailed(ctx context.Context, id int64, nextAttemptAt time.Time, lastErr string) error {
-	if _, err := p.db.ExecContext(ctx, `
+func (p *Postgres) MarkWebhookFailed(ctx context.Context, claim WebhookOutbox, nextAttemptAt time.Time, lastErr string) error {
+	return p.closeClaim(ctx, claim, "reintento", `
 		UPDATE public.webhook_outbox
-		SET status = $1, attempts = attempts + 1, next_attempt_at = $2, last_error = $3
-		WHERE id = $4
-	`, StatusPending, nextAttemptAt, lastErr, id); err != nil {
-		return fmt.Errorf("integrations: marcar entrega %d failed: %w", id, err)
-	}
-	return nil
+		SET status = $3, attempts = attempts + 1, next_attempt_at = $4, last_error = $5, claimed_at = NULL
+		WHERE id = $1 AND claimed_at = $2 AND status = $6
+	`, StatusPending, nextAttemptAt, lastErr, StatusDelivering)
 }
 
 // MarkWebhookDead implementa Store.MarkWebhookDead.
-func (p *Postgres) MarkWebhookDead(ctx context.Context, id int64, lastErr string) error {
-	if _, err := p.db.ExecContext(ctx, `
+func (p *Postgres) MarkWebhookDead(ctx context.Context, claim WebhookOutbox, lastErr string) error {
+	return p.closeClaim(ctx, claim, "dead", `
 		UPDATE public.webhook_outbox
-		SET status = $1, attempts = attempts + 1, last_error = $2
-		WHERE id = $3
-	`, StatusDead, lastErr, id); err != nil {
-		return fmt.Errorf("integrations: marcar entrega %d dead: %w", id, err)
-	}
-	return nil
+		SET status = $3, attempts = attempts + 1, last_error = $4, claimed_at = NULL
+		WHERE id = $1 AND claimed_at = $2 AND status = $5
+	`, StatusDead, lastErr, StatusDelivering)
 }
 
-// RecoverOrphanDeliveries vuelve a pending toda fila 'delivering' cuyo
-// next_attempt_at ya venció: al ENCOLAR una entrega next_attempt_at queda en
-// "ya" (DEFAULT now()), y ClaimWebhookBatch no lo toca al marcar delivering — es
-// la misma marca de tiempo la que delata a un huérfano si nadie la resolvió a
-// tiempo. Se llama una sola vez, al arrancar el worker (D-042.4).
-func (p *Postgres) RecoverOrphanDeliveries(ctx context.Context) (int, error) {
+// RecoverOrphanDeliveries devuelve a pending las entregas cuyo CLAIM VENCIÓ, y
+// SOLO esas (Plan 042 · Ola 3.1).
+//
+// La versión de la Ola 3 preguntaba por `next_attempt_at <= now()`, que para una
+// fila en vuelo es SIEMPRE cierto —el claim no lo tocaba, y ser reclamable exigía
+// que ya estuviera vencido—, así que revertía también las entregas vivas. Con una
+// sola instancia no se veía; con dos (rolling deploy, réplica nueva) el arranque
+// de una devolvía a pending lo que la otra estaba entregando, y la misma solicitud
+// salía dos veces hacia el CRM.
+//
+// Ahora el discriminante es `claimed_at`: solo se recupera lo que lleva más de un
+// `lease` reclamado. `claimed_at IS NULL` con status 'delivering' se trata como
+// huérfana inmediata porque esa combinación solo la deja el código anterior a la
+// migración 0049 — un worker de esta versión siempre sella el claim.
+//
+// attempts++ porque un claim vencido FUE un intento: sin contarlo, una entrega que
+// tumba a su worker de forma reproducible giraría para siempre sin llegar nunca a
+// `dead`, que es justo lo que MaxAttempts existe para impedir.
+func (p *Postgres) RecoverOrphanDeliveries(ctx context.Context, lease time.Duration) (int, error) {
 	res, err := p.db.ExecContext(ctx, `
 		UPDATE public.webhook_outbox
-		SET status = $1
-		WHERE status = $2 AND next_attempt_at <= now()
-	`, StatusPending, StatusDelivering)
+		SET status = $1, attempts = attempts + 1, last_error = $2, claimed_at = NULL
+		WHERE status = $3
+		  AND (claimed_at IS NULL OR claimed_at < now() - make_interval(secs => $4::double precision))
+	`, StatusPending, orphanReason, StatusDelivering, lease.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("integrations: recuperar entregas huérfanas: %w", err)
 	}

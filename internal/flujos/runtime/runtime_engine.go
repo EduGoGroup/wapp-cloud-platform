@@ -302,6 +302,13 @@ func New(repo FlowStore, eng *engine.Engine, sender Sender, resolver TenantResol
 	if len(rt.sinks) == 0 {
 		rt.sinks = []EventSink{NewLogSink(log)}
 	}
+	// El ORDEN del fan-out es una propiedad del runtime, no del wiring (Plan 042 ·
+	// Ola 3.1): los sinks que proyectan —y de paso ENRIQUECEN eff.Payload— corren
+	// antes que los que solo leen ese payload para notificar afuera. Se ordena UNA
+	// vez aquí, de forma estable, para que dispatch() no pague nada por efecto y
+	// para que reordenar dos WithEventSink en bootstrap.go deje de poder romper la
+	// correlación del intake_id en silencio (ver SinkPhase en event_sink.go).
+	sortSinksByPhase(rt.sinks)
 	// El resolver de disparos nunca es nil: NoopResolver por defecto (INV-6
 	// no-regresión: sin WithTriggerResolver el comportamiento es idéntico al previo
 	// al Plan 019 — un entrante sin conversación viva se ignora, decisión C).
