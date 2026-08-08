@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:wapp:contracts:wapp-crm-v1:catalog.pull",
+  "title": "wapp-crm-v1 · catalog.pull (respuesta del puente) — IMPLEMENTACIÓN DIFERIDA",
+  "description": "Forma de la RESPUESTA que el puente devuelve cuando wApp le pide el catálogo. El verbo se publica en v1 pero NADA del Plan 042 lo implementa (D-042.3, REQ-15). La forma es la MISMA del blob de catálogo que wApp ya consume, más contract_version: el puente entrega el catálogo YA en formato wApp; mapear desde el CRM es trabajo del puente (INV-08). Sin moneda tipada (INV-09).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "categories"],
+  "properties": {
+    "contract_version": {
+      "const": "1",
+      "description": "Versión del contrato. Siempre la cadena \"1\" en wapp-crm-v1."
+    },
+    "categories": {
+      "type": "array",
+      "description": "Categorías del catálogo, en el orden en que se ofrecerán.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["code", "label", "items"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1, "description": "Código estable de la categoría." },
+          "label": { "type": "string", "description": "Etiqueta visible de la categoría." },
+          "items": {
+            "type": "array",
+            "description": "Artículos de la categoría.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["code", "sku", "label", "price"],
+              "properties": {
+                "code": { "type": "string", "minLength": 1, "description": "Código estable del artículo dentro de la categoría." },
+                "sku": { "type": "string", "description": "SKU que viajará en items[].sku del intake.push." },
+                "label": { "type": "string", "description": "Etiqueta visible del artículo." },
+                "price": { "type": "number", "minimum": 0, "description": "Precio unitario. Número sin moneda tipada (INV-09)." },
+                "description": { "type": "string", "description": "Descripción del artículo. OPCIONAL." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
