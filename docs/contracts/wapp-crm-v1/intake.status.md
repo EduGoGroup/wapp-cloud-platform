@@ -44,8 +44,11 @@ X-Wapp-Signature: v1=<hex de HMAC-SHA256(secreto, "v1:1786139523:<cuerpo crudo>"
 | `occurred_at` | `string` (RFC3339) | sí | Instante en que el hecho ocurrió **en el CRM** — no cuando se envió el callback. |
 
 **El `tenant` NO viaja en el cuerpo.** El tenant efectivo es el del header `X-Wapp-Tenant`
-**autenticado por la firma HMAC**; cualquier campo de tenant en el cuerpo se ignora y, de hecho, el
-schema lo rechaza como propiedad no permitida.
+**autenticado por la firma HMAC**. Un campo `tenant` en el cuerpo **no se ignora: se rechaza**. El
+schema declara `additionalProperties: false`, así que cualquier propiedad que no esté en la tabla
+de arriba —`tenant` incluido— responde **422**. Es deliberado y vale para todo el contrato: un
+error de integración tiene que doler en el primer intento, no pasar desapercibido durante semanas
+mientras el puente cree que está mandando un campo que wApp nunca leyó.
 
 ---
 

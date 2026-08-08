@@ -8,6 +8,7 @@ package integrations_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -220,9 +221,11 @@ func TestUpsertTenantIntegration_SecretoVacioPreservaElExistente(t *testing.T) {
 	}
 }
 
-// TestRecoverOrphanDeliveries_VuelveAPending confirma D-042.4 contra Postgres
-// real: una fila 'delivering' con next_attempt_at vencido vuelve a pending.
-func TestRecoverOrphanDeliveries_VuelveAPending(t *testing.T) {
+// TestRecoverOrphanDeliveries_FilaSinSelloEsHuerfanaInmediata cubre la RUTA DE
+// ACTUALIZACIÓN de la migración 0049: una fila que quedó en 'delivering' sin
+// claimed_at solo puede venir del código anterior al lease (un worker de esta
+// versión siempre sella el claim), así que se rescata sin esperar al lease.
+func TestRecoverOrphanDeliveries_FilaSinSelloEsHuerfanaInmediata(t *testing.T) {
 	db := openTestDB(t)
 	wipeWebhookTables(t, db)
 	store := integrations.NewPostgres(db, cipherDePrueba(t))
@@ -232,13 +235,15 @@ func TestRecoverOrphanDeliveries_VuelveAPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encolar: %v", err)
 	}
+	// Sin claimed_at: exactamente como la dejaba el código de la Ola 3.
 	if _, err := db.ExecContext(ctx, `
-		UPDATE public.webhook_outbox SET status = 'delivering' WHERE id = $1
+		UPDATE public.webhook_outbox SET status = 'delivering', claimed_at = NULL WHERE id = $1
 	`, id); err != nil {
-		t.Fatalf("simular delivering: %v", err)
+		t.Fatalf("simular delivering sin sello: %v", err)
 	}
 
-	n, err := store.RecoverOrphanDeliveries(ctx)
+	// Lease holgado a propósito: aun así debe rescatarla, porque no tiene sello.
+	n, err := store.RecoverOrphanDeliveries(ctx, time.Hour)
 	if err != nil {
 		t.Fatalf("RecoverOrphanDeliveries: %v", err)
 	}
@@ -252,5 +257,84 @@ func TestRecoverOrphanDeliveries_VuelveAPending(t *testing.T) {
 	}
 	if status != integrations.StatusPending {
 		t.Fatalf("status=%q, quiero pending", status)
+	}
+}
+
+// TestRecoverOrphanDeliveries_NoRevierteUnaEntregaViva es el test de regresión
+// del hallazgo #2 del review de las Olas 1-3, contra Postgres REAL.
+//
+// El bug: la recuperación preguntaba por `next_attempt_at <= now()`, condición
+// que TODA fila en vuelo cumple (el claim no la tocaba, y ser reclamable exigía
+// que ya estuviese vencida). Con dos réplicas —o un rolling deploy— el arranque
+// de una devolvía a pending lo que la otra estaba entregando, y la misma
+// solicitud salía dos veces hacia el CRM del cliente.
+//
+// Un doble en memoria no puede demostrar esto: la condición vive en SQL.
+func TestRecoverOrphanDeliveries_NoRevierteUnaEntregaViva(t *testing.T) {
+	db := openTestDB(t)
+	wipeWebhookTables(t, db)
+	store := integrations.NewPostgres(db, cipherDePrueba(t))
+	ctx := context.Background()
+
+	if _, err := store.EnqueueWebhook(ctx, "t-viva", "intake.push", []byte(`{}`)); err != nil {
+		t.Fatalf("encolar: %v", err)
+	}
+
+	// Réplica A reclama: la fila queda delivering con el claim recién sellado.
+	batch, err := store.ClaimWebhookBatch(ctx, 10)
+	if err != nil {
+		t.Fatalf("ClaimWebhookBatch: %v", err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("reclamadas=%d, quiero 1", len(batch))
+	}
+	claim := batch[0]
+	if claim.ClaimedAt.IsZero() {
+		t.Fatal("el claim debe volver SELLADO con claimed_at (migración 0049)")
+	}
+
+	// Réplica B arranca y rescata huérfanas. Con el lease por defecto, la entrega
+	// de A está VIVA y NO se puede tocar.
+	n, err := store.RecoverOrphanDeliveries(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("RecoverOrphanDeliveries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("se rescataron %d entregas VIVAS: la réplica B pisó el trabajo de la A "+
+			"(esto es exactamente el bug que el lease cierra)", n)
+	}
+
+	// Y A puede cerrar su entrega sin encontrarse la fila robada.
+	if err := store.MarkWebhookDelivered(ctx, claim); err != nil {
+		t.Fatalf("la réplica A debía poder cerrar su propia entrega: %v", err)
+	}
+}
+
+// TestMarkWebhook_ConClaimRobado_DevuelveErrClaimLost: si el lease SÍ venció y
+// otro worker reclamó la fila, el worker viejo no puede pisar el resultado del
+// nuevo — la valla optimista lo corta y se entera con ErrClaimLost.
+func TestMarkWebhook_ConClaimRobado_DevuelveErrClaimLost(t *testing.T) {
+	db := openTestDB(t)
+	wipeWebhookTables(t, db)
+	store := integrations.NewPostgres(db, cipherDePrueba(t))
+	ctx := context.Background()
+
+	if _, err := store.EnqueueWebhook(ctx, "t-robado", "intake.push", []byte(`{}`)); err != nil {
+		t.Fatalf("encolar: %v", err)
+	}
+	batch, err := store.ClaimWebhookBatch(ctx, 1)
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("ClaimWebhookBatch: len=%d err=%v", len(batch), err)
+	}
+	viejo := batch[0]
+
+	// El lease vence y otro worker la rescata (lease 0 ⇒ todo claim está vencido).
+	if n, rerr := store.RecoverOrphanDeliveries(ctx, 0); rerr != nil || n != 1 {
+		t.Fatalf("rescate: n=%d err=%v", n, rerr)
+	}
+
+	if err := store.MarkWebhookDelivered(ctx, viejo); !errors.Is(err, integrations.ErrClaimLost) {
+		t.Fatalf("err=%v, quiero ErrClaimLost: el worker con el claim vencido NO puede "+
+			"cerrar una fila que ya tiene otro dueño", err)
 	}
 }

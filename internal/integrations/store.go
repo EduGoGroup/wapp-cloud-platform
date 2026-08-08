@@ -8,8 +8,18 @@ package integrations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrClaimLost lo devuelven las tres transiciones terminales/de reintento cuando
+// la valla optimista NO casa: la fila ya no está en `delivering` con el
+// `claimed_at` que este worker reclamó, porque su lease venció y OTRO worker la
+// reclamó mientras tanto (Plan 042 · Ola 3.1).
+//
+// No es un fallo de entrega: es este worker llegando tarde. El llamante NO debe
+// reintentar ni contar el intento — la fila ya tiene otro dueño que la resolverá.
+var ErrClaimLost = errors.New("integrations: el claim de la entrega ya no es vigente")
 
 // Estados del ciclo de vida INTERNO de una entrega (webhook_outbox.status, CHECK
 // en la 0046 — vocabulario cerrado que fija este plan, al contrario que
@@ -34,6 +44,11 @@ type WebhookOutbox struct {
 	NextAttemptAt time.Time
 	CreatedAt     time.Time
 	LastError     string // "" == NULL (nunca falló)
+	// ClaimedAt es el instante del claim VIGENTE (migración 0049). Cero == NULL
+	// (no hay claim vigente). Es lo que hace de lease —distingue "la están
+	// entregando ahora" de "su worker murió"— y de valla optimista al cerrar la
+	// fila: las tres transiciones lo exigen para no pisar el claim de otro.
+	ClaimedAt time.Time
 }
 
 // TenantIntegration es una fila de public.tenant_integrations (0047), SIN el
@@ -61,28 +76,42 @@ type Store interface {
 	EnqueueWebhook(ctx context.Context, tenantID, kind string, payload json.RawMessage) (int64, error)
 
 	// ClaimWebhookBatch reclama hasta `limit` filas pending/vencidas con
-	// FOR UPDATE SKIP LOCKED (seguro con más de una réplica del proceso) y las
-	// marca delivering en la MISMA transacción, para que un crash entre el claim
-	// y el POST dependa solo de RecoverOrphanDeliveries, nunca de una carrera.
+	// FOR UPDATE SKIP LOCKED (seguro con más de una réplica del proceso), las
+	// marca delivering y les SELLA el claim con claimed_at = now(), todo en UNA
+	// sentencia atómica. Las filas devueltas traen ya ese claimed_at: es el
+	// testigo que hay que devolver en las tres transiciones de cierre.
 	ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookOutbox, error)
 
-	// MarkWebhookDelivered cierra una entrega en 2xx (terminal).
-	MarkWebhookDelivered(ctx context.Context, id int64) error
+	// MarkWebhookDelivered cierra una entrega en 2xx (terminal). `claim` es la
+	// fila TAL COMO la devolvió ClaimWebhookBatch: su claimed_at es la valla.
+	// Devuelve ErrClaimLost si el claim ya no es vigente (lease vencido y
+	// re-reclamada por otro worker).
+	MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error
 
 	// MarkWebhookFailed registra un intento fallido: attempts++, vuelve a pending
-	// con next_attempt_at = nextAttemptAt (el backoff lo calcula el worker), y dl
-	// deja el motivo en last_error (T3.4, visibilidad de dead).
-	MarkWebhookFailed(ctx context.Context, id int64, nextAttemptAt time.Time, lastErr string) error
+	// con next_attempt_at = nextAttemptAt (el backoff lo calcula el worker) y deja
+	// el motivo en last_error (T3.4, visibilidad de dead). Mismas reglas de valla
+	// que MarkWebhookDelivered.
+	MarkWebhookFailed(ctx context.Context, claim WebhookOutbox, nextAttemptAt time.Time, lastErr string) error
 
 	// MarkWebhookDead cierra una entrega que agotó sus reintentos (terminal,
-	// visible — T3.4).
-	MarkWebhookDead(ctx context.Context, id int64, lastErr string) error
+	// visible — T3.4). Mismas reglas de valla que MarkWebhookDelivered.
+	MarkWebhookDead(ctx context.Context, claim WebhookOutbox, lastErr string) error
 
-	// RecoverOrphanDeliveries vuelve a pending toda fila delivering cuyo
-	// next_attempt_at ya venció (D-042.4): un crash del proceso a mitad de
-	// entrega no pierde el registro. Se llama UNA vez al arrancar el worker.
-	// Devuelve cuántas filas recuperó (para el log de arranque).
-	RecoverOrphanDeliveries(ctx context.Context) (int, error)
+	// RecoverOrphanDeliveries devuelve a pending las filas `delivering` cuyo CLAIM
+	// VENCIÓ — las que llevan más de `lease` sin resolverse, más las que no tienen
+	// claimed_at (reclamadas por el código anterior a la migración 0049).
+	//
+	// El lease es lo que distingue "su worker murió" de "la están entregando
+	// ahora mismo": sin él (Ola 3) esta consulta revertía TODA fila en vuelo, y
+	// con dos réplicas eso producía entregas duplicadas — el hallazgo #2 del
+	// review de las Olas 1-3. Cuenta el intento (attempts++) para que una fila que
+	// tumba a su worker una y otra vez acabe en dead en vez de girar para siempre.
+	//
+	// Se llama al arrancar Y periódicamente (Plan 042 · Ola 3.1): con más de una
+	// réplica, el trabajo de la que muere lo recogen las vivas sin esperar a que
+	// alguien reinicie un proceso. Devuelve cuántas filas recuperó.
+	RecoverOrphanDeliveries(ctx context.Context, lease time.Duration) (int, error)
 
 	// GetTenantIntegration lee la configuración de adaptadores del tenant. found
 	// es false si la fila no existe (equivale a local/local — sin CRM).
