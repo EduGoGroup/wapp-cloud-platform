@@ -76,6 +76,20 @@ const FeatureIntakesExport = "intakes_export"
 // pasada—, no el derecho a tener catálogo.
 const FeatureCatalogImport = "catalog_import"
 
+// FeatureCRMBridge es la feature del puente CRM (Plan 042, D-042.8): gatea el
+// encolado en webhook_outbox del WebhookSink y el CRUD de
+// /api/v1/integrations (Ola 5). Como con FeatureCatalogImport, la clave ya
+// venía sembrada en plan_features desde el Plan 040 (migración 0039:
+// commerce/advisor_ai/advisor_ai_pro/pro la incluyen) — sin la constante Go el
+// gate no se podía escribir, aunque la clave ya existiera en BD.
+//
+// El gate real combina ESTA feature con tenant_integrations (events_adapter=
+// 'webhook' AND enabled=true): tener el plan comercial habilita la CAPACIDAD,
+// tener la fila configurada habilita el DESTINO. Ninguna de las dos sustituye
+// a la otra (mismo principio que "el grant dice puedes operar esto; la
+// feature dice tu plan lo incluye").
+const FeatureCRMBridge = "crm_bridge"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).

@@ -10,94 +10,119 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 )
 
-// WebhookSink es el PUNTO DE INYECCIÓN del CRM/POS externo (Plan 016 · T4,
-// design.md §9.I) implementado como STUB NO-OP: es un EventSink más del fan-out
-// del runtime que, HOY, NO entrega nada por red. Solo LOGUEA que "entregaría" el
-// efecto al CRM y, para cart_closed, CONSTRUYE y SERIALIZA el payload que se
-// enviaría (para dejar documentado y probado el contrato), pero NO hace POST.
+// WebhookSink es el ENCOLADOR del puente CRM (Plan 042 · Ola 3 · T3.2/T2.4):
+// evalúa el gate (feature + integración habilitada) y, si pasa, hace UN INSERT
+// en webhook_outbox con el payload PLANTILLA del contrato wapp-crm-v1
+// (intake.push). NUNCA hace POST — ese es el worker (internal/integrations),
+// que corre en otra goroutina y completa buyer_data/variables{} justo antes de
+// entregar (D-042.9/D-042.11, decisión 2026-08-07 §8.3: prevalece INV-02). Este
+// archivo NO importa net/http a propósito: es la garantía estructural de que el
+// sink jamás bloquea el mensaje entrante con una llamada de red.
 //
-// Por qué existe ya (y no el POST real): en 016 TODO va a la BD (PersistSink →
-// intakes/intake_items). El WebhookSink deja el "asiento" del CRM listo para el
-// futuro sin comprometer credenciales, red ni durabilidad. Un CRM real se
-// enchufa registrando este (u otro) EventSink en main.go SIN tocar el módulo ni
-// el flujo (extensibilidad del hexágono del Plan 015).
-//
-// # Contrato del payload al CRM (zero-knowledge · CERO PII)
-//
-// La forma JSON que un WebhookSink REAL enviaría al CRM/POS es (design.md §9.I):
-//
-//	{
-//	  "tenant":    "<tenant_id>",          // identificador del tenant
-//	  "contact":   "<contact_id opaco>",   // OPACO (Plan 010 / ADR-0010); NUNCA número/JID
-//	  "order_id":  "<uuid de la solicitud>",   // correlación con intakes (ver nota abajo)
-//	  "items": [ { "sku": "...", "label": "...", "customization": "sin cebolla",
-//	              "qty": 2, "unit_price": 9.9 }, ... ],
-//	  "total":     29.7,
-//	  "customer_note": "dejarlo en portería",   // indicación de TODO el pedido
-//	  "timestamp": "2026-07-03T10:00:00Z"  // RFC3339 UTC del cierre
-//	}
-//
-// `items[].customization` es la PERSONALIZACIÓN no facturable de la línea
-// (D-041.17, T4.1b) y viaja aquí porque este payload es el ESBOZO del `intake.push`
-// del Plan 042: es la salida por la que un CRM/POS recibe el pedido, y quien
-// prepara el producto es otro que quien lo recibió. Si el «sin cebolla» no cruza
-// esta frontera, se pierde (INV-12). No toca el dinero: `total` y el precio de la
-// línea son los mismos con o sin ella (INV-13).
-//
-// Coherente con el zero-knowledge (ADR-0007/0009): son DATOS DE NEGOCIO, no PII
-// ni credenciales. El contacto viaja OPACO (contact_id, jamás el teléfono/JID) y
-// no se incluye ningún dato del store cifrado del Edge.
-//
-// Nota sobre order_id: el fan-out entrega el MISMO modules.Effect a todos los
-// sinks; el order_id lo materializa el PersistSink al proyectar intakes. Este stub
-// lo toma de eff.Payload["order_id"] si el efecto lo llevara (hoy cart_closed no
-// lo incluye — design.md §9.J — así que queda vacío). Un WebhookSink real lo
-// correlacionaría (efecto que lo transporte, o consulta a intakes); DIFERIDO.
-//
-// La clave sigue llamándose `order_id` a propósito, y NO se renombró con las
-// tablas en el Plan 041 · T1.0: es un CONTRATO HACIA AFUERA, no un nombre interno.
-// Renombrarlo aquí cambiaría el JSON que un tercero parsea, sin que nadie lo haya
-// pedido y sin versión de contrato que lo anuncie — y el contrato bueno del CRM ya
-// no es este stub, es `intake.push` del Plan 042. Lo interno (tablas, tipos Go,
-// columnas) sí habla de `intake`; esta caja es la frontera.
-//
-// # Qué faltaría para hacerlo REAL (TODO DIFERIDO — §9.I / §10, no implementar aquí)
-//
-//   - POST HTTP saliente al endpoint del CRM (1er cliente HTTP saliente del repo).
-//   - OUTBOX DURABLE + reintentos con back-off (la nube no tiene cola propia; la
-//     durabilidad la da hoy el outbox del Edge, ADR-0003): un POST best-effort
-//     perdería eventos ante un CRM caído.
-//   - tenant_integrations: endpoint + CREDENCIALES CIFRADAS por-tenant (Plan
-//     011/012). tenant_settings (§9.G) es solo su germen.
-//
-// Contrato de Handle (heredado de EventSink): no bloquea indefinidamente, NUNCA
-// filtra PII/credenciales y NUNCA aborta el avance del flujo (devuelve nil; un
-// error de un sink real solo se loguearía). Registrar este sink en el fan-out NO
-// cambia el comportamiento observable (menú/encuesta/carrito idénticos): no
-// escribe BD, no envía WhatsApp, solo loguea.
+// Contrato de Handle (heredado de EventSink): no bloquea indefinidamente
+// (un solo INSERT), NUNCA filtra PII/credenciales, y NUNCA aborta el avance del
+// flujo (devuelve nil siempre; un error de encolado se loguea y sigue).
 type WebhookSink struct {
-	log logger.Logger
-	// deliverEffect es el NOMBRE del efecto que este punto de inyección entregaría al
-	// CRM (hoy cart_closed). Se INYECTA (no se hardcodea el literal de un módulo): el
-	// runtime/sink no conoce los efectos de cart (Plan 027 · Ola 3 · T8). main.go lo
-	// cablea con cart.EffectCartClosed.
+	log    logger.Logger
+	sender WebhookQueuer
+	gate   WebhookGate
+	// deliverEffect es el efecto que este sink entrega al puente (hoy cart_closed).
+	// Se INYECTA (no se hardcodea el literal de un módulo, Plan 027 · Ola 3 · T8):
+	// main.go lo cablea con cart.EffectCartClosed.
 	deliverEffect string
 }
 
-// NewWebhookSink construye el stub del punto de inyección del CRM con el logger dado
-// y el nombre del efecto a entregar. Se registra como cualquier EventSink:
-// flowruntime.WithEventSink(flowruntime.NewWebhookSink(log, cart.EffectCartClosed)).
-// Por defecto NO se registra (§9.I).
-func NewWebhookSink(log logger.Logger, deliverEffect string) *WebhookSink {
-	return &WebhookSink{log: log, deliverEffect: deliverEffect}
+// WebhookQueuer es lo mínimo que el sink necesita del store de integraciones
+// (interfaz local, ISP — mismo patrón que flowEventStore/ProjectionStore de este
+// repo): un solo INSERT. Lo satisface *integrations.Postgres.
+type WebhookQueuer interface {
+	EnqueueWebhook(ctx context.Context, tenantID, kind string, payload json.RawMessage) (int64, error)
 }
 
-// crmItem es una línea del pedido en el contrato JSON hacia el CRM (§9.I).
-//
-// `customization` va SIEMPRE, también vacía: el receptor no debería tener que
-// distinguir "el cliente no pidió nada especial" de "esta plataforma no me lo
-// cuenta" para decidir si imprime la comanda entera.
-type crmItem struct {
+// WebhookGate decide si un tenant tiene el puente CRM activo AHORA MISMO
+// (D-042.8: entitlements.Has(tenant,"crm_bridge") + tenant_integrations con
+// events_adapter='webhook' y enabled=true — mecánica ADR-0022 ya implementada).
+// Interfaz local para que el sink no dependa de los paquetes concretos de
+// entitlements/integrations; la implementación real vive en el wiring
+// (bootstrap.go) como un adaptador pequeño que combina ambos.
+type WebhookGate interface {
+	// Enabled responde si el tenant debe recibir el efecto AHORA. Un error se
+	// trata como "no" (fail-closed, mismo criterio que entitlements.Resolver): un
+	// puente mal configurado no debe colgar el mensaje ni encolar basura.
+	Enabled(ctx context.Context, tenantID string) (bool, error)
+}
+
+// NewWebhookSink construye el sink real. sender/gate pueden ser nil en tests
+// unitarios que solo ejercitan el camino "no entrega" (nav, gate cerrado).
+func NewWebhookSink(log logger.Logger, deliverEffect string, sender WebhookQueuer, gate WebhookGate) *WebhookSink {
+	return &WebhookSink{log: log, sender: sender, gate: gate, deliverEffect: deliverEffect}
+}
+
+// Handle evalúa el gate para el efecto que este sink entrega (hoy cart_closed) y,
+// si pasa, arma la plantilla de intake.push y la encola. Cualquier otro efecto
+// (navegación/telemetría) no se entrega — un CRM real solo quiere el cierre.
+func (s *WebhookSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
+	if s == nil || s.log == nil {
+		return nil
+	}
+	if eff.Name != s.deliverEffect {
+		return nil
+	}
+	if s.sender == nil || s.gate == nil {
+		return nil // sink construido sin dependencias (tests): no-op seguro
+	}
+
+	enabled, err := s.gate.Enabled(ctx, ec.TenantID)
+	if err != nil {
+		s.log.Error("webhook: evaluar gate del puente CRM", "error", err, "tenant", ec.TenantID)
+		return nil
+	}
+	if !enabled {
+		s.log.Debug("webhook: tenant sin puente CRM activo, no se encola", "tenant", ec.TenantID, "name", eff.Name)
+		return nil
+	}
+
+	payload := buildIntakePushTemplate(ec, eff, time.Now().UTC())
+	body, err := json.Marshal(payload)
+	if err != nil {
+		s.log.Error("webhook: serializando la plantilla de intake.push", "error", err, "tenant", ec.TenantID)
+		return nil
+	}
+
+	id, err := s.sender.EnqueueWebhook(ctx, ec.TenantID, "intake.push", body)
+	if err != nil {
+		s.log.Error("webhook: encolando intake.push", "error", err, "tenant", ec.TenantID)
+		return nil
+	}
+	s.log.Debug("webhook: intake.push encolado", "tenant", ec.TenantID, "outbox_id", id, "intake_id", payload.IntakeID)
+	return nil
+}
+
+// intakePushTemplate es la PLANTILLA que se encola (webhook_outbox.payload):
+// solo los campos baratos y estables del contrato wapp-crm-v1 · intake.push.
+// `buyer_data` y `variables` NO viajan aquí — el worker los completa justo
+// antes del POST (D-042.9/D-042.11) — por eso esta struct NO tiene esos campos:
+// añadirlos en el sink volvería a violar INV-02 (cripto/consulta en línea con
+// el mensaje).
+type intakePushTemplate struct {
+	ContractVersion string           `json:"contract_version"`
+	Verb            string           `json:"verb"`
+	Tenant          string           `json:"tenant"`
+	Contact         string           `json:"contact"`
+	IntakeID        string           `json:"intake_id"`
+	LifecycleStatus string           `json:"lifecycle_status"`
+	RevisionNo      int              `json:"revision_no"`
+	CustomerNote    string           `json:"customer_note"`
+	Items           []intakePushItem `json:"items"`
+	Total           float64          `json:"total"`
+	Timestamp       string           `json:"timestamp"`
+	// EventHistoryID es OMITEMPTY a propósito (MD-042.1, resuelto 2026-08-07):
+	// es el único campo opcional del contrato — ausente mientras el Plan 043 no
+	// exista, y el schema lo declara no-requerido.
+	EventHistoryID string `json:"event_history_id,omitempty"`
+}
+
+type intakePushItem struct {
 	SKU           string  `json:"sku"`
 	Label         string  `json:"label"`
 	Customization string  `json:"customization"`
@@ -105,90 +130,47 @@ type crmItem struct {
 	UnitPrice     float64 `json:"unit_price"`
 }
 
-// crmOrderPayload es el cuerpo JSON que un WebhookSink REAL enviaría al CRM/POS al
-// cerrar un pedido (§9.I). CERO PII: contact es OPACO, el resto es dato de negocio.
-// `customer_note` es la indicación del cliente para TODO el pedido (D-041.19): el
-// «dejarlo en portería». Cruza esta frontera por la misma razón que la
-// personalización de la línea —quien prepara y entrega es otro que quien recibió
-// el pedido—, y va SIEMPRE, también vacía.
-type crmOrderPayload struct {
-	Tenant       string    `json:"tenant"`
-	Contact      string    `json:"contact"`
-	OrderID      string    `json:"order_id"`
-	Items        []crmItem `json:"items"`
-	Total        float64   `json:"total"`
-	CustomerNote string    `json:"customer_note"`
-	Timestamp    string    `json:"timestamp"`
-}
+// lifecycleStatusClosed es el estado con el que cart.closeIntake escribe la fila
+// (legado, cart/projection.go: intakeStatusClosed = "closed") — este sink no
+// importa el paquete cart para no crear un ciclo con runtime; el ciclo de vida
+// real tras un cierre de carrito ES SIEMPRE "confirmed" tras normalizar
+// (intakes.NormalizeStatus("closed") == "confirmed"), y el contrato PROHÍBE
+// emitir "closed" (intake.push.md: "El contrato JAMÁS emite closed"). Se
+// hardcodea el resultado ya normalizado en vez de importar internal/intakes
+// solo por esta constante.
+const lifecycleStatusConfirmed = "confirmed"
 
-// Handle es el NO-OP funcional del punto de inyección: NO entrega nada por red y
-// NUNCA aborta (devuelve nil siempre). Loguea a Debug que "entregaría" el efecto
-// al CRM; para cart_closed, además construye y serializa el payload del contrato
-// (§9.I) y lo loguea —son datos de negocio sin PII, no eff.Payload crudo— para
-// dejar el contrato verificable sin red.
-func (s *WebhookSink) Handle(_ context.Context, ec EffectContext, eff modules.Effect) error {
-	if s == nil || s.log == nil {
-		return nil
-	}
-	if eff.Name != s.deliverEffect {
-		// Navegación/telemetría/otros efectos: el punto de inyección no los entrega
-		// (un CRM real filtraría por interés). Solo deja rastro de que existe.
-		s.log.Debug("webhook (stub): efecto NO entregado al CRM (punto de inyección diferido)",
-			"name", eff.Name,
-			"tenant", ec.TenantID,
-			"contact_id", ec.ContactID,
-		)
-		return nil
-	}
-
-	payload := buildCRMOrderPayload(ec, eff, time.Now().UTC())
-	body, err := json.Marshal(payload)
-	if err != nil {
-		// Un fallo de serialización JAMÁS aborta el flujo: se loguea y sigue.
-		s.log.Error("webhook (stub): serializando payload del CRM", "error", err, "tenant", ec.TenantID)
-		return nil
-	}
-	// STUB: NO hay POST. Se loguea el payload que se ENVIARÍA (dato de negocio, sin
-	// PII) para dejar el contrato del CRM verificable en campo sin red.
-	s.log.Debug("webhook (stub): ENTREGARÍA cart_closed al CRM (no se envía — punto de inyección diferido)",
-		"tenant", ec.TenantID,
-		"contact_id", ec.ContactID,
-		"total", payload.Total,
-		"items", len(payload.Items),
-		"payload_json", string(body),
-	)
-	return nil
-}
-
-// buildCRMOrderPayload arma el contrato JSON hacia el CRM (§9.I) a partir del
-// EffectContext (tenant + contact opaco) y el payload del efecto de cierre (items +
-// total). Parsea la MISMA forma del efecto (in-process y round-trip JSON) con las
-// coerciones tolerantes compartidas (modules.As*), SIN acoplarse al paquete cart.
-// now se inyecta para poder verificar la serialización de forma determinista.
-func buildCRMOrderPayload(ec EffectContext, eff modules.Effect, now time.Time) crmOrderPayload {
+// buildIntakePushTemplate arma la plantilla de intake.push (§3 del contrato,
+// design.md) a partir del EffectContext y el efecto cart_closed. intake_id sale
+// de eff.Payload["intake_id"] — lo anota cart.Projector.closeIntake DESPUÉS de
+// proyectar, en el MISMO mapa que ve este sink (corre después en el fan-out de
+// dispatch(), ver runtime/resume.go): sin esa anotación no habría forma de
+// correlacionar sin una consulta extra a la BD, que el sink NO debe hacer
+// (INV-02: cero red/BD adicional en línea con el mensaje más allá del encolado).
+func buildIntakePushTemplate(ec EffectContext, eff modules.Effect, now time.Time) intakePushTemplate {
 	items := effectItems(eff.Payload)
-	crmItems := make([]crmItem, 0, len(items))
+	pushItems := make([]intakePushItem, 0, len(items))
 	for _, m := range items {
-		crmItems = append(crmItems, crmItem{
-			SKU:   modules.AsString(m["sku"]),
-			Label: modules.AsString(m["label"]),
-			// Ausente ⇒ cadena vacía: un efecto de cierre escrito antes de que el
-			// campo existiera cruza igual, sin rama especial (D-041.17).
+		pushItems = append(pushItems, intakePushItem{
+			SKU:           modules.AsString(m["sku"]),
+			Label:         modules.AsString(m["label"]),
 			Customization: modules.AsString(m["customization"]),
 			Qty:           modules.AsInt(m["qty"]),
 			UnitPrice:     modules.AsFloat(m["unit_price"]),
 		})
 	}
-	return crmOrderPayload{
-		Tenant:  ec.TenantID,
-		Contact: ec.ContactID,
-		OrderID: modules.AsString(eff.Payload["order_id"]),
-		Items:   crmItems,
-		Total:   modules.AsFloat(eff.Payload["total"]),
-		// Ausente ⇒ cadena vacía, igual que la personalización de la línea: un cierre
-		// sin indicación (la mayoría) no trae la clave y cruza exactamente igual.
-		CustomerNote: modules.AsString(eff.Payload["customer_note"]),
-		Timestamp:    now.Format(time.RFC3339),
+	return intakePushTemplate{
+		ContractVersion: "1",
+		Verb:            "intake.push",
+		Tenant:          ec.TenantID,
+		Contact:         ec.ContactID,
+		IntakeID:        modules.AsString(eff.Payload["intake_id"]),
+		LifecycleStatus: lifecycleStatusConfirmed,
+		RevisionNo:      1, // wApp emite siempre 1 hasta el Plan 044 (revisiones)
+		CustomerNote:    modules.AsString(eff.Payload["customer_note"]),
+		Items:           pushItems,
+		Total:           modules.AsFloat(eff.Payload["total"]),
+		Timestamp:       now.Format(time.RFC3339),
 	}
 }
 
