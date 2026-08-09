@@ -65,15 +65,24 @@ func countKEK(t *testing.T, db *sql.DB, tenantID, kekID string) int {
 	return n
 }
 
-// wipeContacts limpia la tabla contacts: Rekey escanea GLOBALMENTE (WHERE
-// value_kek_id <> current, sin filtrar tenant), así que el test necesita un tablero
-// limpio para que PendingByKeyID sea determinista y para no toparse con filas de
-// otros tests envueltas por KEKs ausentes de este keyring. contact_id no es blanco
-// de ninguna FK, así que borrar contacts es seguro.
+// wipeContacts limpia las TRES tablas que Rekey barre (Plan 042 · hallazgo #3:
+// desde entonces el censo incluye intake_buyer_data y tenant_integrations, no solo
+// contacts). Rekey escanea GLOBALMENTE (WHERE kek_id <> current, sin filtrar
+// tenant), así que el test necesita un tablero limpio para que PendingByKeyID sea
+// determinista y para no toparse con filas de otros paquetes de integración
+// envueltas por KEKs ausentes de este keyring —que abortarían el scan por
+// fail-safe §10.J. contact_id no es blanco de ninguna FK e intake_buyer_data cuelga
+// de intakes con ON DELETE CASCADE, así que borrar estas filas es seguro.
 func wipeContacts(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.ExecContext(context.Background(), `DELETE FROM public.contacts`); err != nil {
-		t.Fatalf("limpiar contacts: %v", err)
+	for _, borrado := range []string{
+		`DELETE FROM public.contacts`,
+		`DELETE FROM public.intake_buyer_data`,
+		`DELETE FROM public.tenant_integrations`,
+	} {
+		if _, err := db.ExecContext(context.Background(), borrado); err != nil {
+			t.Fatalf("limpiar (%s): %v", borrado, err)
+		}
 	}
 }
 

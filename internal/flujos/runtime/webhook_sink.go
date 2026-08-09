@@ -14,8 +14,10 @@ import (
 // evalúa el gate (feature + integración habilitada) y, si pasa, hace UN INSERT
 // en webhook_outbox con el payload PLANTILLA del contrato wapp-crm-v1
 // (intake.push). NUNCA hace POST — ese es el worker (internal/integrations),
-// que corre en otra goroutina y completa buyer_data/variables{} justo antes de
-// entregar (D-042.9/D-042.11, decisión 2026-08-07 §8.3: prevalece INV-02). Este
+// que corre en otra goroutina y completa buyer_data/variables{}/customer_note
+// justo antes de entregar (D-042.9/D-042.11, decisión 2026-08-07 §8.3: prevalece
+// INV-02; customer_note se sumó a esa lista el 2026-08-08 por PII, ver la
+// plantilla). Este
 // archivo NO importa net/http a propósito: es la garantía estructural de que el
 // sink jamás bloquea el mensaje entrante con una llamada de red.
 //
@@ -108,10 +110,20 @@ func (s *WebhookSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 
 // intakePushTemplate es la PLANTILLA que se encola (webhook_outbox.payload):
 // solo los campos baratos y estables del contrato wapp-crm-v1 · intake.push.
-// `buyer_data` y `variables` NO viajan aquí — el worker los completa justo
-// antes del POST (D-042.9/D-042.11) — por eso esta struct NO tiene esos campos:
-// añadirlos en el sink volvería a violar INV-02 (cripto/consulta en línea con
-// el mensaje).
+// `buyer_data`, `variables` y `customer_note` NO viajan aquí — el worker los
+// completa justo antes del POST (D-042.9/D-042.11) — por eso esta struct NO
+// tiene esos campos: añadirlos en el sink volvería a violar INV-02
+// (cripto/consulta en línea con el mensaje).
+//
+// customer_note se fue por el MISMO camino, pero por un motivo distinto de los
+// otros dos: no es coste, es EXPOSICIÓN. La indicación del cliente («dejarlo en
+// portería, calle Mayor 14») es la PII de manual, y el defecto A2 del Plan 041 ya
+// la sacó de flow_events por la puerta de KindPrivate. Congelarla en el payload de
+// webhook_outbox la dejaba EN CLARO en una segunda tabla que además sobrevive a la
+// entrega — la tercera puerta que aquel arreglo destapó y no cerró. El worker la
+// lee de public.intakes (columna customer_note, migración 0045) justo antes del
+// POST, igual que descifra buyer_data: el contrato wapp-crm-v1 NO cambia, cambia
+// CUÁNDO se rellena.
 type intakePushTemplate struct {
 	ContractVersion string           `json:"contract_version"`
 	Verb            string           `json:"verb"`
@@ -120,7 +132,6 @@ type intakePushTemplate struct {
 	IntakeID        string           `json:"intake_id"`
 	LifecycleStatus string           `json:"lifecycle_status"`
 	RevisionNo      int              `json:"revision_no"`
-	CustomerNote    string           `json:"customer_note"`
 	Items           []intakePushItem `json:"items"`
 	Total           float64          `json:"total"`
 	Timestamp       string           `json:"timestamp"`
@@ -175,10 +186,12 @@ func buildIntakePushTemplate(ec EffectContext, eff modules.Effect, now time.Time
 		IntakeID:        modules.AsString(eff.Payload["intake_id"]),
 		LifecycleStatus: lifecycleStatusConfirmed,
 		RevisionNo:      1, // wApp emite siempre 1 hasta el Plan 044 (revisiones)
-		CustomerNote:    modules.AsString(eff.Payload["customer_note"]),
-		Items:           pushItems,
-		Total:           modules.AsFloat(eff.Payload["total"]),
-		Timestamp:       now.Format(time.RFC3339),
+		// customer_note NO se lee de eff.Payload aunque esté ahí: el efecto sigue
+		// llevándola (el proyector la necesita para escribir intakes.customer_note)
+		// y este sink la ignora a propósito. Ver el comentario de intakePushTemplate.
+		Items:     pushItems,
+		Total:     modules.AsFloat(eff.Payload["total"]),
+		Timestamp: now.Format(time.RFC3339),
 	}
 }
 

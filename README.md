@@ -138,6 +138,7 @@ Principales (ver `config.go` para el conjunto completo):
 | `WAPP_JWT_EC_PRIVATE_KEY_FILE` · `WAPP_JWT_KID` · `WAPP_JWT_ISSUER` | Firma/validación del **Context Token** de wApp (ES256) |
 | `WAPP_IDENTITY_URL` · `WAPP_IDENTITY_JWKS_URL` · `WAPP_IDENTITY_TIMEOUT` | El SSO del grupo: a quién preguntar por las credenciales y con qué claves verificar sus Identity Tokens |
 | `WAPP_KEK_KEYRING` · `WAPP_KEK_CURRENT` · `WAPP_KEK_MASTER_B64` · `WAPP_KEK_INDEX_B64` · `WAPP_CLOUD_ENC_PRIVKEY_B64` | Cifrado de PII (KEK versionada, ADR-0017) y clave de tránsito de la nube |
+| `WAPP_KEK_PROVIDER` (`env` default · `kms`) · `WAPP_KEK_KMS_KEY` · `WAPP_KEK_KMS_KEYRING` · `WAPP_KEK_KMS_INDEX_B64` | De dónde sale la KEK (Plan 042 · T9, ADR-0036): `env` la lee en claro del entorno (**dev local**); `kms` la toma cifrada por el KMS de GCP y la desenvuelve una vez al arrancar. Con `kms` mal configurado el arranque **falla**, nunca cae al fallback. El default sigue en `env`: el KMS se construye pero **no se activa en alfa** (gate T9.2) |
 | `WAPP_LEASE_PRIVATE_KEY_FILE` · `WAPP_LEASE_PRIVATE_KEY_B64` · `WAPP_LEASE_TTL_MINUTES` | Firma y vigencia del lease (kill-switch, ADR-0007) |
 | `WAPP_PKI_*` | Rutas de la CA y el cert de servidor de la PKI del gateway |
 | `WAPP_STORAGE_S3_*` (`BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `PRESIGN_EXPIRY`) | Almacén de objetos R2 (media/PDF) |

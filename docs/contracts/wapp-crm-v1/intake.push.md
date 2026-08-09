@@ -144,6 +144,15 @@ sin controles ni saltos de línea).
   contrato.
 - Son instrucción de producción/entrega, **no identidad**: por eso van en claro y no cifradas.
 
+**`customer_note` se lee en el instante de la entrega**, igual que `variables{}` y por el mismo
+motivo estructural (el builder la lee dentro del worker, nunca en línea con el mensaje de WhatsApp
+— INV-02). Aquí el motivo además es de exposición: es texto libre del cliente final, así que no se
+congela en la cola de entregas, donde sobreviviría en claro a la propia entrega. **Para el puente no
+cambia nada** —el campo llega donde siempre y sigue siendo obligatorio—, con una consecuencia
+observable: si el dueño corrige la nota entre el push y un reintento, se entrega la corregida.
+`items[].customization` **sí** viaja congelada desde el push: pertenece a la línea, y una línea ya
+tomada no se reescribe.
+
 ## Campos RESERVADOS — documentados, **NO emitidos**
 
 | Campo | Estado |

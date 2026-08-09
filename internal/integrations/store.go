@@ -82,10 +82,15 @@ type Store interface {
 	// testigo que hay que devolver en las tres transiciones de cierre.
 	ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookOutbox, error)
 
-	// MarkWebhookDelivered cierra una entrega en 2xx (terminal). `claim` es la
-	// fila TAL COMO la devolvió ClaimWebhookBatch: su claimed_at es la valla.
-	// Devuelve ErrClaimLost si el claim ya no es vigente (lease vencido y
-	// re-reclamada por otro worker).
+	// MarkWebhookDelivered cierra una entrega en 2xx (terminal) Y VACÍA su payload
+	// en la misma sentencia: la fila queda como RECIBO (id, tenant, kind,
+	// timestamps, attempts, status) sin conservar una copia en claro de lo que ya
+	// tiene el puente. `claim` es la fila TAL COMO la devolvió ClaimWebhookBatch:
+	// su claimed_at es la valla. Devuelve ErrClaimLost si el claim ya no es
+	// vigente (lease vencido y re-reclamada por otro worker).
+	//
+	// Vaciar NO es borrar: la fila sobrevive. La retención por antigüedad es del
+	// Plan 046, no de aquí.
 	MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error
 
 	// MarkWebhookFailed registra un intento fallido: attempts++, vuelve a pending

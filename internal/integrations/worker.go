@@ -50,6 +50,20 @@ type BuyerDataReader interface {
 	GetBuyerData(ctx context.Context, intakeID string) (intakes.BuyerData, bool, error)
 }
 
+// CustomerNoteReader es lo mínimo que el worker necesita para completar
+// `customer_note` justo antes del POST. Lo satisface *intakes.Postgres.
+//
+// Es el TERCER campo que se completa aquí en vez de congelarse en la plantilla,
+// y el único de los tres que llegó por PII y no por coste: la indicación del
+// cliente («dejarlo en portería, calle Mayor 14») es texto libre suyo, y
+// congelarla en webhook_outbox.payload la dejaba en claro en una tabla que
+// además sobrevive a la entrega — la tercera puerta que destapó el arreglo del
+// defecto A2 del Plan 041. Mismo camino que buyer_data: fuera de lo persistido,
+// dentro de lo que se arma en memoria (INV-02).
+type CustomerNoteReader interface {
+	GetCustomerNote(ctx context.Context, tenantID, intakeID string) (string, bool, error)
+}
+
 // TenantVariablesReader es lo mínimo que el worker necesita de tenantvars.Store
 // para completar `variables{}` (D-042.11: snapshot al momento de la ENTREGA, no
 // del push — decisión 2026-08-07, prevalece INV-02). Interfaz mínima (ISP): el
@@ -114,6 +128,7 @@ func (c WorkerConfig) withDefaults() WorkerConfig {
 type Worker struct {
 	store    Store
 	buyer    BuyerDataReader
+	notes    CustomerNoteReader
 	tenvars  TenantVariablesReader
 	http     *http.Client
 	log      logger.Logger
@@ -125,10 +140,11 @@ type Worker struct {
 // visibilidad de dead) — mismo patrón desacoplado que receipts.NewSink: este
 // paquete NUNCA importa internal/platform/metrics, el llamante (bootstrap.go)
 // pasa mtx.WebhookDelivery directo. onRecord puede ser nil (tests).
-func NewWorker(store Store, buyer BuyerDataReader, tenvars TenantVariablesReader, log logger.Logger, cfg WorkerConfig, onRecord func(status string)) *Worker {
+func NewWorker(store Store, buyer BuyerDataReader, notes CustomerNoteReader, tenvars TenantVariablesReader, log logger.Logger, cfg WorkerConfig, onRecord func(status string)) *Worker {
 	return &Worker{
 		store:    store,
 		buyer:    buyer,
+		notes:    notes,
 		tenvars:  tenvars,
 		http:     &http.Client{},
 		log:      log,
@@ -292,11 +308,16 @@ func (w *Worker) claimLost(err error, item WebhookOutbox, transicion string) boo
 	return true
 }
 
-// completePayload decodifica la plantilla encolada, añade buyer_data (descifrado)
-// y variables{} (snapshot AHORA, no al momento del push), y resuelve el endpoint
-// + secreto vigentes del tenant. Si el tenant ya no tiene integración habilitada
-// (borrada o deshabilitada después de encolar), devuelve un error explícito: el
-// llamante lo trata como fallo terminal (sin destino, reintentar no ayuda).
+// completePayload decodifica la plantilla encolada, añade buyer_data (descifrado),
+// customer_note y variables{} —los tres leídos AHORA, no al momento del push— y
+// resuelve el endpoint + secreto vigentes del tenant. Si el tenant ya no tiene
+// integración habilitada (borrada o deshabilitada después de encolar), devuelve un
+// error explícito: el llamante lo trata como fallo terminal (sin destino,
+// reintentar no ayuda).
+//
+// El mapa que se muta aquí sale de json.Unmarshal sobre item.Payload: es PROPIO de
+// esta llamada, no el eff.Payload compartido por el fan-out de sinks. Mutarlo no
+// alcanza a nadie más, y el `body` se re-serializa desde él sin tocar la fila.
 func (w *Worker) completePayload(ctx context.Context, item WebhookOutbox) (body []byte, endpointURL, secret string, err error) {
 	var payload map[string]any
 	if err := json.Unmarshal(item.Payload, &payload); err != nil {
@@ -312,6 +333,12 @@ func (w *Worker) completePayload(ctx context.Context, item WebhookOutbox) (body 
 		return nil, "", "", err
 	}
 	payload["buyer_data"] = buyerData
+
+	note, err := w.resolveCustomerNote(ctx, item.TenantID, intakeID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	payload["customer_note"] = note
 
 	variables, err := w.resolveVariables(ctx, item.TenantID)
 	if err != nil {
@@ -345,6 +372,33 @@ func (w *Worker) resolveBuyerData(ctx context.Context, intakeID string) (map[str
 		return map[string]string{}, nil
 	}
 	return bd, nil
+}
+
+// resolveCustomerNote lee la indicación del cliente de public.intakes justo antes
+// del POST, en vez de leerla de la plantilla congelada: así la nota —texto libre
+// del cliente final, PII— no queda EN CLARO en webhook_outbox.payload. Sin
+// intake_id o sin fila ⇒ cadena vacía (el contrato admite customer_note vacía, y
+// la columna es NOT NULL con la cadena vacía por defecto: «sin nota» y «vacía»
+// son el mismo caso, no dos).
+//
+// Consecuencia deliberada, la MISMA de variables{}: la nota que llega al puente es
+// la del instante de la ENTREGA. Si el dueño la corrigió entre el push y un
+// reintento, se entrega la corregida — que es la que quien prepara el pedido tiene
+// que leer.
+func (w *Worker) resolveCustomerNote(ctx context.Context, tenantID, intakeID string) (string, error) {
+	if intakeID == "" {
+		return "", nil
+	}
+	note, found, err := w.notes.GetCustomerNote(ctx, tenantID, intakeID)
+	if err != nil {
+		// El error del store NO cita la nota (ver intakes/customernote.go) y este
+		// tampoco la añade: el mensaje acaba en el log del worker.
+		return "", fmt.Errorf("leer la indicación del cliente de %s: %w", intakeID, err)
+	}
+	if !found {
+		return "", nil
+	}
+	return note, nil
 }
 
 // resolveVariables toma el snapshot de tenant_variables AL MOMENTO DE LA
