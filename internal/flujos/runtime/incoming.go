@@ -160,9 +160,34 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	} else if esc {
 		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
 	}
+	// Salto por tipo y desactivación SOBRE conversación viva (Plan 043 · T2.2/T2.4,
+	// D-043.2): la EXCEPCIÓN ACOTADA de INV-02. Va justo aquí por dos razones:
+	// DESPUÉS del escape global, que conserva su semántica y su prioridad EXACTAS
+	// (INV-06), y ANTES de consecutiveReplay y del Step, porque «carrito» dicho a
+	// media encuesta es una orden de navegación y no una respuesta para el módulo —si
+	// llegara al engine, la encuesta lo guardaría como si fuera la contestación a su
+	// pregunta.
+	if done, eerr := rt.liveEventSwitch(ctx, tenantID, sessionID, key, st, m); eerr != nil {
+		return eerr
+	} else if done {
+		return nil
+	}
 	if consecutiveReplay(st, m) {
 		// Re-entrega INMEDIATA del mismo mensaje → no avanzar ni reenviar.
 		return nil
+	}
+
+	// Estado SIN flujo: lo deja el menú del despachador cuando el contacto pide la
+	// lista sin tener ninguna conversación abierta (D-043.3: el menú no es una fila de
+	// flow_definitions). Si llegamos aquí es que el texto NO era una opción del menú
+	// —menuChoice ya lo descartó—, así que se cumple lo que el propio menú promete
+	// («si prefieres otra cosa, escríbelo») soltando el estado y tratándolo como un
+	// entrante sin conversación viva, en vez de reventar buscando un flujo que no existe.
+	if st.FlowID == "" {
+		if derr := rt.store.Delete(ctx, key); derr != nil {
+			return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
+		}
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
 
 	def, err := rt.store.GetDefinition(ctx, tenantID, st.FlowID, st.FlowVersion)
@@ -217,28 +242,69 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 		return nil
 	}
 	switch dec.Action {
-	case trigger.Start, trigger.Fallback:
-		// Red anti-loop (Plan 020 · T0): el arranque por disparo SIEMPRE auto-responde
-		// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
-		// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
-		// aquí ⇒ no gasta cuota.
-		if !rt.replyAllowed(key) {
-			return nil
-		}
-		// dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
-		// kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
-		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName); serr != nil {
-			if errors.Is(serr, ErrConversationExists) {
-				rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
-					"session_id", sessionID)
-				return nil
-			}
-			return serr
-		}
-		return nil
+	case trigger.StartEvent, trigger.Start, trigger.Fallback:
+		return rt.startFromDecision(ctx, tenantID, sessionID, key, contactID, dec)
 	default: // trigger.Ignore (o cualquier otro): decisión C, no arranca nada.
 		return nil
 	}
+}
+
+// startFromDecision ejecuta una decisión de arranque separando las PUERTAS DEL
+// NACIMIENTO TARDÍO del evento (Plan 043 · T2.5, E-6) del arranque de siempre.
+//
+// Aquí se parte la rama que antes compartían Start y Fallback, y el corte es la
+// tarea entera: el `fallback` queda FUERA de las puertas a propósito. Un saludo, la
+// cháchara o un texto que no casó nada NO crean fila en conversation_events ni
+// arrancan reloj — ese es el TIEMPO MUERTO. La rama ignora dec.EventKind aunque una
+// regla mal configurada lo trajera poblado: quién puede parir un evento lo decide el
+// SITIO, no el dato que llega.
+//
+// Las dos puertas que sí pasan por aquí son event_start (kind del tenant) y una
+// intención LLM mapeada a un event_kind (dec.EventKind poblado sobre Action=Start).
+// La tercera —elegir en el despachador— entra por su propio camino.
+func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if dec.Action != trigger.Fallback {
+		consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "")
+		if err != nil {
+			return err
+		}
+		if consumed {
+			return nil
+		}
+	}
+	return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+}
+
+// startPlainFlow arranca el flujo del tenant SIN parir evento: es el camino del Plan
+// 019 byte a byte, extraído para que la rama de eventos no lo duplique.
+//
+// dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
+// kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
+func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if dec.FlowID == "" {
+		// Una regla de evento sin flujo (el caso del tipo `menu`, D-043.3) y sin plano
+		// de eventos cableado no tiene nada que arrancar. No es un error: es un motor
+		// sin la Ola 2 puesta.
+		rt.log.Debug("runtime: decisión de arranque sin flow_id; no hay flujo que arrancar",
+			"session_id", sessionID)
+		return nil
+	}
+	// Red anti-loop (Plan 020 · T0): el arranque por disparo SIEMPRE auto-responde
+	// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
+	// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
+	// aquí ⇒ no gasta cuota.
+	if !rt.replyAllowed(key) {
+		return nil
+	}
+	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName); serr != nil {
+		if errors.Is(serr, ErrConversationExists) {
+			rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
+				"session_id", sessionID)
+			return nil
+		}
+		return serr
+	}
+	return nil
 }
 
 // buildSignal arma la señal de entrada del resolver de disparos (Plan 029 · T7): el

@@ -44,6 +44,17 @@ func mustResolveSig(t *testing.T, r *trigger.ConfigResolver, tenantID, sessionID
 	return dec
 }
 
+// mustResolveLive ejecuta ResolveLive —el camino de CONVERSACIÓN VIVA (Plan 043 ·
+// D-043.2)— para la sesión dada y falla si hay error.
+func mustResolveLive(t *testing.T, r *trigger.ConfigResolver, tenantID, sessionID, text string) trigger.Decision {
+	t.Helper()
+	dec, err := r.ResolveLive(context.Background(), tenantID, sessionID, text)
+	if err != nil {
+		t.Fatalf("resolveLive(%q,%q,%q): %v", tenantID, sessionID, text, err)
+	}
+	return dec
+}
+
 // mustEscape ejecuta IsEscape (sesión global) y falla si hay error, devolviendo
 // también el message.
 func mustEscape(t *testing.T, r *trigger.ConfigResolver, tenantID, text string) (bool, string) {
@@ -299,5 +310,200 @@ func TestConfigResolver_DisabledLLMIgnored(t *testing.T) {
 	sig := trigger.Signal{Intent: &trigger.IntentSignal{Name: "pedido"}}
 	if dec := mustResolveSig(t, r, "t1", "", sig); dec.Action != trigger.Ignore {
 		t.Fatalf("regla llm deshabilitada no debe casar, got %+v", dec)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Plan 043 · T2.1 — event_start / event_stop
+// ---------------------------------------------------------------------------
+
+// TestConfigResolver_EventStartMatchesNormalized: «CARRÍTO» (mayúsculas, acento y
+// espacios) casa el event_start de keyword `carrito` con la MISMA normalización de
+// siempre, y la decisión lleva el tipo de evento que el runtime tiene que parir.
+func TestConfigResolver_EventStartMatchesNormalized(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true})
+	dec := mustResolve(t, r, "t1", "  CARRÍTO ")
+	if dec.Action != trigger.StartEvent || dec.EventKind != "cart" {
+		t.Fatalf("esperaba StartEvent/cart, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_EventStartIsPeerOfKeyword: event_start y keyword compiten en el
+// MISMO peldaño (D-043.2), así que el ganador lo decide la priority del dueño y no el
+// kind. Se verifica en los dos sentidos para que no pase por casualidad.
+func TestConfigResolver_EventStartIsPeerOfKeyword(t *testing.T) {
+	eventWins := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "pedido", MatchType: trigger.MatchExact, FlowID: "viejo", Priority: 1, Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "pedido", MatchType: trigger.MatchExact, EventKind: "cart", Priority: 9, Enabled: true},
+	)
+	if dec := mustResolve(t, eventWins, "t1", "pedido"); dec.Action != trigger.StartEvent || dec.EventKind != "cart" {
+		t.Fatalf("con mayor priority debe ganar el event_start, got %+v", dec)
+	}
+	keywordWins := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "pedido", MatchType: trigger.MatchExact, FlowID: "viejo", Priority: 9, Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "pedido", MatchType: trigger.MatchExact, EventKind: "cart", Priority: 1, Enabled: true},
+	)
+	if dec := mustResolve(t, keywordWins, "t1", "pedido"); dec.Action != trigger.Start || dec.FlowID != "viejo" {
+		t.Fatalf("con mayor priority debe ganar la keyword, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_EventStartBeatsFallback: el event_start está en el peldaño de
+// keyword, o sea ANTES del fallback.
+func TestConfigResolver_EventStartBeatsFallback(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindFallback, FlowID: "bienvenida", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true},
+	)
+	if dec := mustResolve(t, r, "t1", "carrito"); dec.Action != trigger.StartEvent {
+		t.Fatalf("event_start debe ganar al fallback, got %+v", dec)
+	}
+	if dec := mustResolve(t, r, "t1", "buenas"); dec.Action != trigger.Fallback || dec.FlowID != "bienvenida" {
+		t.Fatalf("sin casar nada debe seguir mandando el fallback, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_EventStopNotResolvedWithoutLiveConversation: sin conversación
+// viva no hay evento activo que desactivar, así que event_stop NO participa en la
+// escalera reactiva y el turno sigue su curso normal (aquí, el fallback).
+func TestConfigResolver_EventStopNotResolvedWithoutLiveConversation(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStop, Keyword: "parar", MatchType: trigger.MatchExact, Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindFallback, FlowID: "bienvenida", Enabled: true},
+	)
+	if dec := mustResolve(t, r, "t1", "parar"); dec.Action != trigger.Fallback {
+		t.Fatalf("event_stop no debe resolver sin conversación viva, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_ResolveLiveStartsAndStops: con conversación viva, event_start
+// conmuta por tipo y event_stop desactiva — la excepción ACOTADA de INV-02.
+func TestConfigResolver_ResolveLiveStartsAndStops(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "encuesta", MatchType: trigger.MatchExact, EventKind: "survey", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStop, Keyword: "parar", MatchType: trigger.MatchExact, Enabled: true},
+	)
+	if dec := mustResolveLive(t, r, "t1", "", "ENCUESTA"); dec.Action != trigger.StartEvent || dec.EventKind != "survey" {
+		t.Fatalf("event_start debe resolver con conversación viva, got %+v", dec)
+	}
+	dec := mustResolveLive(t, r, "t1", "", "parar")
+	if dec.Action != trigger.StopEvent {
+		t.Fatalf("event_stop debe resolver con conversación viva, got %+v", dec)
+	}
+	if dec.EventKind != "" {
+		t.Fatalf("event_stop corta el activo sea del tipo que sea: no debe llevar EventKind, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_ResolveLiveLeavesINV02Intact: lo que NO es un disparo de evento
+// no se toca con conversación viva — ni keyword, ni fallback, ni llm. El texto sigue
+// siendo del módulo, que es justo lo que INV-02 protege.
+func TestConfigResolver_ResolveLiveLeavesINV02Intact(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "pedido", MatchType: trigger.MatchExact, FlowID: "carrito", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindFallback, FlowID: "bienvenida", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", Enabled: true},
+	)
+	for _, text := range []string{"pedido", "cualquier otra cosa"} {
+		if dec := mustResolveLive(t, r, "t1", "", text); dec.Action != trigger.Ignore {
+			t.Fatalf("con conversación viva %q no debe resolver nada (INV-02), got %+v", text, dec)
+		}
+	}
+}
+
+// TestConfigResolver_ResolveLiveRespetaEnabledSesionYTenant: el camino de conversación
+// viva hereda las MISMAS reglas de visibilidad que el reactivo (enabled, sesión, INV-8).
+func TestConfigResolver_ResolveLiveRespetaEnabledSesionYTenant(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "apagado", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: false},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true, SessionID: "sX"},
+		trigger.Rule{TenantID: "t2", Kind: trigger.KindEventStart, Keyword: "ajeno", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true},
+	)
+	if dec := mustResolveLive(t, r, "t1", "", "apagado"); dec.Action != trigger.Ignore {
+		t.Fatalf("una regla deshabilitada no debe casar, got %+v", dec)
+	}
+	if dec := mustResolveLive(t, r, "t1", "sY", "carrito"); dec.Action != trigger.Ignore {
+		t.Fatalf("una regla de la sesión sX no debe filtrarse a sY, got %+v", dec)
+	}
+	if dec := mustResolveLive(t, r, "t1", "sX", "carrito"); dec.Action != trigger.StartEvent {
+		t.Fatalf("la regla de sX debe aplicar en sX, got %+v", dec)
+	}
+	if dec := mustResolveLive(t, r, "t1", "", "ajeno"); dec.Action != trigger.Ignore {
+		t.Fatalf("una regla de t2 NUNCA es visible para t1 (INV-8), got %+v", dec)
+	}
+}
+
+// TestNoopResolver_ResolveLive: con el resolver por defecto, una conversación viva
+// nunca salta ni se desactiva por texto (no-regresión total, INV-6).
+func TestNoopResolver_ResolveLive(t *testing.T) {
+	var r trigger.Resolver = trigger.NewNoopResolver()
+	dec, err := r.ResolveLive(context.Background(), "t1", "", "carrito")
+	if err != nil || dec.Action != trigger.Ignore {
+		t.Fatalf("Noop ResolveLive debe Ignore sin error, got %+v err=%v", dec, err)
+	}
+}
+
+// TestConfigResolver_ResolveLiveStopGanaAlStart: la colisión REAL de la
+// configuración natural del dueño. «carrito» por contains para entrar y «salir del
+// carrito» por contains para salir hacen que el texto «salir del carrito» case las
+// DOS reglas; con la priority por defecto, el desempate por keyword las ordena al
+// revés de lo pedido («carrito» < «salir del carrito»). Antes de evaluar event_stop
+// primero, quien pedía salir acababa DENTRO del carrito.
+func TestConfigResolver_ResolveLiveStopGanaAlStart(t *testing.T) {
+	r := seed(t,
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchContains, EventKind: "cart", Enabled: true},
+		trigger.Rule{TenantID: "t1", Kind: trigger.KindEventStop, Keyword: "salir del carrito", MatchType: trigger.MatchContains, Enabled: true},
+	)
+	dec := mustResolveLive(t, r, "t1", "", "salir del carrito")
+	if dec.Action != trigger.StopEvent {
+		t.Fatalf("«salir del carrito» debe DESACTIVAR, no entrar; got %+v", dec)
+	}
+	// Y el arranque sigue funcionando para el texto que sí lo pide.
+	if dec := mustResolveLive(t, r, "t1", "", "quiero el carrito"); dec.Action != trigger.StartEvent || dec.EventKind != "cart" {
+		t.Fatalf("«quiero el carrito» debe seguir entrando al carrito; got %+v", dec)
+	}
+}
+
+// TestConfigResolver_DesempateTotalPorTriggerID protege el desempate final por
+// trigger_id, que es lo ÚNICO que hace la resolución independiente del orden en que
+// se consultaron los kinds: event_start y keyword compiten en el mismo peldaño, así
+// que la lista viene de DOS consultas y un empate exacto quedaría decidido por cuál
+// se preguntó antes.
+//
+// Se repite con stores nuevos porque el trigger_id es un UUID aleatorio: en cada
+// vuelta cambia cuál de las dos reglas lo tiene menor, y sin el desempate ganaría
+// siempre la del primer kind consultado. Una sola vuelta acertaría por casualidad la
+// mitad de las veces; treinta convierten el fallo en certeza práctica.
+func TestConfigResolver_DesempateTotalPorTriggerID(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		s := trigger.NewMemoryStore()
+		// Empate EXACTO en todo lo que desempata antes: sesión, priority, match_type y
+		// keyword. Solo queda el trigger_id.
+		ev, err := s.Insert(context.Background(), trigger.Rule{
+			TenantID: "t1", Kind: trigger.KindEventStart, Keyword: "pedido",
+			MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("insert event_start: %v", err)
+		}
+		kw, err := s.Insert(context.Background(), trigger.Rule{
+			TenantID: "t1", Kind: trigger.KindKeyword, Keyword: "pedido",
+			MatchType: trigger.MatchExact, FlowID: "viejo", Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("insert keyword: %v", err)
+		}
+
+		dec, err := trigger.NewConfigResolver(s).Resolve(context.Background(), "t1", "", trigger.Signal{Text: "pedido"})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		// Gana la de trigger_id menor, sea del kind que sea.
+		wantEvent := ev.TriggerID < kw.TriggerID
+		gotEvent := dec.Action == trigger.StartEvent
+		if gotEvent != wantEvent {
+			t.Fatalf("vuelta %d: con event_start=%s y keyword=%s debe ganar el trigger_id menor; got %+v",
+				i, ev.TriggerID, kw.TriggerID, dec)
+		}
 	}
 }

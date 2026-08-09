@@ -198,3 +198,48 @@ func TestIntegration_TriggerStore_TenantIsolation(t *testing.T) {
 		t.Fatalf("t2 no debe ver reglas de t1, got %d", len(list))
 	}
 }
+
+// TestIntegration_TriggerStore_EventKindRoundTrip (Plan 043 · T2.1): la columna
+// event_kind de la migración 0052 hace round-trip por Insert/Get/List/ListByKind, y
+// los kinds nuevos entran SIN CHECK que los rechace (la 0023 nunca declaró uno). Un
+// kind que no pare eventos deja la columna NULL, que se lee como "".
+func TestIntegration_TriggerStore_EventKindRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	s := trigger.NewPostgresStore(db)
+	tid := seedTenant(t, db)
+
+	start := mustInsert(t, s, trigger.Rule{TenantID: tid, Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchExact, EventKind: "cart", Priority: 5, Enabled: true})
+	stop := mustInsert(t, s, trigger.Rule{TenantID: tid, Kind: trigger.KindEventStop, Keyword: "parar", MatchType: trigger.MatchExact, Enabled: true})
+
+	gotStart, err := s.Get(ctx, tid, start.TriggerID)
+	if err != nil {
+		t.Fatalf("get event_start: %v", err)
+	}
+	if gotStart.Kind != trigger.KindEventStart || gotStart.EventKind != "cart" || gotStart.FlowID != "" {
+		t.Fatalf("event_start no hizo round-trip: %+v", gotStart)
+	}
+
+	gotStop, err := s.Get(ctx, tid, stop.TriggerID)
+	if err != nil {
+		t.Fatalf("get event_stop: %v", err)
+	}
+	if gotStop.Kind != trigger.KindEventStop || gotStop.EventKind != "" {
+		t.Fatalf("event_stop debe leer event_kind NULL como \"\": %+v", gotStop)
+	}
+
+	starts, err := s.ListByKind(ctx, tid, "", trigger.KindEventStart)
+	if err != nil {
+		t.Fatalf("listByKind event_start: %v", err)
+	}
+	if len(starts) != 1 || starts[0].EventKind != "cart" {
+		t.Fatalf("ListByKind debe traer el event_kind, got %+v", starts)
+	}
+	all, err := s.List(ctx, tid)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("List esperaba 2, got %d", len(all))
+	}
+}

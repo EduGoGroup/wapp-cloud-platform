@@ -24,6 +24,10 @@ func (errTriggerResolver) IsEscape(context.Context, string, string, string) (boo
 	return false, "", nil
 }
 
+func (errTriggerResolver) ResolveLive(context.Context, string, string, string) (trigger.Decision, error) {
+	return trigger.Decision{Action: trigger.Ignore}, nil
+}
+
 // newTriggerRuntime arma un runtime con el flujo de menú publicado (v1) y un
 // ConfigResolver respaldado por un MemoryStore sembrado con las reglas dadas
 // (100% de BD, cero hardcode). Devuelve también el repo y el sender para asserts.

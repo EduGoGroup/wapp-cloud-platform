@@ -23,8 +23,8 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 func (s *PostgresStore) Insert(ctx context.Context, r Rule) (Rule, error) {
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO public.flow_triggers
-			(tenant_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			(tenant_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id, event_kind)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING trigger_id
 	`,
 		r.TenantID,
@@ -36,6 +36,7 @@ func (s *PostgresStore) Insert(ctx context.Context, r Rule) (Rule, error) {
 		r.Enabled,
 		nullStr(r.Message),
 		nullStr(r.SessionID),
+		nullStr(r.EventKind),
 	).Scan(&r.TriggerID)
 	if err != nil {
 		return Rule{}, fmt.Errorf("trigger: insertar regla: %w", err)
@@ -46,7 +47,7 @@ func (s *PostgresStore) Insert(ctx context.Context, r Rule) (Rule, error) {
 // List devuelve todas las reglas del tenant.
 func (s *PostgresStore) List(ctx context.Context, tenantID string) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id
+		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id, event_kind
 		FROM public.flow_triggers
 		WHERE tenant_id = $1
 		ORDER BY trigger_id
@@ -62,7 +63,7 @@ func (s *PostgresStore) List(ctx context.Context, tenantID string) ([]Rule, erro
 // ⇒ solo las globales (Plan 020 · T4).
 func (s *PostgresStore) ListByKind(ctx context.Context, tenantID, sessionID string, k Kind) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id
+		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id, event_kind
 		FROM public.flow_triggers
 		WHERE tenant_id = $1 AND kind = $2 AND (session_id = $3 OR session_id IS NULL)
 		ORDER BY trigger_id
@@ -76,7 +77,7 @@ func (s *PostgresStore) ListByKind(ctx context.Context, tenantID, sessionID stri
 // Get devuelve una regla por (tenant_id, trigger_id); ErrTriggerNotFound si no existe.
 func (s *PostgresStore) Get(ctx context.Context, tenantID, triggerID string) (Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id
+		SELECT tenant_id, trigger_id, kind, keyword, match_type, flow_id, priority, enabled, message, session_id, event_kind
 		FROM public.flow_triggers
 		WHERE tenant_id = $1 AND trigger_id = $2
 	`, tenantID, triggerID)
@@ -114,8 +115,8 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-// scanRule mapea una fila de flow_triggers a Rule (keyword/flow_id/message/session_id
-// NULL → "").
+// scanRule mapea una fila de flow_triggers a Rule
+// (keyword/flow_id/message/session_id/event_kind NULL → "").
 func scanRule(sc scanner) (Rule, error) {
 	var (
 		r         Rule
@@ -125,8 +126,9 @@ func scanRule(sc scanner) (Rule, error) {
 		flowID    sql.NullString
 		message   sql.NullString
 		sessionID sql.NullString
+		eventKind sql.NullString
 	)
-	if err := sc.Scan(&r.TenantID, &r.TriggerID, &kind, &keyword, &match, &flowID, &r.Priority, &r.Enabled, &message, &sessionID); err != nil {
+	if err := sc.Scan(&r.TenantID, &r.TriggerID, &kind, &keyword, &match, &flowID, &r.Priority, &r.Enabled, &message, &sessionID, &eventKind); err != nil {
 		return Rule{}, err
 	}
 	r.Kind = Kind(kind)
@@ -135,6 +137,7 @@ func scanRule(sc scanner) (Rule, error) {
 	r.FlowID = flowID.String
 	r.Message = message.String
 	r.SessionID = sessionID.String
+	r.EventKind = eventKind.String
 	return r, nil
 }
 
@@ -159,7 +162,8 @@ func scanRules(rows *sql.Rows) ([]Rule, error) {
 	return out, nil
 }
 
-// nullStr mapea "" → NULL para columnas nullable (keyword/flow_id/message).
+// nullStr mapea "" → NULL para columnas nullable
+// (keyword/flow_id/message/session_id/event_kind).
 func nullStr(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}

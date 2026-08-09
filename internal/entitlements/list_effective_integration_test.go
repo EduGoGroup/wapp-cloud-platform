@@ -39,9 +39,9 @@ func TestIntegration_ListEffective(t *testing.T) {
 		if plan != "basic" {
 			t.Fatalf("plan = %q, quería basic (plan_id NULL)", plan)
 		}
-		want := []string{"cart_basic", "intakes_export", "menu"}
+		want := []string{"cart_basic", "intakes_export", "menu", "survey"}
 		if !slices.Equal(features, want) {
-			t.Fatalf("features = %v, quería %v (0039, orden alfabético)", features, want)
+			t.Fatalf("features = %v, quería %v (0039 + survey de la 0053, orden alfabético)", features, want)
 		}
 	})
 
@@ -52,7 +52,7 @@ func TestIntegration_ListEffective(t *testing.T) {
 		if plan != "advisor_ai" {
 			t.Fatalf("plan = %q, quería advisor_ai", plan)
 		}
-		want := []string{"cart_basic", "catalog_import", "crm_bridge", "intakes_export", "llm_intent", "menu"}
+		want := []string{"cart_basic", "catalog_import", "crm_bridge", "intakes_export", "llm_intent", "media", "menu", "survey"}
 		if !slices.Equal(features, want) {
 			t.Fatalf("features = %v, quería %v", features, want)
 		}
@@ -72,7 +72,7 @@ func TestIntegration_ListEffective(t *testing.T) {
 		if slices.Contains(features, "menu") {
 			t.Fatalf("features = %v: 'menu' está apagada por override y NO debe listarse", features)
 		}
-		want := []string{"cart_basic", "catalog_import", "crm_bridge", "intakes_export"}
+		want := []string{"cart_basic", "catalog_import", "crm_bridge", "intakes_export", "media", "survey"}
 		if !slices.Equal(features, want) {
 			t.Fatalf("features = %v, quería %v", features, want)
 		}
@@ -85,7 +85,7 @@ func TestIntegration_ListEffective(t *testing.T) {
 			tid, "stt_audio")
 
 		_, features := list(t, tid)
-		want := []string{"cart_basic", "intakes_export", "menu", "stt_audio"}
+		want := []string{"cart_basic", "intakes_export", "menu", "stt_audio", "survey"}
 		if !slices.Equal(features, want) {
 			t.Fatalf("features = %v, quería %v (basic ∪ override)", features, want)
 		}
@@ -99,7 +99,7 @@ func TestIntegration_ListEffective(t *testing.T) {
 			tid, "menu")
 
 		_, features := list(t, tid)
-		want := []string{"cart_basic", "intakes_export", "menu"}
+		want := []string{"cart_basic", "intakes_export", "menu", "survey"}
 		if !slices.Equal(features, want) {
 			t.Fatalf("features = %v, quería %v (sin duplicados)", features, want)
 		}

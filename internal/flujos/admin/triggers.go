@@ -18,6 +18,49 @@ import (
 // keyword de una regla llm que no lo cumpla no podría casar jamás una intención real.
 var intentNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
+// validEventKinds es la lista CERRADA de tipos de evento que acepta el CRUD, en el
+// orden estable de trigger.FactoryEventKinds(). Se materializa una vez para que el
+// mensaje de error enseñe siempre los mismos valores en el mismo orden.
+//
+// El cierre es deliberado y sustituye a una validación de FORMA que aceptaba
+// cualquier identificador en minúsculas: con ella, un `carrrito` mal escrito entraba
+// con un 201 y viajaba hasta una fila de conversation_events para parir un evento que
+// ningún módulo atiende, sin error en ningún punto. El argumento de la migración 0052
+// —que enchufar un módulo no cueste una migración— queda intacto: ampliar una lista
+// en Go tampoco cuesta una migración.
+var validEventKinds = strings.Join(trigger.FactoryEventKinds(), "|")
+
+// kindSpec declara qué campos exige cada kind. Es la ÚNICA lista de kinds válidos del
+// CRUD: dar de alta uno es añadir una fila aquí, no un case nuevo en varios switches
+// (así fue como el kind y sus campos obligatorios pudieron divergir hasta ahora).
+type kindSpec struct {
+	needsKeyword bool
+	needsFlowID  bool
+	// needsEventKind hace doble trabajo: marca event_kind como OBLIGATORIO y, por
+	// negación, como PROHIBIDO en todos los demás kinds (una regla que no pare eventos
+	// deja la columna NULL, que es el caso de siempre).
+	needsEventKind bool
+}
+
+// kindSpecs mapea cada kind válido a sus campos obligatorios. event_start NO exige
+// flow_id a propósito (D-043.3): el despachador del menú es un componente del runtime,
+// no una fila de flow_definitions, así que un event_start de event_kind='menu' no tiene
+// flujo al que apuntar; cart/survey sí pueden traerlo y se respeta. event_stop no lleva
+// event_kind porque corta el evento ACTIVO, sea del tipo que sea (D-043.2).
+var kindSpecs = map[trigger.Kind]kindSpec{
+	trigger.KindKeyword:    {needsKeyword: true, needsFlowID: true},
+	trigger.KindFallback:   {needsFlowID: true},
+	trigger.KindEscape:     {needsKeyword: true},
+	trigger.KindLLM:        {needsKeyword: true, needsFlowID: true},
+	trigger.KindEventStart: {needsKeyword: true, needsEventKind: true},
+	trigger.KindEventStop:  {needsKeyword: true},
+}
+
+// validKinds es la lista de kinds que se le enseña al llamante en el 400. Se mantiene a
+// mano (y no se deriva de kindSpecs) porque el recorrido de un map no tiene orden y un
+// mensaje de error que cambia de forma entre peticiones es un mal mensaje de error.
+const validKinds = "keyword|fallback|escape|llm|event_start|event_stop"
+
 // TriggerStore es el subconjunto de trigger.Store que consumen los handlers CRUD
 // de reglas de disparo. Lo satisface *trigger.PostgresStore y *trigger.MemoryStore.
 // TODAS las operaciones se acotan al tenant del token (INV-8).
@@ -43,6 +86,10 @@ type triggerRequest struct {
 	// SessionID acota la regla a una sesión concreta (Plan 020 · T4). Opcional; si se
 	// omite (o vacío) la regla es GLOBAL del tenant (aplica a todas las sesiones).
 	SessionID string `json:"session_id"`
+	// EventKind es el TIPO de evento conversacional que arranca o conmuta la regla
+	// (Plan 043 · D-043.2). OBLIGATORIO para kind=event_start; si llega en cualquier
+	// otro kind el cuerpo se rechaza (400).
+	EventKind string `json:"event_kind"`
 }
 
 // triggerDTO es la proyección pública de una regla (respuesta de create/list).
@@ -58,6 +105,15 @@ type triggerDTO struct {
 	Enabled   bool   `json:"enabled"`
 	Message   string `json:"message,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	EventKind string `json:"event_kind,omitempty"`
+	// ShadowedByEventList es una marca DERIVADA (no se persiste, no hay columna): avisa
+	// al dueño de que esta regla kind='fallback' ya NO se emite en la conversación sin
+	// evento elegido, porque ahí manda la lista que ofrece (Plan 043 · D-043.20,
+	// REQ-27b, MD-043.11). No dice que la regla esté apagada: fuera de ese punto —con
+	// decisión Start, con conversación viva, y en el caso vacío en que la lista queda
+	// sin una sola opción— el fallback conserva EXACTAMENTE su comportamiento del Plan
+	// 019. Se omite cuando es false para no ensuciar la respuesta de los demás kinds.
+	ShadowedByEventList bool `json:"shadowed_by_event_list,omitempty"`
 }
 
 // dtoFromRule proyecta una trigger.Rule al DTO de respuesta.
@@ -72,23 +128,37 @@ func dtoFromRule(r trigger.Rule) triggerDTO {
 		Enabled:   r.Enabled,
 		Message:   r.Message,
 		SessionID: r.SessionID,
+		EventKind: r.EventKind,
 	}
+}
+
+// listDTO proyecta una regla para la RESPUESTA DEL LISTADO, que es la única que lleva
+// la marca derivada shadowed_by_event_list (MD-043.11): el listado es donde el dueño
+// mira su configuración, mientras que la respuesta 201 de un alta describe lo que
+// acaba de escribir y no es sitio para avisar de nada.
+//
+// La marca se calcula por kind y no consulta estado alguno: la sombra la proyecta la
+// lista de tipos sobre TODA regla de fallback, y si ese tenant acaba en el caso vacío
+// —sin ningún event_kind habilitado y sin nada rescatable— el turno vuelve a su
+// fallback (D-043.20). Por eso la marca dice «te ensombrece», no «estás muerta».
+func listDTO(r trigger.Rule) triggerDTO {
+	dto := dtoFromRule(r)
+	dto.ShadowedByEventList = r.Kind == trigger.KindFallback
+	return dto
 }
 
 // ruleFromRequest valida el cuerpo (REQ-D5) y construye la Rule con el tenant del
 // token. Devuelve un mensaje de error (no vacío) si el cuerpo es incoherente:
-//   - kind ∉ {keyword,fallback,escape,llm}
+//   - kind ∉ kindSpecs (hoy keyword|fallback|escape|llm|event_start|event_stop)
 //   - match_type ∉ {exact,contains} (vacío → default exact)
-//   - keyword/escape/llm sin keyword
-//   - keyword/fallback/llm sin flow_id
+//   - falta un campo que el kind exige (keyword / flow_id / event_kind, ver kindSpecs)
 //   - kind=llm con keyword que no cumple el formato de NOMBRE de intención
+//   - event_kind presente en kind ≠ event_start (solo ese disparo pare eventos)
 //   - message presente en kind ≠ escape (el aviso solo aplica al escape, T4b)
 func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string) {
 	kind := trigger.Kind(strings.TrimSpace(req.Kind))
-	switch kind {
-	case trigger.KindKeyword, trigger.KindFallback, trigger.KindEscape, trigger.KindLLM:
-	default:
-		return trigger.Rule{}, "kind inválido (usar keyword|fallback|escape|llm)"
+	if _, known := kindSpecs[kind]; !known {
+		return trigger.Rule{}, "kind inválido (usar " + validKinds + ")"
 	}
 
 	matchType := trigger.MatchExact
@@ -103,7 +173,8 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 
 	keyword := strings.TrimSpace(req.Keyword)
 	flowID := strings.TrimSpace(req.FlowID)
-	if msg := requiredFieldsByKind(kind, keyword, flowID); msg != "" {
+	eventKind := strings.TrimSpace(req.EventKind)
+	if msg := requiredFieldsByKind(kind, keyword, flowID, eventKind); msg != "" {
 		return trigger.Rule{}, msg
 	}
 
@@ -127,22 +198,31 @@ func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string)
 		Enabled:   enabled,
 		Message:   message,
 		SessionID: strings.TrimSpace(req.SessionID),
+		EventKind: eventKind,
 	}, ""
 }
 
-// requiredFieldsByKind valida los campos obligatorios según el kind (extraído de
-// ruleFromRequest para acotar su complejidad ciclomática): keyword para keyword|
-// escape|llm; flow_id para keyword|fallback|llm; y, para llm, el keyword debe ser un
-// nombre de intención válido (casa flow_triggers.keyword con el enum del clasificador).
-// Devuelve "" si todo está bien.
-func requiredFieldsByKind(kind trigger.Kind, keyword, flowID string) string {
-	needsKeyword := kind == trigger.KindKeyword || kind == trigger.KindEscape || kind == trigger.KindLLM
-	if needsKeyword && keyword == "" {
-		return "keyword es requerido para kind keyword|escape|llm"
+// requiredFieldsByKind valida los campos según el kind (extraído de ruleFromRequest
+// para acotar su complejidad ciclomática) leyendo kindSpecs: qué campos exige y, en el
+// caso de event_kind, en qué kinds está además PROHIBIDO. Para llm, el keyword debe ser
+// un nombre de intención válido (casa flow_triggers.keyword con el enum del
+// clasificador). El llamante ya comprobó que el kind existe. Devuelve "" si todo está bien.
+func requiredFieldsByKind(kind trigger.Kind, keyword, flowID, eventKind string) string {
+	spec := kindSpecs[kind]
+	if spec.needsKeyword && keyword == "" {
+		return "keyword es requerido para kind " + string(kind)
 	}
-	needsFlow := kind == trigger.KindKeyword || kind == trigger.KindFallback || kind == trigger.KindLLM
-	if needsFlow && flowID == "" {
-		return "flow_id es requerido para kind keyword|fallback|llm"
+	if spec.needsFlowID && flowID == "" {
+		return "flow_id es requerido para kind " + string(kind)
+	}
+	if spec.needsEventKind && eventKind == "" {
+		return "event_kind es requerido para kind event_start (el tipo de evento que arranca: " + validEventKinds + ")"
+	}
+	if eventKind != "" && !spec.needsEventKind {
+		return "event_kind solo es válido para kind event_start"
+	}
+	if eventKind != "" && !trigger.IsFactoryEventKind(eventKind) {
+		return "event_kind inválido: los valores admitidos son " + validEventKinds
 	}
 	if kind == trigger.KindLLM && !intentNameRe.MatchString(keyword) {
 		return "keyword de kind llm debe ser un nombre de intención válido (^[a-z][a-z0-9_]{1,63}$)"
@@ -189,6 +269,11 @@ func CreateTriggerHandler(store TriggerStore) http.Handler {
 // ListTriggersHandler devuelve el handler de GET .../triggers: lista las reglas
 // del tenant del token (INV-8). 200 con el arreglo (vacío si no hay); 401 sin
 // Identity; 500 ante fallo del store.
+//
+// Cada regla kind='fallback' sale marcada con shadowed_by_event_list (listDTO): es el
+// aviso al dueño de que su fallback ya no se emite en la conversación sin evento
+// elegido (D-043.20 / REQ-27b). Es DERIVADO —cero DDL, cero estado— y lo pinta quien
+// consuma la API cuando exista una UI de administración (MD-043.11).
 func ListTriggersHandler(store TriggerStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -203,7 +288,7 @@ func ListTriggersHandler(store TriggerStore) http.Handler {
 		}
 		out := make([]triggerDTO, 0, len(rules))
 		for _, rule := range rules {
-			out = append(out, dtoFromRule(rule))
+			out = append(out, listDTO(rule))
 		}
 		writeJSON(w, http.StatusOK, out)
 	})

@@ -135,6 +135,28 @@ type Runtime struct {
 	// NO es un reloj (ADR-0003): no hay barrido ni goroutine de fondo; es este
 	// entrante, que ya estaba pasando por aquí, el que hace de disparador.
 	deposits DepositReminder
+	// events es el almacén del EVENTO conversacional (Plan 043 · Ola 2, D-043.4): la
+	// instancia viva de una capacidad —carrito, encuesta, menú— para ESTA
+	// conversación. Lo consultan el salto por tipo (event_start) y la desactivación
+	// (event_stop). nil (sin WithEventStore) ⇒ no hay plano de eventos: un
+	// event_start arranca su flujo como lo haría una keyword y nada pare filas.
+	// No-regresión total (INV-6).
+	events EventStore
+	// intakes abandona la solicitud del evento que el CLIENTE cierra al elegir
+	// empezar otro del mismo tipo estando el viejo VENCIDO (ADR-0029 · E-11). Es la
+	// otra mitad de un solo hecho: el evento pasa a cancelled y su solicitud a
+	// abandoned. nil ⇒ el evento se cierra igual y la solicitud queda huérfana con
+	// un WARN; el bootstrap lo cablea siempre.
+	intakes IntakeAbandoner
+	// dispatcher decide qué ofrecerle al contacto cuando pide el menú (Plan 043 ·
+	// T2.3): tipos que el tenant ofrece + eventos suyos que puede retomar. SOLO LEE;
+	// crear filas, mover el puntero y hablar es del runtime. nil (sin
+	// WithDispatcher) ⇒ la palabra del menú no presenta nada.
+	dispatcher Dispatcher
+	// flows resuelve qué flujo arranca un tipo de evento, leyendo la regla
+	// event_start del tenant. Lo necesita la elección «empezar uno nuevo» del menú,
+	// que dice el tipo pero no el flujo. nil ⇒ el evento nace sin flujo.
+	flows FlowForKind
 	// onReactiveBlocked cuenta cada entrante que NO entra al motor reactivo, con el
 	// motivo (reasonPassive|reasonSelfLoop|reasonRateLimit). Hook NIL-SAFE inyectado
 	// con WithReactiveBlockedHook —típicamente metrics.FlowReactiveBlocked— para no
@@ -244,6 +266,34 @@ func WithClock(now func() time.Time) Option {
 // no evalúa nada — no-regresión total.
 func WithDepositReminder(d DepositReminder) Option {
 	return func(rt *Runtime) { rt.deposits = d }
+}
+
+// WithEventStore cablea el almacén del evento conversacional (Plan 043 · Ola 2).
+// Sin él, el motor se comporta EXACTAMENTE como antes del Plan 043: un event_start
+// arranca su flujo sin parir evento y un event_stop no desactiva nada (INV-6).
+func WithEventStore(s EventStore) Option {
+	return func(rt *Runtime) { rt.events = s }
+}
+
+// WithIntakeAbandoner cablea el cierre de la solicitud que acompaña al cierre de un
+// evento por E-11. Va junto a WithEventStore: sin él, el evento se cierra y su
+// solicitud queda huérfana (se avisa por WARN), que es media verdad y no la que
+// queremos en producción.
+func WithIntakeAbandoner(a IntakeAbandoner) Option {
+	return func(rt *Runtime) { rt.intakes = a }
+}
+
+// WithDispatcher cablea el despachador de nivel superior (Plan 043 · T2.3). Sin él,
+// un event_start de tipo menu crea el evento pero no presenta ninguna lista.
+func WithDispatcher(d Dispatcher) Option {
+	return func(rt *Runtime) { rt.dispatcher = d }
+}
+
+// WithFlowForKind cablea la resolución «tipo de evento → flujo del tenant», que
+// necesita la opción «empezar uno nuevo» del menú. Va con WithDispatcher: sin ella,
+// elegir un tipo en el menú crearía su evento sin arrancar nada.
+func WithFlowForKind(f FlowForKind) Option {
+	return func(rt *Runtime) { rt.flows = f }
 }
 
 // WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante
