@@ -74,12 +74,22 @@ type fakeIntegrations struct {
 	deletes int
 	// failGet fuerza el fallo de infraestructura, para el 500 del GET.
 	failGet error
+
+	// outbox es la cola por tenant que devuelve CountOutbox, y lastOutboxTenant
+	// el ÚLTIMO tenant por el que se preguntó. Ese testigo es lo que convierte el
+	// test de INV-8 en una prueba de verdad: sin él solo se podría afirmar qué
+	// números salieron, no a quién se le pidieron.
+	outbox           map[string]integrations.OutboxCounts
+	lastOutboxTenant string
+	// failOutbox fuerza el fallo de infraestructura, para el 500 del contador.
+	failOutbox error
 }
 
 func newFakeIntegrations() *fakeIntegrations {
 	return &fakeIntegrations{
 		rows:    map[string]integrations.TenantIntegration{},
 		secrets: map[string]string{},
+		outbox:  map[string]integrations.OutboxCounts{},
 	}
 }
 
@@ -132,6 +142,16 @@ func (f *fakeIntegrations) DeleteTenantIntegration(_ context.Context, tenantID s
 	delete(f.rows, tenantID)
 	delete(f.secrets, tenantID)
 	return nil
+}
+
+func (f *fakeIntegrations) CountOutbox(_ context.Context, tenantID string) (integrations.OutboxCounts, error) {
+	f.lastOutboxTenant = tenantID
+	if f.failOutbox != nil {
+		return integrations.OutboxCounts{}, f.failOutbox
+	}
+	// Un tenant sin filas devuelve el cero, igual que el agregado real: la
+	// consulta sin GROUP BY siempre trae una fila (ver integrations/outbox_stats.go).
+	return f.outbox[tenantID], nil
 }
 
 func (f *fakeIntegrations) SecretFingerprint(_ context.Context, tenantID string) (string, bool, error) {
@@ -662,4 +682,239 @@ func apiConLog(d publicapi.Deps, keys map[string]testIdentity, w *bytes.Buffer, 
 	mux := http.NewServeMux()
 	publicapi.Register(mux, d, httpapi.NewMiddleware(jwt, nil), auditor, sharedlogger.New(sharedlogger.WithWriter(w)))
 	return &testAPI{mux: mux, jwt: jwt, identities: keys}
+}
+
+// ==================== EL ESTADO DE LA COLA (outbox) ====================
+
+// outboxWire espeja el contrato de GET /api/v1/integrations/outbox en el cable.
+// Se declara aquí, y no se importa del paquete, por lo mismo que integrationWire:
+// esto es lo que consume el BFF y un cambio de nombre de campo tiene que verse
+// como un fallo de test, no como un despliegue silencioso.
+type outboxWire struct {
+	Pending         int64  `json:"pending"`
+	Delivering      int64  `json:"delivering"`
+	Delivered       int64  `json:"delivered"`
+	Dead            int64  `json:"dead"`
+	OldestPendingAt string `json:"oldest_pending_at"`
+}
+
+const outboxPath = "/api/v1/integrations/outbox"
+
+func decodeOutboxWire(t *testing.T, body []byte) outboxWire {
+	t.Helper()
+	var out outboxWire
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal de los contadores: %v; body=%s", err, body)
+	}
+	return out
+}
+
+// TestOutbox_GET_LosCuatroContadoresYLaAntigüedad: la foto entera de la cola en
+// una respuesta, con las claves EXACTAS del CHECK de la migración 0046.
+func TestOutbox_GET_LosCuatroContadoresYLaAntigüedad(t *testing.T) {
+	store := newFakeIntegrations()
+	store.seed(tenantA, secretoDePrueba)
+	viejo := time.Date(2026, 8, 8, 9, 15, 0, 0, time.UTC)
+	store.outbox[tenantA] = integrations.OutboxCounts{
+		Pending: 3, Delivering: 1, Delivered: 128, Dead: 2, OldestPendingAt: viejo,
+	}
+	api := integrAPI(store)
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeOutboxWire(t, rec.Body.Bytes())
+	quiero := outboxWire{Pending: 3, Delivering: 1, Delivered: 128, Dead: 2,
+		OldestPendingAt: "2026-08-08T09:15:00Z"}
+	if got != quiero {
+		t.Fatalf("contadores:\n got %+v\nwant %+v", got, quiero)
+	}
+}
+
+// TestOutbox_GET_NoSacaNadaDeDentroDeLasEntregas: el barrido que fija el LÍMITE
+// de esta puerta. La respuesta puede traer CINCO claves y ninguna más — ni
+// payload, ni last_error, ni ids, ni endpoint.
+//
+// Importa porque las filas `dead` son las únicas que conservan su payload (la
+// 0050 vacía el de las entregadas) y son justo las que un panel de errores
+// invita a "enseñar con un poco más de detalle". El detalle no sale por aquí.
+func TestOutbox_GET_NoSacaNadaDeDentroDeLasEntregas(t *testing.T) {
+	store := newFakeIntegrations()
+	store.outbox[tenantA] = integrations.OutboxCounts{Pending: 1, Dead: 4}
+	api := integrAPI(store)
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath, "")
+	var crudo map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &crudo); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
+	}
+	permitidas := map[string]bool{
+		"pending": true, "delivering": true, "delivered": true, "dead": true,
+		"oldest_pending_at": true,
+	}
+	for clave := range crudo {
+		if !permitidas[clave] {
+			t.Fatalf("la respuesta trae la clave %q, que no es un contador: %s", clave, rec.Body.String())
+		}
+	}
+}
+
+// TestOutbox_GET_ColaVacía_TodoACeroYSinAntigüedad: un tenant sin nada encolado
+// responde 200 con ceros, no 404 — «no hay nada esperando» es la respuesta que la
+// pantalla necesita para decir que va al día. Y SIN `oldest_pending_at`: no
+// existe «la más vieja de ninguna», y esa ausencia no se disfraza de fecha cero.
+func TestOutbox_GET_ColaVacía_TodoACeroYSinAntigüedad(t *testing.T) {
+	api := integrAPI(newFakeIntegrations())
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeOutboxWire(t, rec.Body.Bytes()); got != (outboxWire{}) {
+		t.Fatalf("cola vacía = %+v, quiero todo a cero y sin marca", got)
+	}
+	if strings.Contains(rec.Body.String(), "oldest_pending_at") {
+		t.Fatalf("sin nada en cola no debe salir la clave: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "0001-01-01") {
+		t.Fatalf("se serializó el cero de time.Time: %s", rec.Body.String())
+	}
+}
+
+// TestOutbox_INV8_ElTenantSaleDelTokenNoDelParámetro es el criterio explícito de
+// INV-8 para este endpoint: por más que la URL pida OTRO tenant, se cuenta el del
+// token.
+//
+// Se comprueba por los DOS lados —los números que salieron Y el tenant por el que
+// se preguntó de verdad—, porque solo lo primero pasaría igual si el handler
+// leyera el parámetro y el fake devolviera lo mismo para los dos.
+func TestOutbox_INV8_ElTenantSaleDelTokenNoDelParámetro(t *testing.T) {
+	store := newFakeIntegrations()
+	store.outbox[tenantA] = integrations.OutboxCounts{Pending: 2, Dead: 1}
+	store.outbox[tenantB] = integrations.OutboxCounts{Pending: 99, Dead: 77}
+	api := integrAPI(store)
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath+"?tenant_id="+tenantB, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeOutboxWire(t, rec.Body.Bytes())
+	if got.Pending != 2 || got.Dead != 1 {
+		t.Fatalf("FUGA DE TENANT: la respuesta trae la cola de otro: %+v", got)
+	}
+	if store.lastOutboxTenant != tenantA {
+		t.Fatalf("se contó la cola de %q, quiero la del token (%q)", store.lastOutboxTenant, tenantA)
+	}
+}
+
+// TestOutbox_403_SinLaFeature: el contador va gateado igual que el CRUD. Un tenant
+// sin `crm_bridge` no tiene puente del que preguntar, y el volumen de pedidos de
+// una empresa no es información que se regale por una puerta lateral.
+func TestOutbox_403_SinLaFeature(t *testing.T) {
+	store := newFakeIntegrations()
+	store.outbox[tenantA] = integrations.OutboxCounts{Pending: 5}
+	api := newAPI(publicapi.Deps{Integrations: store, Entitlements: entitlements.NewFake()}, integrKeys())
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath, "")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d, quiero 403; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error   string `json:"error"`
+		Feature string `json:"feature"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal del 403: %v; body=%s", err, rec.Body.String())
+	}
+	if body.Error != "feature_not_enabled" || body.Feature != entitlements.FeatureCRMBridge {
+		t.Fatalf("cuerpo del 403 = %+v, quiero feature_not_enabled/crm_bridge", body)
+	}
+	if store.lastOutboxTenant != "" {
+		t.Fatalf("el gate dejó llegar la consulta al store (tenant=%q)", store.lastOutboxTenant)
+	}
+}
+
+// TestOutbox_403_SinElScopeDeLectura: el scope de integraciones no se hereda de
+// otros. Quien puede publicar flujos y mandar mensajes no puede, por eso, mirar la
+// cola del puente.
+func TestOutbox_403_SinElScopeDeLectura(t *testing.T) {
+	store := newFakeIntegrations()
+	api := integrAPI(store)
+
+	if rec := call(api, keyAFull, http.MethodGet, outboxPath, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d, quiero 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if store.lastOutboxTenant != "" {
+		t.Fatalf("llegó al store sin scope (tenant=%q)", store.lastOutboxTenant)
+	}
+}
+
+// TestOutbox_SoloLectura_Alcanza: el reverso. `integrations.read` basta, que es lo
+// que hace que un viewer pueda vigilar la cola sin poder repuntar el endpoint.
+func TestOutbox_SoloLectura_Alcanza(t *testing.T) {
+	store := newFakeIntegrations()
+	store.outbox[tenantA] = integrations.OutboxCounts{Delivered: 7}
+	api := integrAPI(store)
+
+	rec := call(api, keyAIntegrRead, http.MethodGet, outboxPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeOutboxWire(t, rec.Body.Bytes()); got.Delivered != 7 {
+		t.Fatalf("delivered=%d, quiero 7", got.Delivered)
+	}
+}
+
+// TestOutbox_500_SiElStoreFalla: un contador que no se pudo leer NO puede
+// parecerse a un cero. El cero se lee como «todo al día», que es exactamente lo
+// contrario de lo que pasa cuando la base no responde.
+func TestOutbox_500_SiElStoreFalla(t *testing.T) {
+	store := newFakeIntegrations()
+	store.failOutbox = errStoreCaído
+	api := integrAPI(store)
+
+	rec := call(api, keyAIntegr, http.MethodGet, outboxPath, "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d, quiero 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"pending"`) {
+		t.Fatalf("el 500 devolvió contadores: %s", rec.Body.String())
+	}
+}
+
+// TestOutbox_401_SinToken: sin identidad no hay tenant del que contar.
+func TestOutbox_401_SinToken(t *testing.T) {
+	api := integrAPI(newFakeIntegrations())
+	if rec := call(api, "", http.MethodGet, outboxPath, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code=%d, quiero 401", rec.Code)
+	}
+}
+
+// TestOutbox_SinStore_NoSeMontaLaRuta: 404 de ruta inexistente, igual que el CRUD.
+func TestOutbox_SinStore_NoSeMontaLaRuta(t *testing.T) {
+	api := newAPI(publicapi.Deps{Entitlements: entitlements.NewFake()}, integrKeys())
+	if rec := call(api, keyAIntegr, http.MethodGet, outboxPath, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("code=%d, quiero 404", rec.Code)
+	}
+}
+
+// TestOutbox_NoRompeElGETDeLaConfiguración: las dos rutas conviven bajo el mismo
+// prefijo. Sin este test, un patrón mal escrito podría hacer que
+// /api/v1/integrations sirviera el contador o al revés, y los dos responden 200
+// con JSON — el fallo no se vería hasta la pantalla.
+func TestOutbox_NoRompeElGETDeLaConfiguración(t *testing.T) {
+	store := newFakeIntegrations()
+	store.seed(tenantA, secretoDePrueba)
+	store.outbox[tenantA] = integrations.OutboxCounts{Pending: 42}
+	api := integrAPI(store)
+
+	cfg := decodeIntegrWire(t, call(api, keyAIntegr, http.MethodGet, "/api/v1/integrations", "").Body.Bytes())
+	if cfg.EndpointURL != endpointDePrueba || !cfg.Configured {
+		t.Fatalf("la ruta de la configuración dejó de servir lo suyo: %+v", cfg)
+	}
+	cola := decodeOutboxWire(t, call(api, keyAIntegr, http.MethodGet, outboxPath, "").Body.Bytes())
+	if cola.Pending != 42 {
+		t.Fatalf("la ruta del contador no sirvió lo suyo: %+v", cola)
+	}
 }

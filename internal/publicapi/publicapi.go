@@ -460,8 +460,10 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 }
 
 // registerIntegrations monta la CONFIGURACIÓN del puente CRM (Plan 042 · T5.1,
-// design §5): GET / PUT / DELETE de /api/v1/integrations, todo acotado al tenant
-// del token (INV-8).
+// design §5): GET / PUT / DELETE de /api/v1/integrations, más el
+// GET /api/v1/integrations/outbox con el estado de la cola de entregas (T5.2, el
+// panel del outbox que la pantalla del BFF no podía pintar porque nadie lo
+// publicaba). Todo acotado al tenant del token (INV-8).
 //
 // DOS GUARDIAS, como en el resto de rutas de pago: el scope dice «puedes operar
 // esto» y la feature `crm_bridge` dice «tu plan lo incluye» (D-042.8). Sin la
@@ -495,6 +497,12 @@ func registerIntegrations(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, au
 
 	mux.Handle("GET /api/v1/integrations", protectRead(mw,
 		"integrations.read", crmBridge(getIntegrationHandler(d.Integrations))))
+	// El estado de la cola cuelga de la MISMA ruta y va con las mismas dos
+	// guardias: es la otra mitad de la pantalla del puente (la configuración dice
+	// a dónde se entrega; esto, si está llegando). Lectura pura, así que
+	// protectRead sin auditar — mirar un contador no cambia nada.
+	mux.Handle("GET /api/v1/integrations/outbox", protectRead(mw,
+		"integrations.read", crmBridge(getOutboxHandler(d.Integrations))))
 	mux.Handle("PUT /api/v1/integrations", protect(mw, auditor, log,
 		"integrations.write", "integration", crmBridge(putIntegrationHandler(d.Integrations))))
 	mux.Handle("DELETE /api/v1/integrations", protect(mw, auditor, log,

@@ -13,11 +13,14 @@ import (
 )
 
 // integrations.go es la superficie de gestión del puente CRM (Plan 042 · T5.1,
-// design §5): GET / PUT / DELETE de /api/v1/integrations. El dominio ya existía
-// entero (internal/integrations); aquí solo se abre la puerta HTTP.
+// design §5): GET / PUT / DELETE de /api/v1/integrations, más el
+// GET /api/v1/integrations/outbox que enseña cómo va la cola. El dominio ya
+// existía entero (internal/integrations); aquí solo se abre la puerta HTTP.
 //
 // La IDA del puente (webhook_outbox) y la VUELTA (el callback firmado) NO pasan
-// por aquí: esto es la configuración que las dos leen.
+// por aquí: esto es la configuración que las dos leen, y —desde el endpoint del
+// outbox— el resumen de cómo le está yendo a la ida. El resumen son CONTADORES:
+// esta puerta no abre las entregas ni su contenido.
 
 // Vocabulario CERRADO de adaptadores, el mismo que acota el CHECK de la migración
 // 0047. Se repite aquí porque la API tiene que rechazar ANTES de llegar a la BD:
@@ -51,12 +54,14 @@ const (
 // tiene tenant_id como PRIMARY KEY. No hay forma de pedirle la fila de otro.
 //
 // SecretFingerprint devuelve la huella, NO el secreto: el valor en claro no tiene
-// por qué existir nunca en esta capa (ver integrations/crud.go).
+// por qué existir nunca en esta capa (ver integrations/crud.go). Y CountOutbox
+// devuelve números, NO entregas: el mismo criterio aplicado a la cola.
 type IntegrationsStore interface {
 	GetTenantIntegration(ctx context.Context, tenantID string) (integrations.TenantIntegration, bool, error)
 	UpsertTenantIntegration(ctx context.Context, ti integrations.TenantIntegration, secret string) error
 	DeleteTenantIntegration(ctx context.Context, tenantID string) error
 	SecretFingerprint(ctx context.Context, tenantID string) (string, bool, error)
+	CountOutbox(ctx context.Context, tenantID string) (integrations.OutboxCounts, error)
 }
 
 // integrationDTO es el contrato de GET y de la respuesta del PUT (la MISMA forma
@@ -366,6 +371,93 @@ func validateLiveBridge(ctx context.Context, is IntegrationsStore, tenantID stri
 		return http.StatusBadRequest, "un puente webhook encendido necesita un secreto de firma"
 	}
 	return 0, ""
+}
+
+// outboxCountsDTO es el contrato de GET /api/v1/integrations/outbox: cuántas
+// entregas del tenant hay en cada estado del ciclo de vida, y desde cuándo espera
+// la más vieja que sigue en cola.
+//
+// LAS CLAVES SON LOS CUATRO ESTADOS DEL CHECK de la migración 0046, con su nombre
+// exacto. Traducirlos aquí a un vocabulario propio («en cola», «perdidas») sería
+// inventar una segunda taxonomía que habría que mantener sincronizada con la
+// tabla; quien traduce a lenguaje de negocio es la pantalla, que es donde vive el
+// lector humano. Esto es una API.
+//
+// SIN payloads, sin last_error y sin ids. La pregunta que contesta este endpoint
+// es «¿cómo va la cola?», no «¿qué hay dentro?». El payload de las entregadas se
+// vacía al entregar (migración 0050) y el de las `dead` es lo único que queda del
+// intento fallido: sacarlo por la puerta de los contadores devolvería por la
+// ventana lo que la purga sacó por la puerta.
+//
+// `oldest_pending_at` va con omitempty porque su ausencia SIGNIFICA algo —no hay
+// nada en cola— y un cero de time.Time serializado ("0001-01-01T00:00:00Z") lo
+// diría peor: el cliente tendría que saber comparar contra esa fecha mágica en
+// lugar de preguntar si el campo está.
+type outboxCountsDTO struct {
+	Pending         int64  `json:"pending"`
+	Delivering      int64  `json:"delivering"`
+	Delivered       int64  `json:"delivered"`
+	Dead            int64  `json:"dead"`
+	OldestPendingAt string `json:"oldest_pending_at,omitempty"`
+}
+
+// toOutboxCountsDTO pasa los contadores del dominio al cable.
+func toOutboxCountsDTO(c integrations.OutboxCounts) outboxCountsDTO {
+	dto := outboxCountsDTO{
+		Pending:    c.Pending,
+		Delivering: c.Delivering,
+		Delivered:  c.Delivered,
+		Dead:       c.Dead,
+	}
+	if !c.OldestPendingAt.IsZero() {
+		dto.OldestPendingAt = c.OldestPendingAt.UTC().Format(rfc3339)
+	}
+	return dto
+}
+
+// getOutboxHandler devuelve GET /api/v1/integrations/outbox: el estado de la cola
+// de entregas del tenant DEL TOKEN (INV-8).
+//
+// Existe porque sin él la consola no puede responder la única pregunta que un
+// dueño se hace sobre su puente después de configurarlo: ¿está llegando lo que
+// mando? La configuración se ve en el GET de al lado; que las entregas salgan, no
+// se veía en ninguna parte.
+//
+// MISMAS DOS GUARDIAS que el CRUD (integrations.read + feature crm_bridge): es la
+// misma sección del producto y el mismo reparto de poder. Un tenant sin puente no
+// tiene cola de la que preguntar, y quien no puede leer la configuración tampoco
+// tiene por qué saber cuántos pedidos salen de esta empresa —un contador de
+// volumen es información de negocio.
+//
+// 200 SIEMPRE que se pueda contar, también con todo a cero: «no hay nada en cola»
+// es una respuesta, y es justo la que la pantalla necesita para decir que va todo
+// al día. Un 404 obligaría a distinguir dos cosas que significan lo mismo (nunca
+// encoló nada / ya se entregó todo).
+//
+// Respuestas: 200; 401 sin identidad; 403 sin la feature (lo pone el middleware);
+// 500 si el store falla — y el 500 importa: un contador que no se pudo leer NO
+// puede parecerse a un cero, porque un cero se lee como «todo bien».
+func getOutboxHandler(is IntegrationsStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		if is == nil {
+			writeError(w, http.StatusInternalServerError, "store de integraciones no configurado")
+			return
+		}
+		// INV-8: el tenant sale de la identidad del token. No se lee ningún
+		// parámetro de la petición para decidir de quién se cuenta, y por eso no
+		// hay nada que validar ni que rechazar aquí.
+		counts, err := is.CountOutbox(r.Context(), id.TenantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo leer el estado de la cola de entregas")
+			return
+		}
+		writeJSON(w, http.StatusOK, toOutboxCountsDTO(counts))
+	})
 }
 
 // deleteIntegrationHandler devuelve DELETE /api/v1/integrations: borra la fila del
