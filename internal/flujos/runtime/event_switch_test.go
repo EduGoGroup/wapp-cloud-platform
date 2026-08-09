@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,6 +29,44 @@ type memEventStore struct {
 	// contactID lo fija el test que siembra filas a mano (seedAlive), que necesita
 	// el contact_id opaco YA resuelto para que la fila case con la conversación.
 	contactID string
+	// descartados son los eventos cuya solicitud el dueño mandó a `abandoned`: siguen
+	// `open` y ya no se rescatan (INV-17). Lo puebla descartar().
+	descartados map[string]bool
+	// resumenes imita conversation_event_messages con entry_kind='summary': por evento
+	// y EN ORDEN, que es lo que permite comprobar que un segundo abandono añade una
+	// fila en vez de pisar la primera (T3.4).
+	resumenes map[string][]json.RawMessage
+}
+
+// AppendSummary imita la escritura del resumen y devuelve el `seq` que le tocó, igual
+// que el MAX+1 de la tabla real.
+func (m *memEventStore) AppendSummary(_ context.Context, eventID string, body json.RawMessage) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.resumenes == nil {
+		m.resumenes = map[string][]json.RawMessage{}
+	}
+	m.resumenes[eventID] = append(m.resumenes[eventID], body)
+	return len(m.resumenes[eventID]), nil
+}
+
+// resumenesDe devuelve los resúmenes escritos para un evento, en orden.
+func (m *memEventStore) resumenesDe(eventID string) []json.RawMessage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]json.RawMessage(nil), m.resumenes[eventID]...)
+}
+
+// totalResumenes cuenta TODAS las filas de resumen del almacén. Es lo que permite
+// afirmar «cero filas» sin tener que saber a qué evento habrían ido a parar.
+func (m *memEventStore) totalResumenes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, rs := range m.resumenes {
+		n += len(rs)
+	}
+	return n
 }
 
 func newMemEventStore(now time.Time) *memEventStore {
@@ -76,6 +115,42 @@ func (m *memEventStore) ListAlive(_ context.Context, tenantID, sessionID, contac
 		}
 	}
 	return out, nil
+}
+
+// ListRescuable imita el filtro que el runtime NO puede comprobar por su cuenta
+// (REQ-26c): un evento sigue `open` pero deja de ser rescatable en cuanto su solicitud
+// se descarta. Aquí eso se representa con el conjunto `descartados`, que el test puebla
+// con descartar() — el doble no tiene tabla de intakes, y lo que hay que poder fabricar
+// es justo la diferencia entre «vivo» y «rescatable».
+func (m *memEventStore) ListRescuable(_ context.Context, tenantID, sessionID, contactID string, limit int) ([]events.Rescuable, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]events.Rescuable, 0, len(m.rows))
+	for _, e := range m.rows {
+		if e.Status != events.StatusOpen || e.TenantID != tenantID || e.SessionID != sessionID || e.ContactID != contactID {
+			continue
+		}
+		if m.descartados[e.ID] {
+			continue
+		}
+		out = append(out, events.Rescuable{Event: e})
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// descartar simula lo que hace el dueño desde su bandeja: manda la solicitud a
+// `abandoned` SIN tocar el evento, que se queda `open`. Es el caso hostil de INV-17 —
+// el que el predicado tiene que tapar por su cuenta.
+func (m *memEventStore) descartar(eventID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.descartados == nil {
+		m.descartados = map[string]bool{}
+	}
+	m.descartados[eventID] = true
 }
 
 func (m *memEventStore) TransitionEvent(_ context.Context, eventID string, to events.Status) error {

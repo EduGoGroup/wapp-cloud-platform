@@ -49,6 +49,63 @@ func event(name string, payload map[string]any) modules.Effect {
 	return modules.Effect{Kind: kindEvent, Name: name, Payload: payload}
 }
 
+// snapshotKey es la clave bajo la que los efectos que CAMBIAN las líneas del
+// pedido llevan la foto COMPLETA del carrito, con la MISMA forma que las de
+// cart_closed (sku/label/qty/unit_price/customization). Es lo que permite que el
+// proyector deje intake_items al día en una solicitud "open", en vez de esperar al
+// cierre (Plan 043 · Ola 3, líneas durables).
+const snapshotKey = "items"
+
+// withLineSnapshot cuelga del efecto la foto completa de las líneas del carrito y
+// la declara PRIVADA. Las dos mitades importan:
+//
+//   - La FOTO, y no la línea suelta que el efecto ya publica, porque el proyector
+//     REEMPLAZA el conjunto: así el mismo efecto reentregado deja la tabla igual, y
+//     los cambios que no son un "agregar" —la indicación de una línea, o el split
+//     de una línea ×N en ×(N-1)+×1 (D-041.20)— llegan a intake_items en el momento
+//     en que ocurren y no al cerrar.
+//   - PRIVADA, es decir fuera de public.flow_events, y NO por PII: aquí solo hay
+//     códigos de catálogo. Es por el tamaño y por el contrato. El outbox es
+//     append-only: publicar la foto entera en cada item_added reescribiría el
+//     carrito completo N veces para un pedido de N líneas, y además cambiaría el
+//     payload que hoy consumen la telemetría y los goldens. Con esta declaración el
+//     flow_event de item_added sigue siendo EXACTAMENTE el de antes, byte por byte,
+//     y el proyector —que recibe el efecto entero— es el único que ve la foto.
+//
+// En cart_closed la misma lista sí es pública, y no es una incoherencia: ese efecto
+// ocurre UNA vez por solicitud, así que la bitácora gana la foto de lo vendido sin
+// repetirla en cada paso.
+func withLineSnapshot(eff modules.Effect, lines []cartLine) modules.Effect {
+	eff.Payload[snapshotKey] = lineMaps(lines)
+	eff.PrivateKeys = append(eff.PrivateKeys, snapshotKey)
+	return eff
+}
+
+// lineMaps traduce las líneas del carrito a la forma que viaja en el payload de un
+// efecto. Es la ÚNICA traducción: la usan el cierre (público) y la foto de
+// withLineSnapshot (privada), de modo que el proyector lee siempre la misma forma
+// venga por donde venga y cartItems no necesita dos ramas.
+//
+// customization se OMITE cuando está vacía por la misma razón que en el cierre:
+// quien lee ya trata la ausencia como "", así que publicarla vacía solo engordaría
+// el payload.
+func lineMaps(lines []cartLine) []map[string]any {
+	items := make([]map[string]any, 0, len(lines))
+	for _, l := range lines {
+		item := map[string]any{
+			"sku":        l.SKU,
+			"label":      l.Label,
+			"qty":        l.Qty,
+			"unit_price": l.UnitPrice,
+		}
+		if l.Customization != "" {
+			item["customization"] = l.Customization
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
 // buyerDataEffect declara UN campo del checklist del comprador ya capturado (T4.5,
 // D-041.13). Es lo ÚNICO que saca del módulo el valor que tecleó el cliente, y por
 // eso lleva Kind modules.KindPrivate: con ese Kind el PersistSink NO lo escribe en
@@ -106,18 +163,24 @@ func (s noteScope) key() string {
 //
 // splitFromQty > 0 solo cuando hubo split: es la cantidad que tenía la línea antes
 // de partirse, un entero sin PII, para poder medir cuánto se usa esa rama.
-func noteAddedEffect(scope noteScope, sku, text string, splitFromQty int) modules.Effect {
+//
+// `lines` es el carrito YA MUTADO: este efecto acompaña al único cambio de líneas
+// que no es un item_added —la indicación de una línea, y el split que la parte en
+// dos—, así que sin la foto intake_items se quedaría con el conjunto anterior hasta
+// el cierre. Con ámbito "order" las líneas no cambian y la foto es la misma que ya
+// había: reemplazar por lo mismo no escribe nada distinto.
+func noteAddedEffect(scope noteScope, sku, text string, splitFromQty int, lines []cartLine) modules.Effect {
 	payload := map[string]any{"scope": scope.key()}
 	if scope == scopeOrder {
 		payload["len"] = len([]rune(text))
-		return event(EffectNoteAdded, payload)
+		return withLineSnapshot(event(EffectNoteAdded, payload), lines)
 	}
 	payload["sku"] = sku
 	payload["text"] = text
 	if splitFromQty > 0 {
 		payload["split_from_qty"] = splitFromQty
 	}
-	return event(EffectNoteAdded, payload)
+	return withLineSnapshot(event(EffectNoteAdded, payload), lines)
 }
 
 // closedEffect construye el efecto cart_closed (Kind "persist"): lleva las líneas
@@ -138,22 +201,9 @@ func noteAddedEffect(scope noteScope, sku, text string, splitFromQty int) module
 // segura está en el golden de la transcripción v1: un pedido sin indicaciones
 // produce EXACTAMENTE el mismo payload que antes de esta tarea, byte por byte.
 func closedEffect(lines []cartLine, note string) modules.Effect {
-	items := make([]map[string]any, 0, len(lines))
-	for _, l := range lines {
-		item := map[string]any{
-			"sku":        l.SKU,
-			"label":      l.Label,
-			"qty":        l.Qty,
-			"unit_price": l.UnitPrice,
-		}
-		if l.Customization != "" {
-			item["customization"] = l.Customization
-		}
-		items = append(items, item)
-	}
 	payload := map[string]any{
-		"items": items,
-		"total": total(lines),
+		snapshotKey: lineMaps(lines),
+		"total":     total(lines),
 	}
 	// customer_note viaja en el payload —el proyector la escribe en
 	// intakes.customer_note y el sink del CRM la manda al puente— pero se DECLARA

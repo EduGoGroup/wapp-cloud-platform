@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -544,7 +545,7 @@ func TestIntegration_ListAliveYListRescuable(t *testing.T) {
 	if got := ids(mustListar(ctx, t, "ListAlive", store.ListAlive, tenantID, sesion, contactoA)); got != nacimiento {
 		t.Fatalf("ListAlive = %s; quiero orden de nacimiento %s", got, nacimiento)
 	}
-	if got := ids(mustListar(ctx, t, "ListRescuable", store.ListRescuable, tenantID, sesion, contactoA)); got != nacimiento {
+	if got := idsRescatables(mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)); got != nacimiento {
 		t.Fatalf("ListRescuable = %s; quiero el último tocado primero, %s", got, nacimiento)
 	}
 
@@ -555,7 +556,7 @@ func TestIntegration_ListAliveYListRescuable(t *testing.T) {
 	mustTocar(ctx, t, store, encuesta.ID)
 
 	rescate := encuesta.ID + "," + carrito.ID
-	if got := ids(mustListar(ctx, t, "ListRescuable tras el segundo toque", store.ListRescuable, tenantID, sesion, contactoA)); got != rescate {
+	if got := idsRescatables(mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)); got != rescate {
 		t.Fatalf("ListRescuable = %s; quiero %s", got, rescate)
 	}
 	if got := ids(mustListar(ctx, t, "ListAlive tras el segundo toque", store.ListAlive, tenantID, sesion, contactoA)); got != nacimiento {
@@ -923,4 +924,427 @@ func joinComa(ss []string) string {
 		b.WriteString(s)
 	}
 	return b.String()
+}
+
+// idsRescatables concatena los ids de los rescatables en orden.
+func idsRescatables(rs []events.Rescuable) string {
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.ID)
+	}
+	return joinComa(out)
+}
+
+// mustRescatables lee la lista de rescatables o aborta.
+func mustRescatables(ctx context.Context, t *testing.T, st *events.Store,
+	tenantID, sesion, contacto string, limite int) []events.Rescuable {
+	t.Helper()
+	rs, err := st.ListRescuable(ctx, tenantID, sesion, contacto, limite)
+	if err != nil {
+		t.Fatalf("ListRescuable(limite=%d): %v", limite, err)
+	}
+	return rs
+}
+
+// insertarIntake crea una SOLICITUD con el estado dado y devuelve su id. Se
+// escribe con SQL directo y no por el servicio de intakes a propósito: lo que este
+// paquete tiene que probar es su predicado contra los estados que la otra tabla
+// puede tener, no el ciclo de vida que los produce.
+func insertarIntake(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sesion, contacto, status string) string {
+	t.Helper()
+	var id string
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status)
+		 VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id`,
+		tenantID, contacto, sesion, status).Scan(&id)
+	if err != nil {
+		t.Fatalf("insertar intake (%s): %v", status, err)
+	}
+	return id
+}
+
+// ponerStatusIntake mueve la solicitud a mano, que es lo que hace el descarte del
+// Plan 041 (T4.8) por su propia puerta.
+func ponerStatusIntake(ctx context.Context, t *testing.T, db *sql.DB, intakeID, status string) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx,
+		`UPDATE public.intakes SET status = $2 WHERE id = $1`, intakeID, status); err != nil {
+		t.Fatalf("mover el intake %s a %s: %v", intakeID, status, err)
+	}
+}
+
+// forzarStatusEvento reabre un evento con SQL directo, saltándose el guard del
+// store. Es la mitad del escenario de Marta que el plan pide probar: qué pasa si el
+// UPDATE del otro plan NO hubiera corrido.
+func forzarStatusEvento(ctx context.Context, t *testing.T, db *sql.DB, eventID, status string) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx,
+		`UPDATE public.conversation_events SET status = $2 WHERE id = $1`, eventID, status); err != nil {
+		t.Fatalf("forzar el evento %s a %s: %v", eventID, status, err)
+	}
+}
+
+// fijarTTL escribe el reloj de conversación del tenant.
+func fijarTTL(ctx context.Context, t *testing.T, db *sql.DB, tenantID string, segundos int) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO public.tenant_settings (tenant_id, event_inactivity_ttl_seconds)
+		 VALUES ($1, $2)
+		 ON CONFLICT (tenant_id) DO UPDATE SET event_inactivity_ttl_seconds = EXCLUDED.event_inactivity_ttl_seconds`,
+		tenantID, segundos); err != nil {
+		t.Fatalf("fijar event_inactivity_ttl_seconds=%d: %v", segundos, err)
+	}
+}
+
+// ── T3.6 · El filtro por la SOLICITUD (REQ-26c, INV-17) ──────────────────────
+
+// TestIntegration_RescatablesLaEscenaDeMarta es el criterio obligatorio de T3.6
+// (MD-041.5): un carrito cuyo pedido se DESCARTÓ no se lista, no se rescata y no se
+// menciona — y sigue sin listarse aunque su evento estuviera `open`, porque lo tapa
+// el predicado de esta consulta y no el UPDATE del otro plan.
+//
+// El tercer caso es la otra mitad del OR: un evento SIN solicitud (un menú, una
+// encuesta) no puede desaparecer por un LEFT JOIN que no encuentra fila.
+func TestIntegration_RescatablesLaEscenaDeMarta(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	store, reloj := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
+	const sesion = "sess-marta"
+
+	// El pedido de Marta: evento cart ligado a una solicitud ABIERTA.
+	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
+	pedido := nuevoEvento(tenantID, sesion, contactoA, "cart")
+	pedido.IntakeID = intakeID
+	elCart := mustCrear(ctx, t, store, pedido)
+	// Y una encuesta SIN solicitud, para la mitad `intake_id IS NULL` del OR.
+	reloj.avanzar(time.Minute)
+	laEncuesta := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "survey"))
+
+	quiero := laEncuesta.ID + "," + elCart.ID
+	if got := idsRescatables(mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)); got != quiero {
+		t.Fatalf("con la solicitud abierta el pedido es rescatable; got %s, quiero %s", got, quiero)
+	}
+	// Y NO rescatarlo lo deja huérfano y entero: listar no vence ni vacía nada
+	// (D-041.16 — este plan no mata solicitudes). Si un día alguien «limpia» aquí,
+	// esto se pone rojo antes de que el cliente pierda su pedido.
+	if got := statusIntake(ctx, t, db, intakeID); got != "open" {
+		t.Fatalf("listar no puede tocar la solicitud; quedó en %q", got)
+	}
+
+	// El dueño DESCARTA el pedido (Plan 041 · T4.8): la solicitud queda abandoned y
+	// el evento cancelled.
+	ponerStatusIntake(ctx, t, db, intakeID, "abandoned")
+	mustTransitar(ctx, t, store, elCart.ID, events.StatusCancelled)
+
+	if got := idsRescatables(mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)); got != laEncuesta.ID {
+		t.Fatalf("tras el descarte solo queda la encuesta; got %s", got)
+	}
+
+	// Y ahora la mitad que este plan tiene que sostener SOLO: el evento vuelve a
+	// `open` por SQL (el caso en que el UPDATE del 041 no hubiera corrido) y su
+	// solicitud sigue abandonada. Si lo que lo tapaba fuera el status del evento y
+	// no el predicado del intake, aquí reaparecería.
+	forzarStatusEvento(ctx, t, db, elCart.ID, "open")
+	if got := idsRescatables(mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)); got != laEncuesta.ID {
+		t.Fatalf("un evento open cuya solicitud está abandoned NO se lista (INV-17); got %s", got)
+	}
+	// El evento sigue vivo: no se lista, pero nadie lo ha matado.
+	if leerCruda(ctx, t, db, elCart.ID).status != "open" {
+		t.Fatalf("la consulta no debe cambiar el status de nada")
+	}
+}
+
+// TestIntegration_RescatablesSoloLaSolicitudAbiertaCuenta recorre los estados que
+// el ciclo del Plan 041 puede dar: solo `open` es rescatable. Un pedido que ya
+// cuajó (confirmed, settled) tampoco se ofrece para «retomarlo» — no está a medias,
+// está hecho.
+func TestIntegration_RescatablesSoloLaSolicitudAbiertaCuenta(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	store, _ := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
+
+	for _, caso := range []struct {
+		status string
+		quiero bool
+	}{
+		{"open", true},
+		{"abandoned", false},
+		{"cancelled", false},
+		{"confirmed", false},
+		{"settled", false},
+		{"pending_approval", false},
+	} {
+		t.Run(caso.status, func(t *testing.T) {
+			sesion := "sess-estado-" + caso.status
+			intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, caso.status)
+			in := nuevoEvento(tenantID, sesion, contactoA, "cart")
+			in.IntakeID = intakeID
+			ev := mustCrear(ctx, t, store, in)
+
+			got := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
+			if hay := len(got) == 1 && got[0].ID == ev.ID; hay != caso.quiero {
+				t.Fatalf("solicitud %q: rescatable=%v, quiero %v", caso.status, hay, caso.quiero)
+			}
+		})
+	}
+}
+
+// ── T3.9(a) · La marca «vencido» informa y NO filtra ─────────────────────────
+
+// TestIntegration_MarcaVencidoInformaYNoFiltra es el criterio literal de T3.9(a):
+// evento del 1 de enero con TTL de 1 h y contenido `open` ⇒ el 15 de enero SIGUE en
+// la lista y llega MARCADO. Y el que se tocó hoy sale sin marcar, en la misma
+// lectura: la columna distingue, el WHERE no.
+func TestIntegration_MarcaVencidoInformaYNoFiltra(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	enero1 := time.Date(2031, 1, 1, 10, 0, 0, 0, time.UTC)
+	store, reloj := nuevoStore(t, db, enero1)
+	const sesion = "sess-vencido"
+	fijarTTL(ctx, t, db, tenantID, 3600) // 1 h
+
+	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
+	in := nuevoEvento(tenantID, sesion, contactoA, "cart")
+	in.IntakeID = intakeID
+	elViejo := mustCrear(ctx, t, store, in)
+
+	// El 15 de enero llega un entrante y nace otro evento: el reloj del store es el
+	// mismo para los dos, así que lo único que los diferencia es su actividad.
+	reloj.t = time.Date(2031, 1, 15, 10, 0, 0, 0, time.UTC)
+	elDeHoy := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "survey"))
+
+	got := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
+	if len(got) != 2 {
+		t.Fatalf("el vencido SIGUE en la lista (INV-19): %d filas, quiero 2 (%s)", len(got), idsRescatables(got))
+	}
+	porID := map[string]events.Rescuable{got[0].ID: got[0], got[1].ID: got[1]}
+	if !porID[elViejo.ID].Stale {
+		t.Fatalf("el evento del 1 de enero con TTL de 1 h debe llegar MARCADO vencido el 15")
+	}
+	if porID[elDeHoy.ID].Stale {
+		t.Fatalf("el evento tocado hoy no está vencido")
+	}
+}
+
+// TestIntegration_MarcaVencidoConTTLCeroNuncaVence: 0 es el override «sin
+// vencimiento» del tenant (E-6), no un plazo de cero segundos. Sin la mitad
+// `ttl > 0` de la expresión, este tenant vería TODO marcado como vencido — y es un
+// fallo que no da error, solo mensajes equivocados.
+func TestIntegration_MarcaVencidoConTTLCeroNuncaVence(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	store, reloj := nuevoStore(t, db, time.Date(2031, 1, 1, 10, 0, 0, 0, time.UTC))
+	const sesion = "sess-ttl0"
+	fijarTTL(ctx, t, db, tenantID, 0)
+
+	mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "cart"))
+	reloj.avanzar(30 * 24 * time.Hour)
+
+	got := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
+	if len(got) != 1 || got[0].Stale {
+		t.Fatalf("con ttl=0 nada vence, ni tras un mes; got %d filas, stale=%v", len(got), len(got) == 1 && got[0].Stale)
+	}
+}
+
+// TestIntegration_MarcaVencidoSinFilaUsaElMismoDefaultQueLaBD ata las dos puntas
+// del default de plataforma: el COALESCE del SQL de este paquete y el DEFAULT de la
+// columna en la migración 0052.
+//
+// Cómo lo ata sin poder leer la constante del otro paquete: compara un tenant SIN
+// fila en tenant_settings (manda el COALESCE) con uno CON fila creada sin decir el
+// TTL (manda el DEFAULT de la columna). A 1 h 30 min ninguno debe estar vencido y a
+// 3 h los dos sí. Si el COALESCE valiera 3600, el primero divergiría del segundo en
+// el primer corte.
+func TestIntegration_MarcaVencidoSinFilaUsaElMismoDefaultQueLaBD(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	sinFila := seedTenant(t, db)
+	conFila := seedTenant(t, db)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO public.tenant_settings (tenant_id) VALUES ($1)`, conFila); err != nil {
+		t.Fatalf("crear la fila de settings con los DEFAULT de la migración: %v", err)
+	}
+
+	arranque := time.Date(2031, 1, 1, 10, 0, 0, 0, time.UTC)
+	store, reloj := nuevoStore(t, db, arranque)
+	const sesion = "sess-default"
+	mustCrear(ctx, t, store, nuevoEvento(sinFila, sesion, contactoA, "cart"))
+	mustCrear(ctx, t, store, nuevoEvento(conFila, sesion, contactoA, "cart"))
+
+	stale := func(tenantID string) bool {
+		rs := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
+		if len(rs) != 1 {
+			t.Fatalf("tenant %s: %d rescatables, quiero 1", tenantID, len(rs))
+		}
+		return rs[0].Stale
+	}
+
+	reloj.t = arranque.Add(90 * time.Minute)
+	if stale(sinFila) || stale(conFila) {
+		t.Fatalf("a 1 h 30 min nadie está vencido con el default de 2 h (sin fila=%v, con fila=%v)",
+			stale(sinFila), stale(conFila))
+	}
+	reloj.t = arranque.Add(3 * time.Hour)
+	if !stale(sinFila) || !stale(conFila) {
+		t.Fatalf("a 3 h los dos están vencidos (sin fila=%v, con fila=%v)", stale(sinFila), stale(conFila))
+	}
+}
+
+// TestIntegration_RescatablesElLoteAcota comprueba el LIMIT: el constructor de la
+// entrada pide un lote (tope+1) y la BD lo respeta sin perder el orden.
+func TestIntegration_RescatablesElLoteAcota(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	store, reloj := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
+	const sesion = "sess-lote"
+
+	// Siete tipos distintos: el único parcial (E-2) solo deja un vivo POR TIPO, así
+	// que siete rescatables son siete capacidades, no siete carritos.
+	creados := make([]string, 0, 7)
+	for _, k := range []string{"cart", "survey", "media", "taller", "cita", "reserva", "cotizacion"} {
+		ev := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, k))
+		creados = append(creados, ev.ID)
+		reloj.avanzar(time.Minute)
+	}
+
+	if got := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0); len(got) != 7 {
+		t.Fatalf("sin tope se listan los 7; got %d", len(got))
+	}
+	lote := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 6)
+	if len(lote) != 6 {
+		t.Fatalf("con tope 6 se listan 6; got %d", len(lote))
+	}
+	// El que se queda fuera es el MÁS ANTIGUO, no uno cualquiera: el LIMIT se aplica
+	// sobre el orden, no antes.
+	if lote[0].ID != creados[6] || lote[5].ID != creados[1] {
+		t.Fatalf("el lote respeta last_activity_at DESC; got %s", idsRescatables(lote))
+	}
+}
+
+// statusIntake lee el estado de la solicitud con SQL directo.
+func statusIntake(ctx context.Context, t *testing.T, db *sql.DB, intakeID string) string {
+	t.Helper()
+	var s string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM public.intakes WHERE id = $1`, intakeID).Scan(&s); err != nil {
+		t.Fatalf("leer el status del intake %s: %v", intakeID, err)
+	}
+	return s
+}
+
+// insertarLineaIntake añade una línea a la solicitud con SQL directo y devuelve su
+// id. Se escribe así, y no por el módulo cart, porque lo que este test tiene que
+// afirmar es que la consulta de rescatables NO TOCA las líneas: quién las pone es
+// otra capa (y otro plan).
+func insertarLineaIntake(ctx context.Context, t *testing.T, db *sql.DB,
+	intakeID, sku, label string, qty int, unitPrice string) int64 {
+	t.Helper()
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+		 VALUES ($1, $2, $3, '', $4, $5) RETURNING id`,
+		intakeID, sku, label, qty, unitPrice).Scan(&id)
+	if err != nil {
+		t.Fatalf("insertar línea %q del intake: %v", sku, err)
+	}
+	return id
+}
+
+// lineasIntake lee las líneas de la solicitud como «sku xqty @precio», en orden.
+func lineasIntake(ctx context.Context, t *testing.T, db *sql.DB, intakeID string) []string {
+	t.Helper()
+	rows, err := db.QueryContext(ctx,
+		`SELECT sku, qty, unit_price FROM public.intake_items
+		  WHERE intake_id = $1 ORDER BY id`, intakeID)
+	if err != nil {
+		t.Fatalf("leer las líneas del intake %s: %v", intakeID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Logf("cerrar filas de líneas: %v", cerr)
+		}
+	}()
+
+	var out []string
+	for rows.Next() {
+		var (
+			sku   string
+			qty   int
+			price string
+		)
+		if err := rows.Scan(&sku, &qty, &price); err != nil {
+			t.Fatalf("leer línea del intake: %v", err)
+		}
+		out = append(out, fmt.Sprintf("%s x%d @%s", sku, qty, price))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("recorrer las líneas del intake: %v", err)
+	}
+	return out
+}
+
+// TestIntegration_NoRescatarDejaElPedidoHuerfanoConSusLineas es la mitad de
+// REQ-26b que se puede afirmar DESDE ESTE PAQUETE: listar rescatables no vence, no
+// vacía y no cierra nada — el pedido sigue `open`, con su evento vivo y con sus
+// líneas exactas, esperando a que lo retomen o a que un humano lo descarte
+// (D-041.18). Este plan no mata solicitudes.
+//
+// ⚠️ Lo que este test NO prueba, y hay que saberlo al leerlo: que las líneas
+// ESTÉN ahí. Aquí se siembran con SQL porque hoy una solicitud `open` no tiene
+// filas en `intake_items` (solo se pueblan al cerrar), que es justo lo que está
+// arreglando el frente de líneas durables. Cuando eso aterrice, el escenario
+// completo —el cliente añade un artículo y el rescate se lo enseña— se afirma
+// donde vive el módulo cart, no aquí: este paquete no sabe añadir una línea, y un
+// test que lo simulara probaría su propia siembra.
+func TestIntegration_NoRescatarDejaElPedidoHuerfanoConSusLineas(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	store, reloj := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
+	const sesion = "sess-lineas"
+
+	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
+	insertarLineaIntake(ctx, t, db, intakeID, "TORTA-CHOCO", "Torta de chocolate", 1, "25.00")
+	insertarLineaIntake(ctx, t, db, intakeID, "VELA-NUM", "Vela de número", 2, "1.50")
+	quiero := []string{"TORTA-CHOCO x1 @25.00", "VELA-NUM x2 @1.50"}
+	if got := lineasIntake(ctx, t, db, intakeID); !slices.Equal(got, quiero) {
+		t.Fatalf("la siembra no dejó las dos líneas: %v", got)
+	}
+
+	in := nuevoEvento(tenantID, sesion, contactoA, "cart")
+	in.IntakeID = intakeID
+	elPedido := mustCrear(ctx, t, store, in)
+
+	// Pasan tres días de silencio: el evento vence, pero vencer no es morir (E-6).
+	reloj.avanzar(72 * time.Hour)
+	fijarTTL(ctx, t, db, tenantID, 3600)
+
+	rs := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
+	if len(rs) != 1 || rs[0].ID != elPedido.ID {
+		t.Fatalf("el pedido vencido sigue siendo rescatable; got %s", idsRescatables(rs))
+	}
+	if !rs[0].Stale {
+		t.Fatalf("tras 72 h con TTL de 1 h el pedido llega marcado vencido")
+	}
+	// Y el rescatable trae el hilo hasta su solicitud: sin IntakeID, quien componga
+	// el resumen no tendría por dónde llegar a las líneas.
+	if rs[0].IntakeID != intakeID {
+		t.Fatalf("el rescatable debe traer su intake_id (%s); got %q", intakeID, rs[0].IntakeID)
+	}
+
+	// El cliente NO rescata: escribe otra cosa y se va. Nada se vació.
+	if got := statusIntake(ctx, t, db, intakeID); got != "open" {
+		t.Fatalf("la solicitud sigue open aunque no la rescaten; quedó en %q", got)
+	}
+	if got := lineasIntake(ctx, t, db, intakeID); !slices.Equal(got, quiero) {
+		t.Fatalf("las líneas siguen intactas; got %v, quiero %v", got, quiero)
+	}
+	if leerCruda(ctx, t, db, elPedido.ID).status != "open" {
+		t.Fatalf("el evento vencido sigue vivo: nada muere por tiempo (E-6)")
+	}
 }

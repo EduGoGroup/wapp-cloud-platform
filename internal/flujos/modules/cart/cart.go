@@ -339,12 +339,12 @@ func stepQuantity(cat Catalog, st cartState, in string, size int) (cartState, []
 	st.Lines = append(cloneLines(st.Lines), line)
 	st.Level = LevelContinue
 	st.VariantCode = ""
-	eff := event(EffectItemAdded, map[string]any{
+	eff := withLineSnapshot(event(EffectItemAdded, map[string]any{
 		"sku":        line.SKU,
 		"label":      line.Label,
 		"qty":        line.Qty,
 		"unit_price": line.UnitPrice,
-	})
+	}), st.Lines)
 	return st, []string{screenContinue(category)}, []modules.Effect{eff}
 }
 
@@ -520,7 +520,7 @@ func stepItemNote(cat Catalog, st cartState, in string) (cartState, []string, []
 	st.Lines = lines
 	st.NoteSplit = false
 
-	eff := noteAddedEffect(scope, line.SKU, note, splitFrom)
+	eff := noteAddedEffect(scope, line.SKU, note, splitFrom, st.Lines)
 	newSt, outs, _ := backToContinue(cat, st, noteAck(note, scope, line.Qty))
 	return newSt, outs, []modules.Effect{eff}
 }
@@ -548,7 +548,7 @@ func stepOrderNote(st cartState, in string) (cartState, []string, []modules.Effe
 	st.Note = note
 	st.Level = LevelSummary
 	return st, []string{noteAck(note, scopeOrder, 0) + "\n" + screenSummary(st.Lines, st.Note)},
-		[]modules.Effect{noteAddedEffect(scopeOrder, "", note, 0)}
+		[]modules.Effect{noteAddedEffect(scopeOrder, "", note, 0, st.Lines)}
 }
 
 // backToContinue devuelve la sub-máquina a L5 desde cualquiera de los niveles de

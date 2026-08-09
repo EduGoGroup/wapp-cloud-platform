@@ -26,6 +26,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/catalogimport"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
@@ -150,6 +151,11 @@ type Deps struct {
 	// bandeja del dueño y la máquina de estados del Plan 041. Lo satisface
 	// *intakes.Service. nil ⇒ no se montan las rutas /api/v1/intakes.
 	Intakes IntakeService
+	// ConversationEvents lista los EVENTOS conversacionales del tenant (Plan 043 ·
+	// T3.9b, REQ-28): la bandeja hermana de la de solicitudes, la que enseña lo que
+	// `…/intakes/discard` no alcanza porque no parió solicitud. Lo satisface
+	// *events.Store. nil ⇒ no se monta GET /api/v1/conversation-events.
+	ConversationEvents ConversationEventLister
 	// TenantVariables son las variables de empresa clave→valor que wApp NO
 	// interpreta (Plan 041 · T2.1, D-041.1). Lo satisface *tenantvars.Postgres.
 	// nil ⇒ no se montan las rutas /api/v1/tenant-variables.
@@ -335,6 +341,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// que existen.
 	registerIntakes(mux, d, mw, auditor, log)
 
+	// Bandeja de EVENTOS conversacionales (Plan 043 · T3.9b, REQ-28). Misma razón
+	// para vivir aparte: su `if` de montaje sumaría uno más a la complejidad de
+	// Register, que ya roza el techo del linter (gocyclo 15).
+	registerConversationEvents(mux, d, mw)
+
 	// Variables de empresa (Plan 041 · T2.1, D-041.1). También en su propia
 	// función: no por tamaño, sino porque el `if` de montaje sumaría uno más a la
 	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
@@ -425,6 +436,49 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 		"intakes.read", canExport(exportIntakesHandler(d.Intakes))))
 	mux.Handle("GET /api/v1/intakes/summary.json", protectRead(mw,
 		"intakes.read", canExport(intakeSummaryHandler(d.Intakes))))
+}
+
+// registerConversationEvents monta el listado de EVENTOS conversacionales (Plan
+// 043 · T3.9b, REQ-28): la bandeja por la que el dueño limpia lo que la de
+// solicitudes no alcanza. Acotado al tenant del token (INV-8); lectura sin
+// auditoría, como el resto de las lecturas.
+//
+// DOS decisiones que conviene no deshacer sin leer esto:
+//
+// El SCOPE es `intakes.read`, el MISMO de la bandeja de solicitudes, y no un
+// `events.read` nuevo. Un scope nuevo no lo tiene nadie hasta que una migración se
+// lo conceda al rol `operator` (así nacieron sessions.read en la 0030,
+// entitlements.read en la 0040 e intakes.read en la 0042), así que estrenarlo aquí
+// dejaría la ruta montada y devolviendo 403 a la única persona que la necesita.
+// Además las dos bandejas son la misma tarea partida en dos: esta enseña
+// exactamente lo que a la otra se le escapa.
+//
+// La FEATURE no es una: son las CUATRO de los tipos de fábrica, y basta tener UNA
+// (decisión de Jhoan, 2026-08-09). El plan pedía «el mismo gate que …/cancel»
+// (D-043.8), pero ese endpoint todavía NO EXISTE —es T4.2, de la Ola 4—, así que
+// aquí no se copiaba un gate: se elegía el primero. Se descartó `cart_basic` —el de
+// la bandeja de solicitudes— por lo que dejaba fuera: esta lista abarca menu, cart,
+// survey y media, y gatearla con la del carrito habría cegado a un tenant de solo
+// encuestas sobre sus PROPIAS encuestas.
+//
+// El gate abre la puerta; lo que se ve dentro lo acota events.AllowedKinds en el
+// handler, con el MISMO mapa tipo→feature del despachador. Las dos mitades son
+// necesarias: sin la primera un tenant sin nada entraría; sin la segunda, entrar
+// por `survey` enseñaría también los carritos.
+//
+// ⚠️ Cuando T4.2 monte POST …/conversation-events/{id}/cancel debe usar EXACTAMENTE
+// este gate (y el filtro por tipos sobre el id que cancela). Un segundo criterio
+// dejaría al dueño viendo eventos que no puede cerrar, o cerrando los que no ve.
+//
+// Sin el lister o sin el resolver de features la ruta NO se monta: mejor un 404 de
+// ruta inexistente que una bandeja que se abre sin poder comprobar el plan.
+func registerConversationEvents(mux *http.ServeMux, d Deps, mw *httpapi.Middleware) {
+	if d.ConversationEvents == nil || d.Entitlements == nil {
+		return
+	}
+	algúnTipo := entitlements.RequireAnyFeature(d.Entitlements, events.KindFeatures()...)
+	mux.Handle("GET /api/v1/conversation-events", protectRead(mw,
+		"intakes.read", algúnTipo(listConversationEventsHandler(d.ConversationEvents, d.Entitlements))))
 }
 
 // registerTenantVariables monta las variables de empresa por-tenant (Plan 041 ·

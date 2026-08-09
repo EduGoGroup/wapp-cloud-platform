@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
@@ -529,16 +530,25 @@ func TestHandleIncoming_Encuesta_DosRespuestasViaSink(t *testing.T) {
 // sameResultSet compara dos slices de SurveyResult como CONJUNTOS (ignora el
 // orden): el sink escribe por-respuesta según llega el entrante, así que el orden
 // de inserción es determinista pero el contrato es el conjunto de filas.
+// sameResultSet compara por IDENTIDAD DE NEGOCIO y por eso ignora CreatedAt: esa marca
+// la pone el almacén (el DEFAULT now() de la columna, que el repositorio en memoria
+// imita desde el Plan 043 · Ola 3 para que la cota por fecha del resumen se comporte
+// igual en tests que en producción). Compararla obligaría a cada test a conocer la hora
+// de escritura, que no es lo que ninguno de ellos quiere afirmar.
 func sameResultSet(a, b []store.SurveyResult) bool {
 	if len(a) != len(b) {
 		return false
 	}
+	sinFecha := func(r store.SurveyResult) store.SurveyResult {
+		r.CreatedAt = time.Time{}
+		return r
+	}
 	count := map[store.SurveyResult]int{}
 	for _, r := range a {
-		count[r]++
+		count[sinFecha(r)]++
 	}
 	for _, r := range b {
-		count[r]--
+		count[sinFecha(r)]--
 	}
 	for _, c := range count {
 		if c != 0 {

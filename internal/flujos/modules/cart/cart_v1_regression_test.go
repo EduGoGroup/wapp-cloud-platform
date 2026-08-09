@@ -56,7 +56,16 @@ func (tr *transcript) writeEffects(effs []modules.Effect) {
 		return
 	}
 	for _, e := range effs {
-		payload, err := json.Marshal(e.Payload)
+		// PublicPayload y no Payload: el golden sujeta el efecto tal como sale del
+		// módulo HACIA public.flow_events, que es el contrato que no puede regresar
+		// (lo leen la telemetría y el puente del CRM). Las claves declaradas privadas
+		// no llegan ahí, así que meterlas en la transcripción sujetaría como
+		// "conversación v1" algo que ningún consumidor v1 vio nunca.
+		//
+		// Lo privado NO queda sin red: la foto de líneas que item_added/note_added
+		// llevan desde el Plan 043 · Ola 3 la sujetan los tests de la proyección
+		// (projection_lines_test.go), que es donde tiene consecuencias.
+		payload, err := json.Marshal(e.PublicPayload())
 		if err != nil {
 			payload = []byte("<payload no serializable>")
 		}

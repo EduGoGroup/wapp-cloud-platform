@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -35,10 +36,22 @@ type EventStore interface {
 	// ListAlive devuelve todos los eventos vivos de la conversación. El runtime lo usa
 	// para NOMBRAR el evento activo por su tipo (E-3) sin necesitar una lectura por id.
 	ListAlive(ctx context.Context, tenantID, sessionID, contactID string) ([]events.Event, error)
+	// ListRescuable devuelve los eventos vivos que además SIGUEN siendo rescatables:
+	// los que no cuelgan de una solicitud descartada, cancelada o ya cuajada (REQ-26c,
+	// D-043.15). No es lo mismo que ListAlive y la diferencia es INV-17: un evento
+	// puede seguir `open` y no poder retomarse, porque quien decidió que ya no vale fue
+	// una persona sobre el pedido, no un reloj sobre el evento. limit <= 0 ⇒ sin tope.
+	ListRescuable(ctx context.Context, tenantID, sessionID, contactID string, limit int) ([]events.Rescuable, error)
 	// TransitionEvent mueve el evento a un estado terminal con el guard de la BD.
 	TransitionEvent(ctx context.Context, eventID string, to events.Status) error
 	// Touch refresca last_activity_at: EL reloj de conversación (E-6).
 	Touch(ctx context.Context, eventID string) error
+	// AppendSummary escribe el resumen del evento que se abandona (T3.4, E-4). Está
+	// aquí —y no en un puerto propio— porque lo satisface el MISMO *events.Store y
+	// porque quien abandona un evento ya tiene este almacén en la mano; el puerto
+	// estrecho que PersistSummary pide (events.SummaryAppender) queda satisfecho por
+	// esta interfaz sin adaptador.
+	AppendSummary(ctx context.Context, eventID string, body json.RawMessage) (int, error)
 	// IsSuspended evalúa la condición DERIVADA «vencido» con el reloj del store.
 	// ttl <= 0 ⇒ siempre false (override «sin vencimiento» del tenant).
 	IsSuspended(e events.Event, ttl time.Duration) bool
@@ -70,6 +83,40 @@ type IntakeAbandoner interface {
 // palabra del menú no presenta nada.
 type Dispatcher interface {
 	Build(ctx context.Context, ref events.ConversationRef) (events.Menu, error)
+}
+
+// OpeningBuilder es el puerto hacia el constructor de la ENTRADA de una conversación
+// SIN evento (Plan 043 · T3.8, REQ-27, D-043.17): lo que se le ofrece a alguien que
+// escribió algo que no casó nada —los tipos que el tenant habilita y, si tiene algo a
+// medias, la entrada para retomarlo—. Lo satisfará el constructor de T3.8.1-3.
+//
+// La firma es DELIBERADAMENTE la misma forma que Dispatcher, y no por simetría
+// estética: las dos preguntas son «qué le ofrezco a este contacto», la respuesta es el
+// mismo tipo renderizable, y darles firmas distintas invitaría a escribir dos
+// consultas de rescatables donde el plan exige UNA (T3.8: «prohibido escribir una
+// segunda»).
+//
+// Un events.Offering trae las DOS mitades que este runtime necesita y que no se
+// pueden derivar la una de la otra: Text es lo que se le dice al cliente, y Menu es la
+// estructura con la que se interpretará el número que conteste. Por eso se envía Text
+// y se PERSISTE Menu (varPendingMenu): sin lo segundo, la opción «Retomar algo que
+// dejaste a medias» sería una promesa que el mensaje siguiente no sabría cumplir.
+//
+// El CASO VACÍO (Offering.Empty) es la otra razón de ser del puerto: una oferta sin
+// una sola opción NO es una lista vacía que enseñar, es la señal de que la rama debe
+// caer al `fallback` del tenant de toda la vida (REQ-27b, INV-20). Sin ese distingo,
+// un tenant recién creado se quedaría mudo.
+//
+// nil (sin cablear) ⇒ el fallback se comporta EXACTAMENTE como antes del Plan 043:
+// no-regresión total (INV-6).
+type OpeningBuilder interface {
+	// BuildOpening arma la entrada de una conversación SIN evento (T3.8.1).
+	BuildOpening(ctx context.Context, ref events.ConversationRef) (events.Offering, error)
+	// BuildRescue arma la lista de lo que este contacto puede RETOMAR (T3.6). La
+	// consume la opción «Retomar algo que dejaste a medias» de la entrada: elegirla no
+	// rescata nada todavía —abre la lista de qué rescatar—, y por eso son dos pasos y
+	// no uno.
+	BuildRescue(ctx context.Context, ref events.ConversationRef) (events.Offering, error)
 }
 
 // FlowForKind resuelve QUÉ FLUJO arranca un tipo de evento para este tenant.
@@ -309,10 +356,16 @@ func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID stri
 // fila por conversación. Es el precio aceptado por el diseño, que restaura desde la
 // VERDAD DURABLE del módulo (las líneas del intake, las respuestas de la encuesta),
 // no desde el puntero de nodo.
+// Antes de re-entrar al flujo se le RECUERDA al cliente lo que llevaba decidido (T3.4,
+// E-4). Va aquí y no en resumeEvent porque a un evento se vuelve por DOS caminos —
+// diciendo la palabra de su tipo, que entra por beginEvent, y eligiendo su número en la
+// lista de rescatables, que entra por resumeEvent— y los dos pasan por aquí. Ponerlo en
+// uno solo deja al otro sin recordatorio, que es lo que medimos al escribirlo.
 func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID string, ev events.Event) error {
 	if err := rt.events.Touch(ctx, ev.ID); err != nil {
 		return fmt.Errorf("runtime: refrescar el reloj del evento al conmutar: %w", err)
 	}
+	rt.sendResumeSummary(ctx, key, sessionID, ev)
 	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, ev.Kind, ev.FlowID, nil, "")
 }
 
@@ -328,6 +381,16 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 // del tipo `menu`, cuyo contenido lo renderiza el despachador y no una fila de
 // flow_definitions (D-043.3).
 func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID, eventID, kind, flowID string, params map[string]string, intentName string) error {
+	// El SALTO POR TIPO es un abandono: antes de tocar nada, se resume el evento que se
+	// deja atrás (T3.4). Va aquí arriba y no dentro del `if flowID != ""` porque el
+	// salto al menú también abandona, y porque lo que sigue BORRA el flow_state —y con
+	// él las Vars de las que sale el nivel de la sub-máquina.
+	if previo, ok, err := rt.store.Load(ctx, key); err != nil {
+		rt.log.Warn("runtime: no se pudo leer el estado previo para resumir el abandono",
+			"error", err, "session_id", sessionID)
+	} else if ok {
+		rt.summarizeAbandoned(ctx, key, sessionID, previo, eventID)
+	}
 	if kind == trigger.EventKindMenu {
 		// El menú NO es una fila de flow_definitions (D-043.3): su contenido es dinámico
 		// por contacto, así que lo renderiza el despachador y no el motor.
@@ -384,6 +447,9 @@ func (rt *Runtime) stopEvent(ctx context.Context, key store.Key, sessionID strin
 		return nil
 	}
 	kind := rt.activeEventKind(ctx, key, sessionID, st.EventID)
+	// `event_stop` es un abandono declarado por el cliente: se resume ANTES de apagar el
+	// puntero, mientras las Vars todavía dicen dónde se había quedado (T3.4).
+	rt.summarizeAbandoned(ctx, key, sessionID, st, "")
 	st.EventID = ""
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: desactivar el evento activo: %w", err)
@@ -424,22 +490,194 @@ func stopNotice(kind string) string {
 // confirmación (E-3: se nombra el tipo, jamás el history_id). Es BEST-EFFORT: si no
 // se puede averiguar devuelve "" y el aviso cae al genérico — quedarse sin confirmar
 // por no saber cómo llamarlo sería peor que confirmar sin nombre.
-//
-// Va por ListAlive —UNA consulta— y no recorriendo los tipos de fábrica preguntando
-// por cada uno, que serían cuatro consultas para responder a la misma pregunta.
 func (rt *Runtime) activeEventKind(ctx context.Context, key store.Key, sessionID, eventID string) string {
-	alive, err := rt.events.ListAlive(ctx, key.TenantID, sessionID, key.ContactID)
+	ev, ok, err := rt.aliveByID(ctx, key.TenantID, sessionID, key.ContactID, eventID)
 	if err != nil {
 		rt.log.Warn("runtime: no se pudo resolver el tipo del evento activo; se usa el aviso genérico",
 			"error", err, "session_id", sessionID)
 		return ""
 	}
+	if !ok {
+		return ""
+	}
+	return ev.Kind
+}
+
+// aliveByID relee el evento VIVO al que apunta flow_state.event_id. Va por ListAlive
+// —UNA consulta— y no recorriendo los tipos de fábrica preguntando por cada uno, que
+// serían cuatro consultas para responder a la misma pregunta.
+//
+// No encontrarlo NO es un error (ok=false): el puntero puede haber quedado apuntando
+// a un evento que se cerró desde la app del dueño entre un entrante y el siguiente.
+// Quien llama decide qué hacer con esa ausencia; aquí no se inventa nada.
+func (rt *Runtime) aliveByID(ctx context.Context, tenantID, sessionID, contactID, eventID string) (events.Event, bool, error) {
+	alive, err := rt.events.ListAlive(ctx, tenantID, sessionID, contactID)
+	if err != nil {
+		return events.Event{}, false, fmt.Errorf("runtime: releer los eventos vivos de la conversación: %w", err)
+	}
 	for _, ev := range alive {
 		if ev.ID == eventID {
-			return ev.Kind
+			return ev, true, nil
 		}
 	}
-	return ""
+	return events.Event{}, false, nil
+}
+
+// summarizeAbandoned escribe el resumen del evento que la conversación ACABA DE
+// ABANDONAR (T3.4, E-4). Los tres abandonos reales son el salto por tipo, el
+// `event_stop` y el escape global; los tres pasan por aquí.
+//
+// Dos condiciones de uso que no son negociables:
+//
+//  1. SE LLAMA ANTES DE BORRAR EL flow_state. El nivel de la sub-máquina («te
+//     quedaste eligiendo la cantidad») sale de conv.Vars, y las Vars mueren con el
+//     estado. Llamarla después no falla ni avisa: escribe un resumen mudo, y nadie se
+//     entera hasta que un humano lee el historial y no encuentra dónde se quedó.
+//  2. NO se llama al vencer la inactividad. Al vencer, el evento no muere: sigue
+//     `open` y rescatable, y lo único que pasa es que la conversación suelta el
+//     puntero. CALLARSE NO ES ABANDONAR. Escribir ahí una fila marcaría como
+//     terminado lo que sigue abierto, y la reescribiría en cada vencimiento sucesivo
+//     del mismo evento.
+//
+// Es BEST-EFFORT a propósito: un fallo al resumir se LOGUEA y no aborta el abandono.
+// El cliente ya pidió cambiar de conversación, y negárselo porque no se pudo escribir
+// una fila de historial sería castigarle por un problema nuestro. `escrito == false`
+// sin error es lo NORMAL (no había nada que resumir) y no se registra como fallo.
+func (rt *Runtime) summarizeAbandoned(ctx context.Context, key store.Key, sessionID string, st model.Conversation, destino string) {
+	if rt.events == nil || st.EventID == "" || st.EventID == destino {
+		return
+	}
+	if rt.sources.Lines == nil && rt.sources.Answers == nil {
+		return // sin fuentes cableadas no hay resumen que armar (no-regresión).
+	}
+	ev, alive, err := rt.aliveByID(ctx, key.TenantID, sessionID, key.ContactID, st.EventID)
+	if err != nil || !alive {
+		rt.log.Warn("runtime: no se pudo releer el evento abandonado; se sigue sin resumen",
+			"error", err, "session_id", sessionID)
+		return
+	}
+	seq, escrito, err := events.PersistSummary(ctx, rt.events, rt.sources, ev, st.Vars)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo escribir el resumen del evento abandonado",
+			"error", err, "session_id", sessionID, "event_kind", ev.Kind)
+		return
+	}
+	if escrito {
+		rt.log.Debug("runtime: resumen del evento abandonado escrito",
+			"session_id", sessionID, "event_kind", ev.Kind, "seq", seq)
+	}
+}
+
+// sendResumeSummary le recuerda al cliente que vuelve QUÉ LLEVABA DECIDIDO (T3.4,
+// E-4: «además se envía al cliente al reanudar»). Va ANTES de la pantalla del flujo,
+// porque el orden es el de la conversación: primero «esto es lo que tenías», luego
+// «sigue por aquí».
+//
+// El resumen se arma AL VUELO y con vars nil, y las dos cosas son deliberadas:
+//
+//   - Al vuelo, y no leyendo la fila `summary` persistida, porque esa fila puede no
+//     existir. El rescate llega por dos caminos y solo uno la escribe: tras un abandono
+//     real (salto por tipo, event_stop, escape) sí; tras VENCER LA INACTIVIDAD no, por
+//     la decisión de esta ola —callarse no es abandonar—. Y ese segundo camino es el
+//     más común: el cliente que vuelve tras el silencio es exactamente a quien hay que
+//     recordarle lo que llevaba. Leer lo persistido le dejaría mudo.
+//   - vars nil porque el flow_state YA NO EXISTE cuando el cliente vuelve. Lo que se
+//     enseña sale de las fuentes DURABLES —las líneas del pedido, las respuestas
+//     dadas—, no del puntero de nodo que se soltó al vencer.
+//
+// No devuelve error a propósito: es BEST-EFFORT. Si el resumen no se puede armar, el
+// rescate sigue y el cliente vuelve a su pedido igual; quedarse sin recordatorio es
+// peor que quedarse sin rescate, pero mucho menos malo que perder las dos cosas.
+func (rt *Runtime) sendResumeSummary(ctx context.Context, key store.Key, sessionID string, ev events.Event) {
+	if rt.sources.Lines == nil && rt.sources.Answers == nil {
+		return
+	}
+	sum, err := events.LoadSummary(ctx, rt.sources, ev, nil)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo armar el resumen del evento rescatado; se retoma sin él",
+			"error", err, "session_id", sessionID, "event_kind", ev.Kind)
+		return
+	}
+	if sum.Empty() {
+		// Un evento sin nada decidido no tiene qué recordar: se retoma en silencio en
+		// vez de mandar un resumen vacío que solo ocuparía pantalla.
+		return
+	}
+	to, err := rt.destino(ctx, key.TenantID, key.ContactID)
+	if err != nil {
+		rt.log.Warn("runtime: sin destino para el resumen del rescate", "error", err, "session_id", sessionID)
+		return
+	}
+	if _, err := rt.send(ctx, sessionID, to, []engine.Output{{Text: sum.Render()}}); err != nil {
+		rt.log.Warn("runtime: no se pudo enviar el resumen del rescate; se retoma igual",
+			"error", err, "session_id", sessionID)
+	}
+}
+
+// eventClock es EL reloj de conversación (ADR-0029 E-6) aplicado al entrante que
+// llega con un evento ACTIVO. Devuelve si el turno debe tratarse como arranque nuevo.
+//
+// Dos caminos y ninguna columna nueva:
+//
+//   - Dentro de la ventana ⇒ Touch: la interacción estampa last_activity_at := now()
+//     (T3.1). Por eso un chat que dura meses no vence nunca: el plazo se mide contra
+//     la ÚLTIMA interacción, no contra el nacimiento del evento. Un plazo absoluto
+//     desde created_at mataría al cliente fiel, que es justo el que no debe morir.
+//   - Vencido el silencio ⇒ la conversación se SUELTA (T3.2, REQ-09): el entrante no
+//     se ata al evento anterior y entra por el resolver de disparos. La fila del
+//     evento NO se toca: sigue `open`, con su solicitud y sus líneas, rescatable
+//     diciendo su tipo. «Suspendido» sigue siendo DERIVADO — no hay estado `expired`
+//     ni nada que escribir para representarlo.
+//
+// El evento no encontrado entre los vivos (cerrado desde la app del dueño mientras
+// el puntero seguía apuntándolo) NO vence nada y NO refresca nada: la conversación
+// avanza y el puntero se corregirá solo en el siguiente salto. Sin plano de eventos
+// cableado (events nil) esto no existe: no-regresión total (INV-6).
+func (rt *Runtime) eventClock(ctx context.Context, tenantID string, key store.Key, eventID string) (bool, error) {
+	if rt.events == nil {
+		return false, nil
+	}
+	ev, alive, err := rt.aliveByID(ctx, tenantID, key.SessionID, key.ContactID, eventID)
+	if err != nil {
+		return false, err
+	}
+	if !alive {
+		rt.log.Debug("runtime: el evento activo ya no está vivo; su reloj no gobierna este entrante",
+			"session_id", key.SessionID)
+		return false, nil
+	}
+	ttl, err := rt.eventInactivityTTL(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if rt.events.IsSuspended(ev, ttl) {
+		return true, rt.releaseForNewConversation(ctx, key)
+	}
+	if terr := rt.events.Touch(ctx, ev.ID); terr != nil {
+		return false, fmt.Errorf("runtime: refrescar el reloj del evento activo: %w", terr)
+	}
+	return false, nil
+}
+
+// releaseForNewConversation suelta la conversación cuyo evento activo lleva más
+// tiempo callado que el silencio que el tenant tolera (T3.2, REQ-09).
+//
+// Se borra el flow_state entero y no solo su columna event_id, y la diferencia es la
+// que decide si el cliente recibe respuesta: lo que sigue es el camino de una
+// conversación NUEVA (resolver de disparos → despachador), y ese camino arranca
+// flujos con startLocked, que rechaza con ErrConversationExists si queda un estado
+// vivo. Dejar la fila con el puntero apagado convertiría en silencio cualquier
+// palabra clave dicha tras el vencimiento. Lo que se borra es el PUNTERO DE NODO del
+// motor, nunca datos de negocio — la misma regla que enterEventFlow.
+//
+// Y lo que NO se hace es la mitad que importa: no se llama a TransitionEvent, no se
+// toca `status` y no se vacía ninguna solicitud. El evento sigue `open` con sus
+// líneas para que un humano —o el propio cliente— lo retome (INV-09, D-041.18).
+func (rt *Runtime) releaseForNewConversation(ctx context.Context, key store.Key) error {
+	if err := rt.store.Delete(ctx, key); err != nil {
+		return fmt.Errorf("runtime: soltar la conversación por inactividad del evento: %w", err)
+	}
+	return nil
 }
 
 // eventInactivityTTL lee EL reloj de conversación del tenant (E-6). Un fallo de
@@ -538,6 +776,11 @@ func (rt *Runtime) menuChoice(ctx context.Context, key store.Key, sessionID stri
 	switch choice.Action {
 	case events.ActionResume:
 		return true, rt.resumeEvent(ctx, key, sessionID, choice.EventID)
+	case events.ActionRescue:
+		// «Retomar algo que dejaste a medias» (T3.8). Elegirla NO rescata todavía: abre
+		// la lista de QUÉ retomar, y el número siguiente ya llega como ActionResume con
+		// su EventID. Sin este case la opción existía en la lista y no hacía nada.
+		return rt.presentRescue(ctx, key, sessionID)
 	case events.ActionStart:
 		flowID, ferr := rt.flowForKind(ctx, key.TenantID, sessionID, choice.Kind)
 		if ferr != nil {
@@ -551,24 +794,95 @@ func (rt *Runtime) menuChoice(ctx context.Context, key store.Key, sessionID stri
 	}
 }
 
-// resumeEvent retoma un evento vivo elegido por su número en el menú. Se relee de la
-// lista de vivos en vez de fiarse del id que venía en el menú: entre que se pintó y
-// que el cliente contestó, ese evento pudo cerrarse desde la app del dueño, y
-// retomar un evento terminal sería resucitarlo por la puerta de atrás.
-func (rt *Runtime) resumeEvent(ctx context.Context, key store.Key, sessionID, eventID string) error {
-	alive, err := rt.events.ListAlive(ctx, key.TenantID, sessionID, key.ContactID)
-	if err != nil {
-		return fmt.Errorf("runtime: releer los eventos vivos al retomar: %w", err)
+// presentRescue enseña la lista de lo que este contacto puede RETOMAR y la deja
+// pendiente para interpretar el número siguiente. Devuelve si el turno se consumió.
+//
+// El caso vacío NO consume el turno, y no es un detalle: entre que se pintó la entrada
+// y el cliente pulsó su número, el dueño pudo descartar el último pedido que quedaba.
+// Devolver `false` deja que el texto siga su camino —acabará en el fallback, que le
+// volverá a ofrecer lo que sí puede hacer— en vez de dejarlo mirando un silencio. No
+// hay bucle posible: sin rescatables, la entrada que se le ofrece ya no trae esta
+// opción.
+func (rt *Runtime) presentRescue(ctx context.Context, key store.Key, sessionID string) (bool, error) {
+	if rt.opening == nil {
+		return false, nil
 	}
-	for _, ev := range alive {
-		if ev.ID == eventID {
+	offer, err := rt.opening.BuildRescue(ctx, events.ConversationRef{
+		TenantID: key.TenantID, SessionID: sessionID, ContactID: key.ContactID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("runtime: construir la lista de lo que se puede retomar: %w", err)
+	}
+	if offer.Empty() {
+		rt.log.Info("runtime: no queda nada que retomar cuando el cliente lo pidió; el texto sigue su camino",
+			"session_id", sessionID)
+		return false, nil
+	}
+	return true, rt.sendOffer(ctx, key, sessionID, offer)
+}
+
+// sendOffer habla y deja el menú de la oferta PENDIENTE para el mensaje siguiente.
+//
+// Las dos mitades de un Offering van a sitios distintos y las dos hacen falta: Text es
+// lo que el cliente lee, y Menu es lo que permite entender el número con que conteste.
+// Persistir solo el texto convertiría cualquier lista en decorado.
+//
+// El token anti-loop se cobra aquí, justo antes de renderizar, y es el ÚNICO sitio del
+// camino de la oferta que lo cobra (Plan 020 · T0).
+func (rt *Runtime) sendOffer(ctx context.Context, key store.Key, sessionID string, offer events.Offering) error {
+	if !rt.replyAllowed(key) {
+		return nil
+	}
+	raw, err := offer.Menu.Encode()
+	if err != nil {
+		return fmt.Errorf("runtime: serializar la oferta pendiente: %w", err)
+	}
+	// eventID vacío A PROPÓSITO: esta conversación no tiene evento —de eso trata la
+	// tarea— y estamparle uno sería inventar un puntero a algo que no ha nacido.
+	if err := rt.saveMenuState(ctx, key, "", string(raw)); err != nil {
+		return err
+	}
+	to, err := rt.destino(ctx, key.TenantID, key.ContactID)
+	if err != nil {
+		return err
+	}
+	_, err = rt.send(ctx, sessionID, to, []engine.Output{{Text: offer.Text}})
+	return err
+}
+
+// resumeEvent retoma un evento elegido por su número en el menú. Se RELEE en vez de
+// fiarse del id que venía en el menú, porque entre que se pintó la lista y que el
+// cliente contestó pudo pasar cualquier cosa: que el dueño cerrara el evento desde su
+// app, o —lo que este código arregla— que descartara el pedido del que colgaba.
+//
+// La relectura va por ListRescuable y NO por ListAlive, y ahí está toda la tarea
+// (INV-17, REQ-26c). «Vivo» y «rescatable» no son lo mismo: un evento cuyo pedido fue
+// descartado sigue `open` —nada lo cierra por tiempo, D-041.18— y aun así no puede
+// retomarse. Con ListAlive, un menú pintado un segundo antes del descarte seguía
+// pudiendo resucitarlo, y el invariante que dice «no se lista, NO SE RESCATA y no se
+// menciona» se cumplía solo en sus dos tercios visibles.
+//
+// limit 0 = sin tope, a propósito: aquí no se pinta una lista sino que se comprueba
+// una PERTENENCIA, y recortar la consulta podría dejar fuera justo el que el cliente
+// eligió.
+func (rt *Runtime) resumeEvent(ctx context.Context, key store.Key, sessionID, eventID string) error {
+	rescatables, err := rt.events.ListRescuable(ctx, key.TenantID, sessionID, key.ContactID, 0)
+	if err != nil {
+		return fmt.Errorf("runtime: releer los rescatables al retomar: %w", err)
+	}
+	for _, r := range rescatables {
+		if r.ID == eventID {
+			// UN solo token para los DOS salientes (resumen + pantalla del flujo): al
+			// cliente que vuelve se le está dando UNA respuesta, servida en dos mensajes.
+			// Cobrar dos dejaría mudo el rescate justo cuando el cupo va justo. El
+			// resumen lo envía switchToEvent, por donde pasan los dos caminos de vuelta.
 			if !rt.replyAllowed(key) {
 				return nil
 			}
-			return rt.switchToEvent(ctx, key, sessionID, ev)
+			return rt.switchToEvent(ctx, key, sessionID, r.Event)
 		}
 	}
-	rt.log.Info("runtime: el evento elegido ya no está vivo; no se retoma",
+	rt.log.Info("runtime: el evento elegido ya no se puede retomar; no se rescata",
 		"session_id", sessionID)
 	return nil
 }
