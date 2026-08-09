@@ -179,5 +179,5 @@ func commandIDFrom(err error) string {
 // writeError responde un error como JSON tipado {error} (formato del listener
 // público, coherente con el middleware de auth de T3).
 func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, errorBody(msg))
 }

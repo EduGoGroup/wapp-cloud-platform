@@ -109,9 +109,9 @@ func putTenantVariablesHandler(vs TenantVariableStore) http.Handler {
 			writeError(w, http.StatusInternalServerError, "store de variables no configurado")
 			return
 		}
-		vars, code, msg := decodeTenantVariables(r.Body)
-		if msg != "" {
-			writeError(w, code, msg)
+		vars, code, errBody := decodeTenantVariables(r.Body)
+		if errBody != nil {
+			writeJSON(w, code, errBody)
 			return
 		}
 		if err := vs.Replace(r.Context(), id.TenantID, vars); err != nil {
@@ -128,37 +128,41 @@ func putTenantVariablesHandler(vs TenantVariableStore) http.Handler {
 }
 
 // decodeTenantVariables lee y valida la FORMA del cuerpo del PUT. Devuelve el
-// conjunto y, si algo falla, el status + el mensaje (msg vacío = todo bien). Se
-// extrae del handler para que la validación se lea de un vistazo y no infle su
-// complejidad ciclomática.
-func decodeTenantVariables(body io.Reader) (map[string]string, int, string) {
+// conjunto y, si algo falla, el status + el cuerpo de error ya armado (nil = todo
+// bien). Se extrae del handler para que la validación se lea de un vistazo y no
+// infle su complejidad ciclomática.
+//
+// El cuerpo es `any` —y no un string— por lo mismo que en decodeImportBody: el
+// techo de bytes responde {error, max_bytes} (criterio único del 413, limits.go)
+// y el resto de defectos, el {error} de siempre.
+func decodeTenantVariables(body io.Reader) (map[string]string, int, any) {
 	raw, err := io.ReadAll(io.LimitReader(body, maxTenantVariablesBytes+1))
 	if err != nil {
-		return nil, http.StatusBadRequest, "no se pudo leer el cuerpo"
+		return nil, http.StatusBadRequest, errorBody("no se pudo leer el cuerpo")
 	}
 	if len(raw) > maxTenantVariablesBytes {
-		return nil, http.StatusRequestEntityTooLarge, "el cuerpo excede el tamaño máximo"
+		return nil, http.StatusRequestEntityTooLarge, tooLarge("el cuerpo", maxTenantVariablesBytes)
 	}
 	var req tenantVariablesRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil, http.StatusBadRequest, "el cuerpo debe ser un JSON {\"variables\":{clave:valor}} de cadenas"
+		return nil, http.StatusBadRequest, errorBody("el cuerpo debe ser un JSON {\"variables\":{clave:valor}} de cadenas")
 	}
 	if req.Variables == nil {
-		return nil, http.StatusBadRequest, "falta el objeto variables (usa {} para dejar el tenant sin variables)"
+		return nil, http.StatusBadRequest, errorBody("falta el objeto variables (usa {} para dejar el tenant sin variables)")
 	}
 	vars := *req.Variables
 	if len(vars) > maxTenantVariables {
-		return nil, http.StatusBadRequest, "demasiadas variables"
+		return nil, http.StatusBadRequest, errorBody("demasiadas variables")
 	}
 	for k := range vars {
 		if k == "" {
-			return nil, http.StatusBadRequest, "hay una clave vacía"
+			return nil, http.StatusBadRequest, errorBody("hay una clave vacía")
 		}
 		if len(k) > maxTenantVariableKeyLen {
-			return nil, http.StatusBadRequest, "hay una clave demasiado larga"
+			return nil, http.StatusBadRequest, errorBody("hay una clave demasiado larga")
 		}
 	}
-	return vars, 0, ""
+	return vars, 0, nil
 }
 
 // toTenantVariablesDTO arma la respuesta: el mapa clave→valor y el updated_at MÁS

@@ -334,12 +334,16 @@ func Run(ctx context.Context) error {
 		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
 		// de la ida, el MISMO gate que decide si se encola, el store de solicitudes y el
 		// notificador del Plan 041. Nada de esto es nuevo salvo el cable.
-		CRMSecrets: integrationsStore,
-		CRMGate:    webhookGate,
-		CRMReflect: intakeStore,
-		CRMNotify:  intakeNotifier,
-		ConfigPush: gw,
-		Health:     publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// La CONFIGURACIÓN del puente (Plan 042 · T5.1): el MISMO store, otra
+		// pregunta. El CRUD lee y escribe tenant_integrations; el secreto solo
+		// entra (write-only) y sale como huella.
+		Integrations: integrationsStore,
+		CRMSecrets:   integrationsStore,
+		CRMGate:      webhookGate,
+		CRMReflect:   intakeStore,
+		CRMNotify:    intakeNotifier,
+		ConfigPush:   gw,
+		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 	})
 	if err != nil {
 		return err
@@ -389,8 +393,14 @@ func Run(ctx context.Context) error {
 	// polling de larga vida de este repo. Arranca sobre el MISMO ctx derivado de
 	// signal.NotifyContext (línea ~68) que cierra todo lo demás — un solo
 	// Ctrl+C también para el worker, sin un segundo mecanismo de shutdown.
+	// intakeStore entra aquí como TERCER completador del payload (Ola 5): la
+	// indicación del cliente ya no viaja congelada en webhook_outbox.payload —era
+	// PII en claro sobreviviendo a la entrega— y se lee de public.intakes justo
+	// antes del POST, igual que buyerDataStore descifra buyer_data. Es el MISMO
+	// store que ya usan el proyector y la API pública: uno solo, no dos nombres
+	// para lo mismo.
 	webhookWorker := integrations.NewWorker(
-		integrationsStore, buyerDataStore, tenantvars.NewPostgres(db), log,
+		integrationsStore, buyerDataStore, intakeStore, tenantvars.NewPostgres(db), log,
 		integrations.WorkerConfig{
 			PollInterval: cfg.Webhook.PollInterval,
 			MaxAttempts:  cfg.Webhook.MaxAttempts,

@@ -132,11 +132,30 @@ func (p *Postgres) closeClaim(ctx context.Context, claim WebhookOutbox, what, qu
 	return nil
 }
 
-// MarkWebhookDelivered implementa Store.MarkWebhookDelivered.
+// MarkWebhookDelivered implementa Store.MarkWebhookDelivered y, en la MISMA
+// sentencia, VACÍA el payload (política elegida el 2026-08-08).
+//
+// El motivo es que una fila entregada conserva para siempre una copia en claro de
+// lo que se entregó, y nadie la vuelve a leer: el puente ya la tiene. La fila
+// SOBREVIVE como recibo —id, tenant, kind, created_at, attempts, status— así que
+// la trazabilidad no se toca; lo que desaparece es el duplicado del contenido.
+// Cero residuo desde el minuto uno, sin esperar a una política de retención.
+//
+// Se vacía AQUÍ y no en un barrido posterior porque es el único instante en que la
+// copia deja de tener uso, y hacerlo en la misma sentencia que cierra el claim
+// significa que no existe ventana en la que la fila esté `delivered` con payload:
+// un barrido por antigüedad, en cambio, siempre deja una.
+//
+// `'{}'::jsonb` y no NULL: la columna es NOT NULL (0046) y relajarla obligaría a
+// que todo lector distinguiera tres casos (contenido / vacío / nulo) donde solo hay
+// dos. Un objeto JSON vacío se lee y se decodifica igual que cualquier payload.
+//
+// Esto NO prejuzga la retención por antigüedad (borrar filas viejas), que queda
+// reservada al Plan 046: aquí no se borra ninguna fila ni se les pone TTL.
 func (p *Postgres) MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error {
 	return p.closeClaim(ctx, claim, "delivered", `
 		UPDATE public.webhook_outbox
-		SET status = $3, claimed_at = NULL
+		SET status = $3, claimed_at = NULL, payload = '{}'::jsonb
 		WHERE id = $1 AND claimed_at = $2 AND status = $4
 	`, StatusDelivered, StatusDelivering)
 }

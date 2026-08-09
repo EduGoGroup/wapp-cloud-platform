@@ -257,7 +257,7 @@ func authenticateCRMCallback(w http.ResponseWriter, r *http.Request, secrets CRM
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCRMCallbackBody))
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "el cuerpo del callback es demasiado grande")
+		writeTooLarge(w, "el cuerpo del callback", maxCRMCallbackBody)
 		return "", nil, false
 	}
 

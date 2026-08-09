@@ -151,7 +151,11 @@ func readUploadedFile(w http.ResponseWriter, r *http.Request, limits catalogimpo
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			return nil, http.StatusRequestEntityTooLarge, "el archivo excede el tamaño máximo"
+			// Se nombra el techo del ARCHIVO, no el del sobre (maxBytes + slack):
+			// el slack es sitio para las cabeceras del multipart, no presupuesto
+			// que quien sube pueda gastar. Decirle el número mayor le haría
+			// reintentar con un archivo que el segundo techo rechazaría igual.
+			return nil, http.StatusRequestEntityTooLarge, tooLargeMessage("el archivo", maxBytes)
 		}
 		return nil, http.StatusBadRequest, "no llegó ningún archivo: súbelo en el campo «" + tabularFormField +
 			"» de un formulario multipart/form-data."
@@ -165,7 +169,7 @@ func readUploadedFile(w http.ResponseWriter, r *http.Request, limits catalogimpo
 	raw, err := catalogimport.ReadLimited(file, limits)
 	if err != nil {
 		if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
-			return nil, http.StatusRequestEntityTooLarge, "el archivo excede el tamaño máximo"
+			return nil, http.StatusRequestEntityTooLarge, tooLargeMessage("el archivo", maxBytes)
 		}
 		return nil, http.StatusBadRequest, "no se pudo leer el archivo subido."
 	}

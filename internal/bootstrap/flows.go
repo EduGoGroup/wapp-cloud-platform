@@ -28,20 +28,32 @@ type flowRuntimeDeps struct {
 }
 
 // buildFlowRuntimeDeps construye, con fail-fast, las dependencias anteriores: el
-// KeyProvider de PII (ADR-0017: la KEK maestra vive en env/secret store, separada
-// del dato) y el PresignClient de Cloudflare R2 (§3/§8: valida el bucket con
+// KeyProvider de PII (ADR-0017: la KEK vive separada del dato — en el KMS con
+// WAPP_KEK_PROVIDER=kms, o en env como fallback de dev local; ADR-0036 / Plan 042
+// · T9.1) y el PresignClient de Cloudflare R2 (§3/§8: valida el bucket con
 // HeadBucket; sin bucket/credenciales el proceso no levanta). Mismo R2 en dev y
 // prod (sin MinIO local); credenciales por WAPP_STORAGE_S3_* (.env, no versionado).
 func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB) (flowRuntimeDeps, error) {
-	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
-		KeyringB64: cfg.Crypto.KEKKeyring,
-		CurrentID:  cfg.Crypto.KEKCurrent,
-		MasterB64:  cfg.Crypto.KEKMasterB64,
-		IndexB64:   cfg.Crypto.KEKIndexB64,
-		Prod:       cfg.Env == "prod",
+	kp, err := crypto.NewKeyProvider(ctx, crypto.ProviderConfig{
+		Provider: cfg.Crypto.KEKProvider,
+		Prod:     cfg.Env == "prod",
+		Env: crypto.KeyringConfig{
+			KeyringB64: cfg.Crypto.KEKKeyring,
+			CurrentID:  cfg.Crypto.KEKCurrent,
+			MasterB64:  cfg.Crypto.KEKMasterB64,
+			IndexB64:   cfg.Crypto.KEKIndexB64,
+		},
+		KMS: crypto.KMSConfig{
+			KeyName:            cfg.Crypto.KEKKMSKey,
+			KeyringB64:         cfg.Crypto.KEKKMSKeyring,
+			CurrentID:          cfg.Crypto.KEKCurrent,
+			IndexB64:           cfg.Crypto.KEKIndexB64,
+			IndexCiphertextB64: cfg.Crypto.KEKKMSIndexB64,
+		},
 	})
 	if err != nil {
-		return flowRuntimeDeps{}, fmt.Errorf("construyendo KeyProvider de PII (Plan 011): %w", err)
+		return flowRuntimeDeps{}, fmt.Errorf("construyendo KeyProvider de PII (Plan 011; provider %q): %w",
+			cfg.Crypto.KEKProvider, err)
 	}
 	cipher := crypto.NewFieldCipher(kp)
 

@@ -202,7 +202,7 @@ func TestBuildIntakePushTemplate_Contrato(t *testing.T) {
 	}
 
 	want := `{"contract_version":"1","verb":"intake.push","tenant":"tenant-abc","contact":"contact-opaco-xyz",` +
-		`"intake_id":"intake-abc-123","lifecycle_status":"confirmed","revision_no":1,"customer_note":"",` +
+		`"intake_id":"intake-abc-123","lifecycle_status":"confirmed","revision_no":1,` +
 		`"items":[{"sku":"A1","label":"Café","customization":"sin azúcar","qty":2,"unit_price":9.9},` +
 		`{"sku":"B2","label":"Té","customization":"","qty":1,"unit_price":5}],` +
 		`"total":24.8,"timestamp":"2026-08-07T10:00:00Z"}`
@@ -304,37 +304,22 @@ func TestBuildIntakePushTemplate_RoundTripJSON(t *testing.T) {
 	}
 }
 
-// TestBuildIntakePushTemplate_NotaDelPedido (D-041.19, REQ-33f): la indicación
-// del PEDIDO cruza la frontera hacia el CRM.
-func TestBuildIntakePushTemplate_NotaDelPedido(t *testing.T) {
-	eff := cartClosedEffect()
-	eff.Payload["customer_note"] = "dejarlo en portería"
-
-	got := buildIntakePushTemplate(
-		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
-		eff,
-		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
-	)
-	if got.CustomerNote != "dejarlo en portería" {
-		t.Fatalf("customer_note=%q, quiero %q", got.CustomerNote, "dejarlo en portería")
-	}
-	if got.Items[0].Customization != "sin azúcar" {
-		t.Fatalf("items[0].customization=%q", got.Items[0].Customization)
-	}
-	if got.Total != 24.8 {
-		t.Fatalf("total=%v; la indicación del pedido movió el dinero", got.Total)
-	}
-}
-
-// TestBuildIntakePushTemplate_SinNotaDelPedido: cruza igual, con la nota vacía.
-func TestBuildIntakePushTemplate_SinNotaDelPedido(t *testing.T) {
+// TestBuildIntakePushTemplate_PersonalizaciónDeLíneaSiCruza: la personalización
+// de LÍNEA (D-041.17, REQ-31b) sí viaja congelada en la plantilla — es dato de
+// producción de la línea, vive en claro en intake_items y no tiene una columna
+// aparte que el worker pueda releer. La contraparte —que la nota del PEDIDO NO
+// viaja— vive en webhook_sink_pii_test.go.
+func TestBuildIntakePushTemplate_PersonalizaciónDeLíneaSiCruza(t *testing.T) {
 	got := buildIntakePushTemplate(
 		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
 		cartClosedEffect(),
 		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
 	)
-	if got.CustomerNote != "" {
-		t.Fatalf("customer_note=%q, quiero vacía", got.CustomerNote)
+	if got.Items[0].Customization != "sin azúcar" {
+		t.Fatalf("items[0].customization=%q", got.Items[0].Customization)
+	}
+	if got.Total != 24.8 {
+		t.Fatalf("total=%v; la personalización movió el dinero", got.Total)
 	}
 }
 

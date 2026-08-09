@@ -8,9 +8,15 @@
 // KEK retiradas (solo para desenvolver). Esto permite ROTAR la KEK re-envolviendo
 // las DEK (WrapDEK con la current) sin re-cifrar el dato ni tocar el índice ciego.
 //
+// Desde el Plan 042 (Ola T9, ADR-0036) el keyring puede venir de DOS sitios,
+// seleccionados por WAPP_KEK_PROVIDER: `env` (v1, KEKs en variables de entorno —
+// SOLO dev local) y `kms` (las KEKs viajan CIFRADAS por el KMS de GCP y se
+// desenvuelven una vez al arrancar). La interfaz KeyProvider NO cambia entre
+// ambos, así que FieldCipher, los repos y la rotación del Plan 012 son idénticos.
+//
 // Piezas:
 //   - KeyProvider: custodia el keyring (key_id → KEK) y la indexKey, separados
-//     del dato (v1 = env/secret store; KMS-ready por estar detrás de la interfaz).
+//     del dato (env/secret store o KMS, detrás de la misma interfaz).
 //   - FieldCipher: cifra/descifra un campo reusando wapp-shared/envelope
 //     (AES-256-GCM), con una DEK fresca por valor envuelta por la KEK current.
 //
@@ -94,8 +100,13 @@ type KeyProvider interface {
 	CurrentKeyID() string
 }
 
-// envKeyProvider es la implementación v1 del KeyProvider: el keyring y la
-// indexKey viven en variables de entorno (decodificadas en la construcción).
+// envKeyProvider es la implementación en memoria del KeyProvider: el keyring ya
+// resuelto (key_id → KEK en claro) y la indexKey. La construyen los DOS caminos —
+// NewEnvKeyProvider (KEKs desde variables de entorno, solo dev local) y
+// NewKMSKeyProvider (KEKs desenvueltas por el KMS al arrancar) —, porque a partir
+// de aquí el comportamiento es idéntico: envolver/desenvolver DEKs es AES-GCM
+// local, sin salir del proceso. Ese es justamente el punto del envelope de la KEK:
+// el KMS interviene UNA vez en el arranque, no en cada operación (ADR-0036 §3).
 type envKeyProvider struct {
 	keys      map[string][]byte // key_id → KEK (32B): current + retiradas.
 	currentID string            // key_id de la KEK current (la que envuelve).
@@ -125,6 +136,10 @@ type KeyringConfig struct {
 
 // NewEnvKeyProvider construye el KeyProvider v1 (keyring versionado) desde config.
 //
+// ⚠️ Este camino guarda las KEK EN CLARO en variables de entorno: es el fallback
+// de DEV LOCAL. En producción la KEK vive en el KMS (NewKMSKeyProvider, ADR-0036 /
+// Plan 042 · Ola T9); la selección la hace NewKeyProvider por WAPP_KEK_PROVIDER.
+//
 // Modo keyring: KeyringB64 = "id1:base64,id2:base64,…" (cada KEK 32B) + CurrentID
 // (debe existir en el keyring). Modo compat: solo MasterB64 → se carga como el
 // key_id inicial (compatKeyID "1") y es la current (comportamiento idéntico al 011).
@@ -138,7 +153,7 @@ func NewEnvKeyProvider(cfg KeyringConfig) (KeyProvider, error) {
 		return nil, err
 	}
 
-	indexKey, err := resolveIndexKey(cfg, keys[currentID])
+	indexKey, err := resolveIndexKey(cfg.IndexB64, cfg.Prod, keys[currentID])
 	if err != nil {
 		return nil, err
 	}
@@ -179,9 +194,27 @@ func buildKeyring(cfg KeyringConfig) (map[string][]byte, string, error) {
 	}
 }
 
-// parseKeyring decodifica "id1:base64,id2:base64,…" en un mapa key_id → KEK (32B).
-// Cada entrada se parte por el PRIMER ':' (el base64 estándar no lo contiene).
+// parseKeyring decodifica "id1:base64,id2:base64,…" en un mapa key_id → KEK (32B),
+// exigiendo que cada valor sea una KEK AES-256 en claro.
 func parseKeyring(spec string) (map[string][]byte, error) {
+	keys, err := parseKeyringEntries(spec)
+	if err != nil {
+		return nil, err
+	}
+	for id, kek := range keys {
+		if len(kek) != envelope.DEKSize {
+			return nil, fmt.Errorf("%w (key_id %q)", ErrKEKSize, id)
+		}
+	}
+	return keys, nil
+}
+
+// parseKeyringEntries decodifica "id1:base64,id2:base64,…" en un mapa id → bytes
+// SIN validar el tamaño del valor. El mismo formato sirve para los dos providers:
+// con `env` cada valor es la KEK en claro (32B, la valida parseKeyring) y con `kms`
+// es el CIFRADO de esa KEK por el KMS, de longitud variable. Cada entrada se parte
+// por el PRIMER ':' (el base64 estándar no lo contiene).
+func parseKeyringEntries(spec string) (map[string][]byte, error) {
 	keys := make(map[string][]byte)
 	for entry := range strings.SplitSeq(spec, ",") {
 		entry = strings.TrimSpace(entry)
@@ -204,24 +237,22 @@ func parseKeyring(spec string) (map[string][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("KEK %q: base64 inválido: %w", id, err)
 		}
-		if len(kek) != envelope.DEKSize {
-			return nil, fmt.Errorf("%w (key_id %q)", ErrKEKSize, id)
-		}
 		keys[id] = kek
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("keyring vacío (WAPP_KEK_KEYRING sin entradas válidas)")
+		return nil, errors.New("keyring vacío (sin entradas válidas)")
 	}
 	return keys, nil
 }
 
-// resolveIndexKey obtiene la indexKey del índice ciego. Explícita (IndexB64) tiene
+// resolveIndexKey obtiene la indexKey del índice ciego. Explícita (indexB64) tiene
 // prioridad y es la única aceptada en prod (§10.C). En dev, sin explícita, deriva
 // por HKDF de la KEK current con warning visible. La indexKey NO se acopla al
 // keyring: rotar la KEK NO cambia BlindIndex (con indexKey explícita, estable).
-func resolveIndexKey(cfg KeyringConfig, currentKEK []byte) ([]byte, error) {
-	if cfg.IndexB64 != "" {
-		indexKey, err := base64.StdEncoding.DecodeString(cfg.IndexB64)
+// La comparten los dos providers (env y KMS): la política de prod es la misma.
+func resolveIndexKey(indexB64 string, prod bool, currentKEK []byte) ([]byte, error) {
+	if indexB64 != "" {
+		indexKey, err := base64.StdEncoding.DecodeString(indexB64)
 		if err != nil {
 			return nil, fmt.Errorf("indexKey: base64 inválido: %w", err)
 		}
@@ -231,7 +262,7 @@ func resolveIndexKey(cfg KeyringConfig, currentKEK []byte) ([]byte, error) {
 		return indexKey, nil
 	}
 
-	if cfg.Prod {
+	if prod {
 		return nil, ErrIndexKeyRequiredInProd
 	}
 
