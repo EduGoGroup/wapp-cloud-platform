@@ -161,6 +161,11 @@ type Deps struct {
 	// Alerter es el punto de extensión del alerting push sobre la salud derivada
 	// (ADR-0023). nil ⇒ NoopAlerter (nada se empuja; el estado queda consultable).
 	Alerter Alerter
+	// Integrations es la CONFIGURACIÓN del puente CRM por tenant
+	// (tenant_integrations): el CRUD /api/v1/integrations del Plan 042 · T5.1. Lo
+	// satisface *integrations.Postgres — el MISMO objeto que sirve a CRMSecrets y
+	// al gate; lo que cambia es qué se le pide. nil ⇒ no se montan las rutas.
+	Integrations IntegrationsStore
 	// CRMSecrets entrega el secreto HMAC con el que se verifica el callback del
 	// puente (Plan 042 · T4.2). Lo satisface *integrations.Postgres. nil ⇒ NO se
 	// monta POST /api/v1/integrations/callback: mejor un 404 de ruta inexistente
@@ -334,6 +339,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// función: no por tamaño, sino porque el `if` de montaje sumaría uno más a la
 	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
 	registerTenantVariables(mux, d, mw, auditor, log)
+	registerIntegrations(mux, d, mw, auditor, log)
 	registerCRMCallback(mux, d, log)
 
 	// Import de catálogo (Plan 041 · T3.3, D-041.6). Misma razón para vivir aparte:
@@ -451,6 +457,48 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 		"content.read", getTenantVariablesHandler(d.TenantVariables)))
 	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
+}
+
+// registerIntegrations monta la CONFIGURACIÓN del puente CRM (Plan 042 · T5.1,
+// design §5): GET / PUT / DELETE de /api/v1/integrations, todo acotado al tenant
+// del token (INV-8).
+//
+// DOS GUARDIAS, como en el resto de rutas de pago: el scope dice «puedes operar
+// esto» y la feature `crm_bridge` dice «tu plan lo incluye» (D-042.8). Sin la
+// feature son 403 los tres verbos, también el GET: la configuración del puente no
+// es información que un tenant sin puente deba poder consultar. RequireFeature va
+// SIEMPRE después de Authenticate y RequirePermission — antes no habría identidad
+// de la que sacar el tenant y el gate cortaría fail-closed a todo el mundo.
+//
+// SCOPES PROPIOS (integrations.read / integrations.write), y aquí SÍ se justifican
+// en vez de reusar content.* como hicieron las variables de empresa y el import.
+// La diferencia no es de nombre: esta fila guarda el SECRETO de firma del puente y
+// la URL a la que se entregan todos los pedidos del tenant. Quien pueda
+// escribirla puede repuntar el destino a un host propio y quedarse con el flujo
+// entero. Ese poder no puede venir incluido en «puede editar el catálogo».
+//
+// El reparto que resulta NO necesita migración de grants, y es el correcto:
+// tenant_admin ('*') hace las tres; viewer ('*.read') solo lee; operator no
+// alcanza ninguna —configurar un puente externo no es la faena del turno—.
+//
+// Escrituras auditadas (integrations.write / recurso `integration`) sin PII y sin
+// el secreto: se audita la ACCIÓN, jamás el cuerpo.
+//
+// Sin store o sin resolver de features las rutas NO se montan: mejor un 404 de
+// ruta inexistente que una configuración que responde 500 a medio camino o, peor,
+// que se guarda sin poder comprobar el plan.
+func registerIntegrations(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
+	if d.Integrations == nil || d.Entitlements == nil {
+		return
+	}
+	crmBridge := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCRMBridge)
+
+	mux.Handle("GET /api/v1/integrations", protectRead(mw,
+		"integrations.read", crmBridge(getIntegrationHandler(d.Integrations))))
+	mux.Handle("PUT /api/v1/integrations", protect(mw, auditor, log,
+		"integrations.write", "integration", crmBridge(putIntegrationHandler(d.Integrations))))
+	mux.Handle("DELETE /api/v1/integrations", protect(mw, auditor, log,
+		"integrations.write", "integration", crmBridge(deleteIntegrationHandler(d.Integrations))))
 }
 
 // registerCRMCallback monta la VUELTA del puente CRM (Plan 042 · T4.2):

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,8 +96,15 @@ func (s *fakeStore) markClosed(claim WebhookOutbox, apply func(*WebhookOutbox)) 
 	return nil
 }
 
+// MarkWebhookDelivered reproduce la política del store real: además de cerrar la
+// fila, VACÍA el payload. El fake tiene que hacerlo o mentiría por omisión — un
+// test que compruebe el vaciado contra este doble no diría nada de Postgres, y
+// uno que asuma que el payload sigue ahí pasaría en verde con la fuga puesta.
 func (s *fakeStore) MarkWebhookDelivered(_ context.Context, claim WebhookOutbox) error {
-	return s.markClosed(claim, func(r *WebhookOutbox) { r.Status = StatusDelivered })
+	return s.markClosed(claim, func(r *WebhookOutbox) {
+		r.Status = StatusDelivered
+		r.Payload = json.RawMessage(`{}`)
+	})
 }
 
 func (s *fakeStore) MarkWebhookFailed(_ context.Context, claim WebhookOutbox, nextAttemptAt time.Time, lastErr string) error {
@@ -194,6 +202,19 @@ func (f fakeBuyerData) GetBuyerData(_ context.Context, intakeID string) (intakes
 	return bd, ok, nil
 }
 
+// fakeCustomerNotes satisface CustomerNoteReader con un mapa fijo por
+// (tenant, intake). La clave es COMPUESTA a propósito: el store real filtra por
+// tenant además de por id, y un fake que solo mirara el intake_id no podría
+// distinguir "la nota de otra empresa" de "no hay nota".
+type fakeCustomerNotes struct {
+	notes map[[2]string]string
+}
+
+func (f fakeCustomerNotes) GetCustomerNote(_ context.Context, tenantID, intakeID string) (string, bool, error) {
+	n, ok := f.notes[[2]string{tenantID, intakeID}]
+	return n, ok, nil
+}
+
 // fakeTenantVars satisface TenantVariablesReader con una lista fija por tenant.
 type fakeTenantVars struct {
 	vars map[string][]tenantvars.Variable
@@ -222,12 +243,15 @@ func mustEnqueue(t *testing.T, store *fakeStore, tenant, intakeID string) int64 
 	return id
 }
 
+// templatePayload reproduce la plantilla que encola el WebhookSink: SIN
+// buyer_data, SIN variables{} y SIN customer_note — los tres los añade el worker
+// en memoria justo antes del POST (INV-02; customer_note por PII, Ola 5).
 func templatePayload(t *testing.T, intakeID, tenant string) json.RawMessage {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"contract_version": "1", "verb": "intake.push", "tenant": tenant,
 		"contact": "c-opaco", "intake_id": intakeID, "lifecycle_status": "confirmed",
-		"revision_no": 1, "customer_note": "", "items": []any{}, "total": 10.0,
+		"revision_no": 1, "items": []any{}, "total": 10.0,
 		"timestamp": "2026-08-07T10:00:00Z",
 	})
 	if err != nil {
@@ -263,7 +287,7 @@ func TestWorker_Deliver_2xx_FirmaVerificable(t *testing.T) {
 		t.Fatalf("encolar: %v", err)
 	}
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
 	w.pollOnce(context.Background())
 
 	if status := store.statusOf(id); status != StatusDelivered {
@@ -303,7 +327,7 @@ func TestWorker_Deliver_500DosVeces_LuegoOK(t *testing.T) {
 	store.secrets["t-1"] = "s3cr3t"
 	id := mustEnqueue(t, store, "t-1", "i-1")
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
 	// Tres pollOnce: el fakeStore vuelve la fila a pending con next_attempt_at
 	// en backoffDuration(...) en el futuro, así que forzamos next_attempt_at al
 	// pasado entre corridas (equivalente a "ya pasó el tiempo de espera").
@@ -349,7 +373,7 @@ func TestWorker_SiempreFalla_TopeBajado_Dead(t *testing.T) {
 	store.secrets["t-1"] = "s3cr3t"
 	id := mustEnqueue(t, store, "t-1", "i-1")
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 2}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 2}, nil)
 	w.pollOnce(context.Background())
 	forceRetriable(store, id)
 	w.pollOnce(context.Background())
@@ -379,7 +403,7 @@ func TestWorker_MatarEntreClaimYPost_SeRecuperaAlRearrancar(t *testing.T) {
 	store.rows[id].Status = StatusDelivering
 	store.mu.Unlock()
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{PollInterval: time.Hour}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{PollInterval: time.Hour}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -422,7 +446,7 @@ func TestWorker_CompletaBuyerDataYVariables(t *testing.T) {
 	buyer := fakeBuyerData{data: map[string]intakes.BuyerData{"i-1": {"documento": "12.345.678-5"}}}
 	tvars := fakeTenantVars{vars: map[string][]tenantvars.Variable{"t-1": {{Key: "moneda", Value: "Bs"}}}}
 
-	w := NewWorker(store, buyer, tvars, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w := NewWorker(store, buyer, fakeCustomerNotes{}, tvars, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
 	w.pollOnce(context.Background())
 
 	bd, ok := gotBody["buyer_data"].(map[string]any)
@@ -433,17 +457,95 @@ func TestWorker_CompletaBuyerDataYVariables(t *testing.T) {
 	if !ok || vars["moneda"] != "Bs" {
 		t.Fatalf("variables en el body entregado = %v, quiero {moneda: Bs}", gotBody["variables"])
 	}
-	// La plantilla encolada (json.RawMessage) NO debe tener mutado buyer_data
-	// ni variables: solo el body que sale por HTTP los lleva.
+	// La fila NO debe acabar con buyer_data escrito: el worker lo añade en
+	// memoria, nunca lo devuelve a la tabla. Tras la entrega el payload queda
+	// además VACÍO (política de la Ola 5), así que se comprueban las dos cosas de
+	// una vez — que es {} y que por tanto no hay rastro del checklist.
 	var stored map[string]any
 	store.mu.Lock()
 	rawPayload := store.rows[1].Payload
 	store.mu.Unlock()
 	if uerr := json.Unmarshal(rawPayload, &stored); uerr != nil {
-		t.Fatalf("decodificar la plantilla encolada: %v", uerr)
+		t.Fatalf("decodificar el payload de la fila: %v", uerr)
 	}
-	if _, has := stored["buyer_data"]; has {
-		t.Fatal("la plantilla ENCOLADA no debe llevar buyer_data — eso lo añade el worker en memoria, no se re-escribe en la fila")
+	if len(stored) != 0 {
+		t.Fatalf("una fila entregada debe quedar con el payload vacío, tiene %d claves: %s", len(stored), rawPayload)
+	}
+}
+
+// TestWorker_CompletaCustomerNoteSinPersistirla es la contraparte de
+// TestWebhookSink_LaNotaDelPedidoNoSeEncola (internal/flujos/runtime): la nota se
+// sacó de la plantilla, y este test acredita que aun así LLEGA al puente — leída
+// de public.intakes justo antes del POST. Sin él, "no persistir la nota" y "perder
+// la nota" serían indistinguibles.
+func TestWorker_CompletaCustomerNoteSinPersistirla(t *testing.T) {
+	const nota = "dejarlo en porteria calle Mayor 14 qqz"
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if derr := json.NewDecoder(r.Body).Decode(&gotBody); derr != nil {
+			t.Errorf("decodificar body recibido: %v", derr)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.integrations["t-1"] = enabledIntegration("t-1", srv.URL)
+	store.secrets["t-1"] = "s3cr3t"
+	id := mustEnqueue(t, store, "t-1", "i-1")
+
+	// La plantilla encolada no la lleva; la fuente es la solicitud.
+	store.mu.Lock()
+	encolado := string(store.rows[id].Payload)
+	store.mu.Unlock()
+	if strings.Contains(encolado, nota) {
+		t.Fatalf("la plantilla de prueba ya trae la nota: el test no probaría nada:\n%s", encolado)
+	}
+
+	notes := fakeCustomerNotes{notes: map[[2]string]string{{"t-1", "i-1"}: nota}}
+	w := NewWorker(store, fakeBuyerData{}, notes, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w.pollOnce(context.Background())
+
+	if gotBody["customer_note"] != nota {
+		t.Fatalf("customer_note en el body entregado = %v, quiero %q: sacarla de la plantilla "+
+			"no puede costarle al puente la indicación que quien prepara el pedido necesita leer",
+			gotBody["customer_note"], nota)
+	}
+	store.mu.Lock()
+	tras := string(store.rows[id].Payload)
+	store.mu.Unlock()
+	if strings.Contains(tras, nota) {
+		t.Fatalf("FUGA: la nota acabó escrita en la fila de webhook_outbox tras la entrega:\n%s", tras)
+	}
+}
+
+// TestWorker_LaNotaLaLeeDelTenantDeLaFila: el worker pregunta por la nota con el
+// tenant de la entrega, no con el del cuerpo del payload. Si algún día alguien
+// invierte esos dos argumentos, este test se pone rojo antes de que un puente
+// reciba la indicación de otra empresa.
+func TestWorker_LaNotaLaLeeDelTenantDeLaFila(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if derr := json.NewDecoder(r.Body).Decode(&gotBody); derr != nil {
+			t.Errorf("decodificar body recibido: %v", derr)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.integrations["t-1"] = enabledIntegration("t-1", srv.URL)
+	store.secrets["t-1"] = "s3cr3t"
+	mustEnqueue(t, store, "t-1", "i-1")
+
+	// La MISMA solicitud, con nota, pero registrada bajo OTRO tenant.
+	notes := fakeCustomerNotes{notes: map[[2]string]string{{"t-otro", "i-1"}: "nota ajena"}}
+	w := NewWorker(store, fakeBuyerData{}, notes, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w.pollOnce(context.Background())
+
+	if gotBody["customer_note"] != "" {
+		t.Fatalf("customer_note=%v: la nota de otro tenant cruzó la frontera", gotBody["customer_note"])
 	}
 }
 
@@ -454,7 +556,7 @@ func TestWorker_SinIntegracionHabilitada_Falla(t *testing.T) {
 	store := newFakeStore()
 	id := mustEnqueue(t, store, "t-sin-integracion", "i-1")
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
 	w.pollOnce(context.Background())
 
 	if status := store.statusOf(id); status != StatusPending {
@@ -478,7 +580,7 @@ func TestWorker_RecordCallback_NilSeguro(t *testing.T) {
 	store.secrets["t-1"] = "s3cr3t"
 	mustEnqueue(t, store, "t-1", "i-1")
 
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5}, nil)
 	w.pollOnce(context.Background()) // no debe panicar
 }
 
@@ -496,7 +598,7 @@ func TestWorker_RecordCallback_LlamadoConElStatusCorrecto(t *testing.T) {
 	mustEnqueue(t, store, "t-1", "i-1")
 
 	var recorded []string
-	w := NewWorker(store, fakeBuyerData{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5},
+	w := NewWorker(store, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(), WorkerConfig{MaxAttempts: 5},
 		func(status string) { recorded = append(recorded, status) })
 	w.pollOnce(context.Background())
 
@@ -575,7 +677,7 @@ func TestWorker_ClaimPerdido_NoCuentaComoEntrega(t *testing.T) {
 	mustEnqueue(t, base, "t-1", "i-1")
 
 	var recorded []string
-	w := NewWorker(storeConClaimRobado{base}, fakeBuyerData{}, fakeTenantVars{}, discardLogger(),
+	w := NewWorker(storeConClaimRobado{base}, fakeBuyerData{}, fakeCustomerNotes{}, fakeTenantVars{}, discardLogger(),
 		WorkerConfig{MaxAttempts: 5}, func(status string) { recorded = append(recorded, status) })
 	w.pollOnce(context.Background())
 

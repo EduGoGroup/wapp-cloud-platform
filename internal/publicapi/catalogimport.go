@@ -245,10 +245,10 @@ func decodeImportBody(r *http.Request, limits catalogimport.Limits) (catalogimpo
 	if err != nil {
 		if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
 			return catalogimport.CatalogImport{}, http.StatusRequestEntityTooLarge,
-				map[string]string{"error": "el documento excede el tamaño máximo"}
+				tooLarge("el documento", tenantContentBytes(limits.MaxJSONBytes))
 		}
 		return catalogimport.CatalogImport{}, http.StatusBadRequest,
-			map[string]string{"error": "no se pudo leer el cuerpo"}
+			errorBody("no se pudo leer el cuerpo")
 	}
 	doc, verr := catalogimport.Validate(raw, limits)
 	if verr != nil {

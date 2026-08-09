@@ -30,7 +30,7 @@ import (
 // tenant_integrations y el reflejo del CRM sobre intakes— también con un ÚNICO
 // incremento para todo el plan.)
 //
-// 0.27.0 es la EXCEPCIÓN que confirma la segunda mitad de la regla, no una
+// 0.27.0 fue la EXCEPCIÓN que confirma la segunda mitad de la regla, no una
 // violación de la primera: la 0.26.0 YA SE PUBLICÓ y ya está escrita en la fila de
 // public.schema_version de Neon. La 0049 (lease del claim de webhook_outbox, Ola
 // 3.1 del mismo Plan 042) llega DESPUÉS de esa publicación, así que reusar 0.26.0
@@ -38,7 +38,15 @@ import (
 // cambió — exactamente lo que esta constante existe para impedir. La regla «un
 // bump por plan» acota los bumps GRATUITOS dentro de un plan que aún no salió; no
 // obliga a mentir sobre un esquema ya publicado.
-const SchemaVersion = "0.27.0"
+//
+// 0.28.0 es ese MISMO caso otra vez, y por eso no hay contradicción en que el Plan
+// 042 lleve tres incrementos: la 0.27.0 también se publicó (Olas 3.1 y 4, main
+// 2026-08-08) antes de que existiera la 0050 (vaciado del payload entregado en
+// webhook_outbox, saneamiento de PII de la Ola 5). Cada bump de este plan
+// corresponde a un esquema que salió a Neon, no a una migración suelta: las 0046-
+// 0048 fueron a la 0.26.0 en un solo incremento, y ese es el patrón que la regla
+// pide.
+const SchemaVersion = "0.28.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

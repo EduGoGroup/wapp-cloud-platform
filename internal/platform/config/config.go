@@ -316,6 +316,30 @@ type StorageConfig struct {
 // SEPARADAS del dato de negocio (no viven en la BD; §10.A). Se leen con prefijo
 // WAPP_ (p. ej. WAPP_KEK_MASTER_B64), en paralelo a la clave del lease.
 type CryptoConfig struct {
+	// KEKProvider elige DE DÓNDE sale la KEK (Plan 042 · T9.1, ADR-0036):
+	// "env" (default) lee las KEK en claro de las variables de abajo y es el
+	// camino de DEV LOCAL; "kms" las toma cifradas por el KMS de GCP y las
+	// desenvuelve una sola vez al arrancar. Un valor desconocido NO cae al
+	// default: falla el arranque (crypto.ErrUnknownKeyProvider). Se lee de
+	// WAPP_KEK_PROVIDER.
+	//
+	// 💰 El default sigue siendo "env" a propósito: el ADR-0036 §3 construye el
+	// KMS pero NO lo activa en alfa (cero gasto). Activarlo es el gate T9.2.
+	KEKProvider string `yaml:"kek_provider"`
+	// KEKKMSKey es el nombre de recurso de la CryptoKey del KMS que desenvuelve el
+	// keyring: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>. Solo se usa
+	// con KEKProvider="kms" (y entonces es obligatorio). Se lee de WAPP_KEK_KMS_KEY.
+	KEKKMSKey string `yaml:"kek_kms_key"`
+	// KEKKMSKeyring es el keyring versionado CIFRADO por el KMS: entradas
+	// "id:base64(ciphertext)" separadas por coma. Los id son los MISMOS key_id ya
+	// persistidos en las columnas *_kek_id, así que migrar al KMS no toca la base.
+	// Solo se usa con KEKProvider="kms". Se lee de WAPP_KEK_KMS_KEYRING.
+	KEKKMSKeyring string `yaml:"kek_kms_keyring"`
+	// KEKKMSIndexB64 es la indexKey del índice ciego CIFRADA por la misma llave del
+	// KMS (base64 del ciphertext). OPCIONAL: si viene, gana sobre KEKIndexB64 y
+	// evita dejar ese secreto en claro en el entorno productivo. Se lee de
+	// WAPP_KEK_KMS_INDEX_B64.
+	KEKKMSIndexB64 string `yaml:"kek_kms_index_b64"`
 	// KEKKeyring es el keyring versionado del Plan 012: entradas "id:base64"
 	// (cada KEK 32B AES-256) separadas por coma. Con él, WrapDEK usa la KEK
 	// KEKCurrent y UnwrapDEK selecciona por key_id, habilitando la rotación sin
@@ -421,6 +445,12 @@ func defaults() AppConfig {
 		JWT: JWTConfig{
 			Issuer: "wapp-cloud",
 		},
+		Crypto: CryptoConfig{
+			// Default explícito: la KEK sigue en env (ADR-0036 §3, el KMS se
+			// construye pero NO se activa en alfa — cero gasto). Lo cambia el
+			// gate T9.2, no este archivo.
+			KEKProvider: "env",
+		},
 		RateLimit: RateLimitConfig{
 			PublicRPS:   20,
 			PublicBurst: 40,
@@ -516,6 +546,10 @@ func Load() (AppConfig, error) {
 	cfg.Lease.PrivateKeyB64 = loader.GetString("LEASE_PRIVATE_KEY_B64", cfg.Lease.PrivateKeyB64)
 	cfg.Lease.TTLMinutes = loader.GetInt("LEASE_TTL_MINUTES", cfg.Lease.TTLMinutes)
 
+	cfg.Crypto.KEKProvider = loader.GetString("KEK_PROVIDER", cfg.Crypto.KEKProvider)
+	cfg.Crypto.KEKKMSKey = loader.GetString("KEK_KMS_KEY", cfg.Crypto.KEKKMSKey)
+	cfg.Crypto.KEKKMSKeyring = loader.GetString("KEK_KMS_KEYRING", cfg.Crypto.KEKKMSKeyring)
+	cfg.Crypto.KEKKMSIndexB64 = loader.GetString("KEK_KMS_INDEX_B64", cfg.Crypto.KEKKMSIndexB64)
 	cfg.Crypto.KEKKeyring = loader.GetString("KEK_KEYRING", cfg.Crypto.KEKKeyring)
 	cfg.Crypto.KEKCurrent = loader.GetString("KEK_CURRENT", cfg.Crypto.KEKCurrent)
 	cfg.Crypto.KEKMasterB64 = loader.GetString("KEK_MASTER_B64", cfg.Crypto.KEKMasterB64)

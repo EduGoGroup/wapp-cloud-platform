@@ -117,7 +117,7 @@ func putIntentsHandler(store IntentConfigStore, ents FeatureChecker, pusher Conf
 			return
 		}
 		if len(body) > sharedintents.MaxConfigBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, "la config excede el tamaño máximo")
+			writeTooLarge(w, "la config", sharedintents.MaxConfigBytes)
 			return
 		}
 

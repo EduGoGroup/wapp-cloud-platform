@@ -78,10 +78,11 @@ func upsertTenantContentHandler(cs TenantContentStore, maxBytes int64) http.Hand
 			return
 		}
 
-		body, err := catalogimport.ReadLimited(r.Body, catalogimport.Limits{MaxJSONBytes: tenantContentBytes(maxBytes)})
+		techo := tenantContentBytes(maxBytes)
+		body, err := catalogimport.ReadLimited(r.Body, catalogimport.Limits{MaxJSONBytes: techo})
 		if err != nil {
 			if errors.Is(err, catalogimport.ErrDocumentTooLarge) {
-				writeError(w, http.StatusRequestEntityTooLarge, "el contenido excede el tamaño máximo")
+				writeTooLarge(w, "el contenido", techo)
 				return
 			}
 			writeError(w, http.StatusBadRequest, "no se pudo leer el cuerpo")
