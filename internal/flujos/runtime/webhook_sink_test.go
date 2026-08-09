@@ -211,6 +211,58 @@ func TestBuildIntakePushTemplate_Contrato(t *testing.T) {
 	}
 }
 
+// camposQueRellenaElWorker son los tres que esta plantilla NO puede congelar
+// (D-042.9/D-042.11): buyer_data y variables{} por coste —descifrado y consulta,
+// prohibidos en línea con el mensaje por INV-02— y customer_note por exposición
+// (PII en claro en una tabla que sobrevive a la entrega, Ola 5 del Plan 042).
+//
+// La lista está DUPLICADA respecto a internal/integrations/contract_body_test.go
+// a propósito: los dos paquetes no se conocen (el sink solo ve la interfaz
+// WebhookQueuer) y compartirla obligaría a acoplarlos justo por donde la
+// arquitectura los separa. Son tres nombres; si divergen, el test de allí —que
+// valida el documento entero contra el schema— se pone rojo.
+var camposQueRellenaElWorker = []string{"buyer_data", "variables", "customer_note"}
+
+// TestBuildIntakePushTemplate_NoCongelaLoQueRellenaElWorker vigila la mitad
+// CONGELADA del reparto desde el lado del sink, y por nombre.
+//
+// TestBuildIntakePushTemplate_Contrato ya lo cubre de refilón (compara el JSON
+// entero contra un literal), pero se pondría rojo con un mensaje sobre un literal
+// que no dice por qué importa. Aquí el efecto trae los tres campos —el de cierre
+// del carrito lleva la nota de verdad, el proyector la necesita— y aun así ninguno
+// puede acabar en la plantilla que se PERSISTE.
+func TestBuildIntakePushTemplate_NoCongelaLoQueRellenaElWorker(t *testing.T) {
+	eff := cartClosedEffect()
+	eff.Payload["customer_note"] = "dejarlo en porteria calle Mayor 14"
+	eff.Payload["buyer_data"] = map[string]any{"documento": "12.345.678-5"}
+	eff.Payload["variables"] = map[string]any{"moneda": "Bs"}
+
+	body, err := json.Marshal(buildIntakePushTemplate(
+		EffectContext{TenantID: "t-1", ContactID: "c-opaco"}, eff, time.Unix(0, 0).UTC()))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("la plantilla no es JSON válido: %v", err)
+	}
+
+	for _, k := range camposQueRellenaElWorker {
+		if _, hay := got[k]; hay {
+			t.Fatalf("%q volvió a la plantilla que se persiste en webhook_outbox. Los tres los "+
+				"completa el worker justo antes del POST; congelarlos aquí vuelve a violar INV-02 "+
+				"(y, con customer_note, deja PII en claro en una fila que no se poda):\n%s", k, body)
+		}
+	}
+	// …y lo que sí es del instante del cierre sigue estando: una plantilla podada
+	// de más pasaría el barrido de arriba y dejaría al puente sin contrato válido.
+	for _, k := range []string{"items", "total", "timestamp"} {
+		if _, hay := got[k]; !hay {
+			t.Fatalf("la plantilla perdió %q, que se congela al encolar: %s", k, body)
+		}
+	}
+}
+
 // TestBuildIntakePushTemplate_EventHistoryIDOmitido: el contrato lo declara
 // opcional (MD-042.1) — mientras el Plan 043 no exista, no se emite, y la clave
 // NO debe aparecer en el JSON (omitempty), no aparecer como "".
