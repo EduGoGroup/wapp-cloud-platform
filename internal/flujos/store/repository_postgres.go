@@ -64,15 +64,16 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 		c       model.Conversation
 		varsRaw []byte
 		lastWa  sql.NullString
+		eventID sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT tenant_id::text, session_id, contact_id::text, flow_id, flow_version,
-		       current_node, vars, last_wa_message_id, updated_at
+		       current_node, vars, last_wa_message_id, updated_at, event_id::text
 		FROM public.flow_state
 		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
 	`, key.TenantID, key.SessionID, key.ContactID).Scan(
 		&c.TenantID, &c.SessionID, &c.ContactID, &c.FlowID, &c.FlowVersion,
-		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt,
+		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt, &eventID,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -82,6 +83,12 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 	}
 	if lastWa.Valid {
 		c.LastWaMessageID = lastWa.String
+	}
+	// event_id NULL ⇒ EventID "" (la conversación no tiene evento activo, E-6):
+	// es un estado legítimo y frecuente, no una lectura fallida. Se lee con
+	// ::text para que el UUID llegue como cadena, igual que tenant_id/contact_id.
+	if eventID.Valid {
+		c.EventID = eventID.String
 	}
 	if len(varsRaw) > 0 {
 		if err := json.Unmarshal(varsRaw, &c.Vars); err != nil {
@@ -106,19 +113,28 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 	if state.LastWaMessageID != "" {
 		lastWa = sql.NullString{String: state.LastWaMessageID, Valid: true}
 	}
+	// EventID "" ⇒ NULL, y el UPDATE lo escribe igual que cualquier otro valor: apagar
+	// el puntero del evento activo (cierre/cancelación, D-043.4) es guardar un estado
+	// con EventID vacío. Si esta columna se excluyera del DO UPDATE, un evento cerrado
+	// dejaría el puntero pegado para siempre y la conversación seguiría "dentro" de él.
+	var eventID sql.NullString
+	if state.EventID != "" {
+		eventID = sql.NullString{String: state.EventID, Valid: true}
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO public.flow_state
-			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, event_id, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 		ON CONFLICT (tenant_id, session_id, contact_id) DO UPDATE
 		SET flow_id = EXCLUDED.flow_id,
 		    flow_version = EXCLUDED.flow_version,
 		    current_node = EXCLUDED.current_node,
 		    vars = EXCLUDED.vars,
 		    last_wa_message_id = EXCLUDED.last_wa_message_id,
+		    event_id = EXCLUDED.event_id,
 		    updated_at = now()
 	`, state.TenantID, state.SessionID, state.ContactID, state.FlowID, state.FlowVersion,
-		state.CurrentNode, varsRaw, lastWa)
+		state.CurrentNode, varsRaw, lastWa, eventID)
 	if err != nil {
 		return fmt.Errorf("store: upsert estado: %w", err)
 	}
@@ -639,38 +655,44 @@ func (r *PostgresRepository) MarkIntakeStatus(ctx context.Context, intakeID, sta
 
 // GetTenantSettings devuelve la config del carrito para tenantID desde
 // public.tenant_settings (Plan 016 · T0). Si el tenant no tiene fila, devuelve los
-// DEFAULTS (DefaultPageSize, DefaultOrderTTL) SIN error (design.md §9.E/§9.G).
+// DEFAULTS de DefaultTenantSettings SIN error (design.md §9.E/§9.G).
+//
+// HAY FILA vs NO HAY FILA SON DOS CAMINOS DISTINTOS, Y ESO ES EL PUNTO (Plan 043 ·
+// T1.3). Con fila, los valores se devuelven TAL CUAL vienen de la columna, sin
+// sustituir ceros por defaults: `event_inactivity_ttl_seconds = 0` es el override
+// explícito «sin vencimiento» de una empresa (D-043.7 / E-6), no un hueco que
+// rellenar. Como 0 es además el cero de Go, un `if x == 0 { x = Default }` aquí
+// convertiría ese override en 2 h sin que nadie se entere: no lo introduzcas.
 func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
 	var (
-		pageSize    int
-		ttlSecs     int
-		convTTLSecs int
-		buyerFields []byte
+		pageSize        int
+		ttlSecs         int
+		convTTLSecs     int
+		buyerFields     []byte
+		evInactTTLSecs  int
+		evHistoryTTLSec int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields
+		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields,
+		       event_inactivity_ttl_seconds, event_history_ttl_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
-	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields)
+	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields,
+		&evInactTTLSecs, &evHistoryTTLSec)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return TenantSettings{
-			TenantID: tenantID,
-			PageSize: DefaultPageSize,
-			OrderTTL: DefaultOrderTTL,
-			// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila
-			// nunca vencen su conversación, no-regresión). BuyerFields nil ⇒ el
-			// carrito no pregunta nada, que es el comportamiento previo a T4.5.
-		}, nil
+		return DefaultTenantSettings(tenantID), nil
 	case err != nil:
 		return TenantSettings{}, fmt.Errorf("store: leer config de tenant: %w", err)
 	}
 	return TenantSettings{
-		TenantID:        tenantID,
-		PageSize:        pageSize,
-		OrderTTL:        time.Duration(ttlSecs) * time.Second,
-		ConversationTTL: time.Duration(convTTLSecs) * time.Second,
-		BuyerFields:     parseBuyerFields(buyerFields),
+		TenantID:           tenantID,
+		PageSize:           pageSize,
+		OrderTTL:           time.Duration(ttlSecs) * time.Second,
+		ConversationTTL:    time.Duration(convTTLSecs) * time.Second,
+		BuyerFields:        parseBuyerFields(buyerFields),
+		EventInactivityTTL: time.Duration(evInactTTLSecs) * time.Second,
+		EventHistoryTTL:    time.Duration(evHistoryTTLSec) * time.Second,
 	}, nil
 }
 

@@ -170,13 +170,44 @@ func TestIntent_LiveConversation_TextWins(t *testing.T) {
 	}
 }
 
+// seedConversationTTL siembra la config del tenant con el TTL conversacional pedido
+// PARTIENDO DE LOS DEFAULTS (store.DefaultTenantSettings), no de un TenantSettings
+// construido campo a campo. No es estilo, es corrección del banco de pruebas:
+// MemoryRepository.SetTenantSettings siembra la fila LITERALMENTE —como un INSERT que
+// nombra todas las columnas—, así que lo que no rellenes queda en el cero de Go. Con
+// EventInactivityTTL ese cero NO es «no configurado»: significa «SIN VENCIMIENTO», un
+// override explícito de la empresa (D-043.7), mientras que la misma fila creada en
+// Postgres sin nombrar la columna trae el DEFAULT 7200 (2 h, migración 0052). Un tenant
+// sembrado a mano describiría, por tanto, una configuración que producción no tiene — y
+// estos tests seguirían en verde el día que la Ola 2 del Plan 043 cablee el reloj.
+//
+// La relectura con su aserción no sobra: es lo único que impide volver a la siembra a
+// mano sin que nada se queje. El t.Logf deja el valor a la vista con `go test -v`.
+func seedConversationTTL(t *testing.T, repo *store.MemoryRepository, ttl time.Duration) {
+	t.Helper()
+	seeded := store.DefaultTenantSettings(testTenant)
+	seeded.ConversationTTL = ttl
+	repo.SetTenantSettings(seeded)
+
+	got, err := repo.GetTenantSettings(context.Background(), testTenant)
+	if err != nil {
+		t.Fatalf("releer la config sembrada: %v", err)
+	}
+	if got.EventInactivityTTL != store.DefaultEventInactivityTTL {
+		t.Fatalf("el tenant sembrado trae EventInactivityTTL=%v y debe traer el default de plataforma %v: siembra desde store.DefaultTenantSettings, no a mano (un 0 aquí significa «sin vencimiento», que no es lo que hace Postgres)",
+			got.EventInactivityTTL, store.DefaultEventInactivityTTL)
+	}
+	t.Logf("tenant sembrado desde defaults: EventInactivityTTL=%v · EventHistoryTTL=%v · ConversationTTL=%v · PageSize=%d · OrderTTL=%v",
+		got.EventInactivityTTL, got.EventHistoryTTL, got.ConversationTTL, got.PageSize, got.OrderTTL)
+}
+
 // TestConversationTTL_NotExpired_KeepsLiveConversation (T9): con TTL configurado pero
 // dentro del plazo, la conversación viva NO vence: el entrante avanza normal.
 func TestConversationTTL_NotExpired_KeepsLiveConversation(t *testing.T) {
 	// Reloj +1min contra un TTL de 1h ⇒ NO vencido.
 	clock := func() time.Time { return time.Now().Add(time.Minute) }
 	rt, repo, _, contacts := newIntentRuntime(t, true, clock, llmRule("pedido", testCartFlow))
-	repo.SetTenantSettings(store.TenantSettings{TenantID: testTenant, PageSize: store.DefaultPageSize, OrderTTL: store.DefaultOrderTTL, ConversationTTL: time.Hour})
+	seedConversationTTL(t, repo, time.Hour)
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start cart: %v", err)
@@ -199,7 +230,7 @@ func TestConversationTTL_Expired_RestartsViaLLM(t *testing.T) {
 	// Reloj +2h contra un TTL de 1h ⇒ vencido.
 	clock := func() time.Time { return time.Now().Add(2 * time.Hour) }
 	rt, repo, sender, contacts := newIntentRuntime(t, true, clock, llmRule("pedido", testCartFlow))
-	repo.SetTenantSettings(store.TenantSettings{TenantID: testTenant, PageSize: store.DefaultPageSize, OrderTTL: store.DefaultOrderTTL, ConversationTTL: time.Hour})
+	seedConversationTTL(t, repo, time.Hour)
 	ctx := context.Background()
 	// Conversación vieja: un carrito recién iniciado en L1 (sin líneas ni solicitud).
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {

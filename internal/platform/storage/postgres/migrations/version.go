@@ -46,7 +46,7 @@ import (
 // corresponde a un esquema que salió a Neon, no a una migración suelta: las 0046-
 // 0048 fueron a la 0.26.0 en un solo incremento, y ese es el patrón que la regla
 // pide.
-const SchemaVersion = "0.28.0"
+const SchemaVersion = "0.29.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
