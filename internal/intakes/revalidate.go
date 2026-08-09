@@ -35,12 +35,20 @@ import (
 //
 // ⚠️ LO QUE ESTA TAREA NO ENTREGA, y de quién es. El GANCHO en sí —el punto de
 // llamada, entre «el cliente elige rescatar» y «se le devuelve el evento con su
-// pedido»— es del **Plan 043 · T3.6**, y no por prioridad sino porque su materia
-// prima no existe: el rescate cuelga de public.conversation_events y de
-// flow_state.event_id, que no están en NINGÚN repo del ecosistema (043/design.md
-// :1005-1020 y :1118 los crean). Tampoco se puede «hacer el 043 primero»:
-// 043/tasks.md:396 necesita el estado `abandoned` que publica ESTE plan — es un
-// ciclo, no un orden. Lo que queda pendiente, en concreto:
+// pedido»— es del **Plan 043 · T3.6**.
+//
+// ACTUALIZADO 2026-08-09 (Plan 043 · Ola 1) — lo que aquí decía, que la materia prima
+// «no está en NINGÚN repo del ecosistema», YA NO ES CIERTO: public.conversation_events
+// la crea la migración `0051_conversation_events.sql`, flow_state.event_id lo añade
+// `0052_event_seams.sql`, la costura Go ya persiste ese puntero
+// (`model.Conversation.EventID`) y el store del evento vive en `internal/flujos/events`.
+// El ciclo con el 041 tampoco existe ya: el `abandoned` que el 043 esperaba de ESTE
+// plan está publicado (StatusAbandoned, status.go).
+//
+// Lo que bloquea hoy es otra cosa y es más simple: EL RESCATE TODAVÍA NO EXISTE. Nadie
+// crea eventos ni apunta flow_state.event_id (eso nace en la Ola 2, T2.2/T2.5) y el
+// automensaje de rescate con su lista es la propia T3.6 (Ola 3), sin marcar. Lo que
+// queda pendiente, en concreto:
 //
 //   - EL PUNTO DE LLAMADA. Quién invoca Revalidate y ApplyRevalidation, y con qué
 //     catálogo. Hoy nadie: las dos nacen sin llamantes, como nació DiscardableStatuses.

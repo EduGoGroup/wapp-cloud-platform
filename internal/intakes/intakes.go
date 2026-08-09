@@ -318,11 +318,19 @@ type Store interface {
 	//
 	// ⚠️ "Conversación viva" (DiscardOutcome.LiveCart) es hoy una APROXIMACIÓN
 	// PROVISIONAL, y quien la herede tiene que saberlo: se deriva de la única señal
-	// que existe —una fila de public.flow_state para (tenant, sesión, contacto) cuyo
-	// `vars` traiga el estado del carrito—, porque el EVENTO conversacional que
-	// debería contestar esto (public.conversation_events, flow_state.event_id) lo
-	// crea el Plan 043 y hoy no existe en ninguna base. Su FUENTE cambia cuando ese
-	// plan aterrice; su semántica no. Se acepta porque falla del lado seguro: si se
+	// que hay POBLADA —una fila de public.flow_state para (tenant, sesión, contacto)
+	// cuyo `vars` traiga el estado del carrito—, en vez de del EVENTO conversacional,
+	// que es quien debería contestar esto.
+	//
+	// ACTUALIZADO 2026-08-09 (Plan 043 · Ola 1): las dos piezas del evento YA EXISTEN
+	// en el esquema —public.conversation_events la crea `0051_conversation_events.sql`
+	// y flow_state.event_id lo añade `0052_event_seams.sql`—, así que la razón que
+	// aquí figuraba («hoy no existe en ninguna base») caducó. Lo que sigue siendo
+	// cierto es que están VACÍAS: nadie crea eventos ni apunta el puntero hasta la Ola
+	// 2 (T2.2/T2.5), y consultarlas hoy diría «no hay conversación viva» SIEMPRE — que
+	// sobre una acción irreversible es el error caro. Por eso la fuente sigue siendo
+	// flow_state. Su FUENTE cambia cuando el productor aterrice (dueño: 043 · T4.3);
+	// su semántica no. Se acepta porque falla del lado seguro: si se
 	// equivoca, PROTEGE DE MÁS (no descarta algo descartable), nunca de menos — y lo
 	// que está al otro lado es una acción irreversible y sin papelera (D-041.22).
 	Discard(ctx context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error)

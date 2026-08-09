@@ -31,14 +31,26 @@ import (
 //
 // ⚠️ LO QUE ESTA TAREA NO ENTREGA, y de quién es: el CIERRE DEL EVENTO
 // conversacional (REQ-32e, criterios (g) y (h) del plan) y el filtro `orphan=true`
-// del listado (criterio (e)). Los dos son del **Plan 043 · T4.3**, y no por
-// prioridad sino porque su materia prima no existe: `public.conversation_events` no
-// está en NINGÚN repo del ecosistema y `flow_state` no tiene `event_id`
-// (043/design.md:1005-1020 y :1118 los crean). Tampoco se puede "hacer el 043
-// primero": 043/tasks.md:396 necesita el estado `abandoned` que publica ESTE plan —
-// es un ciclo, no un orden. El filtro `orphan` NO se aproxima a propósito: es el que
-// PRESELECCIONA lo que se va a borrar, y una aproximación que frena es aceptable
-// mientras que una que elige víctimas no lo es.
+// del listado (criterio (e)). Los dos siguen siendo del **Plan 043 · T4.3**.
+//
+// ACTUALIZADO 2026-08-09 (Plan 043 · Ola 1) — el motivo cambió, el dueño no. Lo que
+// aquí decía —«su materia prima no existe en NINGÚN repo del ecosistema»— YA NO ES
+// CIERTO y no debe usarse para posponer nada: `public.conversation_events` (y su
+// historial) los crea la migración `0051_conversation_events.sql`,
+// `flow_state.event_id` lo añade `0052_event_seams.sql`, la costura Go ya carga y
+// guarda ese puntero (`model.Conversation.EventID`) y el store del evento vive en
+// `internal/flujos/events`. El ciclo tampoco existe ya: el `abandoned` que el 043
+// esperaba de ESTE plan está publicado (StatusAbandoned, status.go), que es
+// justamente el gate de entrada de la Ola 4 del 043.
+//
+// Lo que de verdad queda pendiente hoy es el PRODUCTOR: nadie crea todavía un evento
+// ni apunta `flow_state.event_id` —eso nace en la Ola 2 (T2.2/T2.5)—, así que la
+// tabla existe y está VACÍA. Mientras lo esté, cerrar el evento al descartar no
+// tendría qué cerrar y el filtro `orphan` no tendría contra qué cruzar.
+//
+// El filtro `orphan` NO se aproxima a propósito: es el que PRESELECCIONA lo que se va
+// a borrar, y una aproximación que frena es aceptable mientras que una que elige
+// víctimas no lo es.
 
 // MaxDiscardBatch acota cuántas solicitudes puede descartar UNA llamada. No es una
 // regla de negocio: es lo que impide que un solo POST convierta una bandeja entera

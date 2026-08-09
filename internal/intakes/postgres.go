@@ -1090,9 +1090,13 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 // del contrato de Store.Discard, y estas son sus tres verdades incómodas:
 //
 //   - La FUENTE es interina. Lo que debería contestar esto es el evento
-//     conversacional del Plan 043 (public.conversation_events + flow_state.event_id),
-//     que hoy no existe en ninguna base. Cuando aterrice, ESTA función se sustituye;
-//     el contrato del puerto no cambia. Dueño de esa sustitución: 043 · T4.3.
+//     conversacional del Plan 043 (public.conversation_events + flow_state.event_id).
+//     ACTUALIZADO 2026-08-09 (043 · Ola 1): las dos piezas ya están en el esquema
+//     (migraciones `0051_conversation_events.sql` y `0052_event_seams.sql`), pero
+//     VACÍAS — nadie las escribe hasta la Ola 2 (T2.2/T2.5), así que cruzarlas hoy
+//     diría «sin conversación viva» siempre. Cuando el productor aterrice, ESTA
+//     función se sustituye; el contrato del puerto no cambia. Dueño de esa
+//     sustitución: 043 · T4.3.
 //   - Sobre-protege. Un contacto que empezó un carrito NUEVO en la misma sesión
 //     bloquea el descarte de una solicitud vieja y huérfana suya. Es el error que se
 //     elige: al otro lado hay una acción irreversible y sin papelera (D-041.22).

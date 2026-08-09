@@ -156,8 +156,9 @@ type IntakeStore interface {
 type TenantSettingsReader interface {
 	// GetTenantSettings devuelve la config del carrito para tenantID desde
 	// public.tenant_settings (Plan 016 · T0). Si el tenant NO tiene fila, devuelve
-	// los DEFAULTS (PageSize=5, OrderTTL=3600s) SIN error: el carrito funciona sin
-	// configurar nada (design.md §9.E/§9.G).
+	// DefaultTenantSettings(tenantID) SIN error: el carrito funciona sin configurar
+	// nada (design.md §9.E/§9.G). Si SÍ tiene fila, devuelve lo que diga la fila sin
+	// sustituir ceros por defaults (un 0 puede ser un override explícito, no un hueco).
 	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
 
@@ -407,6 +408,48 @@ type TenantSettings struct {
 	// cliente responde es PII y no pasa por este struct ni por Vars: viaja en un
 	// efecto privado y acaba CIFRADO en intake_buyer_data (T4.5).
 	BuyerFields []BuyerField
+	// EventInactivityTTL es EL reloj de conversación, en singular (ADR-0029 E-6 /
+	// D-043.7, migración 0052 · event_inactivity_ttl_seconds): el silencio tolerado
+	// entre interacciones de un evento. Se mide desde conversation_events.last_activity_at
+	// y se REFRESCA en cada interacción, así que una conversación activa nunca vence.
+	//
+	// 0 ⇒ SIN VENCIMIENTO, y es un override EXPLÍCITO de la empresa, no un "no
+	// configurado": la columna es NOT NULL DEFAULT 7200, de modo que un tenant que no
+	// tocó nada trae 2 h y solo llega un 0 aquí si alguien lo escribió. Confundir los
+	// dos casos es el error caro de este campo (ver GetTenantSettings).
+	//
+	// No sustituye a ConversationTTL ni se colapsa con él (ADR-0029 E-9.2): aquel es
+	// recolección de basura del flow_state y solo se evalúa cuando NO hay evento activo.
+	EventInactivityTTL time.Duration
+	// EventHistoryTTL es RETENCIÓN DE DATOS, no un reloj de conversación (D-043.13,
+	// migración 0052 · event_history_ttl_seconds): cuánto tiempo se tiene derecho a
+	// guardar el texto del hilo (conversation_event_messages) antes de que la poda
+	// perezosa lo vacíe. Vencer no interrumpe ninguna conversación.
+	//
+	// 0 ⇒ sin poda. Es un default TÉCNICO y retrocompatible, NO una decisión de
+	// retención: el valor de negocio lo fija el Plan 046 (MD-043.6).
+	EventHistoryTTL time.Duration
+}
+
+// DefaultTenantSettings es la config que vale para un tenant SIN fila en
+// public.tenant_settings. Espeja los DEFAULT de las columnas (migraciones 0013,
+// 0034, 0045 y 0052) y es la ÚNICA definición de ese juego de valores: la usan
+// tanto PostgresRepository como MemoryRepository, para que los dos no puedan
+// divergir en silencio como divergirían dos literales copiados.
+//
+// «Sin fila» es lo único que esto responde. Un tenant CON fila devuelve lo que diga
+// la fila, aunque coincida con el cero de Go: ahí no se aplica nada de esto.
+func DefaultTenantSettings(tenantID string) TenantSettings {
+	return TenantSettings{
+		TenantID: tenantID,
+		PageSize: DefaultPageSize,
+		OrderTTL: DefaultOrderTTL,
+		// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila nunca
+		// vencen su conversación, no-regresión). BuyerFields nil ⇒ el carrito no
+		// pregunta nada, que es el comportamiento previo a T4.5.
+		EventInactivityTTL: DefaultEventInactivityTTL,
+		EventHistoryTTL:    DefaultEventHistoryTTL,
+	}
 }
 
 // BuyerField es UN campo del checklist del comprador (D-041.13, ADR-0031 §5).
@@ -443,6 +486,16 @@ const (
 	// migración 0013. DEROGADO como causa de muerte (D-041.16): es el valor que se
 	// devuelve cuando el tenant no tiene fila, no un plazo que alguien aplique.
 	DefaultOrderTTL = time.Hour
+	// DefaultEventInactivityTTL es el default de PLATAFORMA de
+	// event_inactivity_ttl_seconds (7200s = 2h, D-043.7 / ADR-0029 E-6) que espeja el
+	// DEFAULT de la migración 0052. Vale para el tenant SIN fila; un tenant CON fila
+	// manda siempre, incluido su 0 («sin vencimiento»).
+	DefaultEventInactivityTTL = 2 * time.Hour
+	// DefaultEventHistoryTTL es el default TÉCNICO de event_history_ttl_seconds (0 =
+	// sin poda) que espeja el DEFAULT de la migración 0052. NO es una decisión de
+	// retención: esa la toma el Plan 046 (MD-043.6). Se nombra en vez de dejar el cero
+	// implícito para que quien lo cambie sepa qué está cambiando.
+	DefaultEventHistoryTTL = time.Duration(0)
 )
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna

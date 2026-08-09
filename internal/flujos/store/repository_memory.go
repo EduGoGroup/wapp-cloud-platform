@@ -123,6 +123,12 @@ func (r *MemoryRepository) Load(_ context.Context, key Key) (model.Conversation,
 // UpdatedAt = ahora en cada escritura, igual que la columna updated_at = now() del
 // repositorio Postgres, para que el TTL conversacional (Plan 029 · T9) tenga una
 // marca real de última actividad.
+//
+// EventID (el puntero al evento activo, Plan 043 · T1.3) viaja en el clon JSON como
+// un campo más, incluido cuando vale "": el upsert lo SOBRESCRIBE siempre, igual que
+// el `event_id = EXCLUDED.event_id` del repo Postgres. Es lo que permite APAGAR el
+// puntero al cerrar o cancelar un evento; conservar el valor previo dejaría a la
+// conversación pegada a un evento muerto solo en los tests.
 func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) error {
 	clone, err := cloneConversation(state)
 	if err != nil {
@@ -560,19 +566,20 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 }
 
 // GetTenantSettings implementa Repository: devuelve la config sembrada para
-// tenantID o los DEFAULTS (DefaultPageSize, DefaultOrderTTL) si no hay fila, SIN
-// error (design.md §9.E/§9.G).
+// tenantID o DefaultTenantSettings si no hay fila, SIN error (design.md §9.E/§9.G).
+//
+// Los DOS caminos son los mismos que en Postgres, incluida la parte que muerde: una
+// config SEMBRADA se devuelve TAL CUAL, así que un EventInactivityTTL de 0 sembrado
+// sale 0 —el override «sin vencimiento» de D-043.7— y no se convierte en las 2 h del
+// default. Los defaults salen de la MISMA función que usa el repo Postgres, de modo
+// que los dos no pueden divergir.
 func (r *MemoryRepository) GetTenantSettings(_ context.Context, tenantID string) (TenantSettings, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if s, ok := r.settings[tenantID]; ok {
 		return s, nil
 	}
-	return TenantSettings{
-		TenantID: tenantID,
-		PageSize: DefaultPageSize,
-		OrderTTL: DefaultOrderTTL,
-	}, nil
+	return DefaultTenantSettings(tenantID), nil
 }
 
 // Intakes devuelve una copia de las solicitudes acumuladas por UpsertIntake. Es un
@@ -601,6 +608,14 @@ func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 
 // SetTenantSettings siembra la config del carrito para un tenant. Es un helper de
 // test (imita el alta en tenant_settings).
+//
+// SIEMBRA LA FILA LITERALMENTE, como un INSERT que nombra TODAS las columnas: los
+// campos que no rellenes quedan en el cero de Go, NO en el DEFAULT de su columna. La
+// diferencia importa desde el Plan 043: un TenantSettings a medio construir deja
+// EventInactivityTTL en 0, que aquí significa «sin vencimiento» mientras que la misma
+// fila creada en Postgres sin nombrar la columna traería 2 h. Para sembrar un tenant
+// realista parte de DefaultTenantSettings(tenantID) y cambia lo que el test necesite;
+// el 0 déjalo solo cuando el 0 sea lo que se está probando.
 func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

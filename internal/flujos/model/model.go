@@ -139,6 +139,20 @@ type Conversation struct {
 	CurrentNode     string         `json:"current_node"`
 	Vars            map[string]any `json:"vars"`
 	LastWaMessageID string         `json:"last_wa_message_id,omitempty"`
+	// EventID es el evento conversacional ACTIVO de esta conversación
+	// (flow_state.event_id → conversation_events.id, Plan 043 · T1.3, D-043.4).
+	// «Activo» NO es un estado del evento sino un PUNTERO de la conversación: por eso
+	// vive aquí y no como un cuarto valor de conversation_events.status, y por eso un
+	// evento puede seguir vivo sin ser el activo.
+	//
+	// "" ⇒ la conversación NO tiene evento activo. Es el estado NORMAL y frecuente —el
+	// saludo no crea evento (E-6)— y también el que deja cerrar o cancelar: apagar el
+	// puntero es escribir "" y guardar. NO es un error ni un "no sé".
+	//
+	// Se representa como string vacío (no *string ni un tipo Null*) siguiendo la MISMA
+	// convención que LastWaMessageID: el dominio usa el cero de Go y el NULL vive solo
+	// en la frontera SQL (sql.NullString en el repositorio Postgres).
+	EventID string `json:"event_id,omitempty"`
 	// UpdatedAt es la marca de la última escritura del estado (flow_state.updated_at).
 	// La ESTAMPA el store en cada Save (no el llamante); Load la devuelve. La consume
 	// el TTL conversacional del runtime (Plan 029 · T9) para decidir si un estado vivo
