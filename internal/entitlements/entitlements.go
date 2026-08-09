@@ -90,6 +90,37 @@ const FeatureCatalogImport = "catalog_import"
 // feature dice tu plan lo incluye").
 const FeatureCRMBridge = "crm_bridge"
 
+// FeatureMenu es la feature del tipo de fábrica `menu` (lista numerada → rama
+// por elección, Plan 015/016): la clave lleva sembrada en plan_features desde
+// la taxonomía del Plan 040 (migración 0039_seed_plan_taxonomy.sql:52,56,62,
+// 69,80 — los cinco planes la incluyen) pero sin constante Go, porque hasta
+// ahora nada la gateaba desde código. El despachador de nivel superior (Plan
+// 043 · Ola 2 · T2.3) necesita filtrar los tipos ofrecibles por feature, y
+// `menu` es uno de ellos igual que `survey` y `media`, así que se declara
+// aquí de paso.
+const FeatureMenu = "menu"
+
+// FeatureSurvey es la feature del tipo de fábrica `survey` (secuencia de
+// preguntas, Plan 014): nace en el plan `basic` (migración
+// 0053_seed_survey_media_features.sql) porque es solo lógica conversacional,
+// sin coste de infraestructura por tenant que la use. La consume el
+// despachador de T2.3 para filtrar el menú numérico dinámico.
+const FeatureSurvey = "survey"
+
+// FeatureMedia es la feature del tipo de fábrica `media` (entrega de URL
+// prefirmada R2, Plan 017): a diferencia de `survey`, nace en el plan
+// `commerce`, no en `basic` (migración 0053_seed_survey_media_features.sql),
+// porque consume almacenamiento R2 y ancho de banda con coste real por uso.
+const FeatureMedia = "media"
+
+// FeatureLLMIntake es la feature de captación asistida por LLM (Plan
+// 040/042). La clave ya venía sembrada en plan_features desde la taxonomía
+// del Plan 040 (migración 0039_seed_plan_taxonomy.sql:75,86: `advisor_ai_pro`
+// y `pro` la incluyen) sin constante Go — es formalmente de la Ola 3 del Plan
+// 043 (T3.5), pero se declara aquí de paso porque el fichero ya estaba
+// abierto para las dos anteriores.
+const FeatureLLMIntake = "llm_intake"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).

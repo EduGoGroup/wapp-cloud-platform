@@ -22,6 +22,7 @@ import (
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/media"
@@ -224,6 +225,23 @@ func Run(ctx context.Context) error {
 	// Es un solo objeto: dos serían dos criterios de "ya recordé".
 	intakeNotifier := intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log)
 	depositReminder := intakes.NewDepositReminder(intakeNotifier, intakeStore)
+	// El Service de solicitudes se arma AQUÍ, antes del runtime, porque desde el Plan
+	// 043 tiene DOS consumidores: la API del dueño (Deps.Intakes, más abajo) y el
+	// motor, que abandona la solicitud del evento que el cliente cierra al empezar
+	// otro del mismo tipo (E-11). Es un solo objeto a propósito: dos serían dos
+	// máquinas de estados opinando sobre las mismas filas.
+	intakeService := intakes.NewService(intakeStore,
+		intakes.WithNotifier(intakeNotifier),
+		intakes.WithDepositReminder(depositReminder))
+	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
+	// que los contactos y los datos del comprador: el historial del evento guarda
+	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
+	// Una tercera instancia de cipher sería una tercera rotación que gestionar.
+	eventStore := events.NewStore(db, flowDeps.cipher)
+	// El despachador de nivel superior (Plan 043 · T2.3) SOLO LEE: los eventos vivos
+	// del contacto, los tipos que el tenant ofrece (sus reglas event_start) y las
+	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.
+	dispatcher := events.NewDispatcher(eventStore, events.NewTriggerKindOffer(triggerStore), entResolver)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
 			cart.NewProjector(flowStore, intakeStore, intakeStore, buyerDataStore),
@@ -241,6 +259,14 @@ func Run(ctx context.Context) error {
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
+		// El plano de EVENTOS conversacionales (Plan 043 · Ola 2): sin estas dos
+		// opciones el motor se comporta exactamente como antes del plan —un
+		// event_start arranca su flujo sin parir evento y un event_stop no desactiva
+		// nada—, así que van juntas o no van.
+		flowruntime.WithEventStore(eventStore),
+		flowruntime.WithIntakeAbandoner(intakeAbandoner{svc: intakeService}),
+		flowruntime.WithDispatcher(dispatcher),
+		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
 		flowruntime.WithReplyLimiter(replyLimiter),
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
@@ -326,9 +352,7 @@ func Run(ctx context.Context) error {
 		// El recordatorio de la seña (D-041.12 · T4.4) entra por su propia opción
 		// porque cuelga de otro sitio: no de la transición, sino de las LECTURAS del
 		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
-		Intakes: intakes.NewService(intakeStore,
-			intakes.WithNotifier(intakeNotifier),
-			intakes.WithDepositReminder(depositReminder)),
+		Intakes:         intakeService,
 		TenantVariables: tenantvars.NewPostgres(db),
 		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
 		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
@@ -493,4 +517,49 @@ func gracefulStopGRPC(gs *grpc.Server, name string, log sharedlogger.Logger) {
 		gs.Stop()
 		<-done
 	}
+}
+
+// intakeAbandoner adapta el Service de solicitudes al puerto estrecho del motor
+// (flowruntime.IntakeAbandoner). Existe por dos razones y ninguna es cosmética:
+//
+//   - el paquete runtime NO importa internal/intakes (misma frontera que evita
+//     webhook_sink.go), así que la firma del puerto no puede hablar de intakes.Intake;
+//   - la puerta es Service.SetStatus y NUNCA Store.UpdateStatus (ADR-0029 · E-11.5).
+//     SetStatus es el único sitio que consulta CanTransition antes de escribir, y la
+//     tabla intakes no tiene CHECK: un UPDATE crudo escribiría la barbaridad sin que
+//     nadie rebotara. La transición open → abandoned ya está abierta en el mapa; aquí
+//     no se abre ninguna nueva.
+type intakeAbandoner struct{ svc *intakes.Service }
+
+// AbandonIntake deja la solicitud en `abandoned`. NO borra nada (INV-09): el pedido
+// sigue en la bandeja del dueño y sigue siendo exportable.
+func (a intakeAbandoner) AbandonIntake(ctx context.Context, tenantID, intakeID string) error {
+	_, err := a.svc.SetStatus(ctx, tenantID, intakeID, intakes.StatusAbandoned)
+	return err
+}
+
+// flowForKind resuelve «qué flujo arranca este tipo de evento» leyendo las reglas
+// kind='event_start' del tenant. Lo necesita la opción «empezar uno nuevo» del menú
+// del despachador, que dice el TIPO pero no el flujo.
+//
+// La fuente es la misma que la de los tipos ofrecibles (events.TriggerKindOffer), y
+// eso no es casualidad: un tipo está ofrecido porque el tenant le puso una palabra, y
+// esa misma regla es la que dice a qué flujo lleva. Dos fuentes distintas podrían
+// ofrecer un tipo que luego no arrancara nada.
+type flowForKind struct{ rules *trigger.PostgresStore }
+
+// FlowForKind devuelve el flow_id de la primera regla event_start HABILITADA de ese
+// tipo, en el orden determinista del store. "" si no hay ninguna: no es un error —el
+// tipo `menu` no tiene flujo por diseño (D-043.3).
+func (f flowForKind) FlowForKind(ctx context.Context, tenantID, sessionID, kind string) (string, error) {
+	rules, err := f.rules.ListByKind(ctx, tenantID, sessionID, trigger.KindEventStart)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap: leer las reglas event_start: %w", err)
+	}
+	for _, r := range rules {
+		if r.Enabled && r.EventKind == kind && r.FlowID != "" {
+			return r.FlowID, nil
+		}
+	}
+	return "", nil
 }

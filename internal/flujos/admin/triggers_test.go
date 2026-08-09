@@ -230,3 +230,170 @@ func TestDeleteTrigger_OK_And_CrossTenant404(t *testing.T) {
 		t.Fatalf("delete inexistente code=%d, quiero 404", rec.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Plan 043 · T2.1 — kinds event_start / event_stop y la marca derivada
+// ---------------------------------------------------------------------------
+
+// TestCreateTrigger_OK_EventStart: un event_start con keyword y event_kind se acepta
+// (201), devuelve el event_kind y lo persiste. NO exige flow_id: el despachador del
+// menú es un componente del runtime, no una fila de flow_definitions (D-043.3).
+func TestCreateTrigger_OK_EventStart(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	h := admin.CreateTriggerHandler(store)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"event_start","keyword":"carrito","event_kind":"cart"}`, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Kind      string `json:"kind"`
+		EventKind string `json:"event_kind"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Kind != "event_start" || out.EventKind != "cart" {
+		t.Fatalf("la respuesta debe traer kind y event_kind, got %+v", out)
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Kind != trigger.KindEventStart || rules[0].EventKind != "cart" {
+		t.Fatalf("event_start no persistió como se esperaba: %+v", rules)
+	}
+}
+
+// TestCreateTrigger_OK_EventStop: un event_stop solo necesita keyword — corta el
+// evento ACTIVO, sea del tipo que sea, así que no lleva event_kind ni flow_id.
+func TestCreateTrigger_OK_EventStop(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	rec := doTrigger(admin.CreateTriggerHandler(store), http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"event_stop","keyword":"parar"}`, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Kind != trigger.KindEventStop || rules[0].EventKind != "" {
+		t.Fatalf("event_stop no persistió como se esperaba: %+v", rules)
+	}
+}
+
+// TestCreateTrigger_400_EventKindCoherencia: los cuerpos incoherentes con event_kind
+// se rechazan con 400 y un mensaje que dice QUÉ falta (no un 400 mudo).
+func TestCreateTrigger_400_EventKindCoherencia(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	h := admin.CreateTriggerHandler(store)
+	cases := map[string]struct{ body, wantMsg string }{
+		"event_start sin event_kind": {
+			`{"kind":"event_start","keyword":"carrito"}`, "event_kind es requerido"},
+		"event_start sin keyword": {
+			`{"kind":"event_start","event_kind":"cart"}`, "keyword es requerido"},
+		"event_stop sin keyword": {
+			`{"kind":"event_stop"}`, "keyword es requerido"},
+		"event_kind en keyword": {
+			`{"kind":"keyword","keyword":"x","flow_id":"f","event_kind":"cart"}`, "event_kind solo es válido"},
+		"event_kind en event_stop": {
+			`{"kind":"event_stop","keyword":"parar","event_kind":"cart"}`, "event_kind solo es válido"},
+		"event_kind con formato inválido": {
+			`{"kind":"event_start","keyword":"carrito","event_kind":"Cart Grande"}`, "los valores admitidos son"},
+		// El typo del dueño: bien formado, en minúsculas, y aun así no lo atiende
+		// ningún módulo. Antes entraba con un 201 y llegaba hasta la BD.
+		"event_kind con un typo plausible": {
+			`{"kind":"event_start","keyword":"carrito","event_kind":"carrrito"}`, "los valores admitidos son"},
+		"event_kind inventado": {
+			`{"kind":"event_start","keyword":"pizza","event_kind":"pizza"}`, "menu|cart|survey|media"},
+	}
+	for name, tc := range cases {
+		rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant, tc.body, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code=%d, quiero 400; body=%s", name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), tc.wantMsg) {
+			t.Fatalf("%s: el error debe explicar el problema (%q), got %q", name, tc.wantMsg, rec.Body.String())
+		}
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("ningún cuerpo inválido debe haber persistido, got %+v", rules)
+	}
+}
+
+// TestCreateTrigger_INV08_TenantDelCuerpoIgnorado: el tenant sale SIEMPRE del token.
+// Un cuerpo que intente colar otro tenant_id no se cuela: la regla nace del tenant de
+// la Identity y el listado del tenant ajeno no la ve (INV-08).
+func TestCreateTrigger_INV08_TenantDelCuerpoIgnorado(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	rec := doTrigger(admin.CreateTriggerHandler(store), http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"tenant_id":"tenant-ajeno","kind":"event_start","keyword":"carrito","event_kind":"cart"}`, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 || rules[0].TenantID != ctxTenant {
+		t.Fatalf("la regla debe nacer del tenant del token, got %+v", rules)
+	}
+	ajenas, err := store.List(context.Background(), "tenant-ajeno")
+	if err != nil {
+		t.Fatalf("List ajeno: %v", err)
+	}
+	if len(ajenas) != 0 {
+		t.Fatalf("el tenant del cuerpo debe ignorarse por completo, got %+v", ajenas)
+	}
+}
+
+// TestListTriggers_ShadowedByEventList (MD-043.11): el GET marca las reglas
+// kind='fallback' con shadowed_by_event_list para avisar al dueño de que en la
+// conversación sin evento manda la lista (D-043.20). Los demás kinds no la llevan.
+func TestListTriggers_ShadowedByEventList(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	seedRules := []trigger.Rule{
+		{TenantID: ctxTenant, Kind: trigger.KindFallback, FlowID: "bienvenida", Enabled: true},
+		{TenantID: ctxTenant, Kind: trigger.KindKeyword, Keyword: "pedido", MatchType: trigger.MatchExact, FlowID: "carrito", Enabled: true},
+		{TenantID: ctxTenant, Kind: trigger.KindEventStart, Keyword: "carrito", MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true},
+	}
+	for _, r := range seedRules {
+		if _, err := store.Insert(context.Background(), r); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	rec := doTrigger(admin.ListTriggersHandler(store), http.MethodGet, "/admin/triggers", ctxTenant, "", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out []struct {
+		Kind      string `json:"kind"`
+		EventKind string `json:"event_kind"`
+		Shadowed  bool   `json:"shadowed_by_event_list"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("esperaba 3 reglas, got %+v", out)
+	}
+	for _, dto := range out {
+		if want := dto.Kind == "fallback"; dto.Shadowed != want {
+			t.Fatalf("kind=%s shadowed_by_event_list=%v, quiero %v", dto.Kind, dto.Shadowed, want)
+		}
+		if dto.Kind == "event_start" && dto.EventKind != "cart" {
+			t.Fatalf("el listado debe devolver el event_kind, got %+v", dto)
+		}
+	}
+	// La marca es DERIVADA: no se persiste en ninguna parte.
+	if !strings.Contains(rec.Body.String(), `"shadowed_by_event_list":true`) {
+		t.Fatalf("el fallback debe salir marcado, body=%s", rec.Body.String())
+	}
+}
