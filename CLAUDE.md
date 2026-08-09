@@ -145,9 +145,13 @@ guard `IF EXISTS` (ver `0037_tenant_members.sql` y `0038_retiro_iam_propio.sql`)
 
 ### Taxonomía de planes y features (Plan 040)
 
-**5 planes × 12 features**, sembrados en `0039_seed_plan_taxonomy.sql`: los comerciales `basic`,
-`commerce`, `advisor_ai`, `advisor_ai_pro`, más `pro` = plan **interno de laboratorio** con las 12
-claves. `basic` y `pro` ya existían desde la `0032` y se **reutilizan** (no se re-crean ni se
+**5 planes × 14 features**, sembrados en `0039_seed_plan_taxonomy.sql` (las 12 originales) y
+`0053_seed_survey_media_features.sql` (`survey` nace en `basic`, `media` en `commerce`; Plan 043 ·
+Ola 2, porque el despachador filtra el menú por features y esos dos tipos de fábrica no tenían
+clave): los comerciales `basic`, `commerce`, `advisor_ai`, `advisor_ai_pro`, más `pro` = plan
+**interno de laboratorio** con las 14 claves. Los comentarios de la propia `0039` siguen diciendo
+«12» a propósito: cambiarlos alteraría su hash y forzaría un full-replay del esquema en todos los
+entornos por una línea de comentario. `basic` y `pro` ya existían desde la `0032` y se **reutilizan** (no se re-crean ni se
 renombran); la `0039` solo inserta los tres nuevos.
 
 Dos cosas que se malinterpretan al tocar esto:

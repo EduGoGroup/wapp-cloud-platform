@@ -43,9 +43,11 @@ frontera, sus tablas y su API.
 
 ### Planes y features (Plan 040)
 
-**5 planes × 12 features**, sembrados en `0039_seed_plan_taxonomy.sql`: `basic`, `commerce`,
-`advisor_ai` y `advisor_ai_pro` son los paquetes comerciales, y `pro` es el plan **interno de
-laboratorio** con las 12 claves. `basic` y `pro` venían de la `0032` y se reutilizan; la `0039` solo
+**5 planes × 14 features**, sembrados en `0039_seed_plan_taxonomy.sql` (12) y
+`0053_seed_survey_media_features.sql` (`survey` desde `basic` y `media` desde `commerce`, Plan 043 ·
+Ola 2): `basic`, `commerce`, `advisor_ai` y `advisor_ai_pro` son los paquetes comerciales, y `pro` es
+el plan **interno de laboratorio** con las 14 claves. `basic` y `pro` venían de la `0032` y se
+reutilizan; la `0039` solo
 crea los tres nuevos. La composición está **denormalizada** —cada plan lista todas sus features— y
 no hay herencia en BD: la notación «Comercio + …» del design es documental, el lookup es un JOIN
 plano (`postgres.go:235`). `passive_profiles` y `multi_empresa` no entran en ningún paquete
