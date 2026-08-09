@@ -1,7 +1,9 @@
 name: CI
 
-# Régimen CI/CD nuevo (decisión del dueño, 2026-08-01): NO se abren PRs y
-# GitHub Actions NO se dispara automáticamente con push/PR. La validación real
+# Régimen CI/CD nuevo (decisión del dueño, 2026-08-01): NO se abren PRs y la
+# validación en GitHub Actions NO se dispara automáticamente con push/PR (la
+# única excepción del repo es sync-main-to-dev, que no valida nada: solo alinea
+# dev con main tras publicar). La validación real
 # es LOCAL — `make ci-local` (fmt+vet+lint+test+build) y `make ci-docker`
 # (mismo toolchain que este workflow, en contenedor) antes de mergear y
 # pushear. Este workflow queda como corrida MANUAL (workflow_dispatch): sirve
