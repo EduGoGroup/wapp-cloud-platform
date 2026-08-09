@@ -161,6 +161,20 @@ type Deps struct {
 	// Alerter es el punto de extensión del alerting push sobre la salud derivada
 	// (ADR-0023). nil ⇒ NoopAlerter (nada se empuja; el estado queda consultable).
 	Alerter Alerter
+	// CRMSecrets entrega el secreto HMAC con el que se verifica el callback del
+	// puente (Plan 042 · T4.2). Lo satisface *integrations.Postgres. nil ⇒ NO se
+	// monta POST /api/v1/integrations/callback: mejor un 404 de ruta inexistente
+	// que una puerta de autenticación a medio cablear.
+	CRMSecrets CRMSecretReader
+	// CRMGate combina la feature comercial y la integración encendida (D-042.8). Es
+	// el MISMO gate que decide si se encola la ida. nil ⇒ no se monta el callback.
+	CRMGate CRMBridgeGate
+	// CRMReflect aplica el estado canónico sobre la solicitud (ADR-0031: cuando HAY
+	// CRM, el CRM manda). Lo satisface *intakes.Postgres. nil ⇒ no se monta.
+	CRMReflect CRMReflector
+	// CRMNotify avisa al cliente final del cambio reflejado (T4.4). OPCIONAL: sin
+	// él el callback refleja igual y no escribe a nadie.
+	CRMNotify CRMStatusNotifier
 }
 
 // defaultDiagnosticsTTL es la retención del bundle cuando Deps.DiagnosticsBundleTTL
@@ -320,6 +334,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// función: no por tamaño, sino porque el `if` de montaje sumaría uno más a la
 	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
 	registerTenantVariables(mux, d, mw, auditor, log)
+	registerCRMCallback(mux, d, log)
 
 	// Import de catálogo (Plan 041 · T3.3, D-041.6). Misma razón para vivir aparte:
 	// su montaje tiene tres condiciones y aquí solo se ve que existe.
@@ -436,6 +451,28 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 		"content.read", getTenantVariablesHandler(d.TenantVariables)))
 	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
+}
+
+// registerCRMCallback monta la VUELTA del puente CRM (Plan 042 · T4.2):
+// POST /api/v1/integrations/callback.
+//
+// NO PASA POR `protect` NI POR `protectRead`, y esa es la diferencia con todo lo
+// demás de este fichero: el callback no lleva JWT. Quien llama es el puente del
+// cliente, un proceso que no tiene usuario ni sesión, y su credencial es la firma
+// HMAC sobre el cuerpo crudo con el secreto del tenant (D-042.5). Meterlo bajo el
+// middleware de sesión lo dejaría inalcanzable; darle un token lo convertiría en un
+// usuario más, que es justo lo que el contrato evita.
+//
+// Las cuatro dependencias son obligatorias salvo el notificador: sin secreto no se
+// puede autenticar, sin gate no se puede decidir y sin reflector no hay dónde
+// escribir, así que faltando cualquiera la ruta NO se monta y responde 404 de ruta
+// inexistente — mejor que un 500 a mitad de una puerta de autenticación.
+func registerCRMCallback(mux *http.ServeMux, d Deps, log sharedlogger.Logger) {
+	if d.CRMSecrets == nil || d.CRMGate == nil || d.CRMReflect == nil {
+		return
+	}
+	mux.Handle("POST /api/v1/integrations/callback",
+		crmCallbackHandler(d.CRMSecrets, d.CRMGate, d.CRMReflect, d.CRMNotify, log))
 }
 
 // registerCatalogImport monta el import de catálogo (Plan 041 · T3.2/T3.3,
