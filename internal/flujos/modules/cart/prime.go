@@ -109,12 +109,12 @@ func primeAdd(out map[string]any, category Category, a Article, line cartLine) m
 		Outputs: []string{primeAddedScreen(line, category)},
 		Effects: []modules.Effect{
 			event(EffectCartStarted, map[string]any{}),
-			event(EffectItemAdded, map[string]any{
+			withLineSnapshot(event(EffectItemAdded, map[string]any{
 				"sku":        line.SKU,
 				"label":      line.Label,
 				"qty":        line.Qty,
 				"unit_price": line.UnitPrice,
-			}),
+			}), []cartLine{line}),
 		},
 	}
 }

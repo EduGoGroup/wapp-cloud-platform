@@ -250,8 +250,39 @@ func (r *MemoryRepository) InsertResults(_ context.Context, rows []SurveyResult)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.results = append(r.results, rows...)
+	now := time.Now()
+	for _, row := range rows {
+		// Fecha la fila igual que el DEFAULT now() de la columna. Sin esto, el doble
+		// devolvería un created_at CERO donde Postgres devuelve una fecha, y quien
+		// acote «las respuestas de esta pasada» por fecha (el resumen del rescate)
+		// vería en sus tests unitarios un filtro que deja pasar todo y en producción
+		// uno que filtra. Es la misma imitación de un DEFAULT que ya hace AddedAt en
+		// las líneas; la ESCRITURA real de survey_results no cambia.
+		if row.CreatedAt.IsZero() {
+			row.CreatedAt = now
+		}
+		r.results = append(r.results, row)
+	}
 	return nil
+}
+
+// ListResults implementa Repository: filtra las respuestas por (tenant, contacto,
+// flujo) conservando el orden de escritura, que es el cronológico que devuelve el
+// PostgresRepository (allí, ORDER BY created_at, id).
+//
+// Devuelve la lista VACÍA y no nil cuando no hay nada, igual que el camino Postgres:
+// un test que distinga `nil` de `[]` sobre el doble estaría comprobando algo que la
+// implementación real no promete.
+func (r *MemoryRepository) ListResults(_ context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SurveyResult, 0)
+	for _, s := range r.results {
+		if s.TenantID == tenantID && s.ContactID == contactID && s.FlowID == flowID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // SurveyResults devuelve una copia de las respuestas de encuesta acumuladas por
@@ -470,25 +501,49 @@ func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	return nil
 }
 
-// InsertIntakeItems implementa Repository: acumula las líneas de la solicitud en un
-// slice interno (append-only), imitando el INSERT en public.intake_items (Plan 016
-// · T0). len(items)==0 es un no-op. Fija IntakeID y AddedAt (DEFAULT now()) en cada
-// línea; copia por valor (structs sin punteros) para no compartir estado.
-func (r *MemoryRepository) InsertIntakeItems(_ context.Context, intakeID string, items []IntakeItem) error {
-	if len(items) == 0 {
-		return nil
-	}
+// ReplaceIntakeItems implementa Repository: deja las líneas de CLIENTE de la
+// solicitud exactamente en `items`, imitando el DELETE+INSERT transaccional del
+// PostgresRepository (Plan 043 · Ola 3). len(items)==0 BORRA las de cliente, igual
+// que el SQL. Fija IntakeID y AddedAt (DEFAULT now()) en cada línea; copia por valor
+// (structs sin punteros) para no compartir estado.
+//
+// Que este adaptador reemplace y el otro también NO es cosmética: si aquí siguiera
+// acumulando, los tests unitarios verían un pedido sin duplicados que en Postgres
+// SÍ los tendría, y estarían mintiendo justo sobre lo que esta tarea arregla.
+func (r *MemoryRepository) ReplaceIntakeItems(_ context.Context, intakeID string, items []IntakeItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.replaceIntakeItemsLocked(intakeID, items)
+	return nil
+}
+
+// replaceIntakeItemsLocked es el reemplazo con el mutex YA tomado: lo comparten
+// ReplaceIntakeItems y CloseIntake, que necesita hacerlo dentro de su propia sección
+// crítica (el equivalente de su transacción).
+//
+// Conserva las líneas de LA PLATAFORMA (prefijo reservado) al frente, que es donde
+// las deja Postgres cuando existen: se escriben antes de cualquier reemplazo posterior
+// y la lectura ordena por added_at.
+func (r *MemoryRepository) replaceIntakeItemsLocked(intakeID string, items []IntakeItem) {
 	now := time.Now()
+	kept := make([]IntakeItem, 0, len(items))
+	for _, it := range r.intakeItems[intakeID] {
+		if strings.HasPrefix(it.SKU, reservedSKUPrefix) {
+			kept = append(kept, it)
+		}
+	}
 	for _, it := range items {
 		it.IntakeID = intakeID
 		if it.AddedAt.IsZero() {
 			it.AddedAt = now
 		}
-		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
+		kept = append(kept, it)
 	}
-	return nil
+	if len(kept) == 0 {
+		delete(r.intakeItems, intakeID)
+		return
+	}
+	r.intakeItems[intakeID] = kept
 }
 
 // GetOpenIntake implementa Repository: devuelve la solicitud "open" del contacto para
@@ -504,6 +559,27 @@ func (r *MemoryRepository) GetOpenIntake(_ context.Context, tenantID, contactID 
 		}
 	}
 	return Intake{}, false, nil
+}
+
+// ListIntakeItems implementa Repository: devuelve las líneas de la solicitud en el
+// orden en que se escribieron (el del carrito), que es el mismo que da el
+// PostgresRepository al ordenar por (added_at, id).
+//
+// Valida el UUID aunque aquí las claves sean un mapa de cadenas y no haga ninguna
+// falta técnica: el camino Postgres rechaza un id malformado y los dos adaptadores
+// tienen que contestar lo mismo a la misma pregunta. Si aquí un `""` devolviera «sin
+// líneas», un test unitario daría por bueno un resumen vacío que en producción sería
+// un error.
+func (r *MemoryRepository) ListIntakeItems(_ context.Context, intakeID string) ([]IntakeItem, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: id %q inválido: %w", intakeID, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.intakeItems[intakeID]
+	out := make([]IntakeItem, len(src))
+	copy(out, src)
+	return out, nil
 }
 
 // MarkIntakeStatus implementa Repository: transiciona el estado de la solicitud (por
@@ -555,13 +631,10 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			UpdatedAt:    now,
 		}
 	}
-	for _, it := range in.Items {
-		it.IntakeID = intakeID
-		if it.AddedAt.IsZero() {
-			it.AddedAt = now
-		}
-		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
-	}
+	// REEMPLAZO, no acumulación: la solicitud puede llegar al cierre con las líneas
+	// que la proyección de item_added ya materializó (mismo motivo, y mismo orden de
+	// operaciones, que en el PostgresRepository).
+	r.replaceIntakeItemsLocked(intakeID, in.Items)
 	return intakeID, nil
 }
 
@@ -595,8 +668,9 @@ func (r *MemoryRepository) Intakes() []Intake {
 }
 
 // IntakeItems devuelve una copia de las líneas persistidas para intakeID por
-// InsertIntakeItems. Es un helper de test; devuelve una copia para no exponer el
-// slice interno.
+// ReplaceIntakeItems / CloseIntake, EN EL ORDEN en que se escribieron (que es el
+// orden del carrito, y el que da la lectura real por added_at, id). Es un helper de
+// test; devuelve una copia para no exponer el slice interno.
 func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()

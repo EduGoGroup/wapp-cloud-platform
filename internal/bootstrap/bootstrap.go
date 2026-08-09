@@ -265,6 +265,11 @@ func Run(ctx context.Context) error {
 		// nada—, así que van juntas o no van.
 		flowruntime.WithEventStore(eventStore),
 		flowruntime.WithIntakeAbandoner(intakeAbandoner{svc: intakeService}),
+		// La fuente DURABLE del resumen del evento abandonado (Plan 043 · T3.4): las
+		// líneas del pedido abierto. Sin ella los tres abandonos —salto por tipo,
+		// event_stop y escape— ocurren igual pero no dejan rastro en el historial, que
+		// es media verdad y no la que queremos en producción.
+		flowruntime.WithSummarySources(flowruntime.NewSummarySources(flowStore)),
 		flowruntime.WithDispatcher(dispatcher),
 		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
@@ -352,8 +357,13 @@ func Run(ctx context.Context) error {
 		// El recordatorio de la seña (D-041.12 · T4.4) entra por su propia opción
 		// porque cuelga de otro sitio: no de la transición, sino de las LECTURAS del
 		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
-		Intakes:         intakeService,
-		TenantVariables: tenantvars.NewPostgres(db),
+		Intakes: intakeService,
+		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
+		// store que el motor y el despachador: es la misma consulta de rescatables
+		// leída desde el lado del dueño, y una segunda instancia sería un segundo
+		// reloj opinando sobre qué está vencido.
+		ConversationEvents: eventStore,
+		TenantVariables:    tenantvars.NewPostgres(db),
 		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
 		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
 		// de la ida, el MISMO gate que decide si se encola, el store de solicitudes y el

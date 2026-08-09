@@ -31,6 +31,16 @@ const (
 	// ejecutor conmuta flow_state.event_id a Choice.EventID. No nace nada y
 	// ningún status cambia (T2.2).
 	ActionResume MenuAction = "resume"
+	// ActionRescue es pedir la LISTA de lo que se dejó a medias: la entrada final
+	// de la conversación que ofrece (T3.8), «Retomar algo que dejaste a medias
+	// (N)». No retoma nada por sí sola —para eso está ActionResume, que ya sabe
+	// QUÉ evento—: lo que pide es que se le enseñe el automensaje de rescate, con
+	// sus opciones numeradas, y ahí elige.
+	//
+	// Existe porque la entrada de conversación COLAPSA los rescatables en una sola
+	// línea (D-043.17): enumerarlos ahí mezclaría «lo que puedes empezar» con «lo
+	// que dejaste», que es la lista que el despachador ya enseña cuando toca.
+	ActionRescue MenuAction = "rescue"
 	// ActionStart es pedir el tipo Choice.Kind.
 	//
 	// Que el tipo ya tenga un evento vivo NO es un error ni un caso raro: es el
@@ -59,10 +69,16 @@ type MenuOption struct {
 	Action MenuAction `json:"a"`
 	// Kind es el tipo de evento (menu|cart|survey|media). Se puebla SIEMPRE,
 	// también al retomar: quien confirma la elección la nombra por tipo, no por
-	// identificador (E-3).
+	// identificador (E-3). Vacío con ActionRescue, que no habla de un tipo sino
+	// de «lo que dejaste», sea lo que sea.
 	Kind string `json:"k"`
 	// EventID es el evento vivo que se retoma. Vacío con ActionStart.
 	EventID string `json:"e,omitempty"`
+	// Count acompaña a ActionRescue: cuántos hay para retomar. Solo compone la
+	// frase —el «(2)» del final— y no decide nada; quien resuelve la elección
+	// vuelve a preguntar por la lista, porque entre los dos mensajes el cliente
+	// pudo haber cerrado uno.
+	Count int `json:"c,omitempty"`
 }
 
 // Menu es el menú numérico dinámico del despachador: lo que se le enseña al
@@ -247,13 +263,25 @@ const menuFooter = "Si prefieres otra cosa, escríbelo y te ayudamos."
 // Un menú vacío devuelve la cadena vacía en vez de una pregunta sin respuestas
 // posibles: así, un llamante que no comprobó Empty no puede mandar un menú
 // hueco. El caso vacío lo atiende quien llama, no este render.
-func (m Menu) Render() string {
+func (m Menu) Render() string { return m.renderList(menuHeader, menuFooter) }
+
+// renderList es EL componente de render de listas numeradas del despachador
+// (D-043.3): cabecera, opciones numeradas y las líneas de cierre que le dé el
+// llamante, cada una separada por una línea en blanco.
+//
+// La prosa entra por parámetro y no se guarda en Menu a propósito: el menú se
+// PERSISTE entre dos mensajes de WhatsApp y lo que hay que recordar es a qué
+// despacha cada número, no la frase con que se dijo. Así el automensaje de rescate
+// (T3.6) y la entrada que ofrece (T3.8) comparten numeración, etiquetas y formato
+// con el menú sin que ninguno tenga su propio bucle de render — que es como
+// aparecen los menús que numeran distinto que Resolve.
+func (m Menu) renderList(header string, tail ...string) string {
 	if m.Empty() {
 		return ""
 	}
 
 	var b strings.Builder
-	b.WriteString(menuHeader)
+	b.WriteString(header)
 	b.WriteString("\n\n")
 	for _, o := range m.Options {
 		b.WriteString(strconv.Itoa(o.Number))
@@ -261,16 +289,104 @@ func (m Menu) Render() string {
 		b.WriteString(optionLabel(o))
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	b.WriteString(menuFooter)
+	for _, t := range tail {
+		if t == "" {
+			continue // un cierre vacío no deja una línea en blanco de más
+		}
+		b.WriteString("\n")
+		b.WriteString(t)
+	}
 	return b.String()
 }
 
 // optionLabel es la frase de una opción según lo que hace.
 func optionLabel(o MenuOption) string {
-	w := words(o.Kind)
-	if o.Action == ActionResume {
-		return w.resume
+	switch o.Action {
+	case ActionRescue:
+		return rescueEntry(o.Count)
+	case ActionResume:
+		return words(o.Kind).resume
+	default:
+		return words(o.Kind).start
 	}
-	return w.start
+}
+
+// rescueEntry es la entrada FINAL de la conversación que ofrece (T3.8): una sola
+// línea que resume todo lo que el contacto dejó a medias, cuente lo que cuente.
+// Nombra la cantidad y no los tipos porque los tipos ya están arriba, en las
+// opciones de empezar, y repetirlos haría leer dos veces la misma palabra con dos
+// significados distintos.
+func rescueEntry(n int) string {
+	return "Retomar algo que dejaste a medias (" + strconv.Itoa(n) + ")"
+}
+
+// rescueHeader abre el AUTOMENSAJE de rescate (T3.6): dice que no hay nada en
+// curso y cómo retomar lo que quedó.
+//
+// No dice «evento» ni «carrito»: «evento» es vocabulario nuestro y al cliente no le
+// significa nada, y «carrito» está proscrito de cara al cliente (se dice «pedido»,
+// decisión de producto de Jhoan). Tutea, como el resto del producto, y no menciona
+// ningún identificador (E-3) — lo que se ofrece se nombra por tipo, en las
+// opciones.
+const rescueHeader = "Pasó un rato sin novedades, así que ahora mismo no tenemos nada en curso. " +
+	"Si quieres, puedes retomar lo que dejaste a medias — responde con el número:"
+
+// rescueMore es el cierre «…y N más» de la lista de rescate cuando hay más de los
+// que se enseñan (T3.8 · punto 3).
+//
+// El N es lo que reveló el lote pedido a la BD (topeRescatables + 1), no un
+// COUNT(*) de todos: dice «hay al menos uno más», que es lo que el cliente
+// necesita saber para no creer que la lista es todo lo que tiene. Contar de verdad
+// costaría una segunda consulta para una frase.
+func rescueMore(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return "…y " + strconv.Itoa(n) + " más"
+}
+
+// tagline es la COLETILLA del camino con clasificador (T3.8 · punto 2): se añade al
+// final de la respuesta que atiende la intención del cliente, para que sepa que lo
+// que dejó a medias sigue ahí sin que se lo interrumpa con un menú.
+//
+// Nombra por TIPO y jamás por identificador (E-3), y usa «tu» en vez de artículo
+// («tu pedido», «tu encuesta») porque así una sola frase vale para los cuatro tipos
+// sin un motorcito de concordancia de género para cuatro palabras.
+//
+// Sin nada que retomar devuelve la cadena vacía: quien la añade no tiene que
+// comprobar nada, y una coletilla que no dice nada no se escribe.
+func tagline(kinds []string) string {
+	if len(kinds) == 0 {
+		return ""
+	}
+	nombres := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		nombres = append(nombres, "tu "+KindName(k))
+	}
+	sobran := 0
+	if len(nombres) > topeRescatables {
+		sobran = len(nombres) - topeRescatables
+		nombres = nombres[:topeRescatables]
+	}
+	lista := unirEnEspanol(nombres)
+	if sobran > 0 {
+		lista += " y algo más"
+	}
+	if len(kinds) == 1 {
+		return "Por cierto, " + lista + " sigue a medias — dime si quieres retomarlo."
+	}
+	return "Por cierto, " + lista + " siguen a medias — dime si quieres retomarlos."
+}
+
+// unirEnEspanol une una lista con comas y una «y» final, como se escribe una
+// enumeración en español y no como la escribiría un strings.Join.
+func unirEnEspanol(partes []string) string {
+	switch len(partes) {
+	case 0:
+		return ""
+	case 1:
+		return partes[0]
+	default:
+		return strings.Join(partes[:len(partes)-1], ", ") + " y " + partes[len(partes)-1]
+	}
 }

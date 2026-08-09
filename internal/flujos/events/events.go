@@ -159,6 +159,22 @@ type Event struct {
 // suspendido sigue vivo y sigue siendo rescatable).
 func (e Event) Alive() bool { return e.Status == StatusOpen }
 
+// Rescuable es un evento que se le puede OFRECER al contacto para retomarlo, con
+// la marca derivada «vencido» ya resuelta por la consulta (T3.9a).
+//
+// Es un tipo aparte de Event y no un campo suyo porque Stale NO es una propiedad
+// del evento: es una propiedad de la PREGUNTA «¿estaba vencido cuando miré?», y
+// depende del reloj y de la config del tenant. Un Event leído por cualquier otra
+// vía no la tiene ni podría tenerla, y meterla en Event dejaría un bool a false
+// que parecería decir «no está vencido» cuando en realidad nadie lo miró.
+type Rescuable struct {
+	Event
+	// Stale es la marca que INFORMA (D-043.18/E-10): el evento lleva sin tocarse
+	// más de lo que el tenant tolera. No filtra nada (INV-19) — un evento vencido
+	// sigue siendo rescatable, y esa es justo la razón de que el rescate exista.
+	Stale bool
+}
+
 // NewEvent son los datos con que nace un evento. Lo que NO está aquí es
 // deliberado: el status nace siempre en open, y HistoryID, CreatedAt y
 // LastActivityAt los deriva el store del reloj inyectado — no se dictan desde

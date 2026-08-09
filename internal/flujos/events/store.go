@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
@@ -59,9 +61,32 @@ func NewStore(db *sql.DB, cipher *crypto.FieldCipher, opts ...Option) *Store {
 const eventColumns = `id, tenant_id, session_id, contact_id, kind, history_id, status,
 	       flow_id, flow_version, intake_id, created_at, last_activity_at, closed_at`
 
+// eventColumnsE es eventColumns cualificada con el alias `e`: la consulta de
+// rescatables hace JOIN con intakes y con tenant_settings, y las tres tablas tienen
+// columnas `id`, `tenant_id` y `status` — sin cualificar, Postgres la rechaza por
+// ambigua.
+//
+// Va escrita y no derivada en tiempo de ejecución para que la consulta siga siendo
+// una CONSTANTE: una consulta que se compone al arrancar es una que ya no se puede
+// leer entera en el fuente (ni descartar de un vistazo como libre de concatenación).
+// Lo que impide que diverja de eventColumns —y por tanto de scanEvent, donde
+// desalinearse no da error de compilación sino datos cambiados de sitio— es
+// TestQualify_LaListaCualificadaEsLaMISMA, que las compara columna a columna.
+const eventColumnsE = `e.id, e.tenant_id, e.session_id, e.contact_id, e.kind, e.history_id, e.status,
+	       e.flow_id, e.flow_version, e.intake_id, e.created_at, e.last_activity_at, e.closed_at`
+
 // scanner abstrae *sql.Row y *sql.Rows para compartir scanEvent.
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+// eventDest son los destinos de scan de un Event EN EL ORDEN de eventColumns. Es
+// la única lista de campos del paquete: scanEvent y scanRescuable la comparten, y
+// así una columna nueva no puede quedar leída en un sitio y olvidada en el otro.
+func eventDest(ev *Event, intakeID *sql.NullString, closedAt *sql.NullTime) []any {
+	return []any{&ev.ID, &ev.TenantID, &ev.SessionID, &ev.ContactID, &ev.Kind,
+		&ev.HistoryID, &ev.Status, &ev.FlowID, &ev.FlowVersion, intakeID,
+		&ev.CreatedAt, &ev.LastActivityAt, closedAt}
 }
 
 // scanEvent lee una fila de conversation_events en un Event, traduciendo los dos
@@ -72,15 +97,29 @@ func scanEvent(sc scanner) (Event, error) {
 		intakeID sql.NullString
 		closedAt sql.NullTime
 	)
-	err := sc.Scan(&ev.ID, &ev.TenantID, &ev.SessionID, &ev.ContactID, &ev.Kind,
-		&ev.HistoryID, &ev.Status, &ev.FlowID, &ev.FlowVersion, &intakeID,
-		&ev.CreatedAt, &ev.LastActivityAt, &closedAt)
-	if err != nil {
+	if err := sc.Scan(eventDest(&ev, &intakeID, &closedAt)...); err != nil {
 		return Event{}, err
 	}
 	ev.IntakeID = intakeID.String
 	ev.ClosedAt = closedAt.Time
 	return ev, nil
+}
+
+// scanRescuable lee una fila de la consulta de rescatables: las mismas columnas
+// del evento MÁS la marca derivada «vencido», que va la última.
+func scanRescuable(sc scanner) (Rescuable, error) {
+	var (
+		r        Rescuable
+		intakeID sql.NullString
+		closedAt sql.NullTime
+	)
+	dest := append(eventDest(&r.Event, &intakeID, &closedAt), &r.Stale)
+	if err := sc.Scan(dest...); err != nil {
+		return Rescuable{}, err
+	}
+	r.IntakeID = intakeID.String
+	r.ClosedAt = closedAt.Time
+	return r, nil
 }
 
 // nullableID convierte un id opcional vacío en NULL.
@@ -155,38 +194,454 @@ SELECT ` + eventColumns + `
    AND status = 'open'
  ORDER BY created_at, id`
 
-const selectRescuableSQL = `
-SELECT ` + eventColumns + `
-  FROM public.conversation_events
- WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
-   AND status = 'open'
- ORDER BY last_activity_at DESC, id`
-
-// ListAlive devuelve los eventos VIVOS de la conversación en orden de NACIMIENTO.
-// Es la lista del despachador: al cliente se le enseñan sus eventos en el orden en
-// que aparecieron, que no cambia bajo sus pies al escribir.
-func (s *Store) ListAlive(ctx context.Context, tenantID, sessionID, contactID string) ([]Event, error) {
-	return s.listEvents(ctx, selectAliveSQL, tenantID, sessionID, contactID)
-}
-
-// ListRescuable devuelve los eventos vivos ordenados por ÚLTIMA ACTIVIDAD
-// descendente, que es lo que necesita el automensaje de rescate: lo primero que se
-// ofrece retomar es lo último que se tocó.
+// ── La consulta de RESCATABLES: una sola, en piezas nombradas ────────────────
 //
-// Mismo conjunto que ListAlive y distinto orden a propósito: son dos preguntas
-// («¿qué tiene abierto?» y «¿qué le ofrezco retomar primero?») y colapsarlas
-// obligaría a uno de los dos consumidores a reordenar en memoria. Un evento
-// suspendido sigue aquí: suspendido no es muerto (E-6).
-func (s *Store) ListRescuable(ctx context.Context, tenantID, sessionID, contactID string) ([]Event, error) {
-	return s.listEvents(ctx, selectRescuableSQL, tenantID, sessionID, contactID)
-}
+// Es LA consulta de rescatables del sistema (D-043.15): el automensaje de rescate
+// (T3.6), la entrada que ofrece cuando no hay evento (T3.8) y el listado por el que
+// el dueño limpia (T3.9b) leen todos de aquí. Está partida en piezas con nombre
+// para que reusarla no obligue a copiarla: quien necesite otro filtro compone sobre
+// rescuableFrom y rescuableWhere en vez de escribir un segundo FROM que mañana
+// diga otra cosa.
 
-// listEvents ejecuta una consulta de listado ya parametrizada por conversación.
-func (s *Store) listEvents(ctx context.Context, query, tenantID, sessionID, contactID string) (out []Event, err error) {
-	rows, err := s.db.QueryContext(ctx, query, tenantID, sessionID, contactID)
+// rescuableFrom es el origen: el evento MÁS su solicitud (para saber si sigue
+// abierta) MÁS la config del tenant (para saber cuánto silencio tolera).
+//
+// Los dos JOIN son LEFT y no INNER a propósito: un evento sin intake_id (un menu,
+// una encuesta) no tiene fila en intakes y NO puede desaparecer por eso, y un
+// tenant que nunca configuró nada no tiene fila en tenant_settings y tampoco.
+// El cast a text del tenant es real: conversation_events.tenant_id es UUID y
+// tenant_settings.tenant_id es TEXT (migración 0013).
+const rescuableFrom = `
+  FROM public.conversation_events e
+  LEFT JOIN public.intakes i         ON i.id = e.intake_id
+  LEFT JOIN public.tenant_settings s ON s.tenant_id = e.tenant_id::text`
+
+// contentNone es la mitad «este evento no parió solicitud»: los tipos que no la
+// producen (menu, survey, media) y el carrito que aún no ha llegado a parirla.
+// Es EXACTAMENTE el conjunto que POST /api/v1/intakes/discard no alcanza, y por
+// eso vale de filtro por sí sola en el listado del dueño (REQ-28, T3.9b).
+const contentNone = `e.intake_id IS NULL`
+
+// contentAlive es la otra mitad: su solicitud sigue ABIERTA. Con el LEFT JOIN un
+// evento sin intake da `i.status` NULL, y `NULL = 'open'` es NULL —no true—, así
+// que por aquí no se cuela ninguno de los de contentNone. Las dos mitades son
+// disjuntas, y eso es lo que permite que el listado ofrezca `none` y `alive` como
+// filtros distintos sin escribir una condición nueva.
+const contentAlive = `i.status = 'open'`
+
+// rescuableContent es la condición de CONTENIDO de T3.6/REQ-26c: un evento cuya
+// solicitud fue DESCARTADA, cancelada o ya cuajada no se lista, no se rescata y no
+// se menciona (INV-17) — la escena de Marta.
+//
+// Va partida en sus dos mitades con nombre, y no escrita de corrido, porque el
+// listado del dueño (T3.9b) filtra por UNA de ellas: sin el corte, ese filtro
+// tendría que escribir su propio `intake_id IS NULL`, y entonces habría dos sitios
+// diciendo qué es «sin contenido» — que es justo lo que REQ-28 prohíbe.
+const rescuableContent = `(` + contentNone + ` OR ` + contentAlive + `)`
+
+// rescuableWhere es el filtro.
+//
+// INV-19: aquí NO hay ni una comparación de fechas. El vencimiento es una MARCA que
+// informa (ver rescuableStale), no un filtro: un evento vencido sigue siendo
+// rescatable, que es justo lo que hace que nadie pierda un pedido por callarse.
+const rescuableWhere = `
+ WHERE e.tenant_id = $1 AND e.session_id = $2 AND e.contact_id = $3
+   AND e.status = 'open'
+   AND ` + rescuableContent
+
+// rescuableOrder: lo primero que se ofrece retomar es lo último que se tocó. El
+// desempate por id hace el orden total y por tanto el test determinista.
+const rescuableOrder = `
+ ORDER BY e.last_activity_at DESC, e.id`
+
+// rescuableLimit acota el lote. NULLIF(...,0) traduce «sin tope» a LIMIT NULL, que
+// para Postgres es no tener límite: así el tope es un PARÁMETRO y no obliga a
+// concatenar SQL ni a tener dos consultas, una con LIMIT y otra sin él.
+const rescuableLimit = `
+ LIMIT NULLIF($5::bigint, 0)`
+
+// rescuableTTL es el reloj de conversación del tenant, con el default de PLATAFORMA
+// puesto cuando no tiene fila de config. El 7200 (2 h) espeja el DEFAULT de
+// event_inactivity_ttl_seconds de la migración 0052 y el store.DefaultEventInactivityTTL
+// de Go; se repite aquí —y no se importa— porque importarlo obligaría a este
+// paquete a depender del store del motor entero por una constante. Lo que ata las
+// dos puntas es TestIntegration_MarcaVencidoSinFilaUsaElMismoDefaultQueLaBD, que
+// compara un tenant sin fila con uno cuya fila trae el DEFAULT de la columna.
+const rescuableTTL = `COALESCE(s.event_inactivity_ttl_seconds, 7200)`
+
+// rescuableStale es la marca DERIVADA «vencido» (T3.9a) como columna CALCULADA del
+// SELECT.
+//
+// Dos decisiones que no son de estilo:
+//
+//   - El instante viene por PARÁMETRO ($4), no de now() de la BD. El reloj de este
+//     store es uno y es inyectable (ver el comentario de Store): un now() de
+//     servidor no se puede fijar, y entonces «el 15 de enero sigue en la lista y
+//     llega marcada vencida» no se puede afirmar en un test.
+//   - El `> 0` NO sobra: 0 es el override «sin vencimiento» del tenant (E-6), no un
+//     plazo de cero segundos. Sin esa mitad, un tenant que apagó el reloj vería TODO
+//     marcado como vencido. Es la misma regla que la función pura IsSuspended,
+//     escrita en el otro idioma.
+const rescuableStale = `(` + rescuableTTL + ` > 0
+        AND $4::timestamptz - e.last_activity_at > make_interval(secs => ` + rescuableTTL + `)) AS stale`
+
+const selectRescuableSQL = `
+SELECT ` + eventColumnsE + `,
+       ` + rescuableStale + rescuableFrom + rescuableWhere + rescuableOrder + rescuableLimit
+
+// ListAlive devuelve los eventos VIVOS de la conversación en orden de NACIMIENTO:
+// status='open' y nada más, sin mirar la solicitud.
+//
+// ⚠️ NO es la lista de lo que se le puede ofrecer a un cliente. Un carrito cuyo
+// pedido descartó el dueño sigue VIVO un rato —el descarte cancela el evento en
+// otra sentencia— y aquí sale. Quien vaya a ENSEÑAR o RETOMAR algo usa
+// ListRescuable (INV-17: no se lista, no se rescata y no se menciona); esta
+// responde la otra pregunta, «¿qué tiene abierto?», que es de quien audita o
+// ejecuta.
+func (s *Store) ListAlive(ctx context.Context, tenantID, sessionID, contactID string) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, selectAliveSQL, tenantID, sessionID, contactID)
 	if err != nil {
 		return nil, fmt.Errorf("events: listar eventos vivos: %w", err)
 	}
+	return collect(rows, scanEvent)
+}
+
+// ListRescuable devuelve los eventos que se le pueden ofrecer al contacto para
+// retomarlos, ordenados por ÚLTIMA ACTIVIDAD descendente y marcados con «vencido».
+//
+// No es ListAlive con otro ORDER BY, aunque lo pareciera antes de T3.6: filtra
+// además por la solicitud (rescuableWhere). Son dos preguntas distintas —«¿qué
+// tiene abierto?» y «¿qué le ofrezco retomar?»— y desde INV-17 tienen respuestas
+// distintas: un carrito cuyo pedido descartó el dueño sigue vivo pero ya no se
+// ofrece.
+//
+// limit <= 0 ⇒ sin tope. Un evento suspendido sigue aquí, marcado: suspendido no es
+// muerto (E-6), y por eso la marca va en el SELECT y no en el WHERE (INV-19).
+func (s *Store) ListRescuable(ctx context.Context, tenantID, sessionID, contactID string, limit int) ([]Rescuable, error) {
+	if limit < 0 {
+		limit = 0 // negativo no es «al revés»: es «sin tope», y Postgres rechazaría el LIMIT
+	}
+	rows, err := s.db.QueryContext(ctx, selectRescuableSQL,
+		tenantID, sessionID, contactID, s.now().UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("events: listar eventos rescatables: %w", err)
+	}
+	return collect(rows, scanRescuable)
+}
+
+// ── El listado por el que el DUEÑO limpia (T3.9b, REQ-28) ───────────────────
+//
+// Es la MISMA consulta de rescatables leída desde el otro lado del mostrador: allí
+// la pregunta es «¿qué le ofrezco retomar a ESTE contacto?» y aquí «¿qué tengo
+// abierto en todo el tenant?». Comparte FROM, condición de contenido, marca de
+// vencido y orden — todo lo que se reusa está arriba, con su nombre; lo único que
+// esta mitad añade son los filtros que la otra no necesitaba (tipo, estado,
+// contacto opcional) y la paginación.
+//
+// Lo que NO comparte es el WHERE entero, y no puede: el rescate acota SIEMPRE a una
+// conversación (sesión + contacto) y el dueño no acota a ninguna. Escribir un solo
+// WHERE para las dos preguntas obligaría a que el rescate pasara sesión y contacto
+// como «opcionales», y un filtro opcional que en realidad es obligatorio es la clase
+// de cosa que se rompe en silencio el día que alguien lo llama con la cadena vacía.
+
+// Paginación del listado (REQ-28): tamaño por defecto y cota superior. La cota no
+// es cosmética — sin ella un GET sin filtros materializa todos los eventos vivos
+// del tenant.
+const (
+	DefaultPageSize = 50
+	MaxPageSize     = 200
+)
+
+// ── Los tipos que el tenant PUEDE ver (decisión de Jhoan, 2026-08-09) ────────
+//
+// Las dos funciones de aquí no tienen tabla propia ni criterio propio: leen el
+// MISMO featurePorTipo con el que el despachador arma el menú del cliente (T2.3).
+// Que las dos superficies discrepen —que el menú ofrezca «encuesta» y la bandeja
+// del dueño no enseñe sus encuestas, o al revés— sería peor que cualquiera de las
+// dos políticas por separado, y con dos mapas acabaría pasando.
+
+// KindFeatures devuelve, en orden alfabético y sin repetir, las features que
+// habilitan ALGÚN tipo de evento. Es la lista con la que se gatea el listado del
+// dueño: basta UNA para entrar (RequireAnyFeature).
+//
+// El orden es alfabético por ser determinista y no significar nada más: el gate
+// pasa con cualquiera, así que un orden con intención sería inventarse una
+// prioridad que no existe.
+func KindFeatures() []string {
+	out := make([]string, 0, len(featurePorTipo))
+	for _, f := range featurePorTipo {
+		if !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// AllowedKinds devuelve los tipos de evento que ESTE tenant tiene habilitados, en
+// orden alfabético. Es lo que acota el CONTENIDO del listado: pasar el gate por
+// tener una feature no da derecho a ver los tipos de las otras.
+//
+// Consecuencia viva y DESEADA: si un tenant pierde una feature, sus eventos de ese
+// tipo dejan de aparecer en la bandeja. No se borra nada —las filas siguen ahí,
+// intactas— y vuelven a listarse en cuanto la recupere. Es la misma regla que ya
+// gobierna el menú que ve el cliente, y tenerla en un solo sitio es justo lo que
+// impide que las dos pantallas cuenten historias distintas.
+//
+// Un error del resolver se PROPAGA, y aquí sí se separa del gate: aquel decide el
+// ACCESO y falla cerrado con un 403 (mejor negar que abrir por un fallo
+// transitorio); este decide el CONTENIDO, y devolver silenciosamente una lista
+// recortada le diría a quien limpia «ya no queda nada» cuando la verdad es «no
+// pude mirar». Eso se contesta con un 5xx, no con una bandeja vacía.
+func AllowedKinds(ctx context.Context, feats entitlements.Resolver, tenantID string) ([]string, error) {
+	if feats == nil {
+		return nil, fmt.Errorf("events: sin resolver de features no se puede saber qué tipos ve el tenant")
+	}
+	out := make([]string, 0, len(featurePorTipo))
+	for kind, feature := range featurePorTipo {
+		has, err := feats.Has(ctx, tenantID, feature)
+		if err != nil {
+			return nil, fmt.Errorf("events: resolver la feature %q del tenant: %w", feature, err)
+		}
+		if has {
+			out = append(out, kind)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// ContentFilter es la pregunta por el CONTENIDO del evento, y son exactamente
+// tres estados porque la mitad `none` es la que hace falta que exista: es el
+// conjunto que POST /api/v1/intakes/discard NO alcanza (REQ-28), el que dejaba a
+// Herminia sin dónde limpiar.
+type ContentFilter string
+
+const (
+	// ContentAny no distingue entre las dos mitades: enseña las dos, y es el default.
+	//
+	// «Any» es cualquiera de los dos CONTENIDOS del predicado (rescuableContent), NO
+	// «cualquier evento»: un evento cuya solicitud se descartó o ya cuajó NO sale por
+	// aquí, porque el listado del dueño va sobre la MISMA consulta filtrada que el
+	// rescate (INV-17: no se lista, no se rescata, no se menciona). Es el criterio
+	// literal de T3.9 —«tras POST /api/v1/intakes/discard desaparece de la lista»— y
+	// la razón de que esta sea una superficie más de ese invariante y no una excepción.
+	ContentAny ContentFilter = "any"
+	// ContentNone son los eventos SIN solicitud: los que solo `…/cancel` puede cerrar.
+	ContentNone ContentFilter = "none"
+	// ContentAlive son los eventos cuya solicitud sigue abierta.
+	ContentAlive ContentFilter = "alive"
+)
+
+// IsContentFilter reporta si v es uno de los tres valores del filtro. Existe para
+// que el transporte pueda rechazar un typo con un 400 en vez de tragárselo y
+// devolver una lista que no es la que se pidió.
+func IsContentFilter(v string) bool {
+	switch ContentFilter(v) {
+	case ContentAny, ContentNone, ContentAlive:
+		return true
+	}
+	return false
+}
+
+// IsStatus reporta si v es uno de los tres estados del ciclo de vida. Misma razón
+// que IsContentFilter: `status=abiertos` es un error del llamante, no «todos».
+func IsStatus(v string) bool {
+	switch Status(v) {
+	case StatusOpen, StatusClosed, StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// ListFilter es el filtro del listado del dueño. Lo que NO está aquí es tan
+// deliberado como lo que sí: no hay tenant (sale del token, INV-8) y no hay
+// sesión, porque la pregunta del dueño es por su NEGOCIO y no por un teléfono.
+type ListFilter struct {
+	// Status es el estado exacto. Vacío ⇒ StatusOpen (REQ-28): lo que se limpia
+	// es lo que sigue abierto, y una bandeja que arrancara con los cancelados
+	// dentro daría trabajo terminado por trabajo pendiente.
+	Status Status
+	// Kind acota al tipo de evento (cart, survey, menu, media). Vacío ⇒ todos.
+	Kind string
+	// Kinds acota a un CONJUNTO de tipos: los que el tenant tiene habilitados por
+	// su plan (decisión de Jhoan del 2026-08-09). Es distinto de Kind, que es lo
+	// que el llamante pidió ver; este es lo que el llamante PUEDE ver, y los dos se
+	// aplican a la vez — pedir `kind=cart` sin la feature del carrito devuelve una
+	// lista vacía, no un 403: la ruta se abrió porque el tenant tiene ALGÚN tipo.
+	//
+	// nil ⇒ sin filtro. Lista VACÍA ⇒ ningún tipo pasa, que es lo correcto para un
+	// tenant sin ninguna de las cuatro features (ver listArgs).
+	Kinds []string
+	// Content es la pregunta por la solicitud ligada. Vacío ⇒ ContentAny.
+	Content ContentFilter
+	// Stale filtra por la marca DERIVADA «vencido»: nil ⇒ no filtra, true ⇒ solo
+	// los vencidos, false ⇒ solo los que no lo están.
+	//
+	// Es un puntero y no un bool porque «no me importa» y «los que no están
+	// vencidos» son preguntas distintas, y con un bool a false serían la misma.
+	// El filtro se aplica SOBRE LA COLUMNA CALCULADA, nunca comparando fechas en
+	// el predicado (INV-19): ver listEventsStale.
+	Stale *bool
+	// ContactID acota a un contacto (identificador OPACO, ADR-0017). Vacío ⇒ todos.
+	ContactID string
+	// Page es 1-based; PageSize se acota a [1, MaxPageSize].
+	Page     int
+	PageSize int
+}
+
+// Normalized devuelve el filtro con la paginación saneada y los defaults puestos
+// (estado `open`, contenido `any`). Es idempotente.
+func (f ListFilter) Normalized() ListFilter {
+	out := f
+	if out.Page < 1 {
+		out.Page = 1
+	}
+	switch {
+	case out.PageSize <= 0:
+		out.PageSize = DefaultPageSize
+	case out.PageSize > MaxPageSize:
+		out.PageSize = MaxPageSize
+	}
+	if out.Status == "" {
+		out.Status = StatusOpen
+	}
+	if out.Content == "" {
+		out.Content = ContentAny
+	}
+	return out
+}
+
+// Offset es el desplazamiento SQL que corresponde a la página del filtro.
+func (f ListFilter) Offset() int { return (f.Page - 1) * f.PageSize }
+
+// EventPage es una página del listado con el TOTAL de coincidencias del filtro (no
+// de la página): sin él la consola no puede pintar el paginador ni decirle a
+// Herminia cuánto le queda por limpiar.
+type EventPage struct {
+	Events   []Rescuable
+	Page     int
+	PageSize int
+	Total    int
+}
+
+// listEventsWhere es el filtro del listado. Los tres filtros opcionales van con la
+// forma `$n IS NULL OR col = $n` y no concatenando trozos de SQL: así la consulta
+// sigue siendo UNA constante —legible entera en el fuente, imposible de inyectar—
+// en vez de un string que se arma en tiempo de ejecución.
+//
+// El cast de cada parámetro es el de SU columna, y no uno genérico a text: la de
+// contacto es UUID (ADR-0017) y `contact_id = $5::text` no compara —Postgres corta
+// con «operator does not exist: uuid = text» ANTES de mirar ninguna fila, también
+// cuando el filtro va vacío—. Se descubrió contra Postgres real; con un doble en
+// memoria habría llegado hasta producción. Casteando la COLUMNA a text en vez del
+// parámetro también compilaría, pero dejaría fuera al índice
+// conversation_events_alive_idx, que empieza justo por ahí.
+//
+// $4 NO aparece aquí y su hueco está reservado a propósito: es el instante del
+// reloj inyectado que consume rescuableStale, y respetarle la posición es lo que
+// permite reusar esa expresión TAL CUAL en vez de escribir una segunda.
+//
+// INV-19: ni una comparación de fechas. El vencido se filtra después, y sobre la
+// columna calculada (listEventsStale).
+const listEventsWhere = `
+ WHERE e.tenant_id = $1
+   AND e.status = $2
+   AND ($3::text IS NULL OR e.kind = $3)
+   AND ($5::uuid IS NULL OR e.contact_id = $5)
+   AND ($8::text[] IS NULL OR e.kind = ANY($8))
+   AND (($6::text = '` + string(ContentAny) + `' AND ` + rescuableContent + `)
+        OR ($6::text = '` + string(ContentNone) + `' AND ` + contentNone + `)
+        OR ($6::text = '` + string(ContentAlive) + `' AND ` + contentAlive + `))`
+
+// listEventsInner es el evento con su marca de vencido ya resuelta. Las tres
+// piezas que lo componen son las MISMAS que sirven al rescate.
+const listEventsInner = `
+SELECT ` + eventColumnsE + `,
+       ` + rescuableStale + rescuableFrom + listEventsWhere
+
+// listEventsStale filtra por «vencido» SOBRE LA COLUMNA CALCULADA de la subconsulta
+// (que se llama `e` para que el ORDER BY del rescate valga tal cual aquí fuera).
+//
+// Esto es lo que INV-19 pide y no una forma retorcida de saltárselo: la comparación
+// de fechas sigue viviendo en el SELECT, se evalúa para TODAS las filas y la marca
+// se sigue devolviendo en las que no se filtran. Meter `now() - last_activity_at >
+// ttl` en el WHERE de la lista sería lo prohibido, y además otra cosa: haría que
+// «vencido» dejara de informar para empezar a decidir.
+const listEventsStale = `
+ WHERE ($7::boolean IS NULL OR e.stale = $7)`
+
+const listEventsSQL = `
+SELECT * FROM (` + listEventsInner + `
+) e` + listEventsStale + rescuableOrder + `
+ LIMIT $9 OFFSET $10`
+
+// countEventsSQL cuenta las coincidencias del MISMO filtro, y por eso reusa la
+// misma subconsulta: dos WHERE que tuvieran que coincidir a mano acabarían no
+// coincidiendo, y un paginador que miente sobre el total manda a Herminia a una
+// página vacía. Referencia hasta $8, así que se invoca con OCHO argumentos —los
+// de paginación no entran.
+const countEventsSQL = `
+SELECT count(*) FROM (` + listEventsInner + `
+) e` + listEventsStale
+
+// listArgs son los OCHO argumentos del filtro, en el orden de los $n. El instante
+// va en $4 aunque el WHERE no lo use: ese hueco es de rescuableStale.
+func (s *Store) listArgs(tenantID string, f ListFilter) []any {
+	// Los dos nil van como `any` y no como *bool / []string: así el driver recibe un
+	// NULL a secas, que es lo que `$7::boolean IS NULL` y `$8::text[] IS NULL`
+	// esperan, sin depender de que la capa de conversión desreferencie punteros ni
+	// distinga un slice nil de uno vacío por su cuenta.
+	var stale any
+	if f.Stale != nil {
+		stale = *f.Stale
+	}
+	// nil ⇒ sin filtro; una lista VACÍA ⇒ ningún tipo pasa (`kind = ANY('{}')` es
+	// falso para todas las filas). La distinción no es un tecnicismo de Go: es la
+	// diferencia entre «no me filtres por tipo» y «este tenant no tiene ninguno
+	// habilitado», y confundirlas enseñaría la bandeja ENTERA justo en el caso en
+	// que no debe verse nada. Falla cerrado, como el gate.
+	var kinds any
+	if f.Kinds != nil {
+		kinds = f.Kinds
+	}
+	return []any{tenantID, string(f.Status), nullableID(f.Kind), s.now().UTC(),
+		nullableID(f.ContactID), string(f.Content), stale, kinds}
+}
+
+// ListEvents devuelve la página de eventos del TENANT que casan con el filtro,
+// ordenados por última actividad descendente y con la marca «vencido» resuelta.
+//
+// Es la lectura de REQ-28: la que hace ejecutable «ve limpiando». Nunca acota a una
+// sesión ni a un contacto salvo que el filtro lo pida, y el tenant lo pone el
+// llamante desde el token (INV-8) — este método no tiene forma de sacarlo de otro
+// sitio, que es justo la garantía.
+func (s *Store) ListEvents(ctx context.Context, tenantID string, f ListFilter) (EventPage, error) {
+	f = f.Normalized()
+	args := s.listArgs(tenantID, f)
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, countEventsSQL, args...).Scan(&total); err != nil {
+		return EventPage{}, fmt.Errorf("events: contar los eventos del tenant: %w", err)
+	}
+
+	paged := make([]any, 0, len(args)+2)
+	paged = append(paged, args...)
+	paged = append(paged, f.PageSize, f.Offset())
+	rows, err := s.db.QueryContext(ctx, listEventsSQL, paged...)
+	if err != nil {
+		return EventPage{}, fmt.Errorf("events: listar los eventos del tenant: %w", err)
+	}
+	evs, err := collect(rows, scanRescuable)
+	if err != nil {
+		return EventPage{}, err
+	}
+	return EventPage{Events: evs, Page: f.Page, PageSize: f.PageSize, Total: total}, nil
+}
+
+// collect recorre las filas con el escáner dado y CIERRA siempre, propagando el
+// error de cierre solo si no había otro peor que contar.
+func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) (out []T, err error) {
 	defer func() {
 		if cerr := rows.Close(); cerr != nil && err == nil {
 			out, err = nil, fmt.Errorf("events: cerrar filas de eventos: %w", cerr)
@@ -194,11 +649,11 @@ func (s *Store) listEvents(ctx context.Context, query, tenantID, sessionID, cont
 	}()
 
 	for rows.Next() {
-		ev, sErr := scanEvent(rows)
+		v, sErr := scan(rows)
 		if sErr != nil {
 			return nil, fmt.Errorf("events: leer fila de evento: %w", sErr)
 		}
-		out = append(out, ev)
+		out = append(out, v)
 	}
 	if rErr := rows.Err(); rErr != nil {
 		return nil, fmt.Errorf("events: recorrer eventos vivos: %w", rErr)

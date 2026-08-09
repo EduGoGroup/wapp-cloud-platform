@@ -184,3 +184,61 @@ func TestIntegration_ElTenantSinTaxonomiaListaSinFiltro(t *testing.T) {
 		t.Fatalf("sin taxonomía se listan los dos tipos ofrecidos; got %v", got)
 	}
 }
+
+// TestIntegration_ElMenuNoMencionaUnPedidoDescartado es la escena de Marta contra
+// BD real y con las piezas de verdad: el mismo contacto, el mismo evento y lo único
+// que cambia entre las dos mitades es el estado de su SOLICITUD.
+//
+// Con la solicitud abierta, el menú ofrece las dos cosas: pedir y retomar. En cuanto
+// el dueño descarta el pedido —lo que en la tabla es `abandoned`—, la opción de
+// retomar desaparece aunque el evento siga `open`, que es el estado en el que el
+// descarte lo deja durante un instante (y en el que se quedaría para siempre si el
+// UPDATE del otro plan fallara). INV-17: no se lista, no se rescata y no se
+// menciona.
+func TestIntegration_ElMenuNoMencionaUnPedidoDescartado(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tid := seedTenantConPlan(t, db, "basic")
+	const sesion = "sesion-marta-menu"
+
+	reglas := trigger.NewPostgresStore(db)
+	if _, err := reglas.Insert(ctx, reglaEventStart(tid, "carrito", "cart")); err != nil {
+		t.Fatalf("sembrar regla: %v", err)
+	}
+
+	store := events.NewStore(db, nil)
+	intakeID := insertarIntake(ctx, t, db, tid, sesion, contactoA, "open")
+	in := nuevoEvento(tid, sesion, contactoA, "cart")
+	in.IntakeID = intakeID
+	elPedido := mustCrear(ctx, t, store, in)
+
+	d := events.NewDispatcher(store, events.NewTriggerKindOffer(reglas), entitlements.NewPostgres(db))
+	ref := events.ConversationRef{TenantID: tid, SessionID: sesion, ContactID: contactoA}
+	armar := func() events.Menu {
+		t.Helper()
+		m, err := d.Build(ctx, ref)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		return m
+	}
+
+	if got := kindsDe(armar()); len(got) != 2 || got[0] != "start:cart" || got[1] != "resume:cart" {
+		t.Fatalf("con la solicitud abierta se ofrece pedir Y retomar; got %v", got)
+	}
+
+	// El dueño descarta el pedido. El evento sigue `open` a propósito: lo que tapa la
+	// opción tiene que ser el estado de la solicitud, no el del evento.
+	ponerStatusIntake(ctx, t, db, intakeID, "abandoned")
+	if leerCruda(ctx, t, db, elPedido.ID).status != "open" {
+		t.Fatalf("el escenario exige que el evento siga open")
+	}
+
+	m := armar()
+	if got := kindsDe(m); len(got) != 1 || got[0] != "start:cart" {
+		t.Fatalf("descartado el pedido, el menú ya no lo menciona (INV-17); got %v", got)
+	}
+	if texto := m.Render(); strings.Contains(texto, "dejaste a medias") {
+		t.Fatalf("el menú no puede ofrecer retomar un pedido descartado; texto:\n%s", texto)
+	}
+}

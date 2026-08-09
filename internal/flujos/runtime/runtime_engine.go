@@ -10,6 +10,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
@@ -157,6 +158,23 @@ type Runtime struct {
 	// event_start del tenant. Lo necesita la elección «empezar uno nuevo» del menú,
 	// que dice el tipo pero no el flujo. nil ⇒ el evento nace sin flujo.
 	flows FlowForKind
+	// opening arma lo que se le OFRECE a quien escribe algo que no casó nada (Plan
+	// 043 · T3.8, REQ-27): la lista de lo que puede empezar y lo que puede retomar.
+	// Sustituye al texto del `fallback` del tenant, y SOLO ahí (INV-20).
+	//
+	// nil (sin WithOpeningBuilder) ⇒ el fallback se comporta exactamente como antes
+	// del Plan 043: arranca su flujo y dice su frase. No-regresión total (INV-6).
+	opening OpeningBuilder
+	// sources son las fuentes DURABLES del resumen del evento que se abandona (Plan
+	// 043 · T3.4/T3.3): las líneas del pedido para `cart` y las respuestas dadas para
+	// `survey`. De Vars sale solo lo que no es durable (el nivel de la sub-máquina).
+	//
+	// Van las DOS o ninguna: LoadSummary devuelve error cuando le falta el lector del
+	// tipo que le toca —en vez de un resumen vacío, que borraría del historial lo que
+	// el cliente sí decidió—, así que cablear una sola convierte el abandono del otro
+	// tipo en un WARN por cada salto. Cero valor ⇒ no se escribe ningún resumen y el
+	// abandono ocurre igual (no-regresión).
+	sources events.SummarySources
 	// onReactiveBlocked cuenta cada entrante que NO entra al motor reactivo, con el
 	// motivo (reasonPassive|reasonSelfLoop|reasonRateLimit). Hook NIL-SAFE inyectado
 	// con WithReactiveBlockedHook —típicamente metrics.FlowReactiveBlocked— para no
@@ -287,6 +305,27 @@ func WithIntakeAbandoner(a IntakeAbandoner) Option {
 // un event_start de tipo menu crea el evento pero no presenta ninguna lista.
 func WithDispatcher(d Dispatcher) Option {
 	return func(rt *Runtime) { rt.dispatcher = d }
+}
+
+// WithSummarySources cablea las fuentes durables del resumen del evento abandonado
+// (Plan 043 · T3.4): líneas del pedido y respuestas de la encuesta. Van JUNTAS —un
+// struct y no dos Options— para que el día que un tipo nuevo traiga su fuente se añada
+// un campo y ninguna firma se mueva.
+//
+// Cablear solo una es peor que no cablear ninguna: LoadSummary falla cuando le falta el
+// lector del tipo que le toca, así que el abandono de ese tipo produciría un WARN en
+// cada salto en vez de una fila.
+func WithSummarySources(src events.SummarySources) Option {
+	return func(rt *Runtime) { rt.sources = src }
+}
+
+// WithOpeningBuilder cablea el constructor de la entrada que OFRECE (Plan 043 · T3.8).
+// Va con WithDispatcher —en producción lo satisface el MISMO *events.Dispatcher— pero
+// es una Option aparte a propósito: son dos preguntas distintas y un despliegue puede
+// tener cableada una sin la otra. Sin ella, la rama `fallback` de handleTrigger es
+// byte a byte la de siempre (INV-6).
+func WithOpeningBuilder(b OpeningBuilder) Option {
+	return func(rt *Runtime) { rt.opening = b }
 }
 
 // WithFlowForKind cablea la resolución «tipo de evento → flujo del tenant», que

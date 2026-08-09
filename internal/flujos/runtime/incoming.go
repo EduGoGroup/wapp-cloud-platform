@@ -10,6 +10,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
@@ -126,23 +127,50 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM.
 		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
-	// TTL conversacional genérico (Plan 029 · T9): si el tenant configuró un
-	// conversation_ttl_seconds > 0 y el estado vivo lleva más tiempo que eso sin
-	// tocarse, se DESCARTA silenciosamente y el entrante se trata como un arranque
-	// nuevo (camino handleTrigger, donde la señal LLM aplica). Va ANTES de IsEscape /
-	// consecutiveReplay / prepareResume: un estado vencido no debe escapar ni avanzar.
-	// Es el ÚNICO reloj que queda en este camino: el de la SOLICITUD del carrito
-	// (order_ttl_seconds) se derogó en T4.7 (D-041.16) y prepareResume ya no lo
-	// evalúa. Vencer aquí descarta el ESTADO CONVERSACIONAL; la solicitud sobrevive
-	// con sus líneas y solo la mata una persona (D-041.18). ttl<=0 o error de
-	// settings ⇒ no vence (no-regresión).
-	if rt.conversationExpired(ctx, tenantID, st) {
-		if derr := rt.store.Delete(ctx, key); derr != nil {
-			return fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", derr)
-		}
+	// EL reloj de esta conversación (Plan 043 · T3.1/T3.2/T3.7). Va ANTES de IsEscape /
+	// consecutiveReplay / prepareResume: un estado que ya no vale no debe escapar ni
+	// avanzar. Devuelve si el entrante se trata como ARRANQUE NUEVO en vez de avance.
+	restart, err := rt.conversationClock(ctx, tenantID, key, st)
+	if err != nil {
+		return err
+	}
+	if restart {
 		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
 	}
 	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
+}
+
+// conversationClock aplica el reloj que gobierna esta conversación y dice si el
+// entrante debe tratarse como un arranque nuevo (true) o como un avance (false).
+//
+// Hay DOS relojes y son EXCLUYENTES (REQ-01c, INV-18, D-043.16). Cuál manda lo
+// decide una sola cosa: si la conversación tiene evento activo.
+//
+//   - CON evento activo manda event_inactivity_ttl_seconds y NADIE más (T3.1/T3.2):
+//     dentro de la ventana el entrante REFRESCA el reloj; vencida, se suelta la
+//     conversación —el evento sigue `open`— y el texto entra como uno nuevo.
+//   - SIN evento activo —el LIMBO: un saludo, la cháchara, un menú a medias— manda
+//     conversation_ttl_seconds, que es recolección de basura del flow_state y nada
+//     más (Plan 029 · T9).
+//
+// La guarda es la tarea (T3.7): hasta la Ola 3, el TTL conversacional se evaluaba
+// SIEMPRE, también con un pedido en curso, y descartaba su estado por un reloj
+// pensado para otra cosa. No se toca la migración 0034 ni su default 0: lo que
+// cambia es CUÁNDO se pregunta.
+func (rt *Runtime) conversationClock(ctx context.Context, tenantID string, key store.Key, st model.Conversation) (bool, error) {
+	if st.EventID != "" {
+		return rt.eventClock(ctx, tenantID, key, st.EventID)
+	}
+	// El limbo no toca conversation_events: aquí no se lee ni se escribe ningún
+	// last_activity_at (T3.7.2). El reloj del evento empieza a contar cuando el evento
+	// NACE, no cuando el contacto saludó.
+	if !rt.conversationExpired(ctx, tenantID, st) {
+		return false, nil
+	}
+	if err := rt.store.Delete(ctx, key); err != nil {
+		return false, fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", err)
+	}
+	return true, nil
 }
 
 // advanceLive avanza una conversación VIVA (estado ya cargado y no vencido) con un
@@ -158,7 +186,7 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, sessionID, m.GetText()); escErr != nil {
 		rt.log.Warn("runtime: IsEscape falló; se ignora el escape", "error", escErr, "session_id", sessionID)
 	} else if esc {
-		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
+		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg, st)
 	}
 	// Salto por tipo y desactivación SOBRE conversación viva (Plan 043 · T2.2/T2.4,
 	// D-043.2): la EXCEPCIÓN ACOTADA de INV-02. Va justo aquí por dos razones:
@@ -242,11 +270,57 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 		return nil
 	}
 	switch dec.Action {
-	case trigger.StartEvent, trigger.Start, trigger.Fallback:
+	case trigger.StartEvent, trigger.Start:
 		return rt.startFromDecision(ctx, tenantID, sessionID, key, contactID, dec)
+	case trigger.Fallback:
+		// La rama PARTIDA (Plan 043 · T3.8.4, REQ-27b/INV-20/D-043.20). Lo que antes
+		// compartía sitio con Start ahora vive aparte, porque hace otra cosa: en vez de
+		// arrancar el flujo del `fallback` y soltar su frase, se le OFRECE al contacto lo
+		// que puede hacer. Start no se entera: sigue byte a byte igual.
+		//
+		// La condición «esta conversación no tiene evento» NO se comprueba aquí, y esa
+		// ausencia es deliberada: la garantiza el SITIO. A handleTrigger solo se llega sin
+		// flow_state, o tras haberlo descartado, así que añadir una guarda sería un segundo
+		// sitio decidiendo lo mismo. Y por eso se toca aquí y no en el resolver: trigger/
+		// no sabe de eventos y no debe aprenderlo (INV-5) — interpretar la señal es suyo,
+		// decidir QUIÉN habla es del runtime.
+		return rt.openWithOffer(ctx, tenantID, sessionID, key, contactID, dec)
 	default: // trigger.Ignore (o cualquier otro): decisión C, no arranca nada.
 		return nil
 	}
+}
+
+// openWithOffer atiende el `fallback`: en vez de la frase de «no te entendí», le
+// enseña al contacto lo que puede empezar y lo que puede retomar (T3.8.4).
+//
+// El caso vacío es la mitad importante: un tenant sin nada habilitado y un contacto
+// sin nada a medias producen una oferta SIN una sola opción, y entonces la rama cae al
+// `fallback` de siempre (INV-20). Es lo que impide que un tenant recién creado se
+// quede mudo, y la razón de que el startLocked del fallback siga existiendo.
+//
+// El TOKEN anti-loop (Plan 020 · T0) se cobra UNA vez por saliente y por eso no se pide
+// arriba del todo: la oferta se construye primero —leer no habla—, y solo si hay algo
+// que decir se consume el token. Si la oferta viene vacía, el token lo pide
+// startPlainFlow como toda la vida; pedirlo también aquí cobraría dos por un solo
+// mensaje y, con el cupo justo, dejaría mudo al fallback por una lista que ni se envió.
+func (rt *Runtime) openWithOffer(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if rt.opening == nil {
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	offer, err := rt.opening.BuildOpening(ctx, events.ConversationRef{
+		TenantID: tenantID, SessionID: sessionID, ContactID: contactID,
+	})
+	if err != nil {
+		// Un fallo construyendo la oferta NO deja al contacto sin respuesta: se cae al
+		// fallback del tenant, que es exactamente lo que había antes de esta tarea.
+		rt.log.Warn("runtime: no se pudo construir la entrada que ofrece; se usa el fallback del tenant",
+			"error", err, "session_id", sessionID)
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	if offer.Empty() {
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	return rt.sendOffer(ctx, key, sessionID, offer)
 }
 
 // startFromDecision ejecuta una decisión de arranque separando las PUERTAS DEL
@@ -345,6 +419,12 @@ func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlin
 // vence — se prefiere no descartar una conversación por un fallo transitorio). La
 // comparación usa rt.now() (inyectable en tests) contra st.UpdatedAt (lo estampa el
 // store en cada Save). Con UpdatedAt cero (estado sin marca) no vence.
+//
+// Desde el Plan 043 · T3.7 esto SOLO se pregunta cuando la conversación no tiene
+// evento activo: lo garantiza conversationClock, su único llamante. No es un detalle
+// de orden — este TTL es recolección de basura del limbo, y evaluarlo sobre un pedido
+// en curso descartaba el estado de un evento vivo por un reloj que no es el suyo
+// (REQ-01c, INV-18). Si vuelves a llamarlo sin mirar st.EventID, reabres eso.
 func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st model.Conversation) bool {
 	settings, err := rt.store.GetTenantSettings(ctx, tenantID)
 	if err != nil {
@@ -365,13 +445,16 @@ func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st 
 // Tras el borrado, un entrante posterior vuelve a pasar por el resolver (Resolve), no
 // por escape. El estado ya se borró (equivalente al orden Save-antes-de-Send): un
 // fallo del envío se surface al llamante.
-func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string) error {
+func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string, st model.Conversation) error {
 	// Red anti-loop (Plan 020 · T0): el aviso de escape es una auto-respuesta ⇒
 	// consume un token. Agotado ⇒ no se corta ni se avisa (la conversación sigue
 	// viva); rompe cualquier bucle en el que un aviso de escape realimente al peer.
 	if !rt.replyAllowed(key) {
 		return nil
 	}
+	// El escape es el tercer abandono real (T3.4), y el más brusco: se resume ANTES del
+	// Delete, porque ese Delete se lleva las Vars con el nivel de la sub-máquina.
+	rt.summarizeAbandoned(ctx, key, sessionID, st, "")
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
 	}

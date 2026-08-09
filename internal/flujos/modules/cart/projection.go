@@ -30,6 +30,7 @@ const (
 type ProjectionStore interface {
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
+	ReplaceIntakeItems(ctx context.Context, intakeID string, items []store.IntakeItem) error
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
 	CloseIntake(ctx context.Context, in store.IntakeClose) (string, error)
 }
@@ -107,9 +108,16 @@ func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping Shipping
 // buyer_data_captured es el caso INVERSO y el único: se proyecta precisamente
 // porque NO queda en flow_events (Kind modules.KindPrivate). Si este proyector no
 // lo reconociera, el dato del cliente no se guardaría en ningún sitio.
+// note_added es el segundo caso que se proyecta sin ser un cambio de estado de la
+// solicitud, y por la misma razón que item_added: es el OTRO efecto que mueve las
+// líneas del carrito —les pone la indicación del cliente, y parte una línea ×N en
+// ×(N-1)+×1 (D-041.20)—. Si no se proyectara, intake_items se quedaría con el
+// conjunto anterior hasta el cierre y la promesa de esta tarea («al día en todo
+// momento») sería falsa justo en el pedido que alguien personalizó.
 func (Projector) Handles(name string) bool {
 	switch name {
-	case EffectItemAdded, EffectCartClosed, EffectCartCancelled, EffectCartExpired, EffectBuyerDataCaptured:
+	case EffectItemAdded, EffectNoteAdded, EffectCartClosed, EffectCartCancelled,
+		EffectCartExpired, EffectBuyerDataCaptured:
 		return true
 	default:
 		return false
@@ -120,8 +128,8 @@ func (Projector) Handles(name string) bool {
 // cuyo Handles devolvió true.
 func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
 	switch eff.Name {
-	case EffectItemAdded:
-		return p.ensureOpenIntake(ctx, meta)
+	case EffectItemAdded, EffectNoteAdded:
+		return p.projectOpenLines(ctx, meta, eff)
 	case EffectCartClosed:
 		return p.closeIntake(ctx, meta, eff)
 	case EffectCartCancelled:
@@ -148,21 +156,55 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 // en la tabla) y la fila que ya existía se reescribe con el valor que tuviera —las
 // históricas conservan el suyo tal cual, que es justo lo que promete el COMMENT de
 // la columna.
-func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) error {
+func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) (string, error) {
 	existing, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if found {
-		return p.store.UpsertIntake(ctx, existing)
+		return existing.ID, p.store.UpsertIntake(ctx, existing)
 	}
-	return p.store.UpsertIntake(ctx, store.Intake{
+	intake := store.Intake{
 		ID:        uuid.NewString(),
 		TenantID:  meta.TenantID,
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Status:    intakeStatusOpen,
-	})
+	}
+	return intake.ID, p.store.UpsertIntake(ctx, intake)
+}
+
+// projectOpenLines asegura la solicitud "open" y deja sus intake_items IGUALES a la
+// foto del carrito que trae el efecto (Plan 043 · Ola 3). Es lo que cierra el hueco
+// que destapó REQ-26b: hasta ahora una solicitud "open" no tenía NINGUNA línea —se
+// materializaban solo al cerrar—, de modo que rescatarla, o mostrarla en el CRM,
+// prometía unas líneas que no existían.
+//
+// Por qué REEMPLAZAR y no ir añadiendo la línea que el efecto publica:
+//
+//   - IDEMPOTENCIA. El mismo efecto reentregado escribe el mismo conjunto, así que
+//     no duplica ni pierde nada. Añadiendo no habría forma de conseguirlo: dos
+//     item_added del MISMO artículo son dos líneas legítimas del pedido (se agrega
+//     dos veces, con indicaciones distintas), así que no existe clave natural con la
+//     que reconocer un reenvío.
+//   - FIDELIDAD. El carrito cambia sus líneas por más sitios que el "agregar": la
+//     indicación de una línea y el split de D-041.20 las reescriben. Con la foto, la
+//     tabla dice lo que dice el carrito; acumulando, diría solo lo que se agregó.
+//
+// SIN foto en el payload no se toca ninguna línea, y eso NO es lo mismo que una foto
+// vacía: es un flow_event HISTÓRICO reejecutado (los hay, y el proyector los soporta
+// a propósito, ver EffectCartExpired). Un efecto viejo no sabe qué había en el
+// carrito, así que borrarle las líneas al pedido sería inventarse que estaba vacío.
+func (p *Projector) projectOpenLines(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
+	intakeID, err := p.ensureOpenIntake(ctx, meta)
+	if err != nil {
+		return err
+	}
+	items, ok := cartLineSnapshot(eff.Payload)
+	if !ok {
+		return nil
+	}
+	return p.store.ReplaceIntakeItems(ctx, intakeID, items)
 }
 
 // closeIntake proyecta cart_closed: cierra ATÓMICAMENTE la solicitud abierta (o crea una
@@ -300,7 +342,7 @@ func (p *Projector) transitionOpenIntake(ctx context.Context, meta modules.Effec
 // omiten sin panica. El IntakeID lo fija store.CloseIntake.
 func cartItems(payload map[string]any) []store.IntakeItem {
 	var out []store.IntakeItem
-	switch items := payload["items"].(type) {
+	switch items := payload[snapshotKey].(type) {
 	case []map[string]any:
 		for _, m := range items {
 			out = append(out, intakeItemFromMap(m))
@@ -313,6 +355,19 @@ func cartItems(payload map[string]any) []store.IntakeItem {
 		}
 	}
 	return out
+}
+
+// cartLineSnapshot devuelve las líneas de la foto del carrito y si el efecto TRAÍA
+// foto. Los dos casos son distintos y confundirlos borra pedidos: una foto vacía
+// dice «el carrito no tiene líneas», y la AUSENCIA de foto dice «este efecto no sabe
+// qué líneas hay» —un flow_event escrito antes de que la foto existiera, reejecutado
+// hoy—. Por eso la presencia se mira sobre la CLAVE y no sobre el resultado de
+// cartItems, que devuelve nil para las dos.
+func cartLineSnapshot(payload map[string]any) ([]store.IntakeItem, bool) {
+	if _, ok := payload[snapshotKey]; !ok {
+		return nil, false
+	}
+	return cartItems(payload), true
 }
 
 // intakeItemFromMap traduce UNA línea del payload del cierre a la fila que se
