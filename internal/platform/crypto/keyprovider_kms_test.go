@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -344,6 +345,28 @@ func TestNewKeyProvider_Seleccion(t *testing.T) {
 		}
 		if !errors.Is(err, ErrKMSKeyNameMissing) {
 			t.Fatalf("error = %v, want errors.Is(_, ErrKMSKeyNameMissing)", err)
+		}
+	})
+
+	// La configuración se valida ANTES de abrir el cliente de GCP. Sin este caso, el
+	// orden solo queda protegido en máquinas SIN credenciales por defecto (el
+	// contenedor del CI): con ADC presente, invertir el orden abre el cliente, la
+	// apertura funciona y el error de config llega igual — verde engañoso, rojo en
+	// CI. Apuntando GOOGLE_APPLICATION_CREDENTIALS a un fichero que no existe, abrir
+	// el cliente falla SIEMPRE, así que el test detecta la inversión en los dos
+	// entornos: si el error deja de ser el de configuración, es que se salió a la red
+	// antes de mirar lo que ya se tenía en la mano.
+	t.Run("la config se valida antes de abrir el cliente del KMS", func(t *testing.T) {
+		t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "no-existe.json"))
+
+		_, err := NewKeyProvider(context.Background(), ProviderConfig{
+			Provider: ProviderKMS,
+			KMS:      KMSConfig{KeyringB64: "1:" + base64.StdEncoding.EncodeToString([]byte("kms-ct:x")), CurrentID: "1"},
+			Prod:     true,
+		})
+		if !errors.Is(err, ErrKMSKeyNameMissing) {
+			t.Fatalf("error = %v, want errors.Is(_, ErrKMSKeyNameMissing): con la config incompleta hay que "+
+				"nombrar la config, no las credenciales de Google", err)
 		}
 	})
 }

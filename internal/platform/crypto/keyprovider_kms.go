@@ -93,10 +93,17 @@ type KMSConfig struct {
 	Prod bool
 }
 
-// NewKMSKeyProvider construye el KeyProvider de PRODUCCIÓN: abre el cliente del
-// KMS de GCP, desenvuelve el keyring, CIERRA el cliente y devuelve un provider que
-// ya no vuelve a hablar con el KMS. La interfaz KeyProvider no cambia, así que
-// FieldCipher, los repos y la rotación del Plan 012 son idénticos (REQ-17).
+// NewKMSKeyProvider construye el KeyProvider de PRODUCCIÓN: valida la
+// configuración, abre el cliente del KMS de GCP, desenvuelve el keyring, CIERRA el
+// cliente y devuelve un provider que ya no vuelve a hablar con el KMS. La interfaz
+// KeyProvider no cambia, así que FieldCipher, los repos y la rotación del Plan 012
+// son idénticos (REQ-17).
+//
+// El ORDEN importa: primero la configuración, después la red. Abrir el cliente
+// antes convertía un fallo local —falta WAPP_KEK_KMS_KEY— en un error de
+// credenciales ADC, que manda al operador a investigar el sitio equivocado y en un
+// entorno sin ADC (el contenedor del CI) TAPA por completo el error de verdad.
+// Nada que se pueda comprobar en el proceso justifica salir a internet primero.
 //
 // El cliente se cierra aquí a propósito: sin conexión viva no hay reintentos de
 // fondo ni llamadas accidentales que generen gasto (ADR-0036 §3).
@@ -105,6 +112,11 @@ type KMSConfig struct {
 // existe, faltan permisos o el ciphertext es de otra llave, el arranque muere con
 // error claro. Esa es la invariante de la ola.
 func NewKMSKeyProvider(ctx context.Context, cfg KMSConfig) (KeyProvider, error) {
+	plan, err := validateKMSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := newGCPKMSDecrypter(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("abriendo el cliente del KMS de GCP: %w", err)
@@ -114,38 +126,80 @@ func NewKMSKeyProvider(ctx context.Context, cfg KMSConfig) (KeyProvider, error) 
 			log.Printf("[wapp][crypto][WARN] cerrando el cliente del KMS: %v", cerr)
 		}
 	}()
-	return newKMSKeyProvider(ctx, cfg, client)
+	return unwrapKeyring(ctx, cfg, plan, client)
 }
 
-// newKMSKeyProvider es el núcleo testeable: desenvuelve el keyring con dec (el
-// cliente real o un doble) y arma el provider en memoria.
+// newKMSKeyProvider es el núcleo testeable: valida igual que el camino real y
+// desenvuelve el keyring con dec (el cliente real o un doble).
 func newKMSKeyProvider(ctx context.Context, cfg KMSConfig, dec KMSDecrypter) (KeyProvider, error) {
+	plan, err := validateKMSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapKeyring(ctx, cfg, plan, dec)
+}
+
+// kmsKeyringPlan es la KMSConfig ya validada y decodificada: todo lo que se puede
+// comprobar SIN hablar con el KMS. Existe para separar los dos tipos de fallo
+// —configuración (local, barato, culpa del operador) y KMS (red, credenciales,
+// permisos)— y poder hacerlos en ese orden.
+type kmsKeyringPlan struct {
+	keyName   string
+	currentID string
+	wrapped   map[string][]byte // key_id → KEK CIFRADA por el KMS, ya en bytes.
+	indexCT   []byte            // indexKey cifrada por el KMS; nil si no se configuró.
+}
+
+// validateKMSConfig comprueba y decodifica cuanto no requiere red. Es el PRIMER
+// paso del arranque en modo kms: un error de configuración debe nombrar la
+// configuración, y además no tiene sentido gastar N llamadas al KMS por un
+// arranque que va a morir igual.
+func validateKMSConfig(cfg KMSConfig) (kmsKeyringPlan, error) {
 	keyName := strings.TrimSpace(cfg.KeyName)
 	if keyName == "" {
-		return nil, ErrKMSKeyNameMissing
+		return kmsKeyringPlan{}, ErrKMSKeyNameMissing
 	}
 	if strings.TrimSpace(cfg.KeyringB64) == "" {
-		return nil, ErrKMSKeyringMissing
+		return kmsKeyringPlan{}, ErrKMSKeyringMissing
 	}
 	currentID := strings.TrimSpace(cfg.CurrentID)
 	if currentID == "" {
-		return nil, ErrCurrentKeyMissing
+		return kmsKeyringPlan{}, ErrCurrentKeyMissing
 	}
 
 	wrapped, err := parseKeyringEntries(cfg.KeyringB64)
 	if err != nil {
-		return nil, fmt.Errorf("keyring del KMS: %w", err)
+		return kmsKeyringPlan{}, fmt.Errorf("keyring del KMS: %w", err)
 	}
 	if _, ok := wrapped[currentID]; !ok {
-		return nil, fmt.Errorf("%w: %q no está en el keyring del KMS", ErrCurrentKeyMissing, currentID)
+		return kmsKeyringPlan{}, fmt.Errorf("%w: %q no está en el keyring del KMS", ErrCurrentKeyMissing, currentID)
 	}
 
-	keys := make(map[string][]byte, len(wrapped))
-	for id, ct := range wrapped {
-		kek, derr := dec.Decrypt(ctx, keyName, ct)
+	var indexCT []byte
+	switch idxB64 := strings.TrimSpace(cfg.IndexCiphertextB64); {
+	case idxB64 != "":
+		if indexCT, err = base64.StdEncoding.DecodeString(idxB64); err != nil {
+			return kmsKeyringPlan{}, fmt.Errorf("indexKey cifrada por el KMS: base64 inválido: %w", err)
+		}
+	case cfg.Prod && strings.TrimSpace(cfg.IndexB64) == "":
+		// La política de producción (§10.C) también es configuración: sin indexKey
+		// explícita el arranque muere igual, así que se dice ya y no después de
+		// desenvolver el keyring entero.
+		return kmsKeyringPlan{}, ErrIndexKeyRequiredInProd
+	}
+
+	return kmsKeyringPlan{keyName: keyName, currentID: currentID, wrapped: wrapped, indexCT: indexCT}, nil
+}
+
+// unwrapKeyring es la parte que SÍ habla con el KMS: desenvuelve cada KEK del
+// keyring y la indexKey, y arma el provider en memoria.
+func unwrapKeyring(ctx context.Context, cfg KMSConfig, plan kmsKeyringPlan, dec KMSDecrypter) (KeyProvider, error) {
+	keys := make(map[string][]byte, len(plan.wrapped))
+	for id, ct := range plan.wrapped {
+		kek, derr := dec.Decrypt(ctx, plan.keyName, ct)
 		if derr != nil {
 			// Sin el valor ni pistas del material: solo el key_id y la llave del KMS.
-			return nil, fmt.Errorf("%w (key_id %q, llave %s): %w", ErrKMSDecrypt, id, keyName, derr)
+			return nil, fmt.Errorf("%w (key_id %q, llave %s): %w", ErrKMSDecrypt, id, plan.keyName, derr)
 		}
 		if len(kek) != envelope.DEKSize {
 			return nil, fmt.Errorf("%w (key_id %q): el KMS devolvió %d bytes", ErrKEKSize, id, len(kek))
@@ -153,32 +207,28 @@ func newKMSKeyProvider(ctx context.Context, cfg KMSConfig, dec KMSDecrypter) (Ke
 		keys[id] = kek
 	}
 
-	indexKey, err := resolveKMSIndexKey(ctx, cfg, keyName, dec, keys[currentID])
+	indexKey, err := resolveKMSIndexKey(ctx, cfg, plan, dec, keys[plan.currentID])
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("[wapp][crypto][INFO] KeyProvider=kms: keyring desenvuelto por el KMS (keys=%d current=%q llave=%s); "+
-		"no se vuelve a llamar al KMS en caliente", len(keys), currentID, keyName)
-	return &envKeyProvider{keys: keys, currentID: currentID, indexKey: indexKey}, nil
+		"no se vuelve a llamar al KMS en caliente", len(keys), plan.currentID, plan.keyName)
+	return &envKeyProvider{keys: keys, currentID: plan.currentID, indexKey: indexKey}, nil
 }
 
 // resolveKMSIndexKey obtiene la indexKey del índice ciego en modo KMS: primero la
 // cifrada por el KMS (si se configuró), luego la explícita en claro, y si no hay
-// ninguna aplica la MISMA política que el provider env (fail-fast en prod, HKDF
-// con warning en dev).
-func resolveKMSIndexKey(ctx context.Context, cfg KMSConfig, keyName string, dec KMSDecrypter, currentKEK []byte) ([]byte, error) {
-	if strings.TrimSpace(cfg.IndexCiphertextB64) == "" {
+// ninguna aplica la MISMA política que el provider env (fail-fast en prod —ya
+// resuelto en validateKMSConfig—, HKDF con warning en dev).
+func resolveKMSIndexKey(ctx context.Context, cfg KMSConfig, plan kmsKeyringPlan, dec KMSDecrypter, currentKEK []byte) ([]byte, error) {
+	if len(plan.indexCT) == 0 {
 		return resolveIndexKey(cfg.IndexB64, cfg.Prod, currentKEK)
 	}
 
-	ct, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cfg.IndexCiphertextB64))
+	indexKey, err := dec.Decrypt(ctx, plan.keyName, plan.indexCT)
 	if err != nil {
-		return nil, fmt.Errorf("indexKey cifrada por el KMS: base64 inválido: %w", err)
-	}
-	indexKey, err := dec.Decrypt(ctx, keyName, ct)
-	if err != nil {
-		return nil, fmt.Errorf("%w (indexKey, llave %s): %w", ErrKMSDecrypt, keyName, err)
+		return nil, fmt.Errorf("%w (indexKey, llave %s): %w", ErrKMSDecrypt, plan.keyName, err)
 	}
 	if len(indexKey) != indexKeySize {
 		return nil, ErrIndexKeySize
