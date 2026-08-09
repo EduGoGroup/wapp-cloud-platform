@@ -9,6 +9,7 @@ package modules
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -63,6 +64,42 @@ type Effect struct {
 	Kind    string
 	Name    string
 	Payload map[string]any
+	// PrivateKeys nombra las claves del Payload que NO pueden acabar en
+	// public.flow_events. Es KindPrivate a nivel de clave, para el efecto que es
+	// público en su mayor parte y lleva UNA cosa que no debe quedar en claro.
+	//
+	// Nace del defecto A2 del cierre del Plan 041: note_added cumplía al pie de la
+	// letra su asimetría —el ámbito "order" publica el LARGO del texto, nunca el
+	// texto— y el literal entraba igualmente en flow_events por la otra puerta,
+	// dentro del payload de cart_closed. El requisito cumplía su letra y no su
+	// propósito.
+	//
+	// Quien lo poda es el PersistSink, no el módulo, por el mismo motivo por el que
+	// KindPrivate vive allí: si dependiera de que cada módulo se acuerde, bastaría
+	// uno distraído. El módulo solo DECLARA qué es sensible; la garantía la da la
+	// plataforma. Los proyectores y el resto de sinks siguen recibiendo el efecto
+	// ENTERO — la clave tiene un destino legítimo (una columna, un webhook), lo que
+	// no tiene es sitio en un outbox append-only y sin poda.
+	PrivateKeys []string
+}
+
+// PublicPayload es el Payload tal como puede escribirse en un registro en claro:
+// sin las claves declaradas en PrivateKeys.
+//
+// Devuelve una COPIA cuando hay algo que podar, nunca muta el Payload original:
+// ese mapa lo comparten todos los sinks del fan-out —es el mismo puntero, como
+// recordó la Ola 3.1 del Plan 042 al ordenar las fases— y vaciarle una clave aquí
+// se la quitaría al proyector que sí tiene que escribirla.
+func (e Effect) PublicPayload() map[string]any {
+	if len(e.PrivateKeys) == 0 || len(e.Payload) == 0 {
+		return e.Payload
+	}
+	out := make(map[string]any, len(e.Payload))
+	maps.Copy(out, e.Payload)
+	for _, k := range e.PrivateKeys {
+		delete(out, k)
+	}
+	return out
 }
 
 // KindPrivate marca un efecto cuyo PAYLOAD contiene datos personales del cliente
