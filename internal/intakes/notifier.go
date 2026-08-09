@@ -362,3 +362,69 @@ func depositDueDays(days int) int {
 	}
 	return days
 }
+
+// crmStatusTemplates es el texto por estado del CRM (Plan 042 · T4.4). Es un mapa
+// SEPARADO de statusTemplates y no una ampliación suya, por la misma razón por la
+// que crm_status es una columna propia: los dos vocabularios son DISJUNTOS
+// (D-042.6). Fundirlos obligaría a decidir qué significa `preparing` en el ciclo de
+// vida de wApp, que es justo la semántica de CRM que INV-08 prohíbe inventar.
+//
+// `rejected` NO tiene texto propio: toma el del ciclo de vida a propósito. Es el
+// único literal que comparten los dos vocabularios y el hecho que le llega al
+// cliente es el mismo —«no podemos tomar tu pedido»—, así que dos redacciones
+// distintas para lo mismo solo se separarían con el tiempo.
+//
+// Los otros tres se escribieron aquí porque el 041 no tenía ninguno que sirviera:
+// `paid` no puede tomar prestado el de `settled` ni el de `deposit_paid`, que hablan
+// del cobro que gestiona el DUEÑO en wApp, no de lo que su CRM dio por pagado.
+// Siguen el criterio del 041: no repiten lo que el carrito ya dijo al cerrar, no
+// prometen plazos que nadie puede cumplir y dejan la puerta abierta a responder.
+var crmStatusTemplates = map[string]string{
+	CRMStatusPaid:      "Recibimos tu pago. ¡Gracias! Ya estamos con tu pedido.",
+	CRMStatusPreparing: "Tu pedido ya se está preparando. Te avisamos apenas salga.",
+	CRMStatusDelivered: "Tu pedido fue entregado. ¡Que lo disfrutes! Cualquier cosa, respóndenos por aquí.",
+	CRMStatusRejected:  statusTemplates[StatusRejected],
+}
+
+// NotifyCRMStatus avisa al cliente de que su pedido cambió de estado EN EL CRM del
+// negocio (Plan 042 · T4.4).
+//
+// Reutiliza la mecánica entera del 041 O4 —resolución del destinatario por la vía
+// custodiada, envío por la sesión del negocio, contención del pánico— y cambia solo
+// de dónde sale el texto. Eso es lo que hace que el aviso salga igual venga el
+// cambio del CRM o de la pantalla del dueño, que es lo que pide T4.4.
+//
+// NO devuelve error, igual que NotifyStatus y por lo mismo (regla 1 de la cabecera):
+// cuando esto corre, el reflejo YA está escrito. Un error hacia arriba haría que el
+// puente reintentara y volviera a escribir lo mismo para nada, y el aviso tampoco se
+// recuperaría por ese camino.
+//
+// Solo se llama con un cambio REAL: un puente con reintentos manda el mismo estado
+// muchas veces y el cliente no puede recibir el mismo mensaje una vez por reintento.
+// Esa decisión vive en el llamante, que es quien sabe si la fila cambió.
+func (n *Notifier) NotifyCRMStatus(ctx context.Context, tenantID string, in Intake, crmStatus string) {
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil || n.settings == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.contenerPánico(in)
+
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"crm_status", crmStatus,
+	)
+
+	tpl, ok := crmStatusTemplates[crmStatus]
+	if !ok {
+		// Un estado canónico SIN plantilla no debería existir —hay un test que lo
+		// vigila—, así que esto no es el silencio normal de statusTemplates: es una
+		// anomalía y se registra como tal.
+		log.Warn("notificación CRM: estado canónico sin texto, el cliente no se entera")
+		return
+	}
+	// render con dueDays en cero: ninguna de estas plantillas usa {plazo} ni
+	// {fecha_limite} —son del cobro que gestiona el dueño, no del CRM— y el {total}
+	// se resuelve igual que en el resto de los avisos.
+	n.deliver(ctx, tenantID, in, render(tpl, in, 0), log)
+}

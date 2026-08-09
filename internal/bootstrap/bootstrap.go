@@ -330,8 +330,16 @@ func Run(ctx context.Context) error {
 			intakes.WithNotifier(intakeNotifier),
 			intakes.WithDepositReminder(depositReminder)),
 		TenantVariables: tenantvars.NewPostgres(db),
-		ConfigPush:      gw,
-		Health:          publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
+		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
+		// de la ida, el MISMO gate que decide si se encola, el store de solicitudes y el
+		// notificador del Plan 041. Nada de esto es nuevo salvo el cable.
+		CRMSecrets: integrationsStore,
+		CRMGate:    webhookGate,
+		CRMReflect: intakeStore,
+		CRMNotify:  intakeNotifier,
+		ConfigPush: gw,
+		Health:     publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 	})
 	if err != nil {
 		return err
