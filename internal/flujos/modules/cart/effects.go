@@ -155,12 +155,25 @@ func closedEffect(lines []cartLine, note string) modules.Effect {
 		"items": items,
 		"total": total(lines),
 	}
+	// customer_note viaja en el payload —el proyector la escribe en
+	// intakes.customer_note y el sink del CRM la manda al puente— pero se DECLARA
+	// privada para que el PersistSink no la deje en public.flow_events.
+	//
+	// Sin esto, la asimetría de noteAddedEffect (arriba: el ámbito "order" publica
+	// el LARGO, nunca el texto) se cumplía al pie de la letra y el literal entraba
+	// igual por esta puerta: el requisito cumplía su letra y no su propósito. Es el
+	// defecto A2 del cierre del Plan 041, confirmado en producción — un cart_closed
+	// con «Dejarlo en portería» en claro, mientras el RUT (que sí va por
+	// KindPrivate) salía 0 de 16.
+	var private []string
 	if note != "" {
 		payload["customer_note"] = note
+		private = []string{"customer_note"}
 	}
 	return modules.Effect{
-		Kind:    kindPersist,
-		Name:    EffectCartClosed,
-		Payload: payload,
+		Kind:        kindPersist,
+		Name:        EffectCartClosed,
+		PrivateKeys: private,
+		Payload:     payload,
 	}
 }

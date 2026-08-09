@@ -43,12 +43,19 @@ func NewPersistSink(repo flowEventStore, projectors ...modules.Projector) *Persi
 // avance: el estado ya está persistido). Efectos sin proyector (navegación/telemetría)
 // solo quedan en flow_events.
 //
-// La ÚNICA excepción a "siempre en flow_events" es modules.KindPrivate (Plan 041 ·
-// T4.5): ese efecto lleva datos personales y flow_events es un outbox append-only,
-// en claro y sin poda. Se salta el INSERT y va DIRECTO al proyector, que lo cifra.
-// La regla vive aquí y no en el módulo a propósito: si dependiera de que cada
-// módulo se acuerde de no emitir PII, bastaría un módulo nuevo distraído para
-// escribirla; siendo del sink, la garantía es de la plataforma.
+// Hay DOS excepciones a "siempre en flow_events", y las dos son de la plataforma,
+// no del módulo — si dependieran de que cada módulo se acuerde de no emitir PII,
+// bastaría uno nuevo distraído:
+//
+//   - modules.KindPrivate (Plan 041 · T4.5): el efecto ENTERO lleva datos
+//     personales. Se salta el INSERT y va DIRECTO al proyector, que lo cifra.
+//   - Effect.PrivateKeys (defecto A2 del cierre del Plan 041): el efecto es
+//     público salvo por unas claves. Se escribe SIN ellas (PublicPayload) y el
+//     proyector sigue recibiéndolo entero.
+//
+// Las dos existen por lo mismo: public.flow_events es un outbox append-only, en
+// claro y sin poda, así que lo que se escriba ahí sobrevive a la solicitud que lo
+// motivó y a cualquier borrado posterior.
 func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.Effect) error {
 	if eff.Kind != modules.KindPrivate {
 		fe := store.FlowEvent{
@@ -58,7 +65,7 @@ func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 			FlowVersion: ec.FlowVersion,
 			Kind:        eff.Kind,
 			Name:        eff.Name,
-			Payload:     eff.Payload,
+			Payload:     eff.PublicPayload(),
 		}
 		if err := s.repo.InsertFlowEvent(ctx, fe); err != nil {
 			return err
