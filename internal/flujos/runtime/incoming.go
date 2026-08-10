@@ -239,6 +239,12 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 		return fmt.Errorf("runtime: step: %w", err)
 	}
 	st.LastWaMessageID = m.GetWaMessageId()
+	// CIERRE NATURAL del evento (Plan 043 · T4.1): si el Step dejó el flujo en el
+	// centinela y la conversación tenía evento activo, el evento pasa a `closed` y el
+	// puntero se apaga EN ESTE MISMO Save — una escritura de flow_state, no dos. Va
+	// ANTES del Save (el estado que se persiste ya es el final) y antes del fan-out:
+	// los sinks proyectan sobre un evento cuya muerte ya está sellada.
+	rt.closeIfFinished(ctx, &st)
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
 	}

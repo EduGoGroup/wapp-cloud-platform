@@ -42,6 +42,12 @@ type EventStore interface {
 	// puede seguir `open` y no poder retomarse, porque quien decidió que ya no vale fue
 	// una persona sobre el pedido, no un reloj sobre el evento. limit <= 0 ⇒ sin tope.
 	ListRescuable(ctx context.Context, tenantID, sessionID, contactID string, limit int) ([]events.Rescuable, error)
+	// GetEventForTenant lee UN evento por id ACOTADO al tenant (T4.2): el
+	// aislamiento va en el SQL (id AND tenant_id), no en una comparación en Go.
+	// events.ErrEventNotFound cubre TODA ausencia —id inexistente o de otro
+	// tenant—, que para este llamante son la misma respuesta (el 404 que no
+	// filtra existencia cruzada).
+	GetEventForTenant(ctx context.Context, tenantID, eventID string) (events.Event, error)
 	// TransitionEvent mueve el evento a un estado terminal con el guard de la BD.
 	TransitionEvent(ctx context.Context, eventID string, to events.Status) error
 	// Touch refresca last_activity_at: EL reloj de conversación (E-6).
@@ -69,6 +75,14 @@ type EventStore interface {
 //
 // nil ⇒ el evento se cierra igual pero su solicitud NO se abandona; se LOGUEA. Es
 // la mitad del hecho, así que el bootstrap lo cablea siempre.
+//
+// CONTRATO (Plan 043 · Ola 4): AbandonIntake pide un ESTADO, no una transición, y por
+// tanto es IDEMPOTENTE — encontrar la solicitud ya en `abandoned` es ÉXITO (nil), no
+// error. No es un capricho de firma: el reintento de una cancelación cuya costura se
+// quedó a medias vuelve a pedir el abandono (repairCancelled), y una implementación
+// que devolviera el error de «transición inválida de abandoned a abandoned» dejaría
+// esa reparación sin poder terminar nunca. Toda transición IMPOSIBLE de verdad
+// —abandonar una `confirmed`— sí debe salir como error.
 type IntakeAbandoner interface {
 	AbandonIntake(ctx context.Context, tenantID, intakeID string) error
 }
@@ -315,7 +329,7 @@ func (rt *Runtime) reuseOrRetire(ctx context.Context, tenantID string, ev events
 //
 // El pedido NO se borra (INV-09): sigue en la bandeja y sigue exportable.
 func (rt *Runtime) retireForNew(ctx context.Context, tenantID string, ev events.Event) error {
-	if err := rt.events.TransitionEvent(ctx, ev.ID, events.StatusCancelled); err != nil {
+	if err := rt.cancelAndAbandon(ctx, tenantID, ev); err != nil {
 		if errors.Is(err, events.ErrNotOpen) {
 			// Otro escritor lo cerró entre el SELECT y el UPDATE: el tipo quedó libre,
 			// que es justo lo que queríamos. Carrera benigna.
@@ -325,16 +339,37 @@ func (rt *Runtime) retireForNew(ctx context.Context, tenantID string, ev events.
 		}
 		return fmt.Errorf("runtime: cerrar el evento vencido para empezar otro (E-11): %w", err)
 	}
+	return nil
+}
+
+// cancelAndAbandon es la muerte explícita por cancelación, COMPARTIDA por sus dos
+// puertas (E-11 en retireForNew y el cancel por id de T4.2/T4.3): transición
+// open→cancelled con el guard del store y, DESPUÉS, el abandono de la solicitud
+// que colgara. El orden es el hecho único de E-8 §4: si el evento no se pudo
+// cerrar, la solicitud no se toca; si el abandono falla, el error se PROPAGA con
+// el evento ya cancelado (costura conocida — el llamante no puede deshacer la
+// transición, y reintentar el cancel la recorre idempotente).
+//
+// El error de la transición sale TAL CUAL (events.ErrNotOpen incluido): qué
+// significa perder la carrera lo decide cada llamante — para E-11 es «el tipo
+// quedó libre», para el cancel por id es «ya estaba muerto: re-lee y devuélvelo».
+//
+// El pedido JAMÁS se borra (INV-09): `abandoned` lo deja en la bandeja, intacto y
+// exportable.
+func (rt *Runtime) cancelAndAbandon(ctx context.Context, tenantID string, ev events.Event) error {
+	if err := rt.events.TransitionEvent(ctx, ev.ID, events.StatusCancelled); err != nil {
+		return err
+	}
 	if ev.IntakeID == "" {
 		return nil
 	}
 	if rt.intakes == nil {
-		rt.log.Warn("runtime: evento cerrado por E-11 pero su solicitud NO se abandonó (sin IntakeAbandoner cableado)",
+		rt.log.Warn("runtime: evento cancelado pero su solicitud NO se abandonó (sin IntakeAbandoner cableado)",
 			"tenant_id", tenantID, "event_kind", ev.Kind)
 		return nil
 	}
 	if err := rt.intakes.AbandonIntake(ctx, tenantID, ev.IntakeID); err != nil {
-		return fmt.Errorf("runtime: abandonar la solicitud del evento cerrado (E-11): %w", err)
+		return fmt.Errorf("runtime: abandonar la solicitud del evento cancelado: %w", err)
 	}
 	return nil
 }
@@ -453,6 +488,13 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 //
 // Sin flow_state (flujo vacío, o un arranque que no persistió) no hay dónde estampar
 // y se LOGUEA: el evento existe y es rescatable por su tipo, que es lo que importa.
+//
+// El closeIfFinished de antes del Save es el cierre natural de un flujo DE UN SOLO
+// PASO (T4.1): un evento cuyo flujo termina en el propio Enter (message sin next)
+// llega aquí con el estado YA en el centinela — startLocked nunca ve el puntero
+// (trabaja con un estado fresco), así que este es el primer sitio donde el evento y
+// su final coinciden. Se estampa y se cierra en el MISMO Save: la fila queda closed
+// y el puntero no sobrevive ni un turno apuntando a un muerto.
 func (rt *Runtime) pointStateAtEvent(ctx context.Context, key store.Key, eventID string) error {
 	st, ok, err := rt.store.Load(ctx, key)
 	if err != nil {
@@ -464,6 +506,7 @@ func (rt *Runtime) pointStateAtEvent(ctx context.Context, key store.Key, eventID
 		return nil
 	}
 	st.EventID = eventID
+	rt.closeIfFinished(ctx, &st)
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: apuntar el evento activo: %w", err)
 	}
@@ -815,13 +858,28 @@ func (rt *Runtime) presentMenu(ctx context.Context, key store.Key, sessionID, ev
 // en Vars. Crea el flow_state si no existía: un contacto puede pedir el menú sin
 // tener ninguna conversación abierta, y ese estado NO tiene flujo — es legítimo, y
 // por eso advanceLive comprueba que haya definición antes de ir al motor.
+//
+// Un estado TERMINAL cuenta como «ninguna conversación abierta» y se trata igual que
+// la ausencia (Plan 043 · Ola 4). No es cosmético: este es el ÚNICO camino que estampa
+// el puntero sin pasar por pointStateAtEvent —el del `if flowID != ""` borra el estado
+// previo, y este no—, así que heredar el flujo YA ACABADO dejaba el menú colgando de
+// él, y el cierre natural (T4.1) mataba el evento del MENÚ en el siguiente entrante
+// creyendo que ese flujo terminado era suyo: `closed` sin que ningún flujo suyo
+// terminara —el menú ni siquiera tiene flujo (D-043.3)— y un `event_closed` falso en
+// la telemetría. Verificado por sonda antes de escribir esto.
+//
+// Se conserva LastWaMessageID: es la dedupe del entrante, no pertenece al flujo que
+// acabó, y perderla reabriría la puerta a reprocesar el mismo mensaje.
 func (rt *Runtime) saveMenuState(ctx context.Context, key store.Key, eventID, raw string) error {
 	st, ok, err := rt.store.Load(ctx, key)
 	if err != nil {
 		return fmt.Errorf("runtime: cargar estado para el menú: %w", err)
 	}
-	if !ok {
-		st = model.Conversation{TenantID: key.TenantID, SessionID: key.SessionID, ContactID: key.ContactID}
+	if !ok || st.Finished() {
+		st = model.Conversation{
+			TenantID: key.TenantID, SessionID: key.SessionID, ContactID: key.ContactID,
+			LastWaMessageID: st.LastWaMessageID,
+		}
 	}
 	if st.Vars == nil {
 		st.Vars = map[string]any{}

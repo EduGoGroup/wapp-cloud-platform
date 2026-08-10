@@ -65,6 +65,11 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 		return false, fmt.Errorf("runtime: reentrar tras reinicio: %w", err)
 	}
 	fresh.LastWaMessageID = m.GetWaMessageId()
+	// CIERRE NATURAL (Plan 043 · T4.1): la copia conserva el EventID del estado que
+	// se reinicia, y un Enter sobre un flujo sin nodo interactivo (message sin next)
+	// deja `fresh` YA en el centinela. Mismo trato que advanceLive: cerrar y apagar
+	// el puntero en el MISMO Save, no en una segunda escritura.
+	rt.closeIfFinished(ctx, &fresh)
 	if err := rt.store.Save(ctx, fresh); err != nil {
 		return false, fmt.Errorf("runtime: guardar conversación reiniciada: %w", err)
 	}

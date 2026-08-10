@@ -97,6 +97,14 @@ var (
 	ErrNotOpen = errors.New("events: el evento no está open (transición rechazada por el guard)")
 	// ErrEventMissing lo devuelve Touch cuando el id no existe.
 	ErrEventMissing = errors.New("events: el evento no existe")
+	// ErrEventNotFound lo devuelve GetEventForTenant cuando no hay fila para
+	// (id, tenant): también cuando el id EXISTE pero es de otro tenant, y esa
+	// indistinción es deliberada (T4.2) — para el llamante «no es tuyo» y «no
+	// existe» tienen que ser la MISMA respuesta (el 404 que no filtra existencia
+	// cruzada). Es un sentinela aparte de ErrEventMissing porque Touch responde a
+	// una pregunta sin tenant y este a una acotada; fusionarlos invitaría a usar
+	// Touch como comprobación de pertenencia, que es justo lo que no comprueba.
+	ErrEventNotFound = errors.New("events: el evento no existe para ese tenant")
 	// ErrSummaryNotJSON lo devuelve AppendSummary si el cuerpo no es JSON válido.
 	// El nivel 1 del ADR-0034 es ESTRUCTURA en claro, no prosa: si el resumen no
 	// es JSON, lo que se está intentando meter es texto libre por la puerta que no
