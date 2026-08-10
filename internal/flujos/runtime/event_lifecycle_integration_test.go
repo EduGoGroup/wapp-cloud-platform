@@ -26,14 +26,22 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
-// abandonaConElServicio es el adaptador REAL del test: la misma puerta que cablea
-// el bootstrap (Service.Abandon, que por dentro es SetStatus y jamás
-// Store.UpdateStatus — ADR-0029 · E-11.5), para que el abandono pase por
-// CanTransition de verdad y traiga su idempotencia de verdad.
-type abandonaConElServicio struct{ svc *intakes.Service }
+// abandonaPorEvento es el DOBLE del puerto AbandonByEvent contra la BD real
+// (T4.5.5a): la implementación de producción vive en el dominio intakes (la
+// escribe el frente de intakes de esta misma ola, detrás de su servicio) y este
+// test NO puede importarla a medias. El doble reproduce el CONTRATO exacto de
+// D-043.21 —«abandona el intake `open` que declare este event_id»; cero filas =
+// éxito idempotente— con el UPDATE literal de la decisión, para que lo que se
+// verifique aquí sea la costura del runtime contra la FK invertida REAL
+// (intakes.event_id de la 0054), no la mecánica interna del dominio intakes.
+type abandonaPorEvento struct{ db *sql.DB }
 
-func (a abandonaConElServicio) AbandonIntake(ctx context.Context, tenantID, intakeID string) error {
-	return a.svc.Abandon(ctx, tenantID, intakeID)
+func (a abandonaPorEvento) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
+	_, err := a.db.ExecContext(ctx,
+		`UPDATE public.intakes SET status = 'abandoned'
+		  WHERE tenant_id = $1 AND event_id = $2 AND status = 'open'`,
+		tenantID, eventID)
+	return err
 }
 
 // armaRuntimeReal construye el runtime de la ola sobre los almacenes Postgres
@@ -53,7 +61,7 @@ func armaRuntimeReal(t *testing.T, db *sql.DB, tenantID string, rules ...trigger
 	}
 	evs := events.NewStore(db, nil)
 	contacts := contact.NewMemoryResolver(nil)
-	abandoner := abandonaConElServicio{svc: intakes.NewService(intakes.NewPostgres(db))}
+	abandoner := abandonaPorEvento{db: db}
 	rt := runtime.New(repo, newEngine(), &fakeSender{}, fakeResolver{tenantID: tenantID}, contacts, discardLogger(),
 		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)),
 		runtime.WithEventStore(evs),
@@ -199,13 +207,19 @@ func TestIntegration_T41_CierreNatural_E2E(t *testing.T) {
 
 // siembraIntakeConLineas crea la solicitud open con sus líneas, con SQL directo:
 // lo que está bajo prueba es qué le pasa al CANCELAR, no el ciclo que la produce.
-func siembraIntakeConLineas(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sessionID, contactID string, skus ...string) string {
+//
+// Ola 4.5: la solicitud DECLARA a su padre (`event_id`, D-043.21) — sembrarla sin
+// él ya ni siquiera es posible: el CHECK de la 0054 rechaza toda fila nueva con
+// event_id NULL, que es exactamente el «huérfano imposible por construcción». Por
+// eso el evento se crea ANTES y esta firma lo exige; el t.Cleanup lo aporta
+// limpiaTenant (el DELETE del tenant arrastra por CASCADE eventos e intakes).
+func siembraIntakeConLineas(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sessionID, contactID, eventID string, skus ...string) string {
 	t.Helper()
 	var intakeID string
 	err := db.QueryRowContext(ctx, `
-		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'open') RETURNING id`,
-		tenantID, contactID, sessionID).Scan(&intakeID)
+		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, event_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'open', $4) RETURNING id`,
+		tenantID, contactID, sessionID, eventID).Scan(&intakeID)
 	if err != nil {
 		t.Fatalf("sembrar intake: %v", err)
 	}
@@ -230,11 +244,13 @@ func TestIntegration_T43_CancelarAbandonaElIntakeConSusLineasIntactas(t *testing
 	limpiaTenant(t, db, tenantID)
 	ctx := context.Background()
 	rt, repo, evs, _ := armaRuntimeReal(t, db, tenantID)
-	session := fmt.Sprintf("t41-sess-%d", time.Now().UnixNano())
+	session := fmt.Sprintf("t45r-sess-%d", time.Now().UnixNano())
 	contactID := "aaaaaaaa-0000-4000-8000-000000004143"
 
-	intakeID := siembraIntakeConLineas(ctx, t, db, tenantID, session, contactID, "t41-sku-1", "t41-sku-2")
-	ev := siembraEventoApuntado(ctx, t, evs, repo, tenantID, session, contactID, intakeID)
+	// Primero el evento, luego la solicitud que lo DECLARA (FK invertida, D-043.21):
+	// el orden inverso ya no puede ni escribirse — el CHECK de la 0054 lo rechaza.
+	ev := siembraEventoApuntado(ctx, t, evs, repo, tenantID, session, contactID)
+	intakeID := siembraIntakeConLineas(ctx, t, db, tenantID, session, contactID, ev.ID, "t45r-sku-1", "t45r-sku-2")
 
 	got, err := rt.CancelEventForTenant(ctx, tenantID, ev.ID)
 	if err != nil {
@@ -275,13 +291,15 @@ func TestIntegration_T43_CancelarAbandonaElIntakeConSusLineasIntactas(t *testing
 	}
 }
 
-// siembraEventoApuntado crea el evento cart (real, por el store) ligado a la
-// solicitud dada y deja el flow_state de su conversación apuntándolo.
-func siembraEventoApuntado(ctx context.Context, t *testing.T, evs *events.Store, repo *store.PostgresRepository, tenantID, session, contactID, intakeID string) events.Event {
+// siembraEventoApuntado crea el evento cart (real, por el store) y deja el
+// flow_state de su conversación apuntándolo. Desde la Ola 4.5 el evento NO conoce
+// a su solicitud (D-043.21): quien quiera un evento CON pedido crea primero el
+// evento y luego siembra el intake declarando este id (siembraIntakeConLineas).
+func siembraEventoApuntado(ctx context.Context, t *testing.T, evs *events.Store, repo *store.PostgresRepository, tenantID, session, contactID string) events.Event {
 	t.Helper()
 	ev, err := evs.CreateEvent(ctx, events.NewEvent{
 		TenantID: tenantID, SessionID: session, ContactID: contactID,
-		Kind: "cart", FlowID: testFlow, FlowVersion: 1, IntakeID: intakeID,
+		Kind: "cart", FlowID: testFlow, FlowVersion: 1,
 	})
 	if err != nil {
 		t.Fatalf("CreateEvent: %v", err)

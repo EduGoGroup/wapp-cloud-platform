@@ -29,10 +29,12 @@ type ConversationEventCanceller interface {
 	// existe bajo otro tenant, que para este puerto es exactamente lo mismo.
 	GetEventForTenant(ctx context.Context, tenantID, eventID string) (events.Event, error)
 	// CancelEventForTenant cancela con el guard open→cancelled: sella closed_at,
-	// limpia el flow_state que apuntara al evento y deja `abandoned` el intake
-	// abierto que colgara de él (T4.3). IDEMPOTENTE: sobre un evento ya terminal
-	// devuelve la fila tal cual, sin tocarla. Las carreras internas llegan aquí ya
-	// resueltas: el retorno es el estado final.
+	// limpia el flow_state que apuntara al evento y abandona el contenido vivo que
+	// colgara de él — POR EVENTO (D-043.21/T4.5.5): el runtime cierra al hijo por
+	// su propio event_id, y ni él ni este handler cargan ids de ningún dominio de
+	// contenido. IDEMPOTENTE: sobre un evento ya terminal devuelve la fila tal
+	// cual, sin tocarla. Las carreras internas llegan aquí ya resueltas: el
+	// retorno es el estado final.
 	CancelEventForTenant(ctx context.Context, tenantID, eventID string) (events.Event, error)
 }
 
@@ -108,6 +110,9 @@ func cancelConversationEventHandler(canceller ConversationEventCanceller,
 		// que la pantalla que pinta la bandeja pueda pintar la respuesta sin otro
 		// contrato. `stale` viaja false: la marca «vencido» es una pregunta sobre
 		// eventos ABIERTOS y este acaba de dejar de serlo (o ya lo había dejado).
+		// `content_state`/`content_ref` viajan OMITIDOS: son derivados del join del
+		// LISTADO (D-043.22) y esta respuesta no los recalcula — quien quiera el
+		// contenido tras cancelar vuelve a la bandeja, que es su fuente.
 		writeJSON(w, http.StatusOK, toConversationEventDTO(events.Rescuable{Event: out}))
 	})
 }

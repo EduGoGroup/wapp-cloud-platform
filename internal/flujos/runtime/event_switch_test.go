@@ -29,13 +29,68 @@ type memEventStore struct {
 	// contactID lo fija el test que siembra filas a mano (seedAlive), que necesita
 	// el contact_id opaco YA resuelto para que la fila case con la conversación.
 	contactID string
-	// descartados son los eventos cuya solicitud el dueño mandó a `abandoned`: siguen
-	// `open` y ya no se rescatan (INV-17). Lo puebla descartar().
+	// descartados son los eventos cuyo CONTENIDO dejó de estar vivo porque el dueño
+	// lo mandó a `abandoned` (en la vista event_content: state='discarded',
+	// D-043.22): siguen `open` y ya no se rescatan (INV-17). Lo puebla descartar().
 	descartados map[string]bool
 	// resumenes imita conversation_event_messages con entry_kind='summary': por evento
 	// y EN ORDEN, que es lo que permite comprobar que un segundo abandono añade una
 	// fila en vez de pisar la primera (T3.4).
 	resumenes map[string][]json.RawMessage
+	// decisiones imita las filas entry_kind='decision' del hilo (T4.5.7a), por
+	// evento y en orden.
+	decisiones map[string][]json.RawMessage
+	// mensajes imita las filas entry_kind='message' del hilo (T4.5.7b), por evento
+	// y en orden. El doble guarda el CLARO — lo que fija el cifrado real es el
+	// store de events, no este test.
+	mensajes map[string][]mensajeHilo
+}
+
+// mensajeHilo es una fila `message` del doble: quién habló y qué dijo.
+type mensajeHilo struct {
+	role events.Role
+	body string
+}
+
+// AppendDecision imita la fila `decision` del hilo (T4.5.7a).
+func (m *memEventStore) AppendDecision(_ context.Context, eventID string, payload []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.decisiones == nil {
+		m.decisiones = map[string][]json.RawMessage{}
+	}
+	m.decisiones[eventID] = append(m.decisiones[eventID], append(json.RawMessage(nil), payload...))
+	return nil
+}
+
+// AppendMessage imita la fila `message` del hilo (T4.5.7b) y devuelve su seq.
+func (m *memEventStore) AppendMessage(_ context.Context, eventID string, role events.Role, body string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mensajes == nil {
+		m.mensajes = map[string][]mensajeHilo{}
+	}
+	m.mensajes[eventID] = append(m.mensajes[eventID], mensajeHilo{role: role, body: body})
+	return len(m.mensajes[eventID]), nil
+}
+
+// mensajesDe devuelve las filas `message` de un evento, en orden.
+func (m *memEventStore) mensajesDe(eventID string) []mensajeHilo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]mensajeHilo(nil), m.mensajes[eventID]...)
+}
+
+// totalMensajes cuenta TODAS las filas `message` del doble: es lo que permite
+// afirmar «cero filas» sin saber a qué evento habrían ido a parar.
+func (m *memEventStore) totalMensajes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, ms := range m.mensajes {
+		n += len(ms)
+	}
+	return n
 }
 
 // AppendSummary imita la escritura del resumen y devuelve el `seq` que le tocó, igual
@@ -86,7 +141,7 @@ func (m *memEventStore) CreateEvent(_ context.Context, in events.NewEvent) (even
 	ev := events.Event{
 		ID: fmt.Sprintf("ev-%d", m.seq), TenantID: in.TenantID, SessionID: in.SessionID,
 		ContactID: in.ContactID, Kind: in.Kind, HistoryID: events.HistoryID(in.Kind, m.now),
-		Status: events.StatusOpen, FlowID: in.FlowID, IntakeID: in.IntakeID,
+		Status: events.StatusOpen, FlowID: in.FlowID, FlowVersion: in.FlowVersion,
 		CreatedAt: m.now, LastActivityAt: m.now,
 	}
 	m.rows = append(m.rows, ev)
@@ -165,20 +220,6 @@ func (m *memEventStore) GetEventForTenant(_ context.Context, tenantID, eventID s
 		}
 	}
 	return events.Event{}, fmt.Errorf("%w (id=%s)", events.ErrEventNotFound, eventID)
-}
-
-// setIntake liga a mano una solicitud al evento, como haría la proyección del
-// carrito al parirla: es lo que permite fabricar un evento CON intake sin montar
-// el módulo cart entero.
-func (m *memEventStore) setIntake(eventID, intakeID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.rows {
-		if m.rows[i].ID == eventID {
-			m.rows[i].IntakeID = intakeID
-			return
-		}
-	}
 }
 
 func (m *memEventStore) TransitionEvent(_ context.Context, eventID string, to events.Status) error {
@@ -589,35 +630,38 @@ func TestEventStartSobreElActivo_NoConsumeElTurno(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // seedAlive inyecta un evento vivo con la última actividad dada: es lo que permite
-// fabricar un evento VENCIDO sin esperar dos horas.
-func (m *memEventStore) seedAlive(kind, intakeID string, last time.Time) events.Event {
+// fabricar un evento VENCIDO sin esperar dos horas. La ligadura con su solicitud ya
+// NO se siembra a mano (criterio de la Ola 4.5): con la FK invertida (D-043.21) es
+// el intake quien declara su event_id, y el runtime pide el abandono POR EVENTO.
+func (m *memEventStore) seedAlive(kind string, last time.Time) events.Event {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.seq++
 	ev := events.Event{
 		ID: fmt.Sprintf("ev-%d", m.seq), TenantID: testTenant, SessionID: testSession,
 		ContactID: m.contactID, Kind: kind, HistoryID: events.HistoryID(kind, last),
-		Status: events.StatusOpen, FlowID: testFlow, IntakeID: intakeID,
+		Status: events.StatusOpen, FlowID: testFlow,
 		CreatedAt: last, LastActivityAt: last,
 	}
 	m.rows = append(m.rows, ev)
 	return ev
 }
 
-// fakeAbandoner registra a qué solicitudes se les pidió el abandono.
+// fakeAbandoner registra de qué EVENTOS se pidió abandonar la solicitud
+// (AbandonByEvent, T4.5.5a): el runtime ya no conoce ids de intakes.
 type fakeAbandoner struct {
 	mu  sync.Mutex
 	ids []string
-	// err, si no es nil, es lo que devuelve AbandonIntake. Sirve para encender y
+	// err, si no es nil, es lo que devuelve AbandonByEvent. Sirve para encender y
 	// APAGAR el fallo dentro de un mismo test (la costura de fallo parcial y su
 	// reparación al reintentar); el cero es «no falla», así que nadie más lo nota.
 	err error
 }
 
-func (f *fakeAbandoner) AbandonIntake(_ context.Context, _, intakeID string) error {
+func (f *fakeAbandoner) AbandonByEvent(_ context.Context, _, eventID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.ids = append(f.ids, intakeID)
+	f.ids = append(f.ids, eventID)
 	return f.err
 }
 
@@ -653,12 +697,13 @@ func newE11Runtime(t *testing.T, now time.Time) (*runtime.Runtime, *store.Memory
 // TestE11_EmpezarDeNuevoCierraElVencido: el caso de Marta. Su carrito del 1 de enero
 // está vivo y VENCIDO; el 15 pulsa «empezar un pedido» y ese acto suyo lo cierra
 // (cancelled) y abandona su solicitud, dejando sitio al nuevo. El pedido NO se borra.
+// El abandono se pide POR EVENTO (T4.5.5a): ninguna ligadura se siembra a mano.
 func TestE11_EmpezarDeNuevoCierraElVencido(t *testing.T) {
 	quince := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 	rt, _, contacts, evs, ab := newE11Runtime(t, quince)
 	cid := resolveID(t, contacts, testContact)
 	evs.contactID = cid
-	viejo := evs.seedAlive("cart", "intake-viejo", time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))
+	viejo := evs.seedAlive("cart", time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))
 
 	key := store.Key{TenantID: testTenant, SessionID: testSession, ContactID: cid}
 	if _, err := rt.StartNewOfKind(context.Background(), key, testSession, "cart", testFlow, ""); err != nil {
@@ -668,8 +713,8 @@ func TestE11_EmpezarDeNuevoCierraElVencido(t *testing.T) {
 	if got := evs.statuses()[viejo.ID]; got != events.StatusCancelled {
 		t.Fatalf("el vencido debe quedar cancelled, y quedó %q", got)
 	}
-	if got := ab.seen(); len(got) != 1 || got[0] != "intake-viejo" {
-		t.Fatalf("su solicitud debe quedar abandonada, y se pidió %v", got)
+	if got := ab.seen(); len(got) != 1 || got[0] != viejo.ID {
+		t.Fatalf("el abandono debe pedirse por el EVENTO cerrado (%q), y se pidió %v", viejo.ID, got)
 	}
 	alive := evs.alive()
 	if len(alive) != 1 || alive[0].ID == viejo.ID {
@@ -689,7 +734,7 @@ func TestE11_NoCierraElQueSigueEnSuVentana(t *testing.T) {
 	cid := resolveID(t, contacts, testContact)
 	evs.contactID = cid
 	// Última actividad hace 10 minutos: muy dentro del TTL por defecto (2 h).
-	vivo := evs.seedAlive("cart", "intake-vivo", ahora.Add(-10*time.Minute))
+	vivo := evs.seedAlive("cart", ahora.Add(-10*time.Minute))
 
 	key := store.Key{TenantID: testTenant, SessionID: testSession, ContactID: cid}
 	if _, err := rt.StartNewOfKind(context.Background(), key, testSession, "cart", testFlow, ""); err != nil {
@@ -852,7 +897,7 @@ func TestMenu_EmpezarUnoNuevoAplicaE11(t *testing.T) {
 
 	// Un carrito del 1 de enero: vivo y muy vencido.
 	evs.contactID = resolveID(t, contacts, testContact)
-	viejo := evs.seedAlive("cart", "intake-viejo", time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))
+	viejo := evs.seedAlive("cart", time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "menu", "wamid.e11a")); err != nil {
 		t.Fatalf("palabra del menú: %v", err)
@@ -864,8 +909,8 @@ func TestMenu_EmpezarUnoNuevoAplicaE11(t *testing.T) {
 	if got := evs.statuses()[viejo.ID]; got != events.StatusCancelled {
 		t.Fatalf("elegir «empezar uno nuevo» sobre un vencido debe cerrarlo (E-11); quedó %q", got)
 	}
-	if got := ab.seen(); len(got) != 1 || got[0] != "intake-viejo" {
-		t.Fatalf("y su solicitud debe quedar abandonada; se pidió %v", got)
+	if got := ab.seen(); len(got) != 1 || got[0] != viejo.ID {
+		t.Fatalf("y el abandono se pide por SU evento (%q); se pidió %v", viejo.ID, got)
 	}
 	nuevo := aliveOfKind(t, evs, "cart")
 	if nuevo.ID == viejo.ID {

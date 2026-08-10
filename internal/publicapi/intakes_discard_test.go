@@ -32,10 +32,15 @@ const (
 )
 
 // contactoVivo es el contacto de la solicitud con conversación viva. Es OTRO que el
-// de las demás a propósito: la ligadura con la conversación es por
-// (tenant, sesión, contacto), así que si el fixture compartiera contacto, la vida de
-// una conversación taparía a todas las solicitudes de la bandeja.
+// de las demás a propósito: la solicitud viva es la ÚNICA con evento declarado, y
+// tener contacto propio deja legible que las demás son huérfanas (legado pre-0054,
+// sin ligadura) y no víctimas de un fixture compartido.
 const contactoVivo = "9f1c0a7e-0000-4000-8000-000000000abd"
+
+// eventoVivo es el evento conversacional `open` que declara descarteVivo (DT-043.2
+// saldada, D-043.21): la guarda del descarte ya no mira el flow_state sino el
+// estado del EVENTO que la solicitud declara — el fixture siembra exactamente eso.
+const eventoVivo = "e0000005-0000-4000-8000-00000000000e"
 
 // discardResponseDTO espeja el contrato del 200.
 type discardResponseDTO struct {
@@ -62,7 +67,11 @@ func seedDescarte() *intakes.MemoryStore {
 	add(tenantA, descarteConfirmed, intakes.StatusConfirmed, contactoOpaco)
 	add(tenantA, descarteVivo, intakes.StatusOpen, contactoVivo)
 	add(tenantB, descarteAjeno, intakes.StatusOpen, contactoOpaco)
-	st.SetLiveCart(tenantA, "sess-a", contactoVivo)
+	// La conversación viva de descarteVivo, con el mecanismo REAL de la guarda
+	// (D-043.21): un evento `open` sembrado y la solicitud declarándolo como padre.
+	// Las demás quedan sin ligadura a propósito — huérfanas descartables.
+	st.SetEvent(eventoVivo, "open")
+	st.BindEvent(descarteVivo, eventoVivo)
 	return st
 }
 

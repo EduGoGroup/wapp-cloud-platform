@@ -26,10 +26,9 @@ import (
 
 // ids de eventos sembrados (UUID: el handler rechaza con 404 lo que no lo sea).
 const (
-	evCartA   = "e4c11111-1111-4111-8111-111111111111" // tenantA, cart, open, con intake
-	evCartB   = "e4c22222-2222-4222-8222-222222222222" // tenantB, cart, open
-	evNadie   = "e4c99999-9999-4999-8999-999999999999" // no existe en ningún tenant
-	evIntakeA = "77777777-7777-4777-8777-777777777777" // intake que cuelga de evCartA
+	evCartA = "e4c11111-1111-4111-8111-111111111111" // tenantA, cart, open
+	evCartB = "e4c22222-2222-4222-8222-222222222222" // tenantB, cart, open
+	evNadie = "e4c99999-9999-4999-8999-999999999999" // no existe en ningún tenant
 )
 
 // cancelInstante es el instante FIJO en que el fake sella closed_at: con un reloj
@@ -87,11 +86,13 @@ func (f *fakeEventCanceller) CancelEventForTenant(_ context.Context, tenantID, e
 	return ev, nil
 }
 
-// cancellerSembrado deja un carrito abierto (con intake colgante) en cada tenant.
+// cancellerSembrado deja un carrito abierto en cada tenant. Se toma el .Event a
+// propósito: el puerto del cancel habla en events.Event, sin los derivados del
+// join del listado (content_state/content_ref son de la bandeja, no de aquí).
 func cancellerSembrado() *fakeEventCanceller {
 	return &fakeEventCanceller{porTenant: map[string]map[string]events.Event{
-		tenantA: {evCartA: evento(evCartA, "cart", evIntakeA, false).Event},
-		tenantB: {evCartB: evento(evCartB, "cart", "", false).Event},
+		tenantA: {evCartA: evento(evCartA, "cart", "", "", false).Event},
+		tenantB: {evCartB: evento(evCartB, "cart", "", "", false).Event},
 	}}
 }
 
@@ -115,7 +116,8 @@ type cancelledEventWire struct {
 	Status         string `json:"status"`
 	ContactID      string `json:"contact_id"`
 	SessionID      string `json:"session_id"`
-	IntakeID       string `json:"intake_id"`
+	ContentState   string `json:"content_state"`
+	ContentRef     string `json:"content_ref"`
 	Stale          bool   `json:"stale"`
 	CreatedAt      string `json:"created_at"`
 	LastActivityAt string `json:"last_activity_at"`
@@ -153,8 +155,16 @@ func TestConversationEventCancel_200_CaminoFeliz(t *testing.T) {
 	if got.ClosedAt != "2026-01-02T10:00:00Z" {
 		t.Fatalf("closed_at=%q; quiero el sello RFC3339 UTC de la cancelación", got.ClosedAt)
 	}
-	if got.IntakeID != evIntakeA || got.ContactID != contactoOpaco {
-		t.Fatalf("cuerpo=%+v; el intake viaja tal cual y el contacto OPACO (INV-01)", got)
+	if got.ContactID != contactoOpaco {
+		t.Fatalf("cuerpo=%+v; el contacto viaja OPACO (INV-01)", got)
+	}
+	// El cancel ya no habla de intakes (D-043.21: el abandono va por evento) y los
+	// derivados del listado no se recalculan aquí: ni intake_id ni content_* en el
+	// cuerpo — la clave omitida, no vacía.
+	for _, clave := range []string{"intake_id", "content_state", "content_ref"} {
+		if bytes.Contains(rec.Body.Bytes(), []byte(`"`+clave+`"`)) {
+			t.Fatalf("la respuesta del cancel publica %q; body=%s", clave, rec.Body.String())
+		}
 	}
 	if got.Stale {
 		t.Fatalf("stale=true en la respuesta de cancelación: la marca «vencido» es de eventos abiertos")
@@ -472,7 +482,7 @@ func TestConversationEvents_VisibilidadYCancelabilidadSonElMISMOCriterio(t *test
 	// (3) La otra mitad de la simetría, que es la que impide «arreglar» esto
 	// devolviendo 404 a todo: un evento de un tipo que SÍ se ve sí se cancela.
 	evSurvey := "e4c55555-5555-4555-8555-555555555555"
-	canceller.porTenant[tenantA][evSurvey] = evento(evSurvey, "survey", "", false).Event
+	canceller.porTenant[tenantA][evSurvey] = evento(evSurvey, "survey", "", "", false).Event
 	recSurvey := call(api, keyAIntakes, http.MethodPost, cancelURL(evSurvey), "")
 	if recSurvey.Code != http.StatusOK {
 		t.Fatalf("cancelar un tipo VISIBLE: code=%d, quiero 200; body=%s",

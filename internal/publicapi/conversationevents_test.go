@@ -75,17 +75,20 @@ func (r *resolverQueFallaTrasN) Has(ctx context.Context, tenantID, feature strin
 	return r.Fake.Has(ctx, tenantID, feature)
 }
 
-// evento arma una fila del listado con lo justo para identificarla.
-func evento(id, kind, intakeID string, stale bool) events.Rescuable {
+// evento arma una fila del listado con lo justo para identificarla. contentState
+// y contentRef son los DERIVADOS del join con event_content (D-043.22) tal como
+// el store los habría resuelto: vacíos = el evento no produjo contenido.
+func evento(id, kind, contentState, contentRef string, stale bool) events.Rescuable {
 	return events.Rescuable{
 		Event: events.Event{
 			ID: id, TenantID: "", SessionID: "sess-a", ContactID: contactoOpaco,
 			Kind: kind, HistoryID: kind + "-2026-01-01-1200", Status: events.StatusOpen,
-			IntakeID:       intakeID,
 			CreatedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 			LastActivityAt: time.Date(2026, 1, 1, 12, 30, 0, 0, time.UTC),
 		},
-		Stale: stale,
+		Stale:        stale,
+		ContentState: contentState,
+		ContentRef:   contentRef,
 	}
 }
 
@@ -112,10 +115,10 @@ func conTodosLosTipos() *entitlements.Fake {
 func listerSembrado() *fakeEventLister {
 	return &fakeEventLister{porTenant: map[string][]events.Rescuable{
 		tenantA: {
-			evento("ev-a-survey", "survey", "", true),
-			evento("ev-a-cart", "cart", "int-1", false),
+			evento("ev-a-survey", "survey", "", "", true),
+			evento("ev-a-cart", "cart", "alive", "int-1", false),
 		},
-		tenantB: {evento("ev-b-cart", "cart", "int-b", false)},
+		tenantB: {evento("ev-b-cart", "cart", "alive", "int-b", false)},
 	}}
 }
 
@@ -128,7 +131,8 @@ type conversationEventListDTO struct {
 		Status         string `json:"status"`
 		ContactID      string `json:"contact_id"`
 		SessionID      string `json:"session_id"`
-		IntakeID       string `json:"intake_id"`
+		ContentState   string `json:"content_state"`
+		ContentRef     string `json:"content_ref"`
 		Stale          bool   `json:"stale"`
 		CreatedAt      string `json:"created_at"`
 		LastActivityAt string `json:"last_activity_at"`
@@ -146,6 +150,32 @@ func decodeEventos(t *testing.T, body []byte) conversationEventListDTO {
 		t.Fatalf("unmarshal del listado: %v; body=%s", err, body)
 	}
 	return out
+}
+
+// filasCrudas decodifica el listado como mapas crudos, para poder afirmar sobre
+// PRESENCIA de claves — el struct del decode no distingue «clave ausente» de
+// «cadena vacía».
+func filasCrudas(t *testing.T, body []byte) []map[string]json.RawMessage {
+	t.Helper()
+	var crudo struct {
+		Events []map[string]json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(body, &crudo); err != nil {
+		t.Fatalf("unmarshal crudo del listado: %v; body=%s", err, body)
+	}
+	return crudo.Events
+}
+
+// sinClavesDeContenido afirma que la fila cruda NO publica ninguna clave derivada
+// del contenido (omitempty): la ausencia es el dato — «sin fila en la vista»
+// (content=none) — y publicar "" mentiría.
+func sinClavesDeContenido(t *testing.T, fila map[string]json.RawMessage) {
+	t.Helper()
+	for _, clave := range []string{"content_state", "content_ref", "intake_id"} {
+		if _, está := fila[clave]; está {
+			t.Fatalf("la fila sin contenido publica la clave %q; debe OMITIRSE", clave)
+		}
+	}
 }
 
 // TestConversationEvents_200_ContratoDelWire: el camino feliz y lo que publica cada
@@ -166,9 +196,11 @@ func TestConversationEvents_200_ContratoDelWire(t *testing.T) {
 	if primero.ID != "ev-a-survey" || !primero.Stale || primero.Kind != "survey" {
 		t.Fatalf("primera fila=%+v; quiero el survey vencido", primero)
 	}
-	if primero.IntakeID != "" {
-		t.Fatalf("intake_id=%q; el survey no parió solicitud y la clave debe viajar VACÍA", primero.IntakeID)
+	if primero.ContentState != "" || primero.ContentRef != "" {
+		t.Fatalf("content_state=%q content_ref=%q; el survey no produjo contenido", primero.ContentState, primero.ContentRef)
 	}
+	// Y no es que viajen vacías: las claves NO ESTÁN (omitempty).
+	sinClavesDeContenido(t, filasCrudas(t, rec.Body.Bytes())[0])
 	if primero.ContactID != contactoOpaco {
 		t.Fatalf("contact_id=%q; viaja opaco tal cual (INV-01)", primero.ContactID)
 	}
@@ -179,9 +211,10 @@ func TestConversationEvents_200_ContratoDelWire(t *testing.T) {
 	if primero.LastActivityAt != "2026-01-01T12:30:00Z" {
 		t.Fatalf("last_activity_at=%q; quiero RFC3339 en UTC", primero.LastActivityAt)
 	}
-	// El segundo SÍ tiene solicitud: prueba que el campo no se pega a todas las filas.
-	if list.Events[1].IntakeID != "int-1" || list.Events[1].Stale {
-		t.Fatalf("segunda fila=%+v; quiero el carrito con su intake y sin marca", list.Events[1])
+	// El segundo SÍ tiene contenido: los derivados del join viajan tal cual los
+	// resolvió la consulta (D-043.22), y content_ref es el hilo evento→solicitud.
+	if list.Events[1].ContentState != "alive" || list.Events[1].ContentRef != "int-1" || list.Events[1].Stale {
+		t.Fatalf("segunda fila=%+v; quiero el carrito con su contenido vivo y sin marca", list.Events[1])
 	}
 }
 

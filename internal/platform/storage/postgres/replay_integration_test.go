@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,41 +31,7 @@ func TestIntegration_FullReplay_ConservaLosDatos(t *testing.T) {
 		t.Fatalf("migración inicial: %v", err)
 	}
 
-	// Dato de negocio real (no una tabla de juguete): una solicitud con su línea y
-	// su revisión, que es justo lo que la migración 0045 acaba de tocar.
-	tenant := uuid.NewString()
-	intakeID := uuid.NewString()
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total)
-		VALUES ($1, $2, 'contacto-opaco', 'sesion-1', 'closed', 5000)
-	`, intakeID, tenant); err != nil {
-		t.Fatalf("sembrar solicitud: %v", err)
-	}
-	t.Cleanup(func() {
-		// Las líneas van PRIMERO: su FK (0012) no lleva ON DELETE CASCADE, a
-		// diferencia de intake_revisions e intake_buyer_data (0045). Las revisiones
-		// sí caen solas con la cabecera.
-		if _, err := db.ExecContext(context.Background(),
-			`DELETE FROM public.intake_items WHERE intake_id = $1`, intakeID); err != nil {
-			t.Logf("limpiando líneas: %v", err)
-		}
-		if _, err := db.ExecContext(context.Background(),
-			`DELETE FROM public.intakes WHERE tenant_id = $1`, tenant); err != nil {
-			t.Logf("limpiando solicitud: %v", err)
-		}
-	})
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO public.intake_items (intake_id, sku, label, qty, unit_price)
-		VALUES ($1, 'emp-pino', 'Empanada de pino', 2, 2500)
-	`, intakeID); err != nil {
-		t.Fatalf("sembrar línea: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO public.intake_revisions (intake_id, revision_no, kind, payload, created_by)
-		VALUES ($1, 1, 'cart', '{"version":1,"total":5000,"items":[]}'::jsonb, 'system')
-	`, intakeID); err != nil {
-		t.Fatalf("sembrar revisión: %v", err)
-	}
+	intakeID := sembrarSolicitudConCadena(t, db)
 
 	// Alterar SOLO el hash registrado, dejando la versión intacta: es el estado de
 	// una BD cuya migración cambió sin bump.
@@ -99,4 +66,72 @@ func TestIntegration_FullReplay_ConservaLosDatos(t *testing.T) {
 	if items != 1 || revisiones != 1 {
 		t.Fatalf("el replay perdió datos: líneas=%d (want 1), revisiones=%d (want 1)", items, revisiones)
 	}
+}
+
+// sembrarSolicitudConCadena deja el dato de negocio real del replay: una
+// solicitud con su línea y su revisión — justo lo que la 0045 tocó. Desde la
+// 0054 la solicitud declara a su padre (D-043.21, CHECK NOT VALID sobre
+// event_id), así que se monta la cadena completa tenant→evento→solicitud; el
+// tenant de verdad porque conversation_events.tenant_id sí lleva FK. Registra
+// sus propios Cleanup (LIFO: primero líneas+solicitud, el tenant al final, que
+// cascada el evento cuando ya nadie lo declara).
+func sembrarSolicitudConCadena(t *testing.T, db *sql.DB) (intakeID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	var tenant string
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.tenants (slug, display_name)
+		VALUES ($1, 'Replay full-replay') RETURNING id::text
+	`, "replay-"+uuid.NewString()[:8]).Scan(&tenant); err != nil {
+		t.Fatalf("sembrar tenant: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.tenants WHERE id = $1`, tenant); err != nil {
+			t.Logf("limpiando tenant: %v", err)
+		}
+	})
+	var eventID string
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version, closed_at)
+		VALUES ($1, 'sesion-1', $2::uuid, 'cart', 'cart-2026-08-10-0002', 'closed', 'flujo-replay', 1, now())
+		RETURNING id::text
+	`, tenant, uuid.NewString()).Scan(&eventID); err != nil {
+		t.Fatalf("sembrar el evento padre: %v", err)
+	}
+	intakeID = uuid.NewString()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, event_id)
+		VALUES ($1, $2, 'contacto-opaco', 'sesion-1', 'closed', 5000, $3::uuid)
+	`, intakeID, tenant, eventID); err != nil {
+		t.Fatalf("sembrar solicitud: %v", err)
+	}
+	t.Cleanup(func() {
+		// Las líneas van PRIMERO: su FK (0012) no lleva ON DELETE CASCADE, a
+		// diferencia de intake_revisions e intake_buyer_data (0045). Las revisiones
+		// sí caen solas con la cabecera.
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.intake_items WHERE intake_id = $1`, intakeID); err != nil {
+			t.Logf("limpiando líneas: %v", err)
+		}
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.intakes WHERE tenant_id = $1`, tenant); err != nil {
+			t.Logf("limpiando solicitud: %v", err)
+		}
+	})
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_items (intake_id, sku, label, qty, unit_price)
+		VALUES ($1, 'emp-pino', 'Empanada de pino', 2, 2500)
+	`, intakeID); err != nil {
+		t.Fatalf("sembrar línea: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_revisions (intake_id, revision_no, kind, payload, created_by)
+		VALUES ($1, 1, 'cart', '{"version":1,"total":5000,"items":[]}'::jsonb, 'system')
+	`, intakeID); err != nil {
+		t.Fatalf("sembrar revisión: %v", err)
+	}
+	return intakeID
 }
