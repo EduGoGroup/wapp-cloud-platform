@@ -117,6 +117,10 @@ type OpeningBuilder interface {
 	// rescata nada todavía —abre la lista de qué rescatar—, y por eso son dos pasos y
 	// no uno.
 	BuildRescue(ctx context.Context, ref events.ConversationRef) (events.Offering, error)
+	// BuildTagline arma la COLETILLA del camino con llm_intent (T3.8 punto 2): la frase
+	// que se pega al final de la respuesta para avisar de que hay algo a medias. Cadena
+	// vacía cuando no hay nada que retomar ⇒ no se dice nada.
+	BuildTagline(ctx context.Context, ref events.ConversationRef) (string, error)
 }
 
 // FlowForKind resuelve QUÉ FLUJO arranca un tipo de evento para este tenant.
@@ -129,6 +133,23 @@ type OpeningBuilder interface {
 type FlowForKind interface {
 	FlowForKind(ctx context.Context, tenantID, sessionID, kind string) (string, error)
 }
+
+// varTaglineOffered marca que a ESTA conversación ya se le pegó la coletilla de
+// «tienes algo a medias» (T3.8 punto 2: una sola vez por conversación).
+//
+// Vive en flow_state.vars —y no en una tabla ni en conversation_events— porque ese es
+// exactamente el alcance que el plan pide: la marca tiene que MORIR con la
+// conversación. Guardarla en algo más duradero haría que alguien que vuelve semanas
+// después no la viera nunca, que es lo contrario de lo que se busca.
+//
+// Consecuencia asumida, y escrita para que nadie la trate como fallo: si la
+// conversación se descarta y renace —TTL del limbo, escape global—, la coletilla puede
+// volver a salir UNA vez. No es un bug; es lo que significa «por conversación».
+//
+// Hoy, además, la garantía la da el SITIO: la coletilla solo se pega al ARRANCAR, y
+// arrancar crea la conversación. Esta marca es la red para el día que alguien la emita
+// desde otro punto del camino.
+const varTaglineOffered = "tagline_offered"
 
 // varPendingMenu es la clave de Vars donde vive el menú YA RENDERIZADO mientras se
 // espera la elección del cliente. Se persiste el menú entero —no solo un «hay menú
@@ -325,7 +346,18 @@ func (rt *Runtime) retireForNew(ctx context.Context, tenantID string, ev events.
 // El texto de esa primera respuesta lo produce el flujo del tenant y NO lleva el
 // history_id (E-3): el identificador legible existe para que un humano hable de
 // «ese pedido» en la bandeja, no para que el cliente lo memorice.
+//
+// 🔴 La coletilla se resuelve ANTES del CreateEvent, y ese orden es un ARREGLO, no
+// una casualidad: la coletilla habla de «lo que dejaste a medias ANTES de esto», y
+// un evento recién nacido cumple `status='open' AND intake_id IS NULL`, que es
+// exactamente el predicado de rescatable (events/store.go, rescuableWhere).
+// Resolviéndola después, `ListRescuable` devolvía el evento que se acababa de crear
+// y el cliente leía «tu pedido sigue a medias» sobre el pedido que acababa de abrir.
+// Mirando antes no hay nada que excluir, y el componente que LEE no necesita
+// aprender la noción de «el actual» —que es justo lo que el Frente B evitó a
+// propósito—. Lo fija TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo.
 func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision) error {
+	tagline := rt.taglineFor(ctx, key.TenantID, sessionID, key.ContactID, dec.IntentName)
 	ev, err := rt.events.CreateEvent(ctx, events.NewEvent{
 		TenantID:  key.TenantID,
 		SessionID: sessionID,
@@ -344,7 +376,7 @@ func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID stri
 		}
 		return fmt.Errorf("runtime: crear evento de tipo %q: %w", dec.EventKind, err)
 	}
-	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName)
+	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName, tagline)
 }
 
 // switchToEvent conmuta la conversación hacia un evento que YA estaba vivo: apunta
@@ -366,7 +398,9 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 		return fmt.Errorf("runtime: refrescar el reloj del evento al conmutar: %w", err)
 	}
 	rt.sendResumeSummary(ctx, key, sessionID, ev)
-	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, ev.Kind, ev.FlowID, nil, "")
+	// Sin coletilla: volver a un evento que ya existía no es atender una intención, y
+	// además el propio evento al que se vuelve sería lo primero que se anunciaría.
+	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, ev.Kind, ev.FlowID, nil, "", "")
 }
 
 // enterEventFlow deja la conversación dentro del evento eventID: arranca (o
@@ -380,7 +414,11 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 // flowID vacío ⇒ no hay flujo que arrancar y solo se estampa el puntero. Es el caso
 // del tipo `menu`, cuyo contenido lo renderiza el despachador y no una fila de
 // flow_definitions (D-043.3).
-func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID, eventID, kind, flowID string, params map[string]string, intentName string) error {
+//
+// `tagline` llega YA RESUELTA y no se calcula aquí: cuando este camino viene de un
+// evento que acaba de nacer, mirar los rescatables desde dentro devolvería ese mismo
+// evento (ver birthEvent). Quien sabe cuándo era seguro preguntarlo es el llamante.
+func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID, eventID, kind, flowID string, params map[string]string, intentName, tagline string) error {
 	// El SALTO POR TIPO es un abandono: antes de tocar nada, se resume el evento que se
 	// deja atrás (T3.4). Va aquí arriba y no dentro del `if flowID != ""` porque el
 	// salto al menú también abandona, y porque lo que sigue BORRA el flow_state —y con
@@ -400,7 +438,8 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 		if err := rt.store.Delete(ctx, key); err != nil {
 			return fmt.Errorf("runtime: liberar el estado previo al entrar al evento: %w", err)
 		}
-		if _, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, params, intentName); err != nil {
+		if _, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, params, intentName,
+			tagline); err != nil {
 			return fmt.Errorf("runtime: arrancar el flujo del evento: %w", err)
 		}
 	}
@@ -566,6 +605,52 @@ func (rt *Runtime) summarizeAbandoned(ctx context.Context, key store.Key, sessio
 		rt.log.Debug("runtime: resumen del evento abandonado escrito",
 			"session_id", sessionID, "event_kind", ev.Kind, "seq", seq)
 	}
+}
+
+// taglineFor resuelve la COLETILLA del camino con llm_intent (T3.8 punto 2, REQ-27):
+// cuando la intención inferida se atiende, la respuesta termina avisando de que hay
+// algo a medias. Devuelve "" cuando no toca decir nada, y ese es el caso normal.
+//
+// Solo se emite en el camino de la INTENCIÓN —intentName vacío ⇒ nada—, y esa es la
+// mitad que protege a los demás: un arranque por keyword, por fallback o por la API no
+// lleva coletilla, porque ahí lo que va es la lista numerada (o el flujo del tenant) y
+// no un aviso pegado.
+//
+// ⚠️ El otro llamante (enterEventFlow) NO puede emitir nada hoy, y conviene saber por
+// qué antes de "arreglarlo": el ConfigResolver nunca combina las dos cosas. La rama de
+// intención devuelve {Start, FlowID, Params, IntentName} SIN EventKind, y la de
+// event_start devuelve {StartEvent, FlowID, EventKind} SIN IntentName — son
+// excluyentes. Así que el arranque que PARE un evento llega siempre con intentName ""
+// y esa llamada se calla sola. Lo fija TestTagline_ArranquePorEventStartNoLlevaColetilla.
+//
+// 🔴 Y si algún día una regla llm mapea a un event_kind, ese test se pondrá rojo y NO
+// basta con actualizarlo: habría que excluir de la coletilla el evento RECIÉN NACIDO,
+// porque uno recién creado cumple `status='open' AND intake_id IS NULL`, que es
+// exactamente el predicado de rescatable (events/store.go, rescuableWhere). Sin esa
+// exclusión el cliente leería «tu pedido sigue a medias» sobre el pedido que acaba de
+// abrir.
+//
+// 🔴 SEGUNDO DESTINO PENDIENTE: el criterio (c) de T3.8 exige que esta MISMA coletilla
+// aparezca también en el borrador del pipeline del Plan 044 que la operadora ve en KMP.
+// **El Plan 044 no existe todavía**, así que ese destino no se puede cablear ni probar
+// hoy: lo que hay aquí cubre el destino de WhatsApp y nada más. No se escribió ningún
+// test que finja lo contrario, y por eso T3.8 NO está entera.
+func (rt *Runtime) taglineFor(ctx context.Context, tenantID, sessionID, contactID, intentName string) string {
+	if rt.opening == nil || intentName == "" {
+		return ""
+	}
+	tag, err := rt.opening.BuildTagline(ctx, events.ConversationRef{
+		TenantID: tenantID, SessionID: sessionID, ContactID: contactID,
+	})
+	if err != nil {
+		// Best-effort: sin coletilla se atiende igual la intención, que es lo que el
+		// cliente pidió. Negarle la respuesta por no poder añadirle un aviso sería
+		// castigarle por un problema nuestro.
+		rt.log.Warn("runtime: no se pudo armar la coletilla; se responde sin ella",
+			"error", err, "session_id", sessionID)
+		return ""
+	}
+	return tag
 }
 
 // sendResumeSummary le recuerda al cliente que vuelve QUÉ LLEVABA DECIDIDO (T3.4,

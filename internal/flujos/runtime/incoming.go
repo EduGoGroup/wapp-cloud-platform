@@ -370,7 +370,8 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 	if !rt.replyAllowed(key) {
 		return nil
 	}
-	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName); serr != nil {
+	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName,
+		rt.taglineFor(ctx, tenantID, sessionID, contactID, dec.IntentName)); serr != nil {
 		if errors.Is(serr, ErrConversationExists) {
 			rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
 				"session_id", sessionID)

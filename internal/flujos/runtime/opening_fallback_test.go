@@ -66,6 +66,13 @@ func (f *fakeOpening) BuildRescue(context.Context, events.ConversationRef) (even
 	return f.rescate, nil
 }
 
+// BuildTagline no participa en estos escenarios —la coletilla es del camino con
+// llm_intent (T3.8 punto 2) y aquí se prueba el de la lista—, pero el puerto la exige.
+// Devolver "" es además el assert implícito de que este camino NO la lleva.
+func (f *fakeOpening) BuildTagline(context.Context, events.ConversationRef) (string, error) {
+	return "", nil
+}
+
 // ofertaConOpciones es la entrada que ofrece: lo que Marta debe ver en vez del «no te
 // entendí». La opción 3 es la de retomar, que es la que T3.8 añade al final.
 func ofertaConOpciones() events.Offering {
