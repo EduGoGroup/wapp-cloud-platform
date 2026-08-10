@@ -125,8 +125,9 @@ type AppConfig struct {
 	// con prefijo WAPP_WEBHOOK_.
 	Webhook WebhookConfig `yaml:"webhook"`
 	// ConversationThread gobierna el hilo del evento conversacional (Plan 043 ·
-	// Ola 4.5/4.6, D-043.23): hoy solo el interruptor del productor `message` (el
-	// texto literal del turno). Se lee con prefijo WAPP_CONVERSATION_THREAD_.
+	// Ola 4.5, D-043.23 + decisión del dueño del 2026-08-10): hoy solo el
+	// interruptor del productor `message` (el texto literal del turno). Se lee
+	// con prefijo WAPP_CONVERSATION_THREAD_.
 	ConversationThread ConversationThreadConfig `yaml:"conversation_thread"`
 }
 
@@ -146,7 +147,7 @@ type WebhookConfig struct {
 }
 
 // ConversationThreadConfig gobierna el hilo del evento conversacional (Plan 043 ·
-// Ola 4.5/4.6, D-043.23): el histórico de decisiones estructuradas (`decision`,
+// Ola 4.5, D-043.23): el histórico de decisiones estructuradas (`decision`,
 // SIEMPRE activo) y el texto literal del turno (`message`, detrás de este
 // interruptor) que persiste conversation_event_messages.
 type ConversationThreadConfig struct {

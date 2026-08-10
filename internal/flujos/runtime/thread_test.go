@@ -223,9 +223,9 @@ func TestDecision_SinCablearNoEscribeNada(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T4.5.7b / T4.6 — el runtime persiste el literal del turno SOLO con llm_intake
-// Y con el interruptor de despliegue messageThreadEnabled (D-043.23 + decisión
-// de Jhoan del 2026-08-10) encendidos a la vez.
+// T4.5.7b — el runtime persiste el literal del turno SOLO con llm_intake Y con
+// el interruptor de despliegue messageThreadEnabled (D-043.23 + decisión de
+// Jhoan del 2026-08-10) encendidos a la vez.
 // ---------------------------------------------------------------------------
 
 // newThreadRuntime arma el runtime del hilo: plano de eventos + resolver de
