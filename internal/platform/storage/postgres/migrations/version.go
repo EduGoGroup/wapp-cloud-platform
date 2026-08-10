@@ -46,7 +46,11 @@ import (
 // corresponde a un esquema que salió a Neon, no a una migración suelta: las 0046-
 // 0048 fueron a la 0.26.0 en un solo incremento, y ese es el patrón que la regla
 // pide.
-const SchemaVersion = "0.29.0"
+// 0.30.0 — Plan 043 · Ola 4.5 (0054): la relación evento↔contenido se INVIERTE
+// (D-043.21/22) — intakes.event_id y survey_results.event_id (el hijo declara a su
+// padre), DROP de conversation_events.intake_id y la vista public.event_content.
+// Un solo bump para la ola, sobre la 0.29.0 ya publicada.
+const SchemaVersion = "0.30.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
