@@ -12,6 +12,12 @@ type EffectMeta struct {
 	SessionID   string
 	FlowID      string
 	FlowVersion int
+	// EventID es el id del evento conversacional VIVO (conversation_events.id) que
+	// produjo el efecto; "" si no hay evento (Plan 043 · Ola 4.5 · T4.5.1,
+	// D-043.21). Los proyectores lo usan para escribir la FK invertida
+	// (intakes.event_id, survey_results.event_id): el hijo declara a su padre; el
+	// padre no conoce tablas hijas.
+	EventID string
 }
 
 // Projector es la capacidad IMPURA de un módulo para MATERIALIZAR sus efectos en

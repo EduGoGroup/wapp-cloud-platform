@@ -20,6 +20,15 @@ type EffectContext struct {
 	SessionID   string
 	FlowID      string
 	FlowVersion int
+	// EventID es el id del evento conversacional VIVO (conversation_events.id) al
+	// que pertenece el efecto; "" si la conversación no tiene evento (Plan 043 ·
+	// Ola 4.5 · T4.5.1, D-043.21). Es lo que permite al proyector de cada módulo
+	// escribir la FK invertida (intakes.event_id, survey_results.event_id): el
+	// hijo declara a su padre. ⚠️ En el camino de `start` NO sale de st.EventID
+	// (ahí todavía es "" a propósito: pointStateAtEvent estampa el puntero DESPUÉS
+	// de arrancar) sino del evento recién nacido/conmutado que el runtime tiene en
+	// la mano — ver startLocked.
+	EventID string
 }
 
 // EventSink es el puerto por el que el runtime despacha cada Effect que un módulo

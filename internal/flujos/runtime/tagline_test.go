@@ -144,7 +144,7 @@ func (resolverQueParteEventoConIntencion) ResolveLive(context.Context, string, s
 func sembrarPedidoAMedias(t *testing.T, evs *memEventStore, contacts *contact.MemoryResolver) events.Event {
 	t.Helper()
 	evs.contactID = resolveID(t, contacts, testContact)
-	return evs.seedAlive("cart", "", time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC))
+	return evs.seedAlive("cart", time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC))
 }
 
 // assertSinIdentificadores es E-3 escrito como comprobación: lo que se le dice al

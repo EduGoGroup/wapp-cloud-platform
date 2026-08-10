@@ -20,6 +20,31 @@ func cartEC(tenant, contact, session, flow string) runtime.EffectContext {
 	}
 }
 
+// siembraEventoPadre crea la fila de conversation_events de la que el CONTENIDO
+// declara nacer (D-043.21, Ola 4.5): desde la 0054 ninguna proyección puede
+// escribir intakes/survey_results sin un padre real — la FK y el CHECK
+// `*_event_id_required_chk` rechazan al huérfano por construcción, así que estos
+// tests de integración ya no pueden ejercitar el sink «en el vacío».
+//
+// El tenant DEBE ser real (seedTenant): conversation_events.tenant_id es FK a
+// tenants. La limpieza la arrastra el t.Cleanup de limpiaTenant (CASCADE).
+// contactUUID es el contact_id OPACO del evento (columna UUID); no hace falta que
+// coincida con el ContactID del EffectContext — la FK ata solo el event_id.
+func siembraEventoPadre(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sessionID, contactUUID, kind string) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, flow_id, flow_version)
+		VALUES ($1, $2, $3, $4, $5, 'flujo-t45r', 1)
+		RETURNING id::text`,
+		tenantID, sessionID, contactUUID, kind,
+		fmt.Sprintf("%s-t45r-%d", kind, time.Now().UnixNano())).Scan(&id); err != nil {
+		t.Fatalf("sembrar evento padre: %v", err)
+	}
+	return id
+}
+
 func itemAdded(sku, label string, qty int, unit float64) modules.Effect {
 	return modules.Effect{Kind: "event", Name: "item_added", Payload: map[string]any{
 		"sku": sku, "label": label, "qty": qty, "unit_price": unit,
@@ -134,12 +159,18 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	sink := persistSinkWith(repo)
 	ctx := context.Background()
 
-	// Aislamiento: tenant/contact/flow únicos por corrida.
+	// Aislamiento: tenant real (FK del evento padre) + contact/flow únicos por
+	// corrida; limpiaTenant deja el t.Cleanup que arrastra eventos e intakes.
 	suffix := time.Now().UnixNano()
-	tenant := fmt.Sprintf("tenant-cart-%d", suffix)
+	tenant := seedTenant(t, db)
+	limpiaTenant(t, db, tenant)
 	contact := "c-opaco-cart"
 	flowID := fmt.Sprintf("carrito-%d", suffix)
 	ec := cartEC(tenant, contact, "sess-cart", flowID)
+	// El pedido nace DENTRO de un evento vivo (D-043.21): la proyección escribe
+	// intakes.event_id con este id — sin él, el INSERT revienta (huérfano imposible).
+	ec.EventID = siembraEventoPadre(ctx, t, db, tenant, "t45r-sess-cart",
+		"cccccccc-0000-4000-8000-000000000001", "cart")
 
 	must := func(eff modules.Effect) {
 		if err := sink.Handle(ctx, ec, eff); err != nil {
@@ -164,9 +195,24 @@ func TestPersistSink_Integracion_CartPedidoCompleto(t *testing.T) {
 	assertClosedIntake(t, db, tenant, contact)
 	assertIntakeItems(t, db, tenant, contact)
 	assertEventCount(t, db, flowID, 3)
+	// La solicitud DECLARÓ a su padre (T4.5.3/D-043.21): la FK invertida quedó
+	// escrita por la proyección, no sembrada a mano.
+	var declarado string
+	if err := db.QueryRowContext(ctx, `
+		SELECT event_id::text FROM public.intakes WHERE tenant_id = $1 AND contact_id = $2`,
+		tenant, contact).Scan(&declarado); err != nil {
+		t.Fatalf("SELECT intakes.event_id: %v", err)
+	}
+	if declarado != ec.EventID {
+		t.Fatalf("intakes.event_id = %q, quiero el evento del turno %q", declarado, ec.EventID)
+	}
 
-	// Cancelar: nueva solicitud open + cart_cancelled → cancelled.
+	// Cancelar: nueva solicitud open + cart_cancelled → cancelled. Con SU propio
+	// evento padre: el índice único parcial intakes(event_id) fija «a lo sumo un
+	// contenido durable por evento» (D-043.21), así que reusar el primero no puede.
 	ec2 := cartEC(tenant, fmt.Sprintf("c-cancel-%d", suffix), "sess-cart-2", flowID)
+	ec2.EventID = siembraEventoPadre(ctx, t, db, tenant, "t45r-sess-cart-2",
+		"cccccccc-0000-4000-8000-000000000002", "cart")
 	if err := sink.Handle(ctx, ec2, itemAdded("TE", "Té", 1, 2.0)); err != nil {
 		t.Fatalf("Handle item_added (cancel): %v", err)
 	}
@@ -200,10 +246,15 @@ func TestCartIntegracion_SinVencimientoYReplayHistorico(t *testing.T) {
 	ctx := context.Background()
 
 	suffix := time.Now().UnixNano()
-	tenant := fmt.Sprintf("tenant-ttl-%d", suffix)
+	tenant := seedTenant(t, db)
+	limpiaTenant(t, db, tenant)
 	contactID := "c-opaco-ttl"
 	flowID := fmt.Sprintf("carrito-ttl-%d", suffix)
 	ec := cartEC(tenant, contactID, "sess-ttl", flowID)
+	// Desde la 0054 la solicitud declara a su padre (D-043.21): sin evento vivo en
+	// el EffectContext el upsert del carrito ni siquiera puede escribir.
+	ec.EventID = siembraEventoPadre(ctx, t, db, tenant, "t45r-sess-ttl",
+		"cccccccc-0000-4000-8000-000000000003", "cart")
 
 	// item_added abre la solicitud SIN fechar vencimiento: expires_at NULL en la
 	// tabla ⇒ zero al leer.
