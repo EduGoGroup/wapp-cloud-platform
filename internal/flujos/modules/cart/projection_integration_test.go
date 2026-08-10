@@ -3,11 +3,21 @@
 // a mano. Lo que un doble no puede afirmar y aquí se afirma:
 //
 //   - la fila de `intakes` nace con el `event_id` de la EffectMeta y la acepta la
-//     cadena real FK + CHECK + índice único parcial de la 0054;
-//   - el REUSO de una "open" LEGADA (event_id NULL, pre-0054) la estampa;
+//     cadena real FK + índice único parcial de la 0054 (hoy NOT NULL real, 0055);
 //   - la MUTACIÓN del criterio: sin la escritura del proyector (meta sin
-//     EventID), el INSERT revienta contra el CHECK — el huérfano es imposible,
+//     EventID), el INSERT revienta contra el NOT NULL — el huérfano es imposible,
 //     no improbable.
+//
+// TestPG_Projection_ElReusoEstampaElLegado (la tercera pata, "el reuso de una
+// open LEGADA con event_id NULL la estampa") se retiró en la 0055 (Plan 043,
+// decisión del dueño, 2026-08-10): esa migración BORRÓ las intakes legadas y
+// cambió la columna a NOT NULL real, así que la fila que el test necesitaba
+// sembrar (event_id NULL) ya no es representable en la base — ni siquiera
+// retirando el CHECK a mano, porque el CHECK ya no existe (lo reemplazó la
+// restricción de columna). El escenario dejó de existir por construcción, no
+// el código que lo cubría: la rama `existing.EventID == "" && meta.EventID !=
+// ""` de cart.ensureOpenIntake queda inalcanzable en producción (ver el
+// comentario de esa función).
 package cart_test
 
 import (
@@ -158,55 +168,11 @@ func TestPG_Projection_LaSolicitudNaceDeclarandoASuPadre(t *testing.T) {
 	}
 }
 
-// TestPG_Projection_ElReusoEstampaElLegado: una "open" pre-0054 (event_id NULL,
-// sembrada saltándose el CHECK NOT VALID como una fila vieja real) queda ESTAMPADA
-// al primer item_added que la reusa — la única reparación legítima del huérfano.
-func TestPG_Projection_ElReusoEstampaElLegado(t *testing.T) {
-	db := abrirBD(t)
-	tenant, evento := sembrarEvento(t, db)
-	contacto := uuid.NewString()
-
-	// La fila LEGADA: anterior al CHECK, así que para sembrarla como existía hay
-	// que retirar el CHECK un instante (es exactamente lo que "NOT VALID" tolera
-	// en reposo: filas viejas sin ligadura). Se restaura de inmediato.
-	legadoID := uuid.NewString()
-	if _, err := db.Exec(`ALTER TABLE public.intakes DROP CONSTRAINT intakes_event_id_required_chk`); err != nil {
-		t.Fatalf("retirando el CHECK: %v", err)
-	}
-	_, insErr := db.Exec(`
-		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-		VALUES ($1, $2, $3, 't45i-sess', 'open', 0, now(), now())
-	`, legadoID, tenant, contacto)
-	if _, err := db.Exec(`
-		ALTER TABLE public.intakes ADD CONSTRAINT intakes_event_id_required_chk
-		CHECK (event_id IS NOT NULL) NOT VALID`); err != nil {
-		t.Fatalf("restaurando el CHECK: %v", err)
-	}
-	if insErr != nil {
-		t.Fatalf("sembrando la fila legada: %v", insErr)
-	}
-
-	meta := modules.EffectMeta{
-		TenantID: tenant, ContactID: contacto, SessionID: "t45i-sess",
-		FlowID: "flujo-w45", FlowVersion: 1, EventID: evento,
-	}
-	if err := proyector(t, db).Project(context.Background(), meta, itemAdded()); err != nil {
-		t.Fatalf("Project(item_added) sobre el legado: %v", err)
-	}
-
-	var eventID sql.NullString
-	if err := db.QueryRow(`SELECT event_id::text FROM public.intakes WHERE id = $1`, legadoID).Scan(&eventID); err != nil {
-		t.Fatalf("leyendo el legado: %v", err)
-	}
-	if !eventID.Valid || eventID.String != evento {
-		t.Fatalf("event_id=%v, quiero %s: el reuso estampa el NULL legado", eventID, evento)
-	}
-}
-
 // TestPG_Projection_SinEventoElHuerfanoEsImposible es la MUTACIÓN del criterio de
 // T4.5.3 hecha test: si el proyector no escribiera la ligadura (meta sin
-// EventID), el INSERT no degrada a una fila huérfana — REVIENTA contra el CHECK
-// de la 0054. No se inventa ligadura (NULL + log) y la base hace el resto.
+// EventID), el INSERT no degrada a una fila huérfana — REVIENTA contra la
+// restricción de columna (CHECK de la 0054, NOT NULL real desde la 0055). No se
+// inventa ligadura (NULL + log) y la base hace el resto.
 func TestPG_Projection_SinEventoElHuerfanoEsImposible(t *testing.T) {
 	db := abrirBD(t)
 	tenant, _ := sembrarEvento(t, db)
@@ -216,6 +182,6 @@ func TestPG_Projection_SinEventoElHuerfanoEsImposible(t *testing.T) {
 	}
 
 	if err := proyector(t, db).Project(context.Background(), meta, itemAdded()); err == nil {
-		t.Fatal("un item_added sin evento creó una solicitud huérfana: el CHECK de la 0054 no está haciendo su trabajo")
+		t.Fatal("un item_added sin evento creó una solicitud huérfana: la restricción NOT NULL de event_id no está haciendo su trabajo")
 	}
 }

@@ -50,7 +50,13 @@ import (
 // (D-043.21/22) — intakes.event_id y survey_results.event_id (el hijo declara a su
 // padre), DROP de conversation_events.intake_id y la vista public.event_content.
 // Un solo bump para la ola, sobre la 0.29.0 ya publicada.
-const SchemaVersion = "0.30.0"
+//
+// 0.31.0 — Plan 043 (0055): decisión del dueño (Jhoan, 2026-08-10) sobre el legado
+// que la 0054 dejaba tolerado con CHECK NOT VALID — se BORRA (0 filas reparables
+// por backfill, medido contra Neon: conversation_events.intake_id nunca se
+// escribió) y intakes.event_id pasa a NOT NULL real, retirando el CHECK que hacía
+// de sustituto.
+const SchemaVersion = "0.31.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

@@ -284,6 +284,12 @@ func Run(ctx context.Context) error {
 		flowruntime.WithDispatcher(dispatcher),
 		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
+		// Segunda condición del productor `message` del hilo (D-043.23, decisión de
+		// Jhoan del 2026-08-10): la feature llm_intake YA NO basta por sí sola —
+		// hace falta ADEMÁS este interruptor de despliegue, apagado por defecto
+		// (WAPP_CONVERSATION_THREAD_MESSAGES=false), hasta que el Plan 044 (su
+		// lector) exista. Ver internal/flujos/runtime/thread.go.
+		flowruntime.WithMessageThreadEnabled(cfg.ConversationThread.Messages),
 		flowruntime.WithReplyLimiter(replyLimiter),
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
