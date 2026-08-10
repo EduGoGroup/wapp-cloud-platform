@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
@@ -193,6 +195,40 @@ SELECT ` + eventColumns + `
  WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
    AND status = 'open'
  ORDER BY created_at, id`
+
+// selectEventForTenantSQL lee UN evento por id ACOTADO AL TENANT. El `AND
+// tenant_id` no es una optimización: es el aislamiento (INV-8) escrito en el SQL,
+// donde no se puede olvidar. Leer por id y comparar el tenant en Go dejaría una
+// ventana en la que la fila ajena YA está en memoria y un refactor descuidado la
+// devuelve.
+const selectEventForTenantSQL = `
+SELECT ` + eventColumns + `
+  FROM public.conversation_events
+ WHERE id = $1 AND tenant_id = $2`
+
+// GetEventForTenant devuelve el evento id SI Y SOLO SI pertenece al tenant
+// (T4.2). Cualquier ausencia —id inexistente, id de otro tenant, id que ni
+// siquiera es un UUID— es el MISMO ErrEventNotFound: el llamante lo traduce a un
+// 404 que no revela si el evento existe para otro (criterio literal de T4.2).
+//
+// El UUID se valida ANTES de consultar, por la misma razón que
+// store.ListIntakeItems: el id llega de un segmento de URL que puede traer
+// cualquier cosa, y sin la guarda Postgres contestaría 22P02 —un error real que
+// acabaría en 500— a una pregunta cuya respuesta honesta es «eso no existe».
+func (s *Store) GetEventForTenant(ctx context.Context, tenantID, eventID string) (Event, error) {
+	if _, perr := uuid.Parse(eventID); perr != nil {
+		return Event{}, fmt.Errorf("%w (id=%q no es un UUID)", ErrEventNotFound, eventID)
+	}
+	row := s.db.QueryRowContext(ctx, selectEventForTenantSQL, eventID, tenantID)
+	ev, err := scanEvent(row)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Event{}, fmt.Errorf("%w (id=%s)", ErrEventNotFound, eventID)
+	case err != nil:
+		return Event{}, fmt.Errorf("events: leer el evento del tenant: %w", err)
+	}
+	return ev, nil
+}
 
 // ── La consulta de RESCATABLES: una sola, en piezas nombradas ────────────────
 //

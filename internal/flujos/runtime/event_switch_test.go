@@ -153,6 +153,34 @@ func (m *memEventStore) descartar(eventID string) {
 	m.descartados[eventID] = true
 }
 
+// GetEventForTenant imita el SELECT acotado al tenant: cualquier ausencia —id
+// inexistente o de otro tenant— es el MISMO ErrEventNotFound, igual que en el
+// store real (la indistinción es parte del contrato de T4.2).
+func (m *memEventStore) GetEventForTenant(_ context.Context, tenantID, eventID string) (events.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.rows {
+		if e.ID == eventID && e.TenantID == tenantID {
+			return e, nil
+		}
+	}
+	return events.Event{}, fmt.Errorf("%w (id=%s)", events.ErrEventNotFound, eventID)
+}
+
+// setIntake liga a mano una solicitud al evento, como haría la proyección del
+// carrito al parirla: es lo que permite fabricar un evento CON intake sin montar
+// el módulo cart entero.
+func (m *memEventStore) setIntake(eventID, intakeID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.rows {
+		if m.rows[i].ID == eventID {
+			m.rows[i].IntakeID = intakeID
+			return
+		}
+	}
+}
+
 func (m *memEventStore) TransitionEvent(_ context.Context, eventID string, to events.Status) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -580,13 +608,24 @@ func (m *memEventStore) seedAlive(kind, intakeID string, last time.Time) events.
 type fakeAbandoner struct {
 	mu  sync.Mutex
 	ids []string
+	// err, si no es nil, es lo que devuelve AbandonIntake. Sirve para encender y
+	// APAGAR el fallo dentro de un mismo test (la costura de fallo parcial y su
+	// reparación al reintentar); el cero es «no falla», así que nadie más lo nota.
+	err error
 }
 
 func (f *fakeAbandoner) AbandonIntake(_ context.Context, _, intakeID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ids = append(f.ids, intakeID)
-	return nil
+	return f.err
+}
+
+// failWith enciende (o apaga, con nil) el fallo del abandono.
+func (f *fakeAbandoner) failWith(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 func (f *fakeAbandoner) seen() []string {
