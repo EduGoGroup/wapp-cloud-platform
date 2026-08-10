@@ -125,6 +125,17 @@ type Runtime struct {
 	// (camino actual sin clasificador): un gate que solo viviera en el Edge sería
 	// decorativo (corre en la máquina del cliente).
 	entitlements entitlements.Resolver
+	// messageThreadEnabled es la SEGUNDA condición del productor `message` del hilo
+	// (thread.go, D-043.23 + decisión de Jhoan del 2026-08-10): además de la
+	// feature llm_intake, hace falta este interruptor —config
+	// WAPP_CONVERSATION_THREAD_MESSAGES, apagado por defecto (fail-closed)—. El
+	// e2e vivo del 2026-08-10 midió 12 filas `message` con el cuerpo cifrado en un
+	// tenant `pro` real, escritas sin que existiera todavía nadie que las leyera
+	// (el Plan 044, su LECTOR). false (default, sin WithMessageThreadEnabled) ⇒
+	// persistTurnMessages nunca escribe `message`, aunque la feature esté
+	// encendida. NO afecta al productor `decision` (PersistSink.WithDecisionThread),
+	// que sigue escribiendo siempre. Se retira cuando el 044 tenga su lector.
+	messageThreadEnabled bool
 	// now entrega la hora actual para el TTL conversacional (Plan 029 · T9). Inyectable
 	// (WithClock) para tests deterministas; New lo deja en time.Now.
 	now func() time.Time
@@ -265,6 +276,18 @@ func WithIngestDeduper(d IngestDeduper) Option {
 // siempre (no-regresión: comportamiento idéntico al previo al clasificador).
 func WithEntitlements(r entitlements.Resolver) Option {
 	return func(rt *Runtime) { rt.entitlements = r }
+}
+
+// WithMessageThreadEnabled enciende el productor `message` del hilo del evento
+// (thread.go, D-043.23) POR ENCIMA del gate de la feature llm_intake: hacen falta
+// las DOS para que persistTurnMessages escriba el texto literal del turno. Sin
+// llamarla (default false, fail-closed) el turno nunca deja una fila `message`,
+// aunque el tenant tenga la feature contratada — el Plan 044 (su lector) todavía
+// no existe, y guardar el literal sin nadie que lo lea es exposición sin
+// contrapartida (ADR-0034 nivel 2, decisión de Jhoan del 2026-08-10). Se retira
+// esta Option (y el campo que gobierna) cuando el 044 tenga su lector.
+func WithMessageThreadEnabled(enabled bool) Option {
+	return func(rt *Runtime) { rt.messageThreadEnabled = enabled }
 }
 
 // WithClock inyecta el reloj que el TTL conversacional usa para decidir si un estado

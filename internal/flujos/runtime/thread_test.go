@@ -223,12 +223,15 @@ func TestDecision_SinCablearNoEscribeNada(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T4.5.7b — el runtime persiste el literal del turno SOLO con llm_intake
+// T4.5.7b / T4.6 — el runtime persiste el literal del turno SOLO con llm_intake
+// Y con el interruptor de despliegue messageThreadEnabled (D-043.23 + decisión
+// de Jhoan del 2026-08-10) encendidos a la vez.
 // ---------------------------------------------------------------------------
 
 // newThreadRuntime arma el runtime del hilo: plano de eventos + resolver de
-// entitlements (el gate de verdad, misma mecánica que buildSignal / ADR-0022).
-func newThreadRuntime(t *testing.T, feats *entitlements.Fake, rules ...trigger.Rule) (*runtime.Runtime, *memEventStore, *contact.MemoryResolver) {
+// entitlements (el gate de verdad, misma mecánica que buildSignal / ADR-0022) +
+// el interruptor de despliegue msgEnabled (WithMessageThreadEnabled).
+func newThreadRuntime(t *testing.T, feats *entitlements.Fake, msgEnabled bool, rules ...trigger.Rule) (*runtime.Runtime, *memEventStore, *contact.MemoryResolver) {
 	t.Helper()
 	repo := store.NewMemoryRepository()
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
@@ -245,15 +248,18 @@ func newThreadRuntime(t *testing.T, feats *entitlements.Fake, rules ...trigger.R
 	rt := runtime.New(repo, newEngine(), &fakeSender{}, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
 		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)),
 		runtime.WithEventStore(evs),
-		runtime.WithEntitlements(feats))
+		runtime.WithEntitlements(feats),
+		runtime.WithMessageThreadEnabled(msgEnabled))
 	return rt, evs, contacts
 }
 
 // TestHilo_SinLaFeatureNoSeEscribeNiUnMensaje: el gate APAGADO es el estado por
 // defecto de la entrega (D-043.23: lo enciende el plan que trae `llm_intake`; lo
-// explota el Plan 044). Cero filas `message`, con conversación y evento vivos.
+// explota el Plan 044). Cero filas `message`, con conversación y evento vivos —
+// AUNQUE el interruptor de despliegue esté encendido (msgEnabled=true): la
+// feature sigue siendo, por sí sola, insuficiente y necesaria.
 func TestHilo_SinLaFeatureNoSeEscribeNiUnMensaje(t *testing.T) {
-	rt, evs, _ := newThreadRuntime(t, entitlements.NewFake(), eventStartRule("carrito", "cart"))
+	rt, evs, _ := newThreadRuntime(t, entitlements.NewFake(), true, eventStartRule("carrito", "cart"))
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "t457-a1")); err != nil {
@@ -268,15 +274,54 @@ func TestHilo_SinLaFeatureNoSeEscribeNiUnMensaje(t *testing.T) {
 	}
 }
 
-// TestHilo_ConLaFeatureGuardaClienteYNegocioEnOrden: con la feature encendida, el
-// turno dentro del evento deja el literal del cliente (RoleClient) y las
-// respuestas del negocio (RoleBusiness), en el orden de la conversación. El turno
-// de ARRANQUE (la palabra que pare el evento) no pasa por advanceLive y —a
-// propósito, mínimo de la ola— no se persiste.
+// TestHilo_ConFeatureYFlagApagadoNoEscribeMensajePeroDecisionSigue: la SEGUNDA
+// condición (decisión de Jhoan del 2026-08-10, WAPP_CONVERSATION_THREAD_MESSAGES)
+// es igual de necesaria que la feature: con `llm_intake` ENCENDIDA pero el
+// interruptor de despliegue en su default (false, sin WithMessageThreadEnabled),
+// el turno dentro del evento no deja ni una fila `message`. El productor
+// `decision` es OTRA puerta del mismo EventStore (PersistSink.WithDecisionThread,
+// cableado aparte en el bootstrap) y el gate del hilo de mensajes no la toca —se
+// demuestra escribiendo una decisión de verdad sobre el MISMO evento y viendo que
+// llega, mientras `message` sigue en cero.
+func TestHilo_ConFeatureYFlagApagadoNoEscribeMensajePeroDecisionSigue(t *testing.T) {
+	feats := entitlements.NewFake()
+	feats.Enable(testTenant, entitlements.FeatureLLMIntake)
+	rt, evs, _ := newThreadRuntime(t, feats, false, eventStartRule("carrito", "cart"))
+	ctx := context.Background()
+
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "t457-f1")); err != nil {
+		t.Fatalf("carrito: %v", err)
+	}
+	ev := evs.alive()[0]
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "ni idea", "t457-f2")); err != nil {
+		t.Fatalf("turno dentro del evento: %v", err)
+	}
+
+	if got := evs.mensajesDe(ev.ID); len(got) != 0 {
+		t.Fatalf("con el flag apagado (default) el literal NO se escribe aunque la feature esté encendida; hay %d filas", len(got))
+	}
+
+	// `decision` no pasa por messageThreadEnabled: sigue llegando al mismo evento.
+	sink := persistSinkWith(store.NewMemoryRepository()).WithDecisionThread(evs)
+	eff := modules.Effect{Kind: "event", Name: "item_added", Payload: map[string]any{"sku": "CAFE"}}
+	if err := sink.Handle(ctx, ecConEvento(ev.ID), eff); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := len(evs.decisiones[ev.ID]); got != 1 {
+		t.Fatalf("decision debe seguir escribiendo con el flag de message apagado; hay %d filas", got)
+	}
+}
+
+// TestHilo_ConLaFeatureGuardaClienteYNegocioEnOrden: con la feature Y el
+// interruptor de despliegue encendidos, el turno dentro del evento deja el
+// literal del cliente (RoleClient) y las respuestas del negocio (RoleBusiness),
+// en el orden de la conversación. El turno de ARRANQUE (la palabra que pare el
+// evento) no pasa por advanceLive y —a propósito, mínimo de la ola— no se
+// persiste.
 func TestHilo_ConLaFeatureGuardaClienteYNegocioEnOrden(t *testing.T) {
 	feats := entitlements.NewFake()
 	feats.Enable(testTenant, entitlements.FeatureLLMIntake)
-	rt, evs, _ := newThreadRuntime(t, feats, eventStartRule("carrito", "cart"))
+	rt, evs, _ := newThreadRuntime(t, feats, true, eventStartRule("carrito", "cart"))
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "t457-b1")); err != nil {
@@ -313,7 +358,7 @@ func TestHilo_ConLaFeatureGuardaClienteYNegocioEnOrden(t *testing.T) {
 func TestHilo_ElTurnoQueCierraElFlujoPerteneceAlEvento(t *testing.T) {
 	feats := entitlements.NewFake()
 	feats.Enable(testTenant, entitlements.FeatureLLMIntake)
-	rt, evs, _ := newThreadRuntime(t, feats, eventStartRule("carrito", "cart"))
+	rt, evs, _ := newThreadRuntime(t, feats, true, eventStartRule("carrito", "cart"))
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "t457-c1")); err != nil {
@@ -345,7 +390,7 @@ func TestHilo_SinEventoNoSeEscribeAunConFeature(t *testing.T) {
 		TenantID: testTenant, Kind: trigger.KindKeyword, Keyword: "pedido",
 		MatchType: trigger.MatchExact, FlowID: testFlow, Enabled: true,
 	}
-	rt, evs, _ := newThreadRuntime(t, feats, kw)
+	rt, evs, _ := newThreadRuntime(t, feats, true, kw)
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "pedido", "t457-d1")); err != nil {
