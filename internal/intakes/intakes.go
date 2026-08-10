@@ -302,36 +302,39 @@ type Store interface {
 	ApplyRevalidation(ctx context.Context, tenantID, intakeID string, rv Revalidation, renderedText string, expected []string) (Detail, error)
 
 	// Discard aplica el DESCARTE MANUAL del dueño sobre UNA solicitud (D-041.18,
-	// T4.8) en una sola unidad de trabajo: la deja en `abandoned` y escribe su
-	// revisión `discarded`. ErrNotFound si no es del tenant (404 opaco).
+	// T4.8) en una sola unidad de trabajo: la deja en `abandoned`, escribe su
+	// revisión `discarded` y CIERRA SU CONTENEDOR — el evento conversacional que la
+	// propia solicitud declara pasa de `open` a `cancelled` con `closed_at`
+	// (REQ-32e; D-043.15(1) re-expresada por D-043.21). ErrNotFound si no es del
+	// tenant (404 opaco).
 	//
 	// La CONDICIÓN de escritura es toda del llamante y va en `discardable` (las
 	// claves almacenadas desde las que se puede descartar, DiscardableStatuses):
 	// esta operación no consulta la máquina de estados ni decide qué es descartable.
 	// Lo que sí es contrato de este puerto es el ORDEN en que se rechaza —primero el
-	// estado, después la conversación viva— y que un rechazo NO escribe NADA.
+	// estado, después el evento vivo— y que un rechazo NO escribe NADA.
 	//
-	// Ambas comprobaciones y la escritura ocurren bajo el MISMO candado de la
-	// cabecera: sin eso, entre "está descartable y sin conversación" y el UPDATE
-	// cabría un carrito nuevo, y el descarte mataría un pedido que ya había vuelto a
-	// la vida.
+	// Las comprobaciones y las escrituras ocurren bajo el MISMO candado de la
+	// cabecera: sin eso, entre "está descartable y sin evento vivo" y el UPDATE
+	// cabría un rescate, y el descarte mataría un pedido que ya había vuelto a la
+	// vida.
 	//
-	// ⚠️ "Conversación viva" (DiscardOutcome.LiveCart) es hoy una APROXIMACIÓN
-	// PROVISIONAL, y quien la herede tiene que saberlo: se deriva de la única señal
-	// que hay POBLADA —una fila de public.flow_state para (tenant, sesión, contacto)
-	// cuyo `vars` traiga el estado del carrito—, en vez de del EVENTO conversacional,
-	// que es quien debería contestar esto.
-	//
-	// ACTUALIZADO 2026-08-09 (Plan 043 · Ola 1): las dos piezas del evento YA EXISTEN
-	// en el esquema —public.conversation_events la crea `0051_conversation_events.sql`
-	// y flow_state.event_id lo añade `0052_event_seams.sql`—, así que la razón que
-	// aquí figuraba («hoy no existe en ninguna base») caducó. Lo que sigue siendo
-	// cierto es que están VACÍAS: nadie crea eventos ni apunta el puntero hasta la Ola
-	// 2 (T2.2/T2.5), y consultarlas hoy diría «no hay conversación viva» SIEMPRE — que
-	// sobre una acción irreversible es el error caro. Por eso la fuente sigue siendo
-	// flow_state. Su FUENTE cambia cuando el productor aterrice (dueño: 043 · T4.3);
-	// su semántica no. Se acepta porque falla del lado seguro: si se
-	// equivoca, PROTEGE DE MÁS (no descarta algo descartable), nunca de menos — y lo
-	// que está al otro lado es una acción irreversible y sin papelera (D-041.22).
+	// "Evento vivo" (DiscardOutcome.LiveEvent) es desde la Ola 4.5 el criterio
+	// REAL (DT-043.2 SALDADA): ¿está `open` el evento que ESTA solicitud declara en
+	// su `intakes.event_id` (D-043.21)? La aproximación por el `cart` del
+	// flow_state que vivió aquí desde el Plan 041 murió con la columna
+	// conversation_events.intake_id (0054). Una solicitud LEGADA sin event_id no
+	// tiene evento vivo que mirar ⇒ descartable.
 	Discard(ctx context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error)
+
+	// AbandonByEvent deja en `abandoned` la solicitud `open` que declara `eventID`
+	// como padre (D-043.21, T4.5.5(a)): la dirección contenedor→contenido de E-8,
+	// consumida por el runtime cuando un evento muere cancelado (puerto
+	// IntakeAbandoner). Es un CAS de una sentencia (`WHERE event_id=… AND
+	// tenant_id=… AND status='open'`) y 0 filas es ÉXITO IDEMPOTENTE: el reintento
+	// de una cancelación a medias tiene que poder terminar, y un evento sin
+	// contenido (menu, survey) no tiene nada que abandonar. A diferencia de la
+	// vieja puerta por intakeID (Service.Abandon → SetStatus), aquí no hay
+	// TransitionError posible: el guard del estado va en el propio SQL.
+	AbandonByEvent(ctx context.Context, tenantID, eventID string) error
 }

@@ -245,12 +245,15 @@ func TestIntegration_SurveyResultsPersistAndAggregate(t *testing.T) {
 
 	// tenant_id/contact_id como TEXT opaco (la tabla no tiene FK; el runtime pasa
 	// el contact_id ya resuelto). Aislamos por un flow_id único de este test.
+	// Desde la 0054 cada respuesta declara a su padre (event_id, D-043.21): un
+	// mismo evento sirve toda la tanda — la encuesta son N respuestas del evento.
 	flowID := fmt.Sprintf("encuesta-%d", time.Now().UnixNano())
 	tenantID := "tenant-survey-t2"
+	_, evento := seedTenantEventoPG(t, db, "closed")
 	rows := []store.SurveyResult{
-		{TenantID: tenantID, ContactID: "c-1", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
-		{TenantID: tenantID, ContactID: "c-2", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si"},
-		{TenantID: tenantID, ContactID: "c-3", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "no"},
+		{TenantID: tenantID, ContactID: "c-1", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si", EventID: evento},
+		{TenantID: tenantID, ContactID: "c-2", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "si", EventID: evento},
+		{TenantID: tenantID, ContactID: "c-3", FlowID: flowID, FlowVersion: 1, QuestionID: "q1", AnswerCode: "no", EventID: evento},
 	}
 	if err := repo.InsertResults(ctx, rows); err != nil {
 		t.Fatalf("InsertResults: %v", err)
@@ -264,6 +267,19 @@ func TestIntegration_SurveyResultsPersistAndAggregate(t *testing.T) {
 	got := aggregateAnswers(t, db, flowID)
 	if got["si"] != 2 || got["no"] != 1 {
 		t.Fatalf("agregación por answer_code inesperada: %+v", got)
+	}
+
+	// T4.5.3: la fila SALE con su event_id — las tres, no «alguna» (la ligadura no
+	// es opcional por fila).
+	var ligadas int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM public.survey_results
+		WHERE flow_id = $1 AND event_id = $2
+	`, flowID, evento).Scan(&ligadas); err != nil {
+		t.Fatalf("contando ligaduras: %v", err)
+	}
+	if ligadas != 3 {
+		t.Fatalf("filas con event_id=%d, quiero 3 (D-043.21)", ligadas)
 	}
 }
 

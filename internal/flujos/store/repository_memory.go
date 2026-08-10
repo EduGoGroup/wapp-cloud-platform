@@ -493,6 +493,13 @@ func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	now := time.Now()
 	if prev, ok := r.intakes[o.ID]; ok {
 		o.CreatedAt = prev.CreatedAt
+		// Misma semántica que el COALESCE(intakes.event_id, EXCLUDED.event_id) del
+		// Postgres (D-043.21): un padre ya declarado JAMÁS se pisa; un vacío legado
+		// sí se estampa. Si aquí se sobrescribiera, un test unitario daría por
+		// buena una escritura que en producción no puede ocurrir.
+		if prev.EventID != "" {
+			o.EventID = prev.EventID
+		}
 	} else {
 		o.CreatedAt = now
 	}
@@ -612,6 +619,11 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			o.Status = "closed"
 			o.Total = in.Total
 			o.CustomerNote = in.CustomerNote
+			// COALESCE(event_id, $n), como el UPDATE del Postgres (D-043.21): el
+			// cierre rellena un NULL legado y jamás pisa un padre ya declarado.
+			if o.EventID == "" {
+				o.EventID = in.EventID
+			}
 			o.UpdatedAt = now
 			r.intakes[id] = o
 			break
@@ -627,6 +639,7 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			Status:       "closed",
 			Total:        in.Total,
 			CustomerNote: in.CustomerNote,
+			EventID:      in.EventID,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}

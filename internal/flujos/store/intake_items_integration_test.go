@@ -19,14 +19,18 @@ import (
 )
 
 // abrirSolicitud crea una solicitud "open" y devuelve su id, con tenant y contacto
-// únicos para que dos corridas no se pisen.
-func abrirSolicitud(t *testing.T, repo *store.PostgresRepository) (intakeID, tenantID, contactID string) {
+// únicos para que dos corridas no se pisen. Desde la 0054 la fila declara a su
+// padre (event_id): el evento se siembra de verdad (seedTenantEventoPG) porque el
+// CHECK y la FK no aceptan otra cosa; el tenant TEXT de la solicitud sigue siendo
+// el opaco de siempre — la ligadura es solicitud→evento, no tenant→tenant.
+func abrirSolicitud(t *testing.T, db *sql.DB, repo *store.PostgresRepository) (intakeID, tenantID, contactID string) {
 	t.Helper()
 	sufijo := fmt.Sprintf("%d", time.Now().UnixNano())
 	intakeID, tenantID, contactID = uuid.NewString(), "t-lineas-"+sufijo, "c-lineas-"+sufijo
+	_, eventID := seedTenantEventoPG(t, db, "cancelled")
 	if err := repo.UpsertIntake(context.Background(), store.Intake{
 		ID: intakeID, TenantID: tenantID, ContactID: contactID,
-		SessionID: "s-lineas", Status: "open",
+		SessionID: "s-lineas", Status: "open", EventID: eventID,
 	}); err != nil {
 		t.Fatalf("UpsertIntake: %v", err)
 	}
@@ -84,7 +88,7 @@ func TestPG_ReplaceIntakeItems_EsUnEspejoYConservaElOrden(t *testing.T) {
 	db := openTestDB(t)
 	repo := store.NewPostgresRepository(db)
 	ctx := context.Background()
-	intakeID, _, _ := abrirSolicitud(t, repo)
+	intakeID, _, _ := abrirSolicitud(t, db, repo)
 
 	if err := repo.ReplaceIntakeItems(ctx, intakeID, []store.IntakeItem{
 		{SKU: "CAFE", Label: "Café", Qty: 2, UnitPrice: 2.5},
@@ -118,7 +122,7 @@ func TestPG_ReplaceIntakeItems_NoSeLlevaLaLíneaDeEnvío(t *testing.T) {
 	db := openTestDB(t)
 	repo := store.NewPostgresRepository(db)
 	ctx := context.Background()
-	intakeID, _, _ := abrirSolicitud(t, repo)
+	intakeID, _, _ := abrirSolicitud(t, db, repo)
 
 	if err := repo.ReplaceIntakeItems(ctx, intakeID, []store.IntakeItem{
 		{SKU: "CAFE", Label: "Café", Qty: 1, UnitPrice: 2.5},
@@ -150,7 +154,7 @@ func TestPG_CloseIntake_NoDuplicaLasLíneasYaMaterializadas(t *testing.T) {
 	db := openTestDB(t)
 	repo := store.NewPostgresRepository(db)
 	ctx := context.Background()
-	intakeID, tenantID, contactID := abrirSolicitud(t, repo)
+	intakeID, tenantID, contactID := abrirSolicitud(t, db, repo)
 
 	vivas := []store.IntakeItem{
 		{SKU: "CAFE", Label: "Café", Qty: 2, UnitPrice: 2.5},

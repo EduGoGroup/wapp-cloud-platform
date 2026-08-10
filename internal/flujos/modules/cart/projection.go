@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -156,13 +157,39 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 // en la tabla) y la fila que ya existía se reescribe con el valor que tuviera —las
 // históricas conservan el suyo tal cual, que es justo lo que promete el COMMENT de
 // la columna.
+// La solicitud DECLARA A SU PADRE al nacer (D-043.21, T4.5.3): event_id =
+// meta.EventID, el dato que este método ya tenía en la mano y descartaba. Tres
+// reglas, en orden:
+//
+//   - Al CREAR, la fila nace con el event_id de la meta. Si la meta llega VACÍA
+//     (efecto fuera de evento — no debería pasar en cart), NO se inventa nada: va
+//     NULL, se loguea, y el CHECK de la 0054 hace su trabajo en la base.
+//   - Al REUSAR una "open" con event_id NULL (legado pre-0054), se ESTAMPA: es la
+//     única reparación legítima de un huérfano — el evento vivo del turno es, por
+//     E-2 (uno vivo por tipo), el mismo del que esa solicitud colgaba.
+//   - Al REUSAR una que YA declara OTRO evento, NO se pisa: se loguea y se sigue.
+//     No debería pasar (un vivo por tipo + índice único parcial), así que si se ve
+//     en un log es una carrera o un dato roto que hay que mirar, no maquillar. El
+//     COALESCE del UpsertIntake garantiza además EN EL SQL que ninguna escritura
+//     des-declara un padre.
 func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) (string, error) {
 	existing, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
 		return "", err
 	}
 	if found {
+		switch {
+		case existing.EventID == "" && meta.EventID != "":
+			existing.EventID = meta.EventID
+		case meta.EventID != "" && existing.EventID != meta.EventID:
+			slog.Warn("cart: la solicitud abierta ya declara OTRO evento; no se pisa (D-043.21)",
+				"intake_id", existing.ID, "event_id_solicitud", existing.EventID, "event_id_meta", meta.EventID)
+		}
 		return existing.ID, p.store.UpsertIntake(ctx, existing)
+	}
+	if meta.EventID == "" {
+		slog.Warn("cart: item_added sin evento en la meta; la solicitud nace sin padre y el CHECK de la 0054 decidirá",
+			"tenant_id", meta.TenantID, "session_id", meta.SessionID)
 	}
 	intake := store.Intake{
 		ID:        uuid.NewString(),
@@ -170,6 +197,7 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Status:    intakeStatusOpen,
+		EventID:   meta.EventID,
 	}
 	return intake.ID, p.store.UpsertIntake(ctx, intake)
 }
@@ -230,6 +258,10 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Total:     total,
+		// El cierre también declara al padre (D-043.21): en el camino normal solo
+		// rellena un NULL legado (el open ya lo estampó ensureOpenIntake), y en la
+		// rama que crea la "closed" coherente es el event_id de esa fila nueva.
+		EventID: meta.EventID,
 		// La indicación del pedido (D-041.19) viaja en la cabecera del efecto y su
 		// AUSENCIA da la cadena vacía, igual que la personalización de cada línea: un
 		// cierre emitido antes de que el campo existiera —o por un carrito sin

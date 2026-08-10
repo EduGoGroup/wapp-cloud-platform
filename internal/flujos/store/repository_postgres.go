@@ -24,7 +24,7 @@ type execer interface {
 
 // surveyResultCols es el número de columnas por fila que escribe InsertResults
 // (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
-const surveyResultCols = 6
+const surveyResultCols = 7
 
 // intakeItemCols es el número de columnas por fila que escribe insertIntakeItems
 // (orden de intake_items salvo id y added_at, que usan sus DEFAULT).
@@ -288,18 +288,24 @@ func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyRes
 	for i, row := range rows {
 		base := i * surveyResultCols
 		placeholders = append(placeholders, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6,
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7,
 		))
+		// EventID "" ⇒ NULL (D-043.21): solo lo produce un replay legado; una fila
+		// nueva sin padre la rechaza el CHECK de la 0054, que es su trabajo.
+		var eventID sql.NullString
+		if row.EventID != "" {
+			eventID = sql.NullString{String: row.EventID, Valid: true}
+		}
 		args = append(args,
-			row.TenantID, row.ContactID, row.FlowID, row.FlowVersion, row.QuestionID, row.AnswerCode,
+			row.TenantID, row.ContactID, row.FlowID, row.FlowVersion, row.QuestionID, row.AnswerCode, eventID,
 		)
 	}
 	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
 	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
 	query := `
 		INSERT INTO survey_results
-			(tenant_id, contact_id, flow_id, flow_version, question_id, answer_code)
+			(tenant_id, contact_id, flow_id, flow_version, question_id, answer_code, event_id)
 		VALUES ` + strings.Join(placeholders, ", ")
 	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: insertar resultados de encuesta: %w", err)
@@ -535,15 +541,27 @@ func (r *PostgresRepository) DeleteTenantContent(ctx context.Context, tenantID, 
 // UpsertIntake inserta o actualiza (upsert por id) la solicitud en public.intakes
 // (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
 // NULL. created_at/updated_at usan now() (updated_at se refresca en el UPDATE).
+//
+// event_id (D-043.21, migración 0054) se escribe al NACER la fila y en el UPDATE
+// va protegido con COALESCE(intakes.event_id, EXCLUDED.event_id): un event_id ya
+// declarado NO se pisa jamás —ni con otro valor ni con NULL—, y un NULL legado
+// (fila pre-0054) SÍ se estampa cuando el proyector reusa la solicitud con el
+// evento en la mano. La política de QUÉ estampar es del proyector
+// (cart.ensureOpenIntake); esta sentencia solo garantiza que ninguna escritura
+// pueda des-declarar a un padre.
 func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 	var expires sql.NullTime
 	if !o.ExpiresAt.IsZero() {
 		expires = sql.NullTime{Time: o.ExpiresAt, Valid: true}
 	}
+	var eventID sql.NullString
+	if o.EventID != "" {
+		eventID = sql.NullString{String: o.EventID, Valid: true}
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+			(id, tenant_id, contact_id, session_id, status, total, expires_at, event_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
 		ON CONFLICT (id) DO UPDATE
 		SET tenant_id  = EXCLUDED.tenant_id,
 		    contact_id = EXCLUDED.contact_id,
@@ -551,8 +569,9 @@ func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 		    status     = EXCLUDED.status,
 		    total      = EXCLUDED.total,
 		    expires_at = EXCLUDED.expires_at,
+		    event_id   = COALESCE(public.intakes.event_id, EXCLUDED.event_id),
 		    updated_at = now()
-	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires)
+	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires, eventID)
 	if err != nil {
 		return fmt.Errorf("store: upsert solicitud: %w", err)
 	}
@@ -646,6 +665,10 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 	// que confirmó.
 	var closedID string
 	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		var eventID sql.NullString
+		if in.EventID != "" {
+			eventID = sql.NullString{String: in.EventID, Valid: true}
+		}
 		var intakeID string
 		err := tx.QueryRowContext(ctx, `
 			SELECT id::text FROM public.intakes
@@ -657,11 +680,13 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			intakeID = uuid.NewString()
+			// La fila "closed" coherente nace, como cualquier otra, declarando a su
+			// padre (event_id, D-043.21): sin él, el CHECK de la 0054 la rechaza.
 			if _, ierr := tx.ExecContext(ctx, `
 				INSERT INTO public.intakes
-					(id, tenant_id, contact_id, session_id, status, total, customer_note, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, 'closed', $5, $6, now(), now())
-			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote); ierr != nil {
+					(id, tenant_id, contact_id, session_id, status, total, customer_note, event_id, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, 'closed', $5, $6, $7, now(), now())
+			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote, eventID); ierr != nil {
 				return fmt.Errorf("store: insertar solicitud cerrada: %w", ierr)
 			}
 		case err != nil:
@@ -672,11 +697,15 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 			// confirmar. La columna es NOT NULL, así que el vacío viaja igual que el
 			// texto —"sin indicación" es un valor, no una omisión— y una solicitud
 			// cerrada dos veces (reintento del 40P01) acaba con el mismo contenido.
+			//
+			// event_id con COALESCE, igual que en UpsertIntake: rellena un NULL
+			// legado (pre-0054) y JAMÁS pisa un padre ya declarado (D-043.21).
 			if _, uerr := tx.ExecContext(ctx, `
 				UPDATE public.intakes
-				SET status = 'closed', total = $2, customer_note = $3, updated_at = now()
+				SET status = 'closed', total = $2, customer_note = $3,
+				    event_id = COALESCE(event_id, $4), updated_at = now()
 				WHERE id = $1
-			`, intakeID, in.Total, in.CustomerNote); uerr != nil {
+			`, intakeID, in.Total, in.CustomerNote, eventID); uerr != nil {
 				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
 			}
 		}
@@ -698,17 +727,18 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 	var (
 		o       Intake
 		expires sql.NullTime
+		eventID sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id::text, tenant_id, contact_id, session_id, status, total,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, event_id::text
 		FROM public.intakes
 		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, tenantID, contactID).Scan(
 		&o.ID, &o.TenantID, &o.ContactID, &o.SessionID, &o.Status, &o.Total,
-		&o.CreatedAt, &o.UpdatedAt, &expires,
+		&o.CreatedAt, &o.UpdatedAt, &expires, &eventID,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -718,6 +748,11 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 	}
 	if expires.Valid {
 		o.ExpiresAt = expires.Time
+	}
+	// event_id NULL ⇒ EventID "" (fila legada pre-0054): es la señal con la que el
+	// proyector sabe que puede ESTAMPAR el padre al reusar (D-043.21).
+	if eventID.Valid {
+		o.EventID = eventID.String
 	}
 	return o, true, nil
 }

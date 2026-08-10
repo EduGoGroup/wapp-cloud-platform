@@ -16,31 +16,45 @@ import (
 // es el único sitio donde se puede comprobar lo que este endpoint tiene de
 // arriesgado:
 //
-//   - la derivación de `live_event` cruza public.intakes (TEXT) con
-//     public.flow_state (UUID) — el choque de tipos no se ve en un store en memoria;
+//   - la guarda `live_event` pregunta por el estado del EVENTO que la solicitud
+//     declara (intakes.event_id, D-043.21 — DT-043.2 saldada en la Ola 4.5), y el
+//     par evento↔solicitud solo existe entero con las FKs de la 0054 puestas;
 //   - la revisión `discarded` tiene que pasar el CHECK de `kind` de la 0045;
 //   - la idempotencia se sostiene sobre una fila de verdad, no sobre un mapa.
 
 // seedDescartePG inserta UNA solicitud con el contacto y la sesión que se le
-// indiquen (a diferencia de seedPG, que fabrica un contact_id opaco no-UUID) y
-// devuelve su id. Limpia al terminar.
+// indiquen y devuelve su id. Desde la 0054 la fila declara a su padre: nace ligada
+// a un evento propio ya `cancelled` — el pedido HUÉRFANO típico de la bandeja, el
+// que el descarte existe para limpiar. Para montar el par con el evento en otro
+// estado está seedDescarteConEventoPG. Limpia al terminar.
 func seedDescartePG(t *testing.T, db *sql.DB, tenantID, sessionID, contactID, status string) string {
+	id, _ := seedDescarteConEventoPG(t, db, tenantID, sessionID, contactID, status, "cancelled")
+	return id
+}
+
+// seedDescarteConEventoPG monta el PAR completo (D-043.21): un evento del tenant en
+// `eventStatus` y una solicitud en `status` que lo declara como padre. Devuelve los
+// dos ids. Limpia la solicitud al terminar (el evento lo limpia el CASCADE del
+// tenant, ver ensureTenantPG).
+func seedDescarteConEventoPG(t *testing.T, db *sql.DB, tenantID, sessionID, contactID, status, eventStatus string) (intakeID, eventID string) {
 	t.Helper()
-	id := uuid.NewString()
+	ensureTenantPG(t, db, tenantID)
+	eventID = seedEventoPG(t, db, tenantID, eventStatus)
+	intakeID = uuid.NewString()
 	if _, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 18000, now(), now())
-	`, id, tenantID, contactID, sessionID, status); err != nil {
-		t.Fatalf("sembrando solicitud %s: %v", id, err)
+			(id, tenant_id, contact_id, session_id, status, total, event_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 18000, $6, now(), now())
+	`, intakeID, tenantID, contactID, sessionID, status, eventID); err != nil {
+		t.Fatalf("sembrando solicitud %s: %v", intakeID, err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.ExecContext(context.Background(),
-			`DELETE FROM public.intakes WHERE id = $1`, id); err != nil {
-			t.Logf("limpiando solicitud %s: %v", id, err)
+			`DELETE FROM public.intakes WHERE id = $1`, intakeID); err != nil {
+			t.Logf("limpiando solicitud %s: %v", intakeID, err)
 		}
 	})
-	return id
+	return intakeID, eventID
 }
 
 // seedTenantPG crea un tenant de verdad. Hace falta porque flow_state.tenant_id
@@ -63,31 +77,18 @@ func seedTenantPG(t *testing.T, db *sql.DB) string {
 	return id
 }
 
-// seedConversaciónPG inserta la fila de flow_state de (tenant, sesión, contacto)
-// con el `vars` dado. Es la señal de la que hoy se deriva "hay evento vivo".
-func seedConversaciónPG(t *testing.T, db *sql.DB, tenantID, sessionID, contactID, vars string) {
+// estadoEventoPG lee el estado y el closed_at del evento: lo que permite afirmar
+// que el descarte cerró (o respetó) el contenedor sin abrir otra puerta.
+func estadoEventoPG(t *testing.T, db *sql.DB, eventID string) (status string, closed bool) {
 	t.Helper()
-	if _, err := db.ExecContext(context.Background(), `
-		INSERT INTO public.flow_state
-			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars)
-		VALUES ($1, $2, $3, 'flujo-pedidos', 1, 'nodo-cart', $4::jsonb)
-		ON CONFLICT (tenant_id, session_id, contact_id) DO UPDATE SET vars = EXCLUDED.vars
-	`, tenantID, sessionID, contactID, vars); err != nil {
-		t.Fatalf("sembrando conversación: %v", err)
+	var closedAt sql.NullTime
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT status, closed_at FROM public.conversation_events WHERE id = $1`,
+		eventID).Scan(&status, &closedAt); err != nil {
+		t.Fatalf("leyendo evento %s: %v", eventID, err)
 	}
-	t.Cleanup(func() {
-		if _, err := db.ExecContext(context.Background(), `
-			DELETE FROM public.flow_state
-			WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
-		`, tenantID, sessionID, contactID); err != nil {
-			t.Logf("limpiando conversación: %v", err)
-		}
-	})
+	return status, closedAt.Valid
 }
-
-// carritoVivo es un `vars` como el que serializa el módulo cart: la clave `cart`
-// con el estado de la sub-máquina dentro (cart/state.go).
-const carritoVivo = `{"cart":{"level":"summary","lines":[{"sku":"torta-v1","qty":1}]}}`
 
 // TestPostgres_Discard_DescartaYAudita: el camino feliz contra la tabla real. La
 // solicitud queda en `abandoned`, con su revisión `discarded` — que además tiene que
@@ -135,33 +136,29 @@ func TestPostgres_Discard_DescartaYAudita(t *testing.T) {
 	}
 }
 
-// TestPostgres_Discard_ConversaciónViva es la APROXIMACIÓN de `live_event` probada
-// contra la señal real: una fila de flow_state con `cart` en su `vars` frena el
-// descarte; la misma fila SIN carrito no lo frena.
-//
-// Es también donde se ve el choque de tipos: intakes.tenant_id/contact_id son TEXT
-// y flow_state.tenant_id/contact_id son UUID. El cruce solo encuentra la fila porque
-// la solicitud guarda el UUID del tenant y del contacto en su columna de texto, que
-// es lo que escribe el motor en producción (store.CloseIntake con la clave de la
-// conversación).
-func TestPostgres_Discard_ConversaciónViva(t *testing.T) {
+// TestPostgres_Discard_EventoVivo es DT-043.2 SALDADA puesta por escrito
+// (T4.5.5(c)): la guarda `live_event` mira el EVENTO que la solicitud declara —
+// evento `open` + solicitud suya `open` ⇒ `live_event`, sin escribir NADA (ni en la
+// solicitud ni en el evento: eso se cancela por su propia puerta). El mismo par con
+// el evento ya `cancelled` —el huérfano del journal 2026-08-10, el que la
+// aproximación por flow_state dejaba SIN vía de reparación— hoy se descarta.
+func TestPostgres_Discard_EventoVivo(t *testing.T) {
 	db := openTestDB(t)
 	store := intakes.NewPostgres(db)
 	ctx := context.Background()
 	tenant := seedTenantPG(t, db)
-	contacto := uuid.NewString()
-	id := seedDescartePG(t, db, tenant, "sess-viva", contacto, intakes.StatusOpen)
-	seedConversaciónPG(t, db, tenant, "sess-viva", contacto, carritoVivo)
+	id, evento := seedDescarteConEventoPG(t, db, tenant, "t45i-sess-viva", uuid.NewString(),
+		intakes.StatusOpen, "open")
 
 	out, err := store.Discard(ctx, tenant, id, intakes.DiscardableStatuses())
 	if err != nil {
-		t.Fatalf("Discard con conversación viva: %v", err)
+		t.Fatalf("Discard con evento vivo: %v", err)
 	}
 	if out.Discarded {
-		t.Fatal("se descartó una solicitud con carrito vivo: la guarda no vio la fila de flow_state")
+		t.Fatal("se descartó una solicitud cuyo evento sigue open: la guarda no miró el evento")
 	}
-	if !out.LiveCart {
-		t.Fatalf("outcome=%+v; quiero LiveCart=true", out)
+	if !out.LiveEvent {
+		t.Fatalf("outcome=%+v; quiero LiveEvent=true", out)
 	}
 	det, err := store.Get(ctx, tenant, id)
 	if err != nil {
@@ -170,68 +167,49 @@ func TestPostgres_Discard_ConversaciónViva(t *testing.T) {
 	if det.Status != intakes.StatusOpen || len(det.Revisions) != 0 {
 		t.Fatalf("un rechazo no escribe NADA: status=%q revisiones=%d", det.Status, len(det.Revisions))
 	}
+	if status, closed := estadoEventoPG(t, db, evento); status != "open" || closed {
+		t.Fatalf("el rechazo tampoco toca el evento: status=%q closed=%v", status, closed)
+	}
 
-	// La MISMA conversación sin carrito ya no frena nada: lo que se mira es el
-	// carrito, no la mera existencia de la fila.
-	seedConversaciónPG(t, db, tenant, "sess-viva", contacto, `{"otra":"cosa"}`)
+	// El MISMO par cuando el evento muere (la cancelación selló open→cancelled):
+	// la solicitud queda huérfana y el descarte procede — exactamente el caso que
+	// la vieja guarda por flow_state rebotaba para siempre.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE public.conversation_events SET status='cancelled', closed_at=now()
+		WHERE id = $1 AND status='open'`, evento); err != nil {
+		t.Fatalf("cancelando el evento: %v", err)
+	}
 	out, err = store.Discard(ctx, tenant, id, intakes.DiscardableStatuses())
 	if err != nil {
-		t.Fatalf("Discard sin carrito: %v", err)
+		t.Fatalf("Discard del huérfano: %v", err)
 	}
-	if !out.Discarded || out.LiveCart {
-		t.Fatalf("outcome=%+v; sin carrito en vars el descarte procede", out)
+	if !out.Discarded || out.LiveEvent {
+		t.Fatalf("outcome=%+v; con el evento muerto el descarte procede", out)
 	}
 }
 
-// TestPostgres_Discard_ConversaciónDeOtraSesión: la ligadura es por la CLAVE
-// COMPLETA (tenant, sesión, contacto). Una conversación viva del mismo contacto en
-// OTRA sesión no frena el descarte — si lo hiciera, un tenant con dos teléfonos no
-// podría limpiar nunca su bandeja.
-func TestPostgres_Discard_ConversaciónDeOtraSesión(t *testing.T) {
+// TestPostgres_Discard_ElCarritoNuevoYaNoFrena fija la otra mitad de DT-043.2: la
+// sobre-protección de la aproximación murió con ella. Que el tenant tenga OTRO
+// evento `open` (el carrito nuevo de esa conversación, que con la vieja guarda por
+// flow_state frenaba el descarte de cualquier solicitud vieja del contacto) ya no
+// frena nada: lo único que la guarda mira es el evento que ESA solicitud declara —
+// que está `cancelled`.
+func TestPostgres_Discard_ElCarritoNuevoYaNoFrena(t *testing.T) {
 	db := openTestDB(t)
 	store := intakes.NewPostgres(db)
 	tenant := seedTenantPG(t, db)
 	contacto := uuid.NewString()
-	id := seedDescartePG(t, db, tenant, "sess-a", contacto, intakes.StatusOpen)
-	seedConversaciónPG(t, db, tenant, "sess-b", contacto, carritoVivo)
+	// La solicitud vieja, huérfana de un evento ya cancelado…
+	id := seedDescartePG(t, db, tenant, "t45i-sess-a", contacto, intakes.StatusOpen)
+	// …y el carrito NUEVO de la conversación: otro evento, este sí vivo.
+	seedEventoPG(t, db, tenant, "open")
 
 	out, err := store.Discard(context.Background(), tenant, id, intakes.DiscardableStatuses())
 	if err != nil {
 		t.Fatalf("Discard: %v", err)
 	}
-	if !out.Discarded {
-		t.Fatalf("outcome=%+v; la conversación viva es de OTRA sesión", out)
-	}
-}
-
-// TestPostgres_Discard_ContactoQueNoEsUUID es el borde del choque TEXT/UUID puesto
-// por escrito: una solicitud cuyo contact_id NO es un UUID —el fixture histórico de
-// este repo las siembra así— no puede tener fila en flow_state, porque esa columna
-// es UUID y no admitiría el valor. La consulta ni siquiera se lanza (se parsea en
-// Go) y el descarte procede sin reventar con "invalid input syntax for type uuid",
-// que es lo que pasaría si el parámetro viajara crudo.
-func TestPostgres_Discard_ContactoQueNoEsUUID(t *testing.T) {
-	db := openTestDB(t)
-	store := intakes.NewPostgres(db)
-	tenant := seedTenantPG(t, db)
-	id := seedDescartePG(t, db, tenant, "sess-a", "contacto-opaco-legado", intakes.StatusOpen)
-
-	out, err := store.Discard(context.Background(), tenant, id, intakes.DiscardableStatuses())
-	if err != nil {
-		t.Fatalf("Discard con contacto no-UUID: %v", err)
-	}
-	if !out.Discarded {
-		t.Fatalf("outcome=%+v; quiero que se descarte", out)
-	}
-
-	// Y lo mismo con un TENANT que no es UUID (una base con datos de otra época).
-	otro := seedDescartePG(t, db, "tenant-que-no-es-uuid", "sess-a", uuid.NewString(), intakes.StatusOpen)
-	out, err = store.Discard(context.Background(), "tenant-que-no-es-uuid", otro, intakes.DiscardableStatuses())
-	if err != nil {
-		t.Fatalf("Discard con tenant no-UUID: %v", err)
-	}
-	if !out.Discarded {
-		t.Fatalf("outcome=%+v; quiero que se descarte", out)
+	if !out.Discarded || out.LiveEvent {
+		t.Fatalf("outcome=%+v; el evento vivo es OTRO, no el de esta solicitud", out)
 	}
 }
 

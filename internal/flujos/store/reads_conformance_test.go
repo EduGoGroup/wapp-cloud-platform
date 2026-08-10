@@ -34,24 +34,33 @@ type lecturaRepo interface {
 }
 
 // conAmbosAdaptadores ejecuta el caso contra memoria y contra Postgres.
-func conAmbosAdaptadores(t *testing.T, caso func(t *testing.T, repo lecturaRepo)) {
+//
+// `nuevoEvento` es el padre que la 0054 exige declarar a toda fila nueva
+// (D-043.21): contra Postgres crea un evento DE VERDAD (FK + CHECK reales); en
+// memoria basta un id — el doble no impone integridad referencial, y esa asimetría
+// es exactamente la razón de que esta batería exista.
+func conAmbosAdaptadores(t *testing.T, caso func(t *testing.T, repo lecturaRepo, nuevoEvento func() string)) {
 	t.Helper()
 	t.Run("memoria", func(t *testing.T) {
-		caso(t, store.NewMemoryRepository())
+		caso(t, store.NewMemoryRepository(), uuid.NewString)
 	})
 	t.Run("postgres", func(t *testing.T) {
-		caso(t, store.NewPostgresRepository(openTestDB(t)))
+		db := openTestDB(t)
+		caso(t, store.NewPostgresRepository(db), func() string {
+			_, eventID := seedTenantEventoPG(t, db, "cancelled")
+			return eventID
+		})
 	})
 }
 
 // sembrarAbierta crea una solicitud "open" con identidades únicas y devuelve su id.
-func sembrarAbierta(t *testing.T, repo lecturaRepo) (intakeID, tenantID, contactID string) {
+func sembrarAbierta(t *testing.T, repo lecturaRepo, nuevoEvento func() string) (intakeID, tenantID, contactID string) {
 	t.Helper()
 	sufijo := fmt.Sprintf("%d", time.Now().UnixNano())
 	intakeID, tenantID, contactID = uuid.NewString(), "t-lect-"+sufijo, "c-lect-"+sufijo
 	if err := repo.UpsertIntake(context.Background(), store.Intake{
 		ID: intakeID, TenantID: tenantID, ContactID: contactID,
-		SessionID: "s-lect", Status: "open",
+		SessionID: "s-lect", Status: "open", EventID: nuevoEvento(),
 	}); err != nil {
 		t.Fatalf("UpsertIntake: %v", err)
 	}
@@ -62,9 +71,9 @@ func sembrarAbierta(t *testing.T, repo lecturaRepo) (intakeID, tenantID, contact
 // lo copiado (label, precio, personalización) y EN EL ORDEN DEL CARRITO, que es lo
 // que el resumen del rescate le va a leer al cliente.
 func TestConformidad_ListIntakeItems_DevuelveElPedidoEnOrden(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
 		ctx := context.Background()
-		intakeID, _, _ := sembrarAbierta(t, repo)
+		intakeID, _, _ := sembrarAbierta(t, repo, nuevoEvento)
 
 		quiero := []store.IntakeItem{
 			{SKU: "CAFE", Label: "Café", Customization: "sin azúcar", Qty: 2, UnitPrice: 2.5},
@@ -98,9 +107,9 @@ func TestConformidad_ListIntakeItems_DevuelveElPedidoEnOrden(t *testing.T) {
 // carrito de AHORA. Si acumulara, el resumen del rescate leería líneas que el cliente
 // ya cambió.
 func TestConformidad_ListIntakeItems_VeElReemplazoYNoElHistorial(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
 		ctx := context.Background()
-		intakeID, _, _ := sembrarAbierta(t, repo)
+		intakeID, _, _ := sembrarAbierta(t, repo, nuevoEvento)
 
 		if err := repo.ReplaceIntakeItems(ctx, intakeID, []store.IntakeItem{
 			{SKU: "CAFE", Label: "Café", Qty: 2, UnitPrice: 2.5},
@@ -126,8 +135,8 @@ func TestConformidad_ListIntakeItems_VeElReemplazoYNoElHistorial(t *testing.T) {
 // TestConformidad_ListIntakeItems_SinLíneasEsVacíoSinError: una solicitud recién
 // abierta (o una cuyo carrito se vació) NO es un error.
 func TestConformidad_ListIntakeItems_SinLíneasEsVacíoSinError(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
-		intakeID, _, _ := sembrarAbierta(t, repo)
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
+		intakeID, _, _ := sembrarAbierta(t, repo, nuevoEvento)
 		got, err := repo.ListIntakeItems(context.Background(), intakeID)
 		if err != nil {
 			t.Fatalf("ListIntakeItems: %v", err)
@@ -145,7 +154,7 @@ func TestConformidad_ListIntakeItems_SinLíneasEsVacíoSinError(t *testing.T) {
 // Es además el caso donde los dos adaptadores se separarían solos si no se cuidara:
 // Postgres rechaza el UUID inválido (22P02) y un mapa de cadenas no.
 func TestConformidad_ListIntakeItems_IdMalformadoEsError(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
 		for _, id := range []string{"", "no-soy-un-uuid"} {
 			got, err := repo.ListIntakeItems(context.Background(), id)
 			if err == nil {
@@ -159,15 +168,18 @@ func TestConformidad_ListIntakeItems_IdMalformadoEsError(t *testing.T) {
 // hace posible el resumen de una encuesta rescatada, y el acotado que impide que
 // enseñe lo de otro tenant, otro contacto u otro flujo (INV-8).
 func TestConformidad_ListResults_DevuelveLoRespondidoEnOrdenYSoloLoSuyo(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
 		ctx := context.Background()
 		sufijo := fmt.Sprintf("%d", time.Now().UnixNano())
 		tenant, contacto, flujo := "t-enc-"+sufijo, "c-enc-"+sufijo, "encuesta-"+sufijo
 
+		// UN evento para toda la tanda: survey_results no tiene índice único por
+		// event_id (una encuesta son N respuestas del mismo evento, D-043.21).
+		evento := nuevoEvento()
 		fila := func(tn, ct, fl, q, a string) store.SurveyResult {
 			return store.SurveyResult{
 				TenantID: tn, ContactID: ct, FlowID: fl, FlowVersion: 1,
-				QuestionID: q, AnswerCode: a,
+				QuestionID: q, AnswerCode: a, EventID: evento,
 			}
 		}
 		// Las tres primeras son suyas y van en este orden; las tres últimas son de
@@ -220,7 +232,7 @@ func TestConformidad_ListResults_DevuelveLoRespondidoEnOrdenYSoloLoSuyo(t *testi
 // es un error — es un resumen sin respuestas, que es justo lo que hay que poder
 // distinguir de un fallo de lectura.
 func TestConformidad_ListResults_SinRespuestasEsVacíoSinError(t *testing.T) {
-	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo) {
+	conAmbosAdaptadores(t, func(t *testing.T, repo lecturaRepo, nuevoEvento func() string) {
 		got, err := repo.ListResults(context.Background(), "t-vacio", "c-vacio", "f-vacio")
 		if err != nil {
 			t.Fatalf("ListResults: %v", err)

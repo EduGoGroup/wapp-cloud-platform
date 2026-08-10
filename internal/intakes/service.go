@@ -2,7 +2,6 @@ package intakes
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
@@ -201,27 +200,27 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 	return updated, nil
 }
 
-// Abandon deja la solicitud en `abandoned` y es la puerta que usa el motor cuando
-// muere el evento del que colgaba (Plan 043 · Ola 4, puerto IntakeAbandoner).
+// AbandonByEvent deja en `abandoned` la solicitud que colgaba del evento `eventID`
+// (D-043.21, Ola 4.5 · T4.5.5(a)). Es la puerta que el motor consume por el puerto
+// IntakeAbandoner desde que la FK se invirtió: el runtime cancela un evento y pide
+// abandonar SU contenido sin conocer ningún id de hijo — la columna
+// conversation_events.intake_id de la que dependía el viejo Abandon(intakeID)
+// murió en la 0054, y con ella se retiró ese método (Ola 4.5, cableado final).
 //
-// Se distingue de SetStatus en UNA cosa, y es la razón de existir: pide un ESTADO,
-// no una transición, así que encontrarla YA abandonada es ÉXITO. SetStatus rechaza
-// `from == to` —correcto para un operador que pulsa dos veces, porque ahí no hay
-// nada que avisar—, pero su llamante aquí es el reintento de una cancelación cuya
-// costura se quedó a medias: si el «ya estaba» viajara como error, esa reparación no
-// podría terminar nunca. Cualquier otra transición imposible —abandonar una
-// `confirmed`— sigue saliendo como TransitionError.
+// La idempotencia que aquel exigía vive ahora en el SQL: 0 filas —ya
+// abandonada, ya resuelta, o un evento sin contenido (menu/survey)— es ÉXITO, y el
+// guard `status='open'` del store garantiza que una `confirmed` jamás se abandona
+// por aquí. NO notifica al cliente a propósito, como ninguna de las puertas del
+// abandono por cancelación lo hacía de forma efectiva: el aviso de NotifyStatus
+// cuelga de las transiciones del OPERADOR (SetStatus), y la muerte del evento ya se
+// la contó al cliente el propio flujo.
 //
-// Existe para que las TRES puertas (bootstrap y los dos adaptadores de los tests de
-// integración) compartan la regla en vez de copiarla; la anterior copia triple es
-// justo como una de ellas se quedaría atrás.
-func (s *Service) Abandon(ctx context.Context, tenantID, intakeID string) error {
-	_, err := s.SetStatus(ctx, tenantID, intakeID, StatusAbandoned)
-	var te *TransitionError
-	if errors.As(err, &te) && NormalizeStatus(te.From) == StatusAbandoned {
-		return nil
-	}
-	return err
+// ⚠️ LEGADO REGISTRADO: una solicitud pre-0054 (event_id NULL) es INALCANZABLE por
+// esta puerta — no declara padre, así que ningún eventID la encuentra. Ese hueco es
+// el mismo que ya tenía: nadie podía llegar a ella desde un evento cuando la
+// ligadura vivía (sin escribirse) en el padre.
+func (s *Service) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
+	return s.store.AbandonByEvent(ctx, tenantID, eventID)
 }
 
 // notify dispara el aviso al cliente de UNA transición efectivamente aplicada.
