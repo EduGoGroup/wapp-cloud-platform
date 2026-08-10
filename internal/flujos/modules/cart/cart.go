@@ -145,6 +145,15 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	// no pregunta nada y el recorrido es el de siempre (INV-15).
 	fields := loadBuyerFields(vars)
 	st := loadState(vars)
+	st.inEvent = modules.InEvent(conv)
+	// Los inválidos son del EVENTO en que se cometieron: si el estado viene sellado con
+	// otro (la conversación cambió de contexto por un camino que conserva Vars), el
+	// contador arranca de cero aquí. Sin esto, dos fallos en el carrito armaban el menú
+	// de salida al primer fallo del evento siguiente (ver RepromptsEvent).
+	if st.RepromptsEvent != conv.EventID {
+		st.Reprompts = 0
+		st.RepromptsEvent = ""
+	}
 	var effects []modules.Effect
 	if !st.Started {
 		st.Started = true
@@ -152,6 +161,21 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	}
 	newSt, outs, stepEffects := advance(cat, st, input, size, fields)
 	effects = append(effects, stepEffects...)
+	// Contador: si advance NO pasó por reprompt(), el contador no se movió ⇒ la entrada
+	// fue válida ⇒ se reinicia. Evita tocar los 8 sitios de reprompt para reiniciarlo.
+	if newSt.Reprompts == st.Reprompts {
+		newSt.Reprompts = 0
+	}
+	// El contador que sobrevive al turno se sella con el evento en que se contó; el que
+	// murió (entrada válida, o el tercer inválido que armó el menú) suelta su sello.
+	newSt.RepromptsEvent = ""
+	if newSt.Reprompts > 0 {
+		newSt.RepromptsEvent = conv.EventID
+	}
+	if newSt.exitScreen != "" {
+		outs = modules.ArmExitMenu(vars, conv, newSt.exitScreen).Outputs
+		newSt.exitScreen = ""
+	}
 	storeState(vars, newSt)
 	return modules.Result{Vars: vars, Outputs: outs, Effects: effects}
 }
@@ -606,10 +630,18 @@ func mustCategory(category Category, ok bool) Category {
 	return Category{}
 }
 
-// reprompt re-muestra el nivel actual precedido de un aviso, sin avanzar
-// (design.md §4.2: entrada inválida → reprompt acotado). El carrito re-emite la
-// pantalla contextual completa como ayuda; el estado no cambia.
+// reprompt re-muestra el nivel actual precedido de un aviso, sin avanzar. DENTRO de
+// un evento cuenta los inválidos y, al tercero, ARMA el menú de salida (D-043.10) en
+// vez de repreguntar por enésima vez; fuera de un evento repromptea como siempre.
 func reprompt(st cartState, screen string) (cartState, []string) {
+	if st.inEvent {
+		st.Reprompts++
+		if st.Reprompts >= modules.MaxReprompts {
+			st.Reprompts = 0
+			st.exitScreen = screen
+			return st, nil // Module.Step traduce exitScreen a la salida.
+		}
+	}
 	return st, []string{"Opción no válida. Responde con el número de una de las opciones.\n\n" + screen}
 }
 

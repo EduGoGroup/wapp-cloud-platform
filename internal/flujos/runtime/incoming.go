@@ -124,8 +124,9 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// Con NoopResolver (default) devuelve Ignore ⇒ return nil idéntico a la
 		// decisión C histórica (INV-6). El contexto (tenantID, contactID, key,
 		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
-		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM.
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM. Sin
+		// flow_state no hay puntero de evento ⇒ activeEventKind="" (Plan 043 · T5.3).
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
 	}
 	// EL reloj de esta conversación (Plan 043 · T3.1/T3.2/T3.7). Va ANTES de IsEscape /
 	// consecutiveReplay / prepareResume: un estado que ya no vale no debe escapar ni
@@ -135,7 +136,11 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		return err
 	}
 	if restart {
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+		// El reloj del evento venció y releaseForNewConversation ya borró el estado
+		// (T3.2/E-6): el evento sigue `open` pero YA NO es el activo ⇒
+		// activeEventKind="" (Plan 043 · T5.3). Atarlo aquí reintroduciría la atadura
+		// que T3.2 quita.
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
 	}
 	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
 }
@@ -173,6 +178,20 @@ func (rt *Runtime) conversationClock(ctx context.Context, tenantID string, key s
 	return true, nil
 }
 
+// exitMenuStep evalúa el menú de salida (Plan 043 · T5.2, D-043.10) y colapsa su
+// resultado a un único punto de decisión para el llamante: stop=true ⇒ el turno
+// termina aquí (con o sin error; err es nil si el turno se consumió sin fallo).
+// Extraído de advanceLive para acotar SU complejidad ciclomática (gocyclo), igual
+// que el resto de esta función: el comportamiento es idéntico a inlinear las dos
+// ramas de rt.exitMenuChoice.
+func (rt *Runtime) exitMenuStep(ctx context.Context, key store.Key, sessionID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) (bool, error) {
+	done, err := rt.exitMenuChoice(ctx, key, sessionID, st, m)
+	if err != nil {
+		return true, err
+	}
+	return done, nil
+}
+
 // advanceLive avanza una conversación VIVA (estado ya cargado y no vencido) con un
 // entrante: escape global → idempotencia consecutiva → reanudación por módulo →
 // engine.Step → persistir → fan-out de efectos → auto-respuesta. Extraído de
@@ -200,6 +219,13 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	} else if done {
 		return nil
 	}
+	// Menú de SALIDA del reprompt acotado (Plan 043 · T5.2, D-043.10). Va DESPUÉS del
+	// salto por tipo —«carrito» dicho ante el menú de salida sigue siendo una orden de
+	// navegación, y el escape global conserva su prioridad exacta— y ANTES del Step,
+	// porque el «2» que el cliente teclea ahí NO es una respuesta para el módulo.
+	if stop, xerr := rt.exitMenuStep(ctx, key, sessionID, st, m); stop {
+		return xerr
+	}
 	if consecutiveReplay(st, m) {
 		// Re-entrega INMEDIATA del mismo mensaje → no avanzar ni reenviar.
 		return nil
@@ -212,10 +238,21 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// («si prefieres otra cosa, escríbelo») soltando el estado y tratándolo como un
 	// entrante sin conversación viva, en vez de reventar buscando un flujo que no existe.
 	if st.FlowID == "" {
+		// El tipo del evento ACTIVO acota la interpretación de la intención (T5.3,
+		// D-043.9). Se lee ANTES de soltar el estado por HIGIENE de lectura, no por
+		// necesidad: st es una COPIA (el puntero st.EventID sigue en mano tras el
+		// Delete) y activeEventKind → aliveByID → ListAlive consulta
+		// conversation_events, no flow_state (events/store.go: selectAliveSQL), así
+		// que invertir el orden daría hoy el MISMO resultado. Se deja así para que
+		// siga siendo cierto si algún día la relectura pasara a depender del estado.
+		activeKind := ""
+		if st.EventID != "" {
+			activeKind = rt.activeEventKind(ctx, key, sessionID, st.EventID)
+		}
 		if derr := rt.store.Delete(ctx, key); derr != nil {
 			return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
 		}
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
 	}
 
 	def, err := rt.store.GetDefinition(ctx, tenantID, st.FlowID, st.FlowVersion)
@@ -408,8 +445,28 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 // lleva SOLO texto ⇒ una regla kind='llm' nunca dispara sin derecho (camino actual).
 // Un fallo del resolver de entitlements es best-effort: se loguea y se descarta la
 // intención (se prefiere no abrir la capacidad por un fallo transitorio).
-func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage) trigger.Signal {
-	sig := trigger.Signal{Text: m.GetText()}
+//
+// activeEventKind es el TIPO del evento ACTIVO en el instante de interpretar la señal
+// (Plan 043 · T5.3, D-043.9). ⚠️ VERDAD MEDIDA, sin maquillar: de los TRES llamantes,
+// dos pasan "" POR CONSTRUCCIÓN —no hay estado (:129), o se acaba de borrar por el
+// reloj del evento (:143, T3.2), y entonces el evento ya NO es el activo—, y como la
+// guarda del resolver exige ActiveEventKind != "" para acotar, en esos dos sitios NO
+// SE DISPARA NUNCA. El scoping que este parámetro habilita se ejerce hoy en UN (1)
+// solo sitio de producción: el menú PENDIENTE (advanceLive, rama st.FlowID == "",
+// :238-250), y ahí con la config canónica (reglas event_start de cart/survey CON
+// flow_id, admin/triggers.go:63) el único valor posible es el tipo del MENÚ. SIN
+// EMBARGO, un event_start sin flow_id sobre un menú pendiente deja el puntero en un
+// evento de otro tipo con FlowID vacío, así que entonces el valor alcanzable es el de
+// ESE evento.
+//
+// Ver §5.1 del CONTRATO-OLA5: con una conversación viva y un evento en curso el
+// entrante va por ResolveLive, que NUNCA consulta reglas llm (INV-02), así que el
+// caso del criterio del plan («con cart activo, una señal de encuesta cae a
+// desconocido») NO es alcanzable en producción y se fija solo a nivel de resolver.
+// Así se deja (D-043.9 vía Jhoan, 2026-08-10): no se toca ResolveLive ni
+// liveEventSwitch en esta tarea.
+func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage, activeEventKind string) trigger.Signal {
+	sig := trigger.Signal{Text: m.GetText(), ActiveEventKind: activeEventKind}
 	ci := m.GetIntent()
 	if ci == nil || rt.entitlements == nil {
 		return sig
