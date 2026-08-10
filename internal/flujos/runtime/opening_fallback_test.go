@@ -310,8 +310,9 @@ func TestINV17_ElDescarteGanaLaCarreraAlMenuPintado(t *testing.T) {
 	rt, repo, sender, contacts, evs := newMartaRuntime(t, ofrece, true)
 	cid := resolveID(t, contacts, testContact)
 	evs.contactID = cid
-	// El pedido de Marta, vivo y con su solicitud, cuando se pinta el menú.
-	vivo := evs.seedAlive("cart", "intake-marta", time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC))
+	// El pedido de Marta, vivo, cuando se pinta el menú (su solicitud, si existe,
+	// declara ella el event_id — D-043.21; este doble no la necesita).
+	vivo := evs.seedAlive("cart", time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC))
 	ofrece.rescate = events.Offering{
 		Text: "¿Qué quieres retomar?\n1) el pedido",
 		Menu: events.Menu{Options: []events.MenuOption{

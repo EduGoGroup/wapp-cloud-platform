@@ -37,9 +37,11 @@ func bandejaDescarte() *intakes.MemoryStore {
 	add(discardTenant, "id-confirmed", intakes.StatusConfirmed, "sess-a", "contacto-4")
 	add(discardTenant, "id-vivo", intakes.StatusOpen, "sess-b", "contacto-5")
 	add(discardOtro, "id-ajeno", intakes.StatusOpen, "sess-x", "contacto-6")
-	// La conversación viva cuelga de (tenant, sesión, contacto), no del id de la
-	// solicitud: es exactamente la ligadura que se deriva en producción.
-	st.SetLiveCart(discardTenant, "sess-b", "contacto-5")
+	// El evento vivo cuelga de la solicitud que lo DECLARA (intakes.event_id,
+	// D-043.21 — DT-043.2 saldada): es exactamente la ligadura que la guarda mira
+	// en producción, ya no el `cart` del flow_state.
+	st.SetEvent("ev-vivo", "open")
+	st.BindEvent("id-vivo", "ev-vivo")
 	return st
 }
 
@@ -198,11 +200,10 @@ func TestDiscard_LoteMixto_LasCuatroRazones(t *testing.T) {
 }
 
 // storeQueLoDiceTodo es un Store que reporta los DOS hechos a la vez: el estado en
-// el que quedó la solicitud Y que hay conversación viva. Los stores de hoy no lo
-// hacen —salen en cuanto el estado no es descartable, sin llegar a mirar la
-// conversación—, pero el que traiga el Plan 043 puede resolver las dos cosas de una
-// consulta, y el ORDEN con el que el dominio elige la razón tiene que sobrevivir a
-// eso.
+// el que quedó la solicitud Y que su evento sigue vivo. Los stores de hoy no lo
+// hacen —salen en cuanto el estado no es descartable, sin llegar a mirar el
+// evento—, pero un store futuro puede resolver las dos cosas de una consulta, y el
+// ORDEN con el que el dominio elige la razón tiene que sobrevivir a eso.
 type storeQueLoDiceTodo struct {
 	*intakes.MemoryStore
 }
@@ -213,7 +214,7 @@ func (s storeQueLoDiceTodo) Discard(ctx context.Context, tenantID, intakeID stri
 	if err != nil {
 		return out, err
 	}
-	out.LiveCart = true
+	out.LiveEvent = true
 	return out, nil
 }
 

@@ -243,9 +243,13 @@ func Run(ctx context.Context) error {
 	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.
 	dispatcher := events.NewDispatcher(eventStore, events.NewTriggerKindOffer(triggerStore), entResolver)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
+		// WithDecisionThread (T4.5.7a): el MISMO eventStore que gobierna el ciclo de
+		// vida escribe las filas `decision` del hilo — el sink solo ve el puerto
+		// estrecho DecisionAppender. Una segunda instancia sería un segundo cipher
+		// y un segundo reloj sobre conversation_events.
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
 			cart.NewProjector(flowStore, intakeStore, intakeStore, buyerDataStore),
-			survey.NewProjector(flowStore))),
+			survey.NewProjector(flowStore)).WithDecisionThread(eventStore)),
 		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
 		// entrega de verdad se arranca más abajo, después de serveAndWait.
 		//
@@ -264,7 +268,14 @@ func Run(ctx context.Context) error {
 		// event_start arranca su flujo sin parir evento y un event_stop no desactiva
 		// nada—, así que van juntas o no van.
 		flowruntime.WithEventStore(eventStore),
-		flowruntime.WithIntakeAbandoner(intakeAbandoner{svc: intakeService}),
+		// El Service satisface el puerto IntakeAbandoner DIRECTO desde que la FK
+		// se invirtió (T4.5.5a): AbandonByEvent habla de EVENTOS —vocabulario que
+		// el runtime sí conoce—, así que el adapter que traducía ids de intakes
+		// murió con la columna conversation_events.intake_id (0054). La puerta
+		// sigue siendo el Service y no el Store: ahí vive la frontera del dominio,
+		// y el CAS `status='open'` del SQL conserva la garantía de que una
+		// `confirmed` jamás se abandona por aquí (ADR-0029 · E-11.5).
+		flowruntime.WithIntakeAbandoner(intakeService),
 		// La fuente DURABLE del resumen del evento abandonado (Plan 043 · T3.4): las
 		// líneas del pedido abierto. Sin ella los tres abandonos —salto por tipo,
 		// event_stop y escape— ocurren igual pero no dejan rastro en el historial, que
@@ -533,27 +544,6 @@ func gracefulStopGRPC(gs *grpc.Server, name string, log sharedlogger.Logger) {
 		gs.Stop()
 		<-done
 	}
-}
-
-// intakeAbandoner adapta el Service de solicitudes al puerto estrecho del motor
-// (flowruntime.IntakeAbandoner). Existe por dos razones y ninguna es cosmética:
-//
-//   - el paquete runtime NO importa internal/intakes (misma frontera que evita
-//     webhook_sink.go), así que la firma del puerto no puede hablar de intakes.Intake;
-//   - la puerta es Service.SetStatus y NUNCA Store.UpdateStatus (ADR-0029 · E-11.5).
-//     SetStatus es el único sitio que consulta CanTransition antes de escribir, y la
-//     tabla intakes no tiene CHECK: un UPDATE crudo escribiría la barbaridad sin que
-//     nadie rebotara. La transición open → abandoned ya está abierta en el mapa; aquí
-//     no se abre ninguna nueva.
-type intakeAbandoner struct{ svc *intakes.Service }
-
-// AbandonIntake deja la solicitud en `abandoned`. NO borra nada (INV-09): el pedido
-// sigue en la bandeja del dueño y sigue siendo exportable.
-//
-// Delega en Service.Abandon y no en SetStatus: ahí vive la idempotencia que el puerto
-// exige («ya abandonada» es éxito), y ahí sigue viviendo la guarda de CanTransition.
-func (a intakeAbandoner) AbandonIntake(ctx context.Context, tenantID, intakeID string) error {
-	return a.svc.Abandon(ctx, tenantID, intakeID)
 }
 
 // flowForKind resuelve «qué flujo arranca este tipo de evento» leyendo las reglas

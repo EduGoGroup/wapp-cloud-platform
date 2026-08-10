@@ -84,8 +84,9 @@ const (
 type entryKind string
 
 const (
-	entryKindSummary entryKind = "summary"
-	entryKindMessage entryKind = "message"
+	entryKindSummary  entryKind = "summary"
+	entryKindMessage  entryKind = "message"
+	entryKindDecision entryKind = "decision"
 )
 
 // Errores del store. Son sentinelas para que el llamador distinga «la BD falló» de
@@ -105,10 +106,11 @@ var (
 	// una pregunta sin tenant y este a una acotada; fusionarlos invitaría a usar
 	// Touch como comprobación de pertenencia, que es justo lo que no comprueba.
 	ErrEventNotFound = errors.New("events: el evento no existe para ese tenant")
-	// ErrSummaryNotJSON lo devuelve AppendSummary si el cuerpo no es JSON válido.
-	// El nivel 1 del ADR-0034 es ESTRUCTURA en claro, no prosa: si el resumen no
-	// es JSON, lo que se está intentando meter es texto libre por la puerta que no
-	// cifra.
+	// ErrSummaryNotJSON lo devuelven AppendSummary y AppendDecision si el cuerpo
+	// no es JSON válido. El nivel 1 del ADR-0034 es ESTRUCTURA en claro, no
+	// prosa: si la entrada no es JSON, lo que se está intentando meter es texto
+	// libre por la puerta que no cifra. Es UN solo sentinela para las dos puertas
+	// del nivel 1 a propósito: la regla que ambas imponen es la misma.
 	ErrSummaryNotJSON = errors.New("events: el resumen debe ser JSON válido (el nivel 1 es estructura, no prosa)")
 	// ErrNoCipher lo devuelve AppendMessage si el store se construyó sin
 	// FieldCipher. Falla en vez de degradar a texto en claro: la ausencia de
@@ -150,8 +152,6 @@ type Event struct {
 	// el historial siga siendo legible aunque el flujo se edite después.
 	FlowID      string
 	FlowVersion int
-	// IntakeID liga la solicitud que este evento parió (ADR-0031), si la parió.
-	IntakeID string
 	// CreatedAt es el nacimiento, que es TARDÍO (E-6): el saludo no crea evento.
 	CreatedAt time.Time
 	// LastActivityAt es EL reloj (E-6): la última interacción. Touch lo refresca
@@ -181,6 +181,16 @@ type Rescuable struct {
 	// más de lo que el tenant tolera. No filtra nada (INV-19) — un evento vencido
 	// sigue siendo rescatable, y esa es justo la razón de que el rescate exista.
 	Stale bool
+	// ContentState es el estado DERIVADO del contenido del evento, tal como lo
+	// reporta la vista public.event_content (D-043.21/D-043.22): vacío si el
+	// evento no declaró contenido; si no, `alive`, `settled` o `discarded` — el
+	// vocabulario GENÉRICO de la vista, nunca el del dominio del hijo. Sale del
+	// join al leer; no hay columna que lo almacene ni que pueda quedarse vieja.
+	ContentState string
+	// ContentRef es el id del contenido declarado (el `ref` de la vista), vacío
+	// si el evento no tiene contenido. Es lo que permite al dueño navegar
+	// evento→solicitud sin que este paquete sepa qué tabla hay detrás.
+	ContentRef string
 }
 
 // NewEvent son los datos con que nace un evento. Lo que NO está aquí es
@@ -194,9 +204,6 @@ type NewEvent struct {
 	Kind        string
 	FlowID      string
 	FlowVersion int
-	// IntakeID es opcional: vacío = el evento aún no parió solicitud o es de un
-	// tipo que no la produce.
-	IntakeID string
 }
 
 // historyIDLayout es el formato de HistoryID tras el tipo: YYYY-MM-DD-HHMM (E-3).

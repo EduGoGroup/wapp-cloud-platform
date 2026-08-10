@@ -244,6 +244,12 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// puntero se apaga EN ESTE MISMO Save — una escritura de flow_state, no dos. Va
 	// ANTES del Save (el estado que se persiste ya es el final) y antes del fan-out:
 	// los sinks proyectan sobre un evento cuya muerte ya está sellada.
+	// El EventID del turno se captura ANTES del cierre natural (T4.5.1): los efectos
+	// de este Step pertenecen al evento que estaba vivo MIENTRAS se produjeron, y
+	// closeIfFinished apaga st.EventID en el turno que termina el flujo. Sin esta
+	// captura, justo los efectos del final (p. ej. cart_closed) llegarían al
+	// proyector con EventID "" y el hijo no podría declarar a su padre (D-043.21).
+	turnEventID := st.EventID
 	rt.closeIfFinished(ctx, &st)
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
@@ -254,8 +260,13 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por last_wa_message_id
 	// (reprocesar el mismo entrante corta antes del Step). Un fallo de un sink se LOGUEA
 	// y NO aborta el avance ni corta el resto de sinks/efectos.
-	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: turnEventID}
 	rt.dispatch(ctx, ec, effects, sessionID)
+	// El hilo LITERAL del turno (T4.5.7b, D-043.23): cliente y negocio, cifrado y
+	// SOLO con la feature llm_intake. Usa turnEventID por lo mismo que los efectos:
+	// el turno que cierra el flujo pertenece al evento que estaba vivo al hablar.
+	// Best-effort — jamás tumba el turno (ver thread.go).
+	rt.persistTurnMessages(ctx, tenantID, sessionID, turnEventID, m.GetText(), outs)
 	return rt.sendReply(ctx, tenantID, sessionID, contactID, key, outs)
 }
 
@@ -376,7 +387,9 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 	if !rt.replyAllowed(key) {
 		return nil
 	}
-	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName,
+	// Sin evento (eventID ""): este es el arranque plano del Plan 019 — el camino
+	// que NO pare fila en conversation_events (E-6).
+	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, "", dec.Params, dec.IntentName,
 		rt.taglineFor(ctx, tenantID, sessionID, contactID, dec.IntentName)); serr != nil {
 		if errors.Is(serr, ErrConversationExists) {
 			rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",

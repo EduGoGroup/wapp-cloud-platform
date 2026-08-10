@@ -42,6 +42,15 @@ type ConversationEventLister interface {
 // pinta la pantalla no tiene que adivinar si la clave falta porque no hay fecha o
 // porque este servidor todavía no la publica.
 //
+// `content_state`/`content_ref` son el CONTENIDO del evento (D-043.21/22): qué
+// produjo la conversación (`content_ref`, hoy el id de la solicitud — es lo que le
+// permite al dueño navegar evento→solicitud) y en qué está (`content_state`, el
+// vocabulario genérico de la vista `event_content`: alive | settled | discarded).
+// Son DERIVADOS del join con la vista al leer, nunca almacenados — y aquí sí van
+// con omitempty, al revés que `closed_at`, porque la AUSENCIA es el dato: un
+// evento sin fila en la vista no produjo contenido (`content=none`), y publicar
+// `"content_state": ""` diría «hay contenido en un estado vacío», que es mentira.
+//
 // Lo que NO está aquí es tan deliberado como lo que sí: ni una línea del historial
 // (que es texto del cliente, cifrado, ADR-0034 nivel 2), ni el resumen, ni el
 // flow_id. Esta es la lista por la que se LIMPIA, no la que se lee para saber qué
@@ -53,7 +62,8 @@ type conversationEventDTO struct {
 	Status         string `json:"status"`
 	ContactID      string `json:"contact_id"`
 	SessionID      string `json:"session_id"`
-	IntakeID       string `json:"intake_id"`
+	ContentState   string `json:"content_state,omitempty"`
+	ContentRef     string `json:"content_ref,omitempty"`
 	Stale          bool   `json:"stale"`
 	CreatedAt      string `json:"created_at"`
 	LastActivityAt string `json:"last_activity_at"`
@@ -192,7 +202,8 @@ func toConversationEventDTO(ev events.Rescuable) conversationEventDTO {
 		Status:         string(ev.Status),
 		ContactID:      ev.ContactID,
 		SessionID:      ev.SessionID,
-		IntakeID:       ev.IntakeID,
+		ContentState:   ev.ContentState,
+		ContentRef:     ev.ContentRef,
 		Stale:          ev.Stale,
 		CreatedAt:      formatInstant(ev.CreatedAt),
 		LastActivityAt: formatInstant(ev.LastActivityAt),

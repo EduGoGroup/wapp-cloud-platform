@@ -364,14 +364,24 @@ type SurveyResult struct {
 	FlowVersion int
 	QuestionID  string
 	AnswerCode  string
+	// EventID es el evento conversacional (conversation_events.id) durante el que
+	// se respondió (D-043.21: el hijo declara a su padre; migración 0054). Lo
+	// escribe el proyector del módulo survey con el EventID de la EffectMeta. Es
+	// TRAZABILIDAD, no «contenido que puede morir» (D-043.18): la encuesta NO entra
+	// en la vista event_content. Cadena vacía ⇒ NULL en la tabla — solo legítimo en
+	// filas legadas pre-0054; para una fila NUEVA el CHECK
+	// survey_results_event_id_required_chk la rechaza.
+	EventID string
 	// CreatedAt lo pone el DEFAULT now() de la tabla y solo lo rellena la LECTURA
 	// (ListResults); InsertResults ni lo mira, igual que IntakeItem.AddedAt.
 	//
-	// Se lee porque es lo ÚNICO que permite acotar «las respuestas de ESTA pasada»:
-	// survey_results no tiene session_id ni event_id, así que quien resuma una
-	// encuesta rescatada solo puede separar la tanda de hoy de la que el mismo
-	// contacto respondió el mes pasado usando la fecha del evento como cota
-	// inferior. Sin este campo, esa cota no se puede aplicar en ningún sitio.
+	// Se lee porque hasta la 0054 era lo ÚNICO que permitía acotar «las respuestas
+	// de ESTA pasada»: survey_results no tenía session_id ni event_id, así que
+	// quien resumía una encuesta rescatada solo podía separar la tanda de hoy de la
+	// del mes pasado usando la fecha del evento como cota inferior
+	// (runtime/summary_sources.go). Con EventID esa correlación por timestamp queda
+	// como FALLBACK del legado (filas con event_id NULL); la vía por event_id es la
+	// preferida (D-043.21).
 	CreatedAt time.Time
 }
 
@@ -406,6 +416,16 @@ type Intake struct {
 	SessionID string
 	Status    string // "open" | "closed" | "cancelled" | "expired"
 	Total     float64
+	// EventID es el evento conversacional (conversation_events.id) del que nació la
+	// solicitud (D-043.21: el hijo declara a su padre; migración 0054). Lo escribe
+	// el proyector del cart al CREAR la fila (ensureOpenIntake, con el EventID de
+	// la EffectMeta) y NUNCA se pisa uno ya escrito: el upsert lo protege con
+	// COALESCE (un evento tiene a lo sumo un contenido durable, índice único
+	// parcial intakes_event_id_uidx — E-8). Cadena vacía ⇒ NULL — solo legítimo en
+	// filas legadas pre-0054; una fila NUEVA sin él revienta contra el CHECK
+	// intakes_event_id_required_chk, que es exactamente lo que D-043.21 quiere: el
+	// huérfano imposible por construcción, no improbable.
+	EventID   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt time.Time // HISTÓRICA (T4.7): ya no se escribe ni se obedece; zero en lo nuevo
@@ -455,7 +475,14 @@ type IntakeClose struct {
 	SessionID    string
 	Total        float64
 	CustomerNote string
-	Items        []IntakeItem
+	// EventID es el evento conversacional del cierre (D-043.21), el mismo que viaja
+	// en la EffectMeta de cart_closed. En el camino normal la solicitud abierta YA
+	// lo declara (lo estampó ensureOpenIntake) y aquí solo rellena un NULL legado
+	// (COALESCE, nunca pisa); en la rama sin solicitud abierta —cierre que crea la
+	// fila "closed" coherente— es el dato con el que esa fila nueva declara a su
+	// padre, sin el cual el INSERT revienta contra el CHECK de la 0054.
+	EventID string
+	Items   []IntakeItem
 }
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,

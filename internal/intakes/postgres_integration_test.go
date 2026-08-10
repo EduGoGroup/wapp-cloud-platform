@@ -58,15 +58,68 @@ type fixture struct {
 	day     int
 }
 
+// ensureTenantPG garantiza la fila de public.tenants para el UUID dado (Ola 4.5):
+// desde la 0054 toda solicitud nueva declara a su padre (intakes.event_id, CHECK
+// NOT VALID) y el padre —conversation_events— tiene FK a tenants, así que sembrar
+// una solicitud exige la cadena entera tenant→evento→solicitud. Idempotente
+// (ON CONFLICT DO NOTHING); limpia el tenant al terminar (el CASCADE se lleva sus
+// eventos, DESPUÉS de que los cleanups posteriores —LIFO— borraran las solicitudes
+// que los referencian).
+func ensureTenantPG(t *testing.T, db *sql.DB, tenantID string) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO public.tenants (id, slug, display_name)
+		VALUES ($1, $2, 'Ola 4.5')
+		ON CONFLICT (id) DO NOTHING
+	`, tenantID, "t45i-"+tenantID); err != nil {
+		t.Fatalf("asegurando tenant %s: %v", tenantID, err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.tenants WHERE id = $1`, tenantID); err != nil {
+			t.Logf("limpiando tenant %s: %v", tenantID, err)
+		}
+	})
+}
+
+// seedEventoPG crea un evento conversacional del tenant en el estado pedido y
+// devuelve su id: el PADRE que toda solicitud nueva tiene que declarar (D-043.21).
+// Terminal ⇒ closed_at sellado, como escribe transitionSQL. La sesión/el contacto
+// son únicos por evento para no chocar con el índice «uno vivo por tipo» (E-2).
+// Lo limpia el CASCADE del tenant (ensureTenantPG).
+func seedEventoPG(t *testing.T, db *sql.DB, tenantID, status string) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRowContext(context.Background(), `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version, closed_at)
+		VALUES ($1, 't45i-sess-' || gen_random_uuid(), gen_random_uuid(), 'cart',
+		        't45i-' || gen_random_uuid(), $2, 'flujo-w45', 1,
+		        CASE WHEN $2 = 'open' THEN NULL ELSE now() END)
+		RETURNING id::text
+	`, tenantID, status).Scan(&id); err != nil {
+		t.Fatalf("sembrando evento (%s): %v", status, err)
+	}
+	return id
+}
+
 // seedPG inserta las solicitudes del tenant y devuelve sus ids. Limpia al terminar.
+//
+// Desde la 0054 cada fila nace declarando a su padre: un evento propio (uno por
+// solicitud — índice único parcial intakes_event_id_uidx), TERMINAL (`cancelled`)
+// para que la guarda `live_event` del descarte no proteja lo que estos fixtures no
+// quieren proteger. El tenant tiene que ser un UUID: la cadena de FKs
+// tenant→evento lo exige (ensureTenantPG).
 func seedPG(t *testing.T, db *sql.DB, tenantID string, rows []fixture) {
 	t.Helper()
 	ctx := context.Background()
+	ensureTenantPG(t, db, tenantID)
 	for _, r := range rows {
+		eventID := seedEventoPG(t, db, tenantID, "cancelled")
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		`, r.id, tenantID, "contacto-opaco-"+r.id[:8], r.session, r.status, 18000,
+			INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, event_id, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		`, r.id, tenantID, "contacto-opaco-"+r.id[:8], r.session, r.status, 18000, eventID,
 			time.Date(2026, 8, r.day, 12, 0, 0, 0, time.UTC)); err != nil {
 			t.Fatalf("sembrando solicitud %s: %v", r.id, err)
 		}

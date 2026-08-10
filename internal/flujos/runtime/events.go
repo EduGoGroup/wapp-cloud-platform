@@ -58,33 +58,46 @@ type EventStore interface {
 	// estrecho que PersistSummary pide (events.SummaryAppender) queda satisfecho por
 	// esta interfaz sin adaptador.
 	AppendSummary(ctx context.Context, eventID string, body json.RawMessage) (int, error)
+	// AppendDecision escribe una DECISIÓN estructurada del cliente en el hilo del
+	// evento (Plan 043 · Ola 4.5 · T4.5.7a, D-043.23/D-043.13): nivel 1, payload
+	// JSON en claro, marcada por el store como voz del cliente. Quien la produce es
+	// el PersistSink (ver decisionEffects en persist_sink.go); está en ESTE puerto
+	// por la misma razón que AppendSummary — lo satisface el MISMO *events.Store.
+	AppendDecision(ctx context.Context, eventID string, payload []byte) error
+	// AppendMessage escribe el TEXTO LITERAL de una interacción en el hilo, SIEMPRE
+	// cifrado por el store (nivel 2 del ADR-0034; sin FieldCipher devuelve
+	// events.ErrNoCipher, jamás degrada a claro). Lo produce el runtime SOLO detrás
+	// de la feature `llm_intake` (T4.5.7b, D-043.23) — ver persistTurnMessages en
+	// thread.go. Firma idéntica a events/store.go:AppendMessage.
+	AppendMessage(ctx context.Context, eventID string, role events.Role, body string) (int, error)
 	// IsSuspended evalúa la condición DERIVADA «vencido» con el reloj del store.
 	// ttl <= 0 ⇒ siempre false (override «sin vencimiento» del tenant).
 	IsSuspended(e events.Event, ttl time.Duration) bool
 }
 
-// IntakeAbandoner deja en `abandoned` la solicitud que colgaba de un evento que el
-// CLIENTE acaba de cerrar eligiendo empezar otro del mismo tipo (ADR-0029 · E-11).
+// IntakeAbandoner deja en `abandoned` la solicitud que colgaba de un evento que se
+// acaba de cancelar: por E-11 (el cliente eligió empezar otro del mismo tipo sobre
+// un vencido) o por el cancel por id de la app del dueño (T4.2/T4.3).
 //
-// La firma es a propósito distinta de intakes.Service.SetStatus y se adapta en el
-// bootstrap: el paquete runtime NO importa internal/intakes (ver la nota de
-// webhook_sink.go:158, que evita el mismo acoplamiento). Lo que el adaptador NO
-// puede hacer es llamar a Store.UpdateStatus: la puerta es Service.SetStatus, el
-// único sitio que consulta CanTransition antes de escribir, y la tabla intakes no
-// tiene CHECK que ataje una barbaridad (ADR-0029 · E-11.5).
+// FIRMA POR EVENTO (Plan 043 · Ola 4.5 · T4.5.5a, D-043.21): con la FK invertida es
+// el CONTENIDO quien declara de qué conversación nació (`intakes.event_id`), así que
+// el runtime ya no carga ningún id de hijo — pide «abandona el intake `open` que
+// DECLARE este event_id». Cero filas tocadas = ÉXITO IDEMPOTENTE, no error: cubre a
+// la vez el evento sin solicitud, la solicitud ya abandonada y el reintento de una
+// cancelación cuya costura se quedó a medias (repairCancelled delega aquí su
+// «¿hay algo que reparar?»). Toda transición IMPOSIBLE de verdad —abandonar una
+// `confirmed`— sí debe salir como error.
+//
+// La IMPLEMENTACIÓN vive en el dominio intakes y se adapta en el bootstrap: el
+// paquete runtime NO importa internal/intakes (ver la nota de webhook_sink.go, que
+// evita el mismo acoplamiento). Lo que el adaptador NO puede hacer es saltarse la
+// puerta del dominio hacia Store.UpdateStatus a pelo: quién valida la transición
+// sigue siendo el servicio de intakes (ADR-0029 · E-11.5).
 //
 // nil ⇒ el evento se cierra igual pero su solicitud NO se abandona; se LOGUEA. Es
 // la mitad del hecho, así que el bootstrap lo cablea siempre.
-//
-// CONTRATO (Plan 043 · Ola 4): AbandonIntake pide un ESTADO, no una transición, y por
-// tanto es IDEMPOTENTE — encontrar la solicitud ya en `abandoned` es ÉXITO (nil), no
-// error. No es un capricho de firma: el reintento de una cancelación cuya costura se
-// quedó a medias vuelve a pedir el abandono (repairCancelled), y una implementación
-// que devolviera el error de «transición inválida de abandoned a abandoned» dejaría
-// esa reparación sin poder terminar nunca. Toda transición IMPOSIBLE de verdad
-// —abandonar una `confirmed`— sí debe salir como error.
 type IntakeAbandoner interface {
-	AbandonIntake(ctx context.Context, tenantID, intakeID string) error
+	AbandonByEvent(ctx context.Context, tenantID, eventID string) error
 }
 
 // Dispatcher es el puerto hacia el despachador de nivel superior (Plan 043 · T2.3):
@@ -360,15 +373,16 @@ func (rt *Runtime) cancelAndAbandon(ctx context.Context, tenantID string, ev eve
 	if err := rt.events.TransitionEvent(ctx, ev.ID, events.StatusCancelled); err != nil {
 		return err
 	}
-	if ev.IntakeID == "" {
-		return nil
-	}
 	if rt.intakes == nil {
-		rt.log.Warn("runtime: evento cancelado pero su solicitud NO se abandonó (sin IntakeAbandoner cableado)",
+		rt.log.Warn("runtime: evento cancelado sin IntakeAbandoner cableado; si tenía solicitud, quedó sin abandonar",
 			"tenant_id", tenantID, "event_kind", ev.Kind)
 		return nil
 	}
-	if err := rt.intakes.AbandonIntake(ctx, tenantID, ev.IntakeID); err != nil {
+	// Por el event_id del propio evento (D-043.21): el runtime ya no sabe —ni debe
+	// saber— si este evento parió solicitud. «No había ninguna» es cero filas y
+	// éxito idempotente; preguntarlo antes sería una segunda consulta para decidir
+	// lo que el UPDATE decide solo.
+	if err := rt.intakes.AbandonByEvent(ctx, tenantID, ev.ID); err != nil {
 		return fmt.Errorf("runtime: abandonar la solicitud del evento cancelado: %w", err)
 	}
 	return nil
@@ -384,21 +398,33 @@ func (rt *Runtime) cancelAndAbandon(ctx context.Context, tenantID string, ev eve
 //
 // 🔴 La coletilla se resuelve ANTES del CreateEvent, y ese orden es un ARREGLO, no
 // una casualidad: la coletilla habla de «lo que dejaste a medias ANTES de esto», y
-// un evento recién nacido cumple `status='open' AND intake_id IS NULL`, que es
-// exactamente el predicado de rescatable (events/store.go, rescuableWhere).
-// Resolviéndola después, `ListRescuable` devolvía el evento que se acababa de crear
-// y el cliente leía «tu pedido sigue a medias» sobre el pedido que acababa de abrir.
-// Mirando antes no hay nada que excluir, y el componente que LEE no necesita
-// aprender la noción de «el actual» —que es justo lo que el Frente B evitó a
-// propósito—. Lo fija TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo.
+// un evento recién nacido no tiene contenido que lo excluya, así que cumple el
+// predicado de rescatable (sin fila en `event_content` o con contenido `alive`,
+// D-043.22 — events/store.go, rescuableWhere). Resolviéndola después,
+// `ListRescuable` devolvía el evento que se acababa de crear y el cliente leía «tu
+// pedido sigue a medias» sobre el pedido que acababa de abrir. Mirando antes no hay
+// nada que excluir, y el componente que LEE no necesita aprender la noción de «el
+// actual» —que es justo lo que el Frente B evitó a propósito—. Lo fija
+// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo.
+//
+// FlowVersion viaja REAL desde esta ola (T4.5.6, D-043.21): la fila congela el
+// flujo Y SU VERSIÓN con los que nació, que es lo que su COMMENT prometía y toda
+// fila incumplía naciendo con 0 (birthEvent omitía el campo). La versión no viene
+// en la decisión (trigger.Decision solo trae el flow_id) sino del flujo VIGENTE
+// que este mismo camino va a arrancar — ver flowVersionFor.
 func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision) error {
 	tagline := rt.taglineFor(ctx, key.TenantID, sessionID, key.ContactID, dec.IntentName)
+	flowVersion, err := rt.flowVersionFor(ctx, key.TenantID, dec.FlowID)
+	if err != nil {
+		return err
+	}
 	ev, err := rt.events.CreateEvent(ctx, events.NewEvent{
-		TenantID:  key.TenantID,
-		SessionID: sessionID,
-		ContactID: key.ContactID,
-		Kind:      dec.EventKind,
-		FlowID:    dec.FlowID,
+		TenantID:    key.TenantID,
+		SessionID:   sessionID,
+		ContactID:   key.ContactID,
+		Kind:        dec.EventKind,
+		FlowID:      dec.FlowID,
+		FlowVersion: flowVersion,
 	})
 	if err != nil {
 		if errors.Is(err, events.ErrAliveExists) {
@@ -412,6 +438,32 @@ func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID stri
 		return fmt.Errorf("runtime: crear evento de tipo %q: %w", dec.EventKind, err)
 	}
 	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName, tagline)
+}
+
+// flowVersionFor resuelve la VERSIÓN VIGENTE del flujo que va a abrir un evento
+// (T4.5.6): la que startLocked va a arrancar vía LatestDefinition, así que es la
+// única verdad disponible en este camino — la decisión del resolver trae el
+// flow_id sin versión, a propósito (la versión es estado del catálogo, no regla).
+//
+// flowID vacío es el tipo SIN flujo (el `menu`, D-043.3): ahí la versión 0 es la
+// verdad, no una omisión — no hay flujo que congelar.
+//
+// Costura asumida y documentada: startLocked vuelve a leer LatestDefinition al
+// arrancar, y entre las dos lecturas alguien puede publicar una versión nueva.
+// Es la misma carrera benigna de cualquier doble lectura del catálogo; la fila
+// congela la versión con la que el evento NACIÓ según este camino, y discrepar
+// por una publicación concurrente no rompe nada que un humano vaya a leer mal.
+// Un error de la lectura SÍ aborta el nacimiento: mejor no parir el evento que
+// parirlo mintiendo (y el flujo que viene detrás fallaría igual con ese error).
+func (rt *Runtime) flowVersionFor(ctx context.Context, tenantID, flowID string) (int, error) {
+	if flowID == "" {
+		return 0, nil
+	}
+	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
+	if err != nil {
+		return 0, fmt.Errorf("runtime: resolver la versión del flujo %q al parir el evento: %w", flowID, err)
+	}
+	return def.Version, nil
 }
 
 // switchToEvent conmuta la conversación hacia un evento que YA estaba vivo: apunta
@@ -473,7 +525,10 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 		if err := rt.store.Delete(ctx, key); err != nil {
 			return fmt.Errorf("runtime: liberar el estado previo al entrar al evento: %w", err)
 		}
-		if _, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, params, intentName,
+		// eventID viaja al arranque (T4.5.1): startLocked no puede leerlo de
+		// st.EventID (el puntero se estampa DESPUÉS, en pointStateAtEvent) y es
+		// AQUÍ donde el evento recién nacido/conmutado está en la mano.
+		if _, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, eventID, params, intentName,
 			tagline); err != nil {
 			return fmt.Errorf("runtime: arrancar el flujo del evento: %w", err)
 		}
@@ -668,10 +723,10 @@ func (rt *Runtime) summarizeAbandoned(ctx context.Context, key store.Key, sessio
 //
 // 🔴 Y si algún día una regla llm mapea a un event_kind, ese test se pondrá rojo y NO
 // basta con actualizarlo: habría que excluir de la coletilla el evento RECIÉN NACIDO,
-// porque uno recién creado cumple `status='open' AND intake_id IS NULL`, que es
-// exactamente el predicado de rescatable (events/store.go, rescuableWhere). Sin esa
-// exclusión el cliente leería «tu pedido sigue a medias» sobre el pedido que acaba de
-// abrir.
+// porque uno recién creado —`open` y sin contenido en `event_content`— cumple
+// exactamente el predicado de rescatable (D-043.22; events/store.go, rescuableWhere).
+// Sin esa exclusión el cliente leería «tu pedido sigue a medias» sobre el pedido que
+// acaba de abrir.
 //
 // 🔴 SEGUNDO DESTINO PENDIENTE: el criterio (c) de T3.8 exige que esta MISMA coletilla
 // aparezca también en el borrador del pipeline del Plan 044 que la operadora ve en KMP.

@@ -946,20 +946,33 @@ func mustRescatables(ctx context.Context, t *testing.T, st *events.Store,
 	return rs
 }
 
-// insertarIntake crea una SOLICITUD con el estado dado y devuelve su id. Se
-// escribe con SQL directo y no por el servicio de intakes a propósito: lo que este
-// paquete tiene que probar es su predicado contra los estados que la otra tabla
-// puede tener, no el ciclo de vida que los produce.
-func insertarIntake(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sesion, contacto, status string) string {
+// insertarIntake crea una SOLICITUD con el estado dado, DECLARANDO a su padre
+// (D-043.21: es el hijo quien apunta al evento con event_id — el CHECK de la 0054
+// exige la ligadura en toda fila nueva, y el único parcial admite un intake por
+// evento), y devuelve su id. Se escribe con SQL directo y no por el servicio de
+// intakes a propósito: es andamiaje de DATOS, no de ligadura falsa — lo que este
+// paquete tiene que probar es su predicado sobre la vista contra los estados que
+// la otra tabla puede tener, no el ciclo de vida que los produce.
+func insertarIntake(ctx context.Context, t *testing.T, db *sql.DB, tenantID, sesion, contacto, status, eventID string) string {
 	t.Helper()
 	var id string
 	err := db.QueryRowContext(ctx,
-		`INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status)
-		 VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id`,
-		tenantID, contacto, sesion, status).Scan(&id)
+		`INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, event_id)
+		 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5) RETURNING id`,
+		tenantID, contacto, sesion, status, eventID).Scan(&id)
 	if err != nil {
-		t.Fatalf("insertar intake (%s): %v", status, err)
+		t.Fatalf("insertar intake (%s) del evento %s: %v", status, eventID, err)
 	}
+	t.Cleanup(func() {
+		if _, derr := db.ExecContext(ctx,
+			`DELETE FROM public.intake_items WHERE intake_id = $1`, id); derr != nil {
+			t.Logf("limpiar líneas del intake %s: %v", id, derr)
+		}
+		if _, derr := db.ExecContext(ctx,
+			`DELETE FROM public.intakes WHERE id = $1`, id); derr != nil {
+			t.Logf("limpiar intake %s: %v", id, derr)
+		}
+	})
 	return id
 }
 
@@ -1012,12 +1025,11 @@ func TestIntegration_RescatablesLaEscenaDeMarta(t *testing.T) {
 	store, reloj := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
 	const sesion = "sess-marta"
 
-	// El pedido de Marta: evento cart ligado a una solicitud ABIERTA.
-	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
-	pedido := nuevoEvento(tenantID, sesion, contactoA, "cart")
-	pedido.IntakeID = intakeID
-	elCart := mustCrear(ctx, t, store, pedido)
-	// Y una encuesta SIN solicitud, para la mitad `intake_id IS NULL` del OR.
+	// El pedido de Marta: evento cart cuyo contenido (la solicitud ABIERTA) lo
+	// declara el HIJO con su event_id — el evento nace sin saber nada de él.
+	elCart := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "cart"))
+	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open", elCart.ID)
+	// Y una encuesta SIN contenido, para la mitad `c.event_id IS NULL` del OR.
 	reloj.avanzar(time.Minute)
 	laEncuesta := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "survey"))
 
@@ -1078,10 +1090,8 @@ func TestIntegration_RescatablesSoloLaSolicitudAbiertaCuenta(t *testing.T) {
 	} {
 		t.Run(caso.status, func(t *testing.T) {
 			sesion := "sess-estado-" + caso.status
-			intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, caso.status)
-			in := nuevoEvento(tenantID, sesion, contactoA, "cart")
-			in.IntakeID = intakeID
-			ev := mustCrear(ctx, t, store, in)
+			ev := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "cart"))
+			insertarIntake(ctx, t, db, tenantID, sesion, contactoA, caso.status, ev.ID)
 
 			got := mustRescatables(ctx, t, store, tenantID, sesion, contactoA, 0)
 			if hay := len(got) == 1 && got[0].ID == ev.ID; hay != caso.quiero {
@@ -1106,10 +1116,8 @@ func TestIntegration_MarcaVencidoInformaYNoFiltra(t *testing.T) {
 	const sesion = "sess-vencido"
 	fijarTTL(ctx, t, db, tenantID, 3600) // 1 h
 
-	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
-	in := nuevoEvento(tenantID, sesion, contactoA, "cart")
-	in.IntakeID = intakeID
-	elViejo := mustCrear(ctx, t, store, in)
+	elViejo := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "cart"))
+	insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open", elViejo.ID)
 
 	// El 15 de enero llega un entrante y nace otro evento: el reloj del store es el
 	// mismo para los dos, así que lo único que los diferencia es su actividad.
@@ -1308,17 +1316,14 @@ func TestIntegration_NoRescatarDejaElPedidoHuerfanoConSusLineas(t *testing.T) {
 	store, reloj := nuevoStore(t, db, time.Date(2031, 3, 4, 10, 0, 0, 0, time.UTC))
 	const sesion = "sess-lineas"
 
-	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open")
+	elPedido := mustCrear(ctx, t, store, nuevoEvento(tenantID, sesion, contactoA, "cart"))
+	intakeID := insertarIntake(ctx, t, db, tenantID, sesion, contactoA, "open", elPedido.ID)
 	insertarLineaIntake(ctx, t, db, intakeID, "TORTA-CHOCO", "Torta de chocolate", 1, "25.00")
 	insertarLineaIntake(ctx, t, db, intakeID, "VELA-NUM", "Vela de número", 2, "1.50")
 	quiero := []string{"TORTA-CHOCO x1 @25.00", "VELA-NUM x2 @1.50"}
 	if got := lineasIntake(ctx, t, db, intakeID); !slices.Equal(got, quiero) {
 		t.Fatalf("la siembra no dejó las dos líneas: %v", got)
 	}
-
-	in := nuevoEvento(tenantID, sesion, contactoA, "cart")
-	in.IntakeID = intakeID
-	elPedido := mustCrear(ctx, t, store, in)
 
 	// Pasan tres días de silencio: el evento vence, pero vencer no es morir (E-6).
 	reloj.avanzar(72 * time.Hour)
@@ -1331,10 +1336,12 @@ func TestIntegration_NoRescatarDejaElPedidoHuerfanoConSusLineas(t *testing.T) {
 	if !rs[0].Stale {
 		t.Fatalf("tras 72 h con TTL de 1 h el pedido llega marcado vencido")
 	}
-	// Y el rescatable trae el hilo hasta su solicitud: sin IntakeID, quien componga
-	// el resumen no tendría por dónde llegar a las líneas.
-	if rs[0].IntakeID != intakeID {
-		t.Fatalf("el rescatable debe traer su intake_id (%s); got %q", intakeID, rs[0].IntakeID)
+	// Y el rescatable trae el hilo hasta su contenido, DERIVADO de la vista: sin
+	// ContentRef, quien componga el resumen no tendría por dónde llegar a las
+	// líneas — y ContentState dice en qué está, en el vocabulario genérico.
+	if rs[0].ContentRef != intakeID || rs[0].ContentState != "alive" {
+		t.Fatalf("el rescatable debe traer su contenido derivado (ref=%s, state=alive); got ref=%q state=%q",
+			intakeID, rs[0].ContentRef, rs[0].ContentState)
 	}
 
 	// El cliente NO rescata: escribe otra cosa y se va. Nada se vació.

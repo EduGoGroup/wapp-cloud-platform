@@ -36,7 +36,8 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	// Arranque por API (admin / /api/v1/.../start): sin intención LLM ⇒ sin params
 	// (el pre-carga del carrito solo aplica al arranque por decisión llm, T8).
 	// Sin coletilla: este arranque no viene de una intención inferida (T3.8 punto 2).
-	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, nil, "", "")
+	// Sin evento: el arranque por API no pare fila en conversation_events (E-6).
+	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, "", nil, "", "")
 }
 
 // startLocked es el cuerpo de Start SIN tomar el keyedMutex: asume que el llamante
@@ -51,7 +52,17 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 // arranque —API, keyword, fallback, evento—, así que si decidiera aquí si toca
 // emitirla, esa decisión afectaría a caminos que no tienen nada que ver con la
 // intención. Recibiéndola, los demás llamantes pasan "" y siguen byte a byte igual.
-func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID string, intentParams map[string]string, intentName, tagline string) (*cloudlinkv1.Ack, error) {
+//
+// `eventID` es el id del evento conversacional al que pertenece este arranque
+// (Plan 043 · Ola 4.5 · T4.5.1, D-043.21), o "" en los caminos sin evento (API,
+// keyword, fallback). ⚠️ Llega por parámetro y NO puede leerse de st.EventID: en
+// este camino st nace fresco y el puntero flow_state.event_id lo estampa
+// pointStateAtEvent DESPUÉS de arrancar (events.go, enterEventFlow) — leerlo aquí
+// daría SIEMPRE "". Quien tiene el evento recién nacido/conmutado en la mano es el
+// llamante (enterEventFlow), y es él quien lo pasa para que los efectos del
+// pre-carga (p. ej. item_added del Prime del carrito) lleguen al proyector
+// declarando a su padre.
+func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID, eventID string, intentParams map[string]string, intentName, tagline string) (*cloudlinkv1.Ack, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
@@ -102,7 +113,10 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// mismo fan-out EN PROCESO que HandleIncoming, DESPUÉS del Save. Un fallo de un
 	// sink se loguea y no aborta (el estado ya quedó persistido).
 	if len(effects) > 0 {
-		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+		// EventID sale del PARÁMETRO, no de st.EventID: aquí st.EventID es SIEMPRE ""
+		// a propósito (pointStateAtEvent estampa el puntero después de este camino).
+		// Ver el comentario de la firma (T4.5.1).
+		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: eventID}
 		rt.dispatch(ctx, ec, effects, sessionID)
 	}
 	to, err := rt.destino(ctx, tenantID, contactID)

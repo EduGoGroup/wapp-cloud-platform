@@ -240,7 +240,8 @@ func newLifecycleRuntimeConStore(t *testing.T, wired runtime.EventStore, evs *me
 
 // TestCierreNatural_NoTocaElIntake (T4.1, nota de la ola): el cierre natural JAMÁS
 // abandona la solicitud — eso ya lo hace la proyección de cart_closed por su
-// camino, y abandonar es SOLO de la cancelación (T4.3).
+// camino, y abandonar es SOLO de la cancelación (T4.3). Con AbandonByEvent
+// (T4.5.5a) la garantía se afirma igual: el abandonador no recibe NI UNA llamada.
 func TestCierreNatural_NoTocaElIntake(t *testing.T) {
 	rt, _, _, evs, ab := newLifecycleRuntime(t, eventStartRule("carrito", "cart"))
 	ctx := context.Background()
@@ -249,7 +250,6 @@ func TestCierreNatural_NoTocaElIntake(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evs.alive()[0]
-	evs.setIntake(ev.ID, "t41-intake-natural")
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "t41-i2")); err != nil {
 		t.Fatalf("completar: %v", err)
@@ -291,7 +291,6 @@ func TestCancel_CaminoFeliz(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evs.alive()[0]
-	evs.setIntake(ev.ID, "t41-intake-c1")
 
 	got, err := rt.CancelEventForTenant(ctx, testTenant, ev.ID)
 	if err != nil {
@@ -303,8 +302,8 @@ func TestCancel_CaminoFeliz(t *testing.T) {
 	if s := evs.statuses()[ev.ID]; s != events.StatusCancelled {
 		t.Fatalf("la fila del almacén debe quedar cancelled, quedó %q", s)
 	}
-	if vistos := ab.seen(); len(vistos) != 1 || vistos[0] != "t41-intake-c1" {
-		t.Fatalf("su solicitud debe quedar abandonada (jamás borrada, INV-09): %v", vistos)
+	if vistos := ab.seen(); len(vistos) != 1 || vistos[0] != ev.ID {
+		t.Fatalf("el abandono debe pedirse POR EVENTO (%q, T4.5.5a; jamás borrar, INV-09): %v", ev.ID, vistos)
 	}
 	if st := loadState(t, repo, cid); st.EventID != "" {
 		t.Fatalf("el puntero de su conversación debe quedar apagado: %q", st.EventID)
@@ -316,8 +315,8 @@ func TestCancel_CaminoFeliz(t *testing.T) {
 // EVENTO; los efectos colaterales SÍ se vuelven a pedir, y eso es la reparación de
 // la costura de fallo parcial (repairCancelled): pedirlos otra vez es lo único que
 // arregla una cancelación que se quedó a medias, y repetirlos sobre una que salió
-// bien no escribe nada —AbandonIntake trata «ya abandonada» como éxito y
-// releaseStateFrom no toca un puntero ya apagado—.
+// bien no escribe nada —AbandonByEvent es idempotente por contrato (cero filas =
+// éxito) y releaseStateFrom no toca un puntero ya apagado—.
 // Verificado por mutación (tratar ErrNotOpen como error real pone esto en rojo).
 func TestCancel_EsIdempotenteSobreTerminales(t *testing.T) {
 	rt, _, _, evs, ab := newLifecycleRuntime(t, eventStartRule("carrito", "cart"))
@@ -327,7 +326,6 @@ func TestCancel_EsIdempotenteSobreTerminales(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evs.alive()[0]
-	evs.setIntake(ev.ID, "t41-intake-d1")
 
 	primera, err := rt.CancelEventForTenant(ctx, testTenant, ev.ID)
 	if err != nil {
@@ -340,8 +338,8 @@ func TestCancel_EsIdempotenteSobreTerminales(t *testing.T) {
 	if segunda.Status != events.StatusCancelled || !segunda.ClosedAt.Equal(primera.ClosedAt) {
 		t.Fatalf("la fila NO cambia: primera %+v vs segunda %+v", primera, segunda)
 	}
-	if vistos := ab.seen(); len(vistos) != 2 || vistos[1] != "t41-intake-d1" {
-		t.Fatalf("el reintento debe RE-pedir el abandono (reparación de la costura): %v", vistos)
+	if vistos := ab.seen(); len(vistos) != 2 || vistos[1] != ev.ID {
+		t.Fatalf("el reintento debe RE-pedir el abandono por evento (reparación de la costura): %v", vistos)
 	}
 }
 
@@ -364,7 +362,6 @@ func TestCancel_ElReintentoReparaElAbandonoQueFalló(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evs.alive()[0]
-	evs.setIntake(ev.ID, "t43-intake-r1")
 
 	// (1) El abandono FALLA: el evento ya quedó cancelled y el error se propaga.
 	ab.failWith(errors.New("la base se cayó justo aquí"))
@@ -388,16 +385,19 @@ func TestCancel_ElReintentoReparaElAbandonoQueFalló(t *testing.T) {
 	if got.Status != events.StatusCancelled {
 		t.Fatalf("la fila sigue cancelled, got %q", got.Status)
 	}
-	if vistos := ab.seen(); len(vistos) == 0 || vistos[len(vistos)-1] != "t43-intake-r1" {
-		t.Fatalf("el reintento debe volver a pedir el abandono: %v", vistos)
+	if vistos := ab.seen(); len(vistos) == 0 || vistos[len(vistos)-1] != ev.ID {
+		t.Fatalf("el reintento debe volver a pedir el abandono por el evento (%q): %v", ev.ID, vistos)
 	}
 	if st := loadState(t, repo, cid); st.EventID != "" {
 		t.Fatalf("y debe apagar el puntero que se quedó puesto: %q", st.EventID)
 	}
 }
 
-// TestCancel_SinIntakeNoFalla (T4.3): un evento sin solicitud se cancela sin error
-// y sin pedirle nada al abandonador.
+// TestCancel_SinIntakeNoFalla (T4.3 + T4.5.5a): un evento sin solicitud se cancela
+// sin error. Con AbandonByEvent el runtime YA NO pregunta si había solicitud: pide
+// el abandono por evento y «cero filas» ES el éxito idempotente — así que la
+// llamada SÍ ocurre (una), y no falla. La condición «¿hay algo que abandonar?» se
+// delegó entera en la implementación del puerto.
 func TestCancel_SinIntakeNoFalla(t *testing.T) {
 	rt, _, _, evs, ab := newLifecycleRuntime(t, eventStartRule("carrito", "cart"))
 	ctx := context.Background()
@@ -414,8 +414,8 @@ func TestCancel_SinIntakeNoFalla(t *testing.T) {
 	if got.Status != events.StatusCancelled {
 		t.Fatalf("debe quedar cancelled, quedó %q", got.Status)
 	}
-	if vistos := ab.seen(); len(vistos) != 0 {
-		t.Fatalf("sin intake no hay nada que abandonar: %v", vistos)
+	if vistos := ab.seen(); len(vistos) != 1 || vistos[0] != ev.ID {
+		t.Fatalf("la llamada idempotente por evento debe ocurrir UNA vez (%q): %v", ev.ID, vistos)
 	}
 }
 
@@ -501,7 +501,6 @@ func TestCancel_CarreraBenignaDevuelveLoQueQuedo(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evsBase.alive()[0]
-	evsBase.setIntake(ev.ID, "t41-intake-g1")
 
 	got, err := rt.CancelEventForTenant(ctx, testTenant, ev.ID)
 	if err != nil {
@@ -518,7 +517,7 @@ func TestCancel_CarreraBenignaDevuelveLoQueQuedo(t *testing.T) {
 // abandonadorRoto falla siempre: fabrica la costura transición-ok/abandono-falla.
 type abandonadorRoto struct{}
 
-func (abandonadorRoto) AbandonIntake(context.Context, string, string) error {
+func (abandonadorRoto) AbandonByEvent(context.Context, string, string) error {
 	return errors.New("intakes fuera de servicio")
 }
 
@@ -546,7 +545,6 @@ func TestCancel_AbandonoFallaPropagaConEventoCancelado(t *testing.T) {
 		t.Fatalf("carrito: %v", err)
 	}
 	ev := evs.alive()[0]
-	evs.setIntake(ev.ID, "t41-intake-b1")
 
 	if _, err := rt.CancelEventForTenant(ctx, testTenant, ev.ID); err == nil {
 		t.Fatal("el fallo del abandono debe PROPAGARSE, no taparse")

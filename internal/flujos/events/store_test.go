@@ -31,9 +31,10 @@ func TestINV19_ElWhereDeRescatablesNoCompararaFechas(t *testing.T) {
 				prohibido, where)
 		}
 	}
-	// Y la otra mitad: el filtro por la solicitud SÍ tiene que estar ahí (REQ-26c).
-	if !strings.Contains(where, "e.intake_id IS NULL OR i.status = 'open'") {
-		t.Fatalf("el WHERE debe filtrar por la solicitud (INV-17). WHERE:\n%s", where)
+	// Y la otra mitad: el filtro por el contenido SÍ tiene que estar ahí (REQ-26c),
+	// escrito sobre la vista event_content y su vocabulario genérico (D-043.22).
+	if !strings.Contains(where, "c.event_id IS NULL OR c.state = 'alive'") {
+		t.Fatalf("el WHERE debe filtrar por el contenido (INV-17). WHERE:\n%s", where)
 	}
 	t.Logf("WHERE de rescatables:%s", where)
 }
@@ -75,8 +76,8 @@ func TestQualify_LaListaCualificadaEsLaMISMA(t *testing.T) {
 			t.Fatalf("columna %d: %q, quiero %q", i, got, quiero)
 		}
 	}
-	if len(original) != 13 {
-		t.Fatalf("conversation_events tiene 13 columnas y la lista trae %d: si añadiste una, "+
+	if len(original) != 12 {
+		t.Fatalf("conversation_events tiene 12 columnas y la lista trae %d: si añadiste una, "+
 			"añádela también a eventDest o el scan se desalinea", len(original))
 	}
 }

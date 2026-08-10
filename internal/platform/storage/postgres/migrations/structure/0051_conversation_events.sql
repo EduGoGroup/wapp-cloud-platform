@@ -113,7 +113,14 @@ CREATE TABLE IF NOT EXISTS public.conversation_events (
                      CHECK (status IN ('open','closed','cancelled')),   -- D-043.5; sin 'paused'/'expired'
     flow_id          TEXT        NOT NULL,
     flow_version     INTEGER     NOT NULL,
-    intake_id        UUID,                          -- nullable; liga intakes.id si es un carrito (ADR-0031)
+    -- ⚰️ intake_id vivió aquí del 2026-08-09 al 2026-08-10: nació nullable («liga
+    -- intakes.id si es un carrito») y MURIÓ en la 0054 (D-043.21: el padre no tiene
+    -- columnas de ningún hijo; nadie la escribía en producción — ANALISIS-043). Se
+    -- retira TAMBIÉN de este CREATE por la misma razón que la 0041 reescribió la
+    -- 0011: el runner es FULL-REPLAY, y dejar aquí la columna (y su COMMENT más
+    -- abajo) rompería CADA replay futuro sobre una base donde la 0054 ya la dropeó
+    -- (COMMENT ON COLUMN sobre columna inexistente = error). En una base fresca la
+    -- columna ya no nace; en una base vieja la dropea la 0054 (DROP IF EXISTS).
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),  -- nacimiento TARDÍO: no al saludar (E-6)
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),  -- ← EL RELOJ (E-6): se refresca en CADA interacción
     closed_at        TIMESTAMPTZ                    -- instante de la muerte explícita (closed|cancelled)
@@ -219,8 +226,8 @@ COMMENT ON COLUMN public.conversation_events.flow_id IS
   'Flujo que ejecutaba la conversación cuando nació el evento. Se congela aquí para que el historial siga siendo legible aunque el flujo se edite o se retire después.';
 COMMENT ON COLUMN public.conversation_events.flow_version IS
   'Versión del flujo con la que arrancó el evento. Misma razón que flow_state.flow_version: un evento no salta de versión a mitad de camino.';
-COMMENT ON COLUMN public.conversation_events.intake_id IS
-  'Solicitud (intakes.id) que este evento produjo, si es un carrito (ADR-0031). NULL = el evento todavía no ha parido solicitud o es de un tipo que no la produce (menú, encuesta). Sin FK a propósito: el evento y la solicitud tienen ciclos de vida distintos y el evento sobrevive al descarte de la solicitud.';
+-- (El COMMENT de intake_id murió con la columna en la 0054 — ver la nota en el
+-- CREATE TABLE de arriba. La relación se invirtió: hoy es intakes.event_id.)
 COMMENT ON COLUMN public.conversation_events.last_activity_at IS
   'EL reloj de conversación (ADR-0029 E-6): instante de la última interacción del evento. Se refresca en CADA interacción (cliente o negocio), de modo que una conversación activa NUNCA vence — el chat infinito. Un evento esta SUSPENDIDO cuando status=''open'' AND now() - last_activity_at > tenant_settings.event_inactivity_ttl_seconds: condición DERIVADA, evaluada perezosamente al llegar el entrante, SIN cron y SIN cuarto valor en status. No existe columna awaiting_until: un vencimiento absoluto de la espera sobra cuando el reloj se refresca solo.';
 COMMENT ON COLUMN public.conversation_events.created_at IS

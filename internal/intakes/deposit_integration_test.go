@@ -19,12 +19,17 @@ const tenantSeña = "dddddddd-dddd-dddd-dddd-dddddddddddd"
 // Limpia el tenant entero al terminar.
 func filaDeSeña(t *testing.T, db *sql.DB, id, contactID, status string, dueAt, remindedAt any) {
 	t.Helper()
+	// Cadena tenant→evento→solicitud de la 0054 (ver seedPG): sin padre declarado,
+	// el INSERT —y cualquier transición posterior de estas filas— revienta contra
+	// el CHECK intakes_event_id_required_chk.
+	ensureTenantPG(t, db, tenantSeña)
+	eventID := seedEventoPG(t, db, tenantSeña, "cancelled")
 	if _, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at,
+			(id, tenant_id, contact_id, session_id, status, total, event_id, created_at, updated_at,
 			 deposit_due_at, deposit_reminded_at)
-		VALUES ($1, $2, $3, 'sess-negocio', $4, 18000, now(), now(), $5, $6)
-	`, id, tenantSeña, contactID, status, dueAt, remindedAt); err != nil {
+		VALUES ($1, $2, $3, 'sess-negocio', $4, 18000, $5, now(), now(), $6, $7)
+	`, id, tenantSeña, contactID, status, eventID, dueAt, remindedAt); err != nil {
 		t.Fatalf("sembrando la solicitud %s: %v", id, err)
 	}
 	t.Cleanup(func() {

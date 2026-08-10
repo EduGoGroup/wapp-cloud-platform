@@ -153,11 +153,23 @@ func seedLasTres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto
 	}
 
 	// --- public.intake_buyer_data (datos del comprador, Plan 041) ---
+	// La solicitud declara a su padre (D-043.21): desde la 0054 el CHECK
+	// intakes_event_id_required_chk rechaza toda fila nueva sin event_id, así que
+	// el seed monta la cadena tenant→evento→solicitud, no la solicitud sola.
+	var eventID string
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version)
+		VALUES ($1, 'sesion-rekey', $2::uuid, 'cart', 'cart-2026-08-10-0001', 'open', 'flujo-rekey', 1)
+		RETURNING id::text
+	`, tenant, uuid.NewString()).Scan(&eventID); err != nil {
+		t.Fatalf("sembrar el evento padre: %v", err)
+	}
 	intakeID := uuid.NewString()
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total)
-		VALUES ($1, $2, 'contacto-opaco', 'sesion-rekey', 'open', 0)
-	`, intakeID, tenant); err != nil {
+		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, event_id)
+		VALUES ($1, $2, 'contacto-opaco', 'sesion-rekey', 'open', 0, $3::uuid)
+	`, intakeID, tenant, eventID); err != nil {
 		t.Fatalf("sembrar intakes: %v", err)
 	}
 	t.Cleanup(func() {

@@ -74,17 +74,19 @@ func montarBandeja(t *testing.T) (context.Context, bandeja) {
 	fijarTTL(ctx, t, db, tenant, 3600) // 1 hora, el TTL del ejemplo
 	fijarTTL(ctx, t, db, otro, 3600)
 
+	// El contenido lo declara el HIJO (D-043.21): primero nace el evento, después
+	// la solicitud apunta a él con su event_id.
 	b := bandeja{db: db, store: st, reloj: reloj, tenant: tenant, otro: otro}
 	b.survey = mustCrear(ctx, t, st, nuevoEvento(tenant, "sess-a", contactoMarta, "survey")).ID
-	b.cart = mustCrear(ctx, t, st, cartCon(tenant, "sess-a", contactoMarta,
-		insertarIntake(ctx, t, db, tenant, "sess-a", contactoMarta, "open"))).ID
-	b.descart = mustCrear(ctx, t, st, cartCon(tenant, "sess-b", contactoHerminia,
-		insertarIntake(ctx, t, db, tenant, "sess-b", contactoHerminia, "abandoned"))).ID
+	b.cart = mustCrear(ctx, t, st, nuevoEvento(tenant, "sess-a", contactoMarta, "cart")).ID
+	insertarIntake(ctx, t, db, tenant, "sess-a", contactoMarta, "open", b.cart)
+	b.descart = mustCrear(ctx, t, st, nuevoEvento(tenant, "sess-b", contactoHerminia, "cart")).ID
+	insertarIntake(ctx, t, db, tenant, "sess-b", contactoHerminia, "abandoned", b.descart)
 	// Herminia tiene ADEMÁS un carrito vivo. Sin él, su filtro por contacto
 	// devolvería la lista vacía y no se distinguiría «lo suyo está tapado por el
 	// predicado» de «este contacto no tiene nada».
-	b.cartH = mustCrear(ctx, t, st, cartCon(tenant, "sess-c", contactoHerminia,
-		insertarIntake(ctx, t, db, tenant, "sess-c", contactoHerminia, "open"))).ID
+	b.cartH = mustCrear(ctx, t, st, nuevoEvento(tenant, "sess-c", contactoHerminia, "cart")).ID
+	insertarIntake(ctx, t, db, tenant, "sess-c", contactoHerminia, "open", b.cartH)
 	b.ajeno = mustCrear(ctx, t, st, nuevoEvento(otro, "sess-x", contactoAjeno, "survey")).ID
 
 	// El menú nace el 15: es el único que NO está vencido, y su papel es demostrar
@@ -92,13 +94,6 @@ func montarBandeja(t *testing.T) (context.Context, bandeja) {
 	reloj.t = enero15
 	b.menu = mustCrear(ctx, t, st, nuevoEvento(tenant, "sess-a", contactoMarta, "menu")).ID
 	return ctx, b
-}
-
-// cartCon arma un evento `cart` ligado a una solicitud.
-func cartCon(tenantID, sesion, contacto, intakeID string) events.NewEvent {
-	ev := nuevoEvento(tenantID, sesion, contacto, "cart")
-	ev.IntakeID = intakeID
-	return ev
 }
 
 // idsPagina extrae los ids de la página, en orden.
@@ -180,7 +175,8 @@ func TestIntegration_ListadoElVencidoSigueEnLaLista(t *testing.T) {
 }
 
 // TestIntegration_ListadoContentReparteLasTresRespuestas: `none`, `alive` y `any`
-// son tres conjuntos distintos, y el que los distingue es el LEFT JOIN con intakes.
+// son tres conjuntos distintos, y el que los distingue es el LEFT JOIN con la
+// vista event_content.
 //
 // El evento con la solicitud DESCARTADA es el que da sentido a la diferencia: no
 // tiene contenido vivo, pero tampoco es «sin contenido» — y el dueño tiene que poder
@@ -369,11 +365,13 @@ func TestIntegration_ListadoElDescartadoDESAPARECE(t *testing.T) {
 		t.Fatalf("el carrito vivo no estaba en la bandeja ANTES de descartarlo: %v", idsPagina(antes))
 	}
 
+	// La ligadura vive del lado del HIJO (D-043.21): la solicitud del carrito se
+	// encuentra por su event_id, no por ninguna columna del evento.
 	var intakeID string
 	if err := b.db.QueryRowContext(ctx,
-		`SELECT intake_id FROM public.conversation_events WHERE id = $1`, b.cart).
+		`SELECT id FROM public.intakes WHERE event_id = $1`, b.cart).
 		Scan(&intakeID); err != nil {
-		t.Fatalf("leer intake_id del carrito: %v", err)
+		t.Fatalf("leer la solicitud del carrito: %v", err)
 	}
 	ponerStatusIntake(ctx, t, b.db, intakeID, "abandoned")
 

@@ -73,12 +73,17 @@ type surveyAnswers struct{ store SummaryStore }
 
 // SurveyAnswers devuelve las respuestas de ESTA pasada de la encuesta.
 //
-// La cota por fecha es la tarea, no un adorno: survey_results se diseñó dos planes
-// antes de que los eventos existieran y no tiene session_id ni event_id, así que la
-// consulta por (tenant, contacto, flujo) devolvería también lo que la misma persona
-// respondió el mes pasado. Lo único que separa una tanda de otra es el nacimiento del
-// evento —que es TARDÍO, y por tanto posterior a cualquier pasada anterior—: se
-// descarta lo escrito ANTES de que este evento existiera.
+// La cota por fecha es el FALLBACK DEL LEGADO, no un adorno: survey_results se
+// diseñó dos planes antes de que los eventos existieran y no tenía session_id ni
+// event_id. Desde la 0054 (Plan 043 · Ola 4.5, D-043.21) la tabla SÍ tiene
+// `event_id` —lo escribe el proyector del módulo survey al declarar a su padre—,
+// pero las filas anteriores a esa migración lo llevan NULL, así que la consulta por
+// (tenant, contacto, flujo) devolvería también lo que la misma persona respondió el
+// mes pasado. Para separar tandas cubriendo TAMBIÉN el legado se usa el nacimiento
+// del evento —que es TARDÍO, y por tanto posterior a cualquier pasada anterior—: se
+// descarta lo escrito ANTES de que este evento existiera. Migrar este lector a la
+// vía preferida por `event_id` es del plan que vuelva a tocar el resumen de encuesta
+// (anotado en tasks.md del 043, §Ola 4.5 · hallazgos).
 //
 // ⚠️ La cota compara DOS marcas de tiempo y ambas tienen que venir del MISMO reloj. En
 // producción lo hacen —las dos las pone la base—, pero en un test no: el evento se
@@ -88,12 +93,13 @@ type surveyAnswers struct{ store SummaryStore }
 // su reloj a la hora real en vez de a una fecha inventada — si vas a escribir uno nuevo,
 // hazlo igual o estarás midiendo el desfase de los relojes y no la cota.
 //
-// La limitación de fondo, que NO se arregla aquí: `survey_results` no tiene `session_id`
-// ni identidad de pasada, así que por esta fuente REQ-18 no se puede satisfacer del
-// todo. Lo que se puede acotar es el flujo y el instante de nacimiento del evento; dos
-// sesiones del mismo tenant respondiendo el MISMO flujo a la vez no se distinguen. Es
-// una asimetría de la tabla —se diseñó dos planes antes de que los eventos existieran—
-// y taparla aquí sería fingir una precisión que la fuente no da.
+// La limitación de fondo quedó ACOTADA por la 0054, no eliminada: para filas nuevas
+// `event_id` da la identidad de pasada exacta, pero para el LEGADO (`event_id` NULL)
+// sigue sin haber `session_id` ni identidad de pasada, así que por esta fuente REQ-18
+// no se satisface del todo. En el legado lo que se puede acotar es el flujo y el
+// instante de nacimiento del evento; dos sesiones del mismo tenant respondiendo el
+// MISMO flujo a la vez no se distinguen. Taparlo aquí sería fingir una precisión que
+// esas filas no dan.
 func (a surveyAnswers) SurveyAnswers(ctx context.Context, ev events.Event) ([]events.SummaryAnswer, error) {
 	rows, err := a.store.ListResults(ctx, ev.TenantID, ev.ContactID, ev.FlowID)
 	if err != nil {

@@ -143,15 +143,17 @@ func (rt *Runtime) CancelEventForTenant(ctx context.Context, tenantID, eventID s
 // solicitud: la cerró la proyección de cart_closed y abandonarla aquí pisaría ese
 // hecho —es la misma regla que closeIfFinished respeta arriba—.
 //
-// Las dos reparaciones son seguras de repetir: AbandonIntake trata «ya abandonada»
-// como éxito (bootstrap.go) y releaseStateFrom no toca un puntero que ya mira a otro
-// sitio. Sobre una cancelación que salió bien, este camino no escribe nada.
+// Las dos reparaciones son seguras de repetir: AbandonByEvent es idempotente por
+// contrato (T4.5.5a, D-043.21 — cero filas tocadas es éxito, así que «¿hay algo que
+// reparar?» se DELEGA en la propia llamada en vez de leerse de una columna del
+// evento, que ya no existe) y releaseStateFrom no toca un puntero que ya mira a
+// otro sitio. Sobre una cancelación que salió bien, este camino no escribe nada.
 func (rt *Runtime) repairCancelled(ctx context.Context, tenantID string, ev events.Event) (events.Event, error) {
 	if ev.Status != events.StatusCancelled {
 		return ev, nil
 	}
-	if ev.IntakeID != "" && rt.intakes != nil {
-		if err := rt.intakes.AbandonIntake(ctx, tenantID, ev.IntakeID); err != nil {
+	if rt.intakes != nil {
+		if err := rt.intakes.AbandonByEvent(ctx, tenantID, ev.ID); err != nil {
 			return events.Event{}, fmt.Errorf("runtime: completar el abandono de la solicitud del evento cancelado: %w", err)
 		}
 	}

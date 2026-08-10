@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
@@ -42,34 +44,58 @@ const (
 )
 
 // t42IntakeAbandoner adapta intakes.Service a la firma del puerto IntakeAbandoner
-// del runtime, IGUAL que lo hace el bootstrap en producción: la puerta es
-// Service.Abandon —que por dentro pasa por SetStatus, la única que consulta
-// CanTransition, y aporta la idempotencia que el puerto exige—, nunca el UPDATE
-// directo (ADR-0029 · E-11.5).
+// del runtime, IGUAL que lo hace el bootstrap en producción. La firma es POR
+// EVENTO (T4.5.5a, D-043.21): el runtime no carga ids de hijo — pide «abandona
+// el intake open que DECLARE este event_id» — y la puerta sigue siendo el
+// servicio del dominio (quién valida la transición, ADR-0029 · E-11.5), nunca
+// el UPDATE directo.
 type t42IntakeAbandoner struct{ svc *intakes.Service }
 
-func (a t42IntakeAbandoner) AbandonIntake(ctx context.Context, tenantID, intakeID string) error {
-	return a.svc.Abandon(ctx, tenantID, intakeID)
+func (a t42IntakeAbandoner) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
+	return a.svc.AbandonByEvent(ctx, tenantID, eventID)
 }
 
-// t42Seed siembra la foto de ANTES: tenant nuevo, intake 'open' con dos líneas,
-// evento 'cart' abierto ligado al intake, y flow_state apuntando al evento (la
-// conversación lo tiene ACTIVO). Devuelve los ids generados.
+// t42Seed siembra la foto de ANTES: tenant nuevo, evento 'cart' abierto, intake
+// 'open' con dos líneas que DECLARA su evento (intakes.event_id, D-043.21 — el
+// hijo apunta al padre; el CHECK de la 0054 rechaza al huérfano), y flow_state
+// apuntando al evento (la conversación lo tiene ACTIVO). Devuelve los ids
+// generados. El evento nace ANTES que el intake: la FK va del hijo al padre.
 func t42Seed(t *testing.T, db *sql.DB) (tenantID, eventID, intakeID string) {
 	t.Helper()
 	ctx := context.Background()
 
+	// Slug ÚNICO por corrida (no un literal fijo): con slug fijo, una corrida
+	// anterior que muriera entre este INSERT y el t.Cleanup de abajo dejaba el
+	// tenant huérfano y toda corrida futura moría en 23505 (visto el 2026-08-10).
+	// Y la limpieza del tenant se registra AQUÍ MISMO, no al final del seed, por
+	// la misma razón: un Fatalf a mitad de la siembra ya no filtra nada.
 	if err := db.QueryRowContext(ctx,
 		`INSERT INTO public.tenants (slug, display_name) VALUES ($1, $2) RETURNING id::text`,
-		"t42-cancel-"+t42Sesión, "T42 cancelación e2e").Scan(&tenantID); err != nil {
+		"t42-cancel-"+uuid.NewString()[:8], "T42 cancelación e2e").Scan(&tenantID); err != nil {
 		t.Fatalf("sembrando tenant: %v", err)
+	}
+	t.Cleanup(func() {
+		// Corre el ÚLTIMO (LIFO): cascada conversation_events y flow_state; para
+		// entonces el intake que declaraba el evento ya se barrió abajo.
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.tenants WHERE id = $1`, tenantID); err != nil {
+			t.Logf("limpiando tenant: %v", err)
+		}
+	})
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version)
+		VALUES ($1, $2, $3, 'cart', 'cart-2026-08-10-1200', 'open', $4, 1)
+		RETURNING id::text
+	`, tenantID, t42Sesión, t42Contacto, t42Flujo).Scan(&eventID); err != nil {
+		t.Fatalf("sembrando evento: %v", err)
 	}
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'open', 300, now(), now())
+			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at, event_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'open', 300, now(), now(), $4::uuid)
 		RETURNING id::text
-	`, tenantID, t42Contacto, t42Sesión).Scan(&intakeID); err != nil {
+	`, tenantID, t42Contacto, t42Sesión, eventID).Scan(&intakeID); err != nil {
 		t.Fatalf("sembrando intake: %v", err)
 	}
 	for _, línea := range []struct {
@@ -83,14 +109,6 @@ func t42Seed(t *testing.T, db *sql.DB) (tenantID, eventID, intakeID string) {
 			t.Fatalf("sembrando línea %s: %v", línea.sku, err)
 		}
 	}
-	if err := db.QueryRowContext(ctx, `
-		INSERT INTO public.conversation_events
-			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version, intake_id)
-		VALUES ($1, $2, $3, 'cart', 'cart-2026-08-10-1200', 'open', $4, 1, $5)
-		RETURNING id::text
-	`, tenantID, t42Sesión, t42Contacto, t42Flujo, intakeID).Scan(&eventID); err != nil {
-		t.Fatalf("sembrando evento: %v", err)
-	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO public.flow_state
 			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, event_id)
@@ -101,8 +119,8 @@ func t42Seed(t *testing.T, db *sql.DB) (tenantID, eventID, intakeID string) {
 
 	t.Cleanup(func() {
 		ctx := context.Background()
-		// El tenant cascada conversation_events y flow_state; las líneas y el
-		// intake no cuelgan de él por FK, así que se barren explícitos, en orden.
+		// Las líneas y el intake no cuelgan del tenant por FK, así que se barren
+		// explícitos y en orden; el tenant lo barre su propio Cleanup (arriba).
 		for _, q := range []string{
 			`DELETE FROM public.intake_items WHERE intake_id = $1::uuid`,
 			`DELETE FROM public.intakes WHERE id = $1::uuid`,
@@ -110,9 +128,6 @@ func t42Seed(t *testing.T, db *sql.DB) (tenantID, eventID, intakeID string) {
 			if _, err := db.ExecContext(ctx, q, intakeID); err != nil {
 				t.Logf("limpiando intake: %v", err)
 			}
-		}
-		if _, err := db.ExecContext(ctx, `DELETE FROM public.tenants WHERE id = $1`, tenantID); err != nil {
-			t.Logf("limpiando tenant: %v", err)
 		}
 	})
 	return tenantID, eventID, intakeID
