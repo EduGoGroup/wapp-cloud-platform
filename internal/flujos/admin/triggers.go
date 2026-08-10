@@ -40,18 +40,26 @@ type kindSpec struct {
 	// negación, como PROHIBIDO en todos los demás kinds (una regla que no pare eventos
 	// deja la columna NULL, que es el caso de siempre).
 	needsEventKind bool
+	// allowsEventKind ADMITE event_kind sin exigirlo (Plan 043 · T5.3, D-043.9). Solo
+	// lo lleva `llm`, y significa una cosa muy acotada: «esta intención pertenece a
+	// este tipo de evento», para que el resolver la descarte cuando el activo es otro.
+	// NO convierte la regla en una puerta de nacimiento: una regla llm sigue
+	// devolviendo Action=Start SIN EventKind (ver config_resolver.go).
+	allowsEventKind bool
 }
 
 // kindSpecs mapea cada kind válido a sus campos obligatorios. event_start NO exige
 // flow_id a propósito (D-043.3): el despachador del menú es un componente del runtime,
 // no una fila de flow_definitions, así que un event_start de event_kind='menu' no tiene
 // flujo al que apuntar; cart/survey sí pueden traerlo y se respeta. event_stop no lleva
-// event_kind porque corta el evento ACTIVO, sea del tipo que sea (D-043.2).
+// event_kind porque corta el evento ACTIVO, sea del tipo que sea (D-043.2). llm ADMITE
+// (no exige) event_kind desde Plan 043 · T5.3/D-043.9: acota el scoping por evento
+// activo (config_resolver.go), no crea una puerta de nacimiento nueva.
 var kindSpecs = map[trigger.Kind]kindSpec{
 	trigger.KindKeyword:    {needsKeyword: true, needsFlowID: true},
 	trigger.KindFallback:   {needsFlowID: true},
 	trigger.KindEscape:     {needsKeyword: true},
-	trigger.KindLLM:        {needsKeyword: true, needsFlowID: true},
+	trigger.KindLLM:        {needsKeyword: true, needsFlowID: true, allowsEventKind: true},
 	trigger.KindEventStart: {needsKeyword: true, needsEventKind: true},
 	trigger.KindEventStop:  {needsKeyword: true},
 }
@@ -86,9 +94,11 @@ type triggerRequest struct {
 	// SessionID acota la regla a una sesión concreta (Plan 020 · T4). Opcional; si se
 	// omite (o vacío) la regla es GLOBAL del tenant (aplica a todas las sesiones).
 	SessionID string `json:"session_id"`
-	// EventKind es el TIPO de evento conversacional que arranca o conmuta la regla
-	// (Plan 043 · D-043.2). OBLIGATORIO para kind=event_start; si llega en cualquier
-	// otro kind el cuerpo se rechaza (400).
+	// EventKind es el TIPO de evento conversacional. Para kind=event_start es el que
+	// arranca o conmuta la regla (Plan 043 · D-043.2), OBLIGATORIO. Para kind=llm es
+	// OPCIONAL y significa el tipo de evento al que pertenece la intención (Plan 043 ·
+	// T5.3, D-043.9): acota el scoping en config_resolver.go, no arranca nada por sí
+	// solo. En cualquier otro kind el cuerpo se rechaza (400).
 	EventKind string `json:"event_kind"`
 }
 
@@ -153,7 +163,8 @@ func listDTO(r trigger.Rule) triggerDTO {
 //   - match_type ∉ {exact,contains} (vacío → default exact)
 //   - falta un campo que el kind exige (keyword / flow_id / event_kind, ver kindSpecs)
 //   - kind=llm con keyword que no cumple el formato de NOMBRE de intención
-//   - event_kind presente en kind ≠ event_start (solo ese disparo pare eventos)
+//   - event_kind presente en kind ∉ {event_start, llm} (Plan 043 · T5.3: llm lo
+//     ADMITE para el scoping por evento activo, pero no lo exige)
 //   - message presente en kind ≠ escape (el aviso solo aplica al escape, T4b)
 func ruleFromRequest(tenantID string, req triggerRequest) (trigger.Rule, string) {
 	kind := trigger.Kind(strings.TrimSpace(req.Kind))
@@ -218,8 +229,8 @@ func requiredFieldsByKind(kind trigger.Kind, keyword, flowID, eventKind string) 
 	if spec.needsEventKind && eventKind == "" {
 		return "event_kind es requerido para kind event_start (el tipo de evento que arranca: " + validEventKinds + ")"
 	}
-	if eventKind != "" && !spec.needsEventKind {
-		return "event_kind solo es válido para kind event_start"
+	if eventKind != "" && !spec.needsEventKind && !spec.allowsEventKind {
+		return "event_kind solo es válido para kind event_start o llm"
 	}
 	if eventKind != "" && !trigger.IsFactoryEventKind(eventKind) {
 		return "event_kind inválido: los valores admitidos son " + validEventKinds
