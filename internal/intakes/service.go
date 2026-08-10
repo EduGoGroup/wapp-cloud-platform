@@ -2,6 +2,7 @@ package intakes
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -198,6 +199,29 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 	}
 	s.notify(ctx, tenantID, updated, from)
 	return updated, nil
+}
+
+// Abandon deja la solicitud en `abandoned` y es la puerta que usa el motor cuando
+// muere el evento del que colgaba (Plan 043 · Ola 4, puerto IntakeAbandoner).
+//
+// Se distingue de SetStatus en UNA cosa, y es la razón de existir: pide un ESTADO,
+// no una transición, así que encontrarla YA abandonada es ÉXITO. SetStatus rechaza
+// `from == to` —correcto para un operador que pulsa dos veces, porque ahí no hay
+// nada que avisar—, pero su llamante aquí es el reintento de una cancelación cuya
+// costura se quedó a medias: si el «ya estaba» viajara como error, esa reparación no
+// podría terminar nunca. Cualquier otra transición imposible —abandonar una
+// `confirmed`— sigue saliendo como TransitionError.
+//
+// Existe para que las TRES puertas (bootstrap y los dos adaptadores de los tests de
+// integración) compartan la regla en vez de copiarla; la anterior copia triple es
+// justo como una de ellas se quedaría atrás.
+func (s *Service) Abandon(ctx context.Context, tenantID, intakeID string) error {
+	_, err := s.SetStatus(ctx, tenantID, intakeID, StatusAbandoned)
+	var te *TransitionError
+	if errors.As(err, &te) && NormalizeStatus(te.From) == StatusAbandoned {
+		return nil
+	}
+	return err
 }
 
 // notify dispara el aviso al cliente de UNA transición efectivamente aplicada.

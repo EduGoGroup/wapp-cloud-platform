@@ -363,7 +363,13 @@ func Run(ctx context.Context) error {
 		// leída desde el lado del dueño, y una segunda instancia sería un segundo
 		// reloj opinando sobre qué está vencido.
 		ConversationEvents: eventStore,
-		TenantVariables:    tenantvars.NewPostgres(db),
+		// La cancelación de esa bandeja (Plan 043 · T4.2/T4.3) la sirve el MISMO
+		// runtime del motor —no el store— porque cancelar orquesta tres efectos:
+		// guard del evento, puntero del flow_state y solicitud colgante. El runtime
+		// ya viene armado arriba con WithEventStore y WithIntakeAbandoner; sin este
+		// cable la ruta POST …/{id}/cancel no se monta.
+		EventCanceller:  flowRuntime,
+		TenantVariables: tenantvars.NewPostgres(db),
 		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
 		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
 		// de la ida, el MISMO gate que decide si se encola, el store de solicitudes y el
@@ -543,9 +549,11 @@ type intakeAbandoner struct{ svc *intakes.Service }
 
 // AbandonIntake deja la solicitud en `abandoned`. NO borra nada (INV-09): el pedido
 // sigue en la bandeja del dueño y sigue siendo exportable.
+//
+// Delega en Service.Abandon y no en SetStatus: ahí vive la idempotencia que el puerto
+// exige («ya abandonada» es éxito), y ahí sigue viviendo la guarda de CanTransition.
 func (a intakeAbandoner) AbandonIntake(ctx context.Context, tenantID, intakeID string) error {
-	_, err := a.svc.SetStatus(ctx, tenantID, intakeID, intakes.StatusAbandoned)
-	return err
+	return a.svc.Abandon(ctx, tenantID, intakeID)
 }
 
 // flowForKind resuelve «qué flujo arranca este tipo de evento» leyendo las reglas
