@@ -47,6 +47,17 @@ func (s *ecSink) all() []runtime.EffectContext {
 	return append([]runtime.EffectContext(nil), s.contexts...)
 }
 
+// effectsAll devuelve los Effect capturados, EN EL MISMO ORDEN que all(): índice a
+// índice son el mismo despacho. Lo añade T5.4 (Plan 043 · D2) para que los tests de
+// este fichero puedan identificar POR NOMBRE el efecto del Prime/Step entre los
+// nuevos efectos de ciclo de vida (event_started/event_closed) que ahora comparten
+// el mismo fan-out, en vez de depender de un índice fijo que la Ola 5 desplazó.
+func (s *ecSink) effectsAll() []modules.Effect {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]modules.Effect(nil), s.effects...)
+}
+
 // primedModule sustituye al módulo "menu" imitando el contrato del carrito: con
 // intent_params sembrados, su Prime CONSUME la señal y DECLARA un efecto (el
 // item_added del pre-carga, Plan 029 · T8) — es decir, emite un efecto DURANTE el
@@ -136,14 +147,26 @@ func TestEffectContext_ElArranqueLlevaElEventoRecienNacido(t *testing.T) {
 		t.Fatalf("el arranque debe parir UN evento vivo, hay %d", len(alive))
 	}
 	ecs := sink.all()
-	if len(ecs) != 1 {
-		t.Fatalf("el Prime debe declarar UN efecto, llegaron %d", len(ecs))
+	effs := sink.effectsAll()
+	// Desde T5.4 (Plan 043 · D2, telemetría de eventos) birthEvent emite
+	// event_started ANTES de enterEventFlow, así que el Prime del pre-carga ya no es
+	// el único efecto del turno: son DOS, y el que importa a este test (el que
+	// startLocked puede haber mal-atribuido) se identifica por NOMBRE, no por índice
+	// fijo.
+	if len(ecs) != 2 {
+		t.Fatalf("deben llegar DOS efectos (event_started del ciclo de vida + item_added del Prime), llegaron %d", len(ecs))
 	}
-	if ecs[0].EventID == "" {
+	if effs[0].Name != runtime.EffectEventStarted {
+		t.Fatalf("el primero debe ser %q (T5.4), llegó %q", runtime.EffectEventStarted, effs[0].Name)
+	}
+	if effs[1].Name != "item_added" {
+		t.Fatalf("el segundo debe ser el item_added del Prime, llegó %q", effs[1].Name)
+	}
+	if ecs[1].EventID == "" {
 		t.Fatal("el efecto del arranque llegó con EventID vacío: startLocked está leyendo st.EventID (que ahí es \"\" a propósito) en vez del evento recién nacido")
 	}
-	if ecs[0].EventID != alive[0].ID {
-		t.Fatalf("EventID del efecto = %q, quiero el del evento recién nacido %q", ecs[0].EventID, alive[0].ID)
+	if ecs[1].EventID != alive[0].ID {
+		t.Fatalf("EventID del efecto = %q, quiero el del evento recién nacido %q", ecs[1].EventID, alive[0].ID)
 	}
 	// Y el puntero que se estampó DESPUÉS apunta al mismo evento: las dos verdades
 	// coinciden aunque se escriban en momentos distintos.
@@ -177,11 +200,22 @@ func TestEffectContext_ElTurnoQueCierraConservaElEventID(t *testing.T) {
 		t.Fatalf("el cierre natural debe dejar 0 eventos vivos, hay %d", got)
 	}
 	ecs := sink.all()
-	if len(ecs) != 2 {
-		t.Fatalf("deben haber llegado 2 efectos (Prime + Step), llegaron %d", len(ecs))
+	effs := sink.effectsAll()
+	// Desde T5.4 (Plan 043 · D2) el turno 1 despacha event_started+item_added y el
+	// turno 2 despacha event_closed (closeIfFinished, ANTES del Save) seguido del
+	// cart_closed que declaró el Step: CUATRO efectos en total. El que importa a
+	// este test —el efecto del Step que cierra el flujo— se localiza por NOMBRE.
+	if len(ecs) != 4 {
+		t.Fatalf("deben haber llegado 4 efectos (event_started+item_added del turno 1, event_closed+cart_closed del turno 2), llegaron %d", len(ecs))
 	}
-	if ecs[1].EventID != eventID {
-		t.Fatalf("el efecto del turno que cierra llegó con EventID %q, quiero %q (¿se leyó st.EventID después de closeIfFinished?)", ecs[1].EventID, eventID)
+	if effs[2].Name != runtime.EffectEventClosed {
+		t.Fatalf("el tercero debe ser %q (T5.4, cierre natural), llegó %q", runtime.EffectEventClosed, effs[2].Name)
+	}
+	if effs[3].Name != "cart_closed" {
+		t.Fatalf("el cuarto debe ser el cart_closed del Step, llegó %q", effs[3].Name)
+	}
+	if ecs[3].EventID != eventID {
+		t.Fatalf("el efecto del turno que cierra llegó con EventID %q, quiero %q (¿se leyó st.EventID después de closeIfFinished?)", ecs[3].EventID, eventID)
 	}
 }
 
