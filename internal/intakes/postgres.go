@@ -1095,8 +1095,18 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 //     (migraciones `0051_conversation_events.sql` y `0052_event_seams.sql`), pero
 //     VACÍAS — nadie las escribe hasta la Ola 2 (T2.2/T2.5), así que cruzarlas hoy
 //     diría «sin conversación viva» siempre. Cuando el productor aterrice, ESTA
-//     función se sustituye; el contrato del puerto no cambia. Dueño de esa
-//     sustitución: 043 · T4.3.
+//     función se sustituye; el contrato del puerto no cambia.
+//     ⚠️ ACTUALIZADO 2026-08-10 (barrido CLI de la 043 · Ola 4): el productor YA
+//     aterrizó y esta función SIGUE SIN SUSTITUIRSE. La línea de abajo decía «Dueño:
+//     043 · T4.3» y apuntaba a una tarea que ya pasó: el criterio escrito de T4.3
+//     nunca mencionó esta sustitución, así que se cerró sin pagarla. Dueño real hoy:
+//     **DT-043.2** (Plan 045, o la primera ola que vuelva a tocar el descarte),
+//     decisión de Jhoan del 2026-08-10 — ver `043/tasks.md` § D-043.W4.3.
+//     Consecuencia MEDIDA de que siga así, para que nadie la redescubra: con un
+//     evento ya `cancelled` cuyo abandono falló a medias, la solicitud huérfana queda
+//     `open` y este predicado la protege igual (`live_event`), porque el `cart` sigue
+//     en `vars`. Eso dejaba al dueño sin ninguna vía de reparación hasta que el
+//     reintento del cancel pasó a repararla (`runtime.repairCancelled`).
 //   - Sobre-protege. Un contacto que empezó un carrito NUEVO en la misma sesión
 //     bloquea el descarte de una solicitud vieja y huérfana suya. Es el error que se
 //     elige: al otro lado hay una acción irreversible y sin papelera (D-041.22).
