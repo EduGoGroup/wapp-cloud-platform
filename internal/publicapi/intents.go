@@ -84,6 +84,14 @@ func getIntentsHandler(store IntentConfigStore) http.Handler {
 //   - 400 si el cuerpo no es un contrato de intents válido.
 //   - 401 sin identidad; 403 sin la feature; 413 si excede el tamaño del contrato;
 //     500 en fallo del store.
+//
+// event_kind del blob (Plan 043 · T5.3, D-043.9): el Cloud NO lee `event_kind` del
+// blob: el scoping por evento activo (D-043.9) sale de flow_triggers (regla
+// kind='llm'). El campo en el blob es informativo para un Edge futuro. Si un tenant
+// lo incluye por intent, el body sigue validando (ParseAndValidate/sharedintents no
+// tiene DisallowUnknownFields) y se persiste tal cual, pero es INERTE en el Cloud:
+// no arma ni acota ninguna regla. Quien quiera el scoping real lo anota en el CRUD
+// de triggers (internal/flujos/admin/triggers.go, kind='llm', campo event_kind).
 func putIntentsHandler(store IntentConfigStore, ents FeatureChecker, pusher ConfigPusher, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())

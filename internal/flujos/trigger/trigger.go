@@ -184,6 +184,15 @@ type IntentSignal struct {
 type Signal struct {
 	Text   string
 	Intent *IntentSignal
+	// ActiveEventKind es el TIPO del evento conversacional ACTIVO de la conversación
+	// (flow_state.event_id → conversation_events.kind) en el instante en que se
+	// interpreta la señal (Plan 043 · T5.3, D-043.9). "" ⇒ sin evento activo, que es
+	// el caso NORMAL en este camino (ver el comentario de buildSignal).
+	//
+	// Solo ACOTA la rama de intención: nunca la crea, nunca la amplía y jamás decide
+	// un arranque. La degradación que produce es la MISMA que la del umbral de
+	// confianza: la intención deja de casar y la señal sigue su camino por texto.
+	ActiveEventKind string
 }
 
 // Resolver es el puerto que consulta el runtime cuando llega un entrante SIN

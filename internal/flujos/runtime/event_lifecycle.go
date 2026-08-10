@@ -47,6 +47,15 @@ func (rt *Runtime) closeIfFinished(ctx context.Context, st *model.Conversation) 
 	if rt.events == nil || st.EventID == "" || !st.Finished() {
 		return
 	}
+	// Lectura PREVIA (Plan 043 · T5.4, D2 · sitio 5): tras la transición el evento
+	// sale de los vivos y ya no se puede releer por aliveByID. Es la ÚNICA lectura
+	// que añade esta tarea al camino caliente y solo ocurre en el turno que TERMINA
+	// un flujo con evento activo.
+	ev, conocido := rt.activeEvent(ctx, store.Key{
+		TenantID: st.TenantID, SessionID: st.SessionID, ContactID: st.ContactID,
+	}, st.SessionID, st.EventID)
+
+	nuestra := true
 	if err := rt.events.TransitionEvent(ctx, st.EventID, events.StatusClosed); err != nil {
 		if !errors.Is(err, events.ErrNotOpen) {
 			rt.log.Warn("runtime: no se pudo cerrar el evento al terminar su flujo; el puntero se conserva para reintentar",
@@ -55,6 +64,10 @@ func (rt *Runtime) closeIfFinished(ctx context.Context, st *model.Conversation) 
 		}
 		rt.log.Info("runtime: el evento ya no estaba open al terminar su flujo (carrera benigna)",
 			"session_id", st.SessionID)
+		nuestra = false
+	}
+	if nuestra && conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventClosed)
 	}
 	st.EventID = ""
 }

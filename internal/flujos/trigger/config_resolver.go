@@ -52,9 +52,22 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string
 		}
 		matches := make([]Rule, 0, len(llm))
 		for _, r := range llm {
-			if r.Enabled && matchIntent(r, sig.Intent.Name) {
-				matches = append(matches, r)
+			if !r.Enabled || !matchIntent(r, sig.Intent.Name) {
+				continue
 			}
+			// SCOPING POR EVENTO ACTIVO (Plan 043 · T5.3, D-043.9). Una regla llm
+			// ANOTADA con un event_kind distinto del activo NO casa: el intent cae a
+			// `desconocido` de facto —la señal sigue al peldaño de texto— igual que
+			// cuando el clasificador no supera el umbral.
+			//
+			// Las dos guardas de retrocompatibilidad son la mitad del contrato:
+			// sin evento activo (ActiveEventKind == "") no se acota NADA, y una regla
+			// SIN anotar (EventKind == "") sigue casando siempre. Un tenant del Plan
+			// 029 se comporta byte a byte como antes.
+			if sig.ActiveEventKind != "" && r.EventKind != "" && r.EventKind != sig.ActiveEventKind {
+				continue
+			}
+			matches = append(matches, r)
 		}
 		if len(matches) > 0 {
 			sortByPriority(matches)

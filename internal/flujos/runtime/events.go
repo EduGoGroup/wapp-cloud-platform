@@ -373,6 +373,11 @@ func (rt *Runtime) cancelAndAbandon(ctx context.Context, tenantID string, ev eve
 	if err := rt.events.TransitionEvent(ctx, ev.ID, events.StatusCancelled); err != nil {
 		return err
 	}
+	// La muerte está sellada en el UPDATE. El abandono de la solicitud es su
+	// consecuencia y puede fallar propagando el error (costura conocida, E-8 §4): el
+	// evento SIGUE cancelado, así que la telemetría va aquí y no después (Plan 043 ·
+	// T5.4, D2 · sitio 6).
+	rt.emitEventEffect(ctx, ev, EffectEventCancelled)
 	if rt.intakes == nil {
 		rt.log.Warn("runtime: evento cancelado sin IntakeAbandoner cableado; si tenía solicitud, quedó sin abandonar",
 			"tenant_id", tenantID, "event_kind", ev.Kind)
@@ -437,6 +442,7 @@ func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID stri
 		}
 		return fmt.Errorf("runtime: crear evento de tipo %q: %w", dec.EventKind, err)
 	}
+	rt.emitEventEffect(ctx, ev, EffectEventStarted)
 	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName, tagline)
 }
 
@@ -484,6 +490,7 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 	if err := rt.events.Touch(ctx, ev.ID); err != nil {
 		return fmt.Errorf("runtime: refrescar el reloj del evento al conmutar: %w", err)
 	}
+	rt.emitEventEffect(ctx, ev, EffectEventSwitched)
 	rt.sendResumeSummary(ctx, key, sessionID, ev)
 	// Sin coletilla: volver a un evento que ya existía no es atender una intención, y
 	// además el propio evento al que se vuelve sería lo primero que se anunciaría.
@@ -583,13 +590,23 @@ func (rt *Runtime) stopEvent(ctx context.Context, key store.Key, sessionID strin
 		// pero no hay estado que escribir ni nada que confirmar.
 		return nil
 	}
-	kind := rt.activeEventKind(ctx, key, sessionID, st.EventID)
+	ev, conocido := rt.activeEvent(ctx, key, sessionID, st.EventID)
+	kind := ""
+	if conocido {
+		kind = ev.Kind
+	}
 	// `event_stop` es un abandono declarado por el cliente: se resume ANTES de apagar el
 	// puntero, mientras las Vars todavía dicen dónde se había quedado (T3.4).
 	rt.summarizeAbandoned(ctx, key, sessionID, st, "")
 	st.EventID = ""
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: desactivar el evento activo: %w", err)
+	}
+	// El hecho está sellado (el puntero está apagado en BD) ⇒ se registra. Va ANTES
+	// del replyAllowed a propósito: que la red anti-loop impida CONTARLO al cliente no
+	// significa que no haya pasado.
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventDeactivated)
 	}
 	if !rt.replyAllowed(key) {
 		return nil
@@ -623,17 +640,29 @@ func stopNotice(kind string) string {
 	return fmt.Sprintf("Listo, dejamos el %s por ahora. Sigue abierto: puedes retomarlo cuando quieras.", events.KindName(kind))
 }
 
+// activeEvent relee la FILA del evento ACTIVO. Es BEST-EFFORT: un fallo de lectura o
+// un puntero que ya no apunta a nada vivo devuelven ok=false y el llamante decide.
+// Quedarse sin confirmar por no saber cómo llamarlo sería peor que confirmar sin
+// nombre (Plan 043 · T5.4, D2 · sitio 3).
+func (rt *Runtime) activeEvent(ctx context.Context, key store.Key, sessionID, eventID string) (events.Event, bool) {
+	ev, ok, err := rt.aliveByID(ctx, key.TenantID, sessionID, key.ContactID, eventID)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo releer el evento activo; se usa el aviso genérico",
+			"error", err, "session_id", sessionID)
+		return events.Event{}, false
+	}
+	return ev, ok
+}
+
 // activeEventKind resuelve el TIPO del evento activo para poder nombrarlo en la
 // confirmación (E-3: se nombra el tipo, jamás el history_id). Es BEST-EFFORT: si no
 // se puede averiguar devuelve "" y el aviso cae al genérico — quedarse sin confirmar
 // por no saber cómo llamarlo sería peor que confirmar sin nombre.
+//
+// ⚠️ Lo usa T5.3 desde incoming.go (D1): NO se renombra ni se borra. Reimplementado
+// sobre activeEvent (T5.4, D2 · sitio 3) — misma firma, mismo comportamiento.
 func (rt *Runtime) activeEventKind(ctx context.Context, key store.Key, sessionID, eventID string) string {
-	ev, ok, err := rt.aliveByID(ctx, key.TenantID, sessionID, key.ContactID, eventID)
-	if err != nil {
-		rt.log.Warn("runtime: no se pudo resolver el tipo del evento activo; se usa el aviso genérico",
-			"error", err, "session_id", sessionID)
-		return ""
-	}
+	ev, ok := rt.activeEvent(ctx, key, sessionID, eventID)
 	if !ok {
 		return ""
 	}
@@ -834,7 +863,11 @@ func (rt *Runtime) eventClock(ctx context.Context, tenantID string, key store.Ke
 		return false, err
 	}
 	if rt.events.IsSuspended(ev, ttl) {
-		return true, rt.releaseForNewConversation(ctx, key)
+		if rerr := rt.releaseForNewConversation(ctx, key); rerr != nil {
+			return true, rerr
+		}
+		rt.emitEventEffect(ctx, ev, EffectEventInactivityExpired)
+		return true, nil
 	}
 	if terr := rt.events.Touch(ctx, ev.ID); terr != nil {
 		return false, fmt.Errorf("runtime: refrescar el reloj del evento activo: %w", terr)
