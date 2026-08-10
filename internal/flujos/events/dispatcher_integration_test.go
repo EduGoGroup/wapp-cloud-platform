@@ -207,10 +207,8 @@ func TestIntegration_ElMenuNoMencionaUnPedidoDescartado(t *testing.T) {
 	}
 
 	store := events.NewStore(db, nil)
-	intakeID := insertarIntake(ctx, t, db, tid, sesion, contactoA, "open")
-	in := nuevoEvento(tid, sesion, contactoA, "cart")
-	in.IntakeID = intakeID
-	elPedido := mustCrear(ctx, t, store, in)
+	elPedido := mustCrear(ctx, t, store, nuevoEvento(tid, sesion, contactoA, "cart"))
+	intakeID := insertarIntake(ctx, t, db, tid, sesion, contactoA, "open", elPedido.ID)
 
 	d := events.NewDispatcher(store, events.NewTriggerKindOffer(reglas), entitlements.NewPostgres(db))
 	ref := events.ConversationRef{TenantID: tid, SessionID: sesion, ContactID: contactoA}

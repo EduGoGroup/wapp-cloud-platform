@@ -61,11 +61,12 @@ func NewStore(db *sql.DB, cipher *crypto.FieldCipher, opts ...Option) *Store {
 
 // eventColumns es la lista de columnas que scanEvent espera, en orden.
 const eventColumns = `id, tenant_id, session_id, contact_id, kind, history_id, status,
-	       flow_id, flow_version, intake_id, created_at, last_activity_at, closed_at`
+	       flow_id, flow_version, created_at, last_activity_at, closed_at`
 
 // eventColumnsE es eventColumns cualificada con el alias `e`: la consulta de
-// rescatables hace JOIN con intakes y con tenant_settings, y las tres tablas tienen
-// columnas `id`, `tenant_id` y `status` — sin cualificar, Postgres la rechaza por
+// rescatables hace JOIN con la vista event_content y con tenant_settings, y entre
+// las tres fuentes se repiten columnas (`kind` está en el evento y en la vista;
+// `tenant_id` también en settings) — sin cualificar, Postgres la rechaza por
 // ambigua.
 //
 // Va escrita y no derivada en tiempo de ejecución para que la consulta siga siendo
@@ -75,7 +76,7 @@ const eventColumns = `id, tenant_id, session_id, contact_id, kind, history_id, s
 // desalinearse no da error de compilación sino datos cambiados de sitio— es
 // TestQualify_LaListaCualificadaEsLaMISMA, que las compara columna a columna.
 const eventColumnsE = `e.id, e.tenant_id, e.session_id, e.contact_id, e.kind, e.history_id, e.status,
-	       e.flow_id, e.flow_version, e.intake_id, e.created_at, e.last_activity_at, e.closed_at`
+	       e.flow_id, e.flow_version, e.created_at, e.last_activity_at, e.closed_at`
 
 // scanner abstrae *sql.Row y *sql.Rows para compartir scanEvent.
 type scanner interface {
@@ -85,41 +86,38 @@ type scanner interface {
 // eventDest son los destinos de scan de un Event EN EL ORDEN de eventColumns. Es
 // la única lista de campos del paquete: scanEvent y scanRescuable la comparten, y
 // así una columna nueva no puede quedar leída en un sitio y olvidada en el otro.
-func eventDest(ev *Event, intakeID *sql.NullString, closedAt *sql.NullTime) []any {
+func eventDest(ev *Event, closedAt *sql.NullTime) []any {
 	return []any{&ev.ID, &ev.TenantID, &ev.SessionID, &ev.ContactID, &ev.Kind,
-		&ev.HistoryID, &ev.Status, &ev.FlowID, &ev.FlowVersion, intakeID,
+		&ev.HistoryID, &ev.Status, &ev.FlowID, &ev.FlowVersion,
 		&ev.CreatedAt, &ev.LastActivityAt, closedAt}
 }
 
-// scanEvent lee una fila de conversation_events en un Event, traduciendo los dos
-// nullables (intake_id, closed_at) a sus ceros de Go.
+// scanEvent lee una fila de conversation_events en un Event, traduciendo el
+// nullable (closed_at) a su cero de Go.
 func scanEvent(sc scanner) (Event, error) {
 	var (
 		ev       Event
-		intakeID sql.NullString
 		closedAt sql.NullTime
 	)
-	if err := sc.Scan(eventDest(&ev, &intakeID, &closedAt)...); err != nil {
+	if err := sc.Scan(eventDest(&ev, &closedAt)...); err != nil {
 		return Event{}, err
 	}
-	ev.IntakeID = intakeID.String
 	ev.ClosedAt = closedAt.Time
 	return ev, nil
 }
 
 // scanRescuable lee una fila de la consulta de rescatables: las mismas columnas
-// del evento MÁS la marca derivada «vencido», que va la última.
+// del evento MÁS la marca derivada «vencido» MÁS el contenido DERIVADO de la vista
+// (contentDerived), en ese orden.
 func scanRescuable(sc scanner) (Rescuable, error) {
 	var (
 		r        Rescuable
-		intakeID sql.NullString
 		closedAt sql.NullTime
 	)
-	dest := append(eventDest(&r.Event, &intakeID, &closedAt), &r.Stale)
+	dest := append(eventDest(&r.Event, &closedAt), &r.Stale, &r.ContentState, &r.ContentRef)
 	if err := sc.Scan(dest...); err != nil {
 		return Rescuable{}, err
 	}
-	r.IntakeID = intakeID.String
 	r.ClosedAt = closedAt.Time
 	return r, nil
 }
@@ -135,14 +133,18 @@ func nullableID(id string) any {
 const insertEventSQL = `
 INSERT INTO public.conversation_events
        (tenant_id, session_id, contact_id, kind, history_id, status,
-        flow_id, flow_version, intake_id, created_at, last_activity_at)
-VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, $9)
+        flow_id, flow_version, created_at, last_activity_at)
+VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $8)
 RETURNING ` + eventColumns
 
 // CreateEvent inserta un evento VIVO y devuelve la fila tal como quedó.
 //
+// El padre nace SIN columnas de ningún hijo (D-043.21): si el evento produce
+// contenido durable, es el contenido quien declara a su padre con su event_id —
+// nunca al revés.
+//
 // El nacimiento y el reloj arrancan en el MISMO instante del reloj inyectado (por
-// eso $9 va dos veces), y de ese instante sale también HistoryID en UTC: la fila
+// eso $8 va dos veces), y de ese instante sale también HistoryID en UTC: la fila
 // no puede quedar diciendo que nació a una hora y que su id legible es de otra.
 //
 // Si ya hay un evento vivo de ese tipo en la conversación devuelve ErrAliveExists.
@@ -153,7 +155,7 @@ func (s *Store) CreateEvent(ctx context.Context, in NewEvent) (Event, error) {
 	born := s.now().UTC()
 	row := s.db.QueryRowContext(ctx, insertEventSQL,
 		in.TenantID, in.SessionID, in.ContactID, in.Kind, HistoryID(in.Kind, born),
-		in.FlowID, in.FlowVersion, nullableID(in.IntakeID), born)
+		in.FlowID, in.FlowVersion, born)
 
 	ev, err := scanEvent(row)
 	if err != nil {
@@ -239,41 +241,57 @@ func (s *Store) GetEventForTenant(ctx context.Context, tenantID, eventID string)
 // rescuableFrom y rescuableWhere en vez de escribir un segundo FROM que mañana
 // diga otra cosa.
 
-// rescuableFrom es el origen: el evento MÁS su solicitud (para saber si sigue
-// abierta) MÁS la config del tenant (para saber cuánto silencio tolera).
+// rescuableFrom es el origen: el evento MÁS su contenido según la vista-registro
+// public.event_content (D-043.22) MÁS la config del tenant (para saber cuánto
+// silencio tolera).
 //
-// Los dos JOIN son LEFT y no INNER a propósito: un evento sin intake_id (un menu,
-// una encuesta) no tiene fila en intakes y NO puede desaparecer por eso, y un
-// tenant que nunca configuró nada no tiene fila en tenant_settings y tampoco.
-// El cast a text del tenant es real: conversation_events.tenant_id es UUID y
+// El padre pregunta por su contenido SIN conocer a nadie: la vista la definen y
+// migran los dominios de contenido, y aquí solo se lee su vocabulario genérico
+// (`alive`/`settled`/`discarded`). La vista tiene A LO SUMO una fila por evento
+// (índice único parcial del lado del contenido), así que el LEFT JOIN no
+// multiplica filas. Los dos JOIN son LEFT y no INNER a propósito: un evento sin
+// contenido (un menú, una encuesta) no tiene fila en la vista y NO puede
+// desaparecer por eso, y un tenant que nunca configuró nada no tiene fila en
+// tenant_settings y tampoco. Sin CAST en la ligadura evento↔contenido (UUID en
+// las dos puntas); el del tenant es real: conversation_events.tenant_id es UUID y
 // tenant_settings.tenant_id es TEXT (migración 0013).
 const rescuableFrom = `
   FROM public.conversation_events e
-  LEFT JOIN public.intakes i         ON i.id = e.intake_id
+  LEFT JOIN public.event_content c   ON c.event_id = e.id
   LEFT JOIN public.tenant_settings s ON s.tenant_id = e.tenant_id::text`
 
-// contentNone es la mitad «este evento no parió solicitud»: los tipos que no la
-// producen (menu, survey, media) y el carrito que aún no ha llegado a parirla.
-// Es EXACTAMENTE el conjunto que POST /api/v1/intakes/discard no alcanza, y por
-// eso vale de filtro por sí sola en el listado del dueño (REQ-28, T3.9b).
-const contentNone = `e.intake_id IS NULL`
+// contentNone es la mitad «este evento no tiene contenido»: los tipos que no lo
+// producen y los que aún no llegaron a producirlo. Es el conjunto que solo
+// `…/cancel` puede cerrar, y por eso vale de filtro por sí sola en el listado del
+// dueño (REQ-28, T3.9b): sin fila en la vista no hay contenido que declarar.
+const contentNone = `c.event_id IS NULL`
 
-// contentAlive es la otra mitad: su solicitud sigue ABIERTA. Con el LEFT JOIN un
-// evento sin intake da `i.status` NULL, y `NULL = 'open'` es NULL —no true—, así
-// que por aquí no se cuela ninguno de los de contentNone. Las dos mitades son
+// contentAlive es la otra mitad: su contenido sigue VIVO. Con el LEFT JOIN un
+// evento sin contenido da `c.state` NULL, y `NULL = 'alive'` es NULL —no true—,
+// así que por aquí no se cuela ninguno de los de contentNone. Las dos mitades son
 // disjuntas, y eso es lo que permite que el listado ofrezca `none` y `alive` como
 // filtros distintos sin escribir una condición nueva.
-const contentAlive = `i.status = 'open'`
+const contentAlive = `c.state = 'alive'`
 
-// rescuableContent es la condición de CONTENIDO de T3.6/REQ-26c: un evento cuya
-// solicitud fue DESCARTADA, cancelada o ya cuajada no se lista, no se rescata y no
-// se menciona (INV-17) — la escena de Marta.
+// rescuableContent es la condición de CONTENIDO de T3.6/REQ-26c: un evento cuyo
+// contenido ya MURIÓ (`discarded`) o ya CUAJÓ (`settled`) no se lista, no se
+// rescata y no se menciona (INV-17) — la escena de Marta. Qué transiciones del
+// hijo producen cada estado vive del lado del contenido, en la migración de la
+// vista: aquí no hay ni un literal de ese dominio.
 //
 // Va partida en sus dos mitades con nombre, y no escrita de corrido, porque el
 // listado del dueño (T3.9b) filtra por UNA de ellas: sin el corte, ese filtro
-// tendría que escribir su propio `intake_id IS NULL`, y entonces habría dos sitios
-// diciendo qué es «sin contenido» — que es justo lo que REQ-28 prohíbe.
+// tendría que escribir su propio `c.event_id IS NULL`, y entonces habría dos
+// sitios diciendo qué es «sin contenido» — que es justo lo que REQ-28 prohíbe.
 const rescuableContent = `(` + contentNone + ` OR ` + contentAlive + `)`
+
+// contentDerived expone el contenido DERIVADO del join como columnas del SELECT:
+// el estado y el ref de la vista, con ” cuando no hay fila (el evento sin
+// contenido). DERIVADO quiere decir exactamente eso (D-043.22): no hay columna en
+// conversation_events que lo almacene ni INSERT que lo escriba — si el hijo
+// cambia, la siguiente lectura ya lo dice, sin sincronizar nada.
+const contentDerived = `COALESCE(c.state, '') AS content_state,
+       COALESCE(c.ref::text, '') AS content_ref`
 
 // rescuableWhere es el filtro.
 //
@@ -323,7 +341,8 @@ const rescuableStale = `(` + rescuableTTL + ` > 0
 
 const selectRescuableSQL = `
 SELECT ` + eventColumnsE + `,
-       ` + rescuableStale + rescuableFrom + rescuableWhere + rescuableOrder + rescuableLimit
+       ` + rescuableStale + `,
+       ` + contentDerived + rescuableFrom + rescuableWhere + rescuableOrder + rescuableLimit
 
 // ListAlive devuelve los eventos VIVOS de la conversación en orden de NACIMIENTO:
 // status='open' y nada más, sin mirar la solicitud.
@@ -346,7 +365,7 @@ func (s *Store) ListAlive(ctx context.Context, tenantID, sessionID, contactID st
 // retomarlos, ordenados por ÚLTIMA ACTIVIDAD descendente y marcados con «vencido».
 //
 // No es ListAlive con otro ORDER BY, aunque lo pareciera antes de T3.6: filtra
-// además por la solicitud (rescuableWhere). Son dos preguntas distintas —«¿qué
+// además por el contenido (rescuableWhere). Son dos preguntas distintas —«¿qué
 // tiene abierto?» y «¿qué le ofrezco retomar?»— y desde INV-17 tienen respuestas
 // distintas: un carrito cuyo pedido descartó el dueño sigue vivo pero ya no se
 // ofrece.
@@ -448,24 +467,27 @@ func AllowedKinds(ctx context.Context, feats entitlements.Resolver, tenantID str
 }
 
 // ContentFilter es la pregunta por el CONTENIDO del evento, y son exactamente
-// tres estados porque la mitad `none` es la que hace falta que exista: es el
-// conjunto que POST /api/v1/intakes/discard NO alcanza (REQ-28), el que dejaba a
-// Herminia sin dónde limpiar.
+// tres respuestas porque la mitad `none` es la que hace falta que exista: el
+// conjunto de eventos que no produjeron contenido (REQ-28), el que dejaba a
+// Herminia sin dónde limpiar. El vocabulario público es `any|none|alive` y no
+// cambia con la vista: es el contrato del transporte.
 type ContentFilter string
 
 const (
 	// ContentAny no distingue entre las dos mitades: enseña las dos, y es el default.
 	//
 	// «Any» es cualquiera de los dos CONTENIDOS del predicado (rescuableContent), NO
-	// «cualquier evento»: un evento cuya solicitud se descartó o ya cuajó NO sale por
-	// aquí, porque el listado del dueño va sobre la MISMA consulta filtrada que el
-	// rescate (INV-17: no se lista, no se rescata, no se menciona). Es el criterio
-	// literal de T3.9 —«tras POST /api/v1/intakes/discard desaparece de la lista»— y
-	// la razón de que esta sea una superficie más de ese invariante y no una excepción.
+	// «cualquier evento»: un evento cuyo contenido murió (`discarded`) o ya cuajó
+	// (`settled`) NO sale por aquí, porque el listado del dueño va sobre la MISMA
+	// consulta filtrada que el rescate (INV-17: no se lista, no se rescata, no se
+	// menciona). Es el criterio literal de T3.9 —descartado el contenido, el evento
+	// desaparece de la lista— y la razón de que esta sea una superficie más de ese
+	// invariante y no una excepción.
 	ContentAny ContentFilter = "any"
-	// ContentNone son los eventos SIN solicitud: los que solo `…/cancel` puede cerrar.
+	// ContentNone son los eventos SIN contenido (sin fila en la vista): los que
+	// solo `…/cancel` puede cerrar.
 	ContentNone ContentFilter = "none"
-	// ContentAlive son los eventos cuya solicitud sigue abierta.
+	// ContentAlive son los eventos cuyo contenido sigue vivo (`state='alive'`).
 	ContentAlive ContentFilter = "alive"
 )
 
@@ -590,11 +612,12 @@ const listEventsWhere = `
         OR ($6::text = '` + string(ContentNone) + `' AND ` + contentNone + `)
         OR ($6::text = '` + string(ContentAlive) + `' AND ` + contentAlive + `))`
 
-// listEventsInner es el evento con su marca de vencido ya resuelta. Las tres
-// piezas que lo componen son las MISMAS que sirven al rescate.
+// listEventsInner es el evento con su marca de vencido y su contenido derivado ya
+// resueltos. Las piezas que lo componen son las MISMAS que sirven al rescate.
 const listEventsInner = `
 SELECT ` + eventColumnsE + `,
-       ` + rescuableStale + rescuableFrom + listEventsWhere
+       ` + rescuableStale + `,
+       ` + contentDerived + rescuableFrom + listEventsWhere
 
 // listEventsStale filtra por «vencido» SOBRE LA COLUMNA CALCULADA de la subconsulta
 // (que se llama `e` para que el ORDER BY del rescate valga tal cual aquí fuera).
@@ -771,8 +794,7 @@ func (s *Store) IsSuspended(e Event, ttl time.Duration) bool {
 }
 
 // appendEntrySQL numera la entrada leyendo el máximo actual DENTRO de la misma
-// sentencia (mismo idioma que intakes.insertRevisionQuery): entre el cálculo y la
-// escritura no cabe una lectura ajena. Lo que sí cabe es otro INSERT concurrente
+// sentencia: entre el cálculo y la escritura no cabe una lectura ajena. Lo que sí cabe es otro INSERT concurrente
 // que calcule el mismo número; ese pierde contra el UNIQUE (event_id, seq) y lo
 // resuelve el reintento, no un candado que serializaría a todos.
 //
@@ -827,6 +849,32 @@ func (s *Store) AppendSummary(ctx context.Context, eventID string, body json.Raw
 		kind:    entryKindSummary,
 		payload: body,
 	})
+}
+
+// AppendDecision añade una DECISIÓN estructurada del cliente al hilo (D-043.23,
+// D-043.13): la línea agregada o quitada del carrito, la respuesta de encuesta —
+// el efecto ya decidido, no la charla que llevó a él.
+//
+// Es nivel 1 del ADR-0034: ESTRUCTURA en claro en payload, con role='client'
+// FIJO, porque la decisión es del cliente — la voz de la entrada es suya aunque
+// quien la serialice seamos nosotros. Igual que en AppendSummary, el payload se
+// valida como JSON (ErrSummaryNotJSON si no lo es): la prosa no tiene por dónde
+// entrar en el nivel que no cifra.
+//
+// INV-11 sigue intacto: nada NUESTRO se escribe como `decision`. Lo que emite la
+// plataforma (los resúmenes de abandono) entra por AppendSummary con
+// entry_kind='summary' y role='system'; esta puerta registra lo que el cliente
+// decidió, y por eso no hay doble contabilidad entre el resumen y sus decisiones.
+func (s *Store) AppendDecision(ctx context.Context, eventID string, payload []byte) error {
+	if !json.Valid(payload) {
+		return ErrSummaryNotJSON
+	}
+	_, err := s.appendEntry(ctx, eventID, entry{
+		role:    RoleClient,
+		kind:    entryKindDecision,
+		payload: payload,
+	})
+	return err
 }
 
 // AppendMessage añade el TEXTO LITERAL de una interacción, SIEMPRE CIFRADO

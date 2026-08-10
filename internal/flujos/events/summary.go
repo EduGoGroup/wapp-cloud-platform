@@ -228,13 +228,15 @@ type IntakeLineReader interface {
 //
 // Porque acotar «las respuestas de ESTA encuesta» necesita más que la conversación,
 // y la tabla lo demuestra: `survey_results` guarda (tenant, contacto, flow_id,
-// flow_version, question_id, answer_code, created_at) y **no tiene ni session_id ni
-// event_id**. Con solo (tenant, sesión, contacto) el adaptador no podría separar la
-// encuesta de hoy de la que el mismo contacto respondió el mes pasado con el mismo
-// flujo. El Event trae lo que hace falta para acotarla —FlowID y FlowVersion, que
-// congela al nacer, y CreatedAt como cota inferior— y de paso la sesión, que la
-// tabla no tiene y que REQ-18 exige no mezclar. Ese trabajo es del adaptador; aquí
-// se le da todo lo que necesita para hacerlo bien.
+// flow_version, question_id, answer_code, created_at) y —desde la 0054 (Plan 043 ·
+// Ola 4.5, D-043.21)— también `event_id`, que escribe el proyector del módulo
+// survey. Pero las filas anteriores a esa migración lo llevan NULL, así que el
+// adaptador sigue necesitando separar la encuesta de hoy de la del mes pasado
+// TAMBIÉN para el legado. El Event trae lo que hace falta para las dos vías —su
+// propio ID (la preferida, para fila nueva), FlowID y FlowVersion, que congela al
+// nacer, y CreatedAt como cota inferior del fallback por timestamp— y de paso la
+// sesión, que la tabla no tiene y que REQ-18 exige no mezclar. Ese trabajo es del
+// adaptador; aquí se le da todo lo que necesita para hacerlo bien.
 //
 // Pasar el Event y no seis parámetros también evita que esta firma —que gobierna a
 // dos frentes— tenga que crecer en cuanto el adaptador descubra que le falta un

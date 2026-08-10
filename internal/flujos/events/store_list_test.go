@@ -109,6 +109,7 @@ func TestListado_ReusaLasPiezasDelRescate(t *testing.T) {
 		"rescuableOrder": rescuableOrder,
 		"contentNone":    contentNone,
 		"contentAlive":   contentAlive,
+		"contentDerived": contentDerived,
 	} {
 		if !strings.Contains(listEventsSQL, pieza) {
 			t.Fatalf("listEventsSQL no reusa %s TAL CUAL (hay una segunda consulta escrita a mano):\n%s",
@@ -117,7 +118,7 @@ func TestListado_ReusaLasPiezasDelRescate(t *testing.T) {
 	}
 	// Y la del rescate sigue componiendo su condición de contenido con las MISMAS
 	// dos mitades: partirla en piezas no puede haber cambiado lo que filtra.
-	if !strings.Contains(selectRescuableSQL, "(e.intake_id IS NULL OR i.status = 'open')") {
+	if !strings.Contains(selectRescuableSQL, "(c.event_id IS NULL OR c.state = 'alive')") {
 		t.Fatalf("la condición de contenido del rescate cambió al partirla:\n%s", selectRescuableSQL)
 	}
 }
