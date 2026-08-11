@@ -21,26 +21,51 @@ import (
 // exitMenuChoice interpreta la respuesta del cliente contra el menú de salida
 // ARMADO por un módulo. Devuelve true si el turno se consumió.
 //
-// La guarda de st.EventID no es cosmética: el menú de salida solo tiene sentido
-// DENTRO de un evento, y si el evento se apagó entre el menú y la respuesta (una
-// cancelación desde la app, un event_stop) el «2» vuelve a ser del módulo.
+// El menú de salida solo tiene sentido DENTRO del evento sobre el que se armó (E-3):
+// si ese evento se apagó entre el menú y la respuesta —una cancelación desde la app,
+// un event_stop, incluido el caso EventID=="" (sin evento activo)— la rama del sello
+// (más abajo) lo detecta y desarma, y el «2» vuelve a ser del módulo. La guarda de
+// `st.EventID == ""` NO corta arriba del todo —eso dejaba un marcador armado sin
+// evento sobreviviendo MÁS de un turno, incumpliendo la promesa de ExitMenuVar— pero
+// SÍ vive dentro de la rama del sello, porque sin evento activo el marcador jamás debe
+// interpretarse: ver el comentario ⚠️ de esa rama.
 //
 // Las CUATRO ramas, y por qué las tres primeras persisten antes de actuar: el estado
 // se guarda con la marca ya borrada para que ningún camino posterior —stopEvent
 // guarda su propia copia, enterEventFlow relee de la BD— resucite un menú consumido.
 func (rt *Runtime) exitMenuChoice(ctx context.Context, key store.Key, sessionID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) (bool, error) {
-	if rt.events == nil || st.EventID == "" || st.Vars == nil {
+	if rt.events == nil || st.Vars == nil {
 		return false, nil
 	}
 	if _, armado := st.Vars[modules.ExitMenuVar].(string); !armado {
 		return false, nil
 	}
-	if modules.ExitMenuArmedOn(st.Vars) != st.EventID {
-		// El marcador es de OTRO evento: entre el menú y esta respuesta la conversación
-		// cambió de contexto por un camino que conserva las Vars (saveMenuState, el
-		// menú del despachador). Se desarma en silencio y el texto sigue su camino: un
-		// «2» que ya no es del carrito no puede desactivar el evento que ahora manda.
-		// Es la misma norma que menuChoice se aplica a sí mismo (events.go).
+	// ⚠️ `st.EventID == ""` va PRIMERO y no es redundante con la comparación que
+	// sigue (revisión de la Ola 6): un marcador LEGACY —ExitMenuVar escrito antes de
+	// que la Ola 5 añadiera ExitMenuEventVar, que es el estado de CUALQUIER flow_state
+	// hoy en producción— hace que ExitMenuArmedOn devuelva "", y "" == "" casaba con
+	// una conversación sin evento activo. La comparación sola bendecía ese marcador y
+	// el runtime SECUESTRABA el turno: «1» re-emitía una pantalla rancia, «2» se
+	// tragaba el turno en silencio absoluto (stopEvent con EventID=="" no hace ni dice
+	// nada) y «3» abría el despachador que nadie pidió. Es exactamente el lado que el
+	// contrato de modules.ExitMenuArmedOn declara inseguro: «al no casar con ningún
+	// EventID real, el runtime lo desarma y el texto sigue su camino... el otro sería
+	// secuestrar un turno ajeno». Sin evento activo NUNCA se interpreta 1/2/3; solo se
+	// desarma, que es lo que E-3 quería arreglar (el marcador no sobrevive al turno).
+	if st.EventID == "" || modules.ExitMenuArmedOn(st.Vars) != st.EventID {
+		// E-3: el marcador es de OTRO evento —o de NINGUNO (st.EventID==""): la
+		// conversación cambió de contexto por un camino que conserva las Vars
+		// (saveMenuState, el menú del despachador; stopEvent) entre el momento en
+		// que se armó el menú de salida (que solo se arma DENTRO de un evento,
+		// modules.InEvent) y esta respuesta. Antes de esta corrección, EventID=="" se
+		// cortaba en la guarda de arriba SIN pasar por aquí, así que el marcador
+		// sobrevivía MÁS de un turno — rompiendo la promesa literal de ExitMenuVar
+		// («vive exactamente un turno»). Deuda latente documentada, no incidente hoy:
+		// volver al MISMO evento pasa por enterEventFlow, que borra el flow_state
+		// entero antes de que este código llegue a verlo. Se desarma en silencio y el
+		// texto sigue su camino: un «2» que ya no es del carrito no puede desactivar
+		// el evento que ahora manda (o ninguno). Es la misma norma que menuChoice se
+		// aplica a sí mismo (events.go).
 		if _, err := rt.disarmExitMenu(ctx, st); err != nil {
 			return false, err
 		}

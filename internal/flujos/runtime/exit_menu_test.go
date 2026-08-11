@@ -465,3 +465,107 @@ func TestExitMenuChoice_MarcadorDeOtroEvento_NoSecuestraElTurno(t *testing.T) {
 		t.Fatalf("status del evento activo = %q, quiero open", got)
 	}
 }
+
+// TestExitMenuChoice_EventoDesactivado_SeDesarma (E-3): la MISMA propiedad que
+// TestExitMenuChoice_MarcadorDeOtroEvento_NoSecuestraElTurno, con la variante que esa
+// no cubre — el evento se desactiva del todo (EventID="") en vez de conmutar a OTRO.
+// Antes de esta corrección la guarda de arriba cortaba con st.EventID=="" ANTES de
+// llegar al desarme, así que el marcador sobrevivía más de un turno, incumpliendo la
+// promesa literal de ExitMenuVar («vive exactamente un turno»). Fuga sin daño
+// demostrable HOY (volver al MISMO evento pasa por enterEventFlow, que borra el
+// flow_state entero antes de que este código lo vea) pero real: cualquier camino
+// futuro que reactive un evento CONSERVANDO Vars (el mismo patrón que ya existe para
+// saveMenuState/stopEvent) heredaría un menú de salida ARMADO que nadie pidió.
+func TestExitMenuChoice_EventoDesactivado_SeDesarma(t *testing.T) {
+	t.Parallel()
+	e := newT52Env(t)
+	st := e.armado(t, "PANTALLA-ORIGINAL-DEL-CARRITO")
+	// El evento se DESACTIVA del todo (event_stop/cancelación), pero las Vars se
+	// conservan — el mismo hueco que saveMenuState/releaseStateFrom dejan abierto.
+	st.EventID = ""
+	if err := e.rt.store.Save(context.Background(), st); err != nil {
+		t.Fatalf("guardar la desactivación: %v", err)
+	}
+
+	done, err := e.rt.exitMenuChoice(context.Background(), e.key, t52Session, st, t52Incoming("2"))
+	if err != nil {
+		t.Fatalf("exitMenuChoice: %v", err)
+	}
+	if done {
+		t.Fatal("sin evento activo, el marcador rancio no debe consumir el turno")
+	}
+	if len(e.sender.texts()) != 0 {
+		t.Fatalf("no debe confirmar nada; enviados=%v", e.sender.texts())
+	}
+	persisted, ok, err := e.repo.Load(context.Background(), e.key)
+	if err != nil || !ok {
+		t.Fatalf("releer estado: ok=%v err=%v", ok, err)
+	}
+	if persisted.EventID != "" {
+		t.Fatalf("no se reactiva ningún evento; event_id=%q", persisted.EventID)
+	}
+	if _, armado := persisted.Vars[modules.ExitMenuVar]; armado {
+		t.Fatal("E-3: el marcador debe quedar DESARMADO aunque la conversación ya no tenga evento activo")
+	}
+	if _, armado := persisted.Vars[modules.ExitMenuEventVar]; armado {
+		t.Fatal("E-3: el sello del marcador también debe borrarse (DisarmExitMenu borra las DOS claves)")
+	}
+	if got := e.evs.statusOf("t52-ev-cart"); got != events.StatusOpen {
+		t.Fatalf("status del evento cuyo menú quedó armado = %q, quiero open (nadie lo tocó)", got)
+	}
+}
+
+// TestExitMenuChoice_MarcadorLegacySinSelloNoSecuestraElTurno (revisión de la Ola 6,
+// defecto de E-3): un marcador armado ANTES de que la Ola 5 añadiera
+// modules.ExitMenuEventVar —es decir, el estado de CUALQUIER flow_state que hoy corra
+// en producción con el menú de salida armado— hace que ExitMenuArmedOn devuelva "".
+// Al quitar E-3 la guarda `st.EventID == ""` del principio, ese "" casaba con una
+// conversación SIN evento activo (event_stop y el vencimiento del reloj apagan el
+// puntero CONSERVANDO las Vars) y el runtime interpretaba 1/2/3 sobre un marcador que
+// ya no manda: «1» re-emitía una pantalla rancia, «2» consumía el turno en silencio
+// absoluto (stopEvent con EventID=="" devuelve nil sin escribir ni decir nada) y «3»
+// abría el despachador. Es literalmente el lado que el contrato de ExitMenuArmedOn
+// declara inseguro («secuestrar un turno ajeno»).
+//
+// Las TRES entradas, no una: cada rama de exitMenuChoice hace un daño distinto, y
+// elegir una sola dejaría las otras dos sin red.
+func TestExitMenuChoice_MarcadorLegacySinSelloNoSecuestraElTurno(t *testing.T) {
+	t.Parallel()
+	for _, entrada := range []string{modules.ExitMenuKeepTrying, modules.ExitMenuStop, modules.ExitMenuDispatcher} {
+		t.Run("entrada="+entrada, func(t *testing.T) {
+			e := newT52Env(t)
+			// Marcador LEGACY: ExitMenuVar SIN ExitMenuEventVar, sobre una conversación
+			// cuyo evento ya se apagó (los dos caminos que conservan Vars).
+			st := model.Conversation{
+				TenantID: t52Tenant, SessionID: t52Session, ContactID: e.contactID,
+				EventID: "",
+				Vars:    map[string]any{modules.ExitMenuVar: "PANTALLA-RANCIA", "otro": "dato"},
+			}
+			if err := e.rt.store.Save(context.Background(), st); err != nil {
+				t.Fatalf("sembrar flow_state legacy: %v", err)
+			}
+
+			done, err := e.rt.exitMenuChoice(context.Background(), e.key, t52Session, st, t52Incoming(entrada))
+			if err != nil {
+				t.Fatalf("exitMenuChoice: %v", err)
+			}
+			if done {
+				t.Fatalf("un marcador legacy SIN sello, sobre una conversación sin evento, NO puede consumir el turno (entrada=%q): el texto es del módulo", entrada)
+			}
+			if len(e.sender.texts()) != 0 {
+				t.Fatalf("tampoco puede hablar; enviados=%v", e.sender.texts())
+			}
+			persisted, ok, lerr := e.repo.Load(context.Background(), e.key)
+			if lerr != nil || !ok {
+				t.Fatalf("releer estado: ok=%v err=%v", ok, lerr)
+			}
+			if persisted.EventID != "" {
+				t.Fatalf("no puede activar ningún evento; event_id=%q", persisted.EventID)
+			}
+			// Y la mitad que E-3 sí venía a arreglar: el marcador NO sobrevive al turno.
+			if _, armado := persisted.Vars[modules.ExitMenuVar]; armado {
+				t.Fatal("el marcador legacy debe quedar DESARMADO (E-3: vive exactamente un turno)")
+			}
+		})
+	}
+}

@@ -238,21 +238,71 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// («si prefieres otra cosa, escríbelo») soltando el estado y tratándolo como un
 	// entrante sin conversación viva, en vez de reventar buscando un flujo que no existe.
 	if st.FlowID == "" {
-		// El tipo del evento ACTIVO acota la interpretación de la intención (T5.3,
-		// D-043.9). Se lee ANTES de soltar el estado por HIGIENE de lectura, no por
-		// necesidad: st es una COPIA (el puntero st.EventID sigue en mano tras el
-		// Delete) y activeEventKind → aliveByID → ListAlive consulta
-		// conversation_events, no flow_state (events/store.go: selectAliveSQL), así
-		// que invertir el orden daría hoy el MISMO resultado. Se deja así para que
-		// siga siendo cierto si algún día la relectura pasara a depender del estado.
-		activeKind := ""
-		if st.EventID != "" {
-			activeKind = rt.activeEventKind(ctx, key, sessionID, st.EventID)
+		return rt.releaseOrphanMenu(ctx, tenantID, sessionID, key, contactID, st, m)
+	}
+	// Un flow_state TERMINAL con el puntero YA APAGADO cuenta como «ninguna
+	// conversación en curso» — el mismo trato que saveMenuState (events.go) ya le
+	// daba con `!ok || st.Finished()` desde la Ola 4, y que este camino vivo no le
+	// daba (efecto colateral del hallazgo #24, Plan 043 · Ola 6, decisión de Jhoan
+	// 2026-08-11). Confirmar un pedido deja CurrentNode en el centinela:
+	// prepareResume no encuentra def.Nodes[NodeTerminal] (reservado, no es un nodo
+	// real) y engine.Step sobre un estado ya Finished() ignora la entrada SIN emitir
+	// nada (documentado en Step) — el contacto queda mudo para siempre, porque
+	// conversationExpired tampoco lo vence con el TTL en su default deshabilitado
+	// (<=0). Se enruta exactamente como si no hubiera flow_state: el
+	// fallback/oferta/disparadores decide qué contestar, igual que a un contacto de
+	// control. ActiveEventKind="" a propósito: el flujo que acaba de terminar no
+	// tiene autoridad para acotar la interpretación de lo que venga después.
+	//
+	// SÍ se borra el estado (medido en revisión, no era el plan original): dejarlo
+	// intacto y delegar en handleTrigger parecía lo más simple, pero un disparo que
+	// arranca OTRO flujo (p. ej. el fallback del tenant, con su propio FlowID) pasa
+	// por startLocked, que ve `Exists(key)==true` sobre esta MISMA fila y activa el
+	// gotcha 409 (start.go): restartableOnStart consulta la ResumePolicy del NUEVO
+	// flujo contra las Vars del VIEJO —de otro módulo, otra forma— y esa lectura
+	// cruzada casi siempre lee «no terminal» (el módulo nuevo no reconoce nada
+	// suyo), así que startLocked responde ErrConversationExists y ese error se
+	// TRAGA como carrera benigna (incoming.go, startPlainFlow): el turno vuelve a
+	// quedar mudo, solo que por una puerta distinta. Medido por ejecución con un
+	// flujo `survey` terminal y un fallback que arranca `cart`: sin el Delete, cero
+	// salientes. Igual que releaseOrphanMenu (unas líneas arriba) y que
+	// saveMenuState (events.go) desde la Ola 4, no hay nada que rescatar aquí
+	// (E-1/E-7 — el flujo YA terminó, no hay carrito EN CURSO): borrar es seguro
+	// PORQUE la guarda de abajo (pendingClosure) ya certificó que no queda ningún
+	// cierre pendiente de reintentar.
+	//
+	// Esa guarda es «no queda ningún cierre PENDIENTE» y NO «st.EventID == ""»
+	// (#28 / H2, Ola 6 · decisión de Jhoan 2026-08-11, medida por sonda). Lo que
+	// separa este caso es el reintento de E-8 §4 (event_lifecycle.go,
+	// TestCierreNatural_FalloRealNoLimpiaElPuntero): si la transición falló de
+	// verdad, el puntero SIGUE puesto a propósito y el siguiente entrante tiene que
+	// atravesar advanceLiveStep para que closeIfFinished reintente sobre ESTA MISMA
+	// fila — borrarla aquí perdería el reintento para siempre. Pero la guarda de
+	// POSESIÓN de H2 no deja ningún reintento vivo: es DETERMINISTA, se reevalúa
+	// idéntica en cada entrante, y ese evento no es de este flujo, así que nadie lo
+	// va a cerrar por esta vía nunca. Preguntar por st.EventID metía los dos casos
+	// en el mismo saco y dejaba la fila {terminal, con puntero} PARA SIEMPRE: el
+	// Step no emite nada sobre un estado ya Finished() y el contacto se quedaba mudo
+	// a todo texto normal (solo lo rescataban el menú numerado del despachador, las
+	// palabras clave, el escape y la cancelación desde la app). pendingClosure
+	// distingue las dos causas con una sola relectura, y es la MISMA que
+	// closeIfFinished usa: no hay dos sitios decidiendo lo mismo por separado.
+	//
+	// LevelCancelled del carrito SÍ alcanza este punto (hallazgo #29, salida (A),
+	// decisión de Jhoan 2026-08-11): cart.Module.Step fija Next al centinela para
+	// LevelClosed Y LevelCancelled por igual (la misma condición, ver cart.go), así
+	// que un carrito cancelado DENTRO de la conversación deja st.Finished()==true
+	// exactamente como uno confirmado. cart.ResumePolicy.Restart (isTerminal, ver
+	// resume.go) ya NO tiene ocasión de reanudar el flujo desde aquí —CurrentNode
+	// llegó al centinela antes de que hubiera un turno siguiente que lo reanudara—:
+	// el flow_state terminal se suelta como cualquier otro y solo un disparador
+	// real («carrito») abre un pedido nuevo, ya no cualquier texto. Es la otra mitad
+	// del #24 que quedó viva a propósito hasta esta ola; ahora está cerrada (ver la
+	// advertencia actualizada en cart_fin_de_flujo_test.go).
+	if st.Finished() {
+		if ev, conocido, pendiente := rt.pendingClosure(ctx, st); !pendiente {
+			return rt.releaseFinishedState(ctx, tenantID, sessionID, key, contactID, ev, conocido, m)
 		}
-		if derr := rt.store.Delete(ctx, key); derr != nil {
-			return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
-		}
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
 	}
 
 	def, err := rt.store.GetDefinition(ctx, tenantID, st.FlowID, st.FlowVersion)
@@ -260,6 +310,102 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
+	return rt.advanceLiveStep(ctx, tenantID, sessionID, key, contactID, st, def, m)
+}
+
+// releaseFinishedState suelta un flow_state TERMINAL al que ya no le queda ningún
+// cierre pendiente (pendingClosure) y enruta el entrante como si no hubiera
+// conversación viva. Extraída de advanceLive para acotar SU complejidad ciclomática
+// (gocyclo), igual que releaseOrphanMenu; el comportamiento es idéntico a inlinearla.
+//
+// `conocido` distingue las dos causas de «no queda pendiente» (ver pendingClosure) y
+// con ella las dos únicas diferencias de trato:
+//
+//   - SIN evento (conocido=false, el caso del hallazgo #24): el cierre natural ya
+//     apagó el puntero en el turno que terminó el flujo, así que no hay efecto que
+//     emitir ni tipo con el que acotar la señal. Byte a byte lo que hacía la Ola 6
+//     antes de este arreglo.
+//   - con un evento AJENO vivo (conocido=true, la guarda de posesión de H2): la fila
+//     que se destruye apuntaba a un evento que sigue `open` —y sigue `open` a
+//     propósito: lo que se suelta es la FILA, no el evento; su muerte es de la
+//     cancelación desde la app, D-043.5—. Se emite EffectEventEscaped por el MISMO
+//     eje que el quinto camino de suelta (E5/E6): el nombre describe el EFECTO sobre
+//     el flow_state —destruido, no conservado como en event_deactivated—, no la
+//     intención del cliente. Y el tipo del evento activo SÍ acota la interpretación
+//     de la señal (D-043.9), al revés que en el caso de arriba: ese evento no es el
+//     flujo que acabó —ese no tiene autoridad sobre lo que venga después—, es el
+//     `menu` que el contacto pidió y que sigue vivo.
+//
+// El Delete no conserva NADA, tampoco last_wa_message_id, y es deliberado: es el
+// mismo gesto exacto de releaseOrphanMenu (unas líneas abajo) y del saveMenuState de
+// la Ola 4 sobre un estado terminal. Lo que saveMenuState sí conserva es el
+// last_wa_message_id de un flow_state que SOBREVIVE, y aquí la fila desaparece
+// entera: no queda estado al que reprocesar un mensaje, el turno se enruta como el de
+// un contacto sin conversación, y el corte de un reenvío del outbox es el dedupe
+// PERSISTENTE de ingesta por (session_id, wa_message_id) —duplicateIngest, al
+// principio de HandleIncoming—, que no depende de esta fila.
+func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, ev events.Event, conocido bool, m *cloudlinkv1.IncomingMessage) error {
+	if derr := rt.store.Delete(ctx, key); derr != nil {
+		return fmt.Errorf("runtime: soltar el flow_state terminal: %w", derr)
+	}
+	activeKind := ""
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+		activeKind = ev.Kind
+	}
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+}
+
+// releaseOrphanMenu es el QUINTO camino de suelta (Plan 043 · T5.3 D-043.9; Ola 6 ·
+// E6): un flow_state SIN flujo (el `menu`, D-043.3) cuyo texto no casó ninguna
+// opción. Extraído de advanceLive para acotar su complejidad ciclomática (gocyclo);
+// el comportamiento es idéntico a inlinearlo.
+func (rt *Runtime) releaseOrphanMenu(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) error {
+	// El tipo del evento ACTIVO acota la interpretación de la intención (T5.3,
+	// D-043.9). Se lee ANTES de soltar el estado por HIGIENE de lectura, no por
+	// necesidad: st es una COPIA (el puntero st.EventID sigue en mano tras el
+	// Delete) y activeEventKind → aliveByID → ListAlive consulta
+	// conversation_events, no flow_state (events/store.go: selectAliveSQL), así
+	// que invertir el orden daría hoy el MISMO resultado. Se deja así para que
+	// siga siendo cierto si algún día la relectura pasara a depender del estado.
+	activeKind := ""
+	// E-6 (el QUINTO camino de suelta, cubierto en la misma pasada que E5): esta
+	// misma lectura vuelve a hacerse por rt.activeEvent (no por activeEventKind,
+	// que devuelve solo el nombre y no la fila completa que emitEventEffect
+	// necesita) para poder registrar el abandono más abajo. #15 en un octavo
+	// punto: se acepta el mismo patrón que handleEscape.
+	var ev events.Event
+	var conocido bool
+	if st.EventID != "" {
+		activeKind = rt.activeEventKind(ctx, key, sessionID, st.EventID)
+		ev, conocido = rt.activeEvent(ctx, key, sessionID, st.EventID)
+	}
+	if derr := rt.store.Delete(ctx, key); derr != nil {
+		return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
+	}
+	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra. Nombre
+	// ELEGIDO Y NO OBVIO: se reutiliza EffectEventEscaped —no uno nuevo— porque el
+	// eje que la Ola 6 fijó para este efecto (E5) es «¿sobrevive el flow_state al
+	// abandono?», no «¿lo pidió el cliente con la palabra exacta?»: aquí, igual
+	// que en handleEscape, el Delete DESTRUYE el flow_state (event_deactivated,
+	// en cambio, lo CONSERVA — stopEvent). Quien lea flow_events para saber si
+	// hay progreso de nodo que perder no necesita un tercer nombre para una
+	// tercera causa; necesita saber si lo hay, y la respuesta aquí es la MISMA
+	// que en el escape global. La objeción obvia —el cliente no dijo ninguna
+	// palabra de escape, solo tecleó algo que el menú no reconoció— es cierta y
+	// se acepta: el nombre describe el EFECTO sobre el estado, no la intención
+	// del cliente, igual que event_closed no distingue POR QUÉ terminó el flujo.
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+	}
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+}
+
+// advanceLiveStep es la SEGUNDA MITAD de advanceLive (Plan 029 · T9, extendida en la
+// Ola 6 para acotar gocyclo tras E6): resuelve la reanudación por módulo y corre
+// engine.Step sobre un flow_state QUE SÍ tiene flujo (st.FlowID != ""). Comportamiento
+// idéntico a inlinearlo en advanceLive.
+func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, def model.Flow, m *cloudlinkv1.IncomingMessage) error {
 	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso DE LA SOLICITUD +
 	// auto-reinicio + siembra de Vars, GATEADO por la ResumePolicy registrada para el
 	// tipo de nodo (un no-op para menú/encuesta ⇒ comportamiento idéntico). handled=true
@@ -447,17 +593,22 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 // intención (se prefiere no abrir la capacidad por un fallo transitorio).
 //
 // activeEventKind es el TIPO del evento ACTIVO en el instante de interpretar la señal
-// (Plan 043 · T5.3, D-043.9). ⚠️ VERDAD MEDIDA, sin maquillar: de los TRES llamantes,
-// dos pasan "" POR CONSTRUCCIÓN —no hay estado (:129), o se acaba de borrar por el
-// reloj del evento (:143, T3.2), y entonces el evento ya NO es el activo—, y como la
-// guarda del resolver exige ActiveEventKind != "" para acotar, en esos dos sitios NO
-// SE DISPARA NUNCA. El scoping que este parámetro habilita se ejerce hoy en UN (1)
-// solo sitio de producción: el menú PENDIENTE (advanceLive, rama st.FlowID == "",
-// :238-250), y ahí con la config canónica (reglas event_start de cart/survey CON
-// flow_id, admin/triggers.go:63) el único valor posible es el tipo del MENÚ. SIN
-// EMBARGO, un event_start sin flow_id sobre un menú pendiente deja el puntero en un
-// evento de otro tipo con FlowID vacío, así que entonces el valor alcanzable es el de
-// ESE evento.
+// (Plan 043 · T5.3, D-043.9; enmendado Ola 6, decisión de Jhoan 2026-08-11). ⚠️
+// VERDAD MEDIDA, sin maquillar: de los CUATRO llamantes, los CUATRO pasan "" POR
+// CONSTRUCCIÓN —no hay evento del que hablar—: dos porque no hay estado (rama !ok de
+// HandleIncoming) o se acaba de borrar por el reloj del evento (T3.2), y el cuarto
+// (la rama st.Finished() && st.EventID == "" de advanceLive, el hallazgo de esta
+// ola) porque exige el puntero YA apagado —closeIfFinished lo apaga en el MISMO
+// turno que cierra el flujo (T4.1); si siguiera puesto (el reintento de E-8 §4, o la
+// guarda de posesión de H2 sobre un evento AJENO) ese sitio ni se alcanza, cae por
+// advanceLiveStep como siempre—. El resolver exige ActiveEventKind != "" para
+// acotar, así que en los CUATRO sitios que pasan "" NO SE DISPARA NUNCA. El scoping
+// que este parámetro habilita se ejerce hoy en UN (1) solo sitio de producción: el
+// menú PENDIENTE (advanceLive, rama st.FlowID == ""), y ahí con la config canónica
+// (reglas event_start de cart/survey CON flow_id, admin/triggers.go:63) el único
+// valor posible es el tipo del MENÚ. SIN EMBARGO, un event_start sin flow_id sobre
+// un menú pendiente deja el puntero en un evento de otro tipo con FlowID vacío, así
+// que entonces el valor alcanzable es el de ESE evento.
 //
 // Ver §5.1 del CONTRATO-OLA5: con una conversación viva y un evento en curso el
 // entrante va por ResolveLive, que NUNCA consulta reglas llm (INV-02), así que el
@@ -522,18 +673,45 @@ func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st 
 // Tras el borrado, un entrante posterior vuelve a pasar por el resolver (Resolve), no
 // por escape. El estado ya se borró (equivalente al orden Save-antes-de-Send): un
 // fallo del envío se surface al llamante.
+//
+// ⚠️ Orden E-4 (decisión de Jhoan, 2026-08-11): resumen → Delete → efecto (E-5) → y
+// SOLO ENTONCES replyAllowed gobernando el AVISO. Antes, replyAllowed cortaba de
+// primero: con el cupo anti-loop agotado el escape NO OCURRÍA — ni Delete, ni resumen,
+// ni telemetría — y el cliente que dijo la palabra de emergencia se quedaba atrapado
+// en silencio absoluto. Es el MISMO orden que stopEvent (events.go) ya usa, y el
+// mismo precedente textual se aplica aquí: «Va ANTES del replyAllowed a propósito:
+// que la red anti-loop impida CONTARLO al cliente no significa que no haya pasado.»
+// Contrapartida asumida: un peer automático que repite la palabra de escape produce N
+// Delete idempotentes (y N event_escaped, el mismo trato que ya reciben
+// event_cancelled/event_closed ante reintentos — no es nuevo en este camino).
 func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string, st model.Conversation) error {
-	// Red anti-loop (Plan 020 · T0): el aviso de escape es una auto-respuesta ⇒
-	// consume un token. Agotado ⇒ no se corta ni se avisa (la conversación sigue
-	// viva); rompe cualquier bucle en el que un aviso de escape realimente al peer.
-	if !rt.replyAllowed(key) {
-		return nil
+	// #15 en su séptimo punto (E-5): handleEscape recibe la CONVERSACIÓN, no la fila
+	// del evento, así que emitir event_escaped exige releerla — el mismo patrón que
+	// activeEvent ya paga en closeIfFinished/stopEvent. Se lee ANTES del Delete (el
+	// evento no depende del flow_state, pero es el mismo momento en que stopEvent lo
+	// hace) para no acoplar el efecto al orden del borrado.
+	var ev events.Event
+	var conocido bool
+	if st.EventID != "" {
+		ev, conocido = rt.activeEvent(ctx, key, sessionID, st.EventID)
 	}
 	// El escape es el tercer abandono real (T3.4), y el más brusco: se resume ANTES del
 	// Delete, porque ese Delete se lleva las Vars con el nivel de la sub-máquina.
 	rt.summarizeAbandoned(ctx, key, sessionID, st, "")
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
+	}
+	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra (E-5,
+	// EffectEventEscaped: NO event_deactivated — stopEvent conserva el flow_state,
+	// este Delete lo destruye, y son abandonos distintos).
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+	}
+	// Red anti-loop (Plan 020 · T0): el AVISO de escape es una auto-respuesta ⇒
+	// consume un token. Agotado ⇒ no se avisa, pero el escape YA OCURRIÓ (E-4): el
+	// Delete y el event_escaped de arriba no dependen de esto.
+	if !rt.replyAllowed(key) {
+		return nil
 	}
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {

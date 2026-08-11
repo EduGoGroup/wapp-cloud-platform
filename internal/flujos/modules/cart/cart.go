@@ -92,8 +92,11 @@ func (Module) WaitsForInput() bool { return true }
 // Render produce la pantalla de ARRANQUE del carrito: la lista de categorías
 // (L1, página 0). Recibe el catálogo ya resuelto por el engine (model.Content.Raw
 // vía ParseCatalog). El resto de pantallas (tras cada Step) las produce Step en
-// Result.Outputs, porque el carrito permanece en el MISMO nodo (Next==nil) y el
-// engine no vuelve a llamar Render dentro de la sub-máquina.
+// Result.Outputs, porque el carrito permanece en el MISMO nodo (Next==nil) mientras
+// navega y el engine no vuelve a llamar Render dentro de la sub-máquina — la ÚNICA
+// excepción es el pedido CONFIRMADO (Step fija Next al centinela, hallazgo #24), y
+// ahí tampoco se re-renderiza: el engine termina con el Outputs que el propio Step
+// ya produjo (ver la nota de Step, abajo).
 func (m Module) Render(_ model.Node, content model.Content) []string {
 	cat, err := ParseCatalog(content)
 	if err != nil {
@@ -123,12 +126,48 @@ func (m Module) warnCatalog(cat Catalog) {
 // (snapshot en Vars) y el cartState, aplica la transición de la sub-máquina
 // (advance), guarda el nuevo estado en Vars y DECLARA los efectos de negocio
 // (design.md §3.3). El carrito permanece en el mismo nodo (Next==nil) durante
-// toda la navegación; devuelve la pantalla del nuevo nivel en Outputs.
+// la navegación; devuelve la pantalla del nuevo nivel en Outputs.
 //
 // cart_started se emite EXACTAMENTE UNA vez, en el primer Step (flag Started): la
 // pureza del módulo y el contrato de efectos impiden emitirlo en el Enter/Render
 // (Render no declara Effects). Es lo más cercano a "al arranque" (design.md §3.3)
 // sin tocar el contrato del engine.
+//
+// FIN DE FLUJO EN EL PEDIDO CONFIRMADO (hallazgo #24, Plan 043 · Ola 6, decisión de
+// Jhoan 2026-08-11): "el carrito permanece en el mismo nodo" describe la NAVEGACIÓN,
+// no el cierre. Antes de esa tarea Result.Next se quedaba SIEMPRE en nil —también
+// tras closeCart—, así que el flujo nunca llegaba al centinela, closeIfFinished
+// (runtime/event_lifecycle.go) nunca se disparaba y el evento que contenía el pedido
+// quedaba `open` PARA SIEMPRE: si la misma conversación pedía otra vez, el salto por
+// tipo reusaba ese evento todavía vivo y el segundo intake chocaba en silencio contra
+// el índice único parcial `intakes_event_id_uidx` (migración 0054). Con ese arreglo,
+// cuando advance() deja la sub-máquina en LevelClosed (pedido CONFIRMADO), Step fija
+// Result.Next al centinela model.NodeTerminal: engine.Step lo reconoce y termina SIN
+// volver a llamar Render (el Outputs de este mismo Step, screenClosed, ya es la
+// pantalla final), y closeIfFinished cierra el evento —con su event_closed— en el
+// MISMO turno. La guarda de posesión de closeIfFinished (H2, Ola 6) no cambia: sigue
+// exigiendo que el evento que se cierra sea el que el flujo POSEE.
+//
+// LA MISMA CONDICIÓN, EXTENDIDA AL PEDIDO CANCELADO (hallazgo #29, salida (A),
+// decisión de Jhoan 2026-08-11): la asimetría no era intencional, era la otra mitad
+// del #24 sin arreglar todavía. El intake ya quedaba `cancelled` por la proyección de
+// cart_cancelled (transitionOpenIntake, projection.go) —no hay nada que abandonar—,
+// así que lo único que faltaba era el mismo gesto: cuando advance() deja la
+// sub-máquina en LevelCancelled, Step también fija Result.Next al centinela, y
+// closeIfFinished mata el evento por el camino natural. Consecuencia de producto
+// ACEPTADA: el «hola» que antes reanudaba el carrito cancelado (cart.ResumePolicy.
+// Restart vía isTerminal) ahora cae al fallback/oferta del tenant como cualquier
+// contacto sin flujo — solo un disparador real («carrito») abre un pedido nuevo (y
+// por eso screenCancelled lo NOMBRA: la pantalla prometía «puedes iniciar uno nuevo
+// cuando quieras» de una época en la que cualquier texto bastaba).
+//
+// Y QUÉ EVENTO QUEDA DETRÁS (segunda vuelta del #29, decisión de Jhoan 2026-08-11):
+// terminar los dos por el mismo sitio NO es terminar los dos igual. Result.Outcome
+// declara CUÁL de los dos finales se alcanzó —OutcomeCompleted / OutcomeCancelled— y
+// closeIfFinished lo traduce: el pedido cancelado deja su evento en `cancelled`, no en
+// `closed`. Si no se declarara, un pedido cancelado moriría como «fin natural del
+// flujo» (D-043.5) mientras la enmienda E-11 del ADR-0029 produce `cancelled` para el
+// cliente que cierra su evento con un gesto MENOS explícito.
 func (m Module) Step(_ model.Node, conv model.Conversation, input string) modules.Result {
 	vars := cloneVars(conv.Vars)
 	cat, err := loadCatalog(vars)
@@ -177,7 +216,27 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 		newSt.exitScreen = ""
 	}
 	storeState(vars, newSt)
-	return modules.Result{Vars: vars, Outputs: outs, Effects: effects}
+	res := modules.Result{Vars: vars, Outputs: outs, Effects: effects}
+	if newSt.Level == LevelClosed || newSt.Level == LevelCancelled {
+		// Pedido CONFIRMADO o CANCELADO: cierra el flujo (ver la nota grande sobre
+		// Step, arriba — #24 y su extensión, #29). Lo que recibe la clienta en el
+		// turno siguiente lo decide advanceLive (runtime/incoming.go, rama
+		// st.Finished() && st.EventID=="", arreglada por el #28): el flow_state
+		// terminal se suelta y el turno cae por el camino del contacto sin flujo, así
+		// que la clienta NUNCA queda muda y puede pedir de nuevo.
+		term := model.NodeTerminal
+		res.Next = &term
+		// El DESENLACE (segunda vuelta del #29, decisión de Jhoan 2026-08-11): la
+		// condición del centinela es la MISMA para los dos niveles, pero lo que le pasa
+		// al evento no lo es. El módulo dice cuál de los dos finales alcanzó y ahí acaba
+		// su responsabilidad: traducirlo a `closed`/`cancelled` es del runtime
+		// (closeIfFinished), que es el único que conoce el plano de eventos.
+		res.Outcome = model.OutcomeCompleted
+		if newSt.Level == LevelCancelled {
+			res.Outcome = model.OutcomeCancelled
+		}
+	}
+	return res
 }
 
 // advance es el CORAZÓN PURO de la sub-máquina: dada la topología fija, el
@@ -210,7 +269,14 @@ func advance(cat Catalog, st cartState, input string, size int, fields []store.B
 	case LevelBuyerData:
 		return stepBuyerData(st, in, fields)
 	case LevelClosed, LevelCancelled:
-		// Terminal: la entrada se ignora, se re-muestra la pantalla final.
+		// Terminal: la entrada se ignora, se re-muestra la pantalla final. Desde #24
+		// (LevelClosed) y desde el #29 (LevelCancelled, decisión de Jhoan 2026-08-11)
+		// esta rama NO es alcanzable en el camino caliente para NINGUNO de los dos
+		// niveles: Step (arriba) fija Next al centinela en el MISMO turno en que se
+		// alcanza cualquiera de los dos, así que engine.Step ignora cualquier turno
+		// siguiente ANTES de llegar aquí (st.Finished()==true). Se conserva —barato y
+		// sin ambigüedad— por si algún Vars legado quedara con Level=Closed/Cancelled
+		// sin el centinela puesto (p. ej. una fila escrita antes de estas tareas).
 		return st, []string{terminalScreen(st)}, nil
 	default:
 		// Estado inconsistente: reencauzar a la raíz (preservando Started). La nota

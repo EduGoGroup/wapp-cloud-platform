@@ -23,11 +23,37 @@ import (
 // error de cableado, y contestarle 404 al dueño escondería exactamente eso.
 var ErrNoEventPlane = errors.New("runtime: sin plano de eventos cableado (WithEventStore)")
 
-// closeIfFinished aplica el CIERRE NATURAL (T4.1): si el estado quedó en el
-// centinela y la conversación tenía evento activo, transiciona open→closed (el
-// guard y el sellado de closed_at los pone el store) y apaga el puntero EN EL
-// STRUCT — persistirlo es del llamante, que ya tiene un Save por delante; así el
+// closeIfFinished aplica la MUERTE POR FIN DE FLUJO (T4.1): si el estado quedó en el
+// centinela y la conversación tenía evento activo, transiciona el evento a su estado
+// terminal (el guard y el sellado de closed_at los pone el store) y apaga el puntero
+// EN EL STRUCT — persistirlo es del llamante, que ya tiene un Save por delante; así el
 // cierre no añade una segunda escritura de flow_state.
+//
+// A QUÉ estado terminal lo lleva NO es una constante desde el hallazgo #29 (Plan 043 ·
+// Ola 6, decisión de Jhoan 2026-08-11): lo dice el DESENLACE que el módulo declaró y
+// que el engine selló en el estado (model.Conversation.Outcome). El módulo declara
+// CÓMO terminó; esta función TRADUCE:
+//
+//	OutcomeCancelled            → events.StatusCancelled  (+ event_cancelled)
+//	completado / sin declarar   → events.StatusClosed     (+ event_closed, lo de siempre)
+//
+// El porqué de la traducción, y no de dejarlo todo en `closed`: D-043.5 describe
+// `closed` como «fin NATURAL del flujo», y un pedido cancelado no lo es; y la enmienda
+// E-11 del ADR-0029 ya produce `cancelled` cuando el cliente cierra su evento con un
+// gesto MENOS explícito que teclear «cancelar pedido». Dos gestos del mismo cliente,
+// el más explícito de los dos, no pueden acabar en estados contrarios.
+//
+// EL EFECTO SIGUE AL ESTADO, NO AL CAMINO (decisión, no obviedad): con desenlace
+// cancelado se emite `event_cancelled`, el MISMO nombre que emite cancelAndAbandon.
+// La alternativa —conservar `event_closed` porque «este camino es el cierre natural»—
+// se descarta por dos razones medibles. (1) flow_events es una bitácora append-only y
+// conversation_events es la tabla: un `event_closed` junto a una fila que dice
+// `cancelled` es una contradicción escrita, y quien las cruce no puede saber cuál
+// miente. (2) El embudo dejaría de contar: «cuántos eventos se cancelaron» es hoy el
+// recuento de `event_cancelled`, y la cancelación MÁS FRECUENTE —la clienta que
+// cancela dentro de su pedido— quedaría fuera de ese recuento sin que el nombre lo
+// delatara. Es el mismo eje que la Ola 6 fijó para EffectEventEscaped: el nombre
+// describe el EFECTO, no la intención ni la puerta por la que se entró.
 //
 // Tres reglas que no son de estilo:
 //
@@ -40,36 +66,127 @@ var ErrNoEventPlane = errors.New("runtime: sin plano de eventos cableado (WithEv
 //     activo, y el siguiente entrante vuelve a pasar por aquí. Abortar perdería
 //     el Save del avance —la respuesta al cliente y los efectos del módulo— por
 //     no poder sellar una fila que se puede sellar después.
-//   - El intake NO se toca: el cierre natural del carrito ya cierra su solicitud
-//     por la proyección de cart_closed. Abandonarla aquí pisaría ese hecho;
-//     abandonar es SOLO de la cancelación (T4.3).
+//   - El intake NO se toca, TAMPOCO con desenlace cancelado (verificado, no heredado):
+//     la proyección del carrito ya deja su solicitud en el estado que le toca —
+//     cart_closed la cierra, cart_cancelled la lleva a `cancelled`
+//     (transitionOpenIntake, modules/cart/projection.go)—. Abandonarla aquí pisaría
+//     ese hecho y, con el #29, además lo DEGRADARÍA: un pedido que la clienta canceló
+//     figuraría como `abandoned`, que es otra cosa. Abandonar sigue siendo SOLO de la
+//     cancelación desde la app (T4.3).
 func (rt *Runtime) closeIfFinished(ctx context.Context, st *model.Conversation) {
-	if rt.events == nil || st.EventID == "" || !st.Finished() {
+	ev, conocido, pendiente := rt.pendingClosure(ctx, *st)
+	if !pendiente {
 		return
 	}
-	// Lectura PREVIA (Plan 043 · T5.4, D2 · sitio 5): tras la transición el evento
-	// sale de los vivos y ya no se puede releer por aliveByID. Es la ÚNICA lectura
-	// que añade esta tarea al camino caliente y solo ocurre en el turno que TERMINA
-	// un flujo con evento activo.
-	ev, conocido := rt.activeEvent(ctx, store.Key{
-		TenantID: st.TenantID, SessionID: st.SessionID, ContactID: st.ContactID,
-	}, st.SessionID, st.EventID)
-
+	destino, efecto := terminalFor(st.Outcome())
 	nuestra := true
-	if err := rt.events.TransitionEvent(ctx, st.EventID, events.StatusClosed); err != nil {
+	if err := rt.events.TransitionEvent(ctx, st.EventID, destino); err != nil {
 		if !errors.Is(err, events.ErrNotOpen) {
 			rt.log.Warn("runtime: no se pudo cerrar el evento al terminar su flujo; el puntero se conserva para reintentar",
-				"error", err, "session_id", st.SessionID)
+				"error", err, "session_id", st.SessionID, "destino", destino)
 			return
 		}
 		rt.log.Info("runtime: el evento ya no estaba open al terminar su flujo (carrera benigna)",
 			"session_id", st.SessionID)
 		nuestra = false
 	}
+	if nuestra && !conocido {
+		// #15 (E8 punto 2): la transición la ganamos NOSOTROS pero la relectura
+		// previa de `ev` falló, así que emitEventEffect (ev.ID == "") no puede
+		// emitir el efecto: el evento murió en BD sin dejar su fila de telemetría.
+		rt.log.Warn("runtime: el evento murió al terminar su flujo pero no se pudo releer antes para emitir su efecto de ciclo de vida",
+			"session_id", st.SessionID, "event_id", st.EventID, "efecto", efecto)
+	}
 	if nuestra && conocido {
-		rt.emitEventEffect(ctx, ev, EffectEventClosed)
+		rt.emitEventEffect(ctx, ev, efecto)
 	}
 	st.EventID = ""
+}
+
+// terminalFor traduce el desenlace declarado por el módulo al par (estado terminal
+// del evento, efecto de ciclo de vida) que le corresponde. Los dos salen del MISMO
+// sitio a propósito: si el nombre del efecto se eligiera aparte, nada impediría que
+// un cambio futuro moviera el estado y dejara el nombre viejo, que es exactamente la
+// contradicción que el docstring de closeIfFinished prohíbe.
+//
+// Cualquier desenlace que no sea `cancelled` —incluido el CERO, que es lo que
+// declaran menu, survey y media— cae en `closed`: el default es la conducta de
+// siempre, no una rama nueva.
+func terminalFor(o model.Outcome) (events.Status, string) {
+	if o == model.OutcomeCancelled {
+		return events.StatusCancelled, EffectEventCancelled
+	}
+	return events.StatusClosed, EffectEventClosed
+}
+
+// pendingClosure contesta, con UNA SOLA relectura del evento, las dos preguntas que
+// el cierre natural plantea: cuál es la fila del evento apuntado —que closeIfFinished
+// necesita para su telemetría— y si a este flow_state le queda un cierre PENDIENTE,
+// es decir, si alguien va a cerrar ese evento por esta vía alguna vez.
+//
+// Vive aparte porque la segunda pregunta la necesita un SEGUNDO sitio y en OTRO
+// TURNO: la rama de suelta del flow_state terminal (#28 / H2, Ola 6 · incoming.go),
+// que hasta la Ola 6 preguntaba `st.EventID == ""` y por eso se quedaba esperando un
+// apagado que la guarda de posesión de abajo no iba a producir NUNCA. Devolver el
+// motivo en vez de recalcularlo allí evita que dos sitios decidan lo mismo por
+// separado —y que el segundo se olvide de H2—.
+//
+// pendiente=false significa «no queda nada que reintentar», y `conocido` separa sus
+// dos causas para quien necesite tratarlas distinto:
+//
+//   - conocido=false: no hay evento que cerrar (sin plano de eventos, sin puntero, o
+//     el flujo no ha terminado).
+//   - conocido=true: la guarda de POSESIÓN de H2 — el puntero mira a un evento AJENO.
+//
+// pendiente=true incluye el evento que NO se pudo releer (conocido=false con el
+// puntero puesto): esa ausencia no autoriza a dar el cierre por perdido, y
+// closeIfFinished sigue intentando la transición a ciegas como siempre.
+func (rt *Runtime) pendingClosure(ctx context.Context, st model.Conversation) (ev events.Event, conocido, pendiente bool) {
+	if rt.events == nil || st.EventID == "" || !st.Finished() {
+		return events.Event{}, false, false
+	}
+	// Lectura PREVIA (Plan 043 · T5.4, D2 · sitio 5): tras la transición el evento
+	// sale de los vivos y ya no se puede releer por aliveByID. Solo ocurre sobre un
+	// flow_state TERMINAL con evento activo — el turno que termina el flujo y, si ese
+	// cierre no llegó a producirse, el siguiente entrante que vuelva a preguntar.
+	ev, conocido = rt.activeEvent(ctx, store.Key{
+		TenantID: st.TenantID, SessionID: st.SessionID, ContactID: st.ContactID,
+	}, st.SessionID, st.EventID)
+
+	// #22 / H2: un flujo solo puede matar al evento que lo POSEE. saveMenuState
+	// (events.go) hereda el flow_state de un flujo AJENO todavía en curso cuando
+	// arma el evento `menu` sobre él (solo resetea si ese flujo YA estaba
+	// terminal): el puntero pasa a apuntar al `menu`, pero CurrentNode/FlowID
+	// siguen siendo los del flujo heredado. Si ese flujo ajeno alcanza su nodo
+	// TERMINAL más tarde, st.Finished() es cierto pero el dueño real del evento
+	// ACTIVO (el `menu`, sin flujo propio, D-043.3) no tiene nada que ver con lo
+	// que acaba de terminar. Sin esta guarda se cerraba el `menu` con un
+	// event_closed FALSO (flow_id="" en la fila, porque flow_id sale del EVENTO,
+	// no del turno).
+	//
+	// ⚠️ CORREGIDO EN REVISIÓN (medido por sonda, no deducido): esta guarda NO
+	// cambia el ciclo de vida del `menu` a «muere por TTL, E-11 o event_stop» —
+	// ninguno de los tres lo mata, y el encabezado de este fichero ya lo dice:
+	// closeIfFinished y la cancelación son los ÚNICOS dos caminos que mueven
+	// `status` (D-043.5). El TTL solo suelta el flow_state (releaseForNewConversation
+	// no llama a TransitionEvent), event_stop apaga el puntero dejando la fila `open`
+	// a propósito (INV-09: sigue rescatable), y E-11 exige el gesto NUEVO, que el
+	// camino del trigger no produce (beginEvent usa gestureGoTo). Lo que esta guarda
+	// hace es ALINEAR el `menu` heredado con el `menu` NORMAL, que nunca se cerró por
+	// aquí: sin flujo propio, CurrentNode nunca vale el centinela y st.Finished() es
+	// falso siempre. No se crea ninguna fuga nueva: el único cierre que se retira era
+	// el FALSO. Lo que queda `open` hasta que el dueño lo cancele es el mismo `open`
+	// que ya tenía cualquier otro evento `menu`.
+	//
+	// Que el evento sobreviva NO implica que su flow_state deba: la condición es
+	// DETERMINISTA (se reevalúa idéntica en cada entrante), así que aquí no hay
+	// reintento que esperar y la fila queda para siempre {terminal, con puntero}.
+	// Devolverlo como «no pendiente» es lo que permite a incoming.go soltarla —la
+	// FILA, no el evento— en vez de dejar mudo al contacto.
+	if conocido && ev.FlowID != st.FlowID {
+		return ev, true, false
+	}
+	return ev, conocido, true
 }
 
 // GetEventForTenant lee un evento por id acotado al tenant del token (T4.2).
@@ -152,9 +269,33 @@ func (rt *Runtime) CancelEventForTenant(ctx context.Context, tenantID, eventID s
 // dejó anotada a nombre de T4.3)—. Con las dos puertas cerradas, la única salida era
 // un reconciliador. Reintentar el cancel es esa salida, y no hace falta nada más.
 //
-// SOLO para `cancelled`. Un evento `closed` (cierre natural) JAMÁS abandona su
+// SOLO para `cancelled`. Un evento `closed` (fin natural) JAMÁS abandona su
 // solicitud: la cerró la proyección de cart_closed y abandonarla aquí pisaría ese
 // hecho —es la misma regla que closeIfFinished respeta arriba—.
+//
+// 🔴 EL #29 LE AÑADE POBLACIÓN, Y SE ACEPTA A PROPÓSITO (mirado con lupa, no
+// heredado): desde el hallazgo #29 hay una SEGUNDA forma de llegar a `cancelled` —la
+// clienta cancelando dentro de su pedido, vía closeIfFinished—, así que un cancel por
+// id sobre uno de esos eventos ya NO cae en el return temprano de arriba y entra aquí.
+// Se deja entrar, por tres hechos comprobados:
+//
+//   - En el estado asentado no escribe NADA. AbandonByEvent lleva `AND status = 'open'`
+//     en su WHERE (intakes/postgres.go) y la solicitud de ese pedido ya está
+//     `cancelled` por la proyección: cero filas, que por contrato es éxito. Y
+//     releaseStateFrom no toca un puntero que ya apagó closeIfFinished en el mismo Save.
+//   - Cuando SÍ escribe, escribe lo que hay que escribir. El fan-out que proyecta
+//     cart_cancelled es BEST-EFFORT (dispatch loguea y sigue): si su sink falla, la
+//     solicitud se queda `open` colgando de un evento ya `cancelled` — el huérfano
+//     exacto para el que se construyó esta reparación, solo que llegando por otra
+//     puerta. Antes del #29 ese huérfano no tenía NINGUNA salida (el evento quedaba
+//     `closed` y el return temprano lo dejaba pasar de largo); ahora reintentar el
+//     cancel lo repara, igual que repara el de E-8 §4.
+//   - La contrapartida es una ventana estrecha y se nombra en vez de esconderse: el
+//     dispatch corre DESPUÉS del Save, así que durante esos milisegundos la solicitud
+//     sigue `open`. Un cancel desde la app que caiga justo ahí la dejaría en
+//     `abandoned` en vez de `cancelled`. Las dos son terminales, ninguna borra nada
+//     (INV-09) y el pedido sigue en la bandeja; distinguirlas exigiría que el evento
+//     recordara POR QUÉ murió, que es dato nuevo en la fila y materia del Plan 053.
 //
 // Las dos reparaciones son seguras de repetir: AbandonByEvent es idempotente por
 // contrato (T4.5.5a, D-043.21 — cero filas tocadas es éxito, así que «¿hay algo que

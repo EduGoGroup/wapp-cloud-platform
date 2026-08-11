@@ -219,6 +219,45 @@ func TestEffectContext_ElTurnoQueCierraConservaElEventID(t *testing.T) {
 	}
 }
 
+// TestEffectContext_LosEfectosDeCicloDeVidaTambienLlevanElEventID (hallazgo #16,
+// Ola 6 · E7): TestEffectContext_ElTurnoQueCierraConservaElEventID ya monta el
+// escenario de los CUATRO efectos (event_started, item_added, event_closed,
+// cart_closed) pero solo comprobaba ecs[1] y ecs[3] —los del MÓDULO—; nadie
+// comprobaba ecs[0] ni ecs[2] —los del CICLO DE VIDA—. Verificado por mutación:
+// cambiar `EventID: ev.ID` por otro campo en emitEventEffect (event_effects.go) NO lo
+// mataba NINGÚN test de NINGÚN fichero, ni contra Postgres real, porque hoy ese
+// campo está MUERTO río abajo (flow_events no tiene columna event_id, appendDecision
+// filtra por una whitelist de tres que no incluye los event_*, y ningún proyector los
+// reconoce). Por eso este test se vende por lo que es: un test de CONTRATO que
+// protege el día que aparezca el lector (T6.5, en construcción EN PARALELO a esta
+// tarea), no una regresión de HOY — no hay nada hoy que lo consuma.
+func TestEffectContext_LosEfectosDeCicloDeVidaTambienLlevanElEventID(t *testing.T) {
+	rt, _, _, evs, sink := newPrimedEventRuntime(t)
+	ctx := context.Background()
+
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "quiero una torta", "wamid.e7-1")); err != nil {
+		t.Fatalf("turno de arranque: %v", err)
+	}
+	eventID := evs.alive()[0].ID
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.e7-2")); err != nil {
+		t.Fatalf("turno de cierre: %v", err)
+	}
+
+	ecs := sink.all()
+	effs := sink.effectsAll()
+	if len(ecs) != 4 {
+		t.Fatalf("precondición: se esperan 4 efectos (ver TestEffectContext_ElTurnoQueCierraConservaElEventID), llegaron %d", len(ecs))
+	}
+	if effs[0].Name != runtime.EffectEventStarted || ecs[0].EventID != eventID {
+		t.Fatalf("#16: ecs[0] (%q) debe llevar el EventID del evento recién nacido (%q), llegó %q",
+			effs[0].Name, eventID, ecs[0].EventID)
+	}
+	if effs[2].Name != runtime.EffectEventClosed || ecs[2].EventID != eventID {
+		t.Fatalf("#16: ecs[2] (%q) debe llevar el EventID del evento que cierra (%q), llegó %q",
+			effs[2].Name, eventID, ecs[2].EventID)
+	}
+}
+
 // TestEffectContext_ArranquePlanoSinEventoLlevaVacio (T4.5.1, el contraste): el
 // arranque por API (rt.Start) no pare evento y sus turnos despachan con EventID ""
 // — el "" es un valor con significado («no hay evento»), no un descuido.

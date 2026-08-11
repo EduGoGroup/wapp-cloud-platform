@@ -10,6 +10,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // Estados del ciclo de vida de una solicitud (public.intakes). Viven aquí porque la
@@ -199,7 +200,28 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 		Status:    intakeStatusOpen,
 		EventID:   meta.EventID,
 	}
-	return intake.ID, p.store.UpsertIntake(ctx, intake)
+	if err := p.store.UpsertIntake(ctx, intake); err != nil {
+		if postgres.IsUniqueViolation(err) {
+			// Defensa en profundidad del hallazgo #24 (Plan 043 · Ola 6): con el cierre
+			// natural del carrito arreglado (cart.go, Step) este choque YA NO DEBERÍA
+			// ocurrir —un evento cerrado no vuelve a reusarse—, pero un INSERT que
+			// choca contra el único parcial `intakes_event_id_uidx` (migración 0054,
+			// "un evento tiene A LO SUMO un contenido durable, para siempre") es
+			// exactamente el síntoma medido del pedido que se pierde en silencio: el
+			// dispatcher del runtime es best-effort A PROPÓSITO (Runtime.dispatch) y
+			// esto NO lo cambia —el error sigue subiendo para que ese log genérico
+			// también salga—, pero SIN este log específico el único rastro sería
+			// "sink de efecto falló" sin tenant/contacto/evento, insuficiente para
+			// diagnosticar CUÁL pedido se perdió. No se reintenta ni se resuelve aquí
+			// (ver hallazgo #24, salida (b), DECISIÓN ABIERTA para Jhoan): solo se hace
+			// RUIDOSO.
+			slog.Error("cart: el evento ya tenía un intake (intakes_event_id_uidx); el pedido de este turno NO se pudo guardar (hallazgo #24)",
+				"tenant_id", meta.TenantID, "contact_id", meta.ContactID, "session_id", meta.SessionID,
+				"event_id", meta.EventID, "intake_id_intentado", intake.ID, "error", err)
+		}
+		return "", err
+	}
+	return intake.ID, nil
 }
 
 // projectOpenLines asegura la solicitud "open" y deja sus intake_items IGUALES a la

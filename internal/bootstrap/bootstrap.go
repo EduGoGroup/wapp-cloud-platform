@@ -43,6 +43,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/flowlifecycle"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
@@ -401,6 +402,12 @@ func Run(ctx context.Context) error {
 		CRMNotify:    intakeNotifier,
 		ConfigPush:   gw,
 		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// Telemetría de ciclo de vida del evento conversacional (Plan 043 ·
+		// T6.5, cierra MD-043.17): SQL directo sobre el MISMO *sql.DB que ya
+		// comparte toda la plataforma — no una segunda conexión ni un segundo
+		// pool. Ver el comentario de propiedad en
+		// internal/publicapi/eventstelemetry_store.go.
+		EventTelemetry: publicapi.NewPostgresEventTelemetryStore(db),
 	})
 	if err != nil {
 		return err
@@ -466,6 +473,18 @@ func Run(ctx context.Context) error {
 		mtx.WebhookDelivery,
 	)
 	go webhookWorker.Run(ctx)
+
+	// Colector incremental de telemetría de eventos (Plan 043 · T6.5, cierra
+	// MD-043.17): PRIMER consumidor de PRODUCCIÓN del outbox append-only
+	// flow_events, no un assert de test (T6.2 ya lo lee desde un test y eso NO
+	// cierra el hallazgo — ver tasks.md §T6.5). Arranca sobre el MISMO ctx
+	// derivado de signal.NotifyContext que cierra todo lo demás, mismo trato
+	// que webhookWorker. onCount es mtx.FlowEventLifecycle: el colector
+	// (internal/platform/metrics/flowlifecycle) NUNCA importa prometheus ni
+	// internal/flujos, mismo desacoplo que receiptSink/webhookWorker de
+	// arriba.
+	flowLifecycleCollector := flowlifecycle.NewCollector(db, mtx.FlowEventLifecycle, log)
+	go flowLifecycleCollector.Run(ctx)
 
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.

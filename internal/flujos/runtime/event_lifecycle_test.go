@@ -660,3 +660,90 @@ func TestCierreNatural_NoMataElEventoDelMenuHeredandoUnFlujoAcabado(t *testing.T
 		t.Fatalf("el evento `menu` debe seguir open y quedó %q: ningún flujo SUYO terminó", got)
 	}
 }
+
+// TestCierreNatural_NoMataElEventoActivoConFlujoAjenoAunEnCurso (#22 / H2, hallazgo
+// heredado a la Ola 6): la variante que TestCierreNatural_NoMataElEventoDelMenuHeredandoUnFlujoAcabado
+// NO cubre, porque ahí el flujo heredado ya estaba TERMINADO cuando se pidió el menú
+// (saveMenuState lo detecta con st.Finished() y resetea el estado, D-043.3). Aquí el
+// flujo heredado sigue EN CURSO (esperando input) en el momento de heredar: saveMenuState
+// no resetea nada y el evento `menu` se queda apuntando a un flow_state cuyo FlowID es
+// el del `cart`. Si ese flujo ajeno alcanza su nodo TERMINAL más tarde, closeIfFinished
+// sin la guarda de ev.FlowID cerraba el `menu` — que ni siquiera tiene flujo propio
+// (D-043.3, ev.FlowID="") — con un event_closed FALSO.
+//
+// La regla `menu` FUERZA FlowID="" (a mano, y NO con eventStartRule, que hardcodea
+// testFlow para todos los tipos): es la config REAL de un tenant (D-043.3) y es lo
+// que hace que ev.FlowID ("") difiera de st.FlowID (testFlow, heredado) — sin esa
+// diferencia el guard de H2 no se ejerce y este test no prueba nada.
+func TestCierreNatural_NoMataElEventoActivoConFlujoAjenoAunEnCurso(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
+		t.Fatalf("sembrar definición: %v", err)
+	}
+	ts := trigger.NewMemoryStore()
+	for _, r := range []trigger.Rule{
+		eventStartRule("carrito", "cart"),
+		{TenantID: testTenant, Kind: trigger.KindEventStart, Keyword: "menu",
+			MatchType: trigger.MatchExact, EventKind: "menu", FlowID: "", Enabled: true},
+	} {
+		if _, err := ts.Insert(context.Background(), r); err != nil {
+			t.Fatalf("insert regla: %v", err)
+		}
+	}
+	contacts := contact.NewMemoryResolver(repo)
+	evs := newMemEventStore(time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC))
+	// La lista del despachador NO ofrece "1" ni "2": así los dos números que el
+	// flujo heredado del carrito SÍ entiende (sampleFlow: root→1/2) no los
+	// intercepta menuChoice y llegan al Step del flujo ajeno.
+	menu := events.Menu{Options: []events.MenuOption{{Number: 9, Action: events.ActionStart, Kind: "cart"}}}
+	rt := runtime.New(repo, newEngine(), &fakeSender{}, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
+		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)),
+		runtime.WithEventStore(evs),
+		runtime.WithDispatcher(fakeDispatcher{menu: menu}),
+		runtime.WithFlowForKind(fakeFlowForKind{flow: testFlow}))
+	ctx := context.Background()
+	cid := resolveID(t, contacts, testContact)
+
+	// (1) «carrito»: nace y se queda ESPERANDO en el nodo raíz (menú, no terminal).
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "t22-h2-1")); err != nil {
+		t.Fatalf("carrito: %v", err)
+	}
+	cart := aliveOfKind(t, evs, "cart")
+	if st := loadState(t, repo, cid); st.Finished() {
+		t.Fatalf("precondición: el montaje exige un estado EN CURSO (no terminal); nodo=%q", st.CurrentNode)
+	}
+
+	// (2) «menu»: nace el evento `menu` (FlowID=""), y como el cart AÚN NO terminó,
+	// saveMenuState NO resetea nada: hereda FlowID/CurrentNode del cart tal cual.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "menu", "t22-h2-2")); err != nil {
+		t.Fatalf("menu: %v", err)
+	}
+	men := aliveOfKind(t, evs, "menu")
+	st := loadState(t, repo, cid)
+	if st.EventID != men.ID {
+		t.Fatalf("precondición: el puntero debe ser el del menú (%q), y vale %q", men.ID, st.EventID)
+	}
+	if st.FlowID != testFlow || st.Finished() {
+		t.Fatalf("precondición: el estado del menú debe HEREDAR el flujo ajeno en curso; flow=%q finished=%v",
+			st.FlowID, st.Finished())
+	}
+
+	// (3) «1»: no lo ofrece la lista del despachador (solo tiene el 9) así que cae
+	// al Step del flujo heredado (sampleFlow: root, opción "1" → "ventas", TERMINAL).
+	// El flujo que termina es del `cart`, pero el evento ACTIVO es el `menu`.
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "t22-h2-3")); err != nil {
+		t.Fatalf("completar el flujo ajeno: %v", err)
+	}
+	if st := loadState(t, repo, cid); !st.Finished() {
+		t.Fatalf("precondición: el Step del flujo ajeno debe dejar el estado TERMINAL; nodo=%q", st.CurrentNode)
+	}
+
+	// GUARD: el evento `menu` NO puede haber muerto — su dueño (D-043.3, sin flujo
+	// propio) no es el flujo que acaba de terminar.
+	if got := evs.statuses()[men.ID]; got != events.StatusOpen {
+		t.Fatalf("H2: el evento `menu` NO debe cerrarse por el fin de un flujo AJENO (el del cart); quedó %q", got)
+	}
+	if got := evs.statuses()[cart.ID]; got != events.StatusOpen {
+		t.Fatalf("y el `cart` —dueño real del flujo que terminó— tampoco se toca aquí: quedó %q (su cierre es otra puerta)", got)
+	}
+}
