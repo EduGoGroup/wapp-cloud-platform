@@ -33,6 +33,55 @@ const (
 // destapó. Mantener un sentinel imprimible.
 const NodeTerminal = "__wapp_flow_end__"
 
+// Outcome es el DESENLACE con el que un flujo llegó al centinela: cómo terminó, no
+// que terminara (eso ya lo dice Finished). Nace del hallazgo #29 (Plan 043 · Ola 6,
+// decisión de Jhoan 2026-08-11): el módulo DECLARA el desenlace y el runtime lo
+// TRADUCE al estado del evento conversacional (runtime/event_lifecycle.go). Sin él,
+// cancelar un pedido dejaba su evento en `closed` —«fin natural del flujo», D-043.5—
+// cuando la enmienda E-11 del ADR-0029 ya produce `cancelled` para un cliente que
+// cierra su evento con un gesto MENOS explícito.
+//
+// Vive en `model` y no en `modules` por la MISMA razón que MediaRef: modules importa
+// model y nunca al revés, y este valor tiene que viajar en Conversation.
+//
+// El CERO es «sin declarar» a propósito, y es lo que hace el campo ADITIVO: menu,
+// survey y media no declaran nada y siguen valiendo lo de siempre (el evento muere
+// `closed`). Por eso es un tipo propio con tres valores y no un `Cancelled bool`:
+// con un bool, «no lo declaré» y «terminó bien» serían el mismo valor y un módulo
+// nuevo no podría distinguir entre heredar el default y afirmar un final feliz.
+type Outcome string
+
+const (
+	// OutcomeUndeclared es el cero: el módulo no dijo nada. Trato de siempre.
+	OutcomeUndeclared Outcome = ""
+	// OutcomeCompleted es el flujo que llegó a su fin HACIENDO lo que venía a hacer
+	// (el pedido confirmado). Es explícito aunque hoy se traduzca igual que el cero:
+	// un módulo que lo declara está afirmando algo, no callándose.
+	OutcomeCompleted Outcome = "completed"
+	// OutcomeCancelled es el flujo que terminó porque el cliente lo ABANDONÓ desde
+	// dentro (el pedido cancelado). El runtime lo traduce a events.StatusCancelled.
+	OutcomeCancelled Outcome = "cancelled"
+)
+
+// VarOutcome es la clave de Conversation.Vars donde el ENGINE deja el desenlace que
+// el módulo declaró al llegar al centinela (engine.Step). Es una clave del contrato
+// engine↔runtime, como VarContentRaw lo es del contrato engine↔módulos.
+//
+// 🔴 POR QUÉ EN Vars Y NO EN UN CAMPO SUELTO DEL STRUCT (decidido midiendo, no por
+// estilo): un campo del struct NO sobrevive al Save —el repositorio Postgres escribe
+// columnas nombradas una a una (store/repository_postgres.go), no el struct— y el
+// desenlace tiene que sobrevivir EXACTAMENTE UN caso: el reintento de E-8 §4. Cuando
+// TransitionEvent falla de verdad, closeIfFinished conserva el puntero a propósito y
+// el SIGUIENTE entrante vuelve a intentar el cierre sobre un estado RELEÍDO DE LA
+// BASE; con el desenlace en memoria, ese reintento habría escrito `closed` sobre un
+// pedido cancelado, que es justo el defecto que el #29 arregla, solo que un turno más
+// tarde y sin que nadie lo viera. Vars es la parte de Conversation que se persiste,
+// así que el desenlace vive donde vive el resto del estado del flujo.
+//
+// No es PII (un enum de tres valores) y muere con la fila: el flow_state terminal lo
+// borra entero el primer entrante posterior (releaseFinishedState, runtime/incoming.go).
+const VarOutcome = "flow_outcome"
+
 // ErrInvalidFlow es el error base (envoltura) de toda definición de flujo que
 // no cumple el esquema. Se inspecciona con errors.Is.
 var ErrInvalidFlow = errors.New("definición de flujo inválida")
@@ -139,6 +188,20 @@ type Conversation struct {
 	CurrentNode     string         `json:"current_node"`
 	Vars            map[string]any `json:"vars"`
 	LastWaMessageID string         `json:"last_wa_message_id,omitempty"`
+	// EventID es el evento conversacional ACTIVO de esta conversación
+	// (flow_state.event_id → conversation_events.id, Plan 043 · T1.3, D-043.4).
+	// «Activo» NO es un estado del evento sino un PUNTERO de la conversación: por eso
+	// vive aquí y no como un cuarto valor de conversation_events.status, y por eso un
+	// evento puede seguir vivo sin ser el activo.
+	//
+	// "" ⇒ la conversación NO tiene evento activo. Es el estado NORMAL y frecuente —el
+	// saludo no crea evento (E-6)— y también el que deja cerrar o cancelar: apagar el
+	// puntero es escribir "" y guardar. NO es un error ni un "no sé".
+	//
+	// Se representa como string vacío (no *string ni un tipo Null*) siguiendo la MISMA
+	// convención que LastWaMessageID: el dominio usa el cero de Go y el NULL vive solo
+	// en la frontera SQL (sql.NullString en el repositorio Postgres).
+	EventID string `json:"event_id,omitempty"`
 	// UpdatedAt es la marca de la última escritura del estado (flow_state.updated_at).
 	// La ESTAMPA el store en cada Save (no el llamante); Load la devuelve. La consume
 	// el TTL conversacional del runtime (Plan 029 · T9) para decidir si un estado vivo
@@ -152,6 +215,46 @@ type Conversation struct {
 // en el centinela NodeTerminal). Un Step sobre una conversación terminada no
 // avanza (ver engine.Step).
 func (c Conversation) Finished() bool { return c.CurrentNode == NodeTerminal }
+
+// Outcome devuelve el DESENLACE declarado por el módulo al terminar el flujo
+// (VarOutcome). Un estado sin la clave —o con algo que no sea uno de los valores
+// conocidos— vale OutcomeUndeclared: es el trato de siempre, y es lo que hace que
+// una fila LEGADA (escrita antes de esta ola) o el estado de un módulo que no
+// declara nada se comporten exactamente igual que ayer.
+//
+// El desconocido se degrada a «sin declarar» en vez de propagarse: quien traduce
+// esto decide la MUERTE de un evento, y ante un valor que no entiende debe hacer lo
+// conservador (cerrar), no inventarse una tercera conducta.
+func (c Conversation) Outcome() Outcome {
+	v, ok := c.Vars[VarOutcome].(string)
+	if !ok {
+		return OutcomeUndeclared
+	}
+	switch Outcome(v) {
+	case OutcomeCompleted:
+		return OutcomeCompleted
+	case OutcomeCancelled:
+		return OutcomeCancelled
+	default:
+		return OutcomeUndeclared
+	}
+}
+
+// SetOutcome sella el desenlace en Vars. Lo llama el ENGINE al reconocer el
+// centinela; nadie más. OutcomeUndeclared BORRA la clave en vez de escribir "": un
+// mapa que no dice nada es lo mismo que un mapa sin la clave, y dejar el hueco
+// escrito ensuciaría el JSONB de flow_state.vars de todos los flujos que no declaran
+// desenlace (menú, encuesta, media) — que son la mayoría.
+func (c *Conversation) SetOutcome(o Outcome) {
+	if o == OutcomeUndeclared {
+		delete(c.Vars, VarOutcome)
+		return
+	}
+	if c.Vars == nil {
+		c.Vars = map[string]any{}
+	}
+	c.Vars[VarOutcome] = string(o)
+}
 
 // MarshalDefinition serializa una definición de flujo a JSON (cuerpo JSONB).
 func MarshalDefinition(f Flow) ([]byte, error) { return json.Marshal(f) }

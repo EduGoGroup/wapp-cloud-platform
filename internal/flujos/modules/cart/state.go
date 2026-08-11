@@ -161,6 +161,27 @@ type cartState struct {
 	// se teclea —dentro de un efecto modules.KindPrivate que el sink no persiste— y
 	// lo único que queda en el estado es este entero: cuántas van.
 	BuyerIdx int `json:"buyer_idx,omitempty"`
+	// Reprompts cuenta los inválidos CONSECUTIVOS del nivel actual (Plan 043 · T5.2).
+	// Es el primer contador acotado del carrito: hasta esta ola repromptaba sin techo.
+	// Solo cuenta DENTRO de un evento (ver inEvent): fuera, el carrito se comporta
+	// exactamente como siempre (regresión cero).
+	Reprompts int `json:"reprompts,omitempty"`
+	// RepromptsEvent es el SELLO de Reprompts: el evento en que se cometieron esos
+	// inválidos. Sin él el contador cruzaba el cambio de contexto —hay caminos del
+	// runtime que cambian el evento activo conservando Vars, y el cartState viaja
+	// dentro de Vars—, y un carrito con dos fallos acumulados armaba el menú de salida
+	// al PRIMER fallo del evento siguiente. Module.Step lo compara con conv.EventID y
+	// pone el contador a cero si no casan (misma regla que modules.RepromptEventKey
+	// aplica a los contadores que sí viven sueltos en Vars).
+	//
+	// Va aquí y no en Vars porque el sello pertenece al lado del dato que sella; con
+	// `omitempty`, un carrito sin inválidos no escribe ni un byte más en el JSONB.
+	RepromptsEvent string `json:"reprompts_event_id,omitempty"`
+	// inEvent y exitScreen son TRANSITORIOS (sin etiqueta json y NO exportados ⇒
+	// json.Marshal los ignora, así que jamás tocan el JSONB de flow_state.vars).
+	// Module.Step los estampa y los consume EN EL MISMO turno.
+	inEvent    bool
+	exitScreen string
 }
 
 // cartLine es una línea del pedido (design.md §3.2). SKU/Label son códigos de

@@ -22,6 +22,7 @@ import (
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/media"
@@ -42,6 +43,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/flowlifecycle"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
@@ -224,10 +226,31 @@ func Run(ctx context.Context) error {
 	// Es un solo objeto: dos serían dos criterios de "ya recordé".
 	intakeNotifier := intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log)
 	depositReminder := intakes.NewDepositReminder(intakeNotifier, intakeStore)
+	// El Service de solicitudes se arma AQUÍ, antes del runtime, porque desde el Plan
+	// 043 tiene DOS consumidores: la API del dueño (Deps.Intakes, más abajo) y el
+	// motor, que abandona la solicitud del evento que el cliente cierra al empezar
+	// otro del mismo tipo (E-11). Es un solo objeto a propósito: dos serían dos
+	// máquinas de estados opinando sobre las mismas filas.
+	intakeService := intakes.NewService(intakeStore,
+		intakes.WithNotifier(intakeNotifier),
+		intakes.WithDepositReminder(depositReminder))
+	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
+	// que los contactos y los datos del comprador: el historial del evento guarda
+	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
+	// Una tercera instancia de cipher sería una tercera rotación que gestionar.
+	eventStore := events.NewStore(db, flowDeps.cipher)
+	// El despachador de nivel superior (Plan 043 · T2.3) SOLO LEE: los eventos vivos
+	// del contacto, los tipos que el tenant ofrece (sus reglas event_start) y las
+	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.
+	dispatcher := events.NewDispatcher(eventStore, events.NewTriggerKindOffer(triggerStore), entResolver)
 	flowRuntime := flowruntime.New(flowStore, flowEngine, gw, flowResolver, flowDeps.contacts, log,
+		// WithDecisionThread (T4.5.7a): el MISMO eventStore que gobierna el ciclo de
+		// vida escribe las filas `decision` del hilo — el sink solo ve el puerto
+		// estrecho DecisionAppender. Una segunda instancia sería un segundo cipher
+		// y un segundo reloj sobre conversation_events.
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(flowStore,
 			cart.NewProjector(flowStore, intakeStore, intakeStore, buyerDataStore),
-			survey.NewProjector(flowStore))),
+			survey.NewProjector(flowStore)).WithDecisionThread(eventStore)),
 		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
 		// entrega de verdad se arranca más abajo, después de serveAndWait.
 		//
@@ -241,7 +264,33 @@ func Run(ctx context.Context) error {
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
+		// El plano de EVENTOS conversacionales (Plan 043 · Ola 2): sin estas dos
+		// opciones el motor se comporta exactamente como antes del plan —un
+		// event_start arranca su flujo sin parir evento y un event_stop no desactiva
+		// nada—, así que van juntas o no van.
+		flowruntime.WithEventStore(eventStore),
+		// El Service satisface el puerto IntakeAbandoner DIRECTO desde que la FK
+		// se invirtió (T4.5.5a): AbandonByEvent habla de EVENTOS —vocabulario que
+		// el runtime sí conoce—, así que el adapter que traducía ids de intakes
+		// murió con la columna conversation_events.intake_id (0054). La puerta
+		// sigue siendo el Service y no el Store: ahí vive la frontera del dominio,
+		// y el CAS `status='open'` del SQL conserva la garantía de que una
+		// `confirmed` jamás se abandona por aquí (ADR-0029 · E-11.5).
+		flowruntime.WithIntakeAbandoner(intakeService),
+		// La fuente DURABLE del resumen del evento abandonado (Plan 043 · T3.4): las
+		// líneas del pedido abierto. Sin ella los tres abandonos —salto por tipo,
+		// event_stop y escape— ocurren igual pero no dejan rastro en el historial, que
+		// es media verdad y no la que queremos en producción.
+		flowruntime.WithSummarySources(flowruntime.NewSummarySources(flowStore)),
+		flowruntime.WithDispatcher(dispatcher),
+		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
+		// Segunda condición del productor `message` del hilo (D-043.23, decisión de
+		// Jhoan del 2026-08-10): la feature llm_intake YA NO basta por sí sola —
+		// hace falta ADEMÁS este interruptor de despliegue, apagado por defecto
+		// (WAPP_CONVERSATION_THREAD_MESSAGES=false), hasta que el Plan 044 (su
+		// lector) exista. Ver internal/flujos/runtime/thread.go.
+		flowruntime.WithMessageThreadEnabled(cfg.ConversationThread.Messages),
 		flowruntime.WithReplyLimiter(replyLimiter),
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
@@ -326,9 +375,18 @@ func Run(ctx context.Context) error {
 		// El recordatorio de la seña (D-041.12 · T4.4) entra por su propia opción
 		// porque cuelga de otro sitio: no de la transición, sino de las LECTURAS del
 		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
-		Intakes: intakes.NewService(intakeStore,
-			intakes.WithNotifier(intakeNotifier),
-			intakes.WithDepositReminder(depositReminder)),
+		Intakes: intakeService,
+		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
+		// store que el motor y el despachador: es la misma consulta de rescatables
+		// leída desde el lado del dueño, y una segunda instancia sería un segundo
+		// reloj opinando sobre qué está vencido.
+		ConversationEvents: eventStore,
+		// La cancelación de esa bandeja (Plan 043 · T4.2/T4.3) la sirve el MISMO
+		// runtime del motor —no el store— porque cancelar orquesta tres efectos:
+		// guard del evento, puntero del flow_state y solicitud colgante. El runtime
+		// ya viene armado arriba con WithEventStore y WithIntakeAbandoner; sin este
+		// cable la ruta POST …/{id}/cancel no se monta.
+		EventCanceller:  flowRuntime,
 		TenantVariables: tenantvars.NewPostgres(db),
 		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
 		// existen arriba y se reutilizan tal cual: el MISMO store que guarda el secreto
@@ -344,6 +402,12 @@ func Run(ctx context.Context) error {
 		CRMNotify:    intakeNotifier,
 		ConfigPush:   gw,
 		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// Telemetría de ciclo de vida del evento conversacional (Plan 043 ·
+		// T6.5, cierra MD-043.17): SQL directo sobre el MISMO *sql.DB que ya
+		// comparte toda la plataforma — no una segunda conexión ni un segundo
+		// pool. Ver el comentario de propiedad en
+		// internal/publicapi/eventstelemetry_store.go.
+		EventTelemetry: publicapi.NewPostgresEventTelemetryStore(db),
 	})
 	if err != nil {
 		return err
@@ -409,6 +473,18 @@ func Run(ctx context.Context) error {
 		mtx.WebhookDelivery,
 	)
 	go webhookWorker.Run(ctx)
+
+	// Colector incremental de telemetría de eventos (Plan 043 · T6.5, cierra
+	// MD-043.17): PRIMER consumidor de PRODUCCIÓN del outbox append-only
+	// flow_events, no un assert de test (T6.2 ya lo lee desde un test y eso NO
+	// cierra el hallazgo — ver tasks.md §T6.5). Arranca sobre el MISMO ctx
+	// derivado de signal.NotifyContext que cierra todo lo demás, mismo trato
+	// que webhookWorker. onCount es mtx.FlowEventLifecycle: el colector
+	// (internal/platform/metrics/flowlifecycle) NUNCA importa prometheus ni
+	// internal/flujos, mismo desacoplo que receiptSink/webhookWorker de
+	// arriba.
+	flowLifecycleCollector := flowlifecycle.NewCollector(db, mtx.FlowEventLifecycle, log)
+	go flowLifecycleCollector.Run(ctx)
 
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.
@@ -493,4 +569,30 @@ func gracefulStopGRPC(gs *grpc.Server, name string, log sharedlogger.Logger) {
 		gs.Stop()
 		<-done
 	}
+}
+
+// flowForKind resuelve «qué flujo arranca este tipo de evento» leyendo las reglas
+// kind='event_start' del tenant. Lo necesita la opción «empezar uno nuevo» del menú
+// del despachador, que dice el TIPO pero no el flujo.
+//
+// La fuente es la misma que la de los tipos ofrecibles (events.TriggerKindOffer), y
+// eso no es casualidad: un tipo está ofrecido porque el tenant le puso una palabra, y
+// esa misma regla es la que dice a qué flujo lleva. Dos fuentes distintas podrían
+// ofrecer un tipo que luego no arrancara nada.
+type flowForKind struct{ rules *trigger.PostgresStore }
+
+// FlowForKind devuelve el flow_id de la primera regla event_start HABILITADA de ese
+// tipo, en el orden determinista del store. "" si no hay ninguna: no es un error —el
+// tipo `menu` no tiene flujo por diseño (D-043.3).
+func (f flowForKind) FlowForKind(ctx context.Context, tenantID, sessionID, kind string) (string, error) {
+	rules, err := f.rules.ListByKind(ctx, tenantID, sessionID, trigger.KindEventStart)
+	if err != nil {
+		return "", fmt.Errorf("bootstrap: leer las reglas event_start: %w", err)
+	}
+	for _, r := range rules {
+		if r.Enabled && r.EventKind == kind && r.FlowID != "" {
+			return r.FlowID, nil
+		}
+	}
+	return "", nil
 }

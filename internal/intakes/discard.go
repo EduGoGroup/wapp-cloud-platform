@@ -29,16 +29,20 @@ import (
 //     una segunda revisión. Eso es lo que hace que reintentar tras un fallo a medio
 //     lote sea seguro.
 //
-// ⚠️ LO QUE ESTA TAREA NO ENTREGA, y de quién es: el CIERRE DEL EVENTO
-// conversacional (REQ-32e, criterios (g) y (h) del plan) y el filtro `orphan=true`
-// del listado (criterio (e)). Los dos son del **Plan 043 · T4.3**, y no por
-// prioridad sino porque su materia prima no existe: `public.conversation_events` no
-// está en NINGÚN repo del ecosistema y `flow_state` no tiene `event_id`
-// (043/design.md:1005-1020 y :1118 los crean). Tampoco se puede "hacer el 043
-// primero": 043/tasks.md:396 necesita el estado `abandoned` que publica ESTE plan —
-// es un ciclo, no un orden. El filtro `orphan` NO se aproxima a propósito: es el que
-// PRESELECCIONA lo que se va a borrar, y una aproximación que frena es aceptable
-// mientras que una que elige víctimas no lo es.
+// ✅ ACTUALIZADO 2026-08-10 (Plan 043 · Ola 4.5 · T4.5.5): el CIERRE DEL EVENTO
+// conversacional (REQ-32e) que este bloque llevaba dos planes difiriendo YA SE
+// ENTREGA AQUÍ — el descarte efectivo cancela el contenedor por el `event_id` que
+// la PROPIA solicitud declara (D-043.21 invirtió la FK; ver
+// postgres.go:cancelContainerTx). Y la guarda `live_event` dejó de aproximar
+// «conversación viva» con el `cart` del flow_state: pregunta por el estado del
+// evento declarado (DT-043.2 SALDADA; ver postgres.go:hasLiveEventTx).
+//
+// Lo que SIGUE fuera de aquí: el filtro `orphan=true` del listado (criterio (e)
+// del Plan 041 · T4.8) — con la 0054 su materia prima es la vista
+// `event_content`/el join por `intakes.event_id`, y su dueño es el listado, no el
+// descarte. NO se aproxima a propósito: es el que PRESELECCIONA lo que se va a
+// borrar, y una aproximación que frena es aceptable mientras que una que elige
+// víctimas no lo es.
 
 // MaxDiscardBatch acota cuántas solicitudes puede descartar UNA llamada. No es una
 // regla de negocio: es lo que impide que un solo POST convierta una bandeja entera
@@ -61,8 +65,11 @@ const (
 	// DiscardSkipNotOpen — está en un estado desde el que no se descarta (CanDiscard
 	// dice que no). Un `confirmed` se CANCELA, no se descarta.
 	DiscardSkipNotOpen = "not_open"
-	// DiscardSkipLiveEvent — hay conversación viva detrás: eso se cancela por su
-	// propia puerta (Plan 043), no se descarta desde la bandeja.
+	// DiscardSkipLiveEvent — el evento que ESTA solicitud declara sigue `open`
+	// (DT-043.2 saldada: se mira el evento, ya no el `cart` del flow_state): eso
+	// se cancela por su propia puerta (POST /conversation-events/{id}/cancel, que
+	// abandona la solicitud de paso — AbandonByEvent), no se descarta desde la
+	// bandeja.
 	DiscardSkipLiveEvent = "live_event"
 )
 
@@ -102,15 +109,18 @@ type DiscardResult struct {
 // HECHOS, no razones: la traducción a `skipped[].reason` la hace el dominio
 // (Service.Discard), que es quien conoce la política.
 type DiscardOutcome struct {
-	// Discarded dice si esta llamada escribió el `abandoned` (y su revisión).
+	// Discarded dice si esta llamada escribió el `abandoned` (y su revisión, y el
+	// cierre del contenedor si lo hubiera — REQ-32e).
 	Discarded bool
 	// Status es el estado ACTUAL de la solicitud, ya normalizado. Con Discarded en
 	// true es el estado del que VENÍA; con false, aquel en el que se quedó.
 	Status string
-	// LiveCart dice si hay conversación viva ligada a la solicitud. Ver
-	// Store.Discard para qué significa exactamente "viva" hoy y por qué es
-	// PROVISIONAL.
-	LiveCart bool
+	// LiveEvent dice si el evento conversacional que ESTA solicitud declara
+	// (intakes.event_id, D-043.21) sigue `open`. Es el criterio REAL que saldó
+	// DT-043.2 (Ola 4.5): hasta entonces se llamaba LiveCart y aproximaba «viva»
+	// mirando el `cart` del flow_state. Una solicitud legada sin event_id no tiene
+	// evento vivo que mirar ⇒ descartable.
+	LiveEvent bool
 }
 
 // DiscardableStatuses son las claves tal como están ALMACENADAS desde las que se
@@ -188,19 +198,20 @@ func (s *Service) Discard(ctx context.Context, tenantID string, intakeIDs []stri
 //
 //  1. `abandoned` gana a todo: ya está descartada, y decirle "hay conversación
 //     viva" a quien repite un lote sería mentirle sobre por qué no pasó nada.
-//  2. El estado manda sobre la conversación: una `confirmed` con carrito vivo no se
+//  2. El estado manda sobre el evento: una `confirmed` cuyo evento siga vivo no se
 //     descarta porque está confirmada, no porque haya alguien hablando.
-//  3. Solo cuando el estado SÍ era descartable la razón es la conversación viva.
+//  3. Solo cuando el estado SÍ era descartable la razón es el evento vivo (el que
+//     ESTA solicitud declara — DT-043.2 saldada, ver DiscardOutcome.LiveEvent).
 func discardSkipReason(out DiscardOutcome) string {
 	switch {
 	case out.Status == StatusAbandoned:
 		return DiscardSkipAlreadyDiscarded
 	case !CanDiscard(out.Status):
 		return DiscardSkipNotOpen
-	case out.LiveCart:
+	case out.LiveEvent:
 		return DiscardSkipLiveEvent
 	default:
-		// El store no escribió y el estado era descartable sin conversación viva:
+		// El store no escribió y el estado era descartable sin evento vivo:
 		// alguien la movió entre el candado y la escritura y volvió a un estado
 		// descartable. No es alcanzable con el CAS de hoy, y si lo fuera, `not_open`
 		// es la respuesta que hace que el llamante relea en vez de dar por hecho.

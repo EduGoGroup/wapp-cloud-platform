@@ -24,11 +24,21 @@ type execer interface {
 
 // surveyResultCols es el número de columnas por fila que escribe InsertResults
 // (orden de survey_results salvo id y created_at, que usan sus DEFAULT).
-const surveyResultCols = 6
+const surveyResultCols = 7
 
-// intakeItemCols es el número de columnas por fila que escribe InsertIntakeItems
+// intakeItemCols es el número de columnas por fila que escribe insertIntakeItems
 // (orden de intake_items salvo id y added_at, que usan sus DEFAULT).
 const intakeItemCols = 6
+
+// reservedSKUPrefix es el prefijo de los skus que pone LA PLATAFORMA (hoy solo la
+// línea de envío, D-041.11) y que ninguna escritura del carrito puede tirar.
+//
+// Es el MISMO literal que intakes.ReservedSKUPrefix, de quien es la regla, y se
+// repite aquí en vez de importarlo a propósito: este paquete es el almacén del motor
+// de flujos y no debe depender del dominio de solicitudes para escribir una tabla.
+// Lo que impide que los dos literales diverjan no es la disciplina sino un test
+// (reserved_prefix_test.go), que los compara.
+const reservedSKUPrefix = "_"
 
 // PostgresRepository implementa Repository con SQL raw sobre public.flow_state y
 // public.flow_definitions. Los cuerpos flexibles (vars del estado, definition
@@ -64,15 +74,16 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 		c       model.Conversation
 		varsRaw []byte
 		lastWa  sql.NullString
+		eventID sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT tenant_id::text, session_id, contact_id::text, flow_id, flow_version,
-		       current_node, vars, last_wa_message_id, updated_at
+		       current_node, vars, last_wa_message_id, updated_at, event_id::text
 		FROM public.flow_state
 		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
 	`, key.TenantID, key.SessionID, key.ContactID).Scan(
 		&c.TenantID, &c.SessionID, &c.ContactID, &c.FlowID, &c.FlowVersion,
-		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt,
+		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt, &eventID,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -82,6 +93,12 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 	}
 	if lastWa.Valid {
 		c.LastWaMessageID = lastWa.String
+	}
+	// event_id NULL ⇒ EventID "" (la conversación no tiene evento activo, E-6):
+	// es un estado legítimo y frecuente, no una lectura fallida. Se lee con
+	// ::text para que el UUID llegue como cadena, igual que tenant_id/contact_id.
+	if eventID.Valid {
+		c.EventID = eventID.String
 	}
 	if len(varsRaw) > 0 {
 		if err := json.Unmarshal(varsRaw, &c.Vars); err != nil {
@@ -106,19 +123,28 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 	if state.LastWaMessageID != "" {
 		lastWa = sql.NullString{String: state.LastWaMessageID, Valid: true}
 	}
+	// EventID "" ⇒ NULL, y el UPDATE lo escribe igual que cualquier otro valor: apagar
+	// el puntero del evento activo (cierre/cancelación, D-043.4) es guardar un estado
+	// con EventID vacío. Si esta columna se excluyera del DO UPDATE, un evento cerrado
+	// dejaría el puntero pegado para siempre y la conversación seguiría "dentro" de él.
+	var eventID sql.NullString
+	if state.EventID != "" {
+		eventID = sql.NullString{String: state.EventID, Valid: true}
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO public.flow_state
-			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, event_id, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 		ON CONFLICT (tenant_id, session_id, contact_id) DO UPDATE
 		SET flow_id = EXCLUDED.flow_id,
 		    flow_version = EXCLUDED.flow_version,
 		    current_node = EXCLUDED.current_node,
 		    vars = EXCLUDED.vars,
 		    last_wa_message_id = EXCLUDED.last_wa_message_id,
+		    event_id = EXCLUDED.event_id,
 		    updated_at = now()
 	`, state.TenantID, state.SessionID, state.ContactID, state.FlowID, state.FlowVersion,
-		state.CurrentNode, varsRaw, lastWa)
+		state.CurrentNode, varsRaw, lastWa, eventID)
 	if err != nil {
 		return fmt.Errorf("store: upsert estado: %w", err)
 	}
@@ -262,23 +288,68 @@ func (r *PostgresRepository) InsertResults(ctx context.Context, rows []SurveyRes
 	for i, row := range rows {
 		base := i * surveyResultCols
 		placeholders = append(placeholders, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6,
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7,
 		))
+		// EventID "" ⇒ NULL (D-043.21): solo lo produce un replay legado; una fila
+		// nueva sin padre la rechaza el CHECK de la 0054, que es su trabajo.
+		var eventID sql.NullString
+		if row.EventID != "" {
+			eventID = sql.NullString{String: row.EventID, Valid: true}
+		}
 		args = append(args,
-			row.TenantID, row.ContactID, row.FlowID, row.FlowVersion, row.QuestionID, row.AnswerCode,
+			row.TenantID, row.ContactID, row.FlowID, row.FlowVersion, row.QuestionID, row.AnswerCode, eventID,
 		)
 	}
 	// #nosec G202 -- solo se concatenan placeholders generados ($1, $2, ...); los
 	// valores viajan siempre parametrizados en args, nunca interpolados en el SQL.
 	query := `
 		INSERT INTO survey_results
-			(tenant_id, contact_id, flow_id, flow_version, question_id, answer_code)
+			(tenant_id, contact_id, flow_id, flow_version, question_id, answer_code, event_id)
 		VALUES ` + strings.Join(placeholders, ", ")
 	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: insertar resultados de encuesta: %w", err)
 	}
 	return nil
+}
+
+// ListResults devuelve las respuestas de este contacto en este flujo, en orden
+// CRONOLÓGICO y acotadas al tenant (INV-8). Ver SurveyResultStore.ListResults para
+// las dos cosas que esta tabla NO puede decir (ni sesión ni pasada).
+//
+// El orden es (created_at, id) y no solo created_at: el DEFAULT now() es el reloj de
+// la TRANSACCIÓN, así que dos respuestas escritas en la misma tanda comparten
+// created_at al milisegundo y sin el id de desempate saldrían en orden arbitrario —
+// justo en el caso en que quien resume necesita saber cuál fue la última.
+func (r *PostgresRepository) ListResults(ctx context.Context, tenantID, contactID, flowID string) (out []SurveyResult, err error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT tenant_id, contact_id, flow_id, flow_version, question_id, answer_code, created_at
+		FROM survey_results
+		WHERE tenant_id = $1 AND contact_id = $2 AND flow_id = $3
+		ORDER BY created_at, id
+	`, tenantID, contactID, flowID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar resultados de encuesta: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("store: cerrar filas de resultados: %w", cerr)
+		}
+	}()
+
+	out = make([]SurveyResult, 0)
+	for rows.Next() {
+		var s SurveyResult
+		if serr := rows.Scan(&s.TenantID, &s.ContactID, &s.FlowID, &s.FlowVersion,
+			&s.QuestionID, &s.AnswerCode, &s.CreatedAt); serr != nil {
+			return nil, fmt.Errorf("store: escanear resultado de encuesta: %w", serr)
+		}
+		out = append(out, s)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("store: iterar resultados de encuesta: %w", rerr)
+	}
+	return out, nil
 }
 
 // InsertFlowEvent persiste UN efecto del motor en el outbox append-only
@@ -470,15 +541,27 @@ func (r *PostgresRepository) DeleteTenantContent(ctx context.Context, tenantID, 
 // UpsertIntake inserta o actualiza (upsert por id) la solicitud en public.intakes
 // (Plan 016 · T0/T2). Idempotente por o.ID. ExpiresAt zero se materializa como
 // NULL. created_at/updated_at usan now() (updated_at se refresca en el UPDATE).
+//
+// event_id (D-043.21, migración 0054) se escribe al NACER la fila y en el UPDATE
+// va protegido con COALESCE(intakes.event_id, EXCLUDED.event_id): un event_id ya
+// declarado NO se pisa jamás —ni con otro valor ni con NULL—, y un NULL legado
+// (fila pre-0054) SÍ se estampa cuando el proyector reusa la solicitud con el
+// evento en la mano. La política de QUÉ estampar es del proyector
+// (cart.ensureOpenIntake); esta sentencia solo garantiza que ninguna escritura
+// pueda des-declarar a un padre.
 func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 	var expires sql.NullTime
 	if !o.ExpiresAt.IsZero() {
 		expires = sql.NullTime{Time: o.ExpiresAt, Valid: true}
 	}
+	var eventID sql.NullString
+	if o.EventID != "" {
+		eventID = sql.NullString{String: o.EventID, Valid: true}
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+			(id, tenant_id, contact_id, session_id, status, total, expires_at, event_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
 		ON CONFLICT (id) DO UPDATE
 		SET tenant_id  = EXCLUDED.tenant_id,
 		    contact_id = EXCLUDED.contact_id,
@@ -486,23 +569,56 @@ func (r *PostgresRepository) UpsertIntake(ctx context.Context, o Intake) error {
 		    status     = EXCLUDED.status,
 		    total      = EXCLUDED.total,
 		    expires_at = EXCLUDED.expires_at,
+		    event_id   = COALESCE(public.intakes.event_id, EXCLUDED.event_id),
 		    updated_at = now()
-	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires)
+	`, o.ID, o.TenantID, o.ContactID, o.SessionID, o.Status, o.Total, expires, eventID)
 	if err != nil {
 		return fmt.Errorf("store: upsert solicitud: %w", err)
 	}
 	return nil
 }
 
-// InsertIntakeItems persiste en lote las líneas de una solicitud en public.intake_items
-// (Plan 016 · T0/T2). Un solo INSERT multi-fila con placeholders; added_at usa el
-// DEFAULT now() de la tabla. len(items)==0 es un no-op.
-func (r *PostgresRepository) InsertIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
-	return insertIntakeItems(ctx, r.db, intakeID, items)
+// ReplaceIntakeItems deja las líneas de cliente de la solicitud EXACTAMENTE en
+// `items`, en UNA transacción (Plan 043 · Ola 3): borrar y volver a escribir tienen
+// que ser un solo acto o existiría un instante en el que el pedido no tiene líneas,
+// y ese instante lo puede leer el CRM.
+func (r *PostgresRepository) ReplaceIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error {
+	return postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		return replaceIntakeItemsTx(ctx, tx, intakeID, items)
+	})
 }
 
-// insertIntakeItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer
-// (*sql.DB autocommit o *sql.Tx dentro de CloseIntake). len(items)==0 es un no-op.
+// replaceIntakeItemsTx retira las líneas de CLIENTE de la solicitud y escribe las
+// nuevas, sobre una transacción ya abierta. Es el ÚNICO camino por el que el motor
+// de flujos escribe intake_items —lo usan la proyección de item_added y el cierre—,
+// y por eso escribir dos veces el mismo conjunto deja el mismo conjunto.
+//
+// El DELETE excluye el prefijo reservado (copiado de intakes.replaceClientItemsTx,
+// que es como el CRM rehace las líneas en una revisión): las líneas de wApp —hoy la
+// de envío, D-041.11— llevan su precio puesto a mano y no son del carrito. Hoy no
+// pueden coexistir con una escritura del carrito, porque la de envío se cuelga
+// DESPUÉS del cierre y a una solicitud cerrada ya no le entran item_added; la
+// exclusión está para que ese orden pueda cambiar sin que nadie pierda una línea.
+//
+// El orden del pedido se conserva aunque se reescriba entero: la lectura ordena por
+// (added_at, id) y las filas de un INSERT multi-fila reciben el BIGSERIAL en el orden
+// de los VALUES, que es el del carrito. La advertencia de applyRevalidationItemsTx
+// —«reescribirlas todas le reordenaría el pedido»— aplica a un DELETE+INSERT PARCIAL,
+// no a uno que reescribe el conjunto completo en su orden.
+func replaceIntakeItemsTx(ctx context.Context, ex execer, intakeID string, items []IntakeItem) error {
+	if _, err := ex.ExecContext(ctx, `
+		DELETE FROM public.intake_items
+		WHERE intake_id = $1 AND left(sku, 1) <> $2
+	`, intakeID, reservedSKUPrefix); err != nil {
+		return fmt.Errorf("store: retirar líneas de solicitud: %w", err)
+	}
+	return insertIntakeItems(ctx, ex, intakeID, items)
+}
+
+// insertIntakeItems ejecuta el INSERT multi-fila de líneas sobre cualquier execer.
+// len(items)==0 es un no-op. NO es un punto de entrada: se llama SIEMPRE detrás del
+// DELETE de replaceIntakeItemsTx, porque una solicitud recibe hoy varias escrituras
+// de su conjunto de líneas y añadirlas sin retirar las anteriores las duplicaría.
 func insertIntakeItems(ctx context.Context, ex execer, intakeID string, items []IntakeItem) error {
 	if len(items) == 0 {
 		return nil
@@ -549,6 +665,10 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 	// que confirmó.
 	var closedID string
 	err := postgres.WithTx(ctx, r.db, func(tx *sql.Tx) error {
+		var eventID sql.NullString
+		if in.EventID != "" {
+			eventID = sql.NullString{String: in.EventID, Valid: true}
+		}
 		var intakeID string
 		err := tx.QueryRowContext(ctx, `
 			SELECT id::text FROM public.intakes
@@ -560,11 +680,13 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			intakeID = uuid.NewString()
+			// La fila "closed" coherente nace, como cualquier otra, declarando a su
+			// padre (event_id, D-043.21): sin él, el CHECK de la 0054 la rechaza.
 			if _, ierr := tx.ExecContext(ctx, `
 				INSERT INTO public.intakes
-					(id, tenant_id, contact_id, session_id, status, total, customer_note, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, 'closed', $5, $6, now(), now())
-			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote); ierr != nil {
+					(id, tenant_id, contact_id, session_id, status, total, customer_note, event_id, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, 'closed', $5, $6, $7, now(), now())
+			`, intakeID, in.TenantID, in.ContactID, in.SessionID, in.Total, in.CustomerNote, eventID); ierr != nil {
 				return fmt.Errorf("store: insertar solicitud cerrada: %w", ierr)
 			}
 		case err != nil:
@@ -575,16 +697,23 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 			// confirmar. La columna es NOT NULL, así que el vacío viaja igual que el
 			// texto —"sin indicación" es un valor, no una omisión— y una solicitud
 			// cerrada dos veces (reintento del 40P01) acaba con el mismo contenido.
+			//
+			// event_id con COALESCE, igual que en UpsertIntake: rellena un NULL
+			// legado (pre-0054) y JAMÁS pisa un padre ya declarado (D-043.21).
 			if _, uerr := tx.ExecContext(ctx, `
 				UPDATE public.intakes
-				SET status = 'closed', total = $2, customer_note = $3, updated_at = now()
+				SET status = 'closed', total = $2, customer_note = $3,
+				    event_id = COALESCE(event_id, $4), updated_at = now()
 				WHERE id = $1
-			`, intakeID, in.Total, in.CustomerNote); uerr != nil {
+			`, intakeID, in.Total, in.CustomerNote, eventID); uerr != nil {
 				return fmt.Errorf("store: cerrar solicitud: %w", uerr)
 			}
 		}
 		closedID = intakeID
-		return insertIntakeItems(ctx, tx, intakeID, in.Items)
+		// REEMPLAZO, no INSERT: la solicitud puede llegar al cierre con las líneas que
+		// la proyección de item_added ya materializó mientras estaba abierta (Plan 043 ·
+		// Ola 3). Insertarlas otra vez las duplicaría todas.
+		return replaceIntakeItemsTx(ctx, tx, intakeID, in.Items)
 	})
 	if err != nil {
 		return "", err
@@ -598,17 +727,18 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 	var (
 		o       Intake
 		expires sql.NullTime
+		eventID sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id::text, tenant_id, contact_id, session_id, status, total,
-		       created_at, updated_at, expires_at
+		       created_at, updated_at, expires_at, event_id::text
 		FROM public.intakes
 		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, tenantID, contactID).Scan(
 		&o.ID, &o.TenantID, &o.ContactID, &o.SessionID, &o.Status, &o.Total,
-		&o.CreatedAt, &o.UpdatedAt, &expires,
+		&o.CreatedAt, &o.UpdatedAt, &expires, &eventID,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -619,7 +749,53 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 	if expires.Valid {
 		o.ExpiresAt = expires.Time
 	}
+	// event_id NULL ⇒ EventID "" (fila legada pre-0054): es la señal con la que el
+	// proyector sabe que puede ESTAMPAR el padre al reusar (D-043.21).
+	if eventID.Valid {
+		o.EventID = eventID.String
+	}
 	return o, true, nil
+}
+
+// ListIntakeItems devuelve las líneas de la solicitud en el orden en que las ve el
+// cliente (added_at, id), que es el MISMO ORDEN Y LA MISMA PROYECCIÓN que usa
+// intakes.itemsOf: dos lecturas de la misma tabla que se contradijeran en el orden
+// enseñarían el pedido de dos formas distintas según por dónde se mire.
+//
+// El UUID se valida ANTES de consultar para no depender del error 22P02 de Postgres
+// (el repositorio en memoria no lo daría, y las dos implementaciones tienen que
+// contestar lo mismo a la misma pregunta).
+func (r *PostgresRepository) ListIntakeItems(ctx context.Context, intakeID string) (out []IntakeItem, err error) {
+	if _, perr := uuid.Parse(intakeID); perr != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: id %q inválido: %w", intakeID, perr)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT sku, label, customization, qty, unit_price, added_at
+		FROM public.intake_items
+		WHERE intake_id = $1
+		ORDER BY added_at, id
+	`, intakeID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("store: cerrar filas de líneas: %w", cerr)
+		}
+	}()
+
+	out = make([]IntakeItem, 0)
+	for rows.Next() {
+		it := IntakeItem{IntakeID: intakeID}
+		if serr := rows.Scan(&it.SKU, &it.Label, &it.Customization, &it.Qty, &it.UnitPrice, &it.AddedAt); serr != nil {
+			return nil, fmt.Errorf("store: escanear línea de solicitud: %w", serr)
+		}
+		out = append(out, it)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("store: iterar líneas de solicitud: %w", rerr)
+	}
+	return out, nil
 }
 
 // MarkIntakeStatus transiciona el estado de una solicitud (por id) y fija su total,
@@ -639,38 +815,44 @@ func (r *PostgresRepository) MarkIntakeStatus(ctx context.Context, intakeID, sta
 
 // GetTenantSettings devuelve la config del carrito para tenantID desde
 // public.tenant_settings (Plan 016 · T0). Si el tenant no tiene fila, devuelve los
-// DEFAULTS (DefaultPageSize, DefaultOrderTTL) SIN error (design.md §9.E/§9.G).
+// DEFAULTS de DefaultTenantSettings SIN error (design.md §9.E/§9.G).
+//
+// HAY FILA vs NO HAY FILA SON DOS CAMINOS DISTINTOS, Y ESO ES EL PUNTO (Plan 043 ·
+// T1.3). Con fila, los valores se devuelven TAL CUAL vienen de la columna, sin
+// sustituir ceros por defaults: `event_inactivity_ttl_seconds = 0` es el override
+// explícito «sin vencimiento» de una empresa (D-043.7 / E-6), no un hueco que
+// rellenar. Como 0 es además el cero de Go, un `if x == 0 { x = Default }` aquí
+// convertiría ese override en 2 h sin que nadie se entere: no lo introduzcas.
 func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error) {
 	var (
-		pageSize    int
-		ttlSecs     int
-		convTTLSecs int
-		buyerFields []byte
+		pageSize        int
+		ttlSecs         int
+		convTTLSecs     int
+		buyerFields     []byte
+		evInactTTLSecs  int
+		evHistoryTTLSec int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields
+		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields,
+		       event_inactivity_ttl_seconds, event_history_ttl_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
-	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields)
+	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields,
+		&evInactTTLSecs, &evHistoryTTLSec)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return TenantSettings{
-			TenantID: tenantID,
-			PageSize: DefaultPageSize,
-			OrderTTL: DefaultOrderTTL,
-			// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila
-			// nunca vencen su conversación, no-regresión). BuyerFields nil ⇒ el
-			// carrito no pregunta nada, que es el comportamiento previo a T4.5.
-		}, nil
+		return DefaultTenantSettings(tenantID), nil
 	case err != nil:
 		return TenantSettings{}, fmt.Errorf("store: leer config de tenant: %w", err)
 	}
 	return TenantSettings{
-		TenantID:        tenantID,
-		PageSize:        pageSize,
-		OrderTTL:        time.Duration(ttlSecs) * time.Second,
-		ConversationTTL: time.Duration(convTTLSecs) * time.Second,
-		BuyerFields:     parseBuyerFields(buyerFields),
+		TenantID:           tenantID,
+		PageSize:           pageSize,
+		OrderTTL:           time.Duration(ttlSecs) * time.Second,
+		ConversationTTL:    time.Duration(convTTLSecs) * time.Second,
+		BuyerFields:        parseBuyerFields(buyerFields),
+		EventInactivityTTL: time.Duration(evInactTTLSecs) * time.Second,
+		EventHistoryTTL:    time.Duration(evHistoryTTLSec) * time.Second,
 	}, nil
 }
 

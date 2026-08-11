@@ -8,6 +8,7 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
@@ -34,7 +35,9 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	defer unlock()
 	// Arranque por API (admin / /api/v1/.../start): sin intención LLM ⇒ sin params
 	// (el pre-carga del carrito solo aplica al arranque por decisión llm, T8).
-	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, nil, "")
+	// Sin coletilla: este arranque no viene de una intención inferida (T3.8 punto 2).
+	// Sin evento: el arranque por API no pare fila en conversation_events (E-6).
+	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, "", nil, "", "")
 }
 
 // startLocked es el cuerpo de Start SIN tomar el keyedMutex: asume que el llamante
@@ -43,7 +46,23 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 // por palabra clave de HandleIncoming (Plan 019 · T3), que YA tomó el mutex sobre la
 // misma clave: re-llamar a Start ahí causaría un auto-deadlock. Reglas de arranque
 // (guard 409, reinicio de carrito, orden Save-antes-de-Send) son idénticas.
-func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID string, intentParams map[string]string, intentName string) (*cloudlinkv1.Ack, error) {
+//
+// `tagline` es la coletilla YA RESUELTA que se pega al final de la respuesta (T3.8
+// punto 2). Llega resuelta a propósito: startLocked es el camino por el que pasa TODO
+// arranque —API, keyword, fallback, evento—, así que si decidiera aquí si toca
+// emitirla, esa decisión afectaría a caminos que no tienen nada que ver con la
+// intención. Recibiéndola, los demás llamantes pasan "" y siguen byte a byte igual.
+//
+// `eventID` es el id del evento conversacional al que pertenece este arranque
+// (Plan 043 · Ola 4.5 · T4.5.1, D-043.21), o "" en los caminos sin evento (API,
+// keyword, fallback). ⚠️ Llega por parámetro y NO puede leerse de st.EventID: en
+// este camino st nace fresco y el puntero flow_state.event_id lo estampa
+// pointStateAtEvent DESPUÉS de arrancar (events.go, enterEventFlow) — leerlo aquí
+// daría SIEMPRE "". Quien tiene el evento recién nacido/conmutado en la mano es el
+// llamante (enterEventFlow), y es él quien lo pasa para que los efectos del
+// pre-carga (p. ej. item_added del Prime del carrito) lleguen al proyector
+// declarando a su padre.
+func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID, eventID string, intentParams map[string]string, intentName, tagline string) (*cloudlinkv1.Ack, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
@@ -80,6 +99,13 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	if err != nil {
 		return nil, fmt.Errorf("runtime: enter: %w", err)
 	}
+	// La coletilla se pega ANTES de guardar para que la marca de «ya se ofreció» viaje
+	// en el MISMO Save que el estado inicial: si se marcara después, un fallo entre
+	// medias dejaría una conversación que ya la vio y no lo recuerda.
+	outs, ofrecida := appendTagline(outs, tagline)
+	if ofrecida {
+		markTaglineOffered(&st)
+	}
 	if err := rt.store.Save(ctx, st); err != nil {
 		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
 	}
@@ -87,7 +113,10 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// mismo fan-out EN PROCESO que HandleIncoming, DESPUÉS del Save. Un fallo de un
 	// sink se loguea y no aborta (el estado ya quedó persistido).
 	if len(effects) > 0 {
-		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+		// EventID sale del PARÁMETRO, no de st.EventID: aquí st.EventID es SIEMPRE ""
+		// a propósito (pointStateAtEvent estampa el puntero después de este camino).
+		// Ver el comentario de la firma (T4.5.1).
+		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: eventID}
 		rt.dispatch(ctx, ec, effects, sessionID)
 	}
 	to, err := rt.destino(ctx, tenantID, contactID)
@@ -95,6 +124,43 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 		return nil, err
 	}
 	return rt.send(ctx, sessionID, to, outs)
+}
+
+// appendTagline PEGA la coletilla al final del último texto que se va a enviar (T3.8
+// punto 2), en vez de mandarla como mensaje aparte.
+//
+// Que vaya pegada no es estética: son UN turno y UN token del anti-loop. Enviarla suelta
+// serían dos mensajes al cliente y dos tokens, y con el cupo justo el segundo no
+// saldría — el aviso desaparecería justo cuando la conversación va apretada.
+//
+// Sin coletilla, o sin ningún texto al que pegarla, devuelve las salidas TAL CUAL: si la
+// respuesta no lleva texto (solo un adjunto, por ejemplo) no se inventa un saliente para
+// colocarla, porque eso es exactamente lo que esta función existe para evitar.
+//
+// El bool dice si REALMENTE se pegó, y no sobra: quien llama usa esa respuesta para
+// decidir si marca la conversación. Sin él, una respuesta que termina en adjunto se
+// marcaría como «ya se le ofreció» sin que el cliente hubiera leído nada, y esa
+// conversación no volvería a recibir la coletilla nunca. La marca tiene que seguir al
+// hecho, no a la intención.
+func appendTagline(outs []engine.Output, tagline string) ([]engine.Output, bool) {
+	if tagline == "" || len(outs) == 0 {
+		return outs, false
+	}
+	last := len(outs) - 1
+	if outs[last].Text == "" {
+		return outs, false
+	}
+	outs[last].Text += "\n\n" + tagline
+	return outs, true
+}
+
+// markTaglineOffered deja constancia en el estado de que esta conversación ya la vio.
+// Ver varTaglineOffered para el alcance («por conversación») y su consecuencia.
+func markTaglineOffered(st *model.Conversation) {
+	if st.Vars == nil {
+		st.Vars = map[string]any{}
+	}
+	st.Vars[varTaglineOffered] = true
 }
 
 // seedIntentParams siembra en el estado recién creado los parámetros de la intención

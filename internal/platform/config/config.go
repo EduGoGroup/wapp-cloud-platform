@@ -124,6 +124,11 @@ type AppConfig struct {
 	// cadencia del poll, tope de reintentos y timeout de cada entrega. Se lee
 	// con prefijo WAPP_WEBHOOK_.
 	Webhook WebhookConfig `yaml:"webhook"`
+	// ConversationThread gobierna el hilo del evento conversacional (Plan 043 ·
+	// Ola 4.5, D-043.23 + decisión del dueño del 2026-08-10): hoy solo el
+	// interruptor del productor `message` (el texto literal del turno). Se lee
+	// con prefijo WAPP_CONVERSATION_THREAD_.
+	ConversationThread ConversationThreadConfig `yaml:"conversation_thread"`
 }
 
 // WebhookConfig son los parámetros del worker de entregas del puente CRM
@@ -139,6 +144,23 @@ type WebhookConfig struct {
 	// Timeout es el timeout HTTP de CADA entrega individual. Default 10s. Se
 	// lee como cadena time.Duration de WAPP_WEBHOOK_TIMEOUT.
 	Timeout time.Duration `yaml:"timeout"`
+}
+
+// ConversationThreadConfig gobierna el hilo del evento conversacional (Plan 043 ·
+// Ola 4.5, D-043.23): el histórico de decisiones estructuradas (`decision`,
+// SIEMPRE activo) y el texto literal del turno (`message`, detrás de este
+// interruptor) que persiste conversation_event_messages.
+type ConversationThreadConfig struct {
+	// Messages ENCIENDE el productor `message` (internal/flujos/runtime/thread.go)
+	// POR ENCIMA del gate de la feature `llm_intake`: hacen falta las DOS para que
+	// se escriba el texto literal del turno (cifrado, ADR-0034 nivel 2). Default
+	// false (fail-closed) — decisión de Jhoan del 2026-08-10: el e2e vivo de ese
+	// día midió 12 filas `message` con el cuerpo cifrado en un tenant `pro` real,
+	// escritas sin que existiera todavía nadie que las leyera (el Plan 044, su
+	// LECTOR, no existe aún). Se enciende a mano; se retira el interruptor cuando
+	// el 044 tenga su lector. NO afecta al productor `decision`, que sigue
+	// escribiendo siempre. Se lee de WAPP_CONVERSATION_THREAD_MESSAGES.
+	Messages bool `yaml:"messages"`
 }
 
 // IdentityConfig apunta al microecosistema identity, emisor de los Identity
@@ -479,6 +501,11 @@ func defaults() AppConfig {
 			MaxAttempts:  10,
 			Timeout:      10 * time.Second,
 		},
+		ConversationThread: ConversationThreadConfig{
+			// Explícito a propósito (igual que LogJSON): el productor `message`
+			// arranca APAGADO hasta que el Plan 044 tenga su lector.
+			Messages: false,
+		},
 		DB: DatabaseConfig{
 			Host:     "localhost",
 			Port:     5432,
@@ -598,6 +625,8 @@ func Load() (AppConfig, error) {
 		cfg.Webhook.MaxAttempts = n
 	}
 	cfg.Webhook.Timeout = loader.GetDuration("WEBHOOK_TIMEOUT", cfg.Webhook.Timeout)
+
+	cfg.ConversationThread.Messages = loader.GetBool("CONVERSATION_THREAD_MESSAGES", cfg.ConversationThread.Messages)
 
 	return cfg, nil
 }

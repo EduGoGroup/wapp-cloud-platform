@@ -1,15 +1,21 @@
 package cart
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // cartClosedEffect es el efecto de cierre con una línea, tal como lo emite la
@@ -274,5 +280,80 @@ func TestShippingSKU_VaBajoElPrefijoReservado(t *testing.T) {
 	if intakes.ReservedSKUPrefix != SystemSKUPrefix {
 		t.Fatalf("el prefijo reservado de solicitudes (%q) y el del catálogo (%q) tienen que ser el mismo",
 			intakes.ReservedSKUPrefix, SystemSKUPrefix)
+	}
+}
+
+// intakeChocaConEventoYaDeclarado envuelve *store.MemoryRepository (que satisface
+// el resto de ProjectionStore sin doble esfuerzo) y hace que UpsertIntake falle
+// EXACTAMENTE como lo hace Postgres cuando el INSERT choca contra el índice único
+// parcial intakes_event_id_uidx (migración 0054): el mismo *pgconn.PgError que
+// devuelve el driver real, envuelto con el MISMO %w que store.PostgresRepository.
+// UpsertIntake usa en producción — para que postgres.IsUniqueViolation lo reconozca
+// atravesando el mismo envoltorio, no uno inventado para el test.
+type intakeChocaConEventoYaDeclarado struct {
+	*store.MemoryRepository
+	intentos int
+}
+
+func (c *intakeChocaConEventoYaDeclarado) UpsertIntake(context.Context, store.Intake) error {
+	c.intentos++
+	return fmt.Errorf("store: upsert solicitud: %w", &pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "intakes_event_id_uidx",
+	})
+}
+
+// TestProjector_ItemAdded_ColisionDeEventoQuedaVisible es la defensa en
+// profundidad del hallazgo #24 (Plan 043 · Ola 6): un INSERT que choca contra
+// intakes_event_id_uidx —el evento de esta meta ya tenía un intake— NO puede
+// desaparecer en silencio. El carácter best-effort del sink NO cambia (el error
+// SIGUE subiendo tal cual, para que Runtime.dispatch lo loguee y el turno
+// continúe sin abortar) — lo que se añade es un log ESPECÍFICO, con el contexto
+// (tenant/contacto/sesión/evento/intake intentado) que el log genérico de
+// Runtime.dispatch ("sink de efecto falló", solo kind/name/session_id) no lleva.
+func TestProjector_ItemAdded_ColisionDeEventoQuedaVisible(t *testing.T) {
+	var log bytes.Buffer
+	previo := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+	t.Cleanup(func() { slog.SetDefault(previo) })
+
+	repo := &intakeChocaConEventoYaDeclarado{MemoryRepository: store.NewMemoryRepository()}
+	p := NewProjector(repo, intakes.NewMemoryStore(), &envíoEspía{}, intakes.NewMemoryStore())
+	meta := projectorMeta()
+	meta.EventID = "evento-cart-ya-cerrado"
+
+	eff := modules.Effect{
+		Kind:    kindEvent,
+		Name:    EffectItemAdded,
+		Payload: map[string]any{"sku": "emp-pino", "label": "Empanada de pino", "qty": 1, "unit_price": 2500.0},
+	}
+
+	err := p.Project(context.Background(), meta, eff)
+
+	// El best-effort NO cambia: el error sigue subiendo, identificable como
+	// violación de único (el llamante —Runtime.dispatch— decide qué hacer con él;
+	// el proyector no lo traga).
+	if err == nil {
+		t.Fatal("Project(item_added) debe propagar el error del choque, no tragárselo")
+	}
+	if !postgres.IsUniqueViolation(err) {
+		t.Fatalf("el error propagado debe seguir siendo identificable como violación de único (23505): %v", err)
+	}
+	if repo.intentos != 1 {
+		t.Fatalf("UpsertIntake debe intentarse exactamente 1 vez; se intentó %d", repo.intentos)
+	}
+
+	// El log ESPECÍFICO, con el contexto suficiente para diagnosticar CUÁL pedido se
+	// perdió (tenant, contacto, sesión, evento y el intake que se intentó abrir):
+	// sin él, lo único que quedaría es "sink de efecto falló" sin ninguno de estos
+	// cinco datos.
+	logueado := log.String()
+	for _, quiero := range []string{
+		"intakes_event_id_uidx", "hallazgo #24",
+		meta.TenantID, meta.ContactID, meta.SessionID, meta.EventID,
+	} {
+		if !strings.Contains(logueado, quiero) {
+			t.Fatalf("el log de la colisión debe incluir %q para poder diagnosticarla; log=%s", quiero, logueado)
+		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 )
 
 const testCartFlow = "carrito-flow"
@@ -45,12 +46,26 @@ func cartFlow(flowID string) model.Flow {
 // newCartRuntime arma un runtime con el módulo cart registrado, el catálogo
 // sembrado en tenant_content, el content Router (static+json) y el PersistSink
 // cableado (proyecta intakes + flow_events). Igual patrón que newSurveyRuntime.
-func newCartRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
+//
+// `rules` es opcional (variadic, igual que newLifecycleRuntime): sin ninguna, el
+// ConfigResolver sobre un store vacío se comporta como el NoopResolver de siempre
+// (Ignore ante cualquier entrante sin conversación viva), así que las llamadas
+// existentes que no pasan reglas no cambian de conducta. Se necesita para el
+// disparador real («carrito») del hallazgo #29: TestCartResume_AfterCancel_
+// AbreUnPedidoNuevoConElDisparadorReal lo pasa para arrancar un carrito nuevo tras
+// cancelar, ahora que el flow_state terminal se suelta en vez de reanudarse solo.
+func newCartRuntime(t *testing.T, rules ...trigger.Rule) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
 	t.Helper()
 	repo := store.NewMemoryRepository()
 	repo.SetTenantContent(testTenant, "catalogo", []byte(cartCatalogBlob))
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, cartFlow(testCartFlow)); err != nil {
 		t.Fatalf("sembrar definición cart: %v", err)
+	}
+	ts := trigger.NewMemoryStore()
+	for _, r := range rules {
+		if _, err := ts.Insert(context.Background(), r); err != nil {
+			t.Fatalf("insert regla: %v", err)
+		}
 	}
 	reg := modules.NewRegistry()
 	reg.Register(menu.New())
@@ -61,8 +76,22 @@ func newCartRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *f
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
 	rt := runtime.New(repo, eng, sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
-		runtime.WithEventSink(persistSinkWith(repo)), cartResumeOpt(repo))
+		runtime.WithEventSink(persistSinkWith(repo)), cartResumeOpt(repo),
+		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)))
 	return rt, repo, sender, contacts
+}
+
+// cartKeywordRule arma la regla keyword «carrito» → testCartFlow: el disparador REAL
+// que abre un carrito nuevo (Plan 043, hallazgo #29 · salida (A) · decisión de Jhoan
+// 2026-08-11). No es event_start a propósito: newCartRuntime no cablea plano de
+// eventos (sin WithEventStore), y beginEvent trata un event_start sin plano cableado
+// exactamente como una keyword (events.go) — usar KindKeyword aquí es lo mismo que
+// event_start daría, sin fingir un plano que este runtime no tiene.
+func cartKeywordRule() trigger.Rule {
+	return trigger.Rule{
+		TenantID: testTenant, Kind: trigger.KindKeyword, Keyword: "carrito",
+		MatchType: trigger.MatchExact, FlowID: testCartFlow, Enabled: true,
+	}
 }
 
 // cartAddCafe navega Bebidas→Café→Agregar→cantidad(2), dejando el carrito en L5
@@ -192,12 +221,29 @@ func TestCartStart_ConPedidoVencido_SigueDando409(t *testing.T) {
 	}
 }
 
-// TestCartResume_AfterCancel_RestartsAndEnablesNewIntake (design.md §3.4/§4.2):
-// tras cancelar (9), la solicitud queda "cancelled" y la conversación NO se queda
-// bloqueada: el siguiente entrante arranca un carrito limpio (L1) y un pedido
-// nuevo es posible (abre otra solicitud "open").
-func TestCartResume_AfterCancel_RestartsAndEnablesNewIntake(t *testing.T) {
-	rt, repo, sender, _ := newCartRuntime(t)
+// TestCartResume_AfterCancel_AbreUnPedidoNuevoConElDisparadorReal (design.md
+// §3.4/§4.2, hallazgo #29 · salida (A) · decisión de Jhoan 2026-08-11): tras
+// cancelar (9), la solicitud queda "cancelled" y AHORA TAMBIÉN se cierra el evento
+// que contenía el pedido —cart.Module.Step fija Next al centinela para
+// LevelCancelled exactamente igual que para LevelClosed (#24), así que
+// closeIfFinished cierra el evento por el camino natural en el mismo turno (ver
+// cart.go y cart_fin_de_flujo_test.go)—. El flow_state terminal se suelta
+// (advanceLive, incoming.go) y la conversación NO se queda bloqueada, pero un
+// pedido nuevo YA NO nace de cualquier texto: hace falta el disparador real
+// («carrito») para abrirlo, con evento e intake propios.
+//
+// CONDUCTA VIEJA QUE ESTE TEST REEMPLAZA (no se borra el nombre viejo sin decir por
+// qué): se llamaba TestCartResume_AfterCancel_RestartsAndEnablesNewIntake y mandaba
+// «hola» tras cancelar esperando que reanudara el MISMO carrito en L1. Eso ocurría
+// porque cancelar dejaba el flow_state vivo (Level=Cancelled, Finished()==false) y
+// cart.ResumePolicy.Restart (isTerminal) lo reiniciaba ante CUALQUIER entrada,
+// sin mirar el texto. Con el evento cerrándose de verdad, el flow_state
+// desaparece: «hola» ya no tiene flujo que reanudar y cae al
+// fallback/oferta del tenant —aquí sin configurar, así que no contesta nada—,
+// mientras que «carrito» sí casa la regla keyword y arranca un carrito NUEVO. Es el
+// cambio de producto que el #29 acepta a propósito, no una regresión.
+func TestCartResume_AfterCancel_AbreUnPedidoNuevoConElDisparadorReal(t *testing.T) {
+	rt, repo, sender, _ := newCartRuntime(t, cartKeywordRule())
 	ctx := context.Background()
 	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -210,13 +256,24 @@ func TestCartResume_AfterCancel_RestartsAndEnablesNewIntake(t *testing.T) {
 		t.Fatalf("esperaba la solicitud en cancelled, got %+v", os)
 	}
 
-	// Reanudar tras cancelar → arranca limpio (L1), sin conversación viva bloqueando.
+	// Un texto CUALQUIERA («hola») ya NO reanuda nada: el flow_state terminal se
+	// soltó con el cierre natural del evento, y sin regla que case (ni fallback
+	// configurado en este runtime), el resolver de disparos decide Ignore.
 	before := sender.count()
-	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "hola", "resume-1")); err != nil {
-		t.Fatalf("resume: %v", err)
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "hola", "noise-1")); err != nil {
+		t.Fatalf("hola: %v", err)
+	}
+	if got := sender.texts()[before:]; len(got) != 0 {
+		t.Fatalf("un texto sin disparador NO debe reanudar el carrito cancelado: %q", got)
+	}
+
+	// El disparador REAL («carrito») sí abre un pedido nuevo (L1 fresco).
+	before = sender.count()
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "resume-1")); err != nil {
+		t.Fatalf("carrito: %v", err)
 	}
 	if got := strings.Join(sender.texts()[before:], "\n"); !strings.Contains(got, "Elige una categoría") {
-		t.Fatalf("tras cancelar, reanudar debe mostrar L1 fresco: %q", got)
+		t.Fatalf("el disparador «carrito» debe abrir un carrito nuevo (L1): %q", got)
 	}
 
 	// Pedido NUEVO posible: agregar otro artículo abre una segunda solicitud "open".

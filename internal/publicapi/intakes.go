@@ -338,11 +338,14 @@ type discardIntakesResponse struct {
 //
 // ⚠️ Lo que este endpoint NO hace todavía: CERRAR el evento conversacional
 // (`conversation_events` a `cancelled`, `flow_state.event_id` a NULL — REQ-32e,
-// criterios (g)/(h) del plan). No es una omisión de alcance: ninguna de las dos
-// piezas existe en ninguna base, las crea el **Plan 043**, y ese plan a su vez
-// necesita el `abandoned` que publica éste. Dueño declarado: **043 · T4.3**. El
-// detalle de por qué tampoco se entrega el filtro `orphan=true` está en la cabecera
-// de internal/intakes/discard.go.
+// criterios (g)/(h) del plan). Dueño declarado: **043 · T4.3**.
+//
+// ACTUALIZADO 2026-08-09 (Plan 043 · Ola 1): las dos piezas YA EXISTEN en el esquema
+// —migraciones `0051_conversation_events.sql` y `0052_event_seams.sql`— y el ciclo
+// con este plan se rompió (el `abandoned` que el 043 esperaba está publicado). Lo que
+// falta ahora es el PRODUCTOR: nadie crea eventos ni apunta el puntero hasta la Ola 2
+// del 043, así que no hay evento que cerrar. El detalle de por qué tampoco se entrega
+// el filtro `orphan=true` está en la cabecera de internal/intakes/discard.go.
 func discardIntakesHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())

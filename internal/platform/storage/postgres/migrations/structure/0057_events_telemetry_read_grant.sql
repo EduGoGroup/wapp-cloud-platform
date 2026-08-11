@@ -1,0 +1,48 @@
+-- ============================================================
+-- 0057: Grant de `events_telemetry.read` para el rol canónico `operator`
+-- (Plan 043 · Ola 6 · T6.5, MD-043.17 — enmienda de la REFUTACIÓN del revisor,
+-- 2026-08-11).
+--
+-- POR QUÉ EXISTE ESTA MIGRACIÓN. T6.5 estrena un scope NUEVO,
+-- `events_telemetry.read`, para GET /api/v1/events/telemetry. La regla de este
+-- repo está escrita en el propio archivo que la tarea editó
+-- (internal/publicapi/publicapi.go, cabecera de registerConversationEvents):
+--
+--     «Un scope nuevo no lo tiene nadie hasta que una migración se lo conceda
+--      al rol `operator` (así nacieron sessions.read en la 0030,
+--      entitlements.read en la 0040 e intakes.read en la 0042), así que
+--      estrenarlo aquí dejaría la ruta montada y devolviendo 403 a la única
+--      persona que la necesita.»
+--
+-- El endpoint hermano de la MISMA ola (la bandeja de eventos conversacionales)
+-- citó esa regla para NO estrenar scope y reusar `intakes.read`. T6.5 sí lo
+-- estrenó y no trajo la migración, así que el estado entregado deja:
+--
+--   * tenant_admin ('*')      -> cubierto por glob   (medido: EvaluateGrants=true)
+--   * viewer       ('*.read') -> cubierto por glob   (medido: EvaluateGrants=true)
+--   * operator     (lista EXPLÍCITA de la 0042: intakes.*, flows.*, sessions.*,
+--                   triggers.*, intents.*, entitlements.read, diagnostics.request,
+--                   contacts.read, integrations.read, media.*, messages.send)
+--                            -> **403** (medido: EvaluateGrants=false)
+--
+-- operator es exactamente el rol operativo del tenant, y la telemetría de ciclo
+-- de vida del evento es CAPA TÉCNICA (el propio handler lo argumenta para no
+-- ponerle gate de feature: «un tenant del plan más simple no debería quedar
+-- ciego a su propia telemetría»). Un 403 para el operador contradice ese
+-- argumento en el único punto que decide quién entra.
+--
+-- Es lectura del PROPIO tenant (INV-8: el tenant sale del token, nunca de la
+-- query). Extiende el seed de 0015_iam_roles.sql (roles = PLANTILLAS globales,
+-- tenant_id NULL). CERO PII / CERO llaves: solo un patrón de permiso.
+--
+-- ADITIVA e IDEMPOTENTE: ID fijo determinista + ON CONFLICT (id) DO NOTHING =>
+-- re-aplicable N veces (runner hash-based FULL-REPLAY) sin duplicar. NO
+-- clean-slate. NO bumpea SchemaVersion: 0.32.0 ya es el bump de esta ola del
+-- Plan 043 y aún no se ha publicado (regla de version.go: un bump por plan,
+-- salvo esquema ya publicado).
+-- ============================================================
+
+INSERT INTO public.iam_role_grants (id, role_id, pattern, effect) VALUES
+    -- operator: events_telemetry.read (telemetría de ciclo de vida de SU tenant)
+    ('20000000-0000-0000-0000-000000000013', '10000000-0000-0000-0000-000000000002', 'events_telemetry.read', 'allow')
+ON CONFLICT (id) DO NOTHING;

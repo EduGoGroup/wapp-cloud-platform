@@ -123,6 +123,12 @@ func (r *MemoryRepository) Load(_ context.Context, key Key) (model.Conversation,
 // UpdatedAt = ahora en cada escritura, igual que la columna updated_at = now() del
 // repositorio Postgres, para que el TTL conversacional (Plan 029 · T9) tenga una
 // marca real de última actividad.
+//
+// EventID (el puntero al evento activo, Plan 043 · T1.3) viaja en el clon JSON como
+// un campo más, incluido cuando vale "": el upsert lo SOBRESCRIBE siempre, igual que
+// el `event_id = EXCLUDED.event_id` del repo Postgres. Es lo que permite APAGAR el
+// puntero al cerrar o cancelar un evento; conservar el valor previo dejaría a la
+// conversación pegada a un evento muerto solo en los tests.
 func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) error {
 	clone, err := cloneConversation(state)
 	if err != nil {
@@ -244,8 +250,39 @@ func (r *MemoryRepository) InsertResults(_ context.Context, rows []SurveyResult)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.results = append(r.results, rows...)
+	now := time.Now()
+	for _, row := range rows {
+		// Fecha la fila igual que el DEFAULT now() de la columna. Sin esto, el doble
+		// devolvería un created_at CERO donde Postgres devuelve una fecha, y quien
+		// acote «las respuestas de esta pasada» por fecha (el resumen del rescate)
+		// vería en sus tests unitarios un filtro que deja pasar todo y en producción
+		// uno que filtra. Es la misma imitación de un DEFAULT que ya hace AddedAt en
+		// las líneas; la ESCRITURA real de survey_results no cambia.
+		if row.CreatedAt.IsZero() {
+			row.CreatedAt = now
+		}
+		r.results = append(r.results, row)
+	}
 	return nil
+}
+
+// ListResults implementa Repository: filtra las respuestas por (tenant, contacto,
+// flujo) conservando el orden de escritura, que es el cronológico que devuelve el
+// PostgresRepository (allí, ORDER BY created_at, id).
+//
+// Devuelve la lista VACÍA y no nil cuando no hay nada, igual que el camino Postgres:
+// un test que distinga `nil` de `[]` sobre el doble estaría comprobando algo que la
+// implementación real no promete.
+func (r *MemoryRepository) ListResults(_ context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SurveyResult, 0)
+	for _, s := range r.results {
+		if s.TenantID == tenantID && s.ContactID == contactID && s.FlowID == flowID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // SurveyResults devuelve una copia de las respuestas de encuesta acumuladas por
@@ -456,6 +493,13 @@ func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	now := time.Now()
 	if prev, ok := r.intakes[o.ID]; ok {
 		o.CreatedAt = prev.CreatedAt
+		// Misma semántica que el COALESCE(intakes.event_id, EXCLUDED.event_id) del
+		// Postgres (D-043.21): un padre ya declarado JAMÁS se pisa; un vacío legado
+		// sí se estampa. Si aquí se sobrescribiera, un test unitario daría por
+		// buena una escritura que en producción no puede ocurrir.
+		if prev.EventID != "" {
+			o.EventID = prev.EventID
+		}
 	} else {
 		o.CreatedAt = now
 	}
@@ -464,25 +508,49 @@ func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	return nil
 }
 
-// InsertIntakeItems implementa Repository: acumula las líneas de la solicitud en un
-// slice interno (append-only), imitando el INSERT en public.intake_items (Plan 016
-// · T0). len(items)==0 es un no-op. Fija IntakeID y AddedAt (DEFAULT now()) en cada
-// línea; copia por valor (structs sin punteros) para no compartir estado.
-func (r *MemoryRepository) InsertIntakeItems(_ context.Context, intakeID string, items []IntakeItem) error {
-	if len(items) == 0 {
-		return nil
-	}
+// ReplaceIntakeItems implementa Repository: deja las líneas de CLIENTE de la
+// solicitud exactamente en `items`, imitando el DELETE+INSERT transaccional del
+// PostgresRepository (Plan 043 · Ola 3). len(items)==0 BORRA las de cliente, igual
+// que el SQL. Fija IntakeID y AddedAt (DEFAULT now()) en cada línea; copia por valor
+// (structs sin punteros) para no compartir estado.
+//
+// Que este adaptador reemplace y el otro también NO es cosmética: si aquí siguiera
+// acumulando, los tests unitarios verían un pedido sin duplicados que en Postgres
+// SÍ los tendría, y estarían mintiendo justo sobre lo que esta tarea arregla.
+func (r *MemoryRepository) ReplaceIntakeItems(_ context.Context, intakeID string, items []IntakeItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.replaceIntakeItemsLocked(intakeID, items)
+	return nil
+}
+
+// replaceIntakeItemsLocked es el reemplazo con el mutex YA tomado: lo comparten
+// ReplaceIntakeItems y CloseIntake, que necesita hacerlo dentro de su propia sección
+// crítica (el equivalente de su transacción).
+//
+// Conserva las líneas de LA PLATAFORMA (prefijo reservado) al frente, que es donde
+// las deja Postgres cuando existen: se escriben antes de cualquier reemplazo posterior
+// y la lectura ordena por added_at.
+func (r *MemoryRepository) replaceIntakeItemsLocked(intakeID string, items []IntakeItem) {
 	now := time.Now()
+	kept := make([]IntakeItem, 0, len(items))
+	for _, it := range r.intakeItems[intakeID] {
+		if strings.HasPrefix(it.SKU, reservedSKUPrefix) {
+			kept = append(kept, it)
+		}
+	}
 	for _, it := range items {
 		it.IntakeID = intakeID
 		if it.AddedAt.IsZero() {
 			it.AddedAt = now
 		}
-		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
+		kept = append(kept, it)
 	}
-	return nil
+	if len(kept) == 0 {
+		delete(r.intakeItems, intakeID)
+		return
+	}
+	r.intakeItems[intakeID] = kept
 }
 
 // GetOpenIntake implementa Repository: devuelve la solicitud "open" del contacto para
@@ -498,6 +566,27 @@ func (r *MemoryRepository) GetOpenIntake(_ context.Context, tenantID, contactID 
 		}
 	}
 	return Intake{}, false, nil
+}
+
+// ListIntakeItems implementa Repository: devuelve las líneas de la solicitud en el
+// orden en que se escribieron (el del carrito), que es el mismo que da el
+// PostgresRepository al ordenar por (added_at, id).
+//
+// Valida el UUID aunque aquí las claves sean un mapa de cadenas y no haga ninguna
+// falta técnica: el camino Postgres rechaza un id malformado y los dos adaptadores
+// tienen que contestar lo mismo a la misma pregunta. Si aquí un `""` devolviera «sin
+// líneas», un test unitario daría por bueno un resumen vacío que en producción sería
+// un error.
+func (r *MemoryRepository) ListIntakeItems(_ context.Context, intakeID string) ([]IntakeItem, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return nil, fmt.Errorf("store: listar líneas de solicitud: id %q inválido: %w", intakeID, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.intakeItems[intakeID]
+	out := make([]IntakeItem, len(src))
+	copy(out, src)
+	return out, nil
 }
 
 // MarkIntakeStatus implementa Repository: transiciona el estado de la solicitud (por
@@ -530,6 +619,11 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			o.Status = "closed"
 			o.Total = in.Total
 			o.CustomerNote = in.CustomerNote
+			// COALESCE(event_id, $n), como el UPDATE del Postgres (D-043.21): el
+			// cierre rellena un NULL legado y jamás pisa un padre ya declarado.
+			if o.EventID == "" {
+				o.EventID = in.EventID
+			}
 			o.UpdatedAt = now
 			r.intakes[id] = o
 			break
@@ -545,34 +639,33 @@ func (r *MemoryRepository) CloseIntake(_ context.Context, in IntakeClose) (strin
 			Status:       "closed",
 			Total:        in.Total,
 			CustomerNote: in.CustomerNote,
+			EventID:      in.EventID,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
 	}
-	for _, it := range in.Items {
-		it.IntakeID = intakeID
-		if it.AddedAt.IsZero() {
-			it.AddedAt = now
-		}
-		r.intakeItems[intakeID] = append(r.intakeItems[intakeID], it)
-	}
+	// REEMPLAZO, no acumulación: la solicitud puede llegar al cierre con las líneas
+	// que la proyección de item_added ya materializó (mismo motivo, y mismo orden de
+	// operaciones, que en el PostgresRepository).
+	r.replaceIntakeItemsLocked(intakeID, in.Items)
 	return intakeID, nil
 }
 
 // GetTenantSettings implementa Repository: devuelve la config sembrada para
-// tenantID o los DEFAULTS (DefaultPageSize, DefaultOrderTTL) si no hay fila, SIN
-// error (design.md §9.E/§9.G).
+// tenantID o DefaultTenantSettings si no hay fila, SIN error (design.md §9.E/§9.G).
+//
+// Los DOS caminos son los mismos que en Postgres, incluida la parte que muerde: una
+// config SEMBRADA se devuelve TAL CUAL, así que un EventInactivityTTL de 0 sembrado
+// sale 0 —el override «sin vencimiento» de D-043.7— y no se convierte en las 2 h del
+// default. Los defaults salen de la MISMA función que usa el repo Postgres, de modo
+// que los dos no pueden divergir.
 func (r *MemoryRepository) GetTenantSettings(_ context.Context, tenantID string) (TenantSettings, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if s, ok := r.settings[tenantID]; ok {
 		return s, nil
 	}
-	return TenantSettings{
-		TenantID: tenantID,
-		PageSize: DefaultPageSize,
-		OrderTTL: DefaultOrderTTL,
-	}, nil
+	return DefaultTenantSettings(tenantID), nil
 }
 
 // Intakes devuelve una copia de las solicitudes acumuladas por UpsertIntake. Es un
@@ -588,8 +681,9 @@ func (r *MemoryRepository) Intakes() []Intake {
 }
 
 // IntakeItems devuelve una copia de las líneas persistidas para intakeID por
-// InsertIntakeItems. Es un helper de test; devuelve una copia para no exponer el
-// slice interno.
+// ReplaceIntakeItems / CloseIntake, EN EL ORDEN en que se escribieron (que es el
+// orden del carrito, y el que da la lectura real por added_at, id). Es un helper de
+// test; devuelve una copia para no exponer el slice interno.
 func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -601,6 +695,14 @@ func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 
 // SetTenantSettings siembra la config del carrito para un tenant. Es un helper de
 // test (imita el alta en tenant_settings).
+//
+// SIEMBRA LA FILA LITERALMENTE, como un INSERT que nombra TODAS las columnas: los
+// campos que no rellenes quedan en el cero de Go, NO en el DEFAULT de su columna. La
+// diferencia importa desde el Plan 043: un TenantSettings a medio construir deja
+// EventInactivityTTL en 0, que aquí significa «sin vencimiento» mientras que la misma
+// fila creada en Postgres sin nombrar la columna traería 2 h. Para sembrar un tenant
+// realista parte de DefaultTenantSettings(tenantID) y cambia lo que el test necesite;
+// el 0 déjalo solo cuando el 0 sea lo que se está probando.
 func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

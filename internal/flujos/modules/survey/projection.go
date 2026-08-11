@@ -32,6 +32,13 @@ func (Projector) Handles(name string) bool { return name == EffectSurveyAnswer }
 
 // Project materializa survey_answer en survey_results. Aserción de tipo defensiva:
 // claves ausentes o de otro tipo ⇒ se OMITE (el efecto ya quedó en flow_events).
+//
+// La fila DECLARA A SU PADRE (D-043.21, T4.5.3): event_id = meta.EventID, el evento
+// conversacional vivo del turno. Es TRAZABILIDAD, no «contenido que puede morir»
+// (D-043.18) — la encuesta no entra en la vista event_content. Con esto, la
+// correlación por timestamp que hace el resumen de encuesta
+// (runtime/summary_sources.go, paquete ajeno: no se toca aquí) queda como FALLBACK
+// del legado (filas pre-0054 con event_id NULL); la vía preferida es event_id.
 func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
 	qid, ok1 := eff.Payload["question_id"].(string)
 	code, ok2 := eff.Payload["answer_code"].(string)
@@ -45,5 +52,6 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 		FlowVersion: meta.FlowVersion,
 		QuestionID:  qid,
 		AnswerCode:  code,
+		EventID:     meta.EventID,
 	}})
 }

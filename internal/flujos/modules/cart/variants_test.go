@@ -119,8 +119,13 @@ func TestVariante_EfectoItemAddedLlevaElSKUCompuesto(t *testing.T) {
 	}
 	_, effs, _ := driveE(t, m, vars, "2") // cantidad 2
 	e := effByName(t, effs, EffectItemAdded)
-	if len(e.Payload) != 4 {
-		t.Fatalf("item_added no debe ganar ni perder claves, got %+v", e.Payload)
+	// Se mira el payload PÚBLICO —lo que acaba en public.flow_events— porque es ahí
+	// donde "no ganar ni perder claves" significa algo: es el contrato que leen la
+	// telemetría y los goldens. Desde el Plan 043 · Ola 3 el efecto lleva además la
+	// foto de las líneas, declarada PRIVADA justo para no entrar aquí; que siga
+	// fuera lo comprueba TestItemAdded_LaFotoDeLineasNoEntraEnFlowEvents.
+	if len(e.PublicPayload()) != 4 {
+		t.Fatalf("item_added no debe ganar ni perder claves, got %+v", e.PublicPayload())
 	}
 	if e.Payload["sku"] != "TORTA-CHOC#V1" || e.Payload["label"] != "Torta de chocolate — 10-12 porciones" ||
 		e.Payload["qty"] != 2 || e.Payload["unit_price"] != 18000.0 {

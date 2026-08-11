@@ -151,6 +151,10 @@ func (e *Engine) tryPrime(ctx context.Context, def model.Flow, st *model.Convers
 //   - nodo "menu": delega en el módulo; si transiciona, renderiza el destino
 //     encadenando "message" como en Enter; si no, emite el reprompt/ayuda y
 //     permanece.
+//   - un módulo de un solo nodo (p. ej. "cart") puede declarar el FIN de su
+//     flujo apuntando Result.Next al centinela model.NodeTerminal (hallazgo
+//     #24, Plan 043 · Ola 6): el engine lo reconoce sin buscarlo en def.Nodes y
+//     termina con el Outputs que el propio Step ya produjo.
 //   - conversación terminada (centinela): ignora la entrada (salida neutra).
 //
 // No muta el estado recibido.
@@ -195,6 +199,33 @@ func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation
 	res := mod.Step(node, st, in.Text)
 	st.Vars = res.Vars
 	if res.Next != nil {
+		if *res.Next == model.NodeTerminal {
+			// FIN DE FLUJO declarado por el propio módulo (hallazgo #24, Plan 043 ·
+			// Ola 6): un módulo de UN SOLO NODO que espera input siempre (WaitsForInput
+			// == true, p. ej. "cart") no puede terminar por la cadena normal de
+			// renderFrom —no hay un SEGUNDO nodo al que apuntar, y de haberlo,
+			// renderFrom llamaría a Render, no reusaría el Outputs de ESTE Step—. El
+			// módulo señala el fin apuntando Result.Next al centinela él mismo; el
+			// engine lo reconoce AQUÍ, sin buscarlo en def.Nodes (está reservado,
+			// model.Validate lo rechaza como id real), y termina con la pantalla que
+			// el propio módulo ya produjo. closeIfFinished (runtime/event_lifecycle.go)
+			// ve st.Finished()==true en este mismo turno y cierra el evento que posea
+			// el flujo — el mecanismo NO cambia, solo gana quien puede activarlo.
+			st.CurrentNode = model.NodeTerminal
+			// El DESENLACE viaja junto al centinela (hallazgo #29, Plan 043 · Ola 6):
+			// el módulo declara CÓMO terminó y el engine lo sella en el estado, que es
+			// lo que closeIfFinished lee para traducirlo al `status` del evento. Se
+			// escribe SOLO en esta rama —el fin de flujo declarado por el módulo— y
+			// nunca en la transición normal ni en el reprompt: un flujo que sigue vivo
+			// no tiene desenlace, y sellarle uno «por si acaso» dejaría un valor que
+			// mentiría en cuanto la conversación siguiera por otro lado.
+			//
+			// res.Outcome == OutcomeUndeclared BORRA la clave (ver SetOutcome), así que
+			// un módulo que declara el fin sin declarar el desenlace deja el estado byte
+			// a byte como antes de esta ola.
+			st.SetOutcome(res.Outcome)
+			return st, toOutputs(res.Outputs), res.Effects, nil
+		}
 		// Transición válida: renderiza el destino (encadenando messages).
 		st.CurrentNode = *res.Next
 		st2, outs, err := e.renderFrom(ctx, def, st)

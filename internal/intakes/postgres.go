@@ -1007,14 +1007,15 @@ func applyRevalidationItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, 
 // Discard implementa Store: el descarte manual del dueño (T4.8, D-041.18). Todo
 // ocurre en UNA transacción que empieza bloqueando la cabecera, y el orden importa:
 //
-//  1. BLOQUEAR + leer estado, sesión y contacto (FOR UPDATE): el mismo punto de
+//  1. BLOQUEAR + leer estado y event_id (FOR UPDATE): el mismo punto de
 //     serialización que toman el CAS de UpdateStatus, EnsureShippingLine y
 //     ReplaceItems.
 //  2. Comprobar el estado contra `discardable`. Si no está, se sale SIN ESCRIBIR y
-//     sin llegar a mirar la conversación: el estado explica el rechazo mejor.
-//  3. Comprobar la conversación viva (aproximación provisional, ver
-//     hasLiveCartTx). También sale sin escribir.
-//  4. UPDATE a `abandoned` + revisión `discarded`, en esta misma transacción.
+//     sin llegar a mirar el evento: el estado explica el rechazo mejor.
+//  3. Comprobar el evento vivo (DT-043.2 SALDADA, ver hasLiveEventTx). También
+//     sale sin escribir.
+//  4. UPDATE a `abandoned` + revisión `discarded` + cierre del CONTENEDOR
+//     (cancelContainerTx, REQ-32e / D-043.15(1)), en esta misma transacción.
 //
 // El `WHERE status = ANY(...)` del UPDATE es redundante bajo el candado y va igual:
 // es lo que garantiza —en el propio SQL, no en una lectura anterior— que este
@@ -1022,6 +1023,13 @@ func applyRevalidationItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, 
 // audite esta tabla puede leer la sentencia sola. Si alguna vez NO casara, el
 // ErrNoRows sale como error envuelto (⇒ 500) y no como un rechazo silencioso: sería
 // la rotura de un invariante, no una respuesta de negocio.
+//
+// ⚠️ LEGADO REGISTRADO (Ola 4.5, medido contra PG16): una solicitud pre-0054
+// (event_id NULL) pasa la guarda —sin padre declarado no hay evento vivo que
+// mirar— pero su UPDATE a `abandoned` revienta contra el CHECK NOT VALID de la
+// 0054, que valida también los UPDATE de filas viejas. Ese comportamiento queda
+// REGISTRADO, no se maquilla aquí: la decisión sobre el legado real (backfill,
+// trigger o validación solo en dominio) es de la ola que lo pague.
 func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error) {
 	if _, err := uuid.Parse(intakeID); err != nil {
 		return DiscardOutcome{}, ErrNotFound
@@ -1031,13 +1039,16 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
 	var out DiscardOutcome
 	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
-		var stored, sessionID, contactID string
+		var (
+			stored  string
+			eventID sql.NullString
+		)
 		err := tx.QueryRowContext(ctx, `
-			SELECT status, session_id, contact_id
+			SELECT status, event_id::text
 			FROM public.intakes
 			WHERE tenant_id = $1 AND id = $2
 			FOR UPDATE
-		`, tenantID, intakeID).Scan(&stored, &sessionID, &contactID)
+		`, tenantID, intakeID).Scan(&stored, &eventID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return ErrNotFound // no es del tenant o no existe: lo mismo (INV-8)
@@ -1050,12 +1061,12 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 			return nil
 		}
 
-		live, err := hasLiveCartTx(ctx, tx, tenantID, sessionID, contactID)
+		live, err := hasLiveEventTx(ctx, tx, eventID.String)
 		if err != nil {
 			return err
 		}
 		if live {
-			out.LiveCart = true
+			out.LiveEvent = true
 			return nil
 		}
 
@@ -1076,6 +1087,11 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
 			return err
 		}
+		// El descarte CIERRA SU CONTENEDOR (REQ-32e; D-043.15(1) re-expresada por
+		// D-043.21): el evento a cancelar es el que ESTA solicitud declara.
+		if err := cancelContainerTx(ctx, tx, eventID.String); err != nil {
+			return err
+		}
 		out.Discarded = true
 		return nil
 	})
@@ -1085,60 +1101,99 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 	return out, nil
 }
 
-// hasLiveCartTx dice si hay una conversación viva con carrito para
-// (tenant, sesión, contacto). Es la APROXIMACIÓN PROVISIONAL de "hay evento vivo"
-// del contrato de Store.Discard, y estas son sus tres verdades incómodas:
+// hasLiveEventTx pregunta lo que la guarda `live_event` siempre quiso preguntar
+// (DT-043.2 SALDADA, Ola 4.5 · T4.5.5(c)): «¿está `open` el evento que ESTA
+// solicitud declara?» — el criterio REAL, sobre `intakes.event_id` (D-043.21), en
+// vez de la aproximación por el `cart` del `flow_state` que vivió aquí desde el
+// Plan 041 (hasLiveCartTx, escrita cuando la tabla de eventos no existía).
 //
-//   - La FUENTE es interina. Lo que debería contestar esto es el evento
-//     conversacional del Plan 043 (public.conversation_events + flow_state.event_id),
-//     que hoy no existe en ninguna base. Cuando aterrice, ESTA función se sustituye;
-//     el contrato del puerto no cambia. Dueño de esa sustitución: 043 · T4.3.
-//   - Sobre-protege. Un contacto que empezó un carrito NUEVO en la misma sesión
-//     bloquea el descarte de una solicitud vieja y huérfana suya. Es el error que se
-//     elige: al otro lado hay una acción irreversible y sin papelera (D-041.22).
-//   - Los TIPOS NO CASAN y por eso se parsea antes de consultar: flow_state.tenant_id
-//     y .contact_id son UUID (0005_contacts.sql:88,90) mientras que los de intakes
-//     son TEXT (0011_orders.sql:41-42). Un valor que no es UUID no puede estar
-//     almacenado en esas columnas, así que "no parsea" ⇒ no hay fila ⇒ no hay
-//     conversación viva; no es una concesión, es lo que dice el esquema. Se parsea en
-//     Go en vez de castear la columna (`tenant_id::text = $1`) por dos motivos: el
-//     cast del parámetro deja usable la PK (tenant_id, session_id, contact_id), y
-//     comparar como texto fallaría ante un UUID escrito en mayúsculas.
+// Lo que la sustitución arregla, medido: (a) el pedido huérfano de un evento ya
+// `cancelled` (el callejón del journal 2026-08-10) YA NO rebota con `live_event` —
+// su evento no está `open` y el descarte procede; (b) un carrito NUEVO del mismo
+// contacto ya no frena el descarte de una solicitud vieja suya: solo importa el
+// evento de ESTA solicitud, no la conversación de la sesión.
 //
-// "Con carrito" se mira por la presencia de la clave `cart` en `vars` — la que
-// serializa el módulo (cart/state.go:90, `stateVarKey`). El literal se repite aquí
-// porque el cart importa este paquete (projection.go) y volver a importarlo sería un
-// ciclo; es la misma atadura que ya existe entre ReservedSKUPrefix y
-// cart.SystemSKUPrefix. `->> 'cart' IS NOT NULL` trata un `null` JSON como ausencia,
-// que es lo correcto: un carrito nulo no es una conversación viva.
-func hasLiveCartTx(ctx context.Context, tx *sql.Tx, tenantID, sessionID, contactID string) (bool, error) {
-	if !isUUID(tenantID) || !isUUID(contactID) {
+// eventID == "" es una solicitud LEGADA (pre-0054, sin padre declarado): no hay
+// evento vivo que mirar ⇒ descartable. No es una concesión: sin ligadura no existe
+// la conversación que la guarda protege.
+func hasLiveEventTx(ctx context.Context, tx *sql.Tx, eventID string) (bool, error) {
+	if eventID == "" {
 		return false, nil
 	}
-
 	var live bool
 	err := tx.QueryRowContext(ctx, `
-		SELECT true
-		FROM public.flow_state
-		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
-		  AND vars ->> 'cart' IS NOT NULL
-	`, tenantID, sessionID, contactID).Scan(&live)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("intakes: comprobar la conversación viva de la solicitud: %w", err)
+		SELECT EXISTS (
+			SELECT 1 FROM public.conversation_events e
+			WHERE e.id = $1 AND e.status = 'open'
+		)
+	`, eventID).Scan(&live)
+	if err != nil {
+		return false, fmt.Errorf("intakes: comprobar el evento vivo de la solicitud: %w", err)
 	}
 	return live, nil
 }
 
-// isUUID dice si el valor PODRÍA estar almacenado en una columna UUID. No es una
-// validación de entrada: es la pregunta que hay que hacerse antes de cruzar una
-// columna TEXT con una UUID, porque el parámetro se manda tal cual y Postgres
-// reventaría con "invalid input syntax for type uuid" en vez de no encontrar nada.
-func isUUID(s string) bool {
-	_, err := uuid.Parse(s)
-	return err == nil
+// cancelContainerTx cierra el CONTENEDOR de una solicitud descartada: transición
+// open→cancelled + closed_at sobre public.conversation_events (REQ-32e del Plan
+// 041; D-043.15(1) re-expresada por D-043.21 — el evento es `WHERE id = event_id
+// de la propia solicitud`, ya no `WHERE intake_id`, columna que murió en la 0054).
+//
+// VIVE AQUÍ, en el dominio de solicitudes y con SQL directo, a conciencia: es la
+// dirección contenido→contenedor del par de E-8 («evento y pedido son la misma
+// cosa»), y su disparador es el descarte del dueño — una puerta de ESTE dominio.
+// La dirección inversa (contenedor→contenido: cancelar el evento abandona su
+// solicitud) es del runtime vía AbandonByEvent. El SQL calca la semántica de
+// transitionSQL (flujos/events/store.go): compare-and-swap con `AND
+// status='open'`, sin transición de vuelta y sin pisar una muerte ya sellada.
+//
+// 0 filas NO es error (REQ-32e: «si no hay evento ligado, o ya está terminal, el
+// descarte sigue siendo éxito»). De hecho, con la guarda de hasLiveEventTx en la
+// MISMA transacción, un evento aún `open` frena el descarte antes de llegar aquí
+// (`live_event`); este UPDATE es la garantía EN EL SQL de que un descarte
+// consumado jamás deja detrás un contenedor rescatable (INV-17), estén como estén
+// la guarda o sus llamantes el día de mañana.
+func cancelContainerTx(ctx context.Context, tx *sql.Tx, eventID string) error {
+	if eventID == "" {
+		return nil // solicitud legada sin padre declarado: no hay contenedor que cerrar
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public.conversation_events
+		SET status = 'cancelled', closed_at = now()
+		WHERE id = $1 AND status = 'open'
+	`, eventID); err != nil {
+		return fmt.Errorf("intakes: cerrar el contenedor de la solicitud descartada: %w", err)
+	}
+	return nil
+}
+
+// AbandonByEvent implementa Store: deja en `abandoned` la solicitud `open` que
+// declara `eventID` como padre (D-043.21, T4.5.5(a)) — la dirección
+// contenedor→contenido de E-8, la que consume el runtime cuando el evento muere
+// cancelado. CAS en una sentencia: el `AND status='open'` es el guard (una
+// `confirmed` no se abandona por aquí) y 0 filas es ÉXITO IDEMPOTENTE — el
+// reintento de una cancelación a medias (repairCancelled) tiene que poder terminar
+// aunque el abandono ya esté hecho, o no haya solicitud que abandonar (un `menu`
+// no pare contenido). Lo sirve el índice único parcial intakes_event_id_uidx.
+//
+// La auditoría es la del patrón de abandono vigente (Service.Abandon →
+// UpdateStatus): updated_at se refresca y NO se escribe revisión — la revisión
+// `discarded` es exclusiva del descarte manual del dueño (REQ-32d distingue así
+// los dos `abandoned` del embudo).
+//
+// Un eventID que no parsea como UUID no puede estar en la columna: mismo destino
+// que 0 filas (nil), sin molestar a Postgres con un 22P02.
+func (p *Postgres) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
+	if !esUUID(eventID) {
+		return nil
+	}
+	if _, err := p.db.ExecContext(ctx, `
+		UPDATE public.intakes
+		SET status = $3, updated_at = now()
+		WHERE tenant_id = $1 AND event_id = $2 AND status = $4
+	`, tenantID, eventID, StatusAbandoned, StatusOpen); err != nil {
+		return fmt.Errorf("intakes: abandonar la solicitud del evento %s: %w", eventID, err)
+	}
+	return nil
 }
 
 // recomputeTotalTx recalcula el total de la cabecera como la SUMA de sus líneas y

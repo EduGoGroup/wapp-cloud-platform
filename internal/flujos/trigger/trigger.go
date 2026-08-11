@@ -43,7 +43,56 @@ const (
 	// (INV-5), no en el engine ni el runtime. Comparte tabla flow_triggers con los
 	// demás kinds (crecer por casos, no por código nuevo).
 	KindLLM Kind = "llm"
+	// KindEventStart arranca —o CONMUTA, que para el cliente es lo mismo— el evento
+	// conversacional del tipo que lleva en EventKind (Plan 043 · D-043.2). Es PAR de
+	// KindKeyword en la escalera de arranque reactivo y, a diferencia de él, se evalúa
+	// TAMBIÉN con conversación viva (ResolveLive): eso es justo lo que hace posible el
+	// salto por tipo. NO hay un kind aparte para «retomar» (derogado en D-043.2): con
+	// uno-vivo-por-tipo, «carrito» ya significa «ve al carrito», lo cree o lo conmute,
+	// y un kind gemelo solo obligaría al dueño a mantener sus palabras por duplicado.
+	KindEventStart Kind = "event_start"
+	// KindEventStop DESACTIVA el evento activo sin matarlo (Plan 043 · D-043.2): apaga
+	// el puntero flow_state.event_id y la fila sigue en status='open', rescatable. NO
+	// lleva EventKind: lo que corta es el activo, sea del tipo que sea.
+	KindEventStop Kind = "event_stop"
 )
+
+// Tipos de evento DE FÁBRICA (D-043.3, INV-07): el vocabulario cerrado que puede
+// llevar Rule.EventKind, el mismo de conversation_events.kind.
+const (
+	// EventKindMenu es el despachador de nivel superior: el menú es un evento más,
+	// sujeto a la misma regla de uno-vivo-por-tipo (D-043.3).
+	EventKindMenu = "menu"
+	// EventKindCart es el carrito sobre catálogo.
+	EventKindCart = "cart"
+	// EventKindSurvey es la encuesta.
+	EventKindSurvey = "survey"
+	// EventKindMedia es la entrega de media/PDF.
+	EventKindMedia = "media"
+)
+
+// FactoryEventKinds devuelve los tipos de evento de fábrica en orden estable. Es la
+// lista contra la que valida el CRUD y la que se le enseña al dueño en el error.
+//
+// Por qué el vocabulario se cierra AQUÍ y no en la base: flow_triggers.event_kind no
+// lleva CHECK a propósito (migración 0052) para que enchufar un módulo no cueste una
+// migración, y eso sigue intacto —ampliar esta lista tampoco cuesta una migración—.
+// Lo que la laxitud no compraba era nada: sin cierre, un `carrrito` mal escrito
+// entraba con un 200 y llegaba hasta una fila de conversation_events para parir un
+// evento que NINGÚN módulo atiende, sin error en ningún punto del camino.
+func FactoryEventKinds() []string {
+	return []string{EventKindMenu, EventKindCart, EventKindSurvey, EventKindMedia}
+}
+
+// IsFactoryEventKind reporta si k es uno de los tipos de evento de fábrica.
+func IsFactoryEventKind(k string) bool {
+	for _, f := range FactoryEventKinds() {
+		if k == f {
+			return true
+		}
+	}
+	return false
+}
 
 // Action es la decisión que toma el Resolver para un entrante sin conversación
 // viva. El valor cero (Ignore) es el default seguro (no-regresión, INV-6).
@@ -58,6 +107,13 @@ const (
 	Fallback
 	// Escape indica que el texto es una señal de escape (lo usa IsEscape, no Resolve).
 	Escape
+	// StartEvent arranca o CONMUTA el evento conversacional de tipo Decision.EventKind
+	// (Plan 043 · D-043.2/D-043.4). El salto es idempotente POR TIPO y quien lo ejecuta
+	// es el runtime: el resolver solo dice qué tipo pidió el cliente.
+	StartEvent
+	// StopEvent desactiva el evento activo sin matarlo (Plan 043 · D-043.2): el puntero
+	// se apaga, el status NO se toca.
+	StopEvent
 )
 
 // Rule es una regla de disparo PURA (fila de flow_triggers proyectada al dominio).
@@ -79,6 +135,12 @@ type Rule struct {
 	// En el desempate, una regla específica de sesión gana a la global cuando ambas
 	// casan. Retrocompatible: las reglas del 019 no traían SessionID ⇒ globales.
 	SessionID string
+	// EventKind es el TIPO de evento conversacional que pare este disparo (Plan 043 ·
+	// D-043.2): menu | cart | survey | media, el mismo vocabulario que
+	// conversation_events.kind. Obligatorio para kind='event_start' y vacío para
+	// TODOS los demás kinds (incluido event_stop, que corta el activo sea cual sea).
+	// Vacío ⇔ NULL en flow_triggers ⇒ las reglas de siempre siguen sin parir nada.
+	EventKind string
 }
 
 // Decision es el resultado de Resolve.
@@ -95,6 +157,10 @@ type Decision struct {
 	// IntentName es el nombre de la intención que casó (kind='llm'); vacío para
 	// keyword/fallback. El runtime lo siembra en Vars["intent_name"] junto a Params.
 	IntentName string
+	// EventKind es el TIPO de evento que el cliente pidió (Plan 043 · D-043.2); solo
+	// se puebla con Action=StartEvent. El runtime lo usa para arrancar o conmutar el
+	// evento; el resolver NO sabe si ese evento ya existe (eso es estado, no regla).
+	EventKind string
 }
 
 // IntentSignal es la intención resuelta por el clasificador local (ADR-0020) que
@@ -118,6 +184,15 @@ type IntentSignal struct {
 type Signal struct {
 	Text   string
 	Intent *IntentSignal
+	// ActiveEventKind es el TIPO del evento conversacional ACTIVO de la conversación
+	// (flow_state.event_id → conversation_events.kind) en el instante en que se
+	// interpreta la señal (Plan 043 · T5.3, D-043.9). "" ⇒ sin evento activo, que es
+	// el caso NORMAL en este camino (ver el comentario de buildSignal).
+	//
+	// Solo ACOTA la rama de intención: nunca la crea, nunca la amplía y jamás decide
+	// un arranque. La degradación que produce es la MISMA que la del umbral de
+	// confianza: la intención deja de casar y la señal sigue su camino por texto.
+	ActiveEventKind string
 }
 
 // Resolver es el puerto que consulta el runtime cuando llega un entrante SIN
@@ -143,6 +218,18 @@ type Resolver interface {
 	// sobre texto: una conversación viva la corta el usuario escribiendo, no el
 	// clasificador (design.md §4.c: con conversación viva el texto manda).
 	IsEscape(ctx context.Context, tenantID, sessionID, text string) (matched bool, message string, err error)
+	// ResolveLive decide qué hacer con un entrante que llega SOBRE UNA CONVERSACIÓN
+	// VIVA (Plan 043 · D-043.2). Es la EXCEPCIÓN ACOTADA de INV-02: con conversación
+	// viva el texto sigue mandando, y por eso solo se consultan los dos kinds que son
+	// texto EXACTO del tenant —event_start (salto por tipo) y event_stop (desactivar
+	// sin matar)—; keyword, fallback y llm NO se evalúan aquí, así que para todo lo
+	// demás INV-02 queda intacto y el turno es del módulo.
+	//
+	// Recibe texto crudo, no Signal: con conversación viva la intención del
+	// clasificador NO abre ni conmuta nada (design.md §4.c). Devuelve StartEvent (con
+	// EventKind poblado), StopEvent o Ignore; el orden de desempate es el MISMO que en
+	// Resolve (específica-de-sesión → priority desc → exact antes que contains).
+	ResolveLive(ctx context.Context, tenantID, sessionID, text string) (Decision, error)
 }
 
 // NoopResolver es el adapter por DEFAULT: nunca arranca nada y nunca es escape.
@@ -161,4 +248,10 @@ func (NoopResolver) Resolve(context.Context, string, string, Signal) (Decision, 
 // IsEscape siempre es false (sin mensaje).
 func (NoopResolver) IsEscape(context.Context, string, string, string) (bool, string, error) {
 	return false, "", nil
+}
+
+// ResolveLive siempre ignora: sin resolver real cableado, una conversación viva
+// nunca salta de tipo ni se desactiva por texto (no-regresión total, INV-6).
+func (NoopResolver) ResolveLive(context.Context, string, string, string) (Decision, error) {
+	return Decision{Action: Ignore}, nil
 }

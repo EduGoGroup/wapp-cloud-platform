@@ -87,11 +87,17 @@ func TestPersistSink_Integracion_EscribeFlowEvents(t *testing.T) {
 	sink := persistSinkWith(repo)
 
 	ctx := context.Background()
-	tenant := "tenant-persist-sink"
+	// Tenant real + evento padre (D-043.21, Ola 4.5): survey_results declara su
+	// event_id y el CHECK de la 0054 rechaza al huérfano; limpiaTenant deja el
+	// t.Cleanup que arrastra todo por CASCADE.
+	tenant := seedTenant(t, db)
+	limpiaTenant(t, db, tenant)
 	contact := "c-opaco-integ"
 	name := "survey_answer"
 	eff := modules.Effect{Kind: "persist", Name: name, Payload: map[string]any{"question_id": "q1", "answer_code": "a"}}
-	ec := runtime.EffectContext{TenantID: tenant, ContactID: contact, FlowID: "flujo-integ", FlowVersion: 1}
+	ec := runtime.EffectContext{TenantID: tenant, ContactID: contact, FlowID: "flujo-integ", FlowVersion: 1,
+		EventID: siembraEventoPadre(ctx, t, db, tenant, "t45r-sess-sa",
+			"cccccccc-0000-4000-8000-000000000004", "survey")}
 
 	if err := sink.Handle(ctx, ec, eff); err != nil {
 		t.Fatalf("Handle (postgres): %v", err)
@@ -121,11 +127,15 @@ func TestPersistSink_Integracion_EncuestaDosRespuestas(t *testing.T) {
 	sink := persistSinkWith(repo)
 
 	ctx := context.Background()
-	tenant := "tenant-t3-encuesta"
+	// Tenant real + evento padre: mismas razones que el test de arriba (D-043.21).
+	tenant := seedTenant(t, db)
+	limpiaTenant(t, db, tenant)
 	contact := "c-opaco-t3"
 	// flow_id único aísla este test de corridas previas en la BD compartida.
 	flowID := fmt.Sprintf("encuesta-t3-%d", time.Now().UnixNano())
-	ec := runtime.EffectContext{TenantID: tenant, ContactID: contact, FlowID: flowID, FlowVersion: 1}
+	ec := runtime.EffectContext{TenantID: tenant, ContactID: contact, FlowID: flowID, FlowVersion: 1,
+		EventID: siembraEventoPadre(ctx, t, db, tenant, "t45r-sess-t3",
+			"cccccccc-0000-4000-8000-000000000005", "survey")}
 
 	effs := []modules.Effect{
 		{Kind: "persist", Name: "survey_answer", Payload: map[string]any{"question_id": "q1", "answer_code": "si"}},

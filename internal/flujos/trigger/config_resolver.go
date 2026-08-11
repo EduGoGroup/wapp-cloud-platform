@@ -32,11 +32,18 @@ func NewConfigResolver(store Store) *ConfigResolver {
 //     → {Start, FlowID, Params, IntentName} (mismas reglas de session_id/priority/
 //     enabled que keyword). Los Params viajan a la decisión para que el runtime
 //     pre-cargue el flujo (T8).
-//  2. Si no hay intención o ninguna regla llm casa: keyword por sig.Text →
-//     {Start, FlowID} (colisión determinista: específica-de-sesión antes que
-//     global, priority desc, exact antes que contains, keyword asc).
+//  2. Si no hay intención o ninguna regla llm casa: event_start Y keyword por
+//     sig.Text, compitiendo EN EL MISMO PELDAÑO (Plan 043 · D-043.2: event_start es
+//     PAR de keyword, no un peldaño aparte) → {Start,FlowID} o
+//     {StartEvent,EventKind,FlowID} según el kind de la regla ganadora. La colisión
+//     entre ambos kinds la resuelve el desempate de siempre (específica-de-sesión
+//     antes que global, priority desc, exact antes que contains, keyword asc,
+//     trigger_id asc): el kind NO desempata, para que el dueño mande con priority.
 //  3. Si tampoco: fallback habilitado → {Fallback, FlowID} (mejor por el mismo orden).
 //  4. Si nada → {Ignore}.
+//
+// event_stop NO se evalúa aquí: sin conversación viva no hay evento activo que
+// desactivar. Su sitio es ResolveLive.
 func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string, sig Signal) (Decision, error) {
 	if sig.Intent != nil {
 		llm, err := c.store.ListByKind(ctx, tenantID, sessionID, KindLLM)
@@ -45,9 +52,22 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string
 		}
 		matches := make([]Rule, 0, len(llm))
 		for _, r := range llm {
-			if r.Enabled && matchIntent(r, sig.Intent.Name) {
-				matches = append(matches, r)
+			if !r.Enabled || !matchIntent(r, sig.Intent.Name) {
+				continue
 			}
+			// SCOPING POR EVENTO ACTIVO (Plan 043 · T5.3, D-043.9). Una regla llm
+			// ANOTADA con un event_kind distinto del activo NO casa: el intent cae a
+			// `desconocido` de facto —la señal sigue al peldaño de texto— igual que
+			// cuando el clasificador no supera el umbral.
+			//
+			// Las dos guardas de retrocompatibilidad son la mitad del contrato:
+			// sin evento activo (ActiveEventKind == "") no se acota NADA, y una regla
+			// SIN anotar (EventKind == "") sigue casando siempre. Un tenant del Plan
+			// 029 se comporta byte a byte como antes.
+			if sig.ActiveEventKind != "" && r.EventKind != "" && r.EventKind != sig.ActiveEventKind {
+				continue
+			}
+			matches = append(matches, r)
 		}
 		if len(matches) > 0 {
 			sortByPriority(matches)
@@ -60,19 +80,12 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string
 		}
 	}
 
-	keywords, err := c.store.ListByKind(ctx, tenantID, sessionID, KindKeyword)
+	matches, err := c.matching(ctx, tenantID, sessionID, sig.Text, KindEventStart, KindKeyword)
 	if err != nil {
 		return Decision{}, err
 	}
-	matches := make([]Rule, 0, len(keywords))
-	for _, r := range keywords {
-		if r.Enabled && match(r, sig.Text) {
-			matches = append(matches, r)
-		}
-	}
 	if len(matches) > 0 {
-		sortByPriority(matches)
-		return Decision{Action: Start, FlowID: matches[0].FlowID}, nil
+		return decisionFor(matches[0]), nil
 	}
 
 	fallbacks, err := c.store.ListByKind(ctx, tenantID, sessionID, KindFallback)
@@ -84,6 +97,86 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string
 		return Decision{Action: Fallback, FlowID: best.FlowID}, nil
 	}
 	return Decision{Action: Ignore}, nil
+}
+
+// ResolveLive decide qué hacer con un entrante que llega SOBRE UNA CONVERSACIÓN VIVA
+// (Plan 043 · D-043.2). Es la EXCEPCIÓN ACOTADA de INV-02: solo se consultan los dos
+// kinds que son texto EXACTO configurado por el tenant —event_start (salto por tipo) y
+// event_stop (desactivar sin matar)—; keyword, fallback y llm NO se evalúan, de modo
+// que para todo lo demás el texto sigue siendo del módulo y INV-02 queda intacto.
+//
+// El desempate es el MISMO que en Resolve (matching → sortByPriority), así que un
+// event_start y un event_stop que casaran a la vez se resuelven por priority, no por
+// el orden en que se consultaron. Sin coincidencia → {Ignore}: el turno sigue siendo
+// del módulo, exactamente como antes de este plan (INV-6).
+func (c *ConfigResolver) ResolveLive(ctx context.Context, tenantID, sessionID, text string) (Decision, error) {
+	// El interruptor de APAGADO se pregunta PRIMERO, y esto no es una preferencia de
+	// orden: es un arreglo. Con la configuración natural del dueño —event_start
+	// «carrito» por contains para entrar y event_stop «salir del carrito» por contains
+	// para salir— el texto «salir del carrito» casa las DOS reglas, y con la priority
+	// por defecto el desempate por keyword las ordena justo al revés de lo pedido
+	// («carrito» < «salir del carrito»): ganaba el arranque y el cliente acababa
+	// DENTRO del carrito del que quería salir.
+	//
+	// La alternativa —documentarlo y pedirle al dueño que suba la priority del stop—
+	// se descartó: la configuración que cualquiera escribiría produce el
+	// comportamiento contrario al pedido y el dueño no tiene forma de sospecharlo. La
+	// precedencia vive en el código, no en la disciplina del usuario.
+	//
+	// Dentro de CADA kind sigue mandando el desempate de siempre (sortByPriority).
+	stops, err := c.matching(ctx, tenantID, sessionID, text, KindEventStop)
+	if err != nil {
+		return Decision{}, err
+	}
+	if len(stops) > 0 {
+		return decisionFor(stops[0]), nil
+	}
+	starts, err := c.matching(ctx, tenantID, sessionID, text, KindEventStart)
+	if err != nil {
+		return Decision{}, err
+	}
+	if len(starts) == 0 {
+		return Decision{Action: Ignore}, nil
+	}
+	return decisionFor(starts[0]), nil
+}
+
+// matching devuelve las reglas HABILITADAS de los kinds dados que casan el texto, YA
+// ordenadas por el desempate maestro (sortByPriority). Reunir varios kinds en una sola
+// lista es lo que permite que event_start y keyword compitan en el mismo peldaño sin
+// que el orden de consulta decida nada.
+func (c *ConfigResolver) matching(ctx context.Context, tenantID, sessionID, text string, kinds ...Kind) ([]Rule, error) {
+	out := make([]Rule, 0, len(kinds))
+	for _, k := range kinds {
+		rules, err := c.store.ListByKind(ctx, tenantID, sessionID, k)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rules {
+			if r.Enabled && match(r, text) {
+				out = append(out, r)
+			}
+		}
+	}
+	sortByPriority(out)
+	return out, nil
+}
+
+// decisionFor proyecta la regla GANADORA a su Decision según el kind (INV-5: el switch
+// de interpretación vive aquí, no en el runtime). event_start lleva el EventKind —el
+// tipo que el cliente pidió— y arrastra el FlowID si la regla lo trae: para menu no
+// hay flujo que arrancar (el despachador es un componente del runtime, D-043.3), y
+// para cart/survey el dueño puede apuntar al suyo. Cualquier otro kind conserva la
+// semántica histórica {Start, FlowID}.
+func decisionFor(r Rule) Decision {
+	switch r.Kind {
+	case KindEventStart:
+		return Decision{Action: StartEvent, FlowID: r.FlowID, EventKind: r.EventKind}
+	case KindEventStop:
+		return Decision{Action: StopEvent}
+	default:
+		return Decision{Action: Start, FlowID: r.FlowID}
+	}
 }
 
 // IsEscape indica si el texto casa alguna regla kind=escape habilitada del tenant
@@ -123,8 +216,14 @@ func moreSpecific(a, b Rule) bool {
 
 // sortByPriority ordena las reglas que casan de forma determinista:
 // específica-de-sesión antes que global → priority desc → exact antes que contains
-// → keyword asc (orden estable final). La especificidad de sesión es el criterio
-// MAESTRO: una regla de sesión gana a una global aunque tenga menor priority.
+// → keyword asc → trigger_id asc. La especificidad de sesión es el criterio MAESTRO:
+// una regla de sesión gana a una global aunque tenga menor priority.
+//
+// El trigger_id final cierra el orden TOTAL (Plan 043 · T2.1). Antes bastaba el orden
+// estable porque cada llamada ordenaba reglas de UN kind y el store ya las entregaba
+// por trigger_id; desde que event_start y keyword compiten en el mismo peldaño, la
+// lista viene de dos consultas y el empate exacto quedaría a merced del orden de
+// concatenación. El kind NO desempata a propósito: quien manda es la priority del dueño.
 func sortByPriority(rules []Rule) {
 	sort.SliceStable(rules, func(i, j int) bool {
 		a, b := rules[i], rules[j]
@@ -137,7 +236,10 @@ func sortByPriority(rules []Rule) {
 		if a.MatchType != b.MatchType {
 			return a.MatchType == MatchExact // exact gana el empate
 		}
-		return a.Keyword < b.Keyword
+		if a.Keyword != b.Keyword {
+			return a.Keyword < b.Keyword
+		}
+		return a.TriggerID < b.TriggerID
 	})
 }
 

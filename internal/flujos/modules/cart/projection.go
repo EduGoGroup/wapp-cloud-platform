@@ -3,12 +3,14 @@ package cart
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // Estados del ciclo de vida de una solicitud (public.intakes). Viven aquí porque la
@@ -30,6 +32,7 @@ const (
 type ProjectionStore interface {
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
+	ReplaceIntakeItems(ctx context.Context, intakeID string, items []store.IntakeItem) error
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
 	CloseIntake(ctx context.Context, in store.IntakeClose) (string, error)
 }
@@ -107,9 +110,16 @@ func NewProjector(s ProjectionStore, revisions RevisionWriter, shipping Shipping
 // buyer_data_captured es el caso INVERSO y el único: se proyecta precisamente
 // porque NO queda en flow_events (Kind modules.KindPrivate). Si este proyector no
 // lo reconociera, el dato del cliente no se guardaría en ningún sitio.
+// note_added es el segundo caso que se proyecta sin ser un cambio de estado de la
+// solicitud, y por la misma razón que item_added: es el OTRO efecto que mueve las
+// líneas del carrito —les pone la indicación del cliente, y parte una línea ×N en
+// ×(N-1)+×1 (D-041.20)—. Si no se proyectara, intake_items se quedaría con el
+// conjunto anterior hasta el cierre y la promesa de esta tarea («al día en todo
+// momento») sería falsa justo en el pedido que alguien personalizó.
 func (Projector) Handles(name string) bool {
 	switch name {
-	case EffectItemAdded, EffectCartClosed, EffectCartCancelled, EffectCartExpired, EffectBuyerDataCaptured:
+	case EffectItemAdded, EffectNoteAdded, EffectCartClosed, EffectCartCancelled,
+		EffectCartExpired, EffectBuyerDataCaptured:
 		return true
 	default:
 		return false
@@ -120,8 +130,8 @@ func (Projector) Handles(name string) bool {
 // cuyo Handles devolvió true.
 func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
 	switch eff.Name {
-	case EffectItemAdded:
-		return p.ensureOpenIntake(ctx, meta)
+	case EffectItemAdded, EffectNoteAdded:
+		return p.projectOpenLines(ctx, meta, eff)
 	case EffectCartClosed:
 		return p.closeIntake(ctx, meta, eff)
 	case EffectCartCancelled:
@@ -148,21 +158,103 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 // en la tabla) y la fila que ya existía se reescribe con el valor que tuviera —las
 // históricas conservan el suyo tal cual, que es justo lo que promete el COMMENT de
 // la columna.
-func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) error {
+// La solicitud DECLARA A SU PADRE al nacer (D-043.21, T4.5.3): event_id =
+// meta.EventID, el dato que este método ya tenía en la mano y descartaba. Tres
+// reglas, en orden:
+//
+//   - Al CREAR, la fila nace con el event_id de la meta. Si la meta llega VACÍA
+//     (efecto fuera de evento — no debería pasar en cart), NO se inventa nada: va
+//     NULL, se loguea, y el CHECK de la 0054 hace su trabajo en la base.
+//   - Al REUSAR una "open" con event_id NULL (legado pre-0054), se ESTAMPA: es la
+//     única reparación legítima de un huérfano — el evento vivo del turno es, por
+//     E-2 (uno vivo por tipo), el mismo del que esa solicitud colgaba.
+//   - Al REUSAR una que YA declara OTRO evento, NO se pisa: se loguea y se sigue.
+//     No debería pasar (un vivo por tipo + índice único parcial), así que si se ve
+//     en un log es una carrera o un dato roto que hay que mirar, no maquillar. El
+//     COALESCE del UpsertIntake garantiza además EN EL SQL que ninguna escritura
+//     des-declara un padre.
+func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMeta) (string, error) {
 	existing, found, err := p.store.GetOpenIntake(ctx, meta.TenantID, meta.ContactID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if found {
-		return p.store.UpsertIntake(ctx, existing)
+		switch {
+		case existing.EventID == "" && meta.EventID != "":
+			existing.EventID = meta.EventID
+		case meta.EventID != "" && existing.EventID != meta.EventID:
+			slog.Warn("cart: la solicitud abierta ya declara OTRO evento; no se pisa (D-043.21)",
+				"intake_id", existing.ID, "event_id_solicitud", existing.EventID, "event_id_meta", meta.EventID)
+		}
+		return existing.ID, p.store.UpsertIntake(ctx, existing)
 	}
-	return p.store.UpsertIntake(ctx, store.Intake{
+	if meta.EventID == "" {
+		slog.Warn("cart: item_added sin evento en la meta; la solicitud nace sin padre y el CHECK de la 0054 decidirá",
+			"tenant_id", meta.TenantID, "session_id", meta.SessionID)
+	}
+	intake := store.Intake{
 		ID:        uuid.NewString(),
 		TenantID:  meta.TenantID,
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Status:    intakeStatusOpen,
-	})
+		EventID:   meta.EventID,
+	}
+	if err := p.store.UpsertIntake(ctx, intake); err != nil {
+		if postgres.IsUniqueViolation(err) {
+			// Defensa en profundidad del hallazgo #24 (Plan 043 · Ola 6): con el cierre
+			// natural del carrito arreglado (cart.go, Step) este choque YA NO DEBERÍA
+			// ocurrir —un evento cerrado no vuelve a reusarse—, pero un INSERT que
+			// choca contra el único parcial `intakes_event_id_uidx` (migración 0054,
+			// "un evento tiene A LO SUMO un contenido durable, para siempre") es
+			// exactamente el síntoma medido del pedido que se pierde en silencio: el
+			// dispatcher del runtime es best-effort A PROPÓSITO (Runtime.dispatch) y
+			// esto NO lo cambia —el error sigue subiendo para que ese log genérico
+			// también salga—, pero SIN este log específico el único rastro sería
+			// "sink de efecto falló" sin tenant/contacto/evento, insuficiente para
+			// diagnosticar CUÁL pedido se perdió. No se reintenta ni se resuelve aquí
+			// (ver hallazgo #24, salida (b), DECISIÓN ABIERTA para Jhoan): solo se hace
+			// RUIDOSO.
+			slog.Error("cart: el evento ya tenía un intake (intakes_event_id_uidx); el pedido de este turno NO se pudo guardar (hallazgo #24)",
+				"tenant_id", meta.TenantID, "contact_id", meta.ContactID, "session_id", meta.SessionID,
+				"event_id", meta.EventID, "intake_id_intentado", intake.ID, "error", err)
+		}
+		return "", err
+	}
+	return intake.ID, nil
+}
+
+// projectOpenLines asegura la solicitud "open" y deja sus intake_items IGUALES a la
+// foto del carrito que trae el efecto (Plan 043 · Ola 3). Es lo que cierra el hueco
+// que destapó REQ-26b: hasta ahora una solicitud "open" no tenía NINGUNA línea —se
+// materializaban solo al cerrar—, de modo que rescatarla, o mostrarla en el CRM,
+// prometía unas líneas que no existían.
+//
+// Por qué REEMPLAZAR y no ir añadiendo la línea que el efecto publica:
+//
+//   - IDEMPOTENCIA. El mismo efecto reentregado escribe el mismo conjunto, así que
+//     no duplica ni pierde nada. Añadiendo no habría forma de conseguirlo: dos
+//     item_added del MISMO artículo son dos líneas legítimas del pedido (se agrega
+//     dos veces, con indicaciones distintas), así que no existe clave natural con la
+//     que reconocer un reenvío.
+//   - FIDELIDAD. El carrito cambia sus líneas por más sitios que el "agregar": la
+//     indicación de una línea y el split de D-041.20 las reescriben. Con la foto, la
+//     tabla dice lo que dice el carrito; acumulando, diría solo lo que se agregó.
+//
+// SIN foto en el payload no se toca ninguna línea, y eso NO es lo mismo que una foto
+// vacía: es un flow_event HISTÓRICO reejecutado (los hay, y el proyector los soporta
+// a propósito, ver EffectCartExpired). Un efecto viejo no sabe qué había en el
+// carrito, así que borrarle las líneas al pedido sería inventarse que estaba vacío.
+func (p *Projector) projectOpenLines(ctx context.Context, meta modules.EffectMeta, eff modules.Effect) error {
+	intakeID, err := p.ensureOpenIntake(ctx, meta)
+	if err != nil {
+		return err
+	}
+	items, ok := cartLineSnapshot(eff.Payload)
+	if !ok {
+		return nil
+	}
+	return p.store.ReplaceIntakeItems(ctx, intakeID, items)
 }
 
 // closeIntake proyecta cart_closed: cierra ATÓMICAMENTE la solicitud abierta (o crea una
@@ -188,6 +280,10 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 		ContactID: meta.ContactID,
 		SessionID: meta.SessionID,
 		Total:     total,
+		// El cierre también declara al padre (D-043.21): en el camino normal solo
+		// rellena un NULL legado (el open ya lo estampó ensureOpenIntake), y en la
+		// rama que crea la "closed" coherente es el event_id de esa fila nueva.
+		EventID: meta.EventID,
 		// La indicación del pedido (D-041.19) viaja en la cabecera del efecto y su
 		// AUSENCIA da la cadena vacía, igual que la personalización de cada línea: un
 		// cierre emitido antes de que el campo existiera —o por un carrito sin
@@ -300,7 +396,7 @@ func (p *Projector) transitionOpenIntake(ctx context.Context, meta modules.Effec
 // omiten sin panica. El IntakeID lo fija store.CloseIntake.
 func cartItems(payload map[string]any) []store.IntakeItem {
 	var out []store.IntakeItem
-	switch items := payload["items"].(type) {
+	switch items := payload[snapshotKey].(type) {
 	case []map[string]any:
 		for _, m := range items {
 			out = append(out, intakeItemFromMap(m))
@@ -313,6 +409,19 @@ func cartItems(payload map[string]any) []store.IntakeItem {
 		}
 	}
 	return out
+}
+
+// cartLineSnapshot devuelve las líneas de la foto del carrito y si el efecto TRAÍA
+// foto. Los dos casos son distintos y confundirlos borra pedidos: una foto vacía
+// dice «el carrito no tiene líneas», y la AUSENCIA de foto dice «este efecto no sabe
+// qué líneas hay» —un flow_event escrito antes de que la foto existiera, reejecutado
+// hoy—. Por eso la presencia se mira sobre la CLAVE y no sobre el resultado de
+// cartItems, que devuelve nil para las dos.
+func cartLineSnapshot(payload map[string]any) ([]store.IntakeItem, bool) {
+	if _, ok := payload[snapshotKey]; !ok {
+		return nil, false
+	}
+	return cartItems(payload), true
 }
 
 // intakeItemFromMap traduce UNA línea del payload del cierre a la fila que se

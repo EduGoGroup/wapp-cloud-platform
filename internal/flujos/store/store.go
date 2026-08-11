@@ -85,6 +85,31 @@ type SurveyResultStore interface {
 	// un no-op. answer_code NO se cifra: es un código de opción agregable, no PII
 	// (la identidad la protege el contact_id opaco, ADR-0010).
 	InsertResults(ctx context.Context, rows []SurveyResult) error
+	// ListResults devuelve las respuestas que este contacto ya dio en este flujo,
+	// EN ORDEN CRONOLÓGICO (created_at, id), acotadas al tenant (INV-8). Sin
+	// respuestas devuelve la lista vacía SIN error.
+	//
+	// Existe para el RESUMEN del rescate (Plan 043 · Ola 3): el estado vivo de la
+	// encuesta —vars["answers"]— se borra al conmutar de evento, así que sin esta
+	// lectura un rescate enseñaría siempre CERO respuestas. La fuente durable ya
+	// estaba escrita respuesta a respuesta por el efecto survey_answer; lo único
+	// que faltaba era leerla.
+	//
+	// DOS TRAMPAS DE ESTA TABLA, y ninguna la puede arreglar esta función:
+	//
+	//   - NO HAY SESIÓN. survey_results no tiene session_id (migración 0008), así
+	//     que dos sesiones del mismo tenant y contacto comparten resultados. Es la
+	//     misma asimetría que ya tiene GetOpenIntake, resuelto por (tenant,
+	//     contacto) sin sesión, mientras el evento es por (tenant, sesión,
+	//     contacto).
+	//   - NO HAY IDENTIDAD DE PASADA. Tampoco hay columna que diga QUÉ recorrido
+	//     produjo la fila: quien respondió la misma encuesta el mes pasado y vuelve
+	//     hoy trae las dos tandas mezcladas. Por eso el orden es cronológico y
+	//     FlowVersion viaja en cada fila: quien resuma decide la política (lo
+	//     normal es quedarse con la ÚLTIMA respuesta de cada question_id). Elegirla
+	//     aquí sería imponérsela a todos los lectores futuros con una columna que
+	//     no existe.
+	ListResults(ctx context.Context, tenantID, contactID, flowID string) ([]SurveyResult, error)
 }
 
 // FlowEventStore materializa el outbox append-only de efectos (Plan 015 · T2).
@@ -111,6 +136,29 @@ type IntakeReader interface {
 	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
 	// reanudar y para evaluar el TTL (design.md §4.3).
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (intake Intake, found bool, err error)
+	// ListIntakeItems devuelve las líneas de una solicitud EN EL ORDEN EN QUE LAS VE
+	// EL CLIENTE (added_at, id: el orden en que las armó el carrito). Sin líneas
+	// devuelve la lista vacía SIN error; un intakeID que no sea un UUID es un ERROR
+	// —no una solicitud sin líneas—, para que el hueco típico («no comprobé el found
+	// de GetOpenIntake y pasé la cadena vacía») se vea en vez de disfrazarse de
+	// pedido vacío.
+	//
+	// Es la lectura que faltaba para el RESUMEN del rescate (Plan 043 · Ola 3): desde
+	// esta ola las líneas de una solicitud "open" están al día en intake_items, pero
+	// ningún puerto sabía leerlas.
+	//
+	// NO ACOTA POR TENANT, y por eso el intakeID tiene que venir de una lectura que
+	// SÍ lo haga (GetOpenIntake). Misma frontera que intakes.itemsOf, que lee las
+	// líneas después de que su llamante haya resuelto y bloqueado la cabecera.
+	//
+	// ⚠️ Hereda la asimetría de quien resuelve ese id: GetOpenIntake busca por
+	// (tenant, contacto) SIN sesión y se queda con la más reciente
+	// (repository_postgres.go, ORDER BY created_at DESC LIMIT 1), mientras que un
+	// evento conversacional es por (tenant, SESIÓN, contacto). Dos sesiones del mismo
+	// tenant hablando con el mismo contacto pueden acabar leyendo las líneas del
+	// pedido de la otra. Se documenta y NO se corrige aquí: el filtro vive en la
+	// costura del evento, no en esta lectura.
+	ListIntakeItems(ctx context.Context, intakeID string) ([]IntakeItem, error)
 }
 
 // IntakeWriter escribe/transiciona solicitudes del carrito (proyección del PersistSink).
@@ -121,23 +169,44 @@ type IntakeWriter interface {
 	// entrante. Las transiciones de estado posteriores van por MarkIntakeStatus.
 	// CERO PII: o.ContactID es la identidad OPACA (ADR-0010).
 	UpsertIntake(ctx context.Context, o Intake) error
-	// InsertIntakeItems persiste (en lote) las líneas de una solicitud en
-	// public.intake_items (Plan 016 · T0/T2). len(items)==0 es un no-op. added_at
-	// usa el DEFAULT now() de la tabla. sku/label son códigos de negocio, NO PII.
-	InsertIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error
+	// ReplaceIntakeItems deja las líneas de CLIENTE de la solicitud EXACTAMENTE en
+	// `items`: retira las que hubiera y escribe éstas, en un solo acto. added_at usa
+	// el DEFAULT now() de la tabla. sku/label son códigos de negocio, NO PII.
+	//
+	// Es un REEMPLAZO y no un INSERT, y ahí está la tarea entera (Plan 043 · Ola 3):
+	// desde que el carrito proyecta sus líneas en cada item_added —para que una
+	// solicitud "open" tenga las suyas al día y no solo al cerrar—, la MISMA solicitud
+	// recibe varias escrituras del mismo conjunto. Con un INSERT, cada una las
+	// duplicaría; con un reemplazo, escribir dos veces lo mismo deja lo mismo. Por eso
+	// aquí ya no hay ningún escritor que añada líneas sin quitar las anteriores: la
+	// puerta que duplicaba no existe.
+	//
+	// len(items)==0 BORRA las líneas de cliente: es la foto de un carrito vacío, no un
+	// no-op. Quien no tenga foto que escribir no debe llamar (ver cart.Projector).
+	//
+	// Las líneas de LA PLATAFORMA (prefijo reservado: hoy la de envío, D-041.11)
+	// sobreviven intactas, igual que en intakes.replaceClientItemsTx: el carrito
+	// escribe lo que armó el cliente y no puede tirar lo que puso wApp encima.
+	ReplaceIntakeItems(ctx context.Context, intakeID string, items []IntakeItem) error
 	// MarkIntakeStatus transiciona el estado de una solicitud (por ID) y fija su total,
 	// actualizando updated_at (Plan 016 · T2/T3). status es "closed" | "cancelled"
 	// | "expired". Reprocesar el mismo entrante no cambia la semántica (idempotente
 	// por el last_wa_message_id del runtime).
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
 	// CloseIntake cierra ATÓMICAMENTE (una sola transacción) la solicitud "open" del
-	// contacto —o crea una "closed" coherente si no la hubiera— fijando su total e
-	// insertando TODAS sus líneas (Plan 027 · Ola 1 · T4, cierra H4). Garantiza la
-	// invariante "una solicitud closed SIEMPRE tiene sus líneas": nunca deja una solicitud
-	// cerrada sin líneas por un fallo entre dos escrituras (antes eran MarkIntakeStatus
-	// + InsertIntakeItems sueltos, sin transacción). El PostgresRepository bloquea la
-	// solicitud abierta con FOR UPDATE para serializar cierres concurrentes del mismo
-	// contacto y reintenta ante deadlock/serialización (postgres.WithTx).
+	// contacto —o crea una "closed" coherente si no la hubiera— fijando su total y
+	// dejando sus líneas EXACTAMENTE en in.Items (Plan 027 · Ola 1 · T4, cierra H4).
+	// Garantiza la invariante "una solicitud closed SIEMPRE tiene sus líneas": nunca
+	// deja una solicitud cerrada sin líneas por un fallo entre dos escrituras (antes
+	// eran MarkIntakeStatus + un INSERT suelto, sin transacción). El PostgresRepository
+	// bloquea la solicitud abierta con FOR UPDATE para serializar cierres concurrentes
+	// del mismo contacto y reintenta ante deadlock/serialización (postgres.WithTx).
+	//
+	// Las líneas se REEMPLAZAN, no se insertan (misma semántica que
+	// ReplaceIntakeItems), y es lo que impide que el cierre DUPLIQUE lo que la
+	// proyección de item_added ya materializó mientras la solicitud estaba abierta. El
+	// conjunto del cierre es la verdad final —trae las personalizaciones y los splits
+	// que el carrito hizo después del último item_added— y sustituye lo que hubiera.
 	//
 	// Devuelve el ID de la solicitud cerrada: quien cierra necesita saber sobre
 	// qué cerró para poder colgarle la revisión 1 del ciclo extendido (ADR-0031
@@ -156,8 +225,9 @@ type IntakeStore interface {
 type TenantSettingsReader interface {
 	// GetTenantSettings devuelve la config del carrito para tenantID desde
 	// public.tenant_settings (Plan 016 · T0). Si el tenant NO tiene fila, devuelve
-	// los DEFAULTS (PageSize=5, OrderTTL=3600s) SIN error: el carrito funciona sin
-	// configurar nada (design.md §9.E/§9.G).
+	// DefaultTenantSettings(tenantID) SIN error: el carrito funciona sin configurar
+	// nada (design.md §9.E/§9.G). Si SÍ tiene fila, devuelve lo que diga la fila sin
+	// sustituir ceros por defaults (un 0 puede ser un override explícito, no un hueco).
 	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
 
@@ -294,6 +364,25 @@ type SurveyResult struct {
 	FlowVersion int
 	QuestionID  string
 	AnswerCode  string
+	// EventID es el evento conversacional (conversation_events.id) durante el que
+	// se respondió (D-043.21: el hijo declara a su padre; migración 0054). Lo
+	// escribe el proyector del módulo survey con el EventID de la EffectMeta. Es
+	// TRAZABILIDAD, no «contenido que puede morir» (D-043.18): la encuesta NO entra
+	// en la vista event_content. Cadena vacía ⇒ NULL en la tabla — solo legítimo en
+	// filas legadas pre-0054; para una fila NUEVA el CHECK
+	// survey_results_event_id_required_chk la rechaza.
+	EventID string
+	// CreatedAt lo pone el DEFAULT now() de la tabla y solo lo rellena la LECTURA
+	// (ListResults); InsertResults ni lo mira, igual que IntakeItem.AddedAt.
+	//
+	// Se lee porque hasta la 0054 era lo ÚNICO que permitía acotar «las respuestas
+	// de ESTA pasada»: survey_results no tenía session_id ni event_id, así que
+	// quien resumía una encuesta rescatada solo podía separar la tanda de hoy de la
+	// del mes pasado usando la fecha del evento como cota inferior
+	// (runtime/summary_sources.go). Con EventID esa correlación por timestamp queda
+	// como FALLBACK del legado (filas con event_id NULL); la vía por event_id es la
+	// preferida (D-043.21).
+	CreatedAt time.Time
 }
 
 // FlowEvent es un efecto del motor de flujos listo para persistir en el outbox
@@ -327,6 +416,16 @@ type Intake struct {
 	SessionID string
 	Status    string // "open" | "closed" | "cancelled" | "expired"
 	Total     float64
+	// EventID es el evento conversacional (conversation_events.id) del que nació la
+	// solicitud (D-043.21: el hijo declara a su padre; migración 0054). Lo escribe
+	// el proyector del cart al CREAR la fila (ensureOpenIntake, con el EventID de
+	// la EffectMeta) y NUNCA se pisa uno ya escrito: el upsert lo protege con
+	// COALESCE (un evento tiene a lo sumo un contenido durable, índice único
+	// parcial intakes_event_id_uidx — E-8). Cadena vacía ⇒ NULL — solo legítimo en
+	// filas legadas pre-0054; una fila NUEVA sin él revienta contra el CHECK
+	// intakes_event_id_required_chk, que es exactamente lo que D-043.21 quiere: el
+	// huérfano imposible por construcción, no improbable.
+	EventID   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt time.Time // HISTÓRICA (T4.7): ya no se escribe ni se obedece; zero en lo nuevo
@@ -376,7 +475,14 @@ type IntakeClose struct {
 	SessionID    string
 	Total        float64
 	CustomerNote string
-	Items        []IntakeItem
+	// EventID es el evento conversacional del cierre (D-043.21), el mismo que viaja
+	// en la EffectMeta de cart_closed. En el camino normal la solicitud abierta YA
+	// lo declara (lo estampó ensureOpenIntake) y aquí solo rellena un NULL legado
+	// (COALESCE, nunca pisa); en la rama sin solicitud abierta —cierre que crea la
+	// fila "closed" coherente— es el dato con el que esa fila nueva declara a su
+	// padre, sin el cual el INSERT revienta contra el CHECK de la 0054.
+	EventID string
+	Items   []IntakeItem
 }
 
 // TenantSettings es la config del carrito por-tenant (public.tenant_settings,
@@ -407,6 +513,48 @@ type TenantSettings struct {
 	// cliente responde es PII y no pasa por este struct ni por Vars: viaja en un
 	// efecto privado y acaba CIFRADO en intake_buyer_data (T4.5).
 	BuyerFields []BuyerField
+	// EventInactivityTTL es EL reloj de conversación, en singular (ADR-0029 E-6 /
+	// D-043.7, migración 0052 · event_inactivity_ttl_seconds): el silencio tolerado
+	// entre interacciones de un evento. Se mide desde conversation_events.last_activity_at
+	// y se REFRESCA en cada interacción, así que una conversación activa nunca vence.
+	//
+	// 0 ⇒ SIN VENCIMIENTO, y es un override EXPLÍCITO de la empresa, no un "no
+	// configurado": la columna es NOT NULL DEFAULT 7200, de modo que un tenant que no
+	// tocó nada trae 2 h y solo llega un 0 aquí si alguien lo escribió. Confundir los
+	// dos casos es el error caro de este campo (ver GetTenantSettings).
+	//
+	// No sustituye a ConversationTTL ni se colapsa con él (ADR-0029 E-9.2): aquel es
+	// recolección de basura del flow_state y solo se evalúa cuando NO hay evento activo.
+	EventInactivityTTL time.Duration
+	// EventHistoryTTL es RETENCIÓN DE DATOS, no un reloj de conversación (D-043.13,
+	// migración 0052 · event_history_ttl_seconds): cuánto tiempo se tiene derecho a
+	// guardar el texto del hilo (conversation_event_messages) antes de que la poda
+	// perezosa lo vacíe. Vencer no interrumpe ninguna conversación.
+	//
+	// 0 ⇒ sin poda. Es un default TÉCNICO y retrocompatible, NO una decisión de
+	// retención: el valor de negocio lo fija el Plan 046 (MD-043.6).
+	EventHistoryTTL time.Duration
+}
+
+// DefaultTenantSettings es la config que vale para un tenant SIN fila en
+// public.tenant_settings. Espeja los DEFAULT de las columnas (migraciones 0013,
+// 0034, 0045 y 0052) y es la ÚNICA definición de ese juego de valores: la usan
+// tanto PostgresRepository como MemoryRepository, para que los dos no puedan
+// divergir en silencio como divergirían dos literales copiados.
+//
+// «Sin fila» es lo único que esto responde. Un tenant CON fila devuelve lo que diga
+// la fila, aunque coincida con el cero de Go: ahí no se aplica nada de esto.
+func DefaultTenantSettings(tenantID string) TenantSettings {
+	return TenantSettings{
+		TenantID: tenantID,
+		PageSize: DefaultPageSize,
+		OrderTTL: DefaultOrderTTL,
+		// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila nunca
+		// vencen su conversación, no-regresión). BuyerFields nil ⇒ el carrito no
+		// pregunta nada, que es el comportamiento previo a T4.5.
+		EventInactivityTTL: DefaultEventInactivityTTL,
+		EventHistoryTTL:    DefaultEventHistoryTTL,
+	}
 }
 
 // BuyerField es UN campo del checklist del comprador (D-041.13, ADR-0031 §5).
@@ -443,6 +591,16 @@ const (
 	// migración 0013. DEROGADO como causa de muerte (D-041.16): es el valor que se
 	// devuelve cuando el tenant no tiene fila, no un plazo que alguien aplique.
 	DefaultOrderTTL = time.Hour
+	// DefaultEventInactivityTTL es el default de PLATAFORMA de
+	// event_inactivity_ttl_seconds (7200s = 2h, D-043.7 / ADR-0029 E-6) que espeja el
+	// DEFAULT de la migración 0052. Vale para el tenant SIN fila; un tenant CON fila
+	// manda siempre, incluido su 0 («sin vencimiento»).
+	DefaultEventInactivityTTL = 2 * time.Hour
+	// DefaultEventHistoryTTL es el default TÉCNICO de event_history_ttl_seconds (0 =
+	// sin poda) que espeja el DEFAULT de la migración 0052. NO es una decisión de
+	// retención: esa la toma el Plan 046 (MD-043.6). Se nombra en vez de dejar el cero
+	// implícito para que quien lo cambie sepa qué está cambiando.
+	DefaultEventHistoryTTL = time.Duration(0)
 )
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna

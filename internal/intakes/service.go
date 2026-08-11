@@ -200,6 +200,29 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 	return updated, nil
 }
 
+// AbandonByEvent deja en `abandoned` la solicitud que colgaba del evento `eventID`
+// (D-043.21, Ola 4.5 · T4.5.5(a)). Es la puerta que el motor consume por el puerto
+// IntakeAbandoner desde que la FK se invirtió: el runtime cancela un evento y pide
+// abandonar SU contenido sin conocer ningún id de hijo — la columna
+// conversation_events.intake_id de la que dependía el viejo Abandon(intakeID)
+// murió en la 0054, y con ella se retiró ese método (Ola 4.5, cableado final).
+//
+// La idempotencia que aquel exigía vive ahora en el SQL: 0 filas —ya
+// abandonada, ya resuelta, o un evento sin contenido (menu/survey)— es ÉXITO, y el
+// guard `status='open'` del store garantiza que una `confirmed` jamás se abandona
+// por aquí. NO notifica al cliente a propósito, como ninguna de las puertas del
+// abandono por cancelación lo hacía de forma efectiva: el aviso de NotifyStatus
+// cuelga de las transiciones del OPERADOR (SetStatus), y la muerte del evento ya se
+// la contó al cliente el propio flujo.
+//
+// ⚠️ LEGADO REGISTRADO: una solicitud pre-0054 (event_id NULL) es INALCANZABLE por
+// esta puerta — no declara padre, así que ningún eventID la encuentra. Ese hueco es
+// el mismo que ya tenía: nadie podía llegar a ella desde un evento cuando la
+// ligadura vivía (sin escribirse) en el padre.
+func (s *Service) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
+	return s.store.AbandonByEvent(ctx, tenantID, eventID)
+}
+
 // notify dispara el aviso al cliente de UNA transición efectivamente aplicada.
 //
 // Es el punto donde se sostiene «como mucho un mensaje por transición», y lo hace

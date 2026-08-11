@@ -10,6 +10,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
@@ -123,26 +124,72 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// Con NoopResolver (default) devuelve Ignore ⇒ return nil idéntico a la
 		// decisión C histórica (INV-6). El contexto (tenantID, contactID, key,
 		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
-		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM.
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM. Sin
+		// flow_state no hay puntero de evento ⇒ activeEventKind="" (Plan 043 · T5.3).
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
 	}
-	// TTL conversacional genérico (Plan 029 · T9): si el tenant configuró un
-	// conversation_ttl_seconds > 0 y el estado vivo lleva más tiempo que eso sin
-	// tocarse, se DESCARTA silenciosamente y el entrante se trata como un arranque
-	// nuevo (camino handleTrigger, donde la señal LLM aplica). Va ANTES de IsEscape /
-	// consecutiveReplay / prepareResume: un estado vencido no debe escapar ni avanzar.
-	// Es el ÚNICO reloj que queda en este camino: el de la SOLICITUD del carrito
-	// (order_ttl_seconds) se derogó en T4.7 (D-041.16) y prepareResume ya no lo
-	// evalúa. Vencer aquí descarta el ESTADO CONVERSACIONAL; la solicitud sobrevive
-	// con sus líneas y solo la mata una persona (D-041.18). ttl<=0 o error de
-	// settings ⇒ no vence (no-regresión).
-	if rt.conversationExpired(ctx, tenantID, st) {
-		if derr := rt.store.Delete(ctx, key); derr != nil {
-			return fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", derr)
-		}
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m))
+	// EL reloj de esta conversación (Plan 043 · T3.1/T3.2/T3.7). Va ANTES de IsEscape /
+	// consecutiveReplay / prepareResume: un estado que ya no vale no debe escapar ni
+	// avanzar. Devuelve si el entrante se trata como ARRANQUE NUEVO en vez de avance.
+	restart, err := rt.conversationClock(ctx, tenantID, key, st)
+	if err != nil {
+		return err
+	}
+	if restart {
+		// El reloj del evento venció y releaseForNewConversation ya borró el estado
+		// (T3.2/E-6): el evento sigue `open` pero YA NO es el activo ⇒
+		// activeEventKind="" (Plan 043 · T5.3). Atarlo aquí reintroduciría la atadura
+		// que T3.2 quita.
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
 	}
 	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
+}
+
+// conversationClock aplica el reloj que gobierna esta conversación y dice si el
+// entrante debe tratarse como un arranque nuevo (true) o como un avance (false).
+//
+// Hay DOS relojes y son EXCLUYENTES (REQ-01c, INV-18, D-043.16). Cuál manda lo
+// decide una sola cosa: si la conversación tiene evento activo.
+//
+//   - CON evento activo manda event_inactivity_ttl_seconds y NADIE más (T3.1/T3.2):
+//     dentro de la ventana el entrante REFRESCA el reloj; vencida, se suelta la
+//     conversación —el evento sigue `open`— y el texto entra como uno nuevo.
+//   - SIN evento activo —el LIMBO: un saludo, la cháchara, un menú a medias— manda
+//     conversation_ttl_seconds, que es recolección de basura del flow_state y nada
+//     más (Plan 029 · T9).
+//
+// La guarda es la tarea (T3.7): hasta la Ola 3, el TTL conversacional se evaluaba
+// SIEMPRE, también con un pedido en curso, y descartaba su estado por un reloj
+// pensado para otra cosa. No se toca la migración 0034 ni su default 0: lo que
+// cambia es CUÁNDO se pregunta.
+func (rt *Runtime) conversationClock(ctx context.Context, tenantID string, key store.Key, st model.Conversation) (bool, error) {
+	if st.EventID != "" {
+		return rt.eventClock(ctx, tenantID, key, st.EventID)
+	}
+	// El limbo no toca conversation_events: aquí no se lee ni se escribe ningún
+	// last_activity_at (T3.7.2). El reloj del evento empieza a contar cuando el evento
+	// NACE, no cuando el contacto saludó.
+	if !rt.conversationExpired(ctx, tenantID, st) {
+		return false, nil
+	}
+	if err := rt.store.Delete(ctx, key); err != nil {
+		return false, fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", err)
+	}
+	return true, nil
+}
+
+// exitMenuStep evalúa el menú de salida (Plan 043 · T5.2, D-043.10) y colapsa su
+// resultado a un único punto de decisión para el llamante: stop=true ⇒ el turno
+// termina aquí (con o sin error; err es nil si el turno se consumió sin fallo).
+// Extraído de advanceLive para acotar SU complejidad ciclomática (gocyclo), igual
+// que el resto de esta función: el comportamiento es idéntico a inlinear las dos
+// ramas de rt.exitMenuChoice.
+func (rt *Runtime) exitMenuStep(ctx context.Context, key store.Key, sessionID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) (bool, error) {
+	done, err := rt.exitMenuChoice(ctx, key, sessionID, st, m)
+	if err != nil {
+		return true, err
+	}
+	return done, nil
 }
 
 // advanceLive avanza una conversación VIVA (estado ya cargado y no vencido) con un
@@ -158,11 +205,104 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	if esc, escMsg, escErr := rt.triggers.IsEscape(ctx, tenantID, sessionID, m.GetText()); escErr != nil {
 		rt.log.Warn("runtime: IsEscape falló; se ignora el escape", "error", escErr, "session_id", sessionID)
 	} else if esc {
-		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg)
+		return rt.handleEscape(ctx, tenantID, sessionID, key, contactID, escMsg, st)
+	}
+	// Salto por tipo y desactivación SOBRE conversación viva (Plan 043 · T2.2/T2.4,
+	// D-043.2): la EXCEPCIÓN ACOTADA de INV-02. Va justo aquí por dos razones:
+	// DESPUÉS del escape global, que conserva su semántica y su prioridad EXACTAS
+	// (INV-06), y ANTES de consecutiveReplay y del Step, porque «carrito» dicho a
+	// media encuesta es una orden de navegación y no una respuesta para el módulo —si
+	// llegara al engine, la encuesta lo guardaría como si fuera la contestación a su
+	// pregunta.
+	if done, eerr := rt.liveEventSwitch(ctx, tenantID, sessionID, key, st, m); eerr != nil {
+		return eerr
+	} else if done {
+		return nil
+	}
+	// Menú de SALIDA del reprompt acotado (Plan 043 · T5.2, D-043.10). Va DESPUÉS del
+	// salto por tipo —«carrito» dicho ante el menú de salida sigue siendo una orden de
+	// navegación, y el escape global conserva su prioridad exacta— y ANTES del Step,
+	// porque el «2» que el cliente teclea ahí NO es una respuesta para el módulo.
+	if stop, xerr := rt.exitMenuStep(ctx, key, sessionID, st, m); stop {
+		return xerr
 	}
 	if consecutiveReplay(st, m) {
 		// Re-entrega INMEDIATA del mismo mensaje → no avanzar ni reenviar.
 		return nil
+	}
+
+	// Estado SIN flujo: lo deja el menú del despachador cuando el contacto pide la
+	// lista sin tener ninguna conversación abierta (D-043.3: el menú no es una fila de
+	// flow_definitions). Si llegamos aquí es que el texto NO era una opción del menú
+	// —menuChoice ya lo descartó—, así que se cumple lo que el propio menú promete
+	// («si prefieres otra cosa, escríbelo») soltando el estado y tratándolo como un
+	// entrante sin conversación viva, en vez de reventar buscando un flujo que no existe.
+	if st.FlowID == "" {
+		return rt.releaseOrphanMenu(ctx, tenantID, sessionID, key, contactID, st, m)
+	}
+	// Un flow_state TERMINAL con el puntero YA APAGADO cuenta como «ninguna
+	// conversación en curso» — el mismo trato que saveMenuState (events.go) ya le
+	// daba con `!ok || st.Finished()` desde la Ola 4, y que este camino vivo no le
+	// daba (efecto colateral del hallazgo #24, Plan 043 · Ola 6, decisión de Jhoan
+	// 2026-08-11). Confirmar un pedido deja CurrentNode en el centinela:
+	// prepareResume no encuentra def.Nodes[NodeTerminal] (reservado, no es un nodo
+	// real) y engine.Step sobre un estado ya Finished() ignora la entrada SIN emitir
+	// nada (documentado en Step) — el contacto queda mudo para siempre, porque
+	// conversationExpired tampoco lo vence con el TTL en su default deshabilitado
+	// (<=0). Se enruta exactamente como si no hubiera flow_state: el
+	// fallback/oferta/disparadores decide qué contestar, igual que a un contacto de
+	// control. ActiveEventKind="" a propósito: el flujo que acaba de terminar no
+	// tiene autoridad para acotar la interpretación de lo que venga después.
+	//
+	// SÍ se borra el estado (medido en revisión, no era el plan original): dejarlo
+	// intacto y delegar en handleTrigger parecía lo más simple, pero un disparo que
+	// arranca OTRO flujo (p. ej. el fallback del tenant, con su propio FlowID) pasa
+	// por startLocked, que ve `Exists(key)==true` sobre esta MISMA fila y activa el
+	// gotcha 409 (start.go): restartableOnStart consulta la ResumePolicy del NUEVO
+	// flujo contra las Vars del VIEJO —de otro módulo, otra forma— y esa lectura
+	// cruzada casi siempre lee «no terminal» (el módulo nuevo no reconoce nada
+	// suyo), así que startLocked responde ErrConversationExists y ese error se
+	// TRAGA como carrera benigna (incoming.go, startPlainFlow): el turno vuelve a
+	// quedar mudo, solo que por una puerta distinta. Medido por ejecución con un
+	// flujo `survey` terminal y un fallback que arranca `cart`: sin el Delete, cero
+	// salientes. Igual que releaseOrphanMenu (unas líneas arriba) y que
+	// saveMenuState (events.go) desde la Ola 4, no hay nada que rescatar aquí
+	// (E-1/E-7 — el flujo YA terminó, no hay carrito EN CURSO): borrar es seguro
+	// PORQUE la guarda de abajo (pendingClosure) ya certificó que no queda ningún
+	// cierre pendiente de reintentar.
+	//
+	// Esa guarda es «no queda ningún cierre PENDIENTE» y NO «st.EventID == ""»
+	// (#28 / H2, Ola 6 · decisión de Jhoan 2026-08-11, medida por sonda). Lo que
+	// separa este caso es el reintento de E-8 §4 (event_lifecycle.go,
+	// TestCierreNatural_FalloRealNoLimpiaElPuntero): si la transición falló de
+	// verdad, el puntero SIGUE puesto a propósito y el siguiente entrante tiene que
+	// atravesar advanceLiveStep para que closeIfFinished reintente sobre ESTA MISMA
+	// fila — borrarla aquí perdería el reintento para siempre. Pero la guarda de
+	// POSESIÓN de H2 no deja ningún reintento vivo: es DETERMINISTA, se reevalúa
+	// idéntica en cada entrante, y ese evento no es de este flujo, así que nadie lo
+	// va a cerrar por esta vía nunca. Preguntar por st.EventID metía los dos casos
+	// en el mismo saco y dejaba la fila {terminal, con puntero} PARA SIEMPRE: el
+	// Step no emite nada sobre un estado ya Finished() y el contacto se quedaba mudo
+	// a todo texto normal (solo lo rescataban el menú numerado del despachador, las
+	// palabras clave, el escape y la cancelación desde la app). pendingClosure
+	// distingue las dos causas con una sola relectura, y es la MISMA que
+	// closeIfFinished usa: no hay dos sitios decidiendo lo mismo por separado.
+	//
+	// LevelCancelled del carrito SÍ alcanza este punto (hallazgo #29, salida (A),
+	// decisión de Jhoan 2026-08-11): cart.Module.Step fija Next al centinela para
+	// LevelClosed Y LevelCancelled por igual (la misma condición, ver cart.go), así
+	// que un carrito cancelado DENTRO de la conversación deja st.Finished()==true
+	// exactamente como uno confirmado. cart.ResumePolicy.Restart (isTerminal, ver
+	// resume.go) ya NO tiene ocasión de reanudar el flujo desde aquí —CurrentNode
+	// llegó al centinela antes de que hubiera un turno siguiente que lo reanudara—:
+	// el flow_state terminal se suelta como cualquier otro y solo un disparador
+	// real («carrito») abre un pedido nuevo, ya no cualquier texto. Es la otra mitad
+	// del #24 que quedó viva a propósito hasta esta ola; ahora está cerrada (ver la
+	// advertencia actualizada en cart_fin_de_flujo_test.go).
+	if st.Finished() {
+		if ev, conocido, pendiente := rt.pendingClosure(ctx, st); !pendiente {
+			return rt.releaseFinishedState(ctx, tenantID, sessionID, key, contactID, ev, conocido, m)
+		}
 	}
 
 	def, err := rt.store.GetDefinition(ctx, tenantID, st.FlowID, st.FlowVersion)
@@ -170,6 +310,102 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 		return fmt.Errorf("runtime: definición en curso (v%d): %w", st.FlowVersion, err)
 	}
 
+	return rt.advanceLiveStep(ctx, tenantID, sessionID, key, contactID, st, def, m)
+}
+
+// releaseFinishedState suelta un flow_state TERMINAL al que ya no le queda ningún
+// cierre pendiente (pendingClosure) y enruta el entrante como si no hubiera
+// conversación viva. Extraída de advanceLive para acotar SU complejidad ciclomática
+// (gocyclo), igual que releaseOrphanMenu; el comportamiento es idéntico a inlinearla.
+//
+// `conocido` distingue las dos causas de «no queda pendiente» (ver pendingClosure) y
+// con ella las dos únicas diferencias de trato:
+//
+//   - SIN evento (conocido=false, el caso del hallazgo #24): el cierre natural ya
+//     apagó el puntero en el turno que terminó el flujo, así que no hay efecto que
+//     emitir ni tipo con el que acotar la señal. Byte a byte lo que hacía la Ola 6
+//     antes de este arreglo.
+//   - con un evento AJENO vivo (conocido=true, la guarda de posesión de H2): la fila
+//     que se destruye apuntaba a un evento que sigue `open` —y sigue `open` a
+//     propósito: lo que se suelta es la FILA, no el evento; su muerte es de la
+//     cancelación desde la app, D-043.5—. Se emite EffectEventEscaped por el MISMO
+//     eje que el quinto camino de suelta (E5/E6): el nombre describe el EFECTO sobre
+//     el flow_state —destruido, no conservado como en event_deactivated—, no la
+//     intención del cliente. Y el tipo del evento activo SÍ acota la interpretación
+//     de la señal (D-043.9), al revés que en el caso de arriba: ese evento no es el
+//     flujo que acabó —ese no tiene autoridad sobre lo que venga después—, es el
+//     `menu` que el contacto pidió y que sigue vivo.
+//
+// El Delete no conserva NADA, tampoco last_wa_message_id, y es deliberado: es el
+// mismo gesto exacto de releaseOrphanMenu (unas líneas abajo) y del saveMenuState de
+// la Ola 4 sobre un estado terminal. Lo que saveMenuState sí conserva es el
+// last_wa_message_id de un flow_state que SOBREVIVE, y aquí la fila desaparece
+// entera: no queda estado al que reprocesar un mensaje, el turno se enruta como el de
+// un contacto sin conversación, y el corte de un reenvío del outbox es el dedupe
+// PERSISTENTE de ingesta por (session_id, wa_message_id) —duplicateIngest, al
+// principio de HandleIncoming—, que no depende de esta fila.
+func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, ev events.Event, conocido bool, m *cloudlinkv1.IncomingMessage) error {
+	if derr := rt.store.Delete(ctx, key); derr != nil {
+		return fmt.Errorf("runtime: soltar el flow_state terminal: %w", derr)
+	}
+	activeKind := ""
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+		activeKind = ev.Kind
+	}
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+}
+
+// releaseOrphanMenu es el QUINTO camino de suelta (Plan 043 · T5.3 D-043.9; Ola 6 ·
+// E6): un flow_state SIN flujo (el `menu`, D-043.3) cuyo texto no casó ninguna
+// opción. Extraído de advanceLive para acotar su complejidad ciclomática (gocyclo);
+// el comportamiento es idéntico a inlinearlo.
+func (rt *Runtime) releaseOrphanMenu(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) error {
+	// El tipo del evento ACTIVO acota la interpretación de la intención (T5.3,
+	// D-043.9). Se lee ANTES de soltar el estado por HIGIENE de lectura, no por
+	// necesidad: st es una COPIA (el puntero st.EventID sigue en mano tras el
+	// Delete) y activeEventKind → aliveByID → ListAlive consulta
+	// conversation_events, no flow_state (events/store.go: selectAliveSQL), así
+	// que invertir el orden daría hoy el MISMO resultado. Se deja así para que
+	// siga siendo cierto si algún día la relectura pasara a depender del estado.
+	activeKind := ""
+	// E-6 (el QUINTO camino de suelta, cubierto en la misma pasada que E5): esta
+	// misma lectura vuelve a hacerse por rt.activeEvent (no por activeEventKind,
+	// que devuelve solo el nombre y no la fila completa que emitEventEffect
+	// necesita) para poder registrar el abandono más abajo. #15 en un octavo
+	// punto: se acepta el mismo patrón que handleEscape.
+	var ev events.Event
+	var conocido bool
+	if st.EventID != "" {
+		activeKind = rt.activeEventKind(ctx, key, sessionID, st.EventID)
+		ev, conocido = rt.activeEvent(ctx, key, sessionID, st.EventID)
+	}
+	if derr := rt.store.Delete(ctx, key); derr != nil {
+		return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
+	}
+	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra. Nombre
+	// ELEGIDO Y NO OBVIO: se reutiliza EffectEventEscaped —no uno nuevo— porque el
+	// eje que la Ola 6 fijó para este efecto (E5) es «¿sobrevive el flow_state al
+	// abandono?», no «¿lo pidió el cliente con la palabra exacta?»: aquí, igual
+	// que en handleEscape, el Delete DESTRUYE el flow_state (event_deactivated,
+	// en cambio, lo CONSERVA — stopEvent). Quien lea flow_events para saber si
+	// hay progreso de nodo que perder no necesita un tercer nombre para una
+	// tercera causa; necesita saber si lo hay, y la respuesta aquí es la MISMA
+	// que en el escape global. La objeción obvia —el cliente no dijo ninguna
+	// palabra de escape, solo tecleó algo que el menú no reconoció— es cierta y
+	// se acepta: el nombre describe el EFECTO sobre el estado, no la intención
+	// del cliente, igual que event_closed no distingue POR QUÉ terminó el flujo.
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+	}
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+}
+
+// advanceLiveStep es la SEGUNDA MITAD de advanceLive (Plan 029 · T9, extendida en la
+// Ola 6 para acotar gocyclo tras E6): resuelve la reanudación por módulo y corre
+// engine.Step sobre un flow_state QUE SÍ tiene flujo (st.FlowID != ""). Comportamiento
+// idéntico a inlinearlo en advanceLive.
+func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, def model.Flow, m *cloudlinkv1.IncomingMessage) error {
 	// Reanudación por módulo (Plan 027 · Ola 3 · T8): TTL perezoso DE LA SOLICITUD +
 	// auto-reinicio + siembra de Vars, GATEADO por la ResumePolicy registrada para el
 	// tipo de nodo (un no-op para menú/encuesta ⇒ comportamiento idéntico). handled=true
@@ -186,6 +422,18 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 		return fmt.Errorf("runtime: step: %w", err)
 	}
 	st.LastWaMessageID = m.GetWaMessageId()
+	// CIERRE NATURAL del evento (Plan 043 · T4.1): si el Step dejó el flujo en el
+	// centinela y la conversación tenía evento activo, el evento pasa a `closed` y el
+	// puntero se apaga EN ESTE MISMO Save — una escritura de flow_state, no dos. Va
+	// ANTES del Save (el estado que se persiste ya es el final) y antes del fan-out:
+	// los sinks proyectan sobre un evento cuya muerte ya está sellada.
+	// El EventID del turno se captura ANTES del cierre natural (T4.5.1): los efectos
+	// de este Step pertenecen al evento que estaba vivo MIENTRAS se produjeron, y
+	// closeIfFinished apaga st.EventID en el turno que termina el flujo. Sin esta
+	// captura, justo los efectos del final (p. ej. cart_closed) llegarían al
+	// proyector con EventID "" y el hijo no podría declarar a su padre (D-043.21).
+	turnEventID := st.EventID
+	rt.closeIfFinished(ctx, &st)
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
 	}
@@ -195,8 +443,13 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por last_wa_message_id
 	// (reprocesar el mismo entrante corta antes del Step). Un fallo de un sink se LOGUEA
 	// y NO aborta el avance ni corta el resto de sinks/efectos.
-	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: turnEventID}
 	rt.dispatch(ctx, ec, effects, sessionID)
+	// El hilo LITERAL del turno (T4.5.7b, D-043.23): cliente y negocio, cifrado y
+	// SOLO con la feature llm_intake. Usa turnEventID por lo mismo que los efectos:
+	// el turno que cierra el flujo pertenece al evento que estaba vivo al hablar.
+	// Best-effort — jamás tumba el turno (ver thread.go).
+	rt.persistTurnMessages(ctx, tenantID, sessionID, turnEventID, m.GetText(), outs)
 	return rt.sendReply(ctx, tenantID, sessionID, contactID, key, outs)
 }
 
@@ -217,28 +470,118 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 		return nil
 	}
 	switch dec.Action {
-	case trigger.Start, trigger.Fallback:
-		// Red anti-loop (Plan 020 · T0): el arranque por disparo SIEMPRE auto-responde
-		// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
-		// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
-		// aquí ⇒ no gasta cuota.
-		if !rt.replyAllowed(key) {
-			return nil
-		}
-		// dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
-		// kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
-		if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, dec.Params, dec.IntentName); serr != nil {
-			if errors.Is(serr, ErrConversationExists) {
-				rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
-					"session_id", sessionID)
-				return nil
-			}
-			return serr
-		}
-		return nil
+	case trigger.StartEvent, trigger.Start:
+		return rt.startFromDecision(ctx, tenantID, sessionID, key, contactID, dec)
+	case trigger.Fallback:
+		// La rama PARTIDA (Plan 043 · T3.8.4, REQ-27b/INV-20/D-043.20). Lo que antes
+		// compartía sitio con Start ahora vive aparte, porque hace otra cosa: en vez de
+		// arrancar el flujo del `fallback` y soltar su frase, se le OFRECE al contacto lo
+		// que puede hacer. Start no se entera: sigue byte a byte igual.
+		//
+		// La condición «esta conversación no tiene evento» NO se comprueba aquí, y esa
+		// ausencia es deliberada: la garantiza el SITIO. A handleTrigger solo se llega sin
+		// flow_state, o tras haberlo descartado, así que añadir una guarda sería un segundo
+		// sitio decidiendo lo mismo. Y por eso se toca aquí y no en el resolver: trigger/
+		// no sabe de eventos y no debe aprenderlo (INV-5) — interpretar la señal es suyo,
+		// decidir QUIÉN habla es del runtime.
+		return rt.openWithOffer(ctx, tenantID, sessionID, key, contactID, dec)
 	default: // trigger.Ignore (o cualquier otro): decisión C, no arranca nada.
 		return nil
 	}
+}
+
+// openWithOffer atiende el `fallback`: en vez de la frase de «no te entendí», le
+// enseña al contacto lo que puede empezar y lo que puede retomar (T3.8.4).
+//
+// El caso vacío es la mitad importante: un tenant sin nada habilitado y un contacto
+// sin nada a medias producen una oferta SIN una sola opción, y entonces la rama cae al
+// `fallback` de siempre (INV-20). Es lo que impide que un tenant recién creado se
+// quede mudo, y la razón de que el startLocked del fallback siga existiendo.
+//
+// El TOKEN anti-loop (Plan 020 · T0) se cobra UNA vez por saliente y por eso no se pide
+// arriba del todo: la oferta se construye primero —leer no habla—, y solo si hay algo
+// que decir se consume el token. Si la oferta viene vacía, el token lo pide
+// startPlainFlow como toda la vida; pedirlo también aquí cobraría dos por un solo
+// mensaje y, con el cupo justo, dejaría mudo al fallback por una lista que ni se envió.
+func (rt *Runtime) openWithOffer(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if rt.opening == nil {
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	offer, err := rt.opening.BuildOpening(ctx, events.ConversationRef{
+		TenantID: tenantID, SessionID: sessionID, ContactID: contactID,
+	})
+	if err != nil {
+		// Un fallo construyendo la oferta NO deja al contacto sin respuesta: se cae al
+		// fallback del tenant, que es exactamente lo que había antes de esta tarea.
+		rt.log.Warn("runtime: no se pudo construir la entrada que ofrece; se usa el fallback del tenant",
+			"error", err, "session_id", sessionID)
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	if offer.Empty() {
+		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	}
+	return rt.sendOffer(ctx, key, sessionID, offer)
+}
+
+// startFromDecision ejecuta una decisión de arranque separando las PUERTAS DEL
+// NACIMIENTO TARDÍO del evento (Plan 043 · T2.5, E-6) del arranque de siempre.
+//
+// Aquí se parte la rama que antes compartían Start y Fallback, y el corte es la
+// tarea entera: el `fallback` queda FUERA de las puertas a propósito. Un saludo, la
+// cháchara o un texto que no casó nada NO crean fila en conversation_events ni
+// arrancan reloj — ese es el TIEMPO MUERTO. La rama ignora dec.EventKind aunque una
+// regla mal configurada lo trajera poblado: quién puede parir un evento lo decide el
+// SITIO, no el dato que llega.
+//
+// Las dos puertas que sí pasan por aquí son event_start (kind del tenant) y una
+// intención LLM mapeada a un event_kind (dec.EventKind poblado sobre Action=Start).
+// La tercera —elegir en el despachador— entra por su propio camino.
+func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if dec.Action != trigger.Fallback {
+		consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "")
+		if err != nil {
+			return err
+		}
+		if consumed {
+			return nil
+		}
+	}
+	return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+}
+
+// startPlainFlow arranca el flujo del tenant SIN parir evento: es el camino del Plan
+// 019 byte a byte, extraído para que la rama de eventos no lo duplique.
+//
+// dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
+// kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
+func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if dec.FlowID == "" {
+		// Una regla de evento sin flujo (el caso del tipo `menu`, D-043.3) y sin plano
+		// de eventos cableado no tiene nada que arrancar. No es un error: es un motor
+		// sin la Ola 2 puesta.
+		rt.log.Debug("runtime: decisión de arranque sin flow_id; no hay flujo que arrancar",
+			"session_id", sessionID)
+		return nil
+	}
+	// Red anti-loop (Plan 020 · T0): el arranque por disparo SIEMPRE auto-responde
+	// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
+	// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
+	// aquí ⇒ no gasta cuota.
+	if !rt.replyAllowed(key) {
+		return nil
+	}
+	// Sin evento (eventID ""): este es el arranque plano del Plan 019 — el camino
+	// que NO pare fila en conversation_events (E-6).
+	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, "", dec.Params, dec.IntentName,
+		rt.taglineFor(ctx, tenantID, sessionID, contactID, dec.IntentName)); serr != nil {
+		if errors.Is(serr, ErrConversationExists) {
+			rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
+				"session_id", sessionID)
+			return nil
+		}
+		return serr
+	}
+	return nil
 }
 
 // buildSignal arma la señal de entrada del resolver de disparos (Plan 029 · T7): el
@@ -248,8 +591,33 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 // lleva SOLO texto ⇒ una regla kind='llm' nunca dispara sin derecho (camino actual).
 // Un fallo del resolver de entitlements es best-effort: se loguea y se descarta la
 // intención (se prefiere no abrir la capacidad por un fallo transitorio).
-func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage) trigger.Signal {
-	sig := trigger.Signal{Text: m.GetText()}
+//
+// activeEventKind es el TIPO del evento ACTIVO en el instante de interpretar la señal
+// (Plan 043 · T5.3, D-043.9; enmendado Ola 6, decisión de Jhoan 2026-08-11). ⚠️
+// VERDAD MEDIDA, sin maquillar: de los CUATRO llamantes, los CUATRO pasan "" POR
+// CONSTRUCCIÓN —no hay evento del que hablar—: dos porque no hay estado (rama !ok de
+// HandleIncoming) o se acaba de borrar por el reloj del evento (T3.2), y el cuarto
+// (la rama st.Finished() && st.EventID == "" de advanceLive, el hallazgo de esta
+// ola) porque exige el puntero YA apagado —closeIfFinished lo apaga en el MISMO
+// turno que cierra el flujo (T4.1); si siguiera puesto (el reintento de E-8 §4, o la
+// guarda de posesión de H2 sobre un evento AJENO) ese sitio ni se alcanza, cae por
+// advanceLiveStep como siempre—. El resolver exige ActiveEventKind != "" para
+// acotar, así que en los CUATRO sitios que pasan "" NO SE DISPARA NUNCA. El scoping
+// que este parámetro habilita se ejerce hoy en UN (1) solo sitio de producción: el
+// menú PENDIENTE (advanceLive, rama st.FlowID == ""), y ahí con la config canónica
+// (reglas event_start de cart/survey CON flow_id, admin/triggers.go:63) el único
+// valor posible es el tipo del MENÚ. SIN EMBARGO, un event_start sin flow_id sobre
+// un menú pendiente deja el puntero en un evento de otro tipo con FlowID vacío, así
+// que entonces el valor alcanzable es el de ESE evento.
+//
+// Ver §5.1 del CONTRATO-OLA5: con una conversación viva y un evento en curso el
+// entrante va por ResolveLive, que NUNCA consulta reglas llm (INV-02), así que el
+// caso del criterio del plan («con cart activo, una señal de encuesta cae a
+// desconocido») NO es alcanzable en producción y se fija solo a nivel de resolver.
+// Así se deja (D-043.9 vía Jhoan, 2026-08-10): no se toca ResolveLive ni
+// liveEventSwitch en esta tarea.
+func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage, activeEventKind string) trigger.Signal {
+	sig := trigger.Signal{Text: m.GetText(), ActiveEventKind: activeEventKind}
 	ci := m.GetIntent()
 	if ci == nil || rt.entitlements == nil {
 		return sig
@@ -279,6 +647,12 @@ func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlin
 // vence — se prefiere no descartar una conversación por un fallo transitorio). La
 // comparación usa rt.now() (inyectable en tests) contra st.UpdatedAt (lo estampa el
 // store en cada Save). Con UpdatedAt cero (estado sin marca) no vence.
+//
+// Desde el Plan 043 · T3.7 esto SOLO se pregunta cuando la conversación no tiene
+// evento activo: lo garantiza conversationClock, su único llamante. No es un detalle
+// de orden — este TTL es recolección de basura del limbo, y evaluarlo sobre un pedido
+// en curso descartaba el estado de un evento vivo por un reloj que no es el suyo
+// (REQ-01c, INV-18). Si vuelves a llamarlo sin mirar st.EventID, reabres eso.
 func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st model.Conversation) bool {
 	settings, err := rt.store.GetTenantSettings(ctx, tenantID)
 	if err != nil {
@@ -299,15 +673,45 @@ func (rt *Runtime) conversationExpired(ctx context.Context, tenantID string, st 
 // Tras el borrado, un entrante posterior vuelve a pasar por el resolver (Resolve), no
 // por escape. El estado ya se borró (equivalente al orden Save-antes-de-Send): un
 // fallo del envío se surface al llamante.
-func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string) error {
-	// Red anti-loop (Plan 020 · T0): el aviso de escape es una auto-respuesta ⇒
-	// consume un token. Agotado ⇒ no se corta ni se avisa (la conversación sigue
-	// viva); rompe cualquier bucle en el que un aviso de escape realimente al peer.
-	if !rt.replyAllowed(key) {
-		return nil
+//
+// ⚠️ Orden E-4 (decisión de Jhoan, 2026-08-11): resumen → Delete → efecto (E-5) → y
+// SOLO ENTONCES replyAllowed gobernando el AVISO. Antes, replyAllowed cortaba de
+// primero: con el cupo anti-loop agotado el escape NO OCURRÍA — ni Delete, ni resumen,
+// ni telemetría — y el cliente que dijo la palabra de emergencia se quedaba atrapado
+// en silencio absoluto. Es el MISMO orden que stopEvent (events.go) ya usa, y el
+// mismo precedente textual se aplica aquí: «Va ANTES del replyAllowed a propósito:
+// que la red anti-loop impida CONTARLO al cliente no significa que no haya pasado.»
+// Contrapartida asumida: un peer automático que repite la palabra de escape produce N
+// Delete idempotentes (y N event_escaped, el mismo trato que ya reciben
+// event_cancelled/event_closed ante reintentos — no es nuevo en este camino).
+func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string, key store.Key, contactID, message string, st model.Conversation) error {
+	// #15 en su séptimo punto (E-5): handleEscape recibe la CONVERSACIÓN, no la fila
+	// del evento, así que emitir event_escaped exige releerla — el mismo patrón que
+	// activeEvent ya paga en closeIfFinished/stopEvent. Se lee ANTES del Delete (el
+	// evento no depende del flow_state, pero es el mismo momento en que stopEvent lo
+	// hace) para no acoplar el efecto al orden del borrado.
+	var ev events.Event
+	var conocido bool
+	if st.EventID != "" {
+		ev, conocido = rt.activeEvent(ctx, key, sessionID, st.EventID)
 	}
+	// El escape es el tercer abandono real (T3.4), y el más brusco: se resume ANTES del
+	// Delete, porque ese Delete se lleva las Vars con el nivel de la sub-máquina.
+	rt.summarizeAbandoned(ctx, key, sessionID, st, "")
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
+	}
+	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra (E-5,
+	// EffectEventEscaped: NO event_deactivated — stopEvent conserva el flow_state,
+	// este Delete lo destruye, y son abandonos distintos).
+	if conocido {
+		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+	}
+	// Red anti-loop (Plan 020 · T0): el AVISO de escape es una auto-respuesta ⇒
+	// consume un token. Agotado ⇒ no se avisa, pero el escape YA OCURRIÓ (E-4): el
+	// Delete y el event_escaped de arriba no dependen de esto.
+	if !rt.replyAllowed(key) {
+		return nil
 	}
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {

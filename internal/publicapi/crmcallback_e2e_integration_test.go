@@ -159,12 +159,26 @@ func e2eSeed(t *testing.T, db *sql.DB, sessionID, contactID string) (tenantID, i
 			t.Logf("limpiando tenant: %v", err)
 		}
 	})
+	// El intake nuevo DEBE declarar su evento (intakes.event_id, CHECK de la 0054
+	// — D-043.21: el hijo apunta al padre), así que primero nace el padre. Al CRM
+	// el evento le da igual: existe solo para que la siembra sea legal. Nace ya
+	// 'closed' (fin natural: la solicitud está 'confirmed') y con un contacto UUID
+	// propio — la columna del padre es UUID y el contacto opaco de este e2e no lo es.
+	var eventID string
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO public.conversation_events
+			(tenant_id, session_id, contact_id, kind, history_id, status, flow_id, flow_version, closed_at)
+		VALUES ($1, $2, 'c4c4c4c4-e2e0-4c4c-8c4c-c4c4c4c4c4c4', 'cart', 'cart-2026-08-08-1200', 'closed', 'flujo-e2e-crm', 1, now())
+		RETURNING id::text
+	`, tenantID, sessionID).Scan(&eventID); err != nil {
+		t.Fatalf("sembrando el evento padre: %v", err)
+	}
 	if err := db.QueryRowContext(ctx, `
 		INSERT INTO public.intakes
-			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'confirmed', 18000, now(), now())
+			(id, tenant_id, contact_id, session_id, status, total, created_at, updated_at, event_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'confirmed', 18000, now(), now(), $4::uuid)
 		RETURNING id::text
-	`, tenantID, contactID, sessionID).Scan(&intakeID); err != nil {
+	`, tenantID, contactID, sessionID, eventID).Scan(&intakeID); err != nil {
 		t.Fatalf("sembrando solicitud: %v", err)
 	}
 	t.Cleanup(func() {

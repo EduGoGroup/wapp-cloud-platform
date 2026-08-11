@@ -23,10 +23,14 @@ type MemoryStore struct {
 	// notify indexa tenant_id → config del aviso al cliente; imita las columnas
 	// deposit_template / deposit_due_days de tenant_settings (T4.2).
 	notify map[string]NotifySettings
-	// liveCarts imita las filas de public.flow_state con carrito en `vars`, por la
-	// clave (tenant, sesión, contacto). Es la aproximación provisional de
-	// "conversación viva" que consume Discard (ver Store.Discard).
-	liveCarts map[string]bool
+	// events imita public.conversation_events reducida a lo que este dominio mira:
+	// eventID → status (`open` | `closed` | `cancelled`). La consumen la guarda
+	// `live_event` de Discard (DT-043.2: el criterio real es el estado del evento
+	// que la solicitud declara) y el cierre del contenedor (REQ-32e).
+	events map[string]string
+	// eventOf imita intakes.event_id (D-043.21): intakeID → evento padre. "" o
+	// ausencia = fila legada pre-0054 sin ligadura.
+	eventOf map[string]string
 	// buyerData imita public.intake_buyer_data por solicitud (T4.5). ⚠️ Guarda los
 	// valores EN CLARO, y es correcto que lo haga: este store es un doble de tests
 	// que vive en memoria y muere con el proceso. Lo que reproduce del store real es
@@ -56,7 +60,8 @@ func NewMemoryStore() *MemoryStore {
 		revisions: map[string][]Revision{},
 		zones:     map[string][]ShippingZone{},
 		notify:    map[string]NotifySettings{},
-		liveCarts: map[string]bool{},
+		events:    map[string]string{},
+		eventOf:   map[string]string{},
 		buyerData: map[string]BuyerData{},
 		now:       time.Now,
 	}
@@ -127,20 +132,31 @@ func (m *MemoryStore) NotifySettings(_ context.Context, tenantID string) (Notify
 	return cfg, nil
 }
 
-// SetLiveCart marca que (tenant, sesión, contacto) tiene una conversación viva con
-// carrito, como haría una fila de public.flow_state con `cart` en su `vars`. Es un
-// mutador para los tests —como Add o SetShippingZones—, no parte de ningún puerto.
-func (m *MemoryStore) SetLiveCart(tenantID, sessionID, contactID string) {
+// SetEvent siembra el estado de un evento conversacional (`open` | `closed` |
+// `cancelled`), como haría una fila de public.conversation_events. Mutador para
+// tests, como Add o SetShippingZones; no es parte de ningún puerto.
+func (m *MemoryStore) SetEvent(eventID, status string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.liveCarts[liveCartKey(tenantID, sessionID, contactID)] = true
+	m.events[eventID] = status
 }
 
-// liveCartKey compone la clave de la conversación. El separador es "\x00" porque no
-// puede aparecer en un id: con un guion, un tenant acabado en guion y una sesión que
-// empieza por otro producirían la misma clave que otro par.
-func liveCartKey(tenantID, sessionID, contactID string) string {
-	return tenantID + "\x00" + sessionID + "\x00" + contactID
+// EventStatus devuelve el estado sembrado/escrito del evento ("" si no existe).
+// Es el espejo de lectura de SetEvent: lo que permite a un test comprobar que el
+// descarte CERRÓ su contenedor (REQ-32e) sin abrir el mapa.
+func (m *MemoryStore) EventStatus(eventID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.events[eventID]
+}
+
+// BindEvent declara el padre de una solicitud (intakes.event_id, D-043.21), como
+// lo haría el proyector del cart al parir la fila. Mutador para tests; sin
+// llamarlo, la solicitud queda como una fila LEGADA pre-0054 (sin ligadura).
+func (m *MemoryStore) BindEvent(intakeID, eventID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventOf[intakeID] = eventID
 }
 
 // SetShippingZones siembra las zonas de envío del tenant, como haría un UPDATE de
@@ -523,8 +539,9 @@ func (m *MemoryStore) ApplyRevalidation(_ context.Context, tenantID, intakeID st
 }
 
 // Discard implementa Store con el MISMO orden de rechazo que el Postgres —estado
-// primero, conversación viva después— y la misma escritura: `abandoned` más su
-// revisión `discarded`, o nada en absoluto. Esa paridad es la razón de ser de este
+// primero, evento vivo después (DT-043.2: el evento que ESTA solicitud declara)— y
+// la misma escritura: `abandoned` más su revisión `discarded` más el cierre del
+// contenedor (REQ-32e), o nada en absoluto. Esa paridad es la razón de ser de este
 // store: un test de handler contra él solo dice algo verdadero sobre producción si
 // las dos implementaciones rechazan por lo mismo y escriben lo mismo.
 func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, discardable []string) (DiscardOutcome, error) {
@@ -539,8 +556,9 @@ func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, disc
 		if !slices.Contains(discardable, r.status) {
 			return out, nil
 		}
-		if m.liveCarts[liveCartKey(tenantID, r.intake.SessionID, r.intake.ContactID)] {
-			out.LiveCart = true
+		eventID := m.eventOf[intakeID]
+		if eventID != "" && m.events[eventID] == "open" {
+			out.LiveEvent = true
 			return out, nil
 		}
 
@@ -554,10 +572,37 @@ func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, disc
 		rev.CreatedAt = time.Now()
 		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
 
+		// El cierre del contenedor, calcado de cancelContainerTx: CAS open→cancelled
+		// sobre el evento declarado; sin ligadura o ya terminal, no toca nada.
+		if eventID != "" && m.events[eventID] == "open" {
+			m.events[eventID] = "cancelled"
+		}
+
 		out.Discarded = true
 		return out, nil
 	}
 	return DiscardOutcome{}, ErrNotFound
+}
+
+// AbandonByEvent implementa Store con el mismo CAS que el Postgres: la solicitud
+// `open` del tenant que declara `eventID` pasa a `abandoned` (updated_at
+// refrescado, sin revisión); 0 coincidencias es éxito idempotente (D-043.21,
+// T4.5.5(a)).
+func (m *MemoryStore) AbandonByEvent(_ context.Context, tenantID, eventID string) error {
+	if eventID == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, r := range m.rows[tenantID] {
+		if m.eventOf[r.intake.ID] != eventID || r.status != StatusOpen {
+			continue
+		}
+		m.rows[tenantID][i].status = StatusAbandoned
+		m.rows[tenantID][i].intake.Status = StatusAbandoned
+		m.rows[tenantID][i].intake.UpdatedAt = m.now()
+	}
+	return nil
 }
 
 // MarkDepositReminded implementa DepositStore con el MISMO compare-and-swap que el

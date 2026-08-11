@@ -46,7 +46,26 @@ import (
 // corresponde a un esquema que salió a Neon, no a una migración suelta: las 0046-
 // 0048 fueron a la 0.26.0 en un solo incremento, y ese es el patrón que la regla
 // pide.
-const SchemaVersion = "0.28.0"
+// 0.30.0 — Plan 043 · Ola 4.5 (0054): la relación evento↔contenido se INVIERTE
+// (D-043.21/22) — intakes.event_id y survey_results.event_id (el hijo declara a su
+// padre), DROP de conversation_events.intake_id y la vista public.event_content.
+// Un solo bump para la ola, sobre la 0.29.0 ya publicada.
+//
+// 0.31.0 — Plan 043 (0055): decisión del dueño (Jhoan, 2026-08-10) sobre el legado
+// que la 0054 dejaba tolerado con CHECK NOT VALID — se BORRA (0 filas reparables
+// por backfill, medido contra Neon: conversation_events.intake_id nunca se
+// escribió) y intakes.event_id pasa a NOT NULL real, retirando el CHECK que hacía
+// de sustituto.
+//
+// 0.32.0 — Plan 043 · Ola 6 · T6.5 (0056): cierra MD-043.17 — GET
+// /api/v1/events/telemetry gana su índice PARCIAL
+// (tenant_id, created_at, id) WHERE name LIKE 'event\_%' sobre flow_events,
+// enmienda #2 de las cuatro que exigió la refutación con medición del diseño
+// original (2026-08-10/11: flow_events_scan_idx, 0009, no sirve a esta ruta —
+// ver la cabecera de la 0056). Un solo bump para toda la ola, sobre la 0.31.0
+// ya publicada (mismo criterio que 0.27.0/0.28.0/0.30.0/0.31.0 arriba: instrucción
+// explícita del dueño de bumpear al cerrar esta tarea, no una migración suelta).
+const SchemaVersion = "0.32.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

@@ -53,7 +53,9 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	// recorría era cart_expired, derogado por D-041.16— pero el fan-out es del
 	// puerto, no del carrito, y se queda para la próxima política que lo necesite.
 	if len(effects) > 0 {
-		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion}
+		// st es el estado que se REANUDA: su EventID (si lo hay) es el evento al que
+		// pertenecen los efectos sintetizados por la política (T4.5.1, D-043.21).
+		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: st.EventID}
 		rt.dispatch(ctx, ec, effects, sessionID)
 	}
 	// Arranca LIMPIO: descarta las Vars y re-entra el flujo con la MISMA versión con
@@ -65,6 +67,11 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 		return false, fmt.Errorf("runtime: reentrar tras reinicio: %w", err)
 	}
 	fresh.LastWaMessageID = m.GetWaMessageId()
+	// CIERRE NATURAL (Plan 043 · T4.1): la copia conserva el EventID del estado que
+	// se reinicia, y un Enter sobre un flujo sin nodo interactivo (message sin next)
+	// deja `fresh` YA en el centinela. Mismo trato que advanceLive: cerrar y apagar
+	// el puntero en el MISMO Save, no en una segunda escritura.
+	rt.closeIfFinished(ctx, &fresh)
 	if err := rt.store.Save(ctx, fresh); err != nil {
 		return false, fmt.Errorf("runtime: guardar conversación reiniciada: %w", err)
 	}
@@ -99,10 +106,15 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 		return false, nil
 	}
 	var vars map[string]any
+	// eventID se retiene JUNTO a las Vars al cargar el estado (T4.5.1): si la
+	// conversación que se reinicia apuntaba a un evento, los efectos que la política
+	// sintetice deben llegar al proyector declarando ese padre (D-043.21).
+	var eventID string
 	if st, found, err := rt.store.Load(ctx, key); err != nil {
 		return false, fmt.Errorf("runtime: cargar estado: %w", err)
 	} else if found {
 		vars = st.Vars
+		eventID = st.EventID
 	}
 	restart, _, effects, err := policy.Restart(ctx, tenantID, contactID, vars)
 	if err != nil {
@@ -112,7 +124,7 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 		return false, nil
 	}
 	if len(effects) > 0 {
-		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: def.FlowID, FlowVersion: def.Version}
+		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: def.FlowID, FlowVersion: def.Version, EventID: eventID}
 		rt.dispatch(ctx, ec, effects, sessionID)
 	}
 	return true, nil

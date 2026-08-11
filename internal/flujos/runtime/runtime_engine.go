@@ -10,6 +10,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
@@ -124,6 +125,17 @@ type Runtime struct {
 	// (camino actual sin clasificador): un gate que solo viviera en el Edge sería
 	// decorativo (corre en la máquina del cliente).
 	entitlements entitlements.Resolver
+	// messageThreadEnabled es la SEGUNDA condición del productor `message` del hilo
+	// (thread.go, D-043.23 + decisión de Jhoan del 2026-08-10): además de la
+	// feature llm_intake, hace falta este interruptor —config
+	// WAPP_CONVERSATION_THREAD_MESSAGES, apagado por defecto (fail-closed)—. El
+	// e2e vivo del 2026-08-10 midió 12 filas `message` con el cuerpo cifrado en un
+	// tenant `pro` real, escritas sin que existiera todavía nadie que las leyera
+	// (el Plan 044, su LECTOR). false (default, sin WithMessageThreadEnabled) ⇒
+	// persistTurnMessages nunca escribe `message`, aunque la feature esté
+	// encendida. NO afecta al productor `decision` (PersistSink.WithDecisionThread),
+	// que sigue escribiendo siempre. Se retira cuando el 044 tenga su lector.
+	messageThreadEnabled bool
 	// now entrega la hora actual para el TTL conversacional (Plan 029 · T9). Inyectable
 	// (WithClock) para tests deterministas; New lo deja en time.Now.
 	now func() time.Time
@@ -135,6 +147,45 @@ type Runtime struct {
 	// NO es un reloj (ADR-0003): no hay barrido ni goroutine de fondo; es este
 	// entrante, que ya estaba pasando por aquí, el que hace de disparador.
 	deposits DepositReminder
+	// events es el almacén del EVENTO conversacional (Plan 043 · Ola 2, D-043.4): la
+	// instancia viva de una capacidad —carrito, encuesta, menú— para ESTA
+	// conversación. Lo consultan el salto por tipo (event_start) y la desactivación
+	// (event_stop). nil (sin WithEventStore) ⇒ no hay plano de eventos: un
+	// event_start arranca su flujo como lo haría una keyword y nada pare filas.
+	// No-regresión total (INV-6).
+	events EventStore
+	// intakes abandona la solicitud del evento que el CLIENTE cierra al elegir
+	// empezar otro del mismo tipo estando el viejo VENCIDO (ADR-0029 · E-11). Es la
+	// otra mitad de un solo hecho: el evento pasa a cancelled y su solicitud a
+	// abandoned. nil ⇒ el evento se cierra igual y la solicitud queda huérfana con
+	// un WARN; el bootstrap lo cablea siempre.
+	intakes IntakeAbandoner
+	// dispatcher decide qué ofrecerle al contacto cuando pide el menú (Plan 043 ·
+	// T2.3): tipos que el tenant ofrece + eventos suyos que puede retomar. SOLO LEE;
+	// crear filas, mover el puntero y hablar es del runtime. nil (sin
+	// WithDispatcher) ⇒ la palabra del menú no presenta nada.
+	dispatcher Dispatcher
+	// flows resuelve qué flujo arranca un tipo de evento, leyendo la regla
+	// event_start del tenant. Lo necesita la elección «empezar uno nuevo» del menú,
+	// que dice el tipo pero no el flujo. nil ⇒ el evento nace sin flujo.
+	flows FlowForKind
+	// opening arma lo que se le OFRECE a quien escribe algo que no casó nada (Plan
+	// 043 · T3.8, REQ-27): la lista de lo que puede empezar y lo que puede retomar.
+	// Sustituye al texto del `fallback` del tenant, y SOLO ahí (INV-20).
+	//
+	// nil (sin WithOpeningBuilder) ⇒ el fallback se comporta exactamente como antes
+	// del Plan 043: arranca su flujo y dice su frase. No-regresión total (INV-6).
+	opening OpeningBuilder
+	// sources son las fuentes DURABLES del resumen del evento que se abandona (Plan
+	// 043 · T3.4/T3.3): las líneas del pedido para `cart` y las respuestas dadas para
+	// `survey`. De Vars sale solo lo que no es durable (el nivel de la sub-máquina).
+	//
+	// Van las DOS o ninguna: LoadSummary devuelve error cuando le falta el lector del
+	// tipo que le toca —en vez de un resumen vacío, que borraría del historial lo que
+	// el cliente sí decidió—, así que cablear una sola convierte el abandono del otro
+	// tipo en un WARN por cada salto. Cero valor ⇒ no se escribe ningún resumen y el
+	// abandono ocurre igual (no-regresión).
+	sources events.SummarySources
 	// onReactiveBlocked cuenta cada entrante que NO entra al motor reactivo, con el
 	// motivo (reasonPassive|reasonSelfLoop|reasonRateLimit). Hook NIL-SAFE inyectado
 	// con WithReactiveBlockedHook —típicamente metrics.FlowReactiveBlocked— para no
@@ -227,6 +278,18 @@ func WithEntitlements(r entitlements.Resolver) Option {
 	return func(rt *Runtime) { rt.entitlements = r }
 }
 
+// WithMessageThreadEnabled enciende el productor `message` del hilo del evento
+// (thread.go, D-043.23) POR ENCIMA del gate de la feature llm_intake: hacen falta
+// las DOS para que persistTurnMessages escriba el texto literal del turno. Sin
+// llamarla (default false, fail-closed) el turno nunca deja una fila `message`,
+// aunque el tenant tenga la feature contratada — el Plan 044 (su lector) todavía
+// no existe, y guardar el literal sin nadie que lo lea es exposición sin
+// contrapartida (ADR-0034 nivel 2, decisión de Jhoan del 2026-08-10). Se retira
+// esta Option (y el campo que gobierna) cuando el 044 tenga su lector.
+func WithMessageThreadEnabled(enabled bool) Option {
+	return func(rt *Runtime) { rt.messageThreadEnabled = enabled }
+}
+
 // WithClock inyecta el reloj que el TTL conversacional usa para decidir si un estado
 // vivo venció (Plan 029 · T9). Sin él, New usa time.Now. Existe para tests
 // deterministas del TTL.
@@ -244,6 +307,55 @@ func WithClock(now func() time.Time) Option {
 // no evalúa nada — no-regresión total.
 func WithDepositReminder(d DepositReminder) Option {
 	return func(rt *Runtime) { rt.deposits = d }
+}
+
+// WithEventStore cablea el almacén del evento conversacional (Plan 043 · Ola 2).
+// Sin él, el motor se comporta EXACTAMENTE como antes del Plan 043: un event_start
+// arranca su flujo sin parir evento y un event_stop no desactiva nada (INV-6).
+func WithEventStore(s EventStore) Option {
+	return func(rt *Runtime) { rt.events = s }
+}
+
+// WithIntakeAbandoner cablea el cierre de la solicitud que acompaña al cierre de un
+// evento por E-11. Va junto a WithEventStore: sin él, el evento se cierra y su
+// solicitud queda huérfana (se avisa por WARN), que es media verdad y no la que
+// queremos en producción.
+func WithIntakeAbandoner(a IntakeAbandoner) Option {
+	return func(rt *Runtime) { rt.intakes = a }
+}
+
+// WithDispatcher cablea el despachador de nivel superior (Plan 043 · T2.3). Sin él,
+// un event_start de tipo menu crea el evento pero no presenta ninguna lista.
+func WithDispatcher(d Dispatcher) Option {
+	return func(rt *Runtime) { rt.dispatcher = d }
+}
+
+// WithSummarySources cablea las fuentes durables del resumen del evento abandonado
+// (Plan 043 · T3.4): líneas del pedido y respuestas de la encuesta. Van JUNTAS —un
+// struct y no dos Options— para que el día que un tipo nuevo traiga su fuente se añada
+// un campo y ninguna firma se mueva.
+//
+// Cablear solo una es peor que no cablear ninguna: LoadSummary falla cuando le falta el
+// lector del tipo que le toca, así que el abandono de ese tipo produciría un WARN en
+// cada salto en vez de una fila.
+func WithSummarySources(src events.SummarySources) Option {
+	return func(rt *Runtime) { rt.sources = src }
+}
+
+// WithOpeningBuilder cablea el constructor de la entrada que OFRECE (Plan 043 · T3.8).
+// Va con WithDispatcher —en producción lo satisface el MISMO *events.Dispatcher— pero
+// es una Option aparte a propósito: son dos preguntas distintas y un despliegue puede
+// tener cableada una sin la otra. Sin ella, la rama `fallback` de handleTrigger es
+// byte a byte la de siempre (INV-6).
+func WithOpeningBuilder(b OpeningBuilder) Option {
+	return func(rt *Runtime) { rt.opening = b }
+}
+
+// WithFlowForKind cablea la resolución «tipo de evento → flujo del tenant», que
+// necesita la opción «empezar uno nuevo» del menú. Va con WithDispatcher: sin ella,
+// elegir un tipo en el menú crearía su evento sin arrancar nada.
+func WithFlowForKind(f FlowForKind) Option {
+	return func(rt *Runtime) { rt.flows = f }
 }
 
 // WithIncomingTimeout fija el deadline con que OnIncoming acota cada entrante
