@@ -92,46 +92,6 @@ func zzSondaEnv(t *testing.T, flow model.Flow, eng bool, rules ...trigger.Rule) 
 	return rt, repo, sender, contacts, evs
 }
 
-// flujoDeMenusSinFinal es sampleFlow con las dos opciones del nodo raíz apuntando a
-// OTROS nodos de menú en vez de a un `message` terminal: sus nodos SIEMPRE tienen a
-// dónde ir, así que el flujo nunca acaba.
-//
-// 🔴 NO LO CAMBIES A UN FLUJO TERMINAL. Que no termine es la condición que permite a
-// este fichero fijar UNA propiedad. Con un flujo terminal —como sampleFlow, cuyo «2»
-// lleva al `message` sin salida `soporte`— el último test se pondría rojo por un
-// defecto que no es el suyo: al acabarse el flujo, closeIfFinished apaga y CIERRA el
-// evento `menu` que lo había heredado, un evento que ni siquiera tiene flujo propio
-// (D-043.3). Ese cierre falso es el hallazgo H2 del barrido de la Ola 5 (tasks.md,
-// hallazgo #22), heredado a la Ola 6 CON DUEÑO y con su propia sonda.
-//
-// Dicho de otro modo: un test que dependa de que H2 esté arreglado no es un test de
-// esta propiedad, sino de dos, y se pondrá rojo por la que no le toca. Si algún día
-// quieres simplificar esto a sampleFlow, arregla H2 primero y comprueba entonces que
-// el rojo desaparece por la razón correcta.
-func flujoDeMenusSinFinal() model.Flow {
-	return model.Flow{
-		FlowID:  testFlow,
-		Initial: "root",
-		Nodes: map[string]model.Node{
-			"root": {
-				Type:    model.NodeTypeMenu,
-				Prompt:  "Hola 👋\n1) Ventas\n2) Soporte",
-				Options: map[string]string{"1": "ventas", "2": "soporte"},
-			},
-			"ventas": {
-				Type:    model.NodeTypeMenu,
-				Prompt:  "Ventas\n1) Volver\n2) Volver",
-				Options: map[string]string{"1": "root", "2": "root"},
-			},
-			"soporte": {
-				Type:    model.NodeTypeMenu,
-				Prompt:  "Soporte\n1) Volver\n2) Volver",
-				Options: map[string]string{"1": "root", "2": "root"},
-			},
-		},
-	}
-}
-
 // cruceDeEventoConContadorCargado lleva la conversación EXACTAMENTE al escenario del
 // defecto:
 //
@@ -228,10 +188,17 @@ func TestReprompt_UnSoloInvalidoEnElEventoNuevoNoArmaElMenuDeSalida(t *testing.T
 // solo inválido no debe haber menú de salida, el «2» siguiente es del MÓDULO (opción
 // legítima del nodo raíz) y el evento activo sigue siendo el menú.
 //
-// Corre sobre flujoDeMenusSinFinal para que el «2» no termine el flujo: ver el porqué
-// en el comentario de ese helper (aísla esta propiedad de H2).
+// Corre sobre sampleFlow, el caso REALISTA (su «2» SÍ es terminal: root→soporte, sin
+// salida). Hasta la Ola 6 esto corría sobre un flujo fabricado a propósito para que
+// el «2» NO terminara nada, porque el caso realista se ponía rojo por H2 (#22,
+// hallazgo del barrido de la Ola 5): al terminar el flujo heredado del `cart`,
+// closeIfFinished cerraba el evento `menu` que lo había heredado —sin flujo propio,
+// D-043.3— con un event_closed FALSO, y ESE rojo no era de esta propiedad. Con H2
+// arreglado (event_lifecycle.go: closeIfFinished exige ev.FlowID == st.FlowID) la
+// razón para desviarse desapareció: el flujo AJENO puede terminar sin tocar el
+// evento `menu`, así que este test vuelve al escenario que de verdad importa.
 func TestReprompt_ElDosNoDesactivaElEventoConMenuHeredado(t *testing.T) {
-	rt, repo, sender, contacts, evs := zzSondaEnv(t, flujoDeMenusSinFinal(), false,
+	rt, repo, sender, contacts, evs := zzSondaEnv(t, sampleFlow(), false,
 		eventStartRule("carrito", "cart"), zzSondaMenuRule())
 	evA, evB, cid := cruceDeEventoConContadorCargado(t, rt, repo, contacts, evs, "reprompt-c")
 	ctx := context.Background()

@@ -243,7 +243,7 @@ efecto: kind=event name=item_added payload={"label":"Café","qty":1,"sku":"CAFE"
 estado: {"level":"continue","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":1,"unit_price":2.5}],"started":true}
 
 --- STEP <9> ---
-Pedido cancelado. Puedes iniciar uno nuevo cuando quieras.
+Pedido cancelado. Si quieres hacer otro, escribe "carrito" y lo empezamos de cero.
 efecto: kind=event name=cart_cancelled payload={}
 estado: {"level":"cancelled","cat_code":"1","sku":"CAFE","lines":[{"sku":"CAFE","label":"Café","qty":1,"unit_price":2.5}],"started":true}
 

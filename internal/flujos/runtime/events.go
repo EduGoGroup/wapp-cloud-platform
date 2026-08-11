@@ -185,6 +185,23 @@ const varTaglineOffered = "tagline_offered"
 // estado que pudo cambiar, y el «2» del cliente elegiría otra cosa.
 const varPendingMenu = "dispatcher_menu"
 
+// varPendingMenuEventID es el SELLO del menú pendiente (E-2): el evento sobre el que
+// se armó, "" incluido (sendOffer arma la oferta SIN evento a propósito). Mismo
+// patrón EXACTO que la Ola 5 usa para el menú de salida (modules.ExitMenuEventVar) y
+// para los contadores de reprompt (modules.RepromptEventKey): la caducidad es POR
+// LECTURA (menuChoice compara el sello contra st.EventID en cada turno) y no exige
+// que nadie se acuerde de borrar nada al cambiar de evento — el mismo motivo por el
+// que aquellos dos no se implementaron con un delete-al-consumir.
+//
+// Sin el sello, un «1» tecleado sobre una conversación SIN evento activo (o con OTRO
+// distinto del que pintó la lista) se resolvía contra las opciones de un menú que ya
+// no manda —incluso uno cuyo evento está `closed`— y despachaba sobre el tipo
+// equivocado: saveMenuState (más abajo) CONSERVA las Vars al cambiar de evento
+// —crea/hereda el flow_state sin borrar dispatcher_menu—, así que un menú armado
+// para el evento A sobrevivía sin más marca que la de estar en Vars, y menuChoice no
+// tenía cómo distinguirlo de uno recién pintado.
+const varPendingMenuEventID = "dispatcher_menu_event_id"
+
 // eventGesture distingue las DOS cosas que un cliente puede querer decir cuando
 // nombra un tipo de evento. No son la misma y confundirlas le cuesta un pedido:
 //
@@ -647,7 +664,13 @@ func stopNotice(kind string) string {
 func (rt *Runtime) activeEvent(ctx context.Context, key store.Key, sessionID, eventID string) (events.Event, bool) {
 	ev, ok, err := rt.aliveByID(ctx, key.TenantID, sessionID, key.ContactID, eventID)
 	if err != nil {
-		rt.log.Warn("runtime: no se pudo releer el evento activo; se usa el aviso genérico",
+		// #15 (E8 punto 1): esta rama la comparten TODOS los llamantes de activeEvent
+		// (closeIfFinished, stopEvent, handleEscape, el quinto camino de suelta…), y
+		// desde T5.4 cada uno de ellos SE COME un efecto de ciclo de vida cuando esto
+		// falla —el mensaje solo mencionaba el aviso genérico al cliente, no la
+		// telemetría perdida. Se amplía para que el log diga las DOS cosas que se
+		// pierden, no una.
+		rt.log.Warn("runtime: no se pudo releer el evento activo; se usa el aviso genérico y se pierde su efecto de ciclo de vida (sin event_closed/event_deactivated/event_escaped/etc. para este turno)",
 			"error", err, "session_id", sessionID)
 		return events.Event{}, false
 	}
@@ -973,6 +996,7 @@ func (rt *Runtime) saveMenuState(ctx context.Context, key store.Key, eventID, ra
 		st.Vars = map[string]any{}
 	}
 	st.Vars[varPendingMenu] = raw
+	st.Vars[varPendingMenuEventID] = eventID
 	st.EventID = eventID
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar el menú pendiente: %w", err)
@@ -983,13 +1007,28 @@ func (rt *Runtime) saveMenuState(ctx context.Context, key store.Key, eventID, ra
 // menuChoice interpreta la respuesta del cliente contra el menú pendiente. Devuelve
 // true si el turno se consumió.
 //
-// Solo actúa si el evento ACTIVO es aquel para el que se pintó el menú: en cuanto el
-// cliente elige, el activo pasa a ser otro y los números dejan de significar nada.
-// Sin esa guarda, el «2» con el que alguien elige un artículo del carrito se leería
-// como la opción 2 de un menú que ya nadie tiene delante.
+// Solo actúa si el evento ACTIVO es aquel para el que se pintó el menú (E-2, sello
+// varPendingMenuEventID): en cuanto el cliente elige, o el evento cambia por
+// cualquier otro camino que conserve Vars —cancelación desde la app, event_stop—,
+// el activo pasa a ser otro y los números dejan de significar nada. Sin esa guarda,
+// el «2» con el que alguien elige un artículo del carrito se leería como la opción 2
+// de un menú que ya nadie tiene delante, y un «1» sobre una conversación sin evento
+// (o con uno `closed`) se despachaba contra la lista de un menú que ya no manda.
 func (rt *Runtime) menuChoice(ctx context.Context, key store.Key, sessionID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) (bool, error) {
 	raw, ok := st.Vars[varPendingMenu].(string)
 	if !ok || raw == "" {
+		return false, nil
+	}
+	// El aserto comprueba `ok` (y no se descarta con blank) porque este repo activa
+	// errcheck.check-type-assertions (.golangci.yml): sello=="" si la clave falta o
+	// no es string, igual de válido para la comparación de abajo.
+	sello, sok := st.Vars[varPendingMenuEventID].(string)
+	if !sok {
+		sello = ""
+	}
+	if sello != st.EventID {
+		// El menú es de OTRO evento (o de ninguno): se ignora en silencio, igual que
+		// un menú ilegible más abajo — el atajo caduca, no bloquea la conversación.
 		return false, nil
 	}
 	menu, err := events.DecodeMenu([]byte(raw))

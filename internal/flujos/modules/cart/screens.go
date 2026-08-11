@@ -236,8 +236,28 @@ func screenClosed(t float64) string {
 	return "✅ ¡Pedido confirmado! Total " + money(t) + "."
 }
 
+// screenCancelled es la despedida del pedido cancelado.
+//
+// 🔴 LA FRASE CAMBIÓ CON EL #29 (decisión de Jhoan 2026-08-11), y no por estilo:
+// decía «Pedido cancelado. Puedes iniciar uno nuevo cuando quieras.» y esa promesa era
+// LITERALMENTE cierta hasta esta ola —cancelar dejaba el flow_state vivo y
+// cart.ResumePolicy.Restart reabría el catálogo ante CUALQUIER texto—. Desde el #24 y
+// su extensión #29 el flujo TERMINA, el flow_state se suelta y hace falta el
+// disparador REAL: mantener la frase vieja dejaría a la clienta esperando una
+// reapertura que ya no llega. Es la ola la que rompe la promesa, así que la arregla la
+// ola.
+//
+// ⚠️ COSTURA CONOCIDA: la palabra va HARDCODEADA y este módulo es PURO —no conoce las
+// reglas `event_start` del tenant, que son configurables—. stopNotice
+// (runtime/events.go) resolvió la MISMA tensión al revés, no prometiendo ninguna
+// palabra («prometer una palabra que quizá no dispare nada sería peor»). Aquí manda la
+// decisión del dueño: sin nombrar nada, la pantalla no dice QUÉ hacer, que es justo el
+// reparo que había que arreglar. El peor caso está acotado: en un tenant cuya palabra
+// no sea «carrito», ese texto no casa ninguna regla y cae en la oferta/fallback, que
+// sí le enumera lo que puede hacer. Nombrarla de verdad exige que el disparador del
+// tenant viaje hasta el módulo — dato nuevo en el contrato, materia del Plan 053.
 func screenCancelled() string {
-	return "Pedido cancelado. Puedes iniciar uno nuevo cuando quieras."
+	return "Pedido cancelado. Si quieres hacer otro, escribe \"carrito\" y lo empezamos de cero."
 }
 
 func terminalScreen(st cartState) string {

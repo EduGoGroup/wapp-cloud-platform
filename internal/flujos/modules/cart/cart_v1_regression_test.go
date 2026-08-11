@@ -8,6 +8,14 @@
 // El golden se generó con el código ANTERIOR al catálogo v2. Su valor está en que
 // no se toca: si un cambio del v2 altera un texto de nivel o un payload, este test
 // falla y eso es una REGRESIÓN para los tenants que ya venden, no una mejora.
+//
+// ⚠️ ÚNICA LÍNEA DEL GOLDEN TOCADA A MANO desde que se generó (2026-08-11, hallazgo
+// #29): la pantalla de «Pedido cancelado». No se regeneró el archivo con -update —eso
+// habría borrado la red entera de un plumazo—: se editó ESA línea y ninguna más, y el
+// resto del golden siguió sujetando todo lo demás sin moverse. El cambio es
+// DELIBERADO y está razonado en screenCancelled (screens.go): la frase vieja prometía
+// que cualquier texto reabría el catálogo, y esta ola hizo que dejara de ser verdad.
+// Un texto de pantalla que MIENTE no es la no-regresión que este golden protege.
 package cart
 
 import (

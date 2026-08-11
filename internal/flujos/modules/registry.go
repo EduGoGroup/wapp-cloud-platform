@@ -21,8 +21,25 @@ import (
 // []engine.Output.
 type Result struct {
 	// Next es el id del nodo destino al que transicionar. nil = permanecer en
-	// el nodo actual (caso reprompt / ayuda).
+	// el nodo actual (caso reprompt / ayuda). Un módulo de UN SOLO NODO que
+	// espera input siempre (WaitsForInput()==true, p. ej. "cart") puede además
+	// apuntar Next al centinela model.NodeTerminal para declarar el FIN del
+	// flujo (hallazgo #24, Plan 043 · Ola 6): engine.Step lo reconoce sin
+	// buscarlo en la definición (está reservado, model.Validate lo rechaza como
+	// id real) y termina ahí mismo con el Outputs que este Result ya trae.
 	Next *string
+	// Outcome es el DESENLACE con el que el módulo declara haber terminado su flujo
+	// (hallazgo #29, Plan 043 · Ola 6): completado con éxito frente a cancelado. Solo
+	// tiene sentido acompañando a Next = model.NodeTerminal —fuera del fin del flujo
+	// el engine lo IGNORA—, y su cero (model.OutcomeUndeclared) es «no lo declaro»:
+	// por eso el campo es ADITIVO y menu/survey/media no cambian ni una línea.
+	//
+	// El módulo declara CÓMO terminó; QUÉ significa eso para el evento conversacional
+	// lo decide el runtime (closeIfFinished traduce cancelado → events.StatusCancelled
+	// y cualquier otro → StatusClosed). El módulo sigue sin conocer el plano de
+	// eventos, igual que con modules.InEvent: dice un hecho de SU dominio, no toca la
+	// fila de nadie.
+	Outcome model.Outcome
 	// Outputs son los textos a emitir cuando se permanece en el nodo (reprompt
 	// o mensaje de ayuda). En una transición válida va vacío: el render del
 	// destino lo produce el engine.

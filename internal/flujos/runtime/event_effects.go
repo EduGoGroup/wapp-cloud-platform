@@ -9,7 +9,10 @@ import (
 
 // Nombres de los efectos de CICLO DE VIDA del evento conversacional (Plan 043 ·
 // T5.4, D-043.11). Son de PLATAFORMA, no de módulo: ningún modules.Module los
-// declara, los emite el runtime en los seis puntos en que la vida del evento cambia.
+// declara, los emite el runtime en los puntos en que la vida del evento cambia —seis
+// desde T5.4 (birthEvent, switchToEvent, stopEvent, eventClock, closeIfFinished,
+// cancelAndAbandon) más los dos que la Ola 6 añade con EffectEventEscaped
+// (handleEscape y el quinto camino de suelta, incoming.go).
 //
 // ⚠️ `event_expired` NO está y NUNCA estuvo: no existe esa transición (E-6 la derogó;
 // verificado: 0 coincidencias en todo el árbol). Esta tarea no retira nada, solo añade.
@@ -20,6 +23,15 @@ const (
 	EffectEventInactivityExpired = "event_inactivity_expired"
 	EffectEventClosed            = "event_closed"
 	EffectEventCancelled         = "event_cancelled"
+	// EffectEventEscaped es el SÉPTIMO efecto de ciclo de vida (Ola 6 · E5, cierra
+	// MD-043.16): el abandono del escape global (handleEscape, incoming.go) y de su
+	// quinto camino gemelo (E6, el texto que no casa el despachador con
+	// st.FlowID==""). Decisión de Jhoan (2026-08-11): NO reusar event_deactivated.
+	// stopEvent (event_deactivated) apaga el puntero y CONSERVA el flow_state; estos
+	// dos caminos lo DESTRUYEN (Delete). Son abandonos distintos y fundirlos en un
+	// solo nombre haría inútil el embudo: quien lea flow_events no podría distinguir
+	// «se puede retomar tal cual» de «el progreso de nodo se perdió».
+	EffectEventEscaped = "event_escaped"
 )
 
 // effectKindEvent es el valor de la COLUMNA flow_events.kind para estos efectos.
