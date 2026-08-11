@@ -25,13 +25,14 @@ import (
 // observabilidad). Se construye una vez en el arranque y se comparte entre los
 // dos listeners HTTP y el sink de acuses.
 type Metrics struct {
-	reg               *prometheus.Registry
-	httpRequests      *prometheus.CounterVec
-	httpDuration      *prometheus.HistogramVec
-	rateLimitHits     *prometheus.CounterVec
-	receipts          *prometheus.CounterVec
-	reactiveBlocks    *prometheus.CounterVec
-	webhookDeliveries *prometheus.CounterVec
+	reg                *prometheus.Registry
+	httpRequests       *prometheus.CounterVec
+	httpDuration       *prometheus.HistogramVec
+	rateLimitHits      *prometheus.CounterVec
+	receipts           *prometheus.CounterVec
+	reactiveBlocks     *prometheus.CounterVec
+	webhookDeliveries  *prometheus.CounterVec
+	flowEventLifecycle *prometheus.CounterVec
 }
 
 // New construye el registry propio y registra los colectores. Incluye los
@@ -65,11 +66,16 @@ func New() *Metrics {
 			Name: "wapp_webhook_deliveries_total",
 			Help: "Entregas del worker del puente CRM (Plan 042 · T3.4), por resultado (delivered|failed|dead|claim_lost).",
 		}, []string{"status"}),
+		flowEventLifecycle: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "wapp_flow_event_lifecycle_total",
+			Help: "Efectos de ciclo de vida del evento conversacional leídos del outbox flow_events (Plan 043 · T6.5, MD-043.17), por nombre de efecto y tipo de evento (event_kind = payload->>'kind', NUNCA la columna kind).",
+		}, []string{"name", "event_kind"}),
 	}
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks, m.webhookDeliveries,
+		m.flowEventLifecycle,
 	)
 	return m
 }
@@ -175,4 +181,31 @@ func (m *Metrics) WebhookDelivery(status string) {
 		return
 	}
 	m.webhookDeliveries.WithLabelValues(status).Inc()
+}
+
+// FlowEventLifecycle registra el DELTA de una vuelta del colector incremental de
+// flow_events (Plan 043 · T6.5, MD-043.17: primer consumidor de PRODUCCIÓN del
+// outbox append-only, no un assert de test). delta es el count(*) que devolvió
+// esa vuelta para (name, event_kind) — NUNCA un total absoluto — así que se
+// ACUMULA (Add), igual que el resto de contadores del paquete.
+//
+// event_kind es SIEMPRE payload->>'kind' (menu|cart|survey|media|…), JAMÁS la
+// columna `kind` de la fila ("persist"|"event"): la firma del método fuerza el
+// vocabulario correcto por construcción — quien la llama no tiene forma de
+// pasar la columna equivocada sin nombrar mal la variable a propósito. Ver la
+// COLISIÓN DE VOCABULARIO documentada en
+// internal/flujos/runtime/event_effects.go.
+//
+// Cardinalidad: `name` son los efectos de ciclo de vida del evento (hoy seis,
+// más los que el motor añada — este método no los enumera, así que un séptimo
+// efecto nuevo no necesita tocar este paquete) × `event_kind` (cuatro tipos de
+// evento). NO cardinalidad por tenant (misma regla dura del paquete, INV-5). Se
+// pasa como callback al Colector (que NO importa este paquete: mismo desacoplo
+// que Receipt/FlowReactiveBlocked/WebhookDelivery — ver
+// internal/platform/metrics/flowlifecycle).
+func (m *Metrics) FlowEventLifecycle(name, eventKind string, delta float64) {
+	if m == nil {
+		return
+	}
+	m.flowEventLifecycle.WithLabelValues(name, eventKind).Add(delta)
 }

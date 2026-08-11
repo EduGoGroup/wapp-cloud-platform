@@ -192,6 +192,11 @@ type Deps struct {
 	// CRMNotify avisa al cliente final del cambio reflejado (T4.4). OPCIONAL: sin
 	// él el callback refleja igual y no escribe a nadie.
 	CRMNotify CRMStatusNotifier
+	// EventTelemetry lee el outbox append-only flow_events filtrado al
+	// vocabulario de ciclo de vida (name LIKE 'event\_%'), Plan 043 · Ola 6 ·
+	// T6.5, cierra MD-043.17. Lo satisface *PostgresEventTelemetryStore. nil ⇒
+	// no se monta GET /api/v1/events/telemetry.
+	EventTelemetry EventTelemetryReader
 }
 
 // defaultDiagnosticsTTL es la retención del bundle cuando Deps.DiagnosticsBundleTTL
@@ -370,6 +375,12 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		mux.Handle("GET /api/v1/audit", protectRead(mw,
 			"audit.read", listAuditHandler(d.Audit)))
 	}
+
+	// Telemetría de ciclo de vida del evento conversacional (Plan 043 · Ola 6 ·
+	// T6.5, cierra MD-043.17). Propia función por la misma razón que
+	// registerConversationEvents/registerTenantVariables: un `if` más aquí
+	// rozaría el techo del linter (gocyclo 15).
+	registerEventTelemetry(mux, d, mw)
 }
 
 // registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4/T4.10,
