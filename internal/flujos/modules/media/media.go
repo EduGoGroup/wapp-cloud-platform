@@ -52,6 +52,9 @@ func (Module) Type() string { return NodeTypeMedia }
 // engine avanza por Next sin detenerse a esperar entrada (design.md §9.A).
 func (Module) WaitsForInput() bool { return false }
 
+// ProducesDurableContent: false — media entrega un adjunto, no proyecta ningún contenido durable del cliente (design.md D-054.3(a)).
+func (Module) ProducesDurableContent() bool { return false }
+
 // Render no produce texto propio: el texto descriptivo viaja EMBEBIDO en el
 // MediaRef.Caption (UN solo mensaje, design.md §9.I), no como un mensaje de texto
 // suelto. El engine lo llama por contrato (modules.Module); devuelve nil.

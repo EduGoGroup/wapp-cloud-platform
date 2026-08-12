@@ -22,6 +22,15 @@ func TestModuleType(t *testing.T) {
 	}
 }
 
+// TestModuleProducesDurableContent fija que el menú NO proyecta contenido
+// durable del cliente (design.md D-054.3(a)): no bloquea el arranque sin
+// evento de la guarda de T2.3.
+func TestModuleProducesDurableContent(t *testing.T) {
+	if menu.New().ProducesDurableContent() {
+		t.Fatalf("ProducesDurableContent() = true, quiero false (el menú no proyecta nada durable)")
+	}
+}
+
 func TestModuleRender(t *testing.T) {
 	// El engine entrega el contenido YA resuelto; en T0 es un placeholder inline
 	// con content.Prompt == node.Prompt, de observable idéntico (byte-a-byte).

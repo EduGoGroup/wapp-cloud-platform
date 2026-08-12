@@ -46,6 +46,15 @@ func TestModuleWaitsForInput(t *testing.T) {
 	}
 }
 
+// TestModuleProducesDurableContent fija que la encuesta SÍ proyecta contenido
+// durable del cliente (survey_results, design.md D-054.3(a)): un flujo con un
+// nodo survey_question exige evento padre para arrancar (guarda de T2.3).
+func TestModuleProducesDurableContent(t *testing.T) {
+	if !survey.New().ProducesDurableContent() {
+		t.Fatalf("ProducesDurableContent() = false, quiero true (la encuesta proyecta a survey_results)")
+	}
+}
+
 func TestModuleRender(t *testing.T) {
 	// El engine entrega el contenido YA resuelto; en T0 es un placeholder inline
 	// con content.Prompt == node.Prompt, de observable idéntico (byte-a-byte).

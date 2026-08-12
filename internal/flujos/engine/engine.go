@@ -73,6 +73,49 @@ func New(reg *modules.Registry, opts ...Option) *Engine {
 	return e
 }
 
+// FlowProducesDurableContent decide si f exige un evento padre para arrancar
+// (design.md D-054.5): es un OR sobre f.Nodes (map[string]model.Node,
+// model.go:95) que resuelve cada n.Type contra el Registry y devuelve true en
+// cuanto ALGÚN nodo resuelve a un módulo cuyo ProducesDurableContent() es
+// true. Un tipo de nodo NO registrado en e.reg cuenta como NO durable —no hay
+// módulo que pueda materializar nada—, así que un flujo con un tipo
+// desconocido no bloquea el arranque por esta guarda (D-054.5, §1).
+//
+// Vive en el Engine, no en el Runtime ni en una Option nueva. runtime.Runtime
+// declara `engine *engine.Engine` (tipo CONCRETO, no una interfaz) y el
+// Registry es un campo PRIVADO de Engine, inyectado una única vez en New(reg,
+// opts...): el Runtime no tiene forma de preguntarle nada al Registry por su
+// cuenta (un grep de "Registry" sobre runtime_engine.go no devuelve ni una
+// coincidencia). Exponer el predicado aquí evita DOS caminos alternativos, los
+// dos descartados a propósito:
+//
+//   - Una Option nueva en Runtime (p. ej. WithRegistry) para pasarle el
+//     Registry por fuera: sería una TERCERA Option variádica cuya omisión
+//     compila, pasa `go vet` y pasa el lint sin dejar ni una señal roja —
+//     exactamente el modo de fallo que dejó WithOpeningBuilder sin cablear en
+//     bootstrap.go durante meses (T1 de este mismo plan) y que costó dos
+//     comandas perdidas en UAT (hallazgos #001/#003). Este plan existe para
+//     cerrar esa clase de defecto, no para añadir un ejemplar nuevo.
+//   - Duplicar el Registry como campo propio de Runtime: Runtime YA recibe el
+//     *engine.Engine completo por parámetro posicional obligatorio del
+//     constructor (no por Option), así que el Registry viaja gratis dentro de
+//     él. Un segundo puntero al mismo Registry en Runtime sería estado
+//     redundante que podría desincronizarse del que usa el propio Engine para
+//     Render/Step.
+//
+// startLocked (runtime/start.go), el ÚNICO embudo por el que pasan las cuatro
+// puertas de arranque, consulta este método a través de rt.engine —que ya
+// tiene inyectado— sin que bootstrap.go necesite una sola línea nueva de
+// wiring.
+func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
+	for _, n := range f.Nodes {
+		if m, ok := e.reg.Get(n.Type); ok && m.ProducesDurableContent() {
+			return true
+		}
+	}
+	return false
+}
+
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su
 // render, encadenando nodos "message" hasta el primer "menu" o el fin
 // (design.md §6, Start). No muta el estado recibido (devuelve uno nuevo).

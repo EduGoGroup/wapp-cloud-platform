@@ -41,8 +41,9 @@ func (f *fakeSink) count() int {
 // Registrado bajo Type()=="menu", reutiliza sampleFlow() sin tocar el módulo real.
 type effectModule struct{ effects []modules.Effect }
 
-func (effectModule) Type() string        { return model.NodeTypeMenu }
-func (effectModule) WaitsForInput() bool { return true }
+func (effectModule) Type() string                 { return model.NodeTypeMenu }
+func (effectModule) WaitsForInput() bool          { return true }
+func (effectModule) ProducesDurableContent() bool { return false }
 
 func (effectModule) Render(node model.Node, _ model.Content) []string {
 	return []string{node.Prompt}

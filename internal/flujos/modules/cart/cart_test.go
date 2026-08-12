@@ -40,6 +40,16 @@ func drive(t *testing.T, m Module, vars map[string]any, input string) (cartState
 	return loadState(res.Vars), res.Outputs, res.Vars
 }
 
+// TestModuleProducesDurableContent fija que el carrito SÍ proyecta contenido
+// durable del cliente (intakes/intake_items/intake_buyer_data, design.md
+// D-054.3(a)): un flujo con un nodo cart exige evento padre para arrancar
+// (guarda de T2.3).
+func TestModuleProducesDurableContent(t *testing.T) {
+	if !New().ProducesDurableContent() {
+		t.Fatalf("ProducesDurableContent() = false, quiero true (el carrito proyecta a intakes/intake_items/intake_buyer_data)")
+	}
+}
+
 func joined(outs []string) string { return strings.Join(outs, "\n") }
 
 func mustContain(t *testing.T, outs []string, subs ...string) {
