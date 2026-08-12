@@ -18,6 +18,26 @@ import (
 // para la clave (T3 lo mapea a HTTP 409). Se inspecciona con errors.Is.
 var ErrConversationExists = errors.New("ya existe una conversación viva para la clave")
 
+// ErrDurableFlowNeedsEvent lo devuelve startLocked cuando el flujo exige un evento
+// padre —algún nodo resuelve, vía el Registry, a un módulo con
+// ProducesDurableContent()==true (cart, survey)— y la puerta por la que se intenta
+// arrancar no trae uno (eventID == "": API, keyword, fallback; design.md D-054.5).
+// Sin esta guarda el flujo arranca igual y revienta varios turnos después contra el
+// NOT NULL de intakes.event_id/survey_results.event_id (migración 0054), silenciado
+// por el fan-out best-effort del ADR-0003: el pedido se pierde SIN que nada lo avise
+// (hallazgos #001/#003 de docs/runbooks/bitacora-errores-uat.md).
+//
+// La CONSECUENCIA la decide cada llamante, nunca este paquete (el motor no conoce
+// HTTP ni el despachador):
+//   - startPlainFlow (incoming.go, Plan 054 · T2.4) lo traduce en DEGRADAR a la
+//     oferta del despachador: el cliente de WhatsApp jamás ve un error, solo lo que
+//     puede hacer.
+//   - writeStartError en internal/flujos/admin y internal/publicapi (T2.5) lo
+//     traduce en 409, con un motivo distinto del 409 de ErrConversationExists.
+//
+// Se inspecciona con errors.Is (mismo patrón que ErrConversationExists).
+var ErrDurableFlowNeedsEvent = errors.New("el flujo exige un evento padre para arrancar por esta puerta")
+
 // Start abre una conversación por API (design.md §6, decisión C): bajo el
 // single-flight de la clave, si ya existe estado → ErrConversationExists; si
 // no, fija la versión vigente, renderiza el nodo inicial (el menú), persiste y
@@ -68,18 +88,41 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
 	}
 
+	// Guarda D-054.5 (Plan 054 · T2.3): ningún flujo con contenido durable arranca
+	// sin evento padre. La condición es el PARÁMETRO eventID, NUNCA st.EventID —st
+	// ni siquiera existe todavía, y el comentario de la firma de arriba ya avisa de
+	// que en este camino (API/keyword/fallback) eventID llega SIEMPRE ""—. Va JUSTO
+	// AQUÍ, tras cargar def y ANTES de rt.store.Exists/EnterPrimed/Save: un rechazo
+	// no deja rastro — cero flow_state, cero efectos, cero envío (REQ-054.2).
+	if eventID == "" && rt.engine.FlowProducesDurableContent(def) {
+		return nil, ErrDurableFlowNeedsEvent
+	}
+
 	exists, err := rt.store.Exists(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: comprobar existencia: %w", err)
 	}
 	if exists {
-		// Gotcha 409 (design.md §3.4): una conversación de CARRITO cuyo pedido ya
-		// TERMINÓ (sub-máquina cerrada/cancelada, o con una solicitud "open" vencida por
-		// TTL) NO debe bloquear un pedido nuevo. Solo el carrito se reinicia, y solo
-		// si está terminado: un carrito EN CURSO (navegando, u solicitud abierta vigente)
-		// y cualquier conversación de menú/encuesta siguen devolviendo 409. Al
-		// reiniciar, el Save de Enter (upsert por la misma clave) SOBRESCRIBE el
-		// estado viejo con uno limpio.
+		// Gotcha 409 (design.md §3.4) — ESTADO ACTUAL, no la historia que este
+		// comentario contaba antes de la guarda D-054.5 (arriba): hoy este bloque NO
+		// tiene camino vivo que lo ejecute con algo que reiniciar.
+		//
+		// API y keyword SIEMPRE pasan eventID=="" (Start la clava a "", startPlainFlow
+		// también); si def es durable —el carrito lo es SIEMPRE, cart.Module.
+		// ProducesDurableContent() no mira el flujo, devuelve true a secas— la guarda
+		// de arriba ya devolvió ErrDurableFlowNeedsEvent antes de llegar aquí. La
+		// única puerta que trae un eventID real es enterEventFlow (events.go), y esa
+		// hace rt.store.Delete(key) justo antes de llamar a startLocked, así que
+		// exists ya dio false y este `if` ni se evalúa. Y la ÚNICA ResumePolicy
+		// registrada en producción (bootstrap.go) es la de cart.NodeTypeCart: para
+		// cualquier otro tipo de nodo, restartableOnStart no encuentra política y
+		// devuelve (false, nil) sin más, así que tampoco reinicia nada.
+		//
+		// Neto: restartableOnStart puede seguir LLAMÁNDOSE (un nodo no-cart con
+		// exists==true) pero ya no puede REINICIAR nada — «solo el carrito se
+		// reinicia» describe un comportamiento que hoy es imposible de alcanzar. NO
+		// se borra aquí (esa decisión es de otro frente); se deja como lo que es: un
+		// camino sin nadie que lo recorra.
 		restart, rerr := rt.restartableOnStart(ctx, def, key, tenantID, contactID, sessionID)
 		if rerr != nil {
 			return nil, rerr

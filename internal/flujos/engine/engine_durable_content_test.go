@@ -76,3 +76,43 @@ func TestFlowProducesDurableContent(t *testing.T) {
 		}
 	})
 }
+
+// TestDurableNodeType cubre el helper de diagnóstico que usa el WARN de la
+// degradación (T2.4, D-054.6): mismo criterio que FlowProducesDurableContent, pero
+// nombrando el tipo en vez de solo decir sí/no.
+func TestDurableNodeType(t *testing.T) {
+	e := newEngineWithCart()
+
+	t.Run("nodo cart devuelve su tipo", func(t *testing.T) {
+		f := model.Flow{
+			FlowID: "carrito", Version: 1, Initial: "root",
+			Nodes: map[string]model.Node{"root": {Type: cart.NodeTypeCart}},
+		}
+		if got := e.DurableNodeType(f); got != cart.NodeTypeCart {
+			t.Fatalf("DurableNodeType = %q, quiero %q", got, cart.NodeTypeCart)
+		}
+	})
+
+	t.Run("flujo sin nodos durables devuelve vacío", func(t *testing.T) {
+		f := model.Flow{
+			FlowID: "menu-puro", Version: 1, Initial: "root",
+			Nodes: map[string]model.Node{
+				"root": {Type: model.NodeTypeMenu, Options: map[string]string{"1": "fin"}},
+				"fin":  {Type: model.NodeTypeMessage, Text: "gracias"},
+			},
+		}
+		if got := e.DurableNodeType(f); got != "" {
+			t.Fatalf("DurableNodeType = %q, quiero \"\" (nada durable)", got)
+		}
+	})
+
+	t.Run("tipo no registrado no cuenta como durable", func(t *testing.T) {
+		f := model.Flow{
+			FlowID: "desconocido", Version: 1, Initial: "root",
+			Nodes: map[string]model.Node{"root": {Type: "carrusel"}},
+		}
+		if got := e.DurableNodeType(f); got != "" {
+			t.Fatalf("DurableNodeType = %q, quiero \"\" (tipo no registrado)", got)
+		}
+	})
+}

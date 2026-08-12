@@ -2,7 +2,6 @@ package runtime_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -40,8 +39,11 @@ func llmRule(intentName, flowID string) trigger.Rule {
 // newIntentRuntime arma un runtime con: cart+menu registrados, catálogo sembrado,
 // content Router (static+json), PersistSink, ResumePolicy del cart, un ConfigResolver
 // con las reglas dadas, y el gate de entitlements (feature llm_intent on/off). now
-// inyecta el reloj del TTL (nil ⇒ time.Now).
-func newIntentRuntime(t *testing.T, feature bool, now func() time.Time, rules ...trigger.Rule) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
+// inyecta el reloj del TTL (nil ⇒ time.Now). `extra` son Options adicionales
+// (Plan 054 · T2.4: algunos tests necesitan WithOpeningBuilder para observar la
+// degradación de una intención LLM hacia un flujo durable); las llamadas que no lo
+// necesitan lo omiten y no cambian de conducta.
+func newIntentRuntime(t *testing.T, feature bool, now func() time.Time, rules []trigger.Rule, extra ...runtime.Option) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
 	t.Helper()
 	ctx := context.Background()
 	repo := store.NewMemoryRepository()
@@ -78,15 +80,31 @@ func newIntentRuntime(t *testing.T, feature bool, now func() time.Time, rules ..
 	if now != nil {
 		opts = append(opts, runtime.WithClock(now))
 	}
+	opts = append(opts, extra...)
 	rt := runtime.New(repo, eng, sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(), opts...)
 	return rt, repo, sender, contacts
 }
 
-// TestIntent_LLMRule_PreLoadsCart (T7 + T8): con la feature activa, un entrante con
-// intención "pedido" casa la regla llm y arranca el carrito PRE-CARGADO con el
-// producto extraído, saltando a la confirmación de ítem y abriendo la solicitud.
+// TestIntent_LLMRule_PreLoadsCart (T7 + T8) documentaba que una intención LLM
+// arrancaba el carrito PRE-CARGADO. ⚠️ HALLAZGO de Plan 054 · T2.3/T2.4, no
+// anticipado por design.md: una regla kind='llm' que casa produce SIEMPRE
+// Decision{Action:Start} (config_resolver.go, rama de intención, líneas ~72-80) —
+// NUNCA Action:StartEvent ni EventKind poblado. decisionFor() (config_resolver.go
+// ~172) solo puebla EventKind para kind='event_start'. Por eso startFromDecision ve
+// dec.EventKind=="" y beginEvent no la consume: cae a startPlainFlow con eventID=""
+// como CUALQUIER keyword. La "puerta LLM con event_kind" que design.md §4 asume ya
+// construida NO EXISTE hoy — es la brecha que probablemente cierre el Plan 044
+// (Carrito LLM 2.0, el norte de docs/plans/). Con la guarda de D-054.5 puesta, una
+// intención LLM hacia un flujo durable (cart) se degrada EXACTAMENTE como una
+// keyword (T2.4): el cliente ve la oferta del despachador, NO el carrito
+// pre-cargado. Este test queda REESCRITO para probar esa degradación (con
+// WithOpeningBuilder cableado) en vez de fingir que el pre-carga sigue intacto —
+// Jhoan decide si Plan 044 necesita que decisionFor() también arme un EventKind
+// para 'llm' (ver el informe del frente F2).
 func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
-	rt, repo, sender, contacts := newIntentRuntime(t, true, nil, llmRule("pedido", testCartFlow))
+	ofrece := &fakeOpening{apertura: ofertaConOpciones()}
+	rt, repo, sender, contacts := newIntentRuntime(t, true, nil, []trigger.Rule{llmRule("pedido", testCartFlow)},
+		runtime.WithOpeningBuilder(ofrece))
 	ctx := context.Background()
 
 	m := incomingIntent(testContact, "quiero 2 cafés", "wamid.llm", "pedido", map[string]string{"producto": "cafe", "cantidad": "2"})
@@ -94,29 +112,19 @@ func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
 		t.Fatalf("HandleIncoming intent: %v", err)
 	}
 	if sender.count() != 1 {
-		t.Fatalf("el pre-carga debe enviar 1 confirmación, envió %d", sender.count())
+		t.Fatalf("la degradación debe enviar 1 saliente (la oferta), envió %d", sender.count())
 	}
-	if got := sender.texts()[0]; !strings.Contains(got, "Agregué") || !strings.Contains(got, "Café") || !strings.Contains(got, "Finalizar") {
-		t.Fatalf("confirmación de pre-carga inesperada: %q", got)
+	if got := sender.texts()[0]; got != ofrece.apertura.Text {
+		t.Fatalf("el saliente debe ser la oferta del despachador, NO el carrito pre-cargado.\n got: %q\nwant: %q", got, ofrece.apertura.Text)
 	}
-	st := loadState(t, repo, resolveID(t, contacts, testContact))
-	if st.FlowID != testCartFlow {
-		t.Fatalf("debe arrancar el flujo del carrito, got %q", st.FlowID)
+	// El carrito NUNCA arrancó: ni flow_state propio, ni intake, ni item_added.
+	if st, ok, err := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: resolveID(t, contacts, testContact)}); err != nil {
+		t.Fatalf("cargar estado: %v", err)
+	} else if ok && st.FlowID == testCartFlow {
+		t.Fatalf("el carrito NO debe haber arrancado: flow_state en %q", st.FlowID)
 	}
-	cs, ok := st.Vars["cart"].(map[string]any)
-	if !ok || cs["level"] != "continue" {
-		t.Fatalf("el carrito debe quedar en la confirmación de ítem (continue), got %+v", st.Vars["cart"])
-	}
-	// item_added abrió la solicitud "open" (design.md §3.4) y quedó en flow_events.
-	if openIntakeCount(repo, "open") != 1 {
-		t.Fatalf("el pre-add debe abrir 1 solicitud open, got %+v", repo.Intakes())
-	}
-	if !hasFlowEvent(repo, "item_added") {
-		t.Fatalf("el pre-add debe declarar item_added, got %+v", repo.FlowEvents())
-	}
-	// intent_params consumidos: no persisten en el estado guardado.
-	if _, ok := st.Vars[modules.VarIntentParams]; ok {
-		t.Fatalf("intent_params debe consumirse tras el pre-add: %+v", st.Vars)
+	if openIntakeCount(repo, "open") != 0 {
+		t.Fatalf("sin evento, el pre-add NUNCA debe abrir una solicitud: %+v", repo.Intakes())
 	}
 }
 
@@ -124,7 +132,7 @@ func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
 // se DESCARTA (camino actual): la regla llm no dispara y —sin keyword ni fallback que
 // case el texto— no arranca nada.
 func TestIntent_GateOff_IntentIgnored(t *testing.T) {
-	rt, repo, sender, contacts := newIntentRuntime(t, false, nil, llmRule("pedido", testCartFlow))
+	rt, repo, sender, contacts := newIntentRuntime(t, false, nil, []trigger.Rule{llmRule("pedido", testCartFlow)})
 	ctx := context.Background()
 
 	m := incomingIntent(testContact, "quiero 2 cafés", "wamid.gate", "pedido", map[string]string{"producto": "cafe", "cantidad": "2"})
@@ -145,11 +153,13 @@ func TestIntent_GateOff_IntentIgnored(t *testing.T) {
 // TestIntent_LiveConversation_TextWins (T7): con una conversación viva, la intención
 // NO interfiere: el texto manda (engine.Step), no se re-dispara la regla llm.
 func TestIntent_LiveConversation_TextWins(t *testing.T) {
-	rt, repo, sender, contacts := newIntentRuntime(t, true, nil, llmRule("pedido", testCartFlow))
+	rt, repo, sender, contacts := newIntentRuntime(t, true, nil, []trigger.Rule{llmRule("pedido", testCartFlow)})
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start cart: %v", err)
-	}
+	// Sembrado directo (no Start): desde Plan 054 · T2.3 el carrito es SIEMPRE
+	// durable y Start() ya no puede abrirlo — ver seedCartOpen (cart_resume_test.go).
+	// Lo que este test mide (que el texto manda sobre una conversación viva) es
+	// ortogonal a CÓMO se abrió esa conversación.
+	seedCartOpen(t, repo, contacts)
 	// Carrito vivo en L1 categorías. Llega "1" (Bebidas) CON intención "pedido": debe
 	// avanzar por el texto (a L2 artículos), NO pre-cargar por la intención.
 	before := sender.count()
@@ -206,12 +216,11 @@ func seedConversationTTL(t *testing.T, repo *store.MemoryRepository, ttl time.Du
 func TestConversationTTL_NotExpired_KeepsLiveConversation(t *testing.T) {
 	// Reloj +1min contra un TTL de 1h ⇒ NO vencido.
 	clock := func() time.Time { return time.Now().Add(time.Minute) }
-	rt, repo, _, contacts := newIntentRuntime(t, true, clock, llmRule("pedido", testCartFlow))
+	rt, repo, _, contacts := newIntentRuntime(t, true, clock, []trigger.Rule{llmRule("pedido", testCartFlow)})
 	seedConversationTTL(t, repo, time.Hour)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start cart: %v", err)
-	}
+	// Sembrado directo (no Start): ver el comentario de TestIntent_LiveConversation_TextWins.
+	seedCartOpen(t, repo, contacts)
 	m := incomingIntent(testContact, "1", "wamid.ttlok", "pedido", map[string]string{"producto": "flan"})
 	if err := rt.HandleIncoming(ctx, testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
@@ -224,33 +233,45 @@ func TestConversationTTL_NotExpired_KeepsLiveConversation(t *testing.T) {
 }
 
 // TestConversationTTL_Expired_RestartsViaLLM (T9): con TTL vencido, el estado vivo se
-// DESCARTA y el entrante se trata como arranque nuevo; con intención presente, arranca
-// el flujo llm (carrito pre-cargado), no un avance del estado viejo.
+// DESCARTA y el entrante se trata como arranque nuevo, no como avance del estado
+// viejo — eso es lo que este test prueba, y SIGUE siendo cierto.
+//
+// ⚠️ Plan 054 · T2.3/T2.4: lo que YA NO prueba es que la intención "arranque el flujo
+// llm (carrito pre-cargado)" tal cual decía el docstring viejo — ver el hallazgo
+// documentado en TestIntent_LLMRule_PreLoadsCart: una intención LLM hacia un flujo
+// durable se degrada EXACTAMENTE como una keyword. Este runtime no cablea
+// WithOpeningBuilder a propósito (esa prueba ya vive en el otro test), así que la
+// degradación cae en silencio (MD-054.2): el criterio de ESTE test pasa a ser «el
+// estado viejo se descarta y NO SE RESUCITA con contenido pre-cargado», no «se
+// re-arranca pre-cargado».
 func TestConversationTTL_Expired_RestartsViaLLM(t *testing.T) {
 	// Reloj +2h contra un TTL de 1h ⇒ vencido.
 	clock := func() time.Time { return time.Now().Add(2 * time.Hour) }
-	rt, repo, sender, contacts := newIntentRuntime(t, true, clock, llmRule("pedido", testCartFlow))
+	rt, repo, sender, contacts := newIntentRuntime(t, true, clock, []trigger.Rule{llmRule("pedido", testCartFlow)})
 	seedConversationTTL(t, repo, time.Hour)
 	ctx := context.Background()
 	// Conversación vieja: un carrito recién iniciado en L1 (sin líneas ni solicitud).
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start cart: %v", err)
-	}
+	// Sembrado directo (no Start): ver el comentario de TestIntent_LiveConversation_TextWins.
+	cid := seedCartOpen(t, repo, contacts)
 	before := sender.count()
-	// Llega una intención tras el vencimiento: descarta el estado viejo y arranca llm.
+	// Llega una intención tras el vencimiento: el TTL descarta el estado viejo y lo
+	// trata como arranque nuevo — que ahora, por ser durable y sin evento, degrada en
+	// silencio en vez de re-arrancar pre-cargado.
 	m := incomingIntent(testContact, "quiero un flan", "wamid.ttlexp", "pedido", map[string]string{"producto": "flan"})
 	if err := rt.HandleIncoming(ctx, testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
-	if got := strings.Join(sender.texts()[before:], "\n"); !strings.Contains(got, "Agregué") || !strings.Contains(got, "Flan") {
-		t.Fatalf("tras el TTL vencido, la intención debe arrancar el carrito pre-cargado: %q", got)
+	if got := sender.count(); got != before {
+		t.Fatalf("sin opening cableado la degradación es MUDA (MD-054.2); no debió enviar nada, envió %d: %q", got-before, sender.texts()[before:])
 	}
-	st := loadState(t, repo, resolveID(t, contacts, testContact))
-	cs, ok := st.Vars["cart"].(map[string]any)
-	if !ok || cs["level"] != "continue" {
-		t.Fatalf("el estado viejo debe descartarse y arrancar pre-cargado (continue), got %+v", st.Vars["cart"])
+	// El estado VIEJO no sobrevive (el TTL lo descartó) y NO se resucita con
+	// contenido pre-cargado: ninguna solicitud queda open.
+	if st, ok, err := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: cid}); err != nil {
+		t.Fatalf("cargar estado: %v", err)
+	} else if ok && st.FlowID == testCartFlow {
+		t.Fatalf("el carrito NO debe haberse re-arrancado tras el TTL: flow_state en %q", st.FlowID)
 	}
-	if openIntakeCount(repo, "open") != 1 {
-		t.Fatalf("el pre-add tras el TTL debe abrir 1 solicitud, got %+v", repo.Intakes())
+	if openIntakeCount(repo, "open") != 0 {
+		t.Fatalf("sin evento, el pre-add NUNCA debe abrir una solicitud: %+v", repo.Intakes())
 	}
 }

@@ -13,6 +13,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -114,6 +115,33 @@ func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
 		}
 	}
 	return false
+}
+
+// DurableNodeType nombra a QUIÉN culpar cuando FlowProducesDurableContent(f) da
+// true: el tipo del primer nodo (en orden determinista por clave — f.Nodes es un
+// map y su iteración no lo es) que resuelve a un módulo durable. Devuelve "" si
+// ninguno lo es (mismo criterio exacto que FlowProducesDurableContent; es un
+// segundo recorrido sobre el MISMO Registry, no una fuente de verdad nueva).
+//
+// Existe SOLO para diagnóstico (Plan 054 · D-054.6, T2.4): el WARN de la
+// degradación necesita decir qué nodo obligó al rechazo, y la guarda de D-054.5 ya
+// contestó "¿hace falta evento?" con el OR de FlowProducesDurableContent — esto
+// responde "¿de cuál nodo?" para el operador que lee el log. Con varios nodos
+// durables se reporta uno cualquiera (determinista): saber que el flujo exige
+// evento ya basta para corregirlo, no hace falta enumerarlos todos en cada línea.
+func (e *Engine) DurableNodeType(f model.Flow) string {
+	ids := make([]string, 0, len(f.Nodes))
+	for id := range f.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := f.Nodes[id]
+		if m, ok := e.reg.Get(n.Type); ok && m.ProducesDurableContent() {
+			return n.Type
+		}
+	}
+	return ""
 }
 
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su

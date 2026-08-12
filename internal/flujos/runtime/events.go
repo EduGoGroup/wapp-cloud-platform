@@ -1097,12 +1097,30 @@ func (rt *Runtime) presentRescue(ctx context.Context, key store.Key, sessionID s
 // lo que el cliente lee, y Menu es lo que permite entender el número con que conteste.
 // Persistir solo el texto convertiría cualquier lista en decorado.
 //
-// El token anti-loop se cobra aquí, justo antes de renderizar, y es el ÚNICO sitio del
-// camino de la oferta que lo cobra (Plan 020 · T0).
+// El token anti-loop se cobra aquí, justo antes de renderizar. Es el sitio por
+// defecto del camino de la oferta que lo cobra (Plan 020 · T0); el ÚNICO llamante que
+// NO pasa por aquí para cobrarlo es degradeDurableStart (incoming.go, Plan 054 ·
+// T2.4), que ya cobró SU token en startPlainFlow antes de descubrir que el flujo
+// exige evento y usa sendOfferNow para no cobrar dos veces por un solo saliente (ver
+// su docstring — el mismo doble cobro que este comentario evitaba, reintroducido por
+// ese camino nuevo y corregido aquí).
 func (rt *Runtime) sendOffer(ctx context.Context, key store.Key, sessionID string, offer events.Offering) error {
 	if !rt.replyAllowed(key) {
 		return nil
 	}
+	return rt.sendOfferNow(ctx, key, sessionID, offer)
+}
+
+// sendOfferNow es el CUERPO de sendOffer sin su cobro del token anti-loop: existe
+// para degradeDurableStart (incoming.go, D1 del review de Plan 054 · F2), el único
+// llamante cuyo token YA se cobró antes de llegar aquí (startPlainFlow lo cobra vía
+// replyAllowed ANTES de intentar startLocked). Cobrarlo de nuevo aquí sería el doble
+// cobro por un solo mensaje saliente que el docstring de openWithOffer ya advertía:
+// con el cupo justo (burst 1), el segundo cobro fallaría y la degradación se quedaría
+// MUDA aunque el WARN que la precede diga que sí se ofrece. NINGÚN otro llamante debe
+// usar esta función directamente: si necesitas enviar una oferta y no has cobrado
+// tú mismo el token, usa sendOffer.
+func (rt *Runtime) sendOfferNow(ctx context.Context, key store.Key, sessionID string, offer events.Offering) error {
 	raw, err := offer.Menu.Encode()
 	if err != nil {
 		return fmt.Errorf("runtime: serializar la oferta pendiente: %w", err)

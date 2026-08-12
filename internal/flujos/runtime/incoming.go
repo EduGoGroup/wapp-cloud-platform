@@ -504,23 +504,52 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 // startPlainFlow como toda la vida; pedirlo también aquí cobraría dos por un solo
 // mensaje y, con el cupo justo, dejaría mudo al fallback por una lista que ni se envió.
 func (rt *Runtime) openWithOffer(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+	if offer, ok := rt.buildOpeningOffer(ctx, tenantID, sessionID, contactID); ok {
+		return rt.sendOffer(ctx, key, sessionID, offer)
+	}
+	// Sin oferta (sin opening cableado, BuildOpening falló, o Offering.Empty): cae al
+	// fallback del tenant de siempre (INV-20) — comportamiento IDÉNTICO al de antes de
+	// que existiera buildOpeningOffer; ver su docstring para las tres causas.
+	//
+	// offerAlreadyEmpty=true viaja hasta degradeDurableStart (D5, review de código):
+	// buildOpeningOffer YA se preguntó aquí arriba y ya sabemos que da ok=false —
+	// dentro del mismo entrante, bajo el keyedMutex de la clave, nada cambia esa
+	// respuesta entre esta línea y la siguiente—, así que si startPlainFlow rebota
+	// por ErrDurableFlowNeedsEvent no hace falta que degradeDurableStart la
+	// reconstruya: eso era construir la misma oferta DOS veces (y, si BuildOpening
+	// fallaba, duplicar el WARN) para una sola decisión.
+	return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec, true)
+}
+
+// buildOpeningOffer arma la oferta del despachador para (tenant, sesión, contacto):
+// es la ÚNICA construcción que usan openWithOffer (T3.8.4, la rama Fallback de
+// siempre) y la degradación de contenido durable (Plan 054 · T2.4), para que las dos
+// ramas no puedan divergir en qué es "la oferta".
+//
+// ok=false cubre TRES causas a propósito indistinguibles para quien llama —sin
+// opening cableado, BuildOpening falló, o la oferta salió vacía
+// (events.Offering.Empty, REQ-27b/INV-20/INV-054.1: el tenant no tiene nada que
+// ofrecer)—: en los tres, D-054.3(b) deja que cada llamante decida su propia
+// consecuencia (openWithOffer cae al fallback del tenant; la degradación de T2.4 NO
+// puede hacer lo mismo sin reentrar, ver su docstring). Esta función SOLO construye
+// —nunca arranca un flujo ni llama a startPlainFlow/startLocked—, así que no puede
+// ser el origen de ningún bucle.
+func (rt *Runtime) buildOpeningOffer(ctx context.Context, tenantID, sessionID, contactID string) (events.Offering, bool) {
 	if rt.opening == nil {
-		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+		return events.Offering{}, false
 	}
 	offer, err := rt.opening.BuildOpening(ctx, events.ConversationRef{
 		TenantID: tenantID, SessionID: sessionID, ContactID: contactID,
 	})
 	if err != nil {
-		// Un fallo construyendo la oferta NO deja al contacto sin respuesta: se cae al
-		// fallback del tenant, que es exactamente lo que había antes de esta tarea.
-		rt.log.Warn("runtime: no se pudo construir la entrada que ofrece; se usa el fallback del tenant",
+		rt.log.Warn("runtime: no se pudo construir la entrada que ofrece",
 			"error", err, "session_id", sessionID)
-		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+		return events.Offering{}, false
 	}
 	if offer.Empty() {
-		return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+		return events.Offering{}, false
 	}
-	return rt.sendOffer(ctx, key, sessionID, offer)
+	return offer, true
 }
 
 // startFromDecision ejecuta una decisión de arranque separando las PUERTAS DEL
@@ -533,9 +562,20 @@ func (rt *Runtime) openWithOffer(ctx context.Context, tenantID, sessionID string
 // regla mal configurada lo trajera poblado: quién puede parir un evento lo decide el
 // SITIO, no el dato que llega.
 //
-// Las dos puertas que sí pasan por aquí son event_start (kind del tenant) y una
-// intención LLM mapeada a un event_kind (dec.EventKind poblado sobre Action=Start).
-// La tercera —elegir en el despachador— entra por su propio camino.
+// La puerta que SÍ pasa por aquí y consume turno es event_start: decisionFor
+// (trigger/config_resolver.go:171-180) solo puebla dec.EventKind para
+// KindEventStart, y beginEvent (events.go:246) trata cualquier Decision con
+// EventKind=="" como la keyword de siempre —no consume, cae a startPlainFlow—. Por
+// eso una keyword pura (Action=Start) SÍ entra a este `if` (dec.Action != Fallback
+// lo deja pasar) pero beginEvent la descarta enseguida.
+//
+// La «intención LLM mapeada a un event_kind sobre Action=Start» que este comentario
+// afirmaba como segunda puerta NUNCA se construyó: la rama sig.Intent != nil de
+// config_resolver.go:72-80 arma su Decision a mano (Action=Start, FlowID, Params,
+// IntentName) y no puebla EventKind en ningún caso — el Plan 043 la declaró pero
+// esta puerta sigue sin cablear. Es un hallazgo de ESTE plan (054), no un descuido
+// de esta tarea; abrirla es trabajo de otro frente. La tercera puerta —elegir en el
+// despachador— entra por su propio camino (StartNewOfKind, events.go).
 func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
 	if dec.Action != trigger.Fallback {
 		consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "")
@@ -546,7 +586,11 @@ func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID st
 			return nil
 		}
 	}
-	return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec)
+	// offerAlreadyEmpty=false: este camino (event_start/keyword) nunca pasó por
+	// openWithOffer, así que si startPlainFlow rebota por un flujo durable sin
+	// evento, degradeDurableStart SÍ tiene que construir la oferta —nadie la probó
+	// todavía—.
+	return rt.startPlainFlow(ctx, tenantID, sessionID, key, contactID, dec, false)
 }
 
 // startPlainFlow arranca el flujo del tenant SIN parir evento: es el camino del Plan
@@ -554,7 +598,12 @@ func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID st
 //
 // dec.Params/IntentName solo vienen poblados si la decisión provino de una regla
 // kind='llm' (T8): startLocked los siembra en Vars para el pre-carga del módulo.
-func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+//
+// offerAlreadyEmpty viaja SOLO para degradeDurableStart (D5, review de código): dice
+// si el llamante (openWithOffer) YA le preguntó a buildOpeningOffer y salió false,
+// para que la degradación no la vuelva a pedir. startFromDecision, que nunca pasó
+// por openWithOffer, siempre pasa false aquí.
+func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision, offerAlreadyEmpty bool) error {
 	if dec.FlowID == "" {
 		// Una regla de evento sin flujo (el caso del tipo `menu`, D-043.3) y sin plano
 		// de eventos cableado no tiene nada que arrancar. No es un error: es un motor
@@ -567,6 +616,14 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 	// (renderiza el nodo inicial), así que consume un token; agotado ⇒ no arranca
 	// (corta el bucle de fallback destapado en el e2e del Plan 019). Ignore no llega
 	// aquí ⇒ no gasta cuota.
+	//
+	// Este token cubre TODA la consecuencia de este entrante, incluida su posible
+	// degradación (D1, review de código): si startLocked rebota más abajo con
+	// ErrDurableFlowNeedsEvent, degradeDurableStart manda la oferta con
+	// sendOfferNow —SIN volver a cobrar— precisamente porque el cobro ya ocurrió
+	// aquí. Cobrar también allá sería pagar DOS veces por el mismo saliente y, con
+	// el cupo justo (burst 1), dejaría la degradación muda pese al WARN que la
+	// anuncia.
 	if !rt.replyAllowed(key) {
 		return nil
 	}
@@ -579,8 +636,74 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 				"session_id", sessionID)
 			return nil
 		}
+		if errors.Is(serr, ErrDurableFlowNeedsEvent) {
+			return rt.degradeDurableStart(ctx, tenantID, sessionID, key, contactID, dec, offerAlreadyEmpty)
+		}
 		return serr
 	}
+	return nil
+}
+
+// degradeDurableStart atiende D-054.3(b) (Plan 054 · T2.4): startPlainFlow acaba de
+// recibir ErrDurableFlowNeedsEvent —dec.FlowID lleva contenido durable y este camino
+// no trae evento (keyword, o fallback sin oferta que ya cayó aquí)—. El interlocutor
+// aquí es un contacto de WhatsApp sin ninguna capacidad de leer un código de error
+// (a diferencia de la API, T2.5), así que el rechazo del motor NUNCA se le muestra:
+// se degrada a la MISMA oferta que openWithOffer construye (buildOpeningOffer), para
+// que entre por la 3.ª puerta de T2.5/Plan 043 (elección en el despachador) — esa sí
+// pare evento.
+//
+// origen sale de dec.Action, lo único que trigger.Decision trae en la mano aquí:
+// Start es una keyword pura, StartEvent es un event_start/LLM cuyo beginEvent no
+// consumió (sin plano de eventos cableado, el mismo trato que una keyword), y
+// Fallback es el `fallback` del tenant sin nada que ofrecer. No hay un cuarto valor
+// que distinguir; inventar una etiqueta más fina que esta sería mentir en el log.
+//
+// EL TOKEN anti-loop de este saliente lo cobró YA startPlainFlow (D1, review de
+// código): esta función usa sendOfferNow —el cuerpo de sendOffer sin su propio
+// cobro— y NUNCA rt.sendOffer, precisamente para no cobrar dos por el mismo mensaje.
+// Cobrar aquí también dejaba la degradación MUDA con el cupo justo (burst 1) pese al
+// WARN que la anuncia: el mismo error que el docstring de openWithOffer ya advertía
+// para su propio camino, reintroducido por este y corregido en el mismo sitio
+// (sendOfferNow).
+//
+// offerAlreadyEmpty (D5, review de código) evita reconstruir la oferta cuando
+// openWithOffer YA la construyó y dio vacía: solo se vuelve a preguntar cuando este
+// camino NUNCA pasó por buildOpeningOffer (keyword/event puros, que llegan aquí vía
+// startFromDecision con offerAlreadyEmpty=false).
+//
+// NUNCA vuelve a llamar a startPlainFlow ni a openWithOffer (la trampa de recursión
+// de esta tarea): si buildOpeningOffer no tiene nada que dar —sin opening cableado,
+// BuildOpening falló, o la oferta salió vacía—, reintentar por cualquiera de esos dos
+// caminos repetiría la MISMA guarda sobre el MISMO flujo durable y entraría en
+// bucle. Ese corner es MD-054.2: un tenant con un fallback/keyword durable y sin
+// ningún event_start vivo se queda SIN RESPUESTA (silencio elegido, no un panic ni
+// un bucle). D-054.8/T2.7 —otro frente de este plan, NO implementado aquí— lo cierra
+// en tiempo de CONFIGURACIÓN, rechazando el alta de esa combinación.
+func (rt *Runtime) degradeDurableStart(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision, offerAlreadyEmpty bool) error {
+	origen := "fallback"
+	switch dec.Action {
+	case trigger.Start:
+		origen = "keyword"
+	case trigger.StartEvent:
+		origen = "event"
+	}
+	nodeType := ""
+	if def, derr := rt.store.LatestDefinition(ctx, tenantID, dec.FlowID); derr == nil {
+		nodeType = rt.engine.DurableNodeType(def)
+	}
+	rt.log.Warn("runtime: flujo con contenido durable no puede arrancar sin evento; se degrada a la oferta del despachador",
+		"flow_id", dec.FlowID, "node_type", nodeType, "origin", origen, "session_id", sessionID)
+	if !offerAlreadyEmpty {
+		if offer, ok := rt.buildOpeningOffer(ctx, tenantID, sessionID, contactID); ok {
+			return rt.sendOfferNow(ctx, key, sessionID, offer)
+		}
+	}
+	// MD-054.2 (ver el docstring de arriba): sin oferta a la que degradar, el
+	// contacto se queda sin respuesta en vez de reentrar en un bucle sobre el mismo
+	// flujo durable.
+	rt.log.Warn("runtime: sin oferta a la que degradar (MD-054.2, D-054.8/T2.7 lo cierra en configuración); el contacto se queda sin respuesta",
+		"flow_id", dec.FlowID, "session_id", sessionID)
 	return nil
 }
 

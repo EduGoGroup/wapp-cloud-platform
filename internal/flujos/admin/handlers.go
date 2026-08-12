@@ -192,7 +192,9 @@ type startResponse struct {
 // fijando la versión vigente y envía el menú). Respuestas:
 //
 //   - 200 con {acked_command_id, ok, error} cuando se recibió el Ack del envío.
-//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists).
+//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists), o
+//     si el flujo tiene contenido durable y no trae evento padre
+//     (ErrDurableFlowNeedsEvent, Plan 054 · T2.5) — dos 409 con texto distinto.
 //   - 502 si la sesión está offline (no hay stream vivo para el Edge).
 //   - 504 si se agota el contexto/timeout esperando el Ack del Edge.
 //   - 500 ante cualquier otro error.
@@ -245,12 +247,22 @@ func StartHandler(starter Starter) http.Handler {
 }
 
 // writeStartError traduce el error de Start a un código HTTP: conversación ya
-// existente -> 409, sesión offline -> 502, timeout/cancelación esperando el Ack
-// -> 504, resto -> 500.
+// existente -> 409, flujo con contenido durable sin evento -> 409 (texto DISTINTO
+// del anterior, Plan 054 · T2.5, D-054.3(b)/D-054.6), sesión offline -> 502,
+// timeout/cancelación esperando el Ack -> 504, resto -> 500.
 func writeStartError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, runtime.ErrConversationExists):
 		http.Error(w, "ya existe una conversación viva para la clave", http.StatusConflict)
+	case errors.Is(err, runtime.ErrDurableFlowNeedsEvent):
+		// Aquí SÍ se le muestra el 409 al operador (a diferencia del cliente de
+		// WhatsApp, que nunca ve este rechazo: T2.4 lo degrada a la oferta del
+		// despachador). El texto dice qué hacer, no solo que falló: publicapi
+		// (MD-054.3) no tiene campo `code` en su JSON de error, así que el TEXTO es
+		// la única superficie para distinguir este 409 del de ErrConversationExists.
+		http.Error(w, "el flujo tiene contenido durable (cart/survey) y no puede arrancar sin un evento padre: "+
+			"configura una regla event_start para este flujo, o arráncalo desde una conversación que ya tenga "+
+			"un evento activo; no reintentes esta llamada, seguirá devolviendo 409", http.StatusConflict)
 	case errors.Is(err, session.ErrSessionOffline):
 		http.Error(w, "sesión offline: no hay stream vivo para el Edge", http.StatusBadGateway)
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

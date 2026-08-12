@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,19 +82,6 @@ func newCartRuntime(t *testing.T, rules ...trigger.Rule) (*runtime.Runtime, *sto
 	return rt, repo, sender, contacts
 }
 
-// cartKeywordRule arma la regla keyword «carrito» → testCartFlow: el disparador REAL
-// que abre un carrito nuevo (Plan 043, hallazgo #29 · salida (A) · decisión de Jhoan
-// 2026-08-11). No es event_start a propósito: newCartRuntime no cablea plano de
-// eventos (sin WithEventStore), y beginEvent trata un event_start sin plano cableado
-// exactamente como una keyword (events.go) — usar KindKeyword aquí es lo mismo que
-// event_start daría, sin fingir un plano que este runtime no tiene.
-func cartKeywordRule() trigger.Rule {
-	return trigger.Rule{
-		TenantID: testTenant, Kind: trigger.KindKeyword, Keyword: "carrito",
-		MatchType: trigger.MatchExact, FlowID: testCartFlow, Enabled: true,
-	}
-}
-
 // cartAddCafe navega Bebidas→Café→Agregar→cantidad(2), dejando el carrito en L5
 // (continue) con una solicitud "open" (el primer item_added la abre). base da waIDs
 // únicos por invocación para no chocar con la dedupe por last_wa_message_id.
@@ -105,6 +93,28 @@ func cartAddCafe(t *testing.T, rt *runtime.Runtime, base string) {
 			t.Fatalf("HandleIncoming %q: %v", in, err)
 		}
 	}
+}
+
+// seedCartOpen siembra DIRECTO (repo.Save, sin pasar por Start) un flow_state de
+// carrito ya abierto en L0/categorías — el mismo punto de partida que producía
+// Start()/Enter antes de Plan 054. Necesario desde T2.3 (D-054.5): Start() en un
+// flujo con contenido durable YA NO puede abrir nada —cart lo es SIEMPRE, así que
+// Start() da SIEMPRE ErrDurableFlowNeedsEvent, ver
+// TestCartStart_SiempreExigeEvento_ElGotchaDeReinicioQuedaSuperado—, así que los
+// tests que solo necesitan «un carrito ya abierto» como fixture para probar SU
+// mecánica interna (resume, expiración, cancelación) siembran el estado a mano.
+// loadState (modules/cart/state.go) trata unas Vars vacías como Level=Categories
+// (L0), así que el punto de partida es IDÉNTICO al que dejaba Start/Enter.
+func seedCartOpen(t *testing.T, repo *store.MemoryRepository, contacts *contact.MemoryResolver) string {
+	t.Helper()
+	cid := resolveID(t, contacts, testContact)
+	if err := repo.Save(context.Background(), model.Conversation{
+		TenantID: testTenant, SessionID: testSession, ContactID: cid,
+		FlowID: testCartFlow, FlowVersion: 1, CurrentNode: "cart",
+	}); err != nil {
+		t.Fatalf("sembrar flow_state del carrito: %v", err)
+	}
+	return cid
 }
 
 func hasFlowEvent(repo *store.MemoryRepository, name string) bool {
@@ -146,11 +156,11 @@ func openIntakeCount(repo *store.MemoryRepository, status string) int {
 func TestCartResume_NadaVencePorTiempo(t *testing.T) {
 	rt, repo, sender, contacts := newCartRuntime(t)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	// Sembrado directo (no Start): desde Plan 054 · T2.3 el carrito es SIEMPRE
+	// durable y Start() ya no puede abrirlo — ver seedCartOpen. Lo que este test
+	// mide (que nada vence por tiempo) es ortogonal a CÓMO se abrió el carrito.
+	cid := seedCartOpen(t, repo, contacts)
 	cartAddCafe(t, rt, "add")
-	cid := resolveID(t, contacts, testContact)
 
 	intakes := repo.Intakes()
 	if len(intakes) != 1 || intakes[0].Status != "open" {
@@ -193,18 +203,25 @@ func TestCartResume_NadaVencePorTiempo(t *testing.T) {
 	}
 }
 
-// TestCartStart_ConPedidoVencido_SigueDando409 es la otra puerta del mismo reloj:
+// TestCartStart_ConPedidoVencido_SigueDando409 era la otra puerta del mismo reloj:
 // restartableOnStart consultaba la MISMA política, así que un /start sobre un
 // pedido "vencido" reiniciaba en vez de dar 409. Derogado el vencimiento, un pedido
-// en curso es un pedido en curso por viejo que sea, y el 409 protege sus líneas de
-// un clobber. Sin este test, alguien podría reintroducir el reloj por este lado sin
-// que nada se pusiera rojo.
+// en curso es un pedido en curso por viejo que sea.
+//
+// ⚠️ Plan 054 · T2.3 (D-054.5) SUPERSEDE esta protección para el carrito: la guarda
+// de startLocked se dispara ANTES de rt.store.Exists, y cart es SIEMPRE durable
+// (ProducesDurableContent()==true), así que Start() sobre un flujo cart YA NO
+// alcanza jamás restartableOnStart —vencido o no—. El resultado es SIEMPRE
+// ErrDurableFlowNeedsEvent, así que ya no se compara con errIsConvExists
+// (ErrConversationExists). El bootstrap se siembra a mano (seedCartOpen) porque
+// Start tampoco puede abrir el carrito para dejarlo "en curso". Se conserva el
+// test —con la aserción invertida— porque sigue demostrando algo real: ni un
+// pedido vencido reabre una vía para que Start clobbee una solicitud en curso; solo
+// que ahora el motivo del 409 es uno solo y más fuerte que el viejo gotcha.
 func TestCartStart_ConPedidoVencido_SigueDando409(t *testing.T) {
-	rt, repo, _, _ := newCartRuntime(t)
+	rt, repo, _, contacts := newCartRuntime(t)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	seedCartOpen(t, repo, contacts)
 	cartAddCafe(t, rt, "add")
 
 	o := repo.Intakes()[0]
@@ -213,8 +230,8 @@ func TestCartStart_ConPedidoVencido_SigueDando409(t *testing.T) {
 		t.Fatalf("sembrar expires_at histórico: %v", err)
 	}
 
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errIsConvExists(err) {
-		t.Fatalf("Start sobre un pedido en curso debe dar 409 aunque su expires_at sea viejo, dio: %v", err)
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errors.Is(err, runtime.ErrDurableFlowNeedsEvent) {
+		t.Fatalf("Start sobre un flujo durable da SIEMPRE ErrDurableFlowNeedsEvent (T2.3), vencido o no, dio: %v", err)
 	}
 	if os := repo.Intakes(); len(os) != 1 || os[0].Status != "open" {
 		t.Fatalf("la solicitud debe seguir open e intacta, got %+v", os)
@@ -242,11 +259,25 @@ func TestCartStart_ConPedidoVencido_SigueDando409(t *testing.T) {
 // fallback/oferta del tenant —aquí sin configurar, así que no contesta nada—,
 // mientras que «carrito» sí casa la regla keyword y arranca un carrito NUEVO. Es el
 // cambio de producto que el #29 acepta a propósito, no una regresión.
+//
+// ⚠️ Segunda vuelta, Plan 054 · T2.3/T2.4: «carrito» YA NO puede ser una keyword
+// PURA hacia un flujo durable —esa combinación es EXACTAMENTE el hallazgo #001
+// (D-054.5 la rechaza; sin opening cableado en este runtime, T2.4 la degradaría a
+// silencio, no a un carrito nuevo). Así que el disparador REAL pasa a ser una
+// regla event_start (cartEventRule, la misma de event_clock_test.go): «carrito»
+// sigue siendo la palabra, pero ahora PARE EVENTO antes de llegar a startLocked
+// (beginEvent → birthEvent → enterEventFlow), que es la única puerta por la que un
+// flujo durable puede arrancar. El comportamiento observable para el cliente es
+// IDÉNTICO —la misma palabra abre el mismo carrito—; lo que cambia es que ahora deja
+// una fila en conversation_events, que es justo lo que este plan exige.
 func TestCartResume_AfterCancel_AbreUnPedidoNuevoConElDisparadorReal(t *testing.T) {
-	rt, repo, sender, _ := newCartRuntime(t, cartKeywordRule())
+	rt, repo, sender, _, _ := newDurableGuardRuntime(t, nil, nil, cartEventRule())
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start: %v", err)
+	// La apertura inicial TAMBIÉN pasa por el disparador real (event_start): Start()
+	// ya no puede abrir el carrito (T2.3), así que «carrito» hace las dos veces el
+	// mismo trabajo que antes hacían Start() (apertura) y la keyword (reapertura).
+	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "carrito", "open-1")); err != nil {
+		t.Fatalf("carrito (apertura): %v", err)
 	}
 	cartAddCafe(t, rt, "add") // carrito en L5 con solicitud open
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "9", "cancel-1")); err != nil {
@@ -283,39 +314,48 @@ func TestCartResume_AfterCancel_AbreUnPedidoNuevoConElDisparadorReal(t *testing.
 	}
 }
 
-// TestCartStart_AfterCancel_NoBlocking409 (gotcha 409): un /start sobre un carrito
-// TERMINADO (cancelado) NO devuelve 409 sino que reinicia; pero mientras el pedido
-// está EN CURSO (solicitud open vigente) sí bloquea con 409 (no se clobbea).
-func TestCartStart_AfterCancel_NoBlocking409(t *testing.T) {
-	rt, _, sender, _ := newCartRuntime(t)
+// TestCartStart_SiempreExigeEvento_ElGotchaDeReinicioQuedaSuperado REEMPLAZA a
+// TestCartStart_AfterCancel_NoBlocking409 (gotcha 409: un /start sobre un carrito
+// TERMINADO —cancelado— NO devolvía 409 sino que reiniciaba; mientras el pedido
+// estaba EN CURSO sí bloqueaba con 409 para no clobbear).
+//
+// ⚠️ Plan 054 · T2.3 (D-054.5): la guarda de startLocked se dispara ANTES de
+// rt.store.Exists, así que Start() sobre un flujo durable (cart SIEMPRE lo es) YA
+// NO alcanza jamás restartableOnStart —fresco, en curso o cancelado dan ahora el
+// MISMO ErrDurableFlowNeedsEvent—. El caso "tras cancelar reinicia sin 409" DEJÓ DE
+// SER ALCANZABLE por esta puerta: el operador tiene que abrir el carrito por la
+// puerta de eventos (event_start), no por /admin/flows/start. Es la decisión de
+// producto que este plan toma a propósito (design.md §4): el 409 avisa ANTES de
+// tocar la base en vez de dejar la bandeja vacía horas después. Se conserva el
+// nombre viejo en el comentario (convención de este fichero) para que quien busque
+// "NoBlocking409" encuentre por qué dejó de existir.
+func TestCartStart_SiempreExigeEvento_ElGotchaDeReinicioQuedaSuperado(t *testing.T) {
+	rt, repo, _, contacts := newCartRuntime(t)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start 1: %v", err)
-	}
-	cartAddCafe(t, rt, "add") // solicitud open vigente
 
-	// Con un pedido en curso, un segundo Start debe seguir devolviendo 409.
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errIsConvExists(err) {
-		t.Fatalf("Start con pedido en curso debe dar 409, dio: %v", err)
+	// Fresco: nunca hubo conversación, y aun así Start da el MISMO 409 (D-054.5 va
+	// antes de rt.store.Exists, así que ni siquiera llega a comprobar si existe).
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errors.Is(err, runtime.ErrDurableFlowNeedsEvent) {
+		t.Fatalf("Start fresco sobre un flujo durable = %v, quiero ErrDurableFlowNeedsEvent", err)
 	}
 
-	// Cancela y reintenta: ahora el carrito está terminado ⇒ Start reinicia (sin 409).
+	// En curso: se siembra a mano (Start no puede abrirlo) y Start sigue dando el
+	// MISMO error, NUNCA ErrConversationExists (el viejo gotcha 409).
+	seedCartOpen(t, repo, contacts)
+	cartAddCafe(t, rt, "add")
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errors.Is(err, runtime.ErrDurableFlowNeedsEvent) {
+		t.Fatalf("Start con pedido en curso = %v, quiero ErrDurableFlowNeedsEvent (no ErrConversationExists)", err)
+	}
+
+	// Tras cancelar: el flow_state terminal se suelta (advanceLive) y Start SIGUE
+	// dando el mismo 409 — el viejo "reinicia sin 409" ya no es alcanzable por esta
+	// puerta.
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "9", "cancel-1")); err != nil {
 		t.Fatalf("cancelar: %v", err)
 	}
-	before := sender.count()
-	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start tras cancelar NO debe dar 409: %v", err)
+	if _, err := rt.Start(ctx, testTenant, testCartFlow, testSession, phoneRef(t, testContact)); !errors.Is(err, runtime.ErrDurableFlowNeedsEvent) {
+		t.Fatalf("Start tras cancelar = %v, quiero ErrDurableFlowNeedsEvent (el viejo 'reinicia sin 409' ya no es alcanzable)", err)
 	}
-	if got := strings.Join(sender.texts()[before:], "\n"); !strings.Contains(got, "Elige una categoría") {
-		t.Fatalf("Start tras cancelar debe renderizar L1: %q", got)
-	}
-}
-
-// errIsConvExists evita importar errors solo para el test: compara por el mensaje
-// del centinela exportado.
-func errIsConvExists(err error) bool {
-	return err != nil && err.Error() == runtime.ErrConversationExists.Error()
 }
 
 // TestCartNoRegression_MenuNotResetNorPaged: un flujo de MENÚ resumido NO pasa por

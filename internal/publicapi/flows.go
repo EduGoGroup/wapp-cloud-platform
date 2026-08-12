@@ -123,7 +123,9 @@ type startResponse struct {
 // del token (INV-8) y el flow_id de la ruta. Respuestas:
 //
 //   - 200 con {acked_command_id, ok, error} al recibir el Ack.
-//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists).
+//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists), o
+//     si el flujo tiene contenido durable y no trae evento padre
+//     (ErrDurableFlowNeedsEvent, Plan 054 · T2.5) — dos 409 con texto distinto.
 //   - 502 si la sesión está offline; 504 si expira el ack; 500 en otro fallo.
 //   - 401 sin identidad; 400 si falta flow_id/session_id/contacto o el JSON es inválido.
 func startFlowHandler(starter flowadmin.Starter) http.Handler {
@@ -172,12 +174,24 @@ func startFlowHandler(starter flowadmin.Starter) http.Handler {
 }
 
 // writeStartError traduce el error de Start a un código HTTP: conversación existente
-// -> 409, sesión offline -> 502, timeout/cancelación -> 504, resto -> 500 (mismo
-// criterio que flujos/admin).
+// -> 409, flujo con contenido durable sin evento -> 409 (texto DISTINTO del
+// anterior, Plan 054 · T2.5), sesión offline -> 502, timeout/cancelación -> 504,
+// resto -> 500 (mismo criterio que flujos/admin).
 func writeStartError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, runtime.ErrConversationExists):
 		writeError(w, http.StatusConflict, "ya existe una conversación viva para la clave")
+	case errors.Is(err, runtime.ErrDurableFlowNeedsEvent):
+		// MD-054.3 (design.md §6, confirmado por grep contra errorBody/writeError):
+		// publicapi NO tiene campo `code` estructurado en su JSON de error — solo
+		// {"error": "<texto>"}. No se inventa esa superficie aquí (instrucción
+		// explícita del plan); el TEXTO es la única forma de distinguir este 409 del
+		// de ErrConversationExists, y le dice al operador qué hacer, no solo que
+		// falló (el cliente de WhatsApp NUNCA ve este rechazo: T2.4 lo degrada a la
+		// oferta del despachador antes de llegar aquí).
+		writeError(w, http.StatusConflict, "el flujo tiene contenido durable (cart/survey) y no puede arrancar sin un evento padre: "+
+			"configura una regla event_start para este flujo, o arráncalo desde una conversación que ya tenga "+
+			"un evento activo; no reintentes esta llamada, seguirá devolviendo 409")
 	case errors.Is(err, session.ErrSessionOffline):
 		writeError(w, http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge")
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

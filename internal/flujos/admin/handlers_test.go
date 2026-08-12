@@ -478,6 +478,28 @@ func TestStartHandler_ConversationExists(t *testing.T) {
 	}
 }
 
+// TestStartHandler_DurableFlowNeedsEvent (Plan 054 · T2.5, D-054.3(b)/D-054.6):
+// ErrDurableFlowNeedsEvent también da 409, pero con un texto DISTINTO —y que le dice
+// al operador qué hacer— del de ErrConversationExists. El criterio EN PAREJA (las
+// DOS rutas HTTP sobre el MISMO flujo, con el runtime real) vive en
+// internal/publicapi/flows_durable_guard_test.go — este test es la sonda mínima del
+// lado admin, en el mismo estilo que TestStartHandler_ConversationExists.
+func TestStartHandler_DurableFlowNeedsEvent(t *testing.T) {
+	starter := &fakeStarter{err: runtime.ErrDurableFlowNeedsEvent}
+	rec := do(admin.StartHandler(starter), http.MethodPost, "/admin/flows/start", validStartBody)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code = %d, quiero 409", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, runtime.ErrConversationExists.Error()) {
+		t.Fatalf("el 409 de ErrDurableFlowNeedsEvent NO debe confundirse con el de ErrConversationExists: %q", body)
+	}
+	if !strings.Contains(body, "evento") {
+		t.Fatalf("el 409 debe explicarle al operador el motivo (evento), no solo que falló: %q", body)
+	}
+}
+
 func TestStartHandler_SessionOffline(t *testing.T) {
 	// envuelto, como lo propaga Runtime.send → registry.Push (errors.Is debe atravesarlo).
 	starter := &fakeStarter{err: errWrap(session.ErrSessionOffline)}

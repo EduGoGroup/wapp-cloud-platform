@@ -50,29 +50,30 @@ func newDedupeSurveyRuntime(t *testing.T, ded runtime.IngestDeduper) (*runtime.R
 // el last_wa_message_id ya es a2, así que la guarda consecutiva NO lo cortaría; el
 // deduper persistente sí ⇒ ningún envío extra ni error.
 func TestIngestDedupe_ReplayIntercalado_EfectoUnaVez(t *testing.T) {
-	rt, sender, _, _ := newDedupeSurveyRuntime(t, ingest.NewMemoryDeduper())
+	rt, sender, repo, contacts := newDedupeSurveyRuntime(t, ingest.NewMemoryDeduper())
 	ctx := context.Background()
 
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start survey: %v", err)
-	}
+	// Sembrado directo (no Start): desde Plan 054 · T2.3 la encuesta es SIEMPRE
+	// durable y Start() ya no puede abrirla — ver seedSurveyOpen.
+	seedSurveyOpen(t, repo, contacts)
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.a1")); err != nil {
 		t.Fatalf("HandleIncoming a1: %v", err)
 	}
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.a2")); err != nil {
 		t.Fatalf("HandleIncoming a2: %v", err)
 	}
-	// q1 (Start) + q2 (a1) + cierre (a2) = 3 envíos.
-	if got := sender.count(); got != 3 {
-		t.Fatalf("tras completar la encuesta se esperaban 3 envíos, hubo %d", got)
+	// q2 (a1) + cierre (a2) = 2 envíos (sin el q1 de Start, que ya no aplica a un
+	// flujo durable: el fixture se siembra directo en q1).
+	if got := sender.count(); got != 2 {
+		t.Fatalf("tras completar la encuesta se esperaban 2 envíos, hubo %d", got)
 	}
 
 	// REENVÍO INTERCALADO de a1: duplicado del outbox llegado fuera de orden.
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.a1")); err != nil {
 		t.Fatalf("HandleIncoming a1 (reenvío): %v", err)
 	}
-	if got := sender.count(); got != 3 {
-		t.Fatalf("el reenvío intercalado de a1 NO debió producir efectos; envíos=%d (quiero 3)", got)
+	if got := sender.count(); got != 2 {
+		t.Fatalf("el reenvío intercalado de a1 NO debió producir efectos; envíos=%d (quiero 2)", got)
 	}
 }
 
@@ -84,18 +85,17 @@ func TestIngestDedupe_ShortCircuit_NoTocaElMotor(t *testing.T) {
 	rt, sender, repo, contacts := newDedupeSurveyRuntime(t, ded)
 	ctx := context.Background()
 
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start survey: %v", err)
-	}
-	cid := resolveID(t, contacts, testContact)
+	// Sembrado directo (no Start): ver seedSurveyOpen / Plan 054 · T2.3.
+	cid := seedSurveyOpen(t, repo, contacts)
 	stBefore := loadState(t, repo, cid)
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.dup")); err != nil {
 		t.Fatalf("HandleIncoming duplicado: %v", err)
 	}
-	// El único envío es la q1 del Start; el entrante "duplicado" no avanzó nada.
-	if got := sender.count(); got != 1 {
-		t.Fatalf("un entrante ya-visto no debió auto-responder; envíos=%d (quiero 1)", got)
+	// El entrante "duplicado" no avanzó nada: cero envíos (sin Start no hay q1 que
+	// contar, y el dedupe corta el avance ANTES de tocar el motor).
+	if got := sender.count(); got != 0 {
+		t.Fatalf("un entrante ya-visto no debió auto-responder; envíos=%d (quiero 0)", got)
 	}
 	stAfter := loadState(t, repo, cid)
 	if stAfter.CurrentNode != stBefore.CurrentNode {
@@ -111,21 +111,20 @@ func TestIngestDedupe_ShortCircuit_NoTocaElMotor(t *testing.T) {
 // consulta y la conversación avanza normal.
 func TestIngestDedupe_WaMessageIDVacio_NoDeduplica(t *testing.T) {
 	ded := &stubDeduper{seen: true} // si se consultara, cortaría el avance
-	rt, sender, _, _ := newDedupeSurveyRuntime(t, ded)
+	rt, sender, repo, contacts := newDedupeSurveyRuntime(t, ded)
 	ctx := context.Background()
 
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start survey: %v", err)
-	}
+	// Sembrado directo (no Start): ver seedSurveyOpen / Plan 054 · T2.3.
+	seedSurveyOpen(t, repo, contacts)
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "")); err != nil {
 		t.Fatalf("HandleIncoming sin wamid: %v", err)
 	}
 	if ded.calls != 0 {
 		t.Fatalf("con wa_message_id vacío el deduper NO debió consultarse; calls=%d", ded.calls)
 	}
-	// Avanzó a q2 (Start=1 + avance=1): el dedupe no bloqueó nada.
-	if got := sender.count(); got != 2 {
-		t.Fatalf("sin wamid la conversación debió avanzar (2 envíos), hubo %d", got)
+	// Avanzó a q2 (1 envío): el dedupe no bloqueó nada.
+	if got := sender.count(); got != 1 {
+		t.Fatalf("sin wamid la conversación debió avanzar (1 envío), hubo %d", got)
 	}
 }
 
@@ -133,16 +132,15 @@ func TestIngestDedupe_WaMessageIDVacio_NoDeduplica(t *testing.T) {
 // pierde el entrante (fail-open): se continúa el procesamiento normal.
 func TestIngestDedupe_FailOpen_ContinuaAlFallar(t *testing.T) {
 	ded := &stubDeduper{err: errors.New("bd caída")}
-	rt, sender, _, _ := newDedupeSurveyRuntime(t, ded)
+	rt, sender, repo, contacts := newDedupeSurveyRuntime(t, ded)
 	ctx := context.Background()
 
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start survey: %v", err)
-	}
+	// Sembrado directo (no Start): ver seedSurveyOpen / Plan 054 · T2.3.
+	seedSurveyOpen(t, repo, contacts)
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.z1")); err != nil {
 		t.Fatalf("HandleIncoming con deduper caído: %v", err)
 	}
-	if got := sender.count(); got != 2 {
-		t.Fatalf("fail-open: el entrante debió procesarse pese al fallo del deduper (2 envíos), hubo %d", got)
+	if got := sender.count(); got != 1 {
+		t.Fatalf("fail-open: el entrante debió procesarse pese al fallo del deduper (1 envío), hubo %d", got)
 	}
 }
