@@ -285,7 +285,7 @@ func advance(cat Catalog, st cartState, input string, size int, fields []store.B
 		// BuyerIdx viaja con ellas por una razón más dura: los campos que cuenta YA
 		// están escritos y cifrados, y reiniciarlo volvería a pedirle al cliente un
 		// dato personal que ya dio.
-		st = cartState{Level: LevelCategories, Lines: st.Lines, IntakeID: st.IntakeID,
+		st = cartState{Level: LevelCategories, Lines: st.Lines,
 			Started: st.Started, Note: st.Note, BuyerIdx: st.BuyerIdx}
 		return st, []string{screenCategories(cat, st, size)}, nil
 	}

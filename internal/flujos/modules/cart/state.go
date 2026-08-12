@@ -117,13 +117,14 @@ type cartState struct {
 	SKU     string     `json:"sku,omitempty"`      // SKU del artículo en foco (L3/L4)
 	Page    int        `json:"page,omitempty"`     // página del nivel de lista actual
 	Lines   []cartLine `json:"lines,omitempty"`    // líneas acumuladas del pedido
-	// IntakeID se llamaba OrderID (tag `order_id`) hasta el Plan 041 · T1.0. Cambiar
-	// un tag json de estado PERSISTIDO normalmente exige migrar las conversaciones
-	// vivas; aquí no, y por una razón verificable: NADIE le asigna nunca un valor
-	// (el único uso es copiarlo a sí mismo al reencauzar a L1, cart.go), y con
-	// `omitempty` un valor cero jamás llega a escribirse en el JSONB. No hay un solo
-	// `order_id` guardado que quede huérfano.
-	IntakeID string `json:"intake_id,omitempty"` // uuid de la solicitud open (la abre el runtime; §3.4)
+	// El campo IntakeID (tag `intake_id`, antes `order_id`) se RETIRÓ el 2026-08-12:
+	// era un hueco del contrato, no un dato. Nadie le asignó nunca un valor —su único
+	// uso era copiarse a sí mismo al reencauzar a L1— y con `omitempty` jamás llegó a
+	// escribirse en el JSONB, así que no hay una sola fila que migrar ni un solo
+	// `order_id`/`intake_id` guardado que quede huérfano (verificado antes de borrar).
+	// El uuid de la solicitud open lo lleva la proyección (projection.go), que lo
+	// obtiene de ensureOpenIntake y lo publica en el payload del efecto.
+	//
 	// VariantCode es la variante elegida del artículo en foco (Plan 041 ·
 	// D-041.4). Es TRANSITORIO: vive entre el nivel de variante y el de cantidad,
 	// y se limpia al agregar la línea o al salir del artículo. Un artículo sin
