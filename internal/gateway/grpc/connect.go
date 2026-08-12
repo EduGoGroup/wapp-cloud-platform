@@ -109,8 +109,9 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
-	case *cloudlinkv1.EdgeToCloud_Delivery:
-		s.log.Debug("delivery status recibido", "session_id", cc.sessionID)
+	// El case de EdgeToCloud_Delivery se retiró el 2026-08-12 junto con el campo 11 del
+	// contrato: era un frame con consumidor (este log.Debug y nada más) y sin productor
+	// —ningún punto del Edge lo emitió nunca—. Los acuses reales llegan como Receipt.
 	case *cloudlinkv1.EdgeToCloud_Receipt:
 		s.handleReceipt(ctx, cc, p.Receipt)
 	case *cloudlinkv1.EdgeToCloud_DiagnosticsBundle:
