@@ -41,10 +41,14 @@ type kindSpec struct {
 	// deja la columna NULL, que es el caso de siempre).
 	needsEventKind bool
 	// allowsEventKind ADMITE event_kind sin exigirlo (Plan 043 · T5.3, D-043.9). Solo
-	// lo lleva `llm`, y significa una cosa muy acotada: «esta intención pertenece a
-	// este tipo de evento», para que el resolver la descarte cuando el activo es otro.
-	// NO convierte la regla en una puerta de nacimiento: una regla llm sigue
-	// devolviendo Action=Start SIN EventKind (ver config_resolver.go).
+	// lo lleva `llm`, y significa DOS cosas a la vez, en SECUENCIA sobre el mismo
+	// campo (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12, sustituye a
+	// CONTRATO-OLA5 D1): primero acota el scoping —«esta intención pertenece a este
+	// tipo de evento», para que el resolver la descarte cuando el activo es otro—
+	// y, ya elegida la regla, SÍ convierte el disparo en una puerta de nacimiento:
+	// una regla llm que casa con event_kind poblado devuelve Action=StartEvent
+	// (ver config_resolver.go). Sin event_kind, byte a byte como siempre
+	// (Action=Start, sin evento).
 	allowsEventKind bool
 }
 
@@ -54,7 +58,8 @@ type kindSpec struct {
 // flujo al que apuntar; cart/survey sí pueden traerlo y se respeta. event_stop no lleva
 // event_kind porque corta el evento ACTIVO, sea del tipo que sea (D-043.2). llm ADMITE
 // (no exige) event_kind desde Plan 043 · T5.3/D-043.9: acota el scoping por evento
-// activo (config_resolver.go), no crea una puerta de nacimiento nueva.
+// activo Y, desde el Plan 054 · F2b, pare el evento cuando la regla ganadora lo trae
+// (config_resolver.go) — las dos lecturas del mismo campo, no dos campos en pugna.
 var kindSpecs = map[trigger.Kind]kindSpec{
 	trigger.KindKeyword:    {needsKeyword: true, needsFlowID: true},
 	trigger.KindFallback:   {needsFlowID: true},
@@ -97,8 +102,10 @@ type triggerRequest struct {
 	// EventKind es el TIPO de evento conversacional. Para kind=event_start es el que
 	// arranca o conmuta la regla (Plan 043 · D-043.2), OBLIGATORIO. Para kind=llm es
 	// OPCIONAL y significa el tipo de evento al que pertenece la intención (Plan 043 ·
-	// T5.3, D-043.9): acota el scoping en config_resolver.go, no arranca nada por sí
-	// solo. En cualquier otro kind el cuerpo se rechaza (400).
+	// T5.3, D-043.9): acota el scoping en config_resolver.go y, si la regla gana,
+	// PARE ese evento (Plan 054 · F2b, D-A) — sin event_kind la regla llm sigue sin
+	// arrancar nada por sí sola (Action=Start, sin evento). En cualquier otro kind el
+	// cuerpo se rechaza (400).
 	EventKind string `json:"event_kind"`
 }
 

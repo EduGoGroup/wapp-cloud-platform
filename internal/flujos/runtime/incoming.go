@@ -562,20 +562,20 @@ func (rt *Runtime) buildOpeningOffer(ctx context.Context, tenantID, sessionID, c
 // regla mal configurada lo trajera poblado: quién puede parir un evento lo decide el
 // SITIO, no el dato que llega.
 //
-// La puerta que SÍ pasa por aquí y consume turno es event_start: decisionFor
-// (trigger/config_resolver.go:171-180) solo puebla dec.EventKind para
-// KindEventStart, y beginEvent (events.go:246) trata cualquier Decision con
-// EventKind=="" como la keyword de siempre —no consume, cae a startPlainFlow—. Por
-// eso una keyword pura (Action=Start) SÍ entra a este `if` (dec.Action != Fallback
-// lo deja pasar) pero beginEvent la descarta enseguida.
+// Las DOS puertas que pasan por aquí y consumen turno son event_start y, desde el
+// Plan 054 · F2b (D-A), la intención LLM mapeada a un event_kind: decisionFor
+// (trigger/config_resolver.go:171-180) puebla dec.EventKind para KindEventStart, y
+// la rama sig.Intent != nil de Resolve (config_resolver.go, rama del match llm) lo
+// puebla igual cuando la regla GANADORA trae event_kind —en ambos casos beginEvent
+// (events.go:245) no mira dec.Action, solo dec.EventKind, así que le da igual por
+// cuál de las dos puertas llegó—. beginEvent (events.go:246) trata cualquier
+// Decision con EventKind=="" como la keyword de siempre —no consume, cae a
+// startPlainFlow—. Por eso una keyword pura, o una llm sin event_kind (Action=Start,
+// EventKind=="") SÍ entra a este `if` (dec.Action != Fallback lo deja pasar) pero
+// beginEvent la descarta enseguida.
 //
-// La «intención LLM mapeada a un event_kind sobre Action=Start» que este comentario
-// afirmaba como segunda puerta NUNCA se construyó: la rama sig.Intent != nil de
-// config_resolver.go:72-80 arma su Decision a mano (Action=Start, FlowID, Params,
-// IntentName) y no puebla EventKind en ningún caso — el Plan 043 la declaró pero
-// esta puerta sigue sin cablear. Es un hallazgo de ESTE plan (054), no un descuido
-// de esta tarea; abrirla es trabajo de otro frente. La tercera puerta —elegir en el
-// despachador— entra por su propio camino (StartNewOfKind, events.go).
+// La tercera puerta —elegir en el despachador— entra por su propio camino
+// (StartNewOfKind, events.go).
 func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
 	if dec.Action != trigger.Fallback {
 		consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "")

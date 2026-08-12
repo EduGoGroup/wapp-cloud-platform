@@ -153,6 +153,26 @@ func TestFlowsStart_FlujoDurable_409EnLasDosRutas(t *testing.T) {
 	if !strings.Contains(pubText, "evento") {
 		t.Fatalf("el 409 de publicapi debe explicar el motivo (evento): %s", pubText)
 	}
+	// D-B (Plan 054 · F2b, decisión de Jhoan 2026-08-12): el aviso viejo aconsejaba
+	// «arráncalo desde una conversación que ya tenga un evento activo» — algo que
+	// NINGÚN endpoint de admin ni de /api/v1 permite hacer. Los dos cuerpos deben
+	// haber retirado esa vía inexistente y apuntar a la única accionable: configurar
+	// una regla event_start (POST /api/v1/triggers).
+	const consejoInaccionable = "arráncalo desde una conversación que ya tenga"
+	if strings.Contains(adminText, consejoInaccionable) {
+		t.Fatalf("el 409 de admin NO debe aconsejar una vía que la API no ofrece: %s", adminText)
+	}
+	if strings.Contains(pubText, consejoInaccionable) {
+		t.Fatalf("el 409 de publicapi NO debe aconsejar una vía que la API no ofrece: %s", pubText)
+	}
+	for _, want := range []string{"event_start", "/api/v1/triggers"} {
+		if !strings.Contains(adminText, want) {
+			t.Fatalf("el 409 de admin debe apuntar a la vía accionable (%q): %s", want, adminText)
+		}
+		if !strings.Contains(pubText, want) {
+			t.Fatalf("el 409 de publicapi debe apuntar a la vía accionable (%q): %s", want, pubText)
+		}
+	}
 	// publicapi (MD-054.3): SOLO {"error": "<texto>"}, sin campo `code` inventado.
 	if strings.Contains(pubText, `"code"`) {
 		t.Fatalf("publicapi NO debe ganar un campo `code` no autorizado (MD-054.3): %s", pubText)

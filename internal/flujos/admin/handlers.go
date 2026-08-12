@@ -260,9 +260,18 @@ func writeStartError(w http.ResponseWriter, err error) {
 		// despachador). El texto dice qué hacer, no solo que falló: publicapi
 		// (MD-054.3) no tiene campo `code` en su JSON de error, así que el TEXTO es
 		// la única superficie para distinguir este 409 del de ErrConversationExists.
-		http.Error(w, "el flujo tiene contenido durable (cart/survey) y no puede arrancar sin un evento padre: "+
-			"configura una regla event_start para este flujo, o arráncalo desde una conversación que ya tenga "+
-			"un evento activo; no reintentes esta llamada, seguirá devolviendo 409", http.StatusConflict)
+		//
+		// Retirada de capacidad, dicha clara (Plan 054 · F2b, D-B — decisión de Jhoan
+		// 2026-08-12, tras review): verificado que NINGÚN endpoint de /admin ni de
+		// /api/v1 para un evento — las tres puertas del Plan 043 son de WhatsApp. El
+		// texto viejo aconsejaba «arráncalo desde una conversación que ya tenga un
+		// evento activo», y eso NO se puede hacer por API. Ya no se ofrece esa vía:
+		// la única accionable es configurar la regla que SÍ pare el evento desde la
+		// conversación.
+		http.Error(w, "el flujo tiene contenido durable (cart/survey): su evento nace en la conversación, no por "+
+			"esta API. Configura una regla event_start para este flujo (POST /api/v1/triggers) para que el "+
+			"cliente lo arranque escribiendo su palabra clave; no reintentes esta llamada, seguirá devolviendo 409",
+			http.StatusConflict)
 	case errors.Is(err, session.ErrSessionOffline):
 		http.Error(w, "sesión offline: no hay stream vivo para el Edge", http.StatusBadGateway)
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

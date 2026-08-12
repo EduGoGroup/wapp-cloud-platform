@@ -189,9 +189,17 @@ func writeStartError(w http.ResponseWriter, err error) {
 		// de ErrConversationExists, y le dice al operador qué hacer, no solo que
 		// falló (el cliente de WhatsApp NUNCA ve este rechazo: T2.4 lo degrada a la
 		// oferta del despachador antes de llegar aquí).
-		writeError(w, http.StatusConflict, "el flujo tiene contenido durable (cart/survey) y no puede arrancar sin un evento padre: "+
-			"configura una regla event_start para este flujo, o arráncalo desde una conversación que ya tenga "+
-			"un evento activo; no reintentes esta llamada, seguirá devolviendo 409")
+		//
+		// Retirada de capacidad, dicha clara (Plan 054 · F2b, D-B — decisión de
+		// Jhoan 2026-08-12, tras review): verificado que NINGÚN endpoint de /admin
+		// ni de /api/v1 para un evento — las tres puertas del Plan 043 son de
+		// WhatsApp. El texto viejo aconsejaba «arráncalo desde una conversación que
+		// ya tenga un evento activo», y eso NO se puede hacer por API. Ya no se
+		// ofrece esa vía: la única accionable es configurar la regla que SÍ pare el
+		// evento desde la conversación.
+		writeError(w, http.StatusConflict, "el flujo tiene contenido durable (cart/survey): su evento nace en la conversación, no por "+
+			"esta API. Configura una regla event_start para este flujo (POST /api/v1/triggers) para que el "+
+			"cliente lo arranque escribiendo su palabra clave; no reintentes esta llamada, seguirá devolviendo 409")
 	case errors.Is(err, session.ErrSessionOffline):
 		writeError(w, http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge")
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
