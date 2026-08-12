@@ -196,6 +196,13 @@ func Run(ctx context.Context) error {
 	}
 
 	triggerStore := trigger.NewPostgresStore(db)
+	// Puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3, D-054.6/D-054.8): junta el MISMO
+	// flowStore/flowEngine que ya alimentan DefinitionHandler/StartHandler/flowRuntime
+	// —cero dependencias nuevas, solo una lectura nueva sobre objetos que YA existen—
+	// para responder «¿el flujo de esta regla tiene contenido durable?» en tiempo de
+	// CONFIGURACIÓN. Parámetro POSICIONAL de los tres constructores CRUD de abajo (y
+	// de publicapi.Deps.DurableFlowChecker): omitirlo no compila.
+	durableFlowChecker := flowadmin.NewEngineDurableFlowChecker(flowStore, flowEngine)
 	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
 	// El store de SOLICITUDES lo comparten dos consumidores: el proyector del
 	// carrito, que le cuelga la revisión 1 al cerrar (ADR-0031 §3) y le pone la
@@ -378,9 +385,10 @@ func Run(ctx context.Context) error {
 			DiagnosticsRequester: gw,
 			DiagnosticsBundleTTL: cfg.Diagnostics.BundleTTL,
 		},
-		Triggers:     triggerStore,
-		Intents:      intentStore,
-		Entitlements: entResolver,
+		Triggers:            triggerStore,
+		TriggersDurableFlow: durableFlowChecker,
+		Intents:             intentStore,
+		Entitlements:        entResolver,
 		// El notificador (D-041.14 · T4.2) usa las MISMAS tres piezas que ya usa el
 		// motor para hablarle a un contacto: el Gateway como sender, el resolver
 		// custodiado de PII para el destino y el store de solicitudes para la config
@@ -448,11 +456,11 @@ func Run(ctx context.Context) error {
 	mux.Handle("/admin/flows/start", adminHandler(authMW, auditor, log,
 		"flows.start", "flow", flowadmin.StartHandler(flowRuntime)))
 	mux.Handle("POST /admin/triggers", adminHandler(authMW, auditor, log,
-		"triggers.create", "trigger", flowadmin.CreateTriggerHandler(triggerStore)))
+		"triggers.create", "trigger", flowadmin.CreateTriggerHandler(triggerStore, durableFlowChecker)))
 	mux.Handle("GET /admin/triggers", adminHandler(authMW, auditor, log,
-		"triggers.read", "trigger", flowadmin.ListTriggersHandler(triggerStore)))
+		"triggers.read", "trigger", flowadmin.ListTriggersHandler(triggerStore, durableFlowChecker)))
 	mux.Handle("DELETE /admin/triggers/{id}", adminHandler(authMW, auditor, log,
-		"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(triggerStore)))
+		"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(triggerStore, durableFlowChecker)))
 	mux.Handle("POST /admin/sessions/{id}/role", adminHandler(authMW, auditor, log,
 		"sessions.write", "session", flowadmin.SetSessionRoleHandler(fleetRepo)))
 	mux.Handle("POST /admin/sessions/{id}/status", adminHandler(authMW, auditor, log,

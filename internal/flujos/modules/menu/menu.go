@@ -36,7 +36,7 @@ func (Module) Type() string { return model.NodeTypeMenu }
 // flujo esperando la opción del usuario.
 func (Module) WaitsForInput() bool { return true }
 
-// ProducesDurableContent: false — el menú no proyecta ningún contenido durable del cliente (design.md D-054.3(a)).
+// ProducesDurableContent es false: el menú no proyecta ningún contenido durable del cliente (design.md D-054.3(a)).
 func (Module) ProducesDurableContent() bool { return false }
 
 // Render devuelve el prompt del menú tal cual (las opciones numeradas ya vienen

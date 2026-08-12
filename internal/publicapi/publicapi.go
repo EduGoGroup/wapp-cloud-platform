@@ -133,6 +133,14 @@ type Deps struct {
 	Sender   MessageSender          // gateway CloudLink (SendText)
 	Audit    AuditReader            // bitácora de auditoría (GET /api/v1/audit, T10)
 	Triggers flowadmin.TriggerStore // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
+	// TriggersDurableFlow es el puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3,
+	// D-054.6/D-054.8): «¿el flujo de esta regla tiene contenido durable?». Mismo
+	// parámetro POSICIONAL que reciben los tres constructores del CRUD de reglas
+	// (flowadmin.Create/List/DeleteTriggerHandler) — nil es un valor VÁLIDO
+	// (fail-open, ver el docstring de flowadmin.DurableFlowChecker), pero el
+	// parámetro en sí no se puede omitir sin dejar de compilar. Se cablea en
+	// cmd/server con el MISMO flowStore/flowEngine que ya usa el resto del motor.
+	TriggersDurableFlow flowadmin.DurableFlowChecker
 	// Intents persiste el blob de config del clasificador de intenciones por tenant
 	// (Plan 029 · T5). Lo satisface *intentcfg.PostgresStore. nil ⇒ no se montan las
 	// rutas /api/v1/intents.
@@ -264,11 +272,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// al tenant del token (INV-8); reusa los MISMOS handlers que /admin/triggers.
 	if d.Triggers != nil {
 		mux.Handle("POST /api/v1/triggers", protect(mw, auditor, log,
-			"triggers.create", "trigger", flowadmin.CreateTriggerHandler(d.Triggers)))
+			"triggers.create", "trigger", flowadmin.CreateTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
 		mux.Handle("GET /api/v1/triggers", protectRead(mw,
-			"triggers.read", flowadmin.ListTriggersHandler(d.Triggers)))
+			"triggers.read", flowadmin.ListTriggersHandler(d.Triggers, d.TriggersDurableFlow)))
 		mux.Handle("DELETE /api/v1/triggers/{id}", protect(mw, auditor, log,
-			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers)))
+			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
 	}
 
 	// Listar las sesiones/teléfonos vinculados del tenant (Plan 021 · T0, R-A1).

@@ -12,6 +12,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/menu"
@@ -126,36 +127,82 @@ func TestIntent_LLMRule_PreLoadsCart(t *testing.T) {
 	if err := rt.HandleIncoming(ctx, testSession, m); err != nil {
 		t.Fatalf("HandleIncoming intent: %v", err)
 	}
+
+	assertPreLoadConfirmationSent(t, sender)
+	st := loadState(t, repo, resolveID(t, contacts, testContact))
+	// LA diferencia con la versión anterior a T2.3/T2.4: el arranque tiene padre.
+	assertCartStartedWithParentEvent(t, st, evs)
+	assertCartAwaitingItemConfirmation(t, st)
+	// item_added abrió la solicitud "open" (design.md §3.4) y quedó en flow_events.
+	assertPreAddOpenedIntake(t, repo)
+	// intent_params consumidos: no persisten en el estado guardado.
+	assertIntentParamsConsumed(t, st)
+}
+
+// assertPreLoadConfirmationSent comprueba que el pre-carga mandó EXACTAMENTE una
+// confirmación y que su texto menciona el ítem agregado y la opción de finalizar.
+func assertPreLoadConfirmationSent(t *testing.T, sender *fakeSender) {
+	t.Helper()
 	if sender.count() != 1 {
 		t.Fatalf("el pre-carga debe enviar 1 confirmación, envió %d", sender.count())
 	}
-	if got := sender.texts()[0]; !strings.Contains(got, "Agregué") || !strings.Contains(got, "Café") || !strings.Contains(got, "Finalizar") {
-		t.Fatalf("confirmación de pre-carga inesperada: %q", got)
+	got := sender.texts()[0]
+	for _, want := range []string{"Agregué", "Café", "Finalizar"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("confirmación de pre-carga inesperada (falta %q): %q", want, got)
+		}
 	}
-	st := loadState(t, repo, resolveID(t, contacts, testContact))
+}
+
+// assertCartStartedWithParentEvent comprueba que el arranque fue al flujo del
+// carrito CON un evento padre: la diferencia que F2b introduce (Plan 054). Debe
+// haber nacido UN evento cart vivo y ser el MISMO que apunta st.EventID.
+func assertCartStartedWithParentEvent(t *testing.T, st model.Conversation, evs *memEventStore) {
+	t.Helper()
 	if st.FlowID != testCartFlow {
 		t.Fatalf("debe arrancar el flujo del carrito, got %q", st.FlowID)
 	}
-	// LA diferencia con la versión anterior a T2.3/T2.4: el arranque tiene padre.
 	if st.EventID == "" {
 		t.Fatalf("el pre-carga debe llevar EventID no vacío (evento padre, Plan 054 · F2b)")
 	}
 	alive := evs.alive()
-	if len(alive) != 1 || alive[0].ID != st.EventID || alive[0].Kind != trigger.EventKindCart {
-		t.Fatalf("debe haber nacido UN evento cart, el mismo que apunta flow_state: %+v (st.EventID=%q)", alive, st.EventID)
+	if len(alive) != 1 {
+		t.Fatalf("debe haber nacido UN evento cart, got %+v (st.EventID=%q)", alive, st.EventID)
 	}
+	if alive[0].ID != st.EventID || alive[0].Kind != trigger.EventKindCart {
+		t.Fatalf("el evento nacido debe ser el mismo que apunta flow_state y de tipo cart: %+v (st.EventID=%q)", alive, st.EventID)
+	}
+}
+
+// assertCartAwaitingItemConfirmation comprueba que el carrito quedó posado en la
+// pantalla de confirmación de ítem (level=="continue") tras el pre-add.
+func assertCartAwaitingItemConfirmation(t *testing.T, st model.Conversation) {
+	t.Helper()
 	cs, ok := st.Vars["cart"].(map[string]any)
-	if !ok || cs["level"] != "continue" {
+	if !ok {
+		t.Fatalf("st.Vars[\"cart\"] debe ser un map, got %+v", st.Vars["cart"])
+	}
+	if cs["level"] != "continue" {
 		t.Fatalf("el carrito debe quedar en la confirmación de ítem (continue), got %+v", st.Vars["cart"])
 	}
-	// item_added abrió la solicitud "open" (design.md §3.4) y quedó en flow_events.
+}
+
+// assertPreAddOpenedIntake comprueba que el pre-add abrió la solicitud "open"
+// (design.md §3.4) y declaró item_added en flow_events.
+func assertPreAddOpenedIntake(t *testing.T, repo *store.MemoryRepository) {
+	t.Helper()
 	if openIntakeCount(repo, "open") != 1 {
 		t.Fatalf("el pre-add debe abrir 1 solicitud open, got %+v", repo.Intakes())
 	}
 	if !hasFlowEvent(repo, "item_added") {
 		t.Fatalf("el pre-add debe declarar item_added, got %+v", repo.FlowEvents())
 	}
-	// intent_params consumidos: no persisten en el estado guardado.
+}
+
+// assertIntentParamsConsumed comprueba que intent_params se consumió tras el
+// pre-add: no debe persistir en el estado guardado.
+func assertIntentParamsConsumed(t *testing.T, st model.Conversation) {
+	t.Helper()
 	if _, ok := st.Vars[modules.VarIntentParams]; ok {
 		t.Fatalf("intent_params debe consumirse tras el pre-add: %+v", st.Vars)
 	}

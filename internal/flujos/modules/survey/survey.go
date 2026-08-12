@@ -43,7 +43,7 @@ func (Module) Type() string { return model.NodeTypeSurveyQuestion }
 // el flujo esperando la opción del usuario.
 func (Module) WaitsForInput() bool { return true }
 
-// ProducesDurableContent: true — proyecta a survey_results (design.md D-054.3(a)).
+// ProducesDurableContent es true: proyecta a survey_results (design.md D-054.3(a)).
 func (Module) ProducesDurableContent() bool { return true }
 
 // Render devuelve el prompt de la pregunta tal cual (las opciones numeradas ya

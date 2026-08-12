@@ -101,6 +101,98 @@ func durableGuardContactID(t *testing.T, resolver contact.Resolver, phone string
 	return id
 }
 
+// durableGuardRoute describe una de las dos rutas HTTP que comparten el mismo
+// Starter (runtime.Runtime): el nombre para diagnóstico, la sesión/contacto que
+// usa (distintos por ruta para no pisar el flow_state de la otra), si hay que
+// vigilar que el cuerpo NO gane un campo `code` (solo publicapi, MD-054.3), y la
+// función que dispara la petición real contra esa ruta.
+type durableGuardRoute struct {
+	name            string
+	sessionID       string
+	contactPhone    string
+	forbidCodeField bool
+	do              func(t *testing.T) (code int, body string)
+}
+
+// durableGuardRoutes arma las dos rutas sobre el MISMO *runtime.Runtime como
+// Starter: admin/handlers.go:201 y publicapi/flows.go:129 comparten el motor,
+// así que el 409 de las dos debe salir del mismo sitio (la guarda de
+// startLocked, Plan 054 · T2.3).
+func durableGuardRoutes(rt *runtime.Runtime) []durableGuardRoute {
+	return []durableGuardRoute{
+		{
+			name:         "/admin/flows/start",
+			sessionID:    "sess-admin",
+			contactPhone: "+15550000001",
+			do: func(t *testing.T) (int, string) {
+				t.Helper()
+				adminMux := http.NewServeMux()
+				admin.Register(adminMux, nil, rt, nil)
+				req := httptest.NewRequest(http.MethodPost, "/admin/flows/start",
+					strings.NewReader(`{"flow_id":"`+testDurableGuardFlow+`","session_id":"sess-admin","contact":"+15550000001"}`))
+				req = req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: tenantA, Subject: "op-durable-guard"}))
+				rec := httptest.NewRecorder()
+				adminMux.ServeHTTP(rec, req)
+				return rec.Code, rec.Body.String()
+			},
+		},
+		{
+			name:            "/api/v1/flows/{id}/start",
+			sessionID:       "sess-pub",
+			contactPhone:    "+15550000002",
+			forbidCodeField: true,
+			do: func(t *testing.T) (int, string) {
+				t.Helper()
+				mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Starter: rt}}, apiKeys())
+				rec := call(mux, keyAFull, http.MethodPost, "/api/v1/flows/"+testDurableGuardFlow+"/start",
+					`{"session_id":"sess-pub","contact":"+15550000002"}`)
+				return rec.Code, rec.Body.String()
+			},
+		},
+	}
+}
+
+// assertDurable409Body centraliza las comprobaciones comunes a los dos cuerpos
+// 409 (admin y publicapi, T2.5): debe ser DISTINGUIBLE del 409 que ya existe
+// para ErrConversationExists (mismo texto en las dos rutas: "ya existe una
+// conversación viva para la clave", handlers.go/flows.go); debe decirle al
+// operador POR QUÉ (mencionar el evento que falta); y —D-B, Plan 054 · F2b,
+// decisión de Jhoan 2026-08-12— NO debe aconsejar la vía inexistente que el
+// aviso viejo sugería («arráncalo desde una conversación que ya tenga un evento
+// activo», algo que NINGÚN endpoint de admin ni de /api/v1 permite hacer), sino
+// apuntar a la única accionable: configurar una regla event_start
+// (POST /api/v1/triggers).
+func assertDurable409Body(t *testing.T, label, body string) {
+	t.Helper()
+	const convExistsText = "ya existe una conversación viva para la clave"
+	if strings.Contains(body, convExistsText) {
+		t.Fatalf("el 409 de %s NO debe confundirse con el de ErrConversationExists: %s", label, body)
+	}
+	if !strings.Contains(body, "evento") {
+		t.Fatalf("el 409 de %s debe explicar el motivo (evento): %s", label, body)
+	}
+	const consejoInaccionable = "arráncalo desde una conversación que ya tenga"
+	if strings.Contains(body, consejoInaccionable) {
+		t.Fatalf("el 409 de %s NO debe aconsejar una vía que la API no ofrece: %s", label, body)
+	}
+	for _, want := range []string{"event_start", "/api/v1/triggers"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("el 409 de %s debe apuntar a la vía accionable (%q): %s", label, want, body)
+		}
+	}
+}
+
+// assertNoDurableGuardTrace comprueba que la ruta NO dejó rastro: cero
+// flow_state bajo el contact_id opaco que el motor le habría asignado a la
+// sesión/contacto de esa ruta.
+func assertNoDurableGuardTrace(t *testing.T, repo *flowstore.MemoryRepository, contacts contact.Resolver, rte durableGuardRoute) {
+	t.Helper()
+	cid := durableGuardContactID(t, contacts, rte.contactPhone)
+	if ok, err := repo.Exists(context.Background(), flowstore.Key{TenantID: tenantA, SessionID: rte.sessionID, ContactID: cid}); err != nil || ok {
+		t.Fatalf("la ruta %s no debe dejar flow_state: ok=%v err=%v", rte.name, ok, err)
+	}
+}
+
 // TestFlowsStart_FlujoDurable_409EnLasDosRutas es el criterio EN PAREJA de T2.5: el
 // MISMO flujo durable (único nodo "cart"), arrancado primero por
 // POST /admin/flows/start y después por POST /api/v1/flows/{id}/start (comparten
@@ -109,84 +201,23 @@ func durableGuardContactID(t *testing.T, resolver contact.Resolver, phone string
 // NINGUNO de los dos deja una fila de flow_state ni de intake.
 func TestFlowsStart_FlujoDurable_409EnLasDosRutas(t *testing.T) {
 	rt, repo, contacts := newDurableGuardRuntime(t)
-	ctx := context.Background()
 
-	// --- Ruta 1: POST /admin/flows/start ---
-	adminMux := http.NewServeMux()
-	admin.Register(adminMux, nil, rt, nil)
-	adminReq := httptest.NewRequest(http.MethodPost, "/admin/flows/start",
-		strings.NewReader(`{"flow_id":"`+testDurableGuardFlow+`","session_id":"sess-admin","contact":"+15550000001"}`))
-	adminReq = adminReq.WithContext(httpapi.WithIdentity(adminReq.Context(), httpapi.Identity{TenantID: tenantA, Subject: "op-durable-guard"}))
-	adminRec := httptest.NewRecorder()
-	adminMux.ServeHTTP(adminRec, adminReq)
-
-	if adminRec.Code != http.StatusConflict {
-		t.Fatalf("/admin/flows/start code=%d, quiero 409; body=%s", adminRec.Code, adminRec.Body.String())
-	}
-	adminText := adminRec.Body.String()
-
-	// --- Ruta 2: POST /api/v1/flows/{id}/start, el MISMO *runtime.Runtime como Starter ---
-	mux := newAPI(publicapi.Deps{FlowDeps: publicapi.FlowDeps{Starter: rt}}, apiKeys())
-	pubRec := call(mux, keyAFull, http.MethodPost, "/api/v1/flows/"+testDurableGuardFlow+"/start",
-		`{"session_id":"sess-pub","contact":"+15550000002"}`)
-
-	if pubRec.Code != http.StatusConflict {
-		t.Fatalf("/api/v1/flows/{id}/start code=%d, quiero 409; body=%s", pubRec.Code, pubRec.Body.String())
-	}
-	pubText := pubRec.Body.String()
-
-	// Los dos cuerpos deben ser DISTINGUIBLES del 409 que ya existe para
-	// ErrConversationExists (mismo texto en las dos rutas: "ya existe una
-	// conversación viva para la clave", handlers.go/flows.go).
-	const convExistsText = "ya existe una conversación viva para la clave"
-	if strings.Contains(adminText, convExistsText) {
-		t.Fatalf("el 409 de /admin/flows/start NO debe confundirse con el de ErrConversationExists: %s", adminText)
-	}
-	if strings.Contains(pubText, convExistsText) {
-		t.Fatalf("el 409 de /api/v1/flows/{id}/start NO debe confundirse con el de ErrConversationExists: %s", pubText)
-	}
-	// Y ambos deben decirle al operador POR QUÉ (mencionar el evento que falta), no
-	// solo que algo falló — el requisito explícito de T2.5.
-	if !strings.Contains(adminText, "evento") {
-		t.Fatalf("el 409 de admin debe explicar el motivo (evento): %s", adminText)
-	}
-	if !strings.Contains(pubText, "evento") {
-		t.Fatalf("el 409 de publicapi debe explicar el motivo (evento): %s", pubText)
-	}
-	// D-B (Plan 054 · F2b, decisión de Jhoan 2026-08-12): el aviso viejo aconsejaba
-	// «arráncalo desde una conversación que ya tenga un evento activo» — algo que
-	// NINGÚN endpoint de admin ni de /api/v1 permite hacer. Los dos cuerpos deben
-	// haber retirado esa vía inexistente y apuntar a la única accionable: configurar
-	// una regla event_start (POST /api/v1/triggers).
-	const consejoInaccionable = "arráncalo desde una conversación que ya tenga"
-	if strings.Contains(adminText, consejoInaccionable) {
-		t.Fatalf("el 409 de admin NO debe aconsejar una vía que la API no ofrece: %s", adminText)
-	}
-	if strings.Contains(pubText, consejoInaccionable) {
-		t.Fatalf("el 409 de publicapi NO debe aconsejar una vía que la API no ofrece: %s", pubText)
-	}
-	for _, want := range []string{"event_start", "/api/v1/triggers"} {
-		if !strings.Contains(adminText, want) {
-			t.Fatalf("el 409 de admin debe apuntar a la vía accionable (%q): %s", want, adminText)
-		}
-		if !strings.Contains(pubText, want) {
-			t.Fatalf("el 409 de publicapi debe apuntar a la vía accionable (%q): %s", want, pubText)
-		}
-	}
-	// publicapi (MD-054.3): SOLO {"error": "<texto>"}, sin campo `code` inventado.
-	if strings.Contains(pubText, `"code"`) {
-		t.Fatalf("publicapi NO debe ganar un campo `code` no autorizado (MD-054.3): %s", pubText)
+	for _, rte := range durableGuardRoutes(rt) {
+		t.Run(rte.name, func(t *testing.T) {
+			code, body := rte.do(t)
+			if code != http.StatusConflict {
+				t.Fatalf("%s code=%d, quiero 409; body=%s", rte.name, code, body)
+			}
+			assertDurable409Body(t, rte.name, body)
+			// publicapi (MD-054.3): SOLO {"error": "<texto>"}, sin campo `code` inventado.
+			if rte.forbidCodeField && strings.Contains(body, `"code"`) {
+				t.Fatalf("publicapi NO debe ganar un campo `code` no autorizado (MD-054.3): %s", body)
+			}
+			assertNoDurableGuardTrace(t, repo, contacts, rte)
+		})
 	}
 
-	// Ninguna de las dos rutas dejó rastro: cero flow_state, cero intakes.
-	cidAdmin := durableGuardContactID(t, contacts, "+15550000001")
-	if ok, err := repo.Exists(ctx, flowstore.Key{TenantID: tenantA, SessionID: "sess-admin", ContactID: cidAdmin}); err != nil || ok {
-		t.Fatalf("la ruta admin no debe dejar flow_state: ok=%v err=%v", ok, err)
-	}
-	cidPub := durableGuardContactID(t, contacts, "+15550000002")
-	if ok, err := repo.Exists(ctx, flowstore.Key{TenantID: tenantA, SessionID: "sess-pub", ContactID: cidPub}); err != nil || ok {
-		t.Fatalf("la ruta publicapi no debe dejar flow_state: ok=%v err=%v", ok, err)
-	}
+	// Cero intakes: el flow_state por ruta ya se verificó en assertNoDurableGuardTrace.
 	if got := repo.Intakes(); len(got) != 0 {
 		t.Fatalf("ninguna de las dos rutas debe abrir solicitudes: %+v", got)
 	}
