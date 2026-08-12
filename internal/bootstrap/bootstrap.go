@@ -283,6 +283,20 @@ func Run(ctx context.Context) error {
 		// es media verdad y no la que queremos en producción.
 		flowruntime.WithSummarySources(flowruntime.NewSummarySources(flowStore)),
 		flowruntime.WithDispatcher(dispatcher),
+		// La ENTRADA QUE OFRECE (Plan 043 · T3.8, REQ-27/REQ-27b, ADR-0029 · E-9), cableada
+		// el 2026-08-12 sobre el MISMO *events.Dispatcher que la línea de arriba — que es
+		// exactamente lo que su docstring pedía («en producción lo satisface el MISMO
+		// *events.Dispatcher»). Estuvo construida y probada desde el 043 y SIN ENCHUFAR, y
+		// eso no fue gratis: con `opening` a nil la rama Fallback de handleTrigger caía
+		// SIEMPRE a startPlainFlow —el camino que E-9 vino a reemplazar—, que arranca el
+		// flujo del tenant SIN evento padre. Con un tenant cuyo flujo lleva un nodo `cart`,
+		// eso es una comanda perdida en silencio contra el NOT NULL de intakes.event_id
+		// (migración 0054): medido dos veces en UAT el 2026-08-12, hallazgos #001 y #003 de
+		// docs/runbooks/bitacora-errores-uat.md. Con el cable puesto, el entrante que no casa
+		// nada recibe los tipos que el tenant habilita y el evento nace por la TERCERA puerta
+		// de T2.5 (elección en el despachador) — sin tocar el tiempo muerto: el caso vacío
+		// (Offering.Empty) sigue cayendo al fallback de siempre (REQ-27b, INV-20).
+		flowruntime.WithOpeningBuilder(dispatcher),
 		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
 		// Segunda condición del productor `message` del hilo (D-043.23, decisión de
