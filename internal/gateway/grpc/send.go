@@ -260,6 +260,15 @@ func mapKind(kind string) cloudlinkv1.MediaKind {
 
 // Ping empuja un comando Ping hacia la sesión dada. No espera el Pong (mínimo
 // del corte): el Pong recibido se registra en nivel debug.
+//
+// ⚠️ SIN LLAMANTE DE PRODUCCIÓN (verificado 2026-08-12). El keepalive real lo hace el
+// transporte HTTP/2 y la vivacidad la reporta el Heartbeat; nadie de la plataforma
+// llama a este método. Se CONSERVA a propósito, y no por inercia: es la costura más
+// barata para empujar un frame sin esperar Ack, y sobre ella se apoya el test de
+// fan-out concurrente del registry (server_test.go, 20 goroutines contra dos sesiones
+// vivas mientras el Edge manda heartbeats). Borrarlo costaría esa cobertura y
+// obligaría a reescribir el test sobre SendText, que sí espera Ack y traería
+// flakiness. Si un día se retira, hay que llevarse el test o portarlo antes.
 func (s *Server) Ping(_ context.Context, sessionID string, nonce int64) error {
 	cmdID, err := newCommandID()
 	if err != nil {

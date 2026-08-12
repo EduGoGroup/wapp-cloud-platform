@@ -89,9 +89,9 @@ func assertSendMediaCmd(t *testing.T, cmd *cloudlinkv1.CloudToEdge) {
 	if sm.GetKind() != cloudlinkv1.MediaKind_MEDIA_KIND_IMAGE {
 		t.Fatalf("MediaKind = %v, quiero IMAGE (mapeo de kind=image)", sm.GetKind())
 	}
-	if sm.GetInline() != nil {
-		t.Fatalf("MVP usa presigned_url, no inline bytes: %+v", sm)
-	}
+	// La comprobación de "no manda inline bytes" se retiró el 2026-08-12: la rama
+	// `inline` del oneof src salió del contrato (reserved 10), así que presigned_url
+	// es ahora la ÚNICA rama posible y el compilador lo garantiza mejor que un assert.
 	if cmd.GetCommandId() == "" {
 		t.Fatal("comando sin command_id")
 	}
