@@ -1,10 +1,14 @@
 package admin_test
 
-// triggers_durable_test.go — Plan 054 · F3.
+// triggers_durable_test.go — Plan 054 · F3, ampliado por A2 (el hueco gemelo).
 //
 // T2.6 (marca derivada flow_needs_event) y T2.7 (validación 422, D-054.8, LAS DOS
-// DIRECCIONES: alta de un fallback durable sin red de event_start, y baja de la
-// ÚLTIMA event_start que sostiene un fallback durable). Usa stubDurableChecker
+// DIRECCIONES: alta de una regla durable sin red de event_start, y baja de la
+// ÚLTIMA event_start que sostiene una de esas reglas), para los DOS kinds que
+// pueden arrancar un flujo sin evento — kind='fallback' y, desde A2, también
+// kind='keyword' (blocksDurableWithoutEventStart en triggers.go): el mismo
+// corner MD-054.2 por la puerta de al lado, que la primera versión de T2.7 dejó
+// abierta porque solo miraba kind='fallback'. Usa stubDurableChecker
 // (durable_flow_test.go) para no tener que levantar un Registry/engine completo
 // en cada caso — EngineDurableFlowChecker ya se prueba aparte contra el motor
 // real.
@@ -148,14 +152,118 @@ func TestCreateTrigger_500_CheckerFalla(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// El hueco gemelo (A2): T2.7 dirección (i) también para kind='keyword', no solo
+// kind='fallback'. Mismo corner MD-054.2 por la puerta de al lado — un tenant
+// puede sembrar un keyword hacia un flujo durable sin ninguna red de nacimiento
+// tan fácilmente como un fallback, y el resultado es el mismo silencio
+// (blocksDurableWithoutEventStart en triggers.go cubre ambos kinds).
+// ---------------------------------------------------------------------------
+
+// TestCreateTrigger_422_KeywordDurableSinRedEventStart: cero reglas event_start
+// vivas + keyword hacia un flujo durable ⇒ 422 con motivo, y la fila NO se
+// escribe — el mismo criterio (i) de T2.7, ahora para kind='keyword'.
+func TestCreateTrigger_422_KeywordDurableSinRedEventStart(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	checker := stubDurableChecker{flowDurable: true}
+	h := admin.CreateTriggerHandler(store, checker)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"keyword","keyword":"pedido","flow_id":"`+flowDurable+`"}`, true)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code=%d, quiero 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "event_start") || !strings.Contains(rec.Body.String(), "D-054.8") {
+		t.Fatalf("el 422 debe explicar el motivo (event_start / D-054.8), got %q", rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("el 422 NO debe persistir la fila, got %+v", rules)
+	}
+}
+
+// TestCreateTrigger_201_KeywordNoDurable_Regresion: un keyword hacia un flujo SIN
+// nodos durables se acepta con 201 exactamente como hoy, aunque el tenant no
+// tenga ninguna event_start — la guarda de T2.7 no toca este caso.
+func TestCreateTrigger_201_KeywordNoDurable_Regresion(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	checker := stubDurableChecker{flowDurable: true} // flowPlain NO está en el mapa ⇒ false
+	h := admin.CreateTriggerHandler(store, checker)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"keyword","keyword":"pedido","flow_id":"`+flowPlain+`"}`, true)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("debe persistir la fila, got %+v", rules)
+	}
+}
+
+// TestCreateTrigger_201_KeywordDurableConEventStartViva_Regresion: el mismo
+// keyword durable del caso 422, pero con una event_start viva en el tenant ⇒
+// 201, como hoy — la red ya existe, no hay corner que cerrar.
+func TestCreateTrigger_201_KeywordDurableConEventStartViva_Regresion(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	if _, err := store.Insert(context.Background(), trigger.Rule{
+		TenantID: ctxTenant, Kind: trigger.KindEventStart, Keyword: "carrito",
+		MatchType: trigger.MatchExact, EventKind: "cart", Enabled: true,
+	}); err != nil {
+		t.Fatalf("seed event_start: %v", err)
+	}
+	checker := stubDurableChecker{flowDurable: true}
+	h := admin.CreateTriggerHandler(store, checker)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"keyword","keyword":"pedido","flow_id":"`+flowDurable+`"}`, true)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("debe persistir la fila nueva junto a la event_start sembrada, got %+v", rules)
+	}
+}
+
+// TestCreateTrigger_201_KeywordFlowIDInexistente_FailOpen: un flow_id que no
+// existe (checker no lo conoce ⇒ false) se trata como NO durable — fail-open
+// (H2 del contrato), también para kind='keyword'.
+func TestCreateTrigger_201_KeywordFlowIDInexistente_FailOpen(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	checker := stubDurableChecker{} // vacío: CUALQUIER flow_id resuelve a "no durable"
+	h := admin.CreateTriggerHandler(store, checker)
+
+	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
+		`{"kind":"keyword","keyword":"pedido","flow_id":"flujo-que-no-existe"}`, true)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d, quiero 201 (fail-open); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // T2.7 dirección (ii): baja de la ÚLTIMA event_start viva («la puerta de atrás»).
 // ---------------------------------------------------------------------------
 
-// seedEventStartYFallbackDurable siembra UNA regla event_start habilitada y UN
-// fallback habilitado hacia flowDurable (checker la marca durable). Devuelve el
-// trigger_id de la event_start, la única fila que las pruebas de esta sección
-// intentan borrar.
-func seedEventStartYFallbackDurable(t *testing.T, store *trigger.MemoryStore) string {
+// seedEventStartYDurableKind siembra UNA regla event_start habilitada y UNA regla
+// `kind` (fallback o keyword) habilitada hacia flowDurable (checker la marca
+// durable). Devuelve el trigger_id de la event_start, la única fila que las
+// pruebas de esta sección intentan borrar. Generalizada sobre `kind` (A2): antes
+// solo sembraba un fallback, y duplicar esta función para keyword hubiera sido
+// exactamente el tipo de copia que blocksLastLiveEventStart dejó de necesitar.
+func seedEventStartYDurableKind(t *testing.T, store *trigger.MemoryStore, kind trigger.Kind) string {
 	t.Helper()
 	es, err := store.Insert(context.Background(), trigger.Rule{
 		TenantID: ctxTenant, Kind: trigger.KindEventStart, Keyword: "carrito",
@@ -164,10 +272,13 @@ func seedEventStartYFallbackDurable(t *testing.T, store *trigger.MemoryStore) st
 	if err != nil {
 		t.Fatalf("seed event_start: %v", err)
 	}
-	if _, err := store.Insert(context.Background(), trigger.Rule{
-		TenantID: ctxTenant, Kind: trigger.KindFallback, FlowID: flowDurable, Enabled: true,
-	}); err != nil {
-		t.Fatalf("seed fallback: %v", err)
+	rule := trigger.Rule{TenantID: ctxTenant, Kind: kind, FlowID: flowDurable, Enabled: true}
+	if kind == trigger.KindKeyword {
+		rule.Keyword = "pedido"
+		rule.MatchType = trigger.MatchExact
+	}
+	if _, err := store.Insert(context.Background(), rule); err != nil {
+		t.Fatalf("seed %s: %v", kind, err)
 	}
 	return es.TriggerID
 }
@@ -177,7 +288,39 @@ func seedEventStartYFallbackDurable(t *testing.T, store *trigger.MemoryStore) st
 // y la fila NO se borra (criterio (ii) de T2.7 — «la puerta de atrás»).
 func TestDeleteTrigger_422_UltimaEventStartConFallbackDurable(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	esID := seedEventStartYFallbackDurable(t, store)
+	esID := seedEventStartYDurableKind(t, store, trigger.KindFallback)
+	checker := stubDurableChecker{flowDurable: true}
+
+	mux := http.NewServeMux()
+	mux.Handle("DELETE /admin/triggers/{id}", admin.DeleteTriggerHandler(store, checker))
+	req := httptest.NewRequest(http.MethodDelete, "/admin/triggers/"+esID, nil)
+	req = req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: ctxTenant, Subject: "user-1"}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code=%d, quiero 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "event_start") || !strings.Contains(rec.Body.String(), "D-054.8") {
+		t.Fatalf("el 422 debe explicar el motivo (event_start / D-054.8), got %q", rec.Body.String())
+	}
+	rules, err := store.List(context.Background(), ctxTenant)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("el 422 NO debe borrar la fila, got %+v", rules)
+	}
+}
+
+// TestDeleteTrigger_422_UltimaEventStartConKeywordDurable: el gemelo de la prueba
+// anterior para kind='keyword' (A2) — hoy DeleteTriggerHandler solo miraba
+// kind='fallback' al decidir si una event_start sostiene una red; un tenant con
+// un keyword durable y una sola event_start viva podía borrarla igual de fácil y
+// reabrir el mismo corner MD-054.2.
+func TestDeleteTrigger_422_UltimaEventStartConKeywordDurable(t *testing.T) {
+	store := trigger.NewMemoryStore()
+	esID := seedEventStartYDurableKind(t, store, trigger.KindKeyword)
 	checker := stubDurableChecker{flowDurable: true}
 
 	mux := http.NewServeMux()
@@ -206,7 +349,7 @@ func TestDeleteTrigger_422_UltimaEventStartConFallbackDurable(t *testing.T) {
 // cuando QUEDA otra viva ⇒ 204, como siempre — la red se sostiene sin esta fila.
 func TestDeleteTrigger_204_EventStartConOtraViva_Regresion(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	esID := seedEventStartYFallbackDurable(t, store)
+	esID := seedEventStartYDurableKind(t, store, trigger.KindFallback)
 	// Segunda event_start habilitada: ahora hay DOS.
 	if _, err := store.Insert(context.Background(), trigger.Rule{
 		TenantID: ctxTenant, Kind: trigger.KindEventStart, Keyword: "pedido",

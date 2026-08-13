@@ -312,28 +312,49 @@ func tenantHasLiveEventStart(rules []trigger.Rule) bool {
 	return false
 }
 
-// msg422FallbackSinRed es el motivo del 422 de la dirección (i) de T2.7 (alta de un
-// fallback durable sin red de event_start). msg422UltimaEventStart es el de la
-// dirección (ii) (baja de la última event_start que sostiene esa red). Se nombran
-// como constantes para que los dos handlers y sus tests citen el MISMO texto.
+// blocksDurableWithoutEventStart es la MISMA lista de kinds que pueden intentar
+// arrancar un flujo SIN evento padre (D-054.5): keyword y fallback. event_start y
+// la intención llm con event_kind SIEMPRE traen uno (ver el docstring de
+// FlowNeedsEvent, arriba en este fichero), así que ninguno de los dos participa
+// aquí. Un solo lugar para esta lista: blocksStartWithoutEventStart (alta,
+// dirección i) y blocksLastLiveEventStart (baja, dirección ii) la comparten en vez
+// de repetir el mismo par de comparaciones cada una por su lado — la primera
+// versión de T2.7 solo miraba KindFallback en los dos sitios a la vez y por eso
+// dejó kind='keyword' sin cubrir en NINGUNO de los dos: no había una lista común
+// que generalizar, había dos copias del mismo `==` que había que encontrar y
+// cambiar a la vez. Con esta función, extender la validación a un kind nuevo el
+// día de mañana es tocar un solo sitio.
+func blocksDurableWithoutEventStart(k trigger.Kind) bool {
+	return k == trigger.KindFallback || k == trigger.KindKeyword
+}
+
+// msg422DurableSinRed es el motivo del 422 de la dirección (i) de T2.7 (alta de un
+// kind='keyword'/'fallback' durable sin red de event_start). msg422UltimaEventStart
+// es el de la dirección (ii) (baja de la última event_start que sostiene esa red).
+// Se nombran como constantes para que los dos handlers y sus tests citen el MISMO
+// texto.
 const (
-	msg422FallbackSinRed = "no se puede crear: el flujo de destino tiene contenido durable (p. ej. carrito o encuesta) " +
-		"y el tenant no tiene ninguna regla event_start habilitada; sin una, un entrante que caiga a este fallback se " +
-		"quedaría sin respuesta (D-054.8) — crea antes una regla event_start"
-	msg422UltimaEventStart = "no se puede borrar: es la última regla event_start habilitada del tenant, que tiene un " +
-		"fallback hacia un flujo con contenido durable; borrarla dejaría sin respuesta a los entrantes que caigan a ese " +
-		"fallback (D-054.8) — deshabilita o borra primero ese fallback, o conserva/crea otra regla event_start"
+	msg422DurableSinRed = "no se puede crear: el flujo de destino tiene contenido durable (p. ej. carrito o encuesta) " +
+		"y el tenant no tiene ninguna regla event_start habilitada; sin una, un entrante que caiga en esta regla " +
+		"(kind='fallback' o kind='keyword') se quedaría sin respuesta (D-054.8) — crea antes una regla event_start"
+	msg422UltimaEventStart = "no se puede borrar: es la última regla event_start habilitada del tenant, que tiene una " +
+		"regla kind='fallback' o kind='keyword' hacia un flujo con contenido durable; borrarla dejaría sin respuesta a " +
+		"los entrantes que caigan en esa regla (D-054.8) — deshabilita o borra primero esa regla, o conserva/crea otra " +
+		"regla event_start"
 )
 
-// blocksFallbackWithoutEventStart implementa la dirección (i) de T2.7 (D-054.8,
-// cierra MD-054.2): un alta kind='fallback' hacia un flujo con contenido durable,
-// sin ninguna regla event_start habilitada en el tenant, se rechaza en tiempo de
-// CONFIGURACIÓN — es el mismo corner que degradeDurableStart deja anotado y sin
-// resolver en tiempo de EJECUCIÓN (runtime/incoming.go:679-682).
+// blocksStartWithoutEventStart implementa la dirección (i) de T2.7 (D-054.8,
+// cierra MD-054.2): un alta kind='fallback' o kind='keyword' hacia un flujo con
+// contenido durable, sin ninguna regla event_start habilitada en el tenant, se
+// rechaza en tiempo de CONFIGURACIÓN — es el mismo corner que degradeDurableStart
+// deja anotado y sin resolver en tiempo de EJECUCIÓN (runtime/incoming.go:679-682).
+// El hueco gemelo (T2.7 solo miraba kind='fallback', dejando kind='keyword' con el
+// mismo silencio por la puerta de al lado) se cierra generalizando esta misma
+// función en vez de duplicarla.
 //
-// Solo se evalúa para rule.Kind == KindFallback (el llamante ya lo comprobó); esta
-// función solo decide SI bloquea y con qué motivo.
-func blocksFallbackWithoutEventStart(ctx context.Context, triggers TriggerStore, checker DurableFlowChecker, tenantID, flowID string) (bool, error) {
+// Solo se evalúa para blocksDurableWithoutEventStart(rule.Kind) (el llamante ya lo
+// comprobó); esta función solo decide SI bloquea y con qué motivo.
+func blocksStartWithoutEventStart(ctx context.Context, triggers TriggerStore, checker DurableFlowChecker, tenantID, flowID string) (bool, error) {
 	durable, err := durableContent(ctx, checker, tenantID, flowID)
 	if err != nil {
 		return false, err
@@ -350,16 +371,16 @@ func blocksFallbackWithoutEventStart(ctx context.Context, triggers TriggerStore,
 
 // blocksLastLiveEventStart implementa la dirección (ii) de T2.7 (D-054.8) — «la
 // puerta de atrás»: borrar la ÚLTIMA regla event_start viva de un tenant que YA
-// tiene un fallback habilitado hacia un flujo durable reabriría el mismo corner
-// sin tocar la regla de fallback. rules es el listado COMPLETO del tenant (ya
-// tenant-scoped por TriggerStore.List, INV-8); targetID es la fila que
-// DeleteTriggerHandler está a punto de borrar.
+// tiene una regla kind='fallback' o kind='keyword' habilitada hacia un flujo
+// durable reabriría el mismo corner sin tocar esa regla. rules es el listado
+// COMPLETO del tenant (ya tenant-scoped por TriggerStore.List, INV-8); targetID es
+// la fila que DeleteTriggerHandler está a punto de borrar.
 //
 // No hace nada (false, nil) salvo que las TRES condiciones se cumplan a la vez:
 // (1) target es una event_start habilitada, (2) ninguna OTRA event_start sigue
-// viva sin ella, y (3) existe al menos un fallback habilitado hacia un flujo
-// durable que dependería de esa red. Con cualquiera de las tres en contra, borrar
-// no cambia nada que D-054.8 proteja.
+// viva sin ella, y (3) existe al menos una regla kind='fallback'/kind='keyword'
+// habilitada hacia un flujo durable que dependería de esa red. Con cualquiera de
+// las tres en contra, borrar no cambia nada que D-054.8 proteja.
 func blocksLastLiveEventStart(ctx context.Context, checker DurableFlowChecker, tenantID, targetID string, rules []trigger.Rule) (bool, error) {
 	var target *trigger.Rule
 	otrasEventStartVivas := false
@@ -378,7 +399,7 @@ func blocksLastLiveEventStart(ctx context.Context, checker DurableFlowChecker, t
 		return false, nil
 	}
 	for _, r := range rules {
-		if r.Kind != trigger.KindFallback || !r.Enabled {
+		if !blocksDurableWithoutEventStart(r.Kind) || !r.Enabled {
 			continue
 		}
 		durable, err := durableContent(ctx, checker, tenantID, r.FlowID)
@@ -402,14 +423,16 @@ func blocksLastLiveEventStart(ctx context.Context, checker DurableFlowChecker, t
 //   - 422 (Plan 054 · T2.7, D-054.8) — el PRIMER 422 de este CRUD; hasta ahora todo
 //     cuerpo incoherente devolvía 400. Es coherente y no un descuido: el cuerpo
 //     aquí está BIEN FORMADO (pasó las validaciones de REQ-D5) — lo inválido es el
-//     ESTADO resultante de guardarlo (un fallback durable sin red de event_start
-//     deja al contacto sin respuesta, MD-054.2). 400 = «el cuerpo no se entiende»;
-//     422 = «se entiende, y aun así no se puede procesar».
+//     ESTADO resultante de guardarlo (una regla kind='fallback' o kind='keyword'
+//     durable sin red de event_start deja al contacto sin respuesta, MD-054.2).
+//     400 = «el cuerpo no se entiende»; 422 = «se entiende, y aun así no se puede
+//     procesar».
 //   - 500 ante fallo de persistencia o al resolver el checker de contenido durable.
 //
-// checker resuelve T2.7 (dirección i): solo se consulta cuando rule.Kind ==
-// KindFallback (los demás kinds ni lo tocan). Parámetro POSICIONAL a propósito
-// (ver el docstring de DurableFlowChecker): omitirlo no compila.
+// checker resuelve T2.7 (dirección i): solo se consulta cuando
+// blocksDurableWithoutEventStart(rule.Kind) — hoy kind='fallback' o kind='keyword'
+// (los demás kinds ni lo tocan). Parámetro POSICIONAL a propósito (ver el
+// docstring de DurableFlowChecker): omitirlo no compila.
 func CreateTriggerHandler(store TriggerStore, checker DurableFlowChecker) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -430,14 +453,14 @@ func CreateTriggerHandler(store TriggerStore, checker DurableFlowChecker) http.H
 			return
 		}
 
-		if rule.Kind == trigger.KindFallback {
-			blocked, err := blocksFallbackWithoutEventStart(r.Context(), store, checker, id.TenantID, rule.FlowID)
+		if blocksDurableWithoutEventStart(rule.Kind) {
+			blocked, err := blocksStartWithoutEventStart(r.Context(), store, checker, id.TenantID, rule.FlowID)
 			if err != nil {
 				http.Error(w, "no se pudo verificar el contenido durable del flujo", http.StatusInternalServerError)
 				return
 			}
 			if blocked {
-				http.Error(w, msg422FallbackSinRed, http.StatusUnprocessableEntity)
+				http.Error(w, msg422DurableSinRed, http.StatusUnprocessableEntity)
 				return
 			}
 		}
@@ -497,11 +520,12 @@ func ListTriggersHandler(store TriggerStore, checker DurableFlowChecker) http.Ha
 //   - 400 si falta el id en la ruta.
 //   - 401 sin Identity.
 //   - 422 (Plan 054 · T2.7, D-054.8, dirección ii — «la puerta de atrás»): borrar
-//     la ÚLTIMA regla event_start viva de un tenant que ya tiene un fallback
-//     habilitado hacia un flujo con contenido durable reabriría el mismo corner de
-//     MD-054.2 sin tocar la regla de fallback. Mismo código y motivo que la
-//     dirección (i) de CreateTriggerHandler: la invariante de D-054.8 se sostiene
-//     en las DOS direcciones.
+//     la ÚLTIMA regla event_start viva de un tenant que ya tiene una regla
+//     kind='fallback' o kind='keyword' habilitada hacia un flujo con contenido
+//     durable reabriría el mismo corner de MD-054.2 sin tocar esa regla. Mismo
+//     código y motivo que la dirección (i) de CreateTriggerHandler: la invariante
+//     de D-054.8 se sostiene en las DOS direcciones, y para los DOS kinds que
+//     pueden arrancar sin evento (blocksDurableWithoutEventStart).
 //   - 500 ante otro fallo, o al resolver el checker de contenido durable.
 //
 // checker resuelve T2.7 (dirección ii). Parámetro POSICIONAL a propósito (ver el
@@ -520,11 +544,12 @@ func DeleteTriggerHandler(store TriggerStore, checker DurableFlowChecker) http.H
 		}
 
 		// T2.7 dirección (ii): antes de borrar, comprobar si esta fila es la ÚLTIMA
-		// event_start viva que sostiene un fallback durable. rules ya está acotado al
-		// tenant del token (List, INV-8); un triggerID de otro tenant simplemente no
-		// aparece en él, así que blocksLastLiveEventStart no lo bloquea y el
-		// store.Delete de abajo sigue siendo quien decide el 404 cross-tenant (REQ-D4)
-		// — sin cambio de comportamiento en ese caso.
+		// event_start viva que sostiene una regla kind='fallback' o kind='keyword'
+		// durable. rules ya está acotado al tenant del token (List, INV-8); un
+		// triggerID de otro tenant simplemente no aparece en él, así que
+		// blocksLastLiveEventStart no lo bloquea y el store.Delete de abajo sigue
+		// siendo quien decide el 404 cross-tenant (REQ-D4) — sin cambio de
+		// comportamiento en ese caso.
 		rules, err := store.List(r.Context(), id.TenantID)
 		if err != nil {
 			http.Error(w, "no se pudieron listar las reglas de disparo", http.StatusInternalServerError)

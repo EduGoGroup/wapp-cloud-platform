@@ -166,12 +166,25 @@ func o6Seed(t *testing.T, db *sql.DB) (tenantID, sessionID string) {
 
 // o6Runtime arma el runtime de PRODUCCIÓN: engine con cart/survey/menu reales,
 // PersistSink real, plano de eventos real, resolver de disparos real con un
-// event_start por tipo MÁS un fallback SIN keyword (FlowID=cart) — sin
-// OpeningBuilder cableado (rt.opening == nil): openWithOffer cae directo a
-// startPlainFlow, así que el fallback SIEMPRE renderiza la pantalla de arranque
-// del carrito («🛒 Elige una categoría»), sin el rodeo del automensaje de
-// rescate. Es justo lo que la medida «antes/después» del hallazgo necesita: el
-// MISMO texto para el contacto de control y para el que acaba de confirmar.
+// event_start por tipo MÁS un fallback SIN keyword — sin OpeningBuilder cableado
+// (rt.opening == nil): openWithOffer cae directo a startPlainFlow, sin el rodeo
+// del automensaje de rescate (eso lo mide otra suite, incident054_t4). Es justo
+// lo que la medida «antes/después» del hallazgo necesita: el MISMO texto para el
+// contacto de control y para el que acaba de confirmar.
+//
+// ⚠️ El fallback apunta a o6MenuFlujo (NO durable, menu.Module.
+// ProducesDurableContent()==false), NO a o6CartFlujo (Plan 054 · D-054.5/T2.3,
+// A1 del arreglo de la regresión). Antes de la guarda apuntaba al carrito: con
+// la guarda puesta y rt.opening==nil a propósito (arriba), startLocked rechaza
+// CUALQUIER arranque sin evento de un flujo con contenido durable —el fallback
+// jamás trae uno— y sin oferta a la que degradar (MD-054.2) el contacto se
+// queda mudo. Esa combinación es exactamente la que este plan dejó de permitir
+// configurar en producción (D-054.5 en runtime; D-054.8/T2.7 en el CRUD), así
+// que el fixture pasó a describir un mundo que ya no existe y el test se ponía
+// en rojo por el motivo CORRECTO. Apuntar el fallback a un flujo NO durable
+// preserva la intención original —el fallback arranca su flujo de verdad, sin
+// rodeo, y CONTROL/terminal reciben el MISMO texto— sin resucitar una
+// configuración que D-054.5 rechaza.
 func o6Runtime(t *testing.T, db *sql.DB, tenantID string, feats *entitlements.Fake) (
 	*flowruntime.Runtime, *events.Store, *contact.MemoryResolver, *o6Sender,
 ) {
@@ -210,7 +223,10 @@ func o6Runtime(t *testing.T, db *sql.DB, tenantID string, feats *entitlements.Fa
 		// un EventKind libre: "catalogo".
 		{TenantID: tenantID, Kind: trigger.KindEventStart, Keyword: "catalogo",
 			MatchType: trigger.MatchExact, EventKind: "catalogo", FlowID: o6MenuFlujo, Enabled: true},
-		{TenantID: tenantID, Kind: trigger.KindFallback, FlowID: o6CartFlujo, Enabled: true},
+		// FlowID=o6MenuFlujo (NO durable): ver la nota de A1 en el docstring de
+		// o6Runtime — un fallback SIN evento hacia un flujo durable ya no lo permite
+		// D-054.5, así que este fixture apunta al menú, no al carrito.
+		{TenantID: tenantID, Kind: trigger.KindFallback, FlowID: o6MenuFlujo, Enabled: true},
 	}
 	for _, r := range reglas {
 		if _, err := ts.Insert(ctx, r); err != nil {
@@ -426,8 +442,9 @@ func (f o6Fixture) o6QuiereEnCursoIntacto(control string) {
 }
 
 // o6QuiereControl fija la referencia: sin flow_state, un texto cualquiera cae
-// al fallback (D-043.2 vía startPlainFlow) con la pantalla de arranque del
-// carrito. Devuelve el texto exacto para que el resto de escenarios lo comparen.
+// al fallback (D-043.2 vía startPlainFlow) con la pantalla de arranque del menú
+// (o6MenuFlujo, NO durable — ver la nota de A1 en el docstring de o6Runtime).
+// Devuelve el texto exacto para que el resto de escenarios lo comparen.
 func (f o6Fixture) o6QuiereControl() string {
 	f.t.Helper()
 	antes := f.sender.total()
@@ -436,10 +453,10 @@ func (f o6Fixture) o6QuiereControl() string {
 	if len(control) != 1 {
 		f.t.Fatalf("CONTROL: quiero EXACTAMENTE 1 saliente (el fallback), llegaron %d: %v", len(control), control)
 	}
-	if !strings.Contains(control[0], "Elige una categoría") {
-		f.t.Fatalf("CONTROL: el fallback debe ofrecer el arranque del carrito; dijo %q", control[0])
+	if !strings.Contains(control[0], "Ventas") {
+		f.t.Fatalf("CONTROL: el fallback debe ofrecer el arranque del menú; dijo %q", control[0])
 	}
-	// El fallback ARRANCA el flujo del carrito de verdad (startPlainFlow): el
+	// El fallback ARRANCA el flujo del menú de verdad (startPlainFlow): el
 	// CONTROL termina con un flow_state fresco en L1, navegando — la referencia de
 	// esta medida es el TEXTO que dijo, no si quedó o no flow_state.
 	return control[0]
