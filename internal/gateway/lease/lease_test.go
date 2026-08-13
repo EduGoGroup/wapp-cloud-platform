@@ -52,7 +52,7 @@ func TestIssueInitialPersistsAndValidates(t *testing.T) {
 		t.Fatal("CanOperate(true) debería ser true tras el lease inicial")
 	}
 
-	// Persistencia: counter inicial = 1, no revocado, expira ~ahora+TTL.
+	// Persistencia: counter inicial = 1, no revocado, expira ~ahora+TTL (15 min).
 	st, found, err := repo.Get(ctx, "tenant-1", "edge-1")
 	if err != nil || !found {
 		t.Fatalf("Get: found=%v err=%v", found, err)
@@ -63,8 +63,8 @@ func TestIssueInitialPersistsAndValidates(t *testing.T) {
 	if st.Revoked {
 		t.Fatal("el lease inicial no debe estar revocado")
 	}
-	if d := time.Until(st.ExpiresAt); d < 4*time.Minute || d > 6*time.Minute {
-		t.Fatalf("expires_at fuera de rango (~5min): %v", d)
+	if d := time.Until(st.ExpiresAt); d < 14*time.Minute || d > 16*time.Minute {
+		t.Fatalf("expires_at fuera de rango (~15min): %v", d)
 	}
 }
 
@@ -324,7 +324,13 @@ func TestIssueInitialTenantRevokedNeverSeenEdge(t *testing.T) {
 	}
 
 	// Upsert no debió tocarse: el repo no debe tener fila de lease para este edge.
-	if _, found, _ := repo.Get(ctx, "t-comercial", "edge-nunca-visto"); found {
+	// El error se comprueba a propósito: si Get fallara, `found` sería false y el
+	// test pasaría por la razón equivocada, sin haber mirado nada.
+	_, found, getErr := repo.Get(ctx, "t-comercial", "edge-nunca-visto")
+	if getErr != nil {
+		t.Fatalf("repo.Get: %v", getErr)
+	}
+	if found {
 		t.Fatal("no debería haberse persistido una fila de lease para un edge que nace revocado por su tenant")
 	}
 }

@@ -421,7 +421,7 @@ type LeaseConfig struct {
 	// clave de dev efímera (NO apta para producción).
 	PrivateKeyB64 string `yaml:"private_key_b64"`
 	// TTLMinutes es la vigencia del lease en minutos. <=0 usa el default del
-	// gestor (5 min). Se renueva en cada Heartbeat del Edge.
+	// gestor (15 min). Se renueva en cada Heartbeat del Edge.
 	TTLMinutes int `yaml:"ttl_minutes"`
 }
 

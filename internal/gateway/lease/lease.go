@@ -25,10 +25,12 @@ import (
 	cllease "github.com/EduGoGroup/wapp-cloudlink/lease"
 )
 
-// DefaultTTL es la vigencia de un lease emitido. Decisión de Plan 005 · T4:
-// 5 minutos, renovado en cada Heartbeat (el Edge late cada 30s), de modo que un
-// Edge sano siempre tiene lease fresco y la ventana offline máxima es de 5 min.
-const DefaultTTL = 5 * time.Minute
+// DefaultTTL es la vigencia de un lease emitido, renovado en cada Heartbeat (el
+// Edge late cada 30s). Nació en 5 minutos (Plan 005 · T4); D-055.7 (Plan 055,
+// 2026-08-13, Jhoan) lo sube a 15: cubre un blip normal de wifi/4G que 5 no
+// cubría, ya sin ser vía de escape para un Edge revocado (issueAndPersist
+// consulta el estado persistido antes de emitir).
+const DefaultTTL = 15 * time.Minute
 
 // initialCounter es el counter del primer lease de un Edge. El Validator del
 // Edge exige counter estrictamente creciente; arrancar en 1 deja 0 como
