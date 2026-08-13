@@ -65,7 +65,20 @@ import (
 // ver la cabecera de la 0056). Un solo bump para toda la ola, sobre la 0.31.0
 // ya publicada (mismo criterio que 0.27.0/0.28.0/0.30.0/0.31.0 arriba: instrucción
 // explícita del dueño de bumpear al cerrar esta tarea, no una migración suelta).
-const SchemaVersion = "0.32.0"
+//
+// 0.33.0 — Plan 055 · Ola 3 · T3.1 (0058): segundo sujeto de corte del
+// kill-switch (D-055.2) — public.tenants gana revoked_at TIMESTAMPTZ (NULL =
+// activo, NOT NULL = revocación COMERCIAL, distinta de leases.revoked que
+// corta UNA instalación). Un solo bump para la ola, sobre la 0.32.0 ya
+// publicada.
+//
+// La 0059 (plano de plataforma: el tenant operador de wApp, el rol
+// platform_admin con 'tenants.revoke.any'/'tenants.restore.any' y el deny
+// '*.any' que impide que el '*' de tenant_admin los alcance — ADR-0039) NO
+// mueve esta constante: es del MISMO Plan 055 que la 0058 y la 0.33.0 aún no se
+// ha publicado. Es exactamente el caso que la primera mitad de la regla
+// contempla: una migración más dentro de un plan que todavía no salió.
+const SchemaVersion = "0.33.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

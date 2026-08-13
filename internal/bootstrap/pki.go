@@ -63,8 +63,10 @@ func loadCA(cfg config.AppConfig) (*enroll.CA, error) {
 // buildEnrollServer construye el servidor de enrolamiento y resuelve el par
 // X25519 de cifrado de tránsito de la nube (Plan 011 §10.F): publica la pública
 // al Edge en el enrolamiento y devuelve la privada para que el gateway abra el
-// enc_payload al ingreso.
-func buildEnrollServer(cfg config.AppConfig, db *sql.DB, ca *enroll.CA, log sharedlogger.Logger) (*enroll.Server, []byte, error) {
+// enc_payload al ingreso. leasePub es la pública Ed25519 del lease (Plan 055 ·
+// T4.2, D-055.5): el llamante DEBE construir el lease manager antes que este
+// servidor (bootstrap.go reordena esas dos llamadas) para poder pasarla aquí.
+func buildEnrollServer(cfg config.AppConfig, db *sql.DB, ca *enroll.CA, leasePub []byte, log sharedlogger.Logger) (*enroll.Server, []byte, error) {
 	cloudEncPub, cloudEncPriv, err := buildCloudEncKeypair(cfg, log)
 	if err != nil {
 		return nil, nil, err
@@ -74,7 +76,10 @@ func buildEnrollServer(cfg config.AppConfig, db *sql.DB, ca *enroll.CA, log shar
 		ca,
 		enroll.NewPostgresEdgeCertRepository(db),
 	)
-	return enroll.NewServer(enrollSvc, log, enroll.WithCloudEncPubkey(cloudEncPub)), cloudEncPriv, nil
+	return enroll.NewServer(enrollSvc, log,
+		enroll.WithCloudEncPubkey(cloudEncPub),
+		enroll.WithLeasePubKey(leasePub),
+	), cloudEncPriv, nil
 }
 
 // buildCloudEncKeypair resuelve el par X25519 de cifrado de tránsito de la nube

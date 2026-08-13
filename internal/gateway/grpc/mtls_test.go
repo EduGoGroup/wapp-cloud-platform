@@ -695,7 +695,7 @@ func TestMTLSHeartbeatRenewsLeaseCounter(t *testing.T) {
 	waitFleetOnline(t, h.fleetRepo, "s1")
 
 	// El Manager comparte su repo: la renovación persiste counter = hbCounter+1
-	// con expiración ~5min. (El lease inicial fijó counter=1; el Heartbeat lo
+	// con expiración ~15min. (El lease inicial fijó counter=1; el Heartbeat lo
 	// avanza.)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -707,8 +707,8 @@ func TestMTLSHeartbeatRenewsLeaseCounter(t *testing.T) {
 			t.Fatalf("leaseRepo.Get: %v", getErr)
 		}
 		if ok && st.Counter == hbCounter+1 {
-			if d := time.Until(st.ExpiresAt); d < 4*time.Minute || d > 6*time.Minute {
-				t.Fatalf("expires_at fuera de rango (~5min): %v", d)
+			if d := time.Until(st.ExpiresAt); d < 14*time.Minute || d > 16*time.Minute {
+				t.Fatalf("expires_at fuera de rango (~15min): %v", d)
 			}
 			break
 		}

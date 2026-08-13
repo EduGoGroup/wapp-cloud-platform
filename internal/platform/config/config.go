@@ -71,6 +71,20 @@ type AppConfig struct {
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
 	LogJSON bool `yaml:"log_json"`
+	// PlatformTenantID es el tenant OPERADOR de wApp: el único cuyos tokens
+	// pueden cortar (o reactivar) a un tenant ajeno vía /admin/tenants/revoke y
+	// /admin/tenants/restore (ADR-0039, Plan 055 · REQ-055.7). Los handlers lo
+	// comparan contra la Identity del llamante; cualquier otro tenant recibe 403
+	// aunque su token traiga el permiso.
+	//
+	// El default coincide con el id fijo que siembra la migración 0059
+	// (0059_platform_admin.sql): plataforma y esquema tienen que hablar del
+	// MISMO tenant, y un id generado obligaría a reconfigurar tras cada
+	// bootstrap. Se sobreescribe solo en despliegues que sembraran otro.
+	// Vacío ⇒ NADIE puede revocar a un tercero (fail-closed deliberado: una
+	// config a medias no debe abrir el plano de plataforma). Se lee de
+	// WAPP_PLATFORM_TENANT_ID.
+	PlatformTenantID string `yaml:"platform_tenant_id"`
 	// DB es la configuración de conexión a PostgreSQL.
 	DB DatabaseConfig `yaml:"db"`
 	// PKI son las rutas a la CA y el cert de servidor (los genera
@@ -421,7 +435,7 @@ type LeaseConfig struct {
 	// clave de dev efímera (NO apta para producción).
 	PrivateKeyB64 string `yaml:"private_key_b64"`
 	// TTLMinutes es la vigencia del lease en minutos. <=0 usa el default del
-	// gestor (5 min). Se renueva en cada Heartbeat del Edge.
+	// gestor (15 min). Se renueva en cada Heartbeat del Edge.
 	TTLMinutes int `yaml:"ttl_minutes"`
 }
 
@@ -464,6 +478,10 @@ func defaults() AppConfig {
 		GRPCAckTimeout:  8 * time.Second,
 		LogLevel:        "info",
 		LogJSON:         false,
+		// Mismo id que siembra 0059_platform_admin.sql (ver el comentario del
+		// campo): sin este default, un arranque sin configurar dejaría el plano
+		// de plataforma cerrado a cal y canto.
+		PlatformTenantID: "55550000-0000-0000-0000-000000000055",
 		JWT: JWTConfig{
 			Issuer: "wapp-cloud",
 		},
@@ -556,6 +574,7 @@ func Load() (AppConfig, error) {
 	cfg.GRPCAckTimeout = loader.GetDuration("GRPC_ACK_TIMEOUT", cfg.GRPCAckTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
+	cfg.PlatformTenantID = loader.GetString("PLATFORM_TENANT_ID", cfg.PlatformTenantID)
 
 	cfg.DB.Host = loader.GetString("DB_HOST", cfg.DB.Host)
 	cfg.DB.Port = loader.GetInt("DB_PORT", cfg.DB.Port)

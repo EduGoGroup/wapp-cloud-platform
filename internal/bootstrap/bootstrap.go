@@ -82,16 +82,25 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	// --- Enrolamiento + par X25519 de cifrado de tránsito de la nube (Plan 011
-	// §10.F): el enrolamiento publica la pública al Edge; la privada la usa el
-	// gateway para abrir el enc_payload sellado al ingreso. ---
-	enrollSrv, cloudEncPriv, err := buildEnrollServer(cfg, db, ca, log)
+	// --- Lease (kill-switch): clave de firma + persistencia en PostgreSQL.
+	// Construido ANTES que el servidor de enrolamiento (Plan 055 · T4.2,
+	// D-055.5): el enrolamiento necesita leaseMgr.PublicKey() para publicarla
+	// al Edge en EnrollEdgeResponse.lease_pubkey (H-5). Sin este orden, la
+	// pública del lease no existiría todavía cuando buildEnrollServer la
+	// necesita. buildLeaseManager solo depende de cfg/db/log —construidos
+	// arriba (setupDatabase, línea ~73)— así que adelantarla es seguro: no usa
+	// nada de lo que antes se construía entre medias (enrollSrv, cloudEncPriv).
+	leaseMgr, err := buildLeaseManager(cfg, db, log)
 	if err != nil {
 		return err
 	}
 
-	// --- Lease (kill-switch): clave de firma + persistencia en PostgreSQL. ---
-	leaseMgr, err := buildLeaseManager(cfg, db, log)
+	// --- Enrolamiento + par X25519 de cifrado de tránsito de la nube (Plan 011
+	// §10.F): el enrolamiento publica la pública al Edge; la privada la usa el
+	// gateway para abrir el enc_payload sellado al ingreso. También publica la
+	// pública del lease (Plan 055 · T4.2), ya disponible por el reordenamiento
+	// de arriba. ---
+	enrollSrv, cloudEncPriv, err := buildEnrollServer(cfg, db, ca, leaseMgr.PublicKey(), log)
 	if err != nil {
 		return err
 	}
@@ -443,6 +452,18 @@ func Run(ctx context.Context) error {
 	mux.Handle("/metrics", mtx.PromHandler())
 	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
 		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
+	// Kill-switch COMERCIAL por tenant (Plan 055 · T3.3, D-055.2): mismo patrón
+	// adminHandler (auth + permiso + auditoría) que el de leases, pero OTRO plano.
+	// Aquí el objetivo es un tenant AJENO (ADR-0039), así que el permiso lleva el
+	// sufijo '.any': la migración 0059 se lo da SOLO a platform_admin y se lo
+	// niega al '*' de tenant_admin con un deny '*.any'. Ese deny es la pieza que
+	// convierte esto en un permiso de verdad — sin él, el '*' de cualquier
+	// administrador de cliente ya cubriría estas rutas. El handler además exige,
+	// por su cuenta, que el token sea del tenant de plataforma.
+	mux.Handle("/admin/tenants/revoke", adminHandler(authMW, auditor, log,
+		"tenants.revoke.any", "tenant", httpapi.RevokeTenantHandler(gw, cfg.PlatformTenantID)))
+	mux.Handle("/admin/tenants/restore", adminHandler(authMW, auditor, log,
+		"tenants.restore.any", "tenant", httpapi.RestoreTenantHandler(gw, cfg.PlatformTenantID)))
 	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
 		"messages.send", "message", httpapi.SendMessageHandler(gw, log)))
 	mux.Handle("/admin/crypto/rekey", adminHandler(authMW, auditor, log,
