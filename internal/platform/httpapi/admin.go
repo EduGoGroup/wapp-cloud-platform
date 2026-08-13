@@ -72,6 +72,75 @@ func RevokeLeaseHandler(revoker LeaseRevoker) http.Handler {
 	})
 }
 
+// TenantRevoker dispara el kill-switch COMERCIAL (D-055.2, Plan 055) de un
+// tenant completo: marca el tenant revocado y empuja el LeaseUpdate(Revoked)
+// a TODAS las instalaciones conocidas y vivas de ese tenant. Lo satisface
+// *gatewaygrpc.Server con su método RevokeTenant.
+type TenantRevoker interface {
+	RevokeTenant(ctx context.Context, tenantID string) error
+}
+
+// TenantRestorer reactiva un tenant previamente revocado (revoked_at = NULL,
+// Plan 055 · T3.3). Lo satisface *gatewaygrpc.Server con su método
+// RestoreTenant (que delega en el lease.Manager homónimo).
+type TenantRestorer interface {
+	RestoreTenant(ctx context.Context, tenantID string) error
+}
+
+// RevokeTenantHandler devuelve el handler del endpoint admin de revocación de
+// TENANT completo (kill-switch comercial, D-055.2). Hermano de
+// RevokeLeaseHandler: acepta POST sin cuerpo y, al éxito, responde 204 No
+// Content. El tenant_id NUNCA viaja en el cuerpo (INV-8): sale de la
+// Identity del token, igual que RevokeLeaseHandler -- así un operador solo
+// puede revocar SU propio tenant, nunca uno ajeno.
+func RevokeTenantHandler(revoker TenantRevoker) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
+			return
+		}
+
+		id, ok := IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		if err := revoker.RevokeTenant(r.Context(), id.TenantID); err != nil {
+			http.Error(w, "no se pudo revocar el tenant", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// RestoreTenantHandler devuelve el handler del reverso de RevokeTenantHandler
+// (Plan 055 · T3.3): reactiva el tenant de la Identity del token
+// (revoked_at = NULL). Mismo patrón: POST sin cuerpo, 204 al éxito, tenant_id
+// SIEMPRE de la Identity (INV-8).
+func RestoreTenantHandler(restorer TenantRestorer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
+			return
+		}
+
+		id, ok := IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		if err := restorer.RestoreTenant(r.Context(), id.TenantID); err != nil {
+			http.Error(w, "no se pudo restaurar el tenant", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
 // sendMessageRequest es el cuerpo JSON del endpoint de envío de texto.
 type sendMessageRequest struct {
 	SessionID string `json:"session_id"`

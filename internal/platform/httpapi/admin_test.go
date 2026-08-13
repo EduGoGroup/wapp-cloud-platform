@@ -136,6 +136,156 @@ func TestRevokeLeaseHandler_RevokerError(t *testing.T) {
 	}
 }
 
+// fakeTenantRevoker registra la última llamada a RevokeTenant y permite forzar
+// un error.
+type fakeTenantRevoker struct {
+	gotTenant string
+	calls     int
+	err       error
+}
+
+func (f *fakeTenantRevoker) RevokeTenant(_ context.Context, tenantID string) error {
+	f.calls++
+	f.gotTenant = tenantID
+	return f.err
+}
+
+func TestRevokeTenantHandler_OK(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev)
+
+	// Sin cuerpo: el tenant sale del TOKEN (INV-8), igual que RevokeLeaseHandler.
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil), "t-1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if rev.calls != 1 {
+		t.Fatalf("RevokeTenant llamado %d veces, want 1", rev.calls)
+	}
+	if rev.gotTenant != "t-1" {
+		t.Fatalf("tenant: got %q, want t-1", rev.gotTenant)
+	}
+}
+
+// TestRevokeTenantHandler_NoIdentity: sin Identity en el contexto (request que
+// no pasó por Authenticate) el handler responde 401 y NO revoca (INV-8).
+func TestRevokeTenantHandler_NoIdentity(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if rev.calls != 0 {
+		t.Fatalf("RevokeTenant NO debería invocarse sin identidad (calls=%d)", rev.calls)
+	}
+}
+
+func TestRevokeTenantHandler_WrongMethod(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/tenants/revoke", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if rev.calls != 0 {
+		t.Fatalf("RevokeTenant NO debería invocarse con método incorrecto (calls=%d)", rev.calls)
+	}
+}
+
+func TestRevokeTenantHandler_RevokerError(t *testing.T) {
+	rev := &fakeTenantRevoker{err: errors.New("boom")}
+	h := httpapi.RevokeTenantHandler(rev)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil), "t-1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// fakeTenantRestorer registra la última llamada a RestoreTenant y permite
+// forzar un error.
+type fakeTenantRestorer struct {
+	gotTenant string
+	calls     int
+	err       error
+}
+
+func (f *fakeTenantRestorer) RestoreTenant(_ context.Context, tenantID string) error {
+	f.calls++
+	f.gotTenant = tenantID
+	return f.err
+}
+
+func TestRestoreTenantHandler_OK(t *testing.T) {
+	res := &fakeTenantRestorer{}
+	h := httpapi.RestoreTenantHandler(res)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil), "t-1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if res.calls != 1 {
+		t.Fatalf("RestoreTenant llamado %d veces, want 1", res.calls)
+	}
+	if res.gotTenant != "t-1" {
+		t.Fatalf("tenant: got %q, want t-1", res.gotTenant)
+	}
+}
+
+func TestRestoreTenantHandler_NoIdentity(t *testing.T) {
+	res := &fakeTenantRestorer{}
+	h := httpapi.RestoreTenantHandler(res)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if res.calls != 0 {
+		t.Fatalf("RestoreTenant NO debería invocarse sin identidad (calls=%d)", res.calls)
+	}
+}
+
+func TestRestoreTenantHandler_RestorerError(t *testing.T) {
+	res := &fakeTenantRestorer{err: errors.New("boom")}
+	h := httpapi.RestoreTenantHandler(res)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil), "t-1")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
 // fakeSender registra la última llamada a SendText y permite devolver un Ack o
 // forzar un error.
 type fakeSender struct {

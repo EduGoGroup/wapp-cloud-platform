@@ -65,7 +65,13 @@ import (
 // ver la cabecera de la 0056). Un solo bump para toda la ola, sobre la 0.31.0
 // ya publicada (mismo criterio que 0.27.0/0.28.0/0.30.0/0.31.0 arriba: instrucción
 // explícita del dueño de bumpear al cerrar esta tarea, no una migración suelta).
-const SchemaVersion = "0.32.0"
+//
+// 0.33.0 — Plan 055 · Ola 3 · T3.1 (0058): segundo sujeto de corte del
+// kill-switch (D-055.2) — public.tenants gana revoked_at TIMESTAMPTZ (NULL =
+// activo, NOT NULL = revocación COMERCIAL, distinta de leases.revoked que
+// corta UNA instalación). Un solo bump para la ola, sobre la 0.32.0 ya
+// publicada.
+const SchemaVersion = "0.33.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
