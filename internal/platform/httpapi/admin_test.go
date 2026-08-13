@@ -150,12 +150,22 @@ func (f *fakeTenantRevoker) RevokeTenant(_ context.Context, tenantID string) err
 	return f.err
 }
 
+// platformTenant es el tenant OPERADOR de wApp en los tests de este plano
+// (ADR-0039): el mismo id fijo que siembra 0059_platform_admin.sql y que trae
+// por defecto la config.
+const platformTenant = "55550000-0000-0000-0000-000000000055"
+
+// tenantBody construye el cuerpo {tenant_id} que ahora nombra a la VÍCTIMA.
+func tenantBody(target string) *strings.Reader {
+	return strings.NewReader(fmt.Sprintf(`{"tenant_id":%q}`, target))
+}
+
 func TestRevokeTenantHandler_OK(t *testing.T) {
 	rev := &fakeTenantRevoker{}
-	h := httpapi.RevokeTenantHandler(rev)
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
 
-	// Sin cuerpo: el tenant sale del TOKEN (INV-8), igual que RevokeLeaseHandler.
-	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil), "t-1")
+	// El token identifica al EJECUTOR (plataforma); el objetivo va en el cuerpo.
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", tenantBody("t-1")), platformTenant)
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -171,13 +181,80 @@ func TestRevokeTenantHandler_OK(t *testing.T) {
 	}
 }
 
+// TestRevokeTenantHandler_PlatformCallerRevokesThirdParty es REQ-055.7 en un
+// test: el caso que el handler viejo no sabía hacer. wApp corta a una empresa
+// cliente que dejó de pagar, y lo que llega al revoker es el tenant de ESA
+// empresa, no el de quien ejecuta. Cuando el objetivo salía del token, este
+// test habría afirmado el tenant de plataforma y el moroso habría seguido
+// operando.
+func TestRevokeTenantHandler_PlatformCallerRevokesThirdParty(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
+
+	const victima = "99999999-9999-9999-9999-999999999999"
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", tenantBody(victima)), platformTenant)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if rev.gotTenant != victima {
+		t.Fatalf("al revoker le llegó %q, want el tenant de la VÍCTIMA (%s): "+
+			"si llega el del llamante, wApp se está cortando a sí misma", rev.gotTenant, victima)
+	}
+}
+
+// TestRevokeTenantHandler_RejectsNonPlatformCaller es el CERROJO del handler,
+// independiente del permiso RBAC: un tenant cliente, aunque su token trajera
+// 'tenants.revoke.any' por un rol custom o un grant mal sembrado, no puede
+// cortar a nadie. Sin este caso, la seguridad de todo el plano colgaría de una
+// única fila de iam_role_grants.
+func TestRevokeTenantHandler_RejectsNonPlatformCaller(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", tenantBody("victima")), "tenant-cliente")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if rev.calls != 0 {
+		t.Fatalf("RevokeTenant NO debe invocarse desde un tenant que no es el de plataforma (calls=%d)", rev.calls)
+	}
+}
+
+// TestRevokeTenantHandler_MissingTenantID: el objetivo es obligatorio. Sin él no
+// hay nada que revocar y NO se cae de vuelta al tenant del token (que es
+// justamente lo que hacía el handler viejo).
+func TestRevokeTenantHandler_MissingTenantID(t *testing.T) {
+	rev := &fakeTenantRevoker{}
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", strings.NewReader(`{}`)), platformTenant)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if rev.calls != 0 {
+		t.Fatalf("RevokeTenant NO debería invocarse sin tenant_id (calls=%d)", rev.calls)
+	}
+}
+
 // TestRevokeTenantHandler_NoIdentity: sin Identity en el contexto (request que
-// no pasó por Authenticate) el handler responde 401 y NO revoca (INV-8).
+// no pasó por Authenticate) el handler responde 401 y NO revoca.
 func TestRevokeTenantHandler_NoIdentity(t *testing.T) {
 	rev := &fakeTenantRevoker{}
-	h := httpapi.RevokeTenantHandler(rev)
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil)
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", tenantBody("t-1"))
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -192,7 +269,7 @@ func TestRevokeTenantHandler_NoIdentity(t *testing.T) {
 
 func TestRevokeTenantHandler_WrongMethod(t *testing.T) {
 	rev := &fakeTenantRevoker{}
-	h := httpapi.RevokeTenantHandler(rev)
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/tenants/revoke", nil)
 	rec := httptest.NewRecorder()
@@ -209,9 +286,9 @@ func TestRevokeTenantHandler_WrongMethod(t *testing.T) {
 
 func TestRevokeTenantHandler_RevokerError(t *testing.T) {
 	rev := &fakeTenantRevoker{err: errors.New("boom")}
-	h := httpapi.RevokeTenantHandler(rev)
+	h := httpapi.RevokeTenantHandler(rev, platformTenant)
 
-	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil), "t-1")
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", tenantBody("t-1")), platformTenant)
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -237,9 +314,9 @@ func (f *fakeTenantRestorer) RestoreTenant(_ context.Context, tenantID string) e
 
 func TestRestoreTenantHandler_OK(t *testing.T) {
 	res := &fakeTenantRestorer{}
-	h := httpapi.RestoreTenantHandler(res)
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
 
-	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil), "t-1")
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", tenantBody("t-1")), platformTenant)
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -255,11 +332,69 @@ func TestRestoreTenantHandler_OK(t *testing.T) {
 	}
 }
 
+// TestRestoreTenantHandler_PlatformCallerRestoresThirdParty: el reverso, mismo
+// criterio. La plataforma reactiva a la empresa que volvió a pagar.
+func TestRestoreTenantHandler_PlatformCallerRestoresThirdParty(t *testing.T) {
+	res := &fakeTenantRestorer{}
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
+
+	const victima = "99999999-9999-9999-9999-999999999999"
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", tenantBody(victima)), platformTenant)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if res.gotTenant != victima {
+		t.Fatalf("al restorer le llegó %q, want %q", res.gotTenant, victima)
+	}
+}
+
+// TestRestoreTenantHandler_RejectsNonPlatformCaller es la MITAD QUE FALTABA del
+// kill-switch: si el tenant cortado pudiera llamar a /restore con su propio
+// token, el corte duraría lo que tardase en pulsar el botón. Este 403 es lo que
+// hace que revocar signifique algo.
+func TestRestoreTenantHandler_RejectsNonPlatformCaller(t *testing.T) {
+	res := &fakeTenantRestorer{}
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", tenantBody("tenant-cliente")), "tenant-cliente")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if res.calls != 0 {
+		t.Fatalf("un tenant revocado NO puede desrevocarse a sí mismo (calls=%d)", res.calls)
+	}
+}
+
+func TestRestoreTenantHandler_MissingTenantID(t *testing.T) {
+	res := &fakeTenantRestorer{}
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
+
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", strings.NewReader(`{}`)), platformTenant)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if res.calls != 0 {
+		t.Fatalf("RestoreTenant NO debería invocarse sin tenant_id (calls=%d)", res.calls)
+	}
+}
+
 func TestRestoreTenantHandler_NoIdentity(t *testing.T) {
 	res := &fakeTenantRestorer{}
-	h := httpapi.RestoreTenantHandler(res)
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil)
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", tenantBody("t-1"))
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
@@ -274,9 +409,9 @@ func TestRestoreTenantHandler_NoIdentity(t *testing.T) {
 
 func TestRestoreTenantHandler_RestorerError(t *testing.T) {
 	res := &fakeTenantRestorer{err: errors.New("boom")}
-	h := httpapi.RestoreTenantHandler(res)
+	h := httpapi.RestoreTenantHandler(res, platformTenant)
 
-	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", nil), "t-1")
+	req := asOperator(httptest.NewRequest(http.MethodPost, "/admin/tenants/restore", tenantBody("t-1")), platformTenant)
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)

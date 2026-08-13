@@ -452,14 +452,18 @@ func Run(ctx context.Context) error {
 	mux.Handle("/metrics", mtx.PromHandler())
 	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
 		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
-	// Kill-switch COMERCIAL por tenant (Plan 055 · T3.3, D-055.2): hermano del
-	// de leases, mismo patrón adminHandler (auth + permiso + auditoría). El rol
-	// tenant_admin ya cubre "tenants.revoke"/"tenants.restore" con su grant '*'
-	// (0015_iam_roles.sql): no hace falta migración de IAM nueva (design.md §1.3).
+	// Kill-switch COMERCIAL por tenant (Plan 055 · T3.3, D-055.2): mismo patrón
+	// adminHandler (auth + permiso + auditoría) que el de leases, pero OTRO plano.
+	// Aquí el objetivo es un tenant AJENO (ADR-0039), así que el permiso lleva el
+	// sufijo '.any': la migración 0059 se lo da SOLO a platform_admin y se lo
+	// niega al '*' de tenant_admin con un deny '*.any'. Ese deny es la pieza que
+	// convierte esto en un permiso de verdad — sin él, el '*' de cualquier
+	// administrador de cliente ya cubriría estas rutas. El handler además exige,
+	// por su cuenta, que el token sea del tenant de plataforma.
 	mux.Handle("/admin/tenants/revoke", adminHandler(authMW, auditor, log,
-		"tenants.revoke", "tenant", httpapi.RevokeTenantHandler(gw)))
+		"tenants.revoke.any", "tenant", httpapi.RevokeTenantHandler(gw, cfg.PlatformTenantID)))
 	mux.Handle("/admin/tenants/restore", adminHandler(authMW, auditor, log,
-		"tenants.restore", "tenant", httpapi.RestoreTenantHandler(gw)))
+		"tenants.restore.any", "tenant", httpapi.RestoreTenantHandler(gw, cfg.PlatformTenantID)))
 	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
 		"messages.send", "message", httpapi.SendMessageHandler(gw, log)))
 	mux.Handle("/admin/crypto/rekey", adminHandler(authMW, auditor, log,

@@ -87,26 +87,54 @@ type TenantRestorer interface {
 	RestoreTenant(ctx context.Context, tenantID string) error
 }
 
+// tenantTargetRequest es el cuerpo JSON de los endpoints del PLANO DE
+// PLATAFORMA (revoke/restore de tenant). Aquí el tenant_id SÍ viaja en el
+// cuerpo, y esa es toda la diferencia con revokeLeaseRequest.
+//
+// EXCEPCIÓN ADMINISTRATIVA A INV-8 (ADR-0039). La regla del Plan 018 · T4 --
+// "el tenant sale del token, nunca del cuerpo" -- confunde dos sujetos que en
+// el kill-switch COMERCIAL son distintos: quién EJECUTA el corte y a quién se
+// le corta. Mientras coincidieron, el endpoint solo sabía revocar al llamante:
+// wApp no podía cortar a un cliente moroso (REQ-055.7) y el cliente cortado se
+// desrevocaba solo. La separación es: el TOKEN sigue identificando al ejecutor
+// -- y solo el tenant de plataforma lo es -- y el CUERPO nombra al objetivo.
+// INV-8 sigue rigiendo intacta en todo lo demás (leases, flujos, API pública):
+// esto es una excepción de UN plano, no una puerta abierta.
+type tenantTargetRequest struct {
+	TenantID string `json:"tenant_id"`
+}
+
 // RevokeTenantHandler devuelve el handler del endpoint admin de revocación de
-// TENANT completo (kill-switch comercial, D-055.2). Hermano de
-// RevokeLeaseHandler: acepta POST sin cuerpo y, al éxito, responde 204 No
-// Content. El tenant_id NUNCA viaja en el cuerpo (INV-8): sale de la
-// Identity del token, igual que RevokeLeaseHandler -- así un operador solo
-// puede revocar SU propio tenant, nunca uno ajeno.
-func RevokeTenantHandler(revoker TenantRevoker) http.Handler {
+// TENANT completo (kill-switch comercial, D-055.2). Acepta POST con cuerpo JSON
+// {tenant_id} -- el tenant VÍCTIMA -- y, al éxito, responde 204 No Content.
+//
+// SEGURIDAD (ADR-0039), dos cerrojos independientes:
+//
+//   - El de ARRIBA, en el registro de la ruta: el permiso 'tenants.revoke.any',
+//     que la migración 0059 concede SOLO al rol platform_admin y niega
+//     explícitamente al '*' de tenant_admin (deny '*.any').
+//   - El de AQUÍ, que no confía en el anterior: el tenant del token tiene que
+//     ser platformTenantID. Un token de cliente con el permiso concedido por
+//     error -- un rol custom, un grant manual, un IAM mal sembrado -- se queda
+//     igualmente en 403. El agujero que este handler cierra era demasiado caro
+//     para dejarlo colgando de una sola comprobación.
+//
+// El orden importa: 401 si no hay Identity, 403 si el llamante no es el plano de
+// plataforma, y solo entonces se mira el cuerpo. Un tenant ajeno no aprende nada
+// del formato del cuerpo ni de si el tenant objetivo existe.
+func RevokeTenantHandler(revoker TenantRevoker, platformTenantID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
 			return
 		}
 
-		id, ok := IdentityFromContext(r.Context())
-		if !ok || id.TenantID == "" {
-			writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
+		target, ok := platformTarget(w, r, platformTenantID)
+		if !ok {
 			return
 		}
 
-		if err := revoker.RevokeTenant(r.Context(), id.TenantID); err != nil {
+		if err := revoker.RevokeTenant(r.Context(), target); err != nil {
 			http.Error(w, "no se pudo revocar el tenant", http.StatusInternalServerError)
 			return
 		}
@@ -116,29 +144,59 @@ func RevokeTenantHandler(revoker TenantRevoker) http.Handler {
 }
 
 // RestoreTenantHandler devuelve el handler del reverso de RevokeTenantHandler
-// (Plan 055 · T3.3): reactiva el tenant de la Identity del token
-// (revoked_at = NULL). Mismo patrón: POST sin cuerpo, 204 al éxito, tenant_id
-// SIEMPRE de la Identity (INV-8).
-func RestoreTenantHandler(restorer TenantRestorer) http.Handler {
+// (Plan 055 · T3.3): reactiva el tenant NOMBRADO EN EL CUERPO (revoked_at =
+// NULL). Mismo patrón y los MISMOS dos cerrojos que su hermano, y por la misma
+// razón: si el corte lo decide la plataforma pero la reactivación la pudiera
+// pedir el propio cortado, el kill-switch no cortaría nada.
+func RestoreTenantHandler(restorer TenantRestorer, platformTenantID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "método no permitido (usar POST)", http.StatusMethodNotAllowed)
 			return
 		}
 
-		id, ok := IdentityFromContext(r.Context())
-		if !ok || id.TenantID == "" {
-			writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
+		target, ok := platformTarget(w, r, platformTenantID)
+		if !ok {
 			return
 		}
 
-		if err := restorer.RestoreTenant(r.Context(), id.TenantID); err != nil {
+		if err := restorer.RestoreTenant(r.Context(), target); err != nil {
 			http.Error(w, "no se pudo restaurar el tenant", http.StatusInternalServerError)
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// platformTarget aplica los dos cerrojos del plano de plataforma y devuelve el
+// tenant OBJETIVO leído del cuerpo. Si devuelve ok=false ya escribió la
+// respuesta de error y el llamante solo tiene que volver.
+//
+// Vive extraída porque revoke y restore tienen que comportarse IDÉNTICO: son la
+// misma puerta en los dos sentidos, y un criterio que se copia a mano en dos
+// handlers es un criterio que acaba divergiendo en uno.
+func platformTarget(w http.ResponseWriter, r *http.Request, platformTenantID string) (string, bool) {
+	id, ok := IdentityFromContext(r.Context())
+	if !ok || id.TenantID == "" {
+		writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
+		return "", false
+	}
+	if platformTenantID == "" || id.TenantID != platformTenantID {
+		writeAuthError(w, http.StatusForbidden, "operación reservada al plano de plataforma")
+		return "", false
+	}
+
+	var req tenantTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
+		return "", false
+	}
+	if req.TenantID == "" {
+		http.Error(w, "tenant_id es requerido", http.StatusBadRequest)
+		return "", false
+	}
+	return req.TenantID, true
 }
 
 // sendMessageRequest es el cuerpo JSON del endpoint de envío de texto.
