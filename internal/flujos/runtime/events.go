@@ -766,19 +766,23 @@ func (rt *Runtime) summarizeAbandoned(ctx context.Context, key store.Key, sessio
 // lleva coletilla, porque ahí lo que va es la lista numerada (o el flujo del tenant) y
 // no un aviso pegado.
 //
-// ⚠️ El otro llamante (enterEventFlow) NO puede emitir nada hoy, y conviene saber por
-// qué antes de "arreglarlo": el ConfigResolver nunca combina las dos cosas. La rama de
-// intención devuelve {Start, FlowID, Params, IntentName} SIN EventKind, y la de
-// event_start devuelve {StartEvent, FlowID, EventKind} SIN IntentName — son
-// excluyentes. Así que el arranque que PARE un evento llega siempre con intentName ""
-// y esa llamada se calla sola. Lo fija TestTagline_ArranquePorEventStartNoLlevaColetilla.
+// ⚠️ El otro llamante es birthEvent (events.go), que ya NO es un caso mudo (Plan 054 ·
+// F2b, D-A — decisión de Jhoan 2026-08-12, sustituye a CONTRATO-OLA5 D1): el
+// ConfigResolver SÍ combina las dos cosas cuando una regla kind='llm' gana con
+// event_kind poblado —{StartEvent, FlowID, EventKind, Params, IntentName}, las cinco
+// a la vez—, así que dec.IntentName puede llegar no-vacío a un arranque que TAMBIÉN
+// pare un evento. event_start (sin intención propia) sigue llegando con intentName ""
+// y esa llamada se sigue callando sola —lo fija
+// TestTagline_ArranquePorEventStartNoLlevaColetilla, que no se movió—.
 //
-// 🔴 Y si algún día una regla llm mapea a un event_kind, ese test se pondrá rojo y NO
-// basta con actualizarlo: habría que excluir de la coletilla el evento RECIÉN NACIDO,
-// porque uno recién creado —`open` y sin contenido en `event_content`— cumple
-// exactamente el predicado de rescatable (D-043.22; events/store.go, rescuableWhere).
-// Sin esa exclusión el cliente leería «tu pedido sigue a medias» sobre el pedido que
-// acaba de abrir.
+// La combinación NUEVA (intención + nacimiento) es segura PORQUE birthEvent resuelve
+// la coletilla ANTES de CreateEvent (ver su docstring, unas líneas más abajo): el
+// evento que se está a punto de parir no existe todavía cuando BuildTagline consulta
+// los rescatables, así que nunca puede anunciarse «a medias» sobre sí mismo, sea cual
+// sea la puerta (event_start o esta). Lo fija, de forma genérica,
+// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo (con un resolver de prueba
+// que fabrica la combinación a mano) y, de extremo a extremo con el ConfigResolver de
+// producción, TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo.
 //
 // 🔴 SEGUNDO DESTINO PENDIENTE: el criterio (c) de T3.8 exige que esta MISMA coletilla
 // aparezca también en el borrador del pipeline del Plan 044 que la operadora ve en KMP.
@@ -1097,12 +1101,30 @@ func (rt *Runtime) presentRescue(ctx context.Context, key store.Key, sessionID s
 // lo que el cliente lee, y Menu es lo que permite entender el número con que conteste.
 // Persistir solo el texto convertiría cualquier lista en decorado.
 //
-// El token anti-loop se cobra aquí, justo antes de renderizar, y es el ÚNICO sitio del
-// camino de la oferta que lo cobra (Plan 020 · T0).
+// El token anti-loop se cobra aquí, justo antes de renderizar. Es el sitio por
+// defecto del camino de la oferta que lo cobra (Plan 020 · T0); el ÚNICO llamante que
+// NO pasa por aquí para cobrarlo es degradeDurableStart (incoming.go, Plan 054 ·
+// T2.4), que ya cobró SU token en startPlainFlow antes de descubrir que el flujo
+// exige evento y usa sendOfferNow para no cobrar dos veces por un solo saliente (ver
+// su docstring — el mismo doble cobro que este comentario evitaba, reintroducido por
+// ese camino nuevo y corregido aquí).
 func (rt *Runtime) sendOffer(ctx context.Context, key store.Key, sessionID string, offer events.Offering) error {
 	if !rt.replyAllowed(key) {
 		return nil
 	}
+	return rt.sendOfferNow(ctx, key, sessionID, offer)
+}
+
+// sendOfferNow es el CUERPO de sendOffer sin su cobro del token anti-loop: existe
+// para degradeDurableStart (incoming.go, D1 del review de Plan 054 · F2), el único
+// llamante cuyo token YA se cobró antes de llegar aquí (startPlainFlow lo cobra vía
+// replyAllowed ANTES de intentar startLocked). Cobrarlo de nuevo aquí sería el doble
+// cobro por un solo mensaje saliente que el docstring de openWithOffer ya advertía:
+// con el cupo justo (burst 1), el segundo cobro fallaría y la degradación se quedaría
+// MUDA aunque el WARN que la precede diga que sí se ofrece. NINGÚN otro llamante debe
+// usar esta función directamente: si necesitas enviar una oferta y no has cobrado
+// tú mismo el token, usa sendOffer.
+func (rt *Runtime) sendOfferNow(ctx context.Context, key store.Key, sessionID string, offer events.Offering) error {
 	raw, err := offer.Menu.Encode()
 	if err != nil {
 		return fmt.Errorf("runtime: serializar la oferta pendiente: %w", err)

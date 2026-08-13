@@ -20,6 +20,9 @@ func TestModuleContract(t *testing.T) {
 	if m.WaitsForInput() {
 		t.Fatalf("WaitsForInput()=true, quiero false (nodo de salida, no interactivo)")
 	}
+	if m.ProducesDurableContent() {
+		t.Fatalf("ProducesDurableContent()=true, quiero false (media no proyecta contenido durable, design.md D-054.3(a))")
+	}
 	if outs := m.Render(model.Node{}, model.Content{}); outs != nil {
 		t.Fatalf("Render debe devolver nil (el texto va en Caption), got=%q", outs)
 	}

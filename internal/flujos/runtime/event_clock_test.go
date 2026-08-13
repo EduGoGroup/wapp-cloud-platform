@@ -387,34 +387,43 @@ func TestGuarda_ConEventoActivoElTTLConversacionalNoDescarta(t *testing.T) {
 // que es cero regresión. Sin evento activo el TTL conversacional hace exactamente lo
 // de siempre: descarta el flow_state y el entrante entra por el resolver de disparos.
 //
-// El discriminador es la palabra clave: con el estado VIVO, «ayuda» sería una entrada
-// para el módulo (ResolveLive no evalúa keywords, INV-02); con el estado descartado,
-// arranca el flujo del menú. Que el módulo no la vea es lo que prueba el descarte.
+// El discriminador es que el espía —que envuelve al módulo REAL cart— esté en el
+// camino: con el estado VIVO, «ayuda» sería una entrada para el módulo (ResolveLive
+// no evalúa keywords, INV-02); con el estado descartado, arranca el flujo del menú
+// (testFlow) y el módulo cart nunca la ve.
+//
+// D2 (review de código sobre F2): antes, la palabra «hola» ABRÍA el carrito por
+// keyword pura — pero desde D-054.5/T2.3 (Plan 054) esa combinación es EXACTAMENTE
+// la que la guarda de startLocked rechaza (era, sin saberlo, el hallazgo #001 en
+// miniatura). Cuando este test se adaptó apuntando «hola» a testFlow (menú, no
+// durable) para esquivar la guarda, el espía dejó de estar en el camino de NINGÚN
+// turno: las tres aserciones de abajo pasaban a ser trivialmente ciertas (cierto
+// pase lo que pase con el descarte por TTL), exactamente el patrón de «un test
+// verde puede no estar mirando». La corrección siembra el limbo del carrito A MANO
+// (seedCartOpen, el mismo fixture que usa cart_resume_test.go: FlowID=testCartFlow,
+// EventID=="" porque model.Conversation{} no lo estampa) en vez de abrirlo por
+// keyword, y deja «ayuda» como el ÚNICO estímulo — igual que antes de la guarda.
 func TestGuarda_SinEventoElTTLConversacionalSigueDescartando(t *testing.T) {
 	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	dosHorasDespués := func() time.Time { return time.Now().Add(2 * time.Hour) }
-	arranque := trigger.Rule{
-		TenantID: testTenant, Kind: trigger.KindKeyword, Keyword: "hola",
-		MatchType: trigger.MatchExact, FlowID: testCartFlow, Enabled: true,
-	}
 	ayuda := trigger.Rule{
 		TenantID: testTenant, Kind: trigger.KindKeyword, Keyword: "ayuda",
 		MatchType: trigger.MatchExact, FlowID: testFlow, Enabled: true,
 	}
-	rt, repo, sender, contacts, evs, espia := newRelojRuntime(t, t0, dosHorasDespués, arranque, ayuda)
+	rt, repo, sender, contacts, evs, espia := newRelojRuntime(t, t0, dosHorasDespués, ayuda)
 	sembrarInactividad(t, repo, 24*time.Hour, time.Hour)
 	ctx := context.Background()
 
-	// Conversación SIN evento: la palabra clave arranca el flujo y no pare nada (E-6).
-	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "hola", "wamid.b0")); err != nil {
-		t.Fatalf("hola: %v", err)
-	}
+	// El carrito queda abierto en el limbo (EventID==""), sembrado directo — el
+	// mismo punto de partida que antes producía la keyword «hola» sobre el carrito,
+	// sin pasar por una guarda que hoy la rechazaría.
+	cid := seedCartOpen(t, repo, contacts)
 	if evs.total() != 0 {
-		t.Fatalf("una keyword no pare eventos (E-6); hay %d filas", evs.total())
+		t.Fatalf("sembrar el limbo a mano no debe parir ningún evento; hay %d filas", evs.total())
 	}
-	st := loadState(t, repo, resolveID(t, contacts, testContact))
+	st := loadState(t, repo, cid)
 	if st.EventID != "" {
-		t.Fatalf("la conversación está en el limbo y no debe tener evento: %q", st.EventID)
+		t.Fatalf("la conversación sembrada debe estar en el limbo, sin evento: %q", st.EventID)
 	}
 
 	// Dos horas después (TTL conversacional de 1 h) llega «ayuda».
@@ -424,7 +433,7 @@ func TestGuarda_SinEventoElTTLConversacionalSigueDescartando(t *testing.T) {
 	if got := espia.recibido(); len(got) != 0 {
 		t.Fatalf("el estado vencido se descarta ANTES de avanzar; el módulo recibió %v", got)
 	}
-	final := loadState(t, repo, resolveID(t, contacts, testContact))
+	final := loadState(t, repo, cid)
 	if final.FlowID != testFlow {
 		t.Fatalf("el entrante debe ir a handleTrigger y arrancar el flujo de la keyword; quedó en %q", final.FlowID)
 	}

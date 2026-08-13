@@ -13,6 +13,16 @@ package trigger_test
 // reproducido por HandleIncoming con un evento en curso. Ver también
 // internal/flujos/runtime/intent_scope_test.go para el tramo que SÍ atraviesa desde
 // el turno entrante (y que documenta el mismo límite).
+//
+// ⚠️ ACTUALIZACIÓN (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12, tras
+// review): el SCOPING que este fichero fija —qué reglas llm son ELEGIBLES según el
+// evento activo— sigue intacto y sin tocar. Lo que SÍ cambió es qué pasa con la
+// regla ganadora cuando trae event_kind: antes quedaba fuera de la Decision
+// (CONTRATO-OLA5 D1: «la anotación es scoping, no puerta»); ahora SÍ se propaga y
+// PARE (o conmuta) ese evento — la segunda puerta del nacimiento tardío que el Plan
+// 043 · T2.5 declaró y nunca se cableó. Ver
+// TestIntentScope_Decision_PropagaEventKindAlGanar, más abajo, que sustituye a la
+// antigua TestIntentScope_Decision_NoPropagaEventKind.
 
 import (
 	"testing"
@@ -38,7 +48,13 @@ func t53LlmRule(intentName, flowID, eventKind string) trigger.Rule {
 // TestIntentScope_SinEventoActivo_NoAcotaNada fija la PRIMERA guarda de
 // retrocompatibilidad: ActiveEventKind == "" (el caso NORMAL en el camino de
 // producción, ver buildSignal) no acota nada, aunque la regla lleve un event_kind
-// anotado. Sin evento activo, no hay nada que acotar.
+// anotado. Sin evento activo, no hay nada que acotar — la regla CASA igual.
+//
+// Lo que SÍ cambió (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12): antes de
+// esta tarea, casar era siempre {Start, FlowID, IntentName}, sin importar si la regla
+// llevaba event_kind. Ahora, con la regla anotada, casar PARE el evento de ese tipo
+// —{StartEvent, FlowID, EventKind, IntentName}—: el scoping (esta guarda) y la puerta
+// de nacimiento leen el MISMO campo en SECUENCIA, no compiten.
 func TestIntentScope_SinEventoActivo_NoAcotaNada(t *testing.T) {
 	r := seed(t, t53LlmRule("pedir_encuesta", t53SurveyFlow, "survey"))
 
@@ -46,8 +62,8 @@ func TestIntentScope_SinEventoActivo_NoAcotaNada(t *testing.T) {
 		Intent:          &trigger.IntentSignal{Name: "pedir_encuesta"},
 		ActiveEventKind: "",
 	})
-	if dec.Action != trigger.Start || dec.FlowID != t53SurveyFlow || dec.IntentName != "pedir_encuesta" {
-		t.Fatalf("sin evento activo, la regla llm anotada debe casar igual: %+v", dec)
+	if dec.Action != trigger.StartEvent || dec.EventKind != "survey" || dec.FlowID != t53SurveyFlow || dec.IntentName != "pedir_encuesta" {
+		t.Fatalf("sin evento activo, la regla llm anotada debe casar igual y parir su evento: %+v", dec)
 	}
 }
 
@@ -101,7 +117,9 @@ func TestIntentScope_ReglaAnotada_EventoActivoDistinto_CaeAlPeldañoDeTexto(t *t
 
 // TestIntentScope_ReglaAnotada_EventoActivoIgual_Casa es el control positivo: el
 // mismo event_kind en la regla y en la señal SÍ casa (la guarda es `!=`, no un
-// bloqueo total de reglas anotadas).
+// bloqueo total de reglas anotadas) — y, ganadora, PARE (o conmuta) ese mismo tipo
+// de evento (Plan 054 · F2b, D-A: ver el comentario de
+// TestIntentScope_Decision_PropagaEventKindAlGanar, más abajo).
 func TestIntentScope_ReglaAnotada_EventoActivoIgual_Casa(t *testing.T) {
 	r := seed(t, t53LlmRule("pedir_encuesta", t53SurveyFlow, "survey"))
 
@@ -109,24 +127,59 @@ func TestIntentScope_ReglaAnotada_EventoActivoIgual_Casa(t *testing.T) {
 		Intent:          &trigger.IntentSignal{Name: "pedir_encuesta"},
 		ActiveEventKind: "survey",
 	})
-	if dec.Action != trigger.Start || dec.FlowID != t53SurveyFlow || dec.IntentName != "pedir_encuesta" {
-		t.Fatalf("con el mismo event_kind que el activo, la regla debe casar: %+v", dec)
+	if dec.Action != trigger.StartEvent || dec.EventKind != "survey" || dec.FlowID != t53SurveyFlow || dec.IntentName != "pedir_encuesta" {
+		t.Fatalf("con el mismo event_kind que el activo, la regla debe casar y parir/conmutar su evento: %+v", dec)
 	}
 }
 
-// TestIntentScope_Decision_NoPropagaEventKind fija que la Decision de la rama llm
-// JAMÁS lleva EventKind, con o sin scoping de por medio: propagarlo reabriría el
-// defecto de la coletilla (TestTagline_ArranquePorEventStartNoLlevaColetilla,
-// runtime/tagline_test.go) porque startFromDecision usa dec.EventKind como PUERTA
-// de nacimiento de un evento. La anotación es scoping, no puerta (CONTRATO-OLA5 D1).
-func TestIntentScope_Decision_NoPropagaEventKind(t *testing.T) {
+// TestIntentScope_Decision_PropagaEventKindAlGanar reemplaza a la antigua
+// TestIntentScope_Decision_NoPropagaEventKind (Plan 054 · F2b, D-A — decisión de
+// Jhoan 2026-08-12, tras review, que SUSTITUYE a CONTRATO-OLA5 D1 del 2026-08-10).
+//
+// El contrato viejo decía: «la Decision de la rama llm JAMÁS lleva EventKind […]
+// propagarlo reabriría el defecto de la coletilla […] la anotación es scoping, no
+// puerta». Eso dejó de ser cierto a propósito: una regla llm cuyo event_kind gana el
+// scoping AHORA sí lo propaga a la Decision —{StartEvent, EventKind}— para que la
+// intención pueda parir (o conmutar) su evento, con el mismo tratamiento que
+// event_start.
+//
+// El riesgo que motivó el contrato viejo (la coletilla anunciándose a sí misma)
+// sigue vigilado, pero por OTRO mecanismo, más fuerte que «no combinar los campos»:
+// birthEvent (runtime/events.go) resuelve la coletilla ANTES de crear la fila del
+// evento, así que un evento recién nacido no puede aparecer nunca como «a medias»
+// sobre sí mismo, combine o no combine la Decision IntentName con EventKind. Lo fija
+// runtime/tagline_test.go — TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo
+// (genérico, con un resolver de prueba) y
+// TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo (de extremo a extremo, con el
+// ConfigResolver real).
+func TestIntentScope_Decision_PropagaEventKindAlGanar(t *testing.T) {
 	r := seed(t, t53LlmRule("pedir_encuesta", t53SurveyFlow, "survey"))
 
 	dec := mustResolveSig(t, r, t53Tenant, "", trigger.Signal{
 		Intent:          &trigger.IntentSignal{Name: "pedir_encuesta"},
 		ActiveEventKind: "survey",
 	})
-	if dec.EventKind != "" {
-		t.Fatalf("la Decision de la rama llm NO debe llevar EventKind, got %q", dec.EventKind)
+	if dec.EventKind != "survey" {
+		t.Fatalf("la Decision de una regla llm GANADORA con event_kind debe propagarlo, got %q", dec.EventKind)
+	}
+	if dec.Action != trigger.StartEvent {
+		t.Fatalf("y la Action debe ser StartEvent, no Start, got %v", dec.Action)
+	}
+}
+
+// TestIntentScope_ReglaSinEventKind_DecisionNuncaLoLleva es el guardián que SÍ
+// sigue vigente del contrato viejo: una regla llm SIN event_kind (el caso de
+// siempre, Plan 029) jamás lleva EventKind en su Decision — no hay campo que
+// propagar. Sin esto, TestIntentScope_Decision_PropagaEventKindAlGanar (arriba)
+// podría pasar por accidente si alguien poblara EventKind incondicionalmente.
+func TestIntentScope_ReglaSinEventKind_DecisionNuncaLoLleva(t *testing.T) {
+	r := seed(t, t53LlmRule("pedir_catalogo", t53CatalogFlow, ""))
+
+	dec := mustResolveSig(t, r, t53Tenant, "", trigger.Signal{
+		Intent:          &trigger.IntentSignal{Name: "pedir_catalogo"},
+		ActiveEventKind: "",
+	})
+	if dec.Action != trigger.Start || dec.EventKind != "" {
+		t.Fatalf("una regla llm sin event_kind debe seguir devolviendo Start sin EventKind, got %+v", dec)
 	}
 }

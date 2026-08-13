@@ -13,6 +13,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
@@ -71,6 +72,92 @@ func New(reg *modules.Registry, opts ...Option) *Engine {
 		e.content = content.NewStatic()
 	}
 	return e
+}
+
+// FlowProducesDurableContent decide si f exige un evento padre para arrancar
+// (design.md D-054.5): es un OR sobre f.Nodes (map[string]model.Node,
+// model.go:95) que resuelve cada n.Type contra el Registry y devuelve true en
+// cuanto ALGÚN nodo resuelve a un módulo cuyo ProducesDurableContent() es
+// true. Un tipo de nodo NO registrado en e.reg cuenta como NO durable —no hay
+// módulo que pueda materializar nada—, así que un flujo con un tipo
+// desconocido no bloquea el arranque por esta guarda (D-054.5, §1).
+//
+// Vive en el Engine, no en el Runtime ni en una Option nueva. runtime.Runtime
+// declara `engine *engine.Engine` (tipo CONCRETO, no una interfaz) y el
+// Registry es un campo PRIVADO de Engine, inyectado una única vez en New(reg,
+// opts...): el Runtime no tiene forma de preguntarle nada al Registry por su
+// cuenta (un grep de "Registry" sobre runtime_engine.go no devuelve ni una
+// coincidencia). Exponer el predicado aquí evita DOS caminos alternativos, los
+// dos descartados a propósito:
+//
+//   - Una Option nueva en Runtime (p. ej. WithRegistry) para pasarle el
+//     Registry por fuera: sería una TERCERA Option variádica cuya omisión
+//     compila, pasa `go vet` y pasa el lint sin dejar ni una señal roja —
+//     exactamente el modo de fallo que dejó WithOpeningBuilder sin cablear en
+//     bootstrap.go durante meses (T1 de este mismo plan) y que costó dos
+//     comandas perdidas en UAT (hallazgos #001/#003). Este plan existe para
+//     cerrar esa clase de defecto, no para añadir un ejemplar nuevo.
+//   - Duplicar el Registry como campo propio de Runtime: Runtime YA recibe el
+//     *engine.Engine completo por parámetro posicional obligatorio del
+//     constructor (no por Option), así que el Registry viaja gratis dentro de
+//     él. Un segundo puntero al mismo Registry en Runtime sería estado
+//     redundante que podría desincronizarse del que usa el propio Engine para
+//     Render/Step.
+//
+// startLocked (runtime/start.go), el ÚNICO embudo por el que pasan las cuatro
+// puertas de arranque, consulta este método a través de rt.engine —que ya
+// tiene inyectado— sin que bootstrap.go necesite una sola línea nueva de
+// wiring.
+func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
+	for _, n := range f.Nodes {
+		if m, ok := e.reg.Get(n.Type); ok && m.ProducesDurableContent() {
+			return true
+		}
+	}
+	return false
+}
+
+// NodeProducesDurableContent es FlowProducesDurableContent acotado a UN tipo de
+// nodo (Plan 054 · T3, D-054.4): el fan-out best-effort del ADR-0003 gana una
+// excepción acotada SOLO para los efectos que declaró un módulo durable, y cada
+// llamante de runtime.dispatch (startLocked, advanceLiveStep, prepareResume,
+// restartableOnStart) conoce el nodo/módulo que produjo el LOTE de efectos que
+// va a despachar antes de llamarlo —Step/EnterPrimed/Restart procesan UN nodo
+// por turno, así que todo efecto de un mismo lote comparte el mismo módulo—, sin
+// tener que reconstruir un model.Flow de un solo nodo para reusar
+// FlowProducesDurableContent. Mismo criterio exacto: un tipo no registrado en
+// e.reg cuenta como NO durable (D-054.3(a): «no hay módulo que pueda producir
+// nada»).
+func (e *Engine) NodeProducesDurableContent(nodeType string) bool {
+	m, ok := e.reg.Get(nodeType)
+	return ok && m.ProducesDurableContent()
+}
+
+// DurableNodeType nombra a QUIÉN culpar cuando FlowProducesDurableContent(f) da
+// true: el tipo del primer nodo (en orden determinista por clave — f.Nodes es un
+// map y su iteración no lo es) que resuelve a un módulo durable. Devuelve "" si
+// ninguno lo es (mismo criterio exacto que FlowProducesDurableContent; es un
+// segundo recorrido sobre el MISMO Registry, no una fuente de verdad nueva).
+//
+// Existe SOLO para diagnóstico (Plan 054 · D-054.6, T2.4): el WARN de la
+// degradación necesita decir qué nodo obligó al rechazo, y la guarda de D-054.5 ya
+// contestó "¿hace falta evento?" con el OR de FlowProducesDurableContent — esto
+// responde "¿de cuál nodo?" para el operador que lee el log. Con varios nodos
+// durables se reporta uno cualquiera (determinista): saber que el flujo exige
+// evento ya basta para corregirlo, no hace falta enumerarlos todos en cada línea.
+func (e *Engine) DurableNodeType(f model.Flow) string {
+	ids := make([]string, 0, len(f.Nodes))
+	for id := range f.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := f.Nodes[id]
+		if m, ok := e.reg.Get(n.Type); ok && m.ProducesDurableContent() {
+			return n.Type
+		}
+	}
+	return ""
 }
 
 // Enter posiciona la conversación en el nodo inicial del flujo y produce su

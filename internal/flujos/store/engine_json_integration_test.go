@@ -25,8 +25,9 @@ import (
 // solo emite content.Prompt; este fake evidencia también content.Items.
 type itemsRenderModule struct{}
 
-func (itemsRenderModule) Type() string        { return model.NodeTypeMenu }
-func (itemsRenderModule) WaitsForInput() bool { return true }
+func (itemsRenderModule) Type() string                 { return model.NodeTypeMenu }
+func (itemsRenderModule) WaitsForInput() bool          { return true }
+func (itemsRenderModule) ProducesDurableContent() bool { return false }
 
 func (itemsRenderModule) Render(_ model.Node, c model.Content) []string {
 	outs := make([]string, 0, 1+len(c.Items))

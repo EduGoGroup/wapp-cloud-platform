@@ -19,6 +19,12 @@ package runtime_test
 //
 // Sirve igual de prueba: es el turno completo (HandleIncoming → advanceLive →
 // buildSignal → handleTrigger → Resolve), no el resolver desnudo.
+//
+// ⚠️ ACTUALIZACIÓN (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12): una regla
+// llm cuyo event_kind gana el scoping ahora PARE (o conmuta) ese evento — ver
+// config_resolver.go. Los dos tests de abajo que resuelven con event_kind poblado
+// reflejan esa consecuencia; el que la scoping FILTRA (ReglaAjena_NoArranca) no
+// cambia, porque el filtrado en sí no se tocó.
 
 import (
 	"context"
@@ -112,29 +118,69 @@ func TestScope_TurnoAVivo_MenuPendiente_ReglaAjena_NoArranca(t *testing.T) {
 	}
 }
 
-// TestScope_TurnoAVivo_MenuPendiente_ReglaDelMismoTipo_Arranca es el control
+// TestScope_TurnoAVivo_MenuPendiente_ReglaDelMismoTipo_Conmuta es el control
 // positivo del mismo tramo: la MISMA regla, anotada con el tipo del evento que SÍ
-// está activo (`menu`), sí resuelve a Start y el turno completo llega a enviar el
-// primer nodo del flujo.
-func TestScope_TurnoAVivo_MenuPendiente_ReglaDelMismoTipo_Arranca(t *testing.T) {
+// está activo (`menu`), SÍ resuelve y el turno se CONSUME.
+//
+// ⚠️ Lo que este test afirmaba antes de esta tarea ya no es cierto, y a propósito
+// (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12): con la segunda puerta sin
+// construir, la Decision de esta regla no llevaba EventKind y el turno arrancaba
+// `testFlow` a secas, IGNORANDO que había un evento `menu` vivo. Ahora la Decision
+// SÍ lleva EventKind="menu" (ver config_resolver.go), así que entra por beginEvent
+// como cualquier event_start del mismo tipo — y beginEvent es idempotente POR TIPO
+// (D-043.4): con un evento `menu` YA vivo, CONMUTA hacia él en vez de arrancar un
+// flujo aparte. Conmutar a `menu` significa presentMenu (D-043.3: el menú no es una
+// fila de flow_definitions, lo renderiza el despachador) — y este runtime mínimo NO
+// cablea `runtime.WithDispatcher`, así que presentMenu se calla (mismo no-op
+// documentado en events.go). Es el MISMO trato que recibiría una regla event_start
+// con event_kind="menu" en las mismas condiciones — no es un trato especial para la
+// puerta llm, es la CONSECUENCIA correcta de compartir beginEvent.
+//
+// Lo que el test SÍ puede (y debe) seguir afirmando es que el turno no se pierde ni
+// duplica el evento: sigue habiendo UN solo evento vivo (el mismo ID de antes).
+//
+// ⚠️ Medido, no supuesto: el flow_state de partida NO sobrevive al turno, y eso NO
+// es nuevo aquí — lo destruye releaseOrphanMenu (incoming.go, «el quinto camino de
+// suelta», Ola 6) ANTES de volver a entrar por handleTrigger, exactamente igual con
+// una regla event_start que con esta llm. Sin `runtime.WithDispatcher` cableado en
+// este runtime mínimo, presentMenu no lo recrea (mismo no-op documentado en
+// events.go), así que el saldo del turno es: el evento sigue vivo y correctamente
+// identificado (conmutar, no duplicar), pero sin un flow_state que lo apunte. En
+// producción el despachador SIEMPRE está cableado (bootstrap.go), así que ese último
+// paso —presentar el menú y volver a dejar dispatcher_menu_event_id en Vars— sí
+// ocurre; no se reproduce aquí para no montar un Dispatcher completo por una prueba
+// de scoping.
+func TestScope_TurnoAVivo_MenuPendiente_ReglaDelMismoTipo_Conmuta(t *testing.T) {
 	rt, repo, sender, contacts, evs := t53NewScopeRuntime(t,
 		trigger.Rule{TenantID: testTenant, Kind: trigger.KindLLM, Keyword: "pedir_menu", FlowID: testFlow, EventKind: "menu", Enabled: true},
 	)
 	ctx := context.Background()
 	contactID := resolveID(t, contacts, testContact)
-	t53SeedMenuPendiente(t, repo, evs, contactID)
+	menuEventID := t53SeedMenuPendiente(t, repo, evs, contactID)
 
 	m := incomingIntent(testContact, "algo que no es una keyword", "wamid.t53b", "pedir_menu", nil)
 	if err := rt.HandleIncoming(ctx, testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
 
-	if sender.count() != 1 {
-		t.Fatalf("con el mismo event_kind del menú activo, debe arrancar el flujo; envió %d", sender.count())
+	// Sin dispatcher cableado, presentMenu se calla: NINGÚN saliente, ni testFlow ni
+	// ningún otro — la degradación silenciosa está documentada, no es un fallo.
+	if sender.count() != 0 {
+		t.Fatalf("sin despachador cableado, conmutar al menú no debe enviar nada; envió %d: %v", sender.count(), sender.texts())
 	}
-	st := loadState(t, repo, contactID)
-	if st.FlowID != testFlow {
-		t.Fatalf("debe haber arrancado testFlow, got %q", st.FlowID)
+	// El evento NO se duplicó ni se cerró: sigue vivo el MISMO que ya estaba
+	// (conmutar, no parir) — la prueba real de que la regla del MISMO tipo casó y
+	// beginEvent reconoció el evento activo en vez de intentar una segunda fila.
+	alive := evs.alive()
+	if len(alive) != 1 || alive[0].ID != menuEventID {
+		t.Fatalf("debe seguir habiendo UN evento vivo, el mismo de antes (%q); got %+v", menuEventID, alive)
+	}
+	// El flow_state de partida SÍ se suelta (releaseOrphanMenu, no-regresión: ya lo
+	// hacía antes de esta tarea) y sin despachador cableado nada lo recrea.
+	if _, ok, err := repo.Load(ctx, store.Key{TenantID: testTenant, SessionID: testSession, ContactID: contactID}); err != nil {
+		t.Fatalf("Load: %v", err)
+	} else if ok {
+		t.Fatal("sin despachador cableado, presentMenu no debe recrear el flow_state")
 	}
 }
 
@@ -143,6 +189,13 @@ func TestScope_TurnoAVivo_MenuPendiente_ReglaDelMismoTipo_Arranca(t *testing.T) 
 // otros dos sitios de incoming.go), una regla llm anotada con event_kind casa
 // igual — la guarda de retrocompatibilidad no depende de que la regla nunca lleve
 // event_kind, depende de que no haya evento activo.
+//
+// ⚠️ Lo que arranca CAMBIÓ de forma (Plan 054 · F2b, D-A), aunque las dos
+// aserciones originales (1 saliente, FlowID=testFlow) sigan cumpliéndose byte a
+// byte: antes arrancaba testFlow a secas (Action=Start, sin evento); ahora PARE el
+// evento `survey` primero (Action=StartEvent) y arranca testFlow COMO SU FLUJO
+// (con eventID no vacío). Se añade la aserción que antes no hacía falta —el
+// EventID no vacío— para dejar el cambio a la vista.
 func TestScope_TurnoAVivo_SinEventoActivo_ReglaAnotada_SigueArrancando(t *testing.T) {
 	rt, repo, sender, contacts, _ := t53NewScopeRuntime(t,
 		trigger.Rule{TenantID: testTenant, Kind: trigger.KindLLM, Keyword: "pedir_encuesta", FlowID: testFlow, EventKind: "survey", Enabled: true},
@@ -161,5 +214,8 @@ func TestScope_TurnoAVivo_SinEventoActivo_ReglaAnotada_SigueArrancando(t *testin
 	st := loadState(t, repo, contactID)
 	if st.FlowID != testFlow {
 		t.Fatalf("debe haber arrancado testFlow, got %q", st.FlowID)
+	}
+	if st.EventID == "" {
+		t.Fatalf("con event_kind poblado, el arranque debe parir su evento (Plan 054 · F2b): EventID vino vacío")
 	}
 }

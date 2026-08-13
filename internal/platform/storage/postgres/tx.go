@@ -24,6 +24,39 @@ const (
 // actual: ahí el reintento relee y converge. Por eso vive aparte.
 const sqlstateUniqueViolation = "23505"
 
+// sqlstateClassIntegrityConstraintViolation es el PREFIJO de clase (dos dígitos)
+// de todo SQLSTATE "23xxx": not_null_violation (23502), foreign_key_violation
+// (23503), unique_violation (23505), check_violation (23514), … (Plan 054 · T3,
+// REQ-054.4). Reintentar la MISMA escritura contra una violación de esta clase no
+// la cura —el dato que la provoca no cambia entre intentos—: gastar el reintento
+// acotado del fan-out durable ahí solo alarga el turno del cliente sin ganar nada.
+// Es la contraparte PERMANENTE de IsSerializationFailure (deadlock/serialización,
+// clase "40": SÍ vale la pena reintentar, porque el conflicto es de concurrencia,
+// no de dato).
+const sqlstateClassIntegrityConstraintViolation = "23"
+
+// IsPermanentFailure reporta si err (o alguno envuelto) es un fallo de Postgres
+// que NO se cura reintentando la MISMA escritura: hoy, cualquier violación de
+// integridad (clase SQLSTATE 23 — NOT NULL, unique, FK, CHECK). Cualquier otro
+// caso —una conexión caída, un timeout, un deadlock/serialización (clase 40, ya
+// cubierta aparte por IsSerializationFailure), o cualquier error que no sea un
+// *pgconn.PgError— se trata como TRANSITORIO por omisión: vale la pena
+// reintentarlo antes de darlo por perdido.
+//
+// Lo consume el reintento acotado del fan-out de sinks durables (Plan 054 · T3,
+// D-054.4, runtime.dispatch): un 23502 (el que revienta intakes.event_id/
+// survey_results.event_id, hallazgos #001/#003) corta el turno de inmediato, SIN
+// gastar los dos reintentos que sí tienen sentido ante un hipo transitorio de la
+// conexión.
+func IsPermanentFailure(err error) bool {
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) {
+		return false
+	}
+	return len(pg.Code) >= len(sqlstateClassIntegrityConstraintViolation) &&
+		pg.Code[:len(sqlstateClassIntegrityConstraintViolation)] == sqlstateClassIntegrityConstraintViolation
+}
+
 // maxTxAttempts acota los reintentos de WithTx ante un fallo transitorio. 8
 // intentos con backoff exponencial acotado convergen de sobra en la práctica;
 // agotarlos devuelve el último error envuelto (no se cuelga indefinidamente).

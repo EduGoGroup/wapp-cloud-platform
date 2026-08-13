@@ -313,6 +313,36 @@ func TestConfigResolver_DisabledLLMIgnored(t *testing.T) {
 	}
 }
 
+// TestConfigResolver_IntentWithEventKindStartsEvent (Plan 054 · F2b, D-A): una
+// regla kind='llm' que trae event_kind PARE evento — Action=StartEvent con
+// EventKind poblado desde la regla, Params/IntentName intactos para el pre-carga
+// del módulo (T8). Es la SEGUNDA puerta del nacimiento que el Plan 043 ·
+// T2.5/REQ-01b declaró y este frente construye.
+func TestConfigResolver_IntentWithEventKindStartsEvent(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", EventKind: "cart", Enabled: true})
+	sig := trigger.Signal{Text: "quiero 2 pizzas", Intent: &trigger.IntentSignal{Name: "pedido", Params: map[string]string{"producto": "pizza", "cantidad": "2"}}}
+	dec := mustResolveSig(t, r, "t1", "", sig)
+	if dec.Action != trigger.StartEvent || dec.EventKind != "cart" || dec.FlowID != "carrito" {
+		t.Fatalf("intent con event_kind debe parir el evento cart, got %+v", dec)
+	}
+	if dec.IntentName != "pedido" || dec.Params["producto"] != "pizza" || dec.Params["cantidad"] != "2" {
+		t.Fatalf("la decisión debe seguir llevando IntentName y Params para el Prime, got %+v", dec)
+	}
+}
+
+// TestConfigResolver_IntentWithoutEventKindStaysStart (Plan 054 · F2b, D-A, punto
+// 1): no-regresión DURA — una regla llm SIN event_kind sigue devolviendo
+// exactamente lo de siempre (Action=Start, sin evento), byte a byte. Hay tenants
+// con reglas llm sin event_kind y este es su contrato.
+func TestConfigResolver_IntentWithoutEventKindStaysStart(t *testing.T) {
+	r := seed(t, trigger.Rule{TenantID: "t1", Kind: trigger.KindLLM, Keyword: "pedido", FlowID: "carrito", Enabled: true})
+	sig := trigger.Signal{Text: "quiero 2 pizzas", Intent: &trigger.IntentSignal{Name: "pedido", Params: map[string]string{"producto": "pizza"}}}
+	dec := mustResolveSig(t, r, "t1", "", sig)
+	if dec.Action != trigger.Start || dec.EventKind != "" || dec.FlowID != "carrito" {
+		t.Fatalf("intent sin event_kind debe seguir siendo Start sin evento, got %+v", dec)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Plan 043 · T2.1 — event_start / event_stop
 // ---------------------------------------------------------------------------

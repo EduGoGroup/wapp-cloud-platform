@@ -20,7 +20,7 @@ import (
 // puesto se crea (201) y el event_kind persiste tal cual.
 func TestCreateTrigger_LLM_EventKind_Admitido(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"llm","keyword":"pedir_encuesta","flow_id":"encuesta","event_kind":"survey"}`, true)
@@ -53,7 +53,7 @@ func TestCreateTrigger_LLM_EventKind_Admitido(t *testing.T) {
 // admite, no exige. Retrocompatibilidad byte a byte.
 func TestCreateTrigger_LLM_SinEventKind_SigueValidando(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"llm","keyword":"pedir_catalogo","flow_id":"catalogo"}`, true)
@@ -76,7 +76,7 @@ func TestCreateTrigger_LLM_SinEventKind_SigueValidando(t *testing.T) {
 // solo event_start.
 func TestCreateTrigger_LLM_EventKind_VocabularioCerrado(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"llm","keyword":"pedir_pizza","flow_id":"pizza","event_kind":"pizza"}`, true)
@@ -96,7 +96,7 @@ func TestCreateTrigger_LLM_EventKind_VocabularioCerrado(t *testing.T) {
 // habría convertido en un agujero de validación para todas las clases.
 func TestCreateTrigger_400_EventKind_OtrasClasesSiguenRechazando(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 	cases := map[string]string{
 		"keyword":  `{"kind":"keyword","keyword":"x","flow_id":"f","event_kind":"cart"}`,
 		"fallback": `{"kind":"fallback","flow_id":"f","event_kind":"cart"}`,

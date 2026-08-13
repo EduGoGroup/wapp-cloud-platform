@@ -65,6 +65,22 @@ var decisionEffects = map[string]struct{}{
 	effectSurveyAnswer: {},
 }
 
+// ErrMaterializationFailed marca, DENTRO del error que Handle devuelve, que el
+// fallo alcanzó la parte que MATERIALIZA contenido: el INSERT del outbox
+// flow_events o la proyección tipada del módulo (intakes/survey_results). NO lo
+// lleva un fallo AISLADO del hilo de decisión (appendDecision): ese sigue siendo
+// best-effort puro incluso cuando la proyección tuvo éxito — «perder una fila de
+// historial no puede costar una fila de negocio» (D-043.23,
+// TestDecision_ElFalloEsBestEffort).
+//
+// Plan 054 · T3 (D-054.4): runtime.dispatch lo inspecciona con errors.Is para
+// decidir si ESTE fallo concreto es candidato al reintento acotado / corte de
+// turno de un módulo durable (ec.Durable). Sin esta distinción, un hipo aislado
+// en conversation_events —que Handle YA sube para que el dispatcher lo loguee,
+// por diseño— cortaría el turno de un cliente cuyo pedido SÍ se guardó: justo el
+// modo de sobre-corte que la decisión de Jhoan (R3) quería evitar.
+var ErrMaterializationFailed = errors.New("runtime: la materialización del efecto falló")
+
 // PersistSink es el EventSink que MATERIALIZA cada efecto en el outbox append-only
 // flow_events y delega la PROYECCIÓN tipada a los modules.Projector registrados (Plan
 // 027 · Ola 3 · T8, cierra H10). Ya NO conoce los efectos de ningún módulo: el switch
@@ -141,7 +157,11 @@ func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 			Payload:     eff.PublicPayload(),
 		}
 		if err := s.repo.InsertFlowEvent(ctx, fe); err != nil {
-			return err
+			// Marcado con ErrMaterializationFailed (Plan 054 · T3): sin la fila del
+			// outbox, la proyección NUNCA llega a intentarse (return corta aquí), así
+			// que para un efecto durable esto TAMBIÉN es "el contenido no quedó
+			// materializado", no solo un fallo de bitácora.
+			return fmt.Errorf("%w: outbox: %w", ErrMaterializationFailed, err)
 		}
 	}
 
@@ -161,7 +181,13 @@ func (s *PersistSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 	}
 	for _, p := range s.projectors {
 		if p.Handles(eff.Name) {
-			return errors.Join(errHilo, p.Project(ctx, meta, eff))
+			if perr := p.Project(ctx, meta, eff); perr != nil {
+				// Igual que arriba: SOLO la proyección (o el outbox) lleva la marca.
+				// errHilo, si lo hay, viaja JUNTO (errors.Join no lo descarta, así que
+				// el dispatcher lo sigue viendo en el log) pero no la lleva él mismo.
+				return errors.Join(errHilo, fmt.Errorf("%w: proyección: %w", ErrMaterializationFailed, perr))
+			}
+			return errHilo
 		}
 	}
 	return errHilo

@@ -27,7 +27,7 @@ func doTrigger(h http.Handler, method, target, tenant, body string, withID bool)
 
 func TestCreateTrigger_OK_Keyword(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"keyword","keyword":"Pedido","match_type":"exact","flow_id":"carrito","priority":5}`, true)
@@ -61,7 +61,7 @@ func TestCreateTrigger_OK_Keyword(t *testing.T) {
 
 func TestCreateTrigger_401_NoIdentity(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	rec := doTrigger(admin.CreateTriggerHandler(store), http.MethodPost, "/admin/triggers", ctxTenant,
+	rec := doTrigger(admin.CreateTriggerHandler(store, nil), http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"keyword","keyword":"x","flow_id":"f"}`, false)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("code=%d, quiero 401", rec.Code)
@@ -70,7 +70,7 @@ func TestCreateTrigger_401_NoIdentity(t *testing.T) {
 
 func TestCreateTrigger_400_InvalidBody(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 	cases := map[string]string{
 		"json roto":               `{`,
 		"kind desconocido":        `{"kind":"regex","keyword":"x","flow_id":"f"}`,
@@ -94,7 +94,7 @@ func TestCreateTrigger_400_InvalidBody(t *testing.T) {
 
 func TestCreateTrigger_OK_FallbackAndEscape(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 	// fallback: sin keyword, con flow_id.
 	if rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"fallback","flow_id":"menu"}`, true); rec.Code != http.StatusCreated {
@@ -111,7 +111,7 @@ func TestCreateTrigger_OK_FallbackAndEscape(t *testing.T) {
 // intención válido y flow_id se acepta (201) y persiste con su kind.
 func TestCreateTrigger_OK_LLM(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"llm","keyword":"pedido","flow_id":"carrito"}`, true)
 	if rec.Code != http.StatusCreated {
@@ -130,7 +130,7 @@ func TestCreateTrigger_OK_LLM(t *testing.T) {
 // lo devuelve en la respuesta y lo persiste (Plan 019 · T4b).
 func TestCreateTrigger_OK_EscapeWithMessage(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"escape","keyword":"SALIR","message":"Hasta pronto"}`, true)
@@ -158,7 +158,7 @@ func TestCreateTrigger_OK_EscapeWithMessage(t *testing.T) {
 // TestCreateTrigger_400_MessageOnNonEscape: message en kind ≠ escape se rechaza (400).
 func TestCreateTrigger_400_MessageOnNonEscape(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"keyword","keyword":"pedido","flow_id":"carrito","message":"nope"}`, true)
@@ -182,7 +182,7 @@ func TestListTriggers_OK_TenantScoped(t *testing.T) {
 		t.Fatalf("seed otro: %v", err)
 	}
 
-	rec := doTrigger(admin.ListTriggersHandler(store), http.MethodGet, "/admin/triggers", ctxTenant, "", true)
+	rec := doTrigger(admin.ListTriggersHandler(store, nil), http.MethodGet, "/admin/triggers", ctxTenant, "", true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -208,7 +208,7 @@ func TestDeleteTrigger_OK_And_CrossTenant404(t *testing.T) {
 	}
 	// El handler lee r.PathValue("id"): se enruta por un mux con el patrón real.
 	mux := http.NewServeMux()
-	mux.Handle("DELETE /admin/triggers/{id}", admin.DeleteTriggerHandler(store))
+	mux.Handle("DELETE /admin/triggers/{id}", admin.DeleteTriggerHandler(store, nil))
 	del := func(tenant string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodDelete, "/admin/triggers/"+created.TriggerID, nil)
 		req = req.WithContext(httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: tenant, Subject: "user-1"}))
@@ -240,7 +240,7 @@ func TestDeleteTrigger_OK_And_CrossTenant404(t *testing.T) {
 // menú es un componente del runtime, no una fila de flow_definitions (D-043.3).
 func TestCreateTrigger_OK_EventStart(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 
 	rec := doTrigger(h, http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"event_start","keyword":"carrito","event_kind":"cart"}`, true)
@@ -270,7 +270,7 @@ func TestCreateTrigger_OK_EventStart(t *testing.T) {
 // evento ACTIVO, sea del tipo que sea, así que no lleva event_kind ni flow_id.
 func TestCreateTrigger_OK_EventStop(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	rec := doTrigger(admin.CreateTriggerHandler(store), http.MethodPost, "/admin/triggers", ctxTenant,
+	rec := doTrigger(admin.CreateTriggerHandler(store, nil), http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"kind":"event_stop","keyword":"parar"}`, true)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
@@ -288,7 +288,7 @@ func TestCreateTrigger_OK_EventStop(t *testing.T) {
 // se rechazan con 400 y un mensaje que dice QUÉ falta (no un 400 mudo).
 func TestCreateTrigger_400_EventKindCoherencia(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	h := admin.CreateTriggerHandler(store)
+	h := admin.CreateTriggerHandler(store, nil)
 	cases := map[string]struct{ body, wantMsg string }{
 		"event_start sin event_kind": {
 			`{"kind":"event_start","keyword":"carrito"}`, "event_kind es requerido"},
@@ -332,7 +332,7 @@ func TestCreateTrigger_400_EventKindCoherencia(t *testing.T) {
 // la Identity y el listado del tenant ajeno no la ve (INV-08).
 func TestCreateTrigger_INV08_TenantDelCuerpoIgnorado(t *testing.T) {
 	store := trigger.NewMemoryStore()
-	rec := doTrigger(admin.CreateTriggerHandler(store), http.MethodPost, "/admin/triggers", ctxTenant,
+	rec := doTrigger(admin.CreateTriggerHandler(store, nil), http.MethodPost, "/admin/triggers", ctxTenant,
 		`{"tenant_id":"tenant-ajeno","kind":"event_start","keyword":"carrito","event_kind":"cart"}`, true)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("code=%d, quiero 201; body=%s", rec.Code, rec.Body.String())
@@ -369,7 +369,7 @@ func TestListTriggers_ShadowedByEventList(t *testing.T) {
 		}
 	}
 
-	rec := doTrigger(admin.ListTriggersHandler(store), http.MethodGet, "/admin/triggers", ctxTenant, "", true)
+	rec := doTrigger(admin.ListTriggersHandler(store, nil), http.MethodGet, "/admin/triggers", ctxTenant, "", true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
 	}

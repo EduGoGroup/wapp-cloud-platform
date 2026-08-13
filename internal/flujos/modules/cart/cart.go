@@ -89,6 +89,9 @@ func (Module) Type() string { return NodeTypeCart }
 // flujo esperando la entrada del usuario (igual que menú/encuesta).
 func (Module) WaitsForInput() bool { return true }
 
+// ProducesDurableContent es true: el carrito proyecta a intakes / intake_items / intake_buyer_data (design.md D-054.3(a)).
+func (Module) ProducesDurableContent() bool { return true }
+
 // Render produce la pantalla de ARRANQUE del carrito: la lista de categorías
 // (L1, página 0). Recibe el catálogo ya resuelto por el engine (model.Content.Raw
 // vía ParseCatalog). El resto de pantallas (tras cada Step) las produce Step en

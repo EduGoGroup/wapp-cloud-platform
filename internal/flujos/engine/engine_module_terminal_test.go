@@ -33,8 +33,9 @@ const tipoUnSoloNodo = "sonda_un_nodo"
 // no terminaría nunca.
 type móduloUnSoloNodo struct{}
 
-func (móduloUnSoloNodo) Type() string        { return tipoUnSoloNodo }
-func (móduloUnSoloNodo) WaitsForInput() bool { return true }
+func (móduloUnSoloNodo) Type() string                 { return tipoUnSoloNodo }
+func (móduloUnSoloNodo) WaitsForInput() bool          { return true }
+func (móduloUnSoloNodo) ProducesDurableContent() bool { return false }
 
 func (móduloUnSoloNodo) Render(model.Node, model.Content) []string {
 	return []string{"pantalla de ARRANQUE (Render)"}

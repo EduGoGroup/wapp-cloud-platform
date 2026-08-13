@@ -65,8 +65,9 @@ func (s *ecSink) effectsAll() []modules.Effect {
 // otro efecto y transiciona a la hoja "ventas" (fin del flujo en sampleFlow).
 type primedModule struct{}
 
-func (primedModule) Type() string        { return model.NodeTypeMenu }
-func (primedModule) WaitsForInput() bool { return true }
+func (primedModule) Type() string                 { return model.NodeTypeMenu }
+func (primedModule) WaitsForInput() bool          { return true }
+func (primedModule) ProducesDurableContent() bool { return false }
 
 func (primedModule) Render(node model.Node, _ model.Content) []string {
 	return []string{node.Prompt}

@@ -30,8 +30,12 @@ func NewConfigResolver(store Store) *ConfigResolver {
 //  1. Si la señal trae intención (sig.Intent != nil): reglas kind='llm' cuyo
 //     keyword (nombre de intent) casa EXACTO-normalizado el nombre de la intención
 //     → {Start, FlowID, Params, IntentName} (mismas reglas de session_id/priority/
-//     enabled que keyword). Los Params viajan a la decisión para que el runtime
-//     pre-cargue el flujo (T8).
+//     enabled que keyword) o, si la regla GANADORA trae event_kind, →
+//     {StartEvent, FlowID, EventKind, Params, IntentName}: la SEGUNDA puerta del
+//     nacimiento (Plan 043 · T2.5/REQ-01b, construida por el Plan 054 · F2b — ver
+//     el comentario junto al `if winner.EventKind != ""` más abajo). Los Params
+//     viajan a la decisión para que el runtime pre-cargue el flujo (T8), con o sin
+//     evento.
 //  2. Si no hay intención o ninguna regla llm casa: event_start Y keyword por
 //     sig.Text, compitiendo EN EL MISMO PELDAÑO (Plan 043 · D-043.2: event_start es
 //     PAR de keyword, no un peldaño aparte) → {Start,FlowID} o
@@ -71,9 +75,46 @@ func (c *ConfigResolver) Resolve(ctx context.Context, tenantID, sessionID string
 		}
 		if len(matches) > 0 {
 			sortByPriority(matches)
+			winner := matches[0]
+			if winner.EventKind != "" {
+				// SEGUNDA PUERTA del nacimiento (Plan 043 · T2.5/REQ-01b; construida por
+				// el Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12, tras review).
+				// Sustituye a CONTRATO-OLA5 D1 (2026-08-10), que mantenía las dos lecturas
+				// de r.EventKind separadas a propósito («la anotación es scoping, no
+				// puerta») precisamente para no reabrir el defecto de la coletilla
+				// (ver TestIntentScope_Decision_NoPropagaEventKind, ahora reescrito).
+				// Eso dejó de ser necesario: birthEvent (runtime/events.go) resuelve la
+				// coletilla ANTES de crear la fila —el mismo tratamiento que ya protegía
+				// a event_start—, así que un evento recién nacido nunca puede aparecer
+				// como «a medias» sobre sí mismo, venga la Decision de donde venga
+				// (fijado de forma genérica por
+				// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo, runtime/
+				// tagline_test.go, y aquí de extremo a extremo por
+				// TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo).
+				//
+				// El SCOPING de arriba (líneas ~58-69) y esta puerta NO compiten por el
+				// mismo campo: se sirven en SECUENCIA sobre el mismo r.EventKind. El
+				// scoping decide, ANTES, si esta regla es ELEGIBLE para casar la intención
+				// (¿pertenece al tipo de evento activo, si lo hay?); esta puerta, con la
+				// regla YA GANADORA, decide qué tipo de evento arranca o conmuta. Las dos
+				// lecturas se refuerzan —una intención anotada con event_kind="cart" solo
+				// aplica cuando no hay conflicto con otro evento activo, y al aplicar abre
+				// (o retoma) precisamente el carrito— y ninguna le pisa el terreno a la
+				// otra: beginEvent (runtime/events.go) es idempotente por tipo, así que si
+				// el evento de ese kind ya estaba vivo esto CONMUTA en vez de duplicar.
+				return Decision{
+					Action:     StartEvent,
+					FlowID:     winner.FlowID,
+					EventKind:  winner.EventKind,
+					Params:     sig.Intent.Params,
+					IntentName: sig.Intent.Name,
+				}, nil
+			}
+			// Sin event_kind en la regla ganadora: EXACTAMENTE el comportamiento de
+			// siempre (no-regresión dura — hay tenants con reglas llm sin event_kind).
 			return Decision{
 				Action:     Start,
-				FlowID:     matches[0].FlowID,
+				FlowID:     winner.FlowID,
 				Params:     sig.Intent.Params,
 				IntentName: sig.Intent.Name,
 			}, nil

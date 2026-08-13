@@ -152,6 +152,27 @@ type Module interface {
 	// survey_question). El engine lo consulta para delegar Render/Step sin
 	// cablear tipos concretos.
 	WaitsForInput() bool
+	// ProducesDurableContent indica si el módulo materializa CONTENIDO DURABLE
+	// del cliente (una solicitud de carrito, una respuesta de encuesta) en
+	// tablas cuyo event_id es NOT NULL desde las migraciones 0054/0055 (design.md
+	// D-054.3(a)). Un flujo con ALGÚN nodo que responda true no puede arrancarse
+	// por un camino sin evento padre: el INSERT reventaría con SQLSTATE 23502 y
+	// el fan-out best-effort del ADR-0003 lo silenciaría, exactamente el defecto
+	// de los hallazgos #001/#003 (dos comandas perdidas en UAT). El predicado lo
+	// consulta engine.Engine.FlowProducesDurableContent para que
+	// runtime.startLocked (el ÚNICO embudo por el que pasan las cuatro puertas
+	// de arranque) decida ANTES de guardar nada.
+	//
+	// Es OBLIGATORIO en la interfaz —como Type() y WaitsForInput()—, NO opcional
+	// por aserción de capacidad como MediaEmitter, Primer o NodeValidator: esas
+	// tres son legítimamente opcionales (la mayoría de módulos no las necesita, y
+	// omitirlas degrada a un comportamiento previo sin regresión). Esta pregunta
+	// no admite "no contesto": todo módulo tiene una respuesta, aunque sea false.
+	// Ponerla en la interfaz hace que un módulo NUEVO que no la implemente NO
+	// COMPILE — la garantía la da el compilador, no la disciplina de quien lo
+	// añade, que es el mismo modo de fallo (invertido) que dejó WithOpeningBuilder
+	// sin cablear en bootstrap.go durante meses sin una sola señal roja.
+	ProducesDurableContent() bool
 }
 
 // MediaEmitter es la capacidad OPCIONAL de un módulo de SALIDA (no interactivo,

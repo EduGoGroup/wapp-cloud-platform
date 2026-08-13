@@ -123,7 +123,9 @@ type startResponse struct {
 // del token (INV-8) y el flow_id de la ruta. Respuestas:
 //
 //   - 200 con {acked_command_id, ok, error} al recibir el Ack.
-//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists).
+//   - 409 si ya hay una conversación viva para la clave (ErrConversationExists), o
+//     si el flujo tiene contenido durable y no trae evento padre
+//     (ErrDurableFlowNeedsEvent, Plan 054 · T2.5) — dos 409 con texto distinto.
 //   - 502 si la sesión está offline; 504 si expira el ack; 500 en otro fallo.
 //   - 401 sin identidad; 400 si falta flow_id/session_id/contacto o el JSON es inválido.
 func startFlowHandler(starter flowadmin.Starter) http.Handler {
@@ -172,12 +174,32 @@ func startFlowHandler(starter flowadmin.Starter) http.Handler {
 }
 
 // writeStartError traduce el error de Start a un código HTTP: conversación existente
-// -> 409, sesión offline -> 502, timeout/cancelación -> 504, resto -> 500 (mismo
-// criterio que flujos/admin).
+// -> 409, flujo con contenido durable sin evento -> 409 (texto DISTINTO del
+// anterior, Plan 054 · T2.5), sesión offline -> 502, timeout/cancelación -> 504,
+// resto -> 500 (mismo criterio que flujos/admin).
 func writeStartError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, runtime.ErrConversationExists):
 		writeError(w, http.StatusConflict, "ya existe una conversación viva para la clave")
+	case errors.Is(err, runtime.ErrDurableFlowNeedsEvent):
+		// MD-054.3 (design.md §6, confirmado por grep contra errorBody/writeError):
+		// publicapi NO tiene campo `code` estructurado en su JSON de error — solo
+		// {"error": "<texto>"}. No se inventa esa superficie aquí (instrucción
+		// explícita del plan); el TEXTO es la única forma de distinguir este 409 del
+		// de ErrConversationExists, y le dice al operador qué hacer, no solo que
+		// falló (el cliente de WhatsApp NUNCA ve este rechazo: T2.4 lo degrada a la
+		// oferta del despachador antes de llegar aquí).
+		//
+		// Retirada de capacidad, dicha clara (Plan 054 · F2b, D-B — decisión de
+		// Jhoan 2026-08-12, tras review): verificado que NINGÚN endpoint de /admin
+		// ni de /api/v1 para un evento — las tres puertas del Plan 043 son de
+		// WhatsApp. El texto viejo aconsejaba «arráncalo desde una conversación que
+		// ya tenga un evento activo», y eso NO se puede hacer por API. Ya no se
+		// ofrece esa vía: la única accionable es configurar la regla que SÍ pare el
+		// evento desde la conversación.
+		writeError(w, http.StatusConflict, "el flujo tiene contenido durable (cart/survey): su evento nace en la conversación, no por "+
+			"esta API. Configura una regla event_start para este flujo (POST /api/v1/triggers) para que el "+
+			"cliente lo arranque escribiendo su palabra clave; no reintentes esta llamada, seguirá devolviendo 409")
 	case errors.Is(err, session.ErrSessionOffline):
 		writeError(w, http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge")
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

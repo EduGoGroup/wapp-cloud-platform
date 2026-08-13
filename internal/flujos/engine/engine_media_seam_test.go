@@ -21,6 +21,7 @@ type fakeEmit struct {
 
 func (fakeEmit) Type() string                                  { return "banner" }
 func (fakeEmit) WaitsForInput() bool                           { return false }
+func (fakeEmit) ProducesDurableContent() bool                  { return false }
 func (fakeEmit) Render(_ model.Node, _ model.Content) []string { return nil }
 
 func (fakeEmit) Step(_ model.Node, conv model.Conversation, _ string) modules.Result {

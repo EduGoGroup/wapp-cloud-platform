@@ -364,6 +364,39 @@ func TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo(t *testing.T) {
 	}
 }
 
+// TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo es
+// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo (arriba) pero por la
+// puerta REAL (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12): aquella prueba
+// fijó que el RUNTIME no se rompe si una Decision combina IntentName y EventKind
+// —con un resolver de prueba que la fabricaba a mano—; esta prueba fija que el
+// ConfigResolver DE PRODUCCIÓN, resolviendo una regla kind='llm' real que trae
+// event_kind, produce esa MISMA combinación, y que el resultado es idéntico: el
+// pedido que ACABA de nacer no se anuncia como «a medias» sobre sí mismo.
+func TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo(t *testing.T) {
+	regla := trigger.Rule{
+		TenantID: testTenant, Kind: trigger.KindLLM, Keyword: "pedir",
+		FlowID: testFlow, EventKind: trigger.EventKindCart, Enabled: true,
+	}
+	rt, _, sender, contacts, evs := newTaglineRuntime(t, regla)
+	evs.contactID = resolveID(t, contacts, testContact)
+
+	m := incomingIntent(testContact, "quiero pedir una torta", "wamid.tag8", "pedir", nil)
+	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
+		t.Fatalf("HandleIncoming: %v", err)
+	}
+
+	// El pedido nació por la regla llm real: si no, el test no estaría probando lo
+	// que dice.
+	alive := evs.alive()
+	if len(alive) != 1 || alive[0].Kind != trigger.EventKindCart {
+		t.Fatalf("la regla llm con event_kind debe parir el evento cart (si no, el escenario no se dio): %+v", alive)
+	}
+	todo := strings.Join(sender.texts(), "\n")
+	if strings.Contains(todo, "sigue a medias") {
+		t.Fatalf("el pedido que ACABA de nacer por la puerta llm no puede anunciarse a sí mismo como «a medias»: %q", todo)
+	}
+}
+
 // assertVarsSinMarca es la comprobación negativa que acompaña a (b): sin coletilla
 // tampoco se marca nada. Marcar sin haber dicho nada dejaría a la conversación
 // creyendo que ya la vio, y el día que la coletilla se emita desde otro punto —para

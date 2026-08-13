@@ -85,5 +85,15 @@ func (rt *Runtime) emitEventEffect(ctx context.Context, ev events.Event, name st
 			"kind":       ev.Kind,
 		},
 	}
-	rt.dispatch(ctx, ec, []modules.Effect{eff}, ev.SessionID)
+	// ec.Durable queda en su CERO (false, EffectContext no lo fija arriba): estos
+	// efectos son de PLATAFORMA, ningún modules.Module los declara (docstring de
+	// arriba), así que dispatch() nunca alcanza el camino de corte de D-054.4 aquí
+	// — el error solo puede venir de un ErrTurnCutBySinkFailure hipotético que hoy
+	// es inalcanzable. Se comprueba de todos modos (Plan 054 · T3) en vez de
+	// descartarlo en silencio: si algún día un efecto de ciclo de vida SÍ marcara
+	// Durable, este log es la única señal de que el corte no se está honrando aquí.
+	if err := rt.dispatch(ctx, ec, []modules.Effect{eff}, ev.SessionID); err != nil {
+		rt.log.Warn("runtime: dispatch de un efecto de ciclo de vida del evento devolvió un corte inesperado (best-effort de plataforma, no debería ocurrir)",
+			"error", err, "session_id", ev.SessionID, "name", name)
+	}
 }

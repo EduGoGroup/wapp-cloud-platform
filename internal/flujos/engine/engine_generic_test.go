@@ -19,8 +19,9 @@ import (
 // que el menú, sin depender del módulo real (que llega en T1).
 type fakeSurvey struct{}
 
-func (fakeSurvey) Type() string        { return model.NodeTypeSurveyQuestion }
-func (fakeSurvey) WaitsForInput() bool { return true }
+func (fakeSurvey) Type() string                 { return model.NodeTypeSurveyQuestion }
+func (fakeSurvey) WaitsForInput() bool          { return true }
+func (fakeSurvey) ProducesDurableContent() bool { return false }
 
 func (fakeSurvey) Render(_ model.Node, content model.Content) []string {
 	return []string{content.Prompt}

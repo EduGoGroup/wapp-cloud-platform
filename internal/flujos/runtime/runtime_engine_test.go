@@ -177,6 +177,25 @@ func newSurveyRuntime(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, 
 	return rt, repo, sender, contacts
 }
 
+// seedSurveyOpen siembra DIRECTO (repo.Save, sin pasar por Start) un flow_state de
+// encuesta ya abierto en su primera pregunta (q1) — el mismo punto de partida que
+// producía Start()/Enter. Necesario desde Plan 054 · T2.3 (D-054.5): la encuesta es
+// SIEMPRE durable (survey.Module.ProducesDurableContent()==true) y Start() ya no
+// puede abrirla —da SIEMPRE ErrDurableFlowNeedsEvent—, así que los tests que solo
+// necesitan «una encuesta ya abierta» como fixture (dedupe de ingesta, rate-limit,
+// avance normal) siembran el estado a mano en vez de pasar por la puerta API.
+func seedSurveyOpen(t *testing.T, repo *store.MemoryRepository, contacts *contact.MemoryResolver) string {
+	t.Helper()
+	cid := resolveID(t, contacts, testContact)
+	if err := repo.Save(context.Background(), model.Conversation{
+		TenantID: testTenant, SessionID: testSession, ContactID: cid,
+		FlowID: testSurveyFlow, FlowVersion: 1, CurrentNode: "q1",
+	}); err != nil {
+		t.Fatalf("sembrar flow_state de la encuesta: %v", err)
+	}
+	return cid
+}
+
 // newMenuRuntimePersist es newRuntime (flujo de menú puro) pero con el PersistSink
 // cableado: sirve para verificar que un flujo SIN nodos survey no declara efectos
 // y por tanto no escribe flow_events ni survey_results (no-regresión T3).
@@ -476,9 +495,9 @@ func TestConcurrencia_MismaClaveSeSerializa(t *testing.T) {
 func TestHandleIncoming_Encuesta_DosRespuestasViaSink(t *testing.T) {
 	rt, repo, sender, contacts := newSurveyRuntime(t)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	// Sembrado directo (no Start): desde Plan 054 · T2.3 la encuesta es SIEMPRE
+	// durable y Start() ya no puede abrirla — ver seedSurveyOpen.
+	seedSurveyOpen(t, repo, contacts)
 	// Aún nada: no se ha respondido ninguna pregunta.
 	if got := repo.SurveyResults(); len(got) != 0 {
 		t.Fatalf("no debería haber resultados antes de responder, hubo %d", len(got))
@@ -563,11 +582,10 @@ func sameResultSet(a, b []store.SurveyResult) bool {
 // last_wa_message_id corta antes del Step, así que el módulo no re-declara el
 // efecto y el PersistSink no re-escribe (idempotencia HEREDADA, Plan 015 · T3).
 func TestHandleIncoming_Encuesta_IdempotenteViaSink(t *testing.T) {
-	rt, repo, _, _ := newSurveyRuntime(t)
+	rt, repo, _, contacts := newSurveyRuntime(t)
 	ctx := context.Background()
-	if _, err := rt.Start(ctx, testTenant, testSurveyFlow, testSession, phoneRef(t, testContact)); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	// Sembrado directo (no Start): ver seedSurveyOpen / Plan 054 · T2.3.
+	seedSurveyOpen(t, repo, contacts)
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.q1")); err != nil {
 		t.Fatalf("responder P1: %v", err)
 	}

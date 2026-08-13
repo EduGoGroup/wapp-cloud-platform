@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/model"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // prepareResume aplica, al REANUDAR una conversación en un nodo cuyo módulo declaró
@@ -48,15 +51,31 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 		return true, nil
 	}
 	// Efectos SINTETIZADOS por la política, por el MISMO fan-out: el proyector del
-	// módulo los materializa. Best-effort: un fallo se loguea, no aborta (coherencia
-	// BD↔conversación, design.md §3.4). Camino sin uso desde T4.7 —el único que lo
-	// recorría era cart_expired, derogado por D-041.16— pero el fan-out es del
-	// puerto, no del carrito, y se queda para la próxima política que lo necesite.
+	// módulo los materializa. Best-effort para lo NO durable (coherencia
+	// BD↔conversación, design.md §3.4); para un módulo con
+	// ProducesDurableContent()==true (Plan 054 · T3, D-054.4) un fallo agotado del
+	// sink que MATERIALIZA corta el turno — ver dispatch. Camino sin uso desde T4.7
+	// —el único que lo recorría era cart_expired, derogado por D-041.16— pero el
+	// fan-out es del puerto, no del carrito, y se queda para la próxima política
+	// que lo necesite.
 	if len(effects) > 0 {
 		// st es el estado que se REANUDA: su EventID (si lo hay) es el evento al que
 		// pertenecen los efectos sintetizados por la política (T4.5.1, D-043.21).
-		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: st.EventID}
-		rt.dispatch(ctx, ec, effects, sessionID)
+		ec := EffectContext{
+			TenantID: tenantID, ContactID: contactID, SessionID: sessionID,
+			FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: st.EventID,
+			Durable: rt.engine.NodeProducesDurableContent(node.Type),
+		}
+		if cutErr := rt.dispatch(ctx, ec, effects, sessionID); cutErr != nil {
+			// MD-054.1 opción (a): dispatch corre ANTES de re-entrar/Save (más abajo),
+			// así que no hay estado avanzado que revertir — basta con NO reiniciar y
+			// responder con el aviso en vez del reinicio normal. El turno queda
+			// consumido (handled=true) igual que el corte del anti-loop de arriba.
+			rt.log.Error("runtime: reanudación cortada: el sink durable no pudo materializar el efecto sintetizado tras el reintento acotado",
+				"error", cutErr, "session_id", sessionID, "flow_id", st.FlowID)
+			key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
+			return true, rt.sendReply(ctx, tenantID, sessionID, contactID, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+		}
 	}
 	// Arranca LIMPIO: descarta las Vars y re-entra el flujo con la MISMA versión con
 	// la que corría (def viene de GetDefinition).
@@ -124,28 +143,161 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 		return false, nil
 	}
 	if len(effects) > 0 {
-		ec := EffectContext{TenantID: tenantID, ContactID: contactID, SessionID: sessionID, FlowID: def.FlowID, FlowVersion: def.Version, EventID: eventID}
-		rt.dispatch(ctx, ec, effects, sessionID)
+		ec := EffectContext{
+			TenantID: tenantID, ContactID: contactID, SessionID: sessionID,
+			FlowID: def.FlowID, FlowVersion: def.Version, EventID: eventID,
+			Durable: rt.engine.NodeProducesDurableContent(node.Type),
+		}
+		if cutErr := rt.dispatch(ctx, ec, effects, sessionID); cutErr != nil {
+			// Camino HOY inalcanzable para contenido durable (mismo análisis que el
+			// comentario de startLocked al llamar a esta función): la ÚNICA
+			// ResumePolicy registrada es la del carrito, y el carrito SIEMPRE es
+			// durable — cualquier intento de llegar aquí con eventID=="" ya lo
+			// rechazó la guarda de D-054.5 antes de que startLocked invocara
+			// restartableOnStart. Se propaga como CUALQUIER otro error de esta
+			// función (mismo trato que ya tenía antes de esta tarea): no hay
+			// superficie de cliente que avisar aquí, eso lo decide el llamante.
+			return false, fmt.Errorf("runtime: reanudación al arrancar: %w", cutErr)
+		}
 	}
 	return true, nil
 }
 
+// durableRetryAttempts es el reintento ACOTADO de D-054.4 (Plan 054 · T3, R3 de
+// Jhoan): 2 reintentos → 3 intentos en total sobre el MISMO (efecto, sink) antes
+// de cortar el turno. Solo se gasta cuando las TRES condiciones se cumplen a la
+// vez: ec.Durable (el módulo que declaró el efecto tiene
+// ProducesDurableContent()==true, F1), el sink que falló marca su error con
+// ErrMaterializationFailed (persist_sink.go: el sink que MATERIALIZA, no
+// cualquiera — el hilo de decisión y cualquier PhaseNotify como el webhook nunca
+// lo marcan), y el error NO es PERMANENTE (postgres.IsPermanentFailure): un
+// 23502/23505/… no se cura reintentando la MISMA escritura, así que gastarlo ahí
+// solo alarga el turno del cliente sin ganar nada (REQ-054.4).
+const durableRetryAttempts = 2
+
+// durableRetryBackoff es el backoff CORTO entre reintentos del sink durable
+// (D-054.4): síncrono, dentro de la MISMA goroutine de HandleIncoming/
+// startLocked (§5 design.md — sin broker, ADR-0003, ninguna cola ni reintento
+// diferido), así que se mantiene deliberadamente breve para no alargar el turno
+// del cliente más de lo necesario.
+const durableRetryBackoff = 25 * time.Millisecond
+
+// ErrTurnCutBySinkFailure lo devuelve dispatch() cuando el sink que MATERIALIZA
+// contenido durable agotó el reintento acotado de D-054.4 (o falló con un error
+// PERMANENTE que no lo gasta). El llamante (startLocked/advanceLiveStep/
+// prepareResume/restartableOnStart) debe cortar el turno: NO guardar el estado
+// avanzado (dispatch corre ANTES del Save en los cuatro sitios — MD-054.1 opción
+// (a): nada que revertir) y responder con el aviso explícito
+// (defaultDurableSinkFailureNotice) en vez de sus salidas normales — el flujo
+// NUNCA debe alcanzar su nodo de despedida (flow_outcome no debe quedar
+// "completed").
+var ErrTurnCutBySinkFailure = errors.New("runtime: el turno se corta: un sink durable no pudo materializar el efecto")
+
 // dispatch hace el fan-out EN PROCESO (ADR-0003, sin broker) de los efectos por
-// cada EventSink registrado. Un fallo de un sink se LOGUEA y NO aborta el avance
-// ni corta el resto de sinks/efectos (el estado ya quedó persistido antes del
-// dispatch). Hoy lo usa HandleIncoming (efectos que DECLARA el módulo); el otro
-// llamante era el TTL perezoso del carrito, derogado en T4.7 (D-041.16).
-func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []modules.Effect, sessionID string) {
+// cada EventSink registrado. Best-effort por defecto: un fallo se LOGUEA y NO
+// aborta el avance ni corta el resto de sinks/efectos. Hoy lo usa HandleIncoming
+// (efectos que DECLARA el módulo); el otro llamante era el TTL perezoso del
+// carrito, derogado en T4.7 (D-041.16).
+//
+// Excepción ACOTADA (Plan 054 · T3, D-054.4): cuando ec.Durable es true —el
+// llamante ya consultó engine.NodeProducesDurableContent sobre el único
+// nodo/módulo que produjo este lote— y el sink que falla marca su error con
+// ErrMaterializationFailed, dispatch reintenta hasta durableRetryAttempts veces
+// con backoff corto, saltándose el reintento si postgres.IsPermanentFailure(err)
+// (corta de inmediato, sin gastarlo). Agotado el cupo —o ante el fallo
+// permanente— dispatch CORTA de inmediato: deja de despachar el resto de
+// efectos/sinks de este turno y devuelve ErrTurnCutBySinkFailure.
+//
+// Para CUALQUIER otro caso —ec.Durable==false (telemetría, menú, media) o un
+// sink que no marca ErrMaterializationFailed (el hilo de decisión, cualquier
+// PhaseNotify como el webhook: D-054.4 no los toca)— el ADR-0003 sigue intacto:
+// log y sigue, sin reintento y sin corte. Esa es también la salida de un
+// reintento que SÍ materializó pero dejó un fallo best-effort colgando (p. ej. el
+// hilo): no cuenta contra el cupo ni corta el turno (ver retryDurableSink).
+func (rt *Runtime) dispatch(ctx context.Context, ec EffectContext, effects []modules.Effect, sessionID string) error {
 	for _, eff := range effects {
 		for _, sink := range rt.sinks {
-			if err := sink.Handle(ctx, ec, eff); err != nil {
-				rt.log.Error("runtime: sink de efecto falló",
-					"error", err,
-					"kind", eff.Kind,
-					"name", eff.Name,
-					"session_id", sessionID,
-				)
+			err := sink.Handle(ctx, ec, eff)
+			if err == nil {
+				continue
+			}
+			rt.log.Error("runtime: sink de efecto falló",
+				"error", err,
+				"kind", eff.Kind,
+				"name", eff.Name,
+				"session_id", sessionID,
+			)
+			if !ec.Durable || !errors.Is(err, ErrMaterializationFailed) {
+				continue // ADR-0003 intacto: best-effort, sigue con el resto.
+			}
+			if lastErr := rt.retryDurableSink(ctx, sink, ec, eff, sessionID, err); lastErr != nil {
+				return fmt.Errorf("%w: %w", ErrTurnCutBySinkFailure, lastErr)
 			}
 		}
+	}
+	return nil
+}
+
+// retryDurableSink reintenta UN sink que ya falló materializando un efecto
+// durable (D-054.4, primer intento hecho por dispatch: firstErr es su error, ya
+// confirmado ErrMaterializationFailed). Corta de inmediato —sin gastar ni un
+// reintento— ante un error PERMANENTE (postgres.IsPermanentFailure): reintentar
+// la MISMA escritura contra un 23502/23505/… vuelve a chocar siempre (REQ-054.4).
+// Si no es permanente, reintenta hasta durableRetryAttempts veces con backoff
+// corto. Tras CADA intento vuelve a comprobar ErrMaterializationFailed: si el
+// reintento SÍ materializó y lo único que falló es algo best-effort (p. ej. el
+// hilo de decisión), se trata como ÉXITO a efectos de D-054.4 —el error queda
+// logueado, pero no cuenta contra el cupo ni corta el turno—. Devuelve nil en
+// cuanto un intento cuenta como éxito, o el último error si el cupo se agota.
+//
+// ⚠️ COMPROMISO ASUMIDO, dicho entero: se reintenta el `Handle` COMPLETO del sink,
+// no solo la proyección que falló. Si el INSERT del outbox (`flow_events`) ya había
+// tenido éxito y lo que falló fue el proyector, el reintento vuelve a insertar esa
+// fila: `flow_events` NO tiene restricción de unicidad, así que queda duplicada. Se
+// acepta a propósito, y por tres razones: (1) solo ocurre en el camino estrecho de
+// un fallo TRANSITORIO que luego cede —un permanente corta sin reintentar—; (2) el
+// outbox es append-only y su consumidor de negocio (el webhook) no lee de aquí, así
+// que el daño se limita a doble conteo en las métricas de ciclo de vida, no a una
+// entrega duplicada al comercio; y (3) la alternativa —cirugía dentro de PersistSink
+// para reintentar solo la llamada al proyector— parte una operación que hoy es
+// legible de arriba abajo, a cambio de una métrica. Si algún día el outbox gana un
+// consumidor de negocio, esta decisión hay que rehacerla: el cálculo cambia.
+func (rt *Runtime) retryDurableSink(ctx context.Context, sink EventSink, ec EffectContext, eff modules.Effect, sessionID string, firstErr error) error {
+	lastErr := firstErr
+	for attempt := 1; attempt <= durableRetryAttempts; attempt++ {
+		if postgres.IsPermanentFailure(lastErr) {
+			return lastErr
+		}
+		if werr := durableRetrySleep(ctx, durableRetryBackoff); werr != nil {
+			return werr
+		}
+		lastErr = sink.Handle(ctx, ec, eff)
+		if lastErr == nil || !errors.Is(lastErr, ErrMaterializationFailed) {
+			if lastErr != nil {
+				rt.log.Error("runtime: sink de efecto falló tras reintentar (best-effort, no bloquea el turno)",
+					"error", lastErr, "kind", eff.Kind, "name", eff.Name, "session_id", sessionID, "intento", attempt)
+			}
+			return nil
+		}
+		rt.log.Error("runtime: reintento del sink durable falló",
+			"error", lastErr, "kind", eff.Kind, "name", eff.Name,
+			"session_id", sessionID, "intento", attempt,
+		)
+	}
+	return lastErr
+}
+
+// durableRetrySleep espera el backoff CORTO entre reintentos del sink durable
+// (D-054.4), respetando la cancelación del ctx. No reusa
+// postgres.backoffBeforeRetry (privado a su paquete, y con jitter/8 intentos
+// pensados para una transacción completa, no para una espera de milisegundos
+// entre dos llamadas a un EventSink) para no acoplar runtime a un detalle
+// interno de otro paquete por algo tan pequeño.
+func durableRetrySleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
 	}
 }
