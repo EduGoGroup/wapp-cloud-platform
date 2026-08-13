@@ -149,18 +149,35 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	if ofrecida {
 		markTaglineOffered(&st)
 	}
-	if err := rt.store.Save(ctx, st); err != nil {
-		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
-	}
 	// Efectos DECLARADOS por el pre-add del módulo (p. ej. item_added del carrito):
-	// mismo fan-out EN PROCESO que HandleIncoming, DESPUÉS del Save. Un fallo de un
-	// sink se loguea y no aborta (el estado ya quedó persistido).
+	// mismo fan-out EN PROCESO que HandleIncoming, pero ANTES del Save (Plan 054 ·
+	// T3, MD-054.1 opción (a)): si el sink que MATERIALIZA contenido durable agota
+	// su reintento acotado (D-054.4), el arranque se corta AQUÍ —nada se ha
+	// guardado todavía, así que no hay nada que revertir— y el cliente recibe el
+	// aviso en vez del render normal del nodo inicial.
 	if len(effects) > 0 {
 		// EventID sale del PARÁMETRO, no de st.EventID: aquí st.EventID es SIEMPRE ""
 		// a propósito (pointStateAtEvent estampa el puntero después de este camino).
-		// Ver el comentario de la firma (T4.5.1).
-		ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: eventID}
-		rt.dispatch(ctx, ec, effects, sessionID)
+		// Ver el comentario de la firma (T4.5.1). Durable sale del ÚNICO nodo que
+		// pudo producir estos efectos: el inicial (def.Initial) — el pre-carga de
+		// EnterPrimed solo dispara sobre ese nodo (engine.tryPrime).
+		ec := EffectContext{
+			TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID,
+			FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: eventID,
+			Durable: rt.engine.NodeProducesDurableContent(def.Nodes[def.Initial].Type),
+		}
+		if cutErr := rt.dispatch(ctx, ec, effects, sessionID); cutErr != nil {
+			rt.log.Error("runtime: arranque cortado: el sink durable no pudo materializar el pre-carga tras el reintento acotado",
+				"error", cutErr, "tenant_id", tenantID, "flow_id", flowID)
+			to, derr := rt.destino(ctx, tenantID, contactID)
+			if derr != nil {
+				return nil, derr
+			}
+			return rt.send(ctx, sessionID, to, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+		}
+	}
+	if err := rt.store.Save(ctx, st); err != nil {
+		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
 	}
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {

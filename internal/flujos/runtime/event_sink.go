@@ -29,6 +29,23 @@ type EffectContext struct {
 	// de arrancar) sino del evento recién nacido/conmutado que el runtime tiene en
 	// la mano — ver startLocked.
 	EventID string
+	// Durable indica si ESTE lote de efectos lo declaró un módulo con
+	// ProducesDurableContent()==true (Plan 054 · T3, D-054.4 — el MISMO predicado
+	// de F1/T2.1, ninguna lista nueva). Lo fija el llamante de dispatch
+	// (startLocked/advanceLiveStep/prepareResume/restartableOnStart) consultando
+	// engine.NodeProducesDurableContent(nodeType) sobre el ÚNICO nodo/módulo que
+	// produjo este lote —Step/EnterPrimed/Restart procesan un nodo por turno—,
+	// nunca sobre el flujo entero (eso es FlowProducesDurableContent, que responde
+	// una pregunta distinta: "¿hace falta evento para ARRANCAR?", T2).
+	//
+	// dispatch() lo usa para decidir si el fallo del sink que MATERIALIZA
+	// contenido (persist_sink.go: ErrMaterializationFailed) exige el reintento
+	// acotado y el corte del turno, en vez del best-effort puro del ADR-0003. Cero
+	// valor (false) es SIEMPRE seguro: es lo que reciben los efectos de ciclo de
+	// vida del evento (event_effects.go, ningún modules.Module los declara) y
+	// cualquier llamante que no lo fije — ADR-0003 intacto, exactamente el
+	// comportamiento de antes de este plan.
+	Durable bool
 }
 
 // EventSink es el puerto por el que el runtime despacha cada Effect que un módulo

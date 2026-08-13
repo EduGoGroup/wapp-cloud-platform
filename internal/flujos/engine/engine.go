@@ -117,6 +117,22 @@ func (e *Engine) FlowProducesDurableContent(f model.Flow) bool {
 	return false
 }
 
+// NodeProducesDurableContent es FlowProducesDurableContent acotado a UN tipo de
+// nodo (Plan 054 · T3, D-054.4): el fan-out best-effort del ADR-0003 gana una
+// excepción acotada SOLO para los efectos que declaró un módulo durable, y cada
+// llamante de runtime.dispatch (startLocked, advanceLiveStep, prepareResume,
+// restartableOnStart) conoce el nodo/módulo que produjo el LOTE de efectos que
+// va a despachar antes de llamarlo —Step/EnterPrimed/Restart procesan UN nodo
+// por turno, así que todo efecto de un mismo lote comparte el mismo módulo—, sin
+// tener que reconstruir un model.Flow de un solo nodo para reusar
+// FlowProducesDurableContent. Mismo criterio exacto: un tipo no registrado en
+// e.reg cuenta como NO durable (D-054.3(a): «no hay módulo que pueda producir
+// nada»).
+func (e *Engine) NodeProducesDurableContent(nodeType string) bool {
+	m, ok := e.reg.Get(nodeType)
+	return ok && m.ProducesDurableContent()
+}
+
 // DurableNodeType nombra a QUIÉN culpar cuando FlowProducesDurableContent(f) da
 // true: el tipo del primer nodo (en orden determinista por clave — f.Nodes es un
 // map y su iteración no lo es) que resuelve a un módulo durable. Devuelve "" si

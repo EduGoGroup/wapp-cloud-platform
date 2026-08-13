@@ -22,6 +22,16 @@ import (
 // Plan 019 · T4b), handleEscape lo usa en su lugar.
 const defaultEscapeMessage = "Listo, cerramos esto. Escribe una palabra clave cuando quieras empezar de nuevo."
 
+// defaultDurableSinkFailureNotice es el aviso EXPLÍCITO que recibe el cliente
+// cuando el turno se corta por D-054.4 (Plan 054 · T3): el sink que MATERIALIZA
+// contenido durable (la proyección a intakes/survey_results) agotó su reintento
+// acotado. Es un DEFAULT DE PLATAFORMA, deliberadamente sin superficie de
+// configuración por tenant (no la pidió nadie; ampliarla no es parte de este
+// plan) — mismo estatus que defaultEscapeMessage, arriba. Dice qué pasó en
+// términos del cliente (su pedido, no un error técnico) y qué puede hacer
+// (reintentar), nunca un SQLSTATE ni un detalle de Postgres.
+const defaultDurableSinkFailureNotice = "No pudimos registrar tu pedido. Por favor, intenta de nuevo en unos minutos."
+
 // OnIncoming es el wrapper que T5 asigna a (*gatewaygrpc.Server).OnIncoming
 // (func(sessionID string, m *cloudlinkv1.IncomingMessage), sin error).
 //
@@ -417,6 +427,12 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 		return nil
 	}
 
+	// El nodo/módulo QUE PRODUCE effects es el que estaba vivo ANTES de este Step
+	// (st.CurrentNode todavía sin avanzar aquí): Step delega en UN módulo por turno
+	// (engine.Step, model.go), así que basta consultarlo una vez, ANTES de que la
+	// reasignación de abajo pise st con el estado siguiente (Plan 054 · T3, D-054.4
+	// — mismo predicado de F1/T2.1, vía engine.NodeProducesDurableContent).
+	durable := rt.engine.NodeProducesDurableContent(def.Nodes[st.CurrentNode].Type)
 	st, outs, effects, err := rt.engine.Step(ctx, def, st, engine.Input{Text: m.GetText()})
 	if err != nil {
 		return fmt.Errorf("runtime: step: %w", err)
@@ -424,9 +440,10 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 	st.LastWaMessageID = m.GetWaMessageId()
 	// CIERRE NATURAL del evento (Plan 043 · T4.1): si el Step dejó el flujo en el
 	// centinela y la conversación tenía evento activo, el evento pasa a `closed` y el
-	// puntero se apaga EN ESTE MISMO Save — una escritura de flow_state, no dos. Va
-	// ANTES del Save (el estado que se persiste ya es el final) y antes del fan-out:
-	// los sinks proyectan sobre un evento cuya muerte ya está sellada.
+	// puntero se apaga EN ESTE MISMO Save — una escritura de flow_state, no dos.
+	// closeIfFinished es una escritura APARTE del flow_state (events.TransitionEvent),
+	// fuera del alcance de MD-054.1 (que es, literalmente, el orden Save/dispatch de
+	// FLOW_STATE): se queda en su sitio de siempre, antes del fan-out.
 	// El EventID del turno se captura ANTES del cierre natural (T4.5.1): los efectos
 	// de este Step pertenecen al evento que estaba vivo MIENTRAS se produjeron, y
 	// closeIfFinished apaga st.EventID en el turno que termina el flujo. Sin esta
@@ -434,17 +451,32 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 	// proyector con EventID "" y el hijo no podría declarar a su padre (D-043.21).
 	turnEventID := st.EventID
 	rt.closeIfFinished(ctx, &st)
+	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el
+	// módulo (Plan 015 · T3): el PersistSink escribe flow_events y proyecta
+	// survey_results/intakes. Va ANTES del Save (Plan 054 · T3, MD-054.1 opción (a)):
+	// si el sink que MATERIALIZA contenido durable agota su reintento acotado
+	// (D-054.4), el turno se corta AQUÍ, antes de que el avance (p. ej. a la
+	// despedida del carrito) quede persistido — nada que revertir, y el cliente
+	// jamás se despide creyendo que compró. Para todo lo NO durable el orden no
+	// cambia nada observable (el estado igual se guarda después, como siempre) y el
+	// ADR-0003 sigue best-effort.
+	ec := EffectContext{
+		TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID,
+		FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: turnEventID,
+		Durable: durable,
+	}
+	if cutErr := rt.dispatch(ctx, ec, effects, sessionID); cutErr != nil {
+		rt.log.Error("runtime: turno cortado: el sink durable no pudo materializar el efecto tras el reintento acotado",
+			"error", cutErr, "session_id", sessionID, "flow_id", st.FlowID, "wa_message_id", m.GetWaMessageId())
+		// NO se guarda st (el avance, incluida una posible despedida, se descarta:
+		// MD-054.1 opción (a) — nada que revertir porque nunca se escribió) y NO se
+		// persisten los mensajes del turno: solo el aviso explícito, por el MISMO
+		// camino (anti-loop incluido) que cualquier otra auto-respuesta.
+		return rt.sendReply(ctx, tenantID, sessionID, contactID, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+	}
 	if err := rt.store.Save(ctx, st); err != nil {
 		return fmt.Errorf("runtime: guardar estado: %w", err)
 	}
-	// Fan-out EN PROCESO (ADR-0003, sin broker) de los efectos declarados por el módulo
-	// (Plan 015 · T3): el PersistSink escribe flow_events y proyecta survey_results /
-	// intakes. Va DESPUÉS del Save (el estado ya está persistido) y respeta el orden
-	// Save-antes-de-Send. La idempotencia es HEREDADA de la dedupe por last_wa_message_id
-	// (reprocesar el mismo entrante corta antes del Step). Un fallo de un sink se LOGUEA
-	// y NO aborta el avance ni corta el resto de sinks/efectos.
-	ec := EffectContext{TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID, FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: turnEventID}
-	rt.dispatch(ctx, ec, effects, sessionID)
 	// El hilo LITERAL del turno (T4.5.7b, D-043.23): cliente y negocio, cifrado y
 	// SOLO con la feature llm_intake. Usa turnEventID por lo mismo que los efectos:
 	// el turno que cierra el flujo pertenece al evento que estaba vivo al hablar.
