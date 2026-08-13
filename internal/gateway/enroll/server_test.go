@@ -143,6 +143,63 @@ func TestEnrollEdge_SinCloudEncPubkey(t *testing.T) {
 	}
 }
 
+// TestEnrollEdge_IncluyeLeasePubkey verifica que, cableado con WithLeasePubKey,
+// el enrolamiento publica la pública Ed25519 de la clave de firma del lease
+// (kill-switch, ADR-0007) en la respuesta (Plan 055 · T4.2, D-055.5), para que
+// el Edge pueda validar offline la firma de cada lease. En producción
+// bootstrap.go pasa leaseMgr.PublicKey() (32B); aquí se simulan esos 32 bytes
+// crudos, mismo patrón que TestEnrollEdge_IncluyeCloudEncPubkey.
+func TestEnrollEdge_IncluyeLeasePubkey(t *testing.T) {
+	svc, store, _ := newService(t)
+	store.Add("CODE-LEASE", "tenant-42", time.Now().Add(time.Hour))
+
+	pub := make([]byte, 32)
+	for i := range pub {
+		pub[i] = byte(i + 100)
+	}
+	cli := startEnrollServer(t, svc, enroll.WithLeasePubKey(pub))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := cli.EnrollEdge(ctx, &cloudlinkv1.EnrollEdgeRequest{
+		ActivationCode: "CODE-LEASE",
+		CsrPem:         newTestCSR(t, "edge-lease"),
+	})
+	if err != nil {
+		t.Fatalf("EnrollEdge (lease): %v", err)
+	}
+	if len(pub) != 32 {
+		t.Fatalf("fixture inválida: la pública del lease debe medir 32 bytes, mide %d", len(pub))
+	}
+	if got := resp.GetLeasePubkey(); !bytes.Equal(got, pub) {
+		t.Fatalf("lease_pubkey = %x, quiero %x", got, pub)
+	}
+}
+
+// TestEnrollEdge_SinLeasePubkey verifica el fallback (H-5): sin la opción, la
+// respuesta no trae lease_pubkey — el gate de kill-switch queda desactivado en
+// el Edge, mismo comportamiento que hoy, sin romper el enrolamiento.
+func TestEnrollEdge_SinLeasePubkey(t *testing.T) {
+	svc, store, _ := newService(t)
+	store.Add("CODE-NOLEASE", "tenant-42", time.Now().Add(time.Hour))
+	cli := startEnrollServer(t, svc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := cli.EnrollEdge(ctx, &cloudlinkv1.EnrollEdgeRequest{
+		ActivationCode: "CODE-NOLEASE",
+		CsrPem:         newTestCSR(t, "edge-nolease"),
+	})
+	if err != nil {
+		t.Fatalf("EnrollEdge (sin lease): %v", err)
+	}
+	if got := resp.GetLeasePubkey(); len(got) != 0 {
+		t.Fatalf("lease_pubkey debería venir vacío, got %x", got)
+	}
+}
+
 func TestEnrollEdge_ReusedCode(t *testing.T) {
 	svc, store, _ := newService(t)
 	store.Add("CODE-1USE", "tenant-42", time.Now().Add(time.Hour))

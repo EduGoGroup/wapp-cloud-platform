@@ -40,6 +40,80 @@ func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error
 	return nil
 }
 
+// RevokeTenant dispara el kill-switch COMERCIAL de un tenant completo
+// (D-055.2, Plan 055 · T3.3): persiste el corte (tenants.revoked_at, vía
+// lease.Manager.RevokeTenant) y empuja el LeaseUpdate(Revoked) a las sesiones
+// VIVAS de TODAS las instalaciones YA CONOCIDAS de ese tenant. "Conocidas" se
+// resuelve con fleet.Repository.List (persistente, sobrevive reinicios y
+// cubre instalaciones offline en este momento pero registradas alguna vez);
+// las instalaciones NUEVAS que ese tenant abra después no necesitan push --
+// nacen revocadas solas porque Manager.wasRevoked consulta tenants.revoked_at
+// en cada IssueInitial (T3.2).
+//
+// NO marca leases.revoked de cada instalación (a diferencia de RevokeLease):
+// eso dejaría sin retorno a un RestoreTenant posterior (D-055.2, ver el
+// comentario de lease.Manager.RevokeTenant). El blob firmado que sí viaja por
+// sesión lo produce SignTenantRevocation, que firma sin persistir por-edge.
+func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	if err := s.leaseMgr.RevokeTenant(ctx, tenantID); err != nil {
+		return err
+	}
+
+	edgeIDs := map[string]struct{}{}
+	if s.fleet != nil {
+		sessions, err := s.fleet.List(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("gatewaygrpc: listar instalaciones del tenant: %w", err)
+		}
+		for _, sess := range sessions {
+			edgeIDs[sess.EdgeID] = struct{}{}
+		}
+	}
+
+	// Push CONCURRENTE por instalación e independiente entre instalaciones: el
+	// mismo argumento que RevokeLease (arriba) -- ninguna sesión bloqueada debe
+	// retrasar la notificación al resto, y aquí hay potencialmente muchas más
+	// sesiones en juego (todas las instalaciones del tenant, no solo una).
+	var wg sync.WaitGroup
+	for edgeID := range edgeIDs {
+		lu, signErr := s.leaseMgr.SignTenantRevocation(edgeID, tenantID)
+		if signErr != nil {
+			s.log.Error("revoke tenant: firmar revocación de instalación",
+				"edge_id", edgeID, "error", signErr)
+			continue
+		}
+		for _, sid := range s.sessionsForEdge(tenantID, edgeID) {
+			wg.Add(1)
+			go func(sid string, lu *cloudlinkv1.LeaseUpdate) {
+				defer wg.Done()
+				if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
+					s.log.Debug("revoke tenant: push a sesión", "session_id", sid, "error", pushErr)
+				}
+			}(sid, lu)
+		}
+	}
+	wg.Wait()
+	return nil
+}
+
+// RestoreTenant reactiva un tenant previamente revocado (Plan 055 · T3.3,
+// reverso de RevokeTenant): delega en lease.Manager.RestoreTenant
+// (tenants.revoked_at = NULL). NO re-emite leases vigentes ni empuja ningún
+// push por sí mismo -- las instalaciones ya conectadas seguirán viendo su
+// LeaseUpdate(Revoked) previo hasta su siguiente Heartbeat/Renew, momento en
+// el que Manager.wasRevoked ya verá el tenant activo (mismo comportamiento
+// que la reconexión tras un RevokeLease individual: la revocación previa no
+// se retracta con un push, se deja de reafirmar en la siguiente emisión).
+func (s *Server) RestoreTenant(ctx context.Context, tenantID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	return s.leaseMgr.RestoreTenant(ctx, tenantID)
+}
+
 // deliverAck entrega un Ack al chan pendiente correlacionado por
 // acked_command_id, de forma no bloqueante, y limpia la entrada.
 func (s *Server) deliverAck(ack *cloudlinkv1.Ack) {

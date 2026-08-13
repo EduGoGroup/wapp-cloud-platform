@@ -25,10 +25,12 @@ import (
 	cllease "github.com/EduGoGroup/wapp-cloudlink/lease"
 )
 
-// DefaultTTL es la vigencia de un lease emitido. Decisión de Plan 005 · T4:
-// 5 minutos, renovado en cada Heartbeat (el Edge late cada 30s), de modo que un
-// Edge sano siempre tiene lease fresco y la ventana offline máxima es de 5 min.
-const DefaultTTL = 5 * time.Minute
+// DefaultTTL es la vigencia de un lease emitido, renovado en cada Heartbeat (el
+// Edge late cada 30s). Nació en 5 minutos (Plan 005 · T4); D-055.7 (Plan 055,
+// 2026-08-13, Jhoan) lo sube a 15: cubre un blip normal de wifi/4G que 5 no
+// cubría, ya sin ser vía de escape para un Edge revocado (issueAndPersist
+// consulta el estado persistido antes de emitir).
+const DefaultTTL = 15 * time.Minute
 
 // initialCounter es el counter del primer lease de un Edge. El Validator del
 // Edge exige counter estrictamente creciente; arrancar en 1 deja 0 como
@@ -97,12 +99,42 @@ func (m *Manager) Renew(ctx context.Context, tenantID, edgeID string, heartbeatC
 }
 
 // issueAndPersist firma un lease vigente con el counter dado y persiste su
-// estado (revoked=false). Devuelve el LeaseUpdate firmado para empujarlo al Edge.
+// estado (revoked=false), PERO solo si el estado persistido del Edge no dice
+// ya "revocado" (D-055.1): la revocación es pegajosa y ni IssueInitial ni
+// Renew pueden des-revocar. Devuelve el LeaseUpdate firmado para empujarlo al
+// Edge; si el Edge está revocado, el LeaseUpdate devuelto es el de
+// revocación (el mismo tipo que construye Revoke), no uno vigente.
 func (m *Manager) issueAndPersist(ctx context.Context, tenantID, edgeID string, counter int64) (*cloudlinkv1.LeaseUpdate, error) {
+	revoked, err := m.wasRevoked(ctx, tenantID, edgeID)
+	if err != nil {
+		// Fail-closed (D-055.1): si no podemos leer el estado previo, NO
+		// emitimos un lease vigente en su ausencia -- un fallo transitorio de
+		// lectura no debe traducirse silenciosamente en autorización para
+		// operar. El llamante (IssueInitial/Renew) recibe el error y no hay
+		// LeaseUpdate que empujar; el Edge se queda sin lease fresco hasta
+		// que la próxima renovación/heartbeat pueda leer el estado.
+		return nil, err
+	}
+	if revoked {
+		// El estado persistido dice revocado: no se emite un lease vigente
+		// ni se toca Upsert. Se devuelve el mismo tipo de LeaseUpdate
+		// revocado que construye Revoke (vía m.issuer.Revoke), para que el
+		// Edge reciba una señal explícita de revocación en vez de silencio.
+		lu, err := m.issuer.Revoke(edgeID, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("lease: re-emitir revocación: %w", err)
+		}
+		return lu, nil
+	}
+
 	lu, err := m.issuer.Issue(edgeID, tenantID, m.ttl, counter)
 	if err != nil {
 		return nil, fmt.Errorf("lease: emitir: %w", err)
 	}
+	// Revoked se deja en su cero por claridad, pero Upsert lo IGNORA en ambas
+	// implementaciones (contrato de Repository.Upsert): no es este campo el que
+	// impide des-revocar, sino la guarda wasRevoked de arriba más el hecho de
+	// que Upsert nunca escribe el estado de revocación.
 	state := State{
 		TenantID:  tenantID,
 		EdgeID:    edgeID,
@@ -112,6 +144,79 @@ func (m *Manager) issueAndPersist(ctx context.Context, tenantID, edgeID string, 
 	}
 	if err := m.repo.Upsert(ctx, state); err != nil {
 		return nil, fmt.Errorf("lease: persistir emisión: %w", err)
+	}
+	return lu, nil
+}
+
+// wasRevoked consulta el estado persistido -- del TENANT primero (D-055.2,
+// kill-switch COMERCIAL) y del Edge después (D-055.1, anti-clon) -- para
+// decidir si IssueInitial/Renew deben abortar la emisión en favor de una
+// revocación. Un tenant revocado gana incluso sobre un edge_id que NUNCA se
+// ha visto (Get devolvería found=false): una instalación NUEVA de un tenant
+// cortado nace revocada, no hace falta que exista fila en leases para eso.
+// Si el tenant está activo y el Edge nunca se ha visto, no está revocado: se
+// emite normal. Cualquier error se propaga sin envolver la decisión en un
+// booleano ambiguo -- ver el comentario de fail-closed en issueAndPersist.
+func (m *Manager) wasRevoked(ctx context.Context, tenantID, edgeID string) (bool, error) {
+	tenantRevoked, err := m.repo.TenantRevoked(ctx, tenantID)
+	if err != nil {
+		return false, fmt.Errorf("lease: decidir corte por tenant: %w", err)
+	}
+	if tenantRevoked {
+		return true, nil
+	}
+
+	st, found, err := m.repo.Get(ctx, tenantID, edgeID)
+	if err != nil {
+		return false, fmt.Errorf("lease: consultar estado previo: %w", err)
+	}
+	if !found {
+		return false, nil
+	}
+	return st.Revoked, nil
+}
+
+// RevokeTenant dispara el kill-switch COMERCIAL (D-055.2): marca el TENANT
+// como revocado, de forma pegajosa, independiente de cualquier lease
+// individual. NO toca ninguna fila de public.leases -- si tocara
+// leases.revoked de cada instalación, RestoreTenant no podría reactivarlas
+// (leases no tiene reverso por-instalación, deuda ya documentada); dejar los
+// dos sujetos de corte independientes es lo que permite que restaurar el
+// tenant reactive TODAS sus instalaciones de una vez. La notificación viva a
+// cada sesión conectada (LeaseUpdate empujado) es responsabilidad del
+// llamante (gatewaygrpc.Server.RevokeTenant), que conoce el fleet; este
+// método solo persiste el estado de autorización.
+func (m *Manager) RevokeTenant(ctx context.Context, tenantID string) error {
+	if err := m.repo.MarkTenantRevoked(ctx, tenantID); err != nil {
+		return fmt.Errorf("lease: revocar tenant: %w", err)
+	}
+	return nil
+}
+
+// RestoreTenant reactiva un tenant previamente revocado (revoked_at = NULL).
+// No re-emite leases vigentes por sí mismo ni toca leases.revoked de ninguna
+// instalación: el siguiente IssueInitial/Renew de cada Edge pasa por
+// wasRevoked, que ya verá el tenant activo y (si el Edge en sí nunca estuvo
+// revocado individualmente) volverá a emitir vigente.
+func (m *Manager) RestoreTenant(ctx context.Context, tenantID string) error {
+	if err := m.repo.RestoreTenant(ctx, tenantID); err != nil {
+		return fmt.Errorf("lease: restaurar tenant: %w", err)
+	}
+	return nil
+}
+
+// SignTenantRevocation firma el LeaseUpdate de revocación para UN Edge
+// concreto, SIN persistir su estado individual en leases (a diferencia de
+// Revoke, que sí marca leases.revoked=true para ESE edge). La usa el fan-out
+// de gatewaygrpc.Server.RevokeTenant para notificar en vivo a cada
+// instalación conocida del tenant ya revocado (RevokeTenant, arriba, es
+// quien persiste el corte real vía tenants.revoked_at): el blob firmado aquí
+// es solo la notificación push, la autorización real la sigue decidiendo
+// wasRevoked contra el estado del tenant en cada emisión futura.
+func (m *Manager) SignTenantRevocation(edgeID, tenantID string) (*cloudlinkv1.LeaseUpdate, error) {
+	lu, err := m.issuer.Revoke(edgeID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("lease: firmar revocación de tenant para edge: %w", err)
 	}
 	return lu, nil
 }
