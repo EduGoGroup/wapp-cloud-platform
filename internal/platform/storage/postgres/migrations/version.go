@@ -78,7 +78,14 @@ import (
 // mueve esta constante: es del MISMO Plan 055 que la 0058 y la 0.33.0 aún no se
 // ha publicado. Es exactamente el caso que la primera mitad de la regla
 // contempla: una migración más dentro de un plan que todavía no salió.
-const SchemaVersion = "0.33.0"
+//
+// 0.34.0 -- Plan 056 (0060): la consola de plataforma gana su esquema -- el
+// scope multi-empresa de iam_user_roles (tenant_id, D-056.11), la bandeja
+// public.access_requests (T3.1) y los cinco grants nuevos de platform_admin
+// (tenants.read.any, tenants.create.any, fleet.read.any, users.provision.any,
+// enrollment.issue.any). Un solo bump para T1.1/T3.1, sobre la 0.33.0 ya
+// publicada (la 0058/0059 del Plan 055, aplicadas contra Neon de UAT).
+const SchemaVersion = "0.34.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

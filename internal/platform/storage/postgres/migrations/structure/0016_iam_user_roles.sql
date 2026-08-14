@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS public.iam_user_grants (
 CREATE UNIQUE INDEX IF NOT EXISTS iam_user_grants_uidx
     ON public.iam_user_grants (user_id, pattern, effect);
 
-COMMENT ON TABLE  public.iam_user_roles  IS 'Asignación M2M usuario↔rol (Plan 018 §5). PK (user_id, role_id). CERO PII ni llaves.';
+COMMENT ON TABLE  public.iam_user_roles  IS 'Asignación M2M usuario↔rol (Plan 018 §5). PK (user_id, role_id) hasta la migración 0060, que la sustituye por UNIQUE (user_id, role_id, tenant_id) + UNIQUE parcial (user_id, role_id) WHERE tenant_id IS NULL -- ver 0060 para el estado vigente. CERO PII ni llaves.';
 COMMENT ON COLUMN public.iam_user_roles.user_id IS 'Usuario asignado (FK iam_users, ON DELETE CASCADE).';
 COMMENT ON COLUMN public.iam_user_roles.role_id IS 'Rol asignado (FK iam_roles, ON DELETE CASCADE).';
 COMMENT ON TABLE  public.iam_user_grants IS 'Overrides de grants por usuario que se mergean sobre los del rol al emitir el token (design.md §5). CERO PII ni llaves.';

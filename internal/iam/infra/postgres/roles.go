@@ -187,12 +187,18 @@ func (r *RoleRepo) RolesOfUser(ctx context.Context, userID string) ([]domain.Rol
 	return res, nil
 }
 
-// AssignToUser implementa out.RoleRepo (idempotente por PK compuesta).
+// AssignToUser implementa out.RoleRepo (idempotente por los índices únicos de
+// iam_user_roles -- desde 0060 ya NO hay PK: UNIQUE (user_id, role_id,
+// tenant_id) más UNIQUE parcial (user_id, role_id) WHERE tenant_id IS NULL.
+// El ON CONFLICT va SIN target a propósito: un índice PARCIAL no entra en la
+// inferencia por columnas a secas (haría falta repetir su WHERE), así que la
+// forma sin target es la única que cubre los dos índices a la vez -- mismo
+// patrón que 0059_platform_admin.sql:52-57.
 func (r *RoleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.iam_user_roles (user_id, role_id)
 		VALUES ($1, $2)
-		ON CONFLICT (user_id, role_id) DO NOTHING
+		ON CONFLICT DO NOTHING
 	`, userID, roleID)
 	if err != nil {
 		return fmt.Errorf("iam: asignar rol a usuario: %w", err)
