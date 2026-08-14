@@ -34,10 +34,14 @@ var grantsTenantAdmin = identityrbac.Grants{
 	Deny:  []string{"*.any"},
 }
 
-// grantsPlatformAdmin reproduce los del rol platform_admin (0059): los dos
-// permisos del plano de plataforma, y nada más.
+// grantsPlatformAdmin reproduce los del rol platform_admin (0059 + 0060): los
+// permisos del plano de plataforma.
 var grantsPlatformAdmin = identityrbac.Grants{
-	Allow: []string{"tenants.revoke.any", "tenants.restore.any"},
+	Allow: []string{
+		"tenants.revoke.any", "tenants.restore.any",
+		"tenants.read.any", "tenants.create.any",
+		"fleet.read.any", "users.provision.any", "enrollment.issue.any",
+	},
 }
 
 // runWithGrants monta Authenticate → RequirePermission(perm) sobre un handler
@@ -60,32 +64,37 @@ func runWithGrants(t *testing.T, grants identityrbac.Grants, perm string) int {
 }
 
 // TestAdminRBAC_TenantAdminWildcardCannotRevokeAny es el corazón del arreglo:
-// el administrador de una empresa cliente, con su comodín total, NO alcanza el
-// kill-switch comercial. Si este test se pone verde por accidente (por ejemplo
-// si alguien borra el deny '*.any' de la 0059 por "limpiar"), cualquier cliente
-// podría cortar a cualquier otro.
+// el administrador de una empresa cliente, con su comodín total, NO alcanza
+// ninguna ruta del plano de plataforma (.any).
 func TestAdminRBAC_TenantAdminWildcardCannotRevokeAny(t *testing.T) {
 	t.Parallel()
-	if code := runWithGrants(t, grantsTenantAdmin, "tenants.revoke.any"); code != http.StatusForbidden {
-		t.Fatalf("tenants.revoke.any con grants de tenant_admin: code = %d, want 403.\n"+
-			"El deny '*.any' (0059_platform_admin.sql) es lo único que impide que el grant "+
-			"'*' de tenant_admin (0015) alcance el kill-switch COMERCIAL de un tenant ajeno.", code)
+	platformPerms := []string{
+		"tenants.revoke.any", "tenants.restore.any",
+		"tenants.read.any", "tenants.create.any",
+		"fleet.read.any", "users.provision.any", "enrollment.issue.any",
 	}
-	if code := runWithGrants(t, grantsTenantAdmin, "tenants.restore.any"); code != http.StatusForbidden {
-		t.Fatalf("tenants.restore.any con grants de tenant_admin: code = %d, want 403", code)
+	for _, perm := range platformPerms {
+		if code := runWithGrants(t, grantsTenantAdmin, perm); code != http.StatusForbidden {
+			t.Fatalf("%s con grants de tenant_admin: code = %d, want 403.\n"+
+				"El deny '*.any' (0059_platform_admin.sql) es lo único que impide que el grant "+
+				"'*' de tenant_admin (0015) alcance las operaciones de plataforma.", perm, code)
+		}
 	}
 }
 
 // TestAdminRBAC_PlatformAdminCanRevokeAny: el rol que sí es dueño del plano
-// pasa. Sin este caso, el test de arriba se satisfaría con un deny global que
-// dejara el kill-switch inservible para todo el mundo, wApp incluida.
+// pasa en todas las operaciones .any.
 func TestAdminRBAC_PlatformAdminCanRevokeAny(t *testing.T) {
 	t.Parallel()
-	if code := runWithGrants(t, grantsPlatformAdmin, "tenants.revoke.any"); code != http.StatusOK {
-		t.Fatalf("tenants.revoke.any con grants de platform_admin: code = %d, want 200", code)
+	platformPerms := []string{
+		"tenants.revoke.any", "tenants.restore.any",
+		"tenants.read.any", "tenants.create.any",
+		"fleet.read.any", "users.provision.any", "enrollment.issue.any",
 	}
-	if code := runWithGrants(t, grantsPlatformAdmin, "tenants.restore.any"); code != http.StatusOK {
-		t.Fatalf("tenants.restore.any con grants de platform_admin: code = %d, want 200", code)
+	for _, perm := range platformPerms {
+		if code := runWithGrants(t, grantsPlatformAdmin, perm); code != http.StatusOK {
+			t.Fatalf("%s con grants de platform_admin: code = %d, want 200", perm, code)
+		}
 	}
 }
 

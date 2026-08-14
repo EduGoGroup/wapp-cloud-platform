@@ -156,14 +156,31 @@ func (r *RoleRepo) RemoveGrant(ctx context.Context, roleID string, g domain.Gran
 	return nil
 }
 
-// RolesOfUser implementa out.RoleRepo.
-func (r *RoleRepo) RolesOfUser(ctx context.Context, userID string) ([]domain.Role, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT r.id::text, r.tenant_id::text, r.name, r.parent_role_id::text, r.created_at
-		FROM public.iam_roles r
-		JOIN public.iam_user_roles ur ON ur.role_id = r.id
-		WHERE ur.user_id = $1
-	`, userID)
+// RolesOfUser implementa out.RoleRepo. Filtra los roles asignados al usuario
+// que correspondan al tenant indicado o que sean globales (tenant_id IS NULL),
+// priorizando los roles acotados al tenant sobre los globales (T1.1b).
+func (r *RoleRepo) RolesOfUser(ctx context.Context, userID, tenantID string) ([]domain.Role, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if tenantID != "" {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT r.id::text, r.tenant_id::text, r.name, r.parent_role_id::text, r.created_at
+			FROM public.iam_roles r
+			JOIN public.iam_user_roles ur ON ur.role_id = r.id
+			WHERE ur.user_id = $1 AND (ur.tenant_id = $2 OR ur.tenant_id IS NULL)
+			ORDER BY (ur.tenant_id IS NOT NULL) DESC, r.created_at ASC
+		`, userID, tenantID)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT r.id::text, r.tenant_id::text, r.name, r.parent_role_id::text, r.created_at
+			FROM public.iam_roles r
+			JOIN public.iam_user_roles ur ON ur.role_id = r.id
+			WHERE ur.user_id = $1 AND ur.tenant_id IS NULL
+			ORDER BY r.created_at ASC
+		`, userID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("iam: listar roles de usuario: %w", err)
 	}
@@ -174,11 +191,16 @@ func (r *RoleRepo) RolesOfUser(ctx context.Context, userID string) ([]domain.Rol
 	}()
 
 	var res []domain.Role
+	seen := make(map[string]bool)
 	for rows.Next() {
 		role, serr := scanRole(rows)
 		if serr != nil {
 			return nil, fmt.Errorf("iam: escanear rol de usuario: %w", serr)
 		}
+		if seen[role.ID] {
+			continue // Deduplica si el mismo rol estaba asignado acotado y global
+		}
+		seen[role.ID] = true
 		res = append(res, role)
 	}
 	if err := rows.Err(); err != nil {

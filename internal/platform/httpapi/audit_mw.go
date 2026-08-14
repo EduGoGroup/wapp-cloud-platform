@@ -3,10 +3,27 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 )
+
+type auditContext struct {
+	mu             sync.Mutex
+	targetTenantID string
+}
+
+type auditContextKey struct{}
+
+// SetAuditTargetTenant publica el tenant objetivo de la operación en el contexto de auditoría (D-056.9).
+func SetAuditTargetTenant(ctx context.Context, targetTenantID string) {
+	if ac, ok := ctx.Value(auditContextKey{}).(*auditContext); ok && ac != nil {
+		ac.mu.Lock()
+		defer ac.mu.Unlock()
+		ac.targetTenantID = targetTenantID
+	}
+}
 
 // AuditRecorder registra un evento de auditoría. Es el subconjunto de
 // in.Auditor (solo Record) que necesita el middleware; lo satisface
@@ -33,7 +50,8 @@ func (s *statusRecorder) WriteHeader(code int) {
 // Debe montarse DESPUÉS de Authenticate (necesita la Identity en el contexto para
 // el tenant/actor). REGLA DURA (INV-5, zero-knowledge): CERO PII. action/resource
 // son etiquetas FIJAS de la ruta (p. ej. "flows.create"/"flow"); Actor es el
-// subject OPACO del token (user_id/client_id); Meta lleva solo el status HTTP.
+// subject OPACO del token (user_id/client_id); Meta lleva solo el status HTTP
+// y opcionalmente target_tenant_id cuando el handler lo publica (D-056.9).
 // NUNCA se registra el cuerpo del request, número, JID ni secreto alguno.
 //
 // El fallo al auditar NO altera la respuesta al cliente (best-effort): se loguea a
@@ -41,24 +59,36 @@ func (s *statusRecorder) WriteHeader(code int) {
 func AuditMiddleware(rec AuditRecorder, action, resource string, log sharedlogger.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ac := &auditContext{}
+			ctx := context.WithValue(r.Context(), auditContextKey{}, ac)
+			req := r.WithContext(ctx)
+
 			sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(sr, r)
+			next.ServeHTTP(sr, req)
 
 			if rec == nil {
 				return
 			}
-			id, _ := IdentityFromContext(r.Context())
+			id, _ := IdentityFromContext(ctx)
 			result := "success"
 			if sr.status >= http.StatusBadRequest {
 				result = "failure"
 			}
-			if err := rec.Record(r.Context(), in.AuditInput{
+
+			meta := map[string]any{"status": sr.status}
+			ac.mu.Lock()
+			if ac.targetTenantID != "" {
+				meta["target_tenant_id"] = ac.targetTenantID
+			}
+			ac.mu.Unlock()
+
+			if err := rec.Record(ctx, in.AuditInput{
 				TenantID: id.TenantID,
 				Actor:    id.Subject,
 				Action:   action,
 				Resource: resource,
 				Result:   result,
-				Meta:     map[string]any{"status": sr.status},
+				Meta:     meta,
 			}); err != nil && log != nil {
 				// Sin PII: solo la etiqueta de la acción y el error del repositorio.
 				log.Warn("no se pudo registrar la auditoría admin", "action", action, "error", err)

@@ -88,15 +88,59 @@ func TestIntegration_RolesAndGrants(t *testing.T) {
 	if err := roles.AssignToUser(ctx, userID, role.ID); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
-	if rs, err := roles.RolesOfUser(ctx, userID); err != nil || len(rs) != 1 {
+	if rs, err := roles.RolesOfUser(ctx, userID, env.tenantID); err != nil || len(rs) != 1 {
 		t.Fatalf("RolesOfUser: %+v err=%v", rs, err)
 	}
+
 	if err := grants.AddUserGrant(ctx, userID, domain.Grant{Pattern: "flows.delete", Effect: domain.EffectDeny}); err != nil {
 		t.Fatalf("AddUserGrant: %v", err)
 	}
 	ug, err := grants.GrantsOfUser(ctx, userID)
 	if err != nil || len(ug) != 1 || ug[0].Effect != domain.EffectDeny {
 		t.Fatalf("GrantsOfUser: %+v err=%v", ug, err)
+	}
+}
+
+func TestIntegration_TenantScopedUserRoles(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	roles := iampostgres.NewRoleRepo(env.db)
+
+	userID := uuid.NewString()
+	roleGlobal, err := roles.Create(ctx, domain.Role{Name: "global-role-it"})
+	if err != nil {
+		t.Fatalf("crear global role: %v", err)
+	}
+	if err := roles.AssignToUser(ctx, userID, roleGlobal.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
+	}
+
+	// Asignación acotada a otro tenant no se mezcla en env.tenantID
+	otherSlug := fmt.Sprintf("iam-it-other-%d", time.Now().UnixNano())
+	otherTn, err := postgres.NewTenantRepository(env.db).Create(ctx, otherSlug, "Other")
+	if err != nil {
+		t.Fatalf("sembrar other tenant: %v", err)
+	}
+	otherTenantID := otherTn.ID
+	otherRole, err := roles.Create(ctx, domain.Role{TenantID: &otherTenantID, Name: "other-role"})
+	if err != nil {
+		t.Fatalf("crear other role: %v", err)
+	}
+	_, err = env.db.ExecContext(ctx, `INSERT INTO public.iam_user_roles (user_id, role_id, tenant_id) VALUES ($1, $2, $3)`, userID, otherRole.ID, otherTenantID)
+	if err != nil {
+		t.Fatalf("asignar other role con tenant_id: %v", err)
+	}
+
+	// En env.tenantID solo debe verse el rol global, no otherRole
+	rsTenant1, err := roles.RolesOfUser(ctx, userID, env.tenantID)
+	if err != nil || len(rsTenant1) != 1 || rsTenant1[0].ID != roleGlobal.ID {
+		t.Fatalf("RolesOfUser tenant1 esperada 1 fila: %+v err=%v", rsTenant1, err)
+	}
+	// En otherTenantID debe verse tanto el rol global como otherRole
+	rsOther, err := roles.RolesOfUser(ctx, userID, otherTenantID)
+	if err != nil || len(rsOther) != 2 {
+		t.Fatalf("RolesOfUser otherTenant esperadas 2 filas: %+v err=%v", rsOther, err)
 	}
 }
 

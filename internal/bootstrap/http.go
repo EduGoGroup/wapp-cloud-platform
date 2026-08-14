@@ -11,6 +11,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 )
 
@@ -22,7 +24,7 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
-func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -38,6 +40,10 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
+
+	// Ruta pública de alta de usuario (Plan 056 · T3.2): rate-limit por IP (5 rps, burst 10)
+	signupLimiter := ratelimit.NewLimiter(rate.Limit(5), 10)
+	publicMux.Handle("POST /api/v1/signup", platformadmin.SignupHandler(platformRepo, as.m2mClient, signupLimiter, log))
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras

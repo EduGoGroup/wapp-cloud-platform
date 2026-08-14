@@ -31,6 +31,7 @@ import (
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
@@ -46,6 +47,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/flowlifecycle"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
@@ -369,6 +371,7 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("escuchando cloudlink en %s: %w", cfg.GRPCConnectAddr, err)
 	}
 
+	platformRepo := platformadmin.NewRepository(db)
 	fleetRepo := fleet.NewPostgresRepository(db)
 	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, log, mtx, authStk, publicapi.Deps{
 		Sender: gw,
@@ -439,7 +442,7 @@ func Run(ctx context.Context) error {
 		// pool. Ver el comentario de propiedad en
 		// internal/publicapi/eventstelemetry_store.go.
 		EventTelemetry: publicapi.NewPostgresEventTelemetryStore(db),
-	})
+	}, platformRepo)
 	if err != nil {
 		return err
 	}
@@ -452,17 +455,34 @@ func Run(ctx context.Context) error {
 	mux.Handle("/metrics", mtx.PromHandler())
 	mux.Handle("/admin/leases/revoke", adminHandler(authMW, auditor, log,
 		"leases.revoke", "lease", httpapi.RevokeLeaseHandler(gw)))
-	// Kill-switch COMERCIAL por tenant (Plan 055 · T3.3, D-055.2): mismo patrón
-	// adminHandler (auth + permiso + auditoría) que el de leases, pero OTRO plano.
+	// Kill-switch COMERCIAL por tenant (Plan 055 · T3.3, D-055.2) y rutas de
+	// plataforma (Plan 056 · T1.3, T3.4): mismo patrón adminHandler (auth + permiso + auditoría).
 	// Aquí el objetivo es un tenant AJENO (ADR-0039), así que el permiso lleva el
-	// sufijo '.any': la migración 0059 se lo da SOLO a platform_admin y se lo
+	// sufijo '.any': la migración 0059/0060 se lo da SOLO a platform_admin y se lo
 	// niega al '*' de tenant_admin con un deny '*.any'. Ese deny es la pieza que
 	// convierte esto en un permiso de verdad — sin él, el '*' de cualquier
 	// administrador de cliente ya cubriría estas rutas. El handler además exige,
 	// por su cuenta, que el token sea del tenant de plataforma.
-	mux.Handle("/admin/tenants/revoke", adminHandler(authMW, auditor, log,
+	codeStore := enroll.NewPostgresCodeStore(db)
+	mux.Handle("GET /admin/tenants", adminHandler(authMW, auditor, log,
+		"tenants.read.any", "tenant", platformadmin.ListTenantsHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("POST /admin/tenants", adminHandler(authMW, auditor, log,
+		"tenants.create.any", "tenant", platformadmin.CreateTenantHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("GET /admin/tenants/{id}", adminHandler(authMW, auditor, log,
+		"tenants.read.any", "tenant", platformadmin.GetTenantHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("GET /admin/tenants/{id}/installations", adminHandler(authMW, auditor, log,
+		"fleet.read.any", "fleet", platformadmin.ListInstallationsHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("POST /admin/tenants/{id}/enrollment-codes", adminHandler(authMW, auditor, log,
+		"enrollment.issue.any", "enrollment", platformadmin.IssueEnrollmentCodeHandler(platformRepo, codeStore, cfg.PlatformTenantID)))
+	mux.Handle("GET /admin/access-requests", adminHandler(authMW, auditor, log,
+		"users.provision.any", "user", platformadmin.ListAccessRequestsHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("POST /admin/access-requests/{id}/approve", adminHandler(authMW, auditor, log,
+		"users.provision.any", "user", platformadmin.ApproveAccessRequestHandler(platformRepo, authStk.m2mClient, cfg.PlatformTenantID)))
+	mux.Handle("POST /admin/access-requests/{id}/reject", adminHandler(authMW, auditor, log,
+		"users.provision.any", "user", platformadmin.RejectAccessRequestHandler(platformRepo, cfg.PlatformTenantID)))
+	mux.Handle("POST /admin/tenants/revoke", adminHandler(authMW, auditor, log,
 		"tenants.revoke.any", "tenant", httpapi.RevokeTenantHandler(gw, cfg.PlatformTenantID)))
-	mux.Handle("/admin/tenants/restore", adminHandler(authMW, auditor, log,
+	mux.Handle("POST /admin/tenants/restore", adminHandler(authMW, auditor, log,
 		"tenants.restore.any", "tenant", httpapi.RestoreTenantHandler(gw, cfg.PlatformTenantID)))
 	mux.Handle("/admin/messages/send", adminHandler(authMW, auditor, log,
 		"messages.send", "message", httpapi.SendMessageHandler(gw, log)))

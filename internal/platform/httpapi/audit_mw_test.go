@@ -68,15 +68,27 @@ func TestAuditMiddleware_Failure(t *testing.T) {
 	}
 }
 
-// TestAuditMiddleware_NilRecorder: sin auditor el middleware es transparente (no
-// entra en pánico ni altera la respuesta).
-func TestAuditMiddleware_NilRecorder(t *testing.T) {
-	h := httpapi.AuditMiddleware(nil, "x", "y", nil)(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+// TestAuditMiddleware_TargetTenant verifica que si un handler de plataforma
+// publica el target_tenant_id, este se incluye en meta (D-056.9 / T2.5).
+func TestAuditMiddleware_TargetTenant(t *testing.T) {
+	aud := &fakeAuditor{}
+	h := httpapi.AuditMiddleware(aud, "tenants.revoke.any", "tenant", nil)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpapi.SetAuditTargetTenant(r.Context(), "target-tenant-123")
+			w.WriteHeader(http.StatusOK)
+		}),
 	)
+	req := httptest.NewRequest(http.MethodPost, "/admin/tenants/revoke", nil)
+	req = req.WithContext(httpapi.WithIdentity(req.Context(),
+		httpapi.Identity{TenantID: "platform-tenant", Subject: "platform-operator"}))
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/x", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	h.ServeHTTP(rec, req)
+
+	if aud.calls != 1 {
+		t.Fatalf("Record llamado %d veces, want 1", aud.calls)
+	}
+	ev := aud.last
+	if ev.Meta["target_tenant_id"] != "target-tenant-123" {
+		t.Fatalf("meta.target_tenant_id = %v, want target-tenant-123", ev.Meta["target_tenant_id"])
 	}
 }

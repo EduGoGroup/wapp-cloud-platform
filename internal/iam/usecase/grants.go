@@ -35,8 +35,9 @@ func resolveEffectiveGrants(
 	roles out.RoleRepo,
 	grants out.GrantRepo,
 	userID string,
+	tenantID string,
 ) (identityrbac.Grants, []string, error) {
-	assigned, err := roles.RolesOfUser(ctx, userID)
+	assigned, err := roles.RolesOfUser(ctx, userID, tenantID)
 	if err != nil {
 		return identityrbac.Grants{}, nil, err
 	}

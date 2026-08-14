@@ -75,6 +75,8 @@ type authStack struct {
 	// correcta: un despliegue sin identity es un despliegue donde nadie puede
 	// autenticarse, y decirlo es mejor que tener un camino propio de reserva.
 	edgeAuthSvc *iamusecase.DelegatedAuthService
+	// m2mClient habla con identity-api como máquina para aprovisionamiento (Plan 056).
+	m2mClient *iamidentity.M2MClient
 }
 
 // userJWTBundle agrupa el material de tokens de USUARIO (ADR-0019, Plan 028).
@@ -169,7 +171,30 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 	if err := stack.wireDelegatedAuth(cfg, userValidator, log); err != nil {
 		return nil, err
 	}
+
+	// Cliente M2M hacia identity-api (Plan 056 · T2.4 / T3.2 / T3.4).
+	if err := stack.wireIdentityM2M(cfg, log); err != nil {
+		return nil, err
+	}
+
 	return stack, nil
+}
+
+// wireIdentityM2M construye el cliente M2M hacia identity-api para aprovisionamiento (Plan 056).
+func (s *authStack) wireIdentityM2M(cfg config.AppConfig, log sharedlogger.Logger) error {
+	identityURL := strings.TrimSpace(cfg.Identity.URL)
+	apiKey := strings.TrimSpace(cfg.Identity.APIKey)
+	if identityURL == "" || apiKey == "" {
+		log.Warn("WAPP_IDENTITY_URL o WAPP_IDENTITY_API_KEY vacías: cliente M2M de identity no inicializado (alta pública y asignación de sistemas no disponibles)")
+		return nil
+	}
+	m2m, err := iamidentity.NewM2M(identityURL, apiKey, cfg.Identity.Timeout)
+	if err != nil {
+		return fmt.Errorf("construyendo cliente M2M de identity-api: %w", err)
+	}
+	s.m2mClient = m2m
+	log.Info("cliente M2M de identity-api ACTIVO para aprovisionamiento de plataforma", "identity_url", identityURL)
+	return nil
 }
 
 // wireDelegatedAuth construye el autenticador delegado que usará el gateway

@@ -122,8 +122,9 @@ type RoleRepo interface {
 	AddGrant(ctx context.Context, roleID string, g domain.Grant) error
 	// RemoveGrant elimina un grant del rol (no-op si no existía).
 	RemoveGrant(ctx context.Context, roleID string, g domain.Grant) error
-	// RolesOfUser devuelve los roles ASIGNADOS directamente a un usuario.
-	RolesOfUser(ctx context.Context, userID string) ([]domain.Role, error)
+	// RolesOfUser devuelve los roles ASIGNADOS a un usuario para el tenant dado
+	// (o globales si tenant_id es NULL en la asignación).
+	RolesOfUser(ctx context.Context, userID, tenantID string) ([]domain.Role, error)
 	// AssignToUser asigna un rol a un usuario (idempotente por los índices
 	// únicos de iam_user_roles; ya NO hay PK desde la migración 0060).
 	AssignToUser(ctx context.Context, userID, roleID string) error

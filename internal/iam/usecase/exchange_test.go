@@ -243,9 +243,9 @@ func TestExchange_IdentidadCasiVencidaNoSeCanjea(t *testing.T) {
 	}
 }
 
-func TestExchange_AmbasAplicacionesDeWappSeCanjean(t *testing.T) {
+func TestExchange_LasTresAplicacionesDeWappSeCanjean(t *testing.T) {
 	t.Parallel()
-	for _, system := range []string{usecase.SystemWappBFF, usecase.SystemWappEdge} {
+	for _, system := range []string{usecase.SystemWappBFF, usecase.SystemWappEdge, usecase.SystemWappPlatform} {
 		t.Run(system, func(t *testing.T) {
 			t.Parallel()
 			f := newExchangeFixture(t)
@@ -586,5 +586,65 @@ func TestNewExchangeService_ExigeSusDependencias(t *testing.T) {
 	}
 	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Memberships, store.Roles, store.Grants, store.Audit, nil, usecase.Config{}); err == nil {
 		t.Error("sin emisor debería fallar")
+	}
+}
+
+func TestExchange_RolesAcotadosPorTenant(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
+
+	// Rol global (sin tenant): concede "global.read"
+	roleGlobal := f.store.Roles.Seed(domain.Role{Name: "global-role"}, []domain.Grant{
+		{Pattern: "global.read", Effect: domain.EffectAllow},
+	})
+	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleGlobal.ID); err != nil {
+		t.Fatalf("AssignToUser global: %v", err)
+	}
+
+	// Rol acotado a testTenant: concede "tenant.write"
+	tenantID := testTenant
+	roleTenant := f.store.Roles.Seed(domain.Role{TenantID: &tenantID, Name: "tenant-role"}, []domain.Grant{
+		{Pattern: "tenant.write", Effect: domain.EffectAllow},
+	})
+	if err := f.store.Roles.AssignToUserWithTenant(context.Background(), f.userID, roleTenant.ID, testTenant); err != nil {
+		t.Fatalf("AssignToUserWithTenant tenant: %v", err)
+	}
+
+	// Rol acotado a OTRO tenant: concede "other.admin"
+	otherTenantID := "other-tenant-uuid"
+	roleOther := f.store.Roles.Seed(domain.Role{TenantID: &otherTenantID, Name: "other-role"}, []domain.Grant{
+		{Pattern: "other.admin", Effect: domain.EffectAllow},
+	})
+	if err := f.store.Roles.AssignToUserWithTenant(context.Background(), f.userID, roleOther.ID, otherTenantID); err != nil {
+		t.Fatalf("AssignToUserWithTenant other: %v", err)
+	}
+
+	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+	if claims.TenantID != testTenant {
+		t.Fatalf("TenantID=%s, want %s", claims.TenantID, testTenant)
+	}
+
+	allowMap := make(map[string]bool)
+	for _, a := range claims.Grants.Allow {
+		allowMap[a] = true
+	}
+
+	if !allowMap["global.read"] {
+		t.Error("falta grant global.read de rol global")
+	}
+	if !allowMap["tenant.write"] {
+		t.Error("falta grant tenant.write de rol acotado a este tenant")
+	}
+	if allowMap["other.admin"] {
+		t.Error("se coló grant other.admin de un rol acotado a OTRO tenant")
 	}
 }

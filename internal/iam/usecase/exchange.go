@@ -24,11 +24,13 @@ const (
 	SystemWappBFF = "wapp.bff"
 	// SystemWappEdge es la consola local del operador, que el Edge relaya.
 	SystemWappEdge = "wapp.edge"
+	// SystemWappPlatform es la consola de plataforma de wApp (wapp-platform-console).
+	SystemWappPlatform = "wapp.platform"
 )
 
 // acceptedSystems son las aplicaciones cuyo Identity Token se canjea, en el
 // orden en que se prueban.
-var acceptedSystems = []string{SystemWappBFF, SystemWappEdge}
+var acceptedSystems = []string{SystemWappBFF, SystemWappEdge, SystemWappPlatform}
 
 // auditActionExchange es la acción con la que el canje entra en la bitácora.
 const auditActionExchange = "auth.exchange"
@@ -256,7 +258,7 @@ func (s *ExchangeService) resolveGrants(ctx context.Context, userID, tenantID st
 	if tenantID == "" {
 		return sharedjwt.Grants{Allow: []string{}, Deny: []string{}}, []string{}, nil
 	}
-	return resolveEffectiveGrants(ctx, s.roles, s.grants, userID)
+	return resolveEffectiveGrants(ctx, s.roles, s.grants, userID, tenantID)
 }
 
 // sign emite el Context Token. Con tenant es la MISMA llamada de siempre; sin

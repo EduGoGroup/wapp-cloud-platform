@@ -41,15 +41,38 @@ func TestRoleStore_CRUD(t *testing.T) {
 	if err := s.RemoveGrant(ctx, seeded.ID, g2); err != nil {
 		t.Fatalf("RemoveGrant err: %v", err)
 	}
+}
+
+func TestRoleStore_UserAssignments(t *testing.T) {
+	ctx := context.Background()
+	s := NewRoleStore()
+
+	tID := "tenant-a"
+	seeded := s.Seed(domain.Role{TenantID: &tID, Name: "admin"}, nil)
 
 	// AssignToUser / RolesOfUser / UnassignFromUser
 	if err := s.AssignToUser(ctx, "user-1", seeded.ID); err != nil {
 		t.Fatalf("AssignToUser err: %v", err)
 	}
 
-	roles, err := s.RolesOfUser(ctx, "user-1")
+	roles, err := s.RolesOfUser(ctx, "user-1", "tenant-1")
 	if err != nil || len(roles) != 1 {
 		t.Fatalf("RolesOfUser err=%v, len=%d", err, len(roles))
+	}
+
+	// Asignación acotada a otro tenant no debe aparecer en tenant-1
+	roleOther := s.Seed(domain.Role{ID: "role-other", Name: "other"}, nil)
+	if err := s.AssignToUserWithTenant(ctx, "user-1", roleOther.ID, "tenant-other"); err != nil {
+		t.Fatalf("AssignToUserWithTenant err: %v", err)
+	}
+	rolesForTenant1, err := s.RolesOfUser(ctx, "user-1", "tenant-1")
+	if err != nil || len(rolesForTenant1) != 1 || rolesForTenant1[0].ID != seeded.ID {
+		t.Fatalf("RolesOfUser tenant-1 err=%v, roles=%+v", err, rolesForTenant1)
+	}
+
+	rolesForTenantOther, err := s.RolesOfUser(ctx, "user-1", "tenant-other")
+	if err != nil || len(rolesForTenantOther) != 2 {
+		t.Fatalf("RolesOfUser tenant-other err=%v, len=%d", err, len(rolesForTenantOther))
 	}
 
 	if err := s.UnassignFromUser(ctx, "user-1", seeded.ID); err != nil {

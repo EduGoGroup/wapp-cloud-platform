@@ -10,12 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type userRoleAssignment struct {
+	roleID   string
+	tenantID *string
+}
+
 // RoleStore es el doble en memoria de iam_roles/iam_role_grants/iam_user_roles.
 type RoleStore struct {
 	mu        sync.Mutex
 	roles     map[string]domain.Role
-	grants    map[string][]domain.Grant  // roleID → grants
-	userRoles map[string]map[string]bool // userID → set(roleID)
+	grants    map[string][]domain.Grant       // roleID → grants
+	userRoles map[string][]userRoleAssignment // userID → assignments
 }
 
 // NewRoleStore crea un RoleStore vacío.
@@ -23,7 +28,7 @@ func NewRoleStore() *RoleStore {
 	return &RoleStore{
 		roles:     make(map[string]domain.Role),
 		grants:    make(map[string][]domain.Grant),
-		userRoles: make(map[string]map[string]bool),
+		userRoles: make(map[string][]userRoleAssignment),
 	}
 }
 
@@ -133,26 +138,58 @@ func (s *RoleStore) RemoveGrant(_ context.Context, roleID string, g domain.Grant
 }
 
 // RolesOfUser implementa out.RoleRepo.
-func (s *RoleStore) RolesOfUser(_ context.Context, userID string) ([]domain.Role, error) {
+func (s *RoleStore) RolesOfUser(_ context.Context, userID, tenantID string) ([]domain.Role, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var res []domain.Role
-	for roleID := range s.userRoles[userID] {
-		if r, ok := s.roles[roleID]; ok {
-			res = append(res, r)
+	seen := make(map[string]bool)
+
+	// Primero los asignados específicamente al tenant
+	if tenantID != "" {
+		for _, a := range s.userRoles[userID] {
+			if a.tenantID != nil && *a.tenantID == tenantID {
+				if r, ok := s.roles[a.roleID]; ok && !seen[r.ID] {
+					seen[r.ID] = true
+					res = append(res, r)
+				}
+			}
+		}
+	}
+	// Luego los asignados globalmente (tenantID == nil)
+	for _, a := range s.userRoles[userID] {
+		if a.tenantID == nil {
+			if r, ok := s.roles[a.roleID]; ok && !seen[r.ID] {
+				seen[r.ID] = true
+				res = append(res, r)
+			}
 		}
 	}
 	return res, nil
 }
 
-// AssignToUser implementa out.RoleRepo (idempotente).
+// AssignToUser implementa out.RoleRepo (idempotente, asignación global).
 func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.userRoles[userID] == nil {
-		s.userRoles[userID] = make(map[string]bool)
+	for _, a := range s.userRoles[userID] {
+		if a.roleID == roleID && a.tenantID == nil {
+			return nil
+		}
 	}
-	s.userRoles[userID][roleID] = true
+	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: nil})
+	return nil
+}
+
+// AssignToUserWithTenant asigna un rol acotado a un tenant en el test double.
+func (s *RoleStore) AssignToUserWithTenant(_ context.Context, userID, roleID, tenantID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.userRoles[userID] {
+		if a.roleID == roleID && a.tenantID != nil && *a.tenantID == tenantID {
+			return nil
+		}
+	}
+	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: &tenantID})
 	return nil
 }
 
@@ -160,6 +197,12 @@ func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string) error
 func (s *RoleStore) UnassignFromUser(_ context.Context, userID, roleID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.userRoles[userID], roleID)
+	filtered := make([]userRoleAssignment, 0, len(s.userRoles[userID]))
+	for _, a := range s.userRoles[userID] {
+		if a.roleID != roleID {
+			filtered = append(filtered, a)
+		}
+	}
+	s.userRoles[userID] = filtered
 	return nil
 }

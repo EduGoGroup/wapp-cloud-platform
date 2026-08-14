@@ -169,21 +169,26 @@ func RestoreTenantHandler(restorer TenantRestorer, platformTenantID string) http
 	})
 }
 
-// platformTarget aplica los dos cerrojos del plano de plataforma y devuelve el
-// tenant OBJETIVO leído del cuerpo. Si devuelve ok=false ya escribió la
-// respuesta de error y el llamante solo tiene que volver.
-//
-// Vive extraída porque revoke y restore tienen que comportarse IDÉNTICO: son la
-// misma puerta en los dos sentidos, y un criterio que se copia a mano en dos
-// handlers es un criterio que acaba divergiendo en uno.
-func platformTarget(w http.ResponseWriter, r *http.Request, platformTenantID string) (string, bool) {
+// EnforcePlatformCaller valida que el llamante esté autenticado y que su TenantID
+// coincida con el platformTenantID configurado. Si falla, escribe 401 o 403 y devuelve false.
+func EnforcePlatformCaller(w http.ResponseWriter, r *http.Request, platformTenantID string) bool {
 	id, ok := IdentityFromContext(r.Context())
 	if !ok || id.TenantID == "" {
 		writeAuthError(w, http.StatusUnauthorized, "autenticación requerida")
-		return "", false
+		return false
 	}
 	if platformTenantID == "" || id.TenantID != platformTenantID {
 		writeAuthError(w, http.StatusForbidden, "operación reservada al plano de plataforma")
+		return false
+	}
+	return true
+}
+
+// platformTarget aplica los dos cerrojos del plano de plataforma y devuelve el
+// tenant OBJETIVO leído del cuerpo. Si devuelve ok=false ya escribió la
+// respuesta de error y el llamante solo tiene que volver.
+func platformTarget(w http.ResponseWriter, r *http.Request, platformTenantID string) (string, bool) {
+	if !EnforcePlatformCaller(w, r, platformTenantID) {
 		return "", false
 	}
 
@@ -196,6 +201,7 @@ func platformTarget(w http.ResponseWriter, r *http.Request, platformTenantID str
 		http.Error(w, "tenant_id es requerido", http.StatusBadRequest)
 		return "", false
 	}
+	SetAuditTargetTenant(r.Context(), req.TenantID)
 	return req.TenantID, true
 }
 
