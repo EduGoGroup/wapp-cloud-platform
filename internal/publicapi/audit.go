@@ -30,7 +30,7 @@ type auditEventDTO struct {
 func listAuditHandler(reader AuditReader) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
-		if !ok {
+		if !ok || id.TenantID == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "autenticación requerida"})
 			return
 		}

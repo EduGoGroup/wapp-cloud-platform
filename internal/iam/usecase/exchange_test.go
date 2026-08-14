@@ -270,22 +270,89 @@ func TestExchange_LaIdentidadDeOtroEcosistemaNoSeCanjea(t *testing.T) {
 	}
 }
 
-func TestExchange_SujetoDesconocidoEsUsuarioNoMigrado(t *testing.T) {
-	t.Parallel()
-	f := newExchangeFixture(t)
-	token, _ := f.identityToken(t, "99999999-9999-9999-9999-999999999999", usecase.SystemWappBFF, 15*time.Minute)
-
-	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
-	if !errors.Is(err, domain.ErrUserNotMigrated) {
-		t.Fatalf("err = %v, want ErrUserNotMigrated (no se crea la membresía al vuelo)", err)
+// TestExchange_SujetoSinEmpresaCanjeaSinTenant es el caso "cero" de D-056.12
+// (Plan 056 · T3.3). SUSTITUYE a TestExchange_SujetoDesconocidoEsUsuarioNoMigrado,
+// que exigía ErrUserNotMigrated: ese 401 era justo lo que impedía a alguien
+// recién registrado entrar a VER que su acceso está en revisión.
+//
+// Lo que se comprueba no es solo que no falle, sino la forma exacta del token:
+// válido, sin tenant y sin un solo grant. "Entrar y no poder hacer nada" ES el
+func assertTenantlessClaims(t *testing.T, claims *sharedjwt.Claims, sinEmpresa string) {
+	t.Helper()
+	if claims.TenantID != "" {
+		t.Errorf("tenant_id del token = %q, want vacío", claims.TenantID)
+	}
+	if claims.UserID != sinEmpresa || claims.Subject != sinEmpresa {
+		t.Errorf("sujeto del token = %q/%q, want %q", claims.UserID, claims.Subject, sinEmpresa)
+	}
+	if len(claims.Roles) != 0 {
+		t.Errorf("roles = %v, want vacío", claims.Roles)
+	}
+	if len(claims.Grants.Allow) != 0 || len(claims.Grants.Deny) != 0 {
+		t.Errorf("grants = %+v, want vacíos: un token sin empresa no autoriza NADA", claims.Grants)
+	}
+	if identityrbac.EvaluateGrants(claims.Grants, "flows.read") {
+		t.Error("un token sin empresa evaluó allow: el estado de espera no está cerrado")
+	}
+	if claims.TokenUse != sharedjwt.TokenUseAccess {
+		t.Errorf("token_use = %q, want %q", claims.TokenUse, sharedjwt.TokenUseAccess)
 	}
 }
 
-func TestExchange_SinMembresiaEsUsuarioNoMigrado(t *testing.T) {
+// TestExchange_SujetoSinEmpresaCanjeaSinTenant es el caso "cero" de D-056.12
+// (Plan 056 · T3.3). SUSTITUYE a TestExchange_SujetoDesconocidoEsUsuarioNoMigrado,
+// que exigía ErrUserNotMigrated: ese 401 era justo lo que impedía a alguien
+// recién registrado entrar a VER que su acceso está en revisión.
+func TestExchange_SujetoSinEmpresaCanjeaSinTenant(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)
-	// Sujeto con rol asignado en wApp pero SIN membresía: tener permisos no es
-	// pertenecer. La puerta es tenant_members, y está cerrada.
+	sinEmpresa := "99999999-9999-9999-9999-999999999999"
+	token, _ := f.identityToken(t, sinEmpresa, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v (cero membresías dejó de ser un error, D-056.12)", err)
+	}
+	if res.ContextToken == "" {
+		t.Fatal("context token vacío: sin token no hay pantalla de espera que pintar")
+	}
+	if res.Context.TenantID != "" {
+		t.Errorf("tenant del contexto = %q, want vacío", res.Context.TenantID)
+	}
+	if res.Context.UserID != sinEmpresa {
+		t.Errorf("user = %q, want %q", res.Context.UserID, sinEmpresa)
+	}
+
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token sin tenant: %v", err)
+	}
+	assertTenantlessClaims(t, claims, sinEmpresa)
+
+	events := f.store.Audit.Events()
+	if len(events) != 1 {
+		t.Fatalf("el canje dejó %d eventos, quiero exactamente 1", len(events))
+	}
+	if events[0].Action != "auth.exchange" || events[0].Result != "ok" {
+		t.Fatalf("evento inesperado: %+v (el canje sin empresa es un éxito, no un fallo)", events[0])
+	}
+	if events[0].TenantID != nil {
+		t.Errorf("tenant del evento = %v, want NULL", *events[0].TenantID)
+	}
+}
+
+// TestExchange_SinMembresiaNoHeredaLosGrantsDeSusRoles es la MITAD DE SEGURIDAD
+// del caso "cero". Sustituye a TestExchange_SinMembresiaEsUsuarioNoMigrado
+// conservando su siembra exacta —rol asignado, cero membresías—, porque esa
+// combinación es justo la que se vuelve peligrosa cuando el canje deja de
+// cortar: si los grants se resolvieran igual, saldría un token CON permisos y
+// SIN tenant al que acotarlos.
+//
+// La regla no cambia, solo cambia dónde se aplica: tener permisos no es
+// pertenecer.
+func TestExchange_SinMembresiaNoHeredaLosGrantsDeSusRoles(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
 	huerfano := uuid.NewString()
 	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "sin-membresia"},
 		[]domain.Grant{{Pattern: "flows.read", Effect: domain.EffectAllow}})
@@ -294,9 +361,95 @@ func TestExchange_SinMembresiaEsUsuarioNoMigrado(t *testing.T) {
 	}
 	token, _ := f.identityToken(t, huerfano, usecase.SystemWappBFF, 15*time.Minute)
 
-	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
-	if !errors.Is(err, domain.ErrUserNotMigrated) {
-		t.Fatalf("err = %v, want ErrUserNotMigrated", err)
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	if claims.TenantID != "" {
+		t.Errorf("tenant_id = %q, want vacío (no hay fila en tenant_members)", claims.TenantID)
+	}
+	if identityrbac.EvaluateGrants(claims.Grants, "flows.read") {
+		t.Fatal("el token sin membresía heredó flows.read de su rol: permisos sin empresa a la que acotarlos")
+	}
+	if len(claims.Roles) != 0 {
+		t.Errorf("roles = %v, want vacío: sin empresa no se anuncian roles", claims.Roles)
+	}
+}
+
+func assertOperatorIdentity(t *testing.T, claims *sharedjwt.Claims, userID string) {
+	t.Helper()
+	if claims.TenantID != testTenant {
+		t.Errorf("tenant_id = %q, want %q", claims.TenantID, testTenant)
+	}
+	if claims.UserID != userID || claims.Subject != userID {
+		t.Errorf("user_id/sub = %q/%q, want %q", claims.UserID, claims.Subject, userID)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != "operator" {
+		t.Errorf("roles = %v, want [operator]", claims.Roles)
+	}
+	if len(claims.Grants.Allow) != 2 {
+		t.Errorf("allow = %v, want los 2 grants del rol operator", claims.Grants.Allow)
+	}
+	if !identityrbac.EvaluateGrants(claims.Grants, "flows.create") ||
+		!identityrbac.EvaluateGrants(claims.Grants, "messages.send") {
+		t.Errorf("los grants del rol operator no sobrevivieron: %+v", claims.Grants)
+	}
+	if len(claims.Grants.Deny) != 0 {
+		t.Errorf("deny = %v, want vacío", claims.Grants.Deny)
+	}
+}
+
+func assertOperatorTimestamps(t *testing.T, claims *sharedjwt.Claims, identityExp time.Time) {
+	t.Helper()
+	if claims.TokenUse != sharedjwt.TokenUseAccess {
+		t.Errorf("token_use = %q, want %q", claims.TokenUse, sharedjwt.TokenUseAccess)
+	}
+	if claims.Issuer != testIssuer {
+		t.Errorf("iss = %q, want %q", claims.Issuer, testIssuer)
+	}
+	if claims.ID == "" {
+		t.Error("jti vacío: el token perdió su identificador")
+	}
+	if claims.IssuedAt == nil || claims.NotBefore == nil || claims.ExpiresAt == nil {
+		t.Fatalf("iat/nbf/exp = %v/%v/%v, ninguno puede faltar", claims.IssuedAt, claims.NotBefore, claims.ExpiresAt)
+	}
+	if claims.ExpiresAt.Unix() > identityExp.Unix() {
+		t.Errorf("context.exp=%d > identity.exp=%d", claims.ExpiresAt.Unix(), identityExp.Unix())
+	}
+}
+
+// TestExchange_ConUnaMembresiaElTokenNoCambia es la REGRESIÓN DE RANGO CERO de
+// T3.3 (🔴 del plan): el caso de 1 membresía —el único que existía en
+// producción— tiene que salir idéntico campo a campo tras abrir el caso "cero".
+func TestExchange_ConUnaMembresiaElTokenNoCambia(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t) // el fixture siembra 1 membresía y el rol operator
+	token, identityExp := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+
+	assertOperatorIdentity(t, claims, f.userID)
+	assertOperatorTimestamps(t, claims, identityExp)
+
+	if res.ExpiresAt.Unix() != claims.ExpiresAt.Unix() {
+		t.Errorf("ExpiresAt devuelto (%d) != exp del token (%d)", res.ExpiresAt.Unix(), claims.ExpiresAt.Unix())
+	}
+	if res.Context.TenantID != testTenant || res.Context.UserID != f.userID {
+		t.Errorf("contexto devuelto = %+v", res.Context)
+	}
+	if len(res.Context.Roles) != 1 || res.Context.Roles[0] != "operator" {
+		t.Errorf("roles del contexto devuelto = %v, want [operator]", res.Context.Roles)
 	}
 }
 
@@ -345,6 +498,9 @@ func TestExchange_CanjeaSinPadronLocalYConservaLosRolesDeWapp(t *testing.T) {
 	}
 }
 
+// TestExchange_ConVariosTenantsFallaEnVezDeElegir es la pata "2 membresías" de
+// T3.3, y está INTACTO a propósito: D-056.12 abre el caso "cero", no el caso
+// "varias" (INV-056.9). Que este test no se haya tocado es parte del criterio.
 func TestExchange_ConVariosTenantsFallaEnVezDeElegir(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)

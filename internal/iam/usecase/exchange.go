@@ -128,14 +128,16 @@ func (s *ExchangeService) Exchange(ctx context.Context, req in.ExchangeInput) (i
 	// desactivaría en el otro, con el fallo en la dirección peligrosa: se cree
 	// cerrado un acceso que sigue abierto.
 	//
-	// Lo que wApp sí decide es la pertenencia, y eso lo dice la membresía.
+	// Lo que wApp sí decide es la pertenencia, y eso lo dice la membresía. Que
+	// NO haya ninguna ya no corta el canje (Plan 056 · D-056.12): el tenant sale
+	// vacío y el token se emite igual, sin empresa y sin un solo grant.
 	tenantID, err := s.resolveTenant(ctx, userID)
 	if err != nil {
 		s.record(ctx, "", userID, "error")
 		return in.ExchangeResult{}, err
 	}
 
-	effective, roleNames, err := resolveEffectiveGrants(ctx, s.roles, s.grants, userID)
+	effective, roleNames, err := s.resolveGrants(ctx, userID, tenantID)
 	if err != nil {
 		return in.ExchangeResult{}, err
 	}
@@ -151,7 +153,7 @@ func (s *ExchangeService) Exchange(ctx context.Context, req in.ExchangeInput) (i
 		return in.ExchangeResult{}, err
 	}
 
-	token, expiresAt, err := s.jwt.GenerateToken(userID, tenantID, roleNames, effective, ttl)
+	token, expiresAt, err := s.sign(userID, tenantID, roleNames, effective, ttl)
 	if err != nil {
 		return in.ExchangeResult{}, err
 	}
@@ -207,9 +209,21 @@ func (s *ExchangeService) validate(token string) (*identityjwt.Claims, error) {
 // membresías. Hoy la relación es 1:1; más de un tenant es un caso que esta ola
 // NO resuelve y que por tanto falla con nombre propio.
 //
-// Desde la Ola 5 es también la ÚNICA puerta de entrada: sin membresía no hay
-// canje, y ese es el significado entero de "pertenecer a wApp" (design.md Ola 5
-// §2). El 401 «usuario no migrado» nace aquí, no de un padrón local.
+// CERO membresías ya NO es un error (Plan 056 · D-056.12). Antes devolvía
+// ErrUserNotMigrated y el canje se cortaba ahí, lo que dejaba a quien acaba de
+// registrarse sin poder entrar siquiera a ver que su acceso está en revisión.
+// Ahora devuelve tenant VACÍO y sin error: el llamante emite un Context Token
+// sin empresa y sin grants, que es el estado «en espera» — se entra, y no se
+// puede hacer nada. La misma rama mostrará el selector de empresa cuando llegue
+// el multi-empresa.
+//
+// Que el tenant vacío no sea un error NO lo convierte en comodín: aguas abajo
+// nadie lo trata como "cualquier tenant" (ver [ExchangeService.sign], que emite
+// un token sin un solo grant, y los guardas `id.TenantID == ""` de cada handler
+// del :8103).
+//
+// ErrMultipleTenants se queda EXACTAMENTE igual: esta ola abre el caso "cero",
+// no el caso "varias" (INV-056.9).
 func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (string, error) {
 	tenants, err := s.members.TenantsOfUser(ctx, userID)
 	if err != nil {
@@ -217,12 +231,52 @@ func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (str
 	}
 	switch len(tenants) {
 	case 0:
-		return "", domain.ErrUserNotMigrated
+		return "", nil // sin empresa TODAVÍA: token sin tenant, no un 401.
 	case 1:
 		return tenants[0], nil
 	default:
 		return "", domain.ErrMultipleTenants
 	}
+}
+
+// resolveGrants resuelve los grants efectivos del sujeto, salvo cuando no hay
+// tenant: un usuario sin empresa sale SIN un solo grant, se le hayan asignado
+// roles o no.
+//
+// No es una optimización, es la mitad de seguridad del cambio D-056.12. Puede
+// haber filas en iam_user_roles de un sujeto sin fila en tenant_members —el
+// propio TestExchange_SinMembresiaEsUsuarioNoMigrado sembraba justo esa
+// combinación—, y resolverlas aquí metería permisos en un token que no tiene
+// tenant al que acotarlos. Tener permisos no es pertenecer.
+//
+// Con tenant, la llamada es LITERALMENTE la de antes, en el mismo punto del
+// flujo: la regresión del caso de 1 membresía no depende de leer esta función,
+// depende de que su rama sea la misma expresión.
+func (s *ExchangeService) resolveGrants(ctx context.Context, userID, tenantID string) (sharedjwt.Grants, []string, error) {
+	if tenantID == "" {
+		return sharedjwt.Grants{Allow: []string{}, Deny: []string{}}, []string{}, nil
+	}
+	return resolveEffectiveGrants(ctx, s.roles, s.grants, userID)
+}
+
+// sign emite el Context Token. Con tenant es la MISMA llamada de siempre; sin
+// tenant usa el emisor que ni siquiera acepta roles ni grants como parámetros
+// (wapp-shared/auth/jwt), de modo que un token sin empresa no puede salir de
+// aquí llevando permisos aunque alguien se equivocara aguas arriba.
+//
+// Existe la bifurcación porque GenerateToken RECHAZA el tenant vacío
+// (ErrInvalidInput) — y ese rechazo se conserva a propósito: sigue siendo un
+// error pasarle "" al emisor normal.
+func (s *ExchangeService) sign(
+	userID, tenantID string,
+	roleNames []string,
+	effective sharedjwt.Grants,
+	ttl time.Duration,
+) (string, time.Time, error) {
+	if tenantID == "" {
+		return s.jwt.GenerateTenantlessToken(userID, ttl)
+	}
+	return s.jwt.GenerateToken(userID, tenantID, roleNames, effective, ttl)
 }
 
 // contextTTL aplica la regla del `exp` (design.md Ola 3 §3):

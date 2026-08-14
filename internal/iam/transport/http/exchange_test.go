@@ -158,7 +158,6 @@ func TestExchange_TokenNoAceptableResponde401(t *testing.T) {
 	}{
 		{name: "basura", token: "no.es.un.jwt"}, //nolint:gosec // no es una credencial: es justo una cadena que NO es un JWT
 		{name: "aplicación de otro ecosistema", token: h.identityToken(t, h.userID, "edugo.kmp")},
-		{name: "sujeto sin migrar", token: h.identityToken(t, "99999999-9999-9999-9999-999999999999", usecase.SystemWappBFF)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,6 +167,36 @@ func TestExchange_TokenNoAceptableResponde401(t *testing.T) {
 				t.Fatalf("code = %d, want 401 (body %s)", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestExchange_SujetoSinEmpresaResponde200ConContextoSinTenant(t *testing.T) {
+	t.Parallel()
+	h := newExchangeHarness(t)
+	sinEmpresa := "99999999-9999-9999-9999-999999999999"
+	token := h.identityToken(t, sinEmpresa, usecase.SystemWappBFF)
+
+	rec := h.do(t, http.MethodPost, "/api/v1/auth/exchange", `{"identity_token":"`+token+`"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ContextToken string `json:"context_token"`
+		TokenType    string `json:"token_type"`
+		Context      struct {
+			TenantID string `json:"tenant_id"`
+			UserID   string `json:"user_id"`
+		} `json:"context"`
+	}
+	mustJSON(t, rec.Body.Bytes(), &out)
+	if out.ContextToken == "" || out.TokenType != "Bearer" {
+		t.Fatalf("respuesta inesperada: %+v", out)
+	}
+	if out.Context.TenantID != "" {
+		t.Errorf("tenant_id = %q, want vacío", out.Context.TenantID)
+	}
+	if out.Context.UserID != sinEmpresa {
+		t.Errorf("user_id = %q, want %q", out.Context.UserID, sinEmpresa)
 	}
 }
 

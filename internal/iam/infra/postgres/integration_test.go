@@ -131,7 +131,8 @@ func TestIntegration_Memberships(t *testing.T) {
 	userID := uuid.NewString()
 
 	// Sin fila en tenant_members la lista viene vacía, y eso NO es un error: es
-	// el caso «usuario sin membresía», que el canje traduce a «no migrado».
+	// el caso «usuario sin empresa todavía», que desde el Plan 056 (D-056.12) el
+	// canje traduce a un Context Token SIN tenant y sin grants, no a un 401.
 	tenants, err := members.TenantsOfUser(ctx, userID)
 	if err != nil {
 		t.Fatalf("TenantsOfUser (sin membresía): %v", err)
