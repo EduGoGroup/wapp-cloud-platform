@@ -207,14 +207,21 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 			// ocurrir —un evento cerrado no vuelve a reusarse—, pero un INSERT que
 			// choca contra el único parcial `intakes_event_id_uidx` (migración 0054,
 			// "un evento tiene A LO SUMO un contenido durable, para siempre") es
-			// exactamente el síntoma medido del pedido que se pierde en silencio: el
-			// dispatcher del runtime es best-effort A PROPÓSITO (Runtime.dispatch) y
-			// esto NO lo cambia —el error sigue subiendo para que ese log genérico
-			// también salga—, pero SIN este log específico el único rastro sería
-			// "sink de efecto falló" sin tenant/contacto/evento, insuficiente para
-			// diagnosticar CUÁL pedido se perdió. No se reintenta ni se resuelve aquí
-			// (ver hallazgo #24, salida (b), DECISIÓN ABIERTA para Jhoan): solo se hace
-			// RUIDOSO.
+			// exactamente el síntoma medido del pedido que se pierde en silencio.
+			//
+			// ACTUALIZADO 2026-08-13 (Plan 054 · D-054.4 · T3): la parte de este
+			// comentario que decía que el dispatcher es best-effort "y esto NO lo
+			// cambia" YA NO ES CIERTA, y la "decisión abierta" del hallazgo #24 quedó
+			// CERRADA. Como cart.ProducesDurableContent() == true, Runtime.dispatch
+			// deja de tragarse el fallo: corta el turno con aviso explícito al cliente
+			// en vez de despedirlo creyendo que compró. Este error concreto NO se
+			// reintenta —y eso sigue siendo lo correcto—: un choque contra el único
+			// parcial es SQLSTATE clase 23 (violación de integridad), que no cede
+			// reintentando.
+			//
+			// El log específico se conserva: sin él el único rastro sería "sink de
+			// efecto falló" sin tenant/contacto/evento, insuficiente para diagnosticar
+			// CUÁL pedido se perdió.
 			slog.Error("cart: el evento ya tenía un intake (intakes_event_id_uidx); el pedido de este turno NO se pudo guardar (hallazgo #24)",
 				"tenant_id", meta.TenantID, "contact_id", meta.ContactID, "session_id", meta.SessionID,
 				"event_id", meta.EventID, "intake_id_intentado", intake.ID, "error", err)
