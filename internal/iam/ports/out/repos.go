@@ -42,6 +42,54 @@ type IdentityClient interface {
 	LogoutAll(ctx context.Context, identityToken string) error
 }
 
+// IdentityM2MClient habla con identity-api como MÁQUINA, no como persona (Plan
+// 056 · T2.4). Es HERMANO de IdentityClient y no una ampliación suya, y la
+// diferencia no es de comodidad: aquel presenta las credenciales de alguien y
+// devuelve su sesión; este presenta la credencial de wApp —una API key que se
+// CANJEA, nunca se presenta (identity ADR-0025)— y opera sobre el padrón global
+// del grupo en nombre del ecosistema `wapp`.
+//
+// El canje del Service Token y su caché son asunto de la implementación: ningún
+// usecase pasa tokens por aquí. Lo único que hace falta configurar es la API
+// key (WAPP_IDENTITY_API_KEY).
+//
+// 🔴 El orden importa y no es negociable: una cuenta recién nacida —por Signup o
+// por EnsureUser— NO puede entrar a ninguna aplicación hasta que
+// ReplaceUserSystems le abra el System Gate, porque identity lo evalúa en el
+// login ANTES de emitir token y contesta 403 (identity ADR-0020, «el acceso de
+// onboarding se escribe, no se infiere»).
+type IdentityM2MClient interface {
+	// EnsureUser asegura la persona en el padrón GLOBAL de identity por su
+	// correo: la crea si no existe y la devuelve si ya existía (create-or-attach).
+	// Es idempotente y NUNCA modifica una cuenta que ya estaba —nombre y
+	// apellido solo se escriben en el alta—. La cuenta nace SIN contraseña
+	// utilizable: identity veta por escrito que un ecosistema fije la credencial
+	// de nadie.
+	//
+	// ⚠️ NO está acotado por ecosistema: con este scope se puede asegurar
+	// —y por tanto descubrir— cualquier correo del grupo.
+	EnsureUser(ctx context.Context, email, firstName, lastName string) (domain.IdentityUser, error)
+	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
+	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
+	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
+	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
+	//
+	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
+	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
+	// domain.ErrNotFound si la persona no existe en identity.
+	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
+	// Signup registra a la persona en identity CON SU PROPIA contraseña y
+	// devuelve el UUID de su cuenta. Es la única vía por la que un hash
+	// utilizable entra en identity, y por eso la clave la escribe su dueño y no
+	// pasa por ninguna base de wApp.
+	//
+	// ⚠️ La ruta de identity es PÚBLICA (no lleva el Service Token) y se expone
+	// aquí solo para que el alta viva en una pieza. El 201 es AMBIGUO a
+	// propósito —cuenta creada, adoptada o reconocida dan el mismo cuerpo— y
+	// devuelve SIEMPRE el id real (identity ADR-0027).
+	Signup(ctx context.Context, email, password, firstName, lastName string) (userID string, err error)
+}
+
 // MembershipRepo lee la membresía usuario↔tenant (tabla public.tenant_members,
 // migración 0037). Es el vínculo de NEGOCIO que se queda en wApp cuando los
 // usuarios pasan a identity (identity ADR-0001, INV-1): identity dice QUIÉN es
@@ -76,7 +124,8 @@ type RoleRepo interface {
 	RemoveGrant(ctx context.Context, roleID string, g domain.Grant) error
 	// RolesOfUser devuelve los roles ASIGNADOS directamente a un usuario.
 	RolesOfUser(ctx context.Context, userID string) ([]domain.Role, error)
-	// AssignToUser asigna un rol a un usuario (idempotente por PK compuesta).
+	// AssignToUser asigna un rol a un usuario (idempotente por los índices
+	// únicos de iam_user_roles; ya NO hay PK desde la migración 0060).
 	AssignToUser(ctx context.Context, userID, roleID string) error
 	// UnassignFromUser retira un rol de un usuario (no-op si no estaba).
 	UnassignFromUser(ctx context.Context, userID, roleID string) error

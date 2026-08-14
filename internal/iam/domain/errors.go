@@ -71,4 +71,49 @@ var (
 	// indisponibilidad de una dependencia, NO un rechazo de la credencial: se
 	// distingue para no contestar "no autorizado" a quien traía un token bueno.
 	ErrIdentityUnavailable = errors.New("iam: identity no está disponible")
+
+	// ---------------------------------------------------------------------
+	// Cliente M2M de identity (Plan 056 · T2.4)
+	//
+	// Aquí wApp no habla como persona sino como MÁQUINA: canjea su API key por
+	// un Service Token y con él asegura personas en el padrón global y les abre
+	// aplicaciones. Los errores de abajo son los que el llamante NECESITA
+	// distinguir para decidir; todo lo demás cae en ErrIdentityUnavailable o
+	// sube envuelto tal cual.
+	// ---------------------------------------------------------------------
+
+	// ErrMachineCredentialInvalid indica que identity rechazó la credencial M2M
+	// de wApp: el canje devolvió 401 (key desconocida, revocada o vencida —un
+	// solo código para las tres, identity no las distingue a propósito—) o una
+	// ruta M2M devolvió 403 FORBIDDEN por scope insuficiente. NO es culpa de
+	// quien pidió el alta: es la configuración de wApp
+	// (WAPP_IDENTITY_API_KEY y los scopes de esa key) lo que hay que arreglar.
+	ErrMachineCredentialInvalid = errors.New("iam: identity rechazó la credencial M2M de wApp")
+
+	// ErrEmailTaken indica que el correo ya tiene dueño en identity y la clave
+	// presentada no es la suya (409 de POST /auth/signup —identity ADR-0027,
+	// caso D—), o que esa cuenta está bloqueada o inactiva. Los tres comparten
+	// respuesta: identity NO los distingue en el cable, así que wApp tampoco
+	// puede. ⚠️ Esta ruta no es anti-enumerante y eso es deliberado de identity
+	// (docs/RESPUESTA-wapp-alta-de-usuarios.md §1): quien la exponga al público
+	// hereda ese trato, no lo empeora.
+	ErrEmailTaken = errors.New("iam: el correo ya está registrado en identity")
+
+	// ErrPasswordPolicy indica que la contraseña no cumple la política de
+	// identity: mínimo 12 CARACTERES, máximo 72 BYTES, normalización NFKC y
+	// NINGUNA regla de composición (identity password_policy.go:13,18). El
+	// motivo textual que devolvió identity viaja envuelto con %w, así que se
+	// reconoce con errors.Is y se lee con Error().
+	ErrPasswordPolicy = errors.New("iam: la contraseña no cumple la política de identity")
+
+	// ErrRateLimited indica que identity aplicó su freno por IP (429). Su cuerpo
+	// NO trae Retry-After, así que no hay cuándo reintentar: quien lo reciba
+	// decide su propia espera.
+	ErrRateLimited = errors.New("iam: identity aplicó su límite de peticiones")
+
+	// ErrSystemNotAllowed indica que identity rechazó (403 SYSTEM_ACCESS_DENIED)
+	// el conjunto de aplicaciones de un PUT /users/{id}/systems porque alguna no
+	// es del ecosistema de la credencial o no existe. Es ATÓMICO: no se escribió
+	// NADA, ni siquiera las claves legítimas que iban en el mismo conjunto.
+	ErrSystemNotAllowed = errors.New("iam: identity rechazó alguna aplicación del conjunto")
 )

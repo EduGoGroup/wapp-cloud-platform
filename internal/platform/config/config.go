@@ -201,6 +201,25 @@ type IdentityConfig struct {
 	// Timeout acota cada llamada a identity-api. Default 10s; <=0 cae al default.
 	// Se lee como cadena time.Duration de WAPP_IDENTITY_TIMEOUT.
 	Timeout time.Duration `yaml:"timeout"`
+	// APIKey es la credencial M2M de wApp en identity (fila de `iam.api_keys`
+	// con `ecosystem_key = 'wapp'`), la que el cliente M2M CANJEA por un Service
+	// Token contra POST /api/v1/auth/token — nunca se presenta como portador
+	// (identity ADR-0025). Es lo que habilita el alta de usuario: `users/ensure`
+	// y `PUT /users/{id}/systems` (Plan 056 · T2.4).
+	//
+	// SIN default y con semántica de INTERRUPTOR, igual que URL y JWKSURL: vacía
+	// ⇒ el cliente M2M no se construye y el alta por consola no existe; con
+	// valor, el constructor exige además URL (la MISMA base de identity, no hay
+	// una segunda) y falla al arrancar si falta. Se lee de WAPP_IDENTITY_API_KEY.
+	//
+	// 🔴 Es un SECRETO: vive en el `.env` del VPS, no se versiona y no se
+	// registra en ningún log. INV-056.4: aquí NO entra ninguna conexión directa
+	// a la base de identity — wApp habla con identity por HTTP y solo por HTTP.
+	//
+	// El tag es `-` A PROPÓSITO: este campo no se serializa nunca. Un bundle de
+	// diagnóstico, un volcado de configuración o cualquier otro `yaml.Marshal` de
+	// la config publicaría la credencial de máquina del ecosistema entera.
+	APIKey string `yaml:"-"`
 }
 
 // DiagnosticsConfig gobierna el diagnóstico remoto bajo demanda (Plan 031 · T5,
@@ -638,6 +657,7 @@ func Load() (AppConfig, error) {
 	cfg.Identity.JWKSURL = loader.GetString("IDENTITY_JWKS_URL", cfg.Identity.JWKSURL)
 	cfg.Identity.URL = loader.GetString("IDENTITY_URL", cfg.Identity.URL)
 	cfg.Identity.Timeout = loader.GetDuration("IDENTITY_TIMEOUT", cfg.Identity.Timeout)
+	cfg.Identity.APIKey = loader.GetString("IDENTITY_API_KEY", cfg.Identity.APIKey)
 
 	cfg.Webhook.PollInterval = loader.GetDuration("WEBHOOK_POLL_INTERVAL", cfg.Webhook.PollInterval)
 	if n := loader.GetInt("WEBHOOK_MAX_ATTEMPTS", cfg.Webhook.MaxAttempts); n > 0 {

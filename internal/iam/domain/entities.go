@@ -95,3 +95,41 @@ type AuthResult struct {
 	ExpiresAt    time.Time
 	Context      IdentityContext
 }
+
+// IdentityUser es la persona tal y como la deja el padrón GLOBAL de identity
+// tras un `POST /api/v1/users/ensure` (create-or-attach, identity Plan 003 ·
+// T3.4).
+//
+// No trae nombre ni apellido, y esa ausencia es de identity, no un recorte de
+// wApp: `iam.users` no tiene columna de ecosistema, así que devolverlos
+// convertiría el endpoint en un directorio del grupo consultable por correo
+// (identity dto/user_dto.go:44-56).
+type IdentityUser struct {
+	// ID es el UUID de la cuenta en identity. Es lo único que sirve para el
+	// paso siguiente (`PUT /users/{id}/systems`).
+	ID string
+	// Email es el correo NORMALIZADO con el que quedó la cuenta —minúsculas y
+	// sin espacios en los extremos—, que puede no ser el texto que se mandó.
+	Email string
+	// Created dice si ESTA llamada creó la cuenta. Falso cuando ya existía: el
+	// alta es create-or-attach y una cuenta preexistente NO se modifica.
+	Created bool
+}
+
+// IdentitySystemsDiff es lo que devuelve el `PUT /api/v1/users/{id}/systems`:
+// el conjunto vigente más el diff que esa llamada aplicó (identity Plan 003 ·
+// T3.8).
+//
+// El diff es lo que hace observable la idempotencia: repetir el mismo PUT
+// devuelve Granted y Revoked VACÍOS sin tener que leer la base de identity.
+//
+// ⚠️ Systems está acotado al ecosistema de la credencial de wApp: NO enumera
+// los accesos que otro ecosistema le haya dado a la misma persona.
+type IdentitySystemsDiff struct {
+	// Systems es el conjunto vigente tras la llamada, ordenado. Nunca nil.
+	Systems []string
+	// Granted son las claves que GANARON acceso en esta llamada.
+	Granted []string
+	// Revoked son las claves que lo PERDIERON en esta llamada.
+	Revoked []string
+}
