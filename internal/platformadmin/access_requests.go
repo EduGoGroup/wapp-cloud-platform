@@ -23,13 +23,6 @@ import (
 // catálogo, no el comportamiento.
 const systemWappPlatform = "wapp.platform"
 
-// errRetryApproved es un sentinel INTERNO (nunca cruza al handler): la
-// solicitud ya estaba 'approved' hacia el MISMO tenant que se pide ahora.
-// checkPendingUserMembership lo usa para decirle a ApproveAccessRequest que
-// el reintento debe saltar executeApprovalTx entero y converger sincronizando
-// solo los systems -- la mitad que pudo haber fallado la vez anterior (C-04).
-var errRetryApproved = errors.New("platformadmin: solicitud ya aprobada hacia este tenant, reintento convergente")
-
 var (
 	// ErrPlatformSystemForbidden se devuelve cuando la aprobación intenta
 	// conceder wapp.platform desde la bandeja de solicitudes de acceso.
@@ -50,6 +43,34 @@ var (
 	// local (tenant + rol) queda escrito igual, los systems de identity NO se
 	// tocan.
 	ErrSystemsUnionUnavailable = errors.New("platformadmin: no se puede unir con los systems actuales del usuario en identity (sin lectura)")
+
+	// ErrIdentityM2MUnavailable se devuelve cuando la aprobación traía systems
+	// que conceder pero NO hay cliente M2M configurado hacia identity (hoy:
+	// WAPP_IDENTITY_API_KEY ausente, T0.2 pendiente). Antes de este arreglo
+	// (Tanda 6 · 1.1), `m2m == nil` compartía la misma rama de salida
+	// silenciosa que `len(systems) == 0` -- un caso legítimo (no había nada
+	// que conceder) tapaba uno que NO lo es (había algo que conceder y no se
+	// pudo). Lo local (tenant + rol) queda escrito igual; los systems de
+	// identity NO se tocan porque no hay con qué.
+	ErrIdentityM2MUnavailable = errors.New("platformadmin: no hay cliente M2M configurado hacia identity; no se pudieron conceder los systems solicitados")
+
+	// ErrRetryRoleMismatch se devuelve cuando un reintento sobre una solicitud
+	// YA 'approved' pide un ROL distinto del que quedó escrito en la primera
+	// pasada (Tanda 6 · 1.2). Saltar executeApprovalTx
+	// en el reintento significa saltar también resolveRoleID: sin esta
+	// comprobación, un rol distinto -- incluso uno que no existe -- convergía
+	// en silencio con 204 sin cambiar el rol, y de paso disparaba
+	// ReplaceUserSystems con los systems de ESTA llamada, reemplazando lo que
+	// hubiera antes. Converger significa reproducir el MISMO estado, no
+	// aplicar en silencio lo que pida el segundo clic.
+	ErrRetryRoleMismatch = errors.New("platformadmin: el reintento pide un rol distinto del ya aprobado la primera vez; no converge")
+
+	// ErrTenantNotFound se devuelve cuando el tenant_id de la aprobación es
+	// sintácticamente válido pero no existe (Tanda 6 · P3). Antes reventaba
+	// como 500 al violar la FK tenant_members.tenant_id -> tenants(id) DENTRO
+	// de executeApprovalTx; se comprueba ANTES de abrir la tx para devolver
+	// un 404 legible en vez de un error de Postgres crudo.
+	ErrTenantNotFound = errors.New("platformadmin: el tenant_id de la aprobación no existe")
 
 	// ErrSystemsSyncFailed envuelve CUALQUIER fallo de ReplaceUserSystems
 	// tras un commit local exitoso: identity caído, rate-limit, credencial de
@@ -171,48 +192,43 @@ func (r *Repository) CreateAccessRequest(ctx context.Context, userID, email, ori
 	return nil
 }
 
-// checkPendingUserMembership resuelve el usuario de la solicitud y decide si
-// la aprobación puede seguir: 'pending' es el camino normal, 'approved' puede
-// ser un reintento convergente (C-04) y cualquier otro estado es conflicto.
+// lookupAccessRequestStatus resuelve el usuario y estado actual de una
+// solicitud por su id. ErrNotFound si no existe.
 //
 // ⚠️ Ya NO comprueba aquí la membresía cruzada con otro tenant (M-04): esa
 // comprobación se movió DENTRO de la tx de executeApprovalTx, contable en vez
 // de leer una fila arbitraria de una PK compuesta con N filas por usuario.
-func (r *Repository) checkPendingUserMembership(ctx context.Context, requestID, tenantID string) (string, error) {
-	var (
-		userID string
-		status string
-	)
-	err := r.db.QueryRowContext(ctx, `
+func (r *Repository) lookupAccessRequestStatus(ctx context.Context, requestID string) (userID, status string, err error) {
+	err = r.db.QueryRowContext(ctx, `
 		SELECT user_id::text, status
 		FROM public.access_requests
 		WHERE id = $1
 	`, requestID).Scan(&userID, &status)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	case err != nil:
-		return "", fmt.Errorf("platformadmin: read access request: %w", err)
+		return "", "", fmt.Errorf("platformadmin: read access request: %w", err)
 	}
-
-	switch status {
-	case "pending":
-		return userID, nil
-	case "approved":
-		return r.checkRetryApproved(ctx, userID, tenantID)
-	default:
-		return "", ErrConflict
-	}
+	return userID, status, nil
 }
 
-// checkRetryApproved decide si una solicitud YA aprobada puede reintentarse.
-// El criterio (4) de T3.4 exige que reintentar una aprobación que falló en el
-// PUT systems CONVERJA, y la única forma segura de saber que este 'approved'
-// es EL MISMO destino que se pide ahora es comprobar que el usuario está
-// efectivamente en tenant_members para ESE tenant -- si no lo está, 'approved'
-// apunta a otro tenant (o el commit local nunca llegó a pasar) y no hay nada
-// que converger: es un conflicto real.
-func (r *Repository) checkRetryApproved(ctx context.Context, userID, tenantID string) (string, error) {
+// checkRetryApproved decide si una solicitud YA aprobada puede reintentarse
+// DE VERDAD -- converger, no aplicar en silencio lo que pida el segundo clic
+// (Tanda 6 · 1.2). Dos condiciones, las DOS necesarias:
+//
+//  1. El usuario está efectivamente en tenant_members para ESE tenant -- si
+//     no lo está, 'approved' apunta a otro tenant (o el commit local nunca
+//     llegó a pasar) y no hay nada que converger: conflicto real. Esto ya
+//     lo comprobaba el criterio (4) de T3.4.
+//  2. roleID -- el id YA RESUELTO del rol que se pide AHORA -- coincide con
+//     el rol que de verdad quedó escrito en iam_user_roles la primera vez.
+//     Sin esta comprobación, saltar executeApprovalTx en el reintento
+//     también saltaba resolveRoleID: un rol distinto (incluso uno que no
+//     existe) convergía con 204 sin cambiar nada, y de paso disparaba
+//     ReplaceUserSystems con los systems de ESTA llamada -- el peligro que
+//     C-05 vino a cerrar, entrando por la puerta que abrió C-04.
+func (r *Repository) checkRetryApproved(ctx context.Context, userID, tenantID, roleID string) error {
 	var exists bool
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -221,12 +237,26 @@ func (r *Repository) checkRetryApproved(ctx context.Context, userID, tenantID st
 		)
 	`, userID, tenantID).Scan(&exists)
 	if err != nil {
-		return "", fmt.Errorf("platformadmin: check retry membership: %w", err)
+		return fmt.Errorf("platformadmin: check retry membership: %w", err)
 	}
 	if !exists {
-		return "", ErrConflict
+		return ErrConflict
 	}
-	return userID, errRetryApproved
+
+	var roleMatches bool
+	err = r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.iam_user_roles
+			WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
+		)
+	`, userID, tenantID, roleID).Scan(&roleMatches)
+	if err != nil {
+		return fmt.Errorf("platformadmin: check retry role: %w", err)
+	}
+	if !roleMatches {
+		return ErrRetryRoleMismatch
+	}
+	return nil
 }
 
 // hasOtherApprovedRequest dice si el usuario tiene OTRA solicitud (distinta de
@@ -337,9 +367,11 @@ func (r *Repository) executeApprovalTx(ctx context.Context, requestID, tenantID,
 // ApproveAccessRequest aprueba una solicitud asignando empresa, rol y actualizando sistemas en identity.
 //
 // El reintento de una aprobación que falló al sincronizar systems CONVERGE
-// (C-04): si la solicitud ya está 'approved' hacia el MISMO tenant, se salta
-// por completo la escritura local -- ya está hecha -- y va directo a
-// reintentar solo la mitad que pudo haber fallado.
+// (C-04): si la solicitud ya está 'approved' hacia el MISMO tenant Y con el
+// MISMO rol (checkRetryApproved, Tanda 6 · 1.2), se salta por completo la
+// escritura local -- ya está hecha -- y va directo a reintentar solo la mitad
+// que pudo haber fallado. Un reintento que pide un rol distinto NO converge:
+// se rechaza (ErrRetryRoleMismatch) en vez de fingir que se aplicó.
 func (r *Repository) ApproveAccessRequest(ctx context.Context, requestID, tenantID, role, operatorID string, systems []string, m2m out.IdentityM2MClient) error {
 	if requestID == "" || tenantID == "" || role == "" {
 		return ErrInvalidInput
@@ -350,25 +382,62 @@ func (r *Repository) ApproveAccessRequest(ctx context.Context, requestID, tenant
 		return ErrPlatformSystemForbidden
 	}
 
-	userID, err := r.checkPendingUserMembership(ctx, requestID, tenantID)
-	switch {
-	case errors.Is(err, errRetryApproved):
-		// Lo local (tenant + rol) ya está escrito de una pasada anterior:
-		// NO se vuelve a tocar executeApprovalTx, solo se reintenta systems.
-	case err != nil:
+	userID, status, err := r.lookupAccessRequestStatus(ctx, requestID)
+	if err != nil {
 		return err
-	default:
-		roleID, rerr := r.resolveRoleID(ctx, role)
-		if rerr != nil {
-			return rerr
+	}
+
+	// El rol se resuelve UNA vez, ANTES de bifurcar por status: tanto el
+	// camino 'pending' (executeApprovalTx lo necesita para el INSERT) como el
+	// camino 'approved' (checkRetryApproved lo necesita para comparar contra
+	// lo ya escrito) lo usan -- resolverlo aquí evita que el reintento se
+	// salte la validación por saltarse executeApprovalTx entero (1.2).
+	roleID, rerr := r.resolveRoleID(ctx, role)
+	if rerr != nil {
+		return rerr
+	}
+
+	switch status {
+	case "pending":
+		// (P3) Un tenant_id sintácticamente válido pero inexistente violaba
+		// la FK tenant_members.tenant_id -> tenants(id) DENTRO de la tx y
+		// salía como 500 genérico. Comprobarlo aquí, antes de abrir la tx,
+		// lo convierte en un ErrNotFound legible -- no hace falta este
+		// chequeo en el camino 'approved': un 'approved' de verdad ya exige
+		// que exista una fila en tenant_members para ese tenant_id (esa
+		// misma FK, satisfecha la primera vez).
+		exists, existsErr := r.ExistsTenant(ctx, tenantID)
+		if existsErr != nil {
+			return fmt.Errorf("platformadmin: comprobar existencia de tenant: %w", existsErr)
+		}
+		if !exists {
+			return ErrTenantNotFound
 		}
 		if txErr := r.executeApprovalTx(ctx, requestID, tenantID, userID, roleID, operatorID); txErr != nil {
 			return txErr
 		}
+	case "approved":
+		if convErr := r.checkRetryApproved(ctx, userID, tenantID, roleID); convErr != nil {
+			return convErr
+		}
+		// Lo local (tenant + rol) ya está escrito de una pasada anterior Y
+		// coincide con lo que se pide ahora: NO se vuelve a tocar
+		// executeApprovalTx, solo se reintenta systems.
+	default:
+		return ErrConflict
 	}
 
-	if m2m == nil || len(systems) == 0 {
+	// (1.1) len(systems)==0 es un caso LEGÍTIMO -- no había nada que
+	// conceder -- y sigue devolviendo 204 sin más. m2m==nil es DISTINTO: SÍ
+	// había algo que conceder y no hay con qué. Antes ambos compartían la
+	// misma salida silenciosa; con T0.2 pendiente (sin
+	// WAPP_IDENTITY_API_KEY en ningún despliegue), esa rama se tomaba en
+	// TODAS las aprobaciones con systems, callada.
+	if len(systems) == 0 {
 		return nil
+	}
+	if m2m == nil {
+		return ErrIdentityM2MUnavailable
 	}
 
 	// (D) Unión, no reemplazo: ReplaceUserSystems es declarativo y sobre una
@@ -437,6 +506,25 @@ func (r *Repository) RejectAccessRequest(ctx context.Context, requestID, reason,
 	return nil
 }
 
+// accessRequestIDFromPath extrae y valida el {id} de solicitud del path,
+// mismo criterio que tenantIDFromPath (handlers.go) para M-03 (Tanda 6 · P3):
+// un id vacío es 400 (falta el parámetro); un id que no es UUID es 404, no
+// 500 -- sin esto, un `WHERE id = $1` sobre una columna UUID con un valor que
+// no codifica revienta con un error de pgx que no es sql.ErrNoRows, y el
+// switch de más abajo lo mapeaba al 500 genérico de "err != nil".
+func accessRequestIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "id de solicitud requerido", http.StatusBadRequest)
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+		return "", false
+	}
+	return id, true
+}
+
 // ListAccessRequestsHandler devuelve el handler para GET /admin/access-requests.
 func ListAccessRequestsHandler(repo *Repository, platformTenantID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -468,9 +556,8 @@ func ApproveAccessRequestHandler(repo *Repository, m2m out.IdentityM2MClient, pl
 			return
 		}
 
-		requestID := r.PathValue("id")
-		if requestID == "" {
-			http.Error(w, "id de solicitud requerido", http.StatusBadRequest)
+		requestID, ok := accessRequestIDFromPath(w, r)
+		if !ok {
 			return
 		}
 
@@ -495,6 +582,9 @@ func ApproveAccessRequestHandler(repo *Repository, m2m out.IdentityM2MClient, pl
 		switch {
 		case errors.Is(err, ErrNotFound):
 			http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+			return
+		case errors.Is(err, ErrTenantNotFound):
+			http.Error(w, "empresa no encontrada", http.StatusNotFound)
 			return
 		case errors.Is(err, ErrConflict):
 			http.Error(w, "la solicitud ya fue resuelta o la persona ya pertenece a otra empresa", http.StatusConflict)
@@ -523,6 +613,29 @@ func ApproveAccessRequestHandler(repo *Repository, m2m out.IdentityM2MClient, pl
 				Local: "ok", Identity: "failed", Reason: err.Error(),
 			})
 			return
+		case errors.Is(err, ErrIdentityM2MUnavailable):
+			// (1.1) Mismo cuerpo que ErrSystemsSyncFailed y
+			// ErrSystemsUnionUnavailable (Local:"ok", Identity:"skipped")
+			// -- lo local quedó escrito -- pero 503, no 409/502: no es un
+			// conflicto de datos ni un fallo transitorio de red, es que
+			// este despliegue no tiene cliente M2M configurado en
+			// absoluto (mismo criterio y mismo código que usa
+			// SignupHandler para el mismo m2m==nil, signup.go:136-139).
+			writeJSON(w, http.StatusServiceUnavailable, ApprovePartialResult{
+				Local: "ok", Identity: "skipped",
+				Reason: "no hay cliente M2M configurado hacia identity en este despliegue; lo local (empresa y rol) quedó escrito pero los systems solicitados NO se concedieron",
+			})
+			return
+		case errors.Is(err, ErrRetryRoleMismatch):
+			// (1.2) El reintento pide un rol distinto del que ya quedó
+			// aprobado la primera vez: NO converge, así que no se toca
+			// nada (ni el rol local ni los systems de identity). 409:
+			// hace falta que el operador reconcilie a mano -- p. ej.
+			// rechazando y creando una solicitud nueva, o resolviendo el
+			// cambio de rol por otra vía -- esta bandeja no lo hace por
+			// su cuenta.
+			http.Error(w, "la solicitud ya fue aprobada con un rol distinto; el reintento no converge", http.StatusConflict)
+			return
 		case err != nil:
 			http.Error(w, "error al aprobar solicitud", http.StatusInternalServerError)
 			return
@@ -539,9 +652,8 @@ func RejectAccessRequestHandler(repo *Repository, platformTenantID string) http.
 			return
 		}
 
-		requestID := r.PathValue("id")
-		if requestID == "" {
-			http.Error(w, "id de solicitud requerido", http.StatusBadRequest)
+		requestID, ok := accessRequestIDFromPath(w, r)
+		if !ok {
 			return
 		}
 

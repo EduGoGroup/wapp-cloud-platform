@@ -245,10 +245,17 @@ func TestSignupHandler_RateLimiter_TrustProxyFalse_IgnoresForwardedFor(t *testin
 // TestSignupHandler_NoM2MClient_Returns503 fija C-02: un m2m nil DE VERDAD
 // (interfaz, no puntero concreto envuelto) hace que la guarda `== nil`
 // devuelva 503, nunca panic.
+//
+// Sin BD (Tanda 6 · 2.3): el guard `m2m == nil` es el PRIMER paso de
+// SignupHandler -- corta antes de tocar repo (repo.CreateAccessRequest ni
+// siquiera se alcanza) -- así que corre con Repository{db: nil}, mismo
+// patrón que TestHandlers_EnforcePlatformCaller_Gates (setupAdminMux(nil)).
+// Antes usaba openTestDB(t): sin WAPP_TEST_DB_DSN el test se SALTABA
+// (t.Skipf) y el criterio (1) de la Tanda 1 -- C-02 -- quedaba invisible en
+// cualquier corrida de `go test ./...` sin Postgres.
 func TestSignupHandler_NoM2MClient_Returns503(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(nil)
 
 	handler := platformadmin.SignupHandler(repo, nil, nil, false, nil)
 	body := `{"email":"whoever@example.com","password":"Password123456!","first_name":"T","last_name":"U","origin":"bff"}`
@@ -274,10 +281,13 @@ func TestSignupHandler_NoM2MClient_Returns503(t *testing.T) {
 // TestSignupHandler_BodyTooLarge_Returns400 fija A-09: MaxBytesReader corta un
 // cuerpo por encima del límite ANTES de que json.Decode intente reservar
 // memoria para él.
+//
+// Sin BD (Tanda 6 · 2.3): el rechazo ocurre en json.Decode, antes de llegar a
+// registerIdentityUser o a repo.CreateAccessRequest -- ver el m2m.signupCalled
+// == false más abajo, que ya lo demostraba. Repository{db: nil} basta.
 func TestSignupHandler_BodyTooLarge_Returns400(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	handler := platformadmin.SignupHandler(repo, m2m, nil, false, nil)
@@ -301,10 +311,13 @@ func TestSignupHandler_BodyTooLarge_Returns400(t *testing.T) {
 
 // TestSignupHandler_InvalidEmail_Returns400 fija A-09: un correo sin '@' se
 // rechaza en la validación, sin gastar una llamada M2M.
+//
+// Sin BD (Tanda 6 · 2.3): validateSignupRequest corta antes de
+// registerIdentityUser o repo.CreateAccessRequest -- ver el m2m.signupCalled
+// == false más abajo. Repository{db: nil} basta.
 func TestSignupHandler_InvalidEmail_Returns400(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	handler := platformadmin.SignupHandler(repo, m2m, nil, false, nil)
@@ -381,10 +394,14 @@ func TestSignupHandler_EmailNormalization_SameRow(t *testing.T) {
 // ErrPasswordPolicy, ni ErrEmailTaken, ni ErrIdentityUnavailable) para que
 // dispare el único log.Warn que queda con "error" en signup.go y comprueba
 // que el correo no aparece en el texto emitido.
+//
+// Sin BD (Tanda 6 · 2.3): domain.ErrRateLimited hace que registerIdentityUser
+// devuelva 500 ANTES de llegar a repo.CreateAccessRequest -- el mismo error
+// genérico que dispara el log.Warn es lo que corta el flujo. Repository{db:
+// nil} basta.
 func TestSignupHandler_NoPIIInLogs(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(nil)
 	m2m := &mockSignupM2M{signupErr: domain.ErrRateLimited}
 
 	var buf bytes.Buffer

@@ -31,6 +31,13 @@ func setupAdminMux(db *sql.DB) *http.ServeMux {
 	mux.Handle("GET /admin/tenants/{id}", platformadmin.GetTenantHandler(repo, testPlatformTenantID))
 	mux.Handle("GET /admin/tenants/{id}/installations", platformadmin.ListInstallationsHandler(repo, testPlatformTenantID))
 	mux.Handle("POST /admin/tenants/{id}/enrollment-codes", platformadmin.IssueEnrollmentCodeHandler(repo, codes, testPlatformTenantID))
+	// Las tres rutas de la bandeja de solicitudes de acceso (access_requests.go)
+	// viven en el MISMO mux que las cinco de arriba a propósito (Tanda 6 · 1.3):
+	// TestHandlers_EnforcePlatformCaller_Gates necesita las OCHO detrás de la
+	// misma cerca para poder ejercitarlas todas con un único helper.
+	mux.Handle("GET /admin/access-requests", platformadmin.ListAccessRequestsHandler(repo, testPlatformTenantID))
+	mux.Handle("POST /admin/access-requests/{id}/approve", platformadmin.ApproveAccessRequestHandler(repo, &fakeM2MClient{}, testPlatformTenantID))
+	mux.Handle("POST /admin/access-requests/{id}/reject", platformadmin.RejectAccessRequestHandler(repo, testPlatformTenantID))
 	return mux
 }
 
@@ -52,31 +59,49 @@ func reqWithIdentity(req *http.Request, tenantID string) *http.Request {
 // hacía t.Skipf sin WAPP_TEST_DB_DSN y dejaba la cerca de plataforma SIN
 // cubrir en cualquier corrida local sin Postgres (go test ./... daba verde
 // sin haberla mirado). setupAdminMux(nil) ejercita la MISMA cerca sin BD.
+//
+// Las OCHO rutas de plataforma (Tanda 6 · 1.3): las cinco de handlers.go MÁS
+// las tres de la bandeja de solicitudes de acceso (access_requests.go). Antes
+// solo las tres primeras (todas GET) estaban aquí; neutralizar
+// EnforcePlatformCaller en CUALQUIERA de las tres de la bandeja dejaba la
+// suite entera en verde contra BD real (verificado por mutación) porque
+// ningún otro test las ejercita con un tenant que NO sea el de plataforma --
+// TestHandlers_RealTokenChain_AuthenticateAndRequirePermission prueba
+// RequirePermission (la capa DE FUERA), no esta cerca (la capa DE DENTRO), y
+// siempre firma el token con testPlatformTenantID.
 func TestHandlers_EnforcePlatformCaller_Gates(t *testing.T) {
 	t.Parallel()
 	mux := setupAdminMux(nil)
 
-	paths := []string{
-		"/admin/tenants",
-		"/admin/tenants/" + uuid.NewString(),
-		"/admin/tenants/" + uuid.NewString() + "/installations",
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/admin/tenants"},
+		{http.MethodPost, "/admin/tenants"},
+		{http.MethodGet, "/admin/tenants/" + uuid.NewString()},
+		{http.MethodGet, "/admin/tenants/" + uuid.NewString() + "/installations"},
+		{http.MethodPost, "/admin/tenants/" + uuid.NewString() + "/enrollment-codes"},
+		{http.MethodGet, "/admin/access-requests"},
+		{http.MethodPost, "/admin/access-requests/" + uuid.NewString() + "/approve"},
+		{http.MethodPost, "/admin/access-requests/" + uuid.NewString() + "/reject"},
 	}
 
-	for _, p := range paths {
+	for _, tc := range cases {
 		// 1) Sin autenticación -> 401
-		reqNoAuth := httptest.NewRequest(http.MethodGet, p, nil)
+		reqNoAuth := httptest.NewRequest(tc.method, tc.path, nil)
 		recNoAuth := httptest.NewRecorder()
 		mux.ServeHTTP(recNoAuth, reqNoAuth)
 		if recNoAuth.Code != http.StatusUnauthorized {
-			t.Errorf("path %s sin auth: status=%d, want 401", p, recNoAuth.Code)
+			t.Errorf("%s %s sin auth: status=%d, want 401", tc.method, tc.path, recNoAuth.Code)
 		}
 
 		// 2) Con tenant de cliente (no plataforma) -> 403
-		reqClientTenant := reqWithIdentity(httptest.NewRequest(http.MethodGet, p, nil), uuid.NewString())
+		reqClientTenant := reqWithIdentity(httptest.NewRequest(tc.method, tc.path, nil), uuid.NewString())
 		recClientTenant := httptest.NewRecorder()
 		mux.ServeHTTP(recClientTenant, reqClientTenant)
 		if recClientTenant.Code != http.StatusForbidden {
-			t.Errorf("path %s con tenant ajeno: status=%d, want 403", p, recClientTenant.Code)
+			t.Errorf("%s %s con tenant ajeno: status=%d, want 403", tc.method, tc.path, recClientTenant.Code)
 		}
 	}
 }
@@ -428,5 +453,59 @@ func TestHandlers_IssueEnrollmentCode_HTTP(t *testing.T) {
 
 	if rec404.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec404.Code)
+	}
+}
+
+// TestHandlers_IssueEnrollmentCode_HTTP_TTLPropagatesToExpiresAt fija el
+// criterio (6) de la Tanda 2: «emitir un código con ttl=300 ⇒ expires_at ≈
+// now+5min, verificado contra la BD». TestHandlers_IssueEnrollmentCode_HTTP
+// ya mandaba {"ttl":3600} pero solo comprobaba `expires_at` en el futuro --
+// algo que el default de 24h también cumple, así que un mutante que descarta
+// req.TTLSeconds (deja el default fijo) seguía en verde. Aquí el TTL es corto
+// (300s) y la ventana de tolerancia (295-310s) queda muy por debajo de las 24h
+// del default: cualquier regresión que ignore el TTL pedido cae fuera de la
+// ventana. Se comprueba TANTO el cuerpo de la respuesta COMO la fila real en
+// enrollment_codes -- no basta con que el handler lo diga, tiene que ser lo
+// que persistió issuer.Create.
+func TestHandlers_IssueEnrollmentCode_HTTP_TTLPropagatesToExpiresAt(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	mux := setupAdminMux(db)
+	repo := platformadmin.NewRepository(db)
+
+	slug := fmt.Sprintf("pa-h-code-ttl-%d", time.Now().UnixNano())
+	created, err := repo.CreateTenant(context.Background(), slug, "HTTP Code TTL Test", nil)
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	before := time.Now().UTC()
+	req := reqWithIdentity(httptest.NewRequest(http.MethodPost, "/admin/tenants/"+created.ID+"/enrollment-codes", strings.NewReader(`{"ttl":300}`)), testPlatformTenantID)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	var res platformadmin.IssueEnrollmentCodeResponse
+	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+
+	wantMin := before.Add(295 * time.Second)
+	wantMax := before.Add(310 * time.Second) // margen generoso, MUY por debajo del default de 24h
+	if res.ExpiresAt.Before(wantMin) || res.ExpiresAt.After(wantMax) {
+		t.Fatalf("expires_at (cuerpo) = %v, want entre %v y %v (ttl=300 debía propagarse, no el default de 24h)", res.ExpiresAt, wantMin, wantMax)
+	}
+
+	var storedExpiresAt time.Time
+	if qerr := db.QueryRowContext(context.Background(), `
+		SELECT expires_at FROM public.enrollment_codes WHERE code = $1
+	`, res.Code).Scan(&storedExpiresAt); qerr != nil {
+		t.Fatalf("leer expires_at de la BD: %v", qerr)
+	}
+	if storedExpiresAt.Before(wantMin) || storedExpiresAt.After(wantMax) {
+		t.Fatalf("expires_at (BD) = %v, want entre %v y %v", storedExpiresAt, wantMin, wantMax)
 	}
 }

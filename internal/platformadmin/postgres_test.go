@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -173,58 +175,103 @@ func TestIntegration_ListTenants_PaginationAndRevocation(t *testing.T) {
 	}
 }
 
-// TestIntegration_ListTenants_PaginationStableTiebreak fija M-07: dos tenants
+// TestIntegration_ListTenants_PaginationStableTiebreak fija M-07: N tenants
 // con el MISMO created_at (el seed real los comparte con now()) tienen que
-// aparecer los DOS al paginar de una en una, sin repetir ninguno. Antes del
-// fix, `ORDER BY created_at DESC` a secas no garantiza un orden estable entre
-// filas empatadas: una página podía devolver la misma fila que la anterior y
-// dejar la otra fuera para siempre. El empate se fija a un instante futuro
-// ÚNICO por corrida (now + 400 días, con precisión de nanosegundo) para
-// aislarlo de cualquier otro tenant, sembrado en paralelo por el resto de la
-// suite o dejado por una corrida anterior contra la MISMA base -- una fecha
-// futura fija habría chocado consigo misma al repetir el test sin recrear el
-// Postgres efímero.
+// aparecer TODOS al paginar de una en una, sin repetir ni omitir ninguno.
+// Antes del fix, `ORDER BY created_at DESC` a secas no garantiza un orden
+// estable entre filas empatadas: una página podía devolver la misma fila que
+// la anterior y dejar otra fuera para siempre. El empate se fija a un
+// instante futuro ÚNICO por corrida (now + 400 días, con precisión de
+// nanosegundo) para aislarlo de cualquier otro tenant, sembrado en paralelo
+// por el resto de la suite o dejado por una corrida anterior contra la MISMA
+// base -- una fecha futura fija habría chocado consigo misma al repetir el
+// test sin recrear el Postgres efímero.
+//
+// N=2 (la versión original) NO discriminaba (Tanda 6 · 2.2), verificado por
+// mutación: quitando `, id DESC` de postgres.go:99, la versión de 2 filas
+// seguía en VERDE. Razón medida: para una tabla ESTÁTICA (sin escrituras
+// entremedias), Postgres repite el MISMO orden físico en dos consultas
+// independientes -- el "orden inestable" que `id DESC` previene es una
+// garantía del ESTÁNDAR SQL, no algo que un docker Postgres sin concurrencia
+// vaya a exhibir espontáneamente entre dos SELECT consecutivos sobre la
+// misma foto de la tabla. Con solo 2 filas, "sin repetir, sin omitir" además
+// se cumple por pura aritmética de conjuntos (offset 0/1 sobre 2 elementos
+// particiona el par exacto sea cual sea el orden), así que ni siquiera hacía
+// falta la inestabilidad para pasar.
+//
+// El fix real: los ids son gen_random_uuid() (CreateTenant, postgres.go:250),
+// así que el orden de INSERCIÓN -- que es el orden físico que un `ORDER BY
+// created_at DESC` a secas expone para las filas empatadas, al no tocarse
+// nada entre el INSERT y el SELECT -- es independiente del orden por id. Se
+// arma un golden ASC/DESC por id (conocido de antemano, no observado) y se
+// compara la secuencia completa que entrega la paginación, offset a offset,
+// contra ese golden: con `id DESC` en el ORDER BY debe coincidir EXACTO; sin
+// él, coincide con el orden de inserción (que no es el golden por id, con
+// probabilidad efectivamente 1 al ser ids aleatorios) y el test cae. Esto SÍ
+// es discriminante contra el mutante -- comprueba el ORDEN exigido por el
+// contrato, no solo "no faltan ni sobran filas" (que ya cubría la versión
+// vieja, sin distinguir el bug).
 func TestIntegration_ListTenants_PaginationStableTiebreak(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	repo := platformadmin.NewRepository(db)
 	ctx := context.Background()
 
-	slug1 := fmt.Sprintf("pa-tie-1-%d", time.Now().UnixNano())
-	slug2 := fmt.Sprintf("pa-tie-2-%d", time.Now().UnixNano())
-	t1, err := repo.CreateTenant(ctx, slug1, "Tie 1", nil)
-	if err != nil {
-		t.Fatalf("CreateTenant t1: %v", err)
-	}
-	t2, err := repo.CreateTenant(ctx, slug2, "Tie 2", nil)
-	if err != nil {
-		t.Fatalf("CreateTenant t2: %v", err)
-	}
-
+	const tieCount = 12
 	tie := time.Now().UTC().Add(400 * 24 * time.Hour)
-	if _, err := db.ExecContext(ctx, `UPDATE public.tenants SET created_at = $1 WHERE id IN ($2, $3)`, tie, t1.ID, t2.ID); err != nil {
-		t.Fatalf("igualar created_at: %v", err)
+	ids := make([]string, 0, tieCount)
+	for i := 0; i < tieCount; i++ {
+		slug := fmt.Sprintf("pa-tie-%d-%d", i, time.Now().UnixNano())
+		ten, err := repo.CreateTenant(ctx, slug, fmt.Sprintf("Tie %d", i), nil)
+		if err != nil {
+			t.Fatalf("CreateTenant tie[%d]: %v", i, err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE public.tenants SET created_at = $1 WHERE id = $2`, tie, ten.ID); err != nil {
+			t.Fatalf("igualar created_at tie[%d]: %v", i, err)
+		}
+		ids = append(ids, ten.ID)
 	}
 
-	page0, err := repo.ListTenants(ctx, 1, 0)
-	if err != nil {
-		t.Fatalf("ListTenants offset=0: %v", err)
-	}
-	page1, err := repo.ListTenants(ctx, 1, 1)
-	if err != nil {
-		t.Fatalf("ListTenants offset=1: %v", err)
-	}
-	if len(page0) != 1 || len(page1) != 1 {
-		t.Fatalf("esperada 1 fila por página: len(page0)=%d len(page1)=%d", len(page0), len(page1))
+	// Golden: mismos ids, ordenados DESC como texto -- la representación
+	// canónica minúscula (google/uuid y el `id::text` de Postgres coinciden)
+	// compara byte a byte en el mismo orden que el tipo UUID de Postgres,
+	// porque los guiones caen en las MISMAS posiciones fijas en todo UUID
+	// v4 y no alteran el orden relativo de los caracteres hex que sí varían.
+	wantOrder := append([]string(nil), ids...)
+	sort.Slice(wantOrder, func(i, j int) bool { return wantOrder[i] > wantOrder[j] })
+
+	var gotOrder []string
+	seen := make(map[string]int, tieCount)
+	for offset := 0; offset < tieCount; offset++ {
+		page, err := repo.ListTenants(ctx, 1, offset)
+		if err != nil {
+			t.Fatalf("ListTenants offset=%d: %v", offset, err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("ListTenants offset=%d: esperada 1 fila, obtenidas %d", offset, len(page))
+		}
+		gotOrder = append(gotOrder, page[0].ID)
+		seen[page[0].ID]++
 	}
 
-	if page0[0].ID == page1[0].ID {
-		t.Fatalf("paginación con empate repitió la misma empresa (%s) en offset=0 y offset=1", page0[0].ID)
+	var dup, missing []string
+	for id, count := range seen {
+		if count > 1 {
+			dup = append(dup, id)
+		}
 	}
-	seen := map[string]bool{page0[0].ID: true, page1[0].ID: true}
-	if !seen[t1.ID] || !seen[t2.ID] {
-		t.Fatalf("paginación con empate omitió una empresa: page0=%s page1=%s, want t1=%s t2=%s",
-			page0[0].ID, page1[0].ID, t1.ID, t2.ID)
+	for _, id := range ids {
+		if seen[id] == 0 {
+			missing = append(missing, id)
+		}
+	}
+	if len(dup) > 0 || len(missing) > 0 {
+		t.Fatalf("paginación de %d filas empatadas: duplicadas=%v faltantes=%v, orden observado=%v",
+			tieCount, dup, missing, gotOrder)
+	}
+
+	if !slices.Equal(gotOrder, wantOrder) {
+		t.Fatalf("paginación con empate NO siguió el desempate `id DESC`:\n got  = %v\n want = %v", gotOrder, wantOrder)
 	}
 }
 
