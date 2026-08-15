@@ -104,10 +104,17 @@ func TestIntegration_AccessRequests_Lifecycle(t *testing.T) {
 		t.Fatalf("el reintento hacia el mismo tenant debía converger, obtenido: %v", errReApprove)
 	}
 
-	testCrossTenantConflict(ctx, t, repo, userID, email, operatorID, fakeM2M)
+	testCrossTenantConflict(ctx, t, repo, db, userID, email, operatorID, fakeM2M)
 }
 
-func testCrossTenantConflict(ctx context.Context, t *testing.T, repo *platformadmin.Repository, userID, email, operatorID string, fakeM2M *fakeM2MClient) {
+// testCrossTenantConflict cubre el criterio (3) de T3.4: el 409 de membresía
+// cruzada no debe escribir NADA, ni local ni en identity. Antes solo miraba
+// err != nil, que un ErrConflict "de mentira" (p. ej. devuelto por un bug ANTES
+// de la comprobación real, o incluso una escritura parcial seguida de un error
+// distinto) habría dejado pasar igual. Aquí se cuentan filas y llamadas al M2M
+// antes/después para que una escritura fantasma en el tenant conflictivo
+// rompa el test en vez de quedar en silencio.
+func testCrossTenantConflict(ctx context.Context, t *testing.T, repo *platformadmin.Repository, db *sql.DB, userID, email, operatorID string, fakeM2M *fakeM2MClient) {
 	t.Helper()
 	slug2 := fmt.Sprintf("pa-ar-t2-%d", time.Now().UnixNano())
 	ten2, err := repo.CreateTenant(ctx, slug2, "AR Tenant 2", nil)
@@ -133,14 +140,45 @@ func testCrossTenantConflict(ctx context.Context, t *testing.T, repo *platformad
 		t.Fatal("esperada nueva solicitud en pending")
 	}
 
+	// Snapshot ANTES del intento conflictivo: fakeM2M ya se usó en la
+	// aprobación previa de este mismo test (replacedSystems no arranca vacío),
+	// así que lo que importa es que ESTA llamada no lo toque, no que empiece
+	// en cero.
+	callsBefore := fakeM2M.calls
+	membersBefore := countRows(ctx, t, db, `SELECT count(*) FROM public.tenant_members WHERE user_id = $1 AND tenant_id = $2`, userID, ten2.ID)
+	rolesBefore := countRows(ctx, t, db, `SELECT count(*) FROM public.iam_user_roles WHERE user_id = $1 AND tenant_id = $2`, userID, ten2.ID)
+
 	errConflict := repo.ApproveAccessRequest(ctx, found2.ID, ten2.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, fakeM2M)
-	if errConflict == nil {
-		t.Fatal("esperado conflicto al aprobar usuario que ya es miembro de otro tenant")
+	if !errors.Is(errConflict, platformadmin.ErrConflict) {
+		t.Fatalf("esperado ErrConflict al aprobar usuario que ya es miembro de otro tenant, obtenido: %v", errConflict)
+	}
+
+	if fakeM2M.calls != callsBefore {
+		t.Fatalf("ReplaceUserSystems NO debía llamarse en un 409 de membresía cruzada: calls antes=%d, después=%d", callsBefore, fakeM2M.calls)
+	}
+	if got := countRows(ctx, t, db, `SELECT count(*) FROM public.tenant_members WHERE user_id = $1 AND tenant_id = $2`, userID, ten2.ID); got != membersBefore {
+		t.Fatalf("tenant_members NO debía escribirse en el tenant conflictivo: antes=%d, después=%d", membersBefore, got)
+	}
+	if got := countRows(ctx, t, db, `SELECT count(*) FROM public.iam_user_roles WHERE user_id = $1 AND tenant_id = $2`, userID, ten2.ID); got != rolesBefore {
+		t.Fatalf("iam_user_roles NO debía escribirse en el tenant conflictivo: antes=%d, después=%d", rolesBefore, got)
 	}
 
 	if err := repo.RejectAccessRequest(ctx, found2.ID, "usuario ya asignado", operatorID); err != nil {
 		t.Fatalf("RejectAccessRequest: %v", err)
 	}
+}
+
+// countRows ejecuta un SELECT count(*) parametrizado y devuelve el entero.
+// Helper compartido por los tests que necesitan un snapshot antes/después de
+// una operación (atomicidad, conflictos) sin repetir el boilerplate de
+// QueryRowContext + Scan en cada sitio.
+func countRows(ctx context.Context, t *testing.T, db *sql.DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		t.Fatalf("countRows(%q): %v", query, err)
+	}
+	return n
 }
 
 func TestHandlers_AccessRequests_HTTP(t *testing.T) {

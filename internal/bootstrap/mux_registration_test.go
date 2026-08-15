@@ -1,13 +1,23 @@
-package bootstrap_test
+package bootstrap
 
 import (
 	"net/http"
 	"testing"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
-// TestMuxRegistration_NoPanic verifica que el registro de todas las rutas admin
-// (incluyendo rutas parametrizadas como GET /admin/tenants/{id} y rutas POST /admin/tenants/revoke)
-// no colisiona ni genera panic en http.ServeMux (Go >= 1.22, D-056.2 / T1.3).
+// TestMuxRegistration_NoPanic verifica que el registro REAL de todas las rutas
+// admin (incluyendo rutas parametrizadas como GET /admin/tenants/{id} y rutas
+// POST /admin/tenants/revoke) no colisiona ni genera panic en http.ServeMux
+// (Go >= 1.22, D-056.2 / T1.3).
+//
+// A-02: llama a registerAdminRoutes, la MISMA función que Run() usa en
+// producción — no una copia a mano de la lista de patrones. Una copia a mano
+// solo prueba que la copia no colisiona consigo misma; esto prueba que
+// bootstrap.go de verdad no colisiona. Los handlers son dummy (ninguno se
+// invoca: el test solo ejercita mux.Handle, que es donde http.ServeMux
+// detecta y hace panic ante un conflicto de patrones).
 func TestMuxRegistration_NoPanic(t *testing.T) {
 	t.Parallel()
 
@@ -17,32 +27,39 @@ func TestMuxRegistration_NoPanic(t *testing.T) {
 		}
 	}()
 
-	mux := http.NewServeMux()
 	dummy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	mux := http.NewServeMux()
 
-	// Rutas estándar de bootstrap.go
-	mux.Handle("/healthz", dummy)
-	mux.Handle("/metrics", dummy)
-	mux.Handle("/admin/leases/revoke", dummy)
-	mux.Handle("/admin/messages/send", dummy)
-	mux.Handle("/admin/crypto/rekey", dummy)
-	mux.Handle("/admin/flows", dummy)
-	mux.Handle("/admin/flows/start", dummy)
-	mux.Handle("POST /admin/triggers", dummy)
-	mux.Handle("GET /admin/triggers", dummy)
-	mux.Handle("DELETE /admin/triggers/{id}", dummy)
-	mux.Handle("POST /admin/sessions/{id}/role", dummy)
-	mux.Handle("POST /admin/sessions/{id}/status", dummy)
+	registerAdminRoutes(mux, adminRouteDeps{
+		// authMW nil-safe: Authenticate/RequirePermission solo construyen
+		// closures en wrap-time; no dereferencian el receptor hasta ServeHTTP,
+		// que este test nunca dispara.
+		authMW:  httpapi.NewMiddleware(nil, nil),
+		auditor: nil,
+		log:     quietLogger(),
 
-	// Rutas de plataforma (Plan 056 · T1.3, T2.2, T2.3, T3.4)
-	mux.Handle("GET /admin/tenants", dummy)
-	mux.Handle("POST /admin/tenants", dummy)
-	mux.Handle("GET /admin/tenants/{id}", dummy)
-	mux.Handle("GET /admin/tenants/{id}/installations", dummy)
-	mux.Handle("POST /admin/tenants/{id}/enrollment-codes", dummy)
-	mux.Handle("GET /admin/access-requests", dummy)
-	mux.Handle("POST /admin/access-requests/{id}/approve", dummy)
-	mux.Handle("POST /admin/access-requests/{id}/reject", dummy)
-	mux.Handle("POST /admin/tenants/revoke", dummy)
-	mux.Handle("POST /admin/tenants/restore", dummy)
+		health:         dummy,
+		metrics:        dummy,
+		revokeLease:    dummy,
+		sendMessage:    dummy,
+		cryptoRekey:    dummy,
+		flowsCreate:    dummy,
+		flowsStart:     dummy,
+		triggersCreate: dummy,
+		triggersList:   dummy,
+		triggersDelete: dummy,
+		sessionRole:    dummy,
+		sessionStatus:  dummy,
+		revokeTenant:   dummy,
+		restoreTenant:  dummy,
+
+		// Las rutas de plataforma construyen su handler INLINE dentro de
+		// registerAdminRoutes (ver adminRouteDeps); los constructores
+		// platformadmin.*Handler no tocan estas piezas en wrap-time, así que
+		// nil es un valor válido aquí (nunca se ejercita el handler).
+		platformRepo:     nil,
+		platformTenantID: "",
+		codeStore:        nil,
+		m2mClient:        nil,
+	})
 }

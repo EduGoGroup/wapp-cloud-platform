@@ -59,12 +59,39 @@ func TestAuditMiddleware_Success(t *testing.T) {
 	if got := ev.Meta["status"]; got != http.StatusCreated {
 		t.Fatalf("meta.status = %v, want %d", got, http.StatusCreated)
 	}
+	// T2.5: una ruta que NO publica target_tenant_id (este handler no llama a
+	// SetAuditTargetTenant) escribe EXACTAMENTE el mismo meta que antes,
+	// comprobado campo a campo -- no solo que "status" esté, sino que sea lo
+	// ÚNICO. Sin este assert, un meta con claves de más (una fuga de PII, un
+	// campo de depuración olvidado) pasaría igual.
+	if len(ev.Meta) != 1 {
+		t.Fatalf("len(ev.Meta) = %d, want 1 (solo 'status'); meta = %v", len(ev.Meta), ev.Meta)
+	}
 }
 
 func TestAuditMiddleware_Failure(t *testing.T) {
 	aud := serveAudited(http.StatusBadRequest, true)
 	if aud.last.Result != "failure" {
 		t.Fatalf("result = %q, want failure (status 400)", aud.last.Result)
+	}
+}
+
+// TestAuditMiddleware_NilRecorder: sin auditor el middleware es transparente
+// (no entra en pánico ni altera la respuesta). M-05: se eliminó en c858e43 al
+// añadir TestAuditMiddleware_TargetTenant en su lugar, pero el código que
+// prueba (audit_mw.go: `if rec == nil { return }`) sigue vivo y se quedó sin
+// cobertura -- ninguno de los tests que sobrevivieron pasa `nil` como
+// auditor. Recuperado tal cual, más el caso `log` nil (también contemplado
+// por AuditMiddleware) para que ambos "opcionales" del middleware queden
+// bajo prueba a la vez.
+func TestAuditMiddleware_NilRecorder(t *testing.T) {
+	h := httpapi.AuditMiddleware(nil, "x", "y", nil)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/x", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 }
 

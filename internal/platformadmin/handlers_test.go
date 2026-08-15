@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	identityrbac "github.com/EduGoGroup/identity-shared/auth/rbac"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	"github.com/google/uuid"
 )
 
@@ -44,10 +46,15 @@ func reqWithIdentity(req *http.Request, tenantID string) *http.Request {
 	return req.WithContext(httpapi.WithIdentity(req.Context(), id))
 }
 
+// A-07a: EnforcePlatformCaller (401 sin token / 403 con tenant ajeno) corta
+// ANTES de tocar el repositorio -- los handlers de este mux nunca llegan a
+// r.db para ninguno de los dos casos que este test comprueba. openTestDB(t)
+// hacía t.Skipf sin WAPP_TEST_DB_DSN y dejaba la cerca de plataforma SIN
+// cubrir en cualquier corrida local sin Postgres (go test ./... daba verde
+// sin haberla mirado). setupAdminMux(nil) ejercita la MISMA cerca sin BD.
 func TestHandlers_EnforcePlatformCaller_Gates(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	mux := setupAdminMux(db)
+	mux := setupAdminMux(nil)
 
 	paths := []string{
 		"/admin/tenants",
@@ -71,6 +78,103 @@ func TestHandlers_EnforcePlatformCaller_Gates(t *testing.T) {
 		if recClientTenant.Code != http.StatusForbidden {
 			t.Errorf("path %s con tenant ajeno: status=%d, want 403", p, recClientTenant.Code)
 		}
+	}
+}
+
+const (
+	adminChainSecret = "material-de-firma-hs256-para-el-cerrojo-de-plataforma"
+	adminChainIssuer = "wapp-iam-test"
+)
+
+// grantsPlatformTenantAdmin reproduce el rol canónico tenant_admin tras la
+// migración 0059: su '*' de siempre (0015) más el deny '*.any' que ADR-0039
+// añadió para el plano de plataforma. Mismos grants que
+// internal/platform/httpapi/adminroute_test.go:grantsTenantAdmin -- se
+// re-declaran aquí (no se importan, httpapi_test es un paquete de test
+// interno) porque este fichero prueba una capa distinta: QUE ESTE HANDLER
+// CONCRETO de platformadmin está detrás de RequirePermission, no solo que el
+// permiso EN ABSTRACTO deniegue al comodín.
+var grantsPlatformTenantAdmin = identityrbac.Grants{
+	Allow: []string{"*"},
+	Deny:  []string{"*.any"},
+}
+
+// TestHandlers_RealTokenChain_AuthenticateAndRequirePermission monta la
+// MISMA cadena que bootstrap.go arma en producción para cada ruta de
+// plataforma (Authenticate → RequirePermission(perm) → handler; ver
+// adminHandler y registerAdminRoutes en internal/bootstrap/bootstrap.go) con
+// tokens FIRMADOS de verdad -- no httpapi.WithIdentity inyectado a mano
+// (T1.3, «al estilo de adminroute_test.go»). A-07a: sin este test, ningún
+// test de este paquete ejercitaba Authenticate ni RequirePermission sobre
+// las rutas nuevas -- TestHandlers_EnforcePlatformCaller_Gates prueba
+// EnforcePlatformCaller (identidad == tenant de plataforma), no el RBAC
+// (grant == permiso de la ruta), y los tests HTTP de más abajo inyectan la
+// Identity directamente en el contexto, saltándose el middleware entero.
+//
+// El caso 403 con grantsPlatformTenantAdmin es TAMBIÉN el criterio (6) de
+// T3.4 para las tres rutas de solicitudes de acceso («tenant_admin ⇒ 403 en
+// las tres»): reqWithIdentity (arriba) siembra siempre platform_admin y
+// nunca pasa por RequirePermission, así que ningún test HTTP existente podía
+// distinguir "el operador es de plataforma" de "el operador tiene el grant".
+func TestHandlers_RealTokenChain_AuthenticateAndRequirePermission(t *testing.T) {
+	t.Parallel()
+
+	repo := platformadmin.NewRepository(nil)
+	codes := enroll.NewPostgresCodeStore(nil)
+	jwt := sharedjwt.NewJWTManager(adminChainSecret, adminChainIssuer)
+	mw := httpapi.NewMiddleware(jwt, nil)
+
+	// Mismo par patrón→permiso→handler que registerAdminRoutes construye para
+	// las rutas de plataforma (Plan 056 · T1.3/T3.4). Ninguno de estos
+	// handlers llega al repo en los dos casos de abajo (401/403 cortan
+	// antes), así que un *Repository sobre db=nil es un valor válido.
+	routes := []struct {
+		name    string
+		perm    string
+		handler http.Handler
+	}{
+		{"ListTenants", "tenants.read.any", platformadmin.ListTenantsHandler(repo, testPlatformTenantID)},
+		{"CreateTenant", "tenants.create.any", platformadmin.CreateTenantHandler(repo, testPlatformTenantID)},
+		{"GetTenant", "tenants.read.any", platformadmin.GetTenantHandler(repo, testPlatformTenantID)},
+		{"ListInstallations", "fleet.read.any", platformadmin.ListInstallationsHandler(repo, testPlatformTenantID)},
+		{"IssueEnrollmentCode", "enrollment.issue.any", platformadmin.IssueEnrollmentCodeHandler(repo, codes, testPlatformTenantID)},
+		{"ListAccessRequests", "users.provision.any", platformadmin.ListAccessRequestsHandler(repo, testPlatformTenantID)},
+		{"ApproveAccessRequest", "users.provision.any", platformadmin.ApproveAccessRequestHandler(repo, &fakeM2MClient{}, testPlatformTenantID)},
+		{"RejectAccessRequest", "users.provision.any", platformadmin.RejectAccessRequestHandler(repo, testPlatformTenantID)},
+	}
+
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			chain := mw.Authenticate(mw.RequirePermission(rt.perm)(rt.handler))
+
+			// 1) Sin token -> 401 (Authenticate corta antes de RequirePermission).
+			recNoTok := httptest.NewRecorder()
+			chain.ServeHTTP(recNoTok, httptest.NewRequest(http.MethodGet, "/x", nil))
+			if recNoTok.Code != http.StatusUnauthorized {
+				t.Errorf("sin token: status = %d, want 401", recNoTok.Code)
+			}
+
+			// 2) Token FIRMADO de un tenant_admin (comodín '*' + deny '*.any')
+			// -> 403 (RequirePermission corta antes de llegar al handler real:
+			// no hace falta BD, y es justo el escenario que ADR-0039 existe
+			// para impedir -- ver adminroute_test.go). El TenantID del token
+			// es EL DE PLATAFORMA a propósito: si fuera un tenant cualquiera,
+			// el EnforcePlatformCaller de DENTRO del handler ya daría 403 por
+			// su cuenta y el test dejaría de probar RequirePermission (lo
+			// confirmó una mutación: con RequirePermission neutralizado y un
+			// tenant ajeno, este caso seguía en verde por la razón equivocada).
+			tok, _, err := jwt.GenerateToken(uuid.NewString(), testPlatformTenantID, []string{"tenant_admin"}, grantsPlatformTenantAdmin, time.Hour)
+			if err != nil {
+				t.Fatalf("GenerateToken: %v", err)
+			}
+			reqDenied := httptest.NewRequest(http.MethodGet, "/x", nil)
+			reqDenied.Header.Set("Authorization", "Bearer "+tok)
+			recDenied := httptest.NewRecorder()
+			chain.ServeHTTP(recDenied, reqDenied)
+			if recDenied.Code != http.StatusForbidden {
+				t.Errorf("token tenant_admin (comodín '*' + deny '*.any') para %q: status = %d, want 403", rt.perm, recDenied.Code)
+			}
+		})
 	}
 }
 
