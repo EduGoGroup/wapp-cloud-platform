@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
+	"github.com/google/uuid"
 )
 
 // ListTenantsResponse es el cuerpo JSON de la lista de empresas.
@@ -88,6 +89,24 @@ func ListTenantsHandler(repo *Repository, platformTenantID string) http.Handler 
 	})
 }
 
+// tenantIDFromPath extrae y valida el {id} de empresa del path. Un id vacío
+// es 400 (falta el parámetro); un id que no es UUID es 404 (design.md:585-587):
+// así la consulta nunca llega a la BD con un valor que la columna UUID no
+// puede codificar, que es justo lo que hacía salir un 500 en vez del 404 que
+// pide el contrato.
+func tenantIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "id de empresa requerido", http.StatusBadRequest)
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "empresa no encontrada", http.StatusNotFound)
+		return "", false
+	}
+	return id, true
+}
+
 // GetTenantHandler devuelve el handler para GET /admin/tenants/{id}.
 func GetTenantHandler(repo *Repository, platformTenantID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,9 +114,8 @@ func GetTenantHandler(repo *Repository, platformTenantID string) http.Handler {
 			return
 		}
 
-		id := r.PathValue("id")
-		if id == "" {
-			http.Error(w, "id de empresa requerido", http.StatusBadRequest)
+		id, ok := tenantIDFromPath(w, r)
+		if !ok {
 			return
 		}
 		httpapi.SetAuditTargetTenant(r.Context(), id)
@@ -123,20 +141,22 @@ func ListInstallationsHandler(repo *Repository, platformTenantID string) http.Ha
 			return
 		}
 
-		tenantID := r.PathValue("id")
-		if tenantID == "" {
-			http.Error(w, "id de empresa requerido", http.StatusBadRequest)
+		tenantID, ok := tenantIDFromPath(w, r)
+		if !ok {
 			return
 		}
 		httpapi.SetAuditTargetTenant(r.Context(), tenantID)
 
-		// Validar que el tenant existe antes de listar instalaciones
-		if _, err := repo.GetTenant(r.Context(), tenantID); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				http.Error(w, "empresa no encontrada", http.StatusNotFound)
-				return
-			}
+		// Validar que el tenant existe antes de listar instalaciones (una sola
+		// consulta ligera: no hace falta el detalle completo -fila + conteo +
+		// features- que trae GetTenant solo para decidir un 404).
+		exists, err := repo.ExistsTenant(r.Context(), tenantID)
+		if err != nil {
 			http.Error(w, "error al verificar empresa", http.StatusInternalServerError)
+			return
+		}
+		if !exists {
+			http.Error(w, "empresa no encontrada", http.StatusNotFound)
 			return
 		}
 
@@ -210,19 +230,19 @@ func IssueEnrollmentCodeHandler(repo *Repository, issuer CodeIssuer, platformTen
 			return
 		}
 
-		tenantID := r.PathValue("id")
-		if tenantID == "" {
-			http.Error(w, "id de empresa requerido", http.StatusBadRequest)
+		tenantID, ok := tenantIDFromPath(w, r)
+		if !ok {
 			return
 		}
 		httpapi.SetAuditTargetTenant(r.Context(), tenantID)
 
-		if _, err := repo.GetTenant(r.Context(), tenantID); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				http.Error(w, "empresa no encontrada", http.StatusNotFound)
-				return
-			}
+		exists, err := repo.ExistsTenant(r.Context(), tenantID)
+		if err != nil {
 			http.Error(w, "error al verificar empresa", http.StatusInternalServerError)
+			return
+		}
+		if !exists {
+			http.Error(w, "empresa no encontrada", http.StatusNotFound)
 			return
 		}
 

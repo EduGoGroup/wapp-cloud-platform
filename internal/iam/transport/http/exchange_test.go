@@ -71,7 +71,7 @@ func newExchangeHarness(t *testing.T) exchangeHarness {
 		{Pattern: "flows.*", Effect: domain.EffectAllow},
 	})
 	userID := uuid.NewString()
-	if err := store.Roles.AssignToUser(context.Background(), userID, role.ID); err != nil {
+	if err := store.Roles.AssignToUser(context.Background(), userID, role.ID, nil); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
 	store.Memberships.Seed(userID, tTenant)

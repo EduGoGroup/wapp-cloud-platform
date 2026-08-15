@@ -215,13 +215,14 @@ func (r *RoleRepo) RolesOfUser(ctx context.Context, userID, tenantID string) ([]
 // El ON CONFLICT va SIN target a propósito: un índice PARCIAL no entra en la
 // inferencia por columnas a secas (haría falta repetir su WHERE), así que la
 // forma sin target es la única que cubre los dos índices a la vez -- mismo
-// patrón que 0059_platform_admin.sql:52-57.
-func (r *RoleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
+// patrón que 0059_platform_admin.sql:52-57. tenantID nil inserta NULL
+// (asignación global); no nil acota la fila a esa empresa (D-056.11).
+func (r *RoleRepo) AssignToUser(ctx context.Context, userID, roleID string, tenantID *string) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO public.iam_user_roles (user_id, role_id)
-		VALUES ($1, $2)
+		INSERT INTO public.iam_user_roles (user_id, role_id, tenant_id)
+		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING
-	`, userID, roleID)
+	`, userID, roleID, nullString(tenantID))
 	if err != nil {
 		return fmt.Errorf("iam: asignar rol a usuario: %w", err)
 	}

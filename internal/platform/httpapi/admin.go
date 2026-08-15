@@ -129,7 +129,7 @@ func RevokeTenantHandler(revoker TenantRevoker, platformTenantID string) http.Ha
 			return
 		}
 
-		target, ok := platformTarget(w, r, platformTenantID)
+		target, ok := PlatformTarget(w, r, platformTenantID)
 		if !ok {
 			return
 		}
@@ -155,7 +155,7 @@ func RestoreTenantHandler(restorer TenantRestorer, platformTenantID string) http
 			return
 		}
 
-		target, ok := platformTarget(w, r, platformTenantID)
+		target, ok := PlatformTarget(w, r, platformTenantID)
 		if !ok {
 			return
 		}
@@ -184,10 +184,15 @@ func EnforcePlatformCaller(w http.ResponseWriter, r *http.Request, platformTenan
 	return true
 }
 
-// platformTarget aplica los dos cerrojos del plano de plataforma y devuelve el
+// PlatformTarget aplica los dos cerrojos del plano de plataforma y devuelve el
 // tenant OBJETIVO leído del cuerpo. Si devuelve ok=false ya escribió la
 // respuesta de error y el llamante solo tiene que volver.
-func platformTarget(w http.ResponseWriter, r *http.Request, platformTenantID string) (string, bool) {
+//
+// Exportada a propósito (T2.1 pedía dos funciones exportadas de este
+// paquete): cualquier ruta futura que necesite "cerca de plataforma + tenant
+// objetivo del cuerpo" la reutiliza en vez de copiarla -- la copia que la
+// propia tarea prohíbe.
+func PlatformTarget(w http.ResponseWriter, r *http.Request, platformTenantID string) (string, bool) {
 	if !EnforcePlatformCaller(w, r, platformTenantID) {
 		return "", false
 	}

@@ -76,6 +76,13 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 // ListTenants devuelve los tenants paginados. El parámetro limit se acota entre 1 y 500 (default 50).
+//
+// El ORDER BY lleva `id DESC` como desempate: `created_at` NO es único (el
+// seed de varios tenants en la misma transacción comparte `now()`), así que
+// sin un segundo criterio estable, dos páginas consecutivas (limit=1&offset=0
+// y offset=1) pueden devolver la MISMA fila empatada y omitir la otra -- el
+// orden entre empates de un ORDER BY de una sola columna no está garantizado
+// entre ejecuciones.
 func (r *Repository) ListTenants(ctx context.Context, limit, offset int) ([]TenantListItem, error) {
 	if limit <= 0 {
 		limit = 50
@@ -89,7 +96,7 @@ func (r *Repository) ListTenants(ctx context.Context, limit, offset int) ([]Tena
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id::text, slug, display_name, plan_id, revoked_at, created_at, updated_at
 		FROM public.tenants
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
 	if err != nil {
@@ -209,6 +216,22 @@ func (r *Repository) GetTenant(ctx context.Context, id string) (TenantDetail, er
 	slices.Sort(detail.Features)
 
 	return detail, nil
+}
+
+// ExistsTenant informa si el tenant existe, con una sola consulta ligera.
+// Está pensada para los handlers que solo necesitan decidir un 404 antes de
+// una operación (listar instalaciones, emitir un código de enrolamiento):
+// llamar a GetTenant para eso paga tres consultas (fila + COUNT(DISTINCT
+// edge_id) + features efectivas) que nadie usa.
+func (r *Repository) ExistsTenant(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM public.tenants WHERE id = $1)
+	`, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("platformadmin: comprobar existencia de tenant: %w", err)
+	}
+	return exists, nil
 }
 
 // CreateTenant inserta una nueva empresa.

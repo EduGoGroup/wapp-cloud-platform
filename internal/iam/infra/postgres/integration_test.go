@@ -85,7 +85,7 @@ func TestIntegration_RolesAndGrants(t *testing.T) {
 	if gs, err := roles.GrantsOf(ctx, role.ID); err != nil || len(gs) != 1 {
 		t.Fatalf("GrantsOf: %+v err=%v", gs, err)
 	}
-	if err := roles.AssignToUser(ctx, userID, role.ID); err != nil {
+	if err := roles.AssignToUser(ctx, userID, role.ID, nil); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
 	if rs, err := roles.RolesOfUser(ctx, userID, env.tenantID); err != nil || len(rs) != 1 {
@@ -112,7 +112,7 @@ func TestIntegration_TenantScopedUserRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("crear global role: %v", err)
 	}
-	if err := roles.AssignToUser(ctx, userID, roleGlobal.ID); err != nil {
+	if err := roles.AssignToUser(ctx, userID, roleGlobal.ID, nil); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
 

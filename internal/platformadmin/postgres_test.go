@@ -173,6 +173,61 @@ func TestIntegration_ListTenants_PaginationAndRevocation(t *testing.T) {
 	}
 }
 
+// TestIntegration_ListTenants_PaginationStableTiebreak fija M-07: dos tenants
+// con el MISMO created_at (el seed real los comparte con now()) tienen que
+// aparecer los DOS al paginar de una en una, sin repetir ninguno. Antes del
+// fix, `ORDER BY created_at DESC` a secas no garantiza un orden estable entre
+// filas empatadas: una página podía devolver la misma fila que la anterior y
+// dejar la otra fuera para siempre. El empate se fija a un instante futuro
+// ÚNICO por corrida (now + 400 días, con precisión de nanosegundo) para
+// aislarlo de cualquier otro tenant, sembrado en paralelo por el resto de la
+// suite o dejado por una corrida anterior contra la MISMA base -- una fecha
+// futura fija habría chocado consigo misma al repetir el test sin recrear el
+// Postgres efímero.
+func TestIntegration_ListTenants_PaginationStableTiebreak(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	repo := platformadmin.NewRepository(db)
+	ctx := context.Background()
+
+	slug1 := fmt.Sprintf("pa-tie-1-%d", time.Now().UnixNano())
+	slug2 := fmt.Sprintf("pa-tie-2-%d", time.Now().UnixNano())
+	t1, err := repo.CreateTenant(ctx, slug1, "Tie 1", nil)
+	if err != nil {
+		t.Fatalf("CreateTenant t1: %v", err)
+	}
+	t2, err := repo.CreateTenant(ctx, slug2, "Tie 2", nil)
+	if err != nil {
+		t.Fatalf("CreateTenant t2: %v", err)
+	}
+
+	tie := time.Now().UTC().Add(400 * 24 * time.Hour)
+	if _, err := db.ExecContext(ctx, `UPDATE public.tenants SET created_at = $1 WHERE id IN ($2, $3)`, tie, t1.ID, t2.ID); err != nil {
+		t.Fatalf("igualar created_at: %v", err)
+	}
+
+	page0, err := repo.ListTenants(ctx, 1, 0)
+	if err != nil {
+		t.Fatalf("ListTenants offset=0: %v", err)
+	}
+	page1, err := repo.ListTenants(ctx, 1, 1)
+	if err != nil {
+		t.Fatalf("ListTenants offset=1: %v", err)
+	}
+	if len(page0) != 1 || len(page1) != 1 {
+		t.Fatalf("esperada 1 fila por página: len(page0)=%d len(page1)=%d", len(page0), len(page1))
+	}
+
+	if page0[0].ID == page1[0].ID {
+		t.Fatalf("paginación con empate repitió la misma empresa (%s) en offset=0 y offset=1", page0[0].ID)
+	}
+	seen := map[string]bool{page0[0].ID: true, page1[0].ID: true}
+	if !seen[t1.ID] || !seen[t2.ID] {
+		t.Fatalf("paginación con empate omitió una empresa: page0=%s page1=%s, want t1=%s t2=%s",
+			page0[0].ID, page1[0].ID, t1.ID, t2.ID)
+	}
+}
+
 func TestIntegration_ListInstallations(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

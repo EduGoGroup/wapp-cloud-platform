@@ -113,13 +113,14 @@ func registerIdentityUser(ctx context.Context, req SignupRequest, m2m out.Identi
 // por IP. trustProxy gobierna si clientIP confía en X-Forwarded-For/X-Real-IP
 // (A-06a): en `false` (el default) esas cabeceras se ignoran y la clave es
 // siempre la IP de socket, que un cliente no puede falsificar.
+//
+// Sin comprobación de método: el registro es "POST /api/v1/signup"
+// (internal/bootstrap/http.go), y el ServeMux de Go 1.22 ya responde 405 por
+// su cuenta ante cualquier otro método sobre ese patrón -- un `if r.Method !=
+// http.MethodPost` aquí dentro sería código muerto que engaña sobre quién
+// decide el 405.
 func SignupHandler(repo *Repository, m2m out.IdentityM2MClient, limiter *ratelimit.Limiter, trustProxy bool, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
 		if limiter != nil && !limiter.Allow(clientIP(r, trustProxy)) {
 			http.Error(w, "demasiadas solicitudes desde esta IP", http.StatusTooManyRequests)
 			return

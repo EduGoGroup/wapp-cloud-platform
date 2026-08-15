@@ -51,7 +51,7 @@ func TestRoleStore_UserAssignments(t *testing.T) {
 	seeded := s.Seed(domain.Role{TenantID: &tID, Name: "admin"}, nil)
 
 	// AssignToUser / RolesOfUser / UnassignFromUser
-	if err := s.AssignToUser(ctx, "user-1", seeded.ID); err != nil {
+	if err := s.AssignToUser(ctx, "user-1", seeded.ID, nil); err != nil {
 		t.Fatalf("AssignToUser err: %v", err)
 	}
 
@@ -62,8 +62,9 @@ func TestRoleStore_UserAssignments(t *testing.T) {
 
 	// Asignación acotada a otro tenant no debe aparecer en tenant-1
 	roleOther := s.Seed(domain.Role{ID: "role-other", Name: "other"}, nil)
-	if err := s.AssignToUserWithTenant(ctx, "user-1", roleOther.ID, "tenant-other"); err != nil {
-		t.Fatalf("AssignToUserWithTenant err: %v", err)
+	tenantOther := "tenant-other"
+	if err := s.AssignToUser(ctx, "user-1", roleOther.ID, &tenantOther); err != nil {
+		t.Fatalf("AssignToUser (con tenant) err: %v", err)
 	}
 	rolesForTenant1, err := s.RolesOfUser(ctx, "user-1", "tenant-1")
 	if err != nil || len(rolesForTenant1) != 1 || rolesForTenant1[0].ID != seeded.ID {

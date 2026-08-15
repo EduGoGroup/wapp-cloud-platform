@@ -125,9 +125,11 @@ type RoleRepo interface {
 	// RolesOfUser devuelve los roles ASIGNADOS a un usuario para el tenant dado
 	// (o globales si tenant_id es NULL en la asignación).
 	RolesOfUser(ctx context.Context, userID, tenantID string) ([]domain.Role, error)
-	// AssignToUser asigna un rol a un usuario (idempotente por los índices
-	// únicos de iam_user_roles; ya NO hay PK desde la migración 0060).
-	AssignToUser(ctx context.Context, userID, roleID string) error
+	// AssignToUser asigna un rol a un usuario, opcionalmente acotado a un
+	// tenant (D-056.11): tenantID nil asigna GLOBAL, tenantID no nil acota la
+	// asignación a esa empresa. Idempotente por los índices únicos de
+	// iam_user_roles; ya NO hay PK desde la migración 0060.
+	AssignToUser(ctx context.Context, userID, roleID string, tenantID *string) error
 	// UnassignFromUser retira un rol de un usuario (no-op si no estaba).
 	UnassignFromUser(ctx context.Context, userID, roleID string) error
 }

@@ -250,6 +250,48 @@ func TestHandlers_GetTenant_HTTP(t *testing.T) {
 	}
 }
 
+// TestHandlers_InvalidTenantID_Returns404 fija M-03: un {id} que no es UUID
+// tiene que dar 404 (design.md:585-587), no 500. Antes del fix, el handler
+// solo comprobaba id == "" y dejaba pasar cualquier cadena no vacía hasta un
+// `WHERE id = $1` sobre una columna UUID; pgx fallaba al codificar y el error
+// no era sql.ErrNoRows, así que salía 500. La validación vive en el BORDE
+// (tenantIDFromPath), así que este test corre con setupAdminMux(nil): un id
+// mal formado nunca debe llegar al repositorio, y si llegara, un *Repository
+// sobre db=nil haría panic y el test lo delataría igual.
+func TestHandlers_InvalidTenantID_Returns404(t *testing.T) {
+	t.Parallel()
+	mux := setupAdminMux(nil)
+
+	badIDs := []string{
+		"no-es-un-uuid",
+		"12345",
+		"55550000-0000-0000-0000",
+		"55550000-0000-0000-0000-00000000000Z",
+	}
+
+	for _, id := range badIDs {
+		paths := []string{
+			"/admin/tenants/" + id,
+			"/admin/tenants/" + id + "/installations",
+		}
+		for _, p := range paths {
+			req := reqWithIdentity(httptest.NewRequest(http.MethodGet, p, nil), testPlatformTenantID)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s: status = %d, want 404. Body: %s", p, rec.Code, rec.Body.String())
+			}
+		}
+
+		reqCode := reqWithIdentity(httptest.NewRequest(http.MethodPost, "/admin/tenants/"+id+"/enrollment-codes", nil), testPlatformTenantID)
+		recCode := httptest.NewRecorder()
+		mux.ServeHTTP(recCode, reqCode)
+		if recCode.Code != http.StatusNotFound {
+			t.Errorf("POST /admin/tenants/%s/enrollment-codes: status = %d, want 404. Body: %s", id, recCode.Code, recCode.Body.String())
+		}
+	}
+}
+
 func TestHandlers_ListInstallations_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

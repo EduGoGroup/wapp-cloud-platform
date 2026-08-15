@@ -167,30 +167,34 @@ func (s *RoleStore) RolesOfUser(_ context.Context, userID, tenantID string) ([]d
 	return res, nil
 }
 
-// AssignToUser implementa out.RoleRepo (idempotente, asignación global).
-func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string) error {
+// AssignToUser implementa out.RoleRepo, opcionalmente acotado a un tenant
+// (D-056.11): tenantID nil asigna GLOBAL; tenantID no nil acota la
+// asignación a esa empresa. Idempotente por (roleID, tenantID), igual que las
+// dos UNIQUE de iam_user_roles que emula.
+func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string, tenantID *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.userRoles[userID] {
-		if a.roleID == roleID && a.tenantID == nil {
+		if a.roleID == roleID && samePtrValue(a.tenantID, tenantID) {
 			return nil
 		}
 	}
-	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: nil})
+	var t *string
+	if tenantID != nil {
+		v := *tenantID
+		t = &v
+	}
+	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: t})
 	return nil
 }
 
-// AssignToUserWithTenant asigna un rol acotado a un tenant en el test double.
-func (s *RoleStore) AssignToUserWithTenant(_ context.Context, userID, roleID, tenantID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, a := range s.userRoles[userID] {
-		if a.roleID == roleID && a.tenantID != nil && *a.tenantID == tenantID {
-			return nil
-		}
+// samePtrValue compara dos *string por VALOR: nil == nil, y dos no-nil son
+// iguales si sus valores lo son (nunca por dirección de memoria).
+func samePtrValue(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: &tenantID})
-	return nil
+	return *a == *b
 }
 
 // UnassignFromUser implementa out.RoleRepo.

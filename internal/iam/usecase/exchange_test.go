@@ -93,7 +93,7 @@ func seedMember(t *testing.T, store *memory.Store, tenantID, roleName string, gr
 	userID := uuid.NewString()
 	if roleName != "" {
 		role := store.Roles.Seed(domain.Role{TenantID: ptr(tenantID), Name: roleName}, grants)
-		if err := store.Roles.AssignToUser(context.Background(), userID, role.ID); err != nil {
+		if err := store.Roles.AssignToUser(context.Background(), userID, role.ID, nil); err != nil {
 			t.Fatalf("AssignToUser: %v", err)
 		}
 	}
@@ -356,7 +356,7 @@ func TestExchange_SinMembresiaNoHeredaLosGrantsDeSusRoles(t *testing.T) {
 	huerfano := uuid.NewString()
 	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "sin-membresia"},
 		[]domain.Grant{{Pattern: "flows.read", Effect: domain.EffectAllow}})
-	if err := f.store.Roles.AssignToUser(context.Background(), huerfano, role.ID); err != nil {
+	if err := f.store.Roles.AssignToUser(context.Background(), huerfano, role.ID, nil); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
 	token, _ := f.identityToken(t, huerfano, usecase.SystemWappBFF, 15*time.Minute)
@@ -597,7 +597,7 @@ func TestExchange_RolesAcotadosPorTenant(t *testing.T) {
 	roleGlobal := f.store.Roles.Seed(domain.Role{Name: "global-role"}, []domain.Grant{
 		{Pattern: "global.read", Effect: domain.EffectAllow},
 	})
-	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleGlobal.ID); err != nil {
+	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleGlobal.ID, nil); err != nil {
 		t.Fatalf("AssignToUser global: %v", err)
 	}
 
@@ -606,8 +606,8 @@ func TestExchange_RolesAcotadosPorTenant(t *testing.T) {
 	roleTenant := f.store.Roles.Seed(domain.Role{TenantID: &tenantID, Name: "tenant-role"}, []domain.Grant{
 		{Pattern: "tenant.write", Effect: domain.EffectAllow},
 	})
-	if err := f.store.Roles.AssignToUserWithTenant(context.Background(), f.userID, roleTenant.ID, testTenant); err != nil {
-		t.Fatalf("AssignToUserWithTenant tenant: %v", err)
+	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleTenant.ID, &tenantID); err != nil {
+		t.Fatalf("AssignToUser (tenant): %v", err)
 	}
 
 	// Rol acotado a OTRO tenant: concede "other.admin"
@@ -615,8 +615,8 @@ func TestExchange_RolesAcotadosPorTenant(t *testing.T) {
 	roleOther := f.store.Roles.Seed(domain.Role{TenantID: &otherTenantID, Name: "other-role"}, []domain.Grant{
 		{Pattern: "other.admin", Effect: domain.EffectAllow},
 	})
-	if err := f.store.Roles.AssignToUserWithTenant(context.Background(), f.userID, roleOther.ID, otherTenantID); err != nil {
-		t.Fatalf("AssignToUserWithTenant other: %v", err)
+	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleOther.ID, &otherTenantID); err != nil {
+		t.Fatalf("AssignToUser (other tenant): %v", err)
 	}
 
 	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
