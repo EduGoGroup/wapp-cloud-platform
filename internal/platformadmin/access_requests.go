@@ -397,6 +397,18 @@ func (r *Repository) ApproveAccessRequest(ctx context.Context, requestID, tenant
 		return rerr
 	}
 
+	if err := r.resolveApprovalWrite(ctx, status, requestID, tenantID, userID, roleID, operatorID); err != nil {
+		return err
+	}
+
+	return r.syncApprovedSystems(ctx, userID, requestID, systems, m2m)
+}
+
+// resolveApprovalWrite ejecuta -- o converge sobre -- la escritura LOCAL
+// (tenant + rol) de la aprobación, según el status con el que llegó la
+// solicitud. Extraída de ApproveAccessRequest sin cambiar ni el orden ni las
+// comprobaciones: mismo cuerpo, mismo comportamiento.
+func (r *Repository) resolveApprovalWrite(ctx context.Context, status, requestID, tenantID, userID, roleID, operatorID string) error {
 	switch status {
 	case "pending":
 		// (P3) Un tenant_id sintácticamente válido pero inexistente violaba
@@ -416,6 +428,7 @@ func (r *Repository) ApproveAccessRequest(ctx context.Context, requestID, tenant
 		if txErr := r.executeApprovalTx(ctx, requestID, tenantID, userID, roleID, operatorID); txErr != nil {
 			return txErr
 		}
+		return nil
 	case "approved":
 		if convErr := r.checkRetryApproved(ctx, userID, tenantID, roleID); convErr != nil {
 			return convErr
@@ -423,10 +436,17 @@ func (r *Repository) ApproveAccessRequest(ctx context.Context, requestID, tenant
 		// Lo local (tenant + rol) ya está escrito de una pasada anterior Y
 		// coincide con lo que se pide ahora: NO se vuelve a tocar
 		// executeApprovalTx, solo se reintenta systems.
+		return nil
 	default:
 		return ErrConflict
 	}
+}
 
+// syncApprovedSystems sincroniza en identity los systems pedidos, DESPUÉS de
+// que la escritura local ya quedó resuelta. Extraída de ApproveAccessRequest
+// sin cambiar ni el orden ni las comprobaciones: mismo cuerpo, mismo
+// comportamiento -- incluidos los tres desenlaces documentados en (1.1)/(D).
+func (r *Repository) syncApprovedSystems(ctx context.Context, userID, requestID string, systems []string, m2m out.IdentityM2MClient) error {
 	// (1.1) len(systems)==0 es un caso LEGÍTIMO -- no había nada que
 	// conceder -- y sigue devolviendo 204 sin más. m2m==nil es DISTINTO: SÍ
 	// había algo que conceder y no hay con qué. Antes ambos compartían la
@@ -561,13 +581,8 @@ func ApproveAccessRequestHandler(repo *Repository, m2m out.IdentityM2MClient, pl
 			return
 		}
 
-		var req ApproveAccessRequestRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
-			return
-		}
-		if req.TenantID == "" || req.Role == "" {
-			http.Error(w, "tenant_id y role son requeridos", http.StatusBadRequest)
+		req, ok := decodeApproveAccessRequestBody(w, r)
+		if !ok {
 			return
 		}
 
@@ -579,70 +594,96 @@ func ApproveAccessRequestHandler(repo *Repository, m2m out.IdentityM2MClient, pl
 		}
 
 		err := repo.ApproveAccessRequest(r.Context(), requestID, req.TenantID, req.Role, operatorID, req.Systems, m2m)
-		switch {
-		case errors.Is(err, ErrNotFound):
-			http.Error(w, "solicitud no encontrada", http.StatusNotFound)
-			return
-		case errors.Is(err, ErrTenantNotFound):
-			http.Error(w, "empresa no encontrada", http.StatusNotFound)
-			return
-		case errors.Is(err, ErrConflict):
-			http.Error(w, "la solicitud ya fue resuelta o la persona ya pertenece a otra empresa", http.StatusConflict)
-			return
-		case errors.Is(err, ErrInvalidInput):
-			http.Error(w, "datos de solicitud o rol inválidos", http.StatusBadRequest)
-			return
-		case errors.Is(err, ErrPlatformSystemForbidden):
-			http.Error(w, "wapp.platform no se concede desde la bandeja de solicitudes de acceso", http.StatusBadRequest)
-			return
-		case errors.Is(err, ErrSystemsUnionUnavailable):
-			// (D) Lo local quedó escrito; los systems de identity NO se
-			// tocaron porque esta cuenta ya pasó antes por la bandeja y no
-			// hay lectura para unir con seguridad. 409: no es transitorio,
-			// hace falta reconciliar a mano hasta que exista esa lectura.
-			writeJSON(w, http.StatusConflict, ApprovePartialResult{
-				Local: "ok", Identity: "skipped",
-				Reason: "el usuario ya tiene una aprobación previa y no se puede leer su conjunto actual de systems en identity; para no reemplazarlo por accidente no se tocó nada en identity",
-			})
-			return
-		case errors.Is(err, ErrSystemsSyncFailed):
-			// (C-04) Lo local (tenant + rol) quedó escrito; solo falló la
-			// sincronización con identity. 502 distinguible para que la
-			// consola pueda decírselo al operador y reintentar más tarde.
-			writeJSON(w, http.StatusBadGateway, ApprovePartialResult{
-				Local: "ok", Identity: "failed", Reason: err.Error(),
-			})
-			return
-		case errors.Is(err, ErrIdentityM2MUnavailable):
-			// (1.1) Mismo cuerpo que ErrSystemsSyncFailed y
-			// ErrSystemsUnionUnavailable (Local:"ok", Identity:"skipped")
-			// -- lo local quedó escrito -- pero 503, no 409/502: no es un
-			// conflicto de datos ni un fallo transitorio de red, es que
-			// este despliegue no tiene cliente M2M configurado en
-			// absoluto (mismo criterio y mismo código que usa
-			// SignupHandler para el mismo m2m==nil, signup.go:136-139).
-			writeJSON(w, http.StatusServiceUnavailable, ApprovePartialResult{
-				Local: "ok", Identity: "skipped",
-				Reason: "no hay cliente M2M configurado hacia identity en este despliegue; lo local (empresa y rol) quedó escrito pero los systems solicitados NO se concedieron",
-			})
-			return
-		case errors.Is(err, ErrRetryRoleMismatch):
-			// (1.2) El reintento pide un rol distinto del que ya quedó
-			// aprobado la primera vez: NO converge, así que no se toca
-			// nada (ni el rol local ni los systems de identity). 409:
-			// hace falta que el operador reconcilie a mano -- p. ej.
-			// rechazando y creando una solicitud nueva, o resolviendo el
-			// cambio de rol por otra vía -- esta bandeja no lo hace por
-			// su cuenta.
-			http.Error(w, "la solicitud ya fue aprobada con un rol distinto; el reintento no converge", http.StatusConflict)
-			return
-		case err != nil:
-			http.Error(w, "error al aprobar solicitud", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
+		writeApproveAccessRequestResult(w, err)
 	})
+}
+
+// decodeApproveAccessRequestBody decodifica y valida el cuerpo JSON de
+// POST /admin/access-requests/{id}/approve. Si el cuerpo es inválido o le
+// faltan tenant_id/role, ya escribió la respuesta de error y devuelve
+// ok=false -- mismo criterio y mismos mensajes que antes de extraerla.
+func decodeApproveAccessRequestBody(w http.ResponseWriter, r *http.Request) (ApproveAccessRequestRequest, bool) {
+	var req ApproveAccessRequestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
+		return req, false
+	}
+	if req.TenantID == "" || req.Role == "" {
+		http.Error(w, "tenant_id y role son requeridos", http.StatusBadRequest)
+		return req, false
+	}
+	return req, true
+}
+
+// writeApproveAccessRequestResult mapea el resultado de ApproveAccessRequest
+// al status y cuerpo HTTP de la respuesta. Mismo switch, mismos casos, mismo
+// orden que antes de extraerla -- incluido que ninguno de los errors.Is
+// coincide cuando err es nil, así que ese caso cae al 204 explícito de
+// abajo, igual que caía al w.WriteHeader posterior al switch original.
+func writeApproveAccessRequestResult(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrTenantNotFound):
+		http.Error(w, "empresa no encontrada", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrConflict):
+		http.Error(w, "la solicitud ya fue resuelta o la persona ya pertenece a otra empresa", http.StatusConflict)
+		return
+	case errors.Is(err, ErrInvalidInput):
+		http.Error(w, "datos de solicitud o rol inválidos", http.StatusBadRequest)
+		return
+	case errors.Is(err, ErrPlatformSystemForbidden):
+		http.Error(w, "wapp.platform no se concede desde la bandeja de solicitudes de acceso", http.StatusBadRequest)
+		return
+	case errors.Is(err, ErrSystemsUnionUnavailable):
+		// (D) Lo local quedó escrito; los systems de identity NO se
+		// tocaron porque esta cuenta ya pasó antes por la bandeja y no
+		// hay lectura para unir con seguridad. 409: no es transitorio,
+		// hace falta reconciliar a mano hasta que exista esa lectura.
+		writeJSON(w, http.StatusConflict, ApprovePartialResult{
+			Local: "ok", Identity: "skipped",
+			Reason: "el usuario ya tiene una aprobación previa y no se puede leer su conjunto actual de systems en identity; para no reemplazarlo por accidente no se tocó nada en identity",
+		})
+		return
+	case errors.Is(err, ErrSystemsSyncFailed):
+		// (C-04) Lo local (tenant + rol) quedó escrito; solo falló la
+		// sincronización con identity. 502 distinguible para que la
+		// consola pueda decírselo al operador y reintentar más tarde.
+		writeJSON(w, http.StatusBadGateway, ApprovePartialResult{
+			Local: "ok", Identity: "failed", Reason: err.Error(),
+		})
+		return
+	case errors.Is(err, ErrIdentityM2MUnavailable):
+		// (1.1) Mismo cuerpo que ErrSystemsSyncFailed y
+		// ErrSystemsUnionUnavailable (Local:"ok", Identity:"skipped")
+		// -- lo local quedó escrito -- pero 503, no 409/502: no es un
+		// conflicto de datos ni un fallo transitorio de red, es que
+		// este despliegue no tiene cliente M2M configurado en
+		// absoluto (mismo criterio y mismo código que usa
+		// SignupHandler para el mismo m2m==nil, signup.go:136-139).
+		writeJSON(w, http.StatusServiceUnavailable, ApprovePartialResult{
+			Local: "ok", Identity: "skipped",
+			Reason: "no hay cliente M2M configurado hacia identity en este despliegue; lo local (empresa y rol) quedó escrito pero los systems solicitados NO se concedieron",
+		})
+		return
+	case errors.Is(err, ErrRetryRoleMismatch):
+		// (1.2) El reintento pide un rol distinto del que ya quedó
+		// aprobado la primera vez: NO converge, así que no se toca
+		// nada (ni el rol local ni los systems de identity). 409:
+		// hace falta que el operador reconcilie a mano -- p. ej.
+		// rechazando y creando una solicitud nueva, o resolviendo el
+		// cambio de rol por otra vía -- esta bandeja no lo hace por
+		// su cuenta.
+		http.Error(w, "la solicitud ya fue aprobada con un rol distinto; el reintento no converge", http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, "error al aprobar solicitud", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RejectAccessRequestHandler devuelve el handler para POST /admin/access-requests/{id}/reject.

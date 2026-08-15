@@ -276,8 +276,36 @@ func TestIntegration_ApproveAccessRequest_RetryConvergesAfterIdentityFailure(t *
 	// arreglo, la solicitud quedaba "zombi" -- approved localmente, sin
 	// systems en identity, y fuera de la bandeja pending -- y CUALQUIER
 	// reintento moría con 409 porque status ya no era 'pending'.
+	approveWithFailingIdentitySync(ctx, t, repo, found.ID, ten.ID, operatorID)
+
+	// Lo LOCAL debe haber quedado escrito pese al fallo de identity.
+	assertAccessRequestApprovedLocally(ctx, t, db, userID, ten.ID, found.ID)
+
+	// 2) El admin pulsa "Aprobar" otra vez (identity ya volvió): debe
+	// CONVERGER, sin error, sin duplicar tenant_members ni iam_user_roles.
+	assertApproveRetryConverges(ctx, t, db, repo, found.ID, ten.ID, userID, operatorID)
+
+	// 3) Un reintento hacia un tenant DISTINTO no converge: es un conflicto
+	// real, no el mismo destino que el 'approved' ya escrito.
+	otroSlug := fmt.Sprintf("pa-c04-otro-%d", time.Now().UnixNano())
+	otroTen, err := repo.CreateTenant(ctx, otroSlug, "C-04 Otro Tenant", nil)
+	if err != nil {
+		t.Fatalf("CreateTenant otro: %v", err)
+	}
+	err = repo.ApproveAccessRequest(ctx, found.ID, otroTen.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, &fakeM2MClient{})
+	if !errors.Is(err, platformadmin.ErrConflict) {
+		t.Fatalf("esperado ErrConflict al reintentar hacia otro tenant, obtenido: %v", err)
+	}
+}
+
+// approveWithFailingIdentitySync ejecuta la primera aprobación con un M2M
+// cuyo ReplaceUserSystems falla, y comprueba que el error envuelve tanto la
+// causa (domain.ErrIdentityUnavailable) como el sentinel de dominio
+// (ErrSystemsSyncFailed), con UNA sola llamada a ReplaceUserSystems.
+func approveWithFailingIdentitySync(ctx context.Context, t *testing.T, repo *platformadmin.Repository, requestID, tenantID, operatorID string) {
+	t.Helper()
 	down := &fakeM2MClient{replaceErr: domain.ErrIdentityUnavailable}
-	err = repo.ApproveAccessRequest(ctx, found.ID, ten.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, down)
+	err := repo.ApproveAccessRequest(ctx, requestID, tenantID, "tenant_admin", operatorID, []string{"wapp.bff"}, down)
 	if !errors.Is(err, domain.ErrIdentityUnavailable) {
 		t.Fatalf("esperado error envolviendo domain.ErrIdentityUnavailable, obtenido: %v", err)
 	}
@@ -287,21 +315,31 @@ func TestIntegration_ApproveAccessRequest_RetryConvergesAfterIdentityFailure(t *
 	if down.calls != 1 {
 		t.Fatalf("esperada 1 llamada a ReplaceUserSystems, obtenidas: %d", down.calls)
 	}
+}
 
-	// Lo LOCAL debe haber quedado escrito pese al fallo de identity.
-	assertTenantMembersCount(ctx, t, db, userID, ten.ID, 1)
+// assertAccessRequestApprovedLocally comprueba que la escritura LOCAL
+// (tenant_members + status 'approved') quedó hecha pese al fallo de
+// identity de approveWithFailingIdentitySync.
+func assertAccessRequestApprovedLocally(ctx context.Context, t *testing.T, db *sql.DB, userID, tenantID, requestID string) {
+	t.Helper()
+	assertTenantMembersCount(ctx, t, db, userID, tenantID, 1)
 	var status string
-	if qerr := db.QueryRowContext(ctx, `SELECT status FROM public.access_requests WHERE id = $1`, found.ID).Scan(&status); qerr != nil {
+	if qerr := db.QueryRowContext(ctx, `SELECT status FROM public.access_requests WHERE id = $1`, requestID).Scan(&status); qerr != nil {
 		t.Fatalf("leer status: %v", qerr)
 	}
 	if status != "approved" {
 		t.Fatalf("status esperado 'approved' tras el fallo de identity, obtenido: %q", status)
 	}
+}
 
-	// 2) El admin pulsa "Aprobar" otra vez (identity ya volvió): debe
-	// CONVERGER, sin error, sin duplicar tenant_members ni iam_user_roles.
+// assertApproveRetryConverges reintenta la aprobación (identity ya
+// recuperado) y comprueba que converge: una sola llamada a
+// ReplaceUserSystems con los systems esperados, y sin duplicar filas de
+// tenant_members ni de iam_user_roles.
+func assertApproveRetryConverges(ctx context.Context, t *testing.T, db *sql.DB, repo *platformadmin.Repository, requestID, tenantID, userID, operatorID string) {
+	t.Helper()
 	up := &fakeM2MClient{}
-	err = repo.ApproveAccessRequest(ctx, found.ID, ten.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, up)
+	err := repo.ApproveAccessRequest(ctx, requestID, tenantID, "tenant_admin", operatorID, []string{"wapp.bff"}, up)
 	if err != nil {
 		t.Fatalf("el reintento debía converger, obtenido: %v", err)
 	}
@@ -312,27 +350,15 @@ func TestIntegration_ApproveAccessRequest_RetryConvergesAfterIdentityFailure(t *
 		t.Fatalf("systems reenviados inesperados: %v", up.replacedSystems)
 	}
 
-	assertTenantMembersCount(ctx, t, db, userID, ten.ID, 1) // sigue 1, no 2
+	assertTenantMembersCount(ctx, t, db, userID, tenantID, 1) // sigue 1, no 2
 	var roleRows int
 	if qerr := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM public.iam_user_roles WHERE user_id = $1 AND tenant_id = $2
-	`, userID, ten.ID).Scan(&roleRows); qerr != nil {
+	`, userID, tenantID).Scan(&roleRows); qerr != nil {
 		t.Fatalf("contar iam_user_roles: %v", qerr)
 	}
 	if roleRows != 1 {
 		t.Fatalf("iam_user_roles esperado 1 fila, obtenidas: %d", roleRows)
-	}
-
-	// 3) Un reintento hacia un tenant DISTINTO no converge: es un conflicto
-	// real, no el mismo destino que el 'approved' ya escrito.
-	otroSlug := fmt.Sprintf("pa-c04-otro-%d", time.Now().UnixNano())
-	otroTen, err := repo.CreateTenant(ctx, otroSlug, "C-04 Otro Tenant", nil)
-	if err != nil {
-		t.Fatalf("CreateTenant otro: %v", err)
-	}
-	err = repo.ApproveAccessRequest(ctx, found.ID, otroTen.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, up)
-	if !errors.Is(err, platformadmin.ErrConflict) {
-		t.Fatalf("esperado ErrConflict al reintentar hacia otro tenant, obtenido: %v", err)
 	}
 }
 
