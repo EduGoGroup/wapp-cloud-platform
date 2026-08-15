@@ -318,6 +318,12 @@ type RateLimitConfig struct {
 	// PublicBurst es la ráfaga admitida por credencial. Default 40. Se lee de
 	// WAPP_RATELIMIT_PUBLIC_BURST.
 	PublicBurst int `yaml:"public_burst"`
+	// TrustProxy habilita leer X-Forwarded-For/X-Real-IP para el rate-limit por
+	// IP de rutas públicas SIN credencial (hoy solo POST /api/v1/signup,
+	// A-06a). Default false: sin un proxy de confianza delante, esas cabeceras
+	// las pone el cliente y serían un bypass trivial del freno (cada petición
+	// estrena cubo con una IP falsa). Se lee de WAPP_RATELIMIT_TRUST_PROXY.
+	TrustProxy bool `yaml:"trust_proxy"`
 }
 
 // JWTConfig agrupa el material de firma del Context Token de wApp (ADR-0019).
@@ -513,6 +519,9 @@ func defaults() AppConfig {
 		RateLimit: RateLimitConfig{
 			PublicRPS:   20,
 			PublicBurst: 40,
+			// Explícito a propósito (igual que LogJSON): sin proxy de
+			// confianza delante por defecto.
+			TrustProxy: false,
 		},
 		Flow: FlowConfig{
 			ReplyRate:             0.5,
@@ -634,6 +643,7 @@ func Load() (AppConfig, error) {
 
 	cfg.RateLimit.PublicRPS = loader.GetInt("RATELIMIT_PUBLIC_RPS", cfg.RateLimit.PublicRPS)
 	cfg.RateLimit.PublicBurst = loader.GetInt("RATELIMIT_PUBLIC_BURST", cfg.RateLimit.PublicBurst)
+	cfg.RateLimit.TrustProxy = loader.GetBool("RATELIMIT_TRUST_PROXY", cfg.RateLimit.TrustProxy)
 
 	cfg.Flow.ReplyRate = getFloat(loader, "FLOW_REPLY_RATE", cfg.Flow.ReplyRate)
 	if b := loader.GetInt("FLOW_REPLY_BURST", cfg.Flow.ReplyBurst); b > 0 {

@@ -24,6 +24,7 @@ import (
 	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/identity"
 	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
@@ -75,8 +76,15 @@ type authStack struct {
 	// correcta: un despliegue sin identity es un despliegue donde nadie puede
 	// autenticarse, y decirlo es mejor que tener un camino propio de reserva.
 	edgeAuthSvc *iamusecase.DelegatedAuthService
-	// m2mClient habla con identity-api como máquina para aprovisionamiento (Plan 056).
-	m2mClient *iamidentity.M2MClient
+	// m2mClient habla con identity-api como máquina para aprovisionamiento
+	// (Plan 056). Es una INTERFAZ (out.IdentityM2MClient), NO el puntero
+	// concreto *iamidentity.M2MClient (C-02): un *M2MClient nil convertido a
+	// un parámetro de tipo interfaz produce un valor de interfaz CON TIPO, y
+	// entonces las guardas `m2m == nil` de signup.go y access_requests.go dan
+	// SIEMPRE false. Como campo de interfaz, dejarlo sin asignar (el zero
+	// value de wireIdentityM2M cuando falta la config) es un nil de interfaz
+	// de verdad.
+	m2mClient out.IdentityM2MClient
 }
 
 // userJWTBundle agrupa el material de tokens de USUARIO (ADR-0019, Plan 028).
@@ -186,6 +194,9 @@ func (s *authStack) wireIdentityM2M(cfg config.AppConfig, log sharedlogger.Logge
 	apiKey := strings.TrimSpace(cfg.Identity.APIKey)
 	if identityURL == "" || apiKey == "" {
 		log.Warn("WAPP_IDENTITY_URL o WAPP_IDENTITY_API_KEY vacías: cliente M2M de identity no inicializado (alta pública y asignación de sistemas no disponibles)")
+		// s.m2mClient se queda en su zero value: un nil de interfaz DE
+		// VERDAD (C-02). buildPublicAPIServer usa justo esa nulidad para NO
+		// cablear POST /api/v1/signup con un handler que no puede operar.
 		return nil
 	}
 	m2m, err := iamidentity.NewM2M(identityURL, apiKey, cfg.Identity.Timeout)

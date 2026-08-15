@@ -41,9 +41,23 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
 
-	// Ruta pública de alta de usuario (Plan 056 · T3.2): rate-limit por IP (5 rps, burst 10)
-	signupLimiter := ratelimit.NewLimiter(rate.Limit(5), 10)
-	publicMux.Handle("POST /api/v1/signup", platformadmin.SignupHandler(platformRepo, as.m2mClient, signupLimiter, log))
+	// Ruta pública de alta de usuario (Plan 056 · T3.2). A-06a: el freno era
+	// 5 rps/burst 10 por IP —432 000 altas/día para un formulario que una
+	// persona rellena una vez—; baja a 1 cada 60s con ráfaga de 5. C-02
+	// (defensa en profundidad): sin cliente M2M (falta WAPP_IDENTITY_API_KEY)
+	// esta ruta NO se cablea al handler real —que necesita el M2M para
+	// operar—, sino a un 503 fijo. La guarda `m2m == nil` dentro de
+	// SignupHandler es la SEGUNDA capa, por si algún día alguien lo registra
+	// desde otro sitio.
+	if as.m2mClient != nil {
+		signupLimiter := ratelimit.NewLimiter(rate.Every(time.Minute), 5)
+		publicMux.Handle("POST /api/v1/signup", platformadmin.SignupHandler(platformRepo, as.m2mClient, signupLimiter, cfg.RateLimit.TrustProxy, log))
+	} else {
+		log.Warn("POST /api/v1/signup: falta WAPP_IDENTITY_API_KEY; el registro público responde 503 (servicio no disponible)")
+		publicMux.Handle("POST /api/v1/signup", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "registro no disponible", http.StatusServiceUnavailable)
+		}))
+	}
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras
