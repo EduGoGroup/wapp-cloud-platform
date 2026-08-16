@@ -108,7 +108,13 @@ func TestIntegration_TenantScopedUserRoles(t *testing.T) {
 	roles := iampostgres.NewRoleRepo(env.db)
 
 	userID := uuid.NewString()
-	roleGlobal, err := roles.Create(ctx, domain.Role{Name: "global-role-it"})
+	// El nombre lleva sufijo único (mismo patrón que otherSlug, abajo) porque un
+	// rol GLOBAL vive en `tenant_id IS NULL`, donde no hay tenant recién sembrado
+	// que lo aísle: el índice parcial iam_roles_global_name_uidx (0015) lo hace
+	// único en TODA la base, y un nombre fijo hacía que el test pasara contra una
+	// BD virgen y reventara contra la misma BD por segunda vez.
+	globalName := fmt.Sprintf("global-role-it-%d", time.Now().UnixNano())
+	roleGlobal, err := roles.Create(ctx, domain.Role{Name: globalName})
 	if err != nil {
 		t.Fatalf("crear global role: %v", err)
 	}
