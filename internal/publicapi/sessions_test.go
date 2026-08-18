@@ -174,6 +174,131 @@ func TestSessionsList_HealthOmittedWhenAbsent(t *testing.T) {
 	}
 }
 
+// workerHealthKeys son las claves del bloque del worker (Plan 051 · T4.3) en el
+// DTO de GET /api/v1/sessions.
+var workerHealthKeys = []string{
+	"worker_taskset", "intent_p50_ms", "intent_omitted_by_reason",
+	"stuck_heads", "stuck_head_polls", "failed_seal_dispatch", "failed_seal_budget",
+}
+
+// rawRows decodifica la respuesta como objetos crudos para poder afirmar sobre la
+// AUSENCIA de una clave (que es lo que significa «no lo sé»), no solo sobre su cero.
+func rawRows(t *testing.T, body []byte) []map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal(body, &rows); err != nil {
+		t.Fatalf("unmarshal crudo: %v", err)
+	}
+	return rows
+}
+
+// TestSessionsList_WorkerHealthUnknownIsOmitted es el test central de la regla de
+// lectura del Plan 051 · T4.3 en la API: cuando el Edge NO SABE el bloque del
+// worker, las claves NO APARECEN en el JSON. Nunca salen como 0 ni como "",
+// porque un consumidor pintaría "0 ms" o "disjunta" sobre un dato inexistente.
+func TestSessionsList_WorkerHealthUnknownIsOmitted(t *testing.T) {
+	sessions := fakeSessions{byTenant: map[string][]fleet.Session{
+		tenantA: {{
+			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
+			State: fleet.StateOnline, Role: fleet.RoleBot,
+			WhatsappState: "connected", BinaryVersion: "v0.12.0",
+			// Bloque del worker entero en «no lo sé»: mapa nil incluido.
+		}},
+	}}
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessions}}, apiKeys())
+
+	rec := call(mux, keyASessions, http.MethodGet, "/api/v1/sessions", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	rows := rawRows(t, rec.Body.Bytes())
+	if len(rows) != 1 {
+		t.Fatalf("filas=%d, quiero 1", len(rows))
+	}
+	for _, k := range workerHealthKeys {
+		if v, ok := rows[0][k]; ok {
+			t.Fatalf("%q desconocido debe OMITIRSE, no viajar como %v", k, v)
+		}
+	}
+	// intent_circuit vacío tampoco puede viajar: ausente ≠ "closed".
+	if v, ok := rows[0]["intent_circuit"]; ok {
+		t.Fatalf("intent_circuit vacío debe omitirse (ausente ≠ closed): %v", v)
+	}
+}
+
+// TestSessionsList_WorkerHealthExposed cubre el criterio literal de T4.3: el
+// BREAKER ABIERTO y el TASKSET se ven sin entrar en la máquina. Además fija que un
+// 0 MEDIDO sí viaja (puntero presente) y que el desglose de motivos llega clave a
+// clave, sin ningún total agregado (INV-051.3).
+func TestSessionsList_WorkerHealthExposed(t *testing.T) {
+	cero := int64(0)
+	p50 := int64(1450)
+	heads := int64(3)
+	razones := map[string]int64{"fastlane": 7, "presupuesto": 2, "breaker": 1}
+	// El breaker ya NO viaja siempre vacío (cloudlink >= v0.13.0), y
+	// FailedSealBudget se deja SIN reportar para probar en la misma respuesta que
+	// un 0 medido viaja y un desconocido se omite.
+	sessions := fakeSessions{byTenant: map[string][]fleet.Session{
+		tenantA: {{
+			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
+			State: fleet.StateOnline, Role: fleet.RoleBot, WhatsappState: "connected",
+			IntentCircuit: "open", WorkerTaskset: "cajero_sin_confinar",
+			IntentP50Ms: &p50, IntentOmittedByReason: razones,
+			StuckHeads: &heads, FailedSealDispatch: &cero,
+		}},
+	}}
+	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessions}}, apiKeys())
+
+	rec := call(mux, keyASessions, http.MethodGet, "/api/v1/sessions", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	rows := rawRows(t, rec.Body.Bytes())
+	if len(rows) != 1 {
+		t.Fatalf("filas=%d, quiero 1", len(rows))
+	}
+	got := rows[0]
+
+	// Criterio de T4.3: breaker y taskset visibles.
+	if got["intent_circuit"] != "open" {
+		t.Fatalf("el breaker abierto debe verse en la consola: %v", got["intent_circuit"])
+	}
+	if got["worker_taskset"] != "cajero_sin_confinar" {
+		t.Fatalf("el taskset debe verse en la consola: %v", got["worker_taskset"])
+	}
+	if v, ok := got["intent_p50_ms"].(float64); !ok || int64(v) != 1450 {
+		t.Fatalf("intent_p50_ms medido debe viajar: %v", got["intent_p50_ms"])
+	}
+	// Un 0 MEDIDO viaja (puntero presente): «no ocurrió» ≠ «no lo sé».
+	if v, ok := got["failed_seal_dispatch"].(float64); !ok || v != 0 {
+		t.Fatalf("un 0 medido debe viajar como 0, no omitirse: %v (presente=%v)",
+			got["failed_seal_dispatch"], ok)
+	}
+	// El que NO se reportó sigue ausente, en la misma respuesta.
+	if v, ok := got["failed_seal_budget"]; ok {
+		t.Fatalf("failed_seal_budget no reportado debe omitirse: %v", v)
+	}
+
+	// Desglose clave a clave; ningún total agregado en el DTO.
+	desglose, ok := got["intent_omitted_by_reason"].(map[string]any)
+	if !ok {
+		t.Fatalf("intent_omitted_by_reason debe viajar como objeto: %v", got["intent_omitted_by_reason"])
+	}
+	for k, want := range map[string]float64{"fastlane": 7, "presupuesto": 2, "breaker": 1} {
+		if v, okk := desglose[k].(float64); !okk || v != want {
+			t.Fatalf("motivo %q: got %v, want %v", k, desglose[k], want)
+		}
+	}
+	if len(desglose) != 3 {
+		t.Fatalf("el desglose no puede ganar ni perder claves (ni traer un total): %v", desglose)
+	}
+	for _, prohibida := range []string{"intent_omitted_total", "failed_seal_total", "stuck_total"} {
+		if _, existe := got[prohibida]; existe {
+			t.Fatalf("el DTO no puede exponer agregados (%q): rompe INV-051.3 / T3.12", prohibida)
+		}
+	}
+}
+
 func TestSessionsList_TenantIsolation(t *testing.T) {
 	mux := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{Sessions: sessionsFixture()}}, apiKeys())
 

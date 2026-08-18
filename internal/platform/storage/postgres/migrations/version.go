@@ -85,7 +85,15 @@ import (
 // (tenants.read.any, tenants.create.any, fleet.read.any, users.provision.any,
 // enrollment.issue.any). Un solo bump para T1.1/T3.1, sobre la 0.33.0 ya
 // publicada (la 0058/0059 del Plan 055, aplicadas contra Neon de UAT).
-const SchemaVersion = "0.34.0"
+//
+// 0.35.0 -- Plan 051 · Ola 4 · T4.3 (0061): fleet_sessions gana la salud del
+// WORKER del cajero de intents (campos 9-15 del SessionHealth de cloudlink):
+// worker_taskset, intent_p50_ms, intent_omitted_by_reason (JSONB, motivo->conteo)
+// y los cuatro contadores del despachador de T3.12 (stuck_heads,
+// stuck_head_polls, failed_seal_dispatch, failed_seal_budget). Todas NULLABLE y
+// SIN default: NULL = «este Edge no lo sabe», jamás «está bien». Un solo bump
+// para la ola, sobre la 0.34.0 ya publicada (Plan 056, desplegada en UAT).
+const SchemaVersion = "0.35.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

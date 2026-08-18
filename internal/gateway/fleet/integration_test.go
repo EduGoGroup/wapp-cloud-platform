@@ -118,3 +118,86 @@ func TestIntegration_FleetSaveHealth(t *testing.T) {
 		t.Fatalf("al salir de degradado: degraded_since/reason limpios y state connected: %+v", list[0])
 	}
 }
+
+// TestIntegration_FleetSaveWorkerHealth verifica contra Postgres real (migración
+// 0061) que el bloque del WORKER (Plan 051 · T4.3) conserva la distinción entre
+// «no lo sé» y «cero»: sin dato las columnas quedan NULL y se leen como nil (no
+// como 0), con dato viajan enteras —incluido un 0 MEDIDO— y el desglose de motivos
+// hace ida y vuelta por el JSONB clave a clave, sin agregarse (INV-051.3).
+func TestIntegration_FleetSaveWorkerHealth(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	const edgeID, sessionID = "edge-worker-1", "sess-worker-1"
+
+	repo := fleet.NewPostgresRepository(db)
+	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+
+	// 1) Edge que no sabe nada del worker (mapa NIL incluido) ⇒ todo NULL/nil.
+	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
+		WhatsappState: "connected", BinaryVersion: "v0.12.0",
+	}); err != nil {
+		t.Fatalf("SaveHealth sin bloque de worker: %v", err)
+	}
+	s := getSession(t, repo, tenantID, edgeID, sessionID)
+	if s.WorkerTaskset != "" || s.IntentP50Ms != nil || s.IntentOmittedByReason != nil ||
+		s.StuckHeads != nil || s.StuckHeadPolls != nil ||
+		s.FailedSealDispatch != nil || s.FailedSealBudget != nil {
+		t.Fatalf("sin dato del worker todo debe quedar en DESCONOCIDO (NULL⇒nil): %+v", s)
+	}
+
+	// 2) Edge que sí lo sabe: el 0 de failed_seal_dispatch es un 0 MEDIDO.
+	cero := int64(0)
+	p50 := int64(1450)
+	heads := int64(3)
+	polls := int64(11)
+	budget := int64(4)
+	razones := map[string]int64{"fastlane": 7, "presupuesto": 2, "breaker": 1}
+	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
+		WhatsappState: "connected", IntentCircuit: "open",
+		WorkerTaskset: "solapada", IntentP50Ms: &p50,
+		IntentOmittedByReason: razones, StuckHeads: &heads,
+		StuckHeadPolls: &polls, FailedSealDispatch: &cero, FailedSealBudget: &budget,
+	}); err != nil {
+		t.Fatalf("SaveHealth con bloque de worker: %v", err)
+	}
+	s = getSession(t, repo, tenantID, edgeID, sessionID)
+	if s.WorkerTaskset != "solapada" || s.IntentCircuit != "open" {
+		t.Fatalf("taskset/breaker deben verse sin entrar en la máquina: %+v", s)
+	}
+	if s.IntentP50Ms == nil || *s.IntentP50Ms != 1450 {
+		t.Fatalf("intent_p50_ms: %v, want 1450", s.IntentP50Ms)
+	}
+	if s.FailedSealDispatch == nil || *s.FailedSealDispatch != 0 {
+		t.Fatalf("un 0 MEDIDO debe volver como puntero a 0, no como NULL: %v", s.FailedSealDispatch)
+	}
+	if s.FailedSealBudget == nil || *s.FailedSealBudget != 4 {
+		t.Fatalf("failed_seal_budget: %v, want 4", s.FailedSealBudget)
+	}
+	if s.StuckHeads == nil || *s.StuckHeads != 3 || s.StuckHeadPolls == nil || *s.StuckHeadPolls != 11 {
+		t.Fatalf("contadores de cabeza atascada: %+v", s)
+	}
+	for k, want := range map[string]int64{"fastlane": 7, "presupuesto": 2, "breaker": 1} {
+		if got := s.IntentOmittedByReason[k]; got != want {
+			t.Fatalf("motivo %q: got %d, want %d", k, got, want)
+		}
+	}
+	if len(s.IntentOmittedByReason) != 3 {
+		t.Fatalf("el desglose no puede ganar ni perder claves en el JSONB: %v", s.IntentOmittedByReason)
+	}
+
+	// 3) Parte RANCIO (el Edge manda las tres señales a su cero a propósito): el
+	// valor anterior se BORRA, no se conserva. Conservar un "solapada" viejo sería
+	// publicar una señal de salud inventada.
+	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
+		WhatsappState: "connected",
+	}); err != nil {
+		t.Fatalf("SaveHealth rancio: %v", err)
+	}
+	if s = getSession(t, repo, tenantID, edgeID, sessionID); s.WorkerTaskset != "" ||
+		s.IntentP50Ms != nil || s.IntentOmittedByReason != nil {
+		t.Fatalf("un parte rancio debe volver a DESCONOCIDO: %+v", s)
+	}
+}

@@ -40,7 +40,39 @@ type sessionDTO struct {
 	BinaryVersion     string `json:"binary_version,omitempty"`
 	UptimeS           int64  `json:"uptime_s,omitempty"`
 	DekLoadDurationMs int64  `json:"dek_load_duration_ms,omitempty"`
-	IntentCircuit     string `json:"intent_circuit,omitempty"`
+
+	// IntentCircuit es el breaker del clasificador: "closed"|"open"|"half_open".
+	// ⚠️ Hasta cloudlink v0.12.0 SIEMPRE viajaba vacío; desde el 051 · T4.3 llega
+	// lleno, así que este campo EMPIEZA A APARECER en la respuesta. Ausente sigue
+	// significando «el Edge no lo sabe», NUNCA "closed" (decisión 4 de la Ola 4).
+	// Es la mitad "breaker abierto" del criterio de T4.3.
+	IntentCircuit string `json:"intent_circuit,omitempty"`
+
+	// --- Salud del WORKER del cajero de intents (Plan 051 · T4.3). 🔴 Los campos
+	// medibles van en PUNTERO/mapa: se OMITEN cuando el Edge no los sabe, y un 0
+	// presente es un 0 medido. Un consumidor NO puede pintar la ausencia como
+	// "disjunta" ni como "0 ms": la ausencia se pinta como DESCONOCIDO. ---
+
+	// WorkerTaskset: "disjunta"|"solapada"|"cajero_sin_confinar". Ausente = el Edge
+	// no lo sabe (no es Linux, o el parte del worker está rancio). Es la mitad
+	// "taskset" del criterio de T4.3.
+	WorkerTaskset string `json:"worker_taskset,omitempty"`
+	// IntentP50Ms es el p50 de la INFERENCIA en ms. Ausente = no medible; NO es
+	// "0 ms". No confundir con el p50 del handler de whatsmeow (otra población).
+	IntentP50Ms *int64 `json:"intent_p50_ms,omitempty"`
+	// IntentOmittedByReason: motivo→conteo de los despachos sin intent. 🔴 NUNCA se
+	// agrega en un total ("fastlane" es el camino SANO; "presupuesto"/"breaker" son
+	// FALLOS). Solo trae claves con valor distinto de cero: clave ausente ≠ cero
+	// medido, y ausencia del objeto entero = no reportado.
+	IntentOmittedByReason map[string]int64 `json:"intent_omitted_by_reason,omitempty"`
+	// StuckHeads/StuckHeadPolls: cabeza de cola atascada (T3.12). Sin ellos, cero
+	// despachos se lee igual "no hay trabajo" que "el trabajo no avanza".
+	StuckHeads     *int64 `json:"stuck_heads,omitempty"`
+	StuckHeadPolls *int64 `json:"stuck_head_polls,omitempty"`
+	// FailedSealDispatch/FailedSealBudget: 🔴 SEPARADOS a propósito — solo el
+	// primero implica mensajes DUPLICADOS. Agregarlos deshace T3.12.
+	FailedSealDispatch *int64 `json:"failed_seal_dispatch,omitempty"`
+	FailedSealBudget   *int64 `json:"failed_seal_budget,omitempty"`
 }
 
 // listSessionsHandler devuelve el handler de GET /api/v1/sessions: lista las
@@ -83,6 +115,17 @@ func listSessionsHandler(sessions SessionLister, rules HealthRules, alerter Aler
 				UptimeS:           s.UptimeS,
 				DekLoadDurationMs: s.DekLoadDurationMs,
 				IntentCircuit:     s.IntentCircuit,
+
+				// Bloque del worker (Plan 051 · T4.3): se copia TAL CUAL, punteros y
+				// mapa incluidos. Ningún COALESCE, ninguna suma, ningún default: nil
+				// viaja como campo ausente y eso es lo que significa «no lo sé».
+				WorkerTaskset:         s.WorkerTaskset,
+				IntentP50Ms:           s.IntentP50Ms,
+				IntentOmittedByReason: s.IntentOmittedByReason,
+				StuckHeads:            s.StuckHeads,
+				StuckHeadPolls:        s.StuckHeadPolls,
+				FailedSealDispatch:    s.FailedSealDispatch,
+				FailedSealBudget:      s.FailedSealBudget,
 			}
 			if !s.LastConnectedAt.IsZero() {
 				dto.LastConnectedAt = s.LastConnectedAt.UTC().Format(isoFormat)

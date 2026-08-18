@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -155,28 +156,75 @@ func (r *PostgresRepository) SetRole(ctx context.Context, tenantID, sessionID st
 // CASE que preserva el instante de entrada: al entrar en degradado usa el valor
 // previo o now() (COALESCE) y al salir lo pone NULL — atómico contra el valor
 // actual de la fila. Un UPDATE de 0 filas (sesión aún sin registrar) es válido.
+// El bloque del WORKER (Plan 051 · T4.3, campos 9-15) se escribe en columnas
+// NULLABLE: un puntero nil / un texto vacío / un mapa vacío se persisten como NULL
+// («este Edge no lo sabe»), NUNCA como cero. Y se escriben SIEMPRE, también cuando
+// son NULL: un snapshot que dejó de saber el taskset debe BORRAR el valor previo,
+// porque conservar un "disjunta" viejo es publicar una salud inventada.
 func (r *PostgresRepository) SaveHealth(ctx context.Context, tenantID, edgeID, sessionID string, h HealthSnapshot) error {
+	// El desglose de motivos va al JSONB tal cual, SIN sumar nada (INV-051.3). Un
+	// mapa nil o vacío se queda como interfaz nil ⇒ NULL, y no como '{}': el
+	// contrato solo envía las claves con valor distinto de cero, así que un Edge
+	// nuevo SIN omisiones y un Edge viejo llegan indistinguibles — y ante la duda
+	// la lectura honesta es «no lo sé», no «cero omisiones».
+	var omitted any
+	if len(h.IntentOmittedByReason) > 0 {
+		raw, merr := json.Marshal(h.IntentOmittedByReason)
+		if merr != nil {
+			return fmt.Errorf("fleet: serializar desglose de motivos: %w", merr)
+		}
+		omitted = raw
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE public.fleet_sessions
-		SET whatsapp_state       = $4,
-		    degraded_reason      = $5,
-		    last_event_age_s     = $6,
-		    dek_load_duration_ms = $7,
-		    intent_circuit       = $8,
-		    outbox_depth         = $9,
-		    binary_version       = $10,
-		    uptime_s             = $11,
-		    last_health_at       = now(),
-		    degraded_since       = CASE WHEN $12 THEN COALESCE(degraded_since, now()) ELSE NULL END,
-		    updated_at           = now()
+		SET whatsapp_state           = $4,
+		    degraded_reason          = $5,
+		    last_event_age_s         = $6,
+		    dek_load_duration_ms     = $7,
+		    intent_circuit           = $8,
+		    outbox_depth             = $9,
+		    binary_version           = $10,
+		    uptime_s                 = $11,
+		    last_health_at           = now(),
+		    degraded_since           = CASE WHEN $12 THEN COALESCE(degraded_since, now()) ELSE NULL END,
+		    worker_taskset           = $13,
+		    intent_p50_ms            = $14,
+		    intent_omitted_by_reason = $15,
+		    stuck_heads              = $16,
+		    stuck_head_polls         = $17,
+		    failed_seal_dispatch     = $18,
+		    failed_seal_budget       = $19,
+		    updated_at               = now()
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
 	`, tenantID, edgeID, sessionID,
 		h.WhatsappState, h.DegradedReason, h.LastEventAgeS, h.DekLoadDurationMs,
-		h.IntentCircuit, h.OutboxDepth, h.BinaryVersion, h.UptimeS, h.Degraded())
+		h.IntentCircuit, h.OutboxDepth, h.BinaryVersion, h.UptimeS, h.Degraded(),
+		nullText(h.WorkerTaskset), nullInt64(h.IntentP50Ms), omitted,
+		nullInt64(h.StuckHeads), nullInt64(h.StuckHeadPolls),
+		nullInt64(h.FailedSealDispatch), nullInt64(h.FailedSealBudget))
 	if err != nil {
 		return fmt.Errorf("fleet: persistir salud: %w", err)
 	}
 	return nil
+}
+
+// nullText mapea el texto vacío a NULL: en las columnas de salud del worker,
+// vacío significa «no lo sé» y NULL es su representación en el esquema.
+func nullText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// nullInt64 desreferencia el puntero a un valor que el driver entiende, o nil
+// (NULL) si no hay dato. Se desreferencia a mano y no se pasa el *int64 crudo
+// para no depender de cómo cada driver trate los punteros.
+func nullInt64(p *int64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // Get devuelve la sesión, o found=false si no existe.
@@ -228,6 +276,11 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 // (Plan 031 · T3) van al final: degraded_since/last_health_at se escanean como
 // NullTime (NULL ⇒ time.Time cero, que la API lee con IsZero); el resto colapsa a
 // su cero con COALESCE.
+//
+// 🔴 El bloque del WORKER (Plan 051 · T4.3) va SIN COALESCE a propósito: colapsar
+// su NULL a 0 borraría la distinción entre «no medible» y «cero», que es
+// justamente la información que estas columnas existen para conservar. Se escanean
+// como sql.NullInt64 / []byte y se traducen a punteros y mapa nil-able.
 const selectSessionCols = `
 		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
 		       COALESCE(self_pn, ''),
@@ -236,7 +289,9 @@ const selectSessionCols = `
 		       degraded_since, last_health_at,
 		       COALESCE(last_event_age_s, 0), COALESCE(outbox_depth, 0),
 		       COALESCE(binary_version, ''), COALESCE(uptime_s, 0),
-		       COALESCE(dek_load_duration_ms, 0), COALESCE(intent_circuit, '')`
+		       COALESCE(dek_load_duration_ms, 0), COALESCE(intent_circuit, ''),
+		       COALESCE(worker_taskset, ''), intent_p50_ms, intent_omitted_by_reason,
+		       stuck_heads, stuck_head_polls, failed_seal_dispatch, failed_seal_budget`
 
 // rowScanner abstrae *sql.Row y *sql.Rows para reusar el escaneo.
 type rowScanner interface {
@@ -247,11 +302,15 @@ func scanSession(sc rowScanner) (Session, error) {
 	var s Session
 	var state, role string
 	var degradedSince, lastHealthAt sql.NullTime
+	var p50, stuckHeads, stuckPolls, sealDispatch, sealBudget sql.NullInt64
+	var omittedRaw []byte
 	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.SelfPn,
 		&s.LastConnectedAt, &s.LastSeenAt,
 		&s.WhatsappState, &s.DegradedReason, &degradedSince, &lastHealthAt,
 		&s.LastEventAgeS, &s.OutboxDepth, &s.BinaryVersion, &s.UptimeS,
-		&s.DekLoadDurationMs, &s.IntentCircuit); err != nil {
+		&s.DekLoadDurationMs, &s.IntentCircuit,
+		&s.WorkerTaskset, &p50, &omittedRaw,
+		&stuckHeads, &stuckPolls, &sealDispatch, &sealBudget); err != nil {
 		return Session{}, err
 	}
 	s.State = State(state)
@@ -262,5 +321,25 @@ func scanSession(sc rowScanner) (Session, error) {
 	if lastHealthAt.Valid {
 		s.LastHealthAt = lastHealthAt.Time
 	}
+	// Bloque del worker (Plan 051 · T4.3): NULL ⇒ puntero nil («no lo sé»), nunca 0.
+	s.IntentP50Ms = int64Ptr(p50)
+	s.StuckHeads = int64Ptr(stuckHeads)
+	s.StuckHeadPolls = int64Ptr(stuckPolls)
+	s.FailedSealDispatch = int64Ptr(sealDispatch)
+	s.FailedSealBudget = int64Ptr(sealBudget)
+	if len(omittedRaw) > 0 {
+		if err := json.Unmarshal(omittedRaw, &s.IntentOmittedByReason); err != nil {
+			return Session{}, fmt.Errorf("fleet: deserializar desglose de motivos: %w", err)
+		}
+	}
 	return s, nil
+}
+
+// int64Ptr convierte un sql.NullInt64 en *int64: NULL ⇒ nil («no lo sé»), nunca 0.
+func int64Ptr(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Int64
+	return &v
 }

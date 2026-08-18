@@ -107,7 +107,46 @@ type Session struct {
 	DekLoadDurationMs int64
 	// IntentCircuit es el estado del circuito del clasificador (closed|open|half_open);
 	// vacío si el 029 no aplica.
+	//
+	// ⚠️ Hasta cloudlink v0.12.0 este campo SIEMPRE viajaba vacío (el Edge nunca lo
+	// llenaba). Desde el 051 · T4.3 llega LLENO. Ningún consumidor puede seguir
+	// asumiendo que está vacío — y vacío sigue significando «no lo sé», NUNCA
+	// «closed» (decisión 4 de la Ola 4, 2026-08-17).
 	IntentCircuit string
+
+	// --- Salud del WORKER del cajero de intents (Plan 051 · T4.3, campos 9-15 del
+	// SessionHealth). 🔴 REGLA: nil/vacío = «este Edge NO LO SABE», jamás «está
+	// bien». Por eso lo medible va en PUNTERO y no en su cero: un 0 de valor y un
+	// «no lo sé» son cosas distintas y la consola no puede confundirlos. ---
+
+	// WorkerTaskset es el veredicto del reparto de CPU entre el cajero y Ollama
+	// (T2.8): disjunta|solapada|cajero_sin_confinar. VACÍO = el Edge no lo sabe (no
+	// es Linux, o el parte del worker está rancio): NUNCA se lee como "disjunta".
+	WorkerTaskset string
+	// IntentP50Ms es el p50 en ms de la INFERENCIA del clasificador. nil = NO
+	// MEDIBLE. El contrato lo transporta como 0 y el ingestor traduce ese 0 a nil:
+	// persistir el 0 lo dejaría leyéndose como "instantáneo", que es falso. NO es
+	// el p50 del handler de whatsmeow (otra población y otro proceso).
+	IntentP50Ms *int64
+	// IntentOmittedByReason desglosa los despachos que salieron SIN intent por
+	// motivo (INV-051.3). nil = no reportado. 🔴 NUNCA se agrega en un total:
+	// "fastlane" es el camino SANO y "presupuesto"/"breaker" son FALLOS. Solo
+	// llegan las claves con valor distinto de cero: una clave AUSENTE no es un
+	// "cero medido". Leer un mapa nil devuelve el cero sin panic, pero iterarlo da
+	// cero vueltas: no supongas las ocho claves presentes.
+	IntentOmittedByReason map[string]int64
+	// StuckHeads son las cabezas de cola detectadas ATASCADAS (T3.12). nil = la
+	// fila nunca recibió el bloque del worker; 0 = no ocurrió (o el Edge no lo mide).
+	StuckHeads *int64
+	// StuckHeadPolls son los sondeos de una cabeza atascada (T3.12).
+	StuckHeadPolls *int64
+	// FailedSealDispatch son los fallos al SELLAR EL DESPACHO (T3.12). 🔴 SEPARADO
+	// de FailedSealBudget a propósito: solo ESTE implica mensajes DUPLICADOS.
+	FailedSealDispatch *int64
+	// FailedSealBudget son los fallos al SELLAR EL PRESUPUESTO (T3.12). NO implica
+	// duplicados: solo descuadra la contabilidad del gasto. Agregarlo con
+	// FailedSealDispatch deshace T3.12.
+	FailedSealBudget *int64
 }
 
 // HealthSnapshot es el último estado de salud que una sesión reporta en el
@@ -115,6 +154,11 @@ type Session struct {
 // arma desde el proto (mapeando el enum del socket a texto) y se lo pasa a
 // SaveHealth; el dominio fleet no importa el contrato CloudLink. Lista CERRADA de
 // campos: solo metadatos de salud, CERO PII/llaves/credenciales.
+//
+// Plan 051 · T4.3 suma el bloque del WORKER del cajero de intents (campos 9-15 del
+// contrato). 🔴 Lo medible viaja en PUNTERO / mapa nil-able porque nil significa
+// «este Edge NO LO SABE» y NO puede colapsarse con el cero: el Gateway traduce a
+// nil los ceros que el contrato define como «no medible» (ver mapeo en connect.go).
 type HealthSnapshot struct {
 	WhatsappState     string
 	DegradedReason    string
@@ -124,6 +168,42 @@ type HealthSnapshot struct {
 	OutboxDepth       int64
 	BinaryVersion     string
 	UptimeS           int64
+
+	// Bloque del worker (Plan 051 · T4.3). Ver los comentarios homónimos de Session.
+	WorkerTaskset         string
+	IntentP50Ms           *int64
+	IntentOmittedByReason map[string]int64
+	StuckHeads            *int64
+	StuckHeadPolls        *int64
+	FailedSealDispatch    *int64
+	FailedSealBudget      *int64
+}
+
+// cloneReasons devuelve una copia defensiva del desglose de motivos, o nil si no
+// hay nada que copiar. El mapa llega del proto (o de un test) y el repositorio en
+// memoria NO puede quedarse con el mismo respaldo que el llamante: una mutación
+// posterior del Edge/test cambiaría la salud ya "persistida". nil y vacío colapsan
+// a nil a propósito: un Edge nuevo SIN omisiones y un Edge viejo son
+// indistinguibles en el cable, y ante la duda la lectura honesta es «no lo sé».
+func cloneReasons(m map[string]int64) map[string]int64 {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneInt64 duplica un puntero a int64 (nil se propaga como nil), para que el
+// snapshot persistido no comparta respaldo con el llamante.
+func cloneInt64(p *int64) *int64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // Degraded indica si el snapshot representa un socket NO sano (degraded o dead, o
@@ -360,6 +440,17 @@ func (r *MemoryRepository) SaveHealth(_ context.Context, tenantID, edgeID, sessi
 	s.OutboxDepth = h.OutboxDepth
 	s.BinaryVersion = h.BinaryVersion
 	s.UptimeS = h.UptimeS
+	// Bloque del worker (Plan 051 · T4.3): se copia TAL CUAL, incluidos los nil.
+	// Un snapshot que no sabe el taskset debe BORRAR el valor anterior, no
+	// conservarlo: mantener un "disjunta" viejo cuando el parte del worker se
+	// volvió rancio es exactamente publicar una señal de salud inventada.
+	s.WorkerTaskset = h.WorkerTaskset
+	s.IntentP50Ms = cloneInt64(h.IntentP50Ms)
+	s.IntentOmittedByReason = cloneReasons(h.IntentOmittedByReason)
+	s.StuckHeads = cloneInt64(h.StuckHeads)
+	s.StuckHeadPolls = cloneInt64(h.StuckHeadPolls)
+	s.FailedSealDispatch = cloneInt64(h.FailedSealDispatch)
+	s.FailedSealBudget = cloneInt64(h.FailedSealBudget)
 	s.LastHealthAt = now
 	if h.Degraded() {
 		if s.DegradedSince.IsZero() {
@@ -372,12 +463,17 @@ func (r *MemoryRepository) SaveHealth(_ context.Context, tenantID, edgeID, sessi
 	return nil
 }
 
-// Get implementa Repository.
+// Get implementa Repository. La Session sale con copias del desglose de motivos y
+// de los punteros del bloque del worker: el llamante no comparte respaldo con el
+// repositorio (Plan 051 · T4.3).
 func (r *MemoryRepository) Get(_ context.Context, tenantID, edgeID, sessionID string) (Session, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.sessions[memKey(tenantID, edgeID, sessionID)]
-	return s, ok, nil
+	if !ok {
+		return Session{}, false, nil
+	}
+	return detachWorkerHealth(s), true, nil
 }
 
 // List implementa Repository.
@@ -387,8 +483,20 @@ func (r *MemoryRepository) List(_ context.Context, tenantID string) ([]Session, 
 	out := make([]Session, 0, len(r.sessions))
 	for _, s := range r.sessions {
 		if s.TenantID == tenantID {
-			out = append(out, s)
+			out = append(out, detachWorkerHealth(s))
 		}
 	}
 	return out, nil
+}
+
+// detachWorkerHealth devuelve una Session cuyo bloque del worker (mapa y punteros)
+// ya no comparte respaldo con el repositorio en memoria.
+func detachWorkerHealth(s Session) Session {
+	s.IntentOmittedByReason = cloneReasons(s.IntentOmittedByReason)
+	s.IntentP50Ms = cloneInt64(s.IntentP50Ms)
+	s.StuckHeads = cloneInt64(s.StuckHeads)
+	s.StuckHeadPolls = cloneInt64(s.StuckHeadPolls)
+	s.FailedSealDispatch = cloneInt64(s.FailedSealDispatch)
+	s.FailedSealBudget = cloneInt64(s.FailedSealBudget)
+	return s
 }

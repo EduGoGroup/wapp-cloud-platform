@@ -315,6 +315,24 @@ func (s *Server) persistHealth(ctx context.Context, cc connCtx, hb *cloudlinkv1.
 		OutboxDepth:       sh.GetOutboxDepth(),
 		BinaryVersion:     sh.GetBinaryVersion(),
 		UptimeS:           sh.GetDaemonUptimeS(),
+
+		// Bloque del WORKER (Plan 051 · T4.3, campos 9-15). 🔴 El contrato transporta «no lo sé»
+		// como el CERO del tipo, así que se traduce AQUÍ, antes de tocar el dominio:
+		// worker_taskset vacío e intent_p50_ms 0 significan «este Edge no lo sabe», NUNCA
+		// "disjunta" ni "0 ms" (el Edge manda los tres a su cero A PROPÓSITO cuando el parte del
+		// worker lleva >90 s sin refrescarse). El mapa va TAL CUAL: sin sumar nada (INV-051.3) y
+		// sin asumir las ocho claves — solo llegan las que no valen cero, y puede llegar nil.
+		WorkerTaskset:         sh.GetWorkerTaskset(),
+		IntentP50Ms:           nonZeroOrNil(sh.GetIntentP50Ms()),
+		IntentOmittedByReason: sh.GetIntentOmittedByReason(),
+		// Los cuatro contadores del despachador (T3.12) NO tienen presencia en proto3: un Edge
+		// viejo y un Edge nuevo sin incidencias llegan igual (0). Se persiste ese 0 tal cual.
+		// 🔴 failed_seal_dispatch y failed_seal_budget NUNCA se agregan: solo el PRIMERO implica
+		// mensajes duplicados.
+		StuckHeads:         ptrInt64(sh.GetStuckHeads()),
+		StuckHeadPolls:     ptrInt64(sh.GetStuckHeadPolls()),
+		FailedSealDispatch: ptrInt64(sh.GetFailedSealDispatch()),
+		FailedSealBudget:   ptrInt64(sh.GetFailedSealBudget()),
 	}
 	if err := s.fleet.SaveHealth(ctx, cc.tenantID, cc.edgeID, cc.sessionID, snap); err != nil {
 		s.log.Error("fleet: persistir salud", "error", err,
@@ -339,6 +357,21 @@ func whatsappStateString(st cloudlinkv1.WhatsappSocketState) string {
 		return ""
 	}
 }
+
+// nonZeroOrNil traduce a puntero un entero del contrato cuyo CERO significa «no
+// medible» y no «cero medido» (SessionHealth.intent_p50_ms, campo 10): 0 ⇒ nil,
+// para que la nube no publique "0 ms" sobre un dato que el Edge no tiene.
+func nonZeroOrNil(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+// ptrInt64 devuelve un puntero al valor tal cual. Se usa con los contadores
+// acumulados del despachador (campos 12-15), donde el contrato define 0 como «no
+// ocurrió (o el Edge no lo mide)» y proto3 no ofrece presencia para separarlos.
+func ptrInt64(v int64) *int64 { return &v }
 
 // renewLease renueva el lease del Edge a partir del counter del Heartbeat y
 // empuja el LeaseUpdate. No hace nada sin lease o sin identidad.
