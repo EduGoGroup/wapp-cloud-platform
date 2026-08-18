@@ -178,7 +178,12 @@ type configArnes struct {
 // inyectable (T5.1), sobre un bufconn.Listener; y expone el cliente CloudLink ya
 // conectado con el cert del Edge.
 type loadHarness struct {
-	db     *sql.DB
+	db *sql.DB
+	// srv es el Server BAJO MEDICIÓN. Se expone porque el lado nube de un envío
+	// NO es una RPC: SendText es un método Go que llaman los handlers HTTP
+	// (send.go), y sin el puntero al servidor no hay forma de disparar el camino
+	// que T5.2 mide (Push → awaitAck).
+	srv    *gatewaygrpc.Server
 	client cloudlinkv1.CloudLinkClient
 	// slow es la perilla de T5.1: la latencia por consulta al fleet es un
 	// PARÁMETRO del test, ajustable en caliente con SetDelay.
@@ -244,6 +249,7 @@ func newLoadHarness(t *testing.T, cfg configArnes) *loadHarness {
 
 	h := &loadHarness{
 		db:       db,
+		srv:      srv,
 		slow:     slow,
 		logBuf:   logBuf,
 		cfg:      cfg,
