@@ -45,6 +45,18 @@ const offlinePersistTimeout = 5 * time.Second
 // WriteTimeout del servidor HTTP— en config.AppConfig.GRPCAckTimeout.
 const defaultAckTimeout = 8 * time.Second
 
+// defaultWorkQueue es el tope de trabajos encolados POR SESIÓN en el carril de
+// trabajo cuando no se configura otro con WithWorkQueue. Vale 64 igualado al techo
+// de entrantes concurrentes del runtime de flujos, para que ninguna de las dos
+// colas sea el cuello por accidente. Ver config.AppConfig.GatewayWorkQueue.
+const defaultWorkQueue = 64
+
+// defaultWorkBudget es el presupuesto de tiempo de pared de cada trabajo del
+// carril cuando no se configura otro con WithWorkTimeout. Vale lo mismo que
+// offlinePersistTimeout (5s) porque es el mismo orden de trabajo —una escritura
+// contra la base— ya calibrado. Ver config.AppConfig.GatewayWorkTimeout.
+const defaultWorkBudget = 5 * time.Second
+
 // Server implementa cloudlinkv1.CloudLinkServer. Es seguro para uso concurrente.
 //
 // Los hooks observables (OnIncoming, OnHeartbeat) deben asignarse antes de poner
@@ -107,7 +119,26 @@ type Server struct {
 	// cero: New() lo materializa a defaultAckTimeout. Es lo que impide que un Edge
 	// saturado —o un stream que muere sin acusar, caso en el que NADA limpia la
 	// entrada de s.acks— retenga para siempre al llamante.
+	//
+	// ⚠️ CORREGIDO el 2026-08-18 (Plan 050 · T1.1, ADR-0040 §Contexto). El enunciado
+	// de arriba se conserva literal porque es el que dimensionó el follow-up F2 de la
+	// pieza 03, pero EXAGERA: el "NADA limpia" es falso. El defer s.clearAck(cmdID)
+	// de sendCommand limpia la entrada SIEMPRE, por los dos caminos de salida, tanto
+	// si el Ack llegó como si venció el reloj. La entrada no se fuga; vive como mucho
+	// lo que dure el ackTimeout. Lo que este reloj evita de verdad NO es una fuga de
+	// memoria sino una espera: sin él, el llamante HTTP se quedaría colgado. Ese
+	// matiz importa porque el eje del defecto es LATENCIA, no memoria.
 	ackTimeout time.Duration
+
+	// workQueue es el tope de trabajos encolados POR SESIÓN en el carril de trabajo
+	// del stream (Plan 050 · Ola 1, REQ-050.4). Nunca es cero: New() lo materializa
+	// a defaultWorkQueue. Subirlo cuesta memoria por stream.
+	workQueue int
+
+	// workBudget es el presupuesto de tiempo de pared de cada trabajo del carril
+	// (Plan 050 · Ola 1). Nunca es cero: New() lo materializa a defaultWorkBudget.
+	// Subirlo cuesta más tiempo colgado por trabajo, y el carril es serie por sesión.
+	workBudget time.Duration
 
 	// edgeSessions mapea cada Edge (tenant+edge) al conjunto de sus sesiones
 	// vivas, para que RevokeLease pueda empujar el kill-switch a todas ellas.
@@ -145,6 +176,18 @@ func WithDiagnosticsSink(r diagnostics.BundleReceiver) Option { return func(s *S
 // deadline. Mismo criterio que session.WithSendTimeout para el empuje.
 func WithAckTimeout(d time.Duration) Option { return func(s *Server) { s.ackTimeout = d } }
 
+// WithWorkQueue fija cuántos trabajos puede encolar el carril POR SESIÓN antes de
+// aplicar contrapresión al bucle Recv del stream (env WAPP_GATEWAY_WORK_QUEUE). Un
+// valor <=0 se ignora y New cae a defaultWorkQueue: la cola NUNCA queda sin tope,
+// que es lo que reintroduciría el crecimiento sin límite.
+func WithWorkQueue(n int) Option { return func(s *Server) { s.workQueue = n } }
+
+// WithWorkTimeout fija el presupuesto de tiempo de pared de cada trabajo del carril
+// (env WAPP_GATEWAY_WORK_TIMEOUT). Un valor <=0 se ignora y New cae a
+// defaultWorkBudget: ningún trabajo del carril queda sin reloj. Mismo criterio que
+// WithAckTimeout.
+func WithWorkTimeout(d time.Duration) Option { return func(s *Server) { s.workBudget = d } }
+
 // New construye un Server con el registro de sesiones y el logger dados. Las
 // dependencias opcionales (lease, fleet) se pasan como Option.
 func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
@@ -164,6 +207,14 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	// La espera del Ack nunca queda sin reloj (ver ackTimeout).
 	if s.ackTimeout <= 0 {
 		s.ackTimeout = defaultAckTimeout
+	}
+	// El carril de trabajo nunca arranca sin tope ni sin reloj (ver workQueue y
+	// workBudget): un cero aquí sería cola infinita o trabajo sin deadline.
+	if s.workQueue <= 0 {
+		s.workQueue = defaultWorkQueue
+	}
+	if s.workBudget <= 0 {
+		s.workBudget = defaultWorkBudget
 	}
 	return s
 }

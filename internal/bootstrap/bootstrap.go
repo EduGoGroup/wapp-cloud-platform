@@ -154,6 +154,12 @@ func Run(ctx context.Context) error {
 		// anterior. Aquel acota el empuje; este, la respuesta. Sin él, un Edge
 		// saturado cuelga al llamante HTTP indefinidamente (2026-08-06).
 		gatewaygrpc.WithAckTimeout(cfg.GRPCAckTimeout),
+		// Carril de trabajo del stream (Plan 050 · Ola 1, ADR-0040): tope de cola POR
+		// SESIÓN (env WAPP_GATEWAY_WORK_QUEUE, default 64 = el techo de entrantes
+		// concurrentes) y presupuesto de pared por trabajo (env WAPP_GATEWAY_WORK_TIMEOUT,
+		// default 5s). Aquí solo se materializan; quien los consume es el carril.
+		gatewaygrpc.WithWorkQueue(cfg.GatewayWorkQueue),
+		gatewaygrpc.WithWorkTimeout(cfg.GatewayWorkTimeout),
 		gatewaygrpc.WithLease(leaseMgr),
 		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),

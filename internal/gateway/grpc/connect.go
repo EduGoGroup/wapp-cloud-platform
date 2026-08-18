@@ -29,23 +29,28 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 	// sobre el stream (Plan 027 · Ola 0 · T3, cierra H2).
 	sender := newStreamSender(stream)
 
+	// Carril de trabajo POR-STREAM (Plan 050 · Ola 1 · T1.6, ADR-0040 §Decisión.1):
+	// el bucle Recv de abajo deja de hacer el trabajo pesado inline y lo SUELTA
+	// aquí, en una cola por sesión servida por su propia goroutine, para que un
+	// receipt lento de la sesión A no bloquee el heartbeat de la sesión B.
+	//
+	// Su base es context.WithoutCancel(streamCtx) —el mismo molde que onStreamClosed
+	// montaba a mano— porque el trabajo en vuelo NO debe morir con el stream:
+	// persistir que un Edge se fue importa PRECISAMENTE cuando su stream ya murió
+	// (D-050.5). El reloj se lo pone cada job (workBudget), no el stream.
+	lane := newWorkLane(context.WithoutCancel(streamCtx), s.workQueue, s.workBudget, s.log)
+
 	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity}
 	// releases mapea cada session_id registrado en ESTE stream a su release. Es
 	// local al stream y lo muta un ÚNICO goroutine (el bucle Recv de abajo), por
 	// lo que no necesita lock (ADR-0008: N sesiones multiplexadas por session_id
 	// sobre un solo stream CloudLink por Edge).
 	releases := make(map[string]func())
-	defer func() {
-		// Cierre multi-sesión: libera y marca offline CADA sesión del stream
-		// (mismo patrón que RevokeLease, que itera las sesiones del Edge). El
-		// map local se recorre en el goroutine de Recv, sin lock (D1/D4).
-		for sid, release := range releases {
-			release()
-			cc2 := cc
-			cc2.sessionID = sid
-			s.onStreamClosed(streamCtx, cc2)
-		}
-	}()
+	// Cierre en dos tiempos del carril (T1.6) con el MarkOffline ordenado dentro
+	// (T1.11). Este defer corre en la goroutine del bucle Recv y SOLO DESPUÉS de que
+	// Recv haya retornado: es eso lo que garantiza que ningún submit ocurra en
+	// paralelo al wg.Wait() del drenaje. Ver closeStream para el orden exacto.
+	defer s.closeStream(lane, cc, releases)
 
 	for {
 		msg, err := stream.Recv()
@@ -73,12 +78,78 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 			}
 		}
 
-		s.route(streamCtx, frameCC, msg)
+		s.route(lane, frameCC, msg)
 	}
 }
 
-// route despacha un EdgeToCloud según el tipo de su payload.
-func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToCloud) {
+// closeStream cierra el stream y su carril, en el ORDEN que el carril exige
+// (T1.6 · T1.11):
+//
+//  1. por cada sesión del stream: release() en el registry y MarkOffline ENCOLADO
+//     como último job de esa sesión (onStreamClosed), no ejecutado por fuera.
+//  2. seal(): el carril deja de aceptar trabajo nuevo —devolviendo error, no
+//     encolando— y los workers ociosos despiertan para morir.
+//  3. drain(): se espera a los workers con el presupuesto de una unidad de trabajo;
+//     lo que no quepa se abandona con un Warn que dice cuántos jobs y de qué tipo.
+//
+// 🔴 Los tres pasos ocurren en la MISMA goroutine —la del bucle Recv, y solo después
+// de que Recv haya retornado—. Esa es la razón de que el drenaje sea seguro: un
+// submit que cree una cola nueva (y con ella un wg.Add) en paralelo al wg.Wait() de
+// drain sería un «WaitGroup misuse: Add called concurrently with Wait», que es
+// pánico. Nada más puede encolar: route se llama ÚNICAMENTE desde ese bucle.
+//
+// 🔴 Por qué el MarkOffline se encola ANTES del seal y no después, aunque el carril
+// exente al jobOffline del sellado. La exención cubre sessQueue.sealing, pero NO
+// cubre sessQueue.done, que el worker se pone a sí mismo —con el mutex tomado— justo
+// antes de morir, y que enqueue comprueba PRIMERO, también para el jobOffline. En el
+// caso normal de cierre la cola está vacía y su worker ocioso: seal() lo despierta,
+// el worker marca done y muere, y un submit posterior rebota con errLaneSealed. Es
+// decir: sellar primero perdería el MarkOffline casi siempre, y la flota mostraría
+// «online» un Edge que ya se fue — exactamente lo que T1.11 viene a evitar.
+//
+// Encolar primero es, además, DETERMINISTA: antes del seal ninguna cola puede estar
+// done (un worker solo sale de su espera con trabajo o con sealing=true), así que
+// este submit no puede fallar por carrera. Y no altera la garantía de orden que pide
+// D-050.2: como Recv ya retornó, nadie más encolará después, de modo que el
+// MarkOffline sigue siendo el ÚLTIMO job de su sesión.
+func (s *Server) closeStream(lane *workLane, cc connCtx, releases map[string]func()) {
+	// Cierre multi-sesión: libera y marca offline CADA sesión del stream (mismo
+	// patrón que RevokeLease, que itera las sesiones del Edge). El map local se
+	// recorre en el goroutine de Recv, sin lock (D1/D4).
+	for sid, release := range releases {
+		release()
+		cc2 := cc
+		cc2.sessionID = sid
+		s.onStreamClosed(lane, cc2)
+	}
+	lane.seal()
+	lane.drain(s.workBudget)
+}
+
+// route despacha un EdgeToCloud según el tipo de su payload. Lo que es O(1) en
+// memoria se resuelve AQUÍ, en la goroutine del bucle Recv; lo que toca red o base
+// de datos se SUELTA al carril (ADR-0040 §Decisión.3, design.md §3). La enumeración
+// de qué se queda dentro es la del ADR y no se amplía sin tocarlo.
+//
+// Ya no recibe el ctx del stream: todo lo que lo necesitaba vive ahora en el carril,
+// y cada job trae el SUYO (presupuesto propio, desacoplado de la muerte del stream).
+// Lo que queda inline no necesita contexto.
+//
+// Los punteros del payload se pueden retener en la cola sin copiarlos: grpc-go
+// asigna un EdgeToCloud NUEVO en cada Recv, así que el job encolado no compite con
+// el siguiente frame por la misma memoria.
+//
+// 🔴 INVARIANTE — route tiene UN ÚNICO LLAMANTE en producción: el bucle Recv de
+// Connect. No se le añade un segundo sin leer esto antes. De ese invariante cuelga
+// la garantía de D-050.2 (que el MarkOffline sea el ÚLTIMO job de su sesión): el
+// closeStream encola el jobOffline con el carril TODAVÍA ABIERTO —tiene que
+// hacerlo, ver allí—, así que nada impide MECÁNICAMENTE que llegue otro submit
+// después; lo que lo impide es que Recv ya retornó y no queda nadie que encole.
+// Es una garantía POR CONSTRUCCIÓN, no por mecanismo. Un segundo llamante de route
+// (una goroutine de push, un reintento, un test que lo cablee en producción) la
+// rompe en silencio: el MarkOffline dejaría de ser el último y la flota podría
+// mostrar «online» un Edge que ya se fue.
+func (s *Server) route(lane *workLane, cc connCtx, msg *cloudlinkv1.EdgeToCloud) {
 	switch p := msg.GetPayload().(type) {
 	case *cloudlinkv1.EdgeToCloud_Incoming:
 		if s.OnIncoming != nil {
@@ -90,45 +161,187 @@ func (s *Server) route(ctx context.Context, cc connCtx, msg *cloudlinkv1.EdgeToC
 			}
 		}
 	case *cloudlinkv1.EdgeToCloud_Ack:
+		// 🔴 SE QUEDA INLINE A PROPÓSITO (ADR-0040 §Decisión.3). deliverAck es O(1) en
+		// memoria: un lookup en un map y un envío no bloqueante a un canal con buffer.
+		// El Ack es la VÍCTIMA del head-of-line, no su causa — mandarlo al carril le
+		// añadiría la latencia del trabajo pesado justo en el camino que este plan
+		// viene a proteger.
 		s.deliverAck(p.Ack)
 	case *cloudlinkv1.EdgeToCloud_Heartbeat:
+		// El hook es de test/observación, no I/O: se queda inline (design.md §3).
 		if s.OnHeartbeat != nil {
 			s.OnHeartbeat(cc.sessionID, p.Heartbeat)
 		}
-		// Plan 020 · T3: un Heartbeat con State=LOGGED_OUT anuncia que WhatsApp
-		// cerró el device ⇒ sesión ZOMBIE. Se marca loggedout y NO se renueva el
-		// lease (sesión muerta) ni se toca self_pn. Un State=UNSPECIFIED (default de
-		// proto, 0) sigue EXACTAMENTE el camino de siempre (online normal): sin
-		// regresión para toda sesión que nunca reporte LOGGED_OUT.
-		if p.Heartbeat.GetState() == cloudlinkv1.SessionState_SESSION_STATE_LOGGED_OUT {
-			s.markLoggedOut(ctx, cc)
-			return
-		}
-		s.persistSelfPn(ctx, cc, p.Heartbeat)
-		s.persistHealth(ctx, cc, p.Heartbeat)
-		s.renewLease(ctx, cc, p.Heartbeat.GetLeaseCounter())
+		s.submitHeartbeat(lane, cc, p.Heartbeat)
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
 	// El case de EdgeToCloud_Delivery se retiró el 2026-08-12 junto con el campo 11 del
 	// contrato: era un frame con consumidor (este log.Debug y nada más) y sin productor
 	// —ningún punto del Edge lo emitió nunca—. Los acuses reales llegan como Receipt.
 	case *cloudlinkv1.EdgeToCloud_Receipt:
-		s.handleReceipt(ctx, cc, p.Receipt)
+		// T1.8: el sink escribe UNA FILA POR message_id contra la base. Al carril, y
+		// sin coalescer ni descartar jamás: un acuse es estado idempotente sobre un
+		// mensaje NUESTRO (ADR-0037 §Decisión.7), así que diferirlo es legítimo y
+		// perderlo no lo es.
+		receipt := p.Receipt
+		s.submitJob(lane, cc, jobReceipt, func(ctx context.Context) {
+			s.handleReceipt(ctx, cc, receipt)
+		})
 	case *cloudlinkv1.EdgeToCloud_DiagnosticsBundle:
 		// Diagnóstico remoto (Plan 031 · T5, ADR-0023): el Edge responde a un
 		// DiagnosticsRequest con su bundle; se correlaciona por command_id y se almacena.
-		s.storeDiagnosticsBundle(ctx, cc, p.DiagnosticsBundle)
+		// T1.10: escritura GRANDE y sin urgencia ⇒ al carril, la que menos discusión
+		// tiene de las cinco.
+		bundle := p.DiagnosticsBundle
+		s.submitJob(lane, cc, jobDiagnostics, func(ctx context.Context) {
+			s.storeDiagnosticsBundle(ctx, cc, bundle)
+		})
+	// Las tres ramas de auth (T1.9) hacen una LLAMADA HTTP SALIENTE a identity-core
+	// más el INSERT de auditoría. La cola de latencia de una salida de red la fija un
+	// TERCERO, así que son las que peor pintan dentro del bucle Recv.
+	//
+	// 🔴 Único cambio de semántica visible desde fuera de toda la ola (design.md §3):
+	// la respuesta sale ahora desde el carril, no desde la goroutine del bucle. El
+	// Edge no nota diferencia —viaja por el mismo streamSender, que serializa las
+	// escrituras—, pero el orden relativo entre una respuesta de auth y un
+	// ConfigUpdate empujado por OTRA vía deja de estar garantizado por accidente.
+	// Hoy nadie depende de ese orden; queda escrito para que nadie empiece.
 	case *cloudlinkv1.EdgeToCloud_UserLogin:
 		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025):
 		// el Edge relaya credenciales/tokens; se delega en el IAM y se responde con un
 		// UserAuthResponse correlacionado por command_id/session_id.
-		s.handleUserLogin(ctx, cc, p.UserLogin)
+		login := p.UserLogin
+		s.submitJob(lane, cc, jobAuth, func(ctx context.Context) {
+			s.handleUserLogin(ctx, cc, login)
+		})
 	case *cloudlinkv1.EdgeToCloud_UserRefresh:
-		s.handleUserRefresh(ctx, cc, p.UserRefresh)
+		refresh := p.UserRefresh
+		s.submitJob(lane, cc, jobAuth, func(ctx context.Context) {
+			s.handleUserRefresh(ctx, cc, refresh)
+		})
 	case *cloudlinkv1.EdgeToCloud_UserLogout:
-		s.handleUserLogout(ctx, cc, p.UserLogout)
+		logout := p.UserLogout
+		s.submitJob(lane, cc, jobAuth, func(ctx context.Context) {
+			s.handleUserLogout(ctx, cc, logout)
+		})
 	default:
 		s.log.Debug("payload EdgeToCloud desconocido", "session_id", cc.sessionID)
+	}
+}
+
+// submitHeartbeat suelta al carril el trabajo del Heartbeat (T1.7).
+//
+// Los TRES —self_pn, salud y renovación de lease— viajan en UN SOLO job porque son
+// un solo hecho y su orden importa: lo que el Edge cuenta en un latido se persiste
+// junto, y el lease se renueva DESPUÉS de haberlo guardado. Repartirlos en tres jobs
+// los expondría a intercalarse con la coalescencia (D-050.4), que sustituye el job
+// pendiente entero: dos latidos podrían quedar mezclados a medias.
+//
+// ⚠️ Los tres comparten UN presupuesto (workBudget, 5 s por defecto), no uno cada
+// uno. Si persistSelfPn se come el reloj, renewLease recibe un ctx casi vencido y su
+// Push falla: el lease NO queda renovado ante el Edge (lo grita el Warn de runJob,
+// más el log del propio renewLease) y el Edge lo reintentará en el siguiente latido.
+// Subir el presupuesto «para que quepa» sería una decisión de ADR, no un ajuste.
+func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Heartbeat) {
+	// Plan 020 · T3: un Heartbeat con State=LOGGED_OUT anuncia que WhatsApp cerró el
+	// device ⇒ sesión ZOMBIE. Se marca loggedout y NO se renueva el lease (sesión
+	// muerta) ni se toca self_pn. Un State=UNSPECIFIED (default de proto, 0) sigue
+	// EXACTAMENTE el camino de siempre (online normal): sin regresión para toda
+	// sesión que nunca reporte LOGGED_OUT.
+	//
+	// 🔴 CORREGIDO EL 2026-08-18 (Plan 050 · Ola 1, decisión de Jhoan). Se encola
+	// como jobLogout: un tipo PROPIO, exento de coalescencia. Sigue yendo por la
+	// MISMA cola de la sesión, así que conserva el orden FIFO frente al trabajo en
+	// vuelo — que es lo único que la versión anterior quería y lo único que hacía
+	// falta.
+	//
+	// El enunciado que sustituye, literal (nada se borra):
+	//
+	//	«Se encola como jobHeartbeat, no como un tipo propio, para COMPARTIR la
+	//	serialización de su rama hermana: son dos versiones del mismo hecho y
+	//	ninguna puede adelantar a la otra. El precio, explícito: como todo
+	//	jobHeartbeat, un latido posterior lo coalesce (D-050.4) — y eso es lo
+	//	correcto, porque la regla del tipo es que gane el más reciente.»
+	//
+	// Por qué era falso: «gana el más reciente» vale entre dos latidos NORMALES,
+	// que son el mismo hecho contado dos veces. Un logout no es eso: es un hecho
+	// TERMINAL. Coalescido, un latido posterior lo SUSTITUÍA en sitio
+	// (worklane.go, enqueue) y la sesión zombi (a) no se marcaba `loggedout` y
+	// (b) SÍ renovaba su lease — las dos cosas exactas que el Plan 020 · T3
+	// prohíbe. Y no es un caso raro: el Edge sigue latiendo después de anunciar el
+	// logout, así que el latido que lo borra es el caso NORMAL, no el excepcional.
+	//
+	// jobLogout no se coalesce ni se descarta jamás. La regla «solo los heartbeats
+	// se coalescen» (D-050.4) no se toca: es la que hace que esta corrección
+	// consista en un tipo nuevo y nada más.
+	if hb.GetState() == cloudlinkv1.SessionState_SESSION_STATE_LOGGED_OUT {
+		s.submitJob(lane, cc, jobLogout, func(ctx context.Context) {
+			s.markLoggedOut(ctx, cc)
+		})
+		return
+	}
+	s.submitJob(lane, cc, jobHeartbeat, func(ctx context.Context) {
+		s.persistSelfPn(ctx, cc, hb)
+		s.persistHealth(ctx, cc, hb)
+		s.renewLease(ctx, cc, hb.GetLeaseCounter())
+	})
+}
+
+// submitJob suelta un trabajo al carril de su sesión y NUNCA lo pierde en silencio:
+// si el carril ya está sellado —el stream se está cerrando— lo dice con un Warn que
+// nombra la sesión y el tipo de trabajo. Una pérdida muda aquí sería el mismo defecto
+// que este plan viene a arreglar, con otra cara.
+//
+// El submit puede BLOQUEAR al bucle Recv si la cola de esa sesión llegó a su tope
+// (REQ-050.4). Es intencionado —frenar, no descartar—: es así como el backpressure
+// nativo de HTTP/2 sigue llegando hasta el Edge en vez de fabricarse uno propio.
+//
+// 🔴 Un frame SIN session_id no llega a encolarse. El carril indexa por session_id,
+// así que un submit con la llave "" crearía la cola perSess[""] Y SU GOROUTINE: un
+// carril fantasma que no corresponde a ninguna sesión, que nunca recibe su
+// jobOffline —closeStream itera `releases`, donde solo hay session_id no vacíos— y
+// que solo muere en el seal del cierre del stream. Antes del carril ese trabajo se
+// resolvía inline; ahora se rechaza AQUÍ, en el llamante, que es donde el rechazo
+// es explícito, barato y observable.
+//
+// submitHeartbeat no necesita su propia guarda: sus dos ramas terminan las dos en
+// este submitJob, así que quedan cubiertas por esta.
+//
+// 🔴 ES UN CAMBIO DE COMPORTAMIENTO DELIBERADO, del 2026-08-18 (Plan 050 · Ola 1),
+// y no un no-op. La premisa con la que nació la guarda —«esos jobs eran no-ops de
+// todas formas»— es FALSA para dos ramas de route, y queda escrito aquí para que
+// nadie lo descubra en producción:
+//
+//   - Receipt: handleReceipt (send.go) solo comprueba `receipt == nil`. Con
+//     session_id vacío ANTES se logueaba el acuse y se llamaba a receiptSink.Record,
+//     que escribe una fila por message_id. AHORA no se hace nada.
+//   - Las TRES de auth (auth.go, handleUserLogin/Refresh/Logout): comprueban
+//     `s.authn == nil` y `cc.hasIdentity`, NUNCA `cc.sessionID`. Con session_id
+//     vacío ANTES llegaban a identity-core y respondían un UserAuthResponse (o un
+//     pushAuthError). AHORA el Edge no recibe respuesta a ese frame.
+//
+// Se acepta el cambio porque el carril fantasma es peor —una cola y una goroutine
+// bajo la llave "" que nunca recibe su jobOffline (closeStream itera `releases`,
+// donde solo hay session_id no vacíos) y que solo muere en el seal del cierre—, y
+// porque un frame sin session_id es una ANOMALÍA DE PROTOCOLO: el Edge lo rellena
+// siempre (ADR-0008: N sesiones multiplexadas POR session_id sobre un stream). Por
+// eso el aviso es Warn y no Debug: si esto aparece en un log, hay un Edge
+// emitiendo frames inválidos, y eso no es ruido de diagnóstico.
+//
+// Auth y Receipt sin session_id NO tenían efecto útil en el otro extremo (el
+// pushAuthError se correlaciona por session_id, y un acuse sin sesión no se puede
+// atribuir), así que lo que se pierde es trabajo que ya no llegaba a destino. Lo
+// que se gana es que ahora SE VE.
+func (s *Server) submitJob(lane *workLane, cc connCtx, kind jobKind, run func(ctx context.Context)) {
+	if cc.sessionID == "" {
+		s.log.Warn("carril: frame sin session_id; el trabajo no se encola (no hay sesión a la que atribuirlo)",
+			"edge_id", cc.edgeID, "kind", kind.String())
+		return
+	}
+	if err := lane.submit(cc.sessionID, kind, run); err != nil {
+		s.log.Warn("carril: el trabajo no se encoló",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"kind", kind.String(), "error", err)
 	}
 }
 
@@ -213,7 +426,7 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 		s.log.Error("lease: emitir inicial", "error", err, "edge_id", cc.edgeID)
 		return
 	}
-	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
+	if err := s.registry.Push(ctx, cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
 		s.log.Error("lease: push inicial", "error", err, "session_id", cc.sessionID)
 	}
 
@@ -277,8 +490,17 @@ func (s *Server) warnDeviceLimit(ctx context.Context, cc connCtx, selfPn string)
 // markLoggedOut marca la sesión como ZOMBIE (StateLoggedOut) en fleet: WhatsApp
 // cerró el device (Plan 020 · T3). NO renueva el lease (sesión muerta) y se
 // distingue del offline-por-red (que produce onStreamClosed→MarkOffline al caer el
-// stream). No hace nada sin fleet, sin identidad mTLS o sin session_id. Usa el
-// contexto del stream (aún vivo: el Edge sigue conectado, solo anuncia el logout).
+// stream). No hace nada sin fleet, sin identidad mTLS o sin session_id.
+//
+// Desde T1.7 corre dentro de un job del carril, así que el ctx es el del JOB
+// (base desacoplada del stream, presupuesto workBudget), no el del stream. El
+// cambio va a favor: el logout se persiste aunque el Edge cuelgue justo después de
+// anunciarlo.
+//
+// ⚠️ Corregido el 2026-08-18: ese job era un `jobHeartbeat` y desde hoy es un
+// `jobLogout`, exento de coalescencia. Con el tipo anterior, un latido normal
+// posterior sustituía a este trabajo en la cola y la sesión zombi ni se marcaba ni
+// dejaba de renovar el lease. Ver submitHeartbeat.
 func (s *Server) markLoggedOut(ctx context.Context, cc connCtx) {
 	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
 		return
@@ -375,6 +597,14 @@ func ptrInt64(v int64) *int64 { return &v }
 
 // renewLease renueva el lease del Edge a partir del counter del Heartbeat y
 // empuja el LeaseUpdate. No hace nada sin lease o sin identidad.
+//
+// Desde T1.7 es la TERCERA parte de un jobHeartbeat y hereda el ctx del job, que ya
+// viene gastado por las dos escrituras anteriores. Ese ctx manda sobre el reloj
+// interno del Registry (defaultSendTimeout, 10 s): si el presupuesto se agota antes,
+// el Push vuelve al instante con el error de cancelación y el Edge NO recibe el
+// LeaseUpdate. El fallo se loguea aquí y el carril lo grita en su Warn — un lease
+// que no se pudo empujar no debe darse por renovado ante el Edge, que lo reintenta
+// en el siguiente latido.
 func (s *Server) renewLease(ctx context.Context, cc connCtx, heartbeatCounter int64) {
 	if s.leaseMgr == nil || !cc.hasIdentity || cc.sessionID == "" {
 		return
@@ -384,15 +614,30 @@ func (s *Server) renewLease(ctx context.Context, cc connCtx, heartbeatCounter in
 		s.log.Error("lease: renovar", "error", err, "edge_id", cc.edgeID)
 		return
 	}
-	if err := s.registry.Push(cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
+	if err := s.registry.Push(ctx, cc.sessionID, leaseToCloud(cc.sessionID, lu)); err != nil {
 		s.log.Debug("lease: push renovación", "error", err, "session_id", cc.sessionID)
 	}
 }
 
-// onStreamClosed marca la sesión offline en fleet y deja de rastrearla. Usa un
-// contexto desacoplado del stream (ya cancelado) para que la persistencia no
-// falle por cancelación.
-func (s *Server) onStreamClosed(streamCtx context.Context, cc connCtx) {
+// onStreamClosed deja de rastrear la sesión y ENCOLA su MarkOffline como ÚLTIMO job
+// de esa sesión en el carril (T1.11, D-050.2).
+//
+// 🔴 No se ejecuta por fuera del carril, y esa es la tarea entera. Con carril, un
+// SaveHealth del mismo session_id puede seguir pendiente cuando el stream cae; si el
+// MarkOffline lo adelantara, el SaveHealth escribiría después y la flota mostraría
+// «online» un Edge que ya se fue. Encolado, la cola FIFO de la sesión impone el orden
+// —MarkOffline es lo último que se escribe— y por eso el cierre DRENA en vez de
+// cancelar: un context.Cancel mataría precisamente el trabajo que hay que respetar.
+//
+// El contexto ya no se construye aquí: se lo da el carril, cuya base es
+// context.WithoutCancel(streamCtx) acotada por workBudget. Es el mismo molde
+// (desacoplado del stream ya cancelado + reloj propio) que este método montaba a
+// mano con offlinePersistTimeout, y por defecto vale lo mismo: 5 s.
+//
+// Lo llama closeStream ANTES del seal() —ver allí por qué ese orden y no el
+// inverso—, así que este submit no puede rebotar por carrera con la muerte de un
+// worker. Si aun así rebotara, submitJob lo grita: no hay pérdida muda.
+func (s *Server) onStreamClosed(lane *workLane, cc connCtx) {
 	if !cc.hasIdentity || cc.sessionID == "" {
 		return
 	}
@@ -401,12 +646,32 @@ func (s *Server) onStreamClosed(streamCtx context.Context, cc connCtx) {
 	if s.fleet == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(streamCtx), offlinePersistTimeout)
-	defer cancel()
-	if err := s.fleet.MarkOffline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
-		s.log.Error("fleet: marcar offline", "error", err,
-			"edge_id", cc.edgeID, "session_id", cc.sessionID)
-	}
+	// 🔴 DEUDA-050.1 — la carrera de la RECONEXIÓN RÁPIDA. Declarada el 2026-08-18,
+	// dueño: la Ola 3 del Plan 050. NO se arregla aquí, y esto no es un olvido.
+	//
+	// Este MarkOffline es DIFERIDO (hasta el presupuesto de drain, 5 s por defecto, o
+	// sin techo si el drenaje se abandona); el MarkOnline de onSessionRegistered
+	// sigue siendo INLINE E INMEDIATO. Si el Edge reconecta rápido —cae el stream A,
+	// se encola su jobOffline; el stream B registra la sesión y hace MarkOnline YA;
+	// el jobOffline de A aterriza DESPUÉS— la fila queda `offline` con la sesión
+	// VIVA, y nada la corrige hasta la siguiente reconexión. Antes de esta ola el
+	// MarkOffline era síncrono en el defer: la ventana era de milisegundos, no de
+	// segundos.
+	//
+	// El arreglo NO cabe en este fichero: es de fleet.Repository (un
+	// `UPDATE … WHERE last_connected_at <= $epoch`, o un contador de generación por
+	// sesión) para que la escritura vieja no pueda pisar a la nueva. Enunciado
+	// completo, mecanismo y precio en
+	// docs/plans/050-robustez-gateway-cloudlink/tasks.md (DEUDA-050.1).
+	//
+	// ⚠️ HOY NINGÚN TEST LO REPRODUCE: TestConnectReconexionIdempotente corre sin
+	// fleet y TestMTLSFleetOnlineThenOffline nunca reconecta.
+	s.submitJob(lane, cc, jobOffline, func(ctx context.Context) {
+		if err := s.fleet.MarkOffline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
+			s.log.Error("fleet: marcar offline", "error", err,
+				"edge_id", cc.edgeID, "session_id", cc.sessionID)
+		}
+	})
 }
 
 // trackSession añade la sesión al conjunto vivo de su Edge.

@@ -67,6 +67,26 @@ type AppConfig struct {
 	// respuesta — exactamente el síntoma que este reloj viene a eliminar. 8s deja
 	// ~2s de margen para serializar y escribir la respuesta.
 	GRPCAckTimeout time.Duration `yaml:"grpc_ack_timeout"`
+	// GatewayWorkQueue es el tope de trabajos encolados POR SESIÓN en el carril de
+	// trabajo del Gateway CloudLink (Plan 050 · Ola 1, ADR-0040). Cuando la cola de
+	// una sesión se llena, el bucle Recv del stream FRENA (contrapresión) en vez de
+	// seguir aceptando trabajo sin límite. Default 64, igualado al techo de
+	// entrantes concurrentes del runtime de flujos (Flow.MaxConcurrentIncoming) para
+	// que ninguna de las dos colas sea el cuello por accidente. <=0 cae al default.
+	// Env WAPP_GATEWAY_WORK_QUEUE.
+	//
+	// ⚠️ Subirlo cuesta MEMORIA POR STREAM: cada sesión viva puede retener hasta
+	// este número de trabajos pendientes.
+	GatewayWorkQueue int `yaml:"gateway_work_queue"`
+	// GatewayWorkTimeout es el presupuesto de tiempo de PARED de cada trabajo del
+	// carril (Plan 050 · Ola 1, ADR-0040): pasado ese plazo el trabajo se rinde y
+	// libera el carril de su sesión. Default 5s, el mismo valor ya calibrado del
+	// offlinePersistTimeout del gateway (internal/gateway/grpc/server.go). <=0 cae al
+	// default. Env WAPP_GATEWAY_WORK_TIMEOUT.
+	//
+	// ⚠️ Subirlo cuesta TIEMPO COLGADO POR TRABAJO: el carril es serie por sesión,
+	// así que todo lo que venga detrás de un trabajo lento espera ese plazo entero.
+	GatewayWorkTimeout time.Duration `yaml:"gateway_work_timeout"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
@@ -501,8 +521,15 @@ func defaults() AppConfig {
 		GRPCConnectAddr: ":8101",
 		GRPCPushTimeout: 10 * time.Second,
 		GRPCAckTimeout:  8 * time.Second,
-		LogLevel:        "info",
-		LogJSON:         false,
+		// Carril de trabajo del Gateway (Plan 050 · ADR-0040): la cola es POR
+		// SESIÓN y se iguala a propósito al techo de entrantes concurrentes
+		// (Flow.MaxConcurrentIncoming, más abajo) para que ninguna de las dos sea
+		// el cuello por accidente; el presupuesto reusa el valor ya calibrado del
+		// offlinePersistTimeout del gateway.
+		GatewayWorkQueue:   64,
+		GatewayWorkTimeout: 5 * time.Second,
+		LogLevel:           "info",
+		LogJSON:            false,
 		// Mismo id que siembra 0059_platform_admin.sql (ver el comentario del
 		// campo): sin este default, un arranque sin configurar dejaría el plano
 		// de plataforma cerrado a cal y canto.
@@ -600,6 +627,8 @@ func Load() (AppConfig, error) {
 	cfg.GRPCConnectAddr = loader.GetString("GRPC_CONNECT_ADDR", cfg.GRPCConnectAddr)
 	cfg.GRPCPushTimeout = loader.GetDuration("GRPC_PUSH_TIMEOUT", cfg.GRPCPushTimeout)
 	cfg.GRPCAckTimeout = loader.GetDuration("GRPC_ACK_TIMEOUT", cfg.GRPCAckTimeout)
+	cfg.GatewayWorkQueue = loader.GetInt("GATEWAY_WORK_QUEUE", cfg.GatewayWorkQueue)
+	cfg.GatewayWorkTimeout = loader.GetDuration("GATEWAY_WORK_TIMEOUT", cfg.GatewayWorkTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 	cfg.PlatformTenantID = loader.GetString("PLATFORM_TENANT_ID", cfg.PlatformTenantID)

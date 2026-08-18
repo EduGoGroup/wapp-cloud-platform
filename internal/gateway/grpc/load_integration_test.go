@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,6 +49,15 @@ import (
 // inyectarle un repositorio sería inyectar código muerto. De ahí que este arnés
 // calque el patrón de newMTLSHarness (mtls_test.go) y reutilice sus helpers de
 // certificados (newDevCA, issueEdgeCert) y de heartbeats (mtlsHeartbeatHealth).
+//
+// ⚠️ 2026-08-18 · Plan 050 · Ola 1 — el párrafo de arriba SIGUE VIGENTE, y esta
+// nota está aquí para que nadie crea lo contrario al ver las enmiendas de
+// correrFase y registrar. El fichero no importa nada del carril ni de ninguna ola:
+// lo único que cambió es CÓMO reparte la fase sus heartbeats (n sesiones distintas
+// en vez de una sola). Esa forma es válida en LOS DOS mundos —con el bucle Recv
+// serial del commit base el suelo n×d se cumple igual—, así que el arnés sigue
+// siendo test-only y cherry-pickeable sobre `af457c9`, que es la condición de la
+// que cuelga la medición del ANTES de T5.2.
 // ============================================================================
 
 const (
@@ -99,7 +109,20 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn})
+	// El pool va MUY por encima del default de producción (25, postgres/connect.go)
+	// a propósito, y no es un detalle cosmético: con carril, N sesiones latiendo
+	// abren N workers concurrentes, y en el escenario N=60 eso son hasta 60
+	// demandantes contra 25 conexiones. Los 35 que no la consiguen esperan DENTRO
+	// del presupuesto de 5 s del job y algunos lo agotan, con lo que renewLease se
+	// rinde y el Edge pierde su LeaseUpdate. Medido el 2026-08-18: con 25 el test
+	// falla 3 de cada 6 corridas; con 90, 0 de 6.
+	//
+	// Se sube AQUÍ, y solo aquí, porque lo que T5.2/T5.3 miden es la latencia del
+	// Ack con heartbeats en vuelo, no la capacidad del pool: dejarlo en 25 haría
+	// que el gate midiera otra cosa la mitad de las veces. Que 25 se quede corto
+	// bajo flota real es un hallazgo de producto, NO del test, y vive como
+	// DEUDA-050.2 con dueño (Ola 3) — no se tapa aquí, se aísla.
+	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn, MaxOpenConns: 90, MaxIdleConns: 90})
 	if err != nil {
 		if os.Getenv(requireDBEnv) != "" {
 			t.Fatalf("BD no disponible en %s (%v) pero %s exige BD", dsnEnv, err, requireDBEnv)
@@ -265,7 +288,8 @@ func newLoadHarness(t *testing.T, cfg configArnes) *loadHarness {
 		for _, marca := range erroresDeLease {
 			if n := h.logBuf.count(marca); n != 0 {
 				t.Errorf("el servidor logueó %d× %q: el camino del lease FALLÓ durante el test "+
-					"(el cliente no lo ve, el servidor se lo traga y sigue)", n, marca)
+					"(el cliente no lo ve, el servidor se lo traga y sigue)\n  causa: %s",
+					n, marca, strings.Join(h.logBuf.linesContaining(marca), "\n  causa: "))
 			}
 		}
 	})
@@ -423,31 +447,88 @@ func (h *loadHarness) esperarUptime(ctx context.Context, t *testing.T, sessionID
 	t.Fatalf("timeout esperando uptime_s=%d de %q en la BD (último visto: %v)", want, sessionID, ultimo)
 }
 
-// correrFase manda n heartbeats consecutivos numerados desde+1 … desde+n y
-// devuelve cuánto tardó en verse el ÚLTIMO persistido en Postgres. El bucle Recv
-// del Connect es SERIAL (una sola goroutine por stream), así que con una latencia
-// d por consulta el suelo aritmético de la fase es n×d.
-func (h *loadHarness) correrFase(ctx context.Context, t *testing.T, stream edgeSender, sessionID string, desde, n int64) time.Duration {
+// correrFase manda UN heartbeat a CADA UNA de las sesiones dadas —una sesión
+// distinta por heartbeat, numerados con el marcador corrido de m— y devuelve
+// cuánto tardó la fase entera. Entre un heartbeat y el siguiente espera la barrera
+// de LeaseUpdate, que es lo que impide que dos latidos se solapen.
+//
+// 🔴 ENMENDADA EL 2026-08-18 · Plan 050 · Ola 1 (decisión de Jhoan). El enunciado
+// original se conserva LITERAL aquí abajo: dejó de regir, no se borra.
+//
+//	«correrFase manda n heartbeats consecutivos numerados desde+1 … desde+n y
+//	devuelve cuánto tardó en verse el ÚLTIMO persistido en Postgres. El bucle Recv
+//	del Connect es SERIAL (una sola goroutine por stream), así que con una latencia
+//	d por consulta el suelo aritmético de la fase es n×d.»
+//
+// POR QUÉ DEJÓ DE REGIR. Con el carril de la Ola 1 cableado (worklane.go), el
+// bucle Recv ya NO hace el trabajo inline: lo suelta a una cola POR SESIÓN. Y la
+// coalescencia de heartbeats (D-050.4) SUSTITUYE EN SITIO el latido pendiente de
+// una sesión cuando llega otro de la MISMA sesión. Diez heartbeats seguidos al
+// mismo session_id ya no son diez jobs: son ~2 —el que está en vuelo y el último
+// que sustituyó a todos los demás—, así que la fase caía muy por debajo del suelo
+// de 200 ms y el test se habría puesto rojo PORQUE LA OLA FUNCIONA.
+//
+// QUÉ LO SUSTITUYE, Y POR QUÉ EL SUELO n×d SIGUE VALIENDO (el suelo no se ha
+// movido ni un milisegundo; lo que se ha arreglado es la premisa que lo sostenía):
+//   - los n heartbeats de la fase se reparten en n SESIONES DISTINTAS, una cada
+//     uno, así que NO hay nada que coalescer — cada sesión recibe exactamente un
+//     latido por fase;
+//   - entre latido y latido se espera esperarLeases, que impide el solape. Esa
+//     barrera NO es un adorno: cada sesión tiene su PROPIA goroutine (worklane.go,
+//     queueFor arranca un worker por session_id), de modo que sin ella los n
+//     latidos correrían EN PARALELO y la fase costaría ~d, no n×d.
+//
+// Con las dos cosas, cada heartbeat vuelve a pagar su d entero y en serie, que es
+// exactamente lo que la serialidad del bucle Recv daba gratis antes de la ola.
+//
+// Es el molde de T5.2 (load_ack_integration_test.go: un heartbeat a N sesiones
+// distintas + esperarLeases como barrera entre rondas), con la ronda de tamaño
+// UNO: lo que T5.1 mide es el suelo aritmético de la latencia inyectada, no el
+// paralelismo del carril.
+//
+// Por qué la barrera es de LeaseUpdate y no de uptime_s: el LeaseUpdate se empuja
+// al FINAL del job del heartbeat (submitHeartbeat: persistSelfPn → persistHealth →
+// renewLease, connect.go), así que verlo en el cliente ya prueba que el SaveHealth
+// —el único que paga la latencia inyectada— terminó, y cuesta una lectura atómica
+// en vez de una consulta a la BD por latido. Aun así, al cerrar la fase se
+// comprueba UNA vez contra Postgres que la salud aterrizó de verdad: un SaveHealth
+// que falle se lo traga el log del servidor (connect.go) y la barrera del lease no
+// se enteraría. Esa comprobación va DESPUÉS de parar el cronómetro y su fila ya
+// está escrita, así que no alarga la fase.
+func (h *loadHarness) correrFase(ctx context.Context, t *testing.T, stream edgeSender, sesiones []string, m *medicionT52) time.Duration {
 	t.Helper()
 	inicio := time.Now()
-	for i := int64(1); i <= n; i++ {
-		if err := stream.Send(heartbeatCarga(sessionID, desde+i)); err != nil {
-			t.Fatalf("Send heartbeat #%d: %v", desde+i, err)
+	for _, sid := range sesiones {
+		m.ronda++
+		if err := stream.Send(heartbeatCarga(sid, m.ronda)); err != nil {
+			t.Fatalf("Send heartbeat #%d a la sesión %q: %v", m.ronda, sid, err)
 		}
+		m.leases++
+		h.esperarLeases(t, m.leases)
 	}
-	h.esperarUptime(ctx, t, sessionID, desde+n)
-	return time.Since(inicio)
+	fase := time.Since(inicio)
+	h.esperarUptime(ctx, t, sesiones[len(sesiones)-1], m.ronda)
+	return fase
 }
 
-// registrar abre el stream, deja la sesión registrada (online en Postgres) y
-// devuelve el stream ya drenándose. El registro se hace SIEMPRE con la latencia
-// que tenga el arnés en ese momento; los tests que miden lo hacen con latencia 0
-// para que el coste del MarkOnline no entre en la medición de las fases.
+// registrar abre el stream, deja registradas (online en Postgres) TODAS las
+// sesiones dadas —sobre ese ÚNICO stream, que es lo que hace un Edge real
+// (ADR-0008)— y devuelve el stream ya drenándose. El registro se hace SIEMPRE con
+// la latencia que tenga el arnés en ese momento; los tests que miden lo hacen con
+// latencia 0 para que el coste del MarkOnline no entre en la medición de las fases.
+//
+// ⚠️ 2026-08-18 · Plan 050 · Ola 1: antes registraba UNA sesión (`sessionID
+// string`). Pasa a lista porque la fase de T5.1 reparte ahora sus heartbeats en n
+// sesiones distintas (ver correrFase). Los llamantes de una sola sesión pasan una
+// lista de uno y no cambian de comportamiento.
 //
 // (ctx va primero por la regla context-as-argument de revive, activa en
 // .golangci.yml también para los tests.)
-func (h *loadHarness) registrar(ctx context.Context, t *testing.T, sessionID string) edgeSender {
+func (h *loadHarness) registrar(ctx context.Context, t *testing.T, sesiones []string) edgeSender {
 	t.Helper()
+	if len(sesiones) == 0 {
+		t.Fatal("registrar sin sesiones: el arnés no tendría nada que medir")
+	}
 	stream, err := h.client.Connect(ctx)
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -455,15 +536,27 @@ func (h *loadHarness) registrar(ctx context.Context, t *testing.T, sessionID str
 	if h.cfg.drenarStream {
 		h.drenar(stream)
 	}
-	if err := stream.Send(heartbeatCarga(sessionID, 1)); err != nil {
-		t.Fatalf("Send heartbeat de registro: %v", err)
+	for i, sid := range sesiones {
+		if err := stream.Send(heartbeatCarga(sid, 1)); err != nil {
+			t.Fatalf("Send heartbeat de registro de la sesión %d (%q): %v", i, sid, err)
+		}
 	}
-	h.esperarUptime(ctx, t, sessionID, 1)
 	if h.cfg.drenarStream {
-		// El lease se MIRA: el registro empuja el LeaseUpdate inicial
-		// (onSessionRegistered) y el heartbeat de registro fuerza una renovación
-		// (route → renewLease). Son dos, y si no llegan el lease está roto.
-		h.esperarLeases(t, 2)
+		// El lease se MIRA: cada sesión empuja su LeaseUpdate inicial
+		// (onSessionRegistered) y su heartbeat de registro fuerza una renovación
+		// (route → submitHeartbeat → renewLease). Son DOS POR SESIÓN, y si no llegan
+		// el lease está roto. Con el carril de la Ola 1 esta es además la barrera
+		// que de verdad cierra el registro: las sesiones se registran en paralelo
+		// (una goroutine por sesión), así que ver la fila de la última NO implica
+		// que las demás estén.
+		h.esperarLeases(t, int64(2*len(sesiones)))
+	}
+	// Y se confirma contra la BD REAL, sesión por sesión: el LeaseUpdate prueba que
+	// el job terminó, no que el SaveHealth escribiera (su error se lo traga el log).
+	// Tras la barrera de arriba las filas ya están, así que cada sondeo acierta a la
+	// primera; sin drenaje (drenarStream=false) este bucle ES la única barrera.
+	for _, sid := range sesiones {
+		h.esperarUptime(ctx, t, sid, 1)
 	}
 	return stream
 }
@@ -483,7 +576,7 @@ func TestIntegration_CargaArnesPersisteEnPostgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*esperaMaxBD)
 	defer cancel()
 
-	h.registrar(ctx, t, sid)
+	h.registrar(ctx, t, []string{sid})
 
 	var (
 		estado        string
@@ -545,7 +638,7 @@ func TestIntegration_CargaLeaseSobrePostgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*esperaMaxBD)
 	defer cancel()
 
-	h.registrar(ctx, t, sid)
+	h.registrar(ctx, t, []string{sid})
 
 	var (
 		counter int64
@@ -575,6 +668,11 @@ const (
 	// heartbeatsPorFase es el tamaño de la ráfaga de cada fase. Con la latencia de
 	// arriba el suelo por fase es 200 ms: bastante para dominar el ruido de un
 	// bufconn y de un Postgres local, y bastante poco para no alargar el CI.
+	//
+	// ⚠️ 2026-08-18 · Plan 050 · Ola 1: es TAMBIÉN cuántas SESIONES DISTINTAS abre
+	// la fase, porque desde la enmienda de correrFase manda exactamente un latido a
+	// cada una (dos a la misma sesión se coalescerían, D-050.4). El número no
+	// cambia y el suelo tampoco.
 	heartbeatsPorFase = 10
 	// factorControl es cuántas veces más rápida tiene que ser la fase de CONTROL
 	// (sin latencia inyectada) que la fase más rápida CON latencia. Es un umbral
@@ -589,9 +687,19 @@ const (
 // la latencia por consulta es un parámetro del test y el MISMO escenario da el
 // mismo resultado dos veces seguidas.
 //
-// Estructura: se registra la sesión con latencia 0 (el coste del MarkOnline no
+// Estructura: se registran las sesiones con latencia 0 (el coste del MarkOnline no
 // contamina ninguna medición), se corre una fase de CONTROL sin latencia y luego
 // dos fases IDÉNTICAS con la latencia inyectada.
+//
+// ⚠️ ENMENDADO EL 2026-08-18 · Plan 050 · Ola 1 (decisión de Jhoan). La estructura
+// decía «se registra la sesión» (UNA) y la fase mandaba sus n heartbeats a ESA
+// sesión. Con el carril cableado, esos n latidos caen en una sola cola y la
+// coalescencia (D-050.4) los sustituye en sitio: corrían ~2 jobs en vez de n y la
+// fase quedaba muy por debajo del suelo. Ahora la fase se REPARTE en n sesiones
+// distintas, una por latido. El suelo, la tolerancia, el factor de control y la
+// latencia inyectada NO se han tocado: si se hubiera aflojado cualquiera de ellos,
+// el test dejaría de decir lo que dice. El mecanismo completo, y el enunciado
+// original que sustituye, están en correrFase.
 //
 // El lease va en MEMORIA a propósito (default del arnés): lo que aquí se
 // estrangula y se mide es el camino del FLEET, y un segundo repositorio contra BD
@@ -599,38 +707,67 @@ const (
 //
 // Qué margen se considera aceptable y por qué: reproducible NO es determinista al
 // nanosegundo. Aquí se sostienen tres cosas distintas:
-//  1. un SUELO duro (fase ≥ n×d), que es aritmética y no estadística: el bucle
-//     Recv del Connect es serial y cada heartbeat paga su espera entera;
+//  1. un SUELO duro (fase ≥ n×d), que es aritmética y no estadística: cada
+//     heartbeat de la fase va a una SESIÓN DISTINTA y no arranca hasta que el
+//     anterior terminó, así que ninguno se coalesce con otro ni corre en paralelo
+//     con otro, y todos pagan su espera entera. (Enmienda del 2026-08-18: esta
+//     línea decía, literal, «el bucle Recv del Connect es serial y cada heartbeat
+//     paga su espera entera». Con el carril de la Ola 1 el bucle Recv ya no
+//     ejecuta ese trabajo —lo sirve una goroutine por sesión—, así que la
+//     serialidad la ponen ahora el reparto en n sesiones y la barrera de
+//     correrFase, no el bucle. El suelo sigue siendo el mismo: n×d.);
 //  2. un TECHO relativo entre las dos fases idénticas (|A−B| ≤ 50 % del suelo),
-//     que absorbe el jitter del planificador de Go, el sondeo de la BD (hasta un
-//     intervalo de más por fase) y la varianza de un UPDATE en Postgres, pero se
-//     rompería si el resultado dependiera del orden o de un estado acumulado;
+//     que absorbe el jitter del planificador de Go, el sondeo de la barrera (hasta
+//     un intervalo de sondeoBD de más POR HEARTBEAT) y la varianza de un UPDATE en
+//     Postgres, pero se rompería si el resultado dependiera del orden o de un
+//     estado acumulado. (Enmienda del 2026-08-18: decía «el sondeo de la BD (hasta
+//     un intervalo de más por fase)». Con la fase repartida en n sesiones la espera
+//     es POR LATIDO —n sondeos, no uno—, así que el ruido de cuantización que la
+//     tolerancia tiene que absorber es hasta n×sondeoBD, no sondeoBD. Con n=10 y
+//     sondeoBD=2 ms son 20 ms contra una tolerancia de 100 ms.);
 //  3. que el CONTROL (sin latencia) sea una FRACCIÓN CLARA de las fases medidas
 //     (1/factorControl), que es lo que demuestra que quien manda en la medida es
 //     el parámetro y no la BD. Si esto falla, la máquina no sirve para la
 //     medición de T5.2 y hay que saberlo.
 func TestIntegration_CargaLatenciaInyectableEsReproducible(t *testing.T) {
 	h := newLoadHarness(t, configArnes{drenarStream: true})
-	sid := sessionIDUnico("t51")
+
+	// Una sesión por heartbeat de la fase (ver correrFase): así ningún latido
+	// coalesce con otro. El sufijo por índice —el mismo molde que
+	// registrarSesionesT52— evita que dos IDs consecutivos colisionen si el reloj
+	// de nanosegundos no avanza entre dos llamadas.
+	sesiones := make([]string, heartbeatsPorFase)
+	for i := range sesiones {
+		sesiones[i] = sessionIDUnico(fmt.Sprintf("t51-%02d", i))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*esperaMaxBD)
 	defer cancel()
 
-	// Registro con latencia 0: el MarkOnline queda FUERA de toda medición.
-	stream := h.registrar(ctx, t, sid)
+	// Registro con latencia 0: los MarkOnline quedan FUERA de toda medición.
+	stream := h.registrar(ctx, t, sesiones)
+
+	// El marcador de secuencia y la cuenta de LeaseUpdate se arrastran de fase en
+	// fase. leases arranca en 2 por sesión: los que dejó el registro (inicial + la
+	// renovación del heartbeat de registro), que registrar ya esperó. ronda arranca
+	// en 1 —el marcador que usó el registro— para que el PRIMER latido de la primera
+	// fase sea el 2 y ningún esperarUptime pueda darse por satisfecho con la fila
+	// que dejó el registro. Se reutiliza el tipo de T5.2 —mismo paquete, mismo arnés
+	// y misma contabilidad— en vez de clonar un struct de dos campos.
+	m := &medicionT52{ronda: 1, leases: int64(2 * len(sesiones))}
 
 	// Fase de control, todavía sin latencia inyectada.
-	sinLatencia := h.correrFase(ctx, t, stream, sid, 1, heartbeatsPorFase)
+	sinLatencia := h.correrFase(ctx, t, stream, sesiones, m)
 
 	// A partir de aquí, cada consulta al fleet paga la latencia del parámetro.
 	suelo := heartbeatsPorFase * latenciaPorConsulta
 	h.slow.SetDelay(latenciaPorConsulta)
 
-	faseA := h.correrFase(ctx, t, stream, sid, 1+heartbeatsPorFase, heartbeatsPorFase)
-	faseB := h.correrFase(ctx, t, stream, sid, 1+2*heartbeatsPorFase, heartbeatsPorFase)
+	faseA := h.correrFase(ctx, t, stream, sesiones, m)
+	faseB := h.correrFase(ctx, t, stream, sesiones, m)
 
-	t.Logf("control=%v faseA=%v faseB=%v (suelo=%v, %d heartbeats × %v)",
-		sinLatencia, faseA, faseB, suelo, heartbeatsPorFase, latenciaPorConsulta)
+	t.Logf("control=%v faseA=%v faseB=%v (suelo=%v, %d heartbeats × %v, uno por cada una de %d sesiones)",
+		sinLatencia, faseA, faseB, suelo, heartbeatsPorFase, latenciaPorConsulta, len(sesiones))
 
 	// (3) El parámetro manda: sin latencia inyectada el MISMO escenario cuesta una
 	// fracción de lo que cuesta con ella. Si no, la BD ya es tan lenta como el
@@ -644,7 +781,9 @@ func TestIntegration_CargaLatenciaInyectableEsReproducible(t *testing.T) {
 			sinLatencia, menorFase, techoControl, factorControl)
 	}
 
-	// (1) Suelo duro: n heartbeats seriales × d de espera cada uno.
+	// (1) Suelo duro: n heartbeats × d de espera cada uno, en n sesiones distintas y
+	// serializados por la barrera de correrFase (sin ella correrían en paralelo, una
+	// goroutine por sesión, y la fase costaría ~d).
 	for nombre, dur := range map[string]time.Duration{"faseA": faseA, "faseB": faseB} {
 		if dur < suelo {
 			t.Fatalf("%s tardó %v, por debajo del suelo aritmético %v: la latencia inyectada no se está aplicando "+

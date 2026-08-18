@@ -31,7 +31,7 @@ func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error
 		wg.Add(1)
 		go func(sid string) {
 			defer wg.Done()
-			if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
+			if pushErr := s.registry.Push(ctx, sid, leaseToCloud(sid, lu)); pushErr != nil {
 				s.log.Debug("revoke: push a sesión", "session_id", sid, "error", pushErr)
 			}
 		}(sid)
@@ -89,7 +89,7 @@ func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
 			wg.Add(1)
 			go func(sid string, lu *cloudlinkv1.LeaseUpdate) {
 				defer wg.Done()
-				if pushErr := s.registry.Push(sid, leaseToCloud(sid, lu)); pushErr != nil {
+				if pushErr := s.registry.Push(ctx, sid, leaseToCloud(sid, lu)); pushErr != nil {
 					s.log.Debug("revoke tenant: push a sesión", "session_id", sid, "error", pushErr)
 				}
 			}(sid, lu)
@@ -140,6 +140,13 @@ func (s *Server) deliverAck(ack *cloudlinkv1.Ack) {
 // handleReceipt procesa un MessageReceipt (acuse de entrega/lectura) recibido del
 // Edge (Plan 013 §10.F/§10.G). Correlaciona por command_id con el SendText
 // original y lo entrega al receiptSink.
+//
+// Desde el Plan 050 · T1.8 NO corre en el bucle Recv sino en el carril de su sesión
+// (jobReceipt): el sink de producción escribe una fila por message_id, y eso es
+// exactamente el trabajo que no debe frenar al resto del stream. El ctx es el del
+// job, con presupuesto propio. Un receipt encolado NUNCA se coalesce ni se descarta:
+// llega tarde, pero llega (ADR-0037 §Decisión.7 — un acuse es estado idempotente
+// sobre un mensaje nuestro, así que diferirlo es legítimo y perderlo no).
 func (s *Server) handleReceipt(ctx context.Context, cc connCtx, receipt *cloudlinkv1.MessageReceipt) {
 	if receipt == nil {
 		return
@@ -233,7 +240,7 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 			SendText: &cloudlinkv1.SendText{To: to, Text: text},
 		},
 	}
-	if pushErr := s.registry.Push(sessionID, msg); pushErr != nil {
+	if pushErr := s.registry.Push(ctx, sessionID, msg); pushErr != nil {
 		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
@@ -252,6 +259,19 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 // sin acusar, NADA limpia la entrada de s.acks (deliverAck solo corre al recibir el
 // Ack), de modo que sin este reloj el select se quedaría colgado para siempre
 // aunque el Edge ya no exista.
+//
+// ⚠️ CORREGIDO el 2026-08-18 (Plan 050 · T1.1, ADR-0040 §Contexto). El párrafo de
+// arriba se conserva literal —es el que dimensionó el follow-up F2 de la pieza 03—
+// pero su "NADA limpia la entrada de s.acks" es FALSO, y lo era ya cuando se
+// escribió, a pocas líneas de la prueba en contra: sendCommand deja un
+// defer s.clearAck(cmdID) en sus dos caminos de salida, así que la entrada se borra
+// siempre, haya llegado el Ack o haya vencido el reloj. No hay entradas huérfanas y
+// no hay fuga de memoria; la entrada vive como mucho lo que dura el ackTimeout.
+// Lo que sí es cierto del párrafo: sin este reloj el select esperaría al Ack de un
+// Edge que ya no existe. El defecto real es de LATENCIA —el gateway sabe que el
+// stream cayó y aun así hace esperar el plazo entero al llamante HTTP—, no de
+// memoria. Confundir los dos ejes es lo que le dio a la Ola 2 un alcance de
+// "limpieza/TTL de huérfanas" que no tiene a quién limpiar.
 //
 // El error viaja envuelto en *SendError, así que el llamante conserva el command_id
 // —el único hilo que correlaciona lo que la nube intentó con el outbox del Edge y
@@ -310,7 +330,7 @@ func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, fil
 			},
 		},
 	}
-	if pushErr := s.registry.Push(sessionID, msg); pushErr != nil {
+	if pushErr := s.registry.Push(ctx, sessionID, msg); pushErr != nil {
 		return nil, sendErr(cmdID, sessionID, pushErr)
 	}
 
@@ -343,7 +363,10 @@ func mapKind(kind string) cloudlinkv1.MediaKind {
 // vivas mientras el Edge manda heartbeats). Borrarlo costaría esa cobertura y
 // obligaría a reescribir el test sobre SendText, que sí espera Ack y traería
 // flakiness. Si un día se retira, hay que llevarse el test o portarlo antes.
-func (s *Server) Ping(_ context.Context, sessionID string, nonce int64) error {
+//
+// El ctx SÍ se usa desde el Plan 050 · T1.5-bis: acota el Push (antes se descartaba
+// con `_` porque no había a quién dárselo).
+func (s *Server) Ping(ctx context.Context, sessionID string, nonce int64) error {
 	cmdID, err := newCommandID()
 	if err != nil {
 		return err
@@ -356,7 +379,7 @@ func (s *Server) Ping(_ context.Context, sessionID string, nonce int64) error {
 			Ping: &cloudlinkv1.Ping{Nonce: nonce},
 		},
 	}
-	return s.registry.Push(sessionID, msg)
+	return s.registry.Push(ctx, sessionID, msg)
 }
 
 // clearAck elimina la entrada de ack pendiente si aún existe (p.ej. tras un

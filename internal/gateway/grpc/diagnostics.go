@@ -15,7 +15,12 @@ import (
 // el Edge ignora un scope que no reconoce (compat aditiva). No espera el bundle: este
 // sube más tarde por el demux (storeDiagnosticsBundle). Un error propaga el de Push
 // (ErrSessionOffline si la sesión no tiene stream vivo).
-func (s *Server) RequestDiagnostics(_ context.Context, sessionID, commandID, scope string) error {
+//
+// El ctx es el del handler HTTP que pidió el diagnóstico y desde el Plan 050 ·
+// T1.5-bis SÍ se usa: acota el Push (antes se descartaba con `_`). Un handler HTTP no
+// trae deadline, así que en la práctica sigue mandando el sendTimeout del Registry;
+// lo que cambia es que un cliente que se va corta la espera.
+func (s *Server) RequestDiagnostics(ctx context.Context, sessionID, commandID, scope string) error {
 	msg := &cloudlinkv1.CloudToEdge{
 		CommandId: commandID,
 		SessionId: sessionID,
@@ -27,7 +32,7 @@ func (s *Server) RequestDiagnostics(_ context.Context, sessionID, commandID, sco
 			},
 		},
 	}
-	return s.registry.Push(sessionID, msg)
+	return s.registry.Push(ctx, sessionID, msg)
 }
 
 // storeDiagnosticsBundle correlaciona un DiagnosticsBundle recibido del Edge con su
@@ -37,6 +42,12 @@ func (s *Server) RequestDiagnostics(_ context.Context, sessionID, commandID, sco
 // pendiente que case — llegó tarde/duplicado, venció, o vino de otra sesión) se IGNORA
 // con log y NO tumba el stream. El bundle es material operativo saneado por el Edge (gate
 // ZK, T8): aquí solo se persiste OPACO (CERO llaves/DEK/credenciales/PII).
+//
+// Desde el Plan 050 · T1.10 corre en el carril de su sesión (jobDiagnostics) y no en
+// el bucle Recv: es la escritura MÁS GRANDE que llega por el stream (log tail +
+// goroutine dump) y la que menos urgencia tiene — nadie espera su respuesta, el
+// bundle sube por correlación diferida. El ctx es el del job, con su presupuesto: un
+// bundle que no quepa en él se pierde con el aviso del carril, no en silencio.
 func (s *Server) storeDiagnosticsBundle(ctx context.Context, cc connCtx, db *cloudlinkv1.DiagnosticsBundle) {
 	if s.diag == nil || !cc.hasIdentity || cc.sessionID == "" || db == nil {
 		return

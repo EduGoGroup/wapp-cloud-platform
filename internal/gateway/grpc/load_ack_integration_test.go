@@ -55,6 +55,38 @@ import (
 // que ambos lados usen el mismo arnés y el mismo heartbeatCarga.
 // ============================================================================
 
+// ============================================================================
+// 🔴 INVERTIDO EL 2026-08-18 · Plan 050 · Ola 1 · DECISIÓN DE JHOAN.
+//
+// QUÉ CAMBIÓ Y POR QUÉ, para que nadie lea esto como que alguien aflojó un test
+// para ponerlo verde. Este fichero nació midiendo el ANTES (T5.2) y sus
+// aserciones AFIRMABAN QUE EL HEAD-OF-LINE EXISTE: exigían que el p50 del Ack
+// quedara POR ENCIMA del suelo aritmético de la ráfaga y que el escenario
+// cargado fuera al menos factorOcioso× más lento que el ocioso. Eso era correcto
+// —y necesario— mientras el bucle Recv hacía el trabajo inline: sin esas dos
+// afirmaciones, la tabla del ANTES no probaba de quién era la culpa.
+//
+// Con el carril de la Ola 1 cableado esas dos afirmaciones dejan de ser ciertas,
+// y el test se pondría rojo PORQUE LA OLA FUNCIONA. Así que las aserciones se
+// INVIERTEN al criterio de T5.3: de «el Ack queda detrás de la ráfaga» a «el Ack
+// YA NO queda detrás de la ráfaga». La medición, el arnés, los escenarios y los
+// parámetros NO se tocan: si cambiara cualquiera de ellos, la comparación
+// antes/después no significaría nada.
+//
+// La tabla del ANTES se conserva ENTERA y literal, aquí abajo, en constantes
+// (antesT52) y en el comentario que las acompaña. Nada se borra: es contra ella
+// contra la que se compara el después, y sin ella la mejora sería una afirmación
+// sin número detrás.
+//
+// ⚠️ CÓMO SE MIDE EL DESPUÉS, y esto no es negociable: **N=20 y SIN `-race`**.
+// Con `-race` el escenario N=60 dejó de ser reproducible al medir el antes (su
+// p50 caía a 963,7 ms frente a 1,62/1,65 s), así que comparar un antes sin
+// `-race` contra un después con él inventaría la mejora. El gate que corre este
+// fichero —`make test-integration`— usa `go test -p 1 ./...` sin `-race`, que es
+// exactamente lo que hace falta. `make ci-docker` corre con `-race` pero NO ve
+// la integración, así que no puede ensuciar esta medida.
+// ============================================================================
+
 const (
 	// latenciaFleetT52 es la latencia inyectada a CADA consulta al fleet. 20 ms
 	// no es un número redondo elegido al azar: es el orden del RTT que la
@@ -92,8 +124,94 @@ const (
 	// la ráfaga que el p99 del Ack con el bucle OCIOSO. Es la comprobación de
 	// que el escenario satura de verdad: si no se cumple, N es demasiado bajo o
 	// la latencia inyectada no basta, y el p99 publicado no probaría nada.
+	//
+	// ⚠️ 2026-08-18: el enunciado de arriba se conserva porque describe lo que
+	// esta constante significaba mientras midió el ANTES. Invertido el test, ya
+	// no se usa así: el 10 sigue siendo «un orden de magnitud», y de él se derivan
+	// los dos umbrales del DESPUÉS (factorMejoraT53 y holguraOciosoT53).
 	factorOcioso = 10
+
+	// enVueloTitularT53 es el N del escenario TITULAR: el que publica el número
+	// de T5.3 y el único con el que el criterio se declara cumplido. Está fijado
+	// por la decisión del 2026-08-18 (medir el después con N=20 y sin `-race`),
+	// no elegido aquí.
+	enVueloTitularT53 = 20
+
+	// factorMejoraT53 es el «orden de magnitud» literal del criterio de T5.3: el
+	// p99 del después tiene que ser al menos factorMejoraT53 veces mejor que el
+	// p99 del antes, con los MISMOS parámetros. Se escribe derivado de
+	// factorOcioso a propósito: es el mismo 10, y que sea el mismo no es
+	// casualidad sino la simetría del criterio (antes: 10× más lento que el
+	// control; después: 10× mejor que el antes).
+	factorMejoraT53 = factorOcioso
+
+	// holguraOciosoT53 es cuánto se le tolera al escenario CARGADO por encima del
+	// p99 del bucle ocioso medido EN LA MISMA CORRIDA. Antes de la Ola 1 el
+	// cargado tenía que estar factorOcioso× POR ENCIMA del ocioso; después tiene
+	// que quedarse DENTRO de factorOcioso² (100×) de él. No se aprieta más porque
+	// el umbral estricto de verdad es el de factorMejoraT53: este es el control
+	// —que la comparación se hace contra un bucle que sigue siendo rápido—, no la
+	// medida.
+	holguraOciosoT53 = factorOcioso * factorOcioso
+
+	// pisoTechoOciosoT53 es el suelo absoluto de ese techo relativo. Un umbral
+	// puramente relativo se vuelve inalcanzable en una máquina donde el ocioso
+	// salga excepcionalmente rápido (100 × 40 µs = 4 ms no lo pasa nadie), y un
+	// test de integración que depende de eso es flaky por construcción — la misma
+	// lección que T5.1 ya se llevó con su chequeo del control. 10 ms sigue siendo
+	// 55× mejor que el p50 del antes (557,2 ms): no perdona una regresión.
+	pisoTechoOciosoT53 = 10 * time.Millisecond
 )
+
+// filaAntesT52 es una fila de la LÍNEA BASE: lo que este mismo escenario medía
+// ANTES de la Ola 1. Se guarda como dato del test —y no solo en el plan— porque
+// es el otro término de la comparación de T5.3: sin el antes en el código, el
+// después es un número suelto.
+type filaAntesT52 struct {
+	enVuelo  int
+	p50, p99 time.Duration
+}
+
+// antesT52 es LA TABLA DEL ANTES, medida el 2026-08-18 sobre el commit base de
+// producción `af457c9` (arnés test-only `76e2aa6`). NO SE BORRA NI SE ACTUALIZA:
+// si alguien vuelve a medir, mide el DESPUÉS, que es lo que produce este test en
+// cada corrida.
+//
+// Condiciones exactas de la medida, que el escenario de este fichero reproduce
+// tal cual: **20 ms inyectados por consulta al fleet** (latenciaFleetT52), lease
+// sobre **POSTGRES** (3 consultas más por heartbeat), **60 sesiones sobre UN solo
+// stream** (ADR-0008, sesionesT52), `ackTimeout` del servidor 8 s. Hardware:
+// **Apple M1 Pro, 8 cores, 16 GB, macOS 27.0, Go 1.26.5 darwin/arm64, Postgres 16
+// en Docker 29.2.0**. Sin `-race`.
+//
+//	| escenario                | n   | p50      | p95      | p99      | máx      | ventana muerta | K  |
+//	|--------------------------|-----|----------|----------|----------|----------|----------------|----|
+//	| N=0 · Recv ocioso        | 120 | 35 µs    | 77 µs    | 204 µs   | 233 µs   | 186 µs         | 0  |
+//	| N=20 · TITULAR           | 120 | 557,2 ms | 601,4 ms | 619,6 ms | 668,2 ms | 667,6 ms       | 20 |
+//	| N=60 · linealidad        | 40  | 1,621 s  | 1,743 s  | 1,762 s  | 1,762 s  | 1,761 s        | 60 |
+//
+// 🔴 Por qué estos números NO se pueden alcanzar por accidente en una máquina
+// lenta ni fallar por accidente en una rápida: la latencia del antes está
+// dominada por los 20 ms × N que SlowRepository duerme, y un `time.Sleep` cuesta
+// lo mismo en cualquier hardware. El suelo del antes para N=20 es 400 ms de
+// espera pura. Por eso un p99 de 62 ms (el techo que exige factorMejoraT53) es
+// INALCANZABLE sin el carril, en cualquier máquina — que es justo lo que hace
+// que este test se ponga rojo si la Ola 1 se revierte.
+var antesT52 = []filaAntesT52{
+	{enVuelo: 0, p50: 35 * time.Microsecond, p99: 204 * time.Microsecond},
+	{enVuelo: enVueloTitularT53, p50: 557200 * time.Microsecond, p99: 619600 * time.Microsecond},
+	{enVuelo: 60, p50: 1621 * time.Millisecond, p99: 1762 * time.Millisecond},
+}
+
+// antesDe devuelve la línea base del escenario con ese N, si la hay.
+func antesDe(enVuelo int) (filaAntesT52, bool) {
+	for _, f := range antesT52 {
+		if f.enVuelo == enVuelo {
+			return f, true
+		}
+	}
+	return filaAntesT52{}, false
+}
 
 // edgeStream es el stream Connect visto desde el EDGE: manda EdgeToCloud y
 // recibe CloudToEdge. Se declara como interfaz mínima (igual que edgeSender y
@@ -305,7 +423,7 @@ type resultadoT52 struct {
 // que la latencia ESCALA con N, que es la firma del head-of-line.
 var escenariosT52 = []escenarioT52{
 	{nombre: "N=0 · bucle Recv ocioso (control)", enVuelo: 0, muestras: muestrasT52},
-	{nombre: "N=20 · 20 sesiones latiendo", enVuelo: 20, muestras: muestrasT52},
+	{nombre: "N=20 · 20 sesiones latiendo (TITULAR)", enVuelo: enVueloTitularT53, muestras: muestrasT52},
 	{nombre: "N=60 · linealidad", enVuelo: 60, muestras: muestrasLinealidad},
 }
 
@@ -416,6 +534,17 @@ func muestraT52(ctx context.Context, t *testing.T, h *loadHarness, edge *edgeCli
 		// de N. El LeaseUpdate se empuja al FINAL de la rama Heartbeat
 		// (route → renewLease → Push), así que verlo en el cliente es la señal
 		// de que ese heartbeat terminó su viaje entero.
+		//
+		// ⚠️ 2026-08-18 — esta barrera es además lo que mantiene la cuenta EXACTA
+		// con el carril de la Ola 1. La coalescencia de heartbeats (D-050.4) es
+		// POR SESIÓN, y aquí cada ráfaga manda UN heartbeat a cada una de N
+		// sesiones DISTINTAS: dentro de una misma ráfaga no hay nada que
+		// coalescer. Entre rondas tampoco, porque esta barrera espera a que los N
+		// LeaseUpdate hayan llegado antes de mandar la siguiente. Si alguien
+		// quitara la barrera, dos rondas podrían solaparse en la cola de una
+		// sesión, el latido viejo sería sustituido y `esperarLeases` esperaría un
+		// LeaseUpdate que ya nadie va a empujar: el test moriría por timeout, no
+		// en silencio.
 		m.leases += int64(enVuelo)
 		h.esperarLeases(t, m.leases)
 	}
@@ -483,18 +612,24 @@ func medirEscenario(ctx context.Context, t *testing.T, h *loadHarness, edge *edg
 	return res
 }
 
-// TestIntegration_CargaAckBajoHeartbeatsEnVuelo es T5.2: mide y PUBLICA la
-// latencia del Ack antes del Plan 050.
+// TestIntegration_CargaAckBajoHeartbeatsEnVuelo mide y PUBLICA la latencia del
+// Ack. Nació siendo T5.2 (el ANTES) y desde el 2026-08-18 es también el gate de
+// T5.3 (el DESPUÉS): mismo arnés, mismos parámetros, aserciones invertidas. El
+// nombre se conserva a propósito —renombrarlo rompería la trazabilidad con la
+// tabla publicada del antes— y por eso su función de comprobación sigue
+// llamándose comprobarTablaT52.
 //
-// No es solo un impresor de números: afirma las dos cosas sin las cuales la
-// tabla no probaría nada.
-//  1. Que la ráfaga DOMINA: el p50 del Ack con N heartbeats en vuelo queda por
-//     encima de la mitad del suelo aritmético (N × latencia inyectada). Si esto
-//     falla, el Ack no se está colando detrás de la ráfaga y el escenario no
-//     reproduce el head-of-line.
-//  2. Que el bucle OCIOSO es órdenes de magnitud más rápido. Sin este control,
-//     un p99 alto podría ser de la máquina, del bufconn o de Postgres, y la
-//     comparación de T5.3 no significaría nada.
+// No es solo un impresor de números: afirma las tres cosas sin las cuales la
+// mejora no probaría nada (el enunciado de las dos primeras ANTES de invertirse
+// se conserva literal en comprobarEscenarioCargadoT53).
+//  1. Que la ráfaga YA NO DOMINA: el p50 del Ack con N heartbeats en vuelo cae
+//     por debajo de la mitad del suelo aritmético (N × latencia inyectada). Con
+//     el bucle Recv haciendo el trabajo inline esto es imposible de cumplir.
+//  2. Que el p99 es al menos un orden de magnitud mejor que el de la línea base
+//     (antesT52), que es el criterio literal de T5.3.
+//  3. Que el bucle OCIOSO sigue siendo el control: el escenario cargado se queda
+//     ahora DENTRO de su orden de magnitud, en vez de por encima. Sin este
+//     control, una mejora podría ser de la máquina y no del carril.
 func TestIntegration_CargaAckBajoHeartbeatsEnVuelo(t *testing.T) {
 	// drenarStream queda en false porque el drenaje lo pone este test: su lector
 	// es un SUPERCONJUNTO de drenar (lee todo, cuenta los mismos LeaseUpdate en
@@ -546,8 +681,12 @@ func TestIntegration_CargaAckBajoHeartbeatsEnVuelo(t *testing.T) {
 // quedar en la salida del gate, no en un fichero que alguien tenga que creerse.
 func publicarTablaT52(t *testing.T, tabla []resultadoT52) {
 	t.Helper()
-	t.Logf("================ T5.2 · latencia del Ack ANTES del Plan 050 ================")
-	t.Logf("SHA medido: 76e2aa6 (arnés test-only) sobre el commit base de producción af457c9")
+	t.Logf("========= T5.3 · latencia del Ack DESPUÉS de la Ola 1 del Plan 050 =========")
+	t.Logf("(este encabezado decía «T5.2 · latencia del Ack ANTES del Plan 050» hasta el 2026-08-18: " +
+		"el arnés es EL MISMO, lo que cambió es el código que mide y el lado de las aserciones)")
+	t.Logf("línea base del ANTES: 76e2aa6 (arnés test-only) sobre el commit base de producción af457c9")
+	t.Logf("el DESPUÉS lo produce esta corrida · válido SOLO sin -race, con el titular N=%d",
+		enVueloTitularT53)
 	t.Logf("latencia inyectada: %v por consulta al fleet · lease sobre POSTGRES (3 consultas/heartbeat)",
 		latenciaFleetT52)
 	t.Logf("sesiones registradas sobre UN stream (ADR-0008): %d · ackTimeout del servidor: 8s",
@@ -569,13 +708,56 @@ func publicarTablaT52(t *testing.T, tabla []resultadoT52) {
 			r.esc.nombre, kPercentil(r.profundidades, 0.10), kPercentil(r.profundidades, 0.50),
 			kPercentil(r.profundidades, 0.90), kPercentil(r.profundidades, 1))
 	}
+	// La comparación cara a cara, que es el entregable de T5.3. Se publica aunque
+	// el test pase: el criterio del plan pide el NÚMERO, no un verde.
+	t.Logf("---- ANTES (2026-08-18 · af457c9) vs DESPUÉS (esta corrida · Ola 1) ----")
+	for _, r := range tabla {
+		antes, ok := antesDe(r.esc.enVuelo)
+		if !ok {
+			t.Logf("%-36s sin línea base del ANTES para N=%d", r.esc.nombre, r.esc.enVuelo)
+			continue
+		}
+		t.Logf("%-36s p50 %v → %v · p99 %v → %v (techo T5.3 del p99: %v)",
+			r.esc.nombre,
+			antes.p50.Round(time.Microsecond), r.p50.Round(time.Microsecond),
+			antes.p99.Round(time.Microsecond), r.p99.Round(time.Microsecond),
+			(antes.p99 / factorMejoraT53).Round(time.Microsecond))
+	}
 	t.Logf("ventana  = lo que el Ack, YA en el cable, esperó a que el bucle Recv lo consumiera")
 	t.Logf("silencio = mayor hueco entre dos frames consecutivos recibidos por el Edge")
 	t.Logf("===========================================================================")
 }
 
-// comprobarTablaT52 afirma las dos cosas que hacen publicable la tabla.
+// comprobarTablaT52 afirma lo que hace publicable la tabla.
+//
+// 🔴 INVERTIDA EL 2026-08-18 (Plan 050 · Ola 1, decisión de Jhoan). Hasta hoy
+// afirmaba que el head-of-line EXISTE —p50 ≥ suelo, y cargado al menos
+// factorOcioso× más lento que el ocioso—, que es lo que T5.2 tenía que demostrar
+// para que su tabla del ANTES significara algo. Con el carril cableado eso deja
+// de ser cierto y esas aserciones se pondrían rojas PORQUE LA OLA FUNCIONA. Lo
+// que se afirma ahora es el criterio de T5.3, ni más ni menos. El enunciado
+// original de las dos aserciones se conserva literal en cada una.
+//
+// Las funciones están partidas (y no en `t.Run` con closures inline) porque un
+// solo cuerpo con las tres comprobaciones y sus bucles se pasaría del umbral de
+// gocyclo (15) del `.golangci.yml`, y los `t.Run` inline no lo bajan.
 func comprobarTablaT52(t *testing.T, tabla []resultadoT52) {
+	t.Helper()
+	ocioso := controlT53(t, tabla)
+	for i := range tabla {
+		r := &tabla[i]
+		if r.esc.enVuelo == 0 {
+			continue
+		}
+		comprobarEscenarioCargadoT53(t, r, ocioso)
+	}
+}
+
+// controlT53 exige que todos los escenarios dejaran muestra y devuelve el de
+// CONTROL (N=0). El control sobrevive intacto a la inversión: sin un bucle
+// ocioso con el que comparar, ni el antes probaba de quién era la culpa ni el
+// después prueba que la mejora sea del carril y no de la máquina.
+func controlT53(t *testing.T, tabla []resultadoT52) *resultadoT52 {
 	t.Helper()
 	var ocioso *resultadoT52
 	for i := range tabla {
@@ -585,33 +767,81 @@ func comprobarTablaT52(t *testing.T, tabla []resultadoT52) {
 		}
 		if r.esc.enVuelo == 0 {
 			ocioso = r
-			continue
-		}
-		// (1) La ráfaga manda: el Ack se cuela DETRÁS de ella. El umbral es la
-		// mitad del suelo aritmético y no el suelo entero porque el SendText
-		// arranca a la vez que la ráfaga: los primeros frames pueden estar ya
-		// procesados cuando el Ack entra en la cola.
-		suelo := time.Duration(r.esc.enVuelo) * latenciaFleetT52 / 2
-		if r.p50 < suelo {
-			t.Errorf("%q: p50 del Ack = %v, por debajo de %v (mitad de %d × %v). El Ack no está "+
-				"quedando detrás de la ráfaga: el escenario NO reproduce el head-of-line y su p99 no prueba nada",
-				r.esc.nombre, r.p50, suelo, r.esc.enVuelo, latenciaFleetT52)
 		}
 	}
 	if ocioso == nil {
 		t.Fatal("falta el escenario de control (N=0): sin él la tabla no dice de quién es la culpa")
 	}
-	// (2) El control: con el bucle vacío el MISMO Ack vuelve órdenes de magnitud
-	// antes. Si no, lo que se está midiendo no es el bucle.
-	for i := range tabla {
-		r := &tabla[i]
-		if r.esc.enVuelo == 0 {
-			continue
-		}
-		if r.p50 < time.Duration(factorOcioso)*ocioso.p99 {
-			t.Errorf("%q: p50 = %v y el bucle ocioso tiene p99 = %v; se esperaba al menos %d× más lento. "+
-				"O N es demasiado bajo, o la latencia inyectada no basta para saturar el bucle",
-				r.esc.nombre, r.p50, ocioso.p99, factorOcioso)
-		}
+	return ocioso
+}
+
+// comprobarEscenarioCargadoT53 aplica al escenario con ráfaga las TRES
+// afirmaciones del después. Cada una lleva, literal, lo que afirmaba antes de la
+// inversión del 2026-08-18.
+func comprobarEscenarioCargadoT53(t *testing.T, r, ocioso *resultadoT52) {
+	t.Helper()
+
+	// (1) INVERTIDA. Antes afirmaba: «La ráfaga manda: el Ack se cuela DETRÁS de
+	// ella» y exigía p50 ≥ suelo. Ahora afirma lo contrario: el Ack YA NO queda
+	// detrás de la ráfaga, así que su p50 tiene que caer POR DEBAJO de ese mismo
+	// suelo. El umbral no se ha movido ni un milisegundo —sigue siendo la mitad
+	// del suelo aritmético N × latencia inyectada—: lo único que cambia es el
+	// lado de la desigualdad, que es exactamente lo que la Ola 1 promete.
+	suelo := time.Duration(r.esc.enVuelo) * latenciaFleetT52 / 2
+	if r.p50 >= suelo {
+		t.Errorf("%q: p50 del Ack = %v, en o por encima de %v (mitad de %d × %v). El Ack SIGUE "+
+			"quedando detrás de la ráfaga: el carril de la Ola 1 no está soltando el trabajo del bucle Recv "+
+			"(antes de la ola este mismo escenario daba %v de p50)",
+			r.esc.nombre, r.p50, suelo, r.esc.enVuelo, latenciaFleetT52, antesP50De(r.esc.enVuelo))
 	}
+
+	// (2) EL CRITERIO LITERAL DE T5.3: el p99 del después es al menos un orden de
+	// magnitud mejor que el del antes, con los mismos parámetros. Es la aserción
+	// que se pone roja si se revierte la Ola 1, y no puede pasar por accidente en
+	// una máquina rápida: el antes está dominado por los N × 20 ms que
+	// SlowRepository DUERME, y dormir cuesta lo mismo en cualquier hardware.
+	antes, ok := antesDe(r.esc.enVuelo)
+	if !ok {
+		t.Errorf("%q: no hay línea base del ANTES para N=%d en antesT52, así que no hay con qué comparar "+
+			"el p99 medido (%v). O se añade la fila del antes, o el escenario no puede publicar mejora",
+			r.esc.nombre, r.esc.enVuelo, r.p99)
+		return
+	}
+	if techo := antes.p99 / factorMejoraT53; r.p99 > techo {
+		t.Errorf("%q: p99 del Ack = %v, por encima de %v. T5.3 exige que el DESPUÉS sea al menos %d× "+
+			"mejor que el ANTES (p99 del antes = %v, medido el 2026-08-18 sobre af457c9 con los MISMOS "+
+			"parámetros: %d sesiones en vuelo, %v inyectados por consulta al fleet, lease sobre Postgres). "+
+			"Recuerda que este número solo vale medido SIN -race",
+			r.esc.nombre, r.p99, techo, factorMejoraT53, antes.p99, r.esc.enVuelo, latenciaFleetT52)
+	}
+
+	// (3) INVERTIDA. Antes afirmaba: «El control: con el bucle vacío el MISMO Ack
+	// vuelve órdenes de magnitud antes», y exigía que el cargado fuera al menos
+	// factorOcioso× MÁS LENTO que el ocioso. Ahora exige lo contrario: que el
+	// cargado se quede DENTRO de factorOcioso² del ocioso de la MISMA corrida. Es
+	// el control, no la medida —el umbral duro es el (2)—, y por eso lleva un piso
+	// absoluto: un techo puramente relativo se vuelve inalcanzable si el ocioso
+	// sale excepcionalmente rápido, y un test de integración que dependa de eso es
+	// flaky por construcción.
+	techoOcioso := ocioso.p99 * holguraOciosoT53
+	if techoOcioso < pisoTechoOciosoT53 {
+		techoOcioso = pisoTechoOciosoT53
+	}
+	if r.p50 > techoOcioso {
+		t.Errorf("%q: p50 = %v y el bucle ocioso tiene p99 = %v; tras la Ola 1 el escenario cargado debía "+
+			"quedarse por debajo de %v (%d× el ocioso, con piso de %v). Que siga lejos del ocioso significa que "+
+			"la ráfaga TODAVÍA pesa sobre el camino del Ack",
+			r.esc.nombre, r.p50, ocioso.p99, techoOcioso, holguraOciosoT53, pisoTechoOciosoT53)
+	}
+}
+
+// antesP50De devuelve el p50 de la línea base de ese N, o 0 si no la hay. Existe
+// para que el mensaje de fallo de la aserción (1) pueda decir contra qué número
+// se está comparando sin repetir la búsqueda ni complicar la función.
+func antesP50De(enVuelo int) time.Duration {
+	f, ok := antesDe(enVuelo)
+	if !ok {
+		return 0
+	}
+	return f.p50
 }

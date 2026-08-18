@@ -1,6 +1,7 @@
 package gatewaygrpc
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,6 +51,11 @@ func TestStreamSenderSerializesConcurrentSends(t *testing.T) {
 	reg.Register("sesion-A", sender)
 	reg.Register("sesion-B", sender)
 
+	// context.Background() EXPLÍCITO (Plan 050 · T1.5-bis): este test mide la
+	// serialización por-stream, no la propagación del ctx. Un ctx que nunca vence deja
+	// el reloj del Registry como único techo, que es la condición de siempre.
+	ctx := context.Background()
+
 	const perSession = 200
 	var wg sync.WaitGroup
 	for _, sid := range []string{"sesion-A", "sesion-B"} {
@@ -57,7 +63,7 @@ func TestStreamSenderSerializesConcurrentSends(t *testing.T) {
 			wg.Add(1)
 			go func(sid string) {
 				defer wg.Done()
-				if err := reg.Push(sid, &cloudlinkv1.CloudToEdge{SessionId: sid}); err != nil {
+				if err := reg.Push(ctx, sid, &cloudlinkv1.CloudToEdge{SessionId: sid}); err != nil {
 					t.Errorf("Push(%s) devolvió error: %v", sid, err)
 				}
 			}(sid)
