@@ -268,3 +268,67 @@ func TestAckTardioYCierreConcurrentesNoEscribenEnCanalCerrado(t *testing.T) {
 
 	exigirAcksVacio(t, srv)
 }
+
+// TestElCierreDeUnaSesionNoCancelaLosEnviosDeOtra defiende el filtro por sesión de
+// cancelSessionAcks, que hasta el 2026-08-18 no tenía quien lo sostuviera: quitarlo
+// dejaba el paquete ENTERO en verde. Salió de la verificación por mutación de la Ola
+// 2, y lo que deja pasar no es un detalle — en un gateway con varios Edges, la caída
+// del stream de UNO cancelaría los envíos en vuelo de TODOS los demás, cada uno con
+// un ErrStreamClosed que miente sobre una conexión perfectamente sana.
+//
+// La aserción que importa es la NEGATIVA: que el envío de la sesión intacta SIGA
+// esperando. Comprobar que el de s-1 se cancela no prueba nada aquí —de eso ya se
+// encarga el test de arriba—, y por eso el segundo envío se verifica con una espera
+// que debe AGOTARSE sin traer resultado.
+func TestElCierreDeUnaSesionNoCancelaLosEnviosDeOtra(t *testing.T) {
+	t.Parallel()
+	reg := session.NewRegistry()
+	srv := New(reg, laneLog(), WithAckTimeout(defaultAckTimeout))
+
+	enVuelo := func(sid string) (chan struct{}, func()) {
+		empujado := make(chan struct{}, 1)
+		release := reg.Register(sid, senderFunc(func(*cloudlinkv1.CloudToEdge) error {
+			select {
+			case empujado <- struct{}{}:
+			default:
+			}
+			return nil
+		}))
+		return empujado, release
+	}
+
+	empujado1, release1 := enVuelo("s-1")
+	empujado2, release2 := enVuelo("s-2")
+
+	res1 := make(chan error, 1)
+	res2 := make(chan error, 1)
+	go func() {
+		_, err := srv.SendText(context.Background(), "s-1", "57301", "uno")
+		res1 <- err
+	}()
+	go func() {
+		_, err := srv.SendText(context.Background(), "s-2", "57302", "dos")
+		res2 <- err
+	}()
+	<-empujado1
+	<-empujado2
+
+	// Cae SOLO el stream de s-1. El de s-2 sigue vivo y registrado.
+	srv.closeStream(carrilDePrueba(t), connCtx{}, map[string]func(){"s-1": release1})
+
+	if err := <-res1; !errors.Is(err, ErrStreamClosed) {
+		t.Fatalf("el envío de la sesión que SÍ cayó no se canceló: err = %v", err)
+	}
+
+	select {
+	case err := <-res2:
+		t.Fatalf("el envío de s-2 murió al caer el stream de s-1 (err = %v): cancelSessionAcks "+
+			"dejó de filtrar por sesión y se lleva por delante los envíos de los demás Edges", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Cierre ordenado: sin esto la goroutine de s-2 colgaría hasta el ackTimeout.
+	srv.closeStream(carrilDePrueba(t), connCtx{}, map[string]func(){"s-2": release2})
+	<-res2
+	exigirAcksVacio(t, srv)
+}
