@@ -294,7 +294,7 @@ func TestRouteElAckSeResuelveInlineConElCarrilTapado(t *testing.T) {
 	// El comando pendiente que espera su acuse, como lo deja SendText.
 	ch := make(chan *cloudlinkv1.Ack, 1)
 	srv.acksMu.Lock()
-	srv.acks["cmd-inline"] = ch
+	srv.acks["cmd-inline"] = pendingAck{ch: ch, sessionID: "s-1"}
 	srv.acksMu.Unlock()
 
 	srv.route(lane, ccDePrueba("s-1"), frameAck("s-1", "cmd-inline"))

@@ -10,6 +10,33 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 )
 
+// ErrStreamClosed indica que el stream CloudLink de la sesión cayó mientras un envío
+// esperaba su Ack, y que la sesión NO quedó con otro stream vivo detrás. Tiene
+// centinela propio porque es un fallo DISTINTO de context.DeadlineExceeded, aunque
+// hasta el Plan 050 · Ola 2 el llamante viera los dos como lo mismo: el timeout dice
+// «esperamos el plazo entero y el Edge no contestó»; este dice «dejamos de esperar en
+// el acto porque ya no hay nadie que pueda contestar». Confundirlos le costaba al
+// llamante HTTP los 8 s completos de una espera que se sabía perdida desde el primer
+// instante — que es, literalmente, el defecto que esta ola viene a quitar.
+//
+// Está EXPORTADO para que el propio paquete y sus tests lo distingan con errors.Is,
+// pero NO es el camino por el que lo consumen los handlers HTTP: esos usan el
+// duck-typing de SendError.StreamCaido(), porque el Gateway no debe aparecer en sus
+// imports (ver allí, y el mismo argumento escrito sobre commandIDFrom en
+// httpapi/admin.go). Viaja SIEMPRE envuelto en *SendError, igual que los otros dos
+// caminos de salida, así que el command_id —el único hilo que correlaciona lo que la
+// nube intentó con el outbox del Edge y con los acuses del Plan 013— no se pierde.
+//
+// 🔴 Lo que este error NO dice: que el mensaje no saliera. El Push YA tuvo éxito —el
+// comando viajó al Edge y pudo haber llegado a WhatsApp antes de que el stream
+// muriera—; lo único seguro es que el acuse no va a llegar por aquí. De ahí que la
+// respuesta HTTP sea **504 y no 502** (decisión de Jhoan, Ola 2): el 502 de este repo
+// significa lo contrario, «no salió», y es el que le corresponde a ErrSessionOffline,
+// donde el fallo ocurre AL EMPUJAR. Por eso el texto de abajo habla de dejar de
+// esperar y nunca de no poder enviar: redactarlo como un fallo de envío convertiría
+// una respuesta honesta («no sabemos si le llegó») en una afirmación falsa.
+var ErrStreamClosed = errors.New("gatewaygrpc: el stream de la sesión se cerró antes de que llegara el ack")
+
 // RevokeLease dispara el kill-switch del Edge: persiste la revocación y empuja
 // el LeaseUpdate(Revoked) a TODAS sus sesiones vivas. Devuelve error si el lease
 // no está configurado. El endpoint admin HTTP que lo invoca es T5.
@@ -116,11 +143,19 @@ func (s *Server) RestoreTenant(ctx context.Context, tenantID string) error {
 
 // deliverAck entrega un Ack al chan pendiente correlacionado por
 // acked_command_id, de forma no bloqueante, y limpia la entrada.
+//
+// 🔴 Es el ÚNICO escritor de los canales de s.acks (verificado en la Ola 2), y el
+// orden de sus dos mitades es lo que sostiene la invariante de cierre: RETIRA la
+// entrada del mapa bajo acksMu y solo DESPUÉS escribe en el canal. Gracias a eso, un
+// cierre de stream concurrente que logre retirar la misma entrada sabe con certeza
+// que aquí no va a escribir nadie, y puede cerrar el canal sin riesgo. Invertir el
+// orden —escribir y luego borrar— rompería esa certeza en silencio. Ver el enunciado
+// completo en cancelSessionAcks.
 func (s *Server) deliverAck(ack *cloudlinkv1.Ack) {
 	id := ack.GetAckedCommandId()
 
 	s.acksMu.Lock()
-	ch, ok := s.acks[id]
+	p, ok := s.acks[id]
 	if ok {
 		delete(s.acks, id)
 	}
@@ -132,7 +167,7 @@ func (s *Server) deliverAck(ack *cloudlinkv1.Ack) {
 	}
 
 	select {
-	case ch <- ack:
+	case p.ch <- ack:
 	default:
 	}
 }
@@ -194,6 +229,20 @@ func (e *SendError) CommandID() string { return e.commandID }
 // SessionID devuelve la sesión a la que iba dirigido el comando.
 func (e *SendError) SessionID() string { return e.sessionID }
 
+// StreamCaido indica que el stream CloudLink de la sesión se cerró mientras se
+// esperaba el ack, y que la sesión no quedó con otro stream detrás (ErrStreamClosed).
+// Se consume por duck-typing (`interface{ StreamCaido() bool }`), exactamente igual
+// que CommandID(): el contrato es la interfaz anónima, no un tipo compartido, y ese es
+// el desacople que permite al Gateway no aparecer en los imports de los handlers HTTP
+// —el mismo argumento que httpapi/admin.go escribe sobre commandIDFrom—. Un handler
+// que quisiera `errors.Is(err, gatewaygrpc.ErrStreamClosed)` tendría que importar este
+// paquete y romperlo.
+//
+// El bool que devuelve es el que separa el 504 «se cayó» del 504 «no contestó a
+// tiempo»: falso NO significa que el envío fuera bien, significa que falló por otra
+// cosa (plazo vencido, sesión offline al empujar). No lo uses como «hubo error».
+func (e *SendError) StreamCaido() bool { return errors.Is(e.err, ErrStreamClosed) }
+
 // Error implementa error. NO incluye el destino ni el texto: un log de error no es
 // sitio para PII ni para el contenido del mensaje.
 func (e *SendError) Error() string {
@@ -229,7 +278,7 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 
 	ch := make(chan *cloudlinkv1.Ack, 1)
 	s.acksMu.Lock()
-	s.acks[cmdID] = ch
+	s.acks[cmdID] = pendingAck{ch: ch, sessionID: sessionID}
 	s.acksMu.Unlock()
 	defer s.clearAck(cmdID)
 
@@ -263,8 +312,8 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 // ⚠️ CORREGIDO el 2026-08-18 (Plan 050 · T1.1, ADR-0040 §Contexto). El párrafo de
 // arriba se conserva literal —es el que dimensionó el follow-up F2 de la pieza 03—
 // pero su "NADA limpia la entrada de s.acks" es FALSO, y lo era ya cuando se
-// escribió, a pocas líneas de la prueba en contra: sendCommand deja un
-// defer s.clearAck(cmdID) en sus dos caminos de salida, así que la entrada se borra
+// escribió, a pocas líneas de la prueba en contra: SendText y SendMedia dejan un
+// defer s.clearAck(cmdID) en todos sus caminos de salida, así que la entrada se borra
 // siempre, haya llegado el Ack o haya vencido el reloj. No hay entradas huérfanas y
 // no hay fuga de memoria; la entrada vive como mucho lo que dura el ackTimeout.
 // Lo que sí es cierto del párrafo: sin este reloj el select esperaría al Ack de un
@@ -277,13 +326,32 @@ func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*clo
 // —el único hilo que correlaciona lo que la nube intentó con el outbox del Edge y
 // con los acuses del Plan 013— y errors.Is(err, context.DeadlineExceeded) sigue
 // diciendo la verdad.
+//
+// Desde el Plan 050 · Ola 2 · T2.3 hay TRES salidas, no dos, y la nueva es la que da
+// sentido a la ola: el canal CERRADO. Cuando el stream de la sesión cae y nadie lo
+// reemplaza, closeStream cancela sus acuses en vuelo (cancelSessionAcks) cerrando
+// estos canales, y esta espera termina en el acto con ErrStreamClosed en vez de
+// consumir el ackTimeout entero contra un Edge que ya no está. El llamante distingue
+// las dos cosas con errors.Is, que es justo lo que el mapeo HTTP necesita: «no
+// contestó a tiempo» y «se cayó» merecen respuestas distintas.
 func (s *Server) awaitAck(ctx context.Context, ch <-chan *cloudlinkv1.Ack, cmdID, sessionID string) (*cloudlinkv1.Ack, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.ackTimeout)
 	defer cancel()
 
 	select {
-	case ack := <-ch:
-		return ack, nil
+	case ack, ok := <-ch:
+		if ok {
+			return ack, nil
+		}
+		// Canal cerrado = el stream murió con este envío en vuelo. Se loguea a nivel de
+		// COMANDO —igual que el timeout, y por el mismo motivo— porque el command_id es
+		// lo único que permite después averiguar si el mensaje llegó a salir: el Warn
+		// agregado de cancelSessionAcks dice CUÁNTOS cayeron de golpe, este dice CUÁLES.
+		s.log.Warn("gateway: el ack se canceló porque el stream de la sesión cayó",
+			"command_id", cmdID,
+			"session_id", sessionID,
+		)
+		return nil, sendErr(cmdID, sessionID, ErrStreamClosed)
 	case <-ctx.Done():
 		// El comando YA viajó al Edge: esto NO dice que el mensaje no saliera, dice
 		// que no sabemos si salió. De ahí que el command_id sea obligatorio aquí.
@@ -312,7 +380,7 @@ func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, fil
 
 	ch := make(chan *cloudlinkv1.Ack, 1)
 	s.acksMu.Lock()
-	s.acks[cmdID] = ch
+	s.acks[cmdID] = pendingAck{ch: ch, sessionID: sessionID}
 	s.acksMu.Unlock()
 	defer s.clearAck(cmdID)
 
@@ -384,10 +452,66 @@ func (s *Server) Ping(ctx context.Context, sessionID string, nonce int64) error 
 
 // clearAck elimina la entrada de ack pendiente si aún existe (p.ej. tras un
 // timeout sin respuesta del Edge).
+//
+// NO cierra el canal, y no es un olvido: quien sale por aquí es el propio llamante de
+// SendText/SendMedia, que ya dejó de leerlo. Cerrar aquí solo añadiría una segunda
+// mano capaz de cerrar el mismo canal, que es exactamente lo que la invariante de
+// cancelSessionAcks evita.
 func (s *Server) clearAck(cmdID string) {
 	s.acksMu.Lock()
 	delete(s.acks, cmdID)
 	s.acksMu.Unlock()
+}
+
+// cancelSessionAcks cancela DE GOLPE todos los envíos en vuelo de una sesión: retira
+// sus entradas de s.acks y cierra sus canales, con lo que el awaitAck de cada uno
+// despierta al instante con ErrStreamClosed en lugar de agotar el ackTimeout entero
+// esperando a un Edge que ya no está. Devuelve cuántos canceló (Plan 050 · Ola 2 · T2.2).
+//
+// 🔴 LA INVARIANTE QUE HACE SEGURO CERRAR: solo cierra el canal quien logra RETIRAR su
+// entrada de s.acks bajo acksMu. Ojo, porque el enunciado fácil —«delete y close bajo
+// el mismo mutex»— es necesario pero NO es lo que protege: lo que protege es la
+// EXCLUSIVIDAD del retiro. deliverAck es el único que escribe en estos canales, y saca
+// su entrada del mapa bajo acksMu ANTES de escribir; así que si la sacó él, aquí ya no
+// la encontramos, y si la sacamos nosotros, él encuentra el hueco y se limita a loguear.
+// Los dos no pueden tener nunca el mismo canal. Por eso cerrar FUERA del lock —después
+// de haber retirado dentro— no puede producir ni un envío sobre canal cerrado ni un
+// doble close, y a cambio no se tiene el mutex tomado mientras se cierran n canales.
+//
+// El barrido recorre TODO el mapa porque la entrada trae su sessionID dentro y no hay
+// índice por sesión: en pendingAck (types.go) está por qué se prefiere eso a un mapa
+// paralelo. n son los envíos en vuelo del gateway entero —vida máxima ackTimeout— y
+// esto corre una vez por caída de stream, en un camino frío.
+func (s *Server) cancelSessionAcks(sessionID string) int {
+	var cancelados []chan *cloudlinkv1.Ack
+
+	s.acksMu.Lock()
+	for cmdID, p := range s.acks {
+		if p.sessionID != sessionID {
+			continue
+		}
+		delete(s.acks, cmdID)
+		cancelados = append(cancelados, p.ch)
+	}
+	s.acksMu.Unlock()
+
+	for _, ch := range cancelados {
+		close(ch)
+	}
+
+	if len(cancelados) > 0 {
+		// Warn, no Info: cada canal cerrado aquí es un envío que su llamante HTTP va a
+		// ver fallar, y esta es la ÚNICA línea que dice CUÁNTOS cayeron a la vez —el
+		// Warn de awaitAck dice cuáles, uno por command_id—. Esa cifra es justo lo que
+		// se busca cuando alguien pregunta por qué fallaron varios envíos de golpe.
+		// Cuando no hay nada en vuelo NO se loguea nada: el cierre limpio de un stream
+		// es el caso normal y no es noticia.
+		s.log.Warn("gateway: el stream cayó con envíos esperando ack",
+			"session_id", sessionID,
+			"cancelados", len(cancelados),
+		)
+	}
+	return len(cancelados)
 }
 
 // leaseToCloud envuelve un LeaseUpdate en un CloudToEdge dirigido a la sesión

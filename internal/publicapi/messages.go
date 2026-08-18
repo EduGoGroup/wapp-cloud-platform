@@ -49,7 +49,8 @@ type sendErrorResponse struct {
 //   - 400 si el cuerpo JSON es inválido o falta algún campo.
 //   - 401 si el request no llegó autenticado (sin Identity en el contexto).
 //   - 404 si la sesión no pertenece al tenant del token (aislamiento, INV-8/R6).
-//   - 502 si la sesión está offline; 504 si expira el ack; 500 en otro fallo.
+//   - 502 si la sesión está offline; 504 si expira el ack o si el stream del Edge
+//     cae mientras se espera (dos textos distintos, mismo código); 500 en otro fallo.
 //
 // Los tres errores de envío llevan el command_id cuando ya estaba asignado, y TODO
 // desenlace deja traza en el log. Antes no dejaba ninguna: un envío que colgaba
@@ -134,8 +135,9 @@ func sessionBelongsToTenant(ctx context.Context, sessions SessionLister, tenantI
 }
 
 // writeSendError traduce el error de SendText a un código HTTP: sesión offline ->
-// 502, timeout/cancelación esperando el Ack -> 504, resto -> 500 (mismo criterio que
-// httpapi/admin.go). Adjunta el command_id al cuerpo y LOGUEA el fallo.
+// 502, stream caído esperando el Ack -> 504, timeout/cancelación esperando el Ack ->
+// 504, resto -> 500 (mismo criterio que httpapi/admin.go). Adjunta el command_id al
+// cuerpo y LOGUEA el fallo.
 //
 // La diferencia entre el 502 y el 504 no es cosmética y conviene no borrarla al
 // tocar esto: en el 502 el comando NO llegó a salir (no hay stream), mientras que
@@ -143,12 +145,23 @@ func sessionBelongsToTenant(ctx context.Context, sessions SessionLister, tenantI
 // dice «no sé si llegó», no «no llegó». Por eso el 504 es el que más necesita el
 // command_id: es el único modo de resolver la duda después, contra el outbox del
 // Edge o los acuses del Plan 013.
+//
+// Los DOS casos del 504 comparten código y se separan por el TEXTO (Plan 050 · Ola 2 ·
+// T2.4). El enunciado de esa tarea pedía un 502 para el stream caído y NO se siguió
+// (decisión de Jhoan): cuando el stream muere esperando el Ack, el Push ya tuvo éxito
+// —si hubiera fallado, SendText habría devuelto ErrSessionOffline antes de llegar a
+// esperar—, o sea que el comando viajó y estamos exactamente en el «no sé si llegó»
+// del párrafo anterior. Devolver 502 ahí borraría la distinción que ese párrafo pide
+// no borrar y, peor, le diría al llamante «reintenta tranquilo» justo cuando reintentar
+// puede duplicarle un mensaje de WhatsApp a un cliente real.
 func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, sessionID string) {
 	cmdID := commandIDFrom(err)
 	code, msg := http.StatusInternalServerError, "no se pudo enviar el texto"
 	switch {
 	case errors.Is(err, session.ErrSessionOffline):
 		code, msg = http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge"
+	case streamCaidoFrom(err):
+		code, msg = http.StatusGatewayTimeout, msgStreamCaido
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		code, msg = http.StatusGatewayTimeout, "timeout esperando el ack del Edge"
 	}
@@ -162,6 +175,28 @@ func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, s
 		)
 	}
 	writeJSON(w, code, sendErrorResponse{Error: msg, CommandID: cmdID})
+}
+
+// msgStreamCaido es el cuerpo del 504 «se cayó», distinguible a simple vista del 504
+// «no contestó a tiempo» en un log. Está redactado a propósito SIN la palabra «no se
+// pudo enviar»: eso afirmaría algo falso —el comando ya viajó al Edge y el mensaje pudo
+// llegar a WhatsApp— y la única acción honesta que le queda al llamante es verificar
+// antes de reenviar, nunca reintentar a ciegas.
+const msgStreamCaido = "el stream del Edge se cerró antes del ack: el comando YA viajó, " +
+	"así que no se sabe si el mensaje salió. Verifica el envío (por el command_id, contra el " +
+	"outbox del Edge o los acuses) ANTES de reenviar: reenviar a ciegas puede duplicárselo al cliente"
+
+// streamCaidoFrom indica si el error viene de un stream que murió esperando el ack,
+// por duck-typing (`interface{ StreamCaido() bool }`) y sin importar el paquete del
+// Gateway — la hermana exacta de commandIDFrom, y por el mismo motivo: el contrato es
+// la interfaz anónima, no un tipo compartido, y ese desacople es el que mantiene al
+// Gateway fuera de los imports de estos handlers. Un `errors.Is(err,
+// gatewaygrpc.ErrStreamClosed)` obligaría a importarlo y lo rompería.
+//
+// Falso NO significa «el envío fue bien»: significa que, si falló, fue por otra cosa.
+func streamCaidoFrom(err error) bool {
+	var caido interface{ StreamCaido() bool }
+	return errors.As(err, &caido) && caido.StreamCaido()
 }
 
 // commandIDFrom extrae el command_id de un error de envío por duck-typing, sin
