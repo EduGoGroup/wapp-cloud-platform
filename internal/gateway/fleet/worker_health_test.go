@@ -10,6 +10,18 @@ import (
 // i64 devuelve un puntero al valor dado (azúcar para armar snapshots).
 func i64(v int64) *int64 { return &v }
 
+// requirePunteroInt64 exige que el puntero esté PRESENTE y valga lo esperado. Las dos
+// mitades van siempre juntas a propósito: distinguir «no lo sé» (nil) de un valor
+// MEDIDO es el corazón de T4.3, y comprobar solo una de ellas dejaría pasar justo el
+// fallo que duele (un 0 medido degradado a NULL, o un NULL leído como 0). El mensaje
+// lo pone el llamante para no perder el porqué de cada aserción.
+func requirePunteroInt64(t *testing.T, got *int64, want int64, format string, args ...any) {
+	t.Helper()
+	if got == nil || *got != want {
+		t.Fatalf(format, args...)
+	}
+}
+
 // TestMemorySaveHealthWorkerUnknownIsNotZero es el test central de la regla de
 // lectura del Plan 051 · T4.3: un snapshot que NO SABE el bloque del worker
 // (taskset vacío, p50 nil, mapa nil, contadores nil) se persiste como DESCONOCIDO
@@ -92,15 +104,11 @@ func TestMemorySaveHealthWorkerKnownRoundTrip(t *testing.T) {
 	if s.IntentCircuit != "open" {
 		t.Fatalf("el breaker abierto debe llegar entero: got %q", s.IntentCircuit)
 	}
-	if s.IntentP50Ms == nil || *s.IntentP50Ms != 1450 {
-		t.Fatalf("p50: %v, want 1450", s.IntentP50Ms)
-	}
-	if s.FailedSealDispatch == nil || *s.FailedSealDispatch != 0 {
-		t.Fatalf("un 0 MEDIDO debe llegar como puntero a 0, no como nil: %v", s.FailedSealDispatch)
-	}
-	if s.FailedSealBudget == nil || *s.FailedSealBudget != 4 {
-		t.Fatalf("failed_seal_budget: %v, want 4", s.FailedSealBudget)
-	}
+	requirePunteroInt64(t, s.IntentP50Ms, 1450, "p50: %v, want 1450", s.IntentP50Ms)
+	requirePunteroInt64(t, s.FailedSealDispatch, 0,
+		"un 0 MEDIDO debe llegar como puntero a 0, no como nil: %v", s.FailedSealDispatch)
+	requirePunteroInt64(t, s.FailedSealBudget, 4,
+		"failed_seal_budget: %v, want 4", s.FailedSealBudget)
 	// Los dos sellos van SEPARADOS (T3.12): solo el de DESPACHO implica duplicados,
 	// así que el 0 de uno y el 4 del otro tienen que seguir siendo distinguibles.
 	if *s.FailedSealDispatch == *s.FailedSealBudget {

@@ -130,52 +130,95 @@ func TestIntegration_FleetSaveWorkerHealth(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	const edgeID, sessionID = "edge-worker-1", "sess-worker-1"
 
-	repo := fleet.NewPostgresRepository(db)
-	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
+	fila := filaWorker{
+		repo: fleet.NewPostgresRepository(db), tenantID: tenantID,
+		edgeID: edgeID, sessionID: sessionID,
+	}
+	if err := fila.repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}
 
-	// 1) Edge que no sabe nada del worker (mapa NIL incluido) ⇒ todo NULL/nil.
-	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
-		WhatsappState: "connected", BinaryVersion: "v0.12.0",
-	}); err != nil {
-		t.Fatalf("SaveHealth sin bloque de worker: %v", err)
+	// Las tres fases son una SECUENCIA sobre la MISMA fila: la 2 pisa lo que dejó la 1
+	// y la 3 comprueba que se BORRA justo lo que escribió la 2. Por eso van en este
+	// orden, SIN t.Parallel, y una fase rota corta aquí la corrida: seguir sería medir
+	// contra un estado que nadie llegó a escribir.
+	if !t.Run("1) el Edge no sabe nada del worker", func(t *testing.T) {
+		faseWorkerDesconocido(ctx, t, fila)
+	}) {
+		t.Fatal("fase 1 rota: las fases 2 y 3 leen la fila que ella deja")
 	}
-	s := getSession(t, repo, tenantID, edgeID, sessionID)
+	if !t.Run("2) el Edge sí lo sabe (0 MEDIDO incluido)", func(t *testing.T) {
+		faseWorkerConocido(ctx, t, fila)
+	}) {
+		t.Fatal("fase 2 rota: la fase 3 comprueba que se borra justo lo que ella escribe")
+	}
+	t.Run("3) parte RANCIO: lo anterior se BORRA", func(t *testing.T) {
+		faseWorkerRancio(ctx, t, fila)
+	})
+}
+
+// filaWorker identifica la fila de flota que comparten las fases de
+// TestIntegration_FleetSaveWorkerHealth: todas escriben y leen SIEMPRE la misma.
+type filaWorker struct {
+	repo      fleet.Repository
+	tenantID  string
+	edgeID    string
+	sessionID string
+}
+
+// save persiste el snapshot y falla con el motivo de la fase si el repo protesta.
+func (f filaWorker) save(ctx context.Context, t *testing.T, h fleet.HealthSnapshot, motivo string) {
+	t.Helper()
+	if err := f.repo.SaveHealth(ctx, f.tenantID, f.edgeID, f.sessionID, h); err != nil {
+		t.Fatalf("SaveHealth %s: %v", motivo, err)
+	}
+}
+
+// get relee la fila (falla el test si no está).
+func (f filaWorker) get(ctx context.Context, t *testing.T) fleet.Session {
+	t.Helper()
+	return getSessionCtx(ctx, t, f.repo, f.tenantID, f.edgeID, f.sessionID)
+}
+
+// faseWorkerDesconocido: un Edge que no sabe nada del worker (mapa NIL incluido) deja
+// todas las columnas en NULL, que se leen como nil y NUNCA como 0.
+func faseWorkerDesconocido(ctx context.Context, t *testing.T, f filaWorker) {
+	t.Helper()
+	f.save(ctx, t, fleet.HealthSnapshot{
+		WhatsappState: "connected", BinaryVersion: "v0.12.0",
+	}, "sin bloque de worker")
+	s := f.get(ctx, t)
 	if s.WorkerTaskset != "" || s.IntentP50Ms != nil || s.IntentOmittedByReason != nil ||
 		s.StuckHeads != nil || s.StuckHeadPolls != nil ||
 		s.FailedSealDispatch != nil || s.FailedSealBudget != nil {
 		t.Fatalf("sin dato del worker todo debe quedar en DESCONOCIDO (NULL⇒nil): %+v", s)
 	}
+}
 
-	// 2) Edge que sí lo sabe: el 0 de failed_seal_dispatch es un 0 MEDIDO.
+// faseWorkerConocido: el Edge sí lo sabe, y el 0 de failed_seal_dispatch es un 0 MEDIDO.
+func faseWorkerConocido(ctx context.Context, t *testing.T, f filaWorker) {
+	t.Helper()
 	cero := int64(0)
 	p50 := int64(1450)
 	heads := int64(3)
 	polls := int64(11)
 	budget := int64(4)
 	razones := map[string]int64{"fastlane": 7, "presupuesto": 2, "breaker": 1}
-	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
+	f.save(ctx, t, fleet.HealthSnapshot{
 		WhatsappState: "connected", IntentCircuit: "open",
 		WorkerTaskset: "solapada", IntentP50Ms: &p50,
 		IntentOmittedByReason: razones, StuckHeads: &heads,
 		StuckHeadPolls: &polls, FailedSealDispatch: &cero, FailedSealBudget: &budget,
-	}); err != nil {
-		t.Fatalf("SaveHealth con bloque de worker: %v", err)
-	}
-	s = getSession(t, repo, tenantID, edgeID, sessionID)
+	}, "con bloque de worker")
+	s := f.get(ctx, t)
 	if s.WorkerTaskset != "solapada" || s.IntentCircuit != "open" {
 		t.Fatalf("taskset/breaker deben verse sin entrar en la máquina: %+v", s)
 	}
-	if s.IntentP50Ms == nil || *s.IntentP50Ms != 1450 {
-		t.Fatalf("intent_p50_ms: %v, want 1450", s.IntentP50Ms)
-	}
-	if s.FailedSealDispatch == nil || *s.FailedSealDispatch != 0 {
-		t.Fatalf("un 0 MEDIDO debe volver como puntero a 0, no como NULL: %v", s.FailedSealDispatch)
-	}
-	if s.FailedSealBudget == nil || *s.FailedSealBudget != 4 {
-		t.Fatalf("failed_seal_budget: %v, want 4", s.FailedSealBudget)
-	}
+	requirePunteroInt64(t, s.IntentP50Ms, 1450, "intent_p50_ms: %v, want 1450", s.IntentP50Ms)
+	requirePunteroInt64(t, s.FailedSealDispatch, 0,
+		"un 0 MEDIDO debe volver como puntero a 0, no como NULL: %v", s.FailedSealDispatch)
+	requirePunteroInt64(t, s.FailedSealBudget, 4,
+		"failed_seal_budget: %v, want 4", s.FailedSealBudget)
 	if s.StuckHeads == nil || *s.StuckHeads != 3 || s.StuckHeadPolls == nil || *s.StuckHeadPolls != 11 {
 		t.Fatalf("contadores de cabeza atascada: %+v", s)
 	}
@@ -187,16 +230,15 @@ func TestIntegration_FleetSaveWorkerHealth(t *testing.T) {
 	if len(s.IntentOmittedByReason) != 3 {
 		t.Fatalf("el desglose no puede ganar ni perder claves en el JSONB: %v", s.IntentOmittedByReason)
 	}
+}
 
-	// 3) Parte RANCIO (el Edge manda las tres señales a su cero a propósito): el
-	// valor anterior se BORRA, no se conserva. Conservar un "solapada" viejo sería
-	// publicar una señal de salud inventada.
-	if err := repo.SaveHealth(ctx, tenantID, edgeID, sessionID, fleet.HealthSnapshot{
-		WhatsappState: "connected",
-	}); err != nil {
-		t.Fatalf("SaveHealth rancio: %v", err)
-	}
-	if s = getSession(t, repo, tenantID, edgeID, sessionID); s.WorkerTaskset != "" ||
+// faseWorkerRancio: parte RANCIO (el Edge manda las tres señales a su cero a
+// propósito). El valor anterior se BORRA, no se conserva: conservar un "solapada"
+// viejo sería publicar una señal de salud inventada.
+func faseWorkerRancio(ctx context.Context, t *testing.T, f filaWorker) {
+	t.Helper()
+	f.save(ctx, t, fleet.HealthSnapshot{WhatsappState: "connected"}, "rancio")
+	if s := f.get(ctx, t); s.WorkerTaskset != "" ||
 		s.IntentP50Ms != nil || s.IntentOmittedByReason != nil {
 		t.Fatalf("un parte rancio debe volver a DESCONOCIDO: %+v", s)
 	}

@@ -259,6 +259,22 @@ func TestSessionsList_WorkerHealthExposed(t *testing.T) {
 	}
 	got := rows[0]
 
+	// Las dos mitades leen la MISMA respuesta ya decodificada: no se tocan entre sí,
+	// no llevan t.Parallel y no rehacen la llamada (el criterio es que TODO esto se
+	// cumpla a la vez, en una única respuesta).
+	t.Run("breaker, taskset y el 0 MEDIDO", func(t *testing.T) {
+		assertWorkerHealthEscalares(t, got)
+	})
+	t.Run("desglose clave a clave, sin agregados", func(t *testing.T) {
+		assertWorkerHealthDesglose(t, got)
+	})
+}
+
+// assertWorkerHealthEscalares cubre el criterio literal de T4.3 sobre los campos
+// planos: el breaker y el taskset se ven sin entrar en la máquina, un 0 MEDIDO viaja
+// y, en la MISMA respuesta, el que no se reportó sigue ausente.
+func assertWorkerHealthEscalares(t *testing.T, got map[string]any) {
+	t.Helper()
 	// Criterio de T4.3: breaker y taskset visibles.
 	if got["intent_circuit"] != "open" {
 		t.Fatalf("el breaker abierto debe verse en la consola: %v", got["intent_circuit"])
@@ -278,7 +294,12 @@ func TestSessionsList_WorkerHealthExposed(t *testing.T) {
 	if v, ok := got["failed_seal_budget"]; ok {
 		t.Fatalf("failed_seal_budget no reportado debe omitirse: %v", v)
 	}
+}
 
+// assertWorkerHealthDesglose fija que los motivos llegan clave a clave y que el DTO
+// no cuela ningún total agregado (INV-051.3 / T3.12).
+func assertWorkerHealthDesglose(t *testing.T, got map[string]any) {
+	t.Helper()
 	// Desglose clave a clave; ningún total agregado en el DTO.
 	desglose, ok := got["intent_omitted_by_reason"].(map[string]any)
 	if !ok {
