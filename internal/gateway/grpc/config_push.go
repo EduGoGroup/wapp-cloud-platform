@@ -39,13 +39,17 @@ func WithConfigProvider(p ConfigProvider) Option { return func(s *Server) { s.co
 //
 // El push es CONCURRENTE (mismo patrón que RevokeLease): una sesión bloqueada no
 // retrasa la entrega al resto.
-func (s *Server) PushConfig(_ context.Context, tenantID, kind, version string, payload []byte) error {
+//
+// El ctx es el del handler HTTP del PUT y desde el Plan 050 · T1.5-bis SÍ se usa:
+// viaja hasta el Push de cada sesión (antes se descartaba con `_`). Las goroutines
+// lo capturan y wg.Wait() las espera, así que nunca sobreviven al ctx que acotan.
+func (s *Server) PushConfig(ctx context.Context, tenantID, kind, version string, payload []byte) error {
 	var wg sync.WaitGroup
 	for _, sid := range s.sessionsForTenant(tenantID) {
 		wg.Add(1)
 		go func(sid string) {
 			defer wg.Done()
-			if err := s.pushConfig(sid, kind, version, payload); err != nil {
+			if err := s.pushConfig(ctx, sid, kind, version, payload); err != nil {
 				s.log.Debug("config push: a sesión", "session_id", sid, "kind", kind, "error", err)
 			}
 		}(sid)
@@ -69,7 +73,7 @@ func (s *Server) pushConfigsOnConnect(ctx context.Context, cc connCtx) {
 		return
 	}
 	for _, c := range cfgs {
-		if err := s.pushConfig(cc.sessionID, c.Kind, c.Version, c.Payload); err != nil {
+		if err := s.pushConfig(ctx, cc.sessionID, c.Kind, c.Version, c.Payload); err != nil {
 			s.log.Debug("config push: inicial a sesión", "session_id", cc.sessionID,
 				"kind", c.Kind, "error", err)
 		}
@@ -79,7 +83,10 @@ func (s *Server) pushConfigsOnConnect(ctx context.Context, cc connCtx) {
 // pushConfig arma el frame ConfigUpdate con un command_id nuevo y lo empuja a la
 // sesión. El command_id sirve al Ack idempotente del Edge (frame existente); la
 // nube no espera el Ack (push del servidor, como el lease).
-func (s *Server) pushConfig(sessionID, kind, version string, payload []byte) error {
+//
+// Recibe ctx (Plan 050 · T1.5-bis) SOLO para pasárselo al Push: es el del PUT en el
+// fan-out y el del stream en el push al conectar. Nunca se inventa aquí.
+func (s *Server) pushConfig(ctx context.Context, sessionID, kind, version string, payload []byte) error {
 	cmdID, err := newCommandID()
 	if err != nil {
 		return err
@@ -97,7 +104,7 @@ func (s *Server) pushConfig(sessionID, kind, version string, payload []byte) err
 			},
 		},
 	}
-	return s.registry.Push(sessionID, msg)
+	return s.registry.Push(ctx, sessionID, msg)
 }
 
 // sessionsForTenant devuelve una copia de las sesiones vivas de TODOS los Edges del

@@ -160,6 +160,69 @@ func TestLoad_GRPCAckTimeout(t *testing.T) {
 	})
 }
 
+// TestLoad_GatewayWorkLane cubre las dos perillas del carril de trabajo del stream
+// CloudLink (Plan 050 · Ola 1, ADR-0040): el tope de cola POR SESIÓN y el
+// presupuesto de pared por trabajo. Sin ellas, cada frame del Edge arrancaba una
+// goroutine sin techo y sin reloj.
+func TestLoad_GatewayWorkLane(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		isolateEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GatewayWorkQueue != 64 {
+			t.Errorf("GatewayWorkQueue: got %d, want 64", cfg.GatewayWorkQueue)
+		}
+		if cfg.GatewayWorkTimeout != 5*time.Second {
+			t.Errorf("GatewayWorkTimeout: got %v, want 5s", cfg.GatewayWorkTimeout)
+		}
+		// El 64 no es un número redondo cualquiera: está igualado al techo de
+		// entrantes concurrentes del runtime de flujos para que ninguna de las dos
+		// colas sea el cuello por accidente. Si alguien mueve una, que mueva la otra.
+		if cfg.GatewayWorkQueue != cfg.Flow.MaxConcurrentIncoming {
+			t.Errorf("GatewayWorkQueue=%d != Flow.MaxConcurrentIncoming=%d: los defaults van igualados",
+				cfg.GatewayWorkQueue, cfg.Flow.MaxConcurrentIncoming)
+		}
+	})
+
+	t.Run("override por env", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"GATEWAY_WORK_QUEUE", "8")
+		t.Setenv(EnvPrefix+"GATEWAY_WORK_TIMEOUT", "2s")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GatewayWorkQueue != 8 {
+			t.Errorf("GatewayWorkQueue: got %d, want 8", cfg.GatewayWorkQueue)
+		}
+		if cfg.GatewayWorkTimeout != 2*time.Second {
+			t.Errorf("GatewayWorkTimeout: got %v, want 2s", cfg.GatewayWorkTimeout)
+		}
+	})
+
+	// Un valor no parseable cae al default en vez de dejar el campo en cero: cero
+	// sería "cola sin tope" y "trabajo sin reloj", los dos defectos que el carril
+	// elimina. La red de seguridad final está en gatewaygrpc.New, que también
+	// materializa <=0.
+	t.Run("valor inválido cae al default", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"GATEWAY_WORK_QUEUE", "no-es-entero")
+		t.Setenv(EnvPrefix+"GATEWAY_WORK_TIMEOUT", "no-es-duracion")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.GatewayWorkQueue != 64 {
+			t.Errorf("GatewayWorkQueue: got %d, want 64 (default)", cfg.GatewayWorkQueue)
+		}
+		if cfg.GatewayWorkTimeout != 5*time.Second {
+			t.Errorf("GatewayWorkTimeout: got %v, want 5s (default)", cfg.GatewayWorkTimeout)
+		}
+	})
+}
+
 func TestLoad_StorageDefaults(t *testing.T) {
 	isolateEnv(t)
 	cfg, err := Load()

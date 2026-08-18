@@ -99,14 +99,14 @@ func WithAuthAuditor(a in.Auditor) Option { return func(s *Server) { s.authAudit
 func (s *Server) handleUserLogin(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLoginRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
-		s.pushAuthError(cc, cmdID, authCodeInternal, "auth no disponible")
+		s.pushAuthError(ctx, cc, cmdID, authCodeInternal, "auth no disponible")
 		return
 	}
 	if !cc.hasIdentity {
 		// Sin identidad mTLS no se conoce el tenant del canal: no se puede acotar
 		// ni verificar coherencia ⇒ se rechaza sin tocar el IAM.
 		s.recordEdgeAuth(ctx, cc, auditActionLogin, resultError, cmdID, "")
-		s.pushAuthError(cc, cmdID, authCodeTenantMismatch, "canal sin identidad")
+		s.pushAuthError(ctx, cc, cmdID, authCodeTenantMismatch, "canal sin identidad")
 		return
 	}
 	res, err := s.authn.Login(ctx, in.LoginInput{
@@ -116,18 +116,18 @@ func (s *Server) handleUserLogin(ctx context.Context, cc connCtx, req *cloudlink
 	})
 	if err != nil {
 		s.recordEdgeAuth(ctx, cc, auditActionLogin, resultError, cmdID, "")
-		s.pushAuthError(cc, cmdID, authErrorCode(err), "")
+		s.pushAuthError(ctx, cc, cmdID, authErrorCode(err), "")
 		return
 	}
 	if res.Context.TenantID != cc.tenantID {
 		// Guard tenant cruzado (ADR-0025 §Principios): un token válido de otro
 		// tenant NO entra por el canal de este Edge. No se entregan tokens.
 		s.recordEdgeAuth(ctx, cc, auditActionLogin, resultError, cmdID, res.Context.UserID)
-		s.pushAuthError(cc, cmdID, authCodeTenantMismatch, "")
+		s.pushAuthError(ctx, cc, cmdID, authCodeTenantMismatch, "")
 		return
 	}
 	s.recordEdgeAuth(ctx, cc, auditActionLogin, resultOK, cmdID, res.Context.UserID)
-	s.pushAuthTokens(cc, cmdID, res)
+	s.pushAuthTokens(ctx, cc, cmdID, res)
 }
 
 // handleUserRefresh atiende un UserRefresh relayado por el Edge: canjea el refresh
@@ -137,27 +137,27 @@ func (s *Server) handleUserLogin(ctx context.Context, cc connCtx, req *cloudlink
 func (s *Server) handleUserRefresh(ctx context.Context, cc connCtx, req *cloudlinkv1.UserRefreshRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
-		s.pushAuthError(cc, cmdID, authCodeInternal, "auth no disponible")
+		s.pushAuthError(ctx, cc, cmdID, authCodeInternal, "auth no disponible")
 		return
 	}
 	if !cc.hasIdentity {
 		s.recordEdgeAuth(ctx, cc, auditActionRefresh, resultError, cmdID, "")
-		s.pushAuthError(cc, cmdID, authCodeTenantMismatch, "canal sin identidad")
+		s.pushAuthError(ctx, cc, cmdID, authCodeTenantMismatch, "canal sin identidad")
 		return
 	}
 	res, err := s.authn.Refresh(ctx, in.RefreshInput{RefreshToken: req.GetRefreshToken()})
 	if err != nil {
 		s.recordEdgeAuth(ctx, cc, auditActionRefresh, resultError, cmdID, "")
-		s.pushAuthError(cc, cmdID, authErrorCode(err), "")
+		s.pushAuthError(ctx, cc, cmdID, authErrorCode(err), "")
 		return
 	}
 	if res.Context.TenantID != cc.tenantID {
 		s.recordEdgeAuth(ctx, cc, auditActionRefresh, resultError, cmdID, res.Context.UserID)
-		s.pushAuthError(cc, cmdID, authCodeTenantMismatch, "")
+		s.pushAuthError(ctx, cc, cmdID, authCodeTenantMismatch, "")
 		return
 	}
 	s.recordEdgeAuth(ctx, cc, auditActionRefresh, resultOK, cmdID, res.Context.UserID)
-	s.pushAuthTokens(cc, cmdID, res)
+	s.pushAuthTokens(ctx, cc, cmdID, res)
 }
 
 // handleUserLogout atiende un UserLogout relayado por el Edge: revoca el/los
@@ -172,7 +172,7 @@ func (s *Server) handleUserRefresh(ctx context.Context, cc connCtx, req *cloudli
 func (s *Server) handleUserLogout(ctx context.Context, cc connCtx, req *cloudlinkv1.UserLogoutRequest) {
 	cmdID := req.GetCommandId()
 	if s.authn == nil {
-		s.pushAuthError(cc, cmdID, authCodeInternal, "auth no disponible")
+		s.pushAuthError(ctx, cc, cmdID, authCodeInternal, "auth no disponible")
 		return
 	}
 	if err := s.authn.Logout(ctx, in.LogoutInput{
@@ -180,12 +180,12 @@ func (s *Server) handleUserLogout(ctx context.Context, cc connCtx, req *cloudlin
 		AllSessions:  req.GetAllSessions(),
 	}); err != nil {
 		s.recordEdgeAuth(ctx, cc, auditActionLogout, resultError, cmdID, "")
-		s.pushAuthError(cc, cmdID, authErrorCode(err), "")
+		s.pushAuthError(ctx, cc, cmdID, authErrorCode(err), "")
 		return
 	}
 	s.recordEdgeAuth(ctx, cc, auditActionLogout, resultOK, cmdID, "")
 	// Éxito de logout: UserTokens VACÍO en la rama Tokens (convención del contrato).
-	s.pushAuthResponse(cc, &cloudlinkv1.UserAuthResponse{
+	s.pushAuthResponse(ctx, cc, &cloudlinkv1.UserAuthResponse{
 		CommandId: cmdID,
 		SessionId: cc.sessionID,
 		Result:    &cloudlinkv1.UserAuthResponse_Tokens{Tokens: &cloudlinkv1.UserTokens{}},
@@ -209,9 +209,11 @@ func authErrorCode(err error) string {
 	}
 }
 
-// pushAuthTokens responde con el par de tokens emitido (login/refresh ok).
-func (s *Server) pushAuthTokens(cc connCtx, commandID string, res domain.AuthResult) {
-	s.pushAuthResponse(cc, &cloudlinkv1.UserAuthResponse{
+// pushAuthTokens responde con el par de tokens emitido (login/refresh ok). El ctx
+// solo se transporta hasta el Push (Plan 050 · T1.5-bis); desde T1.9 es el del job
+// del carril, no el del stream (ver pushAuthResponse).
+func (s *Server) pushAuthTokens(ctx context.Context, cc connCtx, commandID string, res domain.AuthResult) {
+	s.pushAuthResponse(ctx, cc, &cloudlinkv1.UserAuthResponse{
 		CommandId: commandID,
 		SessionId: cc.sessionID,
 		Result: &cloudlinkv1.UserAuthResponse_Tokens{Tokens: &cloudlinkv1.UserTokens{
@@ -223,9 +225,10 @@ func (s *Server) pushAuthTokens(cc connCtx, commandID string, res domain.AuthRes
 	})
 }
 
-// pushAuthError responde con un UserAuthError tipado (fallo de auth).
-func (s *Server) pushAuthError(cc connCtx, commandID, code, message string) {
-	s.pushAuthResponse(cc, &cloudlinkv1.UserAuthResponse{
+// pushAuthError responde con un UserAuthError tipado (fallo de auth). Mismo ctx y
+// mismo motivo que pushAuthTokens.
+func (s *Server) pushAuthError(ctx context.Context, cc connCtx, commandID, code, message string) {
+	s.pushAuthResponse(ctx, cc, &cloudlinkv1.UserAuthResponse{
 		CommandId: commandID,
 		SessionId: cc.sessionID,
 		Result:    &cloudlinkv1.UserAuthResponse_Error{Error: &cloudlinkv1.UserAuthError{Code: code, Message: message}},
@@ -236,13 +239,28 @@ func (s *Server) pushAuthError(cc connCtx, commandID, code, message string) {
 // del Edge por el registry (correlacionada por command_id/session_id, igual que el
 // resto de los push del servidor). Best-effort: un fallo de entrega se loguea sin
 // tumbar el stream (el Edge reintenta el login si no recibe respuesta).
-func (s *Server) pushAuthResponse(cc connCtx, resp *cloudlinkv1.UserAuthResponse) {
+//
+// Sobre el ctx (Plan 050): T1.5-bis lo introdujo hasta el Push razonando que era el
+// del stream y que, muerto el stream, no había a quién responder. T1.9 movió las tres
+// ramas de auth al carril, así que HOY el ctx que llega aquí es el del JOB, cuya base
+// es context.WithoutCancel(streamCtx): ya NO se cancela al morir el stream, y quien
+// acota la espera es el presupuesto del job (workBudget, 5 s por defecto) por debajo
+// del sendTimeout del Registry (10 s). El efecto neto sigue siendo el que T1.5-bis
+// buscaba —el Push no espera indefinidamente—, pero el disparador es el reloj del
+// carril, no la muerte del stream. Se deja escrito porque el comentario anterior
+// habría quedado falso en silencio.
+//
+// 🔴 Orden: como esta respuesta ya no sale de la goroutine del bucle Recv, su orden
+// relativo respecto a un ConfigUpdate empujado por otra vía deja de estar garantizado
+// por accidente. El Edge no lo nota (el streamSender serializa las escrituras) y hoy
+// nadie depende de ese orden; queda escrito para que nadie empiece.
+func (s *Server) pushAuthResponse(ctx context.Context, cc connCtx, resp *cloudlinkv1.UserAuthResponse) {
 	msg := &cloudlinkv1.CloudToEdge{
 		CommandId: resp.GetCommandId(),
 		SessionId: cc.sessionID,
 		Payload:   &cloudlinkv1.CloudToEdge_UserAuthResponse{UserAuthResponse: resp},
 	}
-	if err := s.registry.Push(cc.sessionID, msg); err != nil {
+	if err := s.registry.Push(ctx, cc.sessionID, msg); err != nil {
 		s.log.Debug("auth: push UserAuthResponse",
 			"session_id", cc.sessionID, "command_id", resp.GetCommandId(), "error", err)
 	}

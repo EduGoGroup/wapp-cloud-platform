@@ -8,6 +8,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -103,14 +104,32 @@ func (r *Registry) Register(sessionID string, s Sender) (release func()) {
 	}
 }
 
-// Push envía un comando hacia el Edge de la sesión dada, ACOTADO por sendTimeout
-// (Plan 027 · Ola 1 · T5, cierra H6). Devuelve un error que envuelve
-// ErrSessionOffline si la sesión no está online, o ErrPushTimeout si el Send no
-// completó a tiempo (Edge lento que no lee su stream). El Send se ejecuta en una
-// goroutine con un canal bufferizado (cap 1): si expira el timeout, la goroutine
-// no se bloquea al entregar el resultado y termina en cuanto el stream se
-// desatasca o el Edge cae (fuga acotada, no indefinida).
-func (r *Registry) Push(sessionID string, msg *cloudlinkv1.CloudToEdge) error {
+// Push envía un comando hacia el Edge de la sesión dada, ACOTADO por DOS relojes
+// independientes: el ctx del llamante y el sendTimeout propio del Registry
+// (Plan 027 · Ola 1 · T5, cierra H6 · Plan 050 · T1.5-bis, ADR-0040 §Decisión.5 ·
+// Enmienda 1). Devuelve un error que envuelve:
+//
+//   - ErrSessionOffline si la sesión no está online. Esta comprobación es PREVIA y
+//     O(1), y GANA SIEMPRE: un ctx ya cancelado no debe convertir un «esa sesión no
+//     existe» en un «se acabó el tiempo» (Enmienda 1, regla 3).
+//   - ctx.Err() —NO ErrPushTimeout— si el llamante se rindió antes de que el Send
+//     contestara. «El llamante se rindió» y «el Edge no lee su stream» son fallos
+//     DISTINTOS y confundirlos borraría la señal (Enmienda 1, regla 2).
+//   - ErrPushTimeout si venció el sendTimeout (Edge lento que no lee su stream). El
+//     timer NO se retira con la llegada del ctx: sigue siendo el techo absoluto para
+//     el llamante que pase un ctx sin deadline —un handler HTTP no trae ninguno— y
+//     WAPP_GRPC_PUSH_TIMEOUT no se toca (INV-050.6).
+//
+// El Send se ejecuta en una goroutine con un canal bufferizado (cap 1): si se sale
+// por cualquiera de los dos relojes, la goroutine no se bloquea al entregar el
+// resultado y termina en cuanto el stream se desatasca o el Edge cae (fuga acotada,
+// no indefinida).
+//
+// ⚠️ Cancelar el ctx NO desbloquea el stream.Send de gRPC, y esta función no lo
+// promete: la goroutine de arriba sobrevive a la salida por ctx.Done() exactamente
+// igual que sobrevivía a la salida por timer. Lo que el ctx compra es que el
+// LLAMANTE deje de esperar, no que el envío se cancele (Enmienda 1, regla 1).
+func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.CloudToEdge) error {
 	r.mu.Lock()
 	ls := r.sessions[sessionID]
 	r.mu.Unlock()
@@ -126,6 +145,8 @@ func (r *Registry) Push(sessionID string, msg *cloudlinkv1.CloudToEdge) error {
 	select {
 	case err := <-done:
 		return err
+	case <-ctx.Done():
+		return fmt.Errorf("push a la sesión %q abandonado por el llamante: %w", sessionID, ctx.Err())
 	case <-timer.C:
 		return fmt.Errorf("%w: %q", ErrPushTimeout, sessionID)
 	}

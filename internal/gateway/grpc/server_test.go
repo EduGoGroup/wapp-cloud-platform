@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -42,6 +43,22 @@ func (b *syncBuffer) count(substr string) int {
 	return strings.Count(b.buf.String(), substr)
 }
 
+// linesContaining devuelve las líneas que contienen substr. count() convierte un
+// fallo tragado en un rojo, pero un rojo que solo dice «pasó N veces» obliga a
+// reproducir a mano para saber QUÉ pasó: esto adjunta la causa al propio fallo.
+func (b *syncBuffer) linesContaining(substr string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var out []string
+	for _, l := range strings.Split(b.buf.String(), "\n") {
+		if strings.Contains(l, substr) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // harness levanta el Server sobre un bufconn.Listener y devuelve un cliente
 // CloudLink ya conectado, junto con el Registry y el Server para inspección.
 //
@@ -61,11 +78,26 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessConSink(t, nil)
+}
+
+// newHarnessConSink es el MISMO arnés con un ReceiptSink inyectado. Es la única
+// dependencia que tiene sentido añadirle sin mTLS: el sink de acuses no mira la
+// identidad del peer (handleReceipt lo llama siempre), así que es el observador
+// natural del CARRIL desde fuera —cada Record ocurre dentro de un jobReceipt, en
+// la goroutine de su sesión— y por eso lo usan los tests de orden y aislamiento
+// de T1.12. sink nil = comportamiento por defecto (LogReceiptSink log-only).
+func newHarnessConSink(t *testing.T, sink gatewaygrpc.ReceiptSink) *harness {
+	t.Helper()
 
 	reg := session.NewRegistry()
 	logBuf := &syncBuffer{}
 	log := logger.New(logger.WithWriter(logBuf))
-	srv := gatewaygrpc.New(reg, log)
+	var opts []gatewaygrpc.Option
+	if sink != nil {
+		opts = append(opts, gatewaygrpc.WithReceiptSink(sink))
+	}
+	srv := gatewaygrpc.New(reg, log, opts...)
 
 	lis := bufconn.Listen(bufSize)
 	gs := grpc.NewServer()
@@ -537,6 +569,13 @@ func TestConnectReconexionIdempotente(t *testing.T) {
 // desde otros goroutines (Ping) sobre 2 sesiones, mientras el Edge sigue
 // multiplexando heartbeats. Debe quedar limpio bajo -race: el map local lo muta
 // solo el goroutine de Recv (D1) y el estado cross-goroutine vive en el registry.
+//
+// ⚠️ Este test NO afirma nada del carril: es un detector de carreras, no de orden
+// ni de aislamiento (lanza 20 goroutines y no mide ninguna de las dos cosas). Lo
+// que T1.12 promete se afirma abajo, en TestConnectCarrilMismaSesionConservaElOrden
+// y TestConnectCarrilSesionesDistintasNoSeBloquean, que sí discriminan. Se deja tal
+// cual porque su valor —el -race sobre el bucle Recv con Push concurrente— sigue
+// siendo real y es independiente.
 func TestConnectMultiSesionRace(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -661,4 +700,218 @@ func TestConnectReceipt(t *testing.T) {
 	if h.logBuf.count("RECEIPT_STATUS_DELIVERED") < 1 {
 		t.Fatal("el status DELIVERED debía loguearse")
 	}
+}
+
+// receiptSinkGrabador es un ReceiptSink que anota QUÉ acuses procesó, EN QUÉ
+// ORDEN y CUÁNTOS a la vez. Los tres datos son lo que T1.12 viene a medir sobre
+// el servidor YA CABLEADO: sin el orden no hay serialización por sesión, y sin el
+// pico de simultáneos no se distingue un carril por sesión de un `go s.route(...)`.
+//
+// Corre dentro del carril (jobReceipt), es decir, en la goroutine de su sesión y
+// no en la del bucle Recv: por eso todos sus campos mutables viven bajo mu.
+type receiptSinkGrabador struct {
+	mu      sync.Mutex
+	visto   []string
+	enVuelo int
+	pico    int
+
+	// dura simula el trabajo del sink de producción (una fila por message_id).
+	// No es sincronización —para eso están los canales de abajo—: es la latencia
+	// que hace SOLAPARSE a los jobs si alguien los suelta en paralelo, y sin ella
+	// un `go s.route(...)` podría pasar desapercibido por puro azar del scheduler.
+	dura time.Duration
+
+	// taponID identifica el acuse que se queda DENTRO del sink hasta que el test
+	// lo suelte; dentro avisa de que ya entró y soltar lo libera. Con la sesión
+	// del tapón retenida, lo que ocurra con OTRA sesión es la prueba del
+	// aislamiento. Los tres se fijan al construir el sink, antes de que arranque
+	// ningún stream, y no se vuelven a escribir.
+	taponID string
+	dentro  chan struct{}
+	soltar  chan struct{}
+}
+
+// Record implementa gatewaygrpc.ReceiptSink.
+func (s *receiptSinkGrabador) Record(_ context.Context, receipt *cloudlinkv1.MessageReceipt) error {
+	id := receipt.GetCommandId()
+	s.entra(id)
+	defer s.sale()
+
+	if s.taponID != "" && id == s.taponID {
+		select {
+		case s.dentro <- struct{}{}:
+		default:
+		}
+		<-s.soltar
+		return nil
+	}
+	if s.dura > 0 {
+		time.Sleep(s.dura)
+	}
+	return nil
+}
+
+func (s *receiptSinkGrabador) entra(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.visto = append(s.visto, id)
+	s.enVuelo++
+	if s.enVuelo > s.pico {
+		s.pico = s.enVuelo
+	}
+}
+
+func (s *receiptSinkGrabador) sale() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enVuelo--
+}
+
+// orden devuelve los command_id procesados, en orden de entrada al sink.
+func (s *receiptSinkGrabador) orden() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Join(s.visto, ",")
+}
+
+// cuenta devuelve cuántos acuses ENTRARON al sink (aunque sigan dentro).
+func (s *receiptSinkGrabador) cuenta() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.visto)
+}
+
+// picoEnVuelo devuelve el máximo de acuses procesándose a la vez.
+func (s *receiptSinkGrabador) picoEnVuelo() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pico
+}
+
+// receiptFrame arma un EdgeToCloud con un MessageReceipt de la sesión dada,
+// identificado por commandID (que es lo que el sink anota).
+func receiptFrame(sessionID, commandID string) *cloudlinkv1.EdgeToCloud {
+	return &cloudlinkv1.EdgeToCloud{
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.EdgeToCloud_Receipt{Receipt: &cloudlinkv1.MessageReceipt{
+			SessionId:  sessionID,
+			MessageIds: []string{"wamid." + commandID},
+			Status:     cloudlinkv1.ReceiptStatus_RECEIPT_STATUS_DELIVERED,
+			CommandId:  commandID,
+		}},
+	}
+}
+
+// esperarAcuses sondea hasta que al menos n acuses hayan ENTRADO al sink. Sondeo,
+// no time.Sleep fijo: el mismo molde que waitOnline/waitLog de este arnés.
+func esperarAcuses(t *testing.T, sink *receiptSinkGrabador, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if sink.cuenta() >= n {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timeout esperando %d acuses en el sink (llegaron %d: %s)", n, sink.cuenta(), sink.orden())
+}
+
+// TestConnectCarrilMismaSesionConservaElOrden (T1.12, REQ-050.3) mide sobre el
+// SERVIDOR YA CABLEADO —no sobre el carril suelto— lo que la ola promete dentro de
+// una sesión: el trabajo pesado de un mismo session_id se ejecuta EN SERIE y EN EL
+// ORDEN en que llegó por el stream.
+//
+// Por qué discrimina, que es lo único que lo hace válido:
+//   - Si el carril se sustituyera por `go s.route(...)`, los ocho acuses entrarían
+//     al sink a la vez —cada uno tarda 15 ms— y el pico de simultáneos sería 8, no
+//     1. Cae por la primera aserción aunque el orden saliera bien por azar.
+//   - Si el carril reordenara (p. ej. coalesciendo receipts o reencolando al
+//     final), cae por la segunda.
+//   - Si la rama Receipt volviera al bucle Recv, seguiría siendo serie y en orden…
+//     pero eso lo cubre T1.14, que es donde se afirma que NO está inline.
+func TestConnectCarrilMismaSesionConservaElOrden(t *testing.T) {
+	t.Parallel()
+	sink := &receiptSinkGrabador{dura: 15 * time.Millisecond}
+	h := newHarnessConSink(t, sink)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	quiero := make([]string, 0, 8)
+	for i := 1; i <= 8; i++ {
+		id := fmt.Sprintf("r%d", i)
+		quiero = append(quiero, id)
+		if sendErr := stream.Send(receiptFrame("s1", id)); sendErr != nil {
+			t.Fatalf("Send receipt %s: %v", id, sendErr)
+		}
+	}
+	esperarAcuses(t, sink, len(quiero))
+
+	if got := sink.picoEnVuelo(); got != 1 {
+		t.Fatalf("acuses simultáneos de la MISMA sesión = %d, quiero 1: el carril es serie por sesión "+
+			"(un %d > 1 es la firma de un `go s.route(...)`)", got, got)
+	}
+	if got, want := sink.orden(), strings.Join(quiero, ","); got != want {
+		t.Fatalf("orden de proceso = %s, quiero %s", got, want)
+	}
+}
+
+// TestConnectCarrilSesionesDistintasNoSeBloquean (T1.12, REQ-050.3) es la otra
+// mitad y la razón de ser de la ola: el trabajo lento de UNA sesión no puede
+// retener al de otra. El acuse de s1 se queda DENTRO del sink (retenido a
+// propósito) y, con él ahí, el acuse de s2 —que viaja por el MISMO stream— tiene
+// que procesarse igual.
+//
+// Por qué discrimina: con una cola única por stream (o con el trabajo inline en el
+// bucle Recv, que es el defecto que este plan viene a arreglar) el acuse de s2 no
+// entraría al sink hasta soltar a s1, y esperarAcuses agotaría su plazo. El pico de
+// 2 simultáneos lo confirma en positivo: hubo dos sesiones trabajando a la vez.
+func TestConnectCarrilSesionesDistintasNoSeBloquean(t *testing.T) {
+	t.Parallel()
+	sink := &receiptSinkGrabador{
+		taponID: "tapon-s1",
+		dentro:  make(chan struct{}, 1),
+		soltar:  make(chan struct{}),
+	}
+	h := newHarnessConSink(t, sink)
+
+	// Soltar SIEMPRE, y una sola vez: si el test falla con el tapón puesto, el
+	// cierre del stream se quedaría drenando hasta agotar el presupuesto.
+	var unaVez sync.Once
+	liberar := func() { unaVez.Do(func() { close(sink.soltar) }) }
+	defer liberar()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	stream, err := h.client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	if sendErr := stream.Send(receiptFrame("s1", "tapon-s1")); sendErr != nil {
+		t.Fatalf("Send receipt s1: %v", sendErr)
+	}
+	select {
+	case <-sink.dentro:
+	case <-time.After(5 * time.Second):
+		t.Fatal("el acuse de s1 no llegó nunca al sink: el carril no procesó su cola")
+	}
+
+	// s1 sigue DENTRO del sink. El acuse de s2 tiene que adelantarlo.
+	if sendErr := stream.Send(receiptFrame("s2", "libre-s2")); sendErr != nil {
+		t.Fatalf("Send receipt s2: %v", sendErr)
+	}
+	esperarAcuses(t, sink, 2)
+
+	if got := sink.picoEnVuelo(); got != 2 {
+		t.Fatalf("acuses simultáneos de sesiones DISTINTAS = %d, quiero 2: "+
+			"cada sesión tiene su propia cola y su propia goroutine", got)
+	}
+	liberar()
 }
