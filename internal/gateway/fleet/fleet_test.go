@@ -50,9 +50,17 @@ func TestMemoryOfflineUnknownIsNoError(t *testing.T) {
 
 // getSession lee la sesión y falla el test si no está o hay error. Toma la interfaz
 // Repository ⇒ sirve a la impl en memoria y a la de Postgres (integración).
+// Para el llamante que YA tiene un ctx en mano está getSessionCtx: propagarlo es lo
+// que exige contextcheck, y además hace la lectura cancelable con el resto del test.
 func getSession(t *testing.T, repo fleet.Repository, tenantID, edgeID, sessionID string) fleet.Session {
 	t.Helper()
-	s, found, err := repo.Get(context.Background(), tenantID, edgeID, sessionID)
+	return getSessionCtx(context.Background(), t, repo, tenantID, edgeID, sessionID)
+}
+
+// getSessionCtx es getSession propagando el contexto del llamante.
+func getSessionCtx(ctx context.Context, t *testing.T, repo fleet.Repository, tenantID, edgeID, sessionID string) fleet.Session {
+	t.Helper()
+	s, found, err := repo.Get(ctx, tenantID, edgeID, sessionID)
 	if err != nil || !found {
 		t.Fatalf("Get(%s): found=%v err=%v", sessionID, found, err)
 	}

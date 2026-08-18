@@ -44,6 +44,14 @@ func (b *syncBuffer) count(substr string) int {
 
 // harness levanta el Server sobre un bufconn.Listener y devuelve un cliente
 // CloudLink ya conectado, junto con el Registry y el Server para inspección.
+//
+// NO admite repositorios (fleet/lease) a propósito, y no tiene sentido añadírselos:
+// este arnés dialoga en CLARO, así que peerIdentity devuelve hasIdentity=false y
+// onSessionRegistered / persistHealth / renewLease retornan ANTES de tocar ningún
+// repositorio (connect.go). Un repo inyectado aquí sería código muerto. Los arneses
+// que SÍ ejercitan fleet/lease usan mTLS: newMTLSHarness (mtls_test.go),
+// newTenantRevokeHarness (tenant_revoke_test.go) y newLoadHarness, el de carga
+// contra Postgres real (load_integration_test.go, Plan 050 · T5.0/T5.1).
 type harness struct {
 	srv      *gatewaygrpc.Server
 	registry *session.Registry
