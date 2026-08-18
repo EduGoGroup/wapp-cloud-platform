@@ -112,8 +112,16 @@ type Server struct {
 	// renovación del lease a partir del lease_counter la hace el propio servidor.
 	OnHeartbeat func(sessionID string, m *cloudlinkv1.Heartbeat)
 
+	// acks correlaciona command_id -> envío en vuelo que espera su Ack. Desde el
+	// Plan 050 · Ola 2 · T2.1 la entrada NO es el canal pelado sino un pendingAck
+	// (types.go) que lleva su session_id dentro, para que la caída de un stream pueda
+	// cancelar de golpe los envíos de ESA sesión sin un índice paralelo que mantener.
+	//
+	// 🔴 INVARIANTE — solo cierra el canal quien logra RETIRAR su entrada de este mapa
+	// bajo acksMu. El enunciado completo, y por qué no basta con decir «delete y close
+	// bajo el mismo mutex», está en cancelSessionAcks (send.go).
 	acksMu sync.Mutex
-	acks   map[string]chan *cloudlinkv1.Ack
+	acks   map[string]pendingAck
 
 	// ackTimeout acota cuánto espera SendText/SendMedia el Ack del Edge. Nunca es
 	// cero: New() lo materializa a defaultAckTimeout. Es lo que impide que un Edge
@@ -123,11 +131,13 @@ type Server struct {
 	// ⚠️ CORREGIDO el 2026-08-18 (Plan 050 · T1.1, ADR-0040 §Contexto). El enunciado
 	// de arriba se conserva literal porque es el que dimensionó el follow-up F2 de la
 	// pieza 03, pero EXAGERA: el "NADA limpia" es falso. El defer s.clearAck(cmdID)
-	// de sendCommand limpia la entrada SIEMPRE, por los dos caminos de salida, tanto
-	// si el Ack llegó como si venció el reloj. La entrada no se fuga; vive como mucho
-	// lo que dure el ackTimeout. Lo que este reloj evita de verdad NO es una fuga de
-	// memoria sino una espera: sin él, el llamante HTTP se quedaría colgado. Ese
-	// matiz importa porque el eje del defecto es LATENCIA, no memoria.
+	// de SendText y SendMedia —no de un "sendCommand", que no existe ni existió en
+	// este repo— limpia la entrada SIEMPRE, por todos sus caminos de salida: haya
+	// llegado el Ack, haya vencido el reloj o (desde T2.3) haya caído el stream. La
+	// entrada no se fuga; vive como mucho lo que dure el ackTimeout. Lo que este reloj
+	// evita de verdad NO es una fuga de memoria sino una espera: sin él, el llamante
+	// HTTP se quedaría colgado. Ese matiz importa porque el eje del defecto es
+	// LATENCIA, no memoria.
 	ackTimeout time.Duration
 
 	// workQueue es el tope de trabajos encolados POR SESIÓN en el carril de trabajo
@@ -194,7 +204,7 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	s := &Server{
 		registry:     registry,
 		log:          log,
-		acks:         make(map[string]chan *cloudlinkv1.Ack),
+		acks:         make(map[string]pendingAck),
 		edgeSessions: make(map[edgeKey]map[string]struct{}),
 	}
 	for _, opt := range opts {

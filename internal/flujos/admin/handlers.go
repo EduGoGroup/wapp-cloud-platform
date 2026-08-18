@@ -246,10 +246,61 @@ func StartHandler(starter Starter) http.Handler {
 	})
 }
 
+// msgStreamCaidoStart es el cuerpo del 504 «se cayó» al ARRANCAR una conversación.
+// No es el texto de messages.go y no debe serlo: allí se pierde el rastro de un
+// mensaje suelto, aquí queda una conversación viva a medio saludar, y lo que el
+// llamante tiene que hacer es distinto.
+//
+// Las tres afirmaciones están verificadas contra el runtime, no supuestas:
+//
+//  1. «YA quedó abierta» —no «pudo haber arrancado»—: rt.store.Save del estado
+//     inicial ocurre ANTES del envío (runtime/start.go, orden Save-antes-de-SendText),
+//     así que cuando el ack se pierde el flow_state ya está persistido. Decir «pudo»
+//     mandaría a comprobar algo que es seguro.
+//  2. «no se sabe si el cliente llegó a recibirlo»: el comando viajó al Edge y pudo
+//     salir a WhatsApp. Por eso esto es un 504 y no el 502 que pedía el enunciado de
+//     T2.4 —el 502 de este repo significa «no salió»— ni el 500 al que caía antes.
+//  3. «devolverá 409»: reintentar NO duplica el arranque. rt.store.Exists ya da true
+//     y restartableOnStart no encuentra ResumePolicy para ningún nodo alcanzable por
+//     esta vía (la única registrada es la del carrito, y un flujo durable ni siquiera
+//     llega aquí: lo corta antes ErrDurableFlowNeedsEvent), así que sale
+//     ErrConversationExists. Avisar de un doble arranque sería asustar con algo que
+//     el código impide; lo útil es decir que el reintento no sirve de nada.
+//
+// Duplicada a propósito en publicapi/flows.go, con el mismo texto: es el mismo suceso
+// visto por los dos APIs y un operador debe reconocerlo igual en ambos.
+const msgStreamCaidoStart = "el stream del Edge se cerró antes del ack: la conversación YA quedó abierta y el " +
+	"comando de su primer mensaje viajó al Edge, así que no se sabe si el cliente llegó a recibirlo. " +
+	"NO reintentes este arranque —devolverá 409—: comprueba la conversación y, si el primer mensaje " +
+	"no salió, continúala sobre la que ya existe"
+
+// streamCaidoFrom indica si el error viene de un stream que murió esperando el ack,
+// por duck-typing (`interface{ StreamCaido() bool }`) y sin importar el paquete del
+// Gateway. Es la TERCERA copia del patrón —las otras dos están en publicapi y en
+// platform/httpapi— y esa duplicación es la convención de la casa, no un descuido:
+// el mismo trato tiene commandIDOf/commandIDCarrier (intakes/notifier.go). El
+// contrato es la interfaz anónima, no un tipo compartido, y es lo que mantiene al
+// Gateway fuera de los imports de los handlers; un errors.Is contra
+// gatewaygrpc.ErrStreamClosed obligaría a importarlo y rompería el desacople.
+//
+// Falso NO significa «el envío fue bien»: significa que, si falló, fue por otra cosa.
+func streamCaidoFrom(err error) bool {
+	var caido interface{ StreamCaido() bool }
+	return errors.As(err, &caido) && caido.StreamCaido()
+}
+
 // writeStartError traduce el error de Start a un código HTTP: conversación ya
 // existente -> 409, flujo con contenido durable sin evento -> 409 (texto DISTINTO
-// del anterior, Plan 054 · T2.5, D-054.3(b)/D-054.6), sesión offline -> 502,
-// timeout/cancelación esperando el Ack -> 504, resto -> 500.
+// del anterior, Plan 054 · T2.5, D-054.3(b)/D-054.6), sesión offline -> 502, stream
+// caído esperando el Ack -> 504, timeout/cancelación esperando el Ack -> 504,
+// resto -> 500.
+//
+// Que el error de ENVÍO llegue hasta aquí no es teoría: el arranque termina en
+// rt.send (runtime/start.go), que envuelve con %w el error del Gateway. Los casos de
+// ErrSessionOffline y DeadlineExceeded que ya había son la prueba de que ese error
+// cruza; el del stream caído cruza por el mismo sitio. Su gemelo público
+// (publicapi/flows.go) hace lo mismo con el mismo texto: si aquí cambia el criterio
+// y allí no, la mitad del API queda mintiendo sobre el mismo suceso.
 func writeStartError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, runtime.ErrConversationExists):
@@ -274,6 +325,12 @@ func writeStartError(w http.ResponseWriter, err error) {
 			http.StatusConflict)
 	case errors.Is(err, session.ErrSessionOffline):
 		http.Error(w, "sesión offline: no hay stream vivo para el Edge", http.StatusBadGateway)
+	case streamCaidoFrom(err):
+		// Plan 050 · Ola 2 · T2.4. Antes de esto el stream caído caía al default y
+		// salía un 500 «no se pudo iniciar la conversación»: código equivocado (no
+		// falló el servidor), causa oculta, y encima incoherente con el 504 que el
+		// MISMO fallo devuelve por /admin/messages/send en el mismo despliegue.
+		http.Error(w, msgStreamCaidoStart, http.StatusGatewayTimeout)
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		http.Error(w, "timeout esperando el ack del Edge", http.StatusGatewayTimeout)
 	default:

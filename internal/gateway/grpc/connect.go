@@ -83,10 +83,12 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 }
 
 // closeStream cierra el stream y su carril, en el ORDEN que el carril exige
-// (T1.6 · T1.11):
+// (T1.6 · T1.11 · T2.2):
 //
-//  1. por cada sesión del stream: release() en el registry y MarkOffline ENCOLADO
-//     como último job de esa sesión (onStreamClosed), no ejecutado por fuera.
+//  1. por cada sesión del stream: release() en el registry, cancelación de sus acuses
+//     en vuelo SI la sesión quedó sin stream (ver la condición en el cuerpo) y
+//     MarkOffline ENCOLADO como último job de esa sesión (onStreamClosed), no
+//     ejecutado por fuera.
 //  2. seal(): el carril deja de aceptar trabajo nuevo —devolviendo error, no
 //     encolando— y los workers ociosos despiertan para morir.
 //  3. drain(): se espera a los workers con el presupuesto de una unidad de trabajo;
@@ -118,6 +120,28 @@ func (s *Server) closeStream(lane *workLane, cc connCtx, releases map[string]fun
 	// recorre en el goroutine de Recv, sin lock (D1/D4).
 	for sid, release := range releases {
 		release()
+		// Los envíos en vuelo de esta sesión dejan de esperar YA (Plan 050 · Ola 2 ·
+		// T2.2): sin esto, el llamante HTTP se come el ackTimeout entero —8 s— por un
+		// acuse que el gateway ya sabe que no va a llegar.
+		//
+		// 🔴 La condición NO es defensiva, es obligatoria, y es el hallazgo de esta ola.
+		// session.Registry.Register es ÚLTIMA-GANA y el release() que devuelve compara
+		// identidad: el release de un stream ya reemplazado es un no-op deliberado. Si
+		// el Edge RECONECTÓ antes de que este stream terminara de morir, quien está
+		// registrado bajo este session_id es el stream NUEVO, y cancelar «los acuses de
+		// la sesión» a secas mataría los envíos en vuelo de un Edge que está
+		// perfectamente vivo — reportándole al operador «la sesión se cayó» sobre una
+		// conexión sana. Preguntar por Online() es lo que distingue «este stream murió»
+		// de «esta sesión se quedó sin nadie», que es la condición real.
+		//
+		// Que eso pueda pasar cuelga de que s.acks se correlaciona por command_id, y un
+		// command_id no sabe de qué stream salió: el Ack de un comando empujado por el
+		// stream viejo puede llegar por el nuevo, y DEBE poder llegar. Es la misma
+		// familia que DEUDA-050.1 (la carrera de la reconexión rápida), declarada más
+		// abajo en onStreamClosed sobre este mismo cierre.
+		if !s.registry.Online(sid) {
+			s.cancelSessionAcks(sid)
+		}
 		cc2 := cc
 		cc2.sessionID = sid
 		s.onStreamClosed(lane, cc2)
