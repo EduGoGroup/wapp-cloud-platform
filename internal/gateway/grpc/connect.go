@@ -332,6 +332,15 @@ func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Hea
 // pushAuthError se correlaciona por session_id, y un acuse sin sesión no se puede
 // atribuir), así que lo que se pierde es trabajo que ya no llegaba a destino. Lo
 // que se gana es que ahora SE VE.
+//
+// Y conviene ser literal con QUÉ session_id, porque el contrato no ayuda: aquí se
+// habla del campo 2 del ENVELOPE (`EdgeToCloud.session_id`, connect.go:66). Los
+// tres mensajes de auth llevan ADEMÁS un `session_id` propio dentro del payload, y
+// ESE sí está documentado como «puede ir vacío» (cloudlink.proto:389, :399, :410).
+// El Edge de hoy no se acoge a ese permiso —estampa `__wapp_control__` en ambos
+// (adapters/cloudlink/auth.go:30), justo para el operador que se loguea antes de
+// emparejar ningún teléfono—, pero un Edge futuro que leyera solo el .proto podría
+// creerse autorizado a vaciar el envelope y quedaría descartado aquí sin recurso.
 func (s *Server) submitJob(lane *workLane, cc connCtx, kind jobKind, run func(ctx context.Context)) {
 	if cc.sessionID == "" {
 		s.log.Warn("carril: frame sin session_id; el trabajo no se encola (no hay sesión a la que atribuirlo)",
