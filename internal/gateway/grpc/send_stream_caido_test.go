@@ -132,3 +132,36 @@ func TestStreamCaidoSeDistingueDelTimeoutPorDuckTyping(t *testing.T) {
 		}
 	})
 }
+
+// El contrato con los handlers HTTP es una interfaz ANÓNIMA, no un tipo compartido:
+// eso es lo que permite que publicapi, platform/httpapi, flujos/admin e intakes
+// reconozcan este error sin importar el paquete del Gateway (el desacople que
+// argumenta httpapi/admin.go sobre commandIDFrom). El precio, que hasta ahora nadie
+// pagaba explícitamente, es que **el compilador no verifica ese contrato en ningún
+// punto**: renombrar aquí StreamCaido o CommandID compila sin queja, y los CINCO
+// consumidores dejan de reconocer el error EN SILENCIO —errors.As devuelve false— de
+// modo que el 504 «se cayó» vuelve a salir como el genérico y el command_id
+// desaparece de las respuestas, sin un solo test en rojo.
+//
+// Estas dos líneas son el único sitio donde ese contrato se afirma. NO prueban
+// comportamiento —de eso se encargan los tests de arriba—: prueban que los NOMBRES
+// siguen siendo los que el otro lado busca. Si alguna deja de compilar, no la
+// "arregles" cambiándola: hay cinco duck-typings ahí fuera que hay que mover con ella
+// (grep de `CommandID() string` y `StreamCaido() bool` fuera de este paquete).
+//
+// Salió de la verificación por mutación de la Ola 2: romper el productor —hacer que
+// awaitAck devolviera DeadlineExceeded, o que StreamCaido() mintiera siempre— dejaba
+// las CUATRO superficies HTTP en verde, porque cada una prueba contra su propio doble.
+// El agujero de CommandID() es anterior a esta ola y se cierra con la misma línea.
+//
+// El //nolint no tapa nada: aquí NO hay error que comprobar. errcheck ve un blank
+// identifier a la izquierda de algo que satisface error —*SendError lo satisface— y lo
+// toma por un descarte, cuando es la aserción de tipo canónica de Go. Escribirla de
+// otra forma para contentar al linter le quitaría lo único que la hace útil: que sea
+// el compilador quien la verifique.
+var (
+	//nolint:errcheck // aserción de tipo, no descarte de error: ver el bloque de arriba.
+	_ interface{ StreamCaido() bool } = (*gatewaygrpc.SendError)(nil)
+	//nolint:errcheck // aserción de tipo, no descarte de error: ver el bloque de arriba.
+	_ interface{ CommandID() string } = (*gatewaygrpc.SendError)(nil)
+)
