@@ -263,11 +263,11 @@ func terminalFor(o model.Outcome) (events.Status, string) {
 // mutación.
 //
 // ⚠️ `conocido=true` con `pendiente=false` YA NO ES ALCANZABLE: era la firma exacta de
-// la guarda retirada. Los dos consumidores lo saben —closeIfFinished ignora `ev`
-// cuando no hay cierre pendiente, y releaseFinishedState (incoming.go) recibe siempre
-// conocido=false por esta vía, así que su rama del evento AJENO vivo queda muerta—.
-// Retirar ese parámetro es de T2.3 (D-053.3), no de aquí: esta tarea no toca
-// incoming.go.
+// la guarda retirada. ✅ **Resuelto en T2.3/T2.4**: releaseFinishedState (incoming.go)
+// ya no recibe `ev` ni `conocido` —lee el evento ACTIVO por su cuenta, que es de donde
+// debía salir—, así que aquí queda UN solo consumidor, closeIfFinished, y `conocido`
+// significa exactamente una cosa: «el DUEÑO se pudo releer para su telemetría». No es
+// un parámetro compartido por dos preguntas distintas, que es lo que era antes.
 func (rt *Runtime) pendingClosure(ctx context.Context, st model.Conversation) (ev events.Event, conocido, pendiente bool) {
 	if rt.events == nil || st.OwnerEventID == "" || !st.Finished() {
 		return events.Event{}, false, false

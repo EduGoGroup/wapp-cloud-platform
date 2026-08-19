@@ -43,6 +43,25 @@ import (
 // Va aparte del test por gocyclo (min-complexity 15), no por reutilización.
 func mudoH2Env(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver, *memEventStore) {
 	t.Helper()
+	return mudoH2EnvCon(t)
+}
+
+// mudoH2EnvCon es mudoH2Env admitiendo Options EXTRA (Plan 053 · Ola 2): los tests de
+// T2.4 necesitan inyectar un EventSink espía sin duplicar el montaje.
+func mudoH2EnvCon(t *testing.T, extra ...runtime.Option) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver, *memEventStore) {
+	t.Helper()
+	return mudoH2EnvBase(t, nil, extra...)
+}
+
+// mudoH2EnvConResolver envuelve el trigger.Resolver REAL con el espía que se le pase,
+// para poder observar el ActiveEventKind con el que se resuelve cada turno (T2.4).
+func mudoH2EnvConResolver(t *testing.T, spy *resolverSpy, extra ...runtime.Option) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver, *memEventStore) {
+	t.Helper()
+	return mudoH2EnvBase(t, spy, extra...)
+}
+
+func mudoH2EnvBase(t *testing.T, spy *resolverSpy, extra ...runtime.Option) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver, *memEventStore) {
+	t.Helper()
 	repo := store.NewMemoryRepository()
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
 		t.Fatalf("precondición: sembrar definición: %v", err)
@@ -62,11 +81,20 @@ func mudoH2Env(t *testing.T) (*runtime.Runtime, *store.MemoryRepository, *fakeSe
 	contacts := contact.NewMemoryResolver(repo)
 	evs := newMemEventStore(time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC))
 	menu := events.Menu{Options: []events.MenuOption{{Number: 9, Action: events.ActionStart, Kind: "cart"}}}
-	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
-		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)),
+	var res trigger.Resolver = trigger.NewConfigResolver(ts)
+	if spy != nil {
+		spy.Resolver = res
+		res = spy
+	}
+	opts := make([]runtime.Option, 0, 4+len(extra))
+	opts = append(opts,
+		runtime.WithTriggerResolver(res),
 		runtime.WithEventStore(evs),
 		runtime.WithDispatcher(fakeDispatcher{menu: menu}),
 		runtime.WithFlowForKind(fakeFlowForKind{flow: testFlow}))
+	opts = append(opts, extra...)
+	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant}, contacts, discardLogger(),
+		opts...)
 	return rt, repo, sender, contacts, evs
 }
 
