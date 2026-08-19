@@ -59,6 +59,14 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 		}))
 	}
 
+	// El PRESUPUESTO DE LA PETICIÓN de envío (Plan 050 · Ola 5 · T5.4, REQ-050.19) se
+	// DERIVA del mismo writeTimeout con el que se arma el http.Server unas líneas más
+	// abajo. Las dos líneas están a la vista una de otra a propósito: el defecto que
+	// esto cierra nació de una aritmética escrita a mano en otro fichero que nadie
+	// rehizo al añadir un reloj. Aquí no hay aritmética que mantener — mover
+	// writeTimeout arrastra el presupuesto solo. Ver publicapi.SendBudgetFrom.
+	pub.SendBudget = publicapi.SendBudgetFrom(writeTimeout)
+
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras
 	// auditadas (mismo auditor). El tenant SIEMPRE sale del token (INV-8). T10
@@ -80,8 +88,10 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
+		// 🔴 El MISMO writeTimeout del que se derivó pub.SendBudget arriba. Si mueves
+		// este valor no hay nada más que ajustar: el presupuesto lo sigue.
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 	return srv, authMW, auditor, nil
 }

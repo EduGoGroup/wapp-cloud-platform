@@ -54,14 +54,29 @@ type sendErrorResponse struct {
 //     mientras se espera, o si la guarda de tenant agota su plazo de BD (tres textos
 //     distintos, mismo código); 500 en otro fallo.
 //
-// Los tres errores de envío llevan el command_id cuando ya estaba asignado, y TODO
+// Los errores de envío llevan el command_id cuando ya estaba asignado, y TODO
 // desenlace deja traza en el log. Antes no dejaba ninguna: un envío que colgaba
 // contra un Edge saturado se iba sin 504, sin log y sin cuerpo (2026-08-06).
 //
+// ⚠️ Ese «TODO desenlace deja traza» fue FALSO desde que se escribió hasta el Plan 050 ·
+// Ola 5 · T5.4: cinco salidas de este handler —el 401, los dos 400, el 404 y el 500 de
+// la guarda— respondían mudas, porque el que loguea es writeSendError y ellas no pasan
+// por ahí. Hoy la frase es verdad, pero NO la sostiene este handler: la sostiene el
+// access-log de accesslog.go, que deja una línea por petición pase lo que pase. Si
+// añades aquí un `return` nuevo, el rastro sigue existiendo sin que tengas que
+// acordarte — que es justo lo que la versión anterior de esta frase daba por hecho y no
+// era cierto.
+//
 // dbTimeout acota la guarda de tenant (Plan 050 · Ola 3 · T3.2): es el ÚNICO tramo
-// de este handler que consulta a Postgres, y hasta esta tarea corría con el contexto
+// de este handler que consulta a Postgres, y hasta esa tarea corría con el contexto
 // pelado de la petición. <=0 cae al suelo de dbCtx.
-func messagesHandler(sender MessageSender, sessions SessionLister, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
+//
+// sendBudget es el PRESUPUESTO DE LA PETICIÓN (Plan 050 · Ola 5 · T5.4, REQ-050.19):
+// el techo por encima de los relojes secuenciales de abajo. Sin él, la suma de los
+// tres (1,5 + 10 + 8 = 19,5s) se pasaba del WriteTimeout del servidor y el cliente se
+// quedaba con la conexión cerrada y sin cuerpo. Se DERIVA del WriteTimeout con
+// SendBudgetFrom; <=0 ⇒ sin plazo. Ver sendCtx en publicapi.go.
+func messagesHandler(sender MessageSender, sessions SessionLister, dbTimeout, sendBudget time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -79,10 +94,16 @@ func messagesHandler(sender MessageSender, sessions SessionLister, dbTimeout tim
 			return
 		}
 
+		// El presupuesto nace AQUÍ, después de las validaciones baratas y antes del
+		// primer tramo que puede colgarse. Cubre la guarda de tenant Y el envío: lo
+		// que se pasaba del WriteTimeout era la SUMA de los dos, no cada uno.
+		ctx, cancelar := sendCtx(r.Context(), sendBudget)
+		defer cancelar()
+
 		// Aislamiento por tenant (INV-8, R6): la sesión debe ser del tenant del token.
 		// La consulta va ACOTADA (dbCtx, ver publicapi.go): sin plazo propio, una base
 		// lenta cuelga al llamante ANTES de que arranque siquiera el reloj del Ack.
-		belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, req.SessionID, dbTimeout)
+		belongs, err := sessionBelongsToTenant(ctx, sessions, id.TenantID, req.SessionID, dbTimeout)
 		if err != nil {
 			// El plazo vencido se distingue del resto (504, no 500): la guarda corre
 			// ANTES de empujar nada, así que el mensaje NO salió y reintentar es seguro
@@ -100,7 +121,7 @@ func messagesHandler(sender MessageSender, sessions SessionLister, dbTimeout tim
 			return
 		}
 
-		ack, err := sender.SendText(r.Context(), req.SessionID, req.To, req.Text)
+		ack, err := sender.SendText(ctx, req.SessionID, req.To, req.Text)
 		if err != nil {
 			writeSendError(w, err, log, req.SessionID)
 			return
@@ -192,6 +213,13 @@ func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, s
 		code, msg = http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge"
 	case streamCaidoFrom(err):
 		code, msg = http.StatusGatewayTimeout, msgStreamCaido
+	// Los DOS casos del empuje van ANTES del deadline genérico de abajo: los dos
+	// envuelven un error de contexto o se le parecen, y el de abajo los absorbería
+	// con un texto que aquí es falso (no se llegó a esperar ningún ack).
+	case errors.Is(err, session.ErrPushTimeout):
+		code, msg = http.StatusGatewayTimeout, msgEdgeNoLee
+	case errors.Is(err, session.ErrPushAbandonado):
+		code, msg = http.StatusGatewayTimeout, msgPresupuestoAgotado
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		code, msg = http.StatusGatewayTimeout, "timeout esperando el ack del Edge"
 	}
@@ -204,7 +232,20 @@ func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, s
 			"error", err,
 		)
 	}
-	writeJSON(w, code, sendErrorResponse{Error: msg, CommandID: cmdID})
+	// writeJSONErr y no writeJSON (Plan 050 · Ola 5 · T5.4): el fallo de ESCRITURA de
+	// un error era el último silencio que quedaba de este camino. Sin esta línea, con
+	// el deadline de escritura ya vencido el log afirmaba «status 500» sobre una
+	// respuesta que el cliente nunca recibió — una traza que miente por omisión es peor
+	// de auditar que la ventana muda del incidente, porque parece que todo se registró.
+	// El camino del 200 ya lo hacía así desde el principio.
+	if werr := writeJSONErr(w, code, sendErrorResponse{Error: msg, CommandID: cmdID}); werr != nil && log != nil {
+		log.Error("no se pudo escribir la respuesta de error del envío",
+			"status", code,
+			"command_id", cmdID,
+			"session_id", sessionID,
+			"error", werr,
+		)
+	}
 }
 
 // msgStreamCaido es el cuerpo del 504 «se cayó», distinguible a simple vista del 504
@@ -215,6 +256,41 @@ func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, s
 const msgStreamCaido = "el stream del Edge se cerró antes del ack: el comando YA viajó, " +
 	"así que no se sabe si el mensaje salió. Verifica el envío (por el command_id, contra el " +
 	"outbox del Edge o los acuses) ANTES de reenviar: reenviar a ciegas puede duplicárselo al cliente"
+
+// msgEdgeNoLee es el cuerpo del 504 del empuje vencido: el Edge sigue conectado pero
+// dejó de leer su stream, así que el comando no cupo dentro del plazo del Push
+// (session.ErrPushTimeout). Hasta el Plan 050 · Ola 5 · T5.4 este caso NO estaba en el
+// switch y caía al 500 genérico «no se pudo enviar el texto», que además de opaco era
+// el desenlace del incidente del 2026-08-06.
+//
+// 🔴 POR QUÉ NO DICE «reintenta», aunque el comando no haya salido todavía. Esa era la
+// redacción evidente y es FALSA: la goroutine del Send del Registry sobrevive a la
+// salida por timeout (session.Push, «Enmienda 1, regla 1»), de modo que el comando
+// puede viajar al Edge DESPUÉS de que el llamante haya recibido este error — medido en
+// el e2e de T5.4, no supuesto. Invitar a reintentar aquí le duplicaría el WhatsApp a un
+// cliente real, que es exactamente lo que msgStreamCaido lleva escrito no hacer.
+//
+// Es 504 y no 502 a propósito: el 502 de este repo significa «no salió» y le pertenece
+// a ErrSessionOffline. Aquí el Edge SÍ está —solo que atascado— y el mensaje puede
+// acabar saliendo; devolver 502 borraría además la diferencia operativa entre «el Edge
+// no está» y «el Edge está y no lee», que son dos problemas distintos de resolver.
+const msgEdgeNoLee = "el Edge dejó de leer su stream y no aceptó el comando dentro del plazo: " +
+	"puede salir aún, así que no se sabe si el mensaje llegará. Verifica el envío (por el " +
+	"command_id, contra el outbox del Edge o los acuses) ANTES de reenviar: reenviar a ciegas " +
+	"puede duplicárselo al cliente"
+
+// msgPresupuestoAgotado es el cuerpo del 504 cuando se acaba el PRESUPUESTO DE LA
+// PETICIÓN mientras se empujaba el comando (session.ErrPushAbandonado). Se distingue
+// de msgEdgeNoLee en la primera frase a propósito: el diagnóstico es otro —allí el
+// Edge se atascó, aquí fuimos nosotros los que nos quedamos sin tiempo— y llevan a
+// revisar sitios distintos.
+//
+// La segunda mitad es la misma, y por el mismo motivo: rendirse NO cancela el envío en
+// vuelo, así que el comando puede salir después. Ver SendBudgetFrom (publicapi.go).
+const msgPresupuestoAgotado = "se agotó el plazo de la petición mientras se empujaba el comando " +
+	"al Edge: puede salir aún, así que no se sabe si el mensaje llegará. Verifica el envío (por " +
+	"el command_id, contra el outbox del Edge o los acuses) ANTES de reenviar: reenviar a ciegas " +
+	"puede duplicárselo al cliente"
 
 // streamCaidoFrom indica si el error viene de un stream que murió esperando el ack,
 // por duck-typing (`interface{ StreamCaido() bool }`) y sin importar el paquete del
