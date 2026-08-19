@@ -115,6 +115,10 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 // ResumePolicy del nodo inicial (Plan 027 · Ola 3 · T8). Sin política (menú/encuesta)
 // ⇒ false (409 intacto). Si la política sintetizara efectos se despachan (coherencia
 // BD↔conversación) y devuelve true; ninguna lo hace hoy (ver prepareResume).
+//
+// Desde el Plan 053 · Ola 3 · T3.1 hay una segunda razón para NO reiniciar, anterior
+// a la política: que el flujo guardado en esa fila sea de OTRO evento dueño (ver
+// ownerFlowMismatch, justo debajo).
 func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, error) {
 	node, ok := def.Nodes[def.Initial]
 	if !ok {
@@ -132,6 +136,21 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 	if st, found, err := rt.store.Load(ctx, key); err != nil {
 		return false, fmt.Errorf("runtime: cargar estado: %w", err)
 	} else if found {
+		// Guarda de POSESIÓN (Plan 053 · Ola 3 · T3.1, REQ-053.3). El flujo que hay
+		// guardado en esta fila puede pertenecer a OTRO evento —un `cart` a medias—, y
+		// reiniciarlo por un Start de otro flujo mezclaría dos conversaciones en una
+		// sola fila: las Vars ajenas viajarían a la política del módulo que arranca.
+		// LA FRONTERA QUE IMPORTA —y la única OBSERVABLE— es que corta ANTES de
+		// invocar policy.Restart: Restart es lo único con efectos por aquí (consulta
+		// el estado del módulo y puede sintetizar efectos que luego se despachan), así
+		// que es lo que un espía de test puede cazar y lo que la letra de T3.1 pide
+		// impedir. Que además esté antes de retener `vars`/`eventID` es higiene de
+		// lectura, no una propiedad verificable: al retornar, esas dos locales están
+		// muertas, y colocar la guarda debajo daría un programa indistinguible. El
+		// llamante contesta el 409 determinista de startLocked.
+		if rt.ownerFlowMismatch(ctx, tenantID, sessionID, contactID, st.OwnerEventID, def.FlowID) {
+			return false, nil
+		}
 		vars = st.Vars
 		eventID = st.EventID
 	}
@@ -161,6 +180,98 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 		}
 	}
 	return true, nil
+}
+
+// ownerFlowMismatch contesta UNA pregunta y solo muerde cuando la respuesta es
+// DETERMINISTA: ¿el flujo guardado en este flow_state pertenece a un evento DUEÑO
+// distinto del flujo que se va a arrancar? (Plan 053 · Ola 3 · T3.1, REQ-053.3).
+// true ⇒ el llamante NO reinicia y el Start acaba en el 409 determinista.
+//
+// ⚠️ EL COMPARANDO ES `FlowID`, **NO** EL `kind` DEL EVENTO, y es una desviación
+// DELIBERADA del enunciado de T3.1: no la "arregles" dentro de seis meses. `model.Flow`
+// no tiene campo `Kind`, y el `Type` del nodo no es fiel al tipo de evento
+// (`survey_question` ≠ `survey`), así que comparar kinds obligaría a montar una tabla
+// nodeType→kind: una pieza nueva, frágil y que habría que acordarse de ampliar con
+// cada módulo. El evento, en cambio, CONGELA su `FlowID` al nacer
+// (events.Event.FlowID, poblado en runtime/events.go desde dec.FlowID), que es
+// exactamente el dato que `def.FlowID` compara sin traducción intermedia.
+//
+// FAIL-OPEN en todo lo demás — decisión explícita del plan, mismo precedente que
+// D-054.8 con su flow_id inexistente: esta guarda solo puede AÑADIR rechazos sobre un
+// hecho que se sabe cierto; ante cualquier duda deja pasar y el comportamiento queda
+// byte a byte como antes del Plan 053. Los cinco casos que dejan pasar:
+//  1. ownerEventID == "" — el caso NORMAL y frecuente: menú puro (D-043.3), flujo que
+//     no nació de ningún evento, o fila LEGADA anterior al backfill de T1.3.
+//  2. rt.events == nil — el plano de eventos es OPCIONAL (ver EventStore en
+//     events.go): sin él nadie estampa `owner_event_id` y no hay a quién preguntar.
+//     Mismo guardarraíl que liveEventSwitch/eventClock/summarizeAbandoned (INV-6).
+//  3. GetEventForTenant falla, events.ErrEventNotFound incluido. Contra Postgres
+//     real lo que cabe aquí es un fallo TRANSITORIO de la BD, un timeout o un `ctx`
+//     ya cancelado; NO las causas que uno escribiría de memoria: el id no puede ser
+//     basura (la columna es `UUID`, y un no-UUID revienta al ESCRIBIR con 22P02 —
+//     nunca llega a leerse) ni apuntar a un evento borrado (la FK de la 0062 va SIN
+//     `ON DELETE`, deliberadamente: el DELETE falla antes que dejar el puntero
+//     colgando). Donde SÍ se pueden construir esos estados es en el runtime EN
+//     MEMORIA y en los tests, y por eso la rama existe. Se LOGUEA y se sigue:
+//     negarle el arranque a un cliente porque una lectura NUESTRA falló sería
+//     castigarle por un problema nuestro — el mismo criterio que liveEventSwitch
+//     aplica a su resolver. El error no se propaga jamás hacia arriba.
+//  4. el dueño resuelve SIN error pero es de OTRA conversación del mismo tenant —
+//     ver el guardarraíl de SessionID/ContactID en el cuerpo.
+//  5. ev.FlowID == "" — un evento que no congeló flujo al nacer. HOY es inalcanzable
+//     por construcción: enterEventFlow saca el `menu` por presentMenu antes de tocar
+//     flujo alguno (runtime/events.go:543-546) y cualquier otro kind con flowID==""
+//     llega a pointStateAtEvent con arrancado=false (:553-567), que no estampa dueño.
+//     Se mantiene por la misma razón que el 3: con un store en memoria sí se alcanza.
+//
+// Nada de esta lista responde a una patología observada: el fail-open es DEFENSA EN
+// PROFUNDIDAD sobre una guarda que solo tiene derecho a morder cuando está segura.
+func (rt *Runtime) ownerFlowMismatch(ctx context.Context, tenantID, sessionID, contactID, ownerEventID, flowID string) bool {
+	if ownerEventID == "" || rt.events == nil {
+		return false
+	}
+	// GetEventForTenant y no la cadena activeEventKind→aliveByID→ListAlive: aquella
+	// lleva `AND status='open'` y un dueño ya CERRADO le saldría como «no existe»,
+	// que es justo la fila sobre la que esta guarda tiene que poder pronunciarse.
+	// Este lookup es por id acotado al tenant (id AND tenant_id) y SIN filtro de
+	// estado, así que ve al dueño terminal igual que al vivo.
+	ev, err := rt.events.GetEventForTenant(ctx, tenantID, ownerEventID)
+	if err != nil {
+		rt.log.Warn("runtime: no se pudo resolver el evento dueño; la guarda de posesión deja pasar (fail-open)",
+			"error", err, "session_id", sessionID, "owner_event_id", ownerEventID, "flow_id", flowID)
+		return false
+	}
+	// El lookup acota por TENANT, no por conversación: `WHERE id = $1 AND
+	// tenant_id = $2` (flujos/events/store.go), y la FK de la 0062 tampoco liga
+	// sesión ni contacto. Un `owner_event_id` que apuntase a un evento de OTRA
+	// conversación del mismo tenant resolvería sin error, y esta guarda emitiría un
+	// veredicto determinista sobre datos ajenos: es el único camino que se escapa de
+	// los fail-open de arriba, porque no falla — acierta con el dato equivocado. Y solo
+	// puede ENSANCHAR el fail-open —convierte un mordisco en un «deja pasar», nunca al
+	// revés—, así que no introduce 409 falsos.
+	//
+	// SE LOGUEA COMO Error Y NO COMO Warn, a diferencia del fail-open de arriba, y la
+	// diferencia es deliberada: aquel cubre un fallo TRANSITORIO de infraestructura
+	// (la BD, un timeout) del que nadie tiene la culpa, mientras que llegar aquí
+	// significa que alguien escribió un dueño que no es de esta conversación. Ningún
+	// camino de CÓDIGO produce ese estado —pointStateAtEvent estampa el evento de la
+	// MISMA conversación (runtime/events.go), y la FK de la 0062 no ayuda: solo exige
+	// que el id exista en conversation_events, no que sea de esta sesión/contacto—,
+	// pero el paso (d) del runbook de backfill SÍ puede: es un UPDATE MANUAL donde el
+	// UUID del dueño lo elige una persona a mano («la elección del dueño es un
+	// juicio», docs/runbooks/backfill-053-owner-event-id.sql) y su WHERE acota la FILA
+	// por tenant/sesión/contacto, no el evento que se le estampa. Un dedo torcido ahí
+	// deja una fila juzgada con datos ajenos para siempre, y en silencio: por eso el
+	// fail-open que la protege tiene que DELATARLA, no enterrarla bajo un Warn.
+	if ev.SessionID != sessionID || ev.ContactID != contactID {
+		rt.log.Error("runtime: el evento dueño pertenece a otra conversación; la guarda de posesión deja pasar (fail-open) — revisa quién escribió ese owner_event_id",
+			"session_id", sessionID, "owner_event_id", ownerEventID, "owner_session_id", ev.SessionID, "flow_id", flowID)
+		return false
+	}
+	if ev.FlowID == "" {
+		return false
+	}
+	return ev.FlowID != flowID
 }
 
 // durableRetryAttempts es el reintento ACOTADO de D-054.4 (Plan 054 · T3, R3 de
