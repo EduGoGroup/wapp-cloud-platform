@@ -79,6 +79,23 @@ func Run(ctx context.Context) error {
 	}
 	defer closeDB(db, log)
 
+	// El pool de conexiones, en /metrics (Plan 050 · T4.3): las seis series
+	// wapp_db_* — entre ellas WaitCount y WaitDuration, la prueba DIRECTA de que
+	// alguien esperó por una conexión, que este proyecto no había medido nunca.
+	// Las lee T5.5 para levantar la curva con la que T4.6 decide DEUDA-050.2.
+	//
+	// Va AQUÍ y no dentro de metrics.New() porque cuando se construyen las
+	// métricas el *sql.DB todavía no existe: la base se abre veinte líneas más
+	// abajo. Registrar sobre el registry ya creado es legal (prometheus.Registry
+	// se protege por dentro), y es la primera vez que este repo lo hace.
+	//
+	// Se aborta el arranque si falla: el único error posible es un choque de
+	// nombres en el registry, o sea un bug de programación, y esos se ven al
+	// arrancar o no se ven nunca. Un fallo de la base no llega hasta aquí.
+	if err := mtx.RegisterDBStats(db); err != nil {
+		return err
+	}
+
 	// --- PKI: CA firmante (enroll) + Pool (mTLS) + cert de servidor (ambos). ---
 	ca, serverCert, err := loadPKI(cfg)
 	if err != nil {
