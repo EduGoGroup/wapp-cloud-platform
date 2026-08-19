@@ -15,6 +15,8 @@ import (
 	"time"
 
 	sharedconfig "github.com/EduGoGroup/wapp-shared/config"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // EnvPrefix es el prefijo aplicado a las variables de entorno de la Plataforma
@@ -515,6 +517,18 @@ type DatabaseConfig struct {
 	Name string `yaml:"name"`
 	// SSLMode es el modo SSL de libpq (disable, require, verify-full, …).
 	SSLMode string `yaml:"sslmode"`
+	// MaxOpenConns es el máximo de conexiones abiertas simultáneas contra
+	// PostgreSQL. Se lee de WAPP_DB_MAX_OPEN_CONNS.
+	MaxOpenConns int `yaml:"max_open_conns"`
+	// MaxIdleConns es el máximo de conexiones ociosas que el pool retiene.
+	// Se lee de WAPP_DB_MAX_IDLE_CONNS.
+	MaxIdleConns int `yaml:"max_idle_conns"`
+	// ConnMaxLifetime es la vida máxima de una conexión antes de reciclarse.
+	// Se lee de WAPP_DB_CONN_MAX_LIFETIME.
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+	// ConnMaxIdleTime es el tiempo máximo que una conexión puede estar ociosa
+	// antes de cerrarse. Se lee de WAPP_DB_CONN_MAX_IDLE_TIME.
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time"`
 }
 
 // DSN construye la cadena de conexión en formato keyword/value de libpq, apta
@@ -605,6 +619,15 @@ func defaults() AppConfig {
 			Password: "wapp",
 			Name:     "wapp_cloud",
 			SSLMode:  "disable",
+			// Los defaults del pool se REFERENCIAN del paquete postgres, no se
+			// copian (Plan 050 · Ola 4 · T4.2). Copiar los números crearía dos
+			// fuentes de verdad para el mismo valor: en cuanto divergieran
+			// ganaría esta —es la que se le pasa a postgres.Open— mientras las
+			// constantes de connect.go seguirían pareciendo el default real.
+			MaxOpenConns:    postgres.DefaultMaxOpenConns,
+			MaxIdleConns:    postgres.DefaultMaxIdleConns,
+			ConnMaxLifetime: postgres.DefaultConnMaxLifetime,
+			ConnMaxIdleTime: postgres.DefaultConnMaxIdleTime,
 		},
 		PKI: PKIConfig{
 			ServerCertFile: "certs/server.crt",
@@ -659,6 +682,26 @@ func Load() (AppConfig, error) {
 	cfg.DB.Password = loader.GetString("DB_PASSWORD", cfg.DB.Password)
 	cfg.DB.Name = loader.GetString("DB_NAME", cfg.DB.Name)
 	cfg.DB.SSLMode = loader.GetString("DB_SSLMODE", cfg.DB.SSLMode)
+
+	// Pool de conexiones: solo se acepta un valor POSITIVO. Un negativo no es
+	// "sin tope", es un error de tecleo, y en database/sql un maxOpen negativo
+	// significa pool ILIMITADO — contra Neon eso se paga en conexiones abiertas,
+	// no en una excepción. Esta es la red de ARRIBA; la de ABAJO está en
+	// postgres.applyPool, que vuelve a descartar el negativo. Cada una tiene su
+	// propio test, y a propósito: si solo hubiera uno que las cruzara, quitar
+	// cualquiera de las dos guardas seguiría dando verde.
+	if n := loader.GetInt("DB_MAX_OPEN_CONNS", cfg.DB.MaxOpenConns); n > 0 {
+		cfg.DB.MaxOpenConns = n
+	}
+	if n := loader.GetInt("DB_MAX_IDLE_CONNS", cfg.DB.MaxIdleConns); n > 0 {
+		cfg.DB.MaxIdleConns = n
+	}
+	if d := loader.GetDuration("DB_CONN_MAX_LIFETIME", cfg.DB.ConnMaxLifetime); d > 0 {
+		cfg.DB.ConnMaxLifetime = d
+	}
+	if d := loader.GetDuration("DB_CONN_MAX_IDLE_TIME", cfg.DB.ConnMaxIdleTime); d > 0 {
+		cfg.DB.ConnMaxIdleTime = d
+	}
 
 	cfg.PKI.ServerCertFile = loader.GetString("PKI_SERVER_CERT_FILE", cfg.PKI.ServerCertFile)
 	cfg.PKI.ServerKeyFile = loader.GetString("PKI_SERVER_KEY_FILE", cfg.PKI.ServerKeyFile)

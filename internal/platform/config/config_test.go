@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // isolateEnv deja el proceso SIN ninguna variable WAPP_* mientras dura el test y
@@ -66,9 +68,17 @@ func TestLoad_DBEnvOverrides(t *testing.T) {
 		t.Fatalf("Load devolvió error inesperado: %v", err)
 	}
 
+	// La comparación es de la struct ENTERA, así que el pool entra aquí aunque
+	// este test no lo sobreescriba: se afirma que los cuatro campos siguen en su
+	// default. Es deliberado — si un día alguien mueve un default del pool, este
+	// test lo cuenta además del suyo propio (TestLoad_DatabasePool).
 	want := DatabaseConfig{
 		Host: "pg", Port: 6000, User: "admin",
 		Password: "secret", Name: "mydb", SSLMode: "require",
+		MaxOpenConns:    postgres.DefaultMaxOpenConns,
+		MaxIdleConns:    postgres.DefaultMaxIdleConns,
+		ConnMaxLifetime: postgres.DefaultConnMaxLifetime,
+		ConnMaxIdleTime: postgres.DefaultConnMaxIdleTime,
 	}
 	if cfg.DB != want {
 		t.Fatalf("DB: got %+v, want %+v", cfg.DB, want)
@@ -355,4 +365,100 @@ func TestLoad_IdentityJWKSURLEnvOverride(t *testing.T) {
 	if cfg.Identity.JWKSURL != "http://localhost:8200/.well-known/jwks.json" {
 		t.Fatalf("Identity.JWKSURL: got %q", cfg.Identity.JWKSURL)
 	}
+}
+
+// TestLoad_DatabasePool cubre el pool de conexiones a PostgreSQL, configurable
+// por WAPP_DB_* desde el Plan 050 · Ola 4 (T4.1/T4.2).
+//
+// El subtest del negativo es el que importa: es la red de ARRIBA de las dos que
+// protegen el mismo síntoma. La de ABAJO —postgres.applyPool descartando el
+// negativo— tiene su propio test en el paquete postgres, y este NO pasa por ella:
+// mira cfg.DB.*, no un *sql.DB. Así, quitar cualquiera de las dos guardas tumba
+// exactamente un test, que es lo que hace que ninguna de las dos parezca
+// redundante y se borre.
+func TestLoad_DatabasePool(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		isolateEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		assertPoolDefaults(t, cfg)
+	})
+
+	t.Run("override por env", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"DB_MAX_OPEN_CONNS", "90")
+		t.Setenv(EnvPrefix+"DB_MAX_IDLE_CONNS", "30")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_LIFETIME", "30m")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_IDLE_TIME", "2m")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		assertPool(t, cfg, 90, 30, 30*time.Minute, 2*time.Minute)
+	})
+
+	t.Run("valor inválido cae al default", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"DB_MAX_OPEN_CONNS", "no-es-entero")
+		t.Setenv(EnvPrefix+"DB_MAX_IDLE_CONNS", "no-es-entero")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_LIFETIME", "no-es-duracion")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_IDLE_TIME", "no-es-duracion")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		assertPoolDefaults(t, cfg)
+	})
+
+	// Un negativo NO desactiva el tope: en database/sql un maxOpen negativo
+	// significa pool ILIMITADO y un lifetime negativo, conexiones eternas. Contra
+	// Neon eso no da un error, da conexiones abiertas hasta que la base las
+	// rechaza. Aquí se descarta y manda el default.
+	t.Run("valor negativo cae al default y no desactiva el tope", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"DB_MAX_OPEN_CONNS", "-1")
+		t.Setenv(EnvPrefix+"DB_MAX_IDLE_CONNS", "-1")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_LIFETIME", "-1s")
+		t.Setenv(EnvPrefix+"DB_CONN_MAX_IDLE_TIME", "-1s")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		assertPoolDefaults(t, cfg)
+	})
+}
+
+// assertPool afirma los cuatro parámetros del pool de una vez. Está extraído a
+// función NOMBRADA, no repetido dentro de cada t.Run: los subtests inline imputan
+// su complejidad a la función madre y TestLoad_DatabasePool tiene cuatro.
+func assertPool(t *testing.T, cfg AppConfig, wantOpen, wantIdle int, wantLifetime, wantIdleTime time.Duration) {
+	t.Helper()
+	if cfg.DB.MaxOpenConns != wantOpen {
+		t.Errorf("DB.MaxOpenConns: got %d, want %d", cfg.DB.MaxOpenConns, wantOpen)
+	}
+	if cfg.DB.MaxIdleConns != wantIdle {
+		t.Errorf("DB.MaxIdleConns: got %d, want %d", cfg.DB.MaxIdleConns, wantIdle)
+	}
+	if cfg.DB.ConnMaxLifetime != wantLifetime {
+		t.Errorf("DB.ConnMaxLifetime: got %v, want %v", cfg.DB.ConnMaxLifetime, wantLifetime)
+	}
+	if cfg.DB.ConnMaxIdleTime != wantIdleTime {
+		t.Errorf("DB.ConnMaxIdleTime: got %v, want %v", cfg.DB.ConnMaxIdleTime, wantIdleTime)
+	}
+}
+
+// assertPoolDefaults afirma que los cuatro parámetros quedaron en el default del
+// paquete postgres. Se compara contra las CONSTANTES, no contra literales: son la
+// única fuente del valor, y copiarlas aquí haría que el test dejara de detectar
+// precisamente la divergencia que justifica exportarlas.
+func assertPoolDefaults(t *testing.T, cfg AppConfig) {
+	t.Helper()
+	assertPool(t, cfg,
+		postgres.DefaultMaxOpenConns,
+		postgres.DefaultMaxIdleConns,
+		postgres.DefaultConnMaxLifetime,
+		postgres.DefaultConnMaxIdleTime,
+	)
 }

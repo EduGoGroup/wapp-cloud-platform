@@ -57,6 +57,17 @@ func run(statusOnly bool) error {
 		return err
 	}
 
+	// Solo el DSN: el migrador NO hereda WAPP_DB_* a propósito (Plan 050 · Ola 4
+	// · T4.2), así que se lleva las constantes por defecto del paquete postgres.
+	// La razón es que sube y baja con el servidor: cablearlo al mismo pool haría
+	// que subir el del servidor multiplicara también las conexiones del migrador
+	// contra el host DIRECTO de Neon (ver el aviso de pg_advisory_lock arriba),
+	// que es justo donde menos falta hacen — este proceso serializa el esquema
+	// con un lock y sale.
+	//
+	// Tampoco se le baja el número aquí: esta ola solo cablea, no mueve valores.
+	// Darle un pool propio más pequeño es una decisión de T4.6, si alguna vez la
+	// medición dice que hace falta.
 	db, err := postgres.Open(ctx, postgres.Config{DSN: cfg.DB.DSN()})
 	if err != nil {
 		return fmt.Errorf("base de datos no disponible: %w", err)

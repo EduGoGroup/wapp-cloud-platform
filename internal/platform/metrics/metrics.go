@@ -11,6 +11,9 @@
 package metrics
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -208,4 +211,99 @@ func (m *Metrics) FlowEventLifecycle(name, eventKind string, delta float64) {
 		return
 	}
 	m.flowEventLifecycle.WithLabelValues(name, eventKind).Add(delta)
+}
+
+// --- Pool de conexiones a PostgreSQL (Plan 050 · Ola 4 · T4.3) --------------
+
+// RegisterDBStats publica las seis series del pool `database/sql` (sql.DBStats)
+// sobre el registry propio. Devuelve error solo si el registry lo rechaza por
+// algo distinto de "ya estaba" (ver más abajo), para que el arranque decida.
+//
+// POR QUÉ ES UN MÉTODO APARTE y no un parámetro de New(): es orden de arranque,
+// no estética. New() se construye antes de que exista el *sql.DB (bootstrap abre
+// la base después, porque el logger y las métricas tienen que estar vivos para
+// poder contar un fallo de conexión), así que el pool no puede inyectarse en el
+// constructor. Es la PRIMERA vez en este repo que algo se registra DESPUÉS de
+// New(), y es seguro: prometheus.Registry protege su estado con un mutex propio
+// (Register/Gather son concurrent-safe por contrato), de modo que registrar
+// mientras un scrape está en vuelo es legal. La alternativa —retrasar New()
+// hasta después de la base— dejaría el fallo de conexión sin instrumentar.
+//
+// POR QUÉ GaugeFunc/CounterFunc y NO un ticker de refresco (el molde de
+// metrics/flowlifecycle): lo que T5.5 va a buscar es el PICO de InUse y de
+// WaitCount bajo carga, y un valor refrescado cada N segundos se lo pierde entre
+// muestra y muestra. Estas funciones leen db.Stats() EN EL MOMENTO DEL SCRAPE;
+// db.Stats() es una copia de struct tomada bajo el mutex del pool: barata y
+// segura de leer en caliente.
+//
+// POR QUÉ NO collectors.NewDBStatsCollector, que ya existe en client_golang:
+// prefija sus series con "go_sql_" sin ninguna opción de cambiarlo, y aquí el
+// prefijo de la casa es "wapp_" (el criterio de T4.3 se verifica con
+// `grep wapp_db_`).
+//
+// Nil-safe como el resto del paquete: con m == nil o db == nil no registra nada
+// y el scrape sigue sirviendo las demás series (un despliegue sin base no debe
+// quedarse sin /metrics).
+//
+// DOBLE LLAMADA: el llamante previsto es UNO SOLO (internal/bootstrap, justo
+// después de abrir la base). Aun así, una segunda llamada NO revienta: el
+// AlreadyRegisteredError del registry se trata como "ya estaba" y se ignora, de
+// forma que un cable duplicado por descuido no tumba el arranque de la
+// plataforma por una métrica. Cualquier otro error sí sube al llamante.
+//
+// CERO datos de negocio (INV-5 del paquete, y además /metrics se sirve SIN
+// autenticar en :8100 sobre IP pública — deuda conocida, dueño Plan 026): las
+// seis series son números del pool, sin etiquetas de ningún tipo. No hay tenant,
+// ni sesión, ni DSN, ni nombre de base.
+func (m *Metrics) RegisterDBStats(db *sql.DB) error {
+	if m == nil || db == nil {
+		return nil
+	}
+	for _, c := range dbStatsCollectors(db) {
+		if err := m.reg.Register(c); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			if errors.As(err, &already) {
+				continue // segunda llamada: idempotente, no tumba el arranque.
+			}
+			return fmt.Errorf("metrics: registrar las series del pool de BD: %w", err)
+		}
+	}
+	return nil
+}
+
+// dbStatsCollectors arma las seis series de sql.DBStats. Está aparte de
+// RegisterDBStats para que el conjunto se lea de un vistazo (nombre, tipo,
+// campo) y para que añadir una séptima no toque la lógica de registro.
+//
+// Los tres primeros son MONÓTONOS (nunca decrecen mientras viva el proceso), así
+// que son contadores aunque el criterio del plan los liste sin sufijo _total:
+// declararlos gauge haría que rate() mintiera. Los tres últimos suben y bajan
+// con el tráfico: gauges.
+func dbStatsCollectors(db *sql.DB) []prometheus.Collector {
+	return []prometheus.Collector{
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "wapp_db_wait_count",
+			Help: "Veces que una goroutine tuvo que ESPERAR a que se liberara una conexión del pool porque las MaxOpenConns estaban ocupadas. Junto con wapp_db_wait_duration_seconds es la PRUEBA DIRECTA de que el pool se quedó corto — no una inferencia por latencia. Nadie la había medido en este proyecto hasta el Plan 050 · T4.3; la lee T5.5 para decidir si DEUDA-050.2 (el cuello mudado del head-of-line al pool) exige subir MaxOpenConns en T4.6. Un cero sostenido bajo carga dice que el cuello NO está aquí.",
+		}, func() float64 { return float64(db.Stats().WaitCount) }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "wapp_db_wait_duration_seconds",
+			Help: "Tiempo TOTAL acumulado esperando por una conexión del pool. Es la otra mitad de la prueba de T5.5: wapp_db_wait_count dice cuántas veces se esperó y esta cuánto dolió (el cociente da la espera media, y su rate() la fracción de tiempo de proceso que se va en el pool). En segundos por la convención de unidades base de Prometheus, igual que wapp_http_request_duration_seconds.",
+		}, func() float64 { return db.Stats().WaitDuration.Seconds() }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "wapp_db_max_idle_closed",
+			Help: "Conexiones cerradas por haber excedido MaxIdleConns. Distingue dos diagnósticos que se confunden: si sube a la vez que wapp_db_wait_count, el pool está ABRIENDO y CERRANDO conexiones en bucle (MaxIdleConns demasiado bajo para el tráfico), y eso se arregla tocando el idle, no el max_open.",
+		}, func() float64 { return float64(db.Stats().MaxIdleClosed) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "wapp_db_in_use",
+			Help: "Conexiones del pool en uso AHORA MISMO (en el instante del scrape, sin refresco diferido: un ticker se perdería el pico, que es justo lo que T5.5 busca). Comparada con wapp_db_max_open dice cuánta cabecera queda antes de que empiece la espera.",
+		}, func() float64 { return float64(db.Stats().InUse) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "wapp_db_idle",
+			Help: "Conexiones abiertas y ociosas en el instante del scrape. in_use + idle es el total de conexiones vivas contra PostgreSQL, el número que le importa al límite del proveedor (Neon).",
+		}, func() float64 { return float64(db.Stats().Idle) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "wapp_db_max_open",
+			Help: "Techo configurado de conexiones simultáneas (SetMaxOpenConns). Es un gauge y no una constante a propósito: se publica para que el dato del pool y su límite se lean del MISMO scrape, sin tener que ir a buscar la config del despliegue para interpretar in_use.",
+		}, func() float64 { return float64(db.Stats().MaxOpenConnections) }),
+	}
 }
