@@ -71,19 +71,21 @@ func (r *PostgresRepository) Exists(ctx context.Context, key Key) (bool, error) 
 // Load carga el estado de la conversación; found=false sin error si no hay.
 func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversation, bool, error) {
 	var (
-		c       model.Conversation
-		varsRaw []byte
-		lastWa  sql.NullString
-		eventID sql.NullString
+		c            model.Conversation
+		varsRaw      []byte
+		lastWa       sql.NullString
+		eventID      sql.NullString
+		ownerEventID sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT tenant_id::text, session_id, contact_id::text, flow_id, flow_version,
-		       current_node, vars, last_wa_message_id, updated_at, event_id::text
+		       current_node, vars, last_wa_message_id, updated_at, event_id::text,
+		       owner_event_id::text
 		FROM public.flow_state
 		WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
 	`, key.TenantID, key.SessionID, key.ContactID).Scan(
 		&c.TenantID, &c.SessionID, &c.ContactID, &c.FlowID, &c.FlowVersion,
-		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt, &eventID,
+		&c.CurrentNode, &varsRaw, &lastWa, &c.UpdatedAt, &eventID, &ownerEventID,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -99,6 +101,14 @@ func (r *PostgresRepository) Load(ctx context.Context, key Key) (model.Conversat
 	// ::text para que el UUID llegue como cadena, igual que tenant_id/contact_id.
 	if eventID.Valid {
 		c.EventID = eventID.String
+	}
+	// owner_event_id NULL ⇒ OwnerEventID "" (esta conversación no tiene flujo con
+	// dueño, Plan 053 · T1.4). Cubre DOS casos que se comportan igual y por eso no se
+	// distinguen: el menú puro sin flujo (D-043.3) y la fila LEGADA que se escribió
+	// antes de que existiera la columna. Se lee con ::text por lo mismo que event_id:
+	// la columna es UUID y el dominio la quiere como cadena.
+	if ownerEventID.Valid {
+		c.OwnerEventID = ownerEventID.String
 	}
 	if len(varsRaw) > 0 {
 		if err := json.Unmarshal(varsRaw, &c.Vars); err != nil {
@@ -131,10 +141,19 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 	if state.EventID != "" {
 		eventID = sql.NullString{String: state.EventID, Valid: true}
 	}
+	// OwnerEventID "" ⇒ NULL, con el MISMO trato que event_id y por el mismo motivo: el
+	// dueño también se apaga (el flujo termina y la fila deja de pertenecer a nadie), y
+	// una columna fuera del DO UPDATE se queda pegada para siempre. Aquí eso sería peor
+	// que en event_id: el dueño es lo que T1.6 usará para decidir a QUÉ evento mata el
+	// cierre, así que un dueño fosilizado cerraría el evento equivocado.
+	var ownerEventID sql.NullString
+	if state.OwnerEventID != "" {
+		ownerEventID = sql.NullString{String: state.OwnerEventID, Valid: true}
+	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO public.flow_state
-			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, event_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+			(tenant_id, session_id, contact_id, flow_id, flow_version, current_node, vars, last_wa_message_id, event_id, owner_event_id, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 		ON CONFLICT (tenant_id, session_id, contact_id) DO UPDATE
 		SET flow_id = EXCLUDED.flow_id,
 		    flow_version = EXCLUDED.flow_version,
@@ -142,9 +161,10 @@ func (r *PostgresRepository) Save(ctx context.Context, state model.Conversation)
 		    vars = EXCLUDED.vars,
 		    last_wa_message_id = EXCLUDED.last_wa_message_id,
 		    event_id = EXCLUDED.event_id,
+		    owner_event_id = EXCLUDED.owner_event_id,
 		    updated_at = now()
 	`, state.TenantID, state.SessionID, state.ContactID, state.FlowID, state.FlowVersion,
-		state.CurrentNode, varsRaw, lastWa, eventID)
+		state.CurrentNode, varsRaw, lastWa, eventID, ownerEventID)
 	if err != nil {
 		return fmt.Errorf("store: upsert estado: %w", err)
 	}
