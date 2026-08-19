@@ -194,9 +194,18 @@ func TestReprompt_UnSoloInvalidoEnElEventoNuevoNoArmaElMenuDeSalida(t *testing.T
 // hallazgo del barrido de la Ola 5): al terminar el flujo heredado del `cart`,
 // closeIfFinished cerraba el evento `menu` que lo había heredado —sin flujo propio,
 // D-043.3— con un event_closed FALSO, y ESE rojo no era de esta propiedad. Con H2
-// arreglado (event_lifecycle.go: closeIfFinished exige ev.FlowID == st.FlowID) la
+// arreglado ~~(event_lifecycle.go: closeIfFinished exige ev.FlowID == st.FlowID)~~ la
 // razón para desviarse desapareció: el flujo AJENO puede terminar sin tocar el
 // evento `menu`, así que este test vuelve al escenario que de verdad importa.
+//
+// 🔁 Plan 053 · T1.6: la guarda `ev.FlowID == st.FlowID` ya no existe (D-053.2); lo
+// que protege al `menu` ahora es que closeIfFinished cierra flow_state.owner_event_id
+// —el `cart`— y NO el activo. Este test no cambia ni un aserto, y ese es el punto: el
+// ASSERT 3b («el evento activo tras el «2» sigue siendo el menú») es el que verifica
+// en producción el hueco D del paso 0, porque una limpieza incondicional de
+// st.EventID lo pondría rojo. Al terminar el «2», el `cart` de este montaje SÍ queda
+// cerrado; el test no lo mira, y se deja así a propósito: su propiedad es el evento
+// ACTIVO, no el ciclo de vida del carrito.
 func TestReprompt_ElDosNoDesactivaElEventoConMenuHeredado(t *testing.T) {
 	rt, repo, sender, contacts, evs := zzSondaEnv(t, sampleFlow(), false,
 		eventStartRule("carrito", "cart"), zzSondaMenuRule())
