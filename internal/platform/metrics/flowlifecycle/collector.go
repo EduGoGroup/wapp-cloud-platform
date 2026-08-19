@@ -91,20 +91,44 @@ const defaultPollInterval = 15 * time.Second
 // filas devueltas donde el prefijo real da 10.000, entrando además `kind=
 // 'persist'`, la fila que menos pinta ahí).
 //
-// GROUP BY 1, 2 agrupa por `name` y por `payload->>'kind'` — NUNCA por la
-// columna `kind` de la fila ("persist"|"event"): un GROUP BY sobre esa columna
-// colapsaría los seis (hoy) nombres de efecto en una sola fila con el 100% de
-// los eventos y CERO error, el fallo plausible que la refutación midió.
+// GROUP BY 1, 2, 3 agrupa por `name`, por `payload->>'kind'` y por
+// `payload->>'reason'` — NUNCA por la columna `kind` de la fila
+// ("persist"|"event"): un GROUP BY sobre esa columna colapsaría los siete (hoy)
+// nombres de efecto en una sola fila con el 100% de los eventos y CERO error, el
+// fallo plausible que la refutación midió.
+//
+// ⚠️ MIGRACIÓN DE CARDINALIDAD (Plan 053 · Ola 4 · T4.2, cierra REQ-053.4).
+// `reason` es la TERCERA dimensión y llega con la Ola 4: distingue las tres causas
+// de `event_escaped` (owner_flow_finished | orphan_menu | client_escape), que hasta
+// ahora se sumaban bajo una sola serie. Consecuencias que hay que saber ANTES de
+// mirar un dashboard viejo:
+//
+//   - Las series ANTERIORES a este cambio tenían dos etiquetas y las nuevas tienen
+//     tres. Prometheus las trata como series DISTINTAS: las viejas dejan de
+//     alimentarse en el reinicio que despliega esto y no vuelven. Toda alerta o
+//     panel que las nombre por su juego exacto de etiquetas deja de casar y hay que
+//     reescribirlo; una suma sin `by (...)` sigue dando el mismo total.
+//   - Los otros seis efectos NO ganan la clave en su payload (el emisor solo la
+//     escribe cuando hay causa que declarar), así que aquí llegan como NULL y
+//     salen con `reason=""`. Es el valor correcto y explícito: «este efecto no
+//     tiene causas que distinguir», no «se perdió el dato».
+//   - Las filas que YA están en flow_events —escritas antes de T4.1— tampoco la
+//     llevan: la bitácora es append-only y no se reescribe. Un `event_escaped`
+//     histórico sale con `reason=""` para siempre, y eso también es la verdad.
 //
 // max(id) viaja en la MISMA consulta agregada — no en una segunda — para no
 // duplicar el escaneo: el cursor avanza al mayor id de las filas que esta
 // vuelta CONTÓ de verdad, nunca al de una fila que el filtro descartó.
+//
+// Sin índice nuevo: `reason` es una columna más en el mismo GROUP BY sobre el mismo
+// escaneo por PK que la refutación T6.5 midió (54 buffers / 0,6 ms). No cambia el
+// plan de acceso — cambia cuántas filas agregadas devuelve, y son unidades.
 const eventTelemetryQuery = `
-SELECT name, payload->>'kind' AS event_kind, count(*), max(id)
+SELECT name, payload->>'kind' AS event_kind, payload->>'reason' AS reason, count(*), max(id)
   FROM public.flow_events
  WHERE id > $1
    AND name LIKE 'event\_%'
- GROUP BY 1, 2
+ GROUP BY 1, 2, 3
 `
 
 // collectorLockKey es la clave del advisory lock de SESIÓN que elige un único
@@ -140,7 +164,7 @@ const collectorLockKey int64 = 0x37232781758ec913
 // Collector desde dos goroutines a la vez.)
 type Collector struct {
 	db           *sql.DB
-	onCount      func(name, eventKind string, delta float64)
+	onCount      func(name, eventKind, reason string, delta float64)
 	log          logger.Logger
 	pollInterval time.Duration
 	cursor       int64
@@ -162,7 +186,7 @@ type Collector struct {
 // gate de huérfanos de esta tarea prohíbe. El único parámetro configurable es
 // pollInterval y hoy nadie lo cambia: cuando alguien lo necesite, añadir el
 // option de vuelta cuesta las mismas ocho líneas que costó borrarlo.
-func NewCollector(db *sql.DB, onCount func(name, eventKind string, delta float64), log logger.Logger) *Collector {
+func NewCollector(db *sql.DB, onCount func(name, eventKind, reason string, delta float64), log logger.Logger) *Collector {
 	return &Collector{db: db, onCount: onCount, log: log, pollInterval: defaultPollInterval}
 }
 
@@ -333,7 +357,7 @@ func (c *Collector) initCursor(ctx context.Context) {
 // pollOnce ejecuta UNA vuelta: primero se asegura de ser el líder de esta
 // vuelta (becomeLeader — si otra réplica lo es, vuelve de inmediato sin
 // consultar nada ni loguear nada), consulta las filas nuevas desde el
-// cursor, publica el delta de cada (name, event_kind) por onCount y avanza
+// cursor, publica el delta de cada (name, event_kind, reason) por onCount y avanza
 // el cursor al mayor id VISTO en esta vuelta. Un error de consulta o de
 // escaneo deja el cursor SIN avanzar (la próxima vuelta reintenta desde el
 // mismo punto — nunca se pierde una fila por un fallo transitorio de la BD).
@@ -357,16 +381,19 @@ func (c *Collector) pollOnce(ctx context.Context) {
 
 	newCursor := c.cursor
 	type delta struct {
-		name, eventKind string
-		count           float64
+		name, eventKind, reason string
+		count                   float64
 	}
 	var deltas []delta
 	for rows.Next() {
 		var name string
-		var eventKind sql.NullString
+		// eventKind y reason se escanean como NullString y se publican por su .String:
+		// un payload sin la clave da NULL en SQL y "" en la métrica, sin rama extra.
+		// Es el mismo trato que eventKind ya recibía; reason lo hereda a propósito.
+		var eventKind, reason sql.NullString
 		var count int64
 		var maxIDRow int64
-		if serr := rows.Scan(&name, &eventKind, &count, &maxIDRow); serr != nil {
+		if serr := rows.Scan(&name, &eventKind, &reason, &count, &maxIDRow); serr != nil {
 			if c.log != nil {
 				c.log.Error("colector de telemetría de flow_events: escanear fila agregada", "error", serr)
 			}
@@ -375,7 +402,7 @@ func (c *Collector) pollOnce(ctx context.Context) {
 		if maxIDRow > newCursor {
 			newCursor = maxIDRow
 		}
-		deltas = append(deltas, delta{name: name, eventKind: eventKind.String, count: float64(count)})
+		deltas = append(deltas, delta{name: name, eventKind: eventKind.String, reason: reason.String, count: float64(count)})
 	}
 	if rerr := rows.Err(); rerr != nil {
 		if c.log != nil {
@@ -394,6 +421,6 @@ func (c *Collector) pollOnce(ctx context.Context) {
 		return
 	}
 	for _, d := range deltas {
-		c.onCount(d.name, d.eventKind, d.count)
+		c.onCount(d.name, d.eventKind, d.reason, d.count)
 	}
 }

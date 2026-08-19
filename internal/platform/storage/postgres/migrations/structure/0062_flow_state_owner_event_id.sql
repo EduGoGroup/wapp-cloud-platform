@@ -1,0 +1,110 @@
+-- ============================================================
+-- 0062: flow_state.owner_event_id — el evento DUEÑO del flujo que corre en la fila
+-- (Plan 053 · Ola 1 · T1.3 — D-053.1 y D-053.7; construye REQ-053.5, respeta
+-- INV-053.3).
+--
+-- La 0052 (Plan 043 · T1.3) trajo `flow_state.event_id`: el evento ACTIVO, «a quién
+-- le habla el contacto AHORA MISMO» (D-043.4). Esta trae la OTRA relación que la
+-- MISMA fila lleva encima desde el primer día y que nadie había separado: de QUIÉN
+-- es el `flow_id`/`current_node`/`vars` que la fila también arrastra.
+--
+-- No son la misma pregunta, y confundirlas es exactamente el bug que este plan
+-- existe para cerrar:
+--   · un evento puede estar ACTIVO sin poseer nada  -> el `menu` puro (D-043.3),
+--     que no tiene flujo propio: su contenido lo renderiza el despachador y no una
+--     fila de flow_definitions.
+--   · un evento puede dejar de estar activo SIN dejar de poseer su estado -> el
+--     `cart` sobre el que el menú se monta encima sin tocarle `flow_id` ni `vars`.
+-- Cuando el segundo caso pasa, `event_id` apunta al `menu` y el `flow_id` de la fila
+-- sigue siendo el del `cart`. Hoy eso se INFIERE releyendo el evento y comparando
+-- `ev.flow_id != st.flow_id` (la guarda de posesión de H2, event_lifecycle.go:186);
+-- con esta columna es un HECHO escrito, no una inferencia sobre otro campo.
+--
+-- ------------------------------------------------------------
+-- NULL ES EL ESTADO CORRECTO, NO UN HUECO A RELLENAR (REQ-053.5)
+-- ------------------------------------------------------------
+-- SIN `NOT NULL` y SIN `CHECK`, a propósito. Una conversación sin ningún módulo en
+-- curso —el `menu` puro de D-043.3, o el estado inicial de cualquier conversación
+-- que todavía no ha arrancado nada— tiene `owner_event_id NULL` LEGÍTIMAMENTE. No
+-- es un dato faltante, no es una fila a reparar y ningún camino de lectura debe
+-- tratarlo como error. En el struct Go carga como `""` (cero de Go), misma
+-- convención que `EventID`: nunca `*string`.
+--
+-- El invariante que SÍ se sostiene es de una sola dirección: `owner_event_id IS NOT
+-- NULL` ⟹ `flow_id <> ''`. La inversa NO es estricta a propósito (D-053.1): una
+-- fila legada —o una escrita en la ventana entre esta migración y el despliegue de
+-- T1.5— puede tener `flow_id` sin dueño poblado. Por eso no hay CHECK: un CHECK
+-- bidireccional bloquearía el propio rollout que D-053.7 describe.
+--
+-- ------------------------------------------------------------
+-- SIN ÍNDICE, Y NO POR OLVIDO (MD-053.2)
+-- ------------------------------------------------------------
+-- No se crea ningún índice sobre la columna. El lookup que la va a consumir
+-- (`restartableOnStart`, D-053.4) resuelve `owner_event_id -> kind` contra
+-- `conversation_events`, servido por la PK de ESA tabla, no por un índice en
+-- `flow_state`. Si la medición de la Ola 3 dice otra cosa —y ahí es donde se decide,
+-- con el dato delante— el índice se añade en su propia migración. Sembrarlo aquí a
+-- ciegas es pagar escritura en la tabla más caliente del motor por una consulta que
+-- todavía nadie ha ejecutado.
+--
+-- ------------------------------------------------------------
+-- LA ASIMETRÍA DE FK CON `event_id`, DECLARADA EN VOZ ALTA
+-- ------------------------------------------------------------
+-- `flow_state.event_id` NACIÓ SIN FK a propósito (0052:78-84): una FK obligaría a
+-- decidir en el esquema qué le pasa al puntero cuando el evento se borra, y la
+-- respuesta correcta («el puntero se apaga, la conversación sigue») la escribe el
+-- código al cerrar o cancelar.
+-- `owner_event_id` SÍ la lleva, porque `design.md` §2 la pide explícitamente y
+-- porque es la misma forma que ya usan `intakes.event_id` y `survey_results.event_id`
+-- (0054:111,137): `REFERENCES public.conversation_events(id)` SIN `ON DELETE`.
+-- ⚠️ Queda escrito que las dos columnas de la MISMA tabla quedan asimétricas: la
+-- vieja sin FK por la razón de la 0052, la nueva con FK por la razón del 053. Sin
+-- `ON DELETE` porque aquí nada se borra por reloj (INV-09); si algún día se borrara
+-- un evento con dueño vivo, el DELETE fallaría en vez de apagar un puntero en
+-- silencio — que es exactamente el comportamiento que se quiere.
+--
+-- ------------------------------------------------------------
+-- IDEMPOTENCIA — CORRECCIÓN AL LITERAL DE design.md §2
+-- ------------------------------------------------------------
+-- 🔴 El SQL literal de `design.md` §2 (y el de `tasks.md` T1.3, que lo copia) dice
+-- `ADD COLUMN owner_event_id ...` SIN `IF NOT EXISTS`. AQUÍ SE ESCRIBE **CON**
+-- `IF NOT EXISTS`, y no es una adaptación de entorno: el runner de este repo es
+-- hash-based FULL-REPLAY (migrate.go:83,87,98,130-153) y re-ejecuta TODOS los
+-- `structure/*.sql` en cuanto cambia el hash del conjunto. Sin `IF NOT EXISTS`, la
+-- segunda pasada aborta con «column "owner_event_id" of relation "flow_state"
+-- already exists» y se lleva por delante la migración entera. Es la convención
+-- documentada del repo —60 de 60 `ADD COLUMN` del árbol la usan, cero sin ella; la
+-- cabecera de la 0061 la declara y la 0055:30-39 explica la doctrina— y hay un test
+-- que la fuerza: `TestIntegration_FullReplay_ConservaLosDatos`
+-- (replay_integration_test.go:26).
+--
+-- ------------------------------------------------------------
+-- LO QUE ESTA MIGRACIÓN NO HACE, A PROPÓSITO
+-- ------------------------------------------------------------
+-- 1. NO TOCA `event_id`. Cero migración de datos sobre ella: sigue significando
+--    exactamente lo mismo que hoy, para todas las filas, sin excepción (INV-053.3).
+-- 2. NO LLEVA EL BACKFILL DENTRO. Es la decisión de forma de esta tarea y tiene una
+--    razón dura: con un runner FULL-REPLAY, un `UPDATE` de datos en este archivo se
+--    RE-EJECUTARÍA en cada replay futuro y pisaría las resoluciones MANUALES de la
+--    tercera categoría de D-053.7 (el `menu`-sobre-heredado), que es justo el dato
+--    que ningún automatismo puede reconstruir. El backfill vive fuera, como consulta
+--    REPETIBLE e IDEMPOTENTE que se corre a mano en el despliegue:
+--    `docs/runbooks/backfill-053-owner-event-id.sql`.
+-- 3. NO crea índice (arriba, MD-053.2) ni CHECK (arriba, REQ-053.5).
+-- 4. NO toca `conversation_events`, `intakes`, `conversation_event_messages` ni
+--    ningún tipo de `flow_triggers`.
+-- 5. NO hay ventana de incompatibilidad POR LA COLUMNA: nadie la lee hasta T1.5, así
+--    que el rollout admite «migración primero, código después». Lo que SÍ hay es la
+--    ventana del hueco E —filas escritas entre esta migración y T1.5 nacen sin
+--    dueño—, y se cierra volviendo a correr el backfill en el despliegue, con T1.5 y
+--    T1.6 desplegándose JUNTOS.
+--
+-- CERO PII: un UUID técnico sobre una tabla de negocio ya existente (ADR-0009).
+-- ADITIVA e IDEMPOTENTE. SchemaVersion sube a 0.36.0.
+-- ============================================================
+
+ALTER TABLE public.flow_state
+    ADD COLUMN IF NOT EXISTS owner_event_id UUID NULL REFERENCES public.conversation_events(id);
+
+COMMENT ON COLUMN public.flow_state.owner_event_id IS
+    'Evento DUENO de esta fila (conversation_events.id): de quien es el flow_id / current_node / vars que la fila arrastra, es decir quien abrio el flujo que corre aqui (Plan 053 · D-053.1). DISTINTO de event_id, que es el evento ACTIVO —a quien le habla el contacto AHORA (D-043.4)—. Coinciden en el caso comun, y DIVERGEN cuando el evento ''menu'' (D-043.3: sin flujo propio, lo renderiza el despachador) se vuelve activo sobre un flow_state heredado de otro modulo todavia en curso: ahi event_id apunta al menu y owner_event_id sigue apuntando al carrito, que es el dueno real del estado. NULL = ningun modulo en curso (el menu puro, o una conversacion que aun no ha arrancado nada): es el estado CORRECTO, jamas un hueco a rellenar ni un dato faltante (REQ-053.5). Invariante de UNA sola direccion: owner_event_id NOT NULL implica flow_id <> ''''; la inversa no, porque el legado y la ventana de rollout admiten flow_id sin dueno. CON FK, a diferencia de event_id (que nacio sin ella en la 0052 a proposito): misma forma que intakes.event_id, sin ON DELETE, porque aqui nada se borra por reloj (INV-09). Plan 053 · T1.3.';

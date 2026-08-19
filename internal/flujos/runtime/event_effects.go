@@ -11,8 +11,14 @@ import (
 // T5.4, D-043.11). Son de PLATAFORMA, no de módulo: ningún modules.Module los
 // declara, los emite el runtime en los puntos en que la vida del evento cambia —seis
 // desde T5.4 (birthEvent, switchToEvent, stopEvent, eventClock, closeIfFinished,
-// cancelAndAbandon) más los dos que la Ola 6 añade con EffectEventEscaped
-// (handleEscape y el quinto camino de suelta, incoming.go).
+// cancelAndAbandon) más los TRES que emiten EffectEventEscaped (todos en
+// incoming.go: handleEscape, el quinto camino de suelta —releaseOrphanMenu— y
+// releaseFinishedState).
+//
+// 🐛 Este párrafo decía «los dos que la Ola 6 añade» y eran TRES desde la propia
+// Ola 6 (MD-053.4). Se corrige aquí, en la tarea que le da a cada uno su `reason`
+// (Plan 053 · Ola 4 · T4.1): un comentario que cuenta mal los emisores es
+// exactamente lo que hace creer que el embudo distingue causas cuando no lo hacía.
 //
 // ⚠️ `event_expired` NO está y NUNCA estuvo: no existe esa transición (E-6 la derogó;
 // verificado: 0 coincidencias en todo el árbol). Esta tarea no retira nada, solo añade.
@@ -32,6 +38,36 @@ const (
 	// solo nombre haría inútil el embudo: quien lea flow_events no podría distinguir
 	// «se puede retomar tal cual» de «el progreso de nodo se perdió».
 	EffectEventEscaped = "event_escaped"
+)
+
+// Las TRES causas de EffectEventEscaped (Plan 053 · Ola 4 · T4.1, REQ-053.4).
+// Viajan en `payload.reason`, NO en el nombre del efecto: multiplicar el nombre en
+// tres es justo lo que D-053.6 rechaza. El eje del NOMBRE sigue siendo el que fijó
+// la Ola 6 —«¿el Delete destruyó el flow_state?»— y es el mismo para las tres; lo
+// que el nombre no puede contestar, y ahora contesta el payload, es POR QUÉ se
+// destruyó. Un embudo que no distingue «el flujo terminó solo» de «el cliente dijo
+// salir» mide tres fenómenos distintos bajo una sola serie.
+//
+// Son valores de bitácora, no de dominio: nadie ramifica sobre ellos. Se exportan
+// para que el test que los distingue pueda nombrarlos sin repetir los literales
+// —un test que compara "orphan_menu" contra "orphan_menu" escrito a mano no
+// protege del renombrado—.
+const (
+	// EscapeReasonOwnerFlowFinished: releaseFinishedState soltó un flow_state que ya
+	// había alcanzado su nodo terminal. NADIE lo pidió: el flujo se acabó y su fila
+	// se recoge. Es la causa más benigna de las tres, y la que más ruido metía al
+	// ir mezclada con las otras dos.
+	EscapeReasonOwnerFlowFinished = "owner_flow_finished"
+	// EscapeReasonOrphanMenu: el quinto camino de suelta (releaseOrphanMenu, E-6).
+	// El contacto tecleó algo que la lista del despachador no reconoce sobre un
+	// flow_state SIN flujo (el `menu`, D-043.3). Tampoco lo pidió, pero a diferencia
+	// del anterior aquí SÍ hubo una intención humana que el sistema no entendió:
+	// si esta serie sube, la lista del despachador se está quedando corta.
+	EscapeReasonOrphanMenu = "orphan_menu"
+	// EscapeReasonClientEscape: handleEscape, el único de los tres que el contacto
+	// pidió con todas las letras (la palabra de escape configurada por el tenant).
+	// Es el que un dueño querría ver por separado: mide abandono DELIBERADO.
+	EscapeReasonClientEscape = "client_escape"
 )
 
 // effectKindEvent es el valor de la COLUMNA flow_events.kind para estos efectos.
@@ -61,6 +97,27 @@ const effectKindEvent = "event"
 // `payload->>'kind'='cart'`: distintas, no ambiguas. Hoy flow_events no tiene NINGÚN
 // lector en producción, así que no hay consumidor que se pueda confundir.
 func (rt *Runtime) emitEventEffect(ctx context.Context, ev events.Event, name string) {
+	rt.emitEventEffectWithReason(ctx, ev, name, "")
+}
+
+// emitEventEscaped es emitEventEffect clavado a EffectEventEscaped y OBLIGADO a
+// declarar su causa (Plan 053 · Ola 4 · T4.1). Existe como puerta separada, y no
+// como un parámetro más de emitEventEffect, por una razón de contrato: de los siete
+// efectos de ciclo de vida, `reason` solo tiene sentido en éste —los otros seis
+// nombran ya su propia causa—, así que un `reason` en la firma común invitaría a
+// rellenarlo en sitios donde no significa nada. Aquí, en cambio, olvidarlo es
+// imposible: no hay forma de emitir un event_escaped sin pasar por este helper.
+func (rt *Runtime) emitEventEscaped(ctx context.Context, ev events.Event, reason string) {
+	rt.emitEventEffectWithReason(ctx, ev, EffectEventEscaped, reason)
+}
+
+// emitEventEffectWithReason es el cuerpo común. `reason` vacío ⇒ la clave NO se
+// escribe: los seis efectos que no la tienen conservan su payload byte a byte
+// —{history_id, kind} y nada más—, que es lo que T4.1 promete no tocar. Escribir
+// `"reason": ""` en todos habría sido más simple de leer aquí y peor de consultar
+// allí: obligaría a cada lector de flow_events a distinguir «sin causa» de «causa
+// vacía» sobre una bitácora append-only que ya no se puede reescribir.
+func (rt *Runtime) emitEventEffectWithReason(ctx context.Context, ev events.Event, name, reason string) {
 	if ev.ID == "" {
 		return
 	}
@@ -77,13 +134,17 @@ func (rt *Runtime) emitEventEffect(ctx context.Context, ev events.Event, name st
 		FlowVersion: ev.FlowVersion,
 		EventID:     ev.ID,
 	}
+	payload := map[string]any{
+		"history_id": ev.HistoryID,
+		"kind":       ev.Kind,
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
 	eff := modules.Effect{
-		Kind: effectKindEvent,
-		Name: name,
-		Payload: map[string]any{
-			"history_id": ev.HistoryID,
-			"kind":       ev.Kind,
-		},
+		Kind:    effectKindEvent,
+		Name:    name,
+		Payload: payload,
 	}
 	// ec.Durable queda en su CERO (false, EffectContext no lo fija arriba): estos
 	// efectos son de PLATAFORMA, ningún modules.Module los declara (docstring de

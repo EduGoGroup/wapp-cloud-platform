@@ -71,8 +71,8 @@ func New() *Metrics {
 		}, []string{"status"}),
 		flowEventLifecycle: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_flow_event_lifecycle_total",
-			Help: "Efectos de ciclo de vida del evento conversacional leídos del outbox flow_events (Plan 043 · T6.5, MD-043.17), por nombre de efecto y tipo de evento (event_kind = payload->>'kind', NUNCA la columna kind).",
-		}, []string{"name", "event_kind"}),
+			Help: "Efectos de ciclo de vida del evento conversacional leídos del outbox flow_events (Plan 043 · T6.5, MD-043.17), por nombre de efecto, tipo de evento (event_kind = payload->>'kind', NUNCA la columna kind) y causa (reason = payload->>'reason', solo poblado en event_escaped: owner_flow_finished|orphan_menu|client_escape; vacío en el resto y en las filas anteriores al Plan 053 · T4.1).",
+		}, []string{"name", "event_kind", "reason"}),
 	}
 	reg.MustRegister(
 		collectors.NewGoCollector(),
@@ -189,8 +189,8 @@ func (m *Metrics) WebhookDelivery(status string) {
 // FlowEventLifecycle registra el DELTA de una vuelta del colector incremental de
 // flow_events (Plan 043 · T6.5, MD-043.17: primer consumidor de PRODUCCIÓN del
 // outbox append-only, no un assert de test). delta es el count(*) que devolvió
-// esa vuelta para (name, event_kind) — NUNCA un total absoluto — así que se
-// ACUMULA (Add), igual que el resto de contadores del paquete.
+// esa vuelta para (name, event_kind, reason) — NUNCA un total absoluto — así que
+// se ACUMULA (Add), igual que el resto de contadores del paquete.
 //
 // event_kind es SIEMPRE payload->>'kind' (menu|cart|survey|media|…), JAMÁS la
 // columna `kind` de la fila ("persist"|"event"): la firma del método fuerza el
@@ -199,18 +199,31 @@ func (m *Metrics) WebhookDelivery(status string) {
 // COLISIÓN DE VOCABULARIO documentada en
 // internal/flujos/runtime/event_effects.go.
 //
-// Cardinalidad: `name` son los efectos de ciclo de vida del evento (hoy seis,
-// más los que el motor añada — este método no los enumera, así que un séptimo
+// `reason` es la TERCERA etiqueta desde el Plan 053 · Ola 4 · T4.1 y solo la
+// puebla `event_escaped`: sus tres emisores mezclaban «el flujo terminó solo»,
+// «el menú no entendió el texto» y «el cliente dijo salir» bajo una serie única.
+// El resto de efectos la traen vacía, y eso es un HECHO —no tienen causas que
+// distinguir—, no un dato que se perdiera por el camino. ⚠️ Añadirla es una
+// MIGRACIÓN DE CARDINALIDAD: las series de dos etiquetas dejan de alimentarse y
+// no vuelven, así que un panel o una alerta que las nombre exactamente hay que
+// reescribirlo (una suma sin `by (...)` sigue dando el mismo total). El detalle
+// está en la cabecera de eventTelemetryQuery, en internal/platform/metrics/flowlifecycle.
+//
+// Cardinalidad: `name` son los efectos de ciclo de vida del evento (hoy siete,
+// más los que el motor añada — este método no los enumera, así que un octavo
 // efecto nuevo no necesita tocar este paquete) × `event_kind` (cuatro tipos de
-// evento). NO cardinalidad por tenant (misma regla dura del paquete, INV-5). Se
-// pasa como callback al Colector (que NO importa este paquete: mismo desacoplo
-// que Receipt/FlowReactiveBlocked/WebhookDelivery — ver
+// evento) × `reason` (tres causas + el vacío, y SOLO sobre event_escaped: el
+// producto real no es 7×4×4, porque las combinaciones imposibles nunca se
+// instancian — Prometheus solo crea la serie que de verdad se incrementa). NO
+// cardinalidad por tenant (misma regla dura del paquete, INV-5). Se pasa como
+// callback al Colector (que NO importa este paquete: mismo desacoplo que
+// Receipt/FlowReactiveBlocked/WebhookDelivery — ver
 // internal/platform/metrics/flowlifecycle).
-func (m *Metrics) FlowEventLifecycle(name, eventKind string, delta float64) {
+func (m *Metrics) FlowEventLifecycle(name, eventKind, reason string, delta float64) {
 	if m == nil {
 		return
 	}
-	m.flowEventLifecycle.WithLabelValues(name, eventKind).Add(delta)
+	m.flowEventLifecycle.WithLabelValues(name, eventKind, reason).Add(delta)
 }
 
 // --- Pool de conexiones a PostgreSQL (Plan 050 · Ola 4 · T4.3) --------------

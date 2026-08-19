@@ -202,6 +202,30 @@ type Conversation struct {
 	// convención que LastWaMessageID: el dominio usa el cero de Go y el NULL vive solo
 	// en la frontera SQL (sql.NullString en el repositorio Postgres).
 	EventID string `json:"event_id,omitempty"`
+	// OwnerEventID es el evento DUEÑO del flujo que corre en ESTA fila
+	// (flow_state.owner_event_id → conversation_events.id, Plan 053 · T1.3/T1.4).
+	//
+	// «Dueño» y «activo» son dos preguntas distintas sobre la misma conversación:
+	// EventID contesta A QUIÉN LE HABLA el contacto ahora; OwnerEventID contesta DE
+	// QUIÉN ES el flujo guardado en FlowID/FlowVersion/CurrentNode/Vars. Casi siempre
+	// coinciden —y por eso una sola columna pareció bastar durante todo el Plan 043—,
+	// pero DIVERGEN en cuanto un evento se monta encima de otro vivo: al abrir el
+	// `menu` sobre un `cart` a medias, EventID pasa a ser el del menú y OwnerEventID
+	// sigue siendo el del carrito, que es de quien sigue siendo el flujo. Con un solo
+	// puntero, cerrar el menú se llevaba por delante el flujo del carrito.
+	//
+	// "" ⇒ esta conversación NO tiene flujo con dueño. Es un estado NORMAL y
+	// frecuente, no un error ni un "no sé": lo produce el menú puro de D-043.3 —que ni
+	// siquiera tiene flujo— y también lo trae una fila LEGADA cuya columna sigue en
+	// NULL. Quien lea "" debe comportarse como se comportaba antes de que existiera
+	// este campo.
+	//
+	// Se representa como string vacío (no *string ni un tipo Null*) siguiendo la MISMA
+	// convención que EventID y LastWaMessageID: el dominio usa el cero de Go y el NULL
+	// vive solo en la frontera SQL (sql.NullString en el repositorio Postgres). Un
+	// puntero obligaría a cada lector a distinguir nil de "" para acabar tratando los
+	// dos igual, y metería un desreferenciado nulo posible donde hoy no hay ninguno.
+	OwnerEventID string `json:"owner_event_id,omitempty"`
 	// UpdatedAt es la marca de la última escritura del estado (flow_state.updated_at).
 	// La ESTAMPA el store en cada Save (no el llamante); Load la devuelve. La consume
 	// el TTL conversacional del runtime (Plan 029 · T9) para decidir si un estado vivo

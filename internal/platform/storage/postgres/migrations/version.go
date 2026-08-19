@@ -93,7 +93,19 @@ import (
 // stuck_head_polls, failed_seal_dispatch, failed_seal_budget). Todas NULLABLE y
 // SIN default: NULL = «este Edge no lo sabe», jamás «está bien». Un solo bump
 // para la ola, sobre la 0.34.0 ya publicada (Plan 056, desplegada en UAT).
-const SchemaVersion = "0.35.0"
+//
+// 0.36.0 -- Plan 053 · Ola 1 · T1.3 (0062): flow_state gana owner_event_id UUID
+// NULL REFERENCES conversation_events(id) — el evento DUEÑO del flujo que corre
+// en la fila, la relación que `event_id` (el evento ACTIVO, D-043.4) nunca pudo
+// expresar y que divergen cuando el `menu` se monta sobre un `cart` vivo
+// (D-053.1). NULLABLE y sin CHECK a propósito: NULL = «ningún módulo en curso»
+// (el menú puro de D-043.3) es el estado CORRECTO, no un hueco a rellenar
+// (REQ-053.5). Sin índice: se decide en la Ola 3 con la medición delante
+// (MD-053.2). El backfill NO viaja en la migración —el runner es full-replay y
+// pisaría las resoluciones manuales—: vive en
+// docs/runbooks/backfill-053-owner-event-id.sql. Un solo bump para la ola, sobre
+// la 0.35.0 ya publicada (Plan 051 · Ola 4).
+const SchemaVersion = "0.36.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
