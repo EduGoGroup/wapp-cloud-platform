@@ -110,6 +110,21 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	return true, nil
 }
 
+// inheritedPointers son los DOS punteros a evento que un reinicio hereda de la fila
+// que va a pisar: el ACTIVO (flow_state.event_id) y el DUEÑO
+// (flow_state.owner_event_id). Existe para que restartableOnStart pueda devolverlos
+// al llamante SIN devolverle el model.Conversation entero, y esa restricción es el
+// punto (Plan 053 · Ola 6 · T6.1): de la fila que se reinicia se heredan los
+// punteros y NADA MÁS. Las Vars se tiran a propósito —arrancar limpio ES el
+// reinicio—, y devolver el estado completo invitaría justo al error contrario.
+//
+// El cero (los dos "") es el caso normal: no había fila, o no tenía punteros. Quien
+// lo reciba debe comportarse como se comportaba antes de que este tipo existiera.
+type inheritedPointers struct {
+	active string
+	owner  string
+}
+
 // restartableOnStart decide si un Start sobre una conversación EXISTENTE puede
 // reiniciarse en vez de devolver 409 (gotcha, design.md §3.4), consultando la
 // ResumePolicy del nodo inicial (Plan 027 · Ola 3 · T8). Sin política (menú/encuesta)
@@ -119,22 +134,34 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 // Desde el Plan 053 · Ola 3 · T3.1 hay una segunda razón para NO reiniciar, anterior
 // a la política: que el flujo guardado en esa fila sea de OTRO evento dueño (ver
 // ownerFlowMismatch, justo debajo).
-func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, error) {
+//
+// El SEGUNDO valor de retorno son los punteros de la fila que se reinicia, y es del
+// Plan 053 · Ola 6 · T6.1 (cierra DEUDA-053.1): el llamante los necesita para que el
+// estado que persiste no nazca huérfano. Se devuelve poblado solo cuando hubo fila
+// que cargar; en cualquier otra salida vale el cero, que es lo mismo que devolvía
+// esta función implícitamente antes de la tarea.
+func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key store.Key, tenantID, contactID, sessionID string) (bool, inheritedPointers, error) {
 	node, ok := def.Nodes[def.Initial]
 	if !ok {
-		return false, nil
+		return false, inheritedPointers{}, nil
 	}
 	policy, ok := rt.resumePolicies[node.Type]
 	if !ok {
-		return false, nil
+		return false, inheritedPointers{}, nil
 	}
 	var vars map[string]any
 	// eventID se retiene JUNTO a las Vars al cargar el estado (T4.5.1): si la
 	// conversación que se reinicia apuntaba a un evento, los efectos que la política
 	// sintetice deben llegar al proyector declarando ese padre (D-043.21).
 	var eventID string
+	// heredados viaja al llamante (T6.1). Nótese que `eventID` y `heredados.active`
+	// valen lo MISMO y no se fusionan: el primero es un dato de ESTE turno (el padre
+	// de los efectos que la política sintetice) y el segundo es un dato de la FILA
+	// (lo que hay que volver a escribir). Hoy coinciden; unificarlos ataría dos
+	// decisiones que no tienen por qué moverse juntas.
+	var heredados inheritedPointers
 	if st, found, err := rt.store.Load(ctx, key); err != nil {
-		return false, fmt.Errorf("runtime: cargar estado: %w", err)
+		return false, inheritedPointers{}, fmt.Errorf("runtime: cargar estado: %w", err)
 	} else if found {
 		// Guarda de POSESIÓN (Plan 053 · Ola 3 · T3.1, REQ-053.3). El flujo que hay
 		// guardado en esta fila puede pertenecer a OTRO evento —un `cart` a medias—, y
@@ -149,17 +176,18 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 		// muertas, y colocar la guarda debajo daría un programa indistinguible. El
 		// llamante contesta el 409 determinista de startLocked.
 		if rt.ownerFlowMismatch(ctx, tenantID, sessionID, contactID, st.OwnerEventID, def.FlowID) {
-			return false, nil
+			return false, inheritedPointers{}, nil
 		}
 		vars = st.Vars
 		eventID = st.EventID
+		heredados = inheritedPointers{active: st.EventID, owner: st.OwnerEventID}
 	}
 	restart, _, effects, err := policy.Restart(ctx, tenantID, contactID, vars)
 	if err != nil {
-		return false, fmt.Errorf("runtime: política de reanudación: %w", err)
+		return false, inheritedPointers{}, fmt.Errorf("runtime: política de reanudación: %w", err)
 	}
 	if !restart {
-		return false, nil
+		return false, inheritedPointers{}, nil
 	}
 	if len(effects) > 0 {
 		ec := EffectContext{
@@ -176,10 +204,10 @@ func (rt *Runtime) restartableOnStart(ctx context.Context, def model.Flow, key s
 			// restartableOnStart. Se propaga como CUALQUIER otro error de esta
 			// función (mismo trato que ya tenía antes de esta tarea): no hay
 			// superficie de cliente que avisar aquí, eso lo decide el llamante.
-			return false, fmt.Errorf("runtime: reanudación al arrancar: %w", cutErr)
+			return false, inheritedPointers{}, fmt.Errorf("runtime: reanudación al arrancar: %w", cutErr)
 		}
 	}
-	return true, nil
+	return true, heredados, nil
 }
 
 // ownerFlowMismatch contesta UNA pregunta y solo muerde cuando la respuesta es
