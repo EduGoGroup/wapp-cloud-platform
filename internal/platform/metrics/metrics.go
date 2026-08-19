@@ -63,7 +63,7 @@ func New() *Metrics {
 		}, []string{"status"}),
 		reactiveBlocks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_flow_reactive_blocked_total",
-			Help: "Entrantes que NO entraron al motor reactivo, por motivo (passive|self_loop|rate_limit).",
+			Help: "Entrantes que NO entraron al motor reactivo, por motivo (passive|self_loop|rate_limit|saturation). Los tres primeros son cortes DELIBERADOS (política: rol, números propios, cupo de auto-respuestas) y no son un error; saturation es una PÉRDIDA (el mensaje debía entrar y se descartó sin cupo en el pool) ⇒ es el único motivo que señala degradación del servicio y el único sobre el que alarmar.",
 		}, []string{"reason"}),
 		webhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "wapp_webhook_deliveries_total",

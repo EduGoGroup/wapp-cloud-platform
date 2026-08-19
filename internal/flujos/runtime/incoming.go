@@ -58,11 +58,16 @@ func (rt *Runtime) OnIncoming(sessionID string, m *cloudlinkv1.IncomingMessage) 
 		// hay cupo dentro del incomingTimeout, se descarta el entrante con log (sin
 		// PII): bajo saturación sostenida es preferible soltar uno a acumular
 		// goroutines colgadas sin techo. Sin semáforo (incomingSem nil) no acota.
+		//
+		// El descarte se CUENTA además de loguearse: es el único camino del contador
+		// que no responde a una política sino a una pérdida —el mensaje debía entrar al
+		// motor y se tiró—, y sin contador solo se sabía leyendo logs a mano.
 		if rt.incomingSem != nil {
 			select {
 			case rt.incomingSem <- struct{}{}:
 				defer func() { <-rt.incomingSem }()
 			case <-ctx.Done():
+				rt.countReactiveBlocked(reasonSaturation)
 				rt.log.Warn("runtime: entrante descartado por saturación (sin cupo en el pool a tiempo)",
 					"session_id", sessionID, "wa_message_id", m.GetWaMessageId())
 				return

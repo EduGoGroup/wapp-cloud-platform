@@ -44,14 +44,23 @@ const (
 )
 
 // Motivos por los que un entrante NO llega al motor reactivo. Son la etiqueta del
-// contador wapp_flow_reactive_blocked_total (cardinalidad FIJA: tres valores) y la
-// respuesta a «¿por qué no contesta?». Los tres cortes son deliberados —dos son
-// configuración (rol, números propios) y uno es contención—, así que ninguno es un
-// error: se cuentan, no se alarman.
+// contador wapp_flow_reactive_blocked_total (cardinalidad FIJA: cuatro valores) y la
+// respuesta a «¿por qué no contesta?». Comparten contador porque responden esa MISMA
+// pregunta, pero NO son la misma clase de hecho y quien lea la métrica tiene que
+// separarlos —la etiqueta sola no lo dice—: los tres primeros son cortes
+// DELIBERADOS —dos son configuración (rol, números propios) y uno es contención de la
+// conversación—, el entrante NO debía entrar, así que ninguno es un error: se cuentan,
+// no se alarman. El cuarto no.
 const (
 	reasonPassive   = "passive"    // la sesión receptora está marcada passive (T1).
 	reasonSelfLoop  = "self_loop"  // el remitente es un número propio del tenant (T2).
 	reasonRateLimit = "rate_limit" // la conversación agotó su cupo de auto-respuestas (T0).
+	// reasonSaturation es el ÚNICO motivo que no es una decisión sino una PÉRDIDA: el
+	// pool de entrantes no dio cupo dentro del incomingTimeout y un mensaje real de un
+	// cliente —que SÍ debía entrar al motor— se descartó. Sobre este motivo sí se
+	// alarma: es la señal de degradación del servicio, no de política (Plan 027 · Ola 1
+	// · T5 dejó el descarte solo en el log; aquí pasa a contarse).
+	reasonSaturation = "saturation"
 )
 
 // TenantResolver resuelve el tenant_id y el ROL (bot|passive, Plan 020 · T1) de
