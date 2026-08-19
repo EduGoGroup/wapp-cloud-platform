@@ -87,6 +87,21 @@ type AppConfig struct {
 	// ⚠️ Subirlo cuesta TIEMPO COLGADO POR TRABAJO: el carril es serie por sesión,
 	// así que todo lo que venga detrás de un trabajo lento espera ese plazo entero.
 	GatewayWorkTimeout time.Duration `yaml:"gateway_work_timeout"`
+	// PublicAPIDBTimeout acota cada CONSULTA A BD que hace un handler de la API
+	// pública ANTES de tocar al Edge (Plan 050 · Ola 3): hoy la guarda de tenant del
+	// envío interroga a Postgres contra un contexto sin plazo propio, y una base
+	// lenta cuelga al llamante antes incluso de que arranque el reloj del Ack.
+	// Default 1,5s. <=0 cae al default. Env WAPP_PUBLICAPI_DB_TIMEOUT.
+	//
+	// ⚠️ INVARIANTE: los dos relojes del envío son SECUENCIALES, no alternativos
+	// —primero la guarda de tenant, después el empuje con GRPCAckTimeout—, así que
+	// contra el WriteTimeout del servidor HTTP (10s, internal/bootstrap/http.go:22)
+	// cuenta la SUMA. Con 1,5s el peor caso es 1,5+8 = 9,5s y todavía quedan ~0,5s
+	// del margen de escritura que los 8s del Ack reservan (ver el comentario de
+	// GRPCAckTimeout arriba). Con 3s la suma sería 11s: margen NEGATIVO, y el 504 se
+	// generaría con el deadline de escritura ya vencido — exactamente el síntoma que
+	// GRPCAckTimeout vino a eliminar (REQ-050.10, INV-050.6).
+	PublicAPIDBTimeout time.Duration `yaml:"publicapi_db_timeout"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
 	// LogJSON selecciona el formato JSON del logger cuando es true.
@@ -528,6 +543,10 @@ func defaults() AppConfig {
 		// offlinePersistTimeout del gateway.
 		GatewayWorkQueue:   64,
 		GatewayWorkTimeout: 5 * time.Second,
+		// El plazo de las consultas a BD de la API pública (Plan 050 · Ola 3) se
+		// calibra por la SUMA, no por sí mismo: 1,5s + los 8s del Ack son 9,5s y
+		// caben en el WriteTimeout de 10s dejando margen para escribir la respuesta.
+		PublicAPIDBTimeout: 1500 * time.Millisecond,
 		LogLevel:           "info",
 		LogJSON:            false,
 		// Mismo id que siembra 0059_platform_admin.sql (ver el comentario del
@@ -629,6 +648,7 @@ func Load() (AppConfig, error) {
 	cfg.GRPCAckTimeout = loader.GetDuration("GRPC_ACK_TIMEOUT", cfg.GRPCAckTimeout)
 	cfg.GatewayWorkQueue = loader.GetInt("GATEWAY_WORK_QUEUE", cfg.GatewayWorkQueue)
 	cfg.GatewayWorkTimeout = loader.GetDuration("GATEWAY_WORK_TIMEOUT", cfg.GatewayWorkTimeout)
+	cfg.PublicAPIDBTimeout = loader.GetDuration("PUBLICAPI_DB_TIMEOUT", cfg.PublicAPIDBTimeout)
 	cfg.LogLevel = loader.GetString("LOG_LEVEL", cfg.LogLevel)
 	cfg.LogJSON = loader.GetBool("LOG_JSON", cfg.LogJSON)
 	cfg.PlatformTenantID = loader.GetString("PLATFORM_TENANT_ID", cfg.PlatformTenantID)

@@ -49,10 +49,16 @@ import (
 type fleetVigilante struct {
 	*fleet.MemoryRepository
 
-	// exigeDeadline distingue las dos caras de la decisión: true para lo que DEBE
-	// correr en el carril; false para las cuatro escrituras del handshake, que se
-	// quedan en el bucle por decisión explícita (ADR-0040 §Decisión.3) y por tanto
-	// corren sobre el ctx del stream, sin reloj propio.
+	// exigeDeadline pide que la escritura traiga su propio presupuesto.
+	//
+	// ⚠️ Hasta la Ola 3 este campo distinguía además DÓNDE corría el trabajo: solo el
+	// carril ponía reloj, así que «con deadline» equivalía a «en el carril». Eso dejó
+	// de ser cierto con T3.4: el handshake sigue INLINE en el bucle Recv (ADR-0040
+	// §Decisión.3) y ahora TAMBIÉN trae reloj (onSessionRegistered). O sea: la
+	// ausencia de deadline sigue delatando una escritura sin presupuesto, pero su
+	// presencia ya no prueba por sí sola que el trabajo se fue al carril. Lo que
+	// discrimina el reparto es el otro observable —qué ocurrió ANTES de que route
+	// retornara, con el carril tapado—, y ese no ha cambiado.
 	exigeDeadline bool
 
 	regMu     sync.Mutex
@@ -93,8 +99,9 @@ func (r *fleetVigilante) exigirDeadline(t *testing.T) {
 	r.regMu.Lock()
 	defer r.regMu.Unlock()
 	for _, metodo := range r.sinDeadline {
-		t.Errorf("fleet.%s llamado con un ctx SIN deadline: esa escritura volvió al bucle Recv "+
-			"(Plan 050 · T1.14, REQ-050.1). Todo job del carril recibe su propio presupuesto (runJob).", metodo)
+		t.Errorf("fleet.%s llamado con un ctx SIN deadline: esa escritura perdió su presupuesto. "+
+			"En el carril lo pone runJob (T1.14, REQ-050.1); en el handshake, onSessionRegistered "+
+			"(T3.4). Un ctx pelado aquí es el ctx crudo del stream, que no trae reloj.", metodo)
 	}
 }
 
@@ -403,8 +410,15 @@ func TestRouteElHeartbeatLlegaAFleetConSuPropioDeadline(t *testing.T) {
 // inicial—, y el carril, que es asíncrono, no puede garantizar eso frente al resto
 // del bucle.
 //
-// Por eso el vigilante NO exige deadline aquí: el ctx del handshake es el del
-// stream, sin reloj propio, y esa es justamente la firma de que sigue inline.
+// Lo que este test afirma es UNA sola cosa: que al retornar onSessionRegistered el
+// MarkOnline YA ocurrió. Ese «ya» es lo que significa inline, y es lo que T3.4 no
+// podía tocar.
+//
+// ⚠️ El vigilante no exige deadline aquí, pero ya NO porque el handshake carezca de
+// reloj: desde T3.4 lo tiene (s.workBudget, puesto en onSessionRegistered). Quien
+// afirma ese reloj es TestElHandshakeTraeSuPropioReloj
+// (connect_handshake_reloj_internal_test.go); aquí se deja fuera para que este test
+// siga midiendo el reparto y nada más.
 func TestElHandshakeSigueResolviendoseEnElBucleRecv(t *testing.T) {
 	t.Parallel()
 	repo := &fleetVigilante{MemoryRepository: fleet.NewMemoryRepository()}

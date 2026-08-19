@@ -63,7 +63,12 @@ type diagnosticsBundleResponse struct {
 // preflightDiagnostics valida identidad + ruta + consentimiento (default ON, opt-out)
 // + aislamiento session→tenant (INV-8). Escribe el error apropiado y devuelve ok=false
 // para cortar; con ok=true devuelve la Identity y el session_id ya validados.
-func preflightDiagnostics(w http.ResponseWriter, r *http.Request, store DiagnosticsStore, sessions SessionLister) (httpapi.Identity, string, bool) {
+//
+// Sus DOS consultas a BD —el consentimiento y la guarda de tenant— van acotadas con
+// el mismo presupuesto (dbTimeout, ver dbCtx en publicapi.go; Plan 050 · Ola 3 ·
+// T3.3). Las dos ocurren ANTES de emitir nada al Edge, así que un plazo vencido
+// responde 504 y reintentar es seguro. <=0 cae al suelo de dbCtx.
+func preflightDiagnostics(w http.ResponseWriter, r *http.Request, store DiagnosticsStore, sessions SessionLister, dbTimeout time.Duration, log sharedlogger.Logger) (httpapi.Identity, string, bool) {
 	id, ok := httpapi.IdentityFromContext(r.Context())
 	if !ok || id.TenantID == "" {
 		writeError(w, http.StatusUnauthorized, "autenticación requerida")
@@ -76,8 +81,14 @@ func preflightDiagnostics(w http.ResponseWriter, r *http.Request, store Diagnost
 	}
 	// Gate de CONSENTIMIENTO (ADR-0023): opt-out ⇒ 403. Un fallo del checker NO abre la
 	// capacidad (se trata como no verificable ⇒ 500, no como consentido).
-	consented, err := store.ConsentEnabled(r.Context(), id.TenantID)
+	ctx, cancel := dbCtx(r.Context(), dbTimeout)
+	consented, err := store.ConsentEnabled(ctx, id.TenantID)
+	cancel()
 	if err != nil {
+		if dbTimedOut504(w, log, err, "la verificación del consentimiento no respondió a tiempo, reintenta",
+			"op", "diagnostics.consent", "tenant_id", id.TenantID, "session_id", sessionID) {
+			return id, "", false
+		}
 		writeError(w, http.StatusInternalServerError, "no se pudo verificar el consentimiento")
 		return id, "", false
 	}
@@ -86,8 +97,12 @@ func preflightDiagnostics(w http.ResponseWriter, r *http.Request, store Diagnost
 		return id, "", false
 	}
 	// Aislamiento por tenant (INV-8): la sesión debe ser del tenant del token.
-	belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, sessionID)
+	belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, sessionID, dbTimeout)
 	if err != nil {
+		if dbTimedOut504(w, log, err, "la verificación de la sesión no respondió a tiempo, reintenta",
+			"op", "diagnostics.guarda_tenant", "tenant_id", id.TenantID, "session_id", sessionID) {
+			return id, "", false
+		}
 		writeError(w, http.StatusInternalServerError, "no se pudo verificar la sesión")
 		return id, "", false
 	}
@@ -129,14 +144,14 @@ func resolveScope(w http.ResponseWriter, r *http.Request) (string, bool) {
 //   - 400 si falta el id en la ruta o el cuerpo JSON es inválido.
 //   - 401 sin identidad; 403 si el tenant desactivó el diagnóstico (opt-out).
 //   - 404 si la sesión no es del tenant; 502 si la sesión está offline; 500 en fallo.
-func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, sessions SessionLister, ttl time.Duration, log sharedlogger.Logger) http.Handler {
+func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, sessions SessionLister, ttl, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if gw == nil || store == nil {
 			writeError(w, http.StatusInternalServerError, "diagnóstico remoto no configurado")
 			return
 		}
 		// Identidad + consentimiento (default ON, opt-out) + aislamiento session→tenant.
-		id, sessionID, ok := preflightDiagnostics(w, r, store, sessions)
+		id, sessionID, ok := preflightDiagnostics(w, r, store, sessions, dbTimeout, log)
 		if !ok {
 			return
 		}
@@ -192,8 +207,12 @@ func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, 
 //   - 200 con el bundle si está listo (ready).
 //   - 202 si sigue pendiente (el Edge aún no respondió).
 //   - 400 si falta el command_id en la ruta; 401 sin identidad.
-//   - 404 si no existe para el tenant; 410 si expiró; 500 en fallo del store.
-func getDiagnosticsHandler(store DiagnosticsStore, log sharedlogger.Logger) http.Handler {
+//   - 404 si no existe para el tenant; 410 si expiró; 504 si la lectura agota su
+//     plazo de BD; 500 en fallo del store.
+//
+// dbTimeout acota la lectura del bundle (Plan 050 · Ola 3 · T3.3, ver dbCtx en
+// publicapi.go). <=0 cae al suelo de dbCtx.
+func getDiagnosticsHandler(store DiagnosticsStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -210,7 +229,17 @@ func getDiagnosticsHandler(store DiagnosticsStore, log sharedlogger.Logger) http
 			return
 		}
 
-		rec, err := store.GetBundle(r.Context(), id.TenantID, commandID)
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		rec, err := store.GetBundle(ctx, id.TenantID, commandID)
+		// El plazo vencido va ANTES del switch a propósito: los errores tipados del
+		// store (ErrNotFound/ErrExpired/ErrPending) responden sobre lo que se LEYÓ, y
+		// aquí no se llegó a leer nada. Colarlo en el `case err != nil` lo convertiría
+		// en un 500 indistinguible de una base rota.
+		if dbTimedOut504(w, log, err, "la lectura del diagnóstico no respondió a tiempo, reintenta la descarga",
+			"op", "diagnostics.bundle", "tenant_id", id.TenantID, "command_id", commandID) {
+			return
+		}
 		switch {
 		case errors.Is(err, diagnostics.ErrNotFound):
 			writeError(w, http.StatusNotFound, "diagnóstico no encontrado")

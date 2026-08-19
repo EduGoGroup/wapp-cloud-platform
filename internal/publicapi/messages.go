@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
@@ -49,13 +50,18 @@ type sendErrorResponse struct {
 //   - 400 si el cuerpo JSON es inválido o falta algún campo.
 //   - 401 si el request no llegó autenticado (sin Identity en el contexto).
 //   - 404 si la sesión no pertenece al tenant del token (aislamiento, INV-8/R6).
-//   - 502 si la sesión está offline; 504 si expira el ack o si el stream del Edge
-//     cae mientras se espera (dos textos distintos, mismo código); 500 en otro fallo.
+//   - 502 si la sesión está offline; 504 si expira el ack, si el stream del Edge cae
+//     mientras se espera, o si la guarda de tenant agota su plazo de BD (tres textos
+//     distintos, mismo código); 500 en otro fallo.
 //
 // Los tres errores de envío llevan el command_id cuando ya estaba asignado, y TODO
 // desenlace deja traza en el log. Antes no dejaba ninguna: un envío que colgaba
 // contra un Edge saturado se iba sin 504, sin log y sin cuerpo (2026-08-06).
-func messagesHandler(sender MessageSender, sessions SessionLister, log sharedlogger.Logger) http.Handler {
+//
+// dbTimeout acota la guarda de tenant (Plan 050 · Ola 3 · T3.2): es el ÚNICO tramo
+// de este handler que consulta a Postgres, y hasta esta tarea corría con el contexto
+// pelado de la petición. <=0 cae al suelo de dbCtx.
+func messagesHandler(sender MessageSender, sessions SessionLister, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -74,8 +80,17 @@ func messagesHandler(sender MessageSender, sessions SessionLister, log sharedlog
 		}
 
 		// Aislamiento por tenant (INV-8, R6): la sesión debe ser del tenant del token.
-		belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, req.SessionID)
+		// La consulta va ACOTADA (dbCtx, ver publicapi.go): sin plazo propio, una base
+		// lenta cuelga al llamante ANTES de que arranque siquiera el reloj del Ack.
+		belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, req.SessionID, dbTimeout)
 		if err != nil {
+			// El plazo vencido se distingue del resto (504, no 500): la guarda corre
+			// ANTES de empujar nada, así que el mensaje NO salió y reintentar es seguro
+			// —lo contrario del 504 del Ack, que avisa de justo lo opuesto—.
+			if dbTimedOut504(w, log, err, msgGuardaVencida,
+				"op", "messages.guarda_tenant", "tenant_id", id.TenantID, "session_id", req.SessionID) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "no se pudo verificar la sesión")
 			return
 		}
@@ -116,12 +131,27 @@ func messagesHandler(sender MessageSender, sessions SessionLister, log sharedlog
 	})
 }
 
+// msgGuardaVencida es el cuerpo del 504 de la guarda de tenant, y dice lo contrario
+// que msgStreamCaido a propósito: aquí la consulta ocurre ANTES de empujar nada al
+// Edge, así que el mensaje NO salió y reintentar es la acción correcta —no puede
+// duplicarle nada al cliente—. Confundir los dos 504 en un mismo texto le quitaría
+// al llamante justo la información que le permite decidir.
+const msgGuardaVencida = "la verificación de la sesión no respondió a tiempo: el mensaje NO se envió, " +
+	"reintenta"
+
 // sessionBelongsToTenant indica si sessionID figura entre las sesiones (durables)
 // del tenant. Reusa fleet.List (tenant-scoped): fleet_sessions guarda una fila por
 // cada sesión que se ha conectado alguna vez (online u offline), de modo que una
 // sesión de OTRO tenant nunca aparece. Nota: una sesión que jamás se conectó no
 // tiene fila; el envío igualmente fallaría con 502 (offline) al no haber stream vivo.
-func sessionBelongsToTenant(ctx context.Context, sessions SessionLister, tenantID, sessionID string) (bool, error) {
+//
+// El PLAZO vive aquí dentro y no en los llamantes (Plan 050 · Ola 3 · T3.2/T3.3): la
+// guarda se invoca desde DOS sitios —el envío y el preflight de diagnóstico— y
+// dejarlo fuera obligaría a repetir el mismo WithTimeout en los dos, con la garantía
+// de que un tercer llamante futuro se lo olvide. <=0 cae al suelo de dbCtx.
+func sessionBelongsToTenant(ctx context.Context, sessions SessionLister, tenantID, sessionID string, dbTimeout time.Duration) (bool, error) {
+	ctx, cancel := dbCtx(ctx, dbTimeout)
+	defer cancel()
 	list, err := sessions.List(ctx, tenantID)
 	if err != nil {
 		return false, err

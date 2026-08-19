@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
@@ -49,8 +51,13 @@ type tenantVariablesRequest struct {
 // getTenantVariablesHandler devuelve GET /api/v1/tenant-variables: las variables
 // de empresa del tenant del token (INV-8), VERBATIM. Un tenant sin variables
 // responde 200 con el mapa vacío —no 404—: "no tengo ninguna" es una respuesta,
-// no un fallo. 401 sin identidad; 500 en fallo del store.
-func getTenantVariablesHandler(vs TenantVariableStore) http.Handler {
+// no un fallo. 401 sin identidad; 504 si la lectura agota su plazo de BD; 500 en
+// fallo del store.
+//
+// dbTimeout acota la lectura (Plan 050 · Ola 3 · T3.3, ver dbCtx en publicapi.go).
+// <=0 cae al suelo de dbCtx. El PUT hermano queda FUERA: reemplaza el conjunto
+// entero en una transacción, y 1,5s está calibrado para una lectura.
+func getTenantVariablesHandler(vs TenantVariableStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -61,8 +68,14 @@ func getTenantVariablesHandler(vs TenantVariableStore) http.Handler {
 			writeError(w, http.StatusInternalServerError, "store de variables no configurado")
 			return
 		}
-		vars, err := vs.List(r.Context(), id.TenantID)
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		vars, err := vs.List(ctx, id.TenantID)
 		if err != nil {
+			if dbTimedOut504(w, log, err, "la lectura de las variables no respondió a tiempo, reintenta",
+				"op", "tenant_variables.list", "tenant_id", id.TenantID) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "no se pudieron leer las variables")
 			return
 		}
