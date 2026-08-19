@@ -80,8 +80,8 @@ func insertFlowEvent(t *testing.T, db *sql.DB, tenantID, kind, name, payloadJSON
 // asserts sin depender de prometheus (mismo desacoplo del paquete: el test
 // tampoco lo importa).
 type recorded struct {
-	name, eventKind string
-	delta           float64
+	name, eventKind, reason string
+	delta                   float64
 }
 
 // newTestCollector construye un Collector, lo hace GANAR el advisory lock
@@ -107,8 +107,8 @@ type recorded struct {
 func newTestCollector(t *testing.T, db *sql.DB) (*Collector, *[]recorded) {
 	t.Helper()
 	var got []recorded
-	c := NewCollector(db, func(name, eventKind string, delta float64) {
-		got = append(got, recorded{name, eventKind, delta})
+	c := NewCollector(db, func(name, eventKind, reason string, delta float64) {
+		got = append(got, recorded{name, eventKind, reason, delta})
 	}, nil)
 	t.Cleanup(func() { c.releaseLeadership(context.Background()) })
 
@@ -146,7 +146,7 @@ func TestCollector_ArrancaEnMaxID_NoRecuentaHistorico(t *testing.T) {
 	if len(*got) != 1 {
 		t.Fatalf("una fila nueva tras el cursor debe contarse: got %+v", *got)
 	}
-	if (*got)[0] != (recorded{"event_closed", "cart", 1}) {
+	if (*got)[0] != (recorded{"event_closed", "cart", "", 1}) {
 		t.Fatalf("grupo inesperado: %+v", (*got)[0])
 	}
 }
@@ -172,7 +172,7 @@ func TestCollector_EscapaGuionBajoEnElPredicado(t *testing.T) {
 	if len(*got) != 1 {
 		t.Fatalf("quiero exactamente 1 grupo (event_started/cart), got %d: %+v", len(*got), *got)
 	}
-	if (*got)[0] != (recorded{"event_started", "cart", 1}) {
+	if (*got)[0] != (recorded{"event_started", "cart", "", 1}) {
 		t.Fatalf("grupo inesperado: %+v", (*got)[0])
 	}
 }
@@ -207,14 +207,23 @@ func TestCollector_AgregaPorNombreYPorPayloadKind(t *testing.T) {
 		if gi.name != gj.name {
 			return gi.name < gj.name
 		}
-		return gi.eventKind < gj.eventKind
+		if gi.eventKind != gj.eventKind {
+			return gi.eventKind < gj.eventKind
+		}
+		// Tercer criterio desde T4.2: sin él, dos grupos que solo difieren en el
+		// reason quedan en orden indefinido y el test es intermitente.
+		return gi.reason < gj.reason
 	})
 
+	// El reason va VACÍO en las cuatro: estas filas las siembra el test con payloads
+	// de solo {history_id, kind} — el mismo payload que emiten hoy los seis efectos
+	// que no son event_escaped, y el que tienen todas las filas anteriores a T4.1.
+	// La agregación CON reason poblado la cubre TestCollector_AgregaTambienPorReason.
 	want := []recorded{
-		{"event_closed", "cart", 1},
-		{"event_escaped", "menu", 1},
-		{"event_started", "cart", 2},
-		{"event_started", "survey", 1},
+		{"event_closed", "cart", "", 1},
+		{"event_escaped", "menu", "", 1},
+		{"event_started", "cart", "", 2},
+		{"event_started", "survey", "", 1},
 	}
 	if len(*got) != len(want) {
 		t.Fatalf("grupos = %d, quiero %d: got=%+v want=%+v", len(*got), len(want), *got, want)
@@ -306,8 +315,8 @@ func TestCollector_DosReplicas_SoloUnaLideraYCuenta(t *testing.T) {
 	// pierde la carrera): aquí perder es justo lo que quiero comprobar.
 	logB := &recordingLogger{}
 	var gotB []recorded
-	b := NewCollector(db, func(name, eventKind string, delta float64) {
-		gotB = append(gotB, recorded{name, eventKind, delta})
+	b := NewCollector(db, func(name, eventKind, reason string, delta float64) {
+		gotB = append(gotB, recorded{name, eventKind, reason, delta})
 	}, logB)
 	t.Cleanup(func() { b.releaseLeadership(context.Background()) })
 
@@ -389,5 +398,112 @@ func TestCollector_RunLiberaElLockAlCancelarElContexto(t *testing.T) {
 	}
 	if _, err := verifyConn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", collectorLockKey); err != nil {
 		t.Fatalf("liberar el lock de verificación: %v", err)
+	}
+}
+
+// TestCollector_AgregaTambienPorReason cierra REQ-053.4 por el lado de la métrica
+// (Plan 053 · Ola 4 · T4.2): las TRES causas de `event_escaped` tienen que salir
+// como tres series distintas, y el resto de efectos tiene que seguir saliendo
+// EXACTAMENTE como antes.
+//
+// Lo que este test protege de verdad es la mitad aburrida: que añadir la dimensión
+// no colapse ni parta lo que ya había. Un `GROUP BY 1, 2, 3` sobre una columna que
+// es NULL en la mayoría de las filas es justo el sitio donde se cuela un INNER JOIN
+// implícito o un COALESCE de más y desaparecen los seis efectos que no la llevan —
+// sin error, con el contador a cero, que es como se pierden las métricas.
+func TestCollector_AgregaTambienPorReason(t *testing.T) {
+	db := openTestDB(t)
+	tenant := "t53o4-" + t.Name()
+
+	c, got := newTestCollector(t, db)
+
+	// Las tres causas del mismo nombre de efecto y del mismo event_kind: lo ÚNICO
+	// que las separa es el reason. Si el GROUP BY lo ignorase, las tres colapsarían
+	// en un solo grupo de 4 y el fallo sería silencioso (un contador que suma bien
+	// el total y miente en el desglose).
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"cart","reason":"client_escape"}`)
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"cart","reason":"client_escape"}`)
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"cart","reason":"owner_flow_finished"}`)
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"cart","reason":"orphan_menu"}`)
+	// Un efecto SIN reason (el payload de los otros seis, y el de toda fila anterior
+	// a T4.1): debe seguir contándose, con el reason vacío.
+	insertFlowEvent(t, db, tenant, "event", "event_started", `{"kind":"cart"}`)
+
+	c.pollOnce(context.Background())
+
+	sort.Slice(*got, func(i, j int) bool {
+		gi, gj := (*got)[i], (*got)[j]
+		if gi.name != gj.name {
+			return gi.name < gj.name
+		}
+		if gi.eventKind != gj.eventKind {
+			return gi.eventKind < gj.eventKind
+		}
+		return gi.reason < gj.reason
+	})
+
+	want := []recorded{
+		{"event_escaped", "cart", "client_escape", 2},
+		{"event_escaped", "cart", "orphan_menu", 1},
+		{"event_escaped", "cart", "owner_flow_finished", 1},
+		{"event_started", "cart", "", 1},
+	}
+	if len(*got) != len(want) {
+		t.Fatalf("las tres causas deben dar tres series distintas (más la del efecto sin causa): grupos = %d, quiero %d.\ngot  = %+v\nwant = %+v",
+			len(*got), len(want), *got, want)
+	}
+	for i := range want {
+		if (*got)[i] != want[i] {
+			t.Fatalf("grupo[%d] = %+v, quiero %+v (got completo: %+v)", i, (*got)[i], want[i], *got)
+		}
+	}
+}
+
+// TestCollector_ReasonVacioNoSeConfundeConAusente fija el contrato del valor vacío,
+// que es la parte que un lector de la métrica se puede creer al revés.
+//
+// `reason=""` significa DOS cosas que a propósito NO se distinguen: «este efecto no
+// tiene causas que declarar» (los otros seis) y «esta fila es anterior a T4.1». En
+// la bitácora append-only son indistinguibles —nadie va a reescribir el histórico—
+// así que la métrica tampoco las separa: un tercer valor centinela para el legado
+// mentiría sobre una precisión que la BD no tiene.
+//
+// 🔬 MATIZ MEDIDO AL ESCRIBIR ESTE TEST, y va contra la intuición: en SQL, `NULL` y
+// `”` NO son el mismo grupo. `GROUP BY payload->>'reason'` devuelve DOS filas
+// agregadas —una por la clave ausente, otra por la clave vacía—, no una. Lo que las
+// reúne es el paso siguiente: las dos se escanean a `sql.NullString` y se publican
+// con `.String == ""`, así que `WithLabelValues(..., "")` da la MISMA serie de
+// Prometheus y el `Add` las acumula. El desglose de la BD tiene un grupo de más; la
+// métrica que se consulta, no. Este test afirma justo eso —el total en una sola
+// serie— y no el número de grupos intermedios, que es un detalle del plan de
+// ejecución de Postgres y no un contrato de nadie.
+func TestCollector_ReasonVacioNoSeConfundeConAusente(t *testing.T) {
+	db := openTestDB(t)
+	tenant := "t53o4-" + t.Name()
+
+	c, got := newTestCollector(t, db)
+
+	// Sin la clave (el payload de siempre, y el de toda fila anterior a T4.1) y CON
+	// la clave a cadena vacía (lo que escribiría un emisor mal programado).
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"menu"}`)
+	insertFlowEvent(t, db, tenant, "event", "event_escaped", `{"kind":"menu","reason":""}`)
+
+	c.pollOnce(context.Background())
+
+	// Ni una fila perdida, y TODO lo publicado va a la misma etiqueta vacía: sumar
+	// los deltas por (name, event_kind, reason) reproduce exactamente lo que hará
+	// Prometheus con estas mismas llamadas.
+	var total float64
+	for _, g := range *got {
+		if g.name != "event_escaped" || g.eventKind != "menu" {
+			t.Fatalf("grupo inesperado: %+v", g)
+		}
+		if g.reason != "" {
+			t.Fatalf("una clave ausente y una clave vacía deben publicarse las DOS con reason vacío; una salió con %q (%+v)", g.reason, g)
+		}
+		total += g.delta
+	}
+	if total != 2 {
+		t.Fatalf("las dos filas deben contarse en la serie de reason vacío: total = %v, quiero 2 (got=%+v)", total, *got)
 	}
 }

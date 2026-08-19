@@ -219,3 +219,56 @@ func TestRegisterDBStats_DobleLlamadaNoRevienta(t *testing.T) {
 		t.Errorf("la serie no debe duplicarse en el scrape:\n%s", body)
 	}
 }
+
+// TestFlowEventLifecycle_ExponeElReasonComoEtiqueta cierra REQ-053.4 por el ÚLTIMO
+// eslabón (Plan 053 · Ola 4 · T4.2): que la causa llegue de verdad a /metrics.
+//
+// 🔬 Este test existe porque la mutación lo pidió. Con el colector agrupando
+// correctamente por `reason` y sus tests de integración en verde, cambiar
+// `WithLabelValues(name, eventKind, reason)` por `WithLabelValues(name, eventKind,
+// "")` NO ponía rojo NADA: la etiqueta se perdía en la última línea de la cadena,
+// justo donde ningún test miraba. El desglose habría desaparecido de /metrics con
+// el total intacto y todos los gates verdes — la forma más cara de romper una
+// métrica. Es el criterio literal de T4.2 («verificable con curl /metrics | grep»),
+// ejecutado en vez de descrito.
+func TestFlowEventLifecycle_ExponeElReasonComoEtiqueta(t *testing.T) {
+	m := New()
+
+	// Las tres causas del MISMO efecto y el MISMO event_kind: lo único que las
+	// separa es el reason, así que si la etiqueta se pierde las tres colapsan en
+	// una sola serie con el total sumado — que es exactamente el fallo silencioso
+	// que este test caza.
+	m.FlowEventLifecycle("event_escaped", "cart", "client_escape", 2)
+	m.FlowEventLifecycle("event_escaped", "cart", "owner_flow_finished", 1)
+	m.FlowEventLifecycle("event_escaped", "cart", "orphan_menu", 1)
+	// Y un efecto SIN causa: debe salir con la etiqueta presente y vacía.
+	m.FlowEventLifecycle("event_started", "cart", "", 5)
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`wapp_flow_event_lifecycle_total{event_kind="cart",name="event_escaped",reason="client_escape"} 2`,
+		`wapp_flow_event_lifecycle_total{event_kind="cart",name="event_escaped",reason="owner_flow_finished"} 1`,
+		`wapp_flow_event_lifecycle_total{event_kind="cart",name="event_escaped",reason="orphan_menu"} 1`,
+		`wapp_flow_event_lifecycle_total{event_kind="cart",name="event_started",reason=""} 5`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/metrics no expone la serie esperada:\n  %s\n\nCuerpo:\n%s", want, body)
+		}
+	}
+}
+
+// TestFlowEventLifecycle_MismaCausaAcumula fija que el contador ACUMULA por serie y
+// no la reemplaza: el colector publica el DELTA de cada vuelta, así que dos vueltas
+// que cuenten la misma causa tienen que sumar. Un Set en vez de un Add aquí dejaría
+// la métrica clavada en el valor de la última vuelta, que casi siempre es 1.
+func TestFlowEventLifecycle_MismaCausaAcumula(t *testing.T) {
+	m := New()
+
+	m.FlowEventLifecycle("event_escaped", "survey", "client_escape", 3)
+	m.FlowEventLifecycle("event_escaped", "survey", "client_escape", 4)
+
+	want := `wapp_flow_event_lifecycle_total{event_kind="survey",name="event_escaped",reason="client_escape"} 7`
+	if body := scrape(t, m); !strings.Contains(body, want) {
+		t.Fatalf("dos deltas sobre la misma serie deben sumar:\n  %s\n\nCuerpo:\n%s", want, body)
+	}
+}
