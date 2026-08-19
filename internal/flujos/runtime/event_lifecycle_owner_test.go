@@ -753,3 +753,56 @@ func TestMutacion_ElUnicoEstadoQueLaGuardaAunDistingue_EsUnDuenoMalEstampado(t *
 		t.Fatalf("y la consecuencia de retirar la guarda sobre un dueño mal estampado es cerrarlo; quedó %q", got)
 	}
 }
+
+// --- Plan 053 · Ola 2 · T2.3: la rama retirada y el cierre del ciclo -------------
+
+// TestReleaseFinishedState_EventoAjenoVivo_YaNoEsConstruible (T2.3, criterio 1): el
+// escenario que disparaba la rama `conocido=true, pendiente=false` —la guarda de
+// POSESIÓN de H2— ya NO se puede montar. Se deja como test de IMPOSIBILIDAD en vez de
+// borrar la cobertura en silencio, que es lo que el criterio de la tarea pide.
+//
+// El estado es el que deja el turno terminal en el caso divergente: dueño APAGADO
+// (hueco C, ya se cerró) y activo VIVO (hueco D, el `menu` no ha terminado nada). Con
+// el dueño vacío pendingClosure corta en su condición de entrada, así que `conocido`
+// sale false: la combinación que alimentaba la rama retirada no tiene forma de darse.
+func TestReleaseFinishedState_EventoAjenoVivo_YaNoEsConstruible(t *testing.T) {
+	e := newT16Env(t)
+	menu := e.evento("t23-ev-menu", "menu", "")
+	st := e.terminal(t16FlujoCart, menu.ID, "") // activo vivo, dueño ya apagado
+
+	ev, conocido, pendiente := e.rt.pendingClosure(context.Background(), st)
+	if pendiente || conocido {
+		t.Fatalf("la rama `conocido=true, pendiente=false` de la guarda de posesión debe ser "+
+			"INCONSTRUIBLE tras T1.6; conocido=%v pendiente=%v ev=%q", conocido, pendiente, ev.ID)
+	}
+}
+
+// TestPendingClosure_TrasCerrar_NoQuedaPendiente (T2.3, criterio 3 — el que ata esta
+// tarea con el hueco C de T1.6): una fila cuyo cierre YA se consumó contesta
+// pendiente=false, aunque el puntero ACTIVO siga puesto.
+//
+// 🔴 Es el ÚNICO sitio del plan donde un fallo del hueco C se nota ANTES de producción:
+// si T1.6 no limpiara st.OwnerEventID, esto diría pendiente=true en todos los turnos
+// siguientes, advanceLive no alcanzaría jamás releaseFinishedState y el contacto se
+// quedaría MUDO sobre una fila terminal que nadie suelta.
+func TestPendingClosure_TrasCerrar_NoQuedaPendiente(t *testing.T) {
+	ctx := context.Background()
+	e := newT16Env(t)
+	cart := e.evento("t23-ev-cart", "cart", t16FlujoCart)
+	menu := e.evento("t23-ev-menu2", "menu", "")
+	st := e.terminal(t16FlujoCart, menu.ID, cart.ID)
+
+	// El turno que consuma el cierre: cierra al DUEÑO y apaga su puntero.
+	e.rt.closeIfFinished(ctx, &st)
+	if st.OwnerEventID != "" {
+		t.Fatalf("precondición (hueco C): el dueño debe quedar apagado tras cerrarse; owner=%q", st.OwnerEventID)
+	}
+	if st.EventID != menu.ID {
+		t.Fatalf("precondición (hueco D): el activo NO debe apagarse por el cierre de otro; event=%q", st.EventID)
+	}
+
+	if _, _, pendiente := e.rt.pendingClosure(ctx, st); pendiente {
+		t.Fatal("tras consumarse el cierre no puede quedar NINGÚN cierre pendiente: si queda, la fila " +
+			"terminal no se suelta nunca y el contacto se queda mudo (hueco C de T1.6)")
+	}
+}

@@ -292,10 +292,17 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// TestCierreNatural_FalloRealNoLimpiaElPuntero): si la transición falló de
 	// verdad, el puntero SIGUE puesto a propósito y el siguiente entrante tiene que
 	// atravesar advanceLiveStep para que closeIfFinished reintente sobre ESTA MISMA
-	// fila — borrarla aquí perdería el reintento para siempre. Pero la guarda de
-	// POSESIÓN de H2 no deja ningún reintento vivo: es DETERMINISTA, se reevalúa
-	// idéntica en cada entrante, y ese evento no es de este flujo, así que nadie lo
-	// va a cerrar por esta vía nunca. Preguntar por st.EventID metía los dos casos
+	// fila — borrarla aquí perdería el reintento para siempre.
+	//
+	// 🔁 Plan 053 · T2.3: aquí se explicaba EN PRESENTE la otra causa, la guarda de
+	// POSESIÓN de H2 («no deja ningún reintento vivo: es DETERMINISTA…»). Esa guarda
+	// YA NO EXISTE (T1.6 la retiró), y con ella desapareció la única forma de que
+	// pendingClosure contestara «no pendiente» teniendo un evento AJENO vivo. Hoy
+	// queda UNA sola causa de «no pendiente» con la fila terminal: que el dueño ya se
+	// apagara —porque su cierre se consumó (hueco C)—. El reintento de E-8 §4 sigue
+	// siendo lo que separa este caso, y ahora es lo ÚNICO que lo separa.
+	//
+	// Preguntar por st.EventID metía los dos casos
 	// en el mismo saco y dejaba la fila {terminal, con puntero} PARA SIEMPRE: el
 	// Step no emite nada sobre un estado ya Finished() y el contacto se quedaba mudo
 	// a todo texto normal (solo lo rescataban el menú numerado del despachador, las
@@ -315,8 +322,12 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 	// del #24 que quedó viva a propósito hasta esta ola; ahora está cerrada (ver la
 	// advertencia actualizada en cart_fin_de_flujo_test.go).
 	if st.Finished() {
-		if ev, conocido, pendiente := rt.pendingClosure(ctx, st); !pendiente {
-			return rt.releaseFinishedState(ctx, tenantID, sessionID, key, contactID, ev, conocido, m)
+		// T2.3: `pendiente` es lo ÚNICO que se consulta aquí. `ev` y `conocido` ya no
+		// viajan a releaseFinishedState —hablaban del DUEÑO, y lo que esa función
+		// necesita es el ACTIVO (T2.4)—, así que se descartan explícitamente en vez de
+		// arrastrarse por la firma.
+		if _, _, pendiente := rt.pendingClosure(ctx, st); !pendiente {
+			return rt.releaseFinishedState(ctx, tenantID, sessionID, key, contactID, st, m)
 		}
 	}
 
@@ -333,40 +344,60 @@ func (rt *Runtime) advanceLive(ctx context.Context, tenantID, sessionID string, 
 // conversación viva. Extraída de advanceLive para acotar SU complejidad ciclomática
 // (gocyclo), igual que releaseOrphanMenu; el comportamiento es idéntico a inlinearla.
 //
-// `conocido` distingue las dos causas de «no queda pendiente» (ver pendingClosure) y
-// con ella las dos únicas diferencias de trato:
+// # DE DÓNDE SALEN EL EFECTO Y EL SCOPING (Plan 053 · T2.4)
 //
-//   - SIN evento (conocido=false, el caso del hallazgo #24): el cierre natural ya
-//     apagó el puntero en el turno que terminó el flujo, así que no hay efecto que
-//     emitir ni tipo con el que acotar la señal. Byte a byte lo que hacía la Ola 6
-//     antes de este arreglo.
-//   - con un evento AJENO vivo (conocido=true, la guarda de posesión de H2): la fila
-//     que se destruye apuntaba a un evento que sigue `open` —y sigue `open` a
-//     propósito: lo que se suelta es la FILA, no el evento; su muerte es de la
-//     cancelación desde la app, D-043.5—. Se emite EffectEventEscaped por el MISMO
-//     eje que el quinto camino de suelta (E5/E6): el nombre describe el EFECTO sobre
-//     el flow_state —destruido, no conservado como en event_deactivated—, no la
-//     intención del cliente. Y el tipo del evento activo SÍ acota la interpretación
-//     de la señal (D-043.9), al revés que en el caso de arriba: ese evento no es el
-//     flujo que acabó —ese no tiene autoridad sobre lo que venga después—, es el
-//     `menu` que el contacto pidió y que sigue vivo.
+// Del evento **ACTIVO** (st.EventID), releído aquí — NO de lo que devuelva
+// pendingClosure, que desde T1.6 relee al DUEÑO y por tanto habla del evento que
+// acaba de MORIR. Son dos preguntas distintas sobre la misma fila y esta función
+// necesita la del activo: lo que se está soltando es la FILA, y quien sigue vivo
+// —y por tanto tiene un efecto que emitir y un tipo con el que acotar la señal— es
+// el evento al que el contacto le está hablando.
+//
+// 🔴 POR QUÉ ESTO ES UNA REPOSICIÓN Y NO UN AÑADIDO. Hasta T1.6 este trabajo lo hacía
+// el parámetro `conocido`, que valía true por la guarda de POSESIÓN de H2 (el puntero
+// miraba a un evento ajeno). Al retirarse la guarda, pendingClosure dejó de poder
+// devolver `conocido=true, pendiente=false`: la rama quedó MUERTA y con ella se
+// perdieron, en silencio y sin un solo test que lo delatara, TRES cosas —el efecto
+// event_escaped que cuenta el colector de métricas, el scoping ActiveEventKind de las
+// reglas llm, y (la que nadie había censado) el hecho de que con ActiveEventKind ""
+// la guarda de config_resolver.go NO DESCARTA NADA, así que el scoping no se perdía:
+// se AFLOJABA, y una regla llm anotada podía abrir la segunda puerta del Plan 054 F2b—.
+// Se repone leyendo el activo, que es de donde debió salir siempre.
+//
+// El patrón es EL MISMO que releaseOrphanMenu (justo debajo) y eso es deliberado: los
+// dos sueltan una fila conservando un evento vivo, así que los dos leen al vivo.
 //
 // El Delete no conserva NADA, tampoco last_wa_message_id, y es deliberado: es el
-// mismo gesto exacto de releaseOrphanMenu (unas líneas abajo) y del saveMenuState de
-// la Ola 4 sobre un estado terminal. Lo que saveMenuState sí conserva es el
-// last_wa_message_id de un flow_state que SOBREVIVE, y aquí la fila desaparece
-// entera: no queda estado al que reprocesar un mensaje, el turno se enruta como el de
-// un contacto sin conversación, y el corte de un reenvío del outbox es el dedupe
-// PERSISTENTE de ingesta por (session_id, wa_message_id) —duplicateIngest, al
-// principio de HandleIncoming—, que no depende de esta fila.
-func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, ev events.Event, conocido bool, m *cloudlinkv1.IncomingMessage) error {
+// mismo gesto exacto de releaseOrphanMenu y del saveMenuState de la Ola 4 sobre un
+// estado terminal. Lo que saveMenuState sí conserva es el last_wa_message_id de un
+// flow_state que SOBREVIVE, y aquí la fila desaparece entera: no queda estado al que
+// reprocesar un mensaje, el turno se enruta como el de un contacto sin conversación,
+// y el corte de un reenvío del outbox es el dedupe PERSISTENTE de ingesta por
+// (session_id, wa_message_id) —duplicateIngest, al principio de HandleIncoming—, que
+// no depende de esta fila.
+//
+// ⚠️ El evento activo NO se cierra ni se desactiva aquí: lo que se suelta es la FILA.
+// Su muerte sigue siendo de la cancelación desde la app (D-043.5).
+func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, st model.Conversation, m *cloudlinkv1.IncomingMessage) error {
+	// Se lee ANTES del Delete por la misma higiene que releaseOrphanMenu documenta: hoy
+	// daría igual (activeEvent consulta conversation_events, no flow_state), y se deja
+	// así para que siga siendo cierto si algún día la relectura pasara a depender del
+	// estado.
+	activeKind := ""
+	var ev events.Event
+	var vivo bool
+	if st.EventID != "" {
+		activeKind = rt.activeEventKind(ctx, key, sessionID, st.EventID)
+		ev, vivo = rt.activeEvent(ctx, key, sessionID, st.EventID)
+	}
 	if derr := rt.store.Delete(ctx, key); derr != nil {
 		return fmt.Errorf("runtime: soltar el flow_state terminal: %w", derr)
 	}
-	activeKind := ""
-	if conocido {
+	if vivo {
+		// EffectEventEscaped por el MISMO eje que el quinto camino de suelta (E5/E6): el
+		// nombre describe el EFECTO sobre el flow_state —destruido, no conservado como en
+		// event_deactivated—, no la intención del cliente.
 		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
-		activeKind = ev.Kind
 	}
 	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
 }
@@ -754,15 +785,25 @@ func (rt *Runtime) degradeDurableStart(ctx context.Context, tenantID, sessionID 
 //
 // activeEventKind es el TIPO del evento ACTIVO en el instante de interpretar la señal
 // (Plan 043 · T5.3, D-043.9; enmendado Ola 6, decisión de Jhoan 2026-08-11). ⚠️
-// VERDAD MEDIDA, sin maquillar: de los CUATRO llamantes, los CUATRO pasan "" POR
-// CONSTRUCCIÓN —no hay evento del que hablar—: dos porque no hay estado (rama !ok de
-// HandleIncoming) o se acaba de borrar por el reloj del evento (T3.2), y el cuarto
-// (la rama st.Finished() && st.EventID == "" de advanceLive, el hallazgo de esta
-// ola) porque exige el puntero YA apagado —closeIfFinished lo apaga en el MISMO
-// turno que cierra el flujo (T4.1); si siguiera puesto (el reintento de E-8 §4, o la
-// guarda de posesión de H2 sobre un evento AJENO) ese sitio ni se alcanza, cae por
-// advanceLiveStep como siempre—. El resolver exige ActiveEventKind != "" para
-// acotar, así que en los CUATRO sitios que pasan "" NO SE DISPARA NUNCA. El scoping
+// ⚠️ 🔁 REESCRITO EN EL PLAN 053 · T2.3/T2.4 — lo que decía aquí era VERDAD MEDIDA en
+// la Ola 6 y dejó de serlo dos veces seguidas, así que se dice qué cambió y cuándo:
+//
+//   - Decía que de los CUATRO llamantes los CUATRO pasaban "" por construcción, y que
+//     por tanto el scoping «NO SE DISPARA NUNCA» desde aquí. Para releaseFinishedState
+//     eso se apoyaba en que closeIfFinished apaga el puntero en el mismo turno.
+//   - Desde T1.6 el cierre apaga el ACTIVO **solo si era el mismo evento** que el dueño
+//     (hueco D): en el caso divergente —`menu` activo sobre un flujo cuyo dueño es el
+//     `cart`— el activo SOBREVIVE al cierre a propósito.
+//   - Y desde T2.4 releaseFinishedState **lee ese activo y lo pasa**. O sea: hoy ese
+//     llamante SÍ puede traer un kind real, y el scoping SÍ se ejerce por esa vía. Es
+//     una reposición deliberada, no una fuga: es exactamente lo que la retirada de la
+//     guarda de posesión había dejado huérfano.
+//
+// 🔴 Y el matiz que hace que esto importe más de lo que parece: con ActiveEventKind ""
+// la guarda del resolver (`sig.ActiveEventKind != "" && …`, trigger/config_resolver.go)
+// **no descarta NADA**. Pasar "" no es «no acotar»: es **no filtrar**, que deja casar
+// reglas llm anotadas que no pertenecen al evento vivo. El lado seguro es pasar el kind
+// real cuando lo hay, no omitirlo. El scoping
 // que este parámetro habilita se ejerce hoy en UN (1) solo sitio de producción: el
 // menú PENDIENTE (advanceLive, rama st.FlowID == ""), y ahí con la config canónica
 // (reglas event_start de cart/survey CON flow_id, admin/triggers.go:63) el único
