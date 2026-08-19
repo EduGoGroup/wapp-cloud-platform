@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	sharedintents "github.com/EduGoGroup/wapp-shared/intents"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
@@ -49,8 +50,13 @@ type intentConfigResponse struct {
 
 // getIntentsHandler devuelve GET /api/v1/intents: el blob de intents del tenant del
 // token (INV-8) con su version de entidad. 200 con {version, config}; 404 si el
-// tenant no tiene config; 401 sin identidad; 500 en fallo del store.
-func getIntentsHandler(store IntentConfigStore) http.Handler {
+// tenant no tiene config; 401 sin identidad; 504 si la lectura agota su plazo de BD;
+// 500 en fallo del store.
+//
+// dbTimeout acota la lectura (Plan 050 · Ola 3 · T3.3, ver dbCtx en publicapi.go).
+// <=0 cae al suelo de dbCtx. El PUT hermano queda FUERA a propósito: escribe, y el
+// presupuesto está calibrado para lecturas.
+func getIntentsHandler(store IntentConfigStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -61,8 +67,14 @@ func getIntentsHandler(store IntentConfigStore) http.Handler {
 			writeError(w, http.StatusInternalServerError, "store de intents no configurado")
 			return
 		}
-		cfg, err := store.Get(r.Context(), id.TenantID)
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		cfg, err := store.Get(ctx, id.TenantID)
 		if err != nil {
+			if dbTimedOut504(w, log, err, "la lectura de la config de intents no respondió a tiempo, reintenta",
+				"op", "intents.get", "tenant_id", id.TenantID) {
+				return
+			}
 			if errors.Is(err, intentcfg.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "el tenant no tiene config de intents")
 				return

@@ -40,10 +40,41 @@ var ErrStreamClosed = errors.New("gatewaygrpc: el stream de la sesión se cerró
 // RevokeLease dispara el kill-switch del Edge: persiste la revocación y empuja
 // el LeaseUpdate(Revoked) a TODAS sus sesiones vivas. Devuelve error si el lease
 // no está configurado. El endpoint admin HTTP que lo invoca es T5.
+//
+// 🔴 RELOJ (Plan 050 · Ola 3 · T3.4). Las TRES entradas de esta familia
+// —RevokeLease, RevokeTenant y RestoreTenant— reciben el r.Context() PELADO del
+// handler admin (platform/httpapi/admin.go), que no trae deadline: sin el plazo de
+// abajo, una base atascada dejaba al handler colgado sin techo. El reloj se pone
+// AQUÍ DENTRO y no en el handler a propósito: es otro paquete y otra superficie, y
+// el gateway es quien sabe cuánto vale su propia unidad de trabajo.
+//
+// Van las tres, no solo la que se notó (REQ-050.12): son la misma familia con el
+// mismo defecto, y dejar una fuera es exactamente el error contra el que ese
+// requisito avisa. La que se notó es RevokeTenant, por su fleet.List —el SELECT sin
+// LIMIT sobre todas las sesiones del tenant, cuarta entrada HTTP a esa consulta y la
+// única que vive fuera de publicapi—.
+//
+// Presupuesto: s.workBudget (WAPP_GATEWAY_WORK_TIMEOUT, 5 s por defecto), el mismo
+// que una unidad de trabajo del carril. Sin variable propia.
+//
+// ⚠️ El plazo es COMPARTIDO por la persistencia y por los push, igual que en el
+// handshake y en jobHeartbeat: si la escritura del lease se come el reloj, los push
+// salen con un ctx ya vencido y no llegan. No es pérdida de la revocación —esa YA
+// está persistida cuando se empuja, y los push son notificación best-effort— sino
+// retraso: la instalación se entera en su siguiente Heartbeat, porque wasRevoked
+// consulta el estado en cada Renew.
+//
+// ⚠️ Efecto lateral que conviene ver escrito: Registry.Push tiene su propio techo
+// (sendTimeout, 10 s), y por esta vía el ctx pasa a ser el más corto de los dos. No
+// se movió NINGÚN timeout (INV-050.6): WAPP_GRPC_PUSH_TIMEOUT sigue valiendo lo
+// mismo y sigue siendo el techo para los llamantes que traen un ctx sin deadline.
 func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error {
 	if s.leaseMgr == nil {
 		return errors.New("gatewaygrpc: lease no configurado")
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
 	lu, err := s.leaseMgr.Revoke(ctx, tenantID, edgeID)
 	if err != nil {
 		return err
@@ -85,6 +116,11 @@ func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
 	if s.leaseMgr == nil {
 		return errors.New("gatewaygrpc: lease no configurado")
 	}
+	// Reloj de T3.4, con el enunciado completo en RevokeLease. Aquí cubre además el
+	// fleet.List de abajo: el SELECT sin LIMIT que motivó la tarea.
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
 	if err := s.leaseMgr.RevokeTenant(ctx, tenantID); err != nil {
 		return err
 	}
@@ -138,6 +174,12 @@ func (s *Server) RestoreTenant(ctx context.Context, tenantID string) error {
 	if s.leaseMgr == nil {
 		return errors.New("gatewaygrpc: lease no configurado")
 	}
+	// Reloj de T3.4, con el enunciado completo en RevokeLease. Un solo viaje, pero
+	// entra igual: es la hermana de las otras dos y la excepción de hoy es el defecto
+	// de mañana (REQ-050.12).
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
 	return s.leaseMgr.RestoreTenant(ctx, tenantID)
 }
 

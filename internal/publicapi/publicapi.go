@@ -17,6 +17,7 @@ package publicapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -205,11 +206,81 @@ type Deps struct {
 	// T6.5, cierra MD-043.17. Lo satisface *PostgresEventTelemetryStore. nil ⇒
 	// no se monta GET /api/v1/events/telemetry.
 	EventTelemetry EventTelemetryReader
+	// DBTimeout es el plazo de cada consulta a BD de estos handlers, cableado desde
+	// config.PublicAPIDBTimeout (1,5s por defecto; Plan 050 · Ola 3). <=0 cae a
+	// defaultDBTimeout — la promesa la cumple dbCtx, que es por donde pasan TODAS
+	// las lecturas acotadas (T3.2/T3.3).
+	DBTimeout time.Duration
 }
 
 // defaultDiagnosticsTTL es la retención del bundle cuando Deps.DiagnosticsBundleTTL
 // llega en cero (mismo criterio defensivo que los umbrales de salud).
 const defaultDiagnosticsTTL = 30 * time.Minute
+
+// defaultDBTimeout es el SUELO del plazo de las lecturas a BD de estos handlers: el
+// valor que se usa cuando Deps.DBTimeout llega en cero o negativo. Es el mismo
+// número que config.PublicAPIDBTimeout trae por defecto, y está aquí a propósito:
+// los docstrings de los dos prometen que «<=0 cae al default» y el cargador de
+// config NO normaliza, así que la promesa la tiene que cumplir el consumidor. Sin
+// esto, unas Deps con el campo sin cablear —un test, un bootstrap futuro que lo
+// olvide— darían un context.WithTimeout de 0 y TODA lectura moriría en el acto.
+const defaultDBTimeout = 1500 * time.Millisecond
+
+// dbCtx deriva del contexto de la petición el contexto ACOTADO con el que se
+// consulta a Postgres (Plan 050 · Ola 3, T3.2/T3.3). El llamante DEBE hacer
+// `defer cancel()`.
+//
+// POR QUÉ HACE FALTA UN RELOJ PROPIO y no basta r.Context(): el contexto de un
+// handler HTTP no trae plazo. El WriteTimeout del http.Server NO interrumpe al
+// handler ni cancela su contexto —solo hace fallar el Write posterior—, de modo que
+// una consulta contra una base lenta espera indefinidamente y el cliente se queda
+// con la conexión cerrada, sin cuerpo y sin una sola línea de log. El razonamiento
+// completo, con el incidente que lo costó, ya está escrito UNA vez y no se copia
+// aquí (una copia diverge del original en cuanto uno de los dos cambie):
+//
+//   - internal/gateway/grpc/send.go:299 (awaitAck) — el incidente del 2026-08-06.
+//   - internal/platform/config/config.go:62 (GRPCAckTimeout) y :96
+//     (PublicAPIDBTimeout) — la invariante contra el WriteTimeout: los dos relojes
+//     del envío son SECUENCIALES, así que contra los 10s cuenta la SUMA.
+//
+// Solo lo usan LECTURAS. Las escrituras y las transacciones quedan fuera a
+// propósito: 1,5s está calibrado para una consulta previa al envío, y aplicárselo a
+// un import de catálogo o a un ReplaceItems los abortaría a media transacción bajo
+// carga — un cambio de comportamiento con riesgo, no una mejora.
+func dbCtx(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = defaultDBTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// dbTimedOut504 traduce el VENCIMIENTO del plazo de dbCtx: si err es el deadline,
+// registra el hecho (Warn) con los campos dados, responde 504 con `motivo` y
+// devuelve true para que el handler corte. Con cualquier otro error —o con ninguno—
+// devuelve false y el handler sigue con el desenlace que ya tenía: esta función NO
+// altera el comportamiento de ningún error preexistente.
+//
+// 504 y no 500 porque el llamante necesita distinguir «no pude» de «no me dio
+// tiempo»: lo segundo es transitorio y reintentar sirve. Y a diferencia del 504 del
+// Ack (writeSendError / msgStreamCaido), aquí NO hay ambigüedad sobre lo que pasó:
+// estas consultas ocurren ANTES de tocar al Edge, así que nada salió hacia WhatsApp
+// y reintentar no puede duplicarle un mensaje a nadie. Por eso estos textos SÍ
+// pueden decir «reintenta»: es una acción que el llamante puede ejecutar de verdad,
+// no un consejo que no le sirve de nada.
+//
+// Los campos del log son SIEMPRE identificadores opacos (tenant_id, session_id,
+// command_id): CERO PII —ni destino ni texto—, como el resto de los logs de esta
+// capa. Un logger nil no es un error: se responde igual, solo que mudo.
+func dbTimedOut504(w http.ResponseWriter, log sharedlogger.Logger, err error, motivo string, campos ...any) bool {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if log != nil {
+		log.Warn("lectura a BD vencida: se responde 504", campos...)
+	}
+	writeError(w, http.StatusGatewayTimeout, motivo)
+	return true
+}
 
 // Register monta las rutas /api/v1 de operación pública en el mux del listener
 // público (:8103), reutilizando el middleware de T3 (mw) y el auditor de T4. Cada
@@ -225,7 +296,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// Envío de mensajes (escritura auditada). Reusa el gateway; añade el guardia
 	// session→tenant que /admin/messages/send (T4) no tenía.
 	mux.Handle("POST /api/v1/messages", protect(mw, auditor, log,
-		"messages.send", "message", messagesHandler(d.Sender, d.Sessions, log)))
+		"messages.send", "message", messagesHandler(d.Sender, d.Sessions, d.DBTimeout, log)))
 
 	// Publicar definición de flujo (escritura auditada). Reusa TAL CUAL el handler
 	// de /admin/flows: ya toma el tenant del token y valida el esquema.
@@ -290,7 +361,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 			alerter = NoopAlerter{} // ADR-0023: seam del alerting push, no-op por defecto.
 		}
 		mux.Handle("GET /api/v1/sessions", protectRead(mw,
-			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, log)))
+			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, d.DBTimeout, log)))
 	}
 
 	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
@@ -315,10 +386,10 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		}
 		mux.Handle("POST /api/v1/sessions/{id}/diagnostics", protect(mw, auditor, log,
 			"diagnostics.request", "session",
-			requestDiagnosticsHandler(d.DiagnosticsRequester, d.Diagnostics, d.Sessions, ttl, log)))
+			requestDiagnosticsHandler(d.DiagnosticsRequester, d.Diagnostics, d.Sessions, ttl, d.DBTimeout, log)))
 		mux.Handle("GET /api/v1/diagnostics/{command_id}", protect(mw, auditor, log,
 			"diagnostics.request", "diagnostics",
-			getDiagnosticsHandler(d.Diagnostics, log)))
+			getDiagnosticsHandler(d.Diagnostics, d.DBTimeout, log)))
 	}
 
 	// Estatus de sesión (Plan 020 · T3): retirar/limpiar un zombie (loggedout) o
@@ -350,7 +421,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// cableados (fase pre-release).
 	if d.Intents != nil && d.Entitlements != nil {
 		mux.Handle("GET /api/v1/intents", protectRead(mw,
-			"intents.read", getIntentsHandler(d.Intents)))
+			"intents.read", getIntentsHandler(d.Intents, d.DBTimeout, log)))
 		mux.Handle("PUT /api/v1/intents", protect(mw, auditor, log,
 			"intents.write", "intents", putIntentsHandler(d.Intents, d.Entitlements, d.ConfigPush, log)))
 	}
@@ -551,7 +622,7 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 		return
 	}
 	mux.Handle("GET /api/v1/tenant-variables", protectRead(mw,
-		"content.read", getTenantVariablesHandler(d.TenantVariables)))
+		"content.read", getTenantVariablesHandler(d.TenantVariables, d.DBTimeout, log)))
 	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
 }

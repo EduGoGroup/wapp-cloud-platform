@@ -2,6 +2,7 @@ package publicapi
 
 import (
 	"net/http"
+	"time"
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
@@ -86,15 +87,26 @@ type sessionDTO struct {
 // rules deriva health al servir; alerter es el punto de extensión del alerting push
 // (ADR-0023): hoy no-op, se invoca best-effort por cada sesión con salud derivada
 // para dejar el seam vivo (nada se empuja todavía).
-func listSessionsHandler(sessions SessionLister, rules HealthRules, alerter Alerter, log sharedlogger.Logger) http.Handler {
+//
+// dbTimeout acota el listado (Plan 050 · Ola 3 · T3.3, ver dbCtx en publicapi.go):
+// esta ruta es la que consulta la consola cada pocos segundos, así que una base lenta
+// se traduce en pantallas colgadas en vez de en un 504 legible. <=0 cae al suelo de
+// dbCtx. Con el plazo vencido responde 504 (transitorio), no 500.
+func listSessionsHandler(sessions SessionLister, rules HealthRules, alerter Alerter, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
 			writeError(w, http.StatusUnauthorized, "autenticación requerida")
 			return
 		}
-		list, err := sessions.List(r.Context(), id.TenantID)
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		list, err := sessions.List(ctx, id.TenantID)
 		if err != nil {
+			if dbTimedOut504(w, log, err, "el listado de sesiones no respondió a tiempo, reintenta",
+				"op", "sessions.list", "tenant_id", id.TenantID) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "no se pudieron listar las sesiones")
 			return
 		}

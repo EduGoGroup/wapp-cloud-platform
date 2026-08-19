@@ -223,6 +223,57 @@ func TestLoad_GatewayWorkLane(t *testing.T) {
 	})
 }
 
+// TestLoad_PublicAPIDBTimeout cubre el plazo de las consultas a BD de la API
+// pública (env WAPP_PUBLICAPI_DB_TIMEOUT, Plan 050 · Ola 3). El valor no se
+// justifica solo: se calibra contra la SUMA con el reloj del Ack, porque los dos
+// relojes del envío corren SECUENCIALMENTE (guarda de tenant, luego empuje).
+func TestLoad_PublicAPIDBTimeout(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		isolateEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.PublicAPIDBTimeout != 1500*time.Millisecond {
+			t.Errorf("PublicAPIDBTimeout: got %v, want 1.5s", cfg.PublicAPIDBTimeout)
+		}
+		// INVARIANTE (REQ-050.10, INV-050.6): lo que cuenta contra el WriteTimeout del
+		// servidor HTTP (10s, internal/bootstrap/http.go) es la SUMA de los dos plazos,
+		// no cada uno. Con 3s aquí la suma sería 11s y el 504 se generaría con el
+		// deadline de escritura vencido — el síntoma que GRPCAckTimeout eliminó.
+		if cfg.PublicAPIDBTimeout+cfg.GRPCAckTimeout >= 10*time.Second {
+			t.Errorf("PublicAPIDBTimeout(%v)+GRPCAckTimeout(%v) >= WriteTimeout HTTP (10s): el 504 no llegaría a escribirse",
+				cfg.PublicAPIDBTimeout, cfg.GRPCAckTimeout)
+		}
+	})
+
+	t.Run("override por env", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"PUBLICAPI_DB_TIMEOUT", "700ms")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.PublicAPIDBTimeout != 700*time.Millisecond {
+			t.Errorf("PublicAPIDBTimeout: got %v, want 700ms", cfg.PublicAPIDBTimeout)
+		}
+	})
+
+	// Un valor no parseable cae al default en vez de dejar el campo en cero: cero
+	// sería "consulta sin plazo", exactamente el hueco que este reloj cierra.
+	t.Run("valor inválido cae al default", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv(EnvPrefix+"PUBLICAPI_DB_TIMEOUT", "no-es-duracion")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load devolvió error inesperado: %v", err)
+		}
+		if cfg.PublicAPIDBTimeout != 1500*time.Millisecond {
+			t.Errorf("PublicAPIDBTimeout: got %v, want 1.5s (default)", cfg.PublicAPIDBTimeout)
+		}
+	})
+}
+
 func TestLoad_StorageDefaults(t *testing.T) {
 	isolateEnv(t)
 	cfg, err := Load()

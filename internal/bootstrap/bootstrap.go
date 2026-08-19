@@ -443,6 +443,10 @@ func Run(ctx context.Context) error {
 		CRMNotify:    intakeNotifier,
 		ConfigPush:   gw,
 		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
+		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
+		// con el reloj del Ack, no cada consulta por separado.
+		DBTimeout: cfg.PublicAPIDBTimeout,
 		// Telemetría de ciclo de vida del evento conversacional (Plan 043 ·
 		// T6.5, cierra MD-043.17): SQL directo sobre el MISMO *sql.DB que ya
 		// comparte toda la plataforma — no una segunda conexión ni un segundo
