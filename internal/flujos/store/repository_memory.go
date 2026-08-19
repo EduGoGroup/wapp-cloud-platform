@@ -129,6 +129,12 @@ func (r *MemoryRepository) Load(_ context.Context, key Key) (model.Conversation,
 // el `event_id = EXCLUDED.event_id` del repo Postgres. Es lo que permite APAGAR el
 // puntero al cerrar o cancelar un evento; conservar el valor previo dejaría a la
 // conversación pegada a un evento muerto solo en los tests.
+//
+// OwnerEventID (el puntero al evento DUEÑO, Plan 053 · T1.4) no necesita nada aparte
+// por la misma razón: el clon JSON copia la estructura ENTERA, así que se sobrescribe
+// siempre —incluido a ""— igual que el `owner_event_id = EXCLUDED.owner_event_id` del
+// repo Postgres. Este gemelo no tiene la trampa del ON CONFLICT porque no reconstruye
+// la fila campo a campo: la reemplaza.
 func (r *MemoryRepository) Save(_ context.Context, state model.Conversation) error {
 	clone, err := cloneConversation(state)
 	if err != nil {

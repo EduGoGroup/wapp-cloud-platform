@@ -675,6 +675,18 @@ func TestCierreNatural_NoMataElEventoDelMenuHeredandoUnFlujoAcabado(t *testing.T
 // testFlow para todos los tipos): es la config REAL de un tenant (D-043.3) y es lo
 // que hace que ev.FlowID ("") difiera de st.FlowID (testFlow, heredado) — sin esa
 // diferencia el guard de H2 no se ejerce y este test no prueba nada.
+//
+// 🔁 EXPECTATIVA REESCRITA EN EL PLAN 053 · T1.6 (D-053.2), y se dice en vez de
+// hacerse en silencio: la PROPIEDAD de este test —el `menu` no muere por el fin de un
+// flujo ajeno— sigue intacta, pero pasa a sostenerse por CONSTRUCCIÓN (closeIfFinished
+// transiciona st.OwnerEventID, que en este montaje ES el `cart`) en vez de por la
+// guarda de posesión, que se retiró. Lo que SÍ cambia es el aserto del `cart`: hasta
+// hoy este test exigía que quedara `open`, que era el gap que la Ola 6 dejó CONSCIENTE
+// —mientras la guarda disparaba, closeIfFinished no cerraba nada, ni el `menu`
+// (correcto) ni el `cart` (incorrecto: se quedaba `open` para siempre con su intake
+// colgando)—. Con el dueño explícito el `cart` se cierra, que es la reparación que
+// D-053.2 anuncia como «de propina». El aserto se invierte por eso, no porque el test
+// estorbara.
 func TestCierreNatural_NoMataElEventoActivoConFlujoAjenoAunEnCurso(t *testing.T) {
 	repo := store.NewMemoryRepository()
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
@@ -738,12 +750,19 @@ func TestCierreNatural_NoMataElEventoActivoConFlujoAjenoAunEnCurso(t *testing.T)
 		t.Fatalf("precondición: el Step del flujo ajeno debe dejar el estado TERMINAL; nodo=%q", st.CurrentNode)
 	}
 
-	// GUARD: el evento `menu` NO puede haber muerto — su dueño (D-043.3, sin flujo
-	// propio) no es el flujo que acaba de terminar.
+	// GUARD: el evento `menu` NO puede haber muerto — el flujo que acaba de terminar
+	// no es suyo (D-043.3: el menú no tiene flujo propio), y desde el Plan 053 eso lo
+	// dice flow_state.owner_event_id, que apunta al `cart`.
 	if got := evs.statuses()[men.ID]; got != events.StatusOpen {
 		t.Fatalf("H2: el evento `menu` NO debe cerrarse por el fin de un flujo AJENO (el del cart); quedó %q", got)
 	}
-	if got := evs.statuses()[cart.ID]; got != events.StatusOpen {
-		t.Fatalf("y el `cart` —dueño real del flujo que terminó— tampoco se toca aquí: quedó %q (su cierre es otra puerta)", got)
+	// Y el `cart` —DUEÑO real del flujo que acaba de terminar— SÍ se cierra (Plan 053 ·
+	// T1.6, D-053.2). Ver la nota «EXPECTATIVA REESCRITA» del docstring: hasta el 053
+	// aquí se exigía `open`, y ese `open` no era una garantía sino el gap consciente que
+	// la guarda de posesión dejaba abierto.
+	if got := evs.statuses()[cart.ID]; got != events.StatusClosed {
+		t.Fatalf("el `cart` —dueño del flujo que terminó— debe cerrarse por el cierre natural; quedó %q "+
+			"(si dice %q, closeIfFinished volvió a transicionar el evento ACTIVO en vez del DUEÑO)",
+			got, events.StatusOpen)
 	}
 }

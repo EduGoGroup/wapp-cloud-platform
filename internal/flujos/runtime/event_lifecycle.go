@@ -73,17 +73,63 @@ var ErrNoEventPlane = errors.New("runtime: sin plano de eventos cableado (WithEv
 //     ese hecho y, con el #29, además lo DEGRADARÍA: un pedido que la clienta canceló
 //     figuraría como `abandoned`, que es otra cosa. Abandonar sigue siendo SOLO de la
 //     cancelación desde la app (T4.3).
+//
+// # QUÉ EVENTO SE CIERRA (Plan 053 · T1.6, D-053.2 / REQ-053.1)
+//
+// El DUEÑO (st.OwnerEventID), NUNCA el activo (st.EventID). Son dos preguntas
+// distintas sobre la misma fila —«¿a quién le habla el contacto ahora?» frente a «¿de
+// quién es el FlowID/CurrentNode/Vars que esta fila carga?»— y hasta el Plan 053 las
+// contestaba una sola columna. Cerrar por el activo es cerrar al que estaba delante,
+// no al que acaba de terminar: con un `menu` montado sobre un `cart` a medias,
+// terminar el carrito mataba el menú (el falso `event_closed` de #22 / H2). Cuando los
+// dos punteros coinciden —el caso común, sin despachador de por medio— esto es byte a
+// byte el gesto de siempre.
+//
+// # LA LIMPIEZA DE LOS DOS PUNTEROS (huecos C y D del paso 0)
+//
+// No es cosmética; sin ella el plan se rompe a sí mismo.
+//
+//   - C · el DUEÑO se apaga SIEMPRE que el cierre se consuma. La condición de entrada
+//     de pendingClosure es ahora st.OwnerEventID, así que es este apagado —y no el del
+//     activo— lo que dice «ya no queda cierre pendiente». Sin él, pendingClosure
+//     contestaría pendiente=true en TODOS los turnos siguientes (D-053.3), advanceLive
+//     no alcanzaría nunca releaseFinishedState y el contacto se quedaría MUDO sobre una
+//     fila terminal que nadie suelta. Hoy no pasa porque quien apaga la condición es
+//     st.EventID = ""; al mover la condición al dueño, la limpieza se mueve con ella.
+//   - D · el ACTIVO se apaga SOLO si era el mismo evento. En el caso divergente
+//     st.EventID apunta al `menu`, que sigue siendo el activo y NO ha terminado nada:
+//     apagarlo sería desactivar de tapadillo un evento vivo por el fin de un flujo
+//     ajeno —justo el efecto colateral que H2 existía para evitar— y haría inalcanzable
+//     el criterio de T5.1 («el menu sigue open Y ACTIVO») con el propio código del plan.
+//
+// eraElMismo se captura ANTES de tocar nada, y ese orden es la parte frágil: leerlo
+// después del `st.OwnerEventID = ""` compararía "" contra el activo y contestaría «no
+// eran el mismo» exactamente en el caso común, dejando el puntero activo colgando de un
+// evento ya cerrado en TODAS las conversaciones. Se calcula arriba del todo, antes
+// incluso de saber si hay algo que cerrar, para que no haya ninguna rama futura entre
+// la captura y su uso.
 func (rt *Runtime) closeIfFinished(ctx context.Context, st *model.Conversation) {
+	// Hueco D: ANTES de cualquier limpieza. Ver el docstring.
+	//
+	// ⚠️ ACOPLAMIENTO ANOTADO: el cuadrante `owner == "" && active == ""` también da
+	// eraElMismo = true, y solo es inofensivo PORQUE la guarda de entrada de
+	// pendingClosure (`st.OwnerEventID == ""`, más abajo) corta antes y nunca se llega
+	// a la limpieza. Si alguien relaja esa condición, este cuadrante apagaría
+	// st.EventID gratis — desactivando un evento activo por un cierre que no ocurrió.
+	eraElMismo := st.OwnerEventID == st.EventID
 	ev, conocido, pendiente := rt.pendingClosure(ctx, *st)
 	if !pendiente {
 		return
 	}
 	destino, efecto := terminalFor(st.Outcome())
 	nuestra := true
-	if err := rt.events.TransitionEvent(ctx, st.EventID, destino); err != nil {
+	if err := rt.events.TransitionEvent(ctx, st.OwnerEventID, destino); err != nil {
 		if !errors.Is(err, events.ErrNotOpen) {
+			// El puntero que se conserva para reintentar es EL DEL DUEÑO (los dos, si
+			// coincidían): se nombra en el log porque desde T1.6 hay dos punteros en la
+			// fila y «el puntero» a secas ya no identifica ninguno.
 			rt.log.Warn("runtime: no se pudo cerrar el evento al terminar su flujo; el puntero se conserva para reintentar",
-				"error", err, "session_id", st.SessionID, "destino", destino)
+				"error", err, "session_id", st.SessionID, "owner_event_id", st.OwnerEventID, "destino", destino)
 			return
 		}
 		rt.log.Info("runtime: el evento ya no estaba open al terminar su flujo (carrera benigna)",
@@ -94,13 +140,26 @@ func (rt *Runtime) closeIfFinished(ctx context.Context, st *model.Conversation) 
 		// #15 (E8 punto 2): la transición la ganamos NOSOTROS pero la relectura
 		// previa de `ev` falló, así que emitEventEffect (ev.ID == "") no puede
 		// emitir el efecto: el evento murió en BD sin dejar su fila de telemetría.
+		//
+		// El id que se loguea es el del DUEÑO y la clave se renombra a owner_event_id
+		// (T1.6): este WARN es la única pista de una fila de telemetría que no se
+		// escribió, y quien la persiga tiene que ir al evento que MURIÓ. Dejar aquí
+		// st.EventID mandaría a leer el `menu` —vivo, intacto y ajeno a lo ocurrido—
+		// en el caso divergente, que es el mismo error de destinatario que esta tarea
+		// corrige tres líneas más arriba.
 		rt.log.Warn("runtime: el evento murió al terminar su flujo pero no se pudo releer antes para emitir su efecto de ciclo de vida",
-			"session_id", st.SessionID, "event_id", st.EventID, "efecto", efecto)
+			"session_id", st.SessionID, "owner_event_id", st.OwnerEventID, "efecto", efecto)
 	}
 	if nuestra && conocido {
 		rt.emitEventEffect(ctx, ev, efecto)
 	}
-	st.EventID = ""
+	// Hueco C: obligatorio, y llega hasta aquí también en la carrera benigna
+	// (nuestra=false) — el dueño está muerto igual, lo matara quien lo matara, y
+	// conservar el puntero solo dejaría un reintento que no tiene nada que reintentar.
+	st.OwnerEventID = ""
+	if eraElMismo {
+		st.EventID = ""
+	}
 }
 
 // terminalFor traduce el desenlace declarado por el módulo al par (estado terminal
@@ -120,72 +179,106 @@ func terminalFor(o model.Outcome) (events.Status, string) {
 }
 
 // pendingClosure contesta, con UNA SOLA relectura del evento, las dos preguntas que
-// el cierre natural plantea: cuál es la fila del evento apuntado —que closeIfFinished
-// necesita para su telemetría— y si a este flow_state le queda un cierre PENDIENTE,
-// es decir, si alguien va a cerrar ese evento por esta vía alguna vez.
+// el cierre natural plantea: cuál es la fila del evento que va a morir —que
+// closeIfFinished necesita para su telemetría— y si a este flow_state le queda un
+// cierre PENDIENTE, es decir, si alguien va a cerrar ese evento por esta vía alguna
+// vez.
 //
 // Vive aparte porque la segunda pregunta la necesita un SEGUNDO sitio y en OTRO
 // TURNO: la rama de suelta del flow_state terminal (#28 / H2, Ola 6 · incoming.go),
 // que hasta la Ola 6 preguntaba `st.EventID == ""` y por eso se quedaba esperando un
-// apagado que la guarda de posesión de abajo no iba a producir NUNCA. Devolver el
+// apagado que la guarda de posesión de entonces no iba a producir NUNCA. Devolver el
 // motivo en vez de recalcularlo allí evita que dos sitios decidan lo mismo por
-// separado —y que el segundo se olvide de H2—.
+// separado.
 //
-// pendiente=false significa «no queda nada que reintentar», y `conocido` separa sus
-// dos causas para quien necesite tratarlas distinto:
+// # LA CONDICIÓN DE ENTRADA MIRA AL DUEÑO (Plan 053 · T1.6, D-053.3)
 //
-//   - conocido=false: no hay evento que cerrar (sin plano de eventos, sin puntero, o
-//     el flujo no ha terminado).
-//   - conocido=true: la guarda de POSESIÓN de H2 — el puntero mira a un evento AJENO.
+// `st.OwnerEventID == ""` y no `st.EventID == ""`, y es LA BISAGRA de toda la tarea,
+// no un detalle de simetría. Tres razones, cada una suficiente:
 //
-// pendiente=true incluye el evento que NO se pudo releer (conocido=false con el
-// puntero puesto): esa ausencia no autoriza a dar el cierre por perdido, y
-// closeIfFinished sigue intentando la transición a ciegas como siempre.
+//  1. Se pregunta por el campo que se USA. Quien contesta pendiente=true autoriza a
+//     closeIfFinished a llamar a TransitionEvent(st.OwnerEventID, …): preguntar por
+//     otro campo dejaría pasar una fila con dueño VACÍO —una fila legada anterior al
+//     backfill de T1.3, con flow_id poblado y owner_event_id todavía NULL— y el
+//     cierre iría contra el id "" contra la base. REQ-053.1 lo dice como regla: con
+//     el dueño vacío NO se transiciona ningún evento.
+//  2. Es la condición que la limpieza APAGA. closeIfFinished limpia el dueño al
+//     terminar (hueco C); si la condición mirase al activo, en el caso divergente
+//     —donde el activo NO se apaga a propósito (hueco D)— esto contestaría
+//     pendiente=true en todos los turnos siguientes, advanceLive no alcanzaría jamás
+//     releaseFinishedState y el contacto se quedaría mudo. Condición y limpieza
+//     tienen que ser el mismo campo o el ciclo no cierra.
+//  3. `Finished()` habla del FLUJO, y el flujo es del dueño. Cruzar «terminó el
+//     flujo» con «hay alguien activo» es exactamente el cruce de dos preguntas
+//     distintas que este plan viene a deshacer.
+//
+// Y por eso mismo la relectura es del DUEÑO: el `ev` que se devuelve alimenta la
+// telemetría del evento que MUERE (event_closed/event_cancelled con su kind y su
+// history_id). Releer el activo daría la fila del `menu` —vivo, intacto y ajeno a lo
+// que acaba de terminar— y firmaría un event_closed con sus datos: el falso positivo
+// de #22 / H2 otra vez, ahora solo en la bitácora. El activo NO necesita releerse
+// aquí: nadie va a tocarlo.
+//
+// pendiente=true incluye el evento que NO se pudo releer (conocido=false con el dueño
+// puesto): esa ausencia no autoriza a dar el cierre por perdido, y closeIfFinished
+// sigue intentando la transición a ciegas como siempre.
+//
+// # LA GUARDA DE POSESIÓN DE H2, RETIRADA (D-053.2) — qué había aquí y por qué se va
+//
+// Aquí vivía, y ya no vive:
+//
+//	if conocido && ev.FlowID != st.FlowID {
+//	    return ev, true, false
+//	}
+//
+// Existía porque hasta el Plan 053 solo había UN puntero y había que ADIVINAR la
+// posesión comparando el FlowID congelado en la fila del evento con el FlowID del
+// flow_state. Lo pedía este escenario: saveMenuState (events.go) hereda el flow_state
+// de un flujo AJENO todavía en curso al armar el evento `menu` sobre él —el puntero
+// pasa al `menu`, pero FlowID/CurrentNode siguen siendo los del `cart`—, y si ese
+// flujo ajeno alcanzaba su nodo terminal más tarde, st.Finished() era cierto y el
+// cierre natural mataba el `menu` con un event_closed FALSO (flow_id="" en la fila,
+// porque flow_id sale del EVENTO y no del turno).
+//
+// Se retira, y se retira ENTERA en vez de repararse, porque ya no le queda trabajo:
+// en ese mismo escenario st.OwnerEventID ES el `cart`, nunca el `menu`. No hay nada
+// que comparar —owner_event_id es el HECHO, escrito por quien arrancó el flujo
+// (pointStateAtEvent, T1.5), no una inferencia sobre otro campo—, y una guarda que
+// solo puede confirmar lo que el campo ya dice es una guarda que miente el día que
+// los dos discrepen. Que la propiedad que protegía sigue en pie no es un acto de fe:
+// lo fija TestCierreNatural_NoMataElEventoActivoConFlujoAjenoAunEnCurso —el `menu`
+// sigue open— y lo verifica el test de mutación de event_lifecycle_owner_test.go, que
+// reintroduce esta guarda a mano y comprueba que no cambia ni un resultado.
+//
+// 🎁 Y de propina se cierra un gap que la Ola 6 dejó CONSCIENTE: mientras la guarda
+// disparaba, closeIfFinished no cerraba nada —ni el `menu` (correcto) ni el `cart`
+// (incorrecto: se quedaba `open` para siempre, con su intake colgando de un evento que
+// ya nadie iba a matar por esta vía)—. Con el dueño explícito el `cart` SÍ se cierra,
+// y el `menu` sigue vivo por construcción en vez de por una comparación.
+//
+// ⚠️ La única forma de resucitar el defecto es que alguien estampe como dueño un
+// evento que no lo es. El sitio es pointStateAtEvent (T1.5) y su contrato está escrito
+// allí: se estampa donde el flujo se acaba de arrancar PARA ese evento, y NO en
+// saveMenuState. Ver la nota de MD sobre el `event_start` sin flow_id en el test de
+// mutación.
+//
+// ⚠️ `conocido=true` con `pendiente=false` YA NO ES ALCANZABLE: era la firma exacta de
+// la guarda retirada. Los dos consumidores lo saben —closeIfFinished ignora `ev`
+// cuando no hay cierre pendiente, y releaseFinishedState (incoming.go) recibe siempre
+// conocido=false por esta vía, así que su rama del evento AJENO vivo queda muerta—.
+// Retirar ese parámetro es de T2.3 (D-053.3), no de aquí: esta tarea no toca
+// incoming.go.
 func (rt *Runtime) pendingClosure(ctx context.Context, st model.Conversation) (ev events.Event, conocido, pendiente bool) {
-	if rt.events == nil || st.EventID == "" || !st.Finished() {
+	if rt.events == nil || st.OwnerEventID == "" || !st.Finished() {
 		return events.Event{}, false, false
 	}
 	// Lectura PREVIA (Plan 043 · T5.4, D2 · sitio 5): tras la transición el evento
 	// sale de los vivos y ya no se puede releer por aliveByID. Solo ocurre sobre un
-	// flow_state TERMINAL con evento activo — el turno que termina el flujo y, si ese
+	// flow_state TERMINAL con dueño puesto — el turno que termina el flujo y, si ese
 	// cierre no llegó a producirse, el siguiente entrante que vuelva a preguntar.
 	ev, conocido = rt.activeEvent(ctx, store.Key{
 		TenantID: st.TenantID, SessionID: st.SessionID, ContactID: st.ContactID,
-	}, st.SessionID, st.EventID)
-
-	// #22 / H2: un flujo solo puede matar al evento que lo POSEE. saveMenuState
-	// (events.go) hereda el flow_state de un flujo AJENO todavía en curso cuando
-	// arma el evento `menu` sobre él (solo resetea si ese flujo YA estaba
-	// terminal): el puntero pasa a apuntar al `menu`, pero CurrentNode/FlowID
-	// siguen siendo los del flujo heredado. Si ese flujo ajeno alcanza su nodo
-	// TERMINAL más tarde, st.Finished() es cierto pero el dueño real del evento
-	// ACTIVO (el `menu`, sin flujo propio, D-043.3) no tiene nada que ver con lo
-	// que acaba de terminar. Sin esta guarda se cerraba el `menu` con un
-	// event_closed FALSO (flow_id="" en la fila, porque flow_id sale del EVENTO,
-	// no del turno).
-	//
-	// ⚠️ CORREGIDO EN REVISIÓN (medido por sonda, no deducido): esta guarda NO
-	// cambia el ciclo de vida del `menu` a «muere por TTL, E-11 o event_stop» —
-	// ninguno de los tres lo mata, y el encabezado de este fichero ya lo dice:
-	// closeIfFinished y la cancelación son los ÚNICOS dos caminos que mueven
-	// `status` (D-043.5). El TTL solo suelta el flow_state (releaseForNewConversation
-	// no llama a TransitionEvent), event_stop apaga el puntero dejando la fila `open`
-	// a propósito (INV-09: sigue rescatable), y E-11 exige el gesto NUEVO, que el
-	// camino del trigger no produce (beginEvent usa gestureGoTo). Lo que esta guarda
-	// hace es ALINEAR el `menu` heredado con el `menu` NORMAL, que nunca se cerró por
-	// aquí: sin flujo propio, CurrentNode nunca vale el centinela y st.Finished() es
-	// falso siempre. No se crea ninguna fuga nueva: el único cierre que se retira era
-	// el FALSO. Lo que queda `open` hasta que el dueño lo cancele es el mismo `open`
-	// que ya tenía cualquier otro evento `menu`.
-	//
-	// Que el evento sobreviva NO implica que su flow_state deba: la condición es
-	// DETERMINISTA (se reevalúa idéntica en cada entrante), así que aquí no hay
-	// reintento que esperar y la fila queda para siempre {terminal, con puntero}.
-	// Devolverlo como «no pendiente» es lo que permite a incoming.go soltarla —la
-	// FILA, no el evento— en vez de dejar mudo al contacto.
-	if conocido && ev.FlowID != st.FlowID {
-		return ev, true, false
-	}
+	}, st.SessionID, st.OwnerEventID)
 	return ev, conocido, true
 }
 
