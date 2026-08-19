@@ -396,8 +396,10 @@ func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID
 	if vivo {
 		// EffectEventEscaped por el MISMO eje que el quinto camino de suelta (E5/E6): el
 		// nombre describe el EFECTO sobre el flow_state —destruido, no conservado como en
-		// event_deactivated—, no la intención del cliente.
-		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+		// event_deactivated—, no la intención del cliente. La INTENCIÓN, que el nombre
+		// deliberadamente no lleva, viaja desde T4.1 en el `reason`: aquí nadie abandonó
+		// nada, el flujo llegó a su nodo terminal y su fila se recoge.
+		rt.emitEventEscaped(ctx, ev, EscapeReasonOwnerFlowFinished)
 	}
 	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
 }
@@ -442,7 +444,10 @@ func (rt *Runtime) releaseOrphanMenu(ctx context.Context, tenantID, sessionID st
 	// se acepta: el nombre describe el EFECTO sobre el estado, no la intención
 	// del cliente, igual que event_closed no distingue POR QUÉ terminó el flujo.
 	if conocido {
-		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+		// El `reason` (T4.1) es lo que rescata la objeción de arriba: el nombre sigue
+		// sin distinguir esta causa del escape deliberado —a propósito—, pero el
+		// payload SÍ, así que quien quiera contarlas por separado ya puede.
+		rt.emitEventEscaped(ctx, ev, EscapeReasonOrphanMenu)
 	}
 	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
 }
@@ -904,9 +909,11 @@ func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string,
 	}
 	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra (E-5,
 	// EffectEventEscaped: NO event_deactivated — stopEvent conserva el flow_state,
-	// este Delete lo destruye, y son abandonos distintos).
+	// este Delete lo destruye, y son abandonos distintos). El único de los tres
+	// emisores donde el contacto PIDIÓ el abandono con la palabra exacta, y por eso
+	// el único cuyo `reason` mide intención y no consecuencia (T4.1).
 	if conocido {
-		rt.emitEventEffect(ctx, ev, EffectEventEscaped)
+		rt.emitEventEscaped(ctx, ev, EscapeReasonClientEscape)
 	}
 	// Red anti-loop (Plan 020 · T0): el AVISO de escape es una auto-respuesta ⇒
 	// consume un token. Agotado ⇒ no se avisa, pero el escape YA OCURRIÓ (E-4): el
