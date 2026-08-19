@@ -110,18 +110,66 @@ func openTestDB(t *testing.T) *sql.DB {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// El pool va MUY por encima del default de producción (25, postgres/connect.go)
-	// a propósito, y no es un detalle cosmético: con carril, N sesiones latiendo
-	// abren N workers concurrentes, y en el escenario N=60 eso son hasta 60
-	// demandantes contra 25 conexiones. Los 35 que no la consiguen esperan DENTRO
-	// del presupuesto de 5 s del job y algunos lo agotan, con lo que renewLease se
-	// rinde y el Edge pierde su LeaseUpdate. Medido el 2026-08-18: con 25 el test
-	// falla 3 de cada 6 corridas; con 90, 0 de 6.
+	// a propósito. POR QUÉ, en dos capas y en este orden: PRIMERO la razón
+	// original, que ha CADUCADO, y DESPUÉS la vigente, que es la que manda hoy. Se
+	// conservan las dos porque la caducada se citó para justificar decisiones, y
+	// hay que poder ver qué se creía y por qué dejó de ser cierto.
 	//
-	// Se sube AQUÍ, y solo aquí, porque lo que T5.2/T5.3 miden es la latencia del
-	// Ack con heartbeats en vuelo, no la capacidad del pool: dejarlo en 25 haría
-	// que el gate midiera otra cosa la mitad de las veces. Que 25 se quede corto
-	// bajo flota real es un hallazgo de producto, NO del test, y vive como
-	// DEUDA-050.2 con dueño (Ola 3) — no se tapa aquí, se aísla.
+	// ── ENUNCIADO ORIGINAL (2026-08-18), CONSERVADO LITERAL ───────────────────
+	//	«con carril, N sesiones latiendo abren N workers concurrentes, y en el
+	//	escenario N=60 eso son hasta 60 demandantes contra 25 conexiones. Los 35
+	//	que no la consiguen esperan DENTRO del presupuesto de 5 s del job y algunos
+	//	lo agotan, con lo que renewLease se rinde y el Edge pierde su LeaseUpdate.
+	//	Medido el 2026-08-18: con 25 el test falla 3 de cada 6 corridas; con 90,
+	//	0 de 6. […] Que 25 se quede corto bajo flota real es un hallazgo de
+	//	producto, NO del test, y vive como DEUDA-050.2 con dueño (Ola 3).»
+	//
+	// ── QUÉ DE ESO SIGUE SIENDO CIERTO, Y QUÉ NO (2026-08-19, Plan 050 · T5.5) ─
+	// La MECÁNICA es exacta y quedó confirmada con el contador del pool, que hasta
+	// T5.5 nadie había mirado: con 60 sesiones latiendo hay 60 carriles pidiendo
+	// conexión, el pico de InUse contra un pool sin restricción es EXACTAMENTE 60
+	// (una por carril) y el codo —el primer tope en el que WaitCount cae a cero—
+	// es EXACTAMENTE 60, en 9 de 9 corridas. Con MaxOpenConns=25 sí hay espera:
+	// ~1.288 esperas por corrida (rango 1.286-1.290 en 9 corridas).
+	//
+	// Lo que NO se sostiene es la CONSECUENCIA. La espera media a 25 es de
+	// ~3,3 ms bajo el arnés y de ~2,80 ms en este mismo test (WaitCount ≈ 8.570,
+	// WaitDuration ≈ 24 s por corrida) contra un presupuesto de job de 5 s
+	// (defaultWorkBudget, server.go): el 0,06 %. Con ese margen la espera por
+	// conexión no puede ser lo que hace vencer a renewLease.
+	//
+	// Y la flakiness NO SE REPRODUCE: 17 corridas, 17 en verde, en dos manos
+	// distintas y sobre la cabeza de esta rama —12 de T5.5 (6 con el lease y el
+	// fleet sobre un pool de 25 y los sondeos aparte, + 6 con este openTestDB
+	// entero bajado a 25, que es la condición EXACTA de la medida del 18) y 5 más
+	// del orquestador, reproducidas de forma independiente bajando este pool a 25.
+	//
+	// HIPÓTESIS (no demostrada) de por qué el 18 salió distinto: que se midiera
+	// con la Ola 1 a medio aterrizar, cuando el bucle Recv todavía gastaba el
+	// presupuesto en head-of-line y no en el pool. Encaja con que el p99 del Ack
+	// pasara de 619,6 ms a 447 µs, pero NO se ha comprobado y no se debe citar
+	// como hecho. Tampoco se afirma que la medida del 18 fuera errónea: se tomó
+	// de buena fe y aquí solo consta que hoy no se reproduce.
+	//
+	// ── POR QUÉ EL POOL SE QUEDA EN 90 DE TODAS FORMAS ────────────────────────
+	// La decisión no cambia, pero el motivo SÍ. Ya no es tapar una flakiness que
+	// no aparece: es AISLAMIENTO. Lo que T5.2/T5.3 miden es la latencia del Ack
+	// con heartbeats en vuelo, no la capacidad del pool, y con el tope por debajo
+	// de las sesiones del escenario (60) este gate mediría las dos cosas mezcladas
+	// sin decir cuál. Un pool por encima de N mantiene el pool FUERA de la medida
+	// por construcción, no por suerte. Si alguien sube sesionesT52 por encima de
+	// 90, hay que subir esto con él o el gate empieza a medir otra cosa.
+	//
+	// ── EL PUNTERO A DEUDA-050.2, ACTUALIZADO ─────────────────────────────────
+	// Ya NO es «25 se queda corto, dueño Ola 3»: T4.6 se cerró el 2026-08-19 con
+	// NO MOVER NADA —el default sigue en 25— con la curva de T5.5 delante
+	// (curva_pool_t55_integration_test.go, que es donde vive la medición y la
+	// tabla). El riesgo que queda es OTRO y no está en el pool: la concurrencia
+	// de carriles no tiene TECHO AGREGADO. Hay un carril por sesión viva y nada
+	// acota su suma sobre la flota entera —el semáforo de 64 de
+	// Flow.MaxConcurrentIncoming acota el camino de los ENTRANTES, no este—, así
+	// que el codo se mueve con el tamaño de la flota. No busques aquí el número
+	// del pool: aquí solo se aísla el gate.
 	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn, MaxOpenConns: 90, MaxIdleConns: 90})
 	if err != nil {
 		if os.Getenv(requireDBEnv) != "" {
@@ -194,6 +242,19 @@ type configArnes struct {
 	// necesita poder incluirlos. T5.1 en cambio lo deja en memoria a propósito,
 	// para aislar la latencia inyectable del fleet.
 	leasePostgres bool
+	// dbMedido, si no es nil, es el pool sobre el que corren el repositorio del
+	// LEASE y el del FLEET, en lugar del pool de openTestDB. Nace el 2026-08-19
+	// para T5.5 (la curva del pool bajo carga): la pregunta de esa tarea es
+	// cuántas conexiones pide el arnés REAL, y con el pool de openTestDB fijo en
+	// 90 —ancho a propósito para que DEUDA-050.2 no contamine lo que miden T5.2 y
+	// T5.3— no hay forma de barrer el tope.
+	//
+	// El nil conserva el comportamiento EXACTO anterior (todo sobre el pool de
+	// openTestDB), así que ningún test existente cambia de significado. Y h.db NO
+	// se toca: los sondeos del propio arnés (esperarUptime, seedTenant) siguen
+	// yendo por el pool ancho, para que el tráfico del test no se cuele en las
+	// estadísticas de lo que se está midiendo.
+	dbMedido *sql.DB
 }
 
 // loadHarness levanta el Server con mTLS + lease (memoria o Postgres, según
@@ -253,9 +314,16 @@ func newLoadHarness(t *testing.T, cfg configArnes) *loadHarness {
 	if err != nil {
 		t.Fatalf("GenerateDevKey: %v", err)
 	}
+	// medido es el pool que ven el LEASE y el FLEET. Por defecto, el mismo de
+	// openTestDB; T5.5 lo sustituye por uno con el tope que quiera barrer.
+	medido := db
+	if cfg.dbMedido != nil {
+		medido = cfg.dbMedido
+	}
+
 	var leaseRepo lease.Repository = lease.NewMemoryRepository()
 	if cfg.leasePostgres {
-		leaseRepo = lease.NewPostgresRepository(db)
+		leaseRepo = lease.NewPostgresRepository(medido)
 	}
 	mgr, err := lease.NewManager(priv, leaseRepo)
 	if err != nil {
@@ -263,7 +331,7 @@ func newLoadHarness(t *testing.T, cfg configArnes) *loadHarness {
 	}
 
 	// El fleet REAL (Postgres) decorado con la latencia inyectable.
-	slow := fleettest.NewSlow(fleet.NewPostgresRepository(db), cfg.latenciaInicial)
+	slow := fleettest.NewSlow(fleet.NewPostgresRepository(medido), cfg.latenciaInicial)
 
 	reg := session.NewRegistry()
 	logBuf := &syncBuffer{}

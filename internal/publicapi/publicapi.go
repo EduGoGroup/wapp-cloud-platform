@@ -131,9 +131,17 @@ type Deps struct {
 	DiagDeps
 	MediaDeps
 
-	Sender   MessageSender          // gateway CloudLink (SendText)
-	Audit    AuditReader            // bitácora de auditoría (GET /api/v1/audit, T10)
-	Triggers flowadmin.TriggerStore // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
+	Sender MessageSender // gateway CloudLink (SendText)
+	// SendBudget es el PRESUPUESTO DE LA PETICIÓN de POST /api/v1/messages (Plan 050 ·
+	// Ola 5 · T5.4): el techo por encima de los relojes secuenciales del envío, para
+	// que su suma no pueda pasarse del WriteTimeout del servidor y dejar al cliente
+	// con la conexión cerrada y sin cuerpo. NO se cablea a mano: se DERIVA con
+	// SendBudgetFrom(writeTimeout) en el mismo sitio que construye el http.Server, de
+	// modo que los dos no puedan desincronizarse. <=0 ⇒ sin plazo (comportamiento
+	// previo a esta tarea).
+	SendBudget time.Duration
+	Audit      AuditReader            // bitácora de auditoría (GET /api/v1/audit, T10)
+	Triggers   flowadmin.TriggerStore // reglas de disparo (CRUD /api/v1/triggers, Plan 019 T5)
 	// TriggersDurableFlow es el puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3,
 	// D-054.6/D-054.8): «¿el flujo de esta regla tiene contenido durable?». Mismo
 	// parámetro POSICIONAL que reciben los tres constructores del CRUD de reglas
@@ -239,9 +247,12 @@ const defaultDBTimeout = 1500 * time.Millisecond
 // aquí (una copia diverge del original en cuanto uno de los dos cambie):
 //
 //   - internal/gateway/grpc/send.go:299 (awaitAck) — el incidente del 2026-08-06.
-//   - internal/platform/config/config.go:62 (GRPCAckTimeout) y :96
-//     (PublicAPIDBTimeout) — la invariante contra el WriteTimeout: los dos relojes
-//     del envío son SECUENCIALES, así que contra los 10s cuenta la SUMA.
+//   - internal/platform/config/config.go (GRPCAckTimeout y PublicAPIDBTimeout) — la
+//     invariante contra el WriteTimeout: los relojes del envío son SECUENCIALES, así
+//     que contra los 10s cuenta la SUMA. Son TRES, no dos: ese comentario decía dos
+//     y la cuenta era falsa hasta que T5.4 la rehizo (ver allí).
+//   - SendBudgetFrom, aquí abajo — el techo que hace que esa suma ya no pueda dejar
+//     al cliente sin respuesta.
 //
 // Solo lo usan LECTURAS. Las escrituras y las transacciones quedan fuera a
 // propósito: 1,5s está calibrado para una consulta previa al envío, y aplicárselo a
@@ -252,6 +263,75 @@ func dbCtx(ctx context.Context, timeout time.Duration) (context.Context, context
 		timeout = defaultDBTimeout
 	}
 	return context.WithTimeout(ctx, timeout)
+}
+
+// margenDeEscritura es lo que SendBudgetFrom reserva del WriteTimeout para que el
+// handler pueda serializar y escribir su respuesta después de rendirse. Es el único
+// número nuevo del arreglo de REQ-050.19, y lo es a propósito: es el parámetro de una
+// fórmula, no una copia de una suma. Un presupuesto escrito como constante suelta
+// habría sido la cuarta cifra que alguien tiene que rehacer a mano cada vez que se
+// mueva un reloj — exactamente el mecanismo por el que la invariante de config.go se
+// desincronizó y acabó documentando un margen que no existía.
+//
+// POR QUÉ 1s Y NO MÁS. Este valor es, exactamente, la franja de envíos que cambian de
+// desenlace: los que tardan entre el presupuesto y el WriteTimeout hoy alcanzan a
+// responder y a partir de ahora se cortan. Estrecharla es el objetivo, y el trabajo
+// que tiene que caber dentro es minúsculo —serializar ~150 bytes de JSON y escribirlos
+// en una conexión ya abierta—: el camino feliz completo de este endpoint, medido de
+// extremo a extremo en el e2e de T5.4, tarda 0,63 ms. 1s son tres órdenes de magnitud
+// de holgura sobre eso, suficientes para absorber un GC o un scheduler cargado, y la
+// mitad de los ~2s que el comentario viejo de GRPCAckTimeout daba por supuestos.
+//
+// 🔴 Lo que NO se puede hacer es bajarlo a cero: sin margen, el handler se rendiría
+// justo cuando el deadline de escritura vence y volveríamos a la respuesta vacía.
+const margenDeEscritura = 1 * time.Second
+
+// SendBudgetFrom DERIVA el presupuesto de una petición de envío del WriteTimeout del
+// servidor HTTP que la sirve (Plan 050 · Ola 5 · T5.4, cierra REQ-050.19). Es la
+// respuesta al defecto que documenta config.PublicAPIDBTimeout: los relojes de abajo
+// —guarda de tenant, empuje, espera del ack— son SECUENCIALES y su suma (19,5s) se
+// pasa del WriteTimeout (10s), de modo que un Edge saturado dejaba al cliente con la
+// conexión cerrada y sin cuerpo.
+//
+// 🔴 SE DERIVA, NO SE INVENTA. Ningún reloj existente se mueve (INV-050.6): lo que se
+// añade es QUIÉN ESPERA. El presupuesto es un techo por encima de los tres, y por ser
+// el más corto es el que gana. Al derivarlo del WriteTimeout, mover el WriteTimeout lo
+// arrastra y la aritmética no puede volver a mentir; los relojes de abajo pueden
+// incluso crecer sin que el cliente se quede sin respuesta, porque quien manda es el
+// techo y no la suma.
+//
+// Un writeTimeout que no deje sitio al margen devuelve 0 = SIN presupuesto, que es el
+// comportamiento previo a esta tarea: es preferible a un plazo ya vencido al nacer,
+// que abortaría TODOS los envíos en el acto.
+func SendBudgetFrom(writeTimeout time.Duration) time.Duration {
+	if writeTimeout <= margenDeEscritura {
+		return 0
+	}
+	return writeTimeout - margenDeEscritura
+}
+
+// sendCtx deriva el contexto ACOTADO de una petición de envío. El llamante DEBE hacer
+// `defer cancel()`. Un presupuesto <=0 devuelve el contexto tal cual (sin plazo): no
+// hay suelo local a propósito, porque un suelo aquí sería justo la constante suelta
+// que SendBudgetFrom existe para no crear — el valor viene derivado de quien conoce el
+// WriteTimeout, y ese es el bootstrap.
+//
+// ⚠️ Cubre el handler ENTERO —guarda de tenant incluida—, no solo el envío: la suma
+// que se pasaba del WriteTimeout incluye la guarda. Que el plazo de dbCtx (1,5s) sea
+// mucho más corto no lo hace redundante: dbCtx acota UNA consulta, esto acota la
+// petición.
+//
+// ⚠️ Cancelar este contexto NO cancela el envío ya en vuelo: la goroutine del Send del
+// Registry sobrevive y el comando puede salir hacia el Edge DESPUÉS de que el llamante
+// haya recibido su error (session.Push, «Enmienda 1, regla 1»; verificado en el e2e de
+// T5.4). Eso es lo que hace seguro este plazo —no se pierde ningún mensaje— y lo que
+// obliga a que los textos de error de writeSendError digan «no se sabe si salió» en
+// vez de invitar a reintentar.
+func sendCtx(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, budget)
 }
 
 // dbTimedOut504 traduce el VENCIMIENTO del plazo de dbCtx: si err es el deadline,
@@ -296,7 +376,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// Envío de mensajes (escritura auditada). Reusa el gateway; añade el guardia
 	// session→tenant que /admin/messages/send (T4) no tenía.
 	mux.Handle("POST /api/v1/messages", protect(mw, auditor, log,
-		"messages.send", "message", messagesHandler(d.Sender, d.Sessions, d.DBTimeout, log)))
+		"messages.send", "message", messagesHandler(d.Sender, d.Sessions, d.DBTimeout, d.SendBudget, log)))
 
 	// Publicar definición de flujo (escritura auditada). Reusa TAL CUAL el handler
 	// de /admin/flows: ya toma el tenant del token y valida el esquema.
@@ -304,9 +384,9 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		"flows.create", "flow", flowadmin.DefinitionHandler(d.Flows, d.Modules)))
 
 	// Listar / leer definiciones (lecturas, sin auditoría).
-	mux.Handle("GET /api/v1/flows", protectRead(mw,
+	mux.Handle("GET /api/v1/flows", protectRead(mw, log,
 		"flows.read", listFlowsHandler(d.Flows)))
-	mux.Handle("GET /api/v1/flows/{id}", protectRead(mw,
+	mux.Handle("GET /api/v1/flows/{id}", protectRead(mw, log,
 		"flows.read", getFlowHandler(d.Flows)))
 
 	// Arrancar una conversación de un flujo (escritura auditada). flow_id va en la
@@ -332,9 +412,9 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		"content.write", "tenant_content", upsertTenantContentHandler(d.Content, d.ContentMaxBytes)))
 	mux.Handle("DELETE /api/v1/tenant-content/{ref}", protect(mw, auditor, log,
 		"content.write", "tenant_content", deleteTenantContentHandler(d.Content)))
-	mux.Handle("GET /api/v1/tenant-content", protectRead(mw,
+	mux.Handle("GET /api/v1/tenant-content", protectRead(mw, log,
 		"content.read", listTenantContentHandler(d.Content)))
-	mux.Handle("GET /api/v1/tenant-content/{ref}", protectRead(mw,
+	mux.Handle("GET /api/v1/tenant-content/{ref}", protectRead(mw, log,
 		"content.read", getTenantContentHandler(d.Content)))
 
 	// CRUD de reglas de disparo (Plan 019 · T5): keyword/fallback/escape por-tenant
@@ -344,7 +424,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	if d.Triggers != nil {
 		mux.Handle("POST /api/v1/triggers", protect(mw, auditor, log,
 			"triggers.create", "trigger", flowadmin.CreateTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
-		mux.Handle("GET /api/v1/triggers", protectRead(mw,
+		mux.Handle("GET /api/v1/triggers", protectRead(mw, log,
 			"triggers.read", flowadmin.ListTriggersHandler(d.Triggers, d.TriggersDurableFlow)))
 		mux.Handle("DELETE /api/v1/triggers/{id}", protect(mw, auditor, log,
 			"triggers.delete", "trigger", flowadmin.DeleteTriggerHandler(d.Triggers, d.TriggersDurableFlow)))
@@ -360,7 +440,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		if alerter == nil {
 			alerter = NoopAlerter{} // ADR-0023: seam del alerting push, no-op por defecto.
 		}
-		mux.Handle("GET /api/v1/sessions", protectRead(mw,
+		mux.Handle("GET /api/v1/sessions", protectRead(mw, log,
 			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, d.DBTimeout, log)))
 	}
 
@@ -408,7 +488,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// migración 0040 (design §D-040.4). Toda UI que pinte capacidades depende de
 	// esta ruta.
 	if d.Entitlements != nil {
-		mux.Handle("GET /api/v1/entitlements", protectRead(mw,
+		mux.Handle("GET /api/v1/entitlements", protectRead(mw, log,
 			"entitlements.read", listEntitlementsHandler(d.Entitlements)))
 	}
 
@@ -420,7 +500,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// sin auditoría (intents.read). Solo se montan si el store y el checker están
 	// cableados (fase pre-release).
 	if d.Intents != nil && d.Entitlements != nil {
-		mux.Handle("GET /api/v1/intents", protectRead(mw,
+		mux.Handle("GET /api/v1/intents", protectRead(mw, log,
 			"intents.read", getIntentsHandler(d.Intents, d.DBTimeout, log)))
 		mux.Handle("PUT /api/v1/intents", protect(mw, auditor, log,
 			"intents.write", "intents", putIntentsHandler(d.Intents, d.Entitlements, d.ConfigPush, log)))
@@ -451,7 +531,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// al tenant del token (INV-8); scope audit.read (o *.read del rol viewer).
 	// Lectura sin auditoría (no tiene efecto). Los eventos ya son OPACOS (CERO PII).
 	if d.Audit != nil {
-		mux.Handle("GET /api/v1/audit", protectRead(mw,
+		mux.Handle("GET /api/v1/audit", protectRead(mw, log,
 			"audit.read", listAuditHandler(d.Audit)))
 	}
 
@@ -459,7 +539,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// T6.5, cierra MD-043.17). Propia función por la misma razón que
 	// registerConversationEvents/registerTenantVariables: un `if` más aquí
 	// rozaría el techo del linter (gocyclo 15).
-	registerEventTelemetry(mux, d, mw)
+	registerEventTelemetry(mux, d, mw, log)
 }
 
 // registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4/T4.10,
@@ -497,9 +577,9 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
 	canExport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureIntakesExport)
 
-	mux.Handle("GET /api/v1/intakes", protectRead(mw,
+	mux.Handle("GET /api/v1/intakes", protectRead(mw, log,
 		"intakes.read", cartBasic(listIntakesHandler(d.Intakes))))
-	mux.Handle("GET /api/v1/intakes/{id}", protectRead(mw,
+	mux.Handle("GET /api/v1/intakes/{id}", protectRead(mw, log,
 		"intakes.read", cartBasic(getIntakeHandler(d.Intakes))))
 	mux.Handle("POST /api/v1/intakes/{id}/status", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(setIntakeStatusHandler(d.Intakes))))
@@ -528,9 +608,9 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 		"intakes.write", "intake", cartBasic(discardIntakesHandler(d.Intakes))))
 
 	// Export y resumen (Plan 041 · T1.2/T1.3, REQ-03/REQ-04).
-	mux.Handle("GET /api/v1/intakes/export", protectRead(mw,
+	mux.Handle("GET /api/v1/intakes/export", protectRead(mw, log,
 		"intakes.read", canExport(exportIntakesHandler(d.Intakes))))
-	mux.Handle("GET /api/v1/intakes/summary.json", protectRead(mw,
+	mux.Handle("GET /api/v1/intakes/summary.json", protectRead(mw, log,
 		"intakes.read", canExport(intakeSummaryHandler(d.Intakes))))
 }
 
@@ -585,7 +665,7 @@ func registerConversationEvents(mux *http.ServeMux, d Deps, mw *httpapi.Middlewa
 	}
 	algúnTipo := entitlements.RequireAnyFeature(d.Entitlements, events.KindFeatures()...)
 	if d.ConversationEvents != nil {
-		mux.Handle("GET /api/v1/conversation-events", protectRead(mw,
+		mux.Handle("GET /api/v1/conversation-events", protectRead(mw, log,
 			"intakes.read", algúnTipo(listConversationEventsHandler(d.ConversationEvents, d.Entitlements))))
 	}
 	if d.EventCanceller != nil {
@@ -621,7 +701,7 @@ func registerTenantVariables(mux *http.ServeMux, d Deps, mw *httpapi.Middleware,
 	if d.TenantVariables == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/tenant-variables", protectRead(mw,
+	mux.Handle("GET /api/v1/tenant-variables", protectRead(mw, log,
 		"content.read", getTenantVariablesHandler(d.TenantVariables, d.DBTimeout, log)))
 	mux.Handle("PUT /api/v1/tenant-variables", protect(mw, auditor, log,
 		"content.write", "tenant_variables", putTenantVariablesHandler(d.TenantVariables)))
@@ -663,13 +743,13 @@ func registerIntegrations(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, au
 	}
 	crmBridge := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCRMBridge)
 
-	mux.Handle("GET /api/v1/integrations", protectRead(mw,
+	mux.Handle("GET /api/v1/integrations", protectRead(mw, log,
 		"integrations.read", crmBridge(getIntegrationHandler(d.Integrations))))
 	// El estado de la cola cuelga de la MISMA ruta y va con las mismas dos
 	// guardias: es la otra mitad de la pantalla del puente (la configuración dice
 	// a dónde se entrega; esto, si está llegando). Lectura pura, así que
 	// protectRead sin auditar — mirar un contador no cambia nada.
-	mux.Handle("GET /api/v1/integrations/outbox", protectRead(mw,
+	mux.Handle("GET /api/v1/integrations/outbox", protectRead(mw, log,
 		"integrations.read", crmBridge(getOutboxHandler(d.Integrations))))
 	mux.Handle("PUT /api/v1/integrations", protect(mw, auditor, log,
 		"integrations.write", "integration", crmBridge(putIntegrationHandler(d.Integrations))))
@@ -695,8 +775,11 @@ func registerCRMCallback(mux *http.ServeMux, d Deps, log sharedlogger.Logger) {
 	if d.CRMSecrets == nil || d.CRMGate == nil || d.CRMReflect == nil {
 		return
 	}
+	// accessLog explícito: es la ÚNICA ruta pública que no pasa por protect/protectRead
+	// (se autentica por firma HMAC del CRM, no por Context Token), así que sin esto
+	// sería el agujero que deja el «toda petición deja rastro» a medias.
 	mux.Handle("POST /api/v1/integrations/callback",
-		crmCallbackHandler(d.CRMSecrets, d.CRMGate, d.CRMReflect, d.CRMNotify, log))
+		accessLog(log, crmCallbackHandler(d.CRMSecrets, d.CRMGate, d.CRMReflect, d.CRMNotify, log)))
 }
 
 // registerCatalogImport monta el import de catálogo (Plan 041 · T3.2/T3.3,
@@ -760,9 +843,9 @@ func registerCatalogImport(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, a
 	// aparecen y desaparecen con el POST— porque son la primera mitad del mismo
 	// acto: repartir la plantilla de un import que no está montado mandaría al
 	// operador a llenarla para encontrarse un 404 al subirla (T3.2).
-	mux.Handle("GET /api/v1/catalog/import/template", protectRead(mw,
+	mux.Handle("GET /api/v1/catalog/import/template", protectRead(mw, log,
 		"content.read", canImport(catalogTemplateHandler())))
-	mux.Handle("GET /api/v1/catalog/import/prompt", protectRead(mw,
+	mux.Handle("GET /api/v1/catalog/import/prompt", protectRead(mw, log,
 		"content.read", canImport(catalogPromptHandler())))
 }
 
@@ -772,13 +855,18 @@ func registerCatalogImport(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, a
 func protect(mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger, perm, resource string, h http.Handler) http.Handler {
 	h = httpapi.AuditMiddleware(auditor, perm, resource, log)(h)
 	h = mw.RequirePermission(perm)(h)
-	return mw.Authenticate(h)
+	h = anotarTenant(h)
+	return accessLog(log, mw.Authenticate(h))
 }
 
 // protectRead compone la cadena de una LECTURA pública: Authenticate →
 // RequirePermission(perm). No audita (lectura sin efecto).
-func protectRead(mw *httpapi.Middleware, perm string, h http.Handler) http.Handler {
-	return mw.Authenticate(mw.RequirePermission(perm)(h))
+//
+// Recibe el logger desde el Plan 050 · Ola 5 · T5.4 y no por simetría cosmética: sin
+// él, las 21 rutas de lectura de la API pública quedarían fuera del access-log y el
+// «toda petición deja rastro» de REQ-050.19 sería verdad solo para las escrituras.
+func protectRead(mw *httpapi.Middleware, log sharedlogger.Logger, perm string, h http.Handler) http.Handler {
+	return accessLog(log, mw.Authenticate(mw.RequirePermission(perm)(anotarTenant(h))))
 }
 
 // writeJSON serializa v como JSON con el código dado (mismo patrón que

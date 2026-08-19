@@ -27,6 +27,26 @@ var ErrSessionOffline = errors.New("sesión offline")
 // (RevokeLease), que no puede quedar atascado en la primera sesión bloqueada.
 var ErrPushTimeout = errors.New("timeout empujando comando al Edge")
 
+// ErrPushAbandonado indica que el LLAMANTE se rindió mientras se empujaba el comando
+// —su contexto venció o lo cancelaron—, no que el Edge fallara. Es el hermano de
+// ErrPushTimeout por el otro brazo del select, y tiene centinela propio desde el
+// Plan 050 · Ola 5 · T5.4 por una razón concreta: al añadirse el presupuesto de la
+// petición (publicapi.SendBudgetFrom) este camino dejó de ser una rareza —una
+// cancelación del cliente— y pasó a ser el desenlace NORMAL de un envío saturado.
+// Sin él, el error solo envolvía context.DeadlineExceeded y el traductor HTTP lo
+// contaba como «timeout esperando el ack del Edge», que aquí es falso: no se llegó a
+// esperar ningún ack, ni siquiera completó el empuje.
+//
+// Viaja SIEMPRE junto a ctx.Err() (doble %w), así que errors.Is(err,
+// context.Canceled/DeadlineExceeded) sigue diciendo la verdad para quien no distinga
+// los casos. Es la misma separación que la Enmienda 1 (regla 2) exige entre «el
+// llamante se rindió» y «el Edge no lee su stream»: confundirlos borra la señal.
+//
+// 🔴 Lo que este error NO dice: que el comando no vaya a salir. La goroutine del Send
+// sobrevive a la salida por ctx.Done() (ver el ⚠️ de Push), así que el comando puede
+// viajar al Edge DESPUÉS de que el llamante haya recibido su error.
+var ErrPushAbandonado = errors.New("el llamante se rindió empujando el comando al Edge")
+
 // defaultSendTimeout acota cada Send hacia un Edge cuando no se configura otro con
 // WithSendTimeout. 10s es holgado para un stream sano y a la vez desatasca al
 // llamante si el Edge dejó de leer (control de flujo gRPC).
@@ -112,9 +132,11 @@ func (r *Registry) Register(sessionID string, s Sender) (release func()) {
 //   - ErrSessionOffline si la sesión no está online. Esta comprobación es PREVIA y
 //     O(1), y GANA SIEMPRE: un ctx ya cancelado no debe convertir un «esa sesión no
 //     existe» en un «se acabó el tiempo» (Enmienda 1, regla 3).
-//   - ctx.Err() —NO ErrPushTimeout— si el llamante se rindió antes de que el Send
-//     contestara. «El llamante se rindió» y «el Edge no lee su stream» son fallos
-//     DISTINTOS y confundirlos borraría la señal (Enmienda 1, regla 2).
+//   - ErrPushAbandonado junto a ctx.Err() —NO ErrPushTimeout— si el llamante se rindió
+//     antes de que el Send contestara. «El llamante se rindió» y «el Edge no lee su
+//     stream» son fallos DISTINTOS y confundirlos borraría la señal (Enmienda 1,
+//     regla 2). El centinela se añadió en T5.4, cuando el presupuesto de la petición
+//     convirtió este camino en el desenlace normal de un envío saturado.
 //   - ErrPushTimeout si venció el sendTimeout (Edge lento que no lee su stream). El
 //     timer NO se retira con la llegada del ctx: sigue siendo el techo absoluto para
 //     el llamante que pase un ctx sin deadline —un handler HTTP no trae ninguno— y
@@ -146,7 +168,7 @@ func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		return fmt.Errorf("push a la sesión %q abandonado por el llamante: %w", sessionID, ctx.Err())
+		return fmt.Errorf("%w: sesión %q: %w", ErrPushAbandonado, sessionID, ctx.Err())
 	case <-timer.C:
 		return fmt.Errorf("%w: %q", ErrPushTimeout, sessionID)
 	}

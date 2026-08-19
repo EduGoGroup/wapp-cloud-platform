@@ -1,6 +1,8 @@
 package publicapi
 
 import (
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -251,10 +253,10 @@ func decodeEventTelemetryCursor(s string) (time.Time, int64, error) {
 // Lectura sin auditoría (protectRead): es idempotente y sin efecto, mismo
 // criterio que el resto de lecturas de este archivo (audit.read,
 // entitlements.read, intents.read GET).
-func registerEventTelemetry(mux *http.ServeMux, d Deps, mw *httpapi.Middleware) {
+func registerEventTelemetry(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, log sharedlogger.Logger) {
 	if d.EventTelemetry == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/events/telemetry", protectRead(mw,
+	mux.Handle("GET /api/v1/events/telemetry", protectRead(mw, log,
 		"events_telemetry.read", eventTelemetryHandler(d.EventTelemetry)))
 }

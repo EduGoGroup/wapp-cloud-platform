@@ -66,8 +66,16 @@ type AppConfig struct {
 	// handler ni cancela su contexto: solo hace fallar el Write posterior. Si este
 	// timeout lo igualara o superara, el 504 se generaría con el deadline de
 	// escritura ya vencido y el cliente seguiría viendo una conexión cerrada sin
-	// respuesta — exactamente el síntoma que este reloj viene a eliminar. 8s deja
-	// ~2s de margen para serializar y escribir la respuesta.
+	// respuesta — exactamente el síntoma que este reloj viene a eliminar.
+	//
+	// 🔴 CORREGIDO (Plan 050 · Ola 5 · T5.4). El párrafo de arriba decía además que
+	// «8s deja ~2s de margen para serializar y escribir la respuesta». Eso solo era
+	// cierto si este reloj fuera el ÚNICO del envío, y no lo es: por delante corren
+	// la guarda de tenant (PublicAPIDBTimeout, 1,5s) y el empuje (GRPCPushTimeout,
+	// 10s), los tres SECUENCIALES. El margen que este valor deja por sí solo no
+	// existe. Ver la cuenta entera —y quién la hace cumplir ahora— en el comentario
+	// de PublicAPIDBTimeout, más abajo en este mismo struct. No repetir aquí la
+	// aritmética: tenerla escrita dos veces fue justo lo que la desincronizó.
 	GRPCAckTimeout time.Duration `yaml:"grpc_ack_timeout"`
 	// GatewayWorkQueue es el tope de trabajos encolados POR SESIÓN en el carril de
 	// trabajo del Gateway CloudLink (Plan 050 · Ola 1, ADR-0040). Cuando la cola de
@@ -95,14 +103,31 @@ type AppConfig struct {
 	// lenta cuelga al llamante antes incluso de que arranque el reloj del Ack.
 	// Default 1,5s. <=0 cae al default. Env WAPP_PUBLICAPI_DB_TIMEOUT.
 	//
-	// ⚠️ INVARIANTE: los dos relojes del envío son SECUENCIALES, no alternativos
-	// —primero la guarda de tenant, después el empuje con GRPCAckTimeout—, así que
+	// ⚠️ INVARIANTE: los relojes del envío son SECUENCIALES, no alternativos, así que
 	// contra el WriteTimeout del servidor HTTP (10s, internal/bootstrap/http.go:22)
-	// cuenta la SUMA. Con 1,5s el peor caso es 1,5+8 = 9,5s y todavía quedan ~0,5s
-	// del margen de escritura que los 8s del Ack reservan (ver el comentario de
-	// GRPCAckTimeout arriba). Con 3s la suma sería 11s: margen NEGATIVO, y el 504 se
-	// generaría con el deadline de escritura ya vencido — exactamente el síntoma que
-	// GRPCAckTimeout vino a eliminar (REQ-050.10, INV-050.6).
+	// cuenta la SUMA.
+	//
+	// 🔴 CORREGIDO (Plan 050 · Ola 5 · T5.4). Este párrafo decía «los DOS relojes» y
+	// hacía la cuenta 1,5+8 = 9,5s, concluyendo que quedaba margen. Eran TRES y la
+	// cuenta era falsa: se saltaba GRPCPushTimeout (10s, declarado en este mismo
+	// struct), que corre ENTRE los otros dos —internal/gateway/grpc/send.go:334 llama
+	// a Push y :338 a awaitAck, uno después del otro—. El peor caso real es
+	//
+	//	1,5 (guarda) + 10 (push) + 8 (ack) = 19,5s   contra un WriteTimeout de 10s
+	//
+	// es decir margen NEGATIVO por 9,5s, no positivo por 0,5s. Con el Edge saturado
+	// el POST se pasaba del deadline de escritura y el cliente veía la conexión
+	// cerrada sin cuerpo (el incidente del 2026-08-06, curl 52), reproducido en
+	// internal/publicapi/gateway_saturado_e2e_integration_test.go.
+	//
+	// 🔴 CÓMO SE SOSTIENE AHORA, y por qué esta cuenta ya no puede volver a mentir:
+	// NO se corrigió moviendo ninguno de los cuatro valores (INV-050.6 lo prohíbe, y
+	// los cuatro siguen exactamente donde estaban). Se AÑADIÓ un techo por encima de
+	// todos ellos —el presupuesto de la petición de envío, publicapi.SendBudgetFrom—
+	// que se DERIVA del WriteTimeout en vez de ser un quinto número suelto que
+	// alguien tenga que mantener a mano. Mover el WriteTimeout arrastra el
+	// presupuesto; la suma de abajo puede crecer sin que el cliente se quede sin
+	// respuesta, porque quien manda es el techo, no la suma.
 	PublicAPIDBTimeout time.Duration `yaml:"publicapi_db_timeout"`
 	// LogLevel es el nivel mínimo de logging: debug, info, warn o error.
 	LogLevel string `yaml:"log_level"`
