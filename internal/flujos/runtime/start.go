@@ -75,23 +75,18 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 //
 // `eventID` es el id del evento conversacional al que pertenece este arranque
 // (Plan 043 · Ola 4.5 · T4.5.1, D-043.21), o "" en los caminos sin evento (API,
-// keyword, fallback). ⚠️ Llega por parámetro y NO puede leerse de st.EventID, y el
-// motivo sobrevive a la Ola 6: quien pasa un eventID no vacío es SIEMPRE
-// enterEventFlow, que borra el flow_state justo antes de llamar aquí (events.go), así
-// que en ESE camino `exists` da false, no se hereda nada y st.EventID vale "" hasta
-// que pointStateAtEvent lo estampe DESPUÉS de arrancar. Quien tiene el evento recién
+// keyword, fallback). ⚠️ Llega por parámetro y NO puede leerse de st.EventID: en este
+// camino st nace fresco —siempre, desde que la Ola 7 retiró el reinicio— y el puntero
+// flow_state.event_id lo estampa pointStateAtEvent DESPUÉS de arrancar (events.go,
+// enterEventFlow), así que leerlo aquí daría SIEMPRE "". Quien tiene el evento recién
 // nacido/conmutado en la mano es el llamante, y es él quien lo pasa para que los
 // efectos del pre-carga (p. ej. item_added del Prime del carrito) lleguen al proyector
 // declarando a su padre.
 //
-// 🔁 Lo que la Ola 6 · T6.1 SÍ cambia es que st.EventID ya no es «siempre ""» como
-// decía este comentario: por la puerta del REINICIO nace con los punteros heredados
-// de la fila que pisa. Esa puerta es UNA SOLA y conviene tenerla clara, porque no es
-// la que se supone: es Start —el API de /admin/flows/start y /api/v1/.../start—, y
-// nada más. Ni enterEventFlow (borra la fila antes de llamar) ni startPlainFlow (solo
-// se llega a él sin flow_state) pueden traer nada que heredar. Y Start pasa eventID
-// "" siempre, así que los dos datos nunca compiten: o hay parámetro y no hay
-// herencia, o hay herencia y no hay parámetro. Ver el bloque de construcción de `st`.
+// 📌 Este párrafo dijo lo contrario entre la Ola 6 y la Ola 7 del Plan 053, y no por
+// error: mientras existió el reinicio por Start, st PODÍA nacer con los punteros
+// heredados de la fila que pisaba. Al retirarse esa rama, «st nace fresco» vuelve a ser
+// cierto sin excepciones.
 func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID, eventID string, intentParams map[string]string, intentName, tagline string) (*cloudlinkv1.Ack, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
@@ -112,86 +107,50 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	if err != nil {
 		return nil, fmt.Errorf("runtime: comprobar existencia: %w", err)
 	}
-	// Los punteros de la fila que este arranque va a PISAR, si es que hay una y el
-	// reinicio procede (Plan 053 · Ola 6 · T6.1). Fuera del `if` porque su cero —el
-	// caso de lejos más frecuente: no había conversación— es el que alimenta el
-	// arranque limpio de siempre.
-	var heredados inheritedPointers
+	// 409 INCONDICIONAL (Plan 053 · Ola 7). Aquí hubo, desde el Plan 027 · T8, un
+	// «gotcha de reinicio»: si el nodo inicial tenía ResumePolicy y esa política decía
+	// que el estado guardado estaba terminal, el Start REINICIABA la conversación en
+	// vez de rechazarla. Se retiró entera —con restartableOnStart y ownerFlowMismatch—
+	// porque llevaba sin poder ejecutarse desde el Plan 054 · T2.3, y las razones están
+	// abajo por si alguien viene a reponerla.
+	//
+	// POR QUÉ NO PODÍA EJECUTARSE (la cadena, verificada atacándola por el lado
+	// contrario y no por el nombre de las funciones):
+	//   1. Solo se reinicia si hay ResumePolicy para el nodo INICIAL. La única
+	//      registrada en producción es la del carrito (bootstrap.go) ⇒ el nodo inicial
+	//      tiene que ser cart.
+	//   2. cart se registra INCONDICIONALMENTE y su ProducesDurableContent() devuelve
+	//      true a secas (cart.go) ⇒ todo flujo con nodo inicial cart es durable.
+	//   3. Un flujo durable sin evento muere ARRIBA, en la guarda D-054.5, que va antes
+	//      de rt.store.Exists ⇒ no se llega aquí.
+	//   4. La única puerta que trae evento es enterEventFlow, y hace Delete(key) justo
+	//      antes ⇒ exists es false y el bloque ni se evaluaba.
+	// La condición que hacía falta —un módulo con ResumePolicy y NO durable— no la
+	// cumple ninguno.
+	//
+	// Y LA DECISIÓN DE PRODUCTO YA ESTABA TOMADA, que es lo que convierte esto en
+	// limpieza y no en un cambio de conducta: D-054.5 (design.md §4 del Plan 054)
+	// eligió que un Start sobre un flujo durable avise con 409 ANTES de tocar la base
+	// en vez de dejar la bandeja vacía horas después; el operador abre por la puerta de
+	// eventos (event_start), no por /admin/flows/start. Lo fijan
+	// TestCartStart_SiempreExigeEvento_ElGotchaDeReinicioQuedaSuperado y
+	// TestCartStart_ConPedidoVencido_SigueDando409, que ya se escribieron con la
+	// aserción invertida.
+	//
+	// SI ALGÚN DÍA SE REGISTRA UNA SEGUNDA ResumePolicy sobre un módulo no durable,
+	// esta es la línea a revisar — y la pregunta a contestar primero es de producto, no
+	// de código: ¿debe un /start por API poder reiniciar una conversación en curso?
+	// Para el carrito y la encuesta la respuesta ya es NO.
+	//
+	// ⚠️ NO CONFUNDIR CON prepareResume (resume.go), que sigue VIVO y es el reinicio
+	// por el camino del ENTRANTE: el cliente escribe, su pedido anterior ya terminó, y
+	// el flujo arranca de nuevo. Comparten el mapa rt.resumePolicies; lo que sobraba
+	// era ESTE consumidor, no el mecanismo.
 	if exists {
-		// Gotcha 409 (design.md §3.4) — ESTADO ACTUAL, no la historia que este
-		// comentario contaba antes de la guarda D-054.5 (arriba): hoy este bloque NO
-		// tiene camino vivo que lo ejecute con algo que reiniciar.
-		//
-		// API y keyword SIEMPRE pasan eventID=="" (Start la clava a "", startPlainFlow
-		// también); si def es durable —el carrito lo es SIEMPRE, cart.Module.
-		// ProducesDurableContent() no mira el flujo, devuelve true a secas— la guarda
-		// de arriba ya devolvió ErrDurableFlowNeedsEvent antes de llegar aquí. La
-		// única puerta que trae un eventID real es enterEventFlow (events.go), y esa
-		// hace rt.store.Delete(key) justo antes de llamar a startLocked, así que
-		// exists ya dio false y este `if` ni se evalúa. Y la ÚNICA ResumePolicy
-		// registrada en producción (bootstrap.go) es la de cart.NodeTypeCart: para
-		// cualquier otro tipo de nodo, restartableOnStart no encuentra política y
-		// devuelve (false, nil) sin más, así que tampoco reinicia nada.
-		//
-		// Neto: restartableOnStart puede seguir LLAMÁNDOSE (un nodo no-cart con
-		// exists==true) pero ya no puede REINICIAR nada — «solo el carrito se
-		// reinicia» describe un comportamiento que hoy es imposible de alcanzar. NO
-		// se borra aquí (esa decisión es de otro frente); se deja como lo que es: un
-		// camino sin nadie que lo recorra.
-		restart, previos, rerr := rt.restartableOnStart(ctx, def, key, tenantID, contactID, sessionID)
-		if rerr != nil {
-			return nil, rerr
-		}
-		if !restart {
-			return nil, ErrConversationExists
-		}
-		heredados = previos
+		return nil, ErrConversationExists
 	}
 
-	// EL ESTADO NACE FRESCO PERO NO HUÉRFANO (Plan 053 · Ola 6 · T6.1, cierra
-	// DEUDA-053.1). Hasta esta tarea, `st` se construía con los tres campos de la
-	// clave y nada más, y el Save de abajo —un upsert que escribe event_id y
-	// owner_event_id como cualquier otra columna (store/repository_postgres.go)—
-	// apagaba LOS DOS punteros de la fila que acababa de reiniciar. Por esta puerta
-	// nadie los vuelve a estampar: pointStateAtEvent solo corre desde enterEventFlow.
-	// El evento dueño se quedaba `open` PARA SIEMPRE —closeIfFinished ya no tiene por
-	// dónde alcanzarlo— y `stale` en GET /api/v1/conversation-events: exactamente la
-	// patología que el Plan 053 existe para cerrar, por la única puerta que el plan no
-	// miraba.
-	//
-	// SE HEREDA, NO SE ABANDONA, y la diferencia no es de matiz. Un reinicio no es un
-	// salto de conversación: la guarda de posesión de T3.1 ya rechazó con 409 todo
-	// Start cuyo dueño corra OTRO flujo, así que el dueño que llega hasta aquí es el
-	// del MISMO flujo que se arranca. Reiniciar el carrito del pedido #7 no abandona
-	// el #7 — resumirlo y cerrarlo (el trato de summarizeAbandoned, que es para el
-	// salto por tipo, el event_stop y el escape global) mataría un evento vivo y
-	// vaciaría su intake sin que el cliente lo pidiera.
-	//
-	// Los DOS precedentes que lo fijan, ambos ya en el árbol antes de esta tarea:
-	//  1. prepareResume, que es EL OTRO reinicio del mismo carrito —por el camino del
-	//     entrante en vez del Start— hace `fresh := *st; fresh.Vars = nil`: conserva
-	//     los dos punteros y tira SOLO las Vars. Dos implementaciones del mismo
-	//     reinicio y solo una conservaba la pertenencia.
-	//  2. restartableOnStart YA retenía el event_id de esta misma fila para dárselo al
-	//     EffectContext (T4.5.1, D-043.21): el mismo turno declaraba al evento padre
-	//     de los efectos que la política sintetiza y acto seguido le quitaba la fila.
-	//     La retención había llegado al fan-out y no al Save.
-	//
-	// Lo que NO se hereda son las Vars: arrancar limpio ES el reinicio (por eso
-	// inheritedPointers lleva los punteros y nada más). Y en el arranque LIMPIO
-	// —heredados en su cero— esto es byte a byte lo de siempre: dos "" en dos campos
-	// que ya nacían "".
-	//
-	// ⚠️ La puerta que hereda es UNA: Start. Los otros dos llamantes de startLocked no
-	// pueden traer fila —enterEventFlow hace Delete(key) justo antes, y a
-	// startPlainFlow solo se llega desde handleTrigger, que exige que no haya
-	// flow_state—, así que para ellos esta línea no existe. Vale la pena saberlo antes
-	// de tocar nada aquí: lo que se lea como «esto afecta a todos los arranques» es
-	// falso, y lo que se lea como «esto no lo ejecuta nadie» también.
-	st := model.Conversation{
-		TenantID: tenantID, SessionID: sessionID, ContactID: contactID,
-		EventID: heredados.active, OwnerEventID: heredados.owner,
-	}
+	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	// Params iniciales (Plan 029 · T8): al arrancar por decisión llm se siembran los
 	// intent_params en Vars ANTES del primer paso, para que un módulo pre-cargue el
 	// flujo (p. ej. el carrito con el producto pedido). EnterPrimed consulta la
@@ -215,31 +174,11 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// guardado todavía, así que no hay nada que revertir— y el cliente recibe el
 	// aviso en vez del render normal del nodo inicial.
 	if len(effects) > 0 {
-		// EventID sale del PARÁMETRO, y NO del st.EventID heredado por T6.1, porque
-		// aquí ese heredado es SIEMPRE "": pre-carga y herencia son mutuamente
-		// EXCLUYENTES por construcción, no por casualidad. La cadena, verificada
-		// llamante a llamante:
-		//
-		//   - Solo hay efectos si tryPrime disparó, y tryPrime exige intent_params en
-		//     Vars ⇒ el llamante tuvo que pasar intentParams.
-		//   - Los DOS que los pasan son enterEventFlow (events.go) y startPlainFlow
-		//     (incoming.go), y ninguno puede llegar con fila que heredar: el primero
-		//     hace Delete(key) justo antes de llamar; al segundo solo se llega desde
-		//     handleTrigger, y sus dos caminos exigen que NO haya flow_state (o no
-		//     había, o conversationClock acaba de borrarlo), todo bajo el mismo lock
-		//     de la clave.
-		//   - Y la única puerta que SÍ hereda —Start, la del API— clava
-		//     intentParams=nil (start.go, en la llamada de Start a startLocked).
-		//
-		// Se probó a curarse en salud con un `if padre == "" { padre = heredados.active }`
-		// y se retiró al medirlo: la mutación que lo borra no pone rojo NADA porque no
-		// puede — es código inalcanzable defendido por un caso imposible, justo lo que
-		// H5 de la Ola 3 obligó a limpiar en ownerFlowMismatch. Si algún día Start
-		// aceptara params, ESTA es la línea que hay que revisar.
-		//
-		// Durable sale del ÚNICO nodo que pudo producir estos efectos: el inicial
-		// (def.Initial) — el pre-carga de EnterPrimed solo dispara sobre ese nodo
-		// (engine.tryPrime).
+		// EventID sale del PARÁMETRO, no de st.EventID: aquí st.EventID es SIEMPRE ""
+		// a propósito (pointStateAtEvent estampa el puntero después de este camino).
+		// Ver el comentario de la firma. Durable sale del ÚNICO nodo que pudo producir
+		// estos efectos: el inicial (def.Initial) — el pre-carga de EnterPrimed solo
+		// dispara sobre ese nodo (engine.tryPrime).
 		ec := EffectContext{
 			TenantID: st.TenantID, ContactID: st.ContactID, SessionID: sessionID,
 			FlowID: st.FlowID, FlowVersion: st.FlowVersion, EventID: eventID,
