@@ -357,9 +357,32 @@ func Run(ctx context.Context) error {
 		// sin esto la única respuesta a «¿por qué no contesta?» era subir el log a
 		// debug e inundarlo. Va por callback para que el motor no importe prometheus.
 		flowruntime.WithReactiveBlockedHook(mtx.FlowReactiveBlocked),
+		// Histograma de las rachas de auto-respuestas consecutivas por conversación
+		// (Plan 049 · Opción A: OBSERVAR). Mismo desacoplo que la línea de arriba —
+		// va por callback para que el motor no importe prometheus— y misma regla: el
+		// hook OBSERVA, no decide. No hay umbral ni corte; cortar es la Opción B,
+		// aplazada hasta tener 2-4 semanas de esta distribución con la que calibrarlo.
+		flowruntime.WithAutoreplyStreakHook(mtx.FlowAutoreplyStreak),
 		// Tercer toque del recordatorio perezoso de la seña (T4.4): el cliente vuelve
 		// a escribir. No añade reloj ninguno — el disparador es el entrante.
 		flowruntime.WithDepositReminder(depositReminder))
+	// Fuente del gauge wapp_flow_autoreply_streak_max (Plan 049 · Opción A). Va AQUÍ,
+	// después de construir el runtime, y NO como una Option, porque la dependencia va
+	// AL REVÉS que la del hook de arriba: el histograma lo EMPUJA el motor cuando una
+	// racha se cierra (push), pero un gauge se TIRA en el scrape (pull), así que quien
+	// tiene que poder preguntar es métricas, y lo que se le inyecta es la función a la
+	// que preguntar. El gauge ya está registrado desde metrics.New(); hasta esta línea
+	// su fuente es nil y el scrape devuelve 0 — ventana esperada, no un fallo.
+	//
+	// 🔴 MaxAutoreplyStreak es O(conversaciones vivas) bajo el candado del contador:
+	// esta línea es el ÚNICO sitio del que debe colgar. Ver su docstring.
+	//
+	// 🔴 Y NO ES UNA LECTURA INOCUA: de paso BARRE las rachas vencidas por inactividad
+	// y las manda al histograma. Es a propósito —el scrape es el único latido regular
+	// que este servicio tiene sin montar una goroutine de fondo (ADR-0003)— y tiene una
+	// consecuencia operativa que conviene saber: si nadie raspa /metrics, los episodios
+	// abandonados no se cierran nunca. Explicado en streakCounter.Max (streak.go).
+	mtx.SetFlowAutoreplyStreakMaxSource(flowRuntime.MaxAutoreplyStreak)
 
 	gw.OnIncoming = flowRuntime.OnIncoming
 	gw.OnHeartbeat = func(sessionID string, m *cloudlinkv1.Heartbeat) {

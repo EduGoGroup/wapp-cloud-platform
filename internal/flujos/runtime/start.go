@@ -191,7 +191,7 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 			if derr != nil {
 				return nil, derr
 			}
-			return rt.send(ctx, sessionID, to, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+			return rt.send(ctx, sessionID, to, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
 		}
 	}
 	if err := rt.store.Save(ctx, st); err != nil {
@@ -201,7 +201,13 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	if err != nil {
 		return nil, err
 	}
-	return rt.send(ctx, sessionID, to, outs)
+	// Cuenta la racha por `key`, que es la MISMA clave que usa el llamante (Start la
+	// clava y startLocked la recibe): el arranque es la primera auto-respuesta del
+	// episodio. ⚠️ Este punto lo recorren las DOS puertas —el arranque por API/admin
+	// (Start) y el arranque REACTIVO por keyword/fallback/evento (handleTrigger,
+	// enterEventFlow)— y las dos cuentan, a propósito: las dos son el motor hablándole
+	// al contacto sin que un humano teclee nada, que es la definición de la métrica.
+	return rt.send(ctx, sessionID, to, key, outs)
 }
 
 // appendTagline PEGA la coletilla al final del último texto que se va a enviar (T3.8
