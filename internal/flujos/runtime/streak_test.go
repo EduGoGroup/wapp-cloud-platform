@@ -10,6 +10,7 @@
 package runtime
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -476,7 +477,7 @@ func TestRacha_ConcurrenciaCuentaBien(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			propia := t49Key("sess-propia", "contacto-"+string(rune('A'+n%26))+string(rune('a'+n/26)))
+			propia := t49Key("sess-propia", fmt.Sprintf("contacto-%d", n))
 			for i := 0; i < porGoroutine; i++ {
 				c.Inc(propia, t49T0)
 			}
