@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -36,6 +37,27 @@ type Metrics struct {
 	reactiveBlocks     *prometheus.CounterVec
 	webhookDeliveries  *prometheus.CounterVec
 	flowEventLifecycle *prometheus.CounterVec
+	autoreplyStreak    prometheus.Histogram
+
+	// Fuente del gauge wapp_flow_autoreply_streak_max (Plan 049 · Opción A).
+	// Aquí la dependencia va AL REVÉS que en el resto del paquete: los demás
+	// colectores los EMPUJA el runtime por callback (Receipt,
+	// FlowReactiveBlocked…), pero un gauge se TIRA en el scrape, así que
+	// metrics tiene que poder preguntarle al runtime. Se resuelve con una
+	// función inyectada, no con un import: el motor sigue sin conocer
+	// prometheus.
+	//
+	// Va bajo RWMutex y NO bajo atomic.Pointer[func() int] a propósito: el
+	// atómico obligaría a guardar un puntero A una variable de tipo función
+	// (&fn) y a desreferenciarlo en cada scrape para poder distinguir el "aún
+	// no inyectada", lo que es más ruidoso de leer sin ganar nada medible aquí
+	// — hay UNA escritura en todo el arranque y una lectura cada intervalo de
+	// scrape (segundos), o sea contención nula. El mutex sí hace falta: New()
+	// corre en el arranque y el scrape corre concurrentemente, así que
+	// escribir el campo sin sincronizar sería una carrera de datos real (la
+	// caza `go test -race`).
+	streakMaxMu     sync.RWMutex
+	streakMaxSource func() int
 }
 
 // New construye el registry propio y registra los colectores. Incluye los
@@ -73,12 +95,46 @@ func New() *Metrics {
 			Name: "wapp_flow_event_lifecycle_total",
 			Help: "Efectos de ciclo de vida del evento conversacional leídos del outbox flow_events (Plan 043 · T6.5, MD-043.17), por nombre de efecto, tipo de evento (event_kind = payload->>'kind', NUNCA la columna kind) y causa (reason = payload->>'reason', solo poblado en event_escaped: owner_flow_finished|orphan_menu|client_escape; vacío en el resto y en las filas anteriores al Plan 053 · T4.1).",
 		}, []string{"name", "event_kind", "reason"}),
+		autoreplyStreak: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "wapp_flow_autoreply_streak",
+			Help: "Distribución de la LONGITUD de las rachas de auto-respuestas consecutivas por conversación (Plan 049 · Opción A, OBSERVAR): se observa UNA vez por episodio CERRADO, y el episodio se cierra cuando muere el estado de la conversación (flujo terminado, escape del cliente o TTL) o cuando pasan 30 min sin auto-respuestas — sin ese matiz el número no se interpreta bien. ⚠️ EL CIERRE POR INACTIVIDAD LO MATERIALIZA ESTE MISMO SCRAPE: como no hay proceso de fondo (ADR-0003), el runtime barre las rachas vencidas cuando alguien raspa /metrics (al calcular wapp_flow_autoreply_streak_max, que ya recorre el mapa), así que una racha abandonada aparece aquí en el primer scrape POSTERIOR a sus 30 min de silencio, no en el instante en que venció — y si nadie raspa, no se cierra. ⚠️ Y PUEDE TARDAR UN SCRAPE MÁS: el registry colecta este histograma y el gauge hermano EN PARALELO, así que si el histograma serializa su estado antes de que corra la fuente del gauge —que es quien barre—, lo barrido en el scrape N se publica en el N+1. Medido, no supuesto (TestAutoreplyStreak_ObservarDuranteElScrapeNoSeBloquea): no se pierde ni se duplica ninguna observación, solo llega tarde. Consecuencia práctica al VERIFICARLO A MANO: hay que raspar DOS veces; con un solo scrape se puede ver _count sin moverse y concluir en falso que el cableado no funciona. Al leer el histograma: los episodios abandonados llegan con retraso (hasta un intervalo de scrape) y, tras un reinicio del proceso, las rachas vivas en memoria se pierden sin observarse. ⚠️ UNIDAD: lo que se cuenta es UNA EMISIÓN del motor (una llamada a send), NO un turno conversacional. Un mismo entrante puede producir más de una emisión (p. ej. el resumen del rescate y, acto seguido, la pantalla del flujo), así que la racha es una COTA SUPERIOR del número de turnos. Consecuencia práctica para quien lea el p99: la estimación de «20-30 auto-respuestas legítimas» del §5 del plan está en TURNOS, así que en esta métrica ese mismo recorrido puede leerse algo más alto — no se debe traducir un percentil de esta métrica a un umbral de turnos sin ese ajuste. Y en el otro extremo: también cuentan los avisos de error del sistema (el aviso de fallo del sink durable) y cada escape acaba dejando un 1 en el histograma (tras el cierre, el propio aviso de escape abre una racha nueva de 1, que se observa cuando esa racha de 1 vence por inactividad y la barre el scrape siguiente — no en el instante del escape), de modo que la cola baja está sesgada hacia abajo por esas dos causas y la mediana NO se debe leer como «longitud típica de una conversación». ⚠️ QUÉ NO CUENTA (la métrica SUBCUENTA, y es sabido): solo se cuentan los envíos que pasan por el motor de flujos (internal/flujos/runtime, función send). Las NOTIFICACIONES DE CAMBIO DE ESTADO DEL PEDIDO (internal/intakes/notifier.go) van directas al Sender sin pasar por ahí y NO suman a la racha, aunque son auto-respuestas de pleno derecho: el sistema hablándole al MISMO contacto de la conversación sin que nadie haya tecleado nada. Así que en las conversaciones con pedido vivo la racha real es más larga que la publicada. Cablear el contador en el Notifier quedó fuera del alcance de la Opción A. (Los otros dos puntos de envío fuera del motor —internal/publicapi/messages.go y internal/platform/httpapi/admin.go— quedan fuera CON RAZÓN: son envíos humanos, no auto-respuestas.) ⚠️ NO ES UNA ALARMA Y NO SE DEBE MONTAR UNA ALERTA SOBRE ELLA: igual que en wapp_flow_reactive_blocked_total se distingue el corte DELIBERADO de política (que no es un error) de la PÉRDIDA real (saturation, el único motivo sobre el que alarmar), aquí una racha larga es OBSERVACIÓN DE POLÍTICA, no degradación — una conversación larga es el motor funcionando exactamente como se diseñó (un catálogo que pagina de 5 en 5 hasta 500 artículos produce 20-30 auto-respuestas perfectamente legítimas). No hay umbral y no se corta a nadie: se cuenta y se publica. Su único propósito es medir la distribución de las rachas LEGÍTIMAS durante 2-4 semanas para poder decidir DESPUÉS, con datos (el p99), si procede un corte — la Opción B del Plan 049, hoy APLAZADA.",
+			// Escala tipo Fibonacci de 1 a 987: fina donde se toma la decisión y
+			// abierta hacia la cola. El §5 del plan estima el recorrido legítimo
+			// más largo (catálogo paginado de 5 en 5 hasta 500 artículos) en 20-30
+			// auto-respuestas, y el §9 quiere leer el p99 de las rachas legítimas
+			// para poder ELEGIR un umbral después. Por eso la resolución fina está
+			// en 13-55 (13, 21, 34, 55): es la franja donde caerá ese p99, y un
+			// bucket ancho ahí lo dejaría en un intervalo demasiado gordo para
+			// justificar un corte. Por debajo (1, 2, 3, 5, 8) se separan las
+			// conversaciones triviales de las de menú; por encima (89…987) los
+			// buckets se ensanchan a propósito: ahí ya no se afina nada, solo
+			// interesa VER si existe cola larga (un bucle con terceros). Sin
+			// etiquetas: tenant y session están PROHIBIDOS por la regla dura del
+			// paquete, así que el histograma es plano y no un HistogramVec.
+			Buckets: []float64{1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987},
+		}),
 	}
+	// El GaugeFunc se construye DESPUÉS del literal porque su closure captura m
+	// (la fuente vive en el struct y se inyecta más tarde, ver
+	// SetFlowAutoreplyStreakMaxSource). Se registra ya, con la fuente todavía
+	// nil: durante esa ventana el scrape devuelve 0 en vez de entrar en pánico.
+	autoreplyStreakMax := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "wapp_flow_autoreply_streak_max",
+		Help: "Longitud de la racha de auto-respuestas VIVA más larga en este instante (Plan 049 · Opción A), muestreada en el momento del scrape. ⚠️ UNIDAD: la racha cuenta EMISIONES del motor (llamadas a send), NO turnos conversacionales — un mismo entrante puede producir más de una emisión (p. ej. el resumen del rescate y, acto seguido, la pantalla del flujo) y también cuentan los avisos de error del sistema (el aviso de fallo del sink durable), así que este valor es una COTA SUPERIOR del número de turnos: la estimación de «20-30 auto-respuestas legítimas» del §5 del plan está en TURNOS y aquí ese mismo recorrido puede verse algo más alto, de modo que no se debe traducir este número a un umbral de turnos sin ese ajuste. Por el mismo motivo un valor bajo tampoco dice gran cosa: tras un escape el propio aviso abre inmediatamente una racha nueva de 1. Existe porque wapp_flow_autoreply_streak solo observa episodios CERRADOS, y un bucle desbocado contra un autorespondedor de terceros NO cierra nunca mientras dura: sería invisible en el histograma justo mientras está ocurriendo. Este gauge lo hace visible EN VIVO y responde a la pregunta 3 del §9 del plan («¿ocurre siquiera un bucle con terceros?»). ⚠️ VIVA QUIERE DECIR VIVA: el propio scrape BARRE antes de medir las rachas que llevan más de 30 min sin una auto-respuesta (y las manda al histograma), precisamente para que este número no se quede clavado en una racha fosilizada de una conversación que el cliente abandonó hace horas — sin ese barrido, un catálogo legítimo de 30 abandonado dejaría el gauge en 30 para siempre y no se distinguiría de un bucle en curso. Efecto lateral que conviene conocer: leer /metrics tiene consecuencias sobre el histograma hermano, y el intervalo de scrape es la resolución con la que se cierran los episodios inactivos. ⚠️ SUBCUENTA IGUAL QUE EL HISTOGRAMA: las notificaciones de estado del pedido (internal/intakes/notifier.go) no pasan por el motor de flujos y no suman a la racha. ⚠️ TAMPOCO ES UNA ALARMA: no hay umbral, no se corta a nadie y un valor alto puede ser una conversación larga legítima (el episodio se cierra por fin de conversación o por 30 min sin auto-respuestas); se publica para OBSERVAR, no para alertar. Vale 0 cuando no hay ninguna racha viva Y TAMBIÉN mientras no se haya inyectado la fuente (la ventana de arranque entre New() y el cableado del runtime), así que un cero no distingue «sin tráfico» de «sin cablear».",
+	}, func() float64 {
+		m.streakMaxMu.RLock()
+		fn := m.streakMaxSource
+		m.streakMaxMu.RUnlock()
+		if fn == nil {
+			return 0
+		}
+		return float64(fn())
+	})
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks, m.webhookDeliveries,
-		m.flowEventLifecycle,
+		m.flowEventLifecycle, m.autoreplyStreak, autoreplyStreakMax,
 	)
 	return m
 }
@@ -224,6 +280,61 @@ func (m *Metrics) FlowEventLifecycle(name, eventKind, reason string, delta float
 		return
 	}
 	m.flowEventLifecycle.WithLabelValues(name, eventKind, reason).Add(delta)
+}
+
+// --- Rachas de auto-respuestas (Plan 049 · Opción A: OBSERVAR) --------------
+
+// FlowAutoreplyStreak observa la longitud de UNA racha de auto-respuestas
+// consecutivas en una conversación, y se llama UNA sola vez por episodio, al
+// CERRARSE (flujo terminado, escape, TTL del estado, o 30 min sin
+// auto-respuestas). Llamarla en cada auto-respuesta en vez de al cierre
+// convertiría el histograma en la distribución de los prefijos de cada racha
+// —1, 2, 3, … para una racha de 3— y el p99 saldría hundido hacia 1.
+//
+// ⚠️ Esto MIDE, no corta: la Opción A del Plan 049 no fija umbral ni frena a
+// nadie. Un valor alto no es un incidente (ver el Help de la métrica). El corte
+// es la Opción B, aplazada hasta tener 2-4 semanas de esta distribución.
+//
+// SIN etiquetas, por la regla dura del paquete: ni tenant ni sesión (aislamiento
+// + cardinalidad). Para saber QUÉ conversación tuvo la racha larga se va al log
+// del runtime, no a /metrics — mismo criterio que FlowReactiveBlocked.
+//
+// Se pasa como callback al runtime de flujos (que NO importa este paquete:
+// mismo desacoplo que Receipt/FlowReactiveBlocked/WebhookDelivery).
+func (m *Metrics) FlowAutoreplyStreak(racha int) {
+	if m == nil {
+		return
+	}
+	m.autoreplyStreak.Observe(float64(racha))
+}
+
+// SetFlowAutoreplyStreakMaxSource fija la fuente del gauge
+// wapp_flow_autoreply_streak_max: una función que devuelve la racha VIVA más
+// larga en este instante, que el colector invoca EN CADA SCRAPE.
+//
+// POR QUÉ UNA FUENTE INYECTADA Y NO UN CALLBACK como el resto del paquete: los
+// demás colectores los empuja el runtime cuando pasa algo (push), pero un gauge
+// se tira en el scrape (pull), así que la dependencia va al revés y metrics
+// necesita poder PREGUNTAR. Inyectar la función mantiene la regla de la casa —
+// el motor sigue sin importar prometheus, igual que con WithReactiveBlockedHook.
+//
+// POR QUÉ SE PUEDE LLAMAR DESPUÉS DE New(): el gauge se registra en New(), pero
+// el runtime que sabe contestar no existe todavía en ese momento. Mientras la
+// fuente sea nil el scrape devuelve 0 y NO entra en pánico; esa ventana es
+// esperada, no un fallo. (Un 0 en esa ventana es indistinguible de «no hay
+// ninguna racha viva» — asumido: la alternativa, no registrar el gauge hasta el
+// cableado, deja /metrics cambiando de forma a mitad del arranque.)
+//
+// Nil-safe respecto al receptor, como el resto del paquete. La escritura va bajo
+// el mismo RWMutex que lee el colector: New() y el scrape son concurrentes.
+// Llamarla dos veces es legal: gana la última.
+func (m *Metrics) SetFlowAutoreplyStreakMaxSource(fn func() int) {
+	if m == nil {
+		return
+	}
+	m.streakMaxMu.Lock()
+	m.streakMaxSource = fn
+	m.streakMaxMu.Unlock()
 }
 
 // --- Pool de conexiones a PostgreSQL (Plan 050 · Ola 4 · T4.3) --------------

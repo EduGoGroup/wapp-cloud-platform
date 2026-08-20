@@ -104,7 +104,14 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	if notice != "" {
 		texts = append([]engine.Output{{Text: notice}}, outs...)
 	}
-	if _, err := rt.send(ctx, sessionID, to, texts); err != nil {
+	// prepareResume no recibe la store.Key —trabaja con tenantID/sessionID/contactID
+	// sueltos, igual que el resto de la función—, así que se RECONSTRUYE con las tres
+	// piezas que sí están en ámbito: exactamente la misma que arman el cobro del
+	// anti-loop (arriba) y el sendReply del corte durable. El aviso del reinicio y el
+	// nodo inicial fresco van en UNA llamada a propósito (ver el comentario del turno
+	// en send.go): son un turno, no dos auto-respuestas.
+	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
+	if _, err := rt.send(ctx, sessionID, to, key, texts); err != nil {
 		return false, err
 	}
 	return true, nil
