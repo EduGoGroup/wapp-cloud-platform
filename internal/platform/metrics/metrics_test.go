@@ -272,3 +272,75 @@ func TestFlowEventLifecycle_MismaCausaAcumula(t *testing.T) {
 		t.Fatalf("dos deltas sobre la misma serie deben sumar:\n  %s\n\nCuerpo:\n%s", want, body)
 	}
 }
+
+// --- Rachas de auto-respuestas (Plan 049 · Opción A) ------------------------
+
+// TestFlowAutoreplyStreak_ObservaEnLosBuckets verifica que el histograma existe,
+// que NO lleva etiquetas (regla dura del paquete: ni tenant ni sesión) y que las
+// observaciones caen donde deben. Los dos valores elegidos (3 y 30) cruzan la
+// franja fina 13-55, que es justo la que el §9 del plan necesita para leer el p99
+// de las rachas legítimas.
+func TestFlowAutoreplyStreak_ObservaEnLosBuckets(t *testing.T) {
+	m := New()
+	m.FlowAutoreplyStreak(3)
+	m.FlowAutoreplyStreak(30)
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`wapp_flow_autoreply_streak_bucket{le="3"} 1`,
+		`wapp_flow_autoreply_streak_bucket{le="21"} 1`,
+		`wapp_flow_autoreply_streak_bucket{le="34"} 2`,
+		`wapp_flow_autoreply_streak_bucket{le="+Inf"} 2`,
+		"wapp_flow_autoreply_streak_sum 33",
+		"wapp_flow_autoreply_streak_count 2",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("falta %q en /metrics:\n%s", want, body)
+		}
+	}
+}
+
+// TestFlowAutoreplyStreakMax_SinFuenteValeCero fija el contrato de la ventana de
+// arranque: el gauge se registra en New() pero la fuente solo se conoce después
+// de construir el runtime, así que el scrape de ese hueco debe dar 0 y NO entrar
+// en pánico. Es el fallo que rompería /metrics ENTERO, no solo esta serie.
+func TestFlowAutoreplyStreakMax_SinFuenteValeCero(t *testing.T) {
+	m := New()
+	if body := scrape(t, m); !strings.Contains(body, "wapp_flow_autoreply_streak_max 0") {
+		t.Errorf("sin fuente inyectada el gauge debe valer 0:\n%s", body)
+	}
+}
+
+// TestFlowAutoreplyStreakMax_LeeLaFuente distingue "publiqué la serie" de
+// "publiqué el DATO": si el gauge devolviera una constante en vez de invocar la
+// fuente EN EL SCRAPE, este test se pone rojo. El contador de llamadas comprueba
+// además que se invoca de verdad una vez por scrape (pull), no una sola vez al
+// registrar.
+func TestFlowAutoreplyStreakMax_LeeLaFuente(t *testing.T) {
+	m := New()
+	llamadas := 0
+	m.SetFlowAutoreplyStreakMaxSource(func() int {
+		llamadas++
+		return 42
+	})
+
+	if body := scrape(t, m); !strings.Contains(body, "wapp_flow_autoreply_streak_max 42") {
+		t.Errorf("el gauge no está leyendo la fuente inyectada:\n%s", body)
+	}
+	if llamadas != 1 {
+		t.Errorf("la fuente debe invocarse en el scrape: llamadas = %d, want 1", llamadas)
+	}
+	// La última inyección gana: el runtime puede recablearla.
+	m.SetFlowAutoreplyStreakMaxSource(func() int { return 0 })
+	if body := scrape(t, m); !strings.Contains(body, "wapp_flow_autoreply_streak_max 0") {
+		t.Errorf("la segunda inyección debe reemplazar a la primera:\n%s", body)
+	}
+}
+
+// TestFlowAutoreplyStreak_NilSafe cubre los dos métodos nuevos sobre un *Metrics
+// nil, igual que TestNilSafe hace con el resto del paquete.
+func TestFlowAutoreplyStreak_NilSafe(t *testing.T) {
+	var m *Metrics
+	m.FlowAutoreplyStreak(7)
+	m.SetFlowAutoreplyStreakMaxSource(func() int { return 7 })
+}
