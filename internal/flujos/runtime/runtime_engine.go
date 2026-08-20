@@ -192,6 +192,27 @@ type Runtime struct {
 	// acoplar el motor a prometheus, igual que el onRecord del sink de acuses. nil
 	// (default) ⇒ no se cuenta nada: los cortes se comportan igual.
 	onReactiveBlocked func(reason string)
+	// onAutoreplyStreak observa la LONGITUD de cada racha de auto-respuestas que se
+	// CIERRA (Plan 049 · Opción A, OBSERVAR). Se invoca una sola vez por episodio, al
+	// cerrarse —flujo terminado, escape, TTL del estado o 30 min de inactividad—, NO
+	// en cada auto-respuesta: llamarlo en cada una convertiría el histograma en la
+	// distribución de los prefijos de cada racha (1, 2, 3… para una racha de 3) y
+	// hundiría el p99 hacia 1. Ver streak.go.
+	//
+	// Hook NIL-SAFE inyectado con WithAutoreplyStreakHook —típicamente
+	// metrics.FlowAutoreplyStreak— por la MISMA razón que su hermano
+	// onReactiveBlocked: el motor de flujos NUNCA importa prometheus. La observación
+	// va por callback; el motor no conoce a quién le está contando nada. nil (default)
+	// ⇒ no se observa: el contador sigue contando y el envío se comporta igual.
+	//
+	// ⚠️ OBSERVA, NUNCA DECIDE: no hay umbral ni corte en la Opción A (cortar es la B,
+	// aplazada hasta tener 2-4 semanas de esta distribución).
+	onAutoreplyStreak func(racha int)
+	// autoreplyStreaks es el contador de rachas por conversación (streak.go). Lo
+	// construye New SIEMPRE —no depende de que el hook esté cableado— para que el
+	// gauge de la racha viva (MaxAutoreplyStreak) tenga qué contestar aunque nadie
+	// haya inyectado el histograma.
+	autoreplyStreaks *streakCounter
 	// passiveAnnounced recuerda qué sesiones ya anunciaron a INFO su corte por rol
 	// passive, para decirlo UNA vez por sesión y las siguientes a Debug. El corte
 	// salta en CADA entrante de una sesión passive (~2.000/hora en el e2e del
@@ -393,6 +414,15 @@ func WithReactiveBlockedHook(fn func(reason string)) Option {
 	return func(rt *Runtime) { rt.onReactiveBlocked = fn }
 }
 
+// WithAutoreplyStreakHook inyecta el observador de rachas de auto-respuestas (Plan
+// 049 · Opción A): recibe la LONGITUD de cada racha al CERRARSE el episodio, una vez
+// por episodio. Se cablea con metrics.FlowAutoreplyStreak; sin él el contador sigue
+// contando (el gauge de la racha viva funciona igual) y simplemente nadie recoge el
+// histograma. El hook NO decide: solo observa — igual que WithReactiveBlockedHook.
+func WithAutoreplyStreakHook(fn func(racha int)) Option {
+	return func(rt *Runtime) { rt.onAutoreplyStreak = fn }
+}
+
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de
 // efectos) se pasan como Option; sin ninguna, el fan-out queda en LogSink
 // (log-only) por defecto.
@@ -444,5 +474,63 @@ func New(repo FlowStore, eng *engine.Engine, sender Sender, resolver TenantResol
 	case rt.maxConcurrentIncoming > 0:
 		rt.incomingSem = make(chan struct{}, rt.maxConcurrentIncoming)
 	}
+	// Contador de rachas de auto-respuestas (Plan 049 · Opción A). Se construye AQUÍ,
+	// DESPUÉS del bucle de Options, por lo mismo que el semáforo y el reloj: es un
+	// campo DERIVADO, y New materializa los derivados cuando ya se sabe qué se
+	// configuró. Siempre, sin condición: el contador es del runtime, no del hook — sin
+	// hook cableado sigue contando y MaxAutoreplyStreak sigue sabiendo contestar.
+	//
+	// El onClose es una INDIRECCIÓN EN TIEMPO DE LLAMADA (mira rt.onAutoreplyStreak
+	// cada vez, no captura su valor de ahora) y esa es la decisión que importa: pasar
+	// rt.onAutoreplyStreak directo congelaría el valor que tuviera en este instante, y
+	// bastaría con que alguien reordenara las Options —o añadiera una que lo fijara
+	// más tarde, o un test que lo cambiara— para que el hook dejara de recibir nada EN
+	// SILENCIO (no rompe: simplemente no se observa, que es el fallo más difícil de
+	// notar). Con la indirección, el orden de aplicación de las Options deja de ser
+	// load-bearing. La guarda nil vive dentro del closure porque streakCounter.report
+	// solo sabe que su onClose no es nil, no que el hook del runtime sí lo sea.
+	//
+	// Los ceros van a propósito: newStreakCounter normaliza idleTTL<=0 a streakIdleTTL
+	// (30 min) y maxEntries<=0 a streakMaxEntries (10.000). Hoy no hay Option que los
+	// exponga —el plan no pide configurarlos— y las constantes viven en streak.go.
+	rt.autoreplyStreaks = newStreakCounter(0, 0, func(racha int) {
+		if rt.onAutoreplyStreak != nil {
+			rt.onAutoreplyStreak(racha)
+		}
+	})
 	return rt
+}
+
+// MaxAutoreplyStreak devuelve la racha de auto-respuestas VIVA más larga en este
+// instante (Plan 049 · Opción A). Es la FUENTE DEL GAUGE
+// wapp_flow_autoreply_streak_max, y se cablea en el arranque con
+// metrics.SetFlowAutoreplyStreakMaxSource — la dependencia va al revés que el hook
+// del histograma porque un gauge se TIRA en el scrape en vez de empujarse.
+//
+// 🔴 PENSADA PARA EL SCRAPE (cada 15-60 s), JAMÁS PARA EL CAMINO CALIENTE: recorre
+// el mapa entero de conversaciones vivas BAJO EL CANDADO del contador, así que es
+// O(conversaciones vivas) y además serializa contra todos los Inc/Close que estén
+// ocurriendo. Llamarla por cada entrante metería ese recorrido dentro del p99 del
+// handler, que ya está en 71 ms contra un objetivo de < 50 ms.
+//
+// 🔴 Y NO ES UN GETTER PURO: streakCounter.Max BARRE de paso las rachas vencidas por
+// inactividad y las reporta al histograma. Es DELIBERADO —el scrape es lo único que
+// pasa por aquí con regularidad sin violar el ADR-0003— y está explicado en Max. La
+// consecuencia para quien la llame desde otro sitio: llamarla es OBSERVAR, no solo
+// leer. No la uses como sonda barata en un test sin saber que puede cerrar episodios.
+//
+// La firma NO lleva `now` a propósito: es `func() int` porque ese es el contrato que
+// bootstrap inyecta como fuente del GaugeFunc de Prometheus
+// (SetFlowAutoreplyStreakMaxSource). El instante lo pone el reloj INYECTABLE del
+// runtime (rt.now, WithClock), que es lo que hace testeable el vencimiento desde el
+// motor con un reloj falso.
+//
+// Nil-safe de arriba abajo: sobre un contador nil devuelve 0 (streakCounter.Max), y
+// sobre un Runtime que no salió de New —sin reloj— devuelve 0 en vez de entrar en
+// pánico al desreferenciar rt.now.
+func (rt *Runtime) MaxAutoreplyStreak() int {
+	if rt == nil || rt.now == nil {
+		return 0
+	}
+	return rt.autoreplyStreaks.Max(rt.now())
 }

@@ -555,6 +555,10 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 		if err := rt.store.Delete(ctx, key); err != nil {
 			return fmt.Errorf("runtime: liberar el estado previo al entrar al evento: %w", err)
 		}
+		// Fin de episodio (Plan 049, ver streak.go): el salto por tipo destruye el
+		// flow_state y arranca otro flujo, así que la racha del flujo que se deja atrás
+		// se cierra aquí y el startLocked de abajo abre una nueva en 1.
+		rt.autoreplyStreaks.Close(key, rt.now())
 		// eventID viaja al arranque (T4.5.1): startLocked no puede leerlo de
 		// st.EventID (el puntero se estampa DESPUÉS, en pointStateAtEvent) y es
 		// AQUÍ donde el evento recién nacido/conmutado está en la mano.
@@ -738,7 +742,7 @@ func (rt *Runtime) stopEvent(ctx context.Context, key store.Key, sessionID strin
 	if err != nil {
 		return err
 	}
-	_, err = rt.send(ctx, sessionID, to, []engine.Output{{Text: stopNotice(kind)}})
+	_, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: stopNotice(kind)}})
 	return err
 }
 
@@ -953,7 +957,7 @@ func (rt *Runtime) sendResumeSummary(ctx context.Context, key store.Key, session
 		rt.log.Warn("runtime: sin destino para el resumen del rescate", "error", err, "session_id", sessionID)
 		return
 	}
-	if _, err := rt.send(ctx, sessionID, to, []engine.Output{{Text: sum.Render()}}); err != nil {
+	if _, err := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: sum.Render()}}); err != nil {
 		rt.log.Warn("runtime: no se pudo enviar el resumen del rescate; se retoma igual",
 			"error", err, "session_id", sessionID)
 	}
@@ -1026,6 +1030,7 @@ func (rt *Runtime) releaseForNewConversation(ctx context.Context, key store.Key)
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: soltar la conversación por inactividad del evento: %w", err)
 	}
+	rt.autoreplyStreaks.Close(key, rt.now()) // fin de episodio (Plan 049, ver streak.go).
 	return nil
 }
 
@@ -1071,7 +1076,7 @@ func (rt *Runtime) presentMenu(ctx context.Context, key store.Key, sessionID, ev
 	if err != nil {
 		return err
 	}
-	_, err = rt.send(ctx, sessionID, to, []engine.Output{{Text: menu.Render()}})
+	_, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: menu.Render()}})
 	return err
 }
 
@@ -1244,7 +1249,7 @@ func (rt *Runtime) sendOfferNow(ctx context.Context, key store.Key, sessionID st
 	if err != nil {
 		return err
 	}
-	_, err = rt.send(ctx, sessionID, to, []engine.Output{{Text: offer.Text}})
+	_, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: offer.Text}})
 	return err
 }
 

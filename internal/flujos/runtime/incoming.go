@@ -190,6 +190,14 @@ func (rt *Runtime) conversationClock(ctx context.Context, tenantID string, key s
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return false, fmt.Errorf("runtime: cerrar conversación vencida (TTL): %w", err)
 	}
+	// FIN DE EPISODIO de la racha de auto-respuestas (Plan 049 · Opción A). El estado
+	// conversacional acaba de destruirse, así que la racha que venía contándose para
+	// esta clave TERMINA aquí: se reporta su longitud al histograma y se olvida. Va
+	// DESPUÉS del Delete —solo se cierra lo que de verdad murió— y es idempotente y
+	// nil-safe, así que puede colgar de los seis caminos de destrucción sin llevar la
+	// cuenta de cuál llegó primero. Qué es una racha, por qué se mide el EPISODIO y
+	// por qué un entrante NO lo cierra: ver la cabecera de streak.go.
+	rt.autoreplyStreaks.Close(key, rt.now())
 	return true, nil
 }
 
@@ -393,6 +401,7 @@ func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID
 	if derr := rt.store.Delete(ctx, key); derr != nil {
 		return fmt.Errorf("runtime: soltar el flow_state terminal: %w", derr)
 	}
+	rt.autoreplyStreaks.Close(key, rt.now()) // fin de episodio (Plan 049, ver streak.go).
 	if vivo {
 		// EffectEventEscaped por el MISMO eje que el quinto camino de suelta (E5/E6): el
 		// nombre describe el EFECTO sobre el flow_state —destruido, no conservado como en
@@ -431,6 +440,7 @@ func (rt *Runtime) releaseOrphanMenu(ctx context.Context, tenantID, sessionID st
 	if derr := rt.store.Delete(ctx, key); derr != nil {
 		return fmt.Errorf("runtime: soltar el estado sin flujo del menú: %w", derr)
 	}
+	rt.autoreplyStreaks.Close(key, rt.now()) // fin de episodio (Plan 049, ver streak.go).
 	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra. Nombre
 	// ELEGIDO Y NO OBVIO: se reutiliza EffectEventEscaped —no uno nuevo— porque el
 	// eje que la Ola 6 fijó para este efecto (E5) es «¿sobrevive el flow_state al
@@ -907,6 +917,12 @@ func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string,
 	if err := rt.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("runtime: cerrar conversación por escape: %w", err)
 	}
+	// Fin de episodio (Plan 049, ver streak.go). Va aquí y NO tras el envío del aviso:
+	// el episodio muere con el estado, no con el mensaje — y el aviso de más abajo
+	// puede no salir (cupo anti-loop agotado) sin que eso cambie que la racha terminó.
+	// El propio aviso, si sale, abre una racha nueva de 1 sobre la misma clave, que es
+	// lo correcto: es la primera —y única— auto-respuesta del episodio siguiente.
+	rt.autoreplyStreaks.Close(key, rt.now())
 	// El hecho está sellado (el flow_state ya no existe) ⇒ se registra (E-5,
 	// EffectEventEscaped: NO event_deactivated — stopEvent conserva el flow_state,
 	// este Delete lo destruye, y son abandonos distintos). El único de los tres
@@ -929,7 +945,7 @@ func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string,
 	if notice == "" {
 		notice = defaultEscapeMessage
 	}
-	if _, err := rt.send(ctx, sessionID, to, []engine.Output{{Text: notice}}); err != nil {
+	if _, err := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: notice}}); err != nil {
 		return err
 	}
 	return nil

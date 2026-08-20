@@ -124,6 +124,6 @@ func (rt *Runtime) resendScreen(ctx context.Context, key store.Key, sessionID, p
 	if err != nil {
 		return err
 	}
-	_, err = rt.send(ctx, sessionID, to, []engine.Output{{Text: pantalla}})
+	_, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: pantalla}})
 	return err
 }
