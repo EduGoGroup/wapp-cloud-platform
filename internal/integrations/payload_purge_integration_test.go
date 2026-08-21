@@ -96,8 +96,12 @@ func TestMarkWebhookDelivered_VacíaElPayload(t *testing.T) {
 // necesita para diagnosticar o re-empujar a mano. En `delivered` la copia es
 // redundante; en `dead` es el original.
 //
-// Si el Plan 046 decide lo contrario al fijar la retención, este test es el que hay
-// que cambiar, y su nombre dice dónde mirar.
+// 🔴 ESTO YA NO ES CONDICIONAL, ES DEFINITIVO. Aquí decía «si el Plan 046 decide lo
+// contrario al fijar la retención, este test es el que hay que cambiar»: ese plan
+// DESCARTÓ la retención el 2026-08-20 (D-046.16, ADR-0043 — wApp no es sistema de
+// registro contable ni fiscal), así que no hay decisión pendiente que pueda invalidar
+// esta aserción. Las filas `dead` conservan su payload A PROPÓSITO: es lo único que le
+// dice al operador qué no se entregó. Que nadie lo «arregle» después.
 func TestMarkWebhookDead_ConservaElPayload(t *testing.T) {
 	db := openTestDB(t)
 	wipeWebhookTables(t, db)

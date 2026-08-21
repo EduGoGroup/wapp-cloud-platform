@@ -81,10 +81,20 @@ type Intake struct {
 	// su línea; esta es de ENTREGA y no es de ningún artículo en particular.
 	//
 	// Como aquélla, jamás entra en el cálculo del Total (INV-13) y viaja EN CLARO —
-	// pero por COSTE, no por doctrina (D-041.23): es donde de verdad se cuela la
-	// PII, y lo que la contiene hoy es el saneo de la puerta (cart.SanitizeNote), el
-	// límite de 280 runas y la poda por retención del Plan 046. Quien añada un
-	// consumidor nuevo de este campo hereda ese contexto.
+	// pero por COSTE, no por doctrina (D-041.23): es donde de verdad se cuela la PII.
+	//
+	// 🔴 LO QUE LA CONTIENE HOY SON TRES COSAS, NO CUATRO: el saneo de la puerta
+	// (cart.SanitizeNote), el límite de 280 runas y la advertencia explícita en
+	// pantalla. La CUARTA PATA —un barrido automático por antigüedad— SE RETIRÓ el
+	// 2026-08-20 (D-046.15, ADR-0043): la columna intake_retention_ttl_seconds no nace
+	// y ese barrido no se construye. La migración 0045 sigue enumerando cuatro porque
+	// no se reescriben migraciones ya aplicadas; el inventario vigente es el ADR-0034.
+	//
+	// ✅ Atenuante real: desde la Ola 2 del Plan 046, en sesiones PASIVAS este texto ni
+	// siquiera llega a escribirse. La contención perdida se repone en parte, en el
+	// perímetro donde el dato no debía nacer.
+	//
+	// Quien añada un consumidor nuevo de este campo hereda ese contexto.
 	//
 	// Cadena vacía = el cliente no indicó nada (es el DEFAULT de la columna).
 	CustomerNote string

@@ -531,8 +531,16 @@ type TenantSettings struct {
 	// guardar el texto del hilo (conversation_event_messages) antes de que la poda
 	// perezosa lo vacíe. Vencer no interrumpe ninguna conversación.
 	//
-	// 0 ⇒ sin poda. Es un default TÉCNICO y retrocompatible, NO una decisión de
-	// retención: el valor de negocio lo fija el Plan 046 (MD-043.6).
+	// 🔴 ESTA CLAVE ES INERTE: SE LEE Y NADIE LA OBEDECE (D-046.14, ADR-0043).
+	// La columna existe y se carga aquí, pero NO HAY PODA construida ni la va a haber:
+	// el Plan 046 la descartó el 2026-08-20 porque wApp no es sistema de registro
+	// contable ni fiscal. La prueba dura de que nada la ejecuta es que purged_at
+	// (0051_conversation_events.sql) tiene CERO apariciones en .go.
+	//
+	// Se conserva en vez de retirarse porque quitarla costaría otra migración y romper
+	// TenantSettings para no ganar nada. Y quien retome la retención algún día EMPIEZA
+	// POR ESCRIBIR LA PODA, no por elegir un número: mientras no exista el barrido,
+	// cambiar este valor no hace absolutamente nada.
 	EventHistoryTTL time.Duration
 }
 
@@ -618,9 +626,12 @@ const (
 	// manda siempre, incluido su 0 («sin vencimiento»).
 	DefaultEventInactivityTTL = 2 * time.Hour
 	// DefaultEventHistoryTTL es el default TÉCNICO de event_history_ttl_seconds (0 =
-	// sin poda) que espeja el DEFAULT de la migración 0052. NO es una decisión de
-	// retención: esa la toma el Plan 046 (MD-043.6). Se nombra en vez de dejar el cero
-	// implícito para que quien lo cambie sepa qué está cambiando.
+	// sin poda) que espeja el DEFAULT de la migración 0052. Se nombra en vez de dejar
+	// el cero implícito para que quien lo cambie sepa qué está cambiando.
+	//
+	// 🔴 Y lo que está cambiando hoy es NADA: la clave es INERTE (D-046.14, ADR-0043).
+	// No hay poda que la obedezca ni se va a construir. Ver el comentario del campo
+	// EventHistoryTTL en TenantSettings, que lleva el detalle.
 	DefaultEventHistoryTTL = time.Duration(0)
 )
 
