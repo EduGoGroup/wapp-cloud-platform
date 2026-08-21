@@ -73,6 +73,41 @@ const VarIntentParams = "intent_params"
 // originó el arranque (Plan 029 · T8), sembrada junto a VarIntentParams.
 const VarIntentName = "intent_name"
 
+// StripIntentSignal devuelve unas Vars SIN las dos claves de la señal de intención,
+// sin mutar el mapa recibido.
+//
+// 🔒 POR QUÉ EXISTE (Plan 046 · Ola 4 · T4.3, REQ-18). Las dos claves las siembra el
+// runtime al arrancar un flujo por decisión kind='llm', y llevan TEXTO EXTRAÍDO DEL
+// MENSAJE DEL CLIENTE. El contrato dice que el módulo que las consume las limpia --y
+// el carrito lo cumple (cart/prime.go)--, pero ese contrato solo se ejecuta cuando
+// ALGUIEN consume. Si nadie consume, nadie limpia: las claves siguen en Vars, caen al
+// renderFrom y de ahí al Save, y el texto del cliente queda EN CLARO en el JSONB de
+// public.flow_state, para siempre. La fuga que esto cierra es la del DISCO, no la del
+// struct.
+//
+// Vive aquí, junto a las dos constantes, a propósito: si algún día nace una TERCERA
+// clave de señal, quien la declare va a ver esta función justo debajo. Repartir el
+// borrado por los sitios que guardan --hoy son OCHO rt.store.Save distintos-- es
+// garantizar que el noveno se olvide.
+//
+// Devuelve el MISMO mapa cuando no hay nada que barrer (el caso común: todo arranque
+// que no venga del clasificador), así que no cuesta una copia por conversación.
+func StripIntentSignal(vars map[string]any) map[string]any {
+	_, hayParams := vars[VarIntentParams]
+	_, hayNombre := vars[VarIntentName]
+	if !hayParams && !hayNombre {
+		return vars
+	}
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		if k == VarIntentParams || k == VarIntentName {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // Effect es un efecto de lado DECLARADO por un módulo para que lo despache el
 // runtime (Plan 015). Kind clasifica el efecto (p. ej. "persist", "emit"), Name
 // lo nombra dentro de su clase (p. ej. "survey_answer") y Payload lleva los
