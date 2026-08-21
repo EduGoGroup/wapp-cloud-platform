@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	cloud.google.com/go/kms v1.33.0
 	github.com/EduGoGroup/identity-shared/auth v0.3.1
-	github.com/EduGoGroup/wapp-cloudlink v0.13.0
+	github.com/EduGoGroup/wapp-cloudlink v0.14.0
 	github.com/EduGoGroup/wapp-shared/config v0.3.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.2.1
 	github.com/EduGoGroup/wapp-shared/health v0.1.1

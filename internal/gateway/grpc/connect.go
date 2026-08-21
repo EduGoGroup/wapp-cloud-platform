@@ -6,6 +6,7 @@ import (
 	"io"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+	cltransport "github.com/EduGoGroup/wapp-cloudlink/transport"
 	"github.com/EduGoGroup/wapp-shared/envelope"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -510,7 +511,28 @@ func (s *Server) registerSession(ctx context.Context, cc connCtx) {
 	// actor es el EdgeID del cert mTLS, no una persona.
 	s.recordEdgeSession(ctx, cc)
 
-	if s.fleet != nil {
+	// 🔴 EL CANAL DE CONTROL NO ES FLOTA (MP-11). Todo lo de arriba SÍ le corresponde —se
+	// registra en el Registry (sin eso el login del operador no tiene por dónde volver), se
+	// trackea y se audita—, pero NO se persiste como sesión: no hay ningún teléfono detrás.
+	//
+	// Sin esta guarda nace una fila en `fleet_sessions` que el CLIENTE ve en su dashboard como
+	// si fuera un teléfono más: con `self_pn` vacío la plantilla cae al `session_id`, así que
+	// lee «__wapp_control__» en la columna del número, con su selector de perfil —marcarlo
+	// pasivo movería la `version` del mapa de filters del tenant ENTERO— y seleccionable como
+	// destino de envío.
+	//
+	// El criterio no es de gusto: lo fija la razón de ser de la flota (funcionalidad 31,
+	// ADR-0023), que nació de una consola diciendo `online` con el socket muerto hacía 31
+	// minutos — «estar registrado no es estar sano». Esta fila NUNCA podrá reportar un
+	// SessionHealth, porque no tiene socket. Es justo lo que esa funcionalidad existe para
+	// desenmascarar.
+	//
+	// ⚠️ Consecuencia ACEPTADA (MP-11 §5): un Edge con el operador logueado y CERO teléfonos
+	// emparejados deja de aparecer en `fleet.List`, así que `RevokeTenant` no cosecha su
+	// edge_id y no le empuja la revocación. La revocación SIGUE SIENDO EFECTIVA —
+	// MarkTenantRevoked escribe en la BD antes del fan-out— y ese Edge no envía ni recibe
+	// nada; se pierde solo el aviso inmediato.
+	if s.fleet != nil && cc.sessionID != cltransport.ControlSessionID {
 		if err := s.fleet.MarkOnline(ctx, cc.tenantID, cc.edgeID, cc.sessionID); err != nil {
 			s.log.Error("fleet: marcar online", "error", err,
 				"edge_id", cc.edgeID, "session_id", cc.sessionID)
