@@ -100,7 +100,27 @@
 --   no es opcional (si no, el conteo sale inflado con las activas, que no reciben nada):
 --
 --     SELECT count(*) FROM public.fleet_sessions
---      WHERE self_pn IS NOT NULL AND greeted_at IS NULL AND profile = 'passive';
+--      WHERE self_pn_bidx IS NOT NULL AND greeted_at IS NULL AND profile = 'passive';
+--
+--   🔧 CORREGIDO EL 2026-08-21 (Plan 046 · T4.1). Esta consulta decía
+--   `self_pn IS NOT NULL`. Desde la migración 0068 el número propio va CIFRADO y la
+--   columna en claro `self_pn` queda VACÍA EN TODA FILA: el conteo daba 0 siempre y
+--   el operador concluía «no se avisa a nadie» justo cuando sí se avisaba. El
+--   predicado correcto es el MISMO que usa PendingGreeting en Go
+--   (repository_postgres.go): `self_pn_bidx IS NOT NULL`. El índice ciego se escribe
+--   con el sobre y en el mismo UPDATE, así que su presencia es exactamente lo que
+--   antes significaba «esta fila tiene número».
+--
+--   ⚠️ Si alguien ejecuta esto sobre una base que TODAVÍA no aplicó la 0068, la
+--   columna `self_pn_bidx` no existe y la consulta da error de columna desconocida;
+--   en ese estado —y solo en ese— el predicado válido sigue siendo `self_pn IS NOT
+--   NULL`. Es una consulta de VERIFICACIÓN dentro de un comentario `--`, no DDL: el
+--   runner no la ejecuta y cambiarla no altera el comportamiento de la migración.
+--   Sí altera el CONTENT HASH del directorio structure/ (ComputeFilesHash suma
+--   TODOS los bytes de TODOS los .sql, comentarios incluidos, version.go:206-234), o
+--   sea que fuerza un replay del directorio. Eso ya lo forzaba la 0068 en este mismo
+--   despliegue, y el replay de esta 0066 es inocuo: su DDL es `ADD COLUMN IF NOT
+--   EXISTS`, idempotente por construcción.
 --
 --   Salida esperada JUSTO DESPUÉS de aplicar y ANTES de arrancar el binario nuevo:
 --
