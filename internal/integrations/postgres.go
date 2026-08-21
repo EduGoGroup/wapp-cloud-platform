@@ -150,8 +150,10 @@ func (p *Postgres) closeClaim(ctx context.Context, claim WebhookOutbox, what, qu
 // que todo lector distinguiera tres casos (contenido / vacío / nulo) donde solo hay
 // dos. Un objeto JSON vacío se lee y se decodifica igual que cualquier payload.
 //
-// Esto NO prejuzga la retención por antigüedad (borrar filas viejas), que queda
-// reservada al Plan 046: aquí no se borra ninguna fila ni se les pone TTL.
+// Esto NO prejuzga la retención por antigüedad (borrar filas viejas). 🔴 Y esa
+// retención NO va a existir: el Plan 046 la descartó el 2026-08-20 (D-046.16,
+// ADR-0043). Aquí no se borra ninguna fila ni se les pone TTL, y en ningún otro
+// sitio tampoco.
 func (p *Postgres) MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error {
 	return p.closeClaim(ctx, claim, "delivered", `
 		UPDATE public.webhook_outbox

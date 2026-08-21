@@ -156,10 +156,13 @@ func (s noteScope) key() string {
 //     REQ-19b ya dice que la personalización de una línea viaja en claro como
 //     decisión.
 //   - scope "order": NO lleva el texto, solo su LARGO. customer_note es donde de
-//     verdad se cuela la PII («déjalo en portería, calle Mayor 14»), y flow_events
-//     no lo poda nadie: el literal sobreviviría a la retención de la propia
-//     solicitud (Plan 046). Lo que se mide —que se usó la ranura, y cuánto se
-//     escribió— no necesita el contenido.
+//     verdad se cuela la PII («déjalo en portería, calle Mayor 14»), y flow_events no
+//     lo poda nadie. 🔴 El argumento original decía que el literal «sobreviviría a la
+//     retención de la propia solicitud (Plan 046)»: esa retención se DESCARTÓ el
+//     2026-08-20 (D-046.15, ADR-0043), así que no hay nada a lo que sobrevivir — ni
+//     aquí ni en intakes. La razón de no llevar el texto sigue en pie y ahora es la
+//     única: lo que se mide —que se usó la ranura, y cuánto se escribió— no necesita
+//     el contenido.
 //
 // splitFromQty > 0 solo cuando hubo split: es la cantidad que tenía la línea antes
 // de partirse, un entero sin PII, para poder medir cuánto se usa esa rama.

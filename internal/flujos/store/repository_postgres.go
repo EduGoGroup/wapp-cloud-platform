@@ -872,7 +872,10 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		ConversationTTL:    time.Duration(convTTLSecs) * time.Second,
 		BuyerFields:        parseBuyerFields(buyerFields),
 		EventInactivityTTL: time.Duration(evInactTTLSecs) * time.Second,
-		EventHistoryTTL:    time.Duration(evHistoryTTLSec) * time.Second,
+		// 🔴 EventHistoryTTL SE LEE Y NADIE LA OBEDECE (D-046.14, ADR-0043): esta línea
+		// es su único destino. No hay poda construida que la consuma, y no la va a
+		// haber. Se sigue cargando para no romper el struct ni pedir otra migración.
+		EventHistoryTTL: time.Duration(evHistoryTTLSec) * time.Second,
 	}, nil
 }
 

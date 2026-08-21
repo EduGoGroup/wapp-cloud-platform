@@ -89,8 +89,9 @@ type Store interface {
 	// su claimed_at es la valla. Devuelve ErrClaimLost si el claim ya no es
 	// vigente (lease vencido y re-reclamada por otro worker).
 	//
-	// Vaciar NO es borrar: la fila sobrevive. La retención por antigüedad es del
-	// Plan 046, no de aquí.
+	// Vaciar NO es borrar: la fila sobrevive. 🔴 Y no la borra nadie después: la
+	// retención por antigüedad se DESCARTÓ (D-046.16, ADR-0043), así que la fila se
+	// queda indefinidamente — con su payload ya vacío desde la 0050.
 	MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error
 
 	// MarkWebhookFailed registra un intento fallido: attempts++, vuelve a pending

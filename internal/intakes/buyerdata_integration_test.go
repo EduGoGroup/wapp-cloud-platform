@@ -218,8 +218,13 @@ func TestBuyerDataPG_SinSolicitudNoSeGuarda(t *testing.T) {
 
 // TestBuyerDataPG_SeVaConLaSolicitud: el ON DELETE CASCADE de la migración 0045 es
 // lo que hace que borrar un pedido borre de verdad los datos personales de su
-// comprador. Sin él, la poda por retención (Plan 046) dejaría atrás justo lo que
-// tenía que llevarse.
+// comprador.
+//
+// 🔴 El motivo original era otro: se apoyaba en un barrido automático por antigüedad
+// que iba a llegar y que se DESCARTÓ el 2026-08-20 (D-046.15, ADR-0043). No hay
+// barrido que dependa de este CASCADE. Lo que sí hay es el BORRADO
+// MANUAL de una solicitud, y ahí el CASCADE es lo único que impide que los datos del
+// comprador queden huérfanos en la base. La aserción no cambia; su razón, sí.
 func TestBuyerDataPG_SeVaConLaSolicitud(t *testing.T) {
 	db := openTestDB(t)
 	tenant := uuid.NewString()

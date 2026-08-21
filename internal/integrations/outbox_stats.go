@@ -54,9 +54,13 @@ type OutboxCounts struct {
 // mientras se pregunta— y la pantalla enseñaría una cola que nunca existió.
 //
 // El filtro por tenant_id lo sirve webhook_outbox_tenant_idx (0046). El escaneo
-// crece con las `delivered` acumuladas hasta que exista la retención por
-// antigüedad (Plan 046): a las escalas de hoy no es un problema, y cuando lo sea
-// lo arregla la purga, no un índice más.
+// crece con las `delivered` acumuladas, y 🔴 NO HAY RETENCIÓN POR ANTIGÜEDAD EN
+// CAMINO: el Plan 046 la descartó el 2026-08-20 (D-046.16, ADR-0043). Queda como
+// deuda de RENDIMIENTO, sin dueño y sin fecha — no de privacidad: las `delivered`
+// ya vacían su payload desde la 0050, así que lo que se acumula son filas de
+// metadatos, no contenido. A las escalas de hoy no es un problema (la tabla tiene
+// UNA fila) y cuando lo sea lo arregla una purga que habrá que escribir, no un
+// índice más.
 //
 // SIN ErrNoRows POSIBLE: un agregado sin GROUP BY devuelve SIEMPRE una fila, con
 // ceros si el tenant no tiene ninguna entrega. Por eso «este tenant nunca encoló
