@@ -149,7 +149,25 @@ import (
 // habitual: el binario nuevo LEE profile_updated_at, así que la fila de
 // schema_version es lo único que le dice a un operador si esa columna existe en
 // la base que tiene delante.
-const SchemaVersion = "0.39.0"
+// 0.40.0 -- Plan 046 · Ola 3 · T3.2 (b) (0066): fleet_sessions gana greeted_at
+// TIMESTAMPTZ NULL, la marca de «a esta sesión ya se le entregó el aviso
+// AVISO_SESION_PASIVA_V1». NULLABLE y SIN default, al revés que la 0065: aquí NULL
+// («nunca se le avisó») es el estado CORRECTO de toda fila preexistente, y un
+// default la dejaría afirmando un saludo que nadie mandó. Sin backfill, por lo
+// mismo. La escribe SOLO MarkGreeted, con centinela WHERE greeted_at IS NULL y solo
+// cuando el Ack del Edge vuelve ok=true — si el envío cae en la ventana del lease
+// (el Validator del Edge nace cerrado, 0,5-1,1 s medidos en campo) la marca no se
+// pone y el siguiente latido reintenta solo.
+//
+// 🔴 Este bump TAMPOCO es de los «gratuitos» que la regla acota. La 0.39.0 ya se
+// publicó y ya se desplegó en UAT el 2026-08-21 con las Olas 1 y 2 de este mismo
+// plan (0063-0065), así que su número ya está escrito en la fila de
+// public.schema_version de Neon. Reusarla dejaría a un operador comparando esa fila
+// contra un esquema que ya cambió — el mismo caso que 0.27.0/0.28.0/0.30.0 más
+// arriba. Que las tres olas sean del Plan 046 no lo convierte en una excepción: la
+// regla «un bump por plan» acota los bumps dentro de un plan que AÚN NO SALIÓ, y de
+// este ya salieron dos tercios.
+const SchemaVersion = "0.40.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

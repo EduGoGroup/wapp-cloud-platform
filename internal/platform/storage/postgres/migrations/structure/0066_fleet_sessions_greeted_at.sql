@@ -1,0 +1,130 @@
+-- ============================================================
+-- 0066: fleet_sessions.greeted_at — LA MARCA DE «a esta sesión ya se le avisó»
+-- (Plan 046 · Ola 3 · T3.2 mitad (b), decisión de MD-046.3 del 2026-08-21).
+--
+-- QUÉ GUARDA
+-- ------------------------------------------------------------
+-- El instante en que la NUBE consiguió entregarle a la sesión recién emparejada el
+-- aviso `AVISO_SESION_PASIVA_V1` (docs/runbooks/perfiles-de-sesion.md §4): el
+-- mensaje de WhatsApp que la sesión se manda A SÍ MISMA para que su dueño se entere
+-- de que nació en perfil `passive` y de cómo activarla. NULL = nunca se le avisó.
+--
+-- POR QUÉ UNA COLUMNA NUEVA Y NO `capabilities`
+-- ------------------------------------------------------------
+-- `capabilities` (0003) está hoy sin un solo lector en todo el repo y NULL en UAT, así
+-- que serviría de marca sin migración — pero su COMMENT (0003:65) dice para qué se
+-- reservó y hay un seed de test que escribe dentro (platformadmin/postgres_test.go:295).
+-- Secuestrarle la semántica a una columna reservada es una decisión, no un atajo, y
+-- MD-046.3 la tomó al revés: marca PROPIA, con su nombre y su comentario.
+--
+-- 🔴 NULLABLE Y SIN DEFAULT, QUE ES TODA LA GRACIA
+-- ------------------------------------------------------------
+-- NULL no es un hueco a rellenar: es el estado CORRECTO de una sesión que nadie
+-- saludó. Un `DEFAULT now()` (el molde de la 0065) sería aquí exactamente el error
+-- contrario, porque afirmaría que a las filas viejas se les avisó cuando no se les
+-- avisó nunca.
+--
+-- BACKFILL: NO HAY, Y ES DELIBERADO — pero por el motivo OPUESTO al de la 0065
+-- ------------------------------------------------------------
+-- Allí no se backfilleaba porque la historia no existía. Aquí NO SE BACKFILLEA
+-- PORQUE ESCRIBIRLO SERÍA MENTIR: `greeted_at = now()` sobre una fila vieja afirma
+-- «a esta sesión ya se le avisó», y no se le avisó nunca. La columna quedaría
+-- mintiendo para siempre para ahorrarse un mensaje.
+--
+-- ⚠️ CONSECUENCIA HONESTA, ESCRITA AQUÍ PARA QUE NADIE LA DESCUBRA EN CAMPO: al
+-- desplegar esto, toda sesión viva que esté en perfil `passive` y tenga `self_pn`
+-- poblado recibirá el aviso UNA vez, en su siguiente latido. Es un evento único por
+-- sesión, no un goteo. En el UAT del 2026-08-21 eso es CERO filas: su única sesión
+-- está en `active`. Si el día del despliegue a un cliente real ese número no fuera
+-- aceptable, la salida NO es un backfill dentro de esta migración —el runner es
+-- FULL-REPLAY y volvería a correr en cada arranque— sino un UPDATE manual y puntual,
+-- con centinela `WHERE greeted_at IS NULL AND profile = 'passive'`, ejecutado por el
+-- operador ANTES de arrancar el binario nuevo.
+--
+-- 🔴 CORREGIDO EL 2026-08-21, EN EL BARRIDO DE LA OLA 3. Este párrafo decía «toda
+-- sesión viva con self_pn poblado», sin nombrar el perfil, y afirmaba que «el texto
+-- sigue siendo cierto para ellas». Las dos cosas eran falsas: PendingGreeting no
+-- filtraba por perfil —verificado ejecutando su SELECT contra Postgres con una fila
+-- activa y otra pasiva: salían las dos— y a una sesión ACTIVA el aviso le miente en
+-- sus tres frases. La única sesión de UAT es activa, así que el despliegue le habría
+-- mandado ese mensaje a un teléfono real. Se arregló en el SQL de PendingGreeting
+-- (`AND profile = 'passive'`, decisión de Jhoan), no aquí: esta columna nunca supo de
+-- perfiles y sigue sin saber.
+--
+-- EL REPLAY, AQUÍ BENIGNO
+-- ------------------------------------------------------------
+-- El runner es hash-based FULL-REPLAY (migrations/version.go): re-aplica todo el
+-- directorio en cuanto cambia el hash del conjunto. Este `ADD COLUMN IF NOT EXISTS`
+-- es, del segundo arranque en adelante, un NO-OP EXACTO —la columna ya existe y un
+-- ADD COLUMN que no se ejecuta no toca valores—, así que los `greeted_at` reales
+-- SOBREVIVEN a cada reinicio. No hay UPDATE, así que no hace falta el guard
+-- `WHERE ... IS NULL` que la 0063 sí necesitaba.
+--
+-- ⚠️ Orden: toca la MISMA tabla que la 0025/0063/0064/0065 y va por encima de todas.
+-- No lee ninguna de sus columnas, pero renumerarla por debajo de la 0025 rompería el
+-- replay igual que cualquier otra sobre esta tabla.
+--
+-- CERO PII: una marca de tiempo sobre una tabla de flota ya existente (ADR-0009). NO
+-- guarda el texto, ni el número, ni el command_id del envío.
+-- ADITIVA e IDEMPOTENTE. SchemaVersion sube a 0.40.0.
+--
+-- ------------------------------------------------------------
+-- VERIFICACIÓN (no hay PostgreSQL en el entorno donde se escribió esto;
+-- estas consultas son para el sweep del CLI / el operador en UAT)
+-- ------------------------------------------------------------
+--
+-- (V1) La columna existe con la forma pedida — NULLABLE y SIN default:
+--
+--   SELECT column_name, is_nullable, column_default
+--     FROM information_schema.columns
+--    WHERE table_schema = 'public'
+--      AND table_name   = 'fleet_sessions'
+--      AND column_name  = 'greeted_at';
+--
+--   Salida esperada — EXACTAMENTE una fila:
+--
+--    column_name | is_nullable | column_default
+--   -------------+-------------+----------------
+--    greeted_at  | YES         |
+--   (1 row)
+--
+--   ⚠️ Un `column_default` NO vacío significa que alguien le puso default: eso
+--   afirmaría que a las filas viejas se las saludó, y es el bug que esta cabecera
+--   existe para impedir.
+--
+-- (V2) Ninguna fila preexistente quedó marcada por la migración:
+--
+--   SELECT count(*) AS marcadas FROM public.fleet_sessions WHERE greeted_at IS NOT NULL;
+--
+--   ⚠️ Y para saber a cuántas se les va a avisar de verdad, la condición del PERFIL
+--   no es opcional (si no, el conteo sale inflado con las activas, que no reciben nada):
+--
+--     SELECT count(*) FROM public.fleet_sessions
+--      WHERE self_pn IS NOT NULL AND greeted_at IS NULL AND profile = 'passive';
+--
+--   Salida esperada JUSTO DESPUÉS de aplicar y ANTES de arrancar el binario nuevo:
+--
+--    marcadas
+--   ----------
+--           0
+--   (1 row)
+--
+-- (V3) El saludo se entregó UNA vez (esta es la prueba de la idempotencia contra BD
+--      real, criterio (c) de T3.2). Tras un emparejamiento y varios latidos:
+--
+--   SELECT session_id, greeted_at IS NOT NULL AS saludada, greeted_at
+--     FROM public.fleet_sessions
+--    WHERE tenant_id = '<TENANT_ID>'
+--    ORDER BY session_id;
+--
+--   `greeted_at` tiene que quedarse CLAVADO en el instante del primer envío bueno:
+--   si avanza entre dos consultas, el centinela `WHERE greeted_at IS NULL` de
+--   MarkGreeted no está haciendo su trabajo y el dueño está recibiendo un mensaje
+--   cada 30 s.
+-- ============================================================
+
+ALTER TABLE public.fleet_sessions
+    ADD COLUMN IF NOT EXISTS greeted_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN public.fleet_sessions.greeted_at IS
+  'Cuando la NUBE consiguio entregarle a esta sesion el aviso AVISO_SESION_PASIVA_V1 (docs/runbooks/perfiles-de-sesion.md seccion 4): el mensaje que la sesion se manda A SI MISMA avisando de que nacio en perfil passive y de como activarla. NULL = nunca se le aviso, y es el estado CORRECTO de una sesion vieja: por eso la columna es NULLABLE y SIN default, y por eso no hay backfill. Solo la escribe MarkGreeted, y solo cuando el Ack del Edge vuelve ok=true, con centinela WHERE greeted_at IS NULL: si el envio muere en la ventana del lease (el Validator del Edge nace cerrado y tarda 0,5-1,1 s en abrirse) la marca NO se pone y el siguiente latido reintenta solo. NO mueve profile_updated_at. Plan 046 · T3.2 (b), MD-046.3.';

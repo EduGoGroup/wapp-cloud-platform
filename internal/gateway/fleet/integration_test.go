@@ -148,7 +148,36 @@ func TestIntegration_FleetPerfilPersisteYRoleYaNoExiste(t *testing.T) {
 	if s.Profile != fleet.ProfilePassive {
 		t.Fatalf("una sesión recién registrada debe nacer pasiva (0063, D-07): got %q", s.Profile)
 	}
+	// Y contra la fila cruda (T3.1, criterio (a)): Get lee con
+	// COALESCE(profile,'passive') — exactamente el valor esperado aquí — así que
+	// por sí solo no distingue «la columna nació 'passive'» de «la columna quedó
+	// rara y el COALESCE la tapó». El SELECT sin red confirma que el DEFAULT de la
+	// 0063 escribió de verdad.
+	var perfilNacimiento string
+	if err := db.QueryRowContext(ctx, `
+		SELECT profile FROM public.fleet_sessions
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+	`, tenantID, edgeID, sessionID).Scan(&perfilNacimiento); err != nil {
+		t.Fatalf("leer la fila cruda tras MarkOnline: %v", err)
+	}
+	if perfilNacimiento != string(fleet.ProfilePassive) {
+		t.Fatalf("la fila en BD tras MarkOnline debe traer profile='passive': got %q", perfilNacimiento)
+	}
 
+	fasePerfilIdaYVuelta(ctx, t, db, repo, tenantID, edgeID, sessionID)
+	faseRoleYaNoExiste(ctx, t, db)
+}
+
+// fasePerfilIdaYVuelta comprueba que SetProfile persiste EN LA COLUMNA los tres
+// saltos active→passive→active (el tercero descarta un one-way), afirmando cada uno
+// por las DOS vías: el Session que devuelve Get y la fila cruda. Va extraída y
+// NOMBRADA —no como closure inline— porque gocyclo imputa los FuncLit anidados a la
+// función madre y no bajaría de su umbral; es el mismo molde que faseWorkerDesconocido.
+func fasePerfilIdaYVuelta(
+	ctx context.Context, t *testing.T, db *sql.DB,
+	repo *fleet.PostgresRepository, tenantID, edgeID, sessionID string,
+) {
+	t.Helper()
 	for _, perfil := range []fleet.Profile{
 		fleet.ProfileActive,
 		fleet.ProfilePassive,
@@ -158,7 +187,7 @@ func TestIntegration_FleetPerfilPersisteYRoleYaNoExiste(t *testing.T) {
 		if err != nil || !foundP {
 			t.Fatalf("SetProfile(%q): found=%v err=%v", perfil, foundP, err)
 		}
-		s, found, err = repo.Get(ctx, tenantID, edgeID, sessionID)
+		s, found, err := repo.Get(ctx, tenantID, edgeID, sessionID)
 		if err != nil || !found {
 			t.Fatalf("Get tras SetProfile(%q): found=%v err=%v", perfil, found, err)
 		}
@@ -178,9 +207,14 @@ func TestIntegration_FleetPerfilPersisteYRoleYaNoExiste(t *testing.T) {
 			t.Fatalf("la fila en BD tras SetProfile(%q): profile=%q", perfil, perfilBD)
 		}
 	}
+}
 
-	// 🔴 La columna legada NO puede seguir ahí. Si esta aserción se pone roja, la
-	// 0064 dejó de aplicarse (o alguien la reintrodujo) y el retiro está a medias.
+// faseRoleYaNoExiste afirma contra information_schema que la columna legada `role`
+// se retiró de verdad (0064). No es adorno: mientras el esquema la conserve, un
+// `SELECT role` sigue funcionando y el retiro estaría a medias sin que ningún test
+// lo notara.
+func faseRoleYaNoExiste(ctx context.Context, t *testing.T, db *sql.DB) {
+	t.Helper()
 	var columnasRole int
 	if err := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM information_schema.columns
@@ -315,5 +349,104 @@ func faseWorkerRancio(ctx context.Context, t *testing.T, f filaWorker) {
 	if s := f.get(ctx, t); s.WorkerTaskset != "" ||
 		s.IntentP50Ms != nil || s.IntentOmittedByReason != nil {
 		t.Fatalf("un parte rancio debe volver a DESCONOCIDO: %+v", s)
+	}
+}
+
+// TestIntegration_SaludoPendienteYCentinela verifica contra Postgres real el SQL que
+// gobierna el aviso de sesión pasiva (Plan 046 · T3.2 (b), migración 0066). Está aquí
+// y no en gateway/grpc porque allí PendingGreeting/MarkGreeted se ejercitan con un
+// DOBLE (fleetSaludos): ese doble prueba la lógica del emisor, pero no ejecuta ni una
+// línea del SQL, así que el filtro de perfil y el centinela no los custodiaba nadie.
+//
+// Cubre las cuatro propiedades que solo la BD puede afirmar:
+//
+//  1. una sesión PASIVA con número y sin marcar está pendiente;
+//  2. 🔴 una sesión ACTIVA con número y sin marcar NO lo está —el aviso le mentiría en
+//     sus tres frases—;
+//  3. sin self_pn no hay a quién avisar;
+//  4. el centinela `WHERE greeted_at IS NULL` de MarkGreeted hace que la SEGUNDA
+//     llamada devuelva marked=false: ahí vive la idempotencia del criterio (c), en la
+//     BD y no en memoria, que es lo que impide un mensaje cada 30 s.
+func TestIntegration_SaludoPendienteYCentinela(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	repo := fleet.NewPostgresRepository(db)
+
+	fasePendienteSoloSiPasivaYConNumero(ctx, t, repo, tenantID)
+	faseCentinelaDeMarkGreeted(ctx, t, repo, tenantID)
+}
+
+// fasePendienteSoloSiPasivaYConNumero cubre las propiedades 1, 2 y 3: quién sale
+// pendiente y quién no. Va extraída y NOMBRADA por gocyclo (los FuncLit anidados se
+// imputan a la función madre), igual que faseWorkerDesconocido.
+func fasePendienteSoloSiPasivaYConNumero(
+	ctx context.Context, t *testing.T, repo *fleet.PostgresRepository, tenantID string,
+) {
+	t.Helper()
+	const edgeID = "edge-saludo"
+	casos := []struct {
+		nombre    string
+		sessionID string
+		selfPn    string
+		perfil    fleet.Profile
+		pendiente bool
+	}{
+		{"pasiva con número: hay que avisarla", "s-pasiva", "34600111222", fleet.ProfilePassive, true},
+		{"ACTIVA con número: el aviso le mentiría", "s-activa", "34600333444", fleet.ProfileActive, false},
+		{"pasiva sin número: no hay a quién avisar", "s-sin-pn", "", fleet.ProfilePassive, false},
+	}
+	for _, c := range casos {
+		if err := repo.MarkOnline(ctx, tenantID, edgeID, c.sessionID); err != nil {
+			t.Fatalf("%s: MarkOnline: %v", c.nombre, err)
+		}
+		if c.selfPn != "" {
+			if err := repo.SetSelfPn(ctx, tenantID, edgeID, c.sessionID, c.selfPn); err != nil {
+				t.Fatalf("%s: SetSelfPn: %v", c.nombre, err)
+			}
+		}
+		// El perfil se pone EXPLÍCITO aunque el default ya sea 'passive': un caso que
+		// pasa por omisión deja de probar lo que dice el día que el default cambie.
+		if _, err := repo.SetProfile(ctx, tenantID, c.sessionID, c.perfil); err != nil {
+			t.Fatalf("%s: SetProfile: %v", c.nombre, err)
+		}
+
+		to, pending, err := repo.PendingGreeting(ctx, tenantID, edgeID, c.sessionID)
+		if err != nil {
+			t.Fatalf("%s: PendingGreeting: %v", c.nombre, err)
+		}
+		if pending != c.pendiente {
+			t.Fatalf("%s: pending=%v, quiero %v", c.nombre, pending, c.pendiente)
+		}
+		if c.pendiente && to != c.selfPn {
+			t.Fatalf("%s: el número a avisar es %q, quiero %q", c.nombre, to, c.selfPn)
+		}
+	}
+}
+
+// faseCentinelaDeMarkGreeted cubre la propiedad 4: la SEGUNDA llamada no marca. Es la
+// idempotencia del criterio (c) de T3.2 afirmada donde de verdad vive —el
+// `WHERE greeted_at IS NULL` del UPDATE—, no en la memoria del emisor.
+func faseCentinelaDeMarkGreeted(
+	ctx context.Context, t *testing.T, repo *fleet.PostgresRepository, tenantID string,
+) {
+	t.Helper()
+	const edgeID, sessionID = "edge-saludo", "s-pasiva"
+
+	marked, err := repo.MarkGreeted(ctx, tenantID, edgeID, sessionID)
+	if err != nil || !marked {
+		t.Fatalf("la PRIMERA llamada debe marcar: marked=%v err=%v", marked, err)
+	}
+	// Ya marcada ⇒ deja de estar pendiente. Sin esto, el saludo se repetiría en cada
+	// latido aunque el UPDATE hubiera funcionado.
+	if _, pending, err := repo.PendingGreeting(ctx, tenantID, edgeID, sessionID); err != nil || pending {
+		t.Fatalf("tras marcar no puede seguir pendiente: pending=%v err=%v", pending, err)
+	}
+	marked, err = repo.MarkGreeted(ctx, tenantID, edgeID, sessionID)
+	if err != nil {
+		t.Fatalf("la segunda MarkGreeted no debe dar error: %v", err)
+	}
+	if marked {
+		t.Fatal("la SEGUNDA llamada devolvió marked=true: el centinela WHERE greeted_at IS NULL no está en el UPDATE, y el dueño recibiría un mensaje por latido")
 	}
 }

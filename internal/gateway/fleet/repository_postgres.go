@@ -21,6 +21,17 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 }
 
 // MarkOnline registra/actualiza la sesión como online.
+//
+// 🔴 EL INSERT NO NOMBRA `profile`, Y ESO ES EL CIERRE DE T3.1, NO UN OLVIDO. Esta
+// es la vía de alta REAL de una sesión —la fila nace aquí, en el registro del stream
+// CloudLink—, así que dejar la columna fuera de la lista hace que Postgres aplique su
+// `DEFAULT 'passive'` (0063:112) y la sesión NAZCA PASIVA (D-046.7): no auto-responde
+// hasta que alguien la active a mano. Nombrarla aquí —aunque fuera para escribir
+// 'passive'— movería la decisión del esquema al código y abriría la puerta a que una
+// vía de alta futura eligiera otra cosa sin que nadie lo note.
+//
+// El ON CONFLICT tampoco la toca: una sesión que RECONECTA conserva su perfil. Quien
+// mueve el eje es SetProfile y solo SetProfile (ver su docstring y el de la 0065).
 func (r *PostgresRepository) MarkOnline(ctx context.Context, tenantID, edgeID, sessionID string) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.fleet_sessions
@@ -126,6 +137,102 @@ func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, se
 		return fmt.Errorf("fleet: fijar self_pn: %w", err)
 	}
 	return nil
+}
+
+// PendingGreeting responde a la ÚNICA pregunta del emisor del saludo de T3.2 (b):
+// «¿a esta sesión hay que avisarla, y a qué número?». Devuelve pending=true —con el
+// self_pn ya normalizado que persistió SetSelfPn— solo si la fila existe, tiene
+// número conocido, `greeted_at IS NULL` y —🔴 la tercera, ver abajo— está en perfil
+// PASIVO.
+//
+// Las tres condiciones van en el SQL y no en el llamante a propósito: son estado de la
+// FILA, y evaluarlas en Go exigiría traerse la sesión entera para mirar tres campos.
+// Cero filas es la respuesta NORMAL, no un error: la da toda sesión ya saludada, toda
+// sesión ACTIVA, toda sesión sin emparejar y el canal de control (que no tiene fila en
+// esta tabla).
+//
+// 🔴 POR QUÉ FILTRA POR PERFIL, Y POR QUÉ SIN ESTO EL AVISO MENTÍA (decisión de Jhoan
+// del 2026-08-21, durante el barrido de la Ola 3). El texto AVISO_SESION_PASIVA_V1
+// afirma tres cosas —«nació en perfil PASIVA», «wApp todavía no responde solo» y
+// «cámbiala a ACTIVA»— y las tres son FALSAS dichas a una sesión que ya está activa.
+// Sin este predicado las activas también salían pendientes: se verificó ejecutando
+// esta misma consulta contra Postgres con dos filas sembradas, y la activa aparecía.
+// No era hipotético: al aplicar la 0066, la ÚNICA sesión de UAT (profile='active',
+// self_pn poblado, greeted_at NULL) habría recibido ese mensaje en su siguiente
+// latido, en un teléfono real.
+//
+// ⚠️ `= 'passive'` Y NO `<> 'active'`, aunque hoy sean equivalentes (la columna es NOT
+// NULL y su CHECK la acota a los dos valores, 0063:104). La equivalencia solo dura
+// mientras el dominio tenga DOS valores: el día que aparezca un tercer perfil,
+// `<> 'active'` le mandaría un aviso que lo describe mal, y `= 'passive'` no le manda
+// nada. El aviso habla de UN perfil concreto, así que la pregunta correcta es «¿es
+// pasiva?», no «¿no es activa?». Fail-closed ante lo que todavía no existe.
+//
+// ⚠️ CONSECUENCIA ACEPTADA: quien active su sesión dentro de los ~30 s que van del
+// emparejamiento al latido que consigue entregar, NO recibe el aviso. Es correcto —ya
+// no le aplica—, y su `greeted_at` se queda NULL, así que si algún día vuelve a
+// pasiva sí lo recibirá. Eso también es correcto: en ese momento el texto vuelve a
+// ser cierto.
+//
+// ⚠️ NO es un claim: no reserva nada. Entre este SELECT y el MarkGreeted posterior
+// hay un envío a WhatsApp de por medio, y esa es justo la ventana que el centinela de
+// MarkGreeted cierra.
+//
+// NUNCA loguea: devuelve el número, que es PII, y quien lo recibe se encarga.
+func (r *PostgresRepository) PendingGreeting(ctx context.Context, tenantID, edgeID, sessionID string) (string, bool, error) {
+	var selfPn string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT self_pn
+		FROM public.fleet_sessions
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		  AND greeted_at IS NULL
+		  AND COALESCE(self_pn, '') <> ''
+		  AND profile = 'passive'
+	`, tenantID, edgeID, sessionID).Scan(&selfPn)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("fleet: consultar saludo pendiente: %w", err)
+	}
+	return selfPn, true, nil
+}
+
+// MarkGreeted deja constancia de que a esta sesión YA se le entregó el aviso
+// AVISO_SESION_PASIVA_V1 (Plan 046 · T3.2 (b), migración 0066). Devuelve marked=true
+// solo si ESTA llamada fue la que puso la marca.
+//
+// 🔴 EL CENTINELA `greeted_at IS NULL` ES LA IDEMPOTENCIA, y no es decorativo: si dos
+// latidos de la misma sesión llegan a la vez —dos Edges reportando la misma sesión,
+// dos streams durante una reconexión—, los dos pueden haber leído `pending=true` y
+// los dos llegar aquí. Con el centinela, el UPDATE del segundo casa CERO filas y
+// devuelve marked=false, así que el llamante sabe que su envío fue el duplicado y
+// puede decirlo en el log en vez de creerse el primero. Sin él, la marca se
+// re-escribiría en cada latido y `greeted_at` dejaría de ser «cuándo se avisó» para
+// pasar a ser «el último latido», que es otra columna que ya existe (updated_at).
+//
+// ⚠️ Solo se llama con el Ack del Edge en la mano y ok=true. Un envío que muere en la
+// ventana del lease (el Validator del Edge nace cerrado y tarda 0,5-1,1 s en abrirse,
+// medido en campo) NO puede marcar: el reintento es el latido siguiente y nada más.
+//
+// NO toca `profile_updated_at`, y eso es obligatorio: la regla de la 0065 dice que
+// SOLO SetProfile mueve el reloj del eje. Mover `updated_at` sí es correcto —es el
+// reloj de la FILA y esta escritura la cambia—.
+func (r *PostgresRepository) MarkGreeted(ctx context.Context, tenantID, edgeID, sessionID string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET greeted_at = now(), updated_at = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		  AND greeted_at IS NULL
+	`, tenantID, edgeID, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("fleet: marcar saludo entregado: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al marcar el saludo: %w", err)
+	}
+	return n > 0, nil
 }
 
 // SetProfile fija el PERFIL (active|passive) de la sesión del tenant.
@@ -373,11 +480,18 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 // justamente la información que estas columnas existen para conservar. Se escanean
 // como sql.NullInt64 / []byte y se traducen a punteros y mapa nil-able.
 //
-// `profile` (Plan 046 · T1.1) viaja al lado de `role`: es el eje de NEGOCIO y el
-// único con el que se decide, mientras `role` sigue publicándose como alias
-// deprecado hasta su DROP. Su COALESCE es defensivo (la 0063 la deja NOT NULL) y
-// cae a 'passive', NUNCA a 'active': si algún día faltara el dato, la lectura
-// segura es «no auto-responde».
+// `profile` (Plan 046 · T1.1) es el ÚNICO eje con el que se decide. Ya no viaja al
+// lado de nada: `role` —que este comentario describía como «alias deprecado hasta su
+// DROP»— se retiró en la 0064, y con él su columna, su tipo Go y sus dos rutas HTTP.
+// El COALESCE de `profile` es defensivo (la 0063 la deja NOT NULL) y cae a 'passive',
+// NUNCA a 'active': si algún día faltara el dato, la lectura segura es «no
+// auto-responde».
+//
+// `greeted_at` (Plan 046 · T3.2) NO está en esta lista a propósito: es un hecho
+// OPERATIVO de una sola sesión —«ya se le entregó el aviso»— que solo consume el
+// emisor del saludo por su propia consulta (PendingGreeting). Meterlo aquí obligaría
+// a añadirle un campo a Session y a escanearlo en cada List del dashboard para que
+// nadie lo lea.
 const selectSessionCols = `
 		SELECT tenant_id::text, edge_id, session_id, state,
 		       COALESCE(profile, 'passive'),

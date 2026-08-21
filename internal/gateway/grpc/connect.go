@@ -262,6 +262,12 @@ func (s *Server) route(lane *workLane, cc connCtx, msg *cloudlinkv1.EdgeToCloud)
 // los expondría a intercalarse con la coalescencia (D-050.4), que sustituye el job
 // pendiente entero: dos latidos podrían quedar mezclados a medias.
 //
+// 📌 Desde el Plan 046 · T3.2 (b) son CUATRO: el saludo de la sesión recién
+// emparejada (greetIfNeeded) va enganchado al final del mismo job, y por los mismos
+// dos motivos —lee lo que persistSelfPn acaba de escribir, y envía por el lease que
+// renewLease acaba de renovar—. El párrafo de abajo sobre el presupuesto vale igual,
+// solo que repartido entre cuatro; el reparto exacto está en greeting.go.
+//
 // ⚠️ Los tres comparten UN presupuesto (workBudget, 5 s por defecto), no uno cada
 // uno. Si persistSelfPn se come el reloj, renewLease recibe un ctx casi vencido y su
 // Push falla: el lease NO queda renovado ante el Edge (lo grita el Warn de runJob,
@@ -309,6 +315,15 @@ func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Hea
 		s.persistSelfPn(ctx, cc, hb)
 		s.persistHealth(ctx, cc, hb)
 		s.renewLease(ctx, cc, hb.GetLeaseCounter())
+		// 🔴 EL CUARTO VA AL FINAL A PROPÓSITO (Plan 046 · T3.2 (b)). El saludo de la
+		// sesión recién emparejada necesita ir DESPUÉS de persistSelfPn —que es quien
+		// deja el número en la fila que su consulta lee— y se pone DESPUÉS DE TODO
+		// porque es el único de los cuatro que espera un Ack del Edge. Los cuatro
+		// comparten UN presupuesto, no uno cada uno (ver el ⚠️ de arriba): al final
+		// solo puede gastar el reloj que los otros tres no gastaron. Antes de
+		// renewLease le robaría el presupuesto justo al lease del que depende para
+		// poder enviar. Su docstring tiene el reparto entero.
+		s.greetIfNeeded(ctx, cc)
 	})
 }
 
