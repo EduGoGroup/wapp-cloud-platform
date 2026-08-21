@@ -78,7 +78,20 @@ type SessionDeps struct {
 	Sessions SessionLister // fleet: sesiones del tenant (aislamiento)
 	// SessionRoles administra el rol bot|passive de una sesión (Plan 020 · T1).
 	// Lo satisface *fleet.PostgresRepository (SetRole). nil ⇒ no se monta la ruta.
+	//
+	// ⚠️ DEPRECADO: usa SessionProfiles (Plan 046 · T1.2, D-046.5). Se conserva un
+	// ciclo para no romper al BFF ya desplegado; muere con el DROP de `role`. Sin la
+	// marca `Deprecated:` de godoc a propósito: bootstrap lo cablea vivo y SA1019
+	// pondría rojo el CI por una convivencia decidida.
 	SessionRoles flowadmin.SessionRoleStore
+	// SessionProfiles administra el PERFIL active|passive de una sesión (Plan 046 ·
+	// T1.2). Lo satisface *fleet.PostgresRepository (SetProfile). nil ⇒ no se monta
+	// la ruta. Sucede a SessionRoles.
+	SessionProfiles flowadmin.SessionProfileStore
+	// ProfilePush empuja el cambio de perfil a la sesión viva tras persistirlo
+	// (best-effort, ADR-0027). 🔴 En T1.2 se cablea a nil (no-op): quien lo enchufa
+	// de verdad es T2.1. nil NO desmonta la ruta, solo apaga el push.
+	ProfilePush flowadmin.ProfilePusher
 	// SessionStatus administra el estatus offline|loggedout de una sesión, para
 	// retirar/limpiar un zombie (Plan 020 · T3). Lo satisface *fleet.PostgresRepository
 	// (SetState). nil ⇒ no se monta la ruta.
@@ -447,9 +460,26 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
 	// pero NO dispara triggers ni auto-responde. Escritura auditada (sessions.write),
 	// acotada al tenant del token (INV-8); reusa el MISMO handler que /admin/sessions.
+	//
+	// ⚠️ DEPRECADA (Plan 046 · T1.2, D-046.5): la sucede POST /api/v1/sessions/{id}/profile,
+	// registrada justo debajo. Se conserva un ciclo —el BFF y la plataforma no se
+	// despliegan a la vez— y toda su respuesta lleva la señal de deprecación
+	// (cabeceras Deprecation + Link y el campo `deprecation` del cuerpo).
 	if d.SessionRoles != nil {
 		mux.Handle("POST /api/v1/sessions/{id}/role", protect(mw, auditor, log,
-			"sessions.write", "session", flowadmin.SetSessionRoleHandler(d.SessionRoles)))
+			"sessions.write", "session",
+			flowadmin.SetSessionRoleHandler(d.SessionRoles, d.ProfilePush, log)))
+	}
+
+	// PERFIL de sesión active|passive (Plan 046 · T1.2, ADR-0027): sucede a /role con
+	// el vocabulario del dueño. MISMO scope (sessions.write), MISMA auditoría y MISMO
+	// aislamiento al tenant del token (INV-8); reusa el MISMO handler que
+	// /admin/sessions/{id}/profile. El push al Edge es best-effort y hoy va apagado
+	// (d.ProfilePush nil ⇒ no-op; lo enchufa T2.1).
+	if d.SessionProfiles != nil {
+		mux.Handle("POST /api/v1/sessions/{id}/profile", protect(mw, auditor, log,
+			"sessions.write", "session",
+			flowadmin.SetSessionProfileHandler(d.SessionProfiles, d.ProfilePush, log)))
 	}
 
 	// Diagnóstico remoto bajo demanda (Plan 031 · T5, ADR-0023 capa 3). POST emite un

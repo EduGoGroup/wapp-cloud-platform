@@ -30,6 +30,18 @@ type sessionDTO struct {
 	LastConnectedAt string `json:"last_connected_at,omitempty"`
 	LastSeenAt      string `json:"last_seen_at,omitempty"`
 
+	// Profile es el PERFIL de negocio de la sesión (active|passive, Plan 046 · T1.2,
+	// ADR-0027): el eje que SUCEDE a Role, con el vocabulario del dueño («activa /
+	// pasiva», D-046.6). Va SIN omitempty a propósito: la columna es NOT NULL con
+	// DEFAULT 'passive', así que siempre lo sabemos, y un campo ausente le diría al
+	// cliente «no lo sé» cuando sí lo sabemos.
+	//
+	// ⚠️ Role NO se retira de este DTO en el mismo despliegue (D-046.1/D-046.5): el
+	// BFF y la plataforma no se despliegan a la vez, y quitarlo hoy dejaría a un BFF
+	// viejo sin nada que pintar. Los dos campos viajan juntos y dicen lo mismo
+	// (bot⇔active, passive⇔passive) hasta el DROP de la columna `role`.
+	Profile string `json:"profile"`
+
 	// Salud (Plan 031 · T4). Health es el estado derivado; el resto es el snapshot.
 	Health            string `json:"health,omitempty"`
 	WhatsappState     string `json:"whatsapp_state,omitempty"`
@@ -117,6 +129,7 @@ func listSessionsHandler(sessions SessionLister, rules HealthRules, alerter Aler
 				EdgeID:            s.EdgeID,
 				State:             string(s.State),
 				Role:              string(s.Role),
+				Profile:           string(s.Profile),
 				SelfPn:            s.SelfPn,
 				Health:            rules.derive(s),
 				WhatsappState:     s.WhatsappState,

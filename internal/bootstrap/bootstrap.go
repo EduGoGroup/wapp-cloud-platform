@@ -431,6 +431,11 @@ func Run(ctx context.Context) error {
 			Sessions:      fleetRepo,
 			SessionRoles:  fleetRepo,
 			SessionStatus: fleetRepo,
+			// Plan 046 · T1.2: el mismo repo por el eje NUEVO (SetProfile).
+			SessionProfiles: fleetRepo,
+			// 🔴 ProfilePush se deja SIN cablear a propósito (nil ⇒ no-op): el hook
+			// del push de filtros nace apagado en T1.2 y lo enchufa T2.1. Mientras
+			// tanto, un cambio de perfil llega al Edge en su siguiente conexión.
 		},
 		MediaDeps: publicapi.MediaDeps{
 			Media:           flowDeps.presign,
@@ -530,7 +535,13 @@ func Run(ctx context.Context) error {
 		triggersCreate: flowadmin.CreateTriggerHandler(triggerStore, durableFlowChecker),
 		triggersList:   flowadmin.ListTriggersHandler(triggerStore, durableFlowChecker),
 		triggersDelete: flowadmin.DeleteTriggerHandler(triggerStore, durableFlowChecker),
-		sessionRole:    flowadmin.SetSessionRoleHandler(fleetRepo),
+		// Plan 046 · T1.2: /role queda DEPRECADA (responde con Deprecation + Link +
+		// campo `deprecation`) y la sucede /profile. El tercer argumento —el
+		// ProfilePusher— va nil a propósito en las DOS: el hook nace apagado y lo
+		// enchufa T2.1. Si un día se enciende, se enciende AQUÍ y en el SessionDeps
+		// de buildPublicAPIServer, no en una sola de las dos vías.
+		sessionRole:    flowadmin.SetSessionRoleHandler(fleetRepo, nil, log),
+		sessionProfile: flowadmin.SetSessionProfileHandler(fleetRepo, nil, log),
 		sessionStatus:  flowadmin.SetSessionStatusHandler(fleetRepo),
 		revokeTenant:   httpapi.RevokeTenantHandler(gw, cfg.PlatformTenantID),
 		restoreTenant:  httpapi.RestoreTenantHandler(gw, cfg.PlatformTenantID),
@@ -629,7 +640,8 @@ type adminRouteDeps struct {
 	triggersCreate http.Handler
 	triggersList   http.Handler
 	triggersDelete http.Handler
-	sessionRole    http.Handler
+	sessionRole    http.Handler // ⚠️ DEPRECADO (Plan 046 · T1.2): lo sucede sessionProfile.
+	sessionProfile http.Handler
 	sessionStatus  http.Handler
 	revokeTenant   http.Handler
 	restoreTenant  http.Handler
@@ -694,8 +706,14 @@ func registerAdminRoutes(mux *http.ServeMux, d adminRouteDeps) {
 		"triggers.read", "trigger", d.triggersList))
 	mux.Handle("DELETE /admin/triggers/{id}", adminHandler(d.authMW, d.auditor, d.log,
 		"triggers.delete", "trigger", d.triggersDelete))
+	// ⚠️ /role DEPRECADA (Plan 046 · T1.2, D-046.5): la sucede /admin/sessions/{id}/profile,
+	// justo debajo. El handler emite Deprecation + Link + el campo `deprecation` en
+	// TODAS sus respuestas, y su Link apunta al sucesor de ESTA vía (/admin/...), no
+	// al de la API pública: el operador de admin puede no tener alcance a /api/v1.
 	mux.Handle("POST /admin/sessions/{id}/role", adminHandler(d.authMW, d.auditor, d.log,
 		"sessions.write", "session", d.sessionRole))
+	mux.Handle("POST /admin/sessions/{id}/profile", adminHandler(d.authMW, d.auditor, d.log,
+		"sessions.write", "session", d.sessionProfile))
 	mux.Handle("POST /admin/sessions/{id}/status", adminHandler(d.authMW, d.auditor, d.log,
 		"sessions.write", "session", d.sessionStatus))
 }

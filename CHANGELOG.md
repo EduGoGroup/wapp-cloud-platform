@@ -5,6 +5,74 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- **Perfil de sesión: `POST /api/v1/sessions/{id}/profile`** (Plan 046 · T1.2,
+  D-046.5). Cuerpo `{"profile":"active"|"passive"}`, respuesta
+  `{"session_id","profile"}`. Mismo grant que la ruta que sucede
+  (**`sessions.write`**), misma auditoría y mismo aislamiento al tenant del token
+  (INV-8): una sesión de otro tenant devuelve **404**, nunca 403 — un 403
+  confirmaría que existe. `{"profile":"bot"}` es **400**: `bot` es vocabulario de
+  la ruta vieja y no se traduce en silencio.
+  Registrada **en las dos vías**, igual que su predecesora: la pública y
+  `POST /admin/sessions/{id}/profile`.
+- **`GET /api/v1/sessions` publica `profile`** (`active`|`passive`) junto a `role`.
+  Va siempre presente (la columna es `NOT NULL DEFAULT 'passive'`).
+- **Migración `0063_fleet_sessions_profile.sql`** (Plan 046 · T1.1): `fleet_sessions`
+  gana la columna `profile TEXT NOT NULL DEFAULT 'passive'` con
+  `CHECK (profile IN ('active','passive'))`, backfilleada desde `role`
+  (`bot⇒active`, `passive⇒passive`). Aditiva e idempotente bajo el runner
+  FULL-REPLAY: la columna nace **sin** default y el backfill lleva
+  `WHERE profile IS NULL`, así que el replay del arranque siguiente es un no-op y
+  **no vuelca a pasiva** las sesiones vivas. `SchemaVersion` sube a **0.37.0**
+  (un solo bump para el plan).
+
+### Changed
+
+- 🔴 **Una sesión recién emparejada nace PASIVA** (D-07). Es un cambio de
+  comportamiento deliberado respecto de la 0025, que traía `DEFAULT 'bot'`: hasta
+  que su dueño la active, la sesión **no dispara triggers ni auto-responde**. Las
+  sesiones que ya existían **conservan su comportamiento exacto** por el backfill de
+  la 0063 (REQ-15) — el default solo alcanza a las filas nuevas.
+- **La decisión de negocio se lee de `profile`, y solo de `profile`.** Los cuatro
+  lectores del runtime (`tenant_resolver`, `self_numbers`, las constantes de
+  `runtime.go` y `reactiveBlocked`) migran a la columna nueva con **semántica byte a
+  byte idéntica**. `role` se conserva un ciclo como alias deprecado y **sincronizado
+  en escritura**: `SetRole` y `SetProfile` escriben las dos columnas en el **mismo**
+  `UPDATE`, así que no hay instante en que se contradigan. Su `DROP` es de un plan
+  futuro.
+
+### Deprecated
+
+- **`POST /api/v1/sessions/{id}/role` y `POST /admin/sessions/{id}/role`** quedan
+  deprecadas **un ciclo** (D-046.5). **No cambia su contrato**: siguen devolviendo
+  **200** con `{"session_id","role"}` y siguen aceptando `bot`|`passive`. Lo que
+  se añade es el aviso, **por partida doble y en las CINCO respuestas** (no solo
+  en el 200):
+  - cabecera `Deprecation: true` (RFC 8594);
+  - cabecera `Link: <…/{id}/profile>; rel="successor-version"` (RFC 8288), que
+    apunta al sucesor **de la misma vía** — a un operador de `/admin` no se le
+    manda a `/api/v1`, que puede no alcanzar;
+  - campo `deprecation` en el cuerpo, para el cliente que solo mira el JSON.
+
+  La traducción es `bot ⇒ active` y `passive ⇒ passive`, y ambas rutas escriben
+  las dos columnas, así que **no hay ventana en la que `role` y `profile` se
+  contradigan**. Conviven a propósito: el BFF y la plataforma no se despliegan a
+  la vez, y romper `/role` hoy dejaría al BFF ya desplegado sin poder cambiar un
+  perfil hasta su redespliegue. El `DROP` de `role` es de un plan futuro.
+- **`sessionDTO.role` de `GET /api/v1/sessions`** queda deprecado por la misma
+  razón y **no se retira** en este despliegue: los dos campos viajan juntos y
+  dicen lo mismo.
+
+### Notas
+
+- 🔴 El push del cambio de perfil al Edge **nace apagado**: el puerto
+  `ProfilePusher` está cableado a `nil` (no-op) en las dos vías. Hasta que **T2.1**
+  lo enchufe, un cambio de perfil llega al Edge **en su siguiente conexión**, no al
+  instante. Cuando se encienda será *best-effort*: un fallo de push se registra y
+  **no** cambia el código de respuesta, porque el perfil ya quedó persistido.
+- El entitlement `passive_profiles` **no gatea** estas rutas en v1.
+
 ## [0.1.0] - 2026-08-13
 
 Primer tag de este repositorio. `wapp-cloud-platform` viene operando desde su

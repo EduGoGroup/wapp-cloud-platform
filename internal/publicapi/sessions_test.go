@@ -17,6 +17,7 @@ type sessionRow struct {
 	EdgeID          string `json:"edge_id"`
 	State           string `json:"state"`
 	Role            string `json:"role"`
+	Profile         string `json:"profile"`
 	SelfPn          string `json:"self_pn"`
 	LastConnectedAt string `json:"last_connected_at"`
 	LastSeenAt      string `json:"last_seen_at"`
@@ -44,11 +45,11 @@ func sessionsFixture() fakeSessions {
 		tenantA: {{
 			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
 			State: fleet.StateOnline, Role: fleet.RoleBot, SelfPn: "15551234567",
-			LastConnectedAt: ts, LastSeenAt: ts,
+			Profile: fleet.ProfileActive, LastConnectedAt: ts, LastSeenAt: ts,
 		}},
 		tenantB: {{
 			TenantID: tenantB, EdgeID: "edge-b", SessionID: "sess-b",
-			State: fleet.StateOffline, Role: fleet.RolePassive,
+			State: fleet.StateOffline, Role: fleet.RolePassive, Profile: fleet.ProfilePassive,
 		}},
 	}}
 }
@@ -71,6 +72,12 @@ func TestSessionsList_OK_WithScope(t *testing.T) {
 	if got.SessionID != "sess-a" || got.EdgeID != "edge-a" || got.State != "online" ||
 		got.Role != "bot" || got.SelfPn != "15551234567" {
 		t.Fatalf("DTO inesperado: %+v", got)
+	}
+	// Plan 046 · T1.2: el DTO publica `profile` SIN dejar de publicar `role`. Los
+	// dos viajan juntos durante el ciclo de deprecación — el BFF y la plataforma no
+	// se despliegan a la vez, y un BFF viejo se quedaría sin nada que pintar.
+	if got.Profile != "active" {
+		t.Fatalf("profile=%q, quiero \"active\" (¿se perdió el campo nuevo?): %+v", got.Profile, got)
 	}
 	if got.LastConnectedAt == "" || got.LastSeenAt == "" {
 		t.Fatalf("timestamps ausentes: %+v", got)
@@ -339,5 +346,92 @@ func TestSessionsList_TenantIsolation(t *testing.T) {
 		if r.SessionID == "sess-a" || r.EdgeID == "edge-a" {
 			t.Fatalf("tenantB no debe ver sesiones de tenantA: %+v", rows)
 		}
+	}
+}
+
+// --- Plan 046 · T1.2: las rutas de perfil, montadas de verdad ---
+
+// apiConPerfiles monta la API con el eje de perfil cableado sobre un repo en
+// memoria, y siembra la sesión sess-a del tenantA.
+func apiConPerfiles(t *testing.T) (*testAPI, *fleet.MemoryRepository) {
+	t.Helper()
+	repo := fleet.NewMemoryRepository()
+	if err := repo.MarkOnline(context.Background(), tenantA, "edge-a", "sess-a"); err != nil {
+		t.Fatalf("seed sesión: %v", err)
+	}
+	api := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{
+		Sessions:        sessionsFixture(),
+		SessionRoles:    repo,
+		SessionProfiles: repo,
+		// ProfilePush queda nil: el hook nace apagado en T1.2 (lo enchufa T2.1).
+	}}, apiKeys())
+	return api, repo
+}
+
+// TestSessionProfile_RutaMontada: POST /api/v1/sessions/{id}/profile existe de
+// verdad en el mux público (no solo el handler suelto) y fija el perfil.
+func TestSessionProfile_RutaMontada(t *testing.T) {
+	api, repo := apiConPerfiles(t)
+
+	rec := call(api, keyASessionsW, http.MethodPost, "/api/v1/sessions/sess-a/profile", `{"profile":"active"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	s, _, err := repo.Get(context.Background(), tenantA, "edge-a", "sess-a")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.Profile != fleet.ProfileActive {
+		t.Fatalf("no persistió active: %q", s.Profile)
+	}
+}
+
+// TestSessionProfile_403_SinScopeDeEscritura: la ruta exige sessions.write, igual
+// que /role. Una credencial de solo lectura no cambia perfiles.
+func TestSessionProfile_403_SinScopeDeEscritura(t *testing.T) {
+	api, _ := apiConPerfiles(t)
+
+	rec := call(api, keyASessions, http.MethodPost, "/api/v1/sessions/sess-a/profile", `{"profile":"active"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d, quiero 403; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSessionProfile_400_Bot_EnLaRutaReal: `bot` es vocabulario de /role. Contra
+// /profile es 400 también a través del mux montado.
+func TestSessionProfile_400_Bot_EnLaRutaReal(t *testing.T) {
+	api, _ := apiConPerfiles(t)
+
+	rec := call(api, keyASessionsW, http.MethodPost, "/api/v1/sessions/sess-a/profile", `{"profile":"bot"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d, quiero 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSessionRole_DeprecacionEnLaRutaPublica: la ruta vieja sigue montada, sigue
+// devolviendo 200 y ya avisa. Aserción sobre el NOMBRE EXACTO de las cabeceras.
+func TestSessionRole_DeprecacionEnLaRutaPublica(t *testing.T) {
+	api, _ := apiConPerfiles(t)
+
+	rec := call(api, keyASessionsW, http.MethodPost, "/api/v1/sessions/sess-a/role", `{"role":"passive"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Deprecation"); got != "true" {
+		t.Fatalf("cabecera Deprecation=%q, quiero \"true\"", got)
+	}
+	quiero := `</api/v1/sessions/sess-a/profile>; rel="successor-version"`
+	if got := rec.Header().Get("Link"); got != quiero {
+		t.Fatalf("cabecera Link=%q, quiero %q", got, quiero)
+	}
+	var out struct {
+		Role        string `json:"role"`
+		Deprecation string `json:"deprecation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Role != "passive" || out.Deprecation == "" {
+		t.Fatalf("respuesta inesperada: %+v", out)
 	}
 }

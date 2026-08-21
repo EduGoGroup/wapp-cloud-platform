@@ -35,6 +35,11 @@ const (
 	keyASessions = "key-a-sessions" // tenantA, grant sessions.read
 	keyBSessions = "key-b-sessions" // tenantB, grant sessions.read
 
+	// keyASessionsW porta sessions.write: es la ESCRITURA de sesión (rol/perfil),
+	// que keyASessions NO tiene — así el 403 por falta de scope sigue siendo
+	// demostrable con la clave de solo lectura (Plan 046 · T1.2).
+	keyASessionsW = "key-a-sessions-w" // tenantA, grants sessions.read + sessions.write
+
 	// tokenIssuer/tokenSecret firman los Context Tokens de estos tests.
 	tokenIssuer = "wapp-test"
 	//nolint:gosec // no es una credencial: es material de firma de un test
@@ -63,6 +68,8 @@ func apiKeys() map[string]testIdentity {
 		keyBContent:  {TenantID: tenantB, Subject: "cms-b", Grants: []string{"media.upload", "content.write", "content.read"}},
 		keyASessions: {TenantID: tenantA, Subject: "guardian-a", Grants: []string{"sessions.read"}},
 		keyBSessions: {TenantID: tenantB, Subject: "guardian-b", Grants: []string{"sessions.read"}},
+
+		keyASessionsW: {TenantID: tenantA, Subject: "guardian-a-w", Grants: []string{"sessions.read", "sessions.write"}},
 	}
 }
 
