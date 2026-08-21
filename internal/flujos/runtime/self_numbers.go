@@ -11,24 +11,29 @@ import (
 // tenant (INV-8): la consulta filtra por tenant_id, así los números de un tenant
 // nunca cruzan a otro.
 //
-// Consciente del ROL (Plan 020 · T1+T2): los números de sesiones PASSIVE se
-// EXCLUYEN — un passive nunca auto-responde (reactiveBlocked lo corta antes del
-// motor), así que un mensaje que llega DESDE ese número no puede realimentar un
-// bucle; bloquearlo solo impediría que una sesión bot atienda al número personal
-// del mismo tenant. El predicado es role <> 'passive' (y no role = 'bot') a
-// propósito: si mañana existe un tercer rol, sus números SIGUEN bloqueando por
-// defecto (no sabemos si auto-responde ⇒ conservador hacia bloquear, misma
-// convención que "rol desconocido ⇒ bot"). El rate-limit por conversación (T0)
-// queda como red de contención adicional.
+// Consciente del PERFIL (Plan 020 · T1+T2, migrado al eje profile por el Plan 046 ·
+// T1.1): los números de sesiones PASIVAS se EXCLUYEN — una pasiva nunca
+// auto-responde (reactiveBlocked lo corta antes del motor), así que un mensaje que
+// llega DESDE ese número no puede realimentar un bucle; bloquearlo solo impediría
+// que una sesión activa atienda al número personal del mismo tenant. El predicado es
+// profile <> 'passive' (y no profile = 'active') a propósito: si mañana existe un
+// tercer perfil, sus números SIGUEN bloqueando por defecto (no sabemos si
+// auto-responde ⇒ conservador hacia bloquear, misma convención que "perfil
+// desconocido ⇒ bloquea"). El rate-limit por conversación (T0) queda como red de
+// contención adicional.
+//
+// 🔴 No "normalizar" el <> a un =: invertir el predicado cambia hacia dónde falla la
+// guarda ante un valor desconocido, que es justo lo que este párrafo protege. La
+// columna legada role ya no se consulta aquí (D-046.1).
 //
 // La decisión es POR NÚMERO, no por fila (GROUP BY self_pn + HAVING). Un mismo
 // self_pn puede aparecer en varias filas —otro edge_id, o la fila que dejó un
-// emparejamiento anterior— y con el filtro por fila bastaba UNA fila bot para
-// bloquear el número aunque la sesión VIVA estuviese en passive: marcar passive
-// desde la consola no surtía efecto y el bot no podía atender al teléfono
-// personal. Ahora un número bloquea solo si ALGUNA de sus sesiones NO retiradas
-// es no-passive (mismo criterio agregado que PostgresTenantResolver, que usa
-// bool_or para el rol efectivo de una sesión repartida entre edges).
+// emparejamiento anterior— y con el filtro por fila bastaba UNA fila activa para
+// bloquear el número aunque la sesión VIVA fuese pasiva: marcarla pasiva desde la
+// consola no surtía efecto y el bot no podía atender al teléfono personal. Ahora un
+// número bloquea solo si ALGUNA de sus sesiones NO retiradas es no-pasiva (mismo
+// criterio agregado que PostgresTenantResolver, que usa bool_or para el perfil
+// efectivo de una sesión repartida entre edges).
 //
 // Coste: se invoca UNA vez por entrante (dentro de la guarda anti-self-loop). Es
 // una query trivial e indexada por tenant_id; para el MVP se acepta SIN caché
@@ -45,7 +50,7 @@ func NewPostgresSelfNumbers(db *sql.DB) *PostgresSelfNumbers {
 }
 
 // SelfNumbers devuelve los self_pn no vacíos del tenant que pertenecen a alguna
-// sesión NO retirada y NO passive (los passive no bloquean: nunca auto-responden
+// sesión NO retirada y NO pasiva (las pasivas no bloquean: nunca auto-responden
 // ⇒ sin riesgo de loop). El resultado ya viene deduplicado por la agregación.
 //
 // ⚠️ El filtro de vida es state <> 'loggedout', NO state = 'online'. Son cosas
@@ -62,7 +67,7 @@ func (r *PostgresSelfNumbers) SelfNumbers(ctx context.Context, tenantID string) 
 		WHERE tenant_id = $1 AND self_pn IS NOT NULL AND self_pn <> ''
 		  AND state <> 'loggedout'
 		GROUP BY self_pn
-		HAVING bool_or(role <> 'passive')
+		HAVING bool_or(profile <> 'passive')
 	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("self_numbers: consulta fleet_sessions: %w", err)

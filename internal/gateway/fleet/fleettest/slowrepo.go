@@ -174,4 +174,13 @@ func (s *SlowRepository) SetRole(ctx context.Context, tenantID, sessionID string
 	return s.inner.SetRole(ctx, tenantID, sessionID, role)
 }
 
+// SetProfile implementa fleet.Repository tras la latencia inyectada. Si el contexto
+// muere durante la espera devuelve found=false y el error del contexto.
+func (s *SlowRepository) SetProfile(ctx context.Context, tenantID, sessionID string, profile fleet.Profile) (bool, error) {
+	if err := s.wait(ctx); err != nil {
+		return false, err
+	}
+	return s.inner.SetProfile(ctx, tenantID, sessionID, profile)
+}
+
 var _ fleet.Repository = (*SlowRepository)(nil)

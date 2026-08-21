@@ -35,9 +35,17 @@ type Presigner interface {
 	GenerateDownloadURL(ctx context.Context, key string) (url string, expiresAt time.Time, err error)
 }
 
-// Roles de sesión que gobiernan el motor reactivo (Plan 020 · T1). Se declaran
-// como literales en runtime (no se importa fleet) para no acoplar el motor al
-// gateway: el resolver entrega el rol ya resuelto como string.
+// Vocabulario INTERNO del motor para el eje que gobierna la reacción (Plan 020 ·
+// T1). Se declaran como literales en runtime (no se importa fleet) para no acoplar
+// el motor al gateway: el resolver entrega el valor ya resuelto como string.
+//
+// ⚠️ Desde el Plan 046 · T1.1 el dato que la BD aporta ya NO es fleet_sessions.role
+// sino fleet_sessions.profile (active|passive): el resolver agrega esa columna y la
+// traduce a ESTOS literales. Los nombres y los valores se conservan a propósito —
+// son el CONTRATO de TenantResolver y de los dobles de test, y cambiarlos aquí
+// obligaría a reescribir aserciones de comportamiento sin cambiar una sola decisión.
+// Mueren con el DROP de la columna role, en el plan futuro que lo haga; hasta
+// entonces "bot" significa exactamente profile='active'.
 const (
 	roleBot     = "bot"     // ejecuta el motor de flujos (dispara triggers / auto-responde).
 	rolePassive = "passive" // solo escucha/transporta: NO dispara triggers ni auto-responde.

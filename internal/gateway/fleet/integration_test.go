@@ -119,6 +119,74 @@ func TestIntegration_FleetSaveHealth(t *testing.T) {
 	}
 }
 
+// TestIntegration_FleetSetRoleEscribeAmbasColumnas verifica contra Postgres real
+// (migración 0063, Plan 046 · T1.1 · D-046.1) las dos mitades del ciclo de
+// convivencia entre `role` y `profile`:
+//
+//  1. Una sesión que nace por MarkOnline NO nombra la columna profile ⇒ cae al
+//     DEFAULT de la 0063 y nace PASIVA (D-07). Es el cambio de comportamiento
+//     respecto de la 0025 (que traía DEFAULT 'bot'), y está aquí para que nadie lo
+//     revierta sin darse cuenta.
+//  2. SetRole escribe las DOS columnas en el mismo UPDATE, traduciendo
+//     bot⇒active/passive⇒passive. Mientras `role` viva como alias deprecado, NO
+//     puede existir una fila en la que los dos ejes se contradigan: la lectura de
+//     negocio ya solo mira `profile`, y una escritura que dejara `role` a solas
+//     haría que la consola y el motor discreparan.
+func TestIntegration_FleetSetRoleEscribeAmbasColumnas(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	tenantID := seedTenant(t, db)
+	const edgeID, sessionID = "edge-profile-1", "sess-profile-1"
+
+	repo := fleet.NewPostgresRepository(db)
+	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+
+	s, found, err := repo.Get(ctx, tenantID, edgeID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("Get tras MarkOnline: found=%v err=%v", found, err)
+	}
+	if s.Profile != fleet.ProfilePassive {
+		t.Fatalf("una sesión recién registrada debe nacer pasiva (0063, D-07): got %q", s.Profile)
+	}
+
+	for _, caso := range []struct {
+		rol    fleet.Role
+		perfil fleet.Profile
+	}{
+		{fleet.RoleBot, fleet.ProfileActive},
+		{fleet.RolePassive, fleet.ProfilePassive},
+		{fleet.RoleBot, fleet.ProfileActive}, // y vuelve, para descartar un one-way
+	} {
+		foundRole, err := repo.SetRole(ctx, tenantID, sessionID, caso.rol)
+		if err != nil || !foundRole {
+			t.Fatalf("SetRole(%q): found=%v err=%v", caso.rol, foundRole, err)
+		}
+		s, found, err = repo.Get(ctx, tenantID, edgeID, sessionID)
+		if err != nil || !found {
+			t.Fatalf("Get tras SetRole(%q): found=%v err=%v", caso.rol, found, err)
+		}
+		if s.Role != caso.rol || s.Profile != caso.perfil {
+			t.Fatalf("SetRole(%q) debe dejar role=%q y profile=%q: got role=%q profile=%q",
+				caso.rol, caso.rol, caso.perfil, s.Role, s.Profile)
+		}
+		// Y contra la fila cruda: que el Session salga bien no prueba que la columna
+		// se escribiera —lo probaría igual si el perfil se derivara al leer—.
+		var rolBD, perfilBD string
+		if err := db.QueryRowContext(ctx, `
+			SELECT role, profile FROM public.fleet_sessions
+			WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		`, tenantID, edgeID, sessionID).Scan(&rolBD, &perfilBD); err != nil {
+			t.Fatalf("leer la fila cruda tras SetRole(%q): %v", caso.rol, err)
+		}
+		if rolBD != string(caso.rol) || perfilBD != string(caso.perfil) {
+			t.Fatalf("la fila en BD tras SetRole(%q): role=%q profile=%q (want %q / %q)",
+				caso.rol, rolBD, perfilBD, caso.rol, caso.perfil)
+		}
+	}
+}
+
 // TestIntegration_FleetSaveWorkerHealth verifica contra Postgres real (migración
 // 0061) que el bloque del WORKER (Plan 051 · T4.3) conserva la distinción entre
 // «no lo sé» y «cero»: sin dato las columnas quedan NULL y se leen como nil (no

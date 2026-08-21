@@ -20,14 +20,21 @@ import (
 // 0025/0028/0029). El STATE pesa tanto como el rol: la query separa la sesión
 // RETIRADA (loggedout, no vuelve sin re-QR) de la meramente desconectada (offline,
 // recuperable).
+//
+// Desde el Plan 046 · T1.1 la fila lleva TAMBIÉN `profile`, derivado del rol con el
+// MISMO CASE que el backfill de la 0063 (bot⇒active, resto⇒passive): la query bajo
+// prueba ya decide por `profile`, y dejar la columna al DEFAULT —que es pasivo—
+// convertiría en pasiva a toda sesión sembrada como bot. Es sembrado, no aserción:
+// los casos de prueba y lo que afirman no cambian.
 func seedFleetSessionStateRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, state, role, selfPn string) {
 	t.Helper()
 	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.fleet_sessions
-			(tenant_id, edge_id, session_id, state, role, self_pn, last_connected_at, last_seen_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), now(), now())
+			(tenant_id, edge_id, session_id, state, role, profile, self_pn, last_connected_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, CASE $5::text WHEN 'bot' THEN 'active' ELSE 'passive' END, $6, now(), now(), now())
 		ON CONFLICT (tenant_id, edge_id, session_id)
-			DO UPDATE SET state = EXCLUDED.state, role = EXCLUDED.role, self_pn = EXCLUDED.self_pn
+			DO UPDATE SET state = EXCLUDED.state, role = EXCLUDED.role,
+			              profile = EXCLUDED.profile, self_pn = EXCLUDED.self_pn
 	`, tenantID, edgeID, sessionID, state, role, selfPn)
 	if err != nil {
 		t.Fatalf("sembrar fleet_sessions (state=%s role=%s): %v", state, role, err)

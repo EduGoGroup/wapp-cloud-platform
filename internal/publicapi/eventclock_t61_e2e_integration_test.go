@@ -188,8 +188,11 @@ func t61Seed(t *testing.T, db *sql.DB) (tenantID, sessionID string) {
 		}
 	})
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO public.fleet_sessions (tenant_id, edge_id, session_id, state)
-		VALUES ($1::uuid, 't61-edge', $2, 'online')
+		-- profile EXPLÍCITO (Plan 046 · T1.1): el DEFAULT de la 0063 es pasivo y el
+		-- runtime ya decide por esa columna, así que sin este 'active' el e2e no
+		-- llegaría al motor reactivo. Es sembrado, no aserción.
+		INSERT INTO public.fleet_sessions (tenant_id, edge_id, session_id, state, profile)
+		VALUES ($1::uuid, 't61-edge', $2, 'online', 'active')
 	`, tenantID, sessionID); err != nil {
 		t.Fatalf("sembrando fleet_sessions: %v", err)
 	}

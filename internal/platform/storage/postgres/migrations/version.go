@@ -105,7 +105,21 @@ import (
 // pisaría las resoluciones manuales—: vive en
 // docs/runbooks/backfill-053-owner-event-id.sql. Un solo bump para la ola, sobre
 // la 0.35.0 ya publicada (Plan 051 · Ola 4).
-const SchemaVersion = "0.36.0"
+//
+// 0.37.0 -- Plan 046 · Ola 1 · T1.1 (0063): fleet_sessions gana profile
+// (active|passive), el EJE DE NEGOCIO que sustituye a role (bot|passive, 0025).
+// Columna NUEVA y no rename (D-046.1): role se conserva un ciclo como alias
+// deprecado —la escritura mantiene las dos sincronizadas, la lectura de negocio
+// pasa a profile y solo a profile— y su DROP es de un plan futuro. La columna
+// nace SIN default y se backfillea con guard `WHERE profile IS NULL` antes de
+// recibir `DEFAULT 'passive'` + NOT NULL: bajo un runner FULL-REPLAY el orden
+// inverso volcaría a pasiva las sesiones vivas del cliente (REQ-15). El default
+// alcanza SOLO a las filas nuevas y es un cambio de comportamiento deliberado
+// (D-07: una sesión recién emparejada nace pasiva). Un solo bump para el plan,
+// sobre la 0.36.0 ya publicada (Plan 053 · Ola 1, desplegada en UAT): las
+// migraciones que el resto de olas del 046 añadan NO vuelven a bumpear mientras
+// la 0.37.0 no se publique.
+const SchemaVersion = "0.37.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

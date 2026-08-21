@@ -127,25 +127,65 @@ func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, se
 	return nil
 }
 
-// SetRole fija el rol (bot|passive) de la sesión del tenant. UPDATE acotado por
-// tenant_id + session_id (aislamiento multi-tenant, INV-8): toca TODAS las filas
-// de esa sesión bajo el tenant. found=false si 0 filas (sesión inexistente o de
-// otro tenant ⇒ 404 opaco). Valida el rol en el dominio antes de tocar la BD.
+// SetRole fija el rol (bot|passive) de la sesión del tenant Y, en el MISMO UPDATE,
+// el perfil equivalente (active|passive, Plan 046 · T1.1 · D-046.1). Las dos
+// columnas viajan juntas porque `role` se conserva un ciclo como alias deprecado:
+// escribirlas en dos sentencias abriría una ventana —por corta que sea— en la que
+// la lectura de negocio (que ya mira SOLO `profile`) y el alias legado se
+// contradicen. La traducción es la del backfill de la 0063: bot⇒active, resto⇒passive.
+//
+// UPDATE acotado por tenant_id + session_id (aislamiento multi-tenant, INV-8): toca
+// TODAS las filas de esa sesión bajo el tenant. found=false si 0 filas (sesión
+// inexistente o de otro tenant ⇒ 404 opaco). Valida el rol en el dominio antes de
+// tocar la BD.
 func (r *PostgresRepository) SetRole(ctx context.Context, tenantID, sessionID string, role Role) (bool, error) {
 	if !ValidRole(role) {
 		return false, ErrInvalidRole
 	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE public.fleet_sessions
-		SET role = $3, updated_at = now()
+		SET role = $3, profile = $4, updated_at = now()
 		WHERE tenant_id = $1 AND session_id = $2
-	`, tenantID, sessionID, string(role))
+	`, tenantID, sessionID, string(role), string(ProfileForRole(role)))
 	if err != nil {
 		return false, fmt.Errorf("fleet: fijar rol: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("fleet: filas afectadas al fijar rol: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetProfile fija el PERFIL de la sesión del tenant Y, en el MISMO UPDATE, el rol
+// legado equivalente (Plan 046 · T1.2 · D-046.1). Es SetRole por el eje contrario y
+// con la misma razón: mientras `role` viva como alias deprecado, escribir las dos
+// columnas en dos sentencias abriría una ventana en la que se contradicen. La
+// traducción es la inversa del backfill de la 0063: active⇒bot, resto⇒passive.
+//
+// 🔴 NO delega en SetRole: la delegación haría que el eje NUEVO dependa del viejo, y
+// el DROP de `role` obligaría a reescribir este camino. Así, el DROP solo borra
+// SetRole y la asignación de `role` de aquí.
+//
+// UPDATE acotado por tenant_id + session_id (aislamiento multi-tenant, INV-8): toca
+// TODAS las filas de esa sesión bajo el tenant. found=false si 0 filas (sesión
+// inexistente o de otro tenant ⇒ 404 opaco). Valida el perfil en el dominio antes de
+// tocar la BD.
+func (r *PostgresRepository) SetProfile(ctx context.Context, tenantID, sessionID string, profile Profile) (bool, error) {
+	if !ValidProfile(profile) {
+		return false, ErrInvalidProfile
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET profile = $3, role = $4, updated_at = now()
+		WHERE tenant_id = $1 AND session_id = $2
+	`, tenantID, sessionID, string(profile), string(RoleForProfile(profile)))
+	if err != nil {
+		return false, fmt.Errorf("fleet: fijar perfil: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al fijar perfil: %w", err)
 	}
 	return n > 0, nil
 }
@@ -281,8 +321,15 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 // su NULL a 0 borraría la distinción entre «no medible» y «cero», que es
 // justamente la información que estas columnas existen para conservar. Se escanean
 // como sql.NullInt64 / []byte y se traducen a punteros y mapa nil-able.
+//
+// `profile` (Plan 046 · T1.1) viaja al lado de `role`: es el eje de NEGOCIO y el
+// único con el que se decide, mientras `role` sigue publicándose como alias
+// deprecado hasta su DROP. Su COALESCE es defensivo (la 0063 la deja NOT NULL) y
+// cae a 'passive', NUNCA a 'active': si algún día faltara el dato, la lectura
+// segura es «no auto-responde».
 const selectSessionCols = `
 		SELECT tenant_id::text, edge_id, session_id, state, COALESCE(role, 'bot'),
+		       COALESCE(profile, 'passive'),
 		       COALESCE(self_pn, ''),
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch'),
 		       COALESCE(whatsapp_state, ''), COALESCE(degraded_reason, ''),
@@ -300,11 +347,11 @@ type rowScanner interface {
 
 func scanSession(sc rowScanner) (Session, error) {
 	var s Session
-	var state, role string
+	var state, role, profile string
 	var degradedSince, lastHealthAt sql.NullTime
 	var p50, stuckHeads, stuckPolls, sealDispatch, sealBudget sql.NullInt64
 	var omittedRaw []byte
-	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &s.SelfPn,
+	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &role, &profile, &s.SelfPn,
 		&s.LastConnectedAt, &s.LastSeenAt,
 		&s.WhatsappState, &s.DegradedReason, &degradedSince, &lastHealthAt,
 		&s.LastEventAgeS, &s.OutboxDepth, &s.BinaryVersion, &s.UptimeS,
@@ -315,6 +362,7 @@ func scanSession(sc rowScanner) (Session, error) {
 	}
 	s.State = State(state)
 	s.Role = Role(role)
+	s.Profile = Profile(profile)
 	if degradedSince.Valid {
 		s.DegradedSince = degradedSince.Time
 	}

@@ -154,6 +154,63 @@ func TestMemoryDefaultRoleIsBot(t *testing.T) {
 	}
 }
 
+// TestMemoryDefaultProfileIsPassive: una sesión recién marcada online nace con
+// perfil PASIVO (espeja el DEFAULT 'passive' de la 0063, Plan 046 · T1.1 · D-07).
+//
+// 🔴 Diverge a propósito de TestMemoryDefaultRoleIsBot, que está justo encima: los
+// dos ejes conviven un ciclo con defaults DISTINTOS porque el 046 cambia la política
+// (una sesión nueva no auto-responde hasta que su dueño la active) sin tocar el
+// alias legado. Igualar los dos defaults «por coherencia» deshace la decisión.
+func TestMemoryDefaultProfileIsPassive(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+	s, _, err := repo.Get(ctx, "t", "e", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.Profile != fleet.ProfilePassive {
+		t.Fatalf("perfil por defecto: got %q, want passive", s.Profile)
+	}
+}
+
+// TestMemorySetRoleSincronizaElPerfil: el espejo en memoria escribe los DOS ejes en
+// SetRole, igual que el UPDATE de Postgres (D-046.1). Un repositorio en memoria que
+// dejara el perfil atrás haría pasar en verde tests unitarios de un estado que la BD
+// nunca produce.
+func TestMemorySetRoleSincronizaElPerfil(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+	for _, caso := range []struct {
+		rol    fleet.Role
+		perfil fleet.Profile
+	}{
+		{fleet.RoleBot, fleet.ProfileActive},
+		{fleet.RolePassive, fleet.ProfilePassive},
+		{fleet.RoleBot, fleet.ProfileActive},
+	} {
+		found, err := repo.SetRole(ctx, "t", "s1", caso.rol)
+		if err != nil || !found {
+			t.Fatalf("SetRole(%q): found=%v err=%v", caso.rol, found, err)
+		}
+		s, _, err := repo.Get(ctx, "t", "e", "s1")
+		if err != nil {
+			t.Fatalf("Get tras SetRole(%q): %v", caso.rol, err)
+		}
+		if s.Role != caso.rol || s.Profile != caso.perfil {
+			t.Fatalf("SetRole(%q): got role=%q profile=%q, want %q / %q",
+				caso.rol, s.Role, s.Profile, caso.rol, caso.perfil)
+		}
+	}
+}
+
 // TestMemorySetRolePassivePreservedOnReconnect: SetRole a passive persiste y una
 // reconexión (MarkOnline) NO revierte el rol (lo gobierna SetRole, no la señal
 // de conexión).

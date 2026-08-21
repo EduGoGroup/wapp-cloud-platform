@@ -1020,18 +1020,25 @@ func consecutiveReplay(st model.Conversation, m *cloudlinkv1.IncomingMessage) bo
 
 // reactiveBlocked agrupa las guardas de BORDE que impiden entrar al motor reactivo
 // (Plan 020). Devuelve true (y NO se procesa el entrante) si:
-//   - la sesión es PASSIVE (T1): escucha/transporta pero no dispara triggers, no
+//   - la sesión es PASIVA (T1): escucha/transporta pero no dispara triggers, no
 //     avanza con auto-envío ni escapa. Una conversación EN CURSO deja de avanzar
-//     mientras siga passive (no se borra su estado; vuelve si se re-marca bot). Rol
-//     vacío/desconocido ⇒ bot (no-regresión).
+//     mientras siga pasiva (no se borra su estado; vuelve si se re-activa). Valor
+//     vacío/desconocido ⇒ activa (no-regresión de esta guarda).
 //   - el remitente es un número PROPIO del tenant (T2, anti-self-loop): una sesión
 //     propia hablando; no se auto-responde (defensa semántica contra el bucle
-//     sesión↔sesión del Plan 019). Consciente del rol: solo cuentan como "propios"
-//     los números de sesiones NO passive — un passive nunca auto-responde, así que
-//     una sesión bot SÍ puede responder a mensajes que llegan desde el número
-//     personal (passive) del mismo tenant sin riesgo de loop.
+//     sesión↔sesión del Plan 019). Consciente del perfil: solo cuentan como
+//     "propios" los números de sesiones NO pasivas — una pasiva nunca auto-responde,
+//     así que una sesión activa SÍ puede responder a mensajes que llegan desde el
+//     número personal (pasivo) del mismo tenant sin riesgo de loop.
 //
-// Sin rol passive y sin self_pn poblado, devuelve false ⇒ no-regresión total.
+// ⚠️ El `role` que entra por parámetro ya NO viene de fleet_sessions.role: desde el
+// Plan 046 · T1.1 el resolver agrega fleet_sessions.profile y lo traduce al
+// vocabulario interno del motor (ver las constantes de runtime.go). El corte es
+// byte a byte el mismo; lo que cambió es de qué columna sale el dato — y el DEFAULT
+// de esa columna, que en la 0063 es pasivo: una sesión NUEVA sin configurar ya no
+// entra al motor reactivo hasta que su dueño la active (D-07).
+//
+// Sin perfil pasivo y sin self_pn poblado, devuelve false ⇒ no-regresión total.
 func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
 	if role == rolePassive {
 		rt.countReactiveBlocked(reasonPassive)
@@ -1068,8 +1075,8 @@ func (rt *Runtime) logPassiveSkip(sessionID string) {
 // sesión propia hablando), en cuyo caso NO se debe auto-responder (Plan 020 · T2,
 // defensa semántica contra el bucle sesión↔sesión del Plan 019). Normaliza el
 // remitente (from_pn) con el MISMO normalizador que el paquete contact y lo compara
-// contra el conjunto de self_pn del tenant. El conjunto es CONSCIENTE DEL ROL: el
-// lister excluye los números de sesiones passive — un passive nunca auto-responde
+// contra el conjunto de self_pn del tenant. El conjunto es CONSCIENTE DEL PERFIL: el
+// lister excluye los números de sesiones pasivas — una pasiva nunca auto-responde
 // (reactiveBlocked lo corta), así que un mensaje desde ese número no puede cerrar
 // un bucle; bloquear ahí solo impediría atender al número personal del tenant. El
 // rate-limit por conversación (T0) sigue como red. Es CONSERVADORA hacia procesar: sin
