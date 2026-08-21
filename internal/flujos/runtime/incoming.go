@@ -175,8 +175,17 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 //
 // La guarda es la tarea (T3.7): hasta la Ola 3, el TTL conversacional se evaluaba
 // SIEMPRE, también con un pedido en curso, y descartaba su estado por un reloj
-// pensado para otra cosa. No se toca la migración 0034 ni su default 0: lo que
-// cambia es CUÁNDO se pregunta.
+// pensado para otra cosa. Lo que aquella tarea cambió es CUÁNDO se pregunta, y esa
+// guarda sigue intacta.
+//
+// 🔧 CORREGIDO POR T4.4 (Plan 046, D-046.12): esta cabecera decía además «no se toca
+// la migración 0034 ni su default 0», y ya NO es cierto. El default de
+// conversation_ttl_seconds pasó de 0 a 7200 (migración 0067) y el espejo en Go lo
+// acompaña (store.DefaultConversationTTL), porque el 0 significaba «sin vencimiento»
+// y dejaba el flow_state —con el texto literal del cliente— sin caducar nunca.
+// 🔴 Lo que NO cambió es la SUBORDINACIÓN, que es lo que esta función implementa: con
+// evento activo manda event_inactivity_ttl_seconds y este reloj no se evalúa. Que los
+// dos valgan ahora 7200 NO los colapsa en una sola clave (ADR-0029 §E-9.2).
 func (rt *Runtime) conversationClock(ctx context.Context, tenantID string, key store.Key, st model.Conversation) (bool, error) {
 	if st.EventID != "" {
 		return rt.eventClock(ctx, tenantID, key, st.EventID)

@@ -15,11 +15,18 @@
 // vencimiento por inactividad), Touch (last_activity_at) y closed_at, y los tres se
 // afirman abajo — mutar events.Store.Touch a time.Now() pone este test en rojo.
 // runtime.WithClock, en cambio, tiene UN solo consumidor en todo el runtime
-// (conversationExpired, incoming.go), que aquí es inerte por dos razones
-// independientes: el tenant no tiene fila en tenant_settings ⇒ ConversationTTL = 0
-// ⇒ «nunca vence», y la comparación es contra flow_state.updated_at, que lo estampa
-// Postgres con now() (reloj de PARED), de modo que un reloj inyectado en el pasado
-// daría una diferencia negativa aunque el TTL no fuera cero. Verificado: quitar
+// (conversationExpired, incoming.go), que aquí es inerte.
+//
+// 🔧 CORREGIDO POR T4.4 (Plan 046, D-046.12): antes se daban DOS razones
+// independientes, y la PRIMERA MURIÓ. Decía «el tenant no tiene fila en
+// tenant_settings ⇒ ConversationTTL = 0 ⇒ nunca vence», y desde T4.4 un tenant sin
+// fila hereda 2 h (store.DefaultConversationTTL), no cero. Se retira en vez de
+// reescribirse: ya no explica nada.
+//
+// La razón que SÍ sigue en pie —y que por sí sola sostiene la inercia— es la
+// segunda: la comparación es contra flow_state.updated_at, que lo estampa Postgres
+// con now() (reloj de PARED), de modo que un reloj inyectado en el pasado daría una
+// diferencia negativa aunque el TTL no fuera cero. Verificado: quitar
 // flowruntime.WithClock de este arranque deja el test IGUAL de verde. Se conserva
 // porque el guion lo pide y porque es correcto tener los dos relojes coherentes,
 // pero NO se le atribuye aquí un observable que no tiene: el TTL conversacional
