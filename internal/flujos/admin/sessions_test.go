@@ -382,7 +382,7 @@ func TestSetSessionProfile_401_SinIdentity(t *testing.T) {
 }
 
 // TestSetSessionProfile_404_CrossTenant: un tenant AJENO no puede tocar la sesión de
-// otro (aislamiento INV-7/INV-8) → 404 opaco y NUNCA 403: un 403 confirmaría que la
+// otro (aislamiento INV-8 del Plan 018) → 404 opaco y NUNCA 403: un 403 confirmaría que la
 // sesión existe. La sesión del dueño queda intacta.
 func TestSetSessionProfile_404_CrossTenant(t *testing.T) {
 	for nombre, via := range viasSesion {

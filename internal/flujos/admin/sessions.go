@@ -205,7 +205,7 @@ func SetSessionRoleHandler(store SessionRoleStore, pusher ProfilePusher, log sha
 // fija el PERFIL (active|passive) de la sesión {id} del tenant del token (Plan 046 ·
 // T1.2, D-046.5). Sucede a SetSessionRoleHandler con el MISMO scope
 // (`sessions.write`), el MISMO aislamiento por tenant (el tenant sale del token,
-// INV-7/INV-8: no se puede tocar la sesión de otro tenant) y las MISMAS cinco
+// INV-8 del Plan 018: no se puede tocar la sesión de otro tenant) y las MISMAS cinco
 // respuestas:
 //
 //   - 200 con {session_id, profile} al fijar.
