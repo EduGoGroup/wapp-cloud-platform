@@ -169,6 +169,26 @@ const backfillSelfPnUpdate = `
 // vengan (T4.2). Los backfills de hoy viven dentro del SQL de su migración; este no
 // puede, y esa imposibilidad es de diseño, no una carencia del runner.
 //
+// 📌 QUÉ HACE EL SEGUNDO CON ESTE MOLDE — decidido por Jhoan el 2026-08-21: **T4.2 lo
+// COPIA, no lo generaliza.** El motivo no es pereza: es que lo que difiere entre los
+// dos backfills no son NOMBRES, son REGLAS. Compárese con crypto.Rekey, que sí está
+// generalizado por tabla y funciona: allí la operación es idéntica en las cuatro
+// tablas —re-envolver una DEK sin tocar el dato— y lo único que cambia son cuatro
+// strings (tabla, PK, columna DEK, columna KEK), así que se parametriza con cuatro
+// strings. Aquí no: este backfill NORMALIZA el valor (y por eso puede fallar y tiene
+// un TERCER desenlace, «omitida») y calcula un ÍNDICE CIEGO; el de push_name no hace
+// ninguna de las dos cosas —es texto libre, sin bidx, con solo dos desenlaces— y vive
+// además en otro paquete (flujos/contact), cuyo repositorio ya tiene su propio cipher
+// y KeyProvider. Un genérico que cubriera ambos acabaría recibiendo un callback
+// «dame el sobre de esta fila, o dime que la omita», y ese callback ES casi todo lo
+// específico: habría movido el código, no eliminado la duplicación.
+//
+// La regla que se aplica es la de la casa: copiar dos veces está bien, tres es deuda.
+// Este es el primero y T4.2 el segundo. **Al TERCER caso se extrae**, y para entonces
+// habrá tres formas reales sobre las que diseñar en vez de una escrita y otra
+// imaginada. T4.2 deja anotado en su docstring qué copió de aquí y qué cambió, para
+// que esa extracción sea mecánica.
+//
 // ── DÓNDE VIVE Y POR QUÉ (decisión de Jhoan) ──────────────────────────────────────
 // Como PASO DE ARRANQUE del servidor, justo después de aplicar migraciones y mucho
 // antes de aceptar tráfico. NO como un `cmd/` nuevo ni como un flag de `cmd/migrate`.
