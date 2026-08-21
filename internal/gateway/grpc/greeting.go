@@ -94,6 +94,21 @@ type sessionGreeter interface {
 // —30 s después, con la puerta ya abierta— reintenta solo. Sin temporizadores, sin
 // goroutines de espera, sin backoff propio: el latido YA es el reintento.
 //
+// 🔧 MATIZ DE CAMPO (PC-17, 2026-08-21): «CONDENADO A FALLAR» ES CIERTO SOLO PARA EL
+// CASO QUE DESCRIBE, EL DEL EMPAREJAMIENTO. Al ejercitarlo en UAT contra WhatsApp real
+// —dos disparos— el aviso se entregó al PRIMER intento las dos veces, y en el log del
+// Edge no apareció ni un «SendText BLOQUEADO por lease no vigente» (los últimos son del
+// 16, 17 y 18 de agosto). El motivo: allí el saludo NO se disparó en el registro sino
+// en un latido posterior, con el lease ya abierto. La ventana existe y se midió esa
+// misma noche —0,637 s entre «sesión registrada» y «lease renovado/aplicado»—, pero el
+// envío cayó 2 s DESPUÉS de ella.
+//
+// Lo que esto cambia y lo que no. NO cambia el diseño: no marcar y dejar que el
+// siguiente latido reintente sigue siendo correcto, y es gratis. SÍ cambia lo que un
+// operador debe esperar: el camino normal es que el aviso llegue A LA PRIMERA, y un
+// rechazo por lease es la excepción del alta, no la regla. Quien lea el párrafo de
+// arriba sin este y no vea el WARN puede creer que el emisor no corrió.
+
 // ⚠️ DÓNDE CUELGA Y POR QUÉ AHÍ. Va en el job del latido, el ÚLTIMO de los cuatro:
 // después de persistSelfPn (que es quien deja el número en la fila que este SELECT
 // lee) y también después de renewLease. Los cuatro comparten UN presupuesto
