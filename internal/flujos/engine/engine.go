@@ -195,6 +195,20 @@ func (e *Engine) EnterPrimed(ctx context.Context, def model.Flow, st model.Conve
 		// es de un solo nodo (Next==nil): permanece en el nodo inicial esperando input.
 		return st, outs, effects, nil
 	}
+	// 🔒 AQUÍ, Y NO EN CADA FIN DE PASO (Plan 046 · Ola 4 · T4.3, REQ-18).
+	//
+	// Llegar a esta línea significa que la señal de intención NO la consumió nadie, y
+	// las SEIS ramas por las que se llega pasan todas por aquí: sin VarIntentParams,
+	// nodo desconocido, módulo no registrado, módulo sin capacidad Primer, contenido no
+	// resoluble, y el propio Prime devolviendo handled=false. En todas ellas las claves
+	// seguían intactas en Vars, y de aquí caían al renderFrom y al Save del runtime:
+	// el TEXTO DEL CLIENTE, en claro y para siempre, en el JSONB de public.flow_state.
+	//
+	// Este es el ÚNICO productor de esas claves y su consumo ocurre entero dentro de
+	// EnterPrimed, así que barrer aquí cierra el 100 % de la fuga. Un barrido «al
+	// finalizar cada paso» sería no-op en todos los pasos menos el primero: un Step
+	// posterior no las siembra ni las lee.
+	st.Vars = modules.StripIntentSignal(st.Vars)
 	st, outs, err := e.renderFrom(ctx, def, st)
 	return st, outs, nil, err
 }
