@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
@@ -30,24 +31,51 @@ type SessionProfileStore interface {
 // ya quedó persistido y el push al conectar reconcilia) y por tanto **no cambia el
 // código de respuesta**; el error se registra y ahí muere.
 //
-// 🔴 En el Plan 046 · T1.2 nace APAGADO: los dos cableados (publicapi y bootstrap)
-// pasan nil, que es un no-op explícito. Quien lo enchufa de verdad —el adaptador que
-// traduce este puerto a un ConfigUpdate de kind `filters`— es **T2.1**, y hasta
-// entonces cambiar el perfil NO llega al Edge hasta su siguiente conexión.
+// 🔴 Nació APAGADO en T1.2 (los dos cableados pasaban nil, un no-op explícito) y lo
+// enchufa **T2.1**: el adaptador que traduce este puerto a un ConfigUpdate de kind
+// `filters` es *filtercfg.Pusher, cableado en LAS DOS vías (el SessionDeps de la API
+// pública y el adminRouteDeps). nil sigue siendo un no-op válido y lo usan los tests.
 type ProfilePusher interface {
 	PushProfile(ctx context.Context, tenantID, sessionID string, profile fleet.Profile) error
 }
 
+// profilePushTimeout acota el push de perfil desenganchado del ctx de la petición.
+//
+// El valor sale de lo que el push hace de verdad: una lectura a Postgres
+// (ProfilesByTenant) más un fan-out concurrente a las sesiones vivas del tenant, y ese
+// fan-out YA está acotado por dentro (WAPP_GRPC_PUSH_TIMEOUT por sesión). Cinco
+// segundos es techo holgado para las dos cosas y a la vez un tope duro: sin él, un
+// Neon colgado dejaría la goroutine del handler esperando para siempre por un push
+// que a nadie le importa ya.
+const profilePushTimeout = 5 * time.Second
+
 // pushProfileBestEffort invoca al pusher tras persistir, con el contrato de
 // ConfigPusher: pusher nil es no-op, y un fallo se loguea SIN tocar la respuesta
 // (que ya se escribió, o se escribe a continuación con 200 igualmente).
+//
+// 🔴 EL CONTEXTO NO ES EL DE LA PETICIÓN (corrección del code review 2026-08-21).
+// Antes se pasaba r.Context(), y PushConfig hace wg.Wait() sobre él: si el cliente
+// abortaba el POST —cerrar la pestaña, un timeout del proxy, un Ctrl-C en el curl—
+// el ctx moría, el push SE PERDÍA y quedaba el peor estado posible: el perfil
+// PERSISTIDO, la sesión viva sin enterarse hasta reconectar, y nadie a quien avisar
+// porque el 200 ya se había escrito (o se escribía igual a continuación).
+//
+// context.WithoutCancel conserva los VALORES del ctx de la petición —el request-id
+// que arrastra el logger, la identidad— y suelta solo su cancelación, que es
+// exactamente lo que sobra aquí. El timeout propio garantiza que la goroutine no se
+// queda colgada: desenganchar del ctx del cliente no puede significar «sin límite».
+//
+// Esto NO cambia el best-effort (criterio (e) de T2.1): el push sigue sin poder
+// alterar el código de respuesta. Lo que cambia es que ahora se INTENTA de verdad.
 func pushProfileBestEffort(r *http.Request, pusher ProfilePusher, log sharedlogger.Logger,
 	tenantID, sessionID string, profile fleet.Profile,
 ) {
 	if pusher == nil {
 		return
 	}
-	if perr := pusher.PushProfile(r.Context(), tenantID, sessionID, profile); perr != nil && log != nil {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), profilePushTimeout)
+	defer cancel()
+	if perr := pusher.PushProfile(ctx, tenantID, sessionID, profile); perr != nil && log != nil {
 		log.Warn("sessions: push de perfil best-effort falló (persistido; reconcilia al conectar)",
 			"tenant_id", tenantID, "session_id", sessionID, "profile", string(profile), "error", perr)
 	}
@@ -83,7 +111,8 @@ type sessionProfileDTO struct {
 // ⚠️ El entitlement `passive_profiles` NO gatea esta ruta en v1 (decisión del plan):
 // existe declarado para cuando se cobre. Ninguna línea de aquí lo consulta.
 //
-// pusher/log admiten nil: ver ProfilePusher (en T1.2 se cablean a nil).
+// pusher/log admiten nil: ver ProfilePusher (en producción los cablea T2.1; nil es un
+// no-op explícito que usan los tests).
 func SetSessionProfileHandler(store SessionProfileStore, pusher ProfilePusher, log sharedlogger.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())

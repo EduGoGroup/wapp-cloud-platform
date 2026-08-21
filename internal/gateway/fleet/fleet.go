@@ -73,6 +73,41 @@ const (
 // active|passive. Se inspecciona con errors.Is.
 var ErrInvalidProfile = errors.New("perfil de sesión inválido (usar active|passive)")
 
+// TenantProfiles es la FOTO COMPLETA del eje `profile` de un tenant: el perfil de
+// TODAS sus sesiones (activas incluidas) y la versión de esa foto (Plan 046 · T2.1,
+// D-046.2). Es lo que alimenta el kind:"filters" que se empuja al Edge.
+//
+// 🔴 «TODAS» no es un detalle de eficiencia: el contrato dice que una sesión AUSENTE
+// del mapa el Edge la asume `active` (fail-open). Si la foto omitiera las activas,
+// coincidiría por casualidad hoy y mentiría el día que una sesión pase de pasiva a
+// activa: el Edge se quedaría con el `passive` anterior y la sesión seguiría muda.
+//
+// Version es `max(profile_updated_at)` de las filas del tenant en MICROSEGUNDOS unix
+// (int64). Es monotónica por tenant y comparable como número —que es lo que el Edge
+// necesita para descartar una versión vieja que llegue tarde— y NO es un hash del
+// payload: dos cambios que se cancelan (active→passive→active) darían el mismo hash y
+// el Edge ignoraría el segundo.
+//
+// 🔴 `profile_updated_at` (migración 0065) y NO `updated_at`. La primera versión de
+// T2.1 usaba `updated_at`, y el code review del 2026-08-21 lo tumbó: `updated_at` es
+// el reloj de la FILA y lo mueve CUALQUIER escritura —MarkOnline, el SaveHealth de
+// CADA heartbeat, SetSelfPn—, así que la versión avanzaba sin que avanzara el
+// contenido. Y no era un detalle estético: MarkOnline corre inmediatamente antes de
+// pushConfigsOnConnect, o sea que un Edge con N sesiones del tenant publicaba N
+// versiones distintas y crecientes CON EL MAPA IDÉNTICO en cada reconexión. El Edge
+// las re-aplica, las re-persiste en su SQLite, y las que llegaran desordenadas le
+// hacían emitir su WARN «versión anterior o igual» EN OPERACIÓN NORMAL — enterrando
+// la única línea de log que delataría una anomalía real de versionado.
+//
+// Version = 0 con Sessions vacío significa «este tenant no tiene ni una fila de
+// sesión». No es un error: se empuja igual (regla 2 de T2.1).
+type TenantProfiles struct {
+	// Version es max(profile_updated_at) del tenant en microsegundos unix.
+	Version int64
+	// Sessions mapea session_id → perfil vigente. Nunca nil (mapa vacío si no hay filas).
+	Sessions map[string]Profile
+}
+
 // ValidProfile indica si p es un perfil conocido (active|passive).
 func ValidProfile(p Profile) bool { return p == ProfileActive || p == ProfilePassive }
 
@@ -288,11 +323,63 @@ type MemoryRepository struct {
 	mu       sync.Mutex
 	sessions map[string]Session
 	now      func() time.Time
+	// profileUpdatedUs espeja la columna `profile_updated_at` (migración 0065) en
+	// microsegundos unix, por clave de fila (Plan 046 · T2.1). Sin ella este doble no
+	// podría responder ProfilesByTenant con una versión, y los tests de monotonicidad
+	// tendrían que vivir SOLO contra Postgres.
+	//
+	// 🔴 ESPEJA `profile_updated_at` Y NO `updated_at`, y esa es toda la gracia: en
+	// producción SOLO SetProfile mueve esa columna (y el DEFAULT now() del alta).
+	// Aquí se cumple la MISMA regla —touchProfileLocked se llama solo desde SetProfile
+	// y desde el alta de una fila nueva— porque un doble que se tocara en cada
+	// MarkOnline/SaveHealth mentiría sobre producción justo en el punto que este
+	// campo existe para vigilar: que la versión del kind:"filters" no avance cuando
+	// no avanza el mapa.
+	profileUpdatedUs map[string]int64
+	// lastProfileUs es el último microsegundo entregado. Fuerza el ESTRICTO
+	// crecimiento de la versión aunque dos escrituras caigan en el mismo microsegundo
+	// de reloj: en Postgres eso no pasa (dos statements = dos now() distintos) pero en
+	// un test en memoria dos llamadas seguidas sí pueden colisionar, y una versión
+	// repetida haría que el Edge descartara el segundo cambio. El doble no puede ser
+	// MENOS monotónico que lo que emula.
+	lastProfileUs int64
 }
 
 // NewMemoryRepository crea un repositorio en memoria vacío con reloj wall-clock.
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{sessions: make(map[string]Session), now: time.Now}
+	return &MemoryRepository{
+		sessions:         make(map[string]Session),
+		now:              time.Now,
+		profileUpdatedUs: make(map[string]int64),
+	}
+}
+
+// touchProfileLocked espeja `profile_updated_at = now()` sobre la clave dada. Debe
+// llamarse con r.mu tomado. Ver el comentario de lastProfileUs para el porqué del
+// clamp.
+//
+// 🔴 SOLO puede llamarse desde SetProfile y desde el ALTA de una fila (que espeja el
+// `DEFAULT now()` de la columna). Llamarla desde MarkOnline, MarkOffline,
+// MarkLoggedOut, SetState, SetSelfPn o SaveHealth rompe el espejo con producción y
+// deja pasar en verde exactamente el bug que la 0065 arregló.
+func (r *MemoryRepository) touchProfileLocked(key string) {
+	us := r.now().UTC().UnixMicro()
+	if us <= r.lastProfileUs {
+		us = r.lastProfileUs + 1
+	}
+	r.lastProfileUs = us
+	r.profileUpdatedUs[key] = us
+}
+
+// birthProfileLocked espeja el `DEFAULT now()` de profile_updated_at: fija el reloj
+// del eje SOLO si la fila es NUEVA. Una fila que ya existía conserva su valor, igual
+// que en Postgres, donde un ADD COLUMN con default no vuelve a tocarla y ningún
+// UPDATE que no sea SetProfile la mueve. Debe llamarse con r.mu tomado.
+func (r *MemoryRepository) birthProfileLocked(key string) {
+	if _, ok := r.profileUpdatedUs[key]; ok {
+		return
+	}
+	r.touchProfileLocked(key)
 }
 
 func memKey(tenantID, edgeID, sessionID string) string {
@@ -316,6 +403,10 @@ func (r *MemoryRepository) MarkOnline(_ context.Context, tenantID, edgeID, sessi
 	s.LastConnectedAt = now
 	s.LastSeenAt = now
 	r.sessions[key] = s
+	// Alta de fila ⇒ espeja el DEFAULT now() de profile_updated_at. Una sesión que
+	// RECONECTA no lo mueve: si lo moviera, este doble reproduciría el bug que la
+	// 0065 arregló (N versiones idénticas por reconexión) en vez de vigilarlo.
+	r.birthProfileLocked(key)
 	return nil
 }
 
@@ -333,6 +424,7 @@ func (r *MemoryRepository) MarkOffline(_ context.Context, tenantID, edgeID, sess
 	s.Profile = defaultProfile(s.Profile)
 	s.LastSeenAt = now
 	r.sessions[key] = s
+	r.birthProfileLocked(key) // solo si la fila es nueva; desconectar no es cambiar de perfil.
 	return nil
 }
 
@@ -351,6 +443,7 @@ func (r *MemoryRepository) MarkLoggedOut(_ context.Context, tenantID, edgeID, se
 	s.Profile = defaultProfile(s.Profile)
 	s.LastSeenAt = now
 	r.sessions[key] = s
+	r.birthProfileLocked(key) // solo si la fila es nueva; el logout no es un cambio de perfil.
 	return nil
 }
 
@@ -370,6 +463,7 @@ func (r *MemoryRepository) SetState(_ context.Context, tenantID, sessionID strin
 			s.State = state
 			s.LastSeenAt = now
 			r.sessions[k] = s
+			// NO se toca profile_updated_at: el estado del link no es el perfil.
 			found = true
 		}
 	}
@@ -419,10 +513,47 @@ func (r *MemoryRepository) SetProfile(_ context.Context, tenantID, sessionID str
 		if s.TenantID == tenantID && s.SessionID == sessionID {
 			s.Profile = profile
 			r.sessions[k] = s
+			// 🔴 EL ÚNICO sitio del doble que mueve el reloj del eje, igual que
+			// SetProfile es el único UPDATE de Postgres que escribe
+			// profile_updated_at (0065).
+			r.touchProfileLocked(k)
 			found = true
 		}
 	}
 	return found, nil
+}
+
+// ProfilesByTenant implementa el puerto de lectura del kind:"filters" (Plan 046 ·
+// T2.1) sobre el doble en memoria: devuelve el perfil de TODAS las sesiones del
+// tenant y la versión (max profile_updated_at en microsegundos). Espeja exactamente
+// lo que hace *PostgresRepository, incluidas las dos decisiones que allí son SQL:
+//
+//   - varias filas con el MISMO session_id (una por edge_id) colapsan a UNA entrada,
+//     y si discreparan gana `passive` — la lectura segura es «no auto-responde».
+//   - el perfil vacío se lee como `passive` (mismo criterio que el COALESCE).
+//
+// 🔴 NO forma parte de la interfaz Repository a propósito: es una lectura de un
+// consumidor concreto (el provider/pusher de filters), no del contrato de flota.
+// Meterla en Repository obligaría a implementarla a todo decorador —fleettest.
+// SlowRepository, los espías de los tests del gateway— sin que ninguno la use.
+func (r *MemoryRepository) ProfilesByTenant(_ context.Context, tenantID string) (TenantProfiles, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := TenantProfiles{Sessions: make(map[string]Profile)}
+	for k, s := range r.sessions {
+		if s.TenantID != tenantID {
+			continue
+		}
+		p := defaultProfile(s.Profile)
+		if prev, ok := out.Sessions[s.SessionID]; ok && prev == ProfilePassive {
+			p = ProfilePassive
+		}
+		out.Sessions[s.SessionID] = p
+		if us := r.profileUpdatedUs[k]; us > out.Version {
+			out.Version = us
+		}
+	}
+	return out, nil
 }
 
 // SetSelfPn implementa Repository: fija el self_pn de la sesión. selfPn vacío es
@@ -440,6 +571,7 @@ func (r *MemoryRepository) SetSelfPn(_ context.Context, tenantID, edgeID, sessio
 	}
 	s.SelfPn = selfPn
 	r.sessions[key] = s
+	// NO se toca profile_updated_at: el número propio no es el perfil.
 	return nil
 }
 
@@ -483,6 +615,10 @@ func (r *MemoryRepository) SaveHealth(_ context.Context, tenantID, edgeID, sessi
 		s.DegradedSince = time.Time{}
 	}
 	r.sessions[key] = s
+	// 🔴 NO se toca profile_updated_at, y este es el caso que más importa: el
+	// heartbeat llega CADA POCOS SEGUNDOS. Si SaveHealth moviera el reloj del eje,
+	// el tenant publicaría una versión nueva del kind:"filters" por latido, con el
+	// mapa idéntico. Es la mitad del bug que la 0065 arregló.
 	return nil
 }
 

@@ -131,7 +131,25 @@ import (
 // tiene que ir SIEMPRE por encima de la 0063, que lee `role` en su backfill.
 // 🔴 A partir de aquí el rollback al binario anterior NO es una opción: leía
 // COALESCE(role,'bot').
-const SchemaVersion = "0.38.0"
+//
+// 0.39.0 -- Plan 046 · Ola 2 · T2.1 (0065): fleet_sessions gana
+// profile_updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), el RELOJ del eje
+// `profile`. La `version` del kind:"filters" que se empuja al Edge pasa a ser
+// max(profile_updated_at) del tenant y deja de ser max(updated_at) — que lo mueve
+// CUALQUIER escritura de la fila (MarkOnline, el SaveHealth de cada heartbeat,
+// SetSelfPn) y hacía que una sola reconexión de un Edge con N sesiones publicara N
+// versiones nuevas con el mapa IDÉNTICO, que el Edge re-aplica, re-persiste y —si
+// llegan desordenadas— reporta con su WARN «versión anterior o igual» en operación
+// normal, enterrando la única línea que delataría una anomalía real.
+//
+// 🔴 Este bump NO es de los «gratuitos» que la regla acota: la 0.38.0 ya salió a
+// main con el commit del retiro de `role` (7ab3a7e), así que reusarla dejaría a un
+// operador comparando public.schema_version contra un esquema que ya cambió — el
+// mismo caso que 0.27.0/0.28.0/0.30.0/0.31.0 más arriba. Y aquí importa más de lo
+// habitual: el binario nuevo LEE profile_updated_at, así que la fila de
+// schema_version es lo único que le dice a un operador si esa columna existe en
+// la base que tiene delante.
+const SchemaVersion = "0.39.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

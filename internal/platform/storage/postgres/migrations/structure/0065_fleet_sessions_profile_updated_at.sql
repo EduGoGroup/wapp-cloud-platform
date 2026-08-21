@@ -1,0 +1,147 @@
+-- ============================================================
+-- 0065: fleet_sessions.profile_updated_at — el RELOJ DEL EJE `profile`
+-- (Plan 046 · Ola 2 · T2.1, corrección del code review 2026-08-21).
+--
+-- QUÉ ARREGLA, Y POR QUÉ NO ERA COSMÉTICO
+-- ------------------------------------------------------------
+-- La primera versión de T2.1 derivaba la `version` del kind:"filters" de
+-- `max(updated_at)` del tenant. `updated_at` es el reloj de LA FILA, y lo mueve
+-- CUALQUIER escritura: MarkOnline, el SaveHealth de CADA heartbeat, SetSelfPn,
+-- SetState. Tres consecuencias, medidas sobre el código y no supuestas:
+--
+--   (1) MarkOnline corre INMEDIATAMENTE antes de pushConfigsOnConnect
+--       (internal/gateway/grpc/connect.go:514 y :523/:537). Un Edge con N sesiones
+--       del mismo tenant produce, en UNA sola reconexión, N versiones distintas y
+--       crecientes con el MAPA IDÉNTICO.
+--   (2) El Edge re-aplica y RE-PERSISTE en su SQLite cada una de esas N versiones.
+--   (3) Las que lleguen desordenadas hacen que el Edge emita su WARN «versión
+--       anterior o igual» EN OPERACIÓN NORMAL. Eso no es ruido inocuo: entierra la
+--       única línea de log que delataría una anomalía REAL de versionado.
+--
+-- La versión de una config tiene que moverse cuando se mueve LA CONFIG. Por eso el
+-- eje `profile` gana su propio reloj y `version` pasa a ser
+-- max(profile_updated_at) del tenant, en microsegundos.
+--
+-- 🔴 LA REGLA — es TODA la garantía, y no la impone el motor
+-- ------------------------------------------------------------
+-- SOLO `SetProfile` mueve esta columna (y el DEFAULT now() del alta la fija por
+-- primera vez). NINGUNA otra escritura de fleet_sessions la toca: ni MarkOnline, ni
+-- MarkOffline, ni MarkLoggedOut, ni SetState, ni SetSelfPn, ni SaveHealth.
+--
+-- No hay trigger ni constraint que lo obligue: es una regla de CÓDIGO. Está escrita
+-- también encima de SetProfile en internal/gateway/fleet/repository_postgres.go y
+-- espejada en MemoryRepository (internal/gateway/fleet/fleet.go) para que los tests
+-- en memoria no mientan sobre producción. Si un día alguien añade
+-- `profile_updated_at = now()` a otro UPDATE, vuelve el bug entero y NADA se pondrá
+-- rojo salvo los tests que lo vigilan explícitamente.
+--
+-- POR QUÉ NO SE HIZO UN TRIGGER
+-- ------------------------------------------------------------
+-- Un `BEFORE UPDATE ... WHEN (OLD.profile IS DISTINCT FROM NEW.profile)` lo forzaría
+-- en el motor, pero mete lógica de negocio en un sitio donde este repo no tiene
+-- ninguna (cero triggers hoy), y bajo el runner FULL-REPLAY habría que recrearlo en
+-- cada arranque con su CREATE OR REPLACE + DROP TRIGGER IF EXISTS. Se prefiere la
+-- regla de código VIGILADA POR TESTS a un trigger que nadie más en el esquema tiene.
+--
+-- BACKFILL: NO HAY, Y ES DELIBERADO
+-- ------------------------------------------------------------
+-- Las filas existentes toman `now()` por el DEFAULT del ADD COLUMN. No se intenta
+-- reconstruir «cuándo cambió de verdad el perfil de esta sesión» porque ESA HISTORIA
+-- NO EXISTE: no hay tabla de auditoría del eje, y `updated_at` —lo único disponible—
+-- es precisamente el valor contaminado que esta migración viene a dejar de usar.
+--
+-- El efecto real es: en el despliegue, TODOS los tenants publican una versión nueva
+-- UNA vez. Es exactamente lo que se quiere —cada Edge recibe la foto vigente y
+-- CONVERGE— y es un evento único, no un goteo. El coste es un ConfigUpdate por
+-- tenant conectado; el mapa que viaja es el correcto.
+--
+-- 🔴 EL REPLAY, QUE AQUÍ SÍ ES BENIGNO (a diferencia de la 0063)
+-- ------------------------------------------------------------
+-- El runner es hash-based FULL-REPLAY: re-aplica TODO el directorio en cuanto cambia
+-- el hash del conjunto. En el segundo arranque este `ADD COLUMN IF NOT EXISTS` es un
+-- NO-OP EXACTO —la columna ya existe, y un ADD COLUMN que no se ejecuta no toca
+-- valores—, así que los profile_updated_at reales SOBREVIVEN a cada reinicio. Esta
+-- migración NO necesita el guard `WHERE ... IS NULL` que la 0063 sí necesitaba: allí
+-- el peligro era un UPDATE de backfill, y aquí no hay UPDATE ninguno.
+--
+-- ⚠️ Orden: esta migración toca la MISMA tabla que la 0063/0064 y va por encima de
+-- las dos. No depende de `profile` (no la lee), pero renumerarla por debajo de la
+-- 0025 rompería el replay igual que cualquier otra sobre esta tabla.
+--
+-- CERO PII: una marca de tiempo sobre una tabla de flota ya existente (ADR-0009).
+-- ADITIVA e IDEMPOTENTE. SchemaVersion sube a 0.39.0.
+--
+-- ------------------------------------------------------------
+-- VERIFICACIÓN (no hay PostgreSQL en el entorno donde se escribió esto;
+-- estas tres consultas son para el sweep del CLI / el operador en UAT)
+-- ------------------------------------------------------------
+--
+-- (V1) La columna existe con la forma pedida:
+--
+--   SELECT column_name, is_nullable, column_default
+--     FROM information_schema.columns
+--    WHERE table_schema = 'public'
+--      AND table_name   = 'fleet_sessions'
+--      AND column_name  = 'profile_updated_at';
+--
+--   Salida esperada — EXACTAMENTE una fila:
+--
+--       column_name     | is_nullable | column_default
+--   --------------------+-------------+----------------
+--    profile_updated_at | NO          | now()
+--   (1 row)
+--
+-- (V2) LA REGLA, comprobada por comportamiento (es la que importa). Sobre un tenant
+--      cuyas filas lleven ya más de un minuto sin cambio de perfil, se imita a mano
+--      lo que hace un heartbeat y se comprueba que el reloj del perfil NO se movió.
+--      Va dentro de una transacción que se DESHACE: no deja rastro.
+--
+--   BEGIN;
+--     UPDATE public.fleet_sessions
+--        SET state = 'online', last_seen_at = now(), updated_at = now()
+--      WHERE tenant_id = '<TENANT_ID>';
+--     SELECT count(*) AS filas_con_reloj_de_perfil_movido
+--       FROM public.fleet_sessions
+--      WHERE tenant_id = '<TENANT_ID>'
+--        AND profile_updated_at > now() - interval '1 minute';
+--   ROLLBACK;
+--
+--   Salida esperada:
+--
+--    filas_con_reloj_de_perfil_movido
+--   ----------------------------------
+--                                   0
+--   (1 row)
+--
+--   ⚠️ Un valor > 0 significa UNA de dos cosas: o alguien acaba de cambiar un perfil
+--   de ese tenant hace menos de un minuto (repítelo), o alguien añadió
+--   `profile_updated_at = now()` a un UPDATE que no es SetProfile — que es el bug
+--   que esta columna existe para impedir.
+--
+-- (V3) La VERSIÓN que publica la nube, calculada desde SQL. Go la saca con
+--      updatedAt.UnixMicro() sobre max(profile_updated_at) (ver ProfilesByTenant);
+--      esta consulta es su equivalente para un operador con psql delante:
+--
+--   SELECT (EXTRACT(EPOCH FROM max(profile_updated_at)) * 1000000)::bigint AS version_us
+--     FROM public.fleet_sessions
+--    WHERE tenant_id = '<TENANT_ID>';
+--
+--   Salida esperada — un entero de 16 dígitos, el MISMO que viaja en
+--   ConfigUpdate.version del kind "filters" y dentro de su payload JSON:
+--
+--       version_us
+--   ------------------
+--    1755734400123456
+--   (1 row)
+--
+--   (EXTRACT devuelve numeric en PostgreSQL 14+, así que el cast a bigint es exacto.
+--   La plataforma NO usa esta forma en producción —lo hace Go— justamente porque en
+--   versiones anteriores EXTRACT devuelve double y el redondeo se comería el
+--   microsegundo. Ver el punto 3 del docstring de ProfilesByTenant.)
+-- ============================================================
+
+ALTER TABLE public.fleet_sessions
+    ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+COMMENT ON COLUMN public.fleet_sessions.profile_updated_at IS
+  'Reloj del EJE profile: cuando cambio por ultima vez el perfil de esta sesion. SOLO lo mueve SetProfile (y el DEFAULT now() del alta) -- ninguna otra escritura de la fila lo toca, a diferencia de updated_at, que lo mueve cualquiera (MarkOnline, el SaveHealth de cada heartbeat, SetSelfPn). De aqui sale la version del kind filters que se empuja al Edge: max(profile_updated_at) del tenant en microsegundos unix. Derivarla de updated_at hacia que una simple reconexion publicase N versiones nuevas con el mapa identico. La regla es de CODIGO, no del motor: no hay trigger. Plan 046 · T2.1.';
