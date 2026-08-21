@@ -13,21 +13,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
-// SessionRoleStore es el subconjunto de fleet.Repository que consume el handler de
-// rol de sesión (Plan 020 · T1). Lo satisface *fleet.PostgresRepository y
-// *fleet.MemoryRepository. La operación se acota al tenant del token (INV-8).
-//
-// ⚠️ DEPRECADO: usa SessionProfileStore (Plan 046 · T1.2, D-046.5). Muere con el
-// DROP de la columna `role`.
-//
-// 🔴 A propósito NO lleva la marca `Deprecated:` de godoc: durante el ciclo de
-// deprecación este puerto se sigue usando —el cableado vivo lo pasa desde publicapi
-// y bootstrap—, y esa marca haría que staticcheck (SA1019) pusiera rojo el CI por
-// una convivencia que está DECIDIDA (D-046.5). La marca se pone el día del DROP.
-type SessionRoleStore interface {
-	SetRole(ctx context.Context, tenantID, sessionID string, role fleet.Role) (found bool, err error)
-}
-
 // SessionProfileStore es el subconjunto de fleet.Repository que consume el handler
 // de PERFIL de sesión (Plan 046 · T1.2). Lo satisface *fleet.PostgresRepository y
 // *fleet.MemoryRepository. La operación se acota al tenant del token (INV-8).
@@ -68,22 +53,6 @@ func pushProfileBestEffort(r *http.Request, pusher ProfilePusher, log sharedlogg
 	}
 }
 
-// sessionRoleRequest es el cuerpo JSON de POST .../sessions/{id}/role. El tenant y
-// el session_id NO viajan aquí (INV-8 / ruta): salen del token y del path.
-type sessionRoleRequest struct {
-	Role string `json:"role"`
-}
-
-// sessionRoleDTO es la respuesta de éxito: el session_id, el rol ya fijado y el
-// aviso de deprecación (Plan 046 · T1.2). Deprecation viaja SIEMPRE lleno: es la
-// mitad "en el cuerpo" de la señal por partida doble (la otra son las cabeceras
-// Deprecation y Link), para el cliente que solo mira el JSON.
-type sessionRoleDTO struct {
-	SessionID   string `json:"session_id"`
-	Role        string `json:"role"`
-	Deprecation string `json:"deprecation"`
-}
-
 // sessionProfileRequest es el cuerpo JSON de POST .../sessions/{id}/profile. El
 // tenant y el session_id NO viajan aquí (INV-8 / ruta): salen del token y del path.
 type sessionProfileRequest struct {
@@ -96,114 +65,9 @@ type sessionProfileDTO struct {
 	Profile   string `json:"profile"`
 }
 
-// successorProfilePath deriva la ruta SUCESORA de la petición viva cambiando el
-// sufijo /role por /profile.
-//
-// 🔑 Se calcula del r.URL.Path y NO se escribe literal a propósito: el MISMO handler
-// está colgado en DOS vías (`/api/v1/sessions/{id}/role` y `/admin/sessions/{id}/role`,
-// Plan 046 · T1.2) y cada una tiene su propio sucesor. Un Link fijo apuntando a
-// /api/v1/... mandaría al operador de la vía admin —que puede no tener alcance a la
-// API pública— a una ruta que no es la suya.
-func successorProfilePath(r *http.Request) string {
-	return strings.TrimSuffix(r.URL.Path, "/role") + "/profile"
-}
-
-// markRoleDeprecated pone la señal de deprecación en CABECERAS y devuelve el texto
-// que va al cuerpo. Se llama al PRINCIPIO del handler, antes de cualquier escritura:
-// así el aviso viaja en las CINCO respuestas (200/400/401/404/500) y no solo en el
-// camino feliz — quien depure un 400 contra /role también se entera de que la ruta
-// se retira. Las cabeceras siguen RFC 8594 (Deprecation) y RFC 8288 (Link).
-func markRoleDeprecated(w http.ResponseWriter, r *http.Request) string {
-	successor := successorProfilePath(r)
-	w.Header().Set("Deprecation", "true")
-	w.Header().Set("Link", "<"+successor+">; rel=\"successor-version\"")
-	return "esta ruta está deprecada (Plan 046 · D-046.5): usa POST " + successor +
-		` con {"profile":"active"|"passive"}. bot⇒active, passive⇒passive.`
-}
-
-// SetSessionRoleHandler devuelve el handler de POST .../sessions/{id}/role: fija el
-// rol (bot|passive) de la sesión {id} del tenant del token (Plan 020 · T1). El
-// tenant sale del token (INV-8) y la mutación se acota a él (aislamiento estricto:
-// no se puede tocar la sesión de otro tenant). Respuestas:
-//
-//   - 200 con {session_id, role, deprecation} al fijar.
-//   - 400 si el JSON es inválido, falta el id en la ruta o el rol no es bot|passive.
-//   - 401 sin Identity en el contexto.
-//   - 404 si la sesión no existe o pertenece a otro tenant (no se filtra existencia).
-//   - 500 ante fallo de persistencia.
-//
-// ⚠️ DEPRECADO (sin la marca `Deprecated:` de godoc mientras dure la convivencia,
-// ver SessionRoleStore): usa SetSessionProfileHandler (Plan 046 · T1.2). Se conserva
-// UN CICLO —traduciendo bot⇒active / passive⇒passive contra el MISMO store— porque
-// el BFF y la plataforma no se despliegan a la vez: romperlo hoy dejaría al BFF ya
-// desplegado sin poder cambiar un perfil hasta su redespliegue. Toda respuesta lleva
-// la señal de deprecación por partida doble (cabeceras Deprecation + Link y el campo
-// `deprecation` del cuerpo). El DROP es de un plan futuro.
-//
-// pusher/log admiten nil: ver ProfilePusher (en T1.2 se cablean a nil).
-//
-// 🔑 Sigue escribiendo por SetRole —el puerto DEPRECADO— y no por SetProfile: así el
-// trío legado (SessionRoleStore + SetRole + este handler) muere de una pieza el día
-// del DROP, en vez de dejar a SetRole sin ningún llamador de producción el mismo día
-// que se escribió. Da igual cuál se use: T1.1 dejó a SetRole escribiendo las DOS
-// columnas, exactamente como SetProfile (D-046.1).
-func SetSessionRoleHandler(store SessionRoleStore, pusher ProfilePusher, log sharedlogger.Logger) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Antes que nada: la señal de deprecación viaja en las CINCO respuestas.
-		aviso := markRoleDeprecated(w, r)
-
-		id, ok := httpapi.IdentityFromContext(r.Context())
-		if !ok || id.TenantID == "" {
-			http.Error(w, "autenticación requerida", http.StatusUnauthorized)
-			return
-		}
-
-		sessionID := r.PathValue("id")
-		if sessionID == "" {
-			http.Error(w, "session id requerido en la ruta", http.StatusBadRequest)
-			return
-		}
-
-		var req sessionRoleRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
-			return
-		}
-
-		role := fleet.Role(strings.TrimSpace(req.Role))
-		if !fleet.ValidRole(role) {
-			http.Error(w, "role inválido (usar bot|passive)", http.StatusBadRequest)
-			return
-		}
-
-		// El perfil equivalente NO se recalcula aparte: es la MISMA traducción que
-		// SetRole persiste (bot⇒active, passive⇒passive), y solo se materializa aquí
-		// para dársela al pusher. La respuesta sigue hablando de `role` — el contrato
-		// del cliente viejo no cambia durante el ciclo de deprecación.
-		profile := fleet.ProfileForRole(role)
-
-		found, err := store.SetRole(r.Context(), id.TenantID, sessionID, role)
-		switch {
-		case errors.Is(err, fleet.ErrInvalidRole):
-			http.Error(w, "role inválido (usar bot|passive)", http.StatusBadRequest)
-		case err != nil:
-			http.Error(w, "no se pudo fijar el rol de la sesión", http.StatusInternalServerError)
-		case !found:
-			http.Error(w, "sesión no encontrada", http.StatusNotFound)
-		default:
-			pushProfileBestEffort(r, pusher, log, id.TenantID, sessionID, profile)
-			writeJSON(w, http.StatusOK, sessionRoleDTO{
-				SessionID:   sessionID,
-				Role:        string(role),
-				Deprecation: aviso,
-			})
-		}
-	})
-}
-
 // SetSessionProfileHandler devuelve el handler de POST .../sessions/{id}/profile:
 // fija el PERFIL (active|passive) de la sesión {id} del tenant del token (Plan 046 ·
-// T1.2, D-046.5). Sucede a SetSessionRoleHandler con el MISMO scope
+// T1.2, D-046.5). Sucedió al handler de /role —retirado con la 0064— con su MISMO scope
 // (`sessions.write`), el MISMO aislamiento por tenant (el tenant sale del token,
 // INV-8 del Plan 018: no se puede tocar la sesión de otro tenant) y las MISMAS cinco
 // respuestas:

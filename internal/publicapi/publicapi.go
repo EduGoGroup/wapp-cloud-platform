@@ -76,17 +76,9 @@ type FlowDeps struct {
 // SessionDeps agrupa las dependencias de gestión de sesiones del Edge.
 type SessionDeps struct {
 	Sessions SessionLister // fleet: sesiones del tenant (aislamiento)
-	// SessionRoles administra el rol bot|passive de una sesión (Plan 020 · T1).
-	// Lo satisface *fleet.PostgresRepository (SetRole). nil ⇒ no se monta la ruta.
-	//
-	// ⚠️ DEPRECADO: usa SessionProfiles (Plan 046 · T1.2, D-046.5). Se conserva un
-	// ciclo para no romper al BFF ya desplegado; muere con el DROP de `role`. Sin la
-	// marca `Deprecated:` de godoc a propósito: bootstrap lo cablea vivo y SA1019
-	// pondría rojo el CI por una convivencia decidida.
-	SessionRoles flowadmin.SessionRoleStore
 	// SessionProfiles administra el PERFIL active|passive de una sesión (Plan 046 ·
 	// T1.2). Lo satisface *fleet.PostgresRepository (SetProfile). nil ⇒ no se monta
-	// la ruta. Sucede a SessionRoles.
+	// la ruta.
 	SessionProfiles flowadmin.SessionProfileStore
 	// ProfilePush empuja el cambio de perfil a la sesión viva tras persistirlo
 	// (best-effort, ADR-0027). 🔴 En T1.2 se cablea a nil (no-op): quien lo enchufa
@@ -455,20 +447,6 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 		}
 		mux.Handle("GET /api/v1/sessions", protectRead(mw, log,
 			"sessions.read", listSessionsHandler(d.Sessions, d.Health, alerter, d.DBTimeout, log)))
-	}
-
-	// Rol de sesión bot|passive (Plan 020 · T1): una sesión passive escucha/transporta
-	// pero NO dispara triggers ni auto-responde. Escritura auditada (sessions.write),
-	// acotada al tenant del token (INV-8); reusa el MISMO handler que /admin/sessions.
-	//
-	// ⚠️ DEPRECADA (Plan 046 · T1.2, D-046.5): la sucede POST /api/v1/sessions/{id}/profile,
-	// registrada justo debajo. Se conserva un ciclo —el BFF y la plataforma no se
-	// despliegan a la vez— y toda su respuesta lleva la señal de deprecación
-	// (cabeceras Deprecation + Link y el campo `deprecation` del cuerpo).
-	if d.SessionRoles != nil {
-		mux.Handle("POST /api/v1/sessions/{id}/role", protect(mw, auditor, log,
-			"sessions.write", "session",
-			flowadmin.SetSessionRoleHandler(d.SessionRoles, d.ProfilePush, log)))
 	}
 
 	// PERFIL de sesión active|passive (Plan 046 · T1.2, ADR-0027): sucede a /role con

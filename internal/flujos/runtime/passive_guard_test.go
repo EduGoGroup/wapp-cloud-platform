@@ -10,9 +10,13 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 )
 
-// newRoleTriggerRuntime es como newTriggerRuntime pero con el ROL de sesión
-// inyectado en el fakeResolver (Plan 020 · T1): permite probar la guarda passive.
-func newRoleTriggerRuntime(t *testing.T, role string, rules ...trigger.Rule) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
+// newProfileTriggerRuntime es como newTriggerRuntime pero con el PERFIL de sesión
+// inyectado en el fakeResolver (Plan 046 · T1.1): permite probar la guarda pasiva.
+//
+// 🔧 El parámetro hablaba bot|passive hasta la 0064, que retiró esa columna. Hoy
+// habla active|passive, el único vocabulario que existe. Es el SEMBRADO lo que
+// cambió: ninguna aserción de conducta de esta suite se tocó.
+func newProfileTriggerRuntime(t *testing.T, profile string, rules ...trigger.Rule) (*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver) {
 	t.Helper()
 	repo := store.NewMemoryRepository()
 	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
@@ -26,7 +30,7 @@ func newRoleTriggerRuntime(t *testing.T, role string, rules ...trigger.Rule) (*r
 	}
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
-	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, role: role}, contacts, discardLogger(),
+	rt := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, profile: profile}, contacts, discardLogger(),
 		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)))
 	return rt, repo, sender, contacts
 }
@@ -43,7 +47,7 @@ func keywordRule() trigger.Rule {
 // motor reactivo — un entrante que casa una palabra clave NI arranca el flujo NI
 // auto-responde NI crea estado (Plan 020 · T1).
 func TestHandleIncoming_SesionPassive_NoDisparaTrigger(t *testing.T) {
-	rt, repo, sender, contacts := newRoleTriggerRuntime(t, "passive", keywordRule())
+	rt, repo, sender, contacts := newProfileTriggerRuntime(t, "passive", keywordRule())
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "pedido", "wamid.pv")); err != nil {
@@ -60,7 +64,7 @@ func TestHandleIncoming_SesionPassive_NoDisparaTrigger(t *testing.T) {
 // TestHandleIncoming_SesionBot_DisparaTrigger: no-regresión del keyword-trigger del
 // 019 — con rol bot EXPLÍCITO, el MISMO entrante arranca el flujo y envía el menú.
 func TestHandleIncoming_SesionBot_DisparaTrigger(t *testing.T) {
-	rt, repo, sender, contacts := newRoleTriggerRuntime(t, "bot", keywordRule())
+	rt, repo, sender, contacts := newProfileTriggerRuntime(t, "active", keywordRule())
 	ctx := context.Background()
 
 	if err := rt.HandleIncoming(ctx, testSession, incoming(testContact, "pedido", "wamid.bt")); err != nil {
@@ -88,15 +92,15 @@ func TestHandleIncoming_PassiveNoAvanzaConversacionViva(t *testing.T) {
 	sender := &fakeSender{}
 	contacts := contact.NewMemoryResolver(repo)
 
-	// Arranca la conversación por API (el rol no interviene en Start): estado vivo en "root".
-	rtBot := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, role: "bot"}, contacts, discardLogger())
-	if _, err := rtBot.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
+	// Arranca la conversación por API (el perfil no interviene en Start): estado vivo en "root".
+	rtActiva := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, profile: "active"}, contacts, discardLogger())
+	if _, err := rtActiva.Start(ctx, testTenant, testFlow, testSession, phoneRef(t, testContact)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	sentAfterStart := sender.count()
 
 	// La MISMA sesión ahora resuelve passive: un entrante NO avanza ni auto-responde.
-	rtPassive := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, role: "passive"}, contacts, discardLogger())
+	rtPassive := runtime.New(repo, newEngine(), sender, fakeResolver{tenantID: testTenant, profile: "passive"}, contacts, discardLogger())
 	if err := rtPassive.HandleIncoming(ctx, testSession, incoming(testContact, "1", "wamid.pv2")); err != nil {
 		t.Fatalf("HandleIncoming passive sobre conversación viva: %v", err)
 	}

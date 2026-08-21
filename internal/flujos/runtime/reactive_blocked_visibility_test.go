@@ -64,7 +64,7 @@ func newPassiveRuntimeObservado(t *testing.T, buf *bytes.Buffer, cnt *contadorCo
 		t.Fatalf("insert regla: %v", err)
 	}
 	return runtime.New(repo, newEngine(), &fakeSender{},
-		fakeResolver{tenantID: testTenant, role: "passive"},
+		fakeResolver{tenantID: testTenant, profile: "passive"},
 		contact.NewMemoryResolver(repo), logCapturado(buf),
 		runtime.WithTriggerResolver(trigger.NewConfigResolver(ts)),
 		runtime.WithReactiveBlockedHook(cnt.registrar))
@@ -166,7 +166,7 @@ func TestReactiveBlocked_SelfLoopCuentaConSuMotivo(t *testing.T) {
 // Sin hook inyectado los cortes se comportan igual (nil-safe): observar es opcional,
 // decidir no. Cubre el arranque de cualquier consumidor que no cablee métricas.
 func TestReactiveBlocked_SinHookNoRompe(t *testing.T) {
-	rt, _, sender, _ := newRoleTriggerRuntime(t, "passive", keywordRule())
+	rt, _, sender, _ := newProfileTriggerRuntime(t, "passive", keywordRule())
 	if err := rt.HandleIncoming(context.Background(), testSession, incoming(testContact, "pedido", "wamid.nh")); err != nil {
 		t.Fatalf("HandleIncoming sin hook: %v", err)
 	}

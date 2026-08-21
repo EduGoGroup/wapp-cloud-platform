@@ -16,16 +16,37 @@ y [Versionado Semántico](https://semver.org/lang/es/).
   la ruta vieja y no se traduce en silencio.
   Registrada **en las dos vías**, igual que su predecesora: la pública y
   `POST /admin/sessions/{id}/profile`.
-- **`GET /api/v1/sessions` publica `profile`** (`active`|`passive`) junto a `role`.
-  Va siempre presente (la columna es `NOT NULL DEFAULT 'passive'`).
+- **`GET /api/v1/sessions` publica `profile`** (`active`|`passive`). Va siempre
+  presente (la columna es `NOT NULL DEFAULT 'passive'`).
 - **Migración `0063_fleet_sessions_profile.sql`** (Plan 046 · T1.1): `fleet_sessions`
   gana la columna `profile TEXT NOT NULL DEFAULT 'passive'` con
   `CHECK (profile IN ('active','passive'))`, backfilleada desde `role`
   (`bot⇒active`, `passive⇒passive`). Aditiva e idempotente bajo el runner
   FULL-REPLAY: la columna nace **sin** default y el backfill lleva
   `WHERE profile IS NULL`, así que el replay del arranque siguiente es un no-op y
-  **no vuelca a pasiva** las sesiones vivas. `SchemaVersion` sube a **0.37.0**
-  (un solo bump para el plan).
+  **no vuelca a pasiva** las sesiones vivas. `SchemaVersion` sube a **0.37.0**.
+
+### Removed
+
+- 🔴 **`POST /api/v1/sessions/{id}/role` y `POST /admin/sessions/{id}/role`:
+  RETIRADAS**, junto con el campo `role` de `GET /api/v1/sessions` y la columna
+  `fleet_sessions.role` (migración **`0064_drop_fleet_sessions_role.sql`**,
+  `SchemaVersion` **0.38.0**).
+
+  **Es un cambio de contrato incompatible, y se hace a propósito en alpha.** La
+  0063 conservaba `role` «un ciclo como alias deprecado» para no romper a clientes
+  que no se despliegan a la vez que la plataforma. Al comprobar esa premisa contra
+  los seis repos del ecosistema, **ese cliente no existe**: el BFF llama a
+  `/profile` y no conserva la ruta vieja ni en su propia consola; el proto de
+  CloudLink no transporta `role`, así que el Edge nunca lo vio; y ningún otro repo
+  lo menciona. Un ciclo de deprecación que no protege a nadie solo cuesta: código,
+  tests y una micro-duda de producto (MD-046.2) que existía únicamente por esta
+  columna. D-046.1 se revisó y la columna, su tipo Go, sus dos rutas y esa
+  micro-duda mueren juntos. Balance: **−667 líneas netas**.
+
+  🔴 **A partir de este despliegue el rollback al binario anterior NO es una
+  opción**: leía `COALESCE(role,'bot')`. Volver atrás exige restaurar también la
+  columna (la 0025 la recrea sola en el replay).
 
 ### Changed
 

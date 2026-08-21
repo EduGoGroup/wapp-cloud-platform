@@ -35,20 +35,17 @@ type Presigner interface {
 	GenerateDownloadURL(ctx context.Context, key string) (url string, expiresAt time.Time, err error)
 }
 
-// Vocabulario INTERNO del motor para el eje que gobierna la reacción (Plan 020 ·
-// T1). Se declaran como literales en runtime (no se importa fleet) para no acoplar
+// Vocabulario INTERNO del motor para el eje que gobierna la reacción (Plan 046 ·
+// T1.1). Se declaran como literales en runtime (no se importa fleet) para no acoplar
 // el motor al gateway: el resolver entrega el valor ya resuelto como string.
 //
-// ⚠️ Desde el Plan 046 · T1.1 el dato que la BD aporta ya NO es fleet_sessions.role
-// sino fleet_sessions.profile (active|passive): el resolver agrega esa columna y la
-// traduce a ESTOS literales. Los nombres y los valores se conservan a propósito —
-// son el CONTRATO de TenantResolver y de los dobles de test, y cambiarlos aquí
-// obligaría a reescribir aserciones de comportamiento sin cambiar una sola decisión.
-// Mueren con el DROP de la columna role, en el plan futuro que lo haga; hasta
-// entonces "bot" significa exactamente profile='active'.
+// 📌 Hasta la 0064 estos literales eran `roleBot = "bot"` / `rolePassive = "passive"`,
+// el vocabulario de la columna legada `fleet_sessions.role`. Al retirarse esa columna
+// —no la consumía nadie— el motor pasa a hablar el ÚNICO eje que existe: el perfil.
+// El corte es byte a byte el mismo; lo que cambió es cómo se llama.
 const (
-	roleBot     = "bot"     // ejecuta el motor de flujos (dispara triggers / auto-responde).
-	rolePassive = "passive" // solo escucha/transporta: NO dispara triggers ni auto-responde.
+	profileActive  = "active"  // ejecuta el motor de flujos (dispara triggers / auto-responde).
+	profilePassive = "passive" // solo emite: NO dispara triggers ni auto-responde.
 )
 
 // Motivos por los que un entrante NO llega al motor reactivo. Son la etiqueta del
@@ -75,10 +72,10 @@ const (
 // la sesión receptora a partir del session_id, porque el hook OnIncoming solo
 // entrega session_id (design.md §10.A). Devuelve ambos en UNA llamada (una query
 // por entrante). Lo implementa el resolver Postgres (o un doble en tests). Un rol
-// vacío o desconocido se trata como bot (no-regresión). Ante error, tenant/rol
+// vacío o desconocido se trata como activo (no-regresión). Ante error, tenant/perfil
 // vacíos y el llamante aborta el avance sin tocar el motor reactivo.
 type TenantResolver interface {
-	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, role string, err error)
+	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, profile string, err error)
 }
 
 // SelfNumberLister devuelve el CONJUNTO de números propios (self_pn, E.164

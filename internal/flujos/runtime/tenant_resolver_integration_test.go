@@ -100,15 +100,15 @@ func TestIntegration_PostgresTenantResolver_Resuelve(t *testing.T) {
 	seedFleetSession(t, db, tenantID, "edge-A", sessionID, "active")
 
 	res := runtime.NewPostgresTenantResolver(db)
-	got, role, err := res.ResolveTenant(ctx, sessionID)
+	got, perfil, err := res.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("ResolveTenant: %v", err)
 	}
 	if got != tenantID {
 		t.Fatalf("tenant resuelto: got %q, want %q", got, tenantID)
 	}
-	if role != "bot" {
-		t.Fatalf("una sesión de perfil activo debe resolver bot: got %q", role)
+	if perfil != "active" {
+		t.Fatalf("una sesión de perfil activo debe resolver active: got %q", perfil)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestIntegration_PostgresTenantResolver_Resuelve(t *testing.T) {
 // auto-responde hasta que su dueño la active.
 //
 // 🔴 Es un cambio de comportamiento deliberado respecto de la 0025 (DEFAULT 'bot',
-// que resolvía bot). Si este test se pone rojo con got=="bot", alguien devolvió el
+// que resolvía activa). Si este test se pone rojo con got=="active", alguien devolvió el
 // default a activo y con él la captura de tráfico por defecto que este plan existe
 // para cerrar.
 func TestIntegration_PostgresTenantResolver_PerfilPorDefectoEsPassive(t *testing.T) {
@@ -129,15 +129,15 @@ func TestIntegration_PostgresTenantResolver_PerfilPorDefectoEsPassive(t *testing
 	seedFleetSessionSinPerfil(t, db, tenantID, "edge-A", sessionID)
 
 	res := runtime.NewPostgresTenantResolver(db)
-	got, role, err := res.ResolveTenant(ctx, sessionID)
+	got, perfil, err := res.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("ResolveTenant: %v", err)
 	}
 	if got != tenantID {
 		t.Fatalf("tenant resuelto: got %q, want %q", got, tenantID)
 	}
-	if role != "passive" {
-		t.Fatalf("perfil por defecto (0063, D-07): got %q, want passive", role)
+	if perfil != "passive" {
+		t.Fatalf("perfil por defecto (0063, D-07): got %q, want passive", perfil)
 	}
 }
 
@@ -180,7 +180,7 @@ func TestIntegration_PostgresTenantResolver_MismoTenantVariosEdges(t *testing.T)
 // `profile = 'passive'` y `profile <> 'active'` son EQUIVALENTES —por eso ningún
 // test de los otros lo distinguía—, pero ante un valor fuera del dominio el primero
 // da any_passive=false y la sesión AUTO-RESPONDE. Este test es lo único que separa
-// las dos formulaciones: con `= 'passive'` se pone rojo con got=="bot".
+// las dos formulaciones: con `= 'passive'` se pone rojo con got=="active".
 //
 // Para poder sembrar el valor desconocido hay que retirar el CHECK de la 0063, que
 // es justamente lo que hoy hace ese caso inalcanzable. Se restaura al terminar; es
@@ -195,16 +195,16 @@ func TestIntegration_PostgresTenantResolver_PerfilDesconocidoCaeAPasiva(t *testi
 	seedFleetSession(t, db, tenantID, "edge-A", sessionID, "supervisor")
 
 	res := runtime.NewPostgresTenantResolver(db)
-	got, role, err := res.ResolveTenant(ctx, sessionID)
+	got, perfil, err := res.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("ResolveTenant: %v", err)
 	}
 	if got != tenantID {
 		t.Fatalf("tenant resuelto: got %q, want %q", got, tenantID)
 	}
-	if role != "passive" {
+	if perfil != "passive" {
 		t.Fatalf("un perfil fuera del dominio debe caer a PASIVA: got %q. Alguien devolvió el "+
-			"predicado a `profile = 'passive'` y una sesión de perfil desconocido auto-responde", role)
+			"predicado a `profile = 'passive'` y una sesión de perfil desconocido auto-responde", perfil)
 	}
 }
 

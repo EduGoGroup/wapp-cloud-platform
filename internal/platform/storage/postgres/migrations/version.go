@@ -119,7 +119,19 @@ import (
 // sobre la 0.36.0 ya publicada (Plan 053 · Ola 1, desplegada en UAT): las
 // migraciones que el resto de olas del 046 añadan NO vuelven a bumpear mientras
 // la 0.37.0 no se publique.
-const SchemaVersion = "0.37.0"
+// 0.38.0 -- Plan 046 · Ola 1 (0064): RETIRO de fleet_sessions.role. La 0063 lo
+// conservaba «un ciclo como alias deprecado» para no romper a clientes que no se
+// despliegan con la plataforma; al comprobarlo contra los seis repos, ese cliente
+// NO EXISTE (el BFF llama a /profile y no conserva la ruta vieja; el proto de
+// CloudLink no transporta role; nadie más lo menciona). Un ciclo de deprecación que
+// no protege a nadie es coste sin contrapartida, así que D-046.1 se revisó y la
+// columna, su tipo Go, sus dos rutas /role y la micro-duda MD-046.2 mueren juntos.
+// 🔴 Bajo FULL-REPLAY la 0025 RECREA la columna en cada arranque y esta la vuelve a
+// borrar: es correcto, converge y cuesta catálogo, no datos — pero esta migración
+// tiene que ir SIEMPRE por encima de la 0063, que lee `role` en su backfill.
+// 🔴 A partir de aquí el rollback al binario anterior NO es una opción: leía
+// COALESCE(role,'bot').
+const SchemaVersion = "0.38.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

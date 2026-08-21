@@ -25,21 +25,19 @@ type sessionDTO struct {
 	SessionID       string `json:"session_id"`
 	EdgeID          string `json:"edge_id"`
 	State           string `json:"state"`
-	Role            string `json:"role"`
 	SelfPn          string `json:"self_pn,omitempty"`
 	LastConnectedAt string `json:"last_connected_at,omitempty"`
 	LastSeenAt      string `json:"last_seen_at,omitempty"`
 
 	// Profile es el PERFIL de negocio de la sesión (active|passive, Plan 046 · T1.2,
-	// ADR-0027): el eje que SUCEDE a Role, con el vocabulario del dueño («activa /
-	// pasiva», D-046.6). Va SIN omitempty a propósito: la columna es NOT NULL con
-	// DEFAULT 'passive', así que siempre lo sabemos, y un campo ausente le diría al
-	// cliente «no lo sé» cuando sí lo sabemos.
+	// ADR-0027), con el vocabulario del dueño («activa / pasiva», D-046.6). Va SIN
+	// omitempty a propósito: la columna es NOT NULL con DEFAULT 'passive', así que
+	// siempre lo sabemos, y un campo ausente le diría al cliente «no lo sé» cuando sí
+	// lo sabemos.
 	//
-	// ⚠️ Role NO se retira de este DTO en el mismo despliegue (D-046.1/D-046.5): el
-	// BFF y la plataforma no se despliegan a la vez, y quitarlo hoy dejaría a un BFF
-	// viejo sin nada que pintar. Los dos campos viajan juntos y dicen lo mismo
-	// (bot⇔active, passive⇔passive) hasta el DROP de la columna `role`.
+	// 📌 El campo `role` que acompañaba a este DESAPARECIÓ del DTO con la 0064: era el
+	// alias legado, no lo consumía nadie fuera de esta plataforma y su ciclo de
+	// deprecación no protegía a ningún cliente real (D-046.1 revisada).
 	Profile string `json:"profile"`
 
 	// Salud (Plan 031 · T4). Health es el estado derivado; el resto es el snapshot.
@@ -128,7 +126,6 @@ func listSessionsHandler(sessions SessionLister, rules HealthRules, alerter Aler
 				SessionID:         s.SessionID,
 				EdgeID:            s.EdgeID,
 				State:             string(s.State),
-				Role:              string(s.Role),
 				Profile:           string(s.Profile),
 				SelfPn:            s.SelfPn,
 				Health:            rules.derive(s),

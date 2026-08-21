@@ -16,7 +16,6 @@ type sessionRow struct {
 	SessionID       string `json:"session_id"`
 	EdgeID          string `json:"edge_id"`
 	State           string `json:"state"`
-	Role            string `json:"role"`
 	Profile         string `json:"profile"`
 	SelfPn          string `json:"self_pn"`
 	LastConnectedAt string `json:"last_connected_at"`
@@ -44,12 +43,12 @@ func sessionsFixture() fakeSessions {
 	return fakeSessions{byTenant: map[string][]fleet.Session{
 		tenantA: {{
 			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
-			State: fleet.StateOnline, Role: fleet.RoleBot, SelfPn: "15551234567",
-			Profile: fleet.ProfileActive, LastConnectedAt: ts, LastSeenAt: ts,
+			State: fleet.StateOnline, Profile: fleet.ProfileActive, SelfPn: "15551234567",
+			LastConnectedAt: ts, LastSeenAt: ts,
 		}},
 		tenantB: {{
 			TenantID: tenantB, EdgeID: "edge-b", SessionID: "sess-b",
-			State: fleet.StateOffline, Role: fleet.RolePassive, Profile: fleet.ProfilePassive,
+			State: fleet.StateOffline, Profile: fleet.ProfilePassive,
 		}},
 	}}
 }
@@ -70,7 +69,7 @@ func TestSessionsList_OK_WithScope(t *testing.T) {
 	}
 	got := rows[0]
 	if got.SessionID != "sess-a" || got.EdgeID != "edge-a" || got.State != "online" ||
-		got.Role != "bot" || got.SelfPn != "15551234567" {
+		got.Profile != "active" || got.SelfPn != "15551234567" {
 		t.Fatalf("DTO inesperado: %+v", got)
 	}
 	// Plan 046 · T1.2: el DTO publica `profile` SIN dejar de publicar `role`. Los
@@ -113,7 +112,7 @@ func TestSessionsList_HealthEnriched(t *testing.T) {
 	sessions := fakeSessions{byTenant: map[string][]fleet.Session{
 		tenantA: {{
 			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
-			State: fleet.StateOnline, Role: fleet.RoleBot,
+			State: fleet.StateOnline, Profile: fleet.ProfileActive,
 			LastConnectedAt: ts, LastSeenAt: ts,
 			// Socket muerto sostenido (degraded_since hace 6m) pero salud fresca (30s).
 			WhatsappState: "dead", DegradedReason: "dek_load_timeout",
@@ -207,7 +206,7 @@ func TestSessionsList_WorkerHealthUnknownIsOmitted(t *testing.T) {
 	sessions := fakeSessions{byTenant: map[string][]fleet.Session{
 		tenantA: {{
 			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
-			State: fleet.StateOnline, Role: fleet.RoleBot,
+			State: fleet.StateOnline, Profile: fleet.ProfileActive,
 			WhatsappState: "connected", BinaryVersion: "v0.12.0",
 			// Bloque del worker entero en «no lo sé»: mapa nil incluido.
 		}},
@@ -248,7 +247,7 @@ func TestSessionsList_WorkerHealthExposed(t *testing.T) {
 	sessions := fakeSessions{byTenant: map[string][]fleet.Session{
 		tenantA: {{
 			TenantID: tenantA, EdgeID: "edge-a", SessionID: "sess-a",
-			State: fleet.StateOnline, Role: fleet.RoleBot, WhatsappState: "connected",
+			State: fleet.StateOnline, Profile: fleet.ProfileActive, WhatsappState: "connected",
 			IntentCircuit: "open", WorkerTaskset: "cajero_sin_confinar",
 			IntentP50Ms: &p50, IntentOmittedByReason: razones,
 			StuckHeads: &heads, FailedSealDispatch: &cero,
@@ -361,7 +360,6 @@ func apiConPerfiles(t *testing.T) (*testAPI, *fleet.MemoryRepository) {
 	}
 	api := newAPI(publicapi.Deps{SessionDeps: publicapi.SessionDeps{
 		Sessions:        sessionsFixture(),
-		SessionRoles:    repo,
 		SessionProfiles: repo,
 		// ProfilePush queda nil: el hook nace apagado en T1.2 (lo enchufa T2.1).
 	}}, apiKeys())
@@ -387,7 +385,7 @@ func TestSessionProfile_RutaMontada(t *testing.T) {
 }
 
 // TestSessionProfile_403_SinScopeDeEscritura: la ruta exige sessions.write, igual
-// que /role. Una credencial de solo lectura no cambia perfiles.
+// que tenía la ruta vieja. Una credencial de solo lectura no cambia perfiles.
 func TestSessionProfile_403_SinScopeDeEscritura(t *testing.T) {
 	api, _ := apiConPerfiles(t)
 
@@ -397,7 +395,8 @@ func TestSessionProfile_403_SinScopeDeEscritura(t *testing.T) {
 	}
 }
 
-// TestSessionProfile_400_Bot_EnLaRutaReal: `bot` es vocabulario de /role. Contra
+// TestSessionProfile_400_Bot_EnLaRutaReal: `bot` era el vocabulario de la ruta
+// retirada en la 0064. Contra
 // /profile es 400 también a través del mux montado.
 func TestSessionProfile_400_Bot_EnLaRutaReal(t *testing.T) {
 	api, _ := apiConPerfiles(t)
@@ -405,33 +404,5 @@ func TestSessionProfile_400_Bot_EnLaRutaReal(t *testing.T) {
 	rec := call(api, keyASessionsW, http.MethodPost, "/api/v1/sessions/sess-a/profile", `{"profile":"bot"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d, quiero 400; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestSessionRole_DeprecacionEnLaRutaPublica: la ruta vieja sigue montada, sigue
-// devolviendo 200 y ya avisa. Aserción sobre el NOMBRE EXACTO de las cabeceras.
-func TestSessionRole_DeprecacionEnLaRutaPublica(t *testing.T) {
-	api, _ := apiConPerfiles(t)
-
-	rec := call(api, keyASessionsW, http.MethodPost, "/api/v1/sessions/sess-a/role", `{"role":"passive"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("Deprecation"); got != "true" {
-		t.Fatalf("cabecera Deprecation=%q, quiero \"true\"", got)
-	}
-	quiero := `</api/v1/sessions/sess-a/profile>; rel="successor-version"`
-	if got := rec.Header().Get("Link"); got != quiero {
-		t.Fatalf("cabecera Link=%q, quiero %q", got, quiero)
-	}
-	var out struct {
-		Role        string `json:"role"`
-		Deprecation string `json:"deprecation"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.Role != "passive" || out.Deprecation == "" {
-		t.Fatalf("respuesta inesperada: %+v", out)
 	}
 }

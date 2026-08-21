@@ -48,7 +48,6 @@ func TestMuxRegistration_NoPanic(t *testing.T) {
 		triggersCreate: dummy,
 		triggersList:   dummy,
 		triggersDelete: dummy,
-		sessionRole:    dummy,
 		sessionProfile: dummy,
 		sessionStatus:  dummy,
 		revokeTenant:   dummy,

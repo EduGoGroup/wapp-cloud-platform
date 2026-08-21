@@ -42,7 +42,7 @@ func newRuntimeConRecordatorio(t *testing.T, role string, spy runtime.DepositRem
 	contacts := contact.NewMemoryResolver(repo)
 	all := append([]runtime.Option{runtime.WithDepositReminder(spy)}, opts...)
 	rt := runtime.New(repo, newSurveyEngine(), &fakeSender{},
-		fakeResolver{tenantID: testTenant, role: role}, contacts, discardLogger(), all...)
+		fakeResolver{tenantID: testTenant, profile: role}, contacts, discardLogger(), all...)
 	return rt, contacts
 }
 

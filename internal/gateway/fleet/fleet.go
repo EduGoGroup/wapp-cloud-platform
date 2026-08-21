@@ -44,25 +44,6 @@ var ErrInvalidState = errors.New("estado de sesión inválido (usar offline|logg
 // offline. StateOnline NO se admite: es DERIVADO del stream vivo (no se falsea).
 func ValidAdminState(s State) bool { return s == StateOffline || s == StateLoggedOut }
 
-// Role es el rol operativo de una sesión (Plan 020 · T1). Gobierna si el motor
-// reactivo de flujos actúa sobre sus entrantes.
-type Role string
-
-const (
-	// RoleBot ejecuta el motor de flujos: dispara triggers y auto-responde. Es el
-	// DEFAULT (columna role DEFAULT 'bot') ⇒ no-regresión de todo lo previo al 020.
-	RoleBot Role = "bot"
-	// RolePassive solo escucha/transporta: NO dispara triggers ni auto-responde.
-	RolePassive Role = "passive"
-)
-
-// ErrInvalidRole lo devuelve SetRole cuando el rol pedido no es bot|passive. Se
-// inspecciona con errors.Is.
-var ErrInvalidRole = errors.New("rol de sesión inválido (usar bot|passive)")
-
-// ValidRole indica si r es un rol conocido (bot|passive).
-func ValidRole(r Role) bool { return r == RoleBot || r == RolePassive }
-
 // Profile es el PERFIL DE NEGOCIO de una sesión (Plan 046 · T1.1, D-046.1): el eje
 // que SUSTITUYE a Role. Mismo par de estados, otra palabra y otro vocabulario de
 // cara al dueño («perfil: activa / pasiva», D-046.6).
@@ -71,17 +52,16 @@ func ValidRole(r Role) bool { return r == RoleBot || r == RolePassive }
 // qué dispositivo manda, este dice si la sesión contesta sola o solo emite. Otro
 // dominio y otro repo (deslinde explícito de este plan).
 //
-// Role NO se retira: se conserva un ciclo como alias deprecado y sincronizado en
-// ESCRITURA (SetRole escribe las dos columnas). La LECTURA de negocio ya solo mira
-// Profile. El DROP de la columna role —y de este tipo Role— es de un plan futuro.
+// Es el ÚNICO eje: la columna legada `role` y su tipo Go se RETIRARON en la
+// migración 0064 (D-046.1 revisada — no había ni un consumidor de `/role` fuera de
+// la propia plataforma, así que el ciclo de deprecación no protegía a nadie).
 type Profile string
 
 const (
 	// ProfileActive ejecuta el motor de flujos: dispara triggers y auto-responde.
-	// Equivale a RoleBot.
 	ProfileActive Profile = "active"
 	// ProfilePassive solo emite: NO dispara triggers ni auto-responde, y sus
-	// entrantes se filtran en el Edge (ADR-0027, Ola 2). Equivale a RolePassive.
+	// entrantes se filtran en el Edge (ADR-0027, Ola 2).
 	//
 	// 🔴 Es el DEFAULT de la columna (0063, D-07): una sesión recién emparejada nace
 	// PASIVA. Distinto del DEFAULT 'bot' que traía la 0025 — cambio deliberado, no
@@ -96,33 +76,6 @@ var ErrInvalidProfile = errors.New("perfil de sesión inválido (usar active|pas
 // ValidProfile indica si p es un perfil conocido (active|passive).
 func ValidProfile(p Profile) bool { return p == ProfileActive || p == ProfilePassive }
 
-// ProfileForRole traduce el rol legado al perfil equivalente: bot ⇒ active, y
-// CUALQUIER otra cosa ⇒ passive. La rama por defecto es conservadora a propósito y
-// espeja byte a byte el CASE del backfill de la 0063 (`CASE role WHEN 'bot' THEN
-// 'active' ELSE 'passive' END`): ante un rol que no reconocemos, la lectura segura
-// es «no auto-responde», nunca «responde».
-func ProfileForRole(r Role) Profile {
-	if r == RoleBot {
-		return ProfileActive
-	}
-	return ProfilePassive
-}
-
-// RoleForProfile traduce el perfil al rol legado equivalente: active ⇒ bot, y
-// CUALQUIER otra cosa ⇒ passive. Es la inversa exacta de ProfileForRole y existe
-// SOLO para mantener sincronizada la columna deprecada `role` mientras viva
-// (D-046.1): la escritura por el eje nuevo (SetProfile) no puede dejar el alias
-// legado contradiciendo al perfil.
-//
-// 🔴 Muere con el DROP de la columna role. Ningún camino de NEGOCIO la llama: si
-// aparece en una decisión, es un bug (la decisión se lee de Profile).
-func RoleForProfile(p Profile) Role {
-	if p == ProfileActive {
-		return RoleBot
-	}
-	return RolePassive
-}
-
 // Session refleja una fila de public.fleet_sessions. Capabilities se omite a
 // propósito: el contrato CloudLink v0.1.0 no transporta capacidades aún.
 type Session struct {
@@ -130,10 +83,6 @@ type Session struct {
 	EdgeID    string
 	SessionID string
 	State     State
-	// Role es el eje LEGADO (bot|passive, Plan 020). Se conserva un ciclo y sigue
-	// escribiéndose sincronizado con Profile, pero ningún camino de NEGOCIO decide
-	// con él: la decisión se lee de Profile (D-046.1). Muere con el DROP futuro.
-	Role Role
 	// Profile es el perfil de negocio de la sesión (active|passive, Plan 046 ·
 	// T1.1). Es el campo con el que se decide si el motor reactivo actúa.
 	Profile Profile
@@ -322,23 +271,11 @@ type Repository interface {
 	// dato ante Heartbeats de una sesión que aún no se emparejó). No falla si la
 	// fila no existe todavía (UPDATE de 0 filas es válido).
 	SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error
-	// SetRole fija el rol (bot|passive) de la sesión sessionID del tenant tenantID
-	// (Plan 020 · T1) y, con él, el PERFIL equivalente (Plan 046 · T1.1, D-046.1):
-	// escribe las DOS columnas en la misma operación (bot⇒active, passive⇒passive),
-	// para que no exista un instante en que role y profile se contradigan.
-	// Acota por tenant_id + session_id (aislamiento multi-tenant,
-	// INV-8): actualiza TODAS las filas de esa sesión bajo el tenant (un mismo
-	// session_id puede colgar de varios edge_id del MISMO tenant). found=false si
-	// ninguna fila del tenant casa el session_id (una sesión de otro tenant queda
-	// invisible ⇒ 404 opaco). Devuelve ErrInvalidRole si role ∉ {bot,passive}.
-	SetRole(ctx context.Context, tenantID, sessionID string, role Role) (found bool, err error)
 	// SetProfile fija el PERFIL (active|passive) de la sesión sessionID del tenant
-	// tenantID (Plan 046 · T1.2) y, con él, el rol legado equivalente: escribe las
-	// DOS columnas en la misma operación (active⇒bot, passive⇒passive), igual que
-	// SetRole pero por el eje NUEVO. Es la operación que sobrevive al DROP de
-	// `role`; SetRole es la que muere con él.
+	// tenantID (Plan 046 · T1.2). Es la ÚNICA escritura del eje: el alias legado
+	// `role` y su SetRole se retiraron con la 0064.
 	//
-	// Mismo aislamiento que SetRole (tenant_id + session_id, INV-8): actualiza
+	// Aislamiento por tenant_id + session_id (INV-8 del Plan 018): actualiza
 	// TODAS las filas de esa sesión bajo el tenant y devuelve found=false si
 	// ninguna casa (sesión de otro tenant ⇒ 404 opaco). Devuelve ErrInvalidProfile
 	// si profile ∉ {active,passive}.
@@ -362,9 +299,9 @@ func memKey(tenantID, edgeID, sessionID string) string {
 	return tenantID + "\x00" + edgeID + "\x00" + sessionID
 }
 
-// MarkOnline implementa Repository. Preserva el rol y el perfil existentes (los
-// gobierna SetRole, no la señal de conexión): una sesión que reconecta conserva su
-// bot|passive y su active|passive.
+// MarkOnline implementa Repository. Preserva el perfil existente (lo gobierna
+// SetProfile, no la señal de conexión): una sesión que reconecta conserva su
+// active|passive.
 func (r *MemoryRepository) MarkOnline(_ context.Context, tenantID, edgeID, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -375,7 +312,6 @@ func (r *MemoryRepository) MarkOnline(_ context.Context, tenantID, edgeID, sessi
 	s.EdgeID = edgeID
 	s.SessionID = sessionID
 	s.State = StateOnline
-	s.Role = defaultRole(s.Role)
 	s.Profile = defaultProfile(s.Profile)
 	s.LastConnectedAt = now
 	s.LastSeenAt = now
@@ -394,7 +330,6 @@ func (r *MemoryRepository) MarkOffline(_ context.Context, tenantID, edgeID, sess
 		s = Session{TenantID: tenantID, EdgeID: edgeID, SessionID: sessionID}
 	}
 	s.State = StateOffline
-	s.Role = defaultRole(s.Role)
 	s.Profile = defaultProfile(s.Profile)
 	s.LastSeenAt = now
 	r.sessions[key] = s
@@ -413,7 +348,6 @@ func (r *MemoryRepository) MarkLoggedOut(_ context.Context, tenantID, edgeID, se
 		s = Session{TenantID: tenantID, EdgeID: edgeID, SessionID: sessionID}
 	}
 	s.State = StateLoggedOut
-	s.Role = defaultRole(s.Role)
 	s.Profile = defaultProfile(s.Profile)
 	s.LastSeenAt = now
 	r.sessions[key] = s
@@ -459,21 +393,12 @@ func (r *MemoryRepository) CountLiveBySelfPn(_ context.Context, tenantID, selfPn
 	return n, nil
 }
 
-// defaultRole normaliza un rol vacío a RoleBot (espeja la columna DEFAULT 'bot').
-func defaultRole(r Role) Role {
-	if r == "" {
-		return RoleBot
-	}
-	return r
-}
-
 // defaultProfile normaliza un perfil vacío a ProfilePassive, espejando el DEFAULT
 // de la columna profile (0063, D-07).
 //
-// 🔴 NO espeja a defaultRole, y la divergencia es DELIBERADA: la 0025 puso
-// DEFAULT 'bot' (una sesión nueva auto-respondía) y la 0063 pone DEFAULT
-// 'passive' (una sesión nueva NO auto-responde hasta que su dueño la active).
-// Igualar los dos defaults «por coherencia» deshace la decisión de producto.
+// 🔴 El default es PASIVO y eso es una decisión de producto, no un detalle: la
+// 0025 ponía DEFAULT 'bot' (una sesión nueva auto-respondía) y la 0063 lo invirtió
+// (una sesión nueva NO auto-responde hasta que su dueño la active, D-07).
 func defaultProfile(p Profile) Profile {
 	if p == "" {
 		return ProfilePassive
@@ -481,32 +406,8 @@ func defaultProfile(p Profile) Profile {
 	return p
 }
 
-// SetRole implementa Repository: fija el rol —y el perfil equivalente— de todas las
-// filas de la sesión bajo el tenant. found=false si ninguna casa (aislamiento por
-// tenant). Escribe los DOS ejes a la vez (D-046.1): mientras role viva, el espejo en
-// memoria no puede quedar en un estado que Postgres nunca produce.
-func (r *MemoryRepository) SetRole(_ context.Context, tenantID, sessionID string, role Role) (bool, error) {
-	if !ValidRole(role) {
-		return false, ErrInvalidRole
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	found := false
-	for k, s := range r.sessions {
-		if s.TenantID == tenantID && s.SessionID == sessionID {
-			s.Role = role
-			s.Profile = ProfileForRole(role)
-			r.sessions[k] = s
-			found = true
-		}
-	}
-	return found, nil
-}
-
-// SetProfile implementa Repository: fija el perfil —y el rol legado equivalente— de
-// todas las filas de la sesión bajo el tenant. found=false si ninguna casa
-// (aislamiento por tenant). Espeja byte a byte a SetRole por el eje contrario: las
-// dos columnas se escriben juntas mientras `role` viva (D-046.1).
+// SetProfile implementa Repository: fija el perfil de todas las filas de la sesión
+// bajo el tenant. found=false si ninguna casa (aislamiento por tenant).
 func (r *MemoryRepository) SetProfile(_ context.Context, tenantID, sessionID string, profile Profile) (bool, error) {
 	if !ValidProfile(profile) {
 		return false, ErrInvalidProfile
@@ -517,7 +418,6 @@ func (r *MemoryRepository) SetProfile(_ context.Context, tenantID, sessionID str
 	for k, s := range r.sessions {
 		if s.TenantID == tenantID && s.SessionID == sessionID {
 			s.Profile = profile
-			s.Role = RoleForProfile(profile)
 			r.sessions[k] = s
 			found = true
 		}

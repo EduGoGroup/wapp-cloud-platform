@@ -119,20 +119,18 @@ func TestIntegration_FleetSaveHealth(t *testing.T) {
 	}
 }
 
-// TestIntegration_FleetSetRoleEscribeAmbasColumnas verifica contra Postgres real
-// (migración 0063, Plan 046 · T1.1 · D-046.1) las dos mitades del ciclo de
-// convivencia entre `role` y `profile`:
+// TestIntegration_FleetPerfilPersisteYRoleYaNoExiste verifica contra Postgres real
+// dos cosas que solo se pueden afirmar con la BD delante:
 //
 //  1. Una sesión que nace por MarkOnline NO nombra la columna profile ⇒ cae al
 //     DEFAULT de la 0063 y nace PASIVA (D-07). Es el cambio de comportamiento
 //     respecto de la 0025 (que traía DEFAULT 'bot'), y está aquí para que nadie lo
 //     revierta sin darse cuenta.
-//  2. SetRole escribe las DOS columnas en el mismo UPDATE, traduciendo
-//     bot⇒active/passive⇒passive. Mientras `role` viva como alias deprecado, NO
-//     puede existir una fila en la que los dos ejes se contradigan: la lectura de
-//     negocio ya solo mira `profile`, y una escritura que dejara `role` a solas
-//     haría que la consola y el motor discreparan.
-func TestIntegration_FleetSetRoleEscribeAmbasColumnas(t *testing.T) {
+//  2. SetProfile persiste el perfil EN LA COLUMNA, ida y vuelta, y 🔴 la columna
+//     `role` YA NO EXISTE (0064). Esto último no es adorno: mientras el esquema la
+//     conserve, un `SELECT role` sigue funcionando y el retiro estaría a medias sin
+//     que ningún test lo notara. Se afirma contra information_schema, no contra Go.
+func TestIntegration_FleetPerfilPersisteYRoleYaNoExiste(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
@@ -151,39 +149,47 @@ func TestIntegration_FleetSetRoleEscribeAmbasColumnas(t *testing.T) {
 		t.Fatalf("una sesión recién registrada debe nacer pasiva (0063, D-07): got %q", s.Profile)
 	}
 
-	for _, caso := range []struct {
-		rol    fleet.Role
-		perfil fleet.Profile
-	}{
-		{fleet.RoleBot, fleet.ProfileActive},
-		{fleet.RolePassive, fleet.ProfilePassive},
-		{fleet.RoleBot, fleet.ProfileActive}, // y vuelve, para descartar un one-way
+	for _, perfil := range []fleet.Profile{
+		fleet.ProfileActive,
+		fleet.ProfilePassive,
+		fleet.ProfileActive, // y vuelve, para descartar un one-way
 	} {
-		foundRole, err := repo.SetRole(ctx, tenantID, sessionID, caso.rol)
-		if err != nil || !foundRole {
-			t.Fatalf("SetRole(%q): found=%v err=%v", caso.rol, foundRole, err)
+		foundP, err := repo.SetProfile(ctx, tenantID, sessionID, perfil)
+		if err != nil || !foundP {
+			t.Fatalf("SetProfile(%q): found=%v err=%v", perfil, foundP, err)
 		}
 		s, found, err = repo.Get(ctx, tenantID, edgeID, sessionID)
 		if err != nil || !found {
-			t.Fatalf("Get tras SetRole(%q): found=%v err=%v", caso.rol, found, err)
+			t.Fatalf("Get tras SetProfile(%q): found=%v err=%v", perfil, found, err)
 		}
-		if s.Role != caso.rol || s.Profile != caso.perfil {
-			t.Fatalf("SetRole(%q) debe dejar role=%q y profile=%q: got role=%q profile=%q",
-				caso.rol, caso.rol, caso.perfil, s.Role, s.Profile)
+		if s.Profile != perfil {
+			t.Fatalf("SetProfile(%q) debe dejar profile=%q: got %q", perfil, perfil, s.Profile)
 		}
 		// Y contra la fila cruda: que el Session salga bien no prueba que la columna
 		// se escribiera —lo probaría igual si el perfil se derivara al leer—.
-		var rolBD, perfilBD string
+		var perfilBD string
 		if err := db.QueryRowContext(ctx, `
-			SELECT role, profile FROM public.fleet_sessions
+			SELECT profile FROM public.fleet_sessions
 			WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
-		`, tenantID, edgeID, sessionID).Scan(&rolBD, &perfilBD); err != nil {
-			t.Fatalf("leer la fila cruda tras SetRole(%q): %v", caso.rol, err)
+		`, tenantID, edgeID, sessionID).Scan(&perfilBD); err != nil {
+			t.Fatalf("leer la fila cruda tras SetProfile(%q): %v", perfil, err)
 		}
-		if rolBD != string(caso.rol) || perfilBD != string(caso.perfil) {
-			t.Fatalf("la fila en BD tras SetRole(%q): role=%q profile=%q (want %q / %q)",
-				caso.rol, rolBD, perfilBD, caso.rol, caso.perfil)
+		if perfilBD != string(perfil) {
+			t.Fatalf("la fila en BD tras SetProfile(%q): profile=%q", perfil, perfilBD)
 		}
+	}
+
+	// 🔴 La columna legada NO puede seguir ahí. Si esta aserción se pone roja, la
+	// 0064 dejó de aplicarse (o alguien la reintrodujo) y el retiro está a medias.
+	var columnasRole int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'fleet_sessions' AND column_name = 'role'
+	`).Scan(&columnasRole); err != nil {
+		t.Fatalf("consultar information_schema por la columna role: %v", err)
+	}
+	if columnasRole != 0 {
+		t.Fatal("fleet_sessions.role sigue existiendo: la 0064 no se aplicó")
 	}
 }
 

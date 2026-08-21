@@ -136,24 +136,6 @@ func TestMemorySaveHealthUnknownIsNoOp(t *testing.T) {
 	}
 }
 
-// TestMemoryDefaultRoleIsBot: una sesión recién marcada online nace con rol bot
-// (espeja la columna DEFAULT 'bot' ⇒ no-regresión).
-func TestMemoryDefaultRoleIsBot(t *testing.T) {
-	t.Parallel()
-	repo := fleet.NewMemoryRepository()
-	ctx := context.Background()
-	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
-		t.Fatalf("MarkOnline: %v", err)
-	}
-	s, _, err := repo.Get(ctx, "t", "e", "s1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if s.Role != fleet.RoleBot {
-		t.Fatalf("rol por defecto: got %q, want bot", s.Role)
-	}
-}
-
 // TestMemoryDefaultProfileIsPassive: una sesión recién marcada online nace con
 // perfil PASIVO (espeja el DEFAULT 'passive' de la 0063, Plan 046 · T1.1 · D-07).
 //
@@ -177,53 +159,23 @@ func TestMemoryDefaultProfileIsPassive(t *testing.T) {
 	}
 }
 
-// TestMemorySetRoleSincronizaElPerfil: el espejo en memoria escribe los DOS ejes en
-// SetRole, igual que el UPDATE de Postgres (D-046.1). Un repositorio en memoria que
-// dejara el perfil atrás haría pasar en verde tests unitarios de un estado que la BD
-// nunca produce.
-func TestMemorySetRoleSincronizaElPerfil(t *testing.T) {
+// TestMemorySetProfilePassivePreservedOnReconnect: SetProfile a passive persiste y
+// una reconexión (MarkOnline) NO revierte el perfil (lo gobierna SetProfile, no la
+// señal de conexión).
+//
+// 📌 Convertido desde su versión sobre `role` al retirarse esa columna (0064): la
+// conducta que protege —una reconexión no pisa lo que el dueño configuró— es la
+// misma y NO tenía gemelo por el eje nuevo, así que borrarlo habría perdido cobertura.
+func TestMemorySetProfilePassivePreservedOnReconnect(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()
 	ctx := context.Background()
 	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}
-	for _, caso := range []struct {
-		rol    fleet.Role
-		perfil fleet.Profile
-	}{
-		{fleet.RoleBot, fleet.ProfileActive},
-		{fleet.RolePassive, fleet.ProfilePassive},
-		{fleet.RoleBot, fleet.ProfileActive},
-	} {
-		found, err := repo.SetRole(ctx, "t", "s1", caso.rol)
-		if err != nil || !found {
-			t.Fatalf("SetRole(%q): found=%v err=%v", caso.rol, found, err)
-		}
-		s, _, err := repo.Get(ctx, "t", "e", "s1")
-		if err != nil {
-			t.Fatalf("Get tras SetRole(%q): %v", caso.rol, err)
-		}
-		if s.Role != caso.rol || s.Profile != caso.perfil {
-			t.Fatalf("SetRole(%q): got role=%q profile=%q, want %q / %q",
-				caso.rol, s.Role, s.Profile, caso.rol, caso.perfil)
-		}
-	}
-}
-
-// TestMemorySetRolePassivePreservedOnReconnect: SetRole a passive persiste y una
-// reconexión (MarkOnline) NO revierte el rol (lo gobierna SetRole, no la señal
-// de conexión).
-func TestMemorySetRolePassivePreservedOnReconnect(t *testing.T) {
-	t.Parallel()
-	repo := fleet.NewMemoryRepository()
-	ctx := context.Background()
-	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
-		t.Fatalf("MarkOnline: %v", err)
-	}
-	found, err := repo.SetRole(ctx, "t", "s1", fleet.RolePassive)
+	found, err := repo.SetProfile(ctx, "t", "s1", fleet.ProfilePassive)
 	if err != nil || !found {
-		t.Fatalf("SetRole: found=%v err=%v", found, err)
+		t.Fatalf("SetProfile: found=%v err=%v", found, err)
 	}
 	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
 		t.Fatalf("MarkOnline reconexión: %v", err)
@@ -232,29 +184,30 @@ func TestMemorySetRolePassivePreservedOnReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if s.Role != fleet.RolePassive {
-		t.Fatalf("el rol passive debería preservarse al reconectar, got %q", s.Role)
+	if s.Profile != fleet.ProfilePassive {
+		t.Fatalf("el perfil pasivo debería preservarse al reconectar, got %q", s.Profile)
 	}
 }
 
-// TestMemorySetRoleInvalid: un rol desconocido se rechaza con ErrInvalidRole y no
-// muta nada.
-func TestMemorySetRoleInvalid(t *testing.T) {
+// TestMemorySetProfileInvalid: un perfil desconocido se rechaza con
+// ErrInvalidProfile y no muta nada. Convertido desde su versión sobre `role` (0064).
+func TestMemorySetProfileInvalid(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()
 	ctx := context.Background()
 	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}
-	if _, err := repo.SetRole(ctx, "t", "s1", fleet.Role("supervisor")); !errors.Is(err, fleet.ErrInvalidRole) {
-		t.Fatalf("rol inválido debería dar ErrInvalidRole, dio: %v", err)
+	if _, err := repo.SetProfile(ctx, "t", "s1", fleet.Profile("supervisor")); !errors.Is(err, fleet.ErrInvalidProfile) {
+		t.Fatalf("perfil inválido debería dar ErrInvalidProfile, dio: %v", err)
 	}
 }
 
-// TestMemorySetRoleTenantIsolation: SetRole solo toca sesiones del tenant dado. Una
-// sesión con el MISMO session_id bajo otro tenant queda intacta y found=false para
-// el tenant que no la posee (aislamiento multi-tenant, INV-8).
-func TestMemorySetRoleTenantIsolation(t *testing.T) {
+// TestMemorySetProfileTenantIsolation: SetProfile solo toca sesiones del tenant
+// dado. Una sesión con el MISMO session_id bajo otro tenant queda intacta y
+// found=false para el tenant que no la posee (INV-8 del Plan 018). Convertido desde
+// su versión sobre `role` (0064); tampoco tenía gemelo.
+func TestMemorySetProfileTenantIsolation(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()
 	ctx := context.Background()
@@ -265,23 +218,23 @@ func TestMemorySetRoleTenantIsolation(t *testing.T) {
 		t.Fatalf("MarkOnline t2: %v", err)
 	}
 
-	// t1 marca su sesión passive.
-	found, err := repo.SetRole(ctx, "t1", "shared-sess", fleet.RolePassive)
+	// t1 marca su sesión ACTIVA — distinto del default pasivo, así el cambio se nota.
+	found, err := repo.SetProfile(ctx, "t1", "shared-sess", fleet.ProfileActive)
 	if err != nil || !found {
-		t.Fatalf("SetRole t1: found=%v err=%v", found, err)
+		t.Fatalf("SetProfile t1: found=%v err=%v", found, err)
 	}
-	// La sesión de t2 (mismo session_id) NO se ve afectada: sigue bot.
+	// La sesión de t2 (mismo session_id) NO se ve afectada: sigue en su default pasivo.
 	s2, _, err := repo.Get(ctx, "t2", "e", "shared-sess")
 	if err != nil {
 		t.Fatalf("Get t2: %v", err)
 	}
-	if s2.Role != fleet.RoleBot {
-		t.Fatalf("aislamiento roto: la sesión de t2 cambió a %q", s2.Role)
+	if s2.Profile != fleet.ProfilePassive {
+		t.Fatalf("aislamiento roto: la sesión de t2 cambió a %q", s2.Profile)
 	}
 	// Un tenant que no posee la sesión no la encuentra (found=false).
-	found, err = repo.SetRole(ctx, "t-otro", "shared-sess", fleet.RolePassive)
+	found, err = repo.SetProfile(ctx, "t-otro", "shared-sess", fleet.ProfileActive)
 	if err != nil {
-		t.Fatalf("SetRole t-otro: %v", err)
+		t.Fatalf("SetProfile t-otro: %v", err)
 	}
 	if found {
 		t.Fatal("un tenant ajeno no debería encontrar la sesión (found=true)")

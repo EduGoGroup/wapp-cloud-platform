@@ -15,36 +15,35 @@ import (
 // fleet_sessions real. Reutilizan openTestDB/seedTenant (mismo gate WAPP_TEST_DB_DSN
 // que el resto de la integración: sin DSN se saltan en local, corren en CI/e2e).
 
-// seedFleetSessionStateRolePn siembra una fila de fleet_sessions con state, rol y
-// self_pn explícitos (extiende el patrón de seedFleetSession con las columnas
-// 0025/0028/0029). El STATE pesa tanto como el rol: la query separa la sesión
+// seedFleetSessionStatePerfilPn siembra una fila de fleet_sessions con state, perfil
+// y self_pn explícitos. El STATE pesa tanto como el perfil: la query separa la sesión
 // RETIRADA (loggedout, no vuelve sin re-QR) de la meramente desconectada (offline,
 // recuperable).
 //
-// Desde el Plan 046 · T1.1 la fila lleva TAMBIÉN `profile`, derivado del rol con el
-// MISMO CASE que el backfill de la 0063 (bot⇒active, resto⇒passive): la query bajo
-// prueba ya decide por `profile`, y dejar la columna al DEFAULT —que es pasivo—
-// convertiría en pasiva a toda sesión sembrada como bot. Es sembrado, no aserción:
-// los casos de prueba y lo que afirman no cambian.
-func seedFleetSessionStateRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, state, role, selfPn string) {
+// 🔧 Hasta la 0064 este helper sembraba TAMBIÉN la columna `role` y derivaba `profile`
+// de ella con el CASE del backfill. Al retirarse `role`, el sembrado nombra el único
+// eje que existe. El perfil se escribe SIEMPRE explícito y nunca se deja al DEFAULT
+// —que es pasivo—: dejarlo convertiría en pasiva a toda sesión que el caso quería
+// activa. Es sembrado, no aserción: los casos de prueba y lo que afirman no cambian.
+func seedFleetSessionStatePerfilPn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, state, perfil, selfPn string) {
 	t.Helper()
 	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.fleet_sessions
-			(tenant_id, edge_id, session_id, state, role, profile, self_pn, last_connected_at, last_seen_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, CASE $5::text WHEN 'bot' THEN 'active' ELSE 'passive' END, $6, now(), now(), now())
+			(tenant_id, edge_id, session_id, state, profile, self_pn, last_connected_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), now(), now())
 		ON CONFLICT (tenant_id, edge_id, session_id)
-			DO UPDATE SET state = EXCLUDED.state, role = EXCLUDED.role,
+			DO UPDATE SET state = EXCLUDED.state,
 			              profile = EXCLUDED.profile, self_pn = EXCLUDED.self_pn
-	`, tenantID, edgeID, sessionID, state, role, selfPn)
+	`, tenantID, edgeID, sessionID, state, perfil, selfPn)
 	if err != nil {
-		t.Fatalf("sembrar fleet_sessions (state=%s role=%s): %v", state, role, err)
+		t.Fatalf("sembrar fleet_sessions (state=%s profile=%s): %v", state, perfil, err)
 	}
 }
 
-// seedFleetSessionRolePn siembra una sesión VIVA (online) con rol y self_pn dados.
-func seedFleetSessionRolePn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, role, selfPn string) {
+// seedFleetSessionPerfilPn siembra una sesión VIVA (online) con rol y self_pn dados.
+func seedFleetSessionPerfilPn(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, role, selfPn string) {
 	t.Helper()
-	seedFleetSessionStateRolePn(t, db, tenantID, edgeID, sessionID, "online", role, selfPn)
+	seedFleetSessionStatePerfilPn(t, db, tenantID, edgeID, sessionID, "online", role, selfPn)
 }
 
 // contiene dice si el número está en el conjunto devuelto por SelfNumbers.
@@ -67,17 +66,17 @@ func TestIntegration_PostgresSelfNumbers_ExcluyePassive(t *testing.T) {
 	tenantID := seedTenant(t, db)
 
 	suffix := time.Now().UnixNano()
-	botPn := fmt.Sprintf("57300%010d", suffix%1e10)
+	activaPn := fmt.Sprintf("57300%010d", suffix%1e10)
 	passivePn := fmt.Sprintf("57301%010d", suffix%1e10)
-	seedFleetSessionRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-bot-%d", suffix), "bot", botPn)
-	seedFleetSessionRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-pas-%d", suffix), "passive", passivePn)
+	seedFleetSessionPerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-activa-%d", suffix), "active", activaPn)
+	seedFleetSessionPerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-pas-%d", suffix), "passive", passivePn)
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
 	if err != nil {
 		t.Fatalf("SelfNumbers: %v", err)
 	}
-	if len(nums) != 1 || nums[0] != botPn {
-		t.Fatalf("SelfNumbers debería devolver SOLO el número de la sesión bot (%s), devolvió %v", botPn, nums)
+	if len(nums) != 1 || nums[0] != activaPn {
+		t.Fatalf("SelfNumbers debería devolver SOLO el número de la sesión bot (%s), devolvió %v", activaPn, nums)
 	}
 	for _, n := range nums {
 		if n == passivePn {
@@ -95,7 +94,7 @@ func TestIntegration_PostgresSelfNumbers_SoloPassiveConjuntoVacio(t *testing.T) 
 	tenantID := seedTenant(t, db)
 
 	suffix := time.Now().UnixNano()
-	seedFleetSessionRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-pas-%d", suffix),
+	seedFleetSessionPerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-pas-%d", suffix),
 		"passive", fmt.Sprintf("57302%010d", suffix%1e10))
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
@@ -117,8 +116,8 @@ func TestIntegration_PostgresSelfNumbers_SesionRetiradaNoBloquea(t *testing.T) {
 
 	suffix := time.Now().UnixNano()
 	zombiPn := fmt.Sprintf("57303%010d", suffix%1e10)
-	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-zombi-%d", suffix),
-		"loggedout", "bot", zombiPn)
+	seedFleetSessionStatePerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-zombi-%d", suffix),
+		"loggedout", "active", zombiPn)
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
 	if err != nil {
@@ -141,11 +140,11 @@ func TestIntegration_PostgresSelfNumbers_PassiveVivaConZombiBotDelMismoNumero(t 
 	suffix := time.Now().UnixNano()
 	pn := fmt.Sprintf("57304%010d", suffix%1e10)
 	// La sesión VIVA de ese número, ya marcada passive por el operador.
-	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-viva-%d", suffix),
+	seedFleetSessionStatePerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-viva-%d", suffix),
 		"online", "passive", pn)
 	// El fantasma del emparejamiento anterior: MISMO número, retirado, aún en bot.
-	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-muerta-%d", suffix),
-		"loggedout", "bot", pn)
+	seedFleetSessionStatePerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-muerta-%d", suffix),
+		"loggedout", "active", pn)
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
 	if err != nil {
@@ -169,8 +168,8 @@ func TestIntegration_PostgresSelfNumbers_SesionOfflineSigueBloqueando(t *testing
 
 	suffix := time.Now().UnixNano()
 	offlinePn := fmt.Sprintf("57305%010d", suffix%1e10)
-	seedFleetSessionStateRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-off-%d", suffix),
-		"offline", "bot", offlinePn)
+	seedFleetSessionStatePerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-off-%d", suffix),
+		"offline", "active", offlinePn)
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
 	if err != nil {
@@ -192,8 +191,8 @@ func TestIntegration_PostgresSelfNumbers_DeduplicaElMismoNumeroEnVariosEdges(t *
 
 	suffix := time.Now().UnixNano()
 	pn := fmt.Sprintf("57306%010d", suffix%1e10)
-	seedFleetSessionRolePn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-a-%d", suffix), "bot", pn)
-	seedFleetSessionRolePn(t, db, tenantID, "edge-B", fmt.Sprintf("sess-b-%d", suffix), "bot", pn)
+	seedFleetSessionPerfilPn(t, db, tenantID, "edge-A", fmt.Sprintf("sess-a-%d", suffix), "active", pn)
+	seedFleetSessionPerfilPn(t, db, tenantID, "edge-B", fmt.Sprintf("sess-b-%d", suffix), "active", pn)
 
 	nums, err := runtime.NewPostgresSelfNumbers(db).SelfNumbers(ctx, tenantID)
 	if err != nil {

@@ -52,10 +52,10 @@ func NewPostgresTenantResolver(db *sql.DB) *PostgresTenantResolver {
 // un `=`: lo único que hoy hace inalcanzable ese caso es el CHECK de la 0063, no
 // este código.
 //
-// El valor de retorno sigue llamándose role y sigue hablando el vocabulario
-// bot|passive del runtime: es el CONTRATO de esta interfaz, y muere con el DROP de
-// la columna, no aquí (ver las constantes de runtime.go).
-func (r *PostgresTenantResolver) ResolveTenant(ctx context.Context, sessionID string) (tenantID string, role string, err error) {
+// El valor de retorno es el PERFIL efectivo (active|passive), el mismo vocabulario
+// que la columna y que el motor (ver las constantes de runtime.go). Hasta la 0064 se
+// llamaba `role` y hablaba bot|passive, por la columna legada que ya no existe.
+func (r *PostgresTenantResolver) ResolveTenant(ctx context.Context, sessionID string) (tenantID string, profile string, err error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT tenant_id::text, bool_or(profile <> 'active') AS any_passive
 		FROM public.fleet_sessions
@@ -89,7 +89,7 @@ func (r *PostgresTenantResolver) ResolveTenant(ctx context.Context, sessionID st
 
 	switch len(found) {
 	case 1:
-		return found[0].id, roleString(found[0].passive), nil
+		return found[0].id, profileString(found[0].passive), nil
 	case 0:
 		return "", "", fmt.Errorf("%w: session_id=%s (0 filas en fleet_sessions)", ErrTenantNotResolved, sessionID)
 	default:
@@ -97,10 +97,10 @@ func (r *PostgresTenantResolver) ResolveTenant(ctx context.Context, sessionID st
 	}
 }
 
-// roleString mapea el agregado any_passive al rol de sesión que consume el runtime.
-func roleString(passive bool) string {
+// profileString mapea el agregado any_passive al perfil que consume el runtime.
+func profileString(passive bool) string {
 	if passive {
-		return rolePassive
+		return profilePassive
 	}
-	return roleBot
+	return profileActive
 }

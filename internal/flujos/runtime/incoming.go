@@ -101,14 +101,14 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	if rt.duplicateIngest(ctx, sessionID, m) {
 		return nil
 	}
-	tenantID, role, err := rt.resolver.ResolveTenant(ctx, sessionID)
+	tenantID, profile, err := rt.resolver.ResolveTenant(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("runtime: resolver tenant: %w", err)
 	}
 	// Guardas de BORDE del motor reactivo (Plan 020 · T1 passive + T2 anti-self-loop):
 	// se cortan ANTES de resolver contacto, tomar el keyedMutex o cargar estado; la
 	// escucha y los acuses (vía separada del Gateway) no se ven afectados.
-	if rt.reactiveBlocked(ctx, tenantID, sessionID, role, m.GetFromPn()) {
+	if rt.reactiveBlocked(ctx, tenantID, sessionID, profile, m.GetFromPn()) {
 		return nil
 	}
 	// Resuelve la identidad enriquecida del entrante (from_pn/from_lid, con
@@ -1031,16 +1031,13 @@ func consecutiveReplay(st model.Conversation, m *cloudlinkv1.IncomingMessage) bo
 //     así que una sesión activa SÍ puede responder a mensajes que llegan desde el
 //     número personal (pasivo) del mismo tenant sin riesgo de loop.
 //
-// ⚠️ El `role` que entra por parámetro ya NO viene de fleet_sessions.role: desde el
-// Plan 046 · T1.1 el resolver agrega fleet_sessions.profile y lo traduce al
-// vocabulario interno del motor (ver las constantes de runtime.go). El corte es
-// byte a byte el mismo; lo que cambió es de qué columna sale el dato — y el DEFAULT
-// de esa columna, que en la 0063 es pasivo: una sesión NUEVA sin configurar ya no
-// entra al motor reactivo hasta que su dueño la active (D-07).
+// El `profile` que entra por parámetro sale de fleet_sessions.profile (Plan 046 ·
+// T1.1), agregado por el resolver. 🔴 Y su DEFAULT es PASIVO (0063, D-07): una sesión
+// NUEVA sin configurar NO entra al motor reactivo hasta que su dueño la active.
 //
 // Sin perfil pasivo y sin self_pn poblado, devuelve false ⇒ no-regresión total.
-func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, role, fromPn string) bool {
-	if role == rolePassive {
+func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, profile, fromPn string) bool {
+	if profile == profilePassive {
 		rt.countReactiveBlocked(reasonPassive)
 		rt.logPassiveSkip(sessionID)
 		return true

@@ -10,37 +10,35 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
 
-// TestIntegration_Migracion0063Profile_ReplayNoPisaElPerfil es el criterio (a) y
-// (b) de T1.1 (Plan 046 · Ola 1) ejecutado contra Postgres real: la idempotencia de
-// una migración no se prueba leyéndola.
+// TestIntegration_Migracion0063Profile_ReplayNoPisaElPerfil es el criterio (a) de
+// T1.1 (Plan 046 · Ola 1) ejecutado contra Postgres real: la idempotencia de una
+// migración no se prueba leyéndola.
 //
-// Lo que se ejerce, en este orden:
+// Lo que ejerce: una fila con su perfil ya fijado sobrevive INTACTA a un replay
+// completo del directorio. El guard `WHERE profile IS NULL` del backfill de la 0063
+// es lo ÚNICO que lo impide; quien quiera ver este test en rojo solo tiene que
+// borrarlo de la migración. De propina, tras el replay: el DEFAULT sigue siendo
+// pasivo (D-07), la columna sigue NOT NULL y el CHECK con NOMBRE sigue puesto — eso
+// último es lo que la versión inline del design.md NO garantizaba.
 //
-//	(b) BACKFILL — sobre filas legadas (solo con `role`), el primer apply de la 0063
-//	    deja profile alineado byte a byte: role='bot' ⟺ profile='active'. Se mide con
-//	    el count del criterio, acotado al tenant sembrado aquí para que las filas que
-//	    otros tests dejan en la tabla no contaminen el veredicto.
+// 🔧 QUÉ CAMBIÓ AL RETIRARSE `role` (0064), y qué se perdió con ello
+// ------------------------------------------------------------------
+// Este test comprobaba también el criterio (b): que el backfill tradujera
+// `role='bot'` ⇒ `profile='active'` sobre filas legadas. Eso ya NO es ejercitable a
+// través del runner: bajo FULL-REPLAY la 0025 recrea `role`, la 0063 lo lee y la
+// 0064 lo borra, todo dentro de la MISMA llamada a Migrate — no hay ningún instante
+// observable desde fuera en el que la columna exista. Y sembrar una «fila legada»
+// tampoco es posible: la columna no está en el estado final.
 //
-//	(a) REPLAY — una fila creada ENTRE los dos applies conserva su profile en el
-//	    segundo. La fila se siembra con role y profile DELIBERADAMENTE
-//	    CONTRADICTORIOS (role='passive', profile='active'): así el guard
-//	    `WHERE profile IS NULL` de la 0063 es lo ÚNICO que impide que el UPDATE del
-//	    replay recalcule el perfil desde el rol y lo voltee. Quien quiera ver el test
-//	    en rojo solo tiene que borrar ese WHERE de la migración.
+// 🔴 No se sustituye por un test que finja probarlo. La evidencia del backfill es de
+// CAMPO y está registrada: el 2026-08-21 se aplicó a las dos bases Neon con la
+// predicción escrita ANTES —UAT 2 filas `bot` ⇒ 2 `active`; dev 3 `bot` + 1 `passive`
+// ⇒ 3 `active` + 1 `passive`— y se cumplió en las dos (journal 2026-08-20 §22.2).
+// Ese camino ya no puede volver a ejecutarse sobre datos legados: no quedan.
 //
-// Y de propina el DEFAULT: tras el replay, una fila insertada sin nombrar la
-// columna nace PASIVA (D-07) y la columna sigue NOT NULL.
-//
-// La BD se lleva a un estado PRE-046 dropeando la columna: es la única forma de
-// ejercer el backfill, porque cuando este test corre la migración ya se aplicó al
-// abrir la BD. El Cleanup la restaura con la propia migración. Es seguro porque la
-// integración corre con `-p 1` (Makefile): ningún otro paquete toca la tabla a la vez.
-//
-// 🔧 Nota de forma (CLI, 2026-08-20): el cuerpo estaba escrito como una secuencia
-// lineal de comprobaciones y `golangci-lint` lo paró por `gocyclo` (23 > 15). Las
-// afirmaciones se extrajeron a funciones NOMBRADAS —no a subtests con closures, que
-// no bajan la métrica porque gocyclo imputa los FuncLit a la función madre—. El
-// orden y las aserciones son los mismos.
+// La BD se lleva a un estado conocido sembrando perfiles explícitos. Es seguro
+// porque la integración corre con `-p 1` (Makefile): ningún otro paquete toca la
+// tabla a la vez.
 func TestIntegration_Migracion0063Profile_ReplayNoPisaElPerfil(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
@@ -52,61 +50,48 @@ func TestIntegration_Migracion0063Profile_ReplayNoPisaElPerfil(t *testing.T) {
 	tenant := sembrarTenantPerfil(t, db)
 	sufijo := uuid.NewString()[:8]
 
-	// El Cleanup se registra ANTES de romper nada (LIFO: restaura la columna y solo
-	// después se borra el tenant, que arrastra sus filas por CASCADE).
-	t.Cleanup(func() { restaurarColumnaProfile(t, db) })
-	llevarAEstadoPre046(t, db)
+	// Dos filas con perfiles OPUESTOS y explícitos: si el replay recalculara el
+	// perfil desde cualquier otra cosa, una de las dos cambiaría.
+	sesionActiva := "sess-activa-" + sufijo
+	sesionPasiva := "sess-pasiva-" + sufijo
+	sembrarSesionConPerfil(t, db, tenant, "edge-1", sesionActiva, "active")
+	sembrarSesionConPerfil(t, db, tenant, "edge-1", sesionPasiva, "passive")
 
-	// Dos filas LEGADAS: una por cada valor del eje viejo.
-	sembrarSesionLegada(t, db, tenant, "edge-legado", "sess-legada-bot-"+sufijo, "bot")
-	sembrarSesionLegada(t, db, tenant, "edge-legado", "sess-legada-passive-"+sufijo, "passive")
+	// ---- REPLAY del directorio entero (hash alterado ⇒ el runner reaplica) ----
+	reaplicarMigracion(t, db, "replay del directorio")
 
-	// ---- PRIMER apply: crea la columna y backfillea ----
-	reaplicarMigracion(t, db, "primer apply de la 0063")
-
-	// Criterio (b): el backfill no inventa ni pierde semántica.
-	if n := contarDesalineadas(t, db, tenant); n != 0 {
-		t.Fatalf("el backfill dejó %d filas donde role y profile no significan lo mismo (want 0)", n)
+	if got := leerPerfil(t, db, tenant, sesionActiva); got != "active" {
+		t.Fatalf("el replay PISÓ el perfil de una sesión activa: got %q, want active. "+
+			"El guard `WHERE profile IS NULL` de la 0063 no está haciendo su trabajo", got)
 	}
-
-	// ---- Fila creada ENTRE los dos applies, con los dos ejes en contradicción ----
-	sesionNueva := "sess-entre-applies-" + sufijo
-	sembrarSesionContradictoria(t, db, tenant, sesionNueva)
-
-	// ---- SEGUNDO apply (el replay del arranque siguiente) ----
-	reaplicarMigracion(t, db, "replay de la 0063")
-
-	if perfil := leerPerfil(t, db, tenant, sesionNueva); perfil != "active" {
-		t.Fatalf("el replay PISÓ el perfil de una fila creada entre los dos applies: got %q, want active. "+
-			"El guard `WHERE profile IS NULL` de la 0063 no está haciendo su trabajo", perfil)
-	}
-
-	// El backfill tampoco tocó a las legadas en la segunda pasada.
-	if n := contarDesalineadas(t, db, tenant); n != 1 {
-		t.Fatalf("tras el replay debería quedar EXACTAMENTE la fila contradictoria sembrada a mano, got %d", n)
+	if got := leerPerfil(t, db, tenant, sesionPasiva); got != "passive" {
+		t.Fatalf("el replay PISÓ el perfil de una sesión pasiva: got %q, want passive", got)
 	}
 
 	afirmarDefaultYNotNull(t, db, tenant, sufijo)
 	afirmarCheckConNombre(t, db, tenant, sufijo)
+	afirmarRoleRetirada(t, db)
 }
 
-// llevarAEstadoPre046 dropea la columna para poder ejercer el backfill: cuando este
-// test corre, la migración ya se aplicó al abrir la BD.
-func llevarAEstadoPre046(t *testing.T, db *sql.DB) {
+// afirmarRoleRetirada comprueba que la 0064 dejó la tabla SIN la columna legada.
+//
+// 🔴 Va aquí, después de un replay COMPLETO, y no en un test suelto: lo que se
+// afirma no es «la 0064 borra la columna» —eso lo haría un DROP cualquiera— sino que
+// el estado final del replay NO la tiene. Bajo FULL-REPLAY la 0025 la recrea en cada
+// arranque; si algún día la 0064 dejara de aplicarse, o alguien la renumerara por
+// debajo de la 0063, la columna reaparecería viva y este test es lo único que lo
+// nota.
+func afirmarRoleRetirada(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.ExecContext(context.Background(),
-		`ALTER TABLE public.fleet_sessions DROP COLUMN IF EXISTS profile`); err != nil {
-		t.Fatalf("llevar la tabla a su estado pre-046: %v", err)
+	var n int
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'fleet_sessions' AND column_name = 'role'
+	`).Scan(&n); err != nil {
+		t.Fatalf("consultar information_schema por la columna role: %v", err)
 	}
-}
-
-// restaurarColumnaProfile devuelve la tabla a su estado real con la propia
-// migración. Va en un Cleanup, así que informa con Logf y no aborta.
-func restaurarColumnaProfile(t *testing.T, db *sql.DB) {
-	t.Helper()
-	forzarReplay(t, db)
-	if _, err := migrations.Migrate(context.Background(), db); err != nil {
-		t.Logf("restaurando la columna profile con la migración: %v", err)
+	if n != 0 {
+		t.Fatal("fleet_sessions.role sigue existiendo tras el replay: la 0064 no se aplicó")
 	}
 }
 
@@ -124,19 +109,6 @@ func reaplicarMigracion(t *testing.T, db *sql.DB, etapa string) {
 	}
 }
 
-// contarDesalineadas es el count del criterio (b), acotado al tenant del test.
-func contarDesalineadas(t *testing.T, db *sql.DB, tenantID string) int {
-	t.Helper()
-	var n int
-	if err := db.QueryRowContext(context.Background(), `
-		SELECT count(*) FROM public.fleet_sessions
-		WHERE tenant_id = $1 AND (role = 'bot') <> (profile = 'active')
-	`, tenantID).Scan(&n); err != nil {
-		t.Fatalf("contar filas desalineadas: %v", err)
-	}
-	return n
-}
-
 // leerPerfil devuelve el profile de una sesión del tenant del test.
 func leerPerfil(t *testing.T, db *sql.DB, tenantID, sessionID string) string {
 	t.Helper()
@@ -148,19 +120,6 @@ func leerPerfil(t *testing.T, db *sql.DB, tenantID, sessionID string) string {
 		t.Fatalf("releer el perfil de %s: %v", sessionID, err)
 	}
 	return perfil
-}
-
-// sembrarSesionContradictoria inserta la fila clave del criterio (a): los dos ejes
-// en desacuerdo a propósito, para que solo el guard del backfill la salve.
-func sembrarSesionContradictoria(t *testing.T, db *sql.DB, tenantID, sessionID string) {
-	t.Helper()
-	if _, err := db.ExecContext(context.Background(), `
-		INSERT INTO public.fleet_sessions
-			(tenant_id, edge_id, session_id, state, role, profile, last_seen_at, updated_at)
-		VALUES ($1, 'edge-nuevo', $2, 'online', 'passive', 'active', now(), now())
-	`, tenantID, sessionID); err != nil {
-		t.Fatalf("sembrar la fila creada entre los dos applies: %v", err)
-	}
 }
 
 // afirmarDefaultYNotNull comprueba que el DEFAULT (D-07) y el NOT NULL siguen
@@ -192,11 +151,10 @@ func afirmarDefaultYNotNull(t *testing.T, db *sql.DB, tenantID, sufijo string) {
 }
 
 // afirmarCheckConNombre comprueba que el CHECK con NOMBRE sigue puesto TRAS el
-// replay (corrección del code review 2026-08-20). Es justo lo que la versión inline
-// del design.md NO garantizaba: el `ADD COLUMN IF NOT EXISTS` se salta en el segundo
-// apply y con él se saltaba el CHECK, que no volvía a crearse nunca. Con el patrón
-// DROP+ADD de la 0025, cada replay lo RESTAURA. Se afirma por el nombre y por el
-// comportamiento.
+// replay. Es justo lo que la versión inline del design.md NO garantizaba: el
+// `ADD COLUMN IF NOT EXISTS` se salta en el segundo apply y con él se saltaba el
+// CHECK, que no volvía a crearse nunca. Con el patrón DROP+ADD de la 0025, cada
+// replay lo RESTAURA. Se afirma por el nombre y por el comportamiento.
 func afirmarCheckConNombre(t *testing.T, db *sql.DB, tenantID, sufijo string) {
 	t.Helper()
 	ctx := context.Background()
@@ -255,15 +213,16 @@ func sembrarTenantPerfil(t *testing.T, db *sql.DB) string {
 	return tenant
 }
 
-// sembrarSesionLegada inserta una fila como las que existían ANTES de la 0063: con
-// `role` y sin `profile` (la columna ni siquiera existe en ese punto del test).
-func sembrarSesionLegada(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, role string) {
+// sembrarSesionConPerfil inserta una fila con su perfil EXPLÍCITO. No se deja al
+// DEFAULT a propósito: el default es pasivo, y una fila sembrada «a pelo» sería un
+// caso de prueba distinto del que el test dice estar probando.
+func sembrarSesionConPerfil(t *testing.T, db *sql.DB, tenantID, edgeID, sessionID, perfil string) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(), `
 		INSERT INTO public.fleet_sessions
-			(tenant_id, edge_id, session_id, state, role, last_seen_at, updated_at)
+			(tenant_id, edge_id, session_id, state, profile, last_seen_at, updated_at)
 		VALUES ($1, $2, $3, 'online', $4, now(), now())
-	`, tenantID, edgeID, sessionID, role); err != nil {
-		t.Fatalf("sembrar sesión legada (role=%s): %v", role, err)
+	`, tenantID, edgeID, sessionID, perfil); err != nil {
+		t.Fatalf("sembrar sesión (profile=%s): %v", perfil, err)
 	}
 }
