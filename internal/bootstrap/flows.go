@@ -18,6 +18,21 @@ import (
 type flowRuntimeDeps struct {
 	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII).
 	contacts contact.Resolver
+	// contactsPG es EXACTAMENTE LA MISMA INSTANCIA que contacts, sin el envoltorio
+	// de la interfaz. Existe por una sola razón: el backfill de arranque de T4.2
+	// (BackfillPushName) es una operación de MANTENIMIENTO del almacén, no parte del
+	// contrato Resolver —el runtime del motor de flujos no tiene por qué poder
+	// dispararla— así que no se añade al interfaz, y desde fuera hace falta el tipo
+	// concreto para llamarla.
+	//
+	// 🔴 SE COMPARTE LA INSTANCIA, NO SE CONSTRUYE UNA SEGUNDA. Un segundo
+	// NewPostgresResolver aquí traería su propio cipher y su propio KeyProvider, y
+	// los sobres que escribiera el backfill quedarían cerrados con un keyring que la
+	// persistencia no conoce: el mismo modo de fallo que el aviso de fleetRepo en
+	// bootstrap.go describe para la flota. La alternativa —una aserción de tipo sobre
+	// `contacts`— haría lo mismo pero fallando en tiempo de ejecución el día que
+	// alguien meta un decorador por en medio.
+	contactsPG *contact.PostgresResolver
 	// cipher y kp son el stack de cifrado de PII (Plan 011); el runtime los usa vía
 	// el resolver, y el endpoint admin /admin/crypto/rekey los necesita en crudo
 	// para la rotación de KEK (Plan 012).
@@ -68,10 +83,14 @@ func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB)
 	if err != nil {
 		return flowRuntimeDeps{}, fmt.Errorf("construyendo PresignClient R2 (Plan 017): %w", err)
 	}
+	// Una sola instancia, dos vistas: la interfaz para el runtime, el tipo concreto
+	// para el backfill de arranque de T4.2 (ver el comentario de contactsPG).
+	contacts := contact.NewPostgresResolver(db, cipher, kp)
 	return flowRuntimeDeps{
-		contacts: contact.NewPostgresResolver(db, cipher, kp),
-		cipher:   cipher,
-		kp:       kp,
-		presign:  presignClient,
+		contacts:   contacts,
+		contactsPG: contacts,
+		cipher:     cipher,
+		kp:         kp,
+		presign:    presignClient,
 	}, nil
 }

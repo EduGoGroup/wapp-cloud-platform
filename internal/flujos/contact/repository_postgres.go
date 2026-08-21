@@ -20,6 +20,26 @@ import (
 // fila guarda value_bidx (índice ciego para buscar/deduplicar), value_enc
 // (envelope) y value_dek (DEK envuelta). El value en claro solo vive en memoria
 // en el borde de la app. cipher cifra/descifra; kp calcula el índice ciego.
+//
+// Desde T4.2 (Plan 046) el push_name TAMBIÉN va cifrado, en un sobre de TRES
+// piezas —push_name_enc, push_name_dek, push_name_kek_id— y SIN índice ciego:
+// nadie busca contactos por su nombre de perfil, así que no hay nada que indexar
+// (migración 0069). La columna en claro push_name sigue existiendo y vacía: su
+// DROP es de T5.4 (D-046.17), y mientras exista, contar filas con push_name no
+// nulo es la prueba de que el backfill hizo su trabajo.
+//
+// 🔴 NO HAY MÉTODO DE LECTURA DEL push_name, Y ES DELIBERADO. Se comprobó antes
+// de escribir T4.2: push_name no aparece en NINGÚN SELECT de este repositorio y
+// contact.Contact.PushName (contact.go:59-60) no se puebla en ningún sitio —el
+// struct Contact no se instancia en todo el repo—. Añadir un Decrypt sin llamador
+// sería el hallazgo que este repo ya tiene registrado: un paquete verde puede
+// probar código que nadie ejecuta. El día que aparezca un lector de verdad
+// (consola, export), el patrón está a la vista en Destino (línea 437): añade
+// las tres columnas a su SELECT y llama a cipher.Decrypt(enc, dek, kekID). Lo que
+// hace eso seguro es una invariante que ya se cumple hoy: el sobre se escribe con
+// EL MISMO FieldCipher y EL MISMO KeyProvider que ya abren value_enc, y el kek_id
+// viaja EN LA FILA, así que cada fila se abre con la KEK que la cerró aunque haya
+// habido una rotación parcial (design.md §6, §10.F).
 type PostgresResolver struct {
 	db     *sql.DB
 	cipher *crypto.FieldCipher
@@ -51,9 +71,14 @@ func NewPostgresResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyPr
 // solo se descubre a mitad de transacción), así que ni ordenar refs ni un lock
 // previo lo evita: el remedio canónico es dejar que Postgres rompa el ciclo (aborta
 // una) y REINTENTAR la transacción, que converge porque el upsert es idempotente
-// (ON CONFLICT) y atómico. El guard `IS DISTINCT FROM` en el UPDATE de push_name
-// (resolveExisting) reduce la ventana: en el estado estable de la ráfaga (mismo
-// push_name repetido) el UPDATE no toca ninguna fila y no toma locks.
+// (ON CONFLICT) y atómico. El guard del UPDATE de push_name (resolveExisting)
+// reduce la ventana, y desde T4.2 ese guard es un CENTINELA (push_name_enc IS
+// NULL) en vez de una comparación de valores. El cambio no relaja nada, aprieta:
+// comparar valores ya NO es posible —dos cifrados del mismo texto nunca son
+// iguales, con DEK fresca y nonce fresco, así que un guard por valor casaría
+// SIEMPRE y tomaría row-locks en CADA entrante, reabriendo justo este deadlock— y
+// el centinela deja de casar antes que la comparación: no en el estado estable de
+// la ráfaga, sino ya en el SEGUNDO entrante del contacto (MD-046.5).
 func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []Ref, pushName string) (string, error) {
 	refs = dedupeRefs(refs)
 	if len(refs) == 0 {
@@ -118,18 +143,28 @@ func (r *PostgresResolver) lookupContactIDs(ctx context.Context, tx *sql.Tx, ten
 // flujo y un entrante concurrentes), ON CONFLICT DO UPDATE devuelve el
 // contact_id existente en lugar de fallar con duplicate key (23505), igual que
 // el hermano attachRef.
+//
+// El push_name entra ya CIFRADO (T4.2): la columna en claro no se escribe nunca
+// más desde Go. Con el nombre vacío las tres columnas del sobre van a NULL —la
+// invariante de la fila es «las tres o ninguna»—, que es lo que hacía nullStr con
+// la columna en claro y ahora hace pushNameEnvelope.
 func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
 	bidx, enc, dek, kekID, err := r.encodeRef(tenantID, refs[0])
 	if err != nil {
 		return "", err
 	}
+	pnEnc, pnDek, pnKekID, err := r.pushNameEnvelope(pushName)
+	if err != nil {
+		return "", err
+	}
 	var cid string
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id, push_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id,
+		                             push_name_enc, push_name_dek, push_name_kek_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (tenant_id, kind, value_bidx) DO UPDATE SET updated_at = now()
 		RETURNING contact_id::text
-	`, tenantID, refs[0].Kind, bidx, enc, dek, kekID, nullStr(pushName)).Scan(&cid)
+	`, tenantID, refs[0].Kind, bidx, enc, dek, kekID, pnEnc, pnDek, nullStr(pnKekID)).Scan(&cid)
 	if err != nil {
 		return "", fmt.Errorf("contact: insertar contacto: %w", err)
 	}
@@ -154,8 +189,74 @@ func (r *PostgresResolver) encodeRef(tenantID string, ref Ref) (bidx string, enc
 	return bidx, enc, dek, kekID, nil
 }
 
+// pushNameEnvelope prepara las TRES columnas cifradas del push_name: enc (el
+// envelope), dek (la DEK envuelta) y kekID (el key_id de la KEK que la envolvió,
+// que se persiste en push_name_kek_id). Es el ÚNICO sitio donde se cifra un
+// push_name: lo comparten los dos INSERT, el UPDATE de resolveExisting y el
+// barrido de BackfillPushName, para que no haya dos versiones de esta lógica.
+//
+// Es el gemelo de encodeRef con dos diferencias, y las dos son de REGLA, no de
+// nombre:
+//
+//   - SIN índice ciego. Nadie busca ni deduplica por el nombre de perfil (el
+//     lookup va siempre por value_bidx, ver lookupContactIDs), así que no hay nada
+//     que indexar; un bidx sobre texto libre solo añadiría una superficie de
+//     correlación sin un lector que la justifique.
+//   - SIN normalización. El push_name es texto libre que el dueño del teléfono
+//     escribe en su perfil, no una referencia con formato: Normalize solo sabe de
+//     teléfonos, LIDs y usernames, y aplicarla aquí destruiría el dato. Por eso
+//     este sobre NO tiene el desenlace de fallo por fila que sí tiene el de las
+//     refs: aquí cifrar solo puede fallar por el stack de claves, que es un fallo
+//     de TODAS las filas, no de esta.
+//
+// Un pushName vacío devuelve las tres piezas vacías SIN cifrar nada, y las
+// escrituras las mandan a NULL. No se cifra la cadena vacía a propósito, y el
+// motivo no es el ahorro: un sobre de cadena vacía dejaría push_name_enc NO NULO
+// y el centinela de MD-046.5 no volvería a casar jamás, así que el nombre real que
+// llegara después se perdería para siempre. Un valor que no es un valor ganaría la
+// carrera del primer nombre no vacío (el razonamiento largo, en BackfillPushName).
+//
+// CERO PII: el error no lleva el nombre, solo el hecho de que no se pudo cifrar.
+func (r *PostgresResolver) pushNameEnvelope(pushName string) (enc, dek []byte, kekID string, err error) {
+	if pushName == "" {
+		return nil, nil, "", nil
+	}
+	enc, dek, kekID, err = r.cipher.Encrypt(pushName)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("contact: cifrar push_name: %w", err)
+	}
+	return enc, dek, kekID, nil
+}
+
 // resolveExisting reusa (un solo contact_id) o funde (varios) los contact_id ya
-// existentes en el canónico, ata las refs faltantes y actualiza el push_name.
+// existentes en el canónico, ata las refs faltantes y sella el push_name.
+//
+// ── SOBRE «NO SELLAR EN BALDE» (bullet de MD-046.5), EVALUADO Y DESCARTADO ─────
+// La instrucción decía: resolveExisting ya corre en transacción y ya hace su
+// SELECT, así que ahí se mira si el sobre está vacío y solo entonces se cifra. Se
+// fue a buscar ese SELECT y NO SIRVE, por tres razones que están en el código:
+//
+//  1. lookupContactIDs (líneas 115-137) selecciona SOLO contact_id::text. Añadirle
+//     push_name_enc daría un booleano POR REF PRESENTE en esta llamada, no por
+//     contacto.
+//  2. Ese lookup bloquea únicamente las filas de las refs que trae ESTE entrante
+//     (por eso existe el deadlock del Plan 026), mientras que el UPDATE de abajo
+//     va por contact_id y toca TODAS las filas del contacto, incluidas las que el
+//     lookup no vio. Un contacto con dos refs entra aquí con una sola.
+//  3. El canónico ni siquiera se conoce en el momento del lookup: lo elige
+//     pickCanonicalDB (líneas 353-371) y la fusión RE-APUNTA filas de otros
+//     contact_id al canónico (fuseDB, línea 381). La respuesta correcta solo
+//     existe DESPUÉS de fundir.
+//
+// O sea que el remedio limpio sería un SELECT EXISTS extra, después de la fusión.
+// NO SE AÑADE: sería un round-trip más a Postgres en el camino caliente del
+// historial (una goroutine por mensaje entrante, runtime OnIncoming), mientras que
+// lo que ahorraría es un cifrado LOCAL —AES-GCM sobre un nombre de perfil más un
+// WrapDEK que ni con el KMS sale del proceso (keyprovider_kms.go:60: cero llamadas
+// al KMS por operación)—: microsegundos de CPU contra una ida y vuelta de red. El
+// remedio sale más caro que el mal, así que se sella en balde a sabiendas. Lo que
+// sí se respeta es lo que de verdad importaba de ese bullet: el que no casa el
+// centinela NO TOMA ROW-LOCKS, y eso lo garantiza el WHERE, no el sellado.
 func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tenantID string, found []string, refs []Ref, pushName string) (string, error) {
 	canonical := found[0]
 	if len(found) > 1 {
@@ -179,21 +280,59 @@ func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tena
 		}
 	}
 	if pushName != "" {
-		// El guard `IS DISTINCT FROM` evita tomar row-locks cuando el push_name no
-		// cambia: en la ráfaga de historial el mismo contacto repite su push_name en
-		// cada entrante, así que tras el primero este UPDATE no toca ninguna fila
-		// (cero locks) y no puede entrar en el ciclo de deadlock (Plan 026 · T4).
+		// El guard es un CENTINELA (push_name_enc IS NULL), no una comparación de
+		// valores, y esa es la decisión MD-046.5. Dos cifrados del mismo texto NUNCA
+		// son iguales —DEK fresca y nonce fresco por escritura—, así que el viejo
+		// `IS DISTINCT FROM` casaría SIEMPRE y tomaría row-locks en CADA entrante de
+		// la ráfaga de historial, reabriendo el deadlock que protege
+		// deadlock_integration_test.go:29-33. Con el centinela, tras el PRIMER nombre
+		// no vacío del contacto este UPDATE no casa ninguna fila: cero locks.
+		//
+		// Precio aceptado: GANA EL PRIMER NOMBRE NO VACÍO. Si el cliente se cambia el
+		// nombre en WhatsApp, la fila conserva el primero. Es un dato de negocio
+		// auxiliar y hoy nadie lo lee (ver el docstring del tipo).
+		//
+		// 🔴 EL `push_name = NULL` DEL SET ES UNA ENMIENDA AL LITERAL DE MD-046.5, y se
+		// hace a sabiendas: la decisión de Jhoan fijaba la GUARDA (el centinela en vez
+		// de la comparación por contenido), que es el problema que estaba resolviendo,
+		// y su cláusula SET se escribió pensando en una fila nueva —donde la columna en
+		// claro ya nace vacía y da igual—. Sobre una fila LEGACY no da igual, y el
+		// agujero es este: si un entrante toca una fila anterior a la migración ANTES de
+		// que el backfill la vea, este UPDATE le escribe el sobre y le deja el nombre EN
+		// CLARO al lado; a partir de ese instante la fila ya no casa el centinela
+		// `push_name_enc IS NULL` del backfill, así que NADIE la vuelve a mirar y ese
+		// nombre se queda en claro PARA SIEMPRE — con el criterio (a) de T4.2 sin poder
+		// llegar a cero nunca. La ventana es estrecha (el backfill corre antes de que
+		// ESTE proceso acepte tráfico) pero no es cero: en un despliegue con solape o
+		// con dos réplicas hay otra instancia sirviendo mientras esta arranca.
+		//
+		// Escribir el sobre y vaciar el claro EN EL MISMO UPDATE es además la regla que
+		// ya gobierna a su gemelo de T4.1 (SetSelfPn y su backfill): la fila no puede
+		// quedar, ni un instante, con el dato en claro Y el sobre a la vez. La enmienda
+		// no relaja la decisión de MD-046.5, la completa; cuesta cuatro palabras y no
+		// cambia ni la guarda ni la semántica de «gana el primer nombre no vacío».
+		// El DROP de la columna sigue siendo de T5.4 (D-046.17).
+		pnEnc, pnDek, pnKekID, encErr := r.pushNameEnvelope(pushName)
+		if encErr != nil {
+			return "", encErr
+		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE public.contacts SET push_name = $1, updated_at = now()
-			WHERE tenant_id = $2 AND contact_id = $3 AND push_name IS DISTINCT FROM $1
-		`, pushName, tenantID, canonical); err != nil {
+			UPDATE public.contacts
+			   SET push_name_enc = $1, push_name_dek = $2, push_name_kek_id = $3,
+			       push_name = NULL, updated_at = now()
+			 WHERE tenant_id = $4 AND contact_id = $5 AND push_name_enc IS NULL
+		`, pnEnc, pnDek, pnKekID, tenantID, canonical); err != nil {
 			return "", fmt.Errorf("contact: actualizar push_name: %w", err)
 		}
 	}
 	return canonical, nil
 }
 
-// nullStr convierte "" en NULL para columnas opcionales (push_name).
+// nullStr convierte la cadena vacía en NULL para columnas opcionales. Desde T4.2
+// su único uso es push_name_kek_id en los dos INSERT: enc y dek son []byte y su
+// nil ya viaja como NULL, pero el key_id es texto y sin esto un contacto sin
+// nombre guardaría una cadena vacía donde la invariante pide NULL («las tres
+// columnas del sobre o ninguna»).
 func nullStr(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}
@@ -202,17 +341,24 @@ func nullStr(s string) sql.NullString {
 }
 
 // attachRef ata una ref (cifrada) al contact_id dado; si ya existe (dedup por
-// (tenant, kind, value_bidx)) no hace nada.
+// (tenant, kind, value_bidx)) no hace nada. El push_name viaja en su sobre de tres
+// columnas, igual que en insertNewContact, y con el nombre vacío van las tres a
+// NULL.
 func (r *PostgresResolver) attachRef(ctx context.Context, tx *sql.Tx, tenantID, contactID string, ref Ref, pushName string) error {
 	bidx, enc, dek, kekID, err := r.encodeRef(tenantID, ref)
 	if err != nil {
 		return err
 	}
+	pnEnc, pnDek, pnKekID, err := r.pushNameEnvelope(pushName)
+	if err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id, contact_id, push_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO public.contacts (tenant_id, kind, value_bidx, value_enc, value_dek, value_kek_id, contact_id,
+		                             push_name_enc, push_name_dek, push_name_kek_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (tenant_id, kind, value_bidx) DO NOTHING
-	`, tenantID, ref.Kind, bidx, enc, dek, kekID, contactID, nullStr(pushName))
+	`, tenantID, ref.Kind, bidx, enc, dek, kekID, contactID, pnEnc, pnDek, nullStr(pnKekID))
 	if err != nil {
 		return fmt.Errorf("contact: adjuntar ref: %w", err)
 	}

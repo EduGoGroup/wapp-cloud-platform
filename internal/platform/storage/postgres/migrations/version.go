@@ -198,7 +198,46 @@ import (
 // más de lo habitual, porque el binario nuevo LEE self_pn_bidx en el camino del
 // anti-self-loop: si esas columnas no existen en la base que el operador tiene
 // delante, esta fila es lo único que se lo dice antes de arrancar.
-const SchemaVersion = "0.41.0"
+//
+// 0.42.0 -- Plan 046 · Ola 4 · T4.2 (0069): contacts.push_name gana el SOBRE DE TRES
+// PIEZAS -- push_name_enc BYTEA, push_name_dek BYTEA y push_name_kek_id TEXT. Cierra
+// REQ-17 y la asignación literal del ADR-0034 §Decisión 3, que ya rechazaba con ❌ el
+// statu quo de dejarlo en claro: por su regla de admisión, un nombre propio identifica
+// a una persona y es nivel 2.
+//
+// 🔴 SON TRES PIEZAS Y NO CUATRO. El sobre de value (0006) y el de self_pn (0068)
+// llevan un _bidx porque hay consultas que buscan por ese valor; del push_name no
+// busca NADIE — no aparece en un solo WHERE, ni en una PK, ni en un índice. Un índice
+// ciego aquí se calcularía en cada escritura, ocuparía en cada fila y no respondería
+// a ninguna pregunta.
+//
+// Las tres nacen NULLABLES y SIN default, y NO reciben jamás un SET NOT NULL: un
+// contacto legítimamente puede no tener nombre. Ojo al contraste con la 0007, que en
+// esta MISMA tabla hizo lo contrario (value_kek_id NOT NULL DEFAULT '1'): allí toda
+// fila tenía ya una DEK que envolver, y aquí no.
+//
+// La columna en claro push_name SE CONSERVA y queda VACÍA -- su DROP es de T5.4
+// (D-046.17), que la retira junto con fleet_sessions.self_pn en una sola migración
+// cuando las dos estén verificadas en campo. Mientras exista, el conteo en claro es
+// la PRUEBA de que el backfill funcionó. La migración NO cifra: la KEK no vive en
+// esta BD (ADR-0007/0009), así que el relleno es un paso de Go colgado del arranque
+// (contact.PostgresResolver.BackfillPushName) y no puede ser un runbook SQL.
+//
+// Trae además el índice parcial de rotación idx_contacts_push_name_kek, porque T4.2
+// mete una SEGUNDA entrada de public.contacts en el censo de rekeyTargets: son dos
+// sobres independientes en la misma fila y el barrido de uno no ve al otro.
+//
+// 🔴 Este bump NO es opcional ni de los «gratuitos» que la regla acota. La 0.41.0 ya
+// se publicó y ya se desplegó en UAT el 2026-08-21 con T4.1, así que su número ya
+// está escrito en la fila de public.schema_version de Neon: reusarla dejaría a un
+// operador comparando esa fila contra un esquema que ya cambió -- el mismo caso que
+// 0.27.0/0.28.0/0.30.0/0.39.0/0.40.0/0.41.0 más arriba. Que sea la segunda tarea de
+// la misma ola del mismo Plan 046 no lo convierte en excepción: la regla «un bump por
+// plan» acota los bumps dentro de un plan que AÚN NO SALIÓ, y de este ya salieron
+// cuatro. Y aquí pesa, porque T4.1 y T4.2 son los dos backfills cifrados de la ola y
+// NO van en el mismo despliegue: sin bump, las dos bases -- la que solo tiene el sobre
+// del self_pn y la que ya tiene los dos -- se declararían idénticas.
+const SchemaVersion = "0.42.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

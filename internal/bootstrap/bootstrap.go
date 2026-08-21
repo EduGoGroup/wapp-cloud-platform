@@ -21,6 +21,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -260,6 +261,45 @@ func Run(ctx context.Context) error {
 	log.Info("backfill del self_pn de la flota",
 		"cifradas", backfill.Encrypted,
 		"omitidas", backfill.Skipped,
+	)
+
+	// --- 🔒 BACKFILL DEL push_name (Plan 046 · T4.2, la mitad en Go de la 0069). ---
+	//
+	// El gemelo del de arriba, para el nombre del contacto: cifra las filas de
+	// public.contacts que todavía lo tienen EN CLARO —las anteriores a la 0069— y
+	// vacía esa columna. Vale aquí, palabra por palabra, todo el razonamiento del
+	// bloque de T4.1 sobre POR QUÉ ESTE PUNTO del arranque (después de las
+	// migraciones, después de flowDeps —de donde sale el MISMO cipher y el MISMO
+	// KeyProvider que usa la persistencia—, y antes de que se abra un solo listener)
+	// y sobre por qué es SÍNCRONO y bloqueante. No se repite; se dice que aplica.
+	//
+	// 🔴 LAS DOS DIFERENCIAS CON SU GEMELO, QUE SON LAS QUE HAY QUE MIRAR AQUÍ:
+	//
+	//   - NO HAY CONTADOR DE OMITIDAS, y su ausencia es la noticia. El backfill del
+	//     self_pn tiene un tercer desenlace —la fila cuyo número no NORMALIZA, que se
+	//     queda con su teléfono en claro para siempre— porque allí el valor es un
+	//     identificador con formato. El push_name es TEXTO LIBRE: no se normaliza, no
+	//     se indexa a ciegas y por tanto NO PUEDE FALLAR por su contenido. Solo hay
+	//     éxitos, de dos clases. Si algún día aparece aquí un contador de omitidas,
+	//     alguien ha metido una validación que no debería estar.
+	//   - `vaciadas` cuenta las filas que tenían la CADENA VACÍA y se nulificaron SIN
+	//     cifrarlas. Debe ser 0 y quedarse en 0: desde Go esa fila es inalcanzable
+	//     (nullStr convierte el vacío en NULL en los dos INSERT), así que un número
+	//     distinto de cero significa que algo escribió en esa columna por fuera del
+	//     código — SQL a mano o un binario antiguo. No es un error y no aborta nada,
+	//     pero es un dato que merece una pregunta.
+	//
+	// El «0 y 0» del segundo arranque en adelante es, igual que arriba, la prueba de
+	// que el centinela funciona y de que no se está re-cifrando la tabla en cada boot.
+	// CERO PII: son filas, no nombres. Y el criterio (a) de T4.2 NO se lee de aquí —
+	// RowsAffected es trabajo hecho, no censo—: se lee de la consulta (V3) de la 0069.
+	pushNameBackfill, err := flowDeps.contactsPG.BackfillPushName(ctx, contact.DefaultPushNameBackfillBatch)
+	if err != nil {
+		return fmt.Errorf("backfill del push_name de contactos (Plan 046 · T4.2): %w", err)
+	}
+	log.Info("backfill del push_name de contactos",
+		"cifradas", pushNameBackfill.Encrypted,
+		"vaciadas", pushNameBackfill.Emptied,
 	)
 
 	gw := gatewaygrpc.New(

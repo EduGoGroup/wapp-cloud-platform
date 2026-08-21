@@ -77,6 +77,18 @@ func (r *MemoryResolver) Resolve(ctx context.Context, tenantID string, refs []Re
 	for _, ref := range refs {
 		r.attach(tenantID, canonical, ref)
 	}
+	// ⚠️ AQUÍ GANA EL ÚLTIMO NOMBRE, Y EN POSTGRES GANA EL PRIMERO. Hasta el Plan 046 ·
+	// T4.2 las dos implementaciones coincidían («último gana»); desde entonces el
+	// resolver de Postgres escribe el sobre con centinela `push_name_enc IS NULL`
+	// —MD-046.5, para no tomar un row-lock por cada entrante de la ráfaga de historial—
+	// y por tanto CONSERVA el primer nombre no vacío. Esta implementación NO se alinea
+	// a propósito: aquí no hay cifrado, no hay row-locks y no hay deadlock que evitar,
+	// así que copiar el centinela sería copiar el precio sin el motivo.
+	//
+	// 🔴 La consecuencia, para quien escriba tests: un test sobre este resolver que
+	// afirme algo sobre CUÁL de dos nombres sobrevive NO dice nada del comportamiento
+	// real. Esa propiedad solo se puede clavar contra Postgres
+	// (backfill_push_name_integration_test.go, el caso «gana el primer nombre no vacío»).
 	if pushName != "" {
 		r.contacts[canonical].pushName = pushName
 	}
