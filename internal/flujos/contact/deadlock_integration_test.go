@@ -95,6 +95,8 @@ const nombreDeLaRafaga = "flood-name"
 //     con el guard puesto la ventana dura UNA sola oleada y la primera transacción que
 //     confirma deja a las demás sin predicado que casar. Reproducirla pediría otro test
 //     —presión sostenida y deadlock_timeout bajo—, no este.
+//     🔖 La carencia está registrada CON DUEÑO en docs/micro-planes/MP-12, que lleva la
+//     medición completa y el criterio de cierre. No la arregles aquí de pasada.
 //   - devolver el centinela `push_name_enc IS NULL` a una comparación por contenido
 //     (repository_postgres.go:323) ⇒ el sobre se reescribe en cada entrante y la
 //     aserción de estabilidad falla: con ella vuelven los row-locks masivos por
