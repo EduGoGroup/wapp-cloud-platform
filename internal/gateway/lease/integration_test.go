@@ -12,12 +12,30 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
 
 // dsnEnv habilita los tests de integración con BD real (igual que en T1/T3).
 const dsnEnv = "WAPP_TEST_DB_DSN"
+
+// fleetRepoDePrueba construye el repositorio de flota con el MISMO stack de
+// cifrado que monta el arranque: desde el Plan 046 · T4.1 el self_pn va cifrado y
+// el repositorio no se puede construir sin cipher ni KeyProvider. El material de
+// clave es fijo y está a la vista a propósito: la base de test es efímera.
+func fleetRepoDePrueba(t *testing.T, db *sql.DB) *fleet.PostgresRepository {
+	t.Helper()
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: "test-kek-1:ERERERERERERERERERERERERERERERERERERERERERE=",
+		CurrentID:  "test-kek-1",
+		IndexB64:   "RERERERERERERERERERERERERERERERERERERERERES=",
+	})
+	if err != nil {
+		t.Fatalf("KeyProvider de prueba: %v", err)
+	}
+	return fleet.NewPostgresRepository(db, crypto.NewFieldCipher(kp), kp)
+}
 
 // openTestDB abre la conexión de test o salta si no hay BD configurada.
 func openTestDB(t *testing.T) *sql.DB {
@@ -388,7 +406,7 @@ func TestIntegration_FleetPersistOnlineOffline(t *testing.T) {
 		sessionID = "sess-int-2"
 	)
 
-	repo := fleet.NewPostgresRepository(db)
+	repo := fleetRepoDePrueba(t, db)
 	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}

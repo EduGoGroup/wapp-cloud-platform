@@ -15,11 +15,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// Rotación de KEK sobre las TRES tablas cifradas (Plan 042 · hallazgo #3). Hasta
-// este arreglo, Rekey y PendingByKeyID barrían SOLO public.contacts: el mapa vacío
-// de "rotación completa" convivía con intake_buyer_data y tenant_integrations
-// enteras todavía envueltas por la KEK vieja, y retirar esa KEK —el paso que ese
-// mapa autoriza (§10.F)— las habría dejado ilegibles.
+// Rotación de KEK sobre las CUATRO tablas cifradas (Plan 042 · hallazgo #3; la
+// cuarta, public.fleet_sessions, entró con el Plan 046 · T4.1). Hasta el arreglo del
+// 042, Rekey y PendingByKeyID barrían SOLO public.contacts: el mapa vacío de
+// "rotación completa" convivía con intake_buyer_data y tenant_integrations enteras
+// todavía envueltas por la KEK vieja, y retirar esa KEK —el paso que ese mapa
+// autoriza (§10.F)— las habría dejado ilegibles.
+//
+// 🔴 LA CUARTA SE SIEMBRA DE VERDAD, Y NO SIEMPRE FUE ASÍ. La T4.1 metió
+// fleet_sessions en rekeyTargets y añadió su limpieza a wipeCifradas, pero NINGÚN
+// caso llegaba a sembrar una fila suya con un sobre viejo: los dos tests seguían
+// contando tres tablas, así que el censo podía haber quedado mal escrito —nombre de
+// columna equivocado, PK incompleta— y los dos habrían pasado igual. La limpieza sin
+// el sembrado daba falsa impresión de cobertura, que es peor que no tener ninguna.
+// El criterio (d) de T4.1 se cierra AQUÍ: la fila aparece pendiente con su KEK vieja,
+// desaparece tras rotar, y —lo que de verdad importa— el número SIGUE DESCIFRÁNDOSE
+// después. Rotar y perder el dato es peor que no rotar.
 //
 // IMPORTANTE (higiene de BD compartida): Rekey escanea GLOBALMENTE (WHERE
 // kek_id <> current, sin filtrar tenant — así rota TODA la flota, correcto en
@@ -90,9 +101,15 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// wipeCifradas deja las TRES tablas del censo de rotación vacías: Rekey y
-// PendingByKeyID escanean globalmente, así que sin tablero limpio los conteos no
-// son deterministas y una fila ajena con una KEK ausente abortaría el scan.
+// wipeCifradas deja el censo de rotación vacío: Rekey y PendingByKeyID escanean
+// globalmente, así que sin tablero limpio los conteos no son deterministas y una
+// fila ajena con una KEK ausente abortaría el scan.
+//
+// 🔴 public.fleet_sessions entró al censo con el Plan 046 · T4.1, y aquí se limpia
+// DISTINTO: se NULIFICAN sus cuatro columnas de self_pn en vez de borrar la fila.
+// Borrarla sería tirar el estado de flota que otros tests de la misma base dejaron
+// sembrado, y lo que contamina el conteo no es la fila: es su sobre, envuelto por
+// una KEK de OTRO test («test-kek-1») que este keyring no tiene.
 func wipeCifradas(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -100,6 +117,10 @@ func wipeCifradas(t *testing.T, db *sql.DB) {
 		`DELETE FROM public.contacts`,
 		`DELETE FROM public.intake_buyer_data`,
 		`DELETE FROM public.tenant_integrations`,
+		`UPDATE public.fleet_sessions
+		    SET self_pn_enc = NULL, self_pn_dek = NULL,
+		        self_pn_kek_id = NULL, self_pn_bidx = NULL
+		  WHERE self_pn_kek_id IS NOT NULL`,
 	} {
 		if _, err := db.ExecContext(ctx, borrado); err != nil {
 			t.Fatalf("limpiar (%s): %v", borrado, err)
@@ -134,10 +155,16 @@ type filaCifrada struct {
 	leerFn func(t *testing.T, db *sql.DB) (enc, dek []byte, kekID string)
 }
 
-// seedLasTres siembra UNA fila cifrada con cipher en cada una de las tres tablas
+// selfPnDePrueba es el número propio (ya NORMALIZADO, E.164 sin '+') de la fila de
+// public.fleet_sessions que entra al censo. Es PII de mentira sobre una base efímera,
+// y aun así no se loguea en ningún sitio: los mensajes de fallo de esta suite hablan
+// de tablas y de key_ids, nunca del valor.
+const selfPnDePrueba = "56984467443"
+
+// seedLasCuatro siembra UNA fila cifrada con cipher en cada una de las CUATRO tablas
 // del censo, más una fila de tenant_integrations SIN secreto (trío NULL) que la
 // rotación debe ignorar sin romperse.
-func seedLasTres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, tenant string) []filaCifrada {
+func seedLasCuatro(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, tenant string) []filaCifrada {
 	t.Helper()
 	ctx := context.Background()
 
@@ -207,7 +234,11 @@ func seedLasTres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto
 		t.Fatalf("sembrar tenant_integrations sin secreto: %v", err)
 	}
 
+	// --- public.fleet_sessions (número propio de la sesión, Plan 046 · T4.1) ---
+	sesion := sembrarSelfPnDeSesion(t, db, cipher, kp, tenant)
+
 	return []filaCifrada{
+		sesion,
 		{tabla: "public.contacts", claro: telefono, enc: encC, leerFn: func(t *testing.T, db *sql.DB) ([]byte, []byte, string) {
 			return leerCifrado(t, db, `SELECT value_enc, value_dek, value_kek_id FROM public.contacts WHERE tenant_id = $1`, tenant)
 		}},
@@ -237,14 +268,70 @@ func leerCifrado(t *testing.T, db *sql.DB, query string, arg any) (enc, dek []by
 	return enc, dek, kekID
 }
 
-// TestRekey_LasTresTablas_Integration es el criterio del hallazgo #3: una pasada
-// de rotación deja las TRES tablas cifradas en la KEK current, sin re-cifrar el
-// dato, y PendingByKeyID solo declara "completa" cuando lo está de verdad.
+// sembrarSelfPnDeSesion siembra la fila de public.fleet_sessions con el sobre del
+// número propio envuelto por la KEK vigente del cipher. Es la CUARTA tabla del censo
+// (Plan 046 · T4.1) y se siembra por SQL directo, como las otras tres: el repositorio
+// de flota vive en otro paquete y usaría su propio keyring, que es justo lo que esta
+// suite necesita controlar.
+//
+// Las cuatro columnas van JUNTAS —incluido self_pn_bidx, que la rotación NO toca— y
+// esa es media prueba: el índice ciego se siembra aquí para poder afirmar después que
+// sobrevivió intacto (§10.C, la indexKey no rota con la KEK).
+func sembrarSelfPnDeSesion(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, tenant string) filaCifrada {
+	t.Helper()
+	enc, dek, kid := mustEncrypt(t, cipher, selfPnDePrueba)
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO public.fleet_sessions
+			(tenant_id, edge_id, session_id, state, self_pn_enc, self_pn_dek, self_pn_kek_id, self_pn_bidx,
+			 last_connected_at, last_seen_at, updated_at)
+		VALUES ($1, 'edge-rekey', 'sesion-rekey', 'online', $2, $3, $4, $5, now(), now(), now())
+	`, tenant, enc, dek, kid, kp.BlindIndex(tenant, selfPnDePrueba)); err != nil {
+		t.Fatalf("sembrar fleet_sessions: %v", err)
+	}
+	return filaCifrada{
+		tabla: "public.fleet_sessions", claro: selfPnDePrueba, enc: enc,
+		leerFn: func(t *testing.T, db *sql.DB) ([]byte, []byte, string) {
+			return leerCifrado(t, db,
+				`SELECT self_pn_enc, self_pn_dek, self_pn_kek_id FROM public.fleet_sessions WHERE tenant_id = $1`,
+				tenant)
+		},
+	}
+}
+
+// bidxDeLaSesion lee el índice ciego CRUDO de la fila de flota sembrada. Se lee por
+// SQL directo y no se recalcula: recalcularlo con el KeyProvider daría el mismo valor
+// aunque la rotación hubiera reescrito la columna con basura.
+func bidxDeLaSesion(t *testing.T, db *sql.DB, tenant string) string {
+	t.Helper()
+	var bidx string
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT self_pn_bidx FROM public.fleet_sessions WHERE tenant_id = $1`, tenant).Scan(&bidx); err != nil {
+		t.Fatalf("leer self_pn_bidx tras la rotación: %v", err)
+	}
+	return bidx
+}
+
+// TestRekey_LasCuatroTablas_Integration es el criterio del hallazgo #3, ampliado al
+// criterio (d) del Plan 046 · T4.1: una pasada de rotación deja las CUATRO tablas
+// cifradas en la KEK current, sin re-cifrar el dato, y PendingByKeyID solo declara
+// "completa" cuando lo está de verdad.
 //
 // Con el barrido antiguo (solo public.contacts) este test falla en dos puntos
-// distintos: Processed = 1 en vez de 3, y las filas de intake_buyer_data y
-// tenant_integrations siguen en la KEK "A".
-func TestRekey_LasTresTablas_Integration(t *testing.T) {
+// distintos: Processed = 1 en vez de 4, y las filas de las otras tres siguen en la
+// KEK "A".
+//
+// 💥 MUTACIONES QUE LO PONEN ROJO, por el lado de fleet_sessions:
+//   - sacar la entrada de public.fleet_sessions de rekeyTargets (rekey.go:91-96) ⇒
+//     Processed = 3 y la fila de flota se queda en la KEK "A"; y como la última fase
+//     descifra con el keyring solo-{B}, el número propio queda ILEGIBLE — el fallo
+//     exacto que el censo existe para impedir, y que la limpieza de wipeCifradas por
+//     sí sola no delataba.
+//   - equivocar dekCol/kekCol o la PK de esa entrada ⇒ el UPDATE no localiza la fila
+//     y el kek_id no llega a "B".
+//   - hacer que la rotación toque self_pn_bidx ⇒ la aserción de estabilidad del índice
+//     ciego falla, y con ella se caería el anti-self-loop de toda la flota en la
+//     siguiente rotación (§10.C: la indexKey NO rota con la KEK).
+func TestRekey_LasCuatroTablas_Integration(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	wipeCifradas(t, db)
@@ -252,7 +339,9 @@ func TestRekey_LasTresTablas_Integration(t *testing.T) {
 
 	// t0: KEK_A es la current; una fila cifrada en cada tabla del censo.
 	kpA := mustKP(t, keyringA(), "A")
-	filas := seedLasTres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
+	filas := seedLasCuatro(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
+	// El índice ciego se apunta ANTES: la rotación no puede haberlo tocado.
+	bidxAntes := bidxDeLaSesion(t, db, tenant)
 
 	// t1: keyring {A,B} con B current. batch=1 fuerza varias pasadas por tabla.
 	kpAB := mustKP(t, keyringAB(), "B")
@@ -262,8 +351,8 @@ func TestRekey_LasTresTablas_Integration(t *testing.T) {
 		t.Fatalf("Rekey: %v", err)
 	}
 	if rep.Processed != len(filas) {
-		t.Fatalf("Rekey processed = %d, want %d (una fila por tabla del censo: contacts, intake_buyer_data, tenant_integrations)",
-			rep.Processed, len(filas))
+		t.Fatalf("Rekey processed = %d, want %d (una fila por tabla del censo: fleet_sessions, contacts, "+
+			"intake_buyer_data, tenant_integrations)", rep.Processed, len(filas))
 	}
 	if rep.CurrentKeyID != "B" {
 		t.Fatalf("Rekey current = %q, want B", rep.CurrentKeyID)
@@ -272,23 +361,12 @@ func TestRekey_LasTresTablas_Integration(t *testing.T) {
 		t.Fatalf("tras rotar: pendientes = %v, want vacío", rep.PendingByKeyID)
 	}
 
-	// Cada tabla: key_id en la current, dato cifrado INTACTO byte-a-byte y claro
-	// recuperable con la KEK nueva.
-	for _, f := range filas {
-		enc, dek, kekID := f.leerFn(t, db)
-		if kekID != "B" {
-			t.Fatalf("%s: kek_id = %q tras rotar, want B (¿la tabla entró en el barrido?)", f.tabla, kekID)
-		}
-		if !bytes.Equal(enc, f.enc) {
-			t.Fatalf("%s: el dato cifrado cambió tras rotar (la rotación NO debe re-cifrar)", f.tabla)
-		}
-		claro, derr := cipherAB.Decrypt(enc, dek, kekID)
-		if derr != nil {
-			t.Fatalf("%s: Decrypt tras rotar: %v", f.tabla, derr)
-		}
-		if claro != f.claro {
-			t.Fatalf("%s: el claro cambió tras rotar", f.tabla)
-		}
+	verificarFilasTrasRotar(t, db, cipherAB, filas)
+
+	if bidxDespues := bidxDeLaSesion(t, db, tenant); bidxDespues != bidxAntes {
+		t.Fatal("self_pn_bidx cambió al rotar la KEK: el índice ciego se calcula con la indexKey, que es " +
+			"estable de por vida (§10.C). Si la rotación lo reescribe, ningún número vuelve a casar consigo " +
+			"mismo y el anti-self-loop queda mudo para toda la flota")
 	}
 
 	// 2ª pasada = no-op (idempotente).
@@ -300,13 +378,47 @@ func TestRekey_LasTresTablas_Integration(t *testing.T) {
 		t.Fatalf("2ª pasada processed = %d, want 0 (idempotente)", rep2.Processed)
 	}
 
-	// Retiro seguro (§10.F): pendientes vacío ⇒ KEK_A retirable. Con el keyring
-	// solo {B}, las tres filas siguen legibles.
-	kpB := mustKP(t, keyringB(), "B")
-	cipherB := crypto.NewFieldCipher(kpB)
+	// Retiro seguro (§10.F): pendientes vacío ⇒ KEK_A retirable. Con el keyring solo
+	// {B}, las CUATRO filas siguen legibles. Es la aserción que de verdad importa del
+	// criterio (d): rotar y perder el dato es peor que no rotar.
+	verificarFilasLegiblesSinLaKEKVieja(t, db, crypto.NewFieldCipher(mustKP(t, keyringB(), "B")), filas)
+}
+
+// verificarFilasTrasRotar comprueba, tabla a tabla, que la rotación hizo su trabajo y
+// SOLO su trabajo: key_id en la current, dato cifrado INTACTO byte a byte (rotar es
+// re-envolver la DEK, no re-cifrar el valor) y claro recuperable con la KEK nueva.
+//
+// Va extraída y NOMBRADA por gocyclo (umbral 15, que aplica también a los tests): con
+// los dos bucles inline la función madre quedaba EXACTAMENTE en 15, así que la
+// aserción del índice ciego la habría empujado al rojo.
+func verificarFilasTrasRotar(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, filas []filaCifrada) {
+	t.Helper()
 	for _, f := range filas {
 		enc, dek, kekID := f.leerFn(t, db)
-		claro, derr := cipherB.Decrypt(enc, dek, kekID)
+		if kekID != "B" {
+			t.Fatalf("%s: kek_id = %q tras rotar, want B (¿la tabla entró en el barrido?)", f.tabla, kekID)
+		}
+		if !bytes.Equal(enc, f.enc) {
+			t.Fatalf("%s: el dato cifrado cambió tras rotar (la rotación NO debe re-cifrar)", f.tabla)
+		}
+		claro, derr := cipher.Decrypt(enc, dek, kekID)
+		if derr != nil {
+			t.Fatalf("%s: Decrypt tras rotar: %v", f.tabla, derr)
+		}
+		if claro != f.claro {
+			t.Fatalf("%s: el claro cambió tras rotar", f.tabla)
+		}
+	}
+}
+
+// verificarFilasLegiblesSinLaKEKVieja descifra las cuatro filas con un keyring que YA
+// NO tiene la KEK_A: es el retiro seguro del §10.F ejecutado de verdad, no supuesto a
+// partir de un mapa de pendientes vacío.
+func verificarFilasLegiblesSinLaKEKVieja(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, filas []filaCifrada) {
+	t.Helper()
+	for _, f := range filas {
+		enc, dek, kekID := f.leerFn(t, db)
+		claro, derr := cipher.Decrypt(enc, dek, kekID)
 		if derr != nil {
 			t.Fatalf("%s: Decrypt con la KEK_A ya retirada: %v", f.tabla, derr)
 		}
@@ -316,35 +428,40 @@ func TestRekey_LasTresTablas_Integration(t *testing.T) {
 	}
 }
 
-// TestPendingByKeyID_AgregaLasTresTablas es la otra mitad del hallazgo #3: el
-// conteo de pendientes tiene que SUMAR las tres tablas. Es lo que decide si una KEK
+// TestPendingByKeyID_AgregaLasCuatroTablas es la otra mitad del hallazgo #3: el
+// conteo de pendientes tiene que SUMAR las cuatro tablas. Es lo que decide si una KEK
 // vieja se puede retirar del keyring; con el conteo antiguo (solo contacts) este
-// test devuelve {"A":1} en vez de {"A":3} — y con las dos tablas nuevas vacías de
+// test devuelve {"A":1} en vez de {"A":4} — y con las tablas nuevas vacías de
 // contacts habría devuelto el mapa VACÍO, autorizando un retiro que deja filas
 // ilegibles.
-func TestPendingByKeyID_AgregaLasTresTablas(t *testing.T) {
+//
+// 💥 MUTACIÓN QUE LO PONE ROJO (criterio (d) de T4.1): sacar public.fleet_sessions de
+// rekeyTargets ⇒ el conteo baja a 3 con una fila de flota todavía bajo la KEK vieja.
+// Ese es el número que autoriza a retirar una KEK: mentirlo por defecto deja a la
+// flota entera sin número propio y sin forma de recuperarlo.
+func TestPendingByKeyID_AgregaLasCuatroTablas(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	wipeCifradas(t, db)
 	tenant := seedTenant(t, db)
 
 	kpA := mustKP(t, keyringA(), "A")
-	filas := seedLasTres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
+	filas := seedLasCuatro(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
 
 	pending, err := crypto.PendingByKeyID(ctx, db, "B")
 	if err != nil {
 		t.Fatalf("PendingByKeyID: %v", err)
 	}
 	if got := pending["A"]; got != len(filas) {
-		t.Fatalf("pendientes en la KEK A = %d, want %d (contacts + intake_buyer_data + tenant_integrations); mapa completo: %v",
-			got, len(filas), pending)
+		t.Fatalf("pendientes en la KEK A = %d, want %d (fleet_sessions + contacts + intake_buyer_data + "+
+			"tenant_integrations); mapa completo: %v", got, len(filas), pending)
 	}
 	if len(pending) != 1 {
 		t.Fatalf("pendientes = %v, want solo la KEK A (la fila sin secreto NO debe contar)", pending)
 	}
 
 	// Con A como current no queda nada pendiente: el mapa vacío significa
-	// "retirable" y solo debe salir cuando lo es en las TRES tablas.
+	// "retirable" y solo debe salir cuando lo es en las CUATRO tablas.
 	vacio, err := crypto.PendingByKeyID(ctx, db, "A")
 	if err != nil {
 		t.Fatalf("PendingByKeyID(current=A): %v", err)
