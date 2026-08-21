@@ -290,13 +290,18 @@ func TestIntegration_ListInstallations(t *testing.T) {
 	edge1 := "edge-001"
 	edge2 := "edge-002"
 
-	// Sembrar fleet_sessions
+	// Sembrar fleet_sessions. El perfil va EXPLÍCITO (Plan 046 · T3.1) aunque a
+	// ListInstallations le dé igual —su query no lee la columna profile—: estas
+	// sesiones no responden a nadie, así que se declaran 'passive' en vez de caer
+	// al DEFAULT de la 0063; que el valor coincida con el default es coincidencia
+	// declarada, no dependencia. Si algún día este test necesitara sesiones que
+	// respondan, el sitio donde activarlas es este INSERT, a la vista.
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO public.fleet_sessions (tenant_id, edge_id, session_id, state, capabilities, last_seen_at)
-		VALUES 
-			($1, $2, 'sess-1', 'online', '{"whatsapp":true}', now()),
-			($1, $2, 'sess-2', 'online', '{"whatsapp":true}', now()),
-			($1, $3, 'sess-3', 'offline', '{"whatsapp":true}', now())
+		INSERT INTO public.fleet_sessions (tenant_id, edge_id, session_id, state, profile, capabilities, last_seen_at)
+		VALUES
+			($1, $2, 'sess-1', 'online', 'passive', '{"whatsapp":true}', now()),
+			($1, $2, 'sess-2', 'online', 'passive', '{"whatsapp":true}', now()),
+			($1, $3, 'sess-3', 'offline', 'passive', '{"whatsapp":true}', now())
 	`, created.ID, edge1, edge2)
 	if err != nil {
 		t.Fatalf("sembrar fleet_sessions: %v", err)

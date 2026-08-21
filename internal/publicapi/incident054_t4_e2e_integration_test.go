@@ -152,6 +152,9 @@ func inc054Seed(t *testing.T, db *sql.DB, etiqueta string) (tenantID, sessionID 
 		-- profile EXPLÍCITO (Plan 046 · T1.1): el DEFAULT de la 0063 es pasivo y el
 		-- runtime ya decide por esa columna, así que sin este 'active' el e2e no
 		-- llegaría al motor reactivo. Es sembrado, no aserción.
+		-- Y va AQUÍ y no vía SetProfile (T3.1): SetProfile es el único UPDATE que
+		-- escribe profile_updated_at (0065) y movería la versión de filtros — el
+		-- sembrado no debe ejercitar rutas de escritura que este e2e no afirma.
 		INSERT INTO public.fleet_sessions (tenant_id, edge_id, session_id, state, profile)
 		VALUES ($1::uuid, 'inc054-edge', $2, 'online', 'active')
 	`, tenantID, sessionID); err != nil {

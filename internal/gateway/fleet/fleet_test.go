@@ -254,10 +254,11 @@ func TestMemorySaveHealthUnknownIsNoOp(t *testing.T) {
 // TestMemoryDefaultProfileIsPassive: una sesión recién marcada online nace con
 // perfil PASIVO (espeja el DEFAULT 'passive' de la 0063, Plan 046 · T1.1 · D-07).
 //
-// 🔴 Diverge a propósito de TestMemoryDefaultRoleIsBot, que está justo encima: los
-// dos ejes conviven un ciclo con defaults DISTINTOS porque el 046 cambia la política
-// (una sesión nueva no auto-responde hasta que su dueño la active) sin tocar el
-// alias legado. Igualar los dos defaults «por coherencia» deshace la decisión.
+// 📌 Este test hablaba de TestMemoryDefaultRoleIsBot como su vecino divergente; ese
+// test se fue con la columna `role` (0064) y hoy solo existe este eje. Cubre el
+// llamante MarkOnline; sus hermanos ...OnMarkOffline y ...OnMarkLoggedOut (abajo)
+// cubren los otros dos llamantes de defaultProfile, porque un espejo arreglado a
+// medias pasa el test de la reconexión y falla el del zombie (T3.1, criterio (b)).
 func TestMemoryDefaultProfileIsPassive(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()
@@ -271,6 +272,47 @@ func TestMemoryDefaultProfileIsPassive(t *testing.T) {
 	}
 	if s.Profile != fleet.ProfilePassive {
 		t.Fatalf("perfil por defecto: got %q, want passive", s.Profile)
+	}
+}
+
+// TestMemoryDefaultProfileIsPassiveOnMarkOffline: el SEGUNDO llamante de
+// defaultProfile. MarkOffline sobre una sesión que no existía la crea, y esa alta
+// también debe nacer pasiva: la política vive en defaultProfile, no en el llamante.
+// Se pone rojo si defaultProfile devolviera otra cosa que ProfilePassive para el
+// perfil vacío, o si MarkOffline dejara de invocarlo (Profile quedaría "").
+func TestMemoryDefaultProfileIsPassiveOnMarkOffline(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOffline(ctx, "t", "e", "s-off"); err != nil {
+		t.Fatalf("MarkOffline: %v", err)
+	}
+	s, found, err := repo.Get(ctx, "t", "e", "s-off")
+	if err != nil || !found {
+		t.Fatalf("Get: found=%v err=%v", found, err)
+	}
+	if s.Profile != fleet.ProfilePassive {
+		t.Fatalf("alta vía MarkOffline debe nacer pasiva: got %q", s.Profile)
+	}
+}
+
+// TestMemoryDefaultProfileIsPassiveOnMarkLoggedOut: el TERCER llamante de
+// defaultProfile — el que un test que solo ejercite la reconexión nunca caza
+// (T3.1: «dejar fuera el de MarkLoggedOut deja la mitad del espejo sin cambiar»).
+// Un zombie recién creado también nace pasivo.
+func TestMemoryDefaultProfileIsPassiveOnMarkLoggedOut(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkLoggedOut(ctx, "t", "e", "s-zombi"); err != nil {
+		t.Fatalf("MarkLoggedOut: %v", err)
+	}
+	s, found, err := repo.Get(ctx, "t", "e", "s-zombi")
+	if err != nil || !found {
+		t.Fatalf("Get: found=%v err=%v", found, err)
+	}
+	if s.Profile != fleet.ProfilePassive {
+		t.Fatalf("alta vía MarkLoggedOut debe nacer pasiva: got %q", s.Profile)
 	}
 }
 
@@ -301,6 +343,35 @@ func TestMemorySetProfilePassivePreservedOnReconnect(t *testing.T) {
 	}
 	if s.Profile != fleet.ProfilePassive {
 		t.Fatalf("el perfil pasivo debería preservarse al reconectar, got %q", s.Profile)
+	}
+}
+
+// TestMemorySetProfileActivePreservedOnReconnect es el hermano DISCRIMINANTE del
+// anterior (T3.1, criterio (c)): como el default de nacimiento ES pasivo, el caso
+// passive-tras-reconexión pasaría igual si MarkOnline reseteara el perfil al
+// default — no distingue «preservado» de «pisado». El caso ACTIVO sí: una sesión
+// que su dueño activó debe seguir activa tras reconectar, y aquí un reset al
+// default se ve en rojo.
+func TestMemorySetProfileActivePreservedOnReconnect(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline: %v", err)
+	}
+	found, err := repo.SetProfile(ctx, "t", "s1", fleet.ProfileActive)
+	if err != nil || !found {
+		t.Fatalf("SetProfile: found=%v err=%v", found, err)
+	}
+	if err := repo.MarkOnline(ctx, "t", "e", "s1"); err != nil {
+		t.Fatalf("MarkOnline reconexión: %v", err)
+	}
+	s, _, err := repo.Get(ctx, "t", "e", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.Profile != fleet.ProfileActive {
+		t.Fatalf("una sesión activada por su dueño debe seguir activa tras reconectar, got %q", s.Profile)
 	}
 }
 
