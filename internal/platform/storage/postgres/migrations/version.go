@@ -167,7 +167,38 @@ import (
 // arriba. Que las tres olas sean del Plan 046 no lo convierte en una excepción: la
 // regla «un bump por plan» acota los bumps dentro de un plan que AÚN NO SALIÓ, y de
 // este ya salieron dos tercios.
-const SchemaVersion = "0.40.0"
+//
+// 0.41.0 -- Plan 046 · Ola 4 · T4.1 (0068): fleet_sessions gana el SOBRE DE CUATRO
+// PIEZAS de self_pn — self_pn_bidx TEXT (hex del HMAC sobre el número NORMALIZADO),
+// self_pn_enc BYTEA, self_pn_dek BYTEA y self_pn_kek_id TEXT, el mismo patrón que
+// public.contacts lleva desde la 0006 (ADR-0017). Cierra la mitad DDL de REQ-16: el
+// censo del MP-06 señala self_pn como el ÚNICO teléfono en claro de toda la base.
+// Las cuatro nacen NULLABLES y SIN default, y a diferencia de la 0063 NO reciben
+// jamás un SET NOT NULL: una sesión sin emparejar legítimamente no tiene número, así
+// que NULL es un estado CORRECTO y no un hueco a rellenar. La columna en claro
+// self_pn SE CONSERVA y queda VACÍA — su DROP es otra migración, de otra tarea.
+// La migración NO cifra: la KEK no vive en esta BD (ADR-0007/0009), así que el
+// backfill es un paso de Go y no puede ser un runbook SQL como el del Plan 053.
+// Además del índice del lookup ciego (tenant_id, self_pn_bidx) trae el índice de
+// rotación por self_pn_kek_id, que las otras tres tablas del censo de rekeyTargets
+// ya tenían.
+//
+// El hueco de la 0067 (reservada a T4.4, que no se escribe en esta sesión) es
+// INOCUO y deliberado: el runner lista el directorio embebido, lo ordena
+// lexicográficamente y ejecuta lo que hay (migrate.go), sin tabla de aplicadas ni
+// exigencia de continuidad — hoy ya falta la 0021 y el sistema arranca.
+//
+// 🔴 Este bump NO es opcional ni de los «gratuitos» que la regla acota. La 0.40.0 ya
+// se publicó y ya se desplegó en UAT el 2026-08-21, así que su número ya está escrito
+// en la fila de public.schema_version de Neon: reusarla dejaría a un operador
+// comparando esa fila contra un esquema que ya cambió — el mismo caso que
+// 0.27.0/0.28.0/0.30.0/0.39.0/0.40.0 más arriba. Que sea la cuarta ola del mismo Plan
+// 046 no lo convierte en excepción: la regla «un bump por plan» acota los bumps
+// dentro de un plan que AÚN NO SALIÓ, y de este ya salieron tres olas. Y aquí pesa
+// más de lo habitual, porque el binario nuevo LEE self_pn_bidx en el camino del
+// anti-self-loop: si esas columnas no existen en la base que el operador tiene
+// delante, esta fila es lo único que se lo dice antes de arrancar.
+const SchemaVersion = "0.41.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
