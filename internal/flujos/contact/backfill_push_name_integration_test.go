@@ -201,6 +201,9 @@ func limpiarPushNamesEnClaro(ctx context.Context, t *testing.T, db *sql.DB) {
 func tableroSinPushNamesEnClaro(ctx context.Context, t *testing.T, db *sql.DB) {
 	t.Helper()
 	limpiarPushNamesEnClaro(ctx, t, db)
+	//nolint:contextcheck // context.Background() a propósito: el cleanup corre DESPUÉS
+	// de los `defer cancel()` del test, así que con el ctx del test la limpieza de
+	// salida moriría cancelada justo en el camino que más la necesita, el del fallo.
 	t.Cleanup(func() {
 		limpiarPushNamesEnClaro(context.Background(), t, db)
 	})

@@ -80,10 +80,21 @@ const nombreDeLaRafaga = "flood-name"
 //     sembrado sin nombre es CONTRATO de este test y no un detalle de montaje; la
 //     única red contra esa mutación es la precondición de abajo, que exige las dos
 //     filas con el sobre a NULL ANTES de la ráfaga.
-//   - quitar el reintento acotado ante 40P01 de postgres.WithTx ⇒ algún Resolve
-//     devuelve el deadlock al llamante y el conteo de deadlocks deja de ser 0. Es el
-//     modo de fallo en producción: el runtime pierde entrantes de la ráfaga de
-//     historial, uno por transacción perdedora, sin reintento de nadie más arriba.
+//   - 🔴 quitar el reintento acotado ante 40P01 de postgres.WithTx NO PONE ROJO ESTE
+//     TEST, y está MEDIDO (2026-08-21, cierre de T4.2): con `maxTxAttempts = 1` el test
+//     sigue en PASS, y también sigue en PASS el test PRE-T4.2 (be89155, siembra "seed" +
+//     guard `IS DISTINCT FROM`) con la misma mutación. O sea que este fichero NO es
+//     guardián del retry acotado, y no lo era antes de T4.2 tampoco: no es una regresión
+//     que trajera esta ola. Lo que este test SÍ protege es el GUARD —que el sobre se
+//     selle UNA vez y no se reescriba por entrante (assertSobreSelladoUnaVez)— y esa es
+//     la mitad del fix del Plan 026 que de verdad mata el ciclo; el retry es la red de
+//     la ventana transitoria y hoy está sin cubrir. La asimetría estructural que originó
+//     el 40P01 SIGUE VIVA en el código (lookupContactIDs toma FOR UPDATE solo la fila de
+//     la ref presente, líneas 115-137, y el UPDATE de resolveExisting va por contact_id
+//     y las pide TODAS): lo que no se consigue es materializarla de forma fiable, porque
+//     con el guard puesto la ventana dura UNA sola oleada y la primera transacción que
+//     confirma deja a las demás sin predicado que casar. Reproducirla pediría otro test
+//     —presión sostenida y deadlock_timeout bajo—, no este.
 //   - devolver el centinela `push_name_enc IS NULL` a una comparación por contenido
 //     (repository_postgres.go:323) ⇒ el sobre se reescribe en cada entrante y la
 //     aserción de estabilidad falla: con ella vuelven los row-locks masivos por
@@ -105,7 +116,7 @@ func TestIntegration_ContactResolve_ConcurrentUpsert_NoDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sembrar contacto con ambas refs: %v", err)
 	}
-	assertSobresPushNameSinEscribir(t, db, tenant, cid)
+	assertSobresPushNameSinEscribir(ctx, t, db, tenant, cid)
 
 	// Ráfaga concurrente: mitad de los workers refrescan por phone-only, mitad por
 	// lid-only, TODOS con el mismo push_name. Las refs disjuntas son lo que cruza los
@@ -121,7 +132,7 @@ func TestIntegration_ContactResolve_ConcurrentUpsert_NoDeadlock(t *testing.T) {
 		t.Fatalf("Resolve devolvió %d error(es) inesperados", otherErrs)
 	}
 
-	assertSobreSelladoUnaVez(t, db, tenant, cid, sobresPrimeraOleada)
+	assertSobreSelladoUnaVez(ctx, t, db, tenant, cid, sobresPrimeraOleada)
 }
 
 // rafagaResolveConcurrente lanza la inundación de historial y devuelve, además de los
@@ -179,7 +190,7 @@ func rafagaResolveConcurrente(
 		}()
 	}
 	primeraOleada.Wait()
-	sobresPrimeraOleada = sobresPushNamePorKind(t, db, tenantID, contactID)
+	sobresPrimeraOleada = sobresPushNamePorKind(ctx, t, db, tenantID, contactID)
 	liberar()
 	wg.Wait()
 	return sobresPrimeraOleada, atomic.LoadInt64(&deadlocks), atomic.LoadInt64(&otherErrs)
@@ -190,9 +201,9 @@ func rafagaResolveConcurrente(
 // aserción se cae, la siembra volvió a llevar nombre y el test ya no reproduce el
 // ciclo 40P01 — es la única señal que delata esa mutación, porque la ráfaga en sí
 // seguiría pasando tan campante.
-func assertSobresPushNameSinEscribir(t *testing.T, db *sql.DB, tenantID, contactID string) {
+func assertSobresPushNameSinEscribir(ctx context.Context, t *testing.T, db *sql.DB, tenantID, contactID string) {
 	t.Helper()
-	sobres := sobresPushNamePorKind(t, db, tenantID, contactID)
+	sobres := sobresPushNamePorKind(ctx, t, db, tenantID, contactID)
 	if len(sobres) != 2 {
 		t.Fatalf("precondición: el contacto debe tener 2 filas (phone + lid), tiene %d", len(sobres))
 	}
@@ -219,12 +230,12 @@ func assertSobresPushNameSinEscribir(t *testing.T, db *sql.DB, tenantID, contact
 // nonce es fresco por escritura, así que dos cifrados del mismo texto nunca coinciden—,
 // pero la garantía viene del cifrado, no de esta aserción. Contar escrituras de verdad
 // pediría un contador en el repositorio que nadie más usaría.
-func assertSobreSelladoUnaVez(t *testing.T, db *sql.DB, tenantID, contactID string, primeraOleada map[string][]byte) {
+func assertSobreSelladoUnaVez(ctx context.Context, t *testing.T, db *sql.DB, tenantID, contactID string, primeraOleada map[string][]byte) {
 	t.Helper()
 	if len(primeraOleada) != 2 {
 		t.Fatalf("tras la primera oleada el contacto tiene %d filas, want 2", len(primeraOleada))
 	}
-	final := sobresPushNamePorKind(t, db, tenantID, contactID)
+	final := sobresPushNamePorKind(ctx, t, db, tenantID, contactID)
 	for kind, blobPrimeraOleada := range primeraOleada {
 		if len(blobPrimeraOleada) == 0 {
 			t.Fatalf("fila %q: la PRIMERA oleada no selló el sobre. Con las 16 transacciones mandando un "+
@@ -257,9 +268,9 @@ func assertSobreSelladoUnaVez(t *testing.T, db *sql.DB, tenantID, contactID stri
 // sin llamador (el porqué entero está en backfill_push_name_integration_test.go). Aquí
 // además ni siquiera hace falta descifrar: lo que se afirma es que los BYTES no
 // cambiaron, y eso se ve sin abrir el sobre.
-func sobresPushNamePorKind(t *testing.T, db *sql.DB, tenantID, contactID string) map[string][]byte {
+func sobresPushNamePorKind(ctx context.Context, t *testing.T, db *sql.DB, tenantID, contactID string) map[string][]byte {
 	t.Helper()
-	rows, err := db.QueryContext(context.Background(), `
+	rows, err := db.QueryContext(ctx, `
 		SELECT kind, push_name_enc FROM public.contacts
 		WHERE tenant_id = $1 AND contact_id = $2
 	`, tenantID, contactID)

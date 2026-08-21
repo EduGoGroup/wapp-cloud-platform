@@ -3,6 +3,7 @@ package contact
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -318,10 +319,15 @@ func (r *PostgresResolver) backfillPushNameBatch(ctx context.Context, batch int,
 	committed := false
 	defer func() {
 		if !committed {
-			// El error del rollback se descarta EXPLÍCITAMENTE: PostgresResolver no tiene
-			// logger (ver el docstring de BackfillPushName) y el error que de verdad
-			// importa —el que provocó el rollback— ya va de vuelta al llamante.
-			_ = tx.Rollback()
+			// El rollback solo puede AÑADIR contexto a un error que YA existe: PostgresResolver
+			// no tiene logger (ver el docstring de BackfillPushName), así que no hay dónde
+			// avisar, y el error que de verdad importa —el que provocó el rollback— ya va de
+			// vuelta al llamante. Si el lote salió bien y aun así no se confirmó (lote vacío,
+			// sin escrituras que deshacer), un rollback fallido NO convierte ese éxito en
+			// fallo. sql.ErrTxDone no es un error real: significa que la tx ya se cerró.
+			if rerr := tx.Rollback(); err != nil && rerr != nil && !errors.Is(rerr, sql.ErrTxDone) {
+				err = errors.Join(err, fmt.Errorf("contact: backfill push_name: rollback del lote: %w", rerr))
+			}
 		}
 	}()
 
