@@ -73,12 +73,21 @@ func countKEK(t *testing.T, db *sql.DB, tenantID, kekID string) int {
 // envueltas por KEKs ausentes de este keyring —que abortarían el scan por
 // fail-safe §10.J. contact_id no es blanco de ninguna FK e intake_buyer_data cuelga
 // de intakes con ON DELETE CASCADE, así que borrar estas filas es seguro.
+//
+// 🔴 Desde el Plan 046 · T4.1 el censo son CUATRO: entró public.fleet_sessions con
+// el sobre del self_pn. Esa se limpia NULIFICANDO sus columnas de sobre y no
+// borrando la fila —el estado de flota que otros tests dejaron sembrado no es
+// basura, y lo que contamina el conteo es el sobre, no la fila—.
 func wipeContacts(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, borrado := range []string{
 		`DELETE FROM public.contacts`,
 		`DELETE FROM public.intake_buyer_data`,
 		`DELETE FROM public.tenant_integrations`,
+		`UPDATE public.fleet_sessions
+		    SET self_pn_enc = NULL, self_pn_dek = NULL,
+		        self_pn_kek_id = NULL, self_pn_bidx = NULL
+		  WHERE self_pn_kek_id IS NOT NULL`,
 	} {
 		if _, err := db.ExecContext(context.Background(), borrado); err != nil {
 			t.Fatalf("limpiar (%s): %v", borrado, err)

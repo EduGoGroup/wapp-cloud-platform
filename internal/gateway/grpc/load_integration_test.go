@@ -24,9 +24,27 @@ import (
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
+
+// fleetRepoDePrueba construye el repositorio de flota con el MISMO stack de
+// cifrado que monta el arranque: desde el Plan 046 · T4.1 el self_pn va cifrado y
+// el repositorio no se puede construir sin cipher ni KeyProvider. El material de
+// clave es fijo y está a la vista a propósito: la base de test es efímera.
+func fleetRepoDePrueba(t *testing.T, db *sql.DB) *fleet.PostgresRepository {
+	t.Helper()
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: "test-kek-1:ERERERERERERERERERERERERERERERERERERERERERE=",
+		CurrentID:  "test-kek-1",
+		IndexB64:   "RERERERERERERERERERERERERERERERERERERERERES=",
+	})
+	if err != nil {
+		t.Fatalf("KeyProvider de prueba: %v", err)
+	}
+	return fleet.NewPostgresRepository(db, crypto.NewFieldCipher(kp), kp)
+}
 
 // ============================================================================
 // Arnés de CARGA del Connect contra Postgres REAL (Plan 050 · T5.0 y T5.1).
@@ -331,7 +349,7 @@ func newLoadHarness(t *testing.T, cfg configArnes) *loadHarness {
 	}
 
 	// El fleet REAL (Postgres) decorado con la latencia inyectable.
-	slow := fleettest.NewSlow(fleet.NewPostgresRepository(medido), cfg.latenciaInicial)
+	slow := fleettest.NewSlow(fleetRepoDePrueba(t, medido), cfg.latenciaInicial)
 
 	reg := session.NewRegistry()
 	logBuf := &syncBuffer{}

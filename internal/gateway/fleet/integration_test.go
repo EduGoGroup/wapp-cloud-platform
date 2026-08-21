@@ -9,12 +9,42 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
 )
 
 // dsnEnv habilita los tests de integración con BD real (mismo patrón que lease).
 const dsnEnv = "WAPP_TEST_DB_DSN"
+
+// Material de clave de tests: 32B constantes en base64, el mismo patrón (y los
+// mismos bytes) que ya usan los tests de intakes y de contactos. No es secreto de
+// nada: la base es efímera y el keyring se construye por proceso.
+const (
+	kekDePruebaB64   = "ERERERERERERERERERERERERERERERERERERERERERE="
+	indexDePruebaB64 = "RERERERERERERERERERERERERERERERERERERERERES="
+	kekIDDePrueba    = "test-kek-1"
+)
+
+// repoDePrueba construye el *fleet.PostgresRepository con el MISMO stack de
+// cifrado que monta el arranque (Plan 046 · T4.1): sin cipher ni KeyProvider el
+// repositorio no puede escribir ni leer el self_pn, que desde la 0068 va cifrado.
+//
+// Devuelve también el KeyProvider: un test que quiera comprobar que la fila NO es
+// legible por SQL directo necesita calcular el índice ciego esperado, y tiene que
+// ser el MISMO material de clave con el que se escribió.
+func repoDePrueba(t *testing.T, db *sql.DB) (*fleet.PostgresRepository, crypto.KeyProvider) {
+	t.Helper()
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: kekIDDePrueba + ":" + kekDePruebaB64,
+		CurrentID:  kekIDDePrueba,
+		IndexB64:   indexDePruebaB64,
+	})
+	if err != nil {
+		t.Fatalf("KeyProvider de prueba: %v", err)
+	}
+	return fleet.NewPostgresRepository(db, crypto.NewFieldCipher(kp), kp), kp
+}
 
 // openTestDB abre la conexión de test o salta si no hay BD configurada.
 func openTestDB(t *testing.T) *sql.DB {
@@ -68,7 +98,7 @@ func TestIntegration_FleetSaveHealth(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	const edgeID, sessionID = "edge-health-1", "sess-health-1"
 
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}
@@ -136,7 +166,7 @@ func TestIntegration_FleetPerfilPersisteYRoleYaNoExiste(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	const edgeID, sessionID = "edge-profile-1", "sess-profile-1"
 
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 	if err := repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}
@@ -238,8 +268,9 @@ func TestIntegration_FleetSaveWorkerHealth(t *testing.T) {
 	tenantID := seedTenant(t, db)
 	const edgeID, sessionID = "edge-worker-1", "sess-worker-1"
 
+	repo, _ := repoDePrueba(t, db)
 	fila := filaWorker{
-		repo: fleet.NewPostgresRepository(db), tenantID: tenantID,
+		repo: repo, tenantID: tenantID,
 		edgeID: edgeID, sessionID: sessionID,
 	}
 	if err := fila.repo.MarkOnline(ctx, tenantID, edgeID, sessionID); err != nil {
@@ -371,7 +402,7 @@ func TestIntegration_SaludoPendienteYCentinela(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 
 	fasePendienteSoloSiPasivaYConNumero(ctx, t, repo, tenantID)
 	faseCentinelaDeMarkGreeted(ctx, t, repo, tenantID)

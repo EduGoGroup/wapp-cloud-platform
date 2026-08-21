@@ -18,7 +18,7 @@ import (
 
 // EventStore es el puerto ESTRECHO del runtime hacia el almacén del evento
 // conversacional (Plan 043 · Ola 2). Se declara aquí —y no se importa
-// *events.Store como tipo concreto— por la misma razón que SelfNumberLister o
+// *events.Store como tipo concreto— por la misma razón que SelfNumberChecker o
 // IngestDeduper: el motor depende de interfaces estrechas y así los tests usan un
 // doble sin BD. Lo satisface *events.Store tal cual.
 //

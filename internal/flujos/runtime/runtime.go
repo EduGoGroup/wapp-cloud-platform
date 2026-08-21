@@ -78,16 +78,26 @@ type TenantResolver interface {
 	ResolveTenant(ctx context.Context, sessionID string) (tenantID string, profile string, err error)
 }
 
-// SelfNumberLister devuelve el CONJUNTO de números propios (self_pn, E.164
-// normalizado) de las sesiones de un tenant (Plan 020 · T2). Lo consume la guarda
-// anti-self-loop de HandleIncoming: si el remitente de un entrante casa uno de
-// estos números, es una sesión propia del tenant hablando y NO se auto-responde
-// (rompe el bucle sesión↔sesión del Plan 019). Se define en el paquete runtime
-// (interfaz estrecha) para NO acoplar el motor al paquete fleet: lo implementa un
-// resolver Postgres (o un doble en tests). Devuelve la lista tal cual (puede traer
-// duplicados entre edges); la guarda compara por igualdad exacta.
-type SelfNumberLister interface {
-	SelfNumbers(ctx context.Context, tenantID string) ([]string, error)
+// SelfNumberChecker responde si UN número dado es propio de alguna sesión del
+// tenant (Plan 020 · T2). Lo consume la guarda anti-self-loop de HandleIncoming: si
+// el remitente de un entrante es un número propio, es una sesión del tenant
+// hablando y NO se auto-responde (rompe el bucle sesión↔sesión del Plan 019). Se
+// define en el paquete runtime (interfaz estrecha) para NO acoplar el motor al
+// paquete fleet: lo implementa *PostgresSelfNumbers (o un doble en tests).
+//
+// 🔒 Hasta el Plan 046 · T4.1 esto era un SelfNumberLister: devolvía la lista entera
+// de números del tenant EN CLARO y el motor la recorría comparando strings. Es un
+// PREDICADO —no una lista— por dos razones que van juntas: (1) el número ya no se
+// guarda en claro, se guarda cifrado más su índice ciego, así que "listar" obligaría
+// a descifrar N teléfonos por entrante para tirarlos todos menos uno; y (2) —el
+// motivo de fondo del Plan 046— así la agenda de teléfonos del tenant deja de
+// viajar a la RAM del proceso: lo único que la cruza es un booleano.
+//
+// El número entra YA NORMALIZADO (contact.Normalize con KindPhoneE164): la
+// implementación calcula sobre él el índice ciego y NO vuelve a normalizar. La
+// simetría entre quien escribe el índice y quien lo consulta es todo el contrato.
+type SelfNumberChecker interface {
+	IsSelfNumber(ctx context.Context, tenantID, numeroNormalizado string) (bool, error)
 }
 
 // IngestDeduper deduplica los mensajes ENTRANTES ante la semántica at-least-once
@@ -96,7 +106,7 @@ type SelfNumberLister interface {
 // forma persistente e IDEMPOTENTE la clave (session_id, wa_message_id) del entrante
 // y devuelve true si YA se había visto (⇒ el runtime lo ignora ANTES de tocar el
 // motor: sin re-procesar efectos ni auto-responder). Se declara en el paquete
-// runtime (interfaz estrecha, como SelfNumberLister) para NO acoplar el motor al
+// runtime (interfaz estrecha, como SelfNumberChecker) para NO acoplar el motor al
 // paquete de ingesta: lo implementa *ingest.PostgresDeduper (o un doble en tests).
 // La idempotencia previa por last_wa_message_id es CONSECUTIVA (solo la re-entrega
 // inmediata); esta cubre además los duplicados INTERCALADOS y los reenvíos que

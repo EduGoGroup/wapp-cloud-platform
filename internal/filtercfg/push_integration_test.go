@@ -16,6 +16,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres/migrations"
@@ -23,6 +24,23 @@ import (
 
 // dsnEnv habilita los tests de integración con BD real (mismo patrón que fleet/lease).
 const dsnEnv = "WAPP_TEST_DB_DSN"
+
+// fleetRepoDePrueba construye el repositorio de flota con el MISMO stack de
+// cifrado que monta el arranque: desde el Plan 046 · T4.1 el self_pn va cifrado y
+// el repositorio no se puede construir sin cipher ni KeyProvider. El material de
+// clave es fijo y está a la vista a propósito: la base de test es efímera.
+func fleetRepoDePrueba(t *testing.T, db *sql.DB) *fleet.PostgresRepository {
+	t.Helper()
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: "test-kek-1:ERERERERERERERERERERERERERERERERERERERERERE=",
+		CurrentID:  "test-kek-1",
+		IndexB64:   "RERERERERERERERERERERERERERERERERERERERERES=",
+	})
+	if err != nil {
+		t.Fatalf("KeyProvider de prueba: %v", err)
+	}
+	return fleet.NewPostgresRepository(db, crypto.NewFieldCipher(kp), kp)
+}
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -135,7 +153,7 @@ func TestIntegration_PostProfile_EmpujaFiltersConLasDosSesiones(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo := fleetRepoDePrueba(t, db)
 
 	for _, s := range []string{"sess-1", "sess-2"} {
 		if err := repo.MarkOnline(ctx, tenantID, "edge-1", s); err != nil {
@@ -184,7 +202,7 @@ func TestIntegration_TenantSinNingunaPasiva_RecibeIgualSuFrame(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo := fleetRepoDePrueba(t, db)
 
 	for _, s := range []string{"sess-1", "sess-2"} {
 		if err := repo.MarkOnline(ctx, tenantID, "edge-1", s); err != nil {
@@ -224,7 +242,7 @@ func TestIntegration_PushFallido_NoCambiaElCodigoDeRespuesta(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo := fleetRepoDePrueba(t, db)
 	if err := repo.MarkOnline(ctx, tenantID, "edge-1", "sess-1"); err != nil {
 		t.Fatalf("MarkOnline: %v", err)
 	}

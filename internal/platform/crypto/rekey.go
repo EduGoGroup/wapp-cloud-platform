@@ -19,7 +19,7 @@ const DefaultRekeyBatch = 500
 // eso es precisamente lo que hace barata la rotación (§7).
 //
 // Requisitos de una tabla para entrar aquí: tener la pareja (dek, kek_id) y una
-// columna updated_at (el UPDATE la refresca). Las tres tablas del censo la tienen.
+// columna updated_at (el UPDATE la refresca). Las cuatro tablas del censo la tienen.
 type rekeyTarget struct {
 	// table es el nombre CALIFICADO de la tabla ("public.contacts").
 	table string
@@ -72,6 +72,27 @@ var rekeyTargets = []rekeyTarget{
 		pkCols: []string{"tenant_id"},
 		dekCol: "secret_dek",
 		kekCol: "secret_kek_id",
+	},
+	// Número propio de la sesión, self_pn (Plan 046 · T4.1, migración 0068). Mismo
+	// caso que tenant_integrations: el trío del envelope es NULLable —una sesión sin
+	// emparejar no tiene número— y esas filas quedan fuera del barrido solas, porque
+	// `NULL <> 'x'` no es TRUE en SQL.
+	//
+	// 🔴 ENTRA AQUÍ EN EL MISMO COMMIT QUE EMPIEZA A CIFRAR, y no después. El censo
+	// es lo que hace verdadero al mapa de PendingByKeyID, y ese mapa vacío es lo que
+	// AUTORIZA retirar una KEK del keyring (§10.F). Una tabla cifrada que no esté en
+	// el censo no rompe nada hoy: rompe el día de la rotación, dejando sus filas
+	// envueltas por una KEK que ya nadie tiene — y con el self_pn eso significa una
+	// flota entera sin número propio y sin forma de recuperarlo.
+	//
+	// 📌 Es además lo que permite que SetSelfPn NO re-escriba el sobre en cada latido
+	// (ver la guarda de su WHERE): re-envolver tras una rotación es trabajo de aquí,
+	// que lo hace SIN descifrar el número, y no del camino caliente del Heartbeat.
+	{
+		table:  "public.fleet_sessions",
+		pkCols: []string{"tenant_id", "edge_id", "session_id"},
+		dekCol: "self_pn_dek",
+		kekCol: "self_pn_kek_id",
 	},
 }
 
@@ -147,7 +168,8 @@ type Report struct {
 
 // Rekey re-envuelve por batch todas las DEK que aún no están envueltas por la KEK
 // current, SIN re-cifrar el dato (§7), recorriendo TODAS las tablas del censo
-// rekeyTargets (contacts, intake_buyer_data, tenant_integrations). Para cada fila:
+// rekeyTargets (contacts, intake_buyer_data, tenant_integrations, fleet_sessions).
+// Para cada fila:
 // UnwrapDEK(dek, kek_id) → WrapDEK con la current → UPDATE de dek + kek_id +
 // updated_at, dejando el dato cifrado y la PK INTACTOS. El valor NUNCA se descifra
 // (solo la DEK, en memoria).
@@ -161,7 +183,7 @@ type Report struct {
 // lecturas y con otra instancia de Rekey.
 //
 // Al terminar, Report.PendingByKeyID indica cuántas filas siguen en cada KEK vieja
-// sumando las tres tablas (para decidir el retiro seguro a 0 referencias, §10.F).
+// sumando las cuatro tablas (para decidir el retiro seguro a 0 referencias, §10.F).
 // Los logs NO llevan contenido (§10.H).
 func Rekey(ctx context.Context, db *sql.DB, cipher *FieldCipher, kp KeyProvider, batch int) (Report, error) {
 	if batch <= 0 {

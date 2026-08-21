@@ -89,12 +89,14 @@ type Runtime struct {
 	// runtime consume un token; agotado ⇒ NO responde (corta cualquier bucle). nil
 	// (sin WithReplyLimiter) desactiva el tope: no-regresión total.
 	replyLimiter ReplyLimiter
-	// selfNumbers entrega el conjunto de números propios (self_pn) del tenant para
-	// la guarda anti-self-loop (Plan 020 · T2): un entrante cuyo from_pn casa un
-	// número propio de OTRA sesión del MISMO tenant NO auto-responde. nil (sin
-	// WithSelfNumbers) desactiva la guarda: no-regresión total (sin self_pn poblado
-	// el comportamiento es idéntico al previo al 020).
-	selfNumbers SelfNumberLister
+	// selfNumbers decide si el remitente de un entrante es un número propio del
+	// tenant, para la guarda anti-self-loop (Plan 020 · T2): un entrante cuyo from_pn
+	// es el número de OTRA sesión del MISMO tenant NO auto-responde. Desde el Plan
+	// 046 · T4.1 es un PREDICADO resuelto en SQL por índice ciego, no una lista en
+	// claro: los teléfonos del tenant ya no se traen a memoria. nil (sin
+	// WithSelfNumbers) desactiva la guarda: no-regresión total (sin números propios
+	// poblados el comportamiento es idéntico al previo al 020).
+	selfNumbers SelfNumberChecker
 	// incomingTimeout acota el procesamiento de cada entrante reactivo despachado
 	// por OnIncoming (Plan 027 · Ola 0 · T1, cierra H1). New lo deja en
 	// defaultIncomingTimeout si no se inyecta WithIncomingTimeout (o si el valor es
@@ -277,11 +279,16 @@ func WithReplyLimiter(l ReplyLimiter) Option {
 	return func(rt *Runtime) { rt.replyLimiter = l }
 }
 
-// WithSelfNumbers inyecta el lister del conjunto de números propios del tenant que
+// WithSelfNumbers inyecta el checker que decide si un número es propio del tenant y
 // alimenta la guarda anti-self-loop (Plan 020 · T2). Sin él, el runtime no aplica
 // la guarda (nil ⇒ no-regresión: se procesa igual que antes del Plan 020).
-func WithSelfNumbers(l SelfNumberLister) Option {
-	return func(rt *Runtime) { rt.selfNumbers = l }
+//
+// Conserva el nombre WithSelfNumbers pese a que el puerto pasó de lista a predicado
+// en el Plan 046 · T4.1: renombrar la Option obligaría a tocar todos los llamantes
+// sin aportar nada, y el nombre sigue describiendo QUÉ se inyecta (la fuente de
+// verdad de los números propios), no CÓMO se consulta.
+func WithSelfNumbers(c SelfNumberChecker) Option {
+	return func(rt *Runtime) { rt.selfNumbers = c }
 }
 
 // WithIngestDeduper inyecta el deduper persistente de entrantes (Plan 028 · T6,

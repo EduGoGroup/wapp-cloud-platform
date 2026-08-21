@@ -25,7 +25,7 @@ func TestIntegration_ProfilesByTenant_FotoCompletaYVersionMonotonica(t *testing.
 	tenantID := seedTenant(t, db)
 	otroTenant := seedTenant(t, db)
 
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 	// sess-activa vive en DOS Edges del mismo tenant: es el caso que obliga al
 	// GROUP BY session_id (la clave física lleva edge_id, el payload no).
 	for _, s := range []struct{ edge, sess string }{
@@ -96,7 +96,7 @@ func TestIntegration_ProfilesByTenant_ElRuidoDeLaFilaNoMueveLaVersion(t *testing
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 
 	for _, s := range []string{"sess-1", "sess-2"} {
 		if err := repo.MarkOnline(ctx, tenantID, "edge-1", s); err != nil {
@@ -157,7 +157,7 @@ func escribirRuidoEnPostgres(t *testing.T, repo fleet.Repository, tenantID strin
 // igual (regla 2 de T2.1).
 func TestIntegration_ProfilesByTenant_TenantSinSesiones(t *testing.T) {
 	db := openTestDB(t)
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 
 	tp, err := repo.ProfilesByTenant(context.Background(), seedTenant(t, db))
 	if err != nil {
@@ -179,7 +179,7 @@ func TestIntegration_ProfilesByTenant_FilasDiscordantes_GanaPassive(t *testing.T
 	db := openTestDB(t)
 	ctx := context.Background()
 	tenantID := seedTenant(t, db)
-	repo := fleet.NewPostgresRepository(db)
+	repo, _ := repoDePrueba(t, db)
 
 	for _, edge := range []string{"edge-a", "edge-b"} {
 		if err := repo.MarkOnline(ctx, tenantID, edge, "sess-1"); err != nil {
