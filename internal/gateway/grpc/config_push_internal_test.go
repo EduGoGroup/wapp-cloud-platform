@@ -112,3 +112,66 @@ func TestPushConfigsOnConnect(t *testing.T) {
 		t.Fatalf("sin identidad: %d ConfigUpdate, quiero 0", got)
 	}
 }
+
+// TestPushConfigsOnConnect_TresKinds_YDosSinLlmIntent es el criterio (d) de
+// Plan 046 · T2.1 leído desde el Gateway: al reconectar un Edge se le entregan TANTAS
+// configs como devuelva su provider, en el mismo orden, cada una en su propio frame.
+//
+// Los dos casos que importan en producción:
+//
+//   - tenant CON llm_intent ⇒ TRES configs: jwks + intents + filters;
+//   - tenant SIN llm_intent ⇒ DOS: jwks + filters. 🔴 filters NO desaparece con la
+//     feature — no se gatea por entitlement (regla 1 de T2.1). Un Edge que se quedara
+//     sin el mapa de filtros subiría el tráfico de sus sesiones pasivas, que es el
+//     fallo exacto que el Plan 046 cierra.
+//
+// La composición de la cadena (quién aporta qué) se prueba en internal/bootstrap; aquí
+// se prueba que el Gateway entrega TODO lo que el provider le da y no se come ninguna.
+func TestPushConfigsOnConnect_TresKinds_YDosSinLlmIntent(t *testing.T) {
+	casos := map[string][]ConfigPayload{
+		"tenant con llm_intent": {
+			{Kind: "jwks", Version: "1", Payload: []byte(`{"keys":[]}`)},
+			{Kind: "intents", Version: "abc123", Payload: []byte(`{"version":"v1"}`)},
+			{Kind: "filters", Version: "1700000000123456", Payload: []byte(`{"version":1700000000123456,"sessions":{}}`)},
+		},
+		"tenant sin llm_intent": {
+			{Kind: "jwks", Version: "1", Payload: []byte(`{"keys":[]}`)},
+			{Kind: "filters", Version: "1700000000123456", Payload: []byte(`{"version":1700000000123456,"sessions":{}}`)},
+		},
+	}
+	for nombre, cfgs := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			s, reg := newTestServer()
+			s.configProvider = fakeProvider{cfgs: cfgs}
+			snd := &captureSender{}
+			reg.Register("sess-1", snd)
+
+			s.pushConfigsOnConnect(context.Background(),
+				connCtx{tenantID: "t1", edgeID: "e1", sessionID: "sess-1", hasIdentity: true})
+
+			cus := snd.configUpdates()
+			if len(cus) != len(cfgs) {
+				t.Fatalf("%d ConfigUpdate, quiero %d", len(cus), len(cfgs))
+			}
+			vistos := map[string]bool{}
+			for i, cu := range cus {
+				if cu.GetKind() != cfgs[i].Kind || cu.GetVersion() != cfgs[i].Version {
+					t.Fatalf("frame %d: kind=%q version=%q, quiero %q/%q",
+						i, cu.GetKind(), cu.GetVersion(), cfgs[i].Kind, cfgs[i].Version)
+				}
+				if !bytes.Equal(cu.GetPayload(), cfgs[i].Payload) {
+					t.Fatalf("frame %d (%s): payload alterado por el Gateway (es OPACO): %s",
+						i, cu.GetKind(), cu.GetPayload())
+				}
+				if cu.GetSessionId() != "sess-1" || cu.GetCommandId() == "" {
+					t.Fatalf("frame %d: sobre mal poblado: %+v", i, cu)
+				}
+				vistos[cu.GetKind()] = true
+			}
+			// filters viaja en LOS DOS casos: es la regla 1 de T2.1 hecha aserción.
+			if !vistos["filters"] {
+				t.Fatalf("no llegó el kind \"filters\" en %q: no se gatea por entitlement", nombre)
+			}
+		})
+	}
+}

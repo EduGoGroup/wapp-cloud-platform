@@ -8,6 +8,121 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 )
 
+// TestMemoryProfilesByTenant_SoloSetProfileMueveLaVersion es, en el doble en memoria,
+// la regla que en Postgres sostiene la columna profile_updated_at (migración 0065):
+// la versión del kind:"filters" avanza cuando avanza EL MAPA, y no cuando se toca la
+// fila por cualquier otro motivo.
+//
+// 🔴 Antes de la 0065 la versión salía de `updated_at`, que mueve CUALQUIER escritura.
+// MarkOnline corre inmediatamente antes de pushConfigsOnConnect, así que un Edge con N
+// sesiones del tenant publicaba N versiones distintas y crecientes CON EL MAPA
+// IDÉNTICO en cada reconexión; el Edge las re-aplicaba, las re-persistía, y las que
+// llegaran desordenadas le hacían emitir su WARN «versión anterior o igual» en
+// operación normal — enterrando la única línea que delataría una anomalía real.
+//
+// Este test vigila el doble; su gemelo contra Postgres real es
+// TestIntegration_ProfilesByTenant_ElRuidoDeLaFilaNoMueveLaVersion. Los dos hacen
+// falta: la regla NO la impone el motor (no hay trigger), es de código, y si el doble
+// no la espejara los tests en memoria mentirían sobre producción.
+func TestMemoryProfilesByTenant_SoloSetProfileMueveLaVersion(t *testing.T) {
+	t.Parallel()
+	repo := fleet.NewMemoryRepository()
+	ctx := context.Background()
+
+	for _, s := range []string{"s1", "s2"} {
+		if err := repo.MarkOnline(ctx, "t", "edge-1", s); err != nil {
+			t.Fatalf("MarkOnline %s: %v", s, err)
+		}
+	}
+	tp0 := leerPerfiles(t, repo, "t", "alta")
+	if tp0.Version == 0 {
+		t.Fatal("version = 0 con dos sesiones dadas de alta: el alta fija el reloj del eje")
+	}
+
+	escribirRuidoEnMemoria(t, repo)
+
+	tp1 := leerPerfiles(t, repo, "t", "tras el ruido")
+	if tp1.Version != tp0.Version {
+		t.Fatalf("la version se movió sin que cambiara ningún perfil: %d -> %d. "+
+			"Alguien está tocando el reloj del eje desde una escritura que no es SetProfile",
+			tp0.Version, tp1.Version)
+	}
+
+	// Y el cambio de perfil SÍ la mueve, estrictamente hacia arriba.
+	activarPerfil(t, repo, "t", "s1", "el que sí debe mover")
+	tp2 := leerPerfiles(t, repo, "t", "tras SetProfile")
+	if tp2.Version <= tp1.Version {
+		t.Fatalf("un cambio de perfil NO movió la version: %d -> %d", tp1.Version, tp2.Version)
+	}
+}
+
+// repoDePerfiles es lo MÍNIMO que los helpers de este paquete de test necesitan de un
+// repositorio: leer la foto del eje `profile` y mover un perfil. La cumplen tanto
+// *fleet.MemoryRepository como *fleet.PostgresRepository, y por eso los tests del doble
+// en memoria y los de Postgres real comparten helper — que es lo que los hace GEMELOS de
+// verdad y no dos tests que se parecen. Si mañana divergieran, divergirían a la vista.
+type repoDePerfiles interface {
+	ProfilesByTenant(ctx context.Context, tenantID string) (fleet.TenantProfiles, error)
+	SetProfile(ctx context.Context, tenantID, sessionID string, profile fleet.Profile) (bool, error)
+}
+
+// leerPerfiles lee la foto de perfiles del tenant y aborta si falla. Está extraída —y no
+// en línea— porque los `if err != nil` de cada lectura le suben la complejidad ciclómatica
+// al test madre por encima del límite de gocyclo (15) SIN añadir nada que se lea. Ojo:
+// subtests inline NO la bajarían, porque los FuncLit anidados se le imputan igual a la
+// función madre; hace falta una función NOMBRADA. Lo que queda arriba es la regla, desnuda.
+func leerPerfiles(t *testing.T, repo repoDePerfiles, tenantID, etapa string) fleet.TenantProfiles {
+	t.Helper()
+	tp, err := repo.ProfilesByTenant(context.Background(), tenantID)
+	if err != nil {
+		t.Fatalf("ProfilesByTenant (%s): %v", etapa, err)
+	}
+	return tp
+}
+
+// activarPerfil pone la sesión en `active` y exige que la fila EXISTIERA: un found=false
+// silencioso convertiría «la version no se movió porque el UPDATE no tocó nada» en un
+// falso verde del test de monotonicidad, que es exactamente la conclusión contraria.
+func activarPerfil(t *testing.T, repo repoDePerfiles, tenantID, sessionID, etapa string) {
+	t.Helper()
+	found, err := repo.SetProfile(context.Background(), tenantID, sessionID, fleet.ProfileActive)
+	if err != nil || !found {
+		t.Fatalf("SetProfile %s (%s): found=%v err=%v", sessionID, etapa, found, err)
+	}
+}
+
+// escribirRuidoEnMemoria ejecuta sobre una sesión viva TODAS las escrituras que fleet hace
+// en el día a día y que NO son un cambio de perfil. Es, literalmente, la lista que la regla
+// de la migración 0065 tiene que sobrevivir. Su gemela contra Postgres real es
+// escribirRuidoEnPostgres, en profiles_integration_test.go.
+//
+// 🔴 SI NACE UNA ESCRITURA NUEVA SOBRE fleet_sessions, VA AQUÍ Y EN SU GEMELA. Esta lista es
+// la única definición ejecutable de «ruido» que tenemos: la exclusividad de profile_updated_at
+// no la impone el motor (no hay trigger), así que una escritura nueva que tocara el perfil sin
+// pasar por SetProfile no pondría este test en rojo — simplemente dejaría de estar vigilada.
+func escribirRuidoEnMemoria(t *testing.T, repo fleet.Repository) {
+	t.Helper()
+	ctx := context.Background()
+	if err := repo.MarkOnline(ctx, "t", "edge-1", "s1"); err != nil { // reconexión
+		t.Fatalf("reconexión: %v", err)
+	}
+	if err := repo.SaveHealth(ctx, "t", "edge-1", "s1", fleet.HealthSnapshot{}); err != nil {
+		t.Fatalf("SaveHealth: %v", err)
+	}
+	if err := repo.SetSelfPn(ctx, "t", "edge-1", "s1", "+34600000000"); err != nil {
+		t.Fatalf("SetSelfPn: %v", err)
+	}
+	if _, err := repo.SetState(ctx, "t", "s1", fleet.StateOffline); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+	if err := repo.MarkOffline(ctx, "t", "edge-1", "s1"); err != nil {
+		t.Fatalf("MarkOffline: %v", err)
+	}
+	if err := repo.MarkLoggedOut(ctx, "t", "edge-1", "s2"); err != nil {
+		t.Fatalf("MarkLoggedOut: %v", err)
+	}
+}
+
 func TestMemoryOnlineThenOffline(t *testing.T) {
 	t.Parallel()
 	repo := fleet.NewMemoryRepository()

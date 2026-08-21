@@ -377,3 +377,83 @@ func TestProfilePusher_NoSeLlamaSiNoSePersistio(t *testing.T) {
 		t.Fatalf("se empujó un cambio que no se persistió: %d llamadas", espia.llamadas)
 	}
 }
+
+// pusherDeContexto inspecciona el CONTEXTO con el que se le llama: si ya venía
+// muerto, si trae plazo propio y si conserva los valores de la petición.
+type pusherDeContexto struct {
+	llamadas      int
+	errAlEntrar   error
+	tieneDeadline bool
+	tenantDelCtx  string
+}
+
+func (p *pusherDeContexto) PushProfile(ctx context.Context, _, _ string, _ fleet.Profile) error {
+	p.llamadas++
+	p.errAlEntrar = ctx.Err()
+	_, p.tieneDeadline = ctx.Deadline()
+	if id, ok := httpapi.IdentityFromContext(ctx); ok {
+		p.tenantDelCtx = id.TenantID
+	}
+	return nil
+}
+
+// TestProfilePusher_SobreviveAlAbortoDelCliente es la corrección del code review
+// 2026-08-21 hecha aserción.
+//
+// EL FALLO QUE CIERRA: pushProfileBestEffort pasaba r.Context() y PushConfig hace
+// wg.Wait() sobre él. Si el cliente abortaba el POST —cerrar la pestaña, el timeout
+// de un proxy, un Ctrl-C en el curl— el ctx moría y EL PUSH SE PERDÍA, dejando el
+// peor estado posible: el perfil PERSISTIDO, la sesión viva sin enterarse hasta
+// reconectar, y nadie a quien avisar porque el 200 ya estaba escrito.
+//
+// Se ejerce con la petición ya abortada ANTES de entrar al handler, que es el caso
+// límite: si el push aguanta eso, aguanta cualquier aborto a medias.
+//
+// Tres cosas se afirman, y las tres son el arreglo:
+//
+//   - el pusher SE LLAMA (antes: se llamaba con un ctx muerto y el fan-out no hacía
+//     nada);
+//   - el ctx que recibe está VIVO y trae PLAZO PROPIO — desenganchar del cliente no
+//     puede significar «sin límite», o una lectura colgada de Neon deja la goroutine
+//     del handler esperando para siempre;
+//   - conserva los VALORES de la petición (la Identity), que es lo que distingue
+//     context.WithoutCancel de un context.Background() a pelo: con Background se
+//     perderían el request-id del logger y todo lo que arrastre la petición.
+func TestProfilePusher_SobreviveAlAbortoDelCliente(t *testing.T) {
+	repo := fleet.NewMemoryRepository()
+	seedSession(t, repo, ctxTenant, "sess-1")
+	espia := &pusherDeContexto{}
+
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/sessions/{id}/profile", admin.SetSessionProfileHandler(repo, espia, nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/sess-1/profile",
+		strings.NewReader(`{"profile":"passive"}`))
+	ctx, cancel := context.WithCancel(
+		httpapi.WithIdentity(req.Context(), httpapi.Identity{TenantID: ctxTenant, Subject: "user-1"}))
+	cancel() // el cliente se fue: el ctx de la petición ya está muerto.
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if espia.llamadas != 1 {
+		t.Fatalf("llamadas al pusher=%d, quiero 1: el aborto del cliente NO puede "+
+			"llevarse por delante el push de una escritura que ya ocurrió", espia.llamadas)
+	}
+	if espia.errAlEntrar != nil {
+		t.Fatalf("el push recibió un ctx MUERTO (%v): falta el context.WithoutCancel "+
+			"sobre el ctx de la petición", espia.errAlEntrar)
+	}
+	if !espia.tieneDeadline {
+		t.Fatal("el push recibió un ctx SIN plazo: desenganchar del cliente no puede " +
+			"significar sin límite (ver profilePushTimeout)")
+	}
+	if espia.tenantDelCtx != ctxTenant {
+		t.Fatalf("el ctx del push perdió los valores de la petición (tenant=%q): "+
+			"WithoutCancel los conserva, un context.Background() a pelo no", espia.tenantDelCtx)
+	}
+}

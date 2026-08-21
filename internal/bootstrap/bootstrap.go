@@ -19,6 +19,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
@@ -162,6 +163,14 @@ func Run(ctx context.Context) error {
 	}
 
 	// --- Fleet + Gateway CloudLink. ---
+	//
+	// 📌 fleetRepo se construye AQUÍ, una sola vez, y lo comparten los cuatro
+	// consumidores: el Gateway (WithFleet), el provider de filters (T2.1), las rutas
+	// de sesión de la API pública y las de admin. Hasta el Plan 046 · T2.1 había DOS
+	// instancias —esta, inline dentro de WithFleet, y otra más abajo— sobre el MISMO
+	// *sql.DB; no era un bug (el repo no tiene estado) pero sí una invitación a que
+	// mañana lo tuviera y las dos mitades vieran cosas distintas.
+	fleetRepo := fleet.NewPostgresRepository(db)
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
 		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
@@ -178,16 +187,16 @@ func Run(ctx context.Context) error {
 		gatewaygrpc.WithWorkQueue(cfg.GatewayWorkQueue),
 		gatewaygrpc.WithWorkTimeout(cfg.GatewayWorkTimeout),
 		gatewaygrpc.WithLease(leaseMgr),
-		gatewaygrpc.WithFleet(fleet.NewPostgresRepository(db)),
+		gatewaygrpc.WithFleet(fleetRepo),
 		gatewaygrpc.WithCloudEncPrivKey(cloudEncPriv),
 		gatewaygrpc.WithReceiptSink(receiptSink),
-		// Push de config al conectar (ADR-0021): entrega SIEMPRE la pública ES256
-		// (kind:"jwks", ADR-0025) y, encadenado, la config de intents vigente del tenant
-		// SOLO si tiene la feature llm_intent y hay config persistida.
-		gatewaygrpc.WithConfigProvider(jwksConfigProvider{
-			jwks: jwksCfg,
-			next: intentsConfigProvider{store: intentStore, ents: entResolver},
-		}),
+		// Push de config al conectar (ADR-0021). TRES eslabones —jwks, intents y
+		// filters— armados por buildConfigProvider, que es donde vive el porqué de
+		// cada regla (y, sobre todo, el único sitio desde el que un test puede
+		// ejercer la cadena REAL: es el criterio (d) de T2.1).
+		gatewaygrpc.WithConfigProvider(
+			buildConfigProvider(jwksCfg, intentStore, entResolver, fleetRepo, log),
+		),
 		// Recepción del DiagnosticsBundle (Plan 031 · T5, ADR-0023): el demux correlaciona
 		// el bundle con su solicitud pendiente por command_id y lo almacena.
 		gatewaygrpc.WithDiagnosticsSink(diagStore),
@@ -419,7 +428,15 @@ func Run(ctx context.Context) error {
 	}
 
 	platformRepo := platformadmin.NewRepository(db)
-	fleetRepo := fleet.NewPostgresRepository(db)
+	// Hook del push de filtros EN CALIENTE (Plan 046 · T2.1): traduce «cambió el
+	// perfil de esta sesión» a un ConfigUpdate kind:"filters" con la foto COMPLETA del
+	// tenant, hacia sus sesiones vivas.
+	//
+	// 🔴 Se cablea en LOS DOS SITIOS que montan la ruta /sessions/{id}/profile —el
+	// SessionDeps de la API pública, justo debajo, y el adminRouteDeps de más abajo—.
+	// Encender solo uno deja la otra vía MUDA y no da ningún rojo: los tests de cada
+	// vía pasan por separado. Si algún día se apaga, se apaga en los dos.
+	filtersPusher := filtercfg.NewPusher(fleetRepo, gw)
 	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, log, mtx, authStk, publicapi.Deps{
 		Sender: gw,
 		FlowDeps: publicapi.FlowDeps{
@@ -432,9 +449,11 @@ func Run(ctx context.Context) error {
 			SessionStatus: fleetRepo,
 			// Plan 046 · T1.2: el mismo repo por el eje NUEVO (SetProfile).
 			SessionProfiles: fleetRepo,
-			// 🔴 ProfilePush se deja SIN cablear a propósito (nil ⇒ no-op): el hook
-			// del push de filtros nace apagado en T1.2 y lo enchufa T2.1. Mientras
-			// tanto, un cambio de perfil llega al Edge en su siguiente conexión.
+			// 🔴 SITIO 1 DE 2 del hook de filtros (Plan 046 · T2.1). El otro es el
+			// `sessionProfile` de adminRouteDeps, más abajo: son DOS vías distintas
+			// hacia el MISMO handler y encender solo una deja la otra muda sin dar
+			// ningún rojo. Best-effort: un fallo del push NO cambia el 200 del POST.
+			ProfilePush: filtersPusher,
 		},
 		MediaDeps: publicapi.MediaDeps{
 			Media:           flowDeps.presign,
@@ -534,11 +553,12 @@ func Run(ctx context.Context) error {
 		triggersCreate: flowadmin.CreateTriggerHandler(triggerStore, durableFlowChecker),
 		triggersList:   flowadmin.ListTriggersHandler(triggerStore, durableFlowChecker),
 		triggersDelete: flowadmin.DeleteTriggerHandler(triggerStore, durableFlowChecker),
-		// 🔴 El tercer argumento —el ProfilePusher— va nil A PROPÓSITO: el hook del
-		// push de filtros nace apagado (T1.2) y lo enchufa T2.1. Si un día se
-		// enciende, se enciende AQUÍ y en el SessionDeps de buildPublicAPIServer:
-		// encender solo una de las dos vías deja la otra muda y no da ningún rojo.
-		sessionProfile: flowadmin.SetSessionProfileHandler(fleetRepo, nil, log),
+		// 🔴 SITIO 2 DE 2 del hook de filtros (Plan 046 · T2.1). El tercer argumento
+		// era nil desde T1.2 y aquí se enciende, EN PAREJA con el ProfilePush del
+		// SessionDeps de buildPublicAPIServer: las dos vías llevan al MISMO handler y
+		// encender solo una deja la otra muda sin dar ningún rojo (los tests de cada
+		// vía pasan por separado). Si un día se apaga, se apagan las dos.
+		sessionProfile: flowadmin.SetSessionProfileHandler(fleetRepo, filtersPusher, log),
 		sessionStatus:  flowadmin.SetSessionStatusHandler(fleetRepo),
 		revokeTenant:   httpapi.RevokeTenantHandler(gw, cfg.PlatformTenantID),
 		restoreTenant:  httpapi.RestoreTenantHandler(gw, cfg.PlatformTenantID),
