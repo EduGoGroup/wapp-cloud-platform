@@ -1035,7 +1035,7 @@ func consecutiveReplay(st model.Conversation, m *cloudlinkv1.IncomingMessage) bo
 // T1.1), agregado por el resolver. 🔴 Y su DEFAULT es PASIVO (0063, D-07): una sesión
 // NUEVA sin configurar NO entra al motor reactivo hasta que su dueño la active.
 //
-// Sin perfil pasivo y sin self_pn poblado, devuelve false ⇒ no-regresión total.
+// Sin perfil pasivo y sin números propios poblados, devuelve false ⇒ no-regresión total.
 func (rt *Runtime) reactiveBlocked(ctx context.Context, tenantID, sessionID, profile, fromPn string) bool {
 	if profile == profilePassive {
 		rt.countReactiveBlocked(reasonPassive)
@@ -1070,16 +1070,29 @@ func (rt *Runtime) logPassiveSkip(sessionID string) {
 
 // isSelfLoop decide si un entrante proviene de un número PROPIO del tenant (una
 // sesión propia hablando), en cuyo caso NO se debe auto-responder (Plan 020 · T2,
-// defensa semántica contra el bucle sesión↔sesión del Plan 019). Normaliza el
-// remitente (from_pn) con el MISMO normalizador que el paquete contact y lo compara
-// contra el conjunto de self_pn del tenant. El conjunto es CONSCIENTE DEL PERFIL: el
-// lister excluye los números de sesiones pasivas — una pasiva nunca auto-responde
-// (reactiveBlocked lo corta), así que un mensaje desde ese número no puede cerrar
-// un bucle; bloquear ahí solo impediría atender al número personal del tenant. El
-// rate-limit por conversación (T0) sigue como red. Es CONSERVADORA hacia procesar: sin
-// lister (nil), sin from_pn, si el número no normaliza o si el lookup falla ⇒
-// devuelve false (no bloquea: la ausencia de dato no debe silenciar tráfico
-// legítimo). NUNCA loguea el número (PII): solo el hecho y IDs opacos.
+// defensa semántica contra el bucle sesión↔sesión del Plan 019).
+//
+// 🔑 LA NORMALIZACIÓN OCURRE AQUÍ Y SOLO AQUÍ (Plan 046 · T4.1). El remitente
+// (from_pn) llega como lo mande WhatsApp —con '+', espacios, guiones o paréntesis—
+// y se pasa por contact.Normalize(KindPhoneE164, …), que lo deja en dígitos puros.
+// El checker calcula el ÍNDICE CIEGO sobre exactamente esos bytes, y el escritor del
+// índice normalizó con la MISMA función: por eso "+57 300-111-0000" y "573001110000"
+// dan el mismo veredicto. Si esta línea desapareciera, el HMAC saldría distinto y el
+// número dejaría de casar consigo mismo — el fallo sería MUDO (la guarda no
+// bloquearía nada y nadie vería un error), que es lo peor que puede pasarle a una
+// defensa anti-bucle. crypto.KeyProvider.BlindIndex NO normaliza a propósito: es un
+// HMAC sobre bytes, no conoce el dominio de los teléfonos.
+//
+// El veredicto es CONSCIENTE DEL PERFIL: el checker excluye los números de sesiones
+// pasivas — una pasiva nunca auto-responde (reactiveBlocked lo corta), así que un
+// mensaje desde ese número no puede cerrar un bucle; bloquear ahí solo impediría
+// atender al número personal del tenant. El rate-limit por conversación (T0) sigue
+// como red.
+//
+// Es CONSERVADORA hacia PROCESAR: sin checker (nil), sin from_pn, si el número no
+// normaliza o si la consulta falla ⇒ devuelve false (no bloquea: la ausencia de dato
+// no debe silenciar tráfico legítimo). NUNCA loguea el número ni su índice ciego
+// (PII): solo el hecho y IDs opacos.
 func (rt *Runtime) isSelfLoop(ctx context.Context, tenantID, sessionID, fromPn string) bool {
 	if rt.selfNumbers == nil || fromPn == "" {
 		return false
@@ -1088,21 +1101,21 @@ func (rt *Runtime) isSelfLoop(ctx context.Context, tenantID, sessionID, fromPn s
 	if err != nil {
 		return false // sin número normalizable no se puede afirmar self-loop.
 	}
-	nums, err := rt.selfNumbers.SelfNumbers(ctx, tenantID)
+	propio, err := rt.selfNumbers.IsSelfNumber(ctx, tenantID, norm)
 	if err != nil {
-		rt.log.Warn("runtime: no se pudo cargar self_pn del tenant; guarda anti-self-loop omitida",
+		// El error se ANUNCIA (no se traga) pero no bloquea: una BD lenta o un
+		// KeyProvider ausente no pueden convertirse en un tenant que deja de atender.
+		rt.log.Warn("runtime: no se pudo comprobar si el remitente es un número propio del tenant; guarda anti-self-loop omitida",
 			"error", err, "session_id", sessionID)
 		return false
 	}
-	for _, n := range nums {
-		if n == norm {
-			rt.countReactiveBlocked(reasonSelfLoop)
-			rt.log.Warn("runtime: entrante de un número propio del tenant; auto-respuesta evitada (anti-self-loop)",
-				"tenant_id", tenantID, "session_id", sessionID)
-			return true
-		}
+	if !propio {
+		return false
 	}
-	return false
+	rt.countReactiveBlocked(reasonSelfLoop)
+	rt.log.Warn("runtime: entrante de un número propio del tenant; auto-respuesta evitada (anti-self-loop)",
+		"tenant_id", tenantID, "session_id", sessionID)
+	return true
 }
 
 // replyAllowed comprueba el token-bucket de auto-respuestas para la clave (Plan

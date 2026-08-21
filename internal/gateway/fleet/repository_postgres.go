@@ -7,17 +7,134 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
+
+// Logger es el puerto ESTRECHO de log que este repositorio necesita: una sola
+// línea de aviso. Se declara aquí —y no se importa wapp-shared/logger— para que
+// el dominio de flota no dependa de una implementación concreta de log; la
+// interfaz la cumple tal cual sharedlogger.Logger (y también *slog.Logger).
+//
+// 🔴 SOLO se usa para el ÚNICO caso que no puede ser ni un error ni un silencio:
+// un sobre de self_pn que no descifra al SERVIR EL LISTADO (ver scanSession y
+// selfPnDecryptTally, que lo emite AGREGADO: una línea por llamada, no por fila).
+// En ningún caso se le pasa el número: es PII.
+type Logger interface {
+	Warn(msg string, args ...any)
+}
+
+// nopLogger es el default cuando nadie enchufa un logger (tests, dobles): traga
+// el aviso. Es preferible a un puntero nil, que obligaría a comprobar en cada
+// punto de uso.
+type nopLogger struct{}
+
+func (nopLogger) Warn(string, ...any) {}
+
+// Option configura al repositorio en su construcción.
+type Option func(*PostgresRepository)
+
+// WithLogger enchufa el logger del proceso. Sin él, el aviso de «un sobre de
+// self_pn no descifra» se pierde: el listado sigue sirviéndose, pero nadie se
+// entera de que un número quedó ilegible. El arranque SIEMPRE debe pasarlo.
+func WithLogger(l Logger) Option {
+	return func(r *PostgresRepository) {
+		if l != nil {
+			r.log = l
+		}
+	}
+}
 
 // PostgresRepository implementa Repository con SQL raw sobre
 // public.fleet_sessions.
+//
+// 🔒 EL self_pn VA CIFRADO EN REPOSO desde el Plan 046 · T4.1 (migración 0068).
+// La fila guarda CUATRO columnas —self_pn_enc (envelope), self_pn_dek (DEK
+// envuelta), self_pn_kek_id (con qué KEK desenvolver) y self_pn_bidx (índice
+// ciego, para buscar/contar sin descifrar)— y la columna EN CLARO `self_pn`
+// queda VACÍA: este código NO la escribe nunca más y NO la lee nunca más para
+// obtener el número. El número en claro solo vive en memoria, en el borde.
+//
+// Es el MISMO molde que contact.PostgresResolver (Plan 011, ADR-0017), y a
+// propósito: cipher hace el envelope, kp calcula el índice ciego. Dos moldes
+// distintos para el mismo problema serían dos rotaciones de KEK que gestionar.
 type PostgresRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+	kp     crypto.KeyProvider
+	log    Logger
 }
 
-// NewPostgresRepository construye el repositorio sobre el pool dado.
-func NewPostgresRepository(db *sql.DB) *PostgresRepository {
-	return &PostgresRepository{db: db}
+// NewPostgresRepository construye el repositorio sobre el pool dado. cipher y kp
+// son OBLIGATORIOS desde T4.1: sin ellos no se puede ni escribir ni leer el
+// self_pn, así que se piden por parámetro posicional y no por Option — un
+// repositorio a medio construir escribiría filas sin número y las leería vacías,
+// en silencio y para siempre.
+func NewPostgresRepository(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, opts ...Option) *PostgresRepository {
+	r := &PostgresRepository{db: db, cipher: cipher, kp: kp, log: nopLogger{}}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// selfPnEnvelope prepara las CUATRO columnas cifradas del número propio:
+// self_pn_bidx (índice ciego), self_pn_enc (envelope), self_pn_dek (DEK
+// envuelta) y el key_id de la KEK que la envolvió. Es el gemelo de
+// contact.encodeRef; el número en claro no sale de aquí.
+//
+// 🔴 NORMALIZA ANTES DE INDEXAR, Y ESE ORDEN ES TODO EL ASUNTO. BlindIndex es un
+// HMAC crudo: no normaliza nada por su cuenta (keyprovider.go:322-328), así que
+// "+34600111222" y "34600111222" darían DOS índices distintos para el MISMO
+// número y el conteo del tope de dispositivos (REQ-D4) contaría dos veces al
+// mismo teléfono. Con la columna en claro ese fallo era visible al mirar la
+// tabla; con el índice ciego es invisible por construcción.
+//
+// ⚠️ SE NORMALIZA AQUÍ AUNQUE EL LLAMADOR YA NORMALICE (connect.go:591-598,
+// persistSelfPn). Normalize es idempotente sobre un valor ya normalizado —solo
+// deja dígitos— así que el segundo paso cuesta un recorrido de ≤15 caracteres y
+// compra la garantía de que el bidx es canónico VENGA DE DONDE VENGA el valor.
+// Confiar en el llamador ataría la integridad del índice a una convención no
+// verificable: mañana un backfill, un endpoint de admin o un test escriben aquí
+// sin pasar por el Heartbeat y el índice queda partido en dos poblaciones que ya
+// nadie puede reconciliar (el valor en claro para compararlas ya no existe).
+func (r *PostgresRepository) selfPnEnvelope(tenantID, selfPn string) (bidx string, enc, dek []byte, kekID string, err error) {
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		// El error de Normalize NUNCA lleva el número (contact.go:121-131 lo
+		// documenta: describe la causa con la longitud, no con el valor), así que
+		// se puede envolver y subir tal cual sin filtrar PII a los logs.
+		return "", nil, nil, "", fmt.Errorf("fleet: normalizar self_pn: %w", err)
+	}
+	bidx = r.kp.BlindIndex(tenantID, norm)
+	enc, dek, kekID, err = r.cipher.Encrypt(norm)
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("fleet: cifrar self_pn: %w", err)
+	}
+	return bidx, enc, dek, kekID, nil
+}
+
+// decryptSelfPn descifra el sobre leído de una fila y devuelve el número en
+// claro. Un sobre AUSENTE (las cuatro columnas NULL: sesión sin emparejar, o
+// fila anterior al backfill) devuelve "" sin error — es el mismo «todavía no hay
+// número» que antes representaba el COALESCE sobre la columna. Un sobre INCOMPLETO o
+// que no abre SÍ es error: ahí hay un dato corrupto y callarlo lo entierra.
+//
+// Se desenvuelve con la KEK que envolvió ESTA fila (self_pn_kek_id) y no con la
+// current: tras una rotación parcial coexisten filas de varias KEK (Plan 012).
+func (r *PostgresRepository) decryptSelfPn(enc, dek []byte, kekID sql.NullString) (string, error) {
+	if len(enc) == 0 && len(dek) == 0 && !kekID.Valid {
+		return "", nil
+	}
+	if len(enc) == 0 || len(dek) == 0 || !kekID.Valid {
+		// Sin el número en el mensaje: solo el HECHO de que el sobre está a medias.
+		return "", errors.New("fleet: sobre de self_pn incompleto (enc/dek/kek_id no viajan juntos)")
+	}
+	pn, err := r.cipher.Decrypt(enc, dek, kekID.String)
+	if err != nil {
+		return "", fmt.Errorf("fleet: descifrar self_pn: %w", err)
+	}
+	return pn, nil
 }
 
 // MarkOnline registra/actualiza la sesión como online.
@@ -105,15 +222,31 @@ func (r *PostgresRepository) SetState(ctx context.Context, tenantID, sessionID s
 // CountLiveBySelfPn cuenta las sesiones vivas (state != 'loggedout') del tenant con
 // el self_pn dado (REQ-D4, aviso del tope de dispositivos). selfPn vacío ⇒ 0 sin
 // tocar la BD.
+//
+// 🔒 COMPARA POR ÍNDICE CIEGO (Plan 046 · T4.1), no por el número: la columna en
+// claro ya no tiene el dato. El bidx es determinista —mismo tenant + mismo número
+// normalizado ⇒ mismo hex— así que la igualdad que antes hacía Postgres sobre el
+// texto la sigue haciendo, ahora sobre el HMAC, y el índice parcial
+// (tenant_id, self_pn_bidx) de la 0068 la sirve igual de barata.
+//
+// Un número que NO normaliza devuelve error (no 0): «no puedo contar» y «hay
+// cero» son respuestas distintas, y devolver 0 aquí apagaría el aviso del tope
+// justo en el caso raro. El llamador (warnDeviceLimit) ya lo traga en Debug.
 func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error) {
 	if selfPn == "" {
 		return 0, nil
 	}
+	// Se normaliza por el MISMO camino que la escritura: si escritura y lectura
+	// normalizaran distinto, el conteo daría 0 siempre y el aviso no saltaría nunca.
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		return 0, fmt.Errorf("fleet: normalizar self_pn para contar: %w", err)
+	}
 	var n int
-	err := r.db.QueryRowContext(ctx, `
+	err = r.db.QueryRowContext(ctx, `
 		SELECT count(*) FROM public.fleet_sessions
-		WHERE tenant_id = $1 AND self_pn = $2 AND state <> 'loggedout'
-	`, tenantID, selfPn).Scan(&n)
+		WHERE tenant_id = $1 AND self_pn_bidx = $2 AND state <> 'loggedout'
+	`, tenantID, r.kp.BlindIndex(tenantID, norm)).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("fleet: contar sesiones vivas por self_pn: %w", err)
 	}
@@ -124,15 +257,87 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // acotado por (tenant_id, edge_id, session_id). selfPn vacío es un no-op: NO
 // sobrescribe un valor previo bueno (protege el dato). Un UPDATE de 0 filas
 // (sesión aún sin registrar) es válido: el próximo Heartbeat lo fijará.
+//
+// 🔒 DESDE T4.1 ESCRIBE EL SOBRE Y VACÍA LA COLUMNA EN CLARO EN EL MISMO UPDATE.
+// `self_pn = NULL` no es una limpieza aparte ni un script de una vez: va aquí,
+// atómico con la escritura del sobre, para que la fila NUNCA quede un instante
+// con el número en claro Y el sobre a la vez, y para que toda sesión viva se
+// sanee sola en su siguiente latido aunque el backfill de arranque no la
+// alcanzara. La columna sigue existiendo en el DDL (la retira una migración
+// posterior, cuando nadie la lea); lo que se retira aquí es al ÚLTIMO escritor.
+//
+// ⚠️ EL NÚMERO NO SE PASA COMO PARÁMETRO SQL EN NINGÚN SITIO: solo viajan el
+// envelope (bytes opacos), la DEK envuelta, el key_id y el HMAC. Un log de
+// sentencias lentas de Postgres ya no puede filtrar un teléfono.
+//
+// 🔴 LA GUARDA DEL WHERE EVITA REESCRIBIR LA FILA EN CADA LATIDO, y no es un
+// adorno de rendimiento. Encrypt genera una DEK FRESCA por llamada, así que el
+// sobre sale distinto cada vez aunque el número sea el mismo: sin guarda, cada
+// sesión reescribiría cuatro columnas cada 30 s, para siempre, generando WAL y
+// bloat por un dato que no cambió. Con ella el UPDATE solo entra en TRES casos:
+//
+//	(1) el número CAMBIÓ — bidx distinto. El bidx sí es determinista, por eso es
+//	    el comparando correcto y el sobre no lo sería. Mismo criterio que el
+//	    `IS DISTINCT FROM` de contact.resolveExisting.
+//	(2) queda plano que limpiar — `self_pn IS NOT NULL`, que es exactamente el
+//	    caso de la primera pasada tras la 0068 y el del rollback a un binario
+//	    viejo que volviera a escribir la columna en claro.
+//	(3) el sobre está envuelto por una KEK que YA NO ES LA CURRENT —
+//	    `self_pn_kek_id IS DISTINCT FROM $6`. Ver abajo: es una vía de
+//	    RECUPERACIÓN, no una optimización.
+//
+// 🔧 CORRECCIÓN DEL 2026-08-21 (revisión de T4.1). Este docstring afirmaba que
+// «un sobre ya escrito no se re-envuelve solo tras una rotación de KEK, y es
+// correcto porque re-envolver es trabajo de crypto.Rekey». LA SEGUNDA MITAD ERA
+// FALSA, y con ella la primera dejaba de ser aceptable:
+//
+//	Rekey re-envuelve haciendo UnwrapDEK(dek, kek_id) → WrapDEK(current)
+//	(rekey.go:173). Necesita la KEK VIEJA. Si esa KEK desapareció del keyring
+//	—un despliegue con WAPP_KEK_KEYRING incompleto, la rotación mal cerrada de
+//	§10.F— Rekey NO PUEDE con esa fila: falla al desenvolver y la deja igual.
+//
+// Sin el caso (3), esa fila quedaba ATRAPADA PARA SIEMPRE: el bidx casa (es
+// determinista, no depende de la KEK), así que la guarda decía «nada que hacer»
+// aunque el Edge estuviera reportando el mismo número cada 30 s; la consola
+// servía "" y scanSession dejaba un Warn por fila y por poll, indefinidamente y
+// SIN vía de recuperación automática. Y es el único caso del sistema en que el
+// dato en claro SÍ está disponible —llega en cada latido— y aun así no se
+// restauraba: cifrar de nuevo desde el latido no necesita la KEK vieja para nada.
+//
+// Con (3), el latido siguiente re-cifra la fila con la KEK current y la fila se
+// AUTO-SANA. Converge en una sola escritura: tras ella `self_pn_kek_id = $6` y
+// la guarda vuelve a bloquear. El precio, dicho entero: tras una rotación de KEK,
+// cada sesión viva paga UN reescritura extra en su siguiente latido (y de paso le
+// ahorra esa fila a Rekey). No reintroduce la reescritura perpetua que la guarda
+// existe para impedir, porque el comparando de (3) también es estable.
+//
+// ⚠️ EL COMPARANDO DE (3) ES $6, NO UN PARÁMETRO NUEVO. $6 es el kekID que
+// devuelve selfPnEnvelope, y ese ES por construcción el key_id de la KEK current:
+// FieldCipher.Encrypt envuelve la DEK con kp.WrapDEK, que documenta «envuelve con
+// la KEK current» (keyprovider.go:88-90). Pasar además kp.CurrentKeyID() sería un
+// segundo testigo del mismo hecho, y dos testigos que pueden divergir son peores
+// que uno.
 func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error {
 	if selfPn == "" {
 		return nil
 	}
-	_, err := r.db.ExecContext(ctx, `
+	bidx, enc, dek, kekID, err := r.selfPnEnvelope(tenantID, selfPn)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		UPDATE public.fleet_sessions
-		SET self_pn = $4, updated_at = now()
+		SET self_pn_enc    = $4,
+		    self_pn_dek    = $5,
+		    self_pn_kek_id = $6,
+		    self_pn_bidx   = $7,
+		    self_pn        = NULL,
+		    updated_at     = now()
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
-	`, tenantID, edgeID, sessionID, selfPn)
+		  AND (self_pn_bidx   IS DISTINCT FROM $7
+		    OR self_pn        IS NOT NULL
+		    OR self_pn_kek_id IS DISTINCT FROM $6)
+	`, tenantID, edgeID, sessionID, enc, dek, kekID, bidx)
 	if err != nil {
 		return fmt.Errorf("fleet: fijar self_pn: %w", err)
 	}
@@ -179,21 +384,58 @@ func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, se
 // MarkGreeted cierra.
 //
 // NUNCA loguea: devuelve el número, que es PII, y quien lo recibe se encarga.
+//
+// 🔴 ESTE LECTOR SE INCORPORÓ A T4.1 SOBRE LA MARCHA, Y NO ESTÁ EN EL CENSO DEL
+// PLAN. El censo de lectores de `self_pn` se escribió ANTES que este método:
+// PendingGreeting nació con la Ola 3 (el aviso de sesión pasiva, T3.2 (b)), o sea
+// DESPUÉS. Si el cifrado hubiera seguido el censo al pie de la letra, este SELECT
+// habría quedado leyendo una columna que a partir de la 0068 está VACÍA: el
+// predicado que exigía la columna no vacía no casaría NUNCA, PendingGreeting
+// devolvería pending=false siempre, y el saludo se quedaría sin destino EN
+// SILENCIO —sin error, sin log, sin nada que delatara que dejó de emitirse—.
+// De ahí las dos correcciones de abajo, y de ahí esta nota: el que venga detrás
+// tiene que poder ver que este lector se añadió a mano y por qué.
+//
+//   - El predicado pasa a `self_pn_bidx IS NOT NULL`. El índice ciego es la
+//     señal de «esta fila tiene número»: se escribe con el sobre y en el mismo
+//     UPDATE, así que su presencia es exactamente lo que antes decía ese filtro.
+//   - El SELECT trae el SOBRE y el número se descifra EN GO, en memoria, justo
+//     para pasárselo a SendText. No hay forma de hacerlo en SQL —ni debe haberla:
+//     la KEK no vive en la base—.
+//
+// Un sobre que no abre devuelve ERROR (no pending=false): sin número no hay a
+// quién avisar, y decir «no está pendiente» convertiría un dato corrupto en un
+// saludo que no se manda nunca y que nadie echa de menos. El emisor lo registra
+// en Warn con IDs opacos y reintenta al siguiente latido (greeting.go:156-160).
 func (r *PostgresRepository) PendingGreeting(ctx context.Context, tenantID, edgeID, sessionID string) (string, bool, error) {
-	var selfPn string
+	var (
+		enc, dek []byte
+		kekID    sql.NullString
+	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT self_pn
+		SELECT self_pn_enc, self_pn_dek, self_pn_kek_id
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
 		  AND greeted_at IS NULL
-		  AND COALESCE(self_pn, '') <> ''
+		  AND self_pn_bidx IS NOT NULL
 		  AND profile = 'passive'
-	`, tenantID, edgeID, sessionID).Scan(&selfPn)
+	`, tenantID, edgeID, sessionID).Scan(&enc, &dek, &kekID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return "", false, nil
 	case err != nil:
 		return "", false, fmt.Errorf("fleet: consultar saludo pendiente: %w", err)
+	}
+	// A partir de aquí el número vive en memoria y no se loguea (§8 del Plan 011).
+	selfPn, err := r.decryptSelfPn(enc, dek, kekID)
+	if err != nil {
+		return "", false, err
+	}
+	if selfPn == "" {
+		// El bidx estaba pero el sobre no: la fila casó el WHERE y aun así no hay
+		// destino. No puede pasar si el sobre se escribe entero (SetSelfPn y el
+		// backfill lo hacen), pero si pasara, «pendiente sin número» sería mentira.
+		return "", false, errors.New("fleet: la fila tiene índice ciego de self_pn pero no sobre; no hay destino para el saludo")
 	}
 	return selfPn, true, nil
 }
@@ -427,10 +669,14 @@ func nullInt64(p *int64) any {
 
 // Get devuelve la sesión, o found=false si no existe.
 func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionID string) (Session, bool, error) {
-	s, err := scanSession(r.db.QueryRowContext(ctx, selectSessionCols+`
+	// Una sola fila ⇒ el tally no acota nada aquí (cota: una línea). Se usa igual
+	// para no tener DOS caminos de aviso que puedan divergir en formato.
+	var tally selfPnDecryptTally
+	defer func() { tally.flush(r.log) }()
+	s, err := r.scanSession(r.db.QueryRowContext(ctx, selectSessionCols+`
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
-	`, tenantID, edgeID, sessionID))
+	`, tenantID, edgeID, sessionID), &tally)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return Session{}, false, nil
@@ -442,6 +688,10 @@ func (r *PostgresRepository) Get(ctx context.Context, tenantID, edgeID, sessionI
 
 // List devuelve las sesiones de un tenant.
 func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []Session, err error) {
+	// UN tally para el listado entero: la cota es UNA línea de Warn por llamada,
+	// pase lo que pase con las filas. Ver selfPnDecryptTally.
+	var tally selfPnDecryptTally
+	defer func() { tally.flush(r.log) }()
 	rows, err := r.db.QueryContext(ctx, selectSessionCols+`
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1
@@ -457,7 +707,7 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 	}()
 
 	for rows.Next() {
-		s, scanErr := scanSession(rows)
+		s, scanErr := r.scanSession(rows, &tally)
 		if scanErr != nil {
 			return nil, fmt.Errorf("fleet: escanear sesión: %w", scanErr)
 		}
@@ -492,10 +742,16 @@ func (r *PostgresRepository) List(ctx context.Context, tenantID string) (out []S
 // emisor del saludo por su propia consulta (PendingGreeting). Meterlo aquí obligaría
 // a añadirle un campo a Session y a escanearlo en cada List del dashboard para que
 // nadie lo lea.
+//
+// 🔒 `self_pn` (Plan 046 · T4.1) YA NO SE SELECCIONA: la columna en claro está
+// vacía y leerla devolvería "" para toda sesión emparejada. En su lugar viajan
+// las TRES columnas del sobre y el número se descifra en Go (ver scanSession).
+// El orden de las tres respeta el sitio que ocupaba la columna en claro para que
+// el resto del scan no se mueva.
 const selectSessionCols = `
 		SELECT tenant_id::text, edge_id, session_id, state,
 		       COALESCE(profile, 'passive'),
-		       COALESCE(self_pn, ''),
+		       self_pn_enc, self_pn_dek, self_pn_kek_id,
 		       COALESCE(last_connected_at, 'epoch'), COALESCE(last_seen_at, 'epoch'),
 		       COALESCE(whatsapp_state, ''), COALESCE(degraded_reason, ''),
 		       degraded_since, last_health_at,
@@ -510,13 +766,113 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanSession(sc rowScanner) (Session, error) {
+// selfPnDecryptTally acumula los sobres de self_pn que NO abrieron durante UNA
+// llamada al repositorio (un Get, o un List entero), para emitir UN SOLO Warn al
+// final en vez de uno por fila.
+//
+// 🔴 POR QUÉ AGREGAR EN VEZ DE AVISAR POR FILA (corrección del 2026-08-21,
+// revisión de T4.1). El aviso vivía dentro de scanSession, o sea DENTRO del bucle
+// de List, y sin acotar. El modo de fallo realista que el propio docstring de
+// scanSession nombra —un keyring incompleto tras una rotación— no rompe UNA fila:
+// rompe TODAS a la vez. Y el consumidor de List es el dashboard del BFF, que
+// POLEA. El resultado era N líneas idénticas por poll, para siempre, sepultando
+// el log justo en el momento en que el operador lo abre para diagnosticar la
+// rotación mal cerrada. Un aviso que solo se puede leer cuando no hace falta no
+// es un aviso.
+//
+// 🔴 POR QUÉ AGREGADO Y NO MUESTREO. Se descartó el muestreo (1 de cada N, o uno
+// cada X segundos) por dos razones. La primera: el muestreo pierde el CONTEO, que
+// aquí es el dato que decide la gravedad —«1 fila ilegible» es una fila corrupta,
+// «las 40» es una KEK que falta— y es justo lo que el operador necesita para
+// distinguirlas. La segunda: un muestreo temporal exige estado compartido y por
+// tanto un mutex en un repositorio que hoy NO tiene estado mutable (lo dice su
+// propio docstring), y ese candado se pagaría en TODAS las lecturas para acotar
+// un caso excepcional. El tally vive en la pila de la llamada: cero contención,
+// cero estado en el repositorio, y una línea por llamada como cota dura.
+//
+// ⚠️ CERO PII, igual que antes: ni el número (que no se pudo obtener) ni el
+// contenido del sobre. Solo identidades opacas y la causa. El key_id SÍ va —dice
+// QUÉ KEK falta y no revela nada del número (§10.I)— y se conserva el de la
+// PRIMERA fila que falló: en el fallo masivo todas comparten el mismo key_id, que
+// es precisamente el dato accionable.
+type selfPnDecryptTally struct {
+	failed       int
+	firstTenant  string
+	firstEdge    string
+	firstSession string
+	firstKekID   string
+	firstErr     error
+}
+
+// record anota un sobre que no abrió. Solo el PRIMERO deja muestra: los demás
+// suman al contador.
+func (t *selfPnDecryptTally) record(tenantID, edgeID, sessionID, kekID string, err error) {
+	t.failed++
+	if t.failed == 1 {
+		t.firstTenant, t.firstEdge, t.firstSession = tenantID, edgeID, sessionID
+		t.firstKekID, t.firstErr = kekID, err
+	}
+}
+
+// flush emite el aviso agregado, o nada si no hubo fallos (el caso normal). Se
+// llama SIEMPRE al terminar la lectura, incluso en el camino de error: si el
+// listado se cortó a media iteración, las filas que ya fallaron siguen siendo
+// información válida sobre el estado del keyring.
+func (t *selfPnDecryptTally) flush(log Logger) {
+	if t.failed == 0 {
+		return
+	}
+	log.Warn("fleet: hay self_pn que no se pudieron descifrar; se sirven vacíos",
+		"filas_afectadas", t.failed,
+		"muestra_tenant_id", t.firstTenant, "muestra_edge_id", t.firstEdge,
+		"muestra_session_id", t.firstSession,
+		"muestra_kek_id", t.firstKekID, "error", t.firstErr)
+}
+
+// scanSession materializa una fila en Session. Es MÉTODO y ya no función suelta
+// (Plan 046 · T4.1) por una razón sola: necesita el cipher para abrir el sobre
+// del self_pn. Pasarlo por parámetro habría sido lo mismo con más ruido.
+//
+// 🔴 MODO DE FALLO DEL DESCIFRADO, DECIDIDO A PROPÓSITO: un sobre que no abre
+// deja `SelfPn` VACÍO, AVISA por log (sin PII) y NO tumba la fila ni la lista.
+//
+// El razonamiento, escrito para que se pueda refutar y no solo obedecer. El
+// consumidor de esto es GET /api/v1/sessions —la consola del dueño y el
+// dashboard del BFF—, y `self_pn` es UN campo de veintitantos de una fila de un
+// listado. Si una KEK faltara del keyring (el fallo realista: un despliegue con
+// WAPP_KEK_KEYRING incompleto tras una rotación), el fallo NO es de una fila:
+// es de TODAS a la vez. Con error duro, la consola entera se queda en blanco
+// —estados, salud, degradados, todo— por un campo cosmético, y encima justo en
+// el momento en que el operador la necesita para diagnosticar. Con campo vacío,
+// el dueño ve su flota completa y una casilla de número sin rellenar, que es
+// EXACTAMENTE lo que ya ve una sesión sin emparejar: un estado que la UI sabe
+// pintar desde el Plan 020 (el campo es `omitempty` en publicapi/sessions.go:28).
+//
+// El precio, dicho sin rebajarlo: un número ilegible se confunde con «todavía no
+// hay número». Por eso el aviso NO es opcional — es la única diferencia entre
+// las dos situaciones, y sin logger enchufado (WithLogger) esto sí sería un
+// fallo silencioso. Si algún día hiciera falta distinguirlas en la API, la
+// salida es un campo de estado explícito, no reventar el listado.
+//
+// ⚠️ NO se aplica el mismo criterio en PendingGreeting: allí el número ES el
+// destino del mensaje, no un adorno, así que sin él la operación no existe.
+//
+// 🔧 EL AVISO YA NO SE EMITE AQUÍ (corrección del 2026-08-21, revisión de T4.1).
+// Se ACUMULA en el tally que pasa el llamante y se emite UNA vez por llamada. El
+// porqué está en selfPnDecryptTally: el modo de fallo que este mismo docstring
+// describe rompe TODAS las filas a la vez, y un Warn por fila dentro del bucle de
+// List multiplicaba el ruido por el tamaño de la flota Y por la frecuencia de
+// poll del dashboard, justo cuando el operador necesita leer el log.
+func (r *PostgresRepository) scanSession(sc rowScanner, tally *selfPnDecryptTally) (Session, error) {
 	var s Session
 	var state, profile string
 	var degradedSince, lastHealthAt sql.NullTime
 	var p50, stuckHeads, stuckPolls, sealDispatch, sealBudget sql.NullInt64
 	var omittedRaw []byte
-	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &profile, &s.SelfPn,
+	var pnEnc, pnDek []byte
+	var pnKekID sql.NullString
+	if err := sc.Scan(&s.TenantID, &s.EdgeID, &s.SessionID, &state, &profile,
+		&pnEnc, &pnDek, &pnKekID,
 		&s.LastConnectedAt, &s.LastSeenAt,
 		&s.WhatsappState, &s.DegradedReason, &degradedSince, &lastHealthAt,
 		&s.LastEventAgeS, &s.OutboxDepth, &s.BinaryVersion, &s.UptimeS,
@@ -527,6 +883,14 @@ func scanSession(sc rowScanner) (Session, error) {
 	}
 	s.State = State(state)
 	s.Profile = Profile(profile)
+	// El número se descifra SOLO aquí, en memoria, para servirlo por la API (el
+	// contrato público NO cambia con T4.1: `self_pn` sigue siendo el número en
+	// claro en el JSON). Un sobre ausente da "" sin error: sesión sin emparejar.
+	selfPn, pnErr := r.decryptSelfPn(pnEnc, pnDek, pnKekID)
+	if pnErr != nil {
+		tally.record(s.TenantID, s.EdgeID, s.SessionID, pnKekID.String, pnErr)
+	}
+	s.SelfPn = selfPn
 	if degradedSince.Valid {
 		s.DegradedSince = degradedSince.Time
 	}

@@ -12,7 +12,45 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 )
+
+// normalizeSelfPn canoniza un número propio a E.164 sin '+' ni separadores (solo
+// dígitos). Es el ÚNICO normalizador del self_pn de este paquete y lo usan LAS
+// DOS implementaciones de Repository.
+//
+// 🔴 POR QUÉ ESTÁ AQUÍ Y NO INLINE EN CADA UNA (Plan 046 · T4.1). Desde que el
+// número va cifrado, Postgres ya no compara textos: compara ÍNDICES CIEGOS —HMAC
+// del valor NORMALIZADO— y el doble en memoria compara strings. Si el doble
+// guardara el valor CRUDO y Postgres indexara el normalizado, las dos mitades
+// dejarían de responder lo mismo, y la divergencia se manifiesta EN LAS DOS
+// DIRECCIONES (redactado el 2026-08-21: aquí había un borrador que se corregía a
+// media frase y no llegaba a decir cuál era el riesgo):
+//
+//	→ VERDE EN MEMORIA, ROJO EN POSTGRES. Un test escribe "+34600111222" y
+//	  consulta por esa MISMA cadena. El doble crudo compara string contra
+//	  string: casa, y el test pasa. Postgres normaliza en la escritura —el bidx
+//	  se calcula sobre "34600111222"— y si la lectura no normaliza, compara
+//	  contra el HMAC de "+34600111222": dos índices distintos para el mismo
+//	  número, no casa, y el conteo del tope de dispositivos devuelve 0. El fallo
+//	  aparece en el suite de integración, no en el unitario que lo cubría.
+//
+//	→ VERDE EN MEMORIA, MAL EN PRODUCCIÓN, que es el peor. El doble crudo trata
+//	  "+34600111222" y "34600111222" como DOS números distintos: un test que
+//	  siembre las dos formas ve dos sesiones y pasa verde. Postgres, con el bidx
+//	  sobre el valor normalizado, las COLAPSA en una sola: el tope de
+//	  dispositivos (REQ-D4) cuenta uno donde el test contó dos. Nadie se entera
+//	  hasta que un teléfono real supera el límite sin que salte el aviso.
+//
+// Los dos modos se cierran igual: normalizar en LOS DOS lados, con ESTA función,
+// en la escritura Y en la lectura. Un doble que no comparte el normalizador con
+// lo que emula no es un doble, es una segunda semántica.
+func normalizeSelfPn(selfPn string) (string, error) {
+	// El error de contact.Normalize NUNCA embebe el número (contact.go:121-131):
+	// describe la causa por longitud. Se puede envolver y loguear sin filtrar PII.
+	return contact.Normalize(contact.KindPhoneE164, selfPn)
+}
 
 // State es el conjunto de estados posibles de una sesión.
 type State string
@@ -124,6 +162,17 @@ type Session struct {
 	// SelfPn es el número propio (E.164 sin '+', normalizado) que la sesión
 	// reporta en su Heartbeat (Plan 020 · T2). Vacío mientras la sesión no reporte
 	// uno (sin emparejar). Lo consume el anti-self-loop del runtime.
+	//
+	// 🔒 EN REPOSO VA CIFRADO (Plan 046 · T4.1) pero ESTE CAMPO SIGUE SIENDO EL
+	// NÚMERO EN CLARO: el contrato público no cambió (publicapi/sessions.go:28
+	// expone `self_pn` y el BFF lo consume). El repositorio abre el sobre al
+	// servir y lo cierra al escribir; el número en claro solo vive en memoria.
+	//
+	// ⚠️ VACÍO YA TIENE DOS CAUSAS, no una: «esta sesión no ha reportado número»
+	// (lo de siempre) y «el sobre no se pudo descifrar» — el segundo caso deja
+	// UNA línea Warn AGREGADA por llamada al repositorio (con el conteo de filas
+	// afectadas, no una línea por fila: ver selfPnDecryptTally) y NO tumba el
+	// listado. La API no los distingue a propósito.
 	SelfPn          string
 	LastConnectedAt time.Time
 	LastSeenAt      time.Time
@@ -288,6 +337,10 @@ type Repository interface {
 	// CountLiveBySelfPn cuenta las sesiones VIVAS (state != loggedout) del tenant que
 	// reportan el mismo self_pn. Alimenta el aviso del tope de dispositivos (REQ-D4).
 	// Un selfPn vacío devuelve 0 (sin número no hay número que contar).
+	//
+	// El número se NORMALIZA antes de comparar (Plan 046 · T4.1): en Postgres la
+	// comparación es por índice ciego del valor canónico, no por texto. Un número
+	// que no normaliza devuelve error, no 0: «no puedo contar» ≠ «hay cero».
 	CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error)
 	// SaveHealth persiste el último snapshot de salud (SessionHealth) que la sesión
 	// reporta en su Heartbeat (Plan 031 · T3). UPDATE acotado por (tenant_id, edge_id,
@@ -305,6 +358,11 @@ type Repository interface {
 	// selfPn VACÍO es un no-op: NO sobrescribe un valor previo bueno (protege el
 	// dato ante Heartbeats de una sesión que aún no se emparejó). No falla si la
 	// fila no existe todavía (UPDATE de 0 filas es válido).
+	//
+	// 🔒 EL NÚMERO SE GUARDA CIFRADO (Plan 046 · T4.1): en Postgres van el sobre
+	// (enc/dek/kek_id) y el índice ciego, y la columna en claro se VACÍA en el
+	// mismo UPDATE. Lo que se persiste es siempre el valor NORMALIZADO; un número
+	// que no normaliza devuelve error y no escribe nada.
 	SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error
 	// SetProfile fija el PERFIL (active|passive) de la sesión sessionID del tenant
 	// tenantID (Plan 046 · T1.2). Es la ÚNICA escritura del eje: el alias legado
@@ -472,15 +530,26 @@ func (r *MemoryRepository) SetState(_ context.Context, tenantID, sessionID strin
 
 // CountLiveBySelfPn implementa Repository: cuenta las sesiones vivas (no zombie)
 // del tenant con el self_pn dado. selfPn vacío ⇒ 0.
+//
+// 🔴 NORMALIZA ANTES DE COMPARAR, igual que *PostgresRepository normaliza antes
+// de calcular el índice ciego (ver normalizeSelfPn). Sin esto el doble sería MÁS
+// estricto que producción: allí "+34600111222" y "34600111222" dan el MISMO bidx
+// y cuentan como el mismo teléfono; aquí, comparando strings crudos, serían dos.
+// Un test del aviso del tope de dispositivos (REQ-D4) pasaría en memoria y
+// mentiría sobre el conteo real.
 func (r *MemoryRepository) CountLiveBySelfPn(_ context.Context, tenantID, selfPn string) (int, error) {
 	if selfPn == "" {
 		return 0, nil
+	}
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		return 0, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := 0
 	for _, s := range r.sessions {
-		if s.TenantID == tenantID && s.SelfPn == selfPn && s.State != StateLoggedOut {
+		if s.TenantID == tenantID && s.SelfPn == norm && s.State != StateLoggedOut {
 			n++
 		}
 	}
@@ -558,9 +627,23 @@ func (r *MemoryRepository) ProfilesByTenant(_ context.Context, tenantID string) 
 
 // SetSelfPn implementa Repository: fija el self_pn de la sesión. selfPn vacío es
 // un no-op (protege un valor previo bueno). No falla si la sesión no existe aún.
+//
+// 🔴 GUARDA EL NÚMERO NORMALIZADO, no el que le pasaron, porque eso es lo que
+// hace el repositorio real: allí lo que se persiste es el sobre de un valor ya
+// canonizado y el índice ciego de ese mismo valor, así que lo que un lector
+// recupera SIEMPRE está normalizado. Si el doble guardara el crudo, el campo
+// SelfPn de una Session tendría una forma en los tests y otra en producción.
+//
+// Un número que NO normaliza devuelve ERROR (no un no-op silencioso), igual que
+// en Postgres: ahí no se puede calcular índice ciego, así que la escritura no
+// existe, y decir que salió bien haría creer que el número quedó guardado.
 func (r *MemoryRepository) SetSelfPn(_ context.Context, tenantID, edgeID, sessionID, selfPn string) error {
 	if selfPn == "" {
 		return nil
+	}
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -569,7 +652,7 @@ func (r *MemoryRepository) SetSelfPn(_ context.Context, tenantID, edgeID, sessio
 	if !ok {
 		return nil
 	}
-	s.SelfPn = selfPn
+	s.SelfPn = norm
 	r.sessions[key] = s
 	// NO se toca profile_updated_at: el número propio no es el perfil.
 	return nil

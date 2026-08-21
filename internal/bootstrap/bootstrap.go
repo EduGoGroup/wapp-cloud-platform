@@ -162,6 +162,43 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	// --- Dependencias del Motor que se construyen con fail-fast: el resolver de
+	// contactos (cifrado de PII, Plan 011) y el almacén de objetos R2 (Plan 017).
+	// Se agrupan para no cargar el arranque con dos ramas de error separadas.
+	//
+	// 🔴 SE ADELANTÓ AQUÍ EN EL PLAN 046 · T4.1. Antes se construía ~65 líneas más
+	// abajo, junto al resto del Motor de Flujos, porque solo el Motor lo usaba. Ya
+	// no: desde que `fleet_sessions.self_pn` va cifrado, el repositorio de FLOTA
+	// —que se construye en el bloque de abajo— necesita el MISMO cipher y el MISMO
+	// KeyProvider. Adelantarlo es seguro: buildFlowRuntimeDeps solo depende de
+	// ctx/cfg/db, todos vivos desde setupDatabase, y no toca nada de lo que se
+	// construye entre medias.
+	//
+	// ⚠️ LO QUE SÍ CAMBIA EL ADELANTO ES QUÉ ERROR DE ARRANQUE SALE PRIMERO (anotado
+	// el 2026-08-21: el comentario original solo hablaba del cipher y daba a entender
+	// que este bloque no hacía nada más). buildFlowRuntimeDeps construye DOS cosas,
+	// no una (flows.go:36-77): el KeyProvider + FieldCipher, y ADEMÁS el cliente de
+	// presign de R2 (Plan 017). Y con `WAPP_KEK_PROVIDER=kms` el primero hace una
+	// LLAMADA DE RED A GCP KMS al arrancar (ADR-0036 §3: el KMS interviene una vez,
+	// en el arranque). Consecuencia: en un despliegue con, a la vez, credenciales de
+	// R2 mal puestas y —pongamos— el emisor JWT mal configurado, ahora se ve el error
+	// de R2/KMS y antes se veía el otro. NO rompe nada —los dos son fail-fast y los
+	// dos abortan igual— pero quien depure un arranque caído leyendo el primer error
+	// del log tiene que saber que el orden se movió a propósito y por esta línea.
+	//
+	// 📌 «EL MISMO» no es una comodidad: es la condición de que haya UNA rotación de
+	// KEK. Un segundo crypto.NewKeyProvider aquí crearía un segundo keyring que
+	// crypto.Rekey (línea ~548) no conoce, y el día de la rotación las filas de
+	// flota se quedarían atrás sin que nadie lo notara hasta no poder abrirlas.
+	//
+	// ⚠️ AVISO AL SIGUIENTE: el backfill de arranque de T4.1 (que sanea las filas
+	// que ya tenían número en claro) necesita este mismo `flowDeps.cipher` y
+	// `flowDeps.kp`. Están disponibles desde esta línea hasta el final de Run.
+	flowDeps, err := buildFlowRuntimeDeps(ctx, cfg, db)
+	if err != nil {
+		return err
+	}
+
 	// --- Fleet + Gateway CloudLink. ---
 	//
 	// 📌 fleetRepo se construye AQUÍ, una sola vez, y lo comparten los cuatro
@@ -170,7 +207,61 @@ func Run(ctx context.Context) error {
 	// instancias —esta, inline dentro de WithFleet, y otra más abajo— sobre el MISMO
 	// *sql.DB; no era un bug (el repo no tiene estado) pero sí una invitación a que
 	// mañana lo tuviera y las dos mitades vieran cosas distintas.
-	fleetRepo := fleet.NewPostgresRepository(db)
+	//
+	// 🔒 Desde T4.1 SÍ tiene estado que importa: el cipher y el KeyProvider con los
+	// que abre y cierra el sobre del self_pn. El logger va enchufado a propósito —es
+	// la ÚNICA vía por la que se entera nadie de que un sobre no descifró al servir
+	// el listado; sin él, ese fallo sería un campo vacío y ni una línea de log.
+	fleetRepo := fleet.NewPostgresRepository(db, flowDeps.cipher, flowDeps.kp,
+		fleet.WithLogger(log))
+
+	// --- 🔒 BACKFILL DEL self_pn (Plan 046 · T4.1, la mitad en Go de la 0068). ---
+	//
+	// Cifra las filas que todavía tienen el número propio EN CLARO —las que existían
+	// antes de la 0068— y vacía esa columna. La migración no pudo hacerlo: cifrar exige
+	// la KEK y la indexKey, y Postgres no las tiene (es justo lo que hace que el sobre
+	// proteja algo). El porqué de cada decisión —centinela, lotes, modo de fallo,
+	// FULL-REPLAY— vive en el docstring de BackfillSelfPn, no aquí.
+	//
+	// 🔴 POR QUÉ EXACTAMENTE EN ESTE PUNTO DEL ARRANQUE, que es toda la decisión:
+	//
+	//   - DESPUÉS de las migraciones. Las aplica setupDatabase (línea ~77) antes de
+	//     devolver el pool, así que aquí las cuatro columnas del sobre y los dos índices
+	//     de la 0068 EXISTEN seguro. Correrlo antes sería un error de columna inexistente.
+	//   - DESPUÉS de flowDeps (línea ~185) y de fleetRepo, porque necesita el MISMO
+	//     cipher y el MISMO KeyProvider que la persistencia: los bidx que escribe aquí
+	//     tienen que casar con los que leerán SetSelfPn, CountLiveBySelfPn y el
+	//     anti-self-loop. Por eso es un método del repositorio y no una función suelta
+	//     con sus propias claves.
+	//   - ANTES de aceptar tráfico. Ningún listener se ha abierto todavía: el Gateway se
+	//     construye en la línea siguiente y los cuatro servidores no arrancan hasta
+	//     serveAndWait, cientos de líneas más abajo. La ventana en la que un Heartbeat
+	//     podría llegar con el backfill a medias NO EXISTE. (Y si existiera tampoco
+	//     corrompería nada: SetSelfPn y el backfill escriben el mismo sobre y los dos
+	//     llevan el centinela `self_pn_bidx IS NULL` en su WHERE.)
+	//
+	// Es SÍNCRONO y BLOQUEA el arranque a propósito. Lanzarlo en una goroutine haría el
+	// arranque más rápido a cambio de que nadie se entere de que falló, que es la clase
+	// de silencio que este plan existe para eliminar. Un fallo aquí ABORTA el proceso:
+	// solo llega hasta aquí lo que rompe a TODAS las filas (el stack de claves o la BD),
+	// nunca un dato malo de una sesión suelta, que se omite y se cuenta.
+	backfill, err := fleetRepo.BackfillSelfPn(ctx, fleet.DefaultSelfPnBackfillBatch)
+	if err != nil {
+		return fmt.Errorf("backfill del self_pn de la flota (Plan 046 · T4.1): %w", err)
+	}
+	// SIEMPRE se registra, también con los dos contadores a cero: ese «0 y 0» del
+	// segundo arranque en adelante es la prueba de que el centinela funciona y de que
+	// no se está re-cifrando la tabla en cada boot. CERO PII: son filas, no números.
+	//
+	// 🔴 `omitidas` ES EL NÚMERO QUE HAY QUE MIRAR: son filas que se quedaron CON SU
+	// TELÉFONO EN CLARO porque su valor no normaliza. Mientras sea > 0, el criterio (a)
+	// de T4.1 («self_pn en claro = 0 filas») NO se cumple, y cada una dejó además su
+	// propio Warn con los IDs opacos de la fila para poder ir a buscarla.
+	log.Info("backfill del self_pn de la flota",
+		"cifradas", backfill.Encrypted,
+		"omitidas", backfill.Skipped,
+	)
+
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
 		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
@@ -231,13 +322,6 @@ func Run(ctx context.Context) error {
 	flowEngine := engine.New(flowReg, engine.WithContentSource(
 		content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))))
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
-	// Dependencias del Motor que se construyen con fail-fast: el resolver de
-	// contactos (cifrado de PII, Plan 011) y el almacén de objetos R2 (Plan 017).
-	// Se agrupan para no cargar el arranque con dos ramas de error separadas.
-	flowDeps, err := buildFlowRuntimeDeps(ctx, cfg, db)
-	if err != nil {
-		return err
-	}
 
 	triggerStore := trigger.NewPostgresStore(db)
 	// Puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3, D-054.6/D-054.8): junta el MISMO
@@ -359,7 +443,21 @@ func Run(ctx context.Context) error {
 		flowruntime.WithReplyLimiter(replyLimiter),
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
-		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db)),
+		// Guarda anti-self-loop (Plan 020 · T2), que desde el Plan 046 · T4.1 pregunta
+		// por ÍNDICE CIEGO y no por el número en claro: por eso el checker necesita
+		// ahora el KeyProvider.
+		//
+		// 🔴 TIENE QUE SER EL MISMO `flowDeps.kp` QUE USA LA PERSISTENCIA (línea ~203,
+		// fleet.NewPostgresRepository), Y ESO NO ES UNA PREFERENCIA DE ESTILO. El bidx
+		// es hex(HMAC(indexKey, tenant||0x00||número)): si el escritor y el lector
+		// tuvieran DOS KeyProviders con `indexKey` distinta, NINGÚN bidx casaría jamás
+		// —IsSelfNumber devolvería false para todos los números propios— y el
+		// anti-self-loop DEJARÍA DE BLOQUEAR SIN DAR UN SOLO ERROR: no hay excepción,
+		// no hay log, no hay métrica; solo dos sesiones del mismo tenant hablándose
+		// para siempre. Un segundo crypto.NewKeyProvider aquí, aunque lea la misma
+		// config, sería el mismo desastre si alguien cambia una de las dos fuentes.
+		// Por eso se pasa el campo del struct y no se construye nada nuevo.
+		flowruntime.WithSelfNumbers(flowruntime.NewPostgresSelfNumbers(db, flowDeps.kp)),
 		flowruntime.WithIngestDeduper(ingest.NewPostgresDeduper(db)),
 		// Contador de los entrantes que NO llegan al motor reactivo (passive /
 		// self-loop / rate-limit): los tres cortes son silenciosos por diseño, así que
