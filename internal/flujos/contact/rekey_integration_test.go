@@ -78,6 +78,14 @@ func countKEK(t *testing.T, db *sql.DB, tenantID, kekID string) int {
 // el sobre del self_pn. Esa se limpia NULIFICANDO sus columnas de sobre y no
 // borrando la fila —el estado de flota que otros tests dejaron sembrado no es
 // basura, y lo que contamina el conteo es el sobre, no la fila—.
+//
+// 🔴 Desde el Plan 046 · T4.2 el censo tiene CINCO ENTRADAS sobre esas mismas cuatro
+// tablas: public.contacts aparece DOS veces, porque una entrada del censo no describe
+// una tabla sino UN SOBRE, y la fila de contacts tiene dos independientes (el del
+// identificador, value_*, y el del nombre, push_name_*). Esta limpieza NO necesita una
+// sentencia nueva por eso: el `DELETE FROM public.contacts` de abajo se lleva la fila
+// entera y con ella los DOS sobres. Se deja escrito para que nadie añada una quinta
+// sentencia redundante ni dé por descubierto un hueco que no existe.
 func wipeContacts(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, borrado := range []string{
