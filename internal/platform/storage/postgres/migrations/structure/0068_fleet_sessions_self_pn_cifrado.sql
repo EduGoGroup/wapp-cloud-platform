@@ -90,8 +90,9 @@
 -- ADITIVA e IDEMPOTENTE. SchemaVersion sube a 0.41.0.
 --
 -- ------------------------------------------------------------
--- VERIFICACIÓN (no hay PostgreSQL en el entorno donde se escribió esto;
--- estas consultas son para el sweep del CLI / el operador en UAT)
+-- VERIFICACIÓN — ✅ LAS CUATRO EJECUTADAS contra PostgreSQL 16 el 2026-08-21
+-- (se escribieron sin base delante; el barrido del CLI las corrió y salieron
+-- como dicen. V3 se midió arrancando el binario del servidor, no el test)
 -- ------------------------------------------------------------
 --
 -- (V1) Las cuatro columnas existen, NULLABLES y SIN default:
@@ -129,6 +130,24 @@
 --    WHERE self_pn IS NOT NULL AND self_pn <> '';           -- esperado: 0
 --   SELECT count(*) AS cifradas FROM public.fleet_sessions
 --    WHERE self_pn_bidx IS NOT NULL;                        -- esperado: nº de filas que tenían número
+--
+--   🔴 LA PRIMERA MITAD ES ADEMÁS UN CHEQUEO PERMANENTE DE OPERACIÓN, no solo del
+--   despliegue (decisión de Jhoan, 2026-08-21). El backfill OMITE —a propósito— la
+--   fila cuyo número no normaliza: la cuenta, la avisa por WARN con sus IDs opacos,
+--   y esa fila CONSERVA SU TELÉFONO EN CLARO para siempre. Se aceptó ese residuo en
+--   vez de abortar el arranque (crearía un bucle: el supervisor relee la misma fila
+--   y vuelve a morir) y en vez de añadir una métrica (en UAT el cron raspa /metrics
+--   con `-o /dev/null`: nadie consume esas series, así que sería otro sitio donde
+--   mirar, no una alerta).
+--
+--   Por eso ESTA consulta es la señal, y no el log: no depende de que nadie abra
+--   `cloud.log` en el minuto del arranque —que además no pasa por journald— ni de
+--   que un cron siga instalado. Dice la verdad del presente siempre que se corra.
+--   Si devuelve > 0: el WARN de ese arranque identifica la fila (tenant/edge/session)
+--   y la causa; el valor se arregla en origen o se vacía a mano. Medido en UAT el
+--   2026-08-21, ANTES de desplegar: 1 sesión, número de 11 dígitos ya normalizado,
+--   CERO filas no normalizables — y es lo esperable, porque el self_pn no lo teclea
+--   nadie: lo reporta el Edge desde el JID de whatsmeow.
 --
 -- (V4) La invariante «las cuatro o ninguna», que no tiene CHECK que la vigile:
 --
