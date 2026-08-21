@@ -64,6 +64,21 @@ COMMENT ON COLUMN public.contacts.kind       IS 'Tipo de referencia: phone_e164 
 COMMENT ON COLUMN public.contacts.value_bidx IS 'Índice ciego: hex(HMAC-SHA256(indexKey, tenant_id||0x00||value_norm)). Determinista (dedup/lookup), no invertible sin la indexKey (design.md §10.C).';
 COMMENT ON COLUMN public.contacts.value_enc  IS 'Value normalizado cifrado con envelope AES-256-GCM (nonce fresco por fila). El value NUNCA está en claro en la fila (design.md §4).';
 COMMENT ON COLUMN public.contacts.value_dek  IS 'DEK por-valor (32B) envuelta por la KEK maestra (§10.B). Se desenvuelve para descifrar value_enc en el borde de la app.';
-COMMENT ON COLUMN public.contacts.push_name  IS 'Último push_name visto (dato de negocio, EN CLARO, opcional; R-d del ADR-0017).';
+-- La columna `push_name` (en claro) la RETIRA la 0070 (Plan 046 · T5.4). En un
+-- FULL-REPLAY posterior (0070 ya aplicada) esa columna ya no existe y el CREATE
+-- TABLE IF NOT EXISTS de arriba NO la repone —la tabla sí existe—, así que un
+-- COMMENT pelado aquí revienta el arranque con «column does not exist». Mismo
+-- guard, y por el mismo motivo, que el de `value` unas líneas más arriba: se
+-- conserva el COMMENT para la base virgen y se salta en la que ya la perdió.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'contacts'
+          AND column_name = 'push_name'
+    ) THEN
+        COMMENT ON COLUMN public.contacts.push_name IS 'Último push_name visto (dato de negocio, EN CLARO, opcional; R-d del ADR-0017).';
+    END IF;
+END $$;
 COMMENT ON COLUMN public.contacts.created_at IS 'Alta de la referencia.';
 COMMENT ON COLUMN public.contacts.updated_at IS 'Última actualización de la referencia.';

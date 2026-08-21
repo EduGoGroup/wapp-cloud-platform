@@ -24,9 +24,10 @@ import (
 // Desde T4.2 (Plan 046) el push_name TAMBIÉN va cifrado, en un sobre de TRES
 // piezas —push_name_enc, push_name_dek, push_name_kek_id— y SIN índice ciego:
 // nadie busca contactos por su nombre de perfil, así que no hay nada que indexar
-// (migración 0069). La columna en claro push_name sigue existiendo y vacía: su
-// DROP es de T5.4 (D-046.17), y mientras exista, contar filas con push_name no
-// nulo es la prueba de que el backfill hizo su trabajo.
+// (migración 0069). La columna en claro push_name ya no existe: la retiró la 0070
+// (T5.4, D-046.17). Mientras existió, contar filas con push_name no nulo era la
+// prueba de que el backfill había hecho su trabajo; hoy no hay nada que contar
+// porque no hay dónde escribirlo.
 //
 // 🔴 NO HAY MÉTODO DE LECTURA DEL push_name, Y ES DELIBERADO. Se comprobó antes
 // de escribir T4.2: push_name no aparece en NINGÚN SELECT de este repositorio y
@@ -144,10 +145,10 @@ func (r *PostgresResolver) lookupContactIDs(ctx context.Context, tx *sql.Tx, ten
 // contact_id existente en lugar de fallar con duplicate key (23505), igual que
 // el hermano attachRef.
 //
-// El push_name entra ya CIFRADO (T4.2): la columna en claro no se escribe nunca
-// más desde Go. Con el nombre vacío las tres columnas del sobre van a NULL —la
-// invariante de la fila es «las tres o ninguna»—, que es lo que hacía nullStr con
-// la columna en claro y ahora hace pushNameEnvelope.
+// El push_name entra ya CIFRADO (T4.2), y desde la 0070 (T5.4) no hay ninguna otra
+// forma de que entre: la columna en claro no existe. Con el nombre vacío las tres
+// columnas del sobre van a NULL —la invariante de la fila es «las tres o ninguna»—,
+// que es lo que hacía nullStr con la columna en claro y ahora hace pushNameEnvelope.
 func (r *PostgresResolver) insertNewContact(ctx context.Context, tx *sql.Tx, tenantID string, refs []Ref, pushName string) (string, error) {
 	bidx, enc, dek, kekID, err := r.encodeRef(tenantID, refs[0])
 	if err != nil {
@@ -292,26 +293,18 @@ func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tena
 		// nombre en WhatsApp, la fila conserva el primero. Es un dato de negocio
 		// auxiliar y hoy nadie lo lee (ver el docstring del tipo).
 		//
-		// 🔴 EL `push_name = NULL` DEL SET ES UNA ENMIENDA AL LITERAL DE MD-046.5, y se
-		// hace a sabiendas: la decisión de Jhoan fijaba la GUARDA (el centinela en vez
-		// de la comparación por contenido), que es el problema que estaba resolviendo,
-		// y su cláusula SET se escribió pensando en una fila nueva —donde la columna en
-		// claro ya nace vacía y da igual—. Sobre una fila LEGACY no da igual, y el
-		// agujero es este: si un entrante toca una fila anterior a la migración ANTES de
-		// que el backfill la vea, este UPDATE le escribe el sobre y le deja el nombre EN
-		// CLARO al lado; a partir de ese instante la fila ya no casa el centinela
-		// `push_name_enc IS NULL` del backfill, así que NADIE la vuelve a mirar y ese
-		// nombre se queda en claro PARA SIEMPRE — con el criterio (a) de T4.2 sin poder
-		// llegar a cero nunca. La ventana es estrecha (el backfill corre antes de que
-		// ESTE proceso acepte tráfico) pero no es cero: en un despliegue con solape o
-		// con dos réplicas hay otra instancia sirviendo mientras esta arranca.
+		// 🔧 EL SET LLEVABA ADEMÁS `push_name = NULL` HASTA T5.4, y merece la pena saber
+		// por qué estaba y por qué ya no. Se añadió como enmienda al literal de MD-046.5
+		// para tapar un agujero real de las filas LEGACY: si un entrante tocaba una fila
+		// anterior a la 0069 ANTES de que el backfill la viera, este UPDATE le escribía
+		// el sobre y le dejaba el nombre EN CLARO al lado; desde ese instante la fila ya
+		// no casaba el centinela `push_name_enc IS NULL` del backfill, así que nadie la
+		// volvía a mirar y ese nombre se quedaba en claro para siempre.
 		//
-		// Escribir el sobre y vaciar el claro EN EL MISMO UPDATE es además la regla que
-		// ya gobierna a su gemelo de T4.1 (SetSelfPn y su backfill): la fila no puede
-		// quedar, ni un instante, con el dato en claro Y el sobre a la vez. La enmienda
-		// no relaja la decisión de MD-046.5, la completa; cuesta cuatro palabras y no
-		// cambia ni la guarda ni la semántica de «gana el primer nombre no vacío».
-		// El DROP de la columna sigue siendo de T5.4 (D-046.17).
+		// La 0070 (T5.4) retiró la columna en claro y con ella el backfill: no hay fila
+		// legacy que tapar ni columna que vaciar. Lo que queda es lo que siempre fue el
+		// fondo del asunto — el CENTINELA `push_name_enc IS NULL` del WHERE, que es la
+		// decisión de MD-046.5 y sigue intacta.
 		pnEnc, pnDek, pnKekID, encErr := r.pushNameEnvelope(pushName)
 		if encErr != nil {
 			return "", encErr
@@ -319,7 +312,7 @@ func (r *PostgresResolver) resolveExisting(ctx context.Context, tx *sql.Tx, tena
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE public.contacts
 			   SET push_name_enc = $1, push_name_dek = $2, push_name_kek_id = $3,
-			       push_name = NULL, updated_at = now()
+			       updated_at = now()
 			 WHERE tenant_id = $4 AND contact_id = $5 AND push_name_enc IS NULL
 		`, pnEnc, pnDek, pnKekID, tenantID, canonical); err != nil {
 			return "", fmt.Errorf("contact: actualizar push_name: %w", err)

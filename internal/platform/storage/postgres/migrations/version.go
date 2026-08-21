@@ -176,9 +176,10 @@ import (
 // Las cuatro nacen NULLABLES y SIN default, y a diferencia de la 0063 NO reciben
 // jamás un SET NOT NULL: una sesión sin emparejar legítimamente no tiene número, así
 // que NULL es un estado CORRECTO y no un hueco a rellenar. La columna en claro
-// self_pn SE CONSERVA y queda VACÍA — su DROP es otra migración, de otra tarea.
-// La migración NO cifra: la KEK no vive en esta BD (ADR-0007/0009), así que el
-// backfill es un paso de Go y no puede ser un runbook SQL como el del Plan 053.
+// self_pn SE CONSERVÓ y quedó VACÍA — 🔧 y ya no existe: su DROP fue la 0070 (T5.4).
+// La migración NO cifraba: la KEK no vive en esta BD (ADR-0007/0009), así que el
+// backfill era un paso de Go y no podía ser un runbook SQL como el del Plan 053. Ese
+// paso se retiró con la columna.
 // Además del índice del lookup ciego (tenant_id, self_pn_bidx) trae el índice de
 // rotación por self_pn_kek_id, que las otras tres tablas del censo de rekeyTargets
 // ya tenían.
@@ -216,12 +217,13 @@ import (
 // esta MISMA tabla hizo lo contrario (value_kek_id NOT NULL DEFAULT '1'): allí toda
 // fila tenía ya una DEK que envolver, y aquí no.
 //
-// La columna en claro push_name SE CONSERVA y queda VACÍA -- su DROP es de T5.4
-// (D-046.17), que la retira junto con fleet_sessions.self_pn en una sola migración
-// cuando las dos estén verificadas en campo. Mientras exista, el conteo en claro es
-// la PRUEBA de que el backfill funcionó. La migración NO cifra: la KEK no vive en
-// esta BD (ADR-0007/0009), así que el relleno es un paso de Go colgado del arranque
-// (contact.PostgresResolver.BackfillPushName) y no puede ser un runbook SQL.
+// La columna en claro push_name SE CONSERVÓ y quedó VACÍA. 🔧 Ya no existe: la 0070
+// (T5.4) la retiró junto con fleet_sessions.self_pn, una vez las dos estuvieron
+// verificadas en campo. Mientras existió, el conteo en claro fue la PRUEBA de que el
+// backfill funcionó. La migración NO cifraba: la KEK no vive en esta BD
+// (ADR-0007/0009), así que el relleno era un paso de Go colgado del arranque
+// (contact.PostgresResolver.BackfillPushName) y no podía ser un runbook SQL. Ese paso
+// se retiró con la columna: sin claro que migrar, su SELECT no tenía dónde mirar.
 //
 // Trae además el índice parcial de rotación idx_contacts_push_name_kek, porque T4.2
 // mete una SEGUNDA entrada de public.contacts en el censo de rekeyTargets: son dos
@@ -266,7 +268,33 @@ import (
 // El bump no es opcional, por lo de siempre: la 0.42.0 ya se publicó y ya se desplegó
 // en UAT el 2026-08-21 con T4.2, así que su número ya está escrito en la fila de
 // public.schema_version de Neon.
-const SchemaVersion = "0.43.0"
+//
+// 0.44.0 -- Plan 046 · Ola 5 · T5.4 (0070): MUEREN LAS DOS COLUMNAS DE PII EN CLARO
+// que quedaron vivas y vacías tras los backfills cifrados -- fleet_sessions.self_pn
+// (la trajo la 0028, la vació T4.1) y contacts.push_name (la trajo la 0005, la vació
+// T4.2). Cierra el saneo de PII del plan: a partir de aquí no hay en toda la base UNA
+// SOLA columna donde quepa un teléfono o un nombre sin cifrar. D-046.17.
+//
+// 🔴 LA MIGRACIÓN ES LA MITAD PEQUEÑA. La otra mitad, en el MISMO commit, es retirar
+// el código Go que nombra esas dos columnas en su SQL: los dos backfills de arranque
+// (fleet.BackfillSelfPn y contact.BackfillPushName), el `self_pn = NULL` de SetSelfPn
+// con su guarda `OR self_pn IS NOT NULL`, y el `push_name = NULL` de resolveExisting.
+// Los backfills BLOQUEAN el arranque y abortan el proceso si su consulta falla, así
+// que desplegar el DROP sin ellos deja la plataforma SIN ARRANCAR con «column does
+// not exist». No es limpieza posterior: es parte de la migración.
+//
+// 🔴 Y ES EL PUNTO DE NO RETORNO DE LA PRUEBA. Mientras esas columnas existieron,
+// `count(*) WHERE self_pn IS NOT NULL` y su gemela de push_name eran LA evidencia de
+// que los backfills funcionaron -- el criterio (a) de T4.1 y T4.2. Después de la 0070
+// esa consulta ya no se puede hacer. Por eso T5.4 exige correrla contra UAT y anotarla
+// en el journal justo antes de aplicar: es la última vez que la prueba es posible.
+//
+// El bump no es opcional: la 0.43.0 ya se publicó y ya se desplegó en UAT el
+// 2026-08-21 con T4.4, así que su número ya está escrito en la fila de
+// public.schema_version de Neon. Y aquí el número importa más que de costumbre --
+// es lo único que distingue, ANTES de arrancar, una base donde el binario nuevo puede
+// correr de una donde su primer SELECT encontraría columnas que ya no espera.
+const SchemaVersion = "0.44.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

@@ -27,8 +27,9 @@ var ErrSelfNumbersSinKeyProvider = errors.New("self_numbers: sin KeyProvider no 
 // Hasta la T4.1 esto era un LISTER: traía a memoria TODOS los self_pn en claro del
 // tenant y el llamante los recorría comparando strings. Eso tenía dos costes que el
 // plan viene a eliminar:
-//   - la columna en claro self_pn deja de existir como fuente (queda VACÍA tras la
-//     migración de la ola): el número vive cifrado en self_pn_enc/self_pn_dek/
+//   - la columna en claro self_pn dejó de existir como fuente (quedó VACÍA con la
+//     migración de la ola y la 0070 la borró): el número vive cifrado en
+//     self_pn_enc/self_pn_dek/
 //     self_pn_kek_id, y lo BUSCABLE es self_pn_bidx. Con la lista habría que
 //     DESCIFRAR N números por cada entrante solo para tirarlos; con el predicado no
 //     se descifra NADA — el HMAC del remitente se compara contra el HMAC guardado.

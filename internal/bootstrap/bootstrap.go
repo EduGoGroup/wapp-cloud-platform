@@ -21,7 +21,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/content"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -216,91 +215,22 @@ func Run(ctx context.Context) error {
 	fleetRepo := fleet.NewPostgresRepository(db, flowDeps.cipher, flowDeps.kp,
 		fleet.WithLogger(log))
 
-	// --- 🔒 BACKFILL DEL self_pn (Plan 046 · T4.1, la mitad en Go de la 0068). ---
+	// 📌 AQUÍ VIVÍAN LOS DOS BACKFILLS CIFRADOS DEL PLAN 046 (T4.1 y T4.2), y se dice
+	// en vez de dejar el hueco: cifraban las filas que todavía tenían el número propio
+	// y el nombre del contacto EN CLARO —las anteriores a las migraciones 0068 y 0069—
+	// y vaciaban esas dos columnas. Corrían síncronos y bloqueando el arranque, después
+	// de las migraciones y antes de que se abriera un solo listener.
 	//
-	// Cifra las filas que todavía tienen el número propio EN CLARO —las que existían
-	// antes de la 0068— y vacía esa columna. La migración no pudo hacerlo: cifrar exige
-	// la KEK y la indexKey, y Postgres no las tiene (es justo lo que hace que el sobre
-	// proteja algo). El porqué de cada decisión —centinela, lotes, modo de fallo,
-	// FULL-REPLAY— vive en el docstring de BackfillSelfPn, no aquí.
+	// Se retiraron con la 0070 (T5.4), que BORRA las dos columnas en claro: ya no hay
+	// nada que migrar, y su primer SELECT —`WHERE self_pn IS NOT NULL`— habría abortado
+	// el arranque con «column does not exist». Van en el MISMO commit por eso: no es
+	// limpieza posterior, es la otra mitad de esa migración.
 	//
-	// 🔴 POR QUÉ EXACTAMENTE EN ESTE PUNTO DEL ARRANQUE, que es toda la decisión:
-	//
-	//   - DESPUÉS de las migraciones. Las aplica setupDatabase (línea ~77) antes de
-	//     devolver el pool, así que aquí las cuatro columnas del sobre y los dos índices
-	//     de la 0068 EXISTEN seguro. Correrlo antes sería un error de columna inexistente.
-	//   - DESPUÉS de flowDeps (línea ~185) y de fleetRepo, porque necesita el MISMO
-	//     cipher y el MISMO KeyProvider que la persistencia: los bidx que escribe aquí
-	//     tienen que casar con los que leerán SetSelfPn, CountLiveBySelfPn y el
-	//     anti-self-loop. Por eso es un método del repositorio y no una función suelta
-	//     con sus propias claves.
-	//   - ANTES de aceptar tráfico. Ningún listener se ha abierto todavía: el Gateway se
-	//     construye en la línea siguiente y los cuatro servidores no arrancan hasta
-	//     serveAndWait, cientos de líneas más abajo. La ventana en la que un Heartbeat
-	//     podría llegar con el backfill a medias NO EXISTE. (Y si existiera tampoco
-	//     corrompería nada: SetSelfPn y el backfill escriben el mismo sobre y los dos
-	//     llevan el centinela `self_pn_bidx IS NULL` en su WHERE.)
-	//
-	// Es SÍNCRONO y BLOQUEA el arranque a propósito. Lanzarlo en una goroutine haría el
-	// arranque más rápido a cambio de que nadie se entere de que falló, que es la clase
-	// de silencio que este plan existe para eliminar. Un fallo aquí ABORTA el proceso:
-	// solo llega hasta aquí lo que rompe a TODAS las filas (el stack de claves o la BD),
-	// nunca un dato malo de una sesión suelta, que se omite y se cuenta.
-	backfill, err := fleetRepo.BackfillSelfPn(ctx, fleet.DefaultSelfPnBackfillBatch)
-	if err != nil {
-		return fmt.Errorf("backfill del self_pn de la flota (Plan 046 · T4.1): %w", err)
-	}
-	// SIEMPRE se registra, también con los dos contadores a cero: ese «0 y 0» del
-	// segundo arranque en adelante es la prueba de que el centinela funciona y de que
-	// no se está re-cifrando la tabla en cada boot. CERO PII: son filas, no números.
-	//
-	// 🔴 `omitidas` ES EL NÚMERO QUE HAY QUE MIRAR: son filas que se quedaron CON SU
-	// TELÉFONO EN CLARO porque su valor no normaliza. Mientras sea > 0, el criterio (a)
-	// de T4.1 («self_pn en claro = 0 filas») NO se cumple, y cada una dejó además su
-	// propio Warn con los IDs opacos de la fila para poder ir a buscarla.
-	log.Info("backfill del self_pn de la flota",
-		"cifradas", backfill.Encrypted,
-		"omitidas", backfill.Skipped,
-	)
-
-	// --- 🔒 BACKFILL DEL push_name (Plan 046 · T4.2, la mitad en Go de la 0069). ---
-	//
-	// El gemelo del de arriba, para el nombre del contacto: cifra las filas de
-	// public.contacts que todavía lo tienen EN CLARO —las anteriores a la 0069— y
-	// vacía esa columna. Vale aquí, palabra por palabra, todo el razonamiento del
-	// bloque de T4.1 sobre POR QUÉ ESTE PUNTO del arranque (después de las
-	// migraciones, después de flowDeps —de donde sale el MISMO cipher y el MISMO
-	// KeyProvider que usa la persistencia—, y antes de que se abra un solo listener)
-	// y sobre por qué es SÍNCRONO y bloqueante. No se repite; se dice que aplica.
-	//
-	// 🔴 LAS DOS DIFERENCIAS CON SU GEMELO, QUE SON LAS QUE HAY QUE MIRAR AQUÍ:
-	//
-	//   - NO HAY CONTADOR DE OMITIDAS, y su ausencia es la noticia. El backfill del
-	//     self_pn tiene un tercer desenlace —la fila cuyo número no NORMALIZA, que se
-	//     queda con su teléfono en claro para siempre— porque allí el valor es un
-	//     identificador con formato. El push_name es TEXTO LIBRE: no se normaliza, no
-	//     se indexa a ciegas y por tanto NO PUEDE FALLAR por su contenido. Solo hay
-	//     éxitos, de dos clases. Si algún día aparece aquí un contador de omitidas,
-	//     alguien ha metido una validación que no debería estar.
-	//   - `vaciadas` cuenta las filas que tenían la CADENA VACÍA y se nulificaron SIN
-	//     cifrarlas. Debe ser 0 y quedarse en 0: desde Go esa fila es inalcanzable
-	//     (nullStr convierte el vacío en NULL en los dos INSERT), así que un número
-	//     distinto de cero significa que algo escribió en esa columna por fuera del
-	//     código — SQL a mano o un binario antiguo. No es un error y no aborta nada,
-	//     pero es un dato que merece una pregunta.
-	//
-	// El «0 y 0» del segundo arranque en adelante es, igual que arriba, la prueba de
-	// que el centinela funciona y de que no se está re-cifrando la tabla en cada boot.
-	// CERO PII: son filas, no nombres. Y el criterio (a) de T4.2 NO se lee de aquí —
-	// RowsAffected es trabajo hecho, no censo—: se lee de la consulta (V3) de la 0069.
-	pushNameBackfill, err := flowDeps.contactsPG.BackfillPushName(ctx, contact.DefaultPushNameBackfillBatch)
-	if err != nil {
-		return fmt.Errorf("backfill del push_name de contactos (Plan 046 · T4.2): %w", err)
-	}
-	log.Info("backfill del push_name de contactos",
-		"cifradas", pushNameBackfill.Encrypted,
-		"vaciadas", pushNameBackfill.Emptied,
-	)
+	// 🔴 Lo que se fue con ellos, dicho para que nadie lo busque: la consulta
+	// `count(*) WHERE self_pn IS NOT NULL = 0` que acreditaba el saneo. Ya no se puede
+	// hacer —la columna que cuenta no existe— y su última ejecución contra UAT quedó
+	// anotada en el journal (criterio (c) de T5.4). La garantía pasó de ser un conteo
+	// a ser el esquema: no hay dónde escribir un teléfono en claro.
 
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
