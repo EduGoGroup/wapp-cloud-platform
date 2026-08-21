@@ -538,7 +538,7 @@ type TenantSettings struct {
 
 // DefaultTenantSettings es la config que vale para un tenant SIN fila en
 // public.tenant_settings. Espeja los DEFAULT de las columnas (migraciones 0013,
-// 0034, 0045 y 0052) y es la ÚNICA definición de ese juego de valores: la usan
+// 0034, 0045, 0052 y 0067) y es la ÚNICA definición de ese juego de valores: la usan
 // tanto PostgresRepository como MemoryRepository, para que los dos no puedan
 // divergir en silencio como divergirían dos literales copiados.
 //
@@ -549,9 +549,12 @@ func DefaultTenantSettings(tenantID string) TenantSettings {
 		TenantID: tenantID,
 		PageSize: DefaultPageSize,
 		OrderTTL: DefaultOrderTTL,
-		// ConversationTTL 0 ⇒ sin vencimiento (default seguro: tenants sin fila nunca
-		// vencen su conversación, no-regresión). BuyerFields nil ⇒ el carrito no
-		// pregunta nada, que es el comportamiento previo a T4.5.
+		// 🔴 ConversationTTL SE NOMBRA DESDE T4.4 (Plan 046), y omitirlo era el defecto:
+		// mientras no estuvo aquí valía el cero de Go, o sea «sin vencimiento», y este
+		// es el camino por el que pasan los tenants SIN fila --hoy 2 de 3 en UAT--, que
+		// NO leen el DEFAULT de la 0067. Sin esta línea, aquel ALTER no habría llegado a
+		// la mayoría de los tenants. BuyerFields nil ⇒ el carrito no pregunta nada.
+		ConversationTTL:    DefaultConversationTTL,
 		EventInactivityTTL: DefaultEventInactivityTTL,
 		EventHistoryTTL:    DefaultEventHistoryTTL,
 	}
@@ -583,7 +586,9 @@ type BuyerField struct {
 }
 
 // Defaults de tenant_settings (design.md §9.E/§9.G): valen cuando el tenant no
-// tiene fila en public.tenant_settings. Espejan los DEFAULT de la migración 0013.
+// tiene fila en public.tenant_settings. Espejan los DEFAULT de las migraciones 0013,
+// 0034 (conversation_ttl_seconds, hoy con el DEFAULT que le puso la 0067), 0045 y
+// 0052.
 const (
 	// DefaultPageSize es el tamaño de página por defecto de la paginación del carrito.
 	DefaultPageSize = 5
@@ -591,6 +596,22 @@ const (
 	// migración 0013. DEROGADO como causa de muerte (D-041.16): es el valor que se
 	// devuelve cuando el tenant no tiene fila, no un plazo que alguien aplique.
 	DefaultOrderTTL = time.Hour
+	// DefaultConversationTTL es el default de PLATAFORMA de conversation_ttl_seconds
+	// (7200s = 2h, D-046.12 / REQ-19) que espeja el DEFAULT de la migración 0067.
+	//
+	// 🔴 ANTES ERA 0, Y EL 0 SIGNIFICABA «SIN VENCIMIENTO». Esa era la raíz del
+	// hallazgo de privacidad del Plan 046: con 0, el flow_state y sus vars --que
+	// llevan el TEXTO LITERAL del cliente-- no caducaban nunca. El valor se igualó al
+	// del reloj único (DefaultEventInactivityTTL) por D-046.12.
+	//
+	// Que compartan número NO los convierte en la misma clave: este es el reloj
+	// SUBORDINADO y solo se evalúa con flow_state.event_id IS NULL; con evento
+	// conversacional activo manda el otro (ADR-0029 §E-9.2). Colapsarlos está
+	// prohibido.
+	//
+	// Vale para el tenant SIN fila; un tenant CON fila manda siempre, incluido su 0
+	// explícito, que sigue siendo un override legítimo («sin vencimiento»).
+	DefaultConversationTTL = 2 * time.Hour
 	// DefaultEventInactivityTTL es el default de PLATAFORMA de
 	// event_inactivity_ttl_seconds (7200s = 2h, D-043.7 / ADR-0029 E-6) que espeja el
 	// DEFAULT de la migración 0052. Vale para el tenant SIN fila; un tenant CON fila

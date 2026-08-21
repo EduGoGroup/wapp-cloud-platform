@@ -237,7 +237,36 @@ import (
 // cuatro. Y aquí pesa, porque T4.1 y T4.2 son los dos backfills cifrados de la ola y
 // NO van en el mismo despliegue: sin bump, las dos bases -- la que solo tiene el sobre
 // del self_pn y la que ya tiene los dos -- se declararían idénticas.
-const SchemaVersion = "0.42.0"
+// 0.43.0 -- Plan 046 · Ola 4 · T4.4 (0067): conversation_ttl_seconds deja de nacer
+// en 0. El DEFAULT pasa a 7200 (2 h), igualado al reloj único
+// event_inactivity_ttl_seconds. Cierra REQ-19 y el hallazgo de privacidad de la ola:
+// con 0 --que la 0034 puso queriendo decir «sin vencimiento»-- el flow_state y sus
+// vars, que llevan el TEXTO LITERAL del cliente, no caducaban NUNCA. No era config:
+// era retención infinita por defecto, lo que el ADR-0034 prohíbe.
+//
+// 🔴 EL BUMP LO PIDE EL ESPEJO EN GO, NO EL SQL. El ALTER de la 0067 solo gobierna a
+// los tenants CON fila en tenant_settings; el tenant SIN fila lee
+// store.DefaultTenantSettings, que hasta esta tarea omitía ConversationTTL y por
+// tanto devolvía el cero de Go. Las dos mitades tienen que viajar juntas, y este
+// número es lo que le dice al operador si la base que tiene delante lleva ya las dos.
+//
+// 🔴 LA 0067 NO TRAE UN UPDATE DE LAS FILAS EXISTENTES, y no es un olvido: el runner
+// es FULL-REPLAY, así que un UPDATE incondicional no correría una vez sino en cada
+// arranque que recalcule el hash, y pisaría al tenant que eligiera 0 a propósito. La
+// columna es NOT NULL y no hay centinela que sirva de guard (el truco de la 0063,
+// profile IS NULL, aquí no existe). El backfill vive en
+// docs/runbooks/backfill-046-conversation-ttl.sql y se corre UNA vez -- mismo
+// precedente que el del Plan 053, citado más arriba en este fichero.
+//
+// 🔴 NO COLAPSA LOS DOS RELOJES (ADR-0029 §E-9.2). Que ahora compartan el número 7200
+// es una coincidencia deliberada de valor, NO una unificación de claves: este es el
+// SUBORDINADO y solo se evalúa con flow_state.event_id IS NULL. Colapsarlos está
+// prohibido desde el 2026-08-06.
+//
+// El bump no es opcional, por lo de siempre: la 0.42.0 ya se publicó y ya se desplegó
+// en UAT el 2026-08-21 con T4.2, así que su número ya está escrito en la fila de
+// public.schema_version de Neon.
+const SchemaVersion = "0.43.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

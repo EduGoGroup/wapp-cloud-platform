@@ -1,0 +1,80 @@
+-- ============================================================
+-- 0067: conversation_ttl_seconds deja de nacer en 0 (Plan 046 · Ola 4 · T4.4,
+-- D-046.12, REQ-19).
+--
+-- QUÉ CAMBIA: el DEFAULT de la columna pasa de 0 a 7200 (2 h), igualado al reloj
+-- único event_inactivity_ttl_seconds (0052_event_seams.sql:106-107, NOT NULL
+-- DEFAULT 7200). El 0 que puso la 0034 significa «SIN vencimiento», y esa es la
+-- raíz del hallazgo de privacidad de esta ola: con 0, el flow_state y sus vars
+-- --que llevan el TEXTO LITERAL del cliente-- no caducan NUNCA. No era un detalle
+-- de configuración: era retención infinita por defecto, justo lo que el ADR-0034
+-- prohíbe.
+--
+-- ⚖️ EL PRECIO, ACEPTADO Y ESCRITO (D-046.12): el cliente que vuelve pasadas 2 h
+-- recibe el saludo otra vez. Su pedido en curso NO se pierde: la orden sigue open,
+-- y la guarda st.EventID != "" de runtime/incoming.go impide llegar al borrado
+-- mientras haya un evento conversacional vivo.
+--
+-- 🔴 ESTA MIGRACIÓN NO LLEVA UN «UPDATE» DE LAS FILAS EXISTENTES, Y ESO ES
+-- DELIBERADO. SET DEFAULT gobierna las filas FUTURAS; las que ya existen se quedan
+-- con su 0 y hay que moverlas aparte. Pero el runner de este repo es hash-based
+-- FULL-REPLAY (migrations/version.go:12-16: tocar un structure/*.sql cambia el
+-- hash, así que las migraciones SE REEJECUTAN), de modo que un UPDATE incondicional
+-- aquí no correría «una vez»: correría en CADA arranque que recalcule el hash. Un
+-- tenant que mañana elija 0 a propósito --un override legítimo, «sin vencimiento»--
+-- volvería a 7200 solo. Y no hay valor centinela con el que guardar el UPDATE: la
+-- columna es NOT NULL, así que el truco de la 0063 (profile IS NULL) aquí NO existe.
+-- ⇒ el backfill vive en docs/runbooks/backfill-046-conversation-ttl.sql y se ejecuta
+-- UNA vez, con el precedente literal del Plan 053 (version.go:104-107).
+--
+-- 🔴 Y NO BASTA CON ESTA MIGRACIÓN: un tenant SIN fila en public.tenant_settings no
+-- lee este DEFAULT, lee los defaults de Go (GetTenantSettings devuelve
+-- DefaultTenantSettings en ErrNoRows). El espejo es store.DefaultConversationTTL y
+-- se cablea en la misma tarea; sin él, este cambio no llega a los tenants sin fila,
+-- que hoy en UAT son 2 de 3.
+--
+-- 🔴 NO COLAPSA LOS DOS RELOJES (ADR-0029 §E-9.2, cerrado el 2026-08-06). Este es el
+-- reloj SUBORDINADO: solo se evalúa con flow_state.event_id IS NULL. Con un evento
+-- conversacional activo manda event_inactivity_ttl_seconds. Que ahora compartan
+-- número (7200) NO los convierte en la misma clave, y ningún código debe tratarlos
+-- como una sola.
+--
+-- ADITIVA e IDEMPOTENTE: ALTER COLUMN ... SET DEFAULT es re-aplicable N veces sin
+-- daño y NO reescribe la tabla (solo toca el catálogo). CERO PII / CERO llaves: es
+-- config de negocio. El número de esta migración (0067) quedó HUECO a propósito
+-- cuando T4.1 tomó el 0068 y T4.2 el 0069; que el hueco no altera el orden ni el
+-- arranque se comprobó al desplegar T4.1.
+-- ============================================================
+
+ALTER TABLE public.tenant_settings
+    ALTER COLUMN conversation_ttl_seconds SET DEFAULT 7200;
+
+COMMENT ON COLUMN public.tenant_settings.conversation_ttl_seconds IS 'TTL de la CONVERSACION en segundos (default 7200 = 2h desde el Plan 046 T4.4, D-046.12; antes 0 = sin vencimiento). Reloj SUBORDINADO: solo se evalua con flow_state.event_id IS NULL — con evento conversacional activo manda event_inactivity_ttl_seconds (ADR-0029 E-9.2). Un tenant CON fila manda siempre, incluido su 0 explicito. Distinto de order_ttl_seconds (TTL de la orden, derogado como causa de muerte por D-041.16).';
+
+-- ── VERIFICACIÓN (a mano, tras aplicar) ──────────────────────────────────────
+--
+-- (V1) El DEFAULT quedó puesto:
+--
+--   SELECT column_default, is_nullable, data_type
+--     FROM information_schema.columns
+--    WHERE table_schema = 'public'
+--      AND table_name   = 'tenant_settings'
+--      AND column_name  = 'conversation_ttl_seconds';
+--
+--   Esperado: column_default = '7200', is_nullable = 'NO', data_type = 'integer'.
+--
+-- (V2) Una fila NUEVA que no nombre la columna la recibe en 7200 --que es el
+--      criterio (b) de T4.4, y se lee de la BD y no del struct de Go:
+--
+--   INSERT INTO public.tenant_settings (tenant_id) VALUES ('t-prueba-0067');
+--   SELECT conversation_ttl_seconds FROM public.tenant_settings
+--    WHERE tenant_id = 't-prueba-0067';   -- 7200
+--   DELETE FROM public.tenant_settings WHERE tenant_id = 't-prueba-0067';
+--
+-- (V3) Las filas que YA existían NO se movieron con esta migración (es lo que
+--      prueba que el UPDATE no viaja aquí). Antes de correr el runbook:
+--
+--   SELECT count(*) FROM public.tenant_settings WHERE conversation_ttl_seconds = 0;
+--
+--   Un número > 0 aquí es lo NORMAL y lo esperado; lo que lo lleva a 0 es
+--   docs/runbooks/backfill-046-conversation-ttl.sql, ejecutado una sola vez.
