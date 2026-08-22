@@ -542,6 +542,23 @@ type TenantSettings struct {
 	// POR ESCRIBIR LA PODA, no por elegir un número: mientras no exista el barrido,
 	// cambiar este valor no hace absolutamente nada.
 	EventHistoryTTL time.Duration
+	// AggregationWindow es LA VENTANA DEL AGREGADOR de captación (Plan 044 · T1.2,
+	// migración 0072 · aggregation_window_seconds INTEGER NOT NULL DEFAULT 45).
+	// Cuántos segundos espera el AggregatorSink DESDE EL PRIMER MENSAJE de la
+	// ventana antes de cerrarla (aggregating -> pending) y disparar el pipeline.
+	//
+	// 🔴 ES LA LATENCIA DE PEOR CASO DEL PIPELINE, y desde T1.7 eso hay que leerlo
+	// literal: el `ClassifiedIntent` del Edge PUEDE NO LLEGAR NUNCA por causas
+	// NORMALES (presupuesto de espera del despachador, mensaje sin texto, grupo,
+	// breaker abierto), así que con el intent ausente esta ventana es la latencia de
+	// TODOS los casos, no la del peor. Pesa directamente sobre la métrica reina del
+	// plan (primer borrador en < 5 min, T6.1).
+	//
+	// 🔴 0 ES UN OVERRIDE LEGÍTIMO y significa FLUSH INMEDIATO —un pipeline por
+	// mensaje, que es lo que el sistema hacía antes de esta ola—, no «sin
+	// configurar». La distinción es la misma que muerde en EventInactivityTTL: con
+	// fila, el 0 se respeta; sin fila manda DefaultAggregationWindow (45 s).
+	AggregationWindow time.Duration
 }
 
 // DefaultTenantSettings es la config que vale para un tenant SIN fila en
@@ -565,6 +582,14 @@ func DefaultTenantSettings(tenantID string) TenantSettings {
 		ConversationTTL:    DefaultConversationTTL,
 		EventInactivityTTL: DefaultEventInactivityTTL,
 		EventHistoryTTL:    DefaultEventHistoryTTL,
+		// 🔴 AggregationWindow SE NOMBRA AQUÍ POR EL MISMO MOTIVO QUE ConversationTTL
+		// arriba, y omitirla sería repetir EXACTAMENTE aquel defecto (design §6.5, el
+		// cuarto sitio): sin esta línea, un tenant SIN fila se quedaría con el cero de
+		// Go, y aquí el 0 no significa «sin configurar» sino FLUSH INMEDIATO — o sea,
+		// la agregación apagada en silencio para todos los tenants que no tienen fila,
+		// que hoy son 2 de 3 en UAT. El DEFAULT 45 de la 0072 solo alcanza a las filas
+		// que existen; este espejo alcanza a las que no.
+		AggregationWindow: DefaultAggregationWindow,
 	}
 }
 
@@ -633,6 +658,15 @@ const (
 	// No hay poda que la obedezca ni se va a construir. Ver el comentario del campo
 	// EventHistoryTTL en TenantSettings, que lleva el detalle.
 	DefaultEventHistoryTTL = time.Duration(0)
+	// DefaultAggregationWindow es el default de PLATAFORMA de
+	// aggregation_window_seconds (45 s, Plan 044 · T1.2) que espeja el DEFAULT de la
+	// migración 0072. Vale para el tenant SIN fila; un tenant CON fila manda siempre,
+	// incluido su 0 explícito, que aquí significa FLUSH INMEDIATO (sin agregación).
+	//
+	// ⚠️ NO es un número de estilo: es la latencia que el cliente espera a su primer
+	// borrador cuando el intent no llega (T1.7), y el 044 se mide contra «< 5 min»
+	// (T6.1). Subirlo es gastar ese presupuesto.
+	DefaultAggregationWindow = 45 * time.Second
 )
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna

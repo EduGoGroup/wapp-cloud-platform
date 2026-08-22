@@ -709,6 +709,13 @@ func (r *MemoryRepository) IntakeItems(intakeID string) []IntakeItem {
 // fila creada en Postgres sin nombrar la columna traería 2 h. Para sembrar un tenant
 // realista parte de DefaultTenantSettings(tenantID) y cambia lo que el test necesite;
 // el 0 déjalo solo cuando el 0 sea lo que se está probando.
+//
+// 🔴 Desde el Plan 044 · T1.2 la trampa tiene un SEGUNDO campo, y es peor que el
+// primero: AggregationWindow a 0 significa FLUSH INMEDIATO (un pipeline por mensaje,
+// agregación apagada), no «45 s por defecto». Un test que siembre a mano y no la
+// nombre estará probando el agregador con la ventana desactivada y verá N jobs donde
+// la producción vería UNO. Este repo NO parchea ceros a propósito (misma regla que el
+// Postgres): parte de DefaultTenantSettings.
 func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

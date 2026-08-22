@@ -851,14 +851,16 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		buyerFields     []byte
 		evInactTTLSecs  int
 		evHistoryTTLSec int
+		aggWindowSecs   int
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields,
-		       event_inactivity_ttl_seconds, event_history_ttl_seconds
+		       event_inactivity_ttl_seconds, event_history_ttl_seconds,
+		       aggregation_window_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
 	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields,
-		&evInactTTLSecs, &evHistoryTTLSec)
+		&evInactTTLSecs, &evHistoryTTLSec, &aggWindowSecs)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return DefaultTenantSettings(tenantID), nil
@@ -876,6 +878,13 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		// es su único destino. No hay poda construida que la consuma, y no la va a
 		// haber. Se sigue cargando para no romper el struct ni pedir otra migración.
 		EventHistoryTTL: time.Duration(evHistoryTTLSec) * time.Second,
+		// AggregationWindow (Plan 044 · T1.2, migración 0072). Se devuelve TAL CUAL,
+		// sin sustituir el 0 por el default: aquí el 0 es el override explícito «flush
+		// inmediato» (ver el CHECK >= 0 de la 0072), exactamente la misma regla que
+		// esta función documenta arriba para EventInactivityTTL. Un
+		// `if x == 0 { x = Default }` en esta línea apagaría ese override sin que
+		// nadie se entere.
+		AggregationWindow: time.Duration(aggWindowSecs) * time.Second,
 	}, nil
 }
 
