@@ -19,8 +19,8 @@ const DefaultRekeyBatch = 500
 // eso es precisamente lo que hace barata la rotación (§7).
 //
 // Requisitos de una tabla para entrar aquí: tener la pareja (dek, kek_id) y una
-// columna updated_at (el UPDATE la refresca). Las cinco tablas del censo la tienen.
-// (Cinco TABLAS, seis ENTRADAS: public.contacts aparece dos veces, una por sobre.)
+// columna updated_at (el UPDATE la refresca). Las seis tablas del censo la tienen.
+// (Seis TABLAS, siete ENTRADAS: public.contacts aparece dos veces, una por sobre.)
 type rekeyTarget struct {
 	// table es el nombre CALIFICADO de la tabla ("public.contacts").
 	table string
@@ -182,6 +182,33 @@ var rekeyTargets = []rekeyTarget{
 		dekCol: "api_key_dek",
 		kekCol: "api_key_kek_id",
 	},
+	// Literal compuesto de la ventana de captación (Plan 044 · Ola 1 · T1.4,
+	// migración 0072). Trío NULLable, como tenant_integrations / fleet_sessions /
+	// push_name: una ventana ABIERTA no tiene sobre —es el estado normal y
+	// mayoritario de la tabla— y esas filas se caen solas del barrido porque
+	// `NULL <> 'x'` no es TRUE en SQL. La 0072 les puso índice parcial
+	// (`idx_intake_jobs_kek … WHERE source_text_kek_id IS NOT NULL`) justo para
+	// que este SELECT no barra la tabla entera buscando la minoría que sí tiene.
+	//
+	// 🔴 ENTRA EN EL MISMO COMMIT QUE EMPIEZA A CIFRAR, que es la regla que este
+	// censo se escribió a sí mismo con fleet_sessions (arriba, :82-87). Hasta T1.4
+	// esta tabla no escribía un byte cifrado; desde T1.4 sí, y una tabla cifrada
+	// fuera del censo no rompe hoy: rompe el día de la rotación.
+	//
+	// ⚠️ Y aquí el precio de olvidarla es PECULIAR, así que se dice en vez de dejar
+	// el silencio: el sobre es un BÚFER con fecha de caducidad corta (INV-13 lo pone
+	// a NULL al llegar el job a done/failed), así que una KEK retirada de más solo
+	// dejaría ilegibles los jobs EN VUELO. No se pierde la copia de registro —el
+	// literal vive en `conversation_event_messages`, que es la fuente canónica
+	// (D-043.13)— pero sí el presupuesto que ese job iba a producir, y sin señal:
+	// el worker de la Ola 2 vería un sobre que no abre. Menos grave que perder los
+	// contactos, más silencioso.
+	{
+		table:  "public.intake_jobs",
+		pkCols: []string{"id"},
+		dekCol: "source_text_dek",
+		kekCol: "source_text_kek_id",
+	},
 }
 
 // selectSQL arma el SELECT del batch: PK (como texto) + DEK + key_id de las filas
@@ -271,10 +298,11 @@ type Report struct {
 
 // Rekey re-envuelve por batch todas las DEK que aún no están envueltas por la KEK
 // current, SIN re-cifrar el dato (§7), recorriendo TODAS las entradas del censo
-// rekeyTargets: hoy son SEIS SOBRES EN CINCO TABLAS —contacts aporta dos, el del
+// rekeyTargets: hoy son SIETE SOBRES EN SEIS TABLAS —contacts aporta dos, el del
 // identificador (value) y el del nombre (push_name, Plan 046 · T4.2)—, más
-// intake_buyer_data, tenant_integrations, fleet_sessions y tenant_llm (la
-// credencial de la vía API, Plan 044 · T0.3). Para cada fila:
+// intake_buyer_data, tenant_integrations, fleet_sessions, tenant_llm (la
+// credencial de la vía API, Plan 044 · T0.3) e intake_jobs (el literal compuesto
+// de la ventana de captación, Plan 044 · T1.4). Para cada fila:
 // UnwrapDEK(dek, kek_id) → WrapDEK con la current → UPDATE de dek + kek_id +
 // updated_at, dejando el dato cifrado y la PK INTACTOS. El valor NUNCA se descifra
 // (solo la DEK, en memoria).

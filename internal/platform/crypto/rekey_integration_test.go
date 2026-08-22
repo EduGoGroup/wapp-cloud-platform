@@ -153,6 +153,18 @@ func wipeCifradas(t *testing.T, db *sql.DB) {
 		// aquí el trío del sobre es NOT NULL, así que una fila sin sobre no puede
 		// existir — el estado «sin vía API» ES la ausencia de fila.
 		`DELETE FROM public.tenant_llm`,
+		// La SEXTA tabla del censo (Plan 044 · T1.4, migración 0072). Se BORRA la
+		// fila entera y no se nulifica el sobre: a diferencia de fleet_sessions —cuya
+		// fila es estado de flota que otros tests siembran y que no se puede tirar—,
+		// una `intake_jobs` no es estado de nadie más; es una unidad de trabajo del
+		// pipeline de captación, y la de otro test no le sirve a este.
+		//
+		// ⚠️ Ninguna prueba de integración escribe HOY un `source_text_kek_id`, así
+		// que esta línea no limpia nada todavía. Va igual, y por lo mismo que el
+		// comentario de fleet_sessions advierte al revés: la limpieza que llega tarde
+		// se descubre como un scan abortado por fail-safe §10.J en un test AJENO, que
+		// es el sitio donde nadie va a buscar la causa.
+		`DELETE FROM public.intake_jobs`,
 		`UPDATE public.fleet_sessions
 		    SET self_pn_enc = NULL, self_pn_dek = NULL,
 		        self_pn_kek_id = NULL, self_pn_bidx = NULL

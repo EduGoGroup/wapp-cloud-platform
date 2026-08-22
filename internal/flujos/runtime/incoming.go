@@ -125,7 +125,16 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	// para que ocurra después de haberle contestado y con la clave ya libre: primero
 	// se atiende lo que la persona vino a hacer, y solo entonces se le recuerda lo que
 	// debe. Sin cablear (deposits nil) esto no existe.
-	defer rt.touchDeposit(ctx, tenantID, contactID)
+	//
+	// `depositEventID` es una VARIABLE CAPTURADA, y esa indirección es el precio de
+	// que el defer se registre antes de saber a qué evento pertenece el turno (Plan
+	// 044 · T1.6): el estado —y con él el puntero de evento— no se ha cargado
+	// todavía. Se rellena más abajo, cuando se sabe, y solo en el camino en que el
+	// evento SIGUE siendo el activo. Queda en "" en los dos caminos en que no lo es
+	// (sin conversación viva, o reloj vencido que soltó la conversación), y entonces
+	// el recordatorio no deja fila — ver touchDeposit.
+	var depositEventID string
+	defer func() { rt.touchDeposit(ctx, tenantID, sessionID, contactID, depositEventID) }()
 	key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
 	unlock := rt.locks.lock(key)
 	defer unlock()
@@ -141,7 +150,7 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
 		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM. Sin
 		// flow_state no hay puntero de evento ⇒ activeEventKind="" (Plan 043 · T5.3).
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""), m)
 	}
 	// EL reloj de esta conversación (Plan 043 · T3.1/T3.2/T3.7). Va ANTES de IsEscape /
 	// consecutiveReplay / prepareResume: un estado que ya no vale no debe escapar ni
@@ -155,8 +164,13 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// (T3.2/E-6): el evento sigue `open` pero YA NO es el activo ⇒
 		// activeEventKind="" (Plan 043 · T5.3). Atarlo aquí reintroduciría la atadura
 		// que T3.2 quita.
-		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""))
+		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""), m)
 	}
+	// El turno avanza sobre el evento que el estado apuntaba: ES el activo, y es el
+	// hilo al que pertenece un recordatorio de seña disparado por este entrante
+	// (Plan 044 · T1.6). Se fija AQUÍ y no antes porque hasta el reloj no se sabía si
+	// el evento seguía gobernando la conversación.
+	depositEventID = st.EventID
 	return rt.advanceLive(ctx, tenantID, sessionID, key, contactID, st, m)
 }
 
@@ -419,7 +433,7 @@ func (rt *Runtime) releaseFinishedState(ctx context.Context, tenantID, sessionID
 		// nada, el flujo llegó a su nodo terminal y su fila se recoge.
 		rt.emitEventEscaped(ctx, ev, EscapeReasonOwnerFlowFinished)
 	}
-	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind), m)
 }
 
 // releaseOrphanMenu es el QUINTO camino de suelta (Plan 043 · T5.3 D-043.9; Ola 6 ·
@@ -468,7 +482,7 @@ func (rt *Runtime) releaseOrphanMenu(ctx context.Context, tenantID, sessionID st
 		// payload SÍ, así que quien quiera contarlas por separado ya puede.
 		rt.emitEventEscaped(ctx, ev, EscapeReasonOrphanMenu)
 	}
-	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind))
+	return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, activeKind), m)
 }
 
 // advanceLiveStep es la SEGUNDA MITAD de advanceLive (Plan 029 · T9, extendida en la
@@ -532,6 +546,20 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 		// MD-054.1 opción (a) — nada que revertir porque nunca se escribió) y NO se
 		// persisten los mensajes del turno: solo el aviso explícito, por el MISMO
 		// camino (anti-loop incluido) que cualquier otra auto-respuesta.
+		//
+		// 🔴 Y TAMPOCO ENTRA EN LA VENTANA DE CAPTACIÓN, Y ESO ES UNA DECISIÓN
+		// (Plan 044, revisada el 2026-08-22 — antes era un silencio). El motivo NO es
+		// el presupuesto de I/O, que aquí sobraría: es que meterlo sería INCOHERENTE
+		// con lo que la ventana promete. `source_refs` es la lista de mensajes cuyo
+		// literal el pipeline va a leer del hilo, y este turno acaba de decidir, dos
+		// líneas más arriba, que su literal NO SE ESCRIBE en el hilo. La referencia
+		// quedaría colgando: el compositor de T1.4 leería el hilo, no encontraría este
+		// mensaje, y compondría un `source_text` al que le falta justo lo que el
+		// cliente pidió — SIN ERROR y sin que nadie lo note, que es la forma peor.
+		// Ancla, además, sobre un turno REVERTIDO: si es el primero, su `message_ts`
+		// pasaría a ser la base de fechas (D-044.9) de un pedido que no ocurrió.
+		// Y no se pierde nada: al cliente se le dice explícitamente que reintente, y
+		// el mensaje con el que reintente sí abrirá (o ampliará) su ventana.
 		return rt.sendReply(ctx, tenantID, sessionID, contactID, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
 	}
 	if err := rt.store.Save(ctx, st); err != nil {
@@ -542,6 +570,15 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 	// el turno que cierra el flujo pertenece al evento que estaba vivo al hablar.
 	// Best-effort — jamás tumba el turno (ver thread.go).
 	rt.persistTurnMessages(ctx, tenantID, sessionID, turnEventID, m.GetText(), outs)
+	// LA VENTANA DE CAPTACIÓN (Plan 044 · Ola 1 · T1.1/T1.2, ver aggregator.go). Va
+	// justo detrás del hilo y usa el MISMO turnEventID por el mismo motivo: el
+	// mensaje pertenece al evento que estaba vivo mientras se produjo. Es el
+	// LECTOR de lo que la línea de arriba acaba de escribir.
+	//
+	// Presupuesto acotado y escrito (D-044.26): UNA sentencia, cero lecturas, cero
+	// cripto, cero red. Best-effort integral — no devuelve error y jamás corta el
+	// turno (INV-10). Sin WithAggregator es un no-op exacto.
+	rt.observeForAggregation(ctx, tenantID, sessionID, contactID, turnEventID, m)
 	return rt.sendReply(ctx, tenantID, sessionID, contactID, key, outs)
 }
 
@@ -554,7 +591,18 @@ func (rt *Runtime) advanceLiveStep(ctx context.Context, tenantID, sessionID stri
 // ErrConversationExists (carrera con otro entrante) se trata como benigno (log + nil).
 // La señal ya viene construida por el llamante (buildSignal, con el gate de
 // entitlements aplicado); handleTrigger solo la resuelve.
-func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, sig trigger.Signal) error {
+//
+// ⚠️ `m` (el ENTRANTE EN CRUDO) viaja además de `sig`, y no es redundante (Plan 044 ·
+// Ola 1, corrección del 2026-08-22). `sig` lleva el TEXTO y la intención ya gateada;
+// la VENTANA DE CAPTACIÓN necesita otras tres cosas que `trigger.Signal` no tiene y no
+// debe aprender: el `wa_message_id` (que es literalmente lo que entra en `source_refs`),
+// el `ts_unix` del cliente (la base de fechas, D-044.9) y la intención SIN el gate de
+// `llm_intent` (el derecho que abre la ventana es `llm_intake`, ver
+// observeForAggregation). Se pasa el mensaje entero en vez de tres parámetros sueltos
+// porque es exactamente lo que observeForAggregation ya recibe desde advanceLiveStep, y
+// tener dos formas de llamar al mismo puente sería la primera grieta por la que los dos
+// caminos divergen.
+func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, sig trigger.Signal, m *cloudlinkv1.IncomingMessage) error {
 	dec, err := rt.triggers.Resolve(ctx, tenantID, sessionID, sig)
 	if err != nil {
 		rt.log.Warn("runtime: resolver de disparos falló; se ignora el entrante",
@@ -563,7 +611,7 @@ func (rt *Runtime) handleTrigger(ctx context.Context, tenantID, sessionID string
 	}
 	switch dec.Action {
 	case trigger.StartEvent, trigger.Start:
-		return rt.startFromDecision(ctx, tenantID, sessionID, key, contactID, dec)
+		return rt.startFromDecision(ctx, tenantID, sessionID, key, contactID, dec, m)
 	case trigger.Fallback:
 		// La rama PARTIDA (Plan 043 · T3.8.4, REQ-27b/INV-20/D-043.20). Lo que antes
 		// compartía sitio con Start ahora vive aparte, porque hace otra cosa: en vez de
@@ -668,13 +716,81 @@ func (rt *Runtime) buildOpeningOffer(ctx context.Context, tenantID, sessionID, c
 //
 // La tercera puerta —elegir en el despachador— entra por su propio camino
 // (StartNewOfKind, events.go).
-func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision) error {
+//
+// # 🔴 AQUÍ ENTRA A LA VENTANA EL MENSAJE QUE ARRANCA EL EVENTO (Plan 044, 2026-08-22)
+//
+// Y este es EL punto, no una elección de comodidad. La ventana de captación exige un
+// `event_id` —`intake_jobs.event_id` es NOT NULL y la fuente del literal (el hilo)
+// cuelga del evento—, así que la llamada no puede ir ni un paso antes:
+//
+//   - en `HandleIncoming`, cuando se decide llamar a handleTrigger, NO HAY evento: o
+//     no había `flow_state` (el limbo) o el reloj acaba de soltar la conversación;
+//   - en `handleTrigger`, tampoco: ahí solo se ha resuelto la DECISIÓN del resolver, y
+//     una `trigger.Decision` trae un `event_kind`, jamás un id — el evento todavía no
+//     existe en la base;
+//   - el id NACE dentro de `beginEvent` → `birthEvent` (`events.CreateEvent`, el
+//     `INSERT`) o se RECUPERA en `switchToEvent` (`ev.ID`, el evento vivo al que se
+//     conmuta). Esas dos son las únicas puertas, y las dos desembocan en el mismo
+//     `beginEvent`.
+//
+// Por eso `beginEvent` DEVUELVE ese id (cambio de firma de esta corrección) en vez de
+// que el agregador se llame desde dentro: `birthEvent`/`switchToEvent` no tienen —ni
+// deben tener— el entrante en la mano, y bajarles `m` por tres firmas para escribir una
+// fila sería meter el 044 en el plano de eventos del 043. Se sube el id, que es un
+// `string`, en lugar de bajar el mensaje.
+//
+// EL PRESUPUESTO ES EL MISMO QUE EN advanceLiveStep, y por construcción: se llama al
+// MISMO `observeForAggregation`, que es best-effort integral (no devuelve error, jamás
+// corta el turno, no-op exacto sin `WithAggregator`) y cuyo coste es 1 escritura y 0
+// lecturas (D-044.26). No se añade ni una guarda nueva: las de `Observe` —clave
+// completa, `wa_message_id`, gate `llm_intake` fail-closed— gobiernan igual aquí.
+//
+// EL DEFECTO QUE CIERRA, dicho con el caso: «quiero presupuesto de 20 hamburguesas»
+// abre el evento por esta puerta y **no llegaba a `source_refs`**. La ventana la abría
+// el mensaje SIGUIENTE (el primero que pasa por `advanceLiveStep`), así que el
+// `message_ts` —la BASE DE FECHAS del presupuesto, D-044.9— quedaba anclado al segundo
+// mensaje y «para el jueves» se resolvía contra el instante equivocado.
+//
+// ⚠️ NO PUEDE DOBLE-CONTAR con advanceLiveStep: por un entrante corre este camino O
+// aquél, nunca los dos (HandleIncoming enruta a handleTrigger *o* a advanceLive, y las
+// dos sueltas que reentran aquí —releaseFinishedState y releaseOrphanMenu— hacen
+// `return` sin pasar por el Step). Y si algún día se solaparan, `alreadySeen` descarta
+// el mismo `wa_message_id` sobre la misma ventana.
+func (rt *Runtime) startFromDecision(ctx context.Context, tenantID, sessionID string, key store.Key, contactID string, dec trigger.Decision, m *cloudlinkv1.IncomingMessage) error {
 	if dec.Action != trigger.Fallback {
-		consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "")
+		// `openedBy(m)` es EL TURNO DE APERTURA (Plan 044 · T1.4, corrección del
+		// 2026-08-22): baja hasta startLocked para que el literal con el que el cliente
+		// abrió el evento —«quiero presupuesto de 20 hamburguesas»— deje su fila en el
+		// hilo, junto a las salidas del arranque y en ese orden.
+		//
+		// 🔴 ES LA OTRA MITAD DE observeForAggregation, Y VAN JUNTAS A PROPÓSITO. La
+		// ventana guarda la REFERENCIA del mensaje (`source_refs`) y ancla en él la base
+		// de fechas; el hilo guarda su LITERAL, y es de ahí de donde el compositor de
+		// T1.4 saca el `source_text`. Hasta esta corrección solo existía la primera: la
+		// referencia apuntaba a un mensaje cuyo texto no estaba escrito en ninguna parte,
+		// así que el `source_text` empezaba por el SEGUNDO mensaje de la ráfaga, sin
+		// error y sin que nadie lo notara. Si algún día se retira una, hay que retirar la
+		// otra — dejar la referencia sin literal es el defecto peor de los dos.
+		//
+		// Baja el TEXTO y no el mensaje entero: ver openingTurn (start.go).
+		eventID, consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, "", openedBy(m))
 		if err != nil {
 			return err
 		}
 		if consumed {
+			// LA VENTANA DE CAPTACIÓN (Plan 044 · Ola 1). `eventID` es "" en los caminos
+			// de beginEvent que consumen el turno SIN dejar evento vivo en la mano (el
+			// cupo anti-loop agotado, la carrera benigna del ErrAliveExists) Y —desde el
+			// 2026-08-22— en el ARRANQUE CORTADO por el sink durable, donde el evento
+			// existe pero su turno no llegó a escribir hilo. En los tres, `Observe` no
+			// escribe nada: `intake.WindowKey.Valid()` es false sin `event_id`. Es la
+			// MISMA guarda que ya protege a advanceLiveStep, no una excepción escrita
+			// para este camino.
+			//
+			// 🔴 LA INVARIANTE, en una línea, para que el siguiente no la rompa: TODO
+			// MENSAJE QUE ENTRA EN `source_refs` TIENE SU LITERAL EN EL HILO — si el
+			// turno se cortó y su texto no se escribió, la referencia tampoco existe.
+			rt.observeForAggregation(ctx, tenantID, sessionID, contactID, eventID, m)
 			return nil
 		}
 	}
@@ -721,8 +837,16 @@ func (rt *Runtime) startPlainFlow(ctx context.Context, tenantID, sessionID strin
 	}
 	// Sin evento (eventID ""): este es el arranque plano del Plan 019 — el camino
 	// que NO pare fila en conversation_events (E-6).
-	if _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, "", dec.Params, dec.IntentName,
-		rt.taglineFor(ctx, tenantID, sessionID, contactID, dec.IntentName)); serr != nil {
+	// openingTurn{}: el arranque PLANO no pare evento (eventID "") y sin evento no hay
+	// hilo donde escribir — threadAllowed ya lo cerraría igual. Se pasa el valor cero
+	// para decirlo en la llamada y no depender de esa coincidencia (Plan 044 · T1.4).
+	// El bool del medio —EL TURNO CORTADO por el sink durable— se DESCARTA aquí y es lo
+	// correcto: este camino arranca SIN evento (el "" de la firma), así que ni escribe
+	// hilo ni observa la ventana de captación, y no hay pareja que pueda descuadrar. La
+	// invariante del Plan 044 solo tiene algo que decir donde hay `event_id`, que es el
+	// camino de enterEventFlow.
+	if _, _, serr := rt.startLocked(ctx, tenantID, dec.FlowID, sessionID, key, contactID, "", dec.Params, dec.IntentName,
+		rt.taglineFor(ctx, tenantID, sessionID, contactID, dec.IntentName), openingTurn{}); serr != nil {
 		if errors.Is(serr, ErrConversationExists) {
 			rt.log.Info("runtime: disparo abortado por conversación ya viva (carrera benigna)",
 				"session_id", sessionID)
@@ -957,6 +1081,12 @@ func (rt *Runtime) handleEscape(ctx context.Context, tenantID, sessionID string,
 	if _, err := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: notice}}); err != nil {
 		return err
 	}
+	// Saliente FUERA DE TURNO (Plan 044 · T1.6, D-044.24). El aviso de escape es
+	// nuestro y no contesta a nada: el cliente dijo la palabra de salida, no hizo un
+	// pedido. Con `conocido` en false, `ev` es el valor cero y ev.ID == "" ⇒
+	// persistOutOfTurnMessage no escribe nada, que es lo correcto: sin evento no hay
+	// hilo. La misma guarda que ya gobierna el emitEventEscaped de arriba.
+	rt.persistOutOfTurnMessage(ctx, tenantID, sessionID, ev.ID, notice)
 	return nil
 }
 
@@ -1011,11 +1141,37 @@ func (rt *Runtime) duplicateIngest(ctx context.Context, sessionID string, m *clo
 // para cortar BUCLES, y aquí no puede haberlos — cada solicitud se recuerda como
 // mucho una vez en su vida, y quien lo garantiza es el compare-and-swap de la marca
 // en la BD, no un contador en memoria.
-func (rt *Runtime) touchDeposit(ctx context.Context, tenantID, contactID string) {
+// ⚠️ EL HILO SE ESCRIBE AQUÍ, Y HAY QUE MIRAR EL RELOJ AL HACERLO (Plan 044 · T1.6,
+// D-044.24). El recordatorio de la seña es la coletilla ARQUETÍPICA fuera de turno:
+// el cliente escribió «hola» y le contestamos además que debe una seña de la semana
+// pasada. Entra al hilo MARCADA, para que quien lea el hilo no la confunda con algo
+// que el cliente pidió.
+//
+// Tres cosas que este punto tiene de particular y que no se pueden perder de vista:
+//
+//   - CORRE CON EL CANDADO YA LIBERADO. Este defer se registra ANTES del lock, así
+//     que se ejecuta el ÚLTIMO, después de que unlock() haya soltado la clave. Otro
+//     turno de la misma conversación puede estar escribiendo en el hilo mientras
+//     esto escribe. No hace falta serializarlo: el seq se numera con MAX+1 dentro de
+//     la propia sentencia y quien pierda contra el UNIQUE (event_id, seq) reintenta
+//     (events/store.go, maxAppendAttempts = 5). Lo que NO se debe hacer es tomar el
+//     candado aquí para «arreglarlo»: eso reintroduciría en el camino caliente la
+//     serialización que el defer existe para evitar.
+//   - VA DESPUÉS DE LA FILA DEL TURNO, y ese es el orden correcto: el recordatorio
+//     sale después de haberle contestado a la persona, así que en el hilo va después.
+//   - eventID VACÍO ⇒ NO SE ESCRIBE, y es fail-open hacia el lado seguro: sin evento
+//     no hay hilo. Pasa cuando el entrante no tenía conversación viva o cuando el
+//     reloj la soltó y el turno arrancó una nueva — casos en los que el evento al que
+//     pertenecería el recordatorio o no existe o todavía no se conoce aquí.
+func (rt *Runtime) touchDeposit(ctx context.Context, tenantID, sessionID, contactID, eventID string) {
 	if rt.deposits == nil {
 		return
 	}
-	rt.deposits.RemindContact(ctx, tenantID, contactID)
+	enviados := rt.deposits.RemindContact(ctx, tenantID, contactID)
+	if len(enviados) == 0 {
+		return
+	}
+	rt.persistOutOfTurnMessage(ctx, tenantID, sessionID, eventID, enviados...)
 }
 
 // consecutiveReplay es la idempotencia CONSECUTIVA (design.md §10.G): corta la

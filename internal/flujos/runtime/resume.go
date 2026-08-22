@@ -47,6 +47,10 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	}
 	// Red anti-loop (Plan 020 · T0): el reinicio auto-responde (aviso + nodo inicial),
 	// así que consume un token. Agotado ⇒ turno consumido SIN responder ni reiniciar.
+	//
+	// Y SIN ventana de captación (Plan 044): no se reinició, no se contestó y no se
+	// escribió una línea de hilo, así que no hay turno del que la ventana pueda hablar.
+	// Ver el bloque del final de esta función, donde sí se observa.
 	if !rt.replyAllowed(store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}) {
 		return true, nil
 	}
@@ -74,7 +78,15 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 			rt.log.Error("runtime: reanudación cortada: el sink durable no pudo materializar el efecto sintetizado tras el reintento acotado",
 				"error", cutErr, "session_id", sessionID, "flow_id", st.FlowID)
 			key := store.Key{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
-			return true, rt.sendReply(ctx, tenantID, sessionID, contactID, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+			err := rt.sendReply(ctx, tenantID, sessionID, contactID, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+			// Saliente FUERA DE TURNO (Plan 044 · T1.6, D-044.24): un aviso de avería
+			// nuestra. No es la respuesta del flujo —el flujo se cortó justo antes—, así
+			// que va MARCADO. Se escribe aunque el envío devuelva error: sendReply se
+			// calla también cuando el anti-loop agota el cupo, y en ese caso no hay
+			// error que distinguir; el rastro de que lo intentamos vale más que la
+			// precisión sobre la entrega, que es la misma regla que persistTurnMessages.
+			rt.persistOutOfTurnMessage(ctx, tenantID, sessionID, st.EventID, defaultDurableSinkFailureNotice)
+			return true, err
 		}
 	}
 	// Arranca LIMPIO: descarta las Vars y re-entra el flujo con la MISMA versión con
@@ -114,7 +126,92 @@ func (rt *Runtime) prepareResume(ctx context.Context, sessionID string, st *mode
 	if _, err := rt.send(ctx, sessionID, to, key, texts); err != nil {
 		return false, err
 	}
+	// 🔴 EL LITERAL DEL CLIENTE, Y LA INVARIANTE QUE LO OBLIGA (Plan 044 · T1.4,
+	// corrección del 2026-08-22): TODO MENSAJE QUE ENTRA EN `source_refs` TIENE SU
+	// LITERAL EN EL HILO. Este camino observa —unas líneas más abajo, con `st.EventID`—,
+	// así que el texto con el que el cliente REABRE un pedido caducado no puede faltar:
+	// una referencia sin literal produce un `source_text` INCOMPLETO **sin dar error**,
+	// que es el peor modo de fallo de este plan. Hasta esta corrección aquí entraba la
+	// referencia y no entraba el texto: el bloque de abajo solo escribía las SALIDAS.
+	//
+	// NO ES UNA PUERTA NUEVA: es persistTurnMessages —el MISMO productor que usa
+	// advanceLiveStep—, y con él el mismo gate (threadAllowed, fail-closed por tenant),
+	// el mismo sobre cifrado (AppendMessage, nivel 2 del ADR-0034), los mismos roles y
+	// el mismo best-effort. Es el gesto EXACTO que hace la CONMUTA en beginEvent
+	// (events.go): literal del cliente sí, salidas no.
+	//
+	// DOS cosas que no son de estilo:
+	//
+	//   - VA PRIMERO, antes del bloque de salientes de abajo. El hilo se lee por `seq`
+	//     (listThreadSQL) y el orden de la conversación es «entrante, luego salidas».
+	//   - VA CON `nil` EN LAS SALIDAS. Las de este turno NO son la respuesta del flujo
+	//     —son el aviso del reinicio más la pantalla inicial fresca— y entran MARCADAS
+	//     por la puerta de al lado. Pasárselas aquí las duplicaría, y un literal
+	//     duplicado en el hilo es una cantidad duplicada en el presupuesto.
+	//
+	// Y NO PUEDE ESCRIBIRSE DOS VECES: este turno se consume aquí (handled=true), así
+	// que jamás alcanza el persistTurnMessages de advanceLiveStep.
+	rt.persistTurnMessages(ctx, tenantID, sessionID, st.EventID, m.GetText(), nil)
+	// Saliente FUERA DE TURNO (Plan 044 · T1.6, D-044.24). El reinicio NO es la
+	// respuesta a lo que el cliente escribió: el entrante disparó una POLÍTICA de
+	// reanudación, y lo que sale es el aviso del reinicio más la pantalla inicial
+	// fresca. Un LLM que lea esa pantalla como pedido del cliente extraería el menú
+	// entero, que es exactamente el bucle que la marca corta.
+	//
+	// `st` ya es `fresh` en este punto y `fresh` conserva el EventID del estado que se
+	// reinicia: el hilo al que pertenecen estos textos es el del evento que se retoma.
+	//
+	// ⚠️ CON UNA EXCEPCIÓN QUE ESTE PÁRRAFO CALLABA (medida el 2026-08-22 leyendo el
+	// código, no el comentario): el closeIfFinished de arriba APAGA st.EventID cuando el
+	// flujo reentrado termina en el propio Enter (un `message` sin `next`). En ese caso
+	// `st.EventID` vale "" y NO SE ESCRIBE NADA — ni esta fila, ni la del literal del
+	// cliente, ni la referencia de la ventana de abajo: threadAllowed y
+	// `WindowKey.Valid()` cierran los tres por la misma condición. La invariante se
+	// mantiene (no hay referencia sin literal: no hay ninguna de las dos), pero ese
+	// turno de reinicio desaparece entero del rastro. No se «arregla» aquí capturando un
+	// turnEventID como hace advanceLiveStep: eso es un cambio de conducta con dueño
+	// propio, y este encargo era cerrar referencias colgando.
+	rt.persistOutOfTurnMessage(ctx, tenantID, sessionID, st.EventID, outputTexts(texts)...)
+	// LA VENTANA DE CAPTACIÓN (Plan 044 · Ola 1, cableada el 2026-08-22 al revisar los
+	// caminos que se quedaban fuera). Este turno se CONSUME aquí —handled=true— y por
+	// tanto NUNCA llega al observeForAggregation de advanceLiveStep: si no se llama
+	// aquí, el mensaje con el que el cliente reabre un pedido caducado no entra en
+	// ninguna ventana, y la ventana la termina anclando el mensaje SIGUIENTE.
+	//
+	// SÍ entra, y la razón es la misma que en startFromDecision: el cliente HABLÓ, hay
+	// un evento vivo (`st.EventID`, que `fresh` conserva) y este es el primer mensaje
+	// de la ráfaga que viene. Ancla bien el `message_ts` (D-044.9). Y su LITERAL acaba
+	// de escribirse arriba, con persistTurnMessages: las dos mitades van juntas o no va
+	// ninguna, que es lo que la invariante exige.
+	//
+	// 🔴 VA EN ESTA RAMA Y SOLO EN ESTA, que es la del reinicio CONSUMADO. Las otras
+	// dos salidas con handled=true quedan fuera a propósito:
+	//   - el cupo anti-loop agotado (arriba, `return true, nil`): no se reinició nada,
+	//     no se contestó nada y no se escribió una línea de hilo. Es un turno que se
+	//     tira, no un turno que ocurre.
+	//   - el corte del sink durable: mismo argumento EXACTO que en advanceLiveStep —el
+	//     literal de este turno no llega al hilo, así que su referencia quedaría
+	//     colgando y el `source_text` saldría incompleto sin dar error—.
+	//
+	// Best-effort integral y no-op exacto sin agregador cableado, igual que en el otro
+	// punto de llamada: 1 escritura, 0 lecturas (D-044.26), y jamás corta el turno.
+	rt.observeForAggregation(ctx, tenantID, sessionID, contactID, st.EventID, m)
 	return true, nil
+}
+
+// outputTexts extrae el literal de cada salida, saltándose las que no lo tienen (un
+// adjunto sin caption). Es la misma poda que hace persistTurnMessages sobre sus
+// engine.Output, escrita una vez para los emisores fuera de turno que mandan varias
+// salidas en una sola llamada.
+func outputTexts(outs []engine.Output) []string {
+	texts := make([]string, 0, len(outs))
+	for _, out := range outs {
+		if out.Text == "" {
+			continue
+		}
+		texts = append(texts, out.Text)
+	}
+	return texts
 }
 
 // durableRetryAttempts es el reintento ACOTADO de D-054.4 (Plan 054 · T3, R3 de

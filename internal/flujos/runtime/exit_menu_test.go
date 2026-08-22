@@ -171,6 +171,10 @@ func (s *t52StubEvents) AppendMessage(_ context.Context, _ string, _ events.Role
 	return 1, nil
 }
 
+func (s *t52StubEvents) AppendOutOfTurnMessage(_ context.Context, _ string, _ string) (int, error) {
+	return 1, nil
+}
+
 func (s *t52StubEvents) IsSuspended(_ events.Event, _ time.Duration) bool { return false }
 
 // t52FakeSender captura los textos enviados (equivalente reducido de fakeSender

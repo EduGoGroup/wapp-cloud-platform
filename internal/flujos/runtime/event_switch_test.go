@@ -44,9 +44,16 @@ type memEventStore struct {
 	// y en orden. El doble guarda el CLARO — lo que fija el cifrado real es el
 	// store de events, no este test.
 	mensajes map[string][]mensajeHilo
+	// fueraDeTurno imita las filas entry_kind='message_out_of_turn' (Plan 044 ·
+	// T1.6, D-044.24), por evento y en orden. Va en un MAPA APARTE de `mensajes` a
+	// propósito: si las dos clases cayeran en el mismo sitio, un test que afirmara
+	// «el turno dejó 2 filas» pasaría en verde con un saliente fuera de turno colado
+	// entre ellas, que es exactamente la confusión que la marca existe para impedir.
+	// Separarlas aquí es lo que hace que el doble pueda MENTIR igual que la base.
+	fueraDeTurno map[string][]mensajeHilo
 }
 
-// mensajeHilo es una fila `message` del doble: quién habló y qué dijo.
+// mensajeHilo es una fila de texto literal del doble: quién habló y qué dijo.
 type mensajeHilo struct {
 	role events.Role
 	body string
@@ -72,6 +79,39 @@ func (m *memEventStore) AppendMessage(_ context.Context, eventID string, role ev
 	}
 	m.mensajes[eventID] = append(m.mensajes[eventID], mensajeHilo{role: role, body: body})
 	return len(m.mensajes[eventID]), nil
+}
+
+// AppendOutOfTurnMessage imita la fila `message_out_of_turn` (Plan 044 · T1.6) y
+// devuelve su seq. El ROL no viaja en la firma —el store real lo clava en
+// `business`— y el doble lo replica: si lo dejara a elección del llamante, un test
+// podría fijar un rol que la tabla nunca escribiría.
+func (m *memEventStore) AppendOutOfTurnMessage(_ context.Context, eventID string, body string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fueraDeTurno == nil {
+		m.fueraDeTurno = map[string][]mensajeHilo{}
+	}
+	m.fueraDeTurno[eventID] = append(m.fueraDeTurno[eventID], mensajeHilo{role: events.RoleBusiness, body: body})
+	return len(m.fueraDeTurno[eventID]), nil
+}
+
+// fueraDeTurnoDe devuelve las filas `message_out_of_turn` de un evento, en orden.
+func (m *memEventStore) fueraDeTurnoDe(eventID string) []mensajeHilo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]mensajeHilo(nil), m.fueraDeTurno[eventID]...)
+}
+
+// totalFueraDeTurno cuenta TODAS las filas marcadas del doble: permite afirmar
+// «cero filas» sin saber a qué evento habrían ido a parar.
+func (m *memEventStore) totalFueraDeTurno() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, ms := range m.fueraDeTurno {
+		n += len(ms)
+	}
+	return n
 }
 
 // mensajesDe devuelve las filas `message` de un evento, en orden.

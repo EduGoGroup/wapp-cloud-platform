@@ -98,7 +98,14 @@ func (rt *Runtime) exitMenuChoice(ctx context.Context, key store.Key, sessionID 
 		// menú» es ir al menú, no empezar uno nuevo, y solo el gesto «nuevo» puede
 		// cerrar un vencido (E-11).
 		dec := trigger.Decision{Action: trigger.StartEvent, EventKind: trigger.EventKindMenu}
-		return rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, st.EventID)
+		// El `event_id` que beginEvent devuelve desde el Plan 044 se DESCARTA aquí: lo
+		// que el cliente tecleó es una opción del menú de SALIDA, no un pedido, y el
+		// evento al que se va es el `menu`. Anclar ahí una ventana de captación pondría
+		// un número suelto de primera referencia y como base de fechas (D-044.9).
+		// openingTurn{} por lo mismo y en el mismo acto: ese número tampoco abre el hilo
+		// del `menu`, que además ni siquiera arranca flujo (Plan 044 · T1.4).
+		_, done, berr := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, st.EventID, openingTurn{})
+		return done, berr
 	}
 }
 
