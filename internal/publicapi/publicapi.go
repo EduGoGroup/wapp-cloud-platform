@@ -200,6 +200,11 @@ type Deps struct {
 	// satisface *integrations.Postgres — el MISMO objeto que sirve a CRMSecrets y
 	// al gate; lo que cambia es qué se le pide. nil ⇒ no se montan las rutas.
 	Integrations IntegrationsStore
+	// TenantLLM es la CONFIGURACIÓN de la vía LLM API por tenant (tenant_llm): el
+	// CRUD /api/v1/tenant-llm del Plan 044 · T0.3. Lo satisface
+	// *tenantllm.Postgres, pero por un puerto RECORTADO que no puede devolver la
+	// credencial (ver TenantLLMStore). nil ⇒ no se montan las rutas.
+	TenantLLM TenantLLMStore
 	// CRMSecrets entrega el secreto HMAC con el que se verifica el callback del
 	// puente (Plan 042 · T4.2). Lo satisface *integrations.Postgres. nil ⇒ NO se
 	// monta POST /api/v1/integrations/callback: mejor un 404 de ruta inexistente
@@ -529,6 +534,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// complejidad de Register, que ya roza el techo del linter (gocyclo 15).
 	registerTenantVariables(mux, d, mw, auditor, log)
 	registerIntegrations(mux, d, mw, auditor, log)
+	registerTenantLLM(mux, d, mw, auditor, log)
 	registerCRMCallback(mux, d, log)
 
 	// Import de catálogo (Plan 041 · T3.3, D-041.6). Misma razón para vivir aparte:
@@ -763,6 +769,55 @@ func registerIntegrations(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, au
 		"integrations.write", "integration", crmBridge(putIntegrationHandler(d.Integrations))))
 	mux.Handle("DELETE /api/v1/integrations", protect(mw, auditor, log,
 		"integrations.write", "integration", crmBridge(deleteIntegrationHandler(d.Integrations))))
+}
+
+// registerTenantLLM monta la CONFIGURACIÓN de la vía LLM API por tenant
+// (Plan 044 · Ola 0 · T0.3, design §8): GET / PUT / DELETE de /api/v1/tenant-llm.
+//
+// Gate `api_llm` en las TRES rutas, incluida la lectura. Que el GET no devuelva
+// la clave no lo convierte en inocuo: dice si el tenant tiene vía API y con qué
+// proveedor, y eso es exactamente la información del add-on que el gate acota.
+// Es el mismo criterio que aplica registerIntegrations a su GET.
+//
+// ⚠️ El cableado del gate es formalmente de T0.4 («403 sin api_llm»), y se hace
+// aquí a propósito: montar un CRUD de CREDENCIALES sin gate, aunque fuera por una
+// tarea, dejaría abierta una puerta que después habría que acordarse de cerrar.
+// T0.4 lo hereda hecho por este lado y le queda su otra mitad (el gate
+// `llm_intake` del pipeline).
+//
+// SCOPES PROPIOS (llm.read / llm.write) por el MISMO argumento que
+// registerIntegrations, y no por simetría de nombres: esta fila guarda una
+// credencial de pago de un proveedor externo, y quien pueda escribirla puede
+// apuntar el gasto del tenant a una cuenta ajena. Ese poder no viene incluido en
+// «puede editar el catálogo».
+//
+// Y como allí, el reparto que resulta NO necesita migración de grants:
+// tenant_admin (`*`) y viewer (`*.read`) están sembrados con glob
+// (0015_iam_roles.sql:65,73) y cubren las dos claves sin tocar nada; operator
+// lleva lista EXPLÍCITA (0015:66, ampliada por la 0042) y no alcanza ninguna de
+// las dos. Que operator quede fuera no es un descuido de los que avisa la 0057
+// —donde un scope estrenado sin grant dejó la ruta devolviendo 403 a quien la
+// necesitaba—: aquí el 403 es el reparto que se busca, porque configurar la
+// credencial de pago del tenant no es la faena del turno.
+//
+// Escrituras auditadas (llm.write / recurso `tenant_llm`) sin la credencial y sin
+// PII: se audita la ACCIÓN, jamás el cuerpo.
+//
+// Sin store o sin resolver de features las rutas NO se montan: mejor un 404 de
+// ruta inexistente que un endpoint de credenciales que responde 500 a medio
+// camino o, peor, que guarda una clave sin poder comprobar el plan.
+func registerTenantLLM(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
+	if d.TenantLLM == nil || d.Entitlements == nil {
+		return
+	}
+	apiLLM := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureAPILLM)
+
+	mux.Handle("GET /api/v1/tenant-llm", protectRead(mw, log,
+		"llm.read", apiLLM(getTenantLLMHandler(d.TenantLLM))))
+	mux.Handle("PUT /api/v1/tenant-llm", protect(mw, auditor, log,
+		"llm.write", "tenant_llm", apiLLM(putTenantLLMHandler(d.TenantLLM))))
+	mux.Handle("DELETE /api/v1/tenant-llm", protect(mw, auditor, log,
+		"llm.write", "tenant_llm", apiLLM(deleteTenantLLMHandler(d.TenantLLM))))
 }
 
 // registerCRMCallback monta la VUELTA del puente CRM (Plan 042 · T4.2):

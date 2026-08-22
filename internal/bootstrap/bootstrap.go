@@ -52,6 +52,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
 
@@ -321,6 +322,12 @@ func Run(ctx context.Context) error {
 	// tenant_integrations y los datos del comprador comparten el stack de
 	// claves, no hay una tercera rotación que gestionar.
 	integrationsStore := integrations.NewPostgres(db, flowDeps.cipher)
+	// La credencial de la vía LLM API (Plan 044 · T0.3) reusa EL MISMO cipher, y
+	// por tanto el mismo keyring versionado del Plan 012, que buyerDataStore y el
+	// puente CRM: tres sobres distintos, una sola rotación que gestionar. Es lo
+	// que hace que meter tenant_llm en el censo de rekeyTargets (rekey.go) baste
+	// para que su clave rote con todo lo demás.
+	tenantLLMStore := tenantllm.NewPostgres(db, flowDeps.cipher)
 	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
@@ -567,7 +574,11 @@ func Run(ctx context.Context) error {
 		// La CONFIGURACIÓN del puente (Plan 042 · T5.1): el MISMO store, otra
 		// pregunta. El CRUD lee y escribe tenant_integrations; el secreto solo
 		// entra (write-only) y sale como huella.
+		// Y la CONFIGURACIÓN de la vía LLM API (Plan 044 · T0.3): entra por el
+		// puerto RECORTADO publicapi.TenantLLMStore, que NO tiene el método APIKey
+		// — la capa HTTP no puede pedir la credencial ni por error.
 		Integrations: integrationsStore,
+		TenantLLM:    tenantLLMStore,
 		CRMSecrets:   integrationsStore,
 		CRMGate:      webhookGate,
 		CRMReflect:   intakeStore,

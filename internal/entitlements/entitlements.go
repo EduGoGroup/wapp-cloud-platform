@@ -121,6 +121,19 @@ const FeatureMedia = "media"
 // abierto para las dos anteriores.
 const FeatureLLMIntake = "llm_intake"
 
+// FeatureAPILLM es la feature de la VÍA API del LLM (ADR-0030, Plan 044): el
+// derecho a configurar credenciales de un proveedor externo y a que el pipeline
+// llame por ahí. La clave ya venía sembrada en plan_features desde la taxonomía
+// del Plan 040 (migración 0039_seed_plan_taxonomy.sql:76,87: `advisor_ai_pro` y
+// `pro` la incluyen) sin constante Go; la declara el Plan 044 · T0.3 al montar
+// el CRUD /api/v1/tenant-llm, que es su primer consumidor.
+//
+// 🔴 ES DISTINTA de FeatureLLMIntake y no se sustituyen: `llm_intake` es «tienes
+// captación asistida por LLM» y `api_llm` es «puedes usar la vía de pago con tu
+// propia cuenta». Un tenant puede tener la primera sin la segunda (el día que la
+// vía local exista), y por eso son dos gates y no uno.
+const FeatureAPILLM = "api_llm"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).
