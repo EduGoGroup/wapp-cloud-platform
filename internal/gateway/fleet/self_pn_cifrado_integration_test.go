@@ -217,13 +217,18 @@ func sembrarSesionActivaConNumero(
 }
 
 // sobreSelfPn es la fila CRUDA leída por SQL directo, sin pasar por el repositorio:
-// las cuatro columnas del sobre más la columna en claro que la T4.1 dejó vacía.
+// las cuatro columnas del sobre.
+//
+// 🔧 Tuvo una quinta lectura hasta T5.4: la columna en claro que T4.1 dejaba vacía.
+// La 0070 la retiró, así que el `SELECT self_pn directo devolvió un valor` que este
+// fichero afirmaba dejó de poder escribirse — y de hacer falta. Aquella aserción era
+// la prueba de que el escritor vaciaba el claro; hoy la da el esquema, que no tiene
+// dónde guardarlo.
 type sobreSelfPn struct {
-	enClaro sql.NullString
-	bidx    sql.NullString
-	kekID   sql.NullString
-	enc     []byte
-	dek     []byte
+	bidx  sql.NullString
+	kekID sql.NullString
+	enc   []byte
+	dek   []byte
 }
 
 // leerSobreCrudo lee la fila SIN el repositorio. Es la única forma de afirmar qué hay
@@ -234,28 +239,25 @@ func leerSobreCrudo(ctx context.Context, t *testing.T, db *sql.DB, tenantID, edg
 	t.Helper()
 	var s sobreSelfPn
 	if err := db.QueryRowContext(ctx, `
-		SELECT self_pn, self_pn_bidx, self_pn_kek_id, self_pn_enc, self_pn_dek
+		SELECT self_pn_bidx, self_pn_kek_id, self_pn_enc, self_pn_dek
 		FROM public.fleet_sessions
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
-	`, tenantID, edgeID, sessionID).Scan(&s.enClaro, &s.bidx, &s.kekID, &s.enc, &s.dek); err != nil {
+	`, tenantID, edgeID, sessionID).Scan(&s.bidx, &s.kekID, &s.enc, &s.dek); err != nil {
 		t.Fatalf("leer el sobre crudo de la fila: %v", err)
 	}
 	return s
 }
 
-// verificarFilaCifradaEnReposo afirma las cinco cosas que hacen verdadero al criterio
-// (a) sobre UNA fila: la columna en claro vacía, el sobre COMPLETO (las cuatro o
-// ninguna, invariante de la 0068 que no tiene CHECK que la vigile), el bidx igual al
-// esperado y el envelope sin rastro del teléfono.
+// verificarFilaCifradaEnReposo afirma las cuatro cosas que hacen verdadero al criterio
+// (a) sobre UNA fila: el sobre COMPLETO (las cuatro columnas o ninguna, invariante de
+// la 0068 que no tiene CHECK que la vigile), el bidx igual al esperado, el kek_id
+// puesto y el envelope sin rastro del teléfono. Eran CINCO hasta T5.4: la primera
+// —«la columna en claro vacía»— se fue con la columna (0070).
 //
 // Va extraída y NOMBRADA por gocyclo (umbral 15, que aplica también a los tests): un
 // subtest inline no bajaría la complejidad de la función madre, una función sí.
 func verificarFilaCifradaEnReposo(t *testing.T, s sobreSelfPn, bidxEsperado string) {
 	t.Helper()
-	if s.enClaro.Valid {
-		t.Fatal("SELECT self_pn directo devolvió un valor: la columna en claro tiene que quedar NULL. " +
-			"Un log de sentencias lentas de Postgres, un dump o un DBA con SELECT ven el teléfono")
-	}
 	if !s.bidx.Valid || !s.kekID.Valid || len(s.enc) == 0 || len(s.dek) == 0 {
 		t.Fatalf("el sobre tiene que ir ENTERO o no ir (invariante de la 0068, sin CHECK que la vigile): "+
 			"bidx=%v kek_id=%v len(enc)=%d len(dek)=%d", s.bidx.Valid, s.kekID.Valid, len(s.enc), len(s.dek))

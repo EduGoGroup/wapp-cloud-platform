@@ -258,13 +258,12 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // sobrescribe un valor previo bueno (protege el dato). Un UPDATE de 0 filas
 // (sesión aún sin registrar) es válido: el próximo Heartbeat lo fijará.
 //
-// 🔒 DESDE T4.1 ESCRIBE EL SOBRE Y VACÍA LA COLUMNA EN CLARO EN EL MISMO UPDATE.
-// `self_pn = NULL` no es una limpieza aparte ni un script de una vez: va aquí,
-// atómico con la escritura del sobre, para que la fila NUNCA quede un instante
-// con el número en claro Y el sobre a la vez, y para que toda sesión viva se
-// sanee sola en su siguiente latido aunque el backfill de arranque no la
-// alcanzara. La columna sigue existiendo en el DDL (la retira una migración
-// posterior, cuando nadie la lea); lo que se retira aquí es al ÚLTIMO escritor.
+// 🔒 DESDE T4.1 ESCRIBE EL SOBRE, Y DESDE T5.4 ESO ES TODO LO QUE HAY QUE ESCRIBIR.
+// Hasta la migración 0070 este UPDATE llevaba además `self_pn = NULL`, atómico con
+// el sobre, para que la fila no quedara ni un instante con el número en claro Y el
+// sobre a la vez. Esa columna ya no existe: la 0070 la retiró, así que la limpieza
+// dejó de tener objeto y se fue con ella. La garantía que daba aquel `= NULL` la da
+// ahora el esquema — no hay dónde escribir un teléfono en claro.
 //
 // ⚠️ EL NÚMERO NO SE PASA COMO PARÁMETRO SQL EN NINGÚN SITIO: solo viajan el
 // envelope (bytes opacos), la DEK envuelta, el key_id y el HMAC. Un log de
@@ -274,17 +273,20 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // adorno de rendimiento. Encrypt genera una DEK FRESCA por llamada, así que el
 // sobre sale distinto cada vez aunque el número sea el mismo: sin guarda, cada
 // sesión reescribiría cuatro columnas cada 30 s, para siempre, generando WAL y
-// bloat por un dato que no cambió. Con ella el UPDATE solo entra en TRES casos:
+// bloat por un dato que no cambió. Con ella el UPDATE solo entra en DOS casos:
 //
 //	(1) el número CAMBIÓ — bidx distinto. El bidx sí es determinista, por eso es
 //	    el comparando correcto y el sobre no lo sería. Mismo criterio que el
 //	    `IS DISTINCT FROM` de contact.resolveExisting.
-//	(2) queda plano que limpiar — `self_pn IS NOT NULL`, que es exactamente el
-//	    caso de la primera pasada tras la 0068 y el del rollback a un binario
-//	    viejo que volviera a escribir la columna en claro.
-//	(3) el sobre está envuelto por una KEK que YA NO ES LA CURRENT —
+//	(2) el sobre está envuelto por una KEK que YA NO ES LA CURRENT —
 //	    `self_pn_kek_id IS DISTINCT FROM $6`. Ver abajo: es una vía de
 //	    RECUPERACIÓN, no una optimización.
+//
+// 🔧 ERAN TRES HASTA T5.4. El que se fue era «queda plano que limpiar»
+// (`self_pn IS NOT NULL`), la condición que atrapaba la primera pasada tras la 0068
+// y el rollback a un binario viejo que volviera a escribir la columna en claro. La
+// 0070 borró esa columna: ese caso ya no puede darse, y una guarda que vigila un
+// estado imposible es deuda con buena letra.
 //
 // 🔧 CORRECCIÓN DEL 2026-08-21 (revisión de T4.1). Este docstring afirmaba que
 // «un sobre ya escrito no se re-envuelve solo tras una rotación de KEK, y es
@@ -296,7 +298,7 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 //	—un despliegue con WAPP_KEK_KEYRING incompleto, la rotación mal cerrada de
 //	§10.F— Rekey NO PUEDE con esa fila: falla al desenvolver y la deja igual.
 //
-// Sin el caso (3), esa fila quedaba ATRAPADA PARA SIEMPRE: el bidx casa (es
+// Sin el caso (2), esa fila quedaba ATRAPADA PARA SIEMPRE: el bidx casa (es
 // determinista, no depende de la KEK), así que la guarda decía «nada que hacer»
 // aunque el Edge estuviera reportando el mismo número cada 30 s; la consola
 // servía "" y scanSession dejaba un Warn por fila y por poll, indefinidamente y
@@ -304,14 +306,14 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // dato en claro SÍ está disponible —llega en cada latido— y aun así no se
 // restauraba: cifrar de nuevo desde el latido no necesita la KEK vieja para nada.
 //
-// Con (3), el latido siguiente re-cifra la fila con la KEK current y la fila se
+// Con (2), el latido siguiente re-cifra la fila con la KEK current y la fila se
 // AUTO-SANA. Converge en una sola escritura: tras ella `self_pn_kek_id = $6` y
 // la guarda vuelve a bloquear. El precio, dicho entero: tras una rotación de KEK,
 // cada sesión viva paga UN reescritura extra en su siguiente latido (y de paso le
 // ahorra esa fila a Rekey). No reintroduce la reescritura perpetua que la guarda
 // existe para impedir, porque el comparando de (3) también es estable.
 //
-// ⚠️ EL COMPARANDO DE (3) ES $6, NO UN PARÁMETRO NUEVO. $6 es el kekID que
+// ⚠️ EL COMPARANDO DE (2) ES $6, NO UN PARÁMETRO NUEVO. $6 es el kekID que
 // devuelve selfPnEnvelope, y ese ES por construcción el key_id de la KEK current:
 // FieldCipher.Encrypt envuelve la DEK con kp.WrapDEK, que documenta «envuelve con
 // la KEK current» (keyprovider.go:88-90). Pasar además kp.CurrentKeyID() sería un
@@ -331,11 +333,9 @@ func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, se
 		    self_pn_dek    = $5,
 		    self_pn_kek_id = $6,
 		    self_pn_bidx   = $7,
-		    self_pn        = NULL,
 		    updated_at     = now()
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
 		  AND (self_pn_bidx   IS DISTINCT FROM $7
-		    OR self_pn        IS NOT NULL
 		    OR self_pn_kek_id IS DISTINCT FROM $6)
 	`, tenantID, edgeID, sessionID, enc, dek, kekID, bidx)
 	if err != nil {

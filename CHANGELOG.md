@@ -28,6 +28,31 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ### Removed
 
+- 🔒 **MUEREN LAS DOS COLUMNAS DE PII EN CLARO** (migración
+  **`0070_drop_self_pn_y_push_name_en_claro.sql`**, Plan 046 · T5.4, D-046.17;
+  `SchemaVersion` **0.44.0**): `public.fleet_sessions.self_pn` y
+  `public.contacts.push_name`, que quedaron vivas y vacías tras los backfills
+  cifrados de T4.1 y T4.2. A partir de aquí **no hay en toda la base una sola
+  columna donde quepa un teléfono o un nombre sin cifrar**.
+
+  **La migración es la mitad pequeña.** En el mismo commit se retira el código Go
+  que nombraba esas columnas en su SQL: los dos backfills de arranque
+  (`fleet.BackfillSelfPn` y `contact.BackfillPushName`, con sus tests), el
+  `self_pn = NULL` de `SetSelfPn` junto con su guarda `OR self_pn IS NOT NULL`, y
+  el `push_name = NULL` de `resolveExisting`. Los backfills **bloquean el arranque**
+  y abortan el proceso si su consulta falla, así que desplegar el DROP sin ellos
+  dejaría la plataforma **sin arrancar** con «column does not exist».
+
+  ⚠️ **El rollback repuebla las columnas, y no es un fallo**: un binario anterior
+  aplica su propio directorio embebido —sin la 0070— y la `0028` (o la `0005`)
+  las recrea vacías. Este DROP cierra la higiene del esquema, no la puerta del
+  rollback.
+
+  ⚠️ **Se perdió la consulta que acreditaba el saneo.** Mientras esas columnas
+  existieron, `count(*) WHERE self_pn IS NOT NULL` y su gemela de `push_name` eran
+  la prueba de que los backfills funcionaron. Ya no se pueden hacer; su última
+  ejecución contra UAT quedó anotada en el journal.
+
 - 🔴 **`POST /api/v1/sessions/{id}/role` y `POST /admin/sessions/{id}/role`:
   RETIRADAS**, junto con el campo `role` de `GET /api/v1/sessions` y la columna
   `fleet_sessions.role` (migración **`0064_drop_fleet_sessions_role.sql`**,

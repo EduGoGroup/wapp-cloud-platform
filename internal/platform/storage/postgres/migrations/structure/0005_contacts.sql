@@ -55,7 +55,22 @@ BEGIN
         COMMENT ON COLUMN public.contacts.value IS 'Valor NORMALIZADO de la referencia, EN CLARO en este corte (a cifrar en Plan 011). Dedup por (tenant_id, kind, value).';
     END IF;
 END $$;
-COMMENT ON COLUMN public.contacts.push_name  IS 'Último push_name visto (dato de negocio, opcional).';
+-- La columna `push_name` (en claro) la RETIRA la 0070 (Plan 046 · T5.4). En un
+-- FULL-REPLAY posterior (0070 ya aplicada) esa columna ya no existe y el CREATE
+-- TABLE IF NOT EXISTS de arriba NO la repone —la tabla sí existe—, así que un
+-- COMMENT pelado aquí revienta el arranque con «column does not exist». Mismo
+-- guard, y por el mismo motivo, que el de `value` unas líneas más arriba: se
+-- conserva el COMMENT para la base virgen y se salta en la que ya la perdió.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'contacts'
+          AND column_name = 'push_name'
+    ) THEN
+        COMMENT ON COLUMN public.contacts.push_name IS 'Último push_name visto (dato de negocio, opcional).';
+    END IF;
+END $$;
 COMMENT ON COLUMN public.contacts.created_at IS 'Alta de la referencia.';
 COMMENT ON COLUMN public.contacts.updated_at IS 'Última actualización de la referencia.';
 

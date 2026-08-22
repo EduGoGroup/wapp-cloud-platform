@@ -245,8 +245,22 @@ COMMENT ON COLUMN public.contacts.push_name_kek_id IS
 -- Se CORRIGE el comentario de la columna en claro, que desde la 0006 dice «EN CLARO»
 -- y a partir de aqui miente. No se reescribe la 0006 (es historia); se enmienda desde
 -- la migracion nueva, que es la convencion de la casa.
-COMMENT ON COLUMN public.contacts.push_name IS
-  'OBSOLETA desde el Plan 046 · T4.2: el nombre vive cifrado en push_name_enc/_dek/_kek_id. Esta columna queda VACIA (el backfill de arranque la nulifica) y se conserva solo hasta T5.4, que la retira junto con fleet_sessions.self_pn en una sola migracion. Mientras exista, count(*) WHERE push_name IS NOT NULL es la PRUEBA de que el backfill funciono, y debe dar 0 (D-046.17, D-046.18). NO la vuelvas a escribir: el codigo de T4.2 ya no lo hace.';
+-- 🔧 GUARD AÑADIDO EN T5.4, y no es cosmético: la 0070 RETIRA esta columna, y en el
+-- FULL-REPLAY siguiente el CREATE TABLE IF NOT EXISTS de la 0006 no la repone (la
+-- tabla ya existe), así que un COMMENT pelado aquí revienta el arranque con «column
+-- does not exist». Mismo patrón que el de `value` en la 0005. El texto se conserva
+-- tal cual para la base virgen, donde esta columna sí llega a existir un instante.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'contacts'
+          AND column_name = 'push_name'
+    ) THEN
+        COMMENT ON COLUMN public.contacts.push_name IS
+          'OBSOLETA desde el Plan 046 · T4.2: el nombre vive cifrado en push_name_enc/_dek/_kek_id. Esta columna queda VACIA (el backfill de arranque la nulifica) y la retira la 0070 (T5.4), junto con fleet_sessions.self_pn en una sola migracion. Mientras existio, count(*) WHERE push_name IS NOT NULL fue la PRUEBA de que el backfill funciono, y debia dar 0 (D-046.17, D-046.18). NO la vuelvas a escribir: el codigo de T4.2 ya no lo hace.';
+    END IF;
+END $$;
 
 -- Las tres son NULLables PARA SIEMPRE y van juntas o no van (o las tres NULL, o las
 -- tres pobladas): invariante del CODIGO, sin CHECK, para no bloquear la escritura
