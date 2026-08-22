@@ -909,6 +909,44 @@ func (s *Store) AppendMessage(ctx context.Context, eventID string, role Role, bo
 	})
 }
 
+// AppendOutOfTurnMessage añade al hilo un SALIENTE FUERA DE TURNO: el texto que la
+// plataforma le manda al cliente sin que nazca de un entrante suyo (Plan 044 ·
+// T1.6, D-044.24) — el resumen del rescate, la confirmación de un `event_stop`, el
+// recordatorio de la seña.
+//
+// Es AppendMessage con OTRO grado, y nada más: mismo cifrado, mismo sobre de tres
+// piezas, mismo nivel 2 del ADR-0034 y misma numeración sin huecos. La única
+// diferencia es `entry_kind='message_out_of_turn'`, que es lo que permite a quien
+// lea el hilo (T1.4) meter el texto como CONTEXTO y no como pedido del cliente. El
+// porqué de esa forma —y por qué no un `role` nuevo ni un flag en `payload`— está
+// en la constante entryKindMessageOutOfTurn (events.go).
+//
+// 🔴 EL ROL ES FIJO Y ES `business`, y no es comodidad: un saliente es, por
+// definición, la voz del negocio. Dejar que el llamante lo eligiera abriría la
+// puerta a registrar texto del CLIENTE como contexto fuera de turno, que es
+// exactamente la doble contabilidad que INV-11 existe para impedir — el mismo
+// criterio con el que AppendSummary clava `system` y AppendDecision clava `client`.
+//
+// Devuelve el seq asignado.
+func (s *Store) AppendOutOfTurnMessage(ctx context.Context, eventID string, body string) (int, error) {
+	if s.cipher == nil {
+		return 0, ErrNoCipher
+	}
+
+	bodyEnc, bodyDEK, kekID, err := s.cipher.Encrypt(body)
+	if err != nil {
+		return 0, fmt.Errorf("events: cifrar el cuerpo del saliente fuera de turno: %w", err)
+	}
+
+	return s.appendEntry(ctx, eventID, entry{
+		role:      RoleBusiness,
+		kind:      entryKindMessageOutOfTurn,
+		bodyEnc:   bodyEnc,
+		bodyDEK:   bodyDEK,
+		bodyKEKID: kekID,
+	})
+}
+
 // appendEntry escribe una entrada del historial numerándola sin huecos,
 // reintentando si otro escritor se llevó ese seq.
 func (s *Store) appendEntry(ctx context.Context, eventID string, e entry) (int, error) {

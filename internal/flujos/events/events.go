@@ -87,6 +87,39 @@ const (
 	entryKindSummary  entryKind = "summary"
 	entryKindMessage  entryKind = "message"
 	entryKindDecision entryKind = "decision"
+	// entryKindMessageOutOfTurn es el SALIENTE FUERA DE TURNO (Plan 044 · T1.6,
+	// D-044.24): el texto que la plataforma le manda al cliente sin que nazca de un
+	// entrante suyo — el resumen del rescate, la confirmación de un `event_stop`, el
+	// recordatorio de la seña. Es nivel 2 del ADR-0034 igual que `message`: MISMO
+	// grado, MISMO cifrado, MISMAS tres columnas del sobre. Lo único que cambia es
+	// que quien lo lea sabe que NO es un pedido.
+	//
+	// 🔑 POR QUÉ ES UN `entry_kind` NUEVO Y NO UN `role` NI UN FLAG EN `payload`.
+	// Las tres se consideraron y dos están CERRADAS por el esquema, no por gusto:
+	//
+	//   - `role` NO SIRVE porque mentiría. `role` dice DE QUIÉN ES LA VOZ, y la voz
+	//     de un resumen de rescate es la del negocio exactamente igual que la de una
+	//     respuesta del flujo (0051, COMMENT de la columna: «Es un ROL, no una
+	//     persona»). Meter aquí un cuarto valor convertiría la columna en un cajón
+	//     de dos preguntas distintas, que es justo lo que `origin` existe para no
+	//     hacer (D-043.19).
+	//   - `payload` ES IMPOSIBLE, y esto no es una opinión: el CHECK de grado
+	//     (conversation_event_messages_grade_chk, 0051:194-197) exige `payload IS
+	//     NULL` en toda fila de nivel 2. Una marca en el JSONB de una fila cifrada
+	//     REBOTA en la base. La opción (c) no llega ni a compilar contra el esquema.
+	//   - `entry_kind` ES LA COLUMNA QUE YA HACE ESTE TRABAJO. `summary` existe por
+	//     el MISMO motivo —«quien analice el hilo DEBE tratar summary como contexto,
+	//     nunca como mensaje original» (0051, COMMENT de entry_kind)— y T1.4 va a
+	//     clasificar cada fila por `entry_kind` (REQ-10b). El precedente que se sigue
+	//     es literalmente ése: la casa ya resolvió «esto es contexto y no pedido»
+	//     ampliando este vocabulario, y se amplía otra vez.
+	//
+	// ⚠️ COSTE ACEPTADO Y DICHO: quien filtre `entry_kind = 'message'` deja fuera
+	// estas filas. Hoy NADIE lo hace en código de producción (verificado el
+	// 2026-08-22: el único SQL que nombra la columna es el INSERT de appendEntrySQL),
+	// así que no hay nada que corregir — pero quien escriba el primer lector tiene
+	// que decidir a conciencia si quiere una clase o las dos.
+	entryKindMessageOutOfTurn entryKind = "message_out_of_turn"
 )
 
 // Errores del store. Son sentinelas para que el llamador distinga «la BD falló» de
