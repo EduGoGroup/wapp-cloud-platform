@@ -17,12 +17,17 @@ import (
 type recordatorioSpy struct {
 	mu     sync.Mutex
 	toques []string // "tenant|contacto"
+	// manda son los textos que el doble finge haber enviado en CADA toque (Plan 044
+	// · T1.6): nil —el caso por defecto de estos tests— significa «no procedía», que
+	// es lo que devuelve el recordatorio real el 99,9 % de las veces.
+	manda []string
 }
 
-func (s *recordatorioSpy) RemindContact(_ context.Context, tenantID, contactID string) {
+func (s *recordatorioSpy) RemindContact(_ context.Context, tenantID, contactID string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toques = append(s.toques, tenantID+"|"+contactID)
+	return s.manda
 }
 
 func (s *recordatorioSpy) count() int {

@@ -161,7 +161,10 @@ func (r *DepositReminder) Remind(ctx context.Context, tenantID string, touched [
 		if !candidate(in, at) {
 			continue
 		}
-		if r.remindOne(ctx, tenantID, in.ID, at) {
+		// El texto se DESCARTA aquí a propósito (Plan 044 · T1.6): este toque lo
+		// dispara una pantalla de la consola del dueño, no una conversación, así que
+		// no hay hilo de evento al que pertenezca. Solo RemindContact lo propaga.
+		if _, ok := r.remindOne(ctx, tenantID, in.ID, at); ok {
 			sent++
 		}
 		if sent >= maxRemindersPerTouch {
@@ -181,9 +184,31 @@ func (r *DepositReminder) Remind(ctx context.Context, tenantID string, touched [
 //
 // No devuelve error por la misma razón que Remind: un fallo aquí no puede tumbar el
 // procesamiento del mensaje que el cliente acaba de mandar.
-func (r *DepositReminder) RemindContact(ctx context.Context, tenantID, contactID string) {
+//
+// 🔑 DEVUELVE LOS TEXTOS QUE MANDÓ (Plan 044 · T1.6, D-044.24), y solo este de los
+// tres toques lo hace. El recordatorio es un saliente FUERA DE TURNO y tiene que
+// dejar rastro en el hilo del evento conversacional — pero este paquete no puede
+// escribirlo: no conoce el evento (Intake no lleva EventID) ni el resolver de
+// entitlements que decide si el tenant puede persistir texto literal. El llamante
+// que sí tiene las dos cosas es el runtime, y por eso lo que cruza la frontera son
+// las cadenas. Ver el puerto DepositReminder en internal/flujos/runtime.
+//
+// Los otros dos toques (Remind, sobre el listado y el detalle del DUEÑO) NO
+// devuelven nada a propósito: los dispara una pantalla de la consola, no una
+// conversación, y allí no hay ningún hilo al que pertenecer.
+//
+// nil o vacío = no se mandó nada, que es el caso normal.
+//
+// ⚠️ ANTE UN PÁNICO CONTENIDO SE DEVUELVE nil, y no lo acumulado hasta ese punto.
+// El retorno NO es con nombre a propósito: con un `recover()` en el defer, un
+// retorno con nombre entregaría al runtime una lista PARCIAL de recordatorios de
+// los que no se sabe si salieron —el pánico pudo ocurrir a mitad de un envío—, y
+// una fila en el hilo de un texto que quizá el cliente nunca vio es peor que no
+// tener la fila. Se prefiere perder el rastro a inventarlo. La noticia del pánico
+// sigue entera en el log, que es donde hay que ir a buscarla.
+func (r *DepositReminder) RemindContact(ctx context.Context, tenantID, contactID string) []string {
 	if !r.usable() || tenantID == "" || contactID == "" {
-		return
+		return nil
 	}
 	defer r.contenerPánico("recordatorio de seña por mensaje entrante")
 
@@ -192,17 +217,19 @@ func (r *DepositReminder) RemindContact(ctx context.Context, tenantID, contactID
 	if err != nil {
 		r.notifier.log.Error("recordatorio de seña: no se pudo consultar las señas vencidas del contacto",
 			"error", err, "tenant_id", tenantID, "contact_id", contactID)
-		return
+		return nil
 	}
-	sent := 0
+	var enviados []string
 	for _, in := range pending {
-		if r.remindOne(ctx, tenantID, in.ID, at) {
-			sent++
+		text, ok := r.remindOne(ctx, tenantID, in.ID, at)
+		if ok {
+			enviados = append(enviados, text)
 		}
-		if sent >= maxRemindersPerTouch {
-			return
+		if len(enviados) >= maxRemindersPerTouch {
+			return enviados
 		}
 	}
+	return enviados
 }
 
 // usable dice si el recordatorio puede operar. Un recordatorio a medias no avisa,
@@ -240,7 +267,11 @@ func candidate(in Intake, at time.Time) bool {
 		in.DepositRemindedAt.IsZero()
 }
 
-// remindOne intenta recordar UNA solicitud y dice si mandó algo. Los tres pasos van
+// remindOne intenta recordar UNA solicitud y devuelve el texto que mandó y si mandó
+// algo. El texto vuelve al llamante desde el Plan 044 · T1.6 (D-044.24): es lo que
+// el runtime necesita para dejar el recordatorio en el hilo del evento, MARCADO como
+// saliente fuera de turno. Con el booleano en false la cadena no significa nada y
+// está vacía. Los tres pasos van
 // en ESTE orden y ninguno es intercambiable:
 //
 //  1. ¿PUEDE decirse algo? Se lee la config del tenant. Va primero justamente para
@@ -253,27 +284,32 @@ func candidate(in Intake, at time.Time) bool {
 //     solicitud que se sabe vigente, y de ella salen el total y la fecha del texto.
 //     Que el envío falle después de marcar es el error elegido (cabecera del
 //     fichero): antes un silencio que un goteo.
-func (r *DepositReminder) remindOne(ctx context.Context, tenantID, intakeID string, at time.Time) bool {
+func (r *DepositReminder) remindOne(ctx context.Context, tenantID, intakeID string, at time.Time) (string, bool) {
 	log := r.notifier.log.With("intake_id", intakeID, "tenant_id", tenantID)
 
 	cfg, ok := r.notifier.depositSettings(ctx, tenantID, log)
 	if !ok {
-		return false // el silencio ya quedó registrado con su causa; la marca sigue libre
+		return "", false // el silencio ya quedó registrado con su causa; la marca sigue libre
 	}
 
 	marked, won, err := r.store.MarkDepositReminded(ctx, tenantID, intakeID, at)
 	if err != nil {
 		log.Error("recordatorio de seña: no se pudo marcar la solicitud; no se envía", "error", err)
-		return false
+		return "", false
 	}
 	if !won {
 		// Lo normal: la seña ya no está pendiente, no venció, o alguien recordó
 		// primero. No es una avería y no merece más que un debug.
 		log.Debug("recordatorio de seña: no procedía (ya recordada, no vencida o seña resuelta)")
-		return false
+		return "", false
 	}
 
 	text := depositReminderPreamble + "\n\n" + render(cfg.DepositTemplate, marked, cfg.DepositDueDays)
 	r.notifier.deliver(ctx, tenantID, marked, text, log.With("motivo", "recordatorio_sena"))
-	return true
+	// Se devuelve `true` (y el texto) tras la ENTREGA aunque `deliver` no diga si
+	// salió: es la misma elección que ya escribía la cabecera de este fichero —«que
+	// el envío falle después de marcar es el error elegido»—, y el hilo hereda el
+	// mismo criterio que el resto de los salientes fuera de turno. La marca en BD ya
+	// se gastó: para todos los efectos, este recordatorio ocurrió.
+	return text, true
 }

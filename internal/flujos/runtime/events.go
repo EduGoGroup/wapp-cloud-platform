@@ -70,6 +70,15 @@ type EventStore interface {
 	// de la feature `llm_intake` (T4.5.7b, D-043.23) — ver persistTurnMessages en
 	// thread.go. Firma idéntica a events/store.go:AppendMessage.
 	AppendMessage(ctx context.Context, eventID string, role events.Role, body string) (int, error)
+	// AppendOutOfTurnMessage escribe un SALIENTE FUERA DE TURNO en el hilo (Plan 044
+	// · T1.6, D-044.24): el texto que la plataforma manda sin que nazca de un
+	// entrante del cliente. Mismo cifrado y mismo grado que AppendMessage; lo que
+	// cambia es la MARCA, que es lo que permite a T1.4 tratarlo como contexto y no
+	// como pedido. Sin `role` en la firma A PROPÓSITO: un saliente es la voz del
+	// negocio y el store la clava (ver events/store.go). Lo produce el runtime SOLO
+	// detrás de la misma feature `llm_intake` — ver persistOutOfTurnMessage en
+	// thread.go.
+	AppendOutOfTurnMessage(ctx context.Context, eventID string, body string) (int, error)
 	// IsSuspended evalúa la condición DERIVADA «vencido» con el reloj del store.
 	// ttl <= 0 ⇒ siempre false (override «sin vencimiento» del tenant).
 	IsSuspended(e events.Event, ttl time.Duration) bool
@@ -242,39 +251,103 @@ const (
 //
 // El bool devuelto dice si el turno se consumió. false ⇒ el llamante sigue con su
 // camino normal (solo ocurre en el caso 1 y cuando no hay plano de eventos).
-func (rt *Runtime) beginEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision, g eventGesture, active string) (bool, error) {
+//
+// # EL PRIMER VALOR: EL ID DEL EVENTO EN EL QUE QUEDA LA CONVERSACIÓN (Plan 044)
+//
+// Esta función es EL ÚNICO SITIO del camino de disparo donde el `event_id` existe: nace
+// en el `CreateEvent` de birthEvent o se recupera del vivo en switchToEvent. Se devuelve
+// —en vez de que el 044 se cuele dentro de esas dos— para que la ventana de captación
+// pueda anclar en él el mensaje que ARRANCA el evento (startFromDecision, incoming.go).
+// Vale "" en los CUATRO casos en los que no hay un evento sobre el que sea legítimo
+// anclar la ventana:
+//
+//   - sin plano de eventos cableado, o con `dec.EventKind` vacío (la keyword de siempre);
+//   - el no-op del caso 1 (ya se estaba en ese evento) — el llamante sigue su camino;
+//   - el cupo anti-loop agotado, y la carrera benigna del `ErrAliveExists` dentro de
+//     birthEvent: el turno se consume, pero aquí no se sabe sobre qué fila;
+//   - 🔴 el ARRANQUE CORTADO por el sink durable (D-054.4, añadido el 2026-08-22). Aquí
+//     el evento SÍ existe y su id se conocía, y aun así no sube: startLocked volvió sin
+//     escribir hilo, así que anclar la ventana en ese mensaje dejaría una referencia sin
+//     literal — el `source_text` saldría incompleto SIN dar error. Ver el `if cortado`
+//     de birthEvent, que es donde se decide.
+//
+// Ese "" NO es un valor de error y nadie tiene que comprobarlo: `Observe` lo descarta
+// solo, porque `intake.WindowKey.Valid()` exige `event_id`.
+//
+// # EL TURNO DE APERTURA, QUE SOLO BAJA (Plan 044 · T1.4, 2026-08-22)
+//
+// `opening` viaja hacia abajo hasta startLocked y es lo ÚNICO del 044 que lo hace: el
+// `event_id` SUBE (ver arriba) porque es un `string` que nace aquí, y el LITERAL baja
+// porque las salidas del arranque nacen allá. Que las dos direcciones convivan no es
+// una incoherencia: cada dato viaja desde donde existe hasta donde hace falta, y en
+// ningún caso baja el `*cloudlinkv1.IncomingMessage` —el plano de eventos del 043
+// sigue sin conocer la forma del entrante—. Ver openingTurn (start.go).
+//
+// De las CINCO puertas que llaman aquí, solo startFromDecision pasa un turno de
+// apertura poblado. Las otras cuatro pasan el valor cero A PROPÓSITO, y el porqué es
+// el MISMO que ya las deja fuera de la ventana de captación: StartNewOfKind (el «1»
+// del despachador no es el pedido), liveEventSwitch y exitMenuChoice (un salto por
+// tipo sobre conversación viva es navegación, no pedido) y el salto del menú de
+// salida. Un literal que no puede anclar la ventana tampoco tiene por qué abrir el
+// hilo del evento al que se salta.
+func (rt *Runtime) beginEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision, g eventGesture, active string, opening openingTurn) (string, bool, error) {
 	if rt.events == nil || dec.EventKind == "" {
 		// Sin plano de eventos cableado, un event_start se comporta como la keyword
 		// que siempre fue: arranca su flujo y no pare nada (INV-6).
-		return false, nil
+		return "", false, nil
 	}
 	ev, alive, err := rt.events.GetAliveByKind(ctx, key.TenantID, sessionID, key.ContactID, dec.EventKind)
 	if err != nil {
-		return false, fmt.Errorf("runtime: buscar evento vivo de tipo %q: %w", dec.EventKind, err)
+		return "", false, fmt.Errorf("runtime: buscar evento vivo de tipo %q: %w", dec.EventKind, err)
 	}
 	if alive && ev.ID == active && g == gestureGoTo {
 		// Caso 1: ya está donde pidió estar. Nada que escribir y turno NO consumido.
 		rt.log.Debug("runtime: event_start sobre el evento que ya estaba activo; no-op",
 			"session_id", sessionID, "event_kind", dec.EventKind)
-		return false, nil
+		return "", false, nil
 	}
 	// A partir de aquí SÍ se escribe y SÍ se habla, así que la red anti-loop (Plan
 	// 020 · T0) se cobra su token: después de descartar el no-op —que no responde y
 	// no debe gastar cuota— y ANTES de tocar la base, porque parir un evento al que
 	// no se va a poder contestar es peor que no parirlo.
 	if !rt.replyAllowed(key) {
-		return true, nil
+		return "", true, nil
 	}
 	if alive {
 		reuse, cerr := rt.reuseOrRetire(ctx, key.TenantID, ev, g)
 		if cerr != nil {
-			return false, cerr
+			return "", false, cerr
 		}
 		if reuse {
-			return true, rt.switchToEvent(ctx, key, sessionID, ev)
+			// El id se devuelve AUNQUE switchToEvent falle: da igual, el llamante corta
+			// por el error antes de mirarlo. Se escribe así —y no con un "" en el camino
+			// de error— porque el evento existe de verdad; mentir sobre eso para adornar
+			// la firma sería peor que la línea de más.
+			//
+			// 🔴 LA CONMUTA ESCRIBE EL LITERAL DEL CLIENTE Y **NO** LAS SALIDAS, y la
+			// asimetría es el punto (Plan 044 · T1.4). La invariante que se sostiene es
+			// «todo mensaje que entra en `source_refs` tiene su literal en el hilo»: cuando
+			// se llega aquí desde startFromDecision, ese entrante SÍ entra en la ventana
+			// (observeForAggregation, con este mismo ev.ID) y anclaría el `message_ts`
+			// (D-044.9), así que su texto no puede faltar — el compositor de T1.4 leería el
+			// hilo y no lo encontraría.
+			//
+			// Las SALIDAS, en cambio, quedan fuera: switchToEvent RE-ENTRA a un evento que
+			// ya existía y cuyo hilo ya tiene escrito su nodo inicial. Volver a meterlo
+			// duplicaría el literal EN SILENCIO —el `seq` es MAX+1 y no hay UNIQUE por
+			// texto—, que es el defecto peor de los dos. Por eso se llama al productor con
+			// `nil` en las salidas y no a persistOpeningTurn.
+			//
+			// Las otras cuatro puertas que llegan aquí pasan el valor cero de openingTurn,
+			// así que para ellas esta línea es un no-op exacto (ver la cabecera).
+			if opening.FromClient {
+				rt.persistTurnMessages(ctx, key.TenantID, sessionID, ev.ID, opening.Text, nil)
+			}
+			return ev.ID, true, rt.switchToEvent(ctx, key, sessionID, ev)
 		}
 	}
-	return true, rt.birthEvent(ctx, key, sessionID, dec)
+	nacido, berr := rt.birthEvent(ctx, key, sessionID, dec, opening)
+	return nacido, true, berr
 }
 
 // StartNewOfKind es la TERCERA puerta del nacimiento tardío (T2.5): la elección
@@ -289,9 +362,20 @@ func (rt *Runtime) beginEvent(ctx context.Context, key store.Key, sessionID stri
 // DENTRO de su ventana se conmuta hacia él y no se cierra nada (E-11.3). Solo un
 // evento vivo y VENCIDO cede su sitio, y lo cede ante una persona que pulsó una
 // opción, nunca ante un reloj.
+//
+// ⚠️ DESCARTA el `event_id` que beginEvent devuelve desde el Plan 044, y es DELIBERADO:
+// esta puerta es la ELECCIÓN EN EL DESPACHADOR («1) Hacer un pedido»), y ese número no
+// es el pedido —es la respuesta a una lista que le pintamos nosotros—. Meterlo en la
+// ventana de captación anclaría el `message_ts` del presupuesto (D-044.9) en un «1» y
+// dejaría ese «1» como primera referencia de `source_refs`. La ventana la abre el primer
+// mensaje en el que el cliente dice lo que quiere, que es el turno siguiente.
 func (rt *Runtime) StartNewOfKind(ctx context.Context, key store.Key, sessionID, kind, flowID, activeEventID string) (bool, error) {
 	dec := trigger.Decision{Action: trigger.StartEvent, EventKind: kind, FlowID: flowID}
-	return rt.beginEvent(ctx, key, sessionID, dec, gestureNew, activeEventID)
+	// openingTurn{}: el «1» que el contacto pulsó NO abre el hilo, por la MISMA razón
+	// por la que no abre la ventana (ver el ⚠️ de arriba). Es la respuesta a una lista
+	// que pintamos nosotros, no lo que el cliente quiere.
+	_, consumed, err := rt.beginEvent(ctx, key, sessionID, dec, gestureNew, activeEventID, openingTurn{})
+	return consumed, err
 }
 
 // liveEventSwitch atiende un entrante que llega SOBRE una conversación viva y
@@ -324,7 +408,16 @@ func (rt *Runtime) liveEventSwitch(ctx context.Context, tenantID, sessionID stri
 	}
 	switch dec.Action {
 	case trigger.StartEvent:
-		return rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, st.EventID)
+		// El `event_id` se DESCARTA aquí a propósito (Plan 044): un salto por tipo sobre
+		// una conversación VIVA es una orden de navegación —«carrito» dicho a media
+		// encuesta—, no un pedido. Anclar la ventana en esa palabra pondría el
+		// `message_ts` del presupuesto en ella y la dejaría de primera referencia. El
+		// mensaje que ABRE el evento sí entra, pero por su camino (startFromDecision).
+		// openingTurn{} por el MISMO motivo por el que se descarta el `event_id`: una
+		// orden de navegación sobre conversación viva no es un pedido, no abre la ventana
+		// y no abre el hilo del evento al que se salta (Plan 044 · T1.4).
+		_, done, berr := rt.beginEvent(ctx, key, sessionID, dec, gestureGoTo, st.EventID, openingTurn{})
+		return done, berr
 	case trigger.StopEvent:
 		return true, rt.stopEvent(ctx, key, sessionID, st)
 	default:
@@ -434,11 +527,22 @@ func (rt *Runtime) cancelAndAbandon(ctx context.Context, tenantID string, ev eve
 // fila incumplía naciendo con 0 (birthEvent omitía el campo). La versión no viene
 // en la decisión (trigger.Decision solo trae el flow_id) sino del flujo VIGENTE
 // que este mismo camino va a arrancar — ver flowVersionFor.
-func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision) error {
+//
+// Devuelve el ID del evento RECIÉN CREADO (Plan 044): es el instante exacto en que ese
+// id empieza a existir —el `INSERT` de CreateEvent—, y la ventana de captación lo
+// necesita para anclar el mensaje que abrió el evento. Vale "" en DOS casos: la carrera
+// benigna del `ErrAliveExists`, que es un éxito sin fila propia (otro entrante parió el
+// evento entre nuestro SELECT y nuestro INSERT y aquí no se llegó a tener su id en la
+// mano), y el ARRANQUE CORTADO por el sink durable — ahí el id sí se tiene y aun así no
+// sube, porque el turno no dejó literal en el hilo (ver el `if cortado`, abajo).
+//
+// `opening` solo hace de correo: baja hasta startLocked, que es quien escribe el hilo
+// del turno de apertura (Plan 044 · T1.4). Esta función no lo mira.
+func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID string, dec trigger.Decision, opening openingTurn) (string, error) {
 	tagline := rt.taglineFor(ctx, key.TenantID, sessionID, key.ContactID, dec.IntentName)
 	flowVersion, err := rt.flowVersionFor(ctx, key.TenantID, dec.FlowID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ev, err := rt.events.CreateEvent(ctx, events.NewEvent{
 		TenantID:    key.TenantID,
@@ -455,12 +559,32 @@ func (rt *Runtime) birthEvent(ctx context.Context, key store.Key, sessionID stri
 			// que el índice único parcial existe para imponer.
 			rt.log.Info("runtime: el evento ya existía al crearlo (carrera benigna)",
 				"session_id", sessionID, "event_kind", dec.EventKind)
-			return nil
+			return "", nil
 		}
-		return fmt.Errorf("runtime: crear evento de tipo %q: %w", dec.EventKind, err)
+		return "", fmt.Errorf("runtime: crear evento de tipo %q: %w", dec.EventKind, err)
 	}
 	rt.emitEventEffect(ctx, ev, EffectEventStarted)
-	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName, tagline)
+	cortado, eerr := rt.enterEventFlow(ctx, key, sessionID, ev.ID, dec.EventKind, dec.FlowID, dec.Params, dec.IntentName, tagline, opening)
+	if cortado {
+		// 🔴 EL ARRANQUE SE CORTÓ POR EL SINK DURABLE (D-054.4), Y ENTONCES EL ID **NO
+		// SUBE** (Plan 044, corrección del 2026-08-22). El evento EXISTE —la fila se creó
+		// arriba y sigue `open`—, pero su turno no ocurrió: startLocked volvió sin guardar
+		// estado y sin escribir una sola fila de hilo, y al cliente se le dijo que
+		// reintentara.
+		//
+		// Devolver "" es lo que hace cumplir la invariante del plan sin tocar el llamante:
+		// TODO MENSAJE QUE ENTRA EN `source_refs` TIENE SU LITERAL EN EL HILO. Con "" la
+		// clave de ventana queda incompleta, `intake.WindowKey.Valid()` da false y
+		// `Observe` descarta el arranque sola — que es justo el trato que ya reciben el
+		// cupo anti-loop agotado y la carrera del ErrAliveExists (ver la cabecera de
+		// beginEvent, que enumera los casos del ""). Es el MISMO corte que advanceLiveStep
+		// hace en su rama del sink durable: si el turno se cortó, no se observa.
+		//
+		// Y no se pierde nada: el mensaje con el que el cliente reintente sí abrirá su
+		// ventana, y lo hará sobre este mismo evento vivo.
+		return "", eerr
+	}
+	return ev.ID, eerr
 }
 
 // flowVersionFor resuelve la VERSIÓN VIGENTE del flujo que va a abrir un evento
@@ -511,7 +635,22 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 	rt.sendResumeSummary(ctx, key, sessionID, ev)
 	// Sin coletilla: volver a un evento que ya existía no es atender una intención, y
 	// además el propio evento al que se vuelve sería lo primero que se anunciaría.
-	return rt.enterEventFlow(ctx, key, sessionID, ev.ID, ev.Kind, ev.FlowID, nil, "", "")
+	//
+	// Y SIN turno de apertura (openingTurn{}): el literal del cliente que trajo hasta
+	// aquí ya lo escribió beginEvent antes de llamar —ver la rama `reuse`— y las
+	// salidas de esta re-entrada NO van al hilo, porque el evento ya tiene su nodo
+	// inicial escrito de cuando nació (Plan 044 · T1.4).
+	//
+	// ⚠️ EL BOOL DEL CORTE SE DESCARTA AQUÍ, Y NO ES UN OLVIDO. En birthEvent el corte
+	// obliga a no devolver el id porque el literal del cliente se escribía DENTRO de
+	// startLocked (persistOpeningTurn) y por tanto no llegó a escribirse. En la CONMUTA
+	// pasa lo contrario: beginEvent ya escribió ese literal ANTES de llamar aquí, con
+	// persistTurnMessages, así que la referencia de la ventana tiene su literal en el
+	// hilo aunque la re-entrada se corte. La invariante se cumple y no hay nada que
+	// suprimir; lo que este camino sí corta —el render del nodo inicial— nunca iba al
+	// hilo de todos modos.
+	_, err := rt.enterEventFlow(ctx, key, sessionID, ev.ID, ev.Kind, ev.FlowID, nil, "", "", openingTurn{})
+	return err
 }
 
 // enterEventFlow deja la conversación dentro del evento eventID: arranca (o
@@ -529,7 +668,27 @@ func (rt *Runtime) switchToEvent(ctx context.Context, key store.Key, sessionID s
 // `tagline` llega YA RESUELTA y no se calcula aquí: cuando este camino viene de un
 // evento que acaba de nacer, mirar los rescatables desde dentro devolvería ese mismo
 // evento (ver birthEvent). Quien sabe cuándo era seguro preguntarlo es el llamante.
-func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID, eventID, kind, flowID string, params map[string]string, intentName, tagline string) error {
+//
+// `opening` es el ÚLTIMO tramo del correo del turno de apertura (Plan 044 · T1.4):
+// llega de birthEvent poblado y de switchToEvent en cero, y esta función solo lo pasa
+// a startLocked. El camino del `menu` (kind == EventKindMenu) sale ANTES de usarlo y
+// eso es correcto: el menú no arranca flujo, así que no hay turno de arranque que
+// escribir — su contenido lo pinta presentMenu, que ya está fuera del censo de
+// emisores del hilo (ver thread.go).
+//
+// # EL BOOL DEVUELTO: «EL ARRANQUE SE CORTÓ» (Plan 044, corrección del 2026-08-22)
+//
+// Sube TAL CUAL desde startLocked (ver su cabecera) y esta función no lo interpreta:
+// solo lo transporta hasta birthEvent, que es quien decide su consecuencia. Vale true
+// cuando el sink durable agotó su reintento acotado (D-054.4) y el arranque volvió sin
+// guardar estado y SIN ESCRIBIR HILO. Sostiene la invariante del plan —todo mensaje que
+// entra en `source_refs` tiene su literal en el hilo—, y por eso `arrancado` va atado a
+// su negación: con el turno cortado no hay flow_state nuevo del que este evento sea
+// dueño, porque no hay flow_state en absoluto.
+//
+// Los caminos que no arrancan flujo —el `menu` y el `flowID == ""`— devuelven false: no
+// hay turno que cortar donde no hay turno.
+func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID, eventID, kind, flowID string, params map[string]string, intentName, tagline string, opening openingTurn) (bool, error) {
 	// El SALTO POR TIPO es un abandono: antes de tocar nada, se resume el evento que se
 	// deja atrás (T3.4). Va aquí arriba y no dentro del `if flowID != ""` porque el
 	// salto al menú también abandona, y porque lo que sigue BORRA el flow_state —y con
@@ -542,8 +701,9 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 	}
 	if kind == trigger.EventKindMenu {
 		// El menú NO es una fila de flow_definitions (D-043.3): su contenido es dinámico
-		// por contacto, así que lo renderiza el despachador y no el motor.
-		return rt.presentMenu(ctx, key, sessionID, eventID)
+		// por contacto, así que lo renderiza el despachador y no el motor. Sin turno que
+		// arrancar no hay turno que cortar ⇒ false.
+		return false, rt.presentMenu(ctx, key, sessionID, eventID)
 	}
 	// `arrancado` es EL DATO DEL CAMINO que pointStateAtEvent necesita para saber si
 	// puede estampar el dueño: vale true SOLO si aquí abajo se borró el flow_state y
@@ -551,9 +711,10 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 	// tarde —es el hecho, capturado por quien lo hizo—. Ver el docstring de
 	// pointStateAtEvent y el camino de la tercera salida (flowID=="" y kind!="menu").
 	arrancado := false
+	cortado := false
 	if flowID != "" {
 		if err := rt.store.Delete(ctx, key); err != nil {
-			return fmt.Errorf("runtime: liberar el estado previo al entrar al evento: %w", err)
+			return false, fmt.Errorf("runtime: liberar el estado previo al entrar al evento: %w", err)
 		}
 		// Fin de episodio (Plan 049, ver streak.go): el salto por tipo destruye el
 		// flow_state y arranca otro flujo, así que la racha del flujo que se deja atrás
@@ -562,13 +723,21 @@ func (rt *Runtime) enterEventFlow(ctx context.Context, key store.Key, sessionID,
 		// eventID viaja al arranque (T4.5.1): startLocked no puede leerlo de
 		// st.EventID (el puntero se estampa DESPUÉS, en pointStateAtEvent) y es
 		// AQUÍ donde el evento recién nacido/conmutado está en la mano.
-		if _, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, eventID, params, intentName,
-			tagline); err != nil {
-			return fmt.Errorf("runtime: arrancar el flujo del evento: %w", err)
+		_, cut, err := rt.startLocked(ctx, key.TenantID, flowID, sessionID, key, key.ContactID, eventID, params, intentName,
+			tagline, opening)
+		if err != nil {
+			return cut, fmt.Errorf("runtime: arrancar el flujo del evento: %w", err)
 		}
-		arrancado = true
+		// `arrancado` es la NEGACIÓN del corte y no un `true` a secas (Plan 044): con el
+		// turno cortado, startLocked volvió ANTES de su Save, así que no existe la fila
+		// de la que este evento sería dueño. pointStateAtEvent no encontraría nada que
+		// estampar de todos modos —y lo loguearía en Debug—, pero el dato del camino
+		// tiene que decir la verdad: es él, y no una relectura tardía, lo que
+		// pointStateAtEvent usa para no escribir un dueño falso.
+		cortado = cut
+		arrancado = !cut
 	}
-	return rt.pointStateAtEvent(ctx, key, eventID, arrancado)
+	return cortado, rt.pointStateAtEvent(ctx, key, eventID, arrancado)
 }
 
 // pointStateAtEvent estampa flow_state.event_id (D-043.4). Va DESPUÉS de arrancar el
@@ -742,8 +911,16 @@ func (rt *Runtime) stopEvent(ctx context.Context, key store.Key, sessionID strin
 	if err != nil {
 		return err
 	}
-	_, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: stopNotice(kind)}})
-	return err
+	aviso := stopNotice(kind)
+	if _, err = rt.send(ctx, sessionID, to, key, []engine.Output{{Text: aviso}}); err != nil {
+		return err
+	}
+	// Saliente FUERA DE TURNO (Plan 044 · T1.6, D-044.24): la confirmación del
+	// `event_stop` la escribimos nosotros y no responde a un pedido. `ev` es el
+	// evento que se acaba de desactivar y sigue siendo el dueño del hilo —el puntero
+	// se apagó, el evento no se cerró—, así que el aviso cuelga de él.
+	rt.persistOutOfTurnMessage(ctx, key.TenantID, sessionID, ev.ID, aviso)
+	return nil
 }
 
 // stopNotice arma la confirmación de event_stop. Nombra el TIPO del evento que se
@@ -957,10 +1134,24 @@ func (rt *Runtime) sendResumeSummary(ctx context.Context, key store.Key, session
 		rt.log.Warn("runtime: sin destino para el resumen del rescate", "error", err, "session_id", sessionID)
 		return
 	}
-	if _, err := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: sum.Render()}}); err != nil {
+	texto := sum.Render()
+	if _, err := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: texto}}); err != nil {
 		rt.log.Warn("runtime: no se pudo enviar el resumen del rescate; se retoma igual",
 			"error", err, "session_id", sessionID)
+		return
 	}
+	// EL SALIENTE FUERA DE TURNO ARQUETÍPICO (Plan 044 · T1.6, D-044.24). Este
+	// automensaje no nace de nada que el cliente pidiera y ADEMÁS LISTA PRODUCTOS,
+	// así que es el caso exacto que la marca existe para desactivar: sin ella, un
+	// «sí, esas dos» posterior no tendría antecedente; con ella pero sin rótulo, el
+	// LLM extraería como pedido la lista que imprimió el propio rescate.
+	//
+	// Va DESPUÉS del envío y solo si salió, al revés que persistTurnMessages: allí
+	// se persiste lo PRODUCIDO porque el estado ya avanzó con ello; aquí no hay
+	// estado que avanzar —el rescate ya ocurrió— y el hilo debe contar lo que el
+	// cliente de verdad tiene delante. Un resumen que no llegó no es antecedente de
+	// nada.
+	rt.persistOutOfTurnMessage(ctx, key.TenantID, sessionID, ev.ID, texto)
 }
 
 // eventClock es EL reloj de conversación (ADR-0029 E-6) aplicado al entrante que
@@ -1173,7 +1364,13 @@ func (rt *Runtime) menuChoice(ctx context.Context, key store.Key, sessionID stri
 		}
 		dec := trigger.Decision{Action: trigger.StartEvent, EventKind: choice.Kind, FlowID: flowID}
 		// Gesto NUEVO: es la única puerta por la que E-11 puede cerrar un vencido.
-		return rt.beginEvent(ctx, key, sessionID, dec, gestureNew, st.EventID)
+		// El `event_id` se DESCARTA (Plan 044), por lo mismo que en StartNewOfKind: el
+		// texto de este turno es el NÚMERO de una lista que pintamos nosotros, no lo que
+		// el cliente quiere pedir. La ventana la abre el mensaje siguiente.
+		// Y openingTurn{} en el mismo acto y por lo mismo (Plan 044 · T1.4): un número de
+		// menú no es el literal con el que se abre un pedido, así que no entra al hilo.
+		_, done, berr := rt.beginEvent(ctx, key, sessionID, dec, gestureNew, st.EventID, openingTurn{})
+		return done, berr
 	default:
 		return false, nil
 	}

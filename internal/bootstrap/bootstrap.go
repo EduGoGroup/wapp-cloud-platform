@@ -38,6 +38,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
@@ -328,6 +329,49 @@ func Run(ctx context.Context) error {
 	// que hace que meter tenant_llm en el censo de rekeyTargets (rekey.go) baste
 	// para que su clave rote con todo lo demás.
 	tenantLLMStore := tenantllm.NewPostgres(db, flowDeps.cipher)
+	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
+	// que los contactos y los datos del comprador: el historial del evento guarda
+	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
+	// Una tercera instancia de cipher sería una tercera rotación que gestionar.
+	//
+	// 🔧 SUBIÓ AQUÍ CON EL PLAN 044 · T1.4, y no por gusto: desde esa tarea el
+	// eventStore es también EL LECTOR del hilo (ListThread), así que el compositor
+	// del literal —que se construye unas líneas más abajo, antes del agregador— lo
+	// necesita ya definido. Su consumidor de siempre (el despachador) sigue donde
+	// estaba.
+	eventStore := events.NewStore(db, flowDeps.cipher)
+	// LA COLA DEL PIPELINE DE CAPTACIÓN (Plan 044 · Ola 1, migración 0072). Sin
+	// cipher a propósito, y no es un olvido NI CADUCÓ CON T1.4: lo que llega a
+	// PutSourceText son bytes YA cifrados por el compositor. Un store sin cipher no
+	// puede escribir literal aunque alguien se lo pida, y eso es lo que sostiene
+	// D-044.26 por construcción.
+	intakeJobStore := intake.NewPostgres(db)
+	// EL COMPOSITOR DEL LITERAL (T1.4). Corre AL FLUSH y nunca en línea con el
+	// entrante: lee el hilo del evento por eventStore —descifrado en el borde,
+	// REQ-10c—, separa el CONTEXTO (los `summary` y los salientes fuera de turno,
+	// D-044.3b + D-044.24) del hilo literal, y guarda el sobre de tres piezas.
+	// Reusa el MISMO cipher que el hilo: el texto sale de un sobre del keyring del
+	// Plan 012 y entra en otro del mismo keyring, sin una tercera rotación.
+	intakeComposer := flowruntime.NewSourceTextComposer(log, eventStore, intakeJobStore, flowDeps.cipher)
+	// El AGREGADOR DE VENTANAS (T1.1/T1.2). Tres dependencias y ninguna más:
+	//   - intakeJobStore, para escribir la ventana (UNA sentencia por entrante);
+	//   - flowStore, para leer `aggregation_window_seconds` EN EL BARRIDO (nunca en
+	//     línea con el mensaje: eso sería el SELECT que D-044.26 prohíbe);
+	//   - entResolver, el MISMO resolver CACHEADO CON TTL que ya usan el hilo y el
+	//     gate del puente CRM. 🔴 No se construye un segundo: dos resolvers serían
+	//     dos cachés y dos verdades sobre qué tiene contratado un tenant.
+	//
+	// ⚠️ Va cableado con WithAggregator MÁS ABAJO y ADEMÁS arrancado con Run()
+	// después de serveAndWait: sin el Run, las ventanas se abrirían y jamás se
+	// cerrarían, y el fallo sería MUDO.
+	//
+	// 🔧 Y una CUARTA desde T1.4, que es una opción y no una dependencia del
+	// constructor: WithSourceComposer. Sin ella el agregador corre con el noop
+	// documentado —las ventanas se cerrarían con el sobre a NULL y el pipeline de la
+	// Ola 2 recibiría jobs sin una línea de texto—, así que el cable importa tanto
+	// como el código que enchufa.
+	intakeAggregator := flowruntime.NewAggregatorSink(log, intakeJobStore, flowStore, entResolver,
+		flowruntime.WithSourceComposer(intakeComposer))
 	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
@@ -346,11 +390,6 @@ func Run(ctx context.Context) error {
 	intakeService := intakes.NewService(intakeStore,
 		intakes.WithNotifier(intakeNotifier),
 		intakes.WithDepositReminder(depositReminder))
-	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
-	// que los contactos y los datos del comprador: el historial del evento guarda
-	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
-	// Una tercera instancia de cipher sería una tercera rotación que gestionar.
-	eventStore := events.NewStore(db, flowDeps.cipher)
 	// El despachador de nivel superior (Plan 043 · T2.3) SOLO LEE: los eventos vivos
 	// del contacto, los tipos que el tenant ofrece (sus reglas event_start) y las
 	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.
@@ -373,6 +412,13 @@ func Run(ctx context.Context) error {
 		// Ola 3.1, ver SinkPhase en flujos/runtime/event_sink.go). El orden de
 		// estas dos líneas es legible, no load-bearing.
 		flowruntime.WithEventSink(flowruntime.NewWebhookSink(log, cart.EffectCartClosed, integrationsStore, webhookGate)),
+		// Ventana de captación (Plan 044 · Ola 1). NO es un EventSink y por eso no
+		// entra por WithEventSink: se alimenta del ENTRANTE y no de los efectos de
+		// módulo, porque EffectContext no lleva `wa_message_id` (y `source_refs` es
+		// justo una lista de ellos) y porque un turno de texto libre —el caso que
+		// este plan resuelve— no declara ningún efecto. El porqué entero está en la
+		// cabecera de internal/flujos/runtime/aggregator.go.
+		flowruntime.WithAggregator(intakeAggregator),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),
@@ -411,12 +457,16 @@ func Run(ctx context.Context) error {
 		flowruntime.WithOpeningBuilder(dispatcher),
 		flowruntime.WithFlowForKind(flowForKind{rules: triggerStore}),
 		flowruntime.WithEntitlements(entResolver),
-		// Segunda condición del productor `message` del hilo (D-043.23, decisión de
-		// Jhoan del 2026-08-10): la feature llm_intake YA NO basta por sí sola —
-		// hace falta ADEMÁS este interruptor de despliegue, apagado por defecto
-		// (WAPP_CONVERSATION_THREAD_MESSAGES=false), hasta que el Plan 044 (su
-		// lector) exista. Ver internal/flujos/runtime/thread.go.
-		flowruntime.WithMessageThreadEnabled(cfg.ConversationThread.Messages),
+		// ⚰️ Aquí se cableaba el INTERRUPTOR DE DESPLIEGUE del productor `message` del
+		// hilo del evento. Lo retiró el Plan 044 · T1.6 el 2026-08-22: era andamiaje
+		// con fecha de caducidad —«hasta que el Plan 044 (su LECTOR) exista»— y el 044
+		// es esa fecha. El gate NO se fue con él: sigue entero y sigue siendo por
+		// tenant, y es la línea de arriba (WithEntitlements) la que lo sostiene — sin
+		// `llm_intake`, cero filas. Ver internal/flujos/runtime/thread.go.
+		// (Esta lápida vive DENTRO de una lista de argumentos, no sobre una declaración:
+		// `revive`/`exported` no la mira. La línea en blanco es solo para que no se lea
+		// como si documentara el WithReplyLimiter de debajo.)
+
 		flowruntime.WithReplyLimiter(replyLimiter),
 		flowruntime.WithIncomingTimeout(cfg.Flow.IncomingTimeout),
 		flowruntime.WithMaxConcurrentIncoming(cfg.Flow.MaxConcurrentIncoming),
@@ -694,6 +744,21 @@ func Run(ctx context.Context) error {
 	// arriba.
 	flowLifecycleCollector := flowlifecycle.NewCollector(db, mtx.FlowEventLifecycle, log)
 	go flowLifecycleCollector.Run(ctx)
+
+	// BARRIDO DE VENTANAS DE CAPTACIÓN (Plan 044 · Ola 1 · T1.2/T1.7). Sin broker
+	// (ADR-0003): un ticker de Go, sobre el MISMO ctx de signal.NotifyContext que
+	// cierra todo lo demás — mismo trato que webhookWorker y flowLifecycleCollector.
+	//
+	// 🔴 ESTA LÍNEA ES LA MITAD QUE NO SE VE, Y SIN ELLA EL 044 NO FUNCIONA: el
+	// AggregatorSink cableado arriba solo ABRE ventanas; quien las CIERRA —y quien
+	// recupera al arrancar las que vencieron mientras el proceso no estaba— es este
+	// Run. Retirarla dejaría jobs en `aggregating` para siempre sin un solo error en
+	// el log.
+	//
+	// Y por eso mismo la recuperación NO es un paso aparte: Run empieza barriendo
+	// (RecoverAtBoot), porque el estado de una ventana vive en `intake_jobs` y no en
+	// este proceso. Un despliegue en medio de una ráfaga no pierde el job.
+	go intakeAggregator.Run(ctx)
 
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.

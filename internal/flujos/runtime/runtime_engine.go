@@ -127,17 +127,20 @@ type Runtime struct {
 	// (camino actual sin clasificador): un gate que solo viviera en el Edge sería
 	// decorativo (corre en la máquina del cliente).
 	entitlements entitlements.Resolver
-	// messageThreadEnabled es la SEGUNDA condición del productor `message` del hilo
-	// (thread.go, D-043.23 + decisión de Jhoan del 2026-08-10): además de la
-	// feature llm_intake, hace falta este interruptor —config
-	// WAPP_CONVERSATION_THREAD_MESSAGES, apagado por defecto (fail-closed)—. El
-	// e2e vivo del 2026-08-10 midió 12 filas `message` con el cuerpo cifrado en un
-	// tenant `pro` real, escritas sin que existiera todavía nadie que las leyera
-	// (el Plan 044, su LECTOR). false (default, sin WithMessageThreadEnabled) ⇒
-	// persistTurnMessages nunca escribe `message`, aunque la feature esté
-	// encendida. NO afecta al productor `decision` (PersistSink.WithDecisionThread),
-	// que sigue escribiendo siempre. Se retira cuando el 044 tenga su lector.
-	messageThreadEnabled bool
+	// ⚰️ Aquí vivió, del 2026-08-10 al 2026-08-22, la SEGUNDA condición del productor
+	// `message` del hilo: un booleano de DESPLIEGUE, leído de una variable de
+	// entorno, por encima del gate por tenant. Lo retiró el Plan 044 · T1.6, que es
+	// el LECTOR que estaba esperando. Hoy la condición es UNA: la feature
+	// `llm_intake` del tenant (thread.go). Quien eche de menos el interruptor y
+	// quiera reponerlo, lea antes thread.go: apagar el hilo para TODO el parque desde
+	// una variable de entorno es lo que dejó al 044 sin materia prima durante doce
+	// días.
+	//
+	// ⚠️ LA LÍNEA EN BLANCO DE ABAJO ES OBLIGATORIA Y NO ES ESTILO. Sin ella la lápida
+	// y el doc-comment del campo siguiente forman UN SOLO bloque de comentario, así que
+	// la documentación de `now` pasa a empezar por «⚰️ Aquí vivió…». Es el mismo defecto
+	// que en WithClock (más abajo), donde además lo caza `revive`/`exported`.
+
 	// now entrega la hora actual para el TTL conversacional (Plan 029 · T9). Inyectable
 	// (WithClock) para tests deterministas; New lo deja en time.Now.
 	now func() time.Time
@@ -224,6 +227,16 @@ type Runtime struct {
 	// (decenas) y se vacía al reiniciar, que es cuando el operador quiere volver a
 	// verlas. sync.Map porque OnIncoming procesa entrantes concurrentes.
 	passiveAnnounced sync.Map
+	// aggregator acumula los entrantes en VENTANAS de captación (Plan 044 · Ola 1 ·
+	// T1.1/T1.2, ver aggregator.go). nil (sin WithAggregator) ⇒ el motor se comporta
+	// EXACTAMENTE como antes del 044: no se abre ninguna ventana y no se escribe una
+	// sola fila en intake_jobs. Es la misma no-regresión por defecto que el resto de
+	// piezas opcionales de este struct.
+	//
+	// Su Observe corre en línea con el mensaje y su presupuesto está acotado y
+	// escrito (D-044.26): UNA sentencia, cero lecturas, cero cripto, cero red. NUNCA
+	// devuelve error — un fallo suyo se loguea y el turno del cliente sigue (INV-10).
+	aggregator *AggregatorSink
 }
 
 // DepositReminder evalúa si a un contacto hay que recordarle la seña de alguna
@@ -234,8 +247,21 @@ type Runtime struct {
 // avisarle de que alguien habló. NO devuelve error a propósito: un recordatorio que
 // no sale no puede tumbar el procesamiento del mensaje que el cliente acaba de
 // mandar (misma regla que el notificador de estados).
+//
+// 🔴 DEVUELVE LOS TEXTOS QUE MANDÓ, y eso lo estrenó el Plan 044 · T1.6 (D-044.24).
+// El recordatorio de la seña es la coletilla ARQUETÍPICA fuera de turno: sale por
+// el Notifier de `intakes`, no por rt.send, y hasta hoy no dejaba rastro en el hilo
+// del evento. Pero el hilo no lo puede escribir `intakes`: ese paquete no conoce el
+// evento conversacional (intakes.Intake no tiene EventID) ni el resolver de
+// entitlements. El runtime sí tiene las dos cosas. Por eso el reparto es éste — el
+// recordatorio sabe QUÉ dijo, el runtime sabe A QUÉ EVENTO pertenece y si el tenant
+// puede persistirlo— y por eso la firma devuelve las cadenas en vez de escribirlas.
+//
+// Slice vacío o nil = no se mandó nada (lo normal, y el 99,9 % de los toques). El
+// llamante NO puede fiarse del orden para nada más que el orden del hilo: son los
+// textos en el orden en que salieron.
 type DepositReminder interface {
-	RemindContact(ctx context.Context, tenantID, contactID string)
+	RemindContact(ctx context.Context, tenantID, contactID string) []string
 }
 
 // ReplyLimiter acota la tasa de auto-respuestas por conversación (Plan 020 · T0).
@@ -306,17 +332,17 @@ func WithEntitlements(r entitlements.Resolver) Option {
 	return func(rt *Runtime) { rt.entitlements = r }
 }
 
-// WithMessageThreadEnabled enciende el productor `message` del hilo del evento
-// (thread.go, D-043.23) POR ENCIMA del gate de la feature llm_intake: hacen falta
-// las DOS para que persistTurnMessages escriba el texto literal del turno. Sin
-// llamarla (default false, fail-closed) el turno nunca deja una fila `message`,
-// aunque el tenant tenga la feature contratada — el Plan 044 (su lector) todavía
-// no existe, y guardar el literal sin nadie que lo lea es exposición sin
-// contrapartida (ADR-0034 nivel 2, decisión de Jhoan del 2026-08-10). Se retira
-// esta Option (y el campo que gobierna) cuando el 044 tenga su lector.
-func WithMessageThreadEnabled(enabled bool) Option {
-	return func(rt *Runtime) { rt.messageThreadEnabled = enabled }
-}
+// ⚰️ Aquí vivió, del 2026-08-10 al 2026-08-22, la Option que encendía el productor
+// `message` del hilo. La retiró el Plan 044 · T1.6 junto con su campo y su variable
+// de entorno: era el interruptor de DESPLIEGUE, y el propio thread.go le puso fecha
+// de caducidad el día que nació. El gate por tenant (`llm_intake`,
+// WithEntitlements) NO se toca y sigue siendo fail-closed.
+//
+// ⚠️ LA LÍNEA EN BLANCO DE ABAJO ES OBLIGATORIA Y NO ES ESTILO. Sin ella esta lápida
+// y el doc-comment de WithClock —que es EXPORTADA— forman UN SOLO bloque, y revive con
+// la regla `exported` (.golangci.yml) falla con «comment on exported function WithClock
+// should be of the form...». Una línea `//` vacía NO separa: para gofmt y para go/doc
+// sigue siendo el mismo comentario. El separador tiene que ser una línea VACÍA de verdad.
 
 // WithClock inyecta el reloj que el TTL conversacional usa para decidir si un estado
 // vivo venció (Plan 029 · T9). Sin él, New usa time.Now. Existe para tests
@@ -428,6 +454,18 @@ func WithReactiveBlockedHook(fn func(reason string)) Option {
 // histograma. El hook NO decide: solo observa — igual que WithReactiveBlockedHook.
 func WithAutoreplyStreakHook(fn func(racha int)) Option {
 	return func(rt *Runtime) { rt.onAutoreplyStreak = fn }
+}
+
+// WithAggregator cablea el AGREGADOR DE VENTANAS de captación (Plan 044 · Ola 1 ·
+// T1.1/T1.2; ver aggregator.go). Sin él —el default— el motor no abre ninguna
+// ventana ni escribe una sola fila en intake_jobs: no-regresión total.
+//
+// ⚠️ Cablearlo NO basta para que las ventanas se cierren: el cierre lo ejecuta el
+// BARRIDO (AggregatorSink.Run), que se arranca aparte en bootstrap. Con el sink
+// cableado y el barrido sin arrancar, las ventanas se abrirían y se quedarían en
+// `aggregating` para siempre — y el fallo sería MUDO. Van juntos.
+func WithAggregator(a *AggregatorSink) Option {
+	return func(rt *Runtime) { rt.aggregator = a }
 }
 
 // New construye el Runtime con sus dependencias. Las opcionales (sinks de

@@ -38,6 +38,66 @@ var ErrConversationExists = errors.New("ya existe una conversación viva para la
 // Se inspecciona con errors.Is (mismo patrón que ErrConversationExists).
 var ErrDurableFlowNeedsEvent = errors.New("el flujo exige un evento padre para arrancar por esta puerta")
 
+// openingTurn es EL ENTRANTE QUE ABRIÓ EL EVENTO, viajando hasta startLocked —el
+// único embudo por el que pasan las cuatro puertas de arranque— para que su literal
+// deje fila en el hilo (Plan 044 · T1.4, corrección del 2026-08-22).
+//
+// # EL DEFECTO QUE CIERRA, DICHO CON EL CASO
+//
+// «quiero presupuesto de 20 hamburguesas» abre el evento por el camino del
+// disparador (handleTrigger → startFromDecision → beginEvent) y NO DEJABA UNA SOLA
+// FILA en `conversation_event_messages`: persistTurnMessages tenía UN llamante,
+// advanceLiveStep, que es el turno de una conversación YA VIVA. Desde el 2026-08-22
+// ese mismo mensaje SÍ entra en `intake_jobs.source_refs` (observeForAggregation en
+// startFromDecision), así que la referencia existía y el literal no: el compositor
+// de T1.4 leía el hilo, no encontraba el primer mensaje de la ráfaga y componía un
+// `source_text` que EMPIEZA POR EL SEGUNDO, sin error y sin que nadie lo notara. Es
+// exactamente el accidente que advanceLiveStep documenta al dejar fuera de la
+// ventana el turno cortado por el sink durable, visto por el otro lado.
+//
+// # POR QUÉ BAJA EL TEXTO EN VEZ DE SUBIR LAS SALIDAS
+//
+// Se sopesaron las dos y esta gana por UNA razón concreta: EL ORDEN. El hilo tiene
+// que quedar «entrante primero, salidas después» (es el orden de la conversación, y
+// `listThreadSQL` lo devuelve por `seq`), y las salidas del arranque NACEN dentro de
+// startLocked. Escribiendo desde aquí, cliente y negocio salen del MISMO sitio y en
+// el mismo acto: no hay forma de que se intercalen. Subiendo las salidas hasta
+// startFromDecision el resultado sería idéntico pero repartido en dos capas, y el
+// día que alguien meta una escritura intermedia el orden se rompe en silencio.
+//
+// ⚠️ NO ES `*cloudlinkv1.IncomingMessage`, y eso es deliberado: beginEvent /
+// birthEvent / enterEventFlow son el plano de EVENTOS del Plan 043 y no deben
+// aprender la forma del entrante (es el mismo argumento con el que el `event_id`
+// SUBE en vez de bajar el mensaje — ver startFromDecision). Lo que baja es un
+// literal y un booleano.
+//
+// 🔴 HAY UN SEGUNDO LECTOR, Y ES UNA EXCEPCIÓN ACOTADA: la rama de CONMUTA de
+// beginEvent (events.go). Cuando el disparador no pare evento sino que salta a uno
+// vivo, ese entrante entra igual en la ventana de captación, así que su literal
+// TAMBIÉN tiene que estar en el hilo — pero SIN las salidas, porque el evento al que
+// se conmuta ya tiene su nodo inicial escrito. Allí se llama directamente a
+// persistTurnMessages con `nil` en las salidas, y el porqué está escrito en el sitio.
+type openingTurn struct {
+	// Text es lo que el cliente escribió. Puede ser "" —un adjunto sin caption abre
+	// el evento igual— y entonces NO se escribe fila de cliente, exactamente la misma
+	// poda que hace persistTurnMessages con su clientText.
+	Text string
+	// FromClient distingue «este arranque lo disparó un entrante» de «este arranque
+	// no tiene turno detrás». NO se puede deducir de Text=="" : un media sin caption
+	// es lo primero con el texto vacío, y confundirlos dejaría las salidas de ese
+	// arranque fuera del hilo. El valor CERO de la struct (FromClient=false) es «no
+	// hay turno de apertura», que es lo que pasan las puertas sin entrante: Start
+	// (API/admin), startPlainFlow (keyword/fallback, que además va sin evento) y
+	// switchToEvent (la CONMUTA — ver su llamada en events.go).
+	FromClient bool
+}
+
+// openedBy construye el turno de apertura a partir del entrante que lo disparó. Se
+// escribe una vez para que ningún llamante pueda olvidarse de poner FromClient.
+func openedBy(m *cloudlinkv1.IncomingMessage) openingTurn {
+	return openingTurn{Text: m.GetText(), FromClient: true}
+}
+
 // Start abre una conversación por API (design.md §6, decisión C): bajo el
 // single-flight de la clave, si ya existe estado → ErrConversationExists; si
 // no, fija la versión vigente, renderiza el nodo inicial (el menú), persiste y
@@ -57,7 +117,18 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 	// (el pre-carga del carrito solo aplica al arranque por decisión llm, T8).
 	// Sin coletilla: este arranque no viene de una intención inferida (T3.8 punto 2).
 	// Sin evento: el arranque por API no pare fila en conversation_events (E-6).
-	return rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, "", nil, "", "")
+	// Sin turno de apertura (openingTurn{}): aquí NO hay entrante — un humano pulsó un
+	// botón del admin. No hay literal de cliente que llevar al hilo, y sin evento
+	// tampoco habría hilo donde ponerlo (Plan 044 · T1.4).
+	//
+	// El segundo valor —EL TURNO CORTADO por el sink durable— se DESCARTA aquí, y es lo
+	// correcto: existe para que nadie meta en la ventana de captación un mensaje cuyo
+	// literal no se escribió, y este camino no trae entrante NI evento (el "" de la
+	// firma), así que no hay ventana ni hilo que puedan descuadrar. La respuesta a la
+	// API sigue siendo byte a byte la de siempre: el Ack del aviso, sin error. Quien SÍ
+	// lo mira es enterEventFlow (events.go).
+	ack, _, err := rt.startLocked(ctx, tenantID, flowID, sessionID, key, contactID, "", nil, "", "", openingTurn{})
+	return ack, err
 }
 
 // startLocked es el cuerpo de Start SIN tomar el keyedMutex: asume que el llamante
@@ -87,10 +158,39 @@ func (rt *Runtime) Start(ctx context.Context, tenantID, flowID, sessionID string
 // error: mientras existió el reinicio por Start, st PODÍA nacer con los punteros
 // heredados de la fila que pisaba. Al retirarse esa rama, «st nace fresco» vuelve a ser
 // cierto sin excepciones.
-func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID, eventID string, intentParams map[string]string, intentName, tagline string) (*cloudlinkv1.Ack, error) {
+//
+// `opening` es EL ENTRANTE QUE ABRIÓ EL EVENTO (Plan 044 · T1.4, 2026-08-22), o el
+// valor cero cuando este arranque no nace de un turno del cliente. Es lo que permite
+// que el literal del disparador —el «quiero presupuesto de X»— deje su fila en el
+// hilo, que hasta esa fecha NO ocurría por ningún camino. Ver openingTurn y
+// persistOpeningTurn, aquí abajo.
+//
+// # EL SEGUNDO VALOR: «ESTE TURNO SE CORTÓ» (Plan 044, corrección del 2026-08-22)
+//
+// Vale true —y solo true— cuando el arranque se abortó porque el sink que MATERIALIZA
+// contenido durable agotó su reintento acotado (D-054.4): el cliente recibió el aviso,
+// el turno se consumió, `err` es nil y NO se guardó estado NI se escribió una sola fila
+// de hilo. Es un HECHO del turno, no un fallo del arranque, y por eso viaja como bool y
+// no como error: convertirlo en error cambiaría la respuesta de la API (Start) y la del
+// disparo plano (startPlainFlow), que hoy son un éxito silencioso a propósito.
+//
+// 🔴 LA INVARIANTE QUE OBLIGA A DEVOLVERLO, dicha entera: TODO MENSAJE QUE ENTRA EN
+// `source_refs` TIENE SU LITERAL EN EL HILO. Hasta esta corrección, un arranque cortado
+// aquí volvía sin escribir hilo —el `return` de la rama del corte va ANTES de
+// persistOpeningTurn— pero startFromDecision observaba igual: tenía el `event_id` en la
+// mano y recibía `consumed=true, err=nil`, así que metía en la ventana un mensaje cuyo
+// texto no estaba escrito en ninguna parte. El compositor de T1.4 leería el hilo, no lo
+// encontraría, y compondría un `source_text` INCOMPLETO sin error y sin que nadie lo
+// notara. Es EXACTAMENTE el mismo corte que ya hace advanceLiveStep (incoming.go:
+// «tampoco entra en la ventana de captación»), visto por el lado del arranque: si el
+// turno se cortó, no se observa.
+//
+// El bool SUBE por enterEventFlow hasta birthEvent, que lo traduce en el `event_id` ""
+// con el que `Observe` descarta sola la ventana (WindowKey.Valid() exige event_id).
+func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID string, key store.Key, contactID, eventID string, intentParams map[string]string, intentName, tagline string, opening openingTurn) (*cloudlinkv1.Ack, bool, error) {
 	def, err := rt.store.LatestDefinition(ctx, tenantID, flowID)
 	if err != nil {
-		return nil, fmt.Errorf("runtime: definición vigente: %w", err)
+		return nil, false, fmt.Errorf("runtime: definición vigente: %w", err)
 	}
 
 	// Guarda D-054.5 (Plan 054 · T2.3): ningún flujo con contenido durable arranca
@@ -100,12 +200,12 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// AQUÍ, tras cargar def y ANTES de rt.store.Exists/EnterPrimed/Save: un rechazo
 	// no deja rastro — cero flow_state, cero efectos, cero envío (REQ-054.2).
 	if eventID == "" && rt.engine.FlowProducesDurableContent(def) {
-		return nil, ErrDurableFlowNeedsEvent
+		return nil, false, ErrDurableFlowNeedsEvent
 	}
 
 	exists, err := rt.store.Exists(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("runtime: comprobar existencia: %w", err)
+		return nil, false, fmt.Errorf("runtime: comprobar existencia: %w", err)
 	}
 	// 409 INCONDICIONAL (Plan 053 · Ola 7). Aquí hubo, desde el Plan 027 · T8, un
 	// «gotcha de reinicio»: si el nodo inicial tenía ResumePolicy y esa política decía
@@ -147,7 +247,7 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// el flujo arranca de nuevo. Comparten el mapa rt.resumePolicies; lo que sobraba
 	// era ESTE consumidor, no el mecanismo.
 	if exists {
-		return nil, ErrConversationExists
+		return nil, false, ErrConversationExists
 	}
 
 	st := model.Conversation{TenantID: tenantID, SessionID: sessionID, ContactID: contactID}
@@ -158,7 +258,7 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	seedIntentParams(&st, intentParams, intentName)
 	st, outs, effects, err := rt.engine.EnterPrimed(ctx, def, st)
 	if err != nil {
-		return nil, fmt.Errorf("runtime: enter: %w", err)
+		return nil, false, fmt.Errorf("runtime: enter: %w", err)
 	}
 	// La coletilla se pega ANTES de guardar para que la marca de «ya se ofreció» viaje
 	// en el MISMO Save que el estado inicial: si se marcara después, un fallo entre
@@ -187,19 +287,36 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 		if cutErr := rt.dispatch(ctx, ec, effects, sessionID); cutErr != nil {
 			rt.log.Error("runtime: arranque cortado: el sink durable no pudo materializar el pre-carga tras el reintento acotado",
 				"error", cutErr, "tenant_id", tenantID, "flow_id", flowID)
+			// El `true` de las DOS salidas de aquí abajo es EL TURNO CORTADO (ver la
+			// cabecera): desde este punto el arranque NO guarda estado y NO escribe hilo,
+			// así que el mensaje que lo disparó NO puede entrar en `source_refs`. Se dice
+			// también en el camino de error del destino, aunque allí el error ya corte por
+			// su cuenta: el hecho es el mismo y mentir sobre él para ahorrar una palabra
+			// sería sembrar la próxima referencia colgando.
 			to, derr := rt.destino(ctx, tenantID, contactID)
 			if derr != nil {
-				return nil, derr
+				return nil, true, derr
 			}
-			return rt.send(ctx, sessionID, to, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+			ack, serr := rt.send(ctx, sessionID, to, key, []engine.Output{{Text: defaultDurableSinkFailureNotice}})
+			return ack, true, serr
 		}
 	}
 	if err := rt.store.Save(ctx, st); err != nil {
-		return nil, fmt.Errorf("runtime: guardar estado inicial: %w", err)
+		return nil, false, fmt.Errorf("runtime: guardar estado inicial: %w", err)
 	}
+	// EL HILO LITERAL DEL TURNO DE APERTURA (Plan 044 · T1.4). Va EXACTAMENTE donde
+	// advanceLiveStep pone el suyo: después del Save y antes del envío. Las dos razones
+	// son las mismas que allí — se persiste lo que el motor PRODUJO (aunque el envío
+	// luego falle o el rate-limit lo calle: el hilo cuenta el turno del motor, no la
+	// entrega) y el corte por sink durable de arriba ya devolvió, así que un arranque
+	// revertido NO deja rastro en el hilo, igual que no entra en la ventana.
+	//
+	// `outs` lleva YA la coletilla pegada (appendTagline, más arriba): es texto que el
+	// cliente lee, así que es texto del hilo.
+	rt.persistOpeningTurn(ctx, tenantID, sessionID, eventID, opening, outs)
 	to, err := rt.destino(ctx, tenantID, contactID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// Cuenta la racha por `key`, que es la MISMA clave que usa el llamante (Start la
 	// clava y startLocked la recibe): el arranque es la primera auto-respuesta del
@@ -207,7 +324,12 @@ func (rt *Runtime) startLocked(ctx context.Context, tenantID, flowID, sessionID 
 	// (Start) y el arranque REACTIVO por keyword/fallback/evento (handleTrigger,
 	// enterEventFlow)— y las dos cuentan, a propósito: las dos son el motor hablándole
 	// al contacto sin que un humano teclee nada, que es la definición de la métrica.
-	return rt.send(ctx, sessionID, to, key, outs)
+	//
+	// `false`: el turno NO se cortó — se guardó estado y el hilo del turno de apertura
+	// ya está escrito unas líneas arriba, así que su referencia puede entrar en la
+	// ventana sin quedar colgando.
+	ack, err := rt.send(ctx, sessionID, to, key, outs)
+	return ack, false, err
 }
 
 // appendTagline PEGA la coletilla al final del último texto que se va a enviar (T3.8

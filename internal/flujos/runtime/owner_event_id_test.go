@@ -180,7 +180,14 @@ func TestPointStateAtEvent_SobreFlujoHeredado_NoEstampaDueno(t *testing.T) {
 
 	// (2) Entra el `survey` SIN flujo — la tercera salida, sin Delete ni startLocked.
 	survey := t15SembrarSurvey(t, e)
-	if err := e.rt.enterEventFlow(ctx, e.key, t52Session, survey.ID, survey.Kind, "", nil, "", ""); err != nil {
+	// El último argumento es el TURNO DE APERTURA (Plan 044 · T1.4): aquí se pasa en
+	// cero porque esta prueba no ejerce el hilo, y con `flowID == ""` (la tercera
+	// salida) enterEventFlow ni siquiera llega a startLocked, que es su único lector.
+	//
+	// El PRIMER valor devuelto es «el arranque se cortó por el sink durable» (Plan 044,
+	// 2026-08-22) y se descarta a propósito: por esta tercera salida no se arranca
+	// ningún flujo, así que no hay turno que cortar y siempre vale false.
+	if _, err := e.rt.enterEventFlow(ctx, e.key, t52Session, survey.ID, survey.Kind, "", nil, "", "", openingTurn{}); err != nil {
 		t.Fatalf("enterEventFlow (survey sin flujo): %v", err)
 	}
 
