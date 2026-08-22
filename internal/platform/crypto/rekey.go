@@ -19,8 +19,8 @@ const DefaultRekeyBatch = 500
 // eso es precisamente lo que hace barata la rotación (§7).
 //
 // Requisitos de una tabla para entrar aquí: tener la pareja (dek, kek_id) y una
-// columna updated_at (el UPDATE la refresca). Las cuatro tablas del censo la tienen.
-// (Cuatro TABLAS, cinco ENTRADAS: public.contacts aparece dos veces, una por sobre.)
+// columna updated_at (el UPDATE la refresca). Las cinco tablas del censo la tienen.
+// (Cinco TABLAS, seis ENTRADAS: public.contacts aparece dos veces, una por sobre.)
 type rekeyTarget struct {
 	// table es el nombre CALIFICADO de la tabla ("public.contacts").
 	table string
@@ -98,7 +98,7 @@ var rekeyTargets = []rekeyTarget{
 	// Nombre del contacto, push_name (Plan 046 · T4.2, migración 0069).
 	//
 	// 🔴 ES LA SEGUNDA ENTRADA DE public.contacts, Y ES LA PRIMERA VEZ QUE UNA TABLA
-	// APARECE DOS VECES EN ESTE CENSO. Las otras cuatro son cuatro tablas distintas,
+	// APARECE DOS VECES EN ESTE CENSO. Las otras cinco son cinco tablas distintas,
 	// así que conviene dejar escrito por qué esto es correcto y no un duplicado que
 	// alguien deba «limpiar»: una entrada del censo no describe una TABLA, describe UN
 	// SOBRE. La fila de contacts tiene dos sobres INDEPENDIENTES —el del identificador
@@ -156,6 +156,31 @@ var rekeyTargets = []rekeyTarget{
 		pkCols: []string{"tenant_id", "kind", "value_bidx"},
 		dekCol: "push_name_dek",
 		kekCol: "push_name_kek_id",
+	},
+	// Credencial de la vía LLM API del tenant (Plan 044 · T0.3, migración 0071).
+	//
+	// 🔴 ES LA PRIMERA ENTRADA DEL CENSO CUYO SOBRE NO GUARDA UN DATO DE NEGOCIO
+	// SINO UNA CREDENCIAL DE UN TERCERO, y por eso el precio de olvidarla es
+	// distinto del de las demás. Si esta tabla no estuviera aquí, PendingByKeyID
+	// diría «rotación completa» con las API keys todavía envueltas por la KEK
+	// vieja; retirar esa KEK —el paso que ese mapa vacío AUTORIZA (§10.F)— dejaría
+	// a cada tenant sin vía API y sin forma de recuperarla salvo volviendo a
+	// teclear la clave, porque wApp no tiene copia de nada de eso. Con el resto
+	// del censo se pierde un dato que wApp sí produjo; aquí se pierde algo que
+	// solo el tenant tiene.
+	//
+	// ⚠️ SU TRÍO ES NOT NULL, al revés que el de tenant_integrations, fleet_sessions
+	// y push_name: aquí NO hay filas que se caigan del barrido solas por el
+	// `NULL <> 'x'`, porque no existe fila sin sobre (0071 — el estado «sin vía
+	// API» es la AUSENCIA de fila). Consecuencia práctica: toda fila de esta tabla
+	// casa el `<> current` durante una rotación y toda fila se re-envuelve. No hay
+	// nada que hacer distinto; se anota porque TRES de las cinco entradas anteriores
+	// —las tres que acaba de nombrar el párrafo— razonan sobre el NULL y ésta no puede.
+	{
+		table:  "public.tenant_llm",
+		pkCols: []string{"tenant_id"},
+		dekCol: "api_key_dek",
+		kekCol: "api_key_kek_id",
 	},
 }
 
@@ -246,9 +271,10 @@ type Report struct {
 
 // Rekey re-envuelve por batch todas las DEK que aún no están envueltas por la KEK
 // current, SIN re-cifrar el dato (§7), recorriendo TODAS las entradas del censo
-// rekeyTargets: hoy son CINCO SOBRES EN CUATRO TABLAS —contacts aporta dos, el del
+// rekeyTargets: hoy son SEIS SOBRES EN CINCO TABLAS —contacts aporta dos, el del
 // identificador (value) y el del nombre (push_name, Plan 046 · T4.2)—, más
-// intake_buyer_data, tenant_integrations y fleet_sessions. Para cada fila:
+// intake_buyer_data, tenant_integrations, fleet_sessions y tenant_llm (la
+// credencial de la vía API, Plan 044 · T0.3). Para cada fila:
 // UnwrapDEK(dek, kek_id) → WrapDEK con la current → UPDATE de dek + kek_id +
 // updated_at, dejando el dato cifrado y la PK INTACTOS. El valor NUNCA se descifra
 // (solo la DEK, en memoria).
@@ -262,7 +288,7 @@ type Report struct {
 // lecturas y con otra instancia de Rekey.
 //
 // Al terminar, Report.PendingByKeyID indica cuántos SOBRES siguen en cada KEK vieja
-// sumando las cinco entradas (para decidir el retiro seguro a 0 referencias, §10.F).
+// sumando las seis entradas (para decidir el retiro seguro a 0 referencias, §10.F).
 // Los logs NO llevan contenido (§10.H).
 func Rekey(ctx context.Context, db *sql.DB, cipher *FieldCipher, kp KeyProvider, batch int) (Report, error) {
 	if batch <= 0 {
