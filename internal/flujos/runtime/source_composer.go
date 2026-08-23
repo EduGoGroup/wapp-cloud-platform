@@ -10,7 +10,7 @@
 //
 // # 🔴 CORRE AL FLUSH, NUNCA EN LÍNEA CON EL ENTRANTE (D-044.26)
 //
-// Es el otro lado de la moneda del `AggregatorSink`: allí el presupuesto es UNA
+// Es el otro lado de la moneda del `IntakeAggregator`: allí el presupuesto es UNA
 // sentencia y CERO lecturas porque TODO lo caro —leer el hilo, descifrarlo,
 // rotular, cifrar— está aquí, fuera del camino del mensaje del cliente. El
 // precedente de la casa es el mismo: el `WebhookSink` no descifra, descifra el

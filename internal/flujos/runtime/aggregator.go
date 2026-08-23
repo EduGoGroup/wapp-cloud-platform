@@ -89,8 +89,15 @@
 //     pidiendo un presupuesto— es exactamente un turno sin efectos de módulo.
 //
 // Por eso el agregador se alimenta del ENTRANTE (`observeForAggregation`) y no de los
-// efectos. El nombre `AggregatorSink` se conserva porque es el que fija `tasks.md` ·
-// T1.1: «sink» aquí significa SUMIDERO DEL ENTRANTE, no `runtime.EventSink`.
+// efectos.
+//
+// 🔧 **Y POR ESO SE RENOMBRÓ, el 2026-08-22 (decisión de Jhoan tras el barrido de la
+// Ola 1): `AggregatorSink` → `IntakeAggregator`.** El nombre viejo es el que fija
+// `tasks.md` · T1.1, y prometía un contrato que este tipo NO cumple ni puede cumplir:
+// quien leyera «Sink» en un paquete donde `EventSink` es una interfaz de verdad
+// (`event_sink.go`) buscaría el fan-out de `dispatch()` y no lo encontraría. Se
+// sostuvo un tiempo la lectura «sink = sumidero del entrante», pero un nombre que
+// necesita una nota al pie para no engañar es un nombre que hay que cambiar.
 //
 // Ese puente tiene TRES puntos de llamada —el turno normal, el mensaje que ARRANCA el
 // evento y el reinicio por reanudación—, y el censo con su porqué está en el docstring
@@ -248,9 +255,9 @@ type noopSourceComposer struct{}
 
 func (noopSourceComposer) ComposeAtFlush(context.Context, intake.WindowKey) error { return nil }
 
-// AggregatorSink acumula entrantes en ventanas y las cierra. Es seguro para uso
+// IntakeAggregator acumula entrantes en ventanas y las cierra. Es seguro para uso
 // concurrente: `Observe` corre desde la goroutine de cada entrante.
-type AggregatorSink struct {
+type IntakeAggregator struct {
 	log      logger.Logger
 	jobs     intake.JobStore
 	settings AggregationSettings
@@ -281,11 +288,11 @@ type AggregatorSink struct {
 }
 
 // AggregatorOption configura el agregador al construirlo.
-type AggregatorOption func(*AggregatorSink)
+type AggregatorOption func(*IntakeAggregator)
 
 // WithAggregatorClock inyecta el reloj (tests deterministas). nil se ignora.
 func WithAggregatorClock(now func() time.Time) AggregatorOption {
-	return func(s *AggregatorSink) {
+	return func(s *IntakeAggregator) {
 		if now != nil {
 			s.now = now
 		}
@@ -299,7 +306,7 @@ func WithAggregatorClock(now func() time.Time) AggregatorOption {
 // Sweep a mano). Si algún día se queda sin llamante, vuelve a ser superficie exportada
 // sin consumidor — que es lo que D-044.23 condena.
 func WithSweepInterval(d time.Duration) AggregatorOption {
-	return func(s *AggregatorSink) {
+	return func(s *IntakeAggregator) {
 		if d > 0 {
 			s.sweepEvery = d
 		}
@@ -312,7 +319,7 @@ func WithSweepInterval(d time.Duration) AggregatorOption {
 // que el batch es un TECHO POR PASADA y no un límite de negocio: lo que no entra sale
 // en el tick siguiente.
 func WithSweepBatch(n int) AggregatorOption {
-	return func(s *AggregatorSink) {
+	return func(s *IntakeAggregator) {
 		if n > 0 {
 			s.sweepBatch = n
 		}
@@ -326,7 +333,7 @@ func WithSweepBatch(n int) AggregatorOption {
 // lo único que esta opción promete —el umbral inyectado SUSTITUYE al default de
 // plataforma, no se suma a él— con una confianza elegida entre los dos números.
 func WithIntentConfidence(min float64) AggregatorOption {
-	return func(s *AggregatorSink) {
+	return func(s *IntakeAggregator) {
 		if min > 0 {
 			s.intentThreshold = min
 		}
@@ -336,20 +343,20 @@ func WithIntentConfidence(min float64) AggregatorOption {
 // WithSourceComposer inyecta el compositor del literal (T1.4). Sin él corre el
 // noop documentado.
 func WithSourceComposer(c SourceComposer) AggregatorOption {
-	return func(s *AggregatorSink) {
+	return func(s *IntakeAggregator) {
 		if c != nil {
 			s.compose = c
 		}
 	}
 }
 
-// NewAggregatorSink construye el agregador. `jobs`, `settings` y `ents` pueden ser
+// NewIntakeAggregator construye el agregador. `jobs`, `settings` y `ents` pueden ser
 // nil en tests que solo ejerciten el camino «no acumula»: con cualquiera de los
 // tres a nil, `Observe` es un no-op seguro (mismo criterio nil-safe que el resto
 // de piezas opcionales del runtime).
-func NewAggregatorSink(log logger.Logger, jobs intake.JobStore, settings AggregationSettings,
-	ents entitlements.Resolver, opts ...AggregatorOption) *AggregatorSink {
-	s := &AggregatorSink{
+func NewIntakeAggregator(log logger.Logger, jobs intake.JobStore, settings AggregationSettings,
+	ents entitlements.Resolver, opts ...AggregatorOption) *IntakeAggregator {
+	s := &IntakeAggregator{
 		log:             log,
 		jobs:            jobs,
 		settings:        settings,
@@ -374,7 +381,7 @@ func NewAggregatorSink(log logger.Logger, jobs intake.JobStore, settings Aggrega
 //
 // NO devuelve error a propósito (INV-10): cualquier fallo se loguea y el turno
 // sigue.
-func (s *AggregatorSink) Observe(ctx context.Context, ref IncomingRef) {
+func (s *IntakeAggregator) Observe(ctx context.Context, ref IncomingRef) {
 	if !s.acceptable(ref) {
 		return
 	}
@@ -416,7 +423,7 @@ func (s *AggregatorSink) Observe(ctx context.Context, ref IncomingRef) {
 // acceptable agrupa las GUARDAS BARATAS: las que no cuestan ni una consulta y por
 // eso van primero (patrón thread.go). Una clave incompleta no es «una ventana
 // rara»: las cuatro columnas son NOT NULL en la 0072 y el INSERT reventaría.
-func (s *AggregatorSink) acceptable(ref IncomingRef) bool {
+func (s *IntakeAggregator) acceptable(ref IncomingRef) bool {
 	switch {
 	case s == nil, s.log == nil, s.jobs == nil, s.ents == nil:
 		return false
@@ -437,7 +444,7 @@ func (s *AggregatorSink) acceptable(ref IncomingRef) bool {
 // ventana. Red SECUNDARIA (la primera es duplicateIngest, Plan 028 · T6): sin ella,
 // un doble Observe duplicaría la referencia dentro de `source_refs` porque el
 // `DO UPDATE` concatena a ciegas y no puede comprobar nada (no lee).
-func (s *AggregatorSink) alreadySeen(ref IncomingRef) bool {
+func (s *IntakeAggregator) alreadySeen(ref IncomingRef) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seen[ref.Key] == ref.WaMessageID {
@@ -450,7 +457,7 @@ func (s *AggregatorSink) alreadySeen(ref IncomingRef) bool {
 // intentTriggers aplica D-044.20 ENTERA: mira `Name` y `Confidence` y NADA MÁS del
 // intent. No lee `params`, no espera una lista de productos y no cambia de
 // comportamiento según lo que el intent traiga dentro.
-func (s *AggregatorSink) intentTriggers(hint *IntentHint) bool {
+func (s *IntakeAggregator) intentTriggers(hint *IntentHint) bool {
 	if hint == nil {
 		return false
 	}
@@ -458,7 +465,7 @@ func (s *AggregatorSink) intentTriggers(hint *IntentHint) bool {
 }
 
 // hintDueNow anota que esa ventana debe cerrarse en el próximo barrido.
-func (s *AggregatorSink) hintDueNow(k intake.WindowKey) {
+func (s *IntakeAggregator) hintDueNow(k intake.WindowKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dueNow[k] = struct{}{}
@@ -468,7 +475,7 @@ func (s *AggregatorSink) hintDueNow(k intake.WindowKey) {
 // aunque el barrido no llegue a mirar la ventana de alguna (el `limit` recorta):
 // esa ventana no se pierde, se cierra por su reloj en un tick posterior — que es
 // justo lo que T1.7 dice que tiene que pasar cuando el adelanto no llega.
-func (s *AggregatorSink) takeHints() map[intake.WindowKey]struct{} {
+func (s *IntakeAggregator) takeHints() map[intake.WindowKey]struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.dueNow) == 0 {
@@ -506,7 +513,7 @@ func (s *AggregatorSink) takeHints() map[intake.WindowKey]struct{} {
 // «restaurar» nada — es mirar la tabla. Por eso un reinicio en medio de una ráfaga
 // no pierde el job (criterio de T1.1) y por eso este agregador no tiene un mapa de
 // ventanas en memoria que salvar.
-func (s *AggregatorSink) RecoverAtBoot(ctx context.Context) int {
+func (s *IntakeAggregator) RecoverAtBoot(ctx context.Context) int {
 	n := s.Sweep(ctx)
 	if n > 0 {
 		s.log.Info("agregador: ventanas vencidas cerradas al arrancar", "jobs", n)
@@ -523,7 +530,7 @@ func (s *AggregatorSink) RecoverAtBoot(ctx context.Context) int {
 // despliega a menudo. El plazo de cada ventana se RECALCULA en cada barrido a
 // partir de `message_ts` (o `created_at`), que están en la base. El proceso nuevo
 // arranca, barre, y cierra lo que venció mientras no había nadie.
-func (s *AggregatorSink) Run(ctx context.Context) {
+func (s *IntakeAggregator) Run(ctx context.Context) {
 	if s == nil || s.jobs == nil {
 		return
 	}
@@ -547,7 +554,7 @@ func (s *AggregatorSink) Run(ctx context.Context) {
 // Es idempotente por construcción: quien cierra es el `UPDATE … WHERE
 // status='aggregating'` del store, así que dos barridos solapados —o un barrido y
 // un adelanto por intent— no pueden producir dos jobs.
-func (s *AggregatorSink) Sweep(ctx context.Context) int {
+func (s *IntakeAggregator) Sweep(ctx context.Context) int {
 	if s == nil || s.jobs == nil || s.log == nil {
 		return 0
 	}
@@ -583,7 +590,7 @@ func (s *AggregatorSink) Sweep(ctx context.Context) int {
 // El orden de evaluación no cambia el resultado —una ventana vencida se cierra
 // haya o no pista—, y por eso el job resultante es INDISTINGUIBLE por los dos
 // caminos: aquí no se anota en ningún sitio cuál de los dos ganó (T1.7 (d)).
-func (s *AggregatorSink) due(ctx context.Context, job intake.OpenJob,
+func (s *IntakeAggregator) due(ctx context.Context, job intake.OpenJob,
 	hints map[intake.WindowKey]struct{}, windows map[string]time.Duration, now time.Time) bool {
 	if _, adelantada := hints[job.Key]; adelantada {
 		return true
@@ -606,7 +613,7 @@ func (s *AggregatorSink) due(ctx context.Context, job intake.OpenJob,
 // cae al DEFAULT DE PLATAFORMA (45 s) y NO a «no cerrar»: una config ilegible no
 // puede dejar ventanas abiertas para siempre, que sería un presupuesto que nunca
 // llega y un job en `aggregating` que nadie recoge.
-func (s *AggregatorSink) windowFor(ctx context.Context, tenantID string) time.Duration {
+func (s *IntakeAggregator) windowFor(ctx context.Context, tenantID string) time.Duration {
 	if s.settings == nil {
 		return store.DefaultAggregationWindow
 	}
@@ -621,7 +628,7 @@ func (s *AggregatorSink) windowFor(ctx context.Context, tenantID string) time.Du
 
 // closeWindow ejecuta la transición y, si de verdad la hizo ESTA llamada, invoca el
 // punto de extensión de T1.4. Devuelve si cerró.
-func (s *AggregatorSink) closeWindow(ctx context.Context, job intake.OpenJob) bool {
+func (s *IntakeAggregator) closeWindow(ctx context.Context, job intake.OpenJob) bool {
 	cerrada, err := s.jobs.CloseWindow(ctx, job.Key)
 	if err != nil {
 		s.log.Error("agregador: no se pudo cerrar la ventana de captación",

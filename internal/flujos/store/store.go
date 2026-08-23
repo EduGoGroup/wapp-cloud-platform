@@ -544,7 +544,7 @@ type TenantSettings struct {
 	EventHistoryTTL time.Duration
 	// AggregationWindow es LA VENTANA DEL AGREGADOR de captación (Plan 044 · T1.2,
 	// migración 0072 · aggregation_window_seconds INTEGER NOT NULL DEFAULT 45).
-	// Cuántos segundos espera el AggregatorSink DESDE EL PRIMER MENSAJE de la
+	// Cuántos segundos espera el IntakeAggregator DESDE EL PRIMER MENSAJE de la
 	// ventana antes de cerrarla (aggregating -> pending) y disparar el pipeline.
 	//
 	// 🔴 ES LA LATENCIA DE PEOR CASO DEL PIPELINE, y desde T1.7 eso hay que leerlo

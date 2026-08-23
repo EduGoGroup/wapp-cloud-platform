@@ -236,7 +236,7 @@ type Runtime struct {
 	// Su Observe corre en línea con el mensaje y su presupuesto está acotado y
 	// escrito (D-044.26): UNA sentencia, cero lecturas, cero cripto, cero red. NUNCA
 	// devuelve error — un fallo suyo se loguea y el turno del cliente sigue (INV-10).
-	aggregator *AggregatorSink
+	aggregator *IntakeAggregator
 }
 
 // DepositReminder evalúa si a un contacto hay que recordarle la seña de alguna
@@ -461,10 +461,10 @@ func WithAutoreplyStreakHook(fn func(racha int)) Option {
 // ventana ni escribe una sola fila en intake_jobs: no-regresión total.
 //
 // ⚠️ Cablearlo NO basta para que las ventanas se cierren: el cierre lo ejecuta el
-// BARRIDO (AggregatorSink.Run), que se arranca aparte en bootstrap. Con el sink
+// BARRIDO (IntakeAggregator.Run), que se arranca aparte en bootstrap. Con el sink
 // cableado y el barrido sin arrancar, las ventanas se abrirían y se quedarían en
 // `aggregating` para siempre — y el fallo sería MUDO. Van juntos.
-func WithAggregator(a *AggregatorSink) Option {
+func WithAggregator(a *IntakeAggregator) Option {
 	return func(rt *Runtime) { rt.aggregator = a }
 }
 

@@ -6,7 +6,7 @@
 //
 // # QUÉ CUBRE, Y POR QUÉ HACÍA FALTA UN FICHERO PARA ESTO
 //
-// El resto de tests del agregador (aggregator_test.go) ejercen el AggregatorSink
+// El resto de tests del agregador (aggregator_test.go) ejercen el IntakeAggregator
 // DIRECTAMENTE: llaman a Observe con una IncomingRef ya montada. Eso prueba la ventana,
 // pero no prueba QUIÉN la alimenta — y ahí estaba el defecto: `observeForAggregation`
 // tenía UN solo punto de llamada, `advanceLiveStep`, que es el turno de una conversación
@@ -72,7 +72,7 @@ func arranqueEntorno(t *testing.T, rules ...trigger.Rule) (*flowruntime.Runtime,
 	// El sink se construye con el DEFAULT de reloj y de ventana a propósito: este test
 	// no barre nada. Lo que afirma es lo que queda en la fila MIENTRAS la ventana sigue
 	// abierta, que es donde vive el defecto.
-	agg := flowruntime.NewAggregatorSink(aggLogger(), jobs, repo, ents)
+	agg := flowruntime.NewIntakeAggregator(aggLogger(), jobs, repo, ents)
 
 	rt := flowruntime.New(repo, newEngine(), &fakeSender{}, fakeResolver{tenantID: testTenant},
 		contacts, discardLogger(),
@@ -224,7 +224,7 @@ func TestArranqueDelEvento_SinLaFeatureNoSeAbreNadaPorEsteCamino(t *testing.T) {
 	}
 	jobs := intake.NewMemoryStore(nuevoAggReloj().now)
 	// El tenant NO tiene la feature: el Fake se queda sin habilitar nada.
-	agg := flowruntime.NewAggregatorSink(aggLogger(), jobs, repo, entitlements.NewFake())
+	agg := flowruntime.NewIntakeAggregator(aggLogger(), jobs, repo, entitlements.NewFake())
 	rt := flowruntime.New(repo, newEngine(), &fakeSender{}, fakeResolver{tenantID: testTenant},
 		contact.NewMemoryResolver(repo), discardLogger(),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(ts)),

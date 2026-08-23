@@ -180,7 +180,7 @@ var (
 // aggEntorno monta el agregador con sus tres dependencias dobles y la feature
 // llm_intake ENCENDIDA para el tenant de estos tests.
 type aggEntorno struct {
-	sink *flowruntime.AggregatorSink
+	sink *flowruntime.IntakeAggregator
 	jobs *intake.MemoryStore
 	// cfg y ents son los dobles DE VERDAD (los que un test siembra o apaga).
 	cfg  *store.MemoryRepository
@@ -212,7 +212,7 @@ func nuevoAggEntorno(t *testing.T, ventana time.Duration) *aggEntorno {
 		// 🔴 EL SINK RECIBE LOS ENVOLTORIOS, no los dobles pelados: si recibiera los
 		// dobles, el presupuesto de `tenant_settings` y el de entitlements volverían a
 		// no medirse y las mutaciones de arriba volverían a quedar mudas.
-		sink:    flowruntime.NewAggregatorSink(aggLogger(), jobs, cfgCnt, entsCnt, flowruntime.WithAggregatorClock(clock.now)),
+		sink:    flowruntime.NewIntakeAggregator(aggLogger(), jobs, cfgCnt, entsCnt, flowruntime.WithAggregatorClock(clock.now)),
 		jobs:    jobs,
 		cfg:     cfg,
 		ents:    ents,
@@ -787,7 +787,7 @@ func TestCloseWindow_DosLlamadasSeguidas_LaSegundaNoTocaLaFila(t *testing.T) {
 // TestReinicioSimulado_ElJobNoSePierdeYElRecoveryLoCierra es el criterio de T1.1
 // «reinicio simulado ⇒ el job no se pierde».
 //
-// El reinicio se simula construyendo un AggregatorSink NUEVO sobre el MISMO store:
+// El reinicio se simula construyendo un IntakeAggregator NUEVO sobre el MISMO store:
 // eso tira exactamente lo que un despliegue tira —las pistas de adelanto y la
 // memoria de deduplicación, que viven en el proceso— y conserva exactamente lo que
 // sobrevive: la fila en intake_jobs. Es la razón de que esta tabla exista en vez de
@@ -813,7 +813,7 @@ func TestReinicioSimulado_ElJobNoSePierdeYElRecoveryLoCierra(t *testing.T) {
 
 	// 💥 REINICIO. El proceso muere con la ventana abierta.
 	e.clock.avanza(10 * time.Minute)
-	renacido := flowruntime.NewAggregatorSink(aggLogger(), e.jobs, e.cfg, e.ents,
+	renacido := flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfg, e.ents,
 		flowruntime.WithAggregatorClock(e.clock.now))
 
 	if n := renacido.RecoverAtBoot(ctx); n != 1 {
@@ -1171,7 +1171,7 @@ func TestMismoMensajeDosVeces_NoDuplicaLaReferencia(t *testing.T) {
 func TestUmbralDeConfianzaInyectado_MandaSobreElDefaultDePlataforma(t *testing.T) {
 	ctx := context.Background()
 	e := nuevoAggEntorno(t, 45*time.Second)
-	sink := flowruntime.NewAggregatorSink(aggLogger(), e.jobs, e.cfg, e.ents,
+	sink := flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfg, e.ents,
 		flowruntime.WithAggregatorClock(e.clock.now),
 		flowruntime.WithIntentConfidence(0.5))
 
@@ -1222,7 +1222,7 @@ func TestTechoDeTrabajoPorPasada_ElBarridoNoMiraMasDeLoQueSeLeDijo(t *testing.T)
 	// Ventana 0 = flush inmediato: a las tres les toca ya, así que lo ÚNICO que puede
 	// impedir que se cierren en la primera pasada es el techo.
 	e := nuevoAggEntorno(t, 0)
-	sink := flowruntime.NewAggregatorSink(aggLogger(), e.jobs, e.cfg, e.ents,
+	sink := flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfg, e.ents,
 		flowruntime.WithAggregatorClock(e.clock.now),
 		flowruntime.WithSweepBatch(1))
 
@@ -1288,7 +1288,7 @@ func TestTechoDeTrabajoPorPasada_ElBarridoNoMiraMasDeLoQueSeLeDijo(t *testing.T)
 // todavía en `aggregating`.
 func TestRun_ElTickerCierraLaVentanaSinQueNadieLlameASweep(t *testing.T) {
 	e := nuevoAggEntorno(t, 45*time.Second)
-	sink := flowruntime.NewAggregatorSink(aggLogger(), e.jobs, e.cfg, e.ents,
+	sink := flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfg, e.ents,
 		flowruntime.WithAggregatorClock(e.clock.now),
 		flowruntime.WithSweepInterval(time.Millisecond))
 

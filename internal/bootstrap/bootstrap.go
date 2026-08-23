@@ -370,7 +370,7 @@ func Run(ctx context.Context) error {
 	// documentado —las ventanas se cerrarían con el sobre a NULL y el pipeline de la
 	// Ola 2 recibiría jobs sin una línea de texto—, así que el cable importa tanto
 	// como el código que enchufa.
-	intakeAggregator := flowruntime.NewAggregatorSink(log, intakeJobStore, flowStore, entResolver,
+	intakeAggregator := flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
 		flowruntime.WithSourceComposer(intakeComposer))
 	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
@@ -750,7 +750,7 @@ func Run(ctx context.Context) error {
 	// cierra todo lo demás — mismo trato que webhookWorker y flowLifecycleCollector.
 	//
 	// 🔴 ESTA LÍNEA ES LA MITAD QUE NO SE VE, Y SIN ELLA EL 044 NO FUNCIONA: el
-	// AggregatorSink cableado arriba solo ABRE ventanas; quien las CIERRA —y quien
+	// IntakeAggregator cableado arriba solo ABRE ventanas; quien las CIERRA —y quien
 	// recupera al arrancar las que vencieron mientras el proceso no estaba— es este
 	// Run. Retirarla dejaría jobs en `aggregating` para siempre sin un solo error en
 	// el log.

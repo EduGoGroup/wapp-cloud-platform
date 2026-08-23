@@ -593,7 +593,7 @@ func kpDePrueba(t *testing.T) crypto.KeyProvider {
 // compEntorno monta el agregador CON el compositor cableado, que es como corre en
 // producción desde T1.4.
 type compEntorno struct {
-	sink   *flowruntime.AggregatorSink
+	sink   *flowruntime.IntakeAggregator
 	jobs   *intake.MemoryStore
 	hilo   *hiloFalso
 	cipher *crypto.FieldCipher
@@ -616,7 +616,7 @@ func nuevoCompEntorno(t *testing.T, ventana time.Duration, entradas []events.Thr
 	comp := flowruntime.NewSourceTextComposer(aggLogger(), hilo, jobs, cipher)
 
 	return &compEntorno{
-		sink: flowruntime.NewAggregatorSink(aggLogger(), jobs, cfg, ents,
+		sink: flowruntime.NewIntakeAggregator(aggLogger(), jobs, cfg, ents,
 			flowruntime.WithAggregatorClock(clock.now),
 			flowruntime.WithSourceComposer(comp)),
 		jobs:   jobs,

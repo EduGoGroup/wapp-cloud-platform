@@ -5,14 +5,14 @@
 // 🔴 QUÉ CUSTODIA ESTE FICHERO, DICHO SIN ADORNO: la rama best-effort del
 // fan-out de dispatch() (resume.go:184-185) cuando el sink que falla es el del
 // LLM. Es decir: que un EventSink caído —por ahí entra al runtime el
-// AggregatorSink que construirá T1.1, design §2— no altere ni un saliente ni el
+// IntakeAggregator que construirá T1.1, design §2— no altere ni un saliente ni el
 // estado guardado. Dentro de dispatch() el turno ya se decidió: el motor no conoce el
 // LLM (engine.Step), el envío tampoco (send.go), y el Save viene después.
 //
 // 🔴 QUÉ NO CUSTODIA, Y ES LA MAYOR PARTE DEL RIESGO REAL DE INV-10. El LLM NO
 // entra al sistema por una sola puerta, y afirmarlo sería falso:
 //
-//	(a) EL SINK NO LLAMA AL PROVEEDOR. El AggregatorSink hace «ventana + flush +
+//	(a) EL SINK NO LLAMA AL PROVEEDOR. El IntakeAggregator hace «ventana + flush +
 //	    persistencia intake_jobs(aggregating)» (design §5 y la tabla §9): las
 //	    llamadas P2/P3/P4 viven en internal/intake/pipeline.go y las mueve un
 //	    WORKER sobre intake_jobs, fuera de dispatch y fuera del turno. Ahí es
