@@ -273,3 +273,43 @@ func TestWarm_SoloCalientaLoQueCAMBIA_ELPREFIJO(t *testing.T) {
 		})
 	}
 }
+
+// TestWarm_SeApagaPorCONFIGURACION_SinRecompilar es el requisito de MÉTODO del criterio
+// (a) de T1.7-4: el A/B tiene que poder hacerse EN LA MISMA TANDA.
+//
+// 🔴 SI APAGARLO EXIGIERA RECOMPILAR, EL CRITERIO NO SE PUEDE EJERCER: harían falta dos
+// binarios y lo que se compararía serían dos despliegues, no el efecto del
+// calentamiento. Por eso el interruptor es un dato del Pool y no una constante.
+//
+// La primera mitad —encendido por defecto— es la que evita que el «arreglo» sea apagarlo
+// todo: un interruptor que hay que acordarse de encender acaba apagado en producción.
+//
+// 🔬 MUTACIÓN: quitar `!p.calentamientoOn` de la guarda de Warm ⇒ rojo.
+func TestWarm_SeApagaPorCONFIGURACION_SinRecompilar(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		nombre   string
+		opts     []intakeahead.Option
+		calienta bool
+	}{
+		{"por defecto ENCENDIDO (New lo materializa)", nil, true},
+		{"encendido explícito", []intakeahead.Option{intakeahead.WithCalentamiento(true)}, true},
+		{"apagado: nadie precalienta y la primera inferencia paga el prefill frío",
+			[]intakeahead.Option{intakeahead.WithCalentamiento(false)}, false},
+	} {
+		t.Run(tc.nombre, func(t *testing.T) {
+			cal := &calFake{}
+			opts := append([]intakeahead.Option{intakeahead.WithCalentador(cal)}, tc.opts...)
+			p := intakeahead.New(log(t), configSembrada(t, catalogoPublicado), &selFake{}, nuevoSink(), opts...)
+			p.Warm(tenant, "edge-1", sesion, intentcfg.Kind)
+			if tc.calienta {
+				esperaCalentamientos(t, cal, 1)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+			if v := cal.todos(); len(v) != 0 {
+				t.Fatalf("se emitieron %d calentamientos con el interruptor APAGADO", len(v))
+			}
+		})
+	}
+}

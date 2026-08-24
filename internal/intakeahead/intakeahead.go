@@ -221,8 +221,11 @@ type Pool struct {
 	enVuelo map[intake.WindowKey]struct{}
 
 	// --- Calentamiento de la caché de prefijo (T1.7-4, ver calentamiento.go) ---
-	calentador  Calentador
-	warmTimeout time.Duration
+	calentador Calentador
+	// calentamientoOn es el interruptor de campo. Nace en true (New lo materializa):
+	// ver WithCalentamiento.
+	calentamientoOn bool
+	warmTimeout     time.Duration
 	// calMu protege calEnVuelo. Es un candado APARTE del `mu` de arriba a propósito:
 	// aquel lo toman Request y atender en el camino de CADA entrante, y colgar de él
 	// un mapa que solo tocan los calentamientos —uno por Edge, cada muchos minutos—
@@ -276,8 +279,9 @@ func New(log logger.Logger, cfg ConfigStore, sel ProviderSelector, sink Sink, op
 		cola:    make(chan peticion, DefaultQueue),
 		enVuelo: make(map[intake.WindowKey]struct{}),
 
-		warmTimeout: DefaultWarmTimeout,
-		calEnVuelo:  make(map[edgeKey]struct{}),
+		calentamientoOn: true,
+		warmTimeout:     DefaultWarmTimeout,
+		calEnVuelo:      make(map[edgeKey]struct{}),
 	}
 	for _, opt := range opts {
 		opt(p)

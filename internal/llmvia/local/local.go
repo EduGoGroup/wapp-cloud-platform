@@ -78,6 +78,12 @@ const DefaultFormat = "json"
 // sigue siendo 25–50 s de generación. Este campo impide que una inferencia ocupe la
 // plaza MÁS de lo previsto; no promete que la ocupe menos.
 //
+// 🔴 Y ES DE SALIDA, NO DE ENTRADA. Los tamaños que circulan por los documentos de esta
+// ola —«P4 pasó de 1.967 a 2.331 B al reordenarlo para I6»— son del PROMPT, o sea
+// entrada, y no entran en esta cuenta: un prompt más largo se prefilla (una vez, si el
+// prefijo es estable) pero no hace más larga la respuesta. Mezclar los dos números es el
+// error fácil aquí, y llevaría a subir techos por un motivo que no los toca.
+//
 // 🔴 Y NO SE DERIVA DE `llm.Options`: el puerto compartido solo lleva Temperature, y
 // ampliarlo sería pedirle al CALLER que sepa cuántos tokens ocupa el esquema de una
 // P4 — que es justo lo que el ADR-0045 pone del lado del Cloud y, dentro del Cloud,
@@ -281,6 +287,10 @@ type Provider struct {
 	// nada sobre quién preguntó. No viaja en el payload. Solo el calentamiento lo
 	// usa: ver WithTargetSession.
 	target string
+	// fijaTecho dice si el Cloud pone el presupuesto de salida en el frame. Nace en
+	// true (New lo materializa) y solo lo apaga el interruptor de campo: ver
+	// WithMaxOutputTokens.
+	fijaTecho bool
 }
 
 // Option configura el Provider al construirlo.
@@ -317,6 +327,21 @@ func WithOriginSession(sessionID string) Option {
 	return func(p *Provider) { p.origin = sessionID }
 }
 
+// WithMaxOutputTokens enciende o apaga el presupuesto de SALIDA que el Cloud fija por
+// tarea (campo 7 del frame). Por defecto está ENCENDIDO — New lo materializa —, así que
+// un Provider construido sin esta opción se comporta como manda T1.7-3.
+//
+// 🔴 APAGA EL ENVÍO, NO BAJA EL NÚMERO, y la diferencia es lo que hace que sirva: lo
+// que hay que poder reproducir es la conducta ANTERIOR a esta ola, y esa era «el Cloud
+// no dice nada y el Edge aplica su 256», no «el Cloud pide 256». Un frame con el campo
+// presente valiendo 256 probaría algo distinto de lo que el criterio (c) pregunta.
+//
+// Existe para el control A/B de campo en la MISMA tanda, no para ajustar nada: quien
+// quiera otro techo lo cambia en la tabla de etapas, que es donde está su aritmética.
+func WithMaxOutputTokens(on bool) Option {
+	return func(p *Provider) { p.fijaTecho = on }
+}
+
 // WithTargetSession fija POR DÓNDE debe salir la petición, sin afirmar que ninguna
 // conversación la originó. Opcional, y hoy solo lo usa el calentamiento: ver el campo
 // TargetSessionID de gatewaygrpc.InferRequest para por qué las dos cosas son campos
@@ -337,7 +362,8 @@ func New(frame Frame, tenantID string, opts ...Option) (*Provider, error) {
 	if tenantID == "" {
 		return nil, ErrSinTenant
 	}
-	p := &Provider{frame: frame, tenantID: tenantID, format: DefaultFormat, timeout: DefaultTimeout}
+	p := &Provider{frame: frame, tenantID: tenantID, format: DefaultFormat, timeout: DefaultTimeout,
+		fijaTecho: true}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -390,7 +416,7 @@ func (p *Provider) run(ctx context.Context, et etapa, prompt string, opts llm.Op
 		Timeout:         plazo,
 		OriginSessionID: p.origin,
 		TargetSessionID: p.target,
-		MaxOutputTokens: et.maxOutputTokens,
+		MaxOutputTokens: p.techo(et),
 		Class:           et.class,
 	})
 	if err != nil {
@@ -425,4 +451,13 @@ func (p *Provider) plazo(ctx context.Context) (time.Duration, error) {
 			ErrSinPresupuesto, time.Until(dl).Round(time.Millisecond), MargenVeredicto)
 	}
 	return restante, nil
+}
+
+// techo resuelve el presupuesto de salida EFECTIVO de una etapa. Con el interruptor
+// apagado devuelve 0, que inferToCloud traduce a «campo ausente» y el Edge a su default.
+func (p *Provider) techo(et etapa) int32 {
+	if !p.fijaTecho {
+		return 0
+	}
+	return et.maxOutputTokens
 }

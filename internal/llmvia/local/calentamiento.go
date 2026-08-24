@@ -108,7 +108,7 @@ func (p *Provider) Warm(ctx context.Context, in llm.ClassifyRequestInput) error 
 		// mantenerla igual evita que alguien lea aquí una diferencia que no existe.
 		Timeout:         plazo,
 		TargetSessionID: p.target,
-		MaxOutputTokens: etapaCalentamiento.maxOutputTokens,
+		MaxOutputTokens: p.techo(etapaCalentamiento),
 		Class:           etapaCalentamiento.class,
 		Warmup:          true,
 	})

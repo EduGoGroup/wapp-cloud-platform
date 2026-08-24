@@ -462,3 +462,42 @@ func assertPoolDefaults(t *testing.T, cfg AppConfig) {
 		postgres.DefaultConnMaxIdleTime,
 	)
 }
+
+// TestLoad_LosInterruptoresLLM_NacenEncendidosYSeApaganPorEnv (Plan 044 · Ola 1.7).
+//
+// Las dos mitades son requisitos distintos y las dos vienen de una prueba de campo:
+//
+//   - **Nacen ENCENDIDOS.** El estado nuevo es el bueno; el apagado existe para el
+//     lado B del A/B. Un interruptor que hay que acordarse de encender acaba apagado en
+//     producción, y entonces el trabajo de esta ola no llega a nadie.
+//   - **Se apagan por ENV, sin recompilar.** Los criterios (a) de T1.7-4 y (c) de
+//     T1.7-3 exigen el control A/B EN LA MISMA TANDA. Con constantes harían falta dos
+//     binarios y lo que se compararía serían dos despliegues.
+//
+// 🔬 MUTACIÓN: poner los defaults en false ⇒ rojo en la primera mitad. Borrar
+// cualquiera de las dos líneas `loader.GetBool` ⇒ rojo en la segunda.
+func TestLoad_LosInterruptoresLLM_NacenEncendidosYSeApaganPorEnv(t *testing.T) {
+	isolateEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LLM.WarmupEnabled || !cfg.LLM.MaxOutputTokensEnabled {
+		t.Fatalf("los interruptores LLM no nacen encendidos: %+v", cfg.LLM)
+	}
+
+	t.Setenv(EnvPrefix+"LLM_WARMUP_ENABLED", "false")
+	t.Setenv(EnvPrefix+"LLM_MAX_OUTPUT_TOKENS_ENABLED", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load con el env puesto: %v", err)
+	}
+	if cfg.LLM.WarmupEnabled {
+		t.Error("WAPP_LLM_WARMUP_ENABLED=false no apagó el precalentado: sin esto el lado B " +
+			"del criterio (a) de T1.7-4 exigiría recompilar y no habría «misma tanda»")
+	}
+	if cfg.LLM.MaxOutputTokensEnabled {
+		t.Error("WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED=false no apagó el presupuesto de salida: " +
+			"sin esto el lado B del criterio (c) de T1.7-3 exigiría recompilar")
+	}
+}

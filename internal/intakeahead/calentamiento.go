@@ -77,6 +77,19 @@ type Calentador interface {
 // su primer mensaje.
 func WithCalentador(c Calentador) Option { return func(p *Pool) { p.calentador = c } }
 
+// WithCalentamiento enciende o apaga el precalentado. Por defecto está ENCENDIDO (New
+// lo materializa), así que un Pool construido sin esta opción precalienta.
+//
+// 🔴 EXISTE POR EL MÉTODO DE LA PRUEBA DE CAMPO, no por prudencia. El criterio (a) de
+// T1.7-4 exige un control A/B EN LA MISMA TANDA: la primera inferencia de un tenant con
+// calentamiento (`prompt_eval_duration` < 2 s) y sin él (> 15 s). Si apagarlo exigiera
+// recompilar, no habría «misma tanda» —harían falta dos binarios— y lo que se compararía
+// serían dos despliegues, no el mecanismo.
+//
+// Apagado, la conducta es EXACTAMENTE la de antes de esta ola: nadie precalienta y la
+// primera inferencia de cada prefijo nuevo paga el prefill frío.
+func WithCalentamiento(on bool) Option { return func(p *Pool) { p.calentamientoOn = on } }
+
 // WithWarmTimeout fija el presupuesto de un calentamiento. <=0 se ignora.
 func WithWarmTimeout(d time.Duration) Option {
 	return func(p *Pool) {
@@ -120,7 +133,8 @@ type edgeKey struct {
 // pool guardara el de `Run`, que hoy no guarda y que no siempre existe: el
 // calentamiento funciona sin `Run` porque no pasa por la cola.
 func (p *Pool) Warm(tenantID, edgeID, sessionID, kind string) {
-	if p == nil || p.calentador == nil || p.cfg == nil || tenantID == "" || sessionID == "" {
+	if p == nil || !p.calentamientoOn || p.calentador == nil || p.cfg == nil ||
+		tenantID == "" || sessionID == "" {
 		return
 	}
 	if kind != "" && kind != intentcfg.Kind {

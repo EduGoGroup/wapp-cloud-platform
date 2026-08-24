@@ -239,3 +239,64 @@ func cola(s string) string {
 	}
 	return "…" + s[len(s)-200:]
 }
+
+// ============================================================================
+// EL INTERRUPTOR DE CAMPO (T1.7-3, criterio (c))
+// ============================================================================
+
+// TestApagarElTechoDevuelveLaCONDUCTA_ANTERIOR: con el interruptor apagado el campo 7
+// viaja AUSENTE, no valiendo 256.
+//
+// 🔴 LA DIFERENCIA ES TODO EL TEST. Lo que el criterio (c) pide reproducir es la
+// conducta de ANTES de esta ola —«el Cloud no dice nada y el Edge aplica su default»—,
+// no «el Cloud pide 256». Un frame con el campo presente valiendo 256 probaría otra
+// cosa: que el Edge obedece un 256 pedido, que no es lo que se discute.
+//
+// 🔬 MUTACIÓN: que `techo` devuelva 256 en vez de 0 con el interruptor apagado ⇒ rojo.
+func TestApagarElTechoDevuelveLaCONDUCTA_ANTERIOR(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		nombre   string
+		opts     []local.Option
+		presente bool
+	}{
+		{"por defecto el Cloud SÍ fija el techo (New lo materializa)", nil, true},
+		{"encendido explícito", []local.Option{local.WithMaxOutputTokens(true)}, true},
+		{"apagado: el campo va ausente y manda el 256 del Edge",
+			[]local.Option{local.WithMaxOutputTokens(false)}, false},
+	} {
+		t.Run(tc.nombre, func(t *testing.T) {
+			t.Parallel()
+			f := &frameFake{out: `{"version":1}`}
+			p := nuevoProvider(t, f, tc.opts...)
+			if _, err := p.ExtractItemSpecs(context.Background(),
+				llm.ExtractItemSpecsInput{SourceText: "x", Idea: "y"}, llm.Options{}); err != nil {
+				t.Fatalf("ExtractItemSpecs: %v", err)
+			}
+			if got := f.vistos[0].MaxOutputTokens > 0; got != tc.presente {
+				t.Fatalf("¿el Cloud fijó el techo? = %v (valor %d), quiero %v",
+					got, f.vistos[0].MaxOutputTokens, tc.presente)
+			}
+		})
+	}
+}
+
+// TestApagarElTechoTambienDestapaElCalentamiento: el interruptor es sobre «el Cloud fija
+// el presupuesto de salida», y eso incluye el calentamiento. Si el calentamiento
+// conservara su techo de 16 con el interruptor apagado, el interruptor significaría dos
+// cosas distintas según el camino y su lectura en el A/B dejaría de ser una.
+func TestApagarElTechoTambienDestapaElCalentamiento(t *testing.T) {
+	t.Parallel()
+	f := &frameFake{out: `{"vers`}
+	p, err := local.New(f, "tenant-1", local.WithMaxOutputTokens(false))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := p.Warm(context.Background(), catálogo()); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if f.vistos[0].MaxOutputTokens != 0 {
+		t.Fatalf("el calentamiento fijó %d tokens con el interruptor APAGADO: el interruptor "+
+			"significaría una cosa en el pipeline y otra aquí", f.vistos[0].MaxOutputTokens)
+	}
+}

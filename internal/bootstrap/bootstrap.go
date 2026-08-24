@@ -45,6 +45,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -354,7 +355,12 @@ func Run(ctx context.Context) error {
 	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
 	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
 		llmvia.WithFrame(gw),
-		llmvia.WithNotifier(degradationNotifier))
+		llmvia.WithNotifier(degradationNotifier),
+		// EL PRESUPUESTO DE SALIDA POR TAREA (T1.7-3), con su interruptor de campo.
+		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
+		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
+		// Edge aplica su default de 256 — que es el lado B del criterio (c).
+		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)))
 	if err != nil {
 		return fmt.Errorf("selector de vía LLM: %w", err)
 	}
@@ -422,13 +428,30 @@ func Run(ctx context.Context) error {
 		// preguntar por la vía y eso se hace en un solo sitio (C2). Sin este cable el
 		// pipeline funciona igual: solo vuelve a pagar el prefill frío (~50 s) en la
 		// primera inferencia de cada prefijo nuevo.
-		intakeahead.WithCalentador(llmSelector))
+		intakeahead.WithCalentador(llmSelector),
+		intakeahead.WithCalentamiento(cfg.LLM.WarmupEnabled))
 	// El OTRO extremo del mismo cable, y va aquí por el nudo de construcción: el
 	// gateway se arma ANTES que el pool (el selector necesita el gateway y el pool
 	// necesita el selector), así que el gateway recibe el hook DESPUÉS, con el mismo
 	// molde que OnIncoming/OnHeartbeat. El gateway solo dice CUÁNDO se enfrió la caché
 	// —sesión registrada, ConfigUpdate empujado—; el qué y el si son del pool.
 	gw.OnWarmup = intakeAhead.Warm
+	// 🔴 EL VALOR QUE GOBIERNA ES EL EFECTIVO, Y SE LEE AQUÍ O NO SE LEE.
+	//
+	// Los dos interruptores existen para el control A/B de campo, y un A/B sobre un
+	// valor que no se puede confirmar no prueba nada: hay que poder mirar el arranque y
+	// saber en qué lado está ESTA instancia. La lección es cara y de esta casa —un
+	// default recalibrado que vivía en el binario y que el `.env` del VPS pisaba, sin
+	// que ningún test pudiera verlo—, así que se imprimen los dos JUNTOS y con el
+	// nombre de su variable, para que quien lo lea sepa qué tocar.
+	//
+	// ⚠️ En el VPS esta línea NO va a journald: la unidad escribe a `cloud.log`
+	// (StandardOutput=append:), así que se busca ahí y no con `journalctl`.
+	log.Info("orquestación LLM (Plan 044 · Ola 1.7): interruptores efectivos",
+		"warmup_enabled", cfg.LLM.WarmupEnabled,
+		"warmup_env", "WAPP_LLM_WARMUP_ENABLED",
+		"max_output_tokens_enabled", cfg.LLM.MaxOutputTokensEnabled,
+		"max_output_tokens_env", "WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED")
 	intakeAggregator = flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
 		flowruntime.WithSourceComposer(intakeComposer),
 		flowruntime.WithAheadRequester(intakeAhead))
