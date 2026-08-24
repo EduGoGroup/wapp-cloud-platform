@@ -164,7 +164,7 @@ type Server struct {
 	infers   map[string]pendingInfer
 
 	// inferGrace es el margen que el Cloud espera POR ENCIMA del timeout_ms que le
-	// dio al Edge. Nunca es cero: New() lo materializa a defaultInferGrace. Ver el
+	// dio al Edge. Nunca es cero: New() lo materializa a DefaultInferGrace. Ver el
 	// porqué del margen en Infer.
 	inferGrace time.Duration
 }
@@ -242,7 +242,7 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	}
 	// La espera de la inferencia nunca queda sin margen (ver inferGrace e Infer).
 	if s.inferGrace <= 0 {
-		s.inferGrace = defaultInferGrace
+		s.inferGrace = DefaultInferGrace
 	}
 	return s
 }

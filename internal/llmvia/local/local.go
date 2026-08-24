@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
@@ -50,17 +51,74 @@ import (
 // parsearlo, y los artefactos versionados los valida el caller en Go.
 const DefaultFormat = "json"
 
-// DefaultTimeout es el presupuesto de UNA inferencia local cuando no se configura
-// otro.
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 UN SOLO RELOJ: EL PLAZO SE HEREDA, NO SE INVENTA
+// ════════════════════════════════════════════════════════════════════════════
 //
-// POR QUÉ 30 s Y NO EL DefaultTimeout DE LA VÍA API (60 s): son dos fierros
-// distintos con dos ventanas distintas. La medición de campo del propio plan sobre
-// el VPS con qwen3:1.7b da p50 de 8,1 s y cola larga (hasta decenas de segundos), y
-// el consumidor de esta vía —el adelanto de la ventana de agregación— tiene 45 s de
-// ventana en los que además hay que hacer algo con la respuesta. Treinta segundos
-// deja sitio para la cola sin comerse la ventana entera. No es un número medido con
-// esta carga: es el punto de partida razonado, y quien lo cambie tiene que mirar las
-// dos cosas a la vez (la cola del modelo y la ventana del llamante).
+// LO QUE PASÓ EN CAMPO (2026-08-23, VPS de UAT, WhatsApp real). Este adaptador tenía
+// un `DefaultTimeout = 30 s` PROPIO, independiente del presupuesto de su llamante
+// (40 s, intakeahead). El de 30 s cortaba primero, sin saber cuánto le quedaba de
+// verdad al de arriba, y 30 s está POR DEBAJO del máximo real medido sobre ese mismo
+// fierro (36,5 s; p50 8,1 s). Con un prompt de 7.786 bytes la inferencia murió por
+// timeout y el borrador nunca se generó. El pipeline entero —petición, servicio por
+// el socket, error nombrado, aviso de degradación— funcionó perfectamente: lo único
+// roto era que había DOS RELOJES INDEPENDIENTES y el de abajo ignoraba al de arriba.
+//
+// LA REGLA, y es el invariante que este paquete custodia con un test:
+//
+//	EL ADAPTADOR NUNCA ES MÁS RESTRICTIVO QUE SU LLAMANTE.
+//
+// Con un ctx que trae deadline, el `Timeout` del frame es LO QUE QUEDA menos
+// MargenVeredicto. Sin deadline, y solo entonces, cae a DefaultTimeout.
+//
+// Es la misma doctrina que el MargenSocket del Edge («el que vence primero es
+// SIEMPRE el plazo de dentro, y el veredicto lo emite quien lo sabe»), aplicada un
+// salto más arriba en la misma cadena.
+
+// MargenVeredicto es lo que este adaptador RESERVA del plazo del llamante para que el
+// veredicto lo emita el Edge y no un corte del cliente.
+//
+// LA ARITMÉTICA, que es lo único que justifica el número:
+//
+//	ctx del llamante                    D
+//	timeout_ms que se le da al Edge     D − MargenVeredicto   (el Edge corta aquí)
+//	timer de awaitInference             D − MargenVeredicto + DefaultInferGrace
+//
+// Con MargenVeredicto > DefaultInferGrace, el timer del Gateway vence ANTES que el
+// ctx, así que el desenlace es determinista: o llega el INFERENCE_ERROR_TIMEOUT
+// nombrado del Edge (el caso normal, porque el Edge cortó MargenVeredicto antes del
+// final), o el Gateway emite `timeout` CON motivo. Lo que NUNCA pasa es que gane un
+// `ctx.Done()`, que es ErrInferenceAbandonada: SIN motivo, SIN aviso al dueño, y
+// mintiendo sobre la causa —diría «el llamante se rindió» cuando el proveedor estaba
+// trabajando—.
+//
+// Si los dos márgenes fueran iguales, el timer y el ctx vencerían a la vez y el
+// veredicto lo decidiría el `select` de Go, que elige al azar entre casos listos: el
+// aviso al dueño saldría o no según la moneda. Por eso hay colchón, y por eso hay un
+// test que custodia la desigualdad en vez de confiarla a estos párrafos.
+//
+// SIETE SEGUNDOS = DefaultInferGrace (5 s, el ida y vuelta del frame más lo que el
+// Edge tarda en construir su respuesta) + 2 s de colchón. Los 2 s son exactamente el
+// MargenSocket del Edge y están aquí por lo mismo: cubrir un viaje de vuelta sin
+// depender de que nadie lo esté midiendo.
+const MargenVeredicto = 7 * time.Second
+
+// DefaultTimeout es la RED DE SEGURIDAD: el presupuesto que se usa cuando el llamante
+// no trae deadline. Es el caso RARO, no el normal.
+//
+// El camino normal de este paquete es el pool de adelanto (internal/intakeahead), que
+// SIEMPRE llama con deadline; en ese camino esta constante no se lee nunca. Un ctx sin
+// deadline llegando aquí significa una de dos cosas: un test, o un llamante nuevo que
+// se olvidó de acotar su propia espera. Para el segundo, quedarse sin techo sería
+// peor que un techo arbitrario —una goroutine esperando indefinidamente a un modelo
+// colgado—, así que el valor se conserva.
+//
+// TREINTA SEGUNDOS, y el número ya no gobierna nada de lo que importa: dejó de ser el
+// que corta las inferencias del pipeline el día que este adaptador empezó a heredar el
+// plazo. Se mantiene porque como techo de un llamante descuidado sigue siendo
+// razonable, no porque nadie lo haya vuelto a medir. Quien necesite otro lo fija con
+// WithTimeout — y si lo que quiere es que las inferencias del pipeline duren más, el
+// número que tiene que mover NO es este, sino el presupuesto del llamante.
 const DefaultTimeout = 30 * time.Second
 
 // ErrSinTransporte indica que el Provider se construyó sin cable. Es un fallo de
@@ -71,6 +129,20 @@ var ErrSinTransporte = errors.New("llmvia/local: el adaptador local necesita un 
 // ErrSinTenant indica que el Provider se construyó sin tenant. Sin él no hay a qué
 // Edge preguntar (INV-7/INV-8: el tenant no es opcional en ningún camino).
 var ErrSinTenant = errors.New("llmvia/local: el adaptador local necesita un tenant")
+
+// ErrSinPresupuesto indica que al llamante ya no le queda plazo útil: lo que resta de
+// su deadline no cubre ni MargenVeredicto, así que ninguna respuesta podría llegar a
+// tiempo de servirle.
+//
+// 🔴 NO SE LLAMA AL EDGE, y esa es la decisión. Mandar el frame igual gastaría un
+// command_id, un viaje por el stream y —lo caro— una plaza del Ollama del cliente
+// para producir algo que nadie va a estar esperando cuando llegue.
+//
+// Es un error PELADO, sin Motivo(), y eso también es deliberado: el escritor de avisos
+// de llmvia solo notifica lo que trae motivo, y aquí no hay ninguna degradación de la
+// vía que contarle al dueño. Su equipo está perfectamente; lo que se acabó fue el
+// presupuesto de quien preguntó. Es la misma familia que ErrInferenceAbandonada.
+var ErrSinPresupuesto = errors.New("llmvia/local: al llamante no le queda plazo para una inferencia")
 
 // Frame es el transporte: empuja el InferenceRequest por el stream CloudLink del
 // tenant y devuelve el JSON crudo del modelo, o un error.
@@ -117,8 +189,14 @@ func WithFormat(f string) Option {
 	}
 }
 
-// WithTimeout fija el presupuesto de cada inferencia. <= 0 se ignora y cae a
-// DefaultTimeout: ninguna inferencia queda sin reloj.
+// WithTimeout fija la RED DE SEGURIDAD (ver DefaultTimeout): el presupuesto que se
+// usa cuando el ctx del llamante NO trae deadline. <= 0 se ignora.
+//
+// ⚠️ NO es un techo sobre el plazo heredado, y cambiarlo para que lo fuera sería
+// reintroducir el defecto que este paquete arregló: un techo local puede quedarse por
+// debajo de lo que el llamante estaba dispuesto a esperar, y entonces el adaptador
+// vuelve a ser más restrictivo que quien lo llama. Con deadline en el ctx, esta opción
+// no se lee.
 func WithTimeout(d time.Duration) Option {
 	return func(p *Provider) {
 		if d > 0 {
@@ -186,15 +264,47 @@ func (p *Provider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTe
 // al dueño— es el decorador de llmvia; aquí solo se propagan sin envolver, para que
 // ni errors.Is ni el duck-typing del motivo se pierdan por el camino.
 func (p *Provider) run(ctx context.Context, prompt string, opts llm.Options) (json.RawMessage, error) {
+	plazo, err := p.plazo(ctx)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := p.frame.Infer(ctx, p.tenantID, gatewaygrpc.InferRequest{
 		Prompt:          prompt,
 		Format:          p.format,
 		Temperature:     opts.Temperature,
-		Timeout:         p.timeout,
+		Timeout:         plazo,
 		OriginSessionID: p.origin,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return llm.ExtractJSON(raw)
+}
+
+// plazo resuelve el `timeout_ms` que viaja en el frame HEREDÁNDOLO del deadline del
+// llamante. Es el corazón de este paquete desde el arreglo del reloj único: ver el
+// bloque «UN SOLO RELOJ» de arriba.
+//
+// Tres desenlaces, y ninguno de ellos inventa un plazo por su cuenta:
+//
+//  1. **El ctx trae deadline** ⇒ lo que queda menos MargenVeredicto. Ese es el caso
+//     de TODO el pipeline.
+//  2. **Le queda menos que el margen** ⇒ ErrSinPresupuesto, sin tocar el cable.
+//  3. **El ctx NO trae deadline** ⇒ DefaultTimeout, la red de seguridad.
+//
+// 🔴 LO QUE NO HACE, dicho porque es la tentación evidente: NO acota el resultado con
+// p.timeout. Un `min(restante, p.timeout)` parecería prudente y sería exactamente el
+// defecto de campo otra vez —el adaptador cortando por debajo de lo que su llamante
+// estaba dispuesto a esperar—, solo que escrito con más letras.
+func (p *Provider) plazo(ctx context.Context) (time.Duration, error) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return p.timeout, nil
+	}
+	restante := time.Until(dl) - MargenVeredicto
+	if restante <= 0 {
+		return 0, fmt.Errorf("%w: quedan %v, y el margen del veredicto es %v",
+			ErrSinPresupuesto, time.Until(dl).Round(time.Millisecond), MargenVeredicto)
+	}
+	return restante, nil
 }

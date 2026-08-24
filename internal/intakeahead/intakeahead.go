@@ -110,13 +110,36 @@ const (
 	// DefaultTimeout es el presupuesto de UNA petición P1 COMPLETA: la inferencia más
 	// el reintento por calidad si lo hay.
 	//
-	// Es mayor que el presupuesto de una inferencia suelta de la vía local (30 s,
-	// llmvia/local.DefaultTimeout) justo para que quepa el reintento, y es menor que
-	// la ventana de agregación por defecto (45 s) para que una respuesta que llega
-	// tarde todavía adelante algo. Que llegue DESPUÉS del cierre no rompe nada —es
-	// inocuo por construcción, ver Sink— pero tampoco sirve de nada, y no tiene
-	// sentido gastar un worker en algo que ya no puede adelantar.
-	DefaultTimeout = 40 * time.Second
+	// 🔴 ES EL ÚNICO RELOJ DE LA CADENA, y desde el arreglo del reloj único eso hay que
+	// leerlo literal. El adaptador de la vía ya no inventa un plazo propio: DERIVA el
+	// suyo de este deadline (ver el bloque «UN SOLO RELOJ» de llmvia/local), reservando
+	// un margen para que el veredicto lo emita quien sabe qué pasó. Este número es, por
+	// tanto, lo que de verdad decide cuánto puede tardar una inferencia del pipeline.
+	//
+	// CUARENTA Y CINCO, Y NO CUARENTA, y el cambio no es cosmético — el 40 estaba
+	// MEDIBLEMENTE MAL. La versión anterior lo justificaba como «mayor que los 30 s del
+	// adaptador y menor que la ventana de 45 s»; la primera mitad describía justamente
+	// el segundo reloj que el arreglo retiró, y la segunda dejaba el presupuesto por
+	// debajo del fierro: 40 s menos el margen del veredicto son 33 s para el modelo,
+	// y el MÁXIMO REAL medido en campo sobre el VPS con qwen3:1.7b es de 36,5 s (p50
+	// 8,1 s). Heredar el reloj sin mover este número habría dejado el fallo del 2026-08-23
+	// exactamente donde estaba, solo que cortando siete segundos más tarde. Con 45 s el
+	// modelo recibe 38 s, que sí cubre lo medido.
+	//
+	// EL TECHO SIGUE SIENDO LA VENTANA, y por eso no sube más: pasado el cierre, una
+	// respuesta ya no adelanta nada. Que llegue tarde no rompe nada —es inocuo por
+	// construcción, ver Sink— pero gastar un worker en algo que ya no puede adelantar
+	// no compra nada. Igualarlo a DefaultAggregationWindow (45 s) es el máximo que ese
+	// argumento admite.
+	//
+	// ⚠️ Y LA VENTANA ES POR TENANT, mientras que esto es una constante de PROCESO
+	// (`tenant_settings.aggregation_window_seconds`, migración 0072; 45 s es solo el
+	// default de plataforma). Un tenant que configure una ventana más corta tendrá un
+	// worker esperando más de lo que su ventana dura. Es despilfarro acotado, no una
+	// avería: lo que se pierde es un adelanto que ya no podía adelantar. Atarlo a la
+	// ventana real exigiría que este pool leyera tenant_settings por petición, y esa
+	// lectura no la pide ninguna tarea hoy.
+	DefaultTimeout = 45 * time.Second
 )
 
 // ProviderSelector traduce un tenant en el llm.LLMProvider de SU vía. Lo satisface
@@ -427,12 +450,53 @@ func aplanar(cat *intents.Config) []llm.IntentSpec {
 // decorador de llmvia trata ErrLLMQuality como «el proveedor funciona y el modelo
 // escribió mal un JSON» y no escribe fila. Aquí solo hay que no confundirlo con un
 // fallo de vía, que es justo lo que hace el errors.Is.
+//
+// # 🔴 EL REINTENTO SOLO ARRANCA SI LE QUEDA PLAZO PARA SER UN REINTENTO
+//
+// Las dos pasadas comparten UN presupuesto (el de atender), y desde que el adaptador
+// hereda el plazo eso tiene una consecuencia que antes quedaba tapada por su reloj
+// propio: si la primera pasada consumió casi todo, la segunda arranca con lo que
+// sobre. Un reintento que empieza con dos segundos no es un reintento, es un fallo
+// garantizado que además OCUPA UN WORKER y, peor, produce un `timeout` CON motivo —o
+// sea, un aviso de degradación al dueño por una avería que no existe—.
+//
+// SE DESCARTÓ REPARTIR MITAD Y MITAD, que era la otra opción sobre la mesa: partir 45 s
+// en dos mitades de 22,5 s dejaría el presupuesto de la PRIMERA pasada por debajo del
+// máximo real medido en campo (36,5 s), o sea, penalizaría el caso frecuente —una
+// inferencia normal que no falla de calidad— para financiar el raro. Habría cambiado un
+// defecto por su espejo.
+//
+// El criterio es MEDIA VUELTA DEL PRESUPUESTO, comprobada sobre el reloj real y no
+// sobre un número aparte: se reintenta si al ctx le queda al menos la mitad de lo que
+// se le dio. Da lo mismo que el reparto en el caso bueno —una primera pasada corta deja
+// sitio de sobra— sin gravar el caso en que la primera pasada necesita el presupuesto
+// entero, y se auto-escala si alguien mueve el plazo con WithTimeout. Sin deadline no
+// se comprueba nada: no hay presupuesto que repartir.
 func (p *Pool) pedir(ctx context.Context, prov llm.LLMProvider, in llm.ClassifyRequestInput) (*llm.Classification, error) {
 	c, err := intentar(ctx, prov, in, llm.TemperatureGreedy)
 	if err == nil || !errors.Is(err, llm.ErrLLMQuality) {
 		return c, err
 	}
+	if !p.cabeElReintento(ctx) {
+		// Se devuelve el error de calidad ORIGINAL, no uno de plazo: lo que pasó de
+		// verdad es que el modelo escribió mal el JSON, y esa sigue siendo la causa que
+		// el llamante tiene que registrar. Inventar aquí un error nuevo cambiaría la
+		// familia del fallo —y con ella la decisión de avisar al dueño— por un detalle
+		// de nuestra política de reintento.
+		return nil, err
+	}
 	return intentar(ctx, prov, in, llm.TemperatureRetry)
+}
+
+// cabeElReintento dice si al presupuesto le queda al menos la MITAD, que es el umbral
+// razonado en el docstring de pedir. Sin deadline devuelve true: no hay plazo que
+// agotar.
+func (p *Pool) cabeElReintento(ctx context.Context) bool {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return true
+	}
+	return time.Until(dl) >= p.timeout/2
 }
 
 // intentar es UNA pasada: pedir y parsear. Los dos pasos fallan con el MISMO
