@@ -348,7 +348,7 @@ func (p *Pool) clasificar(ctx context.Context, pet peticion) (*llm.Classificatio
 			"tenant_id", pet.key.TenantID, "session_id", pet.key.SessionID, "error", err)
 		return nil, false
 	}
-	if !p.aceptar(c, pet) {
+	if !p.aceptar(c, in, pet.key) {
 		return nil, false
 	}
 	return c, true
@@ -451,16 +451,16 @@ func intentar(ctx context.Context, prov llm.LLMProvider, in llm.ClassifyRequestI
 // Rechazar aquí NO es un fallo de la vía y no escribe aviso: el proveedor respondió,
 // el cable funcionó, y lo que pasó es que la respuesta no se sostiene sobre el texto
 // del cliente. Es exactamente la familia de ErrLLMQuality y se trata igual.
-func (p *Pool) aceptar(c *llm.Classification, pet peticion) bool {
-	evidenciaOK, descartados := sanear(c, pet.texto)
+func (p *Pool) aceptar(c *llm.Classification, in llm.ClassifyRequestInput, key intake.WindowKey) bool {
+	evidenciaOK, descartados := sanear(c, in)
 	if descartados > 0 {
 		// El NÚMERO sí va al log; los valores NO (INV-6: son texto del cliente).
-		p.log.Debug("adelanto: params descartados por no aparecer en el mensaje",
-			"tenant_id", pet.key.TenantID, "intent", c.Intent, "descartados", descartados)
+		p.log.Debug("adelanto: params descartados por el allowlist",
+			"tenant_id", key.TenantID, "intent", c.Intent, "descartados", descartados)
 	}
 	if !evidenciaOK {
 		p.log.Debug("adelanto: la evidencia no aparece en el mensaje; la clasificación se descarta",
-			"tenant_id", pet.key.TenantID, "session_id", pet.key.SessionID, "intent", c.Intent)
+			"tenant_id", key.TenantID, "session_id", key.SessionID, "intent", c.Intent)
 		return false
 	}
 	return true

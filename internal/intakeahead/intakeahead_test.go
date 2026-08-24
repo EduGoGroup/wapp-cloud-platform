@@ -720,6 +720,29 @@ func TestSaneo_LosParamsInventadosSeCaenYLaIntencionSOBREVIVE(t *testing.T) {
 	}
 }
 
+// TestSaneo_ElParamNoDECLARADO_SeCaeSinMirarSuValor es el filtro heredado del
+// `sanitizeParams` del Edge (edge/wapp-edge-intent/classifier/sanitize.go), y el que
+// más corta con el catálogo publicado: `intake_request` declara `params: []`
+// (D-044.20), así que CUALQUIER param que devuelva el modelo es invención por
+// definición — incluso uno cuyo valor sí esté en el texto, como este «200».
+//
+// 💥 MUTACIÓN: retirar de `sanear` la rama del `declarados` ⇒ el «200» sobrevive. El
+// test no lo puede ver desde fuera (los params no salen del paquete), así que lo que
+// se comprueba es lo observable: la intención pasa igual, o sea que un param
+// rechazado NUNCA tumba una clasificación buena.
+func TestSaneo_ElParamNoDECLARADO_SeCaeSinMirarSuValor(t *testing.T) {
+	prov := &provFake{respuestas: []respuesta{{
+		raw: artefacto("intake_request", 0.9, "quiero 200 sillas", map[string]string{"cantidad": "200"}),
+	}}}
+	sink := nuevoSink()
+	p := arranca(t, configSembrada(t, catalogoPublicado), &selFake{prov: prov}, sink)
+
+	p.Request(clave(), "quiero 200 sillas para el sábado")
+	if got := sink.esperaUno(t); got.name != "intake_request" || got.conf != 0.9 {
+		t.Fatalf("el catálogo declara `params: []`, así que «cantidad» se cae — y aun así la intención vale; got %+v", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Nil-safety y ciclo de vida
 // ---------------------------------------------------------------------------
@@ -783,13 +806,20 @@ func TestElLogNoLlevaElTextoDelCliente(t *testing.T) {
 // Se cubre desde el otro lado: los identificadores prohibidos solo pueden aparecer en
 // las líneas donde de verdad se usan, y esas están contadas.
 func TestLosLogsMultilineaTampoco(t *testing.T) {
+	// ⚠️ Los tokens llevan su contexto (`range`, `delete(`) y no son el identificador
+	// pelado: `c.Params` es SUBCADENA de `spec.Params`, así que contarlo suelto mezcla
+	// el campo de la clasificación con el del catálogo y da un número que no significa
+	// nada.
 	usosLegitimos := map[string]int{
-		// El texto del cliente: al armar el prompt y al sanear. Y punto.
-		"pet.texto": 2,
+		// El texto del cliente: solo al armar el prompt. De ahí en adelante viaja dentro
+		// de la ClassifyRequestInput, que es lo que ve el saneo.
+		"pet.texto": 1,
 		// La evidencia: SOLO en el saneo, que la compara contra el texto.
 		"c.Evidence": 1,
-		// Los params: SOLO en el saneo, que los recorre y descarta los inventados.
-		"c.Params": 2,
+		// Los params: el saneo los recorre una vez y los borra por los DOS motivos
+		// (clave no declarada, valor que no aparece).
+		"range c.Params":  1,
+		"delete(c.Params": 2,
 	}
 	junto := codigoSinComentarios(t, "intakeahead.go") + codigoSinComentarios(t, "saneo.go")
 	for ident, esperados := range usosLegitimos {

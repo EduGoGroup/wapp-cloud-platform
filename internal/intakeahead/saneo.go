@@ -9,18 +9,37 @@ import (
 // ============================================================================
 // EL SANEO CONTRA EL TEXTO ORIGINAL (Plan 044 · Ola 1.6 · T1.6-4)
 //
-// # 🔴 `sanitizeParams` NO EXISTE, Y NUNCA EXISTIÓ
+// # DE DÓNDE SALE ESTA REGLA: HAY UN `sanitizeParams`, Y ESTÁ EN EL EDGE
 //
-// `tasks.md` · T1.6-4 lo cita como si fuera una función que ya está en algún sitio
-// («armar el prompt desde intent_configs, `sanitizeParams`/umbral en el caller»). No
-// lo está: no hay un solo símbolo con ese nombre en ninguno de los repos del
-// ecosistema. Lo que sí hay es el contrato del módulo compartido diciendo, con estas
-// palabras, de quién es el trabajo:
+// `tasks.md` · T1.6-4 lo cita como si estuviera a mano («armar el prompt desde
+// intent_configs, `sanitizeParams`/umbral en el caller»). Lo hay, pero NO donde se
+// puede llamar: vive en `edge/wapp-edge-intent/classifier/sanitize.go`, es minúscula
+// —no exportada— y está en OTRO repo y en OTRO proceso. Era el allowlist del
+// clasificador que corría en el Edge; con el push muerto (D-044.31) ese camino ya no
+// se recorre, así que el saneo hay que rehacerlo AQUÍ, que es donde ahora vive el
+// texto. El módulo compartido lo dice sin rodeos:
 //
 //	«Este paquete NO sanea los params contra el texto original — ese allowlist lo
 //	aplica el caller, que es quien tiene el texto» (llm/parse.go, Classification.Params)
 //
-// El caller es este paquete. El saneo es esto.
+// # QUÉ SE HEREDA DEL EDGE Y QUÉ NO, CON EL MOTIVO DE CADA COSA
+//
+// Se hereda el INVARIANTE, que está MEDIDO y es el que justifica todo esto: «los
+// modelos pequeños a veces copian valores de los ejemplos del prompt (alucinaron un
+// pedido "887" que el cliente nunca escribió). Exigir que el valor aparezca en el
+// mensaje elimina esa clase entera de fallo». Y se hereda su primer filtro, que es el
+// más barato y el que más corta: **un param cuya CLAVE no está declarada por la
+// intención elegida se cae sin mirar su valor**. Con el catálogo publicado en campo
+// —`params: []`, D-044.20— eso significa que TODO param que devuelva el modelo es, por
+// definición, invención.
+//
+// NO se hereda su tolerancia a plural/tipeo (allí basta con que aparezca el prefijo de
+// 4 caracteres del valor). Allí tenía sentido porque el sujeto era un valor corto
+// —«pizzas» ~ «pizza»—; aquí el sujeto principal es la EVIDENCIA, que es una frase, y
+// un prefijo de 4 caracteres sobre una frase no comprueba nada («quie» está en
+// cualquier mensaje que empiece por «quiero»). Aplicarla solo a los params y no a la
+// evidencia daría dos reglas que mantener sincronizadas para cubrir un campo que hoy
+// no tiene consumidor. Una regla, y dicha.
 //
 // # LA GRANULARIDAD ES LA FRASE, NO LA PALABRA
 //
@@ -64,15 +83,28 @@ import (
 // sanear aplica el allowlist a la clasificación IN SITU y devuelve (a) si la
 // evidencia se sostiene sobre el texto y (b) cuántos params se descartaron.
 //
+// Recibe la MISMA entrada con la que se armó el prompt, y no el texto suelto, por el
+// mismo motivo por el que lo hace ParseClassification: de ahí salen las DOS cosas que
+// el allowlist necesita —el texto original y los params que la intención elegida
+// declara— y pasarlas por separado es la forma de que un día dejen de coincidir.
+//
 // Modifica `c.Params` a propósito: lo que sale de aquí es lo único que el resto del
 // pipeline puede ver, y dejar los inventados dentro «por si acaso» sería dejar la
 // puerta abierta a que alguien los lea más adelante sin saber que no valen.
-func sanear(c *llm.Classification, texto string) (evidenciaOK bool, descartados int) {
+func sanear(c *llm.Classification, in llm.ClassifyRequestInput) (evidenciaOK bool, descartados int) {
 	if c == nil {
 		return false, 0
 	}
-	norm := normalizar(texto)
+	norm := normalizar(in.Text)
+	declarados := paramsDeclarados(in, c.Intent)
 	for k, v := range c.Params {
+		if _, ok := declarados[k]; !ok {
+			// Clave que la intención elegida NO declara: fuera sin mirar el valor. Es el
+			// filtro heredado del Edge y el que más corta con el catálogo de campo.
+			delete(c.Params, k)
+			descartados++
+			continue
+		}
 		// Un valor VACÍO pasa: significa «el cliente no lo dijo», y eso lo dice el
 		// contrato del parser, que lo acepta a propósito. No hay nada que respaldar.
 		if v == "" {
@@ -84,6 +116,26 @@ func sanear(c *llm.Classification, texto string) (evidenciaOK bool, descartados 
 		}
 	}
 	return contieneFrase(norm, c.Evidence), descartados
+}
+
+// paramsDeclarados devuelve los nombres de parámetro que declara la intención elegida.
+//
+// Una intención que no está en el catálogo —solo puede ser la etiqueta reservada de lo
+// desconocido, que el parser acepta sin declararla— no declara ninguno, y entonces
+// TODO param se cae. Es lo correcto: quien acaba de decir que no entendió nada no puede
+// haber extraído un parámetro de nada.
+func paramsDeclarados(in llm.ClassifyRequestInput, intent string) map[string]struct{} {
+	for _, spec := range in.Catalog {
+		if spec.Name != intent {
+			continue
+		}
+		out := make(map[string]struct{}, len(spec.Params))
+		for _, p := range spec.Params {
+			out[p] = struct{}{}
+		}
+		return out
+	}
+	return nil
 }
 
 // contieneFrase dice si `frase` aparece en un texto YA NORMALIZADO. La frase se
