@@ -137,10 +137,25 @@ func NewSelector(cfg Store, log logger.Logger, opts ...SelectorOption) (*Selecto
 // For devuelve el llm.LLMProvider de la vía configurada del tenant.
 //
 // originSessionID es la sesión de WhatsApp cuya conversación originó la pregunta,
-// cuando el llamante la conoce; vacía es un estado legítimo. Solo la usa la vía
-// local (viaja como trazabilidad en el frame y decide por qué stream sale); la vía
-// API la ignora, y esa asimetría NO es un `if via` encubierto: es un dato que se le
-// pasa al constructor de un adaptador, no una decisión de conducta.
+// cuando el llamante la conoce; vacía es un estado legítimo —la inferencia es de
+// alcance EDGE, no de sesión— y el proto la admite vacía sin error.
+//
+// Se le entrega al adaptador local con local.WithOriginSession y de ahí viaja en el
+// frame hasta gatewaygrpc.inferenceSession, que la usa para DOS cosas: es el
+// session_id de trazabilidad del payload, y —si esa sesión está viva— es además el
+// stream por el que sale, así que la pregunta la atiende el mismo Edge que recibió
+// el mensaje del cliente. Si no está viva, el Gateway cae a la primera alfabética de
+// las vivas del tenant: esta función RELLENA EL DATO, no cambia esa política de
+// caída. La vía API lo ignora, y esa asimetría NO es un `if via` encubierto: es un
+// dato que se le pasa al constructor de un adaptador, no una decisión de conducta.
+//
+// 🔴 QUE ESTE PÁRRAFO SEA VERDAD COSTÓ UNA TAREA (T1.7-8). El parámetro se pedía
+// desde T1.6-3 y se TIRABA —WithOriginSession no tenía un solo llamante—, así que el
+// session_id del frame viajaba SIEMPRE vacío y el Edge lo elegía el orden
+// alfabético. Con un Edge no se nota; con dos del mismo tenant, la inferencia salía
+// siempre por el mismo y el otro no calentaba NUNCA su caché de prefijos, que es el
+// recurso que esta ola entera intenta aprovechar. Lo custodia un test del selector,
+// para que no vuelva a ser una promesa escrita aquí.
 //
 // 🔴 UN TENANT SIN FILA ESTÁ EN LA VÍA LOCAL, y no es un default defensivo: lo fija
 // REQ-33 y lo dice el contrato del store («la ausencia de fila ES una respuesta y
@@ -164,7 +179,7 @@ func (s *Selector) For(ctx context.Context, tenantID, originSessionID string) (l
 	// ==================================================================
 	switch via {
 	case tenantllm.ViaLocal:
-		prov, err = local.New(s.frame, tenantID, s.localOpts...)
+		prov, err = s.localProvider(tenantID, originSessionID)
 	case tenantllm.ViaAPI:
 		prov, err = s.apiProvider(ctx, tenantID, cfg)
 	default:
@@ -179,6 +194,30 @@ func (s *Selector) For(ctx context.Context, tenantID, originSessionID string) (l
 		return nil, err
 	}
 	return s.notifying(prov, tenantID, via), nil
+}
+
+// localProvider arma el adaptador de la vía local con la sesión de origen de ESTA
+// petición, que es lo único que cambia entre dos llamadas a For.
+//
+// ⚠️ LAS OPCIONES SE COPIAN, no se le hace append a s.localOpts. El Selector se
+// comparte entre goroutines y For no lo muta: un append directo sobre el slice del
+// Selector escribiría en SU array subyacente en cuanto tuviera capacidad de sobra, y
+// dos peticiones concurrentes se pisarían la sesión de origen —un cruce de
+// trazabilidad entre tenants distintos, silencioso y reproducible una de cada
+// muchas—. La copia cuesta una asignación por inferencia, al lado de un viaje al
+// Ollama del cliente.
+func (s *Selector) localProvider(tenantID, originSessionID string) (llm.LLMProvider, error) {
+	opts := make([]local.Option, 0, len(s.localOpts)+1)
+	opts = append(opts, s.localOpts...)
+	opts = append(opts, local.WithOriginSession(originSessionID))
+	prov, err := local.New(s.frame, tenantID, opts...)
+	if err != nil {
+		// El nil concreto NO se devuelve como interfaz: un (*local.Provider)(nil)
+		// metido en un llm.LLMProvider deja de comparar igual a nil y el siguiente
+		// que escriba `if prov == nil` se llevará una sorpresa a la primera llamada.
+		return nil, err
+	}
+	return prov, nil
 }
 
 // apiProvider arma el provider de la vía API con la credencial descifrada del
