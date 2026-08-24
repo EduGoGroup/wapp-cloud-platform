@@ -127,3 +127,56 @@ func ruta(e ast.Expr) string {
 	}
 	return ""
 }
+
+// TestInferenceStatsCableado: el almacén del parte de inferencia tiene DOS extremos y
+// los dos son asignaciones sueltas —el Gateway lo escribe, /metrics lo lee—. Faltando
+// cualquiera de las dos, todo compila y todos los tests siguen verdes: el colector
+// publicaría series vacías (falta el escritor) o no publicaría ninguna (falta el
+// lector), y en los dos casos el síntoma en campo es idéntico —un /metrics sin datos
+// de inferencia— pero la causa es la contraria.
+//
+// Es la misma red que TestCalentamientoCableado y por el mismo motivo: aquí lo que se
+// quedaría inerte es la tarea entera (T1.7-9), cuyo único criterio es que el dato se
+// pueda leer sin abrir un log.
+func TestInferenceStatsCableado(t *testing.T) {
+	fset := token.NewFileSet()
+	archivo, err := parser.ParseFile(fset, "bootstrap.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parseando bootstrap.go: %v", err)
+	}
+
+	var lector, escritor bool
+	ast.Inspect(archivo, func(n ast.Node) bool {
+		llamada, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch campo(llamada.Fun) {
+		case "mtx.RegisterInferenceStats":
+			// La fuente tiene que ser el Agrega del almacén y no una función suelta: es
+			// lo único que lee lo que el Gateway escribe.
+			if len(llamada.Args) != 1 || ruta(llamada.Args[0]) != "inferStats.Agrega" {
+				t.Fatalf("RegisterInferenceStats no recibe inferStats.Agrega (%s)",
+					fset.Position(llamada.Pos()))
+			}
+			lector = true
+		case "gatewaygrpc.WithInferenceStats":
+			if len(llamada.Args) != 1 || ruta(llamada.Args[0]) != "inferStats" {
+				t.Fatalf("WithInferenceStats no recibe el MISMO almacén que lee /metrics: dos "+
+					"almacenes distintos publicarían series vacías sin ningún error (%s)",
+					fset.Position(llamada.Pos()))
+			}
+			escritor = true
+		}
+		return true
+	})
+
+	if !escritor {
+		t.Error("bootstrap.go no cablea gatewaygrpc.WithInferenceStats: el parte de inferencia " +
+			"del Edge sigue subiendo y muriendo en la base, que es lo que T1.7-9 arregla.")
+	}
+	if !lector {
+		t.Error("bootstrap.go no llama a mtx.RegisterInferenceStats: los números se recogerían " +
+			"en memoria y no saldría ni una serie por /metrics.")
+	}
+}

@@ -38,6 +38,7 @@ import (
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
@@ -238,6 +239,19 @@ func Run(ctx context.Context) error {
 	// anotada en el journal (criterio (c) de T5.4). La garantía pasó de ser un conteo
 	// a ser el esquema: no hay dónde escribir un teléfono en claro.
 
+	// EL ALMACÉN DEL PARTE DE INFERENCIA (Plan 044 · Ola 1.7 · T1.7-9). Se crea aquí,
+	// antes del Gateway, porque tiene DOS extremos: el Gateway lo escribe con lo que
+	// llega en cada latido y /metrics lo lee en el scrape. Es memoria pura —ni base ni
+	// goroutine— y por eso puede vivir todo el arranque sin condiciones.
+	inferStats := inferstats.New()
+	// El lado LECTOR, con el molde de RegisterDBStats: se registra DESPUÉS de New()
+	// porque la fuente no existía al construir las métricas. Se aborta el arranque si
+	// falla, por el mismo motivo que allí: el único error posible es un choque de
+	// nombres en el registry, o sea un bug que se ve al arrancar o no se ve nunca.
+	if err := mtx.RegisterInferenceStats(inferStats.Agrega); err != nil {
+		return err
+	}
+
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
 		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
@@ -266,6 +280,9 @@ func Run(ctx context.Context) error {
 		),
 		// Recepción del DiagnosticsBundle (Plan 031 · T5, ADR-0023): el demux correlaciona
 		// el bundle con su solicitud pendiente por command_id y lo almacena.
+		// El lado ESCRITOR del mismo almacén: sin este cable, el parte de inferencia
+		// sigue subiendo y muriendo en la base, que es justo lo que T1.7-9 arregla.
+		gatewaygrpc.WithInferenceStats(inferStats),
 		gatewaygrpc.WithDiagnosticsSink(diagStore),
 		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025): el
 		// gateway delega UserLogin/Refresh/Logout en un puerto de autenticación y audita

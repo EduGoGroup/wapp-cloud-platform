@@ -15,6 +15,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 )
 
 // Connect atiende el stream bidireccional CloudLink. Extrae la identidad mTLS
@@ -327,6 +328,7 @@ func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Hea
 	}
 	s.submitJob(lane, cc, jobHeartbeat, func(ctx context.Context) {
 		s.persistSelfPn(ctx, cc, hb)
+		s.observeInference(cc, hb)
 		s.persistHealth(ctx, cc, hb)
 		s.renewLease(ctx, cc, hb.GetLeaseCounter())
 		// 🔴 EL CUARTO VA AL FINAL A PROPÓSITO (Plan 046 · T3.2 (b)). El saludo de la
@@ -739,6 +741,61 @@ func (s *Server) persistHealth(ctx context.Context, cc connCtx, hb *cloudlinkv1.
 		s.log.Error("fleet: persistir salud", "error", err,
 			"edge_id", cc.edgeID, "session_id", cc.sessionID)
 	}
+}
+
+// observeInference recoge el bloque de inferencia del latido para que /metrics lo
+// publique (Plan 044 · Ola 1.7 · T1.7-9). Es memoria pura: no toca la base, no acota
+// nada y por eso NO recibe ctx.
+//
+// 🔴 VA APARTE DE persistHealth Y NO DENTRO, aunque lea el mismo SessionHealth. Aquel
+// se rinde sin `fleet` —no hay dónde durabilizar—, y esa guarda es correcta para él y
+// equivocada para esto: un despliegue sin repositorio de flota seguiría sirviendo
+// /metrics, y colgar la recogida de ahí la haría desaparecer sin un solo error. Son
+// dos destinos con dos condiciones, no uno con dos pasos.
+//
+// ⚠️ Corre dentro de un job COALESCIBLE del carril, así que un latido intermedio puede
+// descartarse (D-050.4). Da igual: lo que llega son ACUMULADOS del Edge, no deltas, y
+// el siguiente latido trae el mismo total o uno mayor. Si algún día esto pasara a
+// contar diferencias, la coalescencia dejaría de ser inocua — y ese es el motivo por
+// el que aquí no se resta nada.
+func (s *Server) observeInference(cc connCtx, hb *cloudlinkv1.Heartbeat) {
+	if s.inferStats == nil || !cc.hasIdentity {
+		return
+	}
+	sh := hb.GetSessionHealth()
+	if sh == nil {
+		return // Edge viejo: no reporta salud.
+	}
+	// 🔴 LA CLAVE ES EL EDGE, NO LA SESIÓN. Los contadores los lleva el PROCESO del
+	// Edge (un cajero, un Ollama) pero viajan en el latido de CADA sesión suya: un Edge
+	// con tres teléfonos manda tres latidos con LOS MISMOS totales. Indexar por sesión
+	// multiplicaría por tres las inferencias del mundo con una serie creíble y falsa.
+	// Es la misma lección que el calentamiento de T1.7-4, y por el mismo motivo
+	// (ADR-0008: N sesiones sobre un proceso).
+	s.inferStats.Observa(
+		inferstats.Clave{TenantID: cc.tenantID, EdgeID: cc.edgeID},
+		inferstats.Parte{
+			PorRegimen:        sh.GetInferenceByRegime(),
+			PorClase:          sh.GetInferenceByClass(),
+			OmitidasPorMotivo: sh.GetIntentOmittedByReason(),
+			// 🔴 PRESENCIA NATIVA, NO EL CERO. Los dos son sub-mensajes: ausente
+			// significa «este Edge no mide esa fase», y convertirlo en 0 lo volvería
+			// «cero observaciones», que es una afirmación distinta y publicable.
+			MuestrasPrefill:    muestrasDe(sh.GetInferencePrefill()),
+			MuestrasGeneracion: muestrasDe(sh.GetInferenceGeneration()),
+		})
+}
+
+// muestrasDe extrae el `n` de un InferenceLatency conservando su ausencia. El
+// sub-mensaje lleva el cuantil y su `n` JUNTOS a propósito —aquí un cuantil sin saber
+// cuántas muestras lo sostienen ya fabricó una conclusión falsa—, y lo que se publica
+// es el `n`: ver descMuestrasLatencia para por qué el cuantil no sube a /metrics.
+func muestrasDe(l *cloudlinkv1.InferenceLatency) *int64 {
+	if l == nil {
+		return nil
+	}
+	n := l.GetSamples()
+	return &n
 }
 
 // whatsappStateString mapea el enum WhatsappSocketState del contrato CloudLink al
