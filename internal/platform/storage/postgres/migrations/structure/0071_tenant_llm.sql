@@ -26,6 +26,22 @@
 --
 -- 🔴 EL SOBRE ES DE TRES PIEZAS Y ES `NOT NULL`, AL REVÉS QUE EL DE LA 0047
 -- ------------------------------------------------------------
+-- 🔧 SUPERADO POR LA 0073 (Plan 044 · Ola 1.5 · T1.5-2). Lo que sigue describe la
+-- tabla tal como ESTA migración la deja, y ya NO es el estado final: la 0073
+-- añade la columna `via` y AFLOJA SEIS `NOT NULL` —`provider`, `model`, el trío
+-- del sobre y `consented_at`—, porque desde D-044.28 la fila ya no significa
+-- «este tenant tiene vía API» sino «la configuración LLM de este tenant», y una
+-- fila `via='local'` es completa SIN credencial y sin consentimiento.
+-- 🔴 LA INVARIANTE NO SE PERDIÓ, CAMBIÓ DE FORMA: lo que aquí vigilaban seis NOT
+-- NULL incondicionales lo vigilan allí CHECK condicionales
+-- (`tenant_llm_via_api_completa_check` para la vía api completa,
+-- `tenant_llm_sobre_completo_check` para «las tres o ninguna» y
+-- `tenant_llm_local_sin_credencial_check` para que la vía local no arrastre
+-- credencial). El argumento de abajo sigue siendo el correcto PARA LA VÍA `api`;
+-- lo único que caducó es que valga para toda fila. No se toca ni una sentencia de
+-- este fichero: el full-replay las re-ejecuta y la 0073 corre DESPUÉS, así que
+-- quien habla al final es ella.
+-- ------------------------------------------------------------
 -- El trío de `tenant_integrations` (0047:65-67) es NULLable porque allí la fila
 -- puede existir SIN secreto: un tenant en local/local tiene configuración de
 -- puente y ninguna credencial. Aquí eso no puede pasar, y copiar aquel molde
@@ -45,6 +61,13 @@
 -- toca `_enc`, así que ningún paso legítimo pasa por un estado a medias.
 --
 -- 🔴 `consented_at` ES `NOT NULL` Y NO TIENE DEFAULT, Y ESO ES EL CRITERIO
+-- ------------------------------------------------------------
+-- 🔧 SUPERADO POR LA 0073 EN SU MITAD `NOT NULL`: allí la columna pasa a
+-- NULLable (la vía local no manda nada a ningún tercero, así que no hay a qué
+-- consentir). 🔴 LA OTRA MITAD SIGUE VIVA PALABRA POR PALABRA: NO tiene DEFAULT,
+-- ni allí ni aquí, y para `via='api'` el consentimiento sigue siendo obligatorio
+-- —lo fuerza `tenant_llm_via_api_completa_check`—. La red debajo de la red no se
+-- retiró: dejó de colgar de filas que no van a llamar a nadie.
 -- ------------------------------------------------------------
 -- El criterio de T0.3 dice «PUT sin consentimiento ⇒ 400». Ese 400 lo da la API
 -- (internal/publicapi/tenantllm.go), no esta tabla: la validación llega ANTES,
@@ -129,6 +152,24 @@
 -- VERIFICACIÓN — ⏳ ESCRITAS SIN BASE DELANTE. Las ejecuta el barrido del CLI.
 -- ------------------------------------------------------------
 --
+-- (V1) 🔧 SUPERADA POR LA 0073 — NO LA EJECUTES ESPERANDO ESTA SALIDA. Tal como
+--      está escrita, esta verificación FALLA sobre cualquier base al día: exige
+--      `is_nullable = NO` en las nueve columnas, y la 0073 aflojó SEIS. Se
+--      conserva entera y sin editar porque describe lo que ESTA migración deja
+--      cuando corre sola —y porque los DOS avisos del final siguen siendo el
+--      mejor resumen de por qué el sobre importa—, pero la salida esperada de
+--      HOY es la de la (V2) de la 0073:
+--
+--        tenant_id NO · provider YES · model YES · api_key_enc YES ·
+--        api_key_dek YES · api_key_kek_id YES · consented_at YES ·
+--        created_at NO · updated_at NO · via NO
+--
+--      (DIEZ columnas, no nueve: la 0073 añade `via`, que es NOT NULL con
+--      DEFAULT 'local'.) Lo que sustituye a los seis NOT NULL son los CHECK
+--      condicionales de la 0073 (f.2, f.3 y f.4) y se comprueban en sus (V3),
+--      (V5) y (V6). Un `is_nullable = NO` en las seis, hoy, NO sería una buena
+--      noticia: significaría que la 0073 no corrió.
+--
 -- (V1) La tabla existe con sus NUEVE columnas —SIETE de negocio más los dos
 --      timestamps del molde de la casa— y las nueve son NOT NULL:
 --
@@ -195,6 +236,15 @@
 --
 --   SELECT count(*) AS filtrada FROM public.tenant_llm
 --    WHERE model LIKE '%sk-ant-%' OR provider LIKE '%sk-ant-%';  -- esperado: 0
+--
+-- (V5) 🔧 SUPERADA POR LA 0073, por lo mismo que la (V1): desde que existe la vía
+--      local, una fila con `consented_at IS NULL` es LEGÍTIMA (es un tenant que
+--      no manda nada a ningún tercero) y esta cuenta ya no tiene por qué dar 0.
+--      La pregunta de hoy es la (V5) de la 0073 —ninguna fila `api` a medias—, y
+--      si se quiere el equivalente exacto de ésta:
+--
+--        SELECT count(*) FROM public.tenant_llm
+--         WHERE via = 'api' AND consented_at IS NULL;          -- esperado: 0
 --
 -- (V5) Sin fila sin consentimiento, que es lo que la columna existe para impedir:
 --

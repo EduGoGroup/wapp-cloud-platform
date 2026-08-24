@@ -169,13 +169,31 @@ var rekeyTargets = []rekeyTarget{
 	// del censo se pierde un dato que wApp sí produjo; aquí se pierde algo que
 	// solo el tenant tiene.
 	//
-	// ⚠️ SU TRÍO ES NOT NULL, al revés que el de tenant_integrations, fleet_sessions
-	// y push_name: aquí NO hay filas que se caigan del barrido solas por el
-	// `NULL <> 'x'`, porque no existe fila sin sobre (0071 — el estado «sin vía
-	// API» es la AUSENCIA de fila). Consecuencia práctica: toda fila de esta tabla
-	// casa el `<> current` durante una rotación y toda fila se re-envuelve. No hay
-	// nada que hacer distinto; se anota porque TRES de las cinco entradas anteriores
-	// —las tres que acaba de nombrar el párrafo— razonan sobre el NULL y ésta no puede.
+	// 🔧 CORREGIDO el 2026-08-23 (Plan 044 · Ola 1.5 · T1.5-2, migración 0073).
+	// Este párrafo decía «SU TRÍO ES NOT NULL … no existe fila sin sobre», y DEJÓ
+	// DE SER CIERTO: la 0073 añadió `tenant_llm.via` y aflojó el trío a NULLable,
+	// porque una fila `via='local'` es una configuración COMPLETA y no tiene
+	// credencial — ese tenant ejecuta en su propio fierro (ADR-0045) y no llama a
+	// ningún tercero.
+	//
+	// ⚠️ EL CENSO NO CAMBIA, y merece decirse por qué en vez de dejarlo callado:
+	// esta tabla pasa a comportarse como tenant_integrations, fleet_sessions e
+	// intake_jobs — las filas SIN sobre se caen SOLAS del barrido y del conteo,
+	// porque `NULL <> 'x'` no es TRUE en SQL, así que ni selectSQL ni pendingSQL
+	// las ven. Y eso es lo correcto: una fila sin DEK no tiene nada que
+	// re-envolver, y contarla como pendiente bloquearía para siempre el retiro de
+	// una KEK que ya no envuelve nada suyo.
+	//
+	// Lo que SÍ sigue en pie es el párrafo de arriba —el precio de olvidar esta
+	// tabla—: las filas `via='api'` llevan la credencial de un tercero, y de ésas
+	// no hay copia en ninguna parte.
+	//
+	// ⚠️ `idx_tenant_llm_kek` se queda NO PARCIAL. La 0071 lo justificó con el NOT
+	// NULL («un WHERE … IS NOT NULL sería decorativo») y ese argumento ya no
+	// aplica, pero el índice sigue siendo CORRECTO —solo indexa de más las filas
+	// locales— y convertirlo a parcial exigiría un DROP + CREATE que el
+	// full-replay pagaría en CADA arranque. Se deja, se anota, y se convierte el
+	// día que la proporción de filas locales lo justifique.
 	{
 		table:  "public.tenant_llm",
 		pkCols: []string{"tenant_id"},
