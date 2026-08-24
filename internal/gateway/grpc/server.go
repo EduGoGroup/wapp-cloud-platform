@@ -154,6 +154,19 @@ type Server struct {
 	// vivas, para que RevokeLease pueda empujar el kill-switch a todas ellas.
 	trackMu      sync.Mutex
 	edgeSessions map[edgeKey]map[string]struct{}
+
+	// infers correlaciona command_id -> inferencia en vuelo que espera su
+	// InferenceResult (Plan 044 · Ola 1.6 · T1.6-3, REQ-34). Es el GEMELO de acks:
+	// misma invariante de cierre, mismo reloj propio, misma cancelación al caer el
+	// stream. El porqué de que sean dos mapas y no uno genérico está en
+	// pendingInfer (types.go).
+	infersMu sync.Mutex
+	infers   map[string]pendingInfer
+
+	// inferGrace es el margen que el Cloud espera POR ENCIMA del timeout_ms que le
+	// dio al Edge. Nunca es cero: New() lo materializa a defaultInferGrace. Ver el
+	// porqué del margen en Infer.
+	inferGrace time.Duration
 }
 
 // Option configura el Server al construirlo.
@@ -205,6 +218,7 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 		registry:     registry,
 		log:          log,
 		acks:         make(map[string]pendingAck),
+		infers:       make(map[string]pendingInfer),
 		edgeSessions: make(map[edgeKey]map[string]struct{}),
 	}
 	for _, opt := range opts {
@@ -225,6 +239,10 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	}
 	if s.workBudget <= 0 {
 		s.workBudget = defaultWorkBudget
+	}
+	// La espera de la inferencia nunca queda sin margen (ver inferGrace e Infer).
+	if s.inferGrace <= 0 {
+		s.inferGrace = defaultInferGrace
 	}
 	return s
 }

@@ -17,16 +17,28 @@
 //	INTENT, CUANDO LLEGA, SOLO ADELANTA UN FLUSH QUE IBA A OCURRIR IGUAL — NUNCA
 //	ES LA CONDICIÓN DE QUE OCURRA.
 //
-// El `ClassifiedIntent` PUEDE NO LLEGAR NUNCA, y no por avería. El despachador del
-// Edge tiene un PRESUPUESTO DE ESPERA y, al vencer, despacha el mensaje sin intent
-// (`edge/wapp-edge-agent/internal/app/despachador/despachador.go:512` →
-// `DespacharSinIntent`, motivo `app.MotivoPresupuesto`, declarado en
-// `edge/wapp-edge-agent/internal/app/cola.go:119-121`). Y hay MÁS motivos, todos
-// normales: `MotivoSinTexto`, `MotivoNoElegible` (el mensaje viene de un grupo),
-// `MotivoBreaker` (el circuito del clasificador está abierto) y
-// `MotivoDesconocido`. Encima el clasificador recorta la entrada a 1000 runas
-// (`edge/wapp-edge-intent/classifier/classifier.go:60`), justo el tamaño del caso
-// que este plan quiere resolver.
+// # 🔧 Y DESDE LA OLA 1.6 EL INTENT NO LLEGA: SE PIDE (D-044.31, T1.6-4)
+//
+// Este fichero decía que la señal viajaba ADJUNTA al mensaje —el `ClassifiedIntent`
+// que el Edge sellaba en el proto— y que podía no llegar nunca por el presupuesto de
+// espera del despachador. Eso se acabó: T1.6-1 retiró `ClassifiedIntent` del
+// contrato (campo 11 de `IncomingMessage` y campo 5 de `SensitivePayload`, los dos
+// `reserved`). **El push MURIÓ**, y murió por el lado del CONTRATO: no hay campo
+// donde poner una etiqueta, así que ninguna puede llegar.
+//
+// ⚠️ Lo que el Edge hace mientras tanto es asunto de T1.6-5 y aún NO está hecho:
+// `WAPP_AGENT_INTENT_WAIT_MS` sigue vivo allí (`edge/wapp-edge-agent`), o sea que el
+// despachador sigue pagando su presupuesto de espera por una clasificación que ya no
+// tiene dónde viajar. Eso NO afecta a este fichero —lo que llegue, llega sin
+// etiqueta—, pero sí a la latencia de entrega, y es exactamente el sumando que
+// T1.6-5 existe para quitar.
+//
+// Hoy la señal la PIDE el Cloud, fuera del camino del mensaje: `Observe` encola una
+// petición (`AheadRequester`), un pool la resuelve en segundos y la respuesta vuelve
+// por `OnClassified`. Todo lo que la premisa de T1.7 decía SIGUE SIENDO CIERTO, y
+// más aún: la señal puede no llegar nunca —vía caída, cola llena, catálogo sin
+// publicar, respuesta que llega tarde—, así que la ventana de silencio es el camino
+// principal y el único garantizado, ahora por más motivos que antes.
 //
 // Consecuencias que están escritas en el código de este fichero y no solo aquí:
 //
@@ -34,6 +46,8 @@
 //     respaldo;
 //   - el intent solo mueve la fecha (ver `hintDueNow`): si el proceso se reinicia y
 //     la pista se pierde, la ventana se cierra igual por su reloj;
+//   - una respuesta que llega DESPUÉS del cierre es inocua: su pista no casa con
+//     ninguna ventana viva y el barrido la tira sin abrir ni cerrar nada;
 //   - el job NO LLEVA MARCA de por qué se disparó. Los dos caminos producen jobs
 //     INDISTINGUIBLES, y eso es deliberado (coherente con D-044.20).
 //
@@ -121,14 +135,22 @@ import (
 )
 
 // IntentIntakeRequest es el ÚNICO nombre de intención que adelanta un flush
-// (D-044.20). Lo define la config del tenant (T1.3) y viaja sellado desde el Edge;
-// aquí solo se compara.
+// (D-044.20). Lo define la config del tenant (T1.3) y hoy lo devuelve la
+// clasificación que el Cloud PIDE (T1.6-4); aquí solo se compara.
 const IntentIntakeRequest = "intake_request"
 
 // featureIntakeAggregation es el gate del agregador: la MISMA feature `llm_intake`
 // que abre el productor de filas `message` del hilo (thread.go). No es casualidad
 // ni ahorro: el agregador es el LECTOR de ese hilo, así que encender uno sin el
 // otro deja media función construida. Un tenant sin la feature produce CERO jobs.
+//
+// 🔴 Y ES EL ÚNICO GATE DE ESTE CAMINO: aquí NO se consulta `api_llm` (ADR-0044,
+// D-044.28). La vía —local o API— es una configuración DENTRO del nivel, y
+// decidirla no es asunto de la ventana: un tenant de vía local abre ventana,
+// compone su `source_text` cifrado y deja su job en `pending` exactamente igual.
+// Quien venga a añadir aquí una segunda pregunta al resolver, que lea antes el
+// docstring de entitlements.FeatureAPILLM: lo que busca no se decide en este
+// fichero. Lo vigila via_local_sin_api_llm_test.go con un resolver espía.
 const featureIntakeAggregation = entitlements.FeatureLLMIntake
 
 const (
@@ -162,8 +184,8 @@ const (
 	defaultSweepBatch = 200
 )
 
-// IntentHint es lo ÚNICO que la política de disparo mira de un `ClassifiedIntent`:
-// su nombre y su confianza.
+// IntentHint es lo ÚNICO que la política de disparo mira de una clasificación: su
+// nombre y su confianza.
 //
 // 🔴 NO LLEVA `params` A PROPÓSITO (D-044.20). La política se dispara con la SEÑAL,
 // no con los ítems: no lee params, no espera una lista de productos y no cambia de
@@ -179,10 +201,18 @@ type IntentHint struct {
 	Confidence float64
 }
 
-// IncomingRef es lo mínimo que el agregador necesita de UN entrante. Es
-// deliberadamente pequeño y deliberadamente SIN TEXTO: lo que entra a
-// `intake_jobs` en línea con el mensaje son referencias opacas, nunca contenido
-// (D-044.26). Un `wa_message_id` no es PII; el texto sí.
+// IncomingRef es lo mínimo que el agregador necesita de UN entrante.
+//
+// 🔴 LO QUE ENTRA A `intake_jobs` SIGUEN SIENDO REFERENCIAS OPACAS Y NUNCA
+// CONTENIDO (D-044.26). Un `wa_message_id` no es PII; el texto sí, y por eso el
+// literal NO viaja a ninguna sentencia SQL desde aquí: el sobre
+// `source_text_enc/_dek/_kek_id` sigue naciendo NULL y llenándose AL FLUSH (T1.4).
+//
+// 🔧 DESDE T1.6-4 ESTE TIPO SÍ LLEVA `Text`, y la contradicción es aparente: el
+// campo no es para persistir, es para PREGUNTAR. Con el push muerto (D-044.31) la
+// única forma de tener una señal es pedir la clasificación, y no se puede clasificar
+// un texto que no se tiene. Lo que se hace con él está acotado y dicho en el
+// docstring del campo.
 type IncomingRef struct {
 	Key intake.WindowKey
 	// WaMessageID es el identificador opaco del entrante. Es la primera referencia
@@ -200,9 +230,18 @@ type IncomingRef struct {
 	// el jueves» se resuelve contra este instante. Solo cuenta si este entrante ABRE
 	// la ventana.
 	MessageTS time.Time
-	// Intent es la clasificación del Edge, o nil. 🔴 nil ES NORMAL, no una avería:
-	// ver la cabecera de este fichero (T1.7).
-	Intent *IntentHint
+	// Text es el literal del mensaje del cliente, y existe para UNA cosa: alimentar
+	// la petición de clasificación (T1.6-4).
+	//
+	// 🔴 NO SE PERSISTE Y NO SE LOGUEA. No entra en `intake.Append`, no toca ninguna
+	// sentencia SQL y no aparece en un solo campo de log de este fichero. Vive en la
+	// cola del pool mientras dura la inferencia y muere con ella. Si algún día alguien
+	// lo mete en el Append, ha roto D-044.26 (y el presupuesto de I/O de `Observe`,
+	// que sigue siendo UNA sentencia y CERO lecturas).
+	//
+	// Vacío es normal: un mensaje de solo media no tiene texto que clasificar, y
+	// entonces no se pide nada.
+	Text string
 }
 
 // AggregationSettings es lo mínimo que el barrido necesita de la config del
@@ -255,6 +294,27 @@ type noopSourceComposer struct{}
 
 func (noopSourceComposer) ComposeAtFlush(context.Context, intake.WindowKey) error { return nil }
 
+// AheadRequester PIDE la clasificación que antes llegaba adjunta al mensaje (T1.6-4,
+// D-044.31). Lo satisface *intakeahead.Pool.
+//
+// La firma es corta y las tres cosas que NO tiene son el contrato:
+//
+//   - **no devuelve error**, porque corre en línea con el mensaje y no hay nada que
+//     el agregador pueda hacer con un fallo salvo tragárselo (INV-10);
+//   - **no devuelve la clasificación**, porque tarda segundos y esperarla aquí sería
+//     justo lo que REQ-35 prohíbe — la respuesta vuelve por `OnClassified`;
+//   - **no acepta `ctx`**, y eso es lo más importante de las tres: el contexto del
+//     turno se cancela en milisegundos y la inferencia dura segundos, así que
+//     pasárselo mataría toda petición sin dar un solo error. La firma impide el error
+//     en vez de advertirlo.
+//
+// El puerto vive AQUÍ y no en el paquete que lo implementa por la regla de siempre
+// (ISP, mismo patrón que AggregationSettings): el agregador declara lo que necesita y
+// no se ata a quién se lo da.
+type AheadRequester interface {
+	Request(key intake.WindowKey, text string)
+}
+
 // IntakeAggregator acumula entrantes en ventanas y las cierra. Es seguro para uso
 // concurrente: `Observe` corre desde la goroutine de cada entrante.
 type IntakeAggregator struct {
@@ -263,6 +323,9 @@ type IntakeAggregator struct {
 	settings AggregationSettings
 	ents     entitlements.Resolver
 	compose  SourceComposer
+	// ahead es quien PIDE la clasificación (T1.6-4). nil ⇒ no se pide nada y la
+	// ventana cierra siempre por su reloj, que es el camino garantizado de T1.7.
+	ahead AheadRequester
 
 	// now es el reloj INYECTABLE, mismo patrón que rt.now/WithClock (Plan 029 · T9)
 	// y por el mismo motivo: sin él, un test de la ventana tendría que dormir de
@@ -350,6 +413,17 @@ func WithSourceComposer(c SourceComposer) AggregatorOption {
 	}
 }
 
+// WithAheadRequester inyecta quien PIDE la clasificación (T1.6-4). Sin él el
+// agregador no adelanta NUNCA y toda ventana cierra por su reloj — que es una forma
+// legítima y el camino garantizado de T1.7, no una avería.
+func WithAheadRequester(a AheadRequester) AggregatorOption {
+	return func(s *IntakeAggregator) {
+		if a != nil {
+			s.ahead = a
+		}
+	}
+}
+
 // NewIntakeAggregator construye el agregador. `jobs`, `settings` y `ents` pueden ser
 // nil en tests que solo ejerciten el camino «no acumula»: con cualquiera de los
 // tres a nil, `Observe` es un no-op seguro (mismo criterio nil-safe que el resto
@@ -413,11 +487,49 @@ func (s *IntakeAggregator) Observe(ctx context.Context, ref IncomingRef) {
 			"wa_message_id", ref.WaMessageID)
 		return
 	}
-	// EL ADELANTO POR INTENT (T1.2). Es lo último y es una anotación en memoria: el
-	// cierre lo ejecuta el barrido, fuera del camino del mensaje.
-	if s.intentTriggers(ref.Intent) {
-		s.hintDueNow(ref.Key)
+	// EL ADELANTO (T1.2, reescrito por T1.6-4). Es lo último y NO ES UNA LLAMADA AL
+	// MODELO: es un encolado que vuelve en nanosegundos. La inferencia —segundos— la
+	// hace un pool aparte y su respuesta entra por OnClassified. El cierre lo sigue
+	// ejecutando el barrido, fuera del camino del mensaje (D-044.26 intacta).
+	s.requestAhead(ref)
+}
+
+// requestAhead pide la clasificación de este entrante. Va DESPUÉS de que la ventana
+// exista de verdad: preguntar por una ventana que el INSERT no llegó a abrir sería
+// gastar una inferencia para anotar una pista que no casa con nada.
+//
+// Sin texto no se pide: un mensaje de solo media no tiene nada que clasificar, y es
+// además uno de los motivos SANOS que REQ-38 saca del canal de avisos.
+func (s *IntakeAggregator) requestAhead(ref IncomingRef) {
+	if s.ahead == nil || ref.Text == "" {
+		return
 	}
+	s.ahead.Request(ref.Key, ref.Text)
+}
+
+// OnClassified recibe la clasificación que se pidió y aplica la política de disparo
+// (T1.6-4). Es el reemplazo EXACTO de lo que antes hacía la etiqueta adjunta.
+//
+// 🔴 LA POLÍTICA VIVE AQUÍ Y NO EN QUIEN CLASIFICA, y es deliberado: el pool sabe
+// hablar con un modelo, no sabe qué significa `intake_request` ni qué umbral tiene
+// esta plataforma. Repartir la decisión entre los dos es como acaban diciendo cosas
+// distintas.
+//
+// Por debajo del umbral NO PASA NADA: ni pista, ni log, ni aviso al dueño. Un
+// «desconocido» con confianza baja es el sistema funcionando —REQ-38 lo nombra entre
+// los motivos SANOS—, y contarlo como incidencia mataría el canal de avisos.
+//
+// Que la ventana ya haya cerrado cuando esto llega es INOCUO y no se comprueba:
+// `hintDueNow` anota en memoria y el barrido solo mira las pistas de las ventanas que
+// siguen `aggregating`. Comprobarlo aquí costaría un SELECT para no hacer nada.
+func (s *IntakeAggregator) OnClassified(key intake.WindowKey, intent string, confidence float64) {
+	if s == nil {
+		return
+	}
+	if !s.intentTriggers(&IntentHint{Name: intent, Confidence: confidence}) {
+		return
+	}
+	s.hintDueNow(key)
 }
 
 // acceptable agrupa las GUARDAS BARATAS: las que no cuestan ni una consulta y por
@@ -693,19 +805,15 @@ func (s *IntakeAggregator) closeWindow(ctx context.Context, job intake.OpenJob) 
 //
 // Best-effort integral: nil-safe de arriba abajo y sin devolver error.
 //
-// El intent se lee del entrante EN CRUDO —no de trigger.Signal— porque una
-// conversación VIVA no pasa por buildSignal (va por ResolveLive). El gate de la
-// feature `llm_intent` que buildSignal aplica NO se replica aquí a propósito: el
-// derecho que abre esta función es `llm_intake` (lo comprueba Observe), y exigir
-// además `llm_intent` haría que un tenant con el pipeline contratado dependiera de
-// una segunda feature para algo que la ventana de silencio hace igual sin intent.
+// 🔧 AQUÍ SE LEÍA EL INTENT ADJUNTO (`m.GetIntent()`), y ya no existe: T1.6-1 lo
+// retiró del contrato y D-044.31 cambió el push por el pull. Lo que viaja hoy en su
+// lugar es el TEXTO, que es lo que el Cloud necesita para PEDIR la clasificación
+// (T1.6-4). El derecho sigue siendo `llm_intake` y solo ese —lo comprueba `Observe`—:
+// exigir además `llm_intent` haría que un tenant con el pipeline contratado dependiera
+// de una segunda feature para algo que la ventana de silencio hace igual sin señal.
 func (rt *Runtime) observeForAggregation(ctx context.Context, tenantID, sessionID, contactID, eventID string, m *cloudlinkv1.IncomingMessage) {
 	if rt.aggregator == nil || m == nil {
 		return
-	}
-	var hint *IntentHint
-	if ci := m.GetIntent(); ci != nil {
-		hint = &IntentHint{Name: ci.GetIntent(), Confidence: float64(ci.GetConfidence())}
 	}
 	var ts time.Time
 	if m.GetTsUnix() > 0 {
@@ -726,6 +834,6 @@ func (rt *Runtime) observeForAggregation(ctx context.Context, tenantID, sessionI
 		},
 		WaMessageID: m.GetWaMessageId(),
 		MessageTS:   ts,
-		Intent:      hint,
+		Text:        m.GetText(),
 	})
 }

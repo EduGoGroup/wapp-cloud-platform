@@ -93,7 +93,8 @@ const FeatureCRMBridge = "crm_bridge"
 // FeatureMenu es la feature del tipo de fábrica `menu` (lista numerada → rama
 // por elección, Plan 015/016): la clave lleva sembrada en plan_features desde
 // la taxonomía del Plan 040 (migración 0039_seed_plan_taxonomy.sql:52,56,62,
-// 69,80 — los cinco planes la incluyen) pero sin constante Go, porque hasta
+// 69,80 — los cinco planes de entonces la incluyen, y el sexto, `advisor_ai_local`
+// de la 0074, también) pero sin constante Go, porque hasta
 // ahora nada la gateaba desde código. El despachador de nivel superior (Plan
 // 043 · Ola 2 · T2.3) necesita filtrar los tipos ofrecibles por feature, y
 // `menu` es uno de ellos igual que `survey` y `media`, así que se declara
@@ -119,19 +120,37 @@ const FeatureMedia = "media"
 // y `pro` la incluyen) sin constante Go — es formalmente de la Ola 3 del Plan
 // 043 (T3.5), pero se declara aquí de paso porque el fichero ya estaba
 // abierto para las dos anteriores.
+//
+// 🔴 ES EL NIVEL, Y SE BASTA SOLA (ADR-0044, D-044.28). Es el ÚNICO derecho que
+// gatea el carril de captación entero —ventana de agregación, hilo literal,
+// compositor y nacimiento del job—, y ninguno de esos puntos puede exigir además
+// `api_llm`: ver el 🔴 de FeatureAPILLM, justo debajo, para el porqué y para los
+// dos tests que lo vigilan.
 const FeatureLLMIntake = "llm_intake"
 
-// FeatureAPILLM es la feature de la VÍA API del LLM (ADR-0030, Plan 044): el
-// derecho a configurar credenciales de un proveedor externo y a que el pipeline
-// llame por ahí. La clave ya venía sembrada en plan_features desde la taxonomía
-// del Plan 040 (migración 0039_seed_plan_taxonomy.sql:76,87: `advisor_ai_pro` y
-// `pro` la incluyen) sin constante Go; la declara el Plan 044 · T0.3 al montar
-// el CRUD /api/v1/tenant-llm, que es su primer consumidor.
+// FeatureAPILLM es la feature de la VÍA API del LLM (ADR-0030, ADR-0044, Plan
+// 044): el derecho a configurar credenciales de un proveedor externo y a que el
+// pipeline llame por ahí. La clave ya venía sembrada en plan_features desde la
+// taxonomía del Plan 040 (migración 0039_seed_plan_taxonomy.sql:76,87:
+// `advisor_ai_pro` y `pro` la incluyen) sin constante Go; la declara el Plan 044 ·
+// T0.3 al montar el CRUD /api/v1/tenant-llm, que es su primer consumidor.
 //
-// 🔴 ES DISTINTA de FeatureLLMIntake y no se sustituyen: `llm_intake` es «tienes
-// captación asistida por LLM» y `api_llm` es «puedes usar la vía de pago con tu
-// propia cuenta». Un tenant puede tener la primera sin la segunda (el día que la
-// vía local exista), y por eso son dos gates y no uno.
+// 🔴 GATEA LA VÍA, NO LA CAPACIDAD, Y ESA FRASE ES UN INVARIANTE (ADR-0044,
+// D-044.28). Lo que el tenant paga es el NIVEL —`llm_intake`—; la API es una
+// CONFIGURACIÓN dentro del nivel, no un nivel. Por eso esta constante solo puede
+// aparecer donde se CONFIGURA o se USA la vía API: el CRUD /api/v1/tenant-llm
+// (publicapi.go · registerTenantLLM) y, cuando exista, la elección de vía `api`.
+// Un tenant con `llm_intake` y SIN `api_llm` es un tenant VÁLIDO en vía local, no
+// uno «a medias»: su ventana abre, su hilo se archiva y su job nace `pending`.
+//
+// ⚠️ ESTO INVIERTE D-044.6, que exigía `api_llm` para tener `llm_intake`. Si
+// encuentras esta constante en un gate del agregador (aggregator.go), del
+// productor del hilo (thread.go), del compositor o de un endpoint de captación,
+// es un DEFECTO: lo vigilan
+// internal/flujos/runtime/via_local_sin_api_llm_test.go (que recorre el carril
+// con un resolver espía y afirma que por esta clave no se pregunta ni una vez) y
+// internal/publicapi/tenantllm_gate_via_test.go (que afirma la otra mitad: tener
+// la capacidad NO abre la vía).
 const FeatureAPILLM = "api_llm"
 
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus

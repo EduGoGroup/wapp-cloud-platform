@@ -548,11 +548,17 @@ type TenantSettings struct {
 	// ventana antes de cerrarla (aggregating -> pending) y disparar el pipeline.
 	//
 	// 🔴 ES LA LATENCIA DE PEOR CASO DEL PIPELINE, y desde T1.7 eso hay que leerlo
-	// literal: el `ClassifiedIntent` del Edge PUEDE NO LLEGAR NUNCA por causas
-	// NORMALES (presupuesto de espera del despachador, mensaje sin texto, grupo,
-	// breaker abierto), así que con el intent ausente esta ventana es la latencia de
-	// TODOS los casos, no la del peor. Pesa directamente sobre la métrica reina del
-	// plan (primer borrador en < 5 min, T6.1).
+	// literal: la señal que ADELANTA el cierre puede no llegar nunca por causas
+	// NORMALES, así que sin ella esta ventana es la latencia de TODOS los casos, no la
+	// del peor. Pesa directamente sobre la métrica reina del plan (primer borrador en
+	// < 5 min, T6.1).
+	//
+	// 🔧 Y LOS MOTIVOS CAMBIARON CON LA OLA 1.6 (D-044.31), aunque la conclusión no:
+	// aquí se listaban los del PUSH del Edge (presupuesto de espera del despachador,
+	// mensaje sin texto, grupo, breaker abierto). Ese push murió. Hoy la señal la PIDE
+	// el Cloud (internal/intakeahead) y puede faltar por otros: vía caída, cola de
+	// clasificación llena, catálogo de intents sin publicar, umbral no alcanzado, o una
+	// respuesta que llega después de que la ventana ya cerró.
 	//
 	// 🔴 0 ES UN OVERRIDE LEGÍTIMO y significa FLUSH INMEDIATO —un pipeline por
 	// mensaje, que es lo que el sistema hacía antes de esta ola—, no «sin

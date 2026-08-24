@@ -142,6 +142,11 @@ func (s *Server) closeStream(lane *workLane, cc connCtx, releases map[string]fun
 		// abajo en onStreamClosed sobre este mismo cierre.
 		if !s.registry.Online(sid) {
 			s.cancelSessionAcks(sid)
+			// Y las inferencias en vuelo por el mismo motivo y bajo la misma condición
+			// (Plan 044 · T1.6-3): su presupuesto es de decenas de segundos, así que
+			// dejarlas esperando a un Edge que ya no está cuesta MÁS que en el caso del
+			// ack. Ver cancelSessionInfers.
+			s.cancelSessionInfers(sid)
 		}
 		cc2 := cc
 		cc2.sessionID = sid
@@ -192,6 +197,15 @@ func (s *Server) route(lane *workLane, cc connCtx, msg *cloudlinkv1.EdgeToCloud)
 		// añadiría la latencia del trabajo pesado justo en el camino que este plan
 		// viene a proteger.
 		s.deliverAck(p.Ack)
+	case *cloudlinkv1.EdgeToCloud_InferenceResult:
+		// 🔴 SE QUEDA INLINE, Y ES EL MISMO ARGUMENTO QUE EL ACK (ADR-0040
+		// §Decisión.3). deliverInference es O(1) en memoria: un lookup en un map y un
+		// envío no bloqueante a un canal con buffer. Lo caro de este frame —abrir el
+		// sobre X25519 y deserializar— NO se hace aquí: lo paga el llamante en su
+		// propia goroutine, que es quien está bloqueado esperando (ver el ⚠️ de
+		// deliverInference). Mandarlo al carril le pondría delante la cola de la
+		// sesión justo al camino que este plan viene a acortar.
+		s.deliverInference(p.InferenceResult)
 	case *cloudlinkv1.EdgeToCloud_Heartbeat:
 		// El hook es de test/observación, no I/O: se queda inline (design.md §3).
 		if s.OnHeartbeat != nil {
@@ -437,12 +451,18 @@ func (s *Server) decodeIncoming(msg *cloudlinkv1.IncomingMessage) bool {
 	msg.PushName = sp.GetPushName()
 	msg.FromPn = sp.GetFromPn()
 	msg.FromLid = sp.GetFromLid()
-	// Intención LLM sellada (Plan 029 · T7): el clasificador del Edge la manda dentro
-	// del SensitivePayload (sus params pueden llevar texto literal del cliente). Sin
-	// esta copia el intent sellado jamás llegaría al runtime (que la lee de
-	// IncomingMessage.Intent). El gate de VERDAD sigue en el runtime (entitlements):
-	// aquí solo se transporta. nil si el Edge no clasificó ⇒ campo vacío, sin cambio.
-	msg.Intent = sp.GetIntent()
+	// 🔧 AQUÍ VIVÍA `msg.Intent = sp.GetIntent()` (Plan 029 · T7): el transporte del
+	// intent que el clasificador del Edge sellaba dentro del SensitivePayload. Se fue
+	// con el campo: T1.6-1 retiró ClassifiedIntent del contrato y esta línea dejó de
+	// COMPILAR, así que su borrado no es una decisión que se tome aquí — es el
+	// realineo que el proto obliga (D-044.31, la ventana de 4 s se disuelve y P1 pasa
+	// a pull).
+	//
+	// ⚠️ EL RETIRO NO ESTÁ COMPLETO Y ESO NO ES DE ESTA TAREA. `internal/flujos/
+	// runtime` (buildSignal, observeForAggregation) sigue leyendo el campo muerto y
+	// hoy no compila; quien lo cierra —y quien construye el PULL que lo sustituye— es
+	// T1.6-4. Se retira aquí y solo aquí porque es la línea que impedía compilar ESTE
+	// paquete, no por ampliar el alcance.
 	return true
 }
 

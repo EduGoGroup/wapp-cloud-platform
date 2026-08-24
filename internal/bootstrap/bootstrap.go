@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
@@ -39,9 +40,11 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -329,6 +332,32 @@ func Run(ctx context.Context) error {
 	// que hace que meter tenant_llm en el censo de rekeyTargets (rekey.go) baste
 	// para que su clave rote con todo lo demás.
 	tenantLLMStore := tenantllm.NewPostgres(db, flowDeps.cipher)
+	// Los avisos de degradación al dueño (Plan 044 · T1.5-4, REQ-38). NO lleva
+	// cipher, y esa ausencia es una afirmación: en owner_degradation_notices no hay
+	// NADA que cifrar porque no hay nada sensible (INV-6 — la tabla no tiene una
+	// sola columna donde quepa una frase). El día que alguien tenga que añadir un
+	// cipher aquí, lo que ha pasado es que se coló una columna que no debía existir.
+	//
+	// 🔧 Y AQUÍ ESTÁ SU LLAMANTE, desde T1.6-4: el párrafo de arriba decía que el
+	// escritor —degradation.Notifier— no se cableaba porque nadie lo llamaba. Ya lo
+	// llama alguien. El selector de vía envuelve a los DOS adaptadores con el
+	// decorador que escribe el aviso (llmvia/notify.go), y el primer productor de
+	// fallos reales es el adelanto de ventana por pull. Ventana de dedupe: la de
+	// plataforma (0 ⇒ degradation.VentanaPorDefecto).
+	degradationStore := degradation.NewPostgres(db)
+	degradationNotifier := degradation.NewNotifier(degradationStore, 0)
+	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
+	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
+	// pide un provider a él y no vuelve a mirar la vía nunca más.
+	//
+	// El frame de la vía local ES el gateway: su método Infer tiene exactamente la
+	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
+	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
+		llmvia.WithFrame(gw),
+		llmvia.WithNotifier(degradationNotifier))
+	if err != nil {
+		return fmt.Errorf("selector de vía LLM: %w", err)
+	}
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda
 	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
@@ -370,8 +399,27 @@ func Run(ctx context.Context) error {
 	// documentado —las ventanas se cerrarían con el sobre a NULL y el pipeline de la
 	// Ola 2 recibiría jobs sin una línea de texto—, así que el cable importa tanto
 	// como el código que enchufa.
-	intakeAggregator := flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
-		flowruntime.WithSourceComposer(intakeComposer))
+	//
+	// 🔧 Y una QUINTA desde T1.6-4: WithAheadRequester, quien PIDE la clasificación
+	// que hasta la Ola 1.6 llegaba adjunta al mensaje (D-044.31 mató el push). Sin
+	// ella el agregador no adelanta nunca y toda ventana cierra por su reloj — que es
+	// una forma legítima (T1.7), no una avería, pero deja sobre la mesa el minuto de
+	// latencia que esta ola existe para recortar.
+	//
+	// 🔴 EL NUDO DE CONSTRUCCIÓN, dicho porque el orden de estas tres líneas parece
+	// arbitrario y no lo es: el agregador PIDE por el pool y el pool RESPONDE al
+	// agregador, así que se necesitan mutuamente. Se corta con una clausura (SinkFunc)
+	// que se resuelve al llamar en vez de al construir. La alternativa era un setter
+	// público sobre el agregador, es decir, dejar el cable mutable en caliente para
+	// arreglar un problema que solo existe durante el arranque.
+	var intakeAggregator *flowruntime.IntakeAggregator
+	intakeAhead := intakeahead.New(log, intentStore, llmSelector,
+		intakeahead.SinkFunc(func(key intake.WindowKey, intent string, confidence float64) {
+			intakeAggregator.OnClassified(key, intent, confidence)
+		}))
+	intakeAggregator = flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
+		flowruntime.WithSourceComposer(intakeComposer),
+		flowruntime.WithAheadRequester(intakeAhead))
 	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
@@ -629,12 +677,20 @@ func Run(ctx context.Context) error {
 		// — la capa HTTP no puede pedir la credencial ni por error.
 		Integrations: integrationsStore,
 		TenantLLM:    tenantLLMStore,
-		CRMSecrets:   integrationsStore,
-		CRMGate:      webhookGate,
-		CRMReflect:   intakeStore,
-		CRMNotify:    intakeNotifier,
-		ConfigPush:   gw,
-		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// Y la LECTURA de los avisos de degradación (Plan 044 · T1.5-4, REQ-38),
+		// por un puerto de solo lectura: la capa HTTP no puede escribir un aviso ni
+		// por error. En esta ola la tabla está vacía y una lista `[]` es la
+		// respuesta sana — significa que el LLM no se ha degradado.
+		DegradationNotices: degradationStore,
+		// La VUELTA del puente CRM y lo que cuelga de ella (Plan 042 · T4.2/T4.3/
+		// T4.4) más los umbrales de salud: piezas ya armadas arriba, aquí solo el
+		// cable.
+		CRMSecrets: integrationsStore,
+		CRMGate:    webhookGate,
+		CRMReflect: intakeStore,
+		CRMNotify:  intakeNotifier,
+		ConfigPush: gw,
+		Health:     publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
 		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
 		// con el reloj del Ack, no cada consulta por separado.
@@ -759,6 +815,16 @@ func Run(ctx context.Context) error {
 	// (RecoverAtBoot), porque el estado de una ventana vive en `intake_jobs` y no en
 	// este proceso. Un despliegue en medio de una ráfaga no pierde el job.
 	go intakeAggregator.Run(ctx)
+
+	// EL POOL QUE PIDE LAS CLASIFICACIONES (Plan 044 · Ola 1.6 · T1.6-4). Mismo ctx y
+	// mismo trato que los tres de arriba.
+	//
+	// 🔴 ES LA OTRA MITAD INVISIBLE, y el fallo de olvidarla también es MUDO: sin este
+	// Run el agregador encolaría peticiones, la cola se llenaría y a partir de ahí
+	// todo se descartaría en silencio. El sistema seguiría funcionando —las ventanas
+	// cierran por su reloj— y nadie vería un error; simplemente no habría adelanto
+	// nunca.
+	go intakeAhead.Run(ctx)
 
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.

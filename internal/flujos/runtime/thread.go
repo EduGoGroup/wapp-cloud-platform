@@ -53,6 +53,13 @@ import (
 // se siembra nada nuevo aquí: un tenant sin esos planes tiene el gate APAGADO por
 // defecto, y lo enciende contratar el plan — que desde T1.6 vuelve a bastar por sí
 // solo, como fue hasta el 2026-08-10.
+//
+// 🔴 «ÚNICA» INCLUYE A `api_llm` (ADR-0044, D-044.28). Un tenant con `llm_intake` y
+// sin vía API contratada archiva su hilo EXACTAMENTE igual: el texto se guarda
+// cifrado por AppendMessage y quien lo analice después —por API o en local— es otra
+// decisión, tomada en otro sitio y más tarde. Añadir aquí la vía como segunda
+// condición perdería el literal del cliente para siempre por una configuración que
+// aún puede cambiar. Lo vigila via_local_sin_api_llm_test.go.
 const featureThreadMessages = entitlements.FeatureLLMIntake
 
 // threadAllowed resuelve el gate UNA vez y responde a la única pregunta que los dos

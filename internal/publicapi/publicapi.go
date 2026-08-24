@@ -205,6 +205,15 @@ type Deps struct {
 	// *tenantllm.Postgres, pero por un puerto RECORTADO que no puede devolver la
 	// credencial (ver TenantLLMStore). nil ⇒ no se montan las rutas.
 	TenantLLM TenantLLMStore
+	// DegradationNotices lee los avisos al dueño de que el LLM se degradó al
+	// Nivel A (owner_degradation_notices, Plan 044 · T1.5-4, REQ-38). Lo satisface
+	// *degradation.Postgres, por un puerto de SOLO LECTURA que no puede escribir
+	// (ver DegradationNoticeLister). nil ⇒ no se monta
+	// GET /api/v1/degradation-notices.
+	//
+	// ⚠️ En la Ola 1.5 la tabla está VACÍA y eso es lo esperado: el punto de
+	// inyección se construye aquí y lo pueblan T1.6-6 y la O2.
+	DegradationNotices DegradationNoticeLister
 	// CRMSecrets entrega el secreto HMAC con el que se verifica el callback del
 	// puente (Plan 042 · T4.2). Lo satisface *integrations.Postgres. nil ⇒ NO se
 	// monta POST /api/v1/integrations/callback: mejor un 404 de ruta inexistente
@@ -535,6 +544,7 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	registerTenantVariables(mux, d, mw, auditor, log)
 	registerIntegrations(mux, d, mw, auditor, log)
 	registerTenantLLM(mux, d, mw, auditor, log)
+	registerDegradationNotices(mux, d, mw, log)
 	registerCRMCallback(mux, d, log)
 
 	// Import de catálogo (Plan 041 · T3.3, D-041.6). Misma razón para vivir aparte:
@@ -785,6 +795,14 @@ func registerIntegrations(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, au
 // T0.4 lo hereda hecho por este lado y le queda su otra mitad (el gate
 // `llm_intake` del pipeline).
 //
+// 🔴 Y ÉSTE ES EL ÚNICO SITIO DEL REPO DONDE `api_llm` DECIDE ALGO (ADR-0044,
+// D-044.28, T1.5-1). No porque haya quedado suelto, sino porque es lo que la
+// feature significa: gatea la VÍA —configurar y usar credenciales de un proveedor
+// externo—, no la CAPACIDAD. El carril de captación (agregador, compositor, hilo,
+// nacimiento del job) mira `llm_intake` y solo `llm_intake`, y un tenant que tenga
+// la capacidad SIN la vía sigue recibiendo aquí los tres 403 de siempre: tener
+// nivel no es tener cuenta de pago. Lo afirma tenantllm_gate_via_test.go.
+//
 // SCOPES PROPIOS (llm.read / llm.write) por el MISMO argumento que
 // registerIntegrations, y no por simetría de nombres: esta fila guarda una
 // credencial de pago de un proveedor externo, y quien pueda escribirla puede
@@ -818,6 +836,46 @@ func registerTenantLLM(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, audit
 		"llm.write", "tenant_llm", apiLLM(putTenantLLMHandler(d.TenantLLM))))
 	mux.Handle("DELETE /api/v1/tenant-llm", protect(mw, auditor, log,
 		"llm.write", "tenant_llm", apiLLM(deleteTenantLLMHandler(d.TenantLLM))))
+}
+
+// registerDegradationNotices monta la LECTURA de los avisos de degradación
+// (Plan 044 · Ola 1.5 · T1.5-4, D-044.32, REQ-38, contrato en design.md §8.2):
+// GET /api/v1/degradation-notices.
+//
+// 🔴 EL GATE ES `llm_intake`, NO `api_llm`, Y ESO ES LA DECISIÓN DE ESTA FUNCIÓN
+// (ADR-0044, D-044.28, la misma doctrina que T1.5-1). Lo que se lee aquí es «tu
+// captación asistida se degradó al Nivel A», y eso le pasa —y le importa— a
+// CUALQUIER tenant con el nivel, use la vía que use. Gatear con `api_llm` dejaría
+// sin sus propios avisos exactamente a los tenants de la vía LOCAL, que son los
+// dueños de SEIS de los ocho motivos del vocabulario (`ollama_down`,
+// `breaker_open`, `edge_offline`, `timeout` y, desde T1.6-6,
+// `lease_invalid` y `edge_sin_capacidad`): tendrían el Ollama caído y una
+// bandeja que responde 403. `api_llm` gatea la VÍA, no la capacidad, y este
+// endpoint no es de la vía.
+//
+// SCOPE `llm.read`, el MISMO que ya usa el GET de /api/v1/tenant-llm, y a
+// propósito: no se estrena clave nueva. Un scope recién inventado sin grant
+// sembrado deja la ruta devolviendo 403 a quien la necesita (es lo que pagó la
+// 0057), y aquí no hace falta correr ese riesgo — «leer la configuración LLM del
+// tenant» y «leer los avisos de esa misma configuración» son la misma faena, y el
+// reparto ya está resuelto: tenant_admin (`*`) y viewer (`*.read`) por glob
+// (0015_iam_roles.sql:65,73), operator fuera por su lista explícita. Cero
+// migración de grants.
+//
+// NO SE AUDITA (protectRead): es una lectura sin efecto, mismo criterio que las
+// otras 21 rutas de lectura de la API pública. Sí queda en el access-log.
+//
+// Sin store o sin resolver de features la ruta NO se monta: un 404 de ruta
+// inexistente es más honesto que una bandeja de avisos que responde 500 —o, peor,
+// que responde 200 con la lista de otro porque el gate no se pudo resolver—.
+func registerDegradationNotices(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, log sharedlogger.Logger) {
+	if d.DegradationNotices == nil || d.Entitlements == nil {
+		return
+	}
+	llmIntake := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureLLMIntake)
+
+	mux.Handle("GET /api/v1/degradation-notices", protectRead(mw, log,
+		"llm.read", llmIntake(listDegradationNoticesHandler(d.DegradationNotices, d.DBTimeout))))
 }
 
 // registerCRMCallback monta la VUELTA del puente CRM (Plan 042 · T4.2):
