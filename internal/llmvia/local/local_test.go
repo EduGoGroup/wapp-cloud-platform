@@ -225,3 +225,118 @@ func TestElAdaptadorNoNombraLaVia(t *testing.T) {
 		}
 	}
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// EL RELOJ ÚNICO (arreglo del 2026-08-24, sobre el fallo de campo del 2026-08-23)
+// ════════════════════════════════════════════════════════════════════════════
+
+// TestElPlazoDelFrameSeHEREDA_DelDeadlineDelLlamante es el test del mecanismo: con un
+// ctx que trae deadline, el `timeout_ms` que viaja en el frame es LO QUE QUEDA menos
+// MargenVeredicto — no una constante de este paquete.
+//
+// 🔬 MUTACIÓN VERIFICADA: devolver `p.timeout` fijo en Provider.plazo ⇒ rojo aquí
+// (el frame llevaría 30 s en vez de los ~38 s que quedaban).
+func TestElPlazoDelFrameSeHEREDA_DelDeadlineDelLlamante(t *testing.T) {
+	t.Parallel()
+	const presupuesto = 45 * time.Second
+	f := &frameFake{out: `{"version":1}`}
+	ctx, cancel := context.WithTimeout(context.Background(), presupuesto)
+	defer cancel()
+
+	if _, err := nuevoProvider(t, f).ClassifyRequest(ctx, catálogo(), llm.Options{}); err != nil {
+		t.Fatalf("ClassifyRequest: %v", err)
+	}
+	quiero := presupuesto - local.MargenVeredicto
+	got := f.vistos[0].Timeout
+	// Cota por arriba EXACTA y holgura solo por abajo: entre crear el ctx y leer el
+	// deadline pasa tiempo real, así que el plazo derivado nunca puede ser MAYOR que el
+	// presupuesto menos el margen, pero sí un pelo menor.
+	if got > quiero || got < quiero-time.Second {
+		t.Fatalf("timeout del frame = %v, quiero ~%v (presupuesto %v − margen %v)",
+			got, quiero, presupuesto, local.MargenVeredicto)
+	}
+}
+
+// TestSinDeadlineElPlazoCaeAlDefault es el gemelo del de arriba: el caso RARO. Sin
+// deadline no hay nada que heredar y la red de seguridad es lo correcto.
+//
+// Los dos van juntos a propósito: sin este, «heredar» podría implementarse tirando el
+// default a la basura y dejando sin techo al llamante descuidado.
+func TestSinDeadlineElPlazoCaeAlDefault(t *testing.T) {
+	t.Parallel()
+	f := &frameFake{out: `{"version":1}`}
+	if _, err := nuevoProvider(t, f).ClassifyRequest(context.Background(), catálogo(), llm.Options{}); err != nil {
+		t.Fatalf("ClassifyRequest: %v", err)
+	}
+	if f.vistos[0].Timeout != local.DefaultTimeout {
+		t.Fatalf("timeout del frame = %v, quiero DefaultTimeout (%v)", f.vistos[0].Timeout, local.DefaultTimeout)
+	}
+}
+
+// TestElAdaptadorNUNCA_EsMasRestrictivoQueSuLlamante es EL INVARIANTE, y es el caso
+// exacto que falló en campo el 2026-08-23: el llamante estaba dispuesto a esperar 40 s
+// y este adaptador cortó a los 30 s por su cuenta, por debajo del máximo real del
+// fierro (36,5 s).
+//
+// Se formula contra DefaultTimeout —el plazo propio que el adaptador TENÍA— porque es
+// justo el valor con el que un adaptador que volviera a inventarse el reloj taparía el
+// del llamante. Un llamante con MÁS presupuesto que el default tiene que salir por el
+// cable con MÁS, o el defecto está de vuelta.
+//
+// 🔬 MUTACIÓN VERIFICADA: `Timeout: p.timeout` en run ⇒ rojo.
+func TestElAdaptadorNUNCA_EsMasRestrictivoQueSuLlamante(t *testing.T) {
+	t.Parallel()
+	// Presupuesto del llamante MAYOR que el default de este paquete, con hueco de sobra
+	// para el margen del veredicto.
+	presupuesto := local.DefaultTimeout + 3*local.MargenVeredicto
+	f := &frameFake{out: `{"version":1}`}
+	ctx, cancel := context.WithTimeout(context.Background(), presupuesto)
+	defer cancel()
+
+	if _, err := nuevoProvider(t, f).ClassifyRequest(ctx, catálogo(), llm.Options{}); err != nil {
+		t.Fatalf("ClassifyRequest: %v", err)
+	}
+	if got := f.vistos[0].Timeout; got <= local.DefaultTimeout {
+		t.Fatalf("el adaptador recortó a su propio plazo: mandó %v teniendo %v de presupuesto "+
+			"(su default es %v). Ese es el defecto de campo del 2026-08-23",
+			got, presupuesto, local.DefaultTimeout)
+	}
+}
+
+// TestElMargenDelVeredictoCUBRE_ElGraceDelGateway custodia la desigualdad de la que
+// depende que el veredicto sea determinista, en vez de dejarla escrita en un párrafo.
+//
+// Si MargenVeredicto bajara hasta DefaultInferGrace, el timer de awaitInference y el
+// ctx del llamante vencerían a la vez y el `select` de Go elegiría al azar entre
+// `timeout` (con motivo, con aviso al dueño) y ErrInferenceAbandonada (sin motivo, sin
+// aviso). El aviso saldría o no según la moneda.
+//
+// 🔬 MUTACIÓN VERIFICADA: MargenVeredicto = gatewaygrpc.DefaultInferGrace ⇒ rojo.
+func TestElMargenDelVeredictoCUBRE_ElGraceDelGateway(t *testing.T) {
+	t.Parallel()
+	if local.MargenVeredicto <= gatewaygrpc.DefaultInferGrace {
+		t.Fatalf("MargenVeredicto (%v) tiene que ser ESTRICTAMENTE mayor que DefaultInferGrace (%v): "+
+			"con el margen justo, quién emite el veredicto lo decide una carrera",
+			local.MargenVeredicto, gatewaygrpc.DefaultInferGrace)
+	}
+}
+
+// TestSinPresupuestoNoSeTocaElCable: un llamante al que ya no le queda ni el margen no
+// gasta un command_id, ni un viaje por el stream, ni una plaza del Ollama del cliente.
+//
+// La comprobación que importa es la SEGUNDA (`len(vistos) == 0`): sin ella, el test
+// pasaría igual con una implementación que llama al Edge y luego tira la respuesta.
+func TestSinPresupuestoNoSeTocaElCable(t *testing.T) {
+	t.Parallel()
+	f := &frameFake{out: `{"version":1}`}
+	ctx, cancel := context.WithTimeout(context.Background(), local.MargenVeredicto/2)
+	defer cancel()
+
+	_, err := nuevoProvider(t, f).ClassifyRequest(ctx, catálogo(), llm.Options{})
+	if !errors.Is(err, local.ErrSinPresupuesto) {
+		t.Fatalf("quiero ErrSinPresupuesto, llegó: %v", err)
+	}
+	if len(f.vistos) != 0 {
+		t.Fatalf("se mandó %d inferencia(s) al Edge sin plazo para esperarlas", len(f.vistos))
+	}
+}
