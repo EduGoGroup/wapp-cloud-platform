@@ -46,6 +46,24 @@
 //     cliente (mismo desacoplo que el colector de flow_events).
 //   - **No conoce el contrato CloudLink.** Recibe un struct plano; la traducción desde
 //     el proto la hace el Gateway, que es quien ya lo importa.
+//
+// # ⚠️ ALCANCE: ESTO NO DURABILIZA NADA, Y NO ES UN OLVIDO
+//
+// Los cuatro campos que la Ola 1.7 estrenó en `SessionHealth` (`inference_prefill`,
+// `inference_generation`, `inference_by_regime`, `inference_by_class`) salen por
+// `/metrics` y SOLO por ahí: NO se añadieron a `fleet.HealthSnapshot`, no se escriben
+// en la base y no aparecen en `GET /api/v1/sessions`.
+//
+// Fue una decisión de alcance de T1.7-9, no un descuido: persistirlos pedía migración
+// y bump de `SchemaVersion`, que es otra tanda con su propia coordinación de esquema.
+// Se deja dicho porque el síntoma de no saberlo es concreto y desorienta — alguien
+// busca el régimen de prefill en la API REST o en `fleet_sessions`, no lo encuentra, y
+// concluye que el Edge no lo manda. Sí lo manda; lo que no hay es dónde guardarlo.
+//
+// Consecuencia práctica que conviene tener presente: al reiniciar el Cloud el almacén
+// nace VACÍO, y las series no vuelven hasta el primer latido de cada Edge (segundos).
+// No se pierde ninguna cuenta —lo que llega son acumulados del Edge, no deltas— pero un
+// scrape hecho en esa ventana muestra la flota más pequeña de lo que es.
 package inferstats
 
 import "sync"
