@@ -18,7 +18,7 @@
 // y un canal que avisa de más deja de leerse. De ahí las tres restricciones que
 // definen el paquete entero:
 //
-//  1. El motivo es un ENUM CERRADO de SEIS valores (Reason). Los motivos SANOS de
+//  1. El motivo es un ENUM CERRADO de OCHO valores (Reason). Los motivos SANOS de
 //     alto volumen —atajo determinista, fastlane, «sin texto», umbral no
 //     alcanzado— NO tienen constante aquí y el escritor los RECHAZA. Avisar el
 //     funcionamiento correcto mata el canal (D-044.32).
@@ -54,24 +54,37 @@ import (
 // 🔴 EL TIPO NO BASTA, Y ESE ES EL GOTCHA DE ESTA TAREA. Go convierte
 // implícitamente una constante de cadena sin tipo, así que
 // `Record(ctx, tenant, "fastlane", …)` COMPILA aunque "fastlane" no sea ninguna
-// de las seis constantes de abajo. El tipo evita mezclar un motivo con una vía o
+// de las ocho constantes de abajo. El tipo evita mezclar un motivo con una vía o
 // con un id; lo que evita que entre un motivo INVENTADO —o uno SANO— es la
 // guarda en tiempo de ejecución (Valid, verificada por Notifier.Record antes de
-// tocar el store) más el CHECK de la migración 0075 debajo. Tres redes, porque
+// tocar el store) más el CHECK de la migración debajo (nació en la 0075 y lo
+// amplió T1.6-6 en ese mismo fichero). Tres redes, porque
 // el llamante de mañana no ha leído este comentario.
 type Reason string
 
-// El vocabulario CERRADO de motivos: exactamente los SEIS de tasks.md:856, ni
-// uno más. Es el MISMO conjunto que acota `owner_degradation_notices_reason_check`
-// en la migración 0075, y crecer el dominio significa editar LOS DOS sitios en el
-// mismo commit.
+// El vocabulario CERRADO de motivos: OCHO valores, ni uno más. Nació con los SEIS
+// de tasks.md:856 (Ola 1.5 · T1.5-4) y T1.6-6 lo amplió a ocho el 2026-08-24 con
+// `lease_invalid` y `edge_sin_capacidad` — ver el docstring de cada uno.
 //
-// Los cuatro primeros son fallos de la vía LOCAL (el Edge y su Ollama); los dos
-// últimos, de la vía API (el proveedor externo). ⚠️ El reparto es DESCRIPTIVO, no
-// exclusivo: `ReasonTimeout` es plausible en las dos vías —una llamada HTTP a un
-// proveedor también expira— y por eso NO existe una función que ate motivo↔vía ni
-// un CHECK que lo haga en la base. Atarlo hoy dejaría a T1.6-6 chocando contra el
-// esquema el día que mapee ese caso.
+// Es el MISMO conjunto que acota `owner_degradation_notices_reason_check` en la
+// migración 0075 (bloque (b.1)), y crecer el dominio significa editar LOS DOS
+// sitios en el mismo commit.
+// ⚠️ EL LADO SQL SE EDITA EN LA 0075, NO EN UNA MIGRACIÓN NUEVA, y no es
+// preferencia de estilo: bajo full-replay la 0075 vuelve a correr ANTES que
+// cualquier migración posterior y su ADD CONSTRAINT valida las filas existentes,
+// así que un ensanche desde una 0076 aborta el arranque en cuanto haya UNA fila
+// con un motivo nuevo. Está medido y contado en el propio (b.1) de la 0075.
+// 🔴 ESO NO SE CONFÍA A LA MEMORIA DE NADIE: TestElVocabularioDeMotivosCoincideConLaMigracion
+// LEE el `.sql` de disco y compara la lista del CHECK con esta de aquí. Añadir un
+// motivo en un solo lado pone ese test rojo.
+//
+// Los cuatro primeros y los dos últimos son fallos de la vía LOCAL (el Edge y su
+// Ollama); `ReasonAPIError` y `ReasonCredencial`, de la vía API (el proveedor
+// externo). ⚠️ El reparto es DESCRIPTIVO, no exclusivo: `ReasonTimeout` es
+// plausible en las dos vías —una llamada HTTP a un proveedor también expira— y por
+// eso NO existe una función que ate motivo↔vía ni un CHECK que lo haga en la base.
+// Atarlo dejaría al productor chocando contra el esquema el día que aparezca un
+// caso cruzado.
 const (
 	// ReasonOllamaDown — el Ollama del Edge no está disponible (vía local).
 	ReasonOllamaDown Reason = "ollama_down"
@@ -90,12 +103,45 @@ const (
 	// fija tasks.md:856 y porque el valor viaja al wire y a la BD: renombrarlo
 	// «por coherencia» rompería el contrato de la app sin ganar nada.
 	ReasonCredencial Reason = "credencial"
+	// ReasonLeaseInvalid — el Edge rechazó servir la inferencia porque no tiene
+	// lease vigente: el kill-switch del ADR-0007 hizo su trabajo (vía local).
+	//
+	// Es uno de los CUATRO errores que REQ-34 obliga al frame a saber nombrar
+	// (`ollama_down`, `breaker_open`, `timeout`, `lease_invalid`), y hasta el
+	// 2026-08-24 era el único de los cuatro SIN motivo de notificación: una
+	// omisión objetiva que la Ola 1.5 dejó declarada por su nombre y que T1.6-6
+	// cierra aquí.
+	ReasonLeaseInvalid Reason = "lease_invalid"
+	// ReasonEdgeSinCapacidad — el semáforo de concurrencia del Edge rechazó la
+	// petición: la máquina del cliente está saturada (vía local).
+	//
+	// 🔴 SE DISTINGUE DE ReasonTimeout A PROPÓSITO, y fundirlos sería el error
+	// natural: los dos acaban en «no hubo inferencia». Pero este vocabulario no
+	// describe lo que le pasó al código, describe QUÉ TIENE QUE MIRAR EL DUEÑO, y
+	// ahí son opuestos — `timeout` le manda a la red y al enlace; este, a SU
+	// equipo. Reportar «se agotó el tiempo» cuando el fierro del cliente va corto
+	// le cuesta una tarde diagnosticando donde no está el problema, y encima se lo
+	// cree porque el aviso se lo dijo.
+	//
+	// ⚠️ SU PRODUCTOR DEPENDE DE UNA DECISIÓN ABIERTA: T1.6-2 todavía no ha
+	// elegido si el Edge, con el semáforo lleno, hace ESPERAR a la petición K+1 o
+	// la falla nombrada (tasks.md:1076). Este motivo solo tiene quien lo escriba
+	// en el segundo caso. Si se elige esperar, se queda sin productor y no pasa
+	// nada: un valor admitido que nadie usa no corrompe la tabla, y retirarlo
+	// después costaría una migración con la tabla ya poblada.
+	ReasonEdgeSinCapacidad Reason = "edge_sin_capacidad"
 )
 
 // reasonsValidos es el vocabulario cerrado en forma recorrible. Se declara como
 // variable de paquete y no dentro de Valid para que el `slices.Contains` no
 // reconstruya el slice en cada llamada, y para que los tests puedan recorrerlo y
 // comprobar que la lista y el CHECK de la 0075 dicen lo mismo.
+//
+// EL ORDEN ES EL DE LA MIGRACIÓN —el literal del `IN (…)` de la 0075— para que
+// leer los dos ficheros a la vez sea leer la misma lista. El test compara
+// CONJUNTOS y no depende de esto: en un
+// `IN (…)` el orden no significa nada, y hacerlo significar algo convertiría un
+// reordenado inocente en un rojo.
 //
 // 🔴 ES UN `var` Y NO SE EXPORTA. Un slice exportado es un slice que un llamante
 // puede modificar —`degradation.Reasons[0] = "fastlane"` sería legal— y eso
@@ -108,6 +154,8 @@ var reasonsValidos = []Reason{
 	ReasonTimeout,
 	ReasonAPIError,
 	ReasonCredencial,
+	ReasonLeaseInvalid,
+	ReasonEdgeSinCapacidad,
 }
 
 // Reasons devuelve una COPIA del vocabulario cerrado de motivos. La copia no es
@@ -195,7 +243,7 @@ type Notice struct {
 	// TenantID es de quién es el aviso. Sale del token o de la sesión que falló,
 	// jamás del cuerpo de una petición (INV-7 / INV-8).
 	TenantID string
-	// Reason es POR QUÉ. Vocabulario cerrado de seis.
+	// Reason es POR QUÉ. Vocabulario cerrado de ocho.
 	Reason Reason
 	// Via es QUÉ vía falló. Vocabulario cerrado de dos.
 	Via string
@@ -354,7 +402,7 @@ func VentanaDe(at time.Time, v time.Duration) (inicio, fin time.Time) {
 // que valga el estado que AFIRMA: si aquí entrara un motivo SANO —el cliente
 // respondió «3», el fastlane resolvió el turno, no había texto que analizar—, la
 // tabla dejaría de significar «el LLM se cayó» y el dueño dejaría de leerla.
-// Por eso un motivo fuera de los seis devuelve ErrMotivoDesconocido y NO ESCRIBE
+// Por eso un motivo fuera del vocabulario devuelve ErrMotivoDesconocido y NO ESCRIBE
 // NADA: el store no se llega a tocar. Se elige el ERROR y no el silencio a
 // propósito — tragárselo dejaría al productor equivocado creyendo que avisó, y el
 // día que el motivo bueno se le olvidara nadie se enteraría de nada.

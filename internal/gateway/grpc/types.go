@@ -75,3 +75,28 @@ type pendingAck struct {
 	ch        chan *cloudlinkv1.Ack
 	sessionID string
 }
+
+// pendingInfer es la entrada de s.infers (server.go): el canal por el que viajará
+// el InferenceResult correlacionado por command_id, y la sesión por cuyo stream se
+// empujó el InferenceRequest (Plan 044 · Ola 1.6 · T1.6-3).
+//
+// El sessionID cumple aquí el MISMO papel que en pendingAck y por el mismo motivo:
+// es lo único que permite a cancelSessionInfers encontrar, cuando un stream cae, las
+// inferencias que se acaban de quedar sin nadie que las conteste. El razonamiento
+// entero —por qué el dato vive DENTRO de la entrada y no en un índice paralelo— está
+// escrito en pendingAck y no se repite.
+//
+// 🔴 POR QUÉ SON DOS MAPAS Y NO UNO GENÉRICO. s.acks y s.infers son gemelos: mismo
+// ciclo de vida, misma invariante de cierre, mismo reloj propio. Unificarlos en un
+// `correlator[T]` es la refactorización obvia y NO se hace aquí a propósito: s.acks
+// es el camino MÁS CALIENTE del gateway y sus invariantes están escritas repartidas
+// entre send.go (cancelSessionAcks), connect.go (closeStream) y server.go, con un
+// incidente medido detrás de cada una. Tocarlo para estrenar un frame nuevo mezcla
+// dos riesgos que no tienen por qué viajar juntos. Queda anotado para que la
+// duplicación se vea DELIBERADA y no descuidada: el día que haya un tercer par
+// request/response correlacionado, unificar los tres de una vez sale más barato que
+// haber unificado dos hoy.
+type pendingInfer struct {
+	ch        chan *cloudlinkv1.InferenceResult
+	sessionID string
+}

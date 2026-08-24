@@ -92,7 +92,7 @@ func newTaglineRuntime(t *testing.T, rules ...trigger.Rule) (
 // para poder ejercer decisiones que el ConfigResolver no produce hoy pero que el
 // puerto permite.
 func newTaglineRuntimeCon(t *testing.T, res trigger.Resolver) (
-	*runtime.Runtime, *fakeSender, *contact.MemoryResolver, *memEventStore,
+	*runtime.Runtime, *store.MemoryRepository, *fakeSender, *contact.MemoryResolver, *memEventStore,
 ) {
 	t.Helper()
 	repo := store.NewMemoryRepository()
@@ -110,7 +110,41 @@ func newTaglineRuntimeCon(t *testing.T, res trigger.Resolver) (
 		runtime.WithEventStore(evs),
 		runtime.WithEntitlements(ents),
 		runtime.WithOpeningBuilder(events.NewDispatcher(evs, sinTiposOfrecidos{}, ents)))
-	return rt, sender, contacts, evs
+	return rt, repo, sender, contacts, evs
+}
+
+// resolverDeIntencion es un trigger.Resolver del test que arranca `flowID` declarando
+// que la decisión vino de una INTENCIÓN (Decision.IntentName poblado).
+//
+// 🔧 SUSTITUYE A `llmRule` + `incomingIntent` EN ESTE FICHERO (T1.6-4, D-044.31). Los
+// tests de la coletilla necesitan una decisión con IntentName, y hasta la Ola 1.6 la
+// producía el ConfigResolver a partir de la etiqueta que el Edge adjuntaba al mensaje.
+// Esa etiqueta ya no existe —`ClassifiedIntent` salió del contrato— y `sig.Intent` es
+// hoy siempre nil, así que NINGUNA regla `kind='llm'` puede ganar.
+//
+// 🔴 LO QUE ESO SIGNIFICA, Y HAY QUE DECIRLO AQUÍ PORQUE ESTE FICHERO ES QUIEN LO
+// ENSEÑA: la coletilla se emite SOLO en los arranques por intención (lo fija
+// TestTagline_ArranquePorKeywordNoLlevaColetilla, que prueba que una keyword NO la
+// lleva), así que en producción HOY NO SE EMITE NUNCA. No es una regresión de esta
+// tarea: es la consecuencia de retirar el push, y el sustituto tendría que ser una
+// decisión de arranque tomada con una clasificación PEDIDA — que no cabe en el turno
+// (REQ-35). Lo que estos tests siguen fijando es la conducta del RUNTIME ante una
+// Decision con IntentName, que es un puerto público y sigue viva.
+type resolverDeIntencion struct {
+	flowID     string
+	intentName string
+}
+
+func (r resolverDeIntencion) Resolve(context.Context, string, string, trigger.Signal) (trigger.Decision, error) {
+	return trigger.Decision{Action: trigger.Start, FlowID: r.flowID, IntentName: r.intentName}, nil
+}
+
+func (resolverDeIntencion) IsEscape(context.Context, string, string, string) (bool, string, error) {
+	return false, "", nil
+}
+
+func (resolverDeIntencion) ResolveLive(context.Context, string, string, string) (trigger.Decision, error) {
+	return trigger.Decision{Action: trigger.Ignore}, nil
 }
 
 // resolverQueParteEventoConIntencion es un trigger.Resolver del test que devuelve
@@ -172,10 +206,10 @@ func assertSinIdentificadores(t *testing.T, texto string, ev events.Event) {
 // mensaje aparte serían DOS mensajes y DOS tokens del anti-loop, y con el cupo
 // justo el segundo no saldría. Un turno, un mensaje.
 func TestTagline_LaIntencionSeAtiendeYLaRespuestaTerminaConLaColetilla(t *testing.T) {
-	rt, _, sender, contacts, evs := newTaglineRuntime(t, llmRule("consulta", testFlow))
+	rt, _, sender, contacts, evs := newTaglineRuntimeCon(t, resolverDeIntencion{flowID: testFlow, intentName: "consulta"})
 	pedido := sembrarPedidoAMedias(t, evs, contacts)
 
-	m := incomingIntent(testContact, "¿a qué hora abren?", "wamid.tag1", "consulta", nil)
+	m := incoming(testContact, "¿a qué hora abren?", "wamid.tag1")
 	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
@@ -205,9 +239,9 @@ func TestTagline_LaIntencionSeAtiendeYLaRespuestaTerminaConLaColetilla(t *testin
 // coletilla vacía pegada con sus dos saltos de línea, que es basura invisible en
 // WhatsApp y no se vería en ningún otro assert.
 func TestTagline_SinRescatablesNoHayColetilla(t *testing.T) {
-	rt, _, sender, _, _ := newTaglineRuntime(t, llmRule("consulta", testFlow))
+	rt, _, sender, _, _ := newTaglineRuntimeCon(t, resolverDeIntencion{flowID: testFlow, intentName: "consulta"})
 
-	m := incomingIntent(testContact, "¿a qué hora abren?", "wamid.tag2", "consulta", nil)
+	m := incoming(testContact, "¿a qué hora abren?", "wamid.tag2")
 	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
@@ -232,11 +266,11 @@ func TestTagline_SinRescatablesNoHayColetilla(t *testing.T) {
 // marca (queda escrita). Si algún día la coletilla se emite desde otro punto del
 // camino, el primer assert seguirá siendo el que muerda.
 func TestTagline_NoSeRepiteEnLaSegundaInteraccion(t *testing.T) {
-	rt, repo, sender, contacts, evs := newTaglineRuntime(t, llmRule("consulta", testFlow))
+	rt, repo, sender, contacts, evs := newTaglineRuntimeCon(t, resolverDeIntencion{flowID: testFlow, intentName: "consulta"})
 	sembrarPedidoAMedias(t, evs, contacts)
 	ctx := context.Background()
 
-	m := incomingIntent(testContact, "¿a qué hora abren?", "wamid.tag3a", "consulta", nil)
+	m := incoming(testContact, "¿a qué hora abren?", "wamid.tag3a")
 	if err := rt.HandleIncoming(ctx, testSession, m); err != nil {
 		t.Fatalf("primer entrante: %v", err)
 	}
@@ -346,10 +380,10 @@ func TestTagline_ArranquePorEventStartNoLlevaColetilla(t *testing.T) {
 // El montaje sin ningún evento previo es lo que hace la prueba limpia: si aparece
 // una coletilla, solo puede estar hablando del que acaba de nacer.
 func TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo(t *testing.T) {
-	rt, sender, contacts, evs := newTaglineRuntimeCon(t, resolverQueParteEventoConIntencion{})
+	rt, _, sender, contacts, evs := newTaglineRuntimeCon(t, resolverQueParteEventoConIntencion{})
 	evs.contactID = resolveID(t, contacts, testContact)
 
-	m := incomingIntent(testContact, "quiero pedir una torta", "wamid.tag7", "pedir", nil)
+	m := incoming(testContact, "quiero pedir una torta", "wamid.tag7")
 	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}
@@ -364,38 +398,23 @@ func TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo(t *testing.T) {
 	}
 }
 
-// TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo es
-// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo (arriba) pero por la
-// puerta REAL (Plan 054 · F2b, D-A — decisión de Jhoan 2026-08-12): aquella prueba
-// fijó que el RUNTIME no se rompe si una Decision combina IntentName y EventKind
-// —con un resolver de prueba que la fabricaba a mano—; esta prueba fija que el
-// ConfigResolver DE PRODUCCIÓN, resolviendo una regla kind='llm' real que trae
-// event_kind, produce esa MISMA combinación, y que el resultado es idéntico: el
-// pedido que ACABA de nacer no se anuncia como «a medias» sobre sí mismo.
-func TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo(t *testing.T) {
-	regla := trigger.Rule{
-		TenantID: testTenant, Kind: trigger.KindLLM, Keyword: "pedir",
-		FlowID: testFlow, EventKind: trigger.EventKindCart, Enabled: true,
-	}
-	rt, _, sender, contacts, evs := newTaglineRuntime(t, regla)
-	evs.contactID = resolveID(t, contacts, testContact)
-
-	m := incomingIntent(testContact, "quiero pedir una torta", "wamid.tag8", "pedir", nil)
-	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
-		t.Fatalf("HandleIncoming: %v", err)
-	}
-
-	// El pedido nació por la regla llm real: si no, el test no estaría probando lo
-	// que dice.
-	alive := evs.alive()
-	if len(alive) != 1 || alive[0].Kind != trigger.EventKindCart {
-		t.Fatalf("la regla llm con event_kind debe parir el evento cart (si no, el escenario no se dio): %+v", alive)
-	}
-	todo := strings.Join(sender.texts(), "\n")
-	if strings.Contains(todo, "sigue a medias") {
-		t.Fatalf("el pedido que ACABA de nacer por la puerta llm no puede anunciarse a sí mismo como «a medias»: %q", todo)
-	}
-}
+// 🔧 AQUÍ VIVÍA TestTagline_LLMRuleConEventKind_NoSeAnunciaASiMismo, Y SE RETIRÓ EN
+// T1.6-4 (D-044.31). Probaba lo mismo que
+// TestTagline_ElEventoQueAcabaDeNacerNoSeAnunciaASiMismo (justo arriba) pero «por la
+// puerta REAL»: el ConfigResolver DE PRODUCCIÓN resolviendo una regla `kind='llm'` con
+// event_kind sobre un entrante que traía la etiqueta del clasificador.
+//
+// Esa puerta ya no existe. `ClassifiedIntent` salió del contrato (T1.6-1) y buildSignal
+// dejó de leerlo, así que `sig.Intent` es siempre nil y la rama `kind='llm'` del
+// ConfigResolver no la alcanza nadie en producción. El test no se podía «arreglar»:
+// para volver a verde habría que fabricar la señal a mano, que es EXACTAMENTE lo que
+// hace el test de arriba — y entonces serían dos copias del mismo escenario, una de
+// ellas mintiendo sobre estar usando la puerta real.
+//
+// Lo que se pierde con él está dicho y no es poco: nadie vigila ya que el
+// ConfigResolver combine IntentName y EventKind en una sola Decision (Plan 054 · F2b).
+// Esa combinación sigue cubierta a nivel de resolver en
+// internal/flujos/trigger/intent_scope_test.go, que construye la Signal directamente.
 
 // assertVarsSinMarca es la comprobación negativa que acompaña a (b): sin coletilla
 // tampoco se marca nada. Marcar sin haber dicho nada dejaría a la conversación
@@ -411,9 +430,9 @@ func assertVarsSinMarca(t *testing.T, st model.Conversation) {
 // TestTagline_SinColetillaTampocoSeMarcaLaConversacion cierra el par del criterio
 // (b): no basta con no decir nada, hay que no haberlo apuntado.
 func TestTagline_SinColetillaTampocoSeMarcaLaConversacion(t *testing.T) {
-	rt, repo, _, contacts, _ := newTaglineRuntime(t, llmRule("consulta", testFlow))
+	rt, repo, _, contacts, _ := newTaglineRuntimeCon(t, resolverDeIntencion{flowID: testFlow, intentName: "consulta"})
 
-	m := incomingIntent(testContact, "¿a qué hora abren?", "wamid.tag6", "consulta", nil)
+	m := incoming(testContact, "¿a qué hora abren?", "wamid.tag6")
 	if err := rt.HandleIncoming(context.Background(), testSession, m); err != nil {
 		t.Fatalf("HandleIncoming: %v", err)
 	}

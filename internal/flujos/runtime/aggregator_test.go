@@ -222,13 +222,25 @@ func nuevoAggEntorno(t *testing.T, ventana time.Duration) *aggEntorno {
 	}
 }
 
+// observa mete un entrante en su ventana y, si el caso trae una clasificación,
+// la entrega DESPUÉS, por el mismo camino que producción.
+//
+// 🔧 REESCRITO EN T1.6-4, y el cambio de forma ES el cambio del sistema: hasta la
+// Ola 1.6 la intención viajaba DENTRO del entrante (`IncomingRef.Intent`) porque el
+// Edge la adjuntaba al mensaje. D-044.31 mató ese push. Hoy la señal llega por una
+// llamada APARTE y POSTERIOR —`OnClassified`—, que es exactamente lo que hace el pool
+// cuando la inferencia termina, segundos después del turno. Los tests de política
+// (umbral, nombre, idempotencia) siguen diciendo lo mismo con el mismo `hint`; lo que
+// cambió es por qué puerta entra.
 func (e *aggEntorno) observa(ctx context.Context, waID string, hint *flowruntime.IntentHint) {
 	e.sink.Observe(ctx, flowruntime.IncomingRef{
 		Key:         aggKey(),
 		WaMessageID: waID,
 		MessageTS:   e.clock.now(),
-		Intent:      hint,
 	})
+	if hint != nil {
+		e.sink.OnClassified(aggKey(), hint.Name, hint.Confidence)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -509,8 +521,12 @@ func TestIntentSinParams_ProduceUnJobINDISTINGUIBLE(t *testing.T) {
 		e.observa(ctx, "wa-1", nil)
 		e.clock.avanza(1 * time.Second)
 		e.sink.Observe(ctx, flowruntime.IncomingRef{
-			Key: aggKey(), WaMessageID: "wa-2", MessageTS: e.clock.now(), Intent: hint,
+			Key: aggKey(), WaMessageID: "wa-2", MessageTS: e.clock.now(),
 		})
+		if hint != nil {
+			// Por la puerta de T1.6-4: la clasificación llega DESPUÉS del entrante.
+			e.sink.OnClassified(aggKey(), hint.Name, hint.Confidence)
+		}
 		if !conIntent {
 			e.clock.avanza(45 * time.Second) // el camino garantizado: el plazo
 		}
@@ -644,8 +660,8 @@ func TestT17b_IntentTardio_NoAbreSegundoJobNiDuplica(t *testing.T) {
 	e.clock.avanza(1 * time.Second)
 	e.sink.Observe(ctx, flowruntime.IncomingRef{
 		Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now(),
-		Intent: &flowruntime.IntentHint{Name: flowruntime.IntentIntakeRequest, Confidence: 0.95},
 	})
+	e.sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.95)
 	if n := e.sink.Sweep(ctx); n != 0 {
 		t.Fatalf("el intent tardío cerró %d ventanas; no tenía que cerrar ninguna", n)
 	}
@@ -1178,8 +1194,8 @@ func TestUmbralDeConfianzaInyectado_MandaSobreElDefaultDePlataforma(t *testing.T
 	// 0.4 < 0.5: por debajo del umbral INYECTADO, no adelanta nada.
 	sink.Observe(ctx, flowruntime.IncomingRef{
 		Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now(),
-		Intent: &flowruntime.IntentHint{Name: flowruntime.IntentIntakeRequest, Confidence: 0.4},
 	})
+	sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.4)
 	if n := sink.Sweep(ctx); n != 0 {
 		t.Fatalf("0.4 está por debajo del umbral inyectado (0.5) y no puede adelantar; se cerraron %d", n)
 	}
@@ -1188,8 +1204,8 @@ func TestUmbralDeConfianzaInyectado_MandaSobreElDefaultDePlataforma(t *testing.T
 	e.clock.avanza(time.Second)
 	sink.Observe(ctx, flowruntime.IncomingRef{
 		Key: aggKey(), WaMessageID: "wa-2", MessageTS: e.clock.now(),
-		Intent: &flowruntime.IntentHint{Name: flowruntime.IntentIntakeRequest, Confidence: 0.6},
 	})
+	sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.6)
 	if n := sink.Sweep(ctx); n != 1 {
 		t.Fatalf("0.6 supera el umbral inyectado (0.5) y tenía que adelantar el cierre; se cerraron %d "+
 			"(si es 0, la opción se está ignorando y manda el 0.7 de plataforma)", n)
@@ -1332,5 +1348,194 @@ func TestRun_ElTickerCierraLaVentanaSinQueNadieLlameASweep(t *testing.T) {
 	case <-parado:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run no retornó al cancelar el contexto")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T1.6-4 — el adelanto pasa a PULL (D-044.31, REQ-09, REQ-35, INV-10)
+// ---------------------------------------------------------------------------
+
+// aheadSpy es un flowruntime.AheadRequester de mentira: apunta lo que se le pide.
+type aheadSpy struct {
+	mu    sync.Mutex
+	pedid []pedidoAhead
+}
+
+type pedidoAhead struct {
+	key   intake.WindowKey
+	texto string
+}
+
+func (a *aheadSpy) Request(key intake.WindowKey, text string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.pedid = append(a.pedid, pedidoAhead{key: key, texto: text})
+}
+
+func (a *aheadSpy) todo() []pedidoAhead {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]pedidoAhead(nil), a.pedid...)
+}
+
+// conAhead arma un agregador sobre el entorno con el espía cableado.
+func (e *aggEntorno) conAhead(t *testing.T, spy *aheadSpy) *flowruntime.IntakeAggregator {
+	t.Helper()
+	return flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfgCnt, e.entsCnt,
+		flowruntime.WithAggregatorClock(e.clock.now),
+		flowruntime.WithAheadRequester(spy))
+}
+
+// TestT164_ObserveEncolaLaPeticionConElTextoDelEntrante: con el push muerto, admitir un
+// texto en ventana es lo que DISPARA la petición de clasificación.
+//
+// 💥 MUTACIÓN (compila): en aggregator.go, retirar la llamada a `s.requestAhead(ref)`
+// del final de `Observe` ⇒ rojo aquí, y NINGÚN otro test del paquete se entera. Es el
+// único sitio desde el que sale la petición.
+func TestT164_ObserveEncolaLaPeticionConElTextoDelEntrante(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+	spy := &aheadSpy{}
+	sink := e.conAhead(t, spy)
+
+	sink.Observe(ctx, flowruntime.IncomingRef{
+		Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now(),
+		Text: "quiero 200 sillas para el sábado",
+	})
+
+	got := spy.todo()
+	if len(got) != 1 {
+		t.Fatalf("admitir un texto en ventana debe pedir UNA clasificación; se pidieron %d", len(got))
+	}
+	if got[0].key != aggKey() {
+		t.Fatalf("la petición debe ir atada a SU ventana: %+v", got[0].key)
+	}
+	if got[0].texto != "quiero 200 sillas para el sábado" {
+		t.Fatalf("la petición debe llevar el texto del entrante tal cual: %q", got[0].texto)
+	}
+}
+
+// TestT164_SinTextoNoSePide: un mensaje de solo media no tiene nada que clasificar. Es
+// un motivo SANO (REQ-38) y por eso no se pide nada ni se avisa a nadie.
+func TestT164_SinTextoNoSePide(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+	spy := &aheadSpy{}
+	sink := e.conAhead(t, spy)
+
+	sink.Observe(ctx, flowruntime.IncomingRef{
+		Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now(),
+	})
+	if got := len(spy.todo()); got != 0 {
+		t.Fatalf("sin texto no hay nada que clasificar; se pidieron %d clasificaciones", got)
+	}
+}
+
+// TestT164_SinLaFeatureNoSePide: el gate `llm_intake` corta ANTES de la petición. Un
+// tenant sin el pipeline contratado no puede generar ni una inferencia — que además de
+// ser lo correcto es lo que impide que la vía LLM de un tenant la gaste otro.
+func TestT164_SinLaFeatureNoSePide(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+	e.ents.Disable(aggTenant, entitlements.FeatureLLMIntake)
+	spy := &aheadSpy{}
+	sink := e.conAhead(t, spy)
+
+	sink.Observe(ctx, flowruntime.IncomingRef{
+		Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now(),
+		Text: "quiero 200 sillas",
+	})
+	if got := len(spy.todo()); got != 0 {
+		t.Fatalf("sin la feature llm_intake no se abre ventana NI se pide clasificación; se pidieron %d", got)
+	}
+}
+
+// TestT164_RespuestaTardia_TrasElCierre_EsINOCUA es la pregunta que el diseño del pull
+// tiene que responder: la inferencia tarda segundos (p50 de campo: 8,1 s) y puede
+// contestar DESPUÉS de que la ventana haya cerrado por su reloj. ¿Qué pasa entonces?
+//
+// NADA, y esta es la demostración: la pista se anota igual —no se comprueba nada, y no
+// comprobarlo es la decisión: mirar si la ventana vive costaría un SELECT para no hacer
+// nada—, pero el barrido solo mira las pistas de las ventanas que siguen `aggregating`.
+// La del job ya cerrado no casa con ninguna y se tira en la misma pasada.
+//
+// El assert que de verdad muerde no es el «cerró 0 ventanas», sino que la FILA no se
+// tocó: si un día alguien hiciera que la pista reabriera o re-cerrara algo, el estado o
+// el UpdatedAt del job cambiarían.
+func TestT164_RespuestaTardia_TrasElCierre_EsINOCUA(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+
+	e.observa(ctx, "wa-1", nil)
+	e.clock.avanza(45 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("la ventana tenía que cerrarse por plazo; se cerraron %d", n)
+	}
+	antes := e.jobs.Jobs()[0]
+
+	// La inferencia contesta ahora, 10 s tarde y con una confianza altísima.
+	e.clock.avanza(10 * time.Second)
+	e.sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.99)
+
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("una respuesta posterior al cierre no puede cerrar nada; cerró %d ventanas", n)
+	}
+	jobs := e.jobs.Jobs()
+	if len(jobs) != 1 {
+		t.Fatalf("y tampoco puede abrir un job nuevo; hay %d", len(jobs))
+	}
+	if jobs[0].Status != antes.Status || !jobs[0].UpdatedAt.Equal(antes.UpdatedAt) {
+		t.Fatalf("la fila no se puede haber tocado: antes {status=%q updated=%v}, después {status=%q updated=%v}",
+			antes.Status, antes.UpdatedAt, jobs[0].Status, jobs[0].UpdatedAt)
+	}
+}
+
+// TestT164_RespuestaTardia_NoContaminaLaVentanaSIGUIENTE es el corner que el test de
+// arriba no cubre y que el pull hace MUCHO más probable que el push: entre que se pide
+// la clasificación y llega la respuesta pueden pasar 30 s, tiempo de sobra para que la
+// ventana cierre y el cliente abra OTRA sobre el mismo evento (el índice único de la
+// 0072 es PARCIAL a propósito).
+//
+// 🔴 LO QUE ESTE TEST FIJA ES QUE SÍ LA ADELANTA, y no es un descuido: la clave de la
+// pista es la tupla (tenant, sesión, contacto, evento), no el id del job, así que la
+// pista tardía cierra la ventana nueva. Está ACEPTADO y el porqué está escrito en
+// `defaultIntentConfidence`: «errar por lo BAJO no rompe nada — un intent que adelanta
+// de más cierra una ventana antes de tiempo y el cliente puede abrir otra sobre el
+// mismo evento». Lo que sí sería un defecto es que perdiera mensajes o duplicara jobs,
+// y eso es lo que se comprueba aquí.
+//
+// Se deja escrito para que quien lo descubra en campo sepa que se vio y se decidió, en
+// vez de tratarlo como una sorpresa.
+func TestT164_RespuestaTardia_NoContaminaLaVentanaSIGUIENTE(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+
+	e.observa(ctx, "wa-1", nil)
+	e.clock.avanza(45 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("la primera ventana tenía que cerrarse por plazo; se cerraron %d", n)
+	}
+
+	// El cliente vuelve a escribir: se abre una ventana NUEVA sobre el mismo evento.
+	e.clock.avanza(2 * time.Second)
+	e.observa(ctx, "wa-2", nil)
+
+	// Y ahora contesta la inferencia de la ventana ANTERIOR.
+	e.sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.99)
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("DECISIÓN VIVA: la pista es por tupla, no por job, así que adelanta la ventana nueva; cerró %d", n)
+	}
+
+	jobs := e.jobs.Jobs()
+	if len(jobs) != 2 {
+		t.Fatalf("dos ventanas, dos jobs y ni uno más: hay %d", len(jobs))
+	}
+	// Lo que NO puede pasar: perder un mensaje por el camino.
+	var refs []string
+	for _, j := range jobs {
+		refs = append(refs, j.SourceRefs...)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("los dos mensajes tienen que estar, cada uno en su ventana: %v", refs)
 	}
 }

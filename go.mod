@@ -5,11 +5,21 @@ go 1.26.5
 require (
 	cloud.google.com/go/kms v1.33.0
 	github.com/EduGoGroup/identity-shared/auth v0.3.1
-	github.com/EduGoGroup/wapp-cloudlink v0.14.0
+	github.com/EduGoGroup/wapp-cloudlink v0.15.0
 	github.com/EduGoGroup/wapp-shared/config v0.3.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.2.1
 	github.com/EduGoGroup/wapp-shared/health v0.1.1
 	github.com/EduGoGroup/wapp-shared/intents v0.1.0
+	// ⚠️ LA VERSIÓN QUE ESTE REPO NECESITA ES `llm/v0.2.0` (ClassifyRequest de vuelta
+	// en el puerto, Plan 044 · T1.6-3) Y TODAVÍA NO ESTÁ PUBLICADA: el último tag es
+	// `llm/v0.1.0`. Aquí queda la última publicada porque un `require` a una versión
+	// inexistente rompe a cualquiera que resuelva por go.mod, y el `replace` está
+	// prohibido (ver la cabecera del go.work). Mientras tanto compila por el
+	// workspace, que ve el código de al lado.
+	// 🔴 CONSECUENCIA MEDIBLE: `GOWORK=off go build ./...` FALLA hasta que se corte
+	// la release, porque v0.1.0 no tiene ClassifyRequest. Hay que subir esta línea a
+	// v0.2.0 en el mismo acto de publicar shared (proveedor ANTES que consumidor).
+	github.com/EduGoGroup/wapp-shared/llm v0.2.0
 	github.com/EduGoGroup/wapp-shared/logger v0.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14

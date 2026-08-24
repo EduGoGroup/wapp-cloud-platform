@@ -388,21 +388,28 @@ func TestTenantLLM_PutSinClave400(t *testing.T) {
 
 // ============================ El vocabulario de proveedor ============================
 
-// TestTenantLLM_ProviderLocal422: `local` se ENTIENDE y no se puede (D-044.4,
-// D-044.21). Es 422 y no 400, y el código de error es el mismo que design §8.1
-// fija para /reanalyze — el mismo «no» se dice con la misma palabra.
+// TestT163_ProviderLocalYaEs400NoEs422: `provider:"local"` DENTRO de la vía API
+// pasó de «entendible e imposible» (422) a CONTRADICTORIO (400) el día que nació el
+// adaptador local (T1.6-3).
 //
-// 🔬 MUTACIÓN: mover el `case tenantllm.ProviderLocal` al `default` de
-// validateLLMProvider ⇒ saldría 400 `invalid_provider`.
-func TestTenantLLM_ProviderLocal422(t *testing.T) {
+// 🔴 POR QUÉ CAMBIA UNA RESPUESTA PÚBLICA, que es lo que hay que poder defender: el
+// 422 decía «la vía local existe en el ADR-0030 y todavía no hay pipeline». Esa
+// segunda mitad dejó de ser cierta. Hoy la vía local se pide por su eje —`via`— y
+// este campo solo nombra QUÉ TERCERO se llama cuando la vía es `api`; un tercero
+// llamado "local" no existe ni va a existir. Es la mitad que le faltaba a D-044.22:
+// los dos ejes dejan de compartir respuesta porque dejan de compartir problema.
+//
+// 🔬 MUTACIÓN: devolver el `case tenantllm.ProviderLocal` con su 422 a
+// validateLLMProvider ⇒ este test se pone rojo en el código Y en el cuerpo.
+func TestT163_ProviderLocalYaEs400NoEs422(t *testing.T) {
 	store := newFakeTenantLLM()
 	api := nuevaAPILLM(store)
 	cuerpo := configuraciónLLMVálida()
 	cuerpo["provider"] = tenantllm.ProviderLocal
 
 	rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm", putLLMBody(t, cuerpo))
-	exigeCódigo(t, rec, http.StatusUnprocessableEntity)
-	exigeErrorJSON(t, rec.Body.Bytes(), "llm_provider_unavailable", "provider", tenantllm.ProviderLocal)
+	exigeCódigo(t, rec, http.StatusBadRequest)
+	exigeErrorJSON(t, rec.Body.Bytes(), "invalid_provider", "provider", tenantllm.ProviderLocal)
 	if store.upserts != 0 {
 		t.Fatalf("upserts=%d, quiero 0", store.upserts)
 	}
@@ -718,35 +725,48 @@ func TestT152_ViaAusenteODesconocida400(t *testing.T) {
 	}
 }
 
-// TestT152_ViaLocalNoExigeCredencialYSigueEn422: los DOS hechos de la vía local en
-// esta ola, en un solo test porque son inseparables.
+// TestT163_ViaLocalSeGuardaYNoExigeNada: la puerta que T1.5-2 dejó cerrada con un
+// 422 la ABRE esta tarea, y el test lo comprueba por donde de verdad se nota — la
+// FILA—, no solo por el código de respuesta.
 //
-//  1. NO EXIGE NADA (REQ-33): el cuerpo es `{"via":"local"}` PELADO — sin
-//     consentimiento, sin proveedor, sin modelo y sin clave— y aun así el rechazo
-//     NO es 400. Si la vía local exigiera cualquiera de esas cosas, este cuerpo
-//     daría 400 `consent_required` y el test se pondría rojo. Ésa es la
-//     afirmación fuerte, y se hace ASÍ —por el código de rechazo— porque hoy no
-//     hay un 200 con el que demostrarla.
-//  2. SIGUE CERRADA: 422 `llm_provider_unavailable` con el sujeto en `via`,
-//     porque el pipeline local no existe hasta T1.6-3. La columna admite el
-//     valor; la puerta todavía no.
+// El cuerpo es `{"via":"local"}` PELADO: sin consentimiento, sin proveedor, sin
+// modelo y sin clave. Los tres hechos que fija:
 //
-// 🔬 MUTACIÓN (a): mover el `if req.Via == ViaLocal` por DEBAJO del
-// `if !req.Consented` en validateTenantLLM ⇒ 400 `consent_required`: la vía local
-// habría empezado a exigir consentimiento para nada.
-// 🔬 MUTACIÓN (b): en viaLocalNoCableada, devolver la clave "provider" en vez de
-// "via" ⇒ el assert del campo se pone rojo (los ejes no se mezclan, D-044.22).
-func TestT152_ViaLocalNoExigeCredencialYSigueEn422(t *testing.T) {
+//  1. Responde 200, no 422: la vía local está cableada (T1.6-3).
+//  2. NO EXIGE NADA (REQ-33). Si la vía local exigiera cualquiera de esos campos,
+//     este cuerpo daría 400 y el test se pondría rojo.
+//  3. SE GUARDA. Se mira `store.upserts` y la vía de la fila, no solo el JSON: el
+//     handler relee del mismo fake, así que un 200 por sí solo no prueba escritura.
+//     Ésta es la afirmación que el test anterior NO PODÍA hacer —no había 200 con el
+//     que hacerla— y por eso lo sustituye en vez de acompañarlo.
+//
+// 🔬 MUTACIÓN (a): mover el `if req.Via == ViaLocal` por DEBAJO del `if
+// !req.Consented` en validateTenantLLM ⇒ 400 `consent_required`: la vía local habría
+// empezado a exigir consentimiento para nada.
+// 🔬 MUTACIÓN (b): devolver `viaLocalNoCableada()` en esa rama ⇒ 422 y cero upserts.
+func TestT163_ViaLocalSeGuardaYNoExigeNada(t *testing.T) {
 	store := newFakeTenantLLM()
 	api := nuevaAPILLM(store)
 
 	rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm",
 		putLLMBody(t, map[string]any{"via": tenantllm.ViaLocal}))
 
-	exigeCódigo(t, rec, http.StatusUnprocessableEntity)
-	exigeErrorJSON(t, rec.Body.Bytes(), "llm_provider_unavailable", "via", tenantllm.ViaLocal)
-	if store.upserts != 0 {
-		t.Fatalf("upserts=%d, quiero 0: la vía local no se guarda mientras no exista", store.upserts)
+	exigeCódigo(t, rec, http.StatusOK)
+	if store.upserts != 1 {
+		t.Fatalf("upserts=%d, quiero 1: la vía local ya se guarda", store.upserts)
+	}
+	fila := store.rows[tenantA]
+	if fila.Via != tenantllm.ViaLocal {
+		t.Fatalf("via guardada=%q, quiero %q", fila.Via, tenantllm.ViaLocal)
+	}
+	// 🔴 Y NO SE GUARDÓ CREDENCIAL. No es decorado: el eje entero de REQ-33 es que
+	// elegir local no manda texto a ningún tercero, y una clave dormida en la fila de
+	// un tenant que declara no usarla es exactamente lo que ese requisito prohíbe.
+	if store.últimaClave != "" {
+		t.Fatal("la vía local guardó una credencial")
+	}
+	if !fila.ConsentedAt.IsZero() {
+		t.Fatalf("la vía local guardó consentimiento: %v", fila.ConsentedAt)
 	}
 }
 

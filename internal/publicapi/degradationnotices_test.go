@@ -5,7 +5,7 @@
 //
 //  1. EL GATE ES `llm_intake` Y NO `api_llm`. Es la decisión de la tarea y la que
 //     más fácil sería «arreglar» mal: los avisos de degradación le importan a
-//     cualquier tenant con el NIVEL, y CUATRO de los seis motivos son de la vía
+//     cualquier tenant con el NIVEL, y SEIS de los ocho motivos son de la vía
 //     LOCAL. Gatear por la vía dejaría sin bandeja justo a quien más la necesita.
 //  2. INV-6 EN EL WIRE: la respuesta no tiene ni una clave donde quepa texto del
 //     cliente.
@@ -83,8 +83,9 @@ func apiDeAvisos(store publicapi.DegradationNoticeLister, feats *entitlements.Fa
 // TestT154_ElGateEsLaCapacidadNoLaVia es EL test de la decisión de esta tarea.
 //
 // Un tenant de la vía LOCAL —capacidad SÍ, vía API NO— tiene que poder leer sus
-// avisos: es el dueño de `ollama_down`, `breaker_open`, `edge_offline` y
-// `timeout`, o sea de cuatro de los seis motivos. Y un tenant que tenga la vía
+// avisos: es el dueño de `ollama_down`, `breaker_open`, `edge_offline`,
+// `timeout`, `lease_invalid` y `edge_sin_capacidad`, o sea de seis de los ocho
+// motivos. Y un tenant que tenga la vía
 // pero NO el nivel no tiene bandeja que leer.
 //
 // MUTACIÓN (compila, y es el error natural — «esto es del LLM, gátalo como el

@@ -387,7 +387,13 @@ func validateTenantLLM(req tenantLLMRequest) (int, any) {
 		}
 	}
 	if req.Via == tenantllm.ViaLocal {
-		return viaLocalNoCableada()
+		// 🔴 LA VÍA LOCAL YA ESTÁ CABLEADA (T1.6-3): aquí vivía viaLocalNoCableada(),
+		// el 422 «te entiendo y no puedo», y su borrado es literalmente el criterio de
+		// la tarea. Lo que queda es lo que REQ-33 pide: elegir local no exige NADA —ni
+		// consentimiento, ni proveedor, ni modelo, ni clave— porque la vía local no
+		// manda texto a ningún tercero. Esta rama es un `return` limpio a propósito: la
+		// ausencia de comprobaciones ES el requisito, no un hueco por rellenar.
+		return 0, nil
 	}
 	if !req.Consented {
 		return http.StatusBadRequest, map[string]string{
@@ -410,56 +416,30 @@ func validateTenantLLM(req tenantLLMRequest) (int, any) {
 	return 0, nil
 }
 
-// viaLocalNoCableada es el 422 de «te entiendo y no puedo» del eje VÍA: el
-// tenant pide ejecutar en su propio fierro, la configuración lo admite (la
-// columna `via` de la 0073 guarda ese valor y el store sabe escribirlo) y lo que
-// todavía no existe es el pipeline que lo ejecute — el adaptador `local` nace en
-// la Ola 1.6 (T1.6-3, ADR-0045).
+// validateLLMProvider separa los DOS desenlaces del campo `provider`: el
+// vocabulario admitido de la vía API, y todo lo demás.
 //
-// Se reutiliza el MISMO código de error que el eje proveedor
-// (`llm_provider_unavailable`) a propósito, tal como design §8.1-bis fija: el
-// mismo «no» se dice con la misma palabra en todas las puertas y la UI lo trata
-// en un solo sitio. Lo que cambia es el campo que lo acompaña, y también a
-// propósito: aquí el sujeto del rechazo es la VÍA, así que la respuesta dice
-// `via`, no `provider`. Nombrar el eje equivocado en el cuerpo sería reintroducir
-// por la puerta de atrás la confusión que D-044.22 vino a cerrar.
+// 🔧 ERAN TRES HASTA T1.6-3, y el que se fue merece explicación porque cambia una
+// respuesta pública. `provider:"local"` devolvía **422 `llm_provider_unavailable`**
+// con el argumento «te entiendo y no puedo»: la vía local existía en el ADR-0030
+// pero no había pipeline que la ejecutara. Ese argumento CADUCÓ el día que nació el
+// adaptador local, y con él caducó el 422: hoy la vía local sí se puede, solo que se
+// pide por el eje que le corresponde —`via:"local"`, la columna de la 0073— y no por
+// este campo, que solo describe QUÉ PROVEEDOR EXTERNO se llama cuando la vía es
+// `api`. Un cuerpo con `via:"api", provider:"local"` ya no es «entendible e
+// imposible»: es contradictorio, y eso es un 400 `invalid_provider` como cualquier
+// otro valor inventado.
 //
-// 🔴 T1.6-3 BORRA ESTA FUNCIÓN Y SU ÚNICA LLAMADA, y no toca nada más: la rama
-// `local` de validateTenantLLM pasa a `return 0, nil` y la vía queda abierta. Se
-// escribe así —una función propia, una sola llamada— para que ese día sea un
-// borrado y no una cirugía.
-func viaLocalNoCableada() (int, any) {
-	return http.StatusUnprocessableEntity, map[string]string{
-		"error": "llm_provider_unavailable",
-		"via":   tenantllm.ViaLocal,
-	}
-}
-
-// validateLLMProvider separa los TRES desenlaces del campo `provider`, que es la
-// parte del contrato donde más fácil sería mezclarlos.
+// Es la mitad que faltaba de D-044.22: los dos ejes dejan de compartir respuesta
+// porque dejan de compartir problema. `tenantllm.ProviderLocal` sobrevive como
+// constante DOCUMENTAL —dice por qué "local" no está en el CHECK de `provider`— y ya
+// no gobierna ninguna rama.
 //
-// Se extrae a función propia y no se deja inline en validateTenantLLM por
-// gocyclo, y de paso porque el `local` merece su propio sitio: es el único valor
-// que se entiende y no se puede.
+// Se extrae a función propia y no se deja inline en validateTenantLLM por gocyclo.
 func validateLLMProvider(provider string) (int, any) {
 	switch provider {
 	case tenantllm.ProviderAnthropic, tenantllm.ProviderGemini:
 		return 0, nil
-	case tenantllm.ProviderLocal:
-		// 422 y no 400, y es la MISMA distinción que la 0047 hizo con
-		// catalog_adapter='http' (integrations.go:301-307): la petición está bien
-		// formada y el valor es del vocabulario del PRODUCTO —la vía local existe
-		// en el ADR-0030 y el clasificador local del Edge es real— lo que no
-		// existe es la implementación de esta vía en el pipeline del Plan 044
-		// (D-044.4, D-044.21). Es «te entiendo y no puedo», no «no te entiendo».
-		//
-		// El código de error es el mismo que el design §8.1 fija para /reanalyze,
-		// a propósito: el mismo «no» se dice con la misma palabra en las dos
-		// puertas, y la UI puede tratarlo en un solo sitio.
-		return http.StatusUnprocessableEntity, map[string]string{
-			"error":    "llm_provider_unavailable",
-			"provider": tenantllm.ProviderLocal,
-		}
 	default:
 		return http.StatusBadRequest, map[string]string{
 			"error":    "invalid_provider",

@@ -136,7 +136,7 @@ func (p *Postgres) Save(ctx context.Context, n Notice) (bool, error) {
 // caminos, una sentencia, ninguna concatenación de SQL.
 //
 // EL ORDEN LLEVA DESEMPATE (`created_at DESC, id`) y no solo `window_start DESC`:
-// dentro de la misma ventana puede haber hasta doce filas —seis motivos por dos
+// dentro de la misma ventana puede haber hasta dieciséis filas —ocho motivos por dos
 // vías— y sin un criterio total dos páginas consecutivas podrían repetir o saltar
 // una fila. Un orden no determinista con LIMIT/OFFSET es una paginación que
 // miente, y miente poco y de vez en cuando, que es la peor forma.
@@ -199,7 +199,7 @@ func escanear(rows *sql.Rows) (Notice, error) {
 	// El motivo se convierte al tipo cerrado SIN validar: lo que hay en la base ya
 	// pasó el CHECK, y una fila que la base admitió no puede desaparecer de una
 	// lectura porque este código no la reconozca. Si algún día se AÑADE un motivo
-	// a la 0075 y no aquí, la lista lo enseña igual y `Reason.Valid()` dirá false
+	// a la migración y no aquí, la lista lo enseña igual y `Reason.Valid()` dirá false
 	// sobre él — que es la señal correcta, no un aviso perdido.
 	n.Reason = Reason(reason)
 	// NULL ⇒ tiempo cero ⇒ Notice.Leida() false. La traducción vive aquí y en

@@ -43,9 +43,15 @@ const (
 )
 
 // ProviderLocal NO es un proveedor de esta tabla y no está en el CHECK: `local`
-// es una VÍA (ADR-0030), su implementación es futura (D-044.4) y la API la
-// rechaza con 422 `llm_provider_unavailable`. Se nombra aquí para que ese
-// rechazo compare contra una constante y no contra un literal suelto.
+// es una VÍA (ADR-0030), no un tercero al que llamar.
+//
+// 🔧 ES UNA CONSTANTE DOCUMENTAL DESDE T1.6-3 y ya no gobierna ninguna rama. Hasta
+// entonces la API rechazaba `provider:"local"` con 422 `llm_provider_unavailable`
+// («te entiendo y no puedo»); hoy la vía local SÍ está cableada —se pide por `via`,
+// que es su eje— así que pedirla por este campo pasó de imposible a contradictorio y
+// cae en el 400 `invalid_provider` general. Se conserva el nombre porque sigue
+// respondiendo la pregunta que trae a cualquiera aquí: por qué "local" no está en el
+// CHECK de `provider`.
 const ProviderLocal = "local"
 
 // Vocabulario CERRADO de VÍAS, el que acota el CHECK `tenant_llm_via_check` de
@@ -67,10 +73,11 @@ const (
 	// inferencia la ejecuta el Edge del propio tenant (ADR-0045) y NO sale texto
 	// hacia ningún tercero, así que no exige credencial ni consentimiento.
 	//
-	// ⚠️ En la Ola 1.5 la API todavía RECHAZA elegirla con 422
-	// `llm_provider_unavailable`: la columna admite el valor y el store sabe
-	// escribirlo, pero el pipeline local no existe hasta T1.6-3. La puerta la
-	// abre esa tarea, no ésta.
+	// ✅ ABIERTA DESDE T1.6-3 (2026-08-23). En la Ola 1.5 la API la rechazaba con
+	// 422 `llm_provider_unavailable` porque el pipeline local no existía; hoy
+	// existe (internal/llmvia/local habla el frame de inferencia contra el Ollama
+	// del Edge) y elegirla NO EXIGE NADA: ni credencial, ni consentimiento, ni
+	// proveedor, ni modelo.
 	ViaLocal = "local"
 	// ViaAPI es la vía del proveedor externo: exige credencial cifrada +
 	// `consented_at` (REQ-05, ADR-0030), y es la única cableada en el Plan 044.
