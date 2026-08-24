@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	cloud.google.com/go/kms v1.33.0
 	github.com/EduGoGroup/identity-shared/auth v0.3.1
-	github.com/EduGoGroup/wapp-cloudlink v0.14.0
+	github.com/EduGoGroup/wapp-cloudlink v0.15.0
 	github.com/EduGoGroup/wapp-shared/config v0.3.0
 	github.com/EduGoGroup/wapp-shared/envelope v0.2.1
 	github.com/EduGoGroup/wapp-shared/health v0.1.1
@@ -19,7 +19,7 @@ require (
 	// 🔴 CONSECUENCIA MEDIBLE: `GOWORK=off go build ./...` FALLA hasta que se corte
 	// la release, porque v0.1.0 no tiene ClassifyRequest. Hay que subir esta línea a
 	// v0.2.0 en el mismo acto de publicar shared (proveedor ANTES que consumidor).
-	github.com/EduGoGroup/wapp-shared/llm v0.1.0
+	github.com/EduGoGroup/wapp-shared/llm v0.2.0
 	github.com/EduGoGroup/wapp-shared/logger v0.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
