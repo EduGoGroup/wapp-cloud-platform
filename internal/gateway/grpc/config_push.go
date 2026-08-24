@@ -55,7 +55,64 @@ func (s *Server) PushConfig(ctx context.Context, tenantID, kind, version string,
 		}(sid)
 	}
 	wg.Wait()
+	// 🔴 EL CONFIGUPDATE ES LO QUE ENFRÍA LA CACHÉ, y por eso el calentamiento cuelga
+	// de AQUÍ y no solo del handshake: el prefijo del prompt de un tenant se arma
+	// desde su catálogo de intenciones, así que publicarlo INVALIDA el prefijo que
+	// estuviera caliente en el Ollama de cada Edge. Sin esto, el siguiente mensaje del
+	// cliente vuelve a pagar el prefill frío (~50 s) aunque el Edge lleve horas
+	// conectado — que es justo el caso que T1.7-4 viene a quitar.
+	//
+	// 🔴 UNO POR EDGE, NO UNO POR SESIÓN: ver calentarEdges.
+	//
+	// ⚠️ Va DESPUÉS del wg.Wait() a propósito: calentar con el ConfigUpdate todavía en
+	// vuelo dejaría cacheado el prefijo VIEJO en el Edge que aún no lo ha aplicado, o
+	// sea, exactamente lo contrario de lo que se busca.
+	s.calentarEdges(tenantID, kind)
 	return nil
+}
+
+// calentarEdges avisa de que la caché de prefijo de cada Edge del tenant PUEDE haberse
+// quedado fría, UNA VEZ POR EDGE.
+//
+// «Puede» y no «se quedó»: el kind viaja hacia arriba sin interpretarse porque este
+// paquete no sabe cuál de los tres que empuja forma el prompt. Ver OnWarmup.
+//
+// 🔴 POR EDGE Y NO POR SESIÓN, que es el error fácil aquí: un Edge multiplexa TODAS
+// las sesiones del tenant sobre UN stream (ADR-0008) y tiene UN Ollama con UNA plaza.
+// Avisar por sesión dispararía N calentamientos idénticos contra esa única plaza — un
+// tenant con cinco teléfonos en una máquina pagaría cinco prefills fríos seguidos por
+// publicar su catálogo, y durante esos ~250 s ninguna inferencia real cabría. El
+// cerrojo «uno en vuelo por Edge» del consumidor tapa la mayor parte, pero apoyarse en
+// él sería resolver aguas abajo un dato que aquí se tiene exacto.
+//
+// La sesión que se elige dentro de cada Edge es indiferente y por eso no se ordena:
+// las del mismo Edge son literalmente el mismo cable. Lo que importa es que sea UNA.
+func (s *Server) calentarEdges(tenantID, kind string) {
+	if s.OnWarmup == nil {
+		return
+	}
+	for k, sid := range s.unaSesionPorEdge(tenantID) {
+		s.OnWarmup(tenantID, k, sid, kind)
+	}
+}
+
+// unaSesionPorEdge devuelve, por cada Edge vivo del tenant, UNA de sus sesiones
+// (edge_id -> session_id). Recorre el mismo índice que sessionsForTenant, bajo su
+// candado, y no llama a nadie mientras lo tiene tomado.
+func (s *Server) unaSesionPorEdge(tenantID string) map[string]string {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	out := make(map[string]string)
+	for k, set := range s.edgeSessions {
+		if k.tenantID != tenantID {
+			continue
+		}
+		for sid := range set {
+			out[k.edgeID] = sid
+			break
+		}
+	}
+	return out
 }
 
 // pushConfigsOnConnect empuja al Edge recién conectado las configs vigentes de su

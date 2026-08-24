@@ -38,6 +38,7 @@ import (
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
@@ -45,6 +46,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -237,6 +239,19 @@ func Run(ctx context.Context) error {
 	// anotada en el journal (criterio (c) de T5.4). La garantía pasó de ser un conteo
 	// a ser el esquema: no hay dónde escribir un teléfono en claro.
 
+	// EL ALMACÉN DEL PARTE DE INFERENCIA (Plan 044 · Ola 1.7 · T1.7-9). Se crea aquí,
+	// antes del Gateway, porque tiene DOS extremos: el Gateway lo escribe con lo que
+	// llega en cada latido y /metrics lo lee en el scrape. Es memoria pura —ni base ni
+	// goroutine— y por eso puede vivir todo el arranque sin condiciones.
+	inferStats := inferstats.New()
+	// El lado LECTOR, con el molde de RegisterDBStats: se registra DESPUÉS de New()
+	// porque la fuente no existía al construir las métricas. Se aborta el arranque si
+	// falla, por el mismo motivo que allí: el único error posible es un choque de
+	// nombres en el registry, o sea un bug que se ve al arrancar o no se ve nunca.
+	if err := mtx.RegisterInferenceStats(inferStats.Agrega); err != nil {
+		return err
+	}
+
 	gw := gatewaygrpc.New(
 		// Deadline por Send hacia el Edge (Plan 027 · Ola 1 · T5, cierra H6): un Edge
 		// lento no retiene al llamante ni atasca el kill-switch (env WAPP_GRPC_PUSH_TIMEOUT).
@@ -265,6 +280,9 @@ func Run(ctx context.Context) error {
 		),
 		// Recepción del DiagnosticsBundle (Plan 031 · T5, ADR-0023): el demux correlaciona
 		// el bundle con su solicitud pendiente por command_id y lo almacena.
+		// El lado ESCRITOR del mismo almacén: sin este cable, el parte de inferencia
+		// sigue subiendo y muriendo en la base, que es justo lo que T1.7-9 arregla.
+		gatewaygrpc.WithInferenceStats(inferStats),
 		gatewaygrpc.WithDiagnosticsSink(diagStore),
 		// Auth de usuario del plano de control del Edge (Plan 033 · T2.2, ADR-0025): el
 		// gateway delega UserLogin/Refresh/Logout en un puerto de autenticación y audita
@@ -354,7 +372,12 @@ func Run(ctx context.Context) error {
 	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
 	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
 		llmvia.WithFrame(gw),
-		llmvia.WithNotifier(degradationNotifier))
+		llmvia.WithNotifier(degradationNotifier),
+		// EL PRESUPUESTO DE SALIDA POR TAREA (T1.7-3), con su interruptor de campo.
+		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
+		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
+		// Edge aplica su default de 256 — que es el lado B del criterio (c).
+		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)))
 	if err != nil {
 		return fmt.Errorf("selector de vía LLM: %w", err)
 	}
@@ -416,7 +439,36 @@ func Run(ctx context.Context) error {
 	intakeAhead := intakeahead.New(log, intentStore, llmSelector,
 		intakeahead.SinkFunc(func(key intake.WindowKey, intent string, confidence float64) {
 			intakeAggregator.OnClassified(key, intent, confidence)
-		}))
+		}),
+		// EL CALENTAMIENTO DE LA CACHÉ DE PREFIJO (T1.7-4). El emisor es el MISMO
+		// selector de vía, porque decidir si un tenant tiene caché que calentar es
+		// preguntar por la vía y eso se hace en un solo sitio (C2). Sin este cable el
+		// pipeline funciona igual: solo vuelve a pagar el prefill frío (~50 s) en la
+		// primera inferencia de cada prefijo nuevo.
+		intakeahead.WithCalentador(llmSelector),
+		intakeahead.WithCalentamiento(cfg.LLM.WarmupEnabled))
+	// El OTRO extremo del mismo cable, y va aquí por el nudo de construcción: el
+	// gateway se arma ANTES que el pool (el selector necesita el gateway y el pool
+	// necesita el selector), así que el gateway recibe el hook DESPUÉS, con el mismo
+	// molde que OnIncoming/OnHeartbeat. El gateway solo dice CUÁNDO se enfrió la caché
+	// —sesión registrada, ConfigUpdate empujado—; el qué y el si son del pool.
+	gw.OnWarmup = intakeAhead.Warm
+	// 🔴 EL VALOR QUE GOBIERNA ES EL EFECTIVO, Y SE LEE AQUÍ O NO SE LEE.
+	//
+	// Los dos interruptores existen para el control A/B de campo, y un A/B sobre un
+	// valor que no se puede confirmar no prueba nada: hay que poder mirar el arranque y
+	// saber en qué lado está ESTA instancia. La lección es cara y de esta casa —un
+	// default recalibrado que vivía en el binario y que el `.env` del VPS pisaba, sin
+	// que ningún test pudiera verlo—, así que se imprimen los dos JUNTOS y con el
+	// nombre de su variable, para que quien lo lea sepa qué tocar.
+	//
+	// ⚠️ En el VPS esta línea NO va a journald: la unidad escribe a `cloud.log`
+	// (StandardOutput=append:), así que se busca ahí y no con `journalctl`.
+	log.Info("orquestación LLM (Plan 044 · Ola 1.7): interruptores efectivos",
+		"warmup_enabled", cfg.LLM.WarmupEnabled,
+		"warmup_env", "WAPP_LLM_WARMUP_ENABLED",
+		"max_output_tokens_enabled", cfg.LLM.MaxOutputTokensEnabled,
+		"max_output_tokens_env", "WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED")
 	intakeAggregator = flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
 		flowruntime.WithSourceComposer(intakeComposer),
 		flowruntime.WithAheadRequester(intakeAhead))

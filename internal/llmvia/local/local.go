@@ -52,6 +52,115 @@ import (
 const DefaultFormat = "json"
 
 // ════════════════════════════════════════════════════════════════════════════
+// 🔴 EL PRESUPUESTO DE SALIDA LO FIJA EL CLOUD, Y LO FIJA POR TAREA (T1.7-3)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// LO QUE PASABA HASTA ESTA TAREA. El `num_predict` lo ponía el Edge y valía 256 para
+// TODO. Las salidas medidas en campo de P2 y P3 son de 265–293 tokens, o sea que por
+// la vía local esas dos etapas salían TRUNCADAS: el JSON no cerraba, ExtractJSON o el
+// parser lo rechazaban con llm.ErrLLMQuality, el caller reintentaba a 0,3 y el
+// reintento volvía a truncar en el mismo sitio. Dos inferencias de ~25 s para producir
+// dos JSON rotos. Es el bloqueante de la Ola 2 por vía local.
+//
+// QUÉ ES ESTE NÚMERO, Y QUÉ NO ES. Es un TECHO, no una reserva: el modelo para en su
+// token de fin, así que un techo alto no cuesta nada cuando no se usa. Lo único que
+// paga un techo alto es el caso degenerado —el modelo que se repite— y ahí, a 6–12
+// tok/s en el fierro real, cada 100 tokens de techo son 8–17 s de la PLAZA ÚNICA.
+// De ahí el criterio con el que están elegidos los cinco números:
+//
+//	TECHO ≈ 2× la salida legítima más grande que esa etapa puede producir.
+//
+// Ni menos (truncar una salida legítima cuesta la inferencia entera más su reintento),
+// ni mucho más (el techo es lo único que acota al modelo degenerado; el `timeout_ms`
+// también corta, pero después de haber ocupado la plaza todo ese rato).
+//
+// ⚠️ ACOTA, NO CURA, y conviene no confundirlo: una P3 de 293 tokens a 6–12 tok/s
+// sigue siendo 25–50 s de generación. Este campo impide que una inferencia ocupe la
+// plaza MÁS de lo previsto; no promete que la ocupe menos.
+//
+// 🔴 Y ES DE SALIDA, NO DE ENTRADA. Los tamaños que circulan por los documentos de esta
+// ola —«P4 pasó de 1.967 a 2.331 B al reordenarlo para I6»— son del PROMPT, o sea
+// entrada, y no entran en esta cuenta: un prompt más largo se prefilla (una vez, si el
+// prefijo es estable) pero no hace más larga la respuesta. Mezclar los dos números es el
+// error fácil aquí, y llevaría a subir techos por un motivo que no los toca.
+//
+// 🔴 Y NO SE DERIVA DE `llm.Options`: el puerto compartido solo lleva Temperature, y
+// ampliarlo sería pedirle al CALLER que sepa cuántos tokens ocupa el esquema de una
+// P4 — que es justo lo que el ADR-0045 pone del lado del Cloud y, dentro del Cloud,
+// del sitio que conoce la etapa. Ese sitio es este.
+
+// etapa es lo que este adaptador sabe de cada una de las cinco tareas y que NO viaja
+// en el prompt: cuánto puede ocupar su respuesta y de qué color pintar su serie.
+//
+// Es una tabla y no cinco constantes sueltas para que los dos campos de una etapa se
+// lean juntos: son la misma decisión vista dos veces.
+type etapa struct {
+	// maxOutputTokens es el techo de la salida (campo 7 del frame).
+	maxOutputTokens int32
+	// class es el rótulo de telemetría (campo 8). SOLO rótulo: ver InferRequest.Class.
+	class string
+}
+
+// Las cinco etapas del pipeline, con la aritmética de cada techo.
+//
+// El `class` va por etapa —y no por llamante— porque hoy cada etapa tiene UN llamante
+// y su naturaleza es la de ese llamante: P1 la pide el adelanto de ventana, que existe
+// para que el turno de WhatsApp no espere; P2–P5 son el pipeline del presupuesto, que
+// corre de fondo sobre el hilo ya cerrado. ⚠️ El día que alguien reclasifique en masa
+// —una P1 de lote— este campo deja de ser propiedad de la etapa y tiene que pasar a
+// ser un parámetro del llamante. Hoy no hay tal llamante, y fingir que lo hay sería
+// una opción sin usar que nadie mantendría.
+var (
+	// etapaP1 — clasificar el mensaje en UNA intención.
+	//
+	// TECHO 192. La salida es un objeto de cinco claves cortas: version, intent,
+	// confidence, params y evidence. Medido en campo: 16–17 tokens en el caso
+	// frecuente y 52 en el mayor observado (tarea 618 del 24-08). El caso grande
+	// legítimo —tres o cuatro params más una `evidence` que es una frase entera del
+	// cliente— ronda los 60. 🔴 POR ESO NO SON 64, que es el número que el plan traía:
+	// 64 está a un 23 % del máximo YA OBSERVADO, o sea que no es holgura, es una
+	// moneda al aire — y el precio de perderla es truncar la clasificación que el
+	// adelanto de ventana existe para conseguir. 192 son ~3,7× lo medido, y como techo
+	// del caso degenerado siguen siendo 16–32 s, por debajo del presupuesto de 45 s de
+	// quien la pide.
+	etapaP1 = etapa{maxOutputTokens: 192, class: gatewaygrpc.ClaseInteractivo}
+	// etapaP2 — las ideas principales del hilo.
+	//
+	// TECHO 512. Medido: 265–267 tokens para un hilo de dos ideas, con la `evidence`
+	// literal que el prompt exige. La salida ESCALA CON EL HILO —una entrada por cosa
+	// distinta que el cliente pide, ~40–50 tokens cada una—, así que 512 cubre unas
+	// diez ideas, que es más de lo que un hilo de WhatsApp trae.
+	etapaP2 = etapa{maxOutputTokens: 512, class: gatewaygrpc.ClaseLote}
+	// etapaP3 — especificar UN ítem.
+	//
+	// TECHO 512. Medido: 170 y 293 tokens en dos ítems distintos. Aquí la salida NO
+	// escala con el pedido (se llama una vez por ítem) sino con lo barroco de un solo
+	// ítem: producto, variante, addons candidatos, personalizaciones, notas y
+	// evidencia. 512 son ~1,75× el mayor medido.
+	etapaP3 = etapa{maxOutputTokens: 512, class: gatewaygrpc.ClaseLote}
+	// etapaP4 — normalizar cantidades.
+	//
+	// TECHO 1024, y es el número que más se aparta del enunciado del plan («P4/P5
+	// según su esquema»), así que va con su cuenta. 🔴 P4 ES LA ÚNICA ETAPA CUYA
+	// SALIDA CRECE CON EL TAMAÑO DEL PEDIDO Y ADEMÁS REPITE EL ESQUEMA ENTERO DE CADA
+	// ÍTEM: devuelve la lista COMPLETA, y cada ítem lleva product, qty, range,
+	// unit_kind, package_size, addon_candidates, customizations, notes y evidence —un
+	// superconjunto de lo que P3 produce por ítem—. Un ítem bien poblado son ~70–90
+	// tokens; la cabecera (version + las dos fechas) otros ~30. Diez ítems ≈ 830
+	// tokens. Con 512 —el número que P2 y P3 se ganaron— un pedido de seis ítems se
+	// truncaría, y truncar P4 tira el presupuesto entero. 1024 cubre unos doce.
+	etapaP4 = etapa{maxOutputTokens: 1024, class: gatewaygrpc.ClaseLote}
+	// etapaP5 — redactar la cotización.
+	//
+	// TECHO 768. La salida es {"version":N,"text":"..."} y el texto también escala con
+	// el pedido: una línea por ítem con su importe (~25–35 tokens) más saludo y cierre
+	// (~40). Quince ítems ≈ 570 tokens. Es la ÚLTIMA etapa y su salida es literalmente
+	// lo que el cliente lee por WhatsApp, así que es el peor sitio del pipeline donde
+	// ahorrar tokens: una cotización cortada a media línea es peor que ninguna.
+	etapaP5 = etapa{maxOutputTokens: 768, class: gatewaygrpc.ClaseLote}
+)
+
+// ════════════════════════════════════════════════════════════════════════════
 // 🔴 UN SOLO RELOJ: EL PLAZO SE HEREDA, NO SE INVENTA
 // ════════════════════════════════════════════════════════════════════════════
 //
@@ -174,6 +283,14 @@ type Provider struct {
 	// stream por el que sale. Vacía es un estado legítimo: la inferencia es de
 	// alcance Edge, no de sesión.
 	origin string
+	// target es el stream por el que se EXIGE que salga la petición, sin afirmar
+	// nada sobre quién preguntó. No viaja en el payload. Solo el calentamiento lo
+	// usa: ver WithTargetSession.
+	target string
+	// fijaTecho dice si el Cloud pone el presupuesto de salida en el frame. Nace en
+	// true (New lo materializa) y solo lo apaga el interruptor de campo: ver
+	// WithMaxOutputTokens.
+	fijaTecho bool
 }
 
 // Option configura el Provider al construirlo.
@@ -210,6 +327,29 @@ func WithOriginSession(sessionID string) Option {
 	return func(p *Provider) { p.origin = sessionID }
 }
 
+// WithMaxOutputTokens enciende o apaga el presupuesto de SALIDA que el Cloud fija por
+// tarea (campo 7 del frame). Por defecto está ENCENDIDO — New lo materializa —, así que
+// un Provider construido sin esta opción se comporta como manda T1.7-3.
+//
+// 🔴 APAGA EL ENVÍO, NO BAJA EL NÚMERO, y la diferencia es lo que hace que sirva: lo
+// que hay que poder reproducir es la conducta ANTERIOR a esta ola, y esa era «el Cloud
+// no dice nada y el Edge aplica su 256», no «el Cloud pide 256». Un frame con el campo
+// presente valiendo 256 probaría algo distinto de lo que el criterio (c) pregunta.
+//
+// Existe para el control A/B de campo en la MISMA tanda, no para ajustar nada: quien
+// quiera otro techo lo cambia en la tabla de etapas, que es donde está su aritmética.
+func WithMaxOutputTokens(on bool) Option {
+	return func(p *Provider) { p.fijaTecho = on }
+}
+
+// WithTargetSession fija POR DÓNDE debe salir la petición, sin afirmar que ninguna
+// conversación la originó. Opcional, y hoy solo lo usa el calentamiento: ver el campo
+// TargetSessionID de gatewaygrpc.InferRequest para por qué las dos cosas son campos
+// distintos y no dos usos del mismo.
+func WithTargetSession(sessionID string) Option {
+	return func(p *Provider) { p.target = sessionID }
+}
+
 // New construye el adaptador local para un tenant.
 //
 // Falla al CONSTRUIR si le falta el cable o el tenant, con el mismo criterio que
@@ -222,7 +362,8 @@ func New(frame Frame, tenantID string, opts ...Option) (*Provider, error) {
 	if tenantID == "" {
 		return nil, ErrSinTenant
 	}
-	p := &Provider{frame: frame, tenantID: tenantID, format: DefaultFormat, timeout: DefaultTimeout}
+	p := &Provider{frame: frame, tenantID: tenantID, format: DefaultFormat, timeout: DefaultTimeout,
+		fijaTecho: true}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -231,27 +372,27 @@ func New(frame Frame, tenantID string, opts ...Option) (*Provider, error) {
 
 // ClassifyRequest es la etapa P1: elige UNA intención del catálogo del tenant.
 func (p *Provider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, llm.BuildClassifyRequestPrompt(in), opts)
+	return p.run(ctx, etapaP1, llm.BuildClassifyRequestPrompt(in), opts)
 }
 
 // ExtractMainIdeas es la etapa P2: las ideas principales del hilo.
 func (p *Provider) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeasInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, llm.BuildExtractMainIdeasPrompt(in), opts)
+	return p.run(ctx, etapaP2, llm.BuildExtractMainIdeasPrompt(in), opts)
 }
 
 // ExtractItemSpecs es la etapa P3: especifica UN ítem por llamada.
 func (p *Provider) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecsInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, llm.BuildExtractItemSpecsPrompt(in), opts)
+	return p.run(ctx, etapaP3, llm.BuildExtractItemSpecsPrompt(in), opts)
 }
 
 // NormalizeQuantities es la etapa P4: cantidades, paquetes, rangos y fecha.
 func (p *Provider) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuantitiesInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, llm.BuildNormalizeQuantitiesPrompt(in), opts)
+	return p.run(ctx, etapaP4, llm.BuildNormalizeQuantitiesPrompt(in), opts)
 }
 
 // GenerateQuoteText redacta la cotización con la voz del negocio.
 func (p *Provider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTextInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, llm.BuildGenerateQuoteTextPrompt(in), opts)
+	return p.run(ctx, etapaP5, llm.BuildGenerateQuoteTextPrompt(in), opts)
 }
 
 // run es el camino común de las cinco tareas: mandar el prompt por el cable y aislar
@@ -263,7 +404,7 @@ func (p *Provider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTe
 // el aislado devuelve llm.ErrLLMQuality. Quien los distingue —y decide si se avisa
 // al dueño— es el decorador de llmvia; aquí solo se propagan sin envolver, para que
 // ni errors.Is ni el duck-typing del motivo se pierdan por el camino.
-func (p *Provider) run(ctx context.Context, prompt string, opts llm.Options) (json.RawMessage, error) {
+func (p *Provider) run(ctx context.Context, et etapa, prompt string, opts llm.Options) (json.RawMessage, error) {
 	plazo, err := p.plazo(ctx)
 	if err != nil {
 		return nil, err
@@ -274,6 +415,9 @@ func (p *Provider) run(ctx context.Context, prompt string, opts llm.Options) (js
 		Temperature:     opts.Temperature,
 		Timeout:         plazo,
 		OriginSessionID: p.origin,
+		TargetSessionID: p.target,
+		MaxOutputTokens: p.techo(et),
+		Class:           et.class,
 	})
 	if err != nil {
 		return nil, err
@@ -307,4 +451,13 @@ func (p *Provider) plazo(ctx context.Context) (time.Duration, error) {
 			ErrSinPresupuesto, time.Until(dl).Round(time.Millisecond), MargenVeredicto)
 	}
 	return restante, nil
+}
+
+// techo resuelve el presupuesto de salida EFECTIVO de una etapa. Con el interruptor
+// apagado devuelve 0, que inferToCloud traduce a «campo ausente» y el Edge a su default.
+func (p *Provider) techo(et etapa) int32 {
+	if !p.fijaTecho {
+		return 0
+	}
+	return et.maxOutputTokens
 }

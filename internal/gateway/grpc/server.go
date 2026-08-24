@@ -34,6 +34,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 )
 
 // offlinePersistTimeout acota la persistencia de fleet-offline tras la caída del
@@ -111,6 +112,36 @@ type Server struct {
 	// OnHeartbeat, si no es nil, se invoca por cada Heartbeat recibido. La
 	// renovación del lease a partir del lease_counter la hace el propio servidor.
 	OnHeartbeat func(sessionID string, m *cloudlinkv1.Heartbeat)
+	// inferStats guarda el último parte de inferencia de cada Edge para que /metrics
+	// lo publique (T1.7-9). nil = no se recoge; el resto sigue igual. Se inyecta con
+	// WithInferenceStats.
+	inferStats *inferstats.Store
+
+	// OnWarmup, si no es nil, se invoca cuando la caché de prefijo del Ollama de un
+	// Edge puede haberse quedado fría: al registrar una sesión suya y tras empujarle
+	// un ConfigUpdate (Plan 044 · Ola 1.7 · T1.7-4).
+	//
+	// `kind` es el del ConfigUpdate que se acaba de empujar, o VACÍO cuando el aviso
+	// viene del handshake («este Edge acaba de conectar; no hay nada cacheado, sea cual
+	// sea el kind»). Viaja porque el gateway NO SABE —ni debe— qué kinds cambian el
+	// prompt: hoy empuja tres (jwks, intents, filters) y solo uno de ellos forma el
+	// prefijo. Decidir aquí cuál sería meterle al gateway un conocimiento que su propio
+	// ConfigProvider evita a propósito («el Gateway permanece genérico, no conoce
+	// kinds»), y el precio de equivocarse es un prefill frío de ~50 s en la máquina del
+	// cliente cada vez que rota una JWKS.
+	//
+	// 🔴 TIENE QUE VOLVER EN EL ACTO. Se invoca desde el bucle Recv del stream y desde
+	// el fan-out del PUT de intents; un calentamiento dura ~50 s, así que el que lo
+	// atiende ha de disparar y volver. Lo cumple *intakeahead.Pool.Warm, que encola en
+	// su propia goroutine — y es un hook y no una interfaz por la misma razón que
+	// OnIncoming: el nudo de construcción (el gateway se arma ANTES que el pool, que a
+	// su vez necesita el selector, que necesita el gateway) se corta con una clausura
+	// que se resuelve al llamar y no al construir.
+	//
+	// ⚠️ Este paquete NO sabe qué es un prompt ni si el tenant tiene caché que
+	// calentar: solo dice CUÁNDO ha pasado algo que la enfría. El qué y el si son de
+	// más arriba.
+	OnWarmup func(tenantID, edgeID, sessionID, kind string)
 
 	// acks correlaciona command_id -> envío en vuelo que espera su Ack. Desde el
 	// Plan 050 · Ola 2 · T2.1 la entrada NO es el canal pelado sino un pendingAck
@@ -188,6 +219,15 @@ func WithCloudEncPrivKey(priv []byte) Option { return func(s *Server) { s.cloudE
 // WithReceiptSink inyecta el sink de acuses (MessageReceipt) del Plan 013 §10.F.
 // Sin él, New() usa el LogReceiptSink log-only por defecto (v1: sin persistencia).
 func WithReceiptSink(sink ReceiptSink) Option { return func(s *Server) { s.receiptSink = sink } }
+
+// WithInferenceStats inyecta el almacén en memoria del parte de inferencia del Edge
+// (Plan 044 · Ola 1.7 · T1.7-9). Sin él, los números del latido siguen durabilizándose
+// y sirviéndose por REST como hasta hoy, pero no salen por /metrics.
+//
+// Es un almacén y no un callback —a diferencia de OnWarmup o de FlowEventLifecycle—
+// porque lo que se publica NO es un delta que empujar, sino un acumulado que se lee EN
+// EL SCRAPE. Ver el porqué completo en metrics.RegisterInferenceStats.
+func WithInferenceStats(st *inferstats.Store) Option { return func(s *Server) { s.inferStats = st } }
 
 // WithDiagnosticsSink inyecta el receptor de DiagnosticsBundle (Plan 031 · T5,
 // ADR-0023). Sin él, un bundle recibido del Edge se ignora (no hay dónde almacenarlo).

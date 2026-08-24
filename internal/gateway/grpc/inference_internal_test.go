@@ -293,6 +293,81 @@ func TestInfer_LaEntradaPendienteNoSeFuga(t *testing.T) {
 	}
 }
 
+// TestInfer_ConDosSesionesVivasElORIGEN_DecidePorDondeSale (T1.7-8): el criterio de
+// selección visto DESDE EL CABLE, con dos Edges del mismo tenant.
+//
+// El test de inferenceSession de más abajo prueba la FUNCIÓN; este prueba la CADENA
+// entera —InferRequest.OriginSessionID → inferenceSession → Registry.Push→ y es la
+// que estaba rota: el selector recibía la sesión de origen y no se la pasaba al
+// adaptador, así que este campo llegaba SIEMPRE vacío y el frame salía siempre por la
+// primera alfabética. Con un solo Edge no se nota nada; con dos, el segundo no
+// calienta nunca su caché de prefijos.
+//
+// Las dos sesiones se registran en orden INVERSO al alfabético a propósito: si el
+// código empujara por «la última registrada» o por el recorrido del map, el caso del
+// fallback pasaría por casualidad.
+func TestInfer_ConDosSesionesVivasElORIGEN_DecidePorDondeSale(t *testing.T) {
+	t.Parallel()
+	const salida = `{"version":1,"intent":"x"}`
+	reg := session.NewRegistry()
+	srv := New(reg, logger.New(logger.WithWriter(io.Discard)), WithCloudEncPrivKey(testCloudPriv()))
+	sellada := sellarSalida(t, salida)
+
+	var salioPor string
+	var visto *cloudlinkv1.InferenceRequest
+	for _, sid := range []string{"sess-B", "sess-A"} {
+		defer reg.Register(sid, senderFunc(func(msg *cloudlinkv1.CloudToEdge) error {
+			req := msg.GetInferenceRequest()
+			if req == nil {
+				return nil
+			}
+			salioPor, visto = sid, req
+			go srv.deliverInference(&cloudlinkv1.InferenceResult{
+				CommandId: req.GetCommandId(),
+				Result:    &cloudlinkv1.InferenceResult_EncOutput{EncOutput: sellada},
+			})
+			return nil
+		}))()
+		// edgeID distinto por sesión: son DOS instalaciones del mismo tenant, cada una
+		// con su Ollama. Es el único escenario donde la elección cambia algo.
+		srv.trackSession(connCtx{tenantID: "tenant-1", edgeID: "edge-" + sid, sessionID: sid})
+	}
+
+	for _, tc := range []struct {
+		nombre, origen, quieroStream, quieroPayload string
+	}{
+		{"el origen vivo manda: sale por SU Edge, no por el primero alfabético",
+			"sess-B", "sess-B", "sess-B"},
+		{"sin origen sale por el primero alfabético (no-regresión del fallback)",
+			"", "sess-A", ""},
+		{"un origen que no está vivo cae al alfabético y NO es un error",
+			"sess-muerta", "sess-A", "sess-muerta"},
+	} {
+		t.Run(tc.nombre, func(t *testing.T) {
+			salioPor, visto = "", nil
+			out, err := srv.Infer(context.Background(), "tenant-1", InferRequest{
+				Prompt: "clasifica esto", Format: "json", Timeout: 2 * time.Second,
+				OriginSessionID: tc.origen,
+			})
+			if err != nil {
+				t.Fatalf("Infer: %v", err)
+			}
+			if out != salida {
+				t.Fatalf("salida = %q", out)
+			}
+			if salioPor != tc.quieroStream {
+				t.Fatalf("el frame salió por %q, quiero %q", salioPor, tc.quieroStream)
+			}
+			// Y el session_id del PAYLOAD sigue siendo el de origen tal cual llegó,
+			// también cuando no coincide con el stream: es trazabilidad de la
+			// conversación, no una copia de por dónde salió.
+			if visto.GetSessionId() != tc.quieroPayload {
+				t.Fatalf("session_id del payload = %q, quiero %q", visto.GetSessionId(), tc.quieroPayload)
+			}
+		})
+	}
+}
+
 // TestInferenceSession_PrefiereElOrigenYSiNoEsDeterminista: los dos pasos del
 // criterio de selección.
 //
