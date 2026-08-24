@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
@@ -329,6 +330,18 @@ func Run(ctx context.Context) error {
 	// que hace que meter tenant_llm en el censo de rekeyTargets (rekey.go) baste
 	// para que su clave rote con todo lo demás.
 	tenantLLMStore := tenantllm.NewPostgres(db, flowDeps.cipher)
+	// Los avisos de degradación al dueño (Plan 044 · T1.5-4, REQ-38). NO lleva
+	// cipher, y esa ausencia es una afirmación: en owner_degradation_notices no hay
+	// NADA que cifrar porque no hay nada sensible (INV-6 — la tabla no tiene una
+	// sola columna donde quepa una frase). El día que alguien tenga que añadir un
+	// cipher aquí, lo que ha pasado es que se coló una columna que no debía existir.
+	//
+	// ⚠️ Se cablea SOLO el lado LECTOR (publicapi.DegradationNoticeLister, sin
+	// Save). El escritor —degradation.Notifier— NO se construye en esta ola a
+	// propósito: no tiene productor todavía (llegan en T1.6-6 y en la O2), y un
+	// notificador vivo sin nadie que lo llame es una pieza que parece cableada y no
+	// lo está. Se añadirá aquí, en esta misma línea, el día que exista su llamante.
+	degradationStore := degradation.NewPostgres(db)
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda
 	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
@@ -629,12 +642,20 @@ func Run(ctx context.Context) error {
 		// — la capa HTTP no puede pedir la credencial ni por error.
 		Integrations: integrationsStore,
 		TenantLLM:    tenantLLMStore,
-		CRMSecrets:   integrationsStore,
-		CRMGate:      webhookGate,
-		CRMReflect:   intakeStore,
-		CRMNotify:    intakeNotifier,
-		ConfigPush:   gw,
-		Health:       publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
+		// Y la LECTURA de los avisos de degradación (Plan 044 · T1.5-4, REQ-38),
+		// por un puerto de solo lectura: la capa HTTP no puede escribir un aviso ni
+		// por error. En esta ola la tabla está vacía y una lista `[]` es la
+		// respuesta sana — significa que el LLM no se ha degradado.
+		DegradationNotices: degradationStore,
+		// La VUELTA del puente CRM y lo que cuelga de ella (Plan 042 · T4.2/T4.3/
+		// T4.4) más los umbrales de salud: piezas ya armadas arriba, aquí solo el
+		// cable.
+		CRMSecrets: integrationsStore,
+		CRMGate:    webhookGate,
+		CRMReflect: intakeStore,
+		CRMNotify:  intakeNotifier,
+		ConfigPush: gw,
+		Health:     publicapi.HealthRules{DegradedAfter: cfg.Health.DegradedAfter, StaleAfter: cfg.Health.StaleAfter},
 		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
 		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
 		// con el reloj del Ack, no cada consulta por separado.
