@@ -219,6 +219,20 @@ type Pool struct {
 	// enVuelo son las ventanas con una petición viva (encolada o corriendo). Es el
 	// cerrojo (1) de la cabecera y el que hace que una ráfaga no sea una tormenta.
 	enVuelo map[intake.WindowKey]struct{}
+
+	// --- Calentamiento de la caché de prefijo (T1.7-4, ver calentamiento.go) ---
+	calentador Calentador
+	// calentamientoOn es el interruptor de campo. Nace en true (New lo materializa):
+	// ver WithCalentamiento.
+	calentamientoOn bool
+	warmTimeout     time.Duration
+	// calMu protege calEnVuelo. Es un candado APARTE del `mu` de arriba a propósito:
+	// aquel lo toman Request y atender en el camino de CADA entrante, y colgar de él
+	// un mapa que solo tocan los calentamientos —uno por Edge, cada muchos minutos—
+	// sería meter dos ritmos muy distintos bajo la misma cerradura sin necesidad.
+	calMu sync.Mutex
+	// calEnVuelo son los Edges con un calentamiento vivo. Cerrojo «uno por Edge».
+	calEnVuelo map[edgeKey]struct{}
 }
 
 // Option configura el Pool al construirlo.
@@ -264,6 +278,10 @@ func New(log logger.Logger, cfg ConfigStore, sel ProviderSelector, sink Sink, op
 		timeout: DefaultTimeout,
 		cola:    make(chan peticion, DefaultQueue),
 		enVuelo: make(map[intake.WindowKey]struct{}),
+
+		calentamientoOn: true,
+		warmTimeout:     DefaultWarmTimeout,
+		calEnVuelo:      make(map[edgeKey]struct{}),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -353,7 +371,7 @@ func (p *Pool) atender(ctx context.Context, pet peticion) {
 // error hacia arriba: no hay nadie arriba a quien devolvérselo, y lo que se pierde
 // es un adelanto (REQ-35).
 func (p *Pool) clasificar(ctx context.Context, pet peticion) (*llm.Classification, bool) {
-	in, ok := p.entrada(ctx, pet)
+	in, ok := p.entrada(ctx, "adelanto", pet.key.TenantID, pet.texto)
 	if !ok {
 		return nil, false
 	}
@@ -379,18 +397,27 @@ func (p *Pool) clasificar(ctx context.Context, pet peticion) (*llm.Classificatio
 
 // entrada arma la ClassifyRequestInput desde el catálogo publicado del tenant.
 //
+// 🔴 TIENE DOS LLAMANTES Y ESO ES EL PUNTO, no una casualidad: la clasificación real
+// (clasificar) y el calentamiento de la caché de prefijo (Warm, calentamiento.go). El
+// calentamiento solo sirve si el prefijo que deja cacheado es EL MISMO BYTE A BYTE que
+// el de la P1 real, y todo lo que forma ese prefijo —catálogo aplanado, vocabulario,
+// etiqueta de desconocido— se decide aquí. Dos funciones «que hacen lo mismo» habrían
+// divergido en un campo el día que alguien tocara una y no la otra, y el síntoma
+// habría sido un calentamiento que calienta un prompt que nadie pide: cero error, cero
+// log, y la latencia igual que antes. `quien` solo cambia el rótulo del log.
+//
 // Sin catálogo NO SE PREGUNTA NADA, y no es una guarda defensiva: con `Catalog`
 // vacío el parser rechaza cualquier artefacto (su docstring lo dice: «un catálogo
 // vacío rechaza TODO a propósito»), así que preguntar sería gastar una inferencia de
 // ocho segundos para tirarla. Un tenant sin config de intents es un estado NORMAL —la
 // mayoría lo está—, así que sale por Debug y sin aviso: es un motivo SANO y REQ-38
 // manda que los sanos no notifiquen.
-func (p *Pool) entrada(ctx context.Context, pet peticion) (llm.ClassifyRequestInput, bool) {
-	cfg, err := p.cfg.Get(ctx, pet.key.TenantID)
+func (p *Pool) entrada(ctx context.Context, quien, tenantID, texto string) (llm.ClassifyRequestInput, bool) {
+	cfg, err := p.cfg.Get(ctx, tenantID)
 	if err != nil {
 		if !errors.Is(err, intentcfg.ErrNotFound) {
-			p.log.Warn("adelanto: no se pudo leer el catálogo de intenciones del tenant",
-				"tenant_id", pet.key.TenantID, "error", err)
+			p.log.Warn(quien+": no se pudo leer el catálogo de intenciones del tenant",
+				"tenant_id", tenantID, "error", err)
 		}
 		return llm.ClassifyRequestInput{}, false
 	}
@@ -400,12 +427,12 @@ func (p *Pool) entrada(ctx context.Context, pet peticion) (llm.ClassifyRequestIn
 		// significa que la fila se escribió por fuera del API o que el contrato cambió
 		// bajo los pies. Es un fallo de CONFIGURACIÓN, no de la vía: se dice y no se
 		// notifica como degradación.
-		p.log.Warn("adelanto: el catálogo publicado del tenant no valida; no se pide clasificación",
-			"tenant_id", pet.key.TenantID, "version", cfg.Version, "error", err)
+		p.log.Warn(quien+": el catálogo publicado del tenant no valida; no se pide inferencia",
+			"tenant_id", tenantID, "version", cfg.Version, "error", err)
 		return llm.ClassifyRequestInput{}, false
 	}
 	return llm.ClassifyRequestInput{
-		Text:         pet.texto,
+		Text:         texto,
 		Catalog:      aplanar(cat),
 		UnknownLabel: intents.ReservedUnknown,
 		Vocabulary:   cat.Vocabulario,

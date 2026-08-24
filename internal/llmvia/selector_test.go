@@ -13,6 +13,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 )
 
@@ -52,13 +53,16 @@ func (a *avisoFake) Record(_ context.Context, tenantID string, r degradation.Rea
 	return true, nil
 }
 
-// frameFake es el transporte de la vía local: devuelve lo que se le diga.
+// frameFake es el transporte de la vía local: devuelve lo que se le diga y guarda la
+// ÚLTIMA petición que le llegó, que es por donde se comprueba qué armó el adaptador.
 type frameFake struct {
-	out string
-	err error
+	out   string
+	err   error
+	visto gatewaygrpc.InferRequest
 }
 
-func (f *frameFake) Infer(context.Context, string, gatewaygrpc.InferRequest) (string, error) {
+func (f *frameFake) Infer(_ context.Context, _ string, req gatewaygrpc.InferRequest) (string, error) {
+	f.visto = req
 	return f.out, f.err
 }
 
@@ -172,6 +176,77 @@ func TestFor_ElFalloDeLaBaseNoSeConfundeConUnaVia(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("quiero que propague el error de la base, llegó: %v", err)
 	}
+}
+
+// TestFor_LaSesionDeORIGEN_ViajaAlFrame: el parámetro que For recibe LLEGA al frame.
+//
+// No es cosmética de trazabilidad: ese campo es lo que hace que gatewaygrpc elija el
+// Edge que recibió el mensaje en vez del primero por orden alfabético. Con el dato
+// vacío —que es como viajó toda la Ola 1.6— un tenant con dos Edges mandaba SIEMPRE
+// la inferencia al mismo, y el otro no calentaba nunca su caché de prefijos.
+//
+// 🔬 MUTACIÓN (T1.7-8): quitar local.WithOriginSession de Selector.localProvider deja
+// los tres subtests en rojo. COMPILA —es una opción de menos, no un tipo distinto—, y
+// por eso hay que ejecutarla: el defecto que este test cierra vivió una ola entera
+// con el código compilando y los tres gates en verde.
+func TestFor_LaSesionDeORIGEN_ViajaAlFrame(t *testing.T) {
+	t.Parallel()
+	const salida = `{"version":1,"intent":"intake_request","confidence":0.9,"evidence":"pizzas"}`
+
+	t.Run("la sesión que se le pide a For es la que sale en el frame", func(t *testing.T) {
+		t.Parallel()
+		f := &frameFake{out: salida}
+		p, err := selector(t, &storeFake{hay: false}, llmvia.WithFrame(f)).
+			For(context.Background(), "t1", "sess-B")
+		if err != nil {
+			t.Fatalf("For: %v", err)
+		}
+		if _, err := p.ClassifyRequest(context.Background(), entrada(), llm.Options{}); err != nil {
+			t.Fatalf("ClassifyRequest: %v", err)
+		}
+		if f.visto.OriginSessionID != "sess-B" {
+			t.Fatalf("session_id del frame = %q, quiero sess-B: el selector la pidió y la tiró",
+				f.visto.OriginSessionID)
+		}
+	})
+
+	t.Run("vacía viaja vacía: el selector no se inventa una sesión", func(t *testing.T) {
+		t.Parallel()
+		f := &frameFake{out: salida}
+		p, err := selector(t, &storeFake{hay: false}, llmvia.WithFrame(f)).
+			For(context.Background(), "t1", "")
+		if err != nil {
+			t.Fatalf("For: %v", err)
+		}
+		if _, err := p.ClassifyRequest(context.Background(), entrada(), llm.Options{}); err != nil {
+			t.Fatalf("ClassifyRequest: %v", err)
+		}
+		// Rellenarla con cualquier cosa (el tenant, una sesión cualquiera) convertiría
+		// un dato de trazabilidad en una coincidencia sin significado, y encima le
+		// quitaría al Gateway su fallback: creería que hay origen y no lo hay.
+		if f.visto.OriginSessionID != "" {
+			t.Fatalf("session_id del frame = %q, quiero vacío", f.visto.OriginSessionID)
+		}
+	})
+
+	t.Run("la sesión se AÑADE a las opciones del arranque, no las sustituye", func(t *testing.T) {
+		t.Parallel()
+		f := &frameFake{out: salida}
+		p, err := selector(t, &storeFake{hay: false},
+			llmvia.WithFrame(f),
+			llmvia.WithLocalOptions(local.WithFormat("json_schema")),
+		).For(context.Background(), "t1", "sess-B")
+		if err != nil {
+			t.Fatalf("For: %v", err)
+		}
+		if _, err := p.ClassifyRequest(context.Background(), entrada(), llm.Options{}); err != nil {
+			t.Fatalf("ClassifyRequest: %v", err)
+		}
+		if f.visto.OriginSessionID != "sess-B" || f.visto.Format != "json_schema" {
+			t.Fatalf("frame = {session_id:%q, format:%q}, quiero las DOS cosas: la del arranque y la de la petición",
+				f.visto.OriginSessionID, f.visto.Format)
+		}
+	})
 }
 
 // ---------------------------------------------------------------- la degradación

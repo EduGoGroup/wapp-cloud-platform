@@ -177,6 +177,12 @@ type AppConfig struct {
 	// tope de auto-respuestas por conversación (red anti-loop). Se lee con prefijo
 	// WAPP_FLOW_.
 	Flow FlowConfig `yaml:"flow"`
+	// LLM son los DOS interruptores de la orquestación de inferencia del Plan 044 ·
+	// Ola 1.7. Se lee con prefijo WAPP_LLM_. Existen para poder hacer el control A/B
+	// de campo EN LA MISMA TANDA —encendido y apagado sin recompilar ni desplegar dos
+	// binarios—, que es la única forma de probar que lo que cambia es el mecanismo y
+	// no el humor de la máquina. Ver LLMConfig.
+	LLM LLMConfig `yaml:"llm"`
 	// Health gobierna la derivación de estados de salud de flota (Plan 031 · T4,
 	// ADR-0023): los umbrales N (degradado sostenido) y M (sin salud ⇒ stale) que
 	// GET /api/v1/sessions aplica al servir. Se lee con prefijo WAPP_HEALTH_.
@@ -332,6 +338,43 @@ type HealthConfig struct {
 	// sirve como derived "stale". Default 2m. Se lee como cadena time.Duration de
 	// WAPP_HEALTH_STALE_AFTER.
 	StaleAfter time.Duration `yaml:"stale_after"`
+}
+
+// LLMConfig son los interruptores de lo que el Cloud AÑADE a una inferencia. Los dos
+// nacen ENCENDIDOS: apagarlos devuelve la conducta anterior a la Ola 1.7, que es peor
+// pero conocida, y esa asimetría es deliberada — un interruptor que hay que acordarse
+// de encender acaba apagado en producción.
+//
+// 🔴 SON DE CONFIGURACIÓN Y NO CONSTANTES POR UN MOTIVO DE MÉTODO, no de gusto. Los
+// criterios de campo de T1.7-3 y T1.7-4 piden un control A/B EN LA MISMA TANDA: la
+// primera inferencia con calentamiento y sin él, la misma P3 con techo de salida y sin
+// él. Con constantes harían falta dos binarios y el A/B pierde el control de
+// condiciones — deja de probar el mecanismo y pasa a comparar dos despliegues.
+//
+// ⚠️ Y por eso el arranque LOS IMPRIME (ver la línea «orquestación LLM» de bootstrap):
+// el valor que gobierna es el EFECTIVO, no el que está en el fuente. Es el gotcha caro
+// de esta casa —un default recalibrado en el binario que el `.env` del VPS pisaba, sin
+// que ningún test pudiera verlo—: si el cambio no se puede confirmar leyendo el log del
+// arranque, no está terminado.
+type LLMConfig struct {
+	// WarmupEnabled gobierna el PRECALENTADO de la caché de prefijo del Edge (T1.7-4):
+	// el `inference_request` con `warmup=true` que el Cloud emite al conectar un Edge y
+	// al publicar catálogo de intents. Default true. Env WAPP_LLM_WARMUP_ENABLED.
+	//
+	// Apagado, no se emite ninguno y la primera inferencia real de cada prefijo nuevo
+	// vuelve a pagar el prefill FRÍO (~50 s medidos en UAT). Es exactamente el lado B
+	// del criterio (a) de T1.7-4.
+	WarmupEnabled bool `yaml:"warmup_enabled"`
+	// MaxOutputTokensEnabled gobierna si el Cloud FIJA el presupuesto de salida por
+	// tarea en el frame (campo 7, T1.7-3). Default true.
+	// Env WAPP_LLM_MAX_OUTPUT_TOKENS_ENABLED.
+	//
+	// Apagado, el campo viaja AUSENTE y el Edge aplica su default (hoy 256), con lo que
+	// una P2/P3 de 265–293 tokens vuelve a truncarse. Es el lado B del criterio (c) de
+	// T1.7-3, y la razón de que el interruptor sea sobre el ENVÍO y no sobre el número:
+	// lo que hay que reproducir es la conducta ANTERIOR, y esa era «el Cloud no dice
+	// nada», no «el Cloud pide 256».
+	MaxOutputTokensEnabled bool `yaml:"max_output_tokens_enabled"`
 }
 
 // FlowConfig gobierna el token-bucket EN MEMORIA de auto-respuestas por
@@ -607,6 +650,12 @@ func defaults() AppConfig {
 			IncomingTimeout:       30 * time.Second,
 			MaxConcurrentIncoming: 64,
 		},
+		// Los dos interruptores de la Ola 1.7 nacen ENCENDIDOS: el estado nuevo es el
+		// bueno y el apagado existe para el control A/B de campo, no al revés.
+		LLM: LLMConfig{
+			WarmupEnabled:          true,
+			MaxOutputTokensEnabled: true,
+		},
 		Health: HealthConfig{
 			DegradedAfter: 5 * time.Minute,
 			StaleAfter:    2 * time.Minute,
@@ -756,6 +805,8 @@ func Load() (AppConfig, error) {
 	}
 	cfg.Flow.IncomingTimeout = loader.GetDuration("FLOW_INCOMING_TIMEOUT", cfg.Flow.IncomingTimeout)
 	cfg.Flow.MaxConcurrentIncoming = loader.GetInt("FLOW_MAX_CONCURRENT_INCOMING", cfg.Flow.MaxConcurrentIncoming)
+	cfg.LLM.WarmupEnabled = loader.GetBool("LLM_WARMUP_ENABLED", cfg.LLM.WarmupEnabled)
+	cfg.LLM.MaxOutputTokensEnabled = loader.GetBool("LLM_MAX_OUTPUT_TOKENS_ENABLED", cfg.LLM.MaxOutputTokensEnabled)
 
 	cfg.Health.DegradedAfter = loader.GetDuration("HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
 	cfg.Health.StaleAfter = loader.GetDuration("HEALTH_STALE_AFTER", cfg.Health.StaleAfter)

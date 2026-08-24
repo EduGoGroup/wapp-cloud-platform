@@ -225,6 +225,72 @@ type InferRequest struct {
 	// frame como trazabilidad, y si esa sesión está viva se usa como sesión de
 	// empuje (ver inferenceSession).
 	OriginSessionID string
+	// TargetSessionID fuerza POR DÓNDE SALE la petición, y NO viaja en el payload.
+	//
+	// 🔴 ES LA OTRA MITAD DE UNA DISTINCIÓN QUE ESTE FICHERO YA HACÍA, y por eso es
+	// un campo aparte y no un segundo uso de OriginSessionID: el session_id del
+	// ENVELOPE es el cable, el del PAYLOAD es la conversación que preguntó (ver el
+	// ⚠️ de inferToCloud). Hasta T1.7-4 las dos cosas se pedían con el mismo campo
+	// porque siempre coincidían — toda inferencia nacía de una conversación—. El
+	// calentamiento rompe esa coincidencia: no lo originó ninguna conversación, pero
+	// TIENE que salir por un Edge concreto (el que acaba de conectar, o cada uno de
+	// los que recibieron el ConfigUpdate), porque la caché de prefijo que viene a
+	// llenar es de ESE Ollama y de ningún otro. Rellenar OriginSessionID para
+	// conseguir el enrutado pondría en el cable un dato de trazabilidad FALSO.
+	//
+	// Vacío ⇒ manda OriginSessionID, y si tampoco hay, la política de siempre.
+	TargetSessionID string
+	// MaxOutputTokens es el presupuesto de SALIDA de esta inferencia, en tokens
+	// (campo 7 del frame, `optional`). Lo fija el CLOUD y lo fija POR TAREA, porque
+	// es quien conoce el esquema de la respuesta que espera; el Edge lo traduce a
+	// `num_predict`. <= 0 ⇒ NO se pone en el frame y el Edge aplica su default (hoy
+	// 256), que es fail-closed hacia el lado barato.
+	//
+	// Los números por etapa, con su aritmética, viven en llmvia/local (ver `etapa`):
+	// aquí solo viaja el que le pasen. Este paquete es el transporte y no tiene
+	// opinión sobre cuánto ocupa la respuesta de una P3.
+	MaxOutputTokens int32
+	// Class es la naturaleza declarada de la petición (campo 8): ClaseInteractivo o
+	// ClaseLote. Es SOLO TELEMETRÍA — rótulo de log y del parte del Edge.
+	//
+	// 🔴 PROHIBIDO DECIDIR CON ESTE CAMPO, y la prohibición es del contrato, no de
+	// estilo (ver el proto). Quien necesite que el Edge EXCLUYA una petición del
+	// breaker tiene el campo Warmup; quien necesite que el breaker sea más tolerante
+	// con una petición lenta tiene su `timeout_ms`, que es de lo que el umbral por
+	// petición se deriva (ADR-0042).
+	Class string
+	// Warmup marca esta inferencia como de CALENTAMIENTO de la caché de prefijo del
+	// Edge (campo 10). Su salida SE DESCARTA: nadie la espera.
+	//
+	// Qué obliga al Edge: excluirla del breaker ANTES de evaluar, ni como fallo ni
+	// como lentitud — un calentamiento paga prefill FRÍO por diseño (~50 s para un
+	// P1 de UAT) y un breaker que lo mirara abriría el circuito por haber trabajado
+	// bien. ⚠️ Lo que NO cambia: SÍ ocupa la plaza única y SÍ pasa por el aforo,
+	// como cualquier otra inferencia.
+	Warmup bool
+}
+
+// ClaseInteractivo y ClaseLote son el vocabulario CERRADO del campo `class` (8).
+//
+// Están aquí, junto a InferRequest, porque son vocabulario del CABLE y no de un
+// llamante: el Edge los lee como rótulo y cualquier otro valor —o el vacío— se
+// etiqueta `interactivo` sin error. Dos constantes evitan que el tercer llamante
+// escriba "batch" y estrene una categoría fantasma que nadie sumará nunca.
+const (
+	// ClaseInteractivo: alguien espera al otro lado de WhatsApp.
+	ClaseInteractivo = "interactivo"
+	// ClaseLote: trabajo de fondo, sin nadie esperando el turno.
+	ClaseLote = "lote"
+)
+
+// rutaPreferida resuelve la PRECEDENCIA de enrutado —cable primero, conversación
+// después— sin tocar inferenceSession, que sigue respondiendo a la pregunta de
+// siempre («¿por qué stream sale esto?») con un único candidato preferido.
+func (r InferRequest) rutaPreferida() string {
+	if r.TargetSessionID != "" {
+		return r.TargetSessionID
+	}
+	return r.OriginSessionID
 }
 
 // Infer pide una inferencia al Edge del tenant y devuelve el JSON CRUDO tal cual lo
@@ -248,7 +314,7 @@ type InferRequest struct {
 // en un solo ctx no podría decir cuál venció, y de esa distinción depende si se avisa
 // al dueño o no.
 func (s *Server) Infer(ctx context.Context, tenantID string, req InferRequest) (string, error) {
-	sessionID, ok := s.inferenceSession(tenantID, req.OriginSessionID)
+	sessionID, ok := s.inferenceSession(tenantID, req.rutaPreferida())
 	if !ok {
 		return "", inferErr("", "", MotivoEdgeOffline,
 			fmt.Errorf("%w: el tenant no tiene ninguna sesión viva en esta réplica", session.ErrSessionOffline))
@@ -304,12 +370,14 @@ func motivoDePush(err error) string {
 // verdad es QUÉ EDGE atiende cuando un tenant tiene varias instalaciones — y para
 // eso vale cualquiera: cada una tiene su propio Ollama.
 //
-// El criterio, en dos pasos:
+// El criterio, en dos pasos, sobre el candidato que le pase el llamante (que
+// InferRequest.rutaPreferida resuelve: TargetSessionID si lo hay —el cable que se
+// exige, sin conversación detrás—, y si no OriginSessionID):
 //
-//  1. **La sesión de origen, si está viva.** Es la conversación que generó la
-//     pregunta, así que el frame sale por el mismo Edge que recibió el mensaje del
-//     cliente y el session_id del frame dice algo cierto (trazabilidad, que es
-//     justo para lo que el proto declara ese campo).
+//  1. **El candidato, si está vivo.** En el caso normal es la conversación que
+//     generó la pregunta, así que el frame sale por el mismo Edge que recibió el
+//     mensaje del cliente y el session_id del frame dice algo cierto (trazabilidad,
+//     que es justo para lo que el proto declara ese campo).
 //  2. **Si no, la primera por orden alfabético** de las sesiones vivas del tenant.
 //     El orden importa aunque el destino sea equivalente: el recorrido de un map de
 //     Go está ALEATORIZADO, así que sin ordenar, dos peticiones seguidas del mismo
@@ -342,19 +410,29 @@ func (s *Server) inferenceSession(tenantID, origin string) (string, bool) {
 // en una coincidencia sin significado.
 func inferToCloud(cmdID, sessionID string, req InferRequest) *cloudlinkv1.CloudToEdge {
 	temp := float32(req.Temperature)
+	frame := &cloudlinkv1.InferenceRequest{
+		CommandId:   cmdID,
+		SessionId:   req.OriginSessionID,
+		Prompt:      req.Prompt,
+		Format:      req.Format,
+		Temperature: &temp,
+		TimeoutMs:   inferTimeout(req.Timeout).Milliseconds(),
+		Class:       req.Class,
+		Warmup:      req.Warmup,
+	}
+	// PRESENCIA EXPLÍCITA, y solo cuando hay algo que decir: el campo es `optional`
+	// porque «quiero 0» y «no dije nada» serían el mismo byte en el cable. Aquí el
+	// Cloud NUNCA quiere 0 —una salida de cero tokens no es una respuesta—, así que
+	// un valor no positivo significa «no lo fijo» y el Edge aplica su default.
+	// Escribir un puntero a 0 le pediría al Edge un num_predict de cero.
+	if req.MaxOutputTokens > 0 {
+		tope := req.MaxOutputTokens
+		frame.MaxOutputTokens = &tope
+	}
 	return &cloudlinkv1.CloudToEdge{
 		CommandId: cmdID,
 		SessionId: sessionID,
-		Payload: &cloudlinkv1.CloudToEdge_InferenceRequest{
-			InferenceRequest: &cloudlinkv1.InferenceRequest{
-				CommandId:   cmdID,
-				SessionId:   req.OriginSessionID,
-				Prompt:      req.Prompt,
-				Format:      req.Format,
-				Temperature: &temp,
-				TimeoutMs:   inferTimeout(req.Timeout).Milliseconds(),
-			},
-		},
+		Payload:   &cloudlinkv1.CloudToEdge_InferenceRequest{InferenceRequest: frame},
 	}
 }
 
