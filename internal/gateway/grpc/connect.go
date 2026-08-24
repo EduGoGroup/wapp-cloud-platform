@@ -517,6 +517,26 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 
 	s.registerSession(regCtx, cc)
 
+	// El Ollama de este Edge acaba de aparecer y su caché de prefijo está fría: la
+	// primera inferencia real del tenant pagaría el prefill entero (~50 s medidos en
+	// UAT) con un cliente esperando al otro lado (T1.7-4).
+	//
+	// 🔴 VA FUERA DEL regCtx, y tiene que ir fuera: ese ctx es el presupuesto del
+	// HANDSHAKE (s.workBudget, del orden de segundos) y un calentamiento dura ~50 s.
+	// Colgarlo de ahí lo mataría siempre, sin un solo error que lo delatara. Quien lo
+	// atiende dispara y vuelve, con su propio reloj (ver el contrato de OnWarmup).
+	//
+	// ⚠️ EL CANAL DE CONTROL NO SE CALIENTA. No es una guarda defensiva: un Edge con el
+	// operador logueado y CERO teléfonos emparejados no va a recibir ningún mensaje que
+	// clasificar, así que calentarlo gastaría ~50 s de la CPU del cliente y ~250 MB de
+	// su caché por un prefijo que nadie va a pedir. Es el mismo criterio con el que esa
+	// sesión tampoco es flota (MP-11), aplicado al recurso que aquí se gasta.
+	// El `kind` va VACÍO: no se acaba de publicar ninguna config concreta, es que este
+	// Edge no tiene NADA cacheado todavía.
+	if s.OnWarmup != nil && cc.sessionID != cltransport.ControlSessionID {
+		s.OnWarmup(cc.tenantID, cc.edgeID, cc.sessionID, "")
+	}
+
 	// El molde es el de runJob (worklane.go): un trabajo que se pasa del presupuesto
 	// DEJA RASTRO. Sin este aviso, un handshake que se rindió a medias —sesión sin
 	// lease inicial, o sin su config— sería indistinguible de uno completo.

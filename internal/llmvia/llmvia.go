@@ -249,3 +249,81 @@ func (s *Selector) ahoraFn() time.Time {
 	}
 	return s.ahora()
 }
+
+// ErrViaSinCalentamiento indica que el tenant no está en una vía que tenga caché de
+// prefijo que calentar. NO es un fallo: es la respuesta correcta para un tenant en
+// vía API, y por eso es un error nombrado y no un `nil` mudo — quien lo reciba tiene
+// que poder decir «no había nada que hacer» en vez de «lo hice».
+var ErrViaSinCalentamiento = errors.New("llmvia: la vía del tenant no tiene caché de prefijo que calentar")
+
+// Warm emite UN calentamiento de la caché de prefijo del Edge (T1.7-4).
+//
+// sessionID es la sesión POR LA QUE debe salir —el Edge cuya caché se quiere llenar—,
+// no la conversación que preguntó: aquí no hay ninguna. Viaja como TargetSessionID y
+// por eso no aparece en el payload del frame.
+//
+// # 🔴 POR QUÉ ESTO VIVE AQUÍ Y NO EN EL PAQUETE DEL CALENTAMIENTO
+//
+// Porque preguntar «¿este tenant tiene una caché de prefijo?» ES preguntar por la
+// vía, y C2 dice que eso se hace en un solo sitio. La alternativa —que el emisor del
+// calentamiento mirase `tenant_llm.via`— habría puesto el segundo `if via` del repo
+// justo en el fichero número N+1 contra el que TestC2_LaViaSoloSePreguntaEnLaSeleccion
+// existe. La otra alternativa —calentar SIEMPRE, sin mirar— no es gratis: al tenant en
+// vía API le gastaría ~50 s del Ollama de SU máquina y 250 MB de caché por un prefijo
+// que nadie va a volver a pedir, compitiendo además con el clasificador que el propio
+// Edge sí ejecuta.
+//
+// # Lo que NO hace, y es deliberado
+//
+//   - NO envuelve el provider con notifying(): un calentamiento que falla no es una
+//     degradación de la vía del dueño. Nadie lo pidió y su fallo no le quita nada al
+//     cliente; avisarle sería mandarlo a revisar un equipo que está bien. Misma
+//     familia que ErrInferenceAbandonada.
+//   - NO bloquea al llamante por su cuenta ni se pone reloj: el ctx lo trae quien
+//     llama, que es quien sabe cuánto está dispuesto a esperar por algo que nadie
+//     está esperando.
+func (s *Selector) Warm(ctx context.Context, tenantID, sessionID string, in llm.ClassifyRequestInput) error {
+	cfg, found, err := s.cfg.Get(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+	// ==================================================================
+	// 🔴 EL MISMO SWITCH POR VÍA DE Selector.For, no uno nuevo: mismas dos ramas,
+	// mismo default de REQ-33 (sin fila ⇒ local) y mismo error para el valor fuera
+	// del vocabulario. Si algún día hay una tercera vía, las dos ramas se amplían
+	// juntas o una de ellas empieza a mentir.
+	// ==================================================================
+	switch via {
+	case tenantllm.ViaLocal:
+	case tenantllm.ViaAPI:
+		// El prefijo de un proveedor por API lo cachea —o no— el proveedor, y no hay
+		// nada en nuestra mano que empujar.
+		return ErrViaSinCalentamiento
+	default:
+		return fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
+
+	prov, err := s.localCalentador(tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return prov.Warm(ctx, in)
+}
+
+// localCalentador arma el adaptador local apuntado a UN Edge concreto.
+//
+// Copia s.localOpts por el mismo motivo que localProvider —el Selector se comparte
+// entre goroutines y un append directo sobre su slice pisaría al vecino— y devuelve
+// el tipo CONCRETO a propósito: Warm no está en el puerto llm.LLMProvider y no debe
+// estarlo. El puerto es lo que el pipeline usa; el calentamiento no es una etapa del
+// pipeline, es mantenimiento de la máquina del cliente.
+func (s *Selector) localCalentador(tenantID, sessionID string) (*local.Provider, error) {
+	opts := make([]local.Option, 0, len(s.localOpts)+1)
+	opts = append(opts, s.localOpts...)
+	opts = append(opts, local.WithTargetSession(sessionID))
+	return local.New(s.frame, tenantID, opts...)
+}

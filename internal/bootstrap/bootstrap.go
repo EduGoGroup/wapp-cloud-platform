@@ -416,7 +416,19 @@ func Run(ctx context.Context) error {
 	intakeAhead := intakeahead.New(log, intentStore, llmSelector,
 		intakeahead.SinkFunc(func(key intake.WindowKey, intent string, confidence float64) {
 			intakeAggregator.OnClassified(key, intent, confidence)
-		}))
+		}),
+		// EL CALENTAMIENTO DE LA CACHÉ DE PREFIJO (T1.7-4). El emisor es el MISMO
+		// selector de vía, porque decidir si un tenant tiene caché que calentar es
+		// preguntar por la vía y eso se hace en un solo sitio (C2). Sin este cable el
+		// pipeline funciona igual: solo vuelve a pagar el prefill frío (~50 s) en la
+		// primera inferencia de cada prefijo nuevo.
+		intakeahead.WithCalentador(llmSelector))
+	// El OTRO extremo del mismo cable, y va aquí por el nudo de construcción: el
+	// gateway se arma ANTES que el pool (el selector necesita el gateway y el pool
+	// necesita el selector), así que el gateway recibe el hook DESPUÉS, con el mismo
+	// molde que OnIncoming/OnHeartbeat. El gateway solo dice CUÁNDO se enfrió la caché
+	// —sesión registrada, ConfigUpdate empujado—; el qué y el si son del pool.
+	gw.OnWarmup = intakeAhead.Warm
 	intakeAggregator = flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
 		flowruntime.WithSourceComposer(intakeComposer),
 		flowruntime.WithAheadRequester(intakeAhead))
