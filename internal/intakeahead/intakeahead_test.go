@@ -606,6 +606,96 @@ func TestCalidad_DosFallosSeguidos_SeRinde(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// El reintento comparte UN presupuesto con la primera pasada (arreglo del reloj
+// único, 2026-08-24)
+// ---------------------------------------------------------------------------
+
+// presupuestoDePrueba es el plazo con el que corren los dos tests de abajo. Es
+// milisegundos en vez de segundos porque lo que se prueba es la ARITMÉTICA de la
+// mitad, y esa no cambia con la escala; dormir 45 s de verdad sí.
+const presupuestoDePrueba = time.Second
+
+// TestReintento_NoArrancaSinPlazoParaSerUnReintento: si la primera pasada se comió más
+// de la mitad del presupuesto, NO hay segunda.
+//
+// Antes del arreglo del reloj único esto no se podía dar: el adaptador tenía plazo
+// propio y las dos pasadas cabían siempre porque cada una traía el suyo. Hoy comparten
+// el del pool, y un reintento que arranca con las sobras es un fallo garantizado que
+// ocupa un worker y le escribe al dueño un aviso de degradación por una avería que no
+// existe.
+//
+// 🔬 MUTACIÓN VERIFICADA: quitar la guarda `if !p.cabeElReintento(ctx)` de pedir ⇒ rojo
+// aquí (habría 2 llamadas).
+func TestReintento_NoArrancaSinPlazoParaSerUnReintento(t *testing.T) {
+	// 🔴 SE ESPERA A QUE LA PRIMERA PASADA TERMINE, NO A QUE EMPIECE, y esa distinción
+	// es la diferencia entre un test que mira y uno que no: provFake cuenta la llamada
+	// AL ENTRAR, antes de ejecutar el gancho, así que `veces() == 1` se cumple en
+	// microsegundos y contar ahí daría 1 con guarda y sin ella. La primera versión de
+	// este test hacía justo eso y la mutación salió VERDE.
+	//
+	// La señal se cierra cuando el gancho acaba de dormir, o sea justo antes de que la
+	// primera pasada devuelva: a partir de ahí, un reintento entraría en
+	// ClassifyRequest —y quedaría contado— en microsegundos.
+	primeraTermina := make(chan struct{})
+	var una sync.Once
+	// La primera pasada tarda MÁS de la mitad del presupuesto y falla por calidad.
+	prov := &provFake{
+		respuestas: []respuesta{{raw: "esto no es JSON"}},
+		antesDeResponder: func() {
+			time.Sleep(presupuestoDePrueba * 7 / 10)
+			una.Do(func() { close(primeraTermina) })
+		},
+	}
+	sink := nuevoSink()
+	p := arranca(t, configSembrada(t, catalogoPublicado), &selFake{prov: prov}, sink,
+		intakeahead.WithTimeout(presupuestoDePrueba))
+
+	p.Request(clave(), "quiero 200 sillas")
+	select {
+	case <-primeraTermina:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("la primera pasada no llegó a responder")
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if got := prov.veces(); got != 1 {
+		t.Fatalf("con menos de media vuelta de presupuesto NO se reintenta; hubo %d llamadas", got)
+	}
+	if got := len(sink.todo()); got != 0 {
+		t.Fatalf("sin clasificación interpretable no llega ninguna pista; llegaron %d", got)
+	}
+}
+
+// TestReintento_SI_ArrancaCuandoQuedaMediaVuelta es el gemelo, y va emparejado a
+// propósito: sin él, la guarda de arriba pasaría igual con un `return nil, err` que
+// matara el reintento SIEMPRE — y entonces REQ-02/REQ-03 estarían rotos sin que nada lo
+// dijera.
+//
+// Misma forma que el de arriba, cambiando solo lo que tarda la primera pasada.
+func TestReintento_SI_ArrancaCuandoQuedaMediaVuelta(t *testing.T) {
+	prov := &provFake{
+		respuestas: []respuesta{
+			{raw: "esto no es JSON"},
+			{raw: artefacto("intake_request", 0.88, "quiero 200 sillas", nil)},
+		},
+		antesDeResponder: func() { time.Sleep(presupuestoDePrueba / 10) },
+	}
+	sink := nuevoSink()
+	p := arranca(t, configSembrada(t, catalogoPublicado), &selFake{prov: prov}, sink,
+		intakeahead.WithTimeout(presupuestoDePrueba))
+
+	p.Request(clave(), "quiero 200 sillas")
+	got := sink.esperaUno(t)
+
+	if got.name != "intake_request" {
+		t.Fatalf("con presupuesto de sobra el reintento tiene que salvar la clasificación: %+v", got)
+	}
+	if prov.veces() != 2 {
+		t.Fatalf("quiero la pasada y su reintento (2 llamadas); hubo %d", prov.veces())
+	}
+}
+
 // TestFalloDeVia_NoSeReintenta: el reintento es por CALIDAD, no por vía. Reintentar un
 // Edge caído sería pagar dos veces el mismo timeout dentro de la ventana.
 func TestFalloDeVia_NoSeReintenta(t *testing.T) {

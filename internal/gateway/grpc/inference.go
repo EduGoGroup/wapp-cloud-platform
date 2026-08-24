@@ -62,13 +62,21 @@ import (
 // lo encuentre antes de que se lo cuente un dashboard.
 // ============================================================================
 
-// defaultInferGrace es el margen que el Cloud espera POR ENCIMA del timeout_ms que
+// DefaultInferGrace es el margen que el Cloud espera POR ENCIMA del timeout_ms que
 // le dio al Edge. Sin margen, los dos relojes vencerían a la vez y el Cloud se
 // rendiría JUSTO cuando el Edge está mandando su INFERENCE_ERROR_TIMEOUT: se
 // perdería el error NOMBRADO —el que dice qué pasó— y en su lugar se registraría un
 // «no contestó» genérico. Cinco segundos es el ida y vuelta del frame más el tiempo
 // del Edge en construir su respuesta, con holgura.
-const defaultInferGrace = 5 * time.Second
+//
+// 🔴 ESTÁ EXPORTADA PORQUE EL LLAMANTE TIENE QUE RESERVARLA DE SU PROPIO PLAZO, y
+// eso no se puede hacer sin conocer el número. Quien deriva su Timeout del deadline
+// que le dieron (internal/llmvia/local) resta un margen que debe cubrir ESTE, o el
+// timer de awaitInference vencería DESPUÉS del ctx del llamante y el veredicto lo
+// emitiría un `ctx.Done()` —sin motivo, sin aviso— en vez del Edge, que es quien
+// sabe qué pasó. Es la misma aritmética que el MargenSocket del Edge, vista desde
+// el otro extremo del cable: el plazo de DENTRO vence primero, siempre.
+const DefaultInferGrace = 5 * time.Second
 
 // defaultInferTimeout es el presupuesto de la inferencia cuando el llamante no fija
 // uno. No pretende ser el bueno para nada en concreto: quien conoce su ventana es el
@@ -210,7 +218,7 @@ type InferRequest struct {
 	// es el valor que más se va a pedir y a la vez el cero del campo.
 	Temperature float64
 	// Timeout es el presupuesto de ESTA inferencia, el que el Edge respeta. <= 0 ⇒
-	// defaultInferTimeout. El Cloud espera este plazo MÁS defaultInferGrace.
+	// defaultInferTimeout. El Cloud espera este plazo MÁS DefaultInferGrace.
 	Timeout time.Duration
 	// OriginSessionID es, cuando el Cloud lo sabe, la sesión de WhatsApp cuya
 	// conversación originó la pregunta. Es OPCIONAL y su papel es doble: viaja en el

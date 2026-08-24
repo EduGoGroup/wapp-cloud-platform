@@ -406,8 +406,8 @@ func TestInfer_ResultadoHuerfanoNoRompeNada(t *testing.T) {
 func TestNewMaterializaElMargenDeInferencia(t *testing.T) {
 	t.Parallel()
 	srv := New(session.NewRegistry(), logger.New(logger.WithWriter(io.Discard)))
-	if srv.inferGrace != defaultInferGrace {
-		t.Fatalf("inferGrace = %v, quiero %v", srv.inferGrace, defaultInferGrace)
+	if srv.inferGrace != DefaultInferGrace {
+		t.Fatalf("inferGrace = %v, quiero %v", srv.inferGrace, DefaultInferGrace)
 	}
 	if got := inferTimeout(0); got != defaultInferTimeout {
 		t.Fatalf("inferTimeout(0) = %v, quiero %v", got, defaultInferTimeout)
