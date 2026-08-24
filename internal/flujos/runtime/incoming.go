@@ -7,7 +7,6 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -924,12 +923,33 @@ func (rt *Runtime) degradeDurableStart(ctx context.Context, tenantID, sessionID 
 }
 
 // buildSignal arma la señal de entrada del resolver de disparos (Plan 029 · T7): el
-// texto crudo del entrante y, SOLO si el mensaje trae una intención LLM Y el tenant
-// tiene la feature llm_intent habilitada (gate de verdad, ADR-0022), la intención
-// resuelta. Sin resolver de entitlements cableado (nil) o sin la feature, la señal
-// lleva SOLO texto ⇒ una regla kind='llm' nunca dispara sin derecho (camino actual).
-// Un fallo del resolver de entitlements es best-effort: se loguea y se descarta la
-// intención (se prefiere no abrir la capacidad por un fallo transitorio).
+// texto crudo del entrante y el tipo del evento activo.
+//
+// # 🔴 AQUÍ VIVÍA LA INTENCIÓN LLM, Y SE FUE CON EL PUSH (T1.6-4, D-044.31)
+//
+// Hasta la Ola 1.6 esta función leía `m.GetIntent()` —la etiqueta que el Edge sellaba
+// en `SensitivePayload.intent` y el gateway copiaba a `IncomingMessage.intent`—, la
+// filtraba por la feature `llm_intent` (ADR-0022) y la metía en `sig.Intent`. T1.6-1
+// retiró `ClassifiedIntent` del contrato: los dos campos quedaron `reserved` y la
+// llamada dejó de compilar. No hay de dónde leerla.
+//
+// **CONSECUENCIA, DICHA CON TODAS LAS LETRAS PORQUE NO ES UN DETALLE DE ESTA FUNCIÓN:
+// `sig.Intent` ES HOY SIEMPRE nil, así que las reglas `kind='llm'` (Plan 029 · T7) NO
+// PUEDEN DISPARAR.** El resolver conserva su rama —`config_resolver.go`, `if
+// sig.Intent != nil`— y sus tests, pero en producción nadie la alcanza. La rama NO se
+// retira aquí a propósito: es un frente de producto con dueño propio, no un residuo
+// de esta tarea, y el sustituto natural (pedir la clasificación) no cabe en el camino
+// del disparo — una decisión de arranque se toma EN EL TURNO y una inferencia tarda
+// segundos (p50 medido: 8,1 s), que es exactamente lo que REQ-35 prohíbe esperar.
+//
+// El único consumidor de una clasificación pedida es hoy el adelanto de la ventana de
+// captación (`intakeahead` → `IntakeAggregator.OnClassified`), que puede permitírselo
+// porque NO corre en el turno: adelanta un cierre que iba a ocurrir igual.
+//
+// Los dos primeros parámetros quedan sin usar y NO se retiran: los cuatro llamantes
+// pasan ya el tenant y el ctx, la firma es la que documenta el contrato del resolver,
+// y quitarlos ahora obligaría a reponerlos el día que la señal vuelva a tener una
+// fuente. Ese día se cambia el cuerpo, no las llamadas.
 //
 // activeEventKind es el TIPO del evento ACTIVO en el instante de interpretar la señal
 // (Plan 043 · T5.3, D-043.9; enmendado Ola 6, decisión de Jhoan 2026-08-11). ⚠️
@@ -965,28 +985,8 @@ func (rt *Runtime) degradeDurableStart(ctx context.Context, tenantID, sessionID 
 // desconocido») NO es alcanzable en producción y se fija solo a nivel de resolver.
 // Así se deja (D-043.9 vía Jhoan, 2026-08-10): no se toca ResolveLive ni
 // liveEventSwitch en esta tarea.
-func (rt *Runtime) buildSignal(ctx context.Context, tenantID string, m *cloudlinkv1.IncomingMessage, activeEventKind string) trigger.Signal {
-	sig := trigger.Signal{Text: m.GetText(), ActiveEventKind: activeEventKind}
-	ci := m.GetIntent()
-	if ci == nil || rt.entitlements == nil {
-		return sig
-	}
-	has, err := rt.entitlements.Has(ctx, tenantID, entitlements.FeatureLLMIntent)
-	if err != nil {
-		rt.log.Warn("runtime: no se pudo resolver la feature llm_intent; se descarta la intención",
-			"error", err, "tenant_id", tenantID)
-		return sig
-	}
-	if !has {
-		return sig
-	}
-	sig.Intent = &trigger.IntentSignal{
-		Name:          ci.GetIntent(),
-		Params:        ci.GetParams(),
-		Confidence:    float64(ci.GetConfidence()),
-		ConfigVersion: ci.GetConfigVersion(),
-	}
-	return sig
+func (rt *Runtime) buildSignal(_ context.Context, _ string, m *cloudlinkv1.IncomingMessage, activeEventKind string) trigger.Signal {
+	return trigger.Signal{Text: m.GetText(), ActiveEventKind: activeEventKind}
 }
 
 // conversationExpired decide si un estado vivo venció por el TTL conversacional del

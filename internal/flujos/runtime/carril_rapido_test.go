@@ -31,9 +31,11 @@ package runtime_test
 // Alcance honesto — lo que este test NO vigila:
 //   - No cubre el Edge (edge/wapp-edge-intent), donde vive el clasificador real: eso
 //     es responsabilidad de ese repo.
-//   - No prueba que un `ClassifiedIntent` nunca LLEGA por el proto (eso es un hecho
-//     del Edge); prueba que, llegue o no, la navegación numérica y la entrada tardía
-//     nunca dejan que esa intención alcance una decisión de Resolve/ResolveLive.
+//   - No prueba que una intención nunca LLEGA por el proto. 🔧 Desde T1.6-1 eso ya no
+//     es «un hecho del Edge» sino del CONTRATO —`ClassifiedIntent` salió del proto y no
+//     hay dónde ponerla—, así que la afirmación es hoy más fuerte y más barata. Lo que
+//     este test prueba sigue siendo lo mismo: la navegación numérica y la entrada tardía
+//     no dejan que ninguna intención alcance una decisión de Resolve/ResolveLive.
 //   - IsEscape y ResolveLive NO pueden quedar bajo el "muere si te llaman": producción
 //     las consulta en turnos numéricos legítimos. IsEscape la consulta advanceLive EN
 //     TODO turno con conversación viva (runtime/incoming.go, justo antes de
@@ -62,8 +64,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -265,12 +265,15 @@ func TestCarrilRapido_NumeroDentroDeUnFlujoVivo(t *testing.T) {
 		runtime.WithTriggerResolver(res),
 		runtime.WithEventStore(newMemEventStore(time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))))
 
-	// El «2» llega CON una etiqueta del clasificador pegada (como si el Edge la hubiera
-	// mandado pese al carril rápido). Es lo que da filo al fake: sin ella, un cambio
-	// que sustituyera el texto por la etiqueta en IsEscape/ResolveLive no tendría nada
-	// que sustituir y pasaría inadvertido. Con ella, la sustitución se ve.
+	// 🔧 AQUÍ IBA UN SEÑUELO Y SE FUE CON EL CAMPO (T1.6-1/T1.6-4). El «2» llegaba con
+	// una etiqueta del clasificador pegada, y eso le daba filo al fake: un cambio que
+	// sustituyera el texto por la etiqueta en IsEscape/ResolveLive tenía algo que
+	// sustituir y se veía. Hoy `IncomingMessage` NO TIENE dónde llevar una etiqueta
+	// —D-044.31 retiró `ClassifiedIntent` del contrato—, así que el señuelo no se puede
+	// montar y esa mutación concreta ya no es expresable: no hay etiqueta que poner en
+	// lugar del texto. Lo que este subtest sigue fijando —que el «2» vivo atraviesa
+	// liveEventSwitch y que ResolveLive se consulta con el texto crudo— no cambia.
 	numerico := incoming(testContact, "2", "wamid.t51ii-a")
-	numerico.Intent = &cloudlinkv1.ClassifiedIntent{Intent: "reordenar", Confidence: 0.97}
 	if err := rt.HandleIncoming(ctx, testSession, numerico); err != nil {
 		t.Fatalf("navegar con «2»: %v", err)
 	}
@@ -302,12 +305,13 @@ func TestCarrilRapido_NumeroDentroDeUnFlujoVivo(t *testing.T) {
 // despachador, vía handleTrigger→openWithOffer, literal en el criterio del
 // plan—, nunca a una decisión con una intención LLM.
 //
-// El mensaje tardío lleva un `ClassifiedIntent` SIMULADO (como si el Edge lo
-// hubiera clasificado y lo llevara en el proto — cloudlinkv1.IncomingMessage.Intent)
-// a propósito: sin entitlements cableado (rt.entitlements queda nil, igual que en el
-// resto de este paquete de tests) buildSignal lo descarta ANTES de construir la
-// Signal (runtime/incoming.go buildSignal, gate ADR-0022), así que t51LateEntrySpy
-// nunca debería ver sig.Intent != nil. Si esa poda se rompiera, el spy lo mataría.
+// 🔧 EL MENSAJE TARDÍO LLEVABA UN `ClassifiedIntent` SIMULADO, y ya no puede: el
+// campo se retiró del contrato (T1.6-1, D-044.31) y buildSignal dejó de leerlo
+// (T1.6-4). La aserción del spy sobre `sig.Intent != nil` sigue en pie y hoy prueba
+// algo MÁS FUERTE que antes —entonces probaba que el gate de la feature podaba la
+// etiqueta; hoy prueba que no hay etiqueta que podar, venga de donde venga—, pero
+// hay que decir lo que se perdió: ya no hay forma de simular un Edge que mande la
+// etiqueta igualmente, porque el proto no tiene dónde ponerla.
 func TestCarrilRapido_EntradaTardiaVaAlDespachadorNoAlLLM(t *testing.T) {
 	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	ctx := context.Background()
@@ -349,7 +353,6 @@ func TestCarrilRapido_EntradaTardiaVaAlDespachadorNoAlLLM(t *testing.T) {
 	// como ENTRADA TARDÍA (arranque nuevo, no avance).
 	evs.now = t0.Add(90 * time.Minute)
 	tarde := incoming(testContact, "2", "wamid.t51iii-b")
-	tarde.Intent = &cloudlinkv1.ClassifiedIntent{Intent: "reordenar", Confidence: 0.97}
 	if err := rt.HandleIncoming(ctx, testSession, tarde); err != nil {
 		t.Fatalf("entrada tardía: %v", err)
 	}
