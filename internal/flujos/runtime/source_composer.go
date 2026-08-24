@@ -16,6 +16,15 @@
 // precedente de la casa es el mismo: el `WebhookSink` no descifra, descifra el
 // worker (`integrations/worker.go`, D-042.9/D-042.11).
 //
+// # 🔴 ESTE FICHERO NO TIENE GATE PROPIO, Y NO PUEDE GANAR UNO (ADR-0044, D-044.28)
+//
+// Solo se llega aquí desde `closeWindow`, y a esa ventana solo llegó lo que el gate
+// del agregador dejó pasar: `llm_intake` y nada más. Preguntar aquí otra vez sería
+// duplicar la decisión —y preguntar por `api_llm` sería inventarse una nueva—: la
+// VÍA por la que se analiza el `source_text` se elige mucho después, cuando el
+// worker toma el job, no cuando se compone el texto. Un tenant de vía local
+// compone, cifra y guarda su sobre igual que uno de vía API.
+//
 // # LAS DOS CLASES DE CONTEXTO SON UN SOLO MECANISMO, Y SE PUEDE COMPROBAR
 //
 // El hilo trae hasta cuatro `entry_kind` y este fichero los reparte en TRES
