@@ -56,17 +56,22 @@ func planesCon(t *testing.T, db *sql.DB, feature string) []string {
 func TestIntegration_LasFeaturesDeTipoCasanConLaSiembra(t *testing.T) {
 	db := openTestDB(t)
 
-	losCinco := []string{"advisor_ai", "advisor_ai_pro", "basic", "commerce", "pro"}
-	sinBasic := []string{"advisor_ai", "advisor_ai_pro", "commerce", "pro"}
+	// 🔧 ERAN CINCO HASTA LA 0074 (Plan 044 · Ola 1.5), que añadió `advisor_ai_local`
+	// —la captación con IA por vía local, sin `api_llm` (ADR-0044)—. El plan nuevo
+	// copia la foto de `advisor_ai`, así que entra en las CUATRO listas de abajo. Se
+	// renombra la variable en vez de dejarla mintiendo: el día que el reparto vuelva
+	// a moverse, un nombre con un número dentro es la primera cosa que engaña.
+	losSeis := []string{"advisor_ai", "advisor_ai_local", "advisor_ai_pro", "basic", "commerce", "pro"}
+	sinBasic := []string{"advisor_ai", "advisor_ai_local", "advisor_ai_pro", "commerce", "pro"}
 
 	quiero := []struct {
 		feature string
 		planes  []string
 	}{
-		{entitlements.FeatureMenu, losCinco},      // 0039: los cinco planes
-		{entitlements.FeatureCartBasic, losCinco}, // 0039: los cinco planes
-		{entitlements.FeatureSurvey, losCinco},    // 0053: nace en basic ⇒ los cinco
-		{entitlements.FeatureMedia, sinBasic},     // 0053: nace en commerce ⇒ basic NO
+		{entitlements.FeatureMenu, losSeis},      // 0039 + 0074: todos los planes
+		{entitlements.FeatureCartBasic, losSeis}, // 0039 + 0074: todos los planes
+		{entitlements.FeatureSurvey, losSeis},    // 0053: nace en basic ⇒ todos
+		{entitlements.FeatureMedia, sinBasic},    // 0053: nace en commerce ⇒ basic NO
 	}
 
 	for _, c := range quiero {

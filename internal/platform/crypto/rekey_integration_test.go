@@ -325,15 +325,24 @@ func seedLosSeisSobres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp 
 	// atrás y luego se retirase la KEK vieja, no habría de dónde recuperarlo —wApp
 	// no tiene copia de la clave del tenant—, al revés que con el resto del censo.
 	//
-	// Su trío es NOT NULL (0071), así que aquí NO hay «fila sin sobre» que sembrar
-	// como contrapunto —el papel que hace la fila de tenant_integrations sin
-	// secreto—: en esta tabla ese estado no existe.
+	// 🔧 `via` VA EXPLÍCITA Y VALE 'api' (barrido del CLI, 2026-08-23). Sin ella la
+	// fila toma el DEFAULT 'local' que puso la 0073, y una fila local con sobre la
+	// rechaza `tenant_llm_local_sin_credencial_check`: el seed moría en el Fatalf de
+	// abajo y con él los DOS tests que lo llaman. Es la vía que corresponde, además:
+	// esta fila existe para que la rotación de KEK la encuentre, y la rotación solo
+	// mira filas con credencial, que por definición son de vía API.
+	//
+	// 🔧 EL PÁRRAFO DE AQUÍ DECÍA «su trío es NOT NULL (0071), en esta tabla ese
+	// estado no existe». La 0073 lo aflojó: ahora una fila SIN sobre sí es
+	// representable (es toda fila de vía local), así que ese contrapunto ya podría
+	// sembrarse. No se siembra porque a la rotación no le aporta —una fila sin sobre
+	// no entra en el censo—, pero la razón es esa y no que el estado sea imposible.
 	const claveDelProveedor = "sk-ant-api03-clave-falsa-de-prueba" // #nosec G101 -- clave inventada, no una credencial real
 	encL, dekL, kidL := mustEncrypt(t, cipher, claveDelProveedor)
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO public.tenant_llm
-			(tenant_id, provider, model, api_key_enc, api_key_dek, api_key_kek_id, consented_at)
-		VALUES ($1, 'anthropic', 'claude-sonnet-4-5', $2, $3, $4, now())
+			(tenant_id, via, provider, model, api_key_enc, api_key_dek, api_key_kek_id, consented_at)
+		VALUES ($1, 'api', 'anthropic', 'claude-sonnet-4-5', $2, $3, $4, now())
 	`, tenant, encL, dekL, kidL); err != nil {
 		t.Fatalf("sembrar tenant_llm: %v", err)
 	}

@@ -80,8 +80,16 @@ type TenantLLMStore interface {
 // de confirmación offline sobre un valor de formato conocido y público
 // (`sk-ant-…`) a cambio de una pregunta que nadie hace. Si algún día aparece esa
 // pregunta, ESE día se añade el campo.
+//
+// 🔴 `via` SALE SIEMPRE Y SIN `omitempty` (T1.5-2, REQ-33), al revés que
+// `provider`/`model`. Un tenant SIEMPRE tiene vía —la que no configuró es
+// `local`, que es el default del producto y no «ninguna»—, así que un campo que
+// desapareciera del JSON obligaría a la pantalla a inventar el valor ausente, y
+// la mitad de las pantallas lo inventaría distinto. `provider` sí puede faltar,
+// y su ausencia significa algo concreto: la vía local no llama a ningún tercero.
 type tenantLLMDTO struct {
 	Configured  bool   `json:"configured"`
+	Via         string `json:"via"`
 	Provider    string `json:"provider,omitempty"`
 	Model       string `json:"model,omitempty"`
 	KeySet      bool   `json:"key_set"`
@@ -102,10 +110,23 @@ type tenantLLMDTO struct {
 // externo (ADR-0030). Un `false` o su ausencia son 400, no un upsert silencioso
 // con consentimiento apagado — la tabla no tiene forma de representar eso.
 //
-// `api_key` es OBLIGATORIA en cada PUT, y ahí este contrato se separa a
-// propósito del de integrations (donde `secret` vacío conserva el existente):
-// ver validateTenantLLM.
+// `api_key` es OBLIGATORIA en cada PUT DE LA VÍA API, y ahí este contrato se
+// separa a propósito del de integrations (donde `secret` vacío conserva el
+// existente): ver validateTenantLLM.
+//
+// 🔴 `via` ES OBLIGATORIO Y NO TIENE DEFECTO EN EL CUERPO (T1.5-2, REQ-33), y
+// esto es una decisión, no un olvido. El default `local` vive en la COLUMNA: es
+// el estado de quien todavía no ha elegido. Pero un PUT es LITERALMENTE el acto
+// de elegir —«cambiar de vía es un acto de configuración del tenant», REQ-33—, y
+// un acto de configuración que elige por ti la vía cuando callas es la forma más
+// barata de acabar con un tenant en una vía que no pidió. Ausente o desconocido
+// ⇒ 400 `invalid_via`.
+//
+// Efecto colateral BUSCADO: un cuerpo con la forma vieja —`{provider, model,
+// api_key, consented}`, sin `via`— NO se acepta en silencio como vía API. Falla
+// nombrado, que es lo que se le pide a un contrato que cambia en alpha.
 type tenantLLMRequest struct {
+	Via       string `json:"via"`
 	Provider  string `json:"provider"`
 	Model     string `json:"model"`
 	APIKey    string `json:"api_key"`
@@ -115,8 +136,13 @@ type tenantLLMRequest struct {
 // notConfiguredTenantLLM es lo que responde el GET de un tenant SIN fila: la vía
 // API no está configurada. No es un 404 — «no tengo vía API» es una respuesta, y
 // es la que la pantalla necesita para dibujar el formulario vacío.
+//
+// 🔴 Y RESPONDE `via:"local"`, NO VACÍO (REQ-33). Un tenant sin fila no está
+// «sin vía»: está en la vía por defecto, que es la local. Decir vacío obligaría
+// a la pantalla a traducir la ausencia, y esa traducción es justo la que no debe
+// vivir en el cliente — vive aquí, en la única capa que conoce el default.
 func notConfiguredTenantLLM() tenantLLMDTO {
-	return tenantLLMDTO{Configured: false, KeySet: false}
+	return tenantLLMDTO{Configured: false, Via: tenantllm.ViaLocal, KeySet: false}
 }
 
 // toTenantLLMDTO arma la respuesta a partir de la fila. La fila ya viene SIN la
@@ -124,6 +150,7 @@ func notConfiguredTenantLLM() tenantLLMDTO {
 func toTenantLLMDTO(cfg tenantllm.Config) tenantLLMDTO {
 	dto := tenantLLMDTO{
 		Configured: true,
+		Via:        cfg.Via,
 		Provider:   cfg.Provider,
 		Model:      cfg.Model,
 		KeySet:     cfg.HasAPIKey,
@@ -181,13 +208,24 @@ func getTenantLLMHandler(ts TenantLLMStore) http.Handler {
 // El tenant sale del token (INV-7): un `tenant_id` en el cuerpo no existe para
 // este handler (ver tenantLLMRequest).
 //
+// LOS DOS EJES (T1.5-2, D-044.22 ratificada): el cuerpo trae `via` —quién
+// ejecuta— y, SOLO si la vía es `api`, `provider` —a qué tercero se llama—. Un
+// cuerpo con `provider` y sin `via` es 400 (no se adivina la vía); un cuerpo con
+// `via:"api"` y sin `provider` es 400 por el vocabulario del proveedor; y con
+// `via:"local"` el `provider` que venga NO se guarda, porque la vía local no
+// llama a ningún tercero y una fila local con proveedor sería una contradicción
+// escrita en la base.
+//
 // Respuestas:
 //
 //   - 200 con la configuración RESULTANTE releída (misma forma que el GET).
-//   - 400 cuerpo no-JSON, `consented` ausente o false, proveedor desconocido,
-//     modelo vacío o largo, clave ausente / corta / larga.
+//   - 400 cuerpo no-JSON; `via` ausente o desconocida; y en la vía `api`:
+//     `consented` ausente o false, proveedor desconocido, modelo vacío o largo,
+//     clave ausente / corta / larga.
 //   - 401 sin identidad; 403 sin la feature (middleware); 413 cuerpo excesivo.
-//   - 422 provider="local": la vía local NO está cableada en v1 (D-044.4).
+//   - 422 `via:"local"`: la vía local NO está cableada en esta ola (la abre
+//     T1.6-3). Y 422 `provider:"local"`, que es el mismo «no» por el otro eje
+//     (D-044.4).
 //   - 500 fallo del store.
 func putTenantLLMHandler(ts TenantLLMStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -210,17 +248,8 @@ func putTenantLLMHandler(ts TenantLLMStore) http.Handler {
 			return
 		}
 
-		cfg := tenantllm.Config{
-			TenantID: id.TenantID, // INV-7: del token, jamás del cuerpo
-			Provider: req.Provider,
-			Model:    req.Model,
-		}
-		// El instante del consentimiento lo pone el SERVIDOR, no el cuerpo: el
-		// cliente afirma que consiente (`consented:true`), y cuándo lo afirmó es
-		// un hecho observado aquí. Un `consented_at` que viniera del cuerpo sería
-		// una fecha que el tenant elige, y el registro de un consentimiento no
-		// puede ser antedatable por quien lo da.
-		if err := ts.Upsert(r.Context(), cfg, req.APIKey, time.Now().UTC()); err != nil {
+		cfg, apiKey, consentedAt := upsertDesde(req, id.TenantID)
+		if err := ts.Upsert(r.Context(), cfg, apiKey, consentedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "no se pudo guardar la configuración LLM")
 			return
 		}
@@ -234,6 +263,35 @@ func putTenantLLMHandler(ts TenantLLMStore) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, toTenantLLMDTO(cfg))
 	})
+}
+
+// upsertDesde traduce el cuerpo YA VALIDADO a los tres argumentos del store.
+// Existe para que el handler no cargue con la rama de la vía (gocyclo mide el
+// handler entero) y, sobre todo, para que la decisión quepa entera en un sitio.
+//
+// 🔴 EN LA VÍA LOCAL, LA CREDENCIAL NI SIQUIERA CRUZA LA LLAMADA. El store ya la
+// ignoraría —escribe NULL en el sobre—, pero pasarla igual dejaría la clave en
+// un argumento vivo de una operación que no la usa, y el criterio de este
+// paquete es el contrario: lo que no hace falta, no se mueve. Lo mismo con el
+// instante de consentimiento: en la vía local no hay a qué consentir, así que va
+// el cero, y el cero significa NULL.
+//
+// El instante del consentimiento lo pone el SERVIDOR, no el cuerpo: el cliente
+// afirma que consiente (`consented:true`), y cuándo lo afirmó es un hecho
+// observado aquí. Un `consented_at` que viniera del cuerpo sería una fecha que
+// el tenant elige, y el registro de un consentimiento no puede ser antedatable
+// por quien lo da.
+func upsertDesde(req tenantLLMRequest, tenantID string) (tenantllm.Config, string, time.Time) {
+	cfg := tenantllm.Config{
+		TenantID: tenantID, // INV-7: del token, jamás del cuerpo
+		Via:      req.Via,
+	}
+	if req.Via != tenantllm.ViaAPI {
+		return cfg, "", time.Time{}
+	}
+	cfg.Provider = req.Provider
+	cfg.Model = req.Model
+	return cfg, req.APIKey, time.Now().UTC()
 }
 
 // deleteTenantLLMHandler devuelve DELETE /api/v1/tenant-llm: borra la fila del
@@ -286,8 +344,9 @@ func decodeTenantLLM(body io.Reader) (tenantLLMRequest, int, any) {
 	var req tenantLLMRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return tenantLLMRequest{}, http.StatusBadRequest,
-			errorBody("el cuerpo debe ser un JSON {provider, model, api_key, consented}")
+			errorBody("el cuerpo debe ser un JSON {via, provider, model, api_key, consented}")
 	}
+	req.Via = strings.TrimSpace(req.Via)
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Model = strings.TrimSpace(req.Model)
 	return req, 0, nil
@@ -297,14 +356,39 @@ func decodeTenantLLM(body io.Reader) (tenantLLMRequest, int, any) {
 // debe llegar a comprobar ella. Devuelve (status, cuerpo); cuerpo nil =
 // configuración admisible.
 //
-// EL ORDEN IMPORTA y es el mismo criterio que el de design §8.1: primero el
-// CONSENTIMIENTO, que es lo que autoriza a que exista la fila; después el
-// vocabulario; y al final la forma de los valores. Poner el consentimiento antes
-// que el resto no es cosmético: es lo que hace que «PUT sin consentimiento ⇒
-// 400» sea cierto SIEMPRE, también cuando el cuerpo trae además un proveedor
-// inválido. Si el proveedor se comprobara primero, ese caso devolvería 400 por
-// el motivo equivocado y el criterio de T0.3 pasaría por casualidad.
+// EL ORDEN IMPORTA y es el mismo criterio que el de design §8.1:
+//
+//  1. LA VÍA, antes que nada (T1.5-2). Es lo que decide QUÉ hay que exigir: sin
+//     saberla, cualquier otra comprobación estaría preguntando por campos que
+//     quizá no apliquen. Un cuerpo sin `via` no es «un PUT de vía API al que le
+//     falta un campo»: es un PUT del que no se sabe qué es.
+//  2. EL CONSENTIMIENTO, que es lo que autoriza a que exista la fila `api`.
+//  3. El vocabulario del PROVEEDOR.
+//  4. Y al final la forma de los valores.
+//
+// Poner el consentimiento por delante del resto (dentro de su vía) no es
+// cosmético: es lo que hace que «PUT sin consentimiento ⇒ 400» sea cierto
+// SIEMPRE, también cuando el cuerpo trae además un proveedor inválido. Si el
+// proveedor se comprobara primero, ese caso devolvería 400 por el motivo
+// equivocado y el criterio de T0.3 pasaría por casualidad.
+//
+// 🔴 REQ-33 EN LA RAMA `local`: no se comprueba consentimiento, ni proveedor, ni
+// modelo, ni clave — y esa AUSENCIA de comprobaciones ES la tarea, no un hueco.
+// «Elegir local no exige nada» solo es cierto si aquí no hay nada que exigir.
 func validateTenantLLM(req tenantLLMRequest) (int, any) {
+	if !tenantllm.ValidVia(req.Via) {
+		// El campo se NOMBRA en la respuesta, como hace el resto de esta API con
+		// el sujeto del rechazo. Vacío incluido: `{"via":""}` le dice al cliente
+		// «no mandaste vía», que es distinto de «mandaste una que no existe» y se
+		// lee igual de bien en un log.
+		return http.StatusBadRequest, map[string]string{
+			"error": "invalid_via",
+			"via":   req.Via,
+		}
+	}
+	if req.Via == tenantllm.ViaLocal {
+		return viaLocalNoCableada()
+	}
 	if !req.Consented {
 		return http.StatusBadRequest, map[string]string{
 			"error":  "consent_required",
@@ -324,6 +408,31 @@ func validateTenantLLM(req tenantLLMRequest) (int, any) {
 		return http.StatusBadRequest, errorBody("api_key es obligatoria en cada PUT y debe tener entre 16 y 512 caracteres")
 	}
 	return 0, nil
+}
+
+// viaLocalNoCableada es el 422 de «te entiendo y no puedo» del eje VÍA: el
+// tenant pide ejecutar en su propio fierro, la configuración lo admite (la
+// columna `via` de la 0073 guarda ese valor y el store sabe escribirlo) y lo que
+// todavía no existe es el pipeline que lo ejecute — el adaptador `local` nace en
+// la Ola 1.6 (T1.6-3, ADR-0045).
+//
+// Se reutiliza el MISMO código de error que el eje proveedor
+// (`llm_provider_unavailable`) a propósito, tal como design §8.1-bis fija: el
+// mismo «no» se dice con la misma palabra en todas las puertas y la UI lo trata
+// en un solo sitio. Lo que cambia es el campo que lo acompaña, y también a
+// propósito: aquí el sujeto del rechazo es la VÍA, así que la respuesta dice
+// `via`, no `provider`. Nombrar el eje equivocado en el cuerpo sería reintroducir
+// por la puerta de atrás la confusión que D-044.22 vino a cerrar.
+//
+// 🔴 T1.6-3 BORRA ESTA FUNCIÓN Y SU ÚNICA LLAMADA, y no toca nada más: la rama
+// `local` de validateTenantLLM pasa a `return 0, nil` y la vía queda abierta. Se
+// escribe así —una función propia, una sola llamada— para que ese día sea un
+// borrado y no una cirugía.
+func viaLocalNoCableada() (int, any) {
+	return http.StatusUnprocessableEntity, map[string]string{
+		"error": "llm_provider_unavailable",
+		"via":   tenantllm.ViaLocal,
+	}
 }
 
 // validateLLMProvider separa los TRES desenlaces del campo `provider`, que es la

@@ -129,6 +129,14 @@ const IntentIntakeRequest = "intake_request"
 // que abre el productor de filas `message` del hilo (thread.go). No es casualidad
 // ni ahorro: el agregador es el LECTOR de ese hilo, así que encender uno sin el
 // otro deja media función construida. Un tenant sin la feature produce CERO jobs.
+//
+// 🔴 Y ES EL ÚNICO GATE DE ESTE CAMINO: aquí NO se consulta `api_llm` (ADR-0044,
+// D-044.28). La vía —local o API— es una configuración DENTRO del nivel, y
+// decidirla no es asunto de la ventana: un tenant de vía local abre ventana,
+// compone su `source_text` cifrado y deja su job en `pending` exactamente igual.
+// Quien venga a añadir aquí una segunda pregunta al resolver, que lea antes el
+// docstring de entitlements.FeatureAPILLM: lo que busca no se decide en este
+// fichero. Lo vigila via_local_sin_api_llm_test.go con un resolver espía.
 const featureIntakeAggregation = entitlements.FeatureLLMIntake
 
 const (

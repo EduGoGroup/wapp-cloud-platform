@@ -99,20 +99,33 @@ func (f *fakeTenantLLM) Get(_ context.Context, tenantID string) (tenantllm.Confi
 	return cfg, true, nil
 }
 
+// Upsert imita las DOS reglas del store real (T1.5-2): la vía tiene que ser del
+// vocabulario, y solo la vía API exige credencial. Un fake más permisivo que el
+// store dejaría pasar handlers que en producción devuelven 500.
 func (f *fakeTenantLLM) Upsert(_ context.Context, cfg tenantllm.Config, apiKey string, consentedAt time.Time) error {
-	if apiKey == "" {
-		return errors.New("fake: upsert sin API key")
+	if !tenantllm.ValidVia(cfg.Via) {
+		return errors.New("fake: upsert con vía fuera del vocabulario")
+	}
+	if cfg.Via == tenantllm.ViaAPI && apiKey == "" {
+		return errors.New("fake: upsert de la vía api sin API key")
 	}
 	f.upserts++
 	f.últimaClave = apiKey
 	f.últimoConsent = consentedAt
 	previa, existía := f.rows[cfg.TenantID]
+	// En la vía local no hay consentimiento (llega el cero), pero la fila sí tiene
+	// fechas de alta y cambio: se usa el reloj para no devolver timestamps vacíos
+	// el día que T1.6-3 abra esa vía y alguien escriba el test que los mira.
+	ahora := consentedAt
+	if ahora.IsZero() {
+		ahora = time.Now().UTC()
+	}
 	cfg.ConsentedAt = consentedAt
-	cfg.UpdatedAt = consentedAt
+	cfg.UpdatedAt = ahora
 	if existía {
 		cfg.CreatedAt = previa.CreatedAt // el alta es el alta: no se pisa
 	} else {
-		cfg.CreatedAt = consentedAt
+		cfg.CreatedAt = ahora
 	}
 	f.rows[cfg.TenantID] = cfg
 	f.claves[cfg.TenantID] = apiKey
@@ -133,6 +146,7 @@ func (f *fakeTenantLLM) Delete(_ context.Context, tenantID string) error {
 // interna: si alguien renombra un campo JSON, este test lo nota.
 type llmWire struct {
 	Configured  bool   `json:"configured"`
+	Via         string `json:"via"`
 	Provider    string `json:"provider"`
 	Model       string `json:"model"`
 	KeySet      bool   `json:"key_set"`
@@ -173,8 +187,15 @@ func putLLMBody(t *testing.T, campos map[string]any) string {
 }
 
 // configuraciónLLMVálida es el cuerpo mínimo que deja una vía API configurada.
+//
+// 🔧 Lleva `via` desde T1.5-2, y es el único cambio que necesitaron los tests de
+// T0.3: el campo es OBLIGATORIO en el cuerpo (ver tenantLLMRequest), así que sin
+// él todos habrían empezado a chocar contra un 400 `invalid_via` antes de llegar
+// a lo que cada uno prueba. Que la corrección quepa en una función es la ventaja
+// de haber armado los cuerpos desde un mapa compartido.
 func configuraciónLLMVálida() map[string]any {
 	return map[string]any{
+		"via":       tenantllm.ViaAPI,
 		"provider":  tenantllm.ProviderAnthropic,
 		"model":     modeloDePrueba,
 		"api_key":   claveDePrueba,
@@ -216,9 +237,13 @@ func exigeErrorJSON(t *testing.T, cuerpo []byte, quieroError, campo, quieroCampo
 // 🔬 MUTACIÓN QUE LO PONE ROJO: quitar el bloque `if !req.Consented` de
 // validateTenantLLM (tenantllm.go) ⇒ el PUT devolvería 200 y habría fila.
 func TestTenantLLM_PutSinConsentimiento400(t *testing.T) {
+	// 🔧 LOS DOS CUERPOS LLEVAN `via` (T1.5-2) y no es decorado: validateTenantLLM
+	// comprueba la VÍA LA PRIMERA, así que un cuerpo sin ella se rechaza con
+	// `invalid_via` y este test dejaría de probar el consentimiento — pasaría a
+	// probar, por segunda vez, lo que ya prueba TestT152_ViaAusenteODesconocida400.
 	casos := map[string]map[string]any{
-		"ausente": {"provider": tenantllm.ProviderAnthropic, "model": modeloDePrueba, "api_key": claveDePrueba},
-		"false":   {"provider": tenantllm.ProviderAnthropic, "model": modeloDePrueba, "api_key": claveDePrueba, "consented": false},
+		"ausente": {"via": tenantllm.ViaAPI, "provider": tenantllm.ProviderAnthropic, "model": modeloDePrueba, "api_key": claveDePrueba},
+		"false":   {"via": tenantllm.ViaAPI, "provider": tenantllm.ProviderAnthropic, "model": modeloDePrueba, "api_key": claveDePrueba, "consented": false},
 	}
 	for nombre, cuerpo := range casos {
 		t.Run(nombre, func(t *testing.T) {
@@ -249,8 +274,12 @@ func TestTenantLLM_PutSinConsentimiento400(t *testing.T) {
 func TestTenantLLM_ElConsentimientoSeCompruebaPrimero(t *testing.T) {
 	store := newFakeTenantLLM()
 	api := nuevaAPILLM(store)
+	// 🔧 `via` va delante (T1.5-2): el orden real es vía → consentimiento →
+	// proveedor, así que sin vía el cuerpo se caería por `invalid_via` y el test
+	// no llegaría a comparar consentimiento contra proveedor, que es su asunto.
 	cuerpo := putLLMBody(t, map[string]any{
-		"provider": "inventado", "model": modeloDePrueba, "api_key": claveDePrueba, "consented": false,
+		"via": tenantllm.ViaAPI, "provider": "inventado", "model": modeloDePrueba,
+		"api_key": claveDePrueba, "consented": false,
 	})
 	rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm", cuerpo)
 	exigeCódigo(t, rec, http.StatusBadRequest)
@@ -575,7 +604,11 @@ func TestTenantLLM_SinFeature403(t *testing.T) {
 		cuerpo string
 	}{
 		{http.MethodGet, ""},
-		{http.MethodPut, `{"provider":"anthropic","model":"m","api_key":"sk-ant-api03-xxxxxxxxxxxx","consented":true}`},
+		// 🔧 El cuerpo lleva `via` (T1.5-2) aunque el gate dispare ANTES de validarlo:
+		// con un cuerpo válido, la mutación de abajo daría 200 —el fallo que se
+		// quiere ver—; con uno inválido daría 400 `invalid_via` y el test seguiría
+		// rojo por un motivo que no es el gate.
+		{http.MethodPut, `{"via":"api","provider":"anthropic","model":"m","api_key":"sk-ant-api03-xxxxxxxxxxxx","consented":true}`},
 		{http.MethodDelete, ""},
 	}
 	for _, c := range casos {
@@ -636,4 +669,141 @@ func TestTenantLLM_CuerpoExcesivo413(t *testing.T) {
 	cuerpo["model"] = strings.Repeat("x", 1<<14)
 	exigeCódigo(t, call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm",
 		putLLMBody(t, cuerpo)), http.StatusRequestEntityTooLarge)
+}
+
+// ============================================================
+// Plan 044 · Ola 1.5 · T1.5-2 — EL EJE `via` EN EL CONTRATO (REQ-33, D-044.28)
+//
+// ⏳ NO EJECUTADOS (entorno sin Go). Cada uno lleva su mutación, y la mutación
+// compila.
+// ============================================================
+
+// TestT152_ViaAusenteODesconocida400: `via` es obligatorio en el cuerpo y su
+// vocabulario es cerrado. Los dos casos que importan:
+//
+//   - "forma vieja": el cuerpo de T0.3 tal cual —provider, model, api_key,
+//     consented— SIN `via`. 🔴 Que esto sea 400 y no un 200 silencioso es la
+//     mitad del valor de la tarea: el contrato cambió, y un cuerpo viejo tiene
+//     que enterarse. Aceptarlo «como vía API, que es lo que parece» dejaría al
+//     cliente creyendo que eligió algo.
+//   - "desconocida": un valor inventado. Se nombra en la respuesta.
+//
+// 🔬 MUTACIÓN: en validateTenantLLM, sustituir la guarda por
+// `if req.Via != "" && !tenantllm.ValidVia(req.Via)` —el «arreglo» que
+// resucitaría el cuerpo viejo— ⇒ el subtest "forma vieja" dejaría de dar 400 y
+// caería en **500**: la vía vacía atravesaría la validación entera y la rechazaría
+// la guarda de vocabulario del store (aquí, del fake, que imita la del real). Se
+// dice el código exacto a propósito: un 500 es tan rojo como un 200 para el
+// `exigeCódigo`, pero quien lea la mutación tiene que saber DÓNDE muere el cuerpo
+// viejo cuando la puerta se afloja — no en la puerta, sino dos capas más abajo.
+func TestT152_ViaAusenteODesconocida400(t *testing.T) {
+	casos := map[string]string{"forma vieja": "", "desconocida": "remota"}
+	for nombre, vía := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			store := newFakeTenantLLM()
+			api := nuevaAPILLM(store)
+			cuerpo := configuraciónLLMVálida()
+			if vía == "" {
+				delete(cuerpo, "via")
+			} else {
+				cuerpo["via"] = vía
+			}
+			rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm", putLLMBody(t, cuerpo))
+			exigeCódigo(t, rec, http.StatusBadRequest)
+			exigeErrorJSON(t, rec.Body.Bytes(), "invalid_via", "via", vía)
+			if store.upserts != 0 {
+				t.Fatalf("upserts=%d, quiero 0: un cuerpo sin vía válida no puede escribir", store.upserts)
+			}
+		})
+	}
+}
+
+// TestT152_ViaLocalNoExigeCredencialYSigueEn422: los DOS hechos de la vía local en
+// esta ola, en un solo test porque son inseparables.
+//
+//  1. NO EXIGE NADA (REQ-33): el cuerpo es `{"via":"local"}` PELADO — sin
+//     consentimiento, sin proveedor, sin modelo y sin clave— y aun así el rechazo
+//     NO es 400. Si la vía local exigiera cualquiera de esas cosas, este cuerpo
+//     daría 400 `consent_required` y el test se pondría rojo. Ésa es la
+//     afirmación fuerte, y se hace ASÍ —por el código de rechazo— porque hoy no
+//     hay un 200 con el que demostrarla.
+//  2. SIGUE CERRADA: 422 `llm_provider_unavailable` con el sujeto en `via`,
+//     porque el pipeline local no existe hasta T1.6-3. La columna admite el
+//     valor; la puerta todavía no.
+//
+// 🔬 MUTACIÓN (a): mover el `if req.Via == ViaLocal` por DEBAJO del
+// `if !req.Consented` en validateTenantLLM ⇒ 400 `consent_required`: la vía local
+// habría empezado a exigir consentimiento para nada.
+// 🔬 MUTACIÓN (b): en viaLocalNoCableada, devolver la clave "provider" en vez de
+// "via" ⇒ el assert del campo se pone rojo (los ejes no se mezclan, D-044.22).
+func TestT152_ViaLocalNoExigeCredencialYSigueEn422(t *testing.T) {
+	store := newFakeTenantLLM()
+	api := nuevaAPILLM(store)
+
+	rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm",
+		putLLMBody(t, map[string]any{"via": tenantllm.ViaLocal}))
+
+	exigeCódigo(t, rec, http.StatusUnprocessableEntity)
+	exigeErrorJSON(t, rec.Body.Bytes(), "llm_provider_unavailable", "via", tenantllm.ViaLocal)
+	if store.upserts != 0 {
+		t.Fatalf("upserts=%d, quiero 0: la vía local no se guarda mientras no exista", store.upserts)
+	}
+}
+
+// TestT152_LosDosEjesConvivenYLleganAlStore: `via` y `provider` son ejes
+// DISTINTOS (D-044.22 ratificada) y el contrato los lleva a la vez sin
+// mezclarlos. Se elige `gemini` a propósito para que el test no pueda pasar por
+// casualidad si alguien copiara la vía en el proveedor o al revés: son dos
+// valores que no se parecen.
+//
+// Y se mira el STORE, no solo el JSON: que la respuesta diga `via:"api"` no
+// prueba que la vía se haya guardado, porque el handler relee del mismo fake.
+//
+// 🔬 MUTACIÓN (a): quitar `Via: req.Via` de upsertDesde ⇒ el store recibiría la
+// vía vacía, su guarda de vocabulario devolvería error y el PUT daría 500.
+// 🔬 MUTACIÓN (b): quitar `Via: cfg.Via` de toTenantLLMDTO ⇒ el `via` del wire
+// saldría vacío en el GET y en el PUT.
+func TestT152_LosDosEjesConvivenYLleganAlStore(t *testing.T) {
+	store := newFakeTenantLLM()
+	api := nuevaAPILLM(store)
+	cuerpo := configuraciónLLMVálida()
+	cuerpo["provider"] = tenantllm.ProviderGemini
+
+	rec := call(api, keyALLM, http.MethodPut, "/api/v1/tenant-llm", putLLMBody(t, cuerpo))
+	exigeCódigo(t, rec, http.StatusOK)
+	if w := decodeLLMWire(t, rec.Body.Bytes()); w.Via != tenantllm.ViaAPI || w.Provider != tenantllm.ProviderGemini {
+		t.Fatalf("PUT devolvió via=%q provider=%q, quiero api/gemini", w.Via, w.Provider)
+	}
+
+	rec = call(api, keyALLM, http.MethodGet, "/api/v1/tenant-llm", "")
+	exigeCódigo(t, rec, http.StatusOK)
+	if w := decodeLLMWire(t, rec.Body.Bytes()); w.Via != tenantllm.ViaAPI || w.Provider != tenantllm.ProviderGemini {
+		t.Fatalf("GET devolvió via=%q provider=%q, quiero api/gemini", w.Via, w.Provider)
+	}
+
+	if guardada := store.rows[tenantA].Via; guardada != tenantllm.ViaAPI {
+		t.Fatalf("el store recibió via=%q, quiero %q", guardada, tenantllm.ViaAPI)
+	}
+}
+
+// TestT152_GetSinFilaDiceViaLocal: un tenant que nunca configuró nada NO está
+// «sin vía», está en la vía por defecto (REQ-33). El GET lo dice con todas las
+// letras en vez de dejar el campo vacío para que lo traduzca la pantalla — que es
+// como dos pantallas acaban traduciéndolo distinto.
+//
+// 🔬 MUTACIÓN: quitar `Via: tenantllm.ViaLocal` de notConfiguredTenantLLM ⇒ el
+// campo saldría vacío. (No basta con mirar `configured:false`: eso ya lo cubre
+// TestTenantLLM_GetSinFilaNoEs404, y seguiría verde con la mutación puesta.)
+func TestT152_GetSinFilaDiceViaLocal(t *testing.T) {
+	api := nuevaAPILLM(newFakeTenantLLM())
+	rec := call(api, keyALLM, http.MethodGet, "/api/v1/tenant-llm", "")
+	exigeCódigo(t, rec, http.StatusOK)
+	w := decodeLLMWire(t, rec.Body.Bytes())
+	if w.Configured {
+		t.Fatalf("configured=true sin fila")
+	}
+	if w.Via != tenantllm.ViaLocal {
+		t.Fatalf("via=%q sin fila, quiero %q: el default del producto se dice, no se adivina",
+			w.Via, tenantllm.ViaLocal)
+	}
 }
