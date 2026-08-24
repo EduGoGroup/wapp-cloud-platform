@@ -847,8 +847,9 @@ func registerTenantLLM(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, audit
 // captación asistida se degradó al Nivel A», y eso le pasa —y le importa— a
 // CUALQUIER tenant con el nivel, use la vía que use. Gatear con `api_llm` dejaría
 // sin sus propios avisos exactamente a los tenants de la vía LOCAL, que son los
-// dueños de CUATRO de los seis motivos del vocabulario (`ollama_down`,
-// `breaker_open`, `edge_offline`, `timeout`): tendrían el Ollama caído y una
+// dueños de SEIS de los ocho motivos del vocabulario (`ollama_down`,
+// `breaker_open`, `edge_offline`, `timeout` y, desde T1.6-6,
+// `lease_invalid` y `edge_sin_capacidad`): tendrían el Ollama caído y una
 // bandeja que responde 403. `api_llm` gatea la VÍA, no la capacidad, y este
 // endpoint no es de la vía.
 //

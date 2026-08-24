@@ -1,5 +1,5 @@
-// degradation_test.go custodia las DOS invariantes de T1.5-4 que no necesitan
-// base para demostrarse:
+// degradation_test.go custodia las invariantes del paquete que no necesitan base
+// para demostrarse — las DOS de T1.5-4 y la que añade la ampliación de T1.6-6:
 //
 //  1. EL VOCABULARIO ESTÁ CERRADO — un motivo SANO no escribe NADA. Es la guarda
 //     de la tarea: el registro automático solo vale lo que valga el estado que
@@ -7,6 +7,12 @@
 //     se cayó».
 //  2. LA VENTANA ES UNA FUNCIÓN PURA DEL INSTANTE — que es lo que permite que el
 //     dedupe lo garantice la BASE y no el código.
+//  3. EL VOCABULARIO DE GO Y EL DEL `.sql` DICEN LO MISMO
+//     (TestElVocabularioDeMotivosCoincideConLaMigracion). La añade T1.6-6 al
+//     ampliar el enum a ocho, y se comprueba LEYENDO la migración de disco: un
+//     vocabulario cerrado que vive en dos sitios que no se hablan diverge en
+//     silencio, y quien lo descubre es una fila que la base acepta y Go no
+//     reconoce, o un INSERT que revienta en ejecución.
 //
 // El «N fallos ⇒ 1 fila» de verdad —contra el índice único de Postgres— vive en
 // postgres_integration_test.go. Aquí se demuestra lo que un doble en memoria SÍ
@@ -16,6 +22,12 @@ package degradation_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,9 +68,10 @@ func (s *storeFalso) List(_ context.Context, _ string, _ degradation.ListFilter)
 
 const tenantDePrueba = "t-degradacion"
 
-// TestVocabularioDeMotivosEstaCerrado comprueba los SEIS de tasks.md:856 y, sobre
-// todo, los que NO están: los motivos SANOS de alto volumen. Que estos den false
-// es lo que impide que avisar el funcionamiento correcto mate el canal (D-044.32).
+// TestVocabularioDeMotivosEstaCerrado comprueba los OCHO —los SEIS de tasks.md:856
+// más los DOS de T1.6-6— y, sobre todo, los que NO están: los motivos SANOS de
+// alto volumen. Que estos den false es lo que impide que avisar el funcionamiento
+// correcto mate el canal (D-044.32).
 //
 // Mutación: añadir a reasonsValidos (degradation.go) la línea
 //
@@ -76,17 +89,25 @@ func TestVocabularioDeMotivosEstaCerrado(t *testing.T) {
 		{degradation.ReasonTimeout, true},
 		{degradation.ReasonAPIError, true},
 		{degradation.ReasonCredencial, true},
+		// Los DOS que añadió T1.6-6 el 2026-08-24, cerrando el hueco que la Ola
+		// 1.5 dejó declarado. `lease_invalid` es uno de los cuatro errores que
+		// REQ-34 obliga a nombrar en el frame; `edge_sin_capacidad` es el semáforo
+		// de concurrencia del Edge, y NO es `timeout` a propósito.
+		{degradation.ReasonLeaseInvalid, true},
+		{degradation.ReasonEdgeSinCapacidad, true},
 		// Los CUATRO motivos SANOS que REQ-38 excluye por su nombre. No son un
 		// invento del test: son los que el pipeline produce cuando TODO va bien.
+		// 🔴 QUE EL VOCABULARIO CREZCA NO LOS DEJA ENTRAR, y por eso siguen aquí:
+		// T1.6-6 amplió el dominio con dos FALLOS DEL ADAPTADOR, no lo abrió.
 		{degradation.Reason("atajo_determinista"), false},
 		{degradation.Reason("fastlane"), false},
 		{degradation.Reason("sin_texto"), false},
 		{degradation.Reason("umbral_no_alcanzado"), false},
-		// 🔴 HUECO DECLARADO: lease_invalid es un error del FRAME (REQ-34/T1.6-1) y
-		// NO tiene todavía motivo de notificación asignado — lo decide T1.6-6. Hoy
-		// no está en el vocabulario, y este caso lo deja escrito para que el día
-		// que T1.6-6 lo añada tenga que venir aquí a cambiarlo a propósito.
-		{degradation.Reason("lease_invalid"), false},
+		// Vecinos plausibles de los dos motivos nuevos: el error del frame que NO
+		// se llama así y la variante en inglés del semáforo. Los dos valores que
+		// entraron son literales exactos, no aproximaciones.
+		{degradation.Reason("lease_expired"), false},
+		{degradation.Reason("edge_busy"), false},
 		{degradation.Reason(""), false},
 		{degradation.Reason("OLLAMA_DOWN"), false},
 	}
@@ -95,9 +116,193 @@ func TestVocabularioDeMotivosEstaCerrado(t *testing.T) {
 			t.Errorf("Valid(%q) = %v, se esperaba %v", c.motivo, got, c.valido)
 		}
 	}
-	if n := len(degradation.Reasons()); n != 6 {
-		t.Errorf("el vocabulario tiene %d motivos y tasks.md:856 fija SEIS", n)
+	if n := len(degradation.Reasons()); n != 8 {
+		t.Errorf("el vocabulario tiene %d motivos: SEIS de tasks.md:856 + los DOS de T1.6-6 son OCHO", n)
 	}
+}
+
+// dirMigraciones es el directorio de scripts que el runner embebe y aplica en
+// orden de nombre (migrations/embed.go). La ruta es relativa al paquete porque
+// `go test` corre con el directorio del paquete como cwd.
+//
+// 🔴 SE LEE DE DISCO Y NO SE IMPORTA EL embed.FS porque `structureFS` NO está
+// exportado, y exportarlo para un test abriría el runner entero a cualquier
+// paquete. Lo que se pierde con el fichero de disco es la garantía de estar
+// leyendo los MISMOS bytes que se embeben; lo que se gana es que el test no
+// obligue a tocar el runner. El riesgo real de esa pérdida es nulo: el `go:embed`
+// es `structure/*.sql` sobre este mismo directorio, así que un fichero que esté
+// aquí está embebido, y uno que no esté aquí no existe.
+const dirMigraciones = "../platform/storage/postgres/migrations/structure"
+
+// reasonCheckRE captura la lista del CHECK del vocabulario de motivos. Solo casa
+// el `ADD CONSTRAINT … CHECK (reason IN (…))` completo: el `DROP CONSTRAINT IF
+// EXISTS` de al lado y las menciones al nombre dentro de la prosa no casan.
+var reasonCheckRE = regexp.MustCompile(
+	`(?s)ADD\s+CONSTRAINT\s+owner_degradation_notices_reason_check\s+CHECK\s*\(\s*reason\s+IN\s*\(([^)]*)\)`)
+
+// TestElVocabularioDeMotivosCoincideConLaMigracion es EL test de la ampliación de
+// T1.6-6, y no prueba un motivo: prueba LA REGLA.
+//
+// El vocabulario cerrado vive en DOS sitios que no se hablan —el `const` de
+// degradation.go y el CHECK de un `.sql`— y la única forma de que no divergan en
+// silencio es que algo los compare. Escribir N tests de conducta (uno por motivo)
+// dejaría el hueco justo donde importa: el motivo N+1, el que alguien añada
+// mañana en un solo lado, no tendría test porque el test nace con el motivo.
+// Comparar las DOS LISTAS enteras no tiene esa fuga.
+//
+// LEE EL `.sql` DE DISCO Y NO COPIA LA LISTA. Un test que llevara los ocho
+// literales escritos a mano sería tautológico: pasaría con cualquier CHECK,
+// porque nunca miró el CHECK.
+//
+// 🔴 EL VOCABULARIO VIGENTE ES EL DEL ÚLTIMO FICHERO QUE LO REDEFINE. El runner
+// hace FULL-REPLAY en orden de nombre y cada migración que toca
+// este CHECK hace `DROP` + `ADD`, así que quien habla es la última. Hoy solo lo
+// define la 0075 y por eso la última es ella — pero el test BARRE el directorio en
+// vez de abrir un fichero fijo, porque clavar «0075_*.sql» aquí dejaría pasar
+// desapercibida una redefinición posterior, que es exactamente el fallo que este
+// test existe para impedir.
+//
+// ⚠️ Y esa redefinición posterior sería un DEFECTO, no una variante: bajo
+// full-replay la 0075 corre ANTES y su ADD CONSTRAINT valida las filas, así que
+// ensanchar el vocabulario desde una migración nueva aborta el arranque en cuanto
+// exista UNA fila con el motivo nuevo. La comprobación de estrechamiento del final
+// de este test es lo que la caza.
+func TestElVocabularioDeMotivosCoincideConLaMigracion(t *testing.T) {
+	ficheros, err := filepath.Glob(filepath.Join(dirMigraciones, "*.sql"))
+	if err != nil {
+		t.Fatalf("listando migraciones en %s: %v", dirMigraciones, err)
+	}
+	if len(ficheros) == 0 {
+		t.Fatalf("cero migraciones en %s: la ruta del test se quedó atrás", dirMigraciones)
+	}
+	sort.Strings(ficheros) // el runner las aplica en orden de nombre; el test también
+
+	// definiciones lleva TODAS las redefiniciones del CHECK, en orden de
+	// aplicación. La última es la vigente; las anteriores son historia, y sirven
+	// para la comprobación de estrechamiento de más abajo.
+	type definicion struct {
+		fichero  string
+		motivos  []string
+		posicion int
+	}
+	var definiciones []definicion
+	for _, f := range ficheros {
+		crudo, rerr := os.ReadFile(f) //nolint:gosec // ruta construida por Glob sobre un dir constante
+		if rerr != nil {
+			t.Fatalf("leyendo %s: %v", f, rerr)
+		}
+		sql := sinComentarios(string(crudo))
+		for i, m := range reasonCheckRE.FindAllStringSubmatch(sql, -1) {
+			definiciones = append(definiciones, definicion{
+				fichero:  filepath.Base(f),
+				motivos:  literales(m[1]),
+				posicion: i,
+			})
+		}
+	}
+
+	// 🔴 LA GUARDA QUE HACE QUE ESTE TEST MIRE. Sin ella, el día que alguien
+	// renombre la constraint o reformatee el ALTER, el regex dejaría de casar, no
+	// habría nada que comparar y el test saldría VERDE sin haber leído un solo
+	// vocabulario — el peor resultado posible, porque además nadie se enteraría.
+	if len(definiciones) == 0 {
+		t.Fatalf("ninguna migración de %s define owner_degradation_notices_reason_check: "+
+			"o el CHECK desapareció o el regex dejó de casar; en los dos casos este test estaba a punto "+
+			"de pasar sin comprobar nada", dirMigraciones)
+	}
+
+	vigente := definiciones[len(definiciones)-1]
+	t.Logf("el vocabulario vigente lo fija %s (%d redefiniciones en total): %v",
+		vigente.fichero, len(definiciones), vigente.motivos)
+
+	enGo := make([]string, 0, len(degradation.Reasons()))
+	for _, r := range degradation.Reasons() {
+		enGo = append(enGo, string(r))
+	}
+
+	// La comparación es de CONJUNTOS: en un `IN (…)` el orden no significa nada, y
+	// hacerlo significar algo convertiría un reordenado inocente en un rojo.
+	if faltan := diferencia(vigente.motivos, enGo); len(faltan) > 0 {
+		t.Errorf("%s admite %v y el enum de Go NO los tiene: una fila que la base acepta "+
+			"llegaría a Reason.Valid() == false", vigente.fichero, faltan)
+	}
+	if sobran := diferencia(enGo, vigente.motivos); len(sobran) > 0 {
+		t.Errorf("el enum de Go tiene %v y %s NO los admite: Notifier.Record los dejaría "+
+			"pasar y el INSERT reventaría contra el CHECK en ejecución", sobran, vigente.fichero)
+	}
+	if len(vigente.motivos) != len(unicos(vigente.motivos)) {
+		t.Errorf("%s repite algún motivo en el CHECK: %v", vigente.fichero, vigente.motivos)
+	}
+
+	// EL DOMINIO SOLO PUEDE CRECER, y esto no es purismo. El `ADD CONSTRAINT`
+	// VALIDA las filas existentes: estrechar el vocabulario sobre una tabla con
+	// avisos de un motivo retirado hace que el ALTER falle y el SERVICIO NO
+	// ARRANQUE. Quien necesite quitar un motivo tiene que borrar sus filas en la
+	// misma migración, y entonces vendrá aquí a decirlo a propósito.
+	for _, d := range definiciones[:len(definiciones)-1] {
+		if perdidos := diferencia(d.motivos, vigente.motivos); len(perdidos) > 0 {
+			t.Errorf("%s admitía %v y %s ya no: un ADD CONSTRAINT que estrecha el dominio "+
+				"aborta el arranque si hay una sola fila con ese motivo",
+				d.fichero, perdidos, vigente.fichero)
+		}
+	}
+}
+
+// sinComentarios quita las líneas de comentario SQL enteras. Las migraciones de
+// este repo llevan más prosa que sentencias y esa prosa CITA el DDL, así que sin
+// este filtro un bloque explicativo que reprodujera el ALTER contaría como una
+// definición más.
+//
+// Solo cae la línea que EMPIEZA por `--`: los `--` que viven dentro de un literal
+// de cadena (los COMMENT ON de este repo los usan como separador de prosa) están
+// siempre a media línea y se conservan.
+func sinComentarios(sql string) string {
+	lineas := strings.Split(sql, "\n")
+	limpias := make([]string, 0, len(lineas))
+	for _, l := range lineas {
+		if strings.HasPrefix(strings.TrimSpace(l), "--") {
+			continue
+		}
+		limpias = append(limpias, l)
+	}
+	return strings.Join(limpias, "\n")
+}
+
+// literales extrae los valores entrecomillados de la lista de un `IN (…)`.
+func literales(lista string) []string {
+	var out []string
+	for _, trozo := range strings.Split(lista, ",") {
+		v := strings.TrimSpace(trozo)
+		v = strings.Trim(v, "\n\t ")
+		if len(v) >= 2 && strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
+			out = append(out, v[1:len(v)-1])
+		}
+	}
+	return out
+}
+
+// diferencia devuelve los elementos de a que no están en b.
+func diferencia(a, b []string) []string {
+	var out []string
+	for _, x := range a {
+		if !slices.Contains(b, x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func unicos(a []string) []string {
+	vistos := map[string]struct{}{}
+	var out []string
+	for _, x := range a {
+		if _, ok := vistos[x]; ok {
+			continue
+		}
+		vistos[x] = struct{}{}
+		out = append(out, x)
+	}
+	return out
 }
 
 // TestReasonsDevuelveCopia comprueba que el vocabulario no se puede abrir desde

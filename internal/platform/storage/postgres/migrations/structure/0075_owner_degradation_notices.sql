@@ -12,7 +12,10 @@
 --
 --   * tenant_id    — de quién es el aviso. Sale del token / de la sesión, jamás
 --                    del cuerpo de una petición (INV-7 / INV-8).
---   * reason       — POR QUÉ se degradó. Vocabulario CERRADO (ver el CHECK).
+--   * reason       — POR QUÉ se degradó. Vocabulario CERRADO de OCHO (ver el
+--                    CHECK (b.1)). 🔧 Nació con SEIS; T1.6-6 lo amplió EN SU
+--                    SITIO el 2026-08-24 — el porqué, y por qué no pudo ser
+--                    una migración aparte, están en el propio (b.1).
 --   * via          — QUÉ vía falló (`local` | `api`), el mismo eje que
 --                    tenant_llm.via de la 0073.
 --   * window_start — inicio de la VENTANA en la que cae el fallo. Es la pieza
@@ -168,7 +171,11 @@
 --    ORDER BY conname;
 --
 --   Esperado CUATRO: …_occurrences_check · …_reason_check · …_ventana_check ·
---   …_via_check. Y el de `reason` tiene que listar LOS SEIS motivos, ni uno más.
+--   …_via_check. Y el de `reason` tiene que listar LOS OCHO motivos, ni uno más:
+--   ollama_down, breaker_open, edge_offline, timeout, api_error, credencial,
+--   lease_invalid y edge_sin_capacidad. 🔧 Eran SEIS hasta el 2026-08-24; los dos
+--   últimos los añadió T1.6-6 EDITANDO el (b.1) de este mismo fichero — ver ahí
+--   por qué no pudo ser una migración aparte.
 --
 -- (V3) EL DEDUPE ES DE LA BASE — la verificación que de verdad importa:
 --
@@ -235,7 +242,7 @@ CREATE TABLE IF NOT EXISTS public.owner_degradation_notices (
 --     (regla 4, con la corrección que la 0071 pagó cara).
 -- ------------------------------------------------------------
 
--- (b.1) EL VOCABULARIO DE MOTIVOS. SEIS valores y NI UNO MÁS, y esta línea es la
+-- (b.1) EL VOCABULARIO DE MOTIVOS. OCHO valores y NI UNO MÁS, y esta línea es la
 --       mitad de la tarea T1.5-4: el aviso se escribe SOLO desde fallo-de-
 --       adaptador, así que el motivo tiene que ser un enum cerrado y no un texto.
 --       Los motivos SANOS de alto volumen —atajo determinista, fastlane, «sin
@@ -244,26 +251,96 @@ CREATE TABLE IF NOT EXISTS public.owner_degradation_notices (
 --       el ADR-0038 desglosó sus siete motivos). Que ni siquiera quepan en la
 --       columna es lo que hace que ese «no» sobreviva a un llamante despistado.
 --
---       Los cuatro primeros son fallos de la vía LOCAL (el Edge y su Ollama), los
---       dos últimos de la vía API (el proveedor externo). ⚠️ El reparto es
---       DESCRIPTIVO, no exclusivo, y por eso NO hay un CHECK que ate motivo↔vía:
---       `timeout` es plausible en las dos vías (una llamada HTTP a un proveedor
---       también expira), y un CHECK de pares dejaría a T1.6-6 chocando contra el
---       esquema el día que mapee ese caso. La consistencia del par la decide
---       quien escribe, con el vocabulario de cada eje cerrado por separado.
+--       Los cuatro primeros y los DOS ÚLTIMOS son fallos de la vía LOCAL (el Edge
+--       y su Ollama); `api_error` y `credencial`, de la vía API (el proveedor
+--       externo). ⚠️ El reparto es DESCRIPTIVO, no exclusivo, y por eso NO hay un
+--       CHECK que ate motivo↔vía: `timeout` es plausible en las dos vías (una
+--       llamada HTTP a un proveedor también expira), y un CHECK de pares dejaría
+--       al productor chocando contra el esquema el día que aparezca un caso
+--       cruzado. La consistencia del par la decide quien escribe, con el
+--       vocabulario de cada eje cerrado por separado.
 --
---       🔴 HUECO DECLARADO — `lease_invalid`. REQ-34/T1.6-1 lo nombra como ERROR
---       DEL FRAME (`inference_result` lo puede devolver), y AQUÍ NO ESTÁ: el
---       mapeo error-del-frame → motivo-de-notificación es de **T1.6-6**, no de
---       esta tarea, y añadirlo por si acaso sería decidir por ella. Cuando T1.6-6
---       decida, o le asigna uno de estos seis o edita ESTA línea — y el replay la
---       aplica de verdad, que es para lo que el CHECK vive fuera del CREATE.
+-- ============================================================
+-- 🔧 AMPLIADO EN SU SITIO POR T1.6-6 (Plan 044 · Ola 1.6, decisión de Jhoan del
+--    2026-08-24): DE SEIS MOTIVOS A OCHO. REQ-34, REQ-38, ADR-0007.
+-- ============================================================
+--       Esta migración nació con SEIS y dejó un HUECO DECLARADO por su nombre
+--       —`lease_invalid`— diciendo que T1.6-6 «o le asigna uno de estos seis o
+--       EDITA ESTA LÍNEA». T1.6-6 decidió: ninguno de los seis servía, y entran
+--       DOS.
+--
+--         * `lease_invalid`      — el Edge rechazó servir la inferencia porque no
+--                                  tiene lease vigente (kill-switch del ADR-0007).
+--                                  Vía LOCAL. Es uno de los CUATRO errores que
+--                                  REQ-34 obliga al frame a saber nombrar
+--                                  (`ollama_down`, `breaker_open`, `timeout`,
+--                                  `lease_invalid`), y era el único de los cuatro
+--                                  sin motivo de notificación: una omisión
+--                                  objetiva, no una decisión.
+--         * `edge_sin_capacidad` — el semáforo de concurrencia del Edge rechazó la
+--                                  petición: la máquina del cliente está saturada.
+--                                  Vía LOCAL.
+--
+--       🔴 POR QUÉ `edge_sin_capacidad` NO ES `timeout`. Los dos acaban en «no
+--       hubo inferencia», y por eso fundirlos es la tentación. Pero este
+--       vocabulario no describe lo que le pasó al CÓDIGO: describe QUÉ TIENE QUE
+--       MIRAR EL DUEÑO, y ahí son opuestos. `timeout` le manda a la red y al
+--       enlace; `edge_sin_capacidad`, a SU equipo: cuántas cosas corren a la vez,
+--       si el fierro se quedó corto, si hay que subir el semáforo o bajar la
+--       carga. Decir «se agotó el tiempo» cuando lo que pasa es que el equipo del
+--       cliente va corto le cuesta una tarde diagnosticando donde no está el
+--       problema, y encima se lo cree porque se lo dijo el aviso.
+--
+--       ⚠️ `edge_sin_capacidad` PRESUPONE UNA RAMA DE T1.6-2 QUE SIGUE ABIERTA:
+--       tasks.md:1076 aún no decide si el Edge, con el semáforo lleno, hace
+--       ESPERAR a la petición K+1 o la falla nombrada. Este motivo solo tiene
+--       productor en el segundo caso; si se elige esperar se queda sin quien lo
+--       escriba, y eso no rompe nada (un valor admitido que nadie usa no corrompe
+--       la tabla). ⚠️ Y NO es uno de los cuatro de REQ-34: sería un QUINTO error
+--       del frame, así que quien toque el proto (T1.6-1) tiene que añadirlo allí o
+--       este motivo no tendrá por dónde llegar desde el Edge.
+--
+-- ============================================================
+-- 🔴 POR QUÉ SE EDITA ESTA LÍNEA Y NO SE AÑADE UNA `0076` QUE AMPLÍE EL CHECK
+-- ============================================================
+--       Se intentó primero por el camino que parece limpio —una migración nueva
+--       con `DROP CONSTRAINT` + `ADD CONSTRAINT` de los ocho— y **la base lo
+--       rechazó**. Medido, no supuesto (2026-08-24, Postgres 16 local, base
+--       `wapp_t166_replay`): con TRES filas dentro, una de ellas con
+--       `reason='lease_invalid'`, el siguiente arranque muere así:
+--
+--         migrate: aplicando migraciones: ejecutando 0075_owner_degradation_notices.sql:
+--         ERROR: check constraint "owner_degradation_notices_reason_check" of
+--         relation "owner_degradation_notices" is violated by some row (SQLSTATE 23514)
+--
+--       El motivo es el FULL-REPLAY, y es estructural: el runner reejecuta TODO el
+--       directorio en orden de nombre en cuanto cambia el hash, así que en cada
+--       arranque esta migración vuelve a correr ANTES que cualquier 0076 y su `ADD
+--       CONSTRAINT` **valida las filas existentes** contra el vocabulario ESTRECHO.
+--       La 0076 lo volvería a ensanchar acto seguido, pero nunca llega: el
+--       arranque ya abortó. Una ampliación por migración posterior solo funciona
+--       mientras la tabla no tenga ni una fila con un motivo nuevo — o sea, hasta
+--       el primer aviso real, que es justo lo que T1.6-6 existe para escribir.
+--
+--       🔴 REGLA GENERAL, y vale para los CUATRO CHECK de este fichero y para los
+--       de la 0071/0072/0073: bajo full-replay, **un vocabulario cerrado se edita
+--       EN SU MIGRACIÓN, no se enmienda desde una posterior**. Lo contrario
+--       compila, pasa los tests sobre base vacía y revienta el arranque el día que
+--       hay datos. Es exactamente para esto que el CHECK vive FUERA del `CREATE
+--       TABLE` (regla 4 del patrón, 0063:33-57): editarlo aquí SURTE EFECTO en el
+--       replay, y esa es la vía prevista.
+--
+--       ⚠️ El precio de editar en su sitio es el simétrico y hay que saberlo:
+--       QUITAR un motivo de esta lista aborta el arranque si queda una sola fila
+--       con él. Quien lo haga tiene que borrar esas filas en la MISMA migración.
+--       Ampliar es gratis; estrechar, no.
 ALTER TABLE public.owner_degradation_notices
     DROP CONSTRAINT IF EXISTS owner_degradation_notices_reason_check;
 ALTER TABLE public.owner_degradation_notices
     ADD CONSTRAINT owner_degradation_notices_reason_check CHECK (
         reason IN ('ollama_down','breaker_open','edge_offline','timeout',
-                   'api_error','credencial')
+                   'api_error','credencial',
+                   'lease_invalid','edge_sin_capacidad')
     );
 
 -- (b.2) EL VOCABULARIO DE LA VÍA. El MISMO que `tenant_llm_via_check` (0073),
@@ -352,7 +429,7 @@ COMMENT ON COLUMN public.owner_degradation_notices.id IS
 COMMENT ON COLUMN public.owner_degradation_notices.tenant_id IS
     'Tenant dueno del aviso (TEXT sin FK, convencion de la ficha 3). Sale del TOKEN o de la sesion que fallo, JAMAS del cuerpo de una peticion (INV-7 / INV-8). No es PK: un tenant tiene muchos avisos.';
 COMMENT ON COLUMN public.owner_degradation_notices.reason IS
-    'POR QUE se degrado. Vocabulario CERRADO de SEIS, acotado por owner_degradation_notices_reason_check -- fallo de la via LOCAL: ollama_down | breaker_open | edge_offline | timeout; fallo de la via API: api_error | credencial. Los motivos SANOS no estan y no pueden estar (D-044.32). 🔴 HUECO DECLARADO: lease_invalid es un error del FRAME (REQ-34/T1.6-1) y todavia no tiene motivo de notificacion asignado -- lo decide T1.6-6, no esta migracion.';
+    'POR QUE se degrado. Vocabulario CERRADO de OCHO, acotado por owner_degradation_notices_reason_check -- fallo de la via LOCAL: ollama_down | breaker_open | edge_offline | timeout | lease_invalid | edge_sin_capacidad; fallo de la via API: api_error | credencial. Los motivos SANOS (atajo determinista, fastlane, sin texto, umbral no alcanzado) no estan y no pueden estar (D-044.32). Los DOS ultimos entran el 2026-08-24 por T1.6-6 (Plan 044 · Ola 1.6) y CIERRAN el hueco que esta migracion habia declarado: lease_invalid es uno de los cuatro errores nombrados que REQ-34 exige al frame (kill-switch del ADR-0007) y no tenia motivo; edge_sin_capacidad es el semaforo de concurrencia del Edge y se distingue de timeout A PROPOSITO -- decir "se agoto el tiempo" cuando la maquina del cliente va corta manda al dueno a diagnosticar la red en vez de su carga. ⚠️ NO hay CHECK que ate motivo-a-via: el reparto es descriptivo, no exclusivo (timeout es plausible en las dos vias).';
 COMMENT ON COLUMN public.owner_degradation_notices.via IS
     'QUE VIA fallo: local (el Ollama del Edge del propio tenant) | api (el proveedor externo). Mismo eje y mismo vocabulario que tenant_llm.via (0073), repetido en un CHECK propio porque SQL no comparte dominios entre tablas sin un TYPE, y este repo no usa TYPE enumerados. ⚠️ NO hay CHECK que ate motivo-a-via: el reparto de arriba es descriptivo, no exclusivo (timeout es plausible en las dos), y atarlo dejaria a T1.6-6 chocando contra el esquema.';
 COMMENT ON COLUMN public.owner_degradation_notices.window_start IS

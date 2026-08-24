@@ -265,6 +265,58 @@ func TestElCheckDeMotivosEsLaRedDeAbajo(t *testing.T) {
 	}
 }
 
+// TestLosMotivosDeT166EntranEnLaBase es el criterio de la ampliación contra
+// Postgres real: los DOS motivos que añade T1.6-6 son ACEPTADOS, y el CHECK
+// sigue siendo un vocabulario CERRADO y no uno decorativo.
+//
+// El test de unidad compara las dos listas —el enum y el `.sql`— y eso deja una
+// pregunta abierta que solo la base responde: ¿el `ADD CONSTRAINT` de la 0075
+// llegó de verdad a esta base con los ocho valores? Que el fichero los liste es
+// una afirmación sobre el fichero, no sobre la base que el runner dejó.
+//
+// Mutaciones, una por mitad:
+//
+//   - quitar `'lease_invalid','edge_sin_capacidad'` de la lista del `IN` de la
+//     0075 ⇒ la base vuelve al vocabulario de SEIS y los DOS primeros INSERT
+//     fallan: rojo en la primera mitad.
+//   - borrar el `ADD CONSTRAINT` de la 0075 dejando solo su `DROP` ⇒ la tabla se
+//     queda SIN CHECK de motivo y acepta cualquier cadena: rojo en la segunda
+//     mitad, que es la que distingue «ampliar» de «abrir».
+func TestLosMotivosDeT166EntranEnLaBase(t *testing.T) {
+	_, db := nuevoStorePG(t)
+	ctx := context.Background()
+
+	for _, motivo := range []degradation.Reason{
+		degradation.ReasonLeaseInvalid,
+		degradation.ReasonEdgeSinCapacidad,
+	} {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO public.owner_degradation_notices
+			       (tenant_id, reason, via, window_start, window_end)
+			VALUES ($1, $2, 'local', now(), now() + interval '15 minutes')`,
+			tenantIntegracion, string(motivo))
+		if err != nil {
+			t.Errorf("la base RECHAZÓ %q: el CHECK de la 0075 en esta base sigue siendo el de SEIS (%v)",
+				motivo, err)
+		}
+	}
+
+	// La otra mitad, y la que de verdad prueba que ampliar no es abrir: un motivo
+	// inventado sigue sin entrar. Sin este caso, un CHECK borrado por accidente
+	// —el `DROP` sin su `ADD`— dejaría el test de arriba en verde.
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO public.owner_degradation_notices
+		       (tenant_id, reason, via, window_start, window_end)
+		VALUES ($1, 'lease_expired', 'local', now(), now() + interval '15 minutes')`,
+		tenantIntegracion)
+	if err == nil {
+		t.Fatal("la base aceptó 'lease_expired': el vocabulario dejó de estar cerrado")
+	}
+	if !strings.Contains(err.Error(), "owner_degradation_notices_reason_check") {
+		t.Errorf("la base rechazó por %v, se esperaba owner_degradation_notices_reason_check", err)
+	}
+}
+
 // TestListDevuelveLoDelTenantYNadaMas custodia INV-7 en el store: el tenant es un
 // ARGUMENTO, y no hay forma de que la lista traiga filas de otro.
 //
