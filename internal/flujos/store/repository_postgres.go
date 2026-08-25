@@ -852,15 +852,16 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		evInactTTLSecs  int
 		evHistoryTTLSec int
 		aggWindowSecs   int
+		aggMaxSecs      int
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields,
 		       event_inactivity_ttl_seconds, event_history_ttl_seconds,
-		       aggregation_window_seconds
+		       aggregation_window_seconds, aggregation_max_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
 	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields,
-		&evInactTTLSecs, &evHistoryTTLSec, &aggWindowSecs)
+		&evInactTTLSecs, &evHistoryTTLSec, &aggWindowSecs, &aggMaxSecs)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return DefaultTenantSettings(tenantID), nil
@@ -885,6 +886,12 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		// `if x == 0 { x = Default }` en esta línea apagaría ese override sin que
 		// nadie se entere.
 		AggregationWindow: time.Duration(aggWindowSecs) * time.Second,
+		// AggregationMax (Plan 044 · T1.8-1, migración 0076). MISMA regla, y por eso va
+		// pegada a su hermana: se devuelve TAL CUAL, sin sustituir el 0 por el default.
+		// Aquí el 0 es el override explícito «vencido siempre» (CHECK >= 0 de la 0076).
+		// Un `if x == 0 { x = Default }` en esta línea apagaría ese override sin que
+		// nadie se entere, exactamente igual que lo haría en la línea de arriba.
+		AggregationMax: time.Duration(aggMaxSecs) * time.Second,
 	}, nil
 }
 

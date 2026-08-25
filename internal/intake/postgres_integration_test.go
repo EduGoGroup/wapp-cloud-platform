@@ -601,3 +601,117 @@ func unicaFila(t *testing.T, db *sql.DB, k intake.WindowKey) filaJob {
 	}
 	return filas[0]
 }
+
+// ---------------------------------------------------------------------------
+// (6) LAS DOS ANCLAS DE LA VENTANA HÍBRIDA SALEN DE POSTGRES (T1.8-1)
+// ---------------------------------------------------------------------------
+
+// TestIntegration_ListAggregating_DevuelveLasDosAnclasYElUpsertMueveUpdatedAt es el
+// test que el doble en memoria NO puede dar, y hay tres afirmaciones aquí que solo
+// Postgres responde:
+//
+//  1. que el `updated_at = now()` del `DO UPDATE` SE EJECUTA DE VERDAD en la rama «ya
+//     existía» —es la línea de la que cuelga entera la ventana de silencio de T1.8-1—;
+//  2. que `created_at` NO se mueve con ella (si se moviera, el techo de 120 s se
+//     reiniciaría con cada mensaje y volveríamos al goteo que no cierra nunca);
+//  3. que `ListAggregating` devuelve ESAS DOS columnas y no `message_ts`. El doble en
+//     memoria devuelve lo que le mandemos; aquí lo devuelve el SELECT.
+//
+// 🔴 Y LA CUARTA, QUE ES LA QUE MÁS IMPORTA: `LastActivity` tiene que ser DISTINTA de
+// `message_ts`. Los dos son instantes plausibles y un SELECT que se equivocara de
+// columna no daría ningún error — daría plazos medidos contra el reloj del CLIENTE en
+// vez del de Postgres, que es un fallo permanente y silencioso. El test monta el
+// escenario para que los dos números no puedan coincidir: `message_ts` se siembra en
+// 2026-08-22, que es pasado fijo, y `updated_at` lo pone `now()`.
+//
+// SALIDAS ESPERADAS:
+//   - filas de la tupla ......... 1
+//   - created_at ................ IDÉNTICO antes y después del segundo Append
+//   - updated_at ................ ESTRICTAMENTE MAYOR tras el segundo Append
+//   - message_ts ................ 2026-08-22T10:00:00Z, intacto (D-044.9)
+//   - OpenJob.LastActivity ...... == updated_at de la fila
+//   - OpenJob.CreatedAt ......... == created_at de la fila
+func TestIntegration_ListAggregating_DevuelveLasDosAnclasYElUpsertMueveUpdatedAt(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	jobs := intake.NewPostgres(db)
+	k := claveDeVentana(t, db)
+
+	tsCliente := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	if err := jobs.OpenOrAppend(ctx, intake.Append{Key: k, MessageTS: tsCliente, Refs: []string{"wamid.uno"}}); err != nil {
+		t.Fatalf("OpenOrAppend (abre): %v", err)
+	}
+	nacida, primerToque := anclasDe(t, db, k)
+
+	// EL SEGUNDO MENSAJE DE LA RÁFAGA. Es la rama `DO UPDATE`.
+	if err := jobs.OpenOrAppend(ctx, intake.Append{Key: k, MessageTS: tsCliente.Add(30 * time.Second), Refs: []string{"wamid.dos"}}); err != nil {
+		t.Fatalf("OpenOrAppend (amplía): %v", err)
+	}
+	nacida2, segundoToque := anclasDe(t, db, k)
+
+	if !nacida2.Equal(nacida) {
+		t.Fatalf("created_at cambió con el segundo mensaje: %v -> %v; ESPERADO que fuera INTOCABLE. "+
+			"Si se mueve, el techo de 120 s se reinicia con cada mensaje y el goteo vuelve a no cerrar nunca",
+			nacida, nacida2)
+	}
+	if !segundoToque.After(primerToque) {
+		t.Fatalf("updated_at NO avanzó con el segundo mensaje (%v -> %v); ESPERADO estrictamente mayor. "+
+			"Toda la ventana de silencio de T1.8-1 cuelga del `updated_at = now()` del DO UPDATE: sin él, "+
+			"el plazo seguiría contando desde el PRIMER mensaje y la ráfaga lenta se partiría en dos jobs",
+			primerToque, segundoToque)
+	}
+
+	// Y `message_ts` sigue siendo el del PRIMERO: lo que T1.8-1 cambió es contra qué se
+	// mide el plazo, no qué fecha ancla el presupuesto (D-044.9).
+	filas := jobsDeLaTupla(t, db, k)
+	if len(filas) != 1 {
+		t.Fatalf("filas de la tupla = %d; ESPERADO 1 (dos Append, UNA ventana)", len(filas))
+	}
+	if !filas[0].messageTS.Valid || !filas[0].messageTS.Time.UTC().Equal(tsCliente) {
+		t.Fatalf("message_ts = %v; ESPERADO %v (el del PRIMER mensaje, intacto)", filas[0].messageTS, tsCliente)
+	}
+
+	// LO QUE EL BARRIDO VE. Aquí es donde se caza un SELECT que devolviera la columna
+	// equivocada.
+	abiertas, err := jobs.ListAggregating(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListAggregating: %v", err)
+	}
+	var mia *intake.OpenJob
+	for i := range abiertas {
+		if abiertas[i].Key == k {
+			mia = &abiertas[i]
+			break
+		}
+	}
+	if mia == nil {
+		t.Fatal("ListAggregating no devolvió la ventana viva de la tupla")
+	}
+	if !mia.LastActivity.Equal(segundoToque) {
+		t.Fatalf("OpenJob.LastActivity = %v; ESPERADO el updated_at de la fila (%v)", mia.LastActivity, segundoToque)
+	}
+	if !mia.CreatedAt.Equal(nacida) {
+		t.Fatalf("OpenJob.CreatedAt = %v; ESPERADO el created_at de la fila (%v)", mia.CreatedAt, nacida)
+	}
+	// 🔴 EL ASERTO CONTRA EL ANCLA VIEJA. Si alguien devolviera `message_ts` (o el
+	// COALESCE que había antes) en LastActivity, todo lo de arriba seguiría verde salvo
+	// esto: los plazos pasarían a medirse contra el reloj del cliente.
+	if mia.LastActivity.UTC().Equal(tsCliente) {
+		t.Fatalf("OpenJob.LastActivity = %v, que es EXACTAMENTE message_ts: el SELECT volvió al ancla "+
+			"vieja. Los plazos se medirían restando el `now()` de Postgres a un instante puesto por el "+
+			"Edge — dos relojes distintos, fallo permanente y silencioso", mia.LastActivity)
+	}
+}
+
+// anclasDe lee las DOS anclas de la ÚNICA fila viva de la tupla, con SQL directo.
+// Falla si hay más de una: en los tests que lo usan, eso sería el propio defecto.
+func anclasDe(t *testing.T, db *sql.DB, k intake.WindowKey) (creada, actualizada time.Time) {
+	t.Helper()
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT created_at, updated_at FROM public.intake_jobs
+		 WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3 AND event_id = $4::uuid
+	`, k.TenantID, k.SessionID, k.ContactID, k.EventID).Scan(&creada, &actualizada); err != nil {
+		t.Fatalf("leer created_at/updated_at (¿hay más de una fila para la tupla?): %v", err)
+	}
+	return creada, actualizada
+}

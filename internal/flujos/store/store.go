@@ -547,11 +547,16 @@ type TenantSettings struct {
 	// Cuántos segundos espera el IntakeAggregator DESDE EL PRIMER MENSAJE de la
 	// ventana antes de cerrarla (aggregating -> pending) y disparar el pipeline.
 	//
-	// 🔴 ES LA LATENCIA DE PEOR CASO DEL PIPELINE, y desde T1.7 eso hay que leerlo
-	// literal: la señal que ADELANTA el cierre puede no llegar nunca por causas
-	// NORMALES, así que sin ella esta ventana es la latencia de TODOS los casos, no la
-	// del peor. Pesa directamente sobre la métrica reina del plan (primer borrador en
-	// < 5 min, T6.1).
+	// 🔧 DESDE T1.8-1 LA VENTANA ES HÍBRIDA Y ESTE CAMPO YA NO SE PUEDE LEER SOLO. El
+	// plazo cuenta desde el ÚLTIMO mensaje del cliente (`intake_jobs.updated_at`), no
+	// desde el primero, así que una ráfaga lo reinicia; quien pone el límite duro es
+	// AggregationMax (abajo). Aquí decía «ES LA LATENCIA DE PEOR CASO DEL PIPELINE» y
+	// eso ahora le corresponde al techo.
+	//
+	// 🔴 LO QUE SIGUE SIENDO CIERTO, Y HAY QUE LEERLO LITERAL DESDE T1.7: la señal que
+	// ADELANTA el cierre puede no llegar nunca por causas NORMALES, así que sin ella los
+	// plazos de esta ventana son la latencia de TODOS los casos, no la del peor. Pesan
+	// directamente sobre la métrica reina del plan (primer borrador en < 5 min, T6.1).
 	//
 	// 🔧 Y LOS MOTIVOS CAMBIARON CON LA OLA 1.6 (D-044.31), aunque la conclusión no:
 	// aquí se listaban los del PUSH del Edge (presupuesto de espera del despachador,
@@ -565,6 +570,23 @@ type TenantSettings struct {
 	// configurar». La distinción es la misma que muerde en EventInactivityTTL: con
 	// fila, el 0 se respeta; sin fila manda DefaultAggregationWindow (45 s).
 	AggregationWindow time.Duration
+	// AggregationMax es el TECHO de esa misma ventana (Plan 044 · T1.8-1, migración
+	// 0076 · aggregation_max_seconds INTEGER NOT NULL DEFAULT 120): cuántos segundos
+	// como mucho puede el cliente seguir añadiendo mensajes al MISMO job desde que la
+	// ventana nació (`created_at`) antes de que el barrido decida que ya hay bastante.
+	//
+	// 🔴 LOS DOS PLAZOS SON UNA SOLA REGLA Y NO SE PUEDEN LEER POR SEPARADO: la ventana
+	// cierra por lo que llegue ANTES —silencio (`now()-updated_at >= AggregationWindow`)
+	// o techo (`now()-created_at >= AggregationMax`)—. Sin techo, una conversación que
+	// gotea cada 40 s no alcanza nunca los 45 s de silencio y su job NO CIERRA JAMÁS;
+	// sin silencio, una ráfaga tecleada despacio se parte en dos jobs. Cada uno tapa
+	// el agujero del otro, así que quien toque uno tiene que mirar el otro.
+	//
+	// 🔴 0 SIGNIFICA «VENCIDO SIEMPRE» (cierre en el primer barrido), la MISMA lectura
+	// que el 0 de AggregationWindow — y NO «sin techo», que no existe a propósito: la
+	// ausencia de techo es el defecto que T1.8-1 vino a cerrar. Ver el COMMENT de la
+	// columna en la 0076.
+	AggregationMax time.Duration
 }
 
 // DefaultTenantSettings es la config que vale para un tenant SIN fila en
@@ -596,6 +618,13 @@ func DefaultTenantSettings(tenantID string) TenantSettings {
 		// que hoy son 2 de 3 en UAT. El DEFAULT 45 de la 0072 solo alcanza a las filas
 		// que existen; este espejo alcanza a las que no.
 		AggregationWindow: DefaultAggregationWindow,
+		// 🔴 AggregationMax SE NOMBRA POR EL MISMO MOTIVO Y CON MÁS URGENCIA (T1.8-1):
+		// omitirla dejaría el cero de Go, que aquí significa VENCIDO SIEMPRE — o sea, un
+		// tenant SIN fila cerraría su ventana en el PRIMER barrido, un job por mensaje y
+		// la agregación entera apagada, que es justo el estado que 2 de 3 tenants de UAT
+		// tendrían por no tener fila. El DEFAULT 120 de la 0076 solo alcanza a las filas
+		// que existen; este espejo alcanza a las que no.
+		AggregationMax: DefaultAggregationMax,
 	}
 }
 
@@ -673,6 +702,21 @@ const (
 	// borrador cuando el intent no llega (T1.7), y el 044 se mide contra «< 5 min»
 	// (T6.1). Subirlo es gastar ese presupuesto.
 	DefaultAggregationWindow = 45 * time.Second
+	// DefaultAggregationMax es el default de PLATAFORMA de aggregation_max_seconds
+	// (120 s, Plan 044 · T1.8-1) que espeja el DEFAULT de la migración 0076. Vale para
+	// el tenant SIN fila; un tenant CON fila manda siempre, incluido su 0 explícito,
+	// que aquí significa VENCIDO SIEMPRE (cierre en el primer barrido).
+	//
+	// ⚠️ NO es un número de estilo, y pesa MÁS que la ventana de silencio: es el peor
+	// caso REAL de latencia hasta el flush cuando el cliente teclea despacio, y el 044
+	// se mide contra «< 5 min» (T6.1). Dos de esos cinco minutos se van aquí.
+	//
+	// 🔴 SU RELACIÓN CON DefaultAggregationWindow NO ES UNA INVARIANTE. Que 120 > 45 es
+	// lo normal, pero un tenant puede configurar el techo por DEBAJO de su ventana y es
+	// legítimo: significa «plazo fijo desde el primer mensaje», que es exactamente lo
+	// que el sistema hacía antes de esta ola. No hay CHECK cruzado en la 0076 y no debe
+	// haber un `if` aquí que lo simule.
+	DefaultAggregationMax = 120 * time.Second
 )
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna
