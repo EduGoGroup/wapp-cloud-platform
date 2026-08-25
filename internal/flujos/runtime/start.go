@@ -374,6 +374,20 @@ func markTaglineOffered(st *model.Conversation) {
 // clasificador) y Vars["intent_name"]. Sin params (arranque por keyword/fallback/API)
 // es un no-op ⇒ no-regresión. El módulo los CONSUME una sola vez (los limpia de Vars
 // tras usarlos) en su Prime.
+//
+// ⚠️ 🔴 ESTE CAMINO NO LO EJERCITA NADIE HOY, Y SE ROTULA EN VEZ DE BORRARSE (D-044.40, T1.8-3).
+// Desde la Ola 1.6 (pull, ADR-0045) el arranque por INTENCIÓN no ocurre: en UAT hay CERO reglas
+// `flow_triggers` con `kind='llm'`, y desde T1.8-3 el prompt P1 ya ni siquiera PIDE `params` — así que
+// `intentParams` llega vacío por construcción y esta función es un no-op en todas sus llamadas.
+//
+// POR QUÉ NO SE BORRA AQUÍ: borrarlo se llevaría por delante también `cart.Prime` por intención, y eso
+// es una decisión de PRODUCTO —reconectar el disparo por intención bajo pull, o retirarlo— que tiene su
+// propio plan candidato («disparadores por intención bajo pull — disparo tardío», en `docs/plans/`).
+// T1.8-3 sólo retira lo que P1 PIDE; el cable se queda con la letra puesta.
+//
+// 🔴 Y LA LETRA IMPORTA: una guarda sobre un camino muerto es deuda con buena letra. Si algún día este
+// `if` vuelve a ejecutarse de verdad, que sea porque alguien lo reconectó a propósito y no porque nadie
+// supo que estaba apagado.
 func seedIntentParams(st *model.Conversation, params map[string]string, name string) {
 	if len(params) == 0 && name == "" {
 		return
