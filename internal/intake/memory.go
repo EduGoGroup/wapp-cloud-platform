@@ -65,7 +65,10 @@ type Counters struct {
 // implementación Postgres en las CUATRO cosas que muerden:
 //
 //  1. como mucho UNA ventana viva por tupla (el índice único PARCIAL de la 0072);
-//  2. `MessageTS` se fija SOLO al abrir, nunca al ampliar;
+//  2. `MessageTS` se fija SOLO al abrir, nunca al ampliar, y `UpdatedAt` se mueve en
+//     LAS DOS ramas (es el `updated_at = now()` explícito del `DO UPDATE`, que desde
+//     T1.8-1 es el ancla del SILENCIO — si el doble dejara de moverlo, la ventana
+//     híbrida se probaría contra un reloj congelado);
 //  3. `CloseWindow` es idempotente por el guard de estado;
 //  4. `PutSourceText` escribe en la ÚLTIMA ventana `pending` de la tupla y solo si
 //     su sobre estaba vacío (T1.4 — la subconsulta y el guard de putSourceTextSQL).
@@ -264,11 +267,13 @@ func (m *MemoryStore) ListAggregating(_ context.Context, limit int) ([]OpenJob, 
 		if j.Status != StatusAggregating {
 			continue
 		}
-		anchor := j.MessageTS
-		if anchor.IsZero() {
-			anchor = j.CreatedAt
-		}
-		out = append(out, OpenJob{ID: j.ID, Key: j.Key, Anchor: anchor})
+		// 🔧 LAS DOS ANCLAS DE LA VENTANA HÍBRIDA (T1.8-1), y las dos son del RELOJ DEL
+		// STORE, no del entrante. Aquí había un `anchor := j.MessageTS` con caída a
+		// CreatedAt que replicaba el `COALESCE(message_ts, created_at)` del SQL viejo;
+		// devolver `MessageTS` en cualquiera de los dos campos rompería la simetría con
+		// Postgres, que ya no lo selecciona, y el doble mediría plazos contra el reloj
+		// del cliente mientras producción los mide contra el de la base.
+		out = append(out, OpenJob{ID: j.ID, Key: j.Key, LastActivity: j.UpdatedAt, CreatedAt: j.CreatedAt})
 		if len(out) == limit {
 			break
 		}

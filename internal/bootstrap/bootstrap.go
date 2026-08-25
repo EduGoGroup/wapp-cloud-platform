@@ -519,6 +519,16 @@ func Run(ctx context.Context) error {
 		// este plan resuelve— no declara ningún efecto. El porqué entero está en la
 		// cabecera de internal/flujos/runtime/aggregator.go.
 		flowruntime.WithAggregator(intakeAggregator),
+		// La BIENVENIDA ÚNICA (Plan 044 · Ola 1.8 · T1.8-2, D6): el «estamos
+		// procesando» que el cliente recibe al primer mensaje de una conversación y
+		// otra vez tras un silencio largo. Va cableada con el MISMO flowStore que todo
+		// lo demás —`conversation_welcomes` es estado conversacional y vive en el
+		// repositorio de flujos— y depende del gate por tenant que pone
+		// WithEntitlements, más abajo: sin `llm_intake` no manda nada y no escribe una
+		// sola fila. Va pegada al agregador porque son la misma promesa vista por las
+		// dos caras: aquella acumula lo que el cliente pide, y esta le dice que lo
+		// estamos procesando mientras tanto.
+		flowruntime.WithWelcomeStore(flowStore),
 		flowruntime.WithResumePolicy(cart.NodeTypeCart, cart.NewResumePolicy(flowStore)),
 		flowruntime.WithPresignClient(flowDeps.presign),
 		flowruntime.WithTriggerResolver(trigger.NewConfigResolver(triggerStore)),

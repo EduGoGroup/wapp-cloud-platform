@@ -45,24 +45,9 @@ import (
 //     no lo abre: se DOCUMENTA la exclusión —aquí y en el Help de la métrica— en vez
 //     de dejar que el docstring afirme una cobertura que no existe.
 func (rt *Runtime) send(ctx context.Context, sessionID, to string, key store.Key, outs []engine.Output) (*cloudlinkv1.Ack, error) {
-	var last *cloudlinkv1.Ack
-	emitió := false
-	for _, out := range outs {
-		if out.Media != nil {
-			ack, err := rt.sendMedia(ctx, sessionID, to, out.Media)
-			if err != nil {
-				return last, err
-			}
-			last = ack
-			emitió = true
-			continue
-		}
-		ack, err := rt.sender.SendText(ctx, sessionID, to, out.Text)
-		if err != nil {
-			return last, fmt.Errorf("runtime: enviar texto: %w", err)
-		}
-		last = ack
-		emitió = true
+	last, emitió, err := rt.emit(ctx, sessionID, to, outs)
+	if err != nil {
+		return last, err
 	}
 	// 🔴 SE CUENTA UNA VEZ POR EMISIÓN —una llamada a `send`—, NO POR MENSAJE Y
 	// TAMPOCO POR TURNO, y el matiz es el que da sentido a toda la métrica. Agrupar
@@ -92,6 +77,80 @@ func (rt *Runtime) send(ctx context.Context, sessionID, to string, key store.Key
 		rt.countAutoreplyStreak(key)
 	}
 	return last, nil
+}
+
+// emit es el DESPACHO PURO: empuja cada salida por el Sender en orden, presignando
+// las que llevan Media, y devuelve el último Ack y si de verdad salió algo. Ante el
+// primer error corta y lo devuelve (con el último Ack logrado).
+//
+// 🔴 SE EXTRAJO DE `send` PARA QUE HAYA UN CAMINO DE ENVÍO QUE **NO** CUENTE RACHA
+// (Plan 044 · T1.8-2). Es el cuerpo que `send` tenía inline; lo único que se quedó
+// arriba —y lo único que separa a los dos llamantes— es la llamada a
+// countAutoreplyStreak. La alternativa, un booleano `contar bool` en la firma de
+// `send`, habría dejado ~10 llamantes escribiendo `true` sin saber qué significa;
+// esto obliga a elegir función, y el nombre dice cuál eliges.
+//
+// ⚠️ QUIEN LLAME A `emit` DIRECTAMENTE SE SALE DE LA MÉTRICA DEL PLAN 049, y eso
+// tiene que ser una decisión escrita, no una comodidad. Hoy tiene UN solo llamante
+// fuera de `send`: sendSystemText, ver su docstring. Añadir un segundo sin explicar
+// por qué su saliente no es una auto-respuesta conversacional convierte la racha en
+// una métrica que subcuenta en silencio — exactamente lo que la cabecera de `send`
+// documenta que ya pasa con intakes/notifier.go, y que no queremos repetir a ciegas.
+func (rt *Runtime) emit(ctx context.Context, sessionID, to string, outs []engine.Output) (*cloudlinkv1.Ack, bool, error) {
+	var last *cloudlinkv1.Ack
+	emitió := false
+	for _, out := range outs {
+		if out.Media != nil {
+			ack, err := rt.sendMedia(ctx, sessionID, to, out.Media)
+			if err != nil {
+				return last, emitió, err
+			}
+			last = ack
+			emitió = true
+			continue
+		}
+		ack, err := rt.sender.SendText(ctx, sessionID, to, out.Text)
+		if err != nil {
+			return last, emitió, fmt.Errorf("runtime: enviar texto: %w", err)
+		}
+		last = ack
+		emitió = true
+	}
+	return last, emitió, nil
+}
+
+// sendSystemText despacha UN texto FIJO DEL SISTEMA por el mismo camino de envío que
+// todo lo demás, pero FUERA de la racha de auto-respuestas del Plan 049.
+//
+// # POR QUÉ LA BIENVENIDA NO ES UNA AUTO-RESPUESTA (Plan 044 · T1.8-2)
+//
+// La racha existe para ver UNA cosa: la conversación en la que el motor no para de
+// contestar —el bucle contra un autorespondedor, el catálogo paginado que no acaba—.
+// Lo que la hace legible es que cada incremento sea un TURNO conversacional: entrante
+// → el motor decide → saliente. La bienvenida no es eso. Es un acuse de recibo fijo
+// que se manda como mucho una vez por conversación (y otra tras N horas de silencio),
+// no la responde ningún nodo, no depende de lo que el cliente dijo y no puede
+// repetirse dentro de un episodio.
+//
+// Contarla haría dos daños, los dos al mismo dato:
+//
+//   - DESPLAZA LA DISTRIBUCIÓN UN ESCALÓN ENTERO. Toda conversación de un tenant con
+//     `llm_intake` empezaría en 1 sin que el motor haya contestado nada, así que el
+//     p99 —que el Plan 049 · Opción B va a usar para calibrar un umbral de CORTE con
+//     2-4 semanas de datos reales (§9)— saldría inflado por un mensaje que no es
+//     conversación. Un umbral calibrado sobre eso silencia clientes de verdad.
+//   - INFLA JUSTO LAS RACHAS CORTAS. Una conversación de un solo turno pasaría de 1 a
+//     2: el ruido cae en el tramo donde más pesa la forma de la distribución.
+//
+// ⚠️ TAMPOCO CONSUME TOKEN DEL LIMITADOR ANTI-LOOP (Plan 020 · T0), y también es
+// deliberado: el tope acota las auto-respuestas de una conversación, y gastarle uno a
+// la bienvenida podría dejar MUDA la primera respuesta real del motor por un acuse de
+// recibo. La bienvenida no puede entrar en bucle por construcción —su emisión está
+// sellada en `conversation_welcomes` y solo se repite tras horas de silencio—, así
+// que no necesita esa red.
+func (rt *Runtime) sendSystemText(ctx context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
+	ack, _, err := rt.emit(ctx, sessionID, to, []engine.Output{{Text: text}})
+	return ack, err
 }
 
 // countAutoreplyStreak registra UNA auto-respuesta emitida en la racha de esa

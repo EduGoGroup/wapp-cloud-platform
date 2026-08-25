@@ -14,6 +14,7 @@ package runtime_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
@@ -191,7 +193,17 @@ type aggEntorno struct {
 	clock   *aggReloj
 }
 
+// nuevoAggEntorno monta el entorno con el TECHO en su default de plataforma (120 s,
+// T1.8-1). Los tests que no hablan del techo siguen escribiéndose igual que antes.
 func nuevoAggEntorno(t *testing.T, ventana time.Duration) *aggEntorno {
+	t.Helper()
+	return nuevoAggEntornoConTecho(t, ventana, store.DefaultAggregationMax)
+}
+
+// nuevoAggEntornoConTecho monta el entorno fijando LOS DOS plazos de la ventana
+// híbrida (T1.8-1). Existe porque los dos números son UNA regla —cierra el que venza
+// antes— y hay casos que solo se pueden montar moviendo el segundo.
+func nuevoAggEntornoConTecho(t *testing.T, ventana, techo time.Duration) *aggEntorno {
 	t.Helper()
 	clock := nuevoAggReloj()
 	jobs := intake.NewMemoryStore(clock.now)
@@ -203,6 +215,11 @@ func nuevoAggEntorno(t *testing.T, ventana time.Duration) *aggEntorno {
 	// SetTenantSettings.
 	s := store.DefaultTenantSettings(aggTenant)
 	s.AggregationWindow = ventana
+	// 🔴 EL TECHO TAMBIÉN SE NOMBRA, Y LA TRAMPA ES LA MISMA QUE LA DE LA VENTANA: un
+	// AggregationMax en el cero de Go NO significa «120 por defecto» sino VENCIDO
+	// SIEMPRE, o sea que el barrido cerraría toda ventana en su primera pasada y los
+	// tests del silencio medirían el vacío.
+	s.AggregationMax = techo
 	cfg.SetTenantSettings(s)
 	ents := entitlements.NewFake()
 	ents.Enable(aggTenant, entitlements.FeatureLLMIntake)
@@ -343,17 +360,25 @@ func TestTenantSinLaFeature_CeroJobs(t *testing.T) {
 // sin ningún intent, la ventana se cierra sola al cumplirse el plazo. Y un segundo
 // barrido no produce un segundo job.
 //
-// MUTACIÓN (compila): en aggregator.go, en la función due, sustituir la última
-// línea
+// 🔧 ES TAMBIÉN EL CRITERIO (a) DE T1.8-1 —«un mensaje y silencio ⇒ cierre a los 45 s»—
+// y no hizo falta tocarlo: con UN solo mensaje, `updated_at` y `created_at` valen lo
+// mismo, así que el ancla nueva del silencio da el mismo número que la vieja. El techo
+// de 120 s ni se acerca a disparar. Que este test siguiera verde sin cambios es, de
+// hecho, parte de lo que se quería: la ventana híbrida no cambia el caso simple.
 //
-//	return !now.Before(job.Anchor.Add(win))
+// 🔧 SU MUTACIÓN SE MUDÓ DE FUNCIÓN CON T1.8-1 (la de antes citaba `job.Anchor`, que
+// ya no existe). MUTACIÓN (compila): en aggregator.go, en venceElSilencio, sustituir
+// la última línea
+//
+//	return !now.Before(job.LastActivity.Add(p.silencio))
 //
 // por
 //
 //	return false
 //
-// ("now" es un parámetro y puede quedar sin usar; "win" sigue usada en la guarda
-// del flush inmediato de la línea anterior, así que el paquete compila).
+// («now» y «job» son PARÁMETROS y pueden quedar sin usar; «p.silencio» sigue usada en
+// la guarda del flush inmediato de la línea anterior, así que el paquete compila).
+// Aquí el techo de 120 s no rescata el verde: el test barre a los 45 s.
 func TestSilencio_FlusheaALosNSegundos_YEsIdempotente(t *testing.T) {
 	ctx := context.Background()
 	e := nuevoAggEntorno(t, 45*time.Second)
@@ -560,14 +585,27 @@ func TestIntentSinParams_ProduceUnJobINDISTINGUIBLE(t *testing.T) {
 // produce cuando se le acaba el presupuesto de espera— abre la ventana, la acumula
 // y la cierra a los N segundos. No hay respaldo que probar: éste ES el camino.
 //
-// MUTACIÓN (compila): en aggregator.go, en la función due, sustituir la última
-// línea por
+// 🔧 REESCRITO POR T1.8-1 (2026-08-25), Y EL CAMBIO DE NÚMEROS ES EL CAMBIO DEL
+// SISTEMA. Este test EXIGÍA que la ráfaga cerrara «a los 45 s del PRIMER mensaje», y
+// eso era exactamente el defecto que T1.8-1 vino a cerrar: con cinco mensajes a
+// intervalos de 4 s, el cliente todavía estaba tecleando cuando el barrido decidía que
+// ya tenía bastante. Con la ventana híbrida el plazo cuenta desde el ÚLTIMO mensaje
+// (t=16 s), así que cierra a t=61 s — y el techo de 120 s ni se acerca a disparar. El
+// criterio de T1.7 no se cae, cambia de ancla: «flush por ventana» sigue siendo el
+// camino garantizado, y sigue sin necesitar ningún intent.
+//
+// MUTACIÓN (compila): en aggregator.go, en venceElSilencio, sustituir la última línea
+// por
 //
 //	return false
 //
-// Es la MISMA mutación que rompe el test del silencio, y eso es el punto: si el
-// plazo deja de cerrar ventanas, un tenant cuyo Edge nunca clasifica se queda sin
-// un solo presupuesto y NADIE ve un error.
+// («now» y «job» quedan sin usar dentro de la función, pero son PARÁMETROS y en Go eso
+// compila; «p.silencio» sigue usada en la guarda de la línea anterior). Es la MISMA
+// mutación que rompe el test del silencio, y eso es el punto: si el plazo deja de
+// cerrar ventanas, un tenant cuyo Edge nunca clasifica se queda sin un solo
+// presupuesto y NADIE ve un error. ⚠️ Con esa mutación este test NO se queda en 0
+// para siempre: el TECHO de 120 s acabaría cerrando la ventana igual — lo que se pone
+// rojo es el aserto de t=61.
 func TestT17a_RafagaCompletaSinNingunIntent_FlusheaPorVentana(t *testing.T) {
 	ctx := context.Background()
 	e := nuevoAggEntorno(t, 45*time.Second)
@@ -579,13 +617,22 @@ func TestT17a_RafagaCompletaSinNingunIntent_FlusheaPorVentana(t *testing.T) {
 	if n := len(e.jobs.Jobs()); n != 1 {
 		t.Fatalf("cinco mensajes seguidos son UNA ventana, hay %d jobs", n)
 	}
-	// Han pasado 20 s desde el primero: todavía no.
+	// Han pasado 20 s desde el primero y 4 s desde el último: todavía no.
 	if n := e.sink.Sweep(ctx); n != 0 {
 		t.Fatalf("a los 20 s no toca; se cerraron %d", n)
 	}
-	e.clock.avanza(25 * time.Second) // 45 s desde el PRIMER mensaje
+	// 🔴 EL PLAZO CUENTA DESDE EL ÚLTIMO MENSAJE (t=16 s), NO DESDE EL PRIMERO. A los
+	// 45 s del primero —t=45— todavía faltan 16 para el silencio. Este aserto es el que
+	// se pone rojo si alguien vuelve a anclar en el primer mensaje.
+	e.clock.avanza(25 * time.Second) // t = 45 s
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a los 45 s del PRIMER mensaje NO toca: el silencio se mide desde el ÚLTIMO (t=16 s) "+
+			"y vence en t=61. Se cerraron %d — si esto cierra, el ancla volvió a message_ts y la ráfaga "+
+			"tecleada despacio vuelve a partirse en dos jobs", n)
+	}
+	e.clock.avanza(16 * time.Second) // t = 61 s: 45 s desde el ÚLTIMO mensaje
 	if n := e.sink.Sweep(ctx); n != 1 {
-		t.Fatalf("a los 45 s del primer mensaje tenía que cerrarse; se cerraron %d", n)
+		t.Fatalf("a los 45 s del ÚLTIMO mensaje tenía que cerrarse; se cerraron %d", n)
 	}
 	j := e.jobs.Jobs()[0]
 	if j.Status != intake.StatusPending {
@@ -1022,15 +1069,15 @@ func TestFalloDelStore_NoTumbaElTurno(t *testing.T) {
 // que el sistema hacía antes de esta ola. Lo dice el CHECK >= 0 de la 0072 y el
 // COMMENT de la columna.
 //
-// MUTACIÓN (compila — ver el aviso de abajo): en aggregator.go, en windowFor,
+// MUTACIÓN (compila — ver el aviso de abajo): en aggregator.go, en plazosFor,
 // sustituir la última línea
 //
-//	return cfg.AggregationWindow
+//	return plazosDeVentana{silencio: cfg.AggregationWindow, techo: cfg.AggregationMax}
 //
 // por ESTAS DOS:
 //
 //	_ = cfg
-//	return store.DefaultAggregationWindow
+//	return porDefecto
 //
 // Es exactamente el defecto de «sustituir ceros por defaults» que
 // repository_postgres.go prohíbe por escrito: el override explícito del tenant se
@@ -1045,9 +1092,10 @@ func TestFalloDelStore_NoTumbaElTurno(t *testing.T) {
 // compila porque `err` sigue siendo una variable nueva; se elige la de arriba por
 // tocar un solo sitio.)
 //
-// ⚠️ Y una que NO sirve, anotada para que nadie la reintente: mutar el `if win <= 0`
-// de la función due. Con win=0 la comparación de plazo también cierra, así que el
-// test seguiría verde. Lo que hay que romper es DE DÓNDE SALE EL NÚMERO.
+// ⚠️ Y una que NO sirve, anotada para que nadie la reintente: mutar el
+// `if p.silencio <= 0` de venceElSilencio. Con silencio=0 la comparación de plazo
+// también cierra, así que el test seguiría verde. Lo que hay que romper es DE DÓNDE
+// SALE EL NÚMERO.
 func TestVentanaCero_EsFlushInmediato(t *testing.T) {
 	ctx := context.Background()
 	e := nuevoAggEntorno(t, 0)
@@ -1537,5 +1585,409 @@ func TestT164_RespuestaTardia_NoContaminaLaVentanaSIGUIENTE(t *testing.T) {
 	}
 	if len(refs) != 2 {
 		t.Fatalf("los dos mensajes tienen que estar, cada uno en su ventana: %v", refs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T1.8-1 — LA VENTANA HÍBRIDA (D-044.43): silencio 45 s / techo 120 s
+// ---------------------------------------------------------------------------
+//
+// LOS CINCO CRITERIOS Y DÓNDE VIVE CADA UNO, para que nadie los busque:
+//
+//   (a) un mensaje y silencio ⇒ 45 s .......... TestSilencio_FlusheaALosNSegundos_…
+//                                               (ya existía; sigue valiendo palabra
+//                                               por palabra y el techo ni se acerca)
+//   (b) ráfaga lenta de 70 s ⇒ UN job a 105 s .. TestT181b_…
+//   (c) goteo cada 40 s ⇒ techo a 120 s ....... TestT181c_…
+//   (d) el contexto no mueve updated_at ....... TestT181d_… (ver su docstring: hoy
+//                                               pasa POR CONSTRUCCIÓN)
+//   (f) message_ts sigue siendo el del 1.º .... asertado DENTRO de (b) y (c)
+//   (h) el hint no espera al tick ............. TestT181h_…
+//
+// Y una pieza que los sostiene a todos: TestT181_ElTechoSaleDeLaConfigDelTenant, que
+// impide que el 120 sea una constante escondida en el barrido.
+//
+// ✅ ESTOS SÍ SE HAN EJECUTADO (2026-08-25), al contrario que el aviso de la cabecera
+// del fichero: `GOWORK=off go test -race ./internal/flujos/runtime/`. Y sus dos
+// mutaciones de (e) y la de (h) se escribieron, se COMPILARON, se ejecutaron y se
+// vieron en rojo antes de revertirlas — el rojo exacto está anotado en cada una.
+
+// TestT181b_RafagaLentaDe70s_UnSoloJobQueCierraALos105 es el criterio (b) literal, y
+// es EL defecto que esta tarea vino a cerrar dicho con el caso real: el cliente
+// escribe tres mensajes separados 30 s —una sola petición, tecleada despacio— y hasta
+// hoy el sistema se la partía en DOS pedidos.
+//
+// # POR QUÉ EL BARRIDO DE t=50 ES LA MITAD DEL TEST
+//
+// Sin él, el test no distinguiría «la ventana se extendió» de «nadie miró a tiempo».
+// Con el ancla vieja (el PRIMER mensaje, `message_ts`), ese barrido cerraba la ventana
+// —han pasado 50 s de los 45— y el tercer mensaje, a t=60, abría una ventana NUEVA:
+// dos jobs, cada uno con parte del pedido, y ni un error en ningún log. El aserto
+// final de «UN job» es el que cuenta esa historia.
+//
+// 💥 MUTACIÓN de (e) — «volver a anclar en message_ts» (compila): en
+// internal/intake/memory.go, en ListAggregating, sustituir
+//
+//	out = append(out, OpenJob{ID: j.ID, Key: j.Key, LastActivity: j.UpdatedAt, CreatedAt: j.CreatedAt})
+//
+// por
+//
+//	out = append(out, OpenJob{ID: j.ID, Key: j.Key, LastActivity: j.MessageTS, CreatedAt: j.CreatedAt})
+//
+// Es EXACTAMENTE el ancla vieja (`message_ts`, el ts del primer mensaje) puesta donde
+// ahora va la actividad, y es además lo que pasaría si alguien devolviera esa columna
+// desde `listAggregatingSQL`. Pone rojos DOS asertos: el barrido de t=50 cierra, y al
+// final hay dos jobs en vez de uno.
+func TestT181b_RafagaLentaDe70s_UnSoloJobQueCierraALos105(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second) // techo = 120 s de plataforma
+	primerTS := e.clock.now()
+
+	e.observa(ctx, "wa-1", nil) // t = 0
+	e.clock.avanza(30 * time.Second)
+	e.observa(ctx, "wa-2", nil) // t = 30
+
+	// t = 50: han pasado 50 s DEL PRIMER MENSAJE y solo 20 del último. Con el ancla
+	// vieja esto cerraba y partía la ráfaga.
+	e.clock.avanza(20 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a los 50 s del primer mensaje —y 20 del último— la ventana NO ha vencido; se cerraron %d. "+
+			"Si esto cierra, el silencio volvió a anclarse en el PRIMER mensaje y la ráfaga se parte en dos jobs", n)
+	}
+
+	e.clock.avanza(10 * time.Second)
+	e.observa(ctx, "wa-3", nil) // t = 60, el último de la ráfaga
+
+	// t = 104: falta un segundo para el silencio (60 + 45 = 105) y faltan 16 para el
+	// techo (0 + 120). No toca.
+	e.clock.avanza(44 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a t=104 s no toca (silencio vence en 105, techo en 120); se cerraron %d", n)
+	}
+	// t = 105: 45 s exactos desde el ÚLTIMO mensaje. Cierra el SILENCIO, no el techo.
+	e.clock.avanza(1 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("a t=105 s (45 s tras el último mensaje) tenía que cerrarse; se cerraron %d", n)
+	}
+
+	jobs := e.jobs.Jobs()
+	if len(jobs) != 1 {
+		t.Fatalf("la ráfaga lenta de 70 s tenía que ser UN solo job, hay %d: la petición del cliente "+
+			"se partió en dos pedidos y ninguno lleva el texto entero", len(jobs))
+	}
+	j := jobs[0]
+	if j.Status != intake.StatusPending {
+		t.Fatalf("status tras el flush = %q; se esperaba %q", j.Status, intake.StatusPending)
+	}
+	if len(j.SourceRefs) != 3 {
+		t.Fatalf("el job tenía que llevar las 3 referencias de la ráfaga, lleva %v", j.SourceRefs)
+	}
+	// CRITERIO (f): message_ts NO cambia de significado. Sigue siendo el del PRIMER
+	// mensaje —la base de fechas del presupuesto, D-044.9— aunque el plazo ahora se
+	// mida contra el último. Son dos cosas distintas y esta tarea solo tocó una.
+	if !j.MessageTS.Equal(primerTS) {
+		t.Fatalf("message_ts = %v; tenía que seguir siendo el del PRIMER mensaje (%v). La ventana híbrida "+
+			"cambia CONTRA QUÉ se mide el plazo, no qué fecha ancla el presupuesto", j.MessageTS, primerTS)
+	}
+}
+
+// TestT181c_GoteoCada40s_CierraPorElTechoALos120 es el criterio (c) literal, y es el
+// defecto que aparecería si alguien «arreglara» (b) anclando SOLO en el silencio: una
+// conversación que gotea cada 40 s no alcanza NUNCA los 45 s de silencio, así que su
+// ventana no cerraría jamás. Un job en `aggregating` que nadie recoge es un pedido
+// perdido sin una línea de error en ningún sitio.
+//
+// El último tramo —el mensaje de t=120 abriendo ventana NUEVA— no es decorado: dice
+// que el techo CORTA el pedido, no la conversación. El cliente que sigue escribiendo
+// obtiene un segundo job, que es lo correcto (el índice de la 0072 es PARCIAL a
+// propósito).
+//
+// 💥 MUTACIÓN de (e) — «quitar el techo» (compila): en aggregator.go, en la función
+// due, sustituir la última línea
+//
+//	return s.venceElSilencio(job, p, now) || s.venceElTecho(job, p, now)
+//
+// por
+//
+//	return s.venceElSilencio(job, p, now)
+//
+// (`venceElTecho` se queda sin llamantes, y un MÉTODO sin usar en Go compila — no es
+// una variable local). El barrido de t=120 devuelve 0 y este test se para ahí. Ningún
+// otro test del paquete se entera, que es exactamente por qué este hace falta.
+func TestT181c_GoteoCada40s_CierraPorElTechoALos120(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second) // silencio 45, techo 120
+	primerTS := e.clock.now()
+
+	e.observa(ctx, "wa-1", nil) // t = 0
+
+	e.clock.avanza(40 * time.Second)
+	e.observa(ctx, "wa-2", nil) // t = 40
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a t=40 el silencio lleva 0 s y el techo 40; se cerraron %d", n)
+	}
+
+	e.clock.avanza(40 * time.Second)
+	e.observa(ctx, "wa-3", nil) // t = 80
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a t=80 el silencio lleva 0 s y el techo 80; se cerraron %d", n)
+	}
+
+	// t = 119: el silencio lleva 39 s (vencería en t=125, y el goteo lo reiniciaría
+	// otra vez antes). El techo vence en t=120. Un segundo antes, nada.
+	e.clock.avanza(39 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a t=119 no toca todavía (techo en 120); se cerraron %d", n)
+	}
+	// t = 120: 120 s exactos desde que la ventana NACIÓ. Cierra el TECHO —el silencio
+	// nunca llegó a 45 y no habría llegado nunca.
+	e.clock.avanza(1 * time.Second)
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("a t=120 tenía que cerrar EL TECHO (el silencio nunca alcanza 45 s con un goteo de 40); "+
+			"se cerraron %d. Sin techo, este job se queda en `aggregating` para siempre", n)
+	}
+
+	jobs := e.jobs.Jobs()
+	if len(jobs) != 1 {
+		t.Fatalf("hasta aquí es UN solo job, hay %d", len(jobs))
+	}
+	if len(jobs[0].SourceRefs) != 3 {
+		t.Fatalf("el job tenía que llevar los 3 mensajes del goteo, lleva %v", jobs[0].SourceRefs)
+	}
+	// CRITERIO (f), también por el camino del techo.
+	if !jobs[0].MessageTS.Equal(primerTS) {
+		t.Fatalf("message_ts = %v; tenía que seguir siendo el del PRIMER mensaje (%v)", jobs[0].MessageTS, primerTS)
+	}
+
+	// Y el goteo SIGUE: el techo cortó el pedido, no la conversación. El mensaje de
+	// t=120 abre la ventana siguiente.
+	e.observa(ctx, "wa-4", nil)
+	jobs = e.jobs.Jobs()
+	if len(jobs) != 2 {
+		t.Fatalf("tras cerrar por techo, el siguiente mensaje tiene que abrir OTRA ventana; hay %d jobs", len(jobs))
+	}
+}
+
+// TestT181_ElTechoSaleDeLaConfigDelTenant impide el defecto que (c) por sí solo no ve:
+// que el 120 esté escrito a mano en el barrido en vez de leerse de
+// `tenant_settings.aggregation_max_seconds`. Es la misma familia que
+// TestVentanaCero_EsFlushInmediato, que existe por la misma razón para la ventana.
+//
+// 🔴 EL NÚMERO ELEGIDO (90 s) NO ES NI EL DEFAULT DE PLATAFORMA NI LA VENTANA. Si
+// fuera 120, el test pasaría con el número quemado; si fuera 45, pasaría con el techo
+// leyendo la columna equivocada. Está entre los dos a propósito.
+//
+// MUTACIÓN (compila): en aggregator.go, en plazosFor, sustituir
+//
+//	return plazosDeVentana{silencio: cfg.AggregationWindow, techo: cfg.AggregationMax}
+//
+// por
+//
+//	return plazosDeVentana{silencio: cfg.AggregationWindow, techo: store.DefaultAggregationMax}
+//
+// El techo del tenant se ignora y el barrido de t=90 devuelve 0.
+func TestT181_ElTechoSaleDeLaConfigDelTenant(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntornoConTecho(t, 45*time.Second, 90*time.Second)
+
+	// El goteo va cada 30 s para que el SILENCIO no llegue nunca antes que el techo:
+	// último mensaje en t=60 ⇒ el silencio vencería en t=105, y el techo en t=90. Si
+	// los mensajes fueran más espaciados, cerraría el silencio y este test estaría
+	// midiendo el otro plazo sin enterarse.
+	e.observa(ctx, "wa-1", nil) // t = 0
+	e.clock.avanza(30 * time.Second)
+	e.observa(ctx, "wa-2", nil) // t = 30
+	e.clock.avanza(30 * time.Second)
+	e.observa(ctx, "wa-3", nil) // t = 60
+
+	e.clock.avanza(29 * time.Second) // t = 89
+	if n := e.sink.Sweep(ctx); n != 0 {
+		t.Fatalf("a t=89 no toca (techo del tenant = 90 s; el silencio vencería en 105); se cerraron %d", n)
+	}
+	e.clock.avanza(1 * time.Second) // t = 90
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("a t=90 tenía que cerrar el techo DEL TENANT (90 s, no los 120 de plataforma); se cerraron %d", n)
+	}
+	// Y la lectura fue UNA sola: los dos plazos salen del mismo GetTenantSettings.
+	// Dos lecturas aquí significarían que alguien partió el memo en dos.
+	if n := e.cfgCnt.lecturas(); n != 2 {
+		t.Fatalf("dos barridos son DOS lecturas de tenant_settings (una por pasada, memo por tenant); hubo %d", n)
+	}
+}
+
+// TestT181d_ElContextoNoMueveLaVentanaDeSilencio es el criterio (d).
+//
+// 🔴 HOY PASA POR CONSTRUCCIÓN, Y HAY QUE DECIRLO O ESTE TEST MIENTE. Se verificó
+// contra el código (2026-08-25): las entradas de contexto de T1.4 —`entry_kind`
+// 'summary' y los salientes fuera de turno rotulados— y la bienvenida que traerá
+// T1.8-2 se escriben en `public.conversation_event_messages` a través del EventStore
+// (`thread.go`: persistTurnMessages / persistOpeningTurn / persistOutOfTurnMessage →
+// events.AppendMessage / AppendOutOfTurnMessage / AppendSummary), que es OTRA TABLA.
+// Las únicas tres sentencias que tocan `intake_jobs` son openOrAppendSQL,
+// closeWindowSQL y putSourceTextSQL, y no hay un solo `CREATE TRIGGER` en el esquema.
+// ⇒ es IMPOSIBLE que `updated_at` se mueva por ahí, y por tanto este test NO PUEDE
+// FALLAR hoy. No cuenta como prueba de conducta viva; cuenta como CERROJO.
+//
+// Qué cerrojo, dicho para que se entienda por qué se escribe igual: la regresión
+// realista es que alguien enrute la bienvenida de T1.8-2 —o cualquier saliente del
+// sistema— por `Observe`, «ya que estamos, para que quede en source_refs». Ese día la
+// ventana se REABRIRÍA cada vez que el negocio habla y una conversación con
+// recordatorios automáticos no cerraría nunca. Este test se pone rojo ese día.
+//
+// El segundo aserto es el que tiene dientes de verdad: no basta con que la columna no
+// se mueva, tiene que seguir venciendo el plazo ORIGINAL. Se comprueba cerrando en
+// t=45 y no en t=85 (que es donde vencería si el contexto de t=40 hubiera contado como
+// actividad).
+func TestT181d_ElContextoNoMueveLaVentanaDeSilencio(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+
+	e.observa(ctx, "wa-1", nil) // t = 0, el único mensaje DEL CLIENTE
+	antes := e.jobs.Jobs()[0].UpdatedAt
+
+	// t = 40: el NEGOCIO habla, por las tres puertas que existen. Se usan los mismos
+	// métodos del EventStore que llaman persistTurnMessages / persistOutOfTurnMessage /
+	// PersistSummary, no una imitación: si alguien cambiara esos escritores para tocar
+	// también la ventana, lo tocarían desde aquí.
+	e.clock.avanza(40 * time.Second)
+	evs := newMemEventStore(e.clock.now())
+	if _, err := evs.AppendSummary(ctx, aggEvent, json.RawMessage(`{"resumen":"rescate"}`)); err != nil {
+		t.Fatalf("AppendSummary: %v", err)
+	}
+	if _, err := evs.AppendOutOfTurnMessage(ctx, aggEvent, "te recuerdo que falta la seña"); err != nil {
+		t.Fatalf("AppendOutOfTurnMessage: %v", err)
+	}
+	if _, err := evs.AppendMessage(ctx, aggEvent, events.RoleBusiness, "estamos procesando tu pedido"); err != nil {
+		t.Fatalf("AppendMessage (la bienvenida de T1.8-2): %v", err)
+	}
+
+	// (1) LA COLUMNA, LEÍDA. No el log: `UpdatedAt` del doble es `intake_jobs.updated_at`.
+	if despues := e.jobs.Jobs()[0].UpdatedAt; !despues.Equal(antes) {
+		t.Fatalf("updated_at de la ventana se movió con las filas de CONTEXTO: %v -> %v. "+
+			"El silencio solo lo mueven los MENSAJES DEL CLIENTE; si el negocio lo mueve, una "+
+			"conversación con recordatorios automáticos no cierra nunca", antes, despues)
+	}
+
+	// (2) Y EL PLAZO SIGUE SIENDO EL ORIGINAL: t=45, no t=85.
+	e.clock.avanza(5 * time.Second) // t = 45
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("a t=45 la ventana tenía que cerrarse: el contexto de t=40 no es actividad del cliente. "+
+			"Se cerraron %d — si es 0, el plazo se reinició con lo que dijimos NOSOTROS", n)
+	}
+}
+
+// TestT181h_ElHintDespiertaElBarridoSinEsperarAlTick es el criterio (h): el adelanto
+// por intent NO espera al tick.
+//
+// # QUÉ ESTABA MAL Y POR QUÉ IMPORTAN 5 SEGUNDOS
+//
+// `hintDueNow` anotaba la pista en memoria y se iba. El cierre lo hacía el siguiente
+// tick del barrido, o sea hasta `defaultSweepInterval` (5 s) DESPUÉS de que el sistema
+// ya supiera lo que tenía que saber. Sobre un presupuesto de «< 5 min» no es fatal,
+// pero es tiempo regalado a cambio de nada — y sobre todo es un reloj haciendo el
+// trabajo de un evento, que es el antipatrón que esta casa rechaza por escrito.
+//
+// # CÓMO ESTÁ MONTADO PARA QUE PRUEBE LO QUE DICE
+//
+// 🔴 EL TICKER SE PONE EN UNA HORA. Es la pieza entera del test: con el intervalo por
+// defecto (5 s) —o con cualquiera pequeño— no se podría distinguir «lo cerró el
+// despertador» de «lo cerró un tick que pasaba por ahí». Con una hora, lo único capaz
+// de cerrar esa ventana dentro del plazo del assert es el canal.
+//
+// Y la ventana nace con su plazo SIN cumplir (silencio 45 s, techo 120 s, reloj fake
+// parado), así que tampoco puede cerrarla el `RecoverAtBoot` del arranque ni el paso
+// del tiempo: no pasa tiempo.
+//
+// El plazo del assert (100 ms) sale del criterio literal de la tarea. El margen real
+// es de cuatro órdenes de magnitud contra el ticker de una hora.
+//
+// 💥 MUTACIÓN de (h) — «quitar el despertador» (compila): en aggregator.go, en
+// hintDueNow, borrar el bloque
+//
+//	select {
+//	case s.despertar <- struct{}{}:
+//	default:
+//	}
+//
+// El campo `despertar` sigue construido y sigue leído en `Run`, así que el paquete
+// compila entero. La pista se anota igual y el cierre vuelve a esperar al tick: con el
+// ticker en una hora, este test agota sus 3 s y falla. Ningún otro test del paquete se
+// entera.
+func TestT181h_ElHintDespiertaElBarridoSinEsperarAlTick(t *testing.T) {
+	e := nuevoAggEntorno(t, 45*time.Second)
+	sink := flowruntime.NewIntakeAggregator(aggLogger(), e.jobs, e.cfg, e.ents,
+		flowruntime.WithAggregatorClock(e.clock.now),
+		// UNA HORA: el tick no puede ser quien cierre. Ver el docstring.
+		flowruntime.WithSweepInterval(time.Hour))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sink.Observe(ctx, flowruntime.IncomingRef{Key: aggKey(), WaMessageID: "wa-1", MessageTS: e.clock.now()})
+
+	parado := make(chan struct{})
+	go func() {
+		defer close(parado)
+		sink.Run(ctx)
+	}()
+
+	// Que el RecoverAtBoot del arranque quede atrás, y comprobar que NO cerró nada: el
+	// plazo de la ventana no se ha cumplido (el reloj fake no se mueve en todo el test).
+	time.Sleep(20 * time.Millisecond)
+	if got := e.jobs.Jobs()[0].Status; got != intake.StatusAggregating {
+		t.Fatalf("el arranque de Run NO puede cerrar una ventana que no ha vencido; status=%q", got)
+	}
+
+	// EL EVENTO. A partir de aquí se mide.
+	inicio := time.Now()
+	sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.99)
+
+	limite := time.Now().Add(3 * time.Second)
+	for e.jobs.Jobs()[0].Status != intake.StatusPending {
+		if time.Now().After(limite) {
+			t.Fatalf("el hint no despertó el barrido: la ventana seguía `aggregating` 3 s después. " +
+				"Con el ticker en una hora, lo único que puede cerrarla es el canal de despertar")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if tardo := time.Since(inicio); tardo > 100*time.Millisecond {
+		t.Fatalf("el cierre tardó %v desde el hint; el criterio (h) pide < 100 ms. Si esto se acerca al "+
+			"intervalo del ticker, el cierre lo hizo un tick y no el despertador", tardo)
+	}
+
+	cancel()
+	select {
+	case <-parado:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run no retornó al cancelar el contexto")
+	}
+}
+
+// TestT181h_AvisosDeMasNoApilanBarridos fija la otra mitad del molde del despertador:
+// el envío es NO BLOQUEANTE y el buffer es 1, así que una ráfaga de clasificaciones no
+// puede dejar al agregador barriendo N veces seguidas ni —peor— BLOQUEAR a la
+// goroutine del pool que avisa.
+//
+// 🔴 SIN `Run` CORRIENDO, EL CANAL NO TIENE LECTOR, que es justo el escenario límite:
+// el primer aviso llena el buffer y los 999 siguientes se descartan. Si el envío fuera
+// bloqueante (`s.despertar <- struct{}{}` a secas), esta llamada colgaría para siempre
+// la goroutine que clasifica y el pool entero se pararía. El test acaba, y que acabe
+// ES la aserción.
+//
+// Y las pistas NO se pierden por descartar avisos: se comprueba cerrando la ventana en
+// el barrido siguiente. El aviso es un adelanto; la verdad vive en `dueNow` y en la
+// tabla.
+func TestT181h_AvisosDeMasNoApilanBarridos(t *testing.T) {
+	ctx := context.Background()
+	e := nuevoAggEntorno(t, 45*time.Second)
+
+	e.observa(ctx, "wa-1", nil)
+	for i := 0; i < 1000; i++ {
+		e.sink.OnClassified(aggKey(), flowruntime.IntentIntakeRequest, 0.99)
+	}
+
+	// La pista está anotada aunque 999 avisos se hayan ido a la basura.
+	if n := e.sink.Sweep(ctx); n != 1 {
+		t.Fatalf("la pista tenía que cerrar la ventana en el barrido siguiente; se cerraron %d", n)
 	}
 }

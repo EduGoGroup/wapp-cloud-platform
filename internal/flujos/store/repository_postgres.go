@@ -852,15 +852,20 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		evInactTTLSecs  int
 		evHistoryTTLSec int
 		aggWindowSecs   int
+		aggMaxSecs      int
+		welcomeText     string
+		welcomeSilence  int
 	)
 	err := r.db.QueryRowContext(ctx, `
 		SELECT page_size, order_ttl_seconds, conversation_ttl_seconds, buyer_fields,
 		       event_inactivity_ttl_seconds, event_history_ttl_seconds,
-		       aggregation_window_seconds
+		       aggregation_window_seconds, aggregation_max_seconds,
+		       welcome_text, welcome_silence_seconds
 		FROM public.tenant_settings
 		WHERE tenant_id = $1
 	`, tenantID).Scan(&pageSize, &ttlSecs, &convTTLSecs, &buyerFields,
-		&evInactTTLSecs, &evHistoryTTLSec, &aggWindowSecs)
+		&evInactTTLSecs, &evHistoryTTLSec, &aggWindowSecs, &aggMaxSecs,
+		&welcomeText, &welcomeSilence)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return DefaultTenantSettings(tenantID), nil
@@ -885,6 +890,25 @@ func (r *PostgresRepository) GetTenantSettings(ctx context.Context, tenantID str
 		// `if x == 0 { x = Default }` en esta línea apagaría ese override sin que
 		// nadie se entere.
 		AggregationWindow: time.Duration(aggWindowSecs) * time.Second,
+		// AggregationMax (Plan 044 · T1.8-1, migración 0076). MISMA regla, y por eso va
+		// pegada a su hermana: se devuelve TAL CUAL, sin sustituir el 0 por el default.
+		// Aquí el 0 es el override explícito «vencido siempre» (CHECK >= 0 de la 0076).
+		// Un `if x == 0 { x = Default }` en esta línea apagaría ese override sin que
+		// nadie se entere, exactamente igual que lo haría en la línea de arriba.
+		AggregationMax: time.Duration(aggMaxSecs) * time.Second,
+		// WelcomeText (Plan 044 · T1.8-2, migración 0076). Se devuelve TAL CUAL, '' y
+		// todo, porque ese es el contrato de este método y no se le hace una excepción a
+		// una columna. ⚠️ PERO EL '' NO ES UN OVERRIDE, al revés que los ceros de las
+		// dos columnas de arriba: es el DEFAULT de la columna, lo trae TODA fila
+		// preexistente, y significa «el texto de PLATAFORMA», no «sin bienvenida» ni
+		// «manda un mensaje vacío». Quien lo traduce es el runtime, en UN solo sitio
+		// (welcome.go · textoDeBienvenida), para que los dos caminos —fila con '' y
+		// tenant sin fila— acaben en la misma frase sin que este método invente nada.
+		WelcomeText: welcomeText,
+		// WelcomeSilence (Plan 044 · T1.8-2). MISMA regla que AggregationWindow/Max: se
+		// devuelve TAL CUAL, sin sustituir el 0, porque aquí el 0 SÍ es un override
+		// explícito («vencido siempre», CHECK >= 0 de la 0076).
+		WelcomeSilence: time.Duration(welcomeSilence) * time.Second,
 	}, nil
 }
 
@@ -905,4 +929,102 @@ func parseBuyerFields(raw []byte) []BuyerField {
 		return nil
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// LA BIENVENIDA ÚNICA (Plan 044 · T1.8-2, D6) — `conversation_welcomes`
+// ---------------------------------------------------------------------------
+
+// TouchContact implementa WelcomeStore: registra que el contacto acaba de escribir
+// y devuelve el estado que había ANTES de este turno.
+//
+// # UNA SOLA SENTENCIA, Y POR QUÉ ESO IMPORTA
+//
+// Corre EN LÍNEA con el mensaje del cliente, en el mismo tramo que ya tiene
+// presupuesto escrito para el agregador (D-044.26: una sentencia, cero lecturas,
+// cero cripto, cero red). Partirlo en un SELECT y un UPSERT sería duplicar los
+// round-trips del camino caliente para responder una pregunta que la BD puede
+// contestar de una vez.
+//
+// 🔴 EL CTE `previo` VE LA FILA VIEJA, Y ESA ES TODA LA MECÁNICA. En PostgreSQL
+// todas las sub-sentencias de un mismo statement comparten UN snapshot: `previo`
+// es un SELECT normal, así que lee lo que había antes de que `toque` escribiera,
+// aunque el planificador los ejecute en el orden que quiera. Un `RETURNING` sobre
+// el `ON CONFLICT DO UPDATE` NO serviría —devuelve la fila YA actualizada, o sea
+// `last_incoming_at = now`— y el umbral de silencio saldría 0 siempre: la
+// bienvenida no volvería nunca después de la primera. Es la clase de defecto que
+// solo se ve con un reloj falso y varias horas de diferencia.
+//
+// El CTE de escritura se ejecuta SIEMPRE, aunque la consulta principal no lea ni
+// una fila suya: es garantía documentada de PostgreSQL para las sentencias
+// modificadoras dentro de WITH. Por eso `previo` puede venir vacío (contacto nuevo)
+// sin que el toque se pierda.
+//
+// Ese caso vacío —`sql.ErrNoRows`— es el contacto que escribe por primera vez: se
+// devuelve el WelcomeMark CERO sin error, que es exactamente «nunca habló, nunca
+// se le saludó».
+func (r *PostgresRepository) TouchContact(ctx context.Context, key Key, now time.Time) (WelcomeMark, error) {
+	var last, welcomed sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+		WITH previo AS (
+		    SELECT last_incoming_at, welcomed_at
+		      FROM public.conversation_welcomes
+		     WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+		), toque AS (
+		    INSERT INTO public.conversation_welcomes
+		           (tenant_id, session_id, contact_id, last_incoming_at)
+		    VALUES ($1, $2, $3, $4)
+		    ON CONFLICT (tenant_id, session_id, contact_id)
+		    DO UPDATE SET last_incoming_at = EXCLUDED.last_incoming_at
+		    RETURNING 1
+		)
+		SELECT last_incoming_at, welcomed_at FROM previo
+	`, key.TenantID, key.SessionID, key.ContactID, now).Scan(&last, &welcomed)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Contacto nuevo para esta conversación: no había fila que leer y el `toque`
+		// acaba de crearla. Marca CERO = «nunca habló, nunca se le saludó».
+		return WelcomeMark{}, nil
+	case err != nil:
+		return WelcomeMark{}, fmt.Errorf("store: registrar actividad del contacto (bienvenida): %w", err)
+	}
+	return WelcomeMark{LastIncomingAt: last.Time, WelcomedAt: welcomed.Time}, nil
+}
+
+// MarkWelcomed implementa WelcomeStore: sella la bienvenida como entregada, con
+// CENTINELA sobre el testigo que TouchContact devolvió.
+//
+// # POR QUÉ EL CENTINELA ES UN COMPARE-AND-SET Y NO UN `IS NULL`
+//
+// El precedente directo —fleet_sessions.greeted_at (0066)— usa `WHERE greeted_at IS
+// NULL`, y allí basta porque aquella marca se pone UNA vez y para siempre. Esta
+// vuelve a ponerse cada vez que el contacto reaparece tras el silencio, así que un
+// `IS NULL` solo protegería la PRIMERA bienvenida y dejaría todas las demás sin
+// centinela. `IS NOT DISTINCT FROM` compara incluyendo el NULL (un `=` con NULL da
+// NULL, o sea ninguna fila, y la primera bienvenida no se marcaría JAMÁS: el
+// contacto la recibiría en cada mensaje).
+//
+// Devuelve false SIN error cuando el centinela no casa: otro turno ganó la carrera
+// entre el TouchContact y este UPDATE. La BD queda bien; lo que ya no tiene arreglo
+// es que el mensaje de ESTE camino salió, y ese duplicado se ve en el log del
+// llamante y en ningún otro sitio — misma honestidad que documenta greeting.go.
+func (r *PostgresRepository) MarkWelcomed(ctx context.Context, key Key, testigo WelcomeMark, now time.Time) (bool, error) {
+	var previo any
+	if !testigo.WelcomedAt.IsZero() {
+		previo = testigo.WelcomedAt
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.conversation_welcomes
+		   SET welcomed_at = $4
+		 WHERE tenant_id = $1 AND session_id = $2 AND contact_id = $3
+		   AND welcomed_at IS NOT DISTINCT FROM $5
+	`, key.TenantID, key.SessionID, key.ContactID, now, previo)
+	if err != nil {
+		return false, fmt.Errorf("store: marcar bienvenida entregada: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: filas afectadas al marcar bienvenida: %w", err)
+	}
+	return n > 0, nil
 }

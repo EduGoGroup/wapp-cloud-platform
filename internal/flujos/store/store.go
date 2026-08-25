@@ -231,6 +231,54 @@ type TenantSettingsReader interface {
 	GetTenantSettings(ctx context.Context, tenantID string) (TenantSettings, error)
 }
 
+// WelcomeMark es el estado de la BIENVENIDA ÚNICA de UNA conversación (Plan 044 ·
+// T1.8-2, D6): lo que la tabla `conversation_welcomes` guarda, y lo único que hace
+// falta para decidir si a este turno le toca.
+//
+// Los dos ceros significan cosas distintas y las dos importan:
+//
+//   - LastIncomingAt cero ⇒ NO HAY FILA: este contacto nunca habló por esta sesión.
+//   - WelcomedAt cero ⇒ NUNCA SE LE SALUDÓ, que es el estado correcto de una
+//     conversación nueva (el NULL de la columna, igual que fleet_sessions.greeted_at).
+//
+// 🔴 SON INSTANTES ESCRITOS POR EL RELOJ DEL RUNTIME, no por el de Postgres. El
+// llamante pasa su `now` y compara contra lo que aquí vuelve, así que los dos lados
+// de la resta salen del MISMO reloj. Meter `now()` de la BD en la escritura y
+// `time.Now()` de Go en la comparación es el fallo permanente y silencioso de
+// comparar dos relojes, ya documentado en esta casa.
+type WelcomeMark struct {
+	// LastIncomingAt es el instante del ÚLTIMO mensaje del contacto ANTES de este
+	// turno. Es el ancla del umbral de silencio (TenantSettings.WelcomeSilence).
+	LastIncomingAt time.Time
+	// WelcomedAt es el instante de la ÚLTIMA bienvenida entregada. Cero = ninguna.
+	// Sirve además de TESTIGO para el compare-and-set de MarkWelcomed.
+	WelcomedAt time.Time
+}
+
+// WelcomeStore persiste el estado de la bienvenida única por conversación (Plan 044 ·
+// T1.8-2, D6). Son DOS métodos y no uno porque el envío va EN MEDIO: primero se
+// registra que el contacto habló y se pregunta si toca, luego se manda, y solo si el
+// Edge acusa `ok=true` se marca. Es el runbook exacto de fleet_sessions.greeted_at
+// (0066 / gateway/grpc/greeting.go): un aviso que no llegó no se da por dado.
+type WelcomeStore interface {
+	// TouchContact registra que el contacto acaba de escribir (last_incoming_at :=
+	// now) y devuelve el estado que había ANTES de este turno. Una sola sentencia:
+	// corre en línea con el mensaje del cliente.
+	//
+	// 🔴 DEVUELVE EL ESTADO PREVIO, NO EL NUEVO, y ese matiz es toda la función: el
+	// umbral de silencio se mide contra el mensaje ANTERIOR del contacto. Si
+	// devolviera el estado ya tocado, LastIncomingAt valdría siempre `now`, el
+	// silencio sería siempre 0 y la bienvenida no volvería NUNCA tras la primera.
+	TouchContact(ctx context.Context, key Key, now time.Time) (WelcomeMark, error)
+	// MarkWelcomed sella la bienvenida como entregada, con CENTINELA sobre el testigo
+	// leído: solo escribe si `welcomed_at` sigue siendo EXACTAMENTE el que
+	// TouchContact devolvió. Devuelve false —sin error— si otro turno ganó la carrera.
+	//
+	// Se llama SOLO cuando el Ack del Edge vuelve ok=true. Si el envío falla, no se
+	// llama: el siguiente mensaje del contacto reintenta solo.
+	MarkWelcomed(ctx context.Context, key Key, testigo WelcomeMark, now time.Time) (bool, error)
+}
+
 // Repository es la COMPOSICIÓN de las interfaces segregadas: persiste el estado
 // conversacional, las definiciones versionadas, los resultados/efectos y las
 // solicitudes del carrito. Implementaciones: MemoryRepository (unit CI-safe) y
@@ -253,6 +301,14 @@ type Repository interface {
 var (
 	_ Repository = (*PostgresRepository)(nil)
 	_ Repository = (*MemoryRepository)(nil)
+
+	// WelcomeStore NO entra en Repository, y es la misma razón que el versionado de
+	// catálogo (justo abajo): solo lo necesita el runtime cuando la bienvenida está
+	// cableada, y meterlo en la composición obligaría a implementarlo a cualquier
+	// doble futuro que solo quiera conversaciones. Se afirma aparte, para que un
+	// método que falte rompa AQUÍ y no en el bootstrap.
+	_ WelcomeStore = (*PostgresRepository)(nil)
+	_ WelcomeStore = (*MemoryRepository)(nil)
 
 	// El versionado NO entra en Repository: solo lo necesita el import de catálogo
 	// (Plan 041 · T3.3), y meterlo en la composición obligaría a implementarlo a
@@ -547,11 +603,16 @@ type TenantSettings struct {
 	// Cuántos segundos espera el IntakeAggregator DESDE EL PRIMER MENSAJE de la
 	// ventana antes de cerrarla (aggregating -> pending) y disparar el pipeline.
 	//
-	// 🔴 ES LA LATENCIA DE PEOR CASO DEL PIPELINE, y desde T1.7 eso hay que leerlo
-	// literal: la señal que ADELANTA el cierre puede no llegar nunca por causas
-	// NORMALES, así que sin ella esta ventana es la latencia de TODOS los casos, no la
-	// del peor. Pesa directamente sobre la métrica reina del plan (primer borrador en
-	// < 5 min, T6.1).
+	// 🔧 DESDE T1.8-1 LA VENTANA ES HÍBRIDA Y ESTE CAMPO YA NO SE PUEDE LEER SOLO. El
+	// plazo cuenta desde el ÚLTIMO mensaje del cliente (`intake_jobs.updated_at`), no
+	// desde el primero, así que una ráfaga lo reinicia; quien pone el límite duro es
+	// AggregationMax (abajo). Aquí decía «ES LA LATENCIA DE PEOR CASO DEL PIPELINE» y
+	// eso ahora le corresponde al techo.
+	//
+	// 🔴 LO QUE SIGUE SIENDO CIERTO, Y HAY QUE LEERLO LITERAL DESDE T1.7: la señal que
+	// ADELANTA el cierre puede no llegar nunca por causas NORMALES, así que sin ella los
+	// plazos de esta ventana son la latencia de TODOS los casos, no la del peor. Pesan
+	// directamente sobre la métrica reina del plan (primer borrador en < 5 min, T6.1).
 	//
 	// 🔧 Y LOS MOTIVOS CAMBIARON CON LA OLA 1.6 (D-044.31), aunque la conclusión no:
 	// aquí se listaban los del PUSH del Edge (presupuesto de espera del despachador,
@@ -565,6 +626,51 @@ type TenantSettings struct {
 	// configurar». La distinción es la misma que muerde en EventInactivityTTL: con
 	// fila, el 0 se respeta; sin fila manda DefaultAggregationWindow (45 s).
 	AggregationWindow time.Duration
+	// AggregationMax es el TECHO de esa misma ventana (Plan 044 · T1.8-1, migración
+	// 0076 · aggregation_max_seconds INTEGER NOT NULL DEFAULT 120): cuántos segundos
+	// como mucho puede el cliente seguir añadiendo mensajes al MISMO job desde que la
+	// ventana nació (`created_at`) antes de que el barrido decida que ya hay bastante.
+	//
+	// 🔴 LOS DOS PLAZOS SON UNA SOLA REGLA Y NO SE PUEDEN LEER POR SEPARADO: la ventana
+	// cierra por lo que llegue ANTES —silencio (`now()-updated_at >= AggregationWindow`)
+	// o techo (`now()-created_at >= AggregationMax`)—. Sin techo, una conversación que
+	// gotea cada 40 s no alcanza nunca los 45 s de silencio y su job NO CIERRA JAMÁS;
+	// sin silencio, una ráfaga tecleada despacio se parte en dos jobs. Cada uno tapa
+	// el agujero del otro, así que quien toque uno tiene que mirar el otro.
+	//
+	// 🔴 0 SIGNIFICA «VENCIDO SIEMPRE» (cierre en el primer barrido), la MISMA lectura
+	// que el 0 de AggregationWindow — y NO «sin techo», que no existe a propósito: la
+	// ausencia de techo es el defecto que T1.8-1 vino a cerrar. Ver el COMMENT de la
+	// columna en la 0076.
+	AggregationMax time.Duration
+	// WelcomeText es el TEXTO FIJO de la bienvenida única (Plan 044 · T1.8-2, D6,
+	// migración 0076 · welcome_text TEXT NOT NULL DEFAULT ''): la frase «estamos
+	// procesando» que el Cloud le manda AL CLIENTE al primer mensaje de una
+	// conversación, y otra vez tras WelcomeSilence de silencio.
+	//
+	// 🔴 CADENA VACÍA = EL TEXTO DE PLATAFORMA (DefaultWelcomeText), y NO «sin
+	// bienvenida». Aquí el cero de Go NO es un override —al revés que en las dos
+	// columnas de arriba—, y la asimetría es deliberada: '' es el DEFAULT de la
+	// columna, así que TODA fila preexistente lo trae, y leerlo como «sin bienvenida»
+	// apagaría la funcionalidad entera para todo tenant que tuviera fila. Apagar la
+	// bienvenida se hace quitándole al tenant la feature `llm_intake`, que es el único
+	// interruptor y es fail-closed.
+	//
+	// ⚠️ NO ES CONTENIDO DEL ANÁLISIS: este literal no entra en source_refs ni en
+	// source_text (ni rotulado) ni mueve el updated_at del job. Ver welcome.go.
+	WelcomeText string
+	// WelcomeSilence es cuánto silencio del contacto hace falta para que la
+	// bienvenida VUELVA a mandarse (Plan 044 · T1.8-2, migración 0076 ·
+	// welcome_silence_seconds INTEGER NOT NULL DEFAULT 86400). Se mide contra
+	// conversation_welcomes.last_incoming_at, que es el instante del último mensaje
+	// del contacto — NUNCA contra el de la última bienvenida (ver WelcomeMark).
+	//
+	// 🔴 0 SIGNIFICA «VENCIDO SIEMPRE» (bienvenida en cada mensaje que no avance una
+	// conversación viva), la MISMA lectura que el 0 de AggregationWindow y
+	// AggregationMax — y NO la de ConversationTTL, donde 0 es «sin vencimiento». En
+	// esta tabla el 0 ya significa dos cosas distintas y por eso se dice cuál es la de
+	// aquí. Con fila, el 0 se respeta; sin fila manda DefaultWelcomeSilence (24 h).
+	WelcomeSilence time.Duration
 }
 
 // DefaultTenantSettings es la config que vale para un tenant SIN fila en
@@ -596,6 +702,23 @@ func DefaultTenantSettings(tenantID string) TenantSettings {
 		// que hoy son 2 de 3 en UAT. El DEFAULT 45 de la 0072 solo alcanza a las filas
 		// que existen; este espejo alcanza a las que no.
 		AggregationWindow: DefaultAggregationWindow,
+		// 🔴 AggregationMax SE NOMBRA POR EL MISMO MOTIVO Y CON MÁS URGENCIA (T1.8-1):
+		// omitirla dejaría el cero de Go, que aquí significa VENCIDO SIEMPRE — o sea, un
+		// tenant SIN fila cerraría su ventana en el PRIMER barrido, un job por mensaje y
+		// la agregación entera apagada, que es justo el estado que 2 de 3 tenants de UAT
+		// tendrían por no tener fila. El DEFAULT 120 de la 0076 solo alcanza a las filas
+		// que existen; este espejo alcanza a las que no.
+		AggregationMax: DefaultAggregationMax,
+		// 🔴 WelcomeText y WelcomeSilence SE NOMBRAN POR EL MISMO MOTIVO QUE SUS DOS
+		// VECINAS (T1.8-2, y ya es el quinto sitio donde muerde lo mismo): omitir
+		// WelcomeSilence dejaría el cero de Go, que aquí significa VENCIDO SIEMPRE — o
+		// sea, un tenant SIN fila recibiría la bienvenida en CADA mensaje que no
+		// avanzara conversación viva, que es exactamente lo que el enunciado prohíbe
+		// («nunca por interacción»), y le pasaría a 2 de 3 tenants de UAT por no tener
+		// fila. WelcomeText es el caso benigno —'' ya significa «el de plataforma»— y se
+		// nombra igualmente para que las dos claves de la bienvenida se lean juntas.
+		WelcomeText:    DefaultWelcomeText,
+		WelcomeSilence: DefaultWelcomeSilence,
 	}
 }
 
@@ -673,7 +796,57 @@ const (
 	// borrador cuando el intent no llega (T1.7), y el 044 se mide contra «< 5 min»
 	// (T6.1). Subirlo es gastar ese presupuesto.
 	DefaultAggregationWindow = 45 * time.Second
+	// DefaultAggregationMax es el default de PLATAFORMA de aggregation_max_seconds
+	// (120 s, Plan 044 · T1.8-1) que espeja el DEFAULT de la migración 0076. Vale para
+	// el tenant SIN fila; un tenant CON fila manda siempre, incluido su 0 explícito,
+	// que aquí significa VENCIDO SIEMPRE (cierre en el primer barrido).
+	//
+	// ⚠️ NO es un número de estilo, y pesa MÁS que la ventana de silencio: es el peor
+	// caso REAL de latencia hasta el flush cuando el cliente teclea despacio, y el 044
+	// se mide contra «< 5 min» (T6.1). Dos de esos cinco minutos se van aquí.
+	//
+	// 🔴 SU RELACIÓN CON DefaultAggregationWindow NO ES UNA INVARIANTE. Que 120 > 45 es
+	// lo normal, pero un tenant puede configurar el techo por DEBAJO de su ventana y es
+	// legítimo: significa «plazo fijo desde el primer mensaje», que es exactamente lo
+	// que el sistema hacía antes de esta ola. No hay CHECK cruzado en la 0076 y no debe
+	// haber un `if` aquí que lo simule.
+	DefaultAggregationMax = 120 * time.Second
+	// DefaultWelcomeSilence es el default de PLATAFORMA de welcome_silence_seconds
+	// (86400 s = 24 h, Plan 044 · T1.8-2) que espeja el DEFAULT de la migración 0076.
+	// Vale para el tenant SIN fila; un tenant CON fila manda siempre, incluido su 0
+	// explícito, que aquí significa VENCIDO SIEMPRE (bienvenida en cada mensaje que no
+	// avance conversación viva).
+	//
+	// 🔴 24 h NO ES UN NÚMERO DE ESTILO Y SU RELACIÓN CON LOS OTROS RELOJES SÍ IMPORTA
+	// —al revés que la de AggregationMax con AggregationWindow—: está muy por encima de
+	// DefaultConversationTTL y DefaultEventInactivityTTL (2 h los dos), y esa distancia
+	// es lo que hace que el umbral no pueda vencer DURANTE una conversación viva. Para
+	// que venciera, la conversación tendría que llevar 24 h de silencio, y a las 2 h el
+	// reloj que manda ya la habría soltado. Quien lo baje por debajo de 2 h se queda
+	// SOLO con la guarda del runtime (que no saluda sobre conversación viva); sigue
+	// siendo correcto, pero es UNA red en vez de dos.
+	DefaultWelcomeSilence = 24 * time.Hour
 )
+
+// DefaultWelcomeText es el texto de PLATAFORMA de la bienvenida única (Plan 044 ·
+// T1.8-2, D6): lo que recibe el cliente de un tenant que no configuró
+// `welcome_text`, y lo que recibe también el tenant SIN fila en tenant_settings.
+//
+// Es una CONSTANTE de Go y no un DEFAULT de la columna a propósito: el DEFAULT de la
+// columna es la CADENA VACÍA —que significa «el de plataforma»—, de modo que cambiar esta frase
+// llega a TODO tenant que no la haya sobrescrito sin necesitar una migración. Poner el
+// texto como DEFAULT del esquema lo habría congelado en cada fila el día del ALTER, y
+// corregir una errata habría costado un backfill.
+//
+// QUÉ DICE Y QUÉ NO. Dice que el mensaje LLEGÓ y que se está trabajando en él, que es
+// lo único que el sistema sabe con certeza en ese instante. No promete un plazo exacto
+// —el presupuesto del plan es «primer borrador en < 5 min» (T6.1) y «unos minutos» es
+// lo más preciso que se puede decir sin mentir el día que el pipeline vaya lento—, no
+// pide nada al cliente y no le enseña ninguna opción: no es un menú y no debe parecerlo.
+//
+// 🔴 LO ESCRIBE ESTA CONSTANTE, NO EL LLM (INV-1/INV-2). Es texto fijo del sistema,
+// como defaultEscapeMessage o el aviso de sesión pasiva.
+const DefaultWelcomeText = "¡Hola! Recibimos tu mensaje y lo estamos procesando. Te respondemos en unos minutos."
 
 // ErrDefinitionNotFound lo devuelve LatestDefinition cuando no existe ninguna
 // versión de la definición para (tenant_id, flow_id). Se inspecciona con

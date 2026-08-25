@@ -51,13 +51,19 @@
 //   - el job NO LLEVA MARCA de por qué se disparó. Los dos caminos producen jobs
 //     INDISTINGUIBLES, y eso es deliberado (coherente con D-044.20).
 //
-// # 🔴 `aggregation_window_seconds` ES LA LATENCIA DE PEOR CASO DEL PIPELINE
+// # 🔴 LOS PLAZOS DE LA VENTANA SON LA LATENCIA DE PEOR CASO DEL PIPELINE
 //
-// Y con el intent ausente —que es un caso normal, no una avería— es la latencia de
-// TODOS los casos. Ese número pesa directamente sobre la métrica reina del plan:
-// primer borrador en menos de 5 minutos (T6.1). El peor caso a primer borrador es
-// `aggregation_window_seconds` + lo que tarde el pipeline; subir la ventana es
-// gastar ese presupuesto y hay que decirlo con el número delante.
+// Y con el intent ausente —que es un caso normal, no una avería— son la latencia de
+// TODOS los casos. Esos números pesan directamente sobre la métrica reina del plan:
+// primer borrador en menos de 5 minutos (T6.1).
+//
+// 🔧 CORREGIDO EN T1.8-1: aquí ponía que el peor caso era `aggregation_window_seconds`
+// (45 s) y desde la ventana HÍBRIDA eso es FALSO. El silencio se mide desde el ÚLTIMO
+// mensaje, así que una ráfaga larga lo reinicia una y otra vez; quien acota de verdad
+// es el TECHO, `aggregation_max_seconds` (120 s por defecto). El peor caso a primer
+// borrador es `aggregation_max_seconds` + lo que tarde el pipeline — dos de los cinco
+// minutos del presupuesto. Subir CUALQUIERA de los dos es gastarlo, y hay que decirlo
+// con el número delante.
 //
 // # EL PRESUPUESTO DE I/O EN LÍNEA CON EL MENSAJE (D-044.26, INV-02 del Plan 050)
 //
@@ -343,6 +349,30 @@ type IntakeAggregator struct {
 	// reloj—. Que la pista sea perecedera es coherente con T1.7 y no un descuido:
 	// el intent adelanta, no decide.
 	dueNow map[intake.WindowKey]struct{}
+	// despertar es EL DESPERTADOR DEL BARRIDO (Plan 044 · T1.8-1 criterio (h),
+	// D-044.43): un canal con BUFFER 1 que `hintDueNow` toca y que `Run` escucha junto
+	// al ticker. Vive fuera del candado a propósito — se escribe con un envío NO
+	// BLOQUEANTE, así que no necesita `s.mu` y no puede bloquear a quien avisa.
+	//
+	// 🔴 POR QUÉ EXISTE: el intent es un EVENTO que YA LLEGÓ, y hasta esta tarea su
+	// efecto esperaba al siguiente tick del barrido — hasta 5 s de espera ciega después
+	// de saber lo que había que saber. Un reloj que SUSTITUYE a un evento es el
+	// antipatrón que esta casa rechaza; el tick de 5 s se queda porque hace la otra
+	// mitad del trabajo, que sí es de reloj: vigilar los DOS plazos (45/120 s), que no
+	// tienen evento que los anuncie.
+	//
+	// 🔴 POR QUÉ NO SE PIERDE NINGÚN DESPERTAR, que es la pregunta que este patrón
+	// siempre invita a hacer. El escritor descarta el aviso si el buffer está lleno; y
+	// que esté lleno significa que hay un aviso PENDIENTE que nadie ha recibido todavía.
+	// Ese aviso se recibirá en un `select` POSTERIOR al descarte, y al recibirlo `Sweep`
+	// hace una pasada COMPLETA: `takeHints` se lleva TODAS las pistas acumuladas y
+	// `ListAggregating` vuelve a mirar la tabla entera. La pista nunca se queda
+	// esperando a un aviso que ya se consumió. Y si aun así se perdiera, la ventana
+	// cierra igual por su reloj: el aviso es un ADELANTO, no la verdad durable.
+	//
+	// nil es una degradación silenciosa (un canal nil nunca está listo en un `select`)
+	// y por eso lo construye SIEMPRE el constructor, nunca una opción.
+	despertar chan struct{}
 	// seen recuerda el último `wa_message_id` observado por ventana, para que un
 	// mismo entrante observado dos veces no duplique su referencia. Es una red
 	// SECUNDARIA: la primera es `duplicateIngest` (dedupe PERSISTENTE de ingesta,
@@ -442,6 +472,12 @@ func NewIntakeAggregator(log logger.Logger, jobs intake.JobStore, settings Aggre
 		intentThreshold: defaultIntentConfidence,
 		dueNow:          make(map[intake.WindowKey]struct{}),
 		seen:            make(map[intake.WindowKey]string),
+		// BUFFER 1, ni 0 ni N. Con 0 el envío no bloqueante fallaría siempre que el
+		// barrido no estuviera parado justo en el `select` —o sea, casi siempre— y el
+		// despertador no despertaría nada. Con N se apilarían N avisos para hacer N
+		// barridos completos que verían lo mismo: un aviso pendiente ya significa «hay
+		// trabajo sin mirar», y más de uno no significa más.
+		despertar: make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -576,11 +612,29 @@ func (s *IntakeAggregator) intentTriggers(hint *IntentHint) bool {
 	return hint.Name == IntentIntakeRequest && hint.Confidence >= s.intentThreshold
 }
 
-// hintDueNow anota que esa ventana debe cerrarse en el próximo barrido.
+// hintDueNow anota que esa ventana debe cerrarse, y DESPIERTA al barrido para que lo
+// haga ya (T1.8-1 (h)). Antes solo anotaba, y el efecto esperaba al siguiente tick.
+//
+// 🔴 EL ORDEN DE LAS DOS MITADES NO ES INTERCAMBIABLE: primero se anota bajo candado y
+// DESPUÉS se avisa. Al revés habría una carrera real —el barrido despertaría, llamaría
+// a `takeHints` y encontraría el mapa todavía vacío, y la pista se quedaría esperando
+// al tick igual que antes—. Con este orden, cualquiera que reciba el aviso ve ya la
+// pista.
+//
+// El aviso va FUERA del candado y es NO BLOQUEANTE: quien llama a esto es
+// `OnClassified`, o sea la goroutine del pool de clasificación al terminar una
+// inferencia. No puede quedarse esperando a que el barrido esté escuchando, y tampoco
+// puede quedarse esperando a `s.mu` mientras un barrido largo lo tiene tomado.
 func (s *IntakeAggregator) hintDueNow(k intake.WindowKey) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.dueNow[k] = struct{}{}
+	s.mu.Unlock()
+	// El `default` es lo que hace que esto no bloquee NUNCA: si ya hay un aviso
+	// pendiente, este se descarta y no pasa nada (ver el porqué en el campo `despertar`).
+	select {
+	case s.despertar <- struct{}{}:
+	default:
+	}
 }
 
 // takeHints se lleva las pistas acumuladas y deja el mapa vacío. Se llevan TODAS
@@ -653,7 +707,19 @@ func (s *IntakeAggregator) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.despertar:
+			// EL ADELANTO POR EVENTO (T1.8-1 (h)): un intent seguro acaba de llegar y su
+			// ventana se cierra AHORA, no dentro de hasta 5 s. `Sweep` es el mismo de
+			// abajo y hace una pasada COMPLETA —se lleva TODAS las pistas y vuelve a
+			// mirar la tabla—, que es lo que hace que un aviso descartado por buffer
+			// lleno no pierda trabajo.
+			s.Sweep(ctx)
 		case <-t.C:
+			// EL BARRENDERO, y NO se retira con el despertador puesto: los dos plazos de
+			// la ventana híbrida (silencio 45 s, techo 120 s) NO TIENEN EVENTO que los
+			// anuncie —nadie avisa de que el cliente ha dejado de escribir—, así que
+			// alguien tiene que ir a mirar el reloj. Es también quien cierra las ventanas
+			// que quedaron vivas de un proceso anterior y quien cubre un aviso perdido.
 			s.Sweep(ctx)
 		}
 	}
@@ -677,14 +743,20 @@ func (s *IntakeAggregator) Sweep(ctx context.Context) int {
 	}
 	hints := s.takeHints()
 	now := s.now()
-	// Memo POR PASADA de la ventana de cada tenant: una ráfaga deja N ventanas del
+	// Memo POR PASADA de los plazos de cada tenant: una ráfaga deja N ventanas del
 	// mismo tenant y no hace falta preguntar N veces. Se descarta al terminar la
 	// pasada a propósito — un cambio de config se ve en el barrido siguiente, no al
 	// reiniciar.
-	windows := make(map[string]time.Duration, 4)
+	//
+	// 🔴 GUARDA LOS DOS PLAZOS JUNTOS Y ES UNA SOLA ENTRADA, no dos memos ni dos
+	// lecturas: `GetTenantSettings` devuelve el struct entero, así que separar silencio
+	// y techo en dos cachés duplicaría las consultas a `tenant_settings` sin ganar nada
+	// —y el presupuesto del barrido está medido (TestVentanaCero_… afirma UNA lectura
+	// por pasada y por tenant).
+	plazos := make(map[string]plazosDeVentana, 4)
 	cerrados := 0
 	for _, job := range open {
-		if !s.due(ctx, job, hints, windows, now) {
+		if !s.due(ctx, job, hints, plazos, now) {
 			continue
 		}
 		if s.closeWindow(ctx, job) {
@@ -694,48 +766,124 @@ func (s *IntakeAggregator) Sweep(ctx context.Context) int {
 	return cerrados
 }
 
-// due decide si a una ventana le tocó. DOS caminos y solo dos:
+// plazosDeVentana son los DOS números que gobiernan el cierre de un tenant. Van
+// juntos en un tipo y no sueltos porque son UNA regla: la ventana cierra por lo que
+// llegue antes, así que leer uno sin el otro no responde ninguna pregunta.
+type plazosDeVentana struct {
+	// silencio es `aggregation_window_seconds` (45 s por defecto): cuánto se espera
+	// desde el ÚLTIMO mensaje del cliente.
+	silencio time.Duration
+	// techo es `aggregation_max_seconds` (120 s por defecto): cuánto se espera como
+	// mucho desde que la ventana NACIÓ, pase lo que pase con el silencio.
+	techo time.Duration
+}
+
+// due decide si a una ventana le tocó. TRES caminos, y los tres se dicen enteros:
 //
-//  1. el ADELANTO por intent (la pista), que es un atajo;
-//  2. el PLAZO de la ventana, que es el camino principal y el único garantizado.
+//  1. el ADELANTO por intent (la pista), que es un atajo y llega por EVENTO;
+//  2. el SILENCIO —45 s desde el último mensaje—, que es el camino principal;
+//  3. el TECHO —120 s desde que la ventana nació—, que es la red que impide que 2
+//     no cierre nunca.
 //
-// El orden de evaluación no cambia el resultado —una ventana vencida se cierra
-// haya o no pista—, y por eso el job resultante es INDISTINGUIBLE por los dos
-// caminos: aquí no se anota en ningún sitio cuál de los dos ganó (T1.7 (d)).
+// # POR QUÉ HACEN FALTA LOS DOS PLAZOS Y NO UNO (T1.8-1, D-044.43)
+//
+// Hasta esta tarea había uno solo y anclaba en el PRIMER mensaje, así que:
+//
+//   - una ráfaga tecleada despacio (t=0, 30, 60) SE PARTÍA EN DOS JOBS: a los 45 s el
+//     barrido cerraba lo que hubiera y el tercer mensaje abría otra ventana. El
+//     presupuesto salía incompleto y nadie veía un error.
+//
+// Y la cura obvia —anclar solo en el silencio— arregla eso y rompe lo otro:
+//
+//   - una conversación que gotea cada 40 s NUNCA alcanza 45 s de silencio, así que su
+//     ventana no cerraría JAMÁS. Un job en `aggregating` que nadie recoge es un pedido
+//     perdido, otra vez sin error.
+//
+// ⇒ los dos, y gana el primero que venza. Quitar el techo pone rojo el test del goteo;
+// devolver el silencio al ancla vieja (`message_ts`) pone rojo el de la ráfaga lenta.
+//
+// El orden de evaluación no cambia el resultado —una ventana vencida se cierra haya o
+// no pista, y por cualquiera de los dos plazos—, y por eso el job resultante es
+// INDISTINGUIBLE por los tres caminos: aquí no se anota en ningún sitio cuál ganó
+// (T1.7 (d)).
 func (s *IntakeAggregator) due(ctx context.Context, job intake.OpenJob,
-	hints map[intake.WindowKey]struct{}, windows map[string]time.Duration, now time.Time) bool {
+	hints map[intake.WindowKey]struct{}, memo map[string]plazosDeVentana, now time.Time) bool {
 	if _, adelantada := hints[job.Key]; adelantada {
 		return true
 	}
-	win, ok := windows[job.Key.TenantID]
+	p, ok := memo[job.Key.TenantID]
 	if !ok {
-		win = s.windowFor(ctx, job.Key.TenantID)
-		windows[job.Key.TenantID] = win
+		p = s.plazosFor(ctx, job.Key.TenantID)
+		memo[job.Key.TenantID] = p
 	}
-	// win <= 0 es el override explícito «flush inmediato» (CHECK >= 0 de la 0072):
-	// la ventana se cierra en el primer barrido que la vea. No es un valor
-	// degenerado ni un «sin configurar» — ver el COMMENT de la columna.
-	if win <= 0 {
-		return true
-	}
-	return !now.Before(job.Anchor.Add(win))
+	return s.venceElSilencio(job, p, now) || s.venceElTecho(job, p, now)
 }
 
-// windowFor resuelve `aggregation_window_seconds` del tenant. Un fallo de settings
-// cae al DEFAULT DE PLATAFORMA (45 s) y NO a «no cerrar»: una config ilegible no
-// puede dejar ventanas abiertas para siempre, que sería un presupuesto que nunca
-// llega y un job en `aggregating` que nadie recoge.
-func (s *IntakeAggregator) windowFor(ctx context.Context, tenantID string) time.Duration {
+// venceElSilencio es el plazo desde el ÚLTIMO mensaje del cliente.
+//
+// 🔴 EL ANCLA ES `LastActivity`, QUE ES `intake_jobs.updated_at`, Y NO `message_ts`.
+// `updated_at` lo escribe el `DO UPDATE … updated_at = now()` del UPSERT, o sea el
+// reloj de POSTGRES en cada mensaje de la ráfaga; `message_ts` lo pone el Edge con el
+// reloj del CLIENTE. Medir un plazo restando dos relojes distintos es un fallo
+// permanente y silencioso: con el teléfono adelantado la ventana no cerraría hasta que
+// el desfase pasara, y con el reloj atrasado cerraría de inmediato. Ver el docstring de
+// intake.OpenJob.
+//
+// `silencio <= 0` es el override explícito «flush inmediato» del tenant (CHECK >= 0 de
+// la 0072): la ventana se cierra en el primer barrido que la vea. No es un valor
+// degenerado ni un «sin configurar» — ver el COMMENT de la columna.
+func (s *IntakeAggregator) venceElSilencio(job intake.OpenJob, p plazosDeVentana, now time.Time) bool {
+	if p.silencio <= 0 {
+		return true
+	}
+	return !now.Before(job.LastActivity.Add(p.silencio))
+}
+
+// venceElTecho es el plazo desde que la ventana NACIÓ (`intake_jobs.created_at`, otra
+// vez el reloj de Postgres).
+//
+// 🔴 `techo <= 0` SIGNIFICA «VENCIDO SIEMPRE», IGUAL QUE EL 0 DE LA VENTANA — y NO
+// «sin techo». La decisión está razonada en el COMMENT de la columna (0076) y se
+// repite aquí porque es donde muerde: leer el 0 como «sin techo» pondría a dos
+// columnas vecinas a significar cosas opuestas con el mismo número, y además
+// construiría el interruptor del defecto que esta tarea cerró. No existe forma de
+// apagar el techo, y es deliberado.
+//
+// La guarda no es solo por el 0: `Add` de una duración negativa daría un instante en
+// el pasado y cerraría igual, pero decirlo explícito es lo que impide que alguien
+// «simplifique» la línea y se lleve por delante la lectura del override.
+func (s *IntakeAggregator) venceElTecho(job intake.OpenJob, p plazosDeVentana, now time.Time) bool {
+	if p.techo <= 0 {
+		return true
+	}
+	return !now.Before(job.CreatedAt.Add(p.techo))
+}
+
+// plazosFor resuelve los DOS plazos del tenant con UNA sola lectura de
+// `tenant_settings`. Un fallo de settings cae a los DEFAULTS DE PLATAFORMA (45 s / 120
+// s) y NO a «no cerrar»: una config ilegible no puede dejar ventanas abiertas para
+// siempre, que sería un presupuesto que nunca llega y un job en `aggregating` que nadie
+// recoge.
+//
+// 🔴 SE DEVUELVEN LOS DOS VALORES TAL CUAL, SIN PARCHEAR CEROS. El 0 de cualquiera de
+// las dos columnas es un override explícito del tenant, y un `if x == 0 { x = Default }`
+// aquí lo apagaría sin que nadie se entere — el defecto que repository_postgres.go
+// prohíbe por escrito para la ventana, aplicado ahora a dos columnas en vez de una.
+func (s *IntakeAggregator) plazosFor(ctx context.Context, tenantID string) plazosDeVentana {
+	porDefecto := plazosDeVentana{
+		silencio: store.DefaultAggregationWindow,
+		techo:    store.DefaultAggregationMax,
+	}
 	if s.settings == nil {
-		return store.DefaultAggregationWindow
+		return porDefecto
 	}
 	cfg, err := s.settings.GetTenantSettings(ctx, tenantID)
 	if err != nil {
-		s.log.Warn("agregador: no se pudo leer aggregation_window_seconds; se usa el default de plataforma",
+		s.log.Warn("agregador: no se pudieron leer los plazos de la ventana (aggregation_window_seconds/aggregation_max_seconds); se usan los defaults de plataforma",
 			"error", err, "tenant_id", tenantID)
-		return store.DefaultAggregationWindow
+		return porDefecto
 	}
-	return cfg.AggregationWindow
+	return plazosDeVentana{silencio: cfg.AggregationWindow, techo: cfg.AggregationMax}
 }
 
 // closeWindow ejecuta la transición y, si de verdad la hizo ESTA llamada, invoca el
