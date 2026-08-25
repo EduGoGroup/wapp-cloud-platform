@@ -69,6 +69,7 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 		// sobre él, no sobre una 1ª sesión clavada (D3).
 		frameCC := cc
 		frameCC.sessionID = sessionID
+		sesionNueva := false
 		if sessionID != "" {
 			// Registro perezoso por-frame (register-on-first-frame): la primera
 			// vez que aparece un session_id se registra; idempotente después.
@@ -77,10 +78,35 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 				s.log.Info("sesión CloudLink registrada",
 					"session_id", sessionID, "edge_id", edgeID, "tenant_id", tenantID)
 				s.onSessionRegistered(streamCtx, frameCC)
+				sesionNueva = true
 			}
 		}
 
 		s.route(lane, frameCC, msg)
+
+		// 🔴 EL CALENTAMIENTO DE COMPATIBILIDAD VA AQUÍ, DESPUÉS DE ENCAMINAR EL FRAME,
+		// Y NO DENTRO DE onSessionRegistered — de donde se movió en T1.8-6.
+		//
+		// El problema que resuelve este orden, que no se ve leyendo onSessionRegistered:
+		// EL FRAME QUE PROVOCA EL REGISTRO ES, EN EL CASO NORMAL, EL PRIMER HEARTBEAT DE
+		// LA SESIÓN. Con el disparador dentro del registro, el gateway calentaba ANTES de
+		// haber leído ese latido, o sea antes de saber nada de lo que el Edge dice sobre
+		// su capacidad de inferencia. Un Edge que arranca sin cajero anunciaba DOWN en su
+		// primerísimo latido y aun así se le mandaba un calentamiento que solo podía
+		// contestar OLLAMA_DOWN. Encaminar primero (route lee el campo INLINE, ver el
+		// case del Heartbeat) y preguntar después es lo que hace que ese caso sea CERO
+		// calentamientos en vez de uno.
+		//
+		// ⚠️ SE MUEVE EL AVISO, NO EL REGISTRO. onSessionRegistered sigue corriendo ANTES
+		// de route, y tiene que seguir: dentro está el MarkOnline —que crea la fila que
+		// el job del propio latido va a actualizar con SaveHealth— y el lease inicial,
+		// que el Edge no puede recibir después de una renovación. Mover la función
+		// entera detrás de route invertiría los dos órdenes y la flota mostraría salud
+		// de una sesión que aún no existe. Lo único que se retrasa es el aviso de
+		// calentamiento, que no ordena nada con nadie: dispara y vuelve.
+		if sesionNueva {
+			s.calientaPorRegistro(frameCC)
+		}
 	}
 }
 
@@ -212,6 +238,24 @@ func (s *Server) route(lane *workLane, cc connCtx, msg *cloudlinkv1.EdgeToCloud)
 		if s.OnHeartbeat != nil {
 			s.OnHeartbeat(cc.sessionID, p.Heartbeat)
 		}
+		// 🔴 SE QUEDA INLINE, Y ES LA MISMA REGLA QUE ESCRIBE LA LÍNEA DE ARRIBA
+		// (ADR-0040 §Decisión.3, design.md §3): leer un enum del frame y tocar un mapa
+		// en memoria es O(1) y no roza ni la red ni la base, que es exactamente la
+		// clase que el ADR manda resolver en la goroutine del Recv.
+		//
+		// Y aquí, además, el inline no es solo legítimo: es NECESARIO. El disparador
+		// de compatibilidad del registro (calientaPorRegistro, en el bucle Connect)
+		// corre justo DESPUÉS de que route retorne y pregunta por lo que este latido
+		// acaba de enseñar. Mandarlo al carril lo volvería asíncrono y esa pregunta
+		// pasaría a ser una carrera: el registro leería «no lo dice» de un Edge que
+		// acababa de decir DOWN y lo calentaría igual — el defecto entero que T1.8-6
+		// viene a quitar, reintroducido por el sitio.
+		//
+		// VA ANTES del submit a propósito: submitHeartbeat puede BLOQUEAR al bucle Recv
+		// si la cola de la sesión llegó a su tope (contrapresión, REQ-050.4), y lo que
+		// el Edge DICE sobre su capacidad de inferencia se aprende igual esté la cola
+		// llena o vacía.
+		s.observaReadiness(cc, p.Heartbeat)
 		s.submitHeartbeat(lane, cc, p.Heartbeat)
 	case *cloudlinkv1.EdgeToCloud_Pong:
 		s.log.Debug("pong recibido", "session_id", cc.sessionID, "nonce", p.Pong.GetNonce())
@@ -519,25 +563,13 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 
 	s.registerSession(regCtx, cc)
 
-	// El Ollama de este Edge acaba de aparecer y su caché de prefijo está fría: la
-	// primera inferencia real del tenant pagaría el prefill entero (~50 s medidos en
-	// UAT) con un cliente esperando al otro lado (T1.7-4).
-	//
-	// 🔴 VA FUERA DEL regCtx, y tiene que ir fuera: ese ctx es el presupuesto del
-	// HANDSHAKE (s.workBudget, del orden de segundos) y un calentamiento dura ~50 s.
-	// Colgarlo de ahí lo mataría siempre, sin un solo error que lo delatara. Quien lo
-	// atiende dispara y vuelve, con su propio reloj (ver el contrato de OnWarmup).
-	//
-	// ⚠️ EL CANAL DE CONTROL NO SE CALIENTA. No es una guarda defensiva: un Edge con el
-	// operador logueado y CERO teléfonos emparejados no va a recibir ningún mensaje que
-	// clasificar, así que calentarlo gastaría ~50 s de la CPU del cliente y ~250 MB de
-	// su caché por un prefijo que nadie va a pedir. Es el mismo criterio con el que esa
-	// sesión tampoco es flota (MP-11), aplicado al recurso que aquí se gasta.
-	// El `kind` va VACÍO: no se acaba de publicar ninguna config concreta, es que este
-	// Edge no tiene NADA cacheado todavía.
-	if s.OnWarmup != nil && cc.sessionID != cltransport.ControlSessionID {
-		s.OnWarmup(cc.tenantID, cc.edgeID, cc.sessionID, "")
-	}
+	// 📌 EL AVISO DE CALENTAMIENTO YA NO ESTÁ AQUÍ (T1.8-6). Estuvo en este punto
+	// exacto desde T1.7-4 y se mudó al bucle Connect, DETRÁS de route, porque disparaba
+	// antes de leer el primer latido de la sesión —que es el frame que suele provocar
+	// este mismo registro— y por tanto antes de saber si el Edge dice que puede servir
+	// inferencia. El porqué completo y qué NO se movió están en Connect y en
+	// calientaPorRegistro. Se anota aquí porque quien busque el disparador leerá esta
+	// función primero.
 
 	// El molde es el de runJob (worklane.go): un trabajo que se pasa del presupuesto
 	// DEJA RASTRO. Sin este aviso, un handshake que se rindió a medias —sesión sin
@@ -953,7 +985,22 @@ func (s *Server) trackSession(cc connCtx) {
 	set[cc.sessionID] = struct{}{}
 }
 
-// untrackSession quita la sesión del conjunto vivo de su Edge.
+// untrackSession quita la sesión del conjunto vivo de su Edge, y con la ÚLTIMA de
+// ellas olvida también lo que ese Edge decía sobre su capacidad de inferencia.
+//
+// 🔴 EL OLVIDO DEL READINESS VA BAJO LA MISMA CONDICIÓN QUE EL DEL EDGE, no suelto
+// (Plan 044 · Ola 1.8 · T1.8-6). La trampa, que no se ve desde aquí: onStreamClosed
+// —el único llamante— se invoca UNA VEZ POR SESIÓN del stream (closeStream itera
+// `releases`), y `edgeReadiness` está indexado POR EDGE. Un delete incondicional
+// borraría lo aprendido de un Edge que todavía tiene otras sesiones vivas en el mismo
+// stream: la siguiente vez que una de ellas latiera READY se leería como flanco y
+// dispararía un calentamiento inventado, y mientras tanto el disparador de
+// compatibilidad volvería a creer que ese Edge no dice nada. Colgarlo del `len(set)
+// == 0` que ya decide que este Edge se quedó sin sesiones es lo que hace que las dos
+// estructuras nazcan y mueran juntas.
+//
+// El `return` de arriba (set == nil) tampoco deja nada colgando: ese caso es un
+// untrack de un Edge que YA se vació, y quien lo vació borró las dos entradas.
 func (s *Server) untrackSession(cc connCtx) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
@@ -965,6 +1012,7 @@ func (s *Server) untrackSession(cc connCtx) {
 	delete(set, cc.sessionID)
 	if len(set) == 0 {
 		delete(s.edgeSessions, k)
+		delete(s.edgeReadiness, k)
 	}
 }
 

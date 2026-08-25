@@ -181,16 +181,23 @@ func TestPushConfig_CalientaUNAVezPorEDGE_NoPorSesion(t *testing.T) {
 	}
 }
 
-// TestOnSessionRegistered_CalientaSalvoElCanalDeControl.
+// TestCalientaPorRegistro_CalientaSalvoElCanalDeControl.
+//
+// 📌 Se llamaba TestOnSessionRegistered_CalientaSalvoElCanalDeControl y entraba por
+// onSessionRegistered. En T1.8-6 el aviso salió de ahí —el registro disparaba ANTES de
+// leer el primer latido de la sesión— y vive ahora en calientaPorRegistro, detrás de
+// route. El test se mudó con él sin cambiar lo que afirma.
 //
 // La segunda mitad no es una guarda defensiva: un Edge con el operador logueado y
 // CERO teléfonos no va a recibir ningún mensaje que clasificar, así que calentarlo
 // gastaría ~50 s de la CPU del cliente y ~250 MB de su caché por un prefijo que nadie
-// va a pedir.
+// va a pedir. Y el canal de control SÍ llega hasta aquí de verdad —el registro es
+// perezoso por frame y los frames de auth estampan `__wapp_control__`—, que es lo que
+// distingue esta guarda de una sobre un camino muerto.
 //
 // 🔬 MUTACIÓN: quitar la condición `cc.sessionID != cltransport.ControlSessionID` ⇒
 // rojo en el segundo caso.
-func TestOnSessionRegistered_CalientaSalvoElCanalDeControl(t *testing.T) {
+func TestCalientaPorRegistro_CalientaSalvoElCanalDeControl(t *testing.T) {
 	t.Parallel()
 	srv := New(session.NewRegistry(), logger.New(logger.WithWriter(io.Discard)))
 	var vistos []string
@@ -202,14 +209,14 @@ func TestOnSessionRegistered_CalientaSalvoElCanalDeControl(t *testing.T) {
 		vistos = append(vistos, sessionID)
 	}
 
-	srv.onSessionRegistered(context.Background(), ccDePrueba("s-normal"))
+	srv.calientaPorRegistro(ccDePrueba("s-normal"))
 	if len(vistos) != 1 || vistos[0] != "s-normal" {
 		t.Fatalf("una sesión normal tiene que disparar el calentamiento; vistos=%v", vistos)
 	}
 
 	cc := ccDePrueba("s-normal")
 	cc.sessionID = cltransport.ControlSessionID
-	srv.onSessionRegistered(context.Background(), cc)
+	srv.calientaPorRegistro(cc)
 	if len(vistos) != 1 {
 		t.Fatalf("el canal de control NO se calienta (no hay teléfono detrás); vistos=%v", vistos)
 	}
