@@ -111,11 +111,31 @@ func (s SourceText) Complete() bool {
 type OpenJob struct {
 	ID  string
 	Key WindowKey
-	// Anchor es el instante contra el que se mide la ventana: `message_ts` si está
-	// puesto y `created_at` si no (una fila abierta por un entrante sin ts). Lo
-	// resuelve el store con un COALESCE para que el llamante no tenga que decidir
-	// —ni pueda decidir distinto en dos sitios—.
-	Anchor time.Time
+	// LastActivity y CreatedAt son las DOS anclas de la ventana HÍBRIDA (Plan 044 ·
+	// T1.8-1, D-044.43). La ventana cierra por lo que llegue ANTES:
+	//
+	//   silencio : now() - LastActivity >= aggregation_window_seconds  (45 s)
+	//   techo    : now() - CreatedAt    >= aggregation_max_seconds     (120 s)
+	//
+	// 🔴 AQUÍ HUBO UN SOLO CAMPO, `Anchor`, Y ERA `COALESCE(message_ts, created_at)`.
+	// Se retiró, no se renombró, y el motivo es que sostenía una regla distinta: con un
+	// único ancla en el PRIMER mensaje, una ráfaga tecleada despacio se parte en dos
+	// jobs. Dejar el nombre viejo apuntando a otra cosa habría hecho que todo comentario
+	// que lo cita —y son varios— mintiera en silencio.
+	//
+	// 🔴 LAS DOS SON DEL RELOJ DE POSTGRES (`updated_at` y `created_at` de
+	// `intake_jobs`, las dos NOT NULL en la 0072), NUNCA `message_ts`. `message_ts` lo
+	// pone el Edge con el reloj del cliente, y compararlo contra el `now()` de Go o de
+	// Postgres es comparar dos relojes: un desfase de minutos cerraría ventanas antes de
+	// tiempo o no las cerraría nunca, sin error. `message_ts` sigue existiendo y sigue
+	// siendo el instante del PRIMER mensaje (D-044.9) — pero ya no decide plazos.
+	//
+	// LastActivity la mueve el `DO UPDATE … updated_at = now()` del UPSERT, o sea CADA
+	// mensaje del cliente de la ráfaga. Nada más la mueve: las entradas de contexto
+	// (`summary`, salientes rotulados, la bienvenida de T1.8-2) van a OTRA tabla
+	// (`conversation_event_messages`) y no hay ningún trigger sobre `intake_jobs`.
+	LastActivity time.Time
+	CreatedAt    time.Time
 }
 
 // JobStore es el puerto de `intake_jobs`. CUATRO operaciones y ninguna más, a

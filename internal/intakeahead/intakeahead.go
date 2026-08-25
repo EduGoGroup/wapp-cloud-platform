@@ -126,6 +126,16 @@ const (
 	// exactamente donde estaba, solo que cortando siete segundos más tarde. Con 45 s el
 	// modelo recibe 38 s, que sí cubre lo medido.
 	//
+	// 🔧 T1.8-1 (2026-08-25) DEJA ESTE ARGUMENTO CONSERVADOR, Y SE ANOTA SIN TOCAR EL
+	// NÚMERO. Desde la ventana HÍBRIDA una ráfaga puede seguir viva hasta
+	// `aggregation_max_seconds` (120 s por defecto) —el silencio se reinicia con cada
+	// mensaje—, así que hoy hay respuestas que se cortan a los 45 s y que TODAVÍA
+	// habrían podido adelantar el cierre. No es una avería: la ventana cierra igual por
+	// su reloj y el adelanto perdido solo cuesta latencia. Subir este número es una
+	// decisión con su propio coste —un worker ocupado más tiempo por petición— que
+	// ninguna tarea ha pedido todavía; queda dicho aquí para que quien la tome sepa que
+	// el techo de arriba ya no es el que este párrafo describía.
+	//
 	// EL TECHO SIGUE SIENDO LA VENTANA, y por eso no sube más: pasado el cierre, una
 	// respuesta ya no adelanta nada. Que llegue tarde no rompe nada —es inocuo por
 	// construcción, ver Sink— pero gastar un worker en algo que ya no puede adelantar

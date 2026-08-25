@@ -138,6 +138,19 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 	unlock := rt.locks.lock(key)
 	defer unlock()
 
+	// LA BIENVENIDA ÚNICA, primera mitad (Plan 044 · T1.8-2, D6): registrar que el
+	// contacto acaba de hablar y traerse la marca previa. Va AQUÍ —en CADA entrante,
+	// dentro del candado y antes de cargar el estado— porque el umbral de silencio se
+	// mide contra el ÚLTIMO mensaje del contacto, no contra el último que abrió
+	// conversación: tocando solo en los turnos que saludan, una conversación que lleva
+	// horas hablando parecería llevar horas callada.
+	//
+	// Es una sentencia y ninguna lectura de config; sin la feature `llm_intake` del
+	// tenant (o sin WithWelcomeStore) no escribe nada. La SEGUNDA mitad —decidir y
+	// mandar— vive en los dos caminos de abajo, y su docstring explica por qué en esos
+	// dos y no aquí. Ver welcome.go.
+	bienvenida := rt.observeWelcome(ctx, tenantID, key)
+
 	st, ok, err := rt.store.Load(ctx, key)
 	if err != nil {
 		return fmt.Errorf("runtime: cargar estado: %w", err)
@@ -149,6 +162,13 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// sessionID) ya está resuelto ⇒ se arranca sin re-resolver el contacto. La
 		// Signal lleva el texto y, si el tenant tiene la feature, la intención LLM. Sin
 		// flow_state no hay puntero de evento ⇒ activeEventKind="" (Plan 043 · T5.3).
+		//
+		// LA BIENVENIDA, segunda mitad — CAMINO 1 DE 2: EL LIMBO. No hay conversación
+		// viva, así que este mensaje no avanza nada y no hay ningún menú que pisar. Va
+		// ANTES del handleTrigger porque es un ACUSE DE RECIBO: primero «lo recibimos»,
+		// después lo que el motor tenga que contestar. Es best-effort y no devuelve
+		// error: nada de aquí puede tumbar el turno del cliente (welcome.go).
+		rt.welcomeIfDue(ctx, tenantID, sessionID, contactID, key, bienvenida)
 		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""), m)
 	}
 	// EL reloj de esta conversación (Plan 043 · T3.1/T3.2/T3.7). Va ANTES de IsEscape /
@@ -163,6 +183,13 @@ func (rt *Runtime) HandleIncoming(ctx context.Context, sessionID string, m *clou
 		// (T3.2/E-6): el evento sigue `open` pero YA NO es el activo ⇒
 		// activeEventKind="" (Plan 043 · T5.3). Atarlo aquí reintroduciría la atadura
 		// que T3.2 quita.
+		//
+		// LA BIENVENIDA, segunda mitad — CAMINO 2 DE 2: EL REINICIO. El reloj venció y
+		// la conversación acaba de soltarse: para el cliente esto es el primer mensaje
+		// de una conversación nueva, exactamente igual que el LIMBO de arriba, y el
+		// menú que hubiera ya no existe. Omitirlo aquí dejaría sin bienvenida justo el
+		// caso de «volvió tras el silencio», que es la mitad del enunciado.
+		rt.welcomeIfDue(ctx, tenantID, sessionID, contactID, key, bienvenida)
 		return rt.handleTrigger(ctx, tenantID, sessionID, key, contactID, rt.buildSignal(ctx, tenantID, m, ""), m)
 	}
 	// El turno avanza sobre el evento que el estado apuntaba: ES el activo, y es el

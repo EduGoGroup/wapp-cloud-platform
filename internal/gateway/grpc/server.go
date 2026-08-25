@@ -118,8 +118,18 @@ type Server struct {
 	inferStats *inferstats.Store
 
 	// OnWarmup, si no es nil, se invoca cuando la caché de prefijo del Ollama de un
-	// Edge puede haberse quedado fría: al registrar una sesión suya y tras empujarle
-	// un ConfigUpdate (Plan 044 · Ola 1.7 · T1.7-4).
+	// Edge puede haberse quedado fría, o cuando ese Edge acaba de poder servirla.
+	//
+	// Los TRES disparadores de hoy, y de dónde salen:
+	//
+	//  1. Tras empujarle un ConfigUpdate (T1.7-4, config_push.go: calentarEdges). UNO
+	//     POR EDGE, no por sesión.
+	//  2. 🆕 En la TRANSICIÓN A READY de `Heartbeat.inference_readiness` (T1.8-6,
+	//     readiness.go: observaReadiness). Es el disparador BUENO: el Cloud calienta
+	//     cuando el Edge DICE que puede, no cuando se registra.
+	//  3. Al registrar una sesión suya, y SOLO mientras ese Edge no diga nada
+	//     (T1.7-4, degradado a compatibilidad por T1.8-6; readiness.go:
+	//     calientaPorRegistro, que lleva escrita su condición de retirada).
 	//
 	// `kind` es el del ConfigUpdate que se acaba de empujar, o VACÍO cuando el aviso
 	// viene del handshake («este Edge acaba de conectar; no hay nada cacheado, sea cual
@@ -183,8 +193,45 @@ type Server struct {
 
 	// edgeSessions mapea cada Edge (tenant+edge) al conjunto de sus sesiones
 	// vivas, para que RevokeLease pueda empujar el kill-switch a todas ellas.
-	trackMu      sync.Mutex
-	edgeSessions map[edgeKey]map[string]struct{}
+	//
+	// edgeReadiness guarda la ÚLTIMA DISPONIBILIDAD DE INFERENCIA QUE ESE EDGE HA
+	// DICHO (Heartbeat.inference_readiness, campo 6 del contrato desde v0.17.0;
+	// Plan 044 · Ola 1.8 · T1.8-6, D-044.43). Es lo que convierte al gateway en
+	// CONSUMIDOR del latido: hasta hoy el calentamiento se disparaba a ciegas al
+	// registrar la sesión, y si el cajero del Edge no estaba, el Edge contestaba
+	// OLLAMA_DOWN y nadie reintentaba jamás.
+	//
+	// 🔴 POR QUÉ VIVE AQUÍ Y NO JUNTO AL `calEnVuelo` DE intakeahead, que es lo que
+	// proponía el tasks.md. Aquel es el cerrojo «uno en vuelo por Edge» del pool
+	// (internal/intakeahead/calentamiento.go, calMu/calEnVuelo): se pone y se borra
+	// con un defer alrededor de UNA goroutine de calentamiento, y su única pregunta
+	// es «¿ya hay uno corriendo?». Esto es otra cosa y con otro dueño: su función es
+	// decidir SI EL GATEWAY LLAMA a OnWarmup, o sea, ocurre un escalón ANTES y en
+	// otro paquete. El gateway no puede alcanzar el candado del pool —ni debe: el
+	// hook OnWarmup existe precisamente para que estos dos no se conozcan— así que
+	// ponerlo allí obligaría a exportar un getter del pool y a que el gateway
+	// dependiera de él, deshaciendo el desacople que el hook compra.
+	//
+	// Su hermano de verdad es `edgeSessions`, que está justo encima: mismo eje
+	// (por-Edge, no por-sesión, ADR-0008), mismo ciclo de vida (nace con el primer
+	// latido del Edge, muere cuando se va su última sesión) y por eso MISMO CANDADO.
+	// Un mutex propio solo añadiría un orden de bloqueo que mantener a cambio de
+	// nada: las dos escrituras son O(1) y nunca llaman a nadie con el candado tomado.
+	//
+	// ⚠️ NO ES DURABLE Y ES UNA DECISIÓN (D-044.43). Un reinicio del Cloud lo vacía y
+	// no se pregunta a nadie: el estado se REAPRENDE con el primer latido de cada
+	// Edge —que llegan solos y en cadencia— y ese primer latido READY se lee como
+	// transición, así que el calentamiento se repite. Repetirlo es barato (prefill
+	// caliente 0,07–0,55 s medidos) y nadie espera detrás. Por lo mismo no hay
+	// barrendero: lo que detecta el «vivo pero atascado» es DefaultWarmTimeout
+	// (110 s) más el cerrojo calEnVuelo del pool, no un registro aquí.
+	//
+	// 🔴 EL CERO (INFERENCE_READINESS_UNSPECIFIED) SIGNIFICA «ESTE EDGE NO LO DICE»,
+	// JAMÁS «no puede». Leerlo como DOWN dejaría de calentar a toda la flota vieja
+	// sin producir un solo error. Ver anotaReadiness y calientaPorRegistro.
+	trackMu       sync.Mutex
+	edgeSessions  map[edgeKey]map[string]struct{}
+	edgeReadiness map[edgeKey]cloudlinkv1.InferenceReadiness
 
 	// infers correlaciona command_id -> inferencia en vuelo que espera su
 	// InferenceResult (Plan 044 · Ola 1.6 · T1.6-3, REQ-34). Es el GEMELO de acks:
@@ -255,11 +302,12 @@ func WithWorkTimeout(d time.Duration) Option { return func(s *Server) { s.workBu
 // dependencias opcionales (lease, fleet) se pasan como Option.
 func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
 	s := &Server{
-		registry:     registry,
-		log:          log,
-		acks:         make(map[string]pendingAck),
-		infers:       make(map[string]pendingInfer),
-		edgeSessions: make(map[edgeKey]map[string]struct{}),
+		registry:      registry,
+		log:           log,
+		acks:          make(map[string]pendingAck),
+		infers:        make(map[string]pendingInfer),
+		edgeSessions:  make(map[edgeKey]map[string]struct{}),
+		edgeReadiness: make(map[edgeKey]cloudlinkv1.InferenceReadiness),
 	}
 	for _, opt := range opts {
 		opt(s)

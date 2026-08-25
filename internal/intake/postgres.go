@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 // Postgres es la implementación real de JobStore sobre `public.intake_jobs`
@@ -195,13 +194,33 @@ func (p *Postgres) PutSourceText(ctx context.Context, k WindowKey, env SourceTex
 }
 
 // listAggregatingSQL alimenta el BARRIDO, que corre fuera del camino del entrante.
-// `COALESCE(message_ts, created_at)` resuelve el ancla en SQL para que no haya dos
-// sitios en Go decidiendo contra qué instante se mide la ventana. `ORDER BY
-// created_at` deja las más viejas primero: si el `limit` recorta, recorta por la
-// cola y las que llevan más rato esperando salen igual.
+// `ORDER BY created_at` deja las más viejas primero: si el `limit` recorta, recorta
+// por la cola y las que llevan más rato esperando salen igual.
+//
+// 🔧 AQUÍ ESTABA `COALESCE(message_ts, created_at)` —el ancla ÚNICA de la ventana
+// vieja— y lo sustituyen las DOS columnas de la ventana HÍBRIDA (Plan 044 · T1.8-1):
+//
+//   - `updated_at` es el ancla del SILENCIO. La mueve el `DO UPDATE … updated_at =
+//     now()` de openOrAppendSQL, o sea CADA mensaje de la ráfaga, así que el plazo
+//     cuenta desde el ÚLTIMO mensaje del cliente y una ráfaga larga ya no se parte en
+//     dos jobs. (Ese `now()` es EXPLÍCITO en la sentencia: NO hay ningún trigger sobre
+//     esta tabla — el esquema entero no tiene un solo `CREATE TRIGGER`.)
+//   - `created_at` es el ancla del TECHO, que es lo que impide que una conversación
+//     que gotea cada 40 s deje su job abierto para siempre.
+//
+// 🔴 `message_ts` YA NO SE SELECCIONA, y no es un descuido: lo pone el Edge con el
+// reloj del CLIENTE, y medir contra `now()` un instante de otro reloj es el fallo
+// permanente y silencioso que esta casa ya tiene fichado. La columna sigue viva y
+// sigue siendo el ts del PRIMER mensaje (D-044.9, base de fechas del presupuesto);
+// simplemente no decide plazos. Volver a ponerla aquí es la mutación que el criterio
+// (b) de T1.8-1 exige que ponga un test en rojo.
+//
+// Las dos columnas son NOT NULL en la 0072, así que no hace falta COALESCE ni un
+// sql.NullTime: si alguna llegara NULL, el Scan fallaría en vez de inventar un cero
+// que cerraría la ventana al instante.
 const listAggregatingSQL = `
 SELECT id::text, tenant_id, session_id, contact_id, event_id::text,
-       COALESCE(message_ts, created_at)
+       updated_at, created_at
   FROM public.intake_jobs
  WHERE status = 'aggregating'
  ORDER BY created_at
@@ -227,15 +246,11 @@ func (p *Postgres) ListAggregating(ctx context.Context, limit int) (out []OpenJo
 	}()
 
 	for rows.Next() {
-		var (
-			j      OpenJob
-			anchor time.Time
-		)
+		var j OpenJob
 		if serr := rows.Scan(&j.ID, &j.Key.TenantID, &j.Key.SessionID, &j.Key.ContactID,
-			&j.Key.EventID, &anchor); serr != nil {
+			&j.Key.EventID, &j.LastActivity, &j.CreatedAt); serr != nil {
 			return nil, fmt.Errorf("intake: scan de ventana viva: %w", serr)
 		}
-		j.Anchor = anchor
 		out = append(out, j)
 	}
 	if rerr := rows.Err(); rerr != nil {
