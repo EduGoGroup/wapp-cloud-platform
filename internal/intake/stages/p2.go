@@ -10,10 +10,15 @@
 // escrito. Nada más. En particular NO es de este paquete, y no se cuele aquí:
 //
 //   - **el bucle del worker** —reclamar, encadenar etapas, terminar el job— es T2.5;
-//   - **la política de reintentos** (el retry único por calidad a temperatura 0.3) es
-//     T2.5 también: aquí se hace UNA llamada y el error sale hacia arriba con su
-//     familia intacta (`llm.ErrLLMQuality` envuelto con `%w`), que es justo lo que el
-//     worker necesita para decidir si reintenta o si suelta el job;
+//   - **la política de reintentos DEL JOB** es T2.5: en P2 se hace UNA llamada y el
+//     error sale hacia arriba con su familia intacta (`llm.ErrLLMQuality` envuelto con
+//     `%w`), que es justo lo que el worker necesita para decidir si reintenta o si
+//     suelta el job. 🔧 **Corregido en T2.3**: aquí ponía «la política de reintentos es
+//     T2.5», a secas, y eso resultó FALSO en cuanto llegó P3. Son DOS políticas y no una:
+//     la del JOB (T2.5) y la del ÍTEM (T2.3, REQ-03 — un reintento a temperatura 0.3 y
+//     luego aislamiento). P2 hace una llamada por job, así que reintentar el job no
+//     cuesta nada; P3 hace N, y reintentar el job por un ítem envenenado tiraría las
+//     22–32 s que costó cada uno de los otros N−1;
 //   - **el tope de ítems** (T2.6) y **el aforo `K = 1` por Edge** (T2.7);
 //   - **el descifrado del sobre del literal**: la etapa recibe el texto EN CLARO y no
 //     conoce el `FieldCipher`. Quien descifra —y quien decide qué hacer con un job
