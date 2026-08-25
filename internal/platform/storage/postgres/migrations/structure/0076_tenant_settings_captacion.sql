@@ -1,7 +1,8 @@
 -- ============================================================
 -- 0076: tenant_settings — LOS AJUSTES DE CAPTACIÓN DE LA OLA 1.8
--- (Plan 044 · Ola 1.8. Sección A: T1.8-1 · D-044.43. Sección B: reservada
---  a T1.8-2, la bienvenida única.)
+-- (Plan 044 · Ola 1.8. Sección A: T1.8-1 · D-044.43. Secciones B y C: T1.8-2,
+--  la bienvenida única · D6 — la B son sus dos columnas de config en esta misma
+--  tabla, la C es la tabla NUEVA `conversation_welcomes` con su estado.)
 --
 -- POR QUÉ EL FICHERO SE LLAMA «captacion» Y NO «ventana_hibrida»
 -- ------------------------------------------------------------
@@ -13,6 +14,14 @@
 -- añadir dos columnas a la misma tabla, o —peor— a esconderlas bajo un nombre que
 -- no las nombra. El plan lo dice literalmente: la `0076` «la gastan, por orden,
 -- T1.8-1 (ventana híbrida + bienvenida)».
+--
+-- 🔴 Y ESO SE CUMPLIÓ, CON UNA COSA MÁS DE LA PREVISTA (T1.8-2, el 2026-08-25): además
+-- de sus dos columnas, la bienvenida necesitaba una TABLA propia para su estado, porque
+-- el concepto «primer mensaje de una conversación» no existía en ningún sitio del
+-- esquema. Va en la sección C, en este mismo fichero, y el porqué está escrito allí: es
+-- la misma unidad de despliegue que la B —sin la tabla el emisor saludaría en cada
+-- mensaje, sin las columnas no sabría qué decir— y partirlas permitiría desplegar media
+-- funcionalidad.
 --
 -- 🔴 EL NÚMERO SE VERIFICÓ CON `ls`, NO SE HEREDÓ DE LA DOC. El 2026-08-25, con el
 -- directorio delante, la última migración REAL era la
@@ -208,17 +217,225 @@ COMMENT ON COLUMN public.tenant_settings.aggregation_max_seconds IS
 'Plan 044 T1.8-1: TECHO de la ventana de captación, en segundos desde created_at del job. La ventana cierra por lo que llegue ANTES: silencio (now()-updated_at >= aggregation_window_seconds) o techo (now()-created_at >= este valor). Ambos plazos contra el reloj de Postgres, NUNCA contra message_ts (que viene del Edge). 0 = vencido siempre (cierre en el primer barrido), igual que el 0 de aggregation_window_seconds; NO existe "sin techo" y es deliberado.';
 
 -- ============================================================
--- SECCIÓN B) RESERVADA — LA BIENVENIDA ÚNICA (T1.8-2)
+-- SECCIÓN B) LA BIENVENIDA ÚNICA — SU TEXTO Y SU UMBRAL (T1.8-2, D6)
 -- ============================================================
--- Aquí van, cuando T1.8-2 se ejecute, el texto de la bienvenida por tenant y el
--- umbral de horas de silencio tras el cual se vuelve a mandar. Se dejan ESCRITAS como
--- hueco y no como columnas vacías: una columna que nadie escribe ni lee es superficie
--- muerta (D-044.23), y el plan solo autoriza a compartir el NÚMERO de migración, no a
--- adelantar el DDL de una tarea que todavía no ha decidido su forma.
 --
--- Quien la escriba: añade las columnas AQUÍ ABAJO, en este mismo fichero, con el mismo
--- patrón de cuatro pasos de la sección A. El runner es full-replay por hash, así que
--- editar este fichero reejecuta el esquema entero y las columnas de la sección A
--- sobreviven intactas (sus guardas son NO-OP exactos). Lo que NO se puede hacer es
--- ampliar un CHECK cerrado de aquí con una migración POSTERIOR: bajo full-replay la
--- vieja corre antes y aborta el arranque.
+-- QUÉ CAMBIA EN EL COMPORTAMIENTO, DICHO ANTES QUE EL DDL
+-- ------------------------------------------------------------
+-- Hoy, entre que el cliente escribe y que le llega el borrador del presupuesto, el
+-- Cloud NO LE DICE NADA. Los plazos de la sección A son 45 s de silencio y 120 s de
+-- techo, y encima de eso va el pipeline entero: el cliente pasa minutos mirando una
+-- conversación muda sin saber si su mensaje llegó. La bienvenida es UNA frase fija
+-- —«estamos procesando»— que se manda al PRIMER mensaje de una conversación y otra
+-- vez si el contacto vuelve tras un silencio largo. Nunca por interacción.
+--
+-- 🔴 NO ES CONTENIDO DEL ANÁLISIS Y ESO GOBIERNA TODO SU DISEÑO. La bienvenida no
+-- entra en `source_refs`, no entra en `source_text` (ni rotulada) y no mueve el
+-- `updated_at` del job. La razón no es de presupuesto: una `evidence` del borrador que
+-- apuntara a ella sería una `evidence` que apunta a un texto QUE ESCRIBIMOS NOSOTROS,
+-- o sea, el sistema citándose a sí mismo como si fuera el cliente. Por eso el emisor
+-- vive fuera del camino del agregador y del hilo, y por eso aquí NO hay ninguna
+-- columna que la ligue a `intake_jobs` ni a `conversation_event_messages`.
+--
+-- ⚠️ NO CONFUNDIR CON LOS OTROS DOS AUTOMENSAJES DE LA PLATAFORMA. La notificación de
+-- degradación (0075, `owner_degradation_notices`) va AL DUEÑO, y el aviso de sesión
+-- pasiva (0066, `fleet_sessions.greeted_at`) va al NÚMERO DE LA PROPIA SESIÓN. Esta va
+-- AL CLIENTE, y es el único texto que el Plan 044 le manda antes del borrador. Los tres
+-- son textos FIJOS del sistema: INV-1/INV-2 siguen intactas, el LLM no escribe ninguno.
+--
+-- ------------------------------------------------------------
+-- POR QUÉ DOS COLUMNAS Y NO UNA, Y POR QUÉ AQUÍ
+-- ------------------------------------------------------------
+-- Son las dos únicas cosas que un dueño puede querer cambiar: QUÉ dice y CADA CUÁNTO
+-- se repite. Van en `tenant_settings` porque son configuración por tenant del mismo
+-- asunto que la sección A —cómo se comporta la captación frente al cliente— y porque
+-- esta tabla es donde vive ya el resto de esa configuración (page_size, los TTL, la
+-- ventana). El ESTADO —«a este contacto ya le saludé», «cuándo habló por última vez»—
+-- NO va aquí: es por conversación, no por tenant, y tiene tabla propia en la sección C.
+--
+-- ⚠️ NO HAY INTERRUPTOR DE «APAGAR LA BIENVENIDA», y no es un olvido: el interruptor
+-- ES la feature `llm_intake` del tenant (ADR-0022). Un tenant sin ella no recibe
+-- bienvenida NUNCA —el gate es fail-closed, igual que el del hilo literal—, así que una
+-- columna `welcome_enabled` sería un segundo interruptor para lo mismo. Y un segundo
+-- interruptor es exactamente lo que el Plan 044 · T1.6 tuvo que RETIRAR de `thread.go`
+-- después de que dejara al plan sin materia prima durante doce días.
+
+-- (a) EL TEXTO. `''` NO significa «sin bienvenida»: significa EL TEXTO DE PLATAFORMA
+--     (store.DefaultWelcomeText), que es lo mismo que recibe un tenant SIN fila en esta
+--     tabla. Los dos caminos —fila con '' y sin fila— tienen que dar el mismo mensaje, o
+--     el comportamiento dependería de si alguien tocó alguna vez el page_size.
+--
+--     🔴 EL `DEFAULT ''` ALCANZA A LAS FILAS QUE YA EXISTEN, y aquí eso es lo CORRECTO
+--     (al revés que en la sección A): no hay ninguna columna anterior de la que derivar
+--     un texto mejor, así que el default ES el backfill —el mismo argumento, palabra por
+--     palabra, que la 0072 sección E escribió para `aggregation_window_seconds`—. Un
+--     backfill aparte no tendría de dónde sacar nada distinto de '' y solo añadiría una
+--     sentencia que afectaría a las mismas filas con el mismo valor.
+--
+--     Dato de NEGOCIO EN CLARO (ADR-0009): es una frase que el dueño escribe para que la
+--     lean sus clientes, no PII. ⚠️ Y por eso mismo lleva aviso: quien la configure NO
+--     debe meter aquí datos de nadie —esta columna está en claro y se manda por WhatsApp
+--     a CUALQUIERA que escriba—. Es el mismo aviso que lleva `intake_jobs.error`.
+ALTER TABLE public.tenant_settings
+    ADD COLUMN IF NOT EXISTS welcome_text TEXT NOT NULL DEFAULT '';
+
+-- (b) EL UMBRAL DE SILENCIO, EN SEGUNDOS. El enunciado habla de «N horas» y la columna
+--     se llama `_seconds` a propósito: TODOS los relojes de esta tabla se miden en
+--     segundos (`order_ttl_seconds`, `conversation_ttl_seconds`,
+--     `event_inactivity_ttl_seconds`, `event_history_ttl_seconds`,
+--     `aggregation_window_seconds`, `aggregation_max_seconds`). Una columna en horas
+--     sería la única que no, y quien escribiera un UPDATE a mano sobre dos de ellas
+--     acertaría en una y fallaría en la otra sin que nada se quejara.
+--
+-- 🔴 POR QUÉ 86400 (24 h) Y NO UN NÚMERO CUALQUIERA. El argumento NO es «un día suena
+--     bien», es que 24 h está MUY POR ENCIMA de todos los relojes conversacionales de
+--     esta misma tabla (`conversation_ttl_seconds` y `event_inactivity_ttl_seconds`,
+--     los dos en 7200 = 2 h). Esa distancia es lo que convierte la promesa «nunca por
+--     interacción» en algo que sostiene el NÚMERO y no solo la guarda del código: para
+--     que el umbral venciera durante una conversación viva, esa conversación tendría
+--     que llevar 24 h de silencio, y a las 2 h el reloj que manda ya la habría soltado.
+--     Quien baje este valor por debajo de 7200 se queda SOLO con la guarda del runtime
+--     (que no saluda sobre conversación viva), y eso hay que saberlo antes de bajarlo.
+--
+-- 🔴 QUÉ SIGNIFICA EL 0, dicho porque en esta tabla el 0 ya significa tres cosas
+--     distintas y hay que decir cuál es la de aquí: 0 = VENCIDO SIEMPRE, la MISMA
+--     lectura que el 0 de `aggregation_window_seconds` y `aggregation_max_seconds` (y no
+--     la de `conversation_ttl_seconds`, donde 0 es «sin vencimiento»). Con 0, todo
+--     mensaje que no avance una conversación viva vuelve a recibir la bienvenida. Es
+--     una configuración legítima —un tenant que quiera acuse SIEMPRE— y es la que se
+--     desaconseja: repite la frase, y «nunca por interacción» deja de cumplirse en la
+--     práctica aunque la guarda del runtime siga en su sitio.
+--
+--     POR QUÉ EL CHECK ES `>= 0` Y NO `> 0`: por lo anterior —el 0 tiene lectura— y por
+--     simetría exacta con sus dos vecinas. Lo único que descarta es el negativo, que no
+--     significa «poco silencio» sino nada.
+--     POR QUÉ NO HAY TECHO SUPERIOR: mismo argumento que la 0072 y que la sección A.
+--     Ningún requisito lo discutió y un número inventado no se podría defender. Un
+--     umbral absurdamente alto no rompe nada: ese tenant saluda UNA vez y no repite.
+ALTER TABLE public.tenant_settings
+    ADD COLUMN IF NOT EXISTS welcome_silence_seconds INTEGER NOT NULL DEFAULT 86400;
+
+-- Su CHECK, con nombre y FUERA del `ADD COLUMN`, por la regla (4) de la cabecera: un
+-- CHECK inline en un `ADD COLUMN IF NOT EXISTS` se salta CON él del segundo arranque en
+-- adelante y deja de recrearse para siempre (lo pagó la 0071 el 2026-08-22).
+ALTER TABLE public.tenant_settings
+    DROP CONSTRAINT IF EXISTS tenant_settings_welcome_silence_check;
+ALTER TABLE public.tenant_settings
+    ADD CONSTRAINT tenant_settings_welcome_silence_check
+    CHECK (welcome_silence_seconds >= 0);
+
+COMMENT ON COLUMN public.tenant_settings.welcome_text IS
+'Plan 044 T1.8-2 (D6): TEXTO FIJO de la bienvenida unica que el Cloud manda AL CLIENTE al primer mensaje de una conversacion, y otra vez tras welcome_silence_seconds de silencio. Cadena vacia (el DEFAULT) = usar el texto de PLATAFORMA (store.DefaultWelcomeText), que es lo mismo que recibe un tenant SIN fila en esta tabla; NO significa "sin bienvenida". Apagar la bienvenida se hace quitandole al tenant la feature llm_intake, que es el unico interruptor y es fail-closed. NO es contenido del analisis: no entra en intake_jobs.source_refs ni en source_text, ni rotulada, y no mueve el updated_at del job -- una evidence que apuntara a ella seria el sistema citandose a si mismo. Lo escribe el DUENO y lo lee CUALQUIERA que escriba al numero: dato de negocio EN CLARO (ADR-0009), aqui NO van datos de personas.';
+
+COMMENT ON COLUMN public.tenant_settings.welcome_silence_seconds IS
+'Plan 044 T1.8-2 (D6): segundos de silencio del contacto tras los cuales la bienvenida VUELVE a mandarse. Se mide contra conversation_welcomes.last_incoming_at, que es el instante del ultimo mensaje del contacto. DEFAULT 86400 (24 h), elegido MUY por encima de conversation_ttl_seconds y event_inactivity_ttl_seconds (7200 los dos) para que el umbral no pueda vencer durante una conversacion viva: bajarlo por debajo de 7200 deja la promesa "nunca por interaccion" sostenida SOLO por la guarda del runtime. 0 = VENCIDO SIEMPRE (bienvenida en cada mensaje que no avance conversacion viva), la misma lectura que el 0 de aggregation_window_seconds y aggregation_max_seconds, y NO la de conversation_ttl_seconds. CHECK >= 0: el negativo no significa nada. Sin techo superior a proposito.';
+
+-- ============================================================
+-- SECCIÓN C) EL ESTADO DE LA BIENVENIDA: `conversation_welcomes` (T1.8-2)
+-- ============================================================
+--
+-- 🔴 POR QUÉ ESTA SECCIÓN VIVE EN UN FICHERO QUE SE LLAMA «tenant_settings»
+-- ------------------------------------------------------------
+-- Porque el nombre completo es `0076_tenant_settings_captacion` y lo que lo gobierna es
+-- la segunda mitad: la CAPTACIÓN de la Ola 1.8. La cabecera dice, literalmente, que este
+-- fichero se llama «captacion» para que T1.8-2 pueda meter aquí lo suyo sin pedir otro
+-- número. La bienvenida necesitaba DOS cosas —config por tenant (sección B) y estado por
+-- conversación (esta)—, y las dos son la misma unidad de despliegue: sin la tabla, el
+-- emisor no sabe a quién ya saludó y saludaría en cada mensaje; sin las columnas, no
+-- sabe qué decir ni cada cuánto. Partirlas en dos migraciones permitiría desplegar media
+-- funcionalidad, que es peor que un nombre de fichero que se queda corto.
+--
+-- ⚠️ Y esta migración NO ESTÁ DESPLEGADA: ampliarla editándola es lo correcto (regla de
+-- la casa para migraciones no aplicadas, la misma por la que la 0072 sección F entró
+-- tarde). No hay ninguna base con la 0076 aplicada a la que esto llegue tarde.
+--
+-- ------------------------------------------------------------
+-- QUÉ GUARDA, Y POR QUÉ NO CABÍA EN NINGUNA TABLA QUE YA EXISTA
+-- ------------------------------------------------------------
+-- Dos hechos por conversación, y el concepto «primer mensaje de una conversación» NO
+-- EXISTÍA en el esquema. Se buscaron los tres candidatos obvios y ninguno sirve:
+--
+--   * `contacts` (0005) — NO TIENE `last_seen`, y sobre todo su PK es
+--     (tenant_id, kind, value): UN contacto tiene VARIAS filas, una por referencia
+--     (número + LID + username, todas con el mismo contact_id). Una marca de «ya le
+--     saludé» ahí se duplicaría en N filas y el centinela `WHERE welcomed_at IS NULL`
+--     dejaría de ser una pregunta con UNA respuesta. Su `updated_at`, además, solo se
+--     mueve al re-resolver el push_name: no es un reloj de actividad.
+--   * `conversation_events.last_activity_at` (0051) — es POR EVENTO ABIERTO. Sin evento
+--     vivo (el LIMBO: un saludo, la cháchara) NO HAY FILA, y el LIMBO es justo donde la
+--     bienvenida tiene que decidir.
+--   * `flow_state.updated_at` (0005) — SE BORRA. `releaseForNewConversation` destruye la
+--     fila al vencer el TTL, y con ella se iría la única prueba de que ya saludamos: el
+--     contacto volvería a recibir la bienvenida por el camino equivocado.
+--
+-- ⇒ Estado propio, con la MISMA clave que el motor usa para todo lo demás:
+--   (tenant_id, session_id, contact_id) — `store.Key`, idéntica a la PK de `flow_state`.
+--
+-- 🔴 POR QUÉ LA CLAVE LLEVA `session_id` Y NO ES SOLO (tenant, contacto). El enunciado
+-- dice «un contacto en un tenant», y esa frase se lee como el SCOPING de tenant
+-- (INV-8), no como una declaración de que la sesión sobra. Un tenant con dos sesiones
+-- son DOS números de WhatsApp distintos: el cliente que escribe al segundo está
+-- empezando una conversación con un número que nunca le ha contestado nada, y con la
+-- clave por (tenant, contacto) se quedaría MUDO. Entre saludar de más a quien escribe a
+-- dos números de la misma empresa y dejar en silencio una conversación entera, esta casa
+-- elige lo primero. Y es además la clave con la que el runtime ya serializa (keyedMutex),
+-- carga estado y cuenta rachas: cualquier otra obligaría a traducir.
+--
+-- ------------------------------------------------------------
+-- LAS DOS COLUMNAS, Y POR QUÉ HACEN FALTA LAS DOS
+-- ------------------------------------------------------------
+--   * `welcomed_at` — cuándo se entregó la última bienvenida. NULL = nunca. Es la
+--     idempotencia de «una por conversación» y es el MISMO patrón exacto que
+--     `fleet_sessions.greeted_at` (0066): centinela en el UPDATE, y se marca SOLO si el
+--     Ack del Edge vuelve `ok=true`. Si el envío falla, NO se marca y el siguiente
+--     mensaje reintenta — un aviso que no llegó no se puede dar por dado.
+--   * `last_incoming_at` — cuándo habló el contacto por última vez. Es lo que ancla el
+--     umbral de silencio, y NO se puede sustituir por `welcomed_at`: la regla «vuelve a
+--     saludar tras N h de SILENCIO» anclada en el saludo sería «vuelve a saludar cada N
+--     h», que dispararía en mitad de una conversación larga. Es exactamente lo que el
+--     enunciado prohíbe («nunca por interacción»).
+--
+-- ⚠️ ESTA TABLA NO ES UN REGISTRO DE ACTIVIDAD DE PROPÓSITO GENERAL, y quien venga
+-- buscando uno debe irse: `last_incoming_at` está aquí porque la regla de la bienvenida
+-- lo necesita, y solo se escribe para los tenants que pueden recibirla (los que tienen
+-- `llm_intake`). Colgar de ella un «último visto» de producto sería construir sobre una
+-- columna que miente para media flota. Superficie muerta = D-044.23.
+--
+-- CERO PII (ADR-0009/ADR-0010): tres identificadores OPACOS y dos marcas de tiempo. Ni
+-- el número, ni el push_name, ni una sola letra de lo que el cliente escribió.
+--
+-- RETENCIÓN: no hay poda, y es la MISMA decisión que `intakes`, `flow_events`,
+-- `webhook_outbox` e `intake_jobs` tras el ADR-0043 (Plan 046). Lo que sí la recorta es
+-- el `ON DELETE CASCADE` del tenant: borrar la empresa se lleva sus marcas.
+--
+-- ADITIVA e IDEMPOTENTE: `CREATE TABLE IF NOT EXISTS` es NO-OP EXACTO del segundo
+-- arranque en adelante, así que las marcas reales SOBREVIVEN a cada replay. NO sube
+-- SchemaVersion (un solo bump del 044, en T6.2).
+--
+-- ⚠️ AVISO PARA QUIEN AÑADA UNA COLUMNA AQUÍ MAÑANA: `CREATE TABLE IF NOT EXISTS` no
+-- toca una tabla que ya existe. Una columna nueva se añade con `ALTER TABLE ... ADD
+-- COLUMN IF NOT EXISTS`, nunca editando este CREATE — y un `COMMENT ON COLUMN` sobre una
+-- columna que el CREATE no repuso mata el arranque siguiente (0051:86-90, y el caso real
+-- que el Plan 046 · Ola 5 pagó con la columna borrada de `contacts`).
+CREATE TABLE IF NOT EXISTS public.conversation_welcomes (
+    tenant_id        UUID        NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    session_id       TEXT        NOT NULL,
+    contact_id       UUID        NOT NULL,          -- OPACO: contacts.contact_id (ADR-0017)
+    last_incoming_at TIMESTAMPTZ NOT NULL,          -- el ancla del silencio. SIN default: ver abajo.
+    welcomed_at      TIMESTAMPTZ,                   -- NULL = nunca se le dio la bienvenida
+    PRIMARY KEY (tenant_id, session_id, contact_id)
+);
+
+COMMENT ON TABLE public.conversation_welcomes IS
+'Plan 044 T1.8-2 (D6): estado de la BIENVENIDA UNICA por conversacion (tenant, sesion, contacto) -- la misma clave que flow_state, que es la que el motor usa para todo. Existe porque el concepto "primer mensaje de una conversacion" no vivia en ningun sitio: contacts no tiene last_seen y ademas tiene N filas por contacto (una por referencia), conversation_events.last_activity_at es por evento abierto y no existe en el LIMBO, y flow_state.updated_at SE BORRA al vencer el TTL. CERO PII (ADR-0009/ADR-0010): identificadores opacos y marcas de tiempo. Solo se escribe para tenants con la feature llm_intake. NO es un registro de actividad de proposito general: last_incoming_at esta aqui porque la regla de la bienvenida lo necesita. Sin poda por tiempo, igual que intakes/flow_events/webhook_outbox/intake_jobs tras el ADR-0043; lo unico que la recorta es el CASCADE del tenant.';
+
+COMMENT ON COLUMN public.conversation_welcomes.tenant_id IS
+'Tenant dueno de la conversacion (FK a tenants, CASCADE). Scoping INV-8.';
+COMMENT ON COLUMN public.conversation_welcomes.session_id IS
+'Sesion CloudLink por la que entra la conversacion. VA EN LA CLAVE A PROPOSITO: dos sesiones del mismo tenant son dos numeros de WhatsApp distintos, y el cliente que escribe al segundo empieza una conversacion que nunca le ha contestado nada. Sin session_id en la clave, esa segunda conversacion se quedaria MUDA.';
+COMMENT ON COLUMN public.conversation_welcomes.contact_id IS
+'Identidad OPACA del contacto (contacts.contact_id, ADR-0017). NO es un telefono.';
+COMMENT ON COLUMN public.conversation_welcomes.last_incoming_at IS
+'Instante del ULTIMO mensaje del contacto. Es el ancla del umbral tenant_settings.welcome_silence_seconds. SIN DEFAULT now() a proposito: lo escribe SIEMPRE el runtime con SU reloj inyectable (rt.now, WithClock), de modo que el valor guardado y el "ahora" con el que se compara salen del MISMO reloj. Un DEFAULT now() aqui metaria el reloj de Postgres en una comparacion que hace Go, que es un modo de fallo permanente y silencioso ya conocido en esta casa. NO se puede sustituir por welcomed_at: anclar el umbral en el saludo convertiria "vuelve a saludar tras N h de silencio" en "vuelve a saludar cada N h", que dispara en mitad de una conversacion larga -- justo lo que el enunciado prohibe.';
+COMMENT ON COLUMN public.conversation_welcomes.welcomed_at IS
+'Cuando se ENTREGO la ultima bienvenida a esta conversacion. NULL = nunca, y es el estado CORRECTO de una conversacion a la que nadie saludo: por eso la columna es NULLABLE, SIN default y SIN backfill (mismo argumento exacto que fleet_sessions.greeted_at de la 0066 -- un backfill aqui AFIRMARIA algo falso). Solo la escribe MarkWelcomed, con centinela sobre el valor leido (compare-and-set) y SOLO cuando el Ack del Edge vuelve ok=true: si el envio falla no se marca y el siguiente mensaje reintenta. Un aviso que no llego no se da por dado.';

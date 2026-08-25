@@ -237,6 +237,15 @@ type Runtime struct {
 	// escrito (D-044.26): UNA sentencia, cero lecturas, cero cripto, cero red. NUNCA
 	// devuelve error — un fallo suyo se loguea y el turno del cliente sigue (INV-10).
 	aggregator *IntakeAggregator
+	// welcomes guarda el estado de la BIENVENIDA ÚNICA por conversación (Plan 044 ·
+	// T1.8-2, D6, ver welcome.go): «a esta conversación ya le saludé» y «cuándo habló
+	// el contacto por última vez». nil (sin WithWelcomeStore) ⇒ el motor no manda
+	// ninguna bienvenida y no escribe una sola fila: misma no-regresión por defecto
+	// que el resto de piezas opcionales de este struct.
+	//
+	// Va SIEMPRE con WithEntitlements: el gate por tenant (`llm_intake`) es
+	// fail-closed, así que con el resolver a nil esto queda inerte aunque se cablee.
+	welcomes WelcomeStore
 }
 
 // DepositReminder evalúa si a un contacto hay que recordarle la seña de alguna

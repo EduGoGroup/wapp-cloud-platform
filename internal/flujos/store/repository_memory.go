@@ -57,6 +57,10 @@ type MemoryRepository struct {
 	// T0). Sembrable en tests vía SetTenantSettings; leído por GetTenantSettings
 	// (defaults si no hay fila).
 	settings map[string]TenantSettings
+	// welcomes indexa la clave conversacional → estado de la bienvenida única; imita
+	// public.conversation_welcomes (Plan 044 · T1.8-2). Lo escriben TouchContact y
+	// MarkWelcomed; los tests lo leen con Welcome(key).
+	welcomes map[string]WelcomeMark
 }
 
 // NewMemoryRepository crea un repositorio en memoria vacío.
@@ -71,6 +75,7 @@ func NewMemoryRepository() *MemoryRepository {
 		intakes:         make(map[string]Intake),
 		intakeItems:     make(map[string][]IntakeItem),
 		settings:        make(map[string]TenantSettings),
+		welcomes:        make(map[string]WelcomeMark),
 	}
 }
 
@@ -720,4 +725,54 @@ func (r *MemoryRepository) SetTenantSettings(s TenantSettings) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.settings[s.TenantID] = s
+}
+
+// ---------------------------------------------------------------------------
+// LA BIENVENIDA ÚNICA (Plan 044 · T1.8-2, D6) — el gemelo en memoria
+// ---------------------------------------------------------------------------
+
+// TouchContact implementa WelcomeStore en memoria con la MISMA semántica que el
+// repo Postgres, incluida la que muerde: devuelve el estado ANTERIOR al toque.
+//
+// El gemelo Postgres necesita un CTE para conseguirlo (un `RETURNING` le daría la
+// fila ya actualizada); aquí basta con copiar antes de escribir. Que se consiga de
+// dos maneras distintas es irrelevante: lo que tiene que coincidir es lo que ve el
+// llamante, y lo vigila reads_conformance_test.go.
+func (r *MemoryRepository) TouchContact(_ context.Context, key Key, now time.Time) (WelcomeMark, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := stateKey(key)
+	previo := r.welcomes[k] // cero si no existía: «nunca habló, nunca se le saludó».
+	actual := previo
+	actual.LastIncomingAt = now
+	r.welcomes[k] = actual
+	return previo, nil
+}
+
+// MarkWelcomed implementa WelcomeStore en memoria con el MISMO compare-and-set que
+// el SQL (`welcomed_at IS NOT DISTINCT FROM $testigo`): si la marca cambió desde que
+// el llamante la leyó, no se escribe y se devuelve false SIN error.
+//
+// ⚠️ Si NO hay fila devuelve false, igual que el UPDATE de Postgres (que afectaría 0
+// filas). No la crea: MarkWelcomed solo puede llegar después de un TouchContact, que
+// es quien la crea, y fabricarla aquí taparía un orden de llamadas equivocado.
+func (r *MemoryRepository) MarkWelcomed(_ context.Context, key Key, testigo WelcomeMark, now time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := stateKey(key)
+	actual, ok := r.welcomes[k]
+	if !ok || !actual.WelcomedAt.Equal(testigo.WelcomedAt) {
+		return false, nil
+	}
+	actual.WelcomedAt = now
+	r.welcomes[k] = actual
+	return true, nil
+}
+
+// Welcome devuelve el estado de la bienvenida de una conversación. Helper de test:
+// es el equivalente a mirar la fila de conversation_welcomes con SQL directo.
+func (r *MemoryRepository) Welcome(key Key) WelcomeMark {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.welcomes[stateKey(key)]
 }
