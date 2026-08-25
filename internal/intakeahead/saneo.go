@@ -1,9 +1,9 @@
 package intakeahead
 
 import (
-	"strings"
-
 	"github.com/EduGoGroup/wapp-shared/llm"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/evidence"
 )
 
 // ============================================================================
@@ -41,26 +41,17 @@ import (
 // evidencia daría dos reglas que mantener sincronizadas para cubrir un campo que hoy
 // no tiene consumidor. Una regla, y dicha.
 //
-// # LA GRANULARIDAD ES LA FRASE, NO LA PALABRA
+// # LA GRANULARIDAD ES LA FRASE, NO LA PALABRA — Y LA REGLA YA NO VIVE AQUÍ
 //
-// Un valor se acepta si aparece COMO SUBCADENA del mensaje del cliente. No se parte
-// en palabras y no se acepta «alguna palabra en común»: eso convertiría cualquier
-// invención que reusara dos términos del mensaje en un valor «respaldado», que es
-// justo lo que el allowlist existe para impedir.
+// Un valor se acepta si aparece COMO SUBCADENA del mensaje del cliente, con las
+// mayúsculas y los blancos normalizados y los acentos NO. El enunciado entero, con el
+// motivo de cada una de esas tres decisiones, está en `internal/evidence`: la regla se
+// MUDÓ allí en T2.2 —tal como este mismo comentario predecía en su último párrafo—
+// cuando P2 estrenó el segundo consumidor. Este paquete la llama; no la reimplementa.
 //
-// La comparación normaliza DOS cosas y ninguna más:
-//
-//   - **mayúsculas/minúsculas**, porque el modelo capitaliza a su gusto;
-//   - **los espacios en blanco**, colapsados a uno, porque copia con saltos de línea
-//     donde el original tenía uno o al revés.
-//
-// 🔴 **NO normaliza acentos, y es una decisión.** La evidencia es, por contrato, una
-// COPIA LITERAL de una frase del original: un modelo que escribe «cafe» donde el
-// cliente escribió «café» no está copiando, está reescribiendo, y esa es exactamente
-// la conducta que el allowlist tiene que cazar. El coste de la decisión es real y va
-// dicho: alguna evidencia legítima se rechazará. Y es el lado seguro — un rechazo
-// aquí solo significa NO ADELANTAR la ventana, que es lo mismo que pasa hoy cuando no
-// llega ninguna señal (REQ-35). El error caro es el contrario.
+// Lo que sí es de aquí es el lado seguro del rechazo: un rechazo en P1 solo significa
+// NO ADELANTAR la ventana, que es lo mismo que pasa hoy cuando no llega ninguna señal
+// (REQ-35). El error caro es el contrario.
 //
 // # QUÉ SE HACE CON LO QUE NO PASA: DOS RESPUESTAS DISTINTAS
 //
@@ -78,6 +69,10 @@ import (
 // «porque no lo usa nadie»— porque el consumidor llega en la Ola 2 (P3 extrae ítems
 // con evidencia) y partir la regla en dos funciones el día que aparezca es como las
 // dos empiezan a decir cosas distintas.
+//
+// 🔧 **2026-08-25 (T2.2): el consumidor llegó, y no fue el que este párrafo esperaba.**
+// Fue **P2** —una `evidence` por idea— antes que P3. La regla NO se partió en dos: se
+// mudó a `internal/evidence` y las dos etapas llaman a la misma función.
 // ============================================================================
 
 // sanear aplica el allowlist a la clasificación IN SITU y devuelve (a) si la
@@ -138,24 +133,15 @@ func paramsDeclarados(in llm.ClassifyRequestInput, intent string) map[string]str
 	return nil
 }
 
-// contieneFrase dice si `frase` aparece en un texto YA NORMALIZADO. La frase se
-// normaliza aquí, con la misma regla, para que las dos partes de la comparación se
-// midan con la misma vara.
-//
-// Una frase vacía devuelve false: la evidencia vacía solo es legítima cuando la
-// intención es la etiqueta de lo desconocido, y ese caso ni llega a disparar nada.
+// contieneFrase es UN ALIAS de la regla compartida, y existe solo para que las tres
+// llamadas de `sanear` se lean igual que antes de la mudanza. Una frase vacía devuelve
+// false: la evidencia vacía solo es legítima cuando la intención es la etiqueta de lo
+// desconocido, y ese caso ni llega a disparar nada.
 func contieneFrase(textoNorm, frase string) bool {
-	f := normalizar(frase)
-	if f == "" {
-		return false
-	}
-	return strings.Contains(textoNorm, f)
+	return evidence.Contains(textoNorm, frase)
 }
 
-// normalizar baja a minúsculas y colapsa TODO blanco (espacios, tabuladores, saltos
-// de línea) a un espacio simple, recortando los extremos. strings.Fields hace las
-// tres cosas de una pasada y con la definición de blanco de Unicode, que es la que
-// corresponde a un texto escrito por una persona en WhatsApp.
+// normalizar es el otro alias: ver evidence.Normalize.
 func normalizar(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+	return evidence.Normalize(s)
 }
