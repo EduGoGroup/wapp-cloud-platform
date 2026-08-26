@@ -5,6 +5,17 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`llm` sube a `v0.4.2`: P4 ya dice qué vale `qty` cuando la cantidad ES un rango.**
+  Las reglas del prompt enunciaban «si el cliente no dijo cuántos, `qty` vale 1» y «los
+  rangos se conservan como rango», pero ante «entre 10 y 12 kilos» el cliente **sí** dijo
+  cuántos, así que el hueco quedaba a interpretación del modelo. En campo el 2026-08-26,
+  `gemma4:e2b` y `gemma4:e4b` —dos modelos INDEPENDIENTES, mismo mensaje— lo rellenaron
+  igual, `"qty": 0`, y `validarQuantities` lo rechaza. El artefacto P4 se perdía entero por
+  ese único campo (parseo todo-o-nada, DEUDA-044.16). El cambio es solo texto del prompt:
+  la superficie de `llm` no cambia.
+
 ### Added
 
 - **Perfil de sesión: `POST /api/v1/sessions/{id}/profile`** (Plan 046 · T1.2,
