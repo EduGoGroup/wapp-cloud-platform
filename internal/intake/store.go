@@ -33,6 +33,19 @@ const (
 	// una ventana es lo que LIBERA la tupla para que se pueda abrir otra: al salir
 	// de 'aggregating' la fila sale del índice parcial.
 	StatusPending = "pending"
+	// StatusProcessing es el job TOMADO por un worker del pipeline (Ola 2). Es el
+	// ÚNICO estado desde el que se avanza de etapa o se termina: todas las
+	// transiciones de machine.go llevan `WHERE status = 'processing'`, y de ahí sale
+	// —gratis, sin una comprobación aparte— que los terminales sean ABSORBENTES: ni
+	// `done` ni `failed` son `processing`, así que ninguna transición los muerde.
+	StatusProcessing = "processing"
+	// StatusDone es el terminal FELIZ. Absorbente, y VACÍA el sobre del literal al
+	// entrar (INV-13).
+	StatusDone = "done"
+	// StatusFailed es el terminal INFELIZ, con la causa en la columna `error`.
+	// Absorbente también —un job envenenado no vuelve a la cola— y vacía el sobre
+	// igual que `done`: lo que decide el vaciado es TERMINAR, no terminar bien.
+	StatusFailed = "failed"
 )
 
 // WindowKey es la CLAVE DE VENTANA (D-044.3): los mensajes seguidos de un contacto

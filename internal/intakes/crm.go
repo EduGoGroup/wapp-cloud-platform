@@ -137,6 +137,24 @@ func (p *Postgres) ReflectCRMStatus(ctx context.Context, tenantID, intakeID, sta
 		return CRMReflection{}, fmt.Errorf("intakes: reflejar el estado del CRM: %w", err)
 	}
 	if found == 0 {
+		// 🔴 ESTE ROLLBACK NO ES CEREMONIA: sin él la transacción queda ABANDONADA.
+		// Es el único camino que sale de aquí con `err == nil` y sin llegar al
+		// Commit, así que el `defer` de arriba —que solo revierte cuando hay error—
+		// no lo cubre, y la conexión se queda «idle in transaction» reteniendo su
+		// ACCESS SHARE sobre public.intakes. En producción lo tapa a medias el
+		// `awaitDone` de database/sql (al cancelarse el ctx de la petición la
+		// revierte), pero con un ctx que no se cancela —una tarea de fondo, o un
+		// test con context.Background()— la conexión NO VUELVE AL POOL NUNCA: 25
+		// callbacks de un intake ajeno bastan para agotarlo.
+		//
+		// Lo destapó T2.8 (Plan 044 · Ola 2): su migración necesita un ACCESS
+		// EXCLUSIVE sobre `intakes` y se quedaba bloqueada para siempre detrás de la
+		// sesión que dejaba TestReflectCRMStatus_DeOtroTenant_NoEncuentraNiToca. Es
+		// la primera vez que alguien en este repo pide ese lock sobre esta tabla, y
+		// por eso el defecto llevaba desde el Plan 042 sin verse.
+		if rerr := tx.Rollback(); rerr != nil && !errors.Is(rerr, sql.ErrTxDone) {
+			return CRMReflection{}, fmt.Errorf("intakes: cerrar la transacción de un reflejo sin destinatario: %w", rerr)
+		}
 		return CRMReflection{}, nil
 	}
 
