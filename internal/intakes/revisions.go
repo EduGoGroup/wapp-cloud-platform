@@ -60,8 +60,23 @@ var ErrEmptyRevisionPayload = errors.New("la revisión no lleva payload")
 // produjo (ADR-0031 §3). NO sustituye a las líneas (Items), que siguen siendo la
 // verdad de lo VENDIDO; esto es el borrador y el rastro de cómo se llegó a él.
 //
-// CERO PII: Payload y RenderedText son dato de negocio en claro. Lo que identifique
-// a una persona vive cifrado en intake_buyer_data, jamás aquí.
+// # QUÉ HAY EN CLARO Y QUÉ NO (ENMENDADO — Plan 044 · T3.5, D-044.13 / ADR-0034)
+//
+// Esta cabecera decía «CERO PII: Payload y RenderedText son dato de negocio en
+// claro». Eso era cierto mientras la única revisión del sistema era la del carrito
+// numérico (líneas y totales), y dejó de serlo cuando el pipeline LLM empezó a
+// guardar aquí lo que el CLIENTE escribió. El criterio vigente es GRADUADO:
+//
+//   - `payload` sigue EN CLARO y es dato de negocio cuantificable (nivel 1): skus,
+//     cantidades, precios, fechas, variantes y las personalizaciones («sin sal»).
+//   - El LITERAL del cliente dentro de ese payload —`source_text` y las `evidence`
+//     de cada línea— es nivel 2 y NO VIVE EN LA COLUMNA `payload`: viaja cifrado en
+//     el trío `literal_enc`/`literal_dek`/`literal_kek_id` (migración 0079). El
+//     store lo saca al escribir y lo devuelve a su sitio al leer, así que el Payload
+//     de este struct trae el texto SOLO cuando salió de una lectura y la retención
+//     no ha vencido. Ver literal.go.
+//   - Lo que identifique al COMPRADOR (RUT, dirección) sigue sin pasar por aquí:
+//     vive en intake_buyer_data, y eso no ha cambiado.
 type Revision struct {
 	// IntakeID es la solicitud a la que pertenece la revisión.
 	IntakeID string
@@ -80,6 +95,15 @@ type Revision struct {
 	CreatedBy string
 	// CreatedAt lo fija la BD al escribir.
 	CreatedAt time.Time
+	// LiteralPrunedAt es el instante en que la PODA PEREZOSA destruyó el literal de
+	// esta revisión por haber vencido su retención (T3.5). Zero = no se ha podado,
+	// que NO significa que tuviera literal: la mayoría de las revisiones no lo tiene
+	// nunca. Existe para que ese caso no sea mudo — «aquí no hubo texto» y «el texto
+	// se retuvo el plazo pactado y se destruyó» son dos hechos distintos.
+	//
+	// Solo lo puebla la LECTURA. InsertRevision lo devuelve siempre en cero: una
+	// revisión recién escrita no puede estar podada.
+	LiteralPrunedAt time.Time
 }
 
 // RevisionWriter es el puerto de ESCRITURA de revisiones. Lo satisfacen *Postgres

@@ -238,13 +238,19 @@ func effectByName(effs []modules.Effect, name string) (modules.Effect, bool) {
 // dos entradas de UNA unidad, la comentada la ÚLTIMA, mismo producto en las dos y
 // —lo que de verdad importa— el mismo dinero y la misma cantidad que antes de
 // partir (INV-16). Vive aparte porque son seis afirmaciones sobre UN hecho.
-func assertLineaPartida(t *testing.T, lines []cartLine, nota string, totalEsperado float64) {
+//
+// `restante` es lo que debe llevar la línea que NO se comenta, y es un parámetro
+// desde D-044.18: partir ya no la deja en blanco, le CONSERVA la indicación que la
+// línea traía. Con "" se afirma el caso de siempre —no había ninguna—, y con un
+// texto, que la vieja sobrevivió al re-partido. Un helper que diera por hecho el
+// vacío afirmaría hoy justo lo contrario de la conducta.
+func assertLineaPartida(t *testing.T, lines []cartLine, restante, nota string, totalEsperado float64) {
 	t.Helper()
 	if len(lines) != 2 {
 		t.Fatalf("la línea ×2 debe partirse en dos: %+v", lines)
 	}
-	if lines[0].Qty != 1 || lines[0].Customization != "" {
-		t.Fatalf("la primera línea es el resto SIN indicación: %+v", lines[0])
+	if lines[0].Qty != 1 || lines[0].Customization != restante {
+		t.Fatalf("la primera línea es el resto, con indicación %q: %+v", restante, lines[0])
 	}
 	if lines[1].Qty != 1 || lines[1].Customization != nota {
 		t.Fatalf("la segunda línea es la comentada: %+v", lines[1])
@@ -305,7 +311,9 @@ func TestEjemploCanonicoDosUnidadesUnaComentadaMasNotaDePedido(t *testing.T) {
 	if st.Level != LevelContinue {
 		t.Fatalf("tras anotar se vuelve al nivel de origen (L5), no a %q", st.Level)
 	}
-	assertLineaPartida(t, st.Lines, "sin azúcar", 5.0)
+	// El resto va SIN indicación porque la línea no traía ninguna: aquí el "" no es
+	// un borrado, es que no había nada que conservar.
+	assertLineaPartida(t, st.Lines, "", "sin azúcar", 5.0)
 	mustContain(t, outs, `Anotado para 1 de las 2: "sin azúcar" ✅`, "Añadido al pedido ✅")
 
 	eff, ok := effectByName(effs, EffectNoteAdded)
@@ -358,6 +366,126 @@ func assertEfectoNotaDePedido(t *testing.T, effs []modules.Effect, nota string) 
 	if _, hay := eff.Payload["text"]; hay {
 		t.Fatalf("el efecto de la nota de PEDIDO no puede llevar el texto (REQ-33g): %v", eff.Payload)
 	}
+}
+
+// --- D-044.18: la indicación previa SOBREVIVE al re-partido ---------------
+
+// TestIndicacionPreviaSobreviveAlRePartido es el caso real que cierra A4/MD-041.12
+// del Plan 041 (decisión de producto de Jhoan del 2026-08-09, D-044.18): una línea
+// ×2 que YA lleva «con cebolla» —anotada con alcance «para las 2»— y sobre la que
+// después se anota otra cosa SOLO para una.
+//
+// Hasta este arreglo, partir vaciaba la indicación del resto: el cliente pedía
+// cebolla para los dos, precisaba algo sobre UNO, y el otro salía de cocina sin
+// cebolla. Partir es una RE-AGRUPACIÓN de unidades, no una edición del pedido, así
+// que lo ya pedido tiene que sobrevivir entero: mismo sku, mismo label, mismo
+// unit_price, misma suma de qty, mismo total (INV-16) y la MISMA indicación.
+//
+// Los dos textos se escriben a mano («con cebolla», «sin sal») en cada afirmación y
+// no se comparten con lo que se teclea: un test que se compara contra la variable
+// que alimenta al sistema pasa con cualquier conducta.
+func TestIndicacionPreviaSobreviveAlRePartido(t *testing.T) {
+	m := New()
+
+	// 1 Bebidas · 1 Café · 2 Agregar · 2 unidades · 3 indicación · 1 «Para las 2» · texto.
+	st, _, _, vars := driveNotes(t, m, seededVars(), "1", "1", "2", "2", "3", "1", "con cebolla")
+	if len(st.Lines) != 1 || st.Lines[0].Qty != 2 || st.Lines[0].Customization != "con cebolla" {
+		t.Fatalf("punto de partida: UNA línea ×2 con la indicación puesta, got %+v", st.Lines)
+	}
+	antes := st.Lines[0]
+
+	// 3 indicación · 2 «Solo para 1» · texto NUEVO ⇒ es aquí donde se parte.
+	st, outs, effs, vars := driveNotes(t, m, vars, "3", "2", "sin sal")
+
+	// La restante conserva «con cebolla»; la separada lleva la nueva.
+	assertLineaPartida(t, st.Lines, "con cebolla", "sin sal", 5.0)
+
+	// Y el pedido es el MISMO pedido: solo cambió cómo están agrupadas las unidades.
+	for i, l := range st.Lines {
+		if l.SKU != antes.SKU || l.Label != antes.Label || l.UnitPrice != antes.UnitPrice {
+			t.Fatalf("partir no toca el producto: línea %d %+v vs la original %+v", i, l, antes)
+		}
+	}
+	if suma := st.Lines[0].Qty + st.Lines[1].Qty; suma != antes.Qty {
+		t.Fatalf("partir cambió la cantidad: %d unidades tras partir, %d antes", suma, antes.Qty)
+	}
+	if got := total(st.Lines); got != 5.0 {
+		t.Fatalf("partir movió el dinero: total %v, esperado 5.00 (INV-16)", got)
+	}
+	if st.Level != LevelContinue {
+		t.Fatalf("tras anotar se vuelve a L5, no a %q", st.Level)
+	}
+	mustContain(t, outs, `Anotado para 1 de las 2: "sin sal" ✅`)
+
+	eff, ok := effectByName(effs, EffectNoteAdded)
+	if !ok {
+		t.Fatalf("anotar debe emitir %q: %+v", EffectNoteAdded, effs)
+	}
+	if eff.Payload["scope"] != "item" || eff.Payload["sku"] != "CAFE" ||
+		eff.Payload["text"] != "sin sal" || eff.Payload["split_from_qty"] != 2 {
+		t.Fatalf("payload de %s inesperado: %v", EffectNoteAdded, eff.Payload)
+	}
+
+	// El resumen enseña las DOS indicaciones antes de confirmar (REQ-33c): si el
+	// resto hubiera perdido la suya, aquí faltaría un renglón.
+	st, outs, _, vars = driveNotes(t, m, vars, "2")
+	if st.Level != LevelSummary {
+		t.Fatalf("nivel %q, esperado summary", st.Level)
+	}
+	mustContain(t, outs, "   ✏️ con cebolla", "   ✏️ sin sal", "TOTAL  $5.00")
+
+	// 1 Confirmar → el cierre es lo ÚNICO que cruza al mundo (INV-12): las dos
+	// indicaciones tienen que ir ahí, cada una en SU línea.
+	st, _, effs, _ = driveNotes(t, m, vars, "1")
+	if st.Level != LevelClosed {
+		t.Fatalf("nivel %q, esperado closed", st.Level)
+	}
+	closed, ok := effectByName(effs, EffectCartClosed)
+	if !ok {
+		t.Fatalf("falta %q: %+v", EffectCartClosed, effs)
+	}
+	items, ok := closed.Payload["items"].([]map[string]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("el cierre debe llevar DOS líneas: %v", closed.Payload["items"])
+	}
+	if items[0]["customization"] != "con cebolla" {
+		t.Fatalf("la indicación conservada NO llega al cierre: %v", items[0])
+	}
+	if items[1]["customization"] != "sin sal" {
+		t.Fatalf("la indicación nueva no viaja en el cierre: %v", items[1])
+	}
+	if closed.Payload["total"] != 5.0 {
+		t.Fatalf("el total del cierre cambió: %v", closed.Payload["total"])
+	}
+}
+
+// TestIndicacionConservadaLlegaAIntakeItems recorre el camino de REQ-17d hasta el
+// final: no basta con que la indicación sobreviva EN EL ESTADO del carrito, tiene
+// que acabar en `intake_items.customization`, que es lo que lee quien prepara el
+// pedido. Se conduce por el módulo real y se despachan sus efectos por el proyector
+// —igual que hace el PersistSink—, así que lo que se afirma es la cadena entera:
+// split → foto de líneas del note_added → filas de la solicitud.
+func TestIndicacionConservadaLlegaAIntakeItems(t *testing.T) {
+	p, repo := lineProjector()
+	m := New()
+	vars := seededVars()
+
+	for _, in := range []string{
+		"1", "1", "2", "2", // 2 × Café
+		"3", "1", "con cebolla", // indicación para las 2
+		"3", "2", "sin sal", // y otra solo para 1 ⇒ parte
+		"2", "1", // finalizar y confirmar
+	} {
+		_, effs, next := driveE(t, m, vars, in)
+		project(t, p, effs)
+		vars = next
+	}
+
+	solicitud := soloSolicitud(t, repo)
+	espejo(t, repo, solicitud.ID, []cartLine{
+		{SKU: "CAFE", Label: "Café", Qty: 1, UnitPrice: 2.5, Customization: "con cebolla"},
+		{SKU: "CAFE", Label: "Café", Qty: 1, UnitPrice: 2.5, Customization: "sin sal"},
+	})
 }
 
 // TestUnaUnidadVaDirectoAlTexto: con qty == 1 no hay pregunta de alcance (D-041.20).

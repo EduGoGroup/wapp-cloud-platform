@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EduGoGroup/wapp-shared/logger"
 )
 
 // MemoryStore es un Store en memoria para tests. Reproduce las MISMAS semánticas
@@ -43,7 +45,27 @@ type MemoryStore struct {
 	// now es el reloj con el que se fija deposit_due_at al pedir seña, el equivalente
 	// del now() de la transacción en el store real (T4.4). Inyectable con SetClock
 	// para que un test pueda fijar un plazo y luego cruzar la fecha sin esperar días.
+	//
+	// Desde T3.5 es TAMBIÉN el reloj de la retención del literal: fija el CreatedAt
+	// de una revisión nueva y mide su edad al leerla. Los dos instantes salen del
+	// mismo reloj, que es la condición que LiteralVencido exige — y con SetClock ese
+	// reloj es falso de arriba abajo, así que un test puede envejecer una revisión
+	// doce meses sin esperar ni sembrar fechas a mano.
 	now func() time.Time
+	// literals guarda el material de NIVEL 2 de cada revisión APARTE del payload,
+	// indexado intakeID → revision_no (T3.5). En claro, y es correcto que lo esté por
+	// la misma razón que buyerData: este store vive en memoria y muere con el
+	// proceso. Lo que reproduce del real es la SEMÁNTICA que los tests tienen que
+	// poder comprobar —que el literal no está en el payload persistido, que vuelve al
+	// leer y que la poda lo destruye sin tocar la interpretación—, no el cifrado, que
+	// se prueba contra Postgres de verdad.
+	literals map[string]map[int]LiteralRevision
+	// literalTTL es el equivalente de tenant_settings.intake_literal_ttl_seconds.
+	// Arranca en TTLLiteralPorDefecto (12 meses) igual que el DEFAULT de la 0079, y
+	// se cambia con SetLiteralTTL. 0 = sin poda, la misma lectura que en la columna.
+	literalTTL time.Duration
+	// log es por donde sale el evento de poda, igual que en el store real.
+	log logger.Logger
 }
 
 // row es una solicitud almacenada con su estado tal cual (sin normalizar).
@@ -64,7 +86,104 @@ func NewMemoryStore() *MemoryStore {
 		eventOf:   map[string]string{},
 		buyerData: map[string]BuyerData{},
 		now:       time.Now,
+
+		literals:   map[string]map[int]LiteralRevision{},
+		literalTTL: TTLLiteralPorDefecto,
+		log:        logger.Default(),
 	}
+}
+
+// SetLiteralTTL cambia la retención del literal de las revisiones, como haría un
+// UPDATE de tenant_settings.intake_literal_ttl_seconds (T3.5). 0 = sin poda.
+func (m *MemoryStore) SetLiteralTTL(ttl time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.literalTTL = ttl
+}
+
+// SetLogDeRetencion sustituye el logger por el que sale el evento de poda. Existe
+// para lo mismo que ConLogDeRetencion en el store real: cablear el de la aplicación
+// y, sobre todo, poder OBSERVAR la poda en un test — el criterio de T3.5 exige que
+// quede logueada, y un criterio que no se puede observar no se puede verificar.
+func (m *MemoryStore) SetLogDeRetencion(l logger.Logger) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if l != nil {
+		m.log = l
+	}
+}
+
+// guardarRevisiónLocked es el ÚNICO camino de escritura de revisiones de este store
+// (lo llaman los cinco sitios que numeran una): parte el literal del payload y lo
+// guarda aparte, igual que insertRevisionOnce lo saca antes de tocar la BD.
+//
+// Sin este punto único, cada uno de los cinco tendría que acordarse de partir el
+// payload — y el que se olvidara dejaría el literal en el payload sin que nada
+// fallara, que es el modo de fallo silencioso que T3.5 viene a cerrar.
+//
+// Devuelve la revisión ya numerada, fechada y CON EL PAYLOAD SIN LITERAL: la misma
+// forma que devuelve el store real, para que un test contra este doble no vea algo
+// que en producción no vería.
+func (m *MemoryStore) guardarRevisiónLocked(rev Revision) (Revision, error) {
+	limpio, lit, err := PartirLiteral(rev.Payload)
+	if err != nil {
+		return Revision{}, err
+	}
+	rev.Payload = limpio
+	rev.RevisionNo = len(m.revisions[rev.IntakeID]) + 1
+	if rev.CreatedAt.IsZero() {
+		rev.CreatedAt = m.now()
+	}
+	rev.LiteralPrunedAt = time.Time{}
+	if !lit.Vacio() {
+		if m.literals[rev.IntakeID] == nil {
+			m.literals[rev.IntakeID] = map[int]LiteralRevision{}
+		}
+		m.literals[rev.IntakeID][rev.RevisionNo] = lit
+	}
+	m.revisions[rev.IntakeID] = append(m.revisions[rev.IntakeID], rev)
+	return rev, nil
+}
+
+// leerRevisionesLocked es el espejo de revisionsOf del store real: poda lo vencido y
+// devuelve el literal a su sitio en lo que sigue vigente.
+//
+// Devuelve copias: el literal se funde sobre el payload de la COPIA y nunca sobre el
+// almacenado, para que dos lecturas seguidas no acumulen. Un error al fundir se
+// LOGUEA y deja la revisión con su interpretación sola, en vez de tumbar la lectura
+// entera de la bandeja de un doble de tests.
+func (m *MemoryStore) leerRevisionesLocked(intakeID string) []Revision {
+	guardadas := m.revisions[intakeID]
+	out := make([]Revision, 0, len(guardadas))
+	for i, rev := range guardadas {
+		lit, hay := m.literals[intakeID][rev.RevisionNo]
+		switch {
+		case !hay:
+		case LiteralVencido(m.now().Sub(rev.CreatedAt), m.literalTTL):
+			delete(m.literals[intakeID], rev.RevisionNo)
+			// Se sella sobre la fila GUARDADA, no sobre la copia: la poda es un
+			// hecho persistente y la siguiente lectura tiene que verlo.
+			guardadas[i].LiteralPrunedAt = m.now()
+			rev.LiteralPrunedAt = guardadas[i].LiteralPrunedAt
+			// CERO CONTENIDO, igual que el del store real: lo que se acaba de
+			// destruir no puede acabar en un log.
+			m.log.Info("retención: literal de la revisión podado por TTL vencido",
+				"intake_id", intakeID,
+				"revision_no", rev.RevisionNo,
+				"edad_segundos", int64(m.now().Sub(rev.CreatedAt).Seconds()),
+				"ttl_segundos", int64(m.literalTTL.Seconds()))
+		default:
+			payload, err := FundirLiteral(rev.Payload, lit)
+			if err != nil {
+				m.log.Error("retención: no se pudo devolver el literal a la revisión",
+					"intake_id", intakeID, "revision_no", rev.RevisionNo, "error", err)
+				break
+			}
+			rev.Payload = payload
+		}
+		out = append(out, rev)
+	}
+	return out
 }
 
 // PutBuyerField imita PostgresBuyerData.PutBuyerField: FUSIONA el campo en el
@@ -300,7 +419,7 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, intakeID string) (Detail,
 		return Detail{
 			Intake:           in,
 			Items:            slices.Clone(m.items[intakeID]),
-			Revisions:        slices.Clone(m.revisions[intakeID]),
+			Revisions:        m.leerRevisionesLocked(intakeID),
 			BuyerDataPresent: len(m.buyerData[intakeID]) > 0,
 		}, nil
 	}
@@ -320,17 +439,25 @@ func (m *MemoryStore) InsertRevision(_ context.Context, rev Revision) (Revision,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	rev.RevisionNo = len(m.revisions[rev.IntakeID]) + 1
-	if rev.CreatedAt.IsZero() {
-		rev.CreatedAt = time.Now()
-	}
-	m.revisions[rev.IntakeID] = append(m.revisions[rev.IntakeID], rev)
-	return rev, nil
+	return m.guardarRevisiónLocked(rev)
 }
 
 // Revisions devuelve las revisiones sembradas/escritas para una solicitud, en
 // orden. Es un mirador para los tests, no parte de ningún puerto.
 func (m *MemoryStore) Revisions(intakeID string) []Revision {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.leerRevisionesLocked(intakeID)
+}
+
+// RevisionesPersistidas devuelve las revisiones TAL COMO ESTÁN GUARDADAS: sin poda,
+// sin descifrado y sin devolverle el literal al payload. Es el equivalente en este
+// doble a mirar la tabla con SQL directo, y existe para lo mismo — comprobar que lo
+// que se escribió no lleva literal del cliente.
+//
+// No la use nadie para leer de verdad: Revisions y Get son la lectura, y son las que
+// aplican la retención. Ésta enseña el crudo a propósito.
+func (m *MemoryStore) RevisionesPersistidas(intakeID string) []Revision {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.revisions[intakeID])
@@ -459,14 +586,14 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 		if err != nil {
 			return Detail{}, err
 		}
-		rev.RevisionNo = len(m.revisions[intakeID]) + 1
-		rev.CreatedAt = time.Now()
-		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+		if _, err := m.guardarRevisiónLocked(rev); err != nil {
+			return Detail{}, err
+		}
 
 		return Detail{
 			Intake:    head,
 			Items:     slices.Clone(lines),
-			Revisions: slices.Clone(m.revisions[intakeID]),
+			Revisions: m.leerRevisionesLocked(intakeID),
 		}, nil
 	}
 	return Detail{}, ErrNotFound
@@ -525,14 +652,14 @@ func (m *MemoryStore) ApplyRevalidation(_ context.Context, tenantID, intakeID st
 		if err != nil {
 			return Detail{}, err
 		}
-		rev.RevisionNo = len(m.revisions[intakeID]) + 1
-		rev.CreatedAt = time.Now()
-		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+		if _, err := m.guardarRevisiónLocked(rev); err != nil {
+			return Detail{}, err
+		}
 
 		return Detail{
 			Intake:    head,
 			Items:     slices.Clone(lines),
-			Revisions: slices.Clone(m.revisions[intakeID]),
+			Revisions: m.leerRevisionesLocked(intakeID),
 		}, nil
 	}
 	return Detail{}, ErrNotFound
@@ -568,9 +695,9 @@ func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, disc
 		if err != nil {
 			return DiscardOutcome{}, err
 		}
-		rev.RevisionNo = len(m.revisions[intakeID]) + 1
-		rev.CreatedAt = time.Now()
-		m.revisions[intakeID] = append(m.revisions[intakeID], rev)
+		if _, err := m.guardarRevisiónLocked(rev); err != nil {
+			return DiscardOutcome{}, err
+		}
 
 		// El cierre del contenedor, calcado de cancelContainerTx: CAS open→cancelled
 		// sobre el evento declarado; sin ligadura o ya terminal, no toca nada.

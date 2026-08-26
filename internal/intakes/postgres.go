@@ -3,6 +3,7 @@ package intakes
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/EduGoGroup/wapp-shared/logger"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
@@ -21,11 +25,51 @@ import (
 // revisiones.
 type Postgres struct {
 	db *sql.DB
+	// cipher cifra y descifra el LITERAL de nivel 2 de una revisión (Plan 044 ·
+	// T3.5, migración 0079). Puede ser nil: la mayoría de las revisiones —todas las
+	// del carrito numérico— no llevan literal y no lo necesitan. Lo que NO pasa con
+	// nil es degradar a texto en claro: una revisión CON literal y sin cipher se
+	// rechaza al escribir y se rechaza al leer. Ver cifrarLiteral / abrirLiteral.
+	cipher *crypto.FieldCipher
+	// log es por dónde sale el EVENTO DE PODA (T3.5). Nunca es nil tras
+	// NewPostgres: sin logger la poda destruiría el literal en silencio, y una
+	// destrucción de datos sin rastro no es aceptable ni en alpha.
+	log logger.Logger
+}
+
+// OpciónPostgres configura el store. Se añade así, y no como parámetros de
+// NewPostgres, porque el store lo construyen una docena de tests que no tienen
+// —ni necesitan— un FieldCipher: cambiarles la firma habría convertido una tarea de
+// cifrado en una migración de llamantes, con el riesgo de que alguno pasara nil
+// «para compilar» y se llevara por delante la garantía.
+type OpciónPostgres func(*Postgres)
+
+// ConCifraDeLiteral le da al store la llave con la que sella y abre el literal de
+// nivel 2 de las revisiones (Plan 044 · T3.5). Sin ella el store funciona entero
+// para todo lo que no lleva literal, y falla —explícitamente— en lo que sí.
+func ConCifraDeLiteral(c *crypto.FieldCipher) OpciónPostgres {
+	return func(p *Postgres) { p.cipher = c }
+}
+
+// ConLogDeRetencion sustituye el logger por el que sale el evento de poda. Existe
+// para dos cosas: cablear el logger de la aplicación en producción, y capturar el
+// evento en los tests (el criterio de T3.5 exige que la poda quede logueada, y un
+// criterio que no se puede observar no se puede verificar).
+func ConLogDeRetencion(l logger.Logger) OpciónPostgres {
+	return func(p *Postgres) {
+		if l != nil {
+			p.log = l
+		}
+	}
 }
 
 // NewPostgres construye el store sobre el pool dado.
-func NewPostgres(db *sql.DB) *Postgres {
-	return &Postgres{db: db}
+func NewPostgres(db *sql.DB, opts ...OpciónPostgres) *Postgres {
+	p := &Postgres{db: db, log: logger.Default()}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // intakeCols es la proyección de la cabecera. tenant_id NO se lee: quien consulta
@@ -219,9 +263,15 @@ type rowScanner interface {
 // querier abstrae *sql.DB y *sql.Tx: las MISMAS lecturas (líneas, revisiones) se
 // hacen sueltas desde Get y dentro de la transacción de una edición, y duplicarlas
 // dejaría dos consultas que tendrían que envejecer juntas.
+//
+// ExecContext se añadió con T3.5 y hace que el nombre se quede a medias: la lectura
+// de revisiones ESCRIBE cuando poda. Se deja el nombre en vez de renombrar a
+// `ejecutor` en trece sitios por una tarea de retención — pero conviene saberlo:
+// esto ya no es solo un lector.
 type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // scanIntake lee una cabecera y NORMALIZA su estado: el `closed` que sigue
@@ -271,7 +321,7 @@ func (p *Postgres) Get(ctx context.Context, tenantID, intakeID string) (Detail, 
 	if err != nil {
 		return Detail{}, err
 	}
-	revs, err := revisionsOf(ctx, p.db, intakeID)
+	revs, err := p.revisionsOf(ctx, p.db, intakeID)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -338,40 +388,236 @@ func itemsOf(ctx context.Context, q querier, intakeID string) (out []Item, err e
 // significa algo fuera de la BD es (intake_id, revision_no).
 const revisionCols = `revision_no, kind, payload, rendered_text, created_by, created_at`
 
-// revisionsOf lee las revisiones de una solicitud en orden cronológico. No filtra
-// por tenant: la cabecera ya se validó contra el tenant y la FK garantiza que estas
-// revisiones son suyas (mismo criterio que itemsOf).
-func revisionsOf(ctx context.Context, q querier, intakeID string) (out []Revision, err error) {
-	rows, err := q.QueryContext(ctx, `
-		SELECT `+revisionCols+`
-		FROM public.intake_revisions
-		WHERE intake_id = $1
-		ORDER BY revision_no
-	`, intakeID)
+// selectRevisionsQuery lee las revisiones de una solicitud MÁS lo que hace falta
+// para decidir su retención (Plan 044 · T3.5).
+//
+// # LAS DOS COSAS DE MÁS QUE TRAE, Y POR QUÉ VIENEN DE LA BD Y NO DE GO
+//
+//   - LA EDAD (`now() - created_at`) se calcula EN SQL. `created_at` lo pone
+//     Postgres con su DEFAULT; restarle un `time.Now()` de Go compararía DOS
+//     RELOJES, que en esta casa ya tiene ficha de incidente propia. Con la resta
+//     hecha por la BD hay un solo reloj y el desfase entre máquinas deja de existir
+//     como categoría de error. Se pide en segundos enteros: un TTL se dimensiona en
+//     meses y la fracción no decide nada.
+//   - EL TTL sale de `tenant_settings` por LEFT JOIN. Un tenant SIN fila de config
+//     lee el default de plataforma —el `$2` que pasa el llamante, TTLLiteralPorDefecto—
+//     y un tenant CON fila manda siempre, incluido su 0 explícito («no podar»). Es
+//     el mismo contrato que `event_inactivity_ttl_seconds` y `aggregation_window_seconds`,
+//     y confundir «sin fila» con «0» es el error caro de estas claves.
+//
+// El JOIN a `intakes` es lo único que ata la revisión a su tenant: `intake_revisions`
+// no tiene `tenant_id` (la FK ya la hace suya). No filtra por tenant y no debe: la
+// cabecera se validó antes y la FK garantiza la pertenencia (mismo criterio que
+// itemsOf).
+const selectRevisionsQuery = `
+	SELECT r.revision_no, r.kind, r.payload, r.rendered_text, r.created_by, r.created_at,
+	       r.literal_enc, r.literal_dek, r.literal_kek_id, r.literal_pruned_at,
+	       EXTRACT(EPOCH FROM (now() - r.created_at))::bigint AS edad_segundos,
+	       COALESCE(ts.intake_literal_ttl_seconds, $2) AS ttl_segundos
+	FROM public.intake_revisions r
+	JOIN public.intakes i ON i.id = r.intake_id
+	LEFT JOIN public.tenant_settings ts ON ts.tenant_id = i.tenant_id
+	WHERE r.intake_id = $1
+	ORDER BY r.revision_no`
+
+// podarLiteralQuery es LA PODA (T3.5). Mírese lo que NO menciona: la columna
+// `payload`. «La interpretación estructurada queda intacta» no es aquí una promesa
+// que haya que creerse ni un cuidado que alguien pueda olvidar en el próximo
+// cambio — es que esta sentencia no tiene forma de tocarla.
+//
+// El guard `literal_enc IS NOT NULL` la hace idempotente: podar dos veces la misma
+// revisión afecta 0 filas la segunda, y `literal_pruned_at` conserva el instante en
+// que el texto se destruyó de verdad en vez de moverse con cada lectura posterior.
+const podarLiteralQuery = `
+	UPDATE public.intake_revisions
+	   SET literal_enc       = NULL,
+	       literal_dek       = NULL,
+	       literal_kek_id    = NULL,
+	       literal_pruned_at = now()
+	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL`
+
+// revisionPodada es una poda pendiente de ejecutar: la decisión se toma leyendo y
+// la escritura se hace DESPUÉS de cerrar el cursor. Meter un UPDATE dentro del
+// rows.Next() lo ejecutaría sobre la misma conexión que está sirviendo el SELECT.
+type revisionPodada struct {
+	revisionNo int
+	edad       time.Duration
+	ttl        time.Duration
+}
+
+// revisionsOf lee las revisiones de una solicitud en orden cronológico, PODA las
+// que hayan vencido su retención y devuelve el literal DESCIFRADO dentro del payload
+// de las que no.
+//
+// Es la puerta única de lectura de revisiones del store, y por eso la poda perezosa
+// vive aquí y no en Get: se accede a una revisión desde el detalle, desde la
+// corrección manual y desde la revalidación, y una poda que solo mirara uno de los
+// tres caminos dejaría el literal vivo por los otros dos sin decirlo.
+func (p *Postgres) revisionsOf(ctx context.Context, q querier, intakeID string) (out []Revision, err error) {
+	rows, err := q.QueryContext(ctx, selectRevisionsQuery, intakeID, int64(TTLLiteralPorDefecto.Seconds()))
 	if err != nil {
 		return nil, fmt.Errorf("intakes: listar revisiones: %w", err)
 	}
-	defer func() {
-		if cerr := rows.Close(); cerr != nil && err == nil {
-			out, err = nil, fmt.Errorf("intakes: cerrar filas de revisiones: %w", cerr)
-		}
-	}()
 
-	out = []Revision{}
+	var podas []revisionPodada
+	out, err = p.scanRevisions(rows, intakeID, &podas)
+	if cerr := rows.Close(); cerr != nil && err == nil {
+		return nil, fmt.Errorf("intakes: cerrar filas de revisiones: %w", cerr)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// 🔴 LA PODA VA DESPUÉS DE HABER DEVUELTO LA DECISIÓN, y su fallo NO tumba la
+	// lectura. Es el mismo criterio que el evento del PersistSink: el dueño está
+	// mirando su pedido, y no poder destruir un texto —que no le hace daño a nadie
+	// mientras siga cifrado y bajo su KEK— no puede costarle la pantalla. Lo que sí
+	// pasa es que se entera el log, y la siguiente lectura lo reintenta sola.
+	for _, poda := range podas {
+		p.ejecutarPoda(ctx, q, intakeID, poda)
+	}
+	return out, nil
+}
+
+// scanRevisions recorre el cursor: descifra lo que sigue vigente, marca para poda lo
+// vencido y deja el payload de cada revisión con la forma del contrato §7.4.
+func (p *Postgres) scanRevisions(rows *sql.Rows, intakeID string, podas *[]revisionPodada) ([]Revision, error) {
+	out := []Revision{}
 	for rows.Next() {
 		rev := Revision{IntakeID: intakeID}
-		var rendered, createdBy sql.NullString
+		var rendered, createdBy, kekID sql.NullString
+		var prunedAt sql.NullTime
+		var sobre SobreLiteral
+		var edadSeg, ttlSeg int64
 		if serr := rows.Scan(&rev.RevisionNo, &rev.Kind, &rev.Payload,
-			&rendered, &createdBy, &rev.CreatedAt); serr != nil {
+			&rendered, &createdBy, &rev.CreatedAt,
+			&sobre.Enc, &sobre.DEK, &kekID, &prunedAt, &edadSeg, &ttlSeg); serr != nil {
 			return nil, fmt.Errorf("intakes: leer revisión: %w", serr)
 		}
 		rev.RenderedText, rev.CreatedBy = rendered.String, createdBy.String
+		rev.LiteralPrunedAt, sobre.KEKID = prunedAt.Time, kekID.String
+
+		edad, ttl := time.Duration(edadSeg)*time.Second, time.Duration(ttlSeg)*time.Second
+		switch {
+		case sobre.Vacio():
+			// Sin sobre no hay nada que abrir ni que podar. Es el caso de TODAS las
+			// revisiones del carrito numérico y el de las ya podadas.
+		case LiteralVencido(edad, ttl):
+			// 🔴 NO SE DESCIFRA. Un literal vencido no se abre «para mirarlo antes de
+			// tirarlo»: el plazo de retención es el permiso para leerlo, y se acabó.
+			// El payload que sale es el que había en la columna, o sea la
+			// interpretación estructurada sola.
+			*podas = append(*podas, revisionPodada{revisionNo: rev.RevisionNo, edad: edad, ttl: ttl})
+		default:
+			payload, err := p.abrirLiteral(rev.Payload, sobre)
+			if err != nil {
+				return nil, fmt.Errorf("intakes: revisión %d de la solicitud %s: %w", rev.RevisionNo, intakeID, err)
+			}
+			rev.Payload = payload
+		}
 		out = append(out, rev)
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return nil, fmt.Errorf("intakes: recorrer revisiones: %w", rerr)
 	}
 	return out, nil
+}
+
+// ejecutarPoda destruye el sobre de una revisión vencida y DEJA CONSTANCIA. El
+// evento de poda es obligatorio (criterio de T3.5) y por eso el logger nunca es nil:
+// borrar el texto original de un cliente sin dejar rastro convertiría una política de
+// retención en una pérdida de datos indistinguible de un bug.
+func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string, poda revisionPodada) {
+	res, err := q.ExecContext(ctx, podarLiteralQuery, intakeID, poda.revisionNo)
+	if err != nil {
+		p.log.Error("retención: no se pudo podar el literal de una revisión vencida",
+			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
+		return
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Un driver que no sepa contar filas no puede convertirse en una poda
+		// fantasma en el log: se dice lo que se sabe, que es que el UPDATE no dio
+		// error. La siguiente lectura vuelve a evaluarlo.
+		p.log.Warn("retención: literal podado, sin confirmación de filas afectadas",
+			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
+		return
+	}
+	if n == 0 {
+		// Otra lectura concurrente se adelantó. No es un fallo y no se anuncia como
+		// poda: anunciarla dos veces haría creer que hubo dos textos.
+		return
+	}
+	// 🔴 CERO CONTENIDO EN ESTE EVENTO. Lo que se poda es literal del cliente, así
+	// que el log de la poda no puede llevar ni una palabra suya: dejaría en un
+	// fichero de texto plano —que no se cifra, no se rota por KEK y se retiene por
+	// otras reglas— justo lo que se acaba de destruir de la base.
+	p.log.Info("retención: literal de la revisión podado por TTL vencido",
+		"intake_id", intakeID,
+		"revision_no", poda.revisionNo,
+		"edad_segundos", int64(poda.edad.Seconds()),
+		"ttl_segundos", int64(poda.ttl.Seconds()))
+}
+
+// abrirLiteral descifra el sobre y devuelve el literal a su sitio dentro del
+// payload, que es lo que hace que la API de detalle enseñe el texto original al lado
+// de la interpretación (§7.6) sin que ninguna capa de arriba sepa que viajó aparte.
+//
+// 🔴 LOS DOS FALLOS DE AQUÍ SE PROPAGAN, NO SE TRAGAN. Ni un store sin cipher ni un
+// sobre que no abre pueden devolver «la revisión, pero sin su original»: el dueño
+// estaría comparando su interpretación contra un hueco y creyendo que el cliente no
+// escribió nada. Es el mismo criterio que el hilo del evento (flujos/events).
+func (p *Postgres) abrirLiteral(payload json.RawMessage, sobre SobreLiteral) (json.RawMessage, error) {
+	if !sobre.Completo() {
+		return nil, fmt.Errorf("sobre del literal incompleto en BD (enc=%d dek=%d kek_id=%t): son las tres o ninguna",
+			len(sobre.Enc), len(sobre.DEK), sobre.KEKID != "")
+	}
+	if p.cipher == nil {
+		return nil, errors.New("la revisión trae literal cifrado y el store no tiene FieldCipher (fallo de cableado, no de dato)")
+	}
+	claro, err := p.cipher.Decrypt(sobre.Enc, sobre.DEK, sobre.KEKID)
+	if err != nil {
+		return nil, fmt.Errorf("descifrar el literal: %w", err)
+	}
+	var lit LiteralRevision
+	if uerr := json.Unmarshal([]byte(claro), &lit); uerr != nil {
+		return nil, fmt.Errorf("interpretar el literal descifrado: %w", uerr)
+	}
+	out, err := FundirLiteral(payload, lit)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// cifrarLiteral saca del payload lo que es de nivel 2 y lo mete en un sobre. Es la
+// BARRERA ÚNICA: la llama insertRevisionOnce, que es el único camino de escritura de
+// revisiones del store, así que ningún escritor —ni los de hoy ni los que vengan—
+// puede persistir literal en claro por descuido. Ése fue exactamente el fallo de
+// MP-06 con `vars.intent_params`, y D-044.13 lo nombra para no repetirlo.
+func (p *Postgres) cifrarLiteral(payload json.RawMessage) (json.RawMessage, SobreLiteral, error) {
+	limpio, lit, err := PartirLiteral(payload)
+	if err != nil {
+		return nil, SobreLiteral{}, err
+	}
+	if lit.Vacio() {
+		return limpio, SobreLiteral{}, nil
+	}
+	if p.cipher == nil {
+		// 🔴 SE FALLA, NO SE DEGRADA. La alternativa —escribirlo en claro «porque no
+		// hay llave»— es la que convierte una tarea de cifrado en una columna con PII
+		// que nadie vuelve a mirar.
+		return nil, SobreLiteral{}, errors.New("intakes: la revisión lleva literal del cliente y el store no tiene FieldCipher: no se escribe en claro")
+	}
+	crudo, err := json.Marshal(lit)
+	if err != nil {
+		return nil, SobreLiteral{}, fmt.Errorf("intakes: serializar el literal de la revisión: %w", err)
+	}
+	enc, dek, kekID, err := p.cipher.Encrypt(string(crudo))
+	if err != nil {
+		return nil, SobreLiteral{}, fmt.Errorf("intakes: cifrar el literal de la revisión: %w", err)
+	}
+	return limpio, SobreLiteral{Enc: enc, DEK: dek, KEKID: kekID}, nil
 }
 
 // insertRevisionQuery numera y escribe la revisión en UNA sentencia: el
@@ -381,8 +627,9 @@ func revisionsOf(ctx context.Context, q querier, intakeID string) (out []Revisio
 // resuelve el reintento de InsertRevision, no un candado que serializaría a todos.
 const insertRevisionQuery = `
 	INSERT INTO public.intake_revisions
-		(intake_id, revision_no, kind, payload, rendered_text, created_by)
-	SELECT $1::uuid, COALESCE(MAX(revision_no), 0) + 1, $2, $3::jsonb, $4, $5
+		(intake_id, revision_no, kind, payload, rendered_text, created_by,
+		 literal_enc, literal_dek, literal_kek_id)
+	SELECT $1::uuid, COALESCE(MAX(revision_no), 0) + 1, $2, $3::jsonb, $4, $5, $6, $7, $8
 	FROM public.intake_revisions WHERE intake_id = $1::uuid
 	RETURNING ` + revisionCols
 
@@ -404,7 +651,7 @@ func (p *Postgres) InsertRevision(ctx context.Context, rev Revision) (Revision, 
 
 	var lastErr error
 	for attempt := 0; attempt < maxRevisionAttempts; attempt++ {
-		out, err := insertRevisionOnce(ctx, p.db, rev)
+		out, err := p.insertRevisionOnce(ctx, p.db, rev)
 		switch {
 		case err == nil:
 			return out, nil
@@ -424,12 +671,28 @@ func (p *Postgres) InsertRevision(ctx context.Context, rev Revision) (Revision, 
 // allí no hay reintento posible —un 23505 aborta la transacción entera— y es el
 // precio correcto, porque lo que se compra es que la edición y su rastro se
 // confirmen juntos o no se confirme ninguno.
-func insertRevisionOnce(ctx context.Context, q querier, rev Revision) (Revision, error) {
+// El payload que llega puede traer literal del cliente (`source_text` y las
+// `evidence` de las líneas): se SACA y se sella aquí, en el único camino de
+// escritura, antes de que toque la BD (Plan 044 · T3.5). Lo que va a la columna
+// `payload` es la interpretación estructurada y nada más.
+//
+// La Revision que se DEVUELVE lleva el payload tal como quedó en la BD —sin el
+// literal—, y eso es deliberado: quien acaba de escribirla ya tiene el texto en la
+// mano, y devolvérselo re-fundido obligaría a descifrar lo que se acaba de cifrar
+// para no decir nada nuevo. Quien lo quiera de vuelta lo lee, que es el camino que
+// pasa por la retención.
+func (p *Postgres) insertRevisionOnce(ctx context.Context, q querier, rev Revision) (Revision, error) {
+	payload, sobre, err := p.cifrarLiteral(rev.Payload)
+	if err != nil {
+		return Revision{}, err
+	}
+
 	out := Revision{IntakeID: rev.IntakeID}
 	var rendered, createdBy sql.NullString
-	err := q.QueryRowContext(ctx, insertRevisionQuery,
-		rev.IntakeID, rev.Kind, []byte(rev.Payload),
+	err = q.QueryRowContext(ctx, insertRevisionQuery,
+		rev.IntakeID, rev.Kind, []byte(payload),
 		nullableText(rev.RenderedText), nullableText(rev.CreatedBy),
+		nullableBytes(sobre.Enc), nullableBytes(sobre.DEK), nullableText(sobre.KEKID),
 	).Scan(&out.RevisionNo, &out.Kind, &out.Payload, &rendered, &createdBy, &out.CreatedAt)
 	if err != nil {
 		// Se envuelve SIEMPRE, incluida la colisión de numeración: quien la
@@ -448,6 +711,17 @@ func nullableText(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullableBytes es nullableText para las columnas BYTEA del sobre. Sin ella, un
+// sobre ausente escribiría `”::bytea` en vez de NULL — y entonces el barrido de
+// rotación (que filtra por `literal_kek_id IS NOT NULL`) y el guard de la poda
+// (`literal_enc IS NOT NULL`) verían filas que no tienen nada dentro.
+func nullableBytes(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 // UpdateStatus implementa Store con un COMPARE-AND-SWAP: la escritura solo ocurre
@@ -848,10 +1122,10 @@ func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, 
 		if err != nil {
 			return err
 		}
-		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+		if _, err := p.insertRevisionOnce(ctx, tx, rev); err != nil {
 			return err
 		}
-		revs, err := revisionsOf(ctx, tx, intakeID)
+		revs, err := p.revisionsOf(ctx, tx, intakeID)
 		if err != nil {
 			return err
 		}
@@ -948,14 +1222,14 @@ func (p *Postgres) ApplyRevalidation(ctx context.Context, tenantID, intakeID str
 		if err != nil {
 			return err
 		}
-		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+		if _, err := p.insertRevisionOnce(ctx, tx, rev); err != nil {
 			return err
 		}
 		lines, err := itemsOf(ctx, tx, intakeID)
 		if err != nil {
 			return err
 		}
-		revs, err := revisionsOf(ctx, tx, intakeID)
+		revs, err := p.revisionsOf(ctx, tx, intakeID)
 		if err != nil {
 			return err
 		}
@@ -1084,7 +1358,7 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 		if err != nil {
 			return err
 		}
-		if _, err := insertRevisionOnce(ctx, tx, rev); err != nil {
+		if _, err := p.insertRevisionOnce(ctx, tx, rev); err != nil {
 			return err
 		}
 		// El descarte CIERRA SU CONTENEDOR (REQ-32e; D-043.15(1) re-expresada por

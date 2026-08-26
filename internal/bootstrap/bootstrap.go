@@ -335,7 +335,18 @@ func Run(ctx context.Context) error {
 	// pool y el mismo dominio: dos instancias solo serían dos nombres para lo mismo.
 	// Por eso el proyector lo recibe DOS VECES: satisface sus dos puertos —escritor
 	// de revisiones y garante del envío— sin que el carrito conozca el store entero.
-	intakeStore := intakes.NewPostgres(db)
+	//
+	// 🔧 DESDE T3.5 EL STORE SÍ LLEVA CIPHER, y eso corrige a medias el párrafo de
+	// abajo: el escritor del comprador ya no es «el único componente del dominio que
+	// necesita el cipher». La diferencia sigue siendo real y es de ALCANCE — aquél
+	// cifra la FILA ENTERA de datos personales del comprador; éste cifra UN CAMPO de
+	// nivel 2 dentro del payload de la revisión (el literal del cliente), y deja en
+	// claro la interpretación estructurada, que es lo que el negocio cuenta.
+	// Comparten keyring, que es lo que evita una tercera rotación.
+	intakeStore := intakes.NewPostgres(db,
+		intakes.ConCifraDeLiteral(flowDeps.cipher),
+		intakes.ConLogDeRetencion(log),
+	)
 	// Los DATOS DEL COMPRADOR van por su propio escritor y no por intakeStore (T4.5,
 	// D-041.13): es el único componente del dominio de solicitudes que necesita el
 	// cipher de PII, y tenerlo aparte hace que el store normal —que lo consumen la

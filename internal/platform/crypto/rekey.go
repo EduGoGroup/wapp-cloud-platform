@@ -34,6 +34,12 @@ type rekeyTarget struct {
 	// kekCol es la columna con el key_id de la KEK que envolvió dekCol. Es el
 	// discriminador de la rotación: kekCol <> current ⇒ fila pendiente.
 	kekCol string
+	// sinUpdatedAt marca las tablas que NO tienen columna `updated_at`, para que el
+	// UPDATE del re-wrap no intente escribirla (Plan 044 · T3.5). Es `sin…` y no
+	// `conUpdatedAt` a propósito: el cero-valor tiene que seguir describiendo a las
+	// seis entradas que ya existían, que sí la tienen. Poner el booleano al revés
+	// habría dejado a las seis en silencio con el valor equivocado.
+	sinUpdatedAt bool
 }
 
 // rekeyTargets es el CENSO de tablas con dato cifrado por la KEK. Añadir aquí una
@@ -227,6 +233,39 @@ var rekeyTargets = []rekeyTarget{
 		dekCol: "source_text_dek",
 		kekCol: "source_text_kek_id",
 	},
+	// Literal del cliente dentro de una revisión de la solicitud (Plan 044 · Ola 3 ·
+	// T3.5, migración 0079). Trío NULLable, como los cuatro de arriba: la MAYORÍA de
+	// las revisiones no tiene sobre —las del carrito numérico son líneas y totales, y
+	// las ya podadas quedaron vacías a propósito— y esas filas se caen solas del
+	// barrido porque `NULL <> 'x'` no es TRUE en SQL. La 0079 les puso índice parcial
+	// (`idx_intake_revisions_kek … WHERE literal_kek_id IS NOT NULL`) justo para que
+	// este SELECT no barra la tabla entera buscando la minoría que sí tiene.
+	//
+	// 🔴 ENTRA EN EL MISMO COMMIT QUE EMPIEZA A CIFRAR, la regla de :82-87. Aquí SÍ se
+	// cumplió, y merece decirse porque es la primera vez desde que la regla existe: la
+	// entrada de `intake_jobs` (arriba, :225) llegó tarde y su migración tuvo que
+	// dejarlo escrito como AVISO VIVO en el COMMENT de la columna.
+	//
+	// ⚠️ Y AQUÍ EL PRECIO DE OLVIDARLA ES EL MÁS ALTO DE LOS SIETE, al revés que en
+	// `intake_jobs`. Aquel sobre es un BÚFER que se vacía en estado terminal (INV-13),
+	// así que una KEK retirada de más solo cuesta los jobs en vuelo. Éste es
+	// RETENCIÓN: vive lo que dure el TTL —doce meses por defecto— y es la ÚNICA copia
+	// del original que el dueño tiene para auditar al LLM y para RE-ANALIZAR desde el
+	// origen (D-14). Perderlo no se nota el día de la rotación: se nota meses después,
+	// cuando alguien abre un pedido viejo para ver qué había pedido el cliente de
+	// verdad y encuentra un sobre que no abre.
+	//
+	// 📌 Y es la PRIMERA entrada con `sinUpdatedAt`: `intake_revisions` es
+	// APPEND-ONLY (la 0045 le dio `created_at` y nada más), así que el `SET …,
+	// updated_at = now()` que las otras seis dan por hecho aquí no compila en SQL.
+	// Ver updateSQL.
+	{
+		table:        "public.intake_revisions",
+		pkCols:       []string{"intake_id", "revision_no"},
+		dekCol:       "literal_dek",
+		kekCol:       "literal_kek_id",
+		sinUpdatedAt: true,
+	},
 }
 
 // selectSQL arma el SELECT del batch: PK (como texto) + DEK + key_id de las filas
@@ -250,16 +289,27 @@ func (t rekeyTarget) selectSQL() string {
 // updateSQL arma el UPDATE por PK: $1 = DEK re-envuelta, $2 = key_id nuevo, y
 // desde $3 los valores de la PK en el orden de pkCols. NO toca la columna del dato
 // cifrado (§7): re-envolver la DEK no re-cifra el valor.
+//
+// 🔴 `updated_at = now()` SOLO SI LA TABLA LA TIENE (ver rekeyTarget.sinUpdatedAt).
+// Hasta el Plan 044 · T3.5 las seis entradas del censo eran tablas mutables con esa
+// columna y la sentencia la daba por hecha; `public.intake_revisions` es
+// APPEND-ONLY y no la tiene, así que con el SET fijo su rotación fallaría entera con
+// «column "updated_at" does not exist» — y no en un test, sino la primera vez que
+// alguien rote una KEK en producción.
 func (t rekeyTarget) updateSQL() string {
 	conds := make([]string, len(t.pkCols))
 	for i, c := range t.pkCols {
 		conds[i] = fmt.Sprintf("%s = $%d", c, i+3)
 	}
+	sets := fmt.Sprintf("%s = $1, %s = $2", t.dekCol, t.kekCol)
+	if !t.sinUpdatedAt {
+		sets += ", updated_at = now()"
+	}
 	return fmt.Sprintf(`
 		UPDATE %s
-		SET %s = $1, %s = $2, updated_at = now()
+		SET %s
 		WHERE %s
-	`, t.table, t.dekCol, t.kekCol, strings.Join(conds, " AND "))
+	`, t.table, sets, strings.Join(conds, " AND "))
 }
 
 // pendingSQL arma el conteo de filas pendientes agrupado por key_id viejo.
