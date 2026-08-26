@@ -22,7 +22,7 @@ require (
 	// ⚠️ Y P4 CRECE de 1.967 a 2.331 B (+18,5 %). Son bytes de ENTRADA y estables (se
 	// prefillan una vez), así que no tocan al `max_output_tokens` de T1.7-3, que es de
 	// SALIDA. No mezclar los dos números.
-	github.com/EduGoGroup/wapp-shared/llm v0.4.2
+	github.com/EduGoGroup/wapp-shared/llm v0.4.4
 	github.com/EduGoGroup/wapp-shared/logger v0.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
