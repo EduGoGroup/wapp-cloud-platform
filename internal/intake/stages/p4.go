@@ -127,22 +127,28 @@ const basisPrefijo = "message_ts="
 //     sola, así que reintentar el job no tira trabajo de nadie;
 //   - el catálogo: esta etapa no busca precios ni crea líneas.
 type P4 struct {
-	log   logger.Logger
-	sel   ProviderSelector
-	store StageStore
-	zona  *time.Location
+	log    logger.Logger
+	sel    ProviderSelector
+	store  StageStore
+	zona   *time.Location
+	plazos plazos
 }
 
 // NewP4 construye la etapa. Devuelve ErrSinCablear si le falta log, selector o store, y
 // ErrSinZonaHoraria si no se le dice en qué zona se cuentan los días.
-func NewP4(log logger.Logger, sel ProviderSelector, store StageStore, zona *time.Location) (*P4, error) {
+//
+// La zona sigue siendo OBLIGATORIA y posicional; el plazo por llamada llega por opción
+// (T2.5). No son la misma clase de cosa: la zona es una decisión de producto que falta
+// y que nadie debe heredar por accidente (DEUDA-044.11), y el plazo tiene un
+// comportamiento heredado legítimo — el ctx del llamante.
+func NewP4(log logger.Logger, sel ProviderSelector, store StageStore, zona *time.Location, opts ...Opción) (*P4, error) {
 	if log == nil || sel == nil || store == nil {
 		return nil, ErrSinCablear
 	}
 	if zona == nil {
 		return nil, ErrSinZonaHoraria
 	}
-	return &P4{log: log, sel: sel, store: store, zona: zona}, nil
+	return &P4{log: log, sel: sel, store: store, zona: zona, plazos: nuevosPlazos(opts)}, nil
 }
 
 // Run normaliza un job YA RECLAMADO y devuelve el artefacto tal como quedó persistido,
@@ -234,11 +240,9 @@ func (s *P4) normalizar(ctx context.Context, job intake.ClaimedJob, literal stri
 		return fmt.Errorf("p4: elegir el proveedor del tenant: %w", err)
 	}
 
-	raw, err := prov.NormalizeQuantities(ctx,
-		llm.NormalizeQuantitiesInput{SourceText: literal, Items: items, MessageTS: job.MessageTS},
-		llm.Options{Temperature: llm.TemperatureGreedy})
+	raw, err := s.pedirCantidades(ctx, prov, job, literal, items)
 	if err != nil {
-		return fmt.Errorf("p4: pedir la normalización de cantidades: %w", err)
+		return err
 	}
 
 	out, err := llm.ParseQuantities(raw)
@@ -254,6 +258,22 @@ func (s *P4) normalizar(ctx context.Context, job intake.ClaimedJob, literal stri
 			"el_modelo_propuso_fecha", out.DeliveryDate != "", "go_calculo_fecha", art.DeliveryDate != "")
 	}
 	return nil
+}
+
+// pedirCantidades es LA llamada de P4, acotada por su propio plazo. Extraída por el
+// mismo motivo que en P2 y P3: el `defer cancel()` tiene que cerrar el plazo donde
+// acaba la llamada, no arrastrarlo hasta la escritura del artefacto.
+func (s *P4) pedirCantidades(ctx context.Context, prov llm.LLMProvider, job intake.ClaimedJob,
+	literal string, items []llm.ItemSpec) (json.RawMessage, error) {
+	llamada, cancel := s.plazos.acotar(ctx)
+	defer cancel()
+	raw, err := prov.NormalizeQuantities(llamada,
+		llm.NormalizeQuantitiesInput{SourceText: literal, Items: items, MessageTS: job.MessageTS},
+		llm.Options{Temperature: llm.TemperatureGreedy})
+	if err != nil {
+		return nil, fmt.Errorf("p4: pedir la normalización de cantidades: %w", err)
+	}
+	return raw, nil
 }
 
 // fundir empareja POR POSICIÓN lo que devolvió el modelo con lo que P3 ya sabía, y

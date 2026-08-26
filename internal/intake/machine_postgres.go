@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // machine_postgres.go — el SQL de la máquina de estados (Plan 044 · Ola 2 · T2.1).
@@ -65,6 +66,12 @@ import (
 // una segunda consulta costaría un viaje y —peor— abriría una ventana entre el
 // claim y la lectura en la que el job podría haber terminado.
 //
+// 🔧 `attempts` se sumó al RETURNING en T2.5 y es ADITIVO: la política de
+// reintentos tiene que saber cuántos van consumidos ANTES de decidir si el
+// tropiezo que acaba de ocurrir reintenta o mata el job, y esa decisión solo vale
+// mientras el job sigue en `processing` (ver ClaimedJob.Attempts). No sale por
+// COALESCE porque la 0078 la declaró `NOT NULL DEFAULT 0`: aquí nunca hay NULL.
+//
 // `stage` y `source_text_kek_id` salen por COALESCE a cadena vacía porque las dos
 // son NULLables en la 0072 y "" es aquí un valor legítimo («ninguna etapa todavía»,
 // «sin sobre»): un sql.NullString obligaría a todo llamante a distinguir dos casos
@@ -85,7 +92,8 @@ UPDATE public.intake_jobs AS j
  WHERE j.id = c.id
 RETURNING j.id::text, j.tenant_id, j.session_id, j.contact_id, j.event_id::text,
           COALESCE(j.stage, ''), j.message_ts, j.source_refs, j.artifacts,
-          j.source_text_enc, j.source_text_dek, COALESCE(j.source_text_kek_id, '')
+          j.source_text_enc, j.source_text_dek, COALESCE(j.source_text_kek_id, ''),
+          j.attempts
 `
 
 // ClaimNext implementa PipelineStore.
@@ -103,6 +111,7 @@ func (p *Postgres) ClaimNext(ctx context.Context) (ClaimedJob, bool, error) {
 		&j.ID, &j.Key.TenantID, &j.Key.SessionID, &j.Key.ContactID, &j.Key.EventID,
 		&j.Stage, &messageTS, &refsRaw, &artRaw,
 		&j.SourceText.Enc, &j.SourceText.DEK, &j.SourceText.KEKID,
+		&j.Attempts,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		// No hay nada que tomar. NO es un error: es la cola vacía, que es el estado
@@ -202,6 +211,53 @@ func (p *Postgres) Release(ctx context.Context, jobID string) (bool, error) {
 		return false, fmt.Errorf("intake: devolver a la cola sin id de job")
 	}
 	return p.execTransition(ctx, "devolver a la cola el job "+jobID, releaseSQL, jobID)
+}
+
+// retrySQL es la arista de vuelta CON CASTIGO: `pending` otra vez, un intento
+// consumido y la marca empujada hasta `$2`. Es LA POLÍTICA DE BACKOFF EJECUTADA
+// (la decide `pipeline`, T2.5) sobre la SEDE que dejó la 0078 (T2.1).
+//
+// # LAS TRES ESCRITURAS VAN EN LA MISMA SENTENCIA, Y ES EL PUNTO
+//
+// `status`, `attempts` y `next_attempt_at` se mueven juntas o no se mueve
+// ninguna. Partirlas —volver a `pending` primero y empujar la marca después—
+// deja una ventana en la que el job está `pending` con la marca VIEJA (vencida,
+// porque es la que dejó pasar el claim anterior) y otro worker se lo lleva de
+// inmediato: la tormenta de la 0078, reintroducida por el orden de dos UPDATE.
+//
+// `attempts = attempts + 1` se calcula EN EL MOTOR y no en Go: el valor que el
+// worker leyó en el claim podría estar rancio si alguien tocó la fila, y sumar
+// desde el valor de la base es la misma cuenta que hace `MarkWebhookFailed`
+// (integrations/postgres.go:169), su gemela canónica.
+//
+// Guard `status = 'processing'`: solo se castiga a un job TOMADO. Un Retry sobre
+// un job ya terminado afecta 0 filas y devuelve `(false, nil)` — que el worker
+// tiene que LOGUEAR, porque significa que el job se le movió bajo los pies.
+const retrySQL = `
+UPDATE public.intake_jobs
+   SET status          = 'pending',
+       attempts        = attempts + 1,
+       next_attempt_at = $2,
+       updated_at      = now()
+ WHERE id = $1::uuid AND status = 'processing'
+`
+
+// Retry implementa PipelineStore.
+func (p *Postgres) Retry(ctx context.Context, jobID string, next time.Time) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, nil
+	}
+	if jobID == "" {
+		return false, fmt.Errorf("intake: reencolar con backoff sin id de job")
+	}
+	if next.IsZero() {
+		// Una marca cero es el año 1, o sea `next_attempt_at` en el pasado: el job
+		// volvería a ser reclamable EN EL ACTO y el backoff sería un no-op
+		// silencioso. Se rechaza aquí porque desde fuera no se distingue de un
+		// reintento inmediato legítimo.
+		return false, fmt.Errorf("intake: reencolar el job %s sin marca de reintento: el backoff quedaría en el pasado", jobID)
+	}
+	return p.execTransition(ctx, "reencolar con backoff el job "+jobID, retrySQL, jobID, next.UTC())
 }
 
 // finishSQL es INV-13 escrito: `done` y el vaciado de LAS TRES columnas del sobre

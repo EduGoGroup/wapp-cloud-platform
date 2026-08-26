@@ -200,6 +200,17 @@ type ClaimedJob struct {
 	SourceText SourceText
 	// Artifacts es lo ya persistido, por etapa. Vacío en el primer claim.
 	Artifacts map[string]json.RawMessage
+	// Attempts son los intentos YA CONSUMIDOS antes de éste, tal como los cuenta
+	// la columna `attempts` de la 0078. El intento que empieza con este claim es
+	// `Attempts + 1` — misma convención 1-based que `integrations.Worker.fail`.
+	//
+	// 🔴 VIAJA EN EL CLAIM Y NO EN UNA LECTURA APARTE porque la decisión que
+	// alimenta —«¿este tropiezo se reintenta o mata el job?»— hay que tomarla
+	// mientras el job sigue en `processing`: `Fail` tiene el guard
+	// `status = 'processing'`, así que preguntarlo DESPUÉS de devolverlo a
+	// `pending` llegaría tarde y afectaría 0 filas. Lo añadió T2.5 (la política);
+	// la columna la dejó puesta T2.1 (la sede).
+	Attempts int
 }
 
 // PipelineStore es el puerto del WORKER del pipeline (Ola 2), y es deliberadamente
@@ -233,6 +244,35 @@ type PipelineStore interface {
 	// 🔴 NO vacía el sobre. Solo los terminales lo hacen (INV-13); un Release que
 	// borrara el literal dejaría el job vivo y sin con qué continuar.
 	Release(ctx context.Context, jobID string) (bool, error)
+	// Retry es la OTRA arista de vuelta: devuelve el job a `pending` COBRÁNDOLE el
+	// intento —`attempts + 1`— y EMPUJANDO `next_attempt_at` hasta `next`. Es la
+	// única forma de reencolar un job que acaba de fallar sin que el claim se lo
+	// lleve otra vez en el acto.
+	//
+	// 🔴 LA DIFERENCIA CON Release ES EL CASTIGO, Y NO ES COSMÉTICA. `Release`
+	// devuelve el job intacto (apagado ordenado del worker: el job no falló, es
+	// que el proceso se va) y `Retry` lo devuelve castigado (el intento se
+	// consumió y hay que esperar). Usar `Release` donde toca `Retry` reproduce
+	// exactamente la tormenta que la 0078 existe para impedir: reclamar, fallar y
+	// volver a reclamar a la velocidad del error, con `attempts` clavado en 0 para
+	// siempre — así que el techo de intentos no llegaría NUNCA y el job no moriría
+	// jamás.
+	//
+	// `next` lo calcula el llamante (la política es del worker, no de la máquina) y
+	// es un instante del reloj de GO, no del motor. Es la única marca de esta tabla
+	// que no pone Postgres, y por eso el COMMENT de la 0078 aclara que el `<= now()`
+	// del claim sí lo resuelve el motor: dos relojes a segundos de distancia
+	// desplazan el reintento unos segundos, que es ruido frente a un backoff que
+	// empieza en 30 s. Compararlos para decidir algo sí sería un defecto; empujar
+	// una marca con uno y leerla con el otro, no.
+	//
+	// 🔴 NO ESCRIBE `error`. Esa columna es la causa de muerte de un job `failed`
+	// (COMMENT de la 0072) y escribirla en cada tropiezo dejaría un job que después
+	// termina bien con una causa de muerte que no ocurrió. La causa del reintento va
+	// al log estructurado del worker, con su `causa=` (calidad|infra). El día que
+	// haga falta consultarla por SQL, lo que toca es una columna `last_error` propia
+	// —la gemela de `webhook_outbox`— y no reusar ésta.
+	Retry(ctx context.Context, jobID string, next time.Time) (bool, error)
 	// Finish lleva el job a `done` y VACÍA LAS TRES columnas del sobre en la misma
 	// sentencia (INV-13). `intakeID` es el borrador creado (Ola 3): vacío deja la
 	// columna como estaba.

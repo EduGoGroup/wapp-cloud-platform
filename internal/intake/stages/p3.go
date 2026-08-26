@@ -155,18 +155,23 @@ type ArtefactoP3 struct {
 // «10 o 12 porciones» se persiste tal cual. Partirlo en `{min,max,unit}` es de P4
 // (T2.4) y elegir un número es de nadie. Esta etapa no toca `variant`.
 type P3 struct {
-	log   logger.Logger
-	sel   ProviderSelector
-	store StageStore
+	log    logger.Logger
+	sel    ProviderSelector
+	store  StageStore
+	plazos plazos
 }
 
 // NewP3 construye la etapa. Devuelve ErrSinCablear si le falta cualquiera de las tres
 // piezas: una etapa a medio cablear no nace «por si acaso».
-func NewP3(log logger.Logger, sel ProviderSelector, store StageStore) (*P3, error) {
+//
+// 🔴 `ConPlazoPorLlamada` acota CADA ÍTEM del fan-out, no el fan-out entero. Es lo que
+// el bloque de cabecera de este fichero dejó pedido por escrito, y el motivo por el que
+// la opción no se pudo resolver desde el worker (ver plazo.go).
+func NewP3(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Opción) (*P3, error) {
 	if log == nil || sel == nil || store == nil {
 		return nil, ErrSinCablear
 	}
-	return &P3{log: log, sel: sel, store: store}, nil
+	return &P3{log: log, sel: sel, store: store, plazos: nuevosPlazos(opts)}, nil
 }
 
 // Run ejecuta el fan-out de P3 sobre un job YA RECLAMADO y devuelve el artefacto tal
@@ -345,9 +350,7 @@ func (s *P3) especificar(ctx context.Context, prov llm.LLMProvider, literal, ide
 //     sostiene el `IdeaPos` de la marca, y el lado seguro de romperla es perder una
 //     repetición, nunca duplicar una línea con precio.
 func (s *P3) unaLlamada(ctx context.Context, prov llm.LLMProvider, literal, idea string, temp float64, jobID string, pos int) (*llm.ItemSpec, error) {
-	raw, err := prov.ExtractItemSpecs(ctx,
-		llm.ExtractItemSpecsInput{SourceText: literal, Idea: idea},
-		llm.Options{Temperature: temp})
+	raw, err := s.pedirSpec(ctx, prov, literal, idea, temp)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +368,24 @@ func (s *P3) unaLlamada(ctx context.Context, prov llm.LLMProvider, literal, idea
 			"job_id", jobID, "stage", intake.StageP3, "idea_pos", pos, "descartadas", len(specs.Items)-1)
 	}
 	return &specs.Items[0], nil
+}
+
+// pedirSpec es LA llamada de UN ítem, acotada por SU propio plazo — el de una llamada,
+// no el de las N. Está extraída para que el `defer cancel()` cierre el plazo donde
+// acaba la llamada y no arrastre el deadline al parseo, al anclaje ni a la
+// persistencia: eso convertiría el plazo por llamada en un plazo por etapa por la
+// puerta de atrás.
+//
+// 🔴 EL PLAZO SE APLICA TAMBIÉN AL REINTENTO por calidad (temperatura 0.3), y tiene
+// que ser así: el reintento es otra llamada de lote de 22–32 s, y dejarlo sin acotar
+// mandaría al Edge un `timeout_ms` distinto —el default de 30 s— para exactamente el
+// mismo trabajo, corrompiendo la señal del breaker justo en el caso raro.
+func (s *P3) pedirSpec(ctx context.Context, prov llm.LLMProvider, literal, idea string, temp float64) (json.RawMessage, error) {
+	llamada, cancel := s.plazos.acotar(ctx)
+	defer cancel()
+	return prov.ExtractItemSpecs(llamada,
+		llm.ExtractItemSpecsInput{SourceText: literal, Idea: idea},
+		llm.Options{Temperature: temp})
 }
 
 // persistir serializa el artefacto y lo deja en la máquina de estados.

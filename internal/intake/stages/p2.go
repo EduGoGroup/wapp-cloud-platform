@@ -99,17 +99,21 @@ var ErrJobFueraDeProcessing = errors.New("stages: el job ya no estaba en process
 // de entrega si la dijo. Es la primera etapa del pipeline y la que decide en qué se
 // descompone el pedido: lo que P2 no vea, P3 no lo especificará nunca.
 type P2 struct {
-	log   logger.Logger
-	sel   ProviderSelector
-	store StageStore
+	log    logger.Logger
+	sel    ProviderSelector
+	store  StageStore
+	plazos plazos
 }
 
 // NewP2 construye la etapa. Devuelve error si le falta cualquiera de las tres piezas.
-func NewP2(log logger.Logger, sel ProviderSelector, store StageStore) (*P2, error) {
+//
+// Las opciones son de T2.5 y hoy solo hay una, ConPlazoPorLlamada: sin ella la etapa
+// hereda el ctx del llamante y el adaptador cae a su default de 30 s (ver plazo.go).
+func NewP2(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Opción) (*P2, error) {
 	if log == nil || sel == nil || store == nil {
 		return nil, ErrSinCablear
 	}
-	return &P2{log: log, sel: sel, store: store}, nil
+	return &P2{log: log, sel: sel, store: store, plazos: nuevosPlazos(opts)}, nil
 }
 
 // Run ejecuta P2 sobre un job YA RECLAMADO y devuelve el artefacto tal como quedó
@@ -151,11 +155,9 @@ func (s *P2) Run(ctx context.Context, job intake.ClaimedJob, literal string) (*l
 
 	// UNA pasada. El reintento por calidad es del worker (T2.5) y el techo de tokens
 	// de salida lo pone el adaptador por etapa: aquí no se decide ninguno de los dos.
-	raw, err := prov.ExtractMainIdeas(ctx,
-		llm.ExtractMainIdeasInput{SourceText: literal},
-		llm.Options{Temperature: llm.TemperatureGreedy})
+	raw, err := s.pedirIdeas(ctx, prov, literal)
 	if err != nil {
-		return nil, fmt.Errorf("p2: pedir las ideas principales: %w", err)
+		return nil, err
 	}
 
 	ideas, err := llm.ParseMainIdeas(raw)
@@ -191,6 +193,24 @@ func (s *P2) Run(ctx context.Context, job intake.ClaimedJob, literal string) (*l
 		"ideas", len(ideas.Wants), "ideas_descartadas", descartadas,
 		"con_pista_de_entrega", ideas.DeliveryHint != nil)
 	return ideas, nil
+}
+
+// pedirIdeas es LA llamada de P2, acotada por su propio plazo. Está extraída de Run
+// —en vez de un `defer cancel()` dentro de Run— porque el ctx acotado NO debe seguir
+// vivo mientras se ancla y se persiste: la persistencia es una escritura a la base y
+// heredar el deadline del modelo la mataría a mitad, dejando el artefacto en el aire.
+// El `defer` de una función corta es lo que hace que el plazo acabe DONDE acaba la
+// llamada.
+func (s *P2) pedirIdeas(ctx context.Context, prov llm.LLMProvider, literal string) (json.RawMessage, error) {
+	llamada, cancel := s.plazos.acotar(ctx)
+	defer cancel()
+	raw, err := prov.ExtractMainIdeas(llamada,
+		llm.ExtractMainIdeasInput{SourceText: literal},
+		llm.Options{Temperature: llm.TemperatureGreedy})
+	if err != nil {
+		return nil, fmt.Errorf("p2: pedir las ideas principales: %w", err)
+	}
+	return raw, nil
 }
 
 // anclar quita del artefacto todo lo que el literal no respalda y devuelve cuántas
