@@ -37,6 +37,8 @@ type Metrics struct {
 	reactiveBlocks     *prometheus.CounterVec
 	webhookDeliveries  *prometheus.CounterVec
 	flowEventLifecycle *prometheus.CounterVec
+	cartMatch          *prometheus.CounterVec
+	llmDegradacion     *prometheus.CounterVec
 	autoreplyStreak    prometheus.Histogram
 
 	// Fuente del gauge wapp_flow_autoreply_streak_max (Plan 049 · Opción A).
@@ -95,6 +97,14 @@ func New() *Metrics {
 			Name: "wapp_flow_event_lifecycle_total",
 			Help: "Efectos de ciclo de vida del evento conversacional leídos del outbox flow_events (Plan 043 · T6.5, MD-043.17), por nombre de efecto, tipo de evento (event_kind = payload->>'kind', NUNCA la columna kind) y causa (reason = payload->>'reason', solo poblado en event_escaped: owner_flow_finished|orphan_menu|client_escape; vacío en el resto y en las filas anteriores al Plan 053 · T4.1).",
 		}, []string{"name", "event_kind", "reason"}),
+		cartMatch: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "wapp_cart_match_total",
+			Help: "Resoluciones de la cascada DETERMINISTA del carrito (Plan 044 · Ola 3.5 · T3.5-1), por escalón que resolvió (escalon = exact|fuzzy|ninguno) y nivel de la sub-máquina en que se resolvió (nivel = una de las constantes Level* del módulo cart). Mide QUÉ ESCALÓN RESUELVE, que es el dato con el que se decide si hace falta el turno LLM: `exact` es el cliente escribiendo la etiqueta tal cual, `fuzzy` es la errata rescatada por la distancia de edición con umbral 0,85 (D-044.45), y `ninguno` es la cascada corriendo y NO resolviendo — o sea el material del turno LLM (T3.5-2), no un error. ⚠️ LO QUE ESTE CONTADOR NO CUENTA, y sin esto el volumen se lee al revés: (a) el mensaje resuelto por CÓDIGO EXACTO —el cliente teclea «2», que es el camino mayoritario— NO aparece, porque la cascada ni llega a correr; (b) tampoco aparecen los niveles EXCLUIDOS (quantity, item_note, order_note, buyer_data y los terminales), por la misma razón; (c) una entrada de más de 16 tokens tampoco, porque es prosa y se descarta antes. Así que la suma de las tres etiquetas NO es el número de mensajes del carrito, es el número de mensajes en los que la cascada tuvo algo que hacer. 🔴 CERO TEXTO LIBRE: ni el mensaje del cliente ni textmatch.Result.Evidence —que es texto legible por humanos— pueden entrar en una etiqueta; las dos que hay son de cardinalidad fija (3 escalones × los niveles del carrito). El tenant tampoco se etiqueta: misma regla dura del paquete.",
+		}, []string{"escalon", "nivel"}),
+		llmDegradacion: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "wapp_llm_degradacion_total",
+			Help: "Caídas a NIVEL A de una inferencia LLM (Plan 044 · Ola 3.5 · T3.5-2, ADR-0044 §5): una vez por fallo de la vía que SÍ tiene motivo, o sea exactamente las mismas veces que se escribe un aviso al dueño en owner_degradation_notices — este contador y esa tabla cuentan lo mismo visto desde dos sitios. 📊 ES EL DATO DE CAMPO QUE DESBLOQUEA EL DESALOJO (D-044.41): internal/intake/pipeline/plaza.go dice por escrito que el desalojo «NO se construye hasta que exista la Ola 3.5 y un dato de campo», y el dato es la serie {origen=\"turno\"}. Cómo se lee, porque sin esto el número no significa nada: `origen` dice QUÉ ENTRADA del selector se estaba sirviendo — `turno` es el TURNO ACOTADO del Nivel B (alguien esperando en WhatsApp mientras el carrito no entiende lo que escribió), `pipeline` son las cinco etapas P1–P5 del presupuesto, y `seleccion` es el fallo al CONSTRUIR el adaptador (credencial ilegible, vía imposible), que no llegó a tocar el cable. Así que rate(wapp_llm_degradacion_total{origen=\"turno\",reason=\"timeout\"}) es «turnos interactivos que se quedaron sin interpretación porque el Ollama del cliente no contestó en su plazo», y con K=1 por plaza (ADR-0046 · Mecanismo 1) el sospechoso número uno de ese timeout es una cadena de LOTE ocupando la única plaza — que es la pregunta que D-044.41 hace. Su hermano `reason=\"edge_sin_capacidad\"` es el mismo fenómeno dicho por el Edge en vez de deducido del reloj, y hoy puede no tener productor (degradation.go). ⚠️ LO QUE ESTE CONTADOR NO CUENTA, y es la mitad de la historia del turno acotado: la degradación por CALIDAD. Un modelo que contesta a tiempo pero elige mal, dice `usable:false` o devuelve un número fuera de la lista NO aparece aquí — no es un fallo de la vía, el equipo del cliente está perfectamente, y por eso ni escribe aviso al dueño (llmvia/notify.go, primera rama de motivoDe) ni suma aquí. Eso se ve por el desenlace de la consulta del motor de flujos (engine.ObservadorConsulta), que hoy va al log. Tampoco cuenta el calentamiento fallido, por la misma razón y a propósito. 🔴 CERO PII Y CERO ALTA CARDINALIDAD: ni tenant, ni edge, ni sesión, ni el texto del cliente — la regla dura del paquete (INV-5), custodiada además por un test.",
+		}, []string{"origen", "via", "reason"}),
 		autoreplyStreak: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "wapp_flow_autoreply_streak",
 			Help: "Distribución de la LONGITUD de las rachas de auto-respuestas consecutivas por conversación (Plan 049 · Opción A, OBSERVAR): se observa UNA vez por episodio CERRADO, y el episodio se cierra cuando muere el estado de la conversación (flujo terminado, escape del cliente o TTL) o cuando pasan 30 min sin auto-respuestas — sin ese matiz el número no se interpreta bien. ⚠️ EL CIERRE POR INACTIVIDAD LO MATERIALIZA ESTE MISMO SCRAPE: como no hay proceso de fondo (ADR-0003), el runtime barre las rachas vencidas cuando alguien raspa /metrics (al calcular wapp_flow_autoreply_streak_max, que ya recorre el mapa), así que una racha abandonada aparece aquí en el primer scrape POSTERIOR a sus 30 min de silencio, no en el instante en que venció — y si nadie raspa, no se cierra. ⚠️ Y PUEDE TARDAR UN SCRAPE MÁS: el registry colecta este histograma y el gauge hermano EN PARALELO, así que si el histograma serializa su estado antes de que corra la fuente del gauge —que es quien barre—, lo barrido en el scrape N se publica en el N+1. Medido, no supuesto (TestAutoreplyStreak_ObservarDuranteElScrapeNoSeBloquea): no se pierde ni se duplica ninguna observación, solo llega tarde. Consecuencia práctica al VERIFICARLO A MANO: hay que raspar DOS veces; con un solo scrape se puede ver _count sin moverse y concluir en falso que el cableado no funciona. Al leer el histograma: los episodios abandonados llegan con retraso (hasta un intervalo de scrape) y, tras un reinicio del proceso, las rachas vivas en memoria se pierden sin observarse. ⚠️ UNIDAD: lo que se cuenta es UNA EMISIÓN del motor (una llamada a send), NO un turno conversacional. Un mismo entrante puede producir más de una emisión (p. ej. el resumen del rescate y, acto seguido, la pantalla del flujo), así que la racha es una COTA SUPERIOR del número de turnos. Consecuencia práctica para quien lea el p99: la estimación de «20-30 auto-respuestas legítimas» del §5 del plan está en TURNOS, así que en esta métrica ese mismo recorrido puede leerse algo más alto — no se debe traducir un percentil de esta métrica a un umbral de turnos sin ese ajuste. Y en el otro extremo: también cuentan los avisos de error del sistema (el aviso de fallo del sink durable) y cada escape acaba dejando un 1 en el histograma (tras el cierre, el propio aviso de escape abre una racha nueva de 1, que se observa cuando esa racha de 1 vence por inactividad y la barre el scrape siguiente — no en el instante del escape), de modo que la cola baja está sesgada hacia abajo por esas dos causas y la mediana NO se debe leer como «longitud típica de una conversación». ⚠️ QUÉ NO CUENTA (la métrica SUBCUENTA, y es sabido): solo se cuentan los envíos que pasan por el motor de flujos (internal/flujos/runtime, función send). Las NOTIFICACIONES DE CAMBIO DE ESTADO DEL PEDIDO (internal/intakes/notifier.go) van directas al Sender sin pasar por ahí y NO suman a la racha, aunque son auto-respuestas de pleno derecho: el sistema hablándole al MISMO contacto de la conversación sin que nadie haya tecleado nada. Así que en las conversaciones con pedido vivo la racha real es más larga que la publicada. Cablear el contador en el Notifier quedó fuera del alcance de la Opción A. (Los otros dos puntos de envío fuera del motor —internal/publicapi/messages.go y internal/platform/httpapi/admin.go— quedan fuera CON RAZÓN: son envíos humanos, no auto-respuestas.) ⚠️ NO ES UNA ALARMA Y NO SE DEBE MONTAR UNA ALERTA SOBRE ELLA: igual que en wapp_flow_reactive_blocked_total se distingue el corte DELIBERADO de política (que no es un error) de la PÉRDIDA real (saturation, el único motivo sobre el que alarmar), aquí una racha larga es OBSERVACIÓN DE POLÍTICA, no degradación — una conversación larga es el motor funcionando exactamente como se diseñó (un catálogo que pagina de 5 en 5 hasta 500 artículos produce 20-30 auto-respuestas perfectamente legítimas). No hay umbral y no se corta a nadie: se cuenta y se publica. Su único propósito es medir la distribución de las rachas LEGÍTIMAS durante 2-4 semanas para poder decidir DESPUÉS, con datos (el p99), si procede un corte — la Opción B del Plan 049, hoy APLAZADA.",
@@ -134,7 +144,7 @@ func New() *Metrics {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.httpRequests, m.httpDuration, m.rateLimitHits, m.receipts, m.reactiveBlocks, m.webhookDeliveries,
-		m.flowEventLifecycle, m.autoreplyStreak, autoreplyStreakMax,
+		m.flowEventLifecycle, m.cartMatch, m.llmDegradacion, m.autoreplyStreak, autoreplyStreakMax,
 	)
 	return m
 }
@@ -240,6 +250,46 @@ func (m *Metrics) WebhookDelivery(status string) {
 		return
 	}
 	m.webhookDeliveries.WithLabelValues(status).Inc()
+}
+
+// CartMatch registra UNA resolución de la cascada determinista del carrito (Plan
+// 044 · Ola 3.5 · T3.5-1): escalon es "exact", "fuzzy" o "ninguno", y nivel es el
+// nivel de la sub-máquina (categories|articles|article|variant|continue|summary|
+// item_note_scope). Los dos son de cardinalidad FIJA y NINGUNO de los dos puede
+// portar texto del cliente — ver el Help del colector, donde está la regla y lo
+// que este contador deliberadamente NO cuenta.
+//
+// Se pasa como callback al módulo cart (que NO importa este paquete: mismo
+// desacoplo que Receipt/FlowReactiveBlocked/WebhookDelivery).
+func (m *Metrics) CartMatch(escalon, nivel string) {
+	if m == nil {
+		return
+	}
+	m.cartMatch.WithLabelValues(escalon, nivel).Inc()
+}
+
+// LLMDegradacion registra UNA caída a Nivel A de la vía LLM de un tenant (Plan
+// 044 · Ola 3.5 · T3.5-2). Los tres argumentos son de vocabulario CERRADO y
+// contado, y ninguno puede portar texto del cliente ni identificar a nadie:
+//
+//	origen  →  3 valores: seleccion | pipeline | turno (llmvia.Origen*).
+//	via     →  2 valores: local | api (el CHECK de tenant_llm).
+//	reason  →  8 valores: los de degradation.Reason, que es el mismo vocabulario
+//	           cerrado que el CHECK de la 0075 y el que habla el transporte.
+//
+// CARDINALIDAD, contada: 3 × 2 × 8 = 48 series en el peor caso teórico, y en la
+// práctica un puñado —una vía por tenant y tres o cuatro motivos que ocurren de
+// verdad—. Es del mismo orden que wapp_flow_event_lifecycle_total y muy por debajo
+// de lo que costaría UNA etiqueta por tenant, que es la que está prohibida.
+//
+// Se pasa como CALLBACK al selector de vía (llmvia.WithDegradacionObservada), que
+// NO importa este paquete: mismo desacoplo que Receipt, FlowReactiveBlocked,
+// WebhookDelivery y CartMatch. Nil-safe como todo el paquete.
+func (m *Metrics) LLMDegradacion(origen, via, reason string) {
+	if m == nil {
+		return
+	}
+	m.llmDegradacion.WithLabelValues(origen, via, reason).Inc()
 }
 
 // FlowEventLifecycle registra el DELTA de una vuelta del colector incremental de

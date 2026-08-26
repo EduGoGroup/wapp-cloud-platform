@@ -124,31 +124,31 @@ type avisador struct {
 
 func (a *avisador) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestInput, opts llm.Options) (json.RawMessage, error) {
 	out, err := a.inner.ClassifyRequest(ctx, in, opts)
-	a.sel.avisar(ctx, a.tenantID, a.via, err)
+	a.sel.avisar(ctx, a.tenantID, a.via, OrigenPipeline, err)
 	return out, err
 }
 
 func (a *avisador) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeasInput, opts llm.Options) (json.RawMessage, error) {
 	out, err := a.inner.ExtractMainIdeas(ctx, in, opts)
-	a.sel.avisar(ctx, a.tenantID, a.via, err)
+	a.sel.avisar(ctx, a.tenantID, a.via, OrigenPipeline, err)
 	return out, err
 }
 
 func (a *avisador) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecsInput, opts llm.Options) (json.RawMessage, error) {
 	out, err := a.inner.ExtractItemSpecs(ctx, in, opts)
-	a.sel.avisar(ctx, a.tenantID, a.via, err)
+	a.sel.avisar(ctx, a.tenantID, a.via, OrigenPipeline, err)
 	return out, err
 }
 
 func (a *avisador) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuantitiesInput, opts llm.Options) (json.RawMessage, error) {
 	out, err := a.inner.NormalizeQuantities(ctx, in, opts)
-	a.sel.avisar(ctx, a.tenantID, a.via, err)
+	a.sel.avisar(ctx, a.tenantID, a.via, OrigenPipeline, err)
 	return out, err
 }
 
 func (a *avisador) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTextInput, opts llm.Options) (json.RawMessage, error) {
 	out, err := a.inner.GenerateQuoteText(ctx, in, opts)
-	a.sel.avisar(ctx, a.tenantID, a.via, err)
+	a.sel.avisar(ctx, a.tenantID, a.via, OrigenPipeline, err)
 	return out, err
 }
 
@@ -164,12 +164,33 @@ func (a *avisador) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTe
 // fallaría exactamente en los casos en los que hay algo que contar, y el canal se
 // quedaría mudo justo cuando importa. El presupuesto propio (avisoTimeout) es lo que
 // impide que ese desacople se convierta en una espera sin techo.
-func (s *Selector) avisar(ctx context.Context, tenantID, via string, err error) {
-	if err == nil || s.notifier == nil {
+func (s *Selector) avisar(ctx context.Context, tenantID, via, origen string, err error) {
+	if err == nil {
 		return
 	}
 	reason, ok := motivoDe(err)
 	if !ok {
+		return
+	}
+	// ════════════════════════════════════════════════════════════════════════
+	// LA MÉTRICA VA ANTES QUE LA TABLA, Y VA AUNQUE NO HAYA TABLA (T3.5-2)
+	// ════════════════════════════════════════════════════════════════════════
+	//
+	// Este punto es EL sitio: es el único del repo que tiene a la vez el motivo ya
+	// traducido al vocabulario cerrado, la vía y —desde esta tarea— qué entrada del
+	// selector se estaba sirviendo. Contarlo en cada llamante sería el mismo
+	// razonamiento repetido N veces, y el N+1 se olvidaría.
+	//
+	// 🔴 NO ESTÁ DEBAJO DEL `if s.notifier == nil`, y esa colocación es la decisión:
+	// el notificador es la tabla de avisos AL DUEÑO —una fila deduplicada por
+	// ventana, pensada para que una persona la lea— y la métrica es el conteo para
+	// NOSOTROS. Colgar el contador del notificador ataría el dato de campo que
+	// desbloquea D-044.41 a que haya base de datos cableada, y encima lo dejaría
+	// subcontado por el dedupe: diez timeouts de la misma ventana escriben UN aviso
+	// y son DIEZ caídas a Nivel A. Son dos preguntas distintas y se responden por
+	// separado.
+	s.contarDegradacion(origen, via, reason)
+	if s.notifier == nil {
 		return
 	}
 	at := s.ahoraFn()
@@ -194,4 +215,66 @@ func (s *Selector) avisar(ctx context.Context, tenantID, via string, err error) 
 		s.log.Warn("degradación: la vía LLM del tenant falló y se avisó al dueño",
 			"tenant_id", tenantID, "reason", reason.String(), "via", via)
 	}
+}
+
+// ============================================================================
+// EL CONTEO DE LAS CAÍDAS A NIVEL A (T3.5-2, D-044.41)
+// ============================================================================
+
+// Origen* es el vocabulario CERRADO de «qué entrada del selector se estaba
+// sirviendo cuando la vía falló». Son tres y son de este paquete porque es este
+// paquete el que tiene las tres puertas; quien las cuenta (Prometheus) no las
+// conoce y no debe inventárselas.
+//
+// 🔴 NO ES `class` DEL FRAME, y confundirlos daría un número equivocado. `class`
+// (gatewaygrpc.ClaseInteractivo/ClaseLote) es un rótulo del CABLE que describe la
+// naturaleza de UNA petición, y por él P1 —que es interactiva— viaja marcada
+// `interactivo` aunque entre por la misma puerta que P2–P5. Esto de aquí describe
+// la PUERTA, no la petición, y es lo que hace legible la serie: `turno` es, por
+// construcción, un turno de WhatsApp con alguien esperando delante.
+const (
+	// OrigenSeleccion: falló CONSTRUIR el adaptador (credencial que no se puede
+	// descifrar, vía fuera del vocabulario). No se llegó a tocar el cable, así que
+	// una serie que suba aquí NO habla del equipo del cliente sino de su
+	// configuración.
+	OrigenSeleccion = "seleccion"
+	// OrigenPipeline: una de las cinco etapas P1–P5 del presupuesto, servidas por el
+	// llm.LLMProvider que devuelve For.
+	OrigenPipeline = "pipeline"
+	// OrigenTurno: el TURNO ACOTADO del Nivel B (Selector.Turno). Es la serie que el
+	// plan viene a producir: alguien escribió algo que el carrito no entendió, se le
+	// preguntó al modelo y la vía falló ⇒ el turno cae al camino determinista de
+	// siempre (Nivel A) con el reprompt de toda la vida.
+	OrigenTurno = "turno"
+)
+
+// ObservadorDegradacion cuenta UNA caída a Nivel A. Es un CALLBACK y no una
+// métrica, por la misma razón que el resto de los hooks de este repo: el selector
+// no importa prometheus y no debería. Lo satisface (*metrics.Metrics).LLMDegradacion.
+//
+// 🔴 LOS TRES ARGUMENTOS SON DE CARDINALIDAD ACOTADA POR CONSTRUCCIÓN: origen sale
+// de las constantes de arriba, via del CHECK de tenant_llm y reason del enum
+// cerrado de degradation. Ni el tenant, ni el Edge, ni la sesión, ni una línea de
+// texto del cliente salen por aquí: esto acaba en una etiqueta de Prometheus.
+type ObservadorDegradacion func(origen, via, reason string)
+
+// WithDegradacionObservada inyecta el contador de caídas a Nivel A. Opcional: sin
+// él todo funciona igual y el dato simplemente no se publica — que es exactamente
+// lo que pasaba antes de esta tarea, y por lo que D-044.41 lleva desde la Ola 2 sin
+// poder decidirse.
+func WithDegradacionObservada(fn ObservadorDegradacion) SelectorOption {
+	return func(s *Selector) {
+		if fn != nil {
+			s.degradaciones = fn
+		}
+	}
+}
+
+// contarDegradacion avisa al contador si lo hay. Un observador que entre en pánico
+// se lleva la llamada por delante: mismo trato que los demás hooks del repo.
+func (s *Selector) contarDegradacion(origen, via string, reason degradation.Reason) {
+	if s.degradaciones == nil {
+		return
+	}
+	s.degradaciones(origen, via, reason.String())
 }

@@ -44,6 +44,12 @@ const catalogUnavailable = "El catálogo no está disponible en este momento. In
 type Module struct {
 	pageSize int
 	log      logger.Logger
+	// onMatch observa QUÉ escalón de la cascada determinista resolvió la entrada
+	// del cliente (Plan 044 · Ola 3.5 · T3.5-1). Es un CALLBACK y no una métrica:
+	// el módulo no importa prometheus ni sabe que existe —mismo desacoplo que
+	// receipts.Sink y flowruntime.WithReactiveBlockedHook—. Sin él la cascada
+	// funciona exactamente igual, en silencio: el hook NO decide, solo observa.
+	onMatch func(escalon, nivel string)
 }
 
 // Option configura el Module al construirlo (patrón functional-options).
@@ -58,6 +64,28 @@ func WithLogger(l logger.Logger) Option {
 	return func(m *Module) {
 		if l != nil {
 			m.log = l
+		}
+	}
+}
+
+// WithMatchHook inyecta el observador de la cascada determinista del
+// pre-resolutor (Plan 044 · Ola 3.5 · T3.5-1): recibe el ESCALÓN que resolvió
+// ("exact" | "fuzzy" | "ninguno") y el NIVEL de la sub-máquina en que se resolvió,
+// una vez por mensaje en que la cascada llega a correr. Se cablea con
+// metrics.CartMatch.
+//
+// 🔴 Los dos argumentos son de cardinalidad ACOTADA por construcción: el escalón
+// sale de textmatch.Result.Strategy y el nivel es una de las constantes Level* de
+// state.go. Ni el texto del cliente ni textmatch.Result.Evidence —que es texto
+// legible— salen jamás por aquí, y eso es una regla dura, no una recomendación:
+// esto acaba en una etiqueta de Prometheus.
+//
+// Sin hook el módulo se comporta igual y la pureza no se toca: contar no lee ni
+// escribe nada del mundo (mismo razonamiento que WithLogger).
+func WithMatchHook(fn func(escalon, nivel string)) Option {
+	return func(m *Module) {
+		if fn != nil {
+			m.onMatch = fn
 		}
 	}
 }
@@ -195,6 +223,37 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	if st.RepromptsEvent != conv.EventID {
 		st.Reprompts = 0
 		st.RepromptsEvent = ""
+	}
+	// ════════════════════════════════════════════════════════════════════════
+	// PRE-RESOLUTOR DETERMINISTA (Plan 044 · Ola 3.5 · T3.5-1)
+	// ════════════════════════════════════════════════════════════════════════
+	//
+	// Traduce lo que el cliente escribió al CÓDIGO canónico que los step* ya
+	// entienden (preresolutor.go). Si no resuelve con certeza devuelve el input
+	// INTACTO y todo lo de abajo se comporta EXACTAMENTE como antes de esta tarea.
+	//
+	// 🔴 VA AQUÍ, Y EL SITIO ES LA MITAD DE LA TAREA. Todo lo que hay por encima es
+	// LECTURA PURA —clonar Vars, parsear el catálogo, leer page_size, buyer_fields
+	// y el cartState, y reiniciar un contador de reprompt que es idempotente—, así
+	// que este punto se puede volver a pisar sin efectos duplicados. Todo lo que
+	// hay por DEBAJO ya muta: `Started` (que emite cart_started exactamente una
+	// vez) y el contador de inválidos (que a los 3 arma el menú de salida). Si el
+	// pre-resolutor viviera un renglón más abajo, la segunda pasada que T3.5-2
+	// necesita —salir a preguntarle al LLM y volver a entrar— duplicaría el efecto
+	// cart_started o contaría dos inválidos por un solo mensaje del cliente.
+	// …Y LA CONSULTA SALE DEL MISMO PUNTO (T3.5-2, consulta.go). La segunda pasada
+	// que este comentario anticipaba ya existe: si la cascada no resuelve y el
+	// nivel admite consulta, el módulo devuelve AQUÍ MISMO un Result que solo lleva
+	// la petición —sin efectos, sin estado guardado, sin `Started`— y el engine lo
+	// DESCARTA entero antes de volver a llamar con el veredicto sembrado. Por eso
+	// las dos cosas viven en la misma línea del método y por encima de toda
+	// mutación: el orden es el invariante, y lo fija orden_consulta_ast_test.go.
+	input, consulta := m.preresolveOConsulta(cat, st, vars, input)
+	if consulta != nil {
+		// Vars va sin tocar (el clon fiel de la entrada) y el engine lo descarta
+		// igualmente: se devuelve por disciplina, para que este Result sea legítimo
+		// también si algún día alguien llama a Step sin pasar por el engine.
+		return modules.Result{Vars: vars, Consulta: consulta}
 	}
 	var effects []modules.Effect
 	if !st.Started {

@@ -84,6 +84,7 @@ func TestNilSafe(t *testing.T) {
 	var m *Metrics
 	m.RateLimitHit("public")
 	m.Receipt("read")
+	m.CartMatch("ninguno", "categories")
 	h := m.InstrumentHTTP("public", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -273,6 +274,33 @@ func TestFlowEventLifecycle_MismaCausaAcumula(t *testing.T) {
 	}
 }
 
+// --- Cascada determinista del carrito (Plan 044 · Ola 3.5 · T3.5-1) ---------
+
+// TestCartMatch_PublicaEscalonYNivel fija las DOS etiquetas y el hecho de que el
+// contador acumula por serie. Con una sola etiqueta —o con las dos colapsadas— la
+// métrica seguiría publicando un número plausible y perdería justo lo que se le
+// pide: saber si el carrito resuelve por el escalón barato o si el trabajo se está
+// yendo entero al «ninguno», que es el que dice cuánto le queda al turno LLM.
+func TestCartMatch_PublicaEscalonYNivel(t *testing.T) {
+	m := New()
+
+	m.CartMatch("exact", "categories")
+	m.CartMatch("exact", "categories")
+	m.CartMatch("fuzzy", "articles")
+	m.CartMatch("ninguno", "articles")
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`wapp_cart_match_total{escalon="exact",nivel="categories"} 2`,
+		`wapp_cart_match_total{escalon="fuzzy",nivel="articles"} 1`,
+		`wapp_cart_match_total{escalon="ninguno",nivel="articles"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/metrics no expone la serie esperada:\n  %s\n\nCuerpo:\n%s", want, body)
+		}
+	}
+}
+
 // --- Rachas de auto-respuestas (Plan 049 · Opción A) ------------------------
 
 // TestFlowAutoreplyStreak_ObservaEnLosBuckets verifica que el histograma existe,
@@ -343,4 +371,58 @@ func TestFlowAutoreplyStreak_NilSafe(t *testing.T) {
 	var m *Metrics
 	m.FlowAutoreplyStreak(7)
 	m.SetFlowAutoreplyStreakMaxSource(func() int { return 7 })
+}
+
+// --- Caídas a Nivel A de la vía LLM (Plan 044 · Ola 3.5 · T3.5-2) -----------
+
+// TestLLMDegradacion_PublicaOrigenViaYMotivo comprueba las tres etiquetas y, sobre
+// todo, que el ORIGEN separa las series: la fila que responde a D-044.41 —«¿un lote
+// está ahogando los turnos interactivos?»— es {origen="turno"}, y si se mezclara con
+// la del pipeline el número no diría nada.
+func TestLLMDegradacion_PublicaOrigenViaYMotivo(t *testing.T) {
+	m := New()
+
+	m.LLMDegradacion("turno", "local", "timeout")
+	m.LLMDegradacion("turno", "local", "timeout")
+	m.LLMDegradacion("pipeline", "local", "timeout")
+	m.LLMDegradacion("seleccion", "api", "credencial")
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`wapp_llm_degradacion_total{origen="turno",reason="timeout",via="local"} 2`,
+		`wapp_llm_degradacion_total{origen="pipeline",reason="timeout",via="local"} 1`,
+		`wapp_llm_degradacion_total{origen="seleccion",reason="credencial",via="api"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/metrics no expone la serie esperada:\n  %s\n\nCuerpo:\n%s", want, body)
+		}
+	}
+}
+
+// TestLLMDegradacion_NoSeEtiquetaPorTenantNiPorEdge custodia la regla dura del
+// paquete (INV-5) sobre la serie nueva. Es la etiqueta que más se apetece añadir
+// —«¿pero qué cliente es?»— y la que no puede estar: el tenant multiplica la
+// cardinalidad por el número de clientes y acopla /metrics al aislamiento. Para
+// saber a QUIÉN le pasó está owner_degradation_notices, que es una tabla y sí lleva
+// tenant_id.
+func TestLLMDegradacion_NoSeEtiquetaPorTenantNiPorEdge(t *testing.T) {
+	m := New()
+	m.LLMDegradacion("turno", "local", "ollama_down")
+
+	body := scrape(t, m)
+	linea := ""
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, "wapp_llm_degradacion_total{") {
+			linea = l
+			break
+		}
+	}
+	if linea == "" {
+		t.Fatal("no se publicó ninguna serie wapp_llm_degradacion_total")
+	}
+	for _, prohibido := range []string{"tenant_id", "edge_id", "session_id"} {
+		if strings.Contains(linea, prohibido) {
+			t.Errorf("la serie lleva %q: cardinalidad y aislamiento (INV-5). Línea: %s", prohibido, linea)
+		}
+	}
 }

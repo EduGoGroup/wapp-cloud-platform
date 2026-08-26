@@ -49,6 +49,17 @@ type Engine struct {
 	// inyecta otro con WithContentSource, de modo que el engine sigue testeable
 	// sin BD y el observable es idéntico al placeholder inline de T0.
 	content content.Source
+	// consulta resuelve las Consulta que los módulos elevan (Plan 044 · Ola 3.5 ·
+	// T3.5-2, ver consulta.go). Es OPCIONAL y nil por defecto: sin él, un módulo
+	// que pida recibe un veredicto «sin_resolutor» y su segunda pasada produce la
+	// pantalla de siempre. NO se inicializa a un doble en New —a diferencia de
+	// content— porque «no hay a quién preguntar» es un estado que el módulo tiene
+	// que poder distinguir, y un resolutor que siempre dice que no lo escondería.
+	consulta ConsultaResolver
+	// obsConsulta observa el desenlace de cada consulta. También OPCIONAL: el
+	// engine no tiene logger ni conoce prometheus, así que la única forma de que
+	// una degradación no sea indistinguible de un turno normal es este callback.
+	obsConsulta ObservadorConsulta
 }
 
 // Option configura el Engine al construirlo (patrón functional-options, igual
@@ -298,6 +309,18 @@ func (e *Engine) Step(ctx context.Context, def model.Flow, st model.Conversation
 		st.Vars[modules.VarContentRaw] = resolved.Raw
 	}
 	res := mod.Step(node, st, in.Text)
+	// RE-ENTRY (Plan 044 · Ola 3.5 · T3.5-2, ver consulta.go). El módulo es PURO y
+	// no puede preguntarle nada a nadie; si su camino determinista no resolvió,
+	// PIDE en un campo aditivo del Result y termina su turno sin mutar nada. Aquí
+	// —que es donde hay ctx— se resuelve la consulta y se le vuelve a llamar UNA
+	// vez con el veredicto sembrado en Vars. El Result de la primera pasada se
+	// descarta ENTERO, efectos incluidos.
+	//
+	// Sin consulta (el 100 % de los turnos hasta esta tarea, y el 99 % después) esta
+	// rama no existe: res sigue siendo el de la única pasada.
+	if res.Consulta != nil {
+		res = e.reentrarConVeredicto(ctx, mod, node, st, in.Text, *res.Consulta)
+	}
 	st.Vars = res.Vars
 	if res.Next != nil {
 		if *res.Next == model.NodeTerminal {
