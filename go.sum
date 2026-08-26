@@ -30,6 +30,8 @@ github.com/EduGoGroup/wapp-shared/llm v0.4.5 h1:07D330DidsQDtoHrV6z/yveSbDmzXSGY
 github.com/EduGoGroup/wapp-shared/llm v0.4.5/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
 github.com/EduGoGroup/wapp-shared/logger v0.2.0 h1:5GWxS+fyWqnCrjedsm0t6a368uo59Xl7Om1/OBoJyfU=
 github.com/EduGoGroup/wapp-shared/logger v0.2.0/go.mod h1:jZ8GH59HUREHIEJv21jNpCdLm1P2NthGqTN/s8SrZTg=
+github.com/EduGoGroup/wapp-shared/textmatch v0.1.0 h1:qBbZgXzWxFLCw5qJaicekAUUHVVPD7ZQa9UhIc1PKVY=
+github.com/EduGoGroup/wapp-shared/textmatch v0.1.0/go.mod h1:up+NeTHfYkcwjJB6GDvs+H31I8GDx4JPt/0uHFhz9zA=
 github.com/aws/aws-sdk-go-v2 v1.41.5 h1:dj5kopbwUsVUVFgO4Fi5BIT3t4WyqIDjGKCangnV/yY=
 github.com/aws/aws-sdk-go-v2 v1.41.5/go.mod h1:mwsPRE8ceUUpiTgF7QmQIJ7lgsKUPQOUl3o72QBrE1o=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 h1:eBMB84YGghSocM7PsjmmPffTa+1FBUeNvGvFou6V/4o=

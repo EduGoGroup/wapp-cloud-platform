@@ -594,15 +594,21 @@ func stepItemNote(cat Catalog, st cartState, in string) (cartState, []string, []
 	splitFrom := 0
 	lines := cloneLines(st.Lines)
 	if st.NoteSplit && line.Qty > 1 {
-		// La línea ×N se sustituye por ×(N-1) sin indicación y ×1 con ella, EN ESE
-		// ORDEN: la comentada queda la última, que es la que el siguiente "3" volvería
-		// a tomar. Mismo sku, mismo label, mismo unit_price y misma suma de qty: es
-		// una re-agrupación, no una edición del pedido, y el total no se mueve (INV-16).
+		// La línea ×N se sustituye por ×(N-1) —que CONSERVA la indicación que ya
+		// tuviera— y ×1 con la nueva, EN ESE ORDEN: la comentada queda la última, que
+		// es la que el siguiente "3" volvería a tomar. Mismo sku, mismo label, mismo
+		// unit_price y misma suma de qty: es una re-agrupación, no una edición del
+		// pedido, y el total no se mueve (INV-16).
+		//
+		// Que el resto herede la indicación es la decisión de producto D-044.18 (cierra
+		// A4/MD-041.12 del 041): quien pidió «con cebolla» para las dos y luego «sin
+		// sal» para una NO se queda sin cebolla en la otra. Partir re-agrupa unidades;
+		// no borra lo que el cliente ya había pedido. Por eso `rest` copia la línea
+		// entera —Customization incluida— y solo baja la cantidad.
 		scope = scopeItemSplit
 		splitFrom = line.Qty
 		rest := line
 		rest.Qty = line.Qty - 1
-		rest.Customization = ""
 		commented := line
 		commented.Qty = 1
 		commented.Customization = note
