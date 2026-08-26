@@ -78,6 +78,12 @@ const (
 	DesenlaceSinResolutor = "sin_resolutor"
 	// DesenlaceFallo dice que el resolutor devolvió error (timeout, red, modelo caído).
 	DesenlaceFallo = "fallo"
+	// DesenlaceParcial dice que una consulta CON TROZOS (T3.5-3) resolvió algunos y
+	// no todos: se acabó el tope de llamadas, se agotó el presupuesto del turno o el
+	// modelo no supo con alguno. NO es un fallo y NO es un no-concluyente — el módulo
+	// recibe trabajo aplicable— y por eso tiene su propio valor: mezclarlo con
+	// `resuelto` escondería justo el número que dice si el tope está bien puesto.
+	DesenlaceParcial = "parcial"
 	// DesenlaceBucle dice que la SEGUNDA pasada volvió a pedir consulta. El engine no
 	// obedece. Ver reentrarConVeredicto.
 	DesenlaceBucle = "bucle"
@@ -167,7 +173,7 @@ func (e *Engine) resolverConsulta(ctx context.Context, tenantID, sessionID strin
 		e.observaConsulta(c, DesenlaceFallo)
 		return modules.Veredicto{Motivo: modules.MotivoFallo}
 	}
-	if !v.Resuelto() {
+	if !v.ResueltoAlguno() {
 		e.observaConsulta(c, DesenlaceNoConcluyente)
 		// Se respeta el motivo que declare el resolutor y solo se rellena el que
 		// falte: «no supe» es una respuesta legítima y el módulo puede querer
@@ -177,7 +183,7 @@ func (e *Engine) resolverConsulta(ctx context.Context, tenantID, sessionID strin
 		}
 		return v
 	}
-	e.observaConsulta(c, DesenlaceResuelto)
+	e.observaConsulta(c, desenlaceDe(c, v))
 	// El Codigo llega SIN validar contra Consulta.Opciones: valida el MÓDULO, que
 	// es el dueño de su catálogo y el único que sabe qué es admisible en su nivel.
 	// El engine no interpreta el dominio ni aquí ni en ningún otro sitio.
@@ -193,4 +199,20 @@ func (e *Engine) observaConsulta(c modules.Consulta, desenlace string) {
 		return
 	}
 	e.obsConsulta(string(c.Clase), c.Nivel, desenlace)
+}
+
+// desenlaceDe distingue el troceado COMPLETO del PARCIAL. Para una consulta de un
+// solo texto siempre es `resuelto`, que es lo que era antes de T3.5-3.
+//
+// Se mide contra los TROZOS QUE SE PIDIERON y no contra los que se contestaron: un
+// veredicto que trae menos códigos que trozos —porque el resolutor cortó por tope o
+// por presupuesto— es exactamente el caso que hay que poder ver, y compararlo consigo
+// mismo lo dejaría siempre en verde.
+func desenlaceDe(c modules.Consulta, v modules.Veredicto) string {
+	for i := range c.Trozos {
+		if i >= len(v.Codigos) || v.Codigos[i] == "" {
+			return DesenlaceParcial
+		}
+	}
+	return DesenlaceResuelto
 }

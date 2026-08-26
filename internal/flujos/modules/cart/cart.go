@@ -248,6 +248,23 @@ func (m Module) Step(_ model.Node, conv model.Conversation, input string) module
 	// DESCARTA entero antes de volver a llamar con el veredicto sembrado. Por eso
 	// las dos cosas viven en la misma línea del método y por encima de toda
 	// mutación: el orden es el invariante, y lo fija orden_consulta_ast_test.go.
+	// ════════════════════════════════════════════════════════════════════════
+	// EL TROCEADO (Plan 044 · Ola 3.5 · T3.5-3), Y VA ANTES QUE EL PRE-RESOLUTOR
+	// ════════════════════════════════════════════════════════════════════════
+	//
+	// Un turno con VARIOS productos («quiero 2 pizzas y una hamburguesa») no es una
+	// elección de opción: es un pedido entero. Si lo mirara primero el pre-resolutor,
+	// casaría UN producto y se tragaría el resto del mensaje sin dejar rastro — que
+	// es exactamente la pérdida medida en campo el 2026-08-17 (troceo.go).
+	//
+	// Se aparta solo: fuera del nivel de categorías, o con menos de dos peticiones
+	// dentro del turno, devuelve ok=false y todo lo de abajo corre byte a byte como
+	// el día antes de esta tarea. Y vive aquí arriba por el mismo motivo que la
+	// consulta: su primera pasada también puede devolver una PETICIÓN que el engine
+	// descarta entera.
+	if res, ok := m.troceado(cat, st, vars, input); ok {
+		return res
+	}
 	input, consulta := m.preresolveOConsulta(cat, st, vars, input)
 	if consulta != nil {
 		// Vars va sin tocar (el clon fiel de la entrada) y el engine lo descarta

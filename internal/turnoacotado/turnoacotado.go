@@ -120,6 +120,13 @@ func (r *Resolver) ResolverConsulta(ctx context.Context, tenantID, sessionID str
 		return modules.Veredicto{}, ErrClaseDesconocida
 	}
 
+	if len(c.Trozos) > 0 {
+		// La consulta viene YA TROCEADA por el módulo (T3.5-3): una llamada chica por
+		// trozo, con tope y presupuesto propios. Es la MISMA pregunta de elección de
+		// abajo repetida N veces, no otro camino — ver troceado.go.
+		return r.resolverTrozos(ctx, tenantID, sessionID, c)
+	}
+
 	texto, esquema := prompt(c)
 	raw, err := r.turnero.Turno(ctx, tenantID, sessionID, llmvia.TurnoRequest{Prompt: texto, Formato: esquema})
 	if err != nil {
