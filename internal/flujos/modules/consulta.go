@@ -107,6 +107,25 @@ type Consulta struct {
 	Nivel    string
 	Texto    string
 	Opciones []OpcionConsulta
+	// Trozos son los TROZOS del turno que el módulo ya descompuso y que su camino
+	// determinista no supo resolver, en el orden en que el cliente los escribió
+	// (Plan 044 · Ola 3.5 · T3.5-3). Vacío —el caso normal— significa «esta consulta
+	// es sobre UN solo texto, el de Texto», y entonces todo se comporta exactamente
+	// como antes de esta tarea: el campo es ADITIVO, igual que lo fue Result.Consulta.
+	//
+	// 🔴 LLEVA TEXTO DEL CLIENTE, y por eso está AQUÍ y no en el Veredicto. Un trozo
+	// es literalmente una rebanada de Texto: mismo dato, misma procedencia y por
+	// tanto el MISMO lado del reparto asimétrico de este fichero — el lado que viaja
+	// en Result y que el engine descarta entero tras la primera pasada. Lo que vuelve
+	// (Veredicto.Codigos) son códigos del catálogo cerrado y nada más.
+	//
+	// El resolutor hace UNA llamada CHICA POR TROZO y jamás una llamada monstruo con
+	// los N dentro: es la forma medida de la Ola 2 («Go descompone → LLM decide
+	// chiquito → Go recompone»), y la razón de que sea así está medida en campo —un
+	// turno con cuatro productos mandado de una sentada devolvió UNO y perdió tres
+	// (journal 2026-08-17 §13.3)—. Quien acota cuántas de esas llamadas caben en un
+	// turno es el resolutor, no este contrato (turnoacotado.MaxLlamadasPorTurno).
+	Trozos []string
 }
 
 // MotivoConsulta explica por qué un Veredicto NO trae código. Enum CERRADO: es
@@ -141,10 +160,44 @@ const (
 type Veredicto struct {
 	Codigo string
 	Motivo MotivoConsulta
+	// Codigos es la respuesta a una consulta CON TROZOS: un código por trozo,
+	// ALINEADO POR POSICIÓN con Consulta.Trozos (Plan 044 · Ola 3.5 · T3.5-3). La
+	// cadena vacía en la posición i es «este trozo no se resolvió», y es un desenlace
+	// normal: el trozo se quedó sin llamada por el tope, se agotó el presupuesto del
+	// turno, o el modelo no supo.
+	//
+	// 🔴 ALINEADO POR POSICIÓN Y NO UN MAPA texto→código, que es lo que la privacidad
+	// de este contrato prohíbe: un mapa tendría el trozo del cliente COMO CLAVE, o
+	// sea el texto de la persona metido justo en el lado que SÍ se siembra en Vars y
+	// que acaba en claro en el JSONB de flow_state. Con posiciones no hay dónde meter
+	// una palabra suya ni por descuido.
+	//
+	// Vacío ⇒ consulta de un solo texto; se lee Codigo y nada cambia.
+	Codigos []string
 }
 
-// Resuelto informa si el veredicto trae una respuesta que aplicar.
+// Resuelto informa si el veredicto trae una respuesta de UN SOLO código que aplicar.
+// No mira Codigos a propósito: quien pregunta por trozos pregunta con ResueltoAlguno.
 func (v Veredicto) Resuelto() bool { return v.Codigo != "" }
+
+// ResueltoAlguno informa si el veredicto trae ALGO aplicable, sea el código único o
+// al menos uno de los códigos por trozo.
+//
+// Existe porque un troceado PARCIAL —dos productos resueltos de tres— no es «no
+// resuelto»: es exactamente el desenlace que el tope y el presupuesto del turno
+// producen a propósito, y tratarlo como un cero tiraría trabajo que ya se pagó con
+// la plaza única del Edge.
+func (v Veredicto) ResueltoAlguno() bool {
+	if v.Resuelto() {
+		return true
+	}
+	for _, c := range v.Codigos {
+		if c != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // VeredictoDe lee el veredicto sembrado por el engine. El segundo valor distingue
 // «no hay veredicto» (primera pasada) de «hay veredicto y no resolvió» (segunda
