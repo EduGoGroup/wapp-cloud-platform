@@ -276,8 +276,15 @@ type Frame interface {
 type Provider struct {
 	frame    Frame
 	tenantID string
-	format   string
-	timeout  time.Duration
+	// plantillas son los textos de prompt AJUSTADOS que este proveedor debe usar,
+	// por etapa. Un mapa vacío o una etapa ausente significan «usa el compilado»,
+	// que es el caso normal: quien decide si hay ajuste es el arranque, no aquí.
+	//
+	// Se guarda el mapa y no una copia por etapa porque las cuatro entradas viven y
+	// mueren juntas: vienen de una sola carga de disco y no se tocan en caliente.
+	plantillas map[llm.Etapa]llm.Plantilla
+	format     string
+	timeout    time.Duration
 	// origin es la sesión de WhatsApp cuya conversación originó la pregunta, cuando
 	// se conoce. Viaja al frame como trazabilidad y, si está viva, es además el
 	// stream por el que sale. Vacía es un estado legítimo: la inferencia es de
@@ -370,6 +377,29 @@ func New(frame Frame, tenantID string, opts ...Option) (*Provider, error) {
 	return p, nil
 }
 
+// ConPlantillas inyecta los prompts ajustados que cargó el arranque. Sin ella, el
+// proveedor usa los compilados en el módulo llm.
+//
+// Es la ÚNICA puerta por la que entra un prompt de fuera, y entra ya validado: el
+// cargador (internal/prompts) pasa cada plantilla por llm.ValidarPlantilla antes
+// de que el proceso llegue aquí. Este paquete no revalida ni tiene con qué —no
+// sabe de ficheros ni de arranque—, así que un cambio que se salte al cargador se
+// salta también la red.
+func ConPlantillas(p map[llm.Etapa]llm.Plantilla) Option {
+	return func(pr *Provider) { pr.plantillas = p }
+}
+
+// plantillaDe devuelve la plantilla ajustada de una etapa y si la hay. El caso sin
+// ajuste es el normal, así que no se loguea ni se cuenta: lo que merece una línea
+// de log es lo que SÍ se cargó, y eso lo dice el arranque una vez.
+func (p *Provider) plantillaDe(e llm.Etapa) (llm.Plantilla, bool) {
+	if p.plantillas == nil {
+		return llm.Plantilla{}, false
+	}
+	pl, ok := p.plantillas[e]
+	return pl, ok
+}
+
 // ClassifyRequest es la etapa P1: elige UNA intención del catálogo del tenant.
 func (p *Provider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestInput, opts llm.Options) (json.RawMessage, error) {
 	return p.run(ctx, etapaP1, llm.BuildClassifyRequestPrompt(in), opts)
@@ -377,22 +407,62 @@ func (p *Provider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestIn
 
 // ExtractMainIdeas es la etapa P2: las ideas principales del hilo.
 func (p *Provider) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeasInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, etapaP2, llm.BuildExtractMainIdeasPrompt(in), opts)
+	return p.run(ctx, etapaP2, p.promptDeExtractMainIdeas(in), opts)
+}
+
+// promptDeExtractMainIdeas arma el prompt de la etapa con la plantilla ajustada si la hay, y
+// con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí solo
+// se elige el texto.
+func (p *Provider) promptDeExtractMainIdeas(in llm.ExtractMainIdeasInput) string {
+	if pl, ok := p.plantillaDe(llm.EtapaP2); ok {
+		return llm.BuildExtractMainIdeasPromptCon(pl, in)
+	}
+	return llm.BuildExtractMainIdeasPrompt(in)
 }
 
 // ExtractItemSpecs es la etapa P3: especifica UN ítem por llamada.
 func (p *Provider) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecsInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, etapaP3, llm.BuildExtractItemSpecsPrompt(in), opts)
+	return p.run(ctx, etapaP3, p.promptDeExtractItemSpecs(in), opts)
+}
+
+// promptDeExtractItemSpecs arma el prompt de la etapa con la plantilla ajustada si la hay, y
+// con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí solo
+// se elige el texto.
+func (p *Provider) promptDeExtractItemSpecs(in llm.ExtractItemSpecsInput) string {
+	if pl, ok := p.plantillaDe(llm.EtapaP3); ok {
+		return llm.BuildExtractItemSpecsPromptCon(pl, in)
+	}
+	return llm.BuildExtractItemSpecsPrompt(in)
 }
 
 // NormalizeQuantities es la etapa P4: cantidades, paquetes, rangos y fecha.
 func (p *Provider) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuantitiesInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, etapaP4, llm.BuildNormalizeQuantitiesPrompt(in), opts)
+	return p.run(ctx, etapaP4, p.promptDeNormalizeQuantities(in), opts)
+}
+
+// promptDeNormalizeQuantities arma el prompt de la etapa con la plantilla ajustada si la hay, y
+// con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí solo
+// se elige el texto.
+func (p *Provider) promptDeNormalizeQuantities(in llm.NormalizeQuantitiesInput) string {
+	if pl, ok := p.plantillaDe(llm.EtapaP4); ok {
+		return llm.BuildNormalizeQuantitiesPromptCon(pl, in)
+	}
+	return llm.BuildNormalizeQuantitiesPrompt(in)
 }
 
 // GenerateQuoteText redacta la cotización con la voz del negocio.
 func (p *Provider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTextInput, opts llm.Options) (json.RawMessage, error) {
-	return p.run(ctx, etapaP5, llm.BuildGenerateQuoteTextPrompt(in), opts)
+	return p.run(ctx, etapaP5, p.promptDeGenerateQuoteText(in), opts)
+}
+
+// promptDeGenerateQuoteText arma el prompt de la etapa con la plantilla ajustada si la hay, y
+// con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí solo
+// se elige el texto.
+func (p *Provider) promptDeGenerateQuoteText(in llm.GenerateQuoteTextInput) string {
+	if pl, ok := p.plantillaDe(llm.EtapaP5); ok {
+		return llm.BuildGenerateQuoteTextPromptCon(pl, in)
+	}
+	return llm.BuildGenerateQuoteTextPrompt(in)
 }
 
 // run es el camino común de las cinco tareas: mandar el prompt por el cable y aislar
