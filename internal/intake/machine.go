@@ -237,9 +237,16 @@ type PipelineStore interface {
 	// vale (una reanudación puede volver a producirla), retroceder no.
 	SaveStage(ctx context.Context, jobID string, a Artifact) (bool, error)
 	// Release devuelve un job `processing` a `pending` sin tocar nada más. Es la
-	// ARISTA DE VUELTA que hace posible la reanudación: el proveedor caído deja el
-	// job en la cola, con sus artefactos y su sobre intactos, para el siguiente
-	// intento (T2.5).
+	// ARISTA DE VUELTA que hace posible la reanudación: deja el job en la cola con
+	// sus artefactos y su sobre intactos.
+	//
+	// 🔴 CORREGIDO POR T2.5: esta frase decía «para el siguiente intento (T2.5)», y
+	// era FALSA. Release NO castiga: no toca `next_attempt_at`, así que el job es
+	// reclamable EN EL ACTO y el worker lo vuelve a tomar, a fallar y a soltar a la
+	// velocidad del error — la tormenta que describe la cabecera de la 0078. Se
+	// descubrió ejecutando la mutación, que CUELGA el proceso.
+	// Quien reintenta es Retry, que empuja la marca. Release es para soltar un job
+	// SIN castigo (apagado ordenado), no para reintentar.
 	//
 	// 🔴 NO vacía el sobre. Solo los terminales lo hacen (INV-13); un Release que
 	// borrara el literal dejaría el job vivo y sin con qué continuar.
