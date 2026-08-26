@@ -645,18 +645,32 @@ func esperarClaims(t *testing.T, b *banco, n int) {
 //
 // 🔬 MUTACIÓN EJECUTADA: en `espera`, quitar el `min(..., tope)`. RESULTADO: rojo en el
 // tope. Segunda mutación: devolver `d` sin jitter ⇒ rojo en la dispersión.
+//
+// 🔧 CORREGIDO EL 2026-08-25 (desde T2.6): la primera propiedad era **FLAKY, 9 de cada
+// 60 corridas** — medido, no supuesto. El comentario decía «se comparan las COTAS del
+// jitter (±20 %) y no dos muestras sueltas, que podrían cruzarse por azar» y eso era
+// FALSO: se tomaba UNA muestra de cada intento —ya jitteada— y encima se le volvía a
+// aplicar el ±20 %, con lo que el margen se consumía dos veces. Con `base = 30 s`, una
+// muestra alta del intento 1 (35,97 s ⇒ ×1,2 = 43,2 s) superaba a una baja del intento 2
+// (48 s ⇒ ×0,8 = 38,4 s) y el test se ponía rojo sin que nadie hubiera tocado la curva.
+//
+// Lo que ahora se compara SÍ son cotas, y salen de MUESTREAR: el máximo observado del
+// intento N contra el mínimo observado del N+1. Con el jitter acotado a [0,8; 1,2) y
+// `d(N+1) = 2·d(N)`, el máximo del bajo tiende a 1,2·d y el mínimo del alto a 1,6·d, así
+// que el verde es holgado; y si la curva dejara de crecer, las dos cotas saldrían del
+// MISMO d (1,2·d contra 0,8·d) y el rojo es igual de fiable. Ninguna de las dos
+// direcciones depende ya del azar.
 func TestEspera_LaCurvaCreceSeTopaYLLEVAJITTER(t *testing.T) {
 	const base = 30 * time.Second
 	const tope = 5 * time.Minute
 
-	// Crece: el intento N+1 castiga más que el N mientras no se llegue al tope. Se
-	// comparan las COTAS del jitter (±20 %) y no dos muestras sueltas, que podrían
-	// cruzarse por azar.
+	// Crece: el intento N+1 castiga más que el N mientras no se llegue al tope.
 	for intento := 1; intento <= 3; intento++ {
-		bajo := espera(intento, base, tope)
-		alto := espera(intento+1, base, tope)
-		if float64(bajo)*1.2 >= float64(alto)*0.8*1.0001 {
-			t.Fatalf("la curva no crece del intento %d al %d: %s vs %s", intento, intento+1, bajo, alto)
+		_, techoDelBajo := cotasDeEspera(intento, base, tope)
+		sueloDelAlto, _ := cotasDeEspera(intento+1, base, tope)
+		if techoDelBajo >= sueloDelAlto {
+			t.Fatalf("la curva no crece del intento %d al %d: el techo del %d (%s) alcanza al suelo del %d (%s)",
+				intento, intento+1, intento, techoDelBajo, intento+1, sueloDelAlto)
 		}
 	}
 
@@ -676,6 +690,19 @@ func TestEspera_LaCurvaCreceSeTopaYLLEVAJITTER(t *testing.T) {
 	if len(vistos) < 5 {
 		t.Fatalf("el jitter no está dispersando nada: 40 muestras dieron %d valores distintos", len(vistos))
 	}
+}
+
+// cotasDeEspera muestrea la curva de UN intento y devuelve el mínimo y el máximo vistos.
+// Es lo que convierte una comparación entre dos tiradas de dado en una comparación entre
+// cotas: 64 muestras bastan porque el jitter es uniforme en [0,8; 1,2) y el margen que
+// hay que distinguir es un factor 2.
+func cotasDeEspera(intento int, base, tope time.Duration) (suelo, techo time.Duration) {
+	suelo, techo = espera(intento, base, tope), time.Duration(0)
+	for i := 0; i < 64; i++ {
+		d := espera(intento, base, tope)
+		suelo, techo = min(suelo, d), max(techo, d)
+	}
+	return suelo, techo
 }
 
 // TestCausaDe_LaCalidadVAPRIMERO custodia el orden de las ramas, que es lo único que

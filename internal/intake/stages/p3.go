@@ -64,6 +64,17 @@ import (
 // Motivos por los que un ítem queda AISLADO: no se pudo especificar, pero no se pierde.
 // Son el vocabulario cerrado del campo `reason` de ItemAislado y los lee la bandeja del
 // dueño (Ola 3), así que se exportan.
+//
+// 🔴 LOS TRES ESTÁN AQUÍ JUNTOS A PROPÓSITO, aunque el tercero lo produzca `tope.go`:
+// son UN vocabulario, y el lector de `ItemAislado.Reason` tiene que poder verlo entero
+// de una vez. Repartirlo por el fichero que produce cada valor es cómo dos mitades del
+// mismo enum acaban divergiendo.
+//
+// ⚠️ LOS TRES PIDEN COSAS DISTINTAS AL DUEÑO, y por eso son tres y no uno: `quality` y
+// `evidence` le dicen «el modelo se portó mal con este ítem» —y si se repiten, que mire
+// su Ollama—; `over_limit` le dice «este ítem ni se preguntó: el pedido no cabía», que
+// no es un fallo de nadie y se resuelve hablando con el cliente. Un motivo único los
+// mandaría a diagnosticar la máquina en la mitad de los casos.
 const (
 	// MotivoCalidad es «el modelo contestó dos veces algo ilegible» (REQ-03: una
 	// llamada más un reintento a temperatura 0.3).
@@ -71,6 +82,11 @@ const (
 	// MotivoEvidencia es «el modelo contestó algo bien formado pero cuya frase de
 	// respaldo NO aparece en el texto del cliente»: se lo inventó.
 	MotivoEvidencia = "evidence"
+	// MotivoTope es «el pedido traía más ítems que MaxItemsPorPedido y a éste no se
+	// le llegó a preguntar» (T2.6, ADR-0046 § Mecanismo 1). NO es un fallo: es la
+	// admisión acotada, y el ítem queda visible para que el dueño lo atienda. El
+	// porqué entero, en `tope.go`.
+	MotivoTope = "over_limit"
 )
 
 // ErrSinIdeas no existe, y su ausencia es deliberada: un P2 que dejó CERO ideas vivas
@@ -131,12 +147,16 @@ type ArtefactoP3 struct {
 // # ESTO ES EL FAN-OUT, Y ES LO QUE LA ETAPA ESTRENA
 //
 // Hasta aquí el pipeline era una llamada por etapa. P3 es N llamadas, y cada una son
-// **22–32 s de la plaza única** del Edge. De ahí salen tres cosas que NO son de esta
-// tarea y que no hay que colar aquí:
+// **22–32 s de la plaza única** del Edge. De ahí salen tres cosas, y a día de hoy dos
+// están puestas y una no:
 //
-//   - **el tope de ítems** (T2.6, 10 por D-044.39): hoy el fan-out NO tiene techo;
-//   - **el aforo `K = 1` por Edge/plaza** (T2.7);
-//   - **el plazo por llamada**: ver el bloque de arriba. Hueco señalado.
+//   - ✅ **el tope de ítems** (T2.6, 10 por D-044.39): el fan-out YA tiene techo, y lo
+//     aplica `acotarAlTope` a la entrada de Run, antes de gastar una sola llamada. Los
+//     ítems por encima NO se descartan: quedan marcados con `MotivoTope`. Ver `tope.go`;
+//   - 🔴 **el aforo `K = 1` por Edge/plaza** (T2.7): SIGUE SIN HACERSE. Hoy dos cadenas
+//     de lote del mismo Edge pueden solaparse;
+//   - **el plazo por llamada**: lo cierra T2.5 con `ConPlazoPorLlamada`; lo que queda
+//     abierto es el número (`p99(P3)` sin medir). Ver el bloque de arriba.
 //
 // # P3 PROPONE, EL MATCH DECIDE (D-044.14)
 //
@@ -218,24 +238,39 @@ func NewP3(log logger.Logger, sel ProviderSelector, store StageStore, opts ...Op
 // artefacto vacío, SIN llamar al modelo. Es design §3.2 al pie de la letra («cero
 // resultados válidos tampoco es fatal») y además no gasta la plaza en un prompt en el
 // que lo único concreto sería lo que listamos nosotros (D-044.24).
+//
+// # Y MÁS DE `MaxItemsPorPedido` TAMPOCO ES UN FALLO (T2.6)
+//
+// El corte lo hace `acotarAlTope` AQUÍ, antes de que `fanOut` pida siquiera el
+// provider: es el único punto donde ya se sabe cuántos ítems hay y todavía no se ha
+// gastado ni una llamada. Los ítems por encima del tope quedan aislados con
+// `MotivoTope` —presentes y visibles, nunca descartados— y el job sigue hasta `done`.
+// El porqué del número, del sitio y de la política, en `tope.go`.
 func (s *P3) Run(ctx context.Context, job intake.ClaimedJob, literal string, ideas []llm.Want) (*ArtefactoP3, error) {
 	if literal == "" {
 		return nil, ErrSinLiteral
 	}
 
-	art := &ArtefactoP3{Version: llm.ArtifactVersion, Items: make([]llm.ItemSpec, 0, len(ideas))}
-	if len(ideas) > 0 {
-		if err := s.fanOut(ctx, job, literal, ideas, art); err != nil {
+	atendidas, sobrantes := acotarAlTope(ideas)
+
+	art := &ArtefactoP3{Version: llm.ArtifactVersion, Items: make([]llm.ItemSpec, 0, len(atendidas))}
+	if len(atendidas) > 0 {
+		if err := s.fanOut(ctx, job, literal, atendidas, art); err != nil {
 			return nil, err
 		}
 	}
+	s.marcarSobreTope(art, len(atendidas), sobrantes, job.ID)
 
 	if err := s.persistir(ctx, job.ID, art); err != nil {
 		return nil, err
 	}
+	// 🔴 `items_sobre_tope` va APARTE de `items_aislados` y no sumado dentro: los dos
+	// estados que caben en «aislado» piden cosas OPUESTAS al dueño —mirar su Ollama, o
+	// hablar con el cliente—, y un solo número mentiría en la mitad de los casos.
 	s.log.Info("p3: especificaciones por ítem extraídas y persistidas",
 		"job_id", job.ID, "stage", intake.StageP3,
-		"ideas", len(ideas), "items", len(art.Items), "items_aislados", len(art.Isolated))
+		"ideas", len(ideas), "items", len(art.Items),
+		"items_aislados", len(art.Isolated), "items_sobre_tope", sobrantes)
 	return art, nil
 }
 

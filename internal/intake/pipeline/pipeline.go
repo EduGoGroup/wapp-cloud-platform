@@ -18,9 +18,13 @@
 //
 //   - NO es un planificador ni una cola con prioridades: el ADR-0046 los descarta por
 //     escrito. Reclama de uno en uno, en el orden que fija el `ORDER BY` del claim.
-//   - NO tiene tope de ítems (T2.6) ni aforo por Edge (T2.7). Hoy un pedido de 40
-//     ítems ocupa la plaza durante minutos, y eso sigue siendo verdad después de esta
-//     tarea. Las dos son tareas hermanas y están sin hacer.
+//   - NO tiene aforo por Edge (T2.7): dos cadenas de lote del MISMO Edge pueden
+//     solaparse hoy y hambrear igual a los turnos interactivos. Sigue sin hacerse.
+//     🔄 El tope de ítems (T2.6) SÍ está puesto desde el 2026-08-25, y no aquí: lo
+//     aplica `stages.acotarAlTope` a la entrada de P3, que es donde se gasta la plaza
+//     (ver `stages/tope.go`). Un pedido de 40 ítems ya no hace 40 llamadas: hace 10 y
+//     deja las otras 30 MARCADAS. Lo que sigue siendo verdad es la cuenta de tiempo:
+//     esos 10 ítems son 320–410 s, por encima de «< 5 min».
 //   - NO crea el borrador: `match` y `draft` son de la Ola 3. Hoy la cadena acaba en
 //     P4 y el job pasa a `done` sin `intake_id` (ver terminar).
 //   - NO escribe el aviso de degradación al dueño (REQ-38). Ya lo escribe el decorador
@@ -647,9 +651,12 @@ func (w *Worker) terminar(ctx context.Context, job intake.ClaimedJob) {
 // ⚠️ LO QUE ESTO NO CUBRE, DICHO CLARO: un SIGKILL o una caída dura del proceso sí deja
 // el job en `processing` sin rescate. `intake_jobs` no tiene el `claimed_at` que
 // `webhook_outbox` usa para recuperar huérfanos (0049) y añadirlo es una migración con
-// una decisión dentro —cuánto puede durar legítimamente un `processing`, que depende
-// del tope de ítems (T2.6) y del aforo (T2.7), ninguno de los dos construido—. Queda
-// fuera de T2.5 A PROPÓSITO y escrito aquí para que no se descubra en campo.
+// una decisión dentro —cuánto puede durar legítimamente un `processing`—. 🔄 Esa
+// decisión YA NO ES INCALCULABLE por la mitad de T2.6: con el tope en 10 ítems y
+// `PlazoPorLlamadaSuelo` en 48 s, la cadena entera tiene un techo aritmético (P2 + 10 ×
+// 48 s + P4 ≈ 9 min de peor caso). Lo que sigue faltando es el aforo (T2.7): sin él, N
+// cadenas del mismo Edge se estorban y ese techo se multiplica por N. Queda fuera de
+// T2.5 A PROPÓSITO y escrito aquí para que no se descubra en campo.
 func (w *Worker) cierre(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), plazoDeCierre)
 }

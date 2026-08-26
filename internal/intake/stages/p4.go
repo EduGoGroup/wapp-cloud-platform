@@ -120,7 +120,9 @@ const basisPrefijo = "message_ts="
 //
 // # LO QUE NO ES DE ESTA ETAPA
 //
-//   - el tope de ítems (T2.6) y el aforo `K = 1` por Edge (T2.7);
+//   - el tope de ítems (T2.6) y el aforo `K = 1` por Edge (T2.7). 🔄 El tope YA EXISTE
+//     desde el 2026-08-25 y vive en P3 (`stages/tope.go`), que es quien hace el
+//     fan-out; P4 recibe la lista YA acotada. El aforo sigue sin construirse;
 //   - el bucle del worker, el backoff y la política de reintentos DEL JOB (T2.5): aquí
 //     se hace UNA llamada y el error sale hacia arriba con su familia intacta, como en
 //     P2. No hay reintento por ítem (eso es de P3, que hace N llamadas): P4 hace una

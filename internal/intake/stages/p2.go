@@ -19,7 +19,9 @@
 //     luego aislamiento). P2 hace una llamada por job, así que reintentar el job no
 //     cuesta nada; P3 hace N, y reintentar el job por un ítem envenenado tiraría las
 //     22–32 s que costó cada uno de los otros N−1;
-//   - **el tope de ítems** (T2.6) y **el aforo `K = 1` por Edge** (T2.7);
+//   - **el tope de ítems** (T2.6) y **el aforo `K = 1` por Edge** (T2.7). 🔄 El tope
+//     YA EXISTE desde el 2026-08-25, pero no aquí: vive en P3 (`stages/tope.go`), que
+//     es quien hace el fan-out. P2 hace UNA llamada por job y no hay nada que topar;
 //   - **el descifrado del sobre del literal**: la etapa recibe el texto EN CLARO y no
 //     conoce el `FieldCipher`. Quien descifra —y quien decide qué hacer con un job
 //     cuyo sobre viene vacío— es el worker, tal como dice `intake.ClaimedJob`.
