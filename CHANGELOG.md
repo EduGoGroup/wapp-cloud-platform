@@ -7,7 +7,19 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ### Fixed
 
-- **`llm` sube a `v0.4.2`: P4 ya dice qué vale `qty` cuando la cantidad ES un rango.**
+- **`llm` sube a `v0.4.4`: un `qty` ausente CON rango vale 1, y deja de perderse el
+  artefacto entero.** El prompt (v0.4.2) no bastó: ante «entre 10 y 12 kilos», `gemma4:e2b`
+  emitía el ítem con su `range` correcto y **sin clave `qty`** —coherente con el contrato que
+  él lee—, y como `Qty` es un `int`, la ausencia se leía como 0 y `validarNormalizedItem` la
+  rechazaba. Los TRES ítems se perdían por esa clave (parseo todo-o-nada, DEUDA-044.16), y
+  los otros dos eran impecables.
+  - 🔴 **La decisión de `TestP4_CantidadOmitida_EsUnoYNuncaCero` sigue intacta**: sin `range`,
+    una `qty` ausente se sigue rechazando y no se persiste nada. El `v0.4.3` la atropelló con
+    un default incondicional, ese test se puso rojo al subir la dependencia —que es su
+    función— y el `v0.4.4` estrechó el default al único caso donde el «cuánto» está
+    demostrablemente en otro campo.
+
+- **`llm` v0.4.2: P4 ya dice qué vale `qty` cuando la cantidad ES un rango.**
   Las reglas del prompt enunciaban «si el cliente no dijo cuántos, `qty` vale 1» y «los
   rangos se conservan como rango», pero ante «entre 10 y 12 kilos» el cliente **sí** dijo
   cuántos, así que el hueco quedaba a interpretación del modelo. En campo el 2026-08-26,
