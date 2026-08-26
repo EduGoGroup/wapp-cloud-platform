@@ -44,6 +44,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
+	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 )
@@ -98,6 +99,12 @@ type Selector struct {
 	localOpts []local.Option
 	// ahora es el reloj con el que se sella el instante del fallo. nil ⇒ time.Now.
 	ahora func() time.Time
+	// edges es el frame VISTO COMO enrutador de Edges, cuando sabe serlo. Se
+	// resuelve UNA vez en NewSelector y no en cada PlazaDe: una aserción de tipo por
+	// job de lote no cuesta nada, pero el AVISO de que el transporte no sabe
+	// responder tiene que salir al arrancar, no escondido en el camino caliente.
+	// nil ⇒ no hay a quién preguntar (ver PlazaDe).
+	edges enrutadorDeEdges
 }
 
 // SelectorOption configura el Selector al construirlo.
@@ -130,6 +137,18 @@ func NewSelector(cfg Store, log logger.Logger, opts ...SelectorOption) (*Selecto
 	s := &Selector{cfg: cfg, log: log}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// La capacidad opcional del transporte (T2.7): saber qué Edge atendería una
+	// inferencia. Se resuelve aquí y se AVISA aquí — una sola línea por proceso— para
+	// que un frame que no la tenga no deje el aforo de plaza inerte en silencio, que
+	// es la forma cara de fallar.
+	if s.frame != nil {
+		if e, ok := s.frame.(enrutadorDeEdges); ok {
+			s.edges = e
+		} else if log != nil {
+			log.Warn("llmvia: el transporte de la vía local no sabe decir qué Edge atiende; " +
+				"el aforo de plaza del pipeline de lote (T2.7) quedará INERTE para este proceso")
+		}
 	}
 	return s, nil
 }
@@ -174,8 +193,11 @@ func (s *Selector) For(ctx context.Context, tenantID, originSessionID string) (l
 
 	var prov llm.LLMProvider
 	// ==================================================================
-	// 🔴 EL ÚNICO SWITCH POR VÍA DEL REPO (C2). Si necesitas preguntar por la vía en
-	// otro sitio, lo que necesitas de verdad es otro método en el puerto.
+	// 🔴 EL SWITCH POR VÍA VIVE EN ESTE PAQUETE Y EN NINGÚN OTRO (C2). Si necesitas
+	// preguntar por la vía en otro sitio, lo que necesitas de verdad es otro método
+	// en el puerto — y así nació el segundo y único hermano de este switch,
+	// `Selector.PlazaDe` (más abajo, T2.7): misma fuente, mismo vocabulario cerrado,
+	// mismo default de REQ-33.
 	// ==================================================================
 	switch via {
 	case tenantllm.ViaLocal:
@@ -326,4 +348,102 @@ func (s *Selector) localCalentador(tenantID, sessionID string) (*local.Provider,
 	opts = append(opts, s.localOpts...)
 	opts = append(opts, local.WithTargetSession(sessionID))
 	return local.New(s.frame, tenantID, opts...)
+}
+
+// ============================================================================
+// QUÉ PLAZA OCUPA UNA INFERENCIA, Y SI OCUPA ALGUNA
+// (Plan 044 · Ola 2 · T2.7, ADR-0046 Mecanismo 1)
+// ============================================================================
+//
+// 🔴 ESTO VIVE EN ESTE FICHERO Y NO EN UN `plaza.go` PROPIO, Y NO ES ORGANIZACIÓN:
+// `TestC2_LaViaSoloSePreguntaEnLaSeleccion` recorre el AST de todo `internal/` y exige
+// que la lista de ficheros que preguntan por la vía sea EXACTAMENTE su lista de
+// permitidos. Sacar esta función a un fichero aparte lo pone rojo, y la salida
+// —ampliar la lista— habría convertido una regla de un solo sitio en una regla de dos
+// para ahorrarse un desplazamiento. La regla es «un fichero», así que aquí está.
+//
+// # POR QUÉ ESTA PREGUNTA VIVE AQUÍ Y NO EN EL WORKER DEL PIPELINE
+//
+// Porque la respuesta DEPENDE DE LA VÍA, y la vía se pregunta en un solo sitio: el
+// selector. La regla de la casa (C2 del ADR-0044, y el bloque de For) es que si hace
+// falta saber la vía fuera de la selección, lo que hace falta de verdad es OTRO
+// MÉTODO EN EL PUERTO. Esto es ese método.
+//
+// El worker del pipeline recibe un `(edgeID, ok)` y no sabe —ni tiene por qué— por
+// qué un tenant no tiene plaza: puede ser que esté en vía API o que no tenga ningún
+// Edge conectado ahora mismo. Las dos cosas significan lo mismo para él: no hay
+// plaza que tomar, adelante.
+//
+// # POR QUÉ LA VÍA API NO TIENE PLAZA
+//
+// Porque el entero del Mecanismo 1 protege UNA MÁQUINA —un Ollama por Edge—, y por
+// la vía API no hay máquina del cliente en el camino: la llamada sale a un proveedor
+// remoto que atiende en paralelo. Allí el tope que importa es de PRECIO, no de
+// capacidad, y es otra decisión que este plan no toma. Serializar dos cadenas de
+// lote de un tenant en vía API sería una restricción inventada: cuesta throughput y
+// no protege nada.
+
+// enrutadorDeEdges es la CAPACIDAD OPCIONAL del transporte de la vía local: saber
+// decir qué Edge atendería una inferencia de este (tenant, sesión). La satisface
+// *gatewaygrpc.Server, que es el mismo objeto que ya viaja como local.Frame.
+//
+// 🔴 ES EL MISMO COLABORADOR, NO UNO NUEVO, y esa es toda la gracia: quien sabe por
+// qué Edge sale una inferencia es exactamente quien la manda. Un segundo puerto que
+// cablear sería un segundo sitio donde olvidarse, y olvidarlo dejaría el aforo
+// INERTE sin un solo error.
+type enrutadorDeEdges interface {
+	PlazaDe(tenantID, originSessionID string) (string, bool)
+}
+
+// El transporte de PRODUCCIÓN la satisface, y se comprueba EN COMPILACIÓN. Sin esta
+// línea, el día que alguien renombrara `Server.PlazaDe` el aforo se apagaría entero
+// —la aserción de tipo devolvería false, saldría el Warn del arranque y nada más—
+// sin que un solo test se pusiera rojo.
+var _ enrutadorDeEdges = (*gatewaygrpc.Server)(nil)
+
+// PlazaDe devuelve el Edge cuya plaza ocuparía una inferencia de este tenant
+// originada en esa sesión, o `ok = false` si no ocupa ninguna.
+//
+// `ok = false` NO es un fallo y tiene tres orígenes legítimos, todos con la misma
+// consecuencia para el llamante:
+//
+//   - el tenant está en vía API (no hay máquina del cliente que proteger);
+//   - el tenant no tiene ninguna sesión viva en esta réplica (no hay Edge todavía;
+//     la inferencia fallará por su cuenta con `edge_offline` y el backoff hará su
+//     trabajo);
+//   - el transporte no sabe responder a la pregunta (ver NewSelector: se avisa UNA
+//     vez al arrancar, no una vez por job).
+//
+// El error queda para lo que sí lo es: la configuración del tenant no se pudo leer,
+// o su vía está fuera del vocabulario cerrado.
+//
+// ⚠️ CUESTA UNA LECTURA DE `tenant_llm` POR JOB DE LOTE, no por llamada al modelo:
+// se resuelve una vez, antes de la cadena, y la cadena dura minutos. Es la misma
+// lectura que `For` hace después por cada etapa.
+func (s *Selector) PlazaDe(ctx context.Context, tenantID, originSessionID string) (string, bool, error) {
+	cfg, found, err := s.cfg.Get(ctx, tenantID)
+	if err != nil {
+		return "", false, fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	// Un tenant SIN FILA está en la vía local (REQ-33), igual que en For. Este
+	// default no es defensivo: es la respuesta correcta, y hoy la de todos.
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+	switch via {
+	case tenantllm.ViaLocal:
+		if s.edges == nil {
+			return "", false, nil
+		}
+		edgeID, ok := s.edges.PlazaDe(tenantID, originSessionID)
+		return edgeID, ok, nil
+	case tenantllm.ViaAPI:
+		return "", false, nil
+	default:
+		// El mismo vocabulario cerrado y el mismo error que For: una vía inventada no
+		// se degrada a «sin plaza», porque eso escondería una fila corrupta detrás de
+		// una conducta que parece normal.
+		return "", false, fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
 }

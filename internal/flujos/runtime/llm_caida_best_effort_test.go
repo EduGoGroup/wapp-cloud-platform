@@ -14,7 +14,7 @@
 //
 //	(a) EL SINK NO LLAMA AL PROVEEDOR. El IntakeAggregator hace «ventana + flush +
 //	    persistencia intake_jobs(aggregating)» (design §5 y la tabla §9): las
-//	    llamadas P2/P3/P4 viven en internal/intake/pipeline.go y las mueve un
+//	    llamadas P2/P3/P4 viven en internal/intake/pipeline/ y las mueve un
 //	    WORKER sobre intake_jobs, fuera de dispatch y fuera del turno. Ahí es
 //	    donde el proveedor va a fallar de verdad, y ahí NO llega este fichero.
 //	    Dueño de esa custodia: Plan 044 · Ola 2 · T2.5.

@@ -153,6 +153,29 @@ type Server struct {
 	// más arriba.
 	OnWarmup func(tenantID, edgeID, sessionID, kind string)
 
+	// OnEdgeReady, si no es nil, se invoca en la MISMA TRANSICIÓN A READY que dispara
+	// el calentamiento (readiness.go: observaReadiness), y con la misma dirección:
+	// (tenant, Edge). Es el disparador POR EVENTO de la cadena de lote —Plan 044 ·
+	// Ola 2 · T2.7, D-044.43—, y su consumidor natural es `pipeline.Worker.Despertar`.
+	//
+	// 🔴 POR QUÉ UN SEGUNDO HOOK SOBRE EL MISMO FLANCO, Y NO UN `kind` MÁS DE OnWarmup.
+	// Porque son DOS trabajos con dueños distintos y consecuencias distintas: calentar
+	// es best-effort y se puede repetir gratis; reanudar la cadena de lote mueve filas
+	// de `intake_jobs` a `processing`. Meterlos en la misma clausura obligaría al que
+	// la atienda a distinguirlos por el `kind`, que es exactamente el `if` que el hook
+	// existe para no tener. La DETECCIÓN del flanco sigue siendo una sola
+	// (anotaReadiness): lo que hay son dos consumidores de un mismo hecho.
+	//
+	// 🔴 TIENE QUE VOLVER EN EL ACTO, igual que OnWarmup y por el mismo motivo: se
+	// invoca INLINE en la goroutine del Recv del stream. Lo cumple `Despertar`, que es
+	// un envío no bloqueante a un canal con buffer.
+	//
+	// ⚠️ HOY NO TIENE LLAMANTE EN `bootstrap.go`, y no es un olvido: el worker del
+	// pipeline todavía no se cablea (T2.7 era su último bloqueante, pero el cableado
+	// no es ninguna de las ocho tareas de la Ola 2). Mientras siga nil, el gateway se
+	// comporta EXACTAMENTE como antes.
+	OnEdgeReady func(tenantID, edgeID string)
+
 	// acks correlaciona command_id -> envío en vuelo que espera su Ack. Desde el
 	// Plan 050 · Ola 2 · T2.1 la entrada NO es el canal pelado sino un pendingAck
 	// (types.go) que lleva su session_id dentro, para que la caída de un stream pueda

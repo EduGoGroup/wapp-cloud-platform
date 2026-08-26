@@ -83,16 +83,30 @@ func (s *Server) observaReadiness(cc connCtx, hb *cloudlinkv1.Heartbeat) {
 	if !s.anotaReadiness(cc, hb.GetInferenceReadiness()) {
 		return
 	}
-	if s.OnWarmup == nil {
-		return
-	}
 	s.log.Info("calentamiento: el Edge acaba de decir que puede servir inferencia",
 		"tenant_id", cc.tenantID, "edge_id", cc.edgeID, "session_id", cc.sessionID)
-	// El `kind` va VACÍO por lo mismo que en el handshake: no se acaba de publicar
-	// ninguna config concreta, es que este Edge acaba de poder servir. Un kind no vacío
-	// que no fuera `intents` haría que el consumidor lo filtrara (intakeahead.Warm) y
-	// el calentamiento no saldría.
-	s.OnWarmup(cc.tenantID, cc.edgeID, cc.sessionID, "")
+	if s.OnWarmup != nil {
+		// El `kind` va VACÍO por lo mismo que en el handshake: no se acaba de publicar
+		// ninguna config concreta, es que este Edge acaba de poder servir. Un kind no vacío
+		// que no fuera `intents` haría que el consumidor lo filtrara (intakeahead.Warm) y
+		// el calentamiento no saldría.
+		s.OnWarmup(cc.tenantID, cc.edgeID, cc.sessionID, "")
+	}
+	// 🔴 EL SEGUNDO CONSUMIDOR DEL MISMO FLANCO (T2.7, D-044.43): la cadena de lote se
+	// REANUDA POR EVENTO. Va DESPUÉS del calentamiento a propósito —no es orden
+	// cosmético—: las dos cosas acaban pidiéndole trabajo al MISMO Ollama, y el
+	// calentamiento es el barato (0,07–0,55 s con la caché ya puesta) frente a los
+	// 22–32 s de una llamada de lote. Disparar primero el lote dejaría el prefill
+	// caliente detrás de media hora de presupuestos, que es justo lo que la Ola 1.7
+	// existió para evitar.
+	//
+	// El log de arriba se emite AUNQUE los dos hooks sean nil: es la señal de que el
+	// flanco ocurrió, y colgarlo del `!= nil` lo dejaría mudo justo en el despliegue
+	// donde todavía no hay consumidor cableado (§5.2·bis del plan: no cuelgues la
+	// señal del desenlace feliz).
+	if s.OnEdgeReady != nil {
+		s.OnEdgeReady(cc.tenantID, cc.edgeID)
+	}
 }
 
 // anotaReadiness guarda la disponibilidad que el Edge acaba de declarar y devuelve

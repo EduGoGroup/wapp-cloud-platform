@@ -41,6 +41,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
@@ -364,22 +366,24 @@ func Run(ctx context.Context) error {
 	// plataforma (0 ⇒ degradation.VentanaPorDefecto).
 	degradationStore := degradation.NewPostgres(db)
 	degradationNotifier := degradation.NewNotifier(degradationStore, 0)
-	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
-	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
-	// pide un provider a él y no vuelve a mirar la vía nunca más.
+	// LA COLA DEL PIPELINE DE CAPTACIÓN (Plan 044 · Ola 1, migración 0072). Sin
+	// cipher a propósito, y no es un olvido NI CADUCÓ CON T1.4: lo que llega a
+	// PutSourceText son bytes YA cifrados por el compositor. Un store sin cipher no
+	// puede escribir literal aunque alguien se lo pida, y eso es lo que sostiene
+	// D-044.26 por construcción.
 	//
-	// El frame de la vía local ES el gateway: su método Infer tiene exactamente la
-	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
-	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
-		llmvia.WithFrame(gw),
-		llmvia.WithNotifier(degradationNotifier),
-		// EL PRESUPUESTO DE SALIDA POR TAREA (T1.7-3), con su interruptor de campo.
-		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
-		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
-		// Edge aplica su default de 256 — que es el lado B del criterio (c).
-		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)))
+	// 🔧 SUBIÓ AQUÍ AL CABLEAR LA OLA 2: el worker del pipeline lo necesita, y el
+	// worker nace dentro del stack LLM de la línea siguiente. Es la MISMA instancia
+	// que sigue usando el agregador más abajo; no hay dos.
+	intakeJobStore := intake.NewPostgres(db)
+	// EL STACK LLM DE CAPTACIÓN (Plan 044): el selector de vía y, colgando de él, las
+	// tres etapas, el aforo por Edge y el worker del pipeline. Van juntos en una
+	// función porque son una sola pieza —el selector es la dependencia de todo lo
+	// demás— y porque `Run` estaba ya en el techo de complejidad que fija el lint.
+	llmSelector, intakePipeline, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
+		tenantLLMStore, degradationNotifier, intakeJobStore, flowDeps.cipher)
 	if err != nil {
-		return fmt.Errorf("selector de vía LLM: %w", err)
+		return err
 	}
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda
@@ -392,12 +396,6 @@ func Run(ctx context.Context) error {
 	// necesita ya definido. Su consumidor de siempre (el despachador) sigue donde
 	// estaba.
 	eventStore := events.NewStore(db, flowDeps.cipher)
-	// LA COLA DEL PIPELINE DE CAPTACIÓN (Plan 044 · Ola 1, migración 0072). Sin
-	// cipher a propósito, y no es un olvido NI CADUCÓ CON T1.4: lo que llega a
-	// PutSourceText son bytes YA cifrados por el compositor. Un store sin cipher no
-	// puede escribir literal aunque alguien se lo pida, y eso es lo que sostiene
-	// D-044.26 por construcción.
-	intakeJobStore := intake.NewPostgres(db)
 	// EL COMPOSITOR DEL LITERAL (T1.4). Corre AL FLUSH y nunca en línea con el
 	// entrante: lee el hilo del evento por eventStore —descifrado en el borde,
 	// REQ-10c—, separa el CONTEXTO (los `summary` y los salientes fuera de turno,
@@ -472,6 +470,17 @@ func Run(ctx context.Context) error {
 	intakeAggregator = flowruntime.NewIntakeAggregator(log, intakeJobStore, flowStore, entResolver,
 		flowruntime.WithSourceComposer(intakeComposer),
 		flowruntime.WithAheadRequester(intakeAhead))
+	// EL DISPARADOR POR EVENTO (D-044.43). Mismo molde que `gw.OnWarmup` de arriba y
+	// sobre el MISMO objeto que se registra en el servidor gRPC unas líneas más abajo:
+	// el gateway detecta el flanco a READY una sola vez y lo reparte a sus dos
+	// consumidores. Sin esta línea el hook queda nil —el estado en que nació— y los
+	// jobs de un Edge que acaba de recuperar su Ollama esperarían a que venciera su
+	// backoff, hasta 5 minutos, sin que nada lo dijera.
+	//
+	// `Despertar` cumple la única exigencia del hook —volver en el acto—: es un envío
+	// no bloqueante a un canal con buffer, y el hook corre INLINE en la goroutine del
+	// Recv del stream.
+	gw.OnEdgeReady = intakePipeline.Despertar
 	webhookGate := integrations.NewEntitlementsGate(entResolver, integrationsStore, entitlements.FeatureCRMBridge)
 	// El aviso al cliente y el recordatorio de la seña son la MISMA salida hacia
 	// WhatsApp con dos motivos (D-041.14 y D-041.12): el notificador se construye una
@@ -888,6 +897,22 @@ func Run(ctx context.Context) error {
 	// nunca.
 	go intakeAhead.Run(ctx)
 
+	// EL WORKER DEL PIPELINE P2→P4 (Plan 044 · Ola 2). Mismo ctx y mismo trato que los
+	// cuatro de arriba: una goroutine sobre el ctx de signal.NotifyContext, sin un
+	// segundo mecanismo de apagado. Es lo que el propio `Worker.Run` documenta que hay
+	// que hacer, y lo que hace `integrations.Worker.Run`.
+	//
+	// 🔴 UNA SOLA, Y LA CUENTA IMPORTA (W = 1, ver el cableado de arriba). Duplicar esta
+	// línea no daría ningún error: dos workers reclamarían sin pisarse —el claim va con
+	// `FOR UPDATE SKIP LOCKED`— y se bloquearían el uno al otro en la única plaza del
+	// Edge, cada uno reteniendo un job. Lo custodia TestPipelineCaptacionCableado.
+	//
+	// 🔴 Y ES LA TERCERA MITAD INVISIBLE de esta ola, con el mismo fallo MUDO que las
+	// dos de arriba: sin este Run, las ventanas cerrarían, los jobs quedarían `pending`
+	// y nadie los reclamaría nunca. Ni un error en el log — solo presupuestos que no
+	// llegan, que es exactamente el 7 h 28 min que el plan existe para borrar.
+	go intakePipeline.Run(ctx)
+
 	//nolint:contextcheck // shutdownAll parte de context.Background() a propósito: corre
 	// cuando ctx ya está cancelado, y derivar de él abortaría el cierre gracioso al instante.
 	return serveAndWait(ctx.Done(), log,
@@ -896,6 +921,119 @@ func Run(ctx context.Context) error {
 		grpcServer{gs: enrollGS, lis: enrollLis, addr: cfg.GRPCEnrollAddr, name: "Enrollment (TLS de servidor)"},
 		grpcServer{gs: connectGS, lis: connectLis, addr: cfg.GRPCConnectAddr, name: "CloudLink (mTLS)"},
 	)
+}
+
+// nuevoStackLLMDeCaptacion arma, de una vez, TODO lo que el Plan 044 necesita para
+// convertir una ventana de conversación en un presupuesto: el selector de vía y —
+// colgando de él — las tres etapas, el aforo por Edge y el worker del pipeline.
+//
+// # POR QUÉ UNA FUNCIÓN Y NO SIETE LÍNEAS MÁS EN Run
+//
+// Por dos motivos, y el segundo es el que manda. El primero es que son UNA pieza: el
+// selector es la dependencia de las tres etapas y del aforo, y separarlos obligaría a
+// pasarlo de vuelta a `Run` solo para volver a bajarlo. El segundo es aritmético: `Run`
+// estaba EXACTAMENTE en el techo de complejidad ciclomática que fija el lint (15 de 15
+// antes de este cableado, medido), así que cualquier `if err != nil` nuevo la rompía.
+// Absorber aquí también la comprobación del selector —que ya estaba en `Run`— es lo que
+// deja el cableado a coste CERO de complejidad en el llamante.
+//
+// 🔴 EL AFORO Y EL WORKER SE QUEDAN DENTRO A PROPÓSITO. `aforoLote` no se devuelve
+// porque nadie más debe tocarlo: es el entero del ADR-0046 y su único dueño legítimo es
+// el worker que lo recibe. Devolverlo invitaría a un segundo consumidor, y dos dueños
+// de un aforo son dos ideas distintas de cuántas plazas hay.
+func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
+	gw *gatewaygrpc.Server, tenantLLMStore llmvia.Store, degradationNotifier *degradation.Notifier,
+	intakeJobStore *intake.Postgres, cifra *crypto.FieldCipher,
+) (*llmvia.Selector, *pipeline.Worker, error) {
+	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
+	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
+	// pide un provider a él y no vuelve a mirar la vía nunca más.
+	//
+	// El frame de la vía local ES el gateway: su método Infer tiene exactamente la
+	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
+	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
+		llmvia.WithFrame(gw),
+		llmvia.WithNotifier(degradationNotifier),
+		// EL PRESUPUESTO DE SALIDA POR TAREA (T1.7-3), con su interruptor de campo.
+		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
+		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
+		// Edge aplica su default de 256 — que es el lado B del criterio (c).
+		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("selector de vía LLM: %w", err)
+	}
+	// ═══════════════════════════════════════════════════════════════════════════
+	// EL PIPELINE DE CAPTACIÓN P2 → P3 → P4 (Plan 044 · Ola 2). AQUÍ SE ENCIENDE.
+	// ═══════════════════════════════════════════════════════════════════════════
+	//
+	// La Ola 2 construyó las ocho piezas y las dejó APAGADAS a propósito: hasta esta
+	// línea, NINGÚN fichero de producción importaba `internal/intake/pipeline` ni
+	// `internal/intake/stages`, y `intake_jobs` acumulaba jobs `pending` que nadie
+	// reclamaba. Esto es su primer —y único— llamante de producción.
+	//
+	// 🔴 W = 1, UNA SOLA GOROUTINE, Y ES LA DECISIÓN QUE GOBIERNA EL RESTO. El aforo
+	// de abajo reparte K = 1 plaza POR EDGE; en UAT hay UN Edge, así que con W > 1 los
+	// workers extra se bloquearían pidiendo el mismo asiento CON UN JOB YA RECLAMADO
+	// en la mano —bloqueo en cabeza, `plaza.go` §«Esperar tiene dos precios»— sin
+	// procesar nada más rápido. La palanca para subir W es el número de Edges activos,
+	// no el volumen de trabajo.
+	//
+	// 🔴 NO HAY INTERRUPTOR DE CONFIGURACIÓN, y es deliberado: el gate que queda es UNO
+	// SOLO, la feature (T1.6). Un flag aquí sería un segundo sitio donde apagar lo
+	// mismo, y el día que el pipeline no corriera nadie sabría cuál de los dos manda.
+	// El camino ya está cerrado aguas arriba: sin la feature, el agregador no abre
+	// ventana, no hay job `pending` y este worker gira en vacío cada 5 s.
+	//
+	// Las tres etapas comparten selector de vía y store, y las tres reciben el MISMO
+	// plazo por llamada: `stages.ConPlazoPorLlamada` es obligatoria en producción —sin
+	// ella el adaptador cae a sus 30 s, el umbral de lento baja a 24 s y una P3 caliente
+	// de 27 s ya cuenta como lenta ante el breaker (plazo.go, «el default es COMPATIBLE,
+	// no seguro»)—. `stages.ZonaPorDefecto` es UTC y es la decisión que P4 obliga a
+	// escribir aquí en vez de heredar (DEUDA-044.11, sin dueño).
+	plazoLlamada := stages.ConPlazoPorLlamada(pipeline.PlazoPorLlamadaSuelo)
+	etapaIdeas, err := stages.NewP2(log, llmSelector, intakeJobStore, plazoLlamada)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, etapa P2: %w", err)
+	}
+	etapaSpecs, err := stages.NewP3(log, llmSelector, intakeJobStore, plazoLlamada)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, etapa P3: %w", err)
+	}
+	etapaCantidades, err := stages.NewP4(log, llmSelector, intakeJobStore, stages.ZonaPorDefecto, plazoLlamada)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
+	}
+	// EL AFORO (T2.7, ADR-0046 · Mecanismo 1): una cadena de lote en vuelo por
+	// `(tenant, Edge)`. Es lo único compartido entre workers —hoy uno— y va con el
+	// MISMO `llmSelector` que resuelve la vía: él es quien sabe a qué Edge apunta una
+	// inferencia, y quien sabe que por vía API no hay plaza que tomar. Un segundo
+	// selector aquí sería una segunda verdad sobre lo mismo.
+	//
+	// ⚠️ ES DE PROCESO, NO DISTRIBUIDO: con dos réplicas del Cloud hay K = 2 por Edge.
+	// Decisión escrita (ADR-0046), no descuido; hoy el Cloud corre en una réplica.
+	aforoLote := pipeline.NuevoAforo(pipeline.KPorPlaza)
+	// El worker usa `intakeJobStore` —el MISMO `*intake.Postgres` que el agregador— y
+	// no una construcción propia: ese tipo satisface los DOS puertos, `intake.JobStore`
+	// (la cola, en línea con el mensaje) e `intake.PipelineStore` (la máquina de
+	// estados del worker, machine.go:329). Dos instancias serían dos pools de la misma
+	// base sin ganar nada.
+	//
+	// `cifra` es el descifrador del sobre del literal, y el llamante le pasa
+	// `flowDeps.cipher`: el MISMO keyring del Plan 012 con el que el compositor cerró
+	// ese sobre al cerrar la ventana. Con otro, cada job moriría con `source_text`
+	// ilegible.
+	//
+	// `pipeline.Config{}` deja los cinco valores en su default (cadencia 5 s, backoff
+	// 30 s→5 min, 3 intentos por calidad y 10 por infra): no hay perilla de operador
+	// que gobierne esto, así que no se lee ninguna variable de entorno que luego nadie
+	// pueda confirmar.
+	intakePipeline, err := pipeline.NewWorker(log, intakeJobStore,
+		etapaIdeas, etapaSpecs, etapaCantidades, cifra, pipeline.Config{},
+		pipeline.ConAforo(aforoLote, llmSelector))
+	if err != nil {
+		return nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
+	}
+	return llmSelector, intakePipeline, nil
 }
 
 // adminRouteDeps agrupa lo que registerAdminRoutes necesita para cablear el mux
