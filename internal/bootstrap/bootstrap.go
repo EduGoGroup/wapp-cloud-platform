@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/prompts"
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-cloudlink/mtls"
+	"github.com/EduGoGroup/wapp-shared/llm"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -951,9 +953,17 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	//
 	// El frame de la vía local ES el gateway: su método Infer tiene exactamente la
 	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
+	plantillas, err := cargarPlantillasDePrompt(log, cfg.LLM.PromptsDir)
+	if err != nil {
+		return nil, nil, err
+	}
 	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
 		llmvia.WithFrame(gw),
 		llmvia.WithNotifier(degradationNotifier),
+		// LOS PROMPTS AJUSTABLES DE P2–P5 (WAPP_LLM_PROMPTS_DIR). Sin directorio esto
+		// entrega las plantillas COMPILADAS y el proveedor se comporta igual que antes
+		// de que existiera la palanca: el mapa siempre trae las cuatro etapas.
+		llmvia.WithLocalOptions(local.ConPlantillas(plantillas)),
 		// EL PRESUPUESTO DE SALIDA POR TAREA (T1.7-3), con su interruptor de campo.
 		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
 		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
@@ -1237,4 +1247,33 @@ func (f flowForKind) FlowForKind(ctx context.Context, tenantID, sessionID, kind 
 		}
 	}
 	return "", nil
+}
+
+// cargarPlantillasDePrompt lee los prompts ajustables de las etapas P2–P5 y deja
+// dicho EN EL LOG de dónde salió cada uno.
+//
+// 🔴 LA LÍNEA DE LOG NO ES ADORNO. El fallo que esta palanca puede producir es
+// «alguien editó un prompt en este entorno y nadie se acuerda»: sin esa línea, un
+// artefacto raro manda a leer el código compilado, que no es lo que corrió. Con
+// ella, el arranque dice `p4=/etc/wapp/prompts/p4-normalizar-cantidades.tmpl` y la
+// pregunta se contesta sola.
+//
+// Un error aquí ABORTA EL ARRANQUE, y esa es la política entera de esta palanca:
+// no hay ningún fallo que se degrade a seguir con el texto compilado. Un operador
+// que editó un fichero y no ve el efecto es peor que un proceso que no arranca,
+// porque el segundo se nota.
+func cargarPlantillasDePrompt(log sharedlogger.Logger, dir string) (map[llm.Etapa]llm.Plantilla, error) {
+	cargadas, err := prompts.Cargar(dir)
+	if err != nil {
+		return nil, fmt.Errorf("prompts ajustables de P2-P5: %w", err)
+	}
+	campos := []any{"dir", dir}
+	if dir == "" {
+		campos = []any{"dir", "(ninguno: corre el texto compilado en shared/wapp-shared/llm)"}
+	}
+	for _, e := range llm.EtapasAjustables {
+		campos = append(campos, string(e), cargadas.Origen[e])
+	}
+	log.Info("prompts: plantillas de las etapas ajustables", campos...)
+	return cargadas.Plantillas, nil
 }

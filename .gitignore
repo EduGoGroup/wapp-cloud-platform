@@ -2,6 +2,8 @@
 /platform
 /wapp-cloud-platform
 /server
+/migrate
+/prompts
 *.exe
 *.exe~
 *.test
