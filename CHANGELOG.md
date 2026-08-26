@@ -5,6 +5,30 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+
+- 🧭 **Los prompts de P2–P5 se ajustan por FICHERO, sin release** (`WAPP_LLM_PROMPTS_DIR`).
+  Hasta ahora, cambiar una coma en un prompt costaba release de `llm` + subida de dependencia +
+  release del cloud + despliegue. Ahora se edita un fichero y se reinicia. Guía completa en
+  `docs/funcionalidades/36-ajuste-de-los-prompts-del-pipeline.md`.
+  - `internal/prompts`: lee el directorio, parsea el formato y **valida cada plantilla contra el
+    `Parse*` de su etapa** antes de servirla. Nombres `pN-<lo-que-quieras>.tmpl`, donde **solo el
+    prefijo es contrato**; no hace falta poner las cuatro etapas.
+  - `cmd/prompts`: `-volcar <dir>` escribe los cuatro ficheros con el texto que corre HOY —la
+    única forma correcta de empezar, porque escribirlos a mano produce plantillas que nacen
+    viejas— y `-comprobar <dir>` valida sin tocar el servicio.
+  - `local.ConPlantillas` inyecta los textos en el proveedor; el arranque deja **una línea de
+    log con el origen de cada etapa**, que es lo que contesta «¿qué prompt corrió de verdad?».
+  - 🔴 **Todo fallo ABORTA EL ARRANQUE**: un prefijo desconocido, dos ficheros para la misma
+    etapa, o un esquema que su propio validador rechaza. Nada se degrada a seguir con el texto
+    compilado, porque el peor síntoma posible es «edité el prompt, reinicié y no cambió nada»,
+    que no deja rastro en ningún log.
+  - **Sin la variable no cambia NADA**: corre el texto compilado, y un test exige que volcar y
+    cargar dé la plantilla compilada byte a byte —si no, encender la palanca alteraría los
+    prompts sin que nadie hubiera editado nada—.
+  - **P1 no entra**, a propósito: su prompt lo gobierna el catálogo de intenciones del tenant,
+    que ya se edita por API. Meterlo aquí le daría dos fuentes de verdad al mismo texto.
+
 ### Fixed
 
 - **`llm` sube a `v0.4.4`: un `qty` ausente CON rango vale 1, y deja de perderse el

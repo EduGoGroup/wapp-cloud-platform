@@ -22,7 +22,7 @@ require (
 	// ⚠️ Y P4 CRECE de 1.967 a 2.331 B (+18,5 %). Son bytes de ENTRADA y estables (se
 	// prefillan una vez), así que no tocan al `max_output_tokens` de T1.7-3, que es de
 	// SALIDA. No mezclar los dos números.
-	github.com/EduGoGroup/wapp-shared/llm v0.4.4
+	github.com/EduGoGroup/wapp-shared/llm v0.4.5
 	github.com/EduGoGroup/wapp-shared/logger v0.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
@@ -39,6 +39,8 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
+require github.com/stretchr/testify v1.11.1
+
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
@@ -48,6 +50,7 @@ require (
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -56,6 +59,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

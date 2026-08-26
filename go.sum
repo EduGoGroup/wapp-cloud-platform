@@ -26,14 +26,8 @@ github.com/EduGoGroup/wapp-shared/health v0.1.1 h1:ZiNqKCJY1qwzQjFzo1qZUei+CggxO
 github.com/EduGoGroup/wapp-shared/health v0.1.1/go.mod h1:U2yDan8f0SyLitwrjYcAq9HM8xLZ67lYwbv9Jku/1rw=
 github.com/EduGoGroup/wapp-shared/intents v0.1.0 h1:4CXTKyQi/bR3YCgLjLU/uf2fpMBPvaBO9WcwKHeF7SQ=
 github.com/EduGoGroup/wapp-shared/intents v0.1.0/go.mod h1:JkiGzsfb6jVQ3Uxs3FwV4g2tDd5RXxtg2Lx0kO3ef6g=
-github.com/EduGoGroup/wapp-shared/llm v0.4.1 h1:/su6hl/LbjAO3bXW0SC8ut/CBwT33+KOzv0DYnKyQOk=
-github.com/EduGoGroup/wapp-shared/llm v0.4.1/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
-github.com/EduGoGroup/wapp-shared/llm v0.4.2 h1:TZiDW0LB2iIFCa9kCW/x4nNYcioZtqyo8Hj7g+9f79U=
-github.com/EduGoGroup/wapp-shared/llm v0.4.2/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
-github.com/EduGoGroup/wapp-shared/llm v0.4.3 h1:7sAjewRB85GCgvf9anxjTWQGnnzUXVf16fDbXjIEgiU=
-github.com/EduGoGroup/wapp-shared/llm v0.4.3/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
-github.com/EduGoGroup/wapp-shared/llm v0.4.4 h1:Di/T+IyVttlRcIb7KIPsbGrzK7lz8JDKfZCMt09Jm08=
-github.com/EduGoGroup/wapp-shared/llm v0.4.4/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
+github.com/EduGoGroup/wapp-shared/llm v0.4.5 h1:07D330DidsQDtoHrV6z/yveSbDmzXSGYttDRJkz/rbY=
+github.com/EduGoGroup/wapp-shared/llm v0.4.5/go.mod h1:XUFsgvnK9AGoo6RjkTj0hdBKmCz0gSFjAjS4H/gFY4M=
 github.com/EduGoGroup/wapp-shared/logger v0.2.0 h1:5GWxS+fyWqnCrjedsm0t6a368uo59Xl7Om1/OBoJyfU=
 github.com/EduGoGroup/wapp-shared/logger v0.2.0/go.mod h1:jZ8GH59HUREHIEJv21jNpCdLm1P2NthGqTN/s8SrZTg=
 github.com/aws/aws-sdk-go-v2 v1.41.5 h1:dj5kopbwUsVUVFgO4Fi5BIT3t4WyqIDjGKCangnV/yY=

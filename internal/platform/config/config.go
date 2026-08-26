@@ -375,6 +375,22 @@ type LLMConfig struct {
 	// lo que hay que reproducir es la conducta ANTERIOR, y esa era «el Cloud no dice
 	// nada», no «el Cloud pide 256».
 	MaxOutputTokensEnabled bool `yaml:"max_output_tokens_enabled"`
+
+	// PromptsDir es el directorio del que se cargan los prompts AJUSTABLES de las
+	// etapas P2–P5 (`WAPP_LLM_PROMPTS_DIR`). Vacío —el valor de producción— hace
+	// correr el texto compilado en `shared/wapp-shared/llm`.
+	//
+	// Existe para que afinar la redacción de un prompt no cueste una release del
+	// módulo compartido más otra del cloud: se edita el fichero y se REINICIA. No
+	// hay recarga en caliente a propósito, para que «este job corrió con este
+	// prompt» siga siendo una frase cierta.
+	//
+	// 🔴 UN DIRECTORIO MAL PUESTO NO ARRANCA. Ver internal/prompts: un fichero cuyo
+	// prefijo no es una etapa, dos que reclaman la misma, o un esquema que su propio
+	// validador rechaza, abortan el arranque con el nombre del fichero y el motivo.
+	// El modo de fallo que eso evita es «edité el prompt, reinicié y no cambió
+	// nada», que no deja rastro en ningún log.
+	PromptsDir string `yaml:"prompts_dir"`
 }
 
 // FlowConfig gobierna el token-bucket EN MEMORIA de auto-respuestas por
@@ -807,6 +823,7 @@ func Load() (AppConfig, error) {
 	cfg.Flow.MaxConcurrentIncoming = loader.GetInt("FLOW_MAX_CONCURRENT_INCOMING", cfg.Flow.MaxConcurrentIncoming)
 	cfg.LLM.WarmupEnabled = loader.GetBool("LLM_WARMUP_ENABLED", cfg.LLM.WarmupEnabled)
 	cfg.LLM.MaxOutputTokensEnabled = loader.GetBool("LLM_MAX_OUTPUT_TOKENS_ENABLED", cfg.LLM.MaxOutputTokensEnabled)
+	cfg.LLM.PromptsDir = loader.GetString("LLM_PROMPTS_DIR", cfg.LLM.PromptsDir)
 
 	cfg.Health.DegradedAfter = loader.GetDuration("HEALTH_DEGRADED_AFTER", cfg.Health.DegradedAfter)
 	cfg.Health.StaleAfter = loader.GetDuration("HEALTH_STALE_AFTER", cfg.Health.StaleAfter)
