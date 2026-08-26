@@ -102,7 +102,8 @@ func TestWorker_PedidoDeDoceItems_LLEGA_A_DONE_ConLosDosSobrantesMarcados(t *tes
 	p2 := &p2Falsa{etapaBase: etapaBase{rel: rel}, store: store, wants: wants}
 	p4 := &p4Falsa{etapaBase: etapaBase{rel: rel}, store: store}
 
-	w, err := NewWorker(log, store, p2, p3, p4, cifraDeDoce{}, Config{})
+	m, d, cat := olaTres(t, rel, store)
+	w, err := NewWorker(log, store, p2, p3, p4, m, d, cat, cifraDeDoce{}, Config{})
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}

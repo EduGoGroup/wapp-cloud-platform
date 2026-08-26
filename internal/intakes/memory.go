@@ -287,6 +287,18 @@ func (m *MemoryStore) SetShippingZones(tenantID string, zones ...ShippingZone) {
 	m.zones[tenantID] = slices.Clone(zones)
 }
 
+// ShippingZones implementa el mismo puerto de lectura que `*Postgres` (Plan 044 ·
+// T3.8): las zonas que el worker del pipeline le pasa a la etapa `match`.
+//
+// Existe para que los dos stores del dominio sigan siendo intercambiables en un
+// test. Un tenant sin zonas sembradas devuelve nil sin error, igual que el tenant
+// sin fila en `tenant_settings`.
+func (m *MemoryStore) ShippingZones(_ context.Context, tenantID string) ([]ShippingZone, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.zones[tenantID]), nil
+}
+
 // SetShippingPrice precifica a mano la línea de envío de una solicitud y cuadra el
 // total, que es lo que hará el dueño desde la consola cuando le ponga precio a un
 // «Envío por confirmar» (D-041.11: v1, el dueño precifica). Es un mutador para los
