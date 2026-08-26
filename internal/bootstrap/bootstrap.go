@@ -15,6 +15,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloudlink/mtls"
 	"github.com/EduGoGroup/wapp-shared/llm"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+	"github.com/EduGoGroup/wapp-shared/textmatch"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -43,6 +44,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/catalogo"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
@@ -390,11 +392,21 @@ func Run(ctx context.Context) error {
 	// que sigue usando el agregador más abajo; no hay dos.
 	intakeJobStore := intake.NewPostgres(db)
 	// EL STACK LLM DE CAPTACIÓN (Plan 044): el selector de vía y, colgando de él, las
-	// tres etapas, el aforo por Edge y el worker del pipeline. Van juntos en una
-	// función porque son una sola pieza —el selector es la dependencia de todo lo
-	// demás— y porque `Run` estaba ya en el techo de complejidad que fija el lint.
+	// CINCO etapas, la caché del catálogo, el aforo por Edge y el worker del pipeline.
+	// Van juntos en una función porque son una sola pieza —el selector es la
+	// dependencia de todo lo demás— y porque `Run` estaba ya en el techo de
+	// complejidad que fija el lint.
+	//
+	// 🔧 `flowStore` e `intakeStore` BAJAN AQUÍ DESDE T3.8, y no son instancias
+	// nuevas: son las MISMAS que ya usan el motor de flujos y la bandeja. El
+	// `flowStore` aporta las tres cosas que la Ola 3 necesita de él —el documento del
+	// catálogo (`GetTenantContent`), la cabecera de la solicitud (`UpsertIntake`) y el
+	// outbox de efectos (`InsertFlowEvent`)— y el `intakeStore` las otras dos —la
+	// revisión (`InsertRevision`) y las zonas de envío—. Construir un segundo store
+	// para el pipeline sería un segundo pool contra la misma base y, en el caso de las
+	// revisiones, un segundo cipher del literal: dos rotaciones que mantener.
 	llmSelector, intakePipeline, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
-		tenantLLMStore, degradationNotifier, intakeJobStore, flowDeps.cipher)
+		tenantLLMStore, degradationNotifier, intakeJobStore, flowStore, intakeStore, flowDeps.cipher)
 	if err != nil {
 		return err
 	}
@@ -956,7 +968,8 @@ func Run(ctx context.Context) error {
 // de un aforo son dos ideas distintas de cuántas plazas hay.
 func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	gw *gatewaygrpc.Server, tenantLLMStore llmvia.Store, degradationNotifier *degradation.Notifier,
-	intakeJobStore *intake.Postgres, cifra *crypto.FieldCipher,
+	intakeJobStore *intake.Postgres, flowStore *flowstore.PostgresRepository,
+	intakeStore *intakes.Postgres, cifra *crypto.FieldCipher,
 ) (*llmvia.Selector, *pipeline.Worker, error) {
 	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
 	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
@@ -1024,6 +1037,57 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	if err != nil {
 		return nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
 	}
+	// ═══════════════════════════════════════════════════════════════════════════
+	// LAS DOS ETAPAS DE LA OLA 3 (T3.8). AQUÍ SE ENCIENDEN.
+	// ═══════════════════════════════════════════════════════════════════════════
+	//
+	// La Ola 3 las escribió con sus tests y las dejó SIN LLAMANTE: `stages.NewMatch` y
+	// `stages.NewDraft` no tenían un solo call-site de producción, `pipeline.go` no
+	// nombraba `StageMatch` ni `StageDraft`, y cada job terminaba en `done` sin
+	// `intake_id`. Es el MISMO defecto que la Ola 2 tuvo que cerrar con T2.9, y por eso
+	// el test de AST de este paquete cuenta ahora CINCO constructores y no tres.
+	//
+	// 🔴 NINGUNA DE LAS DOS LLEVA `stages.ConPlazoPorLlamada`, Y NO PUEDE LLEVARLA. No
+	// es una decisión de calibración: `OpciónMatch` y `OpciónDraft` son tipos DISTINTOS
+	// de `Opción` —la de las etapas LLM— precisamente para que un «match con plazo por
+	// llamada» no compile. El motivo de fondo es que ninguna de las dos llama al modelo
+	// en este cableado: `match` corre la cascada determinista `Exact → Fuzzy(0,85)` y
+	// `draft` solo escribe en la base. Un plazo de llamada aquí no acotaría nada.
+	//
+	// 🔴 Y EL MATCH VA SIN ZONA GRIS A PROPÓSITO (`stages.ConZonaGris` NO se pasa). Sin
+	// ella la cascada es 100 % determinista y el ítem que los dos escalones no resuelven
+	// cae a `unmatched` con su aviso — que es el renglón que el dueño precifica, no una
+	// pérdida. El TERCER escalón es el caro: una llamada al LLM por ítem no cubierto,
+	// que compite por la MISMA plaza única del Edge que P2/P3/P4 (ADR-0046) y que
+	// llegará con su propio criterio de coste. Encenderla aquí metería llamadas al
+	// modelo en una etapa que hoy se anuncia como determinista.
+	etapaMatch, err := stages.NewMatch(log, intakeJobStore)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, etapa match: %w", err)
+	}
+	// `flowStore` satisface DOS de los tres puertos del draft (la cabecera de la
+	// solicitud y el outbox de efectos) e `intakeStore` el tercero (la revisión). El
+	// reparto no es caprichoso: la revisión es lo único que lleva literal del cliente
+	// dentro del payload, y el único store con cipher del literal es `intakeStore`
+	// (T3.5). Escribirla por el otro persistiría texto en claro.
+	etapaDraft, err := stages.NewDraft(log, intakeJobStore, flowStore, intakeStore, flowStore)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, etapa draft: %w", err)
+	}
+	// LA CACHÉ DEL CATÁLOGO (T3.7, D-044.44): el índice que `match` consulta por ítem,
+	// construido UNA VEZ POR JOB por el worker e invalidado POR CONTENIDO.
+	//
+	// El normalizador es `textmatch.Normalize` y tiene que ser EXACTAMENTE el mismo que
+	// usa la cascada del match: con dos distintos, «Café» dejaría de casar «cafe» y el
+	// ítem saldría `unmatched` sin un solo error en el log. `NewCache` no se fía y lo
+	// verifica caso a caso al arrancar (`catalogo.VerificarNormalizador`), así que un
+	// normalizador equivocado no llega al primer job de la noche: no llega al arranque.
+	//
+	// `0` en el tope deja `catalogo.MaxTenantsEnCache` (64), la cota de memoria.
+	catalogos, err := catalogo.NewCache(catalogo.NewFuenteContenido(flowStore, ""), textmatch.Normalize, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
+	}
 	// EL AFORO (T2.7, ADR-0046 · Mecanismo 1): una cadena de lote en vuelo por
 	// `(tenant, Edge)`. Es lo único compartido entre workers —hoy uno— y va con el
 	// MISMO `llmSelector` que resuelve la vía: él es quien sabe a qué Edge apunta una
@@ -1048,9 +1112,18 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// 30 s→5 min, 3 intentos por calidad y 10 por infra): no hay perilla de operador
 	// que gobierne esto, así que no se lee ninguna variable de entorno que luego nadie
 	// pueda confirmar.
+	//
+	// `pipeline.ConZonasDeEnvio(intakeStore)` cierra la última lectura por job de la
+	// Ola 3: sin ella TODO borrador saldría con la línea de envío sin precio, también
+	// el del tenant que tiene UNA zona configurada con su tarifa plana — y eso no da
+	// error, solo un renglón que el dueño precifica a mano sin saber que ya estaba
+	// puesto. Es el MISMO store que la bandeja y el carrito numérico, así que las tres
+	// vías leen la misma configuración.
 	intakePipeline, err := pipeline.NewWorker(log, intakeJobStore,
-		etapaIdeas, etapaSpecs, etapaCantidades, cifra, pipeline.Config{},
-		pipeline.ConAforo(aforoLote, llmSelector))
+		etapaIdeas, etapaSpecs, etapaCantidades, etapaMatch, etapaDraft, catalogos,
+		cifra, pipeline.Config{},
+		pipeline.ConAforo(aforoLote, llmSelector),
+		pipeline.ConZonasDeEnvio(intakeStore))
 	if err != nil {
 		return nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
 	}

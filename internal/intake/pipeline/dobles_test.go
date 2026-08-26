@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // dobles_test.go — los aparejos de la suite de robustez de T2.5.
@@ -233,6 +235,11 @@ func (e *p3Falsa) Run(ctx context.Context, job intake.ClaimedJob, _ string, _ []
 type p4Falsa struct {
 	etapaBase
 	store stages.StageStore
+	// fecha es la fecha de entrega ABSOLUTA que P4 calcula. Está aquí desde T3.8
+	// porque es el único dato que viaja de P4 al BORRADOR saltándose el match, y un
+	// cableado que lo perdiera no daría error: el borrador saldría sin fecha, que es
+	// un estado legítimo cuando la expresión no se reconoce.
+	fecha string
 }
 
 func (e *p4Falsa) Run(ctx context.Context, job intake.ClaimedJob, _ string,
@@ -244,8 +251,138 @@ func (e *p4Falsa) Run(ctx context.Context, job intake.ClaimedJob, _ string,
 	for range items {
 		norm = append(norm, llm.NormalizedItem{Qty: 1})
 	}
-	art := &llm.Quantities{Version: llm.ArtifactVersion, Items: norm}
+	art := &llm.Quantities{Version: llm.ArtifactVersion, Items: norm, DeliveryDate: e.fecha}
 	return art, guardar(ctx, e.store, job.ID, intake.StageP4, art)
+}
+
+// matchFalso implementa EtapaMatch. Además de dejar su artefacto, GUARDA la entrada
+// que recibió: es la única forma de afirmar que el worker le pasó el índice del
+// catálogo y las zonas de envío —las dos lecturas por job de T3.8— en vez de
+// llamarla con la mano vacía, que compilaría igual.
+type matchFalso struct {
+	etapaBase
+	store   stages.StageStore
+	entrada stages.EntradaMatch
+	recibio bool
+}
+
+func (e *matchFalso) Run(ctx context.Context, job intake.ClaimedJob, in stages.EntradaMatch) (*stages.ArtefactoMatch, error) {
+	e.mu.Lock()
+	e.entrada, e.recibio = in, true
+	e.mu.Unlock()
+	if err := e.paso(); err != nil {
+		return nil, err
+	}
+	art := &stages.ArtefactoMatch{Version: llm.ArtifactVersion, Lines: lineasDe(in)}
+	return art, guardar(ctx, e.store, job.ID, intake.StageMatch, art)
+}
+
+// vioLaEntrada devuelve la entrada de la última llamada.
+func (e *matchFalso) vioLaEntrada() (stages.EntradaMatch, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.entrada, e.recibio
+}
+
+// lineasDe arma una línea por ítem más la de envío, que es el ORDEN que el match real
+// declara contrato. No copia su lógica —eso lo prueban los tests de `stages`—: lo que
+// aquí importa es que el número de líneas dependa de lo que P4 dejó, para que un
+// worker que se saltara P4 no pudiera pasar desapercibido.
+func lineasDe(in stages.EntradaMatch) []stages.Linea {
+	n := 0
+	if in.Cantidades != nil {
+		n = len(in.Cantidades.Items)
+	}
+	out := make([]stages.Linea, 0, n+1)
+	for i := range n {
+		out = append(out, stages.Linea{Kind: stages.KindUnmatched, Label: fmt.Sprintf("item-%d", i), Qty: 1})
+	}
+	return append(out, stages.Linea{Kind: stages.KindShipping, Label: "Envío por confirmar", Qty: 1})
+}
+
+// draftFalso implementa EtapaDraft. Devuelve SIEMPRE el mismo `intake_id` para que el
+// test pueda afirmar que ese valor exacto llegó a `intake_jobs.intake_id`: un id
+// sorteado dentro del doble haría que la aserción solo pudiera comprobar «no vacío»,
+// que es lo que un `COALESCE` mal puesto también satisface.
+type draftFalso struct {
+	etapaBase
+	store    stages.StageStore
+	intakeID string
+	entrada  stages.EntradaDraft
+	recibio  bool
+}
+
+func (e *draftFalso) Run(ctx context.Context, job intake.ClaimedJob, in stages.EntradaDraft) (*stages.ArtefactoDraft, error) {
+	e.mu.Lock()
+	e.entrada, e.recibio = in, true
+	e.mu.Unlock()
+	if err := e.paso(); err != nil {
+		return nil, err
+	}
+	art := &stages.ArtefactoDraft{
+		Version: intakes.RevisionPayloadVersion, IntakeID: e.intakeID, RevisionNo: 1,
+	}
+	if in.Match != nil {
+		art.Lines = len(in.Match.Lines)
+	}
+	return art, guardar(ctx, e.store, job.ID, intake.StageDraft, art)
+}
+
+// vioLaEntrada devuelve la entrada de la última llamada.
+func (e *draftFalso) vioLaEntrada() (stages.EntradaDraft, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.entrada, e.recibio
+}
+
+// catalogoDePrueba es el doble EXPORTADO del puerto (ver memoria.go), no uno propio:
+// el mismo objeto que usa el test de INV-10 en `flujos/runtime`, que no puede
+// construirse el suyo sin cruzar la frontera del índice.
+func catalogoDePrueba(t *testing.T) *CatalogoEnMemoria {
+	t.Helper()
+	c, err := NuevoCatalogoEnMemoria("Torta de chocolate")
+	if err != nil {
+		t.Fatalf("construir el catálogo de prueba: %v", err)
+	}
+	return c
+}
+
+// itemsDePrueba son `n` ítems especificados, como los que P3 deja para P4. El texto es
+// el del catálogo del doble para que el match real —el de un test— pueda casarlos.
+func itemsDePrueba(n int) []llm.ItemSpec {
+	out := make([]llm.ItemSpec, 0, n)
+	for i := range n {
+		out = append(out, llm.ItemSpec{
+			Product:  "torta de chocolate",
+			Evidence: "quiero la torta " + strconv.Itoa(i+1),
+		})
+	}
+	return out
+}
+
+// wantsDePrueba son `n` ideas vivas, las que P2 deja para P3. Hace falta al menos una:
+// con cero, el worker emite el aviso de «borrador VACÍO» y el escenario deja de ser el
+// camino normal.
+func wantsDePrueba(n int) []llm.Want {
+	out := make([]llm.Want, 0, n)
+	for i := range n {
+		out = append(out, llm.Want{
+			Idea:     "torta de chocolate",
+			Evidence: "quiero la torta " + strconv.Itoa(i+1),
+		})
+	}
+	return out
+}
+
+// olaTres arma las tres piezas que T3.8 volvió OBLIGATORIAS en NewWorker. Existe para
+// los tests que se construyen su propio worker fuera de `nuevoBanco` (los del aforo,
+// los del flanco a READY, el del tope de ítems): a ninguno le importa el borrador,
+// pero todos tienen que pasar por él, porque la cadena de producción lo recorre.
+func olaTres(t *testing.T, rel *reloj, store stages.StageStore) (*matchFalso, *draftFalso, *CatalogoEnMemoria) {
+	t.Helper()
+	return &matchFalso{etapaBase: etapaBase{rel: rel}, store: store},
+		&draftFalso{etapaBase: etapaBase{rel: rel}, store: store, intakeID: intakeIDDePrueba},
+		catalogoDePrueba(t)
 }
 
 // guardar es lo que hace que las etapas falsas dejen rastro REAL en la máquina: sin
@@ -280,7 +417,18 @@ type banco struct {
 	p2    *p2Falsa
 	p3    *p3Falsa
 	p4    *p4Falsa
+	// match, draft, catalogos y zonas son la Ola 3 (T3.8). Están en TODOS los bancos
+	// —y no solo en los tests que los miran— porque la cadena de producción los
+	// recorre siempre: un banco que parara en P4 probaría un worker que ya no existe.
+	match     *matchFalso
+	draft     *draftFalso
+	catalogos *CatalogoEnMemoria
+	zonas     *intakes.MemoryStore
 }
+
+// intakeIDDePrueba es el id que devuelve el draft falso. Es un UUID fijo para que la
+// aserción pueda comparar contra ESTE valor y no solo contra «no vacío».
+const intakeIDDePrueba = "9f3c1d52-4b8a-4a6e-9c11-7d2e6f0a5b34"
 
 // nuevoBanco arma el worker. `cfg` se completa con los defaults de producción, así que
 // un test que no diga nada está probando la política REAL y no una de laboratorio.
@@ -295,8 +443,17 @@ func nuevoBanco(t *testing.T, cfg Config) *banco {
 	b.p3 = &p3Falsa{etapaBase: etapaBase{rel: rel}, store: store,
 		items: []llm.ItemSpec{{Product: "torta", Evidence: "torta"}}}
 	b.p4 = &p4Falsa{etapaBase: etapaBase{rel: rel}, store: store}
+	b.match = &matchFalso{etapaBase: etapaBase{rel: rel}, store: store}
+	b.draft = &draftFalso{etapaBase: etapaBase{rel: rel}, store: store, intakeID: intakeIDDePrueba}
+	b.catalogos = catalogoDePrueba(t)
+	// El lector de zonas es el `MemoryStore` REAL del dominio de solicitudes, no un
+	// doble propio: es el gemelo declarado de `*intakes.Postgres` y ya sabe sembrar
+	// zonas (SetShippingZones). Un tercer doble aquí sería una tercera idea de lo que
+	// significa «este tenant no configuró zonas».
+	b.zonas = intakes.NewMemoryStore()
 
-	w, err := NewWorker(log, store, b.p2, b.p3, b.p4, cifraFalsa{}, cfg)
+	w, err := NewWorker(log, store, b.p2, b.p3, b.p4, b.match, b.draft, b.catalogos,
+		cifraFalsa{}, cfg, ConZonasDeEnvio(b.zonas))
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}

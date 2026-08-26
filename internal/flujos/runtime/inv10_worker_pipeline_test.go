@@ -52,6 +52,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // ---------------------------------------------------------------------------
@@ -215,12 +216,40 @@ func nuevoPipelineCaído(t *testing.T) *pipelineCaído {
 		t.Fatalf("construir P4: %v", err)
 	}
 
-	w, err := pipeline.NewWorker(log, almacén, p2, p3, p4, cifraDePrueba{}, pipeline.Config{
-		Cadencia:         time.Millisecond,
-		BackoffBase:      time.Millisecond,
-		BackoffTope:      5 * time.Millisecond,
-		MaxIntentosInfra: 1_000_000, // que no muera dentro del test: lo que se prueba es que NO llega a done
-	})
+	// LAS DOS ETAPAS DE LA OLA 3 Y LA CACHÉ DEL CATÁLOGO (T3.8). Son REALES y no
+	// dobles: aquí ya se construyen P2-P4 de verdad, y un doble solo para las dos
+	// últimas dejaría este test probando un worker distinto del de producción.
+	//
+	// En ESTE escenario no llegan a correr —el proveedor está muerto y P2 tumba la
+	// cadena en su primera llamada—, que es justo lo que el criterio INV-10 mira: el
+	// job no llega a `done`. Están porque el constructor las exige, y las exige para
+	// que nadie pueda volver a dejarlas apagadas.
+	repoDeFlujos := store.NewMemoryRepository()
+	etapaMatch, err := stages.NewMatch(log, almacén)
+	if err != nil {
+		t.Fatalf("construir el match: %v", err)
+	}
+	etapaDraft, err := stages.NewDraft(log, almacén, repoDeFlujos, intakes.NewMemoryStore(), repoDeFlujos)
+	if err != nil {
+		t.Fatalf("construir el draft: %v", err)
+	}
+	// 🔴 EL CATÁLOGO ENTRA POR `pipeline.NuevoCatalogoEnMemoria` Y NO POR
+	// `catalogo.NewCache`, y no es comodidad: `TestFrontera_NingunFicheroDeFlujosImportaElIndice`
+	// prohíbe que ningún fichero de `internal/flujos/**` —tests incluidos, y lo dice
+	// con esas palabras— importe `internal/intake/catalogo`. Construirlo aquí cruzaría
+	// esa frontera; usar el doble que vive en `pipeline` no la toca.
+	catalogos, err := pipeline.NuevoCatalogoEnMemoria()
+	if err != nil {
+		t.Fatalf("construir el catálogo en memoria: %v", err)
+	}
+
+	w, err := pipeline.NewWorker(log, almacén, p2, p3, p4,
+		etapaMatch, etapaDraft, catalogos, cifraDePrueba{}, pipeline.Config{
+			Cadencia:         time.Millisecond,
+			BackoffBase:      time.Millisecond,
+			BackoffTope:      5 * time.Millisecond,
+			MaxIntentosInfra: 1_000_000, // que no muera dentro del test: lo que se prueba es que NO llega a done
+		})
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}
