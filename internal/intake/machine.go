@@ -229,6 +229,27 @@ type PipelineStore interface {
 	// SKIP LOCKED): un segundo claim del MISMO job no lo encuentra, porque ya no
 	// está en `pending`. Eso es «doble-claim pierde uno».
 	ClaimNext(ctx context.Context) (ClaimedJob, bool, error)
+	// ClaimNextIgnorandoBackoff es el HERMANO POR EVENTO de ClaimNext (Plan 044 ·
+	// Ola 2 · T2.7, D-044.43): toma el job `pending` más antiguo DE ESE TENANT
+	// **sin mirar `next_attempt_at`**, y lo pasa a `processing`.
+	//
+	// 🔴 IGNORAR EL BACKOFF ES TODO EL PUNTO, Y ES PELIGROSO SI SE LLAMA EN BUCLE.
+	// El backoff existe para que un job que falla no gire a la velocidad del error;
+	// este claim se lo salta porque el flanco `DOWN → READY` de un Edge es
+	// exactamente la noticia que invalida la espera: el motivo por el que ese job
+	// estaba castigado —no había con quién hablar— acaba de desaparecer, y hacerle
+	// cumplir los cinco minutos que le quedan sería sincronizar por reloj algo que
+	// tiene un evento perfectamente bueno. Quien llame tiene que garantizar que NO
+	// reclama el mismo job dos veces por evento; lo hace `pipeline.DrenarDespierto`
+	// con un conjunto de vistos, y ahí está escrito por qué no se puede quitar.
+	//
+	// El filtro es por TENANT y no por Edge porque `intake_jobs` no tiene columna
+	// `edge_id` —el job nace de una ventana de conversación, no de una máquina— y
+	// porque el enrutado manda el job de un tenant al Edge que esté vivo. Ver
+	// pipeline.DrenarDespierto.
+	//
+	// Devuelve false sin error cuando no hay nada que tomar, igual que su hermano.
+	ClaimNextIgnorandoBackoff(ctx context.Context, tenantID string) (ClaimedJob, bool, error)
 	// SaveStage persiste el artefacto de una etapa y mueve `stage` a esa etapa, en
 	// UNA sentencia y solo si el job sigue `processing`. Un artefacto inválido no
 	// llega a la base: se rechaza antes con error.

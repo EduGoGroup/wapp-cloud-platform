@@ -18,8 +18,11 @@
 //
 //   - NO es un planificador ni una cola con prioridades: el ADR-0046 los descarta por
 //     escrito. Reclama de uno en uno, en el orden que fija el `ORDER BY` del claim.
-//   - NO tiene aforo por Edge (T2.7): dos cadenas de lote del MISMO Edge pueden
-//     solaparse hoy y hambrear igual a los turnos interactivos. Sigue sin hacerse.
+//   - 🔄 YA TIENE AFORO POR EDGE (T2.7, 2026-08-25). Esta línea decía que no, y era
+//     verdad hasta hoy. Dos cadenas de lote del MISMO Edge ya NO pueden solaparse: el
+//     worker toma la plaza `(tenant, Edge)` antes de la cadena y la suelta al acabar
+//     (ver plaza.go). Lo que sigue siendo cierto es el resto del párrafo: el aforo
+//     acota la espera de un turno interactivo a UNA llamada de lote, no a cero.
 //     🔄 El tope de ítems (T2.6) SÍ está puesto desde el 2026-08-25, y no aquí: lo
 //     aplica `stages.acotarAlTope` a la entrada de P3, que es donde se gasta la plaza
 //     (ver `stages/tope.go`). Un pedido de 40 ítems ya no hace 40 llamadas: hace 10 y
@@ -206,19 +209,96 @@ type Worker struct {
 	cfg    Config
 	ahora  func() time.Time
 	numero func(int, time.Duration, time.Duration) time.Duration
+
+	// aforo y plazas son EL ENTERO de T2.7 y quien sabe a qué plaza apunta un job.
+	// Van en pareja y nacen juntos (ConAforo): un aforo sin quien resuelva la
+	// dirección no podría indexar nada, y un resolutor sin aforo no serviría a nadie.
+	// Los DOS nil = worker sin aforo, que es el estado de T2.5 y sigue siendo legal
+	// (lo grita el arranque, ver Run).
+	aforo  *Aforo
+	plazas Plazas
+
+	// despertares es el DISPARADOR POR EVENTO (D-044.43): por aquí entra «el Edge de
+	// este tenant acaba de decir que puede». Tiene buffer y el envío es NO
+	// BLOQUEANTE (ver Despertar) porque quien lo llena es el bucle Recv del gateway,
+	// que no puede esperar a nadie.
+	despertares chan Plaza
+}
+
+// Opcion es una perilla del worker que NO es un número: un colaborador. Se separan de
+// Config a propósito —Config son las perillas que un operador puede querer mover desde
+// el arranque; esto son piezas que se cablean una vez— y son variádicas para que el
+// worker de T2.5 siga construyéndose igual.
+type Opcion func(*Worker)
+
+// ConAforo le da al worker el entero de T2.7 y quien resuelve la dirección de la
+// plaza. Los dos o ninguno: con uno solo, la opción no hace nada y el worker sigue sin
+// aforo (y lo grita al arrancar).
+//
+// `plazas` lo satisface *llmvia.Selector, que es quien sabe la vía del tenant — y por
+// tanto quien sabe que por vía API NO HAY PLAZA que tomar. El worker nunca pregunta
+// eso: recibe un `ok` y ya.
+func ConAforo(a *Aforo, plazas Plazas) Opcion {
+	return func(w *Worker) {
+		if a == nil || plazas == nil {
+			return
+		}
+		w.aforo, w.plazas = a, plazas
+	}
 }
 
 // NewWorker construye el worker. Devuelve ErrSinCablear si le falta cualquier pieza.
+//
+// Las OPCIONES son de T2.7 y hoy solo hay una, ConAforo: sin ella el worker corre sin
+// aforo por Edge —dos cadenas del mismo Edge pueden solaparse— y el arranque lo dice
+// en un Warn, porque un aforo que no está puesto no da ningún otro síntoma.
 func NewWorker(log logger.Logger, store intake.PipelineStore,
 	p2 EtapaIdeas, p3 EtapaEspecificaciones, p4 EtapaNormalizacion,
-	cifra Descifrador, cfg Config) (*Worker, error) {
+	cifra Descifrador, cfg Config, opts ...Opcion) (*Worker, error) {
 	if log == nil || store == nil || p2 == nil || p3 == nil || p4 == nil || cifra == nil {
 		return nil, ErrSinCablear
 	}
-	return &Worker{
+	w := &Worker{
 		log: log, store: store, p2: p2, p3: p3, p4: p4, cifra: cifra,
 		cfg: cfg.conDefaults(), ahora: time.Now, numero: espera,
-	}, nil
+		despertares: make(chan Plaza, capacidadDespertares),
+	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w, nil
+}
+
+// capacidadDespertares es cuántos flancos a READY caben esperando a que el worker
+// vuelva al select. Treinta y dos y no uno: el flanco es raro (un Edge que arranca o
+// que recupera su Ollama), pero llegan en RÁFAGA cuando el Cloud se reinicia y toda la
+// flota vuelve a latir a la vez. Lleno ⇒ se descarta el aviso, y descartarlo es seguro:
+// el ticker sigue barriendo y el backoff sigue venciendo. Ver Despertar.
+const capacidadDespertares = 32
+
+// Despertar es EL DISPARADOR POR EVENTO de la cadena de lote (D-044.43): el Edge
+// `edgeID` del tenant `tenantID` acaba de pasar a READY, así que sus jobs `pending`
+// se reanudan EN EL ACTO, sin esperar a que venza su backoff.
+//
+// 🔴 NO BLOQUEA NUNCA, y esa es su única exigencia de contrato. Lo llama el hook
+// `OnEdgeReady` del gateway, que corre INLINE en la goroutine del bucle Recv del
+// stream: bloquear ahí pararía la recepción de TODOS los frames de ese Edge. Si el
+// buffer está lleno se descarta el aviso y se dice en Debug —el barrendero sigue
+// siendo el backoff, que es justo el reparto de papeles que D-044.43 escribe.
+//
+// Es seguro llamarlo desde cualquier goroutine y antes de que Run arranque: el canal
+// existe desde NewWorker.
+func (w *Worker) Despertar(tenantID, edgeID string) {
+	p := Plaza{TenantID: tenantID, EdgeID: edgeID}
+	if !p.Valida() {
+		return
+	}
+	select {
+	case w.despertares <- p:
+	default:
+		w.log.Debug("pipeline: aviso de Edge READY descartado (buzón lleno); lo recogerá el backoff",
+			"tenant_id", tenantID, "edge_id", edgeID)
+	}
 }
 
 // Run bloquea hasta que `ctx` se cancele. Se arranca con `go w.Run(ctx)` sobre el
@@ -238,7 +318,17 @@ func (w *Worker) Run(ctx context.Context) {
 		"max_intentos_calidad", w.cfg.MaxIntentosCalidad,
 		"max_intentos_infra", w.cfg.MaxIntentosInfra,
 		"backoff_base", w.cfg.BackoffBase.String(),
-		"backoff_tope", w.cfg.BackoffTope.String())
+		"backoff_tope", w.cfg.BackoffTope.String(),
+		"aforo_por_edge", w.aforo != nil)
+
+	// 🔴 EL AVISO VA EN EL ARRANQUE Y EN Warn PORQUE UN AFORO AUSENTE NO DA NINGÚN
+	// OTRO SÍNTOMA. Sin él, el sistema no falla: sirve, y de vez en cuando dos
+	// cadenas del mismo Edge se pisan y un turno interactivo espera el doble. Eso no
+	// deja rastro en ningún log, así que el rastro se pone aquí.
+	if w.aforo == nil {
+		w.log.Warn("pipeline: worker SIN aforo por Edge (T2.7); dos cadenas de lote del mismo Edge pueden solaparse",
+			"consecuencia", "la espera de un turno interactivo deja de estar acotada a UNA llamada de lote")
+	}
 
 	w.Drenar(ctx)
 	for {
@@ -246,10 +336,72 @@ func (w *Worker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			w.log.Info("pipeline: worker apagando (contexto cancelado)")
 			return
+		case p := <-w.despertares:
+			// El flanco a READY: se atiende ANTES de que venza ningún backoff, que es
+			// todo el propósito. Ver DrenarDespierto.
+			w.DrenarDespierto(ctx, p)
 		case <-tic.C:
 			w.Drenar(ctx)
 		}
 	}
+}
+
+// DrenarDespierto atiende un flanco a READY: procesa los jobs `pending` de ese tenant
+// SIN MIRAR SU BACKOFF, y devuelve cuántos tocó.
+//
+// # POR QUÉ EL CLAIM ES POR TENANT SI LA PLAZA ES POR EDGE — Y NO ES UNA INCOHERENCIA
+//
+// 🔴 `intake_jobs` NO TIENE COLUMNA `edge_id`, y no la tiene porque el job no nace de
+// un Edge: nace de una VENTANA de conversación (`tenant_id`, `session_id`,
+// `contact_id`, `event_id`, migración 0072). El enunciado de D-044.43 —«los jobs
+// pending de ESE EDGE se reanudan»— no es escribible tal cual, y esto es lo más
+// cercano que sí lo es. No es una aproximación floja: el enrutado de una inferencia
+// (`gatewaygrpc.inferenceSession`) manda el job de un tenant al Edge que esté VIVO —la
+// sesión de origen si respira, y si no la primera alfabética—, así que «los jobs que
+// este Edge acaba de desbloquear» y «los jobs pendientes de este tenant» coinciden
+// siempre que el tenant tenga un Edge, y ese es el caso que dispara el flanco. Donde
+// no coincidan, el que sobra se encuentra la plaza ocupada y espera: el aforo sigue
+// protegiendo la máquina.
+//
+// El `edge_id` del flanco NO se tira: viaja al log, que es donde un operador necesita
+// leer qué máquina desatascó qué cola.
+//
+// # POR QUÉ HAY UN CONJUNTO DE VISTOS Y NO SE PUEDE QUITAR
+//
+// 🔴 PORQUE ESTE BUCLE NO TIENE OTRO FRENO. `Drenar` termina porque un job que
+// tropieza sale con su `next_attempt_at` en el futuro y deja de ser reclamable; aquí
+// el claim IGNORA esa marca a propósito, así que ese freno no existe: un job que falle
+// se reencolaría castigado y el claim volvería a llevárselo EN EL ACTO, para siempre y
+// a la velocidad del error. El conjunto de vistos es lo que convierte el flanco en UNA
+// pasada por job, que es lo que un evento significa.
+func (w *Worker) DrenarDespierto(ctx context.Context, p Plaza) int {
+	w.log.Info("pipeline: el Edge acaba de poder servir inferencia; se reanudan sus jobs sin esperar al backoff",
+		"tenant_id", p.TenantID, "edge_id", p.EdgeID)
+
+	vistos := make(map[string]struct{})
+	n := 0
+	for ctx.Err() == nil {
+		job, hubo, err := w.store.ClaimNextIgnorandoBackoff(ctx, p.TenantID)
+		if err != nil {
+			w.log.Error("pipeline: no se pudo reclamar trabajo tras el flanco a READY",
+				"tenant_id", p.TenantID, "edge_id", p.EdgeID, "error", err)
+			return n
+		}
+		if !hubo {
+			return n
+		}
+		if _, repetido := vistos[job.ID]; repetido {
+			// Ya se procesó en ESTE flanco y volvió a la cola: el flanco terminó su
+			// trabajo. Se suelta sin castigo —no ha fallado nada nuevo— y el backoff
+			// que le puso su propio tropiezo sigue mandando.
+			w.soltarSinCastigo(ctx, job, "ya procesado en este mismo flanco a READY")
+			return n
+		}
+		vistos[job.ID] = struct{}{}
+		w.procesar(ctx, job)
+		n++
+	}
+	return n
 }
 
 // Drenar procesa jobs hasta que la cola se queda sin nada reclamable, y devuelve
@@ -328,10 +480,103 @@ func (w *Worker) procesar(ctx context.Context, job intake.ClaimedJob) {
 		w.tropiezo(ctx, job, "", 0, err)
 		return
 	}
+	// 🔴 LA PLAZA SE TOMA AQUÍ: DESPUÉS DE ABRIR EL SOBRE Y ANTES DE LA CADENA.
+	//
+	// Después del sobre porque descifrar es CPU local y no toca el Ollama de nadie:
+	// tomar la plaza antes la retendría durante un descifrado que, si falla, ni
+	// siquiera va a llamar al modelo.
+	//
+	// Antes de la cadena —y no por llamada— porque el entero del ADR-0046 cuenta
+	// CADENAS DE LOTE, no peticiones. Un aforo por llamada dejaría a N cadenas
+	// intercalando sus peticiones sobre la misma plaza, y entonces un turno
+	// interactivo volvería a poder quedar detrás de N llamadas: exactamente el
+	// multiplicador que el Mecanismo 1 existe para quitar.
+	soltar, err := w.tomarPlaza(ctx, job)
+	if err != nil {
+		w.soltarSinCastigo(ctx, job, "el worker se apagó esperando plaza")
+		return
+	}
+	defer soltar()
+
 	if err := w.cadena(ctx, job, literal); err != nil {
 		return // la cadena ya escribió el desenlace
 	}
 	w.terminar(ctx, job)
+}
+
+// tomarPlaza resuelve la dirección de la plaza de este job y la ocupa. Devuelve
+// SIEMPRE una función de soltar utilizable —vacía cuando no había plaza que tomar— y
+// error SOLO si el ctx murió esperando turno.
+//
+// # LOS TRES CAMINOS SIN PLAZA, Y POR QUÉ NINGUNO DE LOS TRES PARA EL JOB
+//
+//  1. **Worker sin aforo** (no se cableó ConAforo). Es el worker de T2.5, y sigue
+//     siendo legal; el Warn del arranque es su señal.
+//  2. **El tenant no ocupa plaza**: está en vía API (allí el tope es de precio, no de
+//     capacidad) o no tiene ningún Edge conectado. Lo distingue `llmvia.Selector`, que
+//     es el único que puede: aquí las dos cosas se ven igual y se tratan igual.
+//  3. **No se pudo preguntar** (la config del tenant no se leyó). 🔴 NO se convierte
+//     en tropiezo AQUÍ, y es deliberado: si `tenant_llm` no se puede leer, la primera
+//     etapa va a fallar por lo mismo dos líneas más abajo y `tropiezo` lo clasificará
+//     con el resto. Clasificarlo también aquí sería la segunda clasificación del mismo
+//     error, que es como una política se acaba aplicando a medias.
+func (w *Worker) tomarPlaza(ctx context.Context, job intake.ClaimedJob) (func(), error) {
+	nada := func() {}
+	if w.aforo == nil || w.plazas == nil {
+		return nada, nil
+	}
+	edgeID, hay, err := w.plazas.PlazaDe(ctx, job.Key.TenantID, job.Key.SessionID)
+	if err != nil {
+		w.log.Warn("pipeline: no se pudo resolver la plaza del job; la cadena sigue SIN aforo",
+			"job_id", job.ID, "tenant_id", job.Key.TenantID, "error", err.Error())
+		return nada, nil
+	}
+	p := Plaza{TenantID: job.Key.TenantID, EdgeID: edgeID}
+	if !hay || !p.Valida() {
+		w.log.Debug("pipeline: el job no ocupa plaza (vía sin plaza, o el tenant no tiene Edge vivo)",
+			"job_id", job.ID, "tenant_id", job.Key.TenantID)
+		return nada, nil
+	}
+
+	// El log de espera SOLO cuando de verdad hay cola: emitirlo siempre lo volvería
+	// ruido y dejaría de significar nada el día que haya que buscarlo.
+	if w.aforo.Esperando() > 0 {
+		w.log.Info("pipeline: la plaza del Edge está ocupada; este job ESPERA (no falla, no se castiga)",
+			"job_id", job.ID, "plaza", p.String(), "esperando", w.aforo.Esperando())
+	}
+	soltar, err := w.aforo.Tomar(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return soltar, nil
+}
+
+// soltarSinCastigo devuelve el job a `pending` TAL COMO ESTABA: sin consumirle el
+// intento y sin empujarle la marca. Es el desenlace de lo que no es culpa del job —el
+// worker se apagó esperando plaza, o el flanco a READY ya lo había procesado— y por
+// eso usa `Release` y no `Retry`.
+//
+// 🔴 Y POR ESO MISMO NO SE PUEDE USAR EN UN TROPIEZO. `Release` no toca
+// `next_attempt_at`, así que el job es reclamable EN EL ACTO: en un camino que vuelve
+// a fallar, eso es la tormenta de la 0078 (medida en la mutación M1 de T2.5: cuelga el
+// proceso). Aquí es correcto porque los dos llamantes SALEN del bucle inmediatamente
+// después.
+func (w *Worker) soltarSinCastigo(ctx context.Context, job intake.ClaimedJob, motivo string) {
+	cerrar, cancel := w.cierre(ctx)
+	defer cancel()
+	aplicado, err := w.store.Release(cerrar, job.ID)
+	if err != nil {
+		w.log.Error("pipeline: no se pudo devolver el job a la cola; queda en processing",
+			"job_id", job.ID, "motivo", motivo, "error", err.Error())
+		return
+	}
+	if !aplicado {
+		w.log.Info("pipeline: la devolución no aplicó (el job ya no estaba en processing)",
+			"job_id", job.ID, "motivo", motivo)
+		return
+	}
+	w.log.Info("pipeline: job devuelto a la cola SIN castigo",
+		"job_id", job.ID, "motivo", motivo)
 }
 
 // literalDe abre el sobre de tres piezas. Distingue los DOS motivos por los que puede
@@ -654,9 +899,12 @@ func (w *Worker) terminar(ctx context.Context, job intake.ClaimedJob) {
 // una decisión dentro —cuánto puede durar legítimamente un `processing`—. 🔄 Esa
 // decisión YA NO ES INCALCULABLE por la mitad de T2.6: con el tope en 10 ítems y
 // `PlazoPorLlamadaSuelo` en 48 s, la cadena entera tiene un techo aritmético (P2 + 10 ×
-// 48 s + P4 ≈ 9 min de peor caso). Lo que sigue faltando es el aforo (T2.7): sin él, N
-// cadenas del mismo Edge se estorban y ese techo se multiplica por N. Queda fuera de
-// T2.5 A PROPÓSITO y escrito aquí para que no se descubra en campo.
+// 48 s + P4 ≈ 9 min de peor caso). 🔄 Y el fleco que este párrafo dejaba abierto —«lo
+// que sigue faltando es el aforo (T2.7): sin él, N cadenas del mismo Edge se estorban
+// y ese techo se multiplica por N»— lo CIERRA T2.7: con el aforo, N cadenas del mismo
+// Edge se ponen en fila y el techo por cadena vuelve a ser el aritmético. Lo que el
+// aforo NO acota es cuánto puede esperar la que va la última, que es N × ese techo:
+// quien decida el `claimed_at` tiene que contar la espera, no solo la cadena.
 func (w *Worker) cierre(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), plazoDeCierre)
 }

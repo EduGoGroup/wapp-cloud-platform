@@ -160,6 +160,37 @@ func (s *StoreEnMemoria) RomperElClaim(err error) {
 // created_at`— porque es lo que la POLÍTICA necesita que sea cierto para poder
 // probarse. NO reproduce `FOR UPDATE SKIP LOCKED`: ver la cabecera.
 func (s *StoreEnMemoria) ClaimNext(_ context.Context) (intake.ClaimedJob, bool, error) {
+	ahora := s.ahora()
+	return s.reclamar(func(f *Fila) bool {
+		return f.Status == intake.StatusPending && !f.NextAttemptAt.After(ahora)
+	})
+}
+
+// ClaimNextIgnorandoBackoff implementa intake.PipelineStore. Reproduce el predicado
+// del claim POR EVENTO: mismo `status = 'pending'`, filtro por tenant, y SIN la mitad
+// temporal — que es exactamente la diferencia que el criterio (f) de T2.7 tiene que
+// poder ver («un job pending cuyo backoff aún NO venció»).
+//
+// El `tenantID` vacío no reclama nada, igual que el store real: un flanco sin
+// identidad no puede barrer la cola de todo el mundo.
+func (s *StoreEnMemoria) ClaimNextIgnorandoBackoff(_ context.Context, tenantID string) (intake.ClaimedJob, bool, error) {
+	if tenantID == "" {
+		return intake.ClaimedJob{}, false, nil
+	}
+	return s.reclamar(func(f *Fila) bool {
+		return f.Status == intake.StatusPending && f.Key.TenantID == tenantID
+	})
+}
+
+// reclamar es el cuerpo COMÚN de los dos claims: cuenta la llamada, aplica el fallo
+// inyectado, filtra con el predicado que le pasen, ordena por el `ORDER BY` real
+// —`next_attempt_at`, y `created_at` de desempate, en los DOS casos— y mueve el
+// primero a `processing`.
+//
+// Que el orden sea el mismo para los dos no es descuido: en el claim por evento
+// `next_attempt_at` deja de filtrar pero sigue ordenando, y ordena por el criterio
+// correcto (el castigo que vencía antes va primero). Ver claimIgnorandoBackoffSQL.
+func (s *StoreEnMemoria) reclamar(elegible func(*Fila) bool) (intake.ClaimedJob, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claims++
@@ -167,10 +198,9 @@ func (s *StoreEnMemoria) ClaimNext(_ context.Context) (intake.ClaimedJob, bool, 
 		return intake.ClaimedJob{}, false, s.falloAlReclamar
 	}
 
-	ahora := s.ahora()
 	elegibles := make([]*Fila, 0, len(s.filas))
 	for _, f := range s.filas {
-		if f.Status == intake.StatusPending && !f.NextAttemptAt.After(ahora) {
+		if elegible(f) {
 			elegibles = append(elegibles, f)
 		}
 	}

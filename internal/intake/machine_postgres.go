@@ -96,18 +96,76 @@ RETURNING j.id::text, j.tenant_id, j.session_id, j.contact_id, j.event_id::text,
           j.attempts
 `
 
+// claimIgnorandoBackoffSQL es el HERMANO POR EVENTO del anterior (T2.7, D-044.43):
+// misma sentencia, mismo RETURNING, y DOS diferencias en el `WHERE` del SELECT
+// interno.
+//
+//  1. **Desaparece `next_attempt_at <= now()`.** Esa es la mitad temporal del claim,
+//     y saltársela es todo el propósito: el flanco `DOWN → READY` de un Edge es la
+//     noticia que INVALIDA la espera —el motivo del castigo era que no había con
+//     quién hablar, y acaba de dejar de serlo—. El backoff se queda como barrendero
+//     del Edge vivo-pero-atascado, que es el caso que ningún evento anuncia.
+//  2. **Aparece `tenant_id = $1`.** Sin él, el flanco de UN Edge vaciaría la cola de
+//     TODOS los tenants ignorando el backoff de todos: un evento local con un efecto
+//     global, que es la forma de convertir una mejora en una tormenta.
+//
+// 🔴 EL `ORDER BY` SE QUEDA IGUAL, con sus dos columnas, y no es copia-pega
+// distraído: aquí `next_attempt_at` ya no filtra pero SIGUE ORDENANDO, y ordena por
+// el criterio correcto —el job cuyo castigo vencía antes es el que lleva más tiempo
+// esperando—, con `created_at` desempatando por el cliente que escribió primero.
+//
+// `FOR UPDATE SKIP LOCKED` se queda por la misma razón que en el hermano: dos
+// workers atendiendo el mismo flanco se llevan jobs distintos en vez de bloquearse.
+const claimIgnorandoBackoffSQL = `
+UPDATE public.intake_jobs AS j
+   SET status = 'processing', updated_at = now()
+  FROM (
+        SELECT id
+          FROM public.intake_jobs
+         WHERE status = 'pending' AND tenant_id = $1
+         ORDER BY next_attempt_at, created_at
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       ) AS c
+ WHERE j.id = c.id
+RETURNING j.id::text, j.tenant_id, j.session_id, j.contact_id, j.event_id::text,
+          COALESCE(j.stage, ''), j.message_ts, j.source_refs, j.artifacts,
+          j.source_text_enc, j.source_text_dek, COALESCE(j.source_text_kek_id, ''),
+          j.attempts
+`
+
 // ClaimNext implementa PipelineStore.
 func (p *Postgres) ClaimNext(ctx context.Context) (ClaimedJob, bool, error) {
 	if p == nil || p.db == nil {
 		return ClaimedJob{}, false, nil
 	}
+	return escanearClaim(p.db.QueryRowContext(ctx, claimNextSQL))
+}
+
+// ClaimNextIgnorandoBackoff implementa PipelineStore. Ver claimIgnorandoBackoffSQL.
+//
+// Un `tenantID` vacío devuelve «no hay nada» sin ir a la base: no es un filtro que
+// case con todo, es una llamada mal hecha, y dejarla pasar convertiría un flanco sin
+// identidad en el barrido global que el `$1` existe para impedir.
+func (p *Postgres) ClaimNextIgnorandoBackoff(ctx context.Context, tenantID string) (ClaimedJob, bool, error) {
+	if p == nil || p.db == nil || tenantID == "" {
+		return ClaimedJob{}, false, nil
+	}
+	return escanearClaim(p.db.QueryRowContext(ctx, claimIgnorandoBackoffSQL, tenantID))
+}
+
+// escanearClaim lee la fila que devuelve CUALQUIERA de los dos claims. Es una sola
+// función y no dos porque el RETURNING es el mismo: dos copias del escaneo serían dos
+// sitios donde añadir la próxima columna, y el día que solo se añadiera en uno el
+// fallo sería un campo vacío en un camino, sin error.
+func escanearClaim(row *sql.Row) (ClaimedJob, bool, error) {
 	var (
 		j         ClaimedJob
 		messageTS sql.NullTime
 		refsRaw   []byte
 		artRaw    []byte
 	)
-	err := p.db.QueryRowContext(ctx, claimNextSQL).Scan(
+	err := row.Scan(
 		&j.ID, &j.Key.TenantID, &j.Key.SessionID, &j.Key.ContactID, &j.Key.EventID,
 		&j.Stage, &messageTS, &refsRaw, &artRaw,
 		&j.SourceText.Enc, &j.SourceText.DEK, &j.SourceText.KEKID,
