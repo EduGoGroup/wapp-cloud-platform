@@ -11,7 +11,9 @@ import (
 // pruebas de efectos T2). Encadena Vars como drive.
 func driveE(t *testing.T, m Module, vars map[string]any, input string) (cartState, []modules.Effect, map[string]any) {
 	t.Helper()
-	res := m.Step(model.Node{}, model.Conversation{Vars: vars}, input)
+	// Turno COMPLETO (dos pasadas si el módulo pide consulta), no un Step suelto:
+	// ver la nota de drive en cart_test.go.
+	res := turno(m, model.Conversation{Vars: vars}, input, nil)
 	return loadState(res.Vars), res.Effects, res.Vars
 }
 

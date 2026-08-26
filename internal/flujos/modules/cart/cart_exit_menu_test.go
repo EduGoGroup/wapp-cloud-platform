@@ -30,7 +30,7 @@ func TestCart_DentroDeEvento_TercerInvalidoArmaMenuDeSalida(t *testing.T) {
 	vars := seededVars()
 	conv := model.Conversation{Vars: vars, EventID: "ev-cart-1"}
 
-	res1 := m.Step(model.Node{}, conv, "zzz")
+	res1 := turno(m, conv, "zzz", nil)
 	if len(res1.Outputs) != 1 || !strings.HasPrefix(res1.Outputs[0], t52CartInvalidPrefix) {
 		t.Fatalf("1er inválido: Outputs = %v, quiero el reprompt clásico", res1.Outputs)
 	}
@@ -40,7 +40,7 @@ func TestCart_DentroDeEvento_TercerInvalidoArmaMenuDeSalida(t *testing.T) {
 	}
 
 	conv.Vars = res1.Vars
-	res2 := m.Step(model.Node{}, conv, "zzz")
+	res2 := turno(m, conv, "zzz", nil)
 	if len(res2.Outputs) != 1 || res2.Outputs[0] != res1.Outputs[0] {
 		t.Fatalf("2do inválido: Outputs = %v, quiero el MISMO reprompt clásico (%q)", res2.Outputs, res1.Outputs[0])
 	}
@@ -49,7 +49,7 @@ func TestCart_DentroDeEvento_TercerInvalidoArmaMenuDeSalida(t *testing.T) {
 	}
 
 	conv.Vars = res2.Vars
-	res3 := m.Step(model.Node{}, conv, "zzz")
+	res3 := turno(m, conv, "zzz", nil)
 	if res3.Outputs == nil || len(res3.Outputs) != 1 {
 		t.Fatalf("3er inválido: Outputs = %v, quiero el menú de salida (1 salida)", res3.Outputs)
 	}
@@ -83,7 +83,7 @@ func TestCart_FueraDeEvento_NuncaArmaYRepromteaSinTecho(t *testing.T) {
 
 	var primero string
 	for i := 0; i < 5; i++ {
-		res := m.Step(model.Node{}, conv, "zzz")
+		res := turno(m, conv, "zzz", nil)
 		if len(res.Outputs) != 1 || !strings.HasPrefix(res.Outputs[0], t52CartInvalidPrefix) {
 			t.Fatalf("intento %d fuera de evento: Outputs = %v, quiero el reprompt clásico", i+1, res.Outputs)
 		}
@@ -109,7 +109,7 @@ func TestCart_ReprompsCounterSoloCuentaDentroDeEvento(t *testing.T) {
 	m := New()
 	conv := model.Conversation{Vars: seededVars()} // SIN EventID.
 
-	res := m.Step(model.Node{}, conv, "zzz")
+	res := turno(m, conv, "zzz", nil)
 	if st := loadState(res.Vars); st.Reprompts != 0 {
 		t.Fatalf("Reprompts fuera de evento tras un inválido = %d, quiero 0 (no cuenta)", st.Reprompts)
 	}
@@ -124,12 +124,12 @@ func TestCart_ValidoReiniciaElContador(t *testing.T) {
 	vars := seededVars()
 	conv := model.Conversation{Vars: vars, EventID: "ev-cart-2"}
 
-	res := m.Step(model.Node{}, conv, "zzz") // 1er inválido: Reprompts=1
+	res := turno(m, conv, "zzz", nil) // 1er inválido: Reprompts=1
 	if st := loadState(res.Vars); st.Reprompts != 1 {
 		t.Fatalf("Reprompts tras 1 inválido = %d, quiero 1", st.Reprompts)
 	}
 	conv.Vars = res.Vars
-	res = m.Step(model.Node{}, conv, "1") // elección VÁLIDA (categoría "1" = Bebidas)
+	res = turno(m, conv, "1", nil) // elección VÁLIDA (categoría "1" = Bebidas)
 	if st := loadState(res.Vars); st.Reprompts != 0 {
 		t.Fatalf("Reprompts tras una elección válida = %d, quiero 0 (se reinicia)", st.Reprompts)
 	}
