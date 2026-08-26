@@ -26,7 +26,7 @@ func TestCart_ContadorDeOtroEvento_EsElPrimerInvalidoDeEste(t *testing.T) {
 	conv := model.Conversation{Vars: seededVars(), EventID: "ev-cart-1"}
 
 	for i := 1; i <= modules.MaxReprompts-1; i++ {
-		res := m.Step(model.Node{}, conv, "zzz")
+		res := turno(m, conv, "zzz", nil)
 		conv.Vars = res.Vars
 		if _, armado := res.Vars[modules.ExitMenuVar]; armado {
 			t.Fatalf("precondición: el inválido %d NO debe armar el menú de salida", i)
@@ -43,7 +43,7 @@ func TestCart_ContadorDeOtroEvento_EsElPrimerInvalidoDeEste(t *testing.T) {
 
 	// CAMBIO DE CONTEXTO: las mismas Vars, otro evento activo.
 	conv.EventID = "ev-menu-2"
-	res := m.Step(model.Node{}, conv, "zzz")
+	res := turno(m, conv, "zzz", nil)
 
 	if _, armado := res.Vars[modules.ExitMenuVar]; armado {
 		t.Fatalf("un contador heredado del evento anterior armó el menú de salida al PRIMER inválido "+
@@ -68,13 +68,13 @@ func TestCart_ValidoSueltaElSello(t *testing.T) {
 	m := New()
 	conv := model.Conversation{Vars: seededVars(), EventID: "ev-cart-1"}
 
-	res := m.Step(model.Node{}, conv, "zzz")
+	res := turno(m, conv, "zzz", nil)
 	if st := loadState(res.Vars); st.RepromptsEvent == "" {
 		t.Fatalf("precondición: el inválido debe dejar el contador sellado; estado=%+v", st)
 	}
 	conv.Vars = res.Vars
 	// "1" es la primera categoría del catálogo sembrado: entrada VÁLIDA en L1.
-	valido := m.Step(model.Node{}, conv, "1")
+	valido := turno(m, conv, "1", nil)
 	st := loadState(valido.Vars)
 	if st.Reprompts != 0 || st.RepromptsEvent != "" {
 		t.Fatalf("tras una entrada válida quiero Reprompts=0 y sin sello; tengo %d / %q",

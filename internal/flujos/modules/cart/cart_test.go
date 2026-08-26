@@ -34,9 +34,15 @@ func seededVars() map[string]any {
 // resultantes (para encadenar). Los efectos declarados (T2) no se inspeccionan
 // aquí: las pantallas/estado son idénticos al T1; los efectos se prueban aparte
 // (cart_effects_test.go).
+//
+// Desde T3.5-2 un turno puede tener DOS pasadas (el módulo pide consulta y el
+// engine le vuelve a llamar con el veredicto), así que esto no llama a Step: llama
+// a `turno` (consulta_test.go), que hace lo mismo que engine.Step. SIN resolutor,
+// que es la degradación y el estado real de producción — y por eso todas las
+// pantallas de esta suite siguen siendo, byte a byte, las de antes de la tarea.
 func drive(t *testing.T, m Module, vars map[string]any, input string) (cartState, []string, map[string]any) {
 	t.Helper()
-	res := m.Step(model.Node{}, model.Conversation{Vars: vars}, input)
+	res := turno(m, model.Conversation{Vars: vars}, input, nil)
 	return loadState(res.Vars), res.Outputs, res.Vars
 }
 

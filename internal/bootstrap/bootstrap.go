@@ -66,7 +66,35 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
+
+// observaConsultas cablea el observador del re-entry de consultas del Motor de
+// Flujos (Plan 044 · Ola 3.5 · T3.5-2) al log del proceso.
+//
+// El engine NO tiene logger —es el núcleo puro de la máquina de estados— y por eso
+// publica sus desenlaces por un callback, igual que el carrito publica los
+// escalones de su cascada. Se cablea AQUÍ, que es donde hay logger, y se cablea YA
+// aunque el resolutor todavía no exista: sin esto, un módulo que pida ayuda que
+// nadie le da degradaría en SILENCIO ABSOLUTO —sin log, sin métrica y sin
+// distinguirse de un turno normal—, que es el modo de fallo del best-effort mudo
+// del content (engine.go). Los tres argumentos son de cardinalidad ACOTADA; el
+// texto del cliente no sale por aquí (engine/consulta.go).
+//
+// Vive fuera de Run, como función con nombre y no como closure inline, porque
+// gocyclo imputa los FuncLit anidados a la función madre y Run ya va justo.
+func observaConsultas(log sharedlogger.Logger) engine.ObservadorConsulta {
+	return func(clase, nivel, desenlace string) {
+		if desenlace == engine.DesenlaceResuelto {
+			log.Info("flujos: consulta resuelta", "clase", clase, "nivel", nivel)
+			return
+		}
+		// Lo demás es degradación (sin resolutor, fallo, no concluyente) o un bug de
+		// módulo (bucle): eso sí tiene que verse en el log de campo, que es lo que se
+		// raspa cuando algo «no entiende» al cliente.
+		log.Warn("flujos: consulta NO resuelta", "clase", clase, "nivel", nivel, "desenlace", desenlace)
+	}
+}
 
 // Run ejecuta el ciclo de vida completo del servidor: carga de config,
 // construcción de dependencias, arranque de listeners y espera de parada.
@@ -310,7 +338,12 @@ func Run(ctx context.Context) error {
 	// su parseo tolerante descarta (Plan 041 · T2.2): en runtime un catálogo a
 	// medias sigue vendiendo, pero el dueño tiene que poder enterarse de qué
 	// parte suya quedó fuera. Sin logger el módulo funciona igual, en silencio.
-	flowReg.Register(cart.New(cart.WithLogger(log)))
+	// Y el hook de la cascada determinista (Plan 044 · Ola 3.5 · T3.5-1), que
+	// publica en /metrics QUÉ escalón resolvió cada entrada de texto del cliente
+	// (exact|fuzzy|ninguno) por nivel del carrito. Es el dato con el que se decide
+	// cuánto trabajo le queda de verdad al turno LLM; sin él la cascada funciona
+	// igual, en silencio.
+	flowReg.Register(cart.New(cart.WithLogger(log), cart.WithMatchHook(mtx.CartMatch)))
 	flowReg.Register(media.New()) // Plan 017: nodo "media" (envía archivos por WhatsApp)
 	flowStore := flowstore.NewPostgresRepository(db)
 	// Fuente de contenido enrutada POR-NODO (Plan 015 T4a): el Router compone el
@@ -318,18 +351,16 @@ func Run(ctx context.Context) error {
 	// (tenant_content). El engine ve UN puerto content.Source; el switch por
 	// fuente vive SOLO en el Router (el dominio no conoce orígenes). Menú/encuesta
 	// sin `content` siguen resolviéndose byte-a-byte por la rama static.
-	flowEngine := engine.New(flowReg, engine.WithContentSource(
-		content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))))
+	// 🔧 EL MOTOR DE FLUJOS SE CONSTRUYE MÁS ABAJO, JUSTO DESPUÉS DEL SELECTOR DE
+	// VÍA (Plan 044 · Ola 3.5 · T3.5-2), y el desplazamiento no es cosmético: desde
+	// esta tarea el engine recibe el RESOLUTOR de consultas, que cuelga del selector
+	// —y el selector necesita el gateway, que se arma un poco más arriba—. La
+	// alternativa era un setter público sobre el engine, o sea dejar el cable mutable
+	// en caliente para arreglar un problema que solo existe durante el arranque: es
+	// exactamente lo que este fichero ya rechazó al cablear el agregador de ventanas.
 	flowResolver := flowruntime.NewPostgresTenantResolver(db)
 
 	triggerStore := trigger.NewPostgresStore(db)
-	// Puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3, D-054.6/D-054.8): junta el MISMO
-	// flowStore/flowEngine que ya alimentan DefinitionHandler/StartHandler/flowRuntime
-	// —cero dependencias nuevas, solo una lectura nueva sobre objetos que YA existen—
-	// para responder «¿el flujo de esta regla tiene contenido durable?» en tiempo de
-	// CONFIGURACIÓN. Parámetro POSICIONAL de los tres constructores CRUD de abajo (y
-	// de publicapi.Deps.DurableFlowChecker): omitirlo no compila.
-	durableFlowChecker := flowadmin.NewEngineDurableFlowChecker(flowStore, flowEngine)
 	replyLimiter := ratelimit.NewLimiter(rate.Limit(cfg.Flow.ReplyRate), cfg.Flow.ReplyBurst)
 	// El store de SOLICITUDES lo comparten dos consumidores: el proyector del
 	// carrito, que le cuelga la revisión 1 al cerrar (ADR-0031 §3) y le pone la
@@ -405,11 +436,49 @@ func Run(ctx context.Context) error {
 	// revisión (`InsertRevision`) y las zonas de envío—. Construir un segundo store
 	// para el pipeline sería un segundo pool contra la misma base y, en el caso de las
 	// revisiones, un segundo cipher del literal: dos rotaciones que mantener.
-	llmSelector, intakePipeline, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
-		tenantLLMStore, degradationNotifier, intakeJobStore, flowStore, intakeStore, flowDeps.cipher)
+	llmSelector, intakePipeline, consultaResolver, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
+		tenantLLMStore, degradationNotifier, intakeJobStore, flowStore, intakeStore, flowDeps.cipher,
+		mtx.LLMDegradacion)
 	if err != nil {
 		return err
 	}
+	// --- EL MOTOR DE FLUJOS, con las dos mitades del re-entry de consultas
+	// (Plan 044 · Ola 3.5 · T3.5-2) ---
+	//
+	// 🔴 SE CONSTRUYE AQUÍ Y NO ARRIBA CON SU REGISTRO DE MÓDULOS porque necesita el
+	// RESOLUTOR, y el resolutor cuelga del selector de vía que acaba de nacer en la
+	// línea anterior. Es la única dependencia que el engine tiene fuera del dominio,
+	// y por eso baja el engine en vez de subir el selector: subirlo obligaría a subir
+	// también el gateway, el store de tenant_llm y el notificador de degradación.
+	//
+	// EL RESOLUTOR (turnoacotado) es el TERCER escalón del carrito: código exacto →
+	// cascada determinista (T3.5-1) → preguntarle al modelo del tenant. Sin esta
+	// línea el mecanismo entero está construido y NO LO EJECUTA NADIE —el engine
+	// devuelve «sin_resolutor» y el carrito repromptea como siempre—, que es
+	// literalmente lo que ya pasó dos veces en este plan: una ola cerrada no es una
+	// ola encendida. Lo custodia TestTurnoAcotadoCableado, contra el AST de este mismo
+	// fichero. ⚠️ Se CONSTRUYE dentro de nuevoStackLLMDeCaptacion, con su error ya
+	// comprobado allí, por la misma aritmética que explica esa función: `Run` estaba
+	// en el techo exacto de complejidad ciclomática que fija el lint, así que un
+	// `if err != nil` más aquí la rompe (medido: 16 de 15).
+	//
+	// Y EL OBSERVADOR de desenlaces, que se cablea igual: el engine no tiene logger
+	// —es el núcleo puro de la máquina de estados— así que publica por callback, como
+	// el carrito publica los escalones de su cascada. Sin él una degradación sería
+	// INDISTINGUIBLE de un turno normal, que es el modo de fallo del best-effort mudo
+	// del content. Los tres argumentos son de cardinalidad acotada; el texto del
+	// cliente no sale por aquí (engine/consulta.go).
+	flowEngine := engine.New(flowReg,
+		engine.WithContentSource(content.NewRouter(content.NewStatic(), content.NewJSON(flowStore))),
+		engine.WithConsultaResolver(consultaResolver),
+		engine.WithConsultaObserver(observaConsultas(log)))
+	// Puerto ESTRECHO de T2.6/T2.7 (Plan 054 · F3, D-054.6/D-054.8): junta el MISMO
+	// flowStore/flowEngine que ya alimentan DefinitionHandler/StartHandler/flowRuntime
+	// —cero dependencias nuevas, solo una lectura nueva sobre objetos que YA existen—
+	// para responder «¿el flujo de esta regla tiene contenido durable?» en tiempo de
+	// CONFIGURACIÓN. Parámetro POSICIONAL de los tres constructores CRUD de abajo (y
+	// de publicapi.Deps.DurableFlowChecker): omitirlo no compila.
+	durableFlowChecker := flowadmin.NewEngineDurableFlowChecker(flowStore, flowEngine)
 	// El almacén del EVENTO conversacional (Plan 043 · Ola 1) reusa el MISMO cipher
 	// que los contactos y los datos del comprador: el historial del evento guarda
 	// texto literal del cliente y va cifrado con el keyring versionado del Plan 012.
@@ -970,7 +1039,8 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	gw *gatewaygrpc.Server, tenantLLMStore llmvia.Store, degradationNotifier *degradation.Notifier,
 	intakeJobStore *intake.Postgres, flowStore *flowstore.PostgresRepository,
 	intakeStore *intakes.Postgres, cifra *crypto.FieldCipher,
-) (*llmvia.Selector, *pipeline.Worker, error) {
+	degradaciones llmvia.ObservadorDegradacion,
+) (*llmvia.Selector, *pipeline.Worker, *turnoacotado.Resolver, error) {
 	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
 	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
 	// pide un provider a él y no vuelve a mirar la vía nunca más.
@@ -979,7 +1049,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
 	plantillas, err := cargarPlantillasDePrompt(log, cfg.LLM.PromptsDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
 		llmvia.WithFrame(gw),
@@ -992,9 +1062,30 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 		// Encendido, cada etapa fija su `max_output_tokens` (P1 192 … P4 1024) y una
 		// P2/P3 de 265-293 tokens NO se trunca; apagado, el campo viaja ausente y el
 		// Edge aplica su default de 256 — que es el lado B del criterio (c).
-		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)))
+		llmvia.WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)),
+		// EL CONTEO DE CAÍDAS A NIVEL A (T3.5-2, D-044.41). Es el otro extremo del
+		// aviso al dueño: la tabla owner_degradation_notices es para que una PERSONA
+		// lea un incidente suyo, deduplicado por ventana; esta serie es para que
+		// NOSOTROS podamos decidir si hace falta el desalojo del Mecanismo 1 —que
+		// internal/intake/pipeline/plaza.go dice por escrito que no se construye
+		// «hasta que exista la Ola 3.5 y un dato de campo»—. La fila que responde esa
+		// pregunta es {origen="turno"}: un turno interactivo que se quedó sin
+		// interpretación mientras, con K=1 por plaza, lo más probable es que una
+		// cadena de lote ocupara el Ollama del cliente.
+		llmvia.WithDegradacionObservada(degradaciones))
 	if err != nil {
-		return nil, nil, fmt.Errorf("selector de vía LLM: %w", err)
+		return nil, nil, nil, fmt.Errorf("selector de vía LLM: %w", err)
+	}
+	// EL RESOLUTOR DEL TURNO ACOTADO (T3.5-2). Nace aquí y no en `Run` por la misma
+	// aritmética que justifica esta función entera: absorber su `if err != nil`
+	// mantiene el cableado a coste CERO de complejidad en el llamante, que estaba en
+	// el techo exacto del lint. Y conceptualmente encaja: es un consumidor MÁS del
+	// selector, como las cinco etapas y el aforo — su único argumento ES el selector.
+	// Si falla es porque el selector vino nil, o sea un bug de este mismo arranque:
+	// se aborta en vez de arrancar con el tercer escalón del carrito apagado.
+	consultaResolver, err := turnoacotado.New(llmSelector)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolutor del turno acotado: %w", err)
 	}
 	// ═══════════════════════════════════════════════════════════════════════════
 	// EL PIPELINE DE CAPTACIÓN P2 → P3 → P4 (Plan 044 · Ola 2). AQUÍ SE ENCIENDE.
@@ -1027,15 +1118,15 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	plazoLlamada := stages.ConPlazoPorLlamada(pipeline.PlazoPorLlamadaSuelo)
 	etapaIdeas, err := stages.NewP2(log, llmSelector, intakeJobStore, plazoLlamada)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, etapa P2: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P2: %w", err)
 	}
 	etapaSpecs, err := stages.NewP3(log, llmSelector, intakeJobStore, plazoLlamada)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, etapa P3: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P3: %w", err)
 	}
 	etapaCantidades, err := stages.NewP4(log, llmSelector, intakeJobStore, stages.ZonaPorDefecto, plazoLlamada)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
 	}
 	// ═══════════════════════════════════════════════════════════════════════════
 	// LAS DOS ETAPAS DE LA OLA 3 (T3.8). AQUÍ SE ENCIENDEN.
@@ -1063,7 +1154,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// modelo en una etapa que hoy se anuncia como determinista.
 	etapaMatch, err := stages.NewMatch(log, intakeJobStore)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, etapa match: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, etapa match: %w", err)
 	}
 	// `flowStore` satisface DOS de los tres puertos del draft (la cabecera de la
 	// solicitud y el outbox de efectos) e `intakeStore` el tercero (la revisión). El
@@ -1072,7 +1163,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// (T3.5). Escribirla por el otro persistiría texto en claro.
 	etapaDraft, err := stages.NewDraft(log, intakeJobStore, flowStore, intakeStore, flowStore)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, etapa draft: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, etapa draft: %w", err)
 	}
 	// LA CACHÉ DEL CATÁLOGO (T3.7, D-044.44): el índice que `match` consulta por ítem,
 	// construido UNA VEZ POR JOB por el worker e invalidado POR CONTENIDO.
@@ -1086,7 +1177,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// `0` en el tope deja `catalogo.MaxTenantsEnCache` (64), la cota de memoria.
 	catalogos, err := catalogo.NewCache(catalogo.NewFuenteContenido(flowStore, ""), textmatch.Normalize, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
+		return nil, nil, nil, fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
 	}
 	// EL AFORO (T2.7, ADR-0046 · Mecanismo 1): una cadena de lote en vuelo por
 	// `(tenant, Edge)`. Es lo único compartido entre workers —hoy uno— y va con el
@@ -1125,9 +1216,9 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 		pipeline.ConAforo(aforoLote, llmSelector),
 		pipeline.ConZonasDeEnvio(intakeStore))
 	if err != nil {
-		return nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
+		return nil, nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
 	}
-	return llmSelector, intakePipeline, nil
+	return llmSelector, intakePipeline, consultaResolver, nil
 }
 
 // adminRouteDeps agrupa lo que registerAdminRoutes necesita para cablear el mux

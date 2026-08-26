@@ -95,7 +95,11 @@ func dumpState(st cartState) string {
 // las va anotando en la transcripción.
 func driveTranscript(tr *transcript, m Module, vars map[string]any, inputs []string) map[string]any {
 	for _, in := range inputs {
-		res := m.Step(model.Node{}, model.Conversation{Vars: vars}, in)
+		// Turno COMPLETO y SIN resolutor (ver drive en cart_test.go). Que este
+		// golden —la transcripción entera del carrito v1, con su «abc» en el nivel
+		// de la cantidad— siga coincidiendo byte a byte tras T3.5-2 es la prueba de
+		// que la degradación produce exactamente la conversación de antes.
+		res := turno(m, model.Conversation{Vars: vars}, in, nil)
 		tr.step(in, res)
 		vars = res.Vars
 	}

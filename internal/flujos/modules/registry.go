@@ -51,6 +51,23 @@ type Result struct {
 	// un evento, …). Es la segunda costura del refactor hexagonal (Plan 015). En
 	// T0 nadie los emite (siempre vacío); el dispatch llega en T2.
 	Effects []Effect
+	// Consulta es la PETICIÓN de interpretación que el módulo eleva al engine
+	// cuando su camino determinista no resuelve (Plan 044 · Ola 3.5 · T3.5-2). El
+	// módulo NO consulta —sigue siendo PURO, sin ctx y sin I/O—: PIDE, y termina
+	// su turno ahí. engine.Step, que sí tiene ctx en la misma función, resuelve la
+	// consulta, siembra el Veredicto en Vars y VUELVE A LLAMAR a Step. Ver el
+	// contrato completo y el reparto asimétrico texto/veredicto en consulta.go.
+	//
+	// nil = «no pregunto nada», que es el CERO del campo: por eso es ADITIVO y
+	// menu/survey/media no cambian ni una línea (mismo razonamiento que Outcome,
+	// arriba). Un Result que lo rellene se DESCARTA ENTERO —Outputs y Effects
+	// incluidos—, así que el módulo debe pedir ANTES de mutar nada suyo; de lo
+	// contrario la segunda pasada duplicaría lo que la primera ya declaró.
+	//
+	// EXACTAMENTE UNA re-entrada por turno. Si la segunda pasada vuelve a rellenar
+	// este campo, el engine NO obedece: corta y deja rastro por su observador. Un
+	// bucle aquí cuelga un turno de WhatsApp.
+	Consulta *Consulta
 }
 
 // VarContentRaw es la clave de Conversation.Vars bajo la que el engine EXPONE el
