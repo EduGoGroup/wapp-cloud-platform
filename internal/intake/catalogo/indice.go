@@ -273,6 +273,41 @@ func anexar(m map[string][]int, clave string, n int) {
 // MaxArticulos y la que debe ir al log del worker.
 func (i *Indice) Articulos() int { return len(i.entradas) }
 
+// Etiqueta devuelve la etiqueta CRUDA del artículo que ocupa la posición n en el
+// orden del documento, o "" si n cae fuera. Junto con Articulos y En forma el
+// RECORRIDO de solo lectura del catálogo.
+//
+// 🔴 POR QUÉ EXISTE, Y POR QUÉ ES UN CURSOR Y NO UN `[]string`. Lo pide el escalón
+// FUZZY de la cascada de T3.2: los cuatro accesos por clave (PorSKU, PorEtiqueta,
+// PorTag, PorVariante) son hash, y un hash no sabe contestar «¿qué etiqueta se
+// PARECE a ésta?». Sin recorrido, la cascada `Exact → Fuzzy → LLM` se queda sin su
+// escalón del medio y toda errata acaba pagando una llamada al modelo.
+//
+// Devolver un slice materializaría 2.000 cadenas en cada llamada; devolver una
+// Coincidencia por entrada copiaría el `cart.Article` entero —con sus slices y su
+// mapa— 2.000 veces por ítem. El cursor recorre sin copiar y solo el GANADOR se
+// materializa con En.
+//
+// NO abre el puerto de lectura que el criterio (a) de T3.7 cierra: sigue sin haber
+// forma de volver a `tenant_content` desde aquí, que es lo que
+// TestFrontera_ElIndiceNoPuedeLeer custodia.
+func (i *Indice) Etiqueta(n int) string {
+	if n < 0 || n >= len(i.entradas) {
+		return ""
+	}
+	return i.entradas[n].articulo.Label
+}
+
+// En materializa la Coincidencia del artículo en la posición n, o la coincidencia
+// cero si n cae fuera. Es el complemento de Etiqueta: se recorre con Etiqueta —que
+// no copia nada— y se paga la copia UNA vez, la del ganador.
+func (i *Indice) En(n int) Coincidencia {
+	if n < 0 || n >= len(i.entradas) {
+		return Coincidencia{}
+	}
+	return i.entradas[n].coincidencia()
+}
+
 // Hash es la huella del documento del que salió el índice, y es la que decide la
 // invalidación. Vacía si el índice se construyó con Construir en vez de por la
 // caché (Construir indexa un catálogo, no un documento: no ha visto bytes).
