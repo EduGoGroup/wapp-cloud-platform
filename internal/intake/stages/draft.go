@@ -47,11 +47,17 @@ import (
 // 🔴 LO QUE ESTA ETAPA NO HACE, Y NO ES UN OLVIDO
 // ════════════════════════════════════════════════════════════════════════════
 //
-//   - NO CIFRA NADA. `source_text` y las `evidence` del payload salen EN CLARO. El
-//     cifrado (KEK) y el TTL de retención son T3.5, la tarea siguiente, y el propio
-//     §7.4 lo dice: «en BD esos campos van cifrados (KEK) + TTL — D-044.13». Hasta
-//     que T3.5 cierre, `intake_revisions.payload` guarda literal del cliente en
-//     claro; está anotado también donde se construye el payload.
+//   - NO CIFRA NADA, Y ESO YA NO SIGNIFICA QUE EL LITERAL VIAJE EN CLARO (🔧 T3.5,
+//     2026-08-26). Esta etapa sigue construyendo el payload §7.4 ENTERO, con su
+//     `source_text` y sus `evidence` dentro, y sigue sin tocar una llave: no la
+//     tiene y no debe tenerla. Lo que cambió es quién hay al otro lado del puerto —
+//     `intakes.Postgres.InsertRevision` SACA el literal del payload y lo sella con
+//     el `FieldCipher` (KEK, Planes 011/012) antes de que toque la BD, y se lo
+//     devuelve a su sitio al leer. Es una BARRERA ÚNICA en el store y no un paso más
+//     de esta etapa a propósito: así ningún escritor de revisiones —ni éste ni los
+//     que vengan— puede persistir literal en claro por olvido, que es exactamente el
+//     fallo de MP-06 (`vars.intent_params`) que D-044.13 cita para no repetirlo.
+//     El detalle vive en `internal/intakes/literal.go`.
 //   - NO ESCRIBE `intake_items`. Las líneas del presupuesto viven en la REVISIÓN, no
 //     en la tabla de líneas: `intake_items` es la verdad de lo VENDIDO (intakes.go)
 //     y un borrador todavía no se ha vendido. Y hay una razón más dura: la mitad de
@@ -196,8 +202,13 @@ type PayloadRevision struct {
 	Version int `json:"version"`
 	// SourceText es el texto ORIGINAL del cliente, el mismo que interpretaron P2-P4.
 	//
-	// 🔴 HOY SALE EN CLARO. Lo cifra T3.5 (D-044.13, ADR-0034) junto con las
-	// `evidence` de las líneas; el resto del payload se queda en claro a propósito.
+	// 🔴 ES NIVEL 2 (ADR-0034): no llega a la columna `payload`. El store lo SACA de
+	// aquí y lo guarda cifrado con KEK aparte, junto con las `evidence` de las
+	// líneas (T3.5, D-044.13); el resto del payload se queda en claro a propósito, y
+	// eso incluye explícitamente las personalizaciones («sin sal»), que son dato de
+	// negocio cuantificable. El campo se llena igual al construir el borrador: quien
+	// lo cifra es `intakes`, y quien lo lea por la API lo recibe descifrado mientras
+	// no venza su TTL de retención.
 	// Está aquí porque el dueño necesita ver el original AL LADO de la interpretación
 	// para validarla (§7.6), y esa es la mitad de la razón de ser de la revisión.
 	SourceText string `json:"source_text,omitempty"`

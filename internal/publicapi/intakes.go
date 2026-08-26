@@ -132,8 +132,21 @@ type intakeDetailResponse struct {
 // la del Plan 044, que aún no existe. El `version` dentro del blob es lo que
 // permite a un cliente saber si entiende lo que lee.
 //
-// CERO PII: ni el payload ni el texto renderizado llevan datos del comprador (esos
-// viven cifrados en intake_buyer_data); `created_by` es un ROL, nunca una persona.
+// `created_by` es un ROL, nunca una persona, y ni el payload ni el texto renderizado
+// llevan los datos del COMPRADOR (RUT, dirección: ésos viven cifrados en
+// intake_buyer_data y de ahí no salen por esta ruta).
+//
+// 🔧 LO QUE SÍ PUEDE VIAJAR AQUÍ DESDE T3.5: el TEXTO LITERAL del cliente. Una
+// revisión `interpreted` del pipeline LLM trae dentro del payload el `source_text`
+// que el cliente escribió y las `evidence` que sostienen cada línea. En reposo van
+// CIFRADOS con KEK y fuera de la columna `payload` (migración 0079); el store los
+// descifra al leer, así que llegan a este DTO en claro — y ESO ES EL REQUISITO, no
+// una fuga: sin el original al lado de la interpretación, el dueño no puede validar
+// que el LLM entendió bien ni pedir un re-análisis (D-044.13 / D-14, ADR-0034
+// §Decisión 2). Lo que protege esa entrega es la MISMA puerta que todo lo demás de
+// esta ruta: identidad válida y tenant propio (INV-8). Vencido el TTL de retención
+// del tenant, el literal ya no está —lo podó la lectura anterior— y el payload llega
+// con su interpretación estructurada sola, que es el comportamiento correcto.
 type intakeRevisionDTO struct {
 	RevisionNo   int             `json:"revision_no"`
 	Kind         string          `json:"kind"`

@@ -724,3 +724,99 @@ func TestDraft_LasOtrasDosFormasDeLaPreguntaPorLaVariante(t *testing.T) {
 // `Linea.UnitPrice` es puntero: un envío con precio y uno «por confirmar» se
 // distinguen por el nil, no por el número.
 var precioDelEnvio = 3000.0
+
+// ---------------------------------------------------------------------------
+// T3.5 — EL LITERAL DEL CLIENTE NO SE PERSISTE EN CLARO
+// ---------------------------------------------------------------------------
+
+// TestDraft_ElLiteralDeAmbarNoSePersisteEnElPayload es el BARRIDO POR SUBSTRING del
+// criterio de T3.5, en su versión sin BD y sobre el pipeline REAL: corre la etapa
+// entera con el fixture de Ambar y mira lo que quedó GUARDADO, no lo que devuelve la
+// lectura.
+//
+// 🔴 LAS DOS MITADES, Y LA PRIMERA ES LA QUE IMPIDE QUE ESTO SEA UNA TAUTOLOGÍA. Un
+// barrido que solo comprueba «el texto no está» sale VERDE cuando el texto nunca
+// llegó a escribirse —un fixture mal montado, una etapa que no corrió—, y entonces no
+// mide nada. Por eso se afirma primero que el literal SÍ está retenido (vuelve entero
+// por la lectura) y después que NO está en claro en lo persistido.
+//
+// Vive en `stages` y no en `intakes` a propósito: el contrato §7.4 lo escribe ESTE
+// paquete, y es aquí donde un renombre de `source_text` o de `evidence` dejaría de
+// casar con las claves que el store extrae. Si alguien renombra un campo del payload
+// y no toca `intakes/literal.go`, este test se pone rojo — que es lo único que impide
+// que el renombre deje el literal en claro sin que nadie se entere.
+func TestDraft_ElLiteralDeAmbarNoSePersisteEnElPayload(t *testing.T) {
+	b := draftDe(t, messageTSDeAmbar.Add(elapsedDeAmbar))
+	_, err := b.draft.Run(context.Background(), jobAmbarP4(), entradaDeAmbar(matchDeAmbarSinDeco(t)))
+	require.NoError(t, err)
+
+	sol := laSolicitud(t, b)
+
+	// (1) EL TEXTO SÍ SE RETUVO: la lectura lo devuelve entero.
+	_, leido := payloadDeLaRevision(t, b, sol.ID)
+	require.Equal(t, textoAmbar, leido.SourceText,
+		"sin esto el barrido de abajo mediría CERO: el literal tiene que estar retenido para poder comprobar que no está en claro")
+	require.NotEmpty(t, leido.Lines)
+	var conEvidencia int
+	for _, l := range leido.Lines {
+		if l.Evidence != "" {
+			conEvidencia++
+		}
+	}
+	require.Positive(t, conEvidencia, "el caso Ambar tiene evidencias; sin ellas el barrido tampoco mediría nada")
+
+	// (2) Y NO ESTÁ EN CLARO EN LO PERSISTIDO.
+	persistidas := b.solicitudes.RevisionesPersistidas(sol.ID)
+	require.Len(t, persistidas, 1)
+	crudo := string(persistidas[0].Payload)
+
+	// 🔴 QUÉ SE BARRE, Y POR QUÉ NO ES «CUALQUIER SUBCADENA DEL TEXTO DE AMBAR».
+	//
+	// El criterio de T3.5 dice «ningún fragmento del texto de Ambar en claro», y esa
+	// frase, leída como «ninguna subcadena», CHOCA con el ADR-0034 §Decisión 1 y
+	// exigiría cifrar cosas que el ADR prohíbe cifrar. Dos casos reales de este mismo
+	// fixture lo demuestran, y los dos se comprueban abajo en el sentido CONTRARIO:
+	//
+	//   · `customization` = «sin lactosa, decoración infantil» — palabras que el
+	//     cliente escribió, y aun así NIVEL 1 POR DOCTRINA (ADR-0034 §Decisión 2, fila
+	//     de intake_items.customization): es spec de producto cuantificable, y sin
+	//     ella el que prepara la torta le pone lactosa. Cifrarla destruye el agregado
+	//     («cuántos piden sin lactosa») sin proteger a nadie.
+	//   · `label` de una línea `unmatched` = «torta de vainilla con lluvia de colores»
+	//     — es lo que dijo el cliente porque NO HAY OTRA COSA QUE ENSEÑAR (match.go):
+	//     es el nombre del producto pedido, o sea la LÍNEA de la solicitud, nivel 1.
+	//     Cifrarlo deja al dueño una línea sin nombre.
+	//
+	// Lo que D-044.13 manda cifrar —y por tanto lo que este barrido busca— son las DOS
+	// cosas que nombra: el literal COMPLETO (`source_text`) y las frases de evidencia.
+	// Quien vea este test rojo por un label o una customization NO debe cifrarlos:
+	// tiene delante nivel 1, y la respuesta está en el ADR, no en el código.
+	fragmentos := []string{
+		textoAmbar,
+		"### MENSAJES DE LA CONVERSACIÓN",
+		"Hola, buenas!",
+		"Te quería pedir un presupuesto",
+		"Me pasas precio porfa?",
+		"Serían 2 tortas",
+		evidenciaTortaChocolate,
+		evidenciaTortaVainilla,
+		evidenciaTequenos,
+		evidenciaEntrega,
+	}
+	for _, f := range fragmentos {
+		require.NotContains(t, crudo, f,
+			"fragmento del literal del cliente EN CLARO en intake_revisions.payload")
+	}
+	require.NotContains(t, crudo, `"source_text"`)
+	require.NotContains(t, crudo, `"evidence"`)
+
+	// (3) Y LA INTERPRETACIÓN SIGUE EN CLARO — el otro lado del ADR-0034. Cifrar de
+	// más destruye el agregado de negocio sin proteger a nadie. Los dos campos de
+	// arriba se afirman AQUÍ, en positivo, para que nadie los «arregle»:
+	require.Contains(t, crudo, `"lines"`)
+	require.Contains(t, crudo, `"suggested_questions"`)
+	require.Contains(t, crudo, "decoración infantil",
+		"la customization es NIVEL 1 POR DOCTRINA (ADR-0034): va en claro y no se re-abre")
+	require.Contains(t, crudo, "torta de vainilla con lluvia de colores",
+		"el label de una línea unmatched es el NOMBRE del producto pedido: nivel 1, o el dueño ve una línea sin nombre")
+}

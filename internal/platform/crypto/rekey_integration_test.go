@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Rotación de KEK sobre los SEIS SOBRES del censo, repartidos en CINCO tablas
+// Rotación de KEK sobre los SIETE SOBRES del censo, repartidos en SEIS tablas
 // (Plan 042 · hallazgo #3; la cuarta tabla, public.fleet_sessions, entró con el Plan
 // 046 · T4.1; el quinto sobre, contacts.push_name, con el Plan 046 · T4.2; el sexto
 // —y la quinta tabla—, public.tenant_llm, con el Plan 044 · T0.3). Hasta el
@@ -24,13 +24,13 @@ import (
 // todavía envueltas por la KEK vieja, y retirar esa KEK —el paso que ese mapa
 // autoriza (§10.F)— las habría dejado ilegibles.
 //
-// 🔴 SEIS SOBRES EN CINCO TABLAS, Y ESE MATIZ ES LA LECCIÓN DE T4.2. Una entrada
+// 🔴 SIETE SOBRES EN SEIS TABLAS, Y ESE MATIZ ES LA LECCIÓN DE T4.2. Una entrada
 // del censo NO describe una tabla: describe UN SOBRE. La fila de public.contacts
 // tiene DOS —el del identificador (value_enc/value_dek/value_kek_id, Plan 011) y el
 // del nombre (push_name_*, migración 0069)—, con DEK distintas y rotables por
 // separado, y el barrido de uno no ve al otro. Por eso esta suite cuenta SOBRES y no
-// filas: Rekey.Processed = 6 con solo 5 filas sembradas, y la fila de contacts aporta
-// +2 ella sola. Quien lea "6" como "6 contactos" se equivoca; son 6 sobres.
+// filas: Rekey.Processed = 7 con solo 6 filas sembradas, y la fila de contacts aporta
+// +2 ella sola. Quien lea "7" como "7 contactos" se equivoca; son 7 sobres.
 //
 // 🔴 EL SEXTO SOBRE ES EL PRIMERO QUE NO GUARDA UN DATO DE NEGOCIO. public.tenant_llm
 // (Plan 044 · T0.3, migración 0071) guarda la API key con la que el Cloud llama al
@@ -153,6 +153,19 @@ func wipeCifradas(t *testing.T, db *sql.DB) {
 		// aquí el trío del sobre es NOT NULL, así que una fila sin sobre no puede
 		// existir — el estado «sin vía API» ES la ausencia de fila.
 		`DELETE FROM public.tenant_llm`,
+		// La SÉPTIMA entrada del censo y la SEXTA tabla (Plan 044 · T3.5, migración
+		// 0079). Se BORRA la fila entera: una revisión sin su solicitud no significa
+		// nada, y aquí no hay estado de nadie más que preservar.
+		//
+		// ⚠️ Y ESTA LÍNEA SÍ LIMPIA ALGO REAL, al revés que la de intake_jobs de
+		// abajo: `internal/intakes` escribe sobres de verdad en esta tabla
+		// (literal_integration_test.go) con SU keyring, que no es el de esta suite.
+		// `go test -p 1 ./...` corre `internal/intakes` ANTES que este paquete —van en
+		// orden alfabético—, así que un resto suyo entraría en el barrido con un
+		// key_id que este keyring no conoce y abortaría el scan por fail-safe §10.J.
+		// Aquellos tests limpian lo suyo por el CASCADE de seedPG; esto es la segunda
+		// red, y cuesta una línea.
+		`DELETE FROM public.intake_revisions`,
 		// La SEXTA tabla del censo (Plan 044 · T1.4, migración 0072). Se BORRA la
 		// fila entera y no se nulifica el sobre: a diferencia de fleet_sessions —cuya
 		// fila es estado de flota que otros tests siembran y que no se puede tirar—,
@@ -220,7 +233,7 @@ const selfPnDePrueba = "56984467443"
 // y mayúsculas — si alguien añadiera una normalización, este valor la delataría.
 const pushNameDePrueba = "Nombre De Prueba"
 
-// seedLosSeisSobres siembra los SEIS SOBRES del censo sobre CINCO filas —una en
+// seedLosSieteSobres siembra los SIETE SOBRES del censo sobre SEIS filas —una en
 // cada tabla—, todos envueltos por la KEK vigente del cipher, más una fila de
 // tenant_integrations SIN secreto (trío NULL) que la rotación debe ignorar sin
 // romperse.
@@ -231,7 +244,7 @@ const pushNameDePrueba = "Nombre De Prueba"
 // filas distintas, que no probarían nada nuevo. Por eso devuelve 6 elementos con 5
 // INSERT: el orden de la lista NO importa (Rekey barre por censo, no por esta lista),
 // pero su LONGITUD sí, porque es el número que se compara contra Report.Processed.
-func seedLosSeisSobres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, tenant string) []sobreCifrado {
+func seedLosSieteSobres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider, tenant string) []sobreCifrado {
 	t.Helper()
 	ctx := context.Background()
 
@@ -347,8 +360,35 @@ func seedLosSeisSobres(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, kp 
 		t.Fatalf("sembrar tenant_llm: %v", err)
 	}
 
+	// --- public.intake_revisions (literal del cliente, Plan 044 · T3.5, migración 0079) ---
+	// EL SÉPTIMO SOBRE, y la SEXTA tabla. Cuelga del MISMO intake que el sobre del
+	// comprador —no hace falta otra cadena tenant→evento→solicitud— y es la primera
+	// entrada del censo sobre una tabla APPEND-ONLY: `intake_revisions` no tiene
+	// `updated_at`.
+	//
+	// 🔴 ESO ÚLTIMO ES LA MITAD DE LO QUE ESTE SOBRE VIENE A PROBAR. Hasta T3.5 el
+	// UPDATE del re-wrap escribía `updated_at = now()` incondicionalmente, así que
+	// esta entrada del censo habría reventado la rotación ENTERA con «column
+	// "updated_at" does not exist» — y no en un test, sino la primera vez que alguien
+	// rotase una KEK en producción. Quien quite el `sinUpdatedAt` de rekey.go lo ve
+	// aquí en rojo.
+	const literalDelCliente = `{"source_text":"cliente: Hola, quería dos tortas","evidence":{"0":"quería dos tortas"}}`
+	encR, dekR, kidR := mustEncrypt(t, cipher, literalDelCliente)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO public.intake_revisions
+			(intake_id, revision_no, kind, payload, created_by, literal_enc, literal_dek, literal_kek_id)
+		VALUES ($1::uuid, 1, 'interpreted', '{"version":1,"lines":[]}'::jsonb, 'system', $2, $3, $4)
+	`, intakeID, encR, dekR, kidR); err != nil {
+		t.Fatalf("sembrar intake_revisions: %v", err)
+	}
+
 	return []sobreCifrado{
 		sesion,
+		{sobre: "public.intake_revisions.literal_enc", claro: literalDelCliente, enc: encR, leerFn: func(t *testing.T, db *sql.DB) ([]byte, []byte, string) {
+			return leerCifrado(t, db,
+				`SELECT literal_enc, literal_dek, literal_kek_id FROM public.intake_revisions WHERE intake_id = $1 AND revision_no = 1`,
+				intakeID)
+		}},
 		{sobre: "public.tenant_llm.api_key_enc", claro: claveDelProveedor, enc: encL, leerFn: func(t *testing.T, db *sql.DB) ([]byte, []byte, string) {
 			return leerCifrado(t, db, `SELECT api_key_enc, api_key_dek, api_key_kek_id FROM public.tenant_llm WHERE tenant_id = $1`, tenant)
 		}},
@@ -437,9 +477,9 @@ func bidxDeLaSesion(t *testing.T, db *sql.DB, tenant string) string {
 	return bidx
 }
 
-// TestRekey_LosSeisSobres_Integration es el criterio del hallazgo #3, ampliado al
+// TestRekey_LosSieteSobres_Integration es el criterio del hallazgo #3, ampliado al
 // criterio (d) del Plan 046 · T4.1 y al criterio (c) de T4.2: una pasada de rotación
-// deja los SEIS SOBRES del censo —repartidos en CINCO tablas— en la KEK current,
+// deja los SIETE SOBRES del censo —repartidos en SEIS tablas— en la KEK current,
 // sin re-cifrar ningún dato, y PendingByKeyID solo declara "completa" cuando lo está
 // de verdad.
 //
@@ -451,7 +491,7 @@ func bidxDeLaSesion(t *testing.T, db *sql.DB, tenant string) string {
 // 💥 MUTACIONES QUE LO PONEN ROJO:
 //   - LA MUTACIÓN PRESCRITA POR T4.2 — quitar la QUINTA entrada del censo, la de
 //     public.contacts/push_name_dek/push_name_kek_id (rekey.go:154-159) ⇒ la aserción
-//     de Processed falla con **Processed = 5, want 6**, y el sobre del nombre se queda
+//     de Processed falla con **Processed = 6, want 7**, y el sobre del nombre se queda
 //     en la KEK "A". Y como la última fase descifra con el keyring solo-{B}, ese sobre
 //     queda ILEGIBLE: verificarSobresLegiblesSinLaKEKVieja falla en
 //     public.contacts.push_name_enc. Es el fallo exacto que el censo existe para
@@ -460,7 +500,7 @@ func bidxDeLaSesion(t *testing.T, db *sql.DB, tenant string) string {
 //   - sacar la entrada de public.fleet_sessions de rekeyTargets (rekey.go:92-97) ⇒
 //     Processed = 5 igualmente (mismo número, OTRO sobre roto: el del número propio),
 //     y el keyring solo-{B} lo deja ilegible.
-//   - equivocar dekCol/kekCol o la PK de cualquiera de las seis entradas ⇒ el UPDATE
+//   - equivocar dekCol/kekCol o la PK de cualquiera de las siete entradas ⇒ el UPDATE
 //     no localiza la fila y el kek_id no llega a "B".
 //   - hacer que la rotación toque self_pn_bidx ⇒ la aserción de estabilidad del índice
 //     ciego falla, y con ella se caería el anti-self-loop de toda la flota en la
@@ -468,15 +508,15 @@ func bidxDeLaSesion(t *testing.T, db *sql.DB, tenant string) string {
 //   - hacer que la quinta entrada escriba también push_name_enc ⇒ falla la aserción de
 //     "el dato cifrado cambió tras rotar": re-envolver la DEK NO re-cifra el dato (§7),
 //     y esa es la propiedad que hace barata la rotación.
-func TestRekey_LosSeisSobres_Integration(t *testing.T) {
+func TestRekey_LosSieteSobres_Integration(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	wipeCifradas(t, db)
 	tenant := seedTenant(t, db)
 
-	// t0: KEK_A es la current; los seis sobres del censo sembrados bajo ella.
+	// t0: KEK_A es la current; los siete sobres del censo sembrados bajo ella.
 	kpA := mustKP(t, keyringA(), "A")
-	sobres := seedLosSeisSobres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
+	sobres := seedLosSieteSobres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
 	// El índice ciego se apunta ANTES: la rotación no puede haberlo tocado.
 	bidxAntes := bidxDeLaSesion(t, db, tenant)
 
@@ -488,10 +528,10 @@ func TestRekey_LosSeisSobres_Integration(t *testing.T) {
 		t.Fatalf("Rekey: %v", err)
 	}
 	if rep.Processed != len(sobres) {
-		t.Fatalf("Rekey processed = %d, want %d. Processed cuenta SOBRES, NO FILAS: son 6 sobres sobre "+
-			"5 filas (fleet_sessions.self_pn, contacts.value, contacts.push_name, intake_buyer_data.data, "+
-			"tenant_integrations.secret, tenant_llm.api_key) y la fila de contacts aporta +2 ella sola. "+
-			"Un 5 aquí significa que una entrada del censo no barrió; un 4, que dos no barrieron",
+		t.Fatalf("Rekey processed = %d, want %d. Processed cuenta SOBRES, NO FILAS: son 7 sobres sobre "+
+			"6 filas (fleet_sessions.self_pn, contacts.value, contacts.push_name, intake_buyer_data.data, "+
+			"tenant_integrations.secret, tenant_llm.api_key, intake_revisions.literal) y la fila de contacts "+
+			"aporta +2 ella sola. Un 6 aquí significa que una entrada del censo no barrió; un 5, que dos no barrieron",
 			rep.Processed, len(sobres))
 	}
 	if rep.CurrentKeyID != "B" {
@@ -519,7 +559,7 @@ func TestRekey_LosSeisSobres_Integration(t *testing.T) {
 	}
 
 	// Retiro seguro (§10.F): pendientes vacío ⇒ KEK_A retirable. Con el keyring solo
-	// {B}, los SEIS sobres siguen legibles —los DOS de la fila de contacts incluidos—.
+	// {B}, los SIETE sobres siguen legibles —los DOS de la fila de contacts incluidos—.
 	// Es la aserción que de verdad importa: rotar y perder el dato es peor que no rotar.
 	verificarSobresLegiblesSinLaKEKVieja(t, db, crypto.NewFieldCipher(mustKP(t, keyringB(), "B")), sobres)
 }
@@ -554,7 +594,7 @@ func verificarSobresTrasRotar(t *testing.T, db *sql.DB, cipher *crypto.FieldCiph
 
 // verificarSobresLegiblesSinLaKEKVieja descifra los sobres recibidos con un keyring que
 // YA NO tiene la KEK_A: es el retiro seguro del §10.F ejecutado de verdad, no supuesto a
-// partir de un mapa de pendientes vacío. El test del censo le pasa los seis; el del
+// partir de un mapa de pendientes vacío. El test del censo le pasa los siete; el del
 // contacto sin nombre, solo el suyo.
 func verificarSobresLegiblesSinLaKEKVieja(t *testing.T, db *sql.DB, cipher *crypto.FieldCipher, sobres []sobreCifrado) {
 	t.Helper()
@@ -570,8 +610,8 @@ func verificarSobresLegiblesSinLaKEKVieja(t *testing.T, db *sql.DB, cipher *cryp
 	}
 }
 
-// TestPendingByKeyID_AgregaLosSeisSobres es la otra mitad del hallazgo #3: el conteo
-// de pendientes tiene que SUMAR las seis entradas del censo. Es lo que decide si una
+// TestPendingByKeyID_AgregaLosSieteSobres es la otra mitad del hallazgo #3: el conteo
+// de pendientes tiene que SUMAR las siete entradas del censo. Es lo que decide si una
 // KEK vieja se puede retirar del keyring; con el conteo antiguo (solo el sobre de
 // value de contacts) este test devuelve {"A":1} en vez de {"A":5} — y con las tablas
 // nuevas vacías de contacts habría devuelto el mapa VACÍO, autorizando un retiro que
@@ -587,7 +627,7 @@ func verificarSobresLegiblesSinLaKEKVieja(t *testing.T, db *sql.DB, cipher *cryp
 // 💥 MUTACIONES QUE LO PONEN ROJO:
 //   - LA MUTACIÓN PRESCRITA POR T4.2 — quitar la QUINTA entrada del censo, la de
 //     public.contacts/push_name_dek/push_name_kek_id (rekey.go:154-159) ⇒ la primera
-//     aserción falla con **pendientes en la KEK A = 5, want 6**, y el mapa completo
+//     aserción falla con **pendientes en la KEK A = 6, want 7**, y el mapa completo
 //     que imprime el fallo sale {"A":5} con el sobre del nombre todavía bajo la KEK
 //     vieja y NADIE contándolo. Ese es el número que autoriza a retirar una KEK:
 //     mentirlo por defecto deja todos los nombres ilegibles el día del retiro.
@@ -598,14 +638,14 @@ func verificarSobresLegiblesSinLaKEKVieja(t *testing.T, db *sql.DB, cipher *cryp
 //     no tiene copia de esa credencial.
 //   - dar un DEFAULT a push_name_kek_id en la 0069 ⇒ ver el test del contacto sin
 //     nombre, que es el que protege esa invariante.
-func TestPendingByKeyID_AgregaLosSeisSobres(t *testing.T) {
+func TestPendingByKeyID_AgregaLosSieteSobres(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	wipeCifradas(t, db)
 	tenant := seedTenant(t, db)
 
 	kpA := mustKP(t, keyringA(), "A")
-	sobres := seedLosSeisSobres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
+	sobres := seedLosSieteSobres(t, db, crypto.NewFieldCipher(kpA), kpA, tenant)
 
 	pending, err := crypto.PendingByKeyID(ctx, db, "B")
 	if err != nil {
@@ -614,14 +654,15 @@ func TestPendingByKeyID_AgregaLosSeisSobres(t *testing.T) {
 	if got := pending["A"]; got != len(sobres) {
 		t.Fatalf("pendientes en la KEK A = %d, want %d SOBRES (no filas): fleet_sessions.self_pn + "+
 			"contacts.value + contacts.push_name + intake_buyer_data.data + tenant_integrations.secret + "+
-			"tenant_llm.api_key, sobre solo 5 filas; mapa completo: %v", got, len(sobres), pending)
+			"tenant_llm.api_key + intake_revisions.literal, sobre solo 6 filas; mapa completo: %v",
+			got, len(sobres), pending)
 	}
 	if len(pending) != 1 {
 		t.Fatalf("pendientes = %v, want solo la KEK A (la fila sin secreto NO debe contar)", pending)
 	}
 
 	// Con A como current no queda nada pendiente: el mapa vacío significa
-	// "retirable" y solo debe salir cuando lo es en las SEIS entradas.
+	// "retirable" y solo debe salir cuando lo es en las SIETE entradas.
 	vacio, err := crypto.PendingByKeyID(ctx, db, "A")
 	if err != nil {
 		t.Fatalf("PendingByKeyID(current=A): %v", err)
