@@ -172,6 +172,35 @@ func TestReflectCRMStatus_DeOtroTenant_NoEncuentraNiToca(t *testing.T) {
 		t.Fatalf("el tenant ajeno ESCRIBIÓ sobre la solicitud: %q/%q → %q/%q",
 			antes.String, extAntes.String, después.String, extDespués.String)
 	}
+
+	exigeConexionDevuelta(t, db, "el reflejo de un tenant ajeno")
+}
+
+// exigeConexionDevuelta afirma que la llamada anterior DEVOLVIÓ su conexión al pool.
+//
+// 🔴 QUÉ DEFECTO REAL VIGILA, Y CÓMO SE DESCUBRIÓ. `ReflectCRMStatus` abre una
+// transacción y solo la revierte en el `defer` cuando hay error. El camino
+// `found == 0` —una solicitud ajena o inexistente— salía con `err == nil` y SIN
+// llegar al Commit: la transacción quedaba abandonada y su conexión «idle in
+// transaction» para siempre, reteniendo un ACCESS SHARE sobre `public.intakes`.
+//
+// No se vio durante todo el Plan 042 porque nadie pedía nunca un lock fuerte sobre
+// esa tabla. Lo destapó T2.8 (Plan 044 · Ola 2): su test del backfill fabrica el
+// estado anterior con un `ALTER TABLE public.intakes DROP COLUMN`, que necesita
+// ACCESS EXCLUSIVE, y se quedaba bloqueado PARA SIEMPRE detrás de la sesión que
+// dejaba este mismo test. La suite entera colgaba sin un solo error.
+//
+// Se afirma por `db.Stats().InUse` y no mirando `pg_stat_activity`: lo que importa
+// es que el POOL de Go recuperó la conexión, y esa es la pregunta exacta que
+// responde InUse. Con la transacción abandonada vale 1; con el rollback puesto, 0.
+func exigeConexionDevuelta(t *testing.T, db *sql.DB, tras string) {
+	t.Helper()
+	if enUso := db.Stats().InUse; enUso != 0 {
+		t.Fatalf("tras %s quedan %d conexiones EN USO; ESPERADO 0. La transacción se abandonó sin "+
+			"Commit ni Rollback: esa conexión no vuelve al pool nunca y retiene su lock sobre "+
+			"public.intakes. Con el pool en 25, 25 callbacks de un intake ajeno lo agotan — y "+
+			"cualquier DDL sobre `intakes` se cuelga detrás sin dar error", tras, enUso)
+	}
 }
 
 // TestReflectCRMStatus_EstadoNoCanonico_NoEscribe es defensa en profundidad: la
