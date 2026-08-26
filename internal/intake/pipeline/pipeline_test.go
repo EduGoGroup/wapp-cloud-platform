@@ -314,7 +314,7 @@ func TestWorker_JobEnvenenado_MuereYNoBloqueaAlSiguienteDelMismoTenant(t *testin
 // RESULTADO: rojo — el job muere en la primera vuelta con `causa=job_invalido`.
 func TestWorker_ElDescifradoQueFallaSeTrataComoInfraestructura(t *testing.T) {
 	b := nuevoBanco(t, Config{})
-	w, err := NewWorker(b.log, b.store, b.p2, b.p3, b.p4,
+	w, err := NewWorker(b.log, b.store, b.p2, b.p3, b.p4, b.match, b.draft, b.catalogos,
 		cifraRota{err: errors.New("la KEK kek-9 no está en el keyring")}, Config{})
 	if err != nil {
 		t.Fatalf("cablear: %v", err)
@@ -427,6 +427,12 @@ func TestWorker_CadaEtapaDejaSuLineaConJobIdStageYElapsed(t *testing.T) {
 	b.p2.guion = []guionEtapa{{dura: 21 * time.Second}}
 	b.p3.guion = []guionEtapa{{dura: 27 * time.Second}}
 	b.p4.guion = []guionEtapa{{dura: 3 * time.Second}}
+	// 🔄 LAS DOS ÚLTIMAS SON DE T3.8. Llevan duración propia —milisegundos, no
+	// segundos— porque no llaman al modelo: `match` cruza el catálogo en memoria y
+	// `draft` escribe cuatro filas. Lo que este test exige de ellas es lo mismo que de
+	// las tres primeras: que publiquen su línea con `elapsed_ms` mayor que cero.
+	b.match.guion = []guionEtapa{{dura: 4 * time.Millisecond}}
+	b.draft.guion = []guionEtapa{{dura: 9 * time.Millisecond}}
 	id := b.sembrarSano("")
 
 	b.w.Drenar(context.Background())
@@ -435,8 +441,8 @@ func TestWorker_CadaEtapaDejaSuLineaConJobIdStageYElapsed(t *testing.T) {
 	}
 
 	lineas := b.log.buscar("etapa completada")
-	if len(lineas) != 3 {
-		t.Fatalf("se esperaba UNA línea por etapa (3), hay %d: %s", len(lineas), b.log.volcado())
+	if len(lineas) != 5 {
+		t.Fatalf("se esperaba UNA línea por etapa (5: p2, p3, p4, match, draft), hay %d: %s", len(lineas), b.log.volcado())
 	}
 	vistas := map[string]bool{}
 	for _, l := range lineas {
@@ -451,7 +457,7 @@ func TestWorker_CadaEtapaDejaSuLineaConJobIdStageYElapsed(t *testing.T) {
 			t.Fatalf("la etapa %q publicó un elapsed_ms inservible: %v", etapa, l.campos["elapsed_ms"])
 		}
 	}
-	for _, e := range []string{intake.StageP2, intake.StageP3, intake.StageP4} {
+	for _, e := range []string{intake.StageP2, intake.StageP3, intake.StageP4, intake.StageMatch, intake.StageDraft} {
 		if !vistas[e] {
 			t.Fatalf("falta la línea de la etapa %q: %s", e, b.log.volcado())
 		}
@@ -732,12 +738,37 @@ func TestCausaDe_LaCalidadVAPRIMERO(t *testing.T) {
 func TestNewWorker_NoNaceAMedias(t *testing.T) {
 	b := nuevoBanco(t, Config{})
 	casos := map[string]func() (*Worker, error){
-		"sin log":         func() (*Worker, error) { return NewWorker(nil, b.store, b.p2, b.p3, b.p4, cifraFalsa{}, Config{}) },
-		"sin store":       func() (*Worker, error) { return NewWorker(b.log, nil, b.p2, b.p3, b.p4, cifraFalsa{}, Config{}) },
-		"sin p2":          func() (*Worker, error) { return NewWorker(b.log, b.store, nil, b.p3, b.p4, cifraFalsa{}, Config{}) },
-		"sin p3":          func() (*Worker, error) { return NewWorker(b.log, b.store, b.p2, nil, b.p4, cifraFalsa{}, Config{}) },
-		"sin p4":          func() (*Worker, error) { return NewWorker(b.log, b.store, b.p2, b.p3, nil, cifraFalsa{}, Config{}) },
-		"sin descifrador": func() (*Worker, error) { return NewWorker(b.log, b.store, b.p2, b.p3, b.p4, nil, Config{}) },
+		"sin log": func() (*Worker, error) {
+			return NewWorker(nil, b.store, b.p2, b.p3, b.p4, b.match, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin store": func() (*Worker, error) {
+			return NewWorker(b.log, nil, b.p2, b.p3, b.p4, b.match, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin p2": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, nil, b.p3, b.p4, b.match, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin p3": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, nil, b.p4, b.match, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin p4": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, b.p3, nil, b.match, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		// 🔴 LOS TRES DE LA OLA 3 (T3.8). Sin ellos el worker NACERÍA —cablearlos como
+		// opción era la alternativa— y terminaría cada job en `done` sin `intake_id`, que
+		// es exactamente el estado del que T3.8 saca al pipeline. Que el constructor los
+		// exija es lo que impide que vuelvan a quedarse apagados sin que nada falle.
+		"sin match": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, b.p3, b.p4, nil, b.draft, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin draft": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, b.p3, b.p4, b.match, nil, b.catalogos, cifraFalsa{}, Config{})
+		},
+		"sin catálogo": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, b.p3, b.p4, b.match, b.draft, nil, cifraFalsa{}, Config{})
+		},
+		"sin descifrador": func() (*Worker, error) {
+			return NewWorker(b.log, b.store, b.p2, b.p3, b.p4, b.match, b.draft, b.catalogos, nil, Config{})
+		},
 	}
 	for nombre, construir := range casos {
 		t.Run(nombre, func(t *testing.T) {

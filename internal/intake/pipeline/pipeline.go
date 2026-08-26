@@ -1,7 +1,7 @@
 // Package pipeline es EL WORKER del pipeline de presupuestos (Plan 044 · Ola 2 ·
 // T2.5): el llamante que ninguna etapa tenía. Reclama un job `pending`, descifra su
-// literal, encadena P2 → P3 → P4 y lo termina — o lo devuelve a la cola castigado, o
-// lo mata con su causa escrita.
+// literal, encadena P2 → P3 → P4 → match → draft y lo termina — o lo devuelve a la
+// cola castigado, o lo mata con su causa escrita.
 //
 // # POR QUÉ ESTE PAQUETE Y NO `internal/intake/pipeline.go`
 //
@@ -28,8 +28,23 @@
 //     (ver `stages/tope.go`). Un pedido de 40 ítems ya no hace 40 llamadas: hace 10 y
 //     deja las otras 30 MARCADAS. Lo que sigue siendo verdad es la cuenta de tiempo:
 //     esos 10 ítems son 320–410 s, por encima de «< 5 min».
-//   - NO crea el borrador: `match` y `draft` son de la Ola 3. Hoy la cadena acaba en
-//     P4 y el job pasa a `done` sin `intake_id` (ver terminar).
+//   - 🔄 YA CREA EL BORRADOR (T3.8, 2026-08-26). Esta línea decía que no —«`match` y
+//     `draft` son de la Ola 3; hoy la cadena acaba en P4 y el job pasa a `done` sin
+//     `intake_id`»— y era verdad hasta hoy: la Ola 3 escribió las dos etapas con sus
+//     tests y NADIE las construía ni las llamaba, exactamente el mismo defecto que la
+//     Ola 2 tuvo que cerrar con T2.9. La cadena llega ahora hasta `draft` y el job
+//     termina CON su `intake_id` (ver terminar).
+//   - NO ANCLA LOS ADJUNTOS. `EntradaDraft.Media` viaja en CERO: la heurística de
+//     T3.3 (`internal/intake/anclaje`) sigue sin llamante de producción, y cablearla
+//     pide un lector que hoy no existe —`events.ThreadEntry` no trae ni los `media
+//     refs` ni el instante de cada turno, que son las DOS entradas de `Repartir`—.
+//     Es un hueco NOMBRADO, no un olvido: sin él el borrador sale entero y sin
+//     adjuntos, con él saldría con las fotos colgadas de su línea.
+//   - NO RELLENA LA VÍA DEL ANÁLISIS (`Analisis.Provider`, D-044.15). Quien sabe si
+//     el job corrió por `local` o por `api` es `llmvia.Selector`, y no lo publica por
+//     ningún puerto: se resuelve DENTRO de cada etapa, por llamada. El borrador sale
+//     igual y `draft` lo dice en un Warn; sacarlo de ahí es cambiar el contrato del
+//     selector, que es una decisión de otra tarea.
 //   - NO escribe el aviso de degradación al dueño (REQ-38). Ya lo escribe el decorador
 //     `avisador` de `llmvia` (T1.6-6), envolviendo al provider que el selector
 //     devuelve: cablearlo también aquí sería un segundo mecanismo con el mismo
@@ -58,7 +73,10 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/anclaje"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/catalogo"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 )
 
 // ---------------------------------------------------------------------------
@@ -94,17 +112,65 @@ type EtapaNormalizacion interface {
 		items []llm.ItemSpec, entrega *llm.Hint) (*llm.Quantities, error)
 }
 
-// Las tres etapas de producción satisfacen sus puertos, comprobado en compilación.
+// EtapaMatch es `match`, la primera etapa que NO habla con un modelo en su camino
+// normal. Lo satisface `*stages.Match`.
+type EtapaMatch interface {
+	Run(ctx context.Context, job intake.ClaimedJob, in stages.EntradaMatch) (*stages.ArtefactoMatch, error)
+}
+
+// EtapaDraft es `draft`, la última: la que escribe FUERA de `intake_jobs` y devuelve
+// el `intake_id` con el que se cierra el job. Lo satisface `*stages.Draft`.
+type EtapaDraft interface {
+	Run(ctx context.Context, job intake.ClaimedJob, in stages.EntradaDraft) (*stages.ArtefactoDraft, error)
+}
+
+// Catalogos es de dónde sale el índice del catálogo del tenant. Lo satisface
+// `*catalogo.Cache`.
+//
+// 🔴 ES UN PUERTO DEL WORKER Y NO DE LA ETAPA, Y ESA FRONTERA ES EL CRITERIO (a) DE
+// T3.7. El worker lo consulta UNA VEZ POR JOB y le pasa el `*Indice` ya construido a
+// `match`, que busca por cada ítem; el `*Indice` no tiene con qué leer nada, así que
+// no hay forma de que el ítem número 7 de un pedido dispare un SELECT. Si este puerto
+// bajara a la etapa, esa garantía dejaría de estar en los tipos y pasaría a depender
+// de que nadie llame a `Obtener` dentro del bucle.
+type Catalogos interface {
+	Obtener(ctx context.Context, tenantID string) (*catalogo.Indice, error)
+}
+
+// ZonasDeEnvio son las zonas de `tenant_settings.shipping_zones` del tenant. Lo
+// satisfacen `*intakes.Postgres` y `*intakes.MemoryStore`.
+//
+// Se lee también UNA VEZ POR JOB y por el mismo motivo que el catálogo: la etapa
+// `match` construye la línea de envío con `intakes.DesiredShippingLine` y no debe
+// poder consultar la base.
+type ZonasDeEnvio interface {
+	ShippingZones(ctx context.Context, tenantID string) ([]intakes.ShippingZone, error)
+}
+
+// Las CINCO etapas de producción y las dos fuentes por job satisfacen sus puertos,
+// comprobado en compilación.
 var (
 	_ EtapaIdeas            = (*stages.P2)(nil)
 	_ EtapaEspecificaciones = (*stages.P3)(nil)
 	_ EtapaNormalizacion    = (*stages.P4)(nil)
+	_ EtapaMatch            = (*stages.Match)(nil)
+	_ EtapaDraft            = (*stages.Draft)(nil)
+	_ Catalogos             = (*catalogo.Cache)(nil)
+	_ ZonasDeEnvio          = (*intakes.Postgres)(nil)
+	_ ZonasDeEnvio          = (*intakes.MemoryStore)(nil)
 )
 
 // ErrSinCablear es el worker al que le falta una pieza. Como las etapas, no nace a
 // medias: un worker sin store reclamaría nil y un worker sin descifrador no podría
 // abrir un solo sobre, y las dos cosas se descubrirían en producción.
-var ErrSinCablear = errors.New("pipeline: el worker necesita log, store, las tres etapas y el descifrador")
+//
+// 🔴 LAS CINCO ETAPAS Y EL CATÁLOGO SON OBLIGATORIOS, Y `match`/`draft` LO SON DESDE
+// T3.8 A PROPÓSITO. La alternativa —cablearlas como `Opcion`, que es como entró el
+// aforo— haría que un worker sin borrador siguiera compilando, siguiera pasando los
+// tests y siguiera terminando jobs en `done` sin `intake_id`: exactamente el estado
+// del que esta tarea saca al pipeline. Lo que no puede omitirse sin error no vuelve
+// a quedarse apagado ocho tareas.
+var ErrSinCablear = errors.New("pipeline: el worker necesita log, store, las CINCO etapas, el catálogo y el descifrador")
 
 // ---------------------------------------------------------------------------
 // EL PLAZO POR LLAMADA — EL HUECO QUE T2.3 SEÑALÓ, CON EL NÚMERO QUE HAY
@@ -200,15 +266,24 @@ func (c Config) topeDe(causa string) int {
 // vez; varias instancias (o varias réplicas del proceso) conviven sin pisarse porque
 // el claim usa `FOR UPDATE SKIP LOCKED`.
 type Worker struct {
-	log    logger.Logger
-	store  intake.PipelineStore
-	p2     EtapaIdeas
-	p3     EtapaEspecificaciones
-	p4     EtapaNormalizacion
-	cifra  Descifrador
-	cfg    Config
-	ahora  func() time.Time
-	numero func(int, time.Duration, time.Duration) time.Duration
+	log   logger.Logger
+	store intake.PipelineStore
+	p2    EtapaIdeas
+	p3    EtapaEspecificaciones
+	p4    EtapaNormalizacion
+	match EtapaMatch
+	draft EtapaDraft
+	// catalogos y zonas son las DOS lecturas por job de la Ola 3: lo que `match`
+	// necesita del tenant y no puede ir a buscar por sí misma. El catálogo es
+	// obligatorio —sin índice ningún ítem casa y la etapa devuelve ErrSinCatalogo—;
+	// las zonas no lo son: un tenant sin zonas configuradas es el caso normal y su
+	// borrador sale con «Envío por confirmar», que es lo que D-041.11 manda.
+	catalogos Catalogos
+	zonas     ZonasDeEnvio
+	cifra     Descifrador
+	cfg       Config
+	ahora     func() time.Time
+	numero    func(int, time.Duration, time.Duration) time.Duration
 
 	// aforo y plazas son EL ENTERO de T2.7 y quien sabe a qué plaza apunta un job.
 	// Van en pareja y nacen juntos (ConAforo): un aforo sin quien resuelva la
@@ -247,19 +322,51 @@ func ConAforo(a *Aforo, plazas Plazas) Opcion {
 	}
 }
 
+// ConZonasDeEnvio le da al worker de dónde leer `tenant_settings.shipping_zones`
+// (T3.8). Es OPCIÓN y no parámetro obligatorio, y la razón es que su ausencia no
+// inventa nada: sin lector, `match` recibe cero zonas y la línea de envío sale
+// «Envío por confirmar» a precio vacío — que es EXACTAMENTE la misma línea que sale
+// para un tenant que tiene 0 zonas o más de una (`intakes.DesiredShippingLine`), o
+// sea el caso mayoritario.
+//
+// 🔴 Y POR ESO MISMO ES OMISIBLE SIN SÍNTOMA, ASÍ QUE LLEVA DOS REDES. Lo único que
+// se pierde al olvidarla es la tarifa plana del tenant con UNA zona configurada, y
+// eso no da error: da un borrador con un renglón de envío sin precio que el dueño
+// rellena a mano sin saber que su configuración existía. Las redes son el Warn del
+// arranque (ver Run) y el criterio (e) de TestPipelineCaptacionCableado, que exige
+// verla en `bootstrap.go`.
+func ConZonasDeEnvio(z ZonasDeEnvio) Opcion {
+	return func(w *Worker) {
+		if z == nil {
+			return
+		}
+		w.zonas = z
+	}
+}
+
 // NewWorker construye el worker. Devuelve ErrSinCablear si le falta cualquier pieza.
 //
-// Las OPCIONES son de T2.7 y hoy solo hay una, ConAforo: sin ella el worker corre sin
-// aforo por Edge —dos cadenas del mismo Edge pueden solaparse— y el arranque lo dice
-// en un Warn, porque un aforo que no está puesto no da ningún otro síntoma.
+// Las CINCO etapas van POSICIONALES y EN EL ORDEN DE LA CADENA (`p2 → p3 → p4 →
+// match → draft`), detrás el catálogo que `match` consume. No hay riesgo de
+// equivocar el orden: los cinco puertos tienen firmas distintas, así que una
+// permutación no compila.
+//
+// Las OPCIONES son de T2.7 y T3.8, y las dos comparten forma: cablean algo cuya
+// ausencia NO da error, solo sirve peor. `ConAforo` (dos cadenas del mismo Edge
+// pueden solaparse) y `ConZonasDeEnvio` (el tenant con tarifa plana pierde su
+// precio de envío). Las dos lo gritan en el Warn del arranque, porque es el único
+// sitio donde pueden gritarlo.
 func NewWorker(log logger.Logger, store intake.PipelineStore,
 	p2 EtapaIdeas, p3 EtapaEspecificaciones, p4 EtapaNormalizacion,
+	match EtapaMatch, draft EtapaDraft, catalogos Catalogos,
 	cifra Descifrador, cfg Config, opts ...Opcion) (*Worker, error) {
-	if log == nil || store == nil || p2 == nil || p3 == nil || p4 == nil || cifra == nil {
+	if log == nil || store == nil || p2 == nil || p3 == nil || p4 == nil ||
+		match == nil || draft == nil || catalogos == nil || cifra == nil {
 		return nil, ErrSinCablear
 	}
 	w := &Worker{
-		log: log, store: store, p2: p2, p3: p3, p4: p4, cifra: cifra,
+		log: log, store: store, p2: p2, p3: p3, p4: p4,
+		match: match, draft: draft, catalogos: catalogos, cifra: cifra,
 		cfg: cfg.conDefaults(), ahora: time.Now, numero: espera,
 		despertares: make(chan Plaza, capacidadDespertares),
 	}
@@ -328,6 +435,13 @@ func (w *Worker) Run(ctx context.Context) {
 	if w.aforo == nil {
 		w.log.Warn("pipeline: worker SIN aforo por Edge (T2.7); dos cadenas de lote del mismo Edge pueden solaparse",
 			"consecuencia", "la espera de un turno interactivo deja de estar acotada a UNA llamada de lote")
+	}
+	// 🔴 MISMO MOTIVO QUE EL DE ARRIBA: un lector de zonas ausente no falla, sirve
+	// peor y en silencio. La línea de envío sale «Envío por confirmar» sin precio,
+	// que es indistinguible del borrador de un tenant que no configuró zonas.
+	if w.zonas == nil {
+		w.log.Warn("pipeline: worker SIN lector de zonas de envío (T3.8); todo borrador saldrá con la línea de envío SIN precio",
+			"consecuencia", "el tenant con UNA zona configurada pierde su tarifa plana y el dueño la precifica a mano sin saber que ya estaba puesta")
 	}
 
 	w.Drenar(ctx)
@@ -498,10 +612,11 @@ func (w *Worker) procesar(ctx context.Context, job intake.ClaimedJob) {
 	}
 	defer soltar()
 
-	if err := w.cadena(ctx, job, literal); err != nil {
+	borrador, err := w.cadena(ctx, job, literal)
+	if err != nil {
 		return // la cadena ya escribió el desenlace
 	}
-	w.terminar(ctx, job)
+	w.terminar(ctx, job, borrador)
 }
 
 // tomarPlaza resuelve la dirección de la plaza de este job y la ocupa. Devuelve
@@ -605,8 +720,9 @@ func (w *Worker) literalDe(job intake.ClaimedJob) (string, error) {
 	return texto, nil
 }
 
-// cadena encadena P2 → P3 → P4 y devuelve error si alguna etapa no pudo producir su
-// artefacto. Cuando lo devuelve, el desenlace YA está escrito.
+// cadena encadena P2 → P3 → P4 → match → draft y devuelve el artefacto de la última
+// etapa —el que lleva el `intake_id` con el que se cierra el job— o error si alguna
+// no pudo producir el suyo. Cuando devuelve error, el desenlace YA está escrito.
 //
 // 🔴 EL CTX QUE VIAJA AQUÍ NO LLEVA DEADLINE, Y ES DELIBERADO. El plazo se acota POR
 // LLAMADA dentro de cada etapa (`stages.ConPlazoPorLlamada`), no por job ni por etapa:
@@ -614,20 +730,27 @@ func (w *Worker) literalDe(job intake.ClaimedJob) (string, error) {
 // lleva casi todo y la última casi nada— y el `timeout_ms` que llega al Edge deja de
 // describir una llamada de lote, con lo que el breaker juzga contra un umbral que se
 // mueve. Ver PlazoPorLlamadaSuelo y stages/plazo.go.
-func (w *Worker) cadena(ctx context.Context, job intake.ClaimedJob, literal string) error {
+func (w *Worker) cadena(ctx context.Context, job intake.ClaimedJob, literal string) (*stages.ArtefactoDraft, error) {
 	ideas, err := w.ideas(ctx, job, literal)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(ideas.Wants) == 0 {
 		w.sinIdeas(job)
 	}
 	specs, err := w.especificaciones(ctx, job, literal, ideas.Wants)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = w.cantidades(ctx, job, literal, specs.Items, ideas.DeliveryHint)
-	return err
+	cantidades, err := w.cantidades(ctx, job, literal, specs.Items, ideas.DeliveryHint)
+	if err != nil {
+		return nil, err
+	}
+	presupuesto, err := w.lineas(ctx, job, cantidades)
+	if err != nil {
+		return nil, err
+	}
+	return w.borrador(ctx, job, literal, presupuesto, cantidades.DeliveryDate)
 }
 
 // sinIdeas es el aviso del job que llega a P3 con CERO ideas vivas.
@@ -698,6 +821,96 @@ func (w *Worker) cantidades(ctx context.Context, job intake.ClaimedJob, literal 
 	inicio := w.ahora()
 	out, err := w.p4.Run(ctx, job, literal, items, entrega)
 	return desenlace(ctx, w, job, intake.StageP4, inicio, out, err)
+}
+
+// lineas ejecuta `match` — o se la salta si el artefacto ya está persistido.
+//
+// 🔴 EL CRONÓMETRO ARRANCA ANTES DE LEER EL CATÁLOGO, Y NO ES UN DESCUIDO. Las dos
+// lecturas por job (índice y zonas) son parte del coste de esta etapa: si un día el
+// `SELECT` del documento se vuelve el cuello, el `elapsed_ms` de `match` tiene que
+// enseñarlo. Medir solo `Run` diría que la etapa tarda 2 ms mientras el job espera
+// 900 en la base.
+func (w *Worker) lineas(ctx context.Context, job intake.ClaimedJob,
+	cantidades *llm.Quantities) (*stages.ArtefactoMatch, error) {
+	if art, ok := reanudar[stages.ArtefactoMatch](w, job, intake.StageMatch); ok {
+		return art, nil
+	}
+	inicio := w.ahora()
+	out, err := w.cruzarConElCatalogo(ctx, job, cantidades)
+	return desenlace(ctx, w, job, intake.StageMatch, inicio, out, err)
+}
+
+// cruzarConElCatalogo hace las DOS lecturas por job y llama a la etapa.
+//
+// # POR QUÉ EL CATÁLOGO MATA EL INTENTO Y LAS ZONAS NO
+//
+// No es simetría rota: son dos daños distintos. Sin índice NINGÚN ítem puede casar y
+// el borrador entero saldría `unmatched`, o sea afirmando que el tenant no vende nada
+// de lo que el cliente pidió — una mentira sobre el catálogo, y la propia etapa lo
+// rechaza con ErrSinCatalogo. Sin zonas se pierde UNA línea de precio, la del envío,
+// y el borrador sale con «Envío por confirmar», que es la línea legítima de la
+// inmensa mayoría de tenants (D-041.11: v1, el dueño precifica).
+//
+// Por eso el catálogo se propaga como error —tropiezo, backoff, y el job vuelve— y
+// las zonas se degradan con un Warn. Tirar el pedido de un cliente porque
+// `tenant_settings` no contestó sería exactamente lo que DEUDA-044.16 prohíbe: que
+// la unidad de daño sea el pedido y no el dato que falló.
+func (w *Worker) cruzarConElCatalogo(ctx context.Context, job intake.ClaimedJob,
+	cantidades *llm.Quantities) (*stages.ArtefactoMatch, error) {
+	indice, err := w.catalogos.Obtener(ctx, job.Key.TenantID)
+	if err != nil {
+		// El error NO cita el documento: dentro van los nombres y precios del tenant.
+		return nil, fmt.Errorf("match: leer el catálogo del tenant: %w", err)
+	}
+	return w.match.Run(ctx, job, stages.EntradaMatch{
+		Cantidades: cantidades,
+		Indice:     indice,
+		Zonas:      w.zonasDe(ctx, job),
+		// 🔴 HOY NADIE PRODUCE LA NOTA DEL PEDIDO ENTERO, y el tipo propio de
+		// `stages.NotaDePedido` existe para que el hueco se vea en ESTA línea. No es
+		// un default cómodo: ninguna etapa anterior la emite y llenarla pide una
+		// decisión de producto (ver NotaDePedido en stages/match.go).
+		Nota: stages.SinNotaDePedido,
+	})
+}
+
+// zonasDe lee las zonas de envío del tenant, o devuelve ninguna. NUNCA falla: ver el
+// bloque de cruzarConElCatalogo.
+func (w *Worker) zonasDe(ctx context.Context, job intake.ClaimedJob) []intakes.ShippingZone {
+	if w.zonas == nil {
+		return nil // el worker sin lector; ya lo gritó el arranque (ver Run).
+	}
+	zonas, err := w.zonas.ShippingZones(ctx, job.Key.TenantID)
+	if err != nil {
+		w.log.Warn("pipeline: no se pudieron leer las zonas de envío; el borrador sale con la línea de envío SIN precio",
+			"job_id", job.ID, "stage", intake.StageMatch,
+			"tenant_id", job.Key.TenantID, "error", err.Error())
+		return nil
+	}
+	return zonas
+}
+
+// borrador ejecuta `draft` — o se la salta si el artefacto ya está persistido.
+//
+// 🔴 `Media` VA EN CERO Y `Analisis` TAMBIÉN, y las dos ausencias están explicadas en
+// la cabecera del paquete: el anclaje de adjuntos (T3.3) no tiene de dónde leer los
+// `media refs` con sus instantes, y la vía del análisis (D-044.15) no sale de ningún
+// puerto del selector. Se pasan explícitas y no por omisión del struct para que las
+// dos se vean aquí el día que alguien vaya a cablearlas.
+func (w *Worker) borrador(ctx context.Context, job intake.ClaimedJob, literal string,
+	presupuesto *stages.ArtefactoMatch, fechaEntrega string) (*stages.ArtefactoDraft, error) {
+	if art, ok := reanudar[stages.ArtefactoDraft](w, job, intake.StageDraft); ok {
+		return art, nil
+	}
+	inicio := w.ahora()
+	out, err := w.draft.Run(ctx, job, stages.EntradaDraft{
+		Match:        presupuesto,
+		SourceText:   literal,
+		FechaEntrega: fechaEntrega,
+		Media:        anclaje.Reparto{},
+		Analisis:     stages.Analisis{},
+	})
+	return desenlace(ctx, w, job, intake.StageDraft, inicio, out, err)
 }
 
 // desenlace es el punto ÚNICO por el que pasa el resultado de toda etapa ejecutada, y
@@ -852,23 +1065,40 @@ func etapaOTodas(etapa string) string {
 	return etapa
 }
 
-// terminar cierra el job en `done`.
+// terminar cierra el job en `done` CON el id del borrador que acaba de nacer.
 //
-// 🔴 EL `intakeID` VA VACÍO, Y NO ES UN OLVIDO: el borrador es de la Ola 3. Hoy la
-// cadena acaba en P4 y `Finish` deja `intake_id` como estaba (su `COALESCE`). Cuando
-// la Ola 3 añada `match` y `draft`, se insertan ANTES de esta llamada y el id del
-// borrador entra por aquí — que es el único sitio donde puede entrar, porque `done` es
-// absorbente y un UPDATE posterior afectaría 0 filas.
+// 🔴 ES EL ÚNICO SITIO DONDE EL `intake_id` PUEDE ENTRAR, y por eso viaja hasta aquí
+// desde `draft` en vez de escribirlo la etapa: `done` es absorbente, así que un
+// UPDATE posterior afectaría 0 filas y el job quedaría terminado sin apuntar a su
+// solicitud — sin error, y sin nada que lo dijera.
 //
-// ⚠️ CONSECUENCIA DE TERMINAR HOY EN P4: `Finish` vacía el sobre del literal en la
-// misma sentencia (INV-13), así que un job `done` de la era Ola 2 ya no tiene texto que
-// reanalizar. Lo que le queda son sus artefactos `p2`/`p3`/`p4`, que es exactamente lo
-// que el match necesita. Un `/reanalyze` (T4.6) que quisiera rehacer P2 sobre un job ya
-// terminado no puede, y eso es INV-13 funcionando, no un defecto.
-func (w *Worker) terminar(ctx context.Context, job intake.ClaimedJob) {
+// 🔄 HASTA T3.8 ESTE PARÁMETRO IBA VACÍO. El comentario que estaba aquí decía «el
+// borrador es de la Ola 3; hoy la cadena acaba en P4 y `Finish` deja `intake_id` como
+// estaba (su `COALESCE`)», y dejó de ser verdad al cablearse `match` y `draft`.
+//
+// ⚠️ INV-13 SIGUE MORDIENDO IGUAL: `Finish` vacía el sobre del literal en la misma
+// sentencia, así que un job `done` ya no tiene texto que reanalizar. Lo que le queda
+// son sus cinco artefactos y su solicitud, que es lo que un `/reanalyze` (T4.6)
+// necesita para escribir una revisión más sobre el MISMO borrador. Rehacer P2 sobre
+// un job terminado sigue sin poder hacerse, y eso es INV-13 funcionando.
+func (w *Worker) terminar(ctx context.Context, job intake.ClaimedJob, borrador *stages.ArtefactoDraft) {
+	intakeID := ""
+	if borrador != nil {
+		intakeID = borrador.IntakeID
+	}
+	if intakeID == "" {
+		// 🔴 A PARTIR DE T3.8 ESTO ES UNA ANOMALÍA, no el caso normal. Se dice porque
+		// `Finish` hace `COALESCE`: con la cadena entera corrida, un id vacío cierra el
+		// job igual y en silencio, y la bandeja se quedaría sin la solicitud sin que
+		// nada fallara. La causa más probable es un artefacto `draft` persistido por
+		// una versión anterior y recuperado por `reanudar`.
+		w.log.Warn("pipeline: el job termina SIN intake_id; su solicitud no quedará enlazada al job",
+			"job_id", job.ID, "tenant_id", job.Key.TenantID,
+			"donde_mirar", "artifacts.draft de este job_id: si no trae `intake_id`, lo escribió una versión anterior a T3.8")
+	}
 	cerrar, cancel := w.cierre(ctx)
 	defer cancel()
-	aplicado, err := w.store.Finish(cerrar, job.ID, "")
+	aplicado, err := w.store.Finish(cerrar, job.ID, intakeID)
 	if err != nil {
 		w.log.Error("pipeline: no se pudo terminar el job; queda en processing",
 			"job_id", job.ID, "error", err.Error())
@@ -880,7 +1110,8 @@ func (w *Worker) terminar(ctx context.Context, job intake.ClaimedJob) {
 		return
 	}
 	w.log.Info("pipeline: job DONE",
-		"job_id", job.ID, "tenant_id", job.Key.TenantID, "intento", job.Attempts+1)
+		"job_id", job.ID, "tenant_id", job.Key.TenantID,
+		"intake_id", intakeID, "intento", job.Attempts+1)
 }
 
 // cierre da el ctx con el que se escriben los DESENLACES (Finish, Fail, Retry).

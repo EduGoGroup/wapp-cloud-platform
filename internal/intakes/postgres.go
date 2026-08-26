@@ -806,7 +806,7 @@ func setDepositDueTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string)
 }
 
 // depositDueDaysTx lee el plazo de la seña del tenant. Un tenant SIN fila de config
-// no es un error (mismo criterio que shippingZonesTx y NotifySettings): es el plazo
+// no es un error (mismo criterio que shippingZonesDe y NotifySettings): es el plazo
 // por defecto. La regla de "valor no positivo ⇒ default" se aplica con el MISMO
 // helper que usa el marcador {plazo} del texto, para no prometer un plazo y fijar
 // otro.
@@ -985,7 +985,7 @@ func (p *Postgres) EnsureShippingLine(ctx context.Context, tenantID, intakeID st
 // El orden importa: primero la política —si no aplica no se toca nada y no se lee
 // una línea que no va a cambiar— y solo después la fila.
 func ensureShippingTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, policy ShippingPolicy) (bool, error) {
-	zones, err := shippingZonesTx(ctx, tx, tenantID)
+	zones, err := shippingZonesDe(ctx, tx, tenantID)
 	if err != nil {
 		return false, err
 	}
@@ -1031,12 +1031,19 @@ func ensureShippingTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string
 	return true, nil
 }
 
-// shippingZonesTx lee tenant_settings.shipping_zones. Un tenant SIN fila de config
+// shippingZonesDe lee tenant_settings.shipping_zones. Un tenant SIN fila de config
 // no es un error: es un tenant que no configuró nada (mismo criterio que
 // GetTenantSettings del módulo de flujos) y por tanto no tiene zonas.
-func shippingZonesTx(ctx context.Context, tx *sql.Tx, tenantID string) ([]ShippingZone, error) {
+//
+// 🔴 TOMA UN `querier` Y NO UN `*sql.Tx` PARA QUE HAYA UNA SOLA SENTENCIA. Sus dos
+// llamantes leen la misma columna con propósitos distintos —EnsureShippingLine
+// dentro del CAS del carrito numérico, ShippingZones fuera de toda transacción para
+// el pipeline de captación— y con dos copias del SELECT bastaría con que alguien
+// añadiera un filtro a una para que el borrador y el pedido cerrado cotizaran envíos
+// distintos sin que nada diera error.
+func shippingZonesDe(ctx context.Context, q querier, tenantID string) ([]ShippingZone, error) {
 	var raw []byte
-	err := tx.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT shipping_zones FROM public.tenant_settings WHERE tenant_id = $1`,
 		tenantID).Scan(&raw)
 	switch {
@@ -1048,15 +1055,37 @@ func shippingZonesTx(ctx context.Context, tx *sql.Tx, tenantID string) ([]Shippi
 	return ParseShippingZones(raw)
 }
 
+// ShippingZones son las zonas de envío del tenant, leídas FUERA de toda transacción.
+//
+// Existe por el pipeline de captación (Plan 044 · T3.8): la etapa `match` construye
+// la línea de envío del borrador con `DesiredShippingLine`, y para eso necesita las
+// mismas zonas que el carrito numérico. El worker las lee UNA VEZ POR JOB —igual que
+// el índice del catálogo— y se las pasa en `stages.EntradaMatch`; la etapa no lee de
+// ninguna parte.
+//
+// 🔴 NO ABRE TRANSACCIÓN, y la diferencia con `EnsureShippingLine` es real: allí la
+// lectura tiene que ver el MISMO estado que la escritura que viene detrás, aquí no
+// hay escritura ninguna. Meterla en una transacción alargaría un candado por una
+// consulta de solo lectura, que es exactamente lo que `NotifySettings` ya evita en
+// esta misma tabla.
+//
+// Un tenant SIN fila de config no es un error: es un tenant que no configuró zonas, y
+// entonces el borrador sale con la línea «Envío por confirmar» que el dueño precifica
+// (D-041.11). Devolver un error ahí mataría el job de todos los tenants que aún no
+// han tocado su configuración, que son la mayoría.
+func (p *Postgres) ShippingZones(ctx context.Context, tenantID string) ([]ShippingZone, error) {
+	return shippingZonesDe(ctx, p.db, tenantID)
+}
+
 // NotifySettings implementa SettingsReader: la config comercial del tenant que el
 // aviso al cliente necesita (T4.2). Sale de la MISMA fila de tenant_settings de la
 // que sale shipping_zones — un solo origen de config, no dos.
 //
-// Un tenant SIN fila no es un error (mismo criterio que shippingZonesTx): es un
+// Un tenant SIN fila no es un error (mismo criterio que shippingZonesDe): es un
 // tenant que no configuró nada, y lo que devuelve dice exactamente eso — sin
 // plantilla de seña (no puede pedir seña) y con el plazo por defecto.
 //
-// NO va dentro de una transacción como shippingZonesTx: esto se lee FUERA de la
+// NO va dentro de una transacción, igual que ShippingZones: esto se lee FUERA de la
 // escritura del estado, después de que la transición ya esté aplicada, y meterlo en
 // la transacción del CAS alargaría el candado de la cabecera por un texto.
 func (p *Postgres) NotifySettings(ctx context.Context, tenantID string) (NotifySettings, error) {

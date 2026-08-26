@@ -226,10 +226,14 @@ func esperarHasta(t *testing.T, que string, cond func() bool) {
 
 // banquillo es N cadenas de lote lanzadas a la vez contra un aforo compartido.
 type banquillo struct {
-	store  *StoreEnMemoria
-	aforo  *Aforo
-	vigia  *vigia
-	rutas  *rutasFalsas
+	store *StoreEnMemoria
+	aforo *Aforo
+	vigia *vigia
+	rutas *rutasFalsas
+	// rel es el reloj compartido. Lo guarda el banquillo desde T3.8 porque las etapas
+	// de la Ola 3 —que no vigilan la plaza pero sí tienen que existir— se construyen
+	// con él, y dos relojes distintos en el mismo worker es un defecto documentado.
+	rel    *reloj
 	espera sync.WaitGroup
 }
 
@@ -245,6 +249,7 @@ func montar(t *testing.T, sesiones map[string]string) *banquillo {
 		aforo: NuevoAforo(KPorPlaza),
 		vigia: nuevaVigia(store, sesiones),
 		rutas: &rutasFalsas{porSesion: sesiones},
+		rel:   rel,
 	}
 	for sesion := range sesiones {
 		store.Sembrar(Fila{
@@ -264,9 +269,10 @@ func montar(t *testing.T, sesiones map[string]string) *banquillo {
 func (b *banquillo) lanzar(t *testing.T, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
+		m, d, cat := olaTres(t, b.rel, b.store)
 		w, err := NewWorker(&captor{}, b.store,
 			&p2Vigilada{v: b.vigia}, &p3Vigilada{v: b.vigia}, &p4Vigilada{v: b.vigia},
-			cifraFalsa{}, Config{}, ConAforo(b.aforo, b.rutas))
+			m, d, cat, cifraFalsa{}, Config{}, ConAforo(b.aforo, b.rutas))
 		if err != nil {
 			t.Fatalf("cablear el worker %d: %v", i, err)
 		}
@@ -540,7 +546,8 @@ func TestDespertar_ElFlancoAREADYReanudaSinEsperarAlBackoff(t *testing.T) {
 		items: []llm.ItemSpec{{Product: "torta", Evidence: "torta"}}}
 	p4 := &p4Falsa{etapaBase: etapaBase{rel: rel}, store: store}
 
-	w, err := NewWorker(log, store, p2, p3, p4, cifraFalsa{}, Config{Cadencia: lejos})
+	m, d, cat := olaTres(t, rel, store)
+	w, err := NewWorker(log, store, p2, p3, p4, m, d, cat, cifraFalsa{}, Config{Cadencia: lejos})
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}
@@ -617,7 +624,8 @@ func TestDespertar_NoReclamaDosVecesElMismoJobEnUnFlanco(t *testing.T) {
 	p3 := &p3Falsa{etapaBase: etapaBase{rel: rel}, store: store}
 	p4 := &p4Falsa{etapaBase: etapaBase{rel: rel}, store: store}
 
-	w, err := NewWorker(log, store, p2, p3, p4, cifraFalsa{}, Config{Cadencia: time.Hour})
+	m, d, cat := olaTres(t, rel, store)
+	w, err := NewWorker(log, store, p2, p3, p4, m, d, cat, cifraFalsa{}, Config{Cadencia: time.Hour})
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}
@@ -650,9 +658,10 @@ func TestDespertar_NoReclamaDosVecesElMismoJobEnUnFlanco(t *testing.T) {
 func TestDespertar_NoBloqueaNuncaAlLlamante(t *testing.T) {
 	t.Parallel()
 	b := montar(t, map[string]string{"sess-1": "edge-1"})
+	m, d, cat := olaTres(t, b.rel, b.store)
 	w, err := NewWorker(&captor{}, b.store,
 		&p2Vigilada{v: b.vigia}, &p3Vigilada{v: b.vigia}, &p4Vigilada{v: b.vigia},
-		cifraFalsa{}, Config{})
+		m, d, cat, cifraFalsa{}, Config{})
 	if err != nil {
 		t.Fatalf("cablear el worker: %v", err)
 	}

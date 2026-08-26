@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/EduGoGroup/wapp-shared/textmatch"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/catalogo"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -325,3 +330,85 @@ func (s *StoreEnMemoria) buscar(id string) *Fila {
 // El doble satisface el puerto, comprobado en compilación: si alguien añade un método a
 // `intake.PipelineStore` y no lo trae aquí, esto no compila.
 var _ intake.PipelineStore = (*StoreEnMemoria)(nil)
+
+// ════════════════════════════════════════════════════════════════════════════
+// EL DOBLE EN MEMORIA DE `Catalogos` (T3.8)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// # POR QUÉ TAMBIÉN ÉSTE ES CÓDIGO EXPORTADO Y NO UN FAKE EN UN `_test.go`
+//
+// La primera razón es la de StoreEnMemoria: lo necesitan dos paquetes de test que no
+// se pueden ver entre sí (`pipeline` y `flujos/runtime`).
+//
+// 🔴 LA SEGUNDA ES UNA FRONTERA QUE NO SE PUEDE CRUZAR NI EN UN TEST.
+// `TestFrontera_NingunFicheroDeFlujosImportaElIndice` (catalogo/frontera_test.go)
+// prohíbe que CUALQUIER fichero bajo `internal/flujos/**` —de producción y de test,
+// explícitamente— importe `internal/intake/catalogo`: el índice vive en el worker del
+// pipeline y llevarlo al turno conversacional devuelve el parseo del catálogo al
+// camino del entrante, que es lo que INV-02/T1.5 prohíbe. Un test de `flujos` que
+// quisiera fabricarse su propio `Catalogos` tendría que nombrar `*catalogo.Indice` en
+// la firma y cruzaría esa frontera. Con el doble aquí, allí solo se USA un valor cuyo
+// tipo no hace falta nombrar — y la frontera sigue entera.
+
+// CatalogoEnMemoria es el doble del puerto Catalogos. Es seguro para uso concurrente.
+type CatalogoEnMemoria struct {
+	mu       sync.Mutex
+	idx      *catalogo.Indice
+	err      error
+	llamadas int
+}
+
+// NuevoCatalogoEnMemoria construye el doble con un artículo por etiqueta.
+//
+// 🔴 INDEXA CON EL NORMALIZADOR DE PRODUCCIÓN (`textmatch.Normalize`) y no con uno de
+// laboratorio: el índice y la cascada del match tienen que opinar lo mismo sobre la ñ
+// y sobre los acentos, y un doble con `strings.ToLower` haría que «Café» dejara de
+// casar «cafe» solo dentro de los tests.
+//
+// Sin etiquetas sirve un catálogo VACÍO, que es un estado legítimo —el tenant que aún
+// no ha subido el suyo— y con el que todo ítem sale `unmatched`.
+func NuevoCatalogoEnMemoria(etiquetas ...string) (*CatalogoEnMemoria, error) {
+	articulos := make([]cart.Article, 0, len(etiquetas))
+	for i, e := range etiquetas {
+		articulos = append(articulos, cart.Article{
+			Code:  strconv.Itoa(i + 1),
+			SKU:   "ART-" + strconv.Itoa(i+1),
+			Label: e,
+			Price: 1000,
+		})
+	}
+	idx, err := catalogo.Construir(cart.Catalog{Categories: []cart.Category{
+		{Code: "1", Label: "Catálogo", Items: articulos},
+	}}, textmatch.Normalize)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: catálogo en memoria: %w", err)
+	}
+	return &CatalogoEnMemoria{idx: idx}, nil
+}
+
+// RomperLaLectura hace que Obtener falle a partir de ahora. Es el «tenant_content no
+// contesta», que sin esto sería inalcanzable desde un test.
+func (c *CatalogoEnMemoria) RomperLaLectura(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err = err
+}
+
+// Obtener implementa Catalogos.
+func (c *CatalogoEnMemoria) Obtener(_ context.Context, _ string) (*catalogo.Indice, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.llamadas++
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.idx, nil
+}
+
+// Lecturas es cuántas veces se pidió el índice. Es lo que permite afirmar el criterio
+// (a) de T3.7 desde fuera: UNA lectura por job, no una por ítem.
+func (c *CatalogoEnMemoria) Lecturas() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.llamadas
+}
