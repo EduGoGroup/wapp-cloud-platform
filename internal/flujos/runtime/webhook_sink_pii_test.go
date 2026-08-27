@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
 )
 
 // El literal es raro a propósito, para buscarlo como subcadena sin falsos
@@ -100,19 +102,19 @@ func TestWebhookSink_NoMutaElPayloadCompartido(t *testing.T) {
 	}
 }
 
-// TestBuildIntakePushTemplate_IgnoraLaNotaDelEfecto aísla la regla del builder del
+// TestBuildIntakePushTemplate_IgnoraLaNotaDelEfecto aísla la regla del builder
+// (crmpush.Build) del
 // camino del sink: aunque el efecto traiga la nota (y la trae: el proyector la
 // necesita), la plantilla no la mira.
 func TestBuildIntakePushTemplate_IgnoraLaNotaDelEfecto(t *testing.T) {
 	eff := cartClosedEffect()
 	eff.Payload["customer_note"] = notaDelPedidoEnElOutbox
 
-	body, err := json.Marshal(buildIntakePushTemplate(
-		EffectContext{TenantID: "t-1", ContactID: "c-opaco"}, eff, time.Unix(0, 0).UTC()))
+	body, err := json.Marshal(crmpush.Build(effectInput(EffectContext{TenantID: "t-1", ContactID: "c-opaco"}, eff), time.Unix(0, 0).UTC()))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if strings.Contains(string(body), notaDelPedidoEnElOutbox) {
-		t.Fatalf("FUGA: buildIntakePushTemplate volvió a copiar la nota del efecto a la plantilla:\n%s", body)
+		t.Fatalf("FUGA: la plantilla volvió a copiar la nota del efecto a la plantilla:\n%s", body)
 	}
 }

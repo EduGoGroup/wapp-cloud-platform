@@ -40,7 +40,7 @@ func solicitudEditable(t *testing.T, zonas ...intakes.ShippingZone) (*intakes.Me
 	}
 
 	svc := intakes.NewService(st)
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusPendingApproval); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusPendingApproval, intakes.NoticeToClient); err != nil {
 		t.Fatalf("llevando la solicitud a pending_approval: %v", err)
 	}
 	return st, svc
@@ -126,7 +126,7 @@ func TestReplaceItems_EscenaDelQuesoExtra(t *testing.T) {
 	exigirRevisiónDeCorrección(t, st.Revisions(intakeEditable), 9)
 
 	// Y se cierra el ciclo: vuelve a confirmed, que ya existía.
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusConfirmed); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusConfirmed, intakes.NoticeToClient); err != nil {
 		t.Fatalf("pending_approval → confirmed: %v", err)
 	}
 }

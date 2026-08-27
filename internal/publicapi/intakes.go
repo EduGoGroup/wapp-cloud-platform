@@ -25,8 +25,12 @@ type IntakeService interface {
 	// Get devuelve la solicitud con sus líneas; intakes.ErrNotFound si no es del
 	// tenant (404 opaco).
 	Get(ctx context.Context, tenantID, intakeID string) (intakes.Detail, error)
-	// SetStatus aplica una transición del ciclo de vida (D-041.10).
-	SetStatus(ctx context.Context, tenantID, intakeID, status string) (intakes.Intake, error)
+	// SetStatus aplica una transición del ciclo de vida (D-041.10). `notice` dice
+	// quién le cuenta el cambio al cliente: esta ruta —el <select> genérico de la
+	// consola— pasa SIEMPRE intakes.NoticeToClient, que es el aviso automático de
+	// T4.2. Las puertas que escriben su propio mensaje al cliente pasan
+	// NoticeByCaller y no van por aquí.
+	SetStatus(ctx context.Context, tenantID, intakeID, status string, notice intakes.StatusNotice) (intakes.Intake, error)
 	// Discard DESCARTA a mano un lote de solicitudes huérfanas dejándolas en
 	// `abandoned` (T4.8, D-041.18). Contesta por ítem: no es todo-o-nada.
 	Discard(ctx context.Context, tenantID string, intakeIDs []string) (intakes.DiscardResult, error)
@@ -318,7 +322,10 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		updated, err := svc.SetStatus(r.Context(), id.TenantID, r.PathValue("id"), req.Status)
+		// NoticeToClient: esta puerta NO escribe ningún texto propio, así que el
+		// aviso genérico del estado destino es el ÚNICO que el cliente va a recibir
+		// (D-041.14). Quitárselo aquí lo dejaría sin enterarse del cambio.
+		updated, err := svc.SetStatus(r.Context(), id.TenantID, r.PathValue("id"), req.Status, intakes.NoticeToClient)
 		var invalid *intakes.TransitionError
 		switch {
 		case errors.Is(err, intakes.ErrNotFound):

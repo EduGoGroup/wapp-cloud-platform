@@ -49,7 +49,7 @@ func TestService_NotificaUnaVezPorTransición(t *testing.T) {
 	spy := &avisoSpy{}
 	svc := intakes.NewService(seedStore(t, intakes.StatusConfirmed), intakes.WithNotifier(spy))
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient); err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
@@ -68,10 +68,10 @@ func TestService_PedirDosVecesLoMismoNoMandaDosMensajes(t *testing.T) {
 	spy := &avisoSpy{}
 	svc := intakes.NewService(seedStore(t, intakes.StatusConfirmed), intakes.WithNotifier(spy))
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient); err != nil {
 		t.Fatalf("primera transición: %v", err)
 	}
-	_, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested)
+	_, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient)
 
 	var invalid *intakes.TransitionError
 	if !errors.As(err, &invalid) {
@@ -89,7 +89,7 @@ func TestService_EstadoQueNoCambiaNoNotifica(t *testing.T) {
 	spy := &avisoSpy{}
 	svc := intakes.NewService(seedStore(t, intakes.StatusConfirmed), intakes.WithNotifier(spy))
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusConfirmed); err == nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusConfirmed, intakes.NoticeToClient); err == nil {
 		t.Fatal("confirmed → confirmed debería rechazarse")
 	}
 	if spy.count() != 0 {
@@ -104,7 +104,7 @@ func TestService_ElQuePierdeElCASNoNotifica(t *testing.T) {
 	spy := &avisoSpy{}
 	svc := intakes.NewService(conflictStore{seedStore(t, intakes.StatusConfirmed)}, intakes.WithNotifier(spy))
 
-	_, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested)
+	_, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient)
 	if err == nil {
 		t.Fatal("quiero ErrConflict")
 	}
@@ -119,7 +119,7 @@ func TestService_ElQuePierdeElCASNoNotifica(t *testing.T) {
 func TestService_SinNotificadorNoRevienta(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusConfirmed))
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient); err != nil {
 		t.Fatalf("SetStatus sin notificador: %v", err)
 	}
 }
@@ -140,7 +140,7 @@ func TestService_SesiónOfflineNoTumbaLaTransición(t *testing.T) {
 	spy := &logSpy{}
 	svc := intakes.NewService(store, intakes.WithNotifier(newNotifier(sender, store, spy)))
 
-	updated, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusSettled)
+	updated, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusSettled, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("la transición no puede fallar porque el envío falle: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestService_UnPánicoAlAvisarNoTumbaLaTransición(t *testing.T) {
 	spy := &logSpy{}
 	svc := intakes.NewService(store, intakes.WithNotifier(newNotifier(senderQuePanica{}, store, spy)))
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusSettled); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusSettled, intakes.NoticeToClient); err != nil {
 		t.Fatalf("un pánico del aviso no puede tumbar la transición: %v", err)
 	}
 

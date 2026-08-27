@@ -182,7 +182,7 @@ func TestSetStatus_PendingApprovalPoneElEnvío(t *testing.T) {
 	st, svc := solicitudPorAprobar(t)
 	st.SetShippingZones(tenantA, zonaÚnica())
 
-	got, err := svc.SetStatus(context.Background(), tenantA, intakeConEnvío, intakes.StatusPendingApproval)
+	got, err := svc.SetStatus(context.Background(), tenantA, intakeConEnvío, intakes.StatusPendingApproval, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestSetStatus_PendingApprovalPoneElEnvío(t *testing.T) {
 func TestSetStatus_PendingApprovalSinZonasPoneLaMarca(t *testing.T) {
 	_, svc := solicitudPorAprobar(t)
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeConEnvío, intakes.StatusPendingApproval); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeConEnvío, intakes.StatusPendingApproval, intakes.NoticeToClient); err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 

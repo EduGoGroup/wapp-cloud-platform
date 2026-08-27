@@ -123,7 +123,7 @@ func TestPostgres_SetStatus_PendingApprovalPoneElEnvío(t *testing.T) {
 	svc := intakes.NewService(store)
 	ctx := context.Background()
 
-	updated, err := svc.SetStatus(ctx, tenant, id, intakes.StatusPendingApproval)
+	updated, err := svc.SetStatus(ctx, tenant, id, intakes.StatusPendingApproval, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestPostgres_EnsureShippingLine_NoPisaElPrecioDelDueño(t *testing.T) {
 
 	// La vuelta a pending_approval vuelve a asegurar la línea, en la misma
 	// transacción de la transición.
-	if _, err := intakes.NewService(store).SetStatus(ctx, tenant, id, intakes.StatusPendingApproval); err != nil {
+	if _, err := intakes.NewService(store).SetStatus(ctx, tenant, id, intakes.StatusPendingApproval, intakes.NoticeToClient); err != nil {
 		t.Fatalf("SetStatus(pending_approval): %v", err)
 	}
 

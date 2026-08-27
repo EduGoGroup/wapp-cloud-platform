@@ -37,7 +37,7 @@ func TestService_SetStatus_TransiciónVálida(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusConfirmed))
 
 	got, err := svc.SetStatus(context.Background(), tenantA,
-		"11111111-1111-1111-1111-111111111111", intakes.StatusDepositRequested)
+		"11111111-1111-1111-1111-111111111111", intakes.StatusDepositRequested, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestService_SetStatus_ClosedLegado(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusClosedLegacy))
 
 	got, err := svc.SetStatus(context.Background(), tenantA,
-		"11111111-1111-1111-1111-111111111111", intakes.StatusSettled)
+		"11111111-1111-1111-1111-111111111111", intakes.StatusSettled, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("SetStatus sobre una fila legada `closed`: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestService_SetStatus_Inválida(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusClosedLegacy))
 
 	_, err := svc.SetStatus(context.Background(), tenantA,
-		"11111111-1111-1111-1111-111111111111", intakes.StatusOpen)
+		"11111111-1111-1111-1111-111111111111", intakes.StatusOpen, intakes.NoticeToClient)
 	var invalid *intakes.TransitionError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("err=%v, quiero *TransitionError", err)
@@ -95,7 +95,7 @@ func TestService_SetStatus_EstadoDesconocido(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusOpen))
 
 	_, err := svc.SetStatus(context.Background(), tenantA,
-		"11111111-1111-1111-1111-111111111111", "en_camino")
+		"11111111-1111-1111-1111-111111111111", "en_camino", intakes.NoticeToClient)
 	var invalid *intakes.TransitionError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("err=%v, quiero *TransitionError", err)
@@ -112,7 +112,7 @@ func TestService_SetStatus_CrossTenant(t *testing.T) {
 	svc := intakes.NewService(seedStore(t, intakes.StatusOpen))
 
 	_, err := svc.SetStatus(context.Background(), tenantB,
-		"11111111-1111-1111-1111-111111111111", intakes.StatusConfirmed)
+		"11111111-1111-1111-1111-111111111111", intakes.StatusConfirmed, intakes.NoticeToClient)
 	if !errors.Is(err, intakes.ErrNotFound) {
 		t.Fatalf("err=%v, quiero ErrNotFound", err)
 	}
@@ -143,7 +143,7 @@ func TestService_SetStatus_Conflicto(t *testing.T) {
 	svc := intakes.NewService(&storeQueMuta{MemoryStore: seedStore(t, intakes.StatusOpen)})
 
 	_, err := svc.SetStatus(context.Background(), tenantA,
-		"11111111-1111-1111-1111-111111111111", intakes.StatusConfirmed)
+		"11111111-1111-1111-1111-111111111111", intakes.StatusConfirmed, intakes.NoticeToClient)
 	if !errors.Is(err, intakes.ErrConflict) {
 		t.Fatalf("err=%v, quiero ErrConflict", err)
 	}

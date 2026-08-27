@@ -11,6 +11,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
 )
 
 // discardWebhookLogger es un logger que descarta la salida (white-box, sin depender
@@ -23,7 +24,7 @@ func discardWebhookLogger() logger.Logger {
 // no (D-041.17): el contrato tiene que llevar el «sin azúcar» de la primera y dejar
 // la segunda vacía. intake_id y revision_no ya están presentes porque
 // cart.Projector.closeIntake los anota en el mapa ANTES de que el fan-out llegue al
-// WebhookSink (ver el comentario de buildIntakePushTemplate).
+// WebhookSink (ver el comentario de effectInput).
 //
 // El revision_no del fixture es 2, y no 1, por DOS motivos: es la forma que tiene
 // hoy en producción —desde T4.0 el pipeline del 044 cuelga su revisión
@@ -37,6 +38,13 @@ func cartClosedEffect() modules.Effect {
 		Payload: map[string]any{
 			"intake_id":   "intake-abc-123",
 			"revision_no": 2,
+			// La clave LEGADA con la que cart.CloseIntake escribe la fila, anotada por
+			// la misma puerta que las otras dos. El sink la lee CRUDA y crmpush.Build
+			// la normaliza a `confirmed`: el contrato JAMÁS emite `closed`. Antes de
+			// T4.10 (mitad 2) el fixture no la traía porque el sink no la miraba —
+			// clavaba el literal "confirmed", que acertaba solo por ser este el cierre
+			// del carrito.
+			"lifecycle_status": "closed",
 			"items": []map[string]any{
 				{"sku": "A1", "label": "Café", "customization": "sin azúcar", "qty": 2, "unit_price": 9.9},
 				{"sku": "B2", "label": "Té", "qty": 1, "unit_price": 5.0},
@@ -172,9 +180,9 @@ func TestWebhookSink_Handle_EncolaCuandoGateAbierto(t *testing.T) {
 	if call.kind != "intake.push" {
 		t.Fatalf("kind encolado=%q, quiero intake.push", call.kind)
 	}
-	var decoded intakePushTemplate
+	var decoded crmpush.Payload
 	if err := json.Unmarshal(call.payload, &decoded); err != nil {
-		t.Fatalf("el payload encolado no es JSON válido de intakePushTemplate: %v", err)
+		t.Fatalf("el payload encolado no es JSON válido del contrato: %v", err)
 	}
 	if decoded.IntakeID != "intake-abc-123" {
 		t.Fatalf("intake_id encolado=%q, quiero intake-abc-123", decoded.IntakeID)
@@ -201,7 +209,7 @@ func TestBuildIntakePushTemplate_Contrato(t *testing.T) {
 	ec := EffectContext{TenantID: "tenant-abc", ContactID: "contact-opaco-xyz"}
 	now := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
 
-	got := buildIntakePushTemplate(ec, cartClosedEffect(), now)
+	got := crmpush.Build(effectInput(ec, cartClosedEffect()), now)
 
 	body, err := json.Marshal(got)
 	if err != nil {
@@ -244,8 +252,7 @@ func TestBuildIntakePushTemplate_NoCongelaLoQueRellenaElWorker(t *testing.T) {
 	eff.Payload["buyer_data"] = map[string]any{"documento": "12.345.678-5"}
 	eff.Payload["variables"] = map[string]any{"moneda": "Bs"}
 
-	body, err := json.Marshal(buildIntakePushTemplate(
-		EffectContext{TenantID: "t-1", ContactID: "c-opaco"}, eff, time.Unix(0, 0).UTC()))
+	body, err := json.Marshal(crmpush.Build(effectInput(EffectContext{TenantID: "t-1", ContactID: "c-opaco"}, eff), time.Unix(0, 0).UTC()))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -274,7 +281,7 @@ func TestBuildIntakePushTemplate_NoCongelaLoQueRellenaElWorker(t *testing.T) {
 // opcional (MD-042.1) — mientras el Plan 043 no exista, no se emite, y la clave
 // NO debe aparecer en el JSON (omitempty), no aparecer como "".
 func TestBuildIntakePushTemplate_EventHistoryIDOmitido(t *testing.T) {
-	got := buildIntakePushTemplate(EffectContext{TenantID: "t", ContactID: "c"}, cartClosedEffect(), time.Unix(0, 0).UTC())
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t", ContactID: "c"}, cartClosedEffect()), time.Unix(0, 0).UTC())
 	body, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -299,11 +306,8 @@ func bytesContains(b []byte, s string) bool {
 // personalización de línea cruza al contrato, tal como en el stub que este
 // archivo reemplaza.
 func TestBuildIntakePushTemplate_Personalización(t *testing.T) {
-	got := buildIntakePushTemplate(
-		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
-		cartClosedEffect(),
-		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
-	)
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
+		cartClosedEffect()), time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC))
 	if len(got.Items) != 2 {
 		t.Fatalf("items=%d, quiero 2", len(got.Items))
 	}
@@ -331,7 +335,7 @@ func TestBuildIntakePushTemplate_SinPersonalización(t *testing.T) {
 			"total":     9.9,
 		},
 	}
-	got := buildIntakePushTemplate(EffectContext{TenantID: "t", ContactID: "c"}, eff, time.Unix(0, 0).UTC())
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t", ContactID: "c"}, eff), time.Unix(0, 0).UTC())
 	if len(got.Items) != 1 || got.Items[0].Customization != "" {
 		t.Fatalf("items=%+v; sin la clave, la personalización debe salir vacía", got.Items)
 	}
@@ -351,7 +355,7 @@ func TestBuildIntakePushTemplate_RoundTripJSON(t *testing.T) {
 			"total": float64(19.8),
 		},
 	}
-	got := buildIntakePushTemplate(EffectContext{TenantID: "t", ContactID: "c"}, eff, time.Unix(0, 0).UTC())
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t", ContactID: "c"}, eff), time.Unix(0, 0).UTC())
 	if len(got.Items) != 1 || got.Items[0].SKU != "A1" || got.Items[0].Qty != 2 || got.Items[0].UnitPrice != 9.9 {
 		t.Fatalf("items round-trip mal parseados: %+v", got.Items)
 	}
@@ -369,11 +373,8 @@ func TestBuildIntakePushTemplate_RoundTripJSON(t *testing.T) {
 // aparte que el worker pueda releer. La contraparte —que la nota del PEDIDO NO
 // viaja— vive en webhook_sink_pii_test.go.
 func TestBuildIntakePushTemplate_PersonalizaciónDeLíneaSiCruza(t *testing.T) {
-	got := buildIntakePushTemplate(
-		EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
-		cartClosedEffect(),
-		time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC),
-	)
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t-1", ContactID: "c-opaco"},
+		cartClosedEffect()), time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC))
 	if got.Items[0].Customization != "sin azúcar" {
 		t.Fatalf("items[0].customization=%q", got.Items[0].Customization)
 	}
@@ -385,7 +386,7 @@ func TestBuildIntakePushTemplate_PersonalizaciónDeLíneaSiCruza(t *testing.T) {
 // TestBuildIntakePushTemplate_LifecycleStatusSiempreConfirmed: el contrato
 // JAMÁS emite "closed" (intake.push.md): la plantilla ya sale normalizada.
 func TestBuildIntakePushTemplate_LifecycleStatusSiempreConfirmed(t *testing.T) {
-	got := buildIntakePushTemplate(EffectContext{TenantID: "t", ContactID: "c"}, cartClosedEffect(), time.Unix(0, 0).UTC())
+	got := crmpush.Build(effectInput(EffectContext{TenantID: "t", ContactID: "c"}, cartClosedEffect()), time.Unix(0, 0).UTC())
 	if got.LifecycleStatus != "confirmed" {
 		t.Fatalf("lifecycle_status=%q, quiero confirmed (el contrato jamás emite closed)", got.LifecycleStatus)
 	}

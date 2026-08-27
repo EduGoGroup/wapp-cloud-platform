@@ -50,6 +50,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
@@ -592,7 +593,20 @@ func Run(ctx context.Context) error {
 	// máquinas de estados opinando sobre las mismas filas.
 	intakeService := intakes.NewService(intakeStore,
 		intakes.WithNotifier(intakeNotifier),
-		intakes.WithDepositReminder(depositReminder))
+		intakes.WithDepositReminder(depositReminder),
+		// El puente CRM del DUEÑO (Plan 044 · Ola 4 · Tanda 2). Reusa las DOS piezas
+		// que ya alimentan al sink del cierre de carrito —el MISMO integrationsStore
+		// y el MISMO webhookGate de la línea de arriba—, así que un tenant no puede
+		// tener el puente abierto para una puerta y cerrado para la otra: es una sola
+		// evaluación de D-042.8, no dos criterios que puedan divergir.
+		//
+		// ⚠️ HOY ESTO NO EMPUJA NADA POR SÍ SOLO: el Service solo encola cuando alguien
+		// llama a PushRevisionToCRM, y ninguna de sus escrituras lo hace todavía. El
+		// cable está puesto para que las puertas del dueño (T4.3/T4.4) no tengan que
+		// tocar el arranque; hasta que exista una, el único productor de intake.push
+		// sigue siendo el WebhookSink.
+		intakes.WithCRMPusher(crmpush.NewRevisionPusher(
+			crmpush.NewPusher(log, integrationsStore, webhookGate), log)))
 	// El despachador de nivel superior (Plan 043 · T2.3) SOLO LEE: los eventos vivos
 	// del contacto, los tipos que el tenant ofrece (sus reglas event_start) y las
 	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.

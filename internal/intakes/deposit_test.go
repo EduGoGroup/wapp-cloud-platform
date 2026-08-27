@@ -76,7 +76,7 @@ func TestSeña_PedirlaFijaElPlazoYLoCuentaEnElMensaje(t *testing.T) {
 	sender := &stubSender{}
 	svc := intakes.NewService(st, intakes.WithNotifier(newNotifier(sender, st, &logSpy{})))
 
-	updated, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested)
+	updated, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositRequested, intakes.NoticeToClient)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestRecordatorio_SiYaPagóNoSeLeRecuerda(t *testing.T) {
 	st := señaEnCurso(t, ahora.Add(-time.Hour))
 	svc, sender, _ := conRecordatorio(t, st)
 
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositPaid); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeDePrueba, intakes.StatusDepositPaid, intakes.NoticeToClient); err != nil {
 		t.Fatalf("marcar la seña recibida: %v", err)
 	}
 	antes := len(sender.messages()) // el aviso de cambio de estado, que sí corresponde

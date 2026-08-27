@@ -393,6 +393,18 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 	// ya conoce. Sale del retorno del INSERT de arriba —el número REAL que la base
 	// asignó—, no de contar revisiones ni de suponer que el cierre es la primera.
 	eff.Payload["revision_no"] = rev.RevisionNo
+	// Y el ESTADO viaja por la MISMA puerta que los otros dos (Plan 044 · Ola 4,
+	// T4.10 mitad 2). El sink emitía un literal "confirmed" que acertaba SOLO
+	// porque este es el cierre del carrito; en cuanto una segunda puerta empuja el
+	// mismo contrato —el re-empuje de una corrección, que devuelve la solicitud a
+	// `pending_approval`— ese literal miente igual que mentía el `RevisionNo: 1`.
+	//
+	// Se anota la clave LEGADA con la que CloseIntake acaba de escribir la fila, sin
+	// normalizar: el contrato la normaliza al armarse (intakes.NormalizeStatus, que
+	// es el único punto del sistema donde se resuelve ese alias) porque JAMÁS emite
+	// `closed`. Normalizar aquí repartiría la regla en dos sitios y dejaría a la
+	// puerta HTTP con la posibilidad de saltársela.
+	eff.Payload["lifecycle_status"] = intakeStatusClosed
 	return nil
 }
 

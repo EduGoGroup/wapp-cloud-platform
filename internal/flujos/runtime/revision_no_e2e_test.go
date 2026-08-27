@@ -117,3 +117,68 @@ func TestRevisionNo_E2E_ElCuerpoEncoladoLlevaElNúmeroQueEscribióLaBase(t *test
 			got, delCierre.RevisionNo)
 	}
 }
+
+// TestLifecycleStatus_E2E_ElCuerpoEncoladoLlevaElEstadoRealNormalizado es el
+// hermano del test de arriba para el SEGUNDO campo que estuvo clavado (Plan 044 ·
+// T4.10, mitad 2), y recorre el mismo camino real: módulo → efecto → PersistSink
+// (cart.Projector, que cierra la fila y ANOTA su estado) → WebhookSink → cuerpo.
+//
+// 🔴 QUÉ CAZA QUE NINGÚN OTRO TEST CAZA: que el carrito deje de anotar
+// `lifecycle_status` en eff.Payload. Los tests del sink usan un fixture que ya trae
+// la clave, así que seguirían verdes con el proyector mudo; aquí la clave la pone el
+// proyector de verdad, y sin ella el cuerpo saldría con el estado VACÍO, que el
+// schema rechaza.
+//
+// Lo que este test NO caza —y por eso existe el candado del AST en
+// internal/integrations/crmpush— es que alguien vuelva a clavar el literal
+// `"confirmed"`: aquí el estado real ES confirmed, así que un literal pasaría por
+// casualidad. Es exactamente la casualidad que hizo que la mentira sobreviviera tres
+// olas. Las dos redes son complementarias.
+func TestLifecycleStatus_E2E_ElCuerpoEncoladoLlevaElEstadoRealNormalizado(t *testing.T) {
+	repo := store.NewMemoryRepository()
+	if _, err := repo.InsertDefinition(context.Background(), testTenant, sampleFlow()); err != nil {
+		t.Fatalf("sembrar definición: %v", err)
+	}
+	q := &capturaQueuer{}
+
+	rt := runtime.New(repo, newEffectEngine([]modules.Effect{cartClosedEmit()}), &fakeSender{},
+		fakeResolver{tenantID: testTenant}, contact.NewMemoryResolver(repo), discardLogger(),
+		runtime.WithEventSink(runtime.NewWebhookSink(discardLogger(), cart.EffectCartClosed, q, gateAbierto{})),
+		runtime.WithEventSink(runtime.NewPersistSink(repo,
+			cart.NewProjector(repo, intakes.NewMemoryStore(), sinEnvío{}, intakes.NewMemoryStore()),
+			survey.NewProjector(repo))),
+	)
+	if err := startAndStep(t, rt); err != nil {
+		t.Fatalf("HandleIncoming: %v", err)
+	}
+
+	if len(q.payloads) != 1 {
+		t.Fatalf("el webhook debía encolar 1 entrega, encoló %d", len(q.payloads))
+	}
+	proyectadas := repo.Intakes()
+	if len(proyectadas) != 1 {
+		t.Fatalf("el proyector debía crear 1 solicitud, creó %d", len(proyectadas))
+	}
+
+	// La VERDAD es lo que el proyector ESCRIBIÓ en la fila, no una constante de este
+	// test: se lee de ahí y se normaliza con la misma función que usa el contrato.
+	// Así el test no se vuelve tautológico y, de paso, deja escrito el hecho que hace
+	// falta normalizar: el carrito guarda `closed`.
+	escrito := proyectadas[0].Status
+	if escrito != intakes.StatusClosedLegacy {
+		t.Fatalf("el carrito escribió %q y este test reproduce el caso de %q: el escenario cambió "+
+			"y hay que revisar qué normaliza el contrato", escrito, intakes.StatusClosedLegacy)
+	}
+	quiero := intakes.NormalizeStatus(escrito)
+
+	var cuerpo map[string]any
+	if err := json.Unmarshal(q.payloads[0], &cuerpo); err != nil {
+		t.Fatalf("el cuerpo encolado no es JSON válido: %v", err)
+	}
+	if got := cuerpo["lifecycle_status"]; got != quiero {
+		t.Fatalf("🔴 el cuerpo encolado lleva lifecycle_status=%#v y la fila quedó en %q (⇒ %q "+
+			"normalizado). El contrato JAMÁS emite `closed` y tampoco puede emitir un estado que "+
+			"la solicitud no tiene: el CRM aplicaría un ciclo de vida que no ocurrió",
+			got, escrito, quiero)
+	}
+}

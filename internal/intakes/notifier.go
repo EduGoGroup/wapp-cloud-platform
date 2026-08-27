@@ -44,6 +44,54 @@ import (
 // son las de aquí, no una segunda salida hacia WhatsApp.
 // ============================================================================
 
+// StatusNotice dice QUIÉN le cuenta al cliente la transición que se está
+// aplicando. Son dos momentos distintos con dos reglas distintas, y por eso lo
+// elige el LLAMANTE: es el mismo patrón con el que esta capa ya resuelve
+// «una regla, dos puertas» en EnsureShippingLine(…, ShippingPolicy)
+// (shipping.go:71 — «dos momentos distintos con dos reglas distintas, y por eso
+// el llamante la elige»).
+//
+// POR QUÉ UN PARÁMETRO TIPADO Y NO UN FUNCTIONAL OPTION POR LLAMADA. En este repo
+// los functional options son SIEMPRE de construcción —Option de NewService,
+// ReminderOption de NewDepositReminder, y una quincena más en internal/—: no hay
+// un solo `opts ...` en un método. Uno por llamada sería un patrón nuevo aquí y,
+// sobre todo, dejaría OPCIONAL la única decisión que no puede quedarse implícita
+// —quién le habla al cliente—: el que lo omite manda un mensaje sin haberlo
+// decidido, y el cliente recibe dos. Con un parámetro, cada puerta lo declara y el
+// compilador no deja pasar a nadie sin decirlo.
+//
+// Y no es un método aparte (`SetStatusSinAviso`) porque serían dos contratos
+// públicos que documentar y mantener en sincronía —con sus dos entradas en el
+// puerto de publicapi— para una diferencia de un bit; el día que se añada una
+// tercera regla, un método más multiplica la superficie y una constante más no.
+//
+// 🔴 LO QUE NO ES: no borra ni toca statusTemplates. Quitar una entrada de ese
+// mapa apagaría el aviso para TODO el mundo, el <select> de estado de la consola
+// incluido (Plan 041 · T4.2); esto lo apaga para UNA transición y solo si su
+// llamante lo pide.
+type StatusNotice int
+
+const (
+	// NoticeToClient — la plataforma manda el aviso genérico del estado destino
+	// (statusTemplates, o la plantilla de seña del tenant). Es la conducta del
+	// Plan 041 y el CERO del tipo a propósito: el valor por descuido es el que
+	// habla, nunca el que calla. Un silencio nace de una decisión escrita.
+	NoticeToClient StatusNotice = iota
+	// NoticeByCaller — el llamante YA le escribe al cliente por su cuenta y la
+	// plataforma se calla en ESTA transición (D-044.49, decisión de producto del
+	// 2026-08-27: al aprobar y al pedir información el cliente recibe UN SOLO
+	// mensaje, el del dueño, porque su texto ya dice lo mismo y mejor).
+	//
+	// Se calla ENTERO, no solo el texto genérico: si el llamante anuncia la
+	// transición, la plataforma no tiene nada que añadir por detrás.
+	NoticeByCaller
+)
+
+// silencia responde si esta política deja el aviso en manos del llamante. Está
+// escrito como método —y no como `notice == NoticeByCaller` suelto en Service—
+// para que la regla viva junto al tipo, igual que ShippingPolicy.applies.
+func (n StatusNotice) silencia() bool { return n == NoticeByCaller }
+
 // MessageSender empuja un texto por una sesión viva del Edge y espera su Ack. La
 // firma es la de (*gatewaygrpc.Server).SendText —la misma que ya declaran
 // runtime.Sender y publicapi.MessageSender—, así que el Gateway la satisface sin
