@@ -49,6 +49,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/quotetext"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/telemetria"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
@@ -471,7 +472,7 @@ func Run(ctx context.Context) error {
 	// arrancado y `intakeService` hace mucho que existe; y aunque fuera nil,
 	// PushRevisionByID es nil-safe y calla.
 	var intakeService *intakes.Service
-	llmSelector, intakePipeline, consultaResolver, reanalysisSvc, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
+	llmSelector, intakePipeline, consultaResolver, reanalysisSvc, quoteSvc, err := nuevoStackLLMDeCaptacion(log, cfg, gw,
 		tenantLLMStore, degradationNotifier, intakeJobStore, flowStore, intakeStore, flowDeps.cipher,
 		mtx.LLMDegradacion, eventStore, intakeComposer, entResolver,
 		stages.EmpujadorCRMFunc(func(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
@@ -891,7 +892,8 @@ func Run(ctx context.Context) error {
 		Intakes: intakeService,
 		// El re-análisis va APARTE de Intakes y no como método suyo: cruza cinco
 		// fronteras que la bandeja no cruza (T4.6, ver internal/reanalisis).
-		Reanalysis: reanalysisSvc,
+		Reanalysis:       reanalysisSvc,
+		QuoteSuggestions: quoteSvc,
 		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
 		// store que el motor y el despachador: es la misma consulta de rescatables
 		// leída desde el lado del dueño, y una segunda instancia sería un segundo
@@ -1116,7 +1118,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	degradaciones llmvia.ObservadorDegradacion,
 	eventStore *events.Store, intakeComposer *flowruntime.SourceTextComposer,
 	entResolver *entitlements.Postgres, empujeCRM stages.EmpujadorCRM,
-) (*llmvia.Selector, *pipeline.Worker, *turnoacotado.Resolver, *reanalisis.Servicio, error) {
+) (*llmvia.Selector, *pipeline.Worker, *turnoacotado.Resolver, *reanalisis.Servicio, *quotetext.Servicio, error) {
 	// EL SELECTOR DE VÍA (T1.6-3, ADR-0044 §C2, REQ-33/REQ-37): el ÚNICO sitio del
 	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
 	// pide un provider a él y no vuelve a mirar la vía nunca más.
@@ -1125,7 +1127,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
 	plantillas, err := cargarPlantillasDePrompt(log, cfg.LLM.PromptsDir)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	llmSelector, err := llmvia.NewSelector(tenantLLMStore, log,
 		llmvia.WithFrame(gw),
@@ -1150,7 +1152,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 		// cadena de lote ocupara el Ollama del cliente.
 		llmvia.WithDegradacionObservada(degradaciones))
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("selector de vía LLM: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("selector de vía LLM: %w", err)
 	}
 	// EL RESOLUTOR DEL TURNO ACOTADO (T3.5-2). Nace aquí y no en `Run` por la misma
 	// aritmética que justifica esta función entera: absorber su `if err != nil`
@@ -1161,7 +1163,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// se aborta en vez de arrancar con el tercer escalón del carrito apagado.
 	consultaResolver, err := turnoacotado.New(llmSelector)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("resolutor del turno acotado: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("resolutor del turno acotado: %w", err)
 	}
 	// ═══════════════════════════════════════════════════════════════════════════
 	// EL PIPELINE DE CAPTACIÓN P2 → P3 → P4 (Plan 044 · Ola 2). AQUÍ SE ENCIENDE.
@@ -1194,15 +1196,15 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	plazoLlamada := stages.ConPlazoPorLlamada(pipeline.PlazoPorLlamadaSuelo)
 	etapaIdeas, err := stages.NewP2(log, llmSelector, intakeJobStore, plazoLlamada)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P2: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P2: %w", err)
 	}
 	etapaSpecs, err := stages.NewP3(log, llmSelector, intakeJobStore, plazoLlamada)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P3: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P3: %w", err)
 	}
 	etapaCantidades, err := stages.NewP4(log, llmSelector, intakeJobStore, stages.ZonaPorDefecto, plazoLlamada)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa P4: %w", err)
 	}
 	// ═══════════════════════════════════════════════════════════════════════════
 	// LAS DOS ETAPAS DE LA OLA 3 (T3.8). AQUÍ SE ENCIENDEN.
@@ -1230,7 +1232,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// modelo en una etapa que hoy se anuncia como determinista.
 	etapaMatch, err := stages.NewMatch(log, intakeJobStore)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa match: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa match: %w", err)
 	}
 	// `flowStore` satisface DOS de los tres puertos del draft (la cabecera de la
 	// solicitud y el outbox de efectos) e `intakeStore` el tercero (la revisión). El
@@ -1249,7 +1251,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	etapaDraft, err := stages.NewDraft(log, intakeJobStore, flowStore, intakeStore, flowStore,
 		stages.ConEmpujeCRM(empujeCRM))
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa draft: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, etapa draft: %w", err)
 	}
 	// LA CACHÉ DEL CATÁLOGO (T3.7, D-044.44): el índice que `match` consulta por ítem,
 	// construido UNA VEZ POR JOB por el worker e invalidado POR CONTENIDO.
@@ -1263,7 +1265,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	// `0` en el tope deja `catalogo.MaxTenantsEnCache` (64), la cota de memoria.
 	catalogos, err := catalogo.NewCache(catalogo.NewFuenteContenido(flowStore, ""), textmatch.Normalize, 0)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("pipeline de captación, caché del catálogo: %w", err)
 	}
 	// EL AFORO (T2.7, ADR-0046 · Mecanismo 1): una cadena de lote en vuelo por
 	// `(tenant, Edge)`. Es lo único compartido entre workers —hoy uno— y va con el
@@ -1302,7 +1304,7 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 		pipeline.ConAforo(aforoLote, llmSelector),
 		pipeline.ConZonasDeEnvio(intakeStore))
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("worker del pipeline de captación: %w", err)
 	}
 	// LA PUERTA DEL RE-ANÁLISIS (Plan 044 · Ola 4 · T4.6, D-044.15, design §8.1):
 	// `POST /api/v1/intakes/{id}/reanalyze`. Seis dependencias y las SEIS son objetos
@@ -1339,9 +1341,34 @@ func nuevoStackLLMDeCaptacion(log sharedlogger.Logger, cfg config.AppConfig,
 	reanalysisSvc, err := reanalisis.NewServicio(log, intakeStore, eventStore, intakeJobStore,
 		intakeComposer, entResolver, tenantLLMStore)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("re-análisis desde el origen: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("re-análisis desde el origen: %w", err)
 	}
-	return llmSelector, intakePipeline, consultaResolver, reanalysisSvc, nil
+	// EL GENERADOR DE COTIZACIÓN CON LA VOZ DE LA DUEÑA (Plan 044 · Ola 5 · T5.1,
+	// D-044.11): lo que sirve `POST /api/v1/intakes/{id}/quote-suggestion`.
+	//
+	// Nace aquí y no en `Run` por la MISMA aritmética que su vecino de arriba: `Run`
+	// está en el techo de gocyclo y un `if err != nil` más allí lo rompe.
+	//
+	// Las tres piezas, y de dónde salen:
+	//   · `intakeStore` sirve por DOS puertos a la vez —la solicitud con sus líneas y
+	//     el historial aprobado del tenant—, que es la misma fila y la misma base;
+	//   · `flowStore` es el lector de `tenant_content` (ref `quote_style_examples`), y
+	//     entra por la OPCIÓN porque la semilla es opcional de verdad: hoy no hay ni un
+	//     tenant que la tenga escrita;
+	//   · `llmSelector` es el MISMO que usan las etapas del pipeline. Este paquete no
+	//     sabe qué vía le tocó al tenant y no debe saberlo (ADR-0044 §C2).
+	//
+	// El plazo es el MISMO suelo por llamada que reciben P2–P4, y por el mismo motivo
+	// escrito allí: sin él el adaptador cae a sus 30 s propios y envenena el umbral de
+	// lento del breaker. La diferencia con el pipeline es que aquí hay UNA llamada y
+	// hay una PERSONA esperando la respuesta.
+	quoteSvc, err := quotetext.NewServicio(log, intakeStore, intakeStore, llmSelector,
+		quotetext.ConSemilla(flowStore),
+		quotetext.ConPlazo(pipeline.PlazoPorLlamadaSuelo))
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("generador de cotización: %w", err)
+	}
+	return llmSelector, intakePipeline, consultaResolver, reanalysisSvc, quoteSvc, nil
 }
 
 // adminRouteDeps agrupa lo que registerAdminRoutes necesita para cablear el mux
