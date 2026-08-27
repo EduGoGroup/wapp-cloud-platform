@@ -68,6 +68,24 @@ type IntakeService interface {
 // la publica. Va en el DTO de la cabecera y no solo en el del detalle, así que la
 // lista la trae igual: es un campo de la solicitud, y una bandeja que muestra
 // «dejarlo en portería» junto al pedido es exactamente para lo que existe.
+//
+// `overdue` es la MARCA DERIVADA del plazo del presupuesto (Plan 044 · T4.5,
+// REQ-25): «este presupuesto lleva más de intakes.QuoteDeadline esperando la
+// decisión del dueño». Se calcula al leer, en esta misma proyección, y no tiene
+// columna en la base ni estado propio.
+//
+// 🔴 `overdue: true` NO CAMBIA `status`, y quien pinte esto no puede tratarlo como
+// si lo cambiara: la solicitud sigue en `pending_approval`, con sus mismos
+// `allowed_transitions`, y la salida sigue siendo humana —aprobar, rechazar o
+// descartar—. Nada muere por tiempo (D-041.16). Por eso el campo NO se llama
+// `expired`: `expired` es un ESTADO legado y terminal del que ya nadie entra ni
+// sale, y llamar igual a las dos cosas invitaría a confundir «lleva mucho
+// esperando» con «está muerto».
+//
+// Viaja SIEMPRE, también en `false`, por la misma razón que `customer_note` y
+// `customization`: quien consume tiene que poder pintar la fila sin preguntarse si
+// la clave falta porque el presupuesto está en plazo o porque este servidor todavía
+// no la publica.
 type intakeDTO struct {
 	ID           string  `json:"id"`
 	ContactID    string  `json:"contact_id"`
@@ -75,6 +93,7 @@ type intakeDTO struct {
 	Status       string  `json:"status"`
 	Total        float64 `json:"total"`
 	CustomerNote string  `json:"customer_note"`
+	Overdue      bool    `json:"overdue"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 }
@@ -211,9 +230,14 @@ func listIntakesHandler(svc IntakeService) http.Handler {
 			return
 		}
 
+		// UN solo instante para toda la página, y no un time.Now() por fila: la marca
+		// `overdue` de dos solicitudes con el mismo plazo tiene que salir igual en la
+		// misma respuesta. Con el reloj dentro del bucle, una página que cruce el
+		// segundo exacto del plazo marcaría a unas sí y a otras no.
+		ahora := time.Now()
 		out := make([]intakeDTO, 0, len(page.Intakes))
 		for _, in := range page.Intakes {
-			out = append(out, toIntakeDTO(in))
+			out = append(out, toIntakeDTO(in, ahora))
 		}
 		writeJSON(w, http.StatusOK, intakeListResponse{
 			Intakes: out, Page: page.Page, PageSize: page.PageSize, Total: page.Total,
@@ -263,7 +287,7 @@ func getIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handl
 // contrario de fail-closed. En la práctica no se alcanza —lo que se reserializa
 // salió de un json.Unmarshal válido—, y por eso no tiene un cuerpo de error propio.
 func writeIntakeDetail(ctx context.Context, w http.ResponseWriter, feats entitlements.Resolver, tenantID string, detail intakes.Detail) {
-	resp := toIntakeDetailResponse(detail)
+	resp := toIntakeDetailResponse(detail, time.Now())
 	if err := aplicarGateLLMIntake(ctx, feats, tenantID, &resp); err != nil {
 		writeError(w, http.StatusInternalServerError, "no se pudo preparar la solicitud")
 		return
@@ -275,7 +299,7 @@ func writeIntakeDetail(ctx context.Context, w http.ResponseWriter, feats entitle
 // dos porque la edición manual (T4.10) responde EXACTAMENTE el mismo cuerpo que el
 // detalle: la consola repinta con lo que le devuelve el PUT, sin un segundo GET, y
 // dos proyecciones separadas empezarían a divergir en el primer campo nuevo.
-func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
+func toIntakeDetailResponse(detail intakes.Detail, at time.Time) intakeDetailResponse {
 	items := make([]intakeItemDTO, 0, len(detail.Items))
 	for _, it := range detail.Items {
 		items = append(items, intakeItemDTO{
@@ -295,7 +319,7 @@ func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
 		})
 	}
 	return intakeDetailResponse{
-		intakeDTO: toIntakeDTO(detail.Intake),
+		intakeDTO: toIntakeDTO(detail.Intake, at),
 		Items:     items,
 		Revisions: revisions,
 		// detail.Status ya viene normalizado del dominio: una solicitud
@@ -353,7 +377,7 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, "no se pudo cambiar el estado de la solicitud")
 		default:
-			writeJSON(w, http.StatusOK, toIntakeDTO(updated))
+			writeJSON(w, http.StatusOK, toIntakeDTO(updated, time.Now()))
 		}
 	})
 }
@@ -876,7 +900,18 @@ func writeRequestInfoError(w http.ResponseWriter, err error) {
 
 // toIntakeDTO proyecta una cabecera al wire. El estado ya viene NORMALIZADO del
 // dominio (el `closed` legado del módulo cart sale como `confirmed`).
-func toIntakeDTO(in intakes.Intake) intakeDTO {
+//
+// `at` es el instante contra el que se decide la marca `overdue`, y entra como
+// ARGUMENTO en vez de leerse aquí con time.Now() por la misma razón por la que
+// Summary recibe su reloj (BuildSummary): la regla es una comparación de tiempos, y
+// una proyección que consulta el reloj por dentro solo se puede probar esperando.
+// Los tres llamantes pasan time.Now() — la marca es «ahora mismo», no un dato
+// guardado.
+//
+// La REGLA no vive aquí: la aplica intakes.Overdue, que es la MISMA función que usa
+// el pre-filtro del recordatorio del plazo. Dos copias de «cuándo está vencido»
+// serían una bandeja que marca lo que el recordatorio no avisa.
+func toIntakeDTO(in intakes.Intake, at time.Time) intakeDTO {
 	return intakeDTO{
 		ID:           in.ID,
 		ContactID:    in.ContactID,
@@ -884,6 +919,7 @@ func toIntakeDTO(in intakes.Intake) intakeDTO {
 		Status:       in.Status,
 		Total:        in.Total,
 		CustomerNote: in.CustomerNote,
+		Overdue:      intakes.Overdue(in, at),
 		CreatedAt:    in.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    in.UpdatedAt.UTC().Format(time.RFC3339),
 	}

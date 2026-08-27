@@ -65,6 +65,22 @@ var flujosAutomáticos = []string{
 	filepath.Join("..", "intake", "pipeline"),
 	filepath.Join("..", "intake", "stages"),
 	filepath.Join("..", "intake"),
+	// 🔴 EL PROPIO DOMINIO, añadido por T4.5 (Plan 044 · Ola 4), y es el directorio
+	// que MÁS falta hacía de los seis. `Approve` se DEFINE aquí, así que hasta ahora
+	// el candado vigilaba a todos los vecinos y dejaba sin mirar la única habitación
+	// donde la llamada está a mano.
+	//
+	// Lo que lo hizo urgente es esta tarea: T4.5 mete en este paquete la primera
+	// evaluación que ocurre POR EL PASO DEL TIEMPO —el plazo del presupuesto— y la
+	// cuelga de una LECTURA. Un «ya que ha pasado el plazo, ciérralo» escrito aquí
+	// aprobaría presupuestos con solo abrir la bandeja: mandaría al cliente una
+	// cotización que nadie escribió, dejaría el pedido en `confirmed` y lo empujaría
+	// al CRM, todo sin un POST del dueño. Es exactamente lo que T4.5 tiene prohibido
+	// («AVISA y no mata») y lo que INV-1 prohíbe en general.
+	//
+	// ⚠️ Definir el método NO lo dispara: llamadasA persigue CallExpr sobre un
+	// selector (`x.Approve(…)`), y una declaración no lo es. Hoy sale a cero.
+	".",
 }
 
 // TestINV1_SoloElPOSTDelDueñoAprueba barre el código de producción y exige que la

@@ -79,9 +79,10 @@ func NewPostgres(db *sql.DB, opts ...OpciónPostgres) *Postgres {
 // de los Scan de scanIntake y scanDetailRow, y meter una columna entre dos ya
 // existentes obligaría a mover los destinos de los dos escaneos a la vez —un
 // descuadre que compila y devuelve el estado en el total—. Las dos marcas de la
-// SEÑA (T4.4) se añaden al final por la misma razón.
+// SEÑA (T4.4) y la del PLAZO del presupuesto (T4.5) se añaden al final por la misma
+// razón.
 const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
-	deposit_due_at, deposit_reminded_at`
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
 
 // intakeFilterWhere es el predicado COMPARTIDO por la página y por su total: si
 // divergieran, el paginador mentiría. Cada filtro es opcional por el patrón
@@ -191,7 +192,7 @@ const listIntakeDetailsBody = `
 		LIMIT $7
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
-	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at,
+	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at, p.expiry_reminded_at,
 	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
 	FROM page p
 	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid`
@@ -250,18 +251,20 @@ func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	var (
 		in                 Intake
 		dueAt, remindedAt  sql.NullTime
+		expiryRemindedAt   sql.NullTime
 		sku, label, custom sql.NullString
 		qty                sql.NullInt64
 		unitPrice          sql.NullFloat64
 		addedAt            sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt,
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt, &expiryRemindedAt,
 		&sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
 		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
 	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
+	in.ExpiryRemindedAt = expiryRemindedAt.Time
 	if !sku.Valid && !label.Valid && !qty.Valid {
 		return in, Item{}, false, nil // solicitud sin líneas (LEFT JOIN)
 	}
@@ -346,14 +349,16 @@ type querier interface {
 // Las dos marcas de la seña son NULLables en la tabla (la inmensa mayoría de las
 // solicitudes no llega a pedir seña) y se leen por sql.NullTime: un NULL sale como
 // tiempo CERO, que es lo que el dominio entiende por "no se ha pedido" / "nunca se
-// recordó". No hay un tercer significado que distinguir.
+// recordó". No hay un tercer significado que distinguir. La marca del PLAZO (T4.5)
+// se lee igual y significa lo mismo: NULL ⇒ al dueño nunca se le recordó.
 func scanIntake(sc rowScanner) (Intake, error) {
 	var (
 		in                Intake
 		dueAt, remindedAt sql.NullTime
+		expiryRemindedAt  sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt, &expiryRemindedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Intake{}, err // lo traduce el llamante (ErrNotFound)
 		}
@@ -361,6 +366,7 @@ func scanIntake(sc rowScanner) (Intake, error) {
 	}
 	in.Status = NormalizeStatus(in.Status)
 	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
+	in.ExpiryRemindedAt = expiryRemindedAt.Time
 	return in, nil
 }
 
@@ -924,6 +930,60 @@ func (p *Postgres) MarkDepositReminded(ctx context.Context, tenantID, intakeID s
 	}
 	in, err := scanIntake(p.db.QueryRowContext(ctx, markDepositRemindedQuery,
 		tenantID, intakeID, at, StoredVariants(StatusDepositRequested)))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Intake{}, false, nil
+	case err != nil:
+		return Intake{}, false, err
+	}
+	return in, true, nil
+}
+
+// markExpiryRemindedQuery es el COMPARE-AND-SWAP que reparte el derecho a
+// recordarle al DUEÑO que un presupuesto lleva más del plazo esperando su decisión
+// (Plan 044 · T4.5, D-044.50). Molde exacto del de la seña, con tres diferencias que
+// no son de estilo:
+//
+//   - status = ANY(...) sobre `pending_approval`: en cuanto el dueño aprueba,
+//     rechaza o pide información, la fila deja de casar. Nadie recuerda una decisión
+//     que ya se tomó.
+//   - EL PLAZO NO ES UNA COLUMNA. Aquí no hay `expiry_due_at` que comparar porque el
+//     plazo es una CONSTANTE DE PLATAFORMA (QuoteDeadline, D-044.50 §1): quien
+//     llama resta el plazo de su propio reloj y manda el CORTE en $5. Así la
+//     constante vive en UN solo sitio —Go— y el pre-filtro y esta consulta no pueden
+//     discrepar sobre cuánto dura un plazo.
+//   - expiry_reminded_at IS NULL: el que llega segundo no escribe. Ahí está el «un
+//     solo recordatorio», sostenido por la BD.
+//
+// 🔴 NO TOCA updated_at, y aquí no es solo higiene como en su gemelo: updated_at es
+// la BASE del plazo (ver quoteDeadlineOf). Tocarlo aquí reiniciaría el plazo que
+// este mismo UPDATE acaba de constatar como vencido, y la marca de la bandeja se
+// apagaría en el mismo instante en que sale el aviso.
+//
+// 🔴 Y NO TOCA status. Es la mitad de la tarea: el presupuesto vencido sigue en
+// `pending_approval`. Nada muere por tiempo (D-041.16); esto solo AVISA.
+const markExpiryRemindedQuery = `
+	UPDATE public.intakes
+	SET expiry_reminded_at = $3
+	WHERE tenant_id = $1 AND id = $2
+	  AND status = ANY($4)
+	  AND updated_at <= $5
+	  AND expiry_reminded_at IS NULL
+	RETURNING ` + intakeCols
+
+// MarkExpiryReminded implementa ExpiryStore: gana (o no) el derecho a avisar al
+// dueño. `false` sin error es la respuesta NORMAL —no vencido, ya avisado, o el
+// dueño ya decidió— y no una avería: quien llama se calla y sigue.
+//
+// El CORTE se calcula aquí y no en el llamante para que la única aritmética del
+// plazo del lado SQL viva pegada a su consulta: `at - QuoteDeadline` es «la fecha a
+// partir de la cual una solicitud tocada lleva demasiado esperando».
+func (p *Postgres) MarkExpiryReminded(ctx context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Intake{}, false, ErrNotFound
+	}
+	in, err := scanIntake(p.db.QueryRowContext(ctx, markExpiryRemindedQuery,
+		tenantID, intakeID, at, StoredVariants(StatusPendingApproval), cutoffDelPlazo(at)))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return Intake{}, false, nil

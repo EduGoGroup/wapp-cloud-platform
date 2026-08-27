@@ -13,6 +13,7 @@ type Service struct {
 	store    Store
 	notifier StatusNotifier
 	deposits DepositTouch
+	expiry   ExpiryTouch
 	crm      CRMPusher
 	quotes   QuoteSender
 	// revisions es el MISMO store, visto por su puerto de escritura de revisiones.
@@ -42,6 +43,21 @@ type StatusNotifier interface {
 // mensaje que no salió.
 type DepositTouch interface {
 	Remind(ctx context.Context, tenantID string, touched []Intake)
+}
+
+// ExpiryTouch evalúa el recordatorio PEREZOSO del PLAZO DEL PRESUPUESTO sobre las
+// solicitudes que una lectura acaba de tocar (Plan 044 · T4.5, D-044.50). Lo
+// satisface *ExpiryReminder.
+//
+// Es el HERMANO de DepositTouch y no una versión suya: aquél le habla al CLIENTE
+// para recordarle una seña, éste le habla al DUEÑO para recordarle una decisión que
+// no ha tomado. Dos destinatarios, dos marcas en la base y dos motivos —y por eso
+// son dos puertos y no un método más del primero: un tenant puede tener cableado
+// uno y no el otro, y de hecho hoy el segundo emite a un sumidero de traza.
+//
+// NO devuelve error, exactamente por lo mismo que sus dos hermanos.
+type ExpiryTouch interface {
+	RemindOverdue(ctx context.Context, tenantID string, touched []Intake)
 }
 
 // CRMPusher empuja al puente CRM del tenant la revisión de una solicitud que
@@ -151,6 +167,28 @@ func WithDepositReminder(d DepositTouch) Option {
 	return func(s *Service) { s.deposits = d }
 }
 
+// WithExpiryReminder cablea el recordatorio PEREZOSO del plazo del presupuesto a
+// las LECTURAS del dueño (Plan 044 · T4.5, D-044.50 §2). Sin esta opción, List y Get
+// no evalúan ningún plazo y no avisan a nadie.
+//
+// 🔴 NO SUSTITUYE NI DEPENDE DE WithDepositReminder, y esa independencia es la mitad
+// del cableado: son dos colaboradores con dos marcas, dos destinatarios y dos
+// motivos. Cablear uno solo tiene que funcionar —lo comprueba un test— porque
+// mientras el emisor real del aviso al dueño no exista (Plan 045) es perfectamente
+// posible que un despliegue lleve uno y no el otro. Ver Service.touch: su guarda
+// pregunta por cada uno POR SEPARADO justamente por esto.
+//
+// El precio es el mismo que ya pagan sus hermanas: colaborador opcional, no puede
+// devolver error, no puede tumbar al llamante, y sin cablear no existe.
+//
+// ⚠️ LO QUE ESTA OPCIÓN NO HACE, aunque su nombre lo sugiera: no marca nada como
+// vencido y no cambia el estado de ninguna solicitud. La MARCA «vencido» es
+// derivada, se calcula al leer (Overdue) y no necesita cableado ninguno; esto solo
+// enciende el RECORDATORIO.
+func WithExpiryReminder(e ExpiryTouch) Option {
+	return func(s *Service) { s.expiry = e }
+}
+
 // WithCRMPusher cablea el empuje al puente CRM de las revisiones que el DUEÑO
 // escribe desde su consola (Plan 044 · Ola 4 · Tanda 2). Sin esta opción el
 // servicio funciona igual y no encola nada — lo mismo que promete WithNotifier
@@ -217,9 +255,10 @@ func NewService(store Store, opts ...Option) *Service {
 // antes de consultar: el llamante no puede pedir 100k filas de un golpe.
 //
 // Es además uno de los tres TOQUES que evalúan el recordatorio de la seña (D-041.12,
-// T4.4): el dueño abriendo su bandeja es lo que hace de reloj, porque en esta
-// plataforma no hay ninguno (ADR-0003). El toque va DESPUÉS de tener la página —solo
-// se evalúa lo que de verdad se leyó— y no puede alterar lo que se devuelve.
+// T4.4) y uno de los DOS que evalúan el del plazo del presupuesto (T4.5): el dueño
+// abriendo su bandeja es lo que hace de reloj, porque en esta plataforma no hay
+// ninguno (ADR-0003). El toque va DESPUÉS de tener la página —solo se evalúa lo que
+// de verdad se leyó— y no puede alterar lo que se devuelve.
 func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, error) {
 	f = f.Normalized()
 	items, total, err := s.store.List(ctx, tenantID, f)
@@ -278,20 +317,36 @@ func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, e
 	return detail, nil
 }
 
-// touch evalúa el recordatorio de la seña sobre lo que una lectura acaba de leer.
-// Sin la opción cableada (el default, y lo que usan todos los tests de dominio) no
-// hace nada: la lectura sigue siendo tan pura como antes de T4.4.
+// touch evalúa los recordatorios PEREZOSOS sobre lo que una lectura acaba de leer.
+// Sin ninguna opción cableada (el default, y lo que usan todos los tests de dominio)
+// no hace nada: la lectura sigue siendo tan pura como antes de T4.4.
 //
 // NO se llama desde ListDetails ni Summary a propósito, aunque también leen
 // solicitudes: son el EXPORT y el resumen, caminos de datos masivos que un dueño
 // dispara para llevarse una hoja de cálculo. Que descargar un CSV le mande WhatsApps
 // a sus clientes sería una sorpresa desagradable, y encima sin cota útil (ahí no hay
 // página: son hasta MaxExportIntakes solicitudes).
+//
+// 🔴 SON DOS COLABORADORES INDEPENDIENTES, y la guarda tiene que preguntarlo dos
+// veces. Hasta T4.5 esto era `if s.deposits == nil || len(touched) == 0 { return }`,
+// y ese `return` habría dejado el recordatorio del plazo MUDO Y EN VERDE en
+// cualquier despliegue sin el recordatorio de la seña: el colaborador nuevo ni
+// siquiera llegaba a mirar. Lo único COMPARTIDO es el corte por lista vacía, que no
+// es de nadie: sin filas leídas no hay nada que evaluar.
+//
+// El ORDEN entre los dos no significa nada y no debe significarlo: hablan con
+// personas distintas (el cliente y el dueño), escriben marcas distintas y ninguno
+// puede ver lo que hizo el otro.
 func (s *Service) touch(ctx context.Context, tenantID string, touched []Intake) {
-	if s.deposits == nil || len(touched) == 0 {
+	if len(touched) == 0 {
 		return
 	}
-	s.deposits.Remind(ctx, tenantID, touched)
+	if s.deposits != nil {
+		s.deposits.Remind(ctx, tenantID, touched)
+	}
+	if s.expiry != nil {
+		s.expiry.RemindOverdue(ctx, tenantID, touched)
+	}
 }
 
 // SetStatus aplica una transición del ciclo de vida y devuelve la solicitud ya

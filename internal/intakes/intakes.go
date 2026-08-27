@@ -112,6 +112,21 @@ type Intake struct {
 	// compare-and-swap contra NULL, así que de N toques simultáneos solo uno manda
 	// (D-041.12: «un solo recordatorio en v1»). Zero = nunca se le recordó.
 	DepositRemindedAt time.Time
+	// ExpiryRemindedAt marca que al DUEÑO ya se le recordó que este presupuesto
+	// lleva más de QuoteDeadline esperando su decisión (Plan 044 · T4.5, D-044.50).
+	// Mismo mecanismo que su hermana de arriba —compare-and-swap contra NULL, así
+	// que de N toques simultáneos solo uno avisa— y misma lectura del cero: nunca se
+	// avisó.
+	//
+	// 🔴 NO ES UNA FECHA DE VENCIMIENTO Y NO MATA NADA. La solicitud sigue en
+	// `pending_approval` con esta marca puesta; lo único que la marca impide es un
+	// SEGUNDO aviso. Que un presupuesto esté vencido se calcula al leer (Overdue,
+	// vencimiento.go) y no tiene columna: preguntarle a ésta si algo venció daría la
+	// respuesta equivocada en los dos sentidos.
+	//
+	// ⚠️ Hoy el aviso que esta marca gasta NO LLEGA A NINGUNA PERSONA: el emisor real
+	// es el push del Plan 045 y el sumidero de hoy solo deja traza (D-044.50 §2).
+	ExpiryRemindedAt time.Time
 }
 
 // Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del

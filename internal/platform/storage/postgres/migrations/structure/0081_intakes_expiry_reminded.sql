@@ -1,0 +1,72 @@
+-- ============================================================
+-- 0081: LA MARCA DEL RECORDATORIO DEL PLAZO — expiry_reminded_at en intakes
+-- (Plan 044 · Ola 4 · T4.5, REQ-25, D-044.50 §2).
+--
+-- QUÉ AÑADE, Y QUÉ NO
+-- ------------------------------------------------------------
+-- UNA columna, y no es la fecha de vencimiento de nada. Es la marca de «al dueño ya
+-- se le recordó UNA vez que este presupuesto lleva demasiado esperando su
+-- decisión». Nada más.
+--
+-- 🔴 NO NACE NINGUNA COLUMNA DE VENCIMIENTO, Y ESO ES LA TAREA. La marca «vencido»
+-- de la bandeja es DERIVADA: se calcula al leer, a partir de `status` y
+-- `updated_at`, contra una constante de plataforma que vive en el código Go
+-- (intakes.QuoteDeadline, 24 h). No se persiste, así que no puede desincronizarse de
+-- la verdad, no hay backfill que hacer, y el día que el plazo cambie cambia también
+-- el pasado — que es lo correcto, porque el plazo no es un hecho de la solicitud
+-- sino una regla de la plataforma.
+--
+-- 🔴 Y NO HAY TRANSICIÓN A `expired`. Los objetos de negocio no mueren por tiempo,
+-- mueren por acción humana (ADR-0029 Enmienda 2, D-041.16): un presupuesto pasado de
+-- plazo sigue en `pending_approval` con sus mismos destinos, y la salida sigue
+-- siendo aprobar, rechazar o descartar. `expired` es legado del reloj derogado y
+-- sigue sin ningún origen en la máquina de estados; el evento de telemetría del
+-- vencimiento no existe en el repo y un candado de suite vigila que siga sin
+-- existir (su nombre no se escribe aquí: ese candado barre el repo entero buscando
+-- el literal, comentarios incluidos).
+--
+-- POR QUÉ HACE FALTA LA COLUMNA SI EL AVISO NO LLEGA A NADIE
+-- ------------------------------------------------------------
+-- ⚠️ El canal real del aviso al dueño es el push del Plan 045, QUE TODAVÍA NO
+-- EXISTE. El emisor de hoy solo deja traza en el log. Aun así la columna nace ahora,
+-- y está decidido a sabiendas (D-044.50 §2): lo difícil de este recordatorio no es
+-- el canal sino la IDEMPOTENCIA —el orden «mirar → marcar → emitir» y el
+-- compare-and-swap contra NULL—, y eso se construye barato hoy, con el gemelo de la
+-- seña delante, y caro dentro del Plan 045, cuando ya nadie esté mirando este
+-- fichero. 🔴 Nadie puede afirmar que el dueño recibe el recordatorio: no lo recibe.
+--
+-- POR QUÉ NULLABLE Y SIN DEFAULT
+-- ------------------------------------------------------------
+-- Molde exacto de deposit_reminded_at (0045:58) y por la misma razón: la inmensa
+-- mayoría de las solicitudes no llega nunca a pasarse de plazo, y un DEFAULT las
+-- obligaría a mentir con una fecha. NULL = al dueño nunca se le recordó, y el
+-- dominio lo lee como tiempo cero (sql.NullTime → scanIntake). No hay un tercer
+-- significado que distinguir, así que no hace falta un booleano aparte.
+--
+-- POR QUÉ NO HAY ÍNDICE, que su gemelo sí tiene
+-- ------------------------------------------------------------
+-- El de la seña (idx_intakes_deposit_pending) existe porque el recordatorio de la
+-- seña lo dispara TAMBIÉN el mensaje entrante del cliente, que no trae ninguna
+-- solicitud consigo y tiene que BUSCAR candidatas por (tenant, contacto) en el
+-- camino caliente del motor de flujos. Éste no busca nada: solo lo disparan las
+-- lecturas del dueño, que ya tienen las filas delante, y su único acceso es el
+-- compare-and-swap por (tenant_id, id) — que es la clave primaria. Un índice parcial
+-- aquí solo añadiría escrituras a mantener sin una consulta que lo use.
+--
+-- 🔴 LO QUE ESTA MIGRACIÓN NO TOCA, Y ES DELIBERADO: `tenant_settings.order_ttl_
+-- seconds` y su COMMENT de la 0013, que afirma que «NO se obedece: ningun codigo
+-- actua sobre este valor». Sigue siendo cierto. El plazo del presupuesto NO se lee
+-- de esa columna (D-044.50 §1) precisamente para no convertir en falsa una
+-- afirmación que hoy está vigilada — y para no reabrir como plazo lo que D-041.16
+-- derogó como causa de muerte. Tampoco toca public.intakes.expires_at, que sigue
+-- siendo histórica y sin escritor.
+--
+-- ADITIVA e IDEMPOTENTE: el runner es hash-based FULL-REPLAY (re-aplica TODOS los
+-- structure/*.sql al cambiar el hash de cualquiera); ADD COLUMN IF NOT EXISTS
+-- garantiza re-aplicación N veces sin daño ni pérdida de filas. NO clean-slate.
+-- ============================================================
+
+ALTER TABLE public.intakes ADD COLUMN IF NOT EXISTS expiry_reminded_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN public.intakes.expiry_reminded_at IS
+    'Recordatorio al DUEÑO de que este presupuesto lleva mas del plazo (intakes.QuoteDeadline, 24 h) esperando su decision. PEREZOSO y por EVENTO (D-044.50): se evalua cuando el dueno lista o abre la solicitud, JAMAS con un cron ni un barrido (ADR-0003). Se escribe con compare-and-swap contra NULL: de N toques simultaneos gana uno y avisa uno. NULL = nunca se le recordo. NO es una fecha de vencimiento y NO mata nada: la solicitud sigue en pending_approval (D-041.16, nada vence por tiempo) y la marca "vencido" de la bandeja es DERIVADA, se calcula al leer y no tiene columna. ATENCION: hoy el aviso que esta marca gasta NO LLEGA A NINGUNA PERSONA - el canal real es el push del Plan 045 y el emisor de hoy solo deja traza en el log.';

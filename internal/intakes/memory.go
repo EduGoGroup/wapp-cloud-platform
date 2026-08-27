@@ -835,6 +835,39 @@ func (m *MemoryStore) MarkDepositReminded(_ context.Context, tenantID, intakeID 
 	return Intake{}, false, nil
 }
 
+// MarkExpiryReminded implementa ExpiryStore con el MISMO compare-and-swap que el
+// Postgres (Plan 044 · T4.5): las tres condiciones se evalúan y la marca se escribe
+// SIN soltar el candado, así que dos toques simultáneos no pueden ganar los dos. Esa
+// paridad es lo que hace que un test de «un solo recordatorio» contra este store
+// diga algo verdadero sobre producción.
+//
+// Reusa Overdue —la MISMA función que pinta la marca en la bandeja y que hace de
+// pre-filtro— en vez de reescribir la comparación de fechas: tres copias de la regla
+// serían tres sitios donde el plazo puede divergir.
+//
+// NO toca UpdatedAt, exactamente como la consulta real, y aquí es todavía más
+// importante que allí: UpdatedAt es la BASE del plazo, así que tocarlo apagaría la
+// marca justo al encender el recordatorio.
+func (m *MemoryStore) MarkExpiryReminded(_ context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		in := r.intake
+		in.Status = NormalizeStatus(r.status)
+		if !Overdue(in, at) || yaAvisado(in) {
+			return Intake{}, false, nil
+		}
+		m.rows[tenantID][i].intake.ExpiryRemindedAt = at
+		in.ExpiryRemindedAt = at
+		return in, true, nil
+	}
+	return Intake{}, false, nil
+}
+
 // PendingDepositReminders implementa DepositStore: las señas vencidas y sin
 // recordar de un contacto, lo más vencido primero y acotadas a `limit`, igual que la
 // consulta real.

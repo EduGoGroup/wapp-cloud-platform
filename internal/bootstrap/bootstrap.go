@@ -604,6 +604,18 @@ func Run(ctx context.Context) error {
 	// Es un solo objeto: dos serían dos criterios de "ya recordé".
 	intakeNotifier := intakes.NewNotifier(gw, flowDeps.contacts, intakeStore, log)
 	depositReminder := intakes.NewDepositReminder(intakeNotifier, intakeStore)
+	// El recordatorio del PLAZO del presupuesto (Plan 044 · T4.5, D-044.50 §2). Es el
+	// HERMANO del de arriba y no una variante suya: aquel le habla al CLIENTE por
+	// WhatsApp para recordarle una seña, éste le habla al DUEÑO para recordarle una
+	// decisión que no ha tomado. Por eso NO reusa intakeNotifier —no hay ningún
+	// teléfono de cliente en este camino— y por eso son dos objetos.
+	//
+	// 🔴 SU EMISOR ES UN SUMIDERO DE TRAZA, Y ESO ESTÁ DECIDIDO. El canal real es el
+	// push del Plan 045, que todavía no existe: hoy esto escribe una línea en el log y
+	// gasta la marca expiry_reminded_at de la solicitud. NADIE PUEDE AFIRMAR QUE EL
+	// DUEÑO RECIBE EL RECORDATORIO. El día que exista el push, esta línea cambia el
+	// argumento y nada más — que es exactamente para lo que se declaró el puerto.
+	expiryReminder := intakes.NewExpiryReminder(intakes.NewLogOwnerNotice(log), intakeStore, log)
 	// El Service de solicitudes se arma AQUÍ, antes del runtime, porque desde el Plan
 	// 043 tiene DOS consumidores: la API del dueño (Deps.Intakes, más abajo) y el
 	// motor, que abandona la solicitud del evento que el cliente cierra al empezar
@@ -612,6 +624,10 @@ func Run(ctx context.Context) error {
 	intakeService = intakes.NewService(intakeStore,
 		intakes.WithNotifier(intakeNotifier),
 		intakes.WithDepositReminder(depositReminder),
+		// Los DOS recordatorios perezosos van cableados por separado a propósito: son
+		// dos colaboradores independientes de Service.touch y ninguno depende del
+		// otro (ver la guarda de touch, que pregunta por cada uno).
+		intakes.WithExpiryReminder(expiryReminder),
 		// La cotización que el DUEÑO le manda al cliente al aprobar (Plan 044 · T4.3).
 		// Es el MISMO notificador de dos líneas más arriba a propósito: una sola
 		// salida hacia WhatsApp y un solo criterio sobre la plantilla de seña del

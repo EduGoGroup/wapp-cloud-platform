@@ -27,6 +27,15 @@ import (
 // DELIBERADO: regenerarlo por costumbre borra justamente la prueba de que el
 // contrato no se movió solo. Y la PAREJA —con y sin `llm_intake`— es el gate en sí:
 // lo que uno tiene y el otro no es exactamente lo que la feature paga.
+//
+// ⚠️ HAY UNA CLAVE QUE DEPENDE DEL RELOJ DE PARED, y conviene saberlo antes de que
+// alguien la persiga: `overdue` (Plan 044 · T4.5) es una marca DERIVADA que se
+// calcula al leer, contra time.Now(). Aquí sale congelada en `true` y es estable
+// para siempre porque la solicitud sembrada está fechada en un pasado FIJO
+// (2026-08-07) y el tiempo solo avanza. 🔴 Quien acerque esa fecha al presente
+// —o la haga relativa a hoy— convertirá estos dos golden en intermitentes: si hace
+// falta tocarla, la salida es sembrar aquí una fecha fija y lejana, no regenerar el
+// golden hasta que pase.
 var updateGoldenAPI = flag.Bool("update", false, "regenera los golden de internal/publicapi/testdata")
 
 // assertGoldenAPI compara `got` con el golden, o lo reescribe con -update. Es la
