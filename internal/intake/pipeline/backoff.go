@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -51,7 +54,12 @@ const (
 	// desenvuelve. Transitorio por hipótesis.
 	CausaInfra = "infra"
 	// CausaJobInvalido es el job que NO PUEDE salir bien por muchas veces que se
-	// intente: hoy, el que llega sin sobre del literal. No se reintenta ni una vez.
+	// intente. No se reintenta ni una vez. Hoy son DOS:
+	//
+	//   - el que llega sin sobre del literal (`stages.ErrSinLiteral`);
+	//   - 🆕 el que revienta contra una VIOLACIÓN DE INTEGRIDAD de Postgres (clase
+	//     SQLSTATE 23: 23505 del único parcial, 23502 de un NOT NULL, 23503 de una FK,
+	//     23514 de un CHECK). El dato que la provoca no cambia entre intentos.
 	CausaJobInvalido = "job_invalido"
 )
 
@@ -63,9 +71,25 @@ const (
 // El orden importa y es el mismo que usa `llmvia.motivoDe`: la calidad va PRIMERO,
 // porque los adaptadores envuelven `llm.ErrLLMQuality` dentro de errores más gordos y
 // cualquier rama más ancha se lo tragaría.
+//
+// 🔧 LA RAMA `job_invalido` (D-044.46, T4.0). Hasta el 2026-08-27 esto era un if/else
+// que mandaba a `CausaInfra` TODO lo que no fuera calidad, y la factura se midió: el job
+// `6c5aac22` chocó contra `intakes_event_id_uidx` y se reintentó **10 veces durante 29
+// minutos** (22:48 → 23:17) para morir igual. Una violación de integridad NO CEDE
+// REINTENTANDO —lo dice el propio `IsPermanentFailure` y lo decía ya el comentario del
+// id derivado de `draft.go`—, así que gastar en ella el cupo de infra solo alarga la
+// espera del cliente. Es la clase 23 ENTERA y no solo el 23505: un NOT NULL o una FK
+// rota tampoco se curan repitiendo la misma escritura.
+//
+// ⚠️ Un 23505 de NUMERACIÓN de revisiones no llega hasta aquí: `intakes.InsertRevision`
+// lo reintenta él mismo releyendo el máximo (5 intentos) y solo escala cuando ya no es
+// una carrera. Que ESE caso muera sin reintento del job es lo correcto.
 func causaDe(err error) string {
 	if errors.Is(err, llm.ErrLLMQuality) {
 		return CausaCalidad
+	}
+	if errors.Is(err, stages.ErrSinLiteral) || postgres.IsPermanentFailure(err) {
+		return CausaJobInvalido
 	}
 	return CausaInfra
 }

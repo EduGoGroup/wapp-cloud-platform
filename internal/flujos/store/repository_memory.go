@@ -519,6 +519,45 @@ func (r *MemoryRepository) UpsertIntake(_ context.Context, o Intake) error {
 	return nil
 }
 
+// GetIntakeByEvent implementa IntakeReader: la solicitud del tenant que declara
+// `eventID` como padre, SIN filtro de estado (D-044.46, hallazgo #24).
+//
+// En producción el índice único parcial intakes_event_id_uidx garantiza que sea a lo
+// sumo UNA; aquí no hay índice que lo imponga, así que ante varias se devuelve la
+// MÁS ANTIGUA (created_at, id) — la que ya estaba, que es justo la que los dos
+// productores tienen que reusar. Sin ese desempate el resultado dependería del orden
+// de recorrido del mapa y un test podría salir verde o rojo según la vuelta.
+//
+// eventID vacío ⇒ no hay nada que buscar (misma puerta que AbandonByEvent): la
+// cadena vacía es el NULL de las filas legadas pre-0054, y "todas las legadas" no es
+// la respuesta a "¿qué tiene ESTE evento?".
+//
+// ⚠️ ASIMETRÍA CONOCIDA CON EL POSTGRES, y escrita para que nadie la descubra
+// depurando: allí la columna es de tipo `uuid` y un eventID que no parsea sale
+// found=false por el guard; aquí los ids son cadenas opacas y se comparan tal cual.
+// Solo diverge para ids que en la base NO PUEDEN existir.
+func (r *MemoryRepository) GetIntakeByEvent(_ context.Context, tenantID, eventID string) (Intake, bool, error) {
+	if eventID == "" {
+		return Intake{}, false, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var (
+		out   Intake
+		found bool
+	)
+	for _, o := range r.intakes {
+		if o.TenantID != tenantID || o.EventID != eventID {
+			continue
+		}
+		if !found || o.CreatedAt.Before(out.CreatedAt) ||
+			(o.CreatedAt.Equal(out.CreatedAt) && o.ID < out.ID) {
+			out, found = o, true
+		}
+	}
+	return out, found, nil
+}
+
 // ReplaceIntakeItems implementa Repository: deja las líneas de CLIENTE de la
 // solicitud exactamente en `items`, imitando el DELETE+INSERT transaccional del
 // PostgresRepository (Plan 043 · Ola 3). len(items)==0 BORRA las de cliente, igual

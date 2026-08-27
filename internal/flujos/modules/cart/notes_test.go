@@ -401,17 +401,44 @@ func TestIndicacionPreviaSobreviveAlRePartido(t *testing.T) {
 	assertLineaPartida(t, st.Lines, "con cebolla", "sin sal", 5.0)
 
 	// Y el pedido es el MISMO pedido: solo cambió cómo están agrupadas las unidades.
-	for i, l := range st.Lines {
+	assertRepartidoConservaProductoYDinero(t, st.Lines, antes, 5.0)
+	assertNotaAnotadaTrasRepartir(t, st, outs, effs)
+
+	// El resumen enseña las DOS indicaciones antes de confirmar (REQ-33c): si el
+	// resto hubiera perdido la suya, aquí faltaría un renglón.
+	st, outs, _, vars = driveNotes(t, m, vars, "2")
+	assertResumenConDosIndicacionesTrasRepartir(t, st, outs)
+
+	// 1 Confirmar → el cierre es lo ÚNICO que cruza al mundo (INV-12): las dos
+	// indicaciones tienen que ir ahí, cada una en SU línea.
+	st, _, effs, _ = driveNotes(t, m, vars, "1")
+	assertCierreDelRePartido(t, st, effs)
+}
+
+// assertRepartidoConservaProductoYDinero comprueba que partir una línea NO toca
+// el producto ni el dinero (INV-16): mismo sku, mismo label y mismo unit_price en
+// las dos líneas resultantes frente a la línea original (`antes`), la misma suma
+// de unidades y el mismo total que había antes de partir.
+func assertRepartidoConservaProductoYDinero(t *testing.T, lines []cartLine, antes cartLine, totalEsperado float64) {
+	t.Helper()
+	for i, l := range lines {
 		if l.SKU != antes.SKU || l.Label != antes.Label || l.UnitPrice != antes.UnitPrice {
 			t.Fatalf("partir no toca el producto: línea %d %+v vs la original %+v", i, l, antes)
 		}
 	}
-	if suma := st.Lines[0].Qty + st.Lines[1].Qty; suma != antes.Qty {
+	if suma := lines[0].Qty + lines[1].Qty; suma != antes.Qty {
 		t.Fatalf("partir cambió la cantidad: %d unidades tras partir, %d antes", suma, antes.Qty)
 	}
-	if got := total(st.Lines); got != 5.0 {
+	if got := total(lines); got != totalEsperado {
 		t.Fatalf("partir movió el dinero: total %v, esperado 5.00 (INV-16)", got)
 	}
+}
+
+// assertNotaAnotadaTrasRepartir comprueba que, tras el re-partido, la sub-máquina
+// vuelve a L5 (LevelContinue) y que la indicación NUEVA —la de la línea que se
+// acaba de separar— se anota con el scope, el sku y el split_from_qty correctos.
+func assertNotaAnotadaTrasRepartir(t *testing.T, st cartState, outs []string, effs []modules.Effect) {
+	t.Helper()
 	if st.Level != LevelContinue {
 		t.Fatalf("tras anotar se vuelve a L5, no a %q", st.Level)
 	}
@@ -425,18 +452,24 @@ func TestIndicacionPreviaSobreviveAlRePartido(t *testing.T) {
 		eff.Payload["text"] != "sin sal" || eff.Payload["split_from_qty"] != 2 {
 		t.Fatalf("payload de %s inesperado: %v", EffectNoteAdded, eff.Payload)
 	}
+}
 
-	// El resumen enseña las DOS indicaciones antes de confirmar (REQ-33c): si el
-	// resto hubiera perdido la suya, aquí faltaría un renglón.
-	st, outs, _, vars = driveNotes(t, m, vars, "2")
+// assertResumenConDosIndicacionesTrasRepartir comprueba que el resumen previo a
+// confirmar (REQ-33c) enseña las DOS indicaciones tras el re-partido: si el resto
+// hubiera perdido la suya, aquí faltaría un renglón.
+func assertResumenConDosIndicacionesTrasRepartir(t *testing.T, st cartState, outs []string) {
+	t.Helper()
 	if st.Level != LevelSummary {
 		t.Fatalf("nivel %q, esperado summary", st.Level)
 	}
 	mustContain(t, outs, "   ✏️ con cebolla", "   ✏️ sin sal", "TOTAL  $5.00")
+}
 
-	// 1 Confirmar → el cierre es lo ÚNICO que cruza al mundo (INV-12): las dos
-	// indicaciones tienen que ir ahí, cada una en SU línea.
-	st, _, effs, _ = driveNotes(t, m, vars, "1")
+// assertCierreDelRePartido comprueba que el cierre —lo ÚNICO que cruza al mundo,
+// INV-12— lleva las DOS líneas del re-partido con su indicación cada una en su
+// sitio, y que el total no se enteró de la separación.
+func assertCierreDelRePartido(t *testing.T, st cartState, effs []modules.Effect) {
+	t.Helper()
 	if st.Level != LevelClosed {
 		t.Fatalf("nivel %q, esperado closed", st.Level)
 	}

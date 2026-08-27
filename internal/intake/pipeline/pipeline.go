@@ -250,7 +250,11 @@ func (c Config) conDefaults() Config {
 }
 
 // topeDe devuelve el techo de intentos que le toca a una causa. `CausaJobInvalido` no
-// aparece: ése no se reintenta nunca y no llega hasta aquí.
+// aparece, y desde D-044.46 hay que decir por qué con precisión: `causaDe` SÍ puede
+// devolverlo (la clase 23 de Postgres), pero `tropiezo` lo aparta ANTES de llegar aquí
+// — un job inválido muere sin curva. Si alguien quitara esa guarda, este `return`
+// silencioso le daría el tope de infra y volveríamos a los 29 minutos del job
+// `6c5aac22`.
 func (c Config) topeDe(causa string) int {
 	if causa == CausaCalidad {
 		return c.MaxIntentosCalidad
@@ -991,12 +995,15 @@ func (w *Worker) tropiezo(ctx context.Context, job intake.ClaimedJob, etapa stri
 			"job_id", job.ID, "stage", etapa, "elapsed_ms", transcurrido.Milliseconds())
 		return
 	}
-	if errors.Is(err, stages.ErrSinLiteral) {
-		w.matar(ctx, job, etapa, CausaJobInvalido, err)
+	causa := causaDe(err)
+	if causa == CausaJobInvalido {
+		// NI UNA VEZ. Es la definición de la causa: el job no puede salir bien por
+		// muchas veces que se intente (sin literal que analizar, o una violación de
+		// integridad de la clase 23). No hay tope que consultar porque no hay curva.
+		w.matar(ctx, job, etapa, causa, err)
 		return
 	}
 
-	causa := causaDe(err)
 	intento := job.Attempts + 1
 	tope := w.cfg.topeDe(causa)
 	if intento >= tope {

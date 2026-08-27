@@ -31,6 +31,12 @@ const (
 // reloj quedó derogado (D-041.16, T4.7).
 type ProjectionStore interface {
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (store.Intake, bool, error)
+	// GetIntakeByEvent es la SEGUNDA pregunta de ensureOpenIntake (D-044.46): la
+	// solicitud que ya cuelga de ESTE evento, esté en el estado que esté. No
+	// sustituye a GetOpenIntake —la identidad de negocio sigue mandando en el camino
+	// normal—: cubre el hueco por el que el carrito no veía el borrador que la etapa
+	// `draft` del pipeline había dejado en `pending_approval` sobre el mismo evento.
+	GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
 	ReplaceIntakeItems(ctx context.Context, intakeID string, items []store.IntakeItem) error
 	MarkIntakeStatus(ctx context.Context, intakeID, status string, total float64) error
@@ -148,9 +154,16 @@ func (p *Projector) Project(ctx context.Context, meta modules.EffectMeta, eff mo
 	}
 }
 
-// ensureOpenIntake garantiza UNA solicitud "open" para (tenant, contact) al primer
+// ensureOpenIntake garantiza UN contenido durable para el turno al primer
 // item_added (design.md §3.4). Idempotente por identidad de negocio: si ya hay
 // abierta NO crea otra, y la "toca" tal cual está.
+//
+// 🔄 Desde D-044.46 (T4.0) pregunta DOS veces antes de crear, y el orden importa:
+// primero por identidad de negocio (tenant, contacto) y después POR EVENTO, sin
+// filtro de estado. La segunda existe porque este proyector ya no es el único
+// productor de filas en `intakes`: la etapa `draft` del pipeline del Plan 044
+// escribe la suya sobre el mismo evento y en `pending_approval`, un estado que la
+// primera pregunta no ve. Ver el bloque de la segunda pregunta, más abajo.
 //
 // Hasta T4.7 esto fijaba y REFRESCABA un vencimiento (expires_at = now +
 // tenant_settings.order_ttl) en CADA item_added. D-041.16 lo derogó: ninguna
@@ -187,6 +200,32 @@ func (p *Projector) ensureOpenIntake(ctx context.Context, meta modules.EffectMet
 				"intake_id", existing.ID, "event_id_solicitud", existing.EventID, "event_id_meta", meta.EventID)
 		}
 		return existing.ID, p.store.UpsertIntake(ctx, existing)
+	}
+	// SEGUNDA PREGUNTA, y la que cierra el hallazgo #24 por el lado del carrito
+	// (D-044.46, T4.0). La de arriba resuelve por identidad de NEGOCIO y solo ve las
+	// `open`; desde el Plan 044 la etapa `draft` del pipeline para contenido durable
+	// sobre el MISMO evento y lo deja en `pending_approval`, que a la de arriba le
+	// resulta invisible. Sin esta pregunta el carrito creaba una fila nueva con un id
+	// sorteado y chocaba contra `intakes_event_id_uidx` — medido en UAT (00:11:08 del
+	// 27-08): el pedido de ese turno se perdía.
+	//
+	// 🔴 SE REUSA LA FILA Y NO SE LA TOCA LA CABECERA. No hay UpsertIntake aquí a
+	// propósito: la fila ya declara este evento (por eso la encontramos) y su `status`
+	// es de quien lo puso — un borrador esperando al dueño no vuelve a `open` porque
+	// el cliente siga agregando. Lo que sí sigue su curso son las LÍNEAS: el llamante
+	// (projectOpenLines) escribe sobre esta solicitud la foto del carrito, que es
+	// exactamente lo que pide D-044.46 («el carrito reusando la fila»).
+	if meta.EventID != "" {
+		ajena, hallada, err := p.store.GetIntakeByEvent(ctx, meta.TenantID, meta.EventID)
+		if err != nil {
+			return "", err
+		}
+		if hallada {
+			slog.Info("cart: el evento YA tenía contenido durable; se reusa en vez de crear otro (D-044.46)",
+				"tenant_id", meta.TenantID, "contact_id", meta.ContactID, "session_id", meta.SessionID,
+				"event_id", meta.EventID, "intake_id", ajena.ID, "status", ajena.Status)
+			return ajena.ID, nil
+		}
 	}
 	if meta.EventID == "" {
 		slog.Warn("cart: item_added sin evento en la meta; la solicitud nace sin padre y el CHECK de la 0054 decidirá",

@@ -32,6 +32,10 @@ import (
 //
 //  1. `intakes` en `pending_approval` — la cabecera. Va primera porque las otras
 //     tres cuelgan de su id (la revisión por FK real, el resto por contenido).
+//     🔄 CON UNA PREGUNTA DELANTE desde D-044.46: si el evento YA tiene contenido
+//     durable (lo pudo parir el proyector del carrito), esta escritura NO ocurre —
+//     las otras tres cuelgan del id que ya había y su `status` no se toca. Ver
+//     `cabecera`.
 //  2. `intake_revisions` revisión 1, `kind='interpreted'` — el borrador entero, con
 //     el contrato §7.4 dentro del payload. Es LA entrega de esta etapa: la cabecera
 //     sin revisión sería una solicitud vacía.
@@ -293,15 +297,21 @@ type EntradaDraft struct {
 	Analisis Analisis
 }
 
-// EscritorSolicitud es lo ÚNICO que esta etapa necesita para PARIR la cabecera de la
-// solicitud: escribirla. Lo satisfacen `*store.PostgresRepository` y
-// `*store.MemoryRepository`.
+// AlmacenSolicitudes es lo ÚNICO que esta etapa necesita de `public.intakes`:
+// PREGUNTAR si el evento ya tiene contenido durable y, solo si no lo tiene, PARIRLO.
+// Lo satisfacen `*store.PostgresRepository` y `*store.MemoryRepository`.
 //
 // Se declara del lado del consumidor (idioma Go, mismo criterio que las cuatro del
-// proyector del carrito) y con UN método: el pipeline no lista solicitudes, no las
-// transiciona y no debe poder hacerlo. Lo único que le corresponde es dar de alta la
-// suya.
-type EscritorSolicitud interface {
+// proyector del carrito) y con DOS métodos, ni uno más: el pipeline no lista
+// solicitudes, no las transiciona y no debe poder hacerlo.
+//
+// 🔄 NACIÓ CON UNO (`EscritorSolicitud`, «lo único que le corresponde es dar de alta
+// la suya») y D-044.46 le añadió la lectura, porque «dar de alta la suya» resultó
+// falso: el proyector del carrito escribe sobre el MISMO evento y ninguno de los dos
+// sabía del otro. La lectura NO filtra por estado — ese filtro es exactamente lo que
+// hacía invisible el intake ajeno (ver GetIntakeByEvent).
+type AlmacenSolicitudes interface {
+	GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (store.Intake, bool, error)
 	UpsertIntake(ctx context.Context, o store.Intake) error
 }
 
@@ -325,7 +335,7 @@ type EscritorEvento interface {
 type Draft struct {
 	log         logger.Logger
 	store       StageStore
-	solicitudes EscritorSolicitud
+	solicitudes AlmacenSolicitudes
 	revisiones  EscritorRevision
 	eventos     EscritorEvento
 	ahora       func() time.Time
@@ -351,7 +361,7 @@ func ConReloj(ahora func() time.Time) OpciónDraft {
 }
 
 // NewDraft construye la etapa. Devuelve ErrDraftSinCablear si le falta una pieza.
-func NewDraft(log logger.Logger, st StageStore, solicitudes EscritorSolicitud,
+func NewDraft(log logger.Logger, st StageStore, solicitudes AlmacenSolicitudes,
 	revisiones EscritorRevision, eventos EscritorEvento, opts ...OpciónDraft) (*Draft, error) {
 	if log == nil || st == nil || solicitudes == nil || revisiones == nil || eventos == nil {
 		return nil, ErrDraftSinCablear
@@ -391,16 +401,65 @@ var espacioBorrador = uuid.MustParse("6f8f5b2e-3d61-5a4c-9a1e-0b7c4d2f8a13")
 //  3. Es un id REPRODUCIBLE: dado el evento, se sabe cuál era su borrador sin abrir la
 //     tabla.
 //
-// ⚠️ LA CONTRAPARTIDA, ESCRITA PARA QUE NADIE LA DESCUBRA EN CAMPO: el upsert PISA
-// `status` con `pending_approval`. En el camino de esta tarea eso es lo correcto —la
-// fila nace aquí—, y en un reintento también —re-escribe lo mismo—. Pero el día que
-// T4.6 reuse esta etapa para un re-análisis, la solicitud PUEDE estar ya en otro
-// estado (el dueño la rechazó, o la aprobó), y volver a `pending_approval` sin mirar
-// de dónde viene sería saltarse la máquina de estados. Esa decisión es de T4.6 y
-// necesita leer el estado actual, cosa que este puerto —de UNA sola escritura— no
-// puede hacer a propósito.
+// ⚠️ LA CONTRAPARTIDA QUE ESTABA ESCRITA AQUÍ — «el upsert PISA `status` con
+// `pending_approval`, y el día que T4.6 reuse esta etapa para un re-análisis eso sería
+// saltarse la máquina de estados» — 🔧 **DEJÓ DE SER CIERTA el 2026-08-27** (D-044.46,
+// T4.0), y no la desactivó T4.6 sino el hallazgo #24: el upsert ya no se ejecuta cuando
+// el evento tiene contenido durable, así que ningún `status` ajeno se pisa. Ver
+// `cabecera`.
+//
+// Lo que sigue vigente de aquel párrafo es POR QUÉ el id se deriva: un reintento de
+// esta misma etapa reescribe su propia fila en vez de chocar. La consulta por evento no
+// lo sustituye —la cubre por el lado del OTRO productor, no por el suyo—, y quitarla
+// devolvería el job envenenado del segundo intento.
 func idDeLaSolicitud(eventoID string) string {
 	return uuid.NewSHA1(espacioBorrador, []byte(eventoID)).String()
+}
+
+// cabecera resuelve SOBRE QUÉ solicitud escribe esta pasada, y devuelve su id y el
+// estado en el que queda. Es la puerta que cierra el hallazgo #24 por el lado del
+// pipeline (D-044.46, T4.0).
+//
+// 🔴 PREGUNTA ANTES DE CREAR, Y LA PREGUNTA NO FILTRA POR ESTADO. `intakes_event_id_uidx`
+// (migración 0054) declara que un evento tiene A LO SUMO un contenido durable, y desde
+// este plan hay DOS productores que lo escriben: esta etapa y el proyector del carrito
+// (`cart.ensureOpenIntake`). El id derivado del evento defiende a esta etapa DE SÍ MISMA
+// —un reintento reescribe su propia fila— pero no del otro productor: contra la fila que
+// el carrito dejó en `open` sobre el MISMO evento, el upsert por id chocaba con un
+// SQLSTATE 23505 (medido en UAT el 27-08 a las 22:48:42, 54 ms después del carrito).
+//
+// 🔴 Y CUANDO LA FILA YA EXISTE, SU `status` NO SE TOCA. Se devuelve el que tiene, no
+// `pending_approval`: un carrito `open` significa que el cliente SIGUE COMPRANDO, y
+// llamar al dueño a mitad de compra es prematuro. El borrador interpretado viaja igual,
+// como revisión adjunta, para cuando el pedido cierre por su camino natural.
+// ⚠️ CONSECUENCIA ACEPTADA Y ESCRITA (D-044.46): mientras el carrito siga `open`, ese
+// borrador NO aparece en la bandeja del dueño. Si se quiere lo contrario es una decisión
+// de producto, no un bug de esta etapa.
+func (s *Draft) cabecera(ctx context.Context, job intake.ClaimedJob) (string, string, error) {
+	existente, hallada, err := s.solicitudes.GetIntakeByEvent(ctx, job.Key.TenantID, job.Key.EventID)
+	if err != nil {
+		return "", "", fmt.Errorf("draft: leer la solicitud del evento del job %s: %w", job.ID, err)
+	}
+	if hallada {
+		s.log.Info("draft: el evento YA tenía contenido durable; la revisión se cuelga de él y su estado no se toca",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", existente.ID,
+			"status", existente.Status)
+		return existente.ID, existente.Status, nil
+	}
+
+	intakeID := idDeLaSolicitud(job.Key.EventID)
+	if err := s.solicitudes.UpsertIntake(ctx, store.Intake{
+		ID:        intakeID,
+		TenantID:  job.Key.TenantID,
+		ContactID: job.Key.ContactID,
+		SessionID: job.Key.SessionID,
+		Status:    intakes.StatusPendingApproval,
+		EventID:   job.Key.EventID,
+		// Total y CustomerNote quedan a cero: ver la cabecera del fichero.
+	}); err != nil {
+		return "", "", fmt.Errorf("draft: crear la solicitud del job %s: %w", job.ID, err)
+	}
+	return intakeID, intakes.StatusPendingApproval, nil
 }
 
 // Run crea la solicitud, le cuelga la revisión 1 y publica la métrica.
@@ -427,17 +486,9 @@ func (s *Draft) Run(ctx context.Context, job intake.ClaimedJob, in EntradaDraft)
 		return nil, fmt.Errorf("%w: job_id=%s", ErrJobSinEvento, job.ID)
 	}
 
-	intakeID := idDeLaSolicitud(job.Key.EventID)
-	if err := s.solicitudes.UpsertIntake(ctx, store.Intake{
-		ID:        intakeID,
-		TenantID:  job.Key.TenantID,
-		ContactID: job.Key.ContactID,
-		SessionID: job.Key.SessionID,
-		Status:    intakes.StatusPendingApproval,
-		EventID:   job.Key.EventID,
-		// Total y CustomerNote quedan a cero: ver la cabecera del fichero.
-	}); err != nil {
-		return nil, fmt.Errorf("draft: crear la solicitud del job %s: %w", job.ID, err)
+	intakeID, estado, err := s.cabecera(ctx, job)
+	if err != nil {
+		return nil, err
 	}
 	s.notaDePedidoPerdida(job, in.Match)
 
@@ -476,7 +527,7 @@ func (s *Draft) Run(ctx context.Context, job intake.ClaimedJob, in EntradaDraft)
 	casadas, sinCasar := s.recuento(in.Match)
 	s.log.Info("draft: borrador creado y esperando al dueño",
 		"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
-		"revision_no", rev.RevisionNo, "status", intakes.StatusPendingApproval,
+		"revision_no", rev.RevisionNo, "status", estado,
 		"lineas", len(in.Match.Lines), "casadas", casadas, "sin_casar", sinCasar,
 		"preguntas", len(revision.SuggestedQuestions), "avisos", len(revision.Warnings),
 		"elapsed_ms", art.ElapsedMS)
