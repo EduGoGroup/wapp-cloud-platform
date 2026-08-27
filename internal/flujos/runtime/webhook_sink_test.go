@@ -21,15 +21,22 @@ func discardWebhookLogger() logger.Logger {
 
 // cartClosedEffect es el efecto de cierre con DOS líneas, una personalizada y otra
 // no (D-041.17): el contrato tiene que llevar el «sin azúcar» de la primera y dejar
-// la segunda vacía. intake_id ya está presente porque cart.Projector.closeIntake
-// lo anota en el mapa ANTES de que el fan-out llegue al WebhookSink (ver el
-// comentario de buildIntakePushTemplate).
+// la segunda vacía. intake_id y revision_no ya están presentes porque
+// cart.Projector.closeIntake los anota en el mapa ANTES de que el fan-out llegue al
+// WebhookSink (ver el comentario de buildIntakePushTemplate).
+//
+// El revision_no del fixture es 2, y no 1, por DOS motivos: es la forma que tiene
+// hoy en producción —desde T4.0 el pipeline del 044 cuelga su revisión
+// `interpreted` de la misma fila `open`, así que el cierre escribe la 2— y un 1
+// volvería a pasar por casualidad si alguien reintrodujera el literal que T4.10
+// retiró del sink.
 func cartClosedEffect() modules.Effect {
 	return modules.Effect{
 		Kind: "persist",
 		Name: "cart_closed",
 		Payload: map[string]any{
-			"intake_id": "intake-abc-123",
+			"intake_id":   "intake-abc-123",
+			"revision_no": 2,
 			"items": []map[string]any{
 				{"sku": "A1", "label": "Café", "customization": "sin azúcar", "qty": 2, "unit_price": 9.9},
 				{"sku": "B2", "label": "Té", "qty": 1, "unit_price": 5.0},
@@ -202,7 +209,7 @@ func TestBuildIntakePushTemplate_Contrato(t *testing.T) {
 	}
 
 	want := `{"contract_version":"1","verb":"intake.push","tenant":"tenant-abc","contact":"contact-opaco-xyz",` +
-		`"intake_id":"intake-abc-123","lifecycle_status":"confirmed","revision_no":1,` +
+		`"intake_id":"intake-abc-123","lifecycle_status":"confirmed","revision_no":2,` +
 		`"items":[{"sku":"A1","label":"Café","customization":"sin azúcar","qty":2,"unit_price":9.9},` +
 		`{"sku":"B2","label":"Té","customization":"","qty":1,"unit_price":5}],` +
 		`"total":24.8,"timestamp":"2026-08-07T10:00:00Z"}`

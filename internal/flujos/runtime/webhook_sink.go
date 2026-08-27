@@ -93,6 +93,14 @@ func (s *WebhookSink) Handle(ctx context.Context, ec EffectContext, eff modules.
 	}
 
 	payload := buildIntakePushTemplate(ec, eff, time.Now().UTC())
+	if payload.RevisionNo < 1 {
+		// No aborta —el sink nunca cuelga el mensaje del cliente— pero tampoco pasa
+		// callando: un push sin revisión solo puede venir de un camino que llegó
+		// hasta aquí sin que el proyector anotara el número, y el operador tiene que
+		// poder encontrarlo por el intake_id antes de que el puente lo rechace.
+		s.log.Error("webhook: intake.push sin revision_no en el efecto; se encola con un número que el contrato rechaza en vez de inventar uno",
+			"tenant", ec.TenantID, "name", eff.Name, "intake_id", payload.IntakeID, "revision_no", payload.RevisionNo)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.log.Error("webhook: serializando la plantilla de intake.push", "error", err, "tenant", ec.TenantID)
@@ -160,12 +168,17 @@ type intakePushItem struct {
 const lifecycleStatusConfirmed = "confirmed"
 
 // buildIntakePushTemplate arma la plantilla de intake.push (§3 del contrato,
-// design.md) a partir del EffectContext y el efecto cart_closed. intake_id sale
-// de eff.Payload["intake_id"] — lo anota cart.Projector.closeIntake DESPUÉS de
-// proyectar, en el MISMO mapa que ve este sink (corre después en el fan-out de
-// dispatch(), ver runtime/resume.go): sin esa anotación no habría forma de
+// design.md) a partir del EffectContext y el efecto cart_closed. intake_id y
+// revision_no salen de eff.Payload — los anota cart.Projector.closeIntake DESPUÉS
+// de proyectar, en el MISMO mapa que ve este sink (corre después en el fan-out de
+// dispatch(), ver runtime/resume.go): sin esas anotaciones no habría forma de
 // correlacionar sin una consulta extra a la BD, que el sink NO debe hacer
 // (INV-02: cero red/BD adicional en línea con el mensaje más allá del encolado).
+//
+// Los DOS son la clave de negocio del contrato: el puente hace UPSERT por
+// (intake_id, revision_no) y trata como duplicado todo par repetido (manual del
+// integrador §4). Por eso el número no puede ser una constante —lo fue hasta
+// T4.10— y por eso su ausencia se emite como 0 y no como 1; ver el campo.
 func buildIntakePushTemplate(ec EffectContext, eff modules.Effect, now time.Time) intakePushTemplate {
 	items := effectItems(eff.Payload)
 	pushItems := make([]intakePushItem, 0, len(items))
@@ -185,7 +198,23 @@ func buildIntakePushTemplate(ec EffectContext, eff modules.Effect, now time.Time
 		Contact:         ec.ContactID,
 		IntakeID:        modules.AsString(eff.Payload["intake_id"]),
 		LifecycleStatus: lifecycleStatusConfirmed,
-		RevisionNo:      1, // wApp emite siempre 1 hasta el Plan 044 (revisiones)
+		// revision_no sale del EFECTO, igual que intake_id y por la misma puerta: lo
+		// anota cart.Projector.closeIntake con el número REAL que la base le asignó a
+		// la revisión de este cierre (T4.10 · D-044.19). Aquí NO puede haber una
+		// constante: ver el comentario de arriba y revision_no_ast_test.go, que lo
+		// vigila sobre el AST.
+		//
+		// 🔴 AUSENTE ⇒ 0, Y ESO ES DELIBERADO. AsInt no distingue «no está» de «vale
+		// 0», y aquí ese empate juega a favor: el cero es el ÚNICO valor que el
+		// schema congelado rechaza (`revision_no: integer, minimum 1`), así que un
+		// push sin número no puede confundirse con un estado legítimo de la
+		// solicitud. La alternativa —volver a poner un 1 de respaldo— es justo el
+		// defecto que esta tarea arregla: un número FALSO es peor que uno ausente,
+		// porque el puente lo aplica sin sospechar y descarta como duplicado el
+		// estado nuevo. Y se sigue encolando en vez de tragarse el push: dejar la
+		// entrega fuera cambiaría un defecto VISIBLE por la pérdida silenciosa del
+		// pedido, que en esta mitad no tiene re-empuje que lo recupere.
+		RevisionNo: modules.AsInt(eff.Payload["revision_no"]),
 		// customer_note NO se lee de eff.Payload aunque esté ahí: el efecto sigue
 		// llevándola (el proyector la necesita para escribir intakes.customer_note)
 		// y este sink la ignora a propósito. Ver el comentario de intakePushTemplate.
