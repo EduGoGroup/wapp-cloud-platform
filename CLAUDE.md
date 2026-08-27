@@ -13,7 +13,7 @@
 **Monolito modular Go** (ADR-0010) que aloja todo lo que gestiona el equipo de wApp
 (plataforma SaaS). La nube **piensa**; el Edge despacha (ADR-0005).
 
-**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.25.0` —
+**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.45.0` —
 `internal/platform/storage/postgres/migrations/version.go`; no fijamos aquí un SHA porque
 caduca al commit siguiente). NO es scaffold ni greenfield:
 cubre IAM, API pública, Motor de Flujos con sus módulos, gateway CloudLink y la
@@ -117,9 +117,9 @@ durabilidad la da el `outbox` del Edge.
 ### Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0045_intakes_lifecycle.sql`).
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0081_intakes_expiry_reminded.sql`).
 El runner los aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy
-**0.25.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
+**0.45.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
 aunque no se suba la versión.
 
 **Cuándo hay que subir `SchemaVersion` — la regla honesta.** El runner reaplica por **hash de

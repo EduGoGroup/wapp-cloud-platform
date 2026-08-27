@@ -29,10 +29,11 @@
 -- hizo EDITANDO la 0075, no con una 0076), así que la `0076` estaba LIBRE. «Conocida»
 -- no es «verificada»: quien añada la siguiente repite el `ls`.
 --
--- ⚠️ **NO sube `SchemaVersion`**: el Plan 044 hace UN SOLO bump al cierre, en T6.2
--- (INV-8). Se comprobó en `migrations/version.go:297` — hoy `0.44.0`, puesta por el
--- Plan 046 · Ola 5— y ninguna de las migraciones de este plan (`0071`–`0075`) la ha
--- movido. El runner reaplica por HASH de contenido, así que este fichero se ejecuta
+-- ⚠️ **NO sube `SchemaVersion`** (INV-8). Cuando se escribió, la constante estaba en
+-- `0.44.0`, puesta por el Plan 046 · Ola 5, y ninguna migración de este plan
+-- (`0071`–`0075`) la había movido. 🔧 El bump del Plan 044 ya NO espera a T6.2: llegó
+-- con la publicación de la Ola 4 (`0.45.0`, ver `migrations/version.go`), y este
+-- fichero sigue sin tocarlo. El runner reaplica por HASH de contenido, así que este fichero se ejecuta
 -- igual sin tocar la constante.
 --
 -- ============================================================

@@ -63,8 +63,11 @@
 -- creó la tabla, y un COMMENT sobre una columna que no existe ABORTA EL ARRANQUE.
 -- Re-aplicarla N veces no toca un solo valor.
 --
--- SIN BUMP DE SchemaVersion: el Plan 044 lo lleva al CIERRE, en T6.2 (lo dice la
--- propia 0072). El runner reejecuta por HASH.
+-- EL BUMP LO PONE LA PUBLICACIÓN DE LA OLA 4: `SchemaVersion` sube a `0.45.0` en
+-- `migrations/version.go` —un solo incremento para ésta y para la 0081, y es el del
+-- Plan 044—. Este fichero no toca la constante: el runner reejecuta por HASH, no por
+-- versión. (Este párrafo decía que el bump esperaba a T6.2, citando la 0072; la Ola 4
+-- se publica hoy y la segunda mitad de la regla no admite salir sin él.)
 -- ============================================================
 
 ALTER TABLE public.intake_jobs

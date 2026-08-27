@@ -294,7 +294,80 @@ import (
 // public.schema_version de Neon. Y aquí el número importa más que de costumbre --
 // es lo único que distingue, ANTES de arrancar, una base donde el binario nuevo puede
 // correr de una donde su primer SELECT encontraría columnas que ya no espera.
-const SchemaVersion = "0.44.0"
+//
+// 0.45.0 — Plan 044 · Ola 4 (0080 y 0081): el RE-ANÁLISIS A DEMANDA del dueño (T4.6)
+// y la MARCA DEL RECORDATORIO del plazo (T4.5). Dos migraciones aditivas de la misma
+// ola y UN solo bump, que es el del Plan 044 entero.
+//
+// 0080 — `intake_jobs` estrena CUATRO columnas de contexto: `requested_by` (el ROL
+// que pidió el job, nunca una persona), `reanalysis_via` (local | api),
+// `reanalysis_source` (event_thread | pasted_text | both) y `reanalyzed_from` (el
+// `revision_no` vigente cuando se pidió, o sea la revisión que este job SUCEDE).
+// Hasta hoy todo job nacía igual —lo abría el agregador con el mensaje del cliente—;
+// `POST /api/v1/intakes/{id}/reanalyze` estrena un SEGUNDO productor, el dueño por
+// HTTP, y su fila es indistinguible columna a columna de la del pipeline normal. La
+// etapa que escribe la revisión (`draft`) no habla con HTTP: recibe un `ClaimedJob` y
+// nada más, así que **o el job transporta el dato o el dato no llega**.
+//
+// Es lo que hace que la revisión resultante nazca con `created_by='owner'` en vez de
+// `system`, lo que GATEA el empuje al puente CRM (sin esa marca, empujar en toda
+// revisión convertiría el pipeline normal en un productor de `intake.push`), y lo que
+// pone VÍA en `payload.analysis.provider` **cuando el resto de interpretaciones no la
+// tienen**: en el pipeline normal la vía la elige el selector POR LLAMADA y no la
+// publica ningún puerto, así que ese campo sale vacío. Solo el re-análisis la conoce,
+// porque la resolvió el endpoint (cuerpo → `tenant_llm.via` → `local`, D-044.48 §4).
+//
+// 🔴 CUATRO COLUMNAS Y NINGUNA CON CHECK, y las dos cosas son decisión. No van en
+// `artifacts` porque ese JSONB está indexado POR ETAPA y esto no es una etapa; no van
+// con CHECK porque el molde exacto es `intake_revisions.created_by` (0045), que
+// declara su vocabulario en el COMMENT y no en una constraint —un CHECK obligaría a
+// migrar la base el día que aparezca un tercer productor de jobs—. Nacen NULL y sin
+// default: rellenar el pasado con `system` afirmaría de cada job de la historia algo
+// que nadie comprobó. Sin índice, porque ninguna consulta filtra por ellas.
+//
+// 0081 — `intakes.expiry_reminded_at`: la constancia de que al dueño YA se le recordó
+// UNA vez que este presupuesto lleva más del plazo (24 h) esperando su decisión.
+//
+// 🔴 NO NACE NINGUNA COLUMNA DE VENCIMIENTO, Y ESO ES LA TAREA. La marca «vencido» de
+// la bandeja es DERIVADA: se calcula AL LEER, desde `status` y `updated_at` contra una
+// constante de plataforma que vive en Go (`intakes.QuoteDeadline`). No se persiste, así
+// que no puede desincronizarse de la verdad, no hay backfill que correr, y el día que
+// el plazo cambie cambia también el pasado —que es lo correcto: el plazo es una regla
+// de la plataforma, no un hecho de la solicitud—. Y NO hay transición a `expired`:
+// nada muere por tiempo (ADR-0029 Enmienda 2, D-041.16), la solicitud sigue en
+// `pending_approval` con sus mismos destinos. Lo único que sí necesita constancia es
+// el RECORDATORIO, porque no puede repetirse: de ahí esta columna, escrita con
+// compare-and-swap contra NULL —de N toques simultáneos gana uno y avisa uno—.
+// Nullable y sin default, molde exacto de `deposit_reminded_at` (0045). Sin índice, y
+// aquí sí se separa de su gemela: el de la seña existe porque aquel recordatorio lo
+// dispara también el mensaje entrante del cliente, que tiene que BUSCAR candidatas por
+// (tenant, contacto) en el camino caliente; éste no busca nada —solo lo disparan las
+// lecturas del dueño, que ya tienen la fila delante, y su único acceso es la PK—.
+//
+// 🔴 AVISO OPERATIVO, PARA QUE NO SORPRENDA A QUIEN LEA EL LOG DESPUÉS DE DESPLEGAR:
+// desde el momento en que esto entre, UAT empezará a escribir `expiry_reminded_at` y a
+// dejar traza de recordatorios QUE NO RECIBE NADIE. El canal real del aviso al dueño es
+// el push del Plan 045 y NO EXISTE; el emisor de hoy solo loguea. Está decidido a
+// sabiendas (D-044.50 §2): lo difícil de este recordatorio no es el canal sino la
+// IDEMPOTENCIA —el orden «mirar → marcar → emitir» y el CAS contra NULL—, y eso se
+// construye barato hoy, con el gemelo de la seña delante, y caro dentro del Plan 045,
+// cuando ya nadie esté mirando este fichero. Un log lleno de recordatorios sin
+// destinatario es lo ESPERADO, no un fallo, y nadie puede afirmar que el dueño los
+// recibe: no los recibe.
+//
+// El bump no es opcional, por lo de siempre: la 0.44.0 ya se publicó y ya se desplegó
+// (Plan 046 · Ola 5 · T5.4, 2026-08-21), así que su número ya está escrito en la fila
+// de `public.schema_version` de esa base. Y aquí pesa más de lo habitual, porque el
+// Plan 044 lleva NUEVE migraciones más —`0071`–`0079`— que ya salieron a `main` bajo
+// la PRIMERA mitad de la regla, sin bump, por ser olas intermedias: hoy toda base
+// donde ese trabajo ya corrió tiene la fila diciendo `0.44.0` sobre un esquema que
+// lleva nueve migraciones del 044 dentro. Este número es lo único que, a partir de la
+// publicación de la Ola 4, distingue esa base de una que solo tenga el esquema del
+// Plan 046 — que es exactamente para lo que esta constante existe.
+//
+// (Las entradas de arriba dicen «de Neon»: desde la migración del VPS esa base es un
+// Postgres 17 en Docker, `wapp-postgres`. La fila y el argumento son los mismos.)
+const SchemaVersion = "0.45.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
