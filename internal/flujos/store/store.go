@@ -136,6 +136,23 @@ type IntakeReader interface {
 	// "open" por (tenant_id, contact_id) (design.md §3.4). La usa el runtime al
 	// reanudar y para evaluar el TTL (design.md §4.3).
 	GetOpenIntake(ctx context.Context, tenantID, contactID string) (intake Intake, found bool, err error)
+	// GetIntakeByEvent devuelve la solicitud que declara `eventID` como padre
+	// (D-043.21), si existe (found=false sin error si no hay). Es la lectura que le
+	// faltaba al par de E-8: `AbandonByEvent` ya ESCRIBÍA por evento y nadie sabía
+	// PREGUNTAR por él.
+	//
+	// 🔴 NO FILTRA POR ESTADO, Y ESO ES EL CONTRATO ENTERO (D-044.46, hallazgo #24).
+	// GetOpenIntake resuelve por identidad de NEGOCIO (tenant, contacto) y solo ve
+	// las `open`; desde el Plan 044 hay DOS productores de contenido durable sobre el
+	// mismo evento —el proyector del carrito y la etapa `draft` del pipeline— y el
+	// intake que uno dejó en `pending_approval` le resultaba INVISIBLE al otro, que
+	// creaba el suyo y chocaba contra `intakes_event_id_uidx` (medido en UAT las dos
+	// direcciones). Filtrar aquí por `open` reproduciría exactamente esa ceguera.
+	//
+	// Por E-8 (único parcial de la 0054) hay A LO SUMO una fila por evento; el
+	// desempate por `created_at, id` existe para que el doble en memoria —que NO
+	// impone el índice— conteste algo determinista y sea SIEMPRE la que ya estaba.
+	GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (intake Intake, found bool, err error)
 	// ListIntakeItems devuelve las líneas de una solicitud EN EL ORDEN EN QUE LAS VE
 	// EL CLIENTE (added_at, id: el orden en que las armó el carrito). Sin líneas
 	// devuelve la lista vacía SIN error; un intakeID que no sea un UUID es un ERROR
