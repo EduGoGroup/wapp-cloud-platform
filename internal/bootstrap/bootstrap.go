@@ -594,6 +594,12 @@ func Run(ctx context.Context) error {
 	intakeService := intakes.NewService(intakeStore,
 		intakes.WithNotifier(intakeNotifier),
 		intakes.WithDepositReminder(depositReminder),
+		// La cotización que el DUEÑO le manda al cliente al aprobar (Plan 044 · T4.3).
+		// Es el MISMO notificador de dos líneas más arriba a propósito: una sola
+		// salida hacia WhatsApp y un solo criterio sobre la plantilla de seña del
+		// tenant. Sin esta línea, Approve corta con ErrNoQuoteSender en vez de
+		// confirmar el pedido dejando al cliente sin enterarse.
+		intakes.WithQuoteSender(intakeNotifier),
 		// El puente CRM del DUEÑO (Plan 044 · Ola 4 · Tanda 2). Reusa las DOS piezas
 		// que ya alimentan al sink del cierre de carrito —el MISMO integrationsStore
 		// y el MISMO webhookGate de la línea de arriba—, así que un tenant no puede

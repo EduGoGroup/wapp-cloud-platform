@@ -139,9 +139,10 @@ type RevisionLine struct {
 
 // linesRevisionPayload es la forma canónica del payload de las revisiones que
 // retratan un conjunto de líneas con su total: RevisionKindCart (lo que armó el
-// carrito) y RevisionKindCorrected (cómo quedó tras la corrección del dueño). Es
-// UNA forma y no dos porque es la misma pregunta —qué líneas y por cuánto—
-// contestada por dos puertas; `kind` es lo que dice cuál fue.
+// carrito), RevisionKindCorrected (cómo quedó tras la corrección del dueño) y
+// RevisionKindApproved (lo que el dueño aprobó y cotizó, Plan 044 · T4.3). Es UNA
+// forma y no tres porque es la misma pregunta —qué líneas y por cuánto— contestada
+// por tres puertas; `kind` es lo que dice cuál fue.
 type linesRevisionPayload struct {
 	Version int            `json:"version"`
 	Total   float64        `json:"total"`
@@ -164,6 +165,16 @@ func CartRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, 
 // parser a media lista.
 func CorrectedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
 	return linesPayload("de la corrección manual", total, lines)
+}
+
+// ApprovedRevisionPayload arma el payload de la revisión de APROBACIÓN del dueño
+// (Plan 044 · T4.3): la MISMA forma versionada que la del carrito y la de la
+// corrección, porque es la misma pregunta —qué líneas y por cuánto— contestada por
+// una tercera puerta. Lo que distingue esta revisión de aquellas dos no es la forma
+// del payload sino su `kind` y su `rendered_text`, que aquí NUNCA está vacío: la
+// aprobación es, por definición, lo que se le dijo al cliente.
+func ApprovedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
+	return linesPayload("de la aprobación", total, lines)
 }
 
 // linesPayload serializa la forma compartida. `what` solo entra en el mensaje de

@@ -37,6 +37,11 @@ type IntakeService interface {
 	// ReplaceItems sustituye las líneas de cliente de una solicitud en
 	// `pending_approval` y deja la revisión `corrected` del dueño (T4.10, REQ-36).
 	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item) (intakes.Detail, error)
+	// Approve APRUEBA el presupuesto (Plan 044 · T4.3): manda al cliente la
+	// cotización que escribió el dueño con la plantilla de seña adjunta, deja la
+	// solicitud en `confirmed` con su revisión `approved` y empuja esa revisión al
+	// puente CRM. `renderedText` es el texto del DUEÑO y es obligatorio.
+	Approve(ctx context.Context, tenantID, intakeID, renderedText string) (intakes.Detail, error)
 	// ListDetails devuelve las solicitudes del filtro CON sus líneas y sin
 	// paginar: es lo que desnormaliza el export (T1.2). intakes.ErrTooLarge si el
 	// filtro abarca más de intakes.MaxExportIntakes.
@@ -631,6 +636,130 @@ func writeEditItemsError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
 	default:
 		writeError(w, http.StatusInternalServerError, "no se pudieron guardar las líneas de la solicitud")
+	}
+}
+
+// approveIntakeRequest es el cuerpo de POST /api/v1/intakes/{id}/approve: el texto
+// que el DUEÑO le manda al cliente (D-044.49, decisión del 2026-08-27).
+//
+// Es un solo campo y es OBLIGATORIO. No hay `items` ni `total` en el cuerpo, y esa
+// ausencia es la decisión: lo que se cotiza son las líneas que la solicitud YA tiene
+// —el dueño las corrige con el `PUT …/items`, que es la otra puerta de la misma
+// pantalla—, así que aceptar aquí una lista abriría un segundo camino para escribir
+// lo mismo. Es exactamente el duplicado que D-044.48 §1 cerró para `correct`.
+//
+// No es puntero (a diferencia de editIntakeItemsRequest.Items) porque aquí no hay
+// dos ausencias que distinguir: la clave que falta y la cadena vacía significan lo
+// mismo —no hay cotización que mandar— y las dos salen por el mismo 400.
+type approveIntakeRequest struct {
+	RenderedText string `json:"rendered_text"`
+}
+
+// pendingPriceResponse es el cuerpo del 400 de una aprobación cuyo borrador todavía
+// tiene líneas sin precio (precondición de T4.3). Lleva TODAS las líneas pendientes
+// con su posición y su etiqueta, por el mismo criterio que invalidItemsResponse:
+// quien tiene tres renglones sin precificar tiene que verlos los tres.
+//
+// La POSICIÓN y no el sku: la línea `unmatched` —la que el catálogo no reconoció, que
+// es justo la que suele no tener precio— no tiene sku (Plan 044 · T3.2).
+type pendingPriceResponse struct {
+	Error string                     `json:"error"`
+	Lines []intakes.PendingPriceLine `json:"lines"`
+}
+
+// notApprovableResponse es el cuerpo del 422 de una aprobación sobre una solicitud
+// que no está por aprobar: dónde está y desde dónde SÍ se aprueba. Es el gemelo de
+// notEditableResponse, y son dos cuerpos y no uno porque son dos preguntas: se puede
+// estar en un estado editable y no aprobable nunca a la vez, pero quien recibe el
+// error tiene que saber cuál de las dos puertas le cerró.
+type notApprovableResponse struct {
+	Error        string   `json:"error"`
+	Status       string   `json:"status"`
+	ApprovableIn []string `json:"approvable_in"`
+}
+
+// approveIntakeHandler sirve POST /api/v1/intakes/{id}/approve: la acción APROBAR del
+// dueño (Plan 044 · T4.3). Responde el detalle completo —con la revisión `approved`
+// recién escrita— para que la consola repinte sin un segundo GET, por el MISMO camino
+// que el GET y el PUT de líneas (writeIntakeDetail), de modo que el gate por campo del
+// 044 se aplique igual.
+//
+// Códigos: 200 con el detalle; 400 si falta el texto, si el borrador tiene líneas sin
+// precio o si no hay nada que cotizar; 404 si la solicitud no es del tenant (nunca
+// 403: confirmaría que existe); 422 si no está en `pending_approval`; 409 si alguien
+// la movió entre la lectura y la escritura.
+//
+// El 200 significa «la aprobación se aplicó y quedó registrada», NUNCA «el cliente
+// recibió el mensaje»: el envío va después de la escritura y no puede tumbarla (ver
+// intakes/approve.go). Con la sesión del negocio offline el dueño sigue viendo su 200
+// y el fallo queda en el log con su command_id.
+func approveIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req approveIntakeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+
+		detail, err := svc.Approve(r.Context(), id.TenantID, r.PathValue("id"), req.RenderedText)
+		if err != nil {
+			writeApproveError(w, err)
+			return
+		}
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
+	})
+}
+
+// writeApproveError traduce el fallo del dominio al código y al cuerpo que le sirven
+// a quien llama. La política de códigos vive aquí y no en el dominio: el dominio dice
+// QUÉ pasó, el transporte decide cómo se cuenta (mismo reparto que writeEditItemsError).
+//
+// *TransitionError sale 422 con el MISMO cuerpo que el <select> de estado
+// (invalidTransitionResponse) y no con el de not_approvable: cuando aparece es porque
+// alguien movió la solicitud entre la validación y el compare-and-swap, y la respuesta
+// útil ahí es la del ciclo de vida —dónde está y adónde puede ir—, no la de esta puerta.
+func writeApproveError(w http.ResponseWriter, err error) {
+	var (
+		pending       *intakes.PendingPriceError
+		notApprovable *intakes.NotApprovableError
+		invalid       *intakes.TransitionError
+	)
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.Is(err, intakes.ErrEmptyQuoteText):
+		writeError(w, http.StatusBadRequest,
+			"rendered_text es obligatorio: es el texto de la cotización que se le manda al cliente")
+	case errors.As(err, &pending):
+		writeJSON(w, http.StatusBadRequest, pendingPriceResponse{
+			Error: "lines_without_price", Lines: pending.Lines,
+		})
+	case errors.Is(err, intakes.ErrEmptyQuote):
+		writeError(w, http.StatusBadRequest,
+			"la solicitud no tiene líneas que cotizar: guarda primero las líneas del borrador con PUT /api/v1/intakes/{id}/items")
+	case errors.As(err, &notApprovable):
+		writeJSON(w, http.StatusUnprocessableEntity, notApprovableResponse{
+			Error:        "not_approvable",
+			Status:       notApprovable.Status,
+			ApprovableIn: []string{intakes.ApprovableStatus},
+		})
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusUnprocessableEntity, invalidTransitionResponse{
+			Error:     "invalid_transition",
+			Status:    invalid.From,
+			Requested: invalid.To,
+			Allowed:   invalid.Allowed,
+		})
+	case errors.Is(err, intakes.ErrConflict):
+		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo aprobar la solicitud")
 	}
 }
 

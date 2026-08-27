@@ -287,7 +287,7 @@ func candidate(in Intake, at time.Time) bool {
 func (r *DepositReminder) remindOne(ctx context.Context, tenantID, intakeID string, at time.Time) (string, bool) {
 	log := r.notifier.log.With("intake_id", intakeID, "tenant_id", tenantID)
 
-	cfg, ok := r.notifier.depositSettings(ctx, tenantID, log)
+	cfg, ok := r.notifier.depositSettings(ctx, tenantID, log, sinPlantillaAlRecordar)
 	if !ok {
 		return "", false // el silencio ya quedó registrado con su causa; la marca sigue libre
 	}

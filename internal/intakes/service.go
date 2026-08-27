@@ -14,6 +14,11 @@ type Service struct {
 	notifier StatusNotifier
 	deposits DepositTouch
 	crm      CRMPusher
+	quotes   QuoteSender
+	// revisions es el MISMO store, visto por su puerto de escritura de revisiones.
+	// No es una dependencia aparte y no se cablea: sale de una aserción de tipo en
+	// NewService (ver allí por qué no es un Option ni un método más de Store).
+	revisions RevisionWriter
 }
 
 // StatusNotifier avisa al CLIENTE de que su solicitud cambió de estado (D-041.14).
@@ -68,6 +73,39 @@ type CRMPusher interface {
 	PushRevision(ctx context.Context, tenantID string, d Detail, revisionNo int)
 }
 
+// QuoteSender le manda al CLIENTE la cotización que escribió EL DUEÑO, por la misma
+// sesión con la que el cliente armó el pedido (Plan 044 · T4.3). Lo satisface
+// *Notifier, que es también quien satisface StatusNotifier: es una sola salida hacia
+// WhatsApp con dos motivos, igual que el recordatorio de la seña reusa ese mismo
+// notificador.
+//
+// POR QUÉ ES UN PUERTO APARTE Y NO DOS MÉTODOS MÁS EN StatusNotifier. Son dos
+// contratos con dos dueños del texto: en aquél habla LA PLATAFORMA (el aviso genérico
+// del estado destino) y en éste habla LA DUEÑA (su cotización, palabra por palabra).
+// Fundirlos obligaría a todo implementador del aviso automático a saber componer una
+// cotización, y borraría en el tipo la distinción que D-044.49 acaba de establecer.
+//
+// POR QUÉ DOS MÉTODOS Y NO UNO. Porque el texto se GUARDA antes de MANDARSE: la
+// revisión `approved` tiene que llevar exactamente lo que sale por el cable
+// (RenderedText), y eso solo se puede si componer y entregar son dos actos separables.
+// Un único SendQuote(ownerText) compondría por dentro y el llamante nunca sabría qué
+// se envió de verdad.
+type QuoteSender interface {
+	// QuoteText compone el mensaje ENTERO: el texto del dueño con la plantilla de
+	// seña del tenant adjunta. Sin plantilla configurada devuelve el texto del dueño
+	// tal cual — es la decisión de producto que ya gobierna el aviso de la seña
+	// (notifier.go): un «te pedimos una seña» que no dice dónde pagarla es peor que
+	// el silencio.
+	//
+	// No devuelve error: un fallo leyendo la config del tenant acaba en la cotización
+	// sola, que es una respuesta completa, y queda en el log de quien lo intentó.
+	QuoteText(ctx context.Context, tenantID string, in Intake, ownerText string) string
+	// SendQuote entrega ese texto por la sesión de la solicitud. NO devuelve error,
+	// por lo mismo que StatusNotifier: un mensaje que no sale no puede tumbar una
+	// aprobación que ya está escrita en la base.
+	SendQuote(ctx context.Context, tenantID string, in Intake, text string)
+}
+
 // Option configura el Service al construirlo.
 type Option func(*Service)
 
@@ -116,9 +154,40 @@ func WithCRMPusher(p CRMPusher) Option {
 	return func(s *Service) { s.crm = p }
 }
 
+// WithQuoteSender cablea la salida por la que el DUEÑO le responde al cliente al
+// aprobar un presupuesto (Plan 044 · T4.3). Se le pasa el MISMO *Notifier que
+// WithNotifier: dos objetos serían dos criterios sobre la misma plantilla de seña y
+// dos caminos distintos hacia el mismo teléfono.
+//
+// A diferencia de sus tres hermanas, su ausencia NO es un silencio: Service.Approve
+// devuelve ErrNoQuoteSender antes de tocar nada. Aprobar es «aprobar y responder», y
+// un servicio que no puede responder no puede aprobar (ver approve.go).
+func WithQuoteSender(q QuoteSender) Option {
+	return func(s *Service) { s.quotes = q }
+}
+
 // NewService construye el servicio sobre el store dado.
+//
+// El puerto de ESCRITURA de revisiones sale del propio store por aserción de tipo, y
+// conviene saber por qué no es ninguna de las otras dos opciones que había:
+//
+//   - No es un Option (WithRevisionWriter): habría que pasarle en el arranque el
+//     MISMO objeto que ya se pasa como store, y un cableado que se puede olvidar es
+//     un cableado que se olvida — con el efecto de que aprobar dejaría de escribir su
+//     rastro sin que nada lo dijera.
+//   - No se mete InsertRevision en el puerto Store: ese puerto es la BANDEJA del
+//     dueño, y RevisionWriter está separado a propósito para que los PRODUCTORES de
+//     revisiones (el proyector del carrito, el pipeline del 044) no lo reciban entero
+//     (ver revisions.go).
+//
+// Un store que no sepa escribir revisiones deja el campo en nil y Approve corta con
+// ErrNoRevisionWriter en vez de aprobar sin rastro. Los dos stores reales —*Postgres
+// y *MemoryStore— lo satisfacen.
 func NewService(store Store, opts ...Option) *Service {
 	s := &Service{store: store}
+	if w, ok := store.(RevisionWriter); ok {
+		s.revisions = w
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

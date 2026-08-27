@@ -296,7 +296,7 @@ func (n *Notifier) text(ctx context.Context, tenantID string, in Intake, to stri
 // Un fallo LEYENDO la config sí es una avería (nivel error) y también acaba en
 // silencio: preferimos no mandar a mandar un texto con marcadores sin rellenar.
 func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, log logger.Logger) (string, bool) {
-	cfg, ok := n.depositSettings(ctx, tenantID, log)
+	cfg, ok := n.depositSettings(ctx, tenantID, log, sinPlantillaAlPedirSeña)
 	if !ok {
 		return "", false
 	}
@@ -313,18 +313,89 @@ func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, 
 // Los dos `false` son los de siempre: sin plantilla es un silencio NORMAL (Warn con
 // la causa) y un fallo de lectura es una avería (Error) que también acaba en
 // silencio, porque mandar un texto con marcadores sin rellenar es peor que no mandar.
-func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger) (NotifySettings, bool) {
+//
+// `sinPlantilla` es la CONSECUENCIA, y la trae el llamante porque no es la misma en
+// los dos caminos: al pedir la seña, sin plantilla no sale NADA; al aprobar (T4.3),
+// sale la cotización del dueño sola. Un texto fijo aquí le contaría al log de uno la
+// consecuencia del otro — y un log que afirma lo que no pasó es la misma clase de
+// defecto que un mensaje que afirma un estado que no es.
+func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger, sinPlantilla string) (NotifySettings, bool) {
 	cfg, err := n.settings.NotifySettings(ctx, tenantID)
 	if err != nil {
-		log.Error("notificación: no se pudo leer la config del tenant; no se envía", "error", err)
+		log.Error("notificación: no se pudo leer la config del tenant", "error", err, "consecuencia", sinPlantilla)
 		return NotifySettings{}, false
 	}
 	if strings.TrimSpace(cfg.DepositTemplate) == "" {
 		log.Warn("notificación: el tenant no tiene plantilla de seña (tenant_settings.deposit_template); " +
-			"la transición se aplicó pero al cliente no se le manda nada")
+			sinPlantilla)
 		return NotifySettings{}, false
 	}
 	return cfg, true
+}
+
+// --- la cotización del DUEÑO (Plan 044 · T4.3, D-044.49 §1) ------------------
+//
+// Las dos funciones de abajo satisfacen QuoteSender y son la MISMA salida hacia
+// WhatsApp que el aviso automático, con otro dueño del texto: aquí las palabras las
+// pone la dueña del negocio y la plataforma solo adjunta lo que solo ella sabe (sus
+// datos de pago) y lo entrega. Por eso reusan `deliver` entero —vía custodiada de
+// PII, Ack y cero PII en los logs— en vez de abrir una segunda puerta hacia el
+// Gateway.
+
+// sinPlantillaAlPedirSeña y sinPlantillaAlAprobar son las dos consecuencias de que un
+// tenant no tenga configurada su plantilla de seña. Ver depositSettings.
+const (
+	sinPlantillaAlPedirSeña = "la transición se aplicó pero al cliente no se le manda nada"
+	sinPlantillaAlRecordar  = "no se manda el recordatorio y la marca de «ya recordado» sigue libre"
+	sinPlantillaAlAprobar   = "se le manda la cotización del dueño sola, sin instrucciones de pago"
+)
+
+// QuoteText implementa QuoteSender: compone la cotización ENTERA que va a salir —el
+// texto del dueño más la plantilla de seña del tenant— y la devuelve para que el
+// llamante la GUARDE antes de mandarla.
+//
+// El texto del dueño se devuelve TAL CUAL, byte a byte, y la plantilla se pega
+// detrás separada por un renglón en blanco. No se recorta, no se normaliza y no se
+// le añade nada más: lo que se guarda en la revisión `approved` es exactamente esto,
+// y cualquier retoque posterior convertiría ese registro en una aproximación.
+//
+// Un notificador a medias —o un tenant sin plantilla, o un fallo leyendo su config—
+// devuelve la cotización sola. Es una respuesta COMPLETA: el cliente recibe su
+// presupuesto; lo que falta es el «cómo pagar la seña», que este tenant no ha escrito.
+func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ownerText string) string {
+	if n == nil || n.log == nil || n.settings == nil {
+		return ownerText
+	}
+	log := n.log.With("intake_id", in.ID, "tenant_id", tenantID, "accion", "approve")
+	cfg, ok := n.depositSettings(ctx, tenantID, log, sinPlantillaAlAprobar)
+	if !ok {
+		return ownerText
+	}
+	// render rellena {total} y {plazo}; {fecha_limite} se queda SIN sustituir a
+	// propósito, porque al aprobar todavía no hay seña pedida y por tanto no hay
+	// deposit_due_at (ver la constante placeholderFechaLímite): un marcador visible
+	// delata que la plantilla promete una fecha que este momento no tiene, y eso es
+	// estrictamente mejor que estamparle al cliente una fecha inventada.
+	return ownerText + separadorDeSeña + render(cfg.DepositTemplate, in, cfg.DepositDueDays)
+}
+
+// SendQuote implementa QuoteSender: entrega el texto ya compuesto por la sesión de la
+// solicitud. No devuelve error (regla 1 de la cabecera) y contiene el pánico por lo
+// mismo: cuando esto corre, la aprobación YA está escrita y numerada.
+func (n *Notifier) SendQuote(ctx context.Context, tenantID string, in Intake, text string) {
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.contenerPánico(in)
+
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"status_to", NormalizeStatus(in.Status),
+		"accion", "approve",
+	)
+	n.deliver(ctx, tenantID, in, text, log)
 }
 
 // deliver resuelve el destino por la vía custodiada y despacha. Es la parte que

@@ -618,6 +618,22 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	mux.Handle("PUT /api/v1/intakes/{id}/items", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(putIntakeItemsHandler(d.Intakes, d.Entitlements))))
 
+	// APROBAR el presupuesto (Plan 044 · Ola 4 · T4.3, D-044.49): el dueño manda su
+	// cotización, el cliente la recibe por WhatsApp y la solicitud queda `confirmed`
+	// con su revisión `approved`.
+	//
+	// Va con `cart_basic` y NO con `llm_intake`, y es la MISMA razón que el 041 dejó
+	// escrita tres líneas más arriba para el `PUT …/items` (D-044.49 §3): cobrar
+	// aprobar con la feature del pipeline dejaría a un tenant `Basic` —plan REAL en
+	// UAT— corrigiendo líneas que después no puede aprobar. Re-presupuestar y aprobar
+	// son del OBJETO; la máquina que redacta el borrador sola es lo que se vende
+	// aparte, y eso ya lo cubre el gate POR CAMPO de T4.1 (intakes_llm_gate.go).
+	//
+	// Auditada como escritura (`intakes.write`), como sus hermanas: es la escritura
+	// que le habla al cliente, así que tiene que constar quién la disparó.
+	mux.Handle("POST /api/v1/intakes/{id}/approve", protect(mw, auditor, log,
+		"intakes.write", "intake", cartBasic(approveIntakeHandler(d.Intakes, d.Entitlements))))
+
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
 	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es
 	// del LOTE, no de una solicitud, y colgarla de un id obligaría a N llamadas —
