@@ -741,22 +741,33 @@ func (r *PostgresRepository) CloseIntake(ctx context.Context, in IntakeClose) (s
 	return closedID, nil
 }
 
-// GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID);
-// found=false sin error si no hay (Plan 016 · T2/T3). Usa el índice intakes_open_idx.
-func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contactID string) (Intake, bool, error) {
+// esUUID dice si `s` puede estar en una columna de tipo `uuid`. Se pregunta ANTES de
+// consultar para no depender del 22P02 de Postgres: es un predicado, no un error, y
+// como predicado lo puede leer el linter y el que venga detrás. Gemelo del `esUUID` de
+// internal/intakes, que existe por lo mismo.
+func esUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+// cabeceraIntakeCols es la proyección de public.intakes que comparten las lecturas
+// de cabecera de este repositorio. Va en una constante porque son DOS consultas
+// —por identidad de negocio (GetOpenIntake) y por evento (GetIntakeByEvent)— que
+// tienen que devolver EXACTAMENTE la misma foto: dos caminos que hacen lo mismo y
+// divergen en una columna es la forma clásica de que el pedido se vea distinto
+// según por dónde se mire.
+const cabeceraIntakeCols = `id::text, tenant_id, contact_id, session_id, status, total,
+		       created_at, updated_at, expires_at, event_id::text`
+
+// escanearCabeceraIntake lee UNA fila de cabecera con la proyección de
+// cabeceraIntakeCols. sql.ErrNoRows ⇒ (zero, false, nil): "no hay" no es un fallo.
+func escanearCabeceraIntake(row *sql.Row, qué string) (Intake, bool, error) {
 	var (
 		o       Intake
 		expires sql.NullTime
 		eventID sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id::text, tenant_id, contact_id, session_id, status, total,
-		       created_at, updated_at, expires_at, event_id::text
-		FROM public.intakes
-		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, tenantID, contactID).Scan(
+	err := row.Scan(
 		&o.ID, &o.TenantID, &o.ContactID, &o.SessionID, &o.Status, &o.Total,
 		&o.CreatedAt, &o.UpdatedAt, &expires, &eventID,
 	)
@@ -764,7 +775,7 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 	case errors.Is(err, sql.ErrNoRows):
 		return Intake{}, false, nil
 	case err != nil:
-		return Intake{}, false, fmt.Errorf("store: leer solicitud abierta: %w", err)
+		return Intake{}, false, fmt.Errorf("store: %s: %w", qué, err)
 	}
 	if expires.Valid {
 		o.ExpiresAt = expires.Time
@@ -775,6 +786,39 @@ func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contac
 		o.EventID = eventID.String
 	}
 	return o, true, nil
+}
+
+// GetOpenIntake devuelve la solicitud "open" del contacto para (tenantID, contactID);
+// found=false sin error si no hay (Plan 016 · T2/T3). Usa el índice intakes_open_idx.
+func (r *PostgresRepository) GetOpenIntake(ctx context.Context, tenantID, contactID string) (Intake, bool, error) {
+	return escanearCabeceraIntake(r.db.QueryRowContext(ctx, `
+		SELECT `+cabeceraIntakeCols+`
+		FROM public.intakes
+		WHERE tenant_id = $1 AND contact_id = $2 AND status = 'open'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, contactID), "leer solicitud abierta")
+}
+
+// GetIntakeByEvent implementa IntakeReader: la solicitud que declara `eventID` como
+// padre, SIN filtro de estado (D-044.46). La sirve el índice único parcial
+// intakes_event_id_uidx, que además garantiza que la fila sea a lo sumo una.
+//
+// Un eventID que no parsea como UUID no puede estar en la columna (es de tipo
+// `uuid`): mismo destino que "no hay" —found=false, sin error—, sin molestar a
+// Postgres con un 22P02. Es el mismo guard, y por la misma razón, que el de
+// intakes.Postgres.AbandonByEvent, la escritura gemela de esta lectura.
+func (r *PostgresRepository) GetIntakeByEvent(ctx context.Context, tenantID, eventID string) (Intake, bool, error) {
+	if !esUUID(eventID) {
+		return Intake{}, false, nil
+	}
+	return escanearCabeceraIntake(r.db.QueryRowContext(ctx, `
+		SELECT `+cabeceraIntakeCols+`
+		FROM public.intakes
+		WHERE tenant_id = $1 AND event_id = $2
+		ORDER BY created_at, id
+		LIMIT 1
+	`, tenantID, eventID), "leer la solicitud del evento")
 }
 
 // ListIntakeItems devuelve las líneas de la solicitud en el orden en que las ve el
