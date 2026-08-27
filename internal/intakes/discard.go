@@ -37,12 +37,17 @@ import (
 // «conversación viva» con el `cart` del flow_state: pregunta por el estado del
 // evento declarado (DT-043.2 SALDADA; ver postgres.go:hasLiveEventTx).
 //
-// Lo que SIGUE fuera de aquí: el filtro `orphan=true` del listado (criterio (e)
-// del Plan 041 · T4.8) — con la 0054 su materia prima es la vista
-// `event_content`/el join por `intakes.event_id`, y su dueño es el listado, no el
-// descarte. NO se aproxima a propósito: es el que PRESELECCIONA lo que se va a
-// borrar, y una aproximación que frena es aceptable mientras que una que elige
-// víctimas no lo es.
+// ✅ ENTREGADO 2026-08-27 (Plan 044 · T4.8) lo que este bloque llevaba difiriendo:
+// el filtro `orphan=true` del listado (criterio (e) del Plan 041 · T4.8). Vive
+// donde decía que le tocaba —en el listado, no en el descarte— como `Filter.Orphan`
+// y el $6 de intakeFilterWhere.
+//
+// Y NO se aproximó, que era la condición: su predicado es el NOT EXISTS del MISMO
+// que usa hasLiveEventTx aquí abajo para la guarda `live_event`, sobre el
+// `intakes.event_id` de la 0054. Es el que PRESELECCIONA lo que se va a matar, y
+// una aproximación que frena es aceptable mientras que una que elige víctimas no lo
+// es — con el criterio compartido, lo que la vista muestra es exactamente lo que
+// esta puerta acepta.
 
 // MaxDiscardBatch acota cuántas solicitudes puede descartar UNA llamada. No es una
 // regla de negocio: es lo que impide que un solo POST convierta una bandeja entera

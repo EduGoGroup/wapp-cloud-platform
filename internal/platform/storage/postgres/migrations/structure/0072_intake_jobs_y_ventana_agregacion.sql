@@ -222,9 +222,11 @@
 -- sembrar (contraste con la 0042, que sí los sembró para `intakes` porque esa sí
 -- tiene bandeja). El día que se exponga, será migración aparte.
 --
--- ADITIVA e IDEMPOTENTE. ⚠️ **NO sube `SchemaVersion`** (`migrations/version.go:297`,
--- hoy `"0.44.0"`): el Plan 044 hace UN SOLO bump al cierre, en su T6.2. Esta
--- migración NO lo toca. El runner la aplica igual —el disparo es el CAMBIO DE HASH
+-- ADITIVA e IDEMPOTENTE. ⚠️ **NO sube `SchemaVersion`**: salió a `main` bajo la
+-- PRIMERA mitad de la regla —ola intermedia, sin bump— con la constante en `"0.44.0"`.
+-- 🔧 El bump del Plan 044 ya NO espera a T6.2: llegó con la publicación de la Ola 4
+-- (`0.45.0`, ver `migrations/version.go`) y cubre también a ésta y al resto de las
+-- `0071`–`0079`, que salieron sin él. Esta migración NO lo toca. El runner la aplica igual —el disparo es el CAMBIO DE HASH
 -- del directorio, no el número de versión (migrate.go:83-96)—, así que añadir este
 -- fichero basta para que se ejecute.
 --

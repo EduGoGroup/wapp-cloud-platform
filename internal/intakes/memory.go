@@ -145,6 +145,29 @@ func (m *MemoryStore) guardarRevisiónLocked(rev Revision) (Revision, error) {
 	return rev, nil
 }
 
+// últimaRevisiónLocked es el espejo de últimaRevisiónTx: la revisión de número más
+// alto de las que hay AHORA, que es el borrador que la corrección está reemplazando.
+// Quién decide si se llega a llamar es señalDeCorrección, igual que en el store real.
+//
+// Lee `m.revisions` directamente en vez de pasar por leerRevisionesLocked por lo
+// mismo que el store real no reusa revisionsOf: aquélla PODA los literales vencidos y
+// los funde sobre el payload, que son efectos que nadie pidió por escribir una línea.
+// Aquí solo hacen falta el número y la clase.
+func (m *MemoryStore) últimaRevisiónLocked(intakeID string) últimaRevisión {
+	return func() (int, string, error) {
+		var (
+			no   int
+			kind string
+		)
+		for _, rev := range m.revisions[intakeID] {
+			if rev.RevisionNo > no {
+				no, kind = rev.RevisionNo, rev.Kind
+			}
+		}
+		return no, kind, nil
+	}
+}
+
 // leerRevisionesLocked es el espejo de revisionsOf del store real: poda lo vencido y
 // devuelve el literal a su sitio en lo que sigue vigente.
 //
@@ -379,28 +402,57 @@ func (m *MemoryStore) ListDetails(_ context.Context, tenantID string, f Filter, 
 	return out, nil
 }
 
-// matching filtra y ordena las solicitudes del tenant SIN paginar. Reproduce el
-// predicado del store Postgres: rango [From, To), variantes legadas del estado,
-// sesión exacta, más recientes primero con desempate por id. El llamante tiene el
-// candado tomado.
-func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
-	var variants []string
-	if f.Status != "" {
-		variants = StoredVariants(f.Status)
+// casaConElFiltroLocked es el PREDICADO del filtro, fila a fila: el espejo del
+// intakeFilterWhere del store real, cláusula por cláusula y en el mismo orden.
+//
+// Vive aparte de matching —que es quien ordena y pagina— porque son dos preguntas
+// distintas: «¿esta fila entra?» y «¿en qué orden salen las que entraron». Tenerlas
+// juntas hacía además que cada cláusula nueva del predicado subiera la complejidad
+// de una función que ya llevaba dentro el comparador del orden.
+//
+// `variants` llega calculado por el llamante: es el mismo para todas las filas y
+// recalcularlo por fila sería recorrer la lista de estados N veces para nada.
+func (m *MemoryStore) casaConElFiltroLocked(r row, f Filter, variants []string) bool {
+	switch {
+	case !f.From.IsZero() && r.intake.CreatedAt.Before(f.From):
+		return false
+	case !f.To.IsZero() && !r.intake.CreatedAt.Before(f.To):
+		return false // To es EXCLUSIVO, igual que el "< $3" del SQL
+	case variants != nil && !slices.Contains(variants, r.status):
+		return false
+	case f.SessionID != "" && r.intake.SessionID != f.SessionID:
+		return false
+	case f.Orphan && m.tieneEventoVivoLocked(r.intake.ID):
+		return false
 	}
+	return true
+}
+
+// tieneEventoVivoLocked responde lo mismo que hasLiveEventTx en el store real: «¿está
+// `open` el evento que ESTA solicitud declara?». Es el criterio que comparten la
+// guarda `live_event` del descarte y el filtro de huérfanas (Plan 044 · T4.8), y por
+// eso está escrito UNA vez: si divergieran, la bandeja de huérfanos enseñaría
+// solicitudes que el descarte va a rechazar.
+//
+// Sin ligadura —fila legada pre-0054, eventOf vacío— no hay evento vivo que mirar.
+func (m *MemoryStore) tieneEventoVivoLocked(intakeID string) bool {
+	eventID := m.eventOf[intakeID]
+	return eventID != "" && m.events[eventID] == "open"
+}
+
+// matching filtra y ordena las solicitudes del tenant SIN paginar. Reproduce el
+// predicado del store Postgres: rango [From, To), variantes legadas de CADA estado
+// pedido, sesión exacta, la orfandad de `f.Orphan` y el orden que dice `f.Sort` con
+// desempate por id. El llamante tiene el candado tomado y le pasa el filtro ya
+// NORMALIZADO (de ahí sale el orden por defecto).
+func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
+	// La expansión es de CADA estado del filtro, no del primero (D-044.47 §2):
+	// el mismo StoredVariantsOf que arma el `= ANY($4)` del store real.
+	variants := StoredVariantsOf(f.Statuses)
 
 	matched := make([]Intake, 0, len(m.rows[tenantID]))
 	for _, r := range m.rows[tenantID] {
-		if !f.From.IsZero() && r.intake.CreatedAt.Before(f.From) {
-			continue
-		}
-		if !f.To.IsZero() && !r.intake.CreatedAt.Before(f.To) {
-			continue // To es EXCLUSIVO, igual que el "< $3" del SQL
-		}
-		if variants != nil && !slices.Contains(variants, r.status) {
-			continue
-		}
-		if f.SessionID != "" && r.intake.SessionID != f.SessionID {
+		if !m.casaConElFiltroLocked(r, f, variants) {
 			continue
 		}
 		in := r.intake
@@ -408,7 +460,15 @@ func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
 		matched = append(matched, in)
 	}
 
+	// Los dos criterios giran JUNTOS con `sort`, igual que el ORDER BY del store
+	// real: created_at manda y el id desempata, los dos en el mismo sentido.
 	slices.SortFunc(matched, func(a, b Intake) int {
+		if f.Sort == SortOldest {
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.Compare(b.CreatedAt) // más antiguas primero
+			}
+			return strings.Compare(a.ID, b.ID)
+		}
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return b.CreatedAt.Compare(a.CreatedAt) // más recientes primero
 		}
@@ -568,7 +628,9 @@ func (m *MemoryStore) ensureShippingLocked(tenantID string, i int, policy Shippi
 // las líneas que quedan y la revisión `corrected` se escribe con la foto de lo
 // persistido. La paridad es lo que hace que un test de handler contra este store
 // diga algo verdadero sobre producción.
-func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+// La SEÑAL FEW-SHOT (T4.4) se resuelve igual que en el store real: mirando cuál era
+// la última revisión ANTES de escribir la nueva, y solo cuando el modo lo pide.
+func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -594,7 +656,11 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 
 		head := m.rows[tenantID][i].intake
 		head.Status = NormalizeStatus(r.status)
-		rev, err := correctedRevision(intakeID, head.Total, lines)
+		signal, err := señalDeCorrección(mode, m.últimaRevisiónLocked(intakeID))
+		if err != nil {
+			return Detail{}, err
+		}
+		rev, err := correctedRevision(intakeID, head.Total, lines, signal)
 		if err != nil {
 			return Detail{}, err
 		}
@@ -764,6 +830,39 @@ func (m *MemoryStore) MarkDepositReminded(_ context.Context, tenantID, intakeID 
 		}
 		m.rows[tenantID][i].intake.DepositRemindedAt = at
 		in.DepositRemindedAt = at
+		return in, true, nil
+	}
+	return Intake{}, false, nil
+}
+
+// MarkExpiryReminded implementa ExpiryStore con el MISMO compare-and-swap que el
+// Postgres (Plan 044 · T4.5): las tres condiciones se evalúan y la marca se escribe
+// SIN soltar el candado, así que dos toques simultáneos no pueden ganar los dos. Esa
+// paridad es lo que hace que un test de «un solo recordatorio» contra este store
+// diga algo verdadero sobre producción.
+//
+// Reusa Overdue —la MISMA función que pinta la marca en la bandeja y que hace de
+// pre-filtro— en vez de reescribir la comparación de fechas: tres copias de la regla
+// serían tres sitios donde el plazo puede divergir.
+//
+// NO toca UpdatedAt, exactamente como la consulta real, y aquí es todavía más
+// importante que allí: UpdatedAt es la BASE del plazo, así que tocarlo apagaría la
+// marca justo al encender el recordatorio.
+func (m *MemoryStore) MarkExpiryReminded(_ context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, r := range m.rows[tenantID] {
+		if r.intake.ID != intakeID {
+			continue
+		}
+		in := r.intake
+		in.Status = NormalizeStatus(r.status)
+		if !Overdue(in, at) || yaAvisado(in) {
+			return Intake{}, false, nil
+		}
+		m.rows[tenantID][i].intake.ExpiryRemindedAt = at
+		in.ExpiryRemindedAt = at
 		return in, true, nil
 	}
 	return Intake{}, false, nil

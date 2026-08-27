@@ -13,6 +13,13 @@ type Service struct {
 	store    Store
 	notifier StatusNotifier
 	deposits DepositTouch
+	expiry   ExpiryTouch
+	crm      CRMPusher
+	quotes   QuoteSender
+	// revisions es el MISMO store, visto por su puerto de escritura de revisiones.
+	// No es una dependencia aparte y no se cablea: sale de una aserción de tipo en
+	// NewService (ver allí por qué no es un Option ni un método más de Store).
+	revisions RevisionWriter
 }
 
 // StatusNotifier avisa al CLIENTE de que su solicitud cambió de estado (D-041.14).
@@ -36,6 +43,100 @@ type StatusNotifier interface {
 // mensaje que no salió.
 type DepositTouch interface {
 	Remind(ctx context.Context, tenantID string, touched []Intake)
+}
+
+// ExpiryTouch evalúa el recordatorio PEREZOSO del PLAZO DEL PRESUPUESTO sobre las
+// solicitudes que una lectura acaba de tocar (Plan 044 · T4.5, D-044.50). Lo
+// satisface *ExpiryReminder.
+//
+// Es el HERMANO de DepositTouch y no una versión suya: aquél le habla al CLIENTE
+// para recordarle una seña, éste le habla al DUEÑO para recordarle una decisión que
+// no ha tomado. Dos destinatarios, dos marcas en la base y dos motivos —y por eso
+// son dos puertos y no un método más del primero: un tenant puede tener cableado
+// uno y no el otro, y de hecho hoy el segundo emite a un sumidero de traza.
+//
+// NO devuelve error, exactamente por lo mismo que sus dos hermanos.
+type ExpiryTouch interface {
+	RemindOverdue(ctx context.Context, tenantID string, touched []Intake)
+}
+
+// CRMPusher empuja al puente CRM del tenant la revisión de una solicitud que
+// ACABA de escribirse (Plan 044 · Ola 4 · Tanda 2). Lo satisface
+// *crmpush.RevisionPusher.
+//
+// 🔴 ES UN PUERTO LOCAL, Y NO UN IMPORT, POR UN CICLO REAL. La pieza que arma y
+// encola el contrato vive en internal/integrations/crmpush, y ESE paquete importa
+// a éste (necesita NormalizeStatus: el contrato wapp-crm-v1 jamás emite `closed`).
+// Si el Service importara crmpush para llamarlo, el ciclo sería directo —
+// intakes → crmpush → intakes— y no compilaría. Declarar aquí la forma que se
+// necesita es exactamente lo que ya hacen StatusNotifier, DepositTouch,
+// Destinations y SettingsReader: este paquete describe a sus colaboradores, no los
+// importa.
+//
+// NO devuelve error, y el motivo es MÁS FUERTE que el de sus dos hermanos. Ahí el
+// argumento es «una escritura aplicada no se deshace porque el teléfono del cliente
+// esté apagado»; aquí, además, las escrituras que disparan el empuje NO SON
+// IDEMPOTENTES: ReplaceItems escribe una revisión NUEVA en cada llamada. Un error
+// propagado le devolvería un 500 al dueño por un encolado fallido, el dueño
+// reintentaría, y el reintento escribiría la revisión N+1 — dos revisiones para una
+// sola corrección. Perder un empuje es malo; fabricar una revisión de más por
+// intentar recuperarlo es peor.
+//
+// ⚠️ LA CONSECUENCIA HAY QUE SABERLA: un encolado que falla NO se reintenta. La
+// durabilidad de webhook_outbox empieza cuando la fila ENTRA; antes de eso no hay
+// red. El fallo queda en el log con su intake_id.
+type CRMPusher interface {
+	PushRevision(ctx context.Context, tenantID string, d Detail, revisionNo int)
+}
+
+// QuoteSender es LA VOZ DEL DUEÑO hacia el cliente, por la misma sesión con la que el
+// cliente armó el pedido: hoy la cotización al aprobar (Plan 044 · T4.3) y la pregunta
+// al pedir información (T4.4). Lo satisface *Notifier, que es también quien satisface
+// StatusNotifier: es una sola salida hacia WhatsApp con varios motivos, igual que el
+// recordatorio de la seña reusa ese mismo notificador.
+//
+// POR QUÉ ES UN PUERTO APARTE Y NO DOS MÉTODOS MÁS EN StatusNotifier. Son dos
+// contratos con dos dueños del texto: en aquél habla LA PLATAFORMA (el aviso genérico
+// del estado destino) y en éste habla LA DUEÑA (su cotización, palabra por palabra).
+// Fundirlos obligaría a todo implementador del aviso automático a saber componer una
+// cotización, y borraría en el tipo la distinción que D-044.49 acaba de establecer.
+//
+// POR QUÉ DOS MÉTODOS Y NO UNO. Porque el texto se GUARDA antes de MANDARSE: la
+// revisión `approved` tiene que llevar exactamente lo que sale por el cable
+// (RenderedText), y eso solo se puede si componer y entregar son dos actos separables.
+// Un único SendQuote(ownerText) compondría por dentro y el llamante nunca sabría qué
+// se envió de verdad.
+type QuoteSender interface {
+	// QuoteText compone el mensaje ENTERO: el texto del dueño con la plantilla de
+	// seña del tenant adjunta. Sin plantilla configurada devuelve el texto del dueño
+	// tal cual — es la decisión de producto que ya gobierna el aviso de la seña
+	// (notifier.go): un «te pedimos una seña» que no dice dónde pagarla es peor que
+	// el silencio.
+	//
+	// No devuelve error: un fallo leyendo la config del tenant acaba en la cotización
+	// sola, que es una respuesta completa, y queda en el log de quien lo intentó.
+	QuoteText(ctx context.Context, tenantID string, in Intake, ownerText string) string
+	// SendQuote entrega ese texto por la sesión de la solicitud. NO devuelve error,
+	// por lo mismo que StatusNotifier: un mensaje que no sale no puede tumbar una
+	// aprobación que ya está escrita en la base.
+	SendQuote(ctx context.Context, tenantID string, in Intake, text string)
+	// SendQuestion entrega la PREGUNTA que escribió el dueño al pedir más
+	// información (T4.4). Tampoco devuelve error, y por lo mismo.
+	//
+	// POR QUÉ AQUÍ Y NO EN UN PUERTO NUEVO. Es la misma salida, el mismo dueño del
+	// texto y las mismas reglas; lo único que cambia es el motivo. Un puerto aparte
+	// sería un segundo cableado que alguien puede olvidar en el arranque, con el
+	// efecto de que pedir información dejaría de preguntar sin que nada lo dijera.
+	//
+	// POR QUÉ NO REUSA SendQuote TAL CUAL, que era lo tentador: aquél ADJUNTA la
+	// plantilla de seña del tenant vía QuoteText y se registra en el log como
+	// `accion=approve`. Adjuntarle instrucciones de pago a una pregunta sería
+	// pedirle la seña a quien todavía no sabe qué va a costar, y un log que dice
+	// «approve» sobre una petición de información es la misma clase de defecto que
+	// un mensaje que afirma un estado que no es. Lo COMÚN —la vía custodiada de PII,
+	// el Ack, el cero PII en los logs— sí se reusa entero: las dos entregas bajan al
+	// mismo `deliver` (notifier.go).
+	SendQuestion(ctx context.Context, tenantID string, in Intake, question string)
 }
 
 // Option configura el Service al construirlo.
@@ -66,9 +167,83 @@ func WithDepositReminder(d DepositTouch) Option {
 	return func(s *Service) { s.deposits = d }
 }
 
+// WithExpiryReminder cablea el recordatorio PEREZOSO del plazo del presupuesto a
+// las LECTURAS del dueño (Plan 044 · T4.5, D-044.50 §2). Sin esta opción, List y Get
+// no evalúan ningún plazo y no avisan a nadie.
+//
+// 🔴 NO SUSTITUYE NI DEPENDE DE WithDepositReminder, y esa independencia es la mitad
+// del cableado: son dos colaboradores con dos marcas, dos destinatarios y dos
+// motivos. Cablear uno solo tiene que funcionar —lo comprueba un test— porque
+// mientras el emisor real del aviso al dueño no exista (Plan 045) es perfectamente
+// posible que un despliegue lleve uno y no el otro. Ver Service.touch: su guarda
+// pregunta por cada uno POR SEPARADO justamente por esto.
+//
+// El precio es el mismo que ya pagan sus hermanas: colaborador opcional, no puede
+// devolver error, no puede tumbar al llamante, y sin cablear no existe.
+//
+// ⚠️ LO QUE ESTA OPCIÓN NO HACE, aunque su nombre lo sugiera: no marca nada como
+// vencido y no cambia el estado de ninguna solicitud. La MARCA «vencido» es
+// derivada, se calcula al leer (Overdue) y no necesita cableado ninguno; esto solo
+// enciende el RECORDATORIO.
+func WithExpiryReminder(e ExpiryTouch) Option {
+	return func(s *Service) { s.expiry = e }
+}
+
+// WithCRMPusher cablea el empuje al puente CRM de las revisiones que el DUEÑO
+// escribe desde su consola (Plan 044 · Ola 4 · Tanda 2). Sin esta opción el
+// servicio funciona igual y no encola nada — lo mismo que promete WithNotifier
+// para el teléfono del cliente.
+//
+// POR QUÉ AQUÍ Y NO EN EL HANDLER, que es la parte que decide el diseño. Hasta esta
+// tarea el ÚNICO productor de `intake.push` era el WebhookSink del motor de flujos,
+// que solo reacciona al cierre del carrito: cualquier ruta nueva que moviera una
+// solicitud tenía que ACORDARSE de encolar por su cuenta, y «acordarse en cada
+// sitio» es exactamente cómo nacen los defectos que este plan lleva dos olas
+// pagando. Colgado del Service, el empuje viaja con la escritura y una puerta nueva
+// lo hereda sin copiar una línea.
+//
+// El precio es el mismo que ya paga SetStatus con su notificador: colaborador
+// opcional, no puede devolver error, no puede tumbar al llamante, y sin cablear no
+// existe.
+func WithCRMPusher(p CRMPusher) Option {
+	return func(s *Service) { s.crm = p }
+}
+
+// WithQuoteSender cablea la salida por la que el DUEÑO le responde al cliente al
+// aprobar un presupuesto (Plan 044 · T4.3). Se le pasa el MISMO *Notifier que
+// WithNotifier: dos objetos serían dos criterios sobre la misma plantilla de seña y
+// dos caminos distintos hacia el mismo teléfono.
+//
+// A diferencia de sus tres hermanas, su ausencia NO es un silencio: Service.Approve y
+// Service.RequestInfo devuelven ErrNoQuoteSender antes de tocar nada. Aprobar es
+// «aprobar y responder» y pedir información es «preguntar»: un servicio que no puede
+// hablar no puede hacer ninguna de las dos (ver approve.go y requestinfo.go).
+func WithQuoteSender(q QuoteSender) Option {
+	return func(s *Service) { s.quotes = q }
+}
+
 // NewService construye el servicio sobre el store dado.
+//
+// El puerto de ESCRITURA de revisiones sale del propio store por aserción de tipo, y
+// conviene saber por qué no es ninguna de las otras dos opciones que había:
+//
+//   - No es un Option (WithRevisionWriter): habría que pasarle en el arranque el
+//     MISMO objeto que ya se pasa como store, y un cableado que se puede olvidar es
+//     un cableado que se olvida — con el efecto de que aprobar dejaría de escribir su
+//     rastro sin que nada lo dijera.
+//   - No se mete InsertRevision en el puerto Store: ese puerto es la BANDEJA del
+//     dueño, y RevisionWriter está separado a propósito para que los PRODUCTORES de
+//     revisiones (el proyector del carrito, el pipeline del 044) no lo reciban entero
+//     (ver revisions.go).
+//
+// Un store que no sepa escribir revisiones deja el campo en nil y Approve corta con
+// ErrNoRevisionWriter en vez de aprobar sin rastro. Los dos stores reales —*Postgres
+// y *MemoryStore— lo satisfacen.
 func NewService(store Store, opts ...Option) *Service {
 	s := &Service{store: store}
+	if w, ok := store.(RevisionWriter); ok {
+		s.revisions = w
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -80,9 +255,10 @@ func NewService(store Store, opts ...Option) *Service {
 // antes de consultar: el llamante no puede pedir 100k filas de un golpe.
 //
 // Es además uno de los tres TOQUES que evalúan el recordatorio de la seña (D-041.12,
-// T4.4): el dueño abriendo su bandeja es lo que hace de reloj, porque en esta
-// plataforma no hay ninguno (ADR-0003). El toque va DESPUÉS de tener la página —solo
-// se evalúa lo que de verdad se leyó— y no puede alterar lo que se devuelve.
+// T4.4) y uno de los DOS que evalúan el del plazo del presupuesto (T4.5): el dueño
+// abriendo su bandeja es lo que hace de reloj, porque en esta plataforma no hay
+// ninguno (ADR-0003). El toque va DESPUÉS de tener la página —solo se evalúa lo que
+// de verdad se leyó— y no puede alterar lo que se devuelve.
 func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, error) {
 	f = f.Normalized()
 	items, total, err := s.store.List(ctx, tenantID, f)
@@ -141,20 +317,36 @@ func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, e
 	return detail, nil
 }
 
-// touch evalúa el recordatorio de la seña sobre lo que una lectura acaba de leer.
-// Sin la opción cableada (el default, y lo que usan todos los tests de dominio) no
-// hace nada: la lectura sigue siendo tan pura como antes de T4.4.
+// touch evalúa los recordatorios PEREZOSOS sobre lo que una lectura acaba de leer.
+// Sin ninguna opción cableada (el default, y lo que usan todos los tests de dominio)
+// no hace nada: la lectura sigue siendo tan pura como antes de T4.4.
 //
 // NO se llama desde ListDetails ni Summary a propósito, aunque también leen
 // solicitudes: son el EXPORT y el resumen, caminos de datos masivos que un dueño
 // dispara para llevarse una hoja de cálculo. Que descargar un CSV le mande WhatsApps
 // a sus clientes sería una sorpresa desagradable, y encima sin cota útil (ahí no hay
 // página: son hasta MaxExportIntakes solicitudes).
+//
+// 🔴 SON DOS COLABORADORES INDEPENDIENTES, y la guarda tiene que preguntarlo dos
+// veces. Hasta T4.5 esto era `if s.deposits == nil || len(touched) == 0 { return }`,
+// y ese `return` habría dejado el recordatorio del plazo MUDO Y EN VERDE en
+// cualquier despliegue sin el recordatorio de la seña: el colaborador nuevo ni
+// siquiera llegaba a mirar. Lo único COMPARTIDO es el corte por lista vacía, que no
+// es de nadie: sin filas leídas no hay nada que evaluar.
+//
+// El ORDEN entre los dos no significa nada y no debe significarlo: hablan con
+// personas distintas (el cliente y el dueño), escriben marcas distintas y ninguno
+// puede ver lo que hizo el otro.
 func (s *Service) touch(ctx context.Context, tenantID string, touched []Intake) {
-	if s.deposits == nil || len(touched) == 0 {
+	if len(touched) == 0 {
 		return
 	}
-	s.deposits.Remind(ctx, tenantID, touched)
+	if s.deposits != nil {
+		s.deposits.Remind(ctx, tenantID, touched)
+	}
+	if s.expiry != nil {
+		s.expiry.RemindOverdue(ctx, tenantID, touched)
+	}
 }
 
 // SetStatus aplica una transición del ciclo de vida y devuelve la solicitud ya
@@ -180,7 +372,13 @@ func (s *Service) touch(ctx context.Context, tenantID string, touched []Intake) 
 // nunca antes ni en paralelo: solo se le cuenta a alguien lo que ya es verdad en la
 // base. No puede fallar hacia arriba —NotifyStatus no devuelve error— porque una
 // transición aplicada no se deshace porque el teléfono del cliente esté apagado.
-func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) (Intake, error) {
+//
+// `notice` dice QUIÉN da ese aviso (ver StatusNotice en notifier.go). El
+// <select> de estado de la consola pasa NoticeToClient y se comporta exactamente
+// como antes; una puerta que ya le escribe al cliente con su propio texto pasa
+// NoticeByCaller y la plataforma se calla en esa transición. La transición se
+// aplica IGUAL en los dos casos: callarse no es no registrar.
+func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string, notice StatusNotice) (Intake, error) {
 	to = NormalizeStatus(to)
 
 	current, err := s.store.Get(ctx, tenantID, intakeID)
@@ -196,7 +394,7 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string) 
 	if err != nil {
 		return Intake{}, err
 	}
-	s.notify(ctx, tenantID, updated, from)
+	s.notify(ctx, tenantID, updated, from, notice)
 	return updated, nil
 }
 
@@ -237,7 +435,16 @@ func (s *Service) AbandonByEvent(ctx context.Context, tenantID, eventID string) 
 //     abajo calla. Es defensa barata contra un store futuro que "arregle" una
 //     transición imposible devolviendo el estado actual: al cliente le llegaría un
 //     WhatsApp que no corresponde a ningún cambio.
-func (s *Service) notify(ctx context.Context, tenantID string, updated Intake, from string) {
+//
+// El CUARTO motivo para callar lo trae el llamante (D-044.49): con NoticeByCaller
+// la transición se aplica y el aviso genérico no sale, porque quien la pidió ya le
+// escribió al cliente con su propio texto. Va PRIMERO —antes del notificador y
+// antes de la guarda del destino— porque es una decisión de producto y no una
+// defensa: si el llamante habla, aquí no hay nada que evaluar.
+func (s *Service) notify(ctx context.Context, tenantID string, updated Intake, from string, notice StatusNotice) {
+	if notice.silencia() {
+		return
+	}
 	if s.notifier == nil {
 		return
 	}
@@ -245,6 +452,33 @@ func (s *Service) notify(ctx context.Context, tenantID string, updated Intake, f
 		return
 	}
 	s.notifier.NotifyStatus(ctx, tenantID, updated, from)
+}
+
+// PushRevisionToCRM encola para el puente CRM del tenant la revisión `revisionNo`
+// de la solicitud `d`, con su ciclo de vida REAL (Plan 044 · Ola 4 · Tanda 2).
+//
+// La llama la escritura que acaba de parir esa revisión —dentro de este Service, no
+// desde el handler—: es el mismo criterio que notify, que cuelga del compare-and-swap
+// ganador y no de la petición. Sin CRMPusher cableado no hace nada.
+//
+// 🔴 EL `revisionNo` ES OBLIGATORIO Y EXPLÍCITO, Y AHÍ ESTÁ TODO EL DISEÑO. El
+// puente hace UPSERT por (intake_id, revision_no) y trata como DUPLICADO todo par
+// repetido (manual del integrador §4), así que el número no es un adorno del
+// documento: es lo que distingue «esto es un estado nuevo» de «esto ya lo sabía».
+// Se pide por parámetro en vez de deducirlo de d.Revisions porque solo el llamante
+// sabe cuál de ellas acaba de escribir, y porque un empuje sin revisión NUEVA es un
+// empuje que el puente descarta en silencio.
+//
+// ⚠️ CONSECUENCIA QUE NO SE TAPA: webhook_outbox NO tiene unicidad por
+// (intake_id, revision_no) —la 0046 deja la idempotencia al receptor, y su COMMENT
+// lo dice—, así que llamar dos veces con el MISMO número encola dos filas y el
+// puente recibe dos entregas. Lo que impide que eso pase no es la base: es colgar
+// esta llamada de la escritura que numeró la revisión, una vez por revisión.
+func (s *Service) PushRevisionToCRM(ctx context.Context, tenantID string, d Detail, revisionNo int) {
+	if s.crm == nil {
+		return
+	}
+	s.crm.PushRevision(ctx, tenantID, d, revisionNo)
 }
 
 // EnsureShippingLine garantiza la línea estándar de envío de una solicitud

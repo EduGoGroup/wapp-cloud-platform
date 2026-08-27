@@ -178,7 +178,7 @@ func TestPostgres_List_StatusAlcanzaElLegado(t *testing.T) {
 	store, tenant, id := bandeja(t)
 
 	got, total, err := store.List(context.Background(), tenant,
-		intakes.Filter{Status: intakes.StatusConfirmed})
+		intakes.Filter{Statuses: []string{intakes.StatusConfirmed}})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestPostgres_Abandoned_SeFiltraEnElListado(t *testing.T) {
 	store, tenant, abandonada, viva := bandejaAbandonada(t)
 	ctx := context.Background()
 
-	got, total, err := store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusAbandoned})
+	got, total, err := store.List(ctx, tenant, intakes.Filter{Statuses: []string{intakes.StatusAbandoned}})
 	if err != nil {
 		t.Fatalf("List(abandoned): %v", err)
 	}
@@ -631,7 +631,7 @@ func TestPostgres_Abandoned_SeFiltraEnElListado(t *testing.T) {
 		t.Fatalf("List(abandoned): total=%d ids=%v; quiero solo la abandonada", total, ids(got))
 	}
 
-	got, total, err = store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusOpen})
+	got, total, err = store.List(ctx, tenant, intakes.Filter{Statuses: []string{intakes.StatusOpen}})
 	if err != nil {
 		t.Fatalf("List(open): %v", err)
 	}
@@ -648,7 +648,7 @@ func TestPostgres_Abandoned_ConservaLíneasYRevisiones(t *testing.T) {
 	ctx := context.Background()
 
 	details, err := store.ListDetails(ctx, tenant,
-		intakes.Filter{Status: intakes.StatusAbandoned}, intakes.MaxExportIntakes)
+		intakes.Filter{Statuses: []string{intakes.StatusAbandoned}}, intakes.MaxExportIntakes)
 	if err != nil {
 		t.Fatalf("ListDetails(abandoned): %v", err)
 	}
@@ -674,4 +674,98 @@ func ids(in []intakes.Intake) []string {
 		out = append(out, i.ID)
 	}
 	return out
+}
+
+// ============ el filtro de HUÉRFANAS contra BD real (T4.8, REQ-21c) ============
+
+// seedIntakeConEvento siembra UNA solicitud del tenant colgada de un evento propio
+// en el estado pedido, y devuelve su id. Es seedPG con el estado del PADRE abierto a
+// parámetro: los fixtures de listado cuelgan todo de eventos `cancelled` y este
+// filtro necesita justo la otra mitad.
+//
+// No hay variante con event_id NULL —la fila LEGADA pre-0054— y no es un olvido: el
+// CHECK NOT VALID de la 0054 valida TODO INSERT, así que esa fila ya no se puede
+// crear. Su caso lo cubren los tests de MemoryStore y el de filterArgs.
+func seedIntakeConEvento(t *testing.T, db *sql.DB, tenantID, estadoDelEvento string, day int) string {
+	t.Helper()
+	id := uuid.NewString()
+	eventID := seedEventoPG(t, db, tenantID, estadoDelEvento)
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO public.intakes (id, tenant_id, contact_id, session_id, status, total, event_id, created_at, updated_at)
+		VALUES ($1, $2, $3, 'sess-orphan', $4, 18000, $5, $6, $6)
+	`, id, tenantID, "contacto-opaco-"+id[:8], intakes.StatusOpen, eventID,
+		time.Date(2026, 8, day, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("sembrando solicitud con evento %s: %v", estadoDelEvento, err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.ExecContext(context.Background(),
+			`DELETE FROM public.intakes WHERE id = $1`, id); err != nil {
+			t.Logf("limpiando solicitud %s: %v", id, err)
+		}
+	})
+	return id
+}
+
+// bandejaConConversaciones es el fixture del criterio de T4.8, y es el mínimo que lo
+// puede demostrar: UNA solicitud cuyo evento sigue `open` y UNA cuyo evento ya está
+// `cancelled`. Con una sola fila el filtro pasaría devolviéndolo todo.
+func bandejaConConversaciones(t *testing.T) (store *intakes.Postgres, tenant, viva, huérfana string) {
+	t.Helper()
+	db := openTestDB(t)
+	tenant = uuid.NewString()
+	ensureTenantPG(t, db, tenant)
+	huérfana = seedIntakeConEvento(t, db, tenant, "cancelled", 1)
+	viva = seedIntakeConEvento(t, db, tenant, "open", 2)
+	return intakes.NewPostgres(db), tenant, viva, huérfana
+}
+
+// TestPostgres_List_Orphan_SoloLasSinEventoVIVO es el criterio de T4.8 contra
+// Postgres: el `$6` del predicado devuelve SOLO las solicitudes cuyo evento
+// declarado ya no está `open`, y el total cuenta lo mismo que la página.
+func TestPostgres_List_Orphan_SoloLasSinEventoVIVO(t *testing.T) {
+	store, tenant, viva, huérfana := bandejaConConversaciones(t)
+
+	got, total, err := store.List(context.Background(), tenant, intakes.Filter{Orphan: true})
+	if err != nil {
+		t.Fatalf("listar huérfanas: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total=%d, quiero 1: el total tiene que contar el MISMO predicado que la página", total)
+	}
+	if len(got) != 1 || got[0].ID != huérfana {
+		t.Fatalf("ids=%v, quiero solo %s (la del evento `cancelled`); %s tiene conversación viva",
+			idsDeIntakes(got), huérfana, viva)
+	}
+}
+
+// TestPostgres_List_SinOrphan_DevuelveLasDos: cero regresión del Plan 041 medida
+// contra la misma bandeja. Es lo que separa «el filtro funciona» de «el JOIN se está
+// comiendo filas»: sin pedir huérfanas tienen que salir las dos.
+func TestPostgres_List_SinOrphan_DevuelveLasDos(t *testing.T) {
+	store, tenant, viva, huérfana := bandejaConConversaciones(t)
+
+	got, total, err := store.List(context.Background(), tenant, intakes.Filter{})
+	if err != nil {
+		t.Fatalf("listar sin filtro: %v", err)
+	}
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("ids=%v total=%d, quiero las dos (%s y %s): sin `orphan` el predicado no se aplica",
+			idsDeIntakes(got), total, viva, huérfana)
+	}
+}
+
+// TestPostgres_ListDetails_Orphan: el export comparte el predicado con la lista
+// (intakeFilterWhere), así que el filtro tiene que valer también ahí — y este test
+// es además el que caza el renumerado de placeholders, porque el `LIMIT` del CTE
+// pasó de $6 a $7 con este cambio.
+func TestPostgres_ListDetails_Orphan(t *testing.T) {
+	store, tenant, _, huérfana := bandejaConConversaciones(t)
+
+	got, err := store.ListDetails(context.Background(), tenant, intakes.Filter{Orphan: true}, 50)
+	if err != nil {
+		t.Fatalf("export de huérfanas: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != huérfana {
+		t.Fatalf("el export de huérfanas devolvió %d filas, quiero solo %s", len(got), huérfana)
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -24,14 +25,29 @@ type IntakeService interface {
 	// Get devuelve la solicitud con sus líneas; intakes.ErrNotFound si no es del
 	// tenant (404 opaco).
 	Get(ctx context.Context, tenantID, intakeID string) (intakes.Detail, error)
-	// SetStatus aplica una transición del ciclo de vida (D-041.10).
-	SetStatus(ctx context.Context, tenantID, intakeID, status string) (intakes.Intake, error)
+	// SetStatus aplica una transición del ciclo de vida (D-041.10). `notice` dice
+	// quién le cuenta el cambio al cliente: esta ruta —el <select> genérico de la
+	// consola— pasa SIEMPRE intakes.NoticeToClient, que es el aviso automático de
+	// T4.2. Las puertas que escriben su propio mensaje al cliente pasan
+	// NoticeByCaller y no van por aquí.
+	SetStatus(ctx context.Context, tenantID, intakeID, status string, notice intakes.StatusNotice) (intakes.Intake, error)
 	// Discard DESCARTA a mano un lote de solicitudes huérfanas dejándolas en
 	// `abandoned` (T4.8, D-041.18). Contesta por ítem: no es todo-o-nada.
 	Discard(ctx context.Context, tenantID string, intakeIDs []string) (intakes.DiscardResult, error)
 	// ReplaceItems sustituye las líneas de cliente de una solicitud en
 	// `pending_approval` y deja la revisión `corrected` del dueño (T4.10, REQ-36).
-	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item) (intakes.Detail, error)
+	// `mode` es el `as_correction` del 044 (T4.4): con intakes.EditPlain se comporta
+	// exactamente como el PUT del 041.
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item, mode intakes.EditMode) (intakes.Detail, error)
+	// Approve APRUEBA el presupuesto (Plan 044 · T4.3): manda al cliente la
+	// cotización que escribió el dueño con la plantilla de seña adjunta, deja la
+	// solicitud en `confirmed` con su revisión `approved` y empuja esa revisión al
+	// puente CRM. `renderedText` es el texto del DUEÑO y es obligatorio.
+	Approve(ctx context.Context, tenantID, intakeID, renderedText string) (intakes.Detail, error)
+	// RequestInfo manda al cliente la PREGUNTA que escribió el dueño y deja la
+	// solicitud en `needs_info` (Plan 044 · T4.4). `question` es obligatoria: la
+	// petición de información jamás sale sola.
+	RequestInfo(ctx context.Context, tenantID, intakeID, question string) (intakes.Detail, error)
 	// ListDetails devuelve las solicitudes del filtro CON sus líneas y sin
 	// paginar: es lo que desnormaliza el export (T1.2). intakes.ErrTooLarge si el
 	// filtro abarca más de intakes.MaxExportIntakes.
@@ -52,6 +68,24 @@ type IntakeService interface {
 // la publica. Va en el DTO de la cabecera y no solo en el del detalle, así que la
 // lista la trae igual: es un campo de la solicitud, y una bandeja que muestra
 // «dejarlo en portería» junto al pedido es exactamente para lo que existe.
+//
+// `overdue` es la MARCA DERIVADA del plazo del presupuesto (Plan 044 · T4.5,
+// REQ-25): «este presupuesto lleva más de intakes.QuoteDeadline esperando la
+// decisión del dueño». Se calcula al leer, en esta misma proyección, y no tiene
+// columna en la base ni estado propio.
+//
+// 🔴 `overdue: true` NO CAMBIA `status`, y quien pinte esto no puede tratarlo como
+// si lo cambiara: la solicitud sigue en `pending_approval`, con sus mismos
+// `allowed_transitions`, y la salida sigue siendo humana —aprobar, rechazar o
+// descartar—. Nada muere por tiempo (D-041.16). Por eso el campo NO se llama
+// `expired`: `expired` es un ESTADO legado y terminal del que ya nadie entra ni
+// sale, y llamar igual a las dos cosas invitaría a confundir «lleva mucho
+// esperando» con «está muerto».
+//
+// Viaja SIEMPRE, también en `false`, por la misma razón que `customer_note` y
+// `customization`: quien consume tiene que poder pintar la fila sin preguntarse si
+// la clave falta porque el presupuesto está en plazo o porque este servidor todavía
+// no la publica.
 type intakeDTO struct {
 	ID           string  `json:"id"`
 	ContactID    string  `json:"contact_id"`
@@ -59,6 +93,7 @@ type intakeDTO struct {
 	Status       string  `json:"status"`
 	Total        float64 `json:"total"`
 	CustomerNote string  `json:"customer_note"`
+	Overdue      bool    `json:"overdue"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 }
@@ -154,6 +189,37 @@ type intakeRevisionDTO struct {
 	RenderedText string          `json:"rendered_text,omitempty"`
 	CreatedBy    string          `json:"created_by,omitempty"`
 	CreatedAt    string          `json:"created_at"`
+	// LiteralPrunedAt es el instante RFC3339 UTC en que la RETENCIÓN destruyó el
+	// texto literal del cliente de esta revisión. La clave está AUSENTE mientras no
+	// se haya podado (D-044.52 §3).
+	//
+	// 🔑 QUÉ PREGUNTA CONTESTA. Sin él, un `source_text` que no viene tiene DOS
+	// causas que el consumidor no puede separar y que significan cosas opuestas
+	// para el dueño: «esta revisión nunca tuvo texto» —todas las del carrito
+	// numérico, y las del pipeline cuyo literal venía vacío— y «lo tuvo, se retuvo
+	// el plazo pactado y se destruyó». Con las dos calladas, la consola solo puede
+	// pintar un hueco y dejar que el dueño decida por su cuenta si el sistema le
+	// perdió el dato. Los tres casos salen de DOS claves:
+	//
+	//	payload.source_text presente ................. hay literal
+	//	ausente + literal_pruned_at ausente .......... nunca lo hubo
+	//	ausente + literal_pruned_at presente ......... se podó, y cuándo
+	//
+	// 🔑 POR QUÉ UN INSTANTE Y NO UN BOOLEANO. Porque es lo que el dominio AFIRMA:
+	// intakes.Revision.LiteralPrunedAt ES el `literal_pruned_at` de la fila —el
+	// momento REAL de la destrucción, que la poda sella UNA vez y no vuelve a mover
+	// (podarLiteralQuery)—. Un `literal_purged: true` sería una derivación suya que
+	// tira la mitad del dato sin comprar nada: el booleano se obtiene igual mirando
+	// si la clave está, así que quien solo quiera los tres casos no paga por el
+	// instante, y quien tenga que contestar «¿cuándo se destruyó el texto de mi
+	// cliente?» —una pregunta de retención, no de pantalla— con el booleano no
+	// puede.
+	//
+	// Va FUERA del payload y hermano de `created_at`, no dentro: el payload es la
+	// interpretación de lo que el cliente pidió, y esto es un hecho SOBRE la
+	// revisión. Estar fuera es además lo que lo deja al margen del gate de
+	// `llm_intake`, que filtra claves DEL payload (ver intakes_llm_gate.go).
+	LiteralPrunedAt string `json:"literal_pruned_at,omitempty"`
 }
 
 // invalidTransitionResponse es el cuerpo del 422 de POST …/status: dónde está la
@@ -172,8 +238,10 @@ type setIntakeStatusRequest struct {
 }
 
 // listIntakesHandler sirve GET /api/v1/intakes: las solicitudes del tenant del
-// token (INV-8), más recientes primero, con filtros from/to/status/session y
-// paginación page/page_size (default 50, máx 200).
+// token (INV-8), con filtros from/to/status/session, orden `sort` (más recientes
+// primero por defecto) y paginación page/page_size (default 50, máx 200).
+//
+// `status` se REPITE para pedir varios estados a la vez; ver parseIntakeFilter.
 func listIntakesHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -193,9 +261,14 @@ func listIntakesHandler(svc IntakeService) http.Handler {
 			return
 		}
 
+		// UN solo instante para toda la página, y no un time.Now() por fila: la marca
+		// `overdue` de dos solicitudes con el mismo plazo tiene que salir igual en la
+		// misma respuesta. Con el reloj dentro del bucle, una página que cruce el
+		// segundo exacto del plazo marcaría a unas sí y a otras no.
+		ahora := time.Now()
 		out := make([]intakeDTO, 0, len(page.Intakes))
 		for _, in := range page.Intakes {
-			out = append(out, toIntakeDTO(in))
+			out = append(out, toIntakeDTO(in, ahora))
 		}
 		writeJSON(w, http.StatusOK, intakeListResponse{
 			Intakes: out, Page: page.Page, PageSize: page.PageSize, Total: page.Total,
@@ -206,7 +279,13 @@ func listIntakesHandler(svc IntakeService) http.Handler {
 // getIntakeHandler sirve GET /api/v1/intakes/{id}: cabecera + líneas. Una
 // solicitud de OTRO tenant responde 404, no 403: un 403 confirmaría que el id
 // existe, y el aislamiento entre tenants no puede filtrar ni eso (INV-8).
-func getIntakeHandler(svc IntakeService) http.Handler {
+//
+// Recibe el resolver de features APARTE del middleware que ya gatea la ruta, y no
+// es una duplicación: el middleware decide si se ENTRA (`cart_basic`), y esto
+// decide qué CAMPOS salen (`llm_intake`, T4.1 / D-044.48 §2). Son dos preguntas
+// distintas y la segunda no se puede contestar desde un middleware, que no ve el
+// cuerpo.
+func getIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -224,15 +303,34 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
 	})
+}
+
+// writeIntakeDetail escribe el detalle YA FILTRADO por el plan del tenant. Es el
+// ÚNICO camino por el que el detalle sale al wire —lo usan el GET y el PUT de
+// líneas—, por la misma razón por la que toIntakeDetailResponse es un solo punto:
+// dos salidas separadas divergirían en el primer campo nuevo, y aquí divergir
+// significa que una de las dos filtra y la otra no.
+//
+// Un fallo al filtrar responde 500 y NO el payload sin filtrar: servir el cuerpo
+// entero ante un error dejaría el gate abierto justo cuando algo va mal, que es lo
+// contrario de fail-closed. En la práctica no se alcanza —lo que se reserializa
+// salió de un json.Unmarshal válido—, y por eso no tiene un cuerpo de error propio.
+func writeIntakeDetail(ctx context.Context, w http.ResponseWriter, feats entitlements.Resolver, tenantID string, detail intakes.Detail) {
+	resp := toIntakeDetailResponse(detail, time.Now())
+	if err := aplicarGateLLMIntake(ctx, feats, tenantID, &resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "no se pudo preparar la solicitud")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // toIntakeDetailResponse proyecta la solicitud completa al wire. Es UN punto y no
 // dos porque la edición manual (T4.10) responde EXACTAMENTE el mismo cuerpo que el
 // detalle: la consola repinta con lo que le devuelve el PUT, sin un segundo GET, y
 // dos proyecciones separadas empezarían a divergir en el primer campo nuevo.
-func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
+func toIntakeDetailResponse(detail intakes.Detail, at time.Time) intakeDetailResponse {
 	items := make([]intakeItemDTO, 0, len(detail.Items))
 	for _, it := range detail.Items {
 		items = append(items, intakeItemDTO{
@@ -249,10 +347,16 @@ func toIntakeDetailResponse(detail intakes.Detail) intakeDetailResponse {
 			RenderedText: rev.RenderedText,
 			CreatedBy:    rev.CreatedBy,
 			CreatedAt:    rev.CreatedAt.UTC().Format(time.RFC3339),
+			// formatInstant y no Format a secas: el cero de time.Time tiene que
+			// salir como cadena VACÍA para que `omitempty` borre la clave. Un
+			// Format del cero publicaría "0001-01-01T00:00:00Z" en toda revisión
+			// sin podar —que es una fecha que no significa nada— y volvería a
+			// hacer indistinguible el caso que este campo viene a separar.
+			LiteralPrunedAt: formatInstant(rev.LiteralPrunedAt),
 		})
 	}
 	return intakeDetailResponse{
-		intakeDTO: toIntakeDTO(detail.Intake),
+		intakeDTO: toIntakeDTO(detail.Intake, at),
 		Items:     items,
 		Revisions: revisions,
 		// detail.Status ya viene normalizado del dominio: una solicitud
@@ -290,7 +394,10 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		updated, err := svc.SetStatus(r.Context(), id.TenantID, r.PathValue("id"), req.Status)
+		// NoticeToClient: esta puerta NO escribe ningún texto propio, así que el
+		// aviso genérico del estado destino es el ÚNICO que el cliente va a recibir
+		// (D-041.14). Quitárselo aquí lo dejaría sin enterarse del cambio.
+		updated, err := svc.SetStatus(r.Context(), id.TenantID, r.PathValue("id"), req.Status, intakes.NoticeToClient)
 		var invalid *intakes.TransitionError
 		switch {
 		case errors.Is(err, intakes.ErrNotFound):
@@ -307,7 +414,7 @@ func setIntakeStatusHandler(svc IntakeService) http.Handler {
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, "no se pudo cambiar el estado de la solicitud")
 		default:
-			writeJSON(w, http.StatusOK, toIntakeDTO(updated))
+			writeJSON(w, http.StatusOK, toIntakeDTO(updated, time.Now()))
 		}
 	})
 }
@@ -357,8 +464,12 @@ type discardIntakesResponse struct {
 // —migraciones `0051_conversation_events.sql` y `0052_event_seams.sql`— y el ciclo
 // con este plan se rompió (el `abandoned` que el 043 esperaba está publicado). Lo que
 // falta ahora es el PRODUCTOR: nadie crea eventos ni apunta el puntero hasta la Ola 2
-// del 043, así que no hay evento que cerrar. El detalle de por qué tampoco se entrega
-// el filtro `orphan=true` está en la cabecera de internal/intakes/discard.go.
+// del 043, así que no hay evento que cerrar.
+//
+// ✅ ACTUALIZADO 2026-08-27 (Plan 044 · T4.8): el filtro `orphan=true` que esta
+// cabecera difería YA ESTÁ, y donde le tocaba — en el LISTADO (parseIntakeFilter,
+// `Filter.Orphan`, el $6 de intakeFilterWhere), no aquí. Este endpoint sigue sin
+// aceptar un filtro y eso NO es una carencia: es discardIntakesRequest, arriba.
 func discardIntakesHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -434,8 +545,25 @@ type editIntakeItemDTO struct {
 // ⇒ 400) de «mandaste la lista vacía» (quitar todas las líneas ⇒ se aplica). La
 // diferencia importa: sin ella, un cuerpo `{}` por un fallo de la UI vaciaría el
 // presupuesto en silencio.
+//
+// `as_correction` es la ACCIÓN «Corregir» del 044 (T4.4, D-044.48 §1): el mismo PUT
+// con un campo más. Es OPCIONAL y su ausencia significa exactamente lo que significaba
+// antes de que existiera —la edición manual del 041, sin conducta nueva—, así que un
+// cliente del 041 que nunca lo mande no ve cambiar nada. No es puntero porque aquí las
+// dos ausencias (clave que falta y `false` explícito) sí quieren decir lo mismo.
 type editIntakeItemsRequest struct {
-	Items *[]editIntakeItemDTO `json:"items"`
+	Items        *[]editIntakeItemDTO `json:"items"`
+	AsCorrection bool                 `json:"as_correction"`
+}
+
+// editModeDe traduce el campo del wire al modo del dominio. Está aparte —y no en
+// línea en el handler— para que el único sitio donde se decide «esto es una
+// corrección» sea uno, y para que el test que fija la conducta pueda nombrarlo.
+func editModeDe(asCorrection bool) intakes.EditMode {
+	if asCorrection {
+		return intakes.EditAsCorrection
+	}
+	return intakes.EditPlain
 }
 
 // invalidItemsResponse es el cuerpo del 400 por líneas mal formadas: TODOS los
@@ -468,10 +596,16 @@ type notEditableResponse struct {
 // ediciones son dos actos del dueño aunque el resultado coincida (misma regla que
 // InsertRevision).
 //
+// Es TAMBIÉN la acción «Corregir» del Plan 044 (T4.4), y no una ruta aparte: con
+// `"as_correction": true` la misma escritura deja además la señal few-shot del
+// D-044.11 en la revisión. La decisión y su porqué están en D-044.48 §1 y en
+// intakes/edit.go; lo que importa aquí es que el campo es opcional y que sin él este
+// handler hace lo mismo que antes de que existiera.
+//
 // Códigos: 200 con el detalle; 400 si el cuerpo o las líneas están mal; 404 si la
 // solicitud no es del tenant (nunca 403: confirmaría que existe); 422 si no está en
 // `pending_approval`; 409 si alguien la movió entre la lectura y la escritura.
-func putIntakeItemsHandler(svc IntakeService) http.Handler {
+func putIntakeItemsHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -497,12 +631,15 @@ func putIntakeItemsHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		detail, err := svc.ReplaceItems(r.Context(), id.TenantID, r.PathValue("id"), items)
+		detail, err := svc.ReplaceItems(r.Context(), id.TenantID, r.PathValue("id"), items, editModeDe(req.AsCorrection))
 		if err != nil {
 			writeEditItemsError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
+		// Por el MISMO camino que el GET, y no por un writeJSON suelto: el cuerpo es
+		// el mismo, así que el gate por campo tiene que ser el mismo. Repintar la
+		// consola con lo que devuelve el PUT no puede enseñar lo que el GET tapa.
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
 	})
 }
 
@@ -592,9 +729,226 @@ func writeEditItemsError(w http.ResponseWriter, err error) {
 	}
 }
 
+// approveIntakeRequest es el cuerpo de POST /api/v1/intakes/{id}/approve: el texto
+// que el DUEÑO le manda al cliente (D-044.49, decisión del 2026-08-27).
+//
+// Es un solo campo y es OBLIGATORIO. No hay `items` ni `total` en el cuerpo, y esa
+// ausencia es la decisión: lo que se cotiza son las líneas que la solicitud YA tiene
+// —el dueño las corrige con el `PUT …/items`, que es la otra puerta de la misma
+// pantalla—, así que aceptar aquí una lista abriría un segundo camino para escribir
+// lo mismo. Es exactamente el duplicado que D-044.48 §1 cerró para `correct`.
+//
+// No es puntero (a diferencia de editIntakeItemsRequest.Items) porque aquí no hay
+// dos ausencias que distinguir: la clave que falta y la cadena vacía significan lo
+// mismo —no hay cotización que mandar— y las dos salen por el mismo 400.
+type approveIntakeRequest struct {
+	RenderedText string `json:"rendered_text"`
+}
+
+// pendingPriceResponse es el cuerpo del 400 de una aprobación cuyo borrador todavía
+// tiene líneas sin precio (precondición de T4.3). Lleva TODAS las líneas pendientes
+// con su posición y su etiqueta, por el mismo criterio que invalidItemsResponse:
+// quien tiene tres renglones sin precificar tiene que verlos los tres.
+//
+// La POSICIÓN y no el sku: la línea `unmatched` —la que el catálogo no reconoció, que
+// es justo la que suele no tener precio— no tiene sku (Plan 044 · T3.2).
+type pendingPriceResponse struct {
+	Error string                     `json:"error"`
+	Lines []intakes.PendingPriceLine `json:"lines"`
+}
+
+// notApprovableResponse es el cuerpo del 422 de una aprobación sobre una solicitud
+// que no está por aprobar: dónde está y desde dónde SÍ se aprueba. Es el gemelo de
+// notEditableResponse, y son dos cuerpos y no uno porque son dos preguntas: se puede
+// estar en un estado editable y no aprobable nunca a la vez, pero quien recibe el
+// error tiene que saber cuál de las dos puertas le cerró.
+type notApprovableResponse struct {
+	Error        string   `json:"error"`
+	Status       string   `json:"status"`
+	ApprovableIn []string `json:"approvable_in"`
+}
+
+// approveIntakeHandler sirve POST /api/v1/intakes/{id}/approve: la acción APROBAR del
+// dueño (Plan 044 · T4.3). Responde el detalle completo —con la revisión `approved`
+// recién escrita— para que la consola repinte sin un segundo GET, por el MISMO camino
+// que el GET y el PUT de líneas (writeIntakeDetail), de modo que el gate por campo del
+// 044 se aplique igual.
+//
+// Códigos: 200 con el detalle; 400 si falta el texto, si el borrador tiene líneas sin
+// precio o si no hay nada que cotizar; 404 si la solicitud no es del tenant (nunca
+// 403: confirmaría que existe); 422 si no está en `pending_approval`; 409 si alguien
+// la movió entre la lectura y la escritura.
+//
+// El 200 significa «la aprobación se aplicó y quedó registrada», NUNCA «el cliente
+// recibió el mensaje»: el envío va después de la escritura y no puede tumbarla (ver
+// intakes/approve.go). Con la sesión del negocio offline el dueño sigue viendo su 200
+// y el fallo queda en el log con su command_id.
+func approveIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req approveIntakeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+
+		detail, err := svc.Approve(r.Context(), id.TenantID, r.PathValue("id"), req.RenderedText)
+		if err != nil {
+			writeApproveError(w, err)
+			return
+		}
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
+	})
+}
+
+// writeApproveError traduce el fallo del dominio al código y al cuerpo que le sirven
+// a quien llama. La política de códigos vive aquí y no en el dominio: el dominio dice
+// QUÉ pasó, el transporte decide cómo se cuenta (mismo reparto que writeEditItemsError).
+//
+// *TransitionError sale 422 con el MISMO cuerpo que el <select> de estado
+// (invalidTransitionResponse) y no con el de not_approvable: cuando aparece es porque
+// alguien movió la solicitud entre la validación y el compare-and-swap, y la respuesta
+// útil ahí es la del ciclo de vida —dónde está y adónde puede ir—, no la de esta puerta.
+func writeApproveError(w http.ResponseWriter, err error) {
+	var (
+		pending       *intakes.PendingPriceError
+		notApprovable *intakes.NotApprovableError
+		invalid       *intakes.TransitionError
+	)
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.Is(err, intakes.ErrEmptyQuoteText):
+		writeError(w, http.StatusBadRequest,
+			"rendered_text es obligatorio: es el texto de la cotización que se le manda al cliente")
+	case errors.As(err, &pending):
+		writeJSON(w, http.StatusBadRequest, pendingPriceResponse{
+			Error: "lines_without_price", Lines: pending.Lines,
+		})
+	case errors.Is(err, intakes.ErrEmptyQuote):
+		writeError(w, http.StatusBadRequest,
+			"la solicitud no tiene líneas que cotizar: guarda primero las líneas del borrador con PUT /api/v1/intakes/{id}/items")
+	case errors.As(err, &notApprovable):
+		writeJSON(w, http.StatusUnprocessableEntity, notApprovableResponse{
+			Error:        "not_approvable",
+			Status:       notApprovable.Status,
+			ApprovableIn: []string{intakes.ApprovableStatus},
+		})
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusUnprocessableEntity, invalidTransitionResponse{
+			Error:     "invalid_transition",
+			Status:    invalid.From,
+			Requested: invalid.To,
+			Allowed:   invalid.Allowed,
+		})
+	case errors.Is(err, intakes.ErrConflict):
+		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo aprobar la solicitud")
+	}
+}
+
+// requestInfoRequest es el cuerpo de POST /api/v1/intakes/{id}/request-info: la
+// pregunta que el DUEÑO le manda al cliente (D-044.49 §2, decisión del 2026-08-27).
+//
+// Un solo campo y OBLIGATORIO. El sistema PREPARA la pregunta —las
+// `suggested_questions` de la revisión, que el detalle ya publica— pero quien la
+// manda es el dueño después de editarla: por eso viaja en el cuerpo y no se deduce
+// aquí de la revisión. Una petición de información que el servidor redactara solo
+// sería exactamente el mensaje automático que D-044.49 §2 apaga.
+//
+// No es puntero, igual que approveIntakeRequest: la clave ausente y la cadena vacía
+// significan lo mismo —no hay pregunta que mandar— y salen por el mismo 400.
+type requestInfoRequest struct {
+	Question string `json:"question"`
+}
+
+// requestInfoIntakeHandler sirve POST /api/v1/intakes/{id}/request-info: la acción
+// PEDIR MÁS INFORMACIÓN del dueño (Plan 044 · T4.4). Responde el detalle completo por
+// el MISMO camino que el GET, el PUT y `approve` (writeIntakeDetail), para que el gate
+// por campo del 044 se aplique igual.
+//
+// Códigos: 200 con el detalle; 400 si falta la pregunta; 404 si la solicitud no es del
+// tenant (nunca 403: confirmaría que existe); 422 si no está en `pending_approval`
+// —con el cuerpo del ciclo de vida, que dice adónde SÍ puede ir—; 409 si alguien la
+// movió entre la lectura y la escritura.
+//
+// El 200 significa «la solicitud quedó esperando la respuesta del cliente», NUNCA «el
+// cliente recibió la pregunta»: el envío va después de la transición y no puede
+// tumbarla (ver intakes/requestinfo.go).
+func requestInfoIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req requestInfoRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+
+		detail, err := svc.RequestInfo(r.Context(), id.TenantID, r.PathValue("id"), req.Question)
+		if err != nil {
+			writeRequestInfoError(w, err)
+			return
+		}
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
+	})
+}
+
+// writeRequestInfoError traduce el fallo del dominio al código y al cuerpo (mismo
+// reparto que writeEditItemsError y writeApproveError: el dominio dice QUÉ pasó, el
+// transporte decide cómo se cuenta).
+//
+// *TransitionError sale con el cuerpo del ciclo de vida y NO con uno propio tipo
+// `not_requestable`, al revés que `approve`: esta puerta no estrecha la máquina de
+// estados —a `needs_info` solo se llega desde `pending_approval` y eso ya lo dice la
+// tabla—, así que el 422 útil es el que enseña dónde está la solicitud y adónde puede
+// ir. Un cuerpo propio habría duplicado esa regla para decir lo mismo peor.
+func writeRequestInfoError(w http.ResponseWriter, err error) {
+	var invalid *intakes.TransitionError
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.Is(err, intakes.ErrEmptyQuestion):
+		writeError(w, http.StatusBadRequest,
+			"question es obligatoria: es la pregunta que se le manda al cliente, y jamás sale sola")
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusUnprocessableEntity, invalidTransitionResponse{
+			Error:     "invalid_transition",
+			Status:    invalid.From,
+			Requested: invalid.To,
+			Allowed:   invalid.Allowed,
+		})
+	case errors.Is(err, intakes.ErrConflict):
+		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo pedir más información sobre la solicitud")
+	}
+}
+
 // toIntakeDTO proyecta una cabecera al wire. El estado ya viene NORMALIZADO del
 // dominio (el `closed` legado del módulo cart sale como `confirmed`).
-func toIntakeDTO(in intakes.Intake) intakeDTO {
+//
+// `at` es el instante contra el que se decide la marca `overdue`, y entra como
+// ARGUMENTO en vez de leerse aquí con time.Now() por la misma razón por la que
+// Summary recibe su reloj (BuildSummary): la regla es una comparación de tiempos, y
+// una proyección que consulta el reloj por dentro solo se puede probar esperando.
+// Los tres llamantes pasan time.Now() — la marca es «ahora mismo», no un dato
+// guardado.
+//
+// La REGLA no vive aquí: la aplica intakes.Overdue, que es la MISMA función que usa
+// el pre-filtro del recordatorio del plazo. Dos copias de «cuándo está vencido»
+// serían una bandeja que marca lo que el recordatorio no avisa.
+func toIntakeDTO(in intakes.Intake, at time.Time) intakeDTO {
 	return intakeDTO{
 		ID:           in.ID,
 		ContactID:    in.ContactID,
@@ -602,6 +956,7 @@ func toIntakeDTO(in intakes.Intake) intakeDTO {
 		Status:       in.Status,
 		Total:        in.Total,
 		CustomerNote: in.CustomerNote,
+		Overdue:      intakes.Overdue(in, at),
 		CreatedAt:    in.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    in.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -615,6 +970,33 @@ func toIntakeDTO(in intakes.Intake) intakeDTO {
 // `confirmed`, y el store alcanza igual las filas viejas). Una clave desconocida se
 // rechaza con 400 en vez de listar todo: un typo que devuelve la bandeja entera es
 // peor que un error.
+//
+// 🔑 `status` SE REPITE para pedir varios (`?status=pending_approval&status=
+// needs_info`, Plan 044 · T4.1 / D-044.47 §2). Hasta el 044 esto usaba
+// `q.Get("status")`, que devuelve el PRIMER valor y descarta el resto EN SILENCIO:
+// una bandeja que pedía dos estados recibía uno y no tenía forma de enterarse. Un
+// solo `?status=x` sigue significando exactamente lo de antes, así que el 041 no
+// ve cambiar nada.
+// ⚠️ La forma con comas (`?status=a,b`) NO se acepta: `a,b` no es un estado
+// conocido y sale por el 400 de siempre, que es un error visible y no otro
+// descarte mudo.
+//
+// `sort` elige el orden (`newest`|`oldest`, D-044.48 §3). Ausente ⇒ `newest`, que
+// es lo que esta ruta sirve y documenta desde el Plan 041: quien no lo pide no ve
+// cambiar su pantalla. Un valor desconocido se rechaza con 400 por la misma razón
+// que un `status` desconocido — servir otro orden en silencio sería peor.
+//
+// `orphan` acota a las solicitudes cuyo evento conversacional ya no está `open`
+// (Plan 041 · T4.8 / REQ-21c, construido en el Plan 044). Se lee con ParseBool, así
+// que `1`/`t`/`TRUE` valen tanto como `true`; cualquier otra cosa —`orphan=si`,
+// `orphan=yes`— es 400 y NO «no filtres», que es el mismo criterio que `status` y
+// `sort`: esta vista PRESELECCIONA lo que el dueño va a descartar sin vuelta atrás,
+// y servirle la bandeja entera creyendo él que mira huérfanas es exactamente el
+// accidente que no puede pasar.
+// ⚠️ `orphan=false` y `orphan` ausente significan LO MISMO —sin cota por este
+// lado—, como el cero-valor del resto de campos de Filter. No existe «enséñame solo
+// las que SÍ tienen conversación viva»: nadie lo ha pedido y sería una vista sin
+// acción detrás.
 func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 	q := r.URL.Query()
 
@@ -627,16 +1009,43 @@ func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 		return intakes.Filter{}, "to inválido: usa YYYY-MM-DD o RFC3339"
 	}
 
-	status := intakes.NormalizeStatus(q.Get("status"))
-	if status != "" && !intakes.IsStatus(status) {
-		return intakes.Filter{}, "status desconocido"
+	// q["status"] y NO q.Get("status"): el Get se queda con el primero.
+	var statuses []string
+	for _, raw := range q["status"] {
+		if raw == "" {
+			continue // `?status=` es "sin filtro", no un estado vacío
+		}
+		status := intakes.NormalizeStatus(raw)
+		if !intakes.IsStatus(status) {
+			return intakes.Filter{}, "status desconocido"
+		}
+		statuses = append(statuses, status)
+	}
+
+	sort := q.Get("sort")
+	if sort != "" && !intakes.IsSort(sort) {
+		return intakes.Filter{}, "sort desconocido: usa newest u oldest"
+	}
+
+	// `?orphan=` (clave presente y vacía) es «sin filtro», igual que `?status=`: una
+	// UI que arma la query siempre con la clave y la deja en blanco cuando el
+	// operador no marcó la casilla no puede recibir un 400.
+	orphan := false
+	if raw := q.Get("orphan"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return intakes.Filter{}, "orphan inválido: usa true o false"
+		}
+		orphan = parsed
 	}
 
 	return intakes.Filter{
 		From:      from,
 		To:        to,
-		Status:    status,
+		Statuses:  statuses,
 		SessionID: q.Get("session"),
+		Orphan:    orphan,
+		Sort:      sort,
 		Page:      parseIntQuery(r, "page", 1),
 		PageSize:  parseIntQuery(r, "page_size", intakes.DefaultPageSize),
 	}, ""

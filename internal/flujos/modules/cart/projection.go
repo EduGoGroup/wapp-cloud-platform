@@ -345,12 +345,28 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 	if err != nil {
 		return err
 	}
-	if _, err := p.revisions.InsertRevision(ctx, intakes.Revision{
+	// 🔴 EL NÚMERO QUE DEVUELVE LA ESCRITURA YA NO SE DESCARTA (T4.10 · D-044.19).
+	// El INSERT numera la revisión DENTRO de su propia sentencia
+	// (`COALESCE(MAX(revision_no), 0) + 1`, intakes/postgres.go), así que el
+	// correlativo que le tocó a ESTE cierre solo se sabe aquí: releerlo después
+	// sería una carrera con cualquier otro escritor de la misma solicitud, y una
+	// consulta extra en línea con el mensaje (INV-02).
+	//
+	// Y ya NO es siempre 1: desde T4.0 (D-044.46) el pipeline del 044 cuelga su
+	// revisión `interpreted` de la MISMA fila que el carrito dejó en `open` —no crea
+	// otra, y no le toca el estado—, así que el cierre normal de ese carrito escribe
+	// la 2. Mientras esto se descartaba, el WebhookSink emitía un literal `1` y el
+	// puente CRM —que hace UPSERT por (intake_id, revision_no), manual del
+	// integrador §4— habría descartado el CIERRE como duplicado de la
+	// interpretación: el pedido de verdad no llega al CRM y no hay un solo error en
+	// ningún log.
+	rev, err := p.revisions.InsertRevision(ctx, intakes.Revision{
 		IntakeID:  intakeID,
 		Kind:      intakes.RevisionKindCart,
 		Payload:   payload,
 		CreatedBy: intakes.RevisionBySystem,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("cart: revisión del cierre de la solicitud %s: %w", intakeID, err)
 	}
 
@@ -371,6 +387,24 @@ func (p *Projector) closeIntake(ctx context.Context, meta modules.EffectMeta, ef
 	// dispatch() sobre el mismo eff — es la única forma de correlacionar sin que el
 	// sink del CRM tenga que volver a consultar la BD.
 	eff.Payload["intake_id"] = intakeID
+	// El revision_no viaja por la MISMA puerta y por el mismo motivo (T4.10): el
+	// contrato wapp-crm-v1 lo declara requerido y es, junto al intake_id, la clave
+	// con la que el puente decide si un push trae un estado NUEVO o repite uno que
+	// ya conoce. Sale del retorno del INSERT de arriba —el número REAL que la base
+	// asignó—, no de contar revisiones ni de suponer que el cierre es la primera.
+	eff.Payload["revision_no"] = rev.RevisionNo
+	// Y el ESTADO viaja por la MISMA puerta que los otros dos (Plan 044 · Ola 4,
+	// T4.10 mitad 2). El sink emitía un literal "confirmed" que acertaba SOLO
+	// porque este es el cierre del carrito; en cuanto una segunda puerta empuja el
+	// mismo contrato —el re-empuje de una corrección, que devuelve la solicitud a
+	// `pending_approval`— ese literal miente igual que mentía el `RevisionNo: 1`.
+	//
+	// Se anota la clave LEGADA con la que CloseIntake acaba de escribir la fila, sin
+	// normalizar: el contrato la normaliza al armarse (intakes.NormalizeStatus, que
+	// es el único punto del sistema donde se resuelve ese alias) porque JAMÁS emite
+	// `closed`. Normalizar aquí repartiría la regla en dos sitios y dejaría a la
+	// puerta HTTP con la posibilidad de saltársela.
+	eff.Payload["lifecycle_status"] = intakeStatusClosed
 	return nil
 }
 

@@ -289,9 +289,11 @@ func TestIntakes_403_SinScope(t *testing.T) {
 // cart_basic en el plan, la bandeja no se abre — y el cuerpo dice cuál falta para
 // que la UI pueda ofrecer el upgrade sin adivinar.
 //
-// Las CUATRO puertas de la bandeja, con peticiones reales: lista, detalle, cambio
-// de estado y edición manual de líneas (T4.10). Leer el middleware no prueba nada;
-// lo que prueba es que el 403 salga por cada una de las rutas montadas.
+// Las CINCO puertas de la bandeja, con peticiones reales: lista, detalle, cambio
+// de estado, edición manual de líneas (T4.10) y aprobación (Plan 044 · T4.3). Leer
+// el middleware no prueba nada; lo que prueba es que el 403 salga por cada una de las
+// rutas montadas — y por eso cada ruta nueva se añade AQUÍ, o el nombre de este test
+// pasa a ser una verdad a medias.
 func TestIntakes_403_SinFeature(t *testing.T) {
 	d := publicapi.Deps{
 		Intakes:      intakes.NewService(seedIntakes()),
@@ -304,6 +306,7 @@ func TestIntakes_403_SinFeature(t *testing.T) {
 		{http.MethodGet, "/api/v1/intakes/" + intakeA1, ""},
 		{http.MethodPost, "/api/v1/intakes/" + intakeA1 + "/status", `{"status":"cancelled"}`},
 		{http.MethodPut, "/api/v1/intakes/" + intakeA1 + "/items", `{"items":[]}`},
+		{http.MethodPost, "/api/v1/intakes/" + intakeA1 + "/approve", `{"rendered_text":"hola"}`},
 	} {
 		rec := call(api, keyAIntakes, ruta.method, ruta.target, ruta.body)
 		if rec.Code != http.StatusForbidden {

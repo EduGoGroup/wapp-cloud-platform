@@ -188,6 +188,12 @@ type pipelineCaído struct {
 	store  *pipeline.StoreEnMemoria
 	prov   *proveedorLLMMuerto
 	jobID  string
+
+	// mu protege `parado`, y `parado` es lo que hace ESTRUCTURAL —no una convención
+	// escrita en un comentario que el siguiente editor no lee— la regla de que el
+	// estado del job solo se mira con el worker MUERTO. Ver fotoConElWorkerParado.
+	mu     sync.Mutex
+	parado bool
 }
 
 // nuevoPipelineCaído arma el banco. El backoff se pone en milisegundos A PROPÓSITO: lo
@@ -285,8 +291,14 @@ func (p *pipelineCaído) arrancar(t *testing.T) (parar func()) {
 			select {
 			case <-fin:
 			case <-time.After(10 * time.Second):
+				// NO se marca `parado`: el worker sigue por ahí y cualquier foto que se
+				// tomara después seguiría siendo de un estado en movimiento.
 				t.Error("el worker no volvió tras cancelar el contexto")
+				return
 			}
+			p.mu.Lock()
+			p.parado = true
+			p.mu.Unlock()
 		})
 	}
 }
@@ -306,7 +318,19 @@ func (p *pipelineCaído) esperarLlamadaEnVuelo(t *testing.T) {
 }
 
 // esperarIntentos bloquea hasta que el job acumule `n` intentos cobrados.
-func (p *pipelineCaído) esperarIntentos(t *testing.T, n int) pipeline.Fila {
+//
+// 🔴 NO DEVUELVE LA FILA, Y ESA AUSENCIA ES EL ARREGLO DE UN FLAKE MEDIDO (3 de cada
+// 40 corridas). Devolvía una, y el test de más abajo afirmaba sobre ella «entre
+// intentos el job queda PENDING»; fallaba con `"processing"` porque la foto se tomaba
+// de un estado EN MOVIMIENTO: `Retry` sube `Attempts` y pone `pending` en la misma
+// sección crítica, y con la cadencia y el backoff de este banco en milisegundos el
+// worker vuelve a reclamar el job antes de que el siguiente muestreo lo lea. La
+// condición «los intentos llegaron a n» es un INSTANTE, no un estado.
+//
+// Quien quiera mirar el estado del job usa fotoConElWorkerParado, que exige que ya no
+// haya nadie moviéndolo. Esta función solo sirve para lo que su nombre dice: esperar
+// a que el worker haya martilleado n veces.
+func (p *pipelineCaído) esperarIntentos(t *testing.T, n int) {
 	t.Helper()
 	limite := time.Now().Add(20 * time.Second)
 	for {
@@ -315,7 +339,7 @@ func (p *pipelineCaído) esperarIntentos(t *testing.T, n int) pipeline.Fila {
 			t.Fatalf("la fila %s desapareció", p.jobID)
 		}
 		if f.Attempts >= n {
-			return f
+			return
 		}
 		if time.Now().After(limite) {
 			t.Fatalf("el job no llegó a %d intentos (va por %d, estado %q, llamadas al proveedor %d)",
@@ -323,6 +347,38 @@ func (p *pipelineCaído) esperarIntentos(t *testing.T, n int) pipeline.Fila {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+}
+
+// fotoConElWorkerParado devuelve el estado del job SIN carrera posible, y corta el
+// test si alguien la llama con el worker todavía vivo.
+//
+// # POR QUÉ ESTO ES UN ESTADO ESTABLE Y NO OTRO INSTANTE
+//
+// Porque cuando `parar()` vuelve, la goroutina de `Worker.Run` ya terminó —`arrancar`
+// espera su `fin`— y no queda nadie que pueda tocar la fila: este banco tiene UN solo
+// worker y el test no escribe en el store. Y el job no puede haber quedado a medias:
+// `Worker.procesar` documenta que sus cuatro desenlaces son `done`, `pending`,
+// `failed` o «no aplicó», ninguno deja `processing`, y los tres que escriben lo hacen
+// por `Worker.cierre`, que es un `context.WithoutCancel` — o sea que cancelar el
+// contexto NO puede abortar el desenlace a mitad y dejar el job colgado.
+//
+// Con eso, «entre intentos» deja de ser un instante que hay que cazar al vuelo y pasa
+// a ser lo que de verdad es: el worker se detuvo DESPUÉS de cobrar n intentos y ANTES
+// del siguiente, y lo que queda en la cola es lo que el último tropiezo escribió.
+func (p *pipelineCaído) fotoConElWorkerParado(t *testing.T) pipeline.Fila {
+	t.Helper()
+	p.mu.Lock()
+	parado := p.parado
+	p.mu.Unlock()
+	if !parado {
+		t.Fatal("se pidió la foto del job con el worker TODAVÍA VIVO: lo que se leyera sería un estado " +
+			"en movimiento y el test volvería a ser intermitente (llama antes a parar())")
+	}
+	f, ok := p.store.Ver(p.jobID)
+	if !ok {
+		t.Fatalf("la fila %s desapareció", p.jobID)
+	}
+	return f
 }
 
 // exigeQueElProveedorSeCayóDeVerdad comprueba las dos mitades sin las cuales todo lo
@@ -371,6 +427,13 @@ func (p *pipelineCaído) exigeQueElProveedorSeCayóDeVerdad(t *testing.T) {
 // la caída del proveedor SIN pasar por `tropiezo`—. COMPILA. RESULTADO: rojo, el job
 // llega a `done` en el primer intento.
 //
+// 🔴 FUE FLAKY —3 de cada 40 corridas, con `"entre intentos el job debe quedar PENDING,
+// quedó \"processing\""`— y la causa NO era un plazo corto: era mirar un estado en
+// movimiento. `esperarIntentos` devolvía la fila en cuanto los intentos llegaban a 2, y
+// para entonces el worker ya podía haber reclamado el job otra vez. El arreglo NO sube
+// ningún plazo ni reintenta la lectura: cambia el disparo por uno de EVENTO —«el worker
+// ya no existe»— y solo entonces mira. Ver fotoConElWorkerParado.
+//
 // 🔴 UNA MUTACIÓN MÁS FLOJA NO BASTA, Y ES UN HALLAZGO: ignorar el error en `cadena`
 // pero DEJANDO que `desenlace` llame a `tropiezo` sale VERDE, porque `tropiezo` ya
 // devolvió el job a `pending` y el `Finish` posterior encuentra el guard
@@ -407,10 +470,18 @@ func TestINV10_ProveedorCaido_ElJobNuncaLlegaADone(t *testing.T) {
 		}
 	}()
 
-	f := p.esperarIntentos(t, 2)
+	p.esperarIntentos(t, 2)
+
+	// 🔴 ESTE ORDEN ES EL ARREGLO DEL FLAKE, y no es cosmético: muere PRIMERO el
+	// worker, y solo después se para el vigía y se mira la fila. Al revés —que es como
+	// estaba— la fila se leía mientras el worker seguía martilleando, y una de cada
+	// trece corridas la pillaba recién reclamada, en `processing`.
+	//
+	// El vigía se para DESPUÉS del worker a propósito: así su ventana de observación
+	// cubre la vida entera del worker, apagado incluido.
+	parar()
 	close(alto)
 	<-fin
-	parar()
 
 	p.exigeQueElProveedorSeCayóDeVerdad(t)
 	select {
@@ -418,14 +489,21 @@ func TestINV10_ProveedorCaido_ElJobNuncaLlegaADone(t *testing.T) {
 		t.Fatalf("el job pasó por %q con el proveedor caído: INV-10 (1) roto", s)
 	default:
 	}
+
+	// La foto del sistema QUIETO. Cubre de una vez las dos cosas que antes se miraban
+	// por separado —el estado «entre intentos» y el estado final tras parar—, porque
+	// ahora son literalmente la misma lectura: exigir `pending` es más fuerte que
+	// exigir «no es done», que era lo único que decía la comprobación final.
+	f := p.fotoConElWorkerParado(t)
 	if f.Status != intake.StatusPending {
-		t.Fatalf("entre intentos el job debe quedar PENDING, quedó %q", f.Status)
+		t.Fatalf("con dos intentos cobrados y el worker detenido, el job debe estar de vuelta en la cola "+
+			"(PENDING); quedó %q: INV-10 (1) roto", f.Status)
+	}
+	if f.Attempts < 2 {
+		t.Fatalf("el job debe conservar los intentos que ya se le cobraron, lleva %d", f.Attempts)
 	}
 	if f.NextAttemptAt.IsZero() {
 		t.Fatal("el job volvió a la cola SIN backoff: la marca sigue en cero")
-	}
-	if final, _ := p.store.Ver(p.jobID); final.Status == intake.StatusDone {
-		t.Fatal("el job acabó en DONE tras parar el worker: INV-10 (1) roto")
 	}
 }
 

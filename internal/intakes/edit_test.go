@@ -40,7 +40,7 @@ func solicitudEditable(t *testing.T, zonas ...intakes.ShippingZone) (*intakes.Me
 	}
 
 	svc := intakes.NewService(st)
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusPendingApproval); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusPendingApproval, intakes.NoticeToClient); err != nil {
 		t.Fatalf("llevando la solicitud a pending_approval: %v", err)
 	}
 	return st, svc
@@ -105,7 +105,7 @@ func TestReplaceItems_EscenaDelQuesoExtra(t *testing.T) {
 	detail, err := svc.ReplaceItems(context.Background(), tenantA, intakeEditable, []intakes.Item{
 		{SKU: "HAMB", Label: "Hamburguesa", Customization: "con queso extra", Qty: 1, UnitPrice: 8},
 		{SKU: "QUESO-EX", Label: "Queso extra", Qty: 1, UnitPrice: 1},
-	})
+	}, intakes.EditPlain)
 	if err != nil {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestReplaceItems_EscenaDelQuesoExtra(t *testing.T) {
 	exigirRevisiónDeCorrección(t, st.Revisions(intakeEditable), 9)
 
 	// Y se cierra el ciclo: vuelve a confirmed, que ya existía.
-	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusConfirmed); err != nil {
+	if _, err := svc.SetStatus(context.Background(), tenantA, intakeEditable, intakes.StatusConfirmed, intakes.NoticeToClient); err != nil {
 		t.Fatalf("pending_approval → confirmed: %v", err)
 	}
 }
@@ -187,7 +187,7 @@ func TestReplaceItems_ElEnvíoSobreviveIntacto(t *testing.T) {
 
 	detail, err := svc.ReplaceItems(context.Background(), tenantA, intakeEditable, []intakes.Item{
 		{SKU: "HAMB", Label: "Hamburguesa", Qty: 2, UnitPrice: 8},
-	})
+	}, intakes.EditPlain)
 	if err != nil {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestReplaceItems_RechazaElSKUReservado(t *testing.T) {
 	_, err := svc.ReplaceItems(context.Background(), tenantA, intakeEditable, []intakes.Item{
 		{SKU: "HAMB", Label: "Hamburguesa", Qty: 1, UnitPrice: 8},
 		{SKU: intakes.ShippingSKU, Label: "Envío gratis", Qty: 1, UnitPrice: 0},
-	})
+	}, intakes.EditPlain)
 	var invalid *intakes.InvalidItemsError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("err=%v; quiero *InvalidItemsError por el sku reservado", err)
@@ -246,7 +246,7 @@ func TestReplaceItems_422SoloEnPendingApproval(t *testing.T) {
 
 		_, err := svc.ReplaceItems(context.Background(), tenantA,
 			"11111111-1111-1111-1111-111111111111",
-			[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}})
+			[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}}, intakes.EditPlain)
 
 		var notEditable *intakes.NotEditableError
 		if !errors.As(err, &notEditable) {
@@ -264,7 +264,7 @@ func TestReplaceItems_404OtroTenant(t *testing.T) {
 	_, svc := solicitudEditable(t)
 
 	_, err := svc.ReplaceItems(context.Background(), tenantB, intakeEditable,
-		[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}})
+		[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}}, intakes.EditPlain)
 	if !errors.Is(err, intakes.ErrNotFound) {
 		t.Fatalf("err=%v, quiero ErrNotFound", err)
 	}
@@ -277,7 +277,7 @@ func TestReplaceItems_409SiAlguienLaMovió(t *testing.T) {
 	svc := intakes.NewService(&storeQueConfirma{MemoryStore: st})
 
 	_, err := svc.ReplaceItems(context.Background(), tenantA, intakeEditable,
-		[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}})
+		[]intakes.Item{{SKU: "X", Label: "X", Qty: 1, UnitPrice: 1}}, intakes.EditPlain)
 	if !errors.Is(err, intakes.ErrConflict) {
 		t.Fatalf("err=%v, quiero ErrConflict", err)
 	}

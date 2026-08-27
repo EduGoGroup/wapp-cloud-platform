@@ -44,6 +44,54 @@ import (
 // son las de aquí, no una segunda salida hacia WhatsApp.
 // ============================================================================
 
+// StatusNotice dice QUIÉN le cuenta al cliente la transición que se está
+// aplicando. Son dos momentos distintos con dos reglas distintas, y por eso lo
+// elige el LLAMANTE: es el mismo patrón con el que esta capa ya resuelve
+// «una regla, dos puertas» en EnsureShippingLine(…, ShippingPolicy)
+// (shipping.go:71 — «dos momentos distintos con dos reglas distintas, y por eso
+// el llamante la elige»).
+//
+// POR QUÉ UN PARÁMETRO TIPADO Y NO UN FUNCTIONAL OPTION POR LLAMADA. En este repo
+// los functional options son SIEMPRE de construcción —Option de NewService,
+// ReminderOption de NewDepositReminder, y una quincena más en internal/—: no hay
+// un solo `opts ...` en un método. Uno por llamada sería un patrón nuevo aquí y,
+// sobre todo, dejaría OPCIONAL la única decisión que no puede quedarse implícita
+// —quién le habla al cliente—: el que lo omite manda un mensaje sin haberlo
+// decidido, y el cliente recibe dos. Con un parámetro, cada puerta lo declara y el
+// compilador no deja pasar a nadie sin decirlo.
+//
+// Y no es un método aparte (`SetStatusSinAviso`) porque serían dos contratos
+// públicos que documentar y mantener en sincronía —con sus dos entradas en el
+// puerto de publicapi— para una diferencia de un bit; el día que se añada una
+// tercera regla, un método más multiplica la superficie y una constante más no.
+//
+// 🔴 LO QUE NO ES: no borra ni toca statusTemplates. Quitar una entrada de ese
+// mapa apagaría el aviso para TODO el mundo, el <select> de estado de la consola
+// incluido (Plan 041 · T4.2); esto lo apaga para UNA transición y solo si su
+// llamante lo pide.
+type StatusNotice int
+
+const (
+	// NoticeToClient — la plataforma manda el aviso genérico del estado destino
+	// (statusTemplates, o la plantilla de seña del tenant). Es la conducta del
+	// Plan 041 y el CERO del tipo a propósito: el valor por descuido es el que
+	// habla, nunca el que calla. Un silencio nace de una decisión escrita.
+	NoticeToClient StatusNotice = iota
+	// NoticeByCaller — el llamante YA le escribe al cliente por su cuenta y la
+	// plataforma se calla en ESTA transición (D-044.49, decisión de producto del
+	// 2026-08-27: al aprobar y al pedir información el cliente recibe UN SOLO
+	// mensaje, el del dueño, porque su texto ya dice lo mismo y mejor).
+	//
+	// Se calla ENTERO, no solo el texto genérico: si el llamante anuncia la
+	// transición, la plataforma no tiene nada que añadir por detrás.
+	NoticeByCaller
+)
+
+// silencia responde si esta política deja el aviso en manos del llamante. Está
+// escrito como método —y no como `notice == NoticeByCaller` suelto en Service—
+// para que la regla viva junto al tipo, igual que ShippingPolicy.applies.
+func (n StatusNotice) silencia() bool { return n == NoticeByCaller }
+
 // MessageSender empuja un texto por una sesión viva del Edge y espera su Ack. La
 // firma es la de (*gatewaygrpc.Server).SendText —la misma que ya declaran
 // runtime.Sender y publicapi.MessageSender—, así que el Gateway la satisface sin
@@ -248,7 +296,7 @@ func (n *Notifier) text(ctx context.Context, tenantID string, in Intake, to stri
 // Un fallo LEYENDO la config sí es una avería (nivel error) y también acaba en
 // silencio: preferimos no mandar a mandar un texto con marcadores sin rellenar.
 func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, log logger.Logger) (string, bool) {
-	cfg, ok := n.depositSettings(ctx, tenantID, log)
+	cfg, ok := n.depositSettings(ctx, tenantID, log, sinPlantillaAlPedirSeña)
 	if !ok {
 		return "", false
 	}
@@ -265,18 +313,114 @@ func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, 
 // Los dos `false` son los de siempre: sin plantilla es un silencio NORMAL (Warn con
 // la causa) y un fallo de lectura es una avería (Error) que también acaba en
 // silencio, porque mandar un texto con marcadores sin rellenar es peor que no mandar.
-func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger) (NotifySettings, bool) {
+//
+// `sinPlantilla` es la CONSECUENCIA, y la trae el llamante porque no es la misma en
+// los dos caminos: al pedir la seña, sin plantilla no sale NADA; al aprobar (T4.3),
+// sale la cotización del dueño sola. Un texto fijo aquí le contaría al log de uno la
+// consecuencia del otro — y un log que afirma lo que no pasó es la misma clase de
+// defecto que un mensaje que afirma un estado que no es.
+func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger, sinPlantilla string) (NotifySettings, bool) {
 	cfg, err := n.settings.NotifySettings(ctx, tenantID)
 	if err != nil {
-		log.Error("notificación: no se pudo leer la config del tenant; no se envía", "error", err)
+		log.Error("notificación: no se pudo leer la config del tenant", "error", err, "consecuencia", sinPlantilla)
 		return NotifySettings{}, false
 	}
 	if strings.TrimSpace(cfg.DepositTemplate) == "" {
 		log.Warn("notificación: el tenant no tiene plantilla de seña (tenant_settings.deposit_template); " +
-			"la transición se aplicó pero al cliente no se le manda nada")
+			sinPlantilla)
 		return NotifySettings{}, false
 	}
 	return cfg, true
+}
+
+// --- la cotización del DUEÑO (Plan 044 · T4.3, D-044.49 §1) ------------------
+//
+// Las dos funciones de abajo satisfacen QuoteSender y son la MISMA salida hacia
+// WhatsApp que el aviso automático, con otro dueño del texto: aquí las palabras las
+// pone la dueña del negocio y la plataforma solo adjunta lo que solo ella sabe (sus
+// datos de pago) y lo entrega. Por eso reusan `deliver` entero —vía custodiada de
+// PII, Ack y cero PII en los logs— en vez de abrir una segunda puerta hacia el
+// Gateway.
+
+// sinPlantillaAlPedirSeña y sinPlantillaAlAprobar son las dos consecuencias de que un
+// tenant no tenga configurada su plantilla de seña. Ver depositSettings.
+const (
+	sinPlantillaAlPedirSeña = "la transición se aplicó pero al cliente no se le manda nada"
+	sinPlantillaAlRecordar  = "no se manda el recordatorio y la marca de «ya recordado» sigue libre"
+	sinPlantillaAlAprobar   = "se le manda la cotización del dueño sola, sin instrucciones de pago"
+)
+
+// QuoteText implementa QuoteSender: compone la cotización ENTERA que va a salir —el
+// texto del dueño más la plantilla de seña del tenant— y la devuelve para que el
+// llamante la GUARDE antes de mandarla.
+//
+// El texto del dueño se devuelve TAL CUAL, byte a byte, y la plantilla se pega
+// detrás separada por un renglón en blanco. No se recorta, no se normaliza y no se
+// le añade nada más: lo que se guarda en la revisión `approved` es exactamente esto,
+// y cualquier retoque posterior convertiría ese registro en una aproximación.
+//
+// Un notificador a medias —o un tenant sin plantilla, o un fallo leyendo su config—
+// devuelve la cotización sola. Es una respuesta COMPLETA: el cliente recibe su
+// presupuesto; lo que falta es el «cómo pagar la seña», que este tenant no ha escrito.
+func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ownerText string) string {
+	if n == nil || n.log == nil || n.settings == nil {
+		return ownerText
+	}
+	log := n.log.With("intake_id", in.ID, "tenant_id", tenantID, claveAcciónDelLog, accionAprobar)
+	cfg, ok := n.depositSettings(ctx, tenantID, log, sinPlantillaAlAprobar)
+	if !ok {
+		return ownerText
+	}
+	// render rellena {total} y {plazo}; {fecha_limite} se queda SIN sustituir a
+	// propósito, porque al aprobar todavía no hay seña pedida y por tanto no hay
+	// deposit_due_at (ver la constante placeholderFechaLímite): un marcador visible
+	// delata que la plantilla promete una fecha que este momento no tiene, y eso es
+	// estrictamente mejor que estamparle al cliente una fecha inventada.
+	return ownerText + separadorDeSeña + render(cfg.DepositTemplate, in, cfg.DepositDueDays)
+}
+
+// Las dos ACCIONES del dueño que hablan por su cuenta, tal como se registran en el
+// log. Son etiquetas de observabilidad y no del wire: lo que separan es «¿por qué
+// salió este mensaje?» cuando alguien lea el log buscando un envío que no llegó.
+const (
+	accionAprobar     = "approve"
+	accionPedirInfo   = "request_info"
+	claveAcciónDelLog = "accion"
+)
+
+// SendQuote implementa QuoteSender: entrega el texto ya compuesto por la sesión de la
+// solicitud. No devuelve error (regla 1 de la cabecera) y contiene el pánico por lo
+// mismo: cuando esto corre, la aprobación YA está escrita y numerada.
+func (n *Notifier) SendQuote(ctx context.Context, tenantID string, in Intake, text string) {
+	n.enviarComoElDueño(ctx, tenantID, in, text, accionAprobar)
+}
+
+// SendQuestion implementa QuoteSender: entrega la PREGUNTA del dueño (T4.4). Es la
+// misma entrega que SendQuote con otro motivo, y no compone NADA: a una pregunta no
+// se le adjunta la plantilla de seña (ver el puerto en service.go).
+func (n *Notifier) SendQuestion(ctx context.Context, tenantID string, in Intake, question string) {
+	n.enviarComoElDueño(ctx, tenantID, in, question, accionPedirInfo)
+}
+
+// enviarComoElDueño es lo COMÚN de las dos salidas en las que habla la dueña: las
+// guardas del notificador a medias, la contención del pánico, el contexto del log y la
+// bajada a `deliver`. Existe como función porque lo único que distingue a las dos es
+// la etiqueta del motivo, y dos copias del mismo bloque habrían divergido en el primer
+// campo de log que alguien añadiera a una de ellas.
+func (n *Notifier) enviarComoElDueño(ctx context.Context, tenantID string, in Intake, text, accion string) {
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.contenerPánico(in)
+
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"status_to", NormalizeStatus(in.Status),
+		claveAcciónDelLog, accion,
+	)
+	n.deliver(ctx, tenantID, in, text, log)
 }
 
 // deliver resuelve el destino por la vía custodiada y despacha. Es la parte que

@@ -79,27 +79,49 @@ func NewPostgres(db *sql.DB, opts ...OpciónPostgres) *Postgres {
 // de los Scan de scanIntake y scanDetailRow, y meter una columna entre dos ya
 // existentes obligaría a mover los destinos de los dos escaneos a la vez —un
 // descuadre que compila y devuelve el estado en el total—. Las dos marcas de la
-// SEÑA (T4.4) se añaden al final por la misma razón.
+// SEÑA (T4.4) y la del PLAZO del presupuesto (T4.5) se añaden al final por la misma
+// razón.
 const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
-	deposit_due_at, deposit_reminded_at`
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
 
 // intakeFilterWhere es el predicado COMPARTIDO por la página y por su total: si
 // divergieran, el paginador mentiría. Cada filtro es opcional por el patrón
 // "$n IS NULL OR …", que deja el plan estable sin construir SQL dinámico
 // (concatenación de constantes: nada de esta cadena viene del usuario).
+//
+// El $6 es el filtro de HUÉRFANAS (Plan 044 · T4.8, REQ-21c): «su evento declarado
+// ya no está open». Es el NOT EXISTS del mismo predicado que hasLiveEventTx usa
+// para la guarda `live_event` del descarte, a propósito y literalmente — la vista
+// preselecciona lo que el descarte va a aceptar, y una divergencia entre las dos
+// haría que el dueño marcara lotes que rebotan.
+//
+// Va como subconsulta correlada y NO como LEFT JOIN: el join duplicaría cabeceras
+// si un evento tuviera dos contenidos (hoy lo impide intakes_event_id_uidx, pero el
+// paginador no puede depender de un índice de otra tabla), y el NOT EXISTS resuelve
+// además el legado sin una sola rama: event_id NULL ⇒ la subconsulta no casa ⇒
+// huérfana, que es lo que hasLiveEventTx decide para esa misma fila.
+//
+// Lo que NO se usa aquí es la vista public.event_content de la 0054: esa mira en la
+// dirección contraria —el PADRE preguntando por el estado de su contenido— y su
+// vocabulario (alive|settled|discarded) es el del intake, no el del evento. Aquí la
+// pregunta es sobre el EVENTO, y su vocabulario es `open`.
 const intakeFilterWhere = `
 	WHERE tenant_id = $1
 	  AND ($2::timestamptz IS NULL OR created_at >= $2)
 	  AND ($3::timestamptz IS NULL OR created_at <  $3)
 	  AND ($4::text[]      IS NULL OR status = ANY($4))
-	  AND ($5::text        IS NULL OR session_id = $5)`
+	  AND ($5::text        IS NULL OR session_id = $5)
+	  AND ($6::boolean     IS NULL OR NOT EXISTS (
+	          SELECT 1 FROM public.conversation_events e
+	          WHERE e.id = public.intakes.event_id AND e.status = 'open'))`
 
-// listIntakesQuery pagina las coincidencias, más recientes primero. El desempate
-// por id hace el orden TOTAL: dos solicitudes con el mismo created_at no pueden
-// aparecer dos veces (ni desaparecer) al pasar de página.
-const listIntakesQuery = `SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere + `
-	ORDER BY created_at DESC, id DESC
-	LIMIT $6 OFFSET $7`
+// listIntakesSelect y listIntakesPage son la consulta de la página PARTIDA en dos
+// por el ORDER BY, que desde el Plan 044 · T4.1 lo elige el filtro (`sort`,
+// D-044.48 §3) y ya no es una constante. Lo que va en medio sale de intakeOrderBy,
+// que devuelve una de dos constantes: la query del usuario no llega aquí.
+const listIntakesSelect = `SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere
+const listIntakesPage = `
+	LIMIT $7 OFFSET $8`
 
 // countIntakesQuery cuenta las MISMAS coincidencias sin paginar.
 const countIntakesQuery = `SELECT count(*) FROM public.intakes` + intakeFilterWhere
@@ -116,7 +138,12 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 		return []Intake{}, 0, nil
 	}
 
-	rows, err := p.db.QueryContext(ctx, listIntakesQuery, append(args, f.PageSize, f.Offset())...)
+	// 🔒 El G202 de gosec queda SILENCIADO abajo, y con razón: las TRES piezas son
+	// constantes de este fichero, y la de en medio la elige intakeOrderBy con un
+	// switch entre dos constantes. No hay un solo carácter de la query del usuario en
+	// esta cadena; los valores del filtro siguen viajando como parámetros ($1..$7).
+	query := listIntakesSelect + intakeOrderBy(f, "") + listIntakesPage //nolint:gosec // G202: concatenación de constantes, ver arriba
+	rows, err := p.db.QueryContext(ctx, query, append(args, f.PageSize, f.Offset())...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("intakes: listar solicitudes: %w", err)
 	}
@@ -140,10 +167,10 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 	return out, total, nil
 }
 
-// listIntakeDetailsQuery trae las cabeceras que casan con el filtro Y sus líneas
-// en UNA sola consulta. Dos decisiones que no son de estilo:
+// listIntakeDetailsHead/Body/Items traen las cabeceras que casan con el filtro Y
+// sus líneas en UNA sola consulta. Dos decisiones que no son de estilo:
 //
-//   - La cota (`LIMIT $6`) va DENTRO del CTE, sobre las cabeceras: si estuviera
+//   - La cota (`LIMIT $7`) va DENTRO del CTE, sobre las cabeceras: si estuviera
 //     fuera cortaría filas del join y devolvería solicitudes con las líneas a
 //     medias, que es exactamente el error que un export no puede permitirse.
 //   - El join es LEFT: una solicitud sin líneas (una `open` que nadie llegó a
@@ -153,18 +180,27 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 // El predicado es el MISMO de la lista (intakeFilterWhere), así que el export no
 // puede divergir de lo que la bandeja muestra. `p.id` es text (intakeCols lo
 // castea) y por eso el join lo devuelve a uuid.
-const listIntakeDetailsQuery = `
+// Va partida en tres por los DOS órdenes que lleva dentro, que desde el Plan 044 ·
+// T4.1 los elige el filtro. Los dos tienen que girar JUNTOS: el de dentro del CTE
+// decide QUÉ solicitudes entran en la cota, y el de fuera en qué orden salen. Si
+// solo girara uno, `sort=oldest` con `limit` devolvería las más recientes puestas
+// del revés — que no es lo que nadie pidió.
+const listIntakeDetailsHead = `
 	WITH page AS (
-		SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere + `
-		ORDER BY created_at DESC, id DESC
-		LIMIT $6
+		SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere
+const listIntakeDetailsBody = `
+		LIMIT $7
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
-	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at,
+	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at, p.expiry_reminded_at,
 	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
 	FROM page p
-	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid
-	ORDER BY p.created_at DESC, p.id DESC, it.added_at, it.id`
+	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid`
+
+// listIntakeDetailsItems desempata DENTRO de cada solicitud, y NO gira con `sort`:
+// las líneas de un presupuesto se leen en el orden en que se añadieron, mire el
+// export las solicitudes por delante o por detrás.
+const listIntakeDetailsItems = `, it.added_at, it.id`
 
 // ListDetails implementa Store: cabeceras + líneas del filtro, sin paginar y sin
 // N+1 (una consulta, no una por solicitud).
@@ -172,8 +208,12 @@ func (p *Postgres) ListDetails(ctx context.Context, tenantID string, f Filter, l
 	if limit <= 0 {
 		return []Detail{}, nil
 	}
-	rows, err := p.db.QueryContext(ctx, listIntakeDetailsQuery,
-		append(filterArgs(tenantID, f.Normalized()), limit)...)
+	f = f.Normalized()
+	// 🔒 Mismo G202 silenciado que en List, y por lo mismo: todas las piezas son
+	// constantes y las dos de intakeOrderBy salen de un switch entre constantes.
+	query := listIntakeDetailsHead + intakeOrderBy(f, "") + listIntakeDetailsBody + //nolint:gosec // G202: concatenación de constantes, ver arriba
+		intakeOrderBy(f, "p.") + listIntakeDetailsItems
+	rows, err := p.db.QueryContext(ctx, query, append(filterArgs(tenantID, f), limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("intakes: listar solicitudes con líneas: %w", err)
 	}
@@ -211,18 +251,20 @@ func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	var (
 		in                 Intake
 		dueAt, remindedAt  sql.NullTime
+		expiryRemindedAt   sql.NullTime
 		sku, label, custom sql.NullString
 		qty                sql.NullInt64
 		unitPrice          sql.NullFloat64
 		addedAt            sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt,
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt, &expiryRemindedAt,
 		&sku, &label, &custom, &qty, &unitPrice, &addedAt); err != nil {
 		return Intake{}, Item{}, false, fmt.Errorf("intakes: leer fila del export: %w", err)
 	}
 	in.Status = NormalizeStatus(in.Status)
 	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
+	in.ExpiryRemindedAt = expiryRemindedAt.Time
 	if !sku.Valid && !label.Valid && !qty.Valid {
 		return in, Item{}, false, nil // solicitud sin líneas (LEFT JOIN)
 	}
@@ -234,25 +276,52 @@ func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	}, true, nil
 }
 
-// filterArgs arma los cinco argumentos del predicado compartido. Un filtro sin
+// filterArgs arma los SEIS argumentos del predicado compartido. Un filtro sin
 // valor viaja como NULL (any(nil)) para que la rama "$n IS NULL" lo desactive.
+//
+// Ese NULL es lo que hace del `orphan` un filtro y no un modo: con Orphan=false el
+// $6 llega NULL y el NOT EXISTS ni se evalúa, así que la bandeja de siempre paga
+// exactamente lo que pagaba.
 func filterArgs(tenantID string, f Filter) []any {
-	var from, to, statuses, session any
+	var from, to, statuses, session, orphan any
 	if !f.From.IsZero() {
 		from = f.From
 	}
 	if !f.To.IsZero() {
 		to = f.To
 	}
-	if f.Status != "" {
+	if len(f.Statuses) > 0 {
 		// Las filas legadas guardan `closed` donde el dominio dice `confirmed`:
-		// el filtro tiene que alcanzarlas (D-041.10, sin migración de datos).
-		statuses = StoredVariants(f.Status)
+		// el filtro tiene que alcanzarlas (D-041.10, sin migración de datos). La
+		// expansión es de CADA estado pedido, no del primero (D-044.47 §2).
+		statuses = StoredVariantsOf(f.Statuses)
 	}
 	if f.SessionID != "" {
 		session = f.SessionID
 	}
-	return []any{tenantID, from, to, statuses, session}
+	if f.Orphan {
+		orphan = true
+	}
+	return []any{tenantID, from, to, statuses, session, orphan}
+}
+
+// intakeOrderBy es la cláusula de orden que corresponde al filtro, con el prefijo
+// de tabla que pida el llamante (la lista consulta `intakes` a secas; el export lo
+// hace desde el CTE `p`).
+//
+// El desempate por id hace el orden TOTAL en los dos sentidos: sin él, dos
+// solicitudes con el mismo created_at podrían repetirse o desaparecer al pasar de
+// página. Y los dos criterios giran JUNTOS —`ASC, ASC` o `DESC, DESC`—: mezclarlos
+// dejaría un orden estable pero incomprensible.
+//
+// Devuelve una constante elegida por un switch, NUNCA texto del usuario: `f.Sort`
+// ya salió de Normalized, que colapsa a SortNewest cualquier cosa que no sea
+// SortOldest. Nada de esta cadena se concatena desde la query.
+func intakeOrderBy(f Filter, prefix string) string {
+	if f.Sort == SortOldest {
+		return ` ORDER BY ` + prefix + `created_at ASC, ` + prefix + `id ASC`
+	}
+	return ` ORDER BY ` + prefix + `created_at DESC, ` + prefix + `id DESC`
 }
 
 // rowScanner abstrae *sql.Row y *sql.Rows para compartir el escaneo de cabecera.
@@ -280,14 +349,16 @@ type querier interface {
 // Las dos marcas de la seña son NULLables en la tabla (la inmensa mayoría de las
 // solicitudes no llega a pedir seña) y se leen por sql.NullTime: un NULL sale como
 // tiempo CERO, que es lo que el dominio entiende por "no se ha pedido" / "nunca se
-// recordó". No hay un tercer significado que distinguir.
+// recordó". No hay un tercer significado que distinguir. La marca del PLAZO (T4.5)
+// se lee igual y significa lo mismo: NULL ⇒ al dueño nunca se le recordó.
 func scanIntake(sc rowScanner) (Intake, error) {
 	var (
 		in                Intake
 		dueAt, remindedAt sql.NullTime
+		expiryRemindedAt  sql.NullTime
 	)
 	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
-		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt); err != nil {
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt, &expiryRemindedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Intake{}, err // lo traduce el llamante (ErrNotFound)
 		}
@@ -295,6 +366,7 @@ func scanIntake(sc rowScanner) (Intake, error) {
 	}
 	in.Status = NormalizeStatus(in.Status)
 	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
+	in.ExpiryRemindedAt = expiryRemindedAt.Time
 	return in, nil
 }
 
@@ -428,13 +500,21 @@ const selectRevisionsQuery = `
 // El guard `literal_enc IS NOT NULL` la hace idempotente: podar dos veces la misma
 // revisión afecta 0 filas la segunda, y `literal_pruned_at` conserva el instante en
 // que el texto se destruyó de verdad en vez de moverse con cada lectura posterior.
+//
+// 🔑 EL `RETURNING` NO ES UN ADORNO: es lo que permite PUBLICAR el sello en la misma
+// lectura que lo pone. El instante lo fija el `now()` de la BD, y devolverlo aquí
+// significa que lo que sale por la API y lo que queda en la columna son EL MISMO
+// valor del MISMO reloj — no dos lecturas de dos relojes que se parecen. Un
+// `time.Now()` de Go para la respuesta y un `now()` de SQL para la fila darían dos
+// instantes distintos del mismo hecho, y la segunda lectura contradiría a la primera.
 const podarLiteralQuery = `
 	UPDATE public.intake_revisions
 	   SET literal_enc       = NULL,
 	       literal_dek       = NULL,
 	       literal_kek_id    = NULL,
 	       literal_pruned_at = now()
-	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL`
+	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL
+	RETURNING literal_pruned_at`
 
 // revisionPodada es una poda pendiente de ejecutar: la decisión se toma leyendo y
 // la escritura se hace DESPUÉS de cerrar el cursor. Meter un UPDATE dentro del
@@ -474,9 +554,46 @@ func (p *Postgres) revisionsOf(ctx context.Context, q querier, intakeID string) 
 	// mientras siga cifrado y bajo su KEK— no puede costarle la pantalla. Lo que sí
 	// pasa es que se entera el log, y la siguiente lectura lo reintenta sola.
 	for _, poda := range podas {
-		p.ejecutarPoda(ctx, q, intakeID, poda)
+		sellarPodada(out, poda.revisionNo, p.ejecutarPoda(ctx, q, intakeID, poda))
 	}
 	return out, nil
+}
+
+// sellarPodada publica en la revisión `revisionNo` de `out` el instante que la poda
+// acaba de sellar en su fila. Es PURA —no toca la BD ni el reloj— y por eso es la
+// pieza que se puede verificar sin Postgres delante (sello_poda_test.go); los tests
+// de esta ruta son de integración y se SALTAN sin WAPP_TEST_DB_DSN, así que un criterio
+// que solo viviera allí casi nunca se comprobaría.
+//
+// 🔴 POR QUÉ HACE FALTA. La poda se EJECUTA después de cerrar el cursor, así que en
+// la lectura que la dispara la columna `literal_pruned_at` todavía es NULL y lo que
+// scanRevisions leyó de ella es el cero. Sin esto, esa primera respuesta diría «esta
+// revisión nunca tuvo texto» de una que se acaba de podar —exactamente la
+// ambigüedad que la columna vino a cerrar (0079, COMMENT de literal_pruned_at)— y la
+// siguiente diría otra cosa sobre el mismo hecho. El MemoryStore ya afirmaba lo
+// correcto en la misma lectura (memory.go, leerRevisionesLocked); esto es lo que
+// hace que los dos stores digan LO MISMO.
+//
+// Dos reglas, y las dos importan:
+//
+//   - LA COLUMNA MANDA. Si la revisión ya traía sello, no se toca: `literal_pruned_at`
+//     conserva el instante en que el texto se destruyó DE VERDAD y no puede moverse
+//     con el reloj de una lectura posterior.
+//   - UN CERO NO ESCRIBE NADA. Si la poda no selló —falló, o se le adelantó otra
+//     lectura—, no se inventa una fecha: la revisión sale como estaba.
+func sellarPodada(out []Revision, revisionNo int, sellado time.Time) {
+	if sellado.IsZero() {
+		return
+	}
+	for i := range out {
+		if out[i].RevisionNo != revisionNo {
+			continue
+		}
+		if out[i].LiteralPrunedAt.IsZero() {
+			out[i].LiteralPrunedAt = sellado
+		}
+		return
+	}
 }
 
 // scanRevisions recorre el cursor: descifra lo que sigue vigente, marca para poda lo
@@ -527,26 +644,26 @@ func (p *Postgres) scanRevisions(rows *sql.Rows, intakeID string, podas *[]revis
 // evento de poda es obligatorio (criterio de T3.5) y por eso el logger nunca es nil:
 // borrar el texto original de un cliente sin dejar rastro convertiría una política de
 // retención en una pérdida de datos indistinguible de un bug.
-func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string, poda revisionPodada) {
-	res, err := q.ExecContext(ctx, podarLiteralQuery, intakeID, poda.revisionNo)
-	if err != nil {
-		p.log.Error("retención: no se pudo podar el literal de una revisión vencida",
-			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
-		return
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		// Un driver que no sepa contar filas no puede convertirse en una poda
-		// fantasma en el log: se dice lo que se sabe, que es que el UPDATE no dio
-		// error. La siguiente lectura vuelve a evaluarlo.
-		p.log.Warn("retención: literal podado, sin confirmación de filas afectadas",
-			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
-		return
-	}
-	if n == 0 {
+//
+// Devuelve el instante que SELLÓ, o el cero si no selló nada —error o carrera—. Ese
+// valor es lo que se publica: ver sellarPodada. Un cero no es una fecha inventada
+// hacia atrás, es «esta lectura no podó»; la siguiente lo vuelve a evaluar.
+func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string, poda revisionPodada) time.Time {
+	var sellado time.Time
+	err := q.QueryRowContext(ctx, podarLiteralQuery, intakeID, poda.revisionNo).Scan(&sellado)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
 		// Otra lectura concurrente se adelantó. No es un fallo y no se anuncia como
 		// poda: anunciarla dos veces haría creer que hubo dos textos.
-		return
+		//
+		// Es el mismo caso que antes se leía de RowsAffected() == 0, y por el
+		// RETURNING ya no hay que contar filas ni tragarse un driver que no sepa
+		// hacerlo: o vuelve el sello, o vuelve ErrNoRows.
+		return time.Time{}
+	case err != nil:
+		p.log.Error("retención: no se pudo podar el literal de una revisión vencida",
+			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
+		return time.Time{}
 	}
 	// 🔴 CERO CONTENIDO EN ESTE EVENTO. Lo que se poda es literal del cliente, así
 	// que el log de la poda no puede llevar ni una palabra suya: dejaría en un
@@ -557,6 +674,7 @@ func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string,
 		"revision_no", poda.revisionNo,
 		"edad_segundos", int64(poda.edad.Seconds()),
 		"ttl_segundos", int64(poda.ttl.Seconds()))
+	return sellado
 }
 
 // abrirLiteral descifra el sobre y devuelve el literal a su sitio dentro del
@@ -867,6 +985,60 @@ func (p *Postgres) MarkDepositReminded(ctx context.Context, tenantID, intakeID s
 	return in, true, nil
 }
 
+// markExpiryRemindedQuery es el COMPARE-AND-SWAP que reparte el derecho a
+// recordarle al DUEÑO que un presupuesto lleva más del plazo esperando su decisión
+// (Plan 044 · T4.5, D-044.50). Molde exacto del de la seña, con tres diferencias que
+// no son de estilo:
+//
+//   - status = ANY(...) sobre `pending_approval`: en cuanto el dueño aprueba,
+//     rechaza o pide información, la fila deja de casar. Nadie recuerda una decisión
+//     que ya se tomó.
+//   - EL PLAZO NO ES UNA COLUMNA. Aquí no hay `expiry_due_at` que comparar porque el
+//     plazo es una CONSTANTE DE PLATAFORMA (QuoteDeadline, D-044.50 §1): quien
+//     llama resta el plazo de su propio reloj y manda el CORTE en $5. Así la
+//     constante vive en UN solo sitio —Go— y el pre-filtro y esta consulta no pueden
+//     discrepar sobre cuánto dura un plazo.
+//   - expiry_reminded_at IS NULL: el que llega segundo no escribe. Ahí está el «un
+//     solo recordatorio», sostenido por la BD.
+//
+// 🔴 NO TOCA updated_at, y aquí no es solo higiene como en su gemelo: updated_at es
+// la BASE del plazo (ver quoteDeadlineOf). Tocarlo aquí reiniciaría el plazo que
+// este mismo UPDATE acaba de constatar como vencido, y la marca de la bandeja se
+// apagaría en el mismo instante en que sale el aviso.
+//
+// 🔴 Y NO TOCA status. Es la mitad de la tarea: el presupuesto vencido sigue en
+// `pending_approval`. Nada muere por tiempo (D-041.16); esto solo AVISA.
+const markExpiryRemindedQuery = `
+	UPDATE public.intakes
+	SET expiry_reminded_at = $3
+	WHERE tenant_id = $1 AND id = $2
+	  AND status = ANY($4)
+	  AND updated_at <= $5
+	  AND expiry_reminded_at IS NULL
+	RETURNING ` + intakeCols
+
+// MarkExpiryReminded implementa ExpiryStore: gana (o no) el derecho a avisar al
+// dueño. `false` sin error es la respuesta NORMAL —no vencido, ya avisado, o el
+// dueño ya decidió— y no una avería: quien llama se calla y sigue.
+//
+// El CORTE se calcula aquí y no en el llamante para que la única aritmética del
+// plazo del lado SQL viva pegada a su consulta: `at - QuoteDeadline` es «la fecha a
+// partir de la cual una solicitud tocada lleva demasiado esperando».
+func (p *Postgres) MarkExpiryReminded(ctx context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Intake{}, false, ErrNotFound
+	}
+	in, err := scanIntake(p.db.QueryRowContext(ctx, markExpiryRemindedQuery,
+		tenantID, intakeID, at, StoredVariants(StatusPendingApproval), cutoffDelPlazo(at)))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Intake{}, false, nil
+	case err != nil:
+		return Intake{}, false, err
+	}
+	return in, true, nil
+}
+
 // pendingDepositRemindersQuery lista las señas vencidas y sin recordar de UN
 // contacto. El predicado es el MISMO del compare-and-swap (menos el id): si
 // divergieran, este camino traería candidatas que el CAS rechaza siempre y el toque
@@ -1124,7 +1296,12 @@ func (p *Postgres) NotifySettings(ctx context.Context, tenantID string) (NotifyS
 //
 // La revisión va al final a propósito: es el retrato de lo YA persistido, no de lo
 // que se pretendía escribir.
-func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+//
+//	4-bis. …y esa revisión lleva la SEÑAL FEW-SHOT (T4.4) cuando la edición se
+//	declaró corrección. El número de la revisión que se está corrigiendo se lee
+//	DENTRO de la transacción, con la cabecera ya bloqueada: fuera del candado
+//	podría apuntar a una revisión que otra escritura acababa de dejar.
+func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error) {
 	if _, err := uuid.Parse(intakeID); err != nil {
 		return Detail{}, ErrNotFound
 	}
@@ -1147,7 +1324,11 @@ func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, 
 		if err != nil {
 			return err
 		}
-		rev, err := correctedRevision(intakeID, head.Total, lines)
+		signal, err := señalDeCorrección(mode, últimaRevisiónTx(ctx, tx, intakeID))
+		if err != nil {
+			return err
+		}
+		rev, err := correctedRevision(intakeID, head.Total, lines, signal)
 		if err != nil {
 			return err
 		}
@@ -1186,6 +1367,42 @@ func lockEditableTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, 
 		return ErrConflict
 	}
 	return nil
+}
+
+// últimaRevisiónTx es la consulta con la que ESTE store contesta «¿qué revisión se
+// está corrigiendo?» (T4.4). La REGLA —cuándo se pregunta y qué se guarda— no está
+// aquí sino en señalDeCorrección, que es la que decide si esta función llega a
+// ejecutarse: en el camino del 041 no se llama y la sentencia no se paga.
+//
+// Consulta a mano en vez de reusar revisionsOf, y es a propósito: aquélla trae los
+// payloads enteros, DESCIFRA el literal del cliente y aplica la poda perezosa por
+// TTL (efectos persistentes). Para saber qué número se corrige hacen falta dos
+// columnas y ningún literal — pedir el resto sería descifrar PII para tirarla.
+//
+// Una solicitud SIN revisiones no es un error: es un borrador que nadie retrató
+// todavía (una solicitud del carrito que llegó a `pending_approval` sin pasar por el
+// pipeline). Devuelve el cero, y la señal saldrá con la marca y sin el par.
+func últimaRevisiónTx(ctx context.Context, q querier, intakeID string) últimaRevisión {
+	return func() (int, string, error) {
+		var (
+			no   int
+			kind string
+		)
+		err := q.QueryRowContext(ctx, `
+			SELECT revision_no, kind
+			FROM public.intake_revisions
+			WHERE intake_id = $1
+			ORDER BY revision_no DESC
+			LIMIT 1
+		`, intakeID).Scan(&no, &kind)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, "", nil
+		case err != nil:
+			return 0, "", fmt.Errorf("intakes: leer la revisión que se está corrigiendo: %w", err)
+		}
+		return no, kind, nil
+	}
 }
 
 // replaceClientItemsTx borra las líneas de CLIENTE y escribe las nuevas. Las del

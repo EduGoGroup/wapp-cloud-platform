@@ -137,15 +137,77 @@ type RevisionLine struct {
 	UnitPrice float64 `json:"unit_price"`
 }
 
+// Claves de la SEÑAL FEW-SHOT dentro del payload de una revisión `corrected`
+// (Plan 044 · T4.4, D-044.11). Se declaran como constantes porque son contrato del
+// CABLE —lo que la Ola 5 tendrá que buscar en el payload— y porque los tests las
+// comparan contra las etiquetas JSON reales por reflexión, igual que ya hacen
+// ClaveLineaUnitPrice y ClavePayloadLines.
+const (
+	ClaveAsCorrection       = "as_correction"
+	ClaveCorrectsRevisionNo = "corrects_revision_no"
+	ClaveCorrectsKind       = "corrects_kind"
+)
+
+// CorrectionSignal es lo que una corrección declarada del dueño deja escrito en su
+// revisión: que ESTA edición fue una corrección del 044 (y no la edición manual
+// rutinaria del 041) y CUÁL era el borrador que corrigió.
+//
+// 🔴 QUÉ ES Y QUÉ NO ES, PORQUE HOY NO TIENE CONSUMIDOR. D-044.11 quiere alimentar
+// el generador de la voz de la dueña con «las últimas N cotizaciones aprobadas +
+// ejemplos semilla de `tenant_content` ref `quote_style_examples`», y dice que «cada
+// corrección del dueño es señal barata». Esa ref tiene CERO apariciones en el código
+// de producción y su consumidor es de la OLA 5. Aquí la señal solo se PRODUCE y se
+// GUARDA: nadie la lee todavía y marcar la casilla de T4.4 no significa que el
+// few-shot funcione.
+//
+// POR QUÉ EL PAR Y NO SOLO LA MARCA. Un few-shot aprende de «esto propuso la máquina,
+// esto dejó la persona»: con la marca sola habría que adivinar qué revisión se estaba
+// corrigiendo, y el número que la identifica solo se conoce con el candado tomado,
+// dentro de la escritura. Por eso lo resuelve el store y no el llamante.
+//
+// Los tres campos llevan `omitempty` y viven en la RAÍZ del payload: sin señal, el
+// JSON de la revisión sale BYTE A BYTE como el que escribe el 041 hoy. Esa es la
+// forma en que «cero regresión» se puede demostrar en vez de prometerse.
+type CorrectionSignal struct {
+	// AsCorrection es la marca: el dueño declaró esta edición como corrección
+	// (`"as_correction": true` en el PUT). Nunca se escribe `false` — su ausencia
+	// ES el «no».
+	AsCorrection bool `json:"as_correction,omitempty"`
+	// CorrectsRevisionNo es el número de la revisión que había ANTES de ésta: el
+	// borrador que el dueño corrigió. Cero —y por tanto ausente— cuando la
+	// solicitud no tenía ninguna revisión, que es un caso raro pero posible.
+	CorrectsRevisionNo int `json:"corrects_revision_no,omitempty"`
+	// CorrectsKind es la clase de ese borrador (`interpreted` cuando lo escribió el
+	// pipeline del 044, `cart` cuando venía del carrito numérico, `corrected` si es
+	// la segunda pasada del dueño). Es lo que le permite a la Ola 5 quedarse solo
+	// con las correcciones que enseñan algo sobre la interpretación del LLM.
+	CorrectsKind string `json:"corrects_kind,omitempty"`
+}
+
 // linesRevisionPayload es la forma canónica del payload de las revisiones que
 // retratan un conjunto de líneas con su total: RevisionKindCart (lo que armó el
-// carrito) y RevisionKindCorrected (cómo quedó tras la corrección del dueño). Es
-// UNA forma y no dos porque es la misma pregunta —qué líneas y por cuánto—
-// contestada por dos puertas; `kind` es lo que dice cuál fue.
+// carrito), RevisionKindCorrected (cómo quedó tras la corrección del dueño) y
+// RevisionKindApproved (lo que el dueño aprobó y cotizó, Plan 044 · T4.3). Es UNA
+// forma y no tres porque es la misma pregunta —qué líneas y por cuánto— contestada
+// por tres puertas; `kind` es lo que dice cuál fue.
+//
+// La señal va EMBEBIDA (json inline) y no en un objeto anidado: `as_correction` es
+// el nombre que el contrato del PUT ya usa (D-044.48 §1), y repetirlo dentro de un
+// objeto llamado «correction» lo diría dos veces. Los tres campos son opcionales, así
+// que una señal VACÍA —la de las otras dos clases de revisión, y la del PUT del 041—
+// serializa exactamente lo que se serializaba antes de esta tarea: nada.
+//
+// ⚠️ NO SUBE RevisionPayloadVersion, y es deliberado: son campos ADITIVOS y
+// opcionales. Ningún lector de la v1 se rompe (no hay un solo DisallowUnknownFields
+// sobre este payload en el repo), mientras que subir la versión la habría subido para
+// las TRES clases —`cart` y `approved` incluidas, que no han cambiado en nada— y
+// habría movido todos los golden files por un campo que la mayoría de las revisiones
+// no lleva.
 type linesRevisionPayload struct {
 	Version int            `json:"version"`
 	Total   float64        `json:"total"`
 	Items   []RevisionLine `json:"items"`
+	*CorrectionSignal
 }
 
 // CartRevisionPayload arma el payload de la revisión de CIERRE DE CARRITO
@@ -155,27 +217,46 @@ type linesRevisionPayload struct {
 // distinguir "se cerró sin líneas" de "aquí no se registró la lista", y `null` no
 // dice cuál de las dos es.
 func CartRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
-	return linesPayload("del carrito", total, lines)
+	return linesPayload("del carrito", total, lines, CorrectionSignal{})
 }
 
 // CorrectedRevisionPayload arma el payload de la revisión de CORRECCIÓN MANUAL
 // del dueño (T4.10 / REQ-36): la misma forma versionada que la del carrito, para
 // que quien lea la negociación entera compare revisión con revisión sin cambiar de
 // parser a media lista.
-func CorrectedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
-	return linesPayload("de la corrección manual", total, lines)
+//
+// `signal` es la señal few-shot del 044 (T4.4) y viene VACÍA en el camino del 041:
+// así el payload sale byte a byte como el de siempre.
+func CorrectedRevisionPayload(total float64, lines []RevisionLine, signal CorrectionSignal) (json.RawMessage, error) {
+	return linesPayload("de la corrección manual", total, lines, signal)
+}
+
+// ApprovedRevisionPayload arma el payload de la revisión de APROBACIÓN del dueño
+// (Plan 044 · T4.3): la MISMA forma versionada que la del carrito y la de la
+// corrección, porque es la misma pregunta —qué líneas y por cuánto— contestada por
+// una tercera puerta. Lo que distingue esta revisión de aquellas dos no es la forma
+// del payload sino su `kind` y su `rendered_text`, que aquí NUNCA está vacío: la
+// aprobación es, por definición, lo que se le dijo al cliente.
+func ApprovedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
+	return linesPayload("de la aprobación", total, lines, CorrectionSignal{})
 }
 
 // linesPayload serializa la forma compartida. `what` solo entra en el mensaje de
 // error: sin él, un fallo de serialización no diría qué revisión se perdió.
-func linesPayload(what string, total float64, lines []RevisionLine) (json.RawMessage, error) {
+//
+// La señal se embebe SIEMPRE y no bajo un `if`: con los tres campos vacíos, los tres
+// `omitempty` la borran entera del JSON. Una rama aquí sería un segundo sitio donde
+// se decide si hay señal, y quien decide eso es señalDeCorrección (edit.go) — una
+// sola vez, que es lo que hace que una mutación en esa guarda se vea.
+func linesPayload(what string, total float64, lines []RevisionLine, signal CorrectionSignal) (json.RawMessage, error) {
 	if lines == nil {
 		lines = []RevisionLine{}
 	}
 	raw, err := json.Marshal(linesRevisionPayload{
-		Version: RevisionPayloadVersion,
-		Total:   total,
-		Items:   lines,
+		Version:          RevisionPayloadVersion,
+		Total:            total,
+		Items:            lines,
+		CorrectionSignal: &signal,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("intakes: serializar payload de la revisión %s: %w", what, err)

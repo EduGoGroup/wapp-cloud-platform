@@ -31,6 +31,7 @@ package intakes
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -111,6 +112,21 @@ type Intake struct {
 	// compare-and-swap contra NULL, así que de N toques simultáneos solo uno manda
 	// (D-041.12: «un solo recordatorio en v1»). Zero = nunca se le recordó.
 	DepositRemindedAt time.Time
+	// ExpiryRemindedAt marca que al DUEÑO ya se le recordó que este presupuesto
+	// lleva más de QuoteDeadline esperando su decisión (Plan 044 · T4.5, D-044.50).
+	// Mismo mecanismo que su hermana de arriba —compare-and-swap contra NULL, así
+	// que de N toques simultáneos solo uno avisa— y misma lectura del cero: nunca se
+	// avisó.
+	//
+	// 🔴 NO ES UNA FECHA DE VENCIMIENTO Y NO MATA NADA. La solicitud sigue en
+	// `pending_approval` con esta marca puesta; lo único que la marca impide es un
+	// SEGUNDO aviso. Que un presupuesto esté vencido se calcula al leer (Overdue,
+	// vencimiento.go) y no tiene columna: preguntarle a ésta si algo venció daría la
+	// respuesta equivocada en los dos sentidos.
+	//
+	// ⚠️ Hoy el aviso que esta marca gasta NO LLEGA A NINGUNA PERSONA: el emisor real
+	// es el push del Plan 045 y el sumidero de hoy solo deja traza (D-044.50 §2).
+	ExpiryRemindedAt time.Time
 }
 
 // Item es una LÍNEA de la solicitud. SKU/Label son códigos del catálogo del
@@ -171,10 +187,10 @@ type Detail struct {
 // Filter acota el listado de solicitudes. Todos los campos son opcionales: el
 // cero-valor lista todo el tenant.
 //
-// Extensible sin rediseño: el filtro `orphan=true` del design §4 es una condición
-// DERIVADA (se recalcula al leer, D-041.16) y la trae T4.8 (Ola 4). Cuando llegue,
-// entra como un campo más de este struct y una cláusula más en el store — ni la
-// firma de Service.List ni la del puerto Store cambian.
+// Extensible sin rediseño, y quedó demostrado: el filtro `orphan=true` del design
+// §4 —condición DERIVADA, recalculada al leer (D-041.16)— LLEGÓ con T4.8 (Ola 4) y
+// entró exactamente como se anunciaba, un campo más aquí y una cláusula más en el
+// store: ni la firma de Service.List ni la del puerto Store cambiaron.
 type Filter struct {
 	// From/To acotan por created_at. From es INCLUSIVO y To EXCLUSIVO: quien
 	// traduce una fecha del usuario a este rango decide qué significa "hasta"
@@ -182,20 +198,76 @@ type Filter struct {
 	// entero). Zero-valor ⇒ sin cota por ese lado.
 	From time.Time
 	To   time.Time
-	// Status es la clave CANÓNICA por la que se filtra (ya normalizada). Vacío ⇒
-	// todos. Filtrar por `confirmed` alcanza también las filas históricas escritas
-	// como `closed`: de eso se encarga StoredVariants en el store.
-	Status string
+	// Statuses son las claves CANÓNICAS por las que se filtra (ya normalizadas).
+	// Lista VACÍA ⇒ todos. Filtrar por `confirmed` alcanza también las filas
+	// históricas escritas como `closed`: de eso se encarga StoredVariantsOf en el
+	// store, que expande CADA elemento de la lista y no solo el primero.
+	//
+	// Es una LISTA y no un estado suelto desde el Plan 044 · T4.1 (D-044.47 §2):
+	// la bandeja del dueño necesita `pending_approval` Y `needs_info` en UNA
+	// pantalla, y con un solo estado eso eran dos llamadas cuyos paginadores no se
+	// podían componer.
+	Statuses []string
 	// SessionID acota a la sesión (Edge/WhatsApp) que originó la solicitud.
 	SessionID string
+	// Orphan acota a las solicitudes HUÉRFANAS: aquellas cuyo evento conversacional
+	// declarado (intakes.event_id, D-043.21) ya NO está `open`. `false` ⇒ sin cota
+	// por este lado, como el resto de los campos de este struct.
+	//
+	// La definición es la MISMA que la guarda `live_event` del descarte
+	// (hasLiveEventTx, discard.go), negada — y eso es el punto entero del filtro
+	// (Plan 041 · T4.8, D-041.18): lo que esta vista PRESELECCIONA es exactamente lo
+	// que el descarte va a aceptar, así que el dueño no marca un lote para que la
+	// plataforma le devuelva media pantalla de `live_event`. Si algún día divergen,
+	// la bandeja de huérfanos empezaría a elegir víctimas equivocadas.
+	//
+	// Cae del lado huérfano la fila LEGADA pre-0054 (event_id NULL), por lo mismo
+	// que hasLiveEventTx la deja pasar: sin padre declarado no existe la conversación
+	// que la guarda protege.
+	//
+	// ⚠️ NO filtra por estado: huérfana es una propiedad de la CONVERSACIÓN, no del
+	// ciclo de vida de la solicitud. Quien quiera «huérfanas y todavía abiertas»
+	// combina Orphan con Statuses, que es lo que la bandeja hace.
+	Orphan bool
+	// Sort es el orden del listado: SortNewest (default, lo que el Plan 041 sirve
+	// y documenta) o SortOldest. Vacío ⇒ SortNewest.
+	//
+	// Es un PARÁMETRO y no una constante desde el Plan 044 · T4.1 (D-044.48 §3):
+	// la bandeja del 044 pide `oldest` porque lo que vence tiene que salir arriba,
+	// y cambiar el default habría alterado una pantalla en producción sin que
+	// nadie lo pidiera.
+	Sort string
 	// Page es 1-based; PageSize se acota a [1, MaxPageSize].
 	Page     int
 	PageSize int
 }
 
+// Los dos órdenes que acepta el listado. `newest` es el default y es lo que el
+// Plan 041 sirve desde su primer día: quien no pide orden no ve cambiar el suyo.
+const (
+	SortNewest = "newest"
+	SortOldest = "oldest"
+)
+
+// IsSort indica si la clave es un orden conocido. La usa el borde HTTP para
+// contestar 400 ante un `sort=antiguos` en vez de servir silenciosamente otro
+// orden — el mismo criterio que `status desconocido`.
+func IsSort(sort string) bool {
+	return sort == SortNewest || sort == SortOldest
+}
+
 // Normalized devuelve el filtro con la paginación saneada (página ≥ 1, tamaño en
-// [1, MaxPageSize] con DefaultPageSize si no se pidió) y el estado normalizado.
-// Es idempotente.
+// [1, MaxPageSize] con DefaultPageSize si no se pidió), los estados normalizados y
+// el orden resuelto. Es idempotente.
+//
+// Los estados salen ORDENADOS y sin repetidos, y eso no es cosmética: la lista
+// viaja a un `= ANY($n)` y a los tests, así que `?status=needs_info&status=
+// pending_approval` y el mismo par al revés tienen que producir EL MISMO filtro.
+// Mismo criterio —y por la misma razón— que DiscardableStatuses.
+//
+// Un elemento vacío se descarta en vez de convertirse en una cadena vacía que no casa con
+// ninguna fila: `?status=&status=needs_info` es «filtra por needs_info», no «no
+// devuelvas nada».
 func (f Filter) Normalized() Filter {
 	out := f
 	if out.Page < 1 {
@@ -207,8 +279,31 @@ func (f Filter) Normalized() Filter {
 	case out.PageSize > MaxPageSize:
 		out.PageSize = MaxPageSize
 	}
-	out.Status = NormalizeStatus(out.Status)
+	if !IsSort(out.Sort) {
+		out.Sort = SortNewest
+	}
+	out.Statuses = normalizeStatuses(out.Statuses)
 	return out
+}
+
+// normalizeStatuses normaliza, ordena y colapsa la lista de estados del filtro.
+// Devuelve nil —y no un slice vacío— cuando no queda ninguno, para que el store
+// distinguya «sin filtro por estado» con la misma prueba de siempre.
+func normalizeStatuses(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if canonical := NormalizeStatus(s); canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Offset es el desplazamiento SQL que corresponde a la página del filtro.
@@ -228,8 +323,9 @@ type Page struct {
 // Store es el puerto de persistencia de solicitudes. Lo satisface *Postgres
 // (producción) y *MemoryStore (tests). Toda operación va acotada al tenant (INV-8).
 type Store interface {
-	// List devuelve la página de solicitudes que casan con el filtro (más
-	// recientes primero) y el TOTAL de coincidencias del filtro sin paginar.
+	// List devuelve la página de solicitudes que casan con el filtro, en el orden
+	// que pide f.Sort (más recientes primero por defecto), y el TOTAL de
+	// coincidencias del filtro sin paginar.
 	List(ctx context.Context, tenantID string, f Filter) (items []Intake, total int, err error)
 
 	// Get devuelve la solicitud con sus líneas y sus revisiones, o ErrNotFound si
@@ -287,7 +383,14 @@ type Store interface {
 	// (StoredVariants): la escritura solo ocurre si la solicitud sigue ahí
 	// (ErrConflict si no, ErrNotFound si no es del tenant). Devuelve el detalle ya
 	// coherente, revisión nueva incluida.
-	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error)
+	//
+	// `mode` dice si la edición se declaró CORRECCIÓN del 044 (Plan 044 · T4.4,
+	// `"as_correction": true`). Con EditPlain —el camino del 041— la revisión sale
+	// byte a byte como salía antes de existir el parámetro. Con EditAsCorrection
+	// lleva además la señal few-shot, y quien la arma es el store porque el número
+	// de la revisión corregida solo se conoce con el candado tomado (ver
+	// CorrectionSignalOf).
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error)
 
 	// ApplyRevalidation escribe el resultado de una revalidación contra el catálogo
 	// vigente (D-041.25, T4.9) en UNA sola unidad de trabajo: re-precia las líneas

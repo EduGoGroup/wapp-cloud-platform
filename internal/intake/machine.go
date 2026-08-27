@@ -211,7 +211,63 @@ type ClaimedJob struct {
 	// `pending` llegaría tarde y afectaría 0 filas. Lo añadió T2.5 (la política);
 	// la columna la dejó puesta T2.1 (la sede).
 	Attempts int
+	// Reanalisis es el CONTEXTO DEL RE-ANÁLISIS (Plan 044 · Ola 4 · T4.6,
+	// migración 0080): quién pidió este job, por qué vía, con qué material y a qué
+	// revisión sucede.
+	//
+	// 🔴 VIAJA EN EL CLAIM POR LA MISMA RAZÓN QUE `Attempts`: quien lo necesita es
+	// la etapa `draft`, que solo ve un ClaimedJob y no habla con HTTP. Sin esto, un
+	// job de re-análisis sería indistinguible de uno normal columna a columna, y su
+	// revisión saldría firmada por `system` con el `analysis` vacío.
+	//
+	// Cero-valor (`EsDelDueño() == false`) es el pipeline NORMAL, que es la inmensa
+	// mayoría de los jobs.
+	Reanalisis Reanalisis
 }
+
+// RequestedByOwner es el ÚNICO valor de `intake_jobs.requested_by` que hoy se
+// escribe: el job lo pidió el DUEÑO por POST /api/v1/intakes/{id}/reanalyze
+// (Plan 044 · T4.6).
+//
+// Es un ROL y no una persona, exactamente como `intake_revisions.created_by` —del
+// que copia el molde—: aquí NUNCA va un identificador de usuario, un número ni un
+// nombre. La cadena vacía es «no lo pidió nadie por esa puerta», o sea el pipeline
+// normal, y NO se escribe como `'system'`: rellenar con un rol inventado afirmaría
+// de cada job de la historia algo que nadie comprobó (ver el COMMENT de la 0080).
+const RequestedByOwner = "owner"
+
+// Reanalisis es lo que un job de RE-ANÁLISIS transporta y uno normal no
+// (migración 0080). Es un struct y no cuatro campos sueltos en ClaimedJob porque
+// las cuatro columnas son UN solo hecho, y agrupadas se puede preguntar
+// `job.Reanalisis.EsDelDueño()` en un sitio en vez de comparar un literal por el
+// código.
+//
+// 🔴 ESTE PAQUETE NO INTERPRETA NINGUNO DE LOS CUATRO VALORES. Son vocabulario de
+// otras capas —el rol lo fija RequestedByOwner, la vía es `tenantllm.Via*` y el
+// material es `stages.Origen*`— y esta cola no sabe de vías ni de material: los
+// transporta. Importar aquí esos paquetes para validarlos cerraría un ciclo
+// (`stages` ya importa `intake`) y convertiría la cola en juez de un vocabulario
+// que no es suyo.
+type Reanalisis struct {
+	// RequestedBy es el rol que pidió el job (RequestedByOwner o "").
+	RequestedBy string
+	// Via es el eje VÍA con el que se pidió correr (`local` | `api`). Vacía en el
+	// pipeline normal, donde la vía la resuelve el selector por llamada.
+	Via string
+	// Source es de dónde salió el material (`event_thread` | `pasted_text` |
+	// `both`, los `stages.Origen*`). Vacío en el pipeline normal.
+	Source string
+	// From es el `revision_no` VIGENTE cuando se pidió el re-análisis: la revisión
+	// a la que este job sucede, NO la que va a escribir. 0 = no había ninguna (o
+	// no es un re-análisis), y el contrato §7.4 lo publica como `null`.
+	From int
+}
+
+// EsDelDueño dice si este job lo pidió el dueño por `/reanalyze`. Es LA pregunta
+// que gatea las tres diferencias de conducta de T4.6 —`created_by='owner'`, el
+// `payload.analysis` y el empuje al puente CRM— y se hace en un solo sitio para
+// que ninguna de las tres pueda quedarse con un criterio distinto.
+func (r Reanalisis) EsDelDueño() bool { return r.RequestedBy == RequestedByOwner }
 
 // PipelineStore es el puerto del WORKER del pipeline (Ola 2), y es deliberadamente
 // distinto de JobStore: aquí sí se lee, aquí sí se bloquean filas y aquí sí viaja el

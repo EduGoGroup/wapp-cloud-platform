@@ -178,6 +178,86 @@ func (s *Store) ListThread(ctx context.Context, eventID string, limit int) (out 
 	return out, nil
 }
 
+// listPastedSQL lee SOLO las transcripciones que pegó el dueño en este evento
+// (Plan 044 · Ola 4 · T4.6). Es la única consulta del árbol que filtra por
+// `origin`, y ese filtro es todo su motivo de existir: el dedupe del `text` de
+// `/reanalyze` es por `(event_id, origin, hash del texto saneado)` y las filas de
+// `whatsapp` no compiten en él — un cliente que escribiera por WhatsApp la misma
+// frase que el dueño pega NO debe impedir que la transcripción se guarde, porque
+// son dos hechos distintos.
+//
+// 🔴 EL HASH NO ESTÁ EN LA SENTENCIA, Y NO PUEDE ESTARLO. No hay columna donde
+// guardarlo: el CHECK de grado (`conversation_event_messages_grade_chk`) obliga a
+// `payload IS NULL` en toda fila `message`, así que la única sede posible sería una
+// columna nueva. Se descartó: el cuerpo va CIFRADO con DEK fresca por fila (nonce
+// distinto cada vez), de modo que dos filas con el mismo texto tienen `body_enc`
+// distintos y no hay forma de compararlas en SQL. El dedupe se resuelve en memoria,
+// descifrando las pocas filas que esta consulta devuelve.
+//
+// No lleva LIMIT: las filas `owner_pasted` de un evento son las veces que el dueño
+// pegó texto en ese pedido —unidades, no cientos—, y un LIMIT que mordiera dejaría
+// pasar un duplicado en silencio, que es justo lo que esto existe para impedir.
+const listPastedSQL = `
+SELECT seq, body_enc, body_dek, body_kek_id
+  FROM public.conversation_event_messages
+ WHERE event_id = $1::uuid
+   AND entry_kind = 'message'
+   AND origin = $2
+ ORDER BY seq
+`
+
+// ListPastedByOwner devuelve, DESCIFRADAS, las transcripciones que el dueño pegó en
+// este evento. Es lo que el dedupe de T4.6 compara contra el texto entrante.
+//
+// Igual que ListThread: sin cipher falla con ErrNoCipher en vez de devolver el hilo
+// a medias, y una entrada indescifrable ABORTA la lectura. Aquí la consecuencia de
+// tragarse un fallo sería un DUPLICADO —la fila que no se pudo leer no se compara,
+// así que el texto se volvería a escribir—, y el criterio dice «repetir la llamada
+// con el mismo `text` ⇒ sigue habiendo una».
+func (s *Store) ListPastedByOwner(ctx context.Context, eventID string) (out []string, err error) {
+	if s == nil || s.db == nil || eventID == "" {
+		return nil, nil
+	}
+	if s.cipher == nil {
+		return nil, ErrNoCipher
+	}
+
+	rows, err := s.db.QueryContext(ctx, listPastedSQL, eventID, string(OriginOwnerPasted))
+	if err != nil {
+		return nil, fmt.Errorf("events: leer las transcripciones pegadas del evento %s: %w", eventID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("events: cerrar las transcripciones pegadas del evento %s: %w", eventID, cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var (
+			seq      int
+			enc, dek []byte
+			kekID    sql.NullString
+		)
+		if serr := rows.Scan(&seq, &enc, &dek, &kekID); serr != nil {
+			return nil, fmt.Errorf("events: scan de una transcripción pegada del evento %s: %w", eventID, serr)
+		}
+		// Se pasa `payload` en nil a propósito: estas filas son nivel 2 por el CHECK
+		// de grado, así que el brazo del payload de entryText no puede ejecutarse. Se
+		// reusa la MISMA función que ListThread para que el descifrado tenga un solo
+		// borde, que es lo que pide REQ-10c.
+		text, terr := s.entryText(nil, enc, dek, kekID)
+		if terr != nil {
+			// El error NO lleva el cuerpo: nombra evento y seq.
+			return nil, fmt.Errorf("events: descifrar la transcripción %d del evento %s: %w", seq, eventID, terr)
+		}
+		out = append(out, text)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("events: iterar las transcripciones pegadas del evento %s: %w", eventID, rerr)
+	}
+	return out, nil
+}
+
 // entryText resuelve el GRADO de una entrada a texto plano. Es UNA función para
 // los cuatro `entry_kind` a propósito: la diferencia que atiende es de NIVEL
 // (ADR-0034), que es una propiedad de la FILA —o trae cuerpo cifrado, o trae

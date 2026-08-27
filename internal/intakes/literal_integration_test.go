@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -382,7 +383,21 @@ func TestLiteralPG_PodaAlVencerElTTL(t *testing.T) {
 		t.Fatal("el literal sobrevivió al vencimiento del TTL")
 	}
 
-	exigirFilaPodada(ctx, t, db, intakeID)
+	enLaColumna := exigirFilaPodada(ctx, t, db, intakeID)
+
+	// 🔴 Y LA LECTURA QUE PODA TIENE QUE DECIRLO YA, no la siguiente. La poda se
+	// ejecuta después de cerrar el cursor, así que la columna que el cursor leyó era
+	// NULL: sin sellarPodada, esta primera respuesta saldría sin marca y sería
+	// indistinguible de una revisión que nunca tuvo texto — justo lo que la columna
+	// vino a cerrar. El valor publicado es ADEMÁS el mismo que quedó en la fila,
+	// porque sale del RETURNING de la propia poda y no de un segundo reloj.
+	sello := podada.Revisions[0].LiteralPrunedAt
+	if sello.IsZero() {
+		t.Fatal("la lectura que podó devolvió literal_pruned_at en cero: dice «nunca hubo texto» de lo que acaba de destruir")
+	}
+	if !sello.Equal(enLaColumna) {
+		t.Fatalf("el instante publicado (%s) no es el que quedó en la columna (%s): son dos relojes", sello, enLaColumna)
+	}
 
 	// El evento de poda, sin una palabra del texto destruido.
 	log := spy.all()
@@ -394,8 +409,14 @@ func TestLiteralPG_PodaAlVencerElTTL(t *testing.T) {
 	}
 
 	// Y no se repite: la segunda lectura ya no tiene nada que podar.
-	if _, err := store.Get(ctx, tenant, intakeID); err != nil {
+	segunda, err := store.Get(ctx, tenant, intakeID)
+	if err != nil {
 		t.Fatalf("Get tras la poda: %v", err)
+	}
+	// Y dice EXACTAMENTE lo mismo que la primera. Dos lecturas del mismo hecho con
+	// dos instantes distintos serían otro defecto, no el arreglo de éste.
+	if !segunda.Revisions[0].LiteralPrunedAt.Equal(sello) {
+		t.Fatalf("la segunda lectura mueve el sello: %s -> %s", sello, segunda.Revisions[0].LiteralPrunedAt)
 	}
 	if n := strings.Count(spy.all(), "podado por TTL vencido"); n != 1 {
 		t.Fatalf("el evento de poda se emitió %d veces, se esperaba 1", n)
@@ -454,7 +475,10 @@ func TestLiteralPG_ElTTLDelTenantManda(t *testing.T) {
 // puesta y el payload INTACTO. Las tres cosas juntas son lo que distingue una poda de
 // una pérdida de datos — un trío en NULL sin `literal_pruned_at` sería indistinguible
 // de una revisión que nunca tuvo texto.
-func exigirFilaPodada(ctx context.Context, t *testing.T, db *sql.DB, intakeID string) {
+// Devuelve el `literal_pruned_at` de la fila para poder contrastarlo con el que la
+// lectura PUBLICÓ: que la API y la columna afirmen el mismo instante es la mitad que
+// mirar solo la fila no puede comprobar.
+func exigirFilaPodada(ctx context.Context, t *testing.T, db *sql.DB, intakeID string) time.Time {
 	t.Helper()
 	var enc []byte
 	var prunedAt sql.NullTime
@@ -476,4 +500,5 @@ func exigirFilaPodada(ctx context.Context, t *testing.T, db *sql.DB, intakeID st
 			t.Fatalf("la poda se llevó por delante la interpretación (%s):\n%s", nivel1, payload)
 		}
 	}
+	return prunedAt.Time
 }
