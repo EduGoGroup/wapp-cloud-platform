@@ -49,6 +49,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/telemetria"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
@@ -646,7 +647,23 @@ func Run(ctx context.Context) error {
 		// tocar el arranque; hasta que exista una, el único productor de intake.push
 		// sigue siendo el WebhookSink.
 		intakes.WithCRMPusher(crmpush.NewRevisionPusher(
-			crmpush.NewPusher(log, integrationsStore, webhookGate), log)))
+			crmpush.NewPusher(log, integrationsStore, webhookGate), log)),
+		// LA TELEMETRÍA DE LA BANDEJA (Plan 044 · T5.2, design §10). El adaptador va
+		// sobre el MISMO `flowStore` que ya recibe la etapa `draft` del pipeline como
+		// escritor de eventos, y tiene que serlo: `flow_events` es UNA tabla y los cinco
+		// eventos del plan se leen juntos desde las consultas del runbook.
+		//
+		// El envoltorio `telemetria.New` NO es ceremonia: `intakes` no puede importar
+		// `flujos/store` —ciclo con el test in-package de aquel paquete— así que su
+		// puerto habla de tenant/contacto/nombre/payload y quien sabe firmar la fila es
+		// este adaptador. Ver internal/intakes/telemetria.
+		//
+		// Sin esta línea el dominio funciona entero y NO publica nada — lo mismo que
+		// promete WithNotifier para el teléfono del cliente—, así que su ausencia no
+		// rompe ninguna acción del dueño: lo que deja vacíos son los tres KPIs que
+		// dependen de la bandeja (`intake_line_corrected`, `intake_approved`,
+		// `intake_info_requested`).
+		intakes.WithMetrics(telemetria.New(flowStore), log))
 	// El despachador de nivel superior (Plan 043 · T2.3) SOLO LEE: los eventos vivos
 	// del contacto, los tipos que el tenant ofrece (sus reglas event_start) y las
 	// features de su plan. Quien crea filas, mueve el puntero y habla es el motor.

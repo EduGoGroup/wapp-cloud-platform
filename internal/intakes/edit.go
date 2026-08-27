@@ -321,6 +321,12 @@ func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, i
 	if rev, ok := LastRevision(detail.Revisions); ok {
 		s.PushRevisionToCRM(ctx, tenantID, detail, rev.RevisionNo)
 	}
+
+	// La métrica de design §10 (T5.2). Va con las líneas de ANTES —las que se acaban
+	// de leer para validar el estado— y las que mandó el dueño: es la única forma de
+	// saber cuántas cambiaron, porque el store devuelve el resultado, no el diff. Ver
+	// recuentoDeCorrección para por qué el denominador no es `len(items)`.
+	s.métricaDeCorrección(ctx, tenantID, detail.Intake, current.Items, items)
 	return detail, nil
 }
 

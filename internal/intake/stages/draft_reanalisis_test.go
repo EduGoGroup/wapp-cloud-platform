@@ -261,15 +261,20 @@ func TestDraft_ElPuenteQueFalla_NoTumbaElBorrador(t *testing.T) {
 // `elapsed_ms` mide la espera del cliente desde que escribió y sale en horas.
 //
 // El envenenamiento sería INVISIBLE: dos filas idénticas midiendo cosas distintas.
+//
+// 🔧 DESDE T5.2 UN RE-ANÁLISIS PUBLICA DOS FILAS y no una: la del borrador (ésta) y
+// la de `intake_reanalyzed` (su golden vive en draft_metrica_reanalisis_test.go). La
+// clave `requested_by` NO se va con ella y sigue haciendo falta aquí: es lo que deja
+// filtrar el KPI del tiempo a primer borrador sobre las filas de UN evento, sin
+// obligar a cruzarlo con otro.
 func TestDraft_LaMetricaMarcaElReanalisis(t *testing.T) {
 	t.Parallel()
 	b := draftDe(t, ahoraDeAmbar())
 
 	correrDraft(t, b, jobDeReanalisis())
 
-	evs := b.flujos.FlowEvents()
-	require.Len(t, evs, 1)
-	require.Equal(t, intake.RequestedByOwner, evs[0].Payload["requested_by"])
+	borrador := elEventoLlamado(t, b, stages.EventoBorradorCreado)
+	require.Equal(t, intake.RequestedByOwner, borrador.Payload["requested_by"])
 }
 
 // TestDraft_LaMetricaDelPipelineNormalNoCambia: la forma que fija design §10 sale
