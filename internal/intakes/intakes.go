@@ -368,7 +368,14 @@ type Store interface {
 	// (StoredVariants): la escritura solo ocurre si la solicitud sigue ahí
 	// (ErrConflict si no, ErrNotFound si no es del tenant). Devuelve el detalle ya
 	// coherente, revisión nueva incluida.
-	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error)
+	//
+	// `mode` dice si la edición se declaró CORRECCIÓN del 044 (Plan 044 · T4.4,
+	// `"as_correction": true`). Con EditPlain —el camino del 041— la revisión sale
+	// byte a byte como salía antes de existir el parámetro. Con EditAsCorrection
+	// lleva además la señal few-shot, y quien la arma es el store porque el número
+	// de la revisión corregida solo se conoce con el candado tomado (ver
+	// CorrectionSignalOf).
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error)
 
 	// ApplyRevalidation escribe el resultado de una revalidación contra el catálogo
 	// vigente (D-041.25, T4.9) en UNA sola unidad de trabajo: re-precia las líneas

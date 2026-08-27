@@ -145,6 +145,29 @@ func (m *MemoryStore) guardarRevisiónLocked(rev Revision) (Revision, error) {
 	return rev, nil
 }
 
+// últimaRevisiónLocked es el espejo de últimaRevisiónTx: la revisión de número más
+// alto de las que hay AHORA, que es el borrador que la corrección está reemplazando.
+// Quién decide si se llega a llamar es señalDeCorrección, igual que en el store real.
+//
+// Lee `m.revisions` directamente en vez de pasar por leerRevisionesLocked por lo
+// mismo que el store real no reusa revisionsOf: aquélla PODA los literales vencidos y
+// los funde sobre el payload, que son efectos que nadie pidió por escribir una línea.
+// Aquí solo hacen falta el número y la clase.
+func (m *MemoryStore) últimaRevisiónLocked(intakeID string) últimaRevisión {
+	return func() (int, string, error) {
+		var (
+			no   int
+			kind string
+		)
+		for _, rev := range m.revisions[intakeID] {
+			if rev.RevisionNo > no {
+				no, kind = rev.RevisionNo, rev.Kind
+			}
+		}
+		return no, kind, nil
+	}
+}
+
 // leerRevisionesLocked es el espejo de revisionsOf del store real: poda lo vencido y
 // devuelve el literal a su sitio en lo que sigue vigente.
 //
@@ -605,7 +628,9 @@ func (m *MemoryStore) ensureShippingLocked(tenantID string, i int, policy Shippi
 // las líneas que quedan y la revisión `corrected` se escribe con la foto de lo
 // persistido. La paridad es lo que hace que un test de handler contra este store
 // diga algo verdadero sobre producción.
-func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+// La SEÑAL FEW-SHOT (T4.4) se resuelve igual que en el store real: mirando cuál era
+// la última revisión ANTES de escribir la nueva, y solo cuando el modo lo pide.
+func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -631,7 +656,11 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 
 		head := m.rows[tenantID][i].intake
 		head.Status = NormalizeStatus(r.status)
-		rev, err := correctedRevision(intakeID, head.Total, lines)
+		signal, err := señalDeCorrección(mode, m.últimaRevisiónLocked(intakeID))
+		if err != nil {
+			return Detail{}, err
+		}
+		rev, err := correctedRevision(intakeID, head.Total, lines, signal)
 		if err != nil {
 			return Detail{}, err
 		}

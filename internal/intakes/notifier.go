@@ -366,7 +366,7 @@ func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ow
 	if n == nil || n.log == nil || n.settings == nil {
 		return ownerText
 	}
-	log := n.log.With("intake_id", in.ID, "tenant_id", tenantID, "accion", "approve")
+	log := n.log.With("intake_id", in.ID, "tenant_id", tenantID, claveAcciónDelLog, accionAprobar)
 	cfg, ok := n.depositSettings(ctx, tenantID, log, sinPlantillaAlAprobar)
 	if !ok {
 		return ownerText
@@ -379,10 +379,35 @@ func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ow
 	return ownerText + separadorDeSeña + render(cfg.DepositTemplate, in, cfg.DepositDueDays)
 }
 
+// Las dos ACCIONES del dueño que hablan por su cuenta, tal como se registran en el
+// log. Son etiquetas de observabilidad y no del wire: lo que separan es «¿por qué
+// salió este mensaje?» cuando alguien lea el log buscando un envío que no llegó.
+const (
+	accionAprobar     = "approve"
+	accionPedirInfo   = "request_info"
+	claveAcciónDelLog = "accion"
+)
+
 // SendQuote implementa QuoteSender: entrega el texto ya compuesto por la sesión de la
 // solicitud. No devuelve error (regla 1 de la cabecera) y contiene el pánico por lo
 // mismo: cuando esto corre, la aprobación YA está escrita y numerada.
 func (n *Notifier) SendQuote(ctx context.Context, tenantID string, in Intake, text string) {
+	n.enviarComoElDueño(ctx, tenantID, in, text, accionAprobar)
+}
+
+// SendQuestion implementa QuoteSender: entrega la PREGUNTA del dueño (T4.4). Es la
+// misma entrega que SendQuote con otro motivo, y no compone NADA: a una pregunta no
+// se le adjunta la plantilla de seña (ver el puerto en service.go).
+func (n *Notifier) SendQuestion(ctx context.Context, tenantID string, in Intake, question string) {
+	n.enviarComoElDueño(ctx, tenantID, in, question, accionPedirInfo)
+}
+
+// enviarComoElDueño es lo COMÚN de las dos salidas en las que habla la dueña: las
+// guardas del notificador a medias, la contención del pánico, el contexto del log y la
+// bajada a `deliver`. Existe como función porque lo único que distingue a las dos es
+// la etiqueta del motivo, y dos copias del mismo bloque habrían divergido en el primer
+// campo de log que alguien añadiera a una de ellas.
+func (n *Notifier) enviarComoElDueño(ctx context.Context, tenantID string, in Intake, text, accion string) {
 	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil {
 		return // un notificador a medias no avisa, pero tampoco rompe nada
 	}
@@ -393,7 +418,7 @@ func (n *Notifier) SendQuote(ctx context.Context, tenantID string, in Intake, te
 		"tenant_id", tenantID,
 		"session_id", in.SessionID,
 		"status_to", NormalizeStatus(in.Status),
-		"accion", "approve",
+		claveAcciónDelLog, accion,
 	)
 	n.deliver(ctx, tenantID, in, text, log)
 }

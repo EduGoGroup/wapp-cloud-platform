@@ -99,6 +99,88 @@ func (e *NotEditableError) Error() string {
 // historia.
 const EditableStatus = StatusPendingApproval
 
+// ════════════════════════════════════════════════════════════════════════════
+// LA ACCIÓN «CORREGIR» DEL 044 (T4.4, D-044.48 §1)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// `correct` NO es una ruta nueva: es ESTE PUT con un campo más. Dos puertas
+// distintas dejando la misma revisión `corrected` es «la clase de duplicado que este
+// plan ya pagó en el hallazgo #24» (D-044.46), así que la decisión fue una puerta y
+// un camino. El campo es opcional y sin él esta operación se comporta EXACTAMENTE
+// como antes de T4.4 — cero regresión para el 041, que es requisito duro.
+//
+// Lo que el campo activa son dos cosas, y conviene decir qué vale cada una:
+//
+//   - la SEÑAL FEW-SHOT (D-044.11), que se produce y se guarda en el payload de la
+//     revisión. Hoy NO TIENE CONSUMIDOR: es de la Ola 5 (ver CorrectionSignal).
+//   - la «vuelta a `pending_approval`», que es un NO-OP y no un descuido. Ver
+//     EditMode.
+
+// EditMode dice si la edición que entra es la corrección declarada del 044 o la
+// edición manual rutinaria del 041. Es un parámetro TIPADO y no un bool desnudo por
+// lo mismo que StatusNotice (notifier.go) y ShippingPolicy (shipping.go): son dos
+// momentos distintos con dos reglas distintas, el llamante es quien sabe cuál es, y
+// un bool en la llamada no dice cuál de los dos es `true` al leerla.
+//
+// 🔴 LO QUE NO CAMBIA CON EL MODO, Y ES LA MITAD DE LA TAREA:
+//
+//   - el ESTADO desde el que se edita sigue siendo EditableStatus. `as_correction`
+//     NO amplía los estados editables ni inventa transiciones.
+//   - la REVISIÓN sigue siendo una, de clase `corrected` y firmada por `owner`.
+//   - el EMPUJE AL CRM se dispara igual con modo y sin modo, porque cuelga de que
+//     NAZCA una revisión y no de este campo (ver Service.ReplaceItems).
+type EditMode int
+
+const (
+	// EditPlain es el `PUT …/items` del Plan 041 tal cual: sin señal y sin conducta
+	// nueva. Es el CERO del tipo a propósito, igual que NoticeToClient: el valor por
+	// descuido es el que ya existía, nunca el que estrena conducta.
+	EditPlain EditMode = iota
+	// EditAsCorrection es el `correct` del 044 (`"as_correction": true`): la misma
+	// escritura, con la señal few-shot dentro de la revisión.
+	EditAsCorrection
+)
+
+// esCorrección responde si este modo deja señal. Método —y no una comparación suelta
+// en el store— para que la regla viva junto al tipo, igual que StatusNotice.silencia.
+func (m EditMode) esCorrección() bool { return m == EditAsCorrection }
+
+// últimaRevisión responde «¿cuál es la revisión de número más alto de esta solicitud,
+// y de qué clase?» — el borrador que la corrección está reemplazando. Cero y cadena
+// vacía cuando no hay ninguna, que no es un error: es una solicitud que nadie retrató
+// todavía.
+//
+// Es una FUNCIÓN y no un dato porque solo se pregunta cuando hace falta: en el camino
+// del 041 no se llega a llamarla, y así ese camino no paga ni una sentencia de más.
+type últimaRevisión func() (no int, kind string, err error)
+
+// señalDeCorrección es LA REGLA de la señal few-shot, y vive aquí una sola vez.
+//
+// 🔴 POR QUÉ LA GUARDA ESTÁ SOLO EN ESTE SITIO. La primera versión de esta pieza la
+// tenía dos veces —aquí y en cada store—, y una mutación lo demostró: quitarla de esta
+// función no ponía rojo ni un test, porque los stores ya la habían comprobado antes de
+// llamar. Una defensa duplicada tapa a los tests de conducta y convierte su verde en
+// una afirmación sobre la copia que sobrevivió. Ahora los stores aportan SOLO su
+// consulta (cada uno sabe leerla bajo su propio candado) y quién decide es esto.
+//
+// La consulta se resuelve CON EL CANDADO YA TOMADO y no antes: entre el Get del
+// Service y el `FOR UPDATE` del store cabe otra escritura, y una señal que apuntara a
+// la revisión equivocada sería peor que ninguna.
+func señalDeCorrección(mode EditMode, última últimaRevisión) (CorrectionSignal, error) {
+	if !mode.esCorrección() {
+		return CorrectionSignal{}, nil
+	}
+	no, kind, err := última()
+	if err != nil {
+		return CorrectionSignal{}, err
+	}
+	return CorrectionSignal{
+		AsCorrection:       true,
+		CorrectsRevisionNo: no,
+		CorrectsKind:       kind,
+	}, nil
+}
+
 // ValidateEditableItems comprueba las líneas de una edición manual y devuelve
 // TODOS sus defectos (*InvalidItemsError) o *TooManyItemsError. Es PURA: no toca
 // BD ni reloj.
@@ -178,11 +260,41 @@ func lineDefects(i int, it Item) []LineDefect {
 // total. Un sku reservado en la entrada se rechaza en la validación, así que esta
 // puerta no puede duplicarla, borrarla ni pisarle el precio que el dueño le puso.
 //
+// `mode` es el campo `as_correction` del 044 (ver EditMode). EditPlain es la
+// conducta del 041, byte a byte.
+//
+// 🔴 EL ESTADO EN EL QUE QUEDA LA SOLICITUD, QUE ES LA PREGUNTA FINA DE T4.4. El
+// enunciado dice que `correct` «vuelve a `pending_approval`». Aquí no se transiciona
+// a ninguna parte, y no es un olvido: **la solicitud ya está en `pending_approval`**,
+// porque es el ÚNICO estado desde el que este PUT escribe (EditableStatus, arriba).
+// Los tres desenlaces posibles, dichos enteros:
+//
+//   - `pending_approval` ⇒ la corrección se aplica y la solicitud SIGUE ahí. La
+//     «vuelta» ya es cierta por construcción. Llamar a SetStatus sería pedir
+//     `pending_approval → pending_approval`, que CanTransition rechaza de plano
+//     (`from == to` no es una transición, status.go) — y un 422 por hacer bien lo
+//     que se pidió.
+//   - `needs_info` ⇒ 422 `not_editable`, con o sin el campo. Es lo mismo que
+//     responde hoy y no se toca: para corregir un pedido al que se le pidió
+//     información, el dueño lo devuelve a `pending_approval` por el selector de
+//     estado —esa transición SÍ es legal (status.go)— y entonces corrige.
+//   - cualquier otro ⇒ 422 `not_editable`, exactamente como el 041.
+//
+// Ampliar los estados editables porque venga `as_correction` habría sido inventar
+// una transición nueva por la puerta de atrás y cambiarle las precondiciones a una
+// ruta del 041 en producción. No se hace: T4.4 añade un campo, no una máquina de
+// estados.
+//
+// EL EMPUJE AL CRM cuelga de que NAZCA una revisión (T4.10 §2: «toda revisión
+// posterior al cierre re-empuja»), NO del modo: un PUT del 041 sin el campo cambia
+// las líneas y el total del pedido, y un CRM que no se entere se queda con un
+// documento que ya no es verdad. Ver PushRevisionToCRM.
+//
 // Errores: *InvalidItemsError / *TooManyItemsError (líneas mal formadas),
 // ErrNotFound (no es del tenant), *NotEditableError (la solicitud no está en
 // `pending_approval`) y ErrConflict (alguien la movió entre la lectura y la
 // escritura).
-func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item) (Detail, error) {
+func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, mode EditMode) (Detail, error) {
 	if err := ValidateEditableItems(items); err != nil {
 		return Detail{}, err
 	}
@@ -197,7 +309,19 @@ func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, i
 		return Detail{}, &NotEditableError{Status: from}
 	}
 
-	return s.store.ReplaceItems(ctx, tenantID, intakeID, items, StoredVariants(EditableStatus))
+	detail, err := s.store.ReplaceItems(ctx, tenantID, intakeID, items, StoredVariants(EditableStatus), mode)
+	if err != nil {
+		return Detail{}, err
+	}
+
+	// El número REAL de la revisión que el store acaba de numerar, leído del detalle
+	// que ya está en la mano (los dos stores recargan las revisiones dentro de su
+	// unidad de trabajo). Sin revisión no se empuja: un push con revision_no 0 es el
+	// único valor que el schema del contrato rechaza, y el puente lo tiraría entero.
+	if rev, ok := LastRevision(detail.Revisions); ok {
+		s.PushRevisionToCRM(ctx, tenantID, detail, rev.RevisionNo)
+	}
+	return detail, nil
 }
 
 // correctedRevision arma la revisión que deja una edición manual, a partir del
@@ -213,8 +337,10 @@ func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, i
 // plataforma le colgara su línea: aquélla responde «qué pidió», ésta responde «cómo
 // quedó el presupuesto tras la corrección», y un payload cuyo total no sumara sus
 // propias líneas no respondería ninguna de las dos.
-func correctedRevision(intakeID string, total float64, items []Item) (Revision, error) {
-	payload, err := CorrectedRevisionPayload(total, revisionLinesOf(items))
+// `signal` es la señal few-shot cuando la edición se declaró corrección del 044, y
+// viene vacía en el camino del 041 (ver señalDeCorrección).
+func correctedRevision(intakeID string, total float64, items []Item, signal CorrectionSignal) (Revision, error) {
+	payload, err := CorrectedRevisionPayload(total, revisionLinesOf(items), signal)
 	if err != nil {
 		return Revision{}, err
 	}

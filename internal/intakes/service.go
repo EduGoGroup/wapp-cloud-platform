@@ -73,11 +73,11 @@ type CRMPusher interface {
 	PushRevision(ctx context.Context, tenantID string, d Detail, revisionNo int)
 }
 
-// QuoteSender le manda al CLIENTE la cotización que escribió EL DUEÑO, por la misma
-// sesión con la que el cliente armó el pedido (Plan 044 · T4.3). Lo satisface
-// *Notifier, que es también quien satisface StatusNotifier: es una sola salida hacia
-// WhatsApp con dos motivos, igual que el recordatorio de la seña reusa ese mismo
-// notificador.
+// QuoteSender es LA VOZ DEL DUEÑO hacia el cliente, por la misma sesión con la que el
+// cliente armó el pedido: hoy la cotización al aprobar (Plan 044 · T4.3) y la pregunta
+// al pedir información (T4.4). Lo satisface *Notifier, que es también quien satisface
+// StatusNotifier: es una sola salida hacia WhatsApp con varios motivos, igual que el
+// recordatorio de la seña reusa ese mismo notificador.
 //
 // POR QUÉ ES UN PUERTO APARTE Y NO DOS MÉTODOS MÁS EN StatusNotifier. Son dos
 // contratos con dos dueños del texto: en aquél habla LA PLATAFORMA (el aviso genérico
@@ -104,6 +104,23 @@ type QuoteSender interface {
 	// por lo mismo que StatusNotifier: un mensaje que no sale no puede tumbar una
 	// aprobación que ya está escrita en la base.
 	SendQuote(ctx context.Context, tenantID string, in Intake, text string)
+	// SendQuestion entrega la PREGUNTA que escribió el dueño al pedir más
+	// información (T4.4). Tampoco devuelve error, y por lo mismo.
+	//
+	// POR QUÉ AQUÍ Y NO EN UN PUERTO NUEVO. Es la misma salida, el mismo dueño del
+	// texto y las mismas reglas; lo único que cambia es el motivo. Un puerto aparte
+	// sería un segundo cableado que alguien puede olvidar en el arranque, con el
+	// efecto de que pedir información dejaría de preguntar sin que nada lo dijera.
+	//
+	// POR QUÉ NO REUSA SendQuote TAL CUAL, que era lo tentador: aquél ADJUNTA la
+	// plantilla de seña del tenant vía QuoteText y se registra en el log como
+	// `accion=approve`. Adjuntarle instrucciones de pago a una pregunta sería
+	// pedirle la seña a quien todavía no sabe qué va a costar, y un log que dice
+	// «approve» sobre una petición de información es la misma clase de defecto que
+	// un mensaje que afirma un estado que no es. Lo COMÚN —la vía custodiada de PII,
+	// el Ack, el cero PII en los logs— sí se reusa entero: las dos entregas bajan al
+	// mismo `deliver` (notifier.go).
+	SendQuestion(ctx context.Context, tenantID string, in Intake, question string)
 }
 
 // Option configura el Service al construirlo.
@@ -159,9 +176,10 @@ func WithCRMPusher(p CRMPusher) Option {
 // WithNotifier: dos objetos serían dos criterios sobre la misma plantilla de seña y
 // dos caminos distintos hacia el mismo teléfono.
 //
-// A diferencia de sus tres hermanas, su ausencia NO es un silencio: Service.Approve
-// devuelve ErrNoQuoteSender antes de tocar nada. Aprobar es «aprobar y responder», y
-// un servicio que no puede responder no puede aprobar (ver approve.go).
+// A diferencia de sus tres hermanas, su ausencia NO es un silencio: Service.Approve y
+// Service.RequestInfo devuelven ErrNoQuoteSender antes de tocar nada. Aprobar es
+// «aprobar y responder» y pedir información es «preguntar»: un servicio que no puede
+// hablar no puede hacer ninguna de las dos (ver approve.go y requestinfo.go).
 func WithQuoteSender(q QuoteSender) Option {
 	return func(s *Service) { s.quotes = q }
 }

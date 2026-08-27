@@ -634,6 +634,21 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	mux.Handle("POST /api/v1/intakes/{id}/approve", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(approveIntakeHandler(d.Intakes, d.Entitlements))))
 
+	// PEDIR MÁS INFORMACIÓN (Plan 044 · Ola 4 · T4.4, D-044.49 §2): el dueño manda su
+	// pregunta —la que el sistema le sugirió, editada por él— y la solicitud queda en
+	// `needs_info` esperando la respuesta del cliente.
+	//
+	// Mismo gate `cart_basic` que `approve` y por el MISMO argumento (D-044.49 §3):
+	// preguntarle algo al cliente es del objeto, no de la máquina que redacta el
+	// borrador. Cobrarlo con `llm_intake` dejaría a un tenant Basic con un presupuesto
+	// que no entiende y sin poder preguntar por qué.
+	//
+	// La ACCIÓN «Corregir» de esa misma tarea NO tiene ruta aquí, y no falta: es el
+	// `PUT …/items` de arriba con `"as_correction": true` (D-044.48 §1). Dos rutas
+	// dejando la misma revisión `corrected` era el duplicado que este plan ya pagó.
+	mux.Handle("POST /api/v1/intakes/{id}/request-info", protect(mw, auditor, log,
+		"intakes.write", "intake", cartBasic(requestInfoIntakeHandler(d.Intakes, d.Entitlements))))
+
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
 	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es
 	// del LOTE, no de una solicitud, y colgarla de un id obligaría a N llamadas —

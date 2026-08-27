@@ -1190,7 +1190,12 @@ func (p *Postgres) NotifySettings(ctx context.Context, tenantID string) (NotifyS
 //
 // La revisión va al final a propósito: es el retrato de lo YA persistido, no de lo
 // que se pretendía escribir.
-func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string) (Detail, error) {
+//
+//	4-bis. …y esa revisión lleva la SEÑAL FEW-SHOT (T4.4) cuando la edición se
+//	declaró corrección. El número de la revisión que se está corrigiendo se lee
+//	DENTRO de la transacción, con la cabecera ya bloqueada: fuera del candado
+//	podría apuntar a una revisión que otra escritura acababa de dejar.
+func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error) {
 	if _, err := uuid.Parse(intakeID); err != nil {
 		return Detail{}, ErrNotFound
 	}
@@ -1213,7 +1218,11 @@ func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, 
 		if err != nil {
 			return err
 		}
-		rev, err := correctedRevision(intakeID, head.Total, lines)
+		signal, err := señalDeCorrección(mode, últimaRevisiónTx(ctx, tx, intakeID))
+		if err != nil {
+			return err
+		}
+		rev, err := correctedRevision(intakeID, head.Total, lines, signal)
 		if err != nil {
 			return err
 		}
@@ -1252,6 +1261,42 @@ func lockEditableTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, 
 		return ErrConflict
 	}
 	return nil
+}
+
+// últimaRevisiónTx es la consulta con la que ESTE store contesta «¿qué revisión se
+// está corrigiendo?» (T4.4). La REGLA —cuándo se pregunta y qué se guarda— no está
+// aquí sino en señalDeCorrección, que es la que decide si esta función llega a
+// ejecutarse: en el camino del 041 no se llama y la sentencia no se paga.
+//
+// Consulta a mano en vez de reusar revisionsOf, y es a propósito: aquélla trae los
+// payloads enteros, DESCIFRA el literal del cliente y aplica la poda perezosa por
+// TTL (efectos persistentes). Para saber qué número se corrige hacen falta dos
+// columnas y ningún literal — pedir el resto sería descifrar PII para tirarla.
+//
+// Una solicitud SIN revisiones no es un error: es un borrador que nadie retrató
+// todavía (una solicitud del carrito que llegó a `pending_approval` sin pasar por el
+// pipeline). Devuelve el cero, y la señal saldrá con la marca y sin el par.
+func últimaRevisiónTx(ctx context.Context, q querier, intakeID string) últimaRevisión {
+	return func() (int, string, error) {
+		var (
+			no   int
+			kind string
+		)
+		err := q.QueryRowContext(ctx, `
+			SELECT revision_no, kind
+			FROM public.intake_revisions
+			WHERE intake_id = $1
+			ORDER BY revision_no DESC
+			LIMIT 1
+		`, intakeID).Scan(&no, &kind)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, "", nil
+		case err != nil:
+			return 0, "", fmt.Errorf("intakes: leer la revisión que se está corrigiendo: %w", err)
+		}
+		return no, kind, nil
+	}
 }
 
 // replaceClientItemsTx borra las líneas de CLIENTE y escribe las nuevas. Las del

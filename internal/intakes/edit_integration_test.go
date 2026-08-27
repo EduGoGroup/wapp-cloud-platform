@@ -65,7 +65,7 @@ func TestPG_ReplaceItems_EscenaDelQuesoExtra(t *testing.T) {
 	detail, err := st.ReplaceItems(context.Background(), tenant, id, []intakes.Item{
 		{SKU: "HAMB", Label: "Hamburguesa", Customization: "con queso extra", Qty: 1, UnitPrice: 8},
 		{SKU: "QUESO-EX", Label: "Queso extra", Qty: 1, UnitPrice: 1},
-	}, intakes.StoredVariants(intakes.StatusPendingApproval))
+	}, intakes.StoredVariants(intakes.StatusPendingApproval), intakes.EditPlain)
 	if err != nil {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestPG_ReplaceItems_NoDuplicaElEnvío(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		if _, err := st.ReplaceItems(context.Background(), tenant, id, []intakes.Item{
 			{SKU: "HAMB", Label: "Hamburguesa", Qty: i + 1, UnitPrice: 8},
-		}, intakes.StoredVariants(intakes.StatusPendingApproval)); err != nil {
+		}, intakes.StoredVariants(intakes.StatusPendingApproval), intakes.EditPlain); err != nil {
 			t.Fatalf("edición %d: %v", i+1, err)
 		}
 		cliente, sistema := contarLíneas(t, db, id)
@@ -166,7 +166,7 @@ func TestPG_ReplaceItems_ElEnvíoPrecificadoAManoSobrevive(t *testing.T) {
 
 	detail, err := st.ReplaceItems(context.Background(), tenant, id, []intakes.Item{
 		{SKU: "HAMB", Label: "Hamburguesa", Qty: 2, UnitPrice: 8},
-	}, intakes.StoredVariants(intakes.StatusPendingApproval))
+	}, intakes.StoredVariants(intakes.StatusPendingApproval), intakes.EditPlain)
 	if err != nil {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestPG_ReplaceItems_ConflictoNoEscribeNada(t *testing.T) {
 
 	_, err := st.ReplaceItems(context.Background(), tenant, id, []intakes.Item{
 		{SKU: "OTRO", Label: "Otro", Qty: 1, UnitPrice: 100},
-	}, intakes.StoredVariants(intakes.StatusOpen)) // esperaba `open`; está en pending_approval
+	}, intakes.StoredVariants(intakes.StatusOpen), intakes.EditPlain) // esperaba `open`; está en pending_approval
 	if !errors.Is(err, intakes.ErrConflict) {
 		t.Fatalf("err=%v, quiero ErrConflict", err)
 	}
@@ -221,7 +221,7 @@ func TestPG_ReplaceItems_AisladoPorTenant(t *testing.T) {
 
 	_, err := st.ReplaceItems(context.Background(), uuid.NewString(), id, []intakes.Item{
 		{SKU: "OTRO", Label: "Otro", Qty: 1, UnitPrice: 100},
-	}, intakes.StoredVariants(intakes.StatusPendingApproval))
+	}, intakes.StoredVariants(intakes.StatusPendingApproval), intakes.EditPlain)
 	if !errors.Is(err, intakes.ErrNotFound) {
 		t.Fatalf("err=%v, quiero ErrNotFound", err)
 	}

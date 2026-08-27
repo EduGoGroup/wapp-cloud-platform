@@ -32,9 +32,10 @@ const cotizaciónDelDueño = "Hola! Tu pedido: 1 torta $18.000. ¿Te sirve para 
 // prueban los tests de su paquete—; aquí solo hace falta poder afirmar que el
 // handler SÍ hace salir un mensaje.
 type canalFalso struct {
-	mu       sync.Mutex
-	sufijo   string
-	enviados []string
+	mu        sync.Mutex
+	sufijo    string
+	enviados  []string
+	preguntas []string
 }
 
 func (c *canalFalso) QuoteText(_ context.Context, _ string, _ intakes.Intake, ownerText string) string {
@@ -47,10 +48,26 @@ func (c *canalFalso) SendQuote(_ context.Context, _ string, _ intakes.Intake, te
 	c.enviados = append(c.enviados, text)
 }
 
+// SendQuestion es la entrega de la PREGUNTA del dueño (T4.4). Se retiene APARTE de
+// los mensajes de aprobación a propósito: los tests de las dos puertas tienen que
+// poder afirmar que salió lo suyo y NO lo de la otra.
+func (c *canalFalso) SendQuestion(_ context.Context, _ string, _ intakes.Intake, question string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.preguntas = append(c.preguntas, question)
+}
+
 func (c *canalFalso) mensajes() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.enviados...)
+}
+
+// preguntasEnviadas son las preguntas que salieron por SendQuestion.
+func (c *canalFalso) preguntasEnviadas() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.preguntas...)
 }
 
 // bandejaPorAprobar siembra la solicitud lista para aprobar.

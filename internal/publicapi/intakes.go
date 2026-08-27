@@ -36,12 +36,18 @@ type IntakeService interface {
 	Discard(ctx context.Context, tenantID string, intakeIDs []string) (intakes.DiscardResult, error)
 	// ReplaceItems sustituye las líneas de cliente de una solicitud en
 	// `pending_approval` y deja la revisión `corrected` del dueño (T4.10, REQ-36).
-	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item) (intakes.Detail, error)
+	// `mode` es el `as_correction` del 044 (T4.4): con intakes.EditPlain se comporta
+	// exactamente como el PUT del 041.
+	ReplaceItems(ctx context.Context, tenantID, intakeID string, items []intakes.Item, mode intakes.EditMode) (intakes.Detail, error)
 	// Approve APRUEBA el presupuesto (Plan 044 · T4.3): manda al cliente la
 	// cotización que escribió el dueño con la plantilla de seña adjunta, deja la
 	// solicitud en `confirmed` con su revisión `approved` y empuja esa revisión al
 	// puente CRM. `renderedText` es el texto del DUEÑO y es obligatorio.
 	Approve(ctx context.Context, tenantID, intakeID, renderedText string) (intakes.Detail, error)
+	// RequestInfo manda al cliente la PREGUNTA que escribió el dueño y deja la
+	// solicitud en `needs_info` (Plan 044 · T4.4). `question` es obligatoria: la
+	// petición de información jamás sale sola.
+	RequestInfo(ctx context.Context, tenantID, intakeID, question string) (intakes.Detail, error)
 	// ListDetails devuelve las solicitudes del filtro CON sus líneas y sin
 	// paginar: es lo que desnormaliza el export (T1.2). intakes.ErrTooLarge si el
 	// filtro abarca más de intakes.MaxExportIntakes.
@@ -478,8 +484,25 @@ type editIntakeItemDTO struct {
 // ⇒ 400) de «mandaste la lista vacía» (quitar todas las líneas ⇒ se aplica). La
 // diferencia importa: sin ella, un cuerpo `{}` por un fallo de la UI vaciaría el
 // presupuesto en silencio.
+//
+// `as_correction` es la ACCIÓN «Corregir» del 044 (T4.4, D-044.48 §1): el mismo PUT
+// con un campo más. Es OPCIONAL y su ausencia significa exactamente lo que significaba
+// antes de que existiera —la edición manual del 041, sin conducta nueva—, así que un
+// cliente del 041 que nunca lo mande no ve cambiar nada. No es puntero porque aquí las
+// dos ausencias (clave que falta y `false` explícito) sí quieren decir lo mismo.
 type editIntakeItemsRequest struct {
-	Items *[]editIntakeItemDTO `json:"items"`
+	Items        *[]editIntakeItemDTO `json:"items"`
+	AsCorrection bool                 `json:"as_correction"`
+}
+
+// editModeDe traduce el campo del wire al modo del dominio. Está aparte —y no en
+// línea en el handler— para que el único sitio donde se decide «esto es una
+// corrección» sea uno, y para que el test que fija la conducta pueda nombrarlo.
+func editModeDe(asCorrection bool) intakes.EditMode {
+	if asCorrection {
+		return intakes.EditAsCorrection
+	}
+	return intakes.EditPlain
 }
 
 // invalidItemsResponse es el cuerpo del 400 por líneas mal formadas: TODOS los
@@ -512,6 +535,12 @@ type notEditableResponse struct {
 // ediciones son dos actos del dueño aunque el resultado coincida (misma regla que
 // InsertRevision).
 //
+// Es TAMBIÉN la acción «Corregir» del Plan 044 (T4.4), y no una ruta aparte: con
+// `"as_correction": true` la misma escritura deja además la señal few-shot del
+// D-044.11 en la revisión. La decisión y su porqué están en D-044.48 §1 y en
+// intakes/edit.go; lo que importa aquí es que el campo es opcional y que sin él este
+// handler hace lo mismo que antes de que existiera.
+//
 // Códigos: 200 con el detalle; 400 si el cuerpo o las líneas están mal; 404 si la
 // solicitud no es del tenant (nunca 403: confirmaría que existe); 422 si no está en
 // `pending_approval`; 409 si alguien la movió entre la lectura y la escritura.
@@ -541,7 +570,7 @@ func putIntakeItemsHandler(svc IntakeService, feats entitlements.Resolver) http.
 			return
 		}
 
-		detail, err := svc.ReplaceItems(r.Context(), id.TenantID, r.PathValue("id"), items)
+		detail, err := svc.ReplaceItems(r.Context(), id.TenantID, r.PathValue("id"), items, editModeDe(req.AsCorrection))
 		if err != nil {
 			writeEditItemsError(w, err)
 			return
@@ -760,6 +789,88 @@ func writeApproveError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
 	default:
 		writeError(w, http.StatusInternalServerError, "no se pudo aprobar la solicitud")
+	}
+}
+
+// requestInfoRequest es el cuerpo de POST /api/v1/intakes/{id}/request-info: la
+// pregunta que el DUEÑO le manda al cliente (D-044.49 §2, decisión del 2026-08-27).
+//
+// Un solo campo y OBLIGATORIO. El sistema PREPARA la pregunta —las
+// `suggested_questions` de la revisión, que el detalle ya publica— pero quien la
+// manda es el dueño después de editarla: por eso viaja en el cuerpo y no se deduce
+// aquí de la revisión. Una petición de información que el servidor redactara solo
+// sería exactamente el mensaje automático que D-044.49 §2 apaga.
+//
+// No es puntero, igual que approveIntakeRequest: la clave ausente y la cadena vacía
+// significan lo mismo —no hay pregunta que mandar— y salen por el mismo 400.
+type requestInfoRequest struct {
+	Question string `json:"question"`
+}
+
+// requestInfoIntakeHandler sirve POST /api/v1/intakes/{id}/request-info: la acción
+// PEDIR MÁS INFORMACIÓN del dueño (Plan 044 · T4.4). Responde el detalle completo por
+// el MISMO camino que el GET, el PUT y `approve` (writeIntakeDetail), para que el gate
+// por campo del 044 se aplique igual.
+//
+// Códigos: 200 con el detalle; 400 si falta la pregunta; 404 si la solicitud no es del
+// tenant (nunca 403: confirmaría que existe); 422 si no está en `pending_approval`
+// —con el cuerpo del ciclo de vida, que dice adónde SÍ puede ir—; 409 si alguien la
+// movió entre la lectura y la escritura.
+//
+// El 200 significa «la solicitud quedó esperando la respuesta del cliente», NUNCA «el
+// cliente recibió la pregunta»: el envío va después de la transición y no puede
+// tumbarla (ver intakes/requestinfo.go).
+func requestInfoIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		var req requestInfoRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+			return
+		}
+
+		detail, err := svc.RequestInfo(r.Context(), id.TenantID, r.PathValue("id"), req.Question)
+		if err != nil {
+			writeRequestInfoError(w, err)
+			return
+		}
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
+	})
+}
+
+// writeRequestInfoError traduce el fallo del dominio al código y al cuerpo (mismo
+// reparto que writeEditItemsError y writeApproveError: el dominio dice QUÉ pasó, el
+// transporte decide cómo se cuenta).
+//
+// *TransitionError sale con el cuerpo del ciclo de vida y NO con uno propio tipo
+// `not_requestable`, al revés que `approve`: esta puerta no estrecha la máquina de
+// estados —a `needs_info` solo se llega desde `pending_approval` y eso ya lo dice la
+// tabla—, así que el 422 útil es el que enseña dónde está la solicitud y adónde puede
+// ir. Un cuerpo propio habría duplicado esa regla para decir lo mismo peor.
+func writeRequestInfoError(w http.ResponseWriter, err error) {
+	var invalid *intakes.TransitionError
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.Is(err, intakes.ErrEmptyQuestion):
+		writeError(w, http.StatusBadRequest,
+			"question es obligatoria: es la pregunta que se le manda al cliente, y jamás sale sola")
+	case errors.As(err, &invalid):
+		writeJSON(w, http.StatusUnprocessableEntity, invalidTransitionResponse{
+			Error:     "invalid_transition",
+			Status:    invalid.From,
+			Requested: invalid.To,
+			Allowed:   invalid.Allowed,
+		})
+	case errors.Is(err, intakes.ErrConflict):
+		writeError(w, http.StatusConflict, "la solicitud cambió de estado; recárgala y reintenta")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo pedir más información sobre la solicitud")
 	}
 }
 
