@@ -43,12 +43,22 @@ type casDelRecordatorio struct {
 	// marca es la columna que ESE compare-and-swap se gana. Es lo único que puede
 	// aparecer en su SET.
 	marca string
+	// guardaIdempotente es la cláusula EXACTA que hace idempotente a este CAS.
+	//
+	// 🔴 VA ESCRITA ENTERA Y A MANO, aunque salga de concatenar `marca` + " IS NULL"
+	// y por tanto sea redundante. La redundancia es el punto: la primera versión de
+	// este fichero la componía, y entonces `grep "expiry_reminded_at IS NULL"` sobre
+	// los tests NO ENCONTRABA NADA — un revisor concluyó, con razón desde su
+	// evidencia, que el candado no existía. Un candado que no se puede encontrar
+	// buscando lo que protege no sirve para tranquilizar a nadie, y el siguiente que
+	// audite esto hará exactamente ese grep.
+	guardaIdempotente string
 }
 
 func losDosCAS() []casDelRecordatorio {
 	return []casDelRecordatorio{
-		{"recordatorio del PLAZO (T4.5)", markExpiryRemindedQuery, "expiry_reminded_at"},
-		{"recordatorio de la SEÑA (T4.4)", markDepositRemindedQuery, "deposit_reminded_at"},
+		{"recordatorio del PLAZO (T4.5)", markExpiryRemindedQuery, "expiry_reminded_at", "expiry_reminded_at IS NULL"},
+		{"recordatorio de la SEÑA (T4.4)", markDepositRemindedQuery, "deposit_reminded_at", "deposit_reminded_at IS NULL"},
 	}
 }
 
@@ -63,7 +73,16 @@ func TestCAS_LaIdempotenciaViveEnElWHEREYNoEnUnIfDeGo(t *testing.T) {
 	for _, cas := range losDosCAS() {
 		t.Run(cas.nombre, func(t *testing.T) {
 			t.Parallel()
-			guarda := cas.marca + " IS NULL"
+			// Control anti-hueco de la propia tabla: la guarda escrita a mano tiene
+			// que ser la de ESTE CAS. Sin esto, un copia-pega que dejara las dos filas
+			// buscando `deposit_reminded_at IS NULL` dejaría el del plazo sin vigilar
+			// y en verde — que es justo el fallo que este fichero existe para impedir.
+			if quiero := cas.marca + " IS NULL"; cas.guardaIdempotente != quiero {
+				t.Fatalf("la tabla dice que la guarda de %s es %q, pero su marca es %q ⇒ tendría "+
+					"que ser %q. Alguien copió una fila y no cambió la mitad",
+					cas.nombre, cas.guardaIdempotente, cas.marca, quiero)
+			}
+			guarda := cas.guardaIdempotente
 			if !strings.Contains(whereDe(t, cas), guarda) {
 				t.Fatalf("el WHERE de %s ya no lleva %q.\n\n"+
 					"Es LA cláusula que hace idempotente el recordatorio: sin ella, cada lectura del "+
