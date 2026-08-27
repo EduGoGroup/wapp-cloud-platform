@@ -199,3 +199,173 @@ func TestIntakes_200_SortNoAfectaAlEstadoNormalizado(t *testing.T) {
 		}
 	}
 }
+
+// ================= el filtro de HUÉRFANAS `orphan` (T4.8, REQ-21c) =================
+
+// Los dos eventos conversacionales que separan una bandeja normal de la de
+// huérfanos: uno `open` —hay alguien escribiendo ahora mismo— y uno `cancelled`,
+// que es un padre muerto y por tanto NO protege a su contenido.
+const (
+	evVivo   = "ev-vivo-open"
+	evMuerto = "ev-muerto-cancelled"
+)
+
+// bandejaConEventos toma el fixture de siempre y le cuelga las conversaciones, que
+// es lo que el filtro mira. Reparte los tres casos que existen:
+//
+//   - A2 declara un evento `open` ⇒ NO es huérfana. Es la única.
+//   - A5 declara un evento `cancelled` ⇒ SÍ es huérfana, y es el caso que separa
+//     este filtro de un `event_id IS NULL`: tiene padre, pero el padre está muerto.
+//     Un filtro que preguntara «¿tiene ligadura?» la dejaría fuera y el dueño no
+//     podría limpiar justo lo que vino a limpiar.
+//   - A1, A3 y A4 quedan sin ligadura (filas LEGADAS pre-0054) ⇒ huérfanas, por lo
+//     mismo que hasLiveEventTx las deja descartar: sin padre declarado no existe la
+//     conversación que la guarda protege.
+func bandejaConEventos() *intakes.MemoryStore {
+	st := seedIntakes()
+	st.BindEvent(intakeA2, evVivo)
+	st.SetEvent(evVivo, "open")
+	st.BindEvent(intakeA5, evMuerto)
+	st.SetEvent(evMuerto, "cancelled")
+	return st
+}
+
+// listarEn es `listar` sobre una bandeja concreta, para los tests que necesitan
+// sembrar conversaciones además de solicitudes.
+func listarEn(t *testing.T, st *intakes.MemoryStore, query string) intakeListDTO {
+	t.Helper()
+	api := newAPI(intakesDeps(st), intakesKeys())
+	rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes"+query, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d, quiero 200; query=%s body=%s", rec.Code, query, rec.Body.String())
+	}
+	return decodeList(t, rec.Body.Bytes())
+}
+
+// TestIntakes_200_OrphanDevuelveSOLOLasQueNoTienenEventoVIVO es el criterio de T4.8
+// tal como está escrito: la vista de huérfanos enseña las solicitudes sin evento
+// vivo, y ninguna más.
+//
+// Lo que hace verificable el «solo»: A2 tiene un evento `open` y las otras cuatro
+// no, así que la respuesta correcta es la bandeja MENOS una fila — no la bandeja, y
+// no la lista vacía.
+func TestIntakes_200_OrphanDevuelveSOLOLasQueNoTienenEventoVIVO(t *testing.T) {
+	got := listarEn(t, bandejaConEventos(), "?orphan=true")
+	quiero := []string{intakeA5, intakeA4, intakeA3, intakeA1}
+	if !slices.Equal(idsDe(got), quiero) {
+		t.Fatalf("ids=%v, quiero %v (todas menos %s, que tiene conversación viva)", idsDe(got), quiero, intakeA2)
+	}
+	if got.Total != 4 {
+		t.Fatalf("total=%d, quiero 4: el total cuenta las huérfanas, no la bandeja entera", got.Total)
+	}
+}
+
+// TestIntakes_200_OrphanNoDevuelveLaBandejaENTERA es el test que caza la
+// implementación que NO FILTRA — un `orphan` que se parsea, viaja y no se aplica—,
+// y por eso está aparte del anterior.
+//
+// Es el fallo más caro que puede tener esta vista y el más silencioso: responde 200,
+// con datos, ordenados, y el dueño marca «todo lo visible» sobre una pantalla que
+// cree de huérfanos. Descartar es irreversible (D-041.22).
+func TestIntakes_200_OrphanNoDevuelveLaBandejaENTERA(t *testing.T) {
+	st := bandejaConEventos()
+	sinFiltro := idsDe(listarEn(t, st, ""))
+	huérfanas := idsDe(listarEn(t, st, "?orphan=true"))
+
+	if slices.Equal(sinFiltro, huérfanas) {
+		t.Fatalf("pedir huérfanas devolvió la bandeja entera (%v): el filtro no se está aplicando", huérfanas)
+	}
+	if slices.Contains(huérfanas, intakeA2) {
+		t.Fatalf("%s tiene un evento `open` y no puede salir en la vista de huérfanos: %v", intakeA2, huérfanas)
+	}
+}
+
+// TestIntakes_200_OrphanAlcanzaLaQueDECLARAUnEventoMUERTO: tener padre no salva a
+// nadie; lo que salva es que el padre esté `open`.
+//
+// Es el callejón del journal 2026-08-10 visto desde el listado: el pedido de un
+// evento ya `cancelled` es exactamente lo que el dueño necesita limpiar, y un filtro
+// escrito como «event_id IS NULL» —la aproximación fácil— lo escondería para
+// siempre.
+func TestIntakes_200_OrphanAlcanzaLaQueDECLARAUnEventoMUERTO(t *testing.T) {
+	if got := idsDe(listarEn(t, bandejaConEventos(), "?orphan=true")); !slices.Contains(got, intakeA5) {
+		t.Fatalf("ids=%v, quiero que incluya %s: declara un evento `cancelled`, y un padre muerto no protege",
+			got, intakeA5)
+	}
+}
+
+// TestIntakes_200_SinOrphanNoCambiaNada: cero regresión para el Plan 041. La bandeja
+// de todos los días sigue siendo la de todos los días, con evento vivo o sin él.
+//
+// Vigila el fallo simétrico del filtro: que el `$6` viajara como `false` en vez de
+// NULL dejaría el NOT EXISTS encendido SIEMPRE y esta pantalla perdería justo las
+// solicitudes que el cliente está escribiendo ahora.
+func TestIntakes_200_SinOrphanNoCambiaNada(t *testing.T) {
+	st := bandejaConEventos()
+	quiero := []string{intakeA5, intakeA4, intakeA3, intakeA2, intakeA1}
+	for _, query := range []string{"", "?orphan=false", "?orphan="} {
+		got := listarEn(t, st, query)
+		if !slices.Equal(idsDe(got), quiero) {
+			t.Fatalf("con %q ids=%v, quiero las 5 del tenant %v", query, idsDe(got), quiero)
+		}
+		if got.Total != 5 {
+			t.Fatalf("con %q total=%d, quiero 5", query, got.Total)
+		}
+	}
+}
+
+// TestIntakes_400_OrphanInvalido: mismo criterio que `status` y `sort` desconocidos.
+// Un `?orphan=si` que se sirviera como «sin filtro» daría una bandeja entera con
+// pinta de vista de huérfanos, que es la pantalla desde la que se descarta sin
+// vuelta atrás.
+func TestIntakes_400_OrphanInvalido(t *testing.T) {
+	for _, malo := range []string{"si", "yes", "sí", "2", "huerfanas"} {
+		api := newAPI(intakesDeps(bandejaConEventos()), intakesKeys())
+		rec := call(api, keyAIntakes, http.MethodGet, "/api/v1/intakes?orphan="+malo, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("orphan=%q dio code=%d, quiero 400; body=%s", malo, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestIntakes_200_OrphanSeCombinaConElRestoDelFiltro: `orphan` es un filtro más y se
+// compone con los otros, que es como la bandeja del 044 lo va a pedir («huérfanas y
+// todavía sin cerrar»). Se comprueba contra el MISMO filtro sin `orphan` para que el
+// test no pueda pasar por casualidad con una lista vacía.
+func TestIntakes_200_OrphanSeCombinaConElRestoDelFiltro(t *testing.T) {
+	st := bandejaConEventos()
+	if got := idsDe(listarEn(t, st, "?status=open")); !slices.Equal(got, []string{intakeA2}) {
+		t.Fatalf("el fixture cambió: `?status=open` da %v y quiero solo %s", got, intakeA2)
+	}
+	if got := idsDe(listarEn(t, st, "?status=open&orphan=true")); len(got) != 0 {
+		t.Fatalf("ids=%v, quiero ninguna: la única `open` tiene conversación viva", got)
+	}
+	if got := idsDe(listarEn(t, st, "?status=confirmed&orphan=true&sort=oldest")); !slices.Equal(got, []string{intakeA1, intakeA4, intakeA5}) {
+		t.Fatalf("ids=%v, quiero las tres `confirmed` huérfanas de la más antigua a la más nueva", got)
+	}
+}
+
+// TestIntakes_200_OrphanConLaLISTADeEstadosDeT41 es la composición de las dos mitades de esta ola en
+// UNA llamada: el filtro por LISTA de estados (T4.1, D-044.47 §2) Y la vista de huérfanos (T4.8).
+// Es la consulta que la bandeja del dueño va a hacer de verdad, y la que ninguno de los dos tests
+// sueltos comprueba.
+//
+// El par elegido no es cualquiera: `open` es el estado de la ÚNICA solicitud con conversación viva,
+// y `confirmed` trae además sus dos filas legadas escritas como `closed`. Así el mismo assert
+// verifica las tres cosas a la vez — que el segundo estado no se pierde, que sigue expandiéndose a
+// su variante legada con el orphan encendido, y que la `open` viva queda fuera.
+func TestIntakes_200_OrphanConLaLISTADeEstadosDeT41(t *testing.T) {
+	st := bandejaConEventos()
+
+	sinOrphan := idsDe(listarEn(t, st, "?status=open&status=confirmed&sort=oldest"))
+	if !slices.Equal(sinOrphan, []string{intakeA1, intakeA2, intakeA4, intakeA5}) {
+		t.Fatalf("el fixture cambió: los dos estados sin orphan dan %v", sinOrphan)
+	}
+
+	conOrphan := idsDe(listarEn(t, st, "?status=open&status=confirmed&orphan=true&sort=oldest"))
+	quiero := []string{intakeA1, intakeA4, intakeA5}
+	if !slices.Equal(conOrphan, quiero) {
+		t.Fatalf("ids=%v, quiero %v: los dos estados siguen valiendo (con el `closed` legado dentro) y solo cae %s, la `open` con conversación viva",
+			conOrphan, quiero, intakeA2)
+	}
+}

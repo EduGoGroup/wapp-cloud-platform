@@ -379,11 +379,49 @@ func (m *MemoryStore) ListDetails(_ context.Context, tenantID string, f Filter, 
 	return out, nil
 }
 
+// casaConElFiltroLocked es el PREDICADO del filtro, fila a fila: el espejo del
+// intakeFilterWhere del store real, cláusula por cláusula y en el mismo orden.
+//
+// Vive aparte de matching —que es quien ordena y pagina— porque son dos preguntas
+// distintas: «¿esta fila entra?» y «¿en qué orden salen las que entraron». Tenerlas
+// juntas hacía además que cada cláusula nueva del predicado subiera la complejidad
+// de una función que ya llevaba dentro el comparador del orden.
+//
+// `variants` llega calculado por el llamante: es el mismo para todas las filas y
+// recalcularlo por fila sería recorrer la lista de estados N veces para nada.
+func (m *MemoryStore) casaConElFiltroLocked(r row, f Filter, variants []string) bool {
+	switch {
+	case !f.From.IsZero() && r.intake.CreatedAt.Before(f.From):
+		return false
+	case !f.To.IsZero() && !r.intake.CreatedAt.Before(f.To):
+		return false // To es EXCLUSIVO, igual que el "< $3" del SQL
+	case variants != nil && !slices.Contains(variants, r.status):
+		return false
+	case f.SessionID != "" && r.intake.SessionID != f.SessionID:
+		return false
+	case f.Orphan && m.tieneEventoVivoLocked(r.intake.ID):
+		return false
+	}
+	return true
+}
+
+// tieneEventoVivoLocked responde lo mismo que hasLiveEventTx en el store real: «¿está
+// `open` el evento que ESTA solicitud declara?». Es el criterio que comparten la
+// guarda `live_event` del descarte y el filtro de huérfanas (Plan 044 · T4.8), y por
+// eso está escrito UNA vez: si divergieran, la bandeja de huérfanos enseñaría
+// solicitudes que el descarte va a rechazar.
+//
+// Sin ligadura —fila legada pre-0054, eventOf vacío— no hay evento vivo que mirar.
+func (m *MemoryStore) tieneEventoVivoLocked(intakeID string) bool {
+	eventID := m.eventOf[intakeID]
+	return eventID != "" && m.events[eventID] == "open"
+}
+
 // matching filtra y ordena las solicitudes del tenant SIN paginar. Reproduce el
 // predicado del store Postgres: rango [From, To), variantes legadas de CADA estado
-// pedido, sesión exacta y el orden que dice `f.Sort` con desempate por id. El
-// llamante tiene el candado tomado y le pasa el filtro ya NORMALIZADO (de ahí sale
-// el orden por defecto).
+// pedido, sesión exacta, la orfandad de `f.Orphan` y el orden que dice `f.Sort` con
+// desempate por id. El llamante tiene el candado tomado y le pasa el filtro ya
+// NORMALIZADO (de ahí sale el orden por defecto).
 func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
 	// La expansión es de CADA estado del filtro, no del primero (D-044.47 §2):
 	// el mismo StoredVariantsOf que arma el `= ANY($4)` del store real.
@@ -391,16 +429,7 @@ func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
 
 	matched := make([]Intake, 0, len(m.rows[tenantID]))
 	for _, r := range m.rows[tenantID] {
-		if !f.From.IsZero() && r.intake.CreatedAt.Before(f.From) {
-			continue
-		}
-		if !f.To.IsZero() && !r.intake.CreatedAt.Before(f.To) {
-			continue // To es EXCLUSIVO, igual que el "< $3" del SQL
-		}
-		if variants != nil && !slices.Contains(variants, r.status) {
-			continue
-		}
-		if f.SessionID != "" && r.intake.SessionID != f.SessionID {
+		if !m.casaConElFiltroLocked(r, f, variants) {
 			continue
 		}
 		in := r.intake

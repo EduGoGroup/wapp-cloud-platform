@@ -87,12 +87,32 @@ const intakeCols = `id::text, contact_id, session_id, status, total, created_at,
 // divergieran, el paginador mentiría. Cada filtro es opcional por el patrón
 // "$n IS NULL OR …", que deja el plan estable sin construir SQL dinámico
 // (concatenación de constantes: nada de esta cadena viene del usuario).
+//
+// El $6 es el filtro de HUÉRFANAS (Plan 044 · T4.8, REQ-21c): «su evento declarado
+// ya no está open». Es el NOT EXISTS del mismo predicado que hasLiveEventTx usa
+// para la guarda `live_event` del descarte, a propósito y literalmente — la vista
+// preselecciona lo que el descarte va a aceptar, y una divergencia entre las dos
+// haría que el dueño marcara lotes que rebotan.
+//
+// Va como subconsulta correlada y NO como LEFT JOIN: el join duplicaría cabeceras
+// si un evento tuviera dos contenidos (hoy lo impide intakes_event_id_uidx, pero el
+// paginador no puede depender de un índice de otra tabla), y el NOT EXISTS resuelve
+// además el legado sin una sola rama: event_id NULL ⇒ la subconsulta no casa ⇒
+// huérfana, que es lo que hasLiveEventTx decide para esa misma fila.
+//
+// Lo que NO se usa aquí es la vista public.event_content de la 0054: esa mira en la
+// dirección contraria —el PADRE preguntando por el estado de su contenido— y su
+// vocabulario (alive|settled|discarded) es el del intake, no el del evento. Aquí la
+// pregunta es sobre el EVENTO, y su vocabulario es `open`.
 const intakeFilterWhere = `
 	WHERE tenant_id = $1
 	  AND ($2::timestamptz IS NULL OR created_at >= $2)
 	  AND ($3::timestamptz IS NULL OR created_at <  $3)
 	  AND ($4::text[]      IS NULL OR status = ANY($4))
-	  AND ($5::text        IS NULL OR session_id = $5)`
+	  AND ($5::text        IS NULL OR session_id = $5)
+	  AND ($6::boolean     IS NULL OR NOT EXISTS (
+	          SELECT 1 FROM public.conversation_events e
+	          WHERE e.id = public.intakes.event_id AND e.status = 'open'))`
 
 // listIntakesSelect y listIntakesPage son la consulta de la página PARTIDA en dos
 // por el ORDER BY, que desde el Plan 044 · T4.1 lo elige el filtro (`sort`,
@@ -100,7 +120,7 @@ const intakeFilterWhere = `
 // que devuelve una de dos constantes: la query del usuario no llega aquí.
 const listIntakesSelect = `SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere
 const listIntakesPage = `
-	LIMIT $6 OFFSET $7`
+	LIMIT $7 OFFSET $8`
 
 // countIntakesQuery cuenta las MISMAS coincidencias sin paginar.
 const countIntakesQuery = `SELECT count(*) FROM public.intakes` + intakeFilterWhere
@@ -149,7 +169,7 @@ func (p *Postgres) List(ctx context.Context, tenantID string, f Filter) (out []I
 // listIntakeDetailsHead/Body/Items traen las cabeceras que casan con el filtro Y
 // sus líneas en UNA sola consulta. Dos decisiones que no son de estilo:
 //
-//   - La cota (`LIMIT $6`) va DENTRO del CTE, sobre las cabeceras: si estuviera
+//   - La cota (`LIMIT $7`) va DENTRO del CTE, sobre las cabeceras: si estuviera
 //     fuera cortaría filas del join y devolvería solicitudes con las líneas a
 //     medias, que es exactamente el error que un export no puede permitirse.
 //   - El join es LEFT: una solicitud sin líneas (una `open` que nadie llegó a
@@ -168,7 +188,7 @@ const listIntakeDetailsHead = `
 	WITH page AS (
 		SELECT ` + intakeCols + ` FROM public.intakes` + intakeFilterWhere
 const listIntakeDetailsBody = `
-		LIMIT $6
+		LIMIT $7
 	)
 	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
 	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at,
@@ -253,10 +273,14 @@ func scanDetailRow(sc rowScanner) (Intake, Item, bool, error) {
 	}, true, nil
 }
 
-// filterArgs arma los cinco argumentos del predicado compartido. Un filtro sin
+// filterArgs arma los SEIS argumentos del predicado compartido. Un filtro sin
 // valor viaja como NULL (any(nil)) para que la rama "$n IS NULL" lo desactive.
+//
+// Ese NULL es lo que hace del `orphan` un filtro y no un modo: con Orphan=false el
+// $6 llega NULL y el NOT EXISTS ni se evalúa, así que la bandeja de siempre paga
+// exactamente lo que pagaba.
 func filterArgs(tenantID string, f Filter) []any {
-	var from, to, statuses, session any
+	var from, to, statuses, session, orphan any
 	if !f.From.IsZero() {
 		from = f.From
 	}
@@ -272,7 +296,10 @@ func filterArgs(tenantID string, f Filter) []any {
 	if f.SessionID != "" {
 		session = f.SessionID
 	}
-	return []any{tenantID, from, to, statuses, session}
+	if f.Orphan {
+		orphan = true
+	}
+	return []any{tenantID, from, to, statuses, session, orphan}
 }
 
 // intakeOrderBy es la cláusula de orden que corresponde al filtro, con el prefijo

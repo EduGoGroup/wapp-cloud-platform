@@ -23,8 +23,8 @@ import (
 // intakeFilterWhere— y exige que sea la lista de estados o nil.
 func argStatuses(t *testing.T, args []any) []string {
 	t.Helper()
-	if len(args) != 5 {
-		t.Fatalf("filterArgs devolvió %d argumentos, quiero 5 (tenant, from, to, statuses, session)", len(args))
+	if len(args) != 6 {
+		t.Fatalf("filterArgs devolvió %d argumentos, quiero 6 (tenant, from, to, statuses, session, orphan)", len(args))
 	}
 	if args[3] == nil {
 		return nil
@@ -137,5 +137,93 @@ func TestFilterArgs_ElOrdenDeEntradaNoCambiaLaConsulta(t *testing.T) {
 		Statuses: []string{StatusNeedsInfo, StatusConfirmed}}.Normalized()))
 	if !slices.Equal(unSentido, elOtro) {
 		t.Fatalf("el orden de entrada cambió $4: %v vs %v", unSentido, elOtro)
+	}
+}
+
+// ==================== el filtro de HUÉRFANAS (T4.8, REQ-21c) ====================
+
+// argOrphan saca el 6.º argumento del predicado —el `$6::boolean` de
+// intakeFilterWhere—, que es o `true` o nil y nunca otra cosa.
+//
+// Va por separado de argStatuses porque comprueba una propiedad distinta: que el
+// filtro APAGADO viaje como NULL de verdad. Un `false` en su lugar compilaría, y el
+// `$6::boolean IS NULL OR …` dejaría de desactivarse.
+func argOrphan(t *testing.T, args []any) any {
+	t.Helper()
+	if len(args) != 6 {
+		t.Fatalf("filterArgs devolvió %d argumentos, quiero 6 (tenant, from, to, statuses, session, orphan)", len(args))
+	}
+	return args[5]
+}
+
+// TestFilterArgs_OrphanEnciendeElSextoArgumento es el cableado del filtro de T4.8:
+// pedir huérfanas tiene que llegar al `$6` del store real como un `true`.
+//
+// 💥 MUTACIÓN EJECUTADA, y COMPILA: en filterArgs, borrar el
+//
+//	if f.Orphan { orphan = true }
+//
+// deja `orphan` en su cero-valor (any(nil)) y el filtro no filtra NADA — el 200
+// sale con la bandeja entera y el dueño creyendo que mira huérfanas. Con esta
+// mutación este test se pone rojo; sin él, la suite entera seguía verde porque los
+// TestPostgres_List_* se SALTAN sin WAPP_TEST_DB_DSN.
+func TestFilterArgs_OrphanEnciendeElSextoArgumento(t *testing.T) {
+	got := argOrphan(t, filterArgs("tenant-a", Filter{Orphan: true}.Normalized()))
+	if got != true {
+		t.Fatalf("$6 = %#v con Orphan=true, quiero true (el NOT EXISTS tiene que evaluarse)", got)
+	}
+}
+
+// TestFilterArgs_SinOrphanViajaNULL: la rama «$6::boolean IS NULL» tiene que quedar
+// DESACTIVADA, y para eso el argumento debe ser nil y no `false`.
+//
+// No es cosmético. Con `false` el predicado pasa a ser «FALSE IS NULL OR NOT
+// EXISTS(…)», que es FALSE OR NOT EXISTS: el filtro se quedaría encendido SIEMPRE y
+// la bandeja de todos los días —la que no pide huérfanas— perdería toda solicitud
+// con conversación viva. Es el mismo fallo que TestFilterArgs_SinEstadosViajaNULL
+// vigila para `$4`, y aquí es peor: esconde justo lo que está pasando ahora mismo.
+func TestFilterArgs_SinOrphanViajaNULL(t *testing.T) {
+	for _, f := range []Filter{
+		Filter{}.Normalized(),
+		Filter{Orphan: false}.Normalized(),
+		Filter{Statuses: []string{StatusOpen}}.Normalized(),
+	} {
+		if got := argOrphan(t, filterArgs("tenant-a", f)); got != nil {
+			t.Fatalf("$6 = %#v con Orphan=false, quiero nil (la rama IS NULL desactiva el filtro)", got)
+		}
+	}
+}
+
+// TestFilterArgs_OrphanNoPisaLosOtrosFiltros: el sexto argumento se AÑADE, no
+// desplaza. El filtro que la bandeja del 044 pide de verdad —huérfanas, en DOS
+// estados, de una sesión— tiene que seguir llevando su lista entera en el `$4`.
+//
+// Existe por dos razones y ninguna es cosmética:
+//
+//   - Este cambio RENUMERÓ los placeholders del LIMIT/OFFSET ($6/$7 → $7/$8). Un
+//     descuadre de posiciones no lo detecta el compilador —todo es `any`— y se
+//     manifiesta como una consulta que filtra por lo que no es.
+//   - El `orphan` y la LISTA de estados de T4.1 se componen, y componerse es
+//     justo donde una implementación se rompe: `StatusNeedsInfo` va delante y
+//     `StatusConfirmed` detrás, así que el `$4` esperado incluye el `closed`
+//     legado — la expansión de CADA elemento (D-044.47 §2) tiene que seguir
+//     ocurriendo con el orphan encendido, no solo sin él.
+func TestFilterArgs_OrphanNoPisaLosOtrosFiltros(t *testing.T) {
+	f := Filter{
+		Orphan:    true,
+		Statuses:  []string{StatusNeedsInfo, StatusConfirmed},
+		SessionID: "sess-a",
+	}.Normalized()
+	args := filterArgs("tenant-a", f)
+
+	quiero := []string{StatusClosedLegacy, StatusConfirmed, StatusNeedsInfo}
+	if got := argStatuses(t, args); !slices.Equal(got, quiero) {
+		t.Fatalf("$4 = %v, quiero %v: con el orphan encendido los DOS estados siguen viajando, y `confirmed` sigue alcanzando su `closed` legado", got, quiero)
+	}
+	if args[4] != "sess-a" {
+		t.Fatalf("$5 = %#v, quiero \"sess-a\"", args[4])
+	}
+	if argOrphan(t, args) != true {
+		t.Fatalf("$6 = %#v, quiero true", args[5])
 	}
 }

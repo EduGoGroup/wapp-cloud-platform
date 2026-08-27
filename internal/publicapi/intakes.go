@@ -385,8 +385,12 @@ type discardIntakesResponse struct {
 // —migraciones `0051_conversation_events.sql` y `0052_event_seams.sql`— y el ciclo
 // con este plan se rompió (el `abandoned` que el 043 esperaba está publicado). Lo que
 // falta ahora es el PRODUCTOR: nadie crea eventos ni apunta el puntero hasta la Ola 2
-// del 043, así que no hay evento que cerrar. El detalle de por qué tampoco se entrega
-// el filtro `orphan=true` está en la cabecera de internal/intakes/discard.go.
+// del 043, así que no hay evento que cerrar.
+//
+// ✅ ACTUALIZADO 2026-08-27 (Plan 044 · T4.8): el filtro `orphan=true` que esta
+// cabecera difería YA ESTÁ, y donde le tocaba — en el LISTADO (parseIntakeFilter,
+// `Filter.Orphan`, el $6 de intakeFilterWhere), no aquí. Este endpoint sigue sin
+// aceptar un filtro y eso NO es una carencia: es discardIntakesRequest, arriba.
 func discardIntakesHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -661,6 +665,18 @@ func toIntakeDTO(in intakes.Intake) intakeDTO {
 // es lo que esta ruta sirve y documenta desde el Plan 041: quien no lo pide no ve
 // cambiar su pantalla. Un valor desconocido se rechaza con 400 por la misma razón
 // que un `status` desconocido — servir otro orden en silencio sería peor.
+//
+// `orphan` acota a las solicitudes cuyo evento conversacional ya no está `open`
+// (Plan 041 · T4.8 / REQ-21c, construido en el Plan 044). Se lee con ParseBool, así
+// que `1`/`t`/`TRUE` valen tanto como `true`; cualquier otra cosa —`orphan=si`,
+// `orphan=yes`— es 400 y NO «no filtres», que es el mismo criterio que `status` y
+// `sort`: esta vista PRESELECCIONA lo que el dueño va a descartar sin vuelta atrás,
+// y servirle la bandeja entera creyendo él que mira huérfanas es exactamente el
+// accidente que no puede pasar.
+// ⚠️ `orphan=false` y `orphan` ausente significan LO MISMO —sin cota por este
+// lado—, como el cero-valor del resto de campos de Filter. No existe «enséñame solo
+// las que SÍ tienen conversación viva»: nadie lo ha pedido y sería una vista sin
+// acción detrás.
 func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 	q := r.URL.Query()
 
@@ -691,11 +707,24 @@ func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 		return intakes.Filter{}, "sort desconocido: usa newest u oldest"
 	}
 
+	// `?orphan=` (clave presente y vacía) es «sin filtro», igual que `?status=`: una
+	// UI que arma la query siempre con la clave y la deja en blanco cuando el
+	// operador no marcó la casilla no puede recibir un 400.
+	orphan := false
+	if raw := q.Get("orphan"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return intakes.Filter{}, "orphan inválido: usa true o false"
+		}
+		orphan = parsed
+	}
+
 	return intakes.Filter{
 		From:      from,
 		To:        to,
 		Statuses:  statuses,
 		SessionID: q.Get("session"),
+		Orphan:    orphan,
 		Sort:      sort,
 		Page:      parseIntQuery(r, "page", 1),
 		PageSize:  parseIntQuery(r, "page_size", intakes.DefaultPageSize),

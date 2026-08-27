@@ -172,10 +172,10 @@ type Detail struct {
 // Filter acota el listado de solicitudes. Todos los campos son opcionales: el
 // cero-valor lista todo el tenant.
 //
-// Extensible sin rediseño: el filtro `orphan=true` del design §4 es una condición
-// DERIVADA (se recalcula al leer, D-041.16) y la trae T4.8 (Ola 4). Cuando llegue,
-// entra como un campo más de este struct y una cláusula más en el store — ni la
-// firma de Service.List ni la del puerto Store cambian.
+// Extensible sin rediseño, y quedó demostrado: el filtro `orphan=true` del design
+// §4 —condición DERIVADA, recalculada al leer (D-041.16)— LLEGÓ con T4.8 (Ola 4) y
+// entró exactamente como se anunciaba, un campo más aquí y una cláusula más en el
+// store: ni la firma de Service.List ni la del puerto Store cambiaron.
 type Filter struct {
 	// From/To acotan por created_at. From es INCLUSIVO y To EXCLUSIVO: quien
 	// traduce una fecha del usuario a este rango decide qué significa "hasta"
@@ -195,6 +195,25 @@ type Filter struct {
 	Statuses []string
 	// SessionID acota a la sesión (Edge/WhatsApp) que originó la solicitud.
 	SessionID string
+	// Orphan acota a las solicitudes HUÉRFANAS: aquellas cuyo evento conversacional
+	// declarado (intakes.event_id, D-043.21) ya NO está `open`. `false` ⇒ sin cota
+	// por este lado, como el resto de los campos de este struct.
+	//
+	// La definición es la MISMA que la guarda `live_event` del descarte
+	// (hasLiveEventTx, discard.go), negada — y eso es el punto entero del filtro
+	// (Plan 041 · T4.8, D-041.18): lo que esta vista PRESELECCIONA es exactamente lo
+	// que el descarte va a aceptar, así que el dueño no marca un lote para que la
+	// plataforma le devuelva media pantalla de `live_event`. Si algún día divergen,
+	// la bandeja de huérfanos empezaría a elegir víctimas equivocadas.
+	//
+	// Cae del lado huérfano la fila LEGADA pre-0054 (event_id NULL), por lo mismo
+	// que hasLiveEventTx la deja pasar: sin padre declarado no existe la conversación
+	// que la guarda protege.
+	//
+	// ⚠️ NO filtra por estado: huérfana es una propiedad de la CONVERSACIÓN, no del
+	// ciclo de vida de la solicitud. Quien quiera «huérfanas y todavía abiertas»
+	// combina Orphan con Statuses, que es lo que la bandeja hace.
+	Orphan bool
 	// Sort es el orden del listado: SortNewest (default, lo que el Plan 041 sirve
 	// y documenta) o SortOldest. Vacío ⇒ SortNewest.
 	//
