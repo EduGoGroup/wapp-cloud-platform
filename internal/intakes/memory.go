@@ -380,14 +380,14 @@ func (m *MemoryStore) ListDetails(_ context.Context, tenantID string, f Filter, 
 }
 
 // matching filtra y ordena las solicitudes del tenant SIN paginar. Reproduce el
-// predicado del store Postgres: rango [From, To), variantes legadas del estado,
-// sesión exacta, más recientes primero con desempate por id. El llamante tiene el
-// candado tomado.
+// predicado del store Postgres: rango [From, To), variantes legadas de CADA estado
+// pedido, sesión exacta y el orden que dice `f.Sort` con desempate por id. El
+// llamante tiene el candado tomado y le pasa el filtro ya NORMALIZADO (de ahí sale
+// el orden por defecto).
 func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
-	var variants []string
-	if f.Status != "" {
-		variants = StoredVariants(f.Status)
-	}
+	// La expansión es de CADA estado del filtro, no del primero (D-044.47 §2):
+	// el mismo StoredVariantsOf que arma el `= ANY($4)` del store real.
+	variants := StoredVariantsOf(f.Statuses)
 
 	matched := make([]Intake, 0, len(m.rows[tenantID]))
 	for _, r := range m.rows[tenantID] {
@@ -408,7 +408,15 @@ func (m *MemoryStore) matching(tenantID string, f Filter) []Intake {
 		matched = append(matched, in)
 	}
 
+	// Los dos criterios giran JUNTOS con `sort`, igual que el ORDER BY del store
+	// real: created_at manda y el id desempata, los dos en el mismo sentido.
 	slices.SortFunc(matched, func(a, b Intake) int {
+		if f.Sort == SortOldest {
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.Compare(b.CreatedAt) // más antiguas primero
+			}
+			return strings.Compare(a.ID, b.ID)
+		}
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return b.CreatedAt.Compare(a.CreatedAt) // más recientes primero
 		}

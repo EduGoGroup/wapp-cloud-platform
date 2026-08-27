@@ -136,6 +136,30 @@ func StoredVariants(canonical string) []string {
 	return variants
 }
 
+// StoredVariantsOf expande TODOS los estados de un filtro a sus claves tal como
+// están ALMACENADAS. Es StoredVariants aplicado a cada elemento, no al primero: un
+// filtro `[confirmed, needs_info]` tiene que alcanzar también las filas legadas en
+// `closed`, y una expansión que solo mirara la cabeza de la lista las perdería en
+// silencio en cuanto el llamante pidiera dos estados (D-044.47 §2, Plan 044 · T4.1).
+//
+// Mismo molde —y por la misma razón— que DiscardableStatuses: acumular, ordenar y
+// colapsar. El orden determinista importa porque el resultado viaja a un
+// `= ANY($n)` y a los tests, y dos filtros con los mismos estados en otro orden no
+// pueden producir dos consultas distintas.
+//
+// Una lista vacía devuelve nil: «sin filtro por estado», no «ningún estado casa».
+func StoredVariantsOf(canonicals []string) []string {
+	if len(canonicals) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(canonicals))
+	for _, status := range canonicals {
+		out = append(out, StoredVariants(status)...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // IsStatus indica si la clave es un estado conocido del ciclo de vida (tras
 // normalizar los alias).
 func IsStatus(status string) bool {

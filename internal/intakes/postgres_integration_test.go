@@ -178,7 +178,7 @@ func TestPostgres_List_StatusAlcanzaElLegado(t *testing.T) {
 	store, tenant, id := bandeja(t)
 
 	got, total, err := store.List(context.Background(), tenant,
-		intakes.Filter{Status: intakes.StatusConfirmed})
+		intakes.Filter{Statuses: []string{intakes.StatusConfirmed}})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestPostgres_Abandoned_SeFiltraEnElListado(t *testing.T) {
 	store, tenant, abandonada, viva := bandejaAbandonada(t)
 	ctx := context.Background()
 
-	got, total, err := store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusAbandoned})
+	got, total, err := store.List(ctx, tenant, intakes.Filter{Statuses: []string{intakes.StatusAbandoned}})
 	if err != nil {
 		t.Fatalf("List(abandoned): %v", err)
 	}
@@ -631,7 +631,7 @@ func TestPostgres_Abandoned_SeFiltraEnElListado(t *testing.T) {
 		t.Fatalf("List(abandoned): total=%d ids=%v; quiero solo la abandonada", total, ids(got))
 	}
 
-	got, total, err = store.List(ctx, tenant, intakes.Filter{Status: intakes.StatusOpen})
+	got, total, err = store.List(ctx, tenant, intakes.Filter{Statuses: []string{intakes.StatusOpen}})
 	if err != nil {
 		t.Fatalf("List(open): %v", err)
 	}
@@ -648,7 +648,7 @@ func TestPostgres_Abandoned_ConservaLíneasYRevisiones(t *testing.T) {
 	ctx := context.Background()
 
 	details, err := store.ListDetails(ctx, tenant,
-		intakes.Filter{Status: intakes.StatusAbandoned}, intakes.MaxExportIntakes)
+		intakes.Filter{Statuses: []string{intakes.StatusAbandoned}}, intakes.MaxExportIntakes)
 	if err != nil {
 		t.Fatalf("ListDetails(abandoned): %v", err)
 	}

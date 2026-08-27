@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/cart"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -172,8 +173,10 @@ type setIntakeStatusRequest struct {
 }
 
 // listIntakesHandler sirve GET /api/v1/intakes: las solicitudes del tenant del
-// token (INV-8), más recientes primero, con filtros from/to/status/session y
-// paginación page/page_size (default 50, máx 200).
+// token (INV-8), con filtros from/to/status/session, orden `sort` (más recientes
+// primero por defecto) y paginación page/page_size (default 50, máx 200).
+//
+// `status` se REPITE para pedir varios estados a la vez; ver parseIntakeFilter.
 func listIntakesHandler(svc IntakeService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
@@ -206,7 +209,13 @@ func listIntakesHandler(svc IntakeService) http.Handler {
 // getIntakeHandler sirve GET /api/v1/intakes/{id}: cabecera + líneas. Una
 // solicitud de OTRO tenant responde 404, no 403: un 403 confirmaría que el id
 // existe, y el aislamiento entre tenants no puede filtrar ni eso (INV-8).
-func getIntakeHandler(svc IntakeService) http.Handler {
+//
+// Recibe el resolver de features APARTE del middleware que ya gatea la ruta, y no
+// es una duplicación: el middleware decide si se ENTRA (`cart_basic`), y esto
+// decide qué CAMPOS salen (`llm_intake`, T4.1 / D-044.48 §2). Son dos preguntas
+// distintas y la segunda no se puede contestar desde un middleware, que no ve el
+// cuerpo.
+func getIntakeHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -224,8 +233,27 @@ func getIntakeHandler(svc IntakeService) http.Handler {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
 	})
+}
+
+// writeIntakeDetail escribe el detalle YA FILTRADO por el plan del tenant. Es el
+// ÚNICO camino por el que el detalle sale al wire —lo usan el GET y el PUT de
+// líneas—, por la misma razón por la que toIntakeDetailResponse es un solo punto:
+// dos salidas separadas divergirían en el primer campo nuevo, y aquí divergir
+// significa que una de las dos filtra y la otra no.
+//
+// Un fallo al filtrar responde 500 y NO el payload sin filtrar: servir el cuerpo
+// entero ante un error dejaría el gate abierto justo cuando algo va mal, que es lo
+// contrario de fail-closed. En la práctica no se alcanza —lo que se reserializa
+// salió de un json.Unmarshal válido—, y por eso no tiene un cuerpo de error propio.
+func writeIntakeDetail(ctx context.Context, w http.ResponseWriter, feats entitlements.Resolver, tenantID string, detail intakes.Detail) {
+	resp := toIntakeDetailResponse(detail)
+	if err := aplicarGateLLMIntake(ctx, feats, tenantID, &resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "no se pudo preparar la solicitud")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // toIntakeDetailResponse proyecta la solicitud completa al wire. Es UN punto y no
@@ -471,7 +499,7 @@ type notEditableResponse struct {
 // Códigos: 200 con el detalle; 400 si el cuerpo o las líneas están mal; 404 si la
 // solicitud no es del tenant (nunca 403: confirmaría que existe); 422 si no está en
 // `pending_approval`; 409 si alguien la movió entre la lectura y la escritura.
-func putIntakeItemsHandler(svc IntakeService) http.Handler {
+func putIntakeItemsHandler(svc IntakeService, feats entitlements.Resolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httpapi.IdentityFromContext(r.Context())
 		if !ok || id.TenantID == "" {
@@ -502,7 +530,10 @@ func putIntakeItemsHandler(svc IntakeService) http.Handler {
 			writeEditItemsError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toIntakeDetailResponse(detail))
+		// Por el MISMO camino que el GET, y no por un writeJSON suelto: el cuerpo es
+		// el mismo, así que el gate por campo tiene que ser el mismo. Repintar la
+		// consola con lo que devuelve el PUT no puede enseñar lo que el GET tapa.
+		writeIntakeDetail(r.Context(), w, feats, id.TenantID, detail)
 	})
 }
 
@@ -615,6 +646,21 @@ func toIntakeDTO(in intakes.Intake) intakeDTO {
 // `confirmed`, y el store alcanza igual las filas viejas). Una clave desconocida se
 // rechaza con 400 en vez de listar todo: un typo que devuelve la bandeja entera es
 // peor que un error.
+//
+// 🔑 `status` SE REPITE para pedir varios (`?status=pending_approval&status=
+// needs_info`, Plan 044 · T4.1 / D-044.47 §2). Hasta el 044 esto usaba
+// `q.Get("status")`, que devuelve el PRIMER valor y descarta el resto EN SILENCIO:
+// una bandeja que pedía dos estados recibía uno y no tenía forma de enterarse. Un
+// solo `?status=x` sigue significando exactamente lo de antes, así que el 041 no
+// ve cambiar nada.
+// ⚠️ La forma con comas (`?status=a,b`) NO se acepta: `a,b` no es un estado
+// conocido y sale por el 400 de siempre, que es un error visible y no otro
+// descarte mudo.
+//
+// `sort` elige el orden (`newest`|`oldest`, D-044.48 §3). Ausente ⇒ `newest`, que
+// es lo que esta ruta sirve y documenta desde el Plan 041: quien no lo pide no ve
+// cambiar su pantalla. Un valor desconocido se rechaza con 400 por la misma razón
+// que un `status` desconocido — servir otro orden en silencio sería peor.
 func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 	q := r.URL.Query()
 
@@ -627,16 +673,30 @@ func parseIntakeFilter(r *http.Request) (intakes.Filter, string) {
 		return intakes.Filter{}, "to inválido: usa YYYY-MM-DD o RFC3339"
 	}
 
-	status := intakes.NormalizeStatus(q.Get("status"))
-	if status != "" && !intakes.IsStatus(status) {
-		return intakes.Filter{}, "status desconocido"
+	// q["status"] y NO q.Get("status"): el Get se queda con el primero.
+	var statuses []string
+	for _, raw := range q["status"] {
+		if raw == "" {
+			continue // `?status=` es "sin filtro", no un estado vacío
+		}
+		status := intakes.NormalizeStatus(raw)
+		if !intakes.IsStatus(status) {
+			return intakes.Filter{}, "status desconocido"
+		}
+		statuses = append(statuses, status)
+	}
+
+	sort := q.Get("sort")
+	if sort != "" && !intakes.IsSort(sort) {
+		return intakes.Filter{}, "sort desconocido: usa newest u oldest"
 	}
 
 	return intakes.Filter{
 		From:      from,
 		To:        to,
-		Status:    status,
+		Statuses:  statuses,
 		SessionID: q.Get("session"),
+		Sort:      sort,
 		Page:      parseIntQuery(r, "page", 1),
 		PageSize:  parseIntQuery(r, "page_size", intakes.DefaultPageSize),
 	}, ""

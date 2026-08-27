@@ -604,7 +604,7 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	mux.Handle("GET /api/v1/intakes", protectRead(mw, log,
 		"intakes.read", cartBasic(listIntakesHandler(d.Intakes))))
 	mux.Handle("GET /api/v1/intakes/{id}", protectRead(mw, log,
-		"intakes.read", cartBasic(getIntakeHandler(d.Intakes))))
+		"intakes.read", cartBasic(getIntakeHandler(d.Intakes, d.Entitlements))))
 	mux.Handle("POST /api/v1/intakes/{id}/status", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(setIntakeStatusHandler(d.Intakes))))
 
@@ -616,7 +616,7 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	// tenant sin LLM que llegara a `pending_approval` sin poder editar se quedaría
 	// encerrado en un estado editable que nadie puede editar.
 	mux.Handle("PUT /api/v1/intakes/{id}/items", protect(mw, auditor, log,
-		"intakes.write", "intake", cartBasic(putIntakeItemsHandler(d.Intakes))))
+		"intakes.write", "intake", cartBasic(putIntakeItemsHandler(d.Intakes, d.Entitlements))))
 
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
 	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es

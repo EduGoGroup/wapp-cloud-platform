@@ -31,6 +31,7 @@ package intakes
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -182,20 +183,57 @@ type Filter struct {
 	// entero). Zero-valor ⇒ sin cota por ese lado.
 	From time.Time
 	To   time.Time
-	// Status es la clave CANÓNICA por la que se filtra (ya normalizada). Vacío ⇒
-	// todos. Filtrar por `confirmed` alcanza también las filas históricas escritas
-	// como `closed`: de eso se encarga StoredVariants en el store.
-	Status string
+	// Statuses son las claves CANÓNICAS por las que se filtra (ya normalizadas).
+	// Lista VACÍA ⇒ todos. Filtrar por `confirmed` alcanza también las filas
+	// históricas escritas como `closed`: de eso se encarga StoredVariantsOf en el
+	// store, que expande CADA elemento de la lista y no solo el primero.
+	//
+	// Es una LISTA y no un estado suelto desde el Plan 044 · T4.1 (D-044.47 §2):
+	// la bandeja del dueño necesita `pending_approval` Y `needs_info` en UNA
+	// pantalla, y con un solo estado eso eran dos llamadas cuyos paginadores no se
+	// podían componer.
+	Statuses []string
 	// SessionID acota a la sesión (Edge/WhatsApp) que originó la solicitud.
 	SessionID string
+	// Sort es el orden del listado: SortNewest (default, lo que el Plan 041 sirve
+	// y documenta) o SortOldest. Vacío ⇒ SortNewest.
+	//
+	// Es un PARÁMETRO y no una constante desde el Plan 044 · T4.1 (D-044.48 §3):
+	// la bandeja del 044 pide `oldest` porque lo que vence tiene que salir arriba,
+	// y cambiar el default habría alterado una pantalla en producción sin que
+	// nadie lo pidiera.
+	Sort string
 	// Page es 1-based; PageSize se acota a [1, MaxPageSize].
 	Page     int
 	PageSize int
 }
 
+// Los dos órdenes que acepta el listado. `newest` es el default y es lo que el
+// Plan 041 sirve desde su primer día: quien no pide orden no ve cambiar el suyo.
+const (
+	SortNewest = "newest"
+	SortOldest = "oldest"
+)
+
+// IsSort indica si la clave es un orden conocido. La usa el borde HTTP para
+// contestar 400 ante un `sort=antiguos` en vez de servir silenciosamente otro
+// orden — el mismo criterio que `status desconocido`.
+func IsSort(sort string) bool {
+	return sort == SortNewest || sort == SortOldest
+}
+
 // Normalized devuelve el filtro con la paginación saneada (página ≥ 1, tamaño en
-// [1, MaxPageSize] con DefaultPageSize si no se pidió) y el estado normalizado.
-// Es idempotente.
+// [1, MaxPageSize] con DefaultPageSize si no se pidió), los estados normalizados y
+// el orden resuelto. Es idempotente.
+//
+// Los estados salen ORDENADOS y sin repetidos, y eso no es cosmética: la lista
+// viaja a un `= ANY($n)` y a los tests, así que `?status=needs_info&status=
+// pending_approval` y el mismo par al revés tienen que producir EL MISMO filtro.
+// Mismo criterio —y por la misma razón— que DiscardableStatuses.
+//
+// Un elemento vacío se descarta en vez de convertirse en una cadena vacía que no casa con
+// ninguna fila: `?status=&status=needs_info` es «filtra por needs_info», no «no
+// devuelvas nada».
 func (f Filter) Normalized() Filter {
 	out := f
 	if out.Page < 1 {
@@ -207,8 +245,31 @@ func (f Filter) Normalized() Filter {
 	case out.PageSize > MaxPageSize:
 		out.PageSize = MaxPageSize
 	}
-	out.Status = NormalizeStatus(out.Status)
+	if !IsSort(out.Sort) {
+		out.Sort = SortNewest
+	}
+	out.Statuses = normalizeStatuses(out.Statuses)
 	return out
+}
+
+// normalizeStatuses normaliza, ordena y colapsa la lista de estados del filtro.
+// Devuelve nil —y no un slice vacío— cuando no queda ninguno, para que el store
+// distinguya «sin filtro por estado» con la misma prueba de siempre.
+func normalizeStatuses(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if canonical := NormalizeStatus(s); canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Offset es el desplazamiento SQL que corresponde a la página del filtro.
@@ -228,8 +289,9 @@ type Page struct {
 // Store es el puerto de persistencia de solicitudes. Lo satisface *Postgres
 // (producción) y *MemoryStore (tests). Toda operación va acotada al tenant (INV-8).
 type Store interface {
-	// List devuelve la página de solicitudes que casan con el filtro (más
-	// recientes primero) y el TOTAL de coincidencias del filtro sin paginar.
+	// List devuelve la página de solicitudes que casan con el filtro, en el orden
+	// que pide f.Sort (más recientes primero por defecto), y el TOTAL de
+	// coincidencias del filtro sin paginar.
 	List(ctx context.Context, tenantID string, f Filter) (items []Intake, total int, err error)
 
 	// Get devuelve la solicitud con sus líneas y sus revisiones, o ErrNotFound si

@@ -1,0 +1,68 @@
+{
+  "id": "77777777-7777-7777-7777-777777777777",
+  "contact_id": "9f1c0a7e-0000-4000-8000-000000000abc",
+  "session_id": "sess-a",
+  "status": "pending_approval",
+  "total": 21000,
+  "customer_note": "dejar en portería",
+  "created_at": "2026-08-07T12:00:00Z",
+  "updated_at": "2026-08-07T12:00:00Z",
+  "items": [
+    {
+      "sku": "TORTA-CHOC#V2",
+      "label": "Torta de chocolate — 12 porciones",
+      "customization": "",
+      "qty": 1,
+      "unit_price": 21000
+    }
+  ],
+  "revisions": [
+    {
+      "revision_no": 1,
+      "kind": "interpreted",
+      "payload": {
+        "analysis": {
+          "provider": "local",
+          "model": "qwen3:8b",
+          "source": "event_thread",
+          "reanalyzed_from": null
+        },
+        "delivery_date": "2026-08-08",
+        "lines": [
+          {
+            "evidence": "una torta de 10 o 12 porciones",
+            "kind": "matched",
+            "label": "Torta de chocolate",
+            "match": {
+              "strategy": "variante",
+              "confidence": 1
+            },
+            "qty": 1,
+            "sku": "TORTA-CHOC",
+            "unit_price": null
+          },
+          {
+            "evidence": "2 kilos de tequeños",
+            "kind": "unmatched",
+            "label": "tequeños",
+            "qty": 2,
+            "unit_price": null
+          }
+        ],
+        "message_ts": "2026-08-01T09:55:00Z",
+        "source_text": "hola! quiero una torta de 10 o 12 porciones para el sábado y 2 kilos de tequeños",
+        "version": 1
+      },
+      "rendered_text": "Torta de chocolate — 12 porciones · 1 × $21.000",
+      "created_by": "system",
+      "created_at": "2026-08-07T12:00:00Z"
+    }
+  ],
+  "allowed_transitions": [
+    "cancelled",
+    "confirmed",
+    "needs_info",
+    "rejected"
+  ],
+  "buyer_data_present": false
+}
