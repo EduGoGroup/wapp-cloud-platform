@@ -133,11 +133,12 @@ func nuevaEscenaMétrica(t *testing.T, opts ...intakes.Option) *escenaMétrica {
 	eventos := &espíaDeEventos{}
 	sender := &stubSender{}
 	log := &logSpy{}
-	base := []intakes.Option{
+	base := make([]intakes.Option, 0, 3+len(opts))
+	base = append(base,
 		intakes.WithQuoteSender(newNotifier(sender, st, log)),
 		intakes.WithMetrics(eventos, log),
 		intakes.WithMetricsClock(func() time.Time { return instanteDeLaDecisión }),
-	}
+	)
 	return &escenaMétrica{
 		svc:     intakes.NewService(st, append(base, opts...)...),
 		store:   st,

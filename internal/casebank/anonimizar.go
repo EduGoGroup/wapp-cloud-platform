@@ -144,6 +144,9 @@ var (
 // Clase es la clase de dato identificable que un detector reconoce.
 type Clase string
 
+// Las tres clases que este barrido sabe reconocer. La lista es CERRADA a
+// propósito: lo que no está aquí no se detecta, y el docstring de arriba dice
+// cuáles son esos huecos en vez de dejarlos al descubrimiento de quien depure.
 const (
 	ClaseJID      Clase = "jid"
 	ClaseTelefono Clase = "telefono"
