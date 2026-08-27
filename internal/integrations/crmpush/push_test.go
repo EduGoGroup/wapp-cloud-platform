@@ -3,7 +3,7 @@ package crmpush
 // push_test.go — la regla del `intake.push`, probada donde vive y sin Postgres.
 //
 // 🔴 POR QUÉ ES UN TEST INTERNO Y NO UNO DE INTEGRACIÓN. Los TestPostgres_* de este
-// repo se SALTAN sin DATABASE_URL y el `rc` sigue siendo 0: si lo único que probara
+// repo se SALTAN sin WAPP_TEST_DB_DSN y el `rc` sigue siendo 0: si lo único que probara
 // esta pieza fuera un test de integración, en la práctica no la probaría nadie. Todo
 // lo de aquí corre siempre: Build es pura y Push habla con dos dobles.
 

@@ -1002,7 +1002,7 @@ func (s *Store) AppendPastedMessage(ctx context.Context, eventID string, body st
 // inline en AppendPastedMessage— para que las CUATRO decisiones de forma (rol
 // `client`, grado `message`, origen `owner_pasted`, payload NULL) se puedan afirmar
 // en un test sin Postgres. Sin ella, lo único que las cubriría serían los
-// `TestPostgres_*`, que se SALTAN sin `DATABASE_URL`.
+// `TestPostgres_*`, que se SALTAN sin `WAPP_TEST_DB_DSN`.
 func pastedEntry(bodyEnc, bodyDEK []byte, kekID string) entry {
 	return entry{
 		role:      RoleClient,

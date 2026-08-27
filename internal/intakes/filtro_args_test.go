@@ -13,11 +13,18 @@ import (
 //
 // 🔴 POR QUÉ NO BASTABAN LOS TESTS DE INTEGRACIÓN. Lo que cubriría esto de verdad es
 // TestPostgres_List_* (postgres_integration_test.go), pero esos se SALTAN sin
-// DATABASE_URL — que es el caso normal de una corrida local y de este gate. Un
+// WAPP_TEST_DB_DSN — que es el caso normal de un `go test` pelado y de este gate. Un
 // criterio que solo se comprueba cuando hay Postgres delante es un criterio que casi
 // nunca se comprueba, y D-044.47 §2 es una condición escrita que no puede depender
 // de eso. filterArgs es una función PURA que devuelve []any, así que se puede
 // afirmar sobre el 4.º argumento sin base de datos y sin reloj.
+//
+// ⚠️ «Se saltan» NO significa «aquí no se pueden correr», y confundir las dos cosas
+// sale caro: `make test-integration` levanta un postgres:16 efímero, exporta
+// WAPP_TEST_DB_DSN y los corre TODOS —los 392 que se saltan sin ella pasan con
+// base—. Lo que justifica este fichero es que la red de siempre no dependa de que
+// quien ejecute el gate tenga Docker, no que la otra corrida sea imposible: antes de
+// declarar algo «imposible de verificar sin BD», levántala.
 
 // argStatuses saca el 4.º argumento del predicado —el `$4::text[]` de
 // intakeFilterWhere— y exige que sea la lista de estados o nil.

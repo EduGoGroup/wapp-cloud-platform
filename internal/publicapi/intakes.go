@@ -189,6 +189,37 @@ type intakeRevisionDTO struct {
 	RenderedText string          `json:"rendered_text,omitempty"`
 	CreatedBy    string          `json:"created_by,omitempty"`
 	CreatedAt    string          `json:"created_at"`
+	// LiteralPrunedAt es el instante RFC3339 UTC en que la RETENCIÓN destruyó el
+	// texto literal del cliente de esta revisión. La clave está AUSENTE mientras no
+	// se haya podado (D-044.52 §3).
+	//
+	// 🔑 QUÉ PREGUNTA CONTESTA. Sin él, un `source_text` que no viene tiene DOS
+	// causas que el consumidor no puede separar y que significan cosas opuestas
+	// para el dueño: «esta revisión nunca tuvo texto» —todas las del carrito
+	// numérico, y las del pipeline cuyo literal venía vacío— y «lo tuvo, se retuvo
+	// el plazo pactado y se destruyó». Con las dos calladas, la consola solo puede
+	// pintar un hueco y dejar que el dueño decida por su cuenta si el sistema le
+	// perdió el dato. Los tres casos salen de DOS claves:
+	//
+	//	payload.source_text presente ................. hay literal
+	//	ausente + literal_pruned_at ausente .......... nunca lo hubo
+	//	ausente + literal_pruned_at presente ......... se podó, y cuándo
+	//
+	// 🔑 POR QUÉ UN INSTANTE Y NO UN BOOLEANO. Porque es lo que el dominio AFIRMA:
+	// intakes.Revision.LiteralPrunedAt ES el `literal_pruned_at` de la fila —el
+	// momento REAL de la destrucción, que la poda sella UNA vez y no vuelve a mover
+	// (podarLiteralQuery)—. Un `literal_purged: true` sería una derivación suya que
+	// tira la mitad del dato sin comprar nada: el booleano se obtiene igual mirando
+	// si la clave está, así que quien solo quiera los tres casos no paga por el
+	// instante, y quien tenga que contestar «¿cuándo se destruyó el texto de mi
+	// cliente?» —una pregunta de retención, no de pantalla— con el booleano no
+	// puede.
+	//
+	// Va FUERA del payload y hermano de `created_at`, no dentro: el payload es la
+	// interpretación de lo que el cliente pidió, y esto es un hecho SOBRE la
+	// revisión. Estar fuera es además lo que lo deja al margen del gate de
+	// `llm_intake`, que filtra claves DEL payload (ver intakes_llm_gate.go).
+	LiteralPrunedAt string `json:"literal_pruned_at,omitempty"`
 }
 
 // invalidTransitionResponse es el cuerpo del 422 de POST …/status: dónde está la
@@ -316,6 +347,12 @@ func toIntakeDetailResponse(detail intakes.Detail, at time.Time) intakeDetailRes
 			RenderedText: rev.RenderedText,
 			CreatedBy:    rev.CreatedBy,
 			CreatedAt:    rev.CreatedAt.UTC().Format(time.RFC3339),
+			// formatInstant y no Format a secas: el cero de time.Time tiene que
+			// salir como cadena VACÍA para que `omitempty` borre la clave. Un
+			// Format del cero publicaría "0001-01-01T00:00:00Z" en toda revisión
+			// sin podar —que es una fecha que no significa nada— y volvería a
+			// hacer indistinguible el caso que este campo viene a separar.
+			LiteralPrunedAt: formatInstant(rev.LiteralPrunedAt),
 		})
 	}
 	return intakeDetailResponse{

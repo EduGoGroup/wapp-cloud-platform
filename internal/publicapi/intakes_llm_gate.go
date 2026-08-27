@@ -47,6 +47,15 @@ const (
 // invariante del negocio: el store sigue devolviendo lo que hay, y quien decide qué
 // sale por el cable es la capa que ya decide todo lo demás que sale por el cable.
 //
+// 🔑 LO QUE ESTA FUNCIÓN NO TAPA, Y NO ES UN OLVIDO: `literal_pruned_at`. El gate
+// borra claves DEL PAYLOAD, y ese campo es hermano de `created_at` —vive fuera—, así
+// que por construcción pasa entero. Y debe pasar: no es contenido del pipeline sino
+// un hecho de RETENCIÓN («el texto original de tu cliente se destruyó, y este día»),
+// y el literal MISMO —`source_text`, dentro del payload— tampoco está gateado, así
+// que taparlo le contaría MENOS a un tenant sobre un texto que ya puede ver. Un plan
+// comercial decide qué capacidades se compran, no si a alguien se le cuenta que se
+// destruyó un dato suyo. Lo fija TestIntakeDetail_ElSelloDePodaNoLoTapaElGateLLM.
+//
 // FAIL-CLOSED en los tres modos de no-resolución —sin resolver, resolver caído,
 // feature ausente—, igual que entitlements.RequireFeature: ante la duda, se tapa.
 // Un fallo transitorio del resolver no puede abrir un campo de pago.

@@ -6,7 +6,7 @@ package intake
 // 🔴 POR QUÉ ESTE FICHERO EXISTE. Todo lo que decide esta pieza vive en dos sitios: en
 // unas guardas de Go y en el texto de dos sentencias. Lo primero se prueba llamando;
 // lo segundo, mirando la sentencia — y en los dos casos el único test alternativo
-// sería un `TestIntegration_*`, que se SALTA sin `DATABASE_URL` (89 así en este repo).
+// sería un `TestIntegration_*`, que se SALTA sin `WAPP_TEST_DB_DSN` (89 así en este repo).
 // Un job que naciera `aggregating` en vez de `pending` rompería el re-análisis entero
 // y ningún test lo vería.
 

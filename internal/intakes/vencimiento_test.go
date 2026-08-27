@@ -15,7 +15,7 @@ package intakes_test
 // deliberado. La regla del plazo es una comparación de tiempos y un
 // compare-and-swap, y las dos cosas las reproduce MemoryStore con las mismas
 // condiciones que el Postgres — así que un test de integración habría movido el
-// único sitio donde esto se comprueba a un camino que se salta sin DATABASE_URL.
+// único sitio donde esto se comprueba a un camino que se salta sin WAPP_TEST_DB_DSN.
 
 import (
 	"context"

@@ -11,7 +11,7 @@ package intakes
 // cabecera sale con los valores corridos.
 //
 // Y HASTA HOY SOLO LO VEÍA POSTGRES. Todo lo que ejercita estos dos escaneos son
-// tests de integración (TestIntegration*/TestE2E*), que se SALTAN sin DATABASE_URL:
+// tests de integración (TestIntegration*/TestE2E*), que se SALTAN sin WAPP_TEST_DB_DSN:
 // en la corrida normal el descuadre pasaba entero, en verde, hasta el despliegue.
 // Estos dos tests corren SIEMPRE y sin base de datos.
 //
@@ -70,7 +70,7 @@ func TestProyecciónCabecera_ScanIntakeTieneUnDestinoPorColumna(t *testing.T) {
 		t.Fatalf("intakeCols tiene %d columnas y scanIntake pasa %d destinos.\n\n"+
 			"Es el descuadre que el comentario de intakeCols advierte: COMPILA y solo revienta "+
 			"—o miente— contra Postgres, que en la corrida normal ni se ejecuta (los tests que "+
-			"tocan esto se saltan sin DATABASE_URL). Al añadir una columna se tocan LOS DOS lados, "+
+			"tocan esto se saltan sin WAPP_TEST_DB_DSN). Al añadir una columna se tocan LOS DOS lados, "+
 			"y siempre AL FINAL de la lista.\ncolumnas=%s", columnas, c.destinos, intakeCols)
 	}
 }

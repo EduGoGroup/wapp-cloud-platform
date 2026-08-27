@@ -14,12 +14,12 @@ package intakes_test
 // divergencia.
 //
 // ⚠️ HONESTIDAD SOBRE EL ALCANCE, PORQUE ES LA MITAD DE LA DECISIÓN. El runner de
-// Postgres **se SALTA sin DATABASE_URL**, así que en la corrida normal esta tabla
+// Postgres **se SALTA sin WAPP_TEST_DB_DSN**, así que en la corrida normal esta tabla
 // solo prueba el store en memoria. NO es el candado de la sentencia: ése es
 // vencimiento_sql_test.go, que corre siempre y afirma sobre el texto del SQL. Éste
 // es su complemento —lo que ese candado no puede ver es la SEMÁNTICA: que Postgres
 // entienda `<=` sobre timestamptz como el Go entiende su comparación—, y solo aporta
-// donde hay base: en local con DATABASE_URL y en el CI que la levanta.
+// donde hay base: en local con WAPP_TEST_DB_DSN y en el CI que la levanta.
 
 import (
 	"context"
@@ -100,7 +100,7 @@ func TestPlazoCAS_ElStoreEnMemoriaCumpleLaTabla(t *testing.T) {
 }
 
 // TestVencimientoEnBD_ElPostgresCumpleLaMISMATabla es el runner contra Postgres. Se
-// SALTA sin DATABASE_URL (openTestDB), y por eso NO es el candado de la sentencia —
+// SALTA sin WAPP_TEST_DB_DSN (openTestDB), y por eso NO es el candado de la sentencia —
 // ver la nota de alcance en la cabecera de este fichero.
 //
 // Lo que aporta y el otro runner no puede: que el `<=` sobre timestamptz, el

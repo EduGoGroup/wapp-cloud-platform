@@ -6,7 +6,7 @@ package events
 // 🔴 POR QUÉ ES UN TEST INTERNO Y NO UNO DE INTEGRACIÓN. Las cuatro decisiones que
 // definen esta fila —rol `client`, grado `message`, origen `owner_pasted`, payload
 // NULL— son de FORMA, y el único test que las tocaría desde fuera sería un
-// `TestPostgres_*`… que se SALTA entero sin `DATABASE_URL`. En este repo hay 89 así,
+// `TestPostgres_*`… que se SALTA entero sin `WAPP_TEST_DB_DSN`. En este repo hay 89 así,
 // y un criterio cubierto solo por uno de ellos no lo está probando nadie. Por eso la
 // construcción de la fila vive en una función pura (`pastedEntry`) y se afirma aquí,
 // sin base de datos.

@@ -23,7 +23,7 @@ import (
 // cable); aquí se mira la DECISIÓN y, sobre todo, lo que se escribe y lo que no.
 //
 // 🔴 NINGUNO DE ESTOS TESTS SE SALTA. Los `TestPostgres_*` de este repo se saltan
-// enteros sin `DATABASE_URL` —hay 89 así— y un criterio cubierto solo por uno de
+// enteros sin `WAPP_TEST_DB_DSN` —hay 89 así— y un criterio cubierto solo por uno de
 // ellos no lo está probando nadie. Todo lo de este fichero corre con dobles.
 
 // textoDelCliente es la frase del hilo. Es literal y no un fixture generado porque

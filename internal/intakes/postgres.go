@@ -500,13 +500,21 @@ const selectRevisionsQuery = `
 // El guard `literal_enc IS NOT NULL` la hace idempotente: podar dos veces la misma
 // revisión afecta 0 filas la segunda, y `literal_pruned_at` conserva el instante en
 // que el texto se destruyó de verdad en vez de moverse con cada lectura posterior.
+//
+// 🔑 EL `RETURNING` NO ES UN ADORNO: es lo que permite PUBLICAR el sello en la misma
+// lectura que lo pone. El instante lo fija el `now()` de la BD, y devolverlo aquí
+// significa que lo que sale por la API y lo que queda en la columna son EL MISMO
+// valor del MISMO reloj — no dos lecturas de dos relojes que se parecen. Un
+// `time.Now()` de Go para la respuesta y un `now()` de SQL para la fila darían dos
+// instantes distintos del mismo hecho, y la segunda lectura contradiría a la primera.
 const podarLiteralQuery = `
 	UPDATE public.intake_revisions
 	   SET literal_enc       = NULL,
 	       literal_dek       = NULL,
 	       literal_kek_id    = NULL,
 	       literal_pruned_at = now()
-	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL`
+	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL
+	RETURNING literal_pruned_at`
 
 // revisionPodada es una poda pendiente de ejecutar: la decisión se toma leyendo y
 // la escritura se hace DESPUÉS de cerrar el cursor. Meter un UPDATE dentro del
@@ -546,9 +554,46 @@ func (p *Postgres) revisionsOf(ctx context.Context, q querier, intakeID string) 
 	// mientras siga cifrado y bajo su KEK— no puede costarle la pantalla. Lo que sí
 	// pasa es que se entera el log, y la siguiente lectura lo reintenta sola.
 	for _, poda := range podas {
-		p.ejecutarPoda(ctx, q, intakeID, poda)
+		sellarPodada(out, poda.revisionNo, p.ejecutarPoda(ctx, q, intakeID, poda))
 	}
 	return out, nil
+}
+
+// sellarPodada publica en la revisión `revisionNo` de `out` el instante que la poda
+// acaba de sellar en su fila. Es PURA —no toca la BD ni el reloj— y por eso es la
+// pieza que se puede verificar sin Postgres delante (sello_poda_test.go); los tests
+// de esta ruta son de integración y se SALTAN sin WAPP_TEST_DB_DSN, así que un criterio
+// que solo viviera allí casi nunca se comprobaría.
+//
+// 🔴 POR QUÉ HACE FALTA. La poda se EJECUTA después de cerrar el cursor, así que en
+// la lectura que la dispara la columna `literal_pruned_at` todavía es NULL y lo que
+// scanRevisions leyó de ella es el cero. Sin esto, esa primera respuesta diría «esta
+// revisión nunca tuvo texto» de una que se acaba de podar —exactamente la
+// ambigüedad que la columna vino a cerrar (0079, COMMENT de literal_pruned_at)— y la
+// siguiente diría otra cosa sobre el mismo hecho. El MemoryStore ya afirmaba lo
+// correcto en la misma lectura (memory.go, leerRevisionesLocked); esto es lo que
+// hace que los dos stores digan LO MISMO.
+//
+// Dos reglas, y las dos importan:
+//
+//   - LA COLUMNA MANDA. Si la revisión ya traía sello, no se toca: `literal_pruned_at`
+//     conserva el instante en que el texto se destruyó DE VERDAD y no puede moverse
+//     con el reloj de una lectura posterior.
+//   - UN CERO NO ESCRIBE NADA. Si la poda no selló —falló, o se le adelantó otra
+//     lectura—, no se inventa una fecha: la revisión sale como estaba.
+func sellarPodada(out []Revision, revisionNo int, sellado time.Time) {
+	if sellado.IsZero() {
+		return
+	}
+	for i := range out {
+		if out[i].RevisionNo != revisionNo {
+			continue
+		}
+		if out[i].LiteralPrunedAt.IsZero() {
+			out[i].LiteralPrunedAt = sellado
+		}
+		return
+	}
 }
 
 // scanRevisions recorre el cursor: descifra lo que sigue vigente, marca para poda lo
@@ -599,26 +644,26 @@ func (p *Postgres) scanRevisions(rows *sql.Rows, intakeID string, podas *[]revis
 // evento de poda es obligatorio (criterio de T3.5) y por eso el logger nunca es nil:
 // borrar el texto original de un cliente sin dejar rastro convertiría una política de
 // retención en una pérdida de datos indistinguible de un bug.
-func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string, poda revisionPodada) {
-	res, err := q.ExecContext(ctx, podarLiteralQuery, intakeID, poda.revisionNo)
-	if err != nil {
-		p.log.Error("retención: no se pudo podar el literal de una revisión vencida",
-			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
-		return
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		// Un driver que no sepa contar filas no puede convertirse en una poda
-		// fantasma en el log: se dice lo que se sabe, que es que el UPDATE no dio
-		// error. La siguiente lectura vuelve a evaluarlo.
-		p.log.Warn("retención: literal podado, sin confirmación de filas afectadas",
-			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
-		return
-	}
-	if n == 0 {
+//
+// Devuelve el instante que SELLÓ, o el cero si no selló nada —error o carrera—. Ese
+// valor es lo que se publica: ver sellarPodada. Un cero no es una fecha inventada
+// hacia atrás, es «esta lectura no podó»; la siguiente lo vuelve a evaluar.
+func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string, poda revisionPodada) time.Time {
+	var sellado time.Time
+	err := q.QueryRowContext(ctx, podarLiteralQuery, intakeID, poda.revisionNo).Scan(&sellado)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
 		// Otra lectura concurrente se adelantó. No es un fallo y no se anuncia como
 		// poda: anunciarla dos veces haría creer que hubo dos textos.
-		return
+		//
+		// Es el mismo caso que antes se leía de RowsAffected() == 0, y por el
+		// RETURNING ya no hay que contar filas ni tragarse un driver que no sepa
+		// hacerlo: o vuelve el sello, o vuelve ErrNoRows.
+		return time.Time{}
+	case err != nil:
+		p.log.Error("retención: no se pudo podar el literal de una revisión vencida",
+			"intake_id", intakeID, "revision_no", poda.revisionNo, "error", err)
+		return time.Time{}
 	}
 	// 🔴 CERO CONTENIDO EN ESTE EVENTO. Lo que se poda es literal del cliente, así
 	// que el log de la poda no puede llevar ni una palabra suya: dejaría en un
@@ -629,6 +674,7 @@ func (p *Postgres) ejecutarPoda(ctx context.Context, q querier, intakeID string,
 		"revision_no", poda.revisionNo,
 		"edad_segundos", int64(poda.edad.Seconds()),
 		"ttl_segundos", int64(poda.ttl.Seconds()))
+	return sellado
 }
 
 // abrirLiteral descifra el sobre y devuelve el literal a su sitio dentro del

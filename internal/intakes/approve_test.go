@@ -417,7 +417,7 @@ func TestApprove_SinCanalNoAprueba(t *testing.T) {
 
 // TestLinesWithoutPrice recorre las formas de payload que existen de verdad en la
 // tabla. Es un test INTERNO y no de integración a propósito: la precondición entera
-// de T4.3 se decide aquí, y un test que necesite DATABASE_URL se salta sin dar error
+// de T4.3 se decide aquí, y un test que necesite WAPP_TEST_DB_DSN se salta sin dar error
 // (`--- SKIP` cuenta como rc=0).
 func TestLinesWithoutPrice(t *testing.T) {
 	casos := map[string]struct {

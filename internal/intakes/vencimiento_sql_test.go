@@ -16,7 +16,7 @@ package intakes
 // CAS.
 //
 // Lo único que ejercita la sentencia real son tests de integración, que se SALTAN sin
-// DATABASE_URL. Este fichero corre SIEMPRE y sin base de datos: afirma sobre el TEXTO
+// WAPP_TEST_DB_DSN. Este fichero corre SIEMPRE y sin base de datos: afirma sobre el TEXTO
 // de la consulta, que es donde vive la decisión.
 //
 // Molde: internal/intake/reanalisis_internal_test.go (T4.6), que afirma sobre la
