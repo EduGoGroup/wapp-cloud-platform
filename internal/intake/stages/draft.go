@@ -331,6 +331,42 @@ type EscritorEvento interface {
 	InsertFlowEvent(ctx context.Context, ev store.FlowEvent) error
 }
 
+// EmpujadorCRM encola para el puente CRM del tenant la revisión que esta etapa
+// acaba de escribir (Plan 044 · Ola 4 · T4.6, cierre de T4.10 mitad 2 / D-044.19).
+// Lo satisface `*intakes.Service` con PushRevisionByID.
+//
+// 🔴 PIDE EL PAR (intake, revisión) Y NO UN `Detail`, y eso es lo que hace que el
+// puerto quepa aquí. Un pipeline que tuviera que construir el detalle completo de una
+// solicitud —líneas, revisiones, datos del comprador— para empujarla estaría leyendo
+// la bandeja entera del dueño desde un worker. La lectura la hace quien ya sabe
+// leerla; esta etapa solo aporta los dos números que únicamente ella conoce.
+//
+// 🔴 ES OPCIONAL (ConEmpujeCRM) Y NO UN PARÁMETRO MÁS DEL CONSTRUCTOR, con su coste
+// dicho: sin él la etapa funciona entera y el borrador sale igual — lo único que no
+// ocurre es el empuje. Se eligió opción porque las cinco piezas posicionales son las
+// que SIN ELLAS la etapa produce una solicitud rota, y esta no lo es. Para que la
+// ausencia no sea muda hay dos redes: un Error en el log cuando un job de re-análisis
+// llega sin empujador (ver empujarAlCRM) y un test de cableado en bootstrap.
+type EmpujadorCRM interface {
+	PushRevisionByID(ctx context.Context, tenantID, intakeID string, revisionNo int) error
+}
+
+// EmpujadorCRMFunc adapta una función al puerto. Existe por un NUDO DE CONSTRUCCIÓN
+// real y no por comodidad: en el arranque, esta etapa se construye ANTES que el
+// Service de solicitudes que la satisface —el pipeline cuelga del selector de vía,
+// que nace mucho antes que la bandeja— así que el cable no se puede resolver al
+// construir. Se corta con una clausura que se resuelve AL LLAMAR, que es el mismo
+// patrón (y el mismo porqué) de `intakeahead.SinkFunc` con el agregador.
+//
+// La alternativa era un setter público sobre la etapa, es decir, dejar el cable
+// mutable en caliente para arreglar un problema que solo existe durante el arranque.
+type EmpujadorCRMFunc func(ctx context.Context, tenantID, intakeID string, revisionNo int) error
+
+// PushRevisionByID implementa EmpujadorCRM.
+func (f EmpujadorCRMFunc) PushRevisionByID(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
+	return f(ctx, tenantID, intakeID, revisionNo)
+}
+
 // Draft es la etapa del BORRADOR (Plan 044 · T3.4).
 type Draft struct {
 	log         logger.Logger
@@ -338,6 +374,7 @@ type Draft struct {
 	solicitudes AlmacenSolicitudes
 	revisiones  EscritorRevision
 	eventos     EscritorEvento
+	crm         EmpujadorCRM
 	ahora       func() time.Time
 }
 
@@ -356,6 +393,18 @@ func ConReloj(ahora func() time.Time) OpciónDraft {
 	return func(d *Draft) {
 		if ahora != nil {
 			d.ahora = ahora
+		}
+	}
+}
+
+// ConEmpujeCRM cablea el puente CRM del dueño (T4.6, cierre de T4.10 mitad 2). Sin
+// él la etapa NO empuja y lo dice en un Error cuando el job era un re-análisis.
+//
+// Pasar nil no hace nada: es el mismo estado que no llamar a la opción.
+func ConEmpujeCRM(crm EmpujadorCRM) OpciónDraft {
+	return func(d *Draft) {
+		if crm != nil {
+			d.crm = crm
 		}
 	}
 }
@@ -502,13 +551,17 @@ func (s *Draft) Run(ctx context.Context, job intake.ClaimedJob, in EntradaDraft)
 		Kind:     intakes.RevisionKindInterpreted,
 		Payload:  payload,
 		// 🔴 CreatedBy es un ROL, jamás una persona (intakes/revisions.go). La revisión
-		// 1 la escribe el pipeline, así que es `system`. La del re-análisis que pide el
-		// dueño será `owner` — sigue siendo el rol, no su identidad.
-		CreatedBy: intakes.RevisionBySystem,
+		// 1 la escribe el pipeline, así que es `system`. La del re-análisis la pidió el
+		// dueño, así que es `owner` — sigue siendo el rol, no su identidad.
+		// 🔧 DEJÓ DE SER UN LITERAL CON T4.6: hasta entonces esta línea decía
+		// `RevisionBySystem` y el comentario prometía el `owner` en futuro. Quien
+		// decide es el JOB (migración 0080), no esta etapa.
+		CreatedBy: autorDe(job),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("draft: revisión interpretada de la solicitud %s: %w", intakeID, err)
 	}
+	s.empujarAlCRM(ctx, job, intakeID, rev.RevisionNo)
 
 	transcurrido := s.transcurrido(job)
 	s.publicarMetrica(ctx, job, in.Match, transcurrido)
@@ -570,6 +623,26 @@ func serializarRevision(jobID string, p PayloadRevision) (json.RawMessage, error
 // proceso sigue siendo el pedido de un cliente; lo que se pierde es poder comparar
 // después «lo que sacó el local» contra «lo que sacó la API» (D-044.15).
 func (s *Draft) analisis(job intake.ClaimedJob, a Analisis) Analisis {
+	// 🔧 EL RE-ANÁLISIS SÍ TRAE SU RASTRO, Y VIENE DEL JOB (T4.6, migración 0080).
+	// Lo puso el endpoint, que es el único que sabe con qué vía se pidió correr, con
+	// qué material y a qué revisión sucede este borrador. No se pisa lo que el
+	// llamante haya rellenado: se completa lo que dejó vacío.
+	if r := job.Reanalisis; r.EsDelDueño() {
+		if a.Provider == "" {
+			a.Provider = r.Via
+		}
+		if a.Source == "" {
+			a.Source = r.Source
+		}
+		if a.ReanalyzedFrom == nil && r.From > 0 {
+			// Copia local: `r` es una copia del campo del job, pero tomar la dirección
+			// de un campo de un parámetro por valor deja el puntero apuntando a algo
+			// que solo vive mientras dure esta llamada — y el payload se serializa
+			// aquí mismo, así que es correcto y explícito.
+			from := r.From
+			a.ReanalyzedFrom = &from
+		}
+	}
 	if a.Source == "" {
 		a.Source = OrigenHiloDelEvento
 	}
@@ -578,6 +651,61 @@ func (s *Draft) analisis(job intake.ClaimedJob, a Analisis) Analisis {
 			"job_id", job.ID, "stage", intake.StageDraft)
 	}
 	return a
+}
+
+// autorDe dice quién firma la revisión: el rol que pidió el job.
+//
+// Es una función libre y no un método para que la regla —«el autor sale del job y de
+// ningún otro sitio»— se pueda probar sin construir una etapa entera. El vocabulario
+// es el de `intakes`; la marca, la de `intake_jobs.requested_by` (0080). Son dos
+// paquetes distintos con el mismo literal `"owner"` y eso NO es casualidad que se
+// pueda perder: esta función es el único punto donde se traducen, y su test compara
+// las dos constantes.
+func autorDe(job intake.ClaimedJob) string {
+	if job.Reanalisis.EsDelDueño() {
+		return intakes.RevisionByOwner
+	}
+	return intakes.RevisionBySystem
+}
+
+// empujarAlCRM manda al puente la revisión recién escrita, y SOLO si el job lo pidió
+// el dueño (Plan 044 · T4.6, cierre de T4.10 mitad 2).
+//
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 EL GATE ES LA MARCA DEL JOB, Y QUITARLO CAMBIARÍA LA CONDUCTA DEL PIPELINE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// D-044.19 pide que «toda revisión POSTERIOR AL CIERRE vuelva a salir al CRM», y las
+// tres puertas que las producen son `approve`, el `PUT …/items` y `reanalyze`. Esta
+// etapa escribe además la PRIMERA revisión de todo pedido interpretado, que no es
+// posterior a nada: es el borrador que todavía nadie ha aprobado. Empujar en toda
+// revisión convertiría el pipeline normal en un productor de `intake.push` —un
+// cambio de conducta que nadie pidió, y que el integrador vería como pedidos nuevos
+// que el dueño ni ha mirado—. Por eso el empuje pregunta por `requested_by` y no por
+// «¿he escrito una revisión?».
+//
+// BEST-EFFORT, como la métrica y por la misma razón: la revisión YA está escrita y
+// perder un empuje no puede costar el trabajo del pipeline. El puente es at-least-once
+// y su outbox tiene reintentos; lo que aquí se pierde es la ENCOLADA, y eso se dice
+// en el log con todo lo necesario para reencolarla a mano.
+func (s *Draft) empujarAlCRM(ctx context.Context, job intake.ClaimedJob, intakeID string, revisionNo int) {
+	if !job.Reanalisis.EsDelDueño() {
+		return
+	}
+	if s.crm == nil {
+		// El cable falta. NO es un Warn: un re-análisis que no llega al CRM deja al
+		// integrador con una versión del pedido que ya no es verdad, y eso es
+		// exactamente lo que T4.10 existe para impedir.
+		s.log.Error("draft: el re-análisis escribió su revisión y NO hay puente CRM cableado; el CRM se queda con la versión vieja",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
+			"revision_no", revisionNo)
+		return
+	}
+	if err := s.crm.PushRevisionByID(ctx, job.Key.TenantID, intakeID, revisionNo); err != nil {
+		s.log.Error("draft: no se pudo encolar la revisión del re-análisis para el puente CRM",
+			"job_id", job.ID, "stage", intake.StageDraft, "intake_id", intakeID,
+			"revision_no", revisionNo, "error", err.Error())
+	}
 }
 
 // lineasConMedia pega a cada línea los adjuntos que le ancló T3.3 y devuelve, aparte,
@@ -686,6 +814,26 @@ func (s *Draft) transcurrido(job intake.ClaimedJob) time.Duration {
 // alguien quisiera, porque `WindowKey` no transporta otra cosa.
 func (s *Draft) publicarMetrica(ctx context.Context, job intake.ClaimedJob, art *ArtefactoMatch, transcurrido time.Duration) {
 	casadas, sinCasar := s.recuento(art)
+	payload := map[string]any{
+		"elapsed_ms": transcurrido.Milliseconds(),
+		"lines":      len(art.Lines),
+		"matched":    casadas,
+		"unmatched":  sinCasar,
+	}
+	// 🔧 LA QUINTA CLAVE, Y SOLO CUANDO APLICA (T4.6). `requested_by` entra ÚNICAMENTE
+	// en los borradores que pidió el dueño, así que la métrica del pipeline normal sale
+	// byte a byte con la forma que fija design §10 y ningún panel existente cambia.
+	//
+	// 🔴 HACE FALTA, Y ES POR `elapsed_ms`. En un re-análisis ese número mide la espera
+	// del CLIENTE desde que escribió —el job hereda el `message_ts` original a propósito,
+	// ver intake/reanalisis.go—, así que sale en horas o en días. Sin esta clave, el KPI
+	// del plan («tiempo a primer borrador < 5 min») quedaría envenenado por peticiones
+	// del dueño hechas al día siguiente, y el envenenamiento sería INVISIBLE: dos filas
+	// idénticas midiendo cosas distintas. Con ella, el KPI se calcula sobre las filas que
+	// NO la traen. Es un ROL, sin PII, igual que en `intake_jobs`.
+	if rb := job.Reanalisis.RequestedBy; rb != "" {
+		payload["requested_by"] = rb
+	}
 	err := s.eventos.InsertFlowEvent(ctx, store.FlowEvent{
 		TenantID:    job.Key.TenantID,
 		ContactID:   job.Key.ContactID,
@@ -693,12 +841,7 @@ func (s *Draft) publicarMetrica(ctx context.Context, job intake.ClaimedJob, art 
 		FlowVersion: VersionFlujoCaptacion,
 		Kind:        kindEventoFlujo,
 		Name:        EventoBorradorCreado,
-		Payload: map[string]any{
-			"elapsed_ms": transcurrido.Milliseconds(),
-			"lines":      len(art.Lines),
-			"matched":    casadas,
-			"unmatched":  sinCasar,
-		},
+		Payload:     payload,
 	})
 	if err != nil {
 		s.log.Warn("draft: no se pudo publicar la métrica del borrador; el borrador SÍ está creado",

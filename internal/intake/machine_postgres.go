@@ -93,7 +93,9 @@ UPDATE public.intake_jobs AS j
 RETURNING j.id::text, j.tenant_id, j.session_id, j.contact_id, j.event_id::text,
           COALESCE(j.stage, ''), j.message_ts, j.source_refs, j.artifacts,
           j.source_text_enc, j.source_text_dek, COALESCE(j.source_text_kek_id, ''),
-          j.attempts
+          j.attempts,
+          COALESCE(j.requested_by, ''), COALESCE(j.reanalysis_via, ''),
+          COALESCE(j.reanalysis_source, ''), COALESCE(j.reanalyzed_from, 0)
 `
 
 // claimIgnorandoBackoffSQL es el HERMANO POR EVENTO del anterior (T2.7, D-044.43):
@@ -131,7 +133,9 @@ UPDATE public.intake_jobs AS j
 RETURNING j.id::text, j.tenant_id, j.session_id, j.contact_id, j.event_id::text,
           COALESCE(j.stage, ''), j.message_ts, j.source_refs, j.artifacts,
           j.source_text_enc, j.source_text_dek, COALESCE(j.source_text_kek_id, ''),
-          j.attempts
+          j.attempts,
+          COALESCE(j.requested_by, ''), COALESCE(j.reanalysis_via, ''),
+          COALESCE(j.reanalysis_source, ''), COALESCE(j.reanalyzed_from, 0)
 `
 
 // ClaimNext implementa PipelineStore.
@@ -170,6 +174,15 @@ func escanearClaim(row *sql.Row) (ClaimedJob, bool, error) {
 		&j.Stage, &messageTS, &refsRaw, &artRaw,
 		&j.SourceText.Enc, &j.SourceText.DEK, &j.SourceText.KEKID,
 		&j.Attempts,
+		// EL CONTEXTO DEL RE-ANÁLISIS (T4.6, migración 0080). Las CUATRO salen por
+		// COALESCE y no por sql.Null*: las cuatro son NULLables a propósito —NULL es
+		// el pipeline normal, que es la inmensa mayoría de la tabla— y el cero-valor
+		// de Go dice exactamente lo mismo que ese NULL. Un sql.NullString obligaría a
+		// todo llamante a distinguir dos casos que se tratan igual, y `reanalyzed_from`
+		// tiene además su propia razón: 0 ES el valor que el contrato §7.4 publica
+		// como `null`, así que COALESCE a 0 no inventa nada.
+		&j.Reanalisis.RequestedBy, &j.Reanalisis.Via,
+		&j.Reanalisis.Source, &j.Reanalisis.From,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		// No hay nada que tomar. NO es un error: es la cola vacía, que es el estado

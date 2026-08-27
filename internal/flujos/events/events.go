@@ -77,6 +77,32 @@ const (
 	RoleSystem Role = "system"
 )
 
+// Origin es POR DÓNDE ENTRÓ una entrada del historial, que NO es lo mismo que de
+// quién es la voz (eso lo dice Role). Vocabulario CERRADO por el CHECK de la
+// columna `origin` en la 0051.
+//
+// 🔑 LAS DOS COLUMNAS EXISTEN PORQUE SON DOS PREGUNTAS. El texto que el dueño pega
+// en `/reanalyze` entra con `role='client'` A PROPÓSITO —para que el pipeline lo
+// trate igual que todo lo demás, sin una rama nueva— y esta columna es la única que
+// impide que se pierda el rastro de quién lo escribió (0051, COMMENT de origin).
+//
+// 🔴 EL LLM NO LA LEE, y eso es criterio de T4.6: «el prompt no contiene la palabra
+// `origin` ni distingue esas filas». La leen la auditoría, la comparación
+// original-vs-interpretado y la app del dueño. Por eso `ThreadEntry` —que es lo que
+// alimenta al compositor del prompt— NO la publica.
+type Origin string
+
+const (
+	// OriginWhatsApp es la fila que llegó por el canal. Es el DEFAULT de la
+	// columna y el origen de todo lo que escribe el motor.
+	OriginWhatsApp Origin = "whatsapp"
+	// OriginOwnerPasted es la TRANSCRIPCIÓN EXTERNA que tecleó o pegó el dueño en
+	// la app (Plan 045 D-045.5, D-044.17; la escribe T4.6 por el campo `text` de
+	// `/reanalyze`). El CHECK de la 0051 ya la admitía desde el primer día: esta
+	// constante no necesita migración, solo un escritor.
+	OriginOwnerPasted Origin = "owner_pasted"
+)
+
 // entryKind marca el GRADO de una entrada del historial (ADR-0034 §Decisión 1).
 // No se exporta porque no es una elección del llamador: cada método de escritura
 // del store fija el suyo, y esa es justo la garantía de que un resumen no pueda

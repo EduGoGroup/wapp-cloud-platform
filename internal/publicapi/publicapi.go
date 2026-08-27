@@ -200,6 +200,16 @@ type Deps struct {
 	// satisface *integrations.Postgres — el MISMO objeto que sirve a CRMSecrets y
 	// al gate; lo que cambia es qué se le pide. nil ⇒ no se montan las rutas.
 	Integrations IntegrationsStore
+	// Reanalysis es el caso de uso de POST /api/v1/intakes/{id}/reanalyze (Plan 044
+	// · Ola 4 · T4.6): re-interpretar un pedido desde el literal original del evento.
+	// Lo satisface *reanalisis.Servicio. nil ⇒ NO se monta la ruta.
+	//
+	// Es una dependencia APARTE de Intakes —y no un método más de aquel puerto—
+	// porque el re-análisis cruza cinco fronteras que la bandeja no cruza:
+	// entitlements, tenant_llm, el hilo cifrado del evento, la cola del pipeline y el
+	// compositor del literal. El porqué entero está en la cabecera de
+	// internal/reanalisis.
+	Reanalysis ReanalysisService
 	// TenantLLM es la CONFIGURACIÓN de la vía LLM API por tenant (tenant_llm): el
 	// CRUD /api/v1/tenant-llm del Plan 044 · T0.3. Lo satisface
 	// *tenantllm.Postgres, pero por un puerto RECORTADO que no puede devolver la
@@ -648,6 +658,48 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	// dejando la misma revisión `corrected` era el duplicado que este plan ya pagó.
 	mux.Handle("POST /api/v1/intakes/{id}/request-info", protect(mw, auditor, log,
 		"intakes.write", "intake", cartBasic(requestInfoIntakeHandler(d.Intakes, d.Entitlements))))
+
+	// RE-ANALIZAR desde el origen (Plan 044 · Ola 4 · T4.6, D-044.15, contrato
+	// completo en design §8.1): el dueño pide que la máquina vuelva a leer el pedido
+	// a partir del literal cifrado del evento, y el pipeline le cuelga una revisión
+	// más. NO responde al cliente y NO transiciona la solicitud.
+	//
+	// 🔴 ES LA ÚNICA RUTA DE LA BANDEJA SIN GATE EN LA CADENA DE MIDDLEWARES, Y ESO
+	// ES DELIBERADO. No falta `cartBasic(...)` ni un `RequireFeature(llm_intake)`:
+	// están DENTRO, en `reanalisis.Servicio`. Las dos razones, en orden:
+	//
+	//  1. **El contrato manda que el 400 vaya PRIMERO.** El §8.1 lo dice con todas
+	//     las letras para el `invalid_via`: «Validación de forma, antes de cualquier
+	//     gate». Un middleware corre ANTES del handler por definición, así que con el
+	//     gate aquí un cuerpo con `{"via":"chatgpt"}` de un tenant sin `llm_intake`
+	//     respondería 403 en vez de 400 — y el orden del contrato dejaría de ser
+	//     verdad sin que ningún test de esta ruta lo viera.
+	//  2. **El segundo gate DEPENDE de la vía efectiva**, que solo se conoce después
+	//     de leer `tenant_llm`. `api_llm` gatea LA VÍA y no la capacidad (ADR-0044 ·
+	//     D-044.28), así que preguntarlo aquí arriba —donde todavía no se sabe si la
+	//     vía es `api`— cerraría la puerta a todo tenant de vía local, que es
+	//     exactamente el invariante que vigilan
+	//     internal/flujos/runtime/via_local_sin_api_llm_test.go y
+	//     internal/publicapi/tenantllm_gate_via_test.go.
+	//
+	// Lo que NO cambia es el cuerpo: el 403 de dentro es LITERALMENTE
+	// `{"error":"feature_not_enabled","feature":"…"}`, el mismo del middleware
+	// (design §D-040.5), para que la UI lo trate en un solo sitio. Y lo que sostiene
+	// que el gate no se pierda es un test de conducta, no este comentario:
+	// TestReanalyze_SinLLMIntake_403 y TestReanalyze_ViaInvalidaGanaAlGate.
+	//
+	// `cart_basic` NO aplica aquí y tampoco es un olvido (D-044.49, último párrafo):
+	// aprobar y corregir son del OBJETO —por eso van con `cart_basic`—, pero
+	// re-analizar es literalmente la máquina que se vende aparte. «Ahí el LLM sí es
+	// el servicio que se presta.»
+	//
+	// Auditada como escritura (`intakes.write`, recurso `intake`) como sus hermanas:
+	// abre trabajo en la cola del pipeline y acaba en una revisión nueva del pedido,
+	// así que tiene que constar quién lo disparó.
+	if d.Reanalysis != nil {
+		mux.Handle("POST /api/v1/intakes/{id}/reanalyze", protect(mw, auditor, log,
+			"intakes.write", "intake", reanalyzeIntakeHandler(d.Reanalysis)))
+	}
 
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
 	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es

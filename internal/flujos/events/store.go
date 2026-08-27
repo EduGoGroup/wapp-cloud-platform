@@ -800,10 +800,18 @@ func (s *Store) IsSuspended(e Event, ttl time.Duration) bool {
 //
 // Numerar con MAX+1 —y no con una secuencia— es lo que da el «sin huecos» que pide
 // el diseño: un INSERT que falla y revierte no consume número.
+//
+// 🔧 `origin` ENTRÓ EN LA SENTENCIA CON T4.6 (Plan 044 · Ola 4). Hasta entonces la
+// columna existía —la creó la 0051 con su CHECK y su DEFAULT 'whatsapp'— y NINGÚN
+// escritor la nombraba: todas las filas caían al default, que era correcto porque
+// todas venían del canal. La segunda procedencia (`owner_pasted`, la transcripción
+// que pega el dueño) obliga a decirlo, y se dice en el INSERT y no con un UPDATE
+// posterior: una fila que nace `whatsapp` y se corrige después tiene un instante en
+// el que miente sobre su propia procedencia.
 const appendEntrySQL = `
 INSERT INTO public.conversation_event_messages
-       (event_id, seq, role, entry_kind, payload, body_enc, body_dek, body_kek_id)
-SELECT $1::uuid, COALESCE(MAX(seq), 0) + 1, $2, $3, $4::jsonb, $5, $6, $7
+       (event_id, seq, role, entry_kind, payload, body_enc, body_dek, body_kek_id, origin)
+SELECT $1::uuid, COALESCE(MAX(seq), 0) + 1, $2, $3, $4::jsonb, $5, $6, $7, $8
   FROM public.conversation_event_messages WHERE event_id = $1::uuid
 RETURNING seq`
 
@@ -824,6 +832,11 @@ type entry struct {
 	bodyEnc   []byte
 	bodyDEK   []byte
 	bodyKEKID any
+	// origin es POR DÓNDE entró la fila. Cero-valor ⇒ OriginWhatsApp: lo resuelve
+	// appendEntry, no cada llamante, para que añadir un método de escritura no
+	// pueda dejar la columna a merced de un olvido (el mismo criterio con el que
+	// `kind` y `role` los clava cada puerta y no el llamador).
+	origin Origin
 }
 
 // AppendSummary añade el RESUMEN determinista que emitimos nosotros al dejar de
@@ -947,15 +960,73 @@ func (s *Store) AppendOutOfTurnMessage(ctx context.Context, eventID string, body
 	})
 }
 
+// AppendPastedMessage añade al hilo la TRANSCRIPCIÓN EXTERNA que el dueño pegó en
+// el cuerpo de `POST /api/v1/intakes/{id}/reanalyze` (Plan 044 · Ola 4 · T4.6;
+// REQ-32 / D-044.17, cierre de MD-044.2).
+//
+// Es AppendMessage con OTRO origen y NADA más: mismo `entry_kind='message'`, mismo
+// cifrado, mismo sobre de tres piezas, mismo nivel 2 del ADR-0034 y misma numeración
+// sin huecos. La única diferencia viaja en `origin`, que es la columna que responde
+// «por dónde entró» y que el LLM no ve.
+//
+// 🔴 EL ROL ES FIJO Y ES `client`, Y ESO ES LA DECISIÓN, NO UN DESCUIDO (D-044.17).
+// Lo que el dueño pega es lo que DIJO EL CLIENTE por otro canal —un audio que
+// transcribió, un mensaje que le llegó por Instagram—, así que su voz es la del
+// cliente. Marcarlo `business` lo convertiría en CONTEXTO para el compositor
+// (speakerOf) y el pipeline dejaría de extraer de ahí ni un ítem, que es
+// exactamente lo contrario de para qué se pega. El rastro de que lo escribió el
+// dueño no se pierde: vive en `origin`, que es la columna de esa pregunta.
+//
+// 🔴 EL SANEO NO ESTÁ AQUÍ, Y TAMPOCO ES UN OLVIDO. `cart.SanitizeNote` es la
+// puerta de contenido del texto libre del dueño y la aplica quien recibe la
+// petición (`internal/reanalisis`), antes de decidir si la fila es un duplicado —
+// porque el dedupe se hace por el hash del texto YA SANEADO. Sanear otra vez aquí
+// sería una segunda regla en un segundo sitio, y este paquete no importa `cart`.
+//
+// Devuelve el seq asignado.
+func (s *Store) AppendPastedMessage(ctx context.Context, eventID string, body string) (int, error) {
+	if s.cipher == nil {
+		return 0, ErrNoCipher
+	}
+
+	bodyEnc, bodyDEK, kekID, err := s.cipher.Encrypt(body)
+	if err != nil {
+		// El error NO cita el cuerpo: es texto del cliente (ADR-0034).
+		return 0, fmt.Errorf("events: cifrar la transcripción pegada por el dueño: %w", err)
+	}
+
+	return s.appendEntry(ctx, eventID, pastedEntry(bodyEnc, bodyDEK, kekID))
+}
+
+// pastedEntry arma la fila del texto pegado. Existe como función aparte —y no
+// inline en AppendPastedMessage— para que las CUATRO decisiones de forma (rol
+// `client`, grado `message`, origen `owner_pasted`, payload NULL) se puedan afirmar
+// en un test sin Postgres. Sin ella, lo único que las cubriría serían los
+// `TestPostgres_*`, que se SALTAN sin `DATABASE_URL`.
+func pastedEntry(bodyEnc, bodyDEK []byte, kekID string) entry {
+	return entry{
+		role:      RoleClient,
+		kind:      entryKindMessage,
+		bodyEnc:   bodyEnc,
+		bodyDEK:   bodyDEK,
+		bodyKEKID: kekID,
+		origin:    OriginOwnerPasted,
+	}
+}
+
 // appendEntry escribe una entrada del historial numerándola sin huecos,
 // reintentando si otro escritor se llevó ese seq.
 func (s *Store) appendEntry(ctx context.Context, eventID string, e entry) (int, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
 		var seq int
+		origin := e.origin
+		if origin == "" {
+			origin = OriginWhatsApp
+		}
 		err := s.db.QueryRowContext(ctx, appendEntrySQL, eventID, e.role, e.kind,
 			nullableJSON(e.payload), nullableBytes(e.bodyEnc), nullableBytes(e.bodyDEK),
-			e.bodyKEKID).Scan(&seq)
+			e.bodyKEKID, string(origin)).Scan(&seq)
 		switch {
 		case err == nil:
 			return seq, nil

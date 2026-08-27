@@ -278,12 +278,20 @@ type SourceTextWriter interface {
 	PutSourceText(ctx context.Context, k intake.WindowKey, env intake.SourceText) (bool, error)
 }
 
-// defaultThreadLimit acota cuántas entradas del hilo entran al `source_text`. Es un
+// DefaultThreadLimit acota cuántas entradas del hilo entran al `source_text`. Es un
 // techo de TAMAÑO DE PROMPT, no una regla de negocio: el pipeline paga por token y
 // un hilo de mil entradas no cabe en ninguna ventana de contexto útil. El recorte
 // muerde por el PRINCIPIO del hilo (ver listThreadSQL): lo que se pierde es lo más
 // viejo.
-const defaultThreadLimit = 200
+//
+// 🔧 SE EXPORTÓ CON T4.6 (Plan 044 · Ola 4), y el motivo es que apareció un SEGUNDO
+// lector del mismo hilo con la misma pregunta: `/reanalyze` comprueba que HAY
+// material antes de abrir el job, y esa comprobación tiene que mirar exactamente las
+// entradas que este compositor va a componer. Con dos constantes, un hilo largo
+// podría pasar la comprobación y componerse vacío —o al revés— y el desenlace sería
+// un job sin sobre que muere sin que nadie sepa por qué. Es la misma constante o son
+// dos verdades.
+const DefaultThreadLimit = 200
 
 // SourceTextComposer implementa SourceComposer (aggregator.go): lee el hilo,
 // compone, cifra y guarda.
@@ -315,7 +323,7 @@ func WithThreadLimit(n int) SourceTextComposerOption {
 // queda en `pending` con el sobre a NULL, que es una forma legítima en la 0072.
 func NewSourceTextComposer(log logger.Logger, thread ThreadReader, jobs SourceTextWriter,
 	cipher *crypto.FieldCipher, opts ...SourceTextComposerOption) *SourceTextComposer {
-	c := &SourceTextComposer{log: log, thread: thread, jobs: jobs, cipher: cipher, limit: defaultThreadLimit}
+	c := &SourceTextComposer{log: log, thread: thread, jobs: jobs, cipher: cipher, limit: DefaultThreadLimit}
 	for _, opt := range opts {
 		opt(c)
 	}

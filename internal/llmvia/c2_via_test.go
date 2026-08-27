@@ -59,6 +59,45 @@ var permitidos = map[string]string{
 
 	"internal/publicapi/tenantllm.go": "El CONTRATO HTTP del PUT: qué campos exige cada vía (REQ-33: elegir local no exige nada) y " +
 		"cómo se traduce el cuerpo a los argumentos del store. Valida la petición; no decide quién ejecuta la inferencia.",
+
+	// 🔧 ENTRADA DE T4.6 (Plan 044 · Ola 4), y merece leerse entera antes de copiarla
+	// para otro sitio.
+	//
+	// Es el gemelo del permitido de arriba, un endpoint más allá: el CONTRATO HTTP de
+	// `/reanalyze` (design §8.1) obliga a saber la vía EFECTIVA para tres cosas, y las
+	// tres son de la PETICIÓN, no de la inferencia:
+	//
+	//   1. resolverla (cuerpo → `tenant_llm.via` → `local` si no hay fila, D-044.48 §4);
+	//   2. rechazar con 400 la que contradice la que el tenant eligió (REQ-33);
+	//   3. exigir `api_llm` y credencial SOLO en la rama `api` — que es literalmente
+	//      la tabla del §8.1 y el invariante de D-044.28 («`api_llm` gatea LA VÍA»).
+	//
+	// 🔴 LO QUE AQUÍ NO SE HACE, Y ES LO QUE C2 PROTEGE: elegir provider. Este fichero
+	// no construye ningún adaptador, no llama al modelo y no toca `llm.LLMProvider`. La
+	// vía que resuelve viaja al job como DATO (`intake_jobs.reanalysis_via`, 0080) y
+	// acaba en `payload.analysis.provider` — telemetría, no rama.
+	//
+	// Y no puede DIVERGIR de la selección, que es la pregunta que de verdad importa:
+	// cuando el worker tome ese job, `Selector.For` resolverá la vía por su cuenta desde
+	// `tenant_llm`, con el MISMO default (`local` si no hay fila, llmvia.go:206).
+	//
+	// 🔴 LA COINCIDENCIA ES POR CONSTRUCCIÓN, Y LA SOSTIENE UNA SOLA REGLA: la `via` del
+	// cuerpo tiene que COINCIDIR con la efectiva o la petición muere en un 400
+	// `invalid_via` (D-044.51, ratificado por Jhoan). Así que lo único que puede llegar
+	// a abrir un job es exactamente la vía que el selector va a resolver — sin fila,
+	// `local`; con fila, la de la fila—. El endpoint AFIRMA la vía; no la conmuta y no
+	// puede conmutarla.
+	//
+	// 🔧 ESTE PÁRRAFO DECÍA OTRA COSA Y ERA FALSA: «sin fila, una petición con
+	// `via:"api"` muere en el 422 de credencial». Eso describía un DEFECTO —un
+	// `hayFila &&` que desactivaba la comparación justo cuando no había fila, que es el
+	// estado de los tres tenants de UAT—. Corregido el 2026-08-27: muere en el 400, y
+	// antes de preguntar por ninguna feature. Se deja escrito porque el comentario que
+	// justifica un permiso de este candado no puede describir una conducta que el
+	// código ya no tiene.
+	"internal/reanalisis/reanalisis.go": "El CONTRATO HTTP del re-análisis (§8.1): resuelve la vía EFECTIVA de la petición y " +
+		"decide QUÉ EXIGE cada una —`api` pide `api_llm` y credencial, `local` no pide nada—. No construye " +
+		"provider ni llama al modelo: la vía viaja al job como DATO y la selección la sigue haciendo el Selector.",
 }
 
 // TestC2_LaViaSoloSePreguntaEnLaSeleccion recorre el AST de todo internal/ y exige
