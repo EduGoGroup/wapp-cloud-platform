@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,11 @@ type fakeM2MClient struct {
 	replacedSystems []string
 	replaceErr      error
 	calls           int
+	// vigentes es lo que identity devuelve en GetUserSystems; getErr fuerza el
+	// fallo de LECTURA, que es lo que hoy dispara ErrSystemsUnionUnavailable.
+	vigentes []string
+	getErr   error
+	getCalls int
 }
 
 func (f *fakeM2MClient) EnsureUser(_ context.Context, email, firstName, lastName string) (domain.IdentityUser, error) {
@@ -36,13 +42,17 @@ func (f *fakeM2MClient) ReplaceUserSystems(_ context.Context, _ string, systems 
 	return domain.IdentitySystemsDiff{Systems: systems}, nil
 }
 
-// GetUserSystems completa out.IdentityM2MClient (Plan 047 · Ola B). Este doble
-// NO lo ejercita: la vía del OPERADOR sigue aproximando la unión con su tabla
-// local (hasOtherApprovedRequest) y esta ola no la toca. Devolver siempre el
-// vacío es honesto —nadie lo llama— y si algún día alguien lo llamara desde aquí,
-// el test que se apoye en ello tendrá que programar este doble a propósito.
+// GetUserSystems completa out.IdentityM2MClient (Plan 047 · Ola B). 🔧 Desde el
+// 2026-08-28 la vía del OPERADOR SÍ lo llama —dejó de aproximar la unión con su
+// tabla local—, así que este doble ya es programable: `vigentes` es lo que
+// identity devolvería y `getErr` fuerza el fallo de lectura. El comentario
+// anterior avisaba de que ese día llegaría; llegó.
 func (f *fakeM2MClient) GetUserSystems(_ context.Context, _ string) ([]string, error) {
-	return []string{}, nil
+	f.getCalls++
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.vigentes, nil
 }
 
 func (f *fakeM2MClient) Signup(_ context.Context, email, password, firstName, lastName string) (string, error) {
@@ -371,13 +381,17 @@ func assertApproveRetryConverges(ctx context.Context, t *testing.T, db *sql.DB, 
 	}
 }
 
-// TestIntegration_ApproveAccessRequest_PreexistingAccountSkipsSystemsSync
-// cubre (D): un usuario con una aprobación previa (y por tanto, posiblemente,
-// systems reales en identity que wApp no puede leer) NO debe recibir un
-// ReplaceUserSystems ciego en una aprobación posterior -- eso reemplazaría en
-// vez de sumar. Debe fallar con ErrSystemsUnionUnavailable y NUNCA llamar al
-// M2M, aunque lo local (tenant + rol) sí se escriba.
-func TestIntegration_ApproveAccessRequest_PreexistingAccountSkipsSystemsSync(t *testing.T) {
+// TestIntegration_ApproveAccessRequest_SegundaAprobacionUNE cubre (D) tras el
+// arreglo del 2026-08-28: un usuario con una aprobación previa YA NO se rehúsa.
+// Se LEE su conjunto vigente en identity y se declara la UNIÓN, así que la
+// segunda aprobación conserva `wapp.edge` (de la primera) y suma `wapp.bff`.
+//
+// 🔴 Este test afirmaba lo contrario —ErrSystemsUnionUnavailable y CERO llamadas
+// al M2M— y era correcto entonces: no había lectura de identity. La Ola B trajo
+// GetUserSystems y esa premisa caducó; el proxy local que la sustituía daba
+// falso negativo en la primera aprobación y falso positivo permanente desde la
+// segunda.
+func TestIntegration_ApproveAccessRequest_SegundaAprobacionUNE(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	repo := platformadmin.NewRepository(db)
@@ -408,17 +422,72 @@ func TestIntegration_ApproveAccessRequest_PreexistingAccountSkipsSystemsSync(t *
 	}
 	second := findPendingByUser(ctx, t, repo, userID)
 
-	m2m2 := &fakeM2MClient{}
+	// identity ya tiene wapp.edge, concedido en la primera aprobación.
+	m2m2 := &fakeM2MClient{vigentes: []string{"wapp.edge"}}
 	err = repo.ApproveAccessRequest(ctx, second.ID, ten.ID, "tenant_admin", operatorID, []string{"wapp.bff"}, m2m2)
-	if !errors.Is(err, platformadmin.ErrSystemsUnionUnavailable) {
-		t.Fatalf("esperado ErrSystemsUnionUnavailable, obtenido: %v", err)
+	if err != nil {
+		t.Fatalf("la segunda aprobación tiene que unir, no rehusar; obtenido: %v", err)
 	}
-	if m2m2.calls != 0 {
-		t.Fatalf("ReplaceUserSystems NO debía llamarse, se llamó %d veces", m2m2.calls)
+	if m2m2.getCalls != 1 {
+		t.Fatalf("hay que LEER el conjunto vigente antes de declararlo; GetUserSystems se llamó %d veces", m2m2.getCalls)
+	}
+	if m2m2.calls != 1 {
+		t.Fatalf("ReplaceUserSystems debía llamarse una vez, se llamó %d", m2m2.calls)
+	}
+	// 🔑 El aserto que da nombre al arreglo: el conjunto declarado es la UNIÓN.
+	// Con el reemplazo ciego de antes, wapp.edge habría desaparecido.
+	esperado := []string{"wapp.edge", "wapp.bff"}
+	if !slices.Equal(m2m2.replacedSystems, esperado) {
+		t.Fatalf("se tenía que declarar la unión %v y se declaró %v", esperado, m2m2.replacedSystems)
 	}
 
 	var status string
 	if qerr := db.QueryRowContext(ctx, `SELECT status FROM public.access_requests WHERE id = $1`, second.ID).Scan(&status); qerr != nil {
+		t.Fatalf("leer status: %v", qerr)
+	}
+	if status != "approved" {
+		t.Fatalf("lo local debía quedar escrito igual; status obtenido: %q", status)
+	}
+}
+
+// TestIntegration_ApproveAccessRequest_SinPoderLEER_NoDeclaraNada — el hermano
+// negativo, y es el que conserva viva la razón de ser de
+// ErrSystemsUnionUnavailable: si la LECTURA del conjunto vigente falla, un PUT
+// declarativo borraría lo que otra vía concedió. Se rehúsa, y sobre todo NO se
+// llama a ReplaceUserSystems. Lo local queda escrito igual.
+//
+// Sin este test, el arreglo de la unión podría degenerar en «si no puedo leer,
+// mando lo que tengo», que es exactamente el borrado que (D) existe para evitar.
+func TestIntegration_ApproveAccessRequest_SinPoderLEER_NoDeclaraNada(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	repo := platformadmin.NewRepository(db)
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	email := fmt.Sprintf("noleer-%d@example.com", time.Now().UnixNano())
+	if err := repo.CreateAccessRequest(ctx, userID, email, "bff"); err != nil {
+		t.Fatalf("CreateAccessRequest: %v", err)
+	}
+	req := findPendingByUser(ctx, t, repo, userID)
+
+	slug := fmt.Sprintf("pa-noleer-%d", time.Now().UnixNano())
+	ten, err := repo.CreateTenant(ctx, slug, "NoLeer Tenant", nil)
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	m2m := &fakeM2MClient{getErr: errors.New("identity no contesta")}
+	err = repo.ApproveAccessRequest(ctx, req.ID, ten.ID, "tenant_admin", uuid.NewString(), []string{"wapp.bff"}, m2m)
+	if !errors.Is(err, platformadmin.ErrSystemsUnionUnavailable) {
+		t.Fatalf("sin lectura hay que rehusar con ErrSystemsUnionUnavailable; obtenido: %v", err)
+	}
+	if m2m.calls != 0 {
+		t.Fatalf("sin haber leído NO se puede declarar nada; ReplaceUserSystems se llamó %d veces", m2m.calls)
+	}
+
+	var status string
+	if qerr := db.QueryRowContext(ctx, `SELECT status FROM public.access_requests WHERE id = $1`, req.ID).Scan(&status); qerr != nil {
 		t.Fatalf("leer status: %v", qerr)
 	}
 	if status != "approved" {
