@@ -104,6 +104,19 @@ const plazoDeEscrituraDeLaRedacción = pipeline.PlazoPorLlamadaSuelo + margenDeR
 // y no cuesta nada: un plazo de escritura amplio en una respuesta inmediata no cambia
 // nada salvo cuánto tardaría en rendirse un cliente que dejó de leer.
 //
+// ⚠️ SI ALGÚN DÍA ESTO SE APLICA A UNA RUTA CON CUERPO (las candidatas naturales son
+// `approve` y `request-info`, que mandan JSON), hay que saber esto antes: mientras a
+// `net/http` le quede cuerpo de petición SIN LEER, no arranca la lectura de fondo con
+// la que detecta que el cliente cerró, así que `r.Context()` NO se cancela y una
+// llamada abortada parece eterna desde el servidor. Medido aquí, con el mismo handler
+// y el cliente abortando a los 200 ms: sin drenar `r.Body`, CERO cancelaciones en
+// 1,5 s; drenándolo primero, cancelación detectada en 200 ms. Lo descubrió el frente
+// del BFF, y le costó un test que medía cancelaciones y mentía en la dirección
+// peligrosa —decir que la petición sigue viva cuando el cliente ya se fue—.
+//
+// A ESTA ruta no le afecta hoy: `quote-suggestion` es un POST SIN cuerpo (el handler
+// no lo lee porque no hay nada que leer, ver quotesuggestion.go).
+//
 // El fallo NO aborta la petición: sin plazo extendido la ruta se comporta como hoy
 // —mal para el caso lento, bien para el rápido—, y cortar la petición cambiaría un
 // defecto de entrega por una caída. Se registra a Warn porque es exactamente la avería
