@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/time/rate"
 
@@ -112,7 +113,7 @@ func (b *bufferConCerrojo) String() string {
 // servidorDePlazos levanta la API pública real —Register + la cadena de envoltorios
 // del bootstrap— sobre un http.Server con el WriteTimeout CORTO, y devuelve su base
 // URL y el log que escribió.
-func servidorDePlazos(t *testing.T, d publicapi.Deps, keys map[string]testIdentity) (*testAPI, string, *bufferConCerrojo) {
+func servidorDePlazos(t *testing.T, d publicapi.Deps, keys map[string]testIdentity, writeTimeout time.Duration) (*testAPI, string, *bufferConCerrojo) {
 	t.Helper()
 
 	log := &bufferConCerrojo{}
@@ -133,7 +134,7 @@ func servidorDePlazos(t *testing.T, d publicapi.Deps, keys map[string]testIdenti
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      writeTimeoutDelTest,
+		WriteTimeout:      writeTimeout,
 	}
 	errServe := make(chan error, 1)
 	go func() { errServe <- srv.Serve(ln) }()
@@ -163,7 +164,7 @@ func servidorDePlazos(t *testing.T, d publicapi.Deps, keys map[string]testIdenti
 // sobre una conexión nueva, y ese segundo intento dispara GotConn otra vez con
 // Reused=false. Quedarse con el último valor —lo primero que escribí— hacía que el test
 // se quejara de que no hubo reutilización justo cuando SÍ la había habido.
-func pedir(t *testing.T, cli *http.Client, api *testAPI, credencial, metodo, url string) (*http.Response, []byte, bool, error) {
+func pedir(t *testing.T, cli *http.Client, api *testAPI, credencial, metodo, url, cuerpo string) (*http.Response, []byte, bool, error) {
 	t.Helper()
 	var reusada atomic.Bool // lo escribe la goroutine del Transport, no la del test
 	trace := &httptrace.ClientTrace{
@@ -174,7 +175,7 @@ func pedir(t *testing.T, cli *http.Client, api *testAPI, credencial, metodo, url
 		},
 	}
 	req, err := http.NewRequestWithContext(
-		httptrace.WithClientTrace(context.Background(), trace), metodo, url, strings.NewReader(""))
+		httptrace.WithClientTrace(context.Background(), trace), metodo, url, strings.NewReader(cuerpo))
 	if err != nil {
 		t.Fatalf("armando la petición: %v", err)
 	}
@@ -224,12 +225,12 @@ func TestQuoteSuggestion_PlazoDeEscritura_SoloEsaRuta(t *testing.T) {
 		SessionDeps:      publicapi.SessionDeps{Sessions: sesionesLentas{espera: lentitudDelTest}},
 	}
 
-	api, base, log := servidorDePlazos(t, deps, intakesKeys())
+	api, base, log := servidorDePlazos(t, deps, intakesKeys(), writeTimeoutDelTest)
 	cli := &http.Client{Timeout: 10 * time.Second}
 
 	// (1) La ruta con plazo extendido responde entera.
 	resp, body, _, err := pedir(t, cli, api, keyAIntakes, http.MethodPost,
-		base+"/api/v1/intakes/"+intakePorAprobar+"/quote-suggestion")
+		base+"/api/v1/intakes/"+intakePorAprobar+"/quote-suggestion", "")
 	if err != nil {
 		t.Fatalf("la sugerencia no llegó al cliente: %v\n"+
 			"Es EL defecto que este arreglo cierra: el handler tarda %v y el WriteTimeout del "+
@@ -249,7 +250,7 @@ func TestQuoteSuggestion_PlazoDeEscritura_SoloEsaRuta(t *testing.T) {
 	}
 
 	// (2) La ruta de control, sobre la MISMA conexión, sigue muriendo.
-	resp2, body2, reusada, err := pedir(t, cli, api, keyASessions, http.MethodGet, base+"/api/v1/sessions")
+	resp2, body2, reusada, err := pedir(t, cli, api, keyASessions, http.MethodGet, base+"/api/v1/sessions", "")
 	if err == nil {
 		t.Fatalf("GET /api/v1/sessions respondió %d (body=%s) tardando %v con un WriteTimeout de %v: "+
 			"el plazo extendido se le pegó a una ruta que no lo pidió. El arreglo tiene que ser POR RUTA.",
@@ -261,4 +262,139 @@ func TestQuoteSuggestion_PlazoDeEscritura_SoloEsaRuta(t *testing.T) {
 		t.Errorf("la conexión NO se reutilizó: el aserto (2) ya no distingue «plazo por petición» "+
 			"de «plazo por conexión». err=%v", err)
 	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LA MEDICIÓN DEL PRESUPUESTO DE ENVÍO
+// ════════════════════════════════════════════════════════════════════════════
+//
+// La pregunta que este bloque contesta —y que NO se contesta leyendo código— es si
+// extender el plazo de escritura de UNA ruta le mueve el suelo a `Deps.SendBudget`,
+// el techo de la petición de `POST /api/v1/messages` (Plan 050 · Ola 5 · T5.4). Se
+// mide cronómetro en mano y sobre la MISMA conexión que acaba de servir a la ruta con
+// el plazo extendido, que es el único sitio donde un contagio podría ocurrir.
+//
+// Las cotas, con la MISMA desigualdad que en producción (presupuesto < WriteTimeout,
+// 9s < 10s), a escala de milisegundos:
+//
+//	presupuestoDelTest (250ms)  <  writeTimeoutDelEnvio (400ms)  <  envioLento (2s)
+//
+// La primera hace que la respuesta del presupuesto agotado QUEPA por el cable (si no,
+// se mediría el defecto de arriba en vez del presupuesto) y la segunda es lo que hace
+// observable el presupuesto: sin él, la petición duraría los 2s del envío.
+const (
+	writeTimeoutDelEnvio = 400 * time.Millisecond
+	presupuestoDelTest   = 250 * time.Millisecond
+	envioLento           = 2 * time.Second
+)
+
+// remitenteLento es el doble del gateway: espera al Ack RESPETANDO el contexto, que es
+// lo que hace el de verdad (awaitAck hace select sobre ctx.Done()). Si ignorara el
+// contexto, el presupuesto no tendría sobre qué actuar y el test mediría un sleep.
+type remitenteLento struct{ espera time.Duration }
+
+func (s remitenteLento) SendText(ctx context.Context, _, _, _ string) (*cloudlinkv1.Ack, error) {
+	select {
+	case <-time.After(s.espera):
+		return &cloudlinkv1.Ack{Ok: true}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestPlazoPorRuta_NoMueveElPresupuestoDeEnvio mide que el plazo de escritura por ruta
+// NO le hace nada al presupuesto de envío, sobre el mismo servidor y la misma conexión.
+//
+// 🔴 POR QUÉ ES UNA MEDICIÓN Y NO UNA DEDUCCIÓN: lo que se compara son dos DURACIONES
+// observadas del mismo POST /api/v1/messages —una sobre conexión virgen y otra sobre la
+// conexión que acaba de servir a la ruta con el plazo de 60s— contra el presupuesto que
+// se le cableó. Si el plazo por ruta contagiara al presupuesto (alargándolo, o dejándolo
+// sin efecto), la segunda duración se iría a los 2s del envío y el aserto caería.
+//
+// Lo que este test NO puede ver, dicho sin adorno: que el VALOR de pub.SendBudget se
+// deriva del writeTimeout del bootstrap. Eso lo fija TestSendBudgetCableado (AST) y lo
+// mide TestSendBudgetDejaMargenConElWriteTimeoutReal (10s ⇒ 9s), los dos en
+// internal/bootstrap. Aquí se mide la CONDUCTA; allí, la aritmética.
+func TestPlazoPorRuta_NoMueveElPresupuestoDeEnvio(t *testing.T) {
+	const sesión = "sess-a"
+	sug := sugeridorLento{espera: lentitudDelTest, out: quotetext.Sugerencia{
+		Texto: "Hola! Torta $18000. Total $18000", Origen: quotetext.OrigenLLM,
+	}}
+	ent := entitlements.NewFake()
+	ent.Enable(tenantA, entitlements.FeatureCartBasic)
+	ent.Enable(tenantA, entitlements.FeatureLLMIntake)
+	deps := publicapi.Deps{
+		Intakes:          intakes.NewService(bandejaPorAprobar()),
+		QuoteSuggestions: sug,
+		Entitlements:     ent,
+		Sender:           remitenteLento{espera: envioLento},
+		SendBudget:       presupuestoDelTest,
+		SessionDeps: publicapi.SessionDeps{
+			Sessions: fakeSessions{byTenant: map[string][]fleet.Session{
+				tenantA: {{TenantID: tenantA, SessionID: sesión}},
+			}},
+		},
+	}
+	api, base, log := servidorDePlazos(t, deps, intakesKeys(), writeTimeoutDelEnvio)
+	cuerpo := `{"session_id":"` + sesión + `","to":"5215550001111","text":"hola"}`
+
+	// (A) LÍNEA BASE: el envío sobre una conexión virgen, sin que la ruta con plazo
+	// extendido haya pasado por ahí.
+	cliVirgen := &http.Client{Timeout: 10 * time.Second}
+	inicio := time.Now()
+	respA, bodyA, _, errA := pedir(t, cliVirgen, api, keyAFull, http.MethodPost, base+"/api/v1/messages", cuerpo)
+	baseline := time.Since(inicio)
+	if errA != nil {
+		t.Fatalf("envío (línea base): %v\nlog:\n%s", errA, log.String())
+	}
+	if respA.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("envío (línea base): status %d, esperaba 504 del presupuesto agotado (body=%s)",
+			respA.StatusCode, bodyA)
+	}
+
+	// (B) EL MISMO ENVÍO sobre la conexión que ACABA de servir la sugerencia con su
+	// plazo de 60s. Si hubiera contagio, aquí es donde se vería.
+	cliContagiado := &http.Client{Timeout: 10 * time.Second}
+	if _, _, _, err := pedir(t, cliContagiado, api, keyAIntakes, http.MethodPost,
+		base+"/api/v1/intakes/"+intakePorAprobar+"/quote-suggestion", ""); err != nil {
+		t.Fatalf("la sugerencia previa no llegó: %v\nlog:\n%s", err, log.String())
+	}
+	inicio = time.Now()
+	respB, bodyB, reusada, errB := pedir(t, cliContagiado, api, keyAFull, http.MethodPost, base+"/api/v1/messages", cuerpo)
+	trasElPlazo := time.Since(inicio)
+	if errB != nil {
+		t.Fatalf("envío (tras la ruta con plazo extendido): %v\nlog:\n%s", errB, log.String())
+	}
+	if !reusada {
+		t.Errorf("la conexión NO se reutilizó: la medición (B) ya no dice nada sobre contagio")
+	}
+	if respB.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("envío tras la ruta con plazo extendido: status %d, esperaba 504 (body=%s)",
+			respB.StatusCode, bodyB)
+	}
+
+	// EL VEREDICTO, MEDIDO: las dos duraciones tienen que estar pegadas al presupuesto
+	// y NO al envío. La cota superior es generosa (el doble del presupuesto) porque lo
+	// que separa las dos hipótesis son 250ms contra 2s: no hace falta precisión, hace
+	// falta que no se confundan.
+	techo := 2 * presupuestoDelTest
+	for _, m := range []struct {
+		nombre string
+		dur    time.Duration
+	}{{"línea base", baseline}, {"tras la ruta con plazo extendido", trasElPlazo}} {
+		if m.dur > techo {
+			t.Fatalf("el envío (%s) tardó %v, más del doble del presupuesto (%v): "+
+				"el presupuesto NO cortó. Si esto solo falla en el segundo caso, el plazo de "+
+				"escritura por ruta se le está contagiando al envío y el arreglo está mal planteado.",
+				m.nombre, m.dur, presupuestoDelTest)
+		}
+		if m.dur < presupuestoDelTest/2 {
+			t.Fatalf("el envío (%s) tardó %v, muy por debajo del presupuesto (%v): "+
+				"cortó algo ANTES que el presupuesto y esta medición no lo está midiendo a él",
+				m.nombre, m.dur, presupuestoDelTest)
+		}
+	}
+	t.Logf("MEDIDO · presupuesto=%v · envío sin plazo extendido delante=%v · sobre la conexión "+
+		"que acaba de servir la ruta de 60s=%v (envío lento=%v)",
+		presupuestoDelTest, baseline.Round(time.Millisecond), trasElPlazo.Round(time.Millisecond), envioLento)
 }

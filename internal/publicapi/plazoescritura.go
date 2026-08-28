@@ -29,12 +29,20 @@ import (
 // POR QUÉ NO SE SUBE EL `writeTimeout` GLOBAL
 // ════════════════════════════════════════════════════════════════════════════
 //
-// Porque de ese mismo valor se DERIVA `pub.SendBudget`
-// (`publicapi.SendBudgetFrom(writeTimeout)`, bootstrap/http.go:97), que es el techo de
-// la petición de envío de mensajes (Plan 050 · T5.4, REQ-050.19). Moverlo relajaría el
-// plazo de escritura de TODA la API pública y además movería el presupuesto de envío —
-// dos cambios de conducta para arreglar una ruta. Lo que se mueve aquí es el plazo de
-// ESA ruta y de ninguna otra.
+// Porque esa constante tiene DOS consecuencias que nadie ve desde aquí, y ninguna de
+// las dos la ha pedido nadie:
+//
+//  1. De ella se DERIVA `pub.SendBudget` (`publicapi.SendBudgetFrom(writeTimeout)`,
+//     bootstrap/http.go:97), el techo de la petición de envío de mensajes (Plan 050 ·
+//     T5.4, REQ-050.19). Subirla habría movido el presupuesto de envío de paso.
+//  2. 🔴 LA COMPARTEN LOS DOS SERVIDORES HTTP del cloud: el público
+//     (bootstrap/http.go:122) y el de ADMIN (bootstrap.go:1008, el :8100 con
+//     /healthz y /admin/*). Subirla habría relajado también el plazo de escritura de
+//     toda la superficie de administración, que no tiene nada que ver con esto.
+//
+// Lo que se mueve aquí es el plazo de ESA ruta y de ninguna otra. Que no le hace nada
+// al presupuesto de envío no es una deducción: está MEDIDO sobre la misma conexión en
+// TestPlazoPorRuta_NoMueveElPresupuestoDeEnvio (plazoescritura_test.go).
 //
 // ⚠️ Lo que este plazo NO es: un timeout de petición. No acota al handler ni cancela
 // su contexto; solo dice hasta cuándo puede el servidor escribir en la conexión. Lo
