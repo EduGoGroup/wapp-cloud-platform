@@ -47,9 +47,19 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// EXISTEN y responden 404 de ruta inexistente — indistinguible desde fuera del
 	// 404 que estas mismas rutas dan al recurso ajeno. Eso es lo que vigila
 	// roleplane_cableado_test.go.
-	rolesPlane, err := buildRolePlane(db)
+	//
+	// El cliente M2M viaja al plano porque el alta de un miembro acredita la
+	// aplicación en identity antes de escribir la fila (Plan 047 · Ola B). Su
+	// ausencia NO desmonta ninguna ruta: es la diferencia entre «esta
+	// administración no existe» (404) y «existe y le falta configuración» (503),
+	// y confundirlas mandaría a depurar el router en vez del entorno.
+	rolesPlane, err := buildRolePlane(db, as.m2mClient, log)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if as.m2mClient == nil {
+		log.Warn("POST /api/v1/members: falta WAPP_IDENTITY_API_KEY; el alta de miembros responde 503 " +
+			"(sin acreditar la aplicación en identity, la persona quedaría de alta y sin poder entrar)")
 	}
 	pub.Roles = rolesPlane.roles
 	pub.Members = rolesPlane.members

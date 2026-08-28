@@ -233,6 +233,30 @@ func (c *M2MClient) EnsureUser(ctx context.Context, email, firstName, lastName s
 	return domain.IdentityUser{ID: res.ID, Email: res.Email, Created: res.Created}, nil
 }
 
+// GetUserSystems implementa out.UserSystemsClient.
+//
+// Comparte URL con ReplaceUserSystems y se distingue por el MÉTODO, que es como
+// identity lo montó (su router.go:110): es el mismo recurso —el conjunto de
+// accesos de esa persona en el ecosistema de la credencial— leído en vez de
+// escrito. Por eso reutiliza pathUserSystemsFmt y su respuesta, y no estrena
+// ninguna de las dos.
+//
+// No manda cuerpo: la petición no declara nada. Y el conjunto que vuelve NUNCA
+// es nil, ni siquiera ante un `null` del JSON (nonNilStrings): quien lo recorra
+// no tiene que distinguir el vacío del nil justo sobre la persona que aún no
+// tiene ningún acceso, que es el caso que esta lectura existe para reportar.
+func (c *M2MClient) GetUserSystems(ctx context.Context, userID string) ([]string, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	path := fmt.Sprintf(pathUserSystemsFmt, url.PathEscape(userID))
+	var res userSystemsResponse
+	if err := c.authorized(ctx, http.MethodGet, path, nil, &res); err != nil {
+		return nil, mapGetUserSystemsError(err)
+	}
+	return nonNilStrings(res.Systems), nil
+}
+
 // ReplaceUserSystems implementa out.IdentityM2MClient.
 //
 // systems nil se manda como `[]` y NO se omite: para identity un cuerpo sin la
@@ -596,6 +620,45 @@ func mapEnsureError(err error) error {
 		// 401 tras el recanje y el reintento, o 403 por scope insuficiente: las
 		// dos son de la credencial de wApp, no del correo que se aseguraba.
 		return domain.ErrMachineCredentialInvalid
+	case http.StatusTooManyRequests:
+		return domain.ErrRateLimited
+	case http.StatusInternalServerError, http.StatusServiceUnavailable:
+		return domain.ErrIdentityUnavailable
+	default:
+		return err
+	}
+}
+
+// mapGetUserSystemsError traduce el fallo de la LECTURA de accesos.
+//
+// Es una función APARTE de mapUserSystemsError y no la misma, aunque hoy sus
+// tablas coincidan salvo en una línea: esa línea es el 403. En el PUT hay DOS
+// 403 —la frontera de ecosistema y el scope insuficiente— y hay que separarlos
+// por el `code`; en el GET solo cabe el segundo, y la razón está escrita en el
+// propio identity (get_user_systems_handler.go): sin declaración no hay ninguna
+// clave que el llamante haya nombrado, luego ninguna puede ser ajena. Compartir
+// mapper haría que un SYSTEM_ACCESS_DENIED imposible en esta ruta saliera como
+// ErrSystemNotAllowed —«esa aplicación no es tuya»— cuando lo que de verdad
+// pasa es que a la credencial de wApp le falta `identity.users.systems.read`.
+//
+// El 404 es un desenlace de NEGOCIO aquí, no un fallo: dice que esa persona no
+// está en el padrón, que es distinto de estar y no tener ningún acceso (200 con
+// la lista vacía).
+func mapGetUserSystemsError(err error) error {
+	var me *m2mError
+	if !errors.As(err, &me) {
+		return err
+	}
+	switch me.status {
+	case http.StatusBadRequest:
+		// El identificador no tiene forma de UUID.
+		return domain.ErrInvalidInput
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// 401 tras el recanje y el reintento, o 403 por scope: las dos son de la
+		// credencial de wApp, no de la persona que se consultaba.
+		return domain.ErrMachineCredentialInvalid
+	case http.StatusNotFound:
+		return domain.ErrNotFound
 	case http.StatusTooManyRequests:
 		return domain.ErrRateLimited
 	case http.StatusInternalServerError, http.StatusServiceUnavailable:

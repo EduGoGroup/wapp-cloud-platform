@@ -69,15 +69,11 @@ type IdentityM2MClient interface {
 	// ⚠️ NO está acotado por ecosistema: con este scope se puede asegurar
 	// —y por tanto descubrir— cualquier correo del grupo.
 	EnsureUser(ctx context.Context, email, firstName, lastName string) (domain.IdentityUser, error)
-	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
-	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
-	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
-	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
-	//
-	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
-	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
-	// domain.ErrNotFound si la persona no existe en identity.
-	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
+	// UserSystemsClient aporta el par LEER/DECLARAR accesos. Va embebido y no
+	// declarado aquí para que quien solo necesite ese par pueda pedirlo sin
+	// heredar de paso la capacidad de crear cuentas en el padrón del grupo (ver
+	// su propia documentación, justo debajo).
+	UserSystemsClient
 	// Signup registra a la persona en identity CON SU PROPIA contraseña y
 	// devuelve el UUID de su cuenta. Es la única vía por la que un hash
 	// utilizable entra en identity, y por eso la clave la escribe su dueño y no
@@ -88,6 +84,53 @@ type IdentityM2MClient interface {
 	// propósito —cuenta creada, adoptada o reconocida dan el mismo cuerpo— y
 	// devuelve SIEMPRE el id real (identity ADR-0027).
 	Signup(ctx context.Context, email, password, firstName, lastName string) (userID string, err error)
+}
+
+// UserSystemsClient es la MITAD de IdentityM2MClient que gobierna a qué
+// aplicaciones de wApp puede entrar una persona: leer el conjunto vigente y
+// declararlo entero. Lo satisface el mismo adaptador (iamidentity.M2MClient).
+//
+// Es un puerto PROPIO y no un par de métodos sueltos del cliente entero porque
+// la administración de membresía (Plan 047 · Ola B) necesita exactamente estas
+// dos operaciones y NINGUNA de las otras dos: dar de alta a alguien en una
+// empresa no puede crear cuentas en el padrón global del grupo (EnsureUser) ni
+// registrar contraseñas (Signup). Con el cliente completo como dependencia esa
+// frontera sería una convención que alguien puede ampliar sin querer; como
+// puerto separado la impone el compilador.
+type UserSystemsClient interface {
+	// GetUserSystems devuelve las aplicaciones a las que la persona puede entrar
+	// HOY dentro del ecosistema de wApp. NUNCA es nil: sin ninguna es un arreglo
+	// vacío, y ese desenlace es DISTINTO de que la persona no exista (identity
+	// dto/user_systems_dto.go:57 lo declara como contrato, no como cortesía).
+	//
+	// 🔴 ES LO QUE HACE POSIBLE UNA UNIÓN EN VEZ DE UN REEMPLAZO CIEGO. El PUT de
+	// aquí abajo es declarativo: sin leer antes, añadir una aplicación revoca
+	// todas las demás. Aproximar esta lectura con una tabla local —«¿le
+	// aprobamos algo antes?»— es lo que se hacía hasta esta ola y está
+	// documentado como estructuralmente equivocado: una tabla de wApp no sabe
+	// qué escribió identity.
+	//
+	// ⚠️ El conjunto está ACOTADO AL ECOSISTEMA de la credencial (identity
+	// ADR-0016): NO enumera los accesos que otro ecosistema le haya dado a la
+	// misma persona. Lejos de ser una limitación, es lo que hace segura la
+	// unión — lo que no se ve tampoco se pisa, porque el PUT hermano revoca
+	// dentro del mismo ecosistema y solo ahí.
+	//
+	// 🔧 Consume el scope `identity.users.systems.read`, que es DISTINTO del de
+	// escritura (`...manage`): una credencial M2M que hoy solo escribe recibe 403
+	// aquí hasta que un operador le añada el de lectura.
+	//
+	// domain.ErrNotFound si la persona no está en el padrón de identity.
+	GetUserSystems(ctx context.Context, userID string) ([]string, error)
+	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
+	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
+	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
+	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
+	//
+	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
+	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
+	// domain.ErrNotFound si la persona no existe en identity.
+	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
 }
 
 // MembershipRepo persiste la membresía usuario↔tenant (tabla

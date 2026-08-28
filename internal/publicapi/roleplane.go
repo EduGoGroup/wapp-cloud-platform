@@ -64,6 +64,16 @@ const (
 //
 // Sin el servicio correspondiente las rutas NO se montan y responden 404 de ruta
 // inexistente: es preferible a una administración que existe y contesta 500.
+//
+// 🔴 EL 404 DE AQUÍ NO ES EL 503 DEL ALTA, y la distinción es semántica. Este
+// 404 sale de `d.Members == nil` y significa «esta administración no existe en
+// este proceso». El 503 de POST /api/v1/members significa lo contrario: la
+// administración SÍ existe —la ruta está montada, el GET hermano contesta 200—
+// y lo que falta es la credencial M2M de identity con la que el alta acredita la
+// aplicación. Por eso el alta sin M2M NO se desmonta: un 404 mandaría a depurar
+// el router, cuando lo que hay que tocar es el entorno. Ese 503 lo produce el
+// usecase (iamusecase.MembershipService.acreditar), y por eso aquí no hay una
+// segunda rama que mantener sincronizada con él.
 func registerRolePlane(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpapi.AuditRecorder, log sharedlogger.Logger) {
 	if d.Roles != nil {
 		h := iamhttp.NewRoleAdminHandler(d.Roles)
@@ -111,6 +121,9 @@ func registerRolePlane(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, audit
 		// que nació esta ola (D-047.8).
 		mux.Handle("GET /api/v1/members", protectRead(mw, log,
 			scopeMembersRead, h.List()))
+		// El alta se monta SIEMPRE que haya administración de membresía, tenga o no
+		// este despliegue credencial M2M de identity: sin ella contesta 503 (ver la
+		// cabecera de esta función), nunca 404.
 		mux.Handle("POST /api/v1/members", protect(mw, auditor, log,
 			scopeMembersWrite, auditResourceMember, h.Add()))
 		mux.Handle("DELETE /api/v1/members/{user_id}", protect(mw, auditor, log,

@@ -76,7 +76,9 @@ func nuevoPlanoDeRoles(t *testing.T) *planoDeRoles {
 	if err != nil {
 		t.Fatalf("NewRoleService: %v", err)
 	}
-	memberSvc, err := iamusecase.NewMembershipService(caller, st.Memberships)
+	// El doble de identity acredita sin ruido: lo que este fichero prueba es el
+	// plano de roles, no la acreditación (esa vive en membersalta_test.go).
+	memberSvc, err := iamusecase.NewMembershipService(caller, st.Memberships, &identidadDeMentira{}, nil)
 	if err != nil {
 		t.Fatalf("NewMembershipService: %v", err)
 	}

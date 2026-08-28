@@ -14,19 +14,28 @@ import (
 )
 
 // membershipFixture arma un MembershipService sobre el doble en memoria.
+//
+// Desde la Ola B lleva dos piezas más, y ninguna es decorado: `identity` es el
+// doble de la acreditación —sin él AddMember no llega a escribir— y `altas`
+// envuelve el repositorio para CONTAR las llamadas a Add, que es lo que permite
+// distinguir «no se escribió» de «se escribió y falló».
 type membershipFixture struct {
-	svc   *usecase.MembershipService
-	store *memory.Store
+	svc      *usecase.MembershipService
+	store    *memory.Store
+	identity *identidadDeMentira
+	altas    *repoQueCuentaAltas
 }
 
 func newMembershipFixture(t *testing.T) membershipFixture {
 	t.Helper()
 	store := memory.NewStore()
-	svc, err := usecase.NewMembershipService(testResolver, store.Memberships)
+	identity := &identidadDeMentira{}
+	altas := &repoQueCuentaAltas{MembershipRepo: store.Memberships}
+	svc, err := usecase.NewMembershipService(testResolver, altas, identity, quietLogger())
 	if err != nil {
 		t.Fatalf("NewMembershipService: %v", err)
 	}
-	return membershipFixture{svc: svc, store: store}
+	return membershipFixture{svc: svc, store: store, identity: identity, altas: altas}
 }
 
 // tenantsDe devuelve las empresas de las que la persona es miembro, abortando
@@ -169,10 +178,18 @@ func TestNewMembershipService_RechazaDepsNil(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
 
-	if _, err := usecase.NewMembershipService(nil, store.Memberships); err == nil {
+	if _, err := usecase.NewMembershipService(nil, store.Memberships, &identidadDeMentira{}, nil); err == nil {
 		t.Error("sin CallerResolver no puede construirse")
 	}
-	if _, err := usecase.NewMembershipService(testResolver, nil); err == nil {
+	if _, err := usecase.NewMembershipService(testResolver, nil, &identidadDeMentira{}, nil); err == nil {
 		t.Error("sin MembershipRepo no puede construirse")
+	}
+	// Y la asimetría deliberada: SIN cliente de identity SÍ se construye. Un
+	// despliegue sin WAPP_IDENTITY_API_KEY es legítimo y su listado de miembros
+	// tiene que seguir sirviendo; lo que no puede es dar de alta a medias, y de
+	// eso responde AddMember con ErrIdentityNotConfigured (ver
+	// TestAddMember_SinClienteM2MNoSeEscribeNada).
+	if _, err := usecase.NewMembershipService(testResolver, store.Memberships, nil, nil); err != nil {
+		t.Errorf("sin cliente de identity el servicio debe construirse igual: %v", err)
 	}
 }

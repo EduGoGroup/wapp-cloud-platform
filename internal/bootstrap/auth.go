@@ -676,7 +676,20 @@ type rolePlane struct {
 // MembershipRepo se construye UNA vez y se comparte entre los dos servicios —
 // RoleService lo necesita para requireMember (acotar las operaciones sobre
 // personas) y MembershipService para el alta y la baja.
-func buildRolePlane(db *sql.DB) (rolePlane, error) {
+//
+// `systems` es el cliente M2M de identity (authStack.m2mClient) y ADMITE nil: en
+// un despliegue sin WAPP_IDENTITY_API_KEY el plano se construye igual, la
+// lectura de miembros sigue sirviendo y solo el alta contesta 503 (ver
+// iamusecase.NewMembershipService). Llega como interfaz y no como puntero
+// concreto por la misma razón que el campo del que sale: un *M2MClient nil
+// metido en un parámetro de interfaz produce un valor NO nil, y entonces la
+// guarda del usecase daría siempre false.
+//
+// `log` es el MISMO del proceso, y no es decorativo: cuando identity rechaza la
+// credencial M2M de wApp el llamante se lleva un 500 genérico —es un fallo del
+// servidor y no le incumbe—, así que el rastro es el único sitio donde queda
+// escrito qué scope hay que reemitir.
+func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.Logger) (rolePlane, error) {
 	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
@@ -691,7 +704,7 @@ func buildRolePlane(db *sql.DB) (rolePlane, error) {
 	if err != nil {
 		return rolePlane{}, fmt.Errorf("construyendo RoleService (IAM): %w", err)
 	}
-	memberSvc, err := iamusecase.NewMembershipService(caller, members)
+	memberSvc, err := iamusecase.NewMembershipService(caller, members, systems, log)
 	if err != nil {
 		return rolePlane{}, fmt.Errorf("construyendo MembershipService (IAM): %w", err)
 	}

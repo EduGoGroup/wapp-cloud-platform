@@ -520,3 +520,117 @@ func TestM2M_UnContextoCanceladoNoEsperaElCanje(t *testing.T) {
 		t.Errorf("canjes = %d, llamadas = %v, want ninguno: el ctx ya estaba muerto", exchanges, calls)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GET /users/{id}/systems — la lectura que hace posible la unión (Plan 047 · T-B1)
+// ---------------------------------------------------------------------------
+
+// TestM2M_GetUserSystems_DevuelveElConjuntoEnteroYSinCuerpo comprueba las dos
+// mitades del contrato de lectura: que devuelve TODAS las claves (no la primera,
+// no una) y que la petición viaja sin cuerpo, porque no declara nada.
+//
+// El assert es sobre los DOS elementos a propósito: con uno solo, una
+// implementación que devolviera `res.Systems[:1]` —o el nil de un decode mudo—
+// pasaría igual, y el conjunto parcial es justo lo que convierte la unión en una
+// revocación silenciosa.
+func TestM2M_GetUserSystems_DevuelveElConjuntoEnteroYSinCuerpo(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+	f.body = `{"systems":["wapp.bff","edugo.web"]}`
+
+	got, err := f.client(t).GetUserSystems(context.Background(), m2mUserID)
+	if err != nil {
+		t.Fatalf("GetUserSystems: %v", err)
+	}
+	if len(got) != 2 || got[0] != "wapp.bff" || got[1] != "edugo.web" {
+		t.Fatalf("systems = %v, quiero los dos en su orden [wapp.bff edugo.web]", got)
+	}
+
+	_, calls, _ := f.snapshot()
+	if len(calls) != 1 || calls[0] != "GET /api/v1/users/"+m2mUserID+"/systems" {
+		t.Errorf("llamadas = %v, quiero un solo GET sobre la ruta del recurso", calls)
+	}
+	// Comparte URL con el PUT y se distingue por el MÉTODO: si esto viajara con
+	// cuerpo, sería que se está reusando el camino de escritura.
+	f.mu.Lock()
+	crudo := f.lastRawIn
+	f.mu.Unlock()
+	if crudo != "" {
+		t.Errorf("la lectura viajó con cuerpo %q: no declara nada, no debe llevarlo", crudo)
+	}
+}
+
+// TestM2M_GetUserSystems_UnNullEsElArregloVacioYNoNil fija la simetría con
+// nonNilStrings (m2m.go): un `null` del JSON deja el slice en nil, y el puerto
+// promete que nunca lo es.
+//
+// No es cosmético: el llamante de esta lectura recorre el conjunto para calcular
+// una unión, y la persona SIN NINGÚN ACCESO —la que devuelve el vacío— es
+// precisamente el caso normal del alta de un miembro nuevo.
+func TestM2M_GetUserSystems_UnNullEsElArregloVacioYNoNil(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+	f.body = `{"systems":null}`
+
+	got, err := f.client(t).GetUserSystems(context.Background(), m2mUserID)
+	if err != nil {
+		t.Fatalf("GetUserSystems: %v", err)
+	}
+	if got == nil {
+		t.Fatal("systems = nil; el puerto promete un arreglo vacío, nunca nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("systems = %v, quiero el arreglo vacío", got)
+	}
+}
+
+// TestM2M_GetUserSystems_TraduceLosCodigos cubre mapGetUserSystemsError.
+//
+// El caso que justifica que el mapper sea PROPIO y no el del PUT es el del 403
+// con SYSTEM_ACCESS_DENIED: en esta ruta ese código no puede significar «esa
+// aplicación no es tuya» —la petición no nombra ninguna—, así que sale como
+// credencial mal configurada igual que un FORBIDDEN. Compartiendo mapper saldría
+// ErrSystemNotAllowed y el 502 correspondiente le contaría al administrador un
+// problema que no es suyo.
+func TestM2M_GetUserSystems_TraduceLosCodigos(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		status int
+		code   string
+		want   error
+	}{
+		{name: "la persona no está en el padrón", status: http.StatusNotFound, code: "NOT_FOUND", want: domain.ErrNotFound},
+		{name: "scope insuficiente", status: http.StatusForbidden, code: "FORBIDDEN", want: domain.ErrMachineCredentialInvalid},
+		{name: "403 de frontera, imposible en esta ruta", status: http.StatusForbidden, code: "SYSTEM_ACCESS_DENIED", want: domain.ErrMachineCredentialInvalid},
+		{name: "identificador sin forma de UUID", status: http.StatusBadRequest, code: "INVALID_REQUEST", want: domain.ErrInvalidInput},
+		{name: "identity frenó", status: http.StatusTooManyRequests, code: "RATE_LIMITED", want: domain.ErrRateLimited},
+		{name: "identity indispuesto", status: http.StatusServiceUnavailable, code: "SERVICE_UNAVAILABLE", want: domain.ErrIdentityUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeM2M(t)
+			f.status, f.code = tt.status, tt.code
+			_, err := f.client(t).GetUserSystems(context.Background(), m2mUserID)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("err = %v, quiero %v", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestM2M_GetUserSystems_UnIdentificadorVacioNoSaleAlCable: sin UUID no hay a
+// quién consultar, y la ruta que se construiría (`/users//systems`) no es la del
+// recurso.
+func TestM2M_GetUserSystems_UnIdentificadorVacioNoSaleAlCable(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+
+	if _, err := f.client(t).GetUserSystems(context.Background(), "  "); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err = %v, quiero ErrInvalidInput", err)
+	}
+	if exchanges, calls, _ := f.snapshot(); exchanges != 0 || len(calls) != 0 {
+		t.Errorf("no debía tocarse identity: canjes=%d llamadas=%v", exchanges, calls)
+	}
+}

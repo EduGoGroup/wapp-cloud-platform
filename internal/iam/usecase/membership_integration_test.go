@@ -101,7 +101,10 @@ func TestIntegration_AltaDeMembresiaLaVeElCanje(t *testing.T) {
 	userID := uuid.NewString()
 
 	members := iampostgres.NewMembershipRepo(env.db)
-	altas, err := usecase.NewMembershipService(testResolver, members)
+	// El doble de identity acredita sin ruido: lo que este test mide es la
+	// membresía contra Postgres, no la acreditación (esa vive en
+	// membership_acreditacion_test.go).
+	altas, err := usecase.NewMembershipService(testResolver, members, &identidadDeMentira{}, quietLogger())
 	if err != nil {
 		t.Fatalf("NewMembershipService: %v", err)
 	}
@@ -174,7 +177,10 @@ func TestIntegration_LaSegundaEmpresaSeRechazaContraLaTabla(t *testing.T) {
 	userID := uuid.NewString()
 
 	members := iampostgres.NewMembershipRepo(env.db)
-	altas, err := usecase.NewMembershipService(testResolver, members)
+	// El doble de identity acredita sin ruido: lo que este test mide es la
+	// membresía contra Postgres, no la acreditación (esa vive en
+	// membership_acreditacion_test.go).
+	altas, err := usecase.NewMembershipService(testResolver, members, &identidadDeMentira{}, quietLogger())
 	if err != nil {
 		t.Fatalf("NewMembershipService: %v", err)
 	}

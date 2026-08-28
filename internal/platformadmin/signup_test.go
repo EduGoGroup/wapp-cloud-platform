@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +28,7 @@ type mockSignupM2M struct {
 	systemsCalled bool
 	signupUserID  string
 	systemsSet    []string
+	systemsLeidos int
 	signupErr     error
 	ensureUserErr error
 }
@@ -42,6 +45,14 @@ func (m *mockSignupM2M) ReplaceUserSystems(_ context.Context, _ string, systems 
 	m.systemsCalled = true
 	m.systemsSet = systems
 	return domain.IdentitySystemsDiff{Systems: systems}, nil
+}
+
+// GetUserSystems completa out.IdentityM2MClient (Plan 047 · Ola B). El signup
+// NO lo usa y no debe usarlo: ver TestSignup_ElAltaPublicaSigueMandandoUnaSola
+// Aplicacion. `systemsLeidos` deja constancia de si alguien lo llamó.
+func (m *mockSignupM2M) GetUserSystems(_ context.Context, _ string) ([]string, error) {
+	m.systemsLeidos++
+	return []string{}, nil
 }
 
 func (m *mockSignupM2M) Signup(_ context.Context, email, password, firstName, lastName string) (string, error) {
@@ -421,5 +432,94 @@ func TestSignupHandler_NoPIIInLogs(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), email) {
 		t.Fatalf("el correo apareció en el log (A-12, CERO PII): %s", buf.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regresión de la Ola B del Plan 047 (restricción 1)
+// ---------------------------------------------------------------------------
+
+// bdMuerta es un *sql.DB que no conecta con nada. Existe para que esta regresión
+// NO dependa de una base: los tests de este fichero que usan openTestDB se SALTAN
+// cuando no hay WAPP_TEST_DB_DSN, y un candado que solo cierra cuando alguien
+// exporta una variable de entorno no es un candado.
+//
+// Le vale con fallar: los pasos 1 y 2 del handler (identity) ocurren ANTES del
+// paso 3 (la fila en access_requests), así que cuando la base revienta el
+// conjunto que viajó a identity ya está registrado en el doble.
+func bdMuerta(t *testing.T) *sql.DB {
+	t.Helper()
+	db := sql.OpenDB(conectorMuerto{})
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Logf("cerrando la bd de mentira: %v", err)
+		}
+	})
+	return db
+}
+
+type conectorMuerto struct{}
+
+func (conectorMuerto) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New("bd de mentira: aquí no se conecta nadie")
+}
+func (conectorMuerto) Driver() driver.Driver { return driverMuerto{} }
+
+type driverMuerto struct{}
+
+func (driverMuerto) Open(string) (driver.Conn, error) {
+	return nil, errors.New("bd de mentira: aquí no se abre nadie")
+}
+
+// TestSignup_ElAltaPublicaSigueMandandoUnaSolaAplicacion es el candado de la
+// restricción 1 de la Ola B.
+//
+// 🔴 QUÉ PROTEGE. El alta de un MIEMBRO pasó a hacer UNIÓN sobre los accesos que
+// la persona ya tiene, y esa unión vive en el usecase de membresías —no en el
+// cliente M2M, que sigue siendo un reemplazo declarativo—. Si algún día alguien
+// «unificara» los dos caminos moviendo la unión al cliente, este alta pública
+// empezaría a leer lo que la cuenta ya tenía y a sumarle la suya: un registro con
+// `origin=edge` heredaría `wapp.bff` —la consola web— sin que nadie lo decida, y
+// al revés. El conjunto que sale de aquí tiene que seguir siendo de UN elemento,
+// el de su propio origen, y nada más.
+//
+// Por eso el assert es sobre la longitud EXACTA además del contenido: un
+// `contiene "wapp.edge"` pasaría igual con los dos dentro.
+func TestSignup_ElAltaPublicaSigueMandandoUnaSolaAplicacion(t *testing.T) {
+	t.Parallel()
+
+	for _, origen := range []string{"bff", "edge"} {
+		t.Run(origen, func(t *testing.T) {
+			t.Parallel()
+			m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
+			handler := platformadmin.SignupHandler(platformadmin.NewRepository(bdMuerta(t)), m2m, nil, false, nil)
+
+			body := fmt.Sprintf(`{"email":"regresion-%s@example.com","password":"Password123456!",`+
+				`"first_name":"Ana","last_name":"Perez","origin":"%s"}`, origen, origen)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/signup", strings.NewReader(body))
+			req.RemoteAddr = "192.0.2.9:1234"
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			// El paso 3 falla contra la bd de mentira; lo que se afirma aquí es lo
+			// que ya pasó en el paso 2. Se comprueba el código para que un cambio que
+			// mueva la escritura de systems DESPUÉS de la fila local salga rojo aquí
+			// en vez de dejar el assert de abajo mirando un doble sin llamar.
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("code = %d, quiero 500 (la fila local no puede escribirse): body %s", rec.Code, rec.Body.String())
+			}
+			if !m2m.systemsCalled {
+				t.Fatal("el alta pública no llamó a ReplaceUserSystems: sin esa llamada este candado no vigila nada")
+			}
+			if len(m2m.systemsSet) != 1 || m2m.systemsSet[0] != "wapp."+origen {
+				t.Fatalf("el alta pública mandó %v; quiero exactamente [wapp.%s] y NADA más.\n"+
+					"La unión de la Ola B es del usecase de membresías; si llega hasta aquí, "+
+					"un registro por el Edge hereda la consola web (y al revés).", m2m.systemsSet, origen)
+			}
+			if m2m.systemsLeidos != 0 {
+				t.Errorf("el alta pública leyó los accesos previos %d veces: este camino REEMPLAZA, no une",
+					m2m.systemsLeidos)
+			}
+		})
 	}
 }

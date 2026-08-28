@@ -418,6 +418,29 @@ func (h *MembershipHandler) List() http.Handler {
 //     administración de empresas: una segunda membresía rompe el canje de su
 //     token (ErrMultipleTenants), así que no le añade una empresa — le quita el
 //     login. Se levanta cuando el canje sepa elegir (MD-055.2), no antes.
+//
+// LOS SEIS DESENLACES (Plan 047 · Ola B). Desde que el alta acredita también la
+// aplicación en identity, un 204 dejó de significar «se escribió una fila» para
+// significar «esa persona es miembro Y puede entrar». Los códigos de fallo
+// separan de quién es el problema, que es lo único que sirve para actuar:
+//
+//	alta correcta (con o sin escritura en identity)   204, sin cuerpo
+//	falta la credencial M2M de este despliegue        503 {"error":"identity_no_configurado"}
+//	identity no contesta (ErrIdentityUnavailable)     503 {"error":"identity no está disponible"}
+//	identity no acredita `wapp.bff` (ErrSystemNotAllowed) 502 {"error":"system_no_acreditable"}
+//	el UUID no existe en identity (ErrNotFound)       404
+//	ya es miembro de otra empresa (ErrConflict)       409
+//
+// «Con o sin escritura en identity» no es un matiz: si la persona ya tenía la
+// aplicación, el alta NO llama al PUT y responde 204 igual. Desde fuera los dos
+// caminos son indistinguibles a propósito — el 204 promete un ESTADO, no un
+// número de escrituras.
+//
+// 🔴 El 404 de aquí es el de identity —esa persona no está en el padrón del
+// grupo—, no el de una ruta inexistente ni el de un recurso ajeno. Llega porque
+// el alta LEE los accesos de la persona antes de escribir, y esa lectura es la
+// primera vez que wApp comprueba que el UUID que le pasaron existe: hasta esta
+// ola, un UUID inventado producía una fila en tenant_members y un 204.
 func (h *MembershipHandler) Add() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req memberRequest
