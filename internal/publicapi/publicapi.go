@@ -746,9 +746,18 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	// Auditada como LECTURA (`intakes.read`) y no como escritura, porque no lo es: no
 	// escribe una fila, no transiciona nada y no le manda nada al cliente. Lo que sí
 	// hace es gastar una inferencia, y por eso es POST — ver el fichero del handler.
+	//
+	// 🔴 ES LA ÚNICA RUTA CON PLAZO DE ESCRITURA PROPIO (`conPlazoDeRedacción`), y es la
+	// única que lo necesita: es la única de la API pública que espera a un modelo dentro
+	// de la petición, y con el WriteTimeout de 10 s del servidor su respuesta real
+	// —24,8 s a 35,5 s medidos en UAT— no cabía por el cable. El razonamiento entero,
+	// con la medición y con por qué NO se sube el writeTimeout global, está en
+	// plazoescritura.go; aquí solo queda dicho que el envoltorio va POR FUERA de
+	// protectRead a propósito (dentro, el ResponseWriter de accessLog corta la cadena
+	// del ResponseController y el plazo no llegaría a la conexión).
 	if d.QuoteSuggestions != nil {
-		mux.Handle("POST /api/v1/intakes/{id}/quote-suggestion", protectRead(mw, log,
-			"intakes.read", cartBasic(llmIntake(quoteSuggestionHandler(d.QuoteSuggestions)))))
+		mux.Handle("POST /api/v1/intakes/{id}/quote-suggestion", conPlazoDeRedacción(log, protectRead(mw, log,
+			"intakes.read", cartBasic(llmIntake(quoteSuggestionHandler(d.QuoteSuggestions))))))
 	}
 
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
