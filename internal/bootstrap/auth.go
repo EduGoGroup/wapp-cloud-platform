@@ -643,3 +643,70 @@ func buildConfigProvider(
 		},
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Plano de roles del tenant (Plan 047 · Ola 1.0 · T1.0-4)
+// ---------------------------------------------------------------------------
+
+// rolePlane agrupa los dos casos de uso que abren el plano 2 del ADR-0033 —la
+// administración de RBAC y la de membresía de la PROPIA empresa— para que
+// bootstrap.go los pase a publicapi.Deps con una sola pieza. Sin ellos, las
+// rutas /api/v1/roles y /api/v1/members no se montan y responden 404 de ruta
+// inexistente: es exactamente el modo de fallo mudo que vigila
+// roleplane_cableado_test.go.
+type rolePlane struct {
+	roles   in.RoleAdmin
+	members in.MembershipAdmin
+}
+
+// buildRolePlane cablea los casos de uso del plano de roles sobre el *sql.DB ya
+// abierto.
+//
+// 🔑 EL CALLERRESOLVER ES LA PIEZA QUE IMPORTA, y es de aquí de donde tenía que
+// salir. Los usecases no llaman a httpapi.IdentityFromContext ellos mismos por
+// dirección de dependencias (internal/platform/httpapi ya importa iam/ports/in;
+// que el usecase importara el transporte invertiría la flecha), así que reciben
+// este puerto. Es el ÚNICO origen del tenant_id en todo el plano: ningún Input de
+// in.* tiene campo TenantID, y esa ausencia es INV-04 escrita en el tipo. Un
+// contexto sin Identity devuelve ok=false y el usecase falla con
+// domain.ErrNoTenant antes de tocar un repositorio.
+//
+// Los cuatro repositorios son los MISMOS adaptadores que ya usa el canje
+// (buildAuthStack): no hay una segunda implementación de estas tablas. El
+// MembershipRepo se construye UNA vez y se comparte entre los dos servicios —
+// RoleService lo necesita para requireMember (acotar las operaciones sobre
+// personas) y MembershipService para el alta y la baja.
+//
+// `systems` es el cliente M2M de identity (authStack.m2mClient) y ADMITE nil: en
+// un despliegue sin WAPP_IDENTITY_API_KEY el plano se construye igual, la
+// lectura de miembros sigue sirviendo y solo el alta contesta 503 (ver
+// iamusecase.NewMembershipService). Llega como interfaz y no como puntero
+// concreto por la misma razón que el campo del que sale: un *M2MClient nil
+// metido en un parámetro de interfaz produce un valor NO nil, y entonces la
+// guarda del usecase daría siempre false.
+//
+// `log` es el MISMO del proceso, y no es decorativo: cuando identity rechaza la
+// credencial M2M de wApp el llamante se lleva un 500 genérico —es un fallo del
+// servidor y no le incumbe—, así que el rastro es el único sitio donde queda
+// escrito qué scope hay que reemitir.
+func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.Logger) (rolePlane, error) {
+	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
+		id, ok := httpapi.IdentityFromContext(ctx)
+		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
+	})
+	members := iampostgres.NewMembershipRepo(db)
+	roleSvc, err := iamusecase.NewRoleService(
+		caller,
+		iampostgres.NewRoleRepo(db),
+		iampostgres.NewGrantRepo(db),
+		members,
+	)
+	if err != nil {
+		return rolePlane{}, fmt.Errorf("construyendo RoleService (IAM): %w", err)
+	}
+	memberSvc, err := iamusecase.NewMembershipService(caller, members, systems, log)
+	if err != nil {
+		return rolePlane{}, fmt.Errorf("construyendo MembershipService (IAM): %w", err)
+	}
+	return rolePlane{roles: roleSvc, members: memberSvc}, nil
+}

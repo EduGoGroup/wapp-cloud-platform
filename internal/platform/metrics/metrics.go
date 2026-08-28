@@ -171,6 +171,27 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap devuelve el ResponseWriter envuelto, que es lo que http.ResponseController
+// necesita para llegar a la conexión (net/http, «ResponseController»: un envoltorio
+// que no lo implementa CORTA la cadena y todo método del controlador devuelve
+// http.ErrNotSupported).
+//
+// 🔴 NO ES COSMÉTICO NI PREVENTIVO: sin este método, un handler que llame a
+// `http.NewResponseController(w).SetWriteDeadline(...)` recibe «feature not supported»
+// y NO PASA NADA —el plazo de escritura se queda en el WriteTimeout del servidor y la
+// respuesta larga sigue sin caber por el cable—. Medido en este repo antes de
+// escribirlo: con el mismo handler, `SetWriteDeadline` devuelve nil sirviendo directo y
+// «feature not supported» detrás de InstrumentHTTP. Lo cubre
+// TestInstrumentHTTP_NoRompeElResponseController (metrics_responsecontroller_test.go);
+// quien lo quite verá morir ese test y el de la ruta que depende de él
+// (internal/publicapi/plazoescritura_test.go).
+//
+// El envoltorio gemelo de httpapi.AuditMiddleware (audit_mw.go) NO lo tiene: no hace
+// falta hoy —la única ruta con plazo extendido es una LECTURA y no atraviesa la
+// auditoría— y añadirlo aquí sin necesidad sería tocar lo que no toca. Quien mañana
+// necesite extender el plazo de una ESCRITURA tendrá que hacer allí exactamente esto.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // InstrumentHTTP envuelve un mux ENTERO (no cada ruta) y registra petición +
 // latencia usando el PATRÓN del ServeMux, que Go fija en r.Pattern DURANTE el
 // ruteo (accesible tras next.ServeHTTP). El patrón es de baja cardinalidad y no

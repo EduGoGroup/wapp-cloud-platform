@@ -19,6 +19,22 @@ var (
 	// detectado por un usecase antes de tocar el repositorio.
 	ErrInvalidInput = errors.New("iam: entrada inválida")
 
+	// ErrNoTenant indica que quien llama no trae empresa en su contexto de
+	// identidad. NO es lo mismo que "no autenticado": desde D-056.12 el canje
+	// emite un Context Token válido y SIN tenant para quien todavía no tiene
+	// membresía, y ese token no puede administrar nada. Los usecases acotados a
+	// un tenant fallan con esto antes de tocar un repositorio, porque sin tenant
+	// del CONTEXTO no hay dónde acotar (INV-8) y el único sustituto posible
+	// sería un tenant elegido por el llamante.
+	ErrNoTenant = errors.New("iam: el contexto de identidad no trae tenant")
+
+	// ErrGlobalRoleImmutable indica un intento de MODIFICAR una plantilla global
+	// (iam_roles con tenant_id NULL) desde la administración de un tenant. Las
+	// plantillas son visibles para todos y asignables por todos, y justo por eso
+	// no son editables por ninguno: cambiar sus grants cambiaría los permisos de
+	// todos los tenants a la vez. Leerlas y asignarlas sigue permitido.
+	ErrGlobalRoleImmutable = errors.New("iam: las plantillas de rol globales no se modifican desde un tenant")
+
 	// ErrInvalidCredentials indica que el par (email, password) no autentica. Lo
 	// devuelve identity-core, que es quien las valida desde la Ola 3; wApp solo
 	// lo traduce. Es deliberadamente OPACO (no distingue "usuario inexistente" de
@@ -110,6 +126,18 @@ var (
 	// NO trae Retry-After, así que no hay cuándo reintentar: quien lo reciba
 	// decide su propia espera.
 	ErrRateLimited = errors.New("iam: identity aplicó su límite de peticiones")
+
+	// ErrIdentityNotConfigured indica que ESTE despliegue no tiene cliente M2M
+	// de identity (falta WAPP_IDENTITY_API_KEY o WAPP_IDENTITY_URL) y la
+	// operación pedida NO se puede completar sin él.
+	//
+	// 🔴 No es un fallo de quien llamó ni una indisponibilidad de identity: es
+	// configuración que falta AQUÍ, y por eso no se puede colapsar ni en el 400
+	// ni en el 500 genérico. El alta de un miembro lo devuelve antes de escribir
+	// nada: sin poder acreditar la aplicación en identity, la fila de
+	// tenant_members solo produciría una persona que es miembro y no puede
+	// entrar — el defecto exacto que la Ola B del Plan 047 cierra.
+	ErrIdentityNotConfigured = errors.New("iam: el cliente M2M de identity no está configurado en este despliegue")
 
 	// ErrSystemNotAllowed indica que identity rechazó (403 SYSTEM_ACCESS_DENIED)
 	// el conjunto de aplicaciones de un PUT /users/{id}/systems porque alguna no

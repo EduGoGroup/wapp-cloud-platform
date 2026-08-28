@@ -36,6 +36,15 @@ func (f *fakeM2MClient) ReplaceUserSystems(_ context.Context, _ string, systems 
 	return domain.IdentitySystemsDiff{Systems: systems}, nil
 }
 
+// GetUserSystems completa out.IdentityM2MClient (Plan 047 · Ola B). Este doble
+// NO lo ejercita: la vía del OPERADOR sigue aproximando la unión con su tabla
+// local (hasOtherApprovedRequest) y esta ola no la toca. Devolver siempre el
+// vacío es honesto —nadie lo llama— y si algún día alguien lo llamara desde aquí,
+// el test que se apoye en ello tendrá que programar este doble a propósito.
+func (f *fakeM2MClient) GetUserSystems(_ context.Context, _ string) ([]string, error) {
+	return []string{}, nil
+}
+
 func (f *fakeM2MClient) Signup(_ context.Context, email, password, firstName, lastName string) (string, error) {
 	return uuid.NewString(), nil
 }

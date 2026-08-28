@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
@@ -24,7 +25,7 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
-func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -34,6 +35,34 @@ func buildPublicAPIServer(cfg config.AppConfig, log sharedlogger.Logger, mtx *me
 	// El mismo AuditService sirve la consulta GET /api/v1/audit (Plan 018 · T10):
 	// lee la bitácora del tenant del token (audit.read). CERO PII (eventos opacos).
 	pub.Audit = auditor
+
+	// PLANO DE ROLES Y MIEMBROS de la empresa (Plan 047 · Ola 1.0 · T1.0-4, plano 2
+	// del ADR-0033). Se resuelve AQUÍ y no en el literal de Deps de bootstrap.go por
+	// la misma razón que pub.Audit justo encima: es una dependencia que solo existe
+	// para esta API y que este constructor puede armar entero.
+	//
+	// 🔴 Los DOS campos son necesarios y ninguna ausencia da error: con Roles nil no
+	// se montan /api/v1/roles ni las rutas de rol/grant bajo /api/v1/members, y con
+	// Members nil no se monta el alta/baja de membresía. Las rutas simplemente NO
+	// EXISTEN y responden 404 de ruta inexistente — indistinguible desde fuera del
+	// 404 que estas mismas rutas dan al recurso ajeno. Eso es lo que vigila
+	// roleplane_cableado_test.go.
+	//
+	// El cliente M2M viaja al plano porque el alta de un miembro acredita la
+	// aplicación en identity antes de escribir la fila (Plan 047 · Ola B). Su
+	// ausencia NO desmonta ninguna ruta: es la diferencia entre «esta
+	// administración no existe» (404) y «existe y le falta configuración» (503),
+	// y confundirlas mandaría a depurar el router en vez del entorno.
+	rolesPlane, err := buildRolePlane(db, as.m2mClient, log)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if as.m2mClient == nil {
+		log.Warn("POST /api/v1/members: falta WAPP_IDENTITY_API_KEY; el alta de miembros responde 503 " +
+			"(sin acreditar la aplicación en identity, la persona quedaría de alta y sin poder entrar)")
+	}
+	pub.Roles = rolesPlane.roles
+	pub.Members = rolesPlane.members
 
 	publicMux := http.NewServeMux()
 	iamhttp.Register(publicMux, as.contextTokens, as.exchanger(), log)

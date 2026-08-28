@@ -69,15 +69,11 @@ type IdentityM2MClient interface {
 	// ⚠️ NO está acotado por ecosistema: con este scope se puede asegurar
 	// —y por tanto descubrir— cualquier correo del grupo.
 	EnsureUser(ctx context.Context, email, firstName, lastName string) (domain.IdentityUser, error)
-	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
-	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
-	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
-	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
-	//
-	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
-	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
-	// domain.ErrNotFound si la persona no existe en identity.
-	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
+	// UserSystemsClient aporta el par LEER/DECLARAR accesos. Va embebido y no
+	// declarado aquí para que quien solo necesite ese par pueda pedirlo sin
+	// heredar de paso la capacidad de crear cuentas en el padrón del grupo (ver
+	// su propia documentación, justo debajo).
+	UserSystemsClient
 	// Signup registra a la persona en identity CON SU PROPIA contraseña y
 	// devuelve el UUID de su cuenta. Es la única vía por la que un hash
 	// utilizable entra en identity, y por eso la clave la escribe su dueño y no
@@ -90,16 +86,106 @@ type IdentityM2MClient interface {
 	Signup(ctx context.Context, email, password, firstName, lastName string) (userID string, err error)
 }
 
-// MembershipRepo lee la membresía usuario↔tenant (tabla public.tenant_members,
-// migración 0037). Es el vínculo de NEGOCIO que se queda en wApp cuando los
-// usuarios pasan a identity (identity ADR-0001, INV-1): identity dice QUIÉN es
-// la persona y esta tabla a QUÉ tenant pertenece. Solo lectura: la escritura la
-// hacen la migración y la administración de tenants, no el plano de auth.
+// UserSystemsClient es la MITAD de IdentityM2MClient que gobierna a qué
+// aplicaciones de wApp puede entrar una persona: leer el conjunto vigente y
+// declararlo entero. Lo satisface el mismo adaptador (iamidentity.M2MClient).
+//
+// Es un puerto PROPIO y no un par de métodos sueltos del cliente entero porque
+// la administración de membresía (Plan 047 · Ola B) necesita exactamente estas
+// dos operaciones y NINGUNA de las otras dos: dar de alta a alguien en una
+// empresa no puede crear cuentas en el padrón global del grupo (EnsureUser) ni
+// registrar contraseñas (Signup). Con el cliente completo como dependencia esa
+// frontera sería una convención que alguien puede ampliar sin querer; como
+// puerto separado la impone el compilador.
+type UserSystemsClient interface {
+	// GetUserSystems devuelve las aplicaciones a las que la persona puede entrar
+	// HOY dentro del ecosistema de wApp. NUNCA es nil: sin ninguna es un arreglo
+	// vacío, y ese desenlace es DISTINTO de que la persona no exista (identity
+	// dto/user_systems_dto.go:57 lo declara como contrato, no como cortesía).
+	//
+	// 🔴 ES LO QUE HACE POSIBLE UNA UNIÓN EN VEZ DE UN REEMPLAZO CIEGO. El PUT de
+	// aquí abajo es declarativo: sin leer antes, añadir una aplicación revoca
+	// todas las demás. Aproximar esta lectura con una tabla local —«¿le
+	// aprobamos algo antes?»— es lo que se hacía hasta esta ola y está
+	// documentado como estructuralmente equivocado: una tabla de wApp no sabe
+	// qué escribió identity.
+	//
+	// ⚠️ El conjunto está ACOTADO AL ECOSISTEMA de la credencial (identity
+	// ADR-0016): NO enumera los accesos que otro ecosistema le haya dado a la
+	// misma persona. Lejos de ser una limitación, es lo que hace segura la
+	// unión — lo que no se ve tampoco se pisa, porque el PUT hermano revoca
+	// dentro del mismo ecosistema y solo ahí.
+	//
+	// 🔧 Consume el scope `identity.users.systems.read`, que es DISTINTO del de
+	// escritura (`...manage`): una credencial M2M que hoy solo escribe recibe 403
+	// aquí hasta que un operador le añada el de lectura.
+	//
+	// domain.ErrNotFound si la persona no está en el padrón de identity.
+	GetUserSystems(ctx context.Context, userID string) ([]string, error)
+	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
+	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
+	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
+	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
+	//
+	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
+	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
+	// domain.ErrNotFound si la persona no existe en identity.
+	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
+}
+
+// MembershipRepo persiste la membresía usuario↔tenant (tabla
+// public.tenant_members, migración 0037). Es el vínculo de NEGOCIO que se queda
+// en wApp cuando los usuarios pasan a identity (identity ADR-0001, INV-1):
+// identity dice QUIÉN es la persona y esta tabla a QUÉ tenant pertenece.
+//
+// Dejó de ser SOLO LECTURA en el Plan 047 · Ola 1.0 (T1.0-2): hasta entonces la
+// única alta la escribía el operador al aprobar un access-request
+// (platformadmin.executeApprovalTx) y no había forma de darla de alta desde el
+// plano de administración del propio tenant.
 type MembershipRepo interface {
 	// TenantsOfUser devuelve los tenants de los que el usuario es miembro, en
 	// orden estable. Una lista VACÍA no es error: significa que ese usuario no
 	// tiene membresía en wApp (quien lo llame decide qué hacer con eso).
 	TenantsOfUser(ctx context.Context, userID string) ([]string, error)
+	// MembersOf devuelve los miembros de UN tenant, en orden estable
+	// (created_at, user_id). Es la lectura INVERSA de TenantsOfUser y la sirve el
+	// índice que la migración 0037 creó exactamente para ella
+	// (idx_tenant_members_tenant): la PK (user_id, tenant_id) sirve al acceso por
+	// usuario —el del canje—, este índice al de administración por tenant.
+	//
+	// Una lista VACÍA no es error: una empresa sin miembros es un estado
+	// legítimo (los tenants nacen antes que su gente).
+	//
+	// ⚠️ Devuelve lo que la TABLA guarda —id opaco y fecha de alta— y nada más.
+	// El nombre y el correo viven en identity (INV-02) y este puerto no sale a
+	// buscarlos: hacerlo convertiría el listado de una empresa en una consulta al
+	// padrón del grupo.
+	MembersOf(ctx context.Context, tenantID string) ([]domain.Membership, error)
+	// Add da de alta la membresía (userID, tenantID). Es IDEMPOTENTE: repetirla
+	// no duplica ni falla. NO asigna rol: eso es otra decisión y tiene su propia
+	// puerta (in.RoleAdmin.AssignRole).
+	//
+	// 🔴 Devuelve domain.ErrConflict si el usuario ya es miembro de OTRO tenant.
+	// Esa guarda NO es una regla de negocio de la administración de empresas: es
+	// lo que mantiene canjeable el token de esa persona. El canje resuelve el
+	// tenant por esta tabla y con más de una membresía falla con
+	// domain.ErrMultipleTenants (usecase/exchange.go:resolveTenant), así que una
+	// segunda membresía no le añade una empresa a nadie — le rompe el login.
+	// Es la deuda MD-055.2 y se levanta cuando el canje sepa elegir, no antes.
+	//
+	// La escritura la comparte con la vía del operador en el adaptador
+	// (iampostgres.GrantTenantAccess): este puerto es PURO y no conoce
+	// transacciones, y la del operador necesita pasar la suya.
+	Add(ctx context.Context, userID, tenantID string) error
+	// Remove da de baja la membresía (userID, tenantID). No-op si no existía.
+	//
+	// ⚠️ NO toca los roles ni los grants de esa persona: las filas de
+	// iam_user_roles acotadas a ese tenant sobreviven. No es un descuido — el
+	// canje ya ignora los permisos de quien no tiene tenant (resolveGrants
+	// devuelve cero grants sin membresía), así que la baja deja a la persona sin
+	// poder operar aunque su asignación siga escrita, y readmitirla no obliga a
+	// reconstruir su rol.
+	Remove(ctx context.Context, userID, tenantID string) error
 }
 
 // RoleRepo persiste roles, sus grants y la asignación usuario↔rol (tablas
@@ -130,8 +216,15 @@ type RoleRepo interface {
 	// asignación a esa empresa. Idempotente por los índices únicos de
 	// iam_user_roles; ya NO hay PK desde la migración 0060.
 	AssignToUser(ctx context.Context, userID, roleID string, tenantID *string) error
-	// UnassignFromUser retira un rol de un usuario (no-op si no estaba).
-	UnassignFromUser(ctx context.Context, userID, roleID string) error
+	// UnassignFromUser retira un rol de un usuario (no-op si no estaba),
+	// SIMÉTRICO a AssignToUser: tenantID nil retira la asignación GLOBAL,
+	// tenantID no nil retira solo la acotada a esa empresa.
+	//
+	// El parámetro se añadió en el Plan 047 · Ola 1.0 y no es simetría estética:
+	// sin él, el DELETE borraba TODAS las filas de esa pareja (user, role) sin
+	// mirar el tenant, y un administrador de la empresa A podía retirarle a
+	// alguien la asignación de un rol GLOBAL que también valía en la empresa B.
+	UnassignFromUser(ctx context.Context, userID, roleID string, tenantID *string) error
 }
 
 // GrantRepo persiste los overrides de grants por usuario (tabla
