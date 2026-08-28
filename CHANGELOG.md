@@ -5,6 +5,8 @@ y [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-28
+
 ### Added
 
 - 🧭 **Los prompts de P2–P5 se ajustan por FICHERO, sin release** (`WAPP_LLM_PROMPTS_DIR`).
