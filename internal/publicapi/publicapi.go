@@ -210,6 +210,15 @@ type Deps struct {
 	// compositor del literal. El porqué entero está en la cabecera de
 	// internal/reanalisis.
 	Reanalysis ReanalysisService
+	// QuoteSuggestions redacta la cotización con la voz de la dueña y la DEVUELVE
+	// (Plan 044 · Ola 5 · T5.1): `POST /api/v1/intakes/{id}/quote-suggestion`. Lo
+	// satisface *quotetext.Servicio. nil ⇒ NO se monta la ruta.
+	//
+	// Es una dependencia APARTE de Intakes —y no un método más de aquel puerto— por lo
+	// mismo que Reanalysis: necesita el selector de vía LLM, el historial aprobado del
+	// TENANT (no de la solicitud) y el contenido dinámico del tenant, y ninguna de las
+	// tres la conoce hoy `intakes.Service`.
+	QuoteSuggestions QuoteSuggester
 	// TenantLLM es la CONFIGURACIÓN de la vía LLM API por tenant (tenant_llm): el
 	// CRUD /api/v1/tenant-llm del Plan 044 · T0.3. Lo satisface
 	// *tenantllm.Postgres, pero por un puerto RECORTADO que no puede devolver la
@@ -610,6 +619,7 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	}
 	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
 	canExport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureIntakesExport)
+	llmIntake := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureLLMIntake)
 
 	mux.Handle("GET /api/v1/intakes", protectRead(mw, log,
 		"intakes.read", cartBasic(listIntakesHandler(d.Intakes))))
@@ -699,6 +709,25 @@ func registerIntakes(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor
 	if d.Reanalysis != nil {
 		mux.Handle("POST /api/v1/intakes/{id}/reanalyze", protect(mw, auditor, log,
 			"intakes.write", "intake", reanalyzeIntakeHandler(d.Reanalysis)))
+	}
+
+	// SUGERIR LA COTIZACIÓN con la voz de la dueña (Plan 044 · Ola 5 · T5.1,
+	// D-044.11): la máquina redacta el texto y lo DEVUELVE; el dueño lo edita y lo
+	// aprueba por `POST …/approve`, que sigue exigiendo su `rendered_text`.
+	//
+	// 🔴 ES LA ÚNICA RUTA DE LA BANDEJA CON `llm_intake` EN LA CADENA, y no contradice
+	// a sus vecinas: aprobar, corregir y preguntar son del OBJETO (por eso van solo con
+	// `cart_basic`), y esto es literalmente «la máquina que redacta el borrador sola»,
+	// que es lo que D-044.49 §3 dice que se vende aparte. Van las DOS features porque
+	// también se opera sobre un pedido: un tenant con `llm_intake` y sin `cart_basic`
+	// no tiene bandeja donde poner el texto.
+	//
+	// Auditada como LECTURA (`intakes.read`) y no como escritura, porque no lo es: no
+	// escribe una fila, no transiciona nada y no le manda nada al cliente. Lo que sí
+	// hace es gastar una inferencia, y por eso es POST — ver el fichero del handler.
+	if d.QuoteSuggestions != nil {
+		mux.Handle("POST /api/v1/intakes/{id}/quote-suggestion", protectRead(mw, log,
+			"intakes.read", cartBasic(llmIntake(quoteSuggestionHandler(d.QuoteSuggestions)))))
 	}
 
 	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /

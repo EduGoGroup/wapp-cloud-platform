@@ -3,6 +3,8 @@ package intakes
 import (
 	"context"
 	"time"
+
+	"github.com/EduGoGroup/wapp-shared/logger"
 )
 
 // Service es la capa de dominio de las solicitudes: aplica las reglas (paginación
@@ -16,6 +18,16 @@ type Service struct {
 	expiry   ExpiryTouch
 	crm      CRMPusher
 	quotes   QuoteSender
+	// metricas es por donde la bandeja publica su telemetría (T5.2). OPCIONAL: nil es
+	// «no se publica nada» y el dominio funciona entero.
+	metricas PublicadorDeMetricas
+	// log es dónde avisa lo BEST-EFFORT de este servicio cuando falla (hoy, la
+	// telemetría). Nunca es nil: NewService pone logger.Default() y WithMetrics lo
+	// sustituye por el del proceso.
+	log logger.Logger
+	// ahora es el reloj con el que se mide `elapsed_from_draft_ms`. Inyectable con
+	// WithMetricsClock, que existe para los tests (ver metricas.go).
+	ahora func() time.Time
 	// revisions es el MISMO store, visto por su puerto de escritura de revisiones.
 	// No es una dependencia aparte y no se cablea: sale de una aserción de tipo en
 	// NewService (ver allí por qué no es un Option ni un método más de Store).
@@ -240,7 +252,11 @@ func WithQuoteSender(q QuoteSender) Option {
 // ErrNoRevisionWriter en vez de aprobar sin rastro. Los dos stores reales —*Postgres
 // y *MemoryStore— lo satisfacen.
 func NewService(store Store, opts ...Option) *Service {
-	s := &Service{store: store}
+	// El log y el reloj nacen con un default utilizable y NO se exigen por parámetro:
+	// son de lo BEST-EFFORT (la telemetría de T5.2), y un servicio sin ellos tendría
+	// que ramificar por nil en cada aviso. El mismo criterio que ya usan *Postgres y
+	// *MemoryStore con su logger.Default().
+	s := &Service{store: store, log: logger.Default(), ahora: time.Now}
 	if w, ok := store.(RevisionWriter); ok {
 		s.revisions = w
 	}
