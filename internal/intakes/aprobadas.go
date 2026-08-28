@@ -64,7 +64,12 @@ const selectApprovedTextsQuery = `
 	WHERE i.tenant_id = $1
 	  AND r.kind = $2
 	  AND r.rendered_text IS NOT NULL
-	  AND btrim(r.rendered_text) <> ''
+	  -- El conjunto de caracteres va EXPLÍCITO: btrim(x) a secas solo quita ESPACIOS,
+	  -- mientras que el strings.TrimSpace del doble en memoria quita todo el blanco.
+	  -- Con un texto de espacios y un salto de línea, Go lo descartaba y Postgres lo
+	  -- dejaba pasar: el doble afirmaba una paridad que no existía. Lo cazó el test de
+	  -- integración; el unitario contra el doble no podía verlo.
+	  AND btrim(r.rendered_text, E' \t\n\r\f\v') <> ''
 	ORDER BY r.created_at DESC, r.revision_no DESC
 	LIMIT $3`
 
