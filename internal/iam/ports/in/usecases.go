@@ -135,3 +135,134 @@ type Auditor interface {
 	Record(ctx context.Context, in AuditInput) error
 	ListAudit(ctx context.Context, tenantID string, limit, offset int) ([]domain.AuditEvent, error)
 }
+
+// ---------------------------------------------------------------------------
+// Administración de roles, grants y membresías (Plan 047 · Ola 1.0 · T1.0-1/2)
+// ---------------------------------------------------------------------------
+
+// Caller es QUIÉN está llamando, resuelto del contexto de identidad. Es el
+// origen ÚNICO del tenant en los usecases de administración (INV-04): fíjate en
+// que ningún Input de abajo tiene campo TenantID, y esa ausencia es la regla
+// escrita en el tipo — lo que no existe no se puede leer del cuerpo por
+// descuido.
+type Caller struct {
+	// TenantID es la empresa a la que se acota TODA la operación. Vacío es un
+	// caso legítimo del canje (D-056.12: token sin empresa todavía) y los
+	// usecases lo rechazan con domain.ErrNoTenant.
+	TenantID string
+	// UserID es el sujeto que opera (el `sub` que acreditó identity).
+	UserID string
+}
+
+// CallerResolver extrae el Caller del contexto del request. Es un puerto y no
+// una llamada directa a httpapi.IdentityFromContext por dirección de
+// dependencias: internal/platform/httpapi ya importa este paquete, y que el
+// usecase importara el transporte invertiría la flecha del módulo.
+//
+// El transporte lo satisface con una línea sobre lo que ya tiene:
+//
+//	in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
+//		id, ok := httpapi.IdentityFromContext(ctx)
+//		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
+//	})
+type CallerResolver interface {
+	// Caller devuelve la identidad del contexto. ok=false si el request no pasó
+	// por el middleware de autenticación.
+	Caller(ctx context.Context) (Caller, bool)
+}
+
+// CallerResolverFunc adapta una función al puerto CallerResolver.
+type CallerResolverFunc func(ctx context.Context) (Caller, bool)
+
+// Caller implementa CallerResolver.
+func (f CallerResolverFunc) Caller(ctx context.Context) (Caller, bool) { return f(ctx) }
+
+// CreateRoleInput es el alta de un rol CUSTOM del tenant. No lleva tenant: el
+// rol nace acotado a la empresa del Caller, siempre.
+type CreateRoleInput struct {
+	// Name es el nombre del rol dentro del tenant (único por tenant).
+	Name string
+	// ParentRoleID es el rol del que hereda grants (opcional). Debe ser visible
+	// para el tenant del Caller: uno suyo o una plantilla global.
+	ParentRoleID *string
+}
+
+// RoleAssignmentInput asigna o retira un rol a una persona DEL TENANT del
+// Caller. UserID es el UUID de identity (aquí no hay padrón local).
+type RoleAssignmentInput struct {
+	UserID string
+	RoleID string
+}
+
+// RoleGrantInput concede o revoca un grant sobre un ROL del tenant.
+type RoleGrantInput struct {
+	RoleID string
+	Grant  domain.Grant
+}
+
+// UserGrantInput concede o revoca un override de grant sobre una PERSONA.
+//
+// ⚠️ iam_user_grants no tiene columna de tenant: el override es del usuario, no
+// de la pareja (usuario, empresa). Lo que lo mantiene acotado es que el usecase
+// exige que esa persona sea miembro de la empresa del Caller, más la guarda de
+// una sola empresa por usuario (out.MembershipRepo.Add).
+type UserGrantInput struct {
+	UserID string
+	Grant  domain.Grant
+}
+
+// RoleAdmin es la administración de RBAC del tenant: lo que hasta el Plan 047
+// solo existía como repositorio y no tenía por dónde ejercerse.
+//
+// TODAS sus operaciones se acotan al tenant del Caller. Un recurso de otra
+// empresa se contesta con domain.ErrNotFound —no con "prohibido"— para no
+// filtrar qué existe fuera.
+type RoleAdmin interface {
+	// ListRoles devuelve los roles visibles: los del tenant más las plantillas
+	// globales.
+	ListRoles(ctx context.Context) ([]domain.Role, error)
+	// CreateRole crea un rol custom del tenant. domain.ErrConflict si el nombre
+	// ya existe en esa empresa.
+	CreateRole(ctx context.Context, input CreateRoleInput) (domain.Role, error)
+	// AssignRole asigna un rol visible a un miembro del tenant. La asignación
+	// queda SIEMPRE acotada a la empresa del Caller, nunca global.
+	AssignRole(ctx context.Context, input RoleAssignmentInput) error
+	// UnassignRole retira esa asignación acotada al tenant. Idempotente.
+	UnassignRole(ctx context.Context, input RoleAssignmentInput) error
+	// GrantToRole añade un grant a un rol PROPIO del tenant. Las plantillas
+	// globales se rechazan con domain.ErrGlobalRoleImmutable.
+	GrantToRole(ctx context.Context, input RoleGrantInput) error
+	// RevokeFromRole quita un grant de un rol propio del tenant.
+	RevokeFromRole(ctx context.Context, input RoleGrantInput) error
+	// GrantToUser añade un override de grant a un miembro del tenant.
+	GrantToUser(ctx context.Context, input UserGrantInput) error
+	// RevokeFromUser quita un override de grant a un miembro del tenant.
+	RevokeFromUser(ctx context.Context, input UserGrantInput) error
+}
+
+// MembershipInput es el alta o la baja de una persona en la empresa del Caller.
+// El tenant NO viaja aquí (INV-04): un administrador solo puede dar de alta en
+// SU empresa.
+type MembershipInput struct {
+	// UserID es el UUID de identity de la persona.
+	UserID string
+}
+
+// MembershipAdmin administra la pertenencia usuario↔empresa.
+type MembershipAdmin interface {
+	// ListMembers devuelve los miembros de la empresa del Caller. NO recibe
+	// tenant, como ningún método de aquí: la empresa sale del contexto (INV-04) y
+	// por eso no hay forma de pedir el padrón de otra.
+	//
+	// Una lista vacía no es error. Devuelve identificadores OPACOS y la fecha de
+	// alta —lo que guarda tenant_members— y NO sale a identity a por el nombre:
+	// eso convertiría el listado de una empresa en una consulta al padrón del
+	// grupo (INV-02).
+	ListMembers(ctx context.Context) ([]domain.Membership, error)
+	// AddMember da de alta a la persona en la empresa del Caller. Idempotente.
+	// domain.ErrConflict si ya es miembro de OTRA empresa (ver
+	// out.MembershipRepo.Add: no le añade una empresa, le rompe el canje).
+	AddMember(ctx context.Context, input MembershipInput) error
+	// RemoveMember la da de baja de la empresa del Caller. Idempotente.
+	RemoveMember(ctx context.Context, input MembershipInput) error
+}

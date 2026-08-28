@@ -197,13 +197,15 @@ func samePtrValue(a, b *string) bool {
 	return *a == *b
 }
 
-// UnassignFromUser implementa out.RoleRepo.
-func (s *RoleStore) UnassignFromUser(_ context.Context, userID, roleID string) error {
+// UnassignFromUser implementa out.RoleRepo, simétrico a AssignToUser: retira
+// SOLO la asignación cuyo tenant coincide por VALOR con el pedido (nil retira la
+// global), igual que el `IS NOT DISTINCT FROM` del adaptador Postgres.
+func (s *RoleStore) UnassignFromUser(_ context.Context, userID, roleID string, tenantID *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	filtered := make([]userRoleAssignment, 0, len(s.userRoles[userID]))
 	for _, a := range s.userRoles[userID] {
-		if a.roleID != roleID {
+		if a.roleID != roleID || !samePtrValue(a.tenantID, tenantID) {
 			filtered = append(filtered, a)
 		}
 	}

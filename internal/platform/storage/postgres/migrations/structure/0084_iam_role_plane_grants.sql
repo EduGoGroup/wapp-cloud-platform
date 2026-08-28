@@ -1,0 +1,100 @@
+-- ============================================================
+-- 0084: Los scopes del PLANO DE ROLES del tenant y la cerca que lo separa del
+-- plano de plataforma (Plan 047 · Ola 1.0 · T1.0-3, INV-10).
+--
+-- QUÉ SCOPES SON, Y POR QUÉ ESOS NOMBRES. La Ola 1.0 abre la puerta HTTP a las
+-- tablas `iam_*` y `tenant_members` del PROPIO tenant (plano 2 del ADR-0033).
+-- Cuatro scopes, en la forma `recurso.read` / `recurso.write` que ya usa toda la
+-- taxonomía viva de este repo (sessions.read/write 0026+0030, intakes.read/write
+-- 0042, intents.read/write 0033, y en las rutas integrations.*, llm.*, content.*
+-- de internal/publicapi/publicapi.go):
+--
+--   * `roles.read`    -- listar los roles del tenant y ver quién los tiene.
+--   * `roles.write`   -- crear rol, asignar/quitar rol a un usuario y, HOY,
+--                        también conceder/revocar los overrides de
+--                        `iam_user_grants`. Van juntos a propósito: partirlos en
+--                        un `grants.write` aparte solo tiene sentido el día que
+--                        alguien delegue lo primero sin lo segundo, y hoy no hay
+--                        ningún rol al que se le conceda esto explícitamente
+--                        (ver más abajo). Si T1.0-4 los separa, el `grants.write`
+--                        necesita SU migración y SU fila de deny de aquí abajo.
+--   * `members.read`  -- listar los miembros de la empresa (`tenant_members`).
+--   * `members.write` -- alta y baja de membresía (T1.0-2).
+--
+-- NO se llaman `users.read`/`users.write` a propósito: `users` YA es un recurso
+-- del OTRO plano ('users.provision.any', 0060), y reusar el nombre a los dos
+-- lados de la cerca hace que cualquier futuro glob sobre `users.*` toque los dos
+-- planos de una vez. `members` es además la palabra del tenant: no es "un
+-- usuario" (eso vive en identity-core, INV-02) sino su pertenencia a la empresa.
+--
+-- ESTA MIGRACIÓN NO SIEMBRA NI UN allow, Y NO ES UN OLVIDO. Quién alcanza qué,
+-- verificado contra el matcher real (identity-shared/auth@v0.3.1
+-- rbac/permission_matcher.go: '*' cubre todo; '*.suffix' cubre cualquier
+-- '<algo>.suffix'):
+--   * tenant_admin ('*', 0015) los tiene los CUATRO por glob -> nada que sembrar.
+--     Es el destinatario: las pantallas que los consumen (T1.2/T1.3/T1.4) son la
+--     administración de la empresa, y su dueña es tenant_admin.
+--   * viewer ('*.read', 0015) alcanza `roles.read` y `members.read` por glob, y
+--     NO alcanza ninguno de los dos `.write`. Eso es exactamente el criterio de
+--     T1.0-3 ("un viewer no puede escribir") y sale gratis: mirar quién está en
+--     la empresa es una lectura; cambiar quién puede qué, no.
+--   * operator (0015: flows.*, messages.send, media.*, contacts.read,
+--     integrations.read + los explícitos de 0024/0026/0030/0033/0036/0040/0042)
+--     NO recibe NINGUNO de los cuatro, tampoco los de lectura, y esta vez la
+--     omisión SÍ es la decisión. `roles.write` es un vector de escalada directo
+--     -- quien puede asignar roles puede asignarse tenant_admin, y quien puede
+--     escribir grants puede concederse '*' --, y `members.write` mete gente de
+--     fuera en la empresa. No es la faena del turno; es la administración de la
+--     empresa. Ojo, porque esto CONTRADICE EN APARIENCIA la regla escrita en
+--     publicapi.go (cabecera de registerConversationEvents): "un scope nuevo no
+--     lo tiene nadie hasta que una migración se lo conceda al rol operator".
+--     Esa regla existe para que una ruta no nazca devolviendo 403 A QUIEN LA
+--     NECESITA, y ahí quien la necesitaba era el operator. Aquí quien la necesita
+--     es tenant_admin, que ya entra por su '*': el 403 que esa regla evita no
+--     puede darse. Si un día se decide que el operator administre el equipo, hará
+--     falta una migración que se lo conceda -- y esa decisión se toma a la vista
+--     de la escalada de arriba, no por inercia.
+--   * platform_admin (0059/0060) no alcanza ninguno hoy, porque la evaluación es
+--     default-DENY y sus siete allow son todos '.any'. Aun así se siembran los
+--     cuatro deny; el porqué, abajo.
+--
+-- LOS CUATRO deny SOBRE platform_admin: INV-10, dirección plataforma -> tenant.
+-- La cerca tiene dos lados y el otro ya está puesto: el deny '*.any' sobre
+-- tenant_admin (0059) impide POR FORMA que el administrador de una empresa entre
+-- en el plano de plataforma, hoy y con cualquier '.any' futuro. Este lado no
+-- tenía nada: se sostenía solo sobre el default-DENY, es decir, sobre que a nadie
+-- se le ocurra darle a platform_admin un glob ancho el día que la consola crezca.
+-- Eso es exactamente el agujero que 0059 documenta para el otro lado ("tenant_admin
+-- tiene el grant '*' ... el agujero cambiaría de sitio, no se cerraría"), esperando
+-- a repetirse simétrico. Con estas cuatro filas, un futuro '*' sobre platform_admin
+-- ampliaría la consola SIN abrirle la administración de las empresas ajenas.
+--
+-- POR QUÉ POR NOMBRE Y NO POR FORMA ('roles.*' / 'members.*'), que sería más
+-- duradero: porque el plano de plataforma nombra sus permisos sobre el MISMO
+-- recurso con el sufijo '.any' -- si mañana un operador necesita ver los miembros
+-- de una empresa para dar soporte, ese permiso se llamará 'members.read.any', y
+-- 'members.*' (que en este matcher cubre todo el subárbol) se lo comería. La cerca
+-- debe separar los dos planos, no amputar uno. El precio está medido y dicho: un
+-- QUINTO scope de tenant que se estrene mañana no queda cubierto por estos deny
+-- (sí por el default-DENY, mientras platform_admin no tenga glob), y por eso el
+-- test de INV-10 exige la fila, no solo la conducta.
+--
+-- CERO PII / CERO llaves: cuatro patrones de permiso. Zero-knowledge intacto.
+--
+-- ADITIVA e IDEMPOTENTE: ids fijos deterministas CONTIGUOS en hex desde el último
+-- usado ('20000000-…-001b', 0060) y ON CONFLICT DO NOTHING => re-aplicable N veces
+-- bajo el runner hash-based FULL-REPLAY. El ON CONFLICT va SIN target, como en
+-- 0059/0060: iam_role_grants tiene además de su PK el índice único de negocio
+-- iam_role_grants_uidx (role_id, pattern, effect), y la forma sin target los cubre
+-- los dos -- si una fila equivalente ya existiera con otro id, no revienta.
+-- NO clean-slate.
+-- ============================================================
+
+INSERT INTO public.iam_role_grants (id, role_id, pattern, effect) VALUES
+    -- platform_admin ('10000000-…-0004', 0059): el plano de plataforma NO entra
+    -- en el de tenant, ni siquiera si un día gana un glob ancho.
+    ('20000000-0000-0000-0000-00000000001c', '10000000-0000-0000-0000-000000000004', 'roles.read',    'deny'),
+    ('20000000-0000-0000-0000-00000000001d', '10000000-0000-0000-0000-000000000004', 'roles.write',   'deny'),
+    ('20000000-0000-0000-0000-00000000001e', '10000000-0000-0000-0000-000000000004', 'members.read',  'deny'),
+    ('20000000-0000-0000-0000-00000000001f', '10000000-0000-0000-0000-000000000004', 'members.write', 'deny')
+ON CONFLICT DO NOTHING;

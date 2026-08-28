@@ -76,8 +76,15 @@ func TestRoleStore_UserAssignments(t *testing.T) {
 		t.Fatalf("RolesOfUser tenant-other err=%v, len=%d", err, len(rolesForTenantOther))
 	}
 
-	if err := s.UnassignFromUser(ctx, "user-1", seeded.ID); err != nil {
+	// Retirar la asignación GLOBAL (tenantID nil) no toca la acotada a
+	// tenant-other: son dos filas distintas de iam_user_roles y el adaptador
+	// Postgres las distingue con `tenant_id IS NOT DISTINCT FROM $3`.
+	if err := s.UnassignFromUser(ctx, "user-1", seeded.ID, nil); err != nil {
 		t.Fatalf("UnassignFromUser err: %v", err)
+	}
+	rolesTrasRetirar, err := s.RolesOfUser(ctx, "user-1", "tenant-other")
+	if err != nil || len(rolesTrasRetirar) != 1 || rolesTrasRetirar[0].ID != roleOther.ID {
+		t.Fatalf("tras retirar la global debía quedar SOLO la acotada: err=%v roles=%+v", err, rolesTrasRetirar)
 	}
 }
 

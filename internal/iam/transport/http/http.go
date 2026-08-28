@@ -66,13 +66,29 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 //   - identity token no aceptable / sujeto sin migrar → 401 (con motivo: el
 //     cliente es el BFF o el gateway, no un anónimo probando contraseñas, y
 //     necesita distinguir "refresca" de "este usuario no está en wApp")
-//   - más de un tenant     → 409 (estado de datos que esta ola no resuelve)
+//   - ErrNoTenant          → 403 (el token acredita a la persona pero no trae
+//     empresa, D-056.12; es el MISMO código con el que el middleware ya rechaza
+//     un token sin empresa en las rutas de negocio — ver tenantless_test.go)
+//   - ErrNotFound          → 404 (incluye el recurso de OTRA empresa: el usecase
+//     lo devuelve así a propósito y aquí no se puede convertir en 403 sin
+//     confirmar que ese rol o esa persona existen fuera)
+//   - ErrConflict / más de un tenant → 409
+//   - ErrGlobalRoleImmutable → 422 (el cuerpo se entiende; lo que no se puede
+//     procesar es editar una plantilla que vale para todos los tenants)
 //   - identity inalcanzable → 503 (indisponibilidad, NO rechazo)
 //   - resto (infra)        → 500
 func writeDomainError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "entrada inválida")
+	case errors.Is(err, domain.ErrNoTenant):
+		writeError(w, http.StatusForbidden, "el token no trae empresa: no puede administrar roles ni miembros")
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "recurso no encontrado")
+	case errors.Is(err, domain.ErrConflict):
+		writeError(w, http.StatusConflict, "conflicto: el recurso ya existe o la persona ya pertenece a otra empresa")
+	case errors.Is(err, domain.ErrGlobalRoleImmutable):
+		writeError(w, http.StatusUnprocessableEntity, "las plantillas de rol globales no se modifican desde una empresa")
 	case errors.Is(err, domain.ErrInvalidCredentials),
 		errors.Is(err, domain.ErrUserInactive),
 		errors.Is(err, domain.ErrRefreshInvalid):

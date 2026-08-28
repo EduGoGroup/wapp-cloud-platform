@@ -3,6 +3,7 @@ package iampostgres_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -275,4 +276,220 @@ func tableExists(ctx context.Context, t *testing.T, db *sql.DB, name string) boo
 		t.Fatalf("consultando la existencia de %s: %v", name, err)
 	}
 	return exists
+}
+
+// TestIntegration_GrantTenantAccess_EsElAltaCompleta ejercita contra Postgres el
+// caso de uso compartido por las dos vías de alta (Plan 047 · Ola 1.0 · T1.0-2):
+// membresía Y rol en una sola llamada, que es lo que la bandeja del operador
+// hacía a mano y ahora delega.
+//
+// Se llama con el *sql.DB directamente —sin transacción— a propósito: lo que se
+// prueba aquí es el SQL, no la atomicidad. La atomicidad de la vía del operador
+// ya tiene su propio test y este no la duplica
+// (platformadmin/executeapprovaltx_internal_test.go).
+func TestIntegration_GrantTenantAccess_EsElAltaCompleta(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	roles := iampostgres.NewRoleRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db)
+
+	userID := uuid.NewString()
+	role, err := roles.Create(ctx, domain.Role{TenantID: &env.tenantID, Name: "acceso-it"})
+	if err != nil {
+		t.Fatalf("crear rol: %v", err)
+	}
+
+	// Dos veces seguidas: el alta es idempotente entera, ni duplica membresía ni
+	// duplica rol (los dos INSERT llevan ON CONFLICT DO NOTHING).
+	for vuelta := range 2 {
+		if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, &role.ID); err != nil {
+			t.Fatalf("GrantTenantAccess (vuelta %d): %v", vuelta, err)
+		}
+		tenants, terr := members.TenantsOfUser(ctx, userID)
+		if terr != nil {
+			t.Fatalf("TenantsOfUser: %v", terr)
+		}
+		if len(tenants) != 1 || tenants[0] != env.tenantID {
+			t.Fatalf("membresías = %v, quiero [%s]", tenants, env.tenantID)
+		}
+		asignados, rerr := roles.RolesOfUser(ctx, userID, env.tenantID)
+		if rerr != nil {
+			t.Fatalf("RolesOfUser: %v", rerr)
+		}
+		if len(asignados) != 1 || asignados[0].ID != role.ID {
+			t.Fatalf("roles = %+v, quiero solo %s", asignados, role.ID)
+		}
+	}
+}
+
+// TestIntegration_GrantTenantAccess_LaGuardaCortaAntesDelRol: la segunda empresa
+// se rechaza, y el rechazo ocurre ANTES de escribir nada — rol incluido.
+func TestIntegration_GrantTenantAccess_LaGuardaCortaAntesDelRol(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	roles := iampostgres.NewRoleRepo(env.db)
+	userID := uuid.NewString()
+
+	if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, nil); err != nil {
+		t.Fatalf("GrantTenantAccess (primera empresa): %v", err)
+	}
+
+	otherSlug := fmt.Sprintf("iam-it-acceso-otra-%d", time.Now().UnixNano())
+	otherTn, err := postgres.NewTenantRepository(env.db).Create(ctx, otherSlug, "Otra")
+	if err != nil {
+		t.Fatalf("sembrar other tenant: %v", err)
+	}
+	otherRole, err := roles.Create(ctx, domain.Role{TenantID: &otherTn.ID, Name: "acceso-it-otra"})
+	if err != nil {
+		t.Fatalf("crear other role: %v", err)
+	}
+
+	err = iampostgres.GrantTenantAccess(ctx, env.db, userID, otherTn.ID, &otherRole.ID)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("segunda empresa: err = %v, quiero domain.ErrConflict", err)
+	}
+	asignados, err := roles.RolesOfUser(ctx, userID, otherTn.ID)
+	if err != nil {
+		t.Fatalf("RolesOfUser: %v", err)
+	}
+	if len(asignados) != 0 {
+		t.Fatalf("el rechazo debía cortar ANTES del rol: %+v", asignados)
+	}
+}
+
+// TestIntegration_GrantTenantAccess_SinRol: roleID nil es la vía del plano de
+// administración del tenant — da la membresía y NO toca iam_user_roles.
+func TestIntegration_GrantTenantAccess_SinRol(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	roles := iampostgres.NewRoleRepo(env.db)
+	userID := uuid.NewString()
+
+	if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, nil); err != nil {
+		t.Fatalf("GrantTenantAccess (sin rol): %v", err)
+	}
+	tenants, err := iampostgres.NewMembershipRepo(env.db).TenantsOfUser(ctx, userID)
+	if err != nil || len(tenants) != 1 {
+		t.Fatalf("membresías = %v err=%v", tenants, err)
+	}
+	asignados, err := roles.RolesOfUser(ctx, userID, env.tenantID)
+	if err != nil {
+		t.Fatalf("RolesOfUser: %v", err)
+	}
+	if len(asignados) != 0 {
+		t.Fatalf("sin roleID no debía asignarse ningún rol: %+v", asignados)
+	}
+}
+
+// TestIntegration_MembersOf ejercita contra Postgres REAL la lectura inversa que
+// estrena el Plan 047 · Ola 1.0 · T1.0-4: los miembros de UN tenant.
+//
+// 🔴 Este test no es opcional aunque el listado ya tenga unitarios: los
+// unitarios corren contra el doble en memoria y NO ejecutan una sola línea de
+// este SQL. Un `WHERE` que se olvida, un `::text` que falta o un ORDER BY sobre
+// una columna que no existe compilan igual de bien y darían verde en todo lo
+// demás — el SQL solo se prueba ejecutándolo.
+//
+// Se siembran DOS tenants a propósito: con uno solo, una consulta sin WHERE
+// devolvería exactamente lo mismo que la correcta.
+func TestIntegration_MembersOf(t *testing.T) {
+	t.Parallel()
+	env := newITEnv(t)
+	ctx := context.Background()
+	members := iampostgres.NewMembershipRepo(env.db)
+
+	// Una empresa sin nadie devuelve lista vacía, no error: los tenants nacen
+	// antes que su gente.
+	iniciales, err := members.MembersOf(ctx, env.tenantID)
+	if err != nil {
+		t.Fatalf("MembersOf (empresa vacía): %v", err)
+	}
+	if len(iniciales) != 0 {
+		t.Fatalf("una empresa recién creada debería venir sin miembros, got %v", iniciales)
+	}
+
+	vecina := sembrarTenantVecino(t, env)
+	primero, segundo, ajeno := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	sembrarMiembro(t, env, primero, env.tenantID)
+	sembrarMiembro(t, env, segundo, env.tenantID)
+	sembrarMiembro(t, env, ajeno, vecina)
+
+	propios, err := members.MembersOf(ctx, env.tenantID)
+	if err != nil {
+		t.Fatalf("MembersOf: %v", err)
+	}
+	if len(propios) != 2 {
+		t.Fatalf("MembersOf devolvió %d filas, want 2: %+v", len(propios), propios)
+	}
+	exigirFilasPropias(t, propios, env.tenantID)
+	vistos := idsDeMembresias(propios)
+	if !vistos[primero] || !vistos[segundo] {
+		t.Errorf("faltan miembros propios en %+v", propios)
+	}
+	if vistos[ajeno] {
+		t.Error("MembersOf devolvió el miembro de la OTRA empresa: fuga de aislamiento")
+	}
+
+	// La baja se refleja en la lectura: es la comprobación de que el listado lee
+	// de la misma tabla en la que escribe Remove, y no de otro sitio.
+	if err := members.Remove(ctx, primero, env.tenantID); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	tras, err := members.MembersOf(ctx, env.tenantID)
+	if err != nil {
+		t.Fatalf("MembersOf tras la baja: %v", err)
+	}
+	if len(tras) != 1 || tras[0].UserID != segundo {
+		t.Errorf("tras la baja de %s el listado es %+v, want solo %s", primero, tras, segundo)
+	}
+}
+
+// sembrarTenantVecino crea una SEGUNDA empresa en la misma base. Sin ella, una
+// consulta a la que se le olvidara el WHERE devolvería lo mismo que la correcta.
+func sembrarTenantVecino(t *testing.T, env itEnv) string {
+	t.Helper()
+	tn, err := postgres.NewTenantRepository(env.db).Create(context.Background(),
+		fmt.Sprintf("iam-it-vecina-%d", time.Now().UnixNano()), "IAM IT vecina")
+	if err != nil {
+		t.Fatalf("sembrar el segundo tenant: %v", err)
+	}
+	return tn.ID
+}
+
+// sembrarMiembro escribe una fila de tenant_members a mano: lo que se prueba es
+// la LECTURA, así que la siembra no pasa por el repositorio.
+func sembrarMiembro(t *testing.T, env itEnv, userID, tenantID string) {
+	t.Helper()
+	if _, err := env.db.ExecContext(context.Background(),
+		`INSERT INTO public.tenant_members (user_id, tenant_id) VALUES ($1, $2)`,
+		userID, tenantID); err != nil {
+		t.Fatalf("sembrar membresía (%s): %v", userID, err)
+	}
+}
+
+// exigirFilasPropias comprueba lo que TODA fila devuelta tiene que cumplir: ser
+// del tenant pedido y traer la fecha de alta, que es la columna sobre la que se
+// apoya el ORDER BY.
+func exigirFilasPropias(t *testing.T, filas []domain.Membership, tenantID string) {
+	t.Helper()
+	for _, m := range filas {
+		if m.TenantID != tenantID {
+			t.Errorf("una fila trae tenant_id=%q, want %q: el WHERE no acota", m.TenantID, tenantID)
+		}
+		if m.CreatedAt.IsZero() {
+			t.Errorf("la fila %s viene sin created_at: el ORDER BY se apoya en esa columna", m.UserID)
+		}
+	}
+}
+
+// idsDeMembresias indexa por user_id para preguntar por presencia sin recorrer.
+func idsDeMembresias(filas []domain.Membership) map[string]bool {
+	vistos := make(map[string]bool, len(filas))
+	for _, m := range filas {
+		vistos[m.UserID] = true
+	}
+	return vistos
 }

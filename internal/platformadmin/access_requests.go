@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/google/uuid"
@@ -306,39 +308,27 @@ func (r *Repository) executeApprovalTx(ctx context.Context, requestID, tenantID,
 		}
 	}()
 
-	// M-04: la comprobación de membresía cruzada vive DENTRO de la misma tx
-	// que escribe, y es CONTABLE -- no lee una fila arbitraria de una PK
-	// compuesta (user_id, tenant_id) con N filas posibles por usuario sin
-	// ORDER BY, que podía dejar pasar a alguien con 2+ membresías si la fila
-	// leída al azar coincidía con el tenant pedido. Un COUNT(*) > 0 basta: no
-	// importa CUÁL de las otras empresas tiene, solo que tiene alguna distinta
-	// de esta.
-	var otherMemberships int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM public.tenant_members
-		WHERE user_id = $1 AND tenant_id <> $2
-	`, userID, tenantID).Scan(&otherMemberships); err != nil {
-		return fmt.Errorf("platformadmin: check cross-tenant membership: %w", err)
-	}
-	if otherMemberships > 0 {
-		return ErrConflict
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO public.tenant_members (user_id, tenant_id)
-		VALUES ($1, $2)
-		ON CONFLICT DO NOTHING
-	`, userID, tenantID); err != nil {
-		return fmt.Errorf("platformadmin: insert tenant_member: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO public.iam_user_roles (user_id, role_id, tenant_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, role_id, tenant_id) DO NOTHING
-	`, userID, roleID, tenantID); err != nil {
-		return fmt.Errorf("platformadmin: insert iam_user_role: %w", err)
+	// 🔴 LOS TRES PRIMEROS PASOS DE ESTA TX YA NO VIVEN AQUÍ (Plan 047 · Ola 1.0 ·
+	// T1.0-2, REQ-17). La guarda de membresía cruzada (M-04), el INSERT en
+	// tenant_members y la asignación del rol son «dar acceso a una empresa», y eso
+	// es exactamente lo que hace la vía nueva del plano de administración del
+	// tenant. Compartirlo era lo deseable y se hizo: el caso de uso común es
+	// iampostgres.GrantTenantAccess y public.tenant_members tiene UN solo escritor
+	// en todo el código (candado estructural en
+	// iam/infra/postgres/membresia_unica_ast_test.go).
+	//
+	// Lo que NO se comparte es el paso de abajo —marcar la solicitud como
+	// 'approved'—, que es de ESTA bandeja y de ninguna otra. Por eso
+	// GrantTenantAccess recibe la transacción en vez de abrir la suya: si
+	// commiteara por su cuenta, una aprobación podría dar el acceso y dejar la
+	// solicitud en 'pending'.
+	if err := iampostgres.GrantTenantAccess(ctx, tx, userID, tenantID, &roleID); err != nil {
+		// El conflicto de «una sola empresa» sale como domain.ErrConflict y esta
+		// bandeja lo expresa con SU sentinel, que es el que sus handlers traducen.
+		if errors.Is(err, domain.ErrConflict) {
+			return ErrConflict
+		}
+		return err
 	}
 
 	var opArg any
