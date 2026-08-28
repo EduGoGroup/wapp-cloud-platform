@@ -13,7 +13,7 @@
 **Monolito modular Go** (ADR-0010) que aloja todo lo que gestiona el equipo de wApp
 (plataforma SaaS). La nube **piensa**; el Edge despacha (ADR-0005).
 
-**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.45.0` —
+**Estado: implementada y en piloto** (esquema en `SchemaVersion`, hoy `0.46.0` —
 `internal/platform/storage/postgres/migrations/version.go`; no fijamos aquí un SHA porque
 caduca al commit siguiente). NO es scaffold ni greenfield:
 cubre IAM, API pública, Motor de Flujos con sus módulos, gateway CloudLink y la
@@ -117,10 +117,14 @@ durabilidad la da el `outbox` del Edge.
 ### Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … `0081_intakes_expiry_reminded.sql`).
-El runner los aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy
-**0.45.0**) contra `public.schema_version`; además hashea los archivos para detectar cambios
-aunque no se suba la versión.
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … la última, que se pregunta al directorio).
+El runner los aplica al arranque y valida `SchemaVersion` contra `public.schema_version`; además
+hashea los archivos para detectar cambios aunque no se suba la versión. 🔴 **El valor NO se copia
+aquí: caduca.** Pregúntalo al código —
+`grep -oE 'SchemaVersion = "[0-9.]+"' internal/platform/storage/postgres/migrations/version.go` — y
+la última migración con `ls .../migrations/structure/ | tail -1`. (Este párrafo dijo **0.45.0** y
+**`0081_…`** hasta el 2026-08-28, cuando el real era **0.46.0** y **`0084_…`**: mismo antídoto que
+aplicó `wapp-cloudlink/CLAUDE.md` con su tag.)
 
 **Cuándo hay que subir `SchemaVersion` — la regla honesta.** El runner reaplica por **hash de
 contenido**: `isUpToDate` exige versión **Y** hash (`migrations/schema.go:82`), así que tocar un
