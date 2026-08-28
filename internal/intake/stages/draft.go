@@ -89,6 +89,23 @@ import (
 // por el código.
 const EventoBorradorCreado = "intake_draft_created"
 
+// EventoReanalizado es el `flow_events.name` del RE-ANÁLISIS consumado (design §10,
+// D-044.15). Vive junto a EventoBorradorCreado por la misma regla: la constante se
+// declara donde está su único productor, y su único productor es esta etapa.
+//
+// 🔴 SE EMITE AL CERRAR EL JOB, NO AL ABRIRLO, y esa es la decisión de diseño entera.
+// Quien recibe el POST /reanalyze (internal/reanalisis) solo ABRE el job: no conoce
+// —no puede conocer— la revisión que el re-análisis va a escribir, porque la escribe
+// este pipeline después y de forma asíncrona. Un evento emitido allí tendría que
+// dejar `to_rev` vacío o inventado, y entonces no mediría lo que su nombre dice: el
+// KPI de este evento es «cuántas veces se equivocó el LLM y con qué vía se arregló»,
+// y una petición que muere en la cola no arregló nada. Aquí el hecho está consumado.
+//
+// La CLAVE ES `via` Y NUNCA `provider`: se renombró el 2026-08-23 (design §10) porque
+// `"api"` no es un proveedor, es un transporte (ADR-0044). Cambiarla ahora que ya
+// emite rompería cualquier consulta o panel que la use.
+const EventoReanalizado = "intake_reanalyzed"
+
 // FlujoCaptacion y VersionFlujoCaptacion son el `flow_id` / `flow_version` con los
 // que el pipeline firma sus filas de `flow_events`.
 //
@@ -565,6 +582,7 @@ func (s *Draft) Run(ctx context.Context, job intake.ClaimedJob, in EntradaDraft)
 
 	transcurrido := s.transcurrido(job)
 	s.publicarMetrica(ctx, job, in.Match, transcurrido)
+	s.publicarReanalisis(ctx, job, rev.RevisionNo)
 
 	art := &ArtefactoDraft{
 		Version:    intakes.RevisionPayloadVersion,
@@ -846,6 +864,53 @@ func (s *Draft) publicarMetrica(ctx context.Context, job intake.ClaimedJob, art 
 	if err != nil {
 		s.log.Warn("draft: no se pudo publicar la métrica del borrador; el borrador SÍ está creado",
 			"job_id", job.ID, "stage", intake.StageDraft, "name", EventoBorradorCreado, "error", err.Error())
+	}
+}
+
+// publicarReanalisis escribe la fila de `intake_reanalyzed`, y SOLO si el job lo pidió
+// el dueño (design §10, D-044.15). BEST-EFFORT, igual que su hermana de arriba y por
+// lo mismo: la revisión ya está escrita.
+//
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 EL GATE ES LA MARCA DEL JOB, EL MISMO QUE EL DEL EMPUJE AL CRM
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Un job del pipeline NORMAL no re-analiza nada: es la primera pasada. Emitir aquí en
+// todos los jobs llenaría el evento de filas con `via`, `source` y `from_rev` vacíos
+// —los cuatro campos son cero-valor fuera del re-análisis (intake/machine.go)— y el
+// KPI contaría como «el LLM se equivocó» cada pedido que salió bien a la primera.
+//
+// LOS CUATRO VALORES SON REALES Y NINGUNO SE INVENTA: los tres primeros los trae el
+// job desde la migración 0080 (los escribió el POST del dueño) y el cuarto es el
+// `revision_no` que el store ACABA de numerar en este mismo Run. `from_rev` en 0
+// significa «no había revisión previa», que es lo que ya publica el contrato §7.4 como
+// null; no se rellena con un 1 plausible.
+//
+// CERO PII, como todo lo que entra en `flow_events`: dos números y dos palabras de un
+// vocabulario cerrado (`local|api`, `event_thread|pasted_text|both`). Ni el texto que
+// pegó el dueño ni el del cliente.
+func (s *Draft) publicarReanalisis(ctx context.Context, job intake.ClaimedJob, revisionNo int) {
+	if !job.Reanalisis.EsDelDueño() {
+		return
+	}
+	err := s.eventos.InsertFlowEvent(ctx, store.FlowEvent{
+		TenantID:    job.Key.TenantID,
+		ContactID:   job.Key.ContactID,
+		FlowID:      FlujoCaptacion,
+		FlowVersion: VersionFlujoCaptacion,
+		Kind:        kindEventoFlujo,
+		Name:        EventoReanalizado,
+		Payload: map[string]any{
+			"via":      job.Reanalisis.Via,
+			"from_rev": job.Reanalisis.From,
+			"to_rev":   revisionNo,
+			"source":   job.Reanalisis.Source,
+		},
+	})
+	if err != nil {
+		s.log.Warn("draft: no se pudo publicar la métrica del re-análisis; la revisión SÍ está escrita",
+			"job_id", job.ID, "stage", intake.StageDraft, "name", EventoReanalizado,
+			"revision_no", revisionNo, "error", err.Error())
 	}
 }
 

@@ -436,6 +436,13 @@ func (s *Service) Approve(ctx context.Context, tenantID, intakeID, renderedText 
 		BuyerDataPresent: current.BuyerDataPresent,
 	}
 	s.PushRevisionToCRM(ctx, tenantID, detail, rev.RevisionNo)
+
+	// (6) la métrica de design §10 (T5.2). Las revisiones que se le pasan son las de
+	// ANTES (`current.Revisions`) y no las del detalle: lo que hay que encontrar ahí
+	// es el BORRADOR —la primera revisión `interpreted`— y la que se acaba de escribir
+	// es la `approved` de este mismo acto. Con `detail.Revisions` daría lo mismo, pero
+	// pasar el histórico previo dice en la llamada qué se está buscando.
+	s.métricaDeAprobación(ctx, tenantID, updated, rev.RevisionNo, current.Revisions)
 	return detail, nil
 }
 

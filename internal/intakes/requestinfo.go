@@ -114,6 +114,12 @@ func (s *Service) RequestInfo(ctx context.Context, tenantID, intakeID, question 
 	// una transición ya escrita no se deshace porque el teléfono esté apagado.
 	s.quotes.SendQuestion(ctx, tenantID, updated, question)
 
+	// La métrica de design §10 (T5.2). Va DESPUÉS del envío y no entre la transición y
+	// él: lo que el evento afirma es que se le pidió información al cliente, y eso
+	// ocurre cuando la pregunta sale. El payload no lleva la pregunta —ni un trozo—,
+	// solo cuántas fueron (ver métricaDeInformación).
+	s.métricaDeInformación(ctx, tenantID, updated)
+
 	return Detail{
 		Intake:           updated,
 		Items:            current.Items,
