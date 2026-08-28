@@ -229,11 +229,18 @@ func (r *RoleRepo) AssignToUser(ctx context.Context, userID, roleID string, tena
 	return nil
 }
 
-// UnassignFromUser implementa out.RoleRepo.
-func (r *RoleRepo) UnassignFromUser(ctx context.Context, userID, roleID string) error {
+// UnassignFromUser implementa out.RoleRepo, SIMÉTRICO a AssignToUser: tenantID
+// nil retira la asignación GLOBAL (tenant_id IS NULL) y no nil retira solo la
+// acotada a esa empresa.
+//
+// El `tenant_id IS NOT DISTINCT FROM $3` es lo que hace las dos ramas UNA: `=`
+// nunca casa contra NULL, así que con la comparación normal el caso global
+// —que es el que escribe AssignToUser con nil— no borraría nada.
+func (r *RoleRepo) UnassignFromUser(ctx context.Context, userID, roleID string, tenantID *string) error {
 	_, err := r.db.ExecContext(ctx, `
-		DELETE FROM public.iam_user_roles WHERE user_id = $1 AND role_id = $2
-	`, userID, roleID)
+		DELETE FROM public.iam_user_roles
+		WHERE user_id = $1 AND role_id = $2 AND tenant_id IS NOT DISTINCT FROM $3
+	`, userID, roleID, nullString(tenantID))
 	if err != nil {
 		return fmt.Errorf("iam: quitar rol de usuario: %w", err)
 	}

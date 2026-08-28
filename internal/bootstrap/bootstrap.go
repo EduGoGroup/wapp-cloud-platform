@@ -847,7 +847,7 @@ func Run(ctx context.Context) error {
 	// Encender solo uno deja la otra vía MUDA y no da ningún rojo: los tests de cada
 	// vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	filtersPusher := filtercfg.NewPusher(fleetRepo, gw)
-	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, log, mtx, authStk, publicapi.Deps{
+	publicSrv, authMW, auditor, err := buildPublicAPIServer(cfg, db, log, mtx, authStk, publicapi.Deps{
 		Sender: gw,
 		FlowDeps: publicapi.FlowDeps{
 			Flows:   flowStore,

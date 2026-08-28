@@ -33,6 +33,29 @@ type Role struct {
 	CreatedAt    time.Time
 }
 
+// Membership es la pertenencia de una persona a una empresa (tabla
+// public.tenant_members, migración 0037). Es el vínculo de NEGOCIO que se queda
+// en wApp: identity dice QUIÉN es la persona y esta fila a QUÉ empresa pertenece.
+//
+// 🔴 SON LAS TRES COLUMNAS DE LA TABLA Y NI UNA MÁS, y esa es toda la entidad.
+// No trae nombre ni correo, y no es un recorte pendiente de completar: la
+// persona vive en identity-core (INV-02), en otra base, y `user_id` no tiene FK
+// que cruzar. Rellenar esos campos saliendo a identity al listar convertiría una
+// lectura del propio tenant en una consulta al padrón del grupo — decisión de
+// producto, no de esta capa. CERO PII.
+type Membership struct {
+	// UserID es el UUID de la cuenta en identity. Es un identificador OPACO.
+	UserID string
+	// TenantID es la empresa. Redundante en un listado acotado a una sola
+	// empresa, y aun así va en la entidad: es la mitad de la clave primaria, y
+	// omitirla obligaría a reconstruirla desde el contexto en cada consumidor.
+	TenantID string
+	// CreatedAt es cuándo entró en la empresa (columna created_at). Es lo que
+	// permite ordenar el listado de forma estable y lo único que hay que
+	// enseñarle a la dueña además del id.
+	CreatedAt time.Time
+}
+
 // Grant es un patrón de permiso glob `recurso.accion` con su efecto
 // (public.iam_role_grants / public.iam_user_grants). Es la unidad que se agrega
 // (rol + cadena ⊕ overrides de usuario) para formar los grants EFECTIVOS que se

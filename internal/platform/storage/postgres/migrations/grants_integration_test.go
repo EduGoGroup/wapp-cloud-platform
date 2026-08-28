@@ -112,36 +112,10 @@ func TestPlatformAdminGrants_Integration(t *testing.T) {
 	)
 
 	// loadGrants arma un rbac.Grants con los patrones sembrados para un rol.
+	// Delega en el helper de paquete (el mismo que usan los tests de INV-10):
+	// un solo lector del seed, un solo formato.
 	loadGrants := func(roleID string) identityrbac.Grants {
-		t.Helper()
-		rows, err := db.Query(`
-			SELECT pattern, effect FROM public.iam_role_grants WHERE role_id = $1
-		`, roleID)
-		if err != nil {
-			t.Fatalf("consultar grants del rol %s: %v", roleID, err)
-		}
-		defer func() {
-			if cerr := rows.Close(); cerr != nil {
-				t.Logf("cerrando filas de grants del rol %s: %v", roleID, cerr)
-			}
-		}()
-
-		var g identityrbac.Grants
-		for rows.Next() {
-			var pattern, effect string
-			if serr := rows.Scan(&pattern, &effect); serr != nil {
-				t.Fatalf("escanear grant: %v", serr)
-			}
-			if effect == "deny" {
-				g.Deny = append(g.Deny, pattern)
-			} else {
-				g.Allow = append(g.Allow, pattern)
-			}
-		}
-		if rerr := rows.Err(); rerr != nil {
-			t.Fatalf("recorrer grants: %v", rerr)
-		}
-		return g
+		return loadRoleGrants(t, db, roleID)
 	}
 
 	// El rol platform_admin tiene que EXISTIR: sin él no hay quien revoque.
@@ -192,5 +166,223 @@ func TestPlatformTenant_Integration(t *testing.T) {
 	}
 	if slug != "wapp-platform" {
 		t.Fatalf("slug del tenant de plataforma = %q, want wapp-platform", slug)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Plan 047 · Ola 1.0 · T1.0-3 — el plano de roles del tenant y la cerca INV-10.
+// ---------------------------------------------------------------------------
+
+// IDs de los roles canónicos (0015_iam_roles.sql) y del rol de plataforma
+// (0059_platform_admin.sql).
+const (
+	roleTenantAdmin   = "10000000-0000-0000-0000-000000000001"
+	roleOperator      = "10000000-0000-0000-0000-000000000002"
+	roleViewer        = "10000000-0000-0000-0000-000000000003"
+	rolePlatformAdmin = "10000000-0000-0000-0000-000000000004"
+)
+
+// rolePlaneScopes son los cuatro scopes que 0084 define para el plano 2 del
+// ADR-0033 (las tablas iam_* y tenant_members del PROPIO tenant).
+var rolePlaneScopes = []string{"roles.read", "roles.write", "members.read", "members.write"}
+
+// platformPlaneScopes son los del plano de plataforma: los dos del kill-switch
+// comercial (0059) y los cinco de la consola (0060). Todos '.any'.
+var platformPlaneScopes = []string{
+	"tenants.revoke.any", "tenants.restore.any",
+	"tenants.read.any", "tenants.create.any", "fleet.read.any",
+	"users.provision.any", "enrollment.issue.any",
+}
+
+// loadRoleGrants arma un rbac.Grants con los patrones SEMBRADOS para un rol,
+// leídos de la BD real. Es el mismo formato que el emisor de tokens mete en el
+// claim (usecase.grantsToAuth) y que evalúa el middleware en producción.
+func loadRoleGrants(t *testing.T, db *sql.DB, roleID string) identityrbac.Grants {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT pattern, effect FROM public.iam_role_grants WHERE role_id = $1
+	`, roleID)
+	if err != nil {
+		t.Fatalf("consultar grants del rol %s: %v", roleID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			t.Logf("cerrando filas de grants del rol %s: %v", roleID, cerr)
+		}
+	}()
+
+	var g identityrbac.Grants
+	for rows.Next() {
+		var pattern, effect string
+		if serr := rows.Scan(&pattern, &effect); serr != nil {
+			t.Fatalf("escanear grant: %v", serr)
+		}
+		if effect == "deny" {
+			g.Deny = append(g.Deny, pattern)
+		} else {
+			g.Allow = append(g.Allow, pattern)
+		}
+	}
+	if rerr := rows.Err(); rerr != nil {
+		t.Fatalf("recorrer grants: %v", rerr)
+	}
+	return g
+}
+
+// TestRolePlaneScopes_Integration verifica la mitad del criterio de T1.0-3 que
+// habla de los roles del TENANT, contra el seed real y con el evaluador de
+// producción: tenant_admin alcanza los cuatro scopes por su glob, viewer lee y
+// NO escribe, y operator no alcanza ninguno.
+//
+// Lo del operator no es un descuido convertido en test: 0084 lo excluye a
+// propósito (roles.write es escalada directa — quien asigna roles se asigna
+// tenant_admin) y este assert es lo que hace ruido si alguien se lo concede sin
+// leer ese porqué. No es vacuo: si mañana el seed le añadiera 'roles.write'
+// allow al operator, esta comprobación se pone roja.
+func TestRolePlaneScopes_Integration(t *testing.T) {
+	db := openGrantsTestDB(t)
+
+	tenantAdmin := loadRoleGrants(t, db, roleTenantAdmin)
+	viewer := loadRoleGrants(t, db, roleViewer)
+	operator := loadRoleGrants(t, db, roleOperator)
+
+	// tenant_admin: los CUATRO, por su '*' (0015). Es el destinatario de las
+	// pantallas T1.2/T1.3/T1.4.
+	for _, scope := range rolePlaneScopes {
+		if !identityrbac.EvaluateGrants(tenantAdmin, scope) {
+			t.Errorf("`tenant_admin` NO alcanza %q (allow=%v deny=%v): la dueña de la empresa "+
+				"no podría administrar su propio equipo", scope, tenantAdmin.Allow, tenantAdmin.Deny)
+		}
+	}
+
+	// viewer: lee por '*.read' (0015) y NO escribe.
+	for _, scope := range []string{"roles.read", "members.read"} {
+		if !identityrbac.EvaluateGrants(viewer, scope) {
+			t.Errorf("`viewer` NO alcanza %q (allow=%v deny=%v): '*.read' debería cubrirlo",
+				scope, viewer.Allow, viewer.Deny)
+		}
+	}
+	for _, scope := range []string{"roles.write", "members.write"} {
+		if identityrbac.EvaluateGrants(viewer, scope) {
+			t.Errorf("`viewer` PUEDE %q (allow=%v deny=%v): un rol de solo lectura estaría "+
+				"cambiando quién puede qué en la empresa", scope, viewer.Allow, viewer.Deny)
+		}
+	}
+
+	// operator: ninguno de los cuatro (decisión escrita en 0084).
+	for _, scope := range rolePlaneScopes {
+		if identityrbac.EvaluateGrants(operator, scope) {
+			t.Errorf("`operator` alcanza %q (allow=%v deny=%v). 0084 lo excluye a propósito: "+
+				"quien asigna roles puede asignarse tenant_admin. Si la concesión es deliberada, "+
+				"cámbiala en la migración Y aquí, con el porqué escrito.",
+				scope, operator.Allow, operator.Deny)
+		}
+	}
+}
+
+// TestINV10_LosDosPerimetrosSiguenAislados_Integration es el corazón del criterio
+// de T1.0-3: la cerca del Plan 056 en los CUATRO cruces, contra el seed real.
+//
+//	(1) tenant_admin  -> plano de PLATAFORMA  = NIEGA   (cruce ilegítimo)
+//	(2) platform_admin -> plano de TENANT     = NIEGA   (cruce ilegítimo)
+//	(3) tenant_admin  -> plano de TENANT      = PERMITE (legítimo)
+//	(4) platform_admin -> plano de PLATAFORMA = PERMITE (legítimo)
+//
+// Los dos legítimos no son decoración: son lo que impide "arreglar" un cruce
+// ilegítimo amputando el plano entero. Un deny demasiado ancho pondría (3) o (4)
+// en rojo, que es justo lo que 0084 evita al denegar POR NOMBRE y no por forma.
+func TestINV10_LosDosPerimetrosSiguenAislados_Integration(t *testing.T) {
+	db := openGrantsTestDB(t)
+
+	tenantAdmin := loadRoleGrants(t, db, roleTenantAdmin)
+	platformAdmin := loadRoleGrants(t, db, rolePlatformAdmin)
+
+	if len(platformAdmin.Allow) == 0 {
+		t.Fatal("`platform_admin` no tiene grants sembrados: la cerca no se puede medir")
+	}
+
+	// (1) El administrador de una empresa NO entra en el plano de plataforma.
+	// Aquí el deny '*.any' de 0059 es imprescindible y se ve: tenant_admin tiene
+	// '*', que sin ese deny cubriría los siete.
+	for _, scope := range platformPlaneScopes {
+		if identityrbac.EvaluateGrants(tenantAdmin, scope) {
+			t.Errorf("CRUCE 1 ABIERTO: `tenant_admin` alcanza %q (allow=%v deny=%v). "+
+				"Falta el deny '*.any' de 0059_platform_admin.sql o alguien lo retiró.",
+				scope, tenantAdmin.Allow, tenantAdmin.Deny)
+		}
+	}
+
+	// (2) El operador de plataforma NO entra en la administración de una empresa.
+	for _, scope := range rolePlaneScopes {
+		if identityrbac.EvaluateGrants(platformAdmin, scope) {
+			t.Errorf("CRUCE 2 ABIERTO: `platform_admin` alcanza %q (allow=%v deny=%v)",
+				scope, platformAdmin.Allow, platformAdmin.Deny)
+		}
+	}
+
+	// (2b) …y lo niega por el DENY de 0084, no por casualidad. Sin este bloque el
+	// assert de arriba sería DECORADO: hoy platform_admin tampoco tiene ningún
+	// allow que case, así que saldría verde con las cuatro filas de 0084
+	// borradas. Se le añade a mano el '*' que un día podría ganar la consola
+	// (exactamente el agujero que 0059 documenta para el otro lado) y se vuelve a
+	// preguntar: si las filas de deny existen, la respuesta sigue siendo no.
+	conGlob := identityrbac.Grants{
+		Allow: append(append([]string{}, platformAdmin.Allow...), "*"),
+		Deny:  append([]string{}, platformAdmin.Deny...),
+	}
+	for _, scope := range rolePlaneScopes {
+		if identityrbac.EvaluateGrants(conGlob, scope) {
+			t.Errorf("CRUCE 2 sostenido solo por el default-DENY: con un '*' añadido a "+
+				"`platform_admin`, %q queda PERMITIDO. Faltan las filas de deny de "+
+				"0084_iam_role_plane_grants.sql.", scope)
+		}
+	}
+
+	// (3) El cruce legítimo del tenant: sigue abierto en su propio plano, y no
+	// solo en los cuatro scopes nuevos — el deny de 0059 es por forma y hay que
+	// probar que no se llevó por delante lo de siempre (leases.revoke es el OTRO
+	// kill-switch, el anti-clon por instalación del ADR-0007).
+	legitimosDelTenant := append(append([]string{}, rolePlaneScopes...),
+		"leases.revoke", "flows.create", "messages.send", "intakes.write")
+	for _, scope := range legitimosDelTenant {
+		if !identityrbac.EvaluateGrants(tenantAdmin, scope) {
+			t.Errorf("CRUCE 3 ROTO: `tenant_admin` ya NO alcanza %q (allow=%v deny=%v): "+
+				"una cerca se llevó por delante un permiso legítimo del tenant",
+				scope, tenantAdmin.Allow, tenantAdmin.Deny)
+		}
+	}
+
+	// (4) El cruce legítimo de la plataforma: los deny de 0084 no pueden tocar
+	// los siete '.any' de la consola (0059/0060). Es lo que se rompería si
+	// alguien "endureciera" 0084 cambiando los nombres exactos por 'roles.*' /
+	// 'members.*' el día que exista un 'members.read.any' de soporte.
+	for _, scope := range platformPlaneScopes {
+		if !identityrbac.EvaluateGrants(platformAdmin, scope) {
+			t.Errorf("CRUCE 4 ROTO: `platform_admin` ya NO alcanza %q (allow=%v deny=%v): "+
+				"un deny del plano de tenant amputó la consola de plataforma",
+				scope, platformAdmin.Allow, platformAdmin.Deny)
+		}
+	}
+}
+
+// TestSeed_RolePlaneDenyRows_Integration mira la FILA, no solo la conducta. La
+// conducta de (2) ya la cubre el bloque (2b) de arriba, pero el fallo que se ve
+// aquí dice qué falta y dónde, en vez de dejar deducirlo de un evaluador.
+func TestSeed_RolePlaneDenyRows_Integration(t *testing.T) {
+	db := openGrantsTestDB(t)
+
+	for _, scope := range rolePlaneScopes {
+		var n int
+		if err := db.QueryRow(`
+			SELECT count(*) FROM public.iam_role_grants
+			 WHERE role_id = $1 AND pattern = $2 AND effect = 'deny'
+		`, rolePlatformAdmin, scope).Scan(&n); err != nil {
+			t.Fatalf("consultar deny %q: %v", scope, err)
+		}
+		if n != 1 {
+			t.Errorf("falta el deny de `platform_admin` sobre %q "+
+				"(0084_iam_role_plane_grants.sql): count=%d. La cerca INV-10 en la dirección "+
+				"plataforma→tenant quedaría sostenida solo por el default-DENY.", scope, n)
+		}
 	}
 }

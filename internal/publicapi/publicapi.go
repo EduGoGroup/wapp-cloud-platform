@@ -32,6 +32,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
+	iamin "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -252,6 +253,21 @@ type Deps struct {
 	// T6.5, cierra MD-043.17. Lo satisface *PostgresEventTelemetryStore. nil ⇒
 	// no se monta GET /api/v1/events/telemetry.
 	EventTelemetry EventTelemetryReader
+	// Roles es la administración de RBAC de la EMPRESA del token (Plan 047 · Ola
+	// 1.0, plano 2 del ADR-0033): listar/crear roles, asignarlos a los miembros y
+	// conceder/revocar grants. Lo satisface *iamusecase.RoleService. nil ⇒ no se
+	// montan las rutas /api/v1/roles ni las de rol/grant bajo /api/v1/members.
+	//
+	// El tenant NO viaja por aquí: el servicio lo resuelve por su in.CallerResolver
+	// desde la Identity del token (INV-04), igual que el resto de esta API.
+	Roles iamin.RoleAdmin
+	// Members es el alta y la baja de personas en la empresa del token (Plan 047 ·
+	// Ola 1.0 · T1.0-2). Lo satisface *iamusecase.MembershipService. nil ⇒ no se
+	// montan POST /api/v1/members ni DELETE /api/v1/members/{user_id}.
+	//
+	// Va SEPARADO de Roles porque son dos permisos distintos (members.write frente
+	// a roles.write) y porque un despliegue puede querer uno sin el otro.
+	Members iamin.MembershipAdmin
 	// DBTimeout es el plazo de cada consulta a BD de estos handlers, cableado desde
 	// config.PublicAPIDBTimeout (1,5s por defecto; Plan 050 · Ola 3). <=0 cae a
 	// defaultDBTimeout — la promesa la cumple dbCtx, que es por donde pasan TODAS
@@ -583,6 +599,11 @@ func Register(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, auditor httpap
 	// registerConversationEvents/registerTenantVariables: un `if` más aquí
 	// rozaría el techo del linter (gocyclo 15).
 	registerEventTelemetry(mux, d, mw, log)
+
+	// Plano de ROLES Y MIEMBROS de la empresa (Plan 047 · Ola 1.0 · T1.0-4). En su
+	// propia función por la misma razón que las de arriba: sus dos `if` de montaje
+	// sumarían a la complejidad de Register, que ya roza el techo del linter.
+	registerRolePlane(mux, d, mw, auditor, log)
 }
 
 // registerIntakes monta la bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4/T4.10,

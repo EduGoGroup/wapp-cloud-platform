@@ -367,7 +367,28 @@ import (
 //
 // (Las entradas de arriba dicen «de Neon»: desde la migración del VPS esa base es un
 // Postgres 17 en Docker, `wapp-postgres`. La fila y el argumento son los mismos.)
-const SchemaVersion = "0.45.0"
+// 0.46.0 — Plan 047 · Ola 1.0 · T1.0-3 (0084): los cuatro scopes del PLANO DE ROLES
+// del tenant (`roles.read`/`roles.write`, `members.read`/`members.write`) y la cerca
+// INV-10 en la dirección que faltaba. Es el bump ÚNICO del Plan 047: sus olas
+// posteriores pueden añadir migraciones sin volver a moverlo (primera mitad de la
+// regla de arriba).
+//
+// La migración no siembra ni un `allow` y eso es la decisión, no el olvido:
+// tenant_admin alcanza los cuatro por su '*' (0015) y viewer alcanza los dos de
+// lectura por '*.read', así que el criterio de T1.0-3 —"un tenant_admin los tiene
+// por su glob; un viewer no puede escribir"— se cumple con el seed que ya existía.
+// Lo que 0084 AÑADE son cuatro `deny` sobre platform_admin: hasta hoy, que el plano
+// de plataforma no entrara en el de tenant se sostenía solo sobre el default-DENY,
+// es decir, sobre que a nadie le diera por ampliar la consola con un glob. El lado
+// simétrico de esa cerca lleva puesto desde 0059 (el deny '*.any' sobre
+// tenant_admin) precisamente porque allí el glob YA existía.
+//
+// El bump toca aquí y no en el cierre del plan por la segunda mitad de la regla: la
+// 0.45.0 ya se publicó y ya corre en UAT (Plan 044 · Ola 4), así que esta migración
+// es la PRIMERA que cambia el esquema por encima de una versión ya escrita en la fila
+// de public.schema_version. Dejarla sin bump haría que esa fila afirmara 0.45.0 sobre
+// un esquema que ya no es el suyo.
+const SchemaVersion = "0.46.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

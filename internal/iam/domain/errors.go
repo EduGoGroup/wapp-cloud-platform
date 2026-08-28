@@ -19,6 +19,22 @@ var (
 	// detectado por un usecase antes de tocar el repositorio.
 	ErrInvalidInput = errors.New("iam: entrada inválida")
 
+	// ErrNoTenant indica que quien llama no trae empresa en su contexto de
+	// identidad. NO es lo mismo que "no autenticado": desde D-056.12 el canje
+	// emite un Context Token válido y SIN tenant para quien todavía no tiene
+	// membresía, y ese token no puede administrar nada. Los usecases acotados a
+	// un tenant fallan con esto antes de tocar un repositorio, porque sin tenant
+	// del CONTEXTO no hay dónde acotar (INV-8) y el único sustituto posible
+	// sería un tenant elegido por el llamante.
+	ErrNoTenant = errors.New("iam: el contexto de identidad no trae tenant")
+
+	// ErrGlobalRoleImmutable indica un intento de MODIFICAR una plantilla global
+	// (iam_roles con tenant_id NULL) desde la administración de un tenant. Las
+	// plantillas son visibles para todos y asignables por todos, y justo por eso
+	// no son editables por ninguno: cambiar sus grants cambiaría los permisos de
+	// todos los tenants a la vez. Leerlas y asignarlas sigue permitido.
+	ErrGlobalRoleImmutable = errors.New("iam: las plantillas de rol globales no se modifican desde un tenant")
+
 	// ErrInvalidCredentials indica que el par (email, password) no autentica. Lo
 	// devuelve identity-core, que es quien las valida desde la Ola 3; wApp solo
 	// lo traduce. Es deliberadamente OPACO (no distingue "usuario inexistente" de
