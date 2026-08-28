@@ -261,25 +261,6 @@ func (r *Repository) checkRetryApproved(ctx context.Context, userID, tenantID, r
 	return nil
 }
 
-// hasOtherApprovedRequest dice si el usuario tiene OTRA solicitud (distinta de
-// excludeRequestID) ya aprobada. Es la señal local -- la única disponible sin
-// lectura de identity (ErrSystemsUnionUnavailable) -- de que esta cuenta pudo
-// haber recibido systems en una pasada ANTERIOR por esta misma bandeja y por
-// tanto no es segura para un ReplaceUserSystems ciego.
-func (r *Repository) hasOtherApprovedRequest(ctx context.Context, userID, excludeRequestID string) (bool, error) {
-	var exists bool
-	err := r.db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM public.access_requests
-			WHERE user_id = $1 AND id <> $2 AND status = 'approved'
-		)
-	`, userID, excludeRequestID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("platformadmin: check prior approvals: %w", err)
-	}
-	return exists, nil
-}
-
 // resolveRoleID encuentra el id canónico del rol por nombre o id.
 func (r *Repository) resolveRoleID(ctx context.Context, role string) (string, error) {
 	var roleID string
@@ -450,19 +431,47 @@ func (r *Repository) syncApprovedSystems(ctx context.Context, userID, requestID 
 		return ErrIdentityM2MUnavailable
 	}
 
-	// (D) Unión, no reemplazo: ReplaceUserSystems es declarativo y sobre una
-	// cuenta que ya pasó antes por esta bandeja podría estar reemplazando --
-	// no sumando -- su conjunto real. Sin lectura de identity (C-05) no hay
-	// forma segura de unir, así que se rehúsa en vez de arriesgar el borrado.
-	preexistente, perr := r.hasOtherApprovedRequest(ctx, userID, requestID)
-	if perr != nil {
-		return fmt.Errorf("platformadmin: comprobar aprobaciones previas: %w", perr)
-	}
-	if preexistente {
-		return ErrSystemsUnionUnavailable
+	// (D) Unión, no reemplazo: ReplaceUserSystems es declarativo, así que
+	// mandarle solo los systems de ESTA solicitud reemplazaría -- no sumaría --
+	// el conjunto real de la persona.
+	//
+	// 🔑 Hasta el 2026-08-28 aquí se APROXIMABA la unión con una señal local
+	// («¿le aprobamos algo antes?», hasOtherApprovedRequest) y, si la respuesta
+	// era sí, se rehusaba: falso negativo en la primera aprobación y falso
+	// positivo permanente desde la segunda. Era un proxy estructuralmente
+	// equivocado, y su excusa —«no hay lectura de identity»— CADUCÓ con el Plan
+	// 047 · Ola B, que trajo GetUserSystems. Ahora se une de verdad, igual que
+	// la vía de la dueña (iam/usecase/memberships.go): leer, unir, declarar.
+	vigentes, gerr := m2m.GetUserSystems(ctx, userID)
+	if gerr != nil {
+		// Sin poder LEER no se puede unir, y un ReplaceUserSystems a ciegas
+		// borraría accesos que no son de esta bandeja. Se rehúsa, que es lo
+		// mismo que se hacía antes -- pero ahora por un fallo MEDIDO y no por
+		// una presunción sobre una tabla local.
+		return fmt.Errorf("%w: %w", ErrSystemsUnionUnavailable, gerr)
 	}
 
-	if _, err := m2m.ReplaceUserSystems(ctx, userID, systems); err != nil {
+	// slices.Clone: no se escribe en el arreglo que devolvió el puerto, que no
+	// es nuestro. El orden es el que dio identity con los nuevos al final:
+	// estable y reproducible, que es lo que permite afirmar sobre el conjunto
+	// exacto que viaja por el cable.
+	deseados := slices.Clone(vigentes)
+	for _, s := range systems {
+		if !slices.Contains(deseados, s) {
+			deseados = append(deseados, s)
+		}
+	}
+	// Si no hay nada que añadir, no se escribe: identity no tiene por qué
+	// recibir un PUT que no cambia nada (mismo criterio que T-B4).
+	if len(deseados) == len(vigentes) {
+		return nil
+	}
+
+	// ⚠️ La unión PRESERVA lo que la persona ya tuviera, incluido wapp.platform.
+	// Eso NO contradice ErrPlatformSystemForbidden: esa guarda prohíbe
+	// CONCEDERLO desde esta bandeja, y aquí no se concede nada nuevo -- se evita
+	// borrar lo que otra vía otorgó. El reemplazo ciego sí lo habría borrado.
+	if _, err := m2m.ReplaceUserSystems(ctx, userID, deseados); err != nil {
 		return fmt.Errorf("%w: %w", ErrSystemsSyncFailed, err)
 	}
 
@@ -629,12 +638,17 @@ func writeApproveAccessRequestResult(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, ErrSystemsUnionUnavailable):
 		// (D) Lo local quedó escrito; los systems de identity NO se
-		// tocaron porque esta cuenta ya pasó antes por la bandeja y no
-		// hay lectura para unir con seguridad. 409: no es transitorio,
-		// hace falta reconciliar a mano hasta que exista esa lectura.
+		// tocaron porque FALLÓ LA LECTURA de su conjunto actual, y sin
+		// leerlo un PUT declarativo borraría lo que otra vía concedió.
+		// 409 y no 502 porque hace falta mirar: reintentar a ciegas no
+		// lo arregla.
+		//
+		// 🔧 Antes esta rama saltaba por PRESUNCIÓN («esta cuenta ya
+		// pasó por la bandeja»), sin intentar leer. Desde el
+		// 2026-08-28 solo salta si la lectura real falló.
 		writeJSON(w, http.StatusConflict, ApprovePartialResult{
 			Local: "ok", Identity: "skipped",
-			Reason: "el usuario ya tiene una aprobación previa y no se puede leer su conjunto actual de systems en identity; para no reemplazarlo por accidente no se tocó nada en identity",
+			Reason: "no se pudo leer el conjunto actual de systems del usuario en identity; para no reemplazarlo por accidente no se tocó nada en identity",
 		})
 		return
 	case errors.Is(err, ErrSystemsSyncFailed):
