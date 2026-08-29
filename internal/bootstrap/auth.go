@@ -657,6 +657,11 @@ func buildConfigProvider(
 type rolePlane struct {
 	roles   in.RoleAdmin
 	members in.MembershipAdmin
+	// invitations es la incorporación POR CÓDIGO (Plan 047 · Ola A). Va en la
+	// misma pieza que las otras dos porque comparte con ellas el CallerResolver y
+	// los repositorios, y porque las tres abren el mismo plano: quién está en la
+	// empresa y quién puede entrar.
+	invitations in.InvitationAdmin
 }
 
 // buildRolePlane cablea los casos de uso del plano de roles sobre el *sql.DB ya
@@ -695,9 +700,10 @@ func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
 	})
 	members := iampostgres.NewMembershipRepo(db)
+	roles := iampostgres.NewRoleRepo(db)
 	roleSvc, err := iamusecase.NewRoleService(
 		caller,
-		iampostgres.NewRoleRepo(db),
+		roles,
 		iampostgres.NewGrantRepo(db),
 		members,
 	)
@@ -708,5 +714,52 @@ func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.
 	if err != nil {
 		return rolePlane{}, fmt.Errorf("construyendo MembershipService (IAM): %w", err)
 	}
-	return rolePlane{roles: roleSvc, members: memberSvc}, nil
+	// El servicio de invitaciones comparte el MISMO RoleRepo que RoleService, y no
+	// es reutilización por comodidad: lo usa para una sola cosa —comprobar que el
+	// rol prometido en la invitación es visible para la empresa que la emite— y
+	// esa comprobación tiene que dar el mismo veredicto que la de RoleService.
+	// Con dos adaptadores distintos, un día darían dos.
+	invitationSvc, err := iamusecase.NewInvitationService(caller, iampostgres.NewInvitationRepo(db), roles)
+	if err != nil {
+		return rolePlane{}, fmt.Errorf("construyendo InvitationService (IAM): %w", err)
+	}
+	return rolePlane{roles: roleSvc, members: memberSvc, invitations: invitationSvc}, nil
+}
+
+// ---------------------------------------------------------------------------
+// El CANJE de una invitación (Plan 047 · Ola A · T-A3/T-A4/T-A5)
+// ---------------------------------------------------------------------------
+
+// buildInvitationRedeem cablea el canje: la otra mitad de la invitación, la que
+// usa el INVITADO.
+//
+// 🔴 SE CONSTRUYE APARTE DE rolePlane, Y NO ES DESORDEN. Aquellos tres servicios
+// son el plano de administración de la empresa: los usa quien YA está dentro y
+// todos exigen un token CON empresa (su CallerResolver resuelve el tenant y sin
+// él fallan con domain.ErrNoTenant). El canje es lo contrario: lo usa quien
+// todavía no está en ninguna, con un Context Token SIN empresa, y su ruta se
+// monta fuera de registerRolePlane por eso mismo — ver el montaje en http.go.
+// Meterlo en la misma pieza sugeriría que comparte esa precondición, y no la
+// comparte.
+//
+// El CallerResolver es el MISMO puerto que el de buildRolePlane y se declara
+// igual, con una diferencia que no está aquí sino en el usecase: RedeemService
+// mira `UserID` y NO mira `TenantID`. La función de aquí no puede expresar esa
+// diferencia (devuelve los dos campos, como la otra), así que no se intenta:
+// donde vive la regla es en RedeemService.RedeemInvitation, con su porqué.
+//
+// No recibe `systems` ni `log`: el canje no llama a identity (quien canjea ya
+// pasó su System Gate: si no, no tendría Context Token con el que llegar) y no
+// tiene un fallo que el llamante no pueda ver, que era lo que el log salvaba en
+// MembershipService.
+func buildInvitationRedeem(db *sql.DB) (in.InvitationRedeemer, error) {
+	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
+		id, ok := httpapi.IdentityFromContext(ctx)
+		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
+	})
+	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(db))
+	if err != nil {
+		return nil, fmt.Errorf("construyendo RedeemService (IAM): %w", err)
+	}
+	return svc, nil
 }

@@ -63,12 +63,54 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	}
 	pub.Roles = rolesPlane.roles
 	pub.Members = rolesPlane.members
+	// La incorporación POR CÓDIGO (Plan 047 · Ola A · T-A2/T-A8). Es la vía para
+	// quien la dueña NO PUEDE BUSCAR: sin bandeja ni buscador, alguien que se
+	// registra por su cuenta le es invisible y hasta hoy tenía que DICTARLE su
+	// UUID. Con Invitations nil las tres rutas /api/v1/invitations no existen
+	// (404 de ruta inexistente), igual que las de arriba.
+	//
+	// ⚠️ NO depende del cliente M2M: emitir una invitación no toca identity. Quien
+	// la canjea ya se registró él mismo en el signup público, así que aquí no hay
+	// nada que acreditar y ninguna ruta que degradar a 503.
+	pub.Invitations = rolesPlane.invitations
 
 	publicMux := http.NewServeMux()
 	iamhttp.Register(publicMux, as.contextTokens, as.exchanger(), log)
 	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
 	// documenta el contrato de identidad para T4/T5 (tenant/subject del token).
 	publicMux.Handle("/api/v1/auth/whoami", authMW.Authenticate(httpapi.WhoAmIHandler()))
+
+	// EL CANJE DE UNA INVITACIÓN (Plan 047 · Ola A · T-A3/T-A4/T-A5). Es la otra
+	// mitad de las tres rutas que registerRolePlane monta para la dueña, y se monta
+	// AQUÍ y no allí por una razón que es el corazón de la tarea:
+	//
+	// 🔴 ES LA SEGUNDA RUTA DE ESTE PROCESO QUE UN TOKEN SIN EMPRESA ATRAVIESA, y
+	// la primera está justo encima. Quien canjea acaba de registrarse por el signup
+	// público: tiene CERO membresías, así que su Context Token se emitió sin tenant
+	// y sin un solo grant (resolveTenant → "", nil, y GenerateTenantlessToken;
+	// D-056.12). Cualquier `protect`/`protectRead` le contestaría 403 —los dos
+	// llevan RequirePermission, que evalúa unos grants que ese token no tiene—, y
+	// el 403 sería para TODAS las personas para las que este endpoint existe. Por
+	// eso la cadena es `Authenticate` a secas, exactamente la de whoami.
+	//
+	// No es una puerta abierta: Authenticate sigue exigiendo un Context Token
+	// válido de wApp, así que un anónimo se lleva 401. Lo que autoriza el canje no
+	// es un grant, es POSEER el token de invitación — y ese lo reparte la dueña.
+	//
+	// ⚠️ Y por eso tampoco se audita con AuditMiddleware: la bitácora graba por
+	// tenant y quien llama no trae ninguno. El rastro del canje queda donde de
+	// verdad se puede consultar: en `redeemed_by`/`redeemed_at` de la propia
+	// invitación, que es del tenant que la emitió y que su dueña sí ve.
+	//
+	// Con la BD cableada esta ruta existe SIEMPRE: no depende del cliente M2M (el
+	// canje no llama a identity) ni de `Invitations`. Un fallo de construcción es
+	// de cableado y aborta el arranque, no degrada la ruta.
+	invitationRedeem, err := buildInvitationRedeem(db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	publicMux.Handle("POST /api/v1/invitations/accept",
+		authMW.Authenticate(iamhttp.NewInvitationRedeemHandler(invitationRedeem).Accept()))
 
 	// Ruta pública de alta de usuario (Plan 056 · T3.2). A-06a: el freno era
 	// 5 rps/burst 10 por IP —432 000 altas/día para un formulario que una
