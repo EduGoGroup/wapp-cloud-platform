@@ -15,7 +15,7 @@ firma. Ver `docs/adr/` y el ADR local de adopción.
 - Módulo Go: `github.com/EduGoGroup/wapp-cloud-platform`
 - Go **1.26**
 - Binarios: `cmd/server` (la plataforma) y `cmd/migrate` (aplica el esquema y sale)
-- SchemaVersion **0.45.0** (última migración `0081_intakes_expiry_reminded.sql`)
+- SchemaVersion **0.47.0** (última migración `0085_tenant_invitations.sql`) — 🔴 **el valor caduca: pregúntalo al código** (`migrations/version.go`), no a este renglón
 
 ## Estado
 
@@ -72,9 +72,10 @@ channels), nunca RabbitMQ ni Redis (ADR-0003).
 ## Migraciones y SchemaVersion
 
 Los scripts SQL embebidos viven en
-`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` …
-`0081_intakes_expiry_reminded.sql`). El runner de `platform/storage/postgres` los
-aplica al arranque y valida `SchemaVersion` (`migrations/version.go`, hoy **0.45.0**)
+`internal/platform/storage/postgres/migrations/structure/` (`0001_*.sql` … la última,
+que se pregunta al directorio con `ls .../structure/ | tail -1`). El runner de
+`platform/storage/postgres` los aplica al arranque y valida `SchemaVersion`
+(`migrations/version.go`, hoy **0.47.0**; este renglón dijo **0.45.0** hasta el 2026-08-28)
 contra `public.schema_version`; además calcula un hash de los archivos para
 detectar cambios aunque no se haya subido la versión.
 

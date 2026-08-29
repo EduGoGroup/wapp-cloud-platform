@@ -369,9 +369,16 @@ import (
 // Postgres 17 en Docker, `wapp-postgres`. La fila y el argumento son los mismos.)
 // 0.46.0 — Plan 047 · Ola 1.0 · T1.0-3 (0084): los cuatro scopes del PLANO DE ROLES
 // del tenant (`roles.read`/`roles.write`, `members.read`/`members.write`) y la cerca
-// INV-10 en la dirección que faltaba. Es el bump ÚNICO del Plan 047: sus olas
-// posteriores pueden añadir migraciones sin volver a moverlo (primera mitad de la
-// regla de arriba).
+// INV-10 en la dirección que faltaba.
+//
+// ⚠️ ESTA ENTRADA DIJO «es el bump ÚNICO del Plan 047: sus olas posteriores pueden
+// añadir migraciones sin volver a moverlo», y la 0.47.0 de abajo la desmiente. No
+// era un error de razonamiento sino una PREDICCIÓN sobre el futuro escrita como
+// hecho: cuando se redactó, la 0.46.0 aún no había salido de `dev`, y bajo la
+// primera mitad de la regla la predicción se habría cumplido. Lo que la rompió es
+// que la 0.46.0 se desplegó en UAT ANTES de que llegara la ola siguiente. La
+// lección, para la próxima entrada: el bump de un plan se puede llamar «el único»
+// en pasado, nunca en futuro — quien lo escribe no controla cuándo se despliega.
 //
 // La migración no siembra ni un `allow` y eso es la decisión, no el olvido:
 // tenant_admin alcanza los cuatro por su '*' (0015) y viewer alcanza los dos de
@@ -388,7 +395,26 @@ import (
 // es la PRIMERA que cambia el esquema por encima de una versión ya escrita en la fila
 // de public.schema_version. Dejarla sin bump haría que esa fila afirmara 0.45.0 sobre
 // un esquema que ya no es el suyo.
-const SchemaVersion = "0.46.0"
+//
+// 0.47.0 — Plan 047 · Ola A · T-A1/T-A6 (0085): nace `public.tenant_invitations`, la
+// invitación de UN SOLO USO con la que una dueña incorpora a alguien a su empresa
+// (D-047.11). Guarda el SHA-256 del token y NUNCA el token en claro, y no tiene ni
+// una columna de texto: CERO PII por forma, no por disciplina.
+//
+// Es el SEGUNDO bump del Plan 047, y eso NO rompe la regla de «un bump por plan»:
+// esa regla dice que las olas INTERMEDIAS no necesitan uno, no que un plan largo
+// solo pueda tener uno. Manda la segunda mitad —«publicar un plan sin su bump, no»—
+// y aquí se cumple de forma verificable: la 0.46.0 ya está escrita en la fila de
+// public.schema_version de UAT (journal 2026-08-28, `version=0.46.0
+// content_hash=195f1659f1371310 skipped=false`), así que la 0085 es la primera
+// migración que cambia el esquema por encima de una versión YA PUBLICADA. Dejarla
+// sin bump haría que esa fila afirmara 0.46.0 sobre un esquema que ya no es el suyo
+// — exactamente el argumento con el que la 0.46.0 se separó de la 0.45.0.
+//
+// El corolario que sí se sostiene: las olas que le queden al Plan 047 (T-A2…T-A8,
+// las pantallas) pueden añadir migraciones bajo ESTE número mientras la 0.47.0 no
+// se despliegue. En cuanto se despliegue, vuelve a aplicar lo de arriba.
+const SchemaVersion = "0.47.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16
