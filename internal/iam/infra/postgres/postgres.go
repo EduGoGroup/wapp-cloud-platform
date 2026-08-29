@@ -13,6 +13,7 @@ package iampostgres
 import (
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -41,4 +42,15 @@ func nullString(p *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *p, Valid: true}
+}
+
+// timePtr convierte un sql.NullTime en *time.Time (nil si NULL). Es el gemelo de
+// strPtr para las columnas TIMESTAMPTZ nullables —redeemed_at, revoked_at—,
+// donde nil significa «todavía no pasó» y no «pasó en el instante cero».
+func timePtr(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	t := nt.Time
+	return &t
 }

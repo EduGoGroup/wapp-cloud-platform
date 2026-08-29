@@ -245,3 +245,56 @@ type AuditRepo interface {
 	// List devuelve los eventos del tenant, más recientes primero, paginados.
 	List(ctx context.Context, tenantID string, limit, offset int) ([]domain.AuditEvent, error)
 }
+
+// InvitationRepo persiste las invitaciones de un solo uso con las que una
+// empresa incorpora a alguien a quien NO PUEDE BUSCAR (tabla
+// public.tenant_invitations, migración 0085; Plan 047 · Ola A).
+//
+// 🔴 EL TOKEN EN CLARO NO ENTRA NI SALE POR AQUÍ. Lo que este puerto mueve es
+// domain.Invitation, cuyo TokenHash son los 32 bytes del SHA-256. Quien emite ve
+// el texto una sola vez, en la respuesta HTTP, y a partir de ahí ni la base ni
+// este puerto pueden reconstruirlo.
+//
+// ⚠️ EL CANJE NO PASA POR AQUÍ, Y HAY UN SEGUNDO REPOSITORIO SOBRE LA MISMA
+// TABLA A PROPÓSITO. Este puerto se quedó con las tres operaciones de la
+// ADMINISTRACIÓN (T-A2 y T-A8); consumir la invitación vive en
+// `out.InvitationRedeemRepo` (ports/out/canje.go), del canje (T-A3).
+//
+// No es duplicación por descuido ni una fusión pendiente: el canje hace CUATRO
+// pasos —leer, GrantTenantAccess, marcar canjeada y cerrar la solicitud
+// huérfana— dentro de UNA transacción, y una *sql.Tx no cabe en un puerto PURO
+// como este (context y tipos de dominio, ver la cabecera del paquete). Partirlo
+// en dos métodos sueltos aquí obligaría al usecase del canje a orquestar la
+// transacción y, con ella, a conocer database/sql. Es la misma razón por la que
+// GrantTenantAccess recibe un Executor en vez de vivir detrás de
+// out.MembershipRepo. Quien venga a unificarlos que empiece por ahí.
+type InvitationRepo interface {
+	// Create inserta la invitación y devuelve la fila con `id` y `created_at` ya
+	// asignados por la base. El TokenHash tiene que medir 32 bytes exactos: si no,
+	// lo rechaza el CHECK de la tabla, no este puerto.
+	Create(ctx context.Context, inv domain.Invitation) (domain.Invitation, error)
+	// ListByTenant devuelve las invitaciones de UNA empresa, en orden estable
+	// (las más recientes primero: created_at DESC, id DESC). Una lista VACÍA no
+	// es error.
+	//
+	// Devuelve la FILA ENTERA, TokenHash incluido, con el mismo criterio que
+	// MembersOf: el repositorio lee lo que la tabla guarda y quien decide qué sale
+	// por el cable es la proyección, que es donde vive el test que lo vigila.
+	ListByTenant(ctx context.Context, tenantID string) ([]domain.Invitation, error)
+	// Revoke anula una invitación VIVA de esa empresa (T-A8).
+	//
+	// 🔴 Es un UPDATE ATÓMICO CONDICIONADO —`WHERE id=$1 AND tenant_id=$2 AND
+	// redeemed_at IS NULL AND revoked_at IS NULL`— y no un SELECT seguido de un
+	// UPDATE: la exclusividad entre los dos estados terminales NO la vigila
+	// ningún CHECK de la tabla (la migración 0085 explica por qué), así que lo
+	// único que impide revocar algo que se está canjeando en ese mismo instante
+	// es que la condición viaje DENTRO de la escritura.
+	//
+	// Desenlaces: nil si se revocó, y también si ya estaba revocada (la baja de
+	// algo ya dado de baja es el estado que se pedía); domain.ErrNotFound si no
+	// existe o es de OTRA empresa —los dos casos comparten código a propósito,
+	// distinguirlos confirmaría que ese id existe fuera—; domain.ErrConflict si
+	// ya fue canjeada, porque revocarla NO deshace la membresía y contestar que
+	// sí sería mentir.
+	Revoke(ctx context.Context, id, tenantID string) error
+}

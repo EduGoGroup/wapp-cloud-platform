@@ -268,6 +268,17 @@ type Deps struct {
 	// Va SEPARADO de Roles porque son dos permisos distintos (members.write frente
 	// a roles.write) y porque un despliegue puede querer uno sin el otro.
 	Members iamin.MembershipAdmin
+	// Invitations administra las invitaciones de UN SOLO USO con las que una
+	// empresa incorpora a alguien a quien NO PUEDE BUSCAR (Plan 047 · Ola A ·
+	// T-A2/T-A8, D-047.11). Lo satisface *iamusecase.InvitationService. nil ⇒ no
+	// se montan las rutas /api/v1/invitations.
+	//
+	// Va separado de Members aunque comparta los scopes `members.*` —una
+	// invitación es una membresía en diferido y por eso no estrena vocabulario de
+	// permisos— porque es otro recurso, con otra tabla y otro ciclo de vida: un
+	// despliegue puede tener la administración de miembros sin la invitación por
+	// código, que es exactamente el estado anterior a esta ola.
+	Invitations iamin.InvitationAdmin
 	// DBTimeout es el plazo de cada consulta a BD de estos handlers, cableado desde
 	// config.PublicAPIDBTimeout (1,5s por defecto; Plan 050 · Ola 3). <=0 cae a
 	// defaultDBTimeout — la promesa la cumple dbCtx, que es por donde pasan TODAS

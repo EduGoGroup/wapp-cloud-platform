@@ -266,3 +266,62 @@ type MembershipAdmin interface {
 	// RemoveMember la da de baja de la empresa del Caller. Idempotente.
 	RemoveMember(ctx context.Context, input MembershipInput) error
 }
+
+// ---------------------------------------------------------------------------
+// Invitaciones de un solo uso (Plan 047 · Ola A · T-A2/T-A8, D-047.11)
+// ---------------------------------------------------------------------------
+
+// IssueInvitationInput es la emisión de una invitación. Fíjate en lo que NO
+// tiene, que es la mitad del contrato:
+//
+//   - no tiene TenantID (INV-04): la empresa sale del token de quien emite, y lo
+//     que no existe en el tipo no se puede colar por el cuerpo;
+//   - no tiene correo, ni nombre, ni teléfono (D-047.11): quien emite NO teclea
+//     el correo de nadie en ningún momento. Reparte el código por WhatsApp —que
+//     es el producto, no un canal prestado— y la nube nunca sabe a quién se lo
+//     mandó. Añadir aquí un campo de destinatario metería PII en una tabla que se
+//     diseñó para no tener ni una columna de texto.
+type IssueInvitationInput struct {
+	// RoleID es el rol que se concederá AL CANJEAR. Opcional (nil = alta sin
+	// rol). Tiene que ser VISIBLE para la empresa de quien emite: uno suyo o una
+	// plantilla global; cualquier otro es domain.ErrNotFound.
+	RoleID *string
+	// TTLSeconds es la vida de la invitación en segundos. CERO (o ausente)
+	// significa «el default», no «que caduque ya»: el servicio aplica 24 h y
+	// después el clamp a [60 s, 30 días]. El número lo elige quien emite porque
+	// no es lo mismo invitar a alguien que está delante que a alguien que abrirá
+	// WhatsApp mañana.
+	TTLSeconds int
+}
+
+// IssuedInvitation es lo que devuelve la emisión: la fila y el token EN CLARO.
+//
+// 🔴 Token viaja AQUÍ Y SOLO AQUÍ, una vez. No está en domain.Invitation, no se
+// persiste y el listado no puede reconstruirlo: en la tabla vive su SHA-256. Si
+// quien emite lo pierde, la respuesta correcta es revocar y emitir otra.
+type IssuedInvitation struct {
+	Invitation domain.Invitation
+	Token      string
+}
+
+// InvitationAdmin administra las invitaciones de la empresa del Caller: la vía
+// por la que entra alguien a quien la dueña NO PUEDE BUSCAR porque no tiene
+// bandeja y, para ella, quien se registra por su cuenta es invisible.
+//
+// Igual que MembershipAdmin, NINGÚN método recibe tenant: sale del contexto.
+type InvitationAdmin interface {
+	// IssueInvitation emite una invitación para la empresa del Caller y devuelve
+	// el token en claro por única vez. domain.ErrNoTenant si el token no trae
+	// empresa; domain.ErrNotFound si el rol pedido no es visible para ella.
+	IssueInvitation(ctx context.Context, input IssueInvitationInput) (IssuedInvitation, error)
+	// ListInvitations devuelve las invitaciones de la empresa del Caller, las
+	// más recientes primero. Una lista vacía no es error.
+	ListInvitations(ctx context.Context) ([]domain.Invitation, error)
+	// RevokeInvitation anula una invitación VIVA de la empresa del Caller
+	// (T-A8), de modo que un canje posterior de ese token falle.
+	//
+	// Idempotente sobre una ya revocada. domain.ErrNotFound si no existe o es de
+	// otra empresa; domain.ErrConflict si ya fue canjeada — revocarla NO deshace
+	// la membresía que el canje escribió, así que no se puede fingir que sí.
+	RevokeInvitation(ctx context.Context, id string) error
+}

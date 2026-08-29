@@ -21,6 +21,7 @@ type Store struct {
 	Grants      *GrantStore
 	Audit       *AuditStore
 	Memberships *MembershipStore
+	Invitations *InvitationStore
 }
 
 // NewStore crea el agregado con todos los repositorios vacíos.
@@ -30,6 +31,7 @@ func NewStore() *Store {
 		Grants:      NewGrantStore(),
 		Audit:       NewAuditStore(),
 		Memberships: NewMembershipStore(),
+		Invitations: NewInvitationStore(),
 	}
 }
 

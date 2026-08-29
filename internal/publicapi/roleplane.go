@@ -39,6 +39,11 @@ const (
 	auditResourceUserRole  = "user_role"
 	auditResourceUserGrant = "user_grant"
 	auditResourceMember    = "member"
+	// La invitación es su PROPIO recurso aunque comparta el action `members.write`
+	// con el alta y la baja: sin este literal, emitir un código y meter a alguien
+	// en la empresa dejarían la MISMA línea en la bitácora, y son dos hechos
+	// distintos —uno crea un secreto con caducidad, el otro escribe una membresía—.
+	auditResourceInvitation = "invitation"
 )
 
 // registerRolePlane monta la administración de roles, grants y membresía de la
@@ -128,5 +133,31 @@ func registerRolePlane(mux *http.ServeMux, d Deps, mw *httpapi.Middleware, audit
 			scopeMembersWrite, auditResourceMember, h.Add()))
 		mux.Handle("DELETE /api/v1/members/{user_id}", protect(mw, auditor, log,
 			scopeMembersWrite, auditResourceMember, h.Remove()))
+	}
+
+	if d.Invitations != nil {
+		h := iamhttp.NewInvitationHandler(d.Invitations)
+
+		// LA INVITACIÓN DE UN SOLO USO (Plan 047 · Ola A · T-A2 y T-A8, D-047.11).
+		// Cierra el hueco que el alta de arriba no puede cubrir: POST
+		// /api/v1/members exige que la dueña SEPA el UUID de la persona, y ella no
+		// tiene bandeja ni buscador — quien se registra por su cuenta le es
+		// invisible. Aquí emite un código opaco, se lo pasa por WhatsApp y la
+		// persona lo canjea después de registrarse ella misma.
+		//
+		// 🔴 LOS SCOPES SON LOS DE MIEMBROS Y NO UNOS NUEVOS, y es una decisión, no
+		// una economía: una invitación es una membresía en diferido, así que quien
+		// puede meter a alguien en la empresa puede invitarlo, y quien no, no.
+		// Estrenar un `invitations.write` habría dejado a la dueña sin poder emitir
+		// hasta que una migración se lo sembrara — la 0085 dice explícitamente que
+		// no siembra grants por esto mismo.
+		mux.Handle("GET /api/v1/invitations", protectRead(mw, log,
+			scopeMembersRead, h.List()))
+		mux.Handle("POST /api/v1/invitations", protect(mw, auditor, log,
+			scopeMembersWrite, auditResourceInvitation, h.Issue()))
+		// La revocación es ESCRITURA y se audita: es la única forma de saber
+		// después quién cerró una puerta que se había abierto.
+		mux.Handle("DELETE /api/v1/invitations/{id}", protect(mw, auditor, log,
+			scopeMembersWrite, auditResourceInvitation, h.Revoke()))
 	}
 }
