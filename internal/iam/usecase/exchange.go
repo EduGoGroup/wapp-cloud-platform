@@ -247,11 +247,13 @@ func (s *ExchangeService) validate(token string) (*identityjwt.Claims, error) {
 // silencio sigue estando PROHIBIDO, y sigue habiendo un test que lo vigila
 // (TestExchange_ConVariasEmpresasYSinElegirNoEligePorTi).
 //
-// El cierre de este caso NO tiene número de invariante: era una FRASE DE DISEÑO
-// del Plan 056 —«este plan no abre el multi-empresa», design.md §5.3— que ese
-// mismo documento atribuyó por error a INV-056.9. INV-056.9 es otra cosa y sigue
-// vigente: «el administrador nunca conoce ni asigna la clave de nadie»
-// (requirements.md del 056). Quien levanta la frase de diseño es este plan.
+// El cierre de este caso NO tenía número de invariante, y aquí no se nombra
+// ninguno a propósito: era una FRASE DE DISEÑO del Plan 056 —«este plan no abre
+// el multi-empresa», su design.md §5.3—, que ese mismo documento se atribuyó a
+// un invariante suyo que trata de otra cosa por completo. Repetir el número aquí,
+// aunque fuera para desmentirlo, seguiría llevando hasta este punto a quien lo
+// buscara. El acta de qué se levantó, cuándo y por quién está donde debe estar:
+// la nota fechada del design.md del 056 y la decisión D-047.14 del Plan 047.
 func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (string, error) {
 	tenants, err := s.members.TenantsOfUser(ctx, userID)
 	if err != nil {
