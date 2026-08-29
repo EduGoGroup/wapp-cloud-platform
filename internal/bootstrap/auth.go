@@ -773,8 +773,15 @@ func buildInvitationRedeem(db *sql.DB) (in.InvitationRedeemer, error) {
 // La ELECCIÓN de empresa (Plan 047 · Ola 5 · T5.1)
 // ---------------------------------------------------------------------------
 
-// buildActiveTenantSelect cablea la elección de empresa activa: la puerta que
-// una persona con VARIAS membresías usa para decir con cuál opera.
+// buildActiveTenantPlane cablea las DOS puertas de la empresa del sujeto: LEER
+// entre cuáles puede elegir (GET /api/v1/auth/tenants) y ESCRIBIR cuál elige
+// (POST /api/v1/auth/active-tenant).
+//
+// 🔴 DEVUELVE EL SERVICIO CONCRETO Y NO UN PUERTO, y aquí es lo correcto:
+// satisface DOS puertos (in.TenantLister e in.ActiveTenantSelector) y devolver
+// uno solo obligaría a un type-assert o a construirlo dos veces. Quien recibe
+// sigue tomando interfaces —el handler declara los dos puertos por separado—, que
+// es donde la frontera importa; este helper es privado y de cableado.
 //
 // 🔴 SE CONSTRUYE APARTE DE rolePlane POR LA MISMA RAZÓN QUE EL CANJE, y es la
 // razón entera de la tarea: aquellos servicios son el plano de administración de
@@ -792,7 +799,7 @@ func buildInvitationRedeem(db *sql.DB) (in.InvitationRedeemer, error) {
 // No recibe `systems` ni `log`: elegir empresa no llama a identity (quien elige
 // ya pasó su System Gate: si no, no tendría Context Token con el que llegar) y no
 // tiene ningún fallo que el llamante no pueda ver.
-func buildActiveTenantSelect(db *sql.DB) (in.ActiveTenantSelector, error) {
+func buildActiveTenantPlane(db *sql.DB) (*iamusecase.ActiveTenantService, error) {
 	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok

@@ -23,9 +23,15 @@ func NewMembershipRepo(db *sql.DB) *MembershipRepo { return &MembershipRepo{db: 
 var _ out.MembershipRepo = (*MembershipRepo)(nil)
 
 // TenantsOfUser implementa out.MembershipRepo. Ordena por created_at para que
-// dos llamadas devuelvan siempre lo mismo; el orden NO se usa para elegir un
-// tenant cuando hay varios (eso es un error explícito del exchange, no una
-// preferencia).
+// dos llamadas devuelvan siempre lo mismo.
+//
+// 🔴 EL ORDEN NO ELIGE NADA, y desde el Plan 047 · Ola 5 · T5.1 hay que decirlo
+// distinto que antes. Hasta entonces la frase era «con varios tenants el exchange
+// falla», y ya no falla: resuelve por la EMPRESA ACTIVA (D-047.14). Lo que sigue
+// siendo cierto —y es lo que este orden NO puede convertirse en— es que con
+// varias membresías y sin empresa activa el canje NO elige la primera: emite un
+// token sin empresa. Si alguien lee este ORDER BY como «la preferida es la más
+// antigua», habrá construido justo la elección silenciosa que está prohibida.
 func (r *MembershipRepo) TenantsOfUser(ctx context.Context, userID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT tenant_id::text
@@ -52,6 +58,62 @@ func (r *MembershipRepo) TenantsOfUser(ctx context.Context, userID string) ([]st
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iam: leer membresías: %w", err)
+	}
+	return tenants, nil
+}
+
+// UserTenants implementa out.MembershipRepo: las empresas del usuario CON SU
+// NOMBRE, para que el selector no tenga que pintar UUIDs.
+//
+// 🔴 EL `INNER JOIN` ES LA GARANTÍA ANTI-ORÁCULO, no un detalle de rendimiento.
+// La consulta arranca en `tenant_members` filtrando por `user_id` y solo desde
+// ahí alcanza `tenants`: una empresa de la que este usuario no sea miembro no
+// tiene por dónde entrar en el resultado. No es que se filtre después — es que no
+// se llega a leer. Un `LEFT JOIN`, o invertir el orden para arrancar en
+// `public.tenants`, rompería esa propiedad sin romper ninguna firma.
+//
+// El ORDER BY es EL MISMO que el de TenantsOfUser —(created_at, tenant_id)— y
+// tiene que seguir siéndolo: los dos métodos describen la misma lista, y que el
+// selector la pinte en un orden y el canje razone sobre otro sería confuso el día
+// que alguien los compare. El `tm.` delante de las columnas no es adorno: sin él,
+// `created_at` es ambiguo (las DOS tablas la tienen) y Postgres lo rechaza.
+//
+// Aquí NO se filtra por `tenants.revoked_at` (el kill-switch comercial de
+// D-055.2), y se dice en vez de callarlo: el canje tampoco lo mira, así que
+// filtrar aquí escondería del selector una empresa a la que el Context Token
+// SIGUE pudiendo acotarse — el selector mentiría sobre lo que el sistema hace.
+// Si algún día una empresa revocada debe desaparecer de la vista, el sitio donde
+// empezar es resolveTenant, no este SELECT.
+func (r *MembershipRepo) UserTenants(ctx context.Context, userID string) ([]domain.UserTenant, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT t.id::text, t.display_name
+		FROM public.tenant_members tm
+		INNER JOIN public.tenants t ON t.id = tm.tenant_id
+		WHERE tm.user_id = $1
+		ORDER BY tm.created_at, tm.tenant_id
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("iam: listar las empresas del usuario: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
+
+	// Se inicializa NO NULA a propósito: cero empresas es un estado legítimo
+	// (D-056.12) y tiene que serializarse como `[]`, no como `null`. Un `null` en
+	// el JSON obligaría a cada cliente a distinguir dos formas del mismo hecho.
+	tenants := make([]domain.UserTenant, 0)
+	for rows.Next() {
+		var t domain.UserTenant
+		if scanErr := rows.Scan(&t.ID, &t.DisplayName); scanErr != nil {
+			return nil, fmt.Errorf("iam: listar las empresas del usuario: %w", scanErr)
+		}
+		tenants = append(tenants, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iam: listar las empresas del usuario: %w", err)
 	}
 	return tenants, nil
 }

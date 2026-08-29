@@ -133,12 +133,21 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	//
 	// Con la BD cableada esta ruta existe SIEMPRE. Un fallo de construcción es de
 	// cableado y aborta el arranque, no degrada la ruta.
-	activeTenant, err := buildActiveTenantSelect(db)
+	activeTenant, err := buildActiveTenantPlane(db)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	publicMux.Handle("POST /api/v1/auth/active-tenant",
-		authMW.Authenticate(iamhttp.NewActiveTenantHandler(activeTenant).Select()))
+	tenantPlane := iamhttp.NewActiveTenantHandler(activeTenant, activeTenant)
+	publicMux.Handle("POST /api/v1/auth/active-tenant", authMW.Authenticate(tenantPlane.Select()))
+	// Y su mitad de LECTURA, sin la cual el selector no se puede ni pintar: el
+	// Context Token de quien tiene CERO empresas y el de quien tiene DOS y no ha
+	// elegido son IDÉNTICOS —los dos sin tenant y sin un solo grant—, así que la
+	// consola no puede distinguir «pantalla de espera» de «selector» mirando el
+	// token. Se lo dice esta lista: vacía en un caso, de dos en el otro.
+	//
+	// Misma cadena `Authenticate` a secas, y por la misma razón: quien necesita
+	// este listado es precisamente quien no tiene empresa en su token.
+	publicMux.Handle("GET /api/v1/auth/tenants", authMW.Authenticate(tenantPlane.List()))
 
 	// Ruta pública de alta de usuario (Plan 056 · T3.2). A-06a: el freno era
 	// 5 rps/burst 10 por IP —432 000 altas/día para un formulario que una

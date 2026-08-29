@@ -12,7 +12,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
@@ -183,4 +185,273 @@ func TestNewActiveTenantService_ExigeSusDependencias(t *testing.T) {
 	if _, err := usecase.NewActiveTenantService(testResolver, store.Memberships, nil); err == nil {
 		t.Error("sin ActiveTenantRepo debería fallar")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// EL LISTADO QUE HACE POSIBLE EL SELECTOR (in.TenantLister)
+// ---------------------------------------------------------------------------
+
+// TestTenantsOfCaller_DevuelveSusEmpresasConNombreYLaActiva.
+func TestTenantsOfCaller_DevuelveSusEmpresasConNombreYLaActiva(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+	userID := uuid.NewString()
+	f.store.Memberships.SeedTenantName(testTenant, "Panadería Doña Rosa")
+	f.store.Memberships.SeedTenantName(testTenantB, "Catering del Sur")
+	f.store.Memberships.Seed(userID, testTenant)
+	f.store.Memberships.Seed(userID, testTenantB)
+	if err := f.svc.SelectActiveTenant(ctxSinEmpresa(userID), testTenantB); err != nil {
+		t.Fatalf("SelectActiveTenant: %v", err)
+	}
+
+	tenants, activeID, err := f.svc.TenantsOfCaller(ctxSinEmpresa(userID))
+	if err != nil {
+		t.Fatalf("TenantsOfCaller: %v", err)
+	}
+	if len(tenants) != 2 {
+		t.Fatalf("devolvió %d empresas, quiero 2: %+v", len(tenants), tenants)
+	}
+	if tenants[0].ID != testTenant || tenants[1].ID != testTenantB {
+		t.Errorf("orden inesperado: %+v", tenants)
+	}
+	// El NOMBRE, que es el motivo entero de que este método exista: sin él la
+	// consola pinta UUIDs.
+	if tenants[0].DisplayName != "Panadería Doña Rosa" || tenants[1].DisplayName != "Catering del Sur" {
+		t.Errorf("los nombres legibles no llegaron: %+v", tenants)
+	}
+	if activeID != testTenantB {
+		t.Errorf("activeID = %q, quiero %q", activeID, testTenantB)
+	}
+}
+
+// TestTenantsOfCaller_SinEmpresasEsListaVaciaYNoUnError es D-056.12 en el
+// listado, y el caso que la consola necesita para distinguir «pantalla de
+// espera» de «selector»: el Context Token de este usuario es IDÉNTICO al de
+// alguien con dos empresas sin elegir.
+//
+// 🔴 La lista tiene que ser NO NULA además de vacía: el transporte la serializa
+// tal cual, y un `null` no es iterable en el cliente.
+func TestTenantsOfCaller_SinEmpresasEsListaVaciaYNoUnError(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+
+	tenants, activeID, err := f.svc.TenantsOfCaller(ctxSinEmpresa(uuid.NewString()))
+	if err != nil {
+		t.Fatalf("err = %v: cero empresas es un estado legítimo, no un fallo", err)
+	}
+	if tenants == nil {
+		t.Error("la lista vacía llegó como nil: se serializaría como `null`, que el cliente no puede recorrer")
+	}
+	if len(tenants) != 0 {
+		t.Errorf("devolvió %+v, quiero vacío", tenants)
+	}
+	if activeID != "" {
+		t.Errorf("activeID = %q, quiero vacío", activeID)
+	}
+}
+
+// TestTenantsOfCaller_SoloLasSuyas es el requisito anti-oráculo: existen otras
+// empresas —con nombre y todo— y ninguna asoma.
+//
+// Se siembran DOS empresas ajenas Y sus nombres a propósito: sin ellas, el test
+// pasaría sobre un store donde no hay nada más que devolver, que es una pared.
+func TestTenantsOfCaller_SoloLasSuyas(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+	userID, otro := uuid.NewString(), uuid.NewString()
+	f.store.Memberships.SeedTenantName(testTenant, "La suya")
+	f.store.Memberships.SeedTenantName(testTenantB, "La AJENA")
+	f.store.Memberships.Seed(userID, testTenant)
+	// Otra persona en otra empresa: existe, tiene nombre, y no es asunto suyo.
+	f.store.Memberships.Seed(otro, testTenantB)
+
+	tenants, _, err := f.svc.TenantsOfCaller(ctxSinEmpresa(userID))
+	if err != nil {
+		t.Fatalf("TenantsOfCaller: %v", err)
+	}
+	if len(tenants) != 1 || tenants[0].ID != testTenant {
+		t.Fatalf("devolvió %+v, quiero SOLO %q: se filtró una empresa ajena", tenants, testTenant)
+	}
+	// Guarda anti-hueco: comprobamos que la ajena EXISTE de verdad en el store, o
+	// el aserto de arriba no probaría nada.
+	if ajenas, _, aerr := f.svc.TenantsOfCaller(ctxSinEmpresa(otro)); aerr != nil || len(ajenas) != 1 {
+		t.Fatalf("la empresa ajena no existía (%+v, err=%v): el test de arriba vigilaba una pared", ajenas, aerr)
+	}
+}
+
+// TestTenantsOfCaller_ConUnaSolaEmpresaMarcaEsaAunqueLaGuardadaSeaOtra es la
+// coherencia SELECTOR ↔ TOKEN, y es el caso donde se rompería si el listado
+// leyera la fila guardada en vez de aplicar la regla del canje.
+//
+// 🔴 Con UNA membresía el canje devuelve ESA empresa e ignora `user_active_tenant`
+// (una fila que apunte a otra parte es basura de una baja anterior). Si el
+// listado devolviera la fila cruda, el selector no marcaría nada —o marcaría una
+// empresa que ni sale en la lista— mientras el token SÍ va acotado. El síntoma
+// sería «la consola no sabe dónde estoy» sin que nada falle.
+func TestTenantsOfCaller_ConUnaSolaEmpresaMarcaEsaAunqueLaGuardadaSeaOtra(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+	userID := uuid.NewString()
+	f.store.Memberships.SeedTenantName(testTenant, "La única")
+	f.store.Memberships.Seed(userID, testTenant)
+	// Basura de una baja anterior: apunta a una empresa que ya no es suya.
+	if err := f.store.ActiveTenants.SetActiveTenant(context.Background(), userID, testTenantB); err != nil {
+		t.Fatalf("SetActiveTenant: %v", err)
+	}
+
+	tenants, activeID, err := f.svc.TenantsOfCaller(ctxSinEmpresa(userID))
+	if err != nil {
+		t.Fatalf("TenantsOfCaller: %v", err)
+	}
+	if len(tenants) != 1 {
+		t.Fatalf("devolvió %+v, quiero una sola", tenants)
+	}
+	if activeID != testTenant {
+		t.Fatalf("activeID = %q, quiero %q: con UNA membresía manda la membresía, "+
+			"que es lo que el canje hace — el selector no puede discrepar del token", activeID, testTenant)
+	}
+}
+
+// TestTenantsOfCaller_LaGuardadaQueYaNoEsSuyaNoSeMarca: tres empresas, se elige
+// una, se pierde la membresía de esa, quedan dos. La lista trae las dos y NINGUNA
+// marcada — que es el mismo desenlace que da el canje (token sin empresa).
+func TestTenantsOfCaller_LaGuardadaQueYaNoEsSuyaNoSeMarca(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+	ctx := context.Background()
+	userID := uuid.NewString()
+	const tercera = "33333333-3333-3333-3333-333333333333"
+	for _, tid := range []string{testTenant, testTenantB, tercera} {
+		f.store.Memberships.SeedTenantName(tid, "Empresa "+tid[:1])
+		f.store.Memberships.Seed(userID, tid)
+	}
+	if err := f.svc.SelectActiveTenant(ctxSinEmpresa(userID), tercera); err != nil {
+		t.Fatalf("SelectActiveTenant: %v", err)
+	}
+	// La baja. La empresa activa NO se toca: sigue escrita, y sigue siendo inerte.
+	if err := f.store.Memberships.Remove(ctx, userID, tercera); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	tenants, activeID, err := f.svc.TenantsOfCaller(ctxSinEmpresa(userID))
+	if err != nil {
+		t.Fatalf("TenantsOfCaller: %v", err)
+	}
+	if len(tenants) != 2 {
+		t.Fatalf("devolvió %d empresas, quiero 2 (la tercera ya no es suya): %+v", len(tenants), tenants)
+	}
+	if activeID != "" {
+		t.Fatalf("activeID = %q, quiero vacío: guardar una empresa activa NO concede nada", activeID)
+	}
+	// Y la que perdió NO puede seguir en la lista.
+	for _, tn := range tenants {
+		if tn.ID == tercera {
+			t.Fatalf("la empresa de la que se le dio de baja sigue en su lista: %+v", tenants)
+		}
+	}
+}
+
+// TestTenantsOfCaller_SinIdentidadEsEntradaInvalida: 400 y no 401, mismo criterio
+// que el resto del plano (a este método solo se llega detrás de Authenticate).
+func TestTenantsOfCaller_SinIdentidadEsEntradaInvalida(t *testing.T) {
+	t.Parallel()
+	f := newActiveTenantFixture(t)
+	if _, _, err := f.svc.TenantsOfCaller(context.Background()); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
+}
+
+// TestTenantsOfCaller_ElSelectorYElCanjeNuncaDiscrepan es EL test de la
+// factorización: para cada forma de estar (cero, una, varias-sin-elegir,
+// varias-con-elegida, varias-con-elegida-caduca), lo que el listado MARCA y lo
+// que el canje ACOTA tienen que ser el mismo valor.
+//
+// 🔴 No compara contra una constante escrita a mano: llama a las DOS piezas y
+// compara sus salidas entre sí. Si alguien duplica la regla en uno de los dos
+// lados, este test lo caza sin que haya que enumerar el desenlace correcto —que
+// es justo lo que un test con valores esperados a mano dejaría envejecer.
+func TestTenantsOfCaller_ElSelectorYElCanjeNuncaDiscrepan(t *testing.T) {
+	t.Parallel()
+	const tercera = "33333333-3333-3333-3333-333333333333"
+
+	casos := []struct {
+		nombre    string
+		empresas  []string
+		elegir    string
+		darDeBaja string
+	}{
+		{"cero empresas", nil, "", ""},
+		{"una empresa", []string{testTenant}, "", ""},
+		{"una empresa con guardada ajena", []string{testTenant}, "", ""},
+		{"varias sin elegir", []string{testTenant, testTenantB}, "", ""},
+		{"varias con elegida", []string{testTenant, testTenantB}, testTenantB, ""},
+		{"varias con elegida que ya no es suya", []string{testTenant, testTenantB, tercera}, tercera, tercera},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			f := newActiveTenantFixture(t)
+			ctx := context.Background()
+			userID := uuid.NewString()
+			for _, tid := range c.empresas {
+				f.store.Memberships.SeedTenantName(tid, "E-"+tid[:1])
+				f.store.Memberships.Seed(userID, tid)
+			}
+			if c.elegir != "" {
+				if err := f.svc.SelectActiveTenant(ctxSinEmpresa(userID), c.elegir); err != nil {
+					t.Fatalf("SelectActiveTenant: %v", err)
+				}
+			}
+			if c.darDeBaja != "" {
+				if err := f.store.Memberships.Remove(ctx, userID, c.darDeBaja); err != nil {
+					t.Fatalf("Remove: %v", err)
+				}
+			}
+
+			_, delSelector, err := f.svc.TenantsOfCaller(ctxSinEmpresa(userID))
+			if err != nil {
+				t.Fatalf("TenantsOfCaller: %v", err)
+			}
+			// El canje REAL, sobre los MISMOS dobles: es la OTRA PIEZA, no una
+			// reimplementación de su regla dentro del test. Y se lee del token
+			// FIRMADO, que es lo que de verdad acota lo que esa persona puede
+			// hacer — no del DTO que el usecase devuelve por comodidad.
+			delCanje := tenantDelCanje(t, f.store, userID)
+
+			if delSelector != delCanje {
+				t.Fatalf("el selector marcaría %q y el canje acotaría a %q: "+
+					"la consola diría que estás en una empresa distinta de la que tu token permite",
+					delSelector, delCanje)
+			}
+		})
+	}
+}
+
+// tenantDelCanje emite un Identity Token para userID, lo canjea con un
+// ExchangeService REAL montado sobre los MISMOS dobles, y devuelve el tenant que
+// viaja en el Context Token FIRMADO.
+//
+// Existe para que el test de coherencia compare DOS PIEZAS y no una pieza contra
+// una constante escrita a mano. La constante envejece en silencio; la otra pieza,
+// no.
+func tenantDelCanje(t *testing.T, store *memory.Store, userID string) string {
+	t.Helper()
+	issuerMgr, verifier := newIdentityPair(t)
+	contexts := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
+	canje := mustExchangeSvc(t, verifier, store, contexts)
+
+	// Fixture PARCIAL solo para emitir el Identity Token, mismo patrón que
+	// membership_integration_test.go.
+	emisor := exchangeFixture{issuer: issuerMgr, contexts: contexts}
+	token, _ := emisor.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := canje.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v (ningún número de membresías puede ser un error)", err)
+	}
+	claims, err := contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	return claims.TenantID
 }

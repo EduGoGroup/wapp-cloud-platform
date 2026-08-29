@@ -27,8 +27,16 @@ type ActiveTenantService struct {
 	active  out.ActiveTenantRepo
 }
 
-// compile-time: ActiveTenantService satisface el puerto de entrada.
-var _ in.ActiveTenantSelector = (*ActiveTenantService)(nil)
+// compile-time: ActiveTenantService satisface los DOS puertos de entrada de este
+// plano — el que ESCRIBE la elección y el que LEE entre qué se puede elegir.
+//
+// Son dos puertos y un solo servicio porque comparten exactamente las tres
+// dependencias y la regla: quién llama, de qué es miembro, y qué eligió. Partirlo
+// en dos servicios duplicaría el cableado para no separar nada.
+var (
+	_ in.ActiveTenantSelector = (*ActiveTenantService)(nil)
+	_ in.TenantLister         = (*ActiveTenantService)(nil)
+)
 
 // NewActiveTenantService construye el servicio. Las tres dependencias son
 // estructurales y un nil en cualquiera es error de cableado (fail-fast al
@@ -88,6 +96,88 @@ func (s *ActiveTenantService) SelectActiveTenant(ctx context.Context, tenantID s
 		return domain.ErrNotFound
 	}
 	return s.active.SetActiveTenant(ctx, c.UserID, tenantID)
+}
+
+// TenantsOfCaller implementa in.TenantLister.
+//
+// 🔴 EL `activeID` SE CALCULA CON LA MISMA FUNCIÓN QUE USA EL CANJE
+// (tenantEfectivo), y no leyendo la fila guardada. Es la mitad que impide que el
+// selector y el token discrepen: con UNA sola membresía manda la membresía y la
+// fila guardada ni se mira, así que devolver la fila cruda marcaría la casilla
+// equivocada sobre un token que sí va acotado a la otra. Un selector que miente
+// sobre con qué empresa estás operando es peor que no tener selector.
+//
+// Cero empresas ⇒ lista VACÍA, activeID vacío y err nil. No es un 404: es el
+// estado de quien acaba de registrarse (D-056.12), y es precisamente el caso que
+// la consola necesita poder distinguir de «dos empresas y ninguna elegida» —
+// porque el Context Token de los dos es el MISMO.
+func (s *ActiveTenantService) TenantsOfCaller(ctx context.Context) ([]domain.UserTenant, string, error) {
+	c, ok := s.caller.Caller(ctx)
+	if !ok || c.UserID == "" {
+		return nil, "", fmt.Errorf("%w: el contexto no acredita a nadie", domain.ErrInvalidInput)
+	}
+
+	tenants, err := s.members.UserTenants(ctx, c.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	ids := make([]string, 0, len(tenants))
+	for _, t := range tenants {
+		ids = append(ids, t.ID)
+	}
+	activo, err := tenantEfectivo(ids, func() (string, bool, error) {
+		return s.active.ActiveTenantOf(ctx, c.UserID)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return tenants, activo, nil
+}
+
+// tenantEfectivo decide QUÉ empresa llevará el próximo Context Token de alguien,
+// dadas sus membresías. Es LA regla del multi-empresa, y vive aquí sola porque
+// tiene DOS consumidores que no pueden discrepar: el canje, que emite el token
+// (ExchangeService.resolveTenant), y el listado, que marca la opción del selector
+// (TenantsOfCaller). Con dos copias, un día marcarían cosas distintas y el
+// síntoma sería «la consola dice que estoy en A y no me deja hacer nada en A».
+//
+// 🔴 `activa` ES UNA FUNCIÓN Y NO UN VALOR, Y ESA FIRMA ES EL PUNTO. Solo la rama
+// de «varias» la invoca, así que los casos de CERO y UNA membresía no pagan la
+// consulta — ni pueden pagarla por descuido, porque quien edite esto no tiene el
+// dato a mano, tiene que ir a buscarlo. Es la regresión de rango cero convertida
+// en una firma: el camino que hoy corre en producción para todo el mundo (una
+// membresía) no toca la tabla nueva.
+//
+// Las TRES ramas, y por qué cada una:
+//
+//   - CERO — empresa vacía y sin error (D-056.12). El token sale sin tenant y sin
+//     un solo grant: es el estado «en espera», se entra y no se puede hacer nada.
+//   - UNA — esa, sin consultar nada. Manda la membresía, no la preferencia: una
+//     fila guardada que apunte a otra parte es basura de una baja anterior, y
+//     obedecerla dejaría a esa persona sin empresa teniendo una.
+//   - VARIAS — la ACTIVA, y solo si sigue siendo suya. Si no hay o ya no es suya,
+//     vacía: elegir la primera en silencio está PROHIBIDO.
+//
+// 🔴 Un error de `activa` SUBE. No se degrada a «no ha elegido»: quien pertenece
+// a dos empresas no puede acabar operando sin ninguna —sin poder hacer nada, y
+// pareciendo que nunca eligió— porque la base tuvo un mal segundo.
+func tenantEfectivo(tenants []string, activa func() (string, bool, error)) (string, error) {
+	switch len(tenants) {
+	case 0:
+		return "", nil
+	case 1:
+		return tenants[0], nil
+	default:
+		activo, hay, err := activa()
+		if err != nil {
+			return "", err
+		}
+		if !hay || !esMiembro(tenants, activo) {
+			return "", nil
+		}
+		return activo, nil
+	}
 }
 
 // esMiembro reporta si tenantID está entre las membresías dadas.

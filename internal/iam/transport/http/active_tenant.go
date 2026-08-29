@@ -63,16 +63,60 @@ type selectActiveTenantRequest struct {
 	TenantID string `json:"tenant_id"`
 }
 
-// ActiveTenantHandler sirve la elección de empresa. Es transporte y nada más: no
-// consulta membresías, no decide desenlaces — traduce JSON ⇄ puerto y errores
-// tipados ⇄ códigos HTTP.
+// ActiveTenantHandler sirve las DOS mitades de la empresa del sujeto: LEER entre
+// cuáles puede elegir (List) y ESCRIBIR cuál elige (Select). Es transporte y nada
+// más: no consulta membresías, no decide desenlaces — traduce JSON ⇄ puertos y
+// errores tipados ⇄ códigos HTTP.
+//
+// Recibe DOS puertos y no uno aunque hoy los satisfaga el mismo servicio: leer y
+// escribir son capacidades distintas, y un handler que solo pintara el selector
+// no tendría por qué recibir de paso la de cambiar la empresa activa.
 type ActiveTenantHandler struct {
 	selector in.ActiveTenantSelector
+	lister   in.TenantLister
 }
 
-// NewActiveTenantHandler construye el handler sobre el puerto de entrada.
-func NewActiveTenantHandler(selector in.ActiveTenantSelector) *ActiveTenantHandler {
-	return &ActiveTenantHandler{selector: selector}
+// NewActiveTenantHandler construye el handler sobre los puertos de entrada.
+func NewActiveTenantHandler(selector in.ActiveTenantSelector, lister in.TenantLister) *ActiveTenantHandler {
+	return &ActiveTenantHandler{selector: selector, lister: lister}
+}
+
+// tenantOptionDTO es UNA empresa en la respuesta de GET /api/v1/auth/tenants.
+//
+// Tiene TRES campos y ninguno sobra: sin `id` el selector no puede mandar la
+// elección de vuelta, sin `display_name` pinta UUIDs (que es lo que la consola
+// hacía hasta hoy) y sin `active` no sabe cuál marcar al cargar.
+//
+// 🔴 Y NO TIENE UN CUARTO. Nada de `slug`, `plan_id`, `revoked_at`, `created_at`
+// ni conteos: eso es el detalle de empresa del plano de PLATAFORMA
+// (platformadmin.TenantListItem), cuya audiencia es el operador. Aquí la
+// audiencia es alguien que solo quiere saber por cuál puerta entra.
+type tenantOptionDTO struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	// Active marca la que llevará el PRÓXIMO Context Token. Como mucho una es
+	// true, y puede que ninguna — «ninguna» es un estado legítimo y se expresa
+	// sin marcar nada, sin necesidad de un elemento centinela.
+	Active bool `json:"active"`
+}
+
+// tenantListDTO es la respuesta de GET /api/v1/auth/tenants.
+//
+// 🔴 NO LLEVA UN `active_tenant_id` AL LADO, y es deliberado aunque fuera cómodo:
+// sería una SEGUNDA fuente del mismo hecho que ya expresa el `active` de cada
+// elemento, y dos fuentes para el mismo dato es como se desincronizan (la casa ya
+// lo tiene escrito en la cabecera de la 0085 sobre el TTL). Con los flags de los
+// elementos basta: «ninguna activa» es «ningún elemento con active:true».
+//
+// ⚠️ Es un OBJETO y no un array pelado, aunque hoy solo tenga una clave: un array
+// en la raíz no admite añadir nada después sin romper a todos los clientes, y una
+// respuesta que ya se sabe que va a crecer (paginación no, pero sí quizá un aviso
+// de empresa revocada) no se sirve así.
+type tenantListDTO struct {
+	// Tenants NUNCA es null: cero empresas se serializa como `[]`. Que el cliente
+	// tenga que distinguir `null` de `[]` para el mismo hecho es un defecto, no
+	// una economía.
+	Tenants []tenantOptionDTO `json:"tenants"`
 }
 
 // Select sirve POST /api/v1/auth/active-tenant.
@@ -109,5 +153,58 @@ func (h *ActiveTenantHandler) Select() http.Handler {
 		// está en su SIGUIENTE Context Token; el que tiene en la mano se emitió
 		// antes y sigue diciendo lo que decía.
 		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// List sirve GET /api/v1/auth/tenants: las empresas del sujeto, con su nombre y
+// con la activa marcada.
+//
+// 🔴 POR QUÉ ESTE ENDPOINT EXISTE, que es más que «faltaba un listado». El
+// Context Token de quien tiene CERO empresas y el de quien tiene DOS y no ha
+// elegido son IDÉNTICOS: los dos sin tenant y sin un solo grant. Sin este
+// listado, la consola no puede distinguir si tocaba pintar la pantalla de espera
+// («tu acceso está en revisión») o el selector («¿con cuál entras?»). La lista
+// vacía y la lista de dos separan los dos casos sin tocar el token.
+//
+// LOS DESENLACES:
+//   - 200 con `{"tenants":[...]}` — incluida la lista VACÍA, que NO es un 404:
+//     no pertenecer a ninguna empresa todavía es un estado del producto
+//     (D-056.12).
+//   - 400 — el contexto no acredita a nadie (fallo de cableado del servidor: a
+//     este handler solo se llega detrás de Authenticate).
+//   - 500 — infraestructura.
+//
+// 🔴 NUNCA UNA EMPRESA AJENA, NI UNA PISTA DE QUE EXISTA. La respuesta no lleva
+// total, ni conteo, ni mensaje que insinúe cuántas hay fuera: es exactamente lo
+// que el usuario ya sabe (las suyas) y nada más. La garantía no está en este
+// fichero —el transporte pinta lo que le den—, está en el INNER JOIN gobernado
+// por `user_id` del adaptador (iampostgres.MembershipRepo.UserTenants).
+//
+// SE MONTA DETRÁS DE `Authenticate` Y SIN `RequirePermission`, igual que Select y
+// por lo mismo: quien necesita este listado es precisamente quien todavía no
+// tiene empresa en su token, así que cualquier grant requerido le daría 403.
+//
+// EL 405 LO DA EL MUX (patrón método+ruta de Go 1.22), como en el resto del
+// paquete.
+func (h *ActiveTenantHandler) List() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenants, activeID, err := h.lister.TenantsOfCaller(r.Context())
+		if err != nil {
+			writeDomainError(w, err)
+			return
+		}
+		// La proyección, y el `active` calculado en UN solo sitio: comparando
+		// contra el activeID que el puerto ya resolvió con la misma regla que el
+		// canje. Aquí no se decide cuál es la activa, se pinta.
+		opciones := make([]tenantOptionDTO, 0, len(tenants))
+		for _, t := range tenants {
+			opciones = append(opciones, tenantOptionDTO{
+				ID:          t.ID,
+				DisplayName: t.DisplayName,
+				// activeID vacío ("ninguna") no marca nada: ningún ID real es "".
+				Active: activeID != "" && t.ID == activeID,
+			})
+		}
+		writeJSON(w, http.StatusOK, tenantListDTO{Tenants: opciones})
 	})
 }

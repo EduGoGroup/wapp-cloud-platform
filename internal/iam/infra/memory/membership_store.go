@@ -32,6 +32,12 @@ type membresia struct {
 type MembershipStore struct {
 	mu       sync.RWMutex
 	byUserID map[string][]membresia
+	// nombres es el trozo de public.tenants que este doble necesita conocer: el
+	// display_name por tenant. NO es una tabla de tenants en miniatura — solo
+	// existe porque UserTenants hace un JOIN contra ella en el adaptador real, y
+	// un doble que devolviera el id como nombre daría por buenos tests que la
+	// base no respalda.
+	nombres map[string]string
 	// siguiente es el ordinal del próximo alta. Empieza en 1 para que el cero
 	// valor de membresia nunca se confunda con una fila real.
 	siguiente uint64
@@ -39,7 +45,24 @@ type MembershipStore struct {
 
 // NewMembershipStore crea el store vacío.
 func NewMembershipStore() *MembershipStore {
-	return &MembershipStore{byUserID: make(map[string][]membresia), siguiente: 1}
+	return &MembershipStore{
+		byUserID:  make(map[string][]membresia),
+		nombres:   make(map[string]string),
+		siguiente: 1,
+	}
+}
+
+// SeedTenantName registra el nombre legible de una empresa (helper de tests).
+//
+// ⚠️ Es una siembra APARTE de Seed y no un parámetro suyo, y eso es fiel a la
+// realidad: el nombre vive en OTRA tabla (public.tenants) que existe antes que
+// cualquier membresía. Una empresa sin nombre sembrado devuelve DisplayName
+// vacío en vez de inventarse uno — así, un test que compruebe nombres tiene que
+// sembrarlos, y no puede pasar por casualidad.
+func (s *MembershipStore) SeedTenantName(tenantID, displayName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nombres[tenantID] = displayName
 }
 
 var _ out.MembershipRepo = (*MembershipStore)(nil)
@@ -116,6 +139,28 @@ func (s *MembershipStore) TenantsOfUser(_ context.Context, userID string) ([]str
 	tenants := make([]string, 0, len(filas))
 	for _, f := range filas {
 		tenants = append(tenants, f.tenantID)
+	}
+	return tenants, nil
+}
+
+// UserTenants implementa out.MembershipRepo: las empresas del usuario CON su
+// nombre, en el MISMO orden que TenantsOfUser (el ordinal de alta).
+//
+// Recorre SOLO las membresías de ese usuario, igual que el INNER JOIN del
+// adaptador real: no hay forma de que aparezca aquí una empresa de la que no sea
+// miembro, ni siquiera una que exista en `nombres` sin membresía detrás. Esa
+// simetría con el SQL es lo que hace que un test unitario verde signifique algo.
+func (s *MembershipStore) UserTenants(_ context.Context, userID string) ([]domain.UserTenant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filas := append([]membresia(nil), s.byUserID[userID]...)
+	sort.Slice(filas, func(i, j int) bool { return filas[i].orden < filas[j].orden })
+
+	// No nula: cero empresas se serializa como `[]`, nunca como `null`.
+	tenants := make([]domain.UserTenant, 0, len(filas))
+	for _, f := range filas {
+		tenants = append(tenants, domain.UserTenant{ID: f.tenantID, DisplayName: s.nombres[f.tenantID]})
 	}
 	return tenants, nil
 }

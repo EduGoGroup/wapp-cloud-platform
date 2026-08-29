@@ -161,6 +161,24 @@ type MembershipRepo interface {
 	// buscarlos: hacerlo convertiría el listado de una empresa en una consulta al
 	// padrón del grupo.
 	MembersOf(ctx context.Context, tenantID string) ([]domain.Membership, error)
+	// UserTenants devuelve las empresas del usuario CON SU NOMBRE legible, en el
+	// mismo orden estable que TenantsOfUser. Lista vacía si no es miembro de
+	// ninguna, y eso NO es un error: es el estado de quien acaba de registrarse
+	// (D-056.12).
+	//
+	// 🔴 SON DOS MÉTODOS Y NO UNO, Y ESA ES LA DECISIÓN. TenantsOfUser corre en el
+	// CAMINO DE EMISIÓN DE TOKENS —una vez por canje, y los consumidores web
+	// canjean solos— y no necesita el nombre para nada: el token no lo lleva.
+	// Fundirlos pagaría un JOIN contra public.tenants en cada canje del sistema
+	// para servir a una pantalla que se pinta cuando alguien abre el selector.
+	// Éste es la lectura FRÍA, y por eso puede permitirse el JOIN.
+	//
+	// 🔴 SOLO LAS SUYAS, Y POR CONSTRUCCIÓN. La implementación es un INNER JOIN
+	// gobernado por `WHERE tenant_members.user_id = $1`: no hay forma de que
+	// devuelva una empresa de la que no sea miembro sin reescribir la consulta, y
+	// no hay ningún parámetro por el que pedir «las de otro». Tampoco devuelve
+	// conteos ni totales — nada que insinúe cuántas empresas hay fuera.
+	UserTenants(ctx context.Context, userID string) ([]domain.UserTenant, error)
 	// Add da de alta la membresía (userID, tenantID). Es IDEMPOTENTE: repetirla
 	// no duplica ni falla. NO asigna rol: eso es otra decisión y tiene su propia
 	// puerta (in.RoleAdmin.AssignRole).

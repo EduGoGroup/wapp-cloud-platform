@@ -56,6 +56,35 @@ type Membership struct {
 	CreatedAt time.Time
 }
 
+// UserTenant es UNA de las empresas del sujeto, vista DESDE el sujeto: lo mínimo
+// que un selector de empresa necesita para pintarse (Plan 047 · Ola 5 · T5.1).
+//
+// ⚠️ NO es domain.Membership con otro nombre, y la diferencia es la dirección.
+// Membership mira desde la EMPRESA («quién está aquí dentro»: user_id, tenant_id,
+// created_at) y por eso no trae nombres — la persona vive en identity. Ésta mira
+// desde la PERSONA («entre qué empresas puedo elegir») y por eso SÍ trae el
+// nombre: la empresa no vive en identity, vive en public.tenants, en esta misma
+// base, a un JOIN de distancia. No hay ninguna salida al padrón del grupo aquí.
+//
+// 🔴 NO LLEVA `Active`, y es deliberado. Cuál es la activa NO es una propiedad de
+// la empresa —dos personas distintas tienen activas empresas distintas—, así que
+// meterla aquí la ataría al sujeto que la consultó. El dato viaja APARTE, en el
+// segundo valor de retorno de in.TenantLister, que además admite el «ninguna» sin
+// tener que inventar un elemento.
+//
+// CERO PII: un UUID y el nombre COMERCIAL de una empresa de la que quien pregunta
+// ya es miembro. Ni correo, ni teléfono, ni nombre de persona.
+type UserTenant struct {
+	// ID es la empresa (public.tenants.id). Es lo que el selector manda de vuelta
+	// a POST /api/v1/auth/active-tenant.
+	ID string
+	// DisplayName es el nombre legible (public.tenants.display_name), el mismo
+	// que teclea el operador de plataforma al dar de alta la empresa. Existe
+	// porque un selector de UUIDs es inservible: hasta hoy la consola pintaba el
+	// id crudo.
+	DisplayName string
+}
+
 // Grant es un patrón de permiso glob `recurso.accion` con su efecto
 // (public.iam_role_grants / public.iam_user_grants). Es la unidad que se agrega
 // (rol + cadena ⊕ overrides de usuario) para formar los grants EFECTIVOS que se

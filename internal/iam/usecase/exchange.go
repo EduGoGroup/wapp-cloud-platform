@@ -257,56 +257,32 @@ func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (str
 	if err != nil {
 		return "", err
 	}
-	switch len(tenants) {
-	case 0:
-		return "", nil // sin empresa TODAVÍA: token sin tenant, no un 401.
-	case 1:
-		// La rama de siempre, LITERALMENTE la misma expresión: con una sola
-		// membresía no se consulta la empresa activa ni se compara nada. La
-		// regresión de este caso no depende de leer el código nuevo, depende de
-		// que el código nuevo no esté aquí.
-		return tenants[0], nil
-	default:
-		return s.tenantActivo(ctx, userID, tenants)
-	}
+	// Las tres ramas viven en tenantEfectivo, COMPARTIDAS con el listado que pinta
+	// el selector (ActiveTenantService.TenantsOfCaller). No es factorización por
+	// gusto: si el canje y el listado decidieran por separado, el selector podría
+	// marcar una empresa distinta de la que el token acaba llevando, y el síntoma
+	// —«la consola dice que estoy en A y no me deja hacer nada en A»— no señalaría
+	// a ninguno de los dos.
+	//
+	// La empresa activa se pasa como FUNCIÓN, así que con cero o una membresía no
+	// se consulta: la regresión del caso que hoy corre en producción está en la
+	// firma, no en un comentario.
+	return tenantEfectivo(tenants, func() (string, bool, error) {
+		return s.active.ActiveTenantOf(ctx, userID)
+	})
 }
 
-// tenantActivo resuelve la empresa de quien pertenece a VARIAS.
+// 🪦 tenantActivo VIVIÓ AQUÍ y se mudó a usecase.tenantEfectivo cuando el listado
+// del selector (T5.1, in.TenantLister) pasó a necesitar la MISMA decisión. Lo que
+// decía sigue vigente palabra por palabra y está escrito allí; se resume por si
+// alguien llega buscándolo:
 //
-// 🔴 LA EMPRESA GUARDADA SE CONTRASTA SIEMPRE CONTRA LAS MEMBRESÍAS, EN EL
-// INSTANTE DE LEERLA. Es el requisito de seguridad entero de T5.1 y está aquí en
-// una línea: `esMiembro(tenants, activo)`, sobre los tenants que resolveTenant
-// acaba de traer de tenant_members. Guardar una empresa activa NO concede nada.
-//
-// La consecuencia que hay que entender antes de tocar esto: si a alguien se le
-// retira la membresía, su empresa activa deja de valer en el SIGUIENTE canje sin
-// que nadie tenga que borrar la fila. Por eso la baja de un miembro no toca
-// user_active_tenant — una revocación que dependiera de acordarse de limpiar
-// otra tabla se olvidaría el día que naciera una segunda vía de baja. Si algún
-// día alguien "optimiza" esto guardándose la comprobación (por ejemplo,
-// confiando en la fila porque se validó al escribirla), habrá convertido una
-// preferencia en un permiso permanente.
-//
-// Los DOS desenlaces que no dan empresa —no hay ninguna guardada, o la guardada
-// ya no es suya— salen por la MISMA línea a propósito: los dos significan «esta
-// persona todavía no ha elegido una empresa válida», y el token que se emite es
-// idéntico al del caso «cero» (D-056.12). Distinguirlos aquí no serviría de nada
-// aguas arriba y sí obligaría a la consola a saber la diferencia.
-//
-// ⚠️ Un fallo del repositorio NO es «no hay empresa activa»: sube como error y
-// corta el canje. Quien pertenece a dos empresas no puede acabar con un token sin
-// empresa porque Postgres no contestara — eso lo dejaría sin poder operar y
-// pareciendo que nunca eligió.
-func (s *ExchangeService) tenantActivo(ctx context.Context, userID string, tenants []string) (string, error) {
-	activo, ok, err := s.active.ActiveTenantOf(ctx, userID)
-	if err != nil {
-		return "", err
-	}
-	if !ok || !esMiembro(tenants, activo) {
-		return "", nil
-	}
-	return activo, nil
-}
+//   - La empresa guardada se CONTRASTA SIEMPRE contra las membresías, en el
+//     instante de leerla. Guardar una empresa activa NO concede nada.
+//   - Por eso la baja de un miembro no toca user_active_tenant: la fila
+//     sobreviviente es inerte, y una revocación que dependiera de acordarse de
+//     limpiar otra tabla se olvidaría el día que naciera una segunda vía de baja.
+//   - Un fallo del repositorio NO es «no hay empresa activa»: sube y corta.
 
 // resolveGrants resuelve los grants efectivos del sujeto, salvo cuando no hay
 // tenant: un usuario sin empresa sale SIN un solo grant, se le hayan asignado

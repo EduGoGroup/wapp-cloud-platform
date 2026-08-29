@@ -3,7 +3,11 @@ package in
 // active_tenant.go — EL PUERTO DE ENTRADA DE LA ELECCIÓN DE EMPRESA
 // (Plan 047 · Ola 5 · T5.1, D-047.14).
 
-import "context"
+import (
+	"context"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
+)
 
 // ActiveTenantSelector fija la empresa con la que opera quien llama, cuando
 // pertenece a varias.
@@ -45,4 +49,38 @@ type ActiveTenantSelector interface {
 	// empresa — el mismo 404 con el que el resto del módulo contesta al recurso
 	// ajeno, para no confirmar qué empresas existen.
 	SelectActiveTenant(ctx context.Context, tenantID string) error
+}
+
+// TenantLister devuelve las empresas ENTRE LAS QUE quien llama puede elegir.
+//
+// 🔴 ES LA PIEZA SIN LA CUAL EL SELECTOR NO SE PUEDE PINTAR, y el hueco que
+// tapaba era peor que «falta un listado»: el Context Token de quien tiene CERO
+// empresas y el de quien tiene DOS y no ha elegido son IDÉNTICOS —los dos sin
+// tenant y sin un solo grant—, así que la consola no podía ni distinguir si tocaba
+// pintar la pantalla de espera («tu acceso está en revisión») o el selector
+// («¿con cuál entras?»). Con este puerto, la lista vacía y la lista de dos
+// separan los dos casos sin que el token tenga que cambiar.
+//
+// Va SEPARADO de ActiveTenantSelector aunque hoy los satisfaga el mismo servicio:
+// uno LEE y el otro ESCRIBE, y un consumidor que solo necesite pintar el selector
+// no tiene por qué recibir de paso la capacidad de cambiar la empresa activa.
+type TenantLister interface {
+	// TenantsOfCaller devuelve las empresas del Caller y CUÁL de ellas llevará su
+	// PRÓXIMO Context Token.
+	//
+	// `activeID` vacío significa «ninguna»: o no ha elegido, o lo que eligió ya
+	// no es suyo. Es un valor legítimo y no un error — el selector nace sin nada
+	// marcado, que es exactamente lo que hay que enseñarle.
+	//
+	// 🔴 `activeID` NO es «lo que hay guardado en user_active_tenant»: es lo que
+	// el canje resolvería AHORA MISMO, calculado con la misma función
+	// (usecase.tenantEfectivo). La diferencia se ve justo donde importa: con UNA
+	// sola membresía manda la membresía y no la fila guardada, así que devolver
+	// la fila cruda marcaría la opción equivocada —o ninguna— sobre un token que
+	// sí va acotado. Un selector que discrepe del token es peor que no tenerlo.
+	//
+	// Cero empresas devuelve lista VACÍA y sin error (D-056.12), nunca
+	// ErrNotFound: no pertenecer a ninguna empresa todavía es un estado del
+	// producto, no un fallo.
+	TenantsOfCaller(ctx context.Context) (tenants []domain.UserTenant, activeID string, err error)
 }

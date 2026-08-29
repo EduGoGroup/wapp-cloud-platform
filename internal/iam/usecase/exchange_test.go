@@ -715,11 +715,22 @@ func TestExchange_ConUnaSolaMembresiaLaEmpresaActivaNiSeMira(t *testing.T) {
 	if err := f.store.ActiveTenants.SetActiveTenant(context.Background(), f.userID, testTenantB); err != nil {
 		t.Fatalf("SetActiveTenant: %v", err)
 	}
+	// 🔴 «NI SE MIRA» SE MIDE, NO SE DEDUCE. Un espía cuenta las lecturas del
+	// repositorio: sin él, este test solo comprobaría el DESENLACE, y un canje que
+	// consultara la tabla en cada emisión —pagando una consulta por token para
+	// todo el sistema— saldría verde mientras devolviera lo mismo.
+	espia := &activeTenantEspia{dentro: f.store.ActiveTenants}
+	svc := mustExchangeSvcCon(t, f, espia)
 	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
 
-	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	res, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
+	}
+	if espia.lecturas != 0 {
+		t.Fatalf("el canje consultó la empresa activa %d vez/veces con UNA sola membresía: "+
+			"es el camino que hoy corre en producción para todo el mundo y no puede pagar esa consulta",
+			espia.lecturas)
 	}
 	if res.Context.TenantID != testTenant {
 		t.Fatalf("tenant = %q, want %q: con UNA membresía manda la membresía, no la empresa activa",
@@ -752,6 +763,23 @@ func TestExchange_UnFalloLeyendoLaEmpresaActivaNoEsUnTokenSinEmpresa(t *testing.
 	if !errors.Is(err, roto) {
 		t.Fatalf("err = %v, want %v: un fallo de infraestructura NO puede leerse como «no ha elegido»", err, roto)
 	}
+}
+
+// activeTenantEspia envuelve un repositorio real y CUENTA las lecturas. Sirve
+// para afirmar lo que ningún aserto sobre el resultado puede afirmar: que cierto
+// camino NO consulta la tabla.
+type activeTenantEspia struct {
+	dentro   out.ActiveTenantRepo
+	lecturas int
+}
+
+func (e *activeTenantEspia) ActiveTenantOf(ctx context.Context, userID string) (string, bool, error) {
+	e.lecturas++
+	return e.dentro.ActiveTenantOf(ctx, userID)
+}
+
+func (e *activeTenantEspia) SetActiveTenant(ctx context.Context, userID, tenantID string) error {
+	return e.dentro.SetActiveTenant(ctx, userID, tenantID)
 }
 
 // activeTenantRoto es el repositorio de empresa activa que siempre falla.
