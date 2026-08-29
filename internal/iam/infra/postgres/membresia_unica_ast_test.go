@@ -10,9 +10,16 @@ package iampostgres_test
 //
 // 🔴 LO QUE VIGILA, y por qué no basta un test de conducta. Un segundo INSERT
 // escrito en otro sitio no da error: da un usuario con dos filas en
-// tenant_members al que el canje deja de dejar entrar (domain.ErrMultipleTenants,
-// MD-055.2). El defecto está en el código que NO llama a la guarda, y a eso no
-// se llega ejercitando el que sí; hay que preguntarle al AST.
+// tenant_members que nadie decidió darle. El defecto está en el código que NO
+// llama a la guarda, y a eso no se llega ejercitando el que sí; hay que
+// preguntarle al AST.
+//
+// 🔧 El daño concreto cambió el 2026-08-29 y el candado NO: hasta el Plan 047 ·
+// Ola 5 · T5.1 esas dos filas dejaban a la persona sin poder canjear
+// (ErrMultipleTenants, hoy retirado); ahora el canje las resuelve por la empresa
+// activa (D-047.14). Sigue habiendo UN solo escritor porque el alta en una
+// segunda empresa tiene que ser una decisión, no un efecto colateral — MD-055.2
+// decide cuándo y cómo se permite.
 //
 // 🚨 GUARDA ANTI-HUECO: un barrido que no encuentra nada pasa siempre. Por eso
 // exige encontrar EXACTAMENTE el escritor conocido antes de que su veredicto
@@ -75,7 +82,7 @@ func TestMembresiaUnica_TodoElQueInsertaLlamaALaGuarda(t *testing.T) {
 
 		if !llamaA(archivo, guardaCompartida) {
 			t.Errorf("%s inserta en tenant_members y NO llama a %s: puede escribir una segunda empresa "+
-				"y dejar a esa persona sin poder canjear (domain.ErrMultipleTenants)", rel, guardaCompartida)
+				"a espaldas de la guarda de membresía única (MD-055.2)", rel, guardaCompartida)
 		}
 		return nil
 	})

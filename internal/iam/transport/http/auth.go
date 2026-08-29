@@ -127,8 +127,14 @@ func (h *AuthHandler) Verify() http.Handler {
 
 // Exchange canjea un Identity Token de identity-core por un Context Token de
 // wApp (identity Plan 003 · T3.1). 200 éxito; 400 cuerpo inválido; 401 token no
-// aceptable o sujeto sin migrar; 409 sujeto con más de un tenant; 503 con el
-// modo dual apagado o identity inalcanzable.
+// aceptable o sujeto sin migrar; 503 con el modo dual apagado o identity
+// inalcanzable.
+//
+// 🔧 El 409 de «sujeto con más de un tenant» YA NO EXISTE (Plan 047 · Ola 5 ·
+// T5.1, D-047.14): varias membresías dejaron de ser un fallo. El canje resuelve
+// con la empresa ACTIVA que esa persona eligió, y si no ha elegido ninguna
+// válida devuelve 200 con un token SIN empresa — el mismo del caso «cero»— para
+// que la consola pinte el selector.
 //
 // Es la puerta por la que entra la identidad del SSO: aquí NO se validan
 // credenciales (eso ya es de identity) ni se emite refresh (eso es de la sesión

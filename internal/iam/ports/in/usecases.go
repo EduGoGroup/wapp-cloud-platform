@@ -109,8 +109,13 @@ type ExchangeResult struct {
 type Exchanger interface {
 	// Exchange valida el Identity Token, resuelve tenant y grants efectivos del
 	// sujeto y emite el Context Token. Devuelve domain.ErrIdentityTokenInvalid,
-	// ErrIdentityTokenExpiring, ErrMultipleTenants, ErrUserInactive o
-	// ErrIdentityUnavailable en fallo. Cero membresías emite un token sin tenant (D-056.12).
+	// ErrIdentityTokenExpiring, ErrUserInactive o ErrIdentityUnavailable en
+	// fallo.
+	//
+	// NINGÚN número de membresías es un fallo: cero emite un token sin tenant
+	// (D-056.12) y varias resuelven por la empresa ACTIVA, que también emite un
+	// token sin tenant cuando no hay elección válida (Plan 047 · Ola 5 · T5.1,
+	// D-047.14).
 	Exchange(ctx context.Context, in ExchangeInput) (ExchangeResult, error)
 }
 

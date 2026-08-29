@@ -115,9 +115,13 @@ func (r *InvitationRedeemRepo) Redeem(ctx context.Context, tokenHash []byte, use
 	// tiene UN SOLO escritor en todo el código y lo vigila un candado sobre el AST
 	// (membresia_unica_ast_test.go): un INSERT propio en este fichero pondría ese
 	// test en rojo, y con razón — se saltaría la guarda de «una sola empresa» y
-	// dejaría a esa persona con dos membresías, o sea sin poder volver a entrar
-	// (resolveTenant devuelve ErrMultipleTenants con dos filas). El 409 de aquí
-	// PROTEGE al invitado; no le está negando nada que pudiera tener.
+	// dejaría a esa persona con dos membresías sin que nadie lo hubiera decidido.
+	//
+	// 🔧 Lo que este comentario decía hasta el 2026-08-29 —«o sea sin poder volver
+	// a entrar»— YA NO ES CIERTO: desde el Plan 047 · Ola 5 · T5.1 el canje
+	// resuelve con dos membresías (empresa activa, D-047.14). El 409 de aquí sigue
+	// siendo correcto, pero por lo que la guarda protege HOY: que el alta en una
+	// segunda empresa sea una decisión y no un efecto colateral de un canje.
 	if err := GrantTenantAccess(ctx, tx, userID, inv.TenantID, inv.RoleID); err != nil {
 		return err
 	}

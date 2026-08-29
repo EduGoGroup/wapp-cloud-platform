@@ -1,0 +1,228 @@
+-- ============================================================
+-- 0086: user_active_tenant — LA EMPRESA ACTIVA DE QUIEN PERTENECE A VARIAS
+-- (Plan 047 · Ola 5 · T5.1; D-047.14, decidida por Jhoan el 2026-08-29.)
+--
+-- POR QUÉ EXISTE
+-- ------------------------------------------------------------
+-- Hasta hoy, `resolveTenant` (usecase/exchange.go) tenía TRES ramas y la tercera
+-- era un muro: cero membresías → token SIN empresa (D-056.12); una → esa
+-- empresa; dos o más → error, y esa persona NO PODÍA ENTRAR. El multi-empresa
+-- empieza por quitar ese muro, y quitarlo obliga a decidir de dónde sale la
+-- empresa cuando hay varias candidatas.
+--
+-- 🔴 Y LA RESPUESTA NO PUEDE SER «DEL CLIENTE», QUE ES LO QUE ESTA TABLA
+-- EXISTE PARA EVITAR. `in.ExchangeInput` tiene UN SOLO campo (`IdentityToken`) y
+-- lo sigue teniendo: INV-8 dice que el tenant se deriva del token y jamás se
+-- acepta del llamante. Y aquí no es una regla abstracta: los tres consumidores
+-- web RE-CANJEAN SOLOS cada ~13 min, sin nadie delante (el Context Token dura
+-- `DefaultAccessTTL = 15 * time.Minute`, usecase/config.go). Si el tenant
+-- viajara en el canje, viajaría en cada uno de esos refrescos desatendidos —
+-- exactamente el camino por el que un cliente comprometido se movería de empresa
+-- sin que nadie lo teclee. Guardado en el SERVIDOR, el refresco lo conserva solo
+-- y la ELECCIÓN entra por una puerta aparte, deliberada y auditable
+-- (POST /api/v1/auth/active-tenant, T5.1).
+--
+-- ------------------------------------------------------------
+-- 🔴 GUARDAR NO CONCEDE: ESTA FILA NO ES UNA AUTORIZACIÓN
+-- ------------------------------------------------------------
+-- Es un requisito de seguridad, no una nota de estilo. Una fila aquí es una
+-- PREFERENCIA, no un permiso: el canje la lee y la CONTRASTA SIEMPRE contra
+-- `public.tenant_members` en el mismo instante en que la usa (esa comprobación
+-- vive en `usecase.esMiembro`, y la ejercita
+-- `TestExchange_LaEmpresaActivaQueYaNoEsSuyaNoDaTenant`).
+--
+-- La consecuencia práctica es la que importa: SI A ALGUIEN SE LE RETIRA LA
+-- MEMBRESÍA, SU EMPRESA ACTIVA DEJA DE VALER EN EL SIGUIENTE CANJE, sin que
+-- nadie tenga que venir a borrar esta fila. Por eso la baja de un miembro
+-- (`MembershipRepo.Remove`) NO toca esta tabla y no es un olvido: si la
+-- revocación dependiera de acordarse de limpiar aquí, el día que alguien
+-- añadiera una segunda vía de baja se quedaría una empresa activa viva sobre una
+-- membresía muerta. Lo que no se puede olvidar es lo que no hay que recordar.
+--
+-- Y por lo mismo, la fila que queda tras la baja es INERTE, no peligrosa: el
+-- canje la descarta y emite el token SIN empresa (el mismo que emite el caso
+-- «cero»: `GenerateTenantlessToken`, sin un solo grant). La consola pinta ahí su
+-- selector.
+--
+-- ------------------------------------------------------------
+-- LA FORMA: UNA FILA POR PERSONA, Y LA PK LO DICE
+-- ------------------------------------------------------------
+-- `user_id` es la PRIMARY KEY, no una columna más con un índice al lado. Una
+-- persona tiene UNA empresa activa: dos filas para el mismo usuario no serían un
+-- dato redundante, serían un dato ambiguo — el canje tendría que elegir entre
+-- ellas y volveríamos al problema que esta tabla resuelve. La escritura es un
+-- `INSERT ... ON CONFLICT (user_id) DO UPDATE`, así que elegir empresa REEMPLAZA
+-- la elección anterior en vez de acumular historia. Aquí no hay historia: si
+-- algún día se quiere («¿desde cuándo opera en esta empresa?»), es una tabla de
+-- eventos aparte, no una segunda fila en ésta.
+--
+-- ⚠️ NO HAY FK HACIA EL USUARIO, y es la misma frontera de siempre: la persona
+-- vive en identity, en OTRA base de datos (INV-02 de identity). Mismo criterio
+-- que `tenant_members.user_id` (0037), `tenant_invitations.created_by` (0085) y
+-- `access_requests` (0060). Hacia `tenants` SÍ hay FK, porque la empresa sí vive
+-- aquí.
+--
+-- ------------------------------------------------------------
+-- CERO PII, por forma
+-- ------------------------------------------------------------
+-- Dos UUID y una marca de tiempo. Ni una columna de texto, así que no cabe un
+-- correo ni un nombre aunque alguien quisiera meterlo (mismo barrido V4 que
+-- 0085; ADR-0034).
+--
+-- ------------------------------------------------------------
+-- 🔴 LAS CUATRO REGLAS DEL PATRÓN FULL-REPLAY (0063:33-57 / 0085), APLICADAS AQUÍ
+-- ------------------------------------------------------------
+-- El runner es hash-based FULL-REPLAY (migrations/migrate.go) y corre AL ARRANCAR
+-- `bin/server`: reaplica TODO el directorio en cuanto cambia el hash del
+-- conjunto. Se dice qué se hizo con cada regla en vez de dejar el silencio:
+--
+-- (1) SIN DEFAULT sobre columnas de estado — SE APLICA por vacuidad: aquí no hay
+--     columnas de estado. Los dos únicos defaults son el `now()` de `updated_at`
+--     —que es el molde de la casa— y ninguno más; `user_id` y `tenant_id` los
+--     escribe SIEMPRE quien elige.
+--
+-- (2) BACKFILL CON GUARD `WHERE ... IS NULL` — NO SE APLICA: tabla nueva, cero
+--     filas preexistentes, ninguna columna que rellenar desde otra. No hay
+--     UPDATE que el replay pueda repetir. 🔴 Y NO SE SIEMBRA NADA a propósito:
+--     sembrar aquí la única membresía de cada persona con una sola empresa sería
+--     escribir preferencias que nadie eligió, y además no cambiaría ni un
+--     desenlace (con UNA membresía el canje ni consulta esta tabla).
+--
+-- (3) `SET NOT NULL` DENTRO DE UN `DO $$ ... IF is_nullable = 'YES'` — NO SE
+--     APLICA: las tres columnas NACEN NOT NULL en el CREATE TABLE, porque la
+--     tabla no tiene filas. Ese `SET NOT NULL` guardado existe para columnas
+--     añadidas a una tabla CON datos.
+--
+-- (4) CHECK CON NOMBRE EXPLÍCITO, FUERA DEL `CREATE TABLE` — NO SE APLICA: esta
+--     tabla NO TIENE NINGÚN CHECK, y conviene decir por qué en vez de dejar el
+--     hueco. Lo único que habría que vigilar —«que ese tenant sea suyo»— NO ES
+--     UN CHECK POSIBLE: depende de otra tabla y, sobre todo, es una condición que
+--     CAMBIA DESPUÉS de escribir la fila (a esa persona pueden darle de baja
+--     mañana). Un CHECK sólo valdría en el instante del INSERT, que es
+--     exactamente el instante en que no hace falta; la comprobación que sí sirve
+--     es la de la LECTURA, y ésa vive en Go (ver arriba). Escribir un CHECK aquí
+--     daría una falsa sensación de red debajo.
+--
+-- ⚠️ LA FK DE `tenant_id` VA INLINE, como la de `tenant_id` en 0085 y por la
+-- MISMA razón, que allí se dejó escrita: la columna es NOT NULL, así que ningún
+-- `ADD COLUMN IF NOT EXISTS` puede reponerla (un `ADD COLUMN NOT NULL` sin
+-- default revienta sobre una tabla con filas). Si esa columna faltara, faltaría
+-- la tabla entera, y ese es un escenario que este fichero no pretende arreglar.
+-- No se repite aquí la maniobra de `DROP CONSTRAINT IF EXISTS` + `ADD` que 0085
+-- sí necesitó para `role_id`, porque allí la columna era NULLable y el bloque de
+-- reparación PODÍA dejarla desnuda. Aquí no puede.
+--
+-- EL REPLAY, AQUÍ BENIGNO
+-- ------------------------------------------------------------
+-- `CREATE TABLE IF NOT EXISTS` es, del segundo arranque en adelante, un NO-OP
+-- EXACTO: no toca valores ni columnas, y las elecciones ya hechas SOBREVIVEN a
+-- cada reinicio. El `ADD COLUMN IF NOT EXISTS` de abajo existe por si una base se
+-- quedó con una versión anterior de este mismo fichero (patrón 0046:69-72,
+-- 0047:73-77, 0082 y 0085).
+--
+-- 🔴 Y ESE `ADD COLUMN` NO ES ADORNO: es la mitad que evita el fallo ya sufrido en
+-- este repo — un `COMMENT ON COLUMN` sobre una columna que NO EXISTE mata el
+-- SEGUNDO ARRANQUE del servidor, no una consulta lejana. Los COMMENT del final
+-- dependen de que `updated_at` exista. Las otras dos no se pueden reponer por esa
+-- vía y por eso no se finge que sí.
+--
+-- ⚠️ ORDEN: depende solo de `public.tenants` (0001), muy anterior y no retirada,
+-- así que no necesita el guard `IF EXISTS` que la 0037 tuvo que ponerle a
+-- `iam_users`. Va al final, en secuencia, porque es donde va todo lo nuevo.
+--
+-- ADITIVA e IDEMPOTENTE. SchemaVersion sube a 0.48.0 (ver version.go): la 0.47.0
+-- ya está escrita en la fila de `public.schema_version` de UAT (journal
+-- 2026-08-29, `version=0.47.0 content_hash=3a1d9df126724d2d skipped=false`), así
+-- que ésta es la primera migración que cambia el esquema POR ENCIMA de una
+-- versión ya publicada — segunda mitad de la regla de version.go. NO clean-slate.
+--
+-- ------------------------------------------------------------
+-- VERIFICACIÓN
+-- ------------------------------------------------------------
+-- (V1) La tabla existe con sus TRES columnas, las tres NOT NULL:
+--
+--   SELECT column_name, data_type, is_nullable, column_default
+--     FROM information_schema.columns
+--    WHERE table_schema = 'public' AND table_name = 'user_active_tenant'
+--    ORDER BY ordinal_position;
+--
+--   Salida esperada — TRES filas, todas con is_nullable = NO; column_default solo
+--   en `updated_at` (now()). ⚠️ `information_schema` enseña el estado FINAL, no
+--   con qué nació la columna.
+--
+-- (V2) La PK es por `user_id` A SECAS (una empresa activa por persona), y la FK
+--      hacia tenants existe:
+--
+--   SELECT conname, contype, pg_get_constraintdef(oid)
+--     FROM pg_constraint
+--    WHERE conrelid = 'public.user_active_tenant'::regclass;
+--   -- esperado: la PK sobre (user_id) —🔴 si sale sobre (user_id, tenant_id),
+--   --           alguien convirtió la preferencia en una lista y el canje volvió
+--   --           a tener que elegir— y la FK de tenant_id ON DELETE CASCADE.
+--
+-- (V3) La base ACEPTA la fila buena, RECHAZA la empresa inexistente y el
+--      REEMPLAZO no acumula (las tres mitades: un rechazo sobre una tabla que no
+--      acepta nada no probaría nada). Sustituye <T1>/<T2> por tenants reales:
+--
+--   INSERT INTO public.user_active_tenant (user_id, tenant_id)
+--   VALUES ('00000000-0000-0000-0000-0000000000aa', '<T1>');
+--   -- esperado: INSERT 0 1
+--
+--   INSERT INTO public.user_active_tenant (user_id, tenant_id)
+--   VALUES ('00000000-0000-0000-0000-0000000000bb', gen_random_uuid());
+--   -- esperado: ERROR ... violates foreign key constraint
+--
+--   INSERT INTO public.user_active_tenant (user_id, tenant_id) VALUES
+--     ('00000000-0000-0000-0000-0000000000aa', '<T2>')
+--   ON CONFLICT (user_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, updated_at = now();
+--   SELECT count(*) FROM public.user_active_tenant
+--    WHERE user_id = '00000000-0000-0000-0000-0000000000aa';   -- esperado: 1
+--
+--   DELETE FROM public.user_active_tenant
+--    WHERE user_id IN ('00000000-0000-0000-0000-0000000000aa',
+--                      '00000000-0000-0000-0000-0000000000bb');
+--
+-- (V4) El barrido de PII: la tabla no tiene NI UNA columna de texto donde quepa
+--      un correo o un nombre. No es una consulta sobre las filas, es una sobre el
+--      esquema, y por eso NO caduca con los datos:
+--
+--   SELECT count(*) AS columnas_de_texto FROM information_schema.columns
+--    WHERE table_schema = 'public' AND table_name = 'user_active_tenant'
+--      AND data_type IN ('text','character varying','character');   -- esperado: 0
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.user_active_tenant (
+    user_id    UUID        PRIMARY KEY,                -- identidad en identity (otra BD), SIN FK
+    tenant_id  UUID        NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()      -- cuándo se eligió por última vez
+);
+
+-- Por si una base ya tiene la tabla de una versión anterior de este fichero: el
+-- replay le añade lo que falte sin tocar las filas existentes (patrón 0085).
+-- SOLO `updated_at` puede llegar por esta vía —tiene DEFAULT, así que un
+-- `ADD COLUMN NOT NULL` no revienta sobre una tabla con filas—; `user_id` es la
+-- PK y `tenant_id` es NOT NULL sin default, y fingir que se reponen sería mentir.
+--
+-- 🔴 De esto depende que los COMMENT del final no maten el SEGUNDO arranque.
+ALTER TABLE public.user_active_tenant
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- ------------------------------------------------------------
+-- SIN ÍNDICES ADICIONALES, y se dice por qué.
+-- ------------------------------------------------------------
+-- La ÚNICA consulta de lectura es `WHERE user_id = $1` (el canje, una vez por
+-- canje y solo cuando hay dos o más membresías), y esa la sirve la PK. No hay
+-- ninguna consulta que filtre por `tenant_id`: nadie pregunta «quién tiene activa
+-- esta empresa», y un índice por una consulta que nadie ha escrito es el criterio
+-- que 0082 y 0085 ya rechazaron.
+--
+-- Lo único que un índice sobre `tenant_id` ahorraría es el scan que el
+-- `ON DELETE CASCADE` paga al borrar una empresa: sobre una tabla con a lo sumo
+-- una fila por persona, y en una operación que no es camino caliente, es ruido.
+-- El día que deje de serlo, la conversación es añadirlo — no descubrir el coste.
+
+COMMENT ON TABLE public.user_active_tenant IS
+    'Empresa ACTIVA de una persona que pertenece a varias (Plan 047 · Ola 5 · T5.1, D-047.14). Una fila por usuario: elegir empresa REEMPLAZA la eleccion anterior (ON CONFLICT (user_id) DO UPDATE), no acumula historia. 🔴 GUARDAR NO CONCEDE: esta fila es una PREFERENCIA, no una autorizacion. El canje la CONTRASTA SIEMPRE contra public.tenant_members en el instante de leerla, asi que retirarle la membresia a alguien invalida su empresa activa sin que nadie tenga que borrar esta fila -- por eso la baja de un miembro no toca esta tabla, y no es un olvido. Si la empresa activa ya no esta entre sus membresias (o no hay ninguna guardada), el canje emite el token SIN empresa, el mismo del caso cero (D-056.12), y la consola pinta su selector. 🔴 La ELECCION entra por POST /api/v1/auth/active-tenant y NUNCA por el canje: in.ExchangeInput sigue teniendo un solo campo (INV-8), porque los consumidores web re-canjean solos cada ~13 min y un tenant que viajara desde el cliente viajaria en cada refresco desatendido. CERO PII: dos UUID y una marca de tiempo, ni una columna de texto.';
+COMMENT ON COLUMN public.user_active_tenant.user_id    IS 'Persona que eligio (UUID de identity, OTRA base de datos, SIN FK -- misma frontera que tenant_members.user_id de la 0037 e INV-02 de identity). Es la PRIMARY KEY A SECAS y no media clave compuesta: una persona tiene UNA empresa activa, y dos filas para el mismo usuario no serian un dato redundante sino AMBIGUO -- el canje tendria que elegir entre ellas, que es justo el problema que esta tabla resuelve.';
+COMMENT ON COLUMN public.user_active_tenant.tenant_id  IS 'Empresa elegida (FK a tenants, ON DELETE CASCADE: si la empresa desaparece, la preferencia que apunta a ella no sobrevive). 🔴 Que este aqui NO significa que la persona pertenezca a ella: la pertenencia la dice tenant_members y el canje la comprueba cada vez. Escribirla exige ser miembro en ese momento (usecase.ActiveTenantService), pero esa comprobacion es del INSTANTE del alta y puede caducar despues -- por eso no hay CHECK que lo vigile: la comprobacion que sirve es la de la LECTURA, y vive en Go.';
+COMMENT ON COLUMN public.user_active_tenant.updated_at IS 'Cuando se eligio por ultima vez. Usa el DEFAULT now() en el alta y se reescribe en cada reemplazo. No hay created_at: la fila no tiene vida propia mas alla de su ultima escritura, y guardar cuando se eligio por PRIMERA vez seria historia -- y la historia, si hace falta, es una tabla de eventos aparte.';

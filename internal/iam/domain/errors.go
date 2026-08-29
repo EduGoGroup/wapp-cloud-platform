@@ -76,11 +76,15 @@ var (
 	// sujeto sin membresía es un usuario sin migrar, no uno que crear al vuelo.
 	ErrUserNotMigrated = errors.New("iam: el sujeto del identity token no es miembro de ningún tenant de wApp")
 
-	// ErrMultipleTenants indica que el usuario es miembro de más de un tenant y
-	// el canje no puede decidir cuál va en el Context Token. Falla explícitamente
-	// en vez de elegir el primero en silencio: la resolución (¿tenant en el
-	// request? ¿selector?) es materia del Plan 005, que remodela la tenencia.
-	ErrMultipleTenants = errors.New("iam: el usuario pertenece a más de un tenant")
+	// 🪦 ErrMultipleTenants VIVIÓ AQUÍ y se retiró con el Plan 047 · Ola 5 · T5.1
+	// (D-047.14). Decía «el usuario es miembro de más de un tenant y el canje no
+	// puede decidir cuál»; hoy el canje SÍ decide —lee la empresa activa que esa
+	// persona eligió y la contrasta contra sus membresías, y si no vale emite el
+	// token sin empresa (usecase/exchange.go:resolveTenant)—, así que NADIE lo
+	// produce ya. Un sentinel que no se devuelve nunca es peor que ninguno: se
+	// sigue citando en comentarios y en `errors.Is` que jamás se cumplen, y da la
+	// impresión de que existe una rama que ya no existe. Se borra, y esta lápida
+	// queda por si alguien lo busca. Su 409 se fue con él (transport/http/http.go).
 
 	// ErrIdentityUnavailable indica que no se pudo decidir sobre el Identity
 	// Token porque identity no está alcanzable (JWKS sin claves frescas). Es

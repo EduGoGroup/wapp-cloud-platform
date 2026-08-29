@@ -124,11 +124,18 @@ type Executor interface {
 // solicitud. Quien llama decide la transacción; esta función no la abre ni la
 // cierra nunca.
 //
-// La guarda NO es una regla de la administración de empresas: es lo que mantiene
-// canjeable el token de esa persona. El canje resuelve el tenant por
-// tenant_members y con dos filas devuelve domain.ErrMultipleTenants
-// (usecase/exchange.go:resolveTenant), así que una segunda membresía no le añade
-// una empresa a nadie — le rompe el login. Devuelve domain.ErrConflict.
+// La guarda limita a UNA la empresa de cada persona y devuelve
+// domain.ErrConflict cuando ya hay otra.
+//
+// 🔧 SU JUSTIFICACIÓN CAMBIÓ EL 2026-08-29 Y LA GUARDA SE QUEDA (Plan 047 · Ola
+// 5 · T5.1, D-047.14). Hasta hoy se defendía diciendo que una segunda membresía
+// «le rompe el login», porque el canje fallaba con dos filas. ESO YA NO ES
+// CIERTO: el canje resuelve por la empresa ACTIVA y, sin elección válida, emite
+// un token sin empresa. Lo que T5.1 abrió es el lado de la LECTURA; el de la
+// ESCRITURA —qué significa dar de alta a alguien en una segunda empresa, y quién
+// puede— sigue sin decidirse, así que la guarda se mantiene tal cual y su
+// levantamiento sigue siendo MD-055.2. Lo que ya no se puede decir es que
+// protege un canje que se rompería.
 //
 // ⚠️ La atomicidad NO es exclusión mutua: bajo READ COMMITTED dos altas
 // simultáneas del mismo usuario en dos empresas distintas pueden contar cero las

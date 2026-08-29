@@ -117,6 +117,7 @@ func TestIntegration_AltaDeMembresiaLaVeElCanje(t *testing.T) {
 		iampostgres.NewRoleRepo(env.db),
 		iampostgres.NewGrantRepo(env.db),
 		iampostgres.NewAuditRepo(env.db),
+		iampostgres.NewActiveTenantRepo(env.db),
 		contexts,
 		usecase.Config{},
 	)
@@ -167,8 +168,11 @@ func TestIntegration_AltaDeMembresiaLaVeElCanje(t *testing.T) {
 // compartida (iampostgres.CountOtherMemberships) contra Postgres, y comprueba lo
 // que de verdad protege: que tras el rechazo el canje SIGUE funcionando.
 //
-// Si la guarda fallara, la fila entraría y el canje pasaría a devolver
-// domain.ErrMultipleTenants — esa persona dejaría de poder entrar (MD-055.2).
+// 🔧 Si la guarda fallara, la fila entraría y esa persona tendría dos empresas
+// sin que nadie lo hubiera decidido. Hasta el 2026-08-29 el daño se describía
+// como «el canje devolvería ErrMultipleTenants y dejaría de poder entrar»: eso ya
+// no ocurre (Plan 047 · Ola 5 · T5.1). Lo que la mitad de abajo comprueba —que
+// tras el rechazo el canje SIGUE funcionando— vale igual.
 func TestIntegration_LaSegundaEmpresaSeRechazaContraLaTabla(t *testing.T) {
 	t.Parallel()
 	env := newAltaEnv(t)

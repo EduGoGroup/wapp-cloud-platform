@@ -414,10 +414,11 @@ func (h *MembershipHandler) List() http.Handler {
 //     no crea una segunda membresía ni falla, así que un 201 mentiría la mitad
 //     de las veces.
 //   - 400 cuerpo inválido o `user_id` vacío.
-//   - 409 esa persona YA es miembro de OTRA empresa. No es una regla de la
-//     administración de empresas: una segunda membresía rompe el canje de su
-//     token (ErrMultipleTenants), así que no le añade una empresa — le quita el
-//     login. Se levanta cuando el canje sepa elegir (MD-055.2), no antes.
+//   - 409 esa persona YA es miembro de OTRA empresa. 🔧 Hasta el 2026-08-29 esto
+//     se justificaba con «una segunda membresía rompe el canje de su token»; ya
+//     no es cierto —el canje resuelve con varias desde el Plan 047 · Ola 5 · T5.1
+//     (empresa activa, D-047.14)—. El 409 se queda porque el lado de la ESCRITURA
+//     sigue sin decidirse: su levantamiento es MD-055.2.
 //
 // LOS SEIS DESENLACES (Plan 047 · Ola B). Desde que el alta acredita también la
 // aplicación en identity, un 204 dejó de significar «se escribió una fila» para

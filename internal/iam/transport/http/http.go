@@ -72,7 +72,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 //   - ErrNotFound          → 404 (incluye el recurso de OTRA empresa: el usecase
 //     lo devuelve así a propósito y aquí no se puede convertir en 403 sin
 //     confirmar que ese rol o esa persona existen fuera)
-//   - ErrConflict / más de un tenant → 409
+//   - ErrConflict          → 409
 //   - ErrGlobalRoleImmutable → 422 (el cuerpo se entiende; lo que no se puede
 //     procesar es editar una plantilla que vale para todos los tenants)
 //   - identity inalcanzable → 503 (indisponibilidad, NO rechazo)
@@ -105,8 +105,6 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "al identity token le queda muy poca vida: refresca antes de canjearlo")
 	case errors.Is(err, domain.ErrUserNotMigrated):
 		writeError(w, http.StatusUnauthorized, "usuario no migrado")
-	case errors.Is(err, domain.ErrMultipleTenants):
-		writeError(w, http.StatusConflict, "el usuario pertenece a más de un tenant: sin resolución hasta el Plan 005")
 	case errors.Is(err, domain.ErrIdentityUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "identity no está disponible")
 	case errors.Is(err, domain.ErrIdentityNotConfigured):

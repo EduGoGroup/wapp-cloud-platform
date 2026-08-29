@@ -308,9 +308,13 @@ func TestRolePlane_LaPlantillaGlobalNoSeEdita(t *testing.T) {
 }
 
 // TestRolePlane_AltaYBajaDeMiembro cubre members.write: el alta es idempotente
-// (204, no 201) y la segunda EMPRESA para la misma persona es 409 — no porque la
-// administración lo prohíba, sino porque le rompería el canje de su token
-// (domain.ErrMultipleTenants, MD-055.2).
+// (204, no 201) y la segunda EMPRESA para la misma persona es 409.
+//
+// 🔧 El porqué del 409 cambió el 2026-08-29: hasta entonces era que «le rompería
+// el canje de su token». Desde el Plan 047 · Ola 5 · T5.1 el canje resuelve con
+// varias membresías (empresa activa, D-047.14), así que lo que lo sostiene es que
+// el alta en una segunda empresa sea una decisión y no un efecto colateral —
+// MD-055.2 decide cuándo se levanta.
 func TestRolePlane_AltaYBajaDeMiembro(t *testing.T) {
 	t.Parallel()
 	p := nuevoPlanoDeRoles(t)

@@ -19,6 +19,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
 )
 
@@ -47,6 +48,11 @@ type exchangeFixture struct {
 	contexts *sharedjwt.JWTManager
 	store    *memory.Store
 	userID   string
+	// verifier es el que acepta los tokens de `issuer`. Se guarda para que un
+	// test pueda reconstruir el canje cambiando UNA pieza (mustExchangeSvcCon)
+	// sin generar otro par de claves, que emitiría tokens que este verificador
+	// rechazaría.
+	verifier usecase.IdentityTokenVerifier
 }
 
 func newExchangeFixture(t *testing.T) exchangeFixture {
@@ -61,7 +67,7 @@ func newExchangeFixture(t *testing.T) exchangeFixture {
 	})
 
 	svc := mustExchangeSvc(t, verifier, store, contexts)
-	return exchangeFixture{svc: svc, issuer: issuerMgr, contexts: contexts, store: store, userID: userID}
+	return exchangeFixture{svc: svc, issuer: issuerMgr, contexts: contexts, store: store, userID: userID, verifier: verifier}
 }
 
 // newIdentityPair devuelve el emisor de Identity Tokens de prueba y el
@@ -101,10 +107,24 @@ func seedMember(t *testing.T, store *memory.Store, tenantID, roleName string, gr
 	return userID
 }
 
+// mustExchangeSvcCon reconstruye el canje del fixture cambiando SOLO el
+// repositorio de empresa activa. Comparte el resto de dobles para que lo único
+// distinto entre este servicio y el del fixture sea la pieza bajo prueba.
+func mustExchangeSvcCon(t *testing.T, f exchangeFixture, active out.ActiveTenantRepo) *usecase.ExchangeService {
+	t.Helper()
+	svc, err := usecase.NewExchangeService(
+		f.verifier, f.store.Memberships, f.store.Roles, f.store.Grants, f.store.Audit, active, f.contexts, usecase.Config{},
+	)
+	if err != nil {
+		t.Fatalf("NewExchangeService: %v", err)
+	}
+	return svc
+}
+
 func mustExchangeSvc(t *testing.T, verifier usecase.IdentityTokenVerifier, store *memory.Store, jwt *sharedjwt.JWTManager) *usecase.ExchangeService {
 	t.Helper()
 	svc, err := usecase.NewExchangeService(
-		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
+		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, store.ActiveTenants, jwt, usecase.Config{},
 	)
 	if err != nil {
 		t.Fatalf("NewExchangeService: %v", err)
@@ -498,20 +518,249 @@ func TestExchange_CanjeaSinPadronLocalYConservaLosRolesDeWapp(t *testing.T) {
 	}
 }
 
-// TestExchange_ConVariosTenantsFallaEnVezDeElegir es la pata "2 membresías" de
-// T3.3, y está INTACTO a propósito: D-056.12 abre el caso "cero", no el caso
-// "varias" (INV-056.9). Que este test no se haya tocado es parte del criterio.
-func TestExchange_ConVariosTenantsFallaEnVezDeElegir(t *testing.T) {
+// ---------------------------------------------------------------------------
+// EL CASO «VARIAS EMPRESAS» (Plan 047 · Ola 5 · T5.1, D-047.14)
+// ---------------------------------------------------------------------------
+//
+// 🔧 AQUÍ VIVÍA TestExchange_ConVariosTenantsFallaEnVezDeElegir, cuya cabecera
+// decía «está INTACTO a propósito […] que este test no se haya tocado es parte
+// del criterio». Tocarlo ES el cambio de T5.1: el canje ya no falla con dos
+// membresías, resuelve por la EMPRESA ACTIVA.
+//
+// 🔴 PERO SU ESPÍRITU SIGUE VIGENTE Y NO SE HA BORRADO: elegir la primera en
+// silencio SIGUE PROHIBIDO. Lo que era un único test que exigía un error son
+// ahora tres que exigen desenlaces concretos, y el primero
+// (TestExchange_ConVariasEmpresasYSinElegirNoEligePorTi) es literalmente la misma
+// afirmación con el desenlace nuevo. La mutación que lo demuestra —hacer que
+// resolveTenant devuelva tenants[0] con dos membresías y sin empresa activa—
+// tiene que ponerlo en ROJO.
+
+// dosEmpresas siembra una persona NUEVA con membresía en dos empresas y un rol
+// DISTINTO acotado a cada una (D-056.11: la asignación lleva tenant). Devuelve su
+// UUID.
+//
+// Los roles van ACOTADOS y no globales a propósito: un rol global se resolvería
+// para las dos empresas y entonces el test de «los grants de ESA y no los de la
+// otra» no podría fallar nunca — sería un assert vacuo con aspecto de cobertura.
+func (f exchangeFixture) dosEmpresas(t *testing.T) string {
+	t.Helper()
+	userID := uuid.NewString()
+	ctx := context.Background()
+
+	rolA := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "solo-en-A"},
+		[]domain.Grant{{Pattern: "flows.create", Effect: domain.EffectAllow}})
+	if err := f.store.Roles.AssignToUser(ctx, userID, rolA.ID, ptr(testTenant)); err != nil {
+		t.Fatalf("AssignToUser (A): %v", err)
+	}
+	rolB := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenantB), Name: "solo-en-B"},
+		[]domain.Grant{{Pattern: "messages.send", Effect: domain.EffectAllow}})
+	if err := f.store.Roles.AssignToUser(ctx, userID, rolB.ID, ptr(testTenantB)); err != nil {
+		t.Fatalf("AssignToUser (B): %v", err)
+	}
+
+	// Seed y no Add: Add lleva la guarda de «una sola empresa» (MD-055.2) y este
+	// es justo el estado que la guarda no dejaría escribir hoy — y que existe en
+	// bases reales anteriores a ella.
+	f.store.Memberships.Seed(userID, testTenant)
+	f.store.Memberships.Seed(userID, testTenantB)
+	return userID
+}
+
+// TestExchange_ConVariasEmpresasYSinElegirNoEligePorTi es el HEREDERO DIRECTO del
+// test custodio, con el desenlace nuevo: sin empresa activa guardada, el canje
+// NO se inventa una — emite el token SIN empresa, exactamente el del caso «cero»
+// (D-056.12), y la consola pinta ahí su selector.
+//
+// 🔴 LO QUE DE VERDAD VIGILA es la mitad negativa: que NO salga testTenant, que
+// es la PRIMERA membresía sembrada. Un `return tenants[0]` en esa rama pasaría
+// cualquier test que solo comprobara «no hay error».
+func TestExchange_ConVariasEmpresasYSinElegirNoEligePorTi(t *testing.T) {
 	t.Parallel()
 	f := newExchangeFixture(t)
-	f.store.Memberships.Seed(f.userID, testTenantB)
-	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
+	userID := f.dosEmpresas(t)
+	token, _ := f.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
 
-	_, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
-	if !errors.Is(err, domain.ErrMultipleTenants) {
-		t.Fatalf("err = %v, want ErrMultipleTenants (elegir el primero en silencio está prohibido)", err)
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v (dos membresías dejaron de ser un error, D-047.14)", err)
+	}
+	if res.Context.TenantID == testTenant {
+		t.Fatalf("el canje eligió la PRIMERA empresa (%q) en silencio: eso sigue estando prohibido", testTenant)
+	}
+	if res.Context.TenantID != "" {
+		t.Fatalf("tenant = %q, want vacío: sin empresa activa no hay empresa", res.Context.TenantID)
+	}
+
+	// El dato que importa es el que viaja FIRMADO, no el del DTO.
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	assertTenantlessClaims(t, claims, userID)
+}
+
+// TestExchange_LaEmpresaActivaValidaAcotaElToken es la otra mitad: con una
+// elección guardada y VIVA, el token sale acotado a ESA empresa y con LOS GRANTS
+// DE ESA EMPRESA.
+//
+// 🔴 Se comprueba leyendo los CLAIMS, y las dos direcciones: que estén los de B y
+// que NO estén los de A. Solo con la primera mitad, un canje que resolviera los
+// grants con el tenant equivocado —o con los dos— saldría verde.
+func TestExchange_LaEmpresaActivaValidaAcotaElToken(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
+	userID := f.dosEmpresas(t)
+	if err := f.store.ActiveTenants.SetActiveTenant(context.Background(), userID, testTenantB); err != nil {
+		t.Fatalf("SetActiveTenant: %v", err)
+	}
+	token, _ := f.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if res.Context.TenantID != testTenantB {
+		t.Fatalf("tenant = %q, want %q (la empresa activa)", res.Context.TenantID, testTenantB)
+	}
+
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	if claims.TenantID != testTenantB {
+		t.Fatalf("tenant_id del token FIRMADO = %q, want %q", claims.TenantID, testTenantB)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != "solo-en-B" {
+		t.Errorf("roles = %v, want [solo-en-B]: se resolvieron los de la otra empresa", claims.Roles)
+	}
+	if !identityrbac.EvaluateGrants(claims.Grants, "messages.send") {
+		t.Errorf("faltan los grants de la empresa ACTIVA: %+v", claims.Grants)
+	}
+	if identityrbac.EvaluateGrants(claims.Grants, "flows.create") {
+		t.Errorf("el token lleva los grants de la OTRA empresa: %+v", claims.Grants)
 	}
 }
+
+// TestExchange_LaEmpresaActivaQueYaNoEsSuyaNoDaTenant es EL TEST DEL REQUISITO DE
+// SEGURIDAD de T5.1: guardar una empresa activa NO concede nada, y la fila se
+// contrasta contra las membresías EN EL MOMENTO DE LEERLA.
+//
+// 🔴 Fíjate en lo que el test NO hace: no borra la fila de user_active_tenant. Le
+// quita la MEMBRESÍA y deja la elección escrita, que es exactamente lo que pasa
+// en producción cuando a alguien se le da de baja de una empresa —la baja no toca
+// esa tabla, a propósito—. Si la comprobación de lectura desapareciera, esa
+// persona seguiría recibiendo tokens acotados a una empresa de la que ya no forma
+// parte, CON sus grants, y nadie se enteraría.
+//
+// ⚠️ SON TRES EMPRESAS Y NO DOS, Y ESO NO ES ADORNO: al quitarle la tercera le
+// quedan DOS, que es la única forma de que el canje siga entrando por la rama de
+// «varias» y llegue a mirar la empresa activa. Con dos empresas y una baja se
+// cae a la rama de UNA membresía, que resuelve por la membresía y ni consulta
+// esta tabla — el test saldría rojo por el motivo equivocado (y así salió la
+// primera vez que se escribió).
+func TestExchange_LaEmpresaActivaQueYaNoEsSuyaNoDaTenant(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
+	ctx := context.Background()
+	userID := f.dosEmpresas(t)
+	const tercera = "33333333-3333-3333-3333-333333333333"
+	f.store.Memberships.Seed(userID, tercera)
+	if err := f.store.ActiveTenants.SetActiveTenant(ctx, userID, tercera); err != nil {
+		t.Fatalf("SetActiveTenant: %v", err)
+	}
+	// La baja de la TERCERA. La empresa activa NO se toca: sigue diciéndola.
+	if err := f.store.Memberships.Remove(ctx, userID, tercera); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	// Y se comprueba que de verdad quedó escrita, para que este test no pase por
+	// haber limpiado lo que dice no limpiar.
+	if activo, ok, aerr := f.store.ActiveTenants.ActiveTenantOf(ctx, userID); aerr != nil || !ok || activo != tercera {
+		t.Fatalf("la empresa activa se perdió (%q, ok=%v, err=%v): este test exige que SIGA escrita", activo, ok, aerr)
+	}
+	// Guarda anti-hueco: le tienen que quedar DOS, o el canje no entraría por la
+	// rama que este test pretende ejercitar.
+	if quedan, qerr := f.store.Memberships.TenantsOfUser(ctx, userID); qerr != nil || len(quedan) != 2 {
+		t.Fatalf("le quedan %v (err=%v), quiero DOS: con una sola el canje ni mira la empresa activa", quedan, qerr)
+	}
+
+	token, _ := f.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
+	res, err := f.svc.Exchange(ctx, in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if res.Context.TenantID != "" {
+		t.Fatalf("tenant = %q, want vacío: la empresa activa ya no es suya y guardarla NO concede nada",
+			res.Context.TenantID)
+	}
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	// Sin empresa Y SIN GRANTS: si el token saliera sin tenant pero con los
+	// grants de la empresa perdida, el fallo sería el mismo con otra cara.
+	assertTenantlessClaims(t, claims, userID)
+}
+
+// TestExchange_ConUnaSolaMembresiaLaEmpresaActivaNI SE MIRA. Con una membresía el
+// canje devuelve esa empresa sin consultar nada: es la regresión de rango cero de
+// T5.1 en su forma más incómoda —una empresa activa guardada que apunta a OTRA
+// parte— y el desenlace correcto es que NO cambia nada.
+//
+// Sin este caso, alguien podría "simplificar" resolveTenant consultando la
+// empresa activa SIEMPRE, y el camino que hoy corre en producción para todo el
+// mundo pasaría a depender de una tabla nueva.
+func TestExchange_ConUnaSolaMembresiaLaEmpresaActivaNiSeMira(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t) // 1 membresía en testTenant, rol operator
+	if err := f.store.ActiveTenants.SetActiveTenant(context.Background(), f.userID, testTenantB); err != nil {
+		t.Fatalf("SetActiveTenant: %v", err)
+	}
+	token, _ := f.identityToken(t, f.userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if res.Context.TenantID != testTenant {
+		t.Fatalf("tenant = %q, want %q: con UNA membresía manda la membresía, no la empresa activa",
+			res.Context.TenantID, testTenant)
+	}
+	claims, err := f.contexts.ValidateToken(res.ContextToken)
+	if err != nil {
+		t.Fatalf("validando el context token: %v", err)
+	}
+	assertOperatorIdentity(t, claims, f.userID)
+}
+
+// TestExchange_UnFalloLeyendoLaEmpresaActivaNoEsUnTokenSinEmpresa: si el
+// repositorio se cae, el canje CORTA. No degrada a «token sin empresa».
+//
+// 🔴 Es la distinción que el puerto pide y que un `if err != nil { return "", nil }`
+// destruiría en silencio: quien pertenece a dos empresas se quedaría operando sin
+// ninguna —sin poder hacer nada, y pareciendo que nunca eligió— porque Postgres
+// tuvo un mal segundo. Es el modo de fallo que se diagnostica mal: parece un
+// problema de la persona y es un problema de la base.
+func TestExchange_UnFalloLeyendoLaEmpresaActivaNoEsUnTokenSinEmpresa(t *testing.T) {
+	t.Parallel()
+	f := newExchangeFixture(t)
+	userID := f.dosEmpresas(t)
+	roto := errors.New("la base no contesta")
+	svc := mustExchangeSvcCon(t, f, activeTenantRoto{err: roto})
+	token, _ := f.identityToken(t, userID, usecase.SystemWappBFF, 15*time.Minute)
+
+	_, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
+	if !errors.Is(err, roto) {
+		t.Fatalf("err = %v, want %v: un fallo de infraestructura NO puede leerse como «no ha elegido»", err, roto)
+	}
+}
+
+// activeTenantRoto es el repositorio de empresa activa que siempre falla.
+type activeTenantRoto struct{ err error }
+
+func (r activeTenantRoto) ActiveTenantOf(context.Context, string) (string, bool, error) {
+	return "", false, r.err
+}
+func (r activeTenantRoto) SetActiveTenant(context.Context, string, string) error { return r.err }
 
 func TestExchange_SinTokenEsEntradaInvalida(t *testing.T) {
 	t.Parallel()
@@ -578,14 +827,21 @@ func TestNewExchangeService_ExigeSusDependencias(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
 	jwt := sharedjwt.NewJWTManager(testSigningKey, testIssuer)
-	if _, err := usecase.NewExchangeService(nil, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(nil, store.Memberships, store.Roles, store.Grants, store.Audit, store.ActiveTenants, jwt, usecase.Config{}); err == nil {
 		t.Error("sin verificador debería fallar: el modo dual apagado NO se expresa con un servicio a medias")
 	}
-	if _, err := usecase.NewExchangeService(unavailableVerifier{}, nil, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(unavailableVerifier{}, nil, store.Roles, store.Grants, store.Audit, store.ActiveTenants, jwt, usecase.Config{}); err == nil {
 		t.Error("sin repositorio de membresías debería fallar")
 	}
-	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Memberships, store.Roles, store.Grants, store.Audit, nil, usecase.Config{}); err == nil {
+	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Memberships, store.Roles, store.Grants, store.Audit, store.ActiveTenants, nil, usecase.Config{}); err == nil {
 		t.Error("sin emisor debería fallar")
+	}
+	// 🔴 Y sin el repositorio de la EMPRESA ACTIVA también (Plan 047 · Ola 5 ·
+	// T5.1). No es simetría por gusto: un servicio construido sin él arrancaría y
+	// dejaría a quien tiene dos empresas sin ninguna, EN SILENCIO — el peor modo
+	// de fallo de los tres, porque los otros dos se notan en el primer canje.
+	if _, err := usecase.NewExchangeService(unavailableVerifier{}, store.Memberships, store.Roles, store.Grants, store.Audit, nil, jwt, usecase.Config{}); err == nil {
+		t.Error("sin repositorio de empresa activa debería fallar: no hay modo «sin multi-empresa»")
 	}
 }
 

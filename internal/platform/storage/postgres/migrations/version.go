@@ -414,7 +414,25 @@ import (
 // El corolario que sí se sostiene: las olas que le queden al Plan 047 (T-A2…T-A8,
 // las pantallas) pueden añadir migraciones bajo ESTE número mientras la 0.47.0 no
 // se despliegue. En cuanto se despliegue, vuelve a aplicar lo de arriba.
-const SchemaVersion = "0.47.0"
+// 0.48.0 — Plan 047 · Ola 5 · T5.1 (0086): nace `public.user_active_tenant`, la
+// EMPRESA ACTIVA de quien pertenece a varias (D-047.14). Con ella, `resolveTenant`
+// deja de fallar en el caso «dos o más membresías»: lee la empresa guardada, la
+// CONTRASTA contra tenant_members en el mismo instante, y si no vale emite el
+// token SIN empresa — el mismo del caso «cero» (D-056.12).
+//
+// Es el TERCER bump del Plan 047, y sigue sin romper la regla por la segunda
+// mitad, que aquí se cumple de forma verificable: la 0.47.0 ya está escrita en la
+// fila de public.schema_version de UAT (journal 2026-08-29, `version=0.47.0
+// content_hash=3a1d9df126724d2d skipped=false`, desplegada con la Ola A), así que
+// la 0086 es la primera migración que cambia el esquema por encima de una versión
+// YA PUBLICADA. Dejarla sin bump haría que esa fila afirmara 0.47.0 sobre un
+// esquema que ya no es el suyo — exactamente el argumento con el que la 0.47.0 se
+// separó de la 0.46.0, y la 0.46.0 de la 0.45.0.
+//
+// El corolario, otra vez: lo que le quede a la Ola 5 puede añadir migraciones bajo
+// ESTE número mientras la 0.48.0 no se despliegue. En cuanto se despliegue, vuelve
+// a aplicar lo de arriba.
+const SchemaVersion = "0.48.0"
 
 // hashLen es la longitud (en caracteres hex) a la que se trunca el content hash.
 const hashLen = 16

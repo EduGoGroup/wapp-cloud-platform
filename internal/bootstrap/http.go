@@ -112,6 +112,34 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	publicMux.Handle("POST /api/v1/invitations/accept",
 		authMW.Authenticate(iamhttp.NewInvitationRedeemHandler(invitationRedeem).Accept()))
 
+	// LA ELECCIÓN DE EMPRESA (Plan 047 · Ola 5 · T5.1, D-047.14). Es la TERCERA
+	// ruta de este proceso que un token SIN EMPRESA atraviesa, y las otras dos
+	// están justo encima — no es coincidencia: las tres son los momentos en que
+	// alguien todavía no tiene empresa en su token y necesita hacer algo al
+	// respecto (mirarse, entrar por invitación, elegir entre las suyas).
+	//
+	// 🔴 Por eso la cadena es `Authenticate` A SECAS, exactamente la de whoami y
+	// la del canje de invitación. Quien pertenece a DOS empresas y no ha elegido
+	// ninguna recibe hoy un Context Token sin tenant y sin un solo grant
+	// (resolveTenant → "", y GenerateTenantlessToken), así que cualquier
+	// `protect`/`protectRead` le contestaría 403 — a todas las personas para las
+	// que este endpoint existe. Lo que autoriza aquí no es un grant: es SER
+	// MIEMBRO de la empresa que se pide, y eso lo comprueba el usecase contra
+	// tenant_members.
+	//
+	// ⚠️ Tampoco se audita con AuditMiddleware, por lo mismo que el canje: la
+	// bitácora graba por tenant y quien llama no trae ninguno. El rastro de la
+	// elección queda en `user_active_tenant.updated_at`.
+	//
+	// Con la BD cableada esta ruta existe SIEMPRE. Un fallo de construcción es de
+	// cableado y aborta el arranque, no degrada la ruta.
+	activeTenant, err := buildActiveTenantSelect(db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	publicMux.Handle("POST /api/v1/auth/active-tenant",
+		authMW.Authenticate(iamhttp.NewActiveTenantHandler(activeTenant).Select()))
+
 	// Ruta pública de alta de usuario (Plan 056 · T3.2). A-06a: el freno era
 	// 5 rps/burst 10 por IP —432 000 altas/día para un formulario que una
 	// persona rellena una vez—; baja a 1 cada 60s con ráfaga de 5. C-02

@@ -59,7 +59,7 @@ func newExchangeHarness(t *testing.T) exchangeHarness {
 		t.Fatalf("NewMultiVerifier (identity): %v", err)
 	}
 	exchangeSvc, err := usecase.NewExchangeService(
-		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, jwt, usecase.Config{},
+		verifier, store.Memberships, store.Roles, store.Grants, store.Audit, store.ActiveTenants, jwt, usecase.Config{},
 	)
 	if err != nil {
 		t.Fatalf("NewExchangeService: %v", err)
@@ -200,15 +200,71 @@ func TestExchange_SujetoSinEmpresaResponde200ConContextoSinTenant(t *testing.T) 
 	}
 }
 
-func TestExchange_VariosTenantsResponde409(t *testing.T) {
+// TestExchange_VariasEmpresasResponde200SinEmpresa GIRA a
+// TestExchange_VariosTenantsResponde409 (Plan 047 · Ola 5 · T5.1, D-047.14).
+//
+// 🔧 El 409 que este test exigía YA NO EXISTE: el sentinel que lo producía
+// (domain.ErrMultipleTenants) se retiró con esta tarea, porque nadie lo devuelve
+// ya. Lo que la persona con dos empresas recibe ahora es un 200 con un token SIN
+// empresa —el mismo del caso «cero»— y la consola pinta ahí su selector.
+//
+// 🔴 Lo que NO cambió es el espíritu: elegir la primera en silencio sigue estando
+// prohibido, y por eso este test comprueba que el `tenant_id` de la respuesta no
+// es la primera membresía, no solo que el código sea 200.
+func TestExchange_VariasEmpresasResponde200SinEmpresa(t *testing.T) {
 	t.Parallel()
 	h := newExchangeHarness(t)
-	h.store.Memberships.Seed(h.userID, "22222222-2222-2222-2222-222222222222")
+	const otra = "22222222-2222-2222-2222-222222222222"
+	h.store.Memberships.Seed(h.userID, otra)
 	token := h.identityToken(t, h.userID, usecase.SystemWappBFF)
 
 	rec := h.do(t, http.MethodPost, "/api/v1/auth/exchange", `{"identity_token":"`+token+`"}`, nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("code = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ContextToken string `json:"context_token"`
+		Context      struct {
+			TenantID string `json:"tenant_id"`
+		} `json:"context"`
+	}
+	mustJSON(t, rec.Body.Bytes(), &out)
+	if out.ContextToken == "" {
+		t.Fatal("context token vacío: sin token no hay selector de empresa que pintar")
+	}
+	if out.Context.TenantID == tTenant {
+		t.Fatalf("el canje eligió la PRIMERA empresa (%q) en silencio: eso sigue prohibido", tTenant)
+	}
+	if out.Context.TenantID != "" {
+		t.Fatalf("tenant_id = %q, want vacío: sin empresa activa no hay empresa", out.Context.TenantID)
+	}
+}
+
+// TestExchange_ConEmpresaActivaResponde200ConEsaEmpresa es la otra mitad por el
+// cable: con la elección guardada, el 200 trae ESA empresa. Sin este caso, el de
+// arriba lo cumpliría un canje que devolviera SIEMPRE el token sin empresa.
+func TestExchange_ConEmpresaActivaResponde200ConEsaEmpresa(t *testing.T) {
+	t.Parallel()
+	h := newExchangeHarness(t)
+	const otra = "22222222-2222-2222-2222-222222222222"
+	h.store.Memberships.Seed(h.userID, otra)
+	if err := h.store.ActiveTenants.SetActiveTenant(context.Background(), h.userID, otra); err != nil {
+		t.Fatalf("SetActiveTenant: %v", err)
+	}
+	token := h.identityToken(t, h.userID, usecase.SystemWappBFF)
+
+	rec := h.do(t, http.MethodPost, "/api/v1/auth/exchange", `{"identity_token":"`+token+`"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Context struct {
+			TenantID string `json:"tenant_id"`
+		} `json:"context"`
+	}
+	mustJSON(t, rec.Body.Bytes(), &out)
+	if out.Context.TenantID != otra {
+		t.Fatalf("tenant_id = %q, want %q (la empresa activa)", out.Context.TenantID, otra)
 	}
 }
 

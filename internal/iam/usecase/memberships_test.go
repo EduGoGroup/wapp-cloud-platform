@@ -86,9 +86,12 @@ func TestAddMember_EsIdempotente(t *testing.T) {
 
 // TestAddMember_UnaSegundaEmpresaEsConflicto es la guarda que sostiene el canje.
 //
-// No se rechaza por política de producto: con dos filas en tenant_members el
-// canje devuelve domain.ErrMultipleTenants y esa persona deja de poder entrar
-// (MD-055.2). Una segunda membresía no le añade una empresa — le rompe el login.
+// 🔧 No se rechaza por política de producto, pero su porqué cambió el
+// 2026-08-29: hasta entonces era que dos filas en tenant_members rompían el
+// canje. Desde el Plan 047 · Ola 5 · T5.1 el canje resuelve con varias (empresa
+// activa, D-047.14), así que lo que sostiene el 409 es que el alta en una
+// segunda empresa sea una decisión y no un efecto colateral. MD-055.2 decide
+// cuándo se levanta.
 func TestAddMember_UnaSegundaEmpresaEsConflicto(t *testing.T) {
 	t.Parallel()
 	f := newMembershipFixture(t)

@@ -263,9 +263,12 @@ func TestIntegration_Canje_UnaInvitacionRevocadaNoSeCanjea(t *testing.T) {
 // TestIntegration_Canje_QuienYaEsMiembroDeOtraEmpresaNoQuemaLaInvitacion es el
 // criterio literal de T-A5, y las DOS mitades importan:
 //
-//	(a) 409 — lo da GrantTenantAccess, que cuenta antes de insertar. El 409
-//	    PROTEGE al invitado: con dos membresías, resolveTenant devolvería
-//	    ErrMultipleTenants y esa persona no podría volver a entrar.
+//	(a) 409 — lo da GrantTenantAccess, que cuenta antes de insertar. 🔧 Hasta el
+//	    2026-08-29 esto se explicaba diciendo que con dos membresías esa persona
+//	    «no podría volver a entrar»; ya no es cierto (Plan 047 · Ola 5 · T5.1: el
+//	    canje resuelve por la empresa activa). El 409 se queda porque el alta en
+//	    una segunda empresa tiene que ser una decisión, no un efecto colateral de
+//	    canjear una invitación — MD-055.2.
 //	(b) LA INVITACIÓN SIGUE USABLE — y esto es lo que fija el ORDEN de los
 //	    pasos. Si el marcado ocurriera ANTES de la guarda, este rechazo dejaría
 //	    la invitación quemada: terminal, sin membresía detrás, y la dueña

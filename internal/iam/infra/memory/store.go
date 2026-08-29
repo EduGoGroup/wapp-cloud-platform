@@ -22,16 +22,21 @@ type Store struct {
 	Audit       *AuditStore
 	Memberships *MembershipStore
 	Invitations *InvitationStore
+	// ActiveTenants es la empresa ACTIVA por usuario (tabla user_active_tenant,
+	// Plan 047 · Ola 5 · T5.1). La consume el canje cuando hay dos o más
+	// membresías.
+	ActiveTenants *ActiveTenantStore
 }
 
 // NewStore crea el agregado con todos los repositorios vacíos.
 func NewStore() *Store {
 	return &Store{
-		Roles:       NewRoleStore(),
-		Grants:      NewGrantStore(),
-		Audit:       NewAuditStore(),
-		Memberships: NewMembershipStore(),
-		Invitations: NewInvitationStore(),
+		Roles:         NewRoleStore(),
+		Grants:        NewGrantStore(),
+		Audit:         NewAuditStore(),
+		Memberships:   NewMembershipStore(),
+		Invitations:   NewInvitationStore(),
+		ActiveTenants: NewActiveTenantStore(),
 	}
 }
 

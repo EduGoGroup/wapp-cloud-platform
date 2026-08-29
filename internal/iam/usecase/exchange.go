@@ -62,8 +62,13 @@ type ExchangeService struct {
 	roles    out.RoleRepo
 	grants   out.GrantRepo
 	audit    out.AuditRepo
-	jwt      *sharedjwt.JWTManager
-	cfg      Config
+	// active es la EMPRESA ACTIVA de quien pertenece a varias (Plan 047 · Ola 5
+	// · T5.1, D-047.14). Solo se consulta en el caso «dos o más membresías»: con
+	// cero o una, el canje ni la mira, y esa es la forma de que la regresión de
+	// los casos que ya funcionaban no dependa de leer código nuevo.
+	active out.ActiveTenantRepo
+	jwt    *sharedjwt.JWTManager
+	cfg    Config
 }
 
 // compile-time: ExchangeService satisface el puerto de entrada.
@@ -81,13 +86,18 @@ func NewExchangeService(
 	roles out.RoleRepo,
 	grants out.GrantRepo,
 	audit out.AuditRepo,
+	active out.ActiveTenantRepo,
 	jwt *sharedjwt.JWTManager,
 	cfg Config,
 ) (*ExchangeService, error) {
 	if verifier == nil {
 		return nil, errors.New("iam: ExchangeService requiere un verificador de Identity Tokens")
 	}
-	if members == nil || roles == nil || grants == nil || audit == nil {
+	// `active` entra en la MISMA guarda que los otros cuatro y no en una
+	// opcional: un despliegue sin él no es un despliegue «sin multi-empresa»,
+	// es uno donde quien tiene dos empresas se queda sin ninguna en silencio.
+	// Que falte es un error de cableado y se dice al arrancar, no al canjear.
+	if members == nil || roles == nil || grants == nil || audit == nil || active == nil {
 		return nil, errors.New("iam: ExchangeService requiere todos los repositorios")
 	}
 	if jwt == nil {
@@ -99,6 +109,7 @@ func NewExchangeService(
 		roles:    roles,
 		grants:   grants,
 		audit:    audit,
+		active:   active,
 		jwt:      jwt,
 		cfg:      cfg.withDefaults(),
 	}, nil
@@ -208,24 +219,39 @@ func (s *ExchangeService) validate(token string) (*identityjwt.Claims, error) {
 }
 
 // resolveTenant traduce el sujeto de identity al tenant de wApp por la tabla de
-// membresías. Hoy la relación es 1:1; más de un tenant es un caso que esta ola
-// NO resuelve y que por tanto falla con nombre propio.
+// membresías. Son TRES casos y ninguno es un error desde el Plan 047 · Ola 5.
 //
-// CERO membresías ya NO es un error (Plan 056 · D-056.12). Antes devolvía
+// CERO membresías ya NO era un error (Plan 056 · D-056.12). Antes devolvía
 // ErrUserNotMigrated y el canje se cortaba ahí, lo que dejaba a quien acaba de
 // registrarse sin poder entrar siquiera a ver que su acceso está en revisión.
 // Ahora devuelve tenant VACÍO y sin error: el llamante emite un Context Token
 // sin empresa y sin grants, que es el estado «en espera» — se entra, y no se
-// puede hacer nada. La misma rama mostrará el selector de empresa cuando llegue
-// el multi-empresa.
+// puede hacer nada. Esa misma rama es la que muestra el selector de empresa
+// ahora que el multi-empresa existe: es el mismo token, emitido por el mismo
+// sitio, y no hubo que construir un tercer estado.
 //
 // Que el tenant vacío no sea un error NO lo convierte en comodín: aguas abajo
 // nadie lo trata como "cualquier tenant" (ver [ExchangeService.sign], que emite
 // un token sin un solo grant, y los guardas `id.TenantID == ""` de cada handler
 // del :8103).
 //
-// ErrMultipleTenants se queda EXACTAMENTE igual: esta ola abre el caso "cero",
-// no el caso "varias" (INV-056.9).
+// 🔴 VARIAS MEMBRESÍAS YA NO FALLA (Plan 047 · Ola 5 · T5.1, D-047.14). Hasta
+// hoy devolvía un sentinel propio y esa persona NO PODÍA ENTRAR. Ahora manda la
+// EMPRESA ACTIVA que ella misma eligió por POST /api/v1/auth/active-tenant y que
+// vive en el SERVIDOR (tabla user_active_tenant, migración 0086), nunca en el
+// cuerpo del canje.
+//
+// Lo que este cambio NO hace, dicho para que nadie lo lea de más: NO elige por
+// nadie. Sin empresa activa —o con una que ya no es suya— el desenlace es el
+// token SIN empresa, y la consola pinta el selector. Elegir la primera en
+// silencio sigue estando PROHIBIDO, y sigue habiendo un test que lo vigila
+// (TestExchange_ConVariasEmpresasYSinElegirNoEligePorTi).
+//
+// El cierre de este caso NO tiene número de invariante: era una FRASE DE DISEÑO
+// del Plan 056 —«este plan no abre el multi-empresa», design.md §5.3— que ese
+// mismo documento atribuyó por error a INV-056.9. INV-056.9 es otra cosa y sigue
+// vigente: «el administrador nunca conoce ni asigna la clave de nadie»
+// (requirements.md del 056). Quien levanta la frase de diseño es este plan.
 func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (string, error) {
 	tenants, err := s.members.TenantsOfUser(ctx, userID)
 	if err != nil {
@@ -235,10 +261,51 @@ func (s *ExchangeService) resolveTenant(ctx context.Context, userID string) (str
 	case 0:
 		return "", nil // sin empresa TODAVÍA: token sin tenant, no un 401.
 	case 1:
+		// La rama de siempre, LITERALMENTE la misma expresión: con una sola
+		// membresía no se consulta la empresa activa ni se compara nada. La
+		// regresión de este caso no depende de leer el código nuevo, depende de
+		// que el código nuevo no esté aquí.
 		return tenants[0], nil
 	default:
-		return "", domain.ErrMultipleTenants
+		return s.tenantActivo(ctx, userID, tenants)
 	}
+}
+
+// tenantActivo resuelve la empresa de quien pertenece a VARIAS.
+//
+// 🔴 LA EMPRESA GUARDADA SE CONTRASTA SIEMPRE CONTRA LAS MEMBRESÍAS, EN EL
+// INSTANTE DE LEERLA. Es el requisito de seguridad entero de T5.1 y está aquí en
+// una línea: `esMiembro(tenants, activo)`, sobre los tenants que resolveTenant
+// acaba de traer de tenant_members. Guardar una empresa activa NO concede nada.
+//
+// La consecuencia que hay que entender antes de tocar esto: si a alguien se le
+// retira la membresía, su empresa activa deja de valer en el SIGUIENTE canje sin
+// que nadie tenga que borrar la fila. Por eso la baja de un miembro no toca
+// user_active_tenant — una revocación que dependiera de acordarse de limpiar
+// otra tabla se olvidaría el día que naciera una segunda vía de baja. Si algún
+// día alguien "optimiza" esto guardándose la comprobación (por ejemplo,
+// confiando en la fila porque se validó al escribirla), habrá convertido una
+// preferencia en un permiso permanente.
+//
+// Los DOS desenlaces que no dan empresa —no hay ninguna guardada, o la guardada
+// ya no es suya— salen por la MISMA línea a propósito: los dos significan «esta
+// persona todavía no ha elegido una empresa válida», y el token que se emite es
+// idéntico al del caso «cero» (D-056.12). Distinguirlos aquí no serviría de nada
+// aguas arriba y sí obligaría a la consola a saber la diferencia.
+//
+// ⚠️ Un fallo del repositorio NO es «no hay empresa activa»: sube como error y
+// corta el canje. Quien pertenece a dos empresas no puede acabar con un token sin
+// empresa porque Postgres no contestara — eso lo dejaría sin poder operar y
+// pareciendo que nunca eligió.
+func (s *ExchangeService) tenantActivo(ctx context.Context, userID string, tenants []string) (string, error) {
+	activo, ok, err := s.active.ActiveTenantOf(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if !ok || !esMiembro(tenants, activo) {
+		return "", nil
+	}
+	return activo, nil
 }
 
 // resolveGrants resuelve los grants efectivos del sujeto, salvo cuando no hay

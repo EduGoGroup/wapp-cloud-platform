@@ -166,12 +166,15 @@ type MembershipRepo interface {
 	// puerta (in.RoleAdmin.AssignRole).
 	//
 	// 🔴 Devuelve domain.ErrConflict si el usuario ya es miembro de OTRO tenant.
-	// Esa guarda NO es una regla de negocio de la administración de empresas: es
-	// lo que mantiene canjeable el token de esa persona. El canje resuelve el
-	// tenant por esta tabla y con más de una membresía falla con
-	// domain.ErrMultipleTenants (usecase/exchange.go:resolveTenant), así que una
-	// segunda membresía no le añade una empresa a nadie — le rompe el login.
-	// Es la deuda MD-055.2 y se levanta cuando el canje sepa elegir, no antes.
+	//
+	// 🔧 SU JUSTIFICACIÓN CAMBIÓ EL 2026-08-29 Y LA GUARDA SE QUEDA (Plan 047 ·
+	// Ola 5 · T5.1, D-047.14). Hasta hoy se defendía diciendo que una segunda
+	// membresía «le rompe el login», porque el canje fallaba con dos filas de
+	// esta tabla. ESO YA NO ES CIERTO: el canje resuelve por la empresa ACTIVA y,
+	// sin elección válida, emite un token sin empresa. T5.1 abrió el lado de la
+	// LECTURA; el de la ESCRITURA —qué significa un alta en una segunda empresa,
+	// y quién puede hacerla— sigue sin decidirse, así que la guarda se mantiene y
+	// su levantamiento sigue siendo MD-055.2.
 	//
 	// La escritura la comparte con la vía del operador en el adaptador
 	// (iampostgres.GrantTenantAccess): este puerto es PURO y no conoce

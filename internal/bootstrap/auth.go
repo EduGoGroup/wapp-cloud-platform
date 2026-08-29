@@ -160,6 +160,11 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 			iampostgres.NewRoleRepo(db),
 			iampostgres.NewGrantRepo(db),
 			iampostgres.NewAuditRepo(db),
+			// La EMPRESA ACTIVA (Plan 047 · Ola 5 · T5.1). Sin este repositorio
+			// el constructor falla y el arranque se aborta: no hay modo
+			// «sin multi-empresa» — quien tenga dos empresas se quedaría sin
+			// ninguna, en silencio, y eso es peor que no arrancar.
+			iampostgres.NewActiveTenantRepo(db),
 			userTokenIssuer,
 			iamusecase.Config{},
 		)
@@ -760,6 +765,41 @@ func buildInvitationRedeem(db *sql.DB) (in.InvitationRedeemer, error) {
 	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(db))
 	if err != nil {
 		return nil, fmt.Errorf("construyendo RedeemService (IAM): %w", err)
+	}
+	return svc, nil
+}
+
+// ---------------------------------------------------------------------------
+// La ELECCIÓN de empresa (Plan 047 · Ola 5 · T5.1)
+// ---------------------------------------------------------------------------
+
+// buildActiveTenantSelect cablea la elección de empresa activa: la puerta que
+// una persona con VARIAS membresías usa para decir con cuál opera.
+//
+// 🔴 SE CONSTRUYE APARTE DE rolePlane POR LA MISMA RAZÓN QUE EL CANJE, y es la
+// razón entera de la tarea: aquellos servicios son el plano de administración de
+// una empresa y todos exigen un token CON empresa (su CallerResolver resuelve el
+// tenant y sin él fallan con domain.ErrNoTenant). Ésta es lo contrario: la usa
+// quien todavía no tiene ninguna empresa en su token —dos membresías y ninguna
+// elegida ⇒ token sin tenant y sin grants— y su ruta se monta fuera de
+// registerRolePlane por eso mismo (ver el montaje en http.go).
+//
+// El MembershipRepo es el mismo adaptador que usan el canje y el plano de roles:
+// la comprobación «¿es miembro de esta empresa?» tiene que dar el mismo veredicto
+// que la que hace el canje al leer la empresa activa. Con dos adaptadores
+// distintos, un día darían dos.
+//
+// No recibe `systems` ni `log`: elegir empresa no llama a identity (quien elige
+// ya pasó su System Gate: si no, no tendría Context Token con el que llegar) y no
+// tiene ningún fallo que el llamante no pueda ver.
+func buildActiveTenantSelect(db *sql.DB) (in.ActiveTenantSelector, error) {
+	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
+		id, ok := httpapi.IdentityFromContext(ctx)
+		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
+	})
+	svc, err := iamusecase.NewActiveTenantService(caller, iampostgres.NewMembershipRepo(db), iampostgres.NewActiveTenantRepo(db))
+	if err != nil {
+		return nil, fmt.Errorf("construyendo ActiveTenantService (IAM): %w", err)
 	}
 	return svc, nil
 }
