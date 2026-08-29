@@ -15,14 +15,15 @@ package iampostgres
 // EL ORDEN DE LOS CUATRO PASOS, QUE ES LA MITAD DEL DISEÑO
 // ------------------------------------------------------------
 //  1. LEER la invitación por su digest — UNA sola consulta (ver leerInvitacion).
-//  2. GrantTenantAccess — la guarda de «una sola empresa», la membresía y el rol.
+//  2. GrantTenantAccess — la guarda de la segunda empresa, la membresía y el rol.
 //  3. MARCAR la invitación como canjeada, con UPDATE condicionado.
 //  4. CERRAR la solicitud huérfana que el invitado dejó en la bandeja del
 //     operador al registrarse.
 //
 // 🔴 EL 2 VA ANTES QUE EL 3, Y NO ES INDIFERENTE (T-A5). Quien ya es miembro de
-// otra empresa no puede canjear: GrantTenantAccess devuelve domain.ErrConflict
-// antes de insertar nada. Si se marcara primero, ese rechazo dejaría la
+// otra empresa puede o no puede canjear —desde el Plan 047 · Ola 5 · T5.2 lo
+// decide el entitlement multi_empresa del tenant que invitó—, y cuando NO puede,
+// GrantTenantAccess devuelve domain.ErrConflict antes de insertar nada. Si se marcara primero, ese rechazo dejaría la
 // invitación QUEMADA —terminal, sin membresía detrás y sin forma de reemitirla
 // para la misma persona salvo pidiéndole a la dueña otra—. Con este orden, un
 // canje rechazado deja la invitación EXACTAMENTE como estaba: sigue viva y sigue
@@ -40,13 +41,19 @@ package iampostgres
 // WHERE bajo READ COMMITTED, ve `redeemed_at` ya escrito, afecta CERO filas y se
 // va con conflicto. Sin `FOR UPDATE` y sin lock explícito.
 //
-// ⚠️ VENTANA DE CARRERA HEREDADA, NO CREADA AQUÍ. La guarda de «una sola
-// empresa» cuenta bajo READ COMMITTED, así que dos altas simultáneas de la MISMA
-// persona en DOS empresas distintas pueden contar cero las dos y escribir las
-// dos (memberships.go:133-139). El canje HEREDA esa ventana; no la abre ni la
-// ensancha, y no se cierra aquí a propósito: cerrarla pide un advisory lock sobre
-// el user_id, que cambiaría el camino que hoy corre en campo por la vía del
-// operador. Queda dicho para que quien levante MD-055.2 lo encuentre escrito.
+// 🔒 LA VENTANA DE CARRERA QUE ESTE CANJE HEREDABA: CERRADA (Plan 047 · Ola 5 ·
+// T5.2). La guarda de la segunda empresa contaba bajo READ COMMITTED, así que
+// dos altas simultáneas de la MISMA persona en DOS empresas distintas podían
+// contar cero las dos y escribir las dos. Hoy GrantTenantAccess toma un
+// pg_advisory_xact_lock sobre el user_id antes de contar —ver su comentario, que
+// explica por qué el argumento que aceptaba la ventana caducó al permitirse la
+// segunda membresía—, y ese cerrojo lo hereda este canje por el mismo sitio por
+// el que heredaba la ventana: la transacción es la SUYA y el lock vive en ella.
+//
+// ⚠️ Por eso el paso (2) tiene que seguir recibiendo `tx` y nunca `r.db`: un
+// advisory lock «xact» sobre una conexión en autocommit se suelta en el acto.
+// Lo vigila canje_orden_ast_test.go, que ya existía por la razón de al lado (el
+// rollback del paso 3).
 
 import (
 	"context"
@@ -64,11 +71,20 @@ import (
 // public.access_requests (0060).
 type InvitationRedeemRepo struct {
 	db *sql.DB
+	// features viaja hasta GrantTenantAccess y solo hasta ahí: el canje no
+	// consulta ningún derecho por su cuenta. Es el resolver que decide si quien
+	// ya es miembro de otra empresa puede entrar en ésta (multi_empresa).
+	features FeatureResolver
 }
 
 // NewInvitationRedeemRepo construye el repositorio sobre el pool dado.
-func NewInvitationRedeemRepo(db *sql.DB) *InvitationRedeemRepo {
-	return &InvitationRedeemRepo{db: db}
+//
+// `features` es obligatorio por la misma razón que en NewMembershipRepo: canjear
+// una invitación DA DE ALTA, y desde el Plan 047 · Ola 5 · T5.2 el desenlace de
+// un alta depende del entitlement multi_empresa del tenant que invitó. Un nil
+// aquí no desactiva el gate: lo deja contestando que no (fail-closed).
+func NewInvitationRedeemRepo(db *sql.DB, features FeatureResolver) *InvitationRedeemRepo {
+	return &InvitationRedeemRepo{db: db, features: features}
 }
 
 var _ out.InvitationRedeemRepo = (*InvitationRedeemRepo)(nil)
@@ -122,7 +138,7 @@ func (r *InvitationRedeemRepo) Redeem(ctx context.Context, tokenHash []byte, use
 	// resuelve con dos membresías (empresa activa, D-047.14). El 409 de aquí sigue
 	// siendo correcto, pero por lo que la guarda protege HOY: que el alta en una
 	// segunda empresa sea una decisión y no un efecto colateral de un canje.
-	if err := GrantTenantAccess(ctx, tx, userID, inv.TenantID, inv.RoleID); err != nil {
+	if err := GrantTenantAccess(ctx, tx, r.features, userID, inv.TenantID, inv.RoleID); err != nil {
 		return err
 	}
 
@@ -233,9 +249,14 @@ func leerInvitacion(ctx context.Context, q Executor, tokenHash []byte) (*domain.
 // pidiéndonos a nosotros un acceso que ya tiene.
 //
 // POR QUÉ LO HACE EL LLAMANTE Y NO GrantTenantAccess. Porque marcar la solicitud
-// es del flujo de esa bandeja y de ninguna otra: está escrito en
-// memberships.go:118-119 y es la razón de que aquella función reciba la
-// transacción en vez de abrir la suya. El operador hace exactamente esto mismo
+// es del flujo de esa bandeja y de ninguna otra: está escrito en la cabecera de
+// GrantTenantAccess («el cuarto [paso] … es del flujo de esa bandeja y se queda
+// allí») y es la razón de que aquella función reciba la transacción en vez de
+// abrir la suya.
+//
+// 🔧 La cita era por NÚMERO DE LÍNEA («memberships.go:118-119») y apuntaba mal
+// ya antes del Plan 047 · Ola 5: en `main@45ef83e` esas líneas eran el final de
+// TenantsOfUser. Se cambia por el nombre de la función, que no se desplaza. El operador hace exactamente esto mismo
 // en su cuarto paso (platformadmin.executeApprovalTx); aquí es el mismo trato.
 //
 // 'approved' Y NO 'rejected': el estado terminal describe cómo acabó la

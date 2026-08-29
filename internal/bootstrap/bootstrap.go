@@ -837,7 +837,9 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("escuchando cloudlink en %s: %w", cfg.GRPCConnectAddr, err)
 	}
 
-	platformRepo := platformadmin.NewRepository(db)
+	// entResolver viaja a la bandeja del operador porque APROBAR una solicitud es
+	// dar de alta, y el alta pregunta por multi_empresa (Plan 047 · Ola 5 · T5.2).
+	platformRepo := platformadmin.NewRepository(db, entResolver)
 	// Hook del push de filtros EN CALIENTE (Plan 046 · T2.1): traduce «cambió el
 	// perfil de esta sesión» a un ConfigUpdate kind:"filters" con la foto COMPLETA del
 	// tenant, hacia sus sesiones vivas.

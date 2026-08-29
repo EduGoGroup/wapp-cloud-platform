@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
 )
 
 const maxLimit = 500
@@ -68,11 +70,22 @@ type InstallationItem struct {
 // Repository expone las operaciones cross-tenant sobre la base de datos PostgreSQL.
 type Repository struct {
 	db *sql.DB
+	// features es el resolver de derechos comerciales, y esta bandeja lo usa
+	// para UNA sola cosa: viaja hasta iampostgres.GrantTenantAccess cuando el
+	// operador aprueba una solicitud, que es quien pregunta por multi_empresa.
+	features iampostgres.FeatureResolver
 }
 
 // NewRepository construye el repositorio sobre el pool dado.
-func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+//
+// `features` viaja hasta la aprobación de solicitudes y de ahí a
+// GrantTenantAccess (Plan 047 · Ola 5 · T5.2): aprobar es DAR DE ALTA, y desde
+// esa tarea el desenlace de un alta depende del entitlement multi_empresa del
+// tenant de destino. nil no desactiva el gate — lo deja contestando que no, que
+// es el comportamiento anterior a T5.2 y el extremo fail-closed de la política
+// del paquete entitlements.
+func NewRepository(db *sql.DB, features iampostgres.FeatureResolver) *Repository {
+	return &Repository{db: db, features: features}
 }
 
 // ListTenants devuelve los tenants paginados. El parámetro limit se acota entre 1 y 500 (default 50).

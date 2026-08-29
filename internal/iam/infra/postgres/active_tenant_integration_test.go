@@ -91,7 +91,7 @@ func TestIntegration_UserTenants_SinMembresiasEsListaVaciaYNoNula(t *testing.T) 
 	t.Parallel()
 	env := newITEnv(t)
 
-	vacia, err := iampostgres.NewMembershipRepo(env.db).UserTenants(context.Background(), uuid.NewString())
+	vacia, err := iampostgres.NewMembershipRepo(env.db, nil).UserTenants(context.Background(), uuid.NewString())
 	if err != nil {
 		t.Fatalf("UserTenants sin membresías: %v (cero empresas no es un fallo)", err)
 	}
@@ -112,7 +112,7 @@ func TestIntegration_UserTenants_SoloLasSuyasYConNombre(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	repo := iampostgres.NewMembershipRepo(env.db)
+	repo := iampostgres.NewMembershipRepo(env.db, nil)
 	userID, otro := uuid.NewString(), uuid.NewString()
 
 	// Dos empresas suyas —con nombres distintos y reconocibles— y UNA AJENA, de
@@ -163,7 +163,7 @@ func TestIntegration_UserTenants_MismoOrdenQueTenantsOfUser(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	repo := iampostgres.NewMembershipRepo(env.db)
+	repo := iampostgres.NewMembershipRepo(env.db, nil)
 	userID := uuid.NewString()
 	for _, nombre := range []string{"Uno", "Dos", "Tres"} {
 		env.seedMembresia(t, userID, env.seedTenantNombrado(t, nombre))

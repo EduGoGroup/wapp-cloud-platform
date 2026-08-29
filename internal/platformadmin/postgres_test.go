@@ -51,7 +51,7 @@ func openTestDB(t *testing.T) *sql.DB {
 func TestIntegration_CreateTenant(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	// Crear tenant
@@ -82,7 +82,7 @@ func TestIntegration_CreateTenant(t *testing.T) {
 func TestIntegration_GetTenant(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	slug := fmt.Sprintf("pa-get-%d", time.Now().UnixNano())
@@ -124,7 +124,7 @@ func TestIntegration_GetTenant(t *testing.T) {
 func TestIntegration_ListTenants_PaginationAndRevocation(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	// Crear 2 tenants, uno revocado
@@ -214,7 +214,7 @@ func TestIntegration_ListTenants_PaginationAndRevocation(t *testing.T) {
 func TestIntegration_ListTenants_PaginationStableTiebreak(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	const tieCount = 12
@@ -278,7 +278,7 @@ func TestIntegration_ListTenants_PaginationStableTiebreak(t *testing.T) {
 func TestIntegration_ListInstallations(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	slug := fmt.Sprintf("pa-inst-%d", time.Now().UnixNano())

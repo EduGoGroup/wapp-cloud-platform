@@ -303,7 +303,7 @@ func (r *Repository) executeApprovalTx(ctx context.Context, requestID, tenantID,
 	// GrantTenantAccess recibe la transacción en vez de abrir la suya: si
 	// commiteara por su cuenta, una aprobación podría dar el acceso y dejar la
 	// solicitud en 'pending'.
-	if err := iampostgres.GrantTenantAccess(ctx, tx, userID, tenantID, &roleID); err != nil {
+	if err := iampostgres.GrantTenantAccess(ctx, tx, r.features, userID, tenantID, &roleID); err != nil {
 		// El conflicto de «una sola empresa» sale como domain.ErrConflict y esta
 		// bandeja lo expresa con SU sentinel, que es el que sus handlers traducen.
 		if errors.Is(err, domain.ErrConflict) {

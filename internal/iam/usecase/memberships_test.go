@@ -3,10 +3,12 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/memory"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
@@ -84,14 +86,20 @@ func TestAddMember_EsIdempotente(t *testing.T) {
 	}
 }
 
-// TestAddMember_UnaSegundaEmpresaEsConflicto es la guarda que sostiene el canje.
+// TestAddMember_UnaSegundaEmpresaEsConflicto — el caso SIN la feature, que es el
+// de la inmensa mayoría de los tenants y el que NO puede cambiar.
 //
-// 🔧 No se rechaza por política de producto, pero su porqué cambió el
-// 2026-08-29: hasta entonces era que dos filas en tenant_members rompían el
-// canje. Desde el Plan 047 · Ola 5 · T5.1 el canje resuelve con varias (empresa
-// activa, D-047.14), así que lo que sostiene el 409 es que el alta en una
-// segunda empresa sea una decisión y no un efecto colateral. MD-055.2 decide
-// cuándo se levanta.
+// 🔧 Su porqué cambió dos veces en el mismo día y conviene leerlo entero:
+// hasta el 2026-08-29 el 409 se defendía diciendo que dos filas en
+// tenant_members rompían el canje; T5.1 lo desmintió (el canje resuelve por la
+// empresa activa, D-047.14); y T5.2 le da su forma definitiva — la segunda
+// empresa es una CAPACIDAD COMERCIAL (`multi_empresa`), así que quien no la paga
+// sigue viendo exactamente este 409, con este sentinela y este cuerpo. El
+// fixture no ata ningún resolver, que es el fail-closed llevado al extremo:
+// sin resolver no hay derecho.
+//
+// 🔴 Su hermano positivo está justo debajo y no es opcional: sin él, este test
+// lo pasaría también una guarda que rechazara SIEMPRE, que es la que había.
 func TestAddMember_UnaSegundaEmpresaEsConflicto(t *testing.T) {
 	t.Parallel()
 	f := newMembershipFixture(t)
@@ -108,6 +116,71 @@ func TestAddMember_UnaSegundaEmpresaEsConflicto(t *testing.T) {
 	tenants := f.tenantsDe(t, userID)
 	if len(tenants) != 1 || tenants[0] != testTenant {
 		t.Fatalf("la membresía original debía quedar intacta: %v", tenants)
+	}
+}
+
+// TestAddMember_ConMultiEmpresaLaSegundaEmpresaSeEscribe es el HERMANO POSITIVO
+// del test de arriba y la mitad nueva de T5.2 (Plan 047 · Ola 5): el tenant de
+// DESTINO tiene `multi_empresa`, así que el alta de quien ya es miembro de otra
+// empresa escribe y devuelve el mismo desenlace que un alta normal (nil ⇒ 204).
+//
+// 🔴 LA FEATURE SE ENCIENDE EN testTenantB Y NO EN testTenant, y es el punto
+// entero del test: se pregunta por la empresa que RECIBE. Si la implementación
+// preguntara por la de origen, este test se pondría rojo — y esa es exactamente
+// la confusión que hay que impedir, porque las dos versiones «funcionan» en un
+// escenario donde ambas empresas tienen el mismo plan.
+func TestAddMember_ConMultiEmpresaLaSegundaEmpresaSeEscribe(t *testing.T) {
+	t.Parallel()
+	f := newMembershipFixture(t)
+	feats := entitlements.NewFake()
+	feats.Enable(testTenantB, entitlements.FeatureMultiEmpresa)
+	f.store.Memberships.ConFeatures(feats)
+	userID := uuid.NewString()
+
+	if err := f.svc.AddMember(ctxOf(testTenant), in.MembershipInput{UserID: userID}); err != nil {
+		t.Fatalf("AddMember (primera): %v", err)
+	}
+	if err := f.svc.AddMember(ctxOf(testTenantB), in.MembershipInput{UserID: userID}); err != nil {
+		t.Fatalf("AddMember (segunda, con multi_empresa): %v", err)
+	}
+
+	tenants := f.tenantsDe(t, userID)
+	if len(tenants) != 2 {
+		t.Fatalf("quiero DOS membresías, tengo %v", tenants)
+	}
+	if !slices.Contains(tenants, testTenant) || !slices.Contains(tenants, testTenantB) {
+		t.Fatalf("las dos empresas tienen que estar: %v", tenants)
+	}
+}
+
+// TestAddMember_ElResolverCaidoNoAbreLaSegundaEmpresa es el FAIL-CLOSED de T5.2,
+// y aquí la política se lee al revés que en un gate normal: «si el derecho no se
+// puede resolver, no se concede» significa MANTENER EL RECHAZO.
+//
+// Sin este test, la implementación más natural —`has, err := …; if err != nil {
+// return err }`— parecería correcta, y no lo es del todo: convertiría un fallo
+// transitorio de la base en un 500 donde el usuario esperaba un 409, y peor, la
+// variante `if err == nil && has` mal escrita (`err != nil || has`) abriría la
+// capacidad de pago con la base caída. El aserto mira las DOS cosas: que el
+// error sea el conflicto de siempre y que NO se haya escrito nada.
+func TestAddMember_ElResolverCaidoNoAbreLaSegundaEmpresa(t *testing.T) {
+	t.Parallel()
+	f := newMembershipFixture(t)
+	feats := entitlements.NewFake()
+	feats.Enable(testTenantB, entitlements.FeatureMultiEmpresa) // la TIENE...
+	feats.Err = errors.New("la base de entitlements no contesta")
+	f.store.Memberships.ConFeatures(feats) // ...pero no se puede acreditar.
+	userID := uuid.NewString()
+
+	if err := f.svc.AddMember(ctxOf(testTenant), in.MembershipInput{UserID: userID}); err != nil {
+		t.Fatalf("AddMember (primera): %v", err)
+	}
+	err := f.svc.AddMember(ctxOf(testTenantB), in.MembershipInput{UserID: userID})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("err = %v, quiero ErrConflict (fail-closed: un resolver caído no concede)", err)
+	}
+	if tenants := f.tenantsDe(t, userID); len(tenants) != 1 {
+		t.Fatalf("no se podía escribir nada: %v", tenants)
 	}
 }
 

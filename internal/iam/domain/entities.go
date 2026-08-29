@@ -21,6 +21,27 @@ const (
 	EffectDeny Effect = "deny"
 )
 
+// RolTransversalID es el id FIJO del rol `platform_admin`, sembrado por la
+// migración 0059_platform_admin.sql. Es el ÚNICO rol cuya ASIGNACIÓN puede ir
+// con ámbito global (public.iam_user_roles.tenant_id NULL), porque es el único
+// que por diseño actúa sobre empresas que no son la suya (ADR-0039).
+//
+// 🔴 EL DISCRIMINADOR ES EL ID Y NO EL NOMBRE, y la diferencia es de seguridad,
+// no de estilo. `iam_roles` solo impone unicidad de nombre ENTRE PLANTILLAS
+// GLOBALES (índice parcial iam_roles_global_name_uidx, 0015:36-37); los roles
+// propios de un tenant se controlan con iam_roles_tenant_name_uidx, que no
+// choca con aquél. Es decir: cualquier administradora puede crear en SU empresa
+// un rol llamado `platform_admin` (RoleService.Create escribe con
+// TenantID = el del llamante y la BD le asigna un id nuevo con
+// gen_random_uuid). Una guarda que mirase el NOMBRE le daría a ese rol
+// falsificado el privilegio de asignarse global. El id, en cambio, no se puede
+// pedir: ninguna vía de producto lo elige, solo lo escribe la migración.
+//
+// 🔴 Y SI ALGÚN DÍA NO COINCIDIERA con el id sembrado en una base concreta, el
+// fallo es FAIL-CLOSED: se rechazaría la asignación global del platform_admin
+// —ruidoso y reparable— en vez de dejar pasar la de un rol de empresa.
+const RolTransversalID = "10000000-0000-0000-0000-000000000004"
+
 // Role es un rol RBAC (tabla public.iam_roles, migración 0015). TenantID nil =
 // PLANTILLA global canónica (tenant_admin/operator/viewer sembrados en T1),
 // referenciable por cualquier tenant; TenantID set = rol custom del tenant.

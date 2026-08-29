@@ -62,7 +62,7 @@ func (f *fakeM2MClient) Signup(_ context.Context, email, password, firstName, la
 func TestIntegration_AccessRequests_Lifecycle(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -203,7 +203,7 @@ func countRows(ctx context.Context, t *testing.T, db *sql.DB, query string, args
 func TestHandlers_AccessRequests_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	fakeM2M := &fakeM2MClient{}
 
 	mux := http.NewServeMux()
@@ -274,7 +274,7 @@ func TestHandlers_AccessRequests_HTTP(t *testing.T) {
 func TestIntegration_ApproveAccessRequest_RetryConvergesAfterIdentityFailure(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -394,7 +394,7 @@ func assertApproveRetryConverges(ctx context.Context, t *testing.T, db *sql.DB, 
 func TestIntegration_ApproveAccessRequest_SegundaAprobacionUNE(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -461,7 +461,7 @@ func TestIntegration_ApproveAccessRequest_SegundaAprobacionUNE(t *testing.T) {
 func TestIntegration_ApproveAccessRequest_SinPoderLEER_NoDeclaraNada(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -505,7 +505,7 @@ func TestIntegration_ApproveAccessRequest_SinPoderLEER_NoDeclaraNada(t *testing.
 func TestIntegration_ApproveAccessRequest_NoM2MClient_KeepsLocalSkipsSystems(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -543,7 +543,7 @@ func TestIntegration_ApproveAccessRequest_NoM2MClient_KeepsLocalSkipsSystems(t *
 func TestIntegration_ApproveAccessRequest_NoM2MClient_NoSystemsStillConverges(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -574,7 +574,7 @@ func TestIntegration_ApproveAccessRequest_NoM2MClient_NoSystemsStillConverges(t 
 func TestHandlers_ApproveAccessRequest_NoM2MClient_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 
 	mux := http.NewServeMux()
 	// nil de verdad: NINGÚN cliente M2M configurado en este mux, igual que un
@@ -625,7 +625,7 @@ func TestHandlers_ApproveAccessRequest_NoM2MClient_HTTP(t *testing.T) {
 func TestIntegration_ApproveAccessRequest_RetryDifferentRole_Rejected(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -742,7 +742,7 @@ func TestHandlers_AccessRequests_InvalidID_Returns404(t *testing.T) {
 func TestIntegration_ApproveAccessRequest_TenantNotFound_Returns404(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()
@@ -813,7 +813,7 @@ func assertTenantMembersCount(ctx context.Context, t *testing.T, db *sql.DB, use
 
 func TestApproveAccessRequest_RejectsPlatformSystem(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	err := repo.ApproveAccessRequest(context.Background(), uuid.NewString(), uuid.NewString(), "tenant_admin", uuid.NewString(), []string{"wapp.bff", "wapp.platform"}, nil)
 	if !errors.Is(err, platformadmin.ErrPlatformSystemForbidden) {
 		t.Fatalf("esperado ErrPlatformSystemForbidden, obtenido: %v", err)
@@ -822,7 +822,7 @@ func TestApproveAccessRequest_RejectsPlatformSystem(t *testing.T) {
 
 func TestRejectAccessRequest_RequiresReason(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	err := repo.RejectAccessRequest(context.Background(), uuid.NewString(), "   ", uuid.NewString())
 	if !errors.Is(err, platformadmin.ErrInvalidInput) {
 		t.Fatalf("esperado ErrInvalidInput con motivo en blanco, obtenido: %v", err)
@@ -831,7 +831,7 @@ func TestRejectAccessRequest_RequiresReason(t *testing.T) {
 
 func TestHandlers_ApproveAccessRequest_RejectsPlatformSystemBody(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	mux := http.NewServeMux()
 	mux.Handle("POST /admin/access-requests/{id}/approve", platformadmin.ApproveAccessRequestHandler(repo, &fakeM2MClient{}, testPlatformTenantID))
 
@@ -850,7 +850,7 @@ func TestHandlers_ApproveAccessRequest_RejectsPlatformSystemBody(t *testing.T) {
 
 func TestHandlers_RejectAccessRequest_RequiresReasonBody(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	mux := http.NewServeMux()
 	mux.Handle("POST /admin/access-requests/{id}/reject", platformadmin.RejectAccessRequestHandler(repo, testPlatformTenantID))
 

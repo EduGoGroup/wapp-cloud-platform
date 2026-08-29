@@ -67,9 +67,7 @@ func TestEffectiveGrants_RoleChain(t *testing.T) {
 		[]domain.Grant{{Pattern: "messages.send", Effect: domain.EffectAllow}})
 
 	userID := uuid.NewString()
-	if err := f.store.Roles.AssignToUser(context.Background(), userID, child.ID, nil); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
-	}
+	f.store.Roles.SeedAsignacion(userID, child.ID, nil)
 	f.store.Memberships.Seed(userID, testTenant)
 
 	grants := f.grantsOf(t, userID)
@@ -90,9 +88,7 @@ func TestEffectiveGrants_UserOverrideDeny(t *testing.T) {
 	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "wide"},
 		[]domain.Grant{{Pattern: "flows.*", Effect: domain.EffectAllow}})
 	userID := uuid.NewString()
-	if err := f.store.Roles.AssignToUser(context.Background(), userID, role.ID, nil); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
-	}
+	f.store.Roles.SeedAsignacion(userID, role.ID, nil)
 	f.store.Memberships.Seed(userID, testTenant)
 
 	// Override deny sobre flows.delete.

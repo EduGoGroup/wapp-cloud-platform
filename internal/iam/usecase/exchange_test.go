@@ -99,9 +99,12 @@ func seedMember(t *testing.T, store *memory.Store, tenantID, roleName string, gr
 	userID := uuid.NewString()
 	if roleName != "" {
 		role := store.Roles.Seed(domain.Role{TenantID: ptr(tenantID), Name: roleName}, grants)
-		if err := store.Roles.AssignToUser(context.Background(), userID, role.ID, nil); err != nil {
-			t.Fatalf("AssignToUser: %v", err)
-		}
+		// SeedAsignacion y no AssignToUser: esto FABRICA el estado de partida, y
+		// desde el Plan 047 · Ola 5 · T5.6 la vía de producto rechaza asignar un rol
+		// de empresa con ámbito global (tenant_id NULL). Lo que estos tests miden
+		// —qué grants acaban en el token— no cambia; lo que ya no se puede es
+		// llegar a este estado por la puerta.
+		store.Roles.SeedAsignacion(userID, role.ID, nil)
 	}
 	store.Memberships.Seed(userID, tenantID)
 	return userID
@@ -376,9 +379,7 @@ func TestExchange_SinMembresiaNoHeredaLosGrantsDeSusRoles(t *testing.T) {
 	huerfano := uuid.NewString()
 	role := f.store.Roles.Seed(domain.Role{TenantID: ptr(testTenant), Name: "sin-membresia"},
 		[]domain.Grant{{Pattern: "flows.read", Effect: domain.EffectAllow}})
-	if err := f.store.Roles.AssignToUser(context.Background(), huerfano, role.ID, nil); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
-	}
+	f.store.Roles.SeedAsignacion(huerfano, role.ID, nil)
 	token, _ := f.identityToken(t, huerfano, usecase.SystemWappBFF, 15*time.Minute)
 
 	res, err := f.svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: token})
@@ -881,9 +882,9 @@ func TestExchange_RolesAcotadosPorTenant(t *testing.T) {
 	roleGlobal := f.store.Roles.Seed(domain.Role{Name: "global-role"}, []domain.Grant{
 		{Pattern: "global.read", Effect: domain.EffectAllow},
 	})
-	if err := f.store.Roles.AssignToUser(context.Background(), f.userID, roleGlobal.ID, nil); err != nil {
-		t.Fatalf("AssignToUser global: %v", err)
-	}
+	// GLOBAL a propósito: es justo lo que este test mide. Se SIEMBRA porque la
+	// guarda de T5.6 reserva el ámbito global al rol transversal, y éste no lo es.
+	f.store.Roles.SeedAsignacion(f.userID, roleGlobal.ID, nil)
 
 	// Rol acotado a testTenant: concede "tenant.write"
 	tenantID := testTenant

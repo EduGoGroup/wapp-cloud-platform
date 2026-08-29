@@ -209,6 +209,36 @@ func (r *RoleRepo) RolesOfUser(ctx context.Context, userID, tenantID string) ([]
 	return res, nil
 }
 
+// validarAmbitoDeAsignacion decide si una asignación de rol puede ir con ámbito
+// GLOBAL (public.iam_user_roles.tenant_id NULL). Es la guarda de T5.6 (Plan 047 ·
+// Ola 5) y la comparten las DOS vías que escriben en esa tabla: RoleRepo.AssignToUser
+// y iampostgres.GrantTenantAccess.
+//
+// LA REGLA, en una frase: el ámbito global es del rol transversal y de ningún
+// otro. Lo transversal se reconoce por el id fijo que siembra la migración 0059
+// (domain.RolTransversalID) — el porqué de que sea el id y no el nombre está
+// escrito ahí, y se resume en que el nombre lo puede falsificar cualquier tenant
+// creando un rol propio que se llame igual.
+//
+// 🔴 POR QUÉ VIVE EN EL REPOSITORIO Y NO EN EL CASO DE USO. Porque el hueco está
+// aquí: AssignToUser aceptaba `nil` sin preguntar y escribía NULL, así que lo
+// único que impedía el desastre era que ningún llamante se hubiera equivocado
+// todavía. Eso no es una guarda, es una costumbre — y la fila mala que hay en la
+// base de UAT (un tenant_admin con tenant_id NULL, que ninguna migración siembra
+// y ningún camino de producto produce) demuestra que la costumbre ya se rompió
+// una vez, por SQL directo.
+//
+// El string vacío cuenta como global igual que el nil: es la forma que toma «sin
+// empresa» cuando el tenant viaja por valor, y dejarla fuera abriría la misma
+// puerta con otra llave.
+func validarAmbitoDeAsignacion(roleID string, tenantID *string) error {
+	global := tenantID == nil || *tenantID == ""
+	if !global || roleID == domain.RolTransversalID {
+		return nil
+	}
+	return fmt.Errorf("%w: rol=%s", domain.ErrRoleScopeInvalid, roleID)
+}
+
 // AssignToUser implementa out.RoleRepo (idempotente por los índices únicos de
 // iam_user_roles -- desde 0060 ya NO hay PK: UNIQUE (user_id, role_id,
 // tenant_id) más UNIQUE parcial (user_id, role_id) WHERE tenant_id IS NULL.
@@ -217,7 +247,18 @@ func (r *RoleRepo) RolesOfUser(ctx context.Context, userID, tenantID string) ([]
 // forma sin target es la única que cubre los dos índices a la vez -- mismo
 // patrón que 0059_platform_admin.sql:52-57. tenantID nil inserta NULL
 // (asignación global); no nil acota la fila a esa empresa (D-056.11).
+//
+// 🔒 Desde el Plan 047 · Ola 5 · T5.6, el NULL ya no se escribe «sin preguntar»:
+// validarAmbitoDeAsignacion (justo encima) solo lo deja pasar para el rol
+// transversal. Cualquier otro rol con ámbito global se va con
+// domain.ErrRoleScopeInvalid y no toca la base.
 func (r *RoleRepo) AssignToUser(ctx context.Context, userID, roleID string, tenantID *string) error {
+	// GUARDA DE ÁMBITO (T5.6): un rol de empresa con tenant_id NULL sería un rol
+	// que vale en TODAS las empresas del titular. Va ANTES del INSERT y no
+	// después, para que el rechazo no dependa de que la fila se pueda deshacer.
+	if err := validarAmbitoDeAsignacion(roleID, tenantID); err != nil {
+		return err
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO public.iam_user_roles (user_id, role_id, tenant_id)
 		VALUES ($1, $2, $3)

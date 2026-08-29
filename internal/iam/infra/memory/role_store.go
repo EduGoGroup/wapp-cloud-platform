@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -172,6 +173,15 @@ func (s *RoleStore) RolesOfUser(_ context.Context, userID, tenantID string) ([]d
 // asignación a esa empresa. Idempotente por (roleID, tenantID), igual que las
 // dos UNIQUE de iam_user_roles que emula.
 func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string, tenantID *string) error {
+	// LA MISMA GUARDA DE ÁMBITO que el adaptador Postgres
+	// (iampostgres.validarAmbitoDeAsignacion, Plan 047 · Ola 5 · T5.6): el ámbito
+	// global es del rol transversal y de ningún otro. Si el doble no la tuviera,
+	// un test unitario daría por buena una asignación global que la base rechaza
+	// —que es exactamente el defecto que T5.6 vino a cerrar, visto desde el otro
+	// lado del espejo.
+	if (tenantID == nil || *tenantID == "") && roleID != domain.RolTransversalID {
+		return fmt.Errorf("%w: rol=%s", domain.ErrRoleScopeInvalid, roleID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.userRoles[userID] {
@@ -186,6 +196,34 @@ func (s *RoleStore) AssignToUser(_ context.Context, userID, roleID string, tenan
 	}
 	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: t})
 	return nil
+}
+
+// SeedAsignacion escribe una asignación de rol SIN pasar por la guarda de
+// ámbito (helper de tests). Es a AssignToUser lo que MembershipStore.Seed es a
+// Add, y existe por la misma razón: fabricar el estado de partida, incluido el
+// que la guarda ya no dejaría escribir.
+//
+// 🔴 El estado que fabrica es REAL, no imaginario: en la base de UAT hay filas
+// con tenant_id NULL de un rol que no es el transversal, escritas a mano por SQL
+// directo antes de que existiera la guarda (Plan 047 · Ola 5 · T5.6). Un doble
+// que no supiera representarlas dejaría sin poder probar qué hace el sistema
+// cuando se las encuentra.
+//
+// Repetir la misma terna no la duplica, igual que AssignToUser.
+func (s *RoleStore) SeedAsignacion(userID, roleID string, tenantID *string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.userRoles[userID] {
+		if a.roleID == roleID && samePtrValue(a.tenantID, tenantID) {
+			return
+		}
+	}
+	var t *string
+	if tenantID != nil {
+		v := *tenantID
+		t = &v
+	}
+	s.userRoles[userID] = append(s.userRoles[userID], userRoleAssignment{roleID: roleID, tenantID: t})
 }
 
 // samePtrValue compara dos *string por VALOR: nil == nil, y dos no-nil son

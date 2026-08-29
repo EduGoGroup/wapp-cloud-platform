@@ -71,9 +71,10 @@ func newExchangeHarness(t *testing.T) exchangeHarness {
 		{Pattern: "flows.*", Effect: domain.EffectAllow},
 	})
 	userID := uuid.NewString()
-	if err := store.Roles.AssignToUser(context.Background(), userID, role.ID, nil); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
-	}
+	// SeedAsignacion y no AssignToUser: desde el Plan 047 · Ola 5 · T5.6 el
+	// repositorio rechaza una asignación GLOBAL de un rol que no sea el
+	// transversal, y aquí solo se está fabricando el estado de partida.
+	store.Roles.SeedAsignacion(userID, role.ID, nil)
 	store.Memberships.Seed(userID, tTenant)
 
 	mux := http.NewServeMux()

@@ -66,7 +66,7 @@ func openInternalTestDB(t *testing.T) *sql.DB {
 func TestExecuteApprovalTx_RoleInsertFailureRollsBackEverything(t *testing.T) {
 	t.Parallel()
 	db := openInternalTestDB(t)
-	r := NewRepository(db)
+	r := NewRepository(db, nil)
 	ctx := context.Background()
 
 	userID := uuid.NewString()

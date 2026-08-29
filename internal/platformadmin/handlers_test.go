@@ -23,7 +23,7 @@ import (
 const testPlatformTenantID = "55550000-0000-0000-0000-000000000055"
 
 func setupAdminMux(db *sql.DB) *http.ServeMux {
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	codes := enroll.NewPostgresCodeStore(db)
 	mux := http.NewServeMux()
 	mux.Handle("GET /admin/tenants", platformadmin.ListTenantsHandler(repo, testPlatformTenantID))
@@ -144,7 +144,7 @@ var grantsPlatformTenantAdmin = identityrbac.Grants{
 func TestHandlers_RealTokenChain_AuthenticateAndRequirePermission(t *testing.T) {
 	t.Parallel()
 
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	codes := enroll.NewPostgresCodeStore(nil)
 	jwt := sharedjwt.NewJWTManager(adminChainSecret, adminChainIssuer)
 	mw := httpapi.NewMiddleware(jwt, nil)
@@ -207,7 +207,7 @@ func TestHandlers_ListTenants_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	mux := setupAdminMux(db)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 
 	slug := fmt.Sprintf("pa-h-list-%d", time.Now().UnixNano())
 	_, err := repo.CreateTenant(context.Background(), slug, "HTTP List Test", nil)
@@ -240,7 +240,7 @@ func TestHandlers_GetTenant_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	mux := setupAdminMux(db)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 
 	slug := fmt.Sprintf("pa-h-get-%d", time.Now().UnixNano())
 	created, err := repo.CreateTenant(context.Background(), slug, "HTTP Get Test", nil)
@@ -321,7 +321,7 @@ func TestHandlers_ListInstallations_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	mux := setupAdminMux(db)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 
 	slug := fmt.Sprintf("pa-h-inst-%d", time.Now().UnixNano())
 	created, err := repo.CreateTenant(context.Background(), slug, "HTTP Inst Test", nil)
@@ -402,7 +402,7 @@ func TestHandlers_IssueEnrollmentCode_HTTP(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	mux := setupAdminMux(db)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	codeStore := enroll.NewPostgresCodeStore(db)
 
 	slug := fmt.Sprintf("pa-h-code-%d", time.Now().UnixNano())
@@ -471,7 +471,7 @@ func TestHandlers_IssueEnrollmentCode_HTTP_TTLPropagatesToExpiresAt(t *testing.T
 	t.Parallel()
 	db := openTestDB(t)
 	mux := setupAdminMux(db)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 
 	slug := fmt.Sprintf("pa-h-code-ttl-%d", time.Now().UnixNano())
 	created, err := repo.CreateTenant(context.Background(), slug, "HTTP Code TTL Test", nil)

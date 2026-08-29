@@ -53,7 +53,10 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// ausencia NO desmonta ninguna ruta: es la diferencia entre «esta
 	// administración no existe» (404) y «existe y le falta configuración» (503),
 	// y confundirlas mandaría a depurar el router en vez del entorno.
-	rolesPlane, err := buildRolePlane(db, as.m2mClient, log)
+	// pub.Entitlements es el MISMO resolver cacheado que gatea el resto de la
+	// plataforma (bootstrap.go: entResolver). Llega al plano por la guarda del
+	// alta, no por las rutas: ver buildRolePlane.
+	rolesPlane, err := buildRolePlane(db, as.m2mClient, pub.Entitlements, log)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -105,7 +108,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// Con la BD cableada esta ruta existe SIEMPRE: no depende del cliente M2M (el
 	// canje no llama a identity) ni de `Invitations`. Un fallo de construcción es
 	// de cableado y aborta el arranque, no degrada la ruta.
-	invitationRedeem, err := buildInvitationRedeem(db)
+	invitationRedeem, err := buildInvitationRedeem(db, pub.Entitlements)
 	if err != nil {
 		return nil, nil, nil, err
 	}

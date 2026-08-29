@@ -66,7 +66,7 @@ func (m *mockSignupM2M) Signup(_ context.Context, email, password, firstName, la
 func TestSignupHandler_Success_NewUser(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	uid := uuid.NewString()
 	m2m := &mockSignupM2M{signupUserID: uid}
 
@@ -142,7 +142,7 @@ func verifyNoPrematureMembership(t *testing.T, db *sql.DB, uid string) {
 func TestSignupHandler_EmailTaken_NoAdoption(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	uid := uuid.NewString()
 	m2m := &mockSignupM2M{
 		signupUserID: uid,
@@ -191,7 +191,7 @@ func TestSignupHandler_EmailTaken_NoAdoption(t *testing.T) {
 func TestSignupHandler_RateLimiter(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	limiter := ratelimit.NewLimiter(rate.Limit(1), 1) // 1 rps, burst 1
@@ -224,7 +224,7 @@ func TestSignupHandler_RateLimiter(t *testing.T) {
 func TestSignupHandler_RateLimiter_TrustProxyFalse_IgnoresForwardedFor(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	limiter := ratelimit.NewLimiter(rate.Limit(1), 1) // 1 rps, burst 1
@@ -266,7 +266,7 @@ func TestSignupHandler_RateLimiter_TrustProxyFalse_IgnoresForwardedFor(t *testin
 // cualquier corrida de `go test ./...` sin Postgres.
 func TestSignupHandler_NoM2MClient_Returns503(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 
 	handler := platformadmin.SignupHandler(repo, nil, nil, false, nil)
 	body := `{"email":"whoever@example.com","password":"Password123456!","first_name":"T","last_name":"U","origin":"bff"}`
@@ -298,7 +298,7 @@ func TestSignupHandler_NoM2MClient_Returns503(t *testing.T) {
 // == false más abajo, que ya lo demostraba. Repository{db: nil} basta.
 func TestSignupHandler_BodyTooLarge_Returns400(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	handler := platformadmin.SignupHandler(repo, m2m, nil, false, nil)
@@ -328,7 +328,7 @@ func TestSignupHandler_BodyTooLarge_Returns400(t *testing.T) {
 // == false más abajo. Repository{db: nil} basta.
 func TestSignupHandler_InvalidEmail_Returns400(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
 
 	handler := platformadmin.SignupHandler(repo, m2m, nil, false, nil)
@@ -354,7 +354,7 @@ func TestSignupHandler_InvalidEmail_Returns400(t *testing.T) {
 func TestSignupHandler_EmailNormalization_SameRow(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	repo := platformadmin.NewRepository(db)
+	repo := platformadmin.NewRepository(db, nil)
 	uid := uuid.NewString()
 	m2m := &mockSignupM2M{signupUserID: uid}
 	handler := platformadmin.SignupHandler(repo, m2m, nil, false, nil)
@@ -412,7 +412,7 @@ func TestSignupHandler_EmailNormalization_SameRow(t *testing.T) {
 // nil} basta.
 func TestSignupHandler_NoPIIInLogs(t *testing.T) {
 	t.Parallel()
-	repo := platformadmin.NewRepository(nil)
+	repo := platformadmin.NewRepository(nil, nil)
 	m2m := &mockSignupM2M{signupErr: domain.ErrRateLimited}
 
 	var buf bytes.Buffer
@@ -492,7 +492,7 @@ func TestSignup_ElAltaPublicaSigueMandandoUnaSolaAplicacion(t *testing.T) {
 		t.Run(origen, func(t *testing.T) {
 			t.Parallel()
 			m2m := &mockSignupM2M{signupUserID: uuid.NewString()}
-			handler := platformadmin.SignupHandler(platformadmin.NewRepository(bdMuerta(t)), m2m, nil, false, nil)
+			handler := platformadmin.SignupHandler(platformadmin.NewRepository(bdMuerta(t), nil), m2m, nil, false, nil)
 
 			body := fmt.Sprintf(`{"email":"regresion-%s@example.com","password":"Password123456!",`+
 				`"first_name":"Ana","last_name":"Perez","origin":"%s"}`, origen, origen)

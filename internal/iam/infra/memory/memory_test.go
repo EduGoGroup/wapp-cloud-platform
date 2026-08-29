@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
@@ -50,10 +51,14 @@ func TestRoleStore_UserAssignments(t *testing.T) {
 	tID := "tenant-a"
 	seeded := s.Seed(domain.Role{TenantID: &tID, Name: "admin"}, nil)
 
-	// AssignToUser / RolesOfUser / UnassignFromUser
-	if err := s.AssignToUser(ctx, "user-1", seeded.ID, nil); err != nil {
-		t.Fatalf("AssignToUser err: %v", err)
-	}
+	// AssignToUser / RolesOfUser / UnassignFromUser.
+	//
+	// La asignación GLOBAL se SIEMBRA: desde el Plan 047 · Ola 5 · T5.6 la vía de
+	// producto reserva el tenant_id NULL al rol transversal, y lo que este test
+	// mide es la RESOLUCIÓN de una fila global, no cómo llegó a existir. Las filas
+	// así existen de verdad en bases reales (se escribieron a mano antes de la
+	// guarda), y por eso el doble tiene que saber representarlas.
+	s.SeedAsignacion("user-1", seeded.ID, nil)
 
 	roles, err := s.RolesOfUser(ctx, "user-1", "tenant-1")
 	if err != nil || len(roles) != 1 {
@@ -173,5 +178,38 @@ func TestStoreAggregator(t *testing.T) {
 	st := NewStore()
 	if st.Roles == nil || st.Grants == nil || st.Audit == nil || st.Memberships == nil {
 		t.Fatal("NewStore debe inicializar los 4 repositorios")
+	}
+}
+
+// TestRoleStore_ElAmbitoGlobalEsDelRolTransversal — el doble aprende la guarda
+// de T5.6 (Plan 047 · Ola 5), y tiene que aprenderla o los tests unitarios que
+// corren sobre él darían por buena una asignación que el adaptador real rechaza.
+//
+// Los DOS casos van juntos a propósito: el negativo solo lo pasarían tanto la
+// guarda buena como una que rechazara TODO, y esa segunda dejaría al plano de
+// plataforma sin poder asignarse su propio rol.
+func TestRoleStore_ElAmbitoGlobalEsDelRolTransversal(t *testing.T) {
+	ctx := context.Background()
+	s := NewRoleStore()
+	tID := "tenant-a"
+	deEmpresa := s.Seed(domain.Role{TenantID: &tID, Name: "admin"}, nil)
+
+	err := s.AssignToUser(ctx, "user-1", deEmpresa.ID, nil)
+	if !errors.Is(err, domain.ErrRoleScopeInvalid) {
+		t.Fatalf("rol de empresa global: err = %v, quiero ErrRoleScopeInvalid", err)
+	}
+	if err := s.AssignToUser(ctx, "user-1", deEmpresa.ID, &tID); err != nil {
+		t.Fatalf("el mismo rol acotado a su empresa tenía que asignarse: %v", err)
+	}
+
+	// El HERMANO: el transversal sí, y con aserto sobre el dato — resuelve en una
+	// empresa cualquiera, que es la razón de que su ámbito sea global.
+	s.Seed(domain.Role{ID: domain.RolTransversalID, Name: "platform_admin"}, nil)
+	if err := s.AssignToUser(ctx, "user-2", domain.RolTransversalID, nil); err != nil {
+		t.Fatalf("el rol transversal TIENE que poder asignarse global: %v", err)
+	}
+	roles, err := s.RolesOfUser(ctx, "user-2", "una-empresa-cualquiera")
+	if err != nil || len(roles) != 1 || roles[0].ID != domain.RolTransversalID {
+		t.Fatalf("RolesOfUser = %+v err=%v, quiero el transversal", roles, err)
 	}
 }

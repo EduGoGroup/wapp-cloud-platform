@@ -118,7 +118,7 @@ func estadoDeSolicitud(ctx context.Context, t *testing.T, env itEnv, userID stri
 // tenantsDeUsuario devuelve las empresas de las que ese usuario es miembro.
 func tenantsDeUsuario(ctx context.Context, t *testing.T, env itEnv, userID string) []string {
 	t.Helper()
-	tenants, err := iampostgres.NewMembershipRepo(env.db).TenantsOfUser(ctx, userID)
+	tenants, err := iampostgres.NewMembershipRepo(env.db, nil).TenantsOfUser(ctx, userID)
 	if err != nil {
 		t.Fatalf("leer membresías de %s: %v", userID, err)
 	}
@@ -135,7 +135,7 @@ func TestIntegration_Canje_ElCaminoFeliz(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	repo := iampostgres.NewInvitationRedeemRepo(env.db)
+	repo := iampostgres.NewInvitationRedeemRepo(env.db, nil)
 
 	inv := sembrarInvitacion(ctx, t, env, env.tenantID, time.Hour)
 	userID := uuid.NewString()
@@ -175,7 +175,7 @@ func TestIntegration_Canje_LosTresRechazos(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	repo := iampostgres.NewInvitationRedeemRepo(env.db)
+	repo := iampostgres.NewInvitationRedeemRepo(env.db, nil)
 
 	t.Run("inexistente", func(t *testing.T) {
 		otro, err := domain.NewInvitationToken()
@@ -243,7 +243,7 @@ func TestIntegration_Canje_UnaInvitacionRevocadaNoSeCanjea(t *testing.T) {
 	}
 
 	userID := uuid.NewString()
-	err := iampostgres.NewInvitationRedeemRepo(env.db).
+	err := iampostgres.NewInvitationRedeemRepo(env.db, nil).
 		Redeem(ctx, domain.HashInvitationToken(inv.token), userID)
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("err = %v, quiero domain.ErrConflict", err)
@@ -283,7 +283,7 @@ func TestIntegration_Canje_QuienYaEsMiembroDeOtraEmpresaNoQuemaLaInvitacion(t *t
 	sembrarMiembro(t, env, userID, otraEmpresa)
 
 	inv := sembrarInvitacion(ctx, t, env, env.tenantID, time.Hour)
-	err := iampostgres.NewInvitationRedeemRepo(env.db).
+	err := iampostgres.NewInvitationRedeemRepo(env.db, nil).
 		Redeem(ctx, domain.HashInvitationToken(inv.token), userID)
 
 	// (a)
@@ -306,7 +306,7 @@ func TestIntegration_Canje_QuienYaEsMiembroDeOtraEmpresaNoQuemaLaInvitacion(t *t
 
 	// Y sigue sirviendo de verdad: otra persona la canjea sin problema.
 	otroUsuario := uuid.NewString()
-	if err := iampostgres.NewInvitationRedeemRepo(env.db).
+	if err := iampostgres.NewInvitationRedeemRepo(env.db, nil).
 		Redeem(ctx, domain.HashInvitationToken(inv.token), otroUsuario); err != nil {
 		t.Fatalf("la invitación no sobrevivió al rechazo: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestIntegration_Canje_ElRechazoNoCierraLaSolicitud(t *testing.T) {
 	sembrarSolicitudPendiente(ctx, t, env, userID)
 
 	inv := sembrarInvitacion(ctx, t, env, env.tenantID, time.Hour)
-	if err := iampostgres.NewInvitationRedeemRepo(env.db).
+	if err := iampostgres.NewInvitationRedeemRepo(env.db, nil).
 		Redeem(ctx, domain.HashInvitationToken(inv.token), userID); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("err = %v, quiero domain.ErrConflict", err)
 	}
@@ -353,7 +353,7 @@ func TestIntegration_Canje_SinSolicitudPendienteNoEsUnFallo(t *testing.T) {
 
 	inv := sembrarInvitacion(ctx, t, env, env.tenantID, time.Hour)
 	userID := uuid.NewString() // sin solicitud sembrada
-	if err := iampostgres.NewInvitationRedeemRepo(env.db).
+	if err := iampostgres.NewInvitationRedeemRepo(env.db, nil).
 		Redeem(ctx, domain.HashInvitationToken(inv.token), userID); err != nil {
 		t.Fatalf("Redeem sin solicitud pendiente: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestIntegration_Canje_ElTenantDelCuerpoSeIgnora(t *testing.T) {
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
 	})
-	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(env.db))
+	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(env.db, nil))
 	if err != nil {
 		t.Fatalf("NewRedeemService: %v", err)
 	}

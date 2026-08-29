@@ -156,7 +156,13 @@ func buildAuthStack(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger) (
 		// declararse indisponible a existir a medias.
 		exchangeSvc, xerr := iamusecase.NewExchangeService(
 			identityVerifier,
-			iampostgres.NewMembershipRepo(db),
+			// nil de resolver de features, y es correcto: el canje solo LEE
+			// membresías (TenantsOfUser) y nunca llama a Add. El resolver que
+			// exige el constructor es el de la guarda del ALTA (multi_empresa,
+			// Plan 047 · Ola 5 · T5.2), y por este camino no se da de alta a
+			// nadie. Si algún día el exchange escribiera, esto es un defecto: el
+			// alta quedaría gateada por un resolver que dice que no a todo.
+			iampostgres.NewMembershipRepo(db, nil),
 			iampostgres.NewRoleRepo(db),
 			iampostgres.NewGrantRepo(db),
 			iampostgres.NewAuditRepo(db),
@@ -695,16 +701,24 @@ type rolePlane struct {
 // metido en un parámetro de interfaz produce un valor NO nil, y entonces la
 // guarda del usecase daría siempre false.
 //
+// `features` es el resolver de derechos comerciales, y llega hasta aquí por UNA
+// sola razón: el alta de un miembro pregunta por el entitlement `multi_empresa`
+// antes de decidir si alguien que ya está en otra empresa puede entrar en ésta
+// (Plan 047 · Ola 5 · T5.2). 🔴 NO gatea las rutas de este plano — administrar
+// miembros y roles sigue siendo capacidad base de cualquier empresa (D-047.10):
+// lo que la feature decide es el desenlace de un alta concreta, no si la puerta
+// existe. Si algún día aparece aquí un RequireFeature, es un defecto.
+//
 // `log` es el MISMO del proceso, y no es decorativo: cuando identity rechaza la
 // credencial M2M de wApp el llamante se lleva un 500 genérico —es un fallo del
 // servidor y no le incumbe—, así que el rastro es el único sitio donde queda
 // escrito qué scope hay que reemitir.
-func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.Logger) (rolePlane, error) {
+func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, features iampostgres.FeatureResolver, log sharedlogger.Logger) (rolePlane, error) {
 	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
 	})
-	members := iampostgres.NewMembershipRepo(db)
+	members := iampostgres.NewMembershipRepo(db, features)
 	roles := iampostgres.NewRoleRepo(db)
 	roleSvc, err := iamusecase.NewRoleService(
 		caller,
@@ -757,12 +771,18 @@ func buildRolePlane(db *sql.DB, systems out.UserSystemsClient, log sharedlogger.
 // pasó su System Gate: si no, no tendría Context Token con el que llegar) y no
 // tiene un fallo que el llamante no pueda ver, que era lo que el log salvaba en
 // MembershipService.
-func buildInvitationRedeem(db *sql.DB) (in.InvitationRedeemer, error) {
+//
+// SÍ recibe `features`, y por la misma razón que el plano de roles: canjear DA DE
+// ALTA, y desde el Plan 047 · Ola 5 · T5.2 el alta de quien ya es miembro de otra
+// empresa depende del entitlement `multi_empresa` del tenant que invitó. El
+// canje no lo consulta: solo lo lleva hasta GrantTenantAccess, que es quien
+// pregunta.
+func buildInvitationRedeem(db *sql.DB, features iampostgres.FeatureResolver) (in.InvitationRedeemer, error) {
 	caller := in.CallerResolverFunc(func(ctx context.Context) (in.Caller, bool) {
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
 	})
-	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(db))
+	svc, err := iamusecase.NewRedeemService(caller, iampostgres.NewInvitationRedeemRepo(db, features))
 	if err != nil {
 		return nil, fmt.Errorf("construyendo RedeemService (IAM): %w", err)
 	}
@@ -804,7 +824,9 @@ func buildActiveTenantPlane(db *sql.DB) (*iamusecase.ActiveTenantService, error)
 		id, ok := httpapi.IdentityFromContext(ctx)
 		return in.Caller{TenantID: id.TenantID, UserID: id.Subject}, ok
 	})
-	svc, err := iamusecase.NewActiveTenantService(caller, iampostgres.NewMembershipRepo(db), iampostgres.NewActiveTenantRepo(db))
+	// nil de resolver por lo mismo que en el canje del exchange: elegir empresa
+	// LEE membresías (UserTenants) y no da de alta a nadie.
+	svc, err := iamusecase.NewActiveTenantService(caller, iampostgres.NewMembershipRepo(db, nil), iampostgres.NewActiveTenantRepo(db))
 	if err != nil {
 		return nil, fmt.Errorf("construyendo ActiveTenantService (IAM): %w", err)
 	}

@@ -183,7 +183,9 @@ func TestIssueInvitation_ElRolPrometidoTieneQueSerVisible(t *testing.T) {
 
 // TestIssueInvitation_SinRolEsLegitimo: `role_id` es opcional y nil significa
 // «alta sin rol», que es un caso normal (dar de alta y dar un rol son dos
-// decisiones distintas, memberships.go:196-198).
+// decisiones distintas: lo dice la cabecera de MembershipRepo.Add). 🔧 Aquí había
+// una cita por número de línea —«memberships.go:196-198»— que ya apuntaba a otro
+// comentario antes de tocar nada; se sustituye por el nombre, que no se mueve.
 func TestIssueInvitation_SinRolEsLegitimo(t *testing.T) {
 	t.Parallel()
 	f := newInvitationFixture(t)

@@ -86,7 +86,12 @@ func TestIntegration_RolesAndGrants(t *testing.T) {
 	if gs, err := roles.GrantsOf(ctx, role.ID); err != nil || len(gs) != 1 {
 		t.Fatalf("GrantsOf: %+v err=%v", gs, err)
 	}
-	if err := roles.AssignToUser(ctx, userID, role.ID, nil); err != nil {
+	// ACOTADA AL TENANT, y no global. Hasta el Plan 047 · Ola 5 · T5.6 aquí iba un
+	// `nil` que hacía la asignación global; era gratis porque nada lo impedía, y
+	// era justo el defecto que T5.6 cierra — un rol de empresa asignado con
+	// tenant_id NULL vale en TODAS las empresas del titular. Lo que el test mide
+	// (que RolesOfUser devuelve ese rol para ese tenant) no cambia.
+	if err := roles.AssignToUser(ctx, userID, role.ID, &env.tenantID); err != nil {
 		t.Fatalf("AssignToUser: %v", err)
 	}
 	if rs, err := roles.RolesOfUser(ctx, userID, env.tenantID); err != nil || len(rs) != 1 {
@@ -119,8 +124,15 @@ func TestIntegration_TenantScopedUserRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("crear global role: %v", err)
 	}
-	if err := roles.AssignToUser(ctx, userID, roleGlobal.ID, nil); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
+	// La fila GLOBAL se escribe por SQL directo, igual que la acotada de más
+	// abajo. Desde el Plan 047 · Ola 5 · T5.6 la vía de producto reserva el
+	// tenant_id NULL al rol transversal (domain.RolTransversalID), y lo que este
+	// test mide es la RESOLUCIÓN de una fila global —que sigue siendo la conducta
+	// correcta de RolesOfUser—, no el permiso para crearla.
+	if _, err := env.db.ExecContext(ctx,
+		`INSERT INTO public.iam_user_roles (user_id, role_id, tenant_id) VALUES ($1, $2, NULL)`,
+		userID, roleGlobal.ID); err != nil {
+		t.Fatalf("sembrar la asignación global: %v", err)
 	}
 
 	// Asignación acotada a otro tenant no se mezcla en env.tenantID
@@ -177,7 +189,7 @@ func TestIntegration_Memberships(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	members := iampostgres.NewMembershipRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db, nil)
 
 	userID := uuid.NewString()
 
@@ -292,7 +304,7 @@ func TestIntegration_GrantTenantAccess_EsElAltaCompleta(t *testing.T) {
 	env := newITEnv(t)
 	ctx := context.Background()
 	roles := iampostgres.NewRoleRepo(env.db)
-	members := iampostgres.NewMembershipRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db, nil)
 
 	userID := uuid.NewString()
 	role, err := roles.Create(ctx, domain.Role{TenantID: &env.tenantID, Name: "acceso-it"})
@@ -303,7 +315,7 @@ func TestIntegration_GrantTenantAccess_EsElAltaCompleta(t *testing.T) {
 	// Dos veces seguidas: el alta es idempotente entera, ni duplica membresía ni
 	// duplica rol (los dos INSERT llevan ON CONFLICT DO NOTHING).
 	for vuelta := range 2 {
-		if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, &role.ID); err != nil {
+		if err := iampostgres.GrantTenantAccess(ctx, env.db, nil, userID, env.tenantID, &role.ID); err != nil {
 			t.Fatalf("GrantTenantAccess (vuelta %d): %v", vuelta, err)
 		}
 		tenants, terr := members.TenantsOfUser(ctx, userID)
@@ -332,7 +344,7 @@ func TestIntegration_GrantTenantAccess_LaGuardaCortaAntesDelRol(t *testing.T) {
 	roles := iampostgres.NewRoleRepo(env.db)
 	userID := uuid.NewString()
 
-	if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, nil); err != nil {
+	if err := iampostgres.GrantTenantAccess(ctx, env.db, nil, userID, env.tenantID, nil); err != nil {
 		t.Fatalf("GrantTenantAccess (primera empresa): %v", err)
 	}
 
@@ -346,7 +358,7 @@ func TestIntegration_GrantTenantAccess_LaGuardaCortaAntesDelRol(t *testing.T) {
 		t.Fatalf("crear other role: %v", err)
 	}
 
-	err = iampostgres.GrantTenantAccess(ctx, env.db, userID, otherTn.ID, &otherRole.ID)
+	err = iampostgres.GrantTenantAccess(ctx, env.db, nil, userID, otherTn.ID, &otherRole.ID)
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("segunda empresa: err = %v, quiero domain.ErrConflict", err)
 	}
@@ -368,10 +380,10 @@ func TestIntegration_GrantTenantAccess_SinRol(t *testing.T) {
 	roles := iampostgres.NewRoleRepo(env.db)
 	userID := uuid.NewString()
 
-	if err := iampostgres.GrantTenantAccess(ctx, env.db, userID, env.tenantID, nil); err != nil {
+	if err := iampostgres.GrantTenantAccess(ctx, env.db, nil, userID, env.tenantID, nil); err != nil {
 		t.Fatalf("GrantTenantAccess (sin rol): %v", err)
 	}
-	tenants, err := iampostgres.NewMembershipRepo(env.db).TenantsOfUser(ctx, userID)
+	tenants, err := iampostgres.NewMembershipRepo(env.db, nil).TenantsOfUser(ctx, userID)
 	if err != nil || len(tenants) != 1 {
 		t.Fatalf("membresías = %v err=%v", tenants, err)
 	}
@@ -399,7 +411,7 @@ func TestIntegration_MembersOf(t *testing.T) {
 	t.Parallel()
 	env := newITEnv(t)
 	ctx := context.Background()
-	members := iampostgres.NewMembershipRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db, nil)
 
 	// Una empresa sin nadie devuelve lista vacía, no error: los tenants nacen
 	// antes que su gente.

@@ -35,6 +35,26 @@ var (
 	// todos los tenants a la vez. Leerlas y asignarlas sigue permitido.
 	ErrGlobalRoleImmutable = errors.New("iam: las plantillas de rol globales no se modifican desde un tenant")
 
+	// ErrRoleScopeInvalid indica un intento de asignar un rol de EMPRESA con
+	// ámbito GLOBAL: una fila de public.iam_user_roles con tenant_id NULL
+	// (Plan 047 · Ola 5 · T5.6).
+	//
+	// Una asignación global vale en TODAS las empresas —así la resuelve
+	// RoleRepo.RolesOfUser: `WHERE ur.tenant_id = $2 OR ur.tenant_id IS NULL`—,
+	// y eso es correcto SOLO para el rol transversal por diseño
+	// (domain.RolTransversalID, el platform_admin del ADR-0039). Para cualquier
+	// otro convierte a esa persona en administradora de todas las empresas de
+	// las que sea miembro, sin que nadie se lo haya dado. Hasta la Ola 5 el daño
+	// estaba dormido porque nadie podía ser miembro de dos empresas; abrir la
+	// multi-empresa (T5.2) es exactamente lo que lo despierta.
+	//
+	// 🔴 NO SE TRADUCE A UN CÓDIGO HTTP, y es deliberado: ninguna ruta viva puede
+	// producirlo. El único llamante de RoleRepo.AssignToUser (RoleService.AssignRole)
+	// pasa SIEMPRE el tenant del contexto, así que quien vea este error habrá
+	// escrito código nuevo que se salta esa regla — es un defecto de programación,
+	// no una entrada de usuario, y el 500 genérico lo dice mejor que un 422.
+	ErrRoleScopeInvalid = errors.New("iam: un rol de empresa no puede asignarse con ámbito global")
+
 	// ErrInvalidCredentials indica que el par (email, password) no autentica. Lo
 	// devuelve identity-core, que es quien las valida desde la Ola 3; wApp solo
 	// lo traduce. Es deliberadamente OPACO (no distingue "usuario inexistente" de

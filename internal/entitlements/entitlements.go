@@ -153,6 +153,28 @@ const FeatureLLMIntake = "llm_intake"
 // la capacidad NO abre la vía).
 const FeatureAPILLM = "api_llm"
 
+// FeatureMultiEmpresa es el derecho a que UNA MISMA PERSONA pertenezca a MÁS DE
+// UNA empresa (Plan 047 · Ola 5 · T5.2, D-047.14). La clave lleva sembrada desde
+// la taxonomía del Plan 040 (migración 0039_seed_plan_taxonomy.sql:91: solo el
+// plan `pro` la incluye) y hasta hoy NINGUNA línea de Go la leía: estaba vendida
+// y muerta. Mismo caso que FeatureCatalogImport en su día — «que la clave exista
+// en BD y no en el código NO es un gate a medias: es NINGÚN gate».
+//
+// 🔴 GOBIERNA EL DESENLACE DE UN ALTA, NO EL ACCESO A UNAS RUTAS (D-047.10, que
+// vence con esta constante). El plano de roles y membresías sigue siendo
+// CAPACIDAD BASE y no va detrás de ninguna feature: cualquier empresa administra
+// sus miembros. Lo que esta clave decide es si un alta CONCRETA —la de alguien
+// que YA es miembro de otra empresa— escribe o se va con 409, y ese veredicto lo
+// da iampostgres.GrantTenantAccess, no un middleware. Si algún día aparece un
+// RequireFeature(…, FeatureMultiEmpresa) colgando de /api/v1/members, es un
+// DEFECTO: dejaría sin administración de miembros a todo tenant que no pague la
+// multi-empresa, que es exactamente lo que D-047.10 prohíbe.
+//
+// ⚠️ La pregunta se hace contra el tenant que RECIBE al miembro —el del alta—, no
+// contra el que ya lo tenía: es esa empresa la que compra la capacidad de
+// incorporar a alguien que está en otra parte.
+const FeatureMultiEmpresa = "multi_empresa"
+
 // Resolver responde si un tenant tiene habilitada una feature y sabe listar sus
 // derechos efectivos. Lo satisface la implementación Postgres (con caché) y el
 // Fake de tests. Toda consulta va acotada al tenant (INV-8).

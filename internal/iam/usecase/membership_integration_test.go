@@ -100,7 +100,7 @@ func TestIntegration_AltaDeMembresiaLaVeElCanje(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.NewString()
 
-	members := iampostgres.NewMembershipRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db, nil)
 	// El doble de identity acredita sin ruido: lo que este test mide es la
 	// membresía contra Postgres, no la acreditación (esa vive en
 	// membership_acreditacion_test.go).
@@ -180,7 +180,7 @@ func TestIntegration_LaSegundaEmpresaSeRechazaContraLaTabla(t *testing.T) {
 	otroTenant := env.seedTenant(t, "alta-it-otra")
 	userID := uuid.NewString()
 
-	members := iampostgres.NewMembershipRepo(env.db)
+	members := iampostgres.NewMembershipRepo(env.db, nil)
 	// El doble de identity acredita sin ruido: lo que este test mide es la
 	// membresía contra Postgres, no la acreditación (esa vive en
 	// membership_acreditacion_test.go).
