@@ -314,18 +314,21 @@ func TestElLiteralDiceLasTresCosasYNadaMas(t *testing.T) {
 // TestElLiteralCoincideConElRunbook cierra la única grieta que un golden en Go no
 // puede cerrar solo: que la constante y el runbook —la FUENTE ÚNICA— divergan.
 //
-// ⚠️ El runbook vive en el repo de documentación (raíz wApp/), no en este repo git,
-// así que en un checkout suelto de wapp-cloud-platform el fichero NO existe y el test
-// se salta. Es deliberado: un t.Skip aquí es honesto (no hay contra qué comparar) y
-// hacerlo fallar rompería la CI del repo por un fichero que no le pertenece. Donde sí
-// existe —la máquina de desarrollo, el árbol completo— compara de verdad.
+// 🔴 EL FICHERO VIVE DENTRO DE ESTE REPO A PROPÓSITO. Hasta el 2026-08-30 la fuente era
+// docs/runbooks/perfiles-de-sesion.md, en el repo de documentación, que NO viaja con este
+// git: en un checkout suelto el os.ReadFile fallaba y este test se SALTABA en silencio, con
+// lo que el invariante quedaba sin vigilar precisamente donde no había nada más que lo
+// vigilara. Ahora la fuente es documentations/literal-aviso-sesion-pasiva.md, de este mismo
+// repo, y su ausencia es un fallo: no hay checkout en el que este test no pueda correr.
+// Lo que la copia cuesta —que la de la nube y la del Edge diverjan entre sí— lo cubre
+// scripts/check-literales-canonicos.py del repo de documentación.
 func TestElLiteralCoincideConElRunbook(t *testing.T) {
 	t.Parallel()
-	const ruta = "../../../../../docs/runbooks/perfiles-de-sesion.md"
+	const ruta = "../../../documentations/literal-aviso-sesion-pasiva.md"
 
 	crudo, err := os.ReadFile(ruta)
 	if err != nil {
-		t.Skipf("no hay runbook que comparar en %s (checkout suelto de este repo): %v", ruta, err)
+		t.Fatalf("no se pudo leer %s: %v — es la fuente única del literal y vive en este repo, así que su ausencia es el defecto", ruta, err)
 	}
 	delRunbook, err := bloqueDelAviso(string(crudo))
 	if err != nil {
