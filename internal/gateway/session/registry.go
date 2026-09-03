@@ -69,10 +69,6 @@ type liveSession struct {
 	sender Sender
 }
 
-func (s *liveSession) send(msg *cloudlinkv1.CloudToEdge) error {
-	return s.sender.Send(msg)
-}
-
 // Registry es el registro concurrente de sesiones online, indexadas por
 // session_id. Es seguro para uso concurrente.
 type Registry struct {
@@ -142,15 +138,14 @@ func (r *Registry) Register(sessionID string, s Sender) (release func()) {
 //     el llamante que pase un ctx sin deadline —un handler HTTP no trae ninguno— y
 //     WAPP_GRPC_PUSH_TIMEOUT no se toca (INV-050.6).
 //
-// El Send se ejecuta en una goroutine con un canal bufferizado (cap 1): si se sale
-// por cualquiera de los dos relojes, la goroutine no se bloquea al entregar el
-// resultado y termina en cuanto el stream se desatasca o el Edge cae (fuga acotada,
-// no indefinida).
+// La acotación en sí —la goroutine, el canal bufferizado (cap 1) y el select de tres
+// ramas— vive desde el Plan 057 · T1.1 en SendAcotado, aquí abajo, porque el camino
+// in-band del gateway la necesita igual y copiarla habría creado dos relojes gemelos
+// que divergen sin dar error. Push es hoy «resolver la sesión + SendAcotado», y lo
+// único que aporta por encima es la comprobación PREVIA de ErrSessionOffline.
 //
 // ⚠️ Cancelar el ctx NO desbloquea el stream.Send de gRPC, y esta función no lo
-// promete: la goroutine de arriba sobrevive a la salida por ctx.Done() exactamente
-// igual que sobrevivía a la salida por timer. Lo que el ctx compra es que el
-// LLAMANTE deje de esperar, no que el envío se cancele (Enmienda 1, regla 1).
+// promete (Enmienda 1, regla 1). El detalle está en SendAcotado.
 func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.CloudToEdge) error {
 	r.mu.Lock()
 	ls := r.sessions[sessionID]
@@ -160,17 +155,60 @@ func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.
 		return fmt.Errorf("%w: %q", ErrSessionOffline, sessionID)
 	}
 
+	return SendAcotado(ctx, ls.sender, msg, r.sendTimeout, sessionID)
+}
+
+// SendTimeout expone el plazo propio del Registry —el que cablea
+// WAPP_GRPC_PUSH_TIMEOUT (bootstrap.go)— para que el camino IN-BAND lo use TAMBIÉN,
+// en vez de inventarse un segundo plazo o leer la variable por su cuenta.
+//
+// 🔴 Un segundo plazo sería una segunda verdad: el operador cambiaría
+// WAPP_GRPC_PUSH_TIMEOUT y la mitad de los envíos seguiría con el viejo, sin dar
+// error. INV-050.6 dice que ese timeout no se toca; esto es lo que hace que siga
+// valiendo cuando hay dos caminos de escritura y no uno.
+func (r *Registry) SendTimeout() time.Duration { return r.sendTimeout }
+
+// SendAcotado escribe msg en el Sender dado bajo los DOS RELOJES de Push —el ctx del
+// llamante y un plazo propio— y es la ÚNICA implementación de esa acotación en el
+// paquete (Plan 057 · Ola 1 · T1.1). Push la usa tras resolver la sesión; el camino
+// in-band del gateway la usa sobre el stream que hizo la petición, sin resolver nada.
+//
+// 🔴 POR QUÉ EXISTE, Y POR QUÉ NO SE PUEDE «SIMPLIFICAR» A UN Send A SECAS. Cuando el
+// gateway pasó a contestar las peticiones de auth por el mismo stream que las trajo
+// (Plan 057), la traducción obvia —`sender.Send(msg)`— parecía «lo mismo sin el
+// lookup». No lo es: es lo mismo SIN LOS DOS RELOJES. stream.Send de gRPC SE BLOQUEA
+// cuando el Edge deja de leer su stream (control de flujo HTTP/2) y NO se desbloquea
+// al cancelar el ctx, así que un Send directo cuelga la goroutine del carril hasta
+// que el stream muera. Toda escritura hacia un Edge pasa por aquí, venga de donde
+// venga.
+//
+// 🔴 Y POR QUÉ SE EXTRAJO EN VEZ DE COPIARSE. Dos `select` gemelos con tres ramas y
+// dos centinelas divergen —y divergen EN SILENCIO: nadie compila la diferencia entre
+// «devolvió ErrPushTimeout» y «devolvió ErrPushAbandonado»—. Es la misma regla que
+// plaza.go escribe para el criterio de enrutado: reimplementar un criterio gemelo
+// fabrica la avería de los caminos que divergen.
+//
+// El `destino` es solo para el mensaje de error: el session_id cuando el llamante es
+// Push, el edge_id cuando la escritura es in-band. Los centinelas (ErrPushTimeout,
+// ErrPushAbandonado) y su composición con ctx.Err() son idénticos por los dos
+// caminos, que es de lo que dependen los llamantes (errors.Is; nadie compara textos).
+//
+// ⚠️ Cancelar el ctx NO desbloquea el stream.Send de gRPC, y esta función no lo
+// promete: la goroutine de arriba sobrevive a la salida por ctx.Done() exactamente
+// igual que sobrevivía a la salida por timer. Lo que el ctx compra es que el LLAMANTE
+// deje de esperar, no que el envío se cancele (Enmienda 1, regla 1).
+func SendAcotado(ctx context.Context, s Sender, msg *cloudlinkv1.CloudToEdge, timeout time.Duration, destino string) error {
 	done := make(chan error, 1)
-	go func() { done <- ls.send(msg) }()
-	timer := time.NewTimer(r.sendTimeout)
+	go func() { done <- s.Send(msg) }()
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		return fmt.Errorf("%w: sesión %q: %w", ErrPushAbandonado, sessionID, ctx.Err())
+		return fmt.Errorf("%w: %q: %w", ErrPushAbandonado, destino, ctx.Err())
 	case <-timer.C:
-		return fmt.Errorf("%w: %q", ErrPushTimeout, sessionID)
+		return fmt.Errorf("%w: %q", ErrPushTimeout, destino)
 	}
 }
 

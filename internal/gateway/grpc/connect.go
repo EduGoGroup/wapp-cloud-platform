@@ -42,7 +42,10 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 	// (D-050.5). El reloj se lo pone cada job (workBudget), no el stream.
 	lane := newWorkLane(context.WithoutCancel(streamCtx), s.workQueue, s.workBudget, s.log)
 
-	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity}
+	// El sender de arriba viaja TAMBIÉN en el connCtx, y no solo al Registry: es lo
+	// que permite contestar in-band a las peticiones que llegan por ESTE stream
+	// (Plan 057 · T1.2). frameCC lo hereda por copia en cada frame.
+	cc := connCtx{tenantID: tenantID, edgeID: edgeID, hasIdentity: hasIdentity, sender: sender}
 	// releases mapea cada session_id registrado en ESTE stream a su release. Es
 	// local al stream y lo muta un ÚNICO goroutine (el bucle Recv de abajo), por
 	// lo que no necesita lock (ADR-0008: N sesiones multiplexadas por session_id
