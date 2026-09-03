@@ -6,6 +6,7 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 )
@@ -235,34 +236,82 @@ func (s *Server) pushAuthError(ctx context.Context, cc connCtx, commandID, code,
 	})
 }
 
-// pushAuthResponse envuelve la respuesta en un CloudToEdge y la empuja a la sesión
-// del Edge por el registry (correlacionada por command_id/session_id, igual que el
-// resto de los push del servidor). Best-effort: un fallo de entrega se loguea sin
-// tumbar el stream (el Edge reintenta el login si no recibe respuesta).
+// pushAuthResponse devuelve la respuesta POR EL MISMO STREAM QUE TRAJO LA PETICIÓN
+// (Plan 057 · Ola 1 · T1.3, REQ-057.1, INV-057.1). Best-effort: un fallo de entrega se
+// loguea sin tumbar el stream (el Edge reintenta el login si no recibe respuesta).
 //
-// Sobre el ctx (Plan 050): T1.5-bis lo introdujo hasta el Push razonando que era el
-// del stream y que, muerto el stream, no había a quién responder. T1.9 movió las tres
-// ramas de auth al carril, así que HOY el ctx que llega aquí es el del JOB, cuya base
-// es context.WithoutCancel(streamCtx): ya NO se cancela al morir el stream, y quien
-// acota la espera es el presupuesto del job (workBudget, 5 s por defecto) por debajo
-// del sendTimeout del Registry (10 s). El efecto neto sigue siendo el que T1.5-bis
-// buscaba —el Push no espera indefinidamente—, pero el disparador es el reloj del
-// carril, no la muerte del stream. Se deja escrito porque el comentario anterior
-// habría quedado falso en silencio.
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 POR QUÉ NO USA session.Registry, Y POR QUÉ ESO ERA UN FALLO DE SEGURIDAD
+// ════════════════════════════════════════════════════════════════════════════
 //
-// 🔴 Orden: como esta respuesta ya no sale de la goroutine del bucle Recv, su orden
-// relativo respecto a un ConfigUpdate empujado por otra vía deja de estar garantizado
-// por accidente. El Edge no lo nota (el streamSender serializa las escrituras) y hoy
-// nadie depende de ese orden; queda escrito para que nadie empiece.
+// Hasta el 2026-09-03 esta función hacía `s.registry.Push(ctx, cc.sessionID, msg)`.
+// Parecía inocente —es lo que hace el resto de push del servidor— pero mezclaba dos
+// cosas que no son la misma:
+//
+//   - session.Registry sirve para comandos que NACEN EN LA NUBE (un SendText de la API
+//     pública, un LeaseUpdate, un ConfigUpdate): no tienen cable propio, así que hay
+//     que ENCONTRAR el del Edge. Para eso está bien.
+//   - Una respuesta de auth NO nace en la nube: es la contestación a una petición que
+//     acaba de llegar por un socket que sigue abierto. Buscar su destino en un mapa es
+//     desacoplar lo que ya venía acoplado.
+//
+// Y el mapa MIENTE, porque los frames de auth del Edge estampan
+// `cltransport.ControlSessionID` (`__wapp_control__`), una constante IDÉNTICA en todos
+// los Edge del planeta —el operador puede loguearse antes de emparejar ningún
+// teléfono, así que no hay session_id real que poner—, mientras que el Registry indexa
+// por session_id SIN TENANT y con política última-gana. El segundo Edge que conectaba
+// PISABA la entrada del primero.
+//
+// Lo que se observó en UAT: con la Mac y el VPS conectados a la vez, el login en la
+// consola del VPS se fue por el cable de la Mac, que lo descartó por command_id
+// desconocido; el VPS agotó sus 20 s de relay y devolvió HTTP 503 relay_offline. Y al
+// parar la Mac, su release() borró la clave compartida y el VPS se quedó SIN canal de
+// control hasta reiniciarlo.
+//
+// 🔴 Lo grave no es eso: es que la colisión NUNCA estuvo acotada a un cliente. Con dos
+// Edge de EMPRESAS DISTINTAS, el UserAuthResponse del operador de una —con su
+// access_token y su refresh_token dentro— se escribía en el socket de la otra. Los dos
+// tests de auth_multiedge_test.go congelan exactamente eso.
+//
+// Contestar por `cc.sender` no es una optimización: elimina la clase entera. No hay
+// clave que confundir porque no hay búsqueda.
+//
+// ⚠️ NO HAY FALLBACK A registry.Push, y es una decisión (D-057.2). La tentación —«por
+// si el connCtx no trae sender, en tests»— reintroduce el camino exacto del incidente
+// y lo deja armado para el día en que alguien construya un connCtx incompleto en
+// producción. Un connCtx sin sender es un error de programa, no un caso degradado:
+// se GRITA y no se entrega. Las pruebas inyectan un sender falso, que es más barato
+// que un fallback que miente.
+//
+// Sobre el ctx (Plan 050): T1.5-bis lo introdujo razonando que era el del stream y
+// que, muerto el stream, no había a quién responder. T1.9 movió las tres ramas de auth
+// al carril, así que HOY el ctx que llega aquí es el del JOB, cuya base es
+// context.WithoutCancel(streamCtx): ya NO se cancela al morir el stream, y quien acota
+// la espera es el presupuesto del job (workBudget, 5 s por defecto) por debajo del
+// plazo del Registry (10 s), que SendAcotado sigue respetando por este camino.
+//
+// 🔴 Orden: como esta respuesta no sale de la goroutine del bucle Recv, su orden
+// relativo respecto a un ConfigUpdate empujado por otra vía no está garantizado. El
+// Edge no lo nota (el streamSender serializa las escrituras) y hoy nadie depende de
+// ese orden; queda escrito para que nadie empiece.
 func (s *Server) pushAuthResponse(ctx context.Context, cc connCtx, resp *cloudlinkv1.UserAuthResponse) {
+	if cc.sender == nil {
+		s.log.Error("auth: el connCtx no trae el stream emisor; la respuesta NO se entrega",
+			"session_id", cc.sessionID, "command_id", resp.GetCommandId(), "edge_id", cc.edgeID)
+		return
+	}
 	msg := &cloudlinkv1.CloudToEdge{
 		CommandId: resp.GetCommandId(),
 		SessionId: cc.sessionID,
 		Payload:   &cloudlinkv1.CloudToEdge_UserAuthResponse{UserAuthResponse: resp},
 	}
-	if err := s.registry.Push(ctx, cc.sessionID, msg); err != nil {
-		s.log.Debug("auth: push UserAuthResponse",
-			"session_id", cc.sessionID, "command_id", resp.GetCommandId(), "error", err)
+	// El destino del mensaje de error es el edge_id y no el session_id: por este
+	// camino el session_id suele ser la constante de control, que no identifica a
+	// nadie — decir «no salió hacia __wapp_control__» no ayudaría a nadie a las 3 AM.
+	if err := session.SendAcotado(ctx, cc.sender, msg, s.registry.SendTimeout(), cc.edgeID); err != nil {
+		s.log.Debug("auth: la respuesta no salió por el stream que la pidió",
+			"session_id", cc.sessionID, "command_id", resp.GetCommandId(),
+			"edge_id", cc.edgeID, "error", err)
 	}
 }
 
