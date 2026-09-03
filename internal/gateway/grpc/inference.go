@@ -378,13 +378,27 @@ func motivoDePush(err error) string {
 //     generó la pregunta, así que el frame sale por el mismo Edge que recibió el
 //     mensaje del cliente y el session_id del frame dice algo cierto (trazabilidad,
 //     que es justo para lo que el proto declara ese campo).
-//  2. **Si no, la primera por orden alfabético** de las sesiones vivas del tenant.
-//     El orden importa aunque el destino sea equivalente: el recorrido de un map de
-//     Go está ALEATORIZADO, así que sin ordenar, dos peticiones seguidas del mismo
-//     tenant podrían irse a Edges distintos. Ordenar las manda al mismo, que es lo
-//     que hace que el breaker del Edge (ADR-0042) y el modelo ya cargado en memoria
-//     signifiquen algo. No se persigue balancear: no hay medida que diga que haga
-//     falta, y un reparto aleatorio es peor que uno estable.
+//
+//  2. **Si no, el mejor candidato del tenant que NO haya dicho que no puede**
+//     (Plan 057 · Ola 3, REQ-057.10). Se descartan los Edge que declararon
+//     `INFERENCE_READINESS_DOWN` —mandarles el prompt solo podía volver como
+//     `ollama_down` tras esperar el presupuesto entero— y se prefiere a los que
+//     dijeron READY sobre los que no dicen nada.
+//
+//     El orden alfabético se conserva DENTRO de cada grupo, y por el motivo
+//     original: el recorrido de un map de Go está ALEATORIZADO, así que sin ordenar,
+//     dos peticiones seguidas del mismo tenant podrían irse a Edges distintos.
+//     Ordenar las manda al mismo, que es lo que hace que el breaker del Edge
+//     (ADR-0042) y el modelo ya cargado en memoria signifiquen algo. No se persigue
+//     balancear: no hay medida que diga que haga falta, y un reparto aleatorio es
+//     peor que uno estable.
+//
+// 🔴 EL PASO 1 NO MIRA LA READINESS, Y ESO ES DOCTRINA, NO UN OLVIDO. El Edge que
+// sostiene la conversación es el único que la atiende: la inferencia jamás cruza
+// entre nodos Edge. Si su Ollama está caído, lo correcto es un `ollama_down` honesto
+// del Edge que de verdad tiene el hilo, no una respuesta fabricada por la máquina de
+// otra instalación del mismo cliente, que no ha visto ni un mensaje de esa charla.
+// El desempate del paso 2 solo entra cuando NO hay conversación detrás.
 //
 // El Registry NO sabe de tenants (es map[session_id]) y no hizo falta ampliarlo: el
 // índice por tenant ya existía en el Server (edgeSessions → sessionsForTenant), que
@@ -393,12 +407,54 @@ func (s *Server) inferenceSession(tenantID, origin string) (string, bool) {
 	if origin != "" && s.registry.Online(origin) {
 		return origin, true
 	}
-	vivas := s.sessionsForTenant(tenantID)
-	if len(vivas) == 0 {
-		return "", false
+	listas, mudas := s.candidatasPorReadiness(tenantID)
+	for _, grupo := range [][]string{listas, mudas} {
+		if len(grupo) > 0 {
+			slices.Sort(grupo)
+			return grupo[0], true
+		}
 	}
-	slices.Sort(vivas)
-	return vivas[0], true
+	return "", false
+}
+
+// candidatasPorReadiness reparte las sesiones vivas del tenant en los DOS grupos que
+// pueden atender una inferencia, y deja fuera al tercero.
+//
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 POR QUÉ DOS LISTAS Y NO UN FILTRO POR READY
+// ════════════════════════════════════════════════════════════════════════════
+//
+// `INFERENCE_READINESS_UNSPECIFIED` significa «este Edge no lo dice» —un Edge con el
+// contrato anterior a v0.17.0, o uno recién arrancado que todavía no lo sabe—, NUNCA
+// «no puede»; la distinción está escrita y razonada en anotaReadiness (readiness.go).
+// Exigir READY para ser elegible, que es lo que pedía el análisis de origen de este
+// plan, dejaría SIN INFERENCIA a toda la flota que no publica el campo, y sin un solo
+// error: el gateway diría «este tenant no tiene a nadie vivo» de un cliente cuya única
+// instalación está perfectamente sana. Por eso el filtro es en NEGATIVO —se descarta
+// lo que dijo DOWN— y READY es una PREFERENCIA que ordena, no una puerta que cierra.
+//
+// Corre bajo `trackMu` —el mismo candado e índice que sessionsForTenant— y lee
+// `edgeReadiness` DENTRO del mismo bloque, sin llamar a nadie con el candado tomado:
+// la disciplina de anotaReadiness y unaSesionPorEdge.
+func (s *Server) candidatasPorReadiness(tenantID string) (listas, mudas []string) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	for k, set := range s.edgeSessions {
+		if k.tenantID != tenantID {
+			continue
+		}
+		destino := &mudas
+		switch s.edgeReadiness[k] {
+		case cloudlinkv1.InferenceReadiness_INFERENCE_READINESS_DOWN:
+			continue
+		case cloudlinkv1.InferenceReadiness_INFERENCE_READINESS_READY:
+			destino = &listas
+		}
+		for sid := range set {
+			*destino = append(*destino, sid)
+		}
+	}
+	return listas, mudas
 }
 
 // inferToCloud envuelve la petición en un CloudToEdge dirigido a la sesión dada.
