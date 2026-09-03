@@ -51,6 +51,10 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 	// lo que no necesita lock (ADR-0008: N sesiones multiplexadas por session_id
 	// sobre un solo stream CloudLink por Edge).
 	releases := make(map[string]func())
+	// controlVisto recuerda si este stream ya usó el canal de control, para empujarle
+	// su config UNA sola vez (ver el case del control, más abajo). Mismo régimen que
+	// `releases`: local al stream y mutada por un ÚNICO goroutine, el bucle Recv.
+	controlVisto := false
 	// Cierre en dos tiempos del carril (T1.6) con el MarkOffline ordenado dentro
 	// (T1.11). Este defer corre en la goroutine del bucle Recv y SOLO DESPUÉS de que
 	// Recv haya retornado: es eso lo que garantiza que ningún submit ocurra en
@@ -73,7 +77,41 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[cloudlinkv1.EdgeToCloud
 		frameCC := cc
 		frameCC.sessionID = sessionID
 		sesionNueva := false
-		if sessionID != "" {
+		switch {
+		// ════════════════════════════════════════════════════════════════════
+		// 🔴 EL CANAL DE CONTROL NO ES UNA SESIÓN (Plan 057 · Ola 2 · T2.1)
+		// ════════════════════════════════════════════════════════════════════
+		//
+		// `__wapp_control__` es el session_id que el Edge estampa en los frames de
+		// AUTH —y solo en ellos— porque el gateway exige un session_id no vacío y el
+		// operador puede loguearse ANTES de emparejar ningún teléfono. Hasta el
+		// 2026-09-03 se registraba como una sesión más. No lo es, y registrarlo tenía
+		// TRES consecuencias, ninguna visible en un log de error:
+		//
+		//  1. Es una CONSTANTE IDÉNTICA en todos los Edge del planeta, y
+		//     session.Registry indexa por session_id SIN TENANT con política
+		//     última-gana: el segundo Edge que conectaba pisaba la entrada del primero
+		//     y la respuesta del login del primero —con sus tokens— salía por el cable
+		//     del segundo, aunque fuera de OTRA EMPRESA. (La Ola 1 ya lo desactivó por
+		//     el otro extremo: la respuesta de auth vuelve in-band. Esto lo remata.)
+		//  2. trackSession lo metía en `edgeSessions`, así que sessionsForTenant lo
+		//     devolvía y el FAN-OUT DE CONFIG (PushConfig) le empujaba el catálogo de
+		//     intenciones del tenant. En el Edge, handleConfigUpdate se atiende ANTES
+		//     de resolver la sesión, se aplica GLOBAL y se ack-ea SIEMPRE: la config de
+		//     una empresa podía APLICARSE DE VERDAD en el Edge de otra. Esto no se
+		//     descartaba en el receptor, a diferencia del token.
+		//  3. Por el mismo índice, inferenceSession podía elegirlo como destino: `_`
+		//     (0x5F) ordena antes que cualquier UUID que empiece por `a`-`f`.
+		//
+		// No se registra, no se indexa y no se le emite lease (no hay teléfono ni DEK
+		// detrás: el Edge lo descarta con un Warn). Lo único que necesita —que el
+		// operador pueda entrar— lo da la Ola 1 sin registro alguno.
+		case sessionID == cltransport.ControlSessionID:
+			if !controlVisto {
+				controlVisto = true
+				s.onControlChannel(streamCtx, frameCC)
+			}
+		case sessionID != "":
 			// Registro perezoso por-frame (register-on-first-frame): la primera
 			// vez que aparece un session_id se registra; idempotente después.
 			if _, ok := releases[sessionID]; !ok {
@@ -591,6 +629,51 @@ func (s *Server) onSessionRegistered(ctx context.Context, cc connCtx) {
 	case err != nil:
 		s.log.Info("handshake: el stream se fue antes de terminar el registro de la sesión",
 			"session_id", cc.sessionID, "edge_id", cc.edgeID, "error", err)
+	}
+}
+
+// onControlChannel es lo ÚNICO que el gateway hace cuando un stream usa el canal de
+// control, y corre UNA VEZ POR STREAM (Plan 057 · Ola 2 · T2.2).
+//
+// Es la mitad que SÍ se conserva de onSessionRegistered para este id. La otra mitad
+// —registrar en el Registry, indexar en edgeSessions, marcar flota, emitir lease— se
+// retiró en T2.1 y el porqué está en el `case` de Connect.
+//
+// 🔴 QUÉ PASARÍA SI ESTA FUNCIÓN NO EXISTIERA, que es la razón de que exista. El push
+// de config al conectar (ADR-0021) vivía DENTRO de registerSession. Para un Edge
+// recién arrancado SIN NINGÚN TELÉFONO EMPAREJADO, el frame de auth era el único que
+// provocaba registro: ese Edge recibía su catálogo de intenciones por el canal de
+// control y por ningún otro sitio. Quitar el registro sin reponer esto lo dejaría
+// arrancando con el catálogo vacío, sin un solo error en ningún log. Ver
+// pushConfigsInBand.
+//
+// El reloj es el mismo molde que onSessionRegistered —ctx del STREAM acotado por
+// workBudget— y por el mismo motivo: si el stream muere a mitad, empujarle config a
+// nadie no sirve de nada, así que este trabajo se rinde con él. Corre INLINE en la
+// goroutine del bucle Recv, igual que el registro de una sesión normal, y por eso el
+// presupuesto no es opcional: lo que hay dentro toca la base (ConfigsForConnect) y la
+// red (el envío), y sin techo retendría el bucle que lee los frames del Edge.
+func (s *Server) onControlChannel(ctx context.Context, cc connCtx) {
+	if !cc.hasIdentity {
+		return
+	}
+	s.log.Info("canal de control en uso (no se registra como sesión)",
+		"edge_id", cc.edgeID, "tenant_id", cc.tenantID)
+
+	ctlCtx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+	s.pushConfigsInBand(ctlCtx, cc)
+
+	// Mismo aviso, y misma distinción de causas, que en onSessionRegistered: un plazo
+	// vencido acusa a Postgres y al presupuesto; un stream que se fue es corriente y
+	// culpar al presupuesto mandaría a investigar al sitio equivocado.
+	switch err := ctlCtx.Err(); {
+	case errors.Is(err, context.DeadlineExceeded):
+		s.log.Warn("canal de control: la config inicial no salió dentro de su presupuesto",
+			"edge_id", cc.edgeID, "budget", s.workBudget, "error", err)
+	case err != nil:
+		s.log.Info("canal de control: el stream se fue antes de empujar la config inicial",
+			"edge_id", cc.edgeID, "error", err)
 	}
 }
 

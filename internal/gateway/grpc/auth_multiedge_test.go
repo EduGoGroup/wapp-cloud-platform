@@ -31,6 +31,8 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,8 +75,19 @@ func (authPorTenant) Login(_ context.Context, req in.LoginInput) (domain.AuthRes
 	}, nil
 }
 
-func (authPorTenant) Refresh(_ context.Context, _ in.RefreshInput) (domain.AuthResult, error) {
-	return domain.AuthResult{}, nil
+// Refresh deriva el tenant del propio refresh token que Login emitió ("refresh-<tenant>"):
+// el contrato de in.RefreshInput no lleva tenant, y el gateway compara el del resultado
+// con el del canal mTLS. Sin esta derivación, todo refresh respondería tenant_mismatch y
+// el test de la desconexión cruzada mediría otra cosa.
+func (authPorTenant) Refresh(_ context.Context, req in.RefreshInput) (domain.AuthResult, error) {
+	tenant := strings.TrimPrefix(req.RefreshToken, "refresh-")
+	return domain.AuthResult{
+		AccessToken:  "access-" + tenant,
+		RefreshToken: "refresh-" + tenant,
+		TokenType:    "Bearer",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		Context:      domain.IdentityContext{TenantID: tenant, UserID: "u-1"},
+	}, nil
 }
 func (authPorTenant) Logout(_ context.Context, _ in.LogoutInput) error { return nil }
 func (authPorTenant) Verify(_ context.Context, _ string) (in.VerifyResult, error) {
@@ -90,9 +103,10 @@ func (authPorTenant) Verify(_ context.Context, _ string) (in.VerifyResult, error
 type multiEdgeHarness struct {
 	ca  *enroll.CA
 	lis *bufconn.Listener
+	srv *gatewaygrpc.Server
 }
 
-func newMultiEdgeHarness(t *testing.T) *multiEdgeHarness {
+func newMultiEdgeHarness(t *testing.T, opts ...gatewaygrpc.Option) *multiEdgeHarness {
 	t.Helper()
 	ca := newDevCA(t)
 
@@ -109,8 +123,10 @@ func newMultiEdgeHarness(t *testing.T) *multiEdgeHarness {
 	// puede recibir es un UserAuthResponse, y «no recibió nada» significa exactamente
 	// «no recibió respuesta de auth ajena» (mismo criterio que newAuthHarness).
 	srv := gatewaygrpc.New(session.NewRegistry(), logger.New(logger.WithWriter(io.Discard)),
-		gatewaygrpc.WithAuthenticator(authPorTenant{}),
-		gatewaygrpc.WithAuthAuditor(&fakeAuditor{}),
+		append([]gatewaygrpc.Option{
+			gatewaygrpc.WithAuthenticator(authPorTenant{}),
+			gatewaygrpc.WithAuthAuditor(&fakeAuditor{}),
+		}, opts...)...,
 	)
 
 	lis := bufconn.Listen(bufSize)
@@ -127,7 +143,7 @@ func newMultiEdgeHarness(t *testing.T) *multiEdgeHarness {
 		}
 	})
 
-	return &multiEdgeHarness{ca: ca, lis: lis}
+	return &multiEdgeHarness{ca: ca, lis: lis, srv: srv}
 }
 
 // edgeVivo es un Edge conectado: su stream más un lector propio que va acumulando lo
@@ -137,6 +153,54 @@ type edgeVivo struct {
 	nombre  string
 	stream  grpc.BidiStreamingClient[cloudlinkv1.EdgeToCloud, cloudlinkv1.CloudToEdge]
 	llegado chan *cloudlinkv1.CloudToEdge
+	// cierra corta el stream como lo haría un Edge que se apaga: es lo que dispara el
+	// closeStream del gateway y, con él, el release() de todo lo que ese stream tuviera
+	// registrado.
+	cierra func()
+	// apartados guarda los frames que un helper sacó del canal buscando OTRA cosa.
+	//
+	// 🔴 Sin esto los helpers se pisan entre sí y el test miente en la dirección
+	// PEOR: `esperaRespuesta` descartaría el ConfigUpdate inicial mientras busca la
+	// respuesta del login, y el `esperaConfigCon` posterior daría por no entregada una
+	// config que sí llegó. Se ordena por el lado del test, no relajando el aserto.
+	// Todos los helpers corren en la goroutine del test, así que no necesita candado.
+	apartados []*cloudlinkv1.CloudToEdge
+}
+
+// busca devuelve el primer frame que cumpla `pred`, mirando primero entre los que otro
+// helper apartó y luego el canal. Lo que no cumple se APARTA, no se tira.
+//
+// 🔴 Los que ya estaban apartados y no cumplen NO se vuelven a apartar: recorrerlos con
+// índice y dejarlos donde están es lo que evita el bucle infinito de reinyectar el
+// mismo frame que se acaba de sacar.
+//
+// Devuelve (frame, streamAbierto, encontrado).
+func (e *edgeVivo) busca(d time.Duration, pred func(*cloudlinkv1.CloudToEdge) bool) (*cloudlinkv1.CloudToEdge, bool, bool) {
+	for i, msg := range e.apartados {
+		if pred(msg) {
+			e.apartados = append(e.apartados[:i], e.apartados[i+1:]...)
+			return msg, true, true
+		}
+	}
+	fin := time.Now().Add(d)
+	for {
+		restante := time.Until(fin)
+		if restante <= 0 {
+			return nil, true, false
+		}
+		select {
+		case msg, abierto := <-e.llegado:
+			if !abierto {
+				return nil, false, false
+			}
+			if pred(msg) {
+				return msg, true, true
+			}
+			e.apartados = append(e.apartados, msg)
+		case <-time.After(restante):
+			return nil, true, false
+		}
+	}
 }
 
 // conecta abre un stream Connect con el certificado de (tenant, edge) dado y arranca
@@ -155,19 +219,28 @@ func (h *multiEdgeHarness) conecta(t *testing.T, nombre, tenantID, edgeID string
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancel()
-		if err := conn.Close(); err != nil {
-			t.Logf("[%s] conn.Close: %v", nombre, err)
-		}
-	})
+	var unaVez sync.Once
+	cerrar := func() {
+		unaVez.Do(func() {
+			cancel()
+			if err := conn.Close(); err != nil {
+				t.Logf("[%s] conn.Close: %v", nombre, err)
+			}
+		})
+	}
+	t.Cleanup(cerrar)
 
 	stream, err := cloudlinkv1.NewCloudLinkClient(conn).Connect(ctx)
 	if err != nil {
 		t.Fatalf("[%s] Connect: %v", nombre, err)
 	}
 
-	e := &edgeVivo{nombre: nombre, stream: stream, llegado: make(chan *cloudlinkv1.CloudToEdge, 8)}
+	e := &edgeVivo{
+		nombre:  nombre,
+		stream:  stream,
+		llegado: make(chan *cloudlinkv1.CloudToEdge, 16),
+		cierra:  cerrar,
+	}
 	go func() {
 		for {
 			msg, err := stream.Recv()
@@ -191,29 +264,55 @@ func (e *edgeVivo) pideLogin(t *testing.T, cmdID string) {
 	}
 }
 
+// pideRefresh envía un UserRefresh con el refresh token que este Edge tendría guardado.
+func (e *edgeVivo) pideRefresh(t *testing.T, cmdID, refreshToken string) {
+	t.Helper()
+	frame := &cloudlinkv1.EdgeToCloud{
+		CommandId: cmdID,
+		SessionId: cltransport.ControlSessionID,
+		Payload: &cloudlinkv1.EdgeToCloud_UserRefresh{UserRefresh: &cloudlinkv1.UserRefreshRequest{
+			CommandId: cmdID, SessionId: cltransport.ControlSessionID, RefreshToken: refreshToken,
+		}},
+	}
+	if err := e.stream.Send(frame); err != nil {
+		t.Fatalf("[%s] Send refresh %s: %v", e.nombre, cmdID, err)
+	}
+}
+
 // esperaRespuesta exige que llegue un UserAuthResponse con ESE command_id.
+//
+// ⚠️ IGNORA los frames que no son de auth, y no es laxitud: desde la Ola 2 el
+// ConfigUpdate inicial del canal de control sale IN-BAND e INLINE (onControlChannel,
+// en la goroutine del bucle Recv), mientras que la respuesta de auth se resuelve en el
+// CARRIL. O sea que la config llega ANTES que la respuesta al login que la provocó. En
+// producción da igual —el Edge correlaciona la auth por command_id y atiende el
+// ConfigUpdate antes de resolver ninguna sesión—, pero un helper que exigiera que el
+// PRIMER frame fuese la respuesta estaría midiendo un orden que nadie promete.
+//
+// Lo que NO se ignora es un UserAuthResponse con otro command_id: eso es exactamente
+// el defecto que estos tests cazan, y tiene que ser rojo.
 func (e *edgeVivo) esperaRespuesta(t *testing.T, cmdID string, d time.Duration) *cloudlinkv1.UserAuthResponse {
 	t.Helper()
-	select {
-	case msg, ok := <-e.llegado:
-		if !ok {
-			t.Fatalf("[%s] el stream se cerró esperando la respuesta a %s", e.nombre, cmdID)
-		}
-		resp := msg.GetUserAuthResponse()
-		if resp == nil {
-			t.Fatalf("[%s] llegó un CloudToEdge que no es UserAuthResponse: %+v", e.nombre, msg)
-		}
-		if resp.GetCommandId() != cmdID {
-			t.Fatalf("[%s] recibió la respuesta de OTRA petición: command_id %q, esperaba %q",
-				e.nombre, resp.GetCommandId(), cmdID)
-		}
-		return resp
-	case <-time.After(d):
+	msg, abierto, hallado := e.busca(d, func(m *cloudlinkv1.CloudToEdge) bool {
+		return m.GetUserAuthResponse() != nil
+	})
+	if !abierto {
+		t.Fatalf("[%s] el stream se cerró esperando la respuesta a %s", e.nombre, cmdID)
+		return nil
+	}
+	if !hallado {
 		t.Fatalf("[%s] NO recibió su respuesta a %s en %s. Es el defecto del 2026-09-03: la "+
 			"respuesta salió por el cable de otro Edge porque `__wapp_control__` es una clave "+
 			"compartida en un registro plano de última-gana", e.nombre, cmdID, d)
 		return nil
 	}
+	resp := msg.GetUserAuthResponse()
+	if resp.GetCommandId() != cmdID {
+		t.Fatalf("[%s] recibió la respuesta de OTRA petición: command_id %q, esperaba %q",
+			e.nombre, resp.GetCommandId(), cmdID)
+		return nil
+	}
+	return resp
 }
 
 // exigeSilencio exige que a este Edge NO le llegue nada. Es el aserto de la fuga: no
@@ -222,18 +321,15 @@ func (e *edgeVivo) esperaRespuesta(t *testing.T, cmdID string, d time.Duration) 
 // token filtrado no deja rastro en el receptor.
 func (e *edgeVivo) exigeSilencio(t *testing.T, d time.Duration) {
 	t.Helper()
-	select {
-	case msg, ok := <-e.llegado:
-		if !ok {
-			return // stream cerrado: tampoco recibió nada
-		}
-		if resp := msg.GetUserAuthResponse(); resp != nil {
-			t.Fatalf("[%s] recibió un UserAuthResponse QUE NO PIDIÓ (command_id %q): es una fuga "+
-				"de credenciales hacia el cable equivocado", e.nombre, resp.GetCommandId())
-		}
-		t.Fatalf("[%s] recibió un CloudToEdge que no le corresponde: %+v", e.nombre, msg)
-	case <-time.After(d):
+	msg, _, hallado := e.busca(d, func(*cloudlinkv1.CloudToEdge) bool { return true })
+	if !hallado {
+		return
 	}
+	if resp := msg.GetUserAuthResponse(); resp != nil {
+		t.Fatalf("[%s] recibió un UserAuthResponse QUE NO PIDIÓ (command_id %q): es una fuga "+
+			"de credenciales hacia el cable equivocado", e.nombre, resp.GetCommandId())
+	}
+	t.Fatalf("[%s] recibió un CloudToEdge que no le corresponde: %+v", e.nombre, msg)
 }
 
 // --- T1.4 ---
@@ -296,4 +392,48 @@ func TestMultiEdge_LoginDeOtroTenantNoLlegaAlEdgeAjeno(t *testing.T) {
 		t.Fatalf("empresa-A recibió el token %q, esperaba el de su tenant", got)
 	}
 	empresaB.exigeSilencio(t, 500*time.Millisecond)
+}
+
+// --- T2.5 (Ola 2) ---
+
+// TestMultiEdge_DesconexionCruzadaNoAfectaCanalDeControl: apagar un Edge NO deja al
+// otro sin poder autenticar.
+//
+// 🔴 EL EFECTO COLATERAL QUE CONGELA, que es la segunda mitad del incidente del
+// 2026-09-03 y la que obligaba a REINICIAR el Edge del VPS. `Register` es última-gana y
+// el `release()` que devuelve compara identidad: cuando la Mac se desconectaba, ELLA era
+// la registrada bajo `__wapp_control__`, así que su release borraba la clave — y el VPS,
+// perfectamente conectado, se quedaba sin canal de control. Todo login o refresh
+// posterior moría con ErrSessionOffline hasta reiniciar el proceso.
+//
+// Tras la Ola 2 ese id no se registra en ningún sitio, así que no hay nada que borrar.
+//
+// 🔬 MUTACIÓN: devolver el `case` del control de Connect al registro perezoso (T2.1)
+// CON el fallback a registry.Push en pushAuthResponse (T1.3) ⇒ rojo.
+func TestMultiEdge_DesconexionCruzadaNoAfectaCanalDeControl(t *testing.T) {
+	t.Parallel()
+	h := newMultiEdgeHarness(t)
+
+	vps := h.conecta(t, "vps", tenantA, "vmi3488280")
+	vps.pideLogin(t, "cmd-vps-1")
+	tokens := vps.esperaRespuesta(t, "cmd-vps-1", 5*time.Second).GetTokens()
+
+	mac := h.conecta(t, "mac", tenantA, "MacBook-Pro-de-Jhoan.local")
+	mac.pideLogin(t, "cmd-mac-1")
+	mac.esperaRespuesta(t, "cmd-mac-1", 5*time.Second)
+
+	// La Mac se va. Con el código anterior, esto se llevaba por delante el canal de
+	// control del VPS.
+	mac.cierra()
+
+	vps.pideRefresh(t, "cmd-vps-refresh", tokens.GetRefreshToken())
+	resp := vps.esperaRespuesta(t, "cmd-vps-refresh", 5*time.Second)
+	if resp.GetError() != nil {
+		t.Fatalf("el refresh del VPS falló tras apagarse la Mac: code=%q. Es el orphan release: "+
+			"el release() del stream de la Mac borraba la clave de control COMPARTIDA",
+			resp.GetError().GetCode())
+	}
+	if got := resp.GetTokens().GetAccessToken(); got != "access-"+tenantA {
+		t.Fatalf("el VPS recibió el token %q, esperaba el de su tenant", got)
+	}
 }
