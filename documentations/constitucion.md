@@ -122,7 +122,7 @@ WAPP_LLM_PROMPTS_DIR=/ruta/prompts ./server    # se enciende con la variable
 - `go run ./cmd/prompts -comprobar <dir>` valida un directorio **sin arrancar el servidor**.
 - 🔴 **Un directorio inválido ABORTA EL ARRANQUE.** No hay degradación a «sigo con el texto
   compilado»: `internal/prompts/prompts.go:113 ErrPromptsDir` lo declara y
-  `internal/bootstrap/bootstrap.go:1592 cargarPlantillasDePrompt` lo propaga. El motivo está
+  `internal/bootstrap/arranque/prompts.go:25 cargarPlantillasDePrompt` lo propaga. El motivo está
   escrito allí mismo: *«un operador que editó un fichero y no ve el efecto es peor que un
   proceso que no arranca, porque el segundo se nota»*.
 - El arranque **deja en el log de dónde salió cada plantilla** (`p4=/ruta/…` o
@@ -165,7 +165,7 @@ tenant?» fuera de `internal/llmvia/`, lo que necesitas es **otro método en el 
 
 ### I-CP-4 · La plaza única: W=1 worker de pipeline, K=1 por Edge
 
-El pipeline de captación corre con **un** worker (`bootstrap.go:1077`). Duplicar esa línea
+El pipeline de captación corre con **un** worker (`arranque/fase9_fondo.go:99`). Duplicar esa línea
 **no daría ningún error**: dos workers reclamarían sin pisarse en la base y se bloquearían
 mutuamente en la única plaza de inferencia del Edge. El aforo por Edge lo toma el worker antes
 de la cadena (`internal/intake/pipeline/plaza.go`).
@@ -186,7 +186,7 @@ lo concede solo a `platform_admin` y se lo **niega** al glob `*` de `tenant_admi
 
 ⚠️ **Trampa de estilo que impone el candado**: el detector lee **texto fuente** y reconoce una
 ruta de plataforma buscando la cadena `"platformadmin."` en el argumento de `adminHandler(...)`
-(`bootstrap.go:1384`). Por eso esos handlers **deben** construirse inline y no pre-armarse en
+(`arranque/rutas_admin.go:29`). Por eso esos handlers **deben** construirse inline y no pre-armarse en
 `adminRouteDeps`. Un refactor «de limpieza» que los mueva a campos deja el candado **ciego sin
 ponerse rojo**.
 
@@ -364,7 +364,7 @@ tabla y hace concluir que el dominio no está construido.
    (`conPlazoDeRedacción`, `internal/publicapi/publicapi.go:770`): espera al modelo **dentro**
    de la petición (24,8–35,5 s medidos en UAT) contra un `WriteTimeout` global de 10 s.
 5. **Suponer que `/metrics` es inocuo.** El scrape **barre de paso** las rachas de
-   auto-respuesta vencidas y las manda al histograma (`bootstrap.go:790`). Si nadie raspa
+   auto-respuesta vencidas y las manda al histograma (`arranque/fase7_flujos.go:123`). Si nadie raspa
    `/metrics`, esos episodios **no se cierran nunca**.
 6. **Esperar ver una métrica recién desplegada.** Un `CounterVec` de Prometheus **no aparece
    en `/metrics` hasta su primer incremento**, y el reinicio lo borra. Su ausencia tras

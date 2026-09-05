@@ -50,7 +50,7 @@ siempre la respuesta a «¿por qué está así?» está tres líneas más arriba
 ## Las cinco cosas que ahorran una tarde
 
 1. **Para saber qué existe, se lee `internal/bootstrap/bootstrap.go`, no el README.** Las
-   991 líneas de `Run` (`internal/bootstrap/bootstrap.go:106`) son el inventario real.
+   nueve fases de `internal/bootstrap/arranque` (empieza por `orquestador.go`) son el inventario real.
 2. **Las rutas están en TRES sitios**, no en uno: `internal/publicapi/`,
    `internal/bootstrap/http.go` (las que un token **sin empresa** puede atravesar) y
    `internal/bootstrap/bootstrap.go` (el listener admin).

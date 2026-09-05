@@ -97,7 +97,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 
 - **Dónde**: `internal/flujos/admin/handlers.go:344`. Sus cuatro llamantes están todos en
   `_test.go`. Las dos rutas que monta (`/admin/flows`, `/admin/flows/start`) se registran
-  **inline** en `internal/bootstrap/bootstrap.go:1462` y `:1464`.
+  **inline** en `internal/bootstrap/arranque/rutas_admin.go:101` y `:103`.
 - **Consecuencia**: **código muerto en producción** que aparece en cualquier inventario de
   rutas y hace contar dos veces. Su comentario dice «lo invoca `cmd/server/main.go`», y **eso
   ya no es cierto**.
@@ -132,25 +132,37 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
   para otras cosas** (hay **8** `*_cableado_test.go` en `internal/bootstrap/`): nadie la apuntó
   aquí.
 
-### D-10 · 🔴 `bootstrap.Run` son 991 líneas
+### ~~D-10 · `bootstrap.Run` son 991 líneas~~ — ✅ CERRADA el 2026-09-04
 
-- **Dónde**: `internal/bootstrap/bootstrap.go:106` → cierra en `:1096`. El fichero son 1.606
-  líneas, **933 de ellas (58 %) comentario**.
-- **Consecuencia**: una sola función construye cifrado, R2, motor, gateway, IAM, pipeline LLM,
-  cinco goroutines y cuatro listeners. **Es imposible de revisar por partes** y cualquier
-  reordenación de dependencias es un cambio de riesgo alto.
-- **Cómo se cierra**: extraer por dominio a `construirX(deps) (X, error)` **sin cambiar el
-  orden**, y dejar `Run` como la secuencia de llamadas. Los tests de cableado existentes son la
-  red que hace esto viable.
+- **Qué era**: `internal/bootstrap/bootstrap.go:106` → `:1096`, una sola función que construía
+  cifrado, R2, motor, gateway, IAM, pipeline LLM, cinco goroutines y cuatro listeners. Imposible
+  de revisar por partes, y con `gocyclo` **en su techo exacto** (15 de 15) — hasta el punto de
+  que `nuevoStackLLMDeCaptacion` existía por escrito para absorber un `if err != nil` y no
+  romper el lint del llamante.
+- **Cómo se cerró**: exactamente como decía esta ficha —extraer **sin cambiar el orden** y dejar
+  la secuencia de llamadas—. El composition root pasó a `internal/bootstrap/arranque`, con nueve
+  fases que comparten un contenedor de campos **privados** (por eso es un subpaquete y no
+  nueve), y `internal/bootstrap` quedó como fachada de los dos símbolos públicos de siempre.
+  Ningún objeto, ningún cable y ningún orden cambió; tampoco cuál es el primer error que ve
+  quien depura un arranque caído.
+- **Lo que se ganó de propina**: cada fase declara `requiere()` y el orquestador lo comprueba
+  antes de ejecutarla —el orden dejó de ser una promesa escrita en comentarios—, y el log dice
+  ahora por qué fase iba (`arranque: fase 1/9 "infraestructura": …`).
+- 🔴 **La lección, que es la parte cara**: los tests de cableado parseaban
+  `parser.ParseFile("bootstrap.go")` **por nombre de fichero**, y el traslado tumbó nueve de
+  golpe sin que un solo invariante hubiera cambiado. Ahora recorren el PAQUETE
+  (`arranque/astpaquete_test.go`). El modo de fallo que eso cierra no es el rojo ruidoso que
+  dieron: es el silencioso —mover la línea vigilada a otro fichero DEJANDO `bootstrap.go` en su
+  sitio los habría dejado en **verde mirando un fichero donde ya no está lo que buscan**.
 
 ### D-11 · 🟡 Cinco goroutines de fondo sin supervisión ni reinicio
 
-- **Dónde**: `bootstrap.go:1033` (webhook), `:1045` (flowlifecycle), `:1060` (agregador),
-  `:1070` (intakeAhead), `:1086` (pipeline) — todas `go X.Run(ctx)` a pelo.
+- **Dónde**: `arranque/fase9_fondo.go:54` (webhook), `:63` (flowlifecycle), `:75` (agregador),
+  `:84` (intakeAhead), `:99` (pipeline) — todas `go X.Run(ctx)` a pelo.
 - **Consecuencia, en palabras del propio código**: «sin este `Run`… el sistema seguiría
-  funcionando y nadie vería un error; simplemente no habría adelanto nunca» (`:1065`) y «las
+  funcionando y nadie vería un error; simplemente no habría adelanto nunca» (`:80`) y «las
   ventanas cerrarían, los jobs quedarían `pending` y nadie los reclamaría nunca. **Ni un error
-  en el log**» (`:1083`). Los cinco fallos son **mudos**.
+  en el log**» (`:95`). Los cinco fallos son **mudos**.
 - **La red actual** es un test de **cableado** (`pipeline_captacion_cableado_test.go`), que
   comprueba que se lanzan, no que sigan vivas.
 - **Cómo se cierra**: un supervisor que relance con backoff y **emita una métrica de
@@ -158,7 +170,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 
 ### D-12 · 🟡 `W = 1` es un invariante que vive en una línea repetible
 
-- **Dónde**: `bootstrap.go:1077`. El comentario lo dice: «duplicar esta línea no daría ningún
+- **Dónde**: `arranque/fase9_fondo.go:99`. El comentario lo dice: «duplicar esta línea no daría ningún
   error: dos workers reclamarían sin pisarse… y se bloquearían el uno al otro en la única plaza
   del Edge».
 - **Estado**: vigilado por `TestPipelineCaptacionCableado`, que **es lo correcto**. Se anota
@@ -166,7 +178,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 
 ### D-13 · 🟡 El candado de rutas de plataforma lee TEXTO FUENTE
 
-- **Dónde**: `bootstrap.go:1384` — `TestINV056_1_PlatformPermissionsMustEndInDotAny` detecta
+- **Dónde**: `arranque/rutas_admin.go:29` — `TestINV056_1_PlatformPermissionsMustEndInDotAny` detecta
   una ruta de plataforma buscando la cadena `"platformadmin."` en el argumento de
   `adminHandler(...)`.
 - **Consecuencia**: impone un estilo de escritura que **solo el comentario explica**: esos
@@ -255,7 +267,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 | Marca | Dónde | Qué significa |
 |---|---|---|
 | **DEUDA-044.10** | `internal/intake/pipeline/pipeline.go:56` | Un aviso colgado del **desenlace feliz** de una operación que, en el caso que importa, **fracasa**: la inferencia fría muere por timeout sin emitir régimen, y el fallo borraba su propia evidencia. El worker ya corrige el patrón; la marca se conserva como recordatorio |
-| **DEUDA-044.11** (sin dueño) | `internal/bootstrap/bootstrap.go:1197`, `internal/intake/stages/p4.go:144` | Un plazo que hay que escribir explícitamente en vez de heredarlo |
+| **DEUDA-044.11** (sin dueño) | `internal/bootstrap/arranque/fase5_captacion.go:170`, `internal/intake/stages/p4.go:144` | Un plazo que hay que escribir explícitamente en vez de heredarlo |
 | **DEUDA-044.16** | `internal/intake/stages/match.go:42` y `:265`, `match_lineas.go:66`, `draft.go:259` | Un ítem malo **no** tira el borrador: se degrada y se anota como *warning* |
 | **DEUDA-050.1** (cerrada con red) | `internal/gateway/grpc/connect.go:917-940` | Carrera de la reconexión rápida (`MarkOffline` diferido, `MarkOnline` inmediato). Mitigada preguntando «¿sigue caída?» **al ejecutar** el job, no al encolarlo. El comentario declara qué **no** cubre la red |
 | **DEUDA-050.2** | `internal/platform/metrics/metrics.go:483` | El cuello mudado del head-of-line al pool; `wapp_db_wait_count` existe para decidirlo |
