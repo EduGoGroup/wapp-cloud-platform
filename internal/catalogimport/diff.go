@@ -294,15 +294,20 @@ func describeWarnings(ws []cart.CatalogWarning) []string {
 		var b strings.Builder
 		b.WriteString("catálogo vigente")
 		if w.Category != "" {
-			b.WriteString(" · categoría " + strconv.Quote(w.Category))
+			b.WriteString(" · categoría ")
+			b.WriteString(strconv.Quote(w.Category))
 		}
 		if w.SKU != "" {
-			b.WriteString(" · artículo " + strconv.Quote(w.SKU))
+			b.WriteString(" · artículo ")
+			b.WriteString(strconv.Quote(w.SKU))
 		}
 		if w.Field != "" {
-			b.WriteString(" · campo " + strconv.Quote(w.Field))
+			b.WriteString(" · campo ")
+			b.WriteString(strconv.Quote(w.Field))
 		}
-		b.WriteString(": " + w.Reason + " (el motor ya lo ignoraba, así que no entra en la comparación de arriba)")
+		b.WriteString(": ")
+		b.WriteString(w.Reason)
+		b.WriteString(" (el motor ya lo ignoraba, así que no entra en la comparación de arriba)")
 		out = append(out, b.String())
 	}
 	return out
