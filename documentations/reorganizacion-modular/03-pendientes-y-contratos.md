@@ -29,14 +29,15 @@ antes/después. Es barato y convierte esta tabla en un gate.
 
 ## 2 · Lo que hay que resolver ANTES de pasárselo a Claude Code en la web
 
-Claude Code en la web **solo ve lo que está en `origin`** de este repo. Hoy eso no coincide con lo
-que hay en local.
+Claude Code en la web **solo ve lo que está en `origin`** de este repo. El 2026-09-27 se publicó en
+`dev` todo lo que estaba solo en local (P-1 a P-3): desde entonces **`dev` es la fuente de la
+verdad**.
 
 | # | Pendiente | Por qué importa | Estado al 2026-09-27 |
 |---|---|---|---|
-| P-1 | **Publicar la rama `refactor/arranque-por-fases`** (2 commits: `0dc6b88` las nueve fases, `7cd3a0c` su documentación) en `dev` | En `origin/dev` (`9493cea`) sigue el `bootstrap.Run` de 991 líneas, y toda la documentación ya habla de nueve fases. Quien implemente vería código y documentación contradiciéndose, y reorganizaría sobre la versión vieja | 🔴 Solo en local |
-| P-2 | **Resolver el trabajo a medio hacer**: 3 ficheros modificados (`internal/catalogimport/diff.go`, `internal/flujos/events/store.go`, `internal/platform/metrics/inferstats.go`) y `cmd/debug_inferencia/` sin versionar | Un movimiento de carpetas sobre cambios sin commitear los pierde o los mezcla. Y `cmd/debug_inferencia` lo cita la nota de arranque del análisis, pero **no existe en git** | 🔴 Sin commitear |
-| P-3 | **Publicar esta carpeta** (`documentations/reorganizacion-modular/`) en `dev` | Sin ella, la web no tiene las instrucciones | 🔴 Sin commitear |
+| P-1 | **Publicar la rama `refactor/arranque-por-fases`** (2 commits: `0dc6b88` las nueve fases, `7cd3a0c` su documentación) en `dev` | En `origin/dev` (`9493cea`) sigue el `bootstrap.Run` de 991 líneas, y toda la documentación ya habla de nueve fases. Quien implemente vería código y documentación contradiciéndose, y reorganizaría sobre la versión vieja | ✅ En `dev` desde el 2026-09-27 |
+| P-2 | **Resolver el trabajo a medio hacer**: 3 ficheros modificados (`internal/catalogimport/diff.go`, `internal/flujos/events/store.go`, `internal/platform/metrics/inferstats.go`) y `cmd/debug_inferencia/` sin versionar | Un movimiento de carpetas sobre cambios sin commitear los pierde o los mezcla. Y `cmd/debug_inferencia` lo cita la nota de arranque del análisis, pero **no existía en git** | ✅ Commiteado y en `dev` el 2026-09-27 |
+| P-3 | **Publicar esta carpeta** (`documentations/reorganizacion-modular/`) en `dev` | Sin ella, la web no tiene las instrucciones | ✅ En `dev` el 2026-09-27 |
 | P-4 | **Decidir el alcance y los nombres** (§3) y escribir entonces el plan ejecutable: olas, tareas, criterios de cierre, prompts | Este análisis no es un plan | ⏳ Pendiente de Jhoan |
 | P-5 | **Ventana de congelación**: mientras dure cada ola de movimiento, nada más entra en `dev` | Un diff que toca casi todos los ficheros choca con cualquier rama viva | Hoy no hay ramas vivas por delante de `dev` (`feat/047-o10-puerta-plano-roles` ya está fusionada: 0 commits por delante) |
 | P-6 | **Saber si el entorno web tiene Docker/Postgres** | Sin él, los 97 ficheros de integración se saltan (DT-52: 438 SKIP bajo rc=0). Si no lo tiene, la ola la **cierra una sesión local** con `make test-integration`, contando SKIP con `-v` y leyendo el `rc` sin pipe | ❓ Por averiguar |
