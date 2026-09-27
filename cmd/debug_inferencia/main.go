@@ -129,8 +129,11 @@ func llamarOllama(ctx context.Context, baseURL, model, prompt string) (string, t
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		cuerpo, _ := io.ReadAll(resp.Body)
-		return "", 0, fmt.Errorf("Ollama respondió HTTP %d: %s", resp.StatusCode, string(cuerpo))
+		cuerpo, errLectura := io.ReadAll(resp.Body)
+		if errLectura != nil {
+			return "", 0, fmt.Errorf("ollama respondió HTTP %d (y su cuerpo no se pudo leer: %w)", resp.StatusCode, errLectura)
+		}
+		return "", 0, fmt.Errorf("ollama respondió HTTP %d: %s", resp.StatusCode, string(cuerpo))
 	}
 
 	var resWire ollamaChatResponse
@@ -182,14 +185,35 @@ func main() {
 	}
 }
 
+// ejecutarFrase recorre la cadena entera para una frase: P1 → bifurcación →
+// P2 → P3 → P4 → match → resumen. Cada etapa imprime lo suyo y devuelve false
+// cuando la cadena no debe seguir.
 func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipeline bool) {
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	fmt.Printf("📝 MENSAJE A ANALIZAR: \"%s\"\n", texto)
 	fmt.Println(strings.Repeat("=", 80))
 
-	// ========================================================================
-	// ETAPA P1: Detección de Intención (Clasificación)
-	// ========================================================================
+	clasificacion, ok := etapaP1(ctx, baseURL, model, texto)
+	if !ok || !veredictoBifurcacion(clasificacion, forzarPipeline) {
+		return
+	}
+	ideas, ok := etapaP2(ctx, baseURL, model, texto)
+	if !ok {
+		return
+	}
+	specs, ok := etapaP3(ctx, baseURL, model, texto, ideas)
+	if !ok {
+		return
+	}
+	cantidades, ok := etapaP4(ctx, baseURL, model, texto, specs)
+	if !ok {
+		return
+	}
+	resumenDraft(etapaMatch(cantidades))
+}
+
+// ETAPA P1: Detección de Intención (Clasificación).
+func etapaP1(ctx context.Context, baseURL, model, texto string) (*llm.Classification, bool) {
 	fmt.Println("\n🔍 [ETAPA P1: Detección de Intención]")
 	fmt.Println("   Construyendo prompt con el catálogo de intenciones del tenant...")
 
@@ -204,29 +228,31 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 	respP1, durP1, err := llamarOllama(ctx, baseURL, model, promptP1)
 	if err != nil {
 		fmt.Printf("   ❌ Error en P1: %v\n", err)
-		return
+		return nil, false
 	}
 
 	jsonP1, err := llm.ExtractJSON(respP1)
 	if err != nil {
 		fmt.Printf("   ❌ Error extrayendo JSON de P1 (%v). Salida cruda:\n%s\n", err, respP1)
-		return
+		return nil, false
 	}
 
 	clasificacion, err := llm.ParseClassification(jsonP1, inP1)
 	if err != nil {
 		fmt.Printf("   ❌ Error validando esquema de P1 (%v). JSON:\n%s\n", err, string(jsonP1))
-		return
+		return nil, false
 	}
 
 	fmt.Printf("   ⏱️  Tiempo P1: %v\n", durP1)
 	fmt.Printf("   📌 Intención detectada: \033[1;36m%s\033[0m\n", clasificacion.Intent)
 	fmt.Printf("   📊 Confianza:           %.2f\n", clasificacion.Confidence)
 	fmt.Printf("   🔎 Evidencia copiada:   \"%s\"\n", clasificacion.Evidence)
+	return clasificacion, true
+}
 
-	// ========================================================================
-	// VEREDICTO DE BIFURCACIÓN
-	// ========================================================================
+// veredictoBifurcacion explica qué haría wApp con la clasificación, y dice si
+// la cadena sigue hacia P2 (siempre que sea pedido, o si se fuerza).
+func veredictoBifurcacion(clasificacion *llm.Classification, forzarPipeline bool) bool {
 	esPedido := clasificacion.Intent == "intake_request" && clasificacion.Confidence >= 0.6
 	fmt.Println("\n🔀 [VEREDICTO DE BIFURCACIÓN EN WAPP]")
 	if esPedido {
@@ -234,20 +260,21 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 		fmt.Println("      1. En producción, la nube ADELANTA el cierre de la ventana de agregación (no espera 45s).")
 		fmt.Println("      2. El job pasa de 'aggregating' a 'pending' en la cola intake_jobs.")
 		fmt.Println("      3. Se activa la cadena del Worker: P2 -> P3 -> P4 -> Match -> Draft.")
-	} else {
-		fmt.Printf("   \033[1;33mℹ️  NO BIFURCA HACIA PEDIDO (intención: %s, confianza: %.2f):\033[0m\n", clasificacion.Intent, clasificacion.Confidence)
-		fmt.Println("      - No abre ventana de presupuesto ni crea solicitud en la bandeja.")
-		fmt.Println("      - Se deriva al flujo estándar de conversación / respuesta rápida.")
-		if !forzarPipeline {
-			fmt.Println("\n   (Tip: Usa flag -force-pipeline si deseas probar P2-P4 con esta frase)")
-			return
-		}
-		fmt.Println("\n   ⚠️  [MODO FORCE-PIPELINE ACTIVO: Continuando con P2-P4 de todos modos]")
+		return true
 	}
+	fmt.Printf("   \033[1;33mℹ️  NO BIFURCA HACIA PEDIDO (intención: %s, confianza: %.2f):\033[0m\n", clasificacion.Intent, clasificacion.Confidence)
+	fmt.Println("      - No abre ventana de presupuesto ni crea solicitud en la bandeja.")
+	fmt.Println("      - Se deriva al flujo estándar de conversación / respuesta rápida.")
+	if !forzarPipeline {
+		fmt.Println("\n   (Tip: Usa flag -force-pipeline si deseas probar P2-P4 con esta frase)")
+		return false
+	}
+	fmt.Println("\n   ⚠️  [MODO FORCE-PIPELINE ACTIVO: Continuando con P2-P4 de todos modos]")
+	return true
+}
 
-	// ========================================================================
-	// ETAPA P2: Extracción de Ideas Principales
-	// ========================================================================
+// ETAPA P2: Extracción de Ideas Principales.
+func etapaP2(ctx context.Context, baseURL, model, texto string) (*llm.MainIdeas, bool) {
 	fmt.Println("\n💡 [ETAPA P2: Extracción de Ideas Principales (Wants)]")
 	inP2 := llm.ExtractMainIdeasInput{
 		SourceText: texto,
@@ -256,13 +283,13 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 	respP2, durP2, err := llamarOllama(ctx, baseURL, model, promptP2)
 	if err != nil {
 		fmt.Printf("   ❌ Error en P2: %v\n", err)
-		return
+		return nil, false
 	}
 
 	jsonP2, err := llm.ExtractJSON(respP2)
 	if err != nil {
 		fmt.Printf("   ❌ Error extrayendo JSON de P2 (%v). Salida cruda:\n%s\n", err, respP2)
-		return
+		return nil, false
 	}
 
 	// Saneo defensivo: si el modelo devuelve "delivery_hint": {}, lo normalizamos a null
@@ -271,7 +298,7 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 	ideas, err := llm.ParseMainIdeas(jsonP2)
 	if err != nil {
 		fmt.Printf("   ❌ Error validando esquema de P2 (%v). JSON:\n%s\n", err, string(jsonP2))
-		return
+		return nil, false
 	}
 
 	fmt.Printf("   ⏱️  Tiempo P2: %v\n", durP2)
@@ -285,90 +312,102 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 
 	if len(ideas.Wants) == 0 {
 		fmt.Println("   ⚠️  No se extrajeron ideas en P2. Fin del pipeline.")
-		return
+		return nil, false
 	}
+	return ideas, true
+}
 
-	// ========================================================================
-	// ETAPA P3: Especificación de cada Ítem (Fan-out)
-	// ========================================================================
+// ETAPA P3: Especificación de cada Ítem (Fan-out). Una idea que falla se
+// salta; la cadena solo se corta si no queda ningún ítem.
+func etapaP3(ctx context.Context, baseURL, model, texto string, ideas *llm.MainIdeas) ([]llm.ItemSpec, bool) {
 	fmt.Println("\n📋 [ETAPA P3: Especificación Detallada de Ítems]")
-	var specsRecolectadas []llm.ItemSpec
+	specsRecolectadas := make([]llm.ItemSpec, 0, len(ideas.Wants))
 
 	for i, want := range ideas.Wants {
 		fmt.Printf("   -> Procesando idea [%d/%d]: \"%s\"...\n", i+1, len(ideas.Wants), want.Idea)
-		inP3 := llm.ExtractItemSpecsInput{
-			SourceText: texto,
-			Idea:       want.Idea,
-		}
-		promptP3 := llm.BuildExtractItemSpecsPrompt(inP3)
-		respP3, durP3, err := llamarOllama(ctx, baseURL, model, promptP3)
-		if err != nil {
-			fmt.Printf("      ❌ Error en P3 para idea %d: %v\n", i+1, err)
-			continue
-		}
-
-		jsonP3, err := llm.ExtractJSON(respP3)
-		if err != nil {
-			fmt.Printf("      ❌ Error extrayendo JSON P3 (%v)\n", err)
-			continue
-		}
-
-		itemSpecs, err := llm.ParseItemSpecs(jsonP3)
-		if err != nil {
-			fmt.Printf("      ❌ Error validando esquema P3 (%v). JSON:\n%s\n", err, string(jsonP3))
-			continue
-		}
-
-		fmt.Printf("      ⏱️  Tiempo P3: %v\n", durP3)
-		for _, it := range itemSpecs.Items {
-			specsRecolectadas = append(specsRecolectadas, it)
-			fmt.Printf("      • Producto base:     \033[1;37m%s\033[0m\n", it.Product)
-			if it.Variant != "" {
-				fmt.Printf("        Variante:          %s\n", it.Variant)
-			}
-			if len(it.AddonCandidates) > 0 {
-				fmt.Printf("        Añadidos (addons): %s\n", strings.Join(it.AddonCandidates, ", "))
-			}
-			if len(it.Customizations) > 0 {
-				fmt.Printf("        Personalizaciones: %s\n", strings.Join(it.Customizations, ", "))
-			}
-			if it.Notes != "" {
-				fmt.Printf("        Notas:             %s\n", it.Notes)
-			}
-		}
+		specsRecolectadas = append(specsRecolectadas, especificarIdea(ctx, baseURL, model, texto, i, want.Idea)...)
 	}
 
 	if len(specsRecolectadas) == 0 {
 		fmt.Println("   ⚠️  No se pudieron especificar ítems en P3. Fin del pipeline.")
-		return
+		return nil, false
+	}
+	return specsRecolectadas, true
+}
+
+// especificarIdea corre P3 para una sola idea e imprime sus ítems.
+func especificarIdea(ctx context.Context, baseURL, model, texto string, i int, idea string) []llm.ItemSpec {
+	inP3 := llm.ExtractItemSpecsInput{
+		SourceText: texto,
+		Idea:       idea,
+	}
+	promptP3 := llm.BuildExtractItemSpecsPrompt(inP3)
+	respP3, durP3, err := llamarOllama(ctx, baseURL, model, promptP3)
+	if err != nil {
+		fmt.Printf("      ❌ Error en P3 para idea %d: %v\n", i+1, err)
+		return nil
 	}
 
-	// ========================================================================
-	// ETAPA P4: Normalización de Cantidades y Fechas
-	// ========================================================================
+	jsonP3, err := llm.ExtractJSON(respP3)
+	if err != nil {
+		fmt.Printf("      ❌ Error extrayendo JSON P3 (%v)\n", err)
+		return nil
+	}
+
+	itemSpecs, err := llm.ParseItemSpecs(jsonP3)
+	if err != nil {
+		fmt.Printf("      ❌ Error validando esquema P3 (%v). JSON:\n%s\n", err, string(jsonP3))
+		return nil
+	}
+
+	fmt.Printf("      ⏱️  Tiempo P3: %v\n", durP3)
+	for _, it := range itemSpecs.Items {
+		imprimirItemSpec(it)
+	}
+	return itemSpecs.Items
+}
+
+func imprimirItemSpec(it llm.ItemSpec) {
+	fmt.Printf("      • Producto base:     \033[1;37m%s\033[0m\n", it.Product)
+	if it.Variant != "" {
+		fmt.Printf("        Variante:          %s\n", it.Variant)
+	}
+	if len(it.AddonCandidates) > 0 {
+		fmt.Printf("        Añadidos (addons): %s\n", strings.Join(it.AddonCandidates, ", "))
+	}
+	if len(it.Customizations) > 0 {
+		fmt.Printf("        Personalizaciones: %s\n", strings.Join(it.Customizations, ", "))
+	}
+	if it.Notes != "" {
+		fmt.Printf("        Notas:             %s\n", it.Notes)
+	}
+}
+
+// ETAPA P4: Normalización de Cantidades y Fechas.
+func etapaP4(ctx context.Context, baseURL, model, texto string, specs []llm.ItemSpec) (*llm.Quantities, bool) {
 	fmt.Println("\n🔢 [ETAPA P4: Normalización de Cantidades y Fechas]")
 	inP4 := llm.NormalizeQuantitiesInput{
 		SourceText: texto,
-		Items:      specsRecolectadas,
+		Items:      specs,
 		MessageTS:  time.Now(),
 	}
 	promptP4 := llm.BuildNormalizeQuantitiesPrompt(inP4)
 	respP4, durP4, err := llamarOllama(ctx, baseURL, model, promptP4)
 	if err != nil {
 		fmt.Printf("   ❌ Error en P4: %v\n", err)
-		return
+		return nil, false
 	}
 
 	jsonP4, err := llm.ExtractJSON(respP4)
 	if err != nil {
 		fmt.Printf("   ❌ Error extrayendo JSON de P4 (%v). Salida cruda:\n%s\n", err, respP4)
-		return
+		return nil, false
 	}
 
 	cantidades, err := llm.ParseQuantities(jsonP4)
 	if err != nil {
 		fmt.Printf("   ❌ Error validando esquema de P4 (%v). JSON:\n%s\n", err, string(jsonP4))
-		return
+		return nil, false
 	}
 
 	fmt.Printf("   ⏱️  Tiempo P4: %v\n", durP4)
@@ -387,50 +426,56 @@ func ejecutarFrase(ctx context.Context, baseURL, model, texto string, forzarPipe
 		}
 		fmt.Println()
 	}
+	return cantidades, true
+}
 
-	// ========================================================================
-	// ETAPA MATCH: Cruce determinista con el Catálogo de Productos
-	// ========================================================================
+// ETAPA MATCH: Cruce determinista con el Catálogo de Productos. Devuelve el
+// total estimado de lo que casó.
+func etapaMatch(cantidades *llm.Quantities) int {
 	fmt.Println("\n🏷️  [ETAPA MATCH: Cruce con Catálogo del Negocio (Sin LLM)]")
 	totalEstimado := 0
 
 	for i, norm := range cantidades.Items {
-		encontrado := false
-		nombreBuscado := strings.ToLower(norm.Product)
-
-		textoCompleto := nombreBuscado
-		for _, c := range norm.Customizations {
-			textoCompleto += " " + strings.ToLower(c)
-		}
-		for _, a := range norm.AddonCandidates {
-			textoCompleto += " " + strings.ToLower(a)
-		}
-
-		for _, prod := range catalogoDemo {
-			for _, kw := range prod.Keywords {
-				if strings.Contains(textoCompleto, kw) || strings.Contains(kw, nombreBuscado) {
-					subtotal := prod.Price * norm.Qty
-					totalEstimado += subtotal
-					fmt.Printf("   [%d] \033[1;32m[MATCHED]\033[0m %s (SKU: %s)\n", i+1, prod.Name, prod.SKU)
-					fmt.Printf("       Cantidad: %d x $%d = $%d\n", norm.Qty, prod.Price, subtotal)
-					encontrado = true
-					break
-				}
-			}
-			if encontrado {
-				break
-			}
-		}
-
+		prod, encontrado := buscarEnCatalogo(norm)
 		if !encontrado {
 			fmt.Printf("   [%d] \033[1;33m[UNMATCHED]\033[0m Producto no reconocido en catálogo: \"%s\"\n", i+1, norm.Product)
 			fmt.Println("       -> La dueña lo revisará en la consola para asignar precio manual.")
+			continue
 		}
+		subtotal := prod.Price * norm.Qty
+		totalEstimado += subtotal
+		fmt.Printf("   [%d] \033[1;32m[MATCHED]\033[0m %s (SKU: %s)\n", i+1, prod.Name, prod.SKU)
+		fmt.Printf("       Cantidad: %d x $%d = $%d\n", norm.Qty, prod.Price, subtotal)
+	}
+	return totalEstimado
+}
+
+// buscarEnCatalogo devuelve el primer producto del catálogo de demo cuya
+// palabra clave aparece en el texto del ítem (producto + personalizaciones +
+// añadidos), o que contiene el nombre del producto.
+func buscarEnCatalogo(norm llm.NormalizedItem) (DemoProduct, bool) {
+	nombreBuscado := strings.ToLower(norm.Product)
+
+	textoCompleto := nombreBuscado
+	for _, c := range norm.Customizations {
+		textoCompleto += " " + strings.ToLower(c)
+	}
+	for _, a := range norm.AddonCandidates {
+		textoCompleto += " " + strings.ToLower(a)
 	}
 
-	// ========================================================================
-	// RESUMEN DRAFT
-	// ========================================================================
+	for _, prod := range catalogoDemo {
+		for _, kw := range prod.Keywords {
+			if strings.Contains(textoCompleto, kw) || strings.Contains(kw, nombreBuscado) {
+				return prod, true
+			}
+		}
+	}
+	return DemoProduct{}, false
+}
+
+// RESUMEN DRAFT: lo que la dueña vería en la bandeja.
+func resumenDraft(totalEstimado int) {
 	fmt.Println("\n📄 [RESULTADO FINAL EN LA BANDEJA (Draft)]")
 	fmt.Printf("   • Estado inicial:   \033[1;34mpending_approval\033[0m (Visible en :8107 Consola del Cliente)\n")
 	fmt.Printf("   • Total estimado:   \033[1;32m$%d\033[0m\n", totalEstimado)

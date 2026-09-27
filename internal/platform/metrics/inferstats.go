@@ -48,7 +48,8 @@ func (m *Metrics) RegisterInferenceStats(src FuenteInferencia) error {
 		return nil
 	}
 	if err := m.reg.Register(&inferenceCollector{src: src}); err != nil {
-		if _, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); ok {
+		var already prometheus.AlreadyRegisteredError
+		if errors.As(err, &already) {
 			return nil // segunda llamada: idempotente, no tumba el arranque.
 		}
 		return fmt.Errorf("metrics: registrar la telemetría de inferencia del Edge: %w", err)
