@@ -1018,7 +1018,7 @@ func pastedEntry(bodyEnc, bodyDEK []byte, kekID string) entry {
 // reintentando si otro escritor se llevó ese seq.
 func (s *Store) appendEntry(ctx context.Context, eventID string, e entry) (int, error) {
 	var lastErr error
-	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
+	for range maxAppendAttempts {
 		var seq int
 		origin := e.origin
 		if origin == "" {

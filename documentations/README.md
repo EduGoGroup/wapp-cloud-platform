@@ -44,13 +44,14 @@ siempre la respuesta a «¿por qué está así?» está tres líneas más arriba
 | [`operacion.md`](operacion.md) | Cómo se arranca en local, cómo se prueba (los `make` reales y qué valida cada uno), cómo se publica una versión y cómo se depura cuando falla. |
 | [`deuda.md`](deuda.md) | La deuda viva con `fichero:línea`, su consecuencia y cómo se cerraría. Incluye el código muerto verificado. |
 | [`literal-aviso-sesion-pasiva.md`](literal-aviso-sesion-pasiva.md) | 🔒 **Contrato congelado, no lo edites de paso.** El literal exacto del aviso de sesión pasiva. |
+| [`reorganizacion-modular/`](reorganizacion-modular/README.md) | **En análisis (2026-09-27).** Factibilidad de ordenar `internal/` por módulos sin romper contratos hacia fuera. Aún no es un plan ejecutable. |
 
 ---
 
 ## Las cinco cosas que ahorran una tarde
 
 1. **Para saber qué existe, se lee `internal/bootstrap/bootstrap.go`, no el README.** Las
-   991 líneas de `Run` (`internal/bootstrap/bootstrap.go:106`) son el inventario real.
+   nueve fases de `internal/bootstrap/arranque` (empieza por `orquestador.go`) son el inventario real.
 2. **Las rutas están en TRES sitios**, no en uno: `internal/publicapi/`,
    `internal/bootstrap/http.go` (las que un token **sin empresa** puede atravesar) y
    `internal/bootstrap/bootstrap.go` (el listener admin).

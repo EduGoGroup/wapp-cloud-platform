@@ -17,11 +17,11 @@ grep -rn 'mux\.Handle' --include='*.go' internal/ | grep -v _test
 distintos.
 
 - **Sobran 5 de esas 95.** Tres son **comentarios** que contienen la cadena
-  (`internal/bootstrap/bootstrap.go:1384`,
+  (`internal/bootstrap/arranque/rutas_admin.go:29`,
   `internal/platform/metrics/flowlifecycle/collector.go:8`,
   `internal/iam/transport/http/roles.go:28` — este último, en un fichero que la tabla ni
   menciona). Las otras dos son el `Register` de `internal/flujos/admin/handlers.go:345-346`, que
-  **solo llaman tests**: esas dos rutas se montan inline en `bootstrap.go:1462,1464`, así que
+  **solo llaman tests**: esas dos rutas se montan inline en `arranque/rutas_admin.go:100,102`, así que
   contarlas las duplicaría. Quedan **90 registros de producción**.
 - **Faltan 5.** En `internal/bootstrap/http.go` la variable se llama `publicMux`, y
   `mux\.Handle` en minúscula **no acierta nunca ahí**
@@ -58,7 +58,7 @@ Contrato: `github.com/EduGoGroup/wapp-cloudlink v0.17.0`, paquete `cloudlinkv1`.
 | `cloudlinkv1.Enrollment/EnrollEdge` | unario | `:8102`, **TLS solo de servidor** | `internal/gateway/enroll/server.go:74` |
 | `cloudlinkv1.CloudLink/Connect` | **bidi-stream** | `:8101`, **mTLS estricto** | `internal/gateway/grpc/server.go:362` |
 
-Keepalive del servidor (`bootstrap.go:824`): `Time=30s`, `Timeout=10s`, `MinTime=15s`,
+Keepalive del servidor (`arranque/fase8_transporte.go:58`): `Time=30s`, `Timeout=10s`, `MinTime=15s`,
 `PermitWithoutStream`.
 
 **Mensajes `EdgeToCloud` que el servidor atiende** — 10, enumeración cerrada en
@@ -202,7 +202,7 @@ Cadena: `Authenticate → RequirePermission → AuditMiddleware → h`
 (verificado en UAT: 404).
 
 ⚠️ **El scrape de `/metrics` no es inocuo**: barre de paso las rachas de auto-respuesta
-vencidas. Si nadie raspa, esos episodios no se cierran nunca (`bootstrap.go:790`).
+vencidas. Si nadie raspa, esos episodios no se cierran nunca (`arranque/fase7_flujos.go:123`).
 
 ---
 

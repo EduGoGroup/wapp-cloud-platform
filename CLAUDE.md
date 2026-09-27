@@ -38,9 +38,10 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 
 ## Antes de tocar nada
 
-- **Para saber qué existe se lee `internal/bootstrap/bootstrap.go`**, no el `README.md`: las 991
-  líneas de `Run` (`:106`) son el inventario real. El `README.md` tiene afirmaciones caducadas,
-  listadas en `documentations/deuda.md` §6.
+- **Para saber qué existe se lee `internal/bootstrap/arranque/orquestador.go`**, no el
+  `README.md`: la lista `fases` (nueve, en una pantalla) y el fichero de cada una son el
+  inventario real. Hasta el 2026-09-04 eran las 991 líneas de `bootstrap.Run`, hoy una fachada.
+  El `README.md` tiene afirmaciones caducadas, listadas en `documentations/deuda.md` §6.
 - **Un PR aquí no valida nada** (`ci.yml` es `workflow_dispatch`): el gate es `make ci-local`.
   Y un `rc=0` cuenta un `--- SKIP` igual que un `--- PASS`: **cuenta los SKIP**, porque los 97
   ficheros de integración se saltan solos sin `WAPP_TEST_DB_DSN`.

@@ -11,11 +11,31 @@ No es hexagonal global. Es **modular por capacidad**: cada módulo de `internal/
 frontera, sus tablas y su API. La única zona hexagonal (`domain` / `usecase` / `ports` /
 `infra` / `transport`) es `internal/iam/`, y es deliberado.
 
-Todo se cablea en **una función**: `bootstrap.Run(ctx)` —
-`internal/bootstrap/bootstrap.go:106` → cierra en `:1096`. Son **991 líneas** que construyen
-cifrado, R2, motor de flujos, gateway, IAM, pipeline LLM, cinco goroutines de fondo y los
-cuatro listeners. 🔴 **Para saber qué existe de verdad en esta pieza, se lee ese fichero.** El
-precio de esa concentración está en `deuda.md`.
+Todo se cablea en **nueve fases**, desde el 2026-09-04 (antes eran las 991 líneas de una
+sola función, `bootstrap.Run`; cerró la deuda D-10). El paquete `internal/bootstrap` es hoy una
+**fachada de dos símbolos** (`Run`, `EnrollServerCreds`) y el cableado vive en
+`internal/bootstrap/arranque`, donde las nueve fases comparten un contenedor de campos
+**privados** — por eso el composition root es un subpaquete y no nueve.
+
+🔴 **Para saber qué existe de verdad en esta pieza se lee
+[`arranque/orquestador.go`](../internal/bootstrap/arranque/orquestador.go)**, que tiene la lista
+`fases` en una pantalla, y después el fichero de la fase que interese:
+
+| # | Fase | Qué construye |
+|---|---|---|
+| 1 | `fase1_infraestructura.go` | métricas · BD y migraciones · PKI · lease · enrolamiento |
+| 2 | `fase2_autenticacion.go` | el plano de auth de usuario del IAM y el JWKS del Edge |
+| 3 | `fase3_almacenes.go` | cifrado de PII (KEK/R2) y los ~16 adaptadores de salida |
+| 4 | `fase4_gateway.go` | el gateway gRPC que termina el túnel de cada Edge |
+| 5 | `fase5_captacion.go` | el stack LLM P2→P5: selector de vía, 5 etapas, aforo, worker |
+| 6 | `fase6_solicitudes.go` | la bandeja del dueño y sus dos recordatorios perezosos |
+| 7 | `fase7_flujos.go` | el Motor de Flujos y los hooks que le cuelgan del gateway |
+| 8 | `fase8_transporte.go` | los cuatro listeners y sus rutas |
+| 9 | `fase9_fondo.go` | las cinco goroutines de larga vida |
+
+Cada fase declara en `requiere()` los hitos que da por cumplidos, y el orquestador los comprueba
+**antes** de ejecutarla: el orden dejó de ser una promesa escrita en comentarios. Un arranque
+caído dice ahora por qué fase iba (`arranque: fase 1/9 "infraestructura": …`).
 
 ```mermaid
 flowchart TB
@@ -111,7 +131,7 @@ un **Registry de módulos enchufables**.
 | `content` · `admin` | El puerto de contenido · los handlers `/admin/flows` y triggers |
 
 **Módulos registrados en producción: exactamente cuatro**, y se ven en una línea cada uno —
-`bootstrap.go:339` menu, `:340` survey, `:350` cart, `:351` media.
+`arranque/fase7_flujos.go:47` menu, `:48` survey, `:58` cart, `:59` media.
 
 ### 2.4 · Intakes y pipeline LLM — `internal/intake*`, `llmvia`, `prompts` (~55.000 líneas)
 
@@ -211,7 +231,7 @@ delega en los dominios de arriba. Sus dos cadenas de middleware:
 - `protect(...)` = `accessLog → Authenticate → RequirePermission(scope) → AuditMiddleware → h`
 - `protectRead(...)` = igual **sin auditoría** (una lectura no tiene efecto que registrar)
 
-Envoltura global del mux público (`bootstrap/http.go:171`):
+Envoltura global del mux público (`arranque/http.go:193`):
 `InstrumentHTTP("public") → PublicRateLimit → mux`.
 
 ### 2.10 · Los dominios pequeños
@@ -241,7 +261,7 @@ Envoltura global del mux público (`bootstrap/http.go:171`):
 
 | `cmd/` | Binario | Qué hace |
 |---|---|---|
-| `cmd/server` | `server` | El proceso real. `main.go` son 36 líneas: migra al arrancar y delega en `bootstrap.Run(ctx)`. Levanta los cuatro listeners y hace cierre gracioso |
+| `cmd/server` | `server` | El proceso real. `main.go` son 36 líneas y delega en `bootstrap.Run(ctx)`, que corre las nueve fases de `internal/bootstrap/arranque`: migra al arrancar, levanta los cuatro listeners y hace cierre gracioso |
 | `cmd/migrate` | `migrate` | Aplica el DDL **y sale**, sin listeners. `-status` solo consulta. Lee las **mismas** `WAPP_DB_*` que el servidor, nunca un argumento |
 | `cmd/prompts` | `prompts` | `-volcar <dir>` escribe los 4 `.tmpl` de P2–P5 con el texto que corre hoy; `-comprobar <dir>` los valida sin arrancar (`cmd/prompts/main.go:44`) |
 | `cmd/casebank` | `casebank` | `-tenant X -consentido` siembra un caso en `intake_case_bank` y sale. **Sin `-consentido` se niega** (`cmd/casebank/main.go:53`) |
@@ -292,15 +312,15 @@ incumplimiento que no existe.
 
 ## 5 · Las cinco goroutines de fondo
 
-`bootstrap.go` lanza cinco `go X.Run(ctx)` **a pelo**, sin supervisión ni reinicio:
+`arranque/fase9_fondo.go` lanza cinco `go X.Run(ctx)` **a pelo**, sin supervisión ni reinicio:
 
 | Línea | Qué hace | Qué pasa si muere |
 |---|---|---|
-| `:1033` | worker del **webhook** durable (CRM) | los `intake.push` dejan de salir |
-| `:1045` | colector **flowlifecycle** → `/metrics` | la telemetría de flujos se congela |
-| `:1060` | **agregador** de ventanas de intake | las ventanas no cierran |
-| `:1070` | **intakeAhead** | «no habría adelanto nunca», dice el propio código en `:1065` |
-| `:1086` | el **worker del pipeline** | «los jobs quedarían `pending` y nadie los reclamaría nunca. Ni un error en el log» (`:1083`) |
+| `:54` | worker del **webhook** durable (CRM) | los `intake.push` dejan de salir |
+| `:63` | colector **flowlifecycle** → `/metrics` | la telemetría de flujos se congela |
+| `:75` | **agregador** de ventanas de intake | las ventanas no cierran |
+| `:84` | **intakeAhead** | «no habría adelanto nunca», dice el propio código en `:80` |
+| `:99` | el **worker del pipeline** | «los jobs quedarían `pending` y nadie los reclamaría nunca. Ni un error en el log» (`:95`) |
 
 🔴 **Los cinco fallos son MUDOS y están identificados como tales en el propio código.** La
 única red es un test de cableado (`pipeline_captacion_cableado_test.go`), no un supervisor en
