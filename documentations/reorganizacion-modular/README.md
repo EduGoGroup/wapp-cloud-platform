@@ -17,10 +17,12 @@ ficheros. Dos condiciones fijas:
 
 ## Veredicto en una línea
 
-**Factible y de riesgo bajo si se hace en dos tiempos**: primero *mover* (mecánico, verificable por
-el compilador, no toca comportamiento), después *cortar ciclos* (trabajo real de diseño, módulo a
-módulo). Hacer las dos cosas a la vez es lo que lo volvería caro. El detalle y la evidencia, en
-[`01-factibilidad.md`](01-factibilidad.md).
+**Factible.** El análisis de [`01`](01-factibilidad.md) lo evaluó como un movimiento mecánico de
+coste bajo-medio. 🔒 El **2026-09-27** Jhoan eligió otro método, más caro y más limpio: **no se
+mueve nada, se reconstruye** cada fichero por **contrato → test en rojo → lógica en verde**,
+aprovechando para limpiar los tests, con un **arranque paralelo** que permite ir de a poco. Las
+reglas están en [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md), y empiezan por un
+**piloto con parada** (F1, `nucleo/contact`) que mide el coste real antes de seguir.
 
 ## Índice
 
@@ -29,6 +31,7 @@ módulo). Hacer las dos cosas a la vez es lo que lo volvería caro. El detalle y
 | [`01-factibilidad.md`](01-factibilidad.md) | **Empieza aquí.** El veredicto, por qué es factible, qué lo encarece, las opciones y la recomendación |
 | [`02-mapa-de-dependencias.md`](02-mapa-de-dependencias.md) | El grafo medido hoy, los paquetes que están en la carpeta equivocada, los ciclos que sobreviven a una agrupación candidata, y **cómo volver a medirlo** |
 | [`03-pendientes-y-contratos.md`](03-pendientes-y-contratos.md) | Lo que **no se toca** (contratos externos), las **precondiciones** antes de pasárselo a Claude Code en la web, y las **decisiones abiertas** |
+| [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md) | 🔒 **Normativo.** Cómo se construye: contratos sin lógica, un test por fichero, rojo antes que verde, el libro de tests, los candados y las fases F0–F9. **Manda sobre los anteriores** |
 | [`04-estructura-final.md`](04-estructura-final.md) | **El acabado, visual**: el árbol completo de `cmd/` e `internal/` fichero a fichero, cómo se llega por **fases** con **dos arranques en paralelo**, y la tabla de correspondencia que usará el script |
 
 ## Para quien implemente (Claude Code en la web)

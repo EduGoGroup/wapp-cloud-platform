@@ -1,5 +1,11 @@
 # 01 · Factibilidad de reorganizar `internal/` por módulos
 
+> ⚠️ **Método sustituido el 2026-09-27.** Jhoan decidió que la reorganización **no es un
+> movimiento mecánico** sino una **reconstrucción por contratos y TDD**, que aprovecha para limpiar
+> los tests. Lo que este documento dice del método y de su coste lo reemplaza
+> [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md) (§7 dice qué, exactamente). La
+> evidencia y los riesgos de aquí siguen valiendo.
+
 > Medido el **2026-09-27** sobre la rama local `refactor/arranque-por-fases` (`7cd3a0c`, dos
 > commits por delante de `origin/dev` = `9493cea`). Cada cifra dice cómo se contó; el grafo y el
 > script para volver a medirlo están en [`02-mapa-de-dependencias.md`](02-mapa-de-dependencias.md).

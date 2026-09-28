@@ -22,7 +22,7 @@ otra cosa, el dibujo cambia así:
 | D-3 aplanar | Sí: `flujos/runtime` → `conversacion/runtime` | Se conserva el nivel intermedio: `conversacion/flujos/runtime` |
 | D-4 renombrar | **No**: la carpeta hoja conserva el nombre del paquete | — (con **una** excepción obligada: `indice`, §5) |
 | D-5 módulos | La candidata de `02` §4, con `acceso` y `operador` **fusionados** (así se deshace el ciclo 1) | Aparece `modulos/operador/` con `platformadmin` y `entitlements` |
-| D-6 `publicapi` | Cara HTTP única, no se reparte | Sus 33 ficheros se reparten entre los módulos |
+| D-6 `publicapi` | Cara HTTP única, no se reparte — ⚠️ **no se sostiene con el método de `05`** (§8.2): ver D-10 | Sus 33 ficheros se reparten entre los módulos |
 
 **Leyenda**: `← origen` carpeta movida sin tocar su contenido · ✚ nuevo · ↦ fichero que viene de
 otro sitio · ✎ cambia su contenido (no solo sus imports) · 🔒 no se toca · `(+ N _test.go)` los
@@ -106,6 +106,9 @@ candados AST de cableado, duplicados). Por eso exige la **ventana de congelació
 (P-5): si entra una funcionalidad nueva, hay que cablearla en los dos.
 
 ### 2.3 · Las fases
+
+> ⚠️ **Sustituida por [`05`](05-metodo-contratos-y-tdd.md) §6** (2026-09-27): el método ya no es
+> mover sino reconstruir por contratos y TDD. Se conserva para ver de dónde se partió.
 
 | Fase | Qué se hace | Qué NO se hace | Cómo se sabe que salió bien |
 |---|---|---|---|
