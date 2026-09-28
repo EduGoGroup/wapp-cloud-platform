@@ -29,6 +29,7 @@ módulo). Hacer las dos cosas a la vez es lo que lo volvería caro. El detalle y
 | [`01-factibilidad.md`](01-factibilidad.md) | **Empieza aquí.** El veredicto, por qué es factible, qué lo encarece, las opciones y la recomendación |
 | [`02-mapa-de-dependencias.md`](02-mapa-de-dependencias.md) | El grafo medido hoy, los paquetes que están en la carpeta equivocada, los ciclos que sobreviven a una agrupación candidata, y **cómo volver a medirlo** |
 | [`03-pendientes-y-contratos.md`](03-pendientes-y-contratos.md) | Lo que **no se toca** (contratos externos), las **precondiciones** antes de pasárselo a Claude Code en la web, y las **decisiones abiertas** |
+| [`04-estructura-final.md`](04-estructura-final.md) | **El acabado, visual**: el árbol completo de `cmd/` e `internal/` fichero a fichero, cómo se llega por **fases** con **dos arranques en paralelo**, y la tabla de correspondencia que usará el script |
 
 ## Para quien implemente (Claude Code en la web)
 

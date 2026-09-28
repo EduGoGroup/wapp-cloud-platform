@@ -174,7 +174,9 @@ días). Necesita una **ventana de congelación**: nada más se fusiona en `dev` 
 **Recomendación: la opción 2, en este orden**:
 
 1. **Ola 0 — Preparación** (sin mover nada): el candado nuevo en su forma de *medición*, la tabla
-   de mapeo definitiva y el script de reescritura, probado en seco.
+   de mapeo definitiva y el script de reescritura, probado en seco. Incluye levantar un **segundo
+   arranque en paralelo** (`cmd/server-modular` → `internal/arranque`) que sirve de oráculo
+   durante la transición: ver [`04-estructura-final.md`](04-estructura-final.md) §2.
 2. **Olas de movimiento**, **una por módulo**, empezando por las hojas (los que nadie importa) y
    terminando por la base. Cada una deja el repo verde y es revertible con un `git revert`.
 3. **Olas de corrección de ubicación** (catálogo, contacto, plataforma), cada una con sus tests.
