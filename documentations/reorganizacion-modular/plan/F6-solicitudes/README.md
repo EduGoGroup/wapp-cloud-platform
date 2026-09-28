@@ -1,0 +1,117 @@
+# F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
+
+> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
+> [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
+> Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
+
+## Objetivo, en tres líneas
+
+1. Reconstruir por contrato → rojo → verde los **41 ficheros de producción** (12.236 líneas) de
+   `internal/intakes/**` (+ `flujos/modules/cart/note.go`), `internal/integrations/**` e
+   `internal/tenantvars` en `internal/modulos/solicitudes/…`; `internal/contracts` **desaparece**.
+2. Conmutar: `cmd/server-modular` cablea los paquetes nuevos (stores, `Service`, notificador,
+   recordatorios, P5, CRM, worker del outbox) y la cara nueva `internal/apipublica` sirve las **18**
+   rutas G1–G18; huella idéntica; `cmd/server` no cambia ni un byte.
+3. Mientras `conversacion` siga vieja (hasta F8), el carrito y el motor viejos siguen funcionando
+   contra los objetos nuevos por **puertos estructurales**, una **segunda instancia vieja sin
+   estado** o un **adaptador en `internal/arranque`** (FX `arquitectura.md` §4). Cero regresiones.
+
+## Entradas (tiene que ser cierto para empezar)
+
+| # | Condición | Cómo se comprueba |
+|---|---|---|
+| E1 | F0–F5 cerrados en `dev`; la decisión de Jhoan tras el piloto F1 permite seguir | `ls internal/modulos/{acceso,edge,inferencia,catalogo}` · `ESTADO.md` |
+| E2 | `nucleo/contact` (F1), `acceso/entitlements` (F2), `edge/grpc` (F3) y `inferencia/llmvia` (F4) están **conmutados**: el notificador nuevo usa el gw nuevo y el resolver de contactos nuevo; P5 usa el selector nuevo | `grep -rn 'modulos/edge/grpc\|nucleo/contact\|inferencia/llmvia' internal/arranque/*.go \| wc -l` > 0 |
+| E3 | `internal/apipublica` tiene `FaseActual = 5` y el candado de mudanzas verde (TX.15) | `grep -n 'FaseActual' internal/apipublica/*.go` |
+| E4 | El código viejo de referencia no cambió desde esta spec | `git log --oneline 1b18932..origin/dev -- internal/intakes internal/integrations internal/tenantvars internal/contracts internal/flujos/modules/cart/note.go` vacío; si no, se relee [`diseno.md`](diseno.md) §4 |
+| E5 | `dev` verde con la toolchain fijada | skill `validar-antes-de-cerrar` |
+
+## Salidas (es cierto al cerrar)
+
+- `internal/modulos/solicitudes/{intakes,intakes/quotetext,intakes/telemetria,integrations,integrations/crmpush,integrations/sigv1,tenantvars}`
+  con **41** ficheros de producción en verde y su `x_test.go` cada uno; paquetes de suite
+  `intakestest`, `integrationstest` (con el **doble nuevo**: `integrations` no tiene gemelo) y
+  `tenantvarstest`.
+- `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes | wc -l` → **0**; SKIP → **0**;
+  `make cobertura-ficheros` ≥ 80 % en todo fichero salvo `postgres.go` (×3), `buyerdata.go` en su
+  parte SQL (ver [`diseno.md`](diseno.md) §2) y `apipublica/eventstelemetry_store.go` (D-FX-4).
+- Los **cuatro candados de invariante** del módulo reescritos en el paquete nuevo (INV-1 aprobar,
+  INV-1 pedir info, vencimiento, poda sellada) y el del contrato CRM (`crmpush`), **con sus rutas
+  nuevas** y en verde; el esquema `wapp-crm-v1` validado desde `integrations` (sin paquete `contracts`).
+- `cmd/server-modular` enlaza `internal/modulos/solicitudes/**` y la cara nueva sirve G1–G18
+  (`FaseActual = 6`); huella igual; `go list -deps ./cmd/server | grep modulos/solicitudes` vacío.
+- Puentes declarados en `internal/modulos/fronteras_test.go`: **uno** (`solicitudes/intakes/telemetria
+  → internal/flujos/store`, muere en F8). Adaptadores/instancias transitorias en `internal/arranque`
+  con fecha de muerte (F8), listados en [`arquitectura.md`](arquitectura.md) §4.
+- Si D-F9-1 (F9 adelantado) está aceptada: T9.27 (9C `solicitudes`) cerrada por la sesión local.
+
+## Orden de lectura
+
+1. [`requisitos.md`](requisitos.md) — qué se exige, en EARS.
+2. [`arquitectura.md`](arquitectura.md) — paquetes viejos → nuevos, imports, puentes, costuras con la
+   conversación vieja, estado en memoria, cableado y rutas.
+3. [`diseno.md`](diseno.md) — contratos por paquete, puertos y suites, reglas E-8, textos observables,
+   candados.
+4. [`reglas.md`](reglas.md) — trampas con `fichero:línea` y definición de hecho.
+5. [`tareas.md`](tareas.md) — tareas y bloques de sesión.
+
+## Bloques de sesión
+
+| Bloque | Entorno | Tareas | Punto de parada |
+|---|---|---|---|
+| **A** · inventario verificado + hojas | 🌐 | T6.1–T6.5 | inventario confirmado (§1 de `diseno.md` recontado); `sigv1`, `tenantvars`, `note.go` y los tipos puros de `intakes` en rojo · `ci-local` rc=0 · PR |
+| **B** · contratos y rojo de `intakes` (dominio y bandeja) | 🌐 | T6.6–T6.9 | los 24 ficheros de `intakes` + `intakestest` en rojo; los 4 candados de invariante escritos · `vet -tags pendiente` rc=0 · PR |
+| **C** · contratos y rojo de `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐 | T6.10–T6.13 | todo el módulo en rojo; puente declarado; `make test-pendiente` = cifra anotada · PR |
+| **D** · verde de las hojas y de `intakes` (1/2) | 🌐 | T6.14–T6.16 | `sigv1`, `tenantvars`, `note.go`, tipos puros y máquina de estados en verde · PR |
+| **E** · verde de `intakes` (2/2) | 🌐 | T6.17–T6.18 | `intakes` en verde entero (incluidos `memory.go`, `postgres.go`, `notifier.go`) · PR |
+| **F** · verde de `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐 | T6.19–T6.21 | pendientes del módulo = 0 · cobertura ≥ 80 % · PR |
+| **G** · cara HTTP (TX.16–TX.17) | 🌐 | T6.22–T6.23 | 12 ficheros de `apipublica` en verde · PR |
+| **H** · conmutar + mudar 18 rutas (TX.18) | 🌐 | T6.24–T6.26 | huella igual · `go list -deps` · traspaso escrito · PR |
+| **I** · cierre local | 💻 | T6.27–T6.29 | procesos P5/P6 (y 9C si D-F9-1) contra los dos binarios · `dev` integrado · `ESTADO.md` |
+
+## Contradicciones encontradas (con `04`/`05`/`ESTADO`, medidas contra el código)
+
+1. **`05` E-6** lista `integrations` entre los 12 sin gemelo en memoria: **cierto** (medido:
+   `ls internal/integrations` → `crud gate outbox_stats postgres store worker`, ningún `memory`). Y
+   `tenantvars` **sí** lo tiene (`internal/tenantvars/memory.go:14`, con reloj inyectable `SetClock`
+   `:26`) — no estaba en la lista y no la contradice. `intakes` también (`memory.go`, 37 métodos de
+   `*MemoryStore` frente a 21 de `*Postgres`: `grep -c 'func (m \*MemoryStore)'` / `'func (p \*Postgres)'`).
+2. **`04` §3** pinta `solicitudes/contracts/(+ 1 _test.go)`: **desaparece** (`05` §6, D-10). Y hay
+   **tres** tests que leen `docs/contracts/wapp-crm-v1/`, no uno: `internal/contracts/contract_examples_test.go:17`,
+   `internal/integrations/contract_body_test.go` e `internal/publicapi/crmcallback_schema_test.go`
+   (`grep -rln 'docs/contracts' --include='*_test.go' internal`). Destino: D-F6-3.
+3. **`04` §3** pinta `intakes/(+ 50 _test.go)`: son los 50 tests **viejos** (316 `func Test`, 23 de
+   ellos ficheros que llaman a `openTestDB`). Con `05` nacen **24** tests nuevos (uno por fichero)
+   más la suite; los de integración van a F9 (P5, P6).
+4. **`05` §3.2** nombra dos candados de `intakes` (`inv1_aprobar`, `{inv_vencimiento,sello_poda}`);
+   hay **cuatro** ficheros AST: falta `inv1_pedirinfo_ast_test.go` (INV-1 para `RequestInfo`, reusa
+   el barrido del de aprobar). Medido: `grep -l 'go/parser' internal/intakes/*_test.go`.
+5. **`02` §4 / `05` §6** («puente de `telemetria` a `conversacion/store` hasta F8») es **el único
+   puente de import** de F6. Pero no es la única costura con la conversación vieja: el **carrito
+   viejo** exige tipos de `intakes` **viejo** en sus puertos (`cart/projection.go:53-66`:
+   `intakes.Revision`, `intakes.ShippingPolicy`). `05` §4.1 solo prevé puentes nuevo → viejo; la
+   dirección viejo → nuevo se resuelve en el arranque ([`arquitectura.md`](arquitectura.md) §4).
+6. **`05` §3.2** dice «`inv1_aprobar_ast_test` lee sus seis directorios». Su **control positivo** es
+   `../publicapi` (`inv1_aprobar_ast_test.go:43`): en el paquete nuevo pasa a ser `internal/apipublica`,
+   y la lista de «flujos automáticos» **cambia por fase** (F6 viejos, F7 añade captación nueva, F8
+   cambia a conversación nueva). La guarda anti-hueco **falla** si un directorio no existe: no se
+   pueden listar hoy los de F7/F8.
+7. **La cadena «`intakes` lo importa `publicapi` 36 veces»** se sostiene con esta regla: **8**
+   ficheros de producción + **28** de test de `internal/publicapi` importan `internal/intakes`
+   (`grep -l 'internal/intakes"' internal/publicapi/*.go`), con **118** usos de símbolo `intakes.X`
+   en producción (incluye comentarios).
+8. **`FX` §2.7** sitúa `quote-suggestion` (G7) en F6 con el plazo inyectado; el **constructor** de
+   P5 vive hoy en la fase de **captación** del arranque viejo (`fase5_captacion.go:342-347`), no en la
+   de solicitudes. La conmutación de F6 toca por tanto `fase3`, `fase5`, `fase6`, `fase7`, `fase8` y
+   `fase9` del arranque nuevo (no solo `fase6`).
+
+## Decisiones que necesita (de Jhoan, con recomendación)
+
+| # | Pregunta | Recomendación |
+|---|---|---|
+| D-F6-1 | El carrito viejo (F8) necesita un `RevisionWriter`/`ShippingEnsurer` con tipos de `intakes` **viejo**. ¿Segunda instancia vieja de `intakes.Postgres` (sin estado) para él hasta F8, o adaptador de tipos `puente_intakes.go`? | **Segunda instancia vieja** (salida 3 de FX §4): `intakes.Postgres` no guarda estado (solo `*sql.DB`, cipher y logger; `grep -n 'sync\.' internal/intakes/postgres.go` vacío). Adaptar `Revision` (22 exportados en `revisions.go`) costaría más que lo que protege |
+| D-F6-2 | Los candados AST INV-1 (aprobar/pedir info) tienen una lista de directorios que **cambia en F7 y F8**. ¿Se aceptan re-toques del candado en esas fases? | **Sí**, como tareas explícitas (T7.x, F8) y con la guarda anti-hueco intacta |
+| D-F6-3 | Dónde vive la validación del esquema `wapp-crm-v1` al desaparecer `contracts` | `crmpush/push_test.go` valida `intake.push` (ejemplo, casos negativos y el payload de `Build`); `apipublica/crmcallback_test.go` valida `intake.status`; los **ejemplos contra su esquema** (5 tests de `contract_examples_test.go`, incl. `catalog.pull` y draft 2020-12) en **un** test con nombre propio `integrations/contrato_wapp_crm_v1_test.go`, **excepción declarada a E-3** (test de un contrato externo, sin fichero homónimo) |
+| D-F6-4 | El texto `"cart: la indicación mide %d runas y el máximo es %d"` (`cart/note.go`) nace en `solicitudes/intakes/note.go` con el prefijo `cart:` | **Conservarlo byte a byte** (`05` §8: se renombra el paquete, no el texto observable) y decirlo en el comentario del contrato |
+| D-F6-5 | `Service.Summary` usa `time.Now()` directo (`service.go:318`) | **Inyectar el reloj** en el contrato nuevo (opción con defecto `time.Now`), para que el test no dependa del reloj real (skill `contrato-tdd`) |
+| D-F6-6 | Tres ficheros llevan SQL de un adaptador Postgres **sin** llamarse `*postgres*.go`, así que el umbral del 80 % los mediría: `intakes/buyerdata.go` (`PostgresBuyerData`), `integrations/crud.go` (`(*Postgres).SecretFingerprint`, `:42`) e `integrations/outbox_stats.go` (`(*Postgres).CountOutbox`, `:69`) | **Partirlos por la convención de nombres** (`estructura.md` §3): `buyerdata.go` (tipos, `Fingerprint` puro) + `buyerdata_postgres.go`; los dos métodos de `integrations` a `postgres.go`. Cambia el árbol de `04` §3 en tres nombres, sin cambiar nada observable |
