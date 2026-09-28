@@ -48,6 +48,20 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 - **Trabaja dentro del módulo** de `internal/` que corresponda: modular por capacidad, no
   hexagonal global (la única zona hexagonal es `internal/iam/`). 🔒 Y no toques
   `documentations/literal-aviso-sesion-pasiva.md`, que es un contrato congelado.
+## 🔧 Reorganización modular en curso (desde el 2026-09-27)
+
+`internal/` se está **reconstruyendo** en `internal/modulos/<módulo>/`, **no moviendo**: cada
+fichero nuevo nace con su **contrato sin lógica** y un **test que lo cubre**, en rojo, antes que la
+lógica. El código viejo **no se toca**: es la referencia y lo que corre en UAT. Conviven dos
+arranques (`cmd/server` viejo, `cmd/server-modular` nuevo), y los tests de integración se
+reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
+
+- **La norma**: [`documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md`](documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md). Manda sobre los documentos 01–04 de esa carpeta.
+- **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
+  `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (web ↔ local) ·
+  `procesos-testcontainers` (F9).
+- **F1 es un piloto con parada**: después de `nucleo/contact`, no se sigue sin decisión de Jhoan.
+
 ## Índice de `documentations/`
 
 | Fichero | Qué contesta |
@@ -59,3 +73,4 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 | [`esquema-postgres.md`](documentations/esquema-postgres.md) | Las 47 tablas, el esquema **0.48.0** y el runner full-replay |
 | [`operacion.md`](documentations/operacion.md) | Arranque local, `make` targets, release y depuración |
 | [`deuda.md`](documentations/deuda.md) | Deuda viva con `fichero:línea` y el código muerto verificado |
+| [`reorganizacion-modular/`](documentations/reorganizacion-modular/README.md) | La reconstrucción por módulos: análisis, árbol destino, **método normativo (`05`)** y entorno web |

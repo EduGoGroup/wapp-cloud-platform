@@ -32,6 +32,7 @@ reglas están en [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md),
 | [`02-mapa-de-dependencias.md`](02-mapa-de-dependencias.md) | El grafo medido hoy, los paquetes que están en la carpeta equivocada, los ciclos que sobreviven a una agrupación candidata, y **cómo volver a medirlo** |
 | [`03-pendientes-y-contratos.md`](03-pendientes-y-contratos.md) | Lo que **no se toca** (contratos externos), las **precondiciones** antes de pasárselo a Claude Code en la web, y las **decisiones abiertas** |
 | [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md) | 🔒 **Normativo.** Cómo se construye: contratos sin lógica, un test por fichero escrito **desde el contrato** para que el código nazca cubierto, rojo antes que verde, los candados, las fases F0–F10 y la integración **de cero, por proceso**. Los tests viejos se consultan, no se portan. **Manda sobre los anteriores** |
+| [`06-entorno-web.md`](06-entorno-web.md) | Qué ve Claude Code en la web (y qué no), **las cinco skills del repo**, y el script de preparación del entorno (lint fijado) |
 | [`04-estructura-final.md`](04-estructura-final.md) | **El acabado, visual**: el árbol completo de `cmd/` e `internal/` fichero a fichero, cómo se llega por **fases** con **dos arranques en paralelo**, y la tabla de correspondencia que usará el script |
 
 ## Para quien implemente (Claude Code en la web)
