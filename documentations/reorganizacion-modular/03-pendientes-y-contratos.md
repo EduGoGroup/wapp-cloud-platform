@@ -40,7 +40,7 @@ verdad**.
 | P-3 | **Publicar esta carpeta** (`documentations/reorganizacion-modular/`) en `dev` | Sin ella, la web no tiene las instrucciones | ✅ En `dev` el 2026-09-27 |
 | P-4 | **Decidir el alcance y los nombres** (§3) y escribir entonces el plan ejecutable: olas, tareas, criterios de cierre, prompts | Este análisis no es un plan | ⏳ Pendiente de Jhoan |
 | P-5 | **Ventana de congelación**: mientras dure cada ola de movimiento, nada más entra en `dev` | Un diff que toca casi todos los ficheros choca con cualquier rama viva | Hoy no hay ramas vivas por delante de `dev` (`feat/047-o10-puerta-plano-roles` ya está fusionada: 0 commits por delante) |
-| P-6 | **Saber si el entorno web tiene Docker/Postgres** | Sin él, los 97 ficheros de integración se saltan (DT-52: 438 SKIP bajo rc=0). Si no lo tiene, la ola la **cierra una sesión local** con `make test-integration`, contando SKIP con `-v` y leyendo el `rc` sin pipe | ❓ Por averiguar |
+| P-6 | **Docker solo hace falta en local** | Con el método de `05`, los tests de fichero son unitarios (sin BD) y los de integración se escriben de cero en F9 con **testcontainers**, que necesita Docker: los corre **Claude Code en local** (`05` §7.3). La web escribe y compila; no cierra F9 | ✅ Resuelto por el método (2026-09-27) |
 | P-7 | **Toolchain fijada**: Go `1.26.5` y golangci-lint `v2.12.2` (`Makefile:11-12`) | El gate es `make ci-local`; otra versión de lint da otro resultado. (La máquina local tiene Go 1.27.1: `go.mod` manda) | Anotado |
 
 ### 2.1 · Lo que queda DESPUÉS, fuera de este repo
@@ -60,6 +60,10 @@ Quien implemente no puede tocarlo; lo hace después una sesión con acceso a la 
 ### 2.2 · Deriva documental que ya existe hoy (conviene corregirla antes, no después)
 
 Detectada al preparar este análisis; son pequeñas pero confunden a quien llega nuevo:
+
+- `Makefile:57` (`test-integration`) levanta `postgres:16`, y UAT corre `postgres:17-alpine`: la
+  batería de integración vieja no prueba contra la versión mayor de producción. La suite nueva de
+  `05` §7.2 fija la 17.
 
 - `README.md` de `documentations/` (§«cinco cosas», punto 2) dice que las rutas están en
   `internal/bootstrap/http.go`; hoy están en `internal/bootstrap/arranque/http.go`.

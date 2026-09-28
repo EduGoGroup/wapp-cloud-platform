@@ -11,6 +11,9 @@
 >    llegue la lógica de verdad, ya exista el mecanismo que la valida.
 > 3. **Los tests de integración tampoco se portan**: se escriben **de cero**, **por proceso** y no
 >    por fichero (§7).
+> 4. **Los tests de proceso usan testcontainers**, con una instancia de Postgres **compartida**
+>    por corrida y una base aislada por proceso. **Nunca** se conectan a un Postgres vivo. Los corre
+>    Claude Code en local, que tiene Docker (§7.2 y §7.3).
 >
 > Este documento es **normativo**: quien implemente lo cumple. Donde choca con un documento
 > anterior, **manda este** (la lista de lo sustituido está en §8).
@@ -241,6 +244,7 @@ El orden de §6 minimiza los puentes, pero no los elimina.
 | `make cobertura-ficheros` | Un fichero ya en verde por debajo del umbral (E-9), salvo adaptadores Postgres |
 | `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
+| `test/procesos/sin_bd_viva_test.go` | Cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
 | `sin_pendientes_test.go` | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
 
 ---
@@ -260,7 +264,7 @@ Orden **de la base hacia arriba**, para que cada módulo encuentre reconstruido 
 | **F6 · `solicitudes`** | `intakes/**` (con `note.go`), `integrations/**`, `tenantvars` | Puente de `telemetria` a `conversacion/store` hasta F8. `contracts` desaparece como paquete: su validación del esquema CRM pasa al contrato de `integrations` |
 | **F7 · `captacion`** | `intake`, `pipeline`, `stages`, `anclaje`, `intakeahead`, `evidence`, `reanalisis`, `casebank`, `intentcfg` | Puentes a `conversacion` hasta F8 |
 | **F8 · `conversacion`** | `flujos/**` y `turnoacotado` | La mayor: **23 ficheros de producción solo en `runtime`**. Al cerrar, se retiran todos los puentes |
-| **F9 · Procesos** | La suite de integración **de cero, por proceso** (§7) | 🔴 **Condición del relevo**: sin ella, el código nuevo no tendría ni una prueba contra Postgres |
+| **F9 · Procesos** | La suite de integración **de cero, por proceso**, con testcontainers y una instancia compartida (§7) | 🔴 **Condición del relevo**: sin ella, el código nuevo no tendría ni una prueba contra Postgres. **La cierra Claude Code en local** (necesita Docker, §7.3) |
 | **F10 · Relevo** | `cmd/server` → `internal/arranque` · se borran los paquetes viejos (con sus tests viejos), `internal/bootstrap` y `cmd/server-modular` · `sin_pendientes_test` activo | Un despliegue de UAT con el binario de siempre |
 
 Dentro de cada módulo, la pasada de **contratos y rojo de todo el módulo** va primero (y puede
@@ -268,28 +272,60 @@ ser una sola ola), y la de **verde** va **fichero a fichero**, cada uno en su co
 
 ---
 
-## 7 · Los tests de integración: de cero, por proceso
+## 7 · Los tests de integración: de cero, por proceso, con testcontainers
 
 Los **107** ficheros de integración viejos **no se portan**. Siguen protegiendo el código viejo
 (que es el que corre en UAT) hasta el relevo, y se borran con él. La suite nueva se escribe en
-**F9**, desde cero, y se organiza **por proceso de negocio**, no por fichero.
+**F9**, desde cero, y se organiza **por proceso de negocio**, no por fichero. Que sea por proceso
+es lo que permite **compartir una sola instancia de Postgres** entre todos: un proceso es una
+unidad aislable; un fichero no.
 
-### 7.1 · Reglas
+### 7.1 · Reglas del proceso
 
 - **Caja negra.** Cada proceso entra por la puerta real: HTTP en `:8103`/`:8100`, gRPC en
   `:8101`/`:8102` con un Edge de prueba, y mira el resultado en Postgres y en lo que el proceso
-  devuelve. No importa paquetes internos.
-- **Ventaja de la caja negra: corre contra los DOS binarios.** Un proceso se escribe primero
-  contra `cmd/server` (el viejo, lo que está en UAT): si pasa, **el test es correcto**. Después se
-  corre contra `cmd/server-modular`: si pasa, **el código nuevo hace lo mismo**. Es el oráculo más
-  fuerte que tiene la reconstrucción.
-- **Postgres obligatorio.** `//go:build integracion`; sin Postgres **falla**, no se salta
-  (E-5). `make test-procesos` levanta el contenedor.
+  devuelve.
+- **Corre contra los DOS binarios.** Un proceso se escribe primero contra `cmd/server` (el viejo,
+  lo que está en UAT): si pasa, **el test es correcto**. Después se corre contra
+  `cmd/server-modular`: si pasa, **el código nuevo hace lo mismo**. Es el oráculo más fuerte que
+  tiene la reconstrucción. Qué binario se prueba lo elige una variable del arnés, no el test.
 - **Las suites de contrato de E-6 corren aquí contra la implementación Postgres.** Así el SQL
   queda cubierto sin tests de integración por fichero.
 - **Los candados de invariante que necesitan BD** (§3.2) entran como aserciones de su proceso.
 
-### 7.2 · Procesos candidatos (a cerrar en D-13)
+### 7.2 · 🔒 La base de datos: testcontainers, una instancia compartida, nunca un contenedor vivo
+
+**Decisión de Jhoan, 2026-09-27.** Los tests de proceso **levantan su propio Postgres con
+[testcontainers-go](https://golang.testcontainers.org/modules/postgres/)** y **nunca se conectan
+a un Postgres que ya esté corriendo**. Es la corrección de un vicio del repo: hoy los tests viejos
+se pegan a un contenedor vivo por `WAPP_TEST_DB_DSN` (**135** usos en `internal/`), y
+`make test-integration` levanta uno a mano con `docker run`, **nombre fijo y puerto 5432**.
+
+| Regla | Cómo |
+|---|---|
+| **Un contenedor por corrida, compartido por todos los procesos** | La suite vive en **un solo paquete**, `test/procesos/`, y su `TestMain` levanta el contenedor **una vez** con `postgres.Run(ctx, imagen, postgres.WithDatabase(…), postgres.BasicWaitStrategies())`. Un solo paquete porque Go compila un binario de test por paquete: dos paquetes serían dos contenedores |
+| **La misma versión que UAT** | Imagen **`postgres:17-alpine`**, la de UAT (`documentations/operacion/` del ecosistema). ⚠️ `make test-integration` usa hoy `postgres:16`: la batería vieja ni siquiera prueba contra la versión mayor de producción |
+| **Migrar una vez** | `TestMain` aplica las 84 migraciones sobre una base **plantilla**, una sola vez por corrida |
+| **Aislar cada proceso** | Cada proceso recibe **su propia base**, clonada de la plantilla (`CREATE DATABASE proc_<nombre> TEMPLATE plantilla`: milisegundos, sin re-migrar), y **su propio servidor** apuntando a ella, con puertos libres elegidos por el arnés. Así los procesos pueden correr en paralelo sin pisarse. Alternativa aceptable si se corren en serie: `postgres.WithSnapshot()` + `ctr.Restore(ctx)` entre procesos, que exige cerrar antes las conexiones del servidor |
+| **Nada sobrevive a la corrida** | El contenedor muere con el test (`testcontainers.CleanupContainer` y el reaper de testcontainers). **Prohibido** `testcontainers.WithReuseByName`: es experimental y es exactamente el «contenedor vivo» que se quiere desterrar |
+| **Ni un DSN de fuera** | La única cadena de conexión válida es la que devuelve `ctr.ConnectionString(ctx, "sslmode=disable")`. Nada de `WAPP_TEST_DB_DSN`, ni `localhost:5432`, ni un nombre de contenedor fijo, ni UAT. **Candado** en §5 |
+| **Sin Docker, falla** | Si no hay Docker, `postgres.Run` devuelve error y el `TestMain` **falla**, no se salta (E-5) |
+| **Driver para el snapshot** | Si se usa `WithSnapshot`, importar `_ "github.com/jackc/pgx/v5/stdlib"` en el paquete de test: sin él, el módulo cae a `docker exec`, mucho más lento |
+
+### 7.3 · Quién lo corre: Claude Code en local
+
+Los tests de proceso necesitan **Docker**, y eso lo tiene la sesión de **Claude Code en local**,
+no el entorno web. El reparto:
+
+- **Claude Code en la web** puede **escribir** un proceso y comprobar que **compila**
+  (`go vet -tags integracion ./test/procesos/...`), pero **no lo da por bueno**: no lo ha corrido.
+- **Claude Code en local** lo **corre** (`make test-procesos`), contra el binario viejo y contra el
+  nuevo, y es quien **cierra F9**. El traspaso entre las dos sesiones sigue el patrón de la skill
+  `pasar-la-pelota` del ecosistema.
+- `testcontainers-go` y su módulo `postgres` entran en el `go.mod` del repo. Solo los importa
+  `test/procesos/`, así que no llegan al binario de producción.
+
+### 7.4 · Procesos candidatos (a cerrar en D-13)
 
 | Proceso | Recorre |
 |---|---|
