@@ -132,6 +132,38 @@ el middleware de auditoría de `platform` al módulo de acceso.
 | `nucleo` | `flujos/contact` |
 | *(sin módulo)* | `platform` (soporte), `publicapi` (cara HTTP), `bootstrap` (cableado) |
 
+### 4.1 · `intake` e `intakes` no son lo mismo, y por eso van a módulos distintos
+
+Se llaman casi igual y el propio código avisa (`internal/intake/store.go`: *«⚠️ NO CONFUNDIR CON
+`internal/intakes` (en plural)»*). Uno es **el proceso**; el otro, **el objeto que produce**.
+
+| | `internal/intake` (singular) → **captación** | `internal/intakes` (plural) → **solicitudes** |
+|---|---|---|
+| Qué es | La **cola de trabajo** que convierte una conversación en un borrador | La **solicitud**: pedido y presupuesto son el mismo objeto (ADR-0031) |
+| Qué contiene | Ventana de agregación · máquina de `intake_jobs` · el worker (`pipeline/`) · las etapas P2→P3→P4→match→draft (`stages/`) · `anclaje/` · `catalogo/` | Cabecera y líneas · máquina de **11 estados** (`status.go`) · acciones de la dueña (aprobar, descartar, editar, pedir info, seña, envío, vencimiento) · revisiones · PII del comprador cifrada (`buyerdata.go`) · notificador · P5 (`quotetext/`) · `telemetria/` |
+| Tablas | **Solo `intake_jobs`** | `intakes`, `intake_items`, `intake_revisions`, `intake_buyer_data` (y lee `tenant_settings`) |
+| Cuándo actúa | Mientras el cliente escribe y justo después | Desde que existe el borrador hasta que se cierra |
+
+**Cómo se tocan.** La dependencia va en **una sola dirección**, `intake → intakes`: la importan
+`intake/pipeline/pipeline.go`, `intake/stages/{draft,match,match_lineas}.go`, porque la última
+etapa (`draft`) **crea** la solicitud. En BD el puente es la FK lógica `intake_jobs.intake_id`.
+`intakes` **nunca** importa `intake`. Es de los cortes más limpios del grafo, y la carpeta padre
+(`modulos/captacion/intake` frente a `modulos/solicitudes/intakes`) deshace la confusión de
+nombres **sin renombrar paquetes** (`03` §3, D-4).
+
+**Dos bordes a revisar antes de fijar la agrupación** (van a D-5 de `03` §3):
+
+1. **P5 (`intakes/quotetext`) queda en solicitudes aunque es una etapa LLM.** Tiene sentido:
+   actúa sobre una solicitud que ya existe y la dispara la dueña, no el pipeline. Pero deja las
+   etapas LLM repartidas: P2–P4 en captación, P5 en solicitudes.
+2. **El re-análisis es un caso de uso con una pieza en cada dominio**, no tres copias:
+   `internal/reanalisis` (772 l) **orquesta** `POST /api/v1/intakes/{id}/reanalyze`;
+   `intake/reanalisis.go` pone lo de la cola (`AbrirReanalisis`, el segundo productor de
+   `intake_jobs`); `intakes/reanalisis.go` pone lo de la solicitud (`ReanalysisTargetOf`,
+   `PushRevisionByID`). Las dos piezas de dominio se quedan donde están; lo que hay que decidir
+   es **dónde vive el orquestador**, que importa de captación, solicitudes **y** conversación
+   (`flujos/{runtime,events}`, `cart`). En la candidata va a captación.
+
 Midiendo esa agrupación **sin extraer todavía nada**, quedan **dos componentes con ciclo**:
 
 ### Ciclo 1 · la base — `acceso · operador · edge · plataforma · nucleo`
