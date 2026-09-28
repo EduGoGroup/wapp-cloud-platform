@@ -1,0 +1,329 @@
+# F0 · Andamiaje — tareas
+
+> Formato de [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md) §3. IDs
+> `T0.n`, nunca se renumeran. Entorno: 🌐 web entera · 💻 solo local · 🌐→💻 la web escribe y la
+> local cierra. Cada gate se lee **sin pipe** (`…; echo rc=$?`) y con la skill
+> `validar-antes-de-cerrar`. Toda tarea que toque código deja `make ci-local` en `rc=0`.
+>
+> **Orden no negociable**: la huella (bloque D) nace **antes** que los ✎ de `platform` (bloque E),
+> para que sea ella la que demuestre que los ✎ no cambian nada hacia fuera.
+
+Variables de los gates: `L=/tmp/gate-$(date +%s).log` y
+`GOWORK=off make ci-local > "$L" 2>&1; echo "GATE_RC=$?" >> "$L"; tail -1 "$L"` (en adelante,
+**«gate ci-local»**: aprobado solo con `GATE_RC=0` leído del log).
+
+---
+
+## Bloque A · el entorno web · 🌐 · T0.0–T0.1
+
+Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión web, y el hook de
+`SessionStart` está commiteado y probado en sus dos ramas.
+
+- [ ] **T0.0 · verificación del entorno de la primera sesión web** · 🌐 · dep. — · cumple R0.1.a–R0.1.e
+  - **Ficheros**: `documentations/reorganizacion-modular/06-entorno-web.md` (sección nueva §5
+    «Verificado en la primera sesión web, <fecha>»). **Nada más**: ni código ni `go.mod`.
+  - **Qué se corre** (cada uno con su `rc`, sin pipe):
+    ```bash
+    go version                                   # ¿1.26.5 o toolchain bajada por GOTOOLCHAIN=auto?
+    golangci-lint version                        # exige v2.12.2 (Makefile:12)
+    GOWORK=off go build ./... ; echo rc=$?
+    time (GOWORK=off make ci-local > /tmp/ci.log 2>&1; echo "GATE_RC=$?" >> /tmp/ci.log); tail -1 /tmp/ci.log
+    docker info > /tmp/docker.log 2>&1; echo rc=$?
+    ```
+    y la **prueba mínima de testcontainers**, en un directorio **fuera del árbol del repo**
+    (`D=$(mktemp -d)`; `cd "$D"`; `go mod init sonda`; `go get
+    github.com/testcontainers/testcontainers-go/modules/postgres`; un `sonda_test.go` con
+    `postgres.Run(ctx, "postgres:17-alpine", postgres.BasicWaitStrategies())`, un `SELECT 1` y
+    `Terminate`; `go test -v ./... ; echo rc=$?`). **No se commitea** y el `go.mod` del repo **no
+    cambia** (`git status --short` limpio salvo `06-entorno-web.md`).
+  - **Hecho cuando**: §5 de `06` lista las seis líneas con valor y `rc`, la duración de `ci-local`
+    en segundos, y el veredicto de testcontainers («funciona» → la web puede correr procesos
+    como **pre-chequeo**; «no funciona» → con el error literal). Si `golangci-lint` no es
+    `v2.12.2`, §5 lo dice y **ningún gate de esta sesión se da por pasado**.
+  - **Gate**: `git diff --stat` → solo `06-entorno-web.md`.
+  - **Commit**: `docs(reorganizacion-modular): F0 · T0.0, el entorno web verificado`
+
+- [ ] **T0.1 · hook `SessionStart` que verifica la toolchain** · 🌐 · dep. T0.0 · cumple R0.1.f
+  - **Diseño**: lo fija [`../00-marco/flujo-web-local.md`](../00-marco/flujo-web-local.md)
+    (qué imprime, qué comprueba, qué hace en local). Esta tarea **solo lo implementa**; si el
+    diseño y esta ficha chocan, manda el diseño.
+  - **Ficheros**: `.claude/settings.json` (nuevo: hoy el repo **no tiene** `.claude/settings.json`,
+    medido con `ls .claude/` → solo `skills/`) y el script que el diseño nombre (propuesta:
+    `.claude/hooks/sesion-inicio.sh`).
+  - **Hecho cuando**: con `CLAUDE_CODE_REMOTE=true` el script imprime `go version`,
+    `golangci-lint version` y un aviso literal si no es `v2.12.2`; sin la variable (local) no
+    hace nada y sale con `rc=0`. Nunca bloquea la sesión (`rc=0` siempre: avisa, no impide).
+  - **Gate**: `bash .claude/hooks/sesion-inicio.sh; echo rc=$?` y
+    `CLAUDE_CODE_REMOTE=true bash .claude/hooks/sesion-inicio.sh; echo rc=$?` → `rc=0` los dos;
+    `python3 -m json.tool .claude/settings.json >/dev/null; echo rc=$?` → `rc=0`.
+  - **Commit**: `andamiaje(f0): hook SessionStart que verifica la toolchain en la web`
+
+## Bloque B · `pendiente` y los `make` · 🌐 · T0.2–T0.4
+
+Para cuando: `make test-pendiente` imprime `PENDIENTES=0` con `rc=0` y el gate ci-local, que ya
+incluye `vet-pendiente`, da `GATE_RC=0`.
+
+- [ ] **T0.2 · rojo(f0): contrato de `internal/pendiente`** · 🌐 · dep. — · cumple R0.2.a, R0.2.b
+  - **Ficheros**: `internal/pendiente/pendiente.go`, `internal/pendiente/pendiente_test.go`
+  - **Contrato**: el de [`diseno.md`](diseno.md) §2. Cuerpo: `panic("pendiente: sin implementar")`
+    (literal: el paquete no puede usarse a sí mismo). Test con `//go:build pendiente`.
+  - **Hecho cuando**: `go test -tags pendiente -run '^TestImplementar' ./internal/pendiente/`
+    da `rc≠0` por el `panic`; sin la etiqueta, `no test files`.
+  - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/pendiente/; echo rc=$?` → `rc=0`
+  - **Commit**: `andamiaje(f0): rojo — contrato de pendiente`
+
+- [ ] **T0.3 · verde(f0): `internal/pendiente`** · 🌐 · dep. T0.2 · cumple R0.2.a, R0.2.b
+  - **Ficheros**: los dos de T0.2; se quita la etiqueta.
+  - **Hecho cuando**: `go test -race -cover ./internal/pendiente/` `rc=0` y cobertura 100 %.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): verde — pendiente`
+
+- [ ] **T0.4 · `make vet-pendiente`, `make test-pendiente` y `ci-local`** · 🌐 · dep. T0.3 · cumple R0.2.c–R0.2.f
+  - **Ficheros**: `Makefile` (targets nuevos y la línea `ci-local:`; ver [`diseno.md`](diseno.md) §3).
+  - **Hecho cuando**: `make test-pendiente` imprime `PENDIENTES=0` y `ROJOS=0` con `rc=0`;
+    `ci-local` es `fmt-check vet vet-pendiente lint test build`. **Demostración de que muerden**
+    (en el árbol, sin commitear, y se deshace con `git stash -u && git stash drop`): un fichero
+    `internal/pendiente/zz_test.go` con `//go:build pendiente` y un error de tipos → `make
+    vet-pendiente` da `rc≠0`; un `x.go` con una llamada `pendiente.Implementar("x")` →
+    `PENDIENTES=1`. Las dos salidas se pegan en el mensaje del commit.
+  - **Gate**: gate ci-local; `make test-pendiente; echo rc=$?` → `PENDIENTES=0`, `rc=0`.
+  - **Commit**: `andamiaje(f0): etiqueta pendiente — vet-pendiente en ci-local y test-pendiente`
+
+## Bloque C · los candados de fichero · 🌐 · T0.5–T0.9
+
+Para cuando: los cinco candados de fichero corren en `ci-local` sobre el árbol real (vacío de
+módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y el gate ci-local da
+`GATE_RC=0`.
+
+- [ ] **T0.5 · rojo(f0): contratos de `internal/candados`** · 🌐 · dep. T0.4 · cumple R0.3.a–R0.3.g
+  - **Ficheros**: `internal/candados/{candados,fronteras,unfichero,exportados,sinbdviva,cobertura}.go`,
+    sus seis `_test.go` (etiqueta `pendiente`) y los árboles de prueba en
+    `internal/candados/testdata/<candado>/{muerde,pasa}/…` (ver [`diseno.md`](diseno.md) §4).
+  - **Hecho cuando**: cada exportado de los seis ficheros aparece en su test (lo exigirá el propio
+    candado de T0.7); cada test tiene **al menos un caso `muerde`** que espera ≥ 1 violación con
+    el fichero y el motivo; `make test-pendiente` → `PENDIENTES` = nº de cuerpos con `panic`.
+  - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/candados/; echo rc=$?` → `rc=0`
+  - **Commit**: `andamiaje(f0): rojo — contratos de los candados de la reconstrucción`
+
+- [ ] **T0.6 · verde(f0): `internal/candados`, un fichero por commit** · 🌐 · dep. T0.5 · cumple R0.3.a–R0.3.g
+  - **Ficheros**: los seis de T0.5, en seis commits (`candados.go` primero: los otros lo usan).
+  - **Hecho cuando**: `go test -race ./internal/candados/ -v` → `rc=0`, `--- SKIP` = 0, y cada
+    caso `muerde` **pasa porque detecta** la violación (no porque no haya ficheros: cada caso
+    afirma también el número de ficheros recorridos > 0). `make test-pendiente` → `PENDIENTES=0`.
+  - **Gate**: gate ci-local tras cada commit.
+  - **Commit**: `andamiaje(f0): verde — candados/<fichero>` (×6)
+
+- [ ] **T0.7 · los tres candados del árbol en `internal/modulos/`** · 🌐 · dep. T0.6 · cumple R0.3.a–R0.3.d
+  - **Ficheros**: `internal/modulos/doc.go` (solo comentario de paquete: qué es el árbol y la
+    tabla de módulos de D-5), `internal/modulos/fronteras_test.go` (con la **tabla** de
+    [`diseno.md`](diseno.md) §4.1: capas, puentes —vacía—, conmutados —vacía— y el mapeo viejo→
+    módulo de `04` §4), `internal/modulos/un_fichero_un_test_test.go`,
+    `internal/modulos/exportados_cubiertos_test.go`.
+  - **Medir antes de escribir la tabla**: correr el script de `02` §5 con el `MAP` de D-5
+    (`acceso` fusionado con `operador`) sobre `dev` y copiar a la tabla las aristas
+    módulo→módulo que hoy existen, **con la fecha y el SHA** en el comentario. Sin medir hoy.
+  - **Hecho cuando**: los tres tests pasan sobre el árbol real (sin módulos: recorren
+    `internal/pendiente`, `internal/candados`, `internal/apipublica` cuando exista y
+    `internal/arranque/huellatest`, y afirman `recorridos > 0`).
+  - **Gate**: gate ci-local; `GOWORK=off go test -v ./internal/modulos/ 2>&1 | grep -c -- '--- SKIP'` → `0`.
+  - **Commit**: `andamiaje(f0): candados de fronteras, un fichero un test y exportados cubiertos`
+
+- [ ] **T0.8 · `test/procesos/sin_bd_viva_test.go`** · 🌐 · dep. T0.6 · cumple R0.3.e
+  - **Ficheros**: `test/procesos/doc.go` (paquete `procesos`, **sin** etiqueta), 
+    `test/procesos/sin_bd_viva_test.go` (**sin** etiqueta `integracion`: tiene que correr en
+    `ci-local`; ver [`reglas.md`](reglas.md) §3).
+  - **Hecho cuando**: pasa sobre el directorio (hoy solo él y `doc.go`); su caso `muerde` vive en
+    `internal/candados/testdata/sinbdviva/muerde/` (T0.5).
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): candado sin_bd_viva para los procesos de F9`
+
+- [ ] **T0.9 · `make cobertura-ficheros`** · 🌐 · dep. T0.6 · cumple R0.3.f, R0.3.g
+  - **Ficheros**: `cmd/cobertura-ficheros/main.go` (lee el perfil, llama a
+    `candados.Cobertura`, imprime la tabla y sale con `rc=1` si hay violaciones), `Makefile`
+    (target nuevo y `ci-local` lo incluye; ver [`diseno.md`](diseno.md) §3).
+  - **Hecho cuando**: `make cobertura-ficheros` imprime `FICHEROS_EVALUADOS=N`,
+    `POR_DEBAJO=0`, `EXENTOS_POSTGRES=0` y `rc=0`. Muerde: el caso de `testdata/cobertura/muerde/`
+    (un perfil con un fichero al 50 %) da una violación en `candados` (T0.6).
+  - **Gate**: gate ci-local; `make cobertura-ficheros; echo rc=$?` → `rc=0`.
+  - **Commit**: `andamiaje(f0): cobertura por fichero (≥ 80 %, D-12) en ci-local`
+
+## Bloque D · el arranque nuevo y la huella · 🌐 · T0.10–T0.15
+
+Para cuando: `cmd/server-modular` compila, `internal/arranque` es copia del viejo (diff solo en
+cabeceras y en las dos rutas relativas de T0.10), y **las dos huellas son idénticas a la dorada**.
+Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en T0.11.
+
+- [ ] **T0.10 · `internal/arranque` como copia del arranque viejo** · 🌐 · dep. T0.7 · cumple R0.4.a–R0.4.d
+  - **Ficheros**: los **21** `.go` de producción de `internal/bootstrap/arranque/` copiados a
+    `internal/arranque/` (lista en [`arquitectura.md`](arquitectura.md) §2) con una cabecera
+    `// Copia de internal/bootstrap/arranque/<f> @ <sha> (F0 · 05 §6): cablea paquetes VIEJOS.`;
+    y **19 de sus 20** tests (todos menos `pool_metrics_integration_test.go`, que usa
+    `WAPP_TEST_DB_DSN` y `t.Skipf`: prohibido en código nuevo, E-5). Dos ajustes obligados:
+    `invitaciones_cableado_test.go:98` y `roleplane_cableado_test.go:69` leen
+    `../../publicapi/roleplane.go`, que desde `internal/arranque` es `../publicapi/roleplane.go`.
+  - **Cómo se copia** (E-1: se crea, no se mueve): `cp` fichero a fichero; **prohibido** `git mv`
+    y prohibido tocar un solo byte de `internal/bootstrap/`.
+  - **Hecho cuando**: `for f in internal/bootstrap/arranque/*.go; do diff <(grep -v '^// Copia de' internal/arranque/$(basename $f)) $f; done`
+    muestra solo las dos rutas relativas; `git diff --stat -- internal/bootstrap` vacío;
+    `go test -race -v ./internal/arranque/` → `rc=0`, 53 `Test*` (54 − 1), `--- SKIP` = 0.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): internal/arranque, copia exacta del arranque viejo (cablea paquetes viejos)`
+
+- [ ] **T0.11 · `cmd/server-modular`** · 🌐 · dep. T0.10 · cumple R0.4.a, R0.4.e
+  - **Ficheros**: `cmd/server-modular/main.go` — copia de `cmd/server/main.go` (36 l) que llama a
+    `arranque.Ejecutar(ctx)` de `internal/arranque` en vez de `bootstrap.Run`. **No** se copian
+    `cmd/server/integration_test.go` ni `flows_integration_test.go` (ver
+    [`diseno.md`](diseno.md) §5.3).
+  - **Hecho cuando**: `GOWORK=off go build -o /tmp/server-modular ./cmd/server-modular; echo rc=$?`
+    → `rc=0`; `go list -deps ./cmd/server-modular | grep -c internal/bootstrap` → `0`.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): cmd/server-modular, el segundo arranque`
+
+- [ ] **T0.12 · rojo(f0): contrato de `internal/arranque/huellatest`** · 🌐 · dep. T0.6 · cumple R0.5.a–R0.5.f
+  - **Ficheros**: `internal/arranque/huellatest/huellatest.go` + `huellatest_test.go` (etiqueta
+    `pendiente`), contrato de [`diseno.md`](diseno.md) §6.2.
+  - **Hecho cuando**: el test tiene casos `muerde` por componente: un mux con una ruta de más, uno
+    con una de menos, un `grpc.Server` con un servicio de más, un `/metrics` con una familia de
+    menos, un paquete de prueba con una `go` de más, y cada uno exige una línea en `Diferencia`.
+  - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/arranque/...; echo rc=$?` → `rc=0`
+  - **Commit**: `andamiaje(f0): rojo — contrato de huellatest`
+
+- [ ] **T0.13 · verde(f0): `huellatest`** · 🌐 · dep. T0.12 · cumple R0.5.a–R0.5.f
+  - **Hecho cuando**: `go test -race -cover ./internal/arranque/huellatest/` → `rc=0`, ≥ 80 %.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): verde — huellatest`
+
+- [ ] **T0.14 · la huella del arranque VIEJO y la dorada** · 🌐 · dep. T0.13, **D-F0-2** · cumple R0.5.a–R0.5.c, R0.5.g
+  - **Ficheros**: `internal/bootstrap/arranque/huella_vieja_test.go` (**el único fichero que F0
+    añade al paquete viejo**, y es de test) y `internal/arranque/testdata/huella.json`.
+  - **Qué hace**: arma el «contenedor de huella» ([`diseno.md`](diseno.md) §6.3: fase 1 y el
+    grupo `flowDeps` de la fase 3 simulados sin red; fases 2–8 **reales**; la 9 no se ejecuta),
+    calcula la parte de ejecución de la huella con `huellatest` y la compara con la dorada. Con
+    `-args -actualizar` **reescribe** la dorada: es el **único** que puede escribirla.
+  - **Hecho cuando**: la dorada tiene **95** rutas (**22** en `:8100` + **73** en `:8103`), **2**
+    rpc, las familias `wapp_*` en frío y los dos perfiles de configuración; `go test -run
+    '^TestHuellaVieja' -v ./internal/bootstrap/arranque/` → `rc=0`. Si salen otras cifras, se
+    anotan en el commit y en `README.md` §Contradicciones con el comando (no se «ajustan»).
+  - **Gate**: gate ci-local; `git diff --stat -- internal/bootstrap` → solo el fichero nuevo.
+  - **Commit**: `andamiaje(f0): la huella del arranque viejo, en una dorada`
+
+- [ ] **T0.15 · `internal/arranque/huella_test.go` — el candado** · 🌐 · dep. T0.14 · cumple R0.5.a–R0.5.h
+  - **Qué hace**: el mismo contenedor de huella sobre el arranque NUEVO, comparado con la misma
+    dorada; y la parte **estática** (goroutines, *hooks* de métricas, lectura de entorno) calculada
+    sobre **los dos** directorios de fuente y comparada entre sí.
+  - **Hecho cuando**: `go test -run '^TestHuella' -v ./internal/arranque/` → `rc=0`. **Muerde**
+    (sin commitear, se deshace): comentar el `mux.Handle("/admin/crypto/rekey", …)` de
+    `internal/arranque/rutas_admin.go` → el test falla nombrando `:8100 /admin/crypto/rekey`;
+    duplicar `go c.intakePipeline.Run(ctx)` en `internal/arranque/fase9_fondo.go` → falla en
+    `goroutines`. Salidas pegadas en el commit.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): candado de huella entre los dos arranques`
+
+## Bloque E · la cara nueva vacía, los ✎ de `platform` y la deriva · 🌐→💻 · T0.16–T0.21
+
+Para cuando: `apipublica` montada y vacía con la huella **igual**, los tres ✎ hechos con la
+huella **igual** y `go list` sin aristas `platform → dominio`, la deriva documental cerrada, y el
+traspaso escrito para el bloque F.
+
+- [ ] **T0.16 · `internal/apipublica` vacía, montada delante del `publicapi` viejo** · 🌐 · dep. T0.15 · cumple R0.6.a–R0.6.c
+  - **Mecanismo**: el de [`../FX-cara-http/diseno.md`](../FX-cara-http/diseno.md) (cómo se
+    compone el `http.Handler` del `:8103`, cómo gana la cara nueva, cómo se decide el
+    *fallback*). Esta tarea **no lo rediseña**.
+  - **Ficheros**: `internal/apipublica/apipublica.go` (comentario de paquete + el símbolo de
+    montaje que fije FX, que en F0 **no registra ninguna ruta**) + `apipublica_test.go`;
+    `internal/arranque/http.go` (primera y única desviación de la copia en F0: el montaje).
+  - **Hecho cuando**: la huella del arranque nuevo **no cambia** (`TestHuella` verde con la misma
+    dorada); `apipublica_test.go` afirma que el montaje vacío deja pasar **toda** petición al
+    viejo; `fronteras_test` verde (`apipublica` no importa nada viejo).
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): apipublica vacía, montada delante del publicapi viejo`
+
+- [ ] **T0.17 · ✎ `platform/httpapi/admin.go` deja de importar `gateway/session`** · 🌐→💻 · dep. T0.15, **D-F0-3** · cumple R0.7.a, R0.7.d, R0.7.e
+  - **Ficheros**: `internal/platform/httpapi/admin.go` (`:13` el import, `:306` el único uso:
+    `errors.Is(err, session.ErrSessionOffline)`), el centinela nuevo en `platform` y
+    `internal/gateway/session/registry.go:22` (una línea: el centinela viejo pasa a **ser** el de
+    `platform`). Detalle en [`diseno.md`](diseno.md) §7.
+  - **Hecho cuando**: `GOWORK=off go list -f '{{join .Imports "\n"}}' ./internal/platform/httpapi | grep -c internal/gateway` → `0`;
+    el texto `"sesión offline"` no cambia; los tests viejos de `httpapi` y de `session` verdes;
+    `TestHuella` verde con la dorada intacta.
+  - **Gate**: gate ci-local. **La integración vieja la cierra T0.22 (💻).**
+  - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de gateway/session`
+
+- [ ] **T0.18 · ✎ `platform/httpapi/audit_mw.go` deja de importar `iam/ports/in`** · 🌐→💻 · dep. T0.17 · cumple R0.7.b, R0.7.d, R0.7.e
+  - **Ficheros**: `internal/platform/httpapi/audit_mw.go` (`:8` import, `:34` y `:85`:
+    `in.AuditInput`), el DTO nuevo en `platform`, `internal/iam/ports/in/usecases.go:129` (una
+    línea: `AuditInput` pasa a ser alias del DTO de `platform`).
+  - **Hecho cuando**: `go list … ./internal/platform/httpapi | grep -c internal/iam` → `0`;
+    `*iamusecase.AuditService` sigue satisfaciendo `httpapi.AuditRecorder` sin adaptador (compila
+    el arranque viejo **sin tocarlo**); huella intacta.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de iam/ports/in`
+
+- [ ] **T0.19 · ✎ `platform/metrics/inferstats.go` deja de importar `internal/inferstats`** · 🌐→💻 · dep. T0.18 · cumple R0.7.c–R0.7.e
+  - **Ficheros**: `internal/platform/metrics/inferstats.go` (`:9` import, `:16` `type
+    FuenteInferencia func() inferstats.Agregado`), `internal/inferstats/inferstats.go:144` (una
+    línea: `Agregado` pasa a ser alias del tipo que ahora declara `platform/metrics`, con **su
+    comentario entero**).
+  - **Hecho cuando**: `go list … ./internal/platform/... | grep -cE 'internal/(gateway|iam|inferstats)'` → `0`
+    (el criterio de las tres); los cinco nombres `wapp_edge_*` intactos
+    (`internal/platform/metrics/inferstats_test.go` verde); huella intacta.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): platform/metrics deja de depender de inferstats`
+
+- [ ] **T0.20 · la deriva documental de `03` §2.2** · 🌐 · dep. T0.10 · cumple R0.8.a
+  - **Ficheros**: `documentations/{README,constitucion,contratos,operacion,deuda}.md` — las **17**
+    menciones medidas con
+    `grep -n 'internal/bootstrap/[a-z_]*\.go\|internal/publicapi/flows.go' documentations/*.md | grep -v bootstrap/arranque`
+    (2026-09-28), más «8 `*_cableado_test.go`» (`constitucion.md` §5, `deuda.md` D-9) → son **9**
+    y viven en `internal/bootstrap/arranque/`. Cada ruta se corrige a la de hoy **y** se añade
+    «(copia en `internal/arranque/` desde F0)» donde el lector deba saberlo. `deuda.md:137` y
+    `README.md:53` narran historia: se corrige solo lo que afirma el presente.
+  - **Hecho cuando**: el mismo `grep` devuelve solo las líneas de historia, y `03` §2.2 y `ESTADO`
+    marcan la deriva como cerrada.
+  - **Gate**: `grep … | wc -l` → nº de líneas de historia, dicho en el commit.
+  - **Commit**: `docs(reorganizacion-modular): F0 cierra la deriva de rutas del arranque`
+
+- [ ] **T0.21 · el traspaso a la sesión local** · 🌐 · dep. T0.16–T0.20 · cumple R0.9.a
+  - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F0-andamiaje.md`, con
+    la skill `traspaso-web-local` (ocho secciones). La §4 lleva T0.22–T0.24 literales; la §7,
+    como mínimo: que la simulación de fases 1 y 3 es la misma en los dos lados, que los alias de
+    D-F0-3 no cambian ningún texto, y que el `go.sum` no cambió.
+  - **Hecho cuando**: el fichero existe y la rama de la web está empujada (su `rc`).
+  - **Commit**: `docs(reorganizacion-modular): traspaso de F0 a la sesión local`
+
+## Bloque F · el cierre local · 💻 · T0.22–T0.25
+
+Para cuando: los cinco criterios de salida de [`README.md`](README.md) se cumplen y `dev`
+contiene F0 entera.
+
+- [ ] **T0.22 · integración vieja con Postgres real tras los ✎** · 💻 · dep. T0.19, T0.21 · cumple R0.7.f
+  - **Por qué**: los ✎ tocan código viejo compartido por los dos arranques (DT-52: 438 tests
+    saltados con la pantalla en verde, `05` E-5).
+  - **Qué se corre**: `INTEGRATION_PG_PORT=<libre> make test-integration` **y**, para contar,
+    la misma batería con `-v` a un log: el `Makefile` ya exporta `WAPP_TEST_REQUIRE_DB=1`, pero
+    solo **50** de los **91** ficheros de test que leen `WAPP_TEST_DB_DSN` lo honran
+    (`grep -rln WAPP_TEST_REQUIRE_DB --include='*.go' . | wc -l` → 50;
+    `grep -rln WAPP_TEST_DB_DSN --include='*_test.go' . | wc -l` → 91, 2026-09-28): los otros
+    41 se saltarían en silencio si la BD fallara. Por eso se cuentan los SKIP.
+  - **Hecho cuando**: `rc=0`; `grep -c -- '--- SKIP'` → `0`; `--- FAIL` → `0`; y el nº de
+    `--- PASS` ≥ el de `ESTADO.md` (4.318, 2026-09-27) o la diferencia explicada.
+  - **Commit**: ninguno (se anota en el `CERRADO` del traspaso).
+
+- [ ] **T0.23 · arranque real de `cmd/server-modular` en local** · 💻 · dep. T0.22 · cumple R0.4.f
+  - **Qué se corre**: el binario nuevo, **nunca a la vez** que `cmd/server`, contra una base
+    **desechable** (contenedor efímero en puerto libre, jamás UAT ni el Postgres compartido) y
+    con el R2/MinIO de desarrollo que ya usa Jhoan (`flows.go:75` hace `HeadBucket` y sin él no
+    arranca). Es la única prueba de F0 de las fases 1 y 3 **reales** del arranque nuevo.
+  - **Hecho cuando**: el log trae las nueve líneas `arranque: fase completada` (`9/9`), `curl
+    -s :8100/healthz` 200, y se apaga limpio con SIGINT (`servidor detenido limpiamente`).
+  - **Commit**: ninguno.
+
+- [ ] **T0.24 · integrar F0 en `dev`** · 💻 · dep. T0.22, T0.23 · cumple R0.9.b
+  - **Qué se hace**: gate ci-local en local con la toolchain fijada; merge de la rama de la web
+    **sin squash** (`rojo`/`verde` distintos, E-4); `git push origin dev` leyendo su `rc`.
+  - **Hecho cuando**: `git log origin/dev` contiene los commits de T0.1–T0.21 en orden.
+
+- [ ] **T0.25 · cerrar F0 en la documentación** · 💻 · dep. T0.24 · cumple R0.9.c
+  - **Ficheros**: `CERRADO <fecha>` en el traspaso; `ESTADO.md` (fase actual: F0 cerrada, F1
+    siguiente); `README.md` de esta carpeta (estado y SHA de cada tarea).
+  - **Commit**: `docs(reorganizacion-modular): F0 cerrada`
