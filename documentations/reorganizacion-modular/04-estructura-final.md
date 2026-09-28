@@ -108,7 +108,8 @@ candados AST de cableado, duplicados). Por eso exige la **ventana de congelació
 ### 2.3 · Las fases
 
 > ⚠️ **Sustituida por [`05`](05-metodo-contratos-y-tdd.md) §6** (2026-09-27): el método ya no es
-> mover sino reconstruir por contratos y TDD. Se conserva para ver de dónde se partió.
+> mover sino reconstruir por contratos y TDD, y el relevo pasa a ser **F10**, tras una **F9** de
+> integración por procesos. Se conserva para ver de dónde se partió.
 
 | Fase | Qué se hace | Qué NO se hace | Cómo se sabe que salió bien |
 |---|---|---|---|
@@ -129,7 +130,7 @@ cuesta poco.
 
 ---
 
-## 3 · El árbol completo, al terminar (tras F9)
+## 3 · El árbol completo, al terminar (tras el relevo, F10 de `05` §6)
 
 ```
 cmd/
@@ -664,7 +665,7 @@ prefijo más largo: `internal/flujos/contact` va a `nucleo/` aunque `internal/fl
 
 | Ruta de hoy | Ruta nueva |
 |---|---|
-| `internal/bootstrap` + `internal/bootstrap/arranque` | `internal/arranque` (en F9) |
+| `internal/bootstrap` + `internal/bootstrap/arranque` | `internal/arranque` (en el relevo) |
 | `internal/iam` | `internal/modulos/acceso/iam` |
 | `internal/platformadmin` · `internal/entitlements` | `internal/modulos/acceso/…` (mismo nombre) |
 | `internal/gateway` | `internal/modulos/edge` (aplanado: `gateway/grpc` → `edge/grpc`) |
