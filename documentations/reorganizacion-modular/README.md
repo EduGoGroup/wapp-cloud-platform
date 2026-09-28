@@ -24,6 +24,9 @@ aprovechando para limpiar los tests, con un **arranque paralelo** que permite ir
 reglas están en [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md), y empiezan por un
 **piloto con parada** (F1, `nucleo/contact`) que mide el coste real antes de seguir.
 
+> 📍 **Para retomar el trabajo, empieza por [`ESTADO.md`](ESTADO.md)**: qué se hizo, qué está
+> decidido, qué falta decidir y cuál es el siguiente paso.
+
 ## Índice
 
 | Documento | Qué contesta |
