@@ -36,6 +36,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 |---|---|---|
 | 9A | F0 cerrada: existen `cmd/server-modular` y `internal/arranque`, y los dos binarios compilan | `GOWORK=off go build ./cmd/server ./cmd/server-modular; echo rc=$?` → `rc=0` |
 | 9A | D-13 (lista de procesos) y D-F9-1..D-F9-4 decididas por Jhoan | Sección «Decisiones» de este README con fecha |
+| 9A | El candado `test/procesos/sin_bd_viva_test.go` y `test/procesos/doc.go` existen (**F0**, T0.8) y, si Jhoan aceptó **D-F1-2**, el mínimo de `test/procesos/main_test.go` y `contact_contrato_test.go` (**F1**, T1.13) | `ls test/procesos/` |
 | 9A | La sesión que cierra tiene Docker (la local siempre; la web solo si la prueba de T9.12 salió bien) | `docker info >/dev/null; echo rc=$?` → `rc=0` |
 | 9B | 9A cerrada por la sesión local (P0 verde contra el viejo **y** el nuevo) | Traspaso `TRASPASO-F9-arnes.md` con sección `CERRADO` |
 | 9C(m) | El módulo `m` está en verde y su commit `conmutar(<m>)` existe | `git log --oneline --grep='conmutar(<m>)'` |
@@ -49,8 +50,8 @@ marca **🕐** en [`tareas.md`](tareas.md).
   incluye `go vet -tags integracion ./test/procesos/...`.
 - Cada proceso **pasa contra el viejo y contra el nuevo**, 3 veces seguidas (`-count=3`), con
   **0 `--- SKIP`** y **0 `--- FAIL`**.
-- Las **suites de contrato** (E-6) de los **20** paquetes con adaptador Postgres corren contra Postgres
-  desde `test/procesos/suites_<modulo>_test.go`.
+- Las **suites de contrato** (E-6) de los **22** paquetes con SQL (medidos; `05` dice 20) corren contra
+  Postgres desde `test/procesos/<paquete>_contrato_test.go` (la convención que estrena F1, T1.13).
 - Los candados de invariante que necesitan BD (`05` §3.2) son aserciones de su proceso.
 - Ni un `WAPP_TEST_DB_DSN`, ni un puerto fijo, ni `WithReuseByName` en `test/procesos/` (el candado lo
   prueba en `ci-local`).
@@ -89,6 +90,18 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-4** | 🔴 Los **9 ficheros / 25 `Test*`** de integración de `internal/platform/` **sobreviven** al relevo (platform no se borra) y seguirían leyendo `WAPP_TEST_DB_DSN` con `t.Skip` (DT-52) | **Re-expresarlos como P10 · plataforma** (réplica de migraciones sobre un clon, grants, rekey por `/admin/crypto/rekey`, el colector de `/metrics`) y borrarlos en F10 junto con `make test-integration`. Sin esto, F10 no puede dejar el repo sin `WAPP_TEST_DB_DSN`. Toca tests viejos de `platform`: por eso es decisión |
 | **D-F9-5** (opcional) | ¿Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`)? | **Sí, informativa, sin umbral**: diría cuánto SQL de los adaptadores excluidos de E-9 ejecutan los procesos. No bloquea nada |
 
+## Encaje con F0 y F1 (escritas antes que esta spec)
+
+- **F0** crea `test/procesos/doc.go` y el candado `sin_bd_viva_test.go` (T0.8; patrones en su
+  `diseno.md` §4.4) y hace la **sonda de testcontainers en la web** fuera del árbol (T0.0, veredicto
+  en `06-entorno-web.md` §5). F9 **amplía** el candado (T9.3) y **usa** ese veredicto (T9.12).
+- **F1**, si Jhoan acepta **D-F1-2**, adelanta el mínimo del arnés (`main_test.go`: contenedor +
+  plantilla + base clonada) para correr `contacttest.Contrato` contra `PostgresResolver`
+  (`contact_contrato_test.go`, T1.13/T1.18). Entonces T9.5 **amplía** ese `main_test.go` (binarios,
+  servidor por proceso) en vez de crearlo, y la pasada 9C de `nucleo` (T9.22) solo añade la corrida de
+  la suite entera contra el nuevo. D-F1-2 y D-F9-1 empujan en la misma dirección: si se acepta una,
+  conviene aceptar la otra.
+
 ## Contradicciones encontradas (con `04`/`05`/`ESTADO`/docs, medidas el 2026-09-28)
 
 1. **R2 (ESTADO, skill `procesos-testcontainers`)**: «puede exigir una opción solo en el arranque
@@ -96,24 +109,32 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 2. **`documentations/operacion.md` §2.4 y §5.3** sitúan el `HeadBucket` en
    `internal/publicapi/flows.go:75`. Está en `internal/bootstrap/arranque/flows.go:75`
    (`objectstore.NewR2PresignClient`) → `internal/platform/storage/objectstore/r2_factory.go:54`.
-3. **`05` §1 y §7: «107 ficheros de integración»**. Medido: **97** `*_integration_test.go`
+3. **`05` E-6: «20 paquetes con adaptador Postgres, 8 con gemelo en memoria»**. Medidos **22** con SQL
+   (`grep -rlE '"database/sql"|pgx' --include='*.go' internal | grep -v _test`, más `platformadmin`,
+   que usa `*sql.DB` por `access_requests.go` y `postgres.go`): además de los 20, `flujos/events` y
+   `flujos/runtime` (`tenant_resolver.go`). Y de los 12 «sin gemelo», **6 sí tienen** implementación en
+   memoria con otro nombre de fichero: `gateway/enroll` (`store.go:55`, `edgecert.go:44`),
+   `gateway/fleet` (`fleet.go:407`), `gateway/lease` (`repository.go:70`), `ingest` (`dedupe.go:31`),
+   `intentcfg` (`store.go:53`), `diagnostics` (`diagnostics.go:115`)
+   (`grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test`).
+4. **`05` §1 y §7: «107 ficheros de integración»**. Medido: **97** `*_integration_test.go`
    (`find internal cmd -name '*_integration_test.go' | wc -l`) y **132** ficheros que dependen de BD
    (unión con `grep -rlE 'WAPP_TEST_DB_DSN|openTestDB|testDB\(' --include='*_test.go' internal cmd`).
    Los **135** usos de `WAPP_TEST_DB_DSN` sí cuadran (`grep -rn 'WAPP_TEST_DB_DSN' --include='*.go' . | wc -l`).
-4. **`05` §7: «siguen protegiendo el código viejo hasta el relevo, y se borran con él»**. No todos:
+5. **`05` §7: «siguen protegiendo el código viejo hasta el relevo, y se borran con él»**. No todos:
    9 viven en `internal/platform/`, que no se borra (D-F9-4).
-5. **Skill: «el proveedor LLM falso, como en el e2e del Plan 044»**. La vía `api` **no se puede
+6. **Skill: «el proveedor LLM falso, como en el e2e del Plan 044»**. La vía `api` **no se puede
    apuntar a un doble**: `internal/llmvia/llmvia.go:275` construye `api.Config` sin `BaseURL` (el
    campo existe en `wapp-shared/llm@v0.4.5/api/api.go:84`). El único LLM falso posible sin tocar
    código es **el Edge de prueba respondiendo `InferenceRequest`** (vía `local`, la de todo tenant
    sin fila en `tenant_llm`: `llmvia.go:201-208`). Un proceso con vía `api` llamaría al proveedor
    real: prohibido (cero gasto).
-6. **Skill: «KEK del cifrado de PII, con el proveedor local»**. El proveedor se llama **`env`**
+7. **Skill: «KEK del cifrado de PII, con el proveedor local»**. El proveedor se llama **`env`**
    (`WAPP_KEK_PROVIDER`, default en `internal/platform/config/config.go:654`).
-7. **Variables de entorno: `03`/`contratos.md` dicen 70.** Medido **71**: 69 por `loader.Get*`
+8. **Variables de entorno: `03`/`contratos.md` dicen 70.** Medido **71**: 69 por `loader.Get*`
    (`awk '/^func Load\(\)/,/^}/' internal/platform/config/config.go | grep -oE 'loader\.Get[A-Za-z]+\("[A-Z_0-9]+"' | sort -u | wc -l`)
    + `FLOW_REPLY_RATE` por `getFloat` (`config.go`, fuera del patrón) + `WAPP_CONFIG_FILE` por
    `os.Getenv` (`config.go:735`). Afecta a la huella de variables de F0, no a F9.
-8. **`05` §7.2**: «`make test-integration` … puerto 5432». Es el **default**, sobrescribible
+9. **`05` §7.2**: «`make test-integration` … puerto 5432». Es el **default**, sobrescribible
    (`INTEGRATION_PG_PORT ?= 5432`, `Makefile:21`). El vicio de fondo (contenedor vivo, nombre fijo
    `wapp-cloud-platform-pg-test`) sí es cierto.

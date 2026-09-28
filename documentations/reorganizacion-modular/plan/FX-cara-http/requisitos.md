@@ -79,10 +79,10 @@
 - **RX.4.a** · **EL** arranque nuevo **DEBERÁ** construir **un** gateway gRPC y **un** runtime del
   motor, y **toda** ruta de cualquiera de las dos caras que los use (directa o transitivamente)
   **DEBERÁ** recibir esa misma instancia. — Verifica: aserción de identidad de puntero en
-  `internal/arranque` (TX.12), p. ej. el `Sender` del notificador viejo `==` el gw de la fase edge.
+  `internal/arranque` (TX.11), p. ej. el `Sender` del notificador viejo `==` el gw de la fase edge.
 - **RX.4.b** · **SI** un puerto viejo exige un tipo del paquete viejo del singleton, **ENTONCES LA**
   ruta **DEBERÁ** mudarse con el singleton o el arranque **DEBERÁ** interponer un adaptador de
-  tipos declarado; nunca una segunda instancia. — Verifica: revisión de TX.12 + `go vet`.
+  tipos declarado; nunca una segunda instancia. — Verifica: revisión de TX.11 + `go vet`.
 - **RX.4.c** · **MIENTRAS** una ruta vieja compare un error centinela del gateway, **EL** paquete
   nuevo **DEBERÁ** conservar la identidad del centinela (D-FX-3). — Verifica:
   `errors.Is(nuevo.ErrSessionOffline, viejo.ErrSessionOffline)` en un test de `internal/arranque`

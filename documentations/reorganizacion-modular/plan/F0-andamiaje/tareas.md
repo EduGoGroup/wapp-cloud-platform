@@ -132,6 +132,8 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Ficheros**: `test/procesos/doc.go` (paquete `procesos`, **sin** etiqueta), 
     `test/procesos/sin_bd_viva_test.go` (**sin** etiqueta `integracion`: tiene que correr en
     `ci-local`; ver [`reglas.md`](reglas.md) §3).
+    Y `.claude/skills/procesos-testcontainers/SKILL.md`: la línea «Todo con `//go:build
+    integracion`» pasa a exceptuar el candado.
   - **Hecho cuando**: pasa sobre el directorio (hoy solo él y `doc.go`); su caso `muerde` vive en
     `internal/candados/testdata/sinbdviva/muerde/` (T0.5).
   - **Gate**: gate ci-local.
@@ -327,3 +329,16 @@ contiene F0 entera.
   - **Ficheros**: `CERRADO <fecha>` en el traspaso; `ESTADO.md` (fase actual: F0 cerrada, F1
     siguiente); `README.md` de esta carpeta (estado y SHA de cada tarea).
   - **Commit**: `docs(reorganizacion-modular): F0 cerrada`
+
+## Añadidas después (van en el bloque que se indica; los IDs no se renumeran)
+
+- [ ] **T0.26 · `make lint` falla si `golangci-lint` no es `v2.12.2`** · 🌐 · bloque B, dep. T0.4, **decisión T-1 del marco** · cumple R0.2.g
+  - **Por qué**: `Makefile:12` declara `LINT_VERSION := v2.12.2` pero `lint` corre el binario que
+    haya en el `PATH`; otra versión da otro resultado y el gate deja de ser autoritativo
+    ([`../00-marco/tecnologia.md`](../00-marco/tecnologia.md), T-1). Si Jhoan dice «no», se tacha.
+  - **Ficheros**: `Makefile` (el target `lint` compara `golangci-lint version` con
+    `$(LINT_VERSION)` antes de correr y sale con un mensaje literal si no casan).
+  - **Hecho cuando**: con la versión fijada, `make lint; echo rc=$?` → `rc=0`; con un binario
+    falso en el `PATH` que imprime otra versión (sin commitear) → `rc≠0` y el mensaje.
+  - **Gate**: gate ci-local.
+  - **Commit**: `andamiaje(f0): lint exige la versión fijada del Makefile`

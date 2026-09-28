@@ -1,0 +1,158 @@
+# F9 · Tareas
+
+> Skills: `procesos-testcontainers` (todas), `validar-antes-de-cerrar` (gates),
+> `traspaso-web-local` (cierre de cada bloque), `contrato-tdd` (solo para leer cómo nace una suite).
+> **🕐** = la tarea cambia si Jhoan **no** acepta adelantar F9 (D-F9-1): ver T9.34.
+> Gate de la web en todas: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo "GATE_RC=$?" >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`.
+> Gate local de procesos: `make test-procesos` (nace en T9.4), `RC=0` por binario leído del log.
+
+## Bloque A · el arnés · 🌐→💻 · T9.1–T9.12 🕐
+
+Entrada: F0 cerrada. Puede correr en paralelo con F1 (otra sesión). Para cuando: P0 verde contra los
+dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
+
+- [ ] **T9.1 · docs: las decisiones de F9, escritas** · 🌐 · dep. — · cumple —
+  - **Ficheros**: `plan/F9-procesos/README.md` (sección «Decisiones», con fecha y lo decidido)
+  - **Hecho cuando**: D-13 y D-F9-1..D-F9-4 tienen respuesta de Jhoan escrita; si D-F9-1 = no, las
+    tareas 🕐 se reordenan según `arquitectura.md` §5.3
+  - **Gate**: `make check-docs` si existe en el repo; si no, revisión de enlaces a mano
+  - **Commit**: `docs(reorganizacion-modular): F9, decisiones D-13 y D-F9`
+
+- [ ] **T9.2 · procesos(arnes): testcontainers-go en `go.mod`** · 🌐 · dep. T9.1 · cumple R9.1.a
+  - **Ficheros**: `go.mod`, `go.sum` (`github.com/testcontainers/testcontainers-go` y `…/modules/postgres`, la última estable; `pgx/v5/stdlib` ya está)
+  - **Hecho cuando**: `go 1.26.5` intacta en `go.mod`; `go.sum` generado **con red real**;
+    `GOWORK=off go list -deps ./cmd/server | grep -c testcontainers` → 0 (no llega al binario)
+  - **Gate**: gate de la web; `GOWORK=off go mod tidy && git diff --exit-code go.mod go.sum` (lo exige `ci.yml`)
+  - **Commit**: `procesos(arnes): testcontainers-go para test/procesos`
+  - Si F1 ya lo añadió (D-F1-2, T1.13): tarea **anulada** con esa referencia.
+
+- [ ] **T9.3 · procesos(arnes): el candado ampliado** · 🌐 · dep. T9.2 · cumple R9.2.a–c
+  - **Ficheros**: la lógica del candado que dejó F0 (`internal/candados/`, su `diseno.md` §4.4) y dos casos `muerde` nuevos en `internal/candados/testdata/sinbdviva/` (`os.Environ()`, `t.Skip`)
+  - **Hecho cuando**: cada caso `muerde` hace fallar el detector; `test/procesos/` limpio pasa
+  - **Gate**: gate de la web; `GOWORK=off go test -v ./test/procesos/ ./internal/candados/... 2>&1 | grep -c -- '--- SKIP'` → 0
+  - **Commit**: `procesos(arnes): el candado sin_bd_viva prohíbe os.Environ y t.Skip`
+
+- [ ] **T9.4 · procesos(arnes): `make test-procesos`, `vet-integracion` y lint** · 🌐 · dep. T9.2 · cumple R9.7.a, R9.4.e
+  - **Ficheros**: `Makefile` (target `test-procesos` de `diseno.md` §7; `vet-integracion` dentro de `ci-local`), `.golangci.yml` (`run.build-tags: [integracion]`)
+  - **Hecho cuando**: `grep -n 'tags integracion' Makefile` ≥ 2 líneas; `make test-procesos` con un test que falla adrede sale ≠ 0 y deja `RC=` en su log (se comprueba y se retira el test trampa antes del commit)
+  - **Gate**: gate de la web (`golangci-lint v2.12.2`)
+  - **Commit**: `procesos(arnes): make test-procesos y vet con la etiqueta integracion`
+
+- [ ] **T9.5 · procesos(arnes): `TestMain` y la base por proceso** · 🌐→💻 · dep. T9.4 · cumple R9.1.a–d
+  - **Ficheros**: `test/procesos/main_test.go` (si F1 · T1.13 lo creó, se **amplía**: compilar `cmd/migrate`, `cmd/server`, `cmd/server-modular`; `WAPP_PROCESOS_BINARIO`), `test/procesos/base_test.go`
+  - **Hecho cuando**: web: `GOWORK=off go vet -tags integracion ./test/procesos/...` rc=0; local: un test mínimo `TestArnes_BasePorProceso` pasa y `docker ps` tras la corrida no deja contenedores
+  - **Gate**: web → vet; local → `BINARIO=viejo make test-procesos` RC=0
+  - **Commit**: `procesos(arnes): un Postgres por corrida y una base clonada por proceso`
+
+- [ ] **T9.6 · procesos(arnes): PKI y claves de prueba** · 🌐 · dep. T9.5 · cumple R9.3.a
+  - **Ficheros**: `test/procesos/pki_test.go`, `test/procesos/claves_test.go`
+  - **Hecho cuando**: `grep -rn 'certs/\|\.env' test/procesos` vacío; un test del arnés parsea lo generado con `crypto/x509` y `crypto/ed25519`
+  - **Gate**: vet `-tags integracion` rc=0
+  - **Commit**: `procesos(arnes): PKI, lease, X25519, KEK y ES256 generados por corrida`
+
+- [ ] **T9.7 · procesos(arnes): dobles de S3 e identidad** · 🌐 · dep. T9.5 · cumple R9.3.b–c
+  - **Ficheros**: `test/procesos/s3falso_test.go`, `test/procesos/identidad_test.go`
+  - **Hecho cuando**: vet rc=0; los dos se levantan en `127.0.0.1` y registran lo que reciben
+  - **Gate**: vet `-tags integracion` rc=0
+  - **Commit**: `procesos(arnes): dobles de S3 e identity en el proceso de test`
+
+- [ ] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f
+  - **Ficheros**: `test/procesos/servidor_test.go` (entorno de `diseno.md` §2, puertos libres, espera, parada, volcado de log)
+  - **Hecho cuando**: local: `TestArnes_EntornoLimpio` pasa con `WAPP_DB_HOST=trampa` exportado; dos servidores en paralelo sin `address already in use`
+  - **Gate**: local `BINARIO=viejo make test-procesos` RC=0
+  - **Commit**: `procesos(arnes): el binario elegido, con base, puertos y entorno propios`
+
+- [ ] **T9.9 · procesos(arnes): clientes y fixtures** · 🌐 · dep. T9.8 · cumple R9.3.e
+  - **Ficheros**: `test/procesos/clientes_test.go`, `test/procesos/fixtures_test.go`
+  - **Hecho cuando**: cada fixture dice en su comentario por qué no hay puerta HTTP; `TestArnes_SinViaAPI` existe
+  - **Gate**: vet `-tags integracion` rc=0
+  - **Commit**: `procesos(arnes): cliente con Context Token y fixtures sin puerta`
+
+- [ ] **T9.10 · procesos(arnes): el Edge de prueba** · 🌐 · dep. T9.8 · cumple R9.3.d
+  - **Ficheros**: `test/procesos/edge_falso_test.go` (`diseno.md` §3.3; lectura previa de `cmd/server/integration_test.go:185-360`)
+  - **Hecho cuando**: vet rc=0; importa solo `wapp-cloudlink` (gen, lease, mtls) y `wapp-shared/envelope` además de stdlib
+  - **Gate**: vet `-tags integracion` rc=0; `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío
+  - **Commit**: `procesos(arnes): el Edge de prueba, con mTLS, lease y sellado`
+
+- [ ] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b
+  - **Ficheros**: `test/procesos/p0_arranque_test.go` (`diseno.md` §4 P0)
+  - **Hecho cuando**: local: P0 `RC=0` contra **viejo y nuevo**; el doble de S3 registró `HEAD /procesos` con `Host: 127.0.0.1:<p>`. 🔴 Si el SDK pidió virtual-hosted, **parar**: traspaso a Jhoan con la petición registrada (D-F9-2)
+  - **Gate**: local `make test-procesos` RC=0 ×2
+  - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
+
+- [ ] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c
+  - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
+  - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
+  - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
+  - **Commit**: `docs(reorganizacion-modular): F9, traspaso del arnés`
+
+## Bloque B1 · procesos de plataforma y acceso · 🌐→💻 · T9.13–T9.16 🕐
+
+Entrada: bloque A `CERRADO`. Para cuando: P1, P2, P3, P9 con `RC=0` contra viejo y nuevo, en local.
+Cada tarea: **Ficheros** el `p<n>_…_test.go` de `diseno.md` §4 · **Hecho cuando** la definición de
+hecho de un proceso (`reglas.md` §4) · **Gate** web: vet `-tags integracion` rc=0 (y pre-chequeo si
+hay Docker); local: `make test-procesos` RC=0 ×2 · **Commit** `procesos(<proceso>): …`.
+
+- [ ] **T9.13 · procesos(enrolamiento): P1, enrolamiento y lease** · 🌐→💻 · dep. T9.12 · cumple R9.4.b–d
+- [ ] **T9.14 · procesos(canje): P2, canje y permisos, con I-CP-5 y el canje único** · 🌐→💻 · dep. T9.12 · cumple R9.6.a–b
+- [ ] **T9.15 · procesos(entrante): P3, del entrante a la respuesta, con el literal del aviso** · 🌐→💻 · dep. T9.13
+- [ ] **T9.16 · procesos(diagnostico): P9, diagnóstico remoto y config empujada** · 🌐→💻 · dep. T9.13
+  - Cierre del bloque: traspaso `TRASPASO-F9-procesos-b1.md` con `CERRADO`.
+
+## Bloque B2 · procesos de negocio · 🌐→💻 · T9.17–T9.21, T9.35 🕐
+
+Entrada: B1 `CERRADO`. Misma forma que B1. Para cuando: P4–P8 (y P10 si D-F9-4) con `RC=0` contra
+viejo y nuevo, en local; traspaso `TRASPASO-F9-procesos-b2.md` con `CERRADO`.
+
+- [ ] **T9.17 · procesos(borrador): el guion de inferencia y P4, de mensaje a borrador** · 🌐→💻 · dep. T9.15
+  - Además: `test/procesos/guion_test.go`; el comentario del guion dice **cómo** reconoce cada etapa (marcador del prompt o `max_output_tokens`, `diseno.md` §3.4) y de qué test viejo sale cada JSON
+- [ ] **T9.18 · procesos(bandeja): P5, la bandeja, con INV-1** · 🌐→💻 · dep. T9.17 · cumple R9.6.c
+- [ ] **T9.19 · procesos(crm): el CRM falso y P6** · 🌐→💻 · dep. T9.18
+- [ ] **T9.20 · procesos(catalogo): P7, catálogo** · 🌐→💻 · dep. T9.17
+- [ ] **T9.21 · procesos(reanalisis): P8, re-análisis** · 🌐→💻 · dep. T9.17
+
+## Bloque C · pasada por conmutación · 🌐→💻 · T9.22–T9.29 🕐
+
+Una tarea por módulo, **dentro de la sesión del `conmutar(<m>)` de su fase** (la fase del módulo la
+cita como dependencia de su cierre). Forma común:
+
+- **Ficheros**: `test/procesos/<paquete>_contrato_test.go`, uno por paquete de la fila de `diseno.md` §5
+- **Hecho cuando**: web: vet rc=0 (y pre-chequeo si hay Docker); local: las suites del módulo
+  `RC=0` contra Postgres **y** `BINARIO=nuevo make test-procesos` `RC=0`; los procesos marcados para
+  el módulo en `arquitectura.md` §5.1 son el gate del `conmutar`
+- **Gate**: local `make test-procesos` RC=0 ×2
+- **Commit**: `procesos(<modulo>): suites de contrato contra Postgres`
+
+- [ ] **T9.22 · `nucleo` (F1)** · dep. T9.12 · retroactiva: si F1 · T1.13/T1.18 ya corrió `contact_contrato_test.go`, solo la suite entera contra el nuevo
+- [ ] **T9.23 · `acceso` (F2)** · dep. `conmutar(acceso)` · `iam/infra/postgres`, `entitlements`, `platformadmin`
+- [ ] **T9.24 · `edge` (F3)** · dep. `conmutar(edge)` · `enroll`, `fleet`, `lease`, `diagnostics`, `ingest`, `receipts`
+- [ ] **T9.25 · `inferencia` (F4)** · dep. `conmutar(inferencia)` · `tenantllm`, `degradation`
+- [ ] **T9.26 · `catalogo` (F5)** · dep. `conmutar(catalogo)` · sin SQL propio: solo la suite entera contra el nuevo
+- [ ] **T9.27 · `solicitudes` (F6)** · dep. `conmutar(solicitudes)` · `intakes`, `integrations`, `tenantvars`
+- [ ] **T9.28 · `captacion` (F7)** · dep. `conmutar(captacion)` · `intake`, `casebank`, `intentcfg`
+- [ ] **T9.29 · `conversacion` (F8)** · dep. `conmutar(conversacion)` · `flujos/store`, `flujos/trigger`, `flujos/events`, `flujos/runtime`
+
+## Bloque D · cierre · 💻 · T9.30–T9.33
+
+Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del relevo cumplida.
+
+- [ ] **T9.30 · Corrida final sin intermitencias** · 💻 · dep. T9.29 · cumple R9.8.a, R9.5.b
+  - **Hecho cuando**: `CUENTA=3 make test-procesos` → viejo y nuevo `RC=0`, 0 SKIP, 0 FAIL; las 22 filas de `diseno.md` §5 con su `--- PASS` en el log; duración total anotada (hoy **sin medir**)
+  - **Gate**: los dos logs, leídos sin pipe
+  - **Commit**: — (resultado en T9.33)
+- [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b
+  - **Hecho cuando**: `go list -deps` sin dominio fuera de suites; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
+- [ ] **T9.32 · docs: F9 cerrada** · 💻 · dep. T9.31
+  - **Ficheros**: `plan/F9-procesos/README.md` (estado, números medidos), `ESTADO.md`, `documentations/operacion.md` §3 (fila `make test-procesos`), la skill `procesos-testcontainers` si algo de lo aprendido la contradice (T-4, T-7, T-8 de `reglas.md`)
+  - **Commit**: `docs(reorganizacion-modular): F9 cerrada, la condición del relevo`
+- [ ] **T9.33 · Traspaso final e integración** · 💻 · dep. T9.32
+  - **Ficheros**: `traspasos/TRASPASO-F9-cierre.md` con `CERRADO <fecha>`; `git push origin dev` leyendo su `rc`
+
+## Tareas condicionales
+
+- [ ] **T9.34 · 🕐 (solo si D-F9-1 = no) · todas las suites de contrato contra Postgres de una vez** · 🌐→💻 · dep. T9.21 y F8 cerrada
+  - Sustituye a T9.22–T9.29 (que se tachan: `~~T9.2x~~ — anulada: D-F9-1 rechazada`). Mismo contenido, en un bloque tras B2.
+- [ ] **T9.35 · procesos(plataforma): P10 (solo si D-F9-4 = sí)** · 🌐→💻 · dep. T9.12
+  - **Ficheros**: `test/procesos/p10_plataforma_test.go` (`diseno.md` §4 P10)
+  - **Hecho cuando**: cubre las reglas de los 9 ficheros de BD de `internal/platform/` (lista en `F10-relevo/diseno.md` §3), leídos (E-8); `RC=0` ×2 en local
+  - **Commit**: `procesos(plataforma): migraciones, grants, rekey y colector contra Postgres`

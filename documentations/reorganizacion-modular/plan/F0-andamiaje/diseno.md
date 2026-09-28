@@ -49,7 +49,7 @@ lleva `panic("pendiente: sin implementar")`.
 | Target | Qué hace | `rc` |
 |---|---|---|
 | `vet-pendiente` | `$(GO) vet -tags pendiente ./...` | el de `vet`: un rojo que no compila rompe el gate (`05` §5) |
-| `test-pendiente` | (1) `PENDIENTES=` nº de llamadas `pendiente.Implementar(` en `.go` **no** de test, fuera de `internal/pendiente/`, sin contar líneas cuyo primer texto sea `//`; (2) `ROJOS=` nº de `_test.go` cuya primera línea es `//go:build pendiente`; (3) `vet-pendiente`. **No corre** los rojos juntos: un `panic` aborta el binario de test del paquete entero (`05` E-5) | `0` salvo que falle el `vet`. Informa, no juzga |
+| `test-pendiente` | (1) `PENDIENTES=` nº de llamadas `pendiente.Implementar(` en `.go` **no** de test, fuera de `internal/pendiente/`, sin contar líneas cuyo primer texto sea `//`; (2) `ROJOS=` nº de `_test.go` cuya primera línea es `//go:build pendiente`; (3) corre `go test -tags pendiente` sobre `internal/modulos/... internal/nucleo/... internal/arranque/...` **sin** que su fallo rompa el target: el rojo es esperado y un `panic` aborta el binario de test del paquete entero, así que la cifra que manda es la estática, no los FAIL (`05` E-5; `../00-marco/tecnologia.md`); (4) `vet-pendiente` | `0` salvo que falle el `vet`. Informa, no juzga |
 | `cobertura-ficheros` | `$(GO) test -covermode=set -coverprofile=$(TMP)/cobertura.out` sobre `./internal/modulos/... ./internal/nucleo/... ./internal/apipublica/... ./internal/pendiente/... ./internal/candados/... ./internal/arranque/huellatest/...` y `go run ./cmd/cobertura-ficheros -perfil … -umbral 80` | `1` si algún fichero **en verde** queda por debajo |
 | `ci-local` | `fmt-check vet vet-pendiente lint test cobertura-ficheros build` | el de su primer fallo |
 

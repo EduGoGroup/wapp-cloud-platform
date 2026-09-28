@@ -35,8 +35,9 @@ flowchart LR
   [`diseno.md`](diseno.md) §2).
 - **Qué gana.** Gana la nueva **por construcción** (se consulta primero). La precedencia «más
   específico gana» de Go solo vale dentro de un mux: de ahí la regla de solapes del mapa §4.2.
-- **En F8**, cuando la cara nueva sirve las 73, el arranque deja de construir la vieja y monta la
-  nueva sola; el estrangulador queda sin uso y se borra en F10.
+- **En F8**, cuando la cara nueva sirve las 73, el arranque deja de llamar a `publicapi.Register`:
+  el compuesto sigue, con un mux viejo **vacío** (así la huella y el candado no cambian de forma a
+  mitad de camino). En F10 se quitan el estrangulador y el mux vacío (TX.25).
 - **`:8100` no se estrangula**: el arranque lo cablea entero y cambia constructores de handler por
   fase (mapa §3).
 

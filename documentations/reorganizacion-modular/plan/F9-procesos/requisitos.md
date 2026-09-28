@@ -41,14 +41,17 @@
 > esconde un rojo, para que el vicio de `WAPP_TEST_DB_DSN` y la deuda DT-52 no vuelvan.
 
 - **R9.2.a** · **SI** algún fichero de `test/procesos/` contiene `WAPP_TEST_DB_DSN`,
-  `WithReuseByName`, `:5432`, `localhost:5432`, `os.Environ()` o `t.Skip`, **ENTONCES EL** test
-  `TestSinBDViva` **DEBERÁ** fallar nombrando fichero y línea. — Verifica: `GOWORK=off go test -run
-  TestSinBDViva ./test/procesos/; echo rc=$?` con un fichero trampa → `rc≠0`.
+  `WithReuseByName`, un literal con `:5432` o que empiece por `postgres://` (lo que ya caza el
+  candado que crea **F0**, T0.8, su `diseno.md` §4.4) **o** —ampliación de F9, T9.3— `os.Environ()` o
+  `t.Skip`, **ENTONCES EL** candado `sin_bd_viva_test.go` **DEBERÁ** fallar nombrando fichero y
+  línea. — Verifica: los casos `muerde` de `internal/candados/testdata/sinbdviva/` (uno por patrón) y
+  `GOWORK=off go test ./test/procesos/; echo rc=$?` → `rc=0` sobre el árbol limpio.
 - **R9.2.b** · **EL** candado **DEBERÁ** correr en `make ci-local` **sin Docker** (fichero sin
   etiqueta de build; el resto del paquete lleva `//go:build integracion`). — Verifica:
-  `GOWORK=off go test -v ./test/procesos/ 2>&1 | grep -c -- '--- PASS: TestSinBDViva'` = 1 sin Docker.
-- **R9.2.c** · **EL** candado **DEBERÁ** probar su propio detector con casos sintéticos (cadenas en
-  memoria), para que un detector roto no dé verde. — Verifica: `TestSinBDViva_DetectaCadaPatron`.
+  `GOWORK=off go test -v ./test/procesos/ 2>&1 | grep -c -- '--- PASS'` ≥ 1 y `--- SKIP` = 0, sin Docker.
+- **R9.2.c** · **EL** candado **DEBERÁ** probar su propio detector con un caso `muerde` por patrón,
+  para que un detector roto no dé verde. — Verifica: el test del detector en `internal/candados/`
+  (mecánica de F0) con un caso por cada uno de los seis patrones.
 
 ## H9.3 · Los dobles: el servidor de verdad arranca sin nada de fuera
 
@@ -105,12 +108,12 @@
 > integración por fichero.
 
 - **R9.5.a** · **CUANDO** un módulo conmuta (ola 9C) — o en 9D si D-F9-1 se rechaza —, **EL** fichero
-  `test/procesos/suites_<modulo>_test.go` **DEBERÁ** ejecutar `…test.Contrato(t, nuevo)` de cada
-  puerto del módulo con un `nuevo` que abre el adaptador Postgres sobre **una base clonada propia**.
-  — Verifica: `go test -tags integracion -v -run 'TestSuites_<Modulo>' ./test/procesos/` con un
-  `--- PASS` por puerto (tabla de `diseno.md` §5).
-- **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **20** paquetes con
-  adaptador Postgres de `05` E-6. — Verifica: la tabla de `diseno.md` §5 con 20 filas marcadas y su
+  `test/procesos/<paquete>_contrato_test.go` (convención que estrena F1, T1.13) **DEBERÁ** ejecutar
+  `…test.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
+  base clonada propia**. — Verifica: `go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
+  con un `--- PASS` por puerto (tabla de `diseno.md` §5).
+- **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con
+  SQL medidos (`05` E-6 dice 20; ver `diseno.md` §5). — Verifica: la tabla de `diseno.md` §5 con 22 filas marcadas y su
   `--- PASS` en el log de T9.30.
 
 ## H9.6 · Los candados de invariante que necesitan BD

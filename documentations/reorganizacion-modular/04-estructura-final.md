@@ -22,7 +22,7 @@ otra cosa, el dibujo cambia así:
 | D-3 aplanar | Sí: `flujos/runtime` → `conversacion/runtime` | Se conserva el nivel intermedio: `conversacion/flujos/runtime` |
 | D-4 renombrar | **No**: la carpeta hoja conserva el nombre del paquete | — (con **una** excepción obligada: `indice`, §5) |
 | D-5 módulos | La candidata de `02` §4, con `acceso` y `operador` **fusionados** (así se deshace el ciclo 1) | Aparece `modulos/operador/` con `platformadmin` y `entitlements` |
-| D-6 `publicapi` | Cara HTTP única, no se reparte — ⚠️ **no se sostiene con el método de `05`** (§8.2): ver D-10 | Sus 33 ficheros se reparten entre los módulos |
+| D-6 / D-10 `publicapi` | ~~Cara HTTP única, no se reparte~~ · 🔒 **Sustituido por D-10 (2026-09-27): «cara única nueva por olas, `internal/apipublica`»**, montada delante de `publicapi` (estrangulador) y alimentada fase a fase; `publicapi` se borra en F10. Detalle en [`plan/FX-cara-http/`](plan/FX-cara-http/README.md) | — (decidido por Jhoan) |
 
 **Leyenda**: `← origen` carpeta movida sin tocar su contenido · ✚ nuevo · ↦ fichero que viene de
 otro sitio · ✎ cambia su contenido (no solo sus imports) · 🔒 no se toca · `(+ N _test.go)` los
@@ -39,7 +39,7 @@ tests del paquete, que viajan con él.
 cmd/                      los binarios — no se mueven
 internal/
 ├── arranque/             ✚ el cableado, ordenado por módulo (sustituye a bootstrap/)
-├── publicapi/            la cara HTTP /api/v1 — no se mueve
+├── apipublica/           ✚ la cara HTTP /api/v1, única y NUEVA, construida por olas (D-10) — ver plan/FX-cara-http/
 ├── platform/             soporte transversal: config, cripto, métricas, BD… — no es módulo
 ├── nucleo/               ✚ lo que comparten varios módulos (la identidad de contacto)
 └── modulos/              ✚ el negocio, un directorio por módulo
@@ -618,41 +618,20 @@ internal/
 │               ├── (+ 3 _test.go)
 │               └── structure/
 │                   └── 0001_…sql … 0084_…sql 84 migraciones, intactas
-└── publicapi/                                la cara HTTP única (D-6); no se mueve, solo cambian sus imports
-    ├── accesslog.go
-    ├── audit.go
-    ├── catalogimport.go
-    ├── catalogtabular.go
-    ├── catalogtemplate.go
-    ├── conversationeventcancel.go
-    ├── conversationevents.go
-    ├── crmcallback.go
-    ├── degradationnotices.go
-    ├── diagnostics.go
-    ├── entitlements.go
-    ├── eventstelemetry.go
-    ├── eventstelemetry_store.go
-    ├── export.go
-    ├── flows.go
-    ├── health.go
-    ├── intakes.go
-    ├── intakes_llm_gate.go
-    ├── integrations.go
-    ├── intents.go
-    ├── limits.go
-    ├── media.go
-    ├── messages.go
-    ├── plazoescritura.go
-    ├── publicapi.go
-    ├── quotesuggestion.go
-    ├── reanalyze.go
-    ├── roleplane.go
-    ├── sessions.go
-    ├── summary.go
-    ├── tenantcontent.go
-    ├── tenantllm.go
-    ├── tenantvariables.go
-    └── (+ 64 _test.go)
+└── apipublica/                               ✚ D-10 (2026-09-27): la cara HTTP única NUEVA, por olas; sustituye a publicapi/
+    ├── apipublica.go · cadena.go · respuesta.go · plazos.go · limits.go · instantes.go      lo común
+    ├── autenticacion.go · roleplane.go · audit.go · entitlements.go                         F2 · acceso
+    ├── messages.go · sessions.go · health.go · sessionadmin.go · diagnostics.go · intents.go  F3 · edge
+    ├── tenantllm.go · degradationnotices.go                                                 F4 · inferencia
+    ├── intakes.go · intakes_llm_gate.go · export.go · summary.go · quotesuggestion.go ·
+    │   plazoescritura.go · tenantvariables.go · integrations.go · crmcallback.go ·
+    │   eventstelemetry.go · eventstelemetry_store.go                                        F6 · solicitudes
+    ├── reanalyze.go                                                                         F7 · captación
+    ├── flows.go · media.go · tenantcontent.go · catalogimport.go · catalogtabular.go ·
+    │   catalogtemplate.go · conversationevents.go · conversationeventcancel.go               F8 · conversación
+    ├── apipublicatest/arnes.go
+    └── (+ 1 _test.go por fichero)   fichero a fichero, con su origen: plan/FX-cara-http/diseno.md §1
+                                     (internal/publicapi/ — 33 + 64 _test.go — se borra en F10)
 ```
 
 ---
@@ -681,7 +660,8 @@ prefijo más largo: `internal/flujos/contact` va a `nucleo/` aunque `internal/fl
 | `internal/intakeahead` · `evidence` · `reanalisis` · `casebank` · `intentcfg` | `internal/modulos/captacion/…` |
 | `internal/llmvia` · `prompts` · `tenantllm` · `degradation` | `internal/modulos/inferencia/…` |
 | `internal/intakes` · `integrations` · `contracts` · `tenantvars` | `internal/modulos/solicitudes/…` |
-| `internal/platform` · `internal/publicapi` | **sin cambio** |
+| `internal/platform` | **sin cambio** |
+| `internal/publicapi` | 🔒 **D-10**: sustituido **ruta a ruta** por `internal/apipublica` según [`plan/FX-cara-http/mapa-de-rutas.md`](plan/FX-cara-http/mapa-de-rutas.md); se borra en F10 |
 
 ---
 

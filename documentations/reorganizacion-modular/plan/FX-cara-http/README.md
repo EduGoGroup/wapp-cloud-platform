@@ -55,20 +55,20 @@ instancia vieja.
 | Fase | Tareas TX | Qué deja hecho | Rutas `:8103` mudadas |
 |---|---|---|---|
 | F0 | TX.1–TX.4 | `apipublica` con `Cara` y `estrangulador` en verde; el arranque compone las dos caras; candado de mudanzas; la huella resuelve por la composición | 0 |
-| F2 | TX.5–TX.8 | ficheros comunes (`cadena`, `respuesta`) · acceso | 23 |
-| F3 | TX.9–TX.13 | `plazos`, `limites` · edge · handlers de sesión portados (también para `:8100`) · intenciones con puente · puente de identidad del centinela | 8 |
-| F4 | TX.14 | inferencia | 4 |
-| F5 | — | nada: sus 4 rutas escriben por `flujos/store` (mapa §2.9) | 0 |
-| F6 | TX.15–TX.17 | solicitudes | 18 |
-| F7 | TX.18–TX.19 | re-análisis · retirar el puente de intenciones | 1 |
-| F8 | TX.20–TX.22 | conversación · la cara vieja deja de construirse · retirar el puente del centinela | 19 |
-| F10 | TX.23 | borrar `publicapi` y el estrangulador | — |
+| F2 | TX.5–TX.7 | ficheros comunes (`cadena`, `respuesta`, arnés) · acceso · 8 handlers de `:8100` | 23 |
+| F3 | TX.8–TX.11 | `plazos`, `limits` · edge · handlers de sesión portados (también para `:8100`) · intenciones con puente · puente de identidad del centinela | 8 |
+| F4 | TX.12–TX.14 | inferencia | 4 |
+| F5 | TX.15 | solo `FaseActual = 5`: sus 4 rutas escriben por `flujos/store` (mapa §2.9) | 0 |
+| F6 | TX.16–TX.18 | solicitudes (G7 con plazo inyectado) | 18 |
+| F7 | TX.19–TX.21 | re-análisis · retirar el puente de intenciones | 1 |
+| F8 | TX.22–TX.24 | conversación · la cara vieja deja de construirse · retirar el puente del centinela | 19 |
+| F10 | TX.25 | borrar `publicapi` y el estrangulador | — |
 
 ## Decisiones que necesita (de Jhoan)
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-FX-1** | `GET/PUT /api/v1/intents`: su código es de captación (F7) pero el `PUT` usa el gw directo. ¿Se mudan en **F3** con un puente declarado `apipublica → internal/intentcfg` (D-10 literal), o se quedan en la cara vieja hasta **F7** recibiendo el gw **nuevo** por su puerto estructural (`publicapi.ConfigPusher`, solo tipos de stdlib; su error solo se registra, `intents.go:167`)? | **F3 con puente** mientras no se decida (es lo que el mapa planifica). La alternativa ahorra un re-toque en F7 y no duplica el gw; es válida **porque** el mismo mecanismo de inyección ya es obligatorio para G1–G7, G17 e I4 (mapa §4.1) |
+| **D-FX-1** | `GET/PUT /api/v1/intents`: su código es de captación (F7) pero el `PUT` usa el gw directo. ¿Se mudan en **F3** con un puente declarado `apipublica → internal/intentcfg` (D-10 literal), o se quedan en la cara vieja hasta **F7** recibiendo el gw **nuevo** por su puerto estructural (`publicapi.ConfigPusher`, solo tipos de stdlib; su error solo se registra, `intents.go:167`)? | **Recomiendo la alternativa (F7)**: cero puentes en `apipublica` (encaja sin excepciones con la regla 4 de fronteras de F0), un solo gw y sin re-toque en F7; es válida **porque** el mismo mecanismo de inyección ya es obligatorio para G1–G7, G17 e I4 (mapa §4.1). **Mientras no se decida, el mapa y las tareas planifican F3** (D-10 literal), y entonces F0 tiene que admitir `Puente` declarados para `apipublica` (contradicción 7) |
 | **D-FX-2** | Los handlers `SetSessionProfileHandler`/`SetSessionStatusHandler` viven hoy en `internal/flujos/admin/sessions.go` (conversación, F8) pero están tipados con `fleet` (edge, F3) y los usan **los dos** listeners. ¿Dónde nacen en F3? | En `apipublica/sessionadmin.go`, **exportados** para que `transporte_rutas_admin.go` los use en `:8100`. Consecuencia: `04` §3 `conversacion/admin/sessions.go` **no se reconstruye** en F8 (queda en la cara) |
 | **D-FX-3** | Del cierre de F3 al de F8, `POST /api/v1/flows/{id}/start` y `/admin/flows/start` comparan el centinela **viejo** `session.ErrSessionOffline` con errores que devuelve el gw **nuevo** (mapa §4.4) | `modulos/edge/session` declara `var ErrSessionOffline = <viejo>.ErrSessionOffline` (puente de **identidad**, declarado en `fronteras_test.go`) y se retira al cerrar F8. Igual para `ErrPushTimeout`/`ErrPushAbandonado` si algún consumidor viejo los compara (hoy: ninguno fuera de `publicapi/messages.go`, que se muda en F3) |
 | **D-FX-4** | El adaptador SQL `publicapi/eventstelemetry_store.go` (lee `flow_events`) vive en la cara HTTP. ¿Se conserva así o baja a `conversacion/events`? | **Se conserva** en `apipublica` (F6), como hoy; bajarlo es una mejora de diseño que el plan no hace (sería cambiar dos cosas a la vez). Queda fuera del 80 % por E-6 |
@@ -92,3 +92,12 @@ instancia vieja.
    (el arranque ya importa lo viejo) pero sí un acoplamiento que F3 debe cablear y probar
    ([`arquitectura.md`](arquitectura.md) §4). Uno de esos puertos **no es estructural**:
    `llmvia/local.Frame.Infer` recibe `gatewaygrpc.InferRequest` (`internal/llmvia/local/local.go:270-272`).
+7. **`plan/F0-andamiaje/diseno.md` §4.1, regla 4** prohíbe a `internal/apipublica` importar
+   **cualquier** paquete viejo, sin `Puente` posible; `05` §4.1 sí admite puentes declarados en un
+   paquete nuevo, y D-FX-1 en su forma literal necesita uno (`apipublica → internal/intentcfg`,
+   F3–F7). Se resuelve con D-FX-1: alternativa → la regla de F0 queda como está; literal → F0
+   admite `Puente` para `apipublica` igual que para los módulos.
+8. **`plan/F0-andamiaje/diseno.md` §8** describe la cara con un *fallback*; el API exacto es el de
+   [`diseno.md`](diseno.md) §2 (`Componer(nueva *Cara, vieja *http.ServeMux)`, sin comodín `"/"`),
+   compatible con su test («con la cara vacía, toda petición llega al viejo sin tocar»). La tarea
+   `T0.16` de F0 equivale a TX.1–TX.2; TX.3–TX.4 caen en su montaje de `http.go` y en su huella.
