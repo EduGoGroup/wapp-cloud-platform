@@ -79,7 +79,8 @@
 
 ## H3.5 · Los contratos hacia fuera no se mueven
 
-> Como **el Edge**, quiero el mismo proto, el mismo literal y los mismos listeners.
+> Como **el Edge**, quiero el mismo proto, el mismo literal y los mismos listeners, para seguir
+> hablando con el Cloud sin cambiar ni una línea de mi lado.
 
 - **R3.5.a** · **EL** `go.mod` **NO DEBERÁ** cambiar la línea `github.com/EduGoGroup/wapp-cloudlink v0.17.0`.
   — Verifica: `git diff <sha-inicio-F3> -- go.mod` sin esa línea.
@@ -99,13 +100,14 @@
 
 ## H3.6 · Un solo gateway en el proceso
 
-> Como **Jhoan**, quiero una sola instancia de `*grpc.Server` en el binario nuevo, porque guarda
-> las conexiones vivas: dos serían un Edge conectado a uno y un envío buscándolo en el otro.
+> Como **Jhoan**, quiero una sola instancia de `*grpc.Server` en el binario nuevo, para que las
+> conexiones vivas estén en un solo sitio: dos serían un Edge conectado a uno y un envío buscándolo
+> en el otro.
 
 - **R3.6.a** · **EL** arranque nuevo **DEBERÁ** construir **un** `edge/grpc.Server` y pasarlo a: los
   hooks del runtime viejo (`OnIncoming`, `OnHeartbeat`), `OnWarmup`/`OnEdgeReady` de captación, el
   `Sender` del runtime viejo, el `MessageSender` del notificador viejo de solicitudes, el
-  `ConfigPusher` de `filtercfg` nuevo, los handlers de `:8100` J12–J15 y (por `puente_gateway.go`)
+  `ConfigPusher` de `filtercfg` nuevo, el `Deps.ConfigPush` de la cara vieja (E2, hasta F7), los handlers de `:8100` J12–J15 y (por `puente_gateway.go`)
   el `local.Frame` y el `enrutadorDeEdges` del selector LLM viejo. — Verifica: aserciones de
   identidad de FX TX.11 (`==` sobre el puntero o sobre `puenteGateway.gw`).
 - **R3.6.b** · **EL** adaptador `puente_gateway.go` **DEBERÁ** implementar **también** `PlazaDe`:
@@ -116,15 +118,15 @@
   `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío.
 - **R3.6.d** · **CUANDO** conmute `edge`, `puente_iam.go` (F2) **DEBERÁ** borrarse: el gw nuevo
   recibe el `in.Authenticator` e `in.Auditor` **nuevos** de `acceso`. — Verifica: `ls internal/arranque/puente_iam.go` → no existe.
-- **R3.6.e** · **EL** binario nuevo **DEBERÁ** servir por `apipublica` D1–D6 y E1–E2 y por los
+- **R3.6.e** · **EL** binario nuevo **DEBERÁ** servir por `apipublica` D1–D6 (E1–E2 siguen en la vieja hasta F7) y por los
   handlers nuevos J12–J17 (D3/J16 y D4/J17 en el mismo commit). — Verifica: `huella_test.go` y FX TX.11.
 
 ## H3.7 · El kill-switch se prueba de punta a punta
 
 > Como **la sesión local**, quiero correr enrolamiento → `Connect` → lease → revocación con mTLS real
-> contra los dos binarios.
+> contra los dos binarios, para probar el kill-switch de punta a punta antes del relevo.
 
 - **R3.7.a** · **EL** `diseno.md` §6 **DEBERÁ** listar las reglas que pasan al proceso
   «Enrolamiento de un Edge y su lease» (`05` §7.4). — Verifica: la lista y su referencia en `plan/F9-procesos/`.
-- **R3.7.b** · **DONDE** F9 esté adelantado, **EL** cierre de F3 **DEBERÁ** correr ese proceso contra
-  `cmd/server-modular`. — Verifica: `make test-procesos` (T3.30, condicionada).
+- **R3.7.b** · **DONDE** F9 esté adelantado (D-F9-1), **EL** cierre de F3 **DEBERÁ** correr ese proceso contra
+  `cmd/server-modular`. — Verifica: `make test-procesos` (T3.30 = T9.24).

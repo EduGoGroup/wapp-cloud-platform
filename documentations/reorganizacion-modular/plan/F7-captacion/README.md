@@ -14,7 +14,8 @@
    etapas, el adelanto por pull y la puerta del re-análisis **nuevos**; la cara nueva sirve H1
    (`/reanalyze`) y E1–E2 (`/intents`); huella idéntica; `cmd/server` no cambia.
 3. Congelar el **ciclo 2** de `02` §4 (`conversacion · captacion · catalogo · solicitudes`) con
-   **tres puentes declarados** a la conversación vieja y **adaptadores** en `internal/arranque` hacia el
+   **dos o tres puentes declarados** a la conversación vieja (el tercero, `reanalisis → flujos/runtime`,
+   se evita si T7.12 pasa `DefaultThreadLimit` por parámetro: recomendado) y **adaptadores** en `internal/arranque` hacia el
    agregador y el compositor viejos, todos con muerte en F8 (D-7).
 
 ## Entradas (tiene que ser cierto para empezar)
@@ -36,8 +37,9 @@
 - Pendientes en `internal/modulos/captacion` → **0**; SKIP → **0**; cobertura ≥ 80 % por fichero salvo
   `postgres.go`/`machine_postgres.go`/`store_postgres.go` (E-6).
 - Puentes en `fronteras_test.go`: `captacion/stages → internal/flujos/store`,
-  `captacion/reanalisis → internal/flujos/events`, `captacion/reanalisis → internal/flujos/runtime`
-  (los tres «muere F8»). Adaptadores `internal/arranque/puente_captacion.go` (muere F8).
+  `captacion/reanalisis → internal/flujos/events` y, solo si T7.12 no lo evita,
+  `captacion/reanalisis → internal/flujos/runtime` (todos «muere F8»; tabla única en
+  [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1). Adaptadores `internal/arranque/puente_captacion.go` (muere F8).
 - `cmd/server-modular` enlaza `modulos/captacion/**`; H1, E1, E2 por la cara nueva (`FaseActual = 7`);
   G7 lee el plazo del `pipeline` **nuevo**; huella igual; candados I-CP-4 (W=1) e INV-1 en verde con
   sus rutas nuevas.
@@ -55,7 +57,7 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 |---|---|---|---|
 | **A** · inventario + hojas en rojo | 🌐 | T7.1–T7.6 | `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en rojo con suites · PR |
 | **B** · rojo de `stages` | 🌐 | T7.7–T7.9 | 10 ficheros de `stages` en rojo; puente a `flujos/store` declarado · PR |
-| **C** · rojo de `pipeline`, `intakeahead`, `reanalisis` | 🌐 | T7.10–T7.13 | todo el módulo en rojo; 3 puentes; `make test-pendiente` anotado · PR |
+| **C** · rojo de `pipeline`, `intakeahead`, `reanalisis` | 🌐 | T7.10–T7.13 | todo el módulo en rojo; 2 puentes (3 si T7.12 no evita el de `runtime`); `make test-pendiente` anotado · PR |
 | **D** · verde de las hojas | 🌐 | T7.14–T7.15 | 5 paquetes hoja en verde · PR |
 | **E** · verde de `stages` | 🌐 | T7.16–T7.17 | `stages` en verde · PR |
 | **F** · verde de `pipeline`, `intakeahead`, `reanalisis` | 🌐 | T7.18–T7.20 | pendientes del módulo = 0 · PR |
@@ -68,7 +70,8 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 1. **`05` E-6** lista `intentcfg` entre los 12 paquetes **sin** gemelo en memoria: **falso**.
    `internal/intentcfg/store.go:47` declara `MemoryStore` (con `sync.Mutex` `:48` y `time.Now()` `:76`).
    `casebank` **sí** carece de él (medido: `grep -n '^type' internal/casebank/*.go` → `Caso`, `Store`,
-   `Servicio`, `Clase`, `Hallazgo`, `Anonimizador`, `Postgres`). Quedan **11** sin gemelo, no 12.
+   `Servicio`, `Clase`, `Hallazgo`, `Anonimizador`, `Postgres`). La cifra buena de todo el repo es
+   **7 sin gemelo de 22 con SQL** ([`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §9), no 12 ni 11.
 2. **El agregador de ventanas y el compositor del literal no son de captación**: viven en
    `internal/flujos/runtime/{aggregator.go,source_composer.go}` (F8), y también el `WebhookSink`.
    «La ráfaga y la ventana» de la tarea de F7 son **conversación**; captación solo aporta la cola
@@ -85,10 +88,10 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
    compositor viejo exige `SourceTextWriter.PutSourceText(ctx, intake.WindowKey, intake.SourceText)`
    (`source_composer.go:277-279`), con tipos del `intake` **viejo**. Se resuelve en el arranque
    ([`arquitectura.md`](arquitectura.md) §4).
-6. **FX `tareas.md` TX.21** está escrita para D-FX-1 **literal** («retirar el puente de intenciones»).
-   Con D-FX-1 en su **alternativa** (las intenciones se mudan en F7, indicación del orquestador) TX.21
-   **muda** E1–E2 en vez de retirar un puente, y F3 no crea ningún puente `apipublica → intentcfg`.
-   A reconciliar en FX.
+6. ~~**FX `tareas.md` TX.21** está escrita para D-FX-1 **literal**~~ — **reconciliado** (2026-09-29):
+   FX, F3 y el mapa planifican ya la recomendación (D-FX-1/D-F7-4): las intenciones se mudan **aquí**
+   (TX.19–TX.21), F3 no crea ningún puente `apipublica → intentcfg` y la cara vieja las sirve de F3
+   a F7 con el gw nuevo inyectado.
 7. **`04` §2.3 (vieja)** decía que `inv1_aprobar_ast_test` «lee sus seis directorios» en F7: con
    `05` es el candado **nuevo** de `solicitudes/intakes` (F6) el que se re-toca aquí (T7.25).
 

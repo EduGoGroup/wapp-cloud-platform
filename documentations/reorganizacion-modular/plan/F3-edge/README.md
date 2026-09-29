@@ -3,7 +3,7 @@
 > **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`).
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
-> [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, E1–E2, J12–J17) y
+> [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
 > sus tareas TX.8–TX.11. Patrones de [`F1`](../F1-nucleo-contact/README.md): rojo **solo con
 > exportados** y adaptadores `internal/arranque/puente_<x>.go`.
 
@@ -15,8 +15,8 @@
    servidora de la doble llave y el kill-switch anti-clon.
 2. Conmutar: `cmd/server-modular` construye **un solo** `*grpc.Server` nuevo (conexiones vivas,
    carriles, acuses e inferencias en vuelo) y lo **inyecta** en los consumidores viejos que aún lo
-   usan (runtime, notificador de solicitudes, selector LLM vía `puente_gateway.go`); muda 8 rutas de
-   `:8103` y 6 de `:8100` (FX TX.8–TX.11).
+   usan (runtime, notificador de solicitudes, selector LLM vía `puente_gateway.go`, y el `ConfigPush` de
+   la cara vieja para E1–E2 hasta F7); muda 6 rutas de `:8103` y 6 de `:8100` (FX TX.8–TX.11).
 3. Conservar byte a byte el literal `AVISO_SESION_PASIVA_V1`, las tres reglas del ADR-0048 (el canal
    de control no es una sesión) y el contrato `wapp-cloudlink v0.17.0`, que no cambia.
 
@@ -59,7 +59,7 @@
 | **D** · verde de las hojas | 🌐 | T3.15–T3.18 | 0 pendientes salvo `fleet`, `filtercfg`, `grpc` · PR |
 | **E** · verde de `fleet`, `filtercfg` | 🌐 | T3.19–T3.20 | 0 pendientes en esos dos · PR |
 | **F** · verde de `grpc` (13 ficheros, el grueso) | 🌐 | T3.21–T3.23 | 0 pendientes en `edge` · literal verde · PR |
-| **G** · puente, cara nueva y conmutación | 🌐 (TX.10 🌐→💻) | T3.24–T3.28 | huella igual · un gw · 8+6 rutas · `puente_iam` borrado · PR · traspaso |
+| **G** · puente, cara nueva y conmutación | 🌐 (TX.10 🌐→💻) | T3.24–T3.28 | huella igual · un gw · 6+6 rutas · `puente_iam` borrado · PR · traspaso |
 | **H** · cierre local (mTLS real, e2e, procesos) | 💻 (🌐→💻) | T3.29–T3.30 | e2e gRPC verde · `dev` integrado |
 
 ## Contradicciones encontradas (con `04`/`05`/marco/FX, medidas contra el código)
@@ -99,4 +99,4 @@
 | D-F3-3 | `ingest` no declara puerto (lo declara el consumidor, `flujos/runtime/runtime.go:116`). ¿Se añade `ingest.Deduper` (solo interfaz) para que `ingesttest.Contrato` tenga contra qué correr? | **Sí**, fichero ✚ `ingest/deduper.go` (solo interfaz, E-3) |
 | D-F3-4 | 🔒 `lease/repository_postgres.go:106,117` escribe `public.tenants.revoked_at` (deuda D-9: tabla de otro módulo sin API interna). ¿Se corrige en la reconstrucción? | **No**: el lease se reconstruye **sin cambiar comportamiento** (`05` §6); el SQL se copia literal y la deuda sigue anotada |
 | D-F3-5 | Los 7 tests de carga/pool del gateway (`load_integration_test.go`, `load_ack_integration_test.go`, `curva_pool_t55_integration_test.go`, `deuda_050_2_pool_integration_test.go`): ¿se reescriben? | **No**: son mediciones publicadas (Plan 050 · T5.x, DEUDA-050.2). Se conservan en el árbol viejo hasta F10 y se dice en el commit |
-| D-F3-6 | ¿Se adelanta F9 para correr «Enrolamiento de un Edge y su lease» contra el binario nuevo al cerrar F3? | **Sí si F9 adelantado está aceptado** (T3.30 condicionada): es el único oráculo del kill-switch extremo a extremo con mTLS real |
+| D-F3-6 | ¿Se adelanta F9 para correr «Enrolamiento de un Edge y su lease» contra el binario nuevo al cerrar F3? | **Subsumida por D-F9-1** (recomendación: sí): T3.30 **es** la pasada 9C de `edge` (T9.24); solo se tacha si D-F9-1 = no. Es el único oráculo del kill-switch extremo a extremo con mTLS real |

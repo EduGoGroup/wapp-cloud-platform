@@ -14,10 +14,10 @@
 | # | Trampa | `fichero:línea` | Qué hacer |
 |---|---|---|---|
 | T-1 | 🔴 `intake` (cola, F7) ≠ `intakes` (solicitud, F6) | `internal/intake/store.go` («NO CONFUNDIR») | Nunca fundirlos; alias explícitos en el arranque |
-| T-2 | El agregador y el compositor **no** son de F7 (viven en `flujos/runtime`) | `fase7_flujos.go:208` · `fase5_captacion.go:52` | No reconstruirlos aquí; coserlos por `puente_captacion.go` |
+| T-2 | El agregador y el compositor **no** son de F7 (viven en `flujos/runtime`) | `fase7_flujos.go:208` · `fase5_captacion.go:62` (el compositor; su porqué en `:53-61`) | No reconstruirlos aquí; coserlos por `puente_captacion.go` |
 | T-3 | Dos `WindowKey` distintos (viejo y nuevo) con los mismos campos: el compilador **no** los mezcla | `internal/intake/store.go:60-65` | Conversión explícita `intakeviejo.WindowKey(k)` **solo** en `internal/arranque/puente_captacion.go`; el test del puente afirma ida y vuelta |
 | T-4 | Duplicar la goroutine del worker **no da error** | `fase9_fondo.go:99` (I-CP-4) | El candado de cableado; nunca un segundo `Run` |
-| T-5 | Dos compositores = dos `source_text` que divergen | `fase5_captacion.go:52-56` | El re-análisis usa el compositor viejo por adaptador, no uno nuevo |
+| T-5 | Dos compositores = dos `source_text` que divergen | `fase5_captacion.go:53-62` (el comentario «ES EL MISMO OBJETO que consume `/reanalyze`», `:60-61`) | El re-análisis usa el compositor viejo por adaptador, no uno nuevo |
 | T-6 | Los candados de cableado copiados en F0 leen **texto** (`"pipeline.NewWorker"`…) | `pipeline_captacion_cableado_test.go:85-164` | Nombre corto para el paquete nuevo, alias para el viejo |
 | T-7 | La guarda anti-hueco del candado INV-1 falla con un directorio inexistente | F6 `diseno.md` §6 | Re-tocar la lista en el mismo commit de la conmutación (T7.25) |
 | T-8 | `casebank` es invisible para la huella y el arranque | `go list` (solo `cmd/casebank`) | Su verdad: suite + doble (y F9) |

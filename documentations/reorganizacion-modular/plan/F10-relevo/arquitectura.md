@@ -48,7 +48,7 @@ Comando: `for d in cmd/*/; do GOWORK=off go list -f '{{join .Imports "\n"}}{{"\n
 | 2 | `relevo: cmd/server usa el arranque nuevo` — `main.go`, `integration_test.go` ✎, borra `flows_integration_test.go`, re-apunta `cmd/casebank` y `cmd/prompts` si hace falta | Desde aquí los dos binarios corren **el mismo** arranque; `make test-procesos` lo confirma (pasa dos veces igual) |
 | 3 | `relevo: fuera cmd/server-modular y la variable del arnés` | Ya no aporta nada; el arnés se simplifica |
 | 4 | `relevo: fuera la cara vieja y el estrangulador` — TX.25 de [`FX-cara-http`](../FX-cara-http/tareas.md) | Tras F8 no sirve ninguna ruta del binario nuevo |
-| 5 | `relevo: fuera el arranque viejo` — `internal/bootstrap/**` (22 + 20 tests), con `huella_vieja_test.go`, `platform_permissions_test.go` y los 11 `*_cableado_test.go` viejos | Sus reglas viven ya en `internal/arranque` (F0) |
+| 5 | `relevo: fuera el arranque viejo` — `internal/bootstrap/**` (22 de producción + 21 tests: los 20 de hoy más `huella_vieja_test.go` de F0), incluidos `platform_permissions_test.go` y los **9** `*cablead*_test.go` viejos (`ls internal/bootstrap/arranque/*cablead*_test.go \| wc -l` → 9; «11» son los que leen AST, F0 README contradicción 1) | Sus reglas viven ya en `internal/arranque` (F0) |
 | 6 | `relevo: fuera los paquetes viejos` — los 26 directorios restantes, con sus tests | Nada los importa desde el commit 5 |
 | 7 | `relevo: cero pendientes` — `sin_pendientes_test.go` activo y, con D-F10-3, fuera `internal/pendiente`, la etiqueta y sus targets | Solo tiene sentido con todo lo viejo fuera |
 | 8 | `relevo: la integración vieja, retirada` — `Makefile`, `ci.yml` (y los 9 tests de BD de `platform` si D-F10-5) | El relevo deja **una** forma de probar contra Postgres |

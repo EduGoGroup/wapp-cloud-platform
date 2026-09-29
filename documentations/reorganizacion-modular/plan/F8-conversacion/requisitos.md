@@ -15,7 +15,8 @@
   `internal/modulos/fronteras_test.go` que apuntan a `internal/flujos/**` o `internal/turnoacotado`
   y los ficheros `internal/arranque/puente_*.go`. — Verifica: `grep -n 'flujos\|turnoacotado' internal/modulos/fronteras_test.go` · `ls internal/arranque/puente_*.go`.
 - **R8.1.c** · **SI** la lista real difiere de [`arquitectura.md`](arquitectura.md) §5, **ENTONCES
-  LA** sesión web **DEBERÁ** corregir esa tabla en el mismo commit y avisar en el README.
+  LA** sesión web **DEBERÁ** corregir esa tabla en el mismo commit y avisar en el README. — Verifica:
+  el diff de T8.2 toca `arquitectura.md` §5 y el README.
 
 ## H8.2 · Contratos y rojo de todo el módulo
 
@@ -57,7 +58,8 @@
 - **R8.3.c** · **EL** carrito nuevo **DEBERÁ** producir las transcripciones de
   `testdata/cart_v{1,2}_transcript.golden.txt` idénticas (D-F8-3). — Verifica: test golden de `C/modules/cart`.
 - **R8.3.d** · **SI** una regla de [`diseno.md`](diseno.md) §4 se decide no mantener, **ENTONCES EL**
-  commit `verde(…)` **DEBERÁ** decirlo con el motivo (E-8).
+  commit `verde(…)` **DEBERÁ** decirlo con el motivo (E-8). — Verifica: revisión de los mensajes
+  `verde(conversacion)` contra la tabla de `diseno.md` §4.
 - **R8.3.e** · **CADA** fichero nuevo **DEBERÁ** empezar con `// Porta internal/<ruta vieja> @ <sha>` (E-10). — Verifica: `grep -L '^// Porta internal/' $(find C -name '*.go' ! -name '*_test.go')` vacío.
 
 ## H8.4 · Los candados de invariante siguen expresados
@@ -121,7 +123,7 @@
   `solicitudes/intakes/telemetria`, `captacion/stages`, `captacion/reanalisis`, `edge/session`)
   **DEBERÁN** seguir en verde y ≥ 80 % tras el re-toque. — Verifica: `make cobertura-ficheros`.
 - **R8.7.d** · **EL** centinela `ErrSessionOffline` **DEBERÁ** ser uno solo, el de
-  `modulos/edge/session`, sin alias al viejo (D-FX-3 resuelto). — Verifica: `grep -rn 'gateway/session' internal/modulos` vacío.
+  `modulos/edge/session` (que con D-F3-2 es el de `platform`), sin alias al viejo. — Verifica: `grep -rn 'gateway/session' internal/modulos` vacío.
 
 ## H8.8 · Cierre por la sesión local
 

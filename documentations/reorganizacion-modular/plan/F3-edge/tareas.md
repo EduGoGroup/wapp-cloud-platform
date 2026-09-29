@@ -52,30 +52,30 @@ Para cuando: 0 pendientes en `edge`; literal y pareja ADR-0048 verdes; PR.
 - [ ] **T3.23 · verde(edge): `inference`, `plaza`, `greeting`** · 🌐 · 3 commits; `grep -rn 'pendiente.Implementar' internal/modulos/edge | wc -l` → 0 · **Gate**: G-verde · `make ci-local` rc=0 · PR
 
 ## Bloque G · puente, cara nueva y conmutación · 🌐 (TX.10 🌐→💻) · T3.24–T3.28
-Para cuando: huella igual · un gw · 8 + 6 rutas · `puente_iam.go` borrado · PR · traspaso.
+Para cuando: huella igual · un gw · 6 + 6 rutas · `puente_iam.go` borrado · PR · traspaso.
 
 - [ ] **T3.24 · rojo(arranque): `puente_gateway.go`** · 🌐 · dep. T3.23 · cumple R3.6.b
   - **Ficheros**: `internal/arranque/puente_gateway.go`, `…/puente_gateway_test.go`
-  - **Hecho cuando**: `puenteGateway{gw *grpc.Server}` no exportado con `Infer(ctx, tenantID, viejo.InferRequest)` (conversión campo a campo) y `PlazaDe`; `var _ local.Frame = (*puenteGateway)(nil)`; el test afirma la conversión de **todos** los campos de `InferRequest` y que `any(p).(interface{ PlazaDe(string, string) (string, bool) })` da `true`.
+  - **Hecho cuando**: `puenteGateway` no exportado, **sin campos en el rojo** (el campo `gw *grpc.Server` nace con el verde, T3.25: `unused` lo marcaría, [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §3.1), con `Infer(ctx, tenantID, viejo.InferRequest)` (conversión campo a campo) y `PlazaDe` en `panic`; `var _ local.Frame = (*puenteGateway)(nil)`; el test afirma la conversión de **todos** los campos de `InferRequest` y que `any(p).(interface{ PlazaDe(string, string) (string, bool) })` da `true`.
   - **Gate**: G-rojo sobre `./internal/arranque/...` · **Commit**: `rojo(arranque): contrato de puente_gateway`
 - [ ] **T3.25 · verde(arranque): `puente_gateway.go`** · 🌐 · **Gate**: G-verde · **Commit**: `verde(arranque): puente_gateway`
-- [ ] **T3.26 · FX TX.8 + TX.9 (cara nueva: edge e intenciones)** · 🌐 · dep. T3.23 · cumple R3.6.e
-  - **Ficheros**: los de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.8 (`apipublica/{plazos,limits,messages,sessions,health,sessionadmin,diagnostics,intents}.go`)
-  - **Hecho cuando**: lo que dicen TX.8 y TX.9; `sessionadmin.go` **exporta** los dos constructores (D-FX-2); `intents.go` con el puente declarado a `internal/intentcfg` (D-FX-1, retira TX.21); `messages.go` mapea los centinelas de `E/session`. Se marcan TX.8 y TX.9.
+- [ ] **T3.26 · FX TX.8 + TX.9 (cara nueva: edge)** · 🌐 · dep. T3.23 · cumple R3.6.e
+  - **Ficheros**: los de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.8 (`apipublica/{plazos,limits,messages,sessions,health,sessionadmin,diagnostics}.go`)
+  - **Hecho cuando**: lo que dicen TX.8 y TX.9; `sessionadmin.go` **exporta** los dos constructores (D-FX-2); `messages.go` mapea los centinelas de `E/session`; **ningún** puente desde `apipublica` (E1–E2 se mudan en F7, D-FX-1/D-F7-4; *alternativa literal*: `intents.go` aquí con puente a `internal/intentcfg`, retira TX.21). Se marcan TX.8 y TX.9.
 - [ ] **T3.27 · FX TX.10: identidad de `ErrSessionOffline`** · 🌐→💻 · dep. T3.26 · cumple R3.6.a
   - **Hecho cuando**: con D-F3-2, `E/session.ErrSessionOffline` **es** el centinela de `platform` y `errors.Is(nuevo, viejo)` es `true` **sin** puente en `fronteras_test.go`; si D-F3-2 se rechaza, se aplica D-FX-3 literal (puente declarado, «retira: TX.24»). La local confirma con el e2e: `/admin/flows/start` a una sesión offline da el mismo código que el binario viejo.
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/a.log" 2>&1; echo rc=$? >> "$TMPDIR/a.log"` → `rc=0`
   - **Commit**: `refactor(edge): el centinela de sesión offline conserva su identidad`
-- [ ] **T3.28 · conmutar(edge): un solo gw, 8 + 6 rutas (= FX TX.11)** · 🌐 · dep. T3.25–T3.27 · cumple R3.5.a, R3.5.c, R3.6.a–e
-  - **Ficheros**: en `internal/arranque`: copias de `fase4_gateway.go`, `fase3_almacenes.go`, `fase5_captacion.go` (`WithFrame(puenteGateway)`), `fase6_solicitudes.go`, `fase7_flujos.go`, `fase8_transporte.go`, `pki.go`, `lease.go`, `auth.go` (config providers con `ConfigPayload` nuevo), `transporte_http.go`, `transporte_rutas_admin.go`, `contenedor.go`; **borrar** `puente_iam.go` y su test; `traspasos/TRASPASO-F3-edge.md`
-  - **Hecho cuando**: **un** `grpc.New` con las 12 opciones y los valores de siempre, `WithAuthenticator`/`WithAuthAuditor` de `acceso` nuevo; el **mismo** gw en runtime viejo (`Sender` + 4 hooks), `intakes.NewNotifier`, `filtercfg.NewPusher`, J12–J15 y (vía puente) el selector; aserciones de identidad; `Deps` viejos `Sender`, `DiagnosticsRequester`, `ConfigPush`, `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics`, `Intents` = `nil`; D3/D4 y J16/J17 en este mismo commit (T-14); `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío; `go.mod` intacto.
+- [ ] **T3.28 · conmutar(edge): un solo gw, 6 + 6 rutas (= FX TX.11)** · 🌐 · dep. T3.25–T3.27 · cumple R3.5.a, R3.5.c, R3.6.a–e
+  - **Ficheros**: en `internal/arranque`: copias de `fase4_gateway.go`, `fase3_almacenes.go`, `fase5_captacion.go` (`WithFrame(puenteGateway)`), `fase6_solicitudes.go`, `fase7_flujos.go`, `fase8_transporte.go`, `pki.go`, `lease.go`, `auth.go` (config providers con `ConfigPayload` nuevo), `http.go`, `rutas_admin.go`, `contenedor.go`; **borrar** `puente_iam.go` y su test; `traspasos/TRASPASO-F3-edge.md`
+  - **Hecho cuando**: **un** `grpc.New` con las 12 opciones y los valores de siempre, `WithAuthenticator`/`WithAuthAuditor` de `acceso` nuevo; el **mismo** gw en runtime viejo (`Sender` + 4 hooks), `intakes.NewNotifier`, `filtercfg.NewPusher`, J12–J15, el `ConfigPush` de la cara vieja (E1–E2 hasta F7) y (vía puente) el selector; aserciones de identidad; `Deps` viejos `Sender`, `DiagnosticsRequester`, `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics` = `nil` (`ConfigPush` = gw nuevo, `Intents` = el viejo); D3/D4 y J16/J17 en este mismo commit (T-14); `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío; `go.mod` intacto.
   - **Gate**: `GOWORK=off go test -count=1 -v -run 'Mudanzas|Huella|Cableado|Identidad' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$? >> "$TMPDIR/m.log"; tail -1 "$TMPDIR/m.log"` → `rc=0`, 0 SKIP · `make ci-local` rc=0
-  - **Commit**: `conmutar(edge): el arranque nuevo cablea edge con un solo gateway y muda 8 rutas`
+  - **Commit**: `conmutar(edge): el arranque nuevo cablea edge con un solo gateway y muda 6 rutas`
 
 ## Bloque H · cierre local · 💻 (🌐→💻) · T3.29–T3.30
 - [ ] **T3.29 · Cierre de F3 con mTLS real** · 🌐→💻 · dep. T3.28
   - **Hecho cuando**: la local repite `validar-antes-de-cerrar`; e2e de `cmd/server-modular` (F0) verde con **enrolamiento real** en `:8102` (código de un solo uso → certificado), `Connect` en `:8101` con ese certificado (y rechazo de uno ajeno), lease inicial recibido, `POST /admin/leases/revoke` → `LeaseUpdate` revocado y el Edge de prueba deja de poder operar; login de operador por el canal de control con **dos** Edge de prueba a la vez (cada uno recibe el suyo); `ESTADO.md` y README → «cerrada» con SHA; traspaso con `CERRADO`.
   - **Gate**: `make ci-local` rc=0 en local · **Commit**: `docs(reorganizacion-modular): F3 cerrada`
-- [ ] **T3.30 · Proceso «Enrolamiento de un Edge y su lease» contra el binario nuevo** · 🌐→💻 · **condicionada: solo si F9 adelantado está aceptado** · cumple R3.7.a–b
-  - **Hecho cuando**: el proceso incluye lo de [`diseno.md`](diseno.md) §6 y pasa contra `cmd/server` y `cmd/server-modular`; si no hay F9 adelantado, la lista se entrega a `plan/F9-procesos/` y la tarea se tacha con ese motivo.
+- [ ] **T3.30 · Proceso «Enrolamiento de un Edge y su lease» contra el binario nuevo (= T9.24, 9C de `edge`)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación) · cumple R3.7.a–b
+  - **Hecho cuando**: el proceso incluye lo de [`diseno.md`](diseno.md) §6 y pasa contra `cmd/server` y `cmd/server-modular`, con las suites de `enroll`, `fleet`, `lease`, `diagnostics`, `ingest`, `receipts` contra Postgres; si D-F9-1 = no, la lista se entrega a `plan/F9-procesos/` (T9.34) y la tarea se tacha con ese motivo.
   - **Gate**: `make test-procesos > "$TMPDIR/p.log" 2>&1; echo rc=$? >> "$TMPDIR/p.log"` → `rc=0`, 0 SKIP · **Commit**: `procesos(enrolamiento-lease): …`

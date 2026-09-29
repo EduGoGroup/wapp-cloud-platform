@@ -74,7 +74,12 @@ Detectada al preparar este análisis; son pequeñas pero confunden a quien llega
 
 ## 3 · Decisiones abiertas
 
-Son de Jhoan. Cada una tiene una recomendación, pero ninguna se da por tomada.
+Son de Jhoan. 🔒 **Actualización 2026-09-28**: D-2, D-5, D-9, D-11 y D-12 se **cerraron** según su
+recomendación el 2026-09-27; **D-10 se cerró distinto** —una cara HTTP **única y nueva**,
+`internal/apipublica`, construida **por olas** (ver [`plan/FX-cara-http/`](plan/FX-cara-http/README.md))—;
+D-13 y las decisiones nuevas que salieron al escribir el plan viven en
+[`plan/DECISIONES.md`](plan/DECISIONES.md), que desde hoy es el registro vivo. Esta tabla queda como
+historia del análisis.
 
 | # | Pregunta | Opciones | Recomendación |
 |---|---|---|---|

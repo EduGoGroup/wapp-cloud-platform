@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Fase · bloque | [F0 · Andamiaje](../F0-andamiaje/README.md) · E · la cara nueva vacía, los ✎ de `platform` y la deriva + F · el cierre local (🌐→💻, 💻) |
-| Tareas | T0.16–T0.21 + T0.22–T0.25 |
+| Tareas | T0.16–T0.21, T0.27 + T0.22–T0.25 |
 | Depende de | F0-05 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F0 bloque E/F» |
 | Se para cuando | los cinco criterios de salida de [`README.md`](../F0-andamiaje/README.md) se cumplen y `dev` contiene F0 entera. |
@@ -27,7 +27,7 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 Tu encargo (y solo este):
 - Fase: F0 · Andamiaje → documentations/reorganizacion-modular/plan/F0-andamiaje/
 - Bloque(s): E · la cara nueva vacía, los ✎ de `platform` y la deriva + F · el cierre local
-- Tareas: T0.16–T0.21 + T0.22–T0.25 de plan/F0-andamiaje/tareas.md
+- Tareas: T0.16–T0.21, T0.27 + T0.22–T0.25 de plan/F0-andamiaje/tareas.md
 - Te paras cuando: los cinco criterios de salida de plan/F0-andamiaje/README.md se cumplen y `dev` contiene F0 entera.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F0 bloque E/F» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar, traspaso-web-local.
@@ -40,7 +40,7 @@ Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, `g
 ## Al terminar debe existir
 
 - La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
-- En [`../F0-andamiaje/tareas.md`](../F0-andamiaje/tareas.md): las tareas 💻 y 🌐→💻 de T0.16–T0.21 + T0.22–T0.25 `[x]` con SHA.
+- En [`../F0-andamiaje/tareas.md`](../F0-andamiaje/tareas.md): las tareas 💻 y 🌐→💻 de T0.16–T0.21, T0.27 + T0.22–T0.25 `[x]` con SHA.
 - El traspaso con su sección `CERRADO <fecha>` (qué se refutó de su §7).
 - `ESTADO.md` de la reorganización al día.
 

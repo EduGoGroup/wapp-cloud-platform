@@ -65,7 +65,8 @@ go version && golangci-lint version        # go1.26.5 y v2.12.2; si no, el entor
 ```bash
 make ci-local > /tmp/ci.log 2>&1; echo "rc=$?"          # el rc SIN pipe
 go vet -tags pendiente ./... ; echo "rc=$?"
-make test-pendiente                                       # cuenta lo que falta
+make test-pendiente                                       # cuenta lo que falta (existe desde F0-02/T0.4;
+                                                          # antes, di «el target aún no existe»)
 go test -v ./internal/<lo tuyo>/... 2>&1 | grep -c -- '--- SKIP'   # SKIP en código nuevo = 0
 ```
 

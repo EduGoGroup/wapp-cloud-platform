@@ -61,7 +61,8 @@
    (`repository_postgres_test.go` y los tres `*_integration_test.go`, 12 `Test*`) **no** vienen (F9).
 2. **`05` §5** sitúa los candados en `internal/modulos/`; `nucleo` queda fuera de `modulos/`. Su
    alcance tiene que incluir `internal/nucleo/**` (entrada E2), o el piloto de los candados correría
-   sin candados.
+   sin candados. **Recogido en F0**: su `diseno.md` §4 («Alcance») y T0.7 lo incluyen, junto con
+   `internal/apipublica`; el marco lo dice en [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.
 3. **`05` E-3** da la suite solo a un fichero «solo de interfaces». `resolver.go` **no** lo es: tiene 3
    centinelas, `Ref.Sendable`, `RefsFrom` y dos auxiliares (`resolver.go:17-150`). Lleva
    `resolver_test.go` **y** la suite del puerto.
@@ -88,6 +89,6 @@
 |---|---|---|
 | D-F1-1 | Firma de la suite: `Contrato(t, func(t) Montaje)` con dos tenants y un observador de estado, en vez de `func() Puerto` | **Sí**, y adoptarla como patrón para todo puerto con BD (F2+) |
 | D-F1-2 | ¿F1 adelanta el mínimo del arnés de F9 (`TestMain` con testcontainers + plantilla migrada) para correr la suite contra Postgres? | **Sí**: medir «suite en memoria + Postgres» es objetivo del piloto (`05` §6); F9 lo hereda. Si no, se anota «no corrido» y el informe lo dice |
-| D-F1-3 | Los paquetes `…test` (suite y dobles) quedan **exentos** de `un_fichero_un_test_test.go` y `exportados_cubiertos_test.go`; los dobles con lógica llevan test propio | **Sí** (`05` E-3 no nombra el fichero de la suite) — confirmar contra lo que construyó F0 |
+| D-F1-3 | Los paquetes `…test` (suite y dobles) quedan **exentos** de `un_fichero_un_test_test.go` y `exportados_cubiertos_test.go`; los dobles con lógica llevan test propio | **Sí** (`05` E-3 no nombra el fichero de la suite). F0 lo deja previsto y **condicionado** a esta decisión en el diseño de los candados (F0 `diseno.md` §4.2–§4.3) |
 | D-F1-4 | No portar el tipo `Contact` (`contact.go:54-61`): no se instancia en todo el repo (medido) | **No portarlo**, y decirlo en el commit (E-8) |
 | D-F1-5 | El adaptador de tipos en `internal/arranque` (viejo `contact.Resolver` ← nuevo) como mecanismo estándar: aparecerá en cada fase cuyos tipos consuma código viejo | **Sí**, con tabla de vida (nace/muere) en cada `arquitectura.md` |

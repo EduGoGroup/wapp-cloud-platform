@@ -92,7 +92,7 @@
    `intakes.Revision`, `intakes.ShippingPolicy`). `05` §4.1 solo prevé puentes nuevo → viejo; la
    dirección viejo → nuevo se resuelve en el arranque ([`arquitectura.md`](arquitectura.md) §4).
 6. **`05` §3.2** dice «`inv1_aprobar_ast_test` lee sus seis directorios». Su **control positivo** es
-   `../publicapi` (`inv1_aprobar_ast_test.go:43`): en el paquete nuevo pasa a ser `internal/apipublica`,
+   `../publicapi` (`inv1_aprobar_ast_test.go:46`, `var puertaDelDueño`): en el paquete nuevo pasa a ser `internal/apipublica`,
    y la lista de «flujos automáticos» **cambia por fase** (F6 viejos, F7 añade captación nueva, F8
    cambia a conversación nueva). La guarda anti-hueco **falla** si un directorio no existe: no se
    pueden listar hoy los de F7/F8.

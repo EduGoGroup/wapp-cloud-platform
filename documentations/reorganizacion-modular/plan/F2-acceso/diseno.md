@@ -178,7 +178,7 @@ Exportados = los del viejo (§1 de arquitectura) salvo lo marcado. Se listan los
 | `internal/bootstrap/arranque/platform_permissions_test.go` (`TestINV056_1_*`, 2 tests) | 🔴 I-CP-5: toda ruta de plataforma exige permiso `.any`. Detecta por `"platformadmin."` en el 6.º argumento de `adminHandler` **o** por patrón `/admin/tenants`, `/admin/access-requests` (`:48-50`) | Su copia en `internal/arranque` (F0) sigue valiendo si el paquete nuevo se importa **como `platformadmin`**. Proceso F9 «canje y permisos»: un `tenant_admin` recibe 403 en una ruta `.any` |
 | `iam/infra/postgres/canje_orden_ast_test.go` | acceso concedido antes de marcar la invitación | **Candado AST** en `A/iam/infra/postgres/` (D-F2-1) · F9 prueba la atomicidad |
 | `iam/infra/postgres/canje_una_consulta_ast_test.go` (2) | una consulta en `leerInvitacion`; las 4 NULLables cableadas | el 1.º, candado AST; el 2.º, test de conducta de `filaAInvitacion` (R-P7) |
-| `iam/infra/postgres/membresia_unica_ast_test.go` | un solo escritor de `tenant_members`, con cerrojo → guarda → INSERT en el cuerpo | candado AST en `A/iam/infra/postgres/`, **barriendo `internal/`** y esperando **los dos** escritores hasta F10; el viejo, con la línea de D-F2-2 |
+| `iam/infra/postgres/membresia_unica_ast_test.go` | un solo escritor de `tenant_members`, con cerrojo → guarda → INSERT en el cuerpo | candado AST en `A/iam/infra/postgres/`, **barriendo `internal/`** y esperando **los dos** escritores hasta F10; el viejo, ciego al árbol nuevo desde F0 (T0.27, D-F4-1) |
 | (sin candado hoy) I-CP-6 fail-closed | 403 en los tres modos | `middleware_test.go` nuevo (R-E1) |
 
 **Pasan a F9 («Canje de identidad y permisos», `05` §7.4)**: el SQL de las 7 suites contra Postgres;

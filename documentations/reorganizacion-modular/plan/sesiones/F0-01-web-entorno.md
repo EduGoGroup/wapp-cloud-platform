@@ -30,7 +30,7 @@ Tu encargo (y solo este):
 - Decisiones: las que en plan/DECISIONES.md bloquean «F0 bloque A» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo (§F0), validar-antes-de-cerrar.
 
-Eres la PRIMERA sesión web del plan: además de T0.0–T0.1, haz la prueba de Docker + testcontainers de `plan/00-marco/flujo-web-local.md` §5 en un directorio temporal FUERA del árbol, sin commitearla, y anota en `documentations/reorganizacion-modular/06-entorno-web.md` §5 lo que viste (versiones, tiempos de `make ci-local`, si Docker y testcontainers funcionan, a qué rama empujas y si el proxy acepta `--force-with-lease`).
+Eres la PRIMERA sesión web del plan: además de T0.0–T0.1, haz la prueba de Docker + testcontainers de `plan/00-marco/flujo-web-local.md` §5 en un directorio temporal FUERA del árbol, sin commitearla, y anota en `documentations/reorganizacion-modular/06-entorno-web.md` §5 lo que viste (versiones, tiempos de `make ci-local`, si Docker y testcontainers funcionan, a qué rama empujas y si el proxy acepta `--force-with-lease`: tras tu primer push, `git commit --amend --no-edit && git push --force-with-lease; echo rc=$?` sobre TU rama, antes del PR).
 
 Orquesta con sub-agentes (por paquete en contratos, por fichero en verde) y protege tu contexto.
 Al terminar: tareas [x] con SHA, ESTADO.md, traspaso si algo lo cierra la local, push de TU rama y `gh pr create --base dev` con «integrar SIN squash». No empieces el bloque siguiente.

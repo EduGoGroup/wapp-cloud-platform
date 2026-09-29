@@ -53,7 +53,7 @@ Entrada: T10.6 con «sigue». Para cuando: la definición de hecho del bloque C 
 - [ ] **T10.9 · relevo: fuera la cara vieja y el estrangulador (FX · TX.25)** · 🌐 · dep. T10.7
   - **Ficheros**: `internal/publicapi/` (33 + 64), `internal/apipublica/estrangulador.go` y lo que diga TX.25 de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md)
 - [ ] **T10.10 · relevo: fuera el arranque viejo** · 🌐 · dep. T10.2, T10.9
-  - **Ficheros**: `internal/bootstrap/` (22 + 20, con `huella_vieja_test.go`, `platform_permissions_test.go` y los 11 `*_cableado_test.go` viejos); `huella_test.go` queda solo contra la dorada
+  - **Ficheros**: `internal/bootstrap/` (22 de producción + 21 tests: los 20 de hoy más `huella_vieja_test.go`; entre ellos `platform_permissions_test.go` y los **9** `*cablead*_test.go` viejos); `huella_test.go` queda solo contra la dorada
   - **Hecho cuando**: I-CP-5 y los candados de cableado siguen en `internal/arranque` (F0) y pasan
 - [ ] **T10.11 · relevo: fuera los paquetes viejos** · 🌐 · dep. T10.10 · cumple R10.3.a–b
   - **Ficheros**: los 26 directorios restantes de `diseno.md` §1; `go.mod`/`go.sum` tras `GOWORK=off go mod tidy`

@@ -20,8 +20,9 @@ Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión we
 `SessionStart` está commiteado y probado en sus dos ramas.
 
 - [ ] **T0.0 · verificación del entorno de la primera sesión web** · 🌐 · dep. — · cumple R0.1.a–R0.1.e
-  - **Ficheros**: `documentations/reorganizacion-modular/06-entorno-web.md` (sección nueva §5
-    «Verificado en la primera sesión web, <fecha>»). **Nada más**: ni código ni `go.mod`.
+  - **Ficheros**: `documentations/reorganizacion-modular/06-entorno-web.md` (rellenar la §5 que ya
+    existe como hueco, «5 · Resultados de la primera sesión web ✎», con la fecha). **Nada más**:
+    ni código ni `go.mod`.
   - **Qué se corre** (cada uno con su `rc`, sin pipe):
     ```bash
     go version                                   # ¿1.26.5 o toolchain bajada por GOTOOLCHAIN=auto?
@@ -30,12 +31,13 @@ Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión we
     time (GOWORK=off make ci-local > /tmp/ci.log 2>&1; echo "GATE_RC=$?" >> /tmp/ci.log); tail -1 /tmp/ci.log
     docker info > /tmp/docker.log 2>&1; echo rc=$?
     ```
-    y la **prueba mínima de testcontainers**, en un directorio **fuera del árbol del repo**
-    (`D=$(mktemp -d)`; `cd "$D"`; `go mod init sonda`; `go get
-    github.com/testcontainers/testcontainers-go/modules/postgres`; un `sonda_test.go` con
-    `postgres.Run(ctx, "postgres:17-alpine", postgres.BasicWaitStrategies())`, un `SELECT 1` y
-    `Terminate`; `go test -v ./... ; echo rc=$?`). **No se commitea** y el `go.mod` del repo **no
-    cambia** (`git status --short` limpio salvo `06-entorno-web.md`).
+    y la **prueba de testcontainers**, en un directorio **fuera del árbol del repo**: la receta
+    **autoritativa** es la de [`../00-marco/flujo-web-local.md`](../00-marco/flujo-web-local.md) §5
+    (`testcontainers-go/modules/postgres@v0.44.0` —la versión que fija
+    [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §6— más `pgx/v5/stdlib`;
+    `postgres.Run(ctx, "postgres:17-alpine", …, postgres.BasicWaitStrategies())`, `SELECT 1`,
+    `CREATE DATABASE … TEMPLATE`, `Terminate`; `TC_RC` al log). **No se commitea** y el `go.mod`
+    del repo **no cambia** (`git status --short` limpio salvo `06-entorno-web.md`).
   - **Hecho cuando**: §5 de `06` lista las seis líneas con valor y `rc`, la duración de `ci-local`
     en segundos, y el veredicto de testcontainers («funciona» → la web puede correr procesos
     como **pre-chequeo**; «no funciona» → con el error literal). Si `golangci-lint` no es
@@ -48,13 +50,15 @@ Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión we
     (qué imprime, qué comprueba, qué hace en local). Esta tarea **solo lo implementa**; si el
     diseño y esta ficha chocan, manda el diseño.
   - **Ficheros**: `.claude/settings.json` (nuevo: hoy el repo **no tiene** `.claude/settings.json`,
-    medido con `ls .claude/` → solo `skills/`) y el script que el diseño nombre (propuesta:
-    `.claude/hooks/sesion-inicio.sh`).
-  - **Hecho cuando**: con `CLAUDE_CODE_REMOTE=true` el script imprime `go version`,
-    `golangci-lint version` y un aviso literal si no es `v2.12.2`; sin la variable (local) no
-    hace nada y sale con `rc=0`. Nunca bloquea la sesión (`rc=0` siempre: avisa, no impide).
-  - **Gate**: `bash .claude/hooks/sesion-inicio.sh; echo rc=$?` y
-    `CLAUDE_CODE_REMOTE=true bash .claude/hooks/sesion-inicio.sh; echo rc=$?` → `rc=0` los dos;
+    medido con `ls .claude/` → solo `skills/`) y el script que el diseño nombra:
+    `.claude/hooks/verificar-entorno.sh` (texto íntegro en `flujo-web-local.md` §4).
+  - **Hecho cuando**: con `CLAUDE_CODE_REMOTE=true` el script imprime la versión de Go,
+    la de `golangci-lint`, un aviso literal si no es `v2.12.2` y si Docker responde; **sin** la
+    variable (local) imprime lo mismo salvo Docker —el diseño lo quiere así para delatar el lint
+    v2.14.0 de la máquina local— y sale con `rc=0`. Nunca bloquea la sesión (`rc=0` siempre:
+    avisa, no impide).
+  - **Gate**: `bash .claude/hooks/verificar-entorno.sh; echo rc=$?` y
+    `CLAUDE_CODE_REMOTE=true bash .claude/hooks/verificar-entorno.sh; echo rc=$?` → `rc=0` los dos;
     `python3 -m json.tool .claude/settings.json >/dev/null; echo rc=$?` → `rc=0`.
   - **Commit**: `andamiaje(f0): hook SessionStart que verifica la toolchain en la web`
 
@@ -122,9 +126,12 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Medir antes de escribir la tabla**: correr el script de `02` §5 con el `MAP` de D-5
     (`acceso` fusionado con `operador`) sobre `dev` y copiar a la tabla las aristas
     módulo→módulo que hoy existen, **con la fecha y el SHA** en el comentario. Sin medir hoy.
-  - **Hecho cuando**: los tres tests pasan sobre el árbol real (sin módulos: recorren
-    `internal/pendiente`, `internal/candados`, `internal/apipublica` cuando exista y
-    `internal/arranque/huellatest`, y afirman `recorridos > 0`).
+  - **Hecho cuando**: los tres tests pasan sobre el árbol real con el **alcance** de
+    [`diseno.md`](diseno.md) §4 —`internal/modulos`, `internal/nucleo` (vacío hasta F1: el piloto
+    lo necesita cubierto, F1 entrada E2), `internal/apipublica`, `internal/pendiente`,
+    `internal/candados`, `internal/arranque/huellatest`— y afirman `recorridos > 0` (sin módulos:
+    recorren `pendiente`, `candados`, `huellatest` y `apipublica` cuando exista). Los paquetes
+    `…test` siguen la regla de D-F1-3 (`diseno.md` §4.2).
   - **Gate**: gate ci-local; `GOWORK=off go test -v ./internal/modulos/ 2>&1 | grep -c -- '--- SKIP'` → `0`.
   - **Commit**: `andamiaje(f0): candados de fronteras, un fichero un test y exportados cubiertos`
 
@@ -221,7 +228,7 @@ Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): candado de huella entre los dos arranques`
 
-## Bloque E · la cara nueva vacía, los ✎ de `platform` y la deriva · 🌐→💻 · T0.16–T0.21
+## Bloque E · la cara nueva vacía, los ✎ de `platform` y la deriva · 🌐→💻 · T0.16–T0.21, T0.27
 
 Para cuando: `apipublica` montada y vacía con la huella **igual**, los tres ✎ hechos con la
 huella **igual** y `go list` sin aristas `platform → dominio`, la deriva documental cerrada, y el
@@ -273,10 +280,10 @@ traspaso escrito para el bloque F.
   - **Commit**: `andamiaje(f0): platform/metrics deja de depender de inferstats`
 
 - [ ] **T0.20 · la deriva documental de `03` §2.2** · 🌐 · dep. T0.10 · cumple R0.8.a
-  - **Ficheros**: `documentations/{README,constitucion,contratos,operacion,deuda}.md` — las **17**
-    menciones medidas con
-    `grep -n 'internal/bootstrap/[a-z_]*\.go\|internal/publicapi/flows.go' documentations/*.md | grep -v bootstrap/arranque`
-    (2026-09-28), más «8 `*_cableado_test.go`» (`constitucion.md` §5, `deuda.md` D-9) → son **9**
+  - **Ficheros**: `documentations/{README,constitucion,contratos,operacion,deuda}.md` — las **18**
+    líneas medidas con
+    `grep -n 'internal/bootstrap/[a-z_]*\.go\|internal/publicapi/flows.go' documentations/*.md | grep -v bootstrap/arranque | wc -l`
+    (→ 18 el 2026-09-29 sobre `dev` @ `7021144`; el plan decía 17), más «8 `*_cableado_test.go`» (`constitucion.md` §5, `deuda.md` D-9) → son **9**
     y viven en `internal/bootstrap/arranque/`. Cada ruta se corrige a la de hoy **y** se añade
     «(copia en `internal/arranque/` desde F0)» donde el lector deba saberlo. `deuda.md:137` y
     `README.md:53` narran historia: se corrige solo lo que afirma el presente.
@@ -342,3 +349,29 @@ contiene F0 entera.
     falso en el `PATH` que imprime otra versión (sin commitear) → `rc≠0` y el mensaje.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): lint exige la versión fijada del Makefile`
+
+- [ ] **T0.27 · los barridos AST viejos dejan de ver el árbol nuevo** · 🌐 · bloque E, dep. T0.16, **decisión D-F4-1** · cumple R0.3.h
+  - **Por qué**: `internal/llmvia/c2_via_test.go:117` (`filepath.WalkDir("..")`) e
+    `internal/iam/infra/postgres/membresia_unica_ast_test.go:97` (`WalkDir(raizDelBarrido)`, con
+    `raizDelBarrido = "../../.."` en `:74`) recorren **todo** `internal/` y exigen una lista
+    **exacta** (ficheros que comparan por vía; escritores de `tenant_members`). El primer `verde`
+    de `modulos/acceso/iam/infra/postgres/memberships.go` (F2) o de
+    `modulos/inferencia/tenantllm/tenantllm.go` (F4) los pondría rojos, y con ellos `ci-local`.
+    Es la segunda excepción a E-1 (la primera, D-F0-3) y **subsume D-F2-2**. El árbol nuevo trae
+    sus propios candados (F2: el de membresía en `acceso`; F4: el C2 en `inferencia/llmvia`, que
+    barren el árbol nuevo). F2 y F4 **verifican** esta tarea; no la repiten. Si Jhoan dice «no», se
+    tacha y valen las alternativas: D-F2-2 en F2 y ampliar la lista del C2 viejo en F4, TX.13 y F7.
+  - **Ficheros**: esos dos tests viejos, **una línea** en cada callback de `WalkDir`, antes de
+    cualquier otro `return`: si la entrada es un directorio de **primer nivel** de `internal/` en
+    {`modulos`, `nucleo`, `arranque`, `apipublica`, `pendiente`, `candados`}, `return
+    filepath.SkipDir`. 🔴 Se compara la **ruta relativa a `internal/`**, no `d.Name()`:
+    `internal/bootstrap/arranque` también se llama `arranque` y tiene que seguir barriéndose.
+    (`candados` es nuevo desde T0.5; sus `testdata/` no deben poder poner rojo un candado viejo.)
+  - **Hecho cuando**: `git diff --stat` → solo esos dos ficheros, +1 línea cada uno (más un
+    import si hace falta); sus listas (`escritoresEsperados`, los permitidos del C2) **sin tocar**.
+    **Muerde al revés** (en el árbol, sin commitear, se deshace con `git stash -u && git stash
+    drop`): un `internal/modulos/zz/zz.go` con `if via == "local"` y el literal
+    `"INSERT INTO public.tenant_members"` → antes de la línea, los dos candados viejos en rojo;
+    después, verdes. Las dos salidas se pegan en el mensaje del commit.
+  - **Gate**: gate ci-local; `GOWORK=off go test -count=1 -v -run 'TestC2_|TestMembresiaUnica_' ./internal/llmvia/ ./internal/iam/infra/postgres/ > "$L" 2>&1; echo "RC=$?" >> "$L"; tail -1 "$L"` → `RC=0` y `grep -c -- '--- SKIP' "$L"` → `0`.
+  - **Commit**: `andamiaje(f0): los barridos AST viejos no ven el árbol nuevo (D-F4-1)`

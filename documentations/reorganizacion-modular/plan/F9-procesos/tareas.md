@@ -15,7 +15,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Ficheros**: `plan/F9-procesos/README.md` (sección «Decisiones», con fecha y lo decidido)
   - **Hecho cuando**: D-13 y D-F9-1..D-F9-4 tienen respuesta de Jhoan escrita; si D-F9-1 = no, las
     tareas 🕐 se reordenan según `arquitectura.md` §5.3
-  - **Gate**: `make check-docs` si existe en el repo; si no, revisión de enlaces a mano
+  - **Gate**: revisión de enlaces a mano (`make check-docs` **no existe** en este repo: `grep -c check-docs Makefile` → 0, 2026-09-29; es un target de la raíz de wApp, que la web no ve)
   - **Commit**: `docs(reorganizacion-modular): F9, decisiones D-13 y D-F9`
 
 - [ ] **T9.2 · procesos(arnes): testcontainers-go en `go.mod`** · 🌐 · dep. T9.1 · cumple R9.1.a

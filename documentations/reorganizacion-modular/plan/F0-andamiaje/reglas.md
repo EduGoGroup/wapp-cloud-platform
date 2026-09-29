@@ -8,7 +8,7 @@
 | Qué | Por qué | Única salvedad en F0 |
 |---|---|---|
 | `internal/bootstrap/**` (fachada y los 21 ficheros del arranque viejo) | Es el **oráculo** y lo que corre en UAT (`05` E-1, §4) | añadir `huella_vieja_test.go` (test, D-F0-2) |
-| Los paquetes viejos de dominio | Referencia y UAT (E-1) | una línea de alias en `gateway/session/registry.go:22`, `iam/ports/in/usecases.go:129`, `inferstats/inferstats.go:144` (D-F0-3) |
+| Los paquetes viejos de dominio | Referencia y UAT (E-1) | una línea de alias en `gateway/session/registry.go:22`, `iam/ports/in/usecases.go:129`, `inferstats/inferstats.go:144` (D-F0-3); y, en tests viejos, una línea en `llmvia/c2_via_test.go` y otra en `iam/infra/postgres/membresia_unica_ast_test.go` para que no barran el árbol nuevo (D-F4-1, T0.27) |
 | `internal/platform/**` | Lo comparten los dos arranques | los tres ✎: `httpapi/admin.go`, `httpapi/audit_mw.go`, `metrics/inferstats.go` |
 | `cmd/server/**` | Es el binario que se despliega | ninguna |
 | `go.mod` / `go.sum` | testcontainers entra en F9, con su decisión (T-2 del marco) | ninguna: T0.0 prueba testcontainers **fuera** del árbol |

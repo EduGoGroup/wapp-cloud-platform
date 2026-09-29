@@ -1,9 +1,9 @@
 # Reorganización modular de `internal/` — portal
 
-> **Estado: ANÁLISIS DE FACTIBILIDAD** (2026-09-27). Todavía **no es un plan ejecutable**: no
-> hay olas, ni tareas, ni prompts de implementación. Esos documentos se escriben **después** de que
-> Jhoan valide este análisis y decida las preguntas abiertas de
-> [`03-pendientes-y-contratos.md`](03-pendientes-y-contratos.md) §3.
+> **Estado: PLAN ESCRITO · ejecución sin empezar** (2026-09-28). El análisis (01–06) está cerrado
+> y el **plan de trabajo ejecutable** vive en [`plan/`](plan/README.md): una *spec* por fase
+> (historias de usuario, arquitectura, diseño, reglas y tareas), el registro de decisiones y las
+> **sesiones con su prompt** para Claude Code en la web y en local.
 
 ## Qué se pretende
 
@@ -36,6 +36,7 @@ reglas están en [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md),
 | [`03-pendientes-y-contratos.md`](03-pendientes-y-contratos.md) | Lo que **no se toca** (contratos externos), las **precondiciones** antes de pasárselo a Claude Code en la web, y las **decisiones abiertas** |
 | [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md) | 🔒 **Normativo.** Cómo se construye: contratos sin lógica, un test por fichero escrito **desde el contrato** para que el código nazca cubierto, rojo antes que verde, los candados, las fases F0–F10 y la integración **de cero, por proceso**. Los tests viejos se consultan, no se portan. **Manda sobre los anteriores** |
 | [`06-entorno-web.md`](06-entorno-web.md) | Qué ve Claude Code en la web (y qué no), **las cinco skills del repo**, y el script de preparación del entorno (lint fijado) |
+| [`plan/`](plan/README.md) | 🚀 **El plan de trabajo ejecutable**: marco común, una *spec* por fase (F0–F10 y la transversal FX, la cara HTTP nueva), [`DECISIONES.md`](plan/DECISIONES.md) y [`sesiones/`](plan/sesiones/README.md), con el orden y el prompt de cada sesión |
 | [`04-estructura-final.md`](04-estructura-final.md) | **El acabado, visual**: el árbol completo de `cmd/` e `internal/` fichero a fichero, cómo se llega por **fases** con **dos arranques en paralelo**, y la tabla de correspondencia que usará el script |
 
 ## Para quien implemente (Claude Code en la web)

@@ -13,7 +13,8 @@
 **Regla** (la del ecosistema): cuenta un **registro que ocurre en ejecución** con el cableado de
 producción, **una vez por patrón**, aunque el patrón aparezca en dos ramas de un `if`. Un bucle
 sobre N elementos contaría N (no hay ninguno: `grep -n 'for .*range'` sobre los cinco ficheros de
-registro → vacío). Un comentario que contiene `mux.Handle` no cuenta. Un `Register` que solo llaman
+registro → una sola línea, `eventstelemetry.go:156`, que recorre filas **dentro de un handler** y no
+registra nada). Un comentario que contiene `mux.Handle` no cuenta. Un `Register` que solo llaman
 tests no cuenta.
 
 ```bash
@@ -133,12 +134,15 @@ Monta si: D2 `Sessions` · D3 `SessionProfiles` · D4 `SessionStatus` · D5 y D6
 
 | # | Método + patrón | Línea | Handler | Cadena · permiso | Dominio (módulo) | Singleton | Mín. | **Muda en** |
 |---|---|---|---|---|---|---|---|---|
-| E1 | `GET /api/v1/intents` | `:571` | `intents.go` · `getIntentsHandler` | R `intents.read` | `intentcfg` (captación) | — | F7 | **F3** (familia de E2) |
-| E2 | `PUT /api/v1/intents` | `:573` | `intents.go` · `putIntentsHandler` | W `intents.write` (`intents`) + gate `llm_intent` **dentro** del handler | `intentcfg` (captación), `entitlements` (acceso), `wapp-shared/intents` | **gw directo** (`ConfigPush`, best-effort: su error solo se registra) | F7 | **F3**, con **puente declarado** `apipublica → internal/intentcfg` que se retira en F7 |
+| E1 | `GET /api/v1/intents` | `:571` | `intents.go` · `getIntentsHandler` | R `intents.read` | `intentcfg` (captación) | — | F7 | **F7** (familia de E2) |
+| E2 | `PUT /api/v1/intents` | `:573` | `intents.go` · `putIntentsHandler` | W `intents.write` (`intents`) + gate `llm_intent` **dentro** del handler | `intentcfg` (captación), `entitlements` (acceso), `wapp-shared/intents` | **gw directo** (`ConfigPush`, best-effort: su error solo se registra) | F7 | **F7**; de F3 a F7 la cara vieja la sirve con el **gw nuevo** inyectado en `ConfigPush` (puerto estructural) |
 
-Monta si: `Intents` **y** `Entitlements` (`:570`). 🔶 **Decisión D-FX-1** del
-[`README.md`](README.md): la alternativa es dejar E1–E2 en la cara vieja hasta F7 con el `gw`
-nuevo inyectado por su puerto estructural. Mientras no se decida, **manda D-10 literal: F3**.
+Monta si: `Intents` **y** `Entitlements` (`:570`). 🔶 **Decisión D-FX-1** (= D-F7-4) del
+[`README.md`](README.md), con la **recomendación** de [`../DECISIONES.md`](../DECISIONES.md) como
+línea base: E1–E2 se quedan en la cara vieja hasta **F7** con el `gw` nuevo inyectado por su puerto
+estructural (`publicapi.ConfigPusher`), y se mudan allí sin puente. *Nota — alternativa (D-10
+literal)*: mudarlas en F3 con un puente declarado `apipublica → internal/intentcfg` que se retira en
+F7; exige la vía de excepción de la regla 4 de fronteras de F0.
 
 ### 2.6 · Inferencia — 4
 
@@ -222,7 +226,7 @@ Monta si: I1–I10 siempre · I11–I13 `Triggers` · I14–I17 `Content`, `Cont
 
 El mux admin lo cablea **entero** el arranque (`registerAdminRoutes`, una sola función, la que
 llama `mux_registration_test.go`). No hay cara vieja que delegar: el arranque nuevo
-(`internal/arranque/transporte_rutas_admin.go`, `04` §3) **cambia el constructor del handler** en
+(`internal/arranque/rutas_admin.go`, la copia de F0 con el mismo nombre; `04` §3 la llamaba `transporte_rutas_admin.go`) **cambia el constructor del handler** en
 la fase indicada. Cadena de todas salvo `/healthz` y `/metrics`: `adminHandler` =
 Authenticate → RequirePermission → AuditMiddleware (`arranque/http.go:216`), sin access-log.
 
@@ -255,7 +259,7 @@ ruta se muda con el singleton.** Aplicada:
 
 | Singleton | Rutas con uso **directo** | Muda forzada | Conflicto |
 |---|---|---|---|
-| gw (F3) | D1 `Sender` · D5 `DiagnosticsRequester` · E2 `ConfigPush` · (admin J12–J15) | F3 | **E1–E2**: su código es de captación (F7) → F3 con puente (D-FX-1) |
+| gw (F3) | D1 `Sender` · D5 `DiagnosticsRequester` · E2 `ConfigPush` · (admin J12–J15) | F3 (salvo E2) | **E1–E2**: su código es de captación (F7) → se quedan en la vieja hasta F7 con el gw **nuevo** inyectado en `ConfigPush` (D-FX-1/D-F7-4; la regla de arriba no obliga: el puerto es estructural y no exige la instancia vieja) |
 | gw (F3) vía `filtercfg.Pusher` | D3 (`ProfilePush`) · J16 | F3 | Ninguno: todo es edge; solo cambia dónde vive el handler ([`diseno.md`](diseno.md) §1, `sessionadmin.go`) |
 | rt (F8) | I4 `Starter` · I19 `EventCanceller` · J19 | F8 | Ninguno |
 
@@ -292,7 +296,9 @@ copiado**. En F7 el arranque pasa a leerlo del `pipeline` nuevo.
 compara `gateway/session.ErrSessionOffline` **viejo** (`publicapi/flows.go:235`,
 `flujos/admin/handlers.go:326`), pero el runtime viejo enviará por el **gw nuevo**, que devolverá el
 centinela **nuevo**. Sin remedio, «sesión offline» deja de mapearse y cambia el código HTTP.
-Remedio propuesto (D-FX-3): en F3, `modulos/edge/session` declara
+Remedio (**D-F3-2**, recomendación): desde el ✎ de F0 (T0.17) el centinela viejo **es** el de
+`platform`, y en F3 `modulos/edge/session` declara `var ErrSessionOffline = <el de platform>`:
+viejo y nuevo son el mismo valor, sin puente. *Nota — alternativa (D-FX-3, solo si D-F3-2 = no)*:
 `var ErrSessionOffline = oldsession.ErrSessionOffline` como **puente de identidad** declarado, que
 se retira al cerrar F8.
 
@@ -303,13 +309,13 @@ se retira al cerrar F8.
 | F0 | 0 (nace la cara vacía y el estrangulador) | 0 | — |
 | F1 | 0 | 0 | — |
 | **F2** `acceso` | **23** | 8 | A1–A7, B1–B14, C1–C2 · J4–J11 |
-| **F3** `edge` | **8** (6 + 2 de intenciones con puente) | 6 | D1–D6, E1–E2 · J12–J17 |
+| **F3** `edge` | **6** | 6 | D1–D6 · J12–J17 |
 | **F4** `inferencia` | **4** | 0 | F1–F4 |
 | **F5** `catalogo` | **0** (sus 4 rutas escriben por `flujos/store`: van en F8) | 0 | — |
 | **F6** `solicitudes` | **18** | 0 | G1–G18 |
-| **F7** `captacion` | **1** | 0 | H1 |
+| **F7** `captacion` | **3** (H1 + las 2 de intenciones, D-FX-1/D-F7-4) | 0 | H1, E1–E2 |
 | **F8** `conversacion` | **19** | 5 | I1–I19 · J18–J22 |
 | **Total** | **73** | 19 (+3 que no cambian) | |
 
-Con D-FX-1 en su alternativa, F3 muda 6 y F7 muda 3. Al cerrar F8 la cara vieja no sirve
+Con D-FX-1 en su forma literal (alternativa), F3 mudaría 8 (con E1–E2 y un puente) y F7 solo 1. Al cerrar F8 la cara vieja no sirve
 **ninguna** ruta en el binario nuevo; en F10 se borran `internal/publicapi` y el estrangulador.

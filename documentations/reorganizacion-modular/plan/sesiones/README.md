@@ -48,8 +48,8 @@
 | 4 | [`F0-02-web-pendiente-y-make`](F0-02-web-pendiente-y-make.md) | 🌐 | F0 | B | T0.2–T0.4 | pendiente |
 | 5 | [`F0-03-web-candados`](F0-03-web-candados.md) | 🌐 | F0 | C | T0.5–T0.9 | pendiente |
 | 6 | [`F0-04-web-arranque-y-huella`](F0-04-web-arranque-y-huella.md) | 🌐 | F0 | D | T0.10–T0.15 | pendiente |
-| 7 | [`F0-05-web-cara-vacia-platform-deriva`](F0-05-web-cara-vacia-platform-deriva.md) | 🌐 | F0 | E | T0.16–T0.21 | pendiente |
-| 8 | [`F0-06-cli-cierre`](F0-06-cli-cierre.md) | 💻 | F0 | E/F | T0.16–T0.21 + T0.22–T0.25 | pendiente |
+| 7 | [`F0-05-web-cara-vacia-platform-deriva`](F0-05-web-cara-vacia-platform-deriva.md) | 🌐 | F0 | E | T0.16–T0.21, T0.27 | pendiente |
+| 8 | [`F0-06-cli-cierre`](F0-06-cli-cierre.md) | 💻 | F0 | E/F | T0.16–T0.21, T0.27 + T0.22–T0.25 | pendiente |
 | 9 | [`F9-01-web-arnes`](F9-01-web-arnes.md) | 🌐 | F9 | A | T9.1–T9.12 🕐 | pendiente |
 | 10 | [`F9-02-cli-arnes-cierre`](F9-02-cli-arnes-cierre.md) | 💻 | F9 | A | T9.1–T9.12 🕐 | pendiente |
 | 11 | [`F1-01-web-contratos-y-rojo`](F1-01-web-contratos-y-rojo.md) | 🌐 | F1 | A | T1.1–T1.7 | pendiente |

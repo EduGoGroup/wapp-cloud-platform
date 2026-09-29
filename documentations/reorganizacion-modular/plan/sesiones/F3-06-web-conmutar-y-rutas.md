@@ -6,7 +6,7 @@
 | Tareas | T3.24–T3.28 |
 | Depende de | F3-05 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F3 bloque G» |
-| Se para cuando | huella igual · un gw · 8 + 6 rutas · `puente_iam.go` borrado · PR · traspaso. |
+| Se para cuando | huella igual · un gw · 6 + 6 rutas · `puente_iam.go` borrado · PR · traspaso. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F3 · edge → documentations/reorganizacion-modular/plan/F3-edge/
 - Bloque(s): G · puente, cara nueva y conmutación
 - Tareas: T3.24–T3.28 de plan/F3-edge/tareas.md
-- Te paras cuando: huella igual · un gw · 8 + 6 rutas · `puente_iam.go` borrado · PR · traspaso.
+- Te paras cuando: huella igual · un gw · 6 + 6 rutas · `puente_iam.go` borrado · PR · traspaso.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F3 bloque G» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, validar-antes-de-cerrar, traspaso-web-local.
 

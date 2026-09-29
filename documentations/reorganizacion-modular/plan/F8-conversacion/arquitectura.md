@@ -104,9 +104,9 @@ Orden de la pasada de contratos **y** de la de verde: `model` → `trigger` → 
 
 | Consumidor | Cable hoy | Tras F8 |
 |---|---|---|
-| Gateway: `gw.OnIncoming = c.flowRuntime.OnIncoming` | `fase7_flujos.go` (FX: `:127`) | `fase7_conversacion.go` con el `gw` nuevo de F3 |
+| Gateway: `gw.OnIncoming = c.flowRuntime.OnIncoming` | `fase7_flujos.go` (FX: `:127`) | `fase7_flujos.go` con el `gw` nuevo de F3 |
 | `POST /api/v1/flows/{id}/start` (I4, `Starter`) · `POST /api/v1/conversation-events/{id}/cancel` (I19, `EventCanceller`) | `fase8_transporte.go:177,229` → `publicapi` viejo | `apipublica` (FX TX.24) |
-| `/admin/flows/start` (J19, `flowadmin.StartHandler(c.flowRuntime)`) | `fase8_transporte.go:129` | `transporte_rutas_admin.go` con `C/admin` |
+| `/admin/flows/start` (J19, `flowadmin.StartHandler(c.flowRuntime)`) | `fase8_transporte.go:129` | `rutas_admin.go` con `C/admin` |
 | Métricas (`SetFlowAutoreplyStreakMaxSource`) | `fase7_flujos.go` | ídem, runtime nuevo |
 | Fondo (`go c.intakeAggregator.Run(ctx)`) | `fase9_fondo.go:75` | `fase9_fondo.go` del arranque nuevo, agregador nuevo |
 
@@ -126,7 +126,7 @@ Medidos sobre el código viejo (quién fuera de `flujos/**` importa `flujos/**`,
 | F6 | `solicitudes/intakes/telemetria` (`intakes/telemetria/telemetria.go:23`) | `flujos/store` | `store.FlowEvent` en su puerto | 1 fichero + test |
 | F7 | `captacion/stages` (`intake/stages/draft.go`) | `flujos/store` | `store.Intake` (`draft.go:331-332,517`), `store.FlowEvent` (`:348,855,896`) | 1 fichero + test; el arranque le pasa el `store` **nuevo** |
 | F7 | `captacion/reanalisis` (`reanalisis/reanalisis.go:53-55`) | `flujos/events`, `flujos/runtime` | `events.ThreadEntry` (`:251,704`), `events.KindMessage` (`:706`), `runtime.DefaultThreadLimit` (`:666`); `*runtime.SourceTextComposer` solo en comentario (`:266`) | 1 fichero + test |
-| F3 (FX D-FX-3) | `edge/session` | `internal/gateway/session` (identidad de `ErrSessionOffline`) | una línea `var ErrSessionOffline = …` | 1 fichero: el centinela pasa a ser propio. Cierra FX TX.24 |
+| *(solo si D-F3-2 = no)* F3 (FX D-FX-3) | `edge/session` | `internal/gateway/session` (identidad de `ErrSessionOffline`) | una línea `var ErrSessionOffline = …` | 1 fichero. **Con la recomendación (D-F3-2) no existe**: viejo y nuevo son el centinela de `platform` desde F0 (T0.17) y aquí no hay nada que retirar |
 
 No son puentes (medido): `captacion/pipeline` (`memoria.go`: tipos de catálogo → `catalogo`),
 `captacion/stages/match*.go` (`SanitizeNote` → `solicitudes/intakes`; `cart.PriceListOf` es solo
@@ -137,26 +137,31 @@ comentario, `match_lineas.go:56`), `catalogo/catalogimport` (tipos de catálogo 
 
 Patrón fijado por F1: cuando un paquete **nuevo** tiene que cooperar con uno **viejo** que el
 arranque nuevo aún cablea, el tipo se adapta en `internal/arranque/puente_<x>.go`. El runtime viejo
-es el mayor consumidor de tipos de otros módulos, así que **todos** mueren aquí:
+es el mayor consumidor de tipos de otros módulos, así que **todos los que quedan** mueren aquí (dos ya murieron antes: `puente_iam` en F3, `puente_gateway` en F4):
 
-| Adaptador | Nace | Por qué existe | Sin medir |
+| Adaptador | Nace | Por qué existe | Muere |
 |---|---|---|---|
-| `puente_contact.go` | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | — |
-| gateway (nombre según F3) | F3 | el runtime viejo recibe `c.gw` (`Sender`, `SendText/SendMedia` con `*cloudlinkv1.Ack`) y el gateway nuevo recibe `OnIncoming` | si hace falta adaptador o es estructural (FX `arquitectura.md` §4.2) |
-| inferencia (`llmvia`) | F4 | `turnoacotado` viejo recibe `*llmvia.Selector` | nombre y forma |
-| captación (ventana) | F7 | `intakeahead.SinkFunc(func(key intake.WindowKey, …))` nuevo → `IntakeAggregator.OnClassified` viejo; `NewIntakeAggregator(…, c.intakeJobStore, …)` pide `intake.JobStore` viejo; `NewSourceTextComposer` y `turnoacotado.New` se construyen en la fase de captación (`fase5_captacion.go:62,122`) | F7 aún sin spec escrita: **a reconciliar con F7** |
-| solicitudes | F6 | `cart.NewProjector(c.flowStore, c.intakeStore, c.intakeStore, c.buyerDataStore)`, `WithIntakeAbandoner(c.intakeService)`, `WithDepositReminder(c.depositReminder)`, `NewWebhookSink(…, c.integrationsStore, c.webhookGate)` piden tipos viejos de `intakes`/`integrations` | nombre y forma |
-| acceso | F2 | `WithEntitlements(c.entResolver)`, `events.NewDispatcher(…, c.entResolver)` piden `entitlements.Resolver` viejo | si es estructural |
+| `puente_contact.go` | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | **aquí** (T8.32) |
+| `puente_iam.go` | F2 | el gateway viejo pide `in.Authenticator`/`in.Auditor` viejos | **F3** (T3.28): ya no existe al llegar aquí |
+| `puente_gateway.go` (`Infer` + `PlazaDe`) | F3 | el `local.Frame` del `llmvia` viejo pide `InferRequest` viejo. El runtime viejo recibe `c.gw` **sin** adaptador (estructural, F3 `arquitectura.md` §4) | **F4** (T4.24): ya no existe al llegar aquí |
+| `puente_inferencia.go` | F4 | `puenteConfigLLM` (`reanalisis` viejo, `tenantllm.Config` viejo) y `puenteTurnero` (`turnoacotado` viejo recibe `llmvia.TurnoRequest` y compara `ErrViaSinTurnoAcotado` viejos) | `puenteConfigLLM` en **F7**; `puenteTurnero` **aquí** (T8.32) |
+| `puente_captacion.go` | F7 | `adelantoViejo`, `compositorViejo` y la clausura del sink (`intakeahead.SinkFunc` → `IntakeAggregator.OnClassified` viejo), conversión de `WindowKey` | **aquí** (T8.32) |
+| 2.ª instancia vieja de `intakes.Postgres` | F6 (D-F6-1) | `cart.NewProjector` viejo pide `RevisionWriter`/`ShippingEnsurer` con tipos de `intakes` viejo | **aquí** (T8.32) |
+| 2.ª instancia vieja de `intake.Postgres` | F7 (D-F7-1) | `NewIntakeAggregator`/`NewSourceTextComposer` viejos piden `JobStore`/`SourceTextWriter` viejos | **aquí** (T8.32) |
+| — acceso · solicitudes | — | `WithEntitlements`, `events.NewDispatcher` (`entitlements.Resolver`) y los puertos del runtime/sink de solicitudes son **estructurales** (F2 §4, F6 §4): el objeto nuevo entra tal cual, sin adaptador | — |
+
+Tabla única del plan (con las discrepancias que había): [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1.
+T8.2 la re-mide contra el árbol real antes de tocar nada.
 
 **Dimensión del re-toque** (lo más arriesgado de F8): **6 paquetes nuevos** re-tocados (§5.1, ~6
-ficheros y sus tests), **todos** los `puente_*.go` borrados (≥ 1 medido, hasta ~6 previstos) y
-`fase7_conversacion.go` + `fase5_captacion.go` + `fase6_solicitudes.go` + `fase8_transporte.go` +
-`fase9_fondo.go` + `transporte_rutas_admin.go` del arranque nuevo re-cableados en la misma ola. El
+ficheros y sus tests), **todos** los `puente_*.go` que quedan borrados (3: `puente_contact`, `puente_inferencia`, `puente_captacion`), las dos segundas instancias viejas fuera, y
+`fase7_flujos.go` + `fase5_captacion.go` + `fase6_solicitudes.go` + `fase8_transporte.go` +
+`fase9_fondo.go` + `rutas_admin.go` del arranque nuevo re-cableados en la misma ola. El
 riesgo no es de compilación (el compilador lo caza) sino de **identidad**: dos instancias de algo
 que tiene que ser una (`entResolver` con su caché TTL, `flowDeps.kp` del índice ciego, el `gw`).
 [`reglas.md`](reglas.md) §2 las lista.
 
-## 6 · Cableado en el arranque nuevo (`internal/arranque/fase7_conversacion.go`)
+## 6 · Cableado en el arranque nuevo (`internal/arranque/fase7_flujos.go`)
 
 Hoy `internal/bootstrap/arranque/fase7_flujos.go` (`requiere`: `gateway`, `selector`,
 `almacenes`, `solicitudes`; marca `flujos`). En F8 la fase nueva construye, **con paquetes de `C`**:

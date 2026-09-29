@@ -23,7 +23,8 @@ grep -rn 'pendiente.Implementar' --include='*.go' internal | wc -l     # lo que 
 ls internal/modulos internal/nucleo internal/arranque 2>/dev/null       # qué existe ya
 ```
 
-- Trabajas sobre **`dev`**, al día con `origin/dev`. Toda ola aterriza en `dev`; `main` solo lo
+- La sesión **local** trabaja sobre **`dev`**, al día con `origin/dev`; la **web**, en su rama
+  partida de `origin/dev`, y abre PR `--base dev` (`plan/sesiones/PROTOCOLO-WEB.md`). Toda ola aterriza en `dev`; `main` solo lo
   mueve la sesión local cuando Jhoan lo pide.
 - **¿En qué fase estás?** Lo dice lo que existe, no lo que recuerdes. Si `internal/arranque` no
   existe, estás en **F0**. Si F1 cerró y nadie decidió seguir, **para**: F1 es un piloto con parada

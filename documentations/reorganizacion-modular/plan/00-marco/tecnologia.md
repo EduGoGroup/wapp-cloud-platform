@@ -50,6 +50,24 @@
 🔴 **Cero `t.Skip`** en código nuevo (E-5, DT-52). Un test que no puede correr aquí **falla** o vive
 tras una etiqueta; nunca se salta con `rc=0`.
 
+### 3.1 · La regla del rojo: el contrato lleva **solo exportados**
+
+Hallazgo del piloto (F1 [`reglas.md`](../F1-nucleo-contact/reglas.md) T-1, sonda del 2026-09-28 con
+golangci-lint 2.14.0; **se reconfirma con v2.12.2** en T1.1). El fichero de producción de un rojo
+**no** lleva etiqueta —solo su `x_test.go` la lleva—, así que `make lint` lo ve; y el linter
+`unused` falla ante cualquier `const`, `var`, `func`, tipo o campo **no exportado** sin uso. Un
+contrato con ayudantes privados, o con un struct que ya declara sus campos, **rompe `ci-local`**.
+
+- En el commit `rojo`: solo símbolos **exportados** (con su comentario-promesa y cuerpo
+  `panic(pendiente.Implementar(…))`) y structs **sin campos**.
+- Los no exportados (ayudantes, campos, constantes internas) **nacen con la lógica**, en el commit
+  `verde`, junto con sus casos de test. Un exportado cuyo único propósito es un ayudante tampoco se
+  inventa para esquivarlo.
+- Un tipo **no exportado** que implementa un puerto (los adaptadores `internal/arranque/puente_<x>.go`)
+  se mantiene «usado» con una aserción de compilación: `var _ viejo.Puerto = (*puenteX)(nil)`.
+- Lo mismo vale para `internal/apipublica` y `internal/nucleo`: la regla es del linter, no del
+  módulo. Toda fase la cita como «T-1 de F1»; si una fase dice otra cosa, manda esta.
+
 ## 4 · Cuánto tarda el gate (medido en local el 2026-09-28)
 
 | Corrida | `make ci-local` | rc | Máquina |
@@ -153,3 +171,16 @@ tools»): es exactamente un «Postgres vivo». El candado `sin_bd_viva_test.go` 
   antes, y dicho en el traspaso; la alternativa (un `go.mod` aparte para `test/procesos/`) añade un
   segundo módulo y contradice «un solo paquete, un contenedor» solo en apariencia, pero complica
   `GOWORK=off`.
+
+## 9 · Cifras de referencia que citan varias fases (medidas el 2026-09-29, `dev` @ `7021144`)
+
+Las fases las heredaron de `03`/`05` o las midieron cada una con otra regla, y discrepaban. Estas
+son **las buenas**, con su comando; si una fase dice otra cifra, manda esta (y se corrige la fase).
+
+| Qué | Cifra | Regla de conteo y comando |
+|---|---:|---|
+| Variables de entorno | **71** | ver [`producto.md`](producto.md) §4: 69 `loader.Get*` + `FLOW_REPLY_RATE` (`getFloat`) + `WAPP_CONFIG_FILE` (`os.Getenv`) |
+| Tests de cableado del arranque viejo | **9** | ficheros con `cablead` en el nombre: `ls internal/bootstrap/arranque/*cablead*_test.go \| wc -l` → 9 = **8** `*_cableado_test.go` + `flow_options_cableadas_test.go`. «8» (constitución, `deuda.md` D-9) cuenta solo el sufijo exacto; «11» (`05` §3.2) es otra cosa: los ficheros de test del arranque que **leen AST** (9 + `platform_permissions_test.go` + `astpaquete_test.go`) |
+| Paquetes de dominio con SQL | **22** | `grep -rlE '"database/sql"\|"github.com/jackc/pgx' --include='*.go' internal \| grep -v '_test\.go' \| xargs -n1 dirname \| sort -u \| grep -vE '^internal/(platform/\|bootstrap\|publicapi)' \| wc -l` → 22. Fuera: `platform/**` (se queda), el arranque y la cara vieja (`publicapi/eventstelemetry_store.go`, que se queda en la cara por D-FX-4). `05` E-6 dice 20: le faltan `flujos/events` y `flujos/runtime` |
+| … de ellos, **con** gemelo en memoria | **15** | por paquete, `grep -lE '^func (\([a-z]+ \*?[A-Za-z]+\) )?(NewMemory\|NuevaMemoria\|NewFake)\|^type (Memory\|Memoria\|Fake)[A-Za-z]* struct' <paquete>/*.go \| grep -v _test`, más `iam/infra/memory` para `iam/infra/postgres`: `diagnostics`, `entitlements` (`Fake`), `flujos/contact`, `flujos/store`, `flujos/trigger`, `gateway/enroll`, `gateway/fleet`, `gateway/lease`, `iam/infra/postgres`, `ingest`, `intake`, `intakes`, `intentcfg`, `receipts`, `tenantvars` |
+| … **sin** gemelo en memoria | **7** | `casebank`, `degradation`, `flujos/events`, `flujos/runtime` (`self_numbers.go`, `tenant_resolver.go`), `integrations`, `platformadmin`, `tenantllm`. Necesitan **doble nuevo** en su `<paquete>test` (E-6). `05` E-6 dice «12 sin gemelo» (contaba por nombre de fichero `memory*`); las fases dijeron 11 (F7) o 6+2 (F9, que además daba `entitlements` sin gemelo) |

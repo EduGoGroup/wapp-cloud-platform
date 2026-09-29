@@ -291,7 +291,7 @@ subtest. «Memoria» = implementación en memoria hoy (medido con
 |---|---|---|---|
 | `flujos/contact` | `nucleo` (F1) | sí | T9.22 (o F1 · T1.13) |
 | `iam/infra/postgres` | `acceso` (F2) | sí (`iam/infra/memory`) | T9.23 |
-| `entitlements` · `platformadmin` | `acceso` (F2) | no · no | T9.23 |
+| `entitlements` · `platformadmin` | `acceso` (F2) | **sí** (`Fake`, `entitlements.go`; D-F2-4 lo muda a `entitlementstest`) · no | T9.23 |
 | `gateway/enroll` · `gateway/fleet` · `gateway/lease` | `edge` (F3) | **sí** (`NewMemory…`) ×3 | T9.24 |
 | `diagnostics` · `ingest` · `receipts` | `edge` (F3) | sí · sí · sí | T9.24 |
 | `tenantllm` · `degradation` | `inferencia` (F4) | no · no | T9.25 |
@@ -300,9 +300,10 @@ subtest. «Memoria» = implementación en memoria hoy (medido con
 | `intake` · `casebank` · `intentcfg` | `captacion` (F7) | sí · no · **sí** (`store.go:53`) | T9.28 |
 | `flujos/store` · `flujos/trigger` · `flujos/events` · `flujos/runtime` | `conversacion` (F8) | sí · sí · no · no | T9.29 |
 
-22 paquetes con SQL (`05` E-6 dice 20). Los 12 «sin gemelo» de `05` son en realidad **6**
-(`entitlements`, `platformadmin`, `tenantllm`, `degradation`, `integrations`, `casebank`) **más** los dos
-que `05` no contó (`flujos/events`, `flujos/runtime`).
+22 paquetes con SQL (`05` E-6 dice 20). Los 12 «sin gemelo» de `05` son en realidad **5**
+(`platformadmin`, `tenantllm`, `degradation`, `integrations`, `casebank`) **más** los dos que `05` no
+contó (`flujos/events`, `flujos/runtime`): **7**. La cifra y su comando, en
+[`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §9.
 
 ## 6 · El candado `sin_bd_viva_test.go`
 

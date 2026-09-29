@@ -128,8 +128,8 @@ Qué fases del arranque (copia de F0) tocan `acceso` hoy (`internal/bootstrap/ar
 
 `conmutar(acceso)` cambia, **en la copia de `internal/arranque`** (el viejo no se toca): los imports a
 `internal/modulos/acceso/...`; `c.entResolver` pasa a `*acceso/entitlements.Postgres`; el gateway
-(aún viejo) recibe `puente_iam`; `http.go`/`transporte_http.go` monta A1–A7 en `apipublica`
-(FX TX.7); `transporte_rutas_admin.go` construye J4–J11 **inline** con `platformadmin.*` nuevo
+(aún viejo) recibe `puente_iam`; `http.go` monta A1–A7 en `apipublica`
+(FX TX.7); `rutas_admin.go` construye J4–J11 **inline** con `platformadmin.*` nuevo
 (I-CP-5). La huella (`huella_test.go`) tiene que dar lo mismo: rutas, permisos, rpc, métricas,
 goroutines. **Cómo se prueba que usa lo nuevo**: `go list -deps ./cmd/server-modular` (R2.5.d) y una
 aserción de cableado en `internal/arranque` sobre el tipo concreto de `c.entResolver`.

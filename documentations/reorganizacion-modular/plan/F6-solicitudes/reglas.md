@@ -8,7 +8,7 @@
 - **`docs/contracts/wapp-crm-v1/`** (7 ficheros + `examples/`): contrato externo congelado. Se lee
   desde el test nuevo con otra ruta relativa; la carpeta no se mueve.
 - **Las migraciones** (`internal/platform/storage/postgres/migrations/structure/*.sql`): cero cambios.
-- **La lista `fases` y el orden de construcción** de `internal/arranque` (`orquestador.go:45-50`).
+- **La lista `fases` y el orden de construcción** de `internal/arranque` (`orquestador.go:51-61`; el comentario «el orden ES el contrato», `:45-50`).
 - `documentations/literal-aviso-sesion-pasiva.md` (no es de F6, pero ningún bloque lo toca).
 
 ## 2 · Trampas conocidas
@@ -21,8 +21,8 @@
 | T-4 | El candado de vencimiento **viejo** barre el repo entero como **texto**: un literal completo del evento de expiración en cualquier fichero nuevo lo pone rojo | `inv_vencimiento_ast_test.go:44,69` (`raízDelRepo = "../.."`) | Componerlo siempre por concatenación, también en tests y en esta documentación |
 | T-5 | El prefijo `cart:` del error de `note.go` **es observable** aunque el fichero cambie de paquete | `cart/note.go` (`NoteTooLongError.Error`) | D-F6-4: se conserva |
 | T-6 | Candados de cableado copiados en F0 buscan el **texto** `quotetext.NewServicio`, `quotetext.ConSemilla`, `stages.ConEmpujeCRM` y el campo `QuoteSuggestions` | `internal/bootstrap/arranque/quotetext_cableado_test.go:56-69`, `reanalisis_cableado_test.go:59-91` | El paquete **nuevo** conserva el nombre corto en el arranque; el viejo va con alias; reajustar la aserción de `QuoteSuggestions` a la cara nueva (T6.25) |
-| T-7 | El `Service` se necesita **antes** de existir: la etapa `draft` (captación) recibe una clausura que lee `c.intakeService`, asignado una fase después | `fase5_captacion.go:218-233`, `fase6_solicitudes.go:52-53` | No «arreglar» el ciclo: la clausura se resuelve al llamar; `PushRevisionByID` es nil-safe |
-| T-8 | El recordatorio del plazo a la dueña es un **sumidero de log** (el push del Plan 045 no existe) | `fase6_solicitudes.go:36-44` | El contrato lo dice; nadie afirma que la dueña lo recibe |
+| T-7 | El `Service` se necesita **antes** de existir: la etapa `draft` (captación) recibe una clausura que lee `c.intakeService`, asignado una fase después | `fase5_captacion.go:218-233`, `fase6_solicitudes.go:61` (`c.intakeService = intakes.NewService(…)`) | No «arreglar» el ciclo: la clausura se resuelve al llamar; `PushRevisionByID` es nil-safe |
+| T-8 | El recordatorio del plazo a la dueña es un **sumidero de log** (el push del Plan 045 no existe) | `fase6_solicitudes.go:45-56` (`NewExpiryReminder(intakes.NewLogOwnerNotice(…))`, `:56`) | El contrato lo dice; nadie afirma que la dueña lo recibe |
 | T-9 | `quote-suggestion` espera al modelo dentro de la petición (24,8–35,5 s en UAT) contra `WriteTimeout` 10 s | `plazoescritura.go:67,87` · `publicapi.go:770` | Plazo propio **derivado** (48 s + 12 s), inyectado (FX §4.3) |
 | T-10 | Un `CounterVec` no aparece en `/metrics` hasta su primer incremento | `contratos.md` §8 | La huella compara **nombres declarados**, no el cuerpo de `/metrics` |
 | T-11 | Tres ficheros con SQL que no se llaman `*postgres*.go` | `buyerdata.go`, `integrations/crud.go:42`, `outbox_stats.go:69` | D-F6-6 |

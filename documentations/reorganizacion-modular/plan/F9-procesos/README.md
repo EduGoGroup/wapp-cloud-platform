@@ -116,7 +116,9 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
    memoria con otro nombre de fichero: `gateway/enroll` (`store.go:55`, `edgecert.go:44`),
    `gateway/fleet` (`fleet.go:407`), `gateway/lease` (`repository.go:70`), `ingest` (`dedupe.go:31`),
    `intentcfg` (`store.go:53`), `diagnostics` (`diagnostics.go:115`)
-   (`grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test`).
+   (`grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test`). Recuento único (22 con
+   SQL, 15 con gemelo, 7 sin él —`entitlements` sí lo tiene: `Fake`—) en
+   [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §9.
 4. **`05` §1 y §7: «107 ficheros de integración»**. Medido: **97** `*_integration_test.go`
    (`find internal cmd -name '*_integration_test.go' | wc -l`) y **132** ficheros que dependen de BD
    (unión con `grep -rlE 'WAPP_TEST_DB_DSN|openTestDB|testDB\(' --include='*_test.go' internal cmd`).

@@ -6,8 +6,9 @@
 ## 1 · Lo que no se toca
 
 - **El código viejo** (`internal/iam/**`, `internal/entitlements`, `internal/platformadmin`,
-  `internal/bootstrap/**`) no se edita (E-1). **Única excepción propuesta**: una línea de
-  `internal/iam/infra/postgres/membresia_unica_ast_test.go` (D-F2-2), si Jhoan la acepta.
+  `internal/bootstrap/**`) no se edita (E-1). La línea que hace que
+  `internal/iam/infra/postgres/membresia_unica_ast_test.go` no barra el árbol nuevo la pone **F0**
+  (T0.27, D-F4-1, que subsume D-F2-2): F2 no toca código viejo.
 - 🔒 **Zero-knowledge**: `acceso` no autentica personas ni guarda contraseñas (constitución
   I-CP-9; la migración `0038_retiro_iam_propio.sql:59` borró `iam_users`, `iam_refresh_tokens`,
   `iam_api_keys`). Ningún contrato nuevo valida una contraseña, resuelve un usuario o emite un refresh
@@ -24,9 +25,9 @@
 
 | # | Trampa | Dónde | Qué hacer |
 |---|---|---|---|
-| T-1 | **El candado viejo de «una sola empresa» barre todo `internal/`** y se pone rojo en cuanto el verde de `A/iam/infra/postgres/memberships.go` escribe `INSERT INTO public.tenant_members` | `internal/iam/infra/postgres/membresia_unica_ast_test.go:74,97-130` | D-F2-2: añadir `modulos/acceso/iam/infra/postgres/memberships.go` a `escritoresEsperados` (`:88-90`, una línea) en el **mismo** commit; el candado nuevo espera los dos hasta F10 |
+| T-1 | **El candado viejo de «una sola empresa» barre todo `internal/`** y se pone rojo en cuanto el verde de `A/iam/infra/postgres/memberships.go` escribe `INSERT INTO public.tenant_members` | `internal/iam/infra/postgres/membresia_unica_ast_test.go:74,97-130` | **Resuelto en F0** (T0.27, D-F4-1): el barrido viejo salta `internal/{modulos,nucleo,arranque,apipublica,pendiente,candados}`. F2 lo **verifica** antes del verde (T2.1). El candado **nuevo** barre todo `internal/` y espera los dos escritores hasta F10. *Si D-F4-1 = no*: D-F2-2, añadir el escritor nuevo a `escritoresEsperados` (`:88-90`) en el mismo commit |
 | T-2 | **El SQL no se puede componer por trozos**: los candados buscan el literal `"INSERT INTO public.tenant_members"`, `"SET redeemed_at"` y `"pg_advisory_xact_lock"` en literales de cadena | `membresia_unica_ast_test.go:77-84`, `canje_orden_ast_test.go:40-47` | copiar el SQL **literal**; si cambia, el candado se reescribe, no se borra |
-| T-3 | **I-CP-5 queda ciego sin ponerse rojo** si el handler de plataforma se pre-arma en un campo o se importa el paquete con alias: detecta por el texto `"platformadmin."` del argumento | `internal/bootstrap/arranque/platform_permissions_test.go:48-50`; deuda D-13 | en `internal/arranque/transporte_rutas_admin.go`, handlers **inline** e import **sin alias** |
+| T-3 | **I-CP-5 queda ciego sin ponerse rojo** si el handler de plataforma se pre-arma en un campo o se importa el paquete con alias: detecta por el texto `"platformadmin."` del argumento | `internal/bootstrap/arranque/platform_permissions_test.go:48-50`; deuda D-13 | en `internal/arranque/rutas_admin.go`, handlers **inline** e import **sin alias** |
 | T-4 | **Centinelas por identidad**: el gateway viejo compara `domain.ErrInvalidCredentials`, `ErrUserInactive`, `ErrRefreshInvalid`, `ErrInvalidInput` **viejos** | `internal/gateway/grpc/auth.go:200-206` | `puente_iam.go` los traduce (arquitectura §4); test de equivalencia con `errors.Is` |
 | T-5 | **Dos resolvers = dos verdades**: la caché de derechos no desaloja ni se invalida | `internal/entitlements/postgres.go:32-39`; comentario 🔴 en `bootstrap/arranque/fase3_almacenes.go:74-77` | una sola instancia nueva, también inyectada en la cara vieja (FX TX.7) |
 | T-6 | **El mutex de la caché no se sostiene durante la consulta**: está bien hecho, no «arreglarlo» | `entitlements/postgres.go:98-113` (arquitectura.md §2.6 lo dice) | portarlo igual |
@@ -65,5 +66,5 @@
    `internal/entitlements`/`internal/platformadmin`; `cmd/server` intacto.
 8. `puente_iam_test.go` verde; `internal/modulos/fronteras_test.go` sin puentes de `acceso`.
 9. `go vet -tags integracion ./...` rc=0 (las suites Postgres compilan); su corrida anotada «no
-   corrida» o hecha por la local (D-F2-7).
+   corrida» o hecha por la local (T2.33 = T9.23, D-F9-1).
 10. `ESTADO.md` y este `README.md` actualizados; traspaso escrito si queda algo 💻.

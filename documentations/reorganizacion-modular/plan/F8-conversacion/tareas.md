@@ -180,12 +180,12 @@ con un párrafo por tarea en el mensaje.
   - **Hecho cuando**: `grep -rn 'internal/flujos\|internal/turnoacotado' internal/modulos --include='*.go'` → vacío; cada fichero re-tocado ≥ 80 %.
 - [ ] **T8.32 · Borrar los adaptadores `internal/arranque/puente_*.go`** · 🌐 · dep. T8.31 · cumple R8.7.b
   - **Ficheros**: todos los `puente_*.go` y sus tests (lista de T8.2); `internal/arranque/fase{3,5,6,8,9}_*.go` re-cableados con los tipos nuevos
-  - **Hecho cuando**: `ls internal/arranque/puente_*.go` → nada; un solo `entResolver`, un solo `flowDeps.kp`, un solo `gw` (T-2, T-3).
-- [ ] **T8.33 · `fase7_conversacion.go` y `:8100`** · 🌐 · dep. T8.32 · cumple R8.5.a–c, R8.6.b
-  - **Ficheros**: `internal/arranque/fase7_conversacion.go`, `transporte_rutas_admin.go` (J18–J22 con `C/admin`), los candados de cableado portados (`flow_options_cableadas`, `turno_acotado_cableado`)
+  - **Hecho cuando**: `ls internal/arranque/puente_*.go` → nada (quedaban `puente_contact`, `puenteTurnero` de `puente_inferencia` y `puente_captacion`: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1); fuera las dos **segundas instancias viejas** (`intakes.Postgres` de F6, `intake.Postgres` de F7); un solo `entResolver`, un solo `flowDeps.kp`, un solo `gw` (T-2, T-3).
+- [ ] **T8.33 · `fase7_flujos.go` y `:8100`** · 🌐 · dep. T8.32 · cumple R8.5.a–c, R8.6.b
+  - **Ficheros**: `internal/arranque/fase7_flujos.go`, `rutas_admin.go` (J18–J22 con `C/admin`), los candados de cableado portados (`flow_options_cableadas`, `turno_acotado_cableado`)
   - **Hecho cuando**: un `runtime.New`, un `NewIntakeAggregator`, las 22 opciones, los 4 hooks y la fuente del gauge; test de identidad del `Runtime` (gateway = Starter = EventCanceller).
-- [ ] **T8.34 · FX TX.24 y D-FX-3: 19 rutas, cara vieja fuera y centinela único** · 🌐 · dep. T8.33 · cumple R8.6.a, R8.6.c, R8.7.d
-  - **Ficheros**: los de TX.24 de FX; `internal/modulos/edge/session/registry.go` (el `ErrSessionOffline` deja de ser alias del viejo)
+- [ ] **T8.34 · FX TX.24: 19 rutas, cara vieja fuera y centinela único** · 🌐 · dep. T8.33 · cumple R8.6.a, R8.6.c, R8.7.d
+  - **Ficheros**: los de TX.24 de FX. Con **D-F3-2** (recomendación) `edge/session.ErrSessionOffline` ya es el de `platform` desde F3 y **no se toca**; solo si D-F3-2 = no (D-FX-3) se edita `internal/modulos/edge/session/registry.go` para que deje de ser alias del viejo
   - **Hecho cuando**: `grep -rn 'internal/publicapi\|internal/gateway/session' internal/arranque internal/modulos internal/apipublica` → vacío.
   - **Gate** (T8.31–T8.34 juntos): `G` · `V` · `go test -run Huella ./internal/arranque/` rc=0 · `go list -deps ./cmd/server-modular` sin paquetes viejos (`reglas.md` §4.5)
   - **Commit**: `conmutar(conversacion): el arranque nuevo cablea conversacion, 19+5 rutas y cero puentes`
@@ -199,8 +199,8 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 entera.
 - [ ] **T8.36 · Gates y arranque local del binario nuevo** · 💻 · dep. T8.35 · cumple R8.8.a, R8.8.c
   - **Hecho cuando**: `validar-antes-de-cerrar` con la toolchain fijada; `cmd/server-modular` arranca en local **solo** (sin `cmd/server`), un Edge de prueba (o el e2e de `cmd/server-modular`) recorre «carrito» → línea → confirmar y el cliente recibe las pantallas; SKIP = 0.
   - **Gate**: `G` · e2e rc=0
-- [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo** · 🌐→💻 · dep. T8.36 · cumple R8.8.b — *solo si F9 adelantado está aceptado*
-  - **Hecho cuando**: la pasada de `conversacion` que F9 tenga vigente (T9.29 o su sustituta T9.34, ver `../F9-procesos/`) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
+- [ ] **T8.37 · 🕐 Procesos del módulo contra el binario nuevo (= T9.29, 9C de `conversacion`)** · 🌐→💻 · dep. T8.36 · cumple R8.8.b — *con D-F9-1 = sí (recomendación); si D-F9-1 = no, se tacha y lo cubre T9.34 tras F8*
+  - **Hecho cuando**: T9.29 (9C de `conversacion`, [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md)) pasa: «Entrante a respuesta», «De mensaje a borrador», «Re-análisis», con las aserciones de BD de `diseno.md` §4.2 (D-054.4, 23502, `ON CONFLICT` de la ventana); `make test-procesos` rc=0 y 0 SKIP con `-v`.
   - **Gate**: `make test-procesos > /tmp/p.log 2>&1; echo RC=$? >> /tmp/p.log; tail -1 /tmp/p.log`
 - [ ] **T8.38 · Cerrar F8** · 💻 · dep. T8.36 (y T8.37 si aplica)
   - **Ficheros**: `ESTADO.md`, este `README.md` (estado «cerrada», SHA), sección `CERRADO <fecha>` del traspaso

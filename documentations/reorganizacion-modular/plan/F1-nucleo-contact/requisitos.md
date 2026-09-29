@@ -41,7 +41,7 @@
 - **R1.3.d** · **SI** las dos implementaciones divergen en un caso de la suite, **ENTONCES EL**
   informe del piloto **DEBERÁ** listarlo, y la suite no se relaja para ocultarlo. — Verifica: §Informe.
 
-## H1.4 · Como **la dueña del negocio** y **el Edge**, no quiero notar nada: mismos contactos, mismo cifrado, mismos textos.
+## H1.4 · Como **la dueña del negocio** y **el Edge**, quiero no notar nada —mismos contactos, mismo cifrado, mismos textos—, para seguir trabajando como hoy.
 
 - **R1.4.a** · **EL** resolver nuevo **DEBERÁ** escribir y leer `public.contacts` con las mismas
   columnas (`value_bidx`, `value_enc`, `value_dek`, `value_kek_id`, `push_name_enc`,
@@ -60,7 +60,7 @@
   de `contacts`, de `fleet_sessions.self_pn_bidx` y del anti-self-loop se calcula sobre esa salida).
   — Verifica: test de equivalencia en `internal/arranque/puente_contact_test.go` (T1.14).
 
-## H1.5 · Como **la operación de UAT**, quiero que el binario desplegado no cambie y que el nuevo cablee el paquete nuevo con la misma huella.
+## H1.5 · Como **la operación de UAT**, quiero que el binario desplegado no cambie y que el nuevo cablee el paquete nuevo con la misma huella, para seguir desplegando `cmd/server` sin sorpresas.
 
 - **R1.5.a** · **EL** binario `cmd/server` **NO DEBERÁ** enlazar `internal/nucleo`. — Verifica:
   `GOWORK=off go list -deps ./cmd/server | grep -c 'internal/nucleo/'` → 0.
@@ -73,7 +73,7 @@
 - **R1.5.d** · **EL** código viejo **NO DEBERÁ** cambiar. — Verifica:
   `git diff --stat <sha-inicio-F1>..HEAD -- internal/flujos internal/bootstrap internal/gateway internal/intakes internal/publicapi cmd/server` vacío.
 
-## H1.6 · Como **la sesión local**, quiero cerrar lo que la web no puede, con los gates fijados.
+## H1.6 · Como **la sesión local**, quiero cerrar lo que la web no puede, con los gates fijados, para que el piloto llegue a `dev` verificado con la toolchain de verdad.
 
 - **R1.6.a** · **CUANDO** la web entregue, **LA** sesión local **DEBERÁ** repetir `make ci-local`
   con golangci-lint v2.12.2, correr la suite contra Postgres (si D-F1-2) e integrar en `dev` sin

@@ -125,7 +125,12 @@ Qué hace fallar el gate (cada línea tiene su caso en `testdata/fronteras/muerd
    `internal/arranque` como única excepción**: es el composition root y en F0 cablea lo viejo;
 3. `internal/arranque` que importa un paquete viejo cuyo módulo (`Mapa`) está en `Conmutados`;
 4. `internal/apipublica` que importa **cualquier** paquete viejo (la cara nueva solo habla con
-   lo nuevo; el `publicapi` viejo lo monta el arranque, no ella);
+   lo nuevo; el `publicapi` viejo lo monta el arranque, no ella). Con las recomendaciones de
+   `DECISIONES.md` (D-FX-1/D-F7-4: intenciones en F7; D-F3-2: centinela vía `platform`) **no hace
+   falta ningún puente** desde `apipublica`, así que la regla se queda así. **Vía de excepción**
+   (`05` §4.1 sí admite puentes declarados): si Jhoan eligiera una alternativa que lo exija, la
+   regla 4 pasa a admitir un `Puente` con `Desde: "internal/apipublica/…"`, con las mismas
+   obligaciones que los demás (regla 6: `Muere` y uso real), en el mismo commit que lo declara;
 5. un fichero de producción **viejo** que importa algo del árbol nuevo; en tests viejos, solo
    `internal/bootstrap/arranque/huella_vieja_test.go` → `internal/arranque/huellatest`;
 6. un `Puente` declarado que ya ningún fichero usa (un puente muerto se borra) o cuyo `Muere`
@@ -145,6 +150,7 @@ excepciones de E-3 se **verifican**, no se listan:
 | fichero de `//go:embed` | todas sus declaraciones son `var` precedidas de `//go:embed` |
 | fichero solo de interfaces (puerto) | todas sus declaraciones son `type X interface{…}`; y existe un paquete hermano `<paquete>test` con una `func Contrato(t *testing.T, …)` |
 | doble en un paquete `…test` | su paquete termina en `test` y no tiene ninguna `func` con cuerpo; si tiene lógica, necesita test |
+| paquete `…test` entero (**D-F1-3**, condicionada) | si D-F1-3 = sí: todo fichero de un paquete cuyo nombre termina en `test` (suite `Contrato` y dobles) queda fuera de este candado **y** del de §4.3; los dobles con lógica llevan igualmente su test (lo exige la fase: F1 T1.4, F2 T2.2…). Si D-F1-3 = no, solo vale la fila anterior. `Recorrer` expone el nombre de paquete para que la exención sea **una** condición en `candados`, no una lista |
 
 ### 4.3 · `exportados_cubiertos` — cómo se detecta «mencionado en su test»
 
@@ -153,7 +159,8 @@ variables y constantes de primer nivel; y los métodos exportados de sus tipos) 
 contenido en el conjunto de **identificadores** de `x_test.go` (`*ast.Ident` sueltos en el mismo
 paquete, o `Sel` de un `*ast.SelectorExpr` en el paquete externo `…_test`). `go/parser` ignora
 las etiquetas de compilación: un test en rojo **cuenta** (`05` E-9, «se cumple ya en rojo»). No
-se exige mencionar campos de struct. Un comentario **no** es una mención.
+se exige mencionar campos de struct. Un comentario **no** es una mención. Con **D-F1-3** = sí, los
+paquetes `…test` quedan fuera (la misma condición que §4.2).
 
 ### 4.4 · `sin_bd_viva`
 
@@ -194,7 +201,7 @@ del arranque ocurre **por módulo**, en cada `conmutar(<m>)`, donde sí cambia a
 |---|---|---|
 | `astpaquete_test.go` (ayudante: recorre el **paquete**, no un fichero) | — | se copia |
 | `calentamiento_cableado_test.go` (3) · `flow_options_cableadas_test.go` (1) · `invitaciones_cableado_test.go` (2) · `pipeline_captacion_cableado_test.go` (1, I-CP-4: W=1) · `quotetext_cableado_test.go` (1) · `reanalisis_cableado_test.go` (1) · `roleplane_cableado_test.go` (2) · `send_budget_cableado_test.go` (2) · `turno_acotado_cableado_test.go` (1) | los **9** candados de cableado (`05` §3.2: «Contrato del arranque nuevo») | se copian; dos rutas relativas cambian (`../../publicapi/` → `../publicapi/`) |
-| `platform_permissions_test.go` (2) | 🔴 I-CP-5: todo permiso de ruta de plataforma acaba en `.any`; detecta por el texto `"platformadmin."` en el argumento de `adminHandler(…)` (`rutas_admin.go:29`) | se copia; sigue funcionando tras F2 porque el paquete nuevo conserva el nombre `platformadmin` (D-4) |
+| `platform_permissions_test.go` (2) | 🔴 I-CP-5: todo permiso de ruta de plataforma acaba en `.any`; detecta por el texto `"platformadmin."` en el argumento de `adminHandler(…)` (llamadas inline en `rutas_admin.go:76-91`; el porqué, en el comentario de `:19-28` sobre `type adminRouteDeps` `:29`) | se copia; sigue funcionando tras F2 porque el paquete nuevo conserva el nombre `platformadmin` (D-4) |
 | `orquestador_test.go` (4) · `mux_registration_test.go` (1) · `es256_key_test.go` (11) · `lease_test.go` (4) · `pki_test.go` (3) · `delegated_auth_test.go` (4) · `identity_verifier_test.go` (2) · `filters_config_test.go` (8) | las funciones puras del arranque | se copian; `orquestador_test.go` añade una mención de `Ejecutar` (exportados cubiertos) |
 | `pool_metrics_integration_test.go` (1) | el pool hasta `/metrics`, contra Postgres | **no** se copia: `t.Skipf` sin `WAPP_TEST_DB_DSN` (E-5). Su regla («las seis `wapp_db_*` salen del pool configurado») pasa a un proceso de F9 |
 

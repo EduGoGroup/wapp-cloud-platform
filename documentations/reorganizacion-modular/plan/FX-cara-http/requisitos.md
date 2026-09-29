@@ -84,7 +84,8 @@
   ruta **DEBERÁ** mudarse con el singleton o el arranque **DEBERÁ** interponer un adaptador de
   tipos declarado; nunca una segunda instancia. — Verifica: revisión de TX.11 + `go vet`.
 - **RX.4.c** · **MIENTRAS** una ruta vieja compare un error centinela del gateway, **EL** paquete
-  nuevo **DEBERÁ** conservar la identidad del centinela (D-FX-3). — Verifica:
+  nuevo **DEBERÁ** conservar la identidad del centinela: con D-F3-2, los dos son el de `platform`
+  (sin puente); con la alternativa D-FX-3, por un puente de identidad declarado. — Verifica:
   `errors.Is(nuevo.ErrSessionOffline, viejo.ErrSessionOffline)` en un test de `internal/arranque`
   hasta F8.
 
@@ -114,7 +115,8 @@
 - **RX.6.a** · **EL** paquete `apipublica` **DEBERÁ** importar solo `platform`, `nucleo`, módulos
   nuevos y los puentes declarados en `internal/modulos/fronteras_test.go`. — Verifica: ese candado
   con `internal/apipublica` en su alcance.
-- **RX.6.b** · **CUANDO** cierre F8, **LA** lista de puentes de `apipublica` **DEBERÁ** estar vacía.
-  — Verifica: `fronteras_test.go`.
+- **RX.6.b** · **CUANDO** cierre F8, **LA** lista de puentes de `apipublica` **DEBERÁ** estar vacía
+  (con las recomendaciones D-FX-1/D-F7-4 y D-F3-2 lo está **siempre**: no nace ninguno). — Verifica:
+  `fronteras_test.go`.
 - **RX.6.c** · **CUANDO** cierre F10, **NO DEBERÁ** existir `internal/publicapi` ni
   `apipublica/estrangulador.go`. — Verifica: `ls` de los dos.

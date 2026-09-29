@@ -19,7 +19,8 @@
   Verifica: `grep -rn 't.Skip' internal/modulos/acceso` vacío; `go test -v … | grep -c -- '--- SKIP'` → 0.
 - **R2.1.d** · **CUANDO** se cierre el bloque C, **EL** recuento **DEBERÁ** coincidir:
   `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/acceso | wc -l` = lo que diga
-  `make test-pendiente` para `acceso`, y `go vet -tags pendiente ./...` rc=0.
+  `make test-pendiente` para `acceso`, y `go vet -tags pendiente ./...` rc=0. — Verifica: esos dos
+  comandos, en el cierre del bloque C (T2.16).
 
 ## H2.2 · Los puertos de salida nacen cubiertos (suite en memoria)
 
@@ -59,7 +60,7 @@
 - **R2.3.c** · **EL** único escritor de `public.tenant_members` del código nuevo **DEBERÁ** ser
   `A/iam/infra/postgres/memberships.go`, con cerrojo `pg_advisory_xact_lock` antes de la guarda
   `countOtherMemberships`, y la guarda antes del `INSERT`, en el cuerpo de la función. — Verifica:
-  candado `membresia_unica_ast_test.go` portado (y el viejo con la línea de D-F2-2).
+  candado `membresia_unica_ast_test.go` portado (y el viejo, ciego al árbol nuevo desde F0 T0.27, D-F4-1).
 - **R2.3.d** · **EL** gate de features **DEBERÁ** ser fail-closed: sin identidad, con resolver caído o
   con resolver nil responde **403** `{"error":"feature_not_enabled","feature":"<clave>"}`; el plural
   corta en el primer error y una lista vacía **no abre**. — Verifica: `middleware_test.go` nuevo.
@@ -95,8 +96,7 @@
   mapa FX (A1–A7, B1–B14, C1–C2) y por los handlers nuevos las 8 de `:8100` (J4–J11). — Verifica:
   `internal/arranque/huella_test.go` y el listado de rutas de `apipublica`.
 - **R2.5.c** · **EL** binario viejo (`cmd/server`) **NO DEBERÁ** cambiar. — Verifica:
-  `git diff --stat <sha-inicio-F2>..HEAD -- cmd/server internal/bootstrap` vacío (salvo D-F2-2, que es
-  un test).
+  `git diff --stat <sha-inicio-F2>..HEAD -- cmd/server internal/bootstrap` vacío.
 - **R2.5.d** · **EL** binario nuevo **DEBERÁ** enlazar `internal/modulos/acceso/...` y **no** enlazar
   `internal/iam/...`, `internal/entitlements` ni `internal/platformadmin`… salvo a través de los
   paquetes viejos aún no reconstruidos que los importan (gateway viejo hasta F3). — Verifica:
@@ -115,4 +115,4 @@
   identidad y permisos» (`05` §7.4), incluido I-CP-5 con un admin de cliente denegado en una ruta `.any`.
   — Verifica: la lista existe y `plan/F9-procesos/` la referencia (T2.33).
 - **R2.6.b** · **DONDE** F9 esté adelantado, **EL** cierre de F2 **DEBERÁ** correr esos procesos contra
-  `cmd/server-modular`. — Verifica: `make test-procesos` en local (T2.33, condicionada).
+  `cmd/server-modular`. — Verifica: `make test-procesos` en local (T2.33 = T9.23).

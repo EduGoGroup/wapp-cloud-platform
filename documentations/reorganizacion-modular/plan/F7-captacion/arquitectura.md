@@ -78,7 +78,7 @@ Las aristas del ciclo, hoy y en F7:
 | Arista del ciclo (`02` §4) | Causa | En F7 |
 |---|---|---|
 | conversación → captación | `runtime/aggregator.go` → `intake` (`WindowKey`, `JobStore`, `OpenJob`, `Append`) · `source_composer.go` → `intake` | el viejo sigue importando `intake` **viejo**; el arranque lo cose con el nuevo (§4) |
-| captación → conversación | `stages` → `flujos/store`; `reanalisis` → `flujos/{events,runtime}`; `pipeline`/`stages` → `cart` | **3 puentes** declarados; lo de `cart` ya no existe (catálogo en F5, `SanitizeNote` en F6) |
+| captación → conversación | `stages` → `flujos/store`; `reanalisis` → `flujos/{events,runtime}`; `pipeline`/`stages` → `cart` | **2 puentes** declarados (3 si no se evita el de `runtime`, nota PUENTE 3 abajo); lo de `cart` ya no existe (catálogo en F5, `SanitizeNote` en F6) |
 | captación → solicitudes | `pipeline`, `stages`, `reanalisis` → `intakes` | a `modulos/solicitudes` (F6): **sin ciclo** entre nuevos (solicitudes no importa captación) |
 | solicitudes → conversación | `intakes/telemetria` → `flujos/store` | puente de F6 |
 | catálogo → conversación | `indice`/`catalogo` → `flujos/model` | puente de F5 (o `model` reconstruido allí) |
@@ -100,7 +100,7 @@ Regla de FX `arquitectura.md` §4: (1) objeto nuevo si el puerto es estructural;
 | `flowruntime.NewSourceTextComposer(log, thread, jobs SourceTextWriter, cipher)` (`source_composer.go:324`) | `PutSourceText(ctx, intake.WindowKey, intake.SourceText) (bool, error)` viejo | **(3)** la misma instancia vieja |
 | `flowruntime.WithAheadRequester(ah)` | `AheadRequester.Request(key intake.WindowKey, text string)` viejo (`aggregator.go:320`) | **(2)** `adelantoViejo{p *intakeahead.Pool}` convierte `intake.WindowKey(k)` |
 | `intakeahead.New(…, sink Sink, …)` nuevo | `Sink.OnClassified(key intake.WindowKey, intent string, confidence float64)` **nuevo** (`intakeahead.go:188`) | **(2)** `SinkFunc` que llama `c.intakeAggregator.OnClassified(intakeviejo.WindowKey(k), …)` (clausura diferida, como hoy `fase7_flujos.go:150`) |
-| `reanalisis.NewServicio(…, compositor Compositor, …)` nuevo | `ComposeAtFlush(ctx, intake.WindowKey) error` **nuevo** (`reanalisis.go:269`) | **(2)** `compositorViejo{c *flowruntime.SourceTextComposer}` — **el mismo** compositor que el agregador: dos divergirían en el primer rótulo (`fase5_captacion.go:52-56`) |
+| `reanalisis.NewServicio(…, compositor Compositor, …)` nuevo | `ComposeAtFlush(ctx, intake.WindowKey) error` **nuevo** (`reanalisis.go:269`) | **(2)** `compositorViejo{c *flowruntime.SourceTextComposer}` — **el mismo** compositor que el agregador: dos divergirían en el primer rótulo (`fase5_captacion.go:53-62`) |
 | `reanalisis` puerto `Hilo` | `events.Store` viejo | **directo** por el puente 2 (el puerto nombra `events.ThreadEntry` viejo) |
 | `stages.NewDraft(…, solicitudes AlmacenSolicitudes, revision EscritorRevision, eventos EscritorEvento, …)` | `flowStore` viejo (puertos con tipos de `flujos/store`) · revisión por el `intakes.Postgres` **nuevo** (F6, cipher del literal) | **directo** por el puente 1 |
 | `gw.OnWarmup = pool.Warm` · `gw.OnEdgeReady = worker.Despertar` | `func(tenantID, edgeID, sessionID, kind string)` · `func(tenantID, edgeID string)` (`gateway/grpc/server.go:154,177`) | **(1)** directo (gw nuevo desde F3) |

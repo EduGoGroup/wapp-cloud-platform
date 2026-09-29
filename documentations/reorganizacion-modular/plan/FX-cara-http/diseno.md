@@ -24,7 +24,7 @@ internal/apipublica/
 ├── health.go                F3  ↦ health.go (HealthRules, Alerter, NoopAlerter)
 ├── sessionadmin.go          F3  ↦ internal/flujos/admin/sessions.go (D3, D4 y J16–J17 de :8100) — D-FX-2
 ├── diagnostics.go           F3  ↦ diagnostics.go (D5, D6)
-├── intents.go               F3  ↦ intents.go (E1, E2) — con puente a internal/intentcfg hasta F7
+├── intents.go               F7  ↦ intents.go (E1, E2) — sobre captacion/intentcfg nuevo, sin puente (D-FX-1/D-F7-4)
 ├── tenantllm.go             F4  ↦ tenantllm.go (F1–F3)
 ├── degradationnotices.go    F4  ↦ degradationnotices.go (F4)
 ├── instantes.go             F6  ↦ formatInstant (conversationevents.go:215), que ya usa intakes.go
@@ -96,7 +96,8 @@ vieja) · `TestComponer_404` · `TestComponer_NoEscribeNada` · `TestComponer_Ni
 
 - **`cadena.go`** — `type Comun struct { MW *httpapi.Middleware; Auditor httpapi.AuditRecorder;
   Log sharedlogger.Logger }` y los no exportados `protect`, `protectRead`, `accessLog`,
-  `anotarTenant`, `respuestaObservada`. Promesas que salen de los comentarios viejos
+  `anotarTenant`, `respuestaObservada` (estos **nacen con el verde**: el rojo lleva solo exportados,
+  [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §3.1). Promesas que salen de los comentarios viejos
   (`publicapi.go:1126-1144`, `accesslog.go:12-126`) y que el test afirma: orden exacto de la
   cadena; `accessLog` por **fuera** de `Authenticate` (ve el 401); cero PII en el log (solo
   `r.URL.Path`, nunca la query); `write_error` a nivel error cuando el `Write` falla; logger `nil`
@@ -142,10 +143,10 @@ ficheros, en `apipublicatest/`. `t.Skip` prohibido.
 |---|---|
 | F0 | `internal/bootstrap/arranque/mux_registration_test.go` (el conflicto de patrones panica al registrar) |
 | F2 | `publicapi_test.go` (arnés), `roleplane_test.go`, `membersalta_test.go`, `invitations_test.go`, `tenantless_test.go`, `entitlements_test.go`; `internal/iam/transport/http/*_test.go` (6); `arranque/{roleplane,invitaciones}_cableado_test.go` |
-| F3 | `messages_senderror_test.go`, `dbtimeout_o3_test.go`, `sessions_test.go`, `health_test.go`, `diagnostics_test.go`, `intents_test.go`, `intents_aditividad_test.go`, `limits_test.go`; `internal/flujos/admin/sessions_test.go`; `arranque/send_budget_cableado_test.go`, `arranque/filters_config_test.go` |
+| F3 | `messages_senderror_test.go`, `dbtimeout_o3_test.go`, `sessions_test.go`, `health_test.go`, `diagnostics_test.go`, `limits_test.go`; `internal/flujos/admin/sessions_test.go`; `arranque/send_budget_cableado_test.go`, `arranque/filters_config_test.go` |
 | F4 | `tenantllm_test.go`, `tenantllm_gate_via_test.go`, `degradationnotices_test.go` |
 | F6 | `intakes_test.go` y los 10 `intakes_*_test.go`, `buyer_data_leak_test.go`, `export_test.go`, `export_internal_test.go`, `summary_test.go`, `quotesuggestion_test.go`, `plazoescritura_test.go`, `integrations_test.go`, `crmcallback_test.go`, `crmcallback_schema_test.go`, `tenantvariables_test.go`, `eventstelemetry_test.go`, `eventstelemetry_internal_test.go`; `arranque/quotetext_cableado_test.go` |
-| F7 | `reanalyze_test.go`; `arranque/reanalisis_cableado_test.go` |
+| F7 | `reanalyze_test.go`, `intents_test.go`, `intents_aditividad_test.go` (E1–E2 se mudan aquí, D-FX-1/D-F7-4); `arranque/reanalisis_cableado_test.go` |
 | F8 | `flows_durable_guard_test.go`, `flows_streamcaido_test.go`, `triggers_test.go`, `media_tenantcontent_test.go`, `catalogimport_test.go`, `catalogtabular_test.go`, `catalogtemplate_test.go`, `conversationevents_test.go`, `conversationeventcancel_test.go` |
 
 Los **14** `*_integration_test.go` de `publicapi` no se leen para contratos de fichero: son

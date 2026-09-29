@@ -67,8 +67,8 @@ Consumidores del `*gatewaygrpc.Server` hoy (`grep -n 'c\.gw' internal/bootstrap/
 | `intakes.Notifier` (F6) | `intakes.NewNotifier(c.gw, …)` (`fase6_solicitudes.go:42`), `MessageSender.SendText` | ídem; lee `CommandID()` por duck-typing (`intakes/notifier.go:141`) | **estructural** |
 | `llmvia.Selector` + `llmvia/local.Provider` (F4) | `llmvia.WithFrame(c.gw)` (`fase5_captacion.go:92`): `local.Frame.Infer(ctx, tenantID, gatewaygrpc.InferRequest)` (`llmvia/local/local.go:270-272`); capacidad **opcional** `PlazaDe` por aserción de tipo (`llmvia.go:163`, `:411-419`) | `InferRequest` **viejo** (nominal); `*InferError` se lee por `Motivo()` duck-typed (`llmvia/notify.go:57`) | **`internal/arranque/puente_gateway.go`** (nace F3, muere F4): convierte `InferRequest` viejo → nuevo campo a campo y expone `PlazaDe`. `Clase*` son `string` sin tipo: mismos valores |
 | `platform/httpapi` (J12–J15: `RevokeLease`, `RevokeTenant`, `RestoreTenant`, `SendText`) | interfaces de `admin.go` | stdlib; errores por `errors.Is(ErrSessionOffline)` (tras F0, el de `platform`) y duck-typing `StreamCaido()`, `CommandID()` (`admin.go:343-352`) | **estructural** |
-| `publicapi` viejo (D1, D5, E2) | `Deps.Sender/DiagnosticsRequester/ConfigPush` | — | **`nil`** (rutas mudadas, FX TX.11) |
-| `flujos/admin` + `publicapi/flows.go` (I4, J19 hasta F8) | comparan `session.ErrSessionOffline` (`flujos/admin/handlers.go:326`, `publicapi/flows.go:235`) | centinela | identidad compartida vía `platform` (D-F3-2) o puente de FX D-FX-3 |
+| `publicapi` viejo (D1, D5, E2) | `Deps.Sender/DiagnosticsRequester/ConfigPush` | `ConfigPusher` estructural | `Sender`/`DiagnosticsRequester` **`nil`** (rutas mudadas, FX TX.11); `ConfigPush` = **gw nuevo** hasta F7 (E2 sigue en la vieja, D-FX-1/D-F7-4) |
+| `flujos/admin` + `publicapi/flows.go` (I4, J19 hasta F8) | comparan `session.ErrSessionOffline` (`flujos/admin/handlers.go:326`, `publicapi/flows.go:235`) | centinela | identidad compartida vía `platform` (D-F3-2, recomendación; alternativa: puente de FX D-FX-3) |
 | `ConfigProvider` del arranque (`auth.go:457-638`: jwks, intents, filters) | `WithConfigProvider` | `[]gatewaygrpc.ConfigPayload` | el arranque (que puede importar viejo y nuevo) devuelve el tipo **nuevo** |
 
 Otros adaptadores del arranque cuyo tipo cambia en F3: `receipts.NewSink(…, c.mtx.Receipt)`
@@ -121,7 +121,7 @@ TX.11; huella igual (2 rpc, rutas, métricas, goroutines).
 
 | Listener | Filas | Nº | En F3 |
 |---|---|---:|---|
-| `:8103` | D1 `POST /api/v1/messages` · D2 `GET /api/v1/sessions` · D3 `POST …/sessions/{id}/profile` · D4 `…/status` · D5 `…/diagnostics` · D6 `GET /api/v1/diagnostics/{command_id}` · E1–E2 `GET/PUT /api/v1/intents` (con puente `apipublica → internal/intentcfg`, D-FX-1) | **8** | a `apipublica` (FX TX.8–TX.11); D3/D4 desde `apipublica/sessionadmin.go` (D-FX-2) |
+| `:8103` | D1 `POST /api/v1/messages` · D2 `GET /api/v1/sessions` · D3 `POST …/sessions/{id}/profile` · D4 `…/status` · D5 `…/diagnostics` · D6 `GET /api/v1/diagnostics/{command_id}` (E1–E2 `GET/PUT /api/v1/intents` **no**: se quedan en la vieja con el gw nuevo y se mudan en F7, D-FX-1/D-F7-4) | **6** | a `apipublica` (FX TX.8–TX.11); D3/D4 desde `apipublica/sessionadmin.go` (D-FX-2) |
 | `:8100` | J12 `/admin/leases/revoke` · J13 `POST /admin/tenants/revoke` · J14 `…/restore` · J15 `/admin/messages/send` · J16–J17 `POST /admin/sessions/{id}/{profile,status}` | **6** | J12–J15 reciben el gw **nuevo**; J16–J17 los constructores exportados de `sessionadmin.go`, **en el mismo commit que D3–D4** |
 
 ## 8 · Lo que no cambia hacia fuera

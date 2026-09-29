@@ -7,7 +7,8 @@
 ## 1 · Lo que no se toca
 
 - **Nada de `internal/{llmvia,prompts,tenantllm,degradation}`** ni de sus tests (E-1), con la única
-  salvedad de lo que decida Jhoan en **D-F4-1** (una línea de exclusión en el barrido del C2 viejo).
+  salvedad de **D-F4-1** (una línea de exclusión en el barrido del C2 viejo), que **no** pone F4:
+  la pone F0 (T0.27) y F4 solo la verifica (T4.2).
 - **`cmd/prompts`**: sigue importando `internal/prompts` hasta F10.
 - **`wapp-shared/llm`**: ni se sube de versión ni se toca. Si una regla del prompt estorba, se
   arregla allí con release (I-ECO-5), nunca con un prompt propio aquí (C2 del ADR-0044: «este paquete
@@ -19,7 +20,7 @@
 
 | Id | Trampa | Dónde | Cómo se evita |
 |---|---|---|---|
-| **T-1** | 🔴 **El C2 viejo barre el árbol nuevo.** `internal/llmvia/c2_via_test.go:117` recorre `..` (= `internal/`) y exige que la lista de ficheros que comparan por vía sea **exactamente** la suya. El primer `verde(inferencia): tenantllm.go` (`ValidVia` compara con `ViaLocal`) lo pone rojo, y con él `make ci-local` | `c2_via_test.go:50-101,117,130` | D-F4-1 **antes** del bloque C. Si no está decidida, **parar** en el bloque B |
+| **T-1** | 🔴 **El C2 viejo barre el árbol nuevo.** `internal/llmvia/c2_via_test.go:117` recorre `..` (= `internal/`) y exige que la lista de ficheros que comparan por vía sea **exactamente** la suya. El primer `verde(inferencia): tenantllm.go` (`ValidVia` compara con `ViaLocal`) lo pone rojo, y con él `make ci-local` | `c2_via_test.go:50-101,117,130` | D-F4-1, aplicada en **F0** (T0.27) y verificada en T4.2 **antes** del bloque C. Si no está, **parar** en el bloque B |
 | T-2 | El detector de C2 es **ancho**: `esNombreDeVia` = `via`, prefijo `via` o **sufijo** `via` en minúsculas (`envia`, `todavia` también cuentan) | `c2_via_test.go:218-221` | No nombrar así variables comparadas fuera de los permitidos; prohibido esquivar el candado renombrando `via` |
 | T-3 | **`WithLocalOptions` acumula**. Escribir `s.localOpts = opts` pasa todos los tests de una sola llamada y mata `WAPP_LLM_PROMPTS_DIR` | `llmvia.go:142-144` | Test con **dos** llamadas (R4.3 + techo) |
 | T-4 | **Copiar las opciones por petición**: `append(s.localOpts, …)` sobre el slice del `Selector` compartido cruza la sesión de origen entre tenants «una de cada muchas» | `llmvia.go:241-252,363-368` | `make([]local.Option, 0, len+1)` + test con `-race` y dos `For` concurrentes |

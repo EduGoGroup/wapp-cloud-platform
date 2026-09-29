@@ -50,7 +50,7 @@ flowchart LR
 | `accessLog` → `Authenticate` → `anotarTenant` → `RequirePermission` → `AuditMiddleware` (W) / sin auditoría (R) | por ruta, dentro de `publicapi` | por ruta, **en la cara que la sirve**: la vieja con su código, la nueva con el portado (`apipublica/cadena.go`) | 1 vez (una petición va a **una** cara) |
 | Gates `entitlements.RequireFeature` / `RequireAnyFeature` | por ruta, **después** de RequirePermission | igual; en la cara nueva, del paquete `acceso/entitlements` nuevo (desde F2) | 1 vez |
 | `conPlazoDeRedacción` (solo G7), **por fuera** de `protectRead` | `publicapi.go:770` | igual en la cara nueva (F6) | 1 vez |
-| `WriteTimeout` 10 s, `ReadTimeout` 10 s, `ReadHeaderTimeout` 5 s, `IdleTimeout` 60 s | `http.go:20-26` | los mismos, en `internal/arranque/transporte_http.go` | — |
+| `WriteTimeout` 10 s, `ReadTimeout` 10 s, `ReadHeaderTimeout` 5 s, `IdleTimeout` 60 s | `http.go:20-26` | los mismos, en `internal/arranque/http.go` | — |
 
 🔴 **La métrica depende del texto del patrón.** `ServeMux.ServeHTTP` escribe `r.Pattern` **en el
 mismo `*http.Request`** que recibe; `InstrumentHTTP` lo lee **después** de servir. Para que la
@@ -82,9 +82,9 @@ salidas, **en este orden de preferencia**:
 | `Roles`, `Members`, `Invitations`, `Audit` | servicios IAM (F2) | no | B1–B14, C1 | `nil` desde F2 |
 | `Entitlements` | `*entitlements.Postgres` (F2) | **caché TTL 60 s** por (tenant, feature) sin invalidación (`entitlements/postgres.go:15-34`) | C2 + los gates de E, F, G, I | desde F2 recibe el **resolver nuevo** (puerto estructural: `Has`, `ListEffective`, `CacheTTL`, `publicapi/entitlements.go:17-27`): una sola caché. `nil` en F8 |
 | `Sender`, `DiagnosticsRequester` | gw (F3) | **sí** | D1, D5 | `nil` desde F3 |
-| `ConfigPush` | gw (F3) | **sí** | E2 | `nil` desde F3 (D-FX-1 literal) · o el **gw nuevo** hasta F7 (alternativa) |
+| `ConfigPush` | gw (F3) | **sí** | E2 | **F3–F6**: el **gw nuevo** (puerto estructural `publicapi.ConfigPusher`, D-FX-1/D-F7-4) · `nil` desde F7. *(Alternativa D-FX-1 literal: `nil` desde F3.)* |
 | `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics`, `DiagnosticsBundleTTL`, `Health`, `Alerter` | fleet, filtercfg, diagnostics (F3) | `filtersPusher` envuelve al gw | D1–D6 | `nil` desde F3 |
-| `Intents` | `intentcfg.PostgresStore` (F7) | no | E1–E2 | `nil` desde F3 (se muda con puente) |
+| `Intents` | `intentcfg.PostgresStore` (F7) | no | E1–E2 | el **viejo** hasta F7 (su dominio aún no conmutó) · `nil` desde F7. *(Alternativa D-FX-1 literal: `nil` desde F3, mudada con puente.)* |
 | `TenantLLM`, `DegradationNotices` | tenantllm, degradation (F4) | no | F1–F4 | `nil` desde F4 |
 | `Intakes`, `QuoteSuggestions`, `TenantVariables`, `Integrations`, `CRMSecrets`, `CRMGate`, `CRMReflect`, `CRMNotify`, `EventTelemetry` | solicitudes (F6) | `Intakes` y `CRMNotify` guardan el **gw** (notificador); `QuoteSuggestions` guarda el **selector LLM** (que guarda el gw) | G1–G18 | **F3–F5**: servicios viejos con el **gw nuevo** inyectado (salida 1: `intakes.MessageSender` es estructural, `intakes/notifier.go:102-104`) · **F4–F5**: `QuoteSuggestions` viejo con el selector — ⚠️ ver abajo · `nil` desde F6 |
 | `Reanalysis` | `reanalisis.Servicio` (F7) | no (guarda stores) | H1 | servicio viejo hasta F7 con los stores que toque (los de F4 y F6 ya nuevos: responsabilidad de F6/F7); `nil` desde F7 |
@@ -102,17 +102,22 @@ depende de ellos entre F3 y F8):
 2. **El runtime viejo** recibe el gw por `flowruntime.New(…, c.gw, …)` (`fase7_flujos.go:228`) y el
    gateway recibe ganchos del runtime (`c.gw.OnIncoming = c.flowRuntime.OnIncoming`, `:127`): los
    tipos de esas firmas deciden si hace falta adaptador (**sin medir** aquí; es de F3).
-3. **Centinelas** (D-FX-3): el código viejo que sigue sirviendo I4 y J19 compara
+3. **Centinelas**: el código viejo que sigue sirviendo I4 y J19 compara
    `gateway/session.ErrSessionOffline` viejo (`publicapi/flows.go:235`,
-   `flujos/admin/handlers.go:326`).
+   `flujos/admin/handlers.go:326`). Con **D-F3-2** (recomendación) no hace falta nada: desde el ✎ de
+   F0 (T0.17) el viejo **es** el centinela de `platform`, y `modulos/edge/session` declara el mismo
+   (`var ErrSessionOffline = <el de platform>`): identidad compartida, **cero puentes**. *(Alternativa
+   D-FX-3, solo si D-F3-2 = no: puente de identidad al viejo, F3→F8.)*
 
 ## 5 · Puentes que nacen y mueren por la cara
 
 | Puente (declarado en `internal/modulos/fronteras_test.go`) | Nace | Muere | Por qué |
 |---|---|---|---|
-| `apipublica → internal/intentcfg` (tipo `Config`, constante `Kind`) | F3 | F7 | E1–E2 se mudan antes que su dominio (D-FX-1 literal) |
-| `modulos/edge/session → internal/gateway/session` (identidad de `ErrSessionOffline`) | F3 | cierre de F8 | D-FX-3 |
-| Ninguno más | — | — | G7 evita el puente al `pipeline` con el plazo inyectado (mapa §4.3); G4/H1 usan `SanitizeNote`/`NoteTooLongError` ya en `solicitudes/intakes/note.go` (F6) |
+| **Ninguno** con las recomendaciones | — | — | E1–E2 se quedan en la cara vieja hasta F7 con el gw nuevo inyectado (D-FX-1/D-F7-4); el centinela es el de `platform` (D-F3-2); G7 evita el puente al `pipeline` con el plazo inyectado (mapa §4.3); G4/H1 usan `SanitizeNote`/`NoteTooLongError` ya en `solicitudes/intakes/note.go` (F6) |
+| *(alternativa)* `apipublica → internal/intentcfg` (tipo `Config`, constante `Kind`) | F3 | F7 | solo si D-FX-1 = literal (E1–E2 se mudan antes que su dominio); exige además la vía de excepción de la regla 4 de fronteras (F0 `diseno.md` §4.1) |
+| *(alternativa)* `modulos/edge/session → internal/gateway/session` (identidad de `ErrSessionOffline`) | F3 | cierre de F8 | solo si D-F3-2 = no (D-FX-3) |
+
+La tabla única de puentes y adaptadores de todo el plan: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1.
 
 ## 6 · Lo que NO cambia hacia fuera
 

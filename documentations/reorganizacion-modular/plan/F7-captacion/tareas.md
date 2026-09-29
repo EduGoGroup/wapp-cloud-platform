@@ -67,12 +67,12 @@ Para cuando: huella igual · cableado por tipo · candados verdes · traspaso ·
   - **Hecho cuando**: tabla de `arquitectura.md` §4 y §6 aplicada; segunda instancia **vieja** de `intake.Postgres` solo para agregador y compositor («muere F8»); `pipeline_captacion_cableado_test` y `calentamiento_cableado_test` verdes sin tocarlos
   - **Gate**: `make ci-local` rc=0 · huella verde · **Commit**: `conmutar(captacion): el arranque nuevo cablea captacion`
 - [ ] **T7.24 = TX.21 · conmutar(captacion): H1, E1 y E2** · 🌐 · dep. T7.23 · cumple R7.7.a
-  - **Hecho cuando**: H1, E1, E2 por la nueva; `Reanalysis` e `Intents` = `nil` en la vieja; G7 y `quotetext.ConPlazo` leen `PlazoPorLlamadaSuelo` del `pipeline` **nuevo** (aserción de igualdad); `reanalisis_cableado_test` mira la cara nueva; `FaseActual = 7`. ⚠️ FX TX.21 dice «retirar el puente de intenciones» (D-FX-1 literal): con la alternativa no existe; reconciliar el texto de FX en este commit
+  - **Hecho cuando**: H1, E1, E2 por la nueva; `Reanalysis` e `Intents` = `nil` en la vieja; G7 y `quotetext.ConPlazo` leen `PlazoPorLlamadaSuelo` del `pipeline` **nuevo** (aserción de igualdad); `reanalisis_cableado_test` mira la cara nueva; `ConfigPush` = `nil` en la vieja (E2 ya no la usa); `FaseActual = 7`. FX TX.21 ya está escrita así (reconciliada el 2026-09-29)
   - **Gate**: el de TX.7 · **Commit**: parte del `conmutar(captacion)`
 - [ ] **T7.25 · refactor(solicitudes): INV-1 vigila la captación nueva** · 🌐 · dep. T7.23 · cumple R7.6.c · lista de `diseno.md` §6; guarda anti-hueco intacta · **Commit**: `refactor(solicitudes): el candado INV-1 mira captacion`
 - [ ] **T7.26 · Traspaso** · 🌐 · `traspasos/TRASPASO-F7-captacion.md`; §7: puentes y adaptadores con fecha de muerte, SQL no corrido, `casebank` sin prueba de extremo a extremo (D-F7-2)
 
 ## Bloque I · cierre local · 💻 · T7.27–T7.29
-- [ ] **T7.27 · procesos(captacion): pasada 9C** · 🌐→💻 · **solo si D-F9-1 aceptada** (T9.28) · suites de `intake`, `casebank`, `intentcfg` contra Postgres; P4 (mensaje a borrador) y P8 (re-análisis) verdes contra `viejo` y `nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 del log
+- [ ] **T7.27 · procesos(captacion): pasada 9C (= T9.28)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34) · suites de `intake`, `casebank`, `intentcfg` contra Postgres; P4 (mensaje a borrador) y P8 (re-análisis) verdes contra `viejo` y `nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 del log
 - [ ] **T7.28 · Integración en `dev`** · 💻 · sin squash; `ci-local` con lint v2.12.2
 - [ ] **T7.29 · Cierre de F7** · 💻 · `ESTADO.md`, este README («cerrada», SHA), `CERRADO` en el traspaso · **Commit**: `docs(reorganizacion-modular): F7 cerrada`

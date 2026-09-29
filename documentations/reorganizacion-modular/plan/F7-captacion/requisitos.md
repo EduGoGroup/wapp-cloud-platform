@@ -40,7 +40,7 @@
 ## H7.3 · El adelanto de la ventana sigue siendo por pull
 
 > Como **la dueña del negocio**, quiero que la ventana cierre antes cuando el modelo ya clasificó la
-> intención, sin que un fallo del adelanto pierda el pedido.
+> intención, para ver antes el borrador, sin que un fallo del adelanto pierda el pedido.
 
 - **R7.3.a** · **EL** `intakeahead.Pool` **DEBERÁ** atender con 4 workers y una cola de 64; **SI** la
   cola está llena, **ENTONCES** **DEBERÁ** soltar la marca de la clave y dejar que la ventana cierre por
@@ -53,7 +53,8 @@
 ## H7.4 · El re-análisis no cambia la solicitud
 
 > Como **la dueña del negocio**, quiero pedir un re-análisis sin que mi solicitud cambie de estado,
-> y que me diga claramente si ya hay uno en curso.
+> y que me diga claramente si ya hay uno en curso, para corregir un borrador sin perder el control de
+> la solicitud.
 
 - **R7.4.a** · **EL** servicio `C/reanalisis` **NO DEBERÁ** poder transicionar, editar ni escribir
   revisiones: su puerto `Solicitudes` solo tiene `ReanalysisTargetOf` (INV-10). — Verifica: aserción de
@@ -67,6 +68,9 @@
 
 ## H7.5 · Los puertos nacen cubiertos sin BD
 
+> Como **la sesión web**, quiero una suite por puerto corrida por su doble en memoria, para que lo que
+> hoy prueban los tests de integración quede especificado antes de F9.
+
 - **R7.5.a** · **LOS** puertos `intake.JobStore` y `intake.PipelineStore` **DEBERÁN** tener su suite en
   `intaketest` corrida por `MemoryStore`. — Verifica: `go test ./internal/modulos/captacion/intake/`.
 - **R7.5.b** · **EL** puerto `casebank.Store` **DEBERÁ** tener `casebanktest.Contrato` y un doble
@@ -79,7 +83,7 @@
 > Como **Jhoan**, quiero que la captación nueva conviva con la conversación vieja por puentes
 > declarados y con fecha de muerte, para cortar el ciclo 2 en F8 sin sorpresas (D-7).
 
-- **R7.6.a** · **SI** `C/**` importa un paquete viejo fuera de los tres puentes declarados, **ENTONCES
+- **R7.6.a** · **SI** `C/**` importa un paquete viejo fuera de los puentes declarados (dos, o tres si T7.12 no evita el de `flujos/runtime`), **ENTONCES
   EL** gate **DEBERÁ** fallar. — Verifica: `fronteras_test.go`.
 - **R7.6.b** · **EL** agregador viejo **DEBERÁ** seguir pidiendo adelantos al `Pool` **nuevo** y
   recibiendo sus clasificaciones, y el re-análisis nuevo **DEBERÁ** usar el **mismo** compositor que
@@ -90,6 +94,9 @@
   `TestINV1_SoloElPOSTDelDueñoAprueba` con la lista de F7.
 
 ## H7.7 · Rutas y oráculo
+
+> Como **Jhoan**, quiero que las rutas de captación se muden a la cara nueva y que sus procesos pasen
+> contra los dos binarios, para saber que el binario nuevo hace lo mismo que el viejo.
 
 - **R7.7.a** · **CUANDO** F7 conmute, **LA** cara nueva **DEBERÁ** servir H1
   (`POST /api/v1/intakes/{id}/reanalyze`, `intakes.write`, sin gate en la cadena) y E1–E2

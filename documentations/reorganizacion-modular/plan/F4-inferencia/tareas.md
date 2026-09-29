@@ -8,17 +8,17 @@
 > Skills: `reconstruir-modulo` (la fase) y `contrato-tdd` (cada fichero).
 
 ## Bloque A · inventario verificado y candados viejos · 🌐 · T4.1–T4.2
-Para cuando: los números de `diseno.md` §1 reconfirmados y D-F4-1 aplicada; gate ci-local rc=0.
+Para cuando: los números de `diseno.md` §1 reconfirmados y D-F4-1 **verificada** (la aplicó F0, T0.27); gate ci-local rc=0.
 
 - [ ] **T4.1 · docs: inventario de F4 reconfirmado sobre `dev`** · 🌐 · dep. F3 cerrado · cumple —
   - **Ficheros**: este `tareas.md` y `diseno.md` §1 (solo si un número cambió)
   - **Hecho cuando**: `wc -l internal/{llmvia,llmvia/local,prompts,tenantllm,degradation}/*.go | grep -v _test` suma 3.072 en 10 ficheros (o se corrige aquí con fecha); `grep -c '^func Test'` sobre los 14 tests viejos suma 88; `GOWORK=off go list -f '{{.Imports}}'` de los 5 paquetes coincide con `arquitectura.md` §2; existe el adaptador de `local.Frame` de F3 (`grep -rln 'InferRequest' internal/arranque`)
   - **Gate**: ninguno de código · **Commit**: `docs(reorganizacion-modular): F4, inventario reconfirmado` (solo si hubo cambios)
-- [ ] **T4.2 · candados viejos ciegos al árbol nuevo (D-F4-1)** · 🌐 · dep. T4.1 y **decisión de Jhoan** · cumple R4.2.c
-  - **Ficheros**: `internal/llmvia/c2_via_test.go` (el `WalkDir` de `:117`) y `internal/iam/infra/postgres/membresia_unica_ast_test.go` (`:97`) — solo si Jhoan acepta la excepción y **no** la hizo ya F0/F2
-  - **Hecho cuando**: los dos barridos devuelven `fs.SkipDir` para `modulos`, `nucleo`, `arranque`, `apipublica`, `pendiente` directamente bajo `internal/`; siguen leyendo > 0 ficheros viejos; una sonda (fichero temporal en `internal/modulos/x/x.go` con `if via == "api"`) ya **no** los pone rojos y se borra antes del commit
-  - **Gate**: gate ci-local · **Commit**: `andamiaje(f0): los candados viejos que barren internal/ saltan el árbol nuevo`
-  - Si Jhoan **no** acepta: 🛑 parada; F4 no puede pasar del bloque B (T-1 de `reglas.md`)
+- [ ] **T4.2 · verificar que los candados viejos están ciegos al árbol nuevo (D-F4-1, hecho en F0)** · 🌐 · dep. T4.1 · cumple R4.2.c
+  - **Ficheros**: ninguno (solo lectura). La línea la puso **F0 · T0.27** en `internal/llmvia/c2_via_test.go` (`:117`) y en `internal/iam/infra/postgres/membresia_unica_ast_test.go` (`:97`); F4 **no** vuelve a tocar código viejo.
+  - **Hecho cuando**: `git log --oneline origin/dev -- internal/llmvia/c2_via_test.go` muestra el commit de T0.27; los dos barridos saltan `modulos`, `nucleo`, `arranque`, `apipublica`, `pendiente`, `candados` **directamente bajo `internal/`** (por ruta, no por nombre) y siguen leyendo > 0 ficheros viejos; una sonda en el árbol, sin commitear (`internal/modulos/x/x.go` con `if via == "api"`), **no** los pone rojos y se borra.
+  - **Gate**: gate ci-local · **Commit**: ninguno
+  - Si falta (D-F4-1 = no, o F0 no la hizo): 🛑 parada; F4 no puede pasar del bloque B (T-1 de `reglas.md`) y se vuelve a Jhoan con la alternativa (ampliar la lista del C2 viejo en F4, TX.13 y F7)
 
 ## Bloque B · contratos y rojo de todo el módulo · 🌐 · T4.3–T4.10
 Para cuando: `make test-pendiente` cuenta **≈54** llamadas en `internal/modulos/inferencia` + `puente_inferencia.go` (la cifra exacta se anota aquí al cerrar T4.10), gate rojo rc=0, gate ci-local rc=0, `make lint` sin `unused`.
@@ -116,6 +116,6 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 se cumple e
 - [ ] **T4.30 · docs: `ESTADO.md` y este README** · 🌐 · dep. T4.29
   - **Hecho cuando**: estado «cerrada», SHA por tarea, cifra de coste (ficheros, commits, horas de sesión) para recalibrar D-12
   - **Commit**: `docs(reorganizacion-modular): F4 cerrada`
-- [ ] **T4.31 · (si F9 adelantado está aceptado) suites contra Postgres** · 🌐→💻 · dep. T4.29 y la decisión de `../F9-procesos/`
+- [ ] **T4.31 · suites contra Postgres (= T9.25, 9C de `inferencia`)** · 🌐→💻 · dep. T4.29 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34)
   - **Hecho cuando**: la sesión web escribe en `test/procesos/` las dos pasadas (`tenantllmtest.Contrato` y `degradationtest.Contrato` sobre `NewPostgres` con la base clonada) y comprueba `go vet -tags integracion ./test/procesos/...` rc=0; la **local** corre `make test-procesos` (testcontainers, `postgres:17-alpine`) y cuenta PASS/FAIL/SKIP con `-v`; traspaso `documentations/reorganizacion-modular/traspasos/TRASPASO-F4-inferencia.md` (skill `traspaso-web-local`)
   - **Commit**: `procesos(inferencia): suites de tenantllm y degradation contra Postgres`

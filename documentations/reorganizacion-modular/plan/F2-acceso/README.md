@@ -72,7 +72,8 @@
 2. **`05` E-1 choca con `internal/iam/infra/postgres/membresia_unica_ast_test.go:74,97,128`**: barre
    **todo** `internal/` y exige que el único fichero con `INSERT INTO public.tenant_members` sea
    `iam/infra/postgres/memberships.go`. El verde de `acceso/iam/infra/postgres/memberships.go` lo pone
-   **rojo** en `ci-local`. Hace falta tocar una línea del test viejo (D-F2-2).
+   **rojo** en `ci-local`. **Resuelto en F0** por D-F4-1 (T0.27: el barrido viejo salta el árbol
+   nuevo), que subsume D-F2-2; F2 solo lo **verifica** (T2.1 y T2.24).
 3. **`05` E-6 lista `entitlements` entre los 12 sin gemelo en memoria**: lo tiene, `Fake`
    (`internal/entitlements/entitlements.go:211-296`), en un fichero de producción. `platformadmin`
    sí carece de gemelo **y de puerto**: sus handlers reciben `*Repository` concreto
@@ -99,9 +100,9 @@
 | # | Pregunta | Recomendación |
 |---|---|---|
 | D-F2-1 | Los 3 candados AST del canje: ¿se quedan como candados AST del paquete nuevo (y no como proceso)? | **Sí**. Y el de «cuatro columnas NULLables» pasa a test **de conducta** sobre la función pura de mapeo extraída (E-6), que ya no necesita AST |
-| D-F2-2 | ¿Se permite tocar **una línea** de `internal/iam/infra/postgres/membresia_unica_ast_test.go` (añadir el escritor nuevo a `escritoresEsperados`) como excepción a E-1? | **Sí**, en el mismo commit que el verde de `memberships.go`, con el motivo en el mensaje. Alternativa peor: que el candado nuevo y el viejo se ignoren mutuamente por ruta |
+| ~~D-F2-2~~ | ~~¿Se permite tocar **una línea** de `internal/iam/infra/postgres/membresia_unica_ast_test.go` (añadir el escritor nuevo a `escritoresEsperados`) como excepción a E-1?~~ | **Subsumida por D-F4-1** ([`../DECISIONES.md`](../DECISIONES.md)): la línea se pone en **F0** (T0.27) y hace que el barrido viejo **ignore** el árbol nuevo. Solo si D-F4-1 = no vuelve esta forma: añadir el escritor nuevo a `escritoresEsperados` en el mismo commit que el verde de `memberships.go` |
 | D-F2-3 | `platformadmin` sin puerto: ¿se crea `platformadmin/puertos.go` ✚ (solo interfaces) y se separa el SQL de `access_requests.go` en `access_requests_postgres.go` ✚? | **Sí**: es la única forma de que su lógica (aprobación, reintento, unión de systems) nazca cubierta sin BD (E-6). Cambia el árbol de `04` §3 en dos ficheros |
 | D-F2-4 | El `Fake` de `entitlements` ¿se queda en `entitlements.go` o se muda a `entitlementstest`? | **A `entitlementstest`** (patrón E-6); `entitlements.go` queda con constantes y el puerto |
 | D-F2-5 | ¿Suites de contrato también para los puertos **de entrada** (`ports/in`), que implementa un solo usecase? | **No**: excepción escrita — los cubre el test del usecase que los implementa. Suites **sí** para los 10 de salida |
 | D-F2-6 | Reloj inyectable (`WithReloj(func() time.Time)`) en `entitlements.Postgres` y `iamidentity.M2MClient`, exportado nuevo sin equivalente viejo | **Sí**: `contrato-tdd` prohíbe reloj real; no cambia nada observable |
-| D-F2-7 | Si F9 se adelanta (`plan/F9-procesos/`), ¿cierra F2 la pasada de los procesos de acceso contra el binario nuevo? | **Sí**, como tarea 🌐→💻 condicionada (T2.33) |
+| D-F2-7 | Si F9 se adelanta (`plan/F9-procesos/`), ¿cierra F2 la pasada de los procesos de acceso contra el binario nuevo? | **Subsumida por D-F9-1** (recomendación: sí): T2.33 **es** la pasada 9C de `acceso` (T9.23); solo se tacha si D-F9-1 = no |

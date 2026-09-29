@@ -131,7 +131,7 @@ de `anonimizar_test`. `semilla.go`: `CasoAmbar`, `NombresDelCaso`, `EsperadoCaso
 | R-05 | El normalizador de la caché y el del match son el mismo, verificado al arrancar | `fase5_captacion.go:238-246` |
 | R-06 | La revisión la escribe el store con cipher del literal; nunca el `flowStore` | `fase5_captacion.go:195-199` |
 | R-07 | El pipeline normal **no** empuja al CRM; solo el re-análisis pedido por la dueña (`requested_by`) | `fase5_captacion.go:209-213` · D-044.19 |
-| R-08 | Un solo compositor en el proceso (ventana y re-análisis) | `fase5_captacion.go:52-56` |
+| R-08 | Un solo compositor en el proceso (ventana y re-análisis) | `fase5_captacion.go:53-62` |
 | R-09 | La cola no lleva cipher: recibe bytes ya cifrados (D-044.26) | `fase3_almacenes.go:171-176` |
 | R-10 | Re-análisis: no cambia el estado de la solicitud (INV-10); 400 de forma antes que 403; seis dependencias obligatorias | `reanalisis.go:238-243`, FX T-8 |
 | R-11 | El adelanto es por **pull** (ADR-0045 fuera del repo: *«el Cloud orquesta la inferencia, el Edge solo la sirve»*); `Signal.Intent` es siempre nil (I-CP-2) | constitución I-CP-2 |

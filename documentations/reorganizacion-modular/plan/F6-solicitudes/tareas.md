@@ -94,7 +94,7 @@ Para cuando: huella igual · `go list -deps` prueba lo nuevo · candados verdes 
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F6-solicitudes.md` · **Hecho cuando**: las 8 secciones; §7 con lo que no se comprobó (SQL nuevo no corrido contra Postgres; carrito viejo con segunda instancia)
 
 ## Bloque I · cierre local · 💻 · T6.27–T6.29
-- [ ] **T6.27 · procesos(solicitudes): pasada 9C** · 🌐→💻 · **solo si D-F9-1 aceptada** (T9.27)
+- [ ] **T6.27 · procesos(solicitudes): pasada 9C (= T9.27)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34)
   - **Hecho cuando**: suites `intakestest`, `integrationstest`, `tenantvarstest` contra Postgres (testcontainers) verdes; P5 (bandeja) y P6 (CRM) verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 leído del log
 - [ ] **T6.28 · Integración en `dev`** · 💻 · merge sin squash; `ci-local` rc=0 en local con lint v2.12.2
 - [ ] **T6.29 · Cierre de F6** · 💻 · `ESTADO.md` y este `README.md` (estado «cerrada», SHA); `CERRADO <fecha>` en el traspaso · **Commit**: `docs(reorganizacion-modular): F6 cerrada`

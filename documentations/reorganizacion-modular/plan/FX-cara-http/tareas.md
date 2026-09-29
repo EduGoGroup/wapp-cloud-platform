@@ -24,7 +24,7 @@ huella igual, `FaseActual = 0` y el candado de mudanzas en verde.
   - **Gate**: el de cabecera · `make cobertura-ficheros; echo rc=$?` → `rc=0`
   - **Commit**: `verde(apipublica): la Cara y el estrangulador` (uno por fichero si se prefiere)
 - [ ] **TX.3 · andamiaje(f0): el arranque nuevo compone las dos caras** · 🌐 · dep. TX.2 y la copia del arranque de F0 · cumple RX.2.a, RX.2.c
-  - **Ficheros**: `internal/arranque/transporte_http.go` (la copia de `bootstrap/arranque/http.go`), su test
+  - **Ficheros**: `internal/arranque/http.go` (la copia de `bootstrap/arranque/http.go`: F0 copia **con el mismo nombre**, T0.10 y T0.16, y el nombre se conserva: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.2), su test
   - **Hecho cuando**: el mux viejo recibe **lo mismo que hoy** (los 7 de autenticación y `publicapi.Register`); se construye `apipublica.Nueva()` vacía; el `http.Server` de `:8103` sirve `PublicRateLimit(InstrumentHTTP(…))` **sobre `apipublica.Componer(cara, viejo)`**, una sola vez cada uno; una aserción de cableado lo comprueba
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/arr.log" 2>&1; echo rc=$?` → `rc=0`, 0 SKIP
   - **Commit**: `andamiaje(f0): la cara nueva vacía delante de la vieja`
@@ -49,31 +49,32 @@ Para cuando: 23 rutas de `:8103` por la cara nueva, J4–J11 con handlers nuevos
   - **Gate**: el de cabecera · `make cobertura-ficheros; echo rc=$?` → `rc=0`
   - **Commit**: `verde(apipublica): <fichero>` — uno por fichero
 - [ ] **TX.7 · conmutar(acceso): 23 rutas a la cara nueva** · 🌐 · dep. TX.6 · cumple RX.3.a, RX.4.a
-  - **Ficheros**: `internal/arranque/transporte_http.go`, `transporte_rutas_admin.go`, la constante `FaseActual`
+  - **Ficheros**: `internal/arranque/http.go`, `rutas_admin.go`, la constante `FaseActual`
   - **Hecho cuando**: A1–A7 ya no se registran en el mux viejo; `Montar{Autenticacion,RolePlane,Auditoria,Derechos}` montados; en los `Deps` viejos `Roles`, `Members`, `Invitations`, `Audit` = `nil` y `Entitlements` = **el resolver nuevo** (una sola caché, [`arquitectura.md`](arquitectura.md) §4); J4–J11 con `platformadmin` **nuevo**, construidos inline (T-16); `FaseActual = 2`
   - **Gate**: `go test -count=1 -v -run 'Mudanzas|Huella|PlatformPermissions' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$?` → `rc=0`, 0 SKIP · `make ci-local; echo rc=$?` → `rc=0`
   - **Commit**: parte del `conmutar(acceso): …` de F2
 
 ## Tramo F3 · `edge` · 🌐 (TX.10 🌐→💻) · TX.8–TX.11
 
-Para cuando: 8 rutas más (31), J12–J17 nuevos, un solo gw, `FaseActual = 3`.
+Para cuando: 6 rutas más (29), J12–J17 nuevos, un solo gw (también el de E1–E2, que siguen en la
+cara vieja hasta F7: D-FX-1/D-F7-4), `FaseActual = 3`.
 
-- [ ] **TX.8 · rojo(apipublica): edge e intenciones** · 🌐 · dep. TX.7 y el verde de `modulos/edge` · cumple RX.2.b, RX.2.d, RX.5.a, RX.6.a
-  - **Ficheros**: `plazos.go`, `limits.go`, `messages.go`, `sessions.go`, `health.go`, `sessionadmin.go`, `diagnostics.go`, `intents.go` y sus 8 tests (16)
-  - **Hecho cuando**: `sessionadmin.go` **exporta** los dos constructores (D-FX-2) para `:8100`; `intents.go` usa `internal/intentcfg` **viejo** y el puente está declarado en `internal/modulos/fronteras_test.go` con «retira: TX.21» (D-FX-1 literal); `messages.go` mapea los centinelas del `edge/session` **nuevo**
+- [ ] **TX.8 · rojo(apipublica): edge** · 🌐 · dep. TX.7 y el verde de `modulos/edge` · cumple RX.2.b, RX.2.d, RX.5.a, RX.6.a
+  - **Ficheros**: `plazos.go`, `limits.go`, `messages.go`, `sessions.go`, `health.go`, `sessionadmin.go`, `diagnostics.go` y sus 7 tests (14)
+  - **Hecho cuando**: `sessionadmin.go` **exporta** los dos constructores (D-FX-2) para `:8100`; `messages.go` mapea los centinelas del `edge/session` **nuevo**; `fronteras_test.go` sin ningún puente desde `apipublica`. *(Alternativa D-FX-1 literal: se añade aquí `intents.go` sobre `internal/intentcfg` viejo con su puente «retira: TX.21».)*
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0`
-  - **Commit**: `rojo(apipublica): edge e intenciones`
-- [ ] **TX.9 · verde(apipublica): edge e intenciones, fichero a fichero** · 🌐 · dep. TX.8
+  - **Commit**: `rojo(apipublica): edge`
+- [ ] **TX.9 · verde(apipublica): edge, fichero a fichero** · 🌐 · dep. TX.8
   - **Hecho cuando**: pendientes = 0; ≥ 80 % por fichero; `SendBudgetFrom` de `plazos.go` da el mismo valor que el viejo para 10 s (9 s) y para ≤ 1 s (0)
   - **Gate**: el de cabecera · `make cobertura-ficheros; echo rc=$?` → `rc=0`
   - **Commit**: `verde(apipublica): <fichero>` — uno por fichero
-- [ ] **TX.10 · refactor(edge): identidad del centinela `ErrSessionOffline` (D-FX-3)** · 🌐→💻 · dep. decisión D-FX-3 · cumple RX.4.c
-  - **Ficheros**: `internal/modulos/edge/session/registry.go` (una línea), `fronteras_test.go` (puente de identidad, «retira: TX.24»), un test en `internal/arranque`
+- [ ] **TX.10 · identidad del centinela `ErrSessionOffline` (D-F3-2)** · 🌐→💻 · dep. decisión D-F3-2 · cumple RX.4.c
+  - **Ficheros**: con **D-F3-2** (recomendación): `internal/modulos/edge/session/registry.go` declara `var ErrSessionOffline = <el de platform>` (el mismo que el viejo desde F0 T0.17) y un test de identidad en `internal/arranque`; **sin** puente. *(Alternativa D-FX-3, si D-F3-2 = no: la línea apunta al viejo y `fronteras_test.go` declara el puente de identidad, «retira: TX.24».)*
   - **Hecho cuando**: `errors.Is(<nuevo>.ErrSessionOffline, <viejo>.ErrSessionOffline)` es `true`; la sesión local lo confirma con el e2e de `cmd/server-modular` (`/admin/flows/start` a una sesión offline → mismo código que el binario viejo)
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/a.log" 2>&1; echo rc=$?` → `rc=0`
-  - **Commit**: `refactor(edge): el centinela de sesión offline conserva su identidad hasta F8`
-- [ ] **TX.11 · conmutar(edge): 8 rutas a la cara nueva, un solo gw** · 🌐 · dep. TX.9, TX.10 · cumple RX.3.a, RX.4.a–b
-  - **Hecho cuando**: `Montar{Mensajes,Sesiones,Diagnosticos,Intenciones}` montados; en los `Deps` viejos `Sender`, `DiagnosticsRequester`, `ConfigPush`, `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics`, `Intents` = `nil`; J12–J15 reciben el gw **nuevo**, J16–J17 los handlers de `sessionadmin.go` **en el mismo commit que D3–D4** (T-10); aserciones de identidad: el `MessageSender` del notificador viejo, el `ConfigPusher` del `filtercfg` nuevo y el `Frame` (o su adaptador) del selector LLM viejo apuntan al **mismo** gw; `FaseActual = 3`
+  - **Commit**: `refactor(edge): el centinela de sesión offline conserva su identidad`
+- [ ] **TX.11 · conmutar(edge): 6 rutas a la cara nueva, un solo gw** · 🌐 · dep. TX.9, TX.10 · cumple RX.3.a, RX.4.a–b
+  - **Hecho cuando**: `Montar{Mensajes,Sesiones,Diagnosticos}` montados; en los `Deps` viejos `Sender`, `DiagnosticsRequester`, `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics` = `nil`; `ConfigPush` = el gw **nuevo** e `Intents` = el `intentcfg` viejo (E1–E2 siguen en la vieja hasta TX.21, D-FX-1/D-F7-4); J12–J15 reciben el gw **nuevo**, J16–J17 los handlers de `sessionadmin.go` **en el mismo commit que D3–D4** (T-10); aserciones de identidad: el `MessageSender` del notificador viejo, el `ConfigPusher` del `filtercfg` nuevo, el `Deps.ConfigPush` de la cara vieja y el `Frame` (o su adaptador) del selector LLM viejo apuntan al **mismo** gw; `FaseActual = 3`
   - **Gate**: el de TX.7 · `make ci-local; echo rc=$?` → `rc=0`
   - **Commit**: parte del `conmutar(edge): …` de F3
 
@@ -104,11 +105,13 @@ Para cuando: 8 rutas más (31), J12–J17 nuevos, un solo gw, `FaseActual = 3`.
 
 ## Tramo F7 · `captacion` · 🌐 · TX.19–TX.21
 
-- [ ] **TX.19 · rojo(apipublica): `reanalyze.go`** · 🌐 · dep. TX.18 y el verde de `modulos/captacion` · cumple RX.2.b · **Hecho cuando**: sin gate en la cadena; el 400 de forma va antes que los 403 del servicio (T-8) · **Commit**: `rojo(apipublica): re-análisis`
-- [ ] **TX.20 · verde(apipublica): `reanalyze.go`** · 🌐 · dep. TX.19 · **Commit**: `verde(apipublica): reanalyze`
-- [ ] **TX.21 · conmutar(captacion): H1 y retirar el puente de intenciones** · 🌐 · dep. TX.20 · cumple RX.3.a, RX.6.a
-  - **Hecho cuando**: H1 por la nueva; `Reanalysis` = `nil` en la vieja; `intents.go` pasa a `modulos/captacion/intentcfg` (commit `refactor(apipublica): intenciones sin puente`) y su puente sale de `fronteras_test.go`; en G7 el arranque lee el plazo del `pipeline` **nuevo**; `FaseActual = 7`
-  - **Gate**: el de TX.7 · **Commit**: `refactor(apipublica): …` + parte del `conmutar(captacion)`
+Para cuando: 3 rutas más (H1, E1, E2), `FaseActual = 7`, ningún puente desde `apipublica`.
+
+- [ ] **TX.19 · rojo(apipublica): `reanalyze.go` e `intents.go`** · 🌐 · dep. TX.18 y el verde de `modulos/captacion` · cumple RX.2.b, RX.2.d, RX.6.a · **Ficheros**: `reanalyze.go`, `intents.go` y sus 2 tests · **Hecho cuando**: `reanalyze.go` sin gate en la cadena y el 400 de forma antes que los 403 del servicio (T-8); `intents.go` sobre `modulos/captacion/intentcfg` **nuevo** (sin puente), con el gate `llm_intent` dentro del handler y el `ConfigPush` best-effort (mapa E2) · **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0` · **Commit**: `rojo(apipublica): re-análisis e intenciones`
+- [ ] **TX.20 · verde(apipublica): `reanalyze.go` e `intents.go`** · 🌐 · dep. TX.19 · **Gate**: cabecera + cobertura · **Commit**: `verde(apipublica): <fichero>` — uno por fichero
+- [ ] **TX.21 · conmutar(captacion): H1, E1 y E2** · 🌐 · dep. TX.20 · cumple RX.3.a, RX.6.a
+  - **Hecho cuando**: H1, E1 y E2 por la nueva (E1 y E2 en el **mismo** commit: familia, mapa §4.2); `Reanalysis`, `Intents` y `ConfigPush` = `nil` en la vieja; en G7 el arranque lee el plazo del `pipeline` **nuevo**; `FaseActual = 7`. *(Alternativa D-FX-1 literal: aquí solo se retira el puente de `intents.go` hacia `internal/intentcfg`, con commit `refactor(apipublica): intenciones sin puente`.)*
+  - **Gate**: el de TX.7 · **Commit**: parte del `conmutar(captacion)`
 
 ## Tramo F8 · `conversacion` · 🌐 · TX.22–TX.24
 
@@ -117,7 +120,7 @@ Para cuando: 8 rutas más (31), J12–J17 nuevos, un solo gw, `FaseActual = 3`.
   - **Hecho cuando**: `flows.go` monta I1 e I11–I13 con los handlers de `modulos/conversacion/admin` **nuevos** y usa `nucleo/contact.Ref`; I16–I17 montan con la misma condición que I14 · **Commit**: `rojo(apipublica): conversación`
 - [ ] **TX.23 · verde(apipublica): conversación, fichero a fichero** · 🌐 · dep. TX.22 · **Commit**: `verde(apipublica): <fichero>`
 - [ ] **TX.24 · conmutar(conversacion): 19 rutas y la cara vieja deja de construirse** · 🌐→💻 · dep. TX.23 · cumple RX.3.a, RX.3.d, RX.4.a, RX.6.b
-  - **Hecho cuando**: I1–I19 por la nueva; el mux viejo es `http.NewServeMux()` **vacío** (sin `publicapi.Register`) → `grep -rn 'publicapi\.' internal/arranque` vacío; J18–J22 con handlers nuevos y el **mismo** rt; retirado el puente de identidad de TX.10; lista de puentes de `apipublica` vacía; `FaseActual = 8`; la sesión local corre el e2e de `cmd/server-modular`
+  - **Hecho cuando**: I1–I19 por la nueva; el mux viejo es `http.NewServeMux()` **vacío** (sin `publicapi.Register`) → `grep -rn 'publicapi\.' internal/arranque` vacío; J18–J22 con handlers nuevos y el **mismo** rt; lista de puentes de `apipublica` vacía (con D-F3-2 no hubo puente de identidad; con D-FX-3 se retira aquí); `FaseActual = 8`; la sesión local corre el e2e de `cmd/server-modular`
   - **Gate**: el de TX.7 · **Commit**: parte del `conmutar(conversacion)`
 
 ## Tramo F10 · relevo · 💻 · TX.25

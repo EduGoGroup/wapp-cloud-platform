@@ -174,7 +174,7 @@ go test -v -count=1 ./... > /tmp/tc.log 2>&1; echo "TC_RC=$?" >> /tmp/tc.log; ta
 docker ps -a --filter label=org.testcontainers=true   # vacío tras la corrida (reaper)
 ```
 
-Se anota en `06` §1 y en `ESTADO.md`: `docker rc`, `TC_RC`, tiempo, si el reaper (Ryuk) arrancó y
+Se anota en `06` §5 (el hueco «Resultados de la primera sesión web») y en `ESTADO.md`: `docker rc`, `TC_RC`, tiempo, si el reaper (Ryuk) arrancó y
 si el puerto mapeado fue alcanzable. Si falla, se anota el error literal y **la web no corre
 procesos**; nada más cambia.
 
@@ -220,7 +220,7 @@ procesos**; nada más cambia.
 | Conmutar un módulo (`conmutar(<m>)`) | 🌐 | 🌐 `huella_test`, `ci-local` · 💻 `test-integration` si toca `platform` | 🌐, o 🌐→💻 si hubo cambio en `platform` |
 | Mudar rutas a `apipublica` | 🌐 | 🌐 huella de rutas | 🌐 |
 | F0: ✎ de `platform` (código que comparten los dos arranques) | 🌐 | 🌐 `ci-local` · 💻 `make test-integration` (`WAPP_TEST_REQUIRE_DB=1`, SKIP contados) | 🌐→💻 |
-| F0: hook `SessionStart`, targets `make` | 🌐 | 🌐 y 💻 (el hook corre en los dos) | 🌐→💻 |
+| F0: hook `SessionStart`, targets `make` | 🌐 | 🌐 (T0.1 prueba las dos ramas del script, con y sin `CLAUDE_CODE_REMOTE`); 💻 lo ve correr al arrancar F0-06 | 🌐 (sin traspaso propio: F0 bloque A es 🌐) |
 | Cambio de `go.mod` (testcontainers) | 🌐 | 💻 `go.sum` con red real, `test-integration` | 🌐→💻 |
 | Proceso de F9 (`procesos(<p>)`) | 🌐 | 🌐 `vet -tags integracion`; pre-chequeo con Docker si §5 salió bien · 💻 `make test-procesos` viejo **y** nuevo | 💻 |
 | Prueba en UAT en sustitución (D-9) | — | 💻 | 💻 |

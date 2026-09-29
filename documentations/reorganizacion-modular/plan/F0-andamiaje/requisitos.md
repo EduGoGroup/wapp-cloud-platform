@@ -79,6 +79,11 @@ un árbol `muerde` que produce ≥ 1 violación con fichero y motivo, y un árbo
 - **R0.3.g** · DONDE un fichero lleve la marca `// cobertura: adaptador postgres (05 E-6)`, EL
   candado DEBERÁ eximirlo del umbral SOLO si importa `database/sql` o `pgx`. — Verifica: caso
   `cobertura/muerde` con una marca ilegítima.
+- **R0.3.h** · *(fuera de la regla común: no es un candado nuevo, es D-F4-1)* SI un fichero del
+  árbol nuevo (`internal/{modulos,nucleo,arranque,apipublica,pendiente,candados}`) compara por vía o
+  escribe `INSERT INTO public.tenant_members`, ENTONCES los barridos viejos `c2_via_test.go` y
+  `membresia_unica_ast_test.go` NO DEBERÁN verlo, y SÍ DEBERÁN seguir viendo todo lo viejo
+  (incluido `internal/bootstrap/arranque`). — Verifica: T0.27 (muerde al revés y listas intactas).
 
 ## H0.4 · El segundo arranque existe y es el primero
 

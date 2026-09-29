@@ -15,6 +15,11 @@
 >    por corrida y una base aislada por proceso. **Nunca** se conectan a un Postgres vivo. Los corre
 >    Claude Code en local, que tiene Docker (§7.2 y §7.3).
 >
+> 🔄 **2026-09-28**: D-10 cerró la cara HTTP como **única y nueva, por olas** (`internal/apipublica`),
+> lo que sustituye §9.2. El plan ejecutable ([`plan/`](plan/README.md)) midió fase a fase varias
+> cifras y afirmaciones de este documento y las corrige sin cambiar el método: la lista, en
+> [`ESTADO.md`](ESTADO.md) §«Lo que el plan corrigió».
+>
 > Este documento es **normativo**: quien implemente lo cumple. Donde choca con un documento
 > anterior, **manda este** (la lista de lo sustituido está en §8).
 

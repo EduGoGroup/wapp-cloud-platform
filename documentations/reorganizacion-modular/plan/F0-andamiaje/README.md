@@ -17,7 +17,8 @@ crítica: si el andamiaje está mal, todo lo demás hereda el fallo.
   (`reconstruir-modulo`, paso 0).
 - El entorno web preparado según [`../00-marco/flujo-web-local.md`](../00-marco/flujo-web-local.md)
   (setup script, variables, `golangci-lint v2.12.2`).
-- **D-F0-1 y D-F0-2** decididas antes del bloque D; **D-F0-3** antes del bloque E (abajo).
+- **D-F0-1 y D-F0-2** decididas antes del bloque D; **D-F0-3** y **D-F4-1** antes del bloque E
+  (abajo).
 - Para el mecanismo de montaje de T0.16: [`../FX-cara-http/diseno.md`](../FX-cara-http/diseno.md) escrito.
 
 ## Salidas (criterio de salida, detallado en [`reglas.md`](reglas.md) §5)
@@ -37,7 +38,7 @@ crítica: si el andamiaje está mal, todo lo demás hereda el fallo.
    fronteras, la agregación de cobertura y el contenedor de huella.
 3. [`reglas.md`](reglas.md) — lo que no se toca, 13 trampas con `fichero:línea`, la definición de hecho.
 4. [`requisitos.md`](requisitos.md) — nueve historias, criterios EARS con su verificación.
-5. [`tareas.md`](tareas.md) — T0.0–T0.26 en seis bloques.
+5. [`tareas.md`](tareas.md) — T0.0–T0.27 en seis bloques.
 
 ## Bloques de sesión
 
@@ -47,7 +48,7 @@ crítica: si el andamiaje está mal, todo lo demás hereda el fallo.
 | B · `pendiente` y los `make` | 🌐 | T0.2–T0.4 (+ T0.26 si T-1 = sí) | `PENDIENTES=0` y gate ci-local `GATE_RC=0` con `vet-pendiente` |
 | C · los candados de fichero | 🌐 | T0.5–T0.9 | cinco candados en `ci-local`, cada uno con su caso que muerde |
 | D · arranque nuevo y huella | 🌐 | T0.10–T0.15 | `TestHuellaVieja` y `TestHuella` verdes contra la misma dorada. **Para en T0.11 si D-F0-1/D-F0-2 no están decididas** |
-| E · cara vacía, ✎ y deriva | 🌐→💻 | T0.16–T0.21 | huella intacta tras cada paso; traspaso escrito y rama empujada |
+| E · cara vacía, ✎ y deriva | 🌐→💻 | T0.16–T0.21 (+ T0.27 si D-F4-1 = sí) | huella intacta tras cada paso; barridos AST viejos ciegos al árbol nuevo; traspaso escrito y rama empujada |
 | F · cierre local | 💻 | T0.22–T0.25 | los cinco criterios de salida en `origin/dev` |
 
 La numeración global de sesiones (`S0n`) la pone [`../sesiones/`](../sesiones/README.md).
@@ -59,6 +60,7 @@ La numeración global de sesiones (`S0n`) la pone [`../sesiones/`](../sesiones/R
 | **D-F0-1** | `05` exige contrato → rojo → verde por fichero y no portar tests (E-2, E-4, E-8). ¿Se acepta que `internal/arranque` nazca **por copia** en F0, con 19 de los 20 tests del viejo copiados (los 11 que leen AST —10 candados y su ayudante— y los unitarios de sus funciones puras), fuera de `un_fichero_un_test` y de la cobertura por fichero? | **Sí.** Es cableado, no dominio: un contrato con `panic` de una copia que debe salir idéntica no especifica nada. Su contrato es la huella + los candados AST, que `05` §3.2 ya asigna «al arranque nuevo». Se reconstruye por módulo en cada `conmutar` (`diseno.md` §5.1) | bloque D |
 | **D-F0-2** | ¿Se permite **un fichero de test** nuevo en el paquete viejo, `internal/bootstrap/arranque/huella_vieja_test.go`? | **Sí.** Sin él no hay forma de medir en ejecución la huella del viejo sin levantarlo (sus constructores son privados y sus fases 1 y 3 exigen Postgres y R2). No cambia producción ni lo que corre en UAT, y muere con el paquete en F10. Alternativa peor: dorada congelada desde la copia en F0, que deja de ser oráculo en el primer arreglo «hecho dos veces» | T0.14 |
 | **D-F0-3** | E-1 exceptúa **solo** los tres ficheros ✎ de `platform`. Cortarlos sin tocar el arranque viejo exige **una línea de alias** en tres paquetes viejos de dominio (`gateway/session/registry.go:22`, `iam/ports/in/usecases.go:129`, `inferstats/inferstats.go:144`). ¿Se acepta? | **Sí.** Alternativa: adaptadores en los dos arranques, que **tocan el oráculo** (fases 4 y 8 del viejo). Con alias, ni el arranque viejo ni ningún texto cambia, y los módulos nuevos declararán el mismo alias (`arquitectura.md` §7) | bloque E |
+| **D-F4-1** *(de F4, se ejecuta aquí)* | Dos barridos AST **viejos** recorren todo `internal/` con lista exacta (`llmvia/c2_via_test.go:117`, `iam/infra/postgres/membresia_unica_ast_test.go:74,97`) y se pondrían rojos con el primer verde de F2/F4. ¿Una línea en cada uno para que salten el árbol nuevo? Subsume D-F2-2 | **Sí** → T0.27 (segunda excepción a E-1). Alternativa peor: tocar la lista vieja en F2, F4, TX.13 y F7 | bloque E |
 | T-1 *(del marco)* | ¿`make lint` falla si la versión no es `v2.12.2`? | Sí → T0.26 | T0.26 |
 
 Decididas en esta fase sin necesitar a Jhoan (con su porqué en [`reglas.md`](reglas.md) §3):
@@ -75,9 +77,9 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 4 | `04` §3: huella de «rutas, rpc, métricas, **variables**»; `05`: «…, **goroutines**» | F0 toma las dos: goroutines estática y `entorno` = ∅ (solo `platform/config` lee entorno, `config.go:735`) | `diseno.md` §6.1 |
 | 5 | `04` §2.1: los dos binarios usan «los MISMOS paquetes» y `server-modular` lleva copia del e2e | sustituido por `05` §4 (no comparten dominio) y E-8; el e2e de `cmd/server` no ejerce el arranque | `diseno.md` §5.3 |
 | 6 | `02` §3.3: `ErrSessionOffline` (3 usos) en `platform/httpapi` | 1 uso en código (`admin.go:306`) + el import (`:13`) | `arquitectura.md` §7 |
-| 7 | `constitucion.md` trampa 8, `deuda.md` D-14, `operacion.md:99,194`: `internal/publicapi/flows.go:75` | es `internal/bootstrap/arranque/flows.go:75` | T0.20 (17 menciones caducadas) |
+| 7 | `constitucion.md` trampa 8, `deuda.md` D-14, `operacion.md:99,194`: `internal/publicapi/flows.go:75` | es `internal/bootstrap/arranque/flows.go:75` | T0.20 (18 líneas caducadas, medido el 2026-09-29) |
 | 8 | skill `procesos-testcontainers`: «todo con `//go:build integracion`», incluido el candado | con etiqueta, el candado no mordería en `ci-local` | T0.8 corrige la skill |
-| 9 | `06-entorno-web.md` §1: Docker ❌, hooks ❓ | según `../00-marco/`, Docker está y los hooks del repo corren en la nube: **sin probar aquí** | T0.0 lo mide |
+| 9 | `06-entorno-web.md` §1 (versión del 2026-09-27): Docker ❌, hooks ❓ | **Ya corregido** en `06` §1 el 2026-09-28 (Docker ✅, hooks ✅, según la doc oficial); lo que sigue **sin probar** es testcontainers en la VM | T0.0 lo mide y lo anota en `06` §5 |
 
 ## Números medidos (y cómo)
 

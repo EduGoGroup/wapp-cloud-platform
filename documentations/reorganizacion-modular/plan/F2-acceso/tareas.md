@@ -14,7 +14,7 @@ Para cuando: números de [`arquitectura.md`](arquitectura.md) §1 re-medidos, D-
 
 - [ ] **T2.1 · Verdad de campo, entradas y re-medición** · 🌐 · dep. F1 cerrado y parada resuelta · cumple R2.1.d
   - **Ficheros**: `plan/F2-acceso/README.md` (estado «en curso», SHA de arranque, respuestas D-F2-*)
-  - **Hecho cuando**: las 5 entradas del README comprobadas con su comando; tabla §1 de arquitectura re-medida (si difiere, se corrige **aquí** y se dice en el commit); `git log 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` revisado; D-F2-1…D-F2-7 con respuesta de Jhoan (o la recomendación marcada «asumida» si Jhoan lo delegó).
+  - **Hecho cuando**: las 5 entradas del README comprobadas con su comando; tabla §1 de arquitectura re-medida (si difiere, se corrige **aquí** y se dice en el commit); `git log 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` revisado; D-F2-1…D-F2-7 con respuesta de Jhoan (o la recomendación marcada «asumida» si Jhoan lo delegó). **Verificado D-F4-1** (lo hizo F0, T0.27): `grep -c 'SkipDir' internal/iam/infra/postgres/membresia_unica_ast_test.go` → ≥ 1 y el commit `andamiaje(f0): los barridos AST viejos…` en `git log origin/dev`; si falta, **parar** (sin él el verde de `memberships.go` pone rojo `ci-local`).
   - **Gate**: `GOWORK=off make ci-local > "$TMPDIR/g.log" 2>&1; echo GATE_RC=$? >> "$TMPDIR/g.log"; tail -1 "$TMPDIR/g.log"` → `GATE_RC=0`
   - **Commit**: `docs(reorganizacion-modular): F2 arranca — entradas verificadas`
 
@@ -115,7 +115,7 @@ Entrada: PR de C integrado. Para cuando: 0 pendientes en `entitlements`, `iam/do
 Para cuando: 0 pendientes en `acceso` · candados AST verdes · PR.
 
 - [ ] **T2.24 · verde(acceso): `iam/infra/postgres/*` (8)** · 🌐 · dep. T2.23 · cumple R2.3.b–c
-  - **Hecho cuando**: SQL **literal** del viejo (T-2); los 3 candados AST en verde sin etiqueta; `memberships.go` en el **mismo** commit que la línea del candado viejo (D-F2-2, T-1) y el mensaje lo explica; unitarios verdes (el SQL lo cubre F9).
+  - **Hecho cuando**: SQL **literal** del viejo (T-2); los 3 candados AST en verde sin etiqueta; el candado viejo sigue verde **sin tocarlo** porque F0 ya lo dejó ciego al árbol nuevo (T0.27, D-F4-1; si D-F4-1 = no: `memberships.go` en el mismo commit que la línea de D-F2-2, T-1); unitarios verdes (el SQL lo cubre F9).
   - **Gate**: G-verde (sin umbral: adaptador Postgres) · `make ci-local` rc=0 (el candado viejo sigue verde)
   - **Commit**: `verde(acceso): iam/infra/postgres/<f>` — uno por fichero
 - [ ] **T2.25 · verde(acceso): `iam/transport/http/*` (6)** · 🌐 · dep. T2.23 · 6 commits · **Gate**: G-verde
@@ -134,8 +134,8 @@ Para cuando: huella igual · 23 + 8 rutas nuevas · `go list -deps` · PR · tra
   - **Ficheros**: los de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.5–TX.6 (`apipublica/{cadena,respuesta,autenticacion,roleplane,audit,entitlements}.go`, arnés)
   - **Hecho cuando**: lo que dice TX.6 (0 pendientes en `apipublica`, ≥ 80 %). Esta tarea **es** TX.5+TX.6: se marcan las dos.
 - [ ] **T2.31 · conmutar(acceso): el arranque nuevo cablea `acceso` (= FX TX.7)** · 🌐 · dep. T2.29, T2.30 · cumple R2.4.a–b, R2.5.b–e, R2.3.e
-  - **Ficheros**: en `internal/arranque`: las copias de `auth.go`, `fase3_almacenes.go`, `fase4_gateway.go`, `fase8_transporte.go`, `transporte_http.go`, `transporte_rutas_admin.go`, `contenedor.go`; `huella_test.go` si hace falta un caso; `traspasos/TRASPASO-F2-acceso.md`
-  - **Hecho cuando**: **un** `entitlements.NewPostgres` (nuevo) inyectado en todos los consumidores —incluida la cara vieja: `Deps.Entitlements` = el nuevo (FX TX.7)—; `Deps.{Roles,Members,Invitations,Audit}` = `nil`; A1–A7 fuera del mux viejo; J4–J11 inline con `platformadmin` nuevo sin alias; gateway viejo con `puente_iam`; aserción de cableado sobre el tipo de `c.entResolver`; `go list -deps ./cmd/server-modular` cumple R2.5.d; `git diff --stat -- cmd/server internal/bootstrap` vacío salvo D-F2-2.
+  - **Ficheros**: en `internal/arranque`: las copias de `auth.go`, `fase3_almacenes.go`, `fase4_gateway.go`, `fase8_transporte.go`, `http.go`, `rutas_admin.go`, `contenedor.go`; `huella_test.go` si hace falta un caso; `traspasos/TRASPASO-F2-acceso.md`
+  - **Hecho cuando**: **un** `entitlements.NewPostgres` (nuevo) inyectado en todos los consumidores —incluida la cara vieja: `Deps.Entitlements` = el nuevo (FX TX.7)—; `Deps.{Roles,Members,Invitations,Audit}` = `nil`; A1–A7 fuera del mux viejo; J4–J11 inline con `platformadmin` nuevo sin alias; gateway viejo con `puente_iam`; aserción de cableado sobre el tipo de `c.entResolver`; `go list -deps ./cmd/server-modular` cumple R2.5.d; `git diff --stat -- cmd/server internal/bootstrap` vacío.
   - **Gate**: `GOWORK=off go test -count=1 -v -run 'Mudanzas|Huella|PlatformPermissions|Cableado' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$? >> "$TMPDIR/m.log"; tail -1 "$TMPDIR/m.log"` → `rc=0`, `grep -c -- '--- SKIP' "$TMPDIR/m.log"` → 0 · `make ci-local` rc=0
   - **Commit**: `conmutar(acceso): el arranque nuevo cablea acceso y muda 23 rutas`
 
@@ -143,7 +143,7 @@ Para cuando: huella igual · 23 + 8 rutas nuevas · `go list -deps` · PR · tra
 - [ ] **T2.32 · Cierre de F2** · 🌐→💻 · dep. T2.31
   - **Hecho cuando**: la local repite `validar-antes-de-cerrar` con su toolchain; e2e de `cmd/server-modular` (`integration_test.go` de F0) verde; **una** petición real por familia contra el binario nuevo en local (exchange 503 en modo dual apagado, `GET /api/v1/entitlements` con `cache_ttl_seconds` 60, `POST /admin/tenants` con token `tenant_admin` → 403); `ESTADO.md` y README de F2 → «cerrada» con SHA; traspaso con su sección `CERRADO`.
   - **Gate**: `make ci-local` rc=0 en local · **Commit**: `docs(reorganizacion-modular): F2 cerrada`
-- [ ] **T2.33 · Procesos de acceso contra el binario nuevo** · 🌐→💻 · **condicionada: solo si F9 adelantado está aceptado** (`plan/F9-procesos/`) · cumple R2.6.a–b
+- [ ] **T2.33 · Procesos de acceso contra el binario nuevo (= T9.23, 9C de `acceso`)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34) · cumple R2.6.a–b
   - **Hecho cuando**: el proceso «Canje de identidad y permisos» (`05` §7.4) incluye las reglas de diseño §6 (suites Postgres, R-P1…R-P8, R-A5…R-A7, I-CP-5, migración 0038) y pasa contra `cmd/server` **y** `cmd/server-modular`; si F9 no está adelantado, esta lista se entrega a `plan/F9-procesos/` y la tarea se tacha con ese motivo.
   - **Gate**: `make test-procesos > "$TMPDIR/p.log" 2>&1; echo rc=$? >> "$TMPDIR/p.log"` → `rc=0`, 0 SKIP · **Commit**: `procesos(canje-permisos): …`
 

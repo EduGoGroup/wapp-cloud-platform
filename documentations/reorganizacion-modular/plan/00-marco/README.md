@@ -44,7 +44,7 @@ Una sesión que **escribe** el plan (no que lo ejecuta) lee primero `plantilla-d
 | El `Makefile` **no fija** el lint (usa el del `PATH`: v2.14.0 en local) y `go 1.26.5` es un mínimo (local corre 1.27.1) | [`tecnologia.md`](tecnologia.md) §1, decisión T-1 |
 | testcontainers v0.44.0 sube `httpsnoop` y `otelhttp`, que están en el binario de producción | [`tecnologia.md`](tecnologia.md) §6, decisión T-2 |
 | La rama por defecto del remoto es `main`: el PR de la web va con `--base dev` | [`flujo-web-local.md`](flujo-web-local.md) §2 |
-| `contratos.md` sitúa rutas en `internal/bootstrap/http.go` y `bootstrap.go:1425-1476`; hoy están en `internal/bootstrap/arranque/{http.go,rutas_admin.go}`. Las **cifras** (95 rutas, 70 variables, 17+5 métricas) sí se sostienen | [`producto.md`](producto.md) §4 |
+| `contratos.md` sitúa rutas en `internal/bootstrap/http.go` y `bootstrap.go:1425-1476`; hoy están en `internal/bootstrap/arranque/{http.go,rutas_admin.go}`. Las **cifras** de rutas (95) y métricas (17+5) sí se sostienen; las **variables son 71**, no 70 (falta `FLOW_REPLY_RATE`, leída por `getFloat`) | [`producto.md`](producto.md) §4 |
 | La VM web trae **PostgreSQL 16 preinstalado**: prohibido para los tests (sería un Postgres vivo) | [`tecnologia.md`](tecnologia.md) §6 |
 
 ## Decisiones que necesita Jhoan (del marco)

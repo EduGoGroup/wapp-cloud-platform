@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Fase · bloque | [F0 · Andamiaje](../F0-andamiaje/README.md) · E · la cara nueva vacía, los ✎ de `platform` y la deriva (🌐→💻) |
-| Tareas | T0.16–T0.21 |
+| Tareas | T0.16–T0.21, T0.27 |
 | Depende de | F0-04 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F0 bloque E» |
 | Se para cuando | `apipublica` montada y vacía con la huella **igual**, los tres ✎ hechos con la huella **igual** y `go list` sin aristas `platform → dominio`, la deriva documental cerrada, y el traspaso escrito para el bloque F. |
@@ -25,7 +25,7 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-WEB.md
 Tu encargo (y solo este):
 - Fase: F0 · Andamiaje → documentations/reorganizacion-modular/plan/F0-andamiaje/
 - Bloque(s): E · la cara nueva vacía, los ✎ de `platform` y la deriva
-- Tareas: T0.16–T0.21 de plan/F0-andamiaje/tareas.md
+- Tareas: T0.16–T0.21, T0.27 de plan/F0-andamiaje/tareas.md
 - Te paras cuando: `apipublica` montada y vacía con la huella **igual**, los tres ✎ hechos con la huella **igual** y `go list` sin aristas `platform → dominio`, la deriva documental cerrada, y el traspaso escrito para el bloque F.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F0 bloque E» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo (§F0), validar-antes-de-cerrar.
@@ -39,7 +39,7 @@ Al terminar: tareas [x] con SHA, ESTADO.md, traspaso si algo lo cierra la local,
 ## Al terminar debe existir
 
 - Commits con los prefijos de la plantilla (`rojo(<m>)`, `verde(<m>)`, `conmutar(<m>)`, `andamiaje(f0)`, `procesos(<p>)`, `relevo`, `docs(reorganizacion-modular)`, `chore(deps)`), empujados a la rama de la sesión.
-- En [`../F0-andamiaje/tareas.md`](../F0-andamiaje/tareas.md): T0.16–T0.21 `[x]` con SHA (o `[~]` con lo que falta).
+- En [`../F0-andamiaje/tareas.md`](../F0-andamiaje/tareas.md): T0.16–T0.21, T0.27 `[x]` con SHA (o `[~]` con lo que falta).
 - `ESTADO.md` de la reorganización al día.
 - Un PR con `--base dev`, con el informe de gates y «integrar SIN squash».
 - Si el bloque es 🌐→💻: el traspaso en `documentations/reorganizacion-modular/traspasos/`.

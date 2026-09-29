@@ -1,6 +1,6 @@
 ---
 name: traspaso-web-local
-description: Use when work on wapp-cloud-platform is split between a Claude Code web session (claude.ai/code — writes code and docs, no Docker, sees only this repo) and a Claude Code local session (Docker/testcontainers, the old integration tests, UAT over SSH, moving main, the rest of the wApp ecosystem). Invoke to write the handoff that bridges them, or when starting a session that received one. Triggers — "traspaso", "handoff", "pásalo a local", "lo cierra la sesión local", "continúa lo que dejó la web", "prompt para la sesión local".
+description: Use when work on wapp-cloud-platform is split between a Claude Code web session (claude.ai/code — writes code and docs, sees only this repo; has Docker, so it may run the F9 processes only as a pre-check, W-1) and a Claude Code local session (closes: testcontainers runs that count, the old integration tests, UAT over SSH, moving main, the rest of the wApp ecosystem). Invoke to write the handoff that bridges them, or when starting a session that received one. Triggers — "traspaso", "handoff", "pásalo a local", "lo cierra la sesión local", "continúa lo que dejó la web", "prompt para la sesión local".
 ---
 
 # Traspaso web ↔ local
@@ -28,7 +28,7 @@ necesite Docker, apuntar a un Postgres vivo).
 | Escribir código, tests y docs | ✅ | ✅ |
 | `make ci-local` (fmt, vet, lint `v2.12.2`, test, build) | ✅ si el setup del entorno instaló el lint (`documentations/reorganizacion-modular/06-entorno-web.md`) | ✅ |
 | Contratos y rojo/verde (tests unitarios) | ✅ | ✅ |
-| **Tests de proceso de F9** (testcontainers) | Escribir y compilar (`go vet -tags integracion`) · **no correr** | ✅ **los corre y los cierra** |
+| **Tests de proceso de F9** (testcontainers) | Escribir y compilar (`go vet -tags integracion`) · **correrlos como pre-chequeo** si la primera sesión web (T0.0) dejó «funciona» en `06-entorno-web.md` §5 (decisión **W-1**); su verde **no cierra** nada | ✅ **los corre y los cierra** (la corrida que cuenta) |
 | Tests de integración **viejos** (`make test-integration`) | ❌ | ✅ (solo importan en F0 y en el relevo) |
 | Ver el resto del ecosistema (docs raíz, BFF, consolas, Edge) | ❌ | ✅ |
 | UAT por SSH, desplegar | ❌ | ✅ |
@@ -42,7 +42,7 @@ gates. Nunca a `main`.
 
 `documentations/reorganizacion-modular/traspasos/TRASPASO-<fase>-<tema>.md`
 (p. ej. `TRASPASO-F1-nucleo-contact.md`). **Nunca** en la raíz del repo ni suelto en otra carpeta.
-Cuando la sesión local lo cierra, añade al final una sección `CERRADO <fecha>` con lo que hizo y
+Cuando la sesión local lo cierra, añade al final una sección `## CERRADO <fecha>` (literal: el hook `SessionStart` da por abierto todo traspaso sin una línea `^## CERRADO`) con lo que hizo y
 lo que refutó; el fichero no se borra: es la historia de la reconstrucción.
 
 ## Estructura obligatoria

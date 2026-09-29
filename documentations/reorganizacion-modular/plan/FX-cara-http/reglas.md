@@ -24,14 +24,14 @@
 | T-6 | **El plazo de G7 dentro de `protectRead`**: el `ResponseWriter` de `accessLog` corta la cadena del `ResponseController` y el plazo no llega a la conexión | `publicapi.go:766-768`, `plazoescritura.go:125-136` | `conPlazoDeRedacción(… protectRead(…))`, por fuera; test F6 |
 | T-7 | **El callback CRM bajo `protect`** lo dejaría inalcanzable (no trae JWT) | `publicapi.go:1037-1056` | Solo `accessLog`; RX.2.g |
 | T-8 | **Poner el gate del re-análisis en la cadena** invierte el orden 400→403 del contrato §8.1 | `publicapi.go:709-731` | H1 sin gate en la cadena; los gates viven en el servicio |
-| T-9 | **Centinela viejo frente a gw nuevo** (F3→F8) | `publicapi/flows.go:235`, `flujos/admin/handlers.go:326`, `gateway/session/registry.go:22` | D-FX-3; test de identidad hasta F8 |
+| T-9 | **Centinela viejo frente a gw nuevo** (F3→F8) | `publicapi/flows.go:235`, `flujos/admin/handlers.go:326`, `gateway/session/registry.go:22` | D-F3-2 (identidad vía `platform`, sin puente; alternativa D-FX-3); test de identidad hasta F8 |
 | T-10 | **Encender una sola de las dos vías del perfil de sesión** la deja muda sin rojo | `fase8_transporte.go:81-85,133-138` | D3 y J16 pasan al handler portado en el **mismo** commit |
 | T-11 | **Montar lo que no debe existir**: una ruta condicional montada sin su dependencia responde 500 en vez de 404 | los `if d.X != nil` de `publicapi.go` y `roleplane.go` | La condición viaja dentro del `Montar`; test «sin dependencia → 404» |
 | T-12 | **Desmontar el alta de miembros sin M2M** (404) cuando el contrato es 503 | `roleplane.go:128-131`, `arranque/http.go:63-66` | RX.2.e |
 | T-13 | **Una segunda instancia del gw** para la cara vieja (o para un servicio viejo): el envío sale por un gateway sin conexiones y se pierde | `fase4_gateway.go:45` | RX.4.a: aserción de identidad de puntero |
 | T-14 | **Contar líneas en vez de registros**: `POST /api/v1/signup` aparece en dos líneas y es un patrón | `arranque/http.go:165,168` | Regla de conteo del mapa §0 |
 | T-15 | **`writeError` y `parseIntQuery` viven en ficheros de área** que se mudan tarde, pero los usan áreas tempranas | `messages.go:322` (F3) lo usa `entitlements.go` (F2); `formatInstant` en `conversationevents.go:215` (F8) lo usa `intakes.go` (F6) | Nacen en ficheros comunes con su **primer** consumidor ([`diseno.md`](diseno.md) §1) |
-| T-16 | **El detector de I-CP-5 lee el texto `platformadmin.` inline** en cada `adminHandler(…)` | `rutas_admin.go:13-28`, `platform_permissions_test.go` | En F2, `transporte_rutas_admin.go` conserva la construcción **inline** de J4–J11 |
+| T-16 | **El detector de I-CP-5 lee el texto `platformadmin.` inline** en cada `adminHandler(…)` | `rutas_admin.go:13-28`, `platform_permissions_test.go` | En F2, `rutas_admin.go` conserva la construcción **inline** de J4–J11 |
 
 ## 3 · Prohibiciones
 

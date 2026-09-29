@@ -78,7 +78,9 @@ paso a paso, lo de fuera del repo) → [`reglas.md`](reglas.md) → [`tareas.md`
 
 1. **`03` §2.1: «5 comentarios de repos hermanos»**. Son **12** líneas de código Go en 7 repos que
    citan rutas de paquetes de este repo ([`diseno.md`](diseno.md) §3.3, comando incluido).
-2. **`03` §2.1: «2.565 menciones de rutas `internal/` en 150 ficheros»**. Hoy:
+2. **`03` §2.1: «2.565 menciones de rutas `internal/` en 150 ficheros»**. Hoy, **desde la raíz de wApp** (la
+   `documentations/` del ecosistema, fuera de este repo: solo lo mide la sesión 💻; desde la raíz
+   del repo el mismo comando da 2.057 en 101, 2026-09-29):
    `grep -rno 'internal/' documentations --include='*.md' | wc -l` → **2.623** en **246** ficheros
    (incluye rutas `internal/` de **otros** repos); acotado a los 28 paquetes viejos de este repo,
    **1.124** en **170** ([`diseno.md`](diseno.md) §3.1).

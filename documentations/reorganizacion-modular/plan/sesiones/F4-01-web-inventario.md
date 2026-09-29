@@ -6,7 +6,7 @@
 | Tareas | T4.1–T4.2 |
 | Depende de | F3-07 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F4 bloque A» |
-| Se para cuando | los números de `diseno.md` §1 reconfirmados y D-F4-1 aplicada; gate ci-local rc=0. |
+| Se para cuando | los números de `diseno.md` §1 reconfirmados y D-F4-1 **verificada** (la aplicó F0, T0.27); gate ci-local rc=0. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F4 · inferencia → documentations/reorganizacion-modular/plan/F4-inferencia/
 - Bloque(s): A · inventario verificado y candados viejos
 - Tareas: T4.1–T4.2 de plan/F4-inferencia/tareas.md
-- Te paras cuando: los números de `diseno.md` §1 reconfirmados y D-F4-1 aplicada; gate ci-local rc=0.
+- Te paras cuando: los números de `diseno.md` §1 reconfirmados y D-F4-1 **verificada** (la aplicó F0, T0.27); gate ci-local rc=0.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F4 bloque A» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

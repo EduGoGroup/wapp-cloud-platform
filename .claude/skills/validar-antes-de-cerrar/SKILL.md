@@ -18,7 +18,7 @@ repo se ha dado por verde lo que no lo estaba más de una vez.
 2. **Contar un SKIP como un PASS.** Los tests de integración **viejos** se saltan solos sin
    `WAPP_TEST_DB_DSN`, con `rc=0` (deuda DT-52: 438 tests). Y contar `--- SKIP` **sin `-v`** da
    siempre 0.
-3. **Dar por corrido lo que no se pudo correr.** La sesión web no tiene Docker. Lo que no se corrió
+3. **Dar por corrido lo que no se pudo correr.** En la web Docker está preinstalado, pero `make test-integration`, UAT y el cierre de F9 son de la sesión local (decisión W-1; que testcontainers funcione en la web lo mide F0-01 en `06-entorno-web.md` §5). Lo que no se corrió
    se reporta como **«no corrido»**, nunca como verde.
 
 ## El gate, en orden
@@ -81,7 +81,10 @@ No corrido: <lista>, y por qué
 
 Si algo falló, se dice primero y con su salida. No se escribe «debería pasar».
 
-## Antes de pushear a `dev`
+## Antes de pushear a `dev` (solo la sesión local)
+
+La sesión **web** no empuja a `dev`: empuja **su** rama y abre `gh pr create --base dev`
+(`documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-WEB.md` §5–§6).
 
 - `GATE_RC=0` leído del log, no de una notificación.
 - `git status --short` sin restos que no sean del commit.

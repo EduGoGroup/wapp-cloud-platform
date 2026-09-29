@@ -27,15 +27,15 @@
 | # | Pregunta | Recomendación | Bloquea | Decisión |
 |---|---|---|---|---|
 | F-1 | ¿Quién fusiona los PR de la web en `dev`? | Jhoan con «Rebase and merge» (bloques 🌐); la sesión local con `merge --no-ff` (bloques 🌐→💻). **Nunca squash** | Toda sesión web | |
-| F-2 | Aplicar en claude.ai/code el *setup script* y las variables de [`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3 | Sí, antes de la primera sesión web | F0-01 | |
+| F-2 | Aplicar en claude.ai/code el *setup script* y las variables de [`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3 | Sí, antes de la primera sesión web | F0-01 (= F0 bloque A) | |
 | T-1 | Que `make lint` **falle** si `golangci-lint` no es `v2.12.2` (hoy `Makefile:42` usa el del `PATH`; en local hay v2.14.0) | Sí (T0.26) | F0 bloque B | |
 | D-F0-1 | `internal/arranque` nace **por copia** del arranque viejo, sin ciclo contrato→rojo→verde, y queda fuera de «un fichero, un test» y de la cobertura por fichero | Sí | F0 bloque D | |
 | D-F0-2 | Se permite **un** fichero de test en el paquete viejo, `huella_vieja_test.go`, que escribe la dorada de la huella | Sí | F0 T0.14 | |
 | D-F0-3 | Tres líneas de **alias** en dominio viejo para cortar los ✎ de `platform` (`session/registry.go:22`, `iam/ports/in/usecases.go:129`, `inferstats/inferstats.go:144`) — excepción a E-1 | Sí | F0 bloque E | |
-| D-F4-1 | 🔴 Los barridos AST viejos que recorren **todo** `internal/` (`llmvia/c2_via_test.go:117`, `iam/infra/postgres/membresia_unica_ast_test.go:74`) se pondrán rojos con el árbol nuevo: una línea en cada uno para que ignoren `internal/{modulos,nucleo,arranque,apipublica,pendiente}` — segunda excepción a E-1, **se ejecuta en F0**. Subsume D-F2-2 | Sí | F0 (y sin ella F2 y F4 no pasan del rojo) | |
+| D-F4-1 | 🔴 Los barridos AST viejos que recorren **todo** `internal/` (`llmvia/c2_via_test.go:117`, `iam/infra/postgres/membresia_unica_ast_test.go:74`) se pondrán rojos con el árbol nuevo: una línea en cada uno para que ignoren `internal/{modulos,nucleo,arranque,apipublica,pendiente}` — segunda excepción a E-1, **se ejecuta en F0 (T0.27)**; F2 (T2.1, T2.24) y F4 (T4.2) solo la **verifican**. Subsume D-F2-2. *Precisión de la validación del 2026-09-29*: el salto se hace por **ruta de primer nivel** bajo `internal/`, no por nombre (`internal/bootstrap/arranque` también se llama `arranque`), y cubre también `internal/candados` (nuevo en F0) | Sí | F0 bloque E, sesión F0-05 (y sin ella F2 y F4 no pasan del rojo) | |
 | D-F1-3 | Los paquetes `…test` (suites de contrato y dobles) quedan exentos de `un_fichero_un_test_test.go` y `exportados_cubiertos_test.go` | Sí | F0 bloque C (diseño de los candados) | |
 | D-FX-5 | Los ficheros comunes de `apipublica` nacen con su **primer consumidor** (F2/F3), no en F0/F1 | Sí | F0 bloque E | |
-| D-F9-1 | 🔍 **Adelantar F9**: arnés (9A) tras F0; procesos contra el binario viejo (9B) tras la parada de F1 y antes de F2; pasada contra el nuevo **dentro de cada conmutación** (9C); cierre (9D) antes de F10. Si no, T9.34 es la alternativa (todo al final) | Sí | Orden de las sesiones tras F0 | |
+| D-F9-1 | 🔍 **Adelantar F9**: arnés (9A) tras F0; procesos contra el binario viejo (9B) tras la parada de F1 y antes de F2; pasada contra el nuevo **dentro de cada conmutación** (9C); cierre (9D) antes de F10. Si no, T9.34 es la alternativa (todo al final). **Subsume D-F2-7 y D-F3-6** (las pasadas de F2 y F3 son T9.23 y T9.24; en cada fase, la tarea de procesos del cierre **es** su 9C) | Sí | Orden de las sesiones tras F0 | |
 | D-F1-2 | Adelantar a F1 el mínimo del arnés de F9 para correr la suite de contrato de `contact` contra Postgres (encaja con D-F9-1) | Sí | F1 bloque B/D | |
 
 ## 2 · Antes de F1
@@ -60,6 +60,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F9-2 | **Sin** opción R2 en el arranque: con endpoint IP el SDK de S3 hace *path-style* solo | Sí | F9 bloque A | |
 | D-F9-3 | S3 falso **dentro del proceso de test** | Sí | F9 bloque A | |
 | D-F9-4 | Proceso P10 para los 9 ficheros / 25 `Test*` de `platform` con BD que sobreviven al relevo | Sí | F9 bloque B2 | |
+| D-F9-5 *(opcional)* | Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`), **informativa, sin umbral** | Sí | Nada (no bloquea) | |
 | T-2 | Aceptar las subidas de dependencias que trae testcontainers v0.44.0 (`httpsnoop` 1.0.4→1.1.0, `otelhttp` 0.67→0.69, `klauspost/compress`; están en `cmd/server`) en un commit `chore(deps)` aislado, con la integración vieja antes | Sí | F9 bloque A | |
 
 ## 5 · Antes de cada módulo
@@ -72,7 +73,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F2-5 | Sin suites de contrato para `ports/in` | Sí | F2 bloque B | |
 | D-F2-6 | Relojes inyectables | Sí | F2 bloque B | |
 | D-F3-1 | Gemelos en memoria a `<paquete>test` | Sí | F3 bloque B | |
-| D-F3-2 | La identidad de `ErrSessionOffline` se conserva vía `platform` (hace innecesario el puente de D-FX-3) | Sí | F3 bloque G | |
+| D-F3-2 | La identidad de `ErrSessionOffline` se conserva vía `platform` (hace innecesario el puente de D-FX-3). FX (TX.10), F3 (T3.27), F8 (T8.34) y el mapa §4.4 ya lo planifican así (validación 2026-09-29) | Sí | F3 bloque G | |
 | D-FX-3 | *(Alternativa a D-F3-2)* `edge/session` conserva la identidad del centinela viejo hasta F8 | Solo si D-F3-2 = no | F3 bloque G | |
 | D-FX-2 | Handlers de sesión en `apipublica/sessionadmin.go`, exportados, para servir también a `:8100` | Sí | F3 bloque G | |
 | D-F3-3 | `ingest.Deduper` nuevo | Sí | F3 bloque B | |
@@ -93,7 +94,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F7-1 | Segunda instancia vieja de `intake.Postgres` + `puente_captacion.go` | Sí | F7 bloque H | |
 | D-F7-2 | `cmd/casebank` cambia al paquete nuevo en F10, no en F7 | Sí | F7 | |
 | D-F7-3 | `pipeline/memoria.go`: verificarlo en T7.1; si es doble, a `pipelinetest/` | Verificar | F7 bloque A | |
-| D-F7-4 / D-FX-1 | Las rutas de intenciones (E1–E2) se mudan en **F7**; hasta entonces, cara vieja con el gateway nuevo inyectado (cero puentes) | Sí | F3 bloque G y F7 bloque G | |
+| D-F7-4 / D-FX-1 | Las rutas de intenciones (E1–E2) se mudan en **F7**; hasta entonces, cara vieja con el gateway nuevo inyectado (cero puentes). FX, F3, F7 y el mapa de rutas ya lo planifican así (validación 2026-09-29). *Si = no* (D-10 literal, F3 con puente `apipublica → internal/intentcfg`): F0 activa la vía de excepción de la regla 4 de fronteras (F0 `diseno.md` §4.1) | Sí | F3 bloque G y F7 bloque G | |
 | D-FX-4 | El adaptador SQL de telemetría se queda en la cara | Sí | F6 bloque G | |
 | D-F8-2 | **No** reconstruir `admin.Register` (código muerto, deuda D-7) | No reconstruir | F8 bloque C | |
 | D-F8-3 | Copiar los *goldens* del carrito como fixture | Sí | F8 bloque D | |
@@ -112,3 +113,4 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F10-5 | Quitar `make test-integration` si existe P10 | Sí | F10 bloque C | |
 | D-F10-6 | Tag `v0.3.0` tras el relevo | Sí | F10 bloque F | |
 | D-F10-7 | Nueva regla de conteo en ADR-0010 (propuesta en [`F10-relevo/diseno.md`](F10-relevo/diseno.md) §3.2) | Sí | F10 bloque E | |
+| D-V-1 | *(de la validación de coherencia, 2026-09-29)* `internal/arranque` conserva de F0 a F8 los nombres de la copia (`http.go`, `rutas_admin.go`, `fase7_flujos.go`…), no los de `04` §3 (`transporte_http.go`, `transporte_rutas_admin.go`, `fase7_conversacion.go`, `fase3_edge.go`, `fase4_inferencia.go`): tres tests copiados leen `http.go`/`auth.go` por nombre ([`00-marco/estructura.md`](00-marco/estructura.md) §2.2). ¿Se renombran en F10? | **No** (el nombre de la copia ya dice lo que hace; renombrar obliga a re-tocar los candados): `04` §3 queda superado en ese punto, como ya dice el marco. Si sí: un `refactor(arranque)` aislado en F10, con los tres tests en el mismo commit | F10 bloque C | |
