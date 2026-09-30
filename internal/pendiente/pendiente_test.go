@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package pendiente_test
 
 import (
