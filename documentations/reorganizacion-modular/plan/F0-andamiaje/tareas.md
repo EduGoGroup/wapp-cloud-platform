@@ -332,7 +332,7 @@ contiene F0 entera.
     **sin squash** (`rojo`/`verde` distintos, E-4); `git push origin dev` leyendo su `rc`.
   - **Hecho cuando**: `git log origin/dev` contiene los commits de T0.1–T0.21 en orden.
 
-- [x] **T0.25 · cerrar F0 en la documentación** · 💻 · dep. T0.24 · cumple R0.9.c — cerrada en `SHA-T0.25` (sesión F0-06, 2026-09-30: `CERRADO` en el traspaso, `ESTADO.md`, README de la fase y la columna «Estado» de `sesiones/README.md`)
+- [x] **T0.25 · cerrar F0 en la documentación** · 💻 · dep. T0.24 · cumple R0.9.c — cerrada en `d3b3f3f` (sesión F0-06, 2026-09-30: `CERRADO` en el traspaso, `ESTADO.md`, README de la fase y la columna «Estado» de `sesiones/README.md`)
   - **Ficheros**: `CERRADO <fecha>` en el traspaso; `ESTADO.md` (fase actual: F0 cerrada, F1
     siguiente); `README.md` de esta carpeta (estado y SHA de cada tarea).
   - **Commit**: `docs(reorganizacion-modular): F0 cerrada`

@@ -4,7 +4,7 @@
 > T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`; F0-04, T0.10–T0.15, de `d64dbbf` a
 > `61ce04b`; F0-05, T0.16–T0.21 y T0.27 + TX.1–TX.4, de `8096232` a `15223ff` (PR #17, `835a7be`); y
 > **F0-06 (💻)**, T0.22–T0.25: integración vieja con Postgres real, arranque real de `cmd/server-modular`, `dev`
-> verificado y este cierre (`SHA-T0.25`). `origin/dev` contiene F0 entera, sin squash. Siguiente:
+> verificado y este cierre (`d3b3f3f`). `origin/dev` contiene F0 entera, sin squash. Siguiente:
 > **F9-01 (9A, el arnés; D-F9-1 = sí)** y luego F1, con el [traspaso](../../traspasos/TRASPASO-F0-andamiaje.md)
 > ya **CERRADO**. Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma: [`05`](../../05-metodo-contratos-y-tdd.md) §6.
 > Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
