@@ -1,6 +1,7 @@
 # F0 · Andamiaje — portal de la fase
 
-> **Estado: sin empezar** (plan escrito el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
+> **Estado: en curso — bloque A cerrado** (2026-09-30, sesión F0-01: T0.0 `98e806d`, T0.1
+> `de04088`); siguiente, bloque B (F0-02). Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo
@@ -63,6 +64,8 @@ La numeración global de sesiones (`S0n`) la pone [`../sesiones/`](../sesiones/R
 | **D-F4-1** *(de F4, se ejecuta aquí)* | Dos barridos AST **viejos** recorren todo `internal/` con lista exacta (`llmvia/c2_via_test.go:117`, `iam/infra/postgres/membresia_unica_ast_test.go:74,97`) y se pondrían rojos con el primer verde de F2/F4. ¿Una línea en cada uno para que salten el árbol nuevo? Subsume D-F2-2 | **Sí** → T0.27 (segunda excepción a E-1). Alternativa peor: tocar la lista vieja en F2, F4, TX.13 y F7 | bloque E |
 | T-1 *(del marco)* | ¿`make lint` falla si la versión no es `v2.12.2`? | Sí → T0.26 | T0.26 |
 
+| **F0-A-1** *(de F0-01, 2026-09-30)* — ✅ **sí (Jhoan, 2026-09-30)**; texto en `flujo-web-local.md` §3, a copiar en claude.ai/code | Docker en la VM: el daemon **no arranca solo** y Docker Hub responde **429** (`06` §5). ¿Se añade `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` a las variables del entorno y, al *setup script*, `(dockerd >/tmp/dockerd.log 2>&1 &)` + espera antes del `docker pull` (con la imagen tirada de `mirror.gcr.io/library/postgres:17-alpine`)? | **Sí a la variable** (probada en frío, `TC_RC=0`; en local no aplica porque no está puesta). El cambio del *setup* **sin verificar**: que el *snapshot* conserve `/var/lib/docker` no está probado; si no lo conserva, sobra. Mientras tanto, cada sesión arranca `dockerd` a mano (el hook lo recuerda) | F9 (pre-chequeo web); no bloquea F0 |
+
 Decididas en esta fase sin necesitar a Jhoan (con su porqué en [`reglas.md`](reglas.md) §3):
 `sin_pendientes_test` nace en F10; `sin_bd_viva_test` sin etiqueta; `cobertura-ficheros` dentro
 de `ci-local`; exención de adaptadores Postgres por marca verificada; `make test-procesos` en F9.
@@ -79,7 +82,9 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 6 | `02` §3.3: `ErrSessionOffline` (3 usos) en `platform/httpapi` | 1 uso en código (`admin.go:306`) + el import (`:13`) | `arquitectura.md` §7 |
 | 7 | `constitucion.md` trampa 8, `deuda.md` D-14, `operacion.md:99,194`: `internal/publicapi/flows.go:75` | es `internal/bootstrap/arranque/flows.go:75` | T0.20 (18 líneas caducadas, medido el 2026-09-29) |
 | 8 | skill `procesos-testcontainers`: «todo con `//go:build integracion`», incluido el candado | con etiqueta, el candado no mordería en `ci-local` | T0.8 corrige la skill |
-| 9 | `06-entorno-web.md` §1 (versión del 2026-09-27): Docker ❌, hooks ❓ | **Ya corregido** en `06` §1 el 2026-09-28 (Docker ✅, hooks ✅, según la doc oficial); lo que sigue **sin probar** es testcontainers en la VM | T0.0 lo mide y lo anota en `06` §5 |
+| 9 | `06-entorno-web.md` §1 (versión del 2026-09-27): Docker ❌, hooks ❓ | **Ya corregido** en `06` §1 el 2026-09-28 (Docker ✅, hooks ✅, según la doc oficial); lo que sigue **sin probar** es testcontainers en la VM | T0.0 lo midió (2026-09-30): funciona, `06` §5 |
+| 10 | `flujo-web-local.md` §4 (diseño del hook): imprime versiones **solo** en el aviso | R0.1.f y T0.1: «el hook DEBERÁ imprimir la versión de Go y de `golangci-lint`» siempre | T0.1 añade la línea `Go: … · golangci-lint: …` y corrige el diseño (✎) |
+| 11 | `06` §1 y `flujo-web-local.md` §1: Docker «preinstalado» ✅ | el binario sí; el **daemon no corre** al empezar la sesión (`docker info` rc=1), y Docker Hub da 429 | `06` §5; el hook lo avisa con el comando; decisión F0-A-1 |
 
 ## Números medidos (y cómo)
 
