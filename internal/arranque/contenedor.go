@@ -10,6 +10,7 @@ import (
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"google.golang.org/grpc"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
@@ -155,6 +156,11 @@ type contenedor struct {
 	connectGS     *grpc.Server
 	enrollLis     net.Listener
 	connectLis    net.Listener
+
+	// publicCompuesto es el estrangulador que sirve publicSrv (cara nueva delante del
+	// publicapi viejo). F0 · desviación de la copia (TX.4): se guarda para que el
+	// candado de mudanzas resuelva las 73 rutas del :8103 por Compuesto.Resolver.
+	publicCompuesto *apipublica.Compuesto
 
 	// hitos son las precondiciones ya cumplidas. No es un mapa de «objetos
 	// construidos» —eso son los campos de arriba— sino de ETAPAS alcanzadas: lo que
