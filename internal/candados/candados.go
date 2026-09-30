@@ -15,10 +15,16 @@
 package candados
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // Violacion es un incumplimiento de un candado: el fichero culpable (ruta con barras,
@@ -31,7 +37,7 @@ type Violacion struct {
 // String devuelve la violación como "fichero: motivo" —exactamente Fichero, dos puntos, un
 // espacio y Motivo—, el formato con el que los tests finos la imprimen.
 func (v Violacion) String() string {
-	panic(pendiente.Implementar("candados.Violacion.String"))
+	return v.Fichero + ": " + v.Motivo
 }
 
 // Fuente es un fichero .go ya parseado por Recorrer.
@@ -72,5 +78,74 @@ type Fuente struct {
 //     parcial (un fichero ilegible no se salta en silencio: sería un agujero del candado);
 //   - el resultado está ordenado por Ruta y no repite ficheros aunque dos dirs se solapen.
 func Recorrer(raiz string, dirs []string, incluirTests bool) ([]Fuente, error) {
-	panic(pendiente.Implementar("candados.Recorrer"))
+	// Primero se reúnen las rutas (un conjunto: dos dirs solapados no repiten) y solo después
+	// se parsea, en orden, cada fichero una vez.
+	vistos := make(map[string]string) // Ruta con barras → ruta en disco
+	for _, dir := range dirs {
+		if err := listarGo(raiz, dir, incluirTests, vistos); err != nil {
+			return nil, err
+		}
+	}
+	claves := make([]string, 0, len(vistos))
+	for ruta := range vistos {
+		claves = append(claves, ruta)
+	}
+	sort.Strings(claves)
+
+	fset := token.NewFileSet()
+	fuentes := make([]Fuente, 0, len(claves))
+	for _, ruta := range claves {
+		// ParseFile no evalúa las etiquetas de compilación: un test con `//go:build pendiente`
+		// se parsea como cualquier otro, que es justo lo que promete el contrato.
+		archivo, err := parser.ParseFile(fset, vistos[ruta], nil, parser.ParseComments)
+		if err != nil {
+			// Sin resultado parcial: un fichero ilegible saltado en silencio sería un agujero
+			// del candado.
+			return nil, fmt.Errorf("candados: %s no parsea: %w", ruta, err)
+		}
+		fuentes = append(fuentes, Fuente{
+			Ruta:    ruta,
+			Archivo: archivo,
+			Fset:    fset,
+			EsTest:  strings.HasSuffix(ruta, "_test.go"),
+			Paquete: archivo.Name.Name,
+		})
+	}
+	return fuentes, nil
+}
+
+// listarGo añade a vistos los .go bajo raiz/dir, saltando los testdata que cuelgan por debajo
+// y, si !incluirTests, los _test.go. Un raiz/dir inexistente no aporta nada y no es error: el
+// árbol nuevo está vacío en F0 y el candado debe pasar igual.
+func listarGo(raiz, dir string, incluirTests bool, vistos map[string]string) error {
+	inicio := filepath.Join(raiz, filepath.FromSlash(dir))
+	if _, err := os.Stat(inicio); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return filepath.WalkDir(inicio, func(ruta string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("candados: recorriendo %s: %w", ruta, err)
+		}
+		if d.IsDir() {
+			// Como la toolchain de Go: testdata no es código del paquete. Solo por debajo del
+			// inicio, que sí puede estar dentro de un testdata (así se recorren los árboles
+			// de prueba de este mismo paquete).
+			if ruta != inicio && d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".go") {
+			return nil
+		}
+		if !incluirTests && strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(raiz, ruta)
+		if err != nil {
+			return fmt.Errorf("candados: ruta relativa de %s: %w", ruta, err)
+		}
+		vistos[filepath.ToSlash(rel)] = ruta
+		return nil
+	})
 }

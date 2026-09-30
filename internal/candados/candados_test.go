@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package candados
 
 import (
@@ -85,6 +83,28 @@ func rutas(fuentes []Fuente) []string {
 		out = append(out, f.Ruta)
 	}
 	return out
+}
+
+// TestAyudasComunes: las ayudas que comparten los tests de los candados aciertan sobre
+// violaciones conocidas. Son el oráculo de los demás tests: si contieneTodos aceptara un
+// trozo ausente, un caso `muerde` pasaría sin morder.
+func TestAyudasComunes(t *testing.T) {
+	vs := []Violacion{
+		{Fichero: "internal/x/a.go", Motivo: "falta a_test.go"},
+		{Fichero: "internal/x/a.go", Motivo: "importa internal/viejo"},
+		{Fichero: "internal/x/b.go", Motivo: "falta b_test.go"},
+	}
+	exigeViolacion(t, vs, "internal/x/a.go", "falta", "a_test.go")
+	exigeNingunaEn(t, vs, "internal/x/c.go")
+	exigeOrdenadas(t, vs)
+	exigeCero(t, nil)
+	exigeCero(t, []Violacion{})
+	if contieneTodos("falta a_test.go", []string{"falta", "b_test.go"}) {
+		t.Error("contieneTodos aceptó un trozo ausente")
+	}
+	if !contieneTodos("cualquier motivo", nil) {
+		t.Error("contieneTodos sin trozos debe aceptar")
+	}
 }
 
 // ── Violacion ────────────────────────────────────────────────────────────────────────────
