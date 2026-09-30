@@ -60,7 +60,7 @@
 | 16 | [`F9-03-web-procesos-plataforma-y-acceso`](F9-03-web-procesos-plataforma-y-acceso.md) | 🌐 | F9 | B1 | T9.13–T9.16 🕐 | pendiente |
 | 17 | [`F9-04-web-procesos-de-negocio`](F9-04-web-procesos-de-negocio.md) | 🌐 | F9 | B2 | T9.17–T9.21, T9.35 🕐 | pendiente |
 | 18 | [`F9-05-cli-procesos-cierre`](F9-05-cli-procesos-cierre.md) | 💻 | F9 | B1/B2 | T9.13–T9.16 🕐 + T9.17–T9.21, T9.35 🕐 | pendiente |
-| 19 | [`F2-01-web-inventario-y-rojo-hojas`](F2-01-web-inventario-y-rojo-hojas.md) | 🌐 | F2 | A/B | T2.1 + T2.2–T2.8 | pendiente |
+| 19 | [`F2-01-web-inventario-y-rojo-hojas`](F2-01-web-inventario-y-rojo-hojas.md) | 🌐 | F2 | A/B | T2.1 + T2.34 + T2.2–T2.8 | pendiente |
 | 20 | [`F2-02-web-rojo-resto`](F2-02-web-rojo-resto.md) | 🌐 | F2 | C | T2.9–T2.16 | pendiente |
 | 21 | [`F2-03-web-verde-hojas`](F2-03-web-verde-hojas.md) | 🌐 | F2 | D | T2.17–T2.21 | pendiente |
 | 22 | [`F2-04-web-verde-usecase-identity`](F2-04-web-verde-usecase-identity.md) | 🌐 | F2 | E | T2.22–T2.23 | pendiente |

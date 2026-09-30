@@ -162,7 +162,7 @@ Para cuando: `cmd/server-modular` compila, `internal/arranque` es copia del viej
 cabeceras y en las dos rutas relativas de T0.10), y **las dos huellas son idénticas a la dorada**.
 Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en T0.11.
 
-- [ ] **T0.10 · `internal/arranque` como copia del arranque viejo** · 🌐 · dep. T0.7 · cumple R0.4.a–R0.4.d
+- [x] **T0.10 · `internal/arranque` como copia del arranque viejo** · 🌐 · dep. T0.7 · cumple R0.4.a–R0.4.d — cerrada en `d64dbbf` (sesión F0-04, 2026-09-30: 21 + 19 ficheros con `cp` y cabecera en la línea 1; el bucle `diff` da las dos rutas relativas **y** la línea `var _ func(context.Context) error = Ejecutar` de `orquestador_test.go`, que exige `exportados_cubiertos` —contradicción 17—; `git diff --stat -- internal/bootstrap` vacío; `go test -race -v` 53 `Test*`, 53 PASS, 0 SKIP; gate `GATE_RC=0` en *worktree* limpio)
   - **Ficheros**: los **21** `.go` de producción de `internal/bootstrap/arranque/` copiados a
     `internal/arranque/` (lista en [`arquitectura.md`](arquitectura.md) §2) con una cabecera
     `// Copia de internal/bootstrap/arranque/<f> @ <sha> (F0 · 05 §6): cablea paquetes VIEJOS.`;
@@ -178,7 +178,7 @@ Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): internal/arranque, copia exacta del arranque viejo (cablea paquetes viejos)`
 
-- [ ] **T0.11 · `cmd/server-modular`** · 🌐 · dep. T0.10 · cumple R0.4.a, R0.4.e
+- [x] **T0.11 · `cmd/server-modular`** · 🌐 · dep. T0.10 · cumple R0.4.a, R0.4.e — cerrada en `a953834` (sesión F0-04: `diff` con `cmd/server/main.go` = import + llamada; `go build` rc=0; `go list -deps … | grep -c internal/bootstrap` → 0; gate `GATE_RC=0`)
   - **Ficheros**: `cmd/server-modular/main.go` — copia de `cmd/server/main.go` (36 l) que llama a
     `arranque.Ejecutar(ctx)` de `internal/arranque` en vez de `bootstrap.Run`. **No** se copian
     `cmd/server/integration_test.go` ni `flows_integration_test.go` (ver
@@ -188,7 +188,7 @@ Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): cmd/server-modular, el segundo arranque`
 
-- [ ] **T0.12 · rojo(f0): contrato de `internal/arranque/huellatest`** · 🌐 · dep. T0.6 · cumple R0.5.a–R0.5.f
+- [x] **T0.12 · rojo(f0): contrato de `internal/arranque/huellatest`** · 🌐 · dep. T0.6 · cumple R0.5.a–R0.5.f — cerrada en `c7ae487` (sesión F0-04: 10 cuerpos con `panic`, `PENDIENTES=10`, `ROJOS=1`; `vet -tags pendiente` rc=0; `go test -tags pendiente` rc=1 por el `panic`; los cinco `muerde` en `TestDiferenciaMuerde`; gate `GATE_RC=0`)
   - **Ficheros**: `internal/arranque/huellatest/huellatest.go` + `huellatest_test.go` (etiqueta
     `pendiente`), contrato de [`diseno.md`](diseno.md) §6.2.
   - **Hecho cuando**: el test tiene casos `muerde` por componente: un mux con una ruta de más, uno
@@ -197,12 +197,12 @@ Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en
   - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/arranque/...; echo rc=$?` → `rc=0`
   - **Commit**: `andamiaje(f0): rojo — contrato de huellatest`
 
-- [ ] **T0.13 · verde(f0): `huellatest`** · 🌐 · dep. T0.12 · cumple R0.5.a–R0.5.f
+- [x] **T0.13 · verde(f0): `huellatest`** · 🌐 · dep. T0.12 · cumple R0.5.a–R0.5.f — cerrada en `141d960` (sesión F0-04: 91,8 %, 34 PASS, 0 SKIP; `PENDIENTES=0`, `ROJOS=0`; `Goroutines` con importador `gc` + `go list -export` en vez de `source` —105 s → 0,55 s por paquete, contradicción 20—; gate `GATE_RC=0`)
   - **Hecho cuando**: `go test -race -cover ./internal/arranque/huellatest/` → `rc=0`, ≥ 80 %.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): verde — huellatest`
 
-- [ ] **T0.14 · la huella del arranque VIEJO y la dorada** · 🌐 · dep. T0.13, **D-F0-2** · cumple R0.5.a–R0.5.c, R0.5.g
+- [x] **T0.14 · la huella del arranque VIEJO y la dorada** · 🌐 · dep. T0.13, **D-F0-2** · cumple R0.5.a–R0.5.c, R0.5.g — cerrada en `fde5849` (sesión F0-04: 95 rutas = 22 + 73 en los dos perfiles, 2 rpc, 11 familias en frío —las cifras de la spec—; 0,25 s; la fase 3 corre **entera** con un S3 falso en proceso, contradicción 19; tres `-actualizar` seguidos dan la misma dorada; `git diff --stat origin/dev -- internal/bootstrap` = solo el fichero nuevo; gate `GATE_RC=0`)
   - **Ficheros**: `internal/bootstrap/arranque/huella_vieja_test.go` (**el único fichero que F0
     añade al paquete viejo**, y es de test) y `internal/arranque/testdata/huella.json`.
   - **Qué hace**: arma el «contenedor de huella» ([`diseno.md`](diseno.md) §6.3: fase 1 y el
@@ -216,7 +216,7 @@ Necesita D-F0-1 y D-F0-2 (ver [`README.md`](README.md)); sin ellas, **parar** en
   - **Gate**: gate ci-local; `git diff --stat -- internal/bootstrap` → solo el fichero nuevo.
   - **Commit**: `andamiaje(f0): la huella del arranque viejo, en una dorada`
 
-- [ ] **T0.15 · `internal/arranque/huella_test.go` — el candado** · 🌐 · dep. T0.14 · cumple R0.5.a–R0.5.h
+- [x] **T0.15 · `internal/arranque/huella_test.go` — el candado** · 🌐 · dep. T0.14 · cumple R0.5.a–R0.5.h — cerrada en `61ce04b` (sesión F0-04: `TestHuella` y `TestHuellaEstatica` rc=0 —10 goroutines, **13** *hooks* de 12 métodos (contradicción 18), entorno ∅—; muerde: sin `/admin/crypto/rekey` → `:8100 falta /admin/crypto/rekey`, con una `go c.intakePipeline.Run` de más → `goroutines sobra pipeline.Worker.Run`; salidas en el commit; gate `GATE_RC=0`)
   - **Qué hace**: el mismo contenedor de huella sobre el arranque NUEVO, comparado con la misma
     dorada; y la parte **estática** (goroutines, *hooks* de métricas, lectura de entorno) calculada
     sobre **los dos** directorios de fuente y comparada entre sí.
