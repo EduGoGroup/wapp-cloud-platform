@@ -128,6 +128,13 @@ v0.44.0 + `pgx/v5/stdlib` v5.11.0; `postgres.Run(…"postgres:17-alpine"…, Bas
 - **Puerto mapeado**: alcanzable desde el proceso de test (`localhost:32769` → 5432 en la corrida 1).
 - **PostgreSQL 16 de la VM**: instalado (`/usr/lib/postgresql/16`), **no escucha** en 5432. Sigue prohibido.
 
+**Rama y push.** La sesión arrancó con `dev` como rama de trabajo (lo que asigna el entorno);
+por `flujo-web-local.md` §2 no se empuja a `dev`: se trabajó en `reorg/f0-a-entorno-web`, creada
+desde `origin/dev` @ `016a657`. El proxy **aceptó** el push de esa rama nueva (`push_rc=0`) y,
+tras `git commit --amend --no-edit && git push --force-with-lease`, el forzado
+(`+ 9dd17c0...98e806d (forced update)`, **`rc=0`**): el rebase con `--force-with-lease` de
+`flujo-web-local.md` §2 queda **verificado**.
+
 **Veredicto: testcontainers FUNCIONA en la web** → la web puede correr los procesos de F9 como
 **pre-chequeo** (W-1); quien los cierra sigue siendo la sesión local. Dos condiciones, ninguna
 cambia el proyecto:

@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar el paso 00-02 (decisiones). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-01** (F0 · bloque A, el entorno web). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -12,18 +12,22 @@ una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y 
 su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendaciones de
 [`plan/DECISIONES.md`](plan/DECISIONES.md) §1, §2, §4, §5 y §6 (§3 sigue abierta hasta la parada de F1).
 
-**Siguiente paso (Jhoan):**
-1. [`plan/sesiones/00-01`](plan/sesiones/00-01-jhoan-preparar-entorno-web.md): configurar el
-   entorno de claude.ai/code (variables y *setup script*). Comprobado el 2026-09-30 en una sesión
-   web: **aún sin aplicar** (variables vacías, `golangci-lint` 2.5.0, sin daemon Docker).
-2. Arrancar **F0-01** (la primera sesión web) y seguir la tabla de
-   [`plan/sesiones/README.md`](plan/sesiones/README.md).
+**F0-01 hecha (2026-09-30)**: entorno web verificado (`go1.26.5`, lint `v2.12.2`, `make ci-local`
+`GATE_RC=0` en 217 s, **testcontainers funciona**: `TC_RC=0`, Ryuk limpia) y hook `SessionStart`
+commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-entorno-web`, PR a `dev`.
+
+**Siguiente paso:**
+1. **Jhoan**: fusionar el PR de F0-01 **sin squash** («Rebase and merge», F-1) y, si quiere,
+   decidir **F0-A-1** (espejo `mirror.gcr.io` para Docker Hub y `dockerd` en el *setup*;
+   [`plan/F0-andamiaje/README.md`](plan/F0-andamiaje/README.md)). No bloquea F0.
+2. Arrancar **F0-02** (F0 · bloque B, `pendiente` y los `make`). En cada sesión web, si el hook dice
+   «Docker: NO responde», arrancar `dockerd` a mano antes de cualquier prueba con contenedores.
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | pendiente | — | — |
+| F0 | en curso | A · el entorno web (T0.0–T0.1) | `98e806d`, `de04088` (rama `reorg/f0-a-entorno-web`; `origin/dev` @ `016a657`) |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -42,6 +46,7 @@ su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendacio
 | 2026-09-28 | `06-entorno-web.md` corregido con la documentación oficial de Claude Code (Docker sí; hooks sí; push solo a la rama de la sesión; *setup* que no aborta) | [`06`](06-entorno-web.md) |
 | 2026-09-28 | `04` marca `publicapi` como sustituido por D-10 | [`04`](04-estructura-final.md) |
 | 2026-09-30 | **Paso 00-02**: `DECISIONES.md` rellenado con la recomendación por defecto (§1, §2, §4, §5, §6); §3 abierta | [`plan/DECISIONES.md`](plan/DECISIONES.md) |
+| 2026-09-30 | **F0-01**: entorno web medido (Docker: daemon a mano, Docker Hub 429 → espejo `mirror.gcr.io`; testcontainers v0.44.0 `TC_RC=0`; el proxy acepta `--force-with-lease`) y hook `SessionStart` (`.claude/settings.json`) | [`06`](06-entorno-web.md) §5 · [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -107,8 +112,9 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- `origin/dev` lleva el plan (commits `docs(reorganizacion-modular): …` del 2026-09-28).
-  `origin/main` = `2da10b4`, sin tocar.
+- `origin/dev` = `016a657` (el plan y 00-02). `origin/main` = `2da10b4`, sin tocar.
+- `origin/reorg/f0-a-entorno-web`: F0-01 (T0.0 `98e806d`, T0.1 `de04088` y el cierre), en PR a `dev`
+  para integrar **sin squash**.
 
 ## Para retomar
 

@@ -19,7 +19,7 @@ Variables de los gates: `L=/tmp/gate-$(date +%s).log` y
 Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión web, y el hook de
 `SessionStart` está commiteado y probado en sus dos ramas.
 
-- [ ] **T0.0 · verificación del entorno de la primera sesión web** · 🌐 · dep. — · cumple R0.1.a–R0.1.e
+- [x] **T0.0 · verificación del entorno de la primera sesión web** · 🌐 · dep. — · cumple R0.1.a–R0.1.e — cerrada en `98e806d` (sesión F0-01, 2026-09-30: `GATE_RC=0` en 217 s, `TC_RC=0`; detalle en `06` §5)
   - **Ficheros**: `documentations/reorganizacion-modular/06-entorno-web.md` (rellenar la §5 que ya
     existe como hueco, «5 · Resultados de la primera sesión web ✎», con la fecha). **Nada más**:
     ni código ni `go.mod`.
@@ -45,7 +45,7 @@ Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión we
   - **Gate**: `git diff --stat` → solo `06-entorno-web.md`.
   - **Commit**: `docs(reorganizacion-modular): F0 · T0.0, el entorno web verificado`
 
-- [ ] **T0.1 · hook `SessionStart` que verifica la toolchain** · 🌐 · dep. T0.0 · cumple R0.1.f
+- [x] **T0.1 · hook `SessionStart` que verifica la toolchain** · 🌐 · dep. T0.0 · cumple R0.1.f — cerrada en `de04088` (sesión F0-01, 2026-09-30). Dos añadidos al texto del diseño, sin cambiar su comportamiento y ya llevados a `flujo-web-local.md` §4: la línea `Go: … · golangci-lint: …` siempre (R0.1.f la exige; el diseño solo la daba en el aviso) y el comando para arrancar `dockerd` en el aviso de Docker (contradicciones 10 y 11 del `README.md`)
   - **Diseño**: lo fija [`../00-marco/flujo-web-local.md`](../00-marco/flujo-web-local.md)
     (qué imprime, qué comprueba, qué hace en local). Esta tarea **solo lo implementa**; si el
     diseño y esta ficha chocan, manda el diseño.

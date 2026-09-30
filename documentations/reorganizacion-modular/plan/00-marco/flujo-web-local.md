@@ -41,8 +41,8 @@ dio por cierto). No se adapta el proyecto al entorno: ni bajar Go, ni `t.Skip`, 
   git merge --no-ff origin/<rama>` y `git push origin dev`, leyendo cada `rc`.
 - **`dev` siempre verde**: antes de fusionar, la rama está **al día con `origin/dev`** y su gate se
   corrió **sobre esa base**. Si `dev` avanzó, la web rebasa (`git rebase origin/dev`) y empuja su
-  rama (`git push --force-with-lease`; **sin verificar** que el proxy lo acepte — si no, `git merge
-  origin/dev` en la rama), y repite el gate.
+  rama (`git push --force-with-lease`; ✎ **verificado** el 2026-09-30 en F0-01: el proxy lo acepta
+  sobre la rama de la sesión, `rc=0`, `06` §5), y repite el gate.
 - Si una sesión web se arranca **con `dev` como rama de trabajo**, podría empujar a `dev`
   directamente. **No se hace**: se pierde la revisión y la regla «la local cierra».
 - `main` solo lo mueve la sesión local a petición de Jhoan; un push a `main` dispara
@@ -105,6 +105,11 @@ exit 0
 **Sin medir**: cuánto tarda (el `go install` del lint compila desde fuente). Si pasa de ~5 min no se
 cachea; entonces el paso 2 se mueve al hook en segundo plano.
 
+✎ **Visto en F0-01 (2026-09-30)**: corrió en ≈1–2 min (estimado por fechas de ficheros); el lint
+que quedó es el binario publicado (ganó `install.sh`, no el `go install`); y el paso 4 **no deja la
+imagen** en el *snapshot* porque `dockerd` no corre durante el *setup* (`06` §5). Propuesta en el
+`README.md` de F0 (decisión F0-A-1).
+
 ## 4 · Hook `SessionStart` propuesto (lo implementa una tarea de F0)
 
 Solo diseño. **Verifica y avisa; no instala nada.** Corre en web **y** en local (los hooks del repo
@@ -143,7 +148,8 @@ GOV=$(GOWORK=off go env GOVERSION 2>/dev/null)
 [ "$GOV" = "$GO_WANT" ] || { echo "⚠️ Go es '$GOV', la fijada es $GO_WANT (GOTOOLCHAIN=$GO_WANT)"; AVISOS=1; }
 LV=$(golangci-lint version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 [ "$LV" = "$LINT_WANT" ] || { echo "⚠️ golangci-lint es '${LV:-ausente}', el fijado es v$LINT_WANT: NINGÚN gate es autoritativo"; AVISOS=1; }
-if [ "$ENT" = web ]; then docker info >/dev/null 2>&1 && echo "Docker: responde" || echo "Docker: NO responde"; fi
+echo "Go: ${GOV:-ausente} · golangci-lint: ${LV:+v}${LV:-ausente}"
+if [ "$ENT" = web ]; then docker info >/dev/null 2>&1 && echo "Docker: responde" || echo "Docker: NO responde — el daemon no arranca solo: (nohup dockerd >/tmp/dockerd.log 2>&1 &)"; fi
 timeout 20 git fetch -q origin 2>/dev/null
 echo "Rama: $(git branch --show-current) · origin/dev: $(git log --oneline -1 origin/dev 2>/dev/null)"
 echo "Pendientes: $(grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal 2>/dev/null | grep -vc '_test\.go:')"
@@ -155,6 +161,11 @@ exit 0
 
 La tarea de F0 lo prueba en local (`CLAUDE_CODE_REMOTE` sin poner) y deja escrito en
 `../../06-entorno-web.md` lo que vio la primera sesión web.
+
+✎ **Implementado en T0.1 (`de04088`, 2026-09-30)** con dos líneas más que el primer borrador, ya
+en el texto de arriba: `Go: … · golangci-lint: …` siempre (R0.1.f pide imprimir las versiones, no
+solo avisar) y, si Docker no responde, el comando para arrancar el daemon (en la VM **no arranca
+solo**, `06` §5). Sigue sin instalar ni arrancar nada, y sale con `rc=0` siempre.
 
 ## 5 · La prueba de Docker + testcontainers (primera sesión web)
 
@@ -177,6 +188,12 @@ docker ps -a --filter label=org.testcontainers=true   # vacío tras la corrida (
 Se anota en `06` §5 (el hueco «Resultados de la primera sesión web») y en `ESTADO.md`: `docker rc`, `TC_RC`, tiempo, si el reaper (Ryuk) arrancó y
 si el puerto mapeado fue alcanzable. Si falla, se anota el error literal y **la web no corre
 procesos**; nada más cambia.
+
+✎ **Hecho el 2026-09-30 (F0-01): funciona** (`TC_RC=0` dos veces, Ryuk limpia, puerto alcanzable).
+Dos condiciones de la VM que la receta no preveía: el **daemon no corre** al empezar
+(`(nohup dockerd >/tmp/dockerd.log 2>&1 &)` antes de `docker info`) y **Docker Hub responde 429**
+por IP compartida (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` lo evita; para `docker run`,
+`mirror.gcr.io/library/postgres:17-alpine`). Detalle en [`../../06-entorno-web.md`](../../06-entorno-web.md) §5.
 
 ## 6 · Protocolo de sesión
 
