@@ -10,11 +10,11 @@
 - [ ] En claude.ai/code, crear (o editar) el **entorno** para `EduGoGroup/wapp-cloud-platform`.
 - [ ] **Acceso de red: Trusted** (el de por defecto). Incluye `proxy.golang.org`, `sum.golang.org`,
       `github.com`, `raw.githubusercontent.com` y Docker Hub.
-- [ ] **Variables del entorno** (`flujo-web-local.md` §3): `GOTOOLCHAIN=go1.26.5`, `GOWORK=off`,
+- [x] **Variables del entorno** (`flujo-web-local.md` §3): `GOTOOLCHAIN=go1.26.5`, `GOWORK=off`,
       `BASH_DEFAULT_TIMEOUT_MS=600000`, `BASH_MAX_TIMEOUT_MS=1800000` y ✎ (F0-A-1)
       `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/`. ⚠️ Ni un secreto: quien use el
       entorno puede leerlas.
-- [ ] **Setup script** (`flujo-web-local.md` §3): el que **no aborta nunca** (instala el lint
+- [x] **Setup script** (`flujo-web-local.md` §3): el que **no aborta nunca** (instala el lint
       `v2.12.2` con `go install`, descarga dependencias y, ✎ desde F0-A-1, arranca `dockerd` y trae las imágenes por `mirror.gcr.io`). 🔴 Un setup que
       sale con `rc≠0` impide arrancar la sesión.
 - [ ] Decisiones **F-1** (quién fusiona los PR) y **F-2** (este entorno aplicado) anotadas en

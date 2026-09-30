@@ -42,7 +42,7 @@
 
 | Paso | Sesión | | Fase | Bloque | Tareas | Estado |
 |---:|---|:-:|---|---|---|---|
-| 1 | [`00-01-jhoan-preparar-entorno-web`](00-01-jhoan-preparar-entorno-web.md) | 🧑 | 00 | — | — | pendiente |
+| 1 | [`00-01-jhoan-preparar-entorno-web`](00-01-jhoan-preparar-entorno-web.md) | 🧑 | 00 | — | — | hecha 2026-09-30 (variables y *setup script*, con el paso 4 de F0-A-1; lo usan F0-01 a F0-05) |
 | 2 | [`00-02-jhoan-decisiones-iniciales`](00-02-jhoan-decisiones-iniciales.md) | 🧑 | 00 | — | — | hecha 2026-09-30 |
 | 3 | [`F0-01-web-entorno`](F0-01-web-entorno.md) | 🌐 | F0 | A | T0.0–T0.1 | hecha 2026-09-30 |
 | 4 | [`F0-02-web-pendiente-y-make`](F0-02-web-pendiente-y-make.md) | 🌐 | F0 | B | T0.2–T0.4, T0.26 | hecha 2026-09-30 (PR #14, fusionado en `dev` sin squash) |

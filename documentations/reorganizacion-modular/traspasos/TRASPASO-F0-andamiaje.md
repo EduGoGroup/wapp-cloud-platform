@@ -293,8 +293,9 @@ rechaza (T-1) y el hook `SessionStart` los avisaba. La ficha F0-06 daba por hech
 
 ### Qué queda
 
-- Sigue pendiente la mirada de Jhoan sobre las **contradicciones 19, 23, 24 y 27** del README de F0 y aplicar
-  **F0-A-1** en claude.ai/code. La 27 bloquea F2, no F0.
+- Sigue pendiente la mirada de Jhoan sobre las **contradicciones 19, 23, 24 y 27** del README de F0. La 27
+  bloquea F2, no F0. (**F0-A-1** quedó aplicada en claude.ai/code el mismo 2026-09-30, después del cierre: variables y
+  paso 4 del *setup script*; ver `plan/DECISIONES.md`.)
 - Siguiente sesión: **F9-01 (🌐, 9A, el arnés)**, porque D-F9-1 = sí adelanta F9; después F1.
 - Para repetir el gate local hace falta `GOTOOLCHAIN=go1.26.5` y un `golangci-lint v2.12.2` en el `PATH`; el de esta
   sesión vivía en un `GOBIN` temporal. Instalación permanente:

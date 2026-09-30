@@ -73,7 +73,6 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
 **Siguiente paso:**
 1. **Jhoan**:
    - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04; la 27 bloquea F2, no F0);
-   - sigue pendiente aplicar **F0-A-1** en claude.ai/code;
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
 2. **F9-01 (🌐, 9A)**: el arnés de procesos, porque D-F9-1 = sí lo adelanta tras F0 ([`plan/sesiones/`](plan/sesiones/README.md));
@@ -108,6 +107,7 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
 | 2026-09-30 | **F0-04**: `internal/arranque` (copia del viejo, D-F0-1) y `cmd/server-modular`; `huellatest` (rojo→verde); dorada desde el arranque viejo (`huella_vieja_test.go`, D-F0-2) y candado de huella entre los dos arranques, que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.10–T0.15 |
 | 2026-09-30 | **F0-05**: `apipublica` (rojo→verde) montada vacía delante del `publicapi` viejo; candado de mudanzas; los tres ✎ de `platform` con alias; barridos AST viejos ciegos al árbol nuevo; deriva documental cerrada; traspaso a la local | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.16–T0.21, T0.27 · [`plan/FX-cara-http/tareas.md`](plan/FX-cara-http/tareas.md) TX.1–TX.4 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) |
 | 2026-09-30 | **F0-06** (💻): **F0 cerrada**. Integración vieja con Postgres real (4.618 PASS · 0 SKIP · 0 FAIL, los 8 del *collector* en PASS), arranque real de `cmd/server-modular` (9/9, `/healthz` 200, SIGINT limpio) contrastado con el viejo (98 peticiones, mismos códigos), gate `ci-local` con `go1.26.5` y `golangci-lint v2.12.2` (`GATE_RC=0`) y §7 del traspaso refutada contra lo que corre | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.22–T0.25 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) `CERRADO` |
+| 2026-09-30 | **F0-A-1 aplicada en claude.ai/code** (Jhoan): las cinco variables del entorno web, `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` incluida, y el paso 4 del *setup script* (arranca `dockerd` y trae `postgres:17-alpine` y `ryuk` por `mirror.gcr.io`). Hasta hoy figuraba «pendiente» en tres ficheros por no haberse anotado | [`plan/DECISIONES.md`](plan/DECISIONES.md) F-2 y F0-A-1 · [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 

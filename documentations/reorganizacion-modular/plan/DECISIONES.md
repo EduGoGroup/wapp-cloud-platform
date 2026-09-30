@@ -30,7 +30,7 @@
 | # | Pregunta | Recomendación | Bloquea | Decisión |
 |---|---|---|---|---|
 | F-1 | ¿Quién fusiona los PR de la web en `dev`? | Jhoan con «Rebase and merge» (bloques 🌐); la sesión local con `merge --no-ff` (bloques 🌐→💻). **Nunca squash** | Toda sesión web | sí (2026-09-30) |
-| F-2 | Aplicar en claude.ai/code el *setup script* y las variables de [`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3 | Sí, antes de la primera sesión web | F0-01 (= F0 bloque A) | sí (2026-09-30); aplicación en claude.ai/code pendiente (paso 00-01) |
+| F-2 | Aplicar en claude.ai/code el *setup script* y las variables de [`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3 | Sí, antes de la primera sesión web | F0-01 (= F0 bloque A) | sí (2026-09-30); **aplicado en claude.ai/code** (2026-09-30: variables y *setup script*, confirmado por Jhoan) |
 | T-1 | Que `make lint` **falle** si `golangci-lint` no es `v2.12.2` (hoy `Makefile:42` usa el del `PATH`; en local hay v2.14.0) | Sí (T0.26) | F0 bloque B | sí (2026-09-30) |
 | D-F0-1 | `internal/arranque` nace **por copia** del arranque viejo, sin ciclo contrato→rojo→verde, y queda fuera de «un fichero, un test» y de la cobertura por fichero | Sí | F0 bloque D | sí (2026-09-30) |
 | D-F0-2 | Se permite **un** fichero de test en el paquete viejo, `huella_vieja_test.go`, que escribe la dorada de la huella | Sí | F0 T0.14 | sí (2026-09-30) |
@@ -39,7 +39,7 @@
 | D-F1-3 | Los paquetes `…test` (suites de contrato y dobles) quedan exentos de `un_fichero_un_test_test.go` y `exportados_cubiertos_test.go` | Sí | F0 bloque C (diseño de los candados) | sí (2026-09-30) |
 | D-FX-5 | Los ficheros comunes de `apipublica` nacen con su **primer consumidor** (F2/F3), no en F0/F1 | Sí | F0 bloque E | sí (2026-09-30) |
 | D-F9-1 | 🔍 **Adelantar F9**: arnés (9A) tras F0; procesos contra el binario viejo (9B) tras la parada de F1 y antes de F2; pasada contra el nuevo **dentro de cada conmutación** (9C); cierre (9D) antes de F10. Si no, T9.34 es la alternativa (todo al final). **Subsume D-F2-7 y D-F3-6** (las pasadas de F2 y F3 son T9.23 y T9.24; en cada fase, la tarea de procesos del cierre **es** su 9C) | Sí | Orden de las sesiones tras F0 | sí (2026-09-30) |
-| F0-A-1 | *(de F0-01)* Docker en la VM web: variable `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` y paso 4 del *setup* que arranca `dockerd` y tira del espejo ([`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3) | Sí | Pre-chequeo de F9 en la web (no bloquea F0) | sí (2026-09-30); aplicación en claude.ai/code pendiente (Jhoan) |
+| F0-A-1 | *(de F0-01)* Docker en la VM web: variable `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` y paso 4 del *setup* que arranca `dockerd` y tira del espejo ([`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3) | Sí | Pre-chequeo de F9 en la web (no bloquea F0) | sí (2026-09-30); **aplicada en claude.ai/code** (2026-09-30: la variable y el paso 4 del *setup*, confirmado por Jhoan con la captura del diálogo y el texto del paso pegado) |
 | D-F1-2 | Adelantar a F1 el mínimo del arnés de F9 para correr la suite de contrato de `contact` contra Postgres (encaja con D-F9-1) | Sí | F1 bloque B/D | sí (2026-09-30) |
 
 ## 2 · Antes de F1
