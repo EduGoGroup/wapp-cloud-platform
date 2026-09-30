@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-28**, al cerrar la escritura del plan de trabajo. Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar el paso 00-02 (decisiones). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -9,14 +9,14 @@
 **Fase: plan de trabajo escrito y validado · ejecución sin empezar.** No hay ni una línea de código
 de la reconstrucción. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
 una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y **81 sesiones** con
-su prompt.
+su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendaciones de
+[`plan/DECISIONES.md`](plan/DECISIONES.md) §1, §2, §4, §5 y §6 (§3 sigue abierta hasta la parada de F1).
 
 **Siguiente paso (Jhoan):**
 1. [`plan/sesiones/00-01`](plan/sesiones/00-01-jhoan-preparar-entorno-web.md): configurar el
-   entorno de claude.ai/code (variables y *setup script*).
-2. [`plan/sesiones/00-02`](plan/sesiones/00-02-jhoan-decisiones-iniciales.md): rellenar
-   [`plan/DECISIONES.md`](plan/DECISIONES.md) §1, §2 y §4.
-3. Arrancar **F0-01** (la primera sesión web) y seguir la tabla de
+   entorno de claude.ai/code (variables y *setup script*). Comprobado el 2026-09-30 en una sesión
+   web: **aún sin aplicar** (variables vacías, `golangci-lint` 2.5.0, sin daemon Docker).
+2. Arrancar **F0-01** (la primera sesión web) y seguir la tabla de
    [`plan/sesiones/README.md`](plan/sesiones/README.md).
 
 ## Avance de la ejecución
@@ -41,6 +41,7 @@ su prompt.
 | 2026-09-28 | **El plan de trabajo**, escrito por un equipo de agentes sobre el código real (`dev` @ `1b18932`) y validado en dos pasadas (coherencia entre fases y verdad de campo) | [`plan/`](plan/README.md) |
 | 2026-09-28 | `06-entorno-web.md` corregido con la documentación oficial de Claude Code (Docker sí; hooks sí; push solo a la rama de la sesión; *setup* que no aborta) | [`06`](06-entorno-web.md) |
 | 2026-09-28 | `04` marca `publicapi` como sustituido por D-10 | [`04`](04-estructura-final.md) |
+| 2026-09-30 | **Paso 00-02**: `DECISIONES.md` rellenado con la recomendación por defecto (§1, §2, §4, §5, §6); §3 abierta | [`plan/DECISIONES.md`](plan/DECISIONES.md) |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
