@@ -60,7 +60,13 @@ GOTOOLCHAIN=go1.26.5
 GOWORK=off
 BASH_DEFAULT_TIMEOUT_MS=600000
 BASH_MAX_TIMEOUT_MS=1800000
+TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/
 ```
+
+✎ La quinta (F0-A-1, 2026-09-30) manda las imágenes de Docker Hub que pide testcontainers
+(`postgres`, `testcontainers/ryuk`) al espejo público de Google: desde la VM, Docker Hub responde
+**429** por IP compartida (`../../06-entorno-web.md` §5). Solo vive en el entorno web; en local no
+se pone.
 
 `GOTOOLCHAIN=go1.26.5` fija la versión **exacta** (con `auto`, un Go preinstalado más nuevo correría
 tal cual). Los dos `BASH_*` suben la espera por defecto a 10 min y el máximo a 30: `make ci-local`
@@ -97,8 +103,16 @@ for d in "${CLAUDE_PROJECT_DIR:-}" "$PWD" /home/user/wapp-cloud-platform; do
   [ -n "$d" ] && [ -f "$d/go.mod" ] && (cd "$d" && go mod download) && break
 done || echo "SETUP: go mod download pendiente (lo hará el primer go build)"
 
-# 4 · La imagen de los tests de proceso, al snapshot (Docker Hub está en Trusted).
-docker pull postgres:17-alpine >/dev/null 2>&1 || echo "SETUP: no se pudo traer postgres:17-alpine"
+# 4 · Docker (✎ F0-A-1): en la VM el daemon no arranca solo, y Docker Hub responde 429 por IP
+#     compartida. Se arranca el daemon y se traen, por el espejo de Google, las dos imágenes con el
+#     nombre exacto que pide testcontainers con TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/.
+if ! docker info >/dev/null 2>&1; then
+  (nohup dockerd >/var/log/dockerd.log 2>&1 &)
+  for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
+fi
+for img in mirror.gcr.io/postgres:17-alpine mirror.gcr.io/testcontainers/ryuk:0.14.0; do
+  docker pull -q "$img" >/dev/null 2>&1 || echo "SETUP: no se pudo traer $img"
+done
 exit 0
 ```
 
@@ -107,8 +121,12 @@ cachea; entonces el paso 2 se mueve al hook en segundo plano.
 
 ✎ **Visto en F0-01 (2026-09-30)**: corrió en ≈1–2 min (estimado por fechas de ficheros); el lint
 que quedó es el binario publicado (ganó `install.sh`, no el `go install`); y el paso 4 **no deja la
-imagen** en el *snapshot* porque `dockerd` no corre durante el *setup* (`06` §5). Propuesta en el
-`README.md` de F0 (decisión F0-A-1).
+imagen** en el *snapshot* porque `dockerd` no corre durante el *setup* (`06` §5). Corregido con
+F0-A-1 (arriba): el paso 4 arranca el daemon y tira del espejo. Probado en la VM el 2026-09-30 con
+el daemon caído: `rc=0` en 5 s, las dos imágenes presentes y testcontainers `TC_RC=0` sin
+descargar nada. **Sin verificar**: que el *snapshot* conserve las imágenes (`/var/lib/docker`); si
+no las conserva, se descargan en la primera prueba y no pasa nada. El daemon **no** sobrevive al
+*snapshot* ni a reanudar la sesión: cada sesión lo arranca a mano cuando el hook avisa.
 
 ## 4 · Hook `SessionStart` propuesto (lo implementa una tarea de F0)
 

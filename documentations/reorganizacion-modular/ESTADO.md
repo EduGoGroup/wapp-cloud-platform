@@ -17,9 +17,10 @@ su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendacio
 commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-entorno-web`, PR a `dev`.
 
 **Siguiente paso:**
-1. **Jhoan**: fusionar el PR de F0-01 **sin squash** («Rebase and merge», F-1) y, si quiere,
-   decidir **F0-A-1** (espejo `mirror.gcr.io` para Docker Hub y `dockerd` en el *setup*;
-   [`plan/F0-andamiaje/README.md`](plan/F0-andamiaje/README.md)). No bloquea F0.
+1. **Jhoan**: fusionar el PR de F0-01 **sin squash** («Rebase and merge», F-1) y aplicar
+   **F0-A-1** (decidida: sí) en claude.ai/code → entorno → *Edit*: la variable
+   `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` y el paso 4 nuevo del *setup script*, los
+   dos copiados de [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3.
 2. Arrancar **F0-02** (F0 · bloque B, `pendiente` y los `make`). En cada sesión web, si el hook dice
    «Docker: NO responde», arrancar `dockerd` a mano antes de cualquier prueba con contenedores.
 
