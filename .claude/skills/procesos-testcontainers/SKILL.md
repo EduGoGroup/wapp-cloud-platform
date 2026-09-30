@@ -36,15 +36,17 @@ protegen el código viejo. No se copian.
 test/procesos/
 ├── main_test.go             TestMain: un contenedor, la plantilla migrada, los binarios compilados
 ├── arnes_test.go            base clonada por proceso + servidor por proceso + clientes HTTP/gRPC
-├── sin_bd_viva_test.go      el candado
+├── doc.go                   el comentario del paquete (sin etiqueta)
+├── sin_bd_viva_test.go      el candado (sin etiqueta: corre en ci-local)
 ├── enrolamiento_lease_test.go
 ├── canje_permisos_test.go
 ├── mensaje_a_borrador_test.go
 └── …                        un fichero por proceso (05 §7.4)
 ```
 
-Todo con `//go:build integracion` en la primera línea. **Un solo paquete**: Go compila un binario
-de test por paquete, y dos paquetes serían dos contenedores.
+Todo con `//go:build integracion` en la primera línea, **salvo el candado `sin_bd_viva_test.go`**,
+que va sin etiqueta para morder en `ci-local` (F0 T0.8, `reglas.md` §3), y `doc.go`. **Un solo
+paquete**: Go compila un binario de test por paquete, y dos paquetes serían dos contenedores.
 
 ### `TestMain`: una instancia por corrida
 
