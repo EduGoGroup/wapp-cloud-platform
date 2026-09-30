@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-02** (F0 · bloque B, `pendiente` y los `make`). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-03** (F0 · bloque C, los candados de fichero). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -21,19 +21,29 @@ commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-ento
 `make lint` que exige `v2.12.2` (T0.26, `d05ac3a`). `make test-pendiente` → `PENDIENTES=0`,
 `ROJOS=0`, `rc=0`; gate ci-local `GATE_RC=0`. Rama `reorg/f0-b-pendiente-make`, PR a `dev`.
 
+**F0-03 hecha (2026-09-30)**: `internal/candados` (rojo `2c2bbd6` → seis verdes, de `b2ecfce` a
+`42884fb`, 91,7–100 % por fichero) y los cinco candados de fichero en `ci-local` sobre el árbol real:
+`internal/modulos/{fronteras,un_fichero_un_test,exportados_cubiertos}_test.go` (`ca462a6`, lista
+blanca **medida**: 13 aristas), `test/procesos/sin_bd_viva_test.go` sin etiqueta (`b522b0f`) y
+`make cobertura-ficheros` (`3e85144`: `FICHEROS_EVALUADOS=7`, `POR_DEBAJO=0`). Cada uno muerde con su
+caso de `testdata/` y con una demostración en el árbol real. `PENDIENTES=0`, `ROJOS=0`; gate ci-local
+`GATE_RC=0` **en un *worktree* limpio** (contradicción 15 del README de F0: la raíz ignora `*.out`).
+Rama `reorg/f0-c-candados`, PR a `dev`.
+
 **Siguiente paso:**
-1. **Jhoan**: fusionar el PR de F0-02 **sin squash** («Rebase and merge», F-1). Sigue pendiente
+1. **Jhoan**: fusionar el PR de F0-03 **sin squash** («Rebase and merge», F-1). Sigue pendiente
    aplicar **F0-A-1** en claude.ai/code (variable `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/`
    y el paso 4 del *setup script*, [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3).
-2. Arrancar **F0-03** (F0 · bloque C, los candados de fichero, T0.5–T0.9). Ojo con las
-   contradicciones 12 y 13 del [`README.md` de F0](plan/F0-andamiaje/README.md) (la receta
-   `git stash -u` y `go list` con directorios inexistentes).
+2. Arrancar **F0-04** (F0 · bloque D, arranque nuevo y huella, T0.10–T0.15; D-F0-1 y D-F0-2 ya
+   decididas). Ojo: desde F0-03 `ci-local` incluye los candados; `internal/arranque` entra en
+   `fronteras` y `exportados_cubiertos` (no en un-fichero-un-test ni en la cobertura, D-F0-1), y
+   `internal/arranque/huellatest` en todos. Correr el gate también en un clon limpio (contradicción 15).
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | en curso | B · `pendiente` y los `make` (T0.2–T0.4, T0.26) | A: `98e806d`, `de04088` (en `dev`). B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a` (rama `reorg/f0-b-pendiente-make`; `origin/dev` @ `afede26`) |
+| F0 | en curso | C · los candados de fichero (T0.5–T0.9) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a` (en `dev`). C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (rama `reorg/f0-c-candados`; `origin/dev` @ `c55e9e3`) |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -54,6 +64,7 @@ commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-ento
 | 2026-09-30 | **Paso 00-02**: `DECISIONES.md` rellenado con la recomendación por defecto (§1, §2, §4, §5, §6); §3 abierta | [`plan/DECISIONES.md`](plan/DECISIONES.md) |
 | 2026-09-30 | **F0-01**: entorno web medido (Docker: daemon a mano, Docker Hub 429 → espejo `mirror.gcr.io`; testcontainers v0.44.0 `TC_RC=0`; el proxy acepta `--force-with-lease`) y hook `SessionStart` (`.claude/settings.json`) | [`06`](06-entorno-web.md) §5 · [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) |
 | 2026-09-30 | **F0-02**: `internal/pendiente` (rojo→verde), `make vet-pendiente`/`test-pendiente`, `vet-pendiente` en `ci-local`, `make lint` exige `v2.12.2` (T-1) | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) · `Makefile` |
+| 2026-09-30 | **F0-03**: `internal/candados` (rojo → 6 verdes) y los cinco candados de fichero en `ci-local` (fronteras con lista blanca medida, un fichero un test, exportados cubiertos, sin BD viva, cobertura por fichero ≥ 80 %), cada uno con su caso que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.5–T0.9 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 

@@ -99,7 +99,7 @@ Para cuando: los cinco candados de fichero corren en `ci-local` sobre el árbol 
 módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y el gate ci-local da
 `GATE_RC=0`.
 
-- [ ] **T0.5 · rojo(f0): contratos de `internal/candados`** · 🌐 · dep. T0.4 · cumple R0.3.a–R0.3.g
+- [x] **T0.5 · rojo(f0): contratos de `internal/candados`** · 🌐 · dep. T0.4 · cumple R0.3.a–R0.3.g — cerrada en `2c2bbd6` (sesión F0-03, 2026-09-30: 10 cuerpos con `panic`, `PENDIENTES=10`, `ROJOS=6`; `vet -tags pendiente` rc=0; `go test -tags pendiente` rc=1 por el `panic`; gate `GATE_RC=0`). Preparada por `3040e82` (los contadores de `test-pendiente` ignoran `testdata/`, contradicción 14). Los dos `perfil.out` de `testdata/cobertura/` van con `internal/candados/testdata/.gitignore` (`!*.out`): la raíz ignora `*.out` (contradicción 15). Contrato ampliado con `Reglas.FasesCerradas` (regla 6), `Fuente.Paquete`/`Fset`, `MarcaPostgres`, `Exentos` y `Evaluables` (las cifras de T0.9)
   - **Ficheros**: `internal/candados/{candados,fronteras,unfichero,exportados,sinbdviva,cobertura}.go`,
     sus seis `_test.go` (etiqueta `pendiente`) y los árboles de prueba en
     `internal/candados/testdata/<candado>/{muerde,pasa}/…` (ver [`diseno.md`](diseno.md) §4).
@@ -109,7 +109,7 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/candados/; echo rc=$?` → `rc=0`
   - **Commit**: `andamiaje(f0): rojo — contratos de los candados de la reconstrucción`
 
-- [ ] **T0.6 · verde(f0): `internal/candados`, un fichero por commit** · 🌐 · dep. T0.5 · cumple R0.3.a–R0.3.g
+- [x] **T0.6 · verde(f0): `internal/candados`, un fichero por commit** · 🌐 · dep. T0.5 · cumple R0.3.a–R0.3.g — cerrada en `b2ecfce` (candados.go 91,7 %), `65d4bc0` (fronteras.go 100 %), `e61567e` (unfichero.go 96,8 %), `681d84e` (exportados.go 100 %), `d48e319` (sinbdviva.go 100 %), `42884fb` (cobertura.go 99,3 %) (sesión F0-03: `go test -race -v` 104 `--- PASS`, 0 SKIP; `PENDIENTES=0`, `ROJOS=0`; gate `GATE_RC=0` en cada commit, `go test ./internal/candados/` rc=0 en cada commit sobre un clon limpio)
   - **Ficheros**: los seis de T0.5, en seis commits (`candados.go` primero: los otros lo usan).
   - **Hecho cuando**: `go test -race ./internal/candados/ -v` → `rc=0`, `--- SKIP` = 0, y cada
     caso `muerde` **pasa porque detecta** la violación (no porque no haya ficheros: cada caso
@@ -117,7 +117,7 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Gate**: gate ci-local tras cada commit.
   - **Commit**: `andamiaje(f0): verde — candados/<fichero>` (×6)
 
-- [ ] **T0.7 · los tres candados del árbol en `internal/modulos/`** · 🌐 · dep. T0.6 · cumple R0.3.a–R0.3.d
+- [x] **T0.7 · los tres candados del árbol en `internal/modulos/`** · 🌐 · dep. T0.6 · cumple R0.3.a–R0.3.d — cerrada en `ca462a6` (sesión F0-03: lista blanca **medida**, 13 aristas sobre `dev` @ `c55e9e3`; 3 `--- PASS`, 0 SKIP; recorridos: fronteras 901, un fichero 18, exportados 18; muerden con un fichero sin test, un exportado sin mencionar y un import a `internal/flujos/store` —regla 2—; gate `GATE_RC=0`)
   - **Ficheros**: `internal/modulos/doc.go` (solo comentario de paquete: qué es el árbol y la
     tabla de módulos de D-5), `internal/modulos/fronteras_test.go` (con la **tabla** de
     [`diseno.md`](diseno.md) §4.1: capas, puentes —vacía—, conmutados —vacía— y el mapeo viejo→
@@ -135,7 +135,7 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Gate**: gate ci-local; `GOWORK=off go test -v ./internal/modulos/ 2>&1 | grep -c -- '--- SKIP'` → `0`.
   - **Commit**: `andamiaje(f0): candados de fronteras, un fichero un test y exportados cubiertos`
 
-- [ ] **T0.8 · `test/procesos/sin_bd_viva_test.go`** · 🌐 · dep. T0.6 · cumple R0.3.e
+- [x] **T0.8 · `test/procesos/sin_bd_viva_test.go`** · 🌐 · dep. T0.6 · cumple R0.3.e — cerrada en `b522b0f` (sesión F0-03: `--- PASS: TestSinBDViva`, recorridos = 2; muerde con un `_test.go` `integracion` con `postgres://…:5432`; skill corregida; gate `GATE_RC=0`)
   - **Ficheros**: `test/procesos/doc.go` (paquete `procesos`, **sin** etiqueta), 
     `test/procesos/sin_bd_viva_test.go` (**sin** etiqueta `integracion`: tiene que correr en
     `ci-local`; ver [`reglas.md`](reglas.md) §3).
@@ -146,7 +146,7 @@ módulos: pasan), cada uno tiene un caso en `testdata/` que **lo pone rojo**, y 
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): candado sin_bd_viva para los procesos de F9`
 
-- [ ] **T0.9 · `make cobertura-ficheros`** · 🌐 · dep. T0.6 · cumple R0.3.f, R0.3.g
+- [x] **T0.9 · `make cobertura-ficheros`** · 🌐 · dep. T0.6 · cumple R0.3.f, R0.3.g — cerrada en `3e85144` (sesión F0-03: `FICHEROS_EVALUADOS=7`, `POR_DEBAJO=0`, `EXENTOS_POSTGRES=0`, rc=0; muerde con un fichero al 0,0 % y con `testdata/cobertura/muerde` —`POR_DEBAJO=3`—; filtra con `[ -d ]` antes de `go list`; gate `GATE_RC=0` con `cobertura-ficheros` dentro de `ci-local`)
   - **Ficheros**: `cmd/cobertura-ficheros/main.go` (lee el perfil, llama a
     `candados.Cobertura`, imprime la tabla y sale con `rc=1` si hay violaciones), `Makefile`
     (target nuevo y `ci-local` lo incluye; ver [`diseno.md`](diseno.md) §3).
