@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 )
 
@@ -25,13 +24,29 @@ func SetAuditTargetTenant(ctx context.Context, targetTenantID string) {
 	}
 }
 
+// AuditInput registra un evento de auditoría. TenantID vacío = evento pre-auth.
+// Actor/Resource deben ser identidades OPACAS (ids), NUNCA email/número ni
+// contenido; Meta, contexto NO sensible.
+//
+// Se declara aquí, en platform, y internal/iam/ports/in lo re-exporta como ALIAS
+// (`in.AuditInput = httpapi.AuditInput`, F0 · D-F0-3): es el MISMO tipo para el
+// IAM viejo y para los módulos nuevos, y httpapi deja de importar el dominio iam.
+type AuditInput struct {
+	TenantID string
+	Actor    string
+	Action   string
+	Resource string
+	Result   string
+	Meta     map[string]any
+}
+
 // AuditRecorder registra un evento de auditoría. Es el subconjunto de
 // in.Auditor (solo Record) que necesita el middleware; lo satisface
-// *usecase.AuditService. Se declara aquí para que httpapi no dependa del
-// usecase concreto (solo del DTO in.AuditInput, ya parte del contrato de
-// entrada del IAM).
+// *usecase.AuditService sin adaptador, porque in.AuditInput es alias de
+// AuditInput. Se declara aquí para que httpapi no dependa del usecase concreto
+// ni del paquete de puertos del IAM.
 type AuditRecorder interface {
-	Record(ctx context.Context, in in.AuditInput) error
+	Record(ctx context.Context, in AuditInput) error
 }
 
 // statusRecorder captura el código de estado que el handler escribió, para
@@ -82,7 +97,7 @@ func AuditMiddleware(rec AuditRecorder, action, resource string, log sharedlogge
 			}
 			ac.mu.Unlock()
 
-			if err := rec.Record(ctx, in.AuditInput{
+			if err := rec.Record(ctx, AuditInput{
 				TenantID: id.TenantID,
 				Actor:    id.Subject,
 				Action:   action,
