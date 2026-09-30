@@ -4,7 +4,8 @@
 # se dispara con push/PR (ci.yml quedó en workflow_dispatch) — sirve para
 # corridas manuales y de base para releases futuros. La red real es este
 # Makefile: valida en LOCAL antes de mergear y pushear.
-#   - ci-local        espeja los jobs "test" + "lint" del ci.yml.
+#   - ci-local        espeja los jobs "test" + "lint" del ci.yml, más los gates de la
+#                     reconstrucción modular (vet-pendiente, cobertura-ficheros).
 #   - test-integration espeja el job "integration" (Postgres efímero).
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
 
@@ -27,7 +28,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: fmt-check vet vet-pendiente test-pendiente lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: fmt-check vet vet-pendiente test-pendiente cobertura-ficheros lint build test test-integration ci-local ci-docker migrate migrate-status
 
 fmt-check: ## gofmt -l vacío (sin archivos sin formatear)
 	@unformatted=$$(gofmt -l .); \
@@ -70,6 +71,34 @@ test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-p
 	fi
 	@$(MAKE) --no-print-directory vet-pendiente
 
+# ── Cobertura por fichero (reconstrucción modular, 05 §5 · D-12 · F0 T0.9) ────
+# Cada fichero de producción EN VERDE del alcance exige ≥ 80 % de sentencias cubiertas;
+# los contratos en rojo (con pendiente.Implementar) no se miden y los adaptadores Postgres
+# marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
+# comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
+# arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest. Esta lista
+# es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
+# Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
+# patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
+COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
+
+cobertura-ficheros: ## Cobertura ≥ 80 % por fichero en verde del árbol nuevo (D-12): FICHEROS_EVALUADOS, POR_DEBAJO, EXENTOS_POSTGRES
+	@dirs=""; pats=""; \
+	for d in $(COBERTURA_DIRS); do \
+		if [ -d "$$d" ]; then dirs="$${dirs:+$$dirs,}$$d"; pats="$$pats ./$$d/..."; fi; \
+	done; \
+	if [ -z "$$pats" ]; then \
+		echo "cobertura-ficheros: aún no existe ningún directorio de $(COBERTURA_DIRS)"; exit 0; \
+	fi; \
+	paqs=$$($(GO) list $$pats) || exit 2; \
+	if [ -z "$$paqs" ]; then \
+		echo "cobertura-ficheros: ningún paquete en$$pats"; exit 0; \
+	fi; \
+	perfil=$$(mktemp "$${TMPDIR:-/tmp}/cobertura-ficheros.XXXXXX") || exit 2; \
+	trap 'rm -f "$$perfil"' EXIT; \
+	$(GO) test -covermode=set -coverprofile="$$perfil" $$paqs || exit $$?; \
+	$(GO) run ./cmd/cobertura-ficheros -perfil "$$perfil" -umbral 80 -dirs "$$dirs"
+
 lint: ## golangci-lint $(LINT_VERSION) — falla si el binario del PATH es otra versión (decisión T-1)
 	@v=$$(golangci-lint version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
 	if [ "v$$v" != "$(LINT_VERSION)" ]; then \
@@ -101,7 +130,7 @@ test-integration: ## Tests de integración con Postgres efímero en Docker — e
 	docker rm -f $(INTEGRATION_PG_CONTAINER) >/dev/null 2>&1; \
 	exit $$status
 
-ci-local: fmt-check vet vet-pendiente lint test build ## Pre-push: fmt + vet + vet-pendiente + lint + test + build (sin integración: correr test-integration aparte)
+ci-local: fmt-check vet vet-pendiente lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + lint + test + cobertura-ficheros + build (sin integración: correr test-integration aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control
