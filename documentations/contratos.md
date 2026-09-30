@@ -23,9 +23,9 @@ distintos.
   menciona). Las otras dos son el `Register` de `internal/flujos/admin/handlers.go:345-346`, que
   **solo llaman tests**: esas dos rutas se montan inline en `arranque/rutas_admin.go:100,102`, así que
   contarlas las duplicaría. Quedan **90 registros de producción**.
-- **Faltan 5.** En `internal/bootstrap/http.go` la variable se llama `publicMux`, y
+- **Faltan 5.** En `internal/bootstrap/arranque/http.go` (copia en `internal/arranque/` desde F0) la variable se llama `publicMux`, y
   `mux\.Handle` en minúscula **no acierta nunca ahí**
-  (`grep -c 'mux\.Handle' internal/bootstrap/http.go` → **0**). Hay que grepear también
+  (`grep -c 'mux\.Handle' internal/bootstrap/arranque/http.go` → **0**). Hay que grepear también
   `publicMux\.Handle`, que da **6 líneas** y **5 patrones**: `POST /api/v1/signup` se registra
   dos veces (`:165` y `:168`), en las dos ramas de un `if`.
 
@@ -36,10 +36,10 @@ sitios. Con esa regla salen **95 patrones distintos**, repartidos así:
 | Origen | Patrones | Listener |
 |---|---|---|
 | `internal/publicapi/publicapi.go` (51) + `roleplane.go` (14) + `eventstelemetry.go` (1) | 66 | público `:8103` |
-| `internal/bootstrap/http.go` (5, por `publicMux.Handle`) + `internal/iam/transport/http/auth.go` (2) | **7** | público `:8103` |
-| `internal/bootstrap/bootstrap.go` → `registerAdminRoutes` (`:1425-1476`) | 22 | admin `:8100` |
+| `internal/bootstrap/arranque/http.go` (5, por `publicMux.Handle`) + `internal/iam/transport/http/auth.go` (2) | **7** | público `:8103` |
+| `internal/bootstrap/arranque/rutas_admin.go` → `registerAdminRoutes` (`:63-114`) | 22 | admin `:8100` |
 
-⚠️ En `bootstrap.go` el grep da **23** líneas, no 22: la de más es el comentario de `:1384`. Ver
+⚠️ En `rutas_admin.go` el grep da **23** líneas, no 22: la de más es el comentario de `:21`. Ver
 `deuda.md`.
 
 🔴 **Muchas rutas son CONDICIONALES.** Si su dependencia en `publicapi.Deps` es `nil`, la ruta
@@ -82,7 +82,7 @@ Un token **sin empresa** las atraviesa: la cadena es `Authenticate` a secas, sin
 |---|---|---|
 | `/api/v1/auth/verify` | `internal/iam/transport/http/auth.go:49` | sin verbo → cualquier método |
 | `/api/v1/auth/exchange` | `auth.go:50` | canje Identity Token → Context Token |
-| `/api/v1/auth/whoami` | `internal/bootstrap/http.go:84` | |
+| `/api/v1/auth/whoami` | `internal/bootstrap/arranque/http.go:84` | |
 | `POST /api/v1/invitations/accept` | `http.go:115` | canje de invitación de un solo uso |
 | `POST /api/v1/auth/active-tenant` | `http.go:144` | elegir empresa |
 | `GET /api/v1/auth/tenants` | `http.go:153` | listar las empresas propias |
@@ -177,7 +177,7 @@ Cabeceras: `X-Wapp-Tenant`, `X-Wapp-Timestamp`, `X-Wapp-Signature: v1=…`
 ## 3 · HTTP — listener admin `:8100` (22 rutas)
 
 Cadena: `Authenticate → RequirePermission → AuditMiddleware → h`
-(`adminHandler`, `internal/bootstrap/http.go:216`).
+(`adminHandler`, `internal/bootstrap/arranque/http.go:216`; copia en `internal/arranque/` desde F0).
 
 | Ruta | Permiso | Plano |
 |---|---|---|

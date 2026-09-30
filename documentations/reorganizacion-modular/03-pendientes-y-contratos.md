@@ -63,12 +63,22 @@ Detectada al preparar este análisis; son pequeñas pero confunden a quien llega
 
 - `Makefile:57` (`test-integration`) levanta `postgres:16`, y UAT corre `postgres:17-alpine`: la
   batería de integración vieja no prueba contra la versión mayor de producción. La suite nueva de
-  `05` §7.2 fija la 17.
+  `05` §7.2 fija la 17. ⏳ **F0 no la cierra**: la cierra F9 (la suite por proceso con
+  testcontainers sobre `postgres:17-alpine`), y F10 retira la batería vieja; hoy la línea es
+  `Makefile:123`.
 
 - `README.md` de `documentations/` (§«cinco cosas», punto 2) dice que las rutas están en
   `internal/bootstrap/http.go`; hoy están en `internal/bootstrap/arranque/http.go`.
+  ✅ cerrada en F0 (T0.20, 2026-09-30).
 - `constitucion.md` (I-CP-5) sitúa el candado en `internal/bootstrap/platform_permissions_test.go`;
-  vive en `internal/bootstrap/arranque/`.
+  vive en `internal/bootstrap/arranque/`. ✅ cerrada en F0 (T0.20, 2026-09-30).
+- Y el resto que midió F0 (T0.20, 2026-09-30): 18 líneas de `README`, `constitucion`,
+  `contratos`, `operacion` y `deuda` citaban en presente `internal/bootstrap/<fichero>.go` o
+  `internal/publicapi/flows.go` (el `HeadBucket` vive en `internal/bootstrap/arranque/flows.go:75`),
+  más «8 `*_cableado_test.go` en `internal/bootstrap/`» (son 9, en `arranque/`) y tres
+  referencias sueltas (`contratos.md` y `operacion.md` a `bootstrap.go`, `arquitectura.md` a
+  `internal/bootstrap/`). ✅ cerrada en F0 (T0.20): el `grep` de T0.20 solo
+  devuelve ya la historia de `deuda.md` (D-10 cerrada).
 
 ---
 

@@ -50,11 +50,13 @@ siempre la respuesta a «¿por qué está así?» está tres líneas más arriba
 
 ## Las cinco cosas que ahorran una tarde
 
-1. **Para saber qué existe, se lee `internal/bootstrap/bootstrap.go`, no el README.** Las
-   nueve fases de `internal/bootstrap/arranque` (empieza por `orquestador.go`) son el inventario real.
+1. **Para saber qué existe, se lee `internal/bootstrap/arranque/orquestador.go`, no el README.**
+   Su lista `fases` —las nueve, en una pantalla— y el fichero de cada una son el inventario real
+   (copia en `internal/arranque/` desde F0). El `bootstrap.go` del paquete padre es hoy una
+   fachada de 42 líneas que apunta ahí.
 2. **Las rutas están en TRES sitios**, no en uno: `internal/publicapi/`,
-   `internal/bootstrap/http.go` (las que un token **sin empresa** puede atravesar) y
-   `internal/bootstrap/bootstrap.go` (el listener admin).
+   `internal/bootstrap/arranque/http.go` (las que un token **sin empresa** puede atravesar) y
+   `internal/bootstrap/arranque/rutas_admin.go` (el listener admin), con copia en `internal/arranque/` desde F0.
 3. **P1 no vive aquí.** El prompt del clasificador de intenciones lo gobierna el catálogo de
    intenciones, que se edita por API (`PUT /api/v1/intents`). Aquí solo viven P2–P5.
 4. **La `DEK` de este repo NO es la DEK del ecosistema.** Ver la sección de homónimos de

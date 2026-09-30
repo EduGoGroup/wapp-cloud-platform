@@ -299,7 +299,7 @@ cuando la tabla la crea y la sirve `platform`
 tabla de identidad de otro módulo, **sin API interna de por medio**.
 
 **No hay candado para esto.** La herramienta existe y se usa para otras cosas (hay más de diez
-tests-AST de cableado en `internal/bootstrap/`); simplemente nadie la apuntó a la pregunta
+tests-AST de cableado en `internal/bootstrap/arranque/`, copia en `internal/arranque/` desde F0); simplemente nadie la apuntó a la pregunta
 «¿qué módulo toca qué tabla?». Está en `deuda.md`.
 
 **Contraverificación honesta**, para que nadie repita un falso positivo: `intake_jobs`,

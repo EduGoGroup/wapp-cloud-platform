@@ -111,7 +111,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
   tests** devuelve **cero**.
 - **Consecuencia**: un tenant puede tener la feature encendida y **no significa nada**.
 - **Asimetría de trato**: `passive_profiles` está en el mismo caso pero **sí está documentado**
-  como no-gateante (`internal/bootstrap/auth.go:527`, `internal/flujos/admin/sessions.go:111`,
+  como no-gateante (`internal/bootstrap/arranque/auth.go:527`, `internal/flujos/admin/sessions.go:111`,
   `internal/filtercfg/filtercfg.go:20`). La diferencia entre las tres es arbitraria.
 - **Cómo se cierra**: documentar las tres igual, o retirar las dos que no gatean.
 
@@ -129,7 +129,9 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
   completa de las 14 está en [`arquitectura.md`](arquitectura.md) §4.
 - **Cómo se cierra**: (a) mover esos dos `UPDATE` detrás de un puerto de `platform`; (b) el
   candado — un test-AST «¿qué módulo toca qué tabla?». **La herramienta ya existe y se usa
-  para otras cosas** (hay **8** `*_cableado_test.go` en `internal/bootstrap/`): nadie la apuntó
+  para otras cosas** (hay **9** tests de cableado en `internal/bootstrap/arranque/` —8
+  `*_cableado_test.go` más `flow_options_cableadas_test.go`—, con copia en `internal/arranque/`
+  desde F0): nadie la apuntó
   aquí.
 
 ### ~~D-10 · `bootstrap.Run` son 991 líneas~~ — ✅ CERRADA el 2026-09-04
@@ -189,7 +191,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 
 ### D-14 · 🟡 El arranque entero depende de R2/S3 vivo
 
-- **Dónde**: `internal/publicapi/flows.go:75` — `NewR2PresignClient` valida el bucket con
+- **Dónde**: `internal/bootstrap/arranque/flows.go:75` (copia en `internal/arranque/` desde F0) — `NewR2PresignClient` valida el bucket con
   `HeadBucket` y **si falla el proceso no levanta**.
 - **Consecuencia**: fail-fast a propósito, pero acopla el arranque de IAM, del gateway y del
   pipeline a un almacén que **solo usa el nodo `media`**.
