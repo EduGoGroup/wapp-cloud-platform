@@ -44,19 +44,21 @@ vet: ## go vet ./...
 # vet-pendiente los compila (un rojo que no compila rompe ci-local); test-pendiente
 # cuenta lo que falta. Alcance del rojo que se ejecuta: los directorios que aún no
 # existen se omiten (el target no falla por un módulo que todavía no nació).
+# Los dos contadores ignoran `testdata/`, como la toolchain de Go: los árboles de
+# prueba de internal/candados imitan rojos a propósito (F0 T0.5).
 PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque
 
 vet-pendiente: ## go vet -tags pendiente ./... — los rojos también compilan
 	$(GO) vet -tags pendiente ./...
 
 test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-pendiente (rc = el de vet-pendiente)
-	@pendientes=$$(grep -rn --include='*.go' --exclude='*_test.go' --exclude-dir=.git 'pendiente\.Implementar(' . \
+	@pendientes=$$(grep -rn --include='*.go' --exclude='*_test.go' --exclude-dir=.git --exclude-dir=testdata 'pendiente\.Implementar(' . \
 		| grep -v '^\./internal/pendiente/' \
 		| sed -E 's/^[^:]+:[0-9]+://' \
 		| grep -vE '^[[:space:]]*//' \
 		| grep -o 'pendiente\.Implementar(' | wc -l); \
 	echo "PENDIENTES=$$pendientes"
-	@rojos=$$(find . -path ./.git -prune -o -name '*_test.go' -type f -print \
+	@rojos=$$(find . \( -path ./.git -o -name testdata \) -prune -o -name '*_test.go' -type f -print \
 		| xargs -r awk 'FNR==1 { if ($$0 == "//go:build pendiente") n++; nextfile } END { print n+0 }'); \
 	echo "ROJOS=$$rojos"
 	@pats=""; for d in $(PENDIENTE_DIRS); do [ -d "$$d" ] && pats="$$pats ./$$d/..."; done; \
