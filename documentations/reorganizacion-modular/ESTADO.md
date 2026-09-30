@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-01** (F0 · bloque A, el entorno web). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-02** (F0 · bloque B, `pendiente` y los `make`). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -16,19 +16,24 @@ su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendacio
 `GATE_RC=0` en 217 s, **testcontainers funciona**: `TC_RC=0`, Ryuk limpia) y hook `SessionStart`
 commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-entorno-web`, PR a `dev`.
 
+**F0-02 hecha (2026-09-30)**: `internal/pendiente` (rojo `d7600d3` → verde `f3b322c`, 100 %),
+`make vet-pendiente` y `make test-pendiente` con `vet-pendiente` dentro de `ci-local` (`d74dd7f`) y
+`make lint` que exige `v2.12.2` (T0.26, `d05ac3a`). `make test-pendiente` → `PENDIENTES=0`,
+`ROJOS=0`, `rc=0`; gate ci-local `GATE_RC=0`. Rama `reorg/f0-b-pendiente-make`, PR a `dev`.
+
 **Siguiente paso:**
-1. **Jhoan**: fusionar el PR de F0-01 **sin squash** («Rebase and merge», F-1) y aplicar
-   **F0-A-1** (decidida: sí) en claude.ai/code → entorno → *Edit*: la variable
-   `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` y el paso 4 nuevo del *setup script*, los
-   dos copiados de [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3.
-2. Arrancar **F0-02** (F0 · bloque B, `pendiente` y los `make`). En cada sesión web, si el hook dice
-   «Docker: NO responde», arrancar `dockerd` a mano antes de cualquier prueba con contenedores.
+1. **Jhoan**: fusionar el PR de F0-02 **sin squash** («Rebase and merge», F-1). Sigue pendiente
+   aplicar **F0-A-1** en claude.ai/code (variable `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/`
+   y el paso 4 del *setup script*, [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3).
+2. Arrancar **F0-03** (F0 · bloque C, los candados de fichero, T0.5–T0.9). Ojo con las
+   contradicciones 12 y 13 del [`README.md` de F0](plan/F0-andamiaje/README.md) (la receta
+   `git stash -u` y `go list` con directorios inexistentes).
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | en curso | A · el entorno web (T0.0–T0.1) | `98e806d`, `de04088` (rama `reorg/f0-a-entorno-web`; `origin/dev` @ `016a657`) |
+| F0 | en curso | B · `pendiente` y los `make` (T0.2–T0.4, T0.26) | A: `98e806d`, `de04088` (en `dev`). B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a` (rama `reorg/f0-b-pendiente-make`; `origin/dev` @ `afede26`) |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -48,6 +53,7 @@ commiteado ([`06-entorno-web.md`](06-entorno-web.md) §5). Rama `reorg/f0-a-ento
 | 2026-09-28 | `04` marca `publicapi` como sustituido por D-10 | [`04`](04-estructura-final.md) |
 | 2026-09-30 | **Paso 00-02**: `DECISIONES.md` rellenado con la recomendación por defecto (§1, §2, §4, §5, §6); §3 abierta | [`plan/DECISIONES.md`](plan/DECISIONES.md) |
 | 2026-09-30 | **F0-01**: entorno web medido (Docker: daemon a mano, Docker Hub 429 → espejo `mirror.gcr.io`; testcontainers v0.44.0 `TC_RC=0`; el proxy acepta `--force-with-lease`) y hook `SessionStart` (`.claude/settings.json`) | [`06`](06-entorno-web.md) §5 · [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) |
+| 2026-09-30 | **F0-02**: `internal/pendiente` (rojo→verde), `make vet-pendiente`/`test-pendiente`, `vet-pendiente` en `ci-local`, `make lint` exige `v2.12.2` (T-1) | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) · `Makefile` |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
