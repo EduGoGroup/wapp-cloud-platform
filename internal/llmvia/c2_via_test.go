@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -115,6 +116,9 @@ func TestC2_LaViaSoloSePreguntaEnLaSeleccion(t *testing.T) {
 	// El test corre desde internal/llmvia; la raíz a recorrer es internal/.
 	encontrados := map[string][]string{}
 	err := filepath.WalkDir("..", func(p string, d fs.DirEntry, err error) error {
+		if esDelArbolNuevo(p, d, err) {
+			return filepath.SkipDir // D-F4-1 (F0 · T0.27)
+		}
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return err
 		}
@@ -231,4 +235,14 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// esDelArbolNuevo dice si la entrada es un directorio de PRIMER nivel de internal/ del
+// árbol de la reconstrucción modular (D-F4-1, F0 · T0.27): el árbol nuevo trae sus
+// propios candados (el C2 de inferencia/llmvia en F4) y este, que exige una lista
+// EXACTA, se pondría rojo con su primer verde. Se compara la ruta de primer nivel, no el
+// nombre: internal/bootstrap/arranque también se llama «arranque» y se sigue barriendo.
+func esDelArbolNuevo(p string, d fs.DirEntry, err error) bool {
+	return err == nil && d.IsDir() && filepath.Dir(p) == ".." &&
+		slices.Contains([]string{"modulos", "nucleo", "arranque", "apipublica", "pendiente", "candados"}, d.Name())
 }

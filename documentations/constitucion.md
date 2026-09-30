@@ -79,7 +79,7 @@ El código de otro producto del grupo (EduGo) se **copió y adaptó** al espacio
 
 ⚠️ **Pero hay una excepción real y sin documentar en la regla original**: `go.mod:7` declara
 `github.com/EduGoGroup/identity-shared/auth v0.3.1`, y se usa **en producción** en
-`internal/bootstrap/auth.go:18`, `internal/platform/httpapi/authmw.go:9`,
+`internal/bootstrap/arranque/auth.go:18` (copia en `internal/arranque/` desde F0), `internal/platform/httpapi/authmw.go:9`,
 `internal/iam/usecase/grants.go:6` e `internal/iam/usecase/exchange.go:9`. No es un
 `edugo-*`: es el SDK del **SSO del grupo** (identity-core), cuyos tokens ES256 esta pieza
 verifica. **No lo retires creyendo que es una violación** — y no lo uses como precedente para
@@ -170,7 +170,7 @@ El pipeline de captación corre con **un** worker (`arranque/fase9_fondo.go:99`)
 mutuamente en la única plaza de inferencia del Edge. El aforo por Edge lo toma el worker antes
 de la cadena (`internal/intake/pipeline/plaza.go`).
 
-**Candado.** `internal/bootstrap/pipeline_captacion_cableado_test.go` — un test de cableado,
+**Candado.** `internal/bootstrap/arranque/pipeline_captacion_cableado_test.go` (copia en `internal/arranque/` desde F0) — un test de cableado,
 porque el invariante vive en una línea repetible.
 
 ### I-CP-5 · 🔴 Los permisos de PLATAFORMA acaban en `.any`
@@ -181,7 +181,7 @@ permiso: `tenants.read.any`, `fleet.read.any`, `users.provision.any`… La migra
 lo concede solo a `platform_admin` y se lo **niega** al glob `*` de `tenant_admin` con un deny
 `*.any`. Sin ese deny, cualquier admin de cliente alcanzaría el plano de plataforma.
 
-**Candado.** `internal/bootstrap/platform_permissions_test.go` →
+**Candado.** `internal/bootstrap/arranque/platform_permissions_test.go` (copia en `internal/arranque/` desde F0) →
 `TestINV056_1_PlatformPermissionsMustEndInDotAny`, con caso negativo.
 
 ⚠️ **Trampa de estilo que impone el candado**: el detector lee **texto fuente** y reconoce una
@@ -335,8 +335,10 @@ tabla y hace concluir que el dominio no está construido.
   `check-type-assertions: true` **y `check-blank: true`**, `gosec`, `contextcheck`, `nilerr`,
   `errorlint`, `gocyclo` (min-complexity 15) y `revive`. Solo hay **13 `//nolint`** en toda la
   producción, **todos con justificación escrita**. Escribe la tuya o no lo pongas.
-- **Tests de cableado (AST)**: hay **8** `*_cableado_test.go` en `internal/bootstrap/`, y son
-  los 8 del repo entero (`find . -name '*_cableado_test.go' | wc -l` → 8).
+- **Tests de cableado (AST)**: hay **9** en `internal/bootstrap/arranque/`
+  (`ls internal/bootstrap/arranque/*cablead*` → 9: los 8 `*_cableado_test.go` más
+  `flow_options_cableadas_test.go`), con su copia en `internal/arranque/` desde F0 — por eso
+  `find . -name '*_cableado_test.go' | wc -l` da hoy 16, dos veces los mismos 8.
   Es la herramienta de este repo para vigilar invariantes que viven en una línea repetible.
   Úsala antes de inventar otra.
 - **Nada de `TODO`/`FIXME`.** La deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡, y se anota
@@ -373,7 +375,7 @@ tabla y hace concluir que el dominio no está construido.
    los runbooks, y **no la lee nadie**: el prefijo es la constante compilada
    `mediaKeyPrefix = "wapp/media"` (`internal/publicapi/media.go:28`). Ver `deuda.md`.
 8. **Desplegar sin R2/S3 vivo.** `NewR2PresignClient` valida el bucket con `HeadBucket` y si
-   falla **el proceso no levanta** (`internal/publicapi/flows.go:75`). Es fail-fast a
+   falla **el proceso no levanta** (`internal/bootstrap/arranque/flows.go:75`). Es fail-fast a
    propósito, pero acopla el arranque de IAM y del gateway a un almacén que solo usa el nodo
    `media`.
 9. **Abrir un PR esperando validación.** `ci.yml` es `workflow_dispatch`: **un PR no valida

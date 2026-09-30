@@ -1,0 +1,96 @@
+id	listener	patron	fase
+A1	:8103	/api/v1/auth/verify	F2
+A2	:8103	/api/v1/auth/exchange	F2
+A3	:8103	/api/v1/auth/whoami	F2
+A4	:8103	POST /api/v1/invitations/accept	F2
+A5	:8103	POST /api/v1/auth/active-tenant	F2
+A6	:8103	GET /api/v1/auth/tenants	F2
+A7	:8103	POST /api/v1/signup	F2
+B1	:8103	GET /api/v1/roles	F2
+B2	:8103	POST /api/v1/roles	F2
+B3	:8103	POST /api/v1/roles/{id}/grants	F2
+B4	:8103	DELETE /api/v1/roles/{id}/grants	F2
+B5	:8103	POST /api/v1/members/{user_id}/roles	F2
+B6	:8103	DELETE /api/v1/members/{user_id}/roles/{role_id}	F2
+B7	:8103	POST /api/v1/members/{user_id}/grants	F2
+B8	:8103	DELETE /api/v1/members/{user_id}/grants	F2
+B9	:8103	GET /api/v1/members	F2
+B10	:8103	POST /api/v1/members	F2
+B11	:8103	DELETE /api/v1/members/{user_id}	F2
+B12	:8103	GET /api/v1/invitations	F2
+B13	:8103	POST /api/v1/invitations	F2
+B14	:8103	DELETE /api/v1/invitations/{id}	F2
+C1	:8103	GET /api/v1/audit	F2
+C2	:8103	GET /api/v1/entitlements	F2
+D1	:8103	POST /api/v1/messages	F3
+D2	:8103	GET /api/v1/sessions	F3
+D3	:8103	POST /api/v1/sessions/{id}/profile	F3
+D4	:8103	POST /api/v1/sessions/{id}/status	F3
+D5	:8103	POST /api/v1/sessions/{id}/diagnostics	F3
+D6	:8103	GET /api/v1/diagnostics/{command_id}	F3
+E1	:8103	GET /api/v1/intents	F7
+E2	:8103	PUT /api/v1/intents	F7
+F1	:8103	GET /api/v1/tenant-llm	F4
+F2	:8103	PUT /api/v1/tenant-llm	F4
+F3	:8103	DELETE /api/v1/tenant-llm	F4
+F4	:8103	GET /api/v1/degradation-notices	F4
+G1	:8103	GET /api/v1/intakes	F6
+G2	:8103	GET /api/v1/intakes/{id}	F6
+G3	:8103	POST /api/v1/intakes/{id}/status	F6
+G4	:8103	PUT /api/v1/intakes/{id}/items	F6
+G5	:8103	POST /api/v1/intakes/{id}/approve	F6
+G6	:8103	POST /api/v1/intakes/{id}/request-info	F6
+G7	:8103	POST /api/v1/intakes/{id}/quote-suggestion	F6
+G8	:8103	POST /api/v1/intakes/discard	F6
+G9	:8103	GET /api/v1/intakes/export	F6
+G10	:8103	GET /api/v1/intakes/summary.json	F6
+G11	:8103	GET /api/v1/tenant-variables	F6
+G12	:8103	PUT /api/v1/tenant-variables	F6
+G13	:8103	GET /api/v1/integrations	F6
+G14	:8103	GET /api/v1/integrations/outbox	F6
+G15	:8103	PUT /api/v1/integrations	F6
+G16	:8103	DELETE /api/v1/integrations	F6
+G17	:8103	POST /api/v1/integrations/callback	F6
+G18	:8103	GET /api/v1/events/telemetry	F6
+H1	:8103	POST /api/v1/intakes/{id}/reanalyze	F7
+I1	:8103	POST /api/v1/flows	F8
+I2	:8103	GET /api/v1/flows	F8
+I3	:8103	GET /api/v1/flows/{id}	F8
+I4	:8103	POST /api/v1/flows/{id}/start	F8
+I5	:8103	POST /api/v1/media/upload-url	F8
+I6	:8103	PUT /api/v1/tenant-content/{ref}	F8
+I7	:8103	POST /api/v1/tenant-content/{ref}	F8
+I8	:8103	DELETE /api/v1/tenant-content/{ref}	F8
+I9	:8103	GET /api/v1/tenant-content	F8
+I10	:8103	GET /api/v1/tenant-content/{ref}	F8
+I11	:8103	POST /api/v1/triggers	F8
+I12	:8103	GET /api/v1/triggers	F8
+I13	:8103	DELETE /api/v1/triggers/{id}	F8
+I14	:8103	POST /api/v1/catalog/import	F8
+I15	:8103	POST /api/v1/catalog/import/tabular	F8
+I16	:8103	GET /api/v1/catalog/import/template	F8
+I17	:8103	GET /api/v1/catalog/import/prompt	F8
+I18	:8103	GET /api/v1/conversation-events	F8
+I19	:8103	POST /api/v1/conversation-events/{id}/cancel	F8
+J1	:8100	/healthz	-
+J2	:8100	/metrics	-
+J3	:8100	/admin/crypto/rekey	-
+J4	:8100	GET /admin/tenants	F2
+J5	:8100	POST /admin/tenants	F2
+J6	:8100	GET /admin/tenants/{id}	F2
+J7	:8100	GET /admin/tenants/{id}/installations	F2
+J8	:8100	POST /admin/tenants/{id}/enrollment-codes	F2
+J9	:8100	GET /admin/access-requests	F2
+J10	:8100	POST /admin/access-requests/{id}/approve	F2
+J11	:8100	POST /admin/access-requests/{id}/reject	F2
+J12	:8100	/admin/leases/revoke	F3
+J13	:8100	POST /admin/tenants/revoke	F3
+J14	:8100	POST /admin/tenants/restore	F3
+J15	:8100	/admin/messages/send	F3
+J16	:8100	POST /admin/sessions/{id}/profile	F3
+J17	:8100	POST /admin/sessions/{id}/status	F3
+J18	:8100	/admin/flows	F8
+J19	:8100	/admin/flows/start	F8
+J20	:8100	POST /admin/triggers	F8
+J21	:8100	GET /admin/triggers	F8
+J22	:8100	DELETE /admin/triggers/{id}	F8

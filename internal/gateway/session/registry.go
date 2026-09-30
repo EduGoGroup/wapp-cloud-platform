@@ -15,11 +15,13 @@ import (
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // ErrSessionOffline indica que no hay un stream vivo para la sesión solicitada,
 // por lo que no es posible empujar un comando hacia el Edge.
-var ErrSessionOffline = errors.New("sesión offline")
+var ErrSessionOffline = httpapi.ErrSessionOffline
 
 // ErrPushTimeout indica que el envío a un Edge no completó dentro del sendTimeout:
 // un Edge lento/atascado (que no lee su stream) no debe retener al llamante

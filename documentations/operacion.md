@@ -96,7 +96,7 @@ curl -s localhost:8100/metrics | grep '^wapp_'
 404 y eso es lo esperado hoy, no un fallo.
 
 ⚠️ **El arranque depende de S3/R2 vivo**: `NewR2PresignClient` valida el bucket con
-`HeadBucket` y si falla **el proceso no levanta** (`internal/publicapi/flows.go:75`). En local
+`HeadBucket` y si falla **el proceso no levanta** (`internal/bootstrap/arranque/flows.go:75`). En local
 sirve un MinIO (`docker run … minio/minio`) con `WAPP_STORAGE_S3_ENDPOINT` apuntándole.
 
 ---
@@ -191,9 +191,9 @@ En UAT no pasa por `journald`: la unidad usa `StandardOutput=append:…/cloud.lo
 | Síntoma | Mira esto primero |
 |---|---|
 | **El proceso no arranca y el error habla de prompts** | I-CP-1: un directorio de `WAPP_LLM_PROMPTS_DIR` inválido **aborta a propósito**. El error dice el fichero y la etapa. Valida con `go run ./cmd/prompts -comprobar <dir>` |
-| **El proceso no arranca y el error habla del bucket** | `HeadBucket` falló: R2/MinIO caído o credenciales malas (`internal/publicapi/flows.go:75`) |
+| **El proceso no arranca y el error habla del bucket** | `HeadBucket` falló: R2/MinIO caído o credenciales malas (`internal/bootstrap/arranque/flows.go:75`) |
 | **Un ajuste de prompt no tiene efecto** | ¿Reiniciaste? No hay recarga en caliente. Y mira la línea de log del arranque: dice `p4=/ruta/…` o `compilada`. En UAT `WAPP_LLM_PROMPTS_DIR` **está vacía**, así que corren los **compilados** |
-| **Una ruta responde 404 y jurarías que existe** | Es **condicional**: su dependencia en `publicapi.Deps` es `nil` y no se montó (`roleplane.go:75`). Mira el cableado en `bootstrap.go` |
+| **Una ruta responde 404 y jurarías que existe** | Es **condicional**: su dependencia en `publicapi.Deps` es `nil` y no se montó (`roleplane.go:75`). Mira el cableado en `internal/bootstrap/arranque/fase8_transporte.go` (`publicapi.Deps{`, `:172`) |
 | **`POST /api/v1/members` responde 503** | Es lo diseñado: se monta siempre y degrada a 503 sin plano M2M. Nunca da 404 |
 | **`/api/v1/signup` responde 503** | Falta `WAPP_IDENTITY_API_KEY`: se cablea un 503 fijo (`bootstrap/http.go:168`) |
 | **`quote-suggestion` corta a los 10 s** | Alguien tocó el `WriteTimeout` global sin mirar el plazo propio de esa ruta (`publicapi.go:770`) |

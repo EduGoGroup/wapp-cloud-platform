@@ -85,12 +85,12 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	// cada vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
-	publicSrv, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
+	publicSrv, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
 		depsDeLaAPIPublica(c), c.platformRepo)
 	if err != nil {
 		return err
 	}
-	c.publicSrv, c.authMW, c.auditor = publicSrv, authMW, auditor
+	c.publicSrv, c.publicCompuesto, c.authMW, c.auditor = publicSrv, compuesto, authMW, auditor
 
 	c.httpSrv = servidorAdmin(c)
 

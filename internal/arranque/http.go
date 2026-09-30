@@ -9,6 +9,7 @@ import (
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 	"golang.org/x/time/rate"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/transport/http"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
@@ -26,7 +27,7 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -59,7 +60,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// alta, no por las rutas: ver buildRolePlane.
 	rolesPlane, err := buildRolePlane(db, as.m2mClient, pub.Entitlements, log)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if as.m2mClient == nil {
 		log.Warn("POST /api/v1/members: falta WAPP_IDENTITY_API_KEY; el alta de miembros responde 503 " +
@@ -111,7 +112,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// de cableado y aborta el arranque, no degrada la ruta.
 	invitationRedeem, err := buildInvitationRedeem(db, pub.Entitlements)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	publicMux.Handle("POST /api/v1/invitations/accept",
 		authMW.Authenticate(iamhttp.NewInvitationRedeemHandler(invitationRedeem).Accept()))
@@ -139,7 +140,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// cableado y aborta el arranque, no degrada la ruta.
 	activeTenant, err := buildActiveTenantPlane(db)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	tenantPlane := iamhttp.NewActiveTenantHandler(activeTenant, activeTenant)
 	publicMux.Handle("POST /api/v1/auth/active-tenant", authMW.Authenticate(tenantPlane.Select()))
@@ -190,8 +191,17 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// ejecución: métricas (siempre cuenta, incluso un 429) → rate-limit → mux. NO
 	// tocan /healthz/metrics (viven en el listener admin). El cubo por IP del
 	// login se fue con el login (identity Plan 003 · Ola 5).
+	//
+	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux viejo va la
+	// cara NUEVA (internal/apipublica), vacía hasta que una fase mude sus rutas
+	// (FaseActual y caraNueva, mudanzas.go). El Compuesto sirve por la nueva lo que ella registre y
+	// delega el resto en publicMux con el MISMO *http.Request, así que r.Pattern sigue
+	// llegando a la métrica. Rate-limit y métricas envuelven el COMPUESTO una sola vez
+	// (RX.2.c; lo vigila cara_nueva_cableado_test.go). El compuesto se devuelve para
+	// que el candado de mudanzas lo resuelva patrón a patrón (Compuesto.Resolver).
+	compuesto := apipublica.Componer(caraNueva(), publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
-	var handler http.Handler = publicMux
+	var handler http.Handler = compuesto
 	handler = httpapi.PublicRateLimit(handler, publicLim, mtx, log)
 	handler = mtx.InstrumentHTTP("public", handler)
 
@@ -205,7 +215,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
 	}
-	return srv, authMW, auditor, nil
+	return srv, compuesto, authMW, auditor, nil
 }
 
 // adminHandler blinda un endpoint /admin/* con la cadena de la fase IAM (Plan

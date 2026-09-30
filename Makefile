@@ -47,7 +47,7 @@ vet: ## go vet ./...
 # existen se omiten (el target no falla por un módulo que todavía no nació).
 # Los dos contadores ignoran `testdata/`, como la toolchain de Go: los árboles de
 # prueba de internal/candados imitan rojos a propósito (F0 T0.5).
-PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque
+PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque internal/apipublica
 
 vet-pendiente: ## go vet -tags pendiente ./... — los rojos también compilan
 	$(GO) vet -tags pendiente ./...

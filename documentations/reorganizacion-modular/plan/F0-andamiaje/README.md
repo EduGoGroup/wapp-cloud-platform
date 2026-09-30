@@ -1,8 +1,10 @@
 # F0 · Andamiaje — portal de la fase
 
-> **Estado: en curso — bloques A, B, C y D cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
+> **Estado: en curso — bloques A, B, C, D y E cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
 > `de04088`; F0-02, T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`; F0-04, T0.10–T0.15,
-> de `d64dbbf` a `61ce04b`); siguiente, bloque E (F0-05). Plan escrito el 2026-09-28 sobre `dev` @
+> de `d64dbbf` a `61ce04b`; F0-05, T0.16–T0.21 y T0.27 + TX.1–TX.4, de `8096232` a `15223ff`, rama
+> `reorg/f0-e-cara-platform`); siguiente, bloque F (F0-06, 💻) con el
+> [traspaso](../../traspasos/TRASPASO-F0-andamiaje.md). Plan escrito el 2026-09-28 sobre `dev` @
 > `1b18932`. Norma: [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo
@@ -97,6 +99,14 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 20 | `diseno.md` §6.1: goroutines normalizadas con `go/types` e importador **`source`** | `source` tarda **~105 s por paquete** sobre el arranque (grpc, aws-sdk, prometheus desde fuente) y 57 s la suite de `huellatest` con `-race` | `141d960`: importador `gc` alimentado por `go list -export -deps` (solo stdlib; ~0,55 s por paquete). Consecuencia: `Goroutines` necesita el comando `go` y un directorio dentro del módulo |
 | 21 | contradicción 15: «el gate que cuenta es el de un clon limpio (`git worktree add --detach … HEAD`)» | si se borra el *worktree* y se crea otro con **otra ruta**, `golangci-lint` sirve de su caché *issues* con rutas del *worktree* borrado, sin poder leer sus `//nolint`: `GATE_RC=2` falso (visto en F0-04 con `servir.go:34`) | reutilizar **siempre la misma ruta** de *worktree* para el gate, o `golangci-lint cache clean` antes |
 | 22 | *(revisión del PR de F0-04)* la copia `internal/arranque/auth.go` tiene 835 líneas y seis temas, y la editan F2 y F3 | R0.4.b obliga a que `internal/arranque` sea copia **exacta** del viejo hasta cerrar F0: partirlo aquí rompería la prueba de T0.10 | Se parte en F2, como su primera tarea: **T2.34**, decisión **D-F2-8** (`auth_*.go` + `edge_config.go`) |
+| 23 | `diseno.md` §7, `arquitectura.md` §7, T0.19: `Agregado` «se declara en `platform/metrics`» | `platform/metrics/inferstats_test.go` es `package metrics` e importa `internal/inferstats`: con `inferstats → platform/metrics` da «import cycle not allowed in test» (y R0.7.d prohíbe editar ese test); además `inferstats` arrastraría Prometheus, contra su doc (`inferstats.go:44-46`) | `5305134` (F0-05, **decidido por el usuario**): paquete hoja `internal/platform/metrics/inferencia` (solo el tipo). `diseno.md` §7 ya dejaba elegir el paquete con la condición «sin ciclo» |
+| 24 | T0.16: `http.go` es «la primera y única desviación de la copia en F0»; TX.4: «la huella resuelve los 73 patrones por `Compuesto.Resolver`» | la huella sondea por `ServeHTTP` desde el bloque gemelo «Contenedor de huella», que no puede cambiar sin cambiar el viejo (que no tiene compuesto) | `9dcf7e8`/`7b7e01f` (F0-05, **decidido por el usuario**): `buildPublicAPIServer` devuelve el compuesto, `fase8_transporte.go` lo guarda en el campo nuevo `contenedor.publicCompuesto`, y `TestMudanzas_HuellaPorElCompuesto` resuelve las 73 filas sobre el contenedor de huella. La copia se desvía en tres ficheros (más `mudanzas.go` y `cara_nueva_cableado_test.go`, nuevos) |
+| 25 | `Makefile`: `PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque` | `internal/apipublica` (que FX construye en rojo/verde) no estaba: sus rojos no se habrían corrido en `test-pendiente` | `5a11f5b`: añadida |
+| 26 | T0.20: «`deuda.md:137` y `README.md:53` narran historia» | `README.md:53` afirmaba en presente «se lee `internal/bootstrap/bootstrap.go`», que hoy es una fachada de 42 líneas | `8096232`: apunta a `internal/bootstrap/arranque/orquestador.go`. Solo `deuda.md:139` (antes `:137`) es historia |
+| 27 | FX RX.6.a: `apipublica` puede importar «los puentes declarados en `fronteras_test.go`» | `internal/candados/fronteras.go:196` (regla 4): «la cara nueva solo habla con lo nuevo, **ni con puente**» — manda sobre la regla 2 | No afecta a F0 (`apipublica` solo importa stdlib). **Decidir antes de la primera ola de FX que necesite un puente** (con D-FX-1 = sí, ninguna lo prevé); traspaso §8 |
+| 28 | `iam/ports/in/usecases.go:~155-158`: «internal/platform/httpapi ya importa este paquete» | desde T0.18 es al revés (`in` importa `httpapi` por el alias) | No se toca (E-1: D-F0-3 autoriza solo la línea del alias). Muere con el paquete |
+| 29 | `mapa-de-rutas.md` y RX.2.c citan líneas de `internal/bootstrap/arranque/http.go` | en la copia `internal/arranque/` todo va +1 línea (la cabecera `// Copia de`), y desde TX.3 más en `http.go` | Las citas del plan se leen contra el viejo; ninguna cita de línea en la copia |
+| 30 | T0.27: «+1 línea cada uno (más un import si hace falta)» | con la condición en línea, `gocyclo` de `TestC2_LaViaSoloSePreguntaEnLaSeleccion` pasa de 15 (18) y `ci-local` falla; `gofmt` además parte el `if` en tres líneas | `dd1e2bd`: en `c2_via_test.go` un ayudante `esDelArbolNuevo` (+14 líneas); en `membresia_unica_ast_test.go`, `if` en línea (+3) |
 
 ## Números medidos (y cómo)
 

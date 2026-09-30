@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/domain"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // ---------------------------------------------------------------------------
@@ -126,14 +127,7 @@ type Exchanger interface {
 // AuditInput registra un evento de auditoría. TenantID vacío = evento pre-auth.
 // Actor/Resource deben ser identidades OPACAS (ids), NUNCA email/número ni
 // contenido; Meta, contexto NO sensible.
-type AuditInput struct {
-	TenantID string
-	Actor    string
-	Action   string
-	Resource string
-	Result   string
-	Meta     map[string]any
-}
+type AuditInput = httpapi.AuditInput
 
 // Auditor registra y consulta la bitácora de auditoría.
 type Auditor interface {
