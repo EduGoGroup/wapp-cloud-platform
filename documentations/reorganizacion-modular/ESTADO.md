@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-03** (F0 · bloque C, los candados de fichero). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-04** (F0 · bloque D, el arranque nuevo y la huella). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -30,20 +30,29 @@ caso de `testdata/` y con una demostración en el árbol real. `PENDIENTES=0`, `
 `GATE_RC=0` **en un *worktree* limpio** (contradicción 15 del README de F0: la raíz ignora `*.out`).
 Rama `reorg/f0-c-candados`, PR a `dev`.
 
+**F0-04 hecha (2026-09-30)**: `internal/arranque`, copia del viejo (`d64dbbf`: 21 + 19 ficheros, 53
+tests, 0 SKIP), `cmd/server-modular` (`a953834`), `internal/arranque/huellatest` (rojo `c7ae487` →
+verde `141d960`, 91,8 %), la huella del viejo en una dorada (`fde5849`: `huella_vieja_test.go`, único
+fichero nuevo en `internal/bootstrap`; 95 rutas = 22 + 73, 2 rpc, 11 familias) y el candado
+`TestHuella`/`TestHuellaEstatica` (`61ce04b`: 10 goroutines, **13** *hooks*, entorno ∅; muerde con una
+ruta de menos y una goroutine de más). Gate ci-local `GATE_RC=0` en cada commit sobre un *worktree*
+limpio. Contradicciones 17–21 del README de F0; la **19** (la fase 3 corre entera contra un S3 falso
+en proceso, en vez de simular `flowDeps`) pide la mirada de Jhoan. Rama `reorg/f0-d-arranque-huella`
+(`61ce04b` + cierre), PR a `dev` sobre `origin/dev` @ `80807ba`.
+
 **Siguiente paso:**
-1. **Jhoan**: fusionar el PR de F0-03 **sin squash** («Rebase and merge», F-1). Sigue pendiente
-   aplicar **F0-A-1** en claude.ai/code (variable `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/`
-   y el paso 4 del *setup script*, [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3).
-2. Arrancar **F0-04** (F0 · bloque D, arranque nuevo y huella, T0.10–T0.15; D-F0-1 y D-F0-2 ya
-   decididas). Ojo: desde F0-03 `ci-local` incluye los candados; `internal/arranque` entra en
-   `fronteras` y `exportados_cubiertos` (no en un-fichero-un-test ni en la cobertura, D-F0-1), y
-   `internal/arranque/huellatest` en todos. Correr el gate también en un clon limpio (contradicción 15).
+1. **Jhoan**: fusionar el PR de F0-04 **sin squash** («Rebase and merge», F-1) y revisar la
+   contradicción 19. Sigue pendiente aplicar **F0-A-1** en claude.ai/code.
+2. Arrancar **F0-05** (F0 · bloque E, T0.16–T0.21 y T0.27: `apipublica` vacía, los tres ✎ de
+   `platform`, los barridos AST viejos y la deriva documental; D-F0-3, D-F4-1 y D-FX-5 ya decididas).
+   La huella ya vigila: tras cada paso, `go test -run '^TestHuella' ./internal/arranque/
+   ./internal/bootstrap/arranque/`. Gate en *worktree* con **ruta fija** (contradicción 21).
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | en curso | C · los candados de fichero (T0.5–T0.9) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a` (en `dev`). C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (rama `reorg/f0-c-candados`; `origin/dev` @ `c55e9e3`) |
+| F0 | en curso | D · el arranque nuevo y la huella (T0.10–T0.15) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (rama `reorg/f0-d-arranque-huella`) |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -65,6 +74,7 @@ Rama `reorg/f0-c-candados`, PR a `dev`.
 | 2026-09-30 | **F0-01**: entorno web medido (Docker: daemon a mano, Docker Hub 429 → espejo `mirror.gcr.io`; testcontainers v0.44.0 `TC_RC=0`; el proxy acepta `--force-with-lease`) y hook `SessionStart` (`.claude/settings.json`) | [`06`](06-entorno-web.md) §5 · [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) |
 | 2026-09-30 | **F0-02**: `internal/pendiente` (rojo→verde), `make vet-pendiente`/`test-pendiente`, `vet-pendiente` en `ci-local`, `make lint` exige `v2.12.2` (T-1) | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) · `Makefile` |
 | 2026-09-30 | **F0-03**: `internal/candados` (rojo → 6 verdes) y los cinco candados de fichero en `ci-local` (fronteras con lista blanca medida, un fichero un test, exportados cubiertos, sin BD viva, cobertura por fichero ≥ 80 %), cada uno con su caso que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.5–T0.9 |
+| 2026-09-30 | **F0-04**: `internal/arranque` (copia del viejo, D-F0-1) y `cmd/server-modular`; `huellatest` (rojo→verde); dorada desde el arranque viejo (`huella_vieja_test.go`, D-F0-2) y candado de huella entre los dos arranques, que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.10–T0.15 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 

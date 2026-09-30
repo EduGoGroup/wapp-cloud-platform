@@ -1,9 +1,9 @@
 # F0 · Andamiaje — portal de la fase
 
-> **Estado: en curso — bloques A, B y C cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
-> `de04088`; F0-02, T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`); siguiente, bloque D
-> (F0-04). Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
-> [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
+> **Estado: en curso — bloques A, B, C y D cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
+> `de04088`; F0-02, T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`; F0-04, T0.10–T0.15,
+> de `d64dbbf` a `61ce04b`); siguiente, bloque E (F0-05). Plan escrito el 2026-09-28 sobre `dev` @
+> `1b18932`. Norma: [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo
 
@@ -91,6 +91,11 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 14 | `diseno.md` §3: `test-pendiente` cuenta `pendiente.Implementar(` y `//go:build pendiente` en todo el repo | el `grep` y el `find` entraban en `testdata/`, que Go ignora; los árboles de prueba de `internal/candados` imitan rojos a propósito (un fichero en rojo en `cobertura`, un test con etiqueta en `exportados`) y las cifras no podrían volver a 0 | `3040e82` (F0-03): `--exclude-dir=testdata` y `-name testdata -prune`, con comentario en el `Makefile` |
 | 15 | `diseno.md` §4.5 y T0.9: el caso `muerde` de la cobertura es «un perfil» en `testdata/cobertura/` | la raíz `.gitignore:10` ignora `*.out`: los `perfil.out` no se commitearon y los verdes pasaban **solo en el árbol de trabajo**; lo destapó correr `ci-local` en un *worktree* limpio (F0-03) | `internal/candados/testdata/.gitignore` con `!*.out`, metido por *fixup* en el rojo `2c2bbd6` (rama propia sin PR). **Norma para toda sesión**: el gate que cuenta es el de un clon limpio del commit (`git worktree add --detach … HEAD`) |
 | 16 | `diseno.md` §4.2: exención D-F1-3 «todo fichero de un paquete cuyo nombre termina en `test`» | literal: exime también un paquete de producción que se llamara, p. ej., `contest` | Se dejó literal (una condición, como pide el diseño). Si un módulo necesitara un nombre así, se decide entonces |
+| 17 | T0.10 «hecho cuando»: el `diff` de la copia muestra **solo** las dos rutas relativas | `exportados_cubiertos` (F0-03) exige que `Ejecutar` aparezca en `orquestador_test.go`, y el test viejo no lo menciona (`diseno.md` §5.2 sí lo preveía) | `d64dbbf` (F0-04): una línea `var _ func(context.Context) error = Ejecutar` con su porqué; no añade `Test*` (siguen 53). El `diff` de T0.10 muestra esa línea además de las dos rutas |
+| 18 | `arquitectura.md` §2.3, R0.5.e, `reglas.md` §5: «**14** usos de 12 métodos» de `*metrics.Metrics` | **13** usos de 12 métodos (`InstrumentHTTP` ×2); el 14.º de `grep -o 'mtx\.[A-Za-z]*'` es el **comentario** de `fase9_fondo.go:59`. `*metrics.Metrics` tiene 13 métodos por `reflect`; `RateLimitHit` no lo usa el arranque | `huellatest.Hooks` recorre el AST (los comentarios no cuentan); `TestHuellaEstatica` da 13 en los dos árboles (`61ce04b`) |
+| 19 | `diseno.md` §6.3: en la huella, la fase 3 «**simulado** solo el grupo `flowDeps` (…presign nulo…)»; medir si basta con `nil` tipado | simular `flowDeps` obliga a **copiar el cuerpo de la fase 3** en los dos tests (la fase construye `flowDeps` en su primera línea). Su única salida a la red es el `HeadBucket` de R2, y con endpoint IP el SDK hace *path-style* solo (D-F9-2) | `fde5849` (F0-04): la fase 3 corre **entera** contra un S3 falso `httptest` dentro del proceso (el mecanismo de D-F9-3) y el keyring de prueba entra por `WAPP_KEK_MASTER_B64`/`_INDEX_B64`. Más fiel que la simulación, y la pregunta del `nil` tipado no aplica. **Para revisar por Jhoan** |
+| 20 | `diseno.md` §6.1: goroutines normalizadas con `go/types` e importador **`source`** | `source` tarda **~105 s por paquete** sobre el arranque (grpc, aws-sdk, prometheus desde fuente) y 57 s la suite de `huellatest` con `-race` | `141d960`: importador `gc` alimentado por `go list -export -deps` (solo stdlib; ~0,55 s por paquete). Consecuencia: `Goroutines` necesita el comando `go` y un directorio dentro del módulo |
+| 21 | contradicción 15: «el gate que cuenta es el de un clon limpio (`git worktree add --detach … HEAD`)» | si se borra el *worktree* y se crea otro con **otra ruta**, `golangci-lint` sirve de su caché *issues* con rutas del *worktree* borrado, sin poder leer sus `//nolint`: `GATE_RC=2` falso (visto en F0-04 con `servir.go:34`) | reutilizar **siempre la misma ruta** de *worktree* para el gate, o `golangci-lint cache clean` antes |
 
 ## Números medidos (y cómo)
 
@@ -105,4 +110,6 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | Integración que honra `WAPP_TEST_REQUIRE_DB` | 50 de 91 ficheros | `grep -rln` (2026-09-28) |
 | Contenedor de huella | 0,09 s, sin red | prototipo |
 | Lista blanca de fronteras | **13 aristas** módulo→módulo entre los 7 de D-5 (+2 de `platform`, los ✎ del bloque E, fuera de `Capas`); los tests viejos añadirían 4 más, que no entran (E-8) | script de `02` §5 con el `MAP` de D-5 (`platformadmin`, `entitlements` → `acceso`), solo `.Imports`, sobre `dev` @ `c55e9e3` (2026-09-30, T0.7) |
-| ¿Basta dejar a `nil` tipado los almacenes de la fase 3 en la huella? | **sin medir — lo mide T0.14** | — |
+| ¿Basta dejar a `nil` tipado los almacenes de la fase 3 en la huella? | **no hace falta**: la fase 3 corre entera con un S3 falso en proceso (contradicción 19) | `TestHuellaVieja` (2026-09-30, T0.14) |
+| Huella medida (dorada) | 95 rutas = 22 `:8100` + 73 `:8103` en los dos perfiles; 2 rpc; 11 familias `wapp_*` en frío; 10 goroutines; **13** *hooks* de 12 métodos; entorno ∅ | `TestHuellaVieja` / `TestHuella` / `TestHuellaEstatica` (2026-09-30, T0.14–T0.15); contenedor + sondas 0,25 s |
+| Importador de tipos para `Goroutines` | `source` ~105 s/paquete · `gc` + `go list -export` ~0,55 s/paquete | medido en T0.13 (2026-09-30) |
