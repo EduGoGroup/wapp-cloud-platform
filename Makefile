@@ -68,7 +68,12 @@ test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-p
 	fi
 	@$(MAKE) --no-print-directory vet-pendiente
 
-lint: ## golangci-lint $(LINT_VERSION) (binario fijado — no el de ~/go/bin)
+lint: ## golangci-lint $(LINT_VERSION) — falla si el binario del PATH es otra versión (decisión T-1)
+	@v=$$(golangci-lint version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	if [ "v$$v" != "$(LINT_VERSION)" ]; then \
+		echo "lint: golangci-lint $${v:-ausente} no es la versión fijada $(LINT_VERSION) (LINT_VERSION del Makefile)"; \
+		exit 1; \
+	fi
 	GOWORK=off golangci-lint run --timeout=5m
 
 build: ## go build ./...
