@@ -27,7 +27,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: fmt-check vet lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: fmt-check vet vet-pendiente test-pendiente lint build test test-integration ci-local ci-docker migrate migrate-status
 
 fmt-check: ## gofmt -l vacío (sin archivos sin formatear)
 	@unformatted=$$(gofmt -l .); \
@@ -38,7 +38,42 @@ fmt-check: ## gofmt -l vacío (sin archivos sin formatear)
 vet: ## go vet ./...
 	$(GO) vet ./...
 
-lint: ## golangci-lint $(LINT_VERSION) (binario fijado — no el de ~/go/bin)
+# ── Etiqueta `pendiente` (reconstrucción modular, 05 E-2/E-5 · F0 T0.4) ───────
+# Un contrato sin lógica tiene cuerpo `panic(pendiente.Implementar("paq.Símbolo"))`
+# y su test nace con `//go:build pendiente`: fuera de `vet`, `lint` y `test`.
+# vet-pendiente los compila (un rojo que no compila rompe ci-local); test-pendiente
+# cuenta lo que falta. Alcance del rojo que se ejecuta: los directorios que aún no
+# existen se omiten (el target no falla por un módulo que todavía no nació).
+PENDIENTE_DIRS := internal/modulos internal/nucleo internal/arranque
+
+vet-pendiente: ## go vet -tags pendiente ./... — los rojos también compilan
+	$(GO) vet -tags pendiente ./...
+
+test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-pendiente (rc = el de vet-pendiente)
+	@pendientes=$$(grep -rn --include='*.go' --exclude='*_test.go' --exclude-dir=.git 'pendiente\.Implementar(' . \
+		| grep -v '^\./internal/pendiente/' \
+		| sed -E 's/^[^:]+:[0-9]+://' \
+		| grep -vE '^[[:space:]]*//' \
+		| grep -o 'pendiente\.Implementar(' | wc -l); \
+	echo "PENDIENTES=$$pendientes"
+	@rojos=$$(find . -path ./.git -prune -o -name '*_test.go' -type f -print \
+		| xargs -r awk 'FNR==1 { if ($$0 == "//go:build pendiente") n++; nextfile } END { print n+0 }'); \
+	echo "ROJOS=$$rojos"
+	@pats=""; for d in $(PENDIENTE_DIRS); do [ -d "$$d" ] && pats="$$pats ./$$d/..."; done; \
+	paqs=$$( [ -n "$$pats" ] && $(GO) list $$pats 2>/dev/null ); \
+	if [ -z "$$paqs" ]; then \
+		echo "test-pendiente: aún no existe ningún paquete en $(PENDIENTE_DIRS)"; \
+	else \
+		$(GO) test -tags pendiente $$paqs || echo "test-pendiente: hay rojos que fallan (esperado; manda la cifra estática)"; \
+	fi
+	@$(MAKE) --no-print-directory vet-pendiente
+
+lint: ## golangci-lint $(LINT_VERSION) — falla si el binario del PATH es otra versión (decisión T-1)
+	@v=$$(golangci-lint version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	if [ "v$$v" != "$(LINT_VERSION)" ]; then \
+		echo "lint: golangci-lint $${v:-ausente} no es la versión fijada $(LINT_VERSION) (LINT_VERSION del Makefile)"; \
+		exit 1; \
+	fi
 	GOWORK=off golangci-lint run --timeout=5m
 
 build: ## go build ./...
@@ -64,7 +99,7 @@ test-integration: ## Tests de integración con Postgres efímero en Docker — e
 	docker rm -f $(INTEGRATION_PG_CONTAINER) >/dev/null 2>&1; \
 	exit $$status
 
-ci-local: fmt-check vet lint test build ## Pre-push: fmt + vet + lint + test + build (sin integración: correr test-integration aparte)
+ci-local: fmt-check vet vet-pendiente lint test build ## Pre-push: fmt + vet + vet-pendiente + lint + test + build (sin integración: correr test-integration aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control

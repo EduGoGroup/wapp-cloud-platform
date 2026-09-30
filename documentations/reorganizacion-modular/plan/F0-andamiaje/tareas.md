@@ -67,7 +67,7 @@ Para cuando: `06-entorno-web.md` §5 tiene el resultado de la primera sesión we
 Para cuando: `make test-pendiente` imprime `PENDIENTES=0` con `rc=0` y el gate ci-local, que ya
 incluye `vet-pendiente`, da `GATE_RC=0`.
 
-- [ ] **T0.2 · rojo(f0): contrato de `internal/pendiente`** · 🌐 · dep. — · cumple R0.2.a, R0.2.b
+- [x] **T0.2 · rojo(f0): contrato de `internal/pendiente`** · 🌐 · dep. — · cumple R0.2.a, R0.2.b — cerrada en `d7600d3` (sesión F0-02, 2026-09-30: `-tags pendiente` rc=1 por el `panic`; sin etiqueta `no test files`; `vet -tags pendiente` rc=0)
   - **Ficheros**: `internal/pendiente/pendiente.go`, `internal/pendiente/pendiente_test.go`
   - **Contrato**: el de [`diseno.md`](diseno.md) §2. Cuerpo: `panic("pendiente: sin implementar")`
     (literal: el paquete no puede usarse a sí mismo). Test con `//go:build pendiente`.
@@ -76,13 +76,13 @@ incluye `vet-pendiente`, da `GATE_RC=0`.
   - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/pendiente/; echo rc=$?` → `rc=0`
   - **Commit**: `andamiaje(f0): rojo — contrato de pendiente`
 
-- [ ] **T0.3 · verde(f0): `internal/pendiente`** · 🌐 · dep. T0.2 · cumple R0.2.a, R0.2.b
+- [x] **T0.3 · verde(f0): `internal/pendiente`** · 🌐 · dep. T0.2 · cumple R0.2.a, R0.2.b — cerrada en `f3b322c` (sesión F0-02: `-race -cover` 100,0 %, 14 `--- PASS`, 0 SKIP; gate ci-local `GATE_RC=0`)
   - **Ficheros**: los dos de T0.2; se quita la etiqueta.
   - **Hecho cuando**: `go test -race -cover ./internal/pendiente/` `rc=0` y cobertura 100 %.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): verde — pendiente`
 
-- [ ] **T0.4 · `make vet-pendiente`, `make test-pendiente` y `ci-local`** · 🌐 · dep. T0.3 · cumple R0.2.c–R0.2.f
+- [x] **T0.4 · `make vet-pendiente`, `make test-pendiente` y `ci-local`** · 🌐 · dep. T0.3 · cumple R0.2.c–R0.2.f — cerrada en `d74dd7f` (sesión F0-02: `PENDIENTES=0`, `ROJOS=0`, `rc=0`; muerden: `vet-pendiente` rc=2 con el error de tipos, `PENDIENTES=1` con `rc=0`; gate `GATE_RC=0`). ⚠️ La receta de deshacer `git stash -u && git stash drop` se lleva también el `Makefile` **sin commitear** de esta misma tarea (contradicción 12 del `README.md`)
   - **Ficheros**: `Makefile` (targets nuevos y la línea `ci-local:`; ver [`diseno.md`](diseno.md) §3).
   - **Hecho cuando**: `make test-pendiente` imprime `PENDIENTES=0` y `ROJOS=0` con `rc=0`;
     `ci-local` es `fmt-check vet vet-pendiente lint test build`. **Demostración de que muerden**
@@ -339,7 +339,7 @@ contiene F0 entera.
 
 ## Añadidas después (van en el bloque que se indica; los IDs no se renumeran)
 
-- [ ] **T0.26 · `make lint` falla si `golangci-lint` no es `v2.12.2`** · 🌐 · bloque B, dep. T0.4, **decisión T-1 del marco** · cumple R0.2.g
+- [x] **T0.26 · `make lint` falla si `golangci-lint` no es `v2.12.2`** · 🌐 · bloque B, dep. T0.4, **decisión T-1 del marco** · cumple R0.2.g — cerrada en `d05ac3a` (sesión F0-02: con v2.12.2 `rc=0`; binario falso 2.14.0 y sin binario → `rc=2` y el mensaje; gate `GATE_RC=0`)
   - **Por qué**: `Makefile:12` declara `LINT_VERSION := v2.12.2` pero `lint` corre el binario que
     haya en el `PATH`; otra versión da otro resultado y el gate deja de ser autoritativo
     ([`../00-marco/tecnologia.md`](../00-marco/tecnologia.md), T-1). Si Jhoan dice «no», se tacha.
