@@ -1,8 +1,10 @@
-//go:build pendiente
-
 package candados
 
-import "testing"
+import (
+	"go/parser"
+	"go/token"
+	"testing"
+)
 
 const moduloWapp = "github.com/EduGoGroup/wapp-cloud-platform"
 
@@ -83,4 +85,62 @@ func TestFronterasPasa(t *testing.T) {
 		FasesCerradas: []string{"F0"},
 	}
 	exigeCero(t, Fronteras(moduloWapp, fuentes, r))
+}
+
+// fuenteEnMemoria parsea src como el fichero ruta, sin tocar el disco.
+func fuenteEnMemoria(t *testing.T, ruta, src string) Fuente {
+	t.Helper()
+	fset := token.NewFileSet()
+	archivo, err := parser.ParseFile(fset, ruta, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("%s no parsea: %v", ruta, err)
+	}
+	return Fuente{Ruta: ruta, Archivo: archivo, Fset: fset, Paquete: archivo.Name.Name}
+}
+
+// TestFronterasBordes: el mismo import dos veces (con nombres distintos) da UNA violación, y
+// dos imports prohibidos del mismo fichero salen ordenados por Motivo;
+// platform es código viejo y tampoco puede importar el árbol nuevo; la frontera de «/» no
+// confunde "internal/modulos/accesox" con el módulo "acceso" ni "internal/platformx" con
+// platform; un Puente cuyo Desde es otro directorio no cubre el import.
+func TestFronterasBordes(t *testing.T) {
+	fuentes := []Fuente{
+		fuenteEnMemoria(t, "internal/modulos/acceso/doble/doble.go", `package doble
+import (
+	a "`+moduloWapp+`/internal/iam/app"
+	b "`+moduloWapp+`/internal/iam/app"
+	"`+moduloWapp+`/internal/gateway/fleet"
+)
+var _ = []any{a.X, b.X, fleet.X}
+`),
+		fuenteEnMemoria(t, "internal/platform/config/config.go", `package config
+import "`+moduloWapp+`/internal/pendiente"
+var _ = pendiente.Implementar
+`),
+		fuenteEnMemoria(t, "internal/modulos/accesox/x/x.go", `package x
+import "`+moduloWapp+`/internal/platformx"
+var _ = platformx.X
+`),
+	}
+	r := Reglas{
+		Capas: map[string][]string{},
+		Puentes: []Puente{
+			{Desde: "internal/modulos/acceso/otro", Hacia: "internal/platformx", Motivo: "no casa", Nace: "F1", Muere: "F8"},
+		},
+	}
+	vs := Fronteras(moduloWapp, fuentes, r)
+	exigeViolacion(t, vs, "internal/modulos/acceso/doble/doble.go",
+		"regla 2: ", "internal/modulos/acceso/doble → internal/iam/app")
+	exigeViolacion(t, vs, "internal/modulos/acceso/doble/doble.go",
+		"regla 2: ", "internal/modulos/acceso/doble → internal/gateway/fleet")
+	exigeViolacion(t, vs, "internal/platform/config/config.go",
+		"regla 5: ", "internal/platform/config → internal/pendiente")
+	exigeViolacion(t, vs, "internal/modulos/accesox/x/x.go",
+		"regla 2: ", "internal/modulos/accesox/x → internal/platformx")
+	exigeViolacion(t, vs, "internal/modulos/acceso/otro",
+		"regla 6: ", "internal/modulos/acceso/otro → internal/platformx")
+	if len(vs) != 5 {
+		t.Errorf("se esperaban 5 violaciones (una por arista); hay %d: %v", len(vs), vs)
+	}
+	exigeOrdenadas(t, vs)
 }

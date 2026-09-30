@@ -1,6 +1,11 @@
 package candados
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"path"
+	"slices"
+	"sort"
+	"strings"
+)
 
 // Puente es un import declarado de un paquete NUEVO a uno VIEJO (05 §4.1): la única forma
 // legítima de que el árbol nuevo toque lo viejo fuera de internal/arranque.
@@ -82,5 +87,189 @@ type Reglas struct {
 // puente no da dos). Importar platform, nucleo, pendiente, el propio módulo o un módulo de
 // Capas[m] nunca es violación.
 func Fronteras(modulo string, fuentes []Fuente, r Reglas) []Violacion {
-	panic(pendiente.Implementar("candados.Fronteras"))
+	vs := make([]Violacion, 0)
+	usados := make([]bool, len(r.Puentes)) // regla 6: qué puentes usa algún fichero
+	for _, f := range fuentes {
+		dir := path.Dir(f.Ruta)
+		// Un mismo import da como mucho una violación: Go admite importar dos veces la misma
+		// ruta con nombres distintos, y eso no debe duplicar la arista.
+		vistos := make(map[string]bool)
+		for _, imp := range f.Archivo.Imports {
+			rel, ok := relativizar(modulo, imp.Path.Value)
+			if !ok || vistos[rel] {
+				continue
+			}
+			vistos[rel] = true
+			marcarPuentes(r.Puentes, dir, rel, usados)
+			if motivo := juzgarImport(f.Ruta, dir, rel, r); motivo != "" {
+				vs = append(vs, Violacion{Fichero: f.Ruta, Motivo: motivo})
+			}
+		}
+	}
+	vs = append(vs, puentesCaducos(r, usados)...)
+	sort.Slice(vs, func(i, j int) bool {
+		if vs[i].Fichero != vs[j].Fichero {
+			return vs[i].Fichero < vs[j].Fichero
+		}
+		return vs[i].Motivo < vs[j].Motivo
+	})
+	return vs
+}
+
+// arbolNuevo son los prefijos del árbol nuevo (clasificación del contrato de Fronteras).
+var arbolNuevo = []string{
+	"internal/modulos",
+	"internal/nucleo",
+	"internal/apipublica",
+	"internal/pendiente",
+	"internal/candados",
+	"internal/arranque",
+	"cmd/server-modular",
+	"cmd/cobertura-ficheros",
+}
+
+const (
+	prefijoModulos    = "internal/modulos"
+	prefijoPlatform   = "internal/platform"
+	prefijoArranque   = "internal/arranque"
+	prefijoApipublica = "internal/apipublica"
+	// La única arista viejo → nuevo admitida (regla 5): la huella del arranque viejo compara
+	// contra el mismo contenedor que la del nuevo (diseno.md §6).
+	huellaVieja = "internal/bootstrap/arranque/huella_vieja_test.go"
+	huellatest  = "internal/arranque/huellatest"
+)
+
+// bajo dice si ruta es prefijo o cuelga de él en frontera de «/»: "internal/iam" cubre
+// "internal/iam/app" pero no "internal/iamx".
+func bajo(ruta, prefijo string) bool {
+	prefijo = strings.TrimSuffix(prefijo, "/")
+	return ruta == prefijo || strings.HasPrefix(ruta, prefijo+"/")
+}
+
+func esNuevo(ruta string) bool {
+	for _, p := range arbolNuevo {
+		if bajo(ruta, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// relativizar quita las comillas del literal del import y el prefijo del módulo Go; false si
+// el import no es del módulo (biblioteca estándar, terceros), que el candado ignora.
+func relativizar(modulo, literal string) (string, bool) {
+	p := strings.Trim(literal, "\"`")
+	rel, ok := strings.CutPrefix(p, modulo+"/")
+	return rel, ok && rel != ""
+}
+
+// moduloDe devuelve <m> para una ruta internal/modulos/<m>/…, o "" si no cuelga de un módulo.
+func moduloDe(ruta string) string {
+	resto, ok := strings.CutPrefix(ruta, prefijoModulos+"/")
+	if !ok {
+		return ""
+	}
+	m, _, _ := strings.Cut(resto, "/")
+	return m
+}
+
+// juzgarImport aplica las reglas 1–5 a una arista fichero → import y devuelve el Motivo de
+// la violación, o "" si la arista está permitida. Cada arista cae en una sola rama, así que
+// da como mucho una violación.
+func juzgarImport(ruta, dir, rel string, r Reglas) string {
+	arista := dir + " → " + rel
+	if !esNuevo(ruta) {
+		// platform es código viejo a estos efectos: tampoco puede importar el árbol nuevo.
+		if esNuevo(rel) && (ruta != huellaVieja || rel != huellatest) {
+			return "regla 5: " + arista + ": código viejo que importa el árbol nuevo"
+		}
+		return ""
+	}
+	if esNuevo(rel) {
+		return juzgarModulos(dir, rel, arista, r)
+	}
+	if bajo(rel, prefijoPlatform) {
+		return "" // viejo, pero importable desde todo el árbol nuevo
+	}
+	// De aquí abajo: árbol nuevo → paquete viejo.
+	switch {
+	case bajo(ruta, prefijoApipublica):
+		// Manda sobre la regla 2: ni un Puente la levanta.
+		return "regla 4: " + arista + ": la cara nueva solo habla con lo nuevo, ni con puente"
+	case bajo(ruta, prefijoArranque):
+		// El composition root puede cablear lo viejo (exento de la regla 2) salvo lo de un
+		// módulo ya conmutado.
+		if m := moduloViejo(r.Mapa, rel); m != "" && slices.Contains(r.Conmutados, m) {
+			return "regla 3: " + arista + ": el módulo " + m + " ya está conmutado; el arranque cablea lo nuevo"
+		}
+		return ""
+	case hayPuente(r.Puentes, dir, rel):
+		return ""
+	default:
+		return "regla 2: " + arista + ": árbol nuevo que importa lo viejo sin un Puente declarado"
+	}
+}
+
+// juzgarModulos aplica la regla 1 a una arista nuevo → nuevo: solo muerde entre módulos
+// distintos de internal/modulos, y el propio módulo o los de Capas[m] siempre valen.
+func juzgarModulos(dir, rel, arista string, r Reglas) string {
+	m, n := moduloDe(dir), moduloDe(rel)
+	if m == "" || n == "" || m == n || slices.Contains(r.Capas[m], n) {
+		return ""
+	}
+	return "regla 1: " + arista + ": el módulo " + m + " no puede importar " + n + " (fuera de Capas)"
+}
+
+// moduloViejo devuelve el módulo de rel según Mapa, ganando el prefijo más largo; "" si
+// ninguno casa.
+func moduloViejo(mapa map[string]string, rel string) string {
+	mejor, modulo := "", ""
+	for prefijo, m := range mapa {
+		if bajo(rel, prefijo) && len(prefijo) > len(mejor) {
+			mejor, modulo = prefijo, m
+		}
+	}
+	return modulo
+}
+
+func casaPuente(p Puente, dir, rel string) bool {
+	return bajo(dir, p.Desde) && rel == p.Hacia
+}
+
+func hayPuente(puentes []Puente, dir, rel string) bool {
+	for _, p := range puentes {
+		if casaPuente(p, dir, rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// marcarPuentes anota qué puentes usa la arista dir → rel. El uso es literal (el contrato de
+// la regla 6): cuenta cualquier fichero cuyo directorio case con Desde.
+func marcarPuentes(puentes []Puente, dir, rel string, usados []bool) {
+	for i, p := range puentes {
+		if casaPuente(p, dir, rel) {
+			usados[i] = true
+		}
+	}
+}
+
+// puentesCaducos aplica la regla 6: un puente sin uso o cuyo Muere es una fase cerrada. No
+// hay fichero culpable, así que se nombra el Desde del puente. Si se dan las dos causas, son
+// dos violaciones: cada una se arregla por separado (borrar el puente arregla ambas).
+func puentesCaducos(r Reglas, usados []bool) []Violacion {
+	var vs []Violacion
+	for i, p := range r.Puentes {
+		arista := p.Desde + " → " + p.Hacia
+		if !usados[i] {
+			vs = append(vs, Violacion{Fichero: p.Desde,
+				Motivo: "regla 6: " + arista + ": puente muerto, ningún fichero lo usa; se borra"})
+		}
+		if slices.Contains(r.FasesCerradas, p.Muere) {
+			vs = append(vs, Violacion{Fichero: p.Desde,
+				Motivo: "regla 6: " + arista + ": su Muere " + p.Muere + " es una fase cerrada; debió borrarse"})
+		}
+	}
+	return vs
 }
