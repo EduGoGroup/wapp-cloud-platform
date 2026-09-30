@@ -1,8 +1,7 @@
-//go:build pendiente
-
 package candados
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -83,6 +82,14 @@ func TestAgregarErrores(t *testing.T) {
 		{"rango mal formado", "mode: set\na.go:1.1,2.2 3 1\na.go:1.1-2.2 3 1\n", "línea 3"},
 		{"sentencias no enteras", "mode: set\na.go:1.1,2.2 x 1\n", "línea 2"},
 		{"cuenta negativa", "mode: set\na.go:1.1,2.2 3 -1\n", "línea 2"},
+		{"solo líneas en blanco", "\n\n", "línea 1"},
+		{"cabecera tras líneas en blanco mal formada", "\nmodo: set\n", "línea 2"},
+		{"fichero vacío antes del rango", "mode: set\n:1.1,2.2 3 1\n", "línea 2"},
+		{"extremo del rango sin columna", "mode: set\na.go:1,2.2 3 1\n", "línea 2"},
+		{"columna no entera", "mode: set\na.go:1.x,2.2 3 1\n", "línea 2"},
+		{"sentencias negativas", "mode: set\na.go:1.1,2.2 -3 1\n", "línea 2"},
+		{"cuenta no entera", "mode: set\na.go:1.1,2.2 3 uno\n", "línea 2"},
+		{"cuatro campos", "mode: set\na.go:1.1,2.2 3 1 1\n", "línea 2"},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
@@ -201,4 +208,59 @@ func TestEvaluables(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lectorRoto falla al leer: un perfil que no se puede leer entero es un error, no un
+// perfil corto.
+type lectorRoto struct{}
+
+func (lectorRoto) Read([]byte) (int, error) { return 0, errors.New("disco roto") }
+
+// TestAgregarLectorRoto: un error de lectura se propaga con "línea N" y sin resultado.
+func TestAgregarLectorRoto(t *testing.T) {
+	got, err := Agregar(lectorRoto{})
+	if err == nil || !strings.Contains(err.Error(), "línea 1") {
+		t.Fatalf("Agregar(lectorRoto) = %v, %v; quiero error con \"línea 1\"", got, err)
+	}
+	if len(got) != 0 {
+		t.Errorf("con error no hay resultado parcial; devolvió %v", got)
+	}
+}
+
+// TestCoberturaBordes: cruce exacto y por sufijo con la Ruta más larga ganando; pgx por
+// subpaquete exime; una mención de pendiente.Implementar en un comentario no pone el
+// fichero en rojo; los tests no se evalúan ni se eximen; el porcentaje se trunca al decimal.
+func TestCoberturaBordes(t *testing.T) {
+	fuentes := []Fuente{
+		fuenteEnMemoria(t, "x/a.go", "package a\n\nfunc A() {}\n"),
+		fuenteEnMemoria(t, "a.go", "package a\n\nfunc A() {}\n"),
+		fuenteEnMemoria(t, "p/pool.go", "// cobertura: adaptador postgres (05 E-6)\n\n"+
+			"package p\n\nimport \"github.com/jackc/pgx/v5/pgxpool\"\n\nvar _ *pgxpool.Pool\n"),
+		fuenteEnMemoria(t, "c/c.go", "package c\n\n// No es rojo: pendiente.Implementar solo se cita aquí.\nfunc C() {}\n"),
+		fuenteEnMemoria(t, "t/t_test.go", "// cobertura: adaptador postgres (05 E-6)\n\npackage t\n"),
+	}
+	fuentes[4].EsTest = true
+	perfil := map[string]Fichero{
+		"mod/x/a.go":      {Ruta: "mod/x/a.go", Sentencias: 10000, Cubiertas: 7996},
+		"a.go":            {Ruta: "a.go", Sentencias: 4, Cubiertas: 4},
+		"mod/p/pool.go":   {Ruta: "mod/p/pool.go", Sentencias: 5, Cubiertas: 0},
+		"mod/c/c.go":      {Ruta: "mod/c/c.go", Sentencias: 2, Cubiertas: 0},
+		"mod/t/t_test.go": {Ruta: "mod/t/t_test.go", Sentencias: 2, Cubiertas: 0},
+	}
+	if got, quiero := Exentos(fuentes), []string{"p/pool.go"}; !reflect.DeepEqual(got, quiero) {
+		t.Errorf("Exentos = %v; quiero %v", got, quiero)
+	}
+	if got, quiero := Evaluables(perfil, fuentes), []string{"a.go", "c/c.go", "x/a.go"}; !reflect.DeepEqual(got, quiero) {
+		t.Errorf("Evaluables = %v; quiero %v", got, quiero)
+	}
+	vs := Cobertura(perfil, fuentes, 80)
+	exigeViolacion(t, vs, "x/a.go", "79.9 %", "80")
+	exigeViolacion(t, vs, "c/c.go", "0.0 %", "80")
+	exigeNingunaEn(t, vs, "a.go")
+	exigeNingunaEn(t, vs, "p/pool.go")
+	exigeNingunaEn(t, vs, "t/t_test.go")
+	if len(vs) != 2 {
+		t.Errorf("se esperaban 2 violaciones; hay %d: %v", len(vs), vs)
+	}
+	exigeOrdenadas(t, vs)
 }
