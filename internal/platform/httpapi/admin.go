@@ -9,9 +9,16 @@ import (
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/session"
 )
+
+// ErrSessionOffline indica que no hay un stream vivo para la sesión solicitada,
+// por lo que no es posible empujar un comando hacia el Edge.
+//
+// Se declara aquí, en platform, y internal/gateway/session lo re-exporta con el
+// MISMO valor (F0 · D-F0-3): writeSendError compara con errors.Is, y un centinela
+// con el mismo texto pero otro valor haría que el 502 pasara a 500 sin un solo
+// error de compilación. Así platform deja de importar el dominio gateway.
+var ErrSessionOffline = errors.New("sesión offline")
 
 // LeaseRevoker dispara el kill-switch anti-clon (ADR-0007) de un Edge concreto.
 // Lo satisface *gatewaygrpc.Server con su método RevokeLease.
@@ -303,7 +310,7 @@ func writeSendError(w http.ResponseWriter, err error, log sharedlogger.Logger, s
 	cmdID := commandIDFrom(err)
 	code, msg := http.StatusInternalServerError, "no se pudo enviar el texto"
 	switch {
-	case errors.Is(err, session.ErrSessionOffline):
+	case errors.Is(err, ErrSessionOffline):
 		code, msg = http.StatusBadGateway, "sesión offline: no hay stream vivo para el Edge"
 	case streamCaidoFrom(err):
 		code, msg = http.StatusGatewayTimeout, msgStreamCaido
