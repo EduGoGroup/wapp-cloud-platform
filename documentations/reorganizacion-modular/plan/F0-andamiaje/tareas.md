@@ -234,7 +234,7 @@ Para cuando: `apipublica` montada y vacía con la huella **igual**, los tres ✎
 huella **igual** y `go list` sin aristas `platform → dominio`, la deriva documental cerrada, y el
 traspaso escrito para el bloque F.
 
-- [ ] **T0.16 · `internal/apipublica` vacía, montada delante del `publicapi` viejo** · 🌐 · dep. T0.15 · cumple R0.6.a–R0.6.c
+- [x] **T0.16 · `internal/apipublica` vacía, montada delante del `publicapi` viejo** · 🌐 · dep. T0.15 · cumple R0.6.a–R0.6.c — cerrada en `5a11f5b` (rojo, TX.1), `de0c29b` (verde, TX.2: 42 PASS, 100 % los dos ficheros) y `9dcf7e8` (montaje, TX.3) (sesión F0-05, 2026-09-30: `TestCaraVacia_TodoALaVieja` —código, cuerpo y cabeceras del viejo, su 404 y su 405—; huella igual; `fronteras_test` verde; gate `GATE_RC=0`). Desviación: la copia cambia además en `fase8_transporte.go` y `contenedor.go` (campo `publicCompuesto`, contradicción 24). Con TX.4 (`7b7e01f`): `mapa.tsv`, `mudanzas.go` (`FaseActual = 0`) y el candado de mudanzas
   - **Mecanismo**: el de [`../FX-cara-http/diseno.md`](../FX-cara-http/diseno.md) (cómo se
     compone el `http.Handler` del `:8103`, cómo gana la cara nueva, cómo se decide el
     *fallback*). Esta tarea **no lo rediseña**.
@@ -247,7 +247,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): apipublica vacía, montada delante del publicapi viejo`
 
-- [ ] **T0.17 · ✎ `platform/httpapi/admin.go` deja de importar `gateway/session`** · 🌐→💻 · dep. T0.15, **D-F0-3** · cumple R0.7.a, R0.7.d, R0.7.e
+- [x] **T0.17 · ✎ `platform/httpapi/admin.go` deja de importar `gateway/session`** · 🌐→💻 · dep. T0.15, **D-F0-3** · cumple R0.7.a, R0.7.d, R0.7.e — cerrada en `6d83620` (sesión F0-05: el centinela vive en `platform/httpapi/admin.go`; `session` hace `var ErrSessionOffline = httpapi.ErrSessionOffline`; `grep -c internal/gateway` → 0; tests viejos de `httpapi`, `gateway/...`, `publicapi`, `flujos/admin` verdes sin editar; huella igual; gate `GATE_RC=0`). Integración vieja: T0.22 (💻)
   - **Ficheros**: `internal/platform/httpapi/admin.go` (`:13` el import, `:306` el único uso:
     `errors.Is(err, session.ErrSessionOffline)`), el centinela nuevo en `platform` y
     `internal/gateway/session/registry.go:22` (una línea: el centinela viejo pasa a **ser** el de
@@ -258,7 +258,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local. **La integración vieja la cierra T0.22 (💻).**
   - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de gateway/session`
 
-- [ ] **T0.18 · ✎ `platform/httpapi/audit_mw.go` deja de importar `iam/ports/in`** · 🌐→💻 · dep. T0.17 · cumple R0.7.b, R0.7.d, R0.7.e
+- [x] **T0.18 · ✎ `platform/httpapi/audit_mw.go` deja de importar `iam/ports/in`** · 🌐→💻 · dep. T0.17 · cumple R0.7.b, R0.7.d, R0.7.e — cerrada en `b65b788` (sesión F0-05: `httpapi.AuditInput`; `in.AuditInput = httpapi.AuditInput`; `grep -c internal/iam` → 0; el arranque viejo compila sin tocarlo; huella igual; gate `GATE_RC=0`). Queda caducado el comentario de `usecases.go:~155-158` (contradicción 28)
   - **Ficheros**: `internal/platform/httpapi/audit_mw.go` (`:8` import, `:34` y `:85`:
     `in.AuditInput`), el DTO nuevo en `platform`, `internal/iam/ports/in/usecases.go:129` (una
     línea: `AuditInput` pasa a ser alias del DTO de `platform`).
@@ -268,7 +268,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de iam/ports/in`
 
-- [ ] **T0.19 · ✎ `platform/metrics/inferstats.go` deja de importar `internal/inferstats`** · 🌐→💻 · dep. T0.18 · cumple R0.7.c–R0.7.e
+- [x] **T0.19 · ✎ `platform/metrics/inferstats.go` deja de importar `internal/inferstats`** · 🌐→💻 · dep. T0.18 · cumple R0.7.c–R0.7.e — cerrada en `5305134` (sesión F0-05: `Agregado` en el paquete hoja **`internal/platform/metrics/inferencia`**, no en `platform/metrics` —ciclo en test, contradicción 23, decidido por el usuario—; `inferstats.Agregado = inferencia.Agregado`; el criterio de los tres ✎ → 0; `inferstats_test.go` verde sin editar; huella igual; gate `GATE_RC=0`)
   - **Ficheros**: `internal/platform/metrics/inferstats.go` (`:9` import, `:16` `type
     FuenteInferencia func() inferstats.Agregado`), `internal/inferstats/inferstats.go:144` (una
     línea: `Agregado` pasa a ser alias del tipo que ahora declara `platform/metrics`, con **su
@@ -279,7 +279,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): platform/metrics deja de depender de inferstats`
 
-- [ ] **T0.20 · la deriva documental de `03` §2.2** · 🌐 · dep. T0.10 · cumple R0.8.a
+- [x] **T0.20 · la deriva documental de `03` §2.2** · 🌐 · dep. T0.10 · cumple R0.8.a — cerrada en `8096232` (sesión F0-05: 17 de las 18 líneas corregidas + 5 rutas caducadas que el `grep` no ve; el `grep` → 1, `deuda.md:139`, historia. `README.md:53` **no** era historia, contradicción 26)
   - **Ficheros**: `documentations/{README,constitucion,contratos,operacion,deuda}.md` — las **18**
     líneas medidas con
     `grep -n 'internal/bootstrap/[a-z_]*\.go\|internal/publicapi/flows.go' documentations/*.md | grep -v bootstrap/arranque | wc -l`
@@ -292,7 +292,7 @@ traspaso escrito para el bloque F.
   - **Gate**: `grep … | wc -l` → nº de líneas de historia, dicho en el commit.
   - **Commit**: `docs(reorganizacion-modular): F0 cierra la deriva de rutas del arranque`
 
-- [ ] **T0.21 · el traspaso a la sesión local** · 🌐 · dep. T0.16–T0.20 · cumple R0.9.a
+- [x] **T0.21 · el traspaso a la sesión local** · 🌐 · dep. T0.16–T0.20 · cumple R0.9.a — cerrada en `15223ff` (sesión F0-05: `traspasos/TRASPASO-F0-andamiaje.md`, rama `reorg/f0-e-cara-platform` empujada, `push rc=0`)
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F0-andamiaje.md`, con
     la skill `traspaso-web-local` (ocho secciones). La §4 lleva T0.22–T0.24 literales; la §7,
     como mínimo: que la simulación de fases 1 y 3 es la misma en los dos lados, que los alias de
@@ -350,7 +350,7 @@ contiene F0 entera.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): lint exige la versión fijada del Makefile`
 
-- [ ] **T0.27 · los barridos AST viejos dejan de ver el árbol nuevo** · 🌐 · bloque E, dep. T0.16, **decisión D-F4-1** · cumple R0.3.h
+- [x] **T0.27 · los barridos AST viejos dejan de ver el árbol nuevo** · 🌐 · bloque E, dep. T0.16, **decisión D-F4-1** · cumple R0.3.h — cerrada en `dd1e2bd` (sesión F0-05: muerde al revés RC=1 → RC=0, 0 SKIP; en `c2_via_test.go` la condición va en un ayudante `esDelArbolNuevo` porque en línea `gocyclo` subía a 18 —+14 líneas, no una—; gate `GATE_RC=0`)
   - **Por qué**: `internal/llmvia/c2_via_test.go:117` (`filepath.WalkDir("..")`) e
     `internal/iam/infra/postgres/membresia_unica_ast_test.go:97` (`WalkDir(raizDelBarrido)`, con
     `raizDelBarrido = "../../.."` en `:74`) recorren **todo** `internal/` y exigen una lista

@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-04** (F0 · bloque D, el arranque nuevo y la huella). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-05** (F0 · bloque E, la cara nueva vacía, los ✎ de `platform` y la deriva). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -40,19 +40,38 @@ limpio. Contradicciones 17–21 del README de F0; la **19** (la fase 3 corre ent
 en proceso, en vez de simular `flowDeps`) pide la mirada de Jhoan. Rama `reorg/f0-d-arranque-huella`
 (`61ce04b` + cierre), PR a `dev` sobre `origin/dev` @ `80807ba`.
 
+**F0-05 hecha (2026-09-30)**: bloque E y el tramo F0 de FX (TX.1–TX.4).
+- **`internal/apipublica`**: la `Cara` y el estrangulador, rojo `5a11f5b` → verde `de0c29b` (100 %
+  por fichero). Va montada **vacía** delante del `publicapi` viejo en el `:8103` (`9dcf7e8`), con una
+  aserción de cableado.
+- **Candado de mudanzas** (`7b7e01f`): `mapa.tsv` de 95 filas, `FaseActual = 0` y las 73 rutas
+  resueltas por `Compuesto.Resolver`.
+- **Los tres ✎ de `platform`**, con alias D-F0-3: `6d83620`, `b65b788` y `5305134`. `Agregado` va
+  en el paquete hoja `platform/metrics/inferencia`; `go list` da 0 aristas `platform → dominio`.
+- **Barridos AST viejos ciegos al árbol nuevo** (D-F4-1, `dd1e2bd`).
+- **Deriva documental cerrada** (`8096232`).
+- **Traspaso** (`15223ff`).
+- **Verificación**: huella igual a la dorada tras cada paso; `GATE_RC=0` en *worktree* de ruta fija
+  sobre `5a11f5b`, `de0c29b`, `7b7e01f` y `dd1e2bd`; `PENDIENTES=0`, `ROJOS=0`.
+- **Contradicciones 23–30** del README de F0: la 23, la 24 y la 27 piden la mirada de Jhoan.
+- Rama `reorg/f0-e-cara-platform`, PR a `dev` sobre `origin/dev` @ `d3deb27`.
+
 **Siguiente paso:**
-1. **Jhoan**: fusionar el PR de F0-04 **sin squash** («Rebase and merge», F-1) y revisar la
-   contradicción 19. Sigue pendiente aplicar **F0-A-1** en claude.ai/code.
-2. Arrancar **F0-05** (F0 · bloque E, T0.16–T0.21 y T0.27: `apipublica` vacía, los tres ✎ de
-   `platform`, los barridos AST viejos y la deriva documental; D-F0-3, D-F4-1 y D-FX-5 ya decididas).
-   La huella ya vigila: tras cada paso, `go test -run '^TestHuella' ./internal/arranque/
-   ./internal/bootstrap/arranque/`. Gate en *worktree* con **ruta fija** (contradicción 21).
+1. **Jhoan**:
+   - fusionar el PR de F0-05 **sin squash** (F-1);
+   - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04);
+   - sigue pendiente aplicar **F0-A-1** en claude.ai/code.
+2. **F0-06 (💻, bloque F)**: seguir [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md):
+   - T0.22: integración vieja con Postgres real, 0 SKIP;
+   - T0.23: arranque real de `cmd/server-modular`;
+   - T0.24: integrar en `dev`;
+   - T0.25: cerrar F0.
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | en curso | D · el arranque nuevo y la huella (T0.10–T0.15) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (rama `reorg/f0-d-arranque-huella`) |
+| F0 | en curso | E · cara nueva vacía, ✎ de `platform` y deriva (T0.16–T0.21, T0.27, TX.1–TX.4) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (rama `reorg/f0-e-cara-platform`) |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -75,6 +94,7 @@ en proceso, en vez de simular `flowDeps`) pide la mirada de Jhoan. Rama `reorg/f
 | 2026-09-30 | **F0-02**: `internal/pendiente` (rojo→verde), `make vet-pendiente`/`test-pendiente`, `vet-pendiente` en `ci-local`, `make lint` exige `v2.12.2` (T-1) | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) · `Makefile` |
 | 2026-09-30 | **F0-03**: `internal/candados` (rojo → 6 verdes) y los cinco candados de fichero en `ci-local` (fronteras con lista blanca medida, un fichero un test, exportados cubiertos, sin BD viva, cobertura por fichero ≥ 80 %), cada uno con su caso que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.5–T0.9 |
 | 2026-09-30 | **F0-04**: `internal/arranque` (copia del viejo, D-F0-1) y `cmd/server-modular`; `huellatest` (rojo→verde); dorada desde el arranque viejo (`huella_vieja_test.go`, D-F0-2) y candado de huella entre los dos arranques, que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.10–T0.15 |
+| 2026-09-30 | **F0-05**: `apipublica` (rojo→verde) montada vacía delante del `publicapi` viejo; candado de mudanzas; los tres ✎ de `platform` con alias; barridos AST viejos ciegos al árbol nuevo; deriva documental cerrada; traspaso a la local | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.16–T0.21, T0.27 · [`plan/FX-cara-http/tareas.md`](plan/FX-cara-http/tareas.md) TX.1–TX.4 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -125,7 +145,8 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
   efectivas · 2.623 menciones de `internal/` fuera del repo · 12 comentarios en repos hermanos.
 - **Documentación del repo con rutas caducadas**: `contratos.md` (`internal/bootstrap/http.go`),
   `operacion.md` y la constitución (`internal/publicapi/flows.go:75`, que está en
-  `internal/bootstrap/arranque/flows.go:75`): las corrige F0 (T0.20).
+  `internal/bootstrap/arranque/flows.go:75`). ✅ **Cerrada en F0 (T0.20, `8096232`)**: el `grep` de
+  R0.8.a da solo la línea de historia (`deuda.md:139`).
 
 ## Pendientes y obstáculos conocidos
 
@@ -140,9 +161,9 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- `origin/dev` = `016a657` (el plan y 00-02). `origin/main` = `2da10b4`, sin tocar.
-- `origin/reorg/f0-a-entorno-web`: F0-01 (T0.0 `98e806d`, T0.1 `de04088` y el cierre), en PR a `dev`
-  para integrar **sin squash**.
+- `origin/dev` = `d3deb27` (F0-01 a F0-04 integradas). `origin/main` = `2da10b4`, sin tocar.
+- `origin/reorg/f0-e-cara-platform`: F0-05, de `8096232` al cierre, en PR a `dev` para integrar
+  **sin squash**. Traspaso abierto: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md).
 
 ## Para retomar
 

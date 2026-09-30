@@ -13,22 +13,22 @@
 Para cuando: el binario nuevo sirve las 73 rutas **por la cara vieja a través del compuesto**,
 huella igual, `FaseActual = 0` y el candado de mudanzas en verde.
 
-- [ ] **TX.1 · rojo(apipublica): contratos de `Cara` y del estrangulador** · 🌐 · dep. `internal/pendiente` (F0) · cumple RX.1.a–d, RX.5.a
+- [x] **TX.1 · rojo(apipublica): contratos de `Cara` y del estrangulador** · 🌐 · dep. `internal/pendiente` (F0) · cumple RX.1.a–d, RX.5.a — cerrada en `5a11f5b` (F0-05: `PENDIENTES=8`, `ROJOS=2`; `internal/apipublica` añadida a `PENDIENTE_DIRS`)
   - **Ficheros**: `internal/apipublica/apipublica.go`, `apipublica_test.go`, `estrangulador.go`, `estrangulador_test.go`
   - **Hecho cuando**: los dos ficheros tienen el contrato de [`diseno.md`](diseno.md) §2 con cuerpos `panic(pendiente.Implementar(…))`; los tests llevan `//go:build pendiente` y **fallan** corridos solos (`go test -tags pendiente -run '^TestComponer_GanaLaNueva$' ./internal/apipublica`)
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0` · `make ci-local; echo rc=$?` → `rc=0`
   - **Commit**: `rojo(apipublica): contratos de la Cara y del estrangulador`
-- [ ] **TX.2 · verde(apipublica): `Cara` y estrangulador** · 🌐 · dep. TX.1 · cumple RX.1.a–d
+- [x] **TX.2 · verde(apipublica): `Cara` y estrangulador** · 🌐 · dep. TX.1 · cumple RX.1.a–d — cerrada en `de0c29b` (F0-05: un commit, 42 PASS, 0 SKIP, 100 % en los dos ficheros)
   - **Ficheros**: los cuatro de TX.1 (se quita la etiqueta)
   - **Hecho cuando**: los 8 tests de §2 pasan; `make cobertura-ficheros` ≥ 80 % en los dos; `pendiente.Implementar` en `internal/apipublica` → 0
   - **Gate**: el de cabecera · `make cobertura-ficheros; echo rc=$?` → `rc=0`
   - **Commit**: `verde(apipublica): la Cara y el estrangulador` (uno por fichero si se prefiere)
-- [ ] **TX.3 · andamiaje(f0): el arranque nuevo compone las dos caras** · 🌐 · dep. TX.2 y la copia del arranque de F0 · cumple RX.2.a, RX.2.c
+- [x] **TX.3 · andamiaje(f0): el arranque nuevo compone las dos caras** · 🌐 · dep. TX.2 y la copia del arranque de F0 · cumple RX.2.a, RX.2.c — cerrada en `9dcf7e8` (F0-05: aserción `cara_nueva_cableado_test.go`, que muerde; `buildPublicAPIServer` devuelve el compuesto y el contenedor lo guarda)
   - **Ficheros**: `internal/arranque/http.go` (la copia de `bootstrap/arranque/http.go`: F0 copia **con el mismo nombre**, T0.10 y T0.16, y el nombre se conserva: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.2), su test
   - **Hecho cuando**: el mux viejo recibe **lo mismo que hoy** (los 7 de autenticación y `publicapi.Register`); se construye `apipublica.Nueva()` vacía; el `http.Server` de `:8103` sirve `PublicRateLimit(InstrumentHTTP(…))` **sobre `apipublica.Componer(cara, viejo)`**, una sola vez cada uno; una aserción de cableado lo comprueba
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/arr.log" 2>&1; echo rc=$?` → `rc=0`, 0 SKIP
   - **Commit**: `andamiaje(f0): la cara nueva vacía delante de la vieja`
-- [ ] **TX.4 · andamiaje(f0): candado de mudanzas y la huella por el compuesto** · 🌐 · dep. TX.3 y la tarea de huella de F0 · cumple RX.2.a, RX.3.a–c
+- [x] **TX.4 · andamiaje(f0): candado de mudanzas y la huella por el compuesto** · 🌐 · dep. TX.3 y la tarea de huella de F0 · cumple RX.2.a, RX.3.a–c — cerrada en `7b7e01f` (F0-05: 95 filas + cabecera; `FaseActual` en `mudanzas.go`; la huella —bloque gemelo intacto— sigue por `ServeHTTP` y `TestMudanzas_HuellaPorElCompuesto` resuelve las 73 por `Resolver` sobre el contenedor de huella)
   - **Ficheros**: `internal/arranque/testdata/mapa.tsv` (95 filas: id · listener · patrón · fase, **copiadas del [`mapa-de-rutas.md`](mapa-de-rutas.md)**), `internal/arranque/mudanzas_test.go`, la constante `FaseActual = 0` en `internal/arranque` (con su test en el fichero que la declare)
   - **Hecho cuando**: con `FaseActual = 0` la cara nueva no resuelve ninguna fila; los tres casos de [`diseno.md`](diseno.md) §6 (fase, solape, familia) tienen su test con un mapa de prueba que falla; la huella resuelve los 73 patrones de `:8103` por `Compuesto.Resolver`
   - **Gate**: `go test -count=1 -v -run 'Mudanzas|Huella' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$?` → `rc=0`, 0 SKIP · `wc -l < internal/arranque/testdata/mapa.tsv` → 95 (+ cabecera si la lleva)
