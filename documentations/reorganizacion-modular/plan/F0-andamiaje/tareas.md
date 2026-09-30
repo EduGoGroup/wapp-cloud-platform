@@ -247,7 +247,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): apipublica vacía, montada delante del publicapi viejo`
 
-- [x] **T0.17 · ✎ `platform/httpapi/admin.go` deja de importar `gateway/session`** · 🌐→💻 · dep. T0.15, **D-F0-3** · cumple R0.7.a, R0.7.d, R0.7.e — cerrada en `6d83620` (sesión F0-05: el centinela vive en `platform/httpapi/admin.go`; `session` hace `var ErrSessionOffline = httpapi.ErrSessionOffline`; `grep -c internal/gateway` → 0; tests viejos de `httpapi`, `gateway/...`, `publicapi`, `flujos/admin` verdes sin editar; huella igual; gate `GATE_RC=0`). Integración vieja: T0.22 (💻)
+- [x] **T0.17 · ✎ `platform/httpapi/admin.go` deja de importar `gateway/session`** · 🌐→💻 · dep. T0.15, **D-F0-3** · cumple R0.7.a, R0.7.d, R0.7.e — cerrada en `6d83620` (sesión F0-05: el centinela vive en `platform/httpapi/admin.go`; `session` hace `var ErrSessionOffline = httpapi.ErrSessionOffline`; `grep -c internal/gateway` → 0; tests viejos de `httpapi`, `gateway/...`, `publicapi`, `flujos/admin` verdes sin editar; huella igual; gate `GATE_RC=0`). Integración vieja con Postgres real: **verde en T0.22** (F0-06, 4.618 PASS · 0 SKIP · 0 FAIL)
   - **Ficheros**: `internal/platform/httpapi/admin.go` (`:13` el import, `:306` el único uso:
     `errors.Is(err, session.ErrSessionOffline)`), el centinela nuevo en `platform` y
     `internal/gateway/session/registry.go:22` (una línea: el centinela viejo pasa a **ser** el de
@@ -258,7 +258,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local. **La integración vieja la cierra T0.22 (💻).**
   - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de gateway/session`
 
-- [x] **T0.18 · ✎ `platform/httpapi/audit_mw.go` deja de importar `iam/ports/in`** · 🌐→💻 · dep. T0.17 · cumple R0.7.b, R0.7.d, R0.7.e — cerrada en `b65b788` (sesión F0-05: `httpapi.AuditInput`; `in.AuditInput = httpapi.AuditInput`; `grep -c internal/iam` → 0; el arranque viejo compila sin tocarlo; huella igual; gate `GATE_RC=0`). Queda caducado el comentario de `usecases.go:~155-158` (contradicción 28)
+- [x] **T0.18 · ✎ `platform/httpapi/audit_mw.go` deja de importar `iam/ports/in`** · 🌐→💻 · dep. T0.17 · cumple R0.7.b, R0.7.d, R0.7.e — cerrada en `b65b788` (sesión F0-05: `httpapi.AuditInput`; `in.AuditInput = httpapi.AuditInput`; `grep -c internal/iam` → 0; el arranque viejo compila sin tocarlo; huella igual; gate `GATE_RC=0`). Queda caducado el comentario de `usecases.go:~155-158` (contradicción 28). Integración vieja con Postgres real: **verde en T0.22** (F0-06)
   - **Ficheros**: `internal/platform/httpapi/audit_mw.go` (`:8` import, `:34` y `:85`:
     `in.AuditInput`), el DTO nuevo en `platform`, `internal/iam/ports/in/usecases.go:129` (una
     línea: `AuditInput` pasa a ser alias del DTO de `platform`).
@@ -268,7 +268,7 @@ traspaso escrito para el bloque F.
   - **Gate**: gate ci-local.
   - **Commit**: `andamiaje(f0): platform/httpapi deja de depender de iam/ports/in`
 
-- [x] **T0.19 · ✎ `platform/metrics/inferstats.go` deja de importar `internal/inferstats`** · 🌐→💻 · dep. T0.18 · cumple R0.7.c–R0.7.e — cerrada en `5305134` (sesión F0-05: `Agregado` en el paquete hoja **`internal/platform/metrics/inferencia`**, no en `platform/metrics` —ciclo en test, contradicción 23, decidido por el usuario—; `inferstats.Agregado = inferencia.Agregado`; el criterio de los tres ✎ → 0; `inferstats_test.go` verde sin editar; huella igual; gate `GATE_RC=0`)
+- [x] **T0.19 · ✎ `platform/metrics/inferstats.go` deja de importar `internal/inferstats`** · 🌐→💻 · dep. T0.18 · cumple R0.7.c–R0.7.e — cerrada en `5305134` (sesión F0-05: `Agregado` en el paquete hoja **`internal/platform/metrics/inferencia`**, no en `platform/metrics` —ciclo en test, contradicción 23, decidido por el usuario—; `inferstats.Agregado = inferencia.Agregado`; el criterio de los tres ✎ → 0; `inferstats_test.go` verde sin editar; huella igual; gate `GATE_RC=0`). Integración vieja con Postgres real: **verde en T0.22** (F0-06); los 8 `TestCollector_*` pasan de SKIP a PASS
   - **Ficheros**: `internal/platform/metrics/inferstats.go` (`:9` import, `:16` `type
     FuenteInferencia func() inferstats.Agregado`), `internal/inferstats/inferstats.go:144` (una
     línea: `Agregado` pasa a ser alias del tipo que ahora declara `platform/metrics`, con **su
@@ -305,7 +305,7 @@ traspaso escrito para el bloque F.
 Para cuando: los cinco criterios de salida de [`README.md`](README.md) se cumplen y `dev`
 contiene F0 entera.
 
-- [ ] **T0.22 · integración vieja con Postgres real tras los ✎** · 💻 · dep. T0.19, T0.21 · cumple R0.7.f
+- [x] **T0.22 · integración vieja con Postgres real tras los ✎** · 💻 · dep. T0.19, T0.21 · cumple R0.7.f — cerrada **sin commit** (sesión F0-06, 2026-09-30, sobre `835a7be`, `go1.26.5`): `make test-integration` con `GOFLAGS='-count=1 -v'` y `INTEGRATION_PG_PORT=61664` —una sola corrida sirve para el `rc` y para contar—: `IT_RC=0`; `--- SKIP` **0**; `--- FAIL` **0**; `--- PASS` **4.618** (subtests incluidos; 3.281 de primer nivel) frente a 4.318, y la diferencia (+300) se explica **exacta**: 296 del código nuevo de F0 (`candados`, `pendiente`, `arranque`, `apipublica`, `test/`, `cobertura-ficheros`, `metrics/inferencia`) + 3 de `internal/modulos` + 1 `TestHuellaVieja`; 79 paquetes `ok`, 0 `FAIL`, 0 `(cached)`, 0 `panic`; los **8** `TestCollector_*` de `flowlifecycle/collector_integration_test.go` (SKIP en la web) en `--- PASS`; contenedor borrado. De los ficheros que leen `WAPP_TEST_DB_DSN` hoy hay **96**, no 91: los 5 nuevos son del candado `sin_bd_viva` (F0-03: `sinbdviva_test.go` y 4 *fixtures* de `testdata`), que mencionan la variable sin conectarse; los 91 viejos siguen y 50 honran `WAPP_TEST_REQUIRE_DB`, y con 0 SKIP los 41 restantes también corrieron. Detalle en el `CERRADO` del traspaso
   - **Por qué**: los ✎ tocan código viejo compartido por los dos arranques (DT-52: 438 tests
     saltados con la pantalla en verde, `05` E-5).
   - **Qué se corre**: `INTEGRATION_PG_PORT=<libre> make test-integration` **y**, para contar,
@@ -318,7 +318,7 @@ contiene F0 entera.
     `--- PASS` ≥ el de `ESTADO.md` (4.318, 2026-09-27) o la diferencia explicada.
   - **Commit**: ninguno (se anota en el `CERRADO` del traspaso).
 
-- [ ] **T0.23 · arranque real de `cmd/server-modular` en local** · 💻 · dep. T0.22 · cumple R0.4.f
+- [x] **T0.23 · arranque real de `cmd/server-modular` en local** · 💻 · dep. T0.22 · cumple R0.4.f — cerrada **sin commit** (sesión F0-06, 2026-09-30): el binario nuevo contra un `postgres:16` efímero (puerto libre, base vacía) y el `HeadBucket` real contra el R2 de desarrollo de `.env`; **9/9** líneas `arranque: fase completada` (fase 1: migraciones `0.48.0` desde cero, 476 ms; fase 3: `HeadBucket`, 3.620 ms), `:8100/healthz` **200**, y `kill -INT` → `señal de parada recibida` + `servidor detenido limpiamente` con `EXIT=0`. A/B con el binario **viejo** (nunca a la vez, su propia base vacía, mismo entorno): también 9/9 y `EXIT=0`; el barrido de las 98 peticiones sin token (las 22 rutas de `:8100` y las 73 de `:8103` de la dorada + 3 sondas) da **los mismos códigos** en los dos (solo difieren los cuerpos de `/healthz` y `/metrics`, que llevan hora y valores vivos), `:8103/api/v1/auth/tenants` sin token **401** y una inexistente `404 page not found` en los dos. Además, contra lo que corre: el 502 de `/admin/messages/send`, los seis campos de auditoría en `public.audit_events` y las cinco `wapp_edge_*` (ver el `CERRADO` del traspaso)
   - **Qué se corre**: el binario nuevo, **nunca a la vez** que `cmd/server`, contra una base
     **desechable** (contenedor efímero en puerto libre, jamás UAT ni el Postgres compartido) y
     con el R2/MinIO de desarrollo que ya usa Jhoan (`flows.go:75` hace `HeadBucket` y sin él no
@@ -327,12 +327,12 @@ contiene F0 entera.
     -s :8100/healthz` 200, y se apaga limpio con SIGINT (`servidor detenido limpiamente`).
   - **Commit**: ninguno.
 
-- [ ] **T0.24 · integrar F0 en `dev`** · 💻 · dep. T0.22, T0.23 · cumple R0.9.b
+- [x] **T0.24 · integrar F0 en `dev`** · 💻 · dep. T0.22, T0.23 · cumple R0.9.b — cerrada (sesión F0-06, 2026-09-30): la rama de la web ya estaba en `dev` con *merge commit* sin squash (PR #17, `835a7be`; antes #13–#16), así que **no se re-fusionó nada**; los 34 SHA citados por T0.0–T0.27 son ancestros de `origin/dev` y aparecen en orden de dependencia (la única alteración respecto al orden de numeración es `3040e82`, prerrequisito del rojo `2c2bbd6`, contradicción 14). Gate `GOWORK=off make ci-local` en un *worktree* limpio de `835a7be` con **`go1.26.5` y `golangci-lint v2.12.2`**: `GATE_RC=0` (2 min 50 s), 84 paquetes `ok`, 0 `FAIL`, `0 issues`, `FICHEROS_EVALUADOS=10`/`POR_DEBAJO=0`; `vet -tags pendiente` rc=0; `PENDIENTES=0`, `ROJOS=0`; `apipublica`+`arranque` con `-v`: 159 PASS / 0 SKIP / 0 FAIL; `TestHuella*` PASS con la dorada sin diff; `go list` `platform → gateway|iam|inferstats` = 0; `go mod verify` y `go mod tidy -diff` limpios; `git diff --stat 1b18932..origin/dev -- internal/bootstrap cmd/server` → solo `huella_vieja_test.go`. Todo igual que lo que midió la web. Empujado el cierre en T0.25
   - **Qué se hace**: gate ci-local en local con la toolchain fijada; merge de la rama de la web
     **sin squash** (`rojo`/`verde` distintos, E-4); `git push origin dev` leyendo su `rc`.
   - **Hecho cuando**: `git log origin/dev` contiene los commits de T0.1–T0.21 en orden.
 
-- [ ] **T0.25 · cerrar F0 en la documentación** · 💻 · dep. T0.24 · cumple R0.9.c
+- [x] **T0.25 · cerrar F0 en la documentación** · 💻 · dep. T0.24 · cumple R0.9.c — cerrada en `SHA-T0.25` (sesión F0-06, 2026-09-30: `CERRADO` en el traspaso, `ESTADO.md`, README de la fase y la columna «Estado» de `sesiones/README.md`)
   - **Ficheros**: `CERRADO <fecha>` en el traspaso; `ESTADO.md` (fase actual: F0 cerrada, F1
     siguiente); `README.md` de esta carpeta (estado y SHA de cada tarea).
   - **Commit**: `docs(reorganizacion-modular): F0 cerrada`

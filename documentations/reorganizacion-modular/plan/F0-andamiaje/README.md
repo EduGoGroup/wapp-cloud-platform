@@ -1,11 +1,13 @@
 # F0 · Andamiaje — portal de la fase
 
-> **Estado: en curso — bloques A, B, C, D y E cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
-> `de04088`; F0-02, T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`; F0-04, T0.10–T0.15,
-> de `d64dbbf` a `61ce04b`; F0-05, T0.16–T0.21 y T0.27 + TX.1–TX.4, de `8096232` a `15223ff`, rama
-> `reorg/f0-e-cara-platform`); siguiente, bloque F (F0-06, 💻) con el
-> [traspaso](../../traspasos/TRASPASO-F0-andamiaje.md). Plan escrito el 2026-09-28 sobre `dev` @
-> `1b18932`. Norma: [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
+> **Estado: ✅ CERRADA (2026-09-30)** — bloques A–F. F0-01, T0.0 `98e806d`, T0.1 `de04088`; F0-02,
+> T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`; F0-04, T0.10–T0.15, de `d64dbbf` a
+> `61ce04b`; F0-05, T0.16–T0.21 y T0.27 + TX.1–TX.4, de `8096232` a `15223ff` (PR #17, `835a7be`); y
+> **F0-06 (💻)**, T0.22–T0.25: integración vieja con Postgres real, arranque real de `cmd/server-modular`, `dev`
+> verificado y este cierre (`SHA-T0.25`). `origin/dev` contiene F0 entera, sin squash. Siguiente:
+> **F9-01 (9A, el arnés; D-F9-1 = sí)** y luego F1, con el [traspaso](../../traspasos/TRASPASO-F0-andamiaje.md)
+> ya **CERRADO**. Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma: [`05`](../../05-metodo-contratos-y-tdd.md) §6.
+> Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo
 
@@ -33,6 +35,19 @@ crítica: si el andamiaje está mal, todo lo demás hereda el fallo.
 3. **`make test-pendiente` = 0.**
 4. **Integración vieja verde con Postgres real** tras los ✎ de `platform` (0 SKIP, 0 FAIL, `-v`).
 5. **Entorno web verificado** y anotado en `06-entorno-web.md` §5.
+
+### Cierre: cada criterio, con su evidencia (2026-09-30, sesión F0-06, `go1.26.5` + `golangci-lint v2.12.2`)
+
+| # | Criterio | Evidencia |
+|---|---|---|
+| 1 | Huellas idénticas | `TestHuellaVieja`, `TestHuella` y `TestHuellaEstatica` PASS; `huella.json` sin diff; 95 rutas = 22 + 73, 2 rpc, 11 familias, 10 goroutines, 13 *hooks*, entorno ∅. **Y en ejecución real**: las 98 peticiones del barrido dan los mismos códigos en los dos binarios |
+| 2 | `dev` verde con todos los candados | `GOWORK=off make ci-local` en un *worktree* limpio de `835a7be`: `GATE_RC=0`, 84 paquetes `ok`, `0 issues`, `FICHEROS_EVALUADOS=10`, `POR_DEBAJO=0`; cada candado con su caso que muerde (F0-03/04/05) |
+| 3 | `make test-pendiente` = 0 | `PENDIENTES=0`, `ROJOS=0`, rc=0; `vet -tags pendiente` rc=0 |
+| 4 | Integración vieja verde con Postgres real | T0.22: `rc=0`, **0 SKIP, 0 FAIL, 4.618 PASS** con `-v` y `-count=1`; los 8 `TestCollector_*` en PASS |
+| 5 | Entorno web verificado | `06-entorno-web.md` §5 (T0.0) y el hook (T0.1) |
+| 6 | `git diff --stat 1b18932..origin/dev -- internal/bootstrap cmd/server` | solo `huella_vieja_test.go` (+305) |
+
+Y el arranque real (T0.23): **9/9** fases, `/healthz` 200 y SIGINT limpio (`EXIT=0`), en el nuevo y en el viejo.
 
 ## Orden de lectura
 
@@ -107,6 +122,9 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 28 | `iam/ports/in/usecases.go:~155-158`: «internal/platform/httpapi ya importa este paquete» | desde T0.18 es al revés (`in` importa `httpapi` por el alias) | No se toca (E-1: D-F0-3 autoriza solo la línea del alias). Muere con el paquete |
 | 29 | `mapa-de-rutas.md` y RX.2.c citan líneas de `internal/bootstrap/arranque/http.go` | en la copia `internal/arranque/` todo va +1 línea (la cabecera `// Copia de`), y desde TX.3 más en `http.go` | Las citas del plan se leen contra el viejo; ninguna cita de línea en la copia |
 | 30 | T0.27: «+1 línea cada uno (más un import si hace falta)» | con la condición en línea, `gocyclo` de `TestC2_LaViaSoloSePreguntaEnLaSeleccion` pasa de 15 (18) y `ci-local` falla; `gofmt` además parte el `if` en tres líneas | `dd1e2bd`: en `c2_via_test.go` un ayudante `esDelArbolNuevo` (+14 líneas); en `membresia_unica_ast_test.go`, `if` en línea (+3) |
+| 31 | *(F0-06)* traspaso §7.2 y T0.19: `/metrics` publica «las cinco `wapp_edge_*`» | **en frío solo sale una**, `wapp_edge_inference_reporting_edges 0`; las otras cuatro no emiten familia sin muestras (`ConstMetric`). Las cinco salen con un Edge que envíe `SessionHealth` (un Edge de mentira con mTLS lo demostró: 9/3, 7/3/2, 5/1/2, 10/10, 1 Edge; idéntico en el viejo) | Es lo que ya fijaba la dorada (`huella.json:120,245`). Corrección de lectura, sin código |
+| 32 | *(F0-06)* T0.22 y el traspaso: «91 ficheros de test leen `WAPP_TEST_DB_DSN`, 50 honran `WAPP_TEST_REQUIRE_DB`» | hoy son **96**: los 5 nuevos son del candado `sin_bd_viva` (`sinbdviva_test.go` y 4 *fixtures* de `testdata`, F0-03), que mencionan la variable sin conectarse. Los 91 viejos y los 50 no cambian; con 0 SKIP los 41 restantes también corrieron | Sin acción. La cifra de la regla E-5 sigue siendo 91/50 para el código viejo |
+| 33 | *(F0-06)* el traspaso da por cubierta la auditoría (`AuditInput`, seis campos) | no hay **ningún test de integración** que la verifique a través del middleware contra Postgres (`audit_mw_test.go`: auditor falso; `TestIntegration_Audit`: `len==1` y `Action`). Hoy solo la vio esta sesión, en ejecución: `public.audit_events` con `tenant_id`, `actor`, `action`, `resource`, `result=failure`, `meta={"status":502}`, también con 404, y **ninguna** fila con 401/403 | Hueco para F9 (un proceso de auditoría). Además `publicapi/messages.go:162-165` dice 502 donde el código da 404: comentario caducado en código viejo, no se toca (E-1) |
 
 ## Números medidos (y cómo)
 
@@ -117,10 +135,13 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | rpc | 2 | `GetServiceInfo()` en el prototipo |
 | Métricas | 22 declaradas; 11 familias en frío | `# TYPE wapp_` de `/metrics` en el prototipo |
 | Goroutines del arranque | 10 sentencias `go` | `grep -rn '^\s*go '` sin tests |
-| *Hooks* de métricas | 14 usos, 12 métodos | `grep -o 'mtx\.[A-Za-z]*'` |
+| *Hooks* de métricas | 13 usos, 12 métodos (el 14.º del `grep` es un comentario, contradicción 18) | `TestHuellaEstatica` (AST) |
 | Integración que honra `WAPP_TEST_REQUIRE_DB` | 50 de 91 ficheros | `grep -rln` (2026-09-28) |
 | Contenedor de huella | 0,09 s, sin red | prototipo |
 | Lista blanca de fronteras | **13 aristas** módulo→módulo entre los 7 de D-5 (+2 de `platform`, los ✎ del bloque E, fuera de `Capas`); los tests viejos añadirían 4 más, que no entran (E-8) | script de `02` §5 con el `MAP` de D-5 (`platformadmin`, `entitlements` → `acceso`), solo `.Imports`, sobre `dev` @ `c55e9e3` (2026-09-30, T0.7) |
 | ¿Basta dejar a `nil` tipado los almacenes de la fase 3 en la huella? | **no hace falta**: la fase 3 corre entera con un S3 falso en proceso (contradicción 19) | `TestHuellaVieja` (2026-09-30, T0.14) |
 | Huella medida (dorada) | 95 rutas = 22 `:8100` + 73 `:8103` en los dos perfiles; 2 rpc; 11 familias `wapp_*` en frío; 10 goroutines; **13** *hooks* de 12 métodos; entorno ∅ | `TestHuellaVieja` / `TestHuella` / `TestHuellaEstatica` (2026-09-30, T0.14–T0.15); contenedor + sondas 0,25 s |
 | Importador de tipos para `Goroutines` | `source` ~105 s/paquete · `gc` + `go list -export` ~0,55 s/paquete | medido en T0.13 (2026-09-30) |
+| Integración vieja con Postgres real (T0.22) | `rc=0`, **4.618 PASS** (3.281 de primer nivel), 0 SKIP, 0 FAIL, 79 paquetes `ok`; 4.318 + 296 (código nuevo de F0) + 3 (`internal/modulos`) + 1 (`TestHuellaVieja`) | `GOFLAGS='-count=1 -v' INTEGRATION_PG_PORT=<libre> make test-integration`, `go1.26.5` (2026-09-30) |
+| Arranque real (T0.23) | 9/9 fases; fase 1 (migraciones `0.48.0` desde cero) 476 ms, fase 3 (`HeadBucket` R2) 3.620 ms; 98 peticiones con los mismos códigos en viejo y nuevo | `cmd/server-modular` y `cmd/server` contra `postgres:16` efímero, `barrido.sh` (2026-09-30) |
+| Gate `ci-local` con la toolchain fijada | `GATE_RC=0` en 2 min 50 s; 84 paquetes `ok`; `0 issues` | `go1.26.5` + `golangci-lint v2.12.2`, *worktree* limpio de `835a7be` (2026-09-30) |

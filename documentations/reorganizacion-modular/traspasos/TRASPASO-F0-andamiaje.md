@@ -197,3 +197,105 @@ Después, T0.25: cerrar F0 en la documentación.
   admite puentes declarados. Si una ola de FX necesita un puente desde `apipublica`, hay que
   decidir cuál manda **antes** de esa ola.
 - Sigue pendiente de F0-04: la contradicción 19 y aplicar **F0-A-1** en claude.ai/code.
+
+## CERRADO 2026-09-30
+
+Sesión **F0-06** (💻 CLI), sobre `origin/dev` @ `835a7be` (PR #17, fusionado por la web sin squash; no se
+re-fusionó nada). **Toolchain de la sesión**: `go1.26.5` (`GOTOOLCHAIN=go1.26.5`, bajado a la caché de
+módulos) y `golangci-lint v2.12.2` (compilado con `go1.26.5` e instalado en un `GOBIN` aislado con
+`go install …@v2.12.2`). El `go1.27.1` y el lint `2.14.0` del sistema **no se usaron**: `make lint` los
+rechaza (T-1) y el hook `SessionStart` los avisaba. La ficha F0-06 daba por hechos «Docker encendido» y
+«toolchain disponible»; no lo estaban, y se prepararon sin tocar `/opt/homebrew`. Docker Desktop 29.8.0,
+`postgres:16`.
+
+### Qué se hizo
+
+- **T0.24** — Los 34 SHA citados por `tareas.md` (T0.0–T0.27) son ancestros de `origin/dev`, en orden de
+  dependencia (única alteración de la numeración: `3040e82`, prerrequisito del rojo `2c2bbd6`, contradicción 14).
+  Gate `GOWORK=off make ci-local` en un *worktree* limpio de `835a7be`: **`GATE_RC=0`** (2 min 50 s), 84 paquetes
+  `ok`, 0 `FAIL`, `0 issues`, `FICHEROS_EVALUADOS=10`, `POR_DEBAJO=0`. Además: `vet -tags pendiente` rc=0;
+  `PENDIENTES=0`, `ROJOS=0`; `apipublica`+`arranque` con `-v` → 159 PASS / 0 SKIP / 0 FAIL; `TestHuella`,
+  `TestHuellaEstatica` y `TestHuellaVieja` PASS con la dorada sin diff; `go list` de `platform` → dominio = 0;
+  `go mod verify` y `go mod tidy -diff` limpios; `git diff --stat 1b18932..origin/dev -- internal/bootstrap cmd/server`
+  → solo `huella_vieja_test.go`. **Idéntico a la §3**: ninguna diferencia con lo que midió la web.
+- **T0.22** — `make test-integration` con `GOFLAGS='-count=1 -v'` (una sola corrida da el `rc` y permite contar;
+  `-count=1` impide PASS de caché): `IT_RC=0`, **0 SKIP, 0 FAIL, 4.618 PASS** (3.281 de primer nivel), 79 paquetes `ok`,
+  0 `(cached)`, 0 `panic`. Los **8** `TestCollector_*` de `flowlifecycle/collector_integration_test.go` (SKIP en la web)
+  pasan a **PASS**. La diferencia con los 4.318 de `ESTADO.md` (+300) se explica exacta: 296 del código nuevo de F0 +
+  3 de `internal/modulos` + 1 `TestHuellaVieja`. Contenedor borrado.
+- **T0.23** — Arranque real contra un `postgres:16` efímero (puerto libre, dos bases vacías) y el `HeadBucket` real contra
+  el R2 de desarrollo de `.env` (bucket `edugo-materials`, prefijo `wapp/`; solo lectura; las credenciales no se
+  imprimieron): el binario **nuevo** da **9/9** fases (fase 1: migraciones `0.48.0` desde cero, 476 ms; fase 3: 3.620 ms),
+  `:8100/healthz` 200 y, con SIGINT, `servidor detenido limpiamente` y `EXIT=0`. El binario **viejo**, en su propia base
+  vacía y nunca a la vez: 9/9 y `EXIT=0` también.
+- **T0.25** — Este cierre; `ESTADO.md`, el README de la fase y la columna «Estado» de `sesiones/README.md`.
+
+### Qué se refutó de la §7 (contra lo que corre, no contra la documentación)
+
+1. **«La huella no prueba las fases 1 y 3 reales»** — cierto, y ahora están probadas: 9/9 en el binario real, con
+   migraciones desde cero y `HeadBucket` real. **El compuesto en ejecución real**: barrido sin token de las **98
+   peticiones** (las 22 rutas de `:8100` y las 73 de `:8103` de la dorada + 3 sondas) en los dos binarios: **los mismos
+   códigos en las 98** (solo difieren los cuerpos de `/healthz` y `/metrics`, que llevan hora y valores vivos);
+   `:8103/api/v1/auth/tenants` sin token → **401** y una ruta inexistente → `404 page not found` en los dos; las 11
+   familias `wapp_*` en frío son las mismas. El compuesto de `apipublica` no cambia nada en caliente.
+2. **«Los alias de D-F0-3 no cambian ningún texto y son el MISMO tipo»** — confirmado en ejecución, con una clave ES256
+   propia (no hay token ni fixture en el repo) y identity apagado:
+   - **El 502**: `POST :8100/admin/messages/send` con una sesión offline → `502 Bad Gateway` y
+     `sesión offline: no hay stream vivo para el Edge (command_id: …)`. Con dos `errors.New` distintos habría dado 500.
+     El segundo consumidor, `POST :8103/api/v1/messages` (`publicapi/messages.go:212`, que casa con `session.ErrSessionOffline`),
+     da **502** con una sesión offline sembrada en la base desechable (y 404 sin sembrar, por la guarda de tenant).
+     Resultado igual en el binario viejo. **Límite**: solo 2 de los 5 consumidores del centinela se ejercitaron en
+     ejecución; `gateway/grpc/inference.go:320,354`, `publicapi/flows.go:235` y `flujos/admin/handlers.go:326` necesitan un
+     flujo o una inferencia y no se ejercitaron.
+   - **Los seis campos de auditoría**: `public.audit_events` recibe una fila por llamada autenticada, también con 502 y con
+     404, con `tenant_id`, `actor`, `action=messages.send`, `resource=message`, `result=failure` y `meta={"status": 502}`;
+     el 401 (sin token) y el 403 (sin permiso) **no** dejan fila. Igual en el viejo.
+   - **`/metrics` y las `wapp_edge_*`**: *en frío* solo sale **una** de las cinco, `wapp_edge_inference_reporting_edges 0`
+     (las otras cuatro no emiten familia sin muestras): «las cinco» solo es cierto con un Edge reportando. *Con muestras*,
+     un Edge de mentira con mTLS (cert de cliente emitido con la CA de `certs/`, `CN=edge-f006`, `O=<tenant>`) envía un
+     latido con `SessionHealth` y `/metrics` publica **las cinco**: por clase 9/3, por régimen 7/3/2, omitidas 5/1/2,
+     muestras 10/10 y 1 Edge; los mismos valores en el viejo.
+3. **Las tres desviaciones**:
+   - (a) **`Agregado`**: ningún test viejo depende de que sea un tipo definido y no un alias (cero usos de `reflect`,
+     `%T` ni `PkgPath` sobre él; solo se nombra en `inferstats`, `metrics/inferstats.go` y `metrics/inferencia`). La única
+     dependencia de identidad es la asignabilidad `func() inferstats.Agregado` → `FuenteInferencia`, y un tipo definido
+     daría error de **compilación**, no un fallo silencioso. Matiz honesto: **ningún** test de integración viejo ejercita el
+     store de inferencia (los de `gateway/grpc` no pasan `WithInferenceStats`), así que T0.22 no refuta esto más allá de
+     compilar; lo refuta el Edge de mentira de arriba.
+   - (b) **La copia de `internal/arranque`**: confirmado que en **producción** difiere solo en `http.go`,
+     `fase8_transporte.go` y `contenedor.go` (más `mudanzas.go`, nuevo). En **tests** hay tres ficheros más, todos ya
+     documentados: dos cambian solo la ruta relativa (`../publicapi/roleplane.go`, T0.10) y `orquestador_test.go` añade
+     la línea `var _ func(context.Context) error = Ejecutar` (contradicción 17); `huella_test.go`,
+     `mudanzas_test.go` y `cara_nueva_cableado_test.go` solo están en la copia, y `huella_vieja_test.go` y
+     `pool_metrics_integration_test.go` solo en el viejo.
+   - (c) **`esDelArbolNuevo`**: `dd1e2bd` toca dos ficheros, +14 y +3 líneas.
+   - `go.sum` no cambió: `git diff --stat` vacío y `go mod verify`/`go mod tidy -diff` limpios con red real.
+
+### Hallazgos nuevos (no estaban en el traspaso)
+
+1. **Hueco de cobertura**: no existe ningún test de integración que verifique los seis campos de auditoría **a través
+   del middleware** contra Postgres (`audit_mw_test.go` usa un auditor falso; `TestIntegration_Audit` solo mira
+   `len==1` y `Action`). Hoy solo lo ha visto esta sesión, en ejecución. Candidato a un proceso de F9.
+2. **Comentario obsoleto** en código viejo: `publicapi/messages.go:162-165` dice que una sesión sin fila «fallaría con
+   502» y el código da **404**. No se toca (E-1).
+3. **Los ficheros que leen `WAPP_TEST_DB_DSN` son 96, no 91**: los 5 nuevos son del candado `sin_bd_viva` (F0-03); los 91
+   viejos siguen, 50 honran `WAPP_TEST_REQUIRE_DB`, y con 0 SKIP los 41 restantes también corrieron.
+4. `reglas.md` §5, `requisitos.md` R0.5.e y la tabla de números del README de F0 decían «14 *hooks*/usos»; son **13**
+   (contradicción 18, ya medida por `TestHuellaEstatica`): corregido en los tres sitios.
+
+### Lo que NO se corrió
+
+- **`make ci-docker`** (el otro gate: `golang:1.26.5-bookworm` + lint descargado): no se pidió; el gate que cuenta aquí fue
+  `ci-local` con la toolchain fijada.
+- **Un Edge real**: el cliente fue un Edge de mentira; prueba el camino gateway → `inferstats` → `/metrics`, no el daemon.
+- **Tres de los cinco consumidores de `ErrSessionOffline`** (arriba).
+- **UAT, `main` y el Postgres compartido (`:5432`)**: no se tocaron.
+
+### Qué queda
+
+- Sigue pendiente la mirada de Jhoan sobre las **contradicciones 19, 23, 24 y 27** del README de F0 y aplicar
+  **F0-A-1** en claude.ai/code. La 27 bloquea F2, no F0.
+- Siguiente sesión: **F9-01 (🌐, 9A, el arnés)**, porque D-F9-1 = sí adelanta F9; después F1.
+- Para repetir el gate local hace falta `GOTOOLCHAIN=go1.26.5` y un `golangci-lint v2.12.2` en el `PATH`; el de esta
+  sesión vivía en un `GOBIN` temporal. Instalación permanente:
+  `GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.

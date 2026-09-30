@@ -102,7 +102,7 @@
 F0 está hecha cuando, **en `origin/dev`**:
 
 1. **Huellas idénticas**: `TestHuellaVieja` y `TestHuella` verdes contra la misma dorada (95
-   rutas, 2 rpc, familias en frío, 10 goroutines, 14 *hooks*, entorno ∅), después de montar
+   rutas, 2 rpc, familias en frío, 10 goroutines, 13 *hooks*, entorno ∅), después de montar
    `apipublica` y de los tres ✎.
 2. **`dev` verde con todos los candados activos y demostrado que muerden**: gate ci-local
    `GATE_RC=0` con `vet-pendiente` y `cobertura-ficheros` dentro; los seis casos `muerde` de

@@ -119,7 +119,7 @@ un árbol `muerde` que produce ≥ 1 violación con fichero y motivo, y un árbo
 - **R0.5.d** · EL candado DEBERÁ comparar el multiconjunto de goroutines lanzadas por el
   arranque (10 sentencias `go` hoy). — Verifica: `TestHuella`, parte estática.
 - **R0.5.e** · EL candado DEBERÁ comparar el multiconjunto de *hooks* de `*metrics.Metrics` que
-  cablea cada arranque (14 usos de 12 métodos hoy). — Verifica: `TestHuella`.
+  cablea cada arranque (13 usos de 12 métodos hoy; contradicción 18). — Verifica: `TestHuella`.
 - **R0.5.f** · EL árbol nuevo NO DEBERÁ leer variables de entorno fuera de `platform/config`. —
   Verifica: componente `entorno` = ∅.
 - **R0.5.g** · SOLO `TestHuellaVieja` DEBERÁ poder escribir la dorada, y SOLO con `-actualizar`.

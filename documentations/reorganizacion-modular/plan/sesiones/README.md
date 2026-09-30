@@ -45,11 +45,11 @@
 | 1 | [`00-01-jhoan-preparar-entorno-web`](00-01-jhoan-preparar-entorno-web.md) | 🧑 | 00 | — | — | pendiente |
 | 2 | [`00-02-jhoan-decisiones-iniciales`](00-02-jhoan-decisiones-iniciales.md) | 🧑 | 00 | — | — | hecha 2026-09-30 |
 | 3 | [`F0-01-web-entorno`](F0-01-web-entorno.md) | 🌐 | F0 | A | T0.0–T0.1 | hecha 2026-09-30 |
-| 4 | [`F0-02-web-pendiente-y-make`](F0-02-web-pendiente-y-make.md) | 🌐 | F0 | B | T0.2–T0.4, T0.26 | hecha 2026-09-30 (PR a `dev`, sin fusionar) |
-| 5 | [`F0-03-web-candados`](F0-03-web-candados.md) | 🌐 | F0 | C | T0.5–T0.9 | hecha 2026-09-30 (PR a `dev`, sin fusionar) |
-| 6 | [`F0-04-web-arranque-y-huella`](F0-04-web-arranque-y-huella.md) | 🌐 | F0 | D | T0.10–T0.15 | pendiente |
-| 7 | [`F0-05-web-cara-vacia-platform-deriva`](F0-05-web-cara-vacia-platform-deriva.md) | 🌐 | F0 | E | T0.16–T0.21, T0.27 | pendiente |
-| 8 | [`F0-06-cli-cierre`](F0-06-cli-cierre.md) | 💻 | F0 | E/F | T0.16–T0.21, T0.27 + T0.22–T0.25 | pendiente |
+| 4 | [`F0-02-web-pendiente-y-make`](F0-02-web-pendiente-y-make.md) | 🌐 | F0 | B | T0.2–T0.4, T0.26 | hecha 2026-09-30 (PR #14, fusionado en `dev` sin squash) |
+| 5 | [`F0-03-web-candados`](F0-03-web-candados.md) | 🌐 | F0 | C | T0.5–T0.9 | hecha 2026-09-30 (PR #15, fusionado en `dev` sin squash) |
+| 6 | [`F0-04-web-arranque-y-huella`](F0-04-web-arranque-y-huella.md) | 🌐 | F0 | D | T0.10–T0.15 | hecha 2026-09-30 (PR #16, fusionado en `dev` sin squash) |
+| 7 | [`F0-05-web-cara-vacia-platform-deriva`](F0-05-web-cara-vacia-platform-deriva.md) | 🌐 | F0 | E | T0.16–T0.21, T0.27 | hecha 2026-09-30 (PR #17, fusionado en `dev` sin squash) |
+| 8 | [`F0-06-cli-cierre`](F0-06-cli-cierre.md) | 💻 | F0 | E/F | T0.16–T0.21, T0.27 + T0.22–T0.25 | hecha 2026-09-30 (F0 cerrada; `dev` empujado) |
 | 9 | [`F9-01-web-arnes`](F9-01-web-arnes.md) | 🌐 | F9 | A | T9.1–T9.12 🕐 | pendiente |
 | 10 | [`F9-02-cli-arnes-cierre`](F9-02-cli-arnes-cierre.md) | 💻 | F9 | A | T9.1–T9.12 🕐 | pendiente |
 | 11 | [`F1-01-web-contratos-y-rojo`](F1-01-web-contratos-y-rojo.md) | 🌐 | F1 | A | T1.1–T1.7 | pendiente |

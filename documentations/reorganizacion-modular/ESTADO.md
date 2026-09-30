@@ -1,13 +1,14 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-05** (F0 · bloque E, la cara nueva vacía, los ✎ de `platform` y la deriva). Este fichero es
+> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-06** (💻 · F0 · bloques E/F: **F0 cerrada**). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
 ## Dónde estamos
 
-**Fase: plan de trabajo escrito y validado · ejecución sin empezar.** No hay ni una línea de código
-de la reconstrucción. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
+**Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · siguiente: F9-01 (9A, el arnés) y luego F1.** El árbol
+nuevo solo tiene andamiaje (`pendiente`, `candados`, `arranque`, `apipublica` vacía, `cmd/server-modular`):
+**ningún módulo** de `internal/modulos/` existe aún. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
 una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y **81 sesiones** con
 su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendaciones de
 [`plan/DECISIONES.md`](plan/DECISIONES.md) §1, §2, §4, §5 y §6 (§3 sigue abierta hasta la parada de F1).
@@ -56,22 +57,33 @@ en proceso, en vez de simular `flowDeps`) pide la mirada de Jhoan. Rama `reorg/f
 - **Contradicciones 23–30** del README de F0: la 23, la 24 y la 27 piden la mirada de Jhoan.
 - Rama `reorg/f0-e-cara-platform`, PR a `dev` sobre `origin/dev` @ `d3deb27`.
 
+**F0-06 hecha (2026-09-30, 💻)**: cierre local de F0 con `go1.26.5` y `golangci-lint v2.12.2` (la ficha daba
+por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
+- **T0.24**: la rama de la web ya estaba en `dev` (PR #17, `835a7be`, sin squash); los 34 SHA de T0.0–T0.27 son ancestros
+  de `origin/dev`; gate `ci-local` en un *worktree* limpio: `GATE_RC=0`, 84 paquetes `ok`, `0 issues`; idéntico a la web.
+- **T0.22**: integración vieja con Postgres real: `rc=0`, **0 SKIP, 0 FAIL, 4.618 PASS**; los 8 `TestCollector_*` pasan de
+  SKIP a PASS.
+- **T0.23**: arranque real de `cmd/server-modular`: **9/9** fases (migraciones desde cero y `HeadBucket` real), `/healthz`
+  200, SIGINT limpio; contraste con el viejo: los mismos códigos en las 98 peticiones del barrido.
+- **§7 del traspaso refutada contra lo que corre**: el 502 de `/admin/messages/send` con sesión offline (y su gemelo en
+  `:8103`), los seis campos de `public.audit_events`, y las cinco `wapp_edge_*` con un Edge de mentira mTLS. Hallazgos
+  nuevos: contradicciones 31–33 del README de F0.
+- Detalle en el `CERRADO` de [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md).
+
 **Siguiente paso:**
 1. **Jhoan**:
-   - fusionar el PR de F0-05 **sin squash** (F-1);
-   - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04);
-   - sigue pendiente aplicar **F0-A-1** en claude.ai/code.
-2. **F0-06 (💻, bloque F)**: seguir [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md):
-   - T0.22: integración vieja con Postgres real, 0 SKIP;
-   - T0.23: arranque real de `cmd/server-modular`;
-   - T0.24: integrar en `dev`;
-   - T0.25: cerrar F0.
+   - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04; la 27 bloquea F2, no F0);
+   - sigue pendiente aplicar **F0-A-1** en claude.ai/code;
+   - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
+     (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
+2. **F9-01 (🌐, 9A)**: el arnés de procesos, porque D-F9-1 = sí lo adelanta tras F0 ([`plan/sesiones/`](plan/sesiones/README.md));
+   luego F9-02 (💻) y F1.
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
-| F0 | en curso | E · cara nueva vacía, ✎ de `platform` y deriva (T0.16–T0.21, T0.27, TX.1–TX.4) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (rama `reorg/f0-e-cara-platform`) |
+| F0 | ✅ cerrada (2026-09-30) | F · cierre local (T0.22–T0.25) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (en `dev` @ `835a7be`, PR #17). F: T0.22 y T0.23 sin commit (evidencia en el `CERRADO` del traspaso), T0.24 `835a7be` verificado, T0.25 `SHA-T0.25` |
 | F9-A/B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -95,6 +107,7 @@ en proceso, en vez de simular `flowDeps`) pide la mirada de Jhoan. Rama `reorg/f
 | 2026-09-30 | **F0-03**: `internal/candados` (rojo → 6 verdes) y los cinco candados de fichero en `ci-local` (fronteras con lista blanca medida, un fichero un test, exportados cubiertos, sin BD viva, cobertura por fichero ≥ 80 %), cada uno con su caso que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.5–T0.9 |
 | 2026-09-30 | **F0-04**: `internal/arranque` (copia del viejo, D-F0-1) y `cmd/server-modular`; `huellatest` (rojo→verde); dorada desde el arranque viejo (`huella_vieja_test.go`, D-F0-2) y candado de huella entre los dos arranques, que muerde | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.10–T0.15 |
 | 2026-09-30 | **F0-05**: `apipublica` (rojo→verde) montada vacía delante del `publicapi` viejo; candado de mudanzas; los tres ✎ de `platform` con alias; barridos AST viejos ciegos al árbol nuevo; deriva documental cerrada; traspaso a la local | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.16–T0.21, T0.27 · [`plan/FX-cara-http/tareas.md`](plan/FX-cara-http/tareas.md) TX.1–TX.4 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) |
+| 2026-09-30 | **F0-06** (💻): **F0 cerrada**. Integración vieja con Postgres real (4.618 PASS · 0 SKIP · 0 FAIL, los 8 del *collector* en PASS), arranque real de `cmd/server-modular` (9/9, `/healthz` 200, SIGINT limpio) contrastado con el viejo (98 peticiones, mismos códigos), gate `ci-local` con `go1.26.5` y `golangci-lint v2.12.2` (`GATE_RC=0`) y §7 del traspaso refutada contra lo que corre | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.22–T0.25 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) `CERRADO` |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -150,10 +163,11 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Pendientes y obstáculos conocidos
 
-- 🔴 **El lint de `ci-local` no está fijado** (`Makefile:42`): T-1, en F0.
+- ✅ **El lint de `ci-local` está fijado** (T-1, `d05ac3a`): `make lint` aborta si no es `v2.12.2`. Consecuencia local: el Go (`1.27.1`) y el lint (`2.14.0`) del sistema **no** sirven; hace falta `GOTOOLCHAIN=go1.26.5` y `v2.12.2` en el `PATH`.
 - **testcontainers sube dependencias de producción**: T-2, commit aislado en F9.
 - **R2 / `HeadBucket`** (`internal/bootstrap/arranque/flows.go:75`): **resuelto en el diseño** de F9
-  sin tocar el arranque (endpoint IP → *path-style*; S3 falso en el proceso de test). Sin ejecutar.
+  sin tocar el arranque (endpoint IP → *path-style*; S3 falso en el proceso de test). Sin ejecutar en F9; el arranque
+  real de F0 (T0.23) sí lo ejecutó contra el R2 de desarrollo de `.env`, solo lectura.
 - `make test-integration` usa `postgres:16`; UAT corre `postgres:17-alpine`; la VM web trae un
   PostgreSQL 16 que **no se usa** para tests.
 - Fuera de este repo (F10, sesión local): la documentación del ecosistema, la regla de conteo del
@@ -161,9 +175,8 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- `origin/dev` = `d3deb27` (F0-01 a F0-04 integradas). `origin/main` = `2da10b4`, sin tocar.
-- `origin/reorg/f0-e-cara-platform`: F0-05, de `8096232` al cierre, en PR a `dev` para integrar
-  **sin squash**. Traspaso abierto: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md).
+- `origin/dev` contiene **F0 entera** (PR #13–#17, sin squash; el último merge es `835a7be`) más el cierre de F0-06.
+  `origin/main` = `2da10b4`, sin tocar. Traspaso de F0: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md), **CERRADO**.
 
 ## Para retomar
 
