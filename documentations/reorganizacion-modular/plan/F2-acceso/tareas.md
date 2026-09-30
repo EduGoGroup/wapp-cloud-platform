@@ -9,14 +9,29 @@
 > `GOWORK=off go vet -tags pendiente ./internal/modulos/acceso/...; echo rc=$?` → `0`. Gate estándar
 > de verde (**G-verde**): `GOWORK=off go test -race ./<paquete>/ > "$TMPDIR/t.log" 2>&1; echo rc=$? >> "$TMPDIR/t.log"; tail -1 "$TMPDIR/t.log"` → `rc=0` · `make cobertura-ficheros` ≥ 80 %.
 
-## Bloque A · inventario verificado · 🌐 · T2.1
-Para cuando: números de [`arquitectura.md`](arquitectura.md) §1 re-medidos, D-F2-1…7 contestadas en el README.
+## Bloque A · inventario verificado · 🌐 · T2.1, T2.34
+Para cuando: números de [`arquitectura.md`](arquitectura.md) §1 re-medidos, D-F2-1…8 contestadas en el README, y `internal/arranque/auth.go` partido (T2.34) con la huella intacta.
 
 - [ ] **T2.1 · Verdad de campo, entradas y re-medición** · 🌐 · dep. F1 cerrado y parada resuelta · cumple R2.1.d
   - **Ficheros**: `plan/F2-acceso/README.md` (estado «en curso», SHA de arranque, respuestas D-F2-*)
   - **Hecho cuando**: las 5 entradas del README comprobadas con su comando; tabla §1 de arquitectura re-medida (si difiere, se corrige **aquí** y se dice en el commit); `git log 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` revisado; D-F2-1…D-F2-7 con respuesta de Jhoan (o la recomendación marcada «asumida» si Jhoan lo delegó). **Verificado D-F4-1** (lo hizo F0, T0.27): `grep -c 'SkipDir' internal/iam/infra/postgres/membresia_unica_ast_test.go` → ≥ 1 y el commit `andamiaje(f0): los barridos AST viejos…` en `git log origin/dev`; si falta, **parar** (sin él el verde de `memberships.go` pone rojo `ci-local`).
   - **Gate**: `GOWORK=off make ci-local > "$TMPDIR/g.log" 2>&1; echo GATE_RC=$? >> "$TMPDIR/g.log"; tail -1 "$TMPDIR/g.log"` → `GATE_RC=0`
   - **Commit**: `docs(reorganizacion-modular): F2 arranca — entradas verificadas`
+
+- [ ] **T2.34 · refactor(arranque): `auth.go` se parte en `auth_*.go` y `edge_config.go`** · 🌐 · dep. F0 cerrada (T0.25) · decisión **D-F2-8** *(añadida el 2026-09-30, revisión del PR de F0-04; el ID no se renumera)*
+  - **Por qué**: la copia `internal/arranque/auth.go` (835 l) mezcla seis cosas y **crece**: la editan T2.31 (`conmutar(acceso)`) y F3 (los config providers con el `ConfigPayload` nuevo), y es el código que sobrevive a F10. En F0 no se pudo partir: R0.4.b exige copia exacta del viejo hasta cerrar F0.
+  - **Ficheros** (solo en `internal/arranque`; **el viejo no se toca**), por símbolos:
+    - `auth_stack.go`: `identityTokenIssuer`, `authStack`, `buildAuthStack`, `wireIdentityM2M`, `wireDelegatedAuth`, `edgeAuthenticator`, `exchanger`, `buildIdentityVerifier`;
+    - `auth_jwt.go`: `defaultES256Kid`, `userJWTBundle`, `buildJWTManagers`, `buildES256Key`, `parseECP256PrivateKeyPEM`, `validateP256`, `buildJWKSConfig`;
+    - `edge_config.go` (**sin** prefijo `auth_`: es la cadena de configuración que se empuja al Edge, no autenticación, y la reescribe F3): `jwksConfigProvider`, `intentConfigStore`, `intentsConfigProvider`, `filtersConfigProvider`, `chainLink`, `chainConfigProvider`, `logConfigLinkError`, `buildConfigProvider` (los cuatro métodos `ConfigsForConnect` van con su tipo);
+    - `auth_roleplane.go`: `rolePlane`, `buildRolePlane`;
+    - `auth_invitaciones.go`: `buildInvitationRedeem`;
+    - `auth_empresa_activa.go`: `buildActiveTenantPlane`;
+    - se borra `internal/arranque/auth.go`; `invitaciones_cableado_test.go:33` pasa a parsear `auth_invitaciones.go` (el candado lee el fichero **por nombre**: sin este cambio falla ruidoso); el comentario de `es256_key_test.go:229` nombra `auth_jwt.go`. Si algún símbolo no está en esta lista, va con el que lo usa y se dice en el commit.
+  - **Cómo**: solo **mover** declaraciones, sin cambiar un byte de ninguna (comentarios incluidos); imports por fichero con `goimports`; cabecera de cada fichero `// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: <tema>.`
+  - **Hecho cuando**: el multiconjunto de declaraciones de primer nivel (texto de `go/printer`, con su comentario) de los seis ficheros es **igual** al de `auth.go` antes del corte; ningún fichero nuevo pasa de 300 líneas; `go test -run '^TestHuella' ./internal/arranque/ ./internal/bootstrap/arranque/` → rc=0 (huella idéntica a la dorada); `go test -race -v ./internal/arranque/...` → rc=0, 0 SKIP; `git diff --stat -- internal/bootstrap cmd/server` vacío.
+  - **Gate**: gate ci-local en un *worktree* limpio de **ruta fija** (contradicción 21 de F0) → `GATE_RC=0`
+  - **Commit**: `refactor(arranque): auth.go se parte en auth_*.go y edge_config.go`
 
 ## Bloque B · rojo de las hojas · 🌐 · T2.2–T2.8
 Para cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo · `ci-local` rc=0 · PR abierto.
@@ -133,8 +148,8 @@ Para cuando: huella igual · 23 + 8 rutas nuevas · `go list -deps` · PR · tra
 - [ ] **T2.30 · FX TX.5–TX.6 (cara nueva: comunes + acceso)** · 🌐 · dep. T2.27 · cumple R2.5.b
   - **Ficheros**: los de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.5–TX.6 (`apipublica/{cadena,respuesta,autenticacion,roleplane,audit,entitlements}.go`, arnés)
   - **Hecho cuando**: lo que dice TX.6 (0 pendientes en `apipublica`, ≥ 80 %). Esta tarea **es** TX.5+TX.6: se marcan las dos.
-- [ ] **T2.31 · conmutar(acceso): el arranque nuevo cablea `acceso` (= FX TX.7)** · 🌐 · dep. T2.29, T2.30 · cumple R2.4.a–b, R2.5.b–e, R2.3.e
-  - **Ficheros**: en `internal/arranque`: las copias de `auth.go`, `fase3_almacenes.go`, `fase4_gateway.go`, `fase8_transporte.go`, `http.go`, `rutas_admin.go`, `contenedor.go`; `huella_test.go` si hace falta un caso; `traspasos/TRASPASO-F2-acceso.md`
+- [ ] **T2.31 · conmutar(acceso): el arranque nuevo cablea `acceso` (= FX TX.7)** · 🌐 · dep. T2.29, T2.30, T2.34 · cumple R2.4.a–b, R2.5.b–e, R2.3.e
+  - **Ficheros**: en `internal/arranque`: `auth_*.go` (partidos en T2.34), `fase3_almacenes.go`, `fase4_gateway.go`, `fase8_transporte.go`, `http.go`, `rutas_admin.go`, `contenedor.go`; `huella_test.go` si hace falta un caso; `traspasos/TRASPASO-F2-acceso.md`
   - **Hecho cuando**: **un** `entitlements.NewPostgres` (nuevo) inyectado en todos los consumidores —incluida la cara vieja: `Deps.Entitlements` = el nuevo (FX TX.7)—; `Deps.{Roles,Members,Invitations,Audit}` = `nil`; A1–A7 fuera del mux viejo; J4–J11 inline con `platformadmin` nuevo sin alias; gateway viejo con `puente_iam`; aserción de cableado sobre el tipo de `c.entResolver`; `go list -deps ./cmd/server-modular` cumple R2.5.d; `git diff --stat -- cmd/server internal/bootstrap` vacío.
   - **Gate**: `GOWORK=off go test -count=1 -v -run 'Mudanzas|Huella|PlatformPermissions|Cableado' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$? >> "$TMPDIR/m.log"; tail -1 "$TMPDIR/m.log"` → `rc=0`, `grep -c -- '--- SKIP' "$TMPDIR/m.log"` → 0 · `make ci-local` rc=0
   - **Commit**: `conmutar(acceso): el arranque nuevo cablea acceso y muda 23 rutas`

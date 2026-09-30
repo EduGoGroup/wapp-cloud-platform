@@ -76,6 +76,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F2-4 | `entitlements.Fake` → paquete `entitlementstest` | Sí | F2 bloque B | sí (2026-09-30) |
 | D-F2-5 | Sin suites de contrato para `ports/in` | Sí | F2 bloque B | sí (2026-09-30) |
 | D-F2-6 | Relojes inyectables | Sí | F2 bloque B | sí (2026-09-30) |
+| D-F2-8 | *(de la revisión del PR de F0-04)* Partir la copia `internal/arranque/auth.go` (835 l, seis temas, crece en F2 y F3) en `auth_{stack,jwt,roleplane,invitaciones,empresa_activa}.go` y `edge_config.go`, solo moviendo declaraciones. En F0 no: R0.4.b exige copia exacta hasta cerrar F0 | Sí, como **primera tarea de F2** (T2.34), con la huella como prueba | F2 bloque A | sí (2026-09-30) |
 | D-F3-1 | Gemelos en memoria a `<paquete>test` | Sí | F3 bloque B | sí (2026-09-30) |
 | D-F3-2 | La identidad de `ErrSessionOffline` se conserva vía `platform` (hace innecesario el puente de D-FX-3). FX (TX.10), F3 (T3.27), F8 (T8.34) y el mapa §4.4 ya lo planifican así (validación 2026-09-29) | Sí | F3 bloque G | sí (2026-09-30) |
 | D-FX-3 | *(Alternativa a D-F3-2)* `edge/session` conserva la identidad del centinela viejo hasta F8 | Solo si D-F3-2 = no | F3 bloque G | no aplica: D-F3-2 = sí (2026-09-30) |

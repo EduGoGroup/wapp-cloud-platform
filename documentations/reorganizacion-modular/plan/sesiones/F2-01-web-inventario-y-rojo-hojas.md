@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Fase · bloque | [F2 · acceso](../F2-acceso/README.md) · A · inventario verificado + B · rojo de las hojas (🌐) |
-| Tareas | T2.1 + T2.2–T2.8 |
+| Tareas | T2.1 + T2.34 + T2.2–T2.8 |
 | Depende de | F9-05 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F2 bloque A/B» |
 | Se para cuando | `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo · `ci-local` rc=0 · PR abierto. |
@@ -27,7 +27,7 @@ documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-WEB.md
 Tu encargo (y solo este):
 - Fase: F2 · acceso → documentations/reorganizacion-modular/plan/F2-acceso/
 - Bloque(s): A · inventario verificado + B · rojo de las hojas
-- Tareas: T2.1 + T2.2–T2.8 de plan/F2-acceso/tareas.md
+- Tareas: T2.1 + T2.34 + T2.2–T2.8 de plan/F2-acceso/tareas.md
 - Te paras cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo · `ci-local` rc=0 · PR abierto.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F2 bloque A/B» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
@@ -39,7 +39,7 @@ Al terminar: tareas [x] con SHA, ESTADO.md, traspaso si algo lo cierra la local,
 ## Al terminar debe existir
 
 - Commits con los prefijos de la plantilla (`rojo(<m>)`, `verde(<m>)`, `conmutar(<m>)`, `andamiaje(f0)`, `procesos(<p>)`, `relevo`, `docs(reorganizacion-modular)`, `chore(deps)`), empujados a la rama de la sesión.
-- En [`../F2-acceso/tareas.md`](../F2-acceso/tareas.md): T2.1 + T2.2–T2.8 `[x]` con SHA (o `[~]` con lo que falta).
+- En [`../F2-acceso/tareas.md`](../F2-acceso/tareas.md): T2.1 + T2.34 + T2.2–T2.8 `[x]` con SHA (o `[~]` con lo que falta).
 - `ESTADO.md` de la reorganización al día.
 - Un PR con `--base dev`, con el informe de gates y «integrar SIN squash».
 - Si el bloque es 🌐→💻: el traspaso en `documentations/reorganizacion-modular/traspasos/`.
