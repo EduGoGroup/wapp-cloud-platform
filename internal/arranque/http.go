@@ -194,12 +194,12 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	//
 	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux viejo va la
 	// cara NUEVA (internal/apipublica), vacía hasta que una fase mude sus rutas
-	// (TX.4: FaseActual, mudanzas.go). El Compuesto sirve por la nueva lo que ella registre y
+	// (FaseActual y caraNueva, mudanzas.go). El Compuesto sirve por la nueva lo que ella registre y
 	// delega el resto en publicMux con el MISMO *http.Request, así que r.Pattern sigue
 	// llegando a la métrica. Rate-limit y métricas envuelven el COMPUESTO una sola vez
 	// (RX.2.c; lo vigila cara_nueva_cableado_test.go). El compuesto se devuelve para
 	// que el candado de mudanzas lo resuelva patrón a patrón (Compuesto.Resolver).
-	compuesto := apipublica.Componer(apipublica.Nueva(), publicMux)
+	compuesto := apipublica.Componer(caraNueva(), publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
 	var handler http.Handler = compuesto
 	handler = httpapi.PublicRateLimit(handler, publicLim, mtx, log)
