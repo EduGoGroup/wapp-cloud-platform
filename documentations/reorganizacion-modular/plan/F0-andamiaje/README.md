@@ -1,7 +1,8 @@
 # F0 · Andamiaje — portal de la fase
 
-> **Estado: en curso — bloque A cerrado** (2026-09-30, sesión F0-01: T0.0 `98e806d`, T0.1
-> `de04088`); siguiente, bloque B (F0-02). Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> **Estado: en curso — bloques A, B y C cerrados** (2026-09-30: F0-01, T0.0 `98e806d`, T0.1
+> `de04088`; F0-02, T0.2–T0.4 y T0.26; F0-03, T0.5–T0.9, de `3040e82` a `3e85144`); siguiente, bloque D
+> (F0-04). Plan escrito el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md) §6. Forma: [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo
@@ -87,6 +88,9 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | 11 | `06` §1 y `flujo-web-local.md` §1: Docker «preinstalado» ✅ | el binario sí; el **daemon no corre** al empezar la sesión (`docker info` rc=1), y Docker Hub da 429 | `06` §5; el hook lo avisa con el comando; decisión F0-A-1 |
 | 12 | `tareas.md` T0.4: la demostración de que muerden «se deshace con `git stash -u && git stash drop`» | en T0.4 el `Makefile` **aún no está commiteado**: el `stash -u` se lo lleva junto con los ficheros de la demostración y el `drop` lo borra (pasó en F0-02; se recuperó del commit del stash con `git checkout <sha-del-stash> -- Makefile`) | Para T0.4 (y toda demostración con cambios propios sin commitear): commitear antes, o deshacer con `rm` de los ficheros de la demostración. T0.27 tiene la misma receta: allí los dos tests viejos **sí** estarán sin commitear |
 | 13 | `diseno.md` §3: «los paquetes del alcance que aún no existen se omiten con `go list`» | `go list ./internal/modulos/... ./internal/nucleo/...` con un directorio inexistente da `rc=1` y **no lista ninguno**, tampoco los que sí existen (`lstat … no such file or directory`) | `test-pendiente` filtra antes por existencia del directorio (`[ -d ]`) y solo entonces llama a `go list`; T0.9 (`cobertura-ficheros`) necesitará lo mismo |
+| 14 | `diseno.md` §3: `test-pendiente` cuenta `pendiente.Implementar(` y `//go:build pendiente` en todo el repo | el `grep` y el `find` entraban en `testdata/`, que Go ignora; los árboles de prueba de `internal/candados` imitan rojos a propósito (un fichero en rojo en `cobertura`, un test con etiqueta en `exportados`) y las cifras no podrían volver a 0 | `3040e82` (F0-03): `--exclude-dir=testdata` y `-name testdata -prune`, con comentario en el `Makefile` |
+| 15 | `diseno.md` §4.5 y T0.9: el caso `muerde` de la cobertura es «un perfil» en `testdata/cobertura/` | la raíz `.gitignore:10` ignora `*.out`: los `perfil.out` no se commitearon y los verdes pasaban **solo en el árbol de trabajo**; lo destapó correr `ci-local` en un *worktree* limpio (F0-03) | `internal/candados/testdata/.gitignore` con `!*.out`, metido por *fixup* en el rojo `2c2bbd6` (rama propia sin PR). **Norma para toda sesión**: el gate que cuenta es el de un clon limpio del commit (`git worktree add --detach … HEAD`) |
+| 16 | `diseno.md` §4.2: exención D-F1-3 «todo fichero de un paquete cuyo nombre termina en `test`» | literal: exime también un paquete de producción que se llamara, p. ej., `contest` | Se dejó literal (una condición, como pide el diseño). Si un módulo necesitara un nombre así, se decide entonces |
 
 ## Números medidos (y cómo)
 
@@ -100,5 +104,5 @@ de `ci-local`; exención de adaptadores Postgres por marca verificada; `make tes
 | *Hooks* de métricas | 14 usos, 12 métodos | `grep -o 'mtx\.[A-Za-z]*'` |
 | Integración que honra `WAPP_TEST_REQUIRE_DB` | 50 de 91 ficheros | `grep -rln` (2026-09-28) |
 | Contenedor de huella | 0,09 s, sin red | prototipo |
-| Lista blanca de fronteras | **sin medir — la mide T0.7** con el script de `02` §5 | — |
+| Lista blanca de fronteras | **13 aristas** módulo→módulo entre los 7 de D-5 (+2 de `platform`, los ✎ del bloque E, fuera de `Capas`); los tests viejos añadirían 4 más, que no entran (E-8) | script de `02` §5 con el `MAP` de D-5 (`platformadmin`, `entitlements` → `acceso`), solo `.Imports`, sobre `dev` @ `c55e9e3` (2026-09-30, T0.7) |
 | ¿Basta dejar a `nil` tipado los almacenes de la fase 3 en la huella? | **sin medir — lo mide T0.14** | — |

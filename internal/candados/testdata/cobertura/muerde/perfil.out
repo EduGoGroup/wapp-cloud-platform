@@ -1,0 +1,9 @@
+mode: set
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/medio/medio.go:4.16,7.2 2 1
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/medio/medio.go:10.16,13.2 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/medio/medio.go:4.16,7.2 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/rojo/rojo.go:6.18,8.2 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/falso/falso.go:7.25,7.41 9 1
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/falso/falso.go:7.41,7.42 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/pg/pg.go:9.28,9.40 10 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/tarde/tarde.go:9.23,9.35 1 0
