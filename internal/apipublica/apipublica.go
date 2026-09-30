@@ -17,8 +17,7 @@ package apipublica
 
 import (
 	"net/http"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"slices"
 )
 
 // Cara es la cara nueva: un *http.ServeMux propio y la lista de patrones que se le registraron
@@ -26,15 +25,19 @@ import (
 // enumerar: el candado de mudanzas comprueba con ella que la cara no sirve un patrón de más.
 //
 // Una Cara se construye con Nueva; su valor cero no está listo para usarse.
+//
+// Registrar (Handle) es cosa del arranque, antes de servir: la lista no lleva cerrojo propio,
+// igual que el cableado de cualquier mux de la casa. El mux sí es seguro para servir en
+// concurrencia, porque es un *http.ServeMux.
 type Cara struct {
-	// El mux y la lista de patrones nacen con el verde: en rojo, un campo que solo lee un
-	// cuerpo en panic sería código muerto.
+	mux      *http.ServeMux
+	patrones []string
 }
 
 // Nueva devuelve una cara vacía: Patrones() da una lista de longitud 0 y toda petición que
 // sirve es el 404 del ServeMux (estado 404, cuerpo exactamente "404 page not found\n").
 func Nueva() *Cara {
-	panic(pendiente.Implementar("apipublica.Nueva"))
+	return &Cara{mux: http.NewServeMux()}
 }
 
 // Handle registra h bajo patron en el mux de la cara Y anota patron al final de la lista de
@@ -47,14 +50,20 @@ func Nueva() *Cara {
 // conflicto es un fallo de cableado que debe romper el arranque (el mismo criterio que el viejo
 // TestMuxRegistration_NoPanic).
 func (c *Cara) Handle(patron string, h http.Handler) {
-	panic(pendiente.Implementar("apipublica.Cara.Handle"))
+	// Primero el mux: si panica (conflicto, patrón inválido, h nil) el panic sube tal cual y el
+	// patrón NO llega a la lista, que así solo contiene lo que la cara sirve de verdad.
+	c.mux.Handle(patron, h)
+	c.patrones = append(c.patrones, patron)
 }
 
 // Patrones devuelve una COPIA de la lista de patrones registrados, en orden de registro. Mutar
 // el slice devuelto (asignar o añadir) no altera la cara: la siguiente llamada da la lista
 // original. Una cara sin registros da longitud 0.
 func (c *Cara) Patrones() []string {
-	panic(pendiente.Implementar("apipublica.Cara.Patrones"))
+	// Clone y no el slice propio: el candado de mudanzas (u otro llamador) podría ordenarlo o
+	// ampliarlo, y eso no debe reescribir lo que la cara registró. Sin registros, Clone de nil
+	// es nil: longitud 0, como promete el contrato.
+	return slices.Clone(c.patrones)
 }
 
 // Handler devuelve lo mismo que http.ServeMux.Handler sobre el mux de la cara: el handler y el
@@ -64,12 +73,14 @@ func (c *Cara) Patrones() []string {
 // Solo consulta: no invoca ningún handler (no escribe respuesta alguna) ni muta r (r.Pattern y
 // los valores de PathValue siguen como estaban).
 func (c *Cara) Handler(r *http.Request) (http.Handler, string) {
-	panic(pendiente.Implementar("apipublica.Cara.Handler"))
+	// http.ServeMux.Handler solo busca: no rellena r.Pattern ni los PathValue (eso lo hace
+	// ServeHTTP), y ante un no-casa devuelve el handler de error del mux con patrón "".
+	return c.mux.Handler(r)
 }
 
 // ServeHTTP delega en el mux de la cara: el handler registrado sirve la petición (con
 // r.Pattern y PathValue rellenos por el mux), y lo que no casa recibe el 404 o el 405 con Allow
 // del propio ServeMux. No añade middleware, cabeceras ni escritura propias.
 func (c *Cara) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	panic(pendiente.Implementar("apipublica.Cara.ServeHTTP"))
+	c.mux.ServeHTTP(w, r)
 }

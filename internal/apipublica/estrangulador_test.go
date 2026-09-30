@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 import (
