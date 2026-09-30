@@ -95,6 +95,9 @@ func TestMembresiaUnica_TodoElQueInsertaLlamaALaGuarda(t *testing.T) {
 	var encontrados []string
 
 	err := filepath.WalkDir(raizDelBarrido, func(ruta string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && filepath.Dir(ruta) == raizDelBarrido && slices.Contains([]string{"modulos", "nucleo", "arranque", "apipublica", "pendiente", "candados"}, d.Name()) {
+			return filepath.SkipDir // D-F4-1 (F0 · T0.27): el árbol nuevo trae sus propios candados; se compara el primer nivel de internal/, no el nombre (internal/bootstrap/arranque se sigue barriendo)
+		}
 		if err != nil {
 			return err
 		}
