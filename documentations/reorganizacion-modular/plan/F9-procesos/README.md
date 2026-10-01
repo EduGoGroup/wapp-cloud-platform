@@ -90,6 +90,23 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-4** | 🔴 Los **9 ficheros / 25 `Test*`** de integración de `internal/platform/` **sobreviven** al relevo (platform no se borra) y seguirían leyendo `WAPP_TEST_DB_DSN` con `t.Skip` (DT-52) | **Re-expresarlos como P10 · plataforma** (réplica de migraciones sobre un clon, grants, rekey por `/admin/crypto/rekey`, el colector de `/metrics`) y borrarlos en F10 junto con `make test-integration`. Sin esto, F10 no puede dejar el repo sin `WAPP_TEST_DB_DSN`. Toca tests viejos de `platform`: por eso es decisión |
 | **D-F9-5** (opcional) | ¿Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`)? | **Sí, informativa, sin umbral**: diría cuánto SQL de los adaptadores excluidos de E-9 ejecutan los procesos. No bloquea nada |
 
+### Decisiones tomadas (T9.1)
+
+> **2026-09-30**: Jhoan acepta **en bloque** la recomendación de todas las filas de
+> [`../DECISIONES.md`](../DECISIONES.md) §4 «Antes de F9» (la fuente; aquí se copian con su fecha para
+> que quien abra esta fase no tenga que salir de ella). Ninguna se tomó distinta de la recomendación,
+> así que **no se reordena nada**.
+
+| # | Decisión | Fecha | Efecto en las tareas |
+|---|---|---|---|
+| **D-F9-1** | **Sí**: se adelanta F9 (9A tras F0, 9B tras la parada de F1, 9C en cada `conmutar`, 9D antes de F10) | 2026-09-30 | Las tareas 🕐 se quedan como están; **T9.34 no se ejecuta** (queda solo como alternativa histórica); T9.22–T9.29 son las pasadas 9C |
+| **D-13** | **Sí**: lista cerrada **P0–P9** de [`diseno.md`](diseno.md) §4 | 2026-09-30 | Un fichero por proceso, T9.11 y T9.13–T9.21 |
+| **D-F9-2** | **Sí**: sin opción R2 en el arranque; con endpoint IP el SDK de S3 hace *path-style* solo | 2026-09-30 | Ninguna variable nueva. 🔴 La confirma **T9.11** ejecutándola; si el SDK pide *virtual-hosted*, se para y vuelve a Jhoan |
+| **D-F9-3** | **Sí**: S3 falso dentro del proceso de test (`s3falso_test.go`, `net/http` puro) | 2026-09-30 | Sin MinIO ni `gofakes3` |
+| **D-F9-4** | **Sí**: P10 · plataforma para los 9 ficheros / 25 `Test*` de `internal/platform/` con BD | 2026-09-30 | T9.35 **activa** (bloque B2) |
+| **D-F9-5** | **Sí** (opcional, informativa, sin umbral): medir la cobertura que dan los procesos al código nuevo | 2026-09-30 | No bloquea nada; se decide cuándo en el bloque D |
+| **T-2** | **Sí**: se aceptan las subidas de `httpsnoop` 1.0.4→1.1.0, `otelhttp` 0.67→0.69 y `klauspost/compress` que trae testcontainers v0.44.0 | 2026-09-30 | T9.2 va en un commit `chore(deps)` **aislado** (ver contradicción 10) |
+
 ## Encaje con F0 y F1 (escritas antes que esta spec)
 
 - **F0** crea `test/procesos/doc.go` y el candado `sin_bd_viva_test.go` (T0.8; patrones en su
