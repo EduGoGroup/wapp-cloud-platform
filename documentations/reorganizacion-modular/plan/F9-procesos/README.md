@@ -1,6 +1,8 @@
 # F9 · Procesos — la integración de cero, por proceso, con testcontainers
 
-> **Estado**: ⏳ sin empezar (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`).
+> **Estado**: 🟡 **bloque A escrito y pre-chequeado en la web** (sesión F9-01, 2026-10-01; rama `reorg/f9-a-arnes`): el arnés y
+> P0 pasan contra los dos binarios en la VM web, **pero lo cierra la sesión local** (F9-02). B1, B2, C y D sin empezar.
+> Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §7 (y E-5, E-6, §3.2). **Cómo**: skill
 > [`procesos-testcontainers`](../../../../.claude/skills/procesos-testcontainers/SKILL.md). Forma:
 > [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Si esta fase choca con `05`, manda `05`.
@@ -90,6 +92,23 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-4** | 🔴 Los **9 ficheros / 25 `Test*`** de integración de `internal/platform/` **sobreviven** al relevo (platform no se borra) y seguirían leyendo `WAPP_TEST_DB_DSN` con `t.Skip` (DT-52) | **Re-expresarlos como P10 · plataforma** (réplica de migraciones sobre un clon, grants, rekey por `/admin/crypto/rekey`, el colector de `/metrics`) y borrarlos en F10 junto con `make test-integration`. Sin esto, F10 no puede dejar el repo sin `WAPP_TEST_DB_DSN`. Toca tests viejos de `platform`: por eso es decisión |
 | **D-F9-5** (opcional) | ¿Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`)? | **Sí, informativa, sin umbral**: diría cuánto SQL de los adaptadores excluidos de E-9 ejecutan los procesos. No bloquea nada |
 
+### Decisiones tomadas (T9.1)
+
+> **2026-09-30**: Jhoan acepta **en bloque** la recomendación de todas las filas de
+> [`../DECISIONES.md`](../DECISIONES.md) §4 «Antes de F9» (la fuente; aquí se copian con su fecha para
+> que quien abra esta fase no tenga que salir de ella). Ninguna se tomó distinta de la recomendación,
+> así que **no se reordena nada**.
+
+| # | Decisión | Fecha | Efecto en las tareas |
+|---|---|---|---|
+| **D-F9-1** | **Sí**: se adelanta F9 (9A tras F0, 9B tras la parada de F1, 9C en cada `conmutar`, 9D antes de F10) | 2026-09-30 | Las tareas 🕐 se quedan como están; **T9.34 no se ejecuta** (queda solo como alternativa histórica); T9.22–T9.29 son las pasadas 9C |
+| **D-13** | **Sí**: lista cerrada **P0–P9** de [`diseno.md`](diseno.md) §4 | 2026-09-30 | Un fichero por proceso, T9.11 y T9.13–T9.21 |
+| **D-F9-2** | **Sí**: sin opción R2 en el arranque; con endpoint IP el SDK de S3 hace *path-style* solo | 2026-09-30 | Ninguna variable nueva. 🔴 La confirma **T9.11** ejecutándola; si el SDK pide *virtual-hosted*, se para y vuelve a Jhoan |
+| **D-F9-3** | **Sí**: S3 falso dentro del proceso de test (`s3falso_test.go`, `net/http` puro) | 2026-09-30 | Sin MinIO ni `gofakes3` |
+| **D-F9-4** | **Sí**: P10 · plataforma para los 9 ficheros / 25 `Test*` de `internal/platform/` con BD | 2026-09-30 | T9.35 **activa** (bloque B2) |
+| **D-F9-5** | **Sí** (opcional, informativa, sin umbral): medir la cobertura que dan los procesos al código nuevo | 2026-09-30 | No bloquea nada; se decide cuándo en el bloque D |
+| **T-2** | **Sí**: se aceptan las subidas de `httpsnoop` 1.0.4→1.1.0, `otelhttp` 0.67→0.69 y `klauspost/compress` que trae testcontainers v0.44.0 | 2026-09-30 | T9.2 va en un commit `chore(deps)` **aislado** (ver contradicción 10) |
+
 ## Encaje con F0 y F1 (escritas antes que esta spec)
 
 - **F0** crea `test/procesos/doc.go` y el candado `sin_bd_viva_test.go` (T0.8; patrones en su
@@ -140,3 +159,36 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 9. **`05` §7.2**: «`make test-integration` … puerto 5432». Es el **default**, sobrescribible
    (`INTEGRATION_PG_PORT ?= 5432`, `Makefile:21`). El vicio de fondo (contenedor vivo, nombre fijo
    `wapp-cloud-platform-pg-test`) sí es cierto.
+10. **T9.2 no puede pasar su propio gate**: `go mod tidy && git diff --exit-code go.mod go.sum` borra un
+    `require` que ningún fichero importa, y T9.2 va antes de T9.5 (que importa testcontainers). Se resolvió con
+    `test/procesos/deps_test.go` (imports en blanco, comentados), que T9.5 borró. Y el prefijo del commit es
+    `chore(deps)` (decisión T-2: «commit aislado»), no el `procesos(arnes)` que dice `tareas.md`.
+11. **`key_source=config` (R9.3.a, `diseno.md` §4 P0, `arquitectura.md` §2)**: solo lo emite la clave de cifrado de la
+    nube (`internal/bootstrap/arranque/pki.go:105`). La del **lease** emite `base64` con `WAPP_LEASE_PRIVATE_KEY_B64`
+    (`internal/gateway/lease/signingkey.go:21`, `lease.go:44`), nunca `config`. P0 aserta cada una con su mensaje exacto.
+12. **«Los 17 nombres estáticos `wapp_*` de `contratos.md` §8 salen sin tráfico»**: solo **9** (`wapp_db_*` ×7,
+    `wapp_flow_autoreply_streak{,_max}`, `wapp_edge_inference_reporting_edges`). Siete `CounterVec` no aparecen hasta su
+    primer incremento (T-10), cuatro familias de Edge solo salen con un Edge reportando, y los dos `wapp_http_*` solo con
+    tráfico (el sondeo del propio arnés ya lo provoca). La lista medida y los motivos están en `p0MetricasSinTrafico`.
+13. **Detalles de código que la spec tenía desplazados**: `UsePathStyle=false` está en `r2_factory.go:47` (no `:51`); el
+    bucket del S3 falso es `wapp-procesos`, así que la petición es `HEAD /wapp-procesos` (no `/procesos`). **D-F9-2 queda
+    confirmada ejecutándola** (T9.11): una sola `HEAD`, path-style, `Host: 127.0.0.1:<p>`, en los dos binarios.
+14. **Lista blanca de imports (`arquitectura.md` §3)**: no nombra `google.golang.org/grpc`, `google.golang.org/protobuf` ni
+    el módulo raíz `identity-shared/auth` (para `ErrTokenExpired`), pero son inevitables para hablar el contrato de
+    `wapp-cloudlink` y para el doble de identidad. La regla que se comprueba de verdad es la de `internal/`:
+    `go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío.
+15. **R9.1.d y R9.1.a no se miden con los comandos de la spec en una máquina con `/var/run/docker.sock`**:
+    `DOCKER_HOST=unix:///nada` no basta (testcontainers prueba ese host, falla y cae al socket por defecto, y la corrida
+    pasa), y `docker ps --filter ancestor=postgres:17-alpine` da 0 siempre si la imagen local es
+    `mirror.gcr.io/postgres:17-alpine` (VM web). Se midió con un espacio de montajes privado que tapa `/run`
+    (`unshare --mount --propagation private`; no toca el daemon) y contando `docker ps -a --format '{{.Image}}'`. En la
+    máquina local con Docker Desktop el socket puede vivir en otra ruta: ahí el comando de la spec puede servir o no.
+16. **Dos refinamientos del arnés, sin efecto observable**: el servidor recibe `HOME=<directorio temporal vacío>` en vez
+    del `HOME` del desarrollador (así el SDK de AWS no lee `~/.aws`), y `TestMain` compila `cmd/migrate` y **solo el
+    binario elegido**, no los tres.
+17. **Para quien orqueste con sub-agentes**: `Agent(isolation: "worktree")` crea el *worktree* desde un commit viejo
+    (`2da10b4`, el de `main`), no desde la rama de la sesión; los tres primeros agentes de este bloque tuvieron que
+    verificar sobre una copia exportada. Los siguientes trabajaron en el árbol de la sesión, con ficheros disjuntos.
+18. **Alcance del Edge de prueba**: `TestArnes_EdgeFrames` ejerce contra el servidor real rutas que B1 recorrerá como
+    procesos (mensajes, diagnóstico, revocación de lease). Está aquí como autoprueba del Edge (sin ella el Edge solo habría
+    quedado compilado); B1 puede reutilizar o aligerar esos casos.

@@ -11,14 +11,14 @@
 Entrada: F0 cerrada. Puede correr en paralelo con F1 (otra sesión). Para cuando: P0 verde contra los
 dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
 
-- [ ] **T9.1 · docs: las decisiones de F9, escritas** · 🌐 · dep. — · cumple —
+- [x] **T9.1 · docs: las decisiones de F9, escritas** · 🌐 · dep. — · cumple — — cerrada en `a374cdb` (sesión F9-01, 2026-10-01): 2026-09-30: las siete decisiones copiadas con su fecha en el README de F9; D-F9-1 = sí, las 🕐 no se reordenan
   - **Ficheros**: `plan/F9-procesos/README.md` (sección «Decisiones», con fecha y lo decidido)
   - **Hecho cuando**: D-13 y D-F9-1..D-F9-4 tienen respuesta de Jhoan escrita; si D-F9-1 = no, las
     tareas 🕐 se reordenan según `arquitectura.md` §5.3
   - **Gate**: revisión de enlaces a mano (`make check-docs` **no existe** en este repo: `grep -c check-docs Makefile` → 0, 2026-09-29; es un target de la raíz de wApp, que la web no ve)
   - **Commit**: `docs(reorganizacion-modular): F9, decisiones D-13 y D-F9`
 
-- [ ] **T9.2 · procesos(arnes): testcontainers-go en `go.mod`** · 🌐 · dep. T9.1 · cumple R9.1.a
+- [x] **T9.2 · procesos(arnes): testcontainers-go en `go.mod`** · 🌐 · dep. T9.1 · cumple R9.1.a — cerrada en `37c7db7` (sesión F9-01, 2026-10-01): prefijo `chore(deps)` (decisión T-2), no `procesos(arnes)`; lleva además `test/procesos/deps_test.go` (imports en blanco) porque `go mod tidy` borra un `require` que nadie importa — T9.5 lo borró; `go 1.26.5` intacta, `go.sum` con red real, `go list -deps ./cmd/server | grep -c testcontainers` → 0, `ci-local` `GATE_RC=0` y `make test-integration` `rc=0` (sin `-v`: sin conteo de SKIP); suben `httpsnoop` 1.1.0, `otelhttp` 0.69.0 y `klauspost/compress` 1.18.6
   - **Ficheros**: `go.mod`, `go.sum` (`github.com/testcontainers/testcontainers-go` y `…/modules/postgres`, la última estable; `pgx/v5/stdlib` ya está)
   - **Hecho cuando**: `go 1.26.5` intacta en `go.mod`; `go.sum` generado **con red real**;
     `GOWORK=off go list -deps ./cmd/server | grep -c testcontainers` → 0 (no llega al binario)
@@ -26,61 +26,61 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Commit**: `procesos(arnes): testcontainers-go para test/procesos`
   - Si F1 ya lo añadió (D-F1-2, T1.13): tarea **anulada** con esa referencia.
 
-- [ ] **T9.3 · procesos(arnes): el candado ampliado** · 🌐 · dep. T9.2 · cumple R9.2.a–c
+- [x] **T9.3 · procesos(arnes): el candado ampliado** · 🌐 · dep. T9.2 · cumple R9.2.a–c — cerrada en `f300aff` (sesión F9-01, 2026-10-01): `SinBDViva` persigue también `os.Environ`, `Skip`/`SkipNow`/`Skipf` (patrón `t.Skip`) y `testing.Short`; un solo commit (modifica un fichero ya verde) con el rojo medido en el cuerpo; `sinbdviva.go` 100 % por fichero
   - **Ficheros**: la lógica del candado que dejó F0 (`internal/candados/`, su `diseno.md` §4.4) y dos casos `muerde` nuevos en `internal/candados/testdata/sinbdviva/` (`os.Environ()`, `t.Skip`)
   - **Hecho cuando**: cada caso `muerde` hace fallar el detector; `test/procesos/` limpio pasa
   - **Gate**: gate de la web; `GOWORK=off go test -v ./test/procesos/ ./internal/candados/... 2>&1 | grep -c -- '--- SKIP'` → 0
   - **Commit**: `procesos(arnes): el candado sin_bd_viva prohíbe os.Environ y t.Skip`
 
-- [ ] **T9.4 · procesos(arnes): `make test-procesos`, `vet-integracion` y lint** · 🌐 · dep. T9.2 · cumple R9.7.a, R9.4.e
+- [x] **T9.4 · procesos(arnes): `make test-procesos`, `vet-integracion` y lint** · 🌐 · dep. T9.2 · cumple R9.7.a, R9.4.e — cerrada en `b5f1601` (sesión F9-01, 2026-10-01): `make test-procesos` (BINARIO, CUENTA, PROCESOS_LOG_DIR), `vet-integracion` dentro de `ci-local` y `run.build-tags: [integracion]`; probado con un test que falla adrede (retirado)
   - **Ficheros**: `Makefile` (target `test-procesos` de `diseno.md` §7; `vet-integracion` dentro de `ci-local`), `.golangci.yml` (`run.build-tags: [integracion]`)
   - **Hecho cuando**: `grep -n 'tags integracion' Makefile` ≥ 2 líneas; `make test-procesos` con un test que falla adrede sale ≠ 0 y deja `RC=` en su log (se comprueba y se retira el test trampa antes del commit)
   - **Gate**: gate de la web (`golangci-lint v2.12.2`)
   - **Commit**: `procesos(arnes): make test-procesos y vet con la etiqueta integracion`
 
-- [ ] **T9.5 · procesos(arnes): `TestMain` y la base por proceso** · 🌐→💻 · dep. T9.4 · cumple R9.1.a–d
+- [~] **T9.5 · procesos(arnes): `TestMain` y la base por proceso** · 🌐→💻 · dep. T9.4 · cumple R9.1.a–d — abierta por la web en `576ba9a` (sesión F9-01, 2026-10-01): web: `vet` rc=0 y pre-chequeo `make test-procesos` viejo y nuevo `RC=0`, 0 SKIP; **falta (local)**: `BINARIO=viejo make test-procesos` `RC=0` y `docker ps` sin contenedores. R9.1.d medido en la web con un espacio de montajes privado (`DOCKER_HOST=unix:///nada` no basta si existe `/var/run/docker.sock`: testcontainers cae a él)
   - **Ficheros**: `test/procesos/main_test.go` (si F1 · T1.13 lo creó, se **amplía**: compilar `cmd/migrate`, `cmd/server`, `cmd/server-modular`; `WAPP_PROCESOS_BINARIO`), `test/procesos/base_test.go`
   - **Hecho cuando**: web: `GOWORK=off go vet -tags integracion ./test/procesos/...` rc=0; local: un test mínimo `TestArnes_BasePorProceso` pasa y `docker ps` tras la corrida no deja contenedores
   - **Gate**: web → vet; local → `BINARIO=viejo make test-procesos` RC=0
   - **Commit**: `procesos(arnes): un Postgres por corrida y una base clonada por proceso`
 
-- [ ] **T9.6 · procesos(arnes): PKI y claves de prueba** · 🌐 · dep. T9.5 · cumple R9.3.a
+- [x] **T9.6 · procesos(arnes): PKI y claves de prueba** · 🌐 · dep. T9.5 · cumple R9.3.a — cerrada en `2e2ecc1` (sesión F9-01, 2026-10-01): CA, certificado de servidor, lease, X25519, KEK y ES256 generados por corrida; sus tests hacen handshakes TLS 1.3 y mTLS reales por loopback
   - **Ficheros**: `test/procesos/pki_test.go`, `test/procesos/claves_test.go`
   - **Hecho cuando**: `grep -rn 'certs/\|\.env' test/procesos` vacío; un test del arnés parsea lo generado con `crypto/x509` y `crypto/ed25519`
   - **Gate**: vet `-tags integracion` rc=0
   - **Commit**: `procesos(arnes): PKI, lease, X25519, KEK y ES256 generados por corrida`
 
-- [ ] **T9.7 · procesos(arnes): dobles de S3 e identidad** · 🌐 · dep. T9.5 · cumple R9.3.b–c
+- [x] **T9.7 · procesos(arnes): dobles de S3 e identidad** · 🌐 · dep. T9.5 · cumple R9.3.b–c — cerrada en `7c63d9e` (sesión F9-01, 2026-10-01): S3 falso con endpoint IP y JWKS ES256 en loopback; el SDK real manda una sola `HEAD /<bucket>` path-style y `jwt.NewMultiVerifierFromJWKS` acepta el JWKS
   - **Ficheros**: `test/procesos/s3falso_test.go`, `test/procesos/identidad_test.go`
   - **Hecho cuando**: vet rc=0; los dos se levantan en `127.0.0.1` y registran lo que reciben
   - **Gate**: vet `-tags integracion` rc=0
   - **Commit**: `procesos(arnes): dobles de S3 e identity en el proceso de test`
 
-- [ ] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f
+- [~] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f — abierta por la web en `660947d` (sesión F9-01, 2026-10-01): web: pre-chequeo viejo y nuevo `RC=0`, `-race -count=3` sin carreras, 0 «address already in use», arranque hasta listo ≈ 105 ms; **falta (local)**: `BINARIO=viejo make test-procesos` `RC=0` (`TestArnes_EntornoLimpio` con `WAPP_DB_HOST=trampa` y dos servidores en paralelo)
   - **Ficheros**: `test/procesos/servidor_test.go` (entorno de `diseno.md` §2, puertos libres, espera, parada, volcado de log)
   - **Hecho cuando**: local: `TestArnes_EntornoLimpio` pasa con `WAPP_DB_HOST=trampa` exportado; dos servidores en paralelo sin `address already in use`
   - **Gate**: local `BINARIO=viejo make test-procesos` RC=0
   - **Commit**: `procesos(arnes): el binario elegido, con base, puertos y entorno propios`
 
-- [ ] **T9.9 · procesos(arnes): clientes y fixtures** · 🌐 · dep. T9.8 · cumple R9.3.e
+- [x] **T9.9 · procesos(arnes): clientes y fixtures** · 🌐 · dep. T9.8 · cumple R9.3.e — cerrada en `fa03e6b` (sesión F9-01, 2026-10-01): cliente con Context Token, `crearTenant`, fixtures sin puerta y `TestArnes_SinViaAPI` (24 casos); el canje contra el servidor real valida el doble de identidad (401 caducado, otro emisor y `system` ajeno; 400 cuerpo vacío)
   - **Ficheros**: `test/procesos/clientes_test.go`, `test/procesos/fixtures_test.go`
   - **Hecho cuando**: cada fixture dice en su comentario por qué no hay puerta HTTP; `TestArnes_SinViaAPI` existe
   - **Gate**: vet `-tags integracion` rc=0
   - **Commit**: `procesos(arnes): cliente con Context Token y fixtures sin puerta`
 
-- [ ] **T9.10 · procesos(arnes): el Edge de prueba** · 🌐 · dep. T9.8 · cumple R9.3.d
+- [x] **T9.10 · procesos(arnes): el Edge de prueba** · 🌐 · dep. T9.8 · cumple R9.3.d — cerrada en `5519343` (sesión F9-01, 2026-10-01): Edge de prueba con núcleo separado del transporte; importa solo `wapp-cloudlink`, `wapp-shared/envelope`, grpc/protobuf y stdlib (`go list -deps … | grep internal/` vacío). Ejercitado contra el servidor real (`TestArnes_EdgeEnrolaYConecta`, `TestArnes_EdgeFrames`) más de lo que pedía la tarea: ver §7 del traspaso
   - **Ficheros**: `test/procesos/edge_falso_test.go` (`diseno.md` §3.3; lectura previa de `cmd/server/integration_test.go:185-360`)
   - **Hecho cuando**: vet rc=0; importa solo `wapp-cloudlink` (gen, lease, mtls) y `wapp-shared/envelope` además de stdlib
   - **Gate**: vet `-tags integracion` rc=0; `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío
   - **Commit**: `procesos(arnes): el Edge de prueba, con mTLS, lease y sellado`
 
-- [ ] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b
+- [~] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b — abierta por la web en `10179d6` (sesión F9-01, 2026-10-01): web: `TestP0_Arranque` (10 subtests) viejo y nuevo `RC=0` ×3, sin diferencias; **D-F9-2 CONFIRMADA ejecutándola** (una `HEAD /wapp-procesos` path-style, `Host: 127.0.0.1:<p>`); **falta (local)**: `make test-procesos` `RC=0` ×2. Correcciones medidas a la spec: ver las contradicciones 11, 12 y 13 del README
   - **Ficheros**: `test/procesos/p0_arranque_test.go` (`diseno.md` §4 P0)
   - **Hecho cuando**: local: P0 `RC=0` contra **viejo y nuevo**; el doble de S3 registró `HEAD /procesos` con `Host: 127.0.0.1:<p>`. 🔴 Si el SDK pidió virtual-hosted, **parar**: traspaso a Jhoan con la petición registrada (D-F9-2)
   - **Gate**: local `make test-procesos` RC=0 ×2
   - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
 
-- [ ] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c
+- [~] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — abierta por la web en `6ee1c5e` (sesión F9-01, 2026-10-01): pre-chequeo web hecho (`make test-procesos` viejo y nuevo `RC=0` ×2 y `CUENTA=3`, 0 SKIP), `ci-local` `GATE_RC=0` y traspaso `TRASPASO-F9-arnes.md` escrito; **falta (local)**: `make test-procesos` `RC=0` ×2, sección `CERRADO <fecha>` e integrar la rama en `dev` sin squash
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
   - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0

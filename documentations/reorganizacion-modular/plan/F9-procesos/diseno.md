@@ -118,10 +118,11 @@ terminan comprobando que el log del servidor no tiene líneas `level=ERROR` ines
 - **Entra por**: el arranque del binario; `GET :8100/healthz`, `GET :8100/metrics`, `GET :8103/healthz`.
 - **Aserta**: `healthz` 200 con Postgres `healthy`; `:8103/healthz` **404** (no tiene sonda,
   `contratos.md` §3); las **9** líneas `arranque: fase completada` en orden (`orquestador.go:117-123`);
-  `migraciones aplicadas … skipped=true` (la base clonada ya está al día); las dos líneas de clave con
-  `key_source=config` (el chequeo §9 del despliegue de UAT); el doble de S3 recibió `HEAD /procesos`;
-  los 17 nombres estáticos `wapp_*` de `contratos.md` §8 que se emiten sin tráfico (los `CounterVec`
-  sin incremento **no** aparecen: se excluyen y se dice cuáles); `SIGTERM` → `servidor detenido
+  `migraciones aplicadas … skipped=true` (la base clonada ya está al día); las dos líneas de clave
+  (el chequeo §9 del despliegue de UAT): lease `key_source=base64` y nube `key_source=config` ✎ medido en F9-01,
+  contradicción 11 del README; el doble de S3 recibió `HEAD /wapp-procesos` (el bucket que crea `arrancar`);
+  los nombres `wapp_*` que salen sin tráfico ✎ **9**, no 17 (contradicción 12 del README: los `CounterVec`
+  sin incremento **no** aparecen y la lista medida está en `p0MetricasSinTrafico`); `SIGTERM` → `servidor detenido
   limpiamente` y código 0.
 - **Candados**: ninguno. **Suites**: ninguna. **Viejos (E-8)**: `internal/bootstrap/arranque/orquestador_test.go`,
   `pool_metrics_integration_test.go`, `internal/platform/metrics/metrics_test.go:48-49` (`wapp_auth_logins_total` no debe aparecer).
