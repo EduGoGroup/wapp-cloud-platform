@@ -1,12 +1,12 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-09-30**, al cerrar la sesión **F0-06** (💻 · F0 · bloques E/F: **F0 cerrada**). Este fichero es
+> **Última actualización: 2026-10-01**, al cerrar la sesión **F9-01** (🌐 · F9 · bloque A, el arnés: escrito y pre-chequeado en la web). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
 ## Dónde estamos
 
-**Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · siguiente: F9-01 (9A, el arnés) y luego F1.** El árbol
+**Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · F9 bloque A (el arnés) 🟡 escrito en la web el 2026-10-01, lo cierra F9-02 (💻) · luego F1.** El árbol
 nuevo solo tiene andamiaje (`pendiente`, `candados`, `arranque`, `apipublica` vacía, `cmd/server-modular`):
 **ningún módulo** de `internal/modulos/` existe aún. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
 una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y **81 sesiones** con
@@ -70,20 +70,35 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
   nuevos: contradicciones 31–33 del README de F0.
 - Detalle en el `CERRADO` de [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md).
 
+**F9-01 hecha (2026-10-01, 🌐)**: el arnés de procesos (ola 9A, adelantada por D-F9-1) y el proceso P0, rama
+`reorg/f9-a-arnes` sobre `origin/dev` @ `45e01a4`, PR a `dev`.
+- **T9.1–T9.4**: decisiones copiadas al README de F9 (`a374cdb`); testcontainers-go v0.44.0 en un commit `chore(deps)` aislado
+  (`37c7db7`, T-2: sube `httpsnoop`, `otelhttp` y `klauspost/compress` de producción); el candado `sin_bd_viva` prohíbe también
+  `os.Environ`, `t.Skip` y `testing.Short` (`f300aff`); `make test-procesos` y `vet-integracion` dentro de `ci-local` (`b5f1601`).
+- **T9.5–T9.11**: `TestMain` + base clonada (`576ba9a`), PKI y claves (`2e2ecc1`), dobles de S3 e identity (`7c63d9e`), servidor por
+  proceso (`660947d`), clientes y fixtures (`fa03e6b`), Edge de prueba (`5519343`) y **P0** (`10179d6`).
+- **Verificación web (no cierra nada)**: `ci-local` `GATE_RC=0` (84 paquetes, 0 issues, lint `v2.12.2`); `make test-procesos` viejo y
+  nuevo `RC=0`, 146 PASS · 0 SKIP · 0 FAIL por binario, dos pasadas y `CUENTA=3` (438 PASS). **D-F9-2 confirmada ejecutándola**:
+  con endpoint IP el SDK de S3 hace *path-style* (una `HEAD /<bucket>`); no hace falta ninguna opción nueva en el arranque.
+- **Contradicciones 10–18** del README de F9; la 11 (`key_source=base64` del lease, no `config`), la 12 (9 métricas sin tráfico, no
+  17) y la 15 (cómo medir «sin Docker») piden la mirada de la local. Traspaso: [`traspasos/TRASPASO-F9-arnes.md`](traspasos/TRASPASO-F9-arnes.md).
+
 **Siguiente paso:**
 1. **Jhoan**:
    - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04; la 27 bloquea F2, no F0);
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
-2. **F9-01 (🌐, 9A)**: el arnés de procesos, porque D-F9-1 = sí lo adelanta tras F0 ([`plan/sesiones/`](plan/sesiones/README.md));
-   luego F9-02 (💻) y F1.
+2. **F9-02 (💻)**: cierra el bloque A del arnés en tu máquina (`make test-procesos` contra los dos binarios, dos veces; ver la §4 del
+   [traspaso](traspasos/TRASPASO-F9-arnes.md)), con `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`, y fusiona la rama
+   de la web **sin squash**. Después F1 (puede correr en paralelo desde ya: no comparte ficheros).
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
 | F0 | ✅ cerrada (2026-09-30) | F · cierre local (T0.22–T0.25) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (en `dev` @ `835a7be`, PR #17). F: T0.22 y T0.23 sin commit (evidencia en el `CERRADO` del traspaso), T0.24 `835a7be` verificado, T0.25 `d3b3f3f` |
-| F9-A/B (adelantado) | pendiente | — | — |
+| F9-A (adelantado) | 🟡 escrito y pre-chequeado en la web (2026-10-01); lo cierra F9-02 | T9.1–T9.11 | `a374cdb`, `37c7db7`, `f300aff`, `b5f1601`, `576ba9a`, `2e2ecc1`, `7c63d9e`, `660947d`, `fa03e6b`, `5519343`, `10179d6` (rama `reorg/f9-a-arnes`, sobre `origin/dev` @ `45e01a4`) |
+| F9-B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
 | F9-D | pendiente | — | — |
@@ -108,6 +123,7 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
 | 2026-09-30 | **F0-05**: `apipublica` (rojo→verde) montada vacía delante del `publicapi` viejo; candado de mudanzas; los tres ✎ de `platform` con alias; barridos AST viejos ciegos al árbol nuevo; deriva documental cerrada; traspaso a la local | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.16–T0.21, T0.27 · [`plan/FX-cara-http/tareas.md`](plan/FX-cara-http/tareas.md) TX.1–TX.4 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) |
 | 2026-09-30 | **F0-06** (💻): **F0 cerrada**. Integración vieja con Postgres real (4.618 PASS · 0 SKIP · 0 FAIL, los 8 del *collector* en PASS), arranque real de `cmd/server-modular` (9/9, `/healthz` 200, SIGINT limpio) contrastado con el viejo (98 peticiones, mismos códigos), gate `ci-local` con `go1.26.5` y `golangci-lint v2.12.2` (`GATE_RC=0`) y §7 del traspaso refutada contra lo que corre | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.22–T0.25 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) `CERRADO` |
 | 2026-09-30 | **F0-A-1 aplicada en claude.ai/code** (Jhoan): las cinco variables del entorno web, `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` incluida, y el paso 4 del *setup script* (arranca `dockerd` y trae `postgres:17-alpine` y `ryuk` por `mirror.gcr.io`). Hasta hoy figuraba «pendiente» en tres ficheros por no haberse anotado | [`plan/DECISIONES.md`](plan/DECISIONES.md) F-2 y F0-A-1 · [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3 |
+| 2026-10-01 | **F9-01** (🌐): el arnés de procesos y P0 — testcontainers-go v0.44.0 (`chore(deps)` aislado, T-2), candado ampliado, `make test-procesos`, `TestMain` + base clonada, PKI/claves, dobles de S3 e identity, servidor por proceso, clientes, Edge de prueba y `TestP0_Arranque`. Pre-chequeo web: viejo y nuevo `RC=0` (146 PASS · 0 SKIP); D-F9-2 confirmada ejecutándola | [`plan/F9-procesos/tareas.md`](plan/F9-procesos/tareas.md) T9.1–T9.11 · [`traspasos/`](traspasos/TRASPASO-F9-arnes.md) |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -164,9 +180,9 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 ## Pendientes y obstáculos conocidos
 
 - ✅ **El lint de `ci-local` está fijado** (T-1, `d05ac3a`): `make lint` aborta si no es `v2.12.2`. Consecuencia local: el Go (`1.27.1`) y el lint (`2.14.0`) del sistema **no** sirven; hace falta `GOTOOLCHAIN=go1.26.5` y `v2.12.2` en el `PATH`.
-- **testcontainers sube dependencias de producción**: T-2, commit aislado en F9.
-- **R2 / `HeadBucket`** (`internal/bootstrap/arranque/flows.go:75`): **resuelto en el diseño** de F9
-  sin tocar el arranque (endpoint IP → *path-style*; S3 falso en el proceso de test). Sin ejecutar en F9; el arranque
+- ✅ **testcontainers sube dependencias de producción** (T-2): hecho en `37c7db7` (commit aislado). Suben `httpsnoop` 1.1.0, `otelhttp` 0.69.0 y `klauspost/compress` 1.18.6; `ci-local` y `make test-integration` (sin `-v`) dan rc=0 sobre esa base. La local repite la integración vieja **con `-v`** y compara con los 4.618 PASS.
+- ✅ **R2 / `HeadBucket`** (`internal/bootstrap/arranque/flows.go:75`): **resuelto y ejecutado** en F9-01
+  sin tocar el arranque (endpoint IP → *path-style*; S3 falso en el proceso de test; P0 lo aserta en los dos binarios); el arranque
   real de F0 (T0.23) sí lo ejecutó contra el R2 de desarrollo de `.env`, solo lectura.
 - `make test-integration` usa `postgres:16`; UAT corre `postgres:17-alpine`; la VM web trae un
   PostgreSQL 16 que **no se usa** para tests.
@@ -177,6 +193,8 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 - `origin/dev` contiene **F0 entera** (PR #13–#17, sin squash; el último merge es `835a7be`) más el cierre de F0-06.
   `origin/main` = `2da10b4`, sin tocar. Traspaso de F0: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md), **CERRADO**.
+- La rama `reorg/f9-a-arnes` (F9-01, 11 commits de código + 2 de documentación) cuelga de `origin/dev` @ `45e01a4`; PR a `dev`, **a integrar sin squash**
+  por F9-02. Traspaso abierto: [`traspasos/TRASPASO-F9-arnes.md`](traspasos/TRASPASO-F9-arnes.md).
 
 ## Para retomar
 
