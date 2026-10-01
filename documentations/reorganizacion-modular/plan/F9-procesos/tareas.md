@@ -80,7 +80,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: local `make test-procesos` RC=0 ×2
   - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
 
-- [x] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — pre-chequeo web en `6ee1c5e` (2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01)**: `make test-procesos` viejo y nuevo `RC=0` ×2 (pasadas 2 y 3) y `CUENTA=3`; `make ci-local` `GATE_RC=0` (84 paquetes, 0 issues, `go1.26.5`, lint `v2.12.2`); integración vieja con `-v` `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL`; la rama de la web ya estaba en `dev` sin squash (PR #18, `af7b8e9`); `TRASPASO-F9-arnes.md` con `CERRADO 2026-10-01`
+- [x] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — pre-chequeo web en `6ee1c5e` (2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; cierre documental en `ac8ac5f`)**: `make test-procesos` viejo y nuevo `RC=0` ×2 (pasadas 2 y 3) y `CUENTA=3`; `make ci-local` `GATE_RC=0` (84 paquetes, 0 issues, `go1.26.5`, lint `v2.12.2`); integración vieja con `-v` `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL`; la rama de la web ya estaba en `dev` sin squash (PR #18, `af7b8e9`); `TRASPASO-F9-arnes.md` con `CERRADO 2026-10-01`
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
   - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
