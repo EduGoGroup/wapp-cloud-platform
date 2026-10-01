@@ -53,6 +53,7 @@ Para cuando: todo el módulo en rojo · puente declarado · `make test-pendiente
 - [ ] **T6.12 · rojo(solicitudes): `integrations`, `crmpush`, suite y doble** · 🌐 · dep. T6.2, T6.3, T6.8 · cumple R6.3.b, R6.4.a–b, R6.4.d
   - **Ficheros**: `S/integrations/{store,gate,worker,crud,outbox_stats,postgres}.go` + tests; `integrationstest/{contrato,memoria}.go` (+ `memoria_test.go`: el doble tiene lógica); `integrations/contrato_wapp_crm_v1_test.go` (D-F6-3); `crmpush/{push,desde_intakes}.go` + tests; `crmpush/contrato_test.go` (candado R-12, dirs de `diseno.md` §6)
   - **Hecho cuando**: el doble `Memoria` nace **completo** y en verde (no es código de producción); reloj inyectado en el worker · **Commit**: `rojo(solicitudes): contratos del puente CRM`
+  - **Heredado de F9-02 (H-1, D-F6-7)**: el contrato de `integrations/worker.go` promete «contexto cancelado → vuelve **sin** loguear a `ERROR`» (hoy lo hacen `worker.go:209` y `:225`, y `TestP0_Arranque/sin_errores` falló por ello 1 de 161 veces); se escribe aquí, con su caso en `worker_test.go` (cancelar a mitad de la primera llamada), no al final
 - [ ] **T6.13 · Cierre del bloque C** · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` anotado (≈191 esperado) y coincide con `make test-pendiente`; `ci-local` rc=0; PR
 
 ## Bloque D · verde de hojas y de `intakes` (1/2) · 🌐 · T6.14–T6.16
@@ -72,6 +73,7 @@ Para cuando: 0 pendientes en `S` · cobertura ≥ 80 % · `vet -tags integracion
 
 - [ ] **T6.19 · verde(solicitudes): `telemetria`, `quotetext`** · 🌐
 - [ ] **T6.20 · verde(solicitudes): `crmpush`, `integrations`** · 🌐 · candado R-12 verde; esquema `wapp-crm-v1` verde
+  - **Heredado de F9-02 (D-F6-7)**: el verde del worker cumple esa promesa; no se porta el `w.log.Error` ante `ctx.Err() != nil`
 - [ ] **T6.21 · refactor(solicitudes) y medición** · 🌐 · pendientes = 0; tabla de cobertura por fichero en el PR
 
 ## Bloque G · la cara HTTP de solicitudes · 🌐 · T6.22–T6.23 (= **TX.16–TX.17** de FX)
@@ -96,5 +98,6 @@ Para cuando: huella igual · `go list -deps` prueba lo nuevo · candados verdes 
 ## Bloque I · cierre local · 💻 · T6.27–T6.29
 - [ ] **T6.27 · procesos(solicitudes): pasada 9C (= T9.27)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34)
   - **Hecho cuando**: suites `intakestest`, `integrationstest`, `tenantvarstest` contra Postgres (testcontainers) verdes; P5 (bandeja) y P6 (CRM) verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 leído del log
+  - **Heredado de F9-02 (H-1, D-F6-7)**: con el worker nuevo, se vuelve a medir `TestP0_Arranque/sin_errores` (`CUENTA=3`, arranques en frío, ambos binarios). Si deja de ser intermitente, se queda; si no, se **redefine el criterio** o lo sustituye un test más acorde, y se anota en el README de F9 (contradicción 19) y en `deuda.md` §5
 - [ ] **T6.28 · Integración en `dev`** · 💻 · merge sin squash; `ci-local` rc=0 en local con lint v2.12.2
 - [ ] **T6.29 · Cierre de F6** · 💻 · `ESTADO.md` y este `README.md` (estado «cerrada», SHA); `CERRADO <fecha>` en el traspaso · **Commit**: `docs(reorganizacion-modular): F6 cerrada`

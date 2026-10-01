@@ -2,7 +2,7 @@
 
 > **Estado**: ✅ **bloque A cerrado** (F9-01 🌐 lo escribió el 2026-10-01 → PR #18, `dev` @ `af7b8e9`; F9-02 💻 lo cerró el mismo
 > día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
-> conocida y sin resolver en `TestP0_Arranque/sin_errores`** (contradicción 19, decisión para Jhoan). B1, B2, C y D sin empezar.
+> conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01). B1, B2, C y D sin empezar.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §7 (y E-5, E-6, §3.2). **Cómo**: skill
 > [`procesos-testcontainers`](../../../../.claude/skills/procesos-testcontainers/SKILL.md). Forma:
@@ -208,7 +208,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     quedado compilado); B1 puede reutilizar o aligerar esos casos. ✅ F9-02 intentó refutarlo leyéndolo y **no lo logró**:
     asierta sobre efectos del servidor real (filas de `ingest_dedupe`, `message_receipts` y `fleet_sessions`, líneas de log,
     códigos HTTP, el Ack con el mismo `command_id`), no sobre lo que el propio Edge se manda. Se queda.
-19. **`TestP0_Arranque/sin_errores` es intermitente** (medido en F9-02, aún **sin resolver**). La pasada 1 de `make
+19. **`TestP0_Arranque/sin_errores` es intermitente** (medido en F9-02; **diferida a F6** por decisión de Jhoan, 2026-10-01). La pasada 1 de `make
     test-procesos` dio `viejo RC=0 · PASS=146` y `nuevo RC=1 · PASS=144 FAIL=2` (`TestP0_Arranque` y su subtest `sin_errores`).
     Las dos líneas `ERROR` son del *webhook worker* y caen en el instante de la parada: `webhook worker: rescatar entregas con
     el claim vencido … lookup localhost: operation was canceled` y `webhook worker: reclamar lote … context canceled`. Línea
@@ -224,12 +224,17 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     - **Quién queda expuesto**: solo el primer servidor de cada proceso de `go test`, que tarda ≈ 610–890 ms en arrancar en este
       Mac (media 697 ms en el viejo y 703 ms en el nuevo, 80 procesos de cada uno; los siguientes, ≈105 ms) y es siempre P0. Cada `make test-procesos` tiene un P0 en frío por binario; T9.30 tendrá dos.
       Con 1/161 ≈ 0,6 % por P0 en frío (intervalo ancho), un ≈ 1–2 % de falso rojo por corrida final.
-    - **No se tocó ni el test ni producción**: la regla de la sesión es no ajustar el test cuando solo falla el nuevo, y F9 no
-      toca `internal/**`. **Decisión de Jhoan**, tres salidas: (a) en el test, que `p0SinErrores` ignore las líneas `ERROR` posteriores
-      a «señal de parada recibida, cerrando» cuyo `error` sea una cancelación; (b) en el test, que P0 espere a la primera vuelta
-      del worker antes de parar (no hay una señal observable hoy); (c) en producción, que el worker no loguee a `ERROR` cuando
-      `ctx.Err() != nil` (defecto cosmético compartido por los dos binarios). Recomendación: (a) ahora y (c) como deuda. Hasta
-      entonces, un rojo de `sin_errores` con exactamente esas dos líneas es esta carrera; cualquier otro rojo no lo es.
+    - **No se tocó ni el test ni producción.** ✅ **Decisión de Jhoan (2026-10-01): se difiere a F6.** `internal/integrations` se reconstruye
+      en F6 (T6.12 y T6.20) y muchas cosas se rehacen allí de cero: arreglar ahora el test de P0 —o el worker viejo, que además **no se toca**,
+      porque es lo que corre en UAT— sería gastar tiempo en algo que probablemente se redefine. Lo que sí se hace es **dejarlo anotado donde F6 lo
+      encuentre**: la decisión **D-F6-7** (README de F6 y `DECISIONES.md`), una nota en T6.12, T6.20 y T6.27, la fila de `deuda.md` §5 y la regla
+      de `diseno.md` §4. En F6 se evalúa: (i) que el contrato del worker nuevo prometa «contexto cancelado → vuelve sin loguear a `ERROR`»;
+      (ii) si con eso `sin_errores` de P0 deja de ser intermitente o hay que **redefinir** el criterio (comprobar el log **antes** de la parada,
+      o aceptar solo cancelaciones posteriores a «señal de parada recibida, cerrando»); y (iii) si un test más acorde lo sustituye. Las salidas
+      que se barajaron: (a) en el test, que `p0SinErrores` ignore los `ERROR` de cancelación posteriores a la señal de parada; (b) en el test,
+      que P0 espere a la primera vuelta del worker (no hay una señal observable hoy); (c) que el worker **reconstruido** no loguee a `ERROR`
+      cuando `ctx.Err() != nil` (en el viejo, no). **Hasta F6**, un rojo de `sin_errores` con exactamente esas dos líneas `ERROR` es esta
+      carrera y no una regresión: se repite la corrida **una vez**, se compara y se anota; cualquier otro rojo no lo es.
 20. **La regla del `Cleanup` («el servidor sale con 0») no tiene la escapatoria que decía el traspaso.** `limpiar` vuelve a
     llamar a `Parar`, que es idempotente y devuelve **el mismo código**; así que un proceso que mata al servidor a propósito y
     llama a `Parar` antes falla igual con `el servidor no paró limpio: código de salida -1` (medido con un test temporal, ya

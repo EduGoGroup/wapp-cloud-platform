@@ -96,6 +96,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F6-4 | Conservar byte a byte el texto `cart: la indicación…` | Sí | F6 | sí (2026-09-30) |
 | D-F6-5 | Reloj inyectado en `Summary` | Sí | F6 bloque B | sí (2026-09-30) |
 | D-F6-6 | Separar el SQL de `buyerdata.go`, `crud.go` y `outbox_stats.go` en ficheros `*postgres*` | Sí | F6 bloque B | sí (2026-09-30) |
+| D-F6-7 | *(heredada de F9-02, H-1)* Diferir a F6 el rojo intermitente de `TestP0_Arranque/sin_errores` (el *webhook worker* viejo loguea `ERROR` al cancelarse el contexto): no se arregla ni el test ni el worker viejo; se evalúa al reconstruir `integrations`, con el contrato prometiendo no loguearlo y P0 redefinido si hace falta | Sí | F6 bloque C (T6.12) y bloque I (T6.27) | sí (2026-10-01) |
 | D-F7-1 | Segunda instancia vieja de `intake.Postgres` + `puente_captacion.go` | Sí | F7 bloque H | sí (2026-09-30) |
 | D-F7-2 | `cmd/casebank` cambia al paquete nuevo en F10, no en F7 | Sí | F7 | sí (2026-09-30) |
 | D-F7-3 | `pipeline/memoria.go`: verificarlo en T7.1; si es doble, a `pipelinetest/` | Verificar | F7 bloque A | verificar en T7.1 (2026-09-30) |

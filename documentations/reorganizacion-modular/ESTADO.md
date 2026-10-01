@@ -6,7 +6,7 @@
 
 ## Dónde estamos
 
-**Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · F9 bloque A (el arnés) ✅ cerrado el 2026-10-01 (F9-01 🌐 + F9-02 💻), con una intermitencia de P0 abierta (H-1) · luego F1.** El árbol
+**Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · F9 bloque A (el arnés) ✅ cerrado el 2026-10-01 (F9-01 🌐 + F9-02 💻), con una intermitencia de P0 diferida a F6 (H-1) · luego F1.** El árbol
 nuevo solo tiene andamiaje (`pendiente`, `candados`, `arranque`, `apipublica` vacía, `cmd/server-modular`):
 **ningún módulo** de `internal/modulos/` existe aún. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
 una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y **81 sesiones** con
@@ -91,8 +91,8 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
   medidos); `go mod tidy` sin cambios, `go mod verify` OK, 0 testcontainers en los dos binarios.
 - **Refutado**: R9.1.d (`DOCKER_HOST=unix:///nada` tampoco falla en macOS; corregido con `HOME` vacío) y la «escapatoria» `Parar` del `Cleanup`. **No refutado**:
   el alcance extra de `TestArnes_EdgeFrames` ni las 9 métricas de P0 (las 7 que faltan son `CounterVec`).
-- **H-1 · abierta, decide Jhoan**: `TestP0_Arranque/sin_errores` es una carrera con la parada (el *webhook worker* loguea `ERROR` si el SIGTERM llega mientras hace su primera
-  llamada a BD), con código compartido por los dos binarios; 1 fallo en 161 arranques en frío. No se tocó ni el test ni producción. Contradicciones 19–21 del README de F9.
+- **H-1 · diferida a F6 (decisión de Jhoan, 2026-10-01; D-F6-7)**: `TestP0_Arranque/sin_errores` es una carrera con la parada (el *webhook worker* loguea `ERROR` si el SIGTERM llega mientras hace su primera
+  llamada a BD), con código compartido por los dos binarios; 1 fallo en 161 arranques en frío. No se tocó ni el test ni producción: se evalúa al reconstruir `integrations` en F6 y queda anotada en `deuda.md` §5, `diseno.md` §4 y T6.12/T6.20/T6.27. Contradicciones 19–21 del README de F9.
 - Detalle en el `CERRADO` de [`traspasos/TRASPASO-F9-arnes.md`](traspasos/TRASPASO-F9-arnes.md).
 
 **Siguiente paso:**
@@ -100,18 +100,17 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
    - revisar las contradicciones 23, 24 y 27 del README de F0 (y la 19 de F0-04; la 27 bloquea F2, no F0);
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
-2. **Jhoan, sobre H-1**: elegir cómo cerrar la intermitencia de `TestP0_Arranque/sin_errores` (README de F9, contradicción 19): (a) el test ignora los
-   `ERROR` de cancelación posteriores a la parada, (b) P0 espera a la primera vuelta del worker, (c) producción no loguea a `ERROR` con el contexto cancelado
-   (`internal/integrations/worker.go:209,225`). Recomendación: (a) ahora y (c) como deuda. No bloquea B1, pero T9.30 tendrá un falso rojo del ≈ 1–2 % hasta decidirlo.
-3. **F9-B1 (T9.13–T9.16)** y **F1**: el bloque A está cerrado; las dos pueden ir en paralelo (no comparten ficheros). Para repetir los gates:
-   `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`.
+2. **F1-01 (🌐)**: el piloto `nucleo/contact`, contratos y rojo (T1.1–T1.7); es la sesión 11 del orden de [`plan/sesiones/`](plan/sesiones/README.md). Las F9-03…F9-05 (B1/B2) van
+   **después** de la parada de F1 (F1-05), por D-F9-1. Para repetir los gates en local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`.
+3. **H-1 no bloquea nada**: se difirió a F6 (D-F6-7). Hasta entonces, un rojo de `TestP0_Arranque/sin_errores` con las dos líneas `ERROR` del *webhook worker* es esa carrera: se repite
+   **una vez**, se compara y se anota (≈ 1–2 % de falso rojo por corrida).
 
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
 |---|---|---|---|
 | F0 | ✅ cerrada (2026-09-30) | F · cierre local (T0.22–T0.25) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (en `dev` @ `835a7be`, PR #17). F: T0.22 y T0.23 sin commit (evidencia en el `CERRADO` del traspaso), T0.24 `835a7be` verificado, T0.25 `d3b3f3f` |
-| F9-A (adelantado) | ✅ cerrado (2026-10-01): escrito en la web (F9-01), cerrado en local (F9-02); abierta H-1 (intermitencia de P0) | T9.1–T9.12 | `a374cdb`, `37c7db7`, `f300aff`, `b5f1601`, `576ba9a`, `2e2ecc1`, `7c63d9e`, `660947d`, `fa03e6b`, `5519343`, `10179d6`, `6ee1c5e` (en `dev` por el merge `af7b8e9`, PR #18); el cierre local es solo documental: `ac8ac5f` |
+| F9-A (adelantado) | ✅ cerrado (2026-10-01): escrito en la web (F9-01), cerrado en local (F9-02); H-1 (intermitencia de P0) diferida a F6 | T9.1–T9.12 | `a374cdb`, `37c7db7`, `f300aff`, `b5f1601`, `576ba9a`, `2e2ecc1`, `7c63d9e`, `660947d`, `fa03e6b`, `5519343`, `10179d6`, `6ee1c5e` (en `dev` por el merge `af7b8e9`, PR #18); el cierre local es solo documental: `ac8ac5f` |
 | F9-B (adelantado) | pendiente | — | — |
 | F1 | pendiente | — | — |
 | F2–F8 | pendiente | — | — |
@@ -138,7 +137,7 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
 | 2026-09-30 | **F0-06** (💻): **F0 cerrada**. Integración vieja con Postgres real (4.618 PASS · 0 SKIP · 0 FAIL, los 8 del *collector* en PASS), arranque real de `cmd/server-modular` (9/9, `/healthz` 200, SIGINT limpio) contrastado con el viejo (98 peticiones, mismos códigos), gate `ci-local` con `go1.26.5` y `golangci-lint v2.12.2` (`GATE_RC=0`) y §7 del traspaso refutada contra lo que corre | [`plan/F0-andamiaje/tareas.md`](plan/F0-andamiaje/tareas.md) T0.22–T0.25 · [`traspasos/`](traspasos/TRASPASO-F0-andamiaje.md) `CERRADO` |
 | 2026-09-30 | **F0-A-1 aplicada en claude.ai/code** (Jhoan): las cinco variables del entorno web, `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` incluida, y el paso 4 del *setup script* (arranca `dockerd` y trae `postgres:17-alpine` y `ryuk` por `mirror.gcr.io`). Hasta hoy figuraba «pendiente» en tres ficheros por no haberse anotado | [`plan/DECISIONES.md`](plan/DECISIONES.md) F-2 y F0-A-1 · [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md) §3 |
 | 2026-10-01 | **F9-01** (🌐): el arnés de procesos y P0 — testcontainers-go v0.44.0 (`chore(deps)` aislado, T-2), candado ampliado, `make test-procesos`, `TestMain` + base clonada, PKI/claves, dobles de S3 e identity, servidor por proceso, clientes, Edge de prueba y `TestP0_Arranque`. Pre-chequeo web: viejo y nuevo `RC=0` (146 PASS · 0 SKIP); D-F9-2 confirmada ejecutándola | [`plan/F9-procesos/tareas.md`](plan/F9-procesos/tareas.md) T9.1–T9.11 · [`traspasos/`](traspasos/TRASPASO-F9-arnes.md) |
-| 2026-10-01 | **F9-02** (💻): **bloque A de F9 cerrado**. `make test-procesos` `RC=0 · 146 PASS · 0 SKIP` por binario (pasadas 2 y 3; `CUENTA=3`: 438) salvo la pasada 1, con un rojo intermitente de `TestP0_Arranque/sin_errores` contra `nuevo` (H-1, abierta); `ci-local` `GATE_RC=0`; integración vieja con `-v` 4.631 PASS · 0 SKIP · 0 FAIL (T-2); R9.1.d corregido (el comando de la spec no mide nada en macOS) y la «escapatoria» `Parar` refutada | [`plan/F9-procesos/tareas.md`](plan/F9-procesos/tareas.md) T9.5, T9.8, T9.11, T9.12 · [`traspasos/`](traspasos/TRASPASO-F9-arnes.md) `CERRADO` |
+| 2026-10-01 | **F9-02** (💻): **bloque A de F9 cerrado**. `make test-procesos` `RC=0 · 146 PASS · 0 SKIP` por binario (pasadas 2 y 3; `CUENTA=3`: 438) salvo la pasada 1, con un rojo intermitente de `TestP0_Arranque/sin_errores` contra `nuevo` (H-1, diferida a F6); `ci-local` `GATE_RC=0`; integración vieja con `-v` 4.631 PASS · 0 SKIP · 0 FAIL (T-2); R9.1.d corregido (el comando de la spec no mide nada en macOS) y la «escapatoria» `Parar` refutada | [`plan/F9-procesos/tareas.md`](plan/F9-procesos/tareas.md) T9.5, T9.8, T9.11, T9.12 · [`traspasos/`](traspasos/TRASPASO-F9-arnes.md) `CERRADO` |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -196,7 +195,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 - ✅ **El lint de `ci-local` está fijado** (T-1, `d05ac3a`): `make lint` aborta si no es `v2.12.2`. Consecuencia local: el Go (`1.27.1`) y el lint (`2.14.0`) del sistema **no** sirven; hace falta `GOTOOLCHAIN=go1.26.5` y `v2.12.2` en el `PATH`.
 - ✅ **testcontainers sube dependencias de producción** (T-2): hecho en `37c7db7` (commit aislado). Suben `httpsnoop` 1.1.0, `otelhttp` 0.69.0 y `klauspost/compress` 1.18.6; `ci-local` y `make test-integration` (sin `-v`) dan rc=0 sobre esa base. **Cerrada con `-v` en F9-02**: `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL` (los +13 frente a los 4.618 de F0-06 son los casos del candado de T9.3, medidos), `go mod tidy` sin cambios y `go mod verify` OK.
-- 🟡 **H-1 · `TestP0_Arranque/sin_errores` intermitente** (F9-02): carrera entre la parada y la primera llamada a BD del *webhook worker* (código compartido por los dos binarios); sin resolver, decide Jhoan. Ver el README de F9, contradicción 19.
+- 🟡 **H-1 · `TestP0_Arranque/sin_errores` intermitente** (F9-02): carrera entre la parada y la primera llamada a BD del *webhook worker* (código compartido por los dos binarios); **diferida a F6 por decisión de Jhoan (2026-10-01)**: se evalúa al reconstruir `integrations` (D-F6-7), sin arreglar nada antes. Ver el README de F9, contradicción 19.
 - ✅ **R2 / `HeadBucket`** (`internal/bootstrap/arranque/flows.go:75`): **resuelto y ejecutado** en F9-01
   sin tocar el arranque (endpoint IP → *path-style*; S3 falso en el proceso de test; P0 lo aserta en los dos binarios); el arranque
   real de F0 (T0.23) sí lo ejecutó contra el R2 de desarrollo de `.env`, solo lectura.

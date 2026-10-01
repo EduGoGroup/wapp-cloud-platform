@@ -111,7 +111,9 @@ Para el callback, **firma** como lo haría el puente (`X-Wapp-Tenant`, `X-Wapp-T
 
 Convenciones: «admin» = Context Token de `tenant_admin` del tenant del proceso; «staff» = de
 `platform_admin` (fixture §1). Cada proceso crea **su** tenant por `POST /admin/tenants`. Todos
-terminan comprobando que el log del servidor no tiene líneas `level=ERROR` inesperadas.
+terminan comprobando que el log del servidor no tiene líneas `level=ERROR` inesperadas. ⚠️ Esa comprobación se hace **antes** de parar
+el servidor: tras el SIGTERM, el *webhook worker* puede loguear dos `ERROR` de cancelación si su primera llamada a BD seguía en vuelo
+(H-1, contradicción 19 del README; diferida a F6, D-F6-7). P0, que comprueba también la parada, es el único expuesto hoy.
 
 ### P0 · Humo del arranque (`p0_arranque_test.go`) — T9.11
 
@@ -123,7 +125,8 @@ terminan comprobando que el log del servidor no tiene líneas `level=ERROR` ines
   contradicción 11 del README; el doble de S3 recibió `HEAD /wapp-procesos` (el bucket que crea `arrancar`);
   los nombres `wapp_*` que salen sin tráfico ✎ **9**, no 17 (contradicción 12 del README: los `CounterVec`
   sin incremento **no** aparecen y la lista medida está en `p0MetricasSinTrafico`); `SIGTERM` → `servidor detenido
-  limpiamente` y código 0.
+  limpiamente` y código 0, **y cero `ERROR` en todo el log, parada incluida** ✎ esto último es intermitente (≈ 1 de 161 arranques en
+  frío, H-1) y se deja así hasta que F6 reconstruya `integrations` (D-F6-7).
 - **Candados**: ninguno. **Suites**: ninguna. **Viejos (E-8)**: `internal/bootstrap/arranque/orquestador_test.go`,
   `pool_metrics_integration_test.go`, `internal/platform/metrics/metrics_test.go:48-49` (`wapp_auth_logins_total` no debe aparecer).
 

@@ -74,7 +74,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: vet `-tags integracion` rc=0; `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío
   - **Commit**: `procesos(arnes): el Edge de prueba, con mTLS, lease y sellado`
 
-- [x] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b — cerrada en `10179d6` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`) con una salvedad**: `make test-procesos` `RC=0` en las pasadas 2 y 3 y en `CUENTA=3`, pero la **pasada 1 dio `RC=1` contra `nuevo`** por una intermitencia de `TestP0_Arranque/sin_errores` (README de F9, contradicción 19: carrera con la parada, **sin resolver**, decisión de Jhoan); `HEAD /wapp-procesos` path-style con `Host: 127.0.0.1:<p>` en los dos binarios (**D-F9-2 reconfirmada en local**); `/metrics` sin tráfico = 11 familias, idénticas en viejo y nuevo, y las 7 declaradas que faltan son `CounterVec` (contradicción 12 confirmada)
+- [x] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b — cerrada en `10179d6` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`) con una salvedad**: `make test-procesos` `RC=0` en las pasadas 2 y 3 y en `CUENTA=3`, pero la **pasada 1 dio `RC=1` contra `nuevo`** por una intermitencia de `TestP0_Arranque/sin_errores` (README de F9, contradicción 19: carrera con la parada, **diferida a F6** por decisión de Jhoan, D-F6-7); `HEAD /wapp-procesos` path-style con `Host: 127.0.0.1:<p>` en los dos binarios (**D-F9-2 reconfirmada en local**); `/metrics` sin tráfico = 11 familias, idénticas en viejo y nuevo, y las 7 declaradas que faltan son `CounterVec` (contradicción 12 confirmada)
   - **Ficheros**: `test/procesos/p0_arranque_test.go` (`diseno.md` §4 P0)
   - **Hecho cuando**: local: P0 `RC=0` contra **viejo y nuevo**; el doble de S3 registró `HEAD /procesos` con `Host: 127.0.0.1:<p>`. 🔴 Si el SDK pidió virtual-hosted, **parar**: traspaso a Jhoan con la petición registrada (D-F9-2)
   - **Gate**: local `make test-procesos` RC=0 ×2
@@ -138,6 +138,7 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
 
 - [ ] **T9.30 · Corrida final sin intermitencias** · 💻 · dep. T9.29 · cumple R9.8.a, R9.5.b
   - **Hecho cuando**: `CUENTA=3 make test-procesos` → viejo y nuevo `RC=0`, 0 SKIP, 0 FAIL; las 22 filas de `diseno.md` §5 con su `--- PASS` en el log; duración total anotada (referencia de F9-02, solo con P0 y el arnés: ≈ 25–31 s por pasada de los dos binarios, 33 s con `CUENTA=3`, Mac de 8 núcleos con la caché de Go caliente; ≈ 23 s en la VM web de 4 vCPU; crecerá con B1–C, hay que remedirla)
+  - **Heredado (H-1 de F9-02, D-F6-7)**: para entonces F6 ya reconstruyó `integrations` y evaluó `sin_errores`; esta corrida **no** lleva la salvedad de la intermitencia: si P0 vuelve a dar rojo con las dos líneas `ERROR` del worker, F6 no lo cerró
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b

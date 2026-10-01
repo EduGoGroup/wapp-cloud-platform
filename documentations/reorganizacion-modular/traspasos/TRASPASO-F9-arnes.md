@@ -214,15 +214,16 @@ directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del 
 
 ### Hallazgos
 
-- **H-1 · `TestP0_Arranque/sin_errores` es intermitente — SIN RESOLVER, decide Jhoan.** Detalle y cifras en la contradicción 19 del README de F9.
+- **H-1 · `TestP0_Arranque/sin_errores` es intermitente — DIFERIDA A F6 (decisión de Jhoan, 2026-10-01).** Detalle y cifras en la contradicción 19 del README de F9.
   Resumen: P0 manda SIGTERM ~130 ms después de arrancar y la primera llamada a BD del *webhook worker* puede seguir en vuelo; el worker
   loguea dos `ERROR` (`internal/integrations/worker.go:209` y `:225`) y P0 afirma «cero ERROR». **No es R9.4.c**: el worker es el mismo
   paquete en los dos binarios y `fase9_fondo.go` difiere solo en un comentario; no lo reproduje en el viejo, pero 1 fallo en 161
   arranques en frío (81 viejo, 80 nuevo) no distingue un binario del otro. Solo está expuesto el primer servidor de cada proceso de
   `go test` (≈ 610–890 ms de arranque en el Mac, con medias de 697 ms en el viejo y 703 ms en el nuevo, frente a ≈105 ms): P0, siempre. **No toqué el test ni producción** (la regla es no ajustar
   el test cuando solo falla el nuevo; F9 no toca `internal/**`). Salidas: (a) el test ignora `ERROR` de cancelación posteriores a la señal
-  de parada, (b) P0 espera a la primera vuelta del worker, (c) producción no loguea a `ERROR` con `ctx.Err() != nil`. Recomiendo (a) ahora
-  y (c) como deuda. T9.30 tendrá ≈ 1–2 % de falso rojo por corrida hasta que se decida.
+  de parada, (b) P0 espera a la primera vuelta del worker, (c) el worker no loguea a `ERROR` con `ctx.Err() != nil` (solo en el reconstruido: el viejo no se toca).
+  **Decisión de Jhoan (2026-10-01): no se arregla ahora, se evalúa en F6** al reconstruir `integrations` (D-F6-7), donde muchas cosas se rehacen de cero y el test
+  probablemente se redefine. Queda anotado en `deuda.md` §5, `diseno.md` §4 y T6.12/T6.20/T6.27. Hasta F6: ≈ 1–2 % de falso rojo por corrida.
 - **H-2 · «usar `Parar` antes» no evita el fallo del `Cleanup`.** `limpiar` vuelve a llamar a `Parar` (idempotente, mismo código): un
   servidor muerto a propósito suspende el test igual (`el servidor no paró limpio: código de salida -1`, medido con un test temporal
   retirado, viejo y nuevo). Quien necesite matarlo adrede tendrá que añadir una marca de «salida esperada»; no se construye por adelantado.
@@ -234,9 +235,9 @@ directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del 
 
 ### Qué queda
 
-- **Decisión de Jhoan sobre H-1** (a/b/c). Mientras tanto, un rojo de `sin_errores` con esas dos líneas exactas es esta carrera; cualquier otro rojo no lo es.
+- **H-1 diferida a F6 (decisión de Jhoan, 2026-10-01; D-F6-7)**: no se arregla ahora. Mientras tanto, un rojo de `sin_errores` con esas dos líneas exactas es esta carrera (se repite una vez y se anota); cualquier otro rojo no lo es.
 - §8 del traspaso: (1) **dejar** el alcance extra del Edge, no se refutó; (2) **mantener** la regla del `Cleanup`, con H-2 anotado; (3) la contradicción 15 **ya está corregida**.
 - **No corrido**: `make ci-docker` (el segundo gate del ecosistema; no se pidió), el arranque real de `cmd/server-modular` (no lo pide este bloque), UAT. De 7.3 (c) queda
   lo que sigue sin verse: la inferencia real, entrante → respuesta (P3) y el push de `intents`; es terreno de T9.15/T9.17.
 - No se tocó `main`; no se empezó F1 ni B1. Producción (`internal/**`, `cmd/**`): cero líneas; `test/procesos/` sin cambios (un test temporal creado y retirado, árbol limpio).
-- Siguiente: B1 (T9.13–T9.16) con el bloque A cerrado, y F1, que puede ir en paralelo.
+- Siguiente: **F1-01** (el piloto `nucleo/contact`); B1 (F9-03) va tras la parada de F1 (F1-05), por D-F9-1 y el orden de `plan/sesiones/`.

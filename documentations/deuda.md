@@ -273,6 +273,7 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 | **DEUDA-044.16** | `internal/intake/stages/match.go:42` y `:265`, `match_lineas.go:66`, `draft.go:259` | Un ítem malo **no** tira el borrador: se degrada y se anota como *warning* |
 | **DEUDA-050.1** (cerrada con red) | `internal/gateway/grpc/connect.go:917-940` | Carrera de la reconexión rápida (`MarkOffline` diferido, `MarkOnline` inmediato). Mitigada preguntando «¿sigue caída?» **al ejecutar** el job, no al encolarlo. El comentario declara qué **no** cubre la red |
 | **DEUDA-050.2** | `internal/platform/metrics/metrics.go:483` | El cuello mudado del head-of-line al pool; `wapp_db_wait_count` existe para decidirlo |
+| **H-1** (F9-02, 2026-10-01) · diferida a F6 | `internal/integrations/worker.go:209` y `:225` | El worker loguea a `ERROR` cuando se cancela el contexto a mitad de `recoverOrphans`/`pollOnce` (SIGTERM justo tras arrancar). Cosmético y **compartido** por `cmd/server` y `cmd/server-modular` (el nuevo cablea el mismo paquete); lo destapó `TestP0_Arranque/sin_errores` (1 fallo en 161 arranques en frío). **No se toca el código viejo**: se resuelve al reconstruir `integrations` en F6 (D-F6-7) |
 
 ---
 

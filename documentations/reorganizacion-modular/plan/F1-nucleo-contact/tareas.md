@@ -67,7 +67,7 @@ Entrada: PR del bloque A integrado en `dev`. Para cuando: 0 pendientes en `inter
   - **Hecho cuando**: pendientes en `internal/nucleo` = 0; tabla de cobertura por fichero anotada en el PR; `refactor` solo si hace falta (tests verdes antes y después).
   - **Commit**: `refactor(nucleo): …` o ninguno
 - [ ] **T1.13 · procesos(contact): la suite contra `PostgresResolver`** · 🌐→💻 · dep. T1.11 · cumple R1.3.c · **solo si D-F1-2**
-  - **Ficheros**: `test/procesos/contact_contrato_test.go` (`//go:build integracion`) y, si F0 no lo creó, el mínimo de `test/procesos/main_test.go` (un contenedor `postgres:17-alpine`, plantilla migrada una vez, base clonada por prueba — skill `procesos-testcontainers`)
+  - **Ficheros**: `test/procesos/contact_contrato_test.go` (`//go:build integracion`) y **reutiliza el arnés que ya dejó F9-A** (F9-02, 2026-10-01: `main_test.go` —un contenedor `postgres:17-alpine`, plantilla migrada una vez— y `base_test.go` —`nuevaBase`, una base clonada por prueba—; skill `procesos-testcontainers`): **no se recrea**, y la suite de contrato pide su base con `nuevaBase`
   - **Hecho cuando**: el `Montaje` de Postgres siembra 2 tenants con `postgres.NewTenantRepository(db).Create` y observa `flow_state` por SQL; `vet -tags integracion` rc=0; si Docker responde en la web, corrida de **pre-chequeo** anotada (no cierra).
   - **Gate**: `GOWORK=off go vet -tags integracion ./test/procesos/...; echo rc=$?` → 0 · candado `sin_bd_viva_test.go` verde
   - **Commit**: `procesos(contact): la suite de contrato contra Postgres`
