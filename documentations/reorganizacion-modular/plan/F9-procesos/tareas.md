@@ -80,7 +80,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: local `make test-procesos` RC=0 ×2
   - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
 
-- [ ] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c
+- [~] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — abierta por la web en `6ee1c5e` (sesión F9-01, 2026-10-01): pre-chequeo web hecho (`make test-procesos` viejo y nuevo `RC=0` ×2 y `CUENTA=3`, 0 SKIP), `ci-local` `GATE_RC=0` y traspaso `TRASPASO-F9-arnes.md` escrito; **falta (local)**: `make test-procesos` `RC=0` ×2, sección `CERRADO <fecha>` e integrar la rama en `dev` sin squash
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
   - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
