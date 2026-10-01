@@ -49,6 +49,7 @@
 | D-F1-1 | Suite de contrato con forma `Contrato(t, func(t) Montaje)` como patrón para **todo** puerto con BD (la forma `func() Puerto` no basta: FK de tenants, estado no visible por el puerto) | Sí | F1 bloque A | sí (2026-09-30) |
 | D-F1-4 | No portar el tipo `Contact` (cero instancias) | Sí | F1 bloque A | sí (2026-09-30) |
 | D-F1-5 | Los tipos nuevos que consumen paquetes aún viejos se adaptan en `internal/arranque/puente_<x>.go` (nace al conmutar, muere cuando conmuta el consumidor) — mecanismo estándar, distinto de los «puentes» de import de `05` §4.1 | Sí | F1 bloque C | sí (2026-09-30) |
+| D-F1-6 | *(de F1-01, sesión web, 2026-10-01)* Los paquetes `…test` (suites de contrato y dobles) quedan exentos **también de la cobertura por fichero** (D-12): `Evaluables` salta todo fichero cuyo paquete termina en `test` (la misma condición de D-F1-3). Sin esto, `contacttest/contrato.go` —que solo ejecutan los tests de las implementaciones, desde otros paquetes, y `go test -cover` sin `-coverpkg` no lo cuenta— saldría al 0 % y rompería `make ci-local`. ⚠️ Efecto colateral medido: `internal/arranque/huellatest` (paquete `huellatest`, 91,8 %) también sale de la medida y `FICHEROS_EVALUADOS` pasa de 10 a 9 | Sí (alternativa: renombrar `huellatest` o acotar la condición a `internal/{modulos,nucleo}`) | F1 bloque A (T1.3b: `68897a8` rojo, `776d6a2` verde) | sí (2026-10-01, Jhoan en la sesión F1-01, elegida entre «auto-test de la suite», «eximir …test» y «parar») |
 
 ## 3 · La parada tras F1 (T1.20)
 
