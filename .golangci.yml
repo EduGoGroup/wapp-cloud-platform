@@ -4,6 +4,10 @@ version: "2"
 run:
   timeout: 5m
   tests: true
+  # Para que el linter también vea test/procesos/ (F9 · T9.4): sus ficheros nacen con
+  # `//go:build integracion` y sin la etiqueta quedan fuera del análisis.
+  build-tags:
+    - integracion
 
 linters:
   enable:

@@ -5,8 +5,9 @@
 # corridas manuales y de base para releases futuros. La red real es este
 # Makefile: valida en LOCAL antes de mergear y pushear.
 #   - ci-local        espeja los jobs "test" + "lint" del ci.yml, más los gates de la
-#                     reconstrucción modular (vet-pendiente, cobertura-ficheros).
+#                     reconstrucción modular (vet-pendiente, vet-integracion, cobertura-ficheros).
 #   - test-integration espeja el job "integration" (Postgres efímero).
+#   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
 
 GO_VERSION   := 1.26.5
@@ -28,7 +29,7 @@ INTEGRATION_PG_PASSWORD  := wapp
 INTEGRATION_PG_DB        := wapp_test
 INTEGRATION_DSN          := postgres://$(INTEGRATION_PG_USER):$(INTEGRATION_PG_PASSWORD)@localhost:$(INTEGRATION_PG_PORT)/$(INTEGRATION_PG_DB)?sslmode=disable
 
-.PHONY: fmt-check vet vet-pendiente test-pendiente cobertura-ficheros lint build test test-integration ci-local ci-docker migrate migrate-status
+.PHONY: fmt-check vet vet-pendiente vet-integracion test-pendiente test-procesos cobertura-ficheros lint build test test-integration ci-local ci-docker migrate migrate-status
 
 fmt-check: ## gofmt -l vacío (sin archivos sin formatear)
 	@unformatted=$$(gofmt -l .); \
@@ -70,6 +71,14 @@ test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-p
 		$(GO) test -tags pendiente $$paqs || echo "test-pendiente: hay rojos que fallan (esperado; manda la cifra estática)"; \
 	fi
 	@$(MAKE) --no-print-directory vet-pendiente
+
+# ── Etiqueta `integracion` (procesos de negocio, F9 · T9.4) ───────────────────
+# Los tests de test/procesos/ nacen con `//go:build integracion`: fuera de `vet`, `lint`
+# y `test` salvo que se pida la etiqueta. vet-integracion los compila (un proceso que no
+# compila rompe ci-local sin necesitar Docker); .golangci.yml lleva la misma etiqueta
+# en run.build-tags para que el linter también los vea. Correrlos es test-procesos.
+vet-integracion: ## go vet -tags integracion ./test/procesos/... — los procesos también compilan (sin Docker)
+	$(GO) vet -tags integracion ./test/procesos/...
 
 # ── Cobertura por fichero (reconstrucción modular, 05 §5 · D-12 · F0 T0.9) ────
 # Cada fichero de producción EN VERDE del alcance exige ≥ 80 % de sentencias cubiertas;
@@ -130,7 +139,31 @@ test-integration: ## Tests de integración con Postgres efímero en Docker — e
 	docker rm -f $(INTEGRATION_PG_CONTAINER) >/dev/null 2>&1; \
 	exit $$status
 
-ci-local: fmt-check vet vet-pendiente lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + lint + test + cobertura-ficheros + build (sin integración: correr test-integration aparte)
+# ── Procesos de negocio (F9 · T9.4) ───────────────────────────────────────────
+# Cada proceso corre contra un Postgres de testcontainers (un contenedor por corrida, una
+# base clonada por proceso), así que NECESITA Docker: sin él, falla (no se salta). Se corre
+# contra los DOS binarios, `viejo` (cmd/server) y `nuevo` (cmd/server-modular), cada uno con
+# su log. La sesión web lo corre solo como pre-chequeo; la que cierra es la sesión local.
+#   BINARIO=viejo|nuevo  acota a un binario (por defecto, los dos)
+#   CUENTA=3             -count (por defecto 1)
+#   PROCESOS_LOG_DIR     dónde dejar los logs (por defecto /tmp → /tmp/procesos-<binario>.log)
+# El rc de `go test` se escribe como última línea `RC=<n>` del log ANTES de pasar al
+# siguiente binario: nunca se lee detrás de una tubería (la tubería devolvería el rc de grep).
+# El target sale ≠ 0 si cualquiera de los binarios falló. Un SKIP NO es verde: la línea de
+# resumen imprime SKIP= y quien lee el resultado lo cuenta (E-5: un proceso que no puede
+# correr falla, no se salta). La etiqueta `integracion` es obligatoria: sin ella el paquete
+# solo tiene el candado y `go test` da `ok` sin ejecutar ningún proceso (T-15).
+PROCESOS_LOG_DIR ?= /tmp
+
+test-procesos: ## Procesos (F9) contra los DOS binarios, testcontainers; necesita Docker (BINARIO=viejo|nuevo, CUENTA=n)
+	@fallo=0; for b in $${BINARIO:-viejo nuevo}; do \
+		L=$(PROCESOS_LOG_DIR)/procesos-$$b.log; \
+		WAPP_PROCESOS_BINARIO=$$b $(GO) test -tags integracion -count=$${CUENTA:-1} -v -timeout 30m -parallel 4 ./test/procesos/... > $$L 2>&1; \
+		rc=$$?; echo "RC=$$rc" >> $$L; [ $$rc -eq 0 ] || fallo=1; \
+		echo "$$b: RC=$$rc · PASS=$$(grep -c -- '--- PASS' $$L) FAIL=$$(grep -c -- '--- FAIL' $$L) SKIP=$$(grep -c -- '--- SKIP' $$L) · $$L"; \
+	done; exit $$fallo
+
+ci-local: fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + vet-integracion + lint + test + cobertura-ficheros + build (sin integración: correr test-integration y test-procesos aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control
