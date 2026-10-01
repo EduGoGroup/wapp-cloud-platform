@@ -1,6 +1,7 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
-> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
+> **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`**
+> (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
 ## Objetivo, en tres líneas
@@ -22,6 +23,18 @@
 | E4 | `internal/apipublica` existe vacío (D-10) | `ls internal/apipublica` |
 | E5 | El paquete viejo no cambió desde esta spec | `git log --oneline 1b18932..origin/dev -- internal/flujos/contact` vacío; si no, se relee §E-8 de [`diseno.md`](diseno.md) |
 | E6 | `dev` verde con la toolchain fijada (Go 1.26.5, golangci-lint v2.12.2) | skill `validar-antes-de-cerrar` |
+
+### Entradas verificadas (T1.1 · sesión F1-01 · 2026-10-01 · `origin/dev` @ `77df20f`)
+
+| # | Resultado |
+|---|---|
+| E1 | ✔ `internal/pendiente`, `internal/arranque`, `cmd/server-modular` existen; `Makefile` con `test-pendiente`, `cobertura-ficheros`, `vet-pendiente`, `vet-integracion` dentro de `ci-local` |
+| E2 | ✔ la sonda `internal/nucleo/sonda/x.go` sin test (en un *worktree* desechable, ya borrado, nada commiteado) hace fallar `make ci-local` (`SONDA_RC=2`): `TestUnFicheroUnTest: internal/nucleo/sonda/x.go: falta x_test.go` |
+| E3 | ✔ 1 acierto, pero en **`internal/arranque/flows.go:89`** (la copia de F0; el `:88` del README es el del viejo) |
+| E4 | ✔ `internal/apipublica` existe (`apipublica.go`, `estrangulador.go` y sus tests): ya no está «vacío» |
+| E5 | ✔ `git log --oneline 1b18932..origin/dev -- internal/flujos/contact` vacío; último cambio del paquete viejo: `4a901c1` |
+| E6 | ✔ go1.26.5 y golangci-lint v2.12.2 (los fijados); `GATE_RC` de `make ci-local` sobre el árbol limpio: ver el commit de T1.1 |
+| T-1 | ✔ reconfirmado con **v2.12.2** y la config del repo, con una sonda **fuera del repo**: `unused` marca un `const` y un `func` no exportados sin uso (2 issues); un tipo no exportado mantenido por `var _ I = (*t)(nil)` da 0 issues |
 
 ## Salidas (es cierto al cerrar)
 
