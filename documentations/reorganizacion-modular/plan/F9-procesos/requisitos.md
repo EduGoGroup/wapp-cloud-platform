@@ -26,7 +26,12 @@
   procesos ven bases distintas.
 - **R9.1.d** · **SI** Docker no está disponible, **ENTONCES EL** `TestMain` **DEBERÁ** terminar con
   código ≠ 0 y el mensaje `procesos: no se pudo levantar Postgres (¿hay Docker?)`, sin saltar nada.
-  — Verifica: `DOCKER_HOST=unix:///nada make test-procesos; echo rc=$?` → `rc≠0` y 0 `--- SKIP`.
+  — Verifica: `HOME=$(mktemp -d) GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
+  GOENV=$(go env GOENV) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
+  ./test/procesos/; echo rc=$?` → `rc≠0`, el mensaje de arriba y 0 `--- SKIP`. ⚠️ **`DOCKER_HOST=unix:///nada` a secas NO sirve**:
+  testcontainers prueba ese host, falla y cae al socket del contexto activo (Docker Desktop) o a `/var/run/docker.sock`, y la
+  corrida pasa (medido en macOS y en la VM web: README, contradicción 15). El `HOME` vacío anula el contexto y
+  `~/.docker/run/docker.sock`; donde exista `/var/run/docker.sock` (Linux) hace falta además un espacio de montajes privado.
 - **R9.1.e** · **EL** arnés **DEBERÁ** lanzar cada servidor con un entorno **construido desde cero**
   (nunca `os.Environ()`), con los cuatro listeners en `127.0.0.1:<puerto libre>`. — Verifica: el
   candado de H9.2 falla si aparece `os.Environ()` en `test/procesos/`; `TestArnes_EntornoLimpio`

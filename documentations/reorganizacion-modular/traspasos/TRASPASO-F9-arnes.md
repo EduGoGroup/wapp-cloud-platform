@@ -133,6 +133,8 @@ parada) están medidos contra un servidor que arranca en ≈ 105 ms. Si en local
 un tope, no del servidor. `-parallel 4` se probó con tres bases a la vez; no con más. Si el proceso de test muere por
 pánico o *timeout*, los `Cleanup` no corren y el servidor queda huérfano (sin `Pdeathsig`: exigiría un fichero solo
 Linux): `pgrep -f servidor-` y `docker ps -a` tras una corrida rota.
+**→ F9-02: hubo una intermitencia y no era un tope de espera (es una carrera con la parada, `TestP0_Arranque/sin_errores`, solo vista
+contra `nuevo` pero con código compartido); los huérfanos existen y se autolimpian en segundos. Ver `CERRADO`, H-1 y H-4.**
 
 **7.2 · Cómo medí «sin Docker» y «sin contenedores» no es lo que dice la spec.** R9.1.d manda
 `DOCKER_HOST=unix:///nada make test-procesos`: aquí **pasa** (testcontainers prueba ese host, falla y cae a
@@ -140,10 +142,12 @@ Linux): `pgrep -f servidor-` y `docker ps -a` tras una corrida rota.
 máquina el socket puede estar en otra ruta, así que el comando original podría sí funcionar: **refútalo en local** y
 corrige R9.1.d con el método que valga. Igual `docker ps --filter ancestor=postgres:17-alpine`: da 0 siempre si la imagen
 local es `mirror.gcr.io/postgres:17-alpine` (VM web); allí conté `docker ps -a --format '{{.Image}}'`.
+**→ F9-02: refutado, el comando de la spec tampoco sirve en macOS (cae al contexto `desktop-linux`); el método que vale y su
+control están en `CERRADO`, H-3. Lo del `ancestor=` sí funciona en el Mac (la imagen está etiquetada).**
 
 **7.3 · Cosas que hicieron los sub-agentes y que la spec no pedía; revisa si las quieres.**
 (a) `arrancar` hace `t.Errorf` en el `Cleanup` si el servidor no sale con código 0 tras SIGTERM (una regla nueva: si
-algún proceso mata al servidor a propósito, hay que usar `Parar` antes); (b) `TestArnes_EdgeFrames` ejerce contra el
+algún proceso mata al servidor a propósito, hay que usar `Parar` antes — **→ F9-02: falso, `Parar` no es escapatoria, `CERRADO` H-2**); (b) `TestArnes_EdgeFrames` ejerce contra el
 servidor real mensajes (`/api/v1/messages`, `/admin/messages/send`), diagnóstico y revocación de lease: es terreno de
 B1, aquí como autoprueba del Edge, y el fixture `edgeAltaAdminDelTenant` (porque `platform_admin` no tiene
 `messages.send`) vive en `edge_falso_test.go` y B1 puede subirlo a `fixtures_test.go`; (c) el Edge **solo en unitario**:
@@ -160,3 +164,79 @@ ficheros podrían pisar».
 2. ¿Se queda la regla «el servidor tiene que salir con 0 al terminar el test» (`Cleanup`, §7.3 a)? Recomendación: sí.
 3. Las contradicciones 11 y 12 del README de F9 ya están aplicadas a `diseno.md` y `arquitectura.md`; **15** (R9.1.d)
    queda abierta hasta que la local mida el comando en su máquina.
+
+
+## CERRADO 2026-10-01
+
+Sesión **F9-02** (💻), sobre `dev` @ `af7b8e9` (el PR #18 ya estaba fusionado sin squash y la rama `reorg/f9-a-arnes` ya no existía: no se
+hizo el paso 2 del protocolo ni los comandos de la §4 que la citan). Toolchain: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2`. **El
+sistema trae `go1.27.1` y `golangci-lint 2.14.0`, que no sirven** (`make lint` aborta por diseño, T-1): la `v2.12.2` se instaló en un
+directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del `make`.
+
+### Qué hice (medido en el Mac: 8 núcleos, Docker Desktop, caché de Go caliente)
+
+| Corrida | `viejo` | `nuevo` | Pared |
+|---|---|---|---|
+| `make test-procesos`, pasada 1 (con un muestreador de `docker ps` a 1 Hz en paralelo) | `RC=0 · PASS=146 · FAIL=0 · SKIP=0` | **`RC=1 · PASS=144 · FAIL=2`** (`TestP0_Arranque` y `…/sin_errores`) | 31 s |
+| pasada 2 | `RC=0 · 146 · 0 · 0` | `RC=0 · 146 · 0 · 0` | 25 s |
+| pasada 3 | `RC=0 · 146 · 0 · 0` | `RC=0 · 146 · 0 · 0` | 26 s |
+| `CUENTA=3 make test-procesos` | `RC=0 · PASS=438 · 0 · 0` | `RC=0 · PASS=438 · 0 · 0` | 33 s |
+
+- Dos verdes consecutivos (pasadas 2 y 3) y `CUENTA=3` verde, **pero la pasada 1 dio un rojo contra `nuevo`** y no se descarta: ver H-1.
+- Contenedores: 1 `postgres:17-alpine` durante la corrida (muestreado), 0 a los ~15 s (*reaper*); 0 servidores huérfanos tras las pasadas.
+  `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_Reintento`, adrede).
+- **Gate `GOWORK=off make ci-local`: `GATE_RC=0`** (135 s) · 84 paquetes `ok` · `0 issues` · `FICHEROS_EVALUADOS=10 · POR_DEBAJO=0`:
+  idéntico a lo que midió la web. `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` ·
+  `-race -cover ./internal/candados/...` rc=0 · `go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'`
+  vacío · `certs/`/`.env`, `WAPP_PROCESOS_BINARIO` fuera de `main_test.go`, `time.Sleep`, `t.Skip`/`Short`/`os.Environ`: todos vacíos ·
+  `-v` sin etiqueta sobre `./test/procesos ./internal/candados/...`: 0 SKIP.
+- **T-2 · integración vieja con `-v`**: `GOFLAGS='-v -count=1' INTEGRATION_PG_PORT=55441 GOWORK=off make test-integration` →
+  **`RC=0 · 4.631 PASS (3.283 de primer nivel) · 0 SKIP · 0 FAIL`**, 79 paquetes `ok` + 9 sin tests = 88, 128 s, contenedor retirado.
+  Referencia de F0-06: 4.618 (3.281) y 79 `ok`. **Los +13 (+2) están explicados**: `internal/candados` + `test/procesos` pasan de 105 a
+  118 PASS (de 32 a 34 de primer nivel), medido en un *worktree* temporal de `835a7be` frente a HEAD; son los casos del candado de
+  T9.3 y nada más, el resto de paquetes no cambió.
+- **`go.mod`/`go.sum` con red real**: `GOWORK=off go mod tidy` sin cambios (`git diff --exit-code go.mod go.sum` → 0), `go mod verify`
+  «all modules verified», `go 1.26.5` intacta, `go list -deps ./cmd/server ./cmd/server-modular | grep -c testcontainers` → 0 y 0;
+  versiones: `httpsnoop` 1.1.0, `otelhttp` 0.69.0, `klauspost/compress` 1.18.6, `testcontainers-go` y `modules/postgres` 0.44.0.
+
+### Qué refuté de la §7 (contra el código y contra lo que corre)
+
+| § | Afirmación | Veredicto |
+|---|---|---|
+| 7.1 | «las intermitencias, si las hay, serán un tope de espera» | **Parcial**: hubo una (H-1) y **no** es un tope: es una carrera con la parada. Ningún tope (30 s / 10 s / 15 s) llegó a saltar en 161 arranques en frío; el arranque más lento fue de 889 ms (P0 contra el viejo) |
+| 7.1 | «si el proceso de test muere, el servidor queda huérfano» | **Cierto pero transitorio** (H-4): con `kill -9` quedó 1 servidor en t+0 y 0 a los 3 s |
+| 7.2 | R9.1.d: `DOCKER_HOST=unix:///nada` quizá sí funcione en tu máquina | **Refutado**: da `RC=0 · PASS=146`; corrección con su control en H-3 |
+| 7.2 | `ancestor=postgres:17-alpine` da 0 siempre | **Solo en la VM web**: en el Mac sí mide (1 durante, 0 después) |
+| 7.3 a | la regla del `Cleanup` y su escapatoria «usar `Parar` antes» | **La regla se sostiene; la escapatoria es falsa** (H-2) |
+| 7.3 b | el alcance extra de `TestArnes_EdgeFrames` | **No refutado**: asierta efectos del servidor real (filas, log, HTTP, Ack), no tautologías. Se queda |
+| 7.3 d | P0 mide 9 métricas, no 17: ¿falta alguna? | **No falta ninguna**: `/metrics` sin tráfico da 11 familias `wapp_*` (las 9 + las 2 `wapp_http_*`), **idénticas en viejo y nuevo**; las 7 declaradas que no salen son todas `prometheus.NewCounterVec` (T-10) |
+| §3 | los gates de la web | **Reproducidos** con mi toolchain, sin diferencias (ver arriba) |
+
+### Hallazgos
+
+- **H-1 · `TestP0_Arranque/sin_errores` es intermitente — SIN RESOLVER, decide Jhoan.** Detalle y cifras en la contradicción 19 del README de F9.
+  Resumen: P0 manda SIGTERM ~130 ms después de arrancar y la primera llamada a BD del *webhook worker* puede seguir en vuelo; el worker
+  loguea dos `ERROR` (`internal/integrations/worker.go:209` y `:225`) y P0 afirma «cero ERROR». **No es R9.4.c**: el worker es el mismo
+  paquete en los dos binarios y `fase9_fondo.go` difiere solo en un comentario; no lo reproduje en el viejo, pero 1 fallo en 161
+  arranques en frío (81 viejo, 80 nuevo) no distingue un binario del otro. Solo está expuesto el primer servidor de cada proceso de
+  `go test` (≈ 610–890 ms de arranque en el Mac, con medias de 697 ms en el viejo y 703 ms en el nuevo, frente a ≈105 ms): P0, siempre. **No toqué el test ni producción** (la regla es no ajustar
+  el test cuando solo falla el nuevo; F9 no toca `internal/**`). Salidas: (a) el test ignora `ERROR` de cancelación posteriores a la señal
+  de parada, (b) P0 espera a la primera vuelta del worker, (c) producción no loguea a `ERROR` con `ctx.Err() != nil`. Recomiendo (a) ahora
+  y (c) como deuda. T9.30 tendrá ≈ 1–2 % de falso rojo por corrida hasta que se decida.
+- **H-2 · «usar `Parar` antes» no evita el fallo del `Cleanup`.** `limpiar` vuelve a llamar a `Parar` (idempotente, mismo código): un
+  servidor muerto a propósito suspende el test igual (`el servidor no paró limpio: código de salida -1`, medido con un test temporal
+  retirado, viejo y nuevo). Quien necesite matarlo adrede tendrá que añadir una marca de «salida esperada»; no se construye por adelantado.
+- **H-3 · R9.1.d corregido** (README de F9, contradicción 15, y `requisitos.md`): `HOME` vacío + `DOCKER_HOST=unix:///nada` + el entorno de Go fijado
+  a mano da `rc=1`, el mensaje `procesos: no se pudo levantar Postgres (¿hay Docker?)`, 0 PASS y 0 SKIP; el control (mismo comando con el
+  `HOME` real) pasa. En Linux con `/var/run/docker.sock` sigue haciendo falta el `unshare` de la web.
+- **H-4 · huérfanos** (contradicción 21): `kill -9` al binario de test → 1 servidor a t+0, 0 a los 3 s (SIGPIPE en su siguiente escritura al log);
+  Postgres fuera a los ~15 s; un pánico por *timeout* con `TestP0_Arranque` en marcha dejó 0. Un servidor **callado** podría vivir más: no medido.
+
+### Qué queda
+
+- **Decisión de Jhoan sobre H-1** (a/b/c). Mientras tanto, un rojo de `sin_errores` con esas dos líneas exactas es esta carrera; cualquier otro rojo no lo es.
+- §8 del traspaso: (1) **dejar** el alcance extra del Edge, no se refutó; (2) **mantener** la regla del `Cleanup`, con H-2 anotado; (3) la contradicción 15 **ya está corregida**.
+- **No corrido**: `make ci-docker` (el segundo gate del ecosistema; no se pidió), el arranque real de `cmd/server-modular` (no lo pide este bloque), UAT. De 7.3 (c) queda
+  lo que sigue sin verse: la inferencia real, entrante → respuesta (P3) y el push de `intents`; es terreno de T9.15/T9.17.
+- No se tocó `main`; no se empezó F1 ni B1. Producción (`internal/**`, `cmd/**`): cero líneas; `test/procesos/` sin cambios (un test temporal creado y retirado, árbol limpio).
+- Siguiente: B1 (T9.13–T9.16) con el bloque A cerrado, y F1, que puede ir en paralelo.

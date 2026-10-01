@@ -38,7 +38,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: gate de la web (`golangci-lint v2.12.2`)
   - **Commit**: `procesos(arnes): make test-procesos y vet con la etiqueta integracion`
 
-- [~] **T9.5 · procesos(arnes): `TestMain` y la base por proceso** · 🌐→💻 · dep. T9.4 · cumple R9.1.a–d — abierta por la web en `576ba9a` (sesión F9-01, 2026-10-01): web: `vet` rc=0 y pre-chequeo `make test-procesos` viejo y nuevo `RC=0`, 0 SKIP; **falta (local)**: `BINARIO=viejo make test-procesos` `RC=0` y `docker ps` sin contenedores. R9.1.d medido en la web con un espacio de montajes privado (`DOCKER_HOST=unix:///nada` no basta si existe `/var/run/docker.sock`: testcontainers cae a él)
+- [x] **T9.5 · procesos(arnes): `TestMain` y la base por proceso** · 🌐→💻 · dep. T9.4 · cumple R9.1.a–d — cerrada en `576ba9a` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; integrada en `dev` por el merge `af7b8e9`)**: `make test-procesos` viejo `RC=0 · PASS=146 · FAIL=0 · SKIP=0` (pasadas 2 y 3 y `CUENTA=3`: 438); 1 contenedor `postgres:17-alpine` durante la corrida y 0 a los ~15 s (R9.1.a, con su comando literal); R9.1.d medido con `HOME` vacío, porque `DOCKER_HOST=unix:///nada` **no** falla ni en macOS ni en la web (README de F9, contradicción 15)
   - **Ficheros**: `test/procesos/main_test.go` (si F1 · T1.13 lo creó, se **amplía**: compilar `cmd/migrate`, `cmd/server`, `cmd/server-modular`; `WAPP_PROCESOS_BINARIO`), `test/procesos/base_test.go`
   - **Hecho cuando**: web: `GOWORK=off go vet -tags integracion ./test/procesos/...` rc=0; local: un test mínimo `TestArnes_BasePorProceso` pasa y `docker ps` tras la corrida no deja contenedores
   - **Gate**: web → vet; local → `BINARIO=viejo make test-procesos` RC=0
@@ -56,7 +56,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: vet `-tags integracion` rc=0
   - **Commit**: `procesos(arnes): dobles de S3 e identity en el proceso de test`
 
-- [~] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f — abierta por la web en `660947d` (sesión F9-01, 2026-10-01): web: pre-chequeo viejo y nuevo `RC=0`, `-race -count=3` sin carreras, 0 «address already in use», arranque hasta listo ≈ 105 ms; **falta (local)**: `BINARIO=viejo make test-procesos` `RC=0` (`TestArnes_EntornoLimpio` con `WAPP_DB_HOST=trampa` y dos servidores en paralelo)
+- [x] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f — cerrada en `660947d` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`)**: `TestArnes_EntornoLimpio` (con `WAPP_DB_HOST=trampa`) y los dos servidores en paralelo pasan en viejo y nuevo; `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_Reintento`, que ejerce ese camino adrede, uno por ejecución)
   - **Ficheros**: `test/procesos/servidor_test.go` (entorno de `diseno.md` §2, puertos libres, espera, parada, volcado de log)
   - **Hecho cuando**: local: `TestArnes_EntornoLimpio` pasa con `WAPP_DB_HOST=trampa` exportado; dos servidores en paralelo sin `address already in use`
   - **Gate**: local `BINARIO=viejo make test-procesos` RC=0
@@ -74,13 +74,13 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: vet `-tags integracion` rc=0; `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío
   - **Commit**: `procesos(arnes): el Edge de prueba, con mTLS, lease y sellado`
 
-- [~] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b — abierta por la web en `10179d6` (sesión F9-01, 2026-10-01): web: `TestP0_Arranque` (10 subtests) viejo y nuevo `RC=0` ×3, sin diferencias; **D-F9-2 CONFIRMADA ejecutándola** (una `HEAD /wapp-procesos` path-style, `Host: 127.0.0.1:<p>`); **falta (local)**: `make test-procesos` `RC=0` ×2. Correcciones medidas a la spec: ver las contradicciones 11, 12 y 13 del README
+- [x] **T9.11 · procesos(arranque): P0, humo del arranque — y la prueba de D-F9-2** · 🌐→💻 · dep. T9.9, T9.10 · cumple R9.3.b, R9.4.a–b — cerrada en `10179d6` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`) con una salvedad**: `make test-procesos` `RC=0` en las pasadas 2 y 3 y en `CUENTA=3`, pero la **pasada 1 dio `RC=1` contra `nuevo`** por una intermitencia de `TestP0_Arranque/sin_errores` (README de F9, contradicción 19: carrera con la parada, **sin resolver**, decisión de Jhoan); `HEAD /wapp-procesos` path-style con `Host: 127.0.0.1:<p>` en los dos binarios (**D-F9-2 reconfirmada en local**); `/metrics` sin tráfico = 11 familias, idénticas en viejo y nuevo, y las 7 declaradas que faltan son `CounterVec` (contradicción 12 confirmada)
   - **Ficheros**: `test/procesos/p0_arranque_test.go` (`diseno.md` §4 P0)
   - **Hecho cuando**: local: P0 `RC=0` contra **viejo y nuevo**; el doble de S3 registró `HEAD /procesos` con `Host: 127.0.0.1:<p>`. 🔴 Si el SDK pidió virtual-hosted, **parar**: traspaso a Jhoan con la petición registrada (D-F9-2)
   - **Gate**: local `make test-procesos` RC=0 ×2
   - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
 
-- [~] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — abierta por la web en `6ee1c5e` (sesión F9-01, 2026-10-01): pre-chequeo web hecho (`make test-procesos` viejo y nuevo `RC=0` ×2 y `CUENTA=3`, 0 SKIP), `ci-local` `GATE_RC=0` y traspaso `TRASPASO-F9-arnes.md` escrito; **falta (local)**: `make test-procesos` `RC=0` ×2, sección `CERRADO <fecha>` e integrar la rama en `dev` sin squash
+- [x] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — pre-chequeo web en `6ee1c5e` (2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01)**: `make test-procesos` viejo y nuevo `RC=0` ×2 (pasadas 2 y 3) y `CUENTA=3`; `make ci-local` `GATE_RC=0` (84 paquetes, 0 issues, `go1.26.5`, lint `v2.12.2`); integración vieja con `-v` `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL`; la rama de la web ya estaba en `dev` sin squash (PR #18, `af7b8e9`); `TRASPASO-F9-arnes.md` con `CERRADO 2026-10-01`
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
   - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
@@ -137,7 +137,7 @@ cita como dependencia de su cierre). Forma común:
 Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del relevo cumplida.
 
 - [ ] **T9.30 · Corrida final sin intermitencias** · 💻 · dep. T9.29 · cumple R9.8.a, R9.5.b
-  - **Hecho cuando**: `CUENTA=3 make test-procesos` → viejo y nuevo `RC=0`, 0 SKIP, 0 FAIL; las 22 filas de `diseno.md` §5 con su `--- PASS` en el log; duración total anotada (hoy **sin medir**)
+  - **Hecho cuando**: `CUENTA=3 make test-procesos` → viejo y nuevo `RC=0`, 0 SKIP, 0 FAIL; las 22 filas de `diseno.md` §5 con su `--- PASS` en el log; duración total anotada (referencia de F9-02, solo con P0 y el arnés: ≈ 25–31 s por pasada de los dos binarios, 33 s con `CUENTA=3`, Mac de 8 núcleos con la caché de Go caliente; ≈ 23 s en la VM web de 4 vCPU; crecerá con B1–C, hay que remedirla)
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b

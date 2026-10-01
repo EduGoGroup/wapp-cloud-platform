@@ -1,7 +1,8 @@
 # F9 · Procesos — la integración de cero, por proceso, con testcontainers
 
-> **Estado**: 🟡 **bloque A escrito y pre-chequeado en la web** (sesión F9-01, 2026-10-01; rama `reorg/f9-a-arnes`): el arnés y
-> P0 pasan contra los dos binarios en la VM web, **pero lo cierra la sesión local** (F9-02). B1, B2, C y D sin empezar.
+> **Estado**: ✅ **bloque A cerrado** (F9-01 🌐 lo escribió el 2026-10-01 → PR #18, `dev` @ `af7b8e9`; F9-02 💻 lo cerró el mismo
+> día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
+> conocida y sin resolver en `TestP0_Arranque/sin_errores`** (contradicción 19, decisión para Jhoan). B1, B2, C y D sin empezar.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §7 (y E-5, E-6, §3.2). **Cómo**: skill
 > [`procesos-testcontainers`](../../../../.claude/skills/procesos-testcontainers/SKILL.md). Forma:
@@ -183,6 +184,19 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     `mirror.gcr.io/postgres:17-alpine` (VM web). Se midió con un espacio de montajes privado que tapa `/run`
     (`unshare --mount --propagation private`; no toca el daemon) y contando `docker ps -a --format '{{.Image}}'`. En la
     máquina local con Docker Desktop el socket puede vivir en otra ruta: ahí el comando de la spec puede servir o no.
+    ✅ **Medido en local (F9-02, macOS + Docker Desktop, 2026-10-01)**: el comando de la spec **tampoco sirve**:
+    `DOCKER_HOST=unix:///nada make test-procesos` da `RC=0 · PASS=146` (cae al socket de Docker Desktop por el contexto
+    `desktop-linux`, `~/Library/Containers/com.docker.docker/Data/docker-cli.sock`; `/var/run/docker.sock` no existe en este
+    Mac, así que no es ese el fallback). **Lo que sí mide R9.1.d sin parar Docker**: anular también lo que testcontainers
+    descubre desde `HOME` (contexto y `~/.docker/run/docker.sock`), fijando el entorno de Go a mano porque `HOME` es donde
+    `go` busca su caché: `HOME=$(mktemp -d) GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
+    GOENV=$(go env GOENV) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
+    ./test/procesos/` → `rc=1`, `procesos: no se pudo levantar Postgres (¿hay Docker?)`, 0 PASS y 0 SKIP (control: el mismo
+    comando con el `HOME` real pasa). Vale donde no hay `/var/run/docker.sock`; en Linux con ese socket sigue haciendo falta
+    el `unshare`. En cambio **R9.1.a sí se mide con su comando literal en este Mac** (la imagen está etiquetada
+    `postgres:17-alpine`): `docker ps --filter ancestor=postgres:17-alpine -q | wc -l` muestreó **1** durante la corrida y
+    **0** a los ~15 s (el *reaper* de Ryuk); el ID de imagen sin etiqueta que muestran los contenedores viejos de otros
+    proyectos no lo contamina.
 16. **Dos refinamientos del arnés, sin efecto observable**: el servidor recibe `HOME=<directorio temporal vacío>` en vez
     del `HOME` del desarrollador (así el SDK de AWS no lee `~/.aws`), y `TestMain` compila `cmd/migrate` y **solo el
     binario elegido**, no los tres.
@@ -191,4 +205,42 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     verificar sobre una copia exportada. Los siguientes trabajaron en el árbol de la sesión, con ficheros disjuntos.
 18. **Alcance del Edge de prueba**: `TestArnes_EdgeFrames` ejerce contra el servidor real rutas que B1 recorrerá como
     procesos (mensajes, diagnóstico, revocación de lease). Está aquí como autoprueba del Edge (sin ella el Edge solo habría
-    quedado compilado); B1 puede reutilizar o aligerar esos casos.
+    quedado compilado); B1 puede reutilizar o aligerar esos casos. ✅ F9-02 intentó refutarlo leyéndolo y **no lo logró**:
+    asierta sobre efectos del servidor real (filas de `ingest_dedupe`, `message_receipts` y `fleet_sessions`, líneas de log,
+    códigos HTTP, el Ack con el mismo `command_id`), no sobre lo que el propio Edge se manda. Se queda.
+19. **`TestP0_Arranque/sin_errores` es intermitente** (medido en F9-02, aún **sin resolver**). La pasada 1 de `make
+    test-procesos` dio `viejo RC=0 · PASS=146` y `nuevo RC=1 · PASS=144 FAIL=2` (`TestP0_Arranque` y su subtest `sin_errores`).
+    Las dos líneas `ERROR` son del *webhook worker* y caen en el instante de la parada: `webhook worker: rescatar entregas con
+    el claim vencido … lookup localhost: operation was canceled` y `webhook worker: reclamar lote … context canceled`. Línea
+    temporal: listeners arriba a las 32.0645, SIGTERM a las 32.1967 (**132 ms** después), y la primera llamada a la BD del
+    worker (`recoverOrphans` y `pollOnce`, que corren al arrancar; `internal/integrations/worker.go:209` y `:225`) aún no había
+    terminado. P0 afirma «medido: cero ERROR, parada incluida»; eso solo es cierto si esa primera llamada acaba antes del SIGTERM.
+    - **No es un hallazgo R9.4.c** (el viejo y el nuevo no se apartan): el worker es el mismo paquete en los dos binarios y
+      `fase9_fondo.go` del viejo y del nuevo difieren solo en una línea de comentario. Pero **no lo reproduje en el viejo**:
+      161 arranques en frío de P0 (81 en el viejo y 80 en el nuevo: 30 invocaciones por binario en reposo, 20 bajo 12 procesos
+      `yes` saturando los 8 núcleos, 25 con `docker ps` a 5 Hz, y las pasadas completas, `CUENTA=3` y la del `DOCKER_HOST`)
+      dieron **1 fallo**, y fue contra el nuevo. La muestra (≈80 por binario) no distingue un binario de otro; la prueba de
+      que es compartido es estructural, no empírica.
+    - **Quién queda expuesto**: solo el primer servidor de cada proceso de `go test`, que tarda ≈ 610–890 ms en arrancar en este
+      Mac (media 697 ms en el viejo y 703 ms en el nuevo, 80 procesos de cada uno; los siguientes, ≈105 ms) y es siempre P0. Cada `make test-procesos` tiene un P0 en frío por binario; T9.30 tendrá dos.
+      Con 1/161 ≈ 0,6 % por P0 en frío (intervalo ancho), un ≈ 1–2 % de falso rojo por corrida final.
+    - **No se tocó ni el test ni producción**: la regla de la sesión es no ajustar el test cuando solo falla el nuevo, y F9 no
+      toca `internal/**`. **Decisión de Jhoan**, tres salidas: (a) en el test, que `p0SinErrores` ignore las líneas `ERROR` posteriores
+      a «señal de parada recibida, cerrando» cuyo `error` sea una cancelación; (b) en el test, que P0 espere a la primera vuelta
+      del worker antes de parar (no hay una señal observable hoy); (c) en producción, que el worker no loguee a `ERROR` cuando
+      `ctx.Err() != nil` (defecto cosmético compartido por los dos binarios). Recomendación: (a) ahora y (c) como deuda. Hasta
+      entonces, un rojo de `sin_errores` con exactamente esas dos líneas es esta carrera; cualquier otro rojo no lo es.
+20. **La regla del `Cleanup` («el servidor sale con 0») no tiene la escapatoria que decía el traspaso.** `limpiar` vuelve a
+    llamar a `Parar`, que es idempotente y devuelve **el mismo código**; así que un proceso que mata al servidor a propósito y
+    llama a `Parar` antes falla igual con `el servidor no paró limpio: código de salida -1` (medido con un test temporal, ya
+    retirado: `SIGKILL`, `Parar`, y el `Cleanup` lo suspendió, en viejo y en nuevo). La regla sigue siendo correcta —un servidor que
+    muere solo, o por señal, **debe** fallar el test—, pero quien necesite matarlo adrede (p. ej. un proceso que simule una caída)
+    tendrá que añadir una marca explícita de «salida esperada» en `servidor`; hoy no existe. Se decide en el primer proceso que
+    la necesite (B1/B2); no se construye por adelantado.
+21. **Medido en local además** (F9-02): (a) el Go del sistema es `1.27.1` y `golangci-lint` `2.14.0`, y `make lint` aborta con
+    ellos (por diseño, T-1): se usó `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` instalado en un directorio aparte, sin tocar
+    el de Homebrew; (b) **huérfanos** (§7.1 del traspaso): con `kill -9` al binario de test en mitad de la suite quedó **1 servidor
+    vivo en t+0 y 0 a los 3 s** (muere por SIGPIPE en su siguiente escritura al log, que ya no tiene lector), y el contenedor
+    Postgres desapareció a los ~15 s por el *reaper*; un pánico por *timeout* con `TestP0_Arranque` en marcha dejó 0. No hay
+    huérfano persistente en esas dos muestras; un servidor **callado** podría vivir más (no medido); (c) el `-timeout` de `go test`
+    cuenta desde `m.Run`, no desde el `TestMain`: la suite entera cabe en ≈ 3 s, el resto de los ≈ 10 s del paquete es el `TestMain`.
