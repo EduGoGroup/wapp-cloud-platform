@@ -36,8 +36,9 @@ var ErrContactNotFound = errors.New("contact: contact_id no encontrado")
 //
 // Todo es por tenant (N-01): las mismas refs en dos tenants son dos contactos distintos, y un
 // contact_id solo existe dentro del tenant que lo creó. tenantID y contactID son UUID: con uno mal
-// formado Postgres devuelve un error de parseo, NO ErrContactNotFound (la memoria sí devuelve
-// este). Quien llama pasa siempre UUID bien formados.
+// formado Postgres devuelve un error de parseo, NO ErrContactNotFound; la memoria no parsea nada y
+// trata los ids como claves opacas (Resolve no los rechaza y Destino devuelve ErrContactNotFound).
+// Quien llama pasa siempre UUID bien formados.
 type Resolver interface {
 	// Resolve devuelve el contact_id (UUID) del contacto que describen las refs, creándolo si
 	// hace falta. Todas las refs son del MISMO contacto. Con error devuelve contactID "".
