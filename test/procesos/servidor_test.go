@@ -105,7 +105,11 @@ type servidor struct {
 // antes de estar listo (con el código de salida y las últimas 200 líneas del log), o si tras un
 // reintento por puerto ocupado vuelve a fallar. Si el servidor muere con «address already in use»
 // —la carrera entre soltar un puerto libre y que el servidor lo enlace— reintenta UNA vez con
-// puertos nuevos. Si el test falla, el Cleanup vuelca las últimas 200 líneas del log con t.Logf.
+// puertos nuevos, y del intento fallido no queda rastro en lo que el test puede mirar: Log y
+// LineasLog son solo del proceso vigente (cada intento tiene su búfer) y el doble de S3 olvida lo
+// que le pidió el intento muerto (S3.forget), así que tras un reintento consta UN HeadBucket, no
+// dos. La base clonada sí es la misma para los dos intentos. Si el test falla, el Cleanup vuelca
+// las últimas 200 líneas del log con t.Logf.
 func arrancar(t *testing.T, o opcionesServidor) *servidor {
 	t.Helper()
 	base := nuevaBase(t, o.Proceso) // la primera: su DROP DATABASE es el último Cleanup en correr
@@ -131,6 +135,9 @@ func arrancar(t *testing.T, o opcionesServidor) *servidor {
 			// detectar colisiones reales, y aquí la colisión ya está absorbida por el reintento.
 			t.Logf("servidor %q: puerto ocupado entre reservarlo y enlazarlo (admin=%s publica=%s enrolar=%s conectar=%s); reintento con puertos nuevos",
 				o.Proceso, s.AdminAddr, s.PublicaAddr, s.EnrolarAddr, s.ConectarAddr)
+			// El intento fallido ya murió (errSalioAntes), pero antes de enlazar hizo su HeadBucket: el
+			// doble lo olvida para que solo conste lo que pida el servidor que queda.
+			s.S3.forget()
 			continue
 		}
 		s.fallarArranque(t, o, err)
@@ -805,8 +812,11 @@ func paralelaVerificarWebhook(t *testing.T, s *servidor, o opcionesServidor) {
 
 // TestArnes_ReintentoPuertoOcupado prueba el reintento por puerto ocupado: el primer intento
 // recibe un puerto de admin que otro listener ya tiene, el servidor muere con «address already in
-// use» y arrancar vuelve a intentarlo, una sola vez, con puertos nuevos. No es paralelo: cambia
-// elegirPuertos, que solo restaura al terminar.
+// use» y arrancar vuelve a intentarlo, una sola vez, con puertos nuevos. Y que el intento fallido
+// no deja rastro en lo que un proceso mira después: el log visible es solo el del servidor vigente
+// (sin la frase del puerto ni líneas ERROR), el doble de S3 cuenta UN HEAD /<bucket> y la base
+// sigue con una sola fila en schema_version. No es paralelo: cambia elegirPuertos, que solo
+// restaura al terminar.
 func TestArnes_ReintentoPuertoOcupado(t *testing.T) {
 	ocupante, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -841,8 +851,38 @@ func TestArnes_ReintentoPuertoOcupado(t *testing.T) {
 	if strings.Contains(s.Log(), textoPuertoOcupado) {
 		t.Errorf("el log del reintento aún contiene %q: no es el del intento nuevo", textoPuertoOcupado)
 	}
+	checkNoTraceOfFailedAttempt(t, s)
 	if codigo, _, err := consultarHealthz(t.Context(), s.AdminAddr); err != nil || codigo != http.StatusOK {
 		t.Errorf("tras el reintento, /healthz: código %d, error %v", codigo, err)
+	}
+}
+
+// checkNoTraceOfFailedAttempt comprueba, en un servidor que arrancó tras un reintento por puerto
+// ocupado, que el intento fallido no dejó rastro: ninguna línea ERROR en el log visible, UN solo
+// HEAD /<bucket> en el doble de S3 y una sola fila en schema_version. Falla el test con t.Errorf
+// por cada incumplimiento (t.Fatalf si no puede abrir o consultar la base).
+func checkNoTraceOfFailedAttempt(t *testing.T, s *servidor) {
+	t.Helper()
+	for _, l := range s.LineasLog() {
+		if strings.EqualFold(p0Cadena(l, "level"), "ERROR") {
+			t.Errorf("el log visible arrastra una línea ERROR (¿del intento fallido?): %v", l)
+		}
+	}
+	// El intento fallido llegó a hacer su HeadBucket antes de morir al enlazar: el doble de S3 solo
+	// debe contar el del servidor que quedó (es lo que P0 exige con «exactamente 1»).
+	cabeceras := 0
+	for _, p := range s.S3.Peticiones() {
+		if p.Metodo == http.MethodHead && p.Ruta == "/"+bucketServidor {
+			cabeceras++
+		}
+	}
+	if cabeceras != 1 {
+		t.Errorf("HEAD /%s consta %d veces en el doble de S3 tras el reintento, quería 1 (solo el del servidor vigente); todas: %+v",
+			bucketServidor, cabeceras, s.S3.Peticiones())
+	}
+	// La base es la misma en los dos intentos: el fallido no debe haberla migrado de nuevo.
+	if filas := consultaEntero(t, s.Base.Abrir(t), `SELECT count(*) FROM public.schema_version`); filas != 1 {
+		t.Errorf("schema_version tiene %d filas tras el reintento, quería 1", filas)
 	}
 }
 
