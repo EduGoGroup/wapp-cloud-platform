@@ -8,7 +8,8 @@ import (
 // TestSinBDVivaMuerde: cada uno de los patrones prohibidos dispara, nombrado en el motivo;
 // las etiquetas no esconden un fichero, y el propio candado se salta. veces es el número de
 // apariciones del patrón en el fichero: cada aparición es una violación (skip_test.go tiene
-// tres llamadas Skip*, así que t.Skip da tres).
+// tres llamadas Skip*, así que t.Skip da tres). Un alias o un import de punto de os o de
+// testing no esconde el patrón, y el motivo lo sigue nombrando «os.Environ» / «testing.Short».
 func TestSinBDVivaMuerde(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/sinbdviva/muerde", []string{"test/procesos"}, true)
 	vs := SinBDViva(fuentes)
@@ -28,6 +29,10 @@ func TestSinBDVivaMuerde(t *testing.T) {
 		{"os.Environ() hereda el entorno del shell", d + "environ_test.go", "os.Environ", 1},
 		{"t.Skip, t.SkipNow y t.Skipf, con etiqueta integracion", d + "skip_test.go", "t.Skip", 3},
 		{"testing.Short() como pretexto para saltar, con etiqueta integracion", d + "skip_test.go", "testing.Short", 1},
+		{"aliased os import: e.Environ()", d + "alias_test.go", "os.Environ", 1},
+		{"aliased testing import: tt.Short()", d + "alias_test.go", "testing.Short", 1},
+		{"dot import of os: bare Environ()", d + "dot_import_test.go", "os.Environ", 1},
+		{"dot import of testing: bare Short()", d + "dot_import_test.go", "testing.Short", 1},
 	}
 	esperadas := 0
 	for _, c := range casos {
@@ -59,7 +64,9 @@ func contarPatron(vs []Violacion, fichero, patron string) int {
 }
 
 // TestSinBDVivaPasa: los patrones en comentarios no cuentan, la cadena de
-// ctr.ConnectionString es válida y sin_bd_viva_test.go se salta.
+// ctr.ConnectionString es válida y sin_bd_viva_test.go se salta. Tampoco muerde un alias de
+// os o de testing que no llega a Environ ni a Short (alias_getenv_test.go), ni un método
+// propio llamado Environ o Short en un fichero sin import de punto (own_methods_test.go).
 func TestSinBDVivaPasa(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/sinbdviva/pasa", []string{"test/procesos"}, true)
 	exigeCero(t, SinBDViva(fuentes))
@@ -162,6 +169,264 @@ func g(t *testing.T, o otro) {
 	exigeNingunaEn(t, vs, d+"no_dispara_test.go")
 	if len(vs) != 8 {
 		t.Errorf("se esperaban 8 violaciones; hay %d: %v", len(vs), vs)
+	}
+	exigeOrdenadas(t, vs)
+}
+
+// TestSinBDVivaAliasAndDotImports: os.Environ y testing.Short se persiguen por el paquete, no
+// por el nombre con que el fichero lo importa. Con alias dispara <alias>.Environ y
+// <alias>.Short; con import de punto, el identificador suelto Environ / Short; en los dos
+// casos llamado o como valor, y el motivo sigue nombrando «os.Environ» / «testing.Short». El
+// literal os / testing dispara siempre, lo importe el fichero como lo importe. No dispara el
+// import en blanco (ni siquiera hace de «_» un receptor: _.Environ no compila, pero parsea,
+// y es la única forma de observar que no añadió nada), el alias de OTRO paquete, ni el punto
+// de un paquete para el nombre del otro. Con import de punto presente, un selector ajeno (x.Environ, x.Short) NO dispara y
+// os.Environ cuenta una sola vez, porque el Sel de un selector no es un identificador suelto;
+// en cambio DECLARAR ahí algo llamado Environ o Short (un método propio) sí dispara: el
+// candado no resuelve tipos y prefiere morder de más.
+func TestSinBDVivaAliasAndDotImports(t *testing.T) {
+	const ruta = "test/procesos/caso_test.go"
+	casos := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			"aliased os bites called and as a value",
+			`package procesos
+import e "os"
+var a = e.Environ()
+var b = e.Environ
+`,
+			[]string{"os.Environ en la línea 3", "os.Environ en la línea 4"},
+		},
+		{
+			"aliased testing bites called and as a value",
+			`package procesos
+import tt "testing"
+var a = tt.Short()
+var b = tt.Short
+`,
+			[]string{"testing.Short en la línea 3", "testing.Short en la línea 4"},
+		},
+		{
+			"alias with a raw string import path",
+			"package procesos\nimport e `os`\nvar a = e.Environ()\n",
+			[]string{"os.Environ en la línea 3"},
+		},
+		{
+			"two aliases of the same package both bite",
+			`package procesos
+import (
+	a "os"
+	b "os"
+)
+var x = a.Environ()
+var y = b.Environ()
+`,
+			[]string{"os.Environ en la línea 6", "os.Environ en la línea 7"},
+		},
+		{
+			"the literal names keep biting next to an alias",
+			`package procesos
+import (
+	e "os"
+	tt "testing"
+)
+var x = os.Environ()
+var y = testing.Short()
+var z = e.Getenv("UNA")
+var w = tt.Verbose()
+`,
+			[]string{"os.Environ en la línea 6", "testing.Short en la línea 7"},
+		},
+		{
+			"dot import of os: bare Environ called",
+			`package procesos
+import . "os"
+var a = Environ()
+`,
+			[]string{"os.Environ en la línea 3"},
+		},
+		{
+			"dot import of os: bare Environ as a value",
+			`package procesos
+import . "os"
+var a = Environ
+`,
+			[]string{"os.Environ en la línea 3"},
+		},
+		{
+			"dot import of testing: bare Short called and as a value",
+			`package procesos
+import . "testing"
+var a = Short()
+var b = Short
+`,
+			[]string{"testing.Short en la línea 3", "testing.Short en la línea 4"},
+		},
+		{
+			"dot import present: os.Environ and testing.Short count once, not twice",
+			`package procesos
+import (
+	"os"
+	. "os"
+	"testing"
+	. "testing"
+)
+var a = os.Environ()
+var b = testing.Short()
+`,
+			[]string{"os.Environ en la línea 8", "testing.Short en la línea 9"},
+		},
+		{
+			"dot import present: a foreign selector does not bite",
+			`package procesos
+import (
+	. "os"
+	. "testing"
+	"example.com/fake"
+)
+func f(s fake.Server, w struct{ S fake.Server }) {
+	_ = s.Environ()
+	_ = s.Short()
+	_ = s.Environ
+	_ = w.S.Environ()
+	_ = fake.New().Short()
+}
+`,
+			nil,
+		},
+		{
+			"dot import present: declaring a method named Environ or Short bites (bite too much)",
+			`package procesos
+import (
+	. "os"
+	. "testing"
+)
+type own struct{}
+func (own) Environ() []string { return nil }
+func (own) Short() bool { return false }
+`,
+			[]string{"os.Environ en la línea 7", "testing.Short en la línea 8"},
+		},
+		{
+			"the dot import of one package does not bite the name of the other",
+			`package procesos
+import . "os"
+func Short() bool { return false }
+var a = Short()
+var b = Getenv("UNA")
+`,
+			nil,
+		},
+		{
+			"the dot import of testing does not bite a bare Environ",
+			`package procesos
+import . "testing"
+func Environ() []string { return nil }
+var a = Environ()
+var b = Verbose()
+`,
+			nil,
+		},
+		{
+			"blank imports add nothing",
+			`package procesos
+import (
+	_ "os"
+	_ "testing"
+)
+func Environ() []string { return nil }
+func Short() bool { return false }
+var a = Environ()
+var b = Short()
+var c = _.Environ()
+var d = _.Short()
+`,
+			nil,
+		},
+		{
+			"an alias of another package is not a receiver",
+			`package procesos
+import (
+	e "example.com/env"
+	tt "example.com/testing"
+	. "example.com/os"
+)
+var a = e.Environ()
+var b = tt.Short()
+var c = Environ()
+var d = Short()
+`,
+			nil,
+		},
+		{
+			"the alias of os is not a receiver for Short, nor the alias of testing for Environ",
+			`package procesos
+import (
+	e "os"
+	tt "testing"
+)
+var a = e.Short()
+var b = tt.Environ()
+var c = e.Getenv("UNA")
+`,
+			nil,
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.name, func(t *testing.T) {
+			vs := SinBDViva([]Fuente{fuenteEnMemoria(t, ruta, c.src)})
+			for _, w := range c.want {
+				exigeViolacion(t, vs, ruta, w)
+			}
+			if len(vs) != len(c.want) {
+				t.Errorf("se esperaban %d violaciones; hay %d: %v", len(c.want), len(vs), vs)
+			}
+			exigeOrdenadas(t, vs)
+		})
+	}
+}
+
+// TestSinBDVivaImportsPerFile: el alias y el import de punto valen SOLO en el fichero que los
+// declara. El mismo nombre «e» es os en un fichero y otro paquete en el siguiente, y el
+// Environ suelto del fichero que no tiene import de punto es una función propia: ninguno de
+// los dos hereda lo que resolvió el fichero anterior.
+func TestSinBDVivaImportsPerFile(t *testing.T) {
+	const d = "test/procesos/"
+	fuentes := []Fuente{
+		fuenteEnMemoria(t, d+"a_alias_test.go", `package procesos
+import e "os"
+var a = e.Environ()
+`),
+		fuenteEnMemoria(t, d+"b_other_alias_test.go", `package procesos
+import e "example.com/env"
+var b = e.Environ()
+`),
+		fuenteEnMemoria(t, d+"c_dot_test.go", `package procesos
+import (
+	. "os"
+	. "testing"
+)
+var c = Environ()
+var d = Short()
+`),
+		fuenteEnMemoria(t, d+"d_no_dot_test.go", `package procesos
+func Environ() []string { return nil }
+func Short() bool { return false }
+var e = Environ()
+var f = Short()
+`),
+	}
+	vs := SinBDViva(fuentes)
+	exigeViolacion(t, vs, d+"a_alias_test.go", "os.Environ en la línea 3")
+	exigeNingunaEn(t, vs, d+"b_other_alias_test.go")
+	exigeViolacion(t, vs, d+"c_dot_test.go", "os.Environ en la línea 6")
+	exigeViolacion(t, vs, d+"c_dot_test.go", "testing.Short en la línea 7")
+	exigeNingunaEn(t, vs, d+"d_no_dot_test.go")
+	if len(vs) != 3 {
+		t.Errorf("se esperaban 3 violaciones; hay %d: %v", len(vs), vs)
 	}
 	exigeOrdenadas(t, vs)
 }
