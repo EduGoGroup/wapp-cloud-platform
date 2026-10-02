@@ -11,7 +11,7 @@ import (
 
 // El núcleo del Edge de prueba: qué hace con cada comando que recibe del servidor (lease, SendText,
 // SendMedia, config, diagnóstico, ping) y el gate de lease de los envíos. La inferencia va aparte,
-// en edge_inference_test.go. Sale de edge_falso_test.go (D-F9-11: solo se movieron declaraciones).
+// en edge_falso_inference_test.go. Sale de edge_falso_test.go (D-F9-11: solo se movieron declaraciones).
 
 // ---------------------------------------------------------------------------------------------
 // Comandos que el Edge recibe (el núcleo)

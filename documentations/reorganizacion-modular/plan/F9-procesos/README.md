@@ -437,10 +437,12 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     ✎ **2026-10-02 · D-F9-11 aplicada** (en un PR aparte, encima del de las otras siete; un commit por fichero de origen):
     `edge_falso_test.go` → 19 ficheros (`6ed524b`), `servidor_test.go` → 6 (`4ac3dbd`), `clientes_test.go` → 3 (`c8f7d31`),
     `pki_test.go` → 3 (`e9d93f4`) y `p0_arranque_test.go` → 3 (`eae418d`; el parser de Prometheus queda en
-    `p0_prometheus_parser_test.go`). El paquete pasa de 14 a **43** ficheros `.go` y **ninguno pasa de 500 líneas** (`wc -l`): el
-    mayor es `main_test.go`, 483, sin tocar; de los nuevos, `edge_connection_test.go`, 336. Los cinco ficheros de origen conservan
-    su nombre y el núcleo de su tema; los nuevos llevan nombre en inglés (`05` E-11): `edge_*`, `server_*`, `client_*`, `pki_*`,
-    `p0_*`, y los `TestArnes_…` van en hermanos `*_selftest_*`. **Solo se movieron declaraciones**: 461 de primer nivel (291
+    `p0_arranque_prometheus_parser_test.go`). El paquete pasa de 14 a **43** ficheros `.go` y **ninguno pasa de 500 líneas** (`wc -l`): el
+    mayor es `main_test.go`, 483, sin tocar; de los nuevos, `edge_falso_connection_test.go`, 336. Los cinco ficheros de origen conservan
+    su nombre y el núcleo de su tema; **cada pieza se llama `<fichero de origen>_<tema>_test.go`**, para que se vea de qué fichero
+    salió y queden juntas en un listado (indicación de Jhoan al revisar, 2026-10-02): `edge_falso_*`, `servidor_*`, `clientes_*`,
+    `pki_*` y `p0_arranque_*`. El tema va en inglés (`05` E-11) y el nombre de origen no se traduce; los `TestArnes_…` van en
+    hermanos `…_selftest_*`. **Solo se movieron declaraciones**: 461 de primer nivel (291
     funciones, 102 métodos, 32 `type`, 23 `const`, 13 `var`) y 140 *specs* de bloque, iguales byte a byte antes y después, y 0
     comentarios perdidos (los 58 grupos nuevos son 29 etiquetas `//go:build integracion` y 29 cabeceras de fichero), medido con
     `go/parser` sobre los bytes del fuente; lo único que cambia además es el bloque `import` de cada fichero. No hay ningún

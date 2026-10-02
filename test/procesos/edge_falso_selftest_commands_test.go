@@ -15,7 +15,7 @@ import (
 
 // TestArnes_EdgeNucleo, sin servidor: qué hace el Edge de prueba con cada comando que no es un envío
 // (config, diagnóstico, ping, leases, comando desconocido, fallo de la salida, canal lleno, copias).
-// Los casos de envío están en edge_selftest_send_test.go.
+// Los casos de envío están en edge_falso_selftest_send_test.go.
 // Sale de edge_falso_test.go (D-F9-11: solo se movieron declaraciones).
 
 // TestArnes_EdgeNucleo prueba, sin servidor, qué hace el Edge con cada comando del servidor y qué

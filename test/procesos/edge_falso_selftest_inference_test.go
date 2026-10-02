@@ -15,7 +15,7 @@ import (
 
 // TestArnes_EdgeInferencia, sin servidor: cómo contesta el Edge de prueba a una InferenceRequest con
 // lease vigente (guion, fallo, sin guion, calentamiento, guion lento, de una en una). Los casos del
-// gate de lease están en edge_selftest_inference_lease_test.go.
+// gate de lease están en edge_falso_selftest_inference_lease_test.go.
 // Sale de edge_falso_test.go (D-F9-11: solo se movieron declaraciones).
 
 // TestArnes_EdgeInferencia prueba, sin servidor, cómo contesta el Edge a una InferenceRequest. Con
