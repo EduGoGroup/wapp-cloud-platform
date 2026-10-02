@@ -4,6 +4,10 @@
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
+> **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
+> nombraba con `…test` (`intaketest`, `casebanktest`, `intentcfgtest`, `pipelinetest`): se actualizó el sufijo, nada más.
 
 ## Objetivo, en tres líneas
 
@@ -31,8 +35,8 @@
 ## Salidas (es cierto al cerrar)
 
 - `internal/modulos/captacion/{intake,pipeline,stages,anclaje,intakeahead,evidence,reanalisis,casebank,intentcfg}`
-  con **32** ficheros en verde, cada uno con su `x_test.go`; suites `intaketest` (dos puertos:
-  `JobStore` y `PipelineStore`), `intentcfgtest` y `casebanktest` (con **doble nuevo**: `casebank` no
+  con **32** ficheros en verde, cada uno con su `x_test.go`; suites `intakehelpertest` (dos puertos:
+  `JobStore` y `PipelineStore`), `intentcfghelpertest` y `casebankhelpertest` (con **doble nuevo**: `casebank` no
   tiene gemelo).
 - Pendientes en `internal/modulos/captacion` → **0**; SKIP → **0**; cobertura ≥ 80 % por fichero salvo
   `postgres.go`/`machine_postgres.go`/`store_postgres.go` (E-6).
@@ -101,5 +105,5 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 |---|---|---|
 | D-F7-1 | Costura con el agregador y el compositor viejos (F8): ¿segunda instancia **vieja** de `intake.Postgres` (sin estado) para ellos + adaptador de tipos para `Request`/`OnClassified`/`ComposeAtFlush`, o adaptar también la cola? | **Segunda instancia vieja** para `JobStore`/`SourceTextWriter` (solo `*sql.DB`, `grep -n 'sync\.' internal/intake/postgres.go` vacío) + **`puente_captacion.go`** con las tres conversiones de `WindowKey` (struct idéntico de 4 `string`, `store.go:60-65`: conversión directa `intakeviejo.WindowKey(k)`). Todo muere en F8 |
 | D-F7-2 | `cmd/casebank` (CLI que siembra `intake_case_bank`) importa `internal/casebank`: ¿cambia a `modulos/captacion/casebank` en F7 o en F10? | **F10**, con `cmd/server`: `cmd/` no se toca durante la transición y el operador sigue usando el código de UAT. En F7 el paquete nuevo se prueba por su suite y su doble |
-| D-F7-3 | `pipeline/memoria.go` (414 l, `sync.Mutex` `:86`, construye `cart.Article`/`catalogo.Construir` `:371-380`) está entre los ficheros de producción: ¿es producción o un doble para los guiones de test? | Verificar en T7.1 (`grep -rn 'NuevaMemoria\|memoria\.' internal --include='*.go' \| grep -v _test`): si solo lo usan tests, **pasa a `pipelinetest/`** (E-3, dobles); si no, se reconstruye como producción |
+| D-F7-3 | `pipeline/memoria.go` (414 l, `sync.Mutex` `:86`, construye `cart.Article`/`catalogo.Construir` `:371-380`) está entre los ficheros de producción: ¿es producción o un doble para los guiones de test? | Verificar en T7.1 (`grep -rn 'NuevaMemoria\|memoria\.' internal --include='*.go' \| grep -v _test`): si solo lo usan tests, **pasa a `pipelinehelpertest/`** (E-3, dobles); si no, se reconstruye como producción |
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |

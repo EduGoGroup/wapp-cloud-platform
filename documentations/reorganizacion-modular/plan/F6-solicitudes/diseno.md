@@ -43,11 +43,11 @@
 | `metricas.go` | 342 | 6 | Puerto `PublicadorDeMetricas` (`:83`) y los tres eventos `intake_line_corrected` `:55`, `intake_approved` `:57`, `intake_info_requested` `:59` con su payload 🔶 | `metricas_test` |
 | `notifier.go` | 574 | 15 | `Notifier` (salida hacia WhatsApp por `MessageSender.SendText(ctx, sessionID, to, text) (*cloudlinkv1.Ack, error)` `:102`), `Destinations` (`:114`), `SettingsReader` (`:133`); plantillas que ve el **cliente** 🔶 | `notifier_test`, `notifier_integration_test` (→F9) |
 | `buyerdata.go` (+ `buyerdata_postgres.go`, D-F6-6) | 219 | 6 | `BuyerData`, `PostgresBuyerData` (sobre KEK por **fila**: el envelope de PII de negocio — 🔴 no es la DEK del ADR-0007), `PutBuyerField` | `buyerdata_test`, `buyerdata_integration_test` (→F9) |
-| `memory.go` | 907 | 31 | `MemoryStore`: gemelo en memoria del `Store` (37 métodos, `sync.Mutex` `:20`). **Corre `intakestest.Contrato`** | todos los unitarios lo usan |
+| `memory.go` | 907 | 31 | `MemoryStore`: gemelo en memoria del `Store` (37 métodos, `sync.Mutex` `:20`). **Corre `intakeshelpertest.Contrato`** | todos los unitarios lo usan |
 | `postgres.go` | 1.734 | 20 | Adaptador (`NewPostgres`, `ConCifraDeLiteral`, `ConLogDeRetencion`); SQL con `WithTx`; funciones puras extraídas para mapeo de filas y de `IsUniqueViolation`; `revisionsOf → ejecutarPoda → sellarPodada` (candado §6) | `postgres_integration_test` (16, →F9), `event_pair_*`, `proyeccion_cabecera_test` |
 | `note.go` | 150 | 4 | `MaxNoteRunes = 280`, `NoteTooLongError{Runes,Max}` con su `Error()` **literal** `cart: …`, `SanitizeNote` (reglas en §4) | `cart/notes_test` (14), `cart/buyer_test` |
 
-**Suite `S/intakes/intakestest`**: `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (firma
+**Suite `S/intakes/intakeshelpertest`**: `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (firma
 D-F1-1) sobre el puerto `Store` (`intakes.go:325`): alta por evento, lectura por tenant (otro tenant
 → `ErrNotFound`), paginación y filtros, transición válida/ inválida (`TransitionError`), revisiones
 con número creciente, envío idempotente (`EnsureShippingLine`), historial aprobado. La corre
@@ -84,7 +84,7 @@ importar `flujos/store`** (ciclo con el test in-package de aquel, `fase6_solicit
 | `outbox_stats.go` | 2 | `OutboxCounts` · `CountOutbox` pasa a `postgres.go` (D-F6-6) |
 | `postgres.go` | 12 | Adaptador; secreto HMAC cifrado con el `FieldCipher` compartido; `scanWebhookRows` y `closeClaim` como funciones puras testeables |
 
-**Suite y doble nuevos** (`S/integrations/integrationstest/`): `Contrato(t, func(t) Montaje)` sobre
+**Suite y doble nuevos** (`S/integrations/integrationshelpertest/`): `Contrato(t, func(t) Montaje)` sobre
 `Store` + `Memoria` (doble con `sync.Mutex` y reloj inyectable): encolar devuelve id creciente;
 reclamar un lote no devuelve filas ya reclamadas y vigentes; `MarkWebhookFailed` reprograma;
 `RecoverOrphanDeliveries` devuelve a `pending` las reclamadas con lease vencido; secreto nunca se
@@ -112,16 +112,16 @@ del llamante; `event_history_id` omitido; no congela lo que rellena el worker; g
 - `sigv1.go` (3 exp.): `Sign`, `SignatureHeader`, verificación HMAC-SHA256 sobre el cuerpo **crudo**,
   ventana ±300 s, comparación en **tiempo constante** (`:39`), reloj como parámetro. `sigv1_test` (7).
 - `tenantvars.go` (2: `Variable`, puerto `Store` `:44`), `memory.go` (5, `SetClock`), `postgres.go`
-  (4, `Replace` en transacción). Suite `tenantvarstest.Contrato`: `Replace` sustituye el conjunto
+  (4, `Replace` en transacción). Suite `tenantvarshelpertest.Contrato`: `Replace` sustituye el conjunto
   entero; `List` ordenado y por tenant. 🔶 `postgres_integration_test` (5).
 
 ## 3 · Dobles y suites (E-6)
 
 | Puerto | Suite | Implementación en unitario | Postgres (F9) |
 |---|---|---|---|
-| `intakes.Store` | `intakestest.Contrato` | `MemoryStore` (producción, `memory.go`) | `Postgres`, T9.27 |
-| `integrations.Store` | `integrationstest.Contrato` | `integrationstest.Memoria` **nuevo** | `Postgres`, T9.27 |
-| `tenantvars.Store` | `tenantvarstest.Contrato` | `MemoryStore` (producción) | `Postgres`, T9.27 |
+| `intakes.Store` | `intakeshelpertest.Contrato` | `MemoryStore` (producción, `memory.go`) | `Postgres`, T9.27 |
+| `integrations.Store` | `integrationshelpertest.Contrato` | `integrationshelpertest.Memoria` **nuevo** | `Postgres`, T9.27 |
+| `tenantvars.Store` | `tenantvarshelpertest.Contrato` | `MemoryStore` (producción) | `Postgres`, T9.27 |
 | Los demás puertos (notificador, emisores, lectores de P5, `Outbox`) | — | dobles locales del test del consumidor | — |
 
 ## 4 · Reglas E-8 que el contrato debe llevar (las no obvias)

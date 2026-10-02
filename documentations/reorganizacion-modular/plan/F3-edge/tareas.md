@@ -18,18 +18,18 @@ Para cuando: `session`, `inferstats`, `receipts`, `ingest`, `diagnostics`, `leas
 
 - [ ] **T3.2 · rojo(edge): `session/registry.go`** · 🌐 · dep. T3.1 · cumple R3.1.a–b · R-S1…R-S4; `ErrSessionOffline` = el de `platform` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de session/registry`
 - [ ] **T3.3 · rojo(edge): `inferstats/inferstats.go`** · 🌐 · `Agregado` alias de `platform/metrics` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de inferstats`
-- [ ] **T3.4 · rojo(edge): `receipts` (3) + `receiptstest`** · 🌐 · cumple R3.2.a–b · doble nace completo y verde contra la suite (D-F3-1) · **Gate**: G-rojo · `go test -race ./internal/modulos/edge/receipts/receiptstest/` rc=0 · **Commit**: `rojo(edge): contratos de receipts y su suite`
-- [ ] **T3.5 · rojo(edge): `ingest` (2 + `deduper.go` ✚) + `ingesttest`** · 🌐 · cumple R3.2.a · D-F3-3 · **Gate**: igual · **Commit**: `rojo(edge): contratos de ingest y su suite`
-- [ ] **T3.6 · rojo(edge): `diagnostics` (2) + `diagnosticstest`** · 🌐 · cumple R3.2.a · **Gate**: igual · **Commit**: `rojo(edge): contratos de diagnostics y su suite`
-- [ ] **T3.7 · rojo(edge): 🔒 `lease` (4) + `leasetest`** · 🌐 · cumple R3.3.a–e
-  - **Ficheros**: `E/lease/{lease,repository,repository_postgres,signingkey}.go` y 4 `_test.go`, `E/lease/leasetest/{suite,memoria,memoria_test}.go`, `…/repository_integracion_test.go` (`integracion`)
+- [ ] **T3.4 · rojo(edge): `receipts` (3) + `receiptshelpertest`** · 🌐 · cumple R3.2.a–b · doble nace completo y verde contra la suite (D-F3-1) · **Gate**: G-rojo · `go test -race ./internal/modulos/edge/receipts/receiptshelpertest/` rc=0 · **Commit**: `rojo(edge): contratos de receipts y su suite`
+- [ ] **T3.5 · rojo(edge): `ingest` (2 + `deduper.go` ✚) + `ingesthelpertest`** · 🌐 · cumple R3.2.a · D-F3-3 · **Gate**: igual · **Commit**: `rojo(edge): contratos de ingest y su suite`
+- [ ] **T3.6 · rojo(edge): `diagnostics` (2) + `diagnosticshelpertest`** · 🌐 · cumple R3.2.a · **Gate**: igual · **Commit**: `rojo(edge): contratos de diagnostics y su suite`
+- [ ] **T3.7 · rojo(edge): 🔒 `lease` (4) + `leasehelpertest`** · 🌐 · cumple R3.3.a–e
+  - **Ficheros**: `E/lease/{lease,repository,repository_postgres,signingkey}.go` y 4 `_test.go`, `E/lease/leasehelpertest/{suite,memoria,memoria_test}.go`, `…/repository_integracion_test.go` (`integracion`)
   - **Hecho cuando**: R-L1…R-L8 en los comentarios, con la cita de ADR-0007 en el de paquete; suite con «Upsert no resucita» y los dos sujetos de corte; SQL de `repository_postgres.go` **pendiente de copiar literal** en el verde (T-9); los tests usan claves Ed25519 generadas en el test, nunca un fichero.
   - **Gate**: G-rojo · **Commit**: `rojo(edge): contrato del lease (mitad servidora de la doble llave)`
-- [ ] **T3.8 · rojo(edge): `enroll` (7, `doc.go` sin test) + `enrolltest`** · 🌐 · cumple R3.1.d, R3.2.a · CA de prueba con `NewDevCA`; `EnrollEdge` por `bufconn` · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de enroll y sus suites`
+- [ ] **T3.8 · rojo(edge): `enroll` (7, `doc.go` sin test) + `enrollhelpertest`** · 🌐 · cumple R3.1.d, R3.2.a · CA de prueba con `NewDevCA`; `EnrollEdge` por `bufconn` · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de enroll y sus suites`
 - [ ] **T3.9 · Cierre del bloque B** · 🌐 · pendientes de `edge` anotados = `make test-pendiente`; `ci-local` rc=0; PR · **Gate**: `validar-antes-de-cerrar`
 
 ## Bloque C · rojo de `fleet`, `filtercfg`, `grpc` · 🌐 · T3.10–T3.14
-- [ ] **T3.10 · rojo(edge): `fleet` (2) + `fleettest` (suite, memoria, `slowrepo.go`)** · 🌐 · dep. T3.9 · cumple R3.2.a · suite de diseño §2 completa; `slowrepo.go` con test propio (tiene lógica) · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de fleet y su suite`
+- [ ] **T3.10 · rojo(edge): `fleet` (2) + `fleethelpertest` (suite, memoria, `slowrepo.go`)** · 🌐 · dep. T3.9 · cumple R3.2.a · suite de diseño §2 completa; `slowrepo.go` con test propio (tiene lógica) · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de fleet y su suite`
 - [ ] **T3.11 · rojo(edge): `filtercfg/filtercfg.go`** · 🌐 · R-C1…R-C5 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de filtercfg`
 - [ ] **T3.12 · rojo(edge): `grpc` — tipos, servidor y envío** (`types`, `server`, `send`, `receipt_sink`, `worklane`) · 🌐 · dep. T3.10 · cumple R3.5.d, R3.6.a · R-G3, R-G11, R-G12 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de grpc/<fichero>` — uno por fichero
 - [ ] **T3.13 · rojo(edge): `grpc` — conexión, auth, config, readiness** (`connect`, `auth`, `config_push`, `readiness`, `diagnostics`) · 🌐 · cumple R3.4.a–c, R3.5.d · R-G1…R-G10, R-G16, R-G17, R-G19…R-G21 · **Gate**: G-rojo
@@ -42,7 +42,7 @@ Para cuando: `session`, `inferstats`, `receipts`, `ingest`, `diagnostics`, `leas
 - [ ] **T3.18 · verde(edge): `enroll`** · 🌐 · 6 commits · cierre del bloque con PR · **Gate**: G-verde
 
 ## Bloque E · verde de `fleet` y `filtercfg` · 🌐 · T3.19–T3.20
-- [ ] **T3.19 · verde(edge): `fleet/fleet.go`, `fleet/repository_postgres.go`, `fleettest/slowrepo.go`** · 🌐 · dep. T3.18 · el índice ciego usa `nucleo/contact.Normalize` · **Gate**: G-verde
+- [ ] **T3.19 · verde(edge): `fleet/fleet.go`, `fleet/repository_postgres.go`, `fleethelpertest/slowrepo.go`** · 🌐 · dep. T3.18 · el índice ciego usa `nucleo/contact.Normalize` · **Gate**: G-verde
 - [ ] **T3.20 · verde(edge): `filtercfg`** · 🌐 · **Gate**: G-verde · PR
 
 ## Bloque F · verde de `grpc` · 🌐 · T3.21–T3.23

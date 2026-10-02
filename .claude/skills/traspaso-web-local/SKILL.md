@@ -26,7 +26,7 @@ necesite Docker, apuntar a un Postgres vivo).
 | | Web (claude.ai/code) | Local (Claude Code en la máquina de Jhoan) |
 |---|---|---|
 | Escribir código, tests y docs | ✅ | ✅ |
-| `make ci-local` (fmt, vet, lint `v2.12.2`, test, build) | ✅ si el setup del entorno instaló el lint (`documentations/reorganizacion-modular/06-entorno-web.md`) | ✅ |
+| `make ci-local` (fmt, vet, lint `v2.12.2`, test, build) | ✅ si `make toolchain` da `TOOLCHAIN=OK` (el lint fijado lo deja en el `PATH` el setup del entorno: `documentations/reorganizacion-modular/06-entorno-web.md` §3 y §6) | ✅ si `make toolchain` da `TOOLCHAIN=OK`; si falta el lint, `make tools` (una vez por *checkout*) |
 | Contratos y rojo/verde (tests unitarios) | ✅ | ✅ |
 | **Tests de proceso de F9** (testcontainers) | Escribir y compilar (`go vet -tags integracion`) · **correrlos como pre-chequeo** si la primera sesión web (T0.0) dejó «funciona» en `06-entorno-web.md` §5 (decisión **W-1**); su verde **no cierra** nada | ✅ **los corre y los cierra** (la corrida que cuenta) |
 | Tests de integración **viejos** (`make test-integration`) | ❌ | ✅ (solo importan en F0 y en el relevo) |
@@ -53,7 +53,9 @@ Ocho secciones, en este orden, con **comandos literales** que se puedan copiar:
 Contexto: [qué fase, qué módulo, qué fecha — una frase]
 
 ═══ 0. BLOQUEANTE ═══
-    [lo que impide empezar. Si no hay nada: "ninguno" — la sección no se omite]
+    [lo que impide empezar. Si no hay nada: "ninguno" — la sección no se omite.
+     La toolchain NO se escribe aquí como receta: quien recibe corre `make toolchain` (rc=0 y
+     TOOLCHAIN=OK) y, en local, `make tools` si falta el lint. Solo va aquí si eso no basta]
 
 ═══ 1. Rama y commits ═══
     [rama de trabajo, último SHA, commits rojo/verde/conmutar hechos, qué hay sin pushear]
@@ -63,8 +65,9 @@ Contexto: [qué fase, qué módulo, qué fecha — una frase]
      que go.sum se generó con red real]
 
 ═══ 3. Gates que la web corrió ═══
-    [cada comando, su rc leído SIN pipe, conteos PASS/FAIL, pendientes, cobertura, SKIP en
-     código nuevo, versión de golangci-lint usada]
+    [la salida de `make toolchain` (GO_EFFECTIVE, LINT_EFFECTIVE, TOOLCHAIN=OK|NOT_READY) y,
+     después, cada comando, su rc leído SIN pipe, conteos PASS/FAIL, pendientes, cobertura y
+     SKIP en código nuevo. Un `go` suelto como gate: con `GOTOOLCHAIN=go1.26.5` delante, o por `make`]
 
 ═══ 4. Lo que solo la sesión local puede hacer ═══
     [comandos exactos y la salida esperada: `make test-procesos` contra el binario viejo y contra
@@ -98,7 +101,10 @@ comprobó.
 - 🚫 Bajar `go 1.26.5` en `go.mod` para acomodar un entorno.
 - 🚫 Generar `go.sum` sin red real.
 - 🚫 Declarar pasado un gate corrido con una versión de herramienta distinta de la fijada: se dice
-  qué versión se usó y que **no es autoritativa**.
+  qué versión se usó y que **no es autoritativa**. La que cuenta es la **efectiva**, la que dice
+  `make toolchain`, no la del `PATH`: en local un `go` suelto es `go1.27.1` aunque `make` use
+  `go1.26.5`. La toolchain la pone el `Makefile` y el lint, `make tools`: no hace falta exportar
+  `GOTOOLCHAIN` en la sesión ni instalar el lint en un directorio aparte.
 - 🚫 `t.Skip` para que algo «pase» en la web.
 - 🚫 Apuntar un test a un Postgres vivo (`WAPP_TEST_DB_DSN`, `localhost:5432`, UAT): los tests de
   proceso usan **testcontainers** (skill `procesos-testcontainers`).
@@ -109,6 +115,7 @@ comprobó.
 
 1. Lee el fichero entero antes de tocar nada.
 2. Verdad de campo: `git fetch origin`, la rama y el SHA que dice el traspaso existen.
-3. Repite los gates de la §3 con **tu** toolchain fijada, y compara.
+3. Repite los gates de la §3 con **tu** toolchain fijada, y compara. Antes: `make toolchain` →
+   `TOOLCHAIN=OK` y `rc=0`; en local, si falta el lint, `make tools` y otra vez `make toolchain`.
 4. Haz la §4. Refuta la §7.
 5. Cierra con la sección `CERRADO <fecha>` en el mismo fichero, e integra en `dev`.

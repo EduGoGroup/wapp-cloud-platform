@@ -15,7 +15,7 @@ import (
 // public.flow_state. Es la implementación que corre en producción: la identidad de los contactos
 // vive en Postgres, con el identificador cifrado en reposo. Se construye con NewPostgresResolver y
 // es seguro para uso concurrente (cada Resolve abre su propia transacción). La suite
-// contacttest.Contrato fija lo que promete junto a MemoryResolver; su SQL solo lo ejercita un
+// contacthelpertest.Contrato fija lo que promete junto a MemoryResolver; su SQL solo lo ejercita un
 // Postgres real (esa misma suite contra esta implementación y los procesos de F9), no un test
 // unitario.
 //
@@ -105,12 +105,21 @@ func NewPostgresResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyPr
 // sentencias comparten la transacción de Resolve.
 //
 // push_name (R-27, R-28). Con pushName no vacío lo sella: en la fila de cada ref que inserta y, para
-// un contacto que ya existía, con un UPDATE sobre sus filas del contacto canónico cuyo WHERE lleva el
-// CENTINELA push_name_enc IS NULL. Así el nombre que llega tarde a un contacto creado sin él (verdad
-// de campo: «a veces el nombre no llega en los primeros eventos, llega posterior») se guarda
-// entonces. Con pushName vacío no toca el nombre. Gana el primer nombre no vacío POR FILA: si el
-// cliente se cambia el nombre en WhatsApp, la fila conserva el primero. Qué nombre sobrevive NO es
+// un contacto que la búsqueda encontró, con un UPDATE sobre las filas del contacto canónico cuyo
+// WHERE lleva el CENTINELA push_name_enc IS NULL. Así el nombre que llega tarde a un contacto creado
+// sin él (verdad de campo: «a veces el nombre no llega en los primeros eventos, llega posterior») se
+// guarda entonces. Con pushName vacío no toca el nombre. Gana el primer nombre no vacío POR FILA: si
+// el cliente se cambia el nombre en WhatsApp, la fila conserva el primero. Qué nombre sobrevive NO es
 // parte del puerto (la memoria conserva el último) y pushName nunca cambia el contact_id (N-04).
+//
+// Una rama NO sella el nombre en lo que ya existía: la carrera get-or-create. Si la búsqueda no
+// encontró ninguna ref y el INSERT de la primera choca con la fila que otra transacción acaba de
+// insertar, su ON CONFLICT ... DO UPDATE solo toca updated_at, no escribe el sobre en esa fila; y ese
+// camino, el de la creación, no ejecuta el UPDATE del centinela, que solo corre cuando la búsqueda
+// encontró el contacto. El pushName de esa llamada queda entonces, como mucho, en las filas de las
+// demás refs que ella misma inserte. La fila que ganó la carrera conserva lo que tuviera: si nació
+// sin nombre, sigue sin él hasta la siguiente Resolve con pushName no vacío que sí encuentre el
+// contacto, que lo sella porque el centinela sigue casando.
 //
 // Por qué un centinela y no una comparación de valores (MD-046.5). Dos cifrados del mismo texto
 // nunca son iguales, porque cada escritura usa una DEK y un nonce frescos: un guard por valor
@@ -159,11 +168,24 @@ func NewPostgresResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyPr
 //   - «contact: podar flow_state huérfano: %w», «contact: migrar flow_state en fusión: %w» y
 //     «contact: re-apuntar refs en fusión: %w», los tres pasos de la fusión.
 //
-// Los errores de la transacción misma (abrirla, confirmarla, agotar el reintento ante un
-// deadlock) los devuelve postgres.WithTx con su propio prefijo «postgres: » y Resolve no los
-// vuelve a envolver. Un tenantID mal formado (no UUID) da el error de parseo de Postgres, nunca un
-// centinela. Ningún error contiene el value ni el pushName (R1.4.d): son PII y los errores suben a
-// los logs; los de cifrado dicen solo que no se pudo cifrar.
+// Los errores de la transacción misma los devuelve postgres.WithTx, y Resolve no los vuelve a
+// envolver ni les antepone «contact: ». Son de tres clases, y solo la primera lleva un prefijo propio:
+//   - con el prefijo «postgres: »: «postgres: iniciar transacción: %w» (abrirla), «postgres:
+//     confirmar transacción: %w» (el COMMIT) y, agotados los intentos ante un deadlock o un fallo de
+//     serialización, «postgres: transacción tras %d intentos (último deadlock/serialización): %w»
+//     (hoy, 8 intentos), que envuelve el último error del cuerpo: ahí el «contact: ...» del cuerpo
+//     no abre el texto, va detrás de ese prefijo;
+//   - el error del contexto DESNUDO, sin ningún prefijo (context.Canceled o
+//     context.DeadlineExceeded tal cual), si el ctx se cancela durante la espera que sigue a un
+//     intento abortado por deadlock o serialización: el error que provocó el reintento no aparece;
+//   - un error compuesto con errors.Join, si además falla el ROLLBACK de un intento: une el error
+//     que lo abortó (el del cuerpo, con su «contact: », o el de confirmar si el ctx se canceló justo
+//     antes del COMMIT) y el del rollback, cada uno en su línea del texto y sin un prefijo común.
+//     errors.Is y errors.As ven los dos.
+//
+// Un tenantID mal formado (no UUID) da el error de parseo de Postgres, nunca un centinela. Ningún
+// error contiene el value ni el pushName (R1.4.d): son PII y los errores suben a los logs; los de
+// cifrado dicen solo que no se pudo cifrar.
 func (r *PostgresResolver) Resolve(ctx context.Context, tenantID string, refs []Ref, pushName string) (string, error) {
 	panic(pendiente.Implementar("contact.PostgresResolver.Resolve"))
 }

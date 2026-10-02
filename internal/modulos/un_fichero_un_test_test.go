@@ -13,7 +13,11 @@ const raizRepo = "../.."
 // alcance son los directorios que recorren un_fichero_un_test y exportados_cubiertos
 // (plan/F0-andamiaje/diseno.md §4, «Alcance»). internal/nucleo está vacío hasta F1 y aun así
 // va cubierto (el piloto lo necesita, F1 entrada E2); internal/apipublica, cuando exista.
-// internal/arranque queda FUERA (D-F0-1: su test es el paquete); solo entra su huellatest.
+// internal/arranque queda FUERA (D-F0-1: su test es el paquete); solo entra su huellatest,
+// que desde D-F1-10 (Jhoan, 2026-10-02) NO está exento de ningún candado: su nombre termina en
+// «test», no en el sufijo compuesto «helpertest» que exime a suites y dobles
+// (candados.UnFicheroUnTest), y no se puede renombrar porque lo importa el test del arranque
+// viejo. Su huellatest.go lleva su huellatest_test.go, con todos sus exportados.
 var alcance = []string{
 	"internal/modulos",
 	"internal/nucleo",

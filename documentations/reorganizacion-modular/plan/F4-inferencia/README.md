@@ -4,6 +4,10 @@
 > una línea de código. Marco común: [`../00-marco/`](../00-marco/README.md) (no se repite aquí).
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Rutas: autoridad
 > [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas F1–F4).
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
+> **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
+> nombraba con `…test` (`degradationtest`, `tenantllmtest`): se actualizó el sufijo, nada más.
 
 ## Objetivo en tres líneas
 

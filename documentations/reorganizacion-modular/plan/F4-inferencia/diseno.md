@@ -17,13 +17,13 @@ internal/modulos/inferencia/
 ├── degradation/
 │   ├── degradation.go   degradation_test.go  porta V/degradation/degradation.go (28 · 449 l)
 │   ├── postgres.go      postgres_test.go     porta V/degradation/postgres.go    (4 · 227 l) — fuera del umbral
-│   └── degradationtest/
+│   └── degradationhelpertest/
 │       ├── contrato.go  (sin test propio, D-F1-3)   suite del puerto Store
 │       └── memoria.go   memoria_test.go             doble con el arbitrio del índice único
 ├── tenantllm/
 │   ├── tenantllm.go     tenantllm_test.go    porta V/tenantllm/tenantllm.go (9 · 182 l)
 │   ├── postgres.go      postgres_test.go     porta V/tenantllm/postgres.go  (6 · 222 l) — fuera del umbral
-│   └── tenantllmtest/
+│   └── tenantllmhelpertest/
 │       ├── contrato.go  (sin test propio)
 │       └── memoria.go   memoria_test.go
 └── llmvia/
@@ -112,10 +112,10 @@ DEK del ADR-0007 (la del almacén de `whatsmeow`, que custodia el cliente y nunc
 
 | Fichero | Contrato |
 |---|---|
-| `tenantllmtest/contrato.go` | `func Contrato(t *testing.T, nuevo func() tenantllm.Store)`: las promesas del puerto de arriba, **con UUID bien formados** y un tenant ajeno para INV-7 (reproduce en conducta los 15 casos de `V/tenantllm/postgres_integration_test.go`, salvo los 4 `TestBackfill0073_*`, que son de la migración → F9) |
-| `tenantllmtest/memoria.go` + test | Doble que cumple la suite; guarda la clave en claro **solo en memoria de test**; su test corre `Contrato` |
-| `degradationtest/contrato.go` | `Contrato(t, nuevo func() degradation.Store)`: N `Save` misma clave ⇒ una fila y `creado` solo el primero; ventana siguiente ⇒ fila nueva; `List` acotada al tenant, orden y `[]` no nil (de `V/degradation/postgres_integration_test.go`) |
-| `degradationtest/memoria.go` + test | Arbitrio del índice único `(tenant, reason, via, window_start.UTC())`; cuenta llamadas (`Saves()`) para R4.5.b |
+| `tenantllmhelpertest/contrato.go` | `func Contrato(t *testing.T, nuevo func() tenantllm.Store)`: las promesas del puerto de arriba, **con UUID bien formados** y un tenant ajeno para INV-7 (reproduce en conducta los 15 casos de `V/tenantllm/postgres_integration_test.go`, salvo los 4 `TestBackfill0073_*`, que son de la migración → F9) |
+| `tenantllmhelpertest/memoria.go` + test | Doble que cumple la suite; guarda la clave en claro **solo en memoria de test**; su test corre `Contrato` |
+| `degradationhelpertest/contrato.go` | `Contrato(t, nuevo func() degradation.Store)`: N `Save` misma clave ⇒ una fila y `creado` solo el primero; ventana siguiente ⇒ fila nueva; `List` acotada al tenant, orden y `[]` no nil (de `V/degradation/postgres_integration_test.go`) |
+| `degradationhelpertest/memoria.go` + test | Arbitrio del índice único `(tenant, reason, via, window_start.UTC())`; cuenta llamadas (`Saves()`) para R4.5.b |
 
 ### `llmvia/notify.go`
 
@@ -188,7 +188,7 @@ centinela viejo. **Muere**: `puenteConfigLLM` en F7 (conmuta `reanalisis`), `pue
 
 | Candado viejo | Regla | Dónde queda |
 |---|---|---|
-| `internal/llmvia/c2_via_test.go` (AST, I-CP-3) | La vía se pregunta en un solo sitio; lista exacta de permitidos (en los dos sentidos) | `N/llmvia/c2_via_test.go` (D-F4-2). Barre `internal/{modulos,nucleo,arranque,apipublica}` hasta F10 y todo `internal/` desde F10. **Permitidos en el árbol nuevo**: `modulos/inferencia/llmvia/llmvia.go` · `…/tenantllm/tenantllm.go` · `…/tenantllm/postgres.go` · `…/tenantllm/tenantllmtest/memoria.go` (el doble aplica la misma regla de persistencia) · `…/degradation/degradation.go` · `apipublica/tenantllm.go` (lo añade TX.13) · `modulos/captacion/reanalisis/reanalisis.go` (lo añade F7). Cada entrada entra **en el commit `verde` que introduce la comparación** (un permitido que no compara pone rojo el candado) |
+| `internal/llmvia/c2_via_test.go` (AST, I-CP-3) | La vía se pregunta en un solo sitio; lista exacta de permitidos (en los dos sentidos) | `N/llmvia/c2_via_test.go` (D-F4-2). Barre `internal/{modulos,nucleo,arranque,apipublica}` hasta F10 y todo `internal/` desde F10. **Permitidos en el árbol nuevo**: `modulos/inferencia/llmvia/llmvia.go` · `…/tenantllm/tenantllm.go` · `…/tenantllm/postgres.go` · `…/tenantllm/tenantllmhelpertest/memoria.go` (el doble aplica la misma regla de persistencia) · `…/degradation/degradation.go` · `apipublica/tenantllm.go` (lo añade TX.13) · `modulos/captacion/reanalisis/reanalisis.go` (lo añade F7). Cada entrada entra **en el commit `verde` que introduce la comparación** (un permitido que no compara pone rojo el candado) |
 | `withlocaloptions_acumula_{,whitebox_}test.go` | `WithLocalOptions` acumula | Aserción de conducta en `llmvia_test.go` (las dos opciones llegan al provider: plantilla ajustada **y** techo apagado a la vez); el caja-blanca no se porta |
 | `degradation_test.go:170` (lee la `0075`) | Vocabulario Go ≡ `CHECK` SQL | `N/degradation/degradation_test.go`, ruta `../../../platform/storage/postgres/migrations/structure` (el `embed.FS` de `migrations` no está exportado) |
 | `internal/gateway/grpc/inference_vocabulario_internal_test.go` | `Motivo*` del transporte ⊆ `Reasons()` | Vive en `edge` (F3); F4 lo re-apunta al `degradation` nuevo (T4.28) |

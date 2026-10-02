@@ -65,7 +65,7 @@
 - **R4.4.b** · **CUANDO** el tenant no tiene fila, **EL** selector **DEBERÁ** usar la vía `local` y
   no pedir la credencial (REQ-33). — Verifica: `TestFor` caso «sin fila» con `pedidasLa == 0`.
 - **R4.4.c** · **SI** se pide `APIKey` de un tenant sin fila, sin sobre o con `via='local'`,
-  **ENTONCES EL** store **DEBERÁ** devolver `ErrNotConfigured`. — Verifica: suite `tenantllmtest.Contrato` sobre el doble (y sobre Postgres en F9).
+  **ENTONCES EL** store **DEBERÁ** devolver `ErrNotConfigured`. — Verifica: suite `tenantllmhelpertest.Contrato` sobre el doble (y sobre Postgres en F9).
 - **R4.4.d** · **CUANDO** un `Upsert` pasa de `api` a `local`, **EL** store **DEBERÁ** retirar la
   credencial y el consentimiento. — Verifica: la misma suite.
 - **R4.4.e** · **SI** un `Upsert` en vía `api` llega sin clave o sin consentimiento, o con una vía
@@ -86,7 +86,7 @@
   Verifica: doble que cuenta llamadas (`saves == 0`).
 - **R4.5.c** · **CUANDO** N fallos del mismo (tenant, motivo, vía) caen en la misma ventana de
   15 min (`VentanaDe`: `at.UTC().Truncate(v)`), **EL** escritor **DEBERÁ** producir una sola fila.
-  — Verifica: suite `degradationtest.Contrato` sobre el doble; la del índice único, en F9.
+  — Verifica: suite `degradationhelpertest.Contrato` sobre el doble; la del índice único, en F9.
 - **R4.5.d** · **EL** mapeo error→motivo (`motivoDe`) **DEBERÁ** cumplir la tabla de
   [`diseno.md`](diseno.md) §3.2 — incluidos los 6 casos que **no** avisan (`llm.ErrLLMQuality`
   envuelto o no, `api.ErrUnsupportedProvider`, motivo inventado, motivo sano, error cualquiera). —

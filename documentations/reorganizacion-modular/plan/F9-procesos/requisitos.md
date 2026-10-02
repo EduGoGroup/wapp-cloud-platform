@@ -26,15 +26,19 @@
   procesos ven bases distintas.
 - **R9.1.d** · **SI** Docker no está disponible, **ENTONCES EL** `TestMain` **DEBERÁ** terminar con
   código ≠ 0 y el mensaje `procesos: no se pudo levantar Postgres (¿hay Docker?)`, sin saltar nada.
-  — Verifica: `HOME=$(mktemp -d) GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
-  GOENV=$(go env GOENV) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
+  — Verifica: `GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
+  GOENV=$(go env GOENV) HOME=$(mktemp -d) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
   ./test/procesos/; echo rc=$?` → `rc≠0`, el mensaje de arriba y 0 `--- SKIP`. ⚠️ **`DOCKER_HOST=unix:///nada` a secas NO sirve**:
   testcontainers prueba ese host, falla y cae al socket del contexto activo (Docker Desktop) o a `/var/run/docker.sock`, y la
   corrida pasa (medido en macOS y en la VM web: README, contradicción 15). El `HOME` vacío anula el contexto y
   `~/.docker/run/docker.sock`; donde exista `/var/run/docker.sock` (Linux) hace falta además un espacio de montajes privado.
+  ⚠️ **`HOME=$(mktemp -d)` va DESPUÉS de las variables de Go** (corregido el 2026-10-01): las asignaciones de una línea se evalúan
+  de izquierda a derecha, y con `HOME` delante cada `$(go env …)` calcula su ruta bajo el `HOME` vacío (caché de compilación vacía y,
+  sin `GOMODCACHE` exportada, caché de módulos vacía). Medido en bash 3.2, zsh, `sh` y `dash`: README, contradicción 15.
 - **R9.1.e** · **EL** arnés **DEBERÁ** lanzar cada servidor con un entorno **construido desde cero**
   (nunca `os.Environ()`), con los cuatro listeners en `127.0.0.1:<puerto libre>`. — Verifica: el
-  candado de H9.2 falla si aparece `os.Environ()` en `test/procesos/`; `TestArnes_EntornoLimpio`
+  candado de H9.2 falla si aparece `os.Environ()` en `test/procesos/` (también con `os` importado con alias o con punto, desde
+  `1c247f9`; lo que el candado sigue sin ver, en la contradicción 22 del README); `TestArnes_EntornoLimpio`
   arranca con `WAPP_DB_HOST=trampa` exportado en el shell y el servidor igualmente usa el contenedor.
 - **R9.1.f** · **MIENTRAS** dos procesos corren en paralelo (`t.Parallel()`), **EL** arnés **DEBERÁ**
   darles puertos y bases disjuntos. — Verifica: `make test-procesos` con `-parallel 4` sin
@@ -100,8 +104,12 @@
   §7 del traspaso.
 - **R9.4.d** · **EL** proceso **DEBERÁ** entrar solo por las puertas reales (HTTP `:8100`/`:8103`,
   gRPC `:8101`/`:8102`) y leer Postgres por SQL; **NO DEBERÁ** importar paquetes de dominio. —
-  Verifica: `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/' | grep -v '/internal/modulos/.*test$\|/internal/nucleo/.*test$'`
-  vacío (solo se admiten los paquetes `…test` de suites de contrato, H9.5).
+  Verifica: `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/' | grep -v '/internal/modulos/.*helpertest$\|/internal/nucleo/.*helpertest$'`
+  vacío (solo se admiten los paquetes `…helpertest` de suites de contrato, H9.5). ✎ **D-F1-10 (2026-10-02)**: el filtro era
+  `.*test$`, que admitía también un paquete de producción `latest` o `contest` —el defecto del hallazgo 21 del
+  [README de F1](../F1-nucleo-contact/README.md)—; pasa a `helpertest$`, el sufijo que reconocen los candados. Hoy da vacío con
+  los dos filtros: `test/procesos` no importa nada de `internal/`. D-F1-8, que pide ampliar este requisito al adaptador
+  Postgres del puerto, sigue abierta.
 - **R9.4.e** · **MIENTRAS** corre la suite, **EL** gate **DEBERÁ** leer el `rc` del log y contar
   `--- SKIP` = 0 y `--- FAIL` = 0 con `-v`. — Verifica: bloque «Antes de dar un proceso por bueno»
   de la skill `procesos-testcontainers`.
@@ -114,7 +122,7 @@
 
 - **R9.5.a** · **CUANDO** un módulo conmuta (ola 9C) — o en 9D si D-F9-1 se rechaza —, **EL** fichero
   `test/procesos/<paquete>_contrato_test.go` (convención que estrena F1, T1.13) **DEBERÁ** ejecutar
-  `…test.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
+  `…helpertest.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
   base clonada propia**. — Verifica: `go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
   con un `--- PASS` por puerto (tabla de `diseno.md` §5).
 - **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con

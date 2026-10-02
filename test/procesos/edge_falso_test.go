@@ -46,6 +46,11 @@ import (
 // con WhatsApp: no hay whatsmeow, ni DEK, ni Ollama. Dónde manda cada cosa lo dice el fichero
 // del diseño (plan/F9-procesos/diseno.md §3.3).
 //
+// Lo que SÍ hace igual que el Edge de verdad es obedecer al lease (el kill-switch, ADR-0007): sin
+// un lease vigente NO «entrega» —ni SendText ni SendMedia— y lo dice con el mismo Ack que el Edge
+// real (ok=false, «lease no vigente»). Un doble más permisivo que el Edge daría por buena una
+// entrega que en producción no ocurre.
+//
 // Está partido en dos a propósito. El NÚCLEO (edge.manejar y sus alRecibir…) decide qué hace el
 // Edge con cada comando y emite sus frames por edge.salida, una función inyectada: se prueba sin
 // servidor ni red, con un colector en vez del stream. El TRANSPORTE (enrolar, conectar, recibir,
@@ -70,6 +75,12 @@ const (
 	// edgeSalidaCalentamiento es lo que se contesta a una inferencia de calentamiento (Warmup):
 	// su salida se descarta en la nube, así que no consume un paso del guion.
 	edgeSalidaCalentamiento = "{}"
+	// edgeLeaseNotValidText es el texto de Ack.error con el que el Edge REAL rechaza un envío cuando
+	// el lease de la sesión no está vigente (wapp-edge-agent, internal/adapters/cloudlink/adapter.go,
+	// handleSendText y handleSendMedia: `a.ack(cl, sid, cmdID, false, "lease no vigente")`). El doble
+	// contesta lo mismo, letra por letra: es lo que la nube devuelve en el campo «error» de su API
+	// de envío.
+	edgeLeaseNotValidText = "lease no vigente"
 
 	// edgeTopeEnrolar acota la llamada EnrollEdge.
 	edgeTopeEnrolar = 15 * time.Second
@@ -90,6 +101,10 @@ var (
 	errEdgeSinSalida = errors.New("el Edge de prueba no tiene un enlace abierto por donde emitir")
 	// errEdgeLeaseNoLlego marca que el servidor no mandó el LeaseUpdate inicial a tiempo.
 	errEdgeLeaseNoLlego = errors.New("el servidor no mandó el LeaseUpdate inicial")
+	// errEdgeInitialLeaseRejected marca que el Validator RECHAZÓ el primer LeaseUpdate de la
+	// conexión (firma de otra clave, blob malformado): el Edge está conectado pero no puede operar.
+	// Va siempre acompañado de la causa (errors.Is con cllease.ErrBadSignature, ErrStaleCounter…).
+	errEdgeInitialLeaseRejected = errors.New("el Validator rechazó el LeaseUpdate inicial")
 )
 
 // textoRecibido es un SendText que el servidor empujó al Edge: A es el destinatario (SendText.to),
@@ -164,6 +179,11 @@ type edge struct {
 	errores      []error
 	enlace       *edgeEnlace
 	cerrando     bool
+
+	// initialLeaseErr (bajo mu) es el rechazo del Validator al PRIMER LeaseUpdate de la conexión
+	// actual; nil si lo aceptó (vigente o revocación) o si aún no llegó. Lo fija alRecibirLease y
+	// lo borra reiniciarLeases.
+	initialLeaseErr error
 
 	salidaMu sync.Mutex
 	salida   func(*cloudlinkv1.EdgeToCloud) error
@@ -328,10 +348,15 @@ func edgeAleatorioHex(t *testing.T, n int) string {
 // conectar abre el stream CloudLink/Connect con mTLS usando el certificado que emitió el
 // enrolamiento, lanza el bucle de recepción, manda el primer latido —con el contador del lease
 // inicial y la inferencia declarada READY— y devuelve cuando el servidor ya mandó el LeaseUpdate
-// inicial (tope 10 s). Cada conexión es un arranque del Edge: el Validator de leases nace
-// nuevo (si no, el lease inicial de una reconexión, de contador 1, se rechazaría como replay); lo
-// demás que el Edge registró (textos, configs, peticiones) se conserva. Registra en t.Cleanup el
-// cierre del stream y de la conexión. Falla (t.Fatalf) si no consigue conectar.
+// inicial (tope 10 s) Y el Validator lo aceptó. Cada conexión es un arranque del Edge: el Validator
+// de leases nace nuevo (si no, el lease inicial de una reconexión, de contador 1, se rechazaría como
+// replay); lo demás que el Edge registró (textos, configs, peticiones) se conserva. Registra en
+// t.Cleanup el cierre del stream y de la conexión. Falla (t.Fatalf) si no consigue conectar o si el
+// Validator rechaza el lease inicial (ver conectarErr).
+//
+// «Aceptado» no es «vigente»: a un Edge ya revocado el servidor le manda una revocación como
+// lease inicial, el Validator la acepta y conectar vuelve sin fallar, con puedeOperar() falso y
+// revocado() verdadero. Quien necesite un Edge operativo lo afirma con puedeOperar().
 func (e *edge) conectar(t *testing.T) {
 	t.Helper()
 	if err := e.conectarErr(t); err != nil {
@@ -342,8 +367,11 @@ func (e *edge) conectar(t *testing.T) {
 // conectarErr es conectar para los casos negativos: devuelve el error en vez de fallar el test. Si
 // el servidor rechaza el handshake (p. ej. un certificado de otra CA) o cierra el stream, el error
 // trae el motivo de la recepción; si nunca llega el LeaseUpdate inicial, envuelve
-// errEdgeLeaseNoLlego. Tras un error el enlace queda cerrado. Solo falla el test por una avería
-// del propio arnés.
+// errEdgeLeaseNoLlego; si llega y el Validator lo RECHAZA (p. ej. el servidor firma con otra clave
+// que la que el Edge tiene en LeasePub), envuelve errEdgeInitialLeaseRejected y la causa del
+// Validator (errors.Is con cllease.ErrBadSignature, cllease.ErrStaleCounter…). Una revocación NO es
+// un rechazo: el Validator la acepta y conectarErr devuelve nil. Tras un error el enlace queda
+// cerrado. Solo falla el test por una avería del propio arnés.
 func (e *edge) conectarErr(t *testing.T) error {
 	t.Helper()
 	if err := e.cerrarEnlace(); err != nil { // conectar de nuevo sin desconectar antes: la anterior se cierra
@@ -431,8 +459,10 @@ func (e *edge) recibir(en *edgeEnlace) {
 }
 
 // esperarLeaseInicial sondea hasta que el Edge haya recibido su primer LeaseUpdate, con tope de 10
-// s. Devuelve nil cuando llegó; el error con el que terminó el stream si el bucle de recepción
-// acabó antes; o un error que envuelve errEdgeLeaseNoLlego si venció el tope.
+// s. Devuelve nil cuando llegó y el Validator lo aceptó (vigente o revocación); un error que
+// envuelve errEdgeInitialLeaseRejected y la causa si llegó y el Validator lo rechazó; el error con
+// el que terminó el stream si el bucle de recepción acabó antes; o un error que envuelve
+// errEdgeLeaseNoLlego si venció el tope.
 func (e *edge) esperarLeaseInicial(ctx context.Context, en *edgeEnlace) error {
 	ctx, cancelar := context.WithTimeout(ctx, edgeTopeConectar)
 	defer cancelar()
@@ -447,7 +477,20 @@ func (e *edge) esperarLeaseInicial(ctx context.Context, en *edgeEnlace) error {
 		case <-tic.C:
 		}
 	}
-	return nil
+	return e.initialLeaseRejection()
+}
+
+// initialLeaseRejection devuelve nil si el Validator aceptó el primer LeaseUpdate de la conexión
+// actual (o si aún no llegó ninguno), y si lo rechazó, un error que envuelve
+// errEdgeInitialLeaseRejected y la causa del Validator. Solo mira el PRIMERO: un rechazo posterior
+// (un lease de contador viejo tras uno bueno) queda en Errores y no cambia esto.
+func (e *edge) initialLeaseRejection() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.initialLeaseErr == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", errEdgeInitialLeaseRejected, e.initialLeaseErr)
 }
 
 // desconectar cierra el stream y la conexión, como un Edge que se va: cierra el lado de envío (el
@@ -525,13 +568,15 @@ func (e *edge) estaCerrando() bool {
 	return e.cerrando
 }
 
-// reiniciarLeases deja al Edge como recién arrancado en lo que toca al lease: Validator nuevo y
-// contador de leases a cero. Lo hace conectarErr antes de cada conexión.
+// reiniciarLeases deja al Edge como recién arrancado en lo que toca al lease: Validator nuevo,
+// contador de leases a cero y sin rechazo del lease inicial. Lo hace conectarErr antes de cada
+// conexión.
 func (e *edge) reiniciarLeases() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.validador = cllease.NewValidator(e.LeasePub)
 	e.leases = 0
+	e.initialLeaseErr = nil
 }
 
 // conCertificadoDe devuelve OTRO Edge con la misma identidad (id, tenant, clave) pero con un
@@ -566,6 +611,21 @@ func (e *edge) conCertificadoDe(t *testing.T, otra pki) *edge {
 	copia.certPEM = edgePEM("CERTIFICATE", der)
 	copia.caPEM = e.caPEM // la raíz que verifica al SERVIDOR sigue siendo la buena
 	return copia
+}
+
+// withLeasePub devuelve OTRO Edge con la misma identidad, la misma clave y el MISMO certificado (el
+// bueno: pasa el mTLS), pero que verifica los leases con la pública dada en vez de con la del
+// servidor, y con un session_id propio. Sirve para el caso «el servidor firma los leases con otra
+// clave que la que el Edge tiene»: conectarErr de ese Edge debe devolver el rechazo del lease
+// inicial (errEdgeInitialLeaseRejected, cllease.ErrBadSignature). No falla.
+func (e *edge) withLeasePub(t *testing.T, pub ed25519.PublicKey) *edge {
+	t.Helper()
+	other := nuevoEdge(e.TenantID, e.EdgeID, "sesion-otra-clave-"+edgeAleatorioHex(t, 6), e.CloudEncPub, pub)
+	other.conectarAddr = e.conectarAddr
+	other.clave = e.clave
+	other.certPEM = e.certPEM
+	other.caPEM = e.caPEM
+	return other
 }
 
 // edgeCargarCA lee el certificado y la clave SEC1 de la CA de una PKI del arnés. Falla el test
@@ -764,16 +824,26 @@ func (e *edge) despachar(cmd *cloudlinkv1.CloudToEdge) {
 }
 
 // manejar atiende UN comando del servidor, sin transporte: lo que responda lo emite por la salida
-// del Edge. SendText: publica el texto y lo acusa. LeaseUpdate: lo aplica al Validator.
-// ConfigUpdate: lo registra y lo acusa. DiagnosticsRequest: lo registra (no responde solo).
-// InferenceRequest: contesta con el guion (o con un error). Ping: Pong. Cualquier otro comando
-// con command_id se acusa como correcto.
+// del Edge. SendText: si el lease está vigente publica el texto y lo acusa; si no, lo rechaza.
+// SendMedia: si el lease está vigente lo acusa; si no, lo rechaza. LeaseUpdate: lo aplica al
+// Validator. ConfigUpdate: lo registra y lo acusa. DiagnosticsRequest: lo registra (no responde
+// solo). InferenceRequest: contesta con el guion (o con un error). Ping: Pong. Cualquier otro
+// comando con command_id se acusa como correcto.
+//
+// El gate de lease cubre SOLO los dos comandos «de operar» (los que en el Edge real despachan a
+// WhatsApp), igual que wapp-edge-agent: ConfigUpdate, DiagnosticsRequest y Ping no pasan por él.
+// La inferencia tiene en el Edge real su propia regla (inferencia.go, leaseVigente: de alcance
+// daemon —basta una sesión operable— y con 2 s de gracia; si ninguna lo es, contesta
+// INFERENCE_ERROR_LEASE_INVALID) y aquí NO se reproduce: el doble la sirve siempre, también
+// revocado.
 func (e *edge) manejar(cmd *cloudlinkv1.CloudToEdge) {
 	switch p := cmd.GetPayload().(type) {
 	case *cloudlinkv1.CloudToEdge_LeaseUpdate:
 		e.alRecibirLease(p.LeaseUpdate)
 	case *cloudlinkv1.CloudToEdge_SendText:
 		e.alRecibirTexto(cmd, p.SendText)
+	case *cloudlinkv1.CloudToEdge_SendMedia:
+		e.handleSendMedia(cmd)
 	case *cloudlinkv1.CloudToEdge_ConfigUpdate:
 		e.alRecibirConfig(cmd, p.ConfigUpdate)
 	case *cloudlinkv1.CloudToEdge_DiagnosticsRequest:
@@ -796,9 +866,16 @@ func (e *edge) sesionDe(cmd *cloudlinkv1.CloudToEdge) string {
 	return e.SessionID
 }
 
-// acusar contesta a un comando con Ack{ok}, correlacionado por su command_id. Un comando sin
+// acusar contesta a un comando con Ack{ok=true}, correlacionado por su command_id. Un comando sin
 // command_id no se acusa (no habría a qué correlacionarlo).
 func (e *edge) acusar(cmd *cloudlinkv1.CloudToEdge) {
+	e.reply(cmd, true, "")
+}
+
+// reply contesta a un comando con Ack{ok, error}, correlacionado por su command_id y en la sesión
+// del comando. errText es el motivo cuando ok es falso (vacío si ok). Un comando sin command_id no
+// se contesta (no habría a qué correlacionarlo).
+func (e *edge) reply(cmd *cloudlinkv1.CloudToEdge, ok bool, errText string) {
 	if cmd.GetCommandId() == "" {
 		return
 	}
@@ -806,27 +883,60 @@ func (e *edge) acusar(cmd *cloudlinkv1.CloudToEdge) {
 		SessionId: e.sesionDe(cmd),
 		Payload: &cloudlinkv1.EdgeToCloud_Ack{Ack: &cloudlinkv1.Ack{
 			AckedCommandId: cmd.GetCommandId(),
-			Ok:             true,
+			Ok:             ok,
+			Error:          errText,
 		}},
 	})
 }
 
-// alRecibirLease cuenta el lease y se lo da al Validator. Un lease que el Validator rechaza (firma
-// ajena, contador viejo) se anota en Errores y no cambia el estado.
+// blockedByLease aplica el gate de lease del Edge real a un comando «de operar» (ADR-0007, el
+// kill-switch): si el Edge NO puede operar —aún no tiene lease, el Validator rechazó el que llegó,
+// venció o está revocado—, contesta Ack{ok=false, error=«lease no vigente»} y devuelve true, y
+// quien llama no debe despachar nada. Si puede operar devuelve false sin emitir nada. Es la regla
+// de handleSendText y handleSendMedia de wapp-edge-agent
+// (internal/adapters/cloudlink/adapter.go: `!validator.CanOperate(hasDEK)`), sin su modo sombra.
+// Un bloqueo no es un error del núcleo: no se anota en Errores.
+func (e *edge) blockedByLease(cmd *cloudlinkv1.CloudToEdge) bool {
+	if e.puedeOperar() {
+		return false
+	}
+	e.reply(cmd, false, edgeLeaseNotValidText)
+	return true
+}
+
+// alRecibirLease se lo da al Validator y DESPUÉS lo cuenta: cuando Leases() dice n, los n ya están
+// aplicados (o rechazados), así que quien espera un lease puede mirar puedeOperar() sin carrera. Un
+// lease que el Validator rechaza (firma ajena, contador viejo) se anota en Errores y no cambia el
+// estado; si además es el PRIMERO de la conexión, el rechazo queda para conectarErr
+// (initialLeaseRejection). Una revocación se acepta: no es un rechazo.
 func (e *edge) alRecibirLease(lu *cloudlinkv1.LeaseUpdate) {
 	e.mu.Lock()
 	v := e.validador
-	e.leases++
 	e.mu.Unlock()
-	if err := v.Apply(lu); err != nil {
-		e.anotarError(fmt.Errorf("el Validator rechazó un LeaseUpdate: %w", err))
+	err := v.Apply(lu)
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.leases++
+	if err == nil {
+		return
 	}
+	if e.leases == 1 {
+		e.initialLeaseErr = err
+	}
+	e.errores = append(e.errores, fmt.Errorf("el Validator rechazó un LeaseUpdate: %w", err))
 }
 
-// alRecibirTexto publica el SendText en el canal de textos y después lo acusa. El orden importa
-// para quien llama por HTTP: el servidor devuelve su 200 al recibir el Ack, así que cuando el
-// test ve la respuesta el texto ya está en el canal.
+// alRecibirTexto aplica el gate de lease y, si el Edge puede operar, publica el SendText en el
+// canal de textos y después lo acusa. Sin lease vigente NO lo publica y lo rechaza con
+// Ack{ok=false, «lease no vigente»} (blockedByLease): para el servidor, y para la API de envío, ese
+// texto no se entregó. El orden publicar → acusar importa para quien llama por HTTP: el servidor
+// devuelve su 200 al recibir el Ack, así que cuando el test ve una respuesta con ok=true el texto
+// ya está en el canal, y cuando la ve con ok=false sabe que no lo estará.
 func (e *edge) alRecibirTexto(cmd *cloudlinkv1.CloudToEdge, st *cloudlinkv1.SendText) {
+	if e.blockedByLease(cmd) {
+		return
+	}
 	txt := textoRecibido{A: st.GetTo(), Texto: st.GetText(), ComandoID: cmd.GetCommandId()}
 	select {
 	case e.textos <- txt:
@@ -836,7 +946,18 @@ func (e *edge) alRecibirTexto(cmd *cloudlinkv1.CloudToEdge, st *cloudlinkv1.Send
 	e.acusar(cmd)
 }
 
-// alRecibirConfig registra el ConfigUpdate (con copia del contenido) y lo acusa.
+// handleSendMedia aplica el gate de lease a un SendMedia, como el Edge real: sin lease vigente lo
+// rechaza con Ack{ok=false, «lease no vigente»}; con lease lo acusa como correcto. El doble no
+// descarga ni registra el archivo: de un SendMedia solo decide si «sale» o no.
+func (e *edge) handleSendMedia(cmd *cloudlinkv1.CloudToEdge) {
+	if e.blockedByLease(cmd) {
+		return
+	}
+	e.acusar(cmd)
+}
+
+// alRecibirConfig registra el ConfigUpdate (con copia del contenido) y lo acusa. No pasa por el
+// gate de lease: no es una operación de WhatsApp (igual que en el Edge real).
 func (e *edge) alRecibirConfig(cmd *cloudlinkv1.CloudToEdge, cu *cloudlinkv1.ConfigUpdate) {
 	e.mu.Lock()
 	e.configs = append(e.configs, configRecibida{
@@ -949,7 +1070,8 @@ func (e *edge) anotarError(err error) {
 // Lo que el test puede mirar
 // ---------------------------------------------------------------------------------------------
 
-// Textos devuelve el canal por el que llegan los SendText que el servidor empuja (búfer de 256).
+// Textos devuelve el canal por el que llegan los SendText que el servidor empuja (búfer de 256) y
+// que el Edge «entregó»: los que llegaron sin lease vigente no están (se rechazaron con ok=false).
 // Cada texto llega una sola vez; leerlo lo saca del canal.
 func (e *edge) Textos() <-chan textoRecibido { return e.textos }
 
@@ -988,7 +1110,8 @@ func (e *edge) Inferencias() []*cloudlinkv1.InferenceRequest {
 }
 
 // Leases devuelve cuántos LeaseUpdate ha recibido el Edge en la conexión actual (los rechazados y
-// las revocaciones cuentan; el rechazo además queda en Errores).
+// las revocaciones cuentan; el rechazo además queda en Errores). Cuenta los YA procesados por el
+// Validator: no dice que haya un lease vigente —eso es puedeOperar()—.
 func (e *edge) Leases() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1005,7 +1128,9 @@ func (e *edge) Errores() []error {
 }
 
 // puedeOperar dice lo que dice el Validator con la DEK presente: hay un lease vigente aplicado y
-// no está revocado ni vencido. Falso antes de recibir el primero.
+// no está revocado ni vencido. Falso antes de recibir el primero. Es el gate de los envíos
+// (blockedByLease). El doble no late solo: el lease vence a su TTL (15 min por defecto en el
+// servidor) contado desde la última renovación, y un proceso que durase más tendría que latir.
 func (e *edge) puedeOperar() bool {
 	e.mu.Lock()
 	v := e.validador
@@ -1181,6 +1306,32 @@ func edgeEmisorLease(t *testing.T, k claves) *cllease.Issuer {
 	return iss
 }
 
+// edgeLeaseCommand envuelve un LeaseUpdate en el CloudToEdge con el que el servidor lo manda a la
+// sesión del Edge (sin command_id). Falla el test (t.Fatalf) si err, el de haberlo emitido, no es
+// nil: está pensada para recibir directamente lo que devuelve Issuer.Issue o Issuer.Revoke.
+func edgeLeaseCommand(t *testing.T, e *edge, lu *cloudlinkv1.LeaseUpdate, err error) *cloudlinkv1.CloudToEdge {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("emitir el lease: %v", err)
+	}
+	return edgeComando("", e.SessionID, func(cmd *cloudlinkv1.CloudToEdge) {
+		cmd.Payload = &cloudlinkv1.CloudToEdge_LeaseUpdate{LeaseUpdate: lu}
+	})
+}
+
+// edgeGrantLease deja a un Edge sin servidor como lo deja conectar contra uno de verdad: con un
+// lease vigente (una hora, contador 1) firmado con las claves dadas y aplicado por el Validator.
+// Sin esto el Edge no «entrega» nada (blockedByLease). Falla el test (t.Fatalf) si tras aplicarlo
+// el Edge no puede operar.
+func edgeGrantLease(t *testing.T, e *edge, k claves) {
+	t.Helper()
+	lu, err := edgeEmisorLease(t, k).Issue(e.EdgeID, e.TenantID, time.Hour, edgeContadorInicial)
+	e.manejar(edgeLeaseCommand(t, e, lu, err))
+	if !e.puedeOperar() {
+		t.Fatalf("edgeGrantLease: con un lease vigente recién aplicado el Edge no puede operar (errores: %v)", e.Errores())
+	}
+}
+
 // edgeComando envuelve un payload en un CloudToEdge con el command_id y el session_id dados.
 func edgeComando(id, sesion string, payload func(*cloudlinkv1.CloudToEdge)) *cloudlinkv1.CloudToEdge {
 	cmd := &cloudlinkv1.CloudToEdge{CommandId: id, SessionId: sesion}
@@ -1199,13 +1350,19 @@ func edgeAckDe(t *testing.T, f *cloudlinkv1.EdgeToCloud) *cloudlinkv1.Ack {
 }
 
 // TestArnes_EdgeNucleo prueba, sin servidor, qué hace el Edge con cada comando del servidor y qué
-// emite: el SendText se publica y se acusa (en ese orden), el ConfigUpdate se registra y se
-// acusa, el DiagnosticsRequest solo se registra y se contesta con bundle, el Ping se contesta con
-// Pong, los leases pasan por el Validator (vigente, revocado, firma ajena, contador viejo), un
-// comando desconocido se acusa si trae command_id, y un fallo de la salida queda en Errores.
+// emite: con lease vigente el SendText se publica y se acusa (en ese orden) y el SendMedia se
+// acusa; sin lease vigente —ninguno todavía, rechazado, vencido o revocado— ninguno de los dos
+// «sale» y se contesta Ack{ok=false, «lease no vigente»}, como el Edge real; el ConfigUpdate se
+// registra y se acusa (sin gate), el DiagnosticsRequest solo se registra y se contesta con bundle,
+// el Ping se contesta con Pong, los leases pasan por el Validator (vigente, revocado, firma ajena,
+// contador viejo), un comando desconocido se acusa si trae command_id, y un fallo de la salida
+// queda en Errores.
 func TestArnes_EdgeNucleo(t *testing.T) {
 	t.Parallel()
 	t.Run("SendText: se publica y se acusa, en ese orden", edgeProbarSendText)
+	t.Run("gate de lease: sin lease vigente no se entrega y se acusa ok=false", edgeCheckLeaseGate)
+	t.Run("gate de lease: un lease vencido tampoco deja entregar", edgeCheckLeaseGateExpired)
+	t.Run("SendMedia: con lease vigente se acusa", edgeCheckSendMediaWithLease)
 	t.Run("ConfigUpdate: se registra y se acusa", edgeProbarConfig)
 	t.Run("DiagnosticsRequest: se registra, no responde y bundle contesta", edgeProbarDiagnosticoNucleo)
 	t.Run("Ping: Pong con el mismo nonce", edgeProbarPing)
@@ -1217,12 +1374,13 @@ func TestArnes_EdgeNucleo(t *testing.T) {
 	t.Run("las listas devueltas son copias", edgeProbarCopias)
 }
 
-// edgeProbarSendText comprueba que el SendText llega al canal con destino, texto y command_id, que
-// el Ack sale con el mismo command_id y el session_id del comando, y que cuando el Ack sale el texto
-// ya está en el canal.
+// edgeProbarSendText comprueba que, con un lease vigente, el SendText llega al canal con destino,
+// texto y command_id, que el Ack sale con ok=true, sin error, con el mismo command_id y el
+// session_id del comando, y que cuando el Ack sale el texto ya está en el canal.
 func edgeProbarSendText(t *testing.T) {
 	t.Parallel()
-	e, c, _ := edgeDePrueba(t)
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	var textoYaEnElCanal atomic.Bool
 	e.salida = func(m *cloudlinkv1.EdgeToCloud) error {
 		textoYaEnElCanal.Store(len(e.textos) == 1)
@@ -1245,17 +1403,156 @@ func edgeProbarSendText(t *testing.T) {
 		t.Fatalf("frames emitidos = %d, quería 1 (el Ack)", len(frames))
 	}
 	ack := edgeAckDe(t, frames[0])
-	if ack.GetAckedCommandId() != "cmd-1" || !ack.GetOk() || frames[0].GetSessionId() != "sesion-x" {
-		t.Errorf("Ack = %+v en la sesión %q, quería ok de cmd-1 en sesion-x", ack, frames[0].GetSessionId())
+	if ack.GetAckedCommandId() != "cmd-1" || !ack.GetOk() || ack.GetError() != "" || frames[0].GetSessionId() != "sesion-x" {
+		t.Errorf("Ack = %+v en la sesión %q, quería ok de cmd-1, sin error, en sesion-x", ack, frames[0].GetSessionId())
 	}
 	if !textoYaEnElCanal.Load() {
 		t.Errorf("el Ack salió antes de publicar el texto: un 200 HTTP no garantizaría verlo en el canal")
 	}
 }
 
+// edgeOperateCommands son los dos comandos «de operar» del contrato, los que el gate de lease
+// cubre, cada uno con un constructor de su payload.
+var edgeOperateCommands = []struct {
+	name    string
+	payload func(*cloudlinkv1.CloudToEdge)
+}{
+	{"SendText", func(cmd *cloudlinkv1.CloudToEdge) {
+		cmd.Payload = &cloudlinkv1.CloudToEdge_SendText{SendText: &cloudlinkv1.SendText{To: "573001110000", Text: "hola"}}
+	}},
+	{"SendMedia", func(cmd *cloudlinkv1.CloudToEdge) {
+		cmd.Payload = &cloudlinkv1.CloudToEdge_SendMedia{SendMedia: &cloudlinkv1.SendMedia{To: "573001110000"}}
+	}},
+}
+
+// edgeCheckBlocked manda al Edge un SendText y un SendMedia con command_id y comprueba que NINGUNO
+// «sale»: cada uno se contesta con un solo Ack{ok=false, error=«lease no vigente»} de su command_id
+// en la sesión del comando, y el canal de textos sigue vacío. Recibe la etapa (para los mensajes y
+// para que los command_id no se repitan). Falla el test con t.Errorf por cada incumplimiento.
+func edgeCheckBlocked(t *testing.T, e *edge, c *edgeColector, stage string) {
+	t.Helper()
+	for _, oc := range edgeOperateCommands {
+		before := len(c.todos())
+		id := stage + "-" + oc.name
+		e.manejar(edgeComando(id, "sesion-x", oc.payload))
+		frames := c.todos()[before:]
+		if len(frames) != 1 {
+			t.Errorf("%s, %s: %d frames emitidos, quería 1 (el Ack de rechazo)", stage, oc.name, len(frames))
+			continue
+		}
+		ack := edgeAckDe(t, frames[0])
+		if ack.GetAckedCommandId() != id || ack.GetOk() || ack.GetError() != edgeLeaseNotValidText || frames[0].GetSessionId() != "sesion-x" {
+			t.Errorf("%s, %s: Ack = %+v en la sesión %q; quería ok=false con error %q de %s en sesion-x",
+				stage, oc.name, ack, frames[0].GetSessionId(), edgeLeaseNotValidText, id)
+		}
+	}
+	if n := len(e.Textos()); n != 0 {
+		t.Errorf("%s: hay %d textos en el canal; sin lease vigente el Edge no entrega ninguno", stage, n)
+	}
+}
+
+// edgeCheckLeaseGate recorre la vida del lease y comprueba el gate en cada etapa, igual que el Edge
+// real (handleSendText/handleSendMedia de wapp-edge-agent): sin ningún lease todavía, bloquea; con
+// uno que el Validator rechazó por firma ajena, bloquea; con uno vigente, el SendText se publica y
+// los dos comandos se acusan ok=true; tras la revocación, bloquea; y un lease vigente posterior no
+// lo reabre (la revocación es pegajosa). El texto del rechazo es literalmente «lease no vigente», y
+// un comando bloqueado sin command_id no emite nada. Los bloqueos no se anotan en Errores.
+func edgeCheckLeaseGate(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	iss := edgeEmisorLease(t, k)
+	foreign := edgeEmisorLease(t, nuevasClaves(t))
+	apply := func(lu *cloudlinkv1.LeaseUpdate, err error) {
+		t.Helper()
+		e.manejar(edgeLeaseCommand(t, e, lu, err))
+	}
+	if edgeLeaseNotValidText != "lease no vigente" {
+		t.Fatalf("el texto del rechazo es %q: debe ser el del Edge real, «lease no vigente»", edgeLeaseNotValidText)
+	}
+
+	edgeCheckBlocked(t, e, c, "sin-lease")
+	before := len(c.todos())
+	e.manejar(edgeComando("", "sesion-x", edgeOperateCommands[0].payload))
+	if n := len(c.todos()) - before; n != 0 || len(e.Textos()) != 0 {
+		t.Errorf("un SendText bloqueado sin command_id emitió %d frames y dejó %d textos; quería 0 y 0", n, len(e.Textos()))
+	}
+
+	apply(foreign.Issue(e.EdgeID, e.TenantID, time.Hour, 1))
+	edgeCheckBlocked(t, e, c, "lease-rechazado")
+
+	apply(iss.Issue(e.EdgeID, e.TenantID, time.Hour, 2))
+	before = len(c.todos())
+	for _, oc := range edgeOperateCommands {
+		e.manejar(edgeComando("vigente-"+oc.name, "sesion-x", oc.payload))
+	}
+	frames := c.todos()[before:]
+	if len(frames) != len(edgeOperateCommands) {
+		t.Fatalf("con lease vigente: %d frames, quería %d Ack", len(frames), len(edgeOperateCommands))
+	}
+	for i, oc := range edgeOperateCommands {
+		if ack := edgeAckDe(t, frames[i]); ack.GetAckedCommandId() != "vigente-"+oc.name || !ack.GetOk() || ack.GetError() != "" {
+			t.Errorf("con lease vigente, %s: Ack = %+v, quería ok=true sin error", oc.name, ack)
+		}
+	}
+	if txt, err := e.recibirTexto(t.Context(), time.Second); err != nil || txt.ComandoID != "vigente-SendText" {
+		t.Errorf("con lease vigente el SendText debía llegar al canal: %+v, %v", txt, err)
+	}
+
+	apply(iss.Revoke(e.EdgeID, e.TenantID))
+	edgeCheckBlocked(t, e, c, "revocado")
+	apply(iss.Issue(e.EdgeID, e.TenantID, time.Hour, 9))
+	edgeCheckBlocked(t, e, c, "revocado-y-renovado")
+
+	if errs := e.Errores(); len(errs) != 1 || !errors.Is(errs[0], cllease.ErrBadSignature) {
+		t.Errorf("Errores = %v, quería solo el lease de firma ajena (un bloqueo no es un error del núcleo)", errs)
+	}
+}
+
+// edgeCheckLeaseGateExpired comprueba que el gate mira la vigencia y no solo «hubo un lease»: un
+// lease bien firmado y aceptado por el Validator, pero ya vencido, no deja entregar.
+func edgeCheckLeaseGateExpired(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	lu, err := edgeEmisorLease(t, k).Issue(e.EdgeID, e.TenantID, -time.Minute, edgeContadorInicial)
+	e.manejar(edgeLeaseCommand(t, e, lu, err))
+	if errs := e.Errores(); len(errs) != 0 || e.Leases() != 1 || e.revocado() {
+		t.Fatalf("el lease vencido debía aceptarse sin más: errores %v, leases %d, revocado %v", errs, e.Leases(), e.revocado())
+	}
+	if e.puedeOperar() {
+		t.Fatalf("con un lease vencido el Edge dice que puede operar")
+	}
+	edgeCheckBlocked(t, e, c, "vencido")
+}
+
+// edgeCheckSendMediaWithLease comprueba el SendMedia con lease vigente: se acusa ok=true, sin
+// error, con su command_id y en la sesión del comando; sin command_id no se acusa; y no deja nada
+// en el canal de textos (el doble no registra el archivo).
+func edgeCheckSendMediaWithLease(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
+	media := edgeOperateCommands[1].payload
+	e.manejar(edgeComando("", "sesion-x", media))
+	if n := len(c.todos()); n != 0 {
+		t.Fatalf("un SendMedia sin command_id emitió %d frames", n)
+	}
+	e.manejar(edgeComando("media-1", "sesion-x", media))
+	frames := c.todos()
+	if len(frames) != 1 {
+		t.Fatalf("frames = %d, quería 1", len(frames))
+	}
+	if a := edgeAckDe(t, frames[0]); a.GetAckedCommandId() != "media-1" || !a.GetOk() || a.GetError() != "" || frames[0].GetSessionId() != "sesion-x" {
+		t.Errorf("Ack = %+v en la sesión %q, quería ok de media-1 en sesion-x", a, frames[0].GetSessionId())
+	}
+	if n := len(e.Textos()); n != 0 {
+		t.Errorf("el SendMedia dejó %d textos en el canal", n)
+	}
+}
+
 // edgeProbarConfig comprueba que el ConfigUpdate se registra entero (kind, versión, contenido, sesión
 // y command_id), que se acusa, y que uno dirigido a todas las sesiones (session_id vacío) se
-// acusa con la sesión del Edge.
+// acusa con la sesión del Edge. El Edge de este test NO tiene lease: el ConfigUpdate no pasa por
+// el gate (como en el Edge real, no es una operación de WhatsApp).
 func edgeProbarConfig(t *testing.T) {
 	t.Parallel()
 	e, c, _ := edgeDePrueba(t)
@@ -1401,24 +1698,26 @@ func edgeProbarLeasesRechazados(t *testing.T) {
 	}
 }
 
-// edgeProbarDesconocido comprueba que un comando que el Edge no interpreta (un SendMedia) se acusa
-// como correcto si trae command_id, y no se acusa si no lo trae.
+// edgeProbarDesconocido comprueba que un comando que el Edge no interpreta (un UserAuthResponse, la
+// respuesta al login del operador) se acusa como correcto si trae command_id, y no se acusa si no
+// lo trae. El Edge de este test NO tiene lease: lo que no es «de operar» no pasa por el gate. (El
+// SendMedia, que hacía de «desconocido» aquí, dejó de serlo: tiene su gate y sus propios tests.)
 func edgeProbarDesconocido(t *testing.T) {
 	t.Parallel()
 	e, c, _ := edgeDePrueba(t)
-	media := func(cmd *cloudlinkv1.CloudToEdge) {
-		cmd.Payload = &cloudlinkv1.CloudToEdge_SendMedia{SendMedia: &cloudlinkv1.SendMedia{To: "573001110000"}}
+	unknown := func(cmd *cloudlinkv1.CloudToEdge) {
+		cmd.Payload = &cloudlinkv1.CloudToEdge_UserAuthResponse{UserAuthResponse: &cloudlinkv1.UserAuthResponse{}}
 	}
-	e.manejar(edgeComando("", "sesion-x", media))
+	e.manejar(edgeComando("", "sesion-x", unknown))
 	if n := len(c.todos()); n != 0 {
 		t.Fatalf("un comando sin command_id emitió %d frames", n)
 	}
-	e.manejar(edgeComando("media-1", "sesion-x", media))
+	e.manejar(edgeComando("auth-1", "sesion-x", unknown))
 	frames := c.todos()
 	if len(frames) != 1 {
 		t.Fatalf("frames = %d, quería 1", len(frames))
 	}
-	if a := edgeAckDe(t, frames[0]); a.GetAckedCommandId() != "media-1" || !a.GetOk() {
+	if a := edgeAckDe(t, frames[0]); a.GetAckedCommandId() != "auth-1" || !a.GetOk() || a.GetError() != "" {
 		t.Errorf("Ack = %+v", a)
 	}
 }
@@ -1452,11 +1751,12 @@ func edgeProbarFalloDeSalida(t *testing.T) {
 	}
 }
 
-// edgeProbarCanalLleno comprueba que, con el canal de textos lleno, el siguiente SendText no bloquea
-// al bucle de recepción: se descarta, se anota en Errores y aun así se acusa.
+// edgeProbarCanalLleno comprueba que, con lease vigente y el canal de textos lleno, el siguiente
+// SendText no bloquea al bucle de recepción: se descarta, se anota en Errores y aun así se acusa.
 func edgeProbarCanalLleno(t *testing.T) {
 	t.Parallel()
-	e, c, _ := edgeDePrueba(t)
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	texto := func(cmd *cloudlinkv1.CloudToEdge) {
 		cmd.Payload = &cloudlinkv1.CloudToEdge_SendText{SendText: &cloudlinkv1.SendText{To: "x", Text: "y"}}
 	}
@@ -1820,10 +2120,13 @@ func TestArnes_EdgeEnvioSerializado(t *testing.T) {
 
 // TestArnes_EdgeEsperas prueba las esperas del Edge sin servidor: el texto que ya está llega, el que
 // no llega agota el tope con un error, un contexto cancelado corta la espera, esperarConfig y
-// esperarLeases encuentran lo que ya está, y edgeSondear devuelve falso al agotar su contexto.
+// esperarLeases encuentran lo que ya está (un lease rechazado también cuenta), y edgeSondear
+// devuelve falso al agotar su contexto. El Edge tiene un lease vigente: sin él no habría texto que
+// esperar.
 func TestArnes_EdgeEsperas(t *testing.T) {
 	t.Parallel()
-	e, _, _ := edgeDePrueba(t)
+	e, _, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 
 	if cap(e.Textos()) != edgeBuferTextos {
 		t.Errorf("el canal de textos tiene capacidad %d, quería %d", cap(e.Textos()), edgeBuferTextos)
@@ -1849,14 +2152,113 @@ func TestArnes_EdgeEsperas(t *testing.T) {
 	if c := e.esperarConfig(t, "jwks", time.Second); c.Version != "v" {
 		t.Errorf("esperarConfig = %+v", c)
 	}
+	e.esperarLeases(t, 1, time.Second) // el vigente de edgeGrantLease
 	e.alRecibirLease(&cloudlinkv1.LeaseUpdate{})
-	e.esperarLeases(t, 1, time.Second)
+	e.esperarLeases(t, 2, time.Second) // y el vacío, que el Validator rechaza pero cuenta
 
 	corto, cancelarCorto := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer cancelarCorto()
 	if edgeSondear(corto, func() bool { return false }) {
 		t.Errorf("edgeSondear devolvió verdadero con una condición siempre falsa")
 	}
+}
+
+// edgeTestTenant y edgeTestID son el tenant y el id del Edge de los casos de
+// TestArnes_EdgeInitialLease (los mismos que usa edgeDePrueba).
+const (
+	edgeTestTenant = "11111111-1111-4111-8111-111111111111"
+	edgeTestID     = "edge-prueba"
+)
+
+// edgeIssuedLease es lo que devuelve Issuer.Issue o Issuer.Revoke: el LeaseUpdate y el error de
+// emitirlo, tal cual, para dárselo a edgeLeaseCommand.
+type edgeIssuedLease struct {
+	lu  *cloudlinkv1.LeaseUpdate
+	err error
+}
+
+// edgeInitialLeaseCase es un caso de TestArnes_EdgeInitialLease: los leases que recibe la conexión,
+// en orden, y lo que se espera: la causa del rechazo del primero (nil si conectar lo da por
+// bueno), si el Edge puede operar, si queda revocado y cuántos errores anota el núcleo.
+type edgeInitialLeaseCase struct {
+	name       string
+	leases     []edgeIssuedLease
+	cause      error
+	canOperate bool
+	revoked    bool
+	coreErrors int
+}
+
+// TestArnes_EdgeInitialLease prueba, sin servidor, qué concluye conectar del PRIMER LeaseUpdate de
+// una conexión (esperarLeaseInicial sobre un enlace que no termina): si el Validator lo rechaza
+// —firma de otra clave, blob malformado— devuelve un error que envuelve errEdgeInitialLeaseRejected
+// y la causa del Validator, y el Edge no puede operar; si es un lease vigente, nil y puede operar;
+// si es una REVOCACIÓN, nil también (el Validator la acepta), con puedeOperar falso y revocado
+// verdadero; un rechazo que no es el primero (contador viejo tras uno bueno) no cuenta; y una
+// conexión nueva (reiniciarLeases) olvida el rechazo de la anterior. Leases() cuenta todos.
+func TestArnes_EdgeInitialLease(t *testing.T) {
+	t.Parallel()
+	k := nuevasClaves(t)
+	iss := edgeEmisorLease(t, k)
+	foreign := edgeEmisorLease(t, nuevasClaves(t))
+	issue := func(i *cllease.Issuer, counter int64) edgeIssuedLease {
+		lu, err := i.Issue(edgeTestID, edgeTestTenant, time.Hour, counter)
+		return edgeIssuedLease{lu, err}
+	}
+	revocation := func() edgeIssuedLease {
+		lu, err := iss.Revoke(edgeTestID, edgeTestTenant)
+		return edgeIssuedLease{lu, err}
+	}
+	cases := []edgeInitialLeaseCase{
+		{"vigente", []edgeIssuedLease{issue(iss, 1)}, nil, true, false, 0},
+		{"firma de otra clave", []edgeIssuedLease{issue(foreign, 1)}, cllease.ErrBadSignature, false, false, 1},
+		{"malformado", []edgeIssuedLease{{&cloudlinkv1.LeaseUpdate{}, nil}}, cllease.ErrMalformed, false, false, 1},
+		{"revocación", []edgeIssuedLease{revocation()}, nil, false, true, 0},
+		{"vigente y después uno de contador viejo", []edgeIssuedLease{issue(iss, 5), issue(iss, 3)}, nil, true, false, 1},
+		{"firma de otra clave y después uno vigente", []edgeIssuedLease{issue(foreign, 1), issue(iss, 2)}, cllease.ErrBadSignature, true, false, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := edgeCheckInitialLease(t, k, c)
+			// Una conexión nueva empieza limpia: el rechazo de la anterior no la contamina.
+			e.reiniciarLeases()
+			if err := e.initialLeaseRejection(); err != nil || e.Leases() != 0 || e.puedeOperar() || e.revocado() {
+				t.Errorf("tras reiniciarLeases: rechazo %v, leases %d, puedeOperar %v, revocado %v; quería todo a cero",
+					err, e.Leases(), e.puedeOperar(), e.revocado())
+			}
+		})
+	}
+}
+
+// edgeCheckInitialLease es el cuerpo de un caso de TestArnes_EdgeInitialLease: le da a un Edge
+// nuevo los leases del caso, en orden, y comprueba lo que devuelve esperarLeaseInicial (nil, o un
+// error que envuelve errEdgeInitialLeaseRejected y la causa), el estado del Validator y las cuentas
+// de Leases y Errores. Devuelve el Edge, tal como quedó. Falla el test con t.Errorf por cada
+// incumplimiento.
+func edgeCheckInitialLease(t *testing.T, k claves, c edgeInitialLeaseCase) *edge {
+	t.Helper()
+	e := nuevoEdge(edgeTestTenant, edgeTestID, "sesion-prueba", k.NubePub, k.LeasePub)
+	for _, l := range c.leases {
+		e.manejar(edgeLeaseCommand(t, e, l.lu, l.err))
+	}
+	err := e.esperarLeaseInicial(t.Context(), &edgeEnlace{fin: make(chan struct{})})
+	switch {
+	case c.cause == nil && err != nil:
+		t.Errorf("esperarLeaseInicial = %v, quería nil", err)
+	case c.cause != nil && (!errors.Is(err, errEdgeInitialLeaseRejected) || !errors.Is(err, c.cause)):
+		t.Errorf("esperarLeaseInicial = %v, quería un error que envuelva errEdgeInitialLeaseRejected y %v", err, c.cause)
+	}
+	if errors.Is(err, errEdgeLeaseNoLlego) {
+		t.Errorf("un lease rechazado no es un lease que no llegó: %v", err)
+	}
+	if e.puedeOperar() != c.canOperate || e.revocado() != c.revoked {
+		t.Errorf("puedeOperar=%v revocado=%v, quería %v y %v", e.puedeOperar(), e.revocado(), c.canOperate, c.revoked)
+	}
+	if e.Leases() != len(c.leases) || len(e.Errores()) != c.coreErrors {
+		t.Errorf("Leases()=%d Errores()=%v, quería %d leases y %d errores", e.Leases(), e.Errores(), len(c.leases), c.coreErrors)
+	}
+	return e
 }
 
 // TestArnes_EdgeIdentidad prueba, sin servidor, lo que el Edge fabrica para el mTLS: el CSR es un
@@ -2155,7 +2557,9 @@ func edgeSinErrores(t *testing.T, s *servidor, esperados map[string]int) {
 // dos públicas, todo coherente con las claves del servidor y con las filas de Postgres); conecta
 // con mTLS y recibe su lease inicial, su renovación por el primer latido y la config inicial
 // (jwks y filters); el canal de control recibe la suya sin registrar sesión; el mismo código no se
-// puede canjear dos veces; y un certificado de OTRA CA no pasa el handshake. Necesita Docker.
+// puede canjear dos veces; un certificado de OTRA CA no pasa el handshake; y un Edge que espera
+// otra clave de lease conecta pero conectarErr devuelve el rechazo del lease inicial. Necesita
+// Docker.
 func TestArnes_EdgeEnrolaYConecta(t *testing.T) {
 	t.Parallel()
 	esc := edgeEscenarioNuevo(t, "edge_enrola", "edge-enrola", false)
@@ -2170,6 +2574,7 @@ func TestArnes_EdgeEnrolaYConecta(t *testing.T) {
 	edgeVerificarConfigsIniciales(t, esc, e)
 	edgeVerificarCanalControl(t, esc, e)
 	edgeVerificarCertificadoAjeno(t, esc, e)
+	edgeCheckForeignLeaseKey(t, esc, e)
 
 	if errs := e.Errores(); len(errs) != 0 {
 		t.Errorf("el núcleo del Edge anotó errores: %v", errs)
@@ -2317,13 +2722,40 @@ func edgeVerificarCertificadoAjeno(t *testing.T, esc edgeEscenario, e *edge) {
 	}
 }
 
+// edgeCheckForeignLeaseKey comprueba, contra el servidor real, que conectar NO da por buena una
+// conexión cuyo lease inicial rechazó el Validator: el mismo Edge, con su certificado bueno pero
+// esperando otra clave de lease, pasa el mTLS, recibe el lease inicial del servidor y conectarErr
+// devuelve el rechazo (errEdgeInitialLeaseRejected y cllease.ErrBadSignature), con el Edge sin
+// poder operar y el enlace cerrado; y el Edge legítimo, en su propia sesión, sigue operando.
+func edgeCheckForeignLeaseKey(t *testing.T, esc edgeEscenario, e *edge) {
+	t.Helper()
+	other := e.withLeasePub(t, nuevasClaves(t).LeasePub)
+	err := other.conectarErr(t)
+	if !errors.Is(err, errEdgeInitialLeaseRejected) || !errors.Is(err, cllease.ErrBadSignature) {
+		t.Fatalf("conectar esperando otra clave de lease = %v; quería el rechazo del lease inicial por firma inválida", err)
+	}
+	if other.puedeOperar() || other.revocado() || other.Leases() == 0 {
+		t.Errorf("tras el rechazo: puedeOperar=%v revocado=%v leases=%d; quería falso, falso y al menos 1 recibido",
+			other.puedeOperar(), other.revocado(), other.Leases())
+	}
+	if err := other.emitir(edgeLatido(other.SessionID, edgeContadorInicial)); !errors.Is(err, errEdgeSinSalida) {
+		t.Errorf("tras el rechazo el enlace debía quedar cerrado: emitir = %v, quería errEdgeSinSalida", err)
+	}
+	// El servidor sí llegó a registrar esa sesión (el mTLS era bueno) y la ve irse.
+	edgeEsperarValor(t, esc.DB, "offline", "la sesión del Edge que rechazó su lease", edgeEstadoSesion, esc.Tenant, e.EdgeID, other.SessionID)
+	if !e.puedeOperar() || len(e.Errores()) != 0 {
+		t.Errorf("el Edge legítimo quedó afectado: puedeOperar=%v errores=%v", e.puedeOperar(), e.Errores())
+	}
+}
+
 // TestArnes_EdgeFrames prueba, contra el servidor real, los frames del Edge que dejan un efecto que
 // se puede observar: el SendText que el servidor empuja por las dos rutas de envío (llega al
 // canal y el servidor recibe el Ack), el entrante sellado (el servidor lo abre, no registra el
 // texto, lo deduplica), los acuses (filas de message_receipts), el diagnóstico remoto (el Edge
 // recibe el DiagnosticsRequest y el bundle sale por la ruta de descarga), la renovación del lease
 // por latido y el anti-replay del Validator, la desconexión (sesión offline, envío con 502) y la
-// reconexión, y la revocación del lease. Necesita Docker.
+// reconexión, y la revocación del lease con su efecto: tras revocar, el envío del servidor ya no se
+// entrega (200 con ok=false y «lease no vigente»), tampoco tras reconectar. Necesita Docker.
 //
 // NO ejercita contra el servidor: los Ping (no hay ruta que los provoque), la inferencia (la pide la
 // canalización LLM, que monta T9.17), ni el camino del entrante hasta una respuesta (perfil y flujos,
@@ -2517,8 +2949,11 @@ func edgeProbarReconexion(t *testing.T, esc edgeEscenario, e *edge) {
 	}
 }
 
-// edgeProbarRevocacion comprueba el kill-switch: la administradora revoca el lease del Edge (204) y
-// el Edge recibe la revocación firmada, queda revocado y sin poder operar, y Postgres lo refleja.
+// edgeProbarRevocacion comprueba el kill-switch de punta a punta: la administradora revoca el lease
+// del Edge (204) y el Edge recibe la revocación firmada, queda revocado y sin poder operar, y
+// Postgres lo refleja; a partir de ahí el envío del servidor NO se entrega (edgeCheckNotDelivered);
+// y reconectar no lo arregla: conectar vuelve sin error —el servidor manda la revocación como
+// lease inicial y el Validator la acepta—, pero el Edge sigue revocado y sin entregar.
 func edgeProbarRevocacion(t *testing.T, esc edgeEscenario, e *edge) {
 	t.Helper()
 	r := esc.S.Admin(esc.TokenAdmin).Post(t, "/admin/leases/revoke", map[string]string{"edge_id": e.EdgeID})
@@ -2531,4 +2966,47 @@ func edgeProbarRevocacion(t *testing.T, esc edgeEscenario, e *edge) {
 	}
 	edgeEsperarValor(t, esc.DB, "true", "leases.revoked en Postgres",
 		`SELECT revoked::text FROM public.leases WHERE tenant_id = $1::uuid AND edge_id = $2`, esc.Tenant, e.EdgeID)
+	edgeCheckNotDelivered(t, esc, e, "tras revocar")
+
+	e.conectar(t) // no falla: una revocación aceptada por el Validator no es un rechazo
+	if e.puedeOperar() || !e.revocado() {
+		t.Errorf("tras reconectar el Edge revocado: puedeOperar=%v revocado=%v; quería falso y verdadero", e.puedeOperar(), e.revocado())
+	}
+	edgeEsperarValor(t, esc.DB, "online", "la sesión del Edge revocado tras reconectar", edgeEstadoSesion, esc.Tenant, e.EdgeID, e.SessionID)
+	edgeCheckNotDelivered(t, esc, e, "tras reconectar revocado")
+}
+
+// edgeCheckNotDelivered manda un texto por las dos rutas de envío del servidor (la pública y la de
+// admin) a un Edge que no puede operar, y comprueba lo que ve quien llama: 200 con el Ack del
+// Edge, ok=false y error «lease no vigente» (la API refleja el Ack, no lo convierte en un 5xx), y
+// que el texto NO llegó al canal de textos. Recibe la etapa, para los mensajes. Falla el test con
+// t.Errorf por cada incumplimiento.
+func edgeCheckNotDelivered(t *testing.T, esc edgeEscenario, e *edge, stage string) {
+	t.Helper()
+	routes := []struct {
+		name   string
+		client *clienteHTTP
+		path   string
+	}{
+		{"API pública", esc.S.Publica(esc.TokenAdmin), "/api/v1/messages"},
+		{"admin", esc.S.Admin(esc.TokenAdmin), "/admin/messages/send"},
+	}
+	for _, r := range routes {
+		resp := r.client.Post(t, r.path, map[string]string{"session_id": e.SessionID, "to": "573001110000", "text": "esto no debe salir"})
+		var ack struct {
+			AckedCommandID string `json:"acked_command_id"`
+			OK             bool   `json:"ok"`
+			Error          string `json:"error"`
+		}
+		resp.JSON(t, &ack)
+		if resp.Codigo != http.StatusOK || ack.OK || ack.Error != edgeLeaseNotValidText || ack.AckedCommandID == "" {
+			t.Errorf("%s, %s: HTTP %d %+v; quería 200 con ok=false y error %q\ncuerpo: %s",
+				stage, r.name, resp.Codigo, ack, edgeLeaseNotValidText, recortar(resp.Cuerpo))
+		}
+	}
+	// El Edge decide ANTES de acusar: con las respuestas ya recibidas, si hubiera publicado algo
+	// estaría en el canal.
+	if n := len(e.Textos()); n != 0 {
+		t.Errorf("%s: hay %d textos en el canal de un Edge que no puede operar", stage, n)
+	}
 }

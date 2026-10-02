@@ -15,9 +15,13 @@ import (
 //
 // Quedan fuera, sin mirar nada más:
 //   - los ficheros de test (EsTest);
-//   - todo fichero de un paquete cuyo nombre termina en "test" (D-F1-3 = sí: suites
-//     Contrato y dobles; los dobles con lógica llevan igualmente su test, pero eso lo exige
-//     la fase, no este candado).
+//   - todo fichero de un paquete de suite y dobles (D-F1-3 = sí: suites Contrato y dobles;
+//     los dobles con lógica llevan igualmente su test, pero eso lo exige la fase, no este
+//     candado). Ese paquete es el que dice isHelperTestPackage: su nombre —la cláusula
+//     `package`, no el directorio— termina en el sufijo compuesto "helpertest" (D-F1-10,
+//     Jhoan, 2026-10-02, que estrecha D-F1-3). Un paquete que termina en "test" a secas NO
+//     queda fuera: con esa regla, la de antes, un paquete de producción llamado latest
+//     pasaba el candado sin test.
 //
 // Excepciones de E-3, VERIFICADAS (se comprueba la condición, no se lista el fichero):
 //   - doc.go: se exime si no tiene ninguna declaración (ni import): solo `package` y su
@@ -27,10 +31,12 @@ import (
 //     comentario; una sola declaración de otra clase le quita la exención;
 //   - puerto (solo interfaces): se exime si tiene al menos una declaración, todas las que no
 //     son import son `type X interface{…}` (ni funciones, ni métodos, ni var, ni const, ni
-//     tipos de otra clase) Y entre fuentes hay un fichero del paquete <paquete>test en el
-//     subdirectorio <dir>/<paquete>test (patrón internal/gateway/fleet/fleettest) que declara
-//     una función de primer nivel `Contrato` cuyo primer parámetro es *testing.T. Sin esa
-//     suite entre fuentes, el puerto necesita test.
+//     tipos de otra clase) Y entre fuentes hay un fichero del paquete <paquete>helpertest
+//     en el subdirectorio <dir>/<paquete>helpertest (p. ej.
+//     internal/nucleo/contact/contacthelpertest; es el patrón de
+//     internal/gateway/fleet/fleettest con el sufijo de D-F1-10) que declara una función de
+//     primer nivel `Contrato` cuyo primer parámetro es *testing.T. Sin esa suite entre
+//     fuentes, el puerto necesita test; una suite en <paquete>test, el nombre viejo, no vale.
 //
 // Una violación por fichero sin test y sin excepción: Fichero es la Ruta del x.go y Motivo
 // contiene "falta x_test.go" (el nombre base del test que falta).
@@ -45,8 +51,9 @@ func UnFicheroUnTest(fuentes []Fuente) []Violacion {
 	}
 	vs := make([]Violacion, 0)
 	for _, f := range fuentes {
-		// D-F1-3 = sí: un paquete …test entero (suite Contrato y dobles) queda fuera.
-		if f.EsTest || strings.HasSuffix(f.Paquete, "test") {
+		// D-F1-3 = sí: un paquete …helpertest entero (suite Contrato y dobles) queda fuera;
+		// el sufijo es el de D-F1-10 (uno que acaba en "test" a secas, como latest, no).
+		if f.EsTest || isHelperTestPackage(f.Paquete) {
 			continue
 		}
 		test := strings.TrimSuffix(f.Ruta, ".go") + "_test.go"
@@ -158,9 +165,16 @@ func esTipoInterfaz(d ast.Decl) bool {
 }
 
 // haySuiteContrato busca, entre fuentes, la suite del puerto f: un fichero del paquete
-// <paquete>test en <dir>/<paquete>test con `func Contrato(t *testing.T, …)` de primer nivel.
+// <paquete>helpertest en <dir>/<paquete>helpertest con `func Contrato(t *testing.T, …)` de
+// primer nivel. Tienen que casar LOS DOS, el nombre del paquete y el directorio.
+//
+// El sufijo es helperTestSuffix, el mismo con el que isHelperTestPackage exime a ese paquete
+// (D-F1-10, Jhoan, 2026-10-02): así la suite que exime al puerto es siempre un paquete que
+// los candados reconocen como suite. Hasta D-F1-10 se buscaba en <paquete>test; una suite que
+// siga ahí ya no exime al puerto (ni está exenta ella: necesita su test), y tampoco un
+// paquete llamado "helpertest" a secas, que no lleva el nombre de f delante.
 func haySuiteContrato(f Fuente, fuentes []Fuente) bool {
-	paquete := f.Paquete + "test"
+	paquete := f.Paquete + helperTestSuffix
 	dir := path.Join(path.Dir(f.Ruta), paquete)
 	for _, s := range fuentes {
 		if s.Paquete != paquete || path.Dir(s.Ruta) != dir {

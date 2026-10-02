@@ -31,6 +31,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Hecho cuando**: cada caso `muerde` hace fallar el detector; `test/procesos/` limpio pasa
   - **Gate**: gate de la web; `GOWORK=off go test -v ./test/procesos/ ./internal/candados/... 2>&1 | grep -c -- '--- SKIP'` → 0
   - **Commit**: `procesos(arnes): el candado sin_bd_viva prohíbe os.Environ y t.Skip`
+  - ⚠️ **Revisión independiente (2026-10-01)**: `os.Environ` y `testing.Short` se esquivaban con un import con alias o con punto; corregido en `1c247f9` (`verde(candados)`, con el rojo medido en el cuerpo; `sinbdviva.go` sigue al 100 %). Lo que el candado sigue sin ver: contradicción 22 del README y D-F9-6.
 
 - [x] **T9.4 · procesos(arnes): `make test-procesos`, `vet-integracion` y lint** · 🌐 · dep. T9.2 · cumple R9.7.a, R9.4.e — cerrada en `b5f1601` (sesión F9-01, 2026-10-01): `make test-procesos` (BINARIO, CUENTA, PROCESOS_LOG_DIR), `vet-integracion` dentro de `ci-local` y `run.build-tags: [integracion]`; probado con un test que falla adrede (retirado)
   - **Ficheros**: `Makefile` (target `test-procesos` de `diseno.md` §7; `vet-integracion` dentro de `ci-local`), `.golangci.yml` (`run.build-tags: [integracion]`)
@@ -56,7 +57,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: vet `-tags integracion` rc=0
   - **Commit**: `procesos(arnes): dobles de S3 e identity en el proceso de test`
 
-- [x] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f — cerrada en `660947d` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`)**: `TestArnes_EntornoLimpio` (con `WAPP_DB_HOST=trampa`) y los dos servidores en paralelo pasan en viejo y nuevo; `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_Reintento`, que ejerce ese camino adrede, uno por ejecución)
+- [x] **T9.8 · procesos(arnes): un servidor por proceso** · 🌐→💻 · dep. T9.6, T9.7 · cumple R9.1.e–f — cerrada en `660947d` (web, 2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; `dev` @ `af7b8e9`)**: `TestArnes_EntornoLimpio` (con `WAPP_DB_HOST=trampa`) y los dos servidores en paralelo pasan en viejo y nuevo; `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_ReintentoPuertoOcupado`, que ejerce ese camino adrede, uno por ejecución)
   - **Ficheros**: `test/procesos/servidor_test.go` (entorno de `diseno.md` §2, puertos libres, espera, parada, volcado de log)
   - **Hecho cuando**: local: `TestArnes_EntornoLimpio` pasa con `WAPP_DB_HOST=trampa` exportado; dos servidores en paralelo sin `address already in use`
   - **Gate**: local `BINARIO=viejo make test-procesos` RC=0
@@ -80,7 +81,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: local `make test-procesos` RC=0 ×2
   - **Commit**: `procesos(arranque): el binario completo arranca en el arnés`
 
-- [x] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — pre-chequeo web en `6ee1c5e` (2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; cierre documental en `ac8ac5f`)**: `make test-procesos` viejo y nuevo `RC=0` ×2 (pasadas 2 y 3) y `CUENTA=3`; `make ci-local` `GATE_RC=0` (84 paquetes, 0 issues, `go1.26.5`, lint `v2.12.2`); integración vieja con `-v` `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL`; la rama de la web ya estaba en `dev` sin squash (PR #18, `af7b8e9`); `TRASPASO-F9-arnes.md` con `CERRADO 2026-10-01`
+- [x] **T9.12 · Cierre del bloque A: pre-chequeo web y traspaso** · 🌐→💻 · dep. T9.11 · cumple R9.7.b–c — pre-chequeo web en `6ee1c5e` (2026-10-01) y **cerrada en local por F9-02 (💻, 2026-10-01; cierre documental en `ac8ac5f`)**: `make test-procesos` viejo y nuevo `RC=0` ×2 (pasadas 2 y 3) y `CUENTA=3`; `make ci-local` `GATE_RC=0` (84 líneas `ok` —79 paquetes con tests + 5 que `cobertura-ficheros` vuelve a correr; no son 84 paquetes—, 0 issues, `go1.26.5`, lint `v2.12.2`); integración vieja con `-v` `RC=0 · 4.631 PASS · 0 SKIP · 0 FAIL`; la rama de la web ya estaba en `dev` sin squash (PR #18, `af7b8e9`); `TRASPASO-F9-arnes.md` con `CERRADO 2026-10-01`
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F9-arnes.md`
   - **Hecho cuando**: web: si el veredicto de F0 · T0.0 (`06-entorno-web.md` §5) fue «funciona», `make test-procesos` corrido en la web y su log citado como **pre-chequeo**; si fue «no funciona», se dice. Local: gates repetidos, sección `CERRADO <fecha>`, rama integrada en `dev` **sin squash**
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
@@ -139,6 +140,7 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
 - [ ] **T9.30 · Corrida final sin intermitencias** · 💻 · dep. T9.29 · cumple R9.8.a, R9.5.b
   - **Hecho cuando**: `CUENTA=3 make test-procesos` → viejo y nuevo `RC=0`, 0 SKIP, 0 FAIL; las 22 filas de `diseno.md` §5 con su `--- PASS` en el log; duración total anotada (referencia de F9-02, solo con P0 y el arnés: ≈ 25–31 s por pasada de los dos binarios, 33 s con `CUENTA=3`, Mac de 8 núcleos con la caché de Go caliente; ≈ 23 s en la VM web de 4 vCPU; crecerá con B1–C, hay que remedirla)
   - **Heredado (H-1 de F9-02, D-F6-7)**: para entonces F6 ya reconstruyó `integrations` y evaluó `sin_errores`; esta corrida **no** lleva la salvedad de la intermitencia: si P0 vuelve a dar rojo con las dos líneas `ERROR` del worker, F6 no lo cerró
+  - ⚠️ **Revisión independiente (2026-10-01)** — hechos; el criterio de arriba **no se cambia** (es de Jhoan: pregunta abierta D-F9-10 del [README](README.md)). (i) T9.30 corre **antes** de F10 y contra los dos binarios: `viejo` conserva el worker viejo hasta el relevo (D-F6-7 no lo arregla), así que un rojo contra `viejo` con esas líneas no dice que F6 no lo cerrara. (ii) Contra `nuevo` puede salir la misma carrera con otro texto: el colector (`platform`) no se reconstruye, y el agregador y el pipeline dependen de lo que prometan F8 y F7 (contradicción 19, hechos 1 y 2). (iii) Un **verde** tampoco dice que esté cerrada: `CUENTA=3` son 2 arranques en frío expuestos y da verde ≈ 98,8 % de las veces sin arreglar nada (hecho 3)
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b

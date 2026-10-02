@@ -6,6 +6,10 @@
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md). Patrones heredados de
 > [`F1`](../F1-nucleo-contact/README.md): rojo **solo con exportados** (T-1 de F1: `unused` rompe el
 > lint) y adaptador de tipos viejo ← nuevo en `internal/arranque/puente_<x>.go`.
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
+> **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
+> nombraba con `…test` (`entitlementstest`, `outtest`, `platformadmintest`): se actualizó el sufijo, nada más.
 
 ## Objetivo, en tres líneas
 
@@ -102,7 +106,7 @@
 | D-F2-1 | Los 3 candados AST del canje: ¿se quedan como candados AST del paquete nuevo (y no como proceso)? | **Sí**. Y el de «cuatro columnas NULLables» pasa a test **de conducta** sobre la función pura de mapeo extraída (E-6), que ya no necesita AST |
 | ~~D-F2-2~~ | ~~¿Se permite tocar **una línea** de `internal/iam/infra/postgres/membresia_unica_ast_test.go` (añadir el escritor nuevo a `escritoresEsperados`) como excepción a E-1?~~ | **Subsumida por D-F4-1** ([`../DECISIONES.md`](../DECISIONES.md)): la línea se pone en **F0** (T0.27) y hace que el barrido viejo **ignore** el árbol nuevo. Solo si D-F4-1 = no vuelve esta forma: añadir el escritor nuevo a `escritoresEsperados` en el mismo commit que el verde de `memberships.go` |
 | D-F2-3 | `platformadmin` sin puerto: ¿se crea `platformadmin/puertos.go` ✚ (solo interfaces) y se separa el SQL de `access_requests.go` en `access_requests_postgres.go` ✚? | **Sí**: es la única forma de que su lógica (aprobación, reintento, unión de systems) nazca cubierta sin BD (E-6). Cambia el árbol de `04` §3 en dos ficheros |
-| D-F2-4 | El `Fake` de `entitlements` ¿se queda en `entitlements.go` o se muda a `entitlementstest`? | **A `entitlementstest`** (patrón E-6); `entitlements.go` queda con constantes y el puerto |
+| D-F2-4 | El `Fake` de `entitlements` ¿se queda en `entitlements.go` o se muda a `entitlementshelpertest`? | **A `entitlementshelpertest`** (patrón E-6); `entitlements.go` queda con constantes y el puerto |
 | D-F2-5 | ¿Suites de contrato también para los puertos **de entrada** (`ports/in`), que implementa un solo usecase? | **No**: excepción escrita — los cubre el test del usecase que los implementa. Suites **sí** para los 10 de salida |
 | D-F2-6 | Reloj inyectable (`WithReloj(func() time.Time)`) en `entitlements.Postgres` y `iamidentity.M2MClient`, exportado nuevo sin equivalente viejo | **Sí**: `contrato-tdd` prohíbe reloj real; no cambia nada observable |
 | D-F2-7 | Si F9 se adelanta (`plan/F9-procesos/`), ¿cierra F2 la pasada de los procesos de acceso contra el binario nuevo? | **Subsumida por D-F9-1** (recomendación: sí): T2.33 **es** la pasada 9C de `acceso` (T9.23); solo se tacha si D-F9-1 = no |

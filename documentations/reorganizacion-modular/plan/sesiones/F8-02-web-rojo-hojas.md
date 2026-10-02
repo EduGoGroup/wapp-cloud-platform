@@ -6,7 +6,7 @@
 | Tareas | T8.3–T8.8 |
 | Depende de | F8-01 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F8 bloque B» |
-| Se para cuando | `model`, `trigger`, `content`, `store`, `modules` en rojo; `storetest` y `triggertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.) |
+| Se para cuando | `model`, `trigger`, `content`, `store`, `modules` en rojo; `storehelpertest` y `triggerhelpertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.) |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque(s): B · contratos y rojo de las hojas
 - Tareas: T8.3–T8.8 de plan/F8-conversacion/tareas.md
-- Te paras cuando: `model`, `trigger`, `content`, `store`, `modules` en rojo; `storetest` y `triggertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.)
+- Te paras cuando: `model`, `trigger`, `content`, `store`, `modules` en rojo; `storehelpertest` y `triggerhelpertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.)
 - Decisiones: las que en plan/DECISIONES.md bloquean «F8 bloque B» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

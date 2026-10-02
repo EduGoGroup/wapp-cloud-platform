@@ -21,7 +21,7 @@
 | T-6 | Los candados de cableado copiados en F0 leen **texto** (`"pipeline.NewWorker"`…) | `pipeline_captacion_cableado_test.go:85-164` | Nombre corto para el paquete nuevo, alias para el viejo |
 | T-7 | La guarda anti-hueco del candado INV-1 falla con un directorio inexistente | F6 `diseno.md` §6 | Re-tocar la lista en el mismo commit de la conmutación (T7.25) |
 | T-8 | `casebank` es invisible para la huella y el arranque | `go list` (solo `cmd/casebank`) | Su verdad: suite + doble (y F9) |
-| T-9 | `intentcfg` sí tiene gemelo (contra `05` E-6) | `intentcfg/store.go:47` | No crear un segundo doble en `intentcfgtest`: la suite la corre el `MemoryStore` |
+| T-9 | `intentcfg` sí tiene gemelo (contra `05` E-6) | `intentcfg/store.go:47` | No crear un segundo doble en `intentcfghelpertest`: la suite la corre el `MemoryStore` |
 | T-10 | Los tests viejos de `stages` y `pipeline` son **guiones** (ámbar, hamburguesas, T40, Ola 3), no por fichero | `V/pipeline/guion_*_test.go`, `V/stages/ambar_*_test.go` | Consultarlos (E-8); el comportamiento de extremo a extremo va al proceso P4 de F9, no a un test de fichero |
 | T-11 | `match_lineas.go` no tiene exportados | medido (0) | No inventar exportados para «cumplir» el candado; su test llega con el verde |
 | T-12 | Los fallos de `intakeAhead.Run` y del worker son mudos (D-11) | `fase9_fondo.go:80,95` | No añadir supervisión de paso: es un frente con dueño |
@@ -39,8 +39,8 @@
 
 ## 4 · Definición de hecho (F7)
 
-1. 32 ficheros (o 31 + `pipelinetest/memoria.go` según D-F7-3) con `x_test.go`; suites `intaketest`,
-   `casebanktest` (con doble), `intentcfgtest`.
+1. 32 ficheros (o 31 + `pipelinehelpertest/memoria.go` según D-F7-3) con `x_test.go`; suites `intakehelpertest`,
+   `casebankhelpertest` (con doble), `intentcfghelpertest`.
 2. Pendientes en `internal/modulos/captacion` = 0; SKIP = 0 (gate con `-v`, sin pipe).
 3. Cobertura ≥ 80 % por fichero (fuera `postgres.go`, `machine_postgres.go`, `store_postgres.go`).
 4. `make ci-local` rc=0; `vet -tags pendiente` rc=0; `fronteras_test.go` con 2–3 puentes de F7 + 1 de F6.

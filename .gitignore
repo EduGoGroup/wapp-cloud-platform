@@ -13,6 +13,9 @@
 bin/
 dist/
 
+# Herramientas fijadas que instala `make tools` (el golangci-lint de LINT_VERSION del Makefile)
+/.bin/
+
 # Entornos y secretos
 .env
 .env.*

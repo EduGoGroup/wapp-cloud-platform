@@ -15,7 +15,7 @@ import (
 // Aserciones de compilación de lo que PostgresResolver promete sin base de datos: es un Resolver
 // (el puerto), el constructor recibe el pool, el cipher y el KeyProvider y NO devuelve un error (no
 // valida sus argumentos), y Destino tiene la firma del puerto. Destino y el SQL de Resolve solo
-// se ejercitan contra un Postgres real: la suite contacttest.Contrato (T1.13, T1.18) y F9.
+// se ejercitan contra un Postgres real: la suite contacthelpertest.Contrato (T1.13, T1.18) y F9.
 var _ Resolver = (*PostgresResolver)(nil)
 
 var _ func(*sql.DB, *crypto.FieldCipher, crypto.KeyProvider) *PostgresResolver = NewPostgresResolver

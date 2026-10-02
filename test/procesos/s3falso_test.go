@@ -80,6 +80,18 @@ func (s *s3Falso) Peticiones() []peticionS3 {
 	return append([]peticionS3{}, s.recibidas...)
 }
 
+// forget borra todo lo que el doble ha registrado hasta ahora; el doble sigue escuchando en la misma
+// URL y contestando igual. Lo usa arrancar cuando un intento de arranque muere por puerto ocupado:
+// ese intento ya hizo su HeadBucket, y sin olvidarlo el servidor que queda tras el reintento
+// aparecería con DOS, cuando hizo uno (P0 exige exactamente uno). Solo es correcto llamarlo cuando
+// quien hizo las peticiones ya no existe: una petición en vuelo se anotaría después del borrado. Es
+// segura entre goroutines. No recibe nada ni falla.
+func (s *s3Falso) forget() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recibidas = nil
+}
+
 // Entorno devuelve las variables "K=V" que apuntan al servidor a este doble: endpoint, bucket,
 // región y un par de credenciales fijas (el doble no las comprueba, pero el SDK exige que
 // existan). Devuelve un slice nuevo en cada llamada. No falla.
@@ -131,7 +143,8 @@ const s3Bucket = "bucket-procesos"
 
 // TestArnes_S3Falso fija el contrato del doble de S3: HEAD /<bucket> da 200 con el Host de
 // path-style, cualquier otra cosa da 404, todo queda registrado (también bajo concurrencia), el
-// registro que se entrega es una copia, el entorno apunta al doble y el Cleanup lo cierra.
+// registro que se entrega es una copia, forget lo vacía sin parar el doble, el entorno apunta al
+// doble y el Cleanup lo cierra.
 // Los subtests van en orden y comparten el doble: cada uno parte del registro que dejó el
 // anterior. No necesita Docker.
 func TestArnes_S3Falso(t *testing.T) {
@@ -140,6 +153,7 @@ func TestArnes_S3Falso(t *testing.T) {
 	t.Run("la URL es una IP de loopback con puerto", func(t *testing.T) { probarS3URL(t, s3) })
 	t.Run("HEAD del bucket responde 200 y otras rutas 404", func(t *testing.T) { probarS3Respuestas(t, s3) })
 	t.Run("Peticiones entrega una copia", func(t *testing.T) { probarS3Copia(t, s3) })
+	t.Run("forget olvida lo registrado y el doble sigue sirviendo", func(t *testing.T) { probarS3Forget(t, s3) })
 	t.Run("el registro es seguro bajo concurrencia", func(t *testing.T) { probarS3Concurrencia(t, s3) })
 	t.Run("Entorno apunta al doble", func(t *testing.T) { probarS3Entorno(t, s3) })
 	t.Run("el Cleanup lo cierra", probarS3Cierre)
@@ -198,6 +212,31 @@ func probarS3Copia(t *testing.T, s3 *s3Falso) {
 	primera[0].Ruta = "/alterada"
 	if got := s3.Peticiones()[0].Ruta; got == "/alterada" {
 		t.Fatal("modificar el resultado de Peticiones alteró el registro interno")
+	}
+}
+
+// probarS3Forget comprueba que forget deja el registro vacío (un slice vacío, no nil, como recién
+// creado), que el doble sigue contestando en la misma URL y que lo que llega después se anota desde
+// cero. Deja en el registro una petición, para el subtest siguiente.
+func probarS3Forget(t *testing.T, s3 *s3Falso) {
+	t.Helper()
+	if len(s3.Peticiones()) == 0 {
+		t.Fatal("se esperaba el registro de los subtests anteriores")
+	}
+	url := s3.URL()
+	s3.forget()
+	if got := s3.Peticiones(); got == nil || len(got) != 0 {
+		t.Fatalf("tras forget el registro debe ser un slice vacío no nil, es %#v", got)
+	}
+	if s3.URL() != url {
+		t.Fatalf("forget cambió la URL del doble: %q, era %q", s3.URL(), url)
+	}
+	if got := s3Pedir(t, http.MethodHead, url+"/"+s3Bucket); got != http.StatusOK {
+		t.Fatalf("tras forget, HEAD /%s: código %d, se esperaba 200", s3Bucket, got)
+	}
+	want := []peticionS3{{Metodo: http.MethodHead, Ruta: "/" + s3Bucket, Host: strings.TrimPrefix(url, "http://")}}
+	if got := s3.Peticiones(); !slices.Equal(got, want) {
+		t.Fatalf("registro tras forget y una petición:\n got %v\nwant %v", got, want)
 	}
 }
 

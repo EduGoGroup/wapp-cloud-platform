@@ -31,7 +31,7 @@ cuerpos de función/método exportados (cota de `make test-pendiente`, se fija e
 | `postgres.go` | 260 | 6 | Adaptador de `JobStore` — **sin cipher a propósito** (D-044.26: lo que llega a `PutSourceText` son bytes ya cifrados; `fase3_almacenes.go:171-176`) |
 | `machine_postgres.go` | 431 | 7 | Adaptador de `PipelineStore` (reclamo, avance de etapa, castigo con causa, backoff, `Despertar`) 🔶 `FOR UPDATE SKIP LOCKED` y reloj |
 
-Suites `C/intake/intaketest`: `ContratoCola(t, …)` sobre `JobStore` (abrir o anexar a la ventana de
+Suites `C/intake/intakehelpertest`: `ContratoCola(t, …)` sobre `JobStore` (abrir o anexar a la ventana de
 una clave; cerrar devuelve `true` una sola vez; listar solo `aggregating`; `PutSourceText` idempotente
 por clave) y `ContratoMaquina(t, …)` sobre `PipelineStore` (reclamar solo `pending`; un job reclamado
 no lo reclama otro; terminar/castigar; reintentos). 🔶 los casos exactos de
@@ -101,23 +101,23 @@ dobles?).
 literal)` = guarda de idempotencia de la siembra), `Servicio` (`Insertar`, `Sembrar`). `anonimizar.go`:
 `Anonimizador` (teléfonos y nombres con límites de palabra, `Restos` devuelve lo que quedó) 🔶 reglas
 de `anonimizar_test`. `semilla.go`: `CasoAmbar`, `NombresDelCaso`, `EsperadoCasoAmbar`. `postgres.go`.
-**Doble nuevo** `casebanktest.Memoria` + `casebanktest.Contrato` (E-6). `cmd/casebank` (se niega sin
+**Doble nuevo** `casebankhelpertest.Memoria` + `casebankhelpertest.Contrato` (E-6). `cmd/casebank` (se niega sin
 `-consentido`, `cmd/casebank/main.go:53`) **no** cambia en F7 (D-F7-2).
 
 ### 2.9 · `C/intentcfg` (2 · 12 exp.)
 
 `Config{Version, Blob, UpdatedAt}`, `Store` (`Get`, `Upsert`), `ErrNotFound`, `Kind` (el kind
 `intents` del push al Edge), `MemoryStore` (gemelo: `05` E-6 se equivoca, README contradicción 1),
-`PostgresStore`. **Aquí vive P1** (constitución §3.3: no en `prompts`). Suite `intentcfgtest.Contrato`
+`PostgresStore`. **Aquí vive P1** (constitución §3.3: no en `prompts`). Suite `intentcfghelpertest.Contrato`
 (sin versión ⇒ `ErrNotFound`; `Upsert` sustituye; por tenant).
 
 ## 3 · Dobles y suites (E-6)
 
 | Puerto | Suite | Unitario | Postgres (F9, T9.28) |
 |---|---|---|---|
-| `intake.JobStore`, `intake.PipelineStore` | `intaketest.ContratoCola`, `ContratoMaquina` | `MemoryStore` | `Postgres`, `machine_postgres` |
-| `casebank.Store` | `casebanktest.Contrato` | `casebanktest.Memoria` **nuevo** | `Postgres` |
-| `intentcfg.Store` | `intentcfgtest.Contrato` | `MemoryStore` | `PostgresStore` |
+| `intake.JobStore`, `intake.PipelineStore` | `intakehelpertest.ContratoCola`, `ContratoMaquina` | `MemoryStore` | `Postgres`, `machine_postgres` |
+| `casebank.Store` | `casebankhelpertest.Contrato` | `casebankhelpertest.Memoria` **nuevo** | `Postgres` |
+| `intentcfg.Store` | `intentcfghelpertest.Contrato` | `MemoryStore` | `PostgresStore` |
 | Puertos de etapas, selector, sink, compositor, hilo | — | dobles locales en el test del consumidor | — |
 
 ## 4 · Reglas E-8 (las que un reimplementador olvidaría)

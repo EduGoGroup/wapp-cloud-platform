@@ -184,7 +184,7 @@ directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del 
 
 - Dos verdes consecutivos (pasadas 2 y 3) y `CUENTA=3` verde, **pero la pasada 1 dio un rojo contra `nuevo`** y no se descarta: ver H-1.
 - Contenedores: 1 `postgres:17-alpine` durante la corrida (muestreado), 0 a los ~15 s (*reaper*); 0 servidores huérfanos tras las pasadas.
-  `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_Reintento`, adrede).
+  `address already in use`: 0 en 167 logs de la sesión (los 12 «puerto ocupado… reintento» son `TestArnes_ReintentoPuertoOcupado`, adrede).
 - **Gate `GOWORK=off make ci-local`: `GATE_RC=0`** (135 s) · 84 paquetes `ok` · `0 issues` · `FICHEROS_EVALUADOS=10 · POR_DEBAJO=0`:
   idéntico a lo que midió la web. `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` ·
   `-race -cover ./internal/candados/...` rc=0 · `go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'`
@@ -223,7 +223,7 @@ directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del 
   el test cuando solo falla el nuevo; F9 no toca `internal/**`). Salidas: (a) el test ignora `ERROR` de cancelación posteriores a la señal
   de parada, (b) P0 espera a la primera vuelta del worker, (c) el worker no loguea a `ERROR` con `ctx.Err() != nil` (solo en el reconstruido: el viejo no se toca).
   **Decisión de Jhoan (2026-10-01): no se arregla ahora, se evalúa en F6** al reconstruir `integrations` (D-F6-7), donde muchas cosas se rehacen de cero y el test
-  probablemente se redefine. Queda anotado en `deuda.md` §5, `diseno.md` §4 y T6.12/T6.20/T6.27. Hasta F6: ≈ 1–2 % de falso rojo por corrida.
+  probablemente se redefine. Queda anotado en `deuda.md` §5, `plan/F9-procesos/diseno.md` §4 y T6.12/T6.20/T6.27. Hasta F6: ≈ 1–2 % de falso rojo por corrida.
 - **H-2 · «usar `Parar` antes» no evita el fallo del `Cleanup`.** `limpiar` vuelve a llamar a `Parar` (idempotente, mismo código): un
   servidor muerto a propósito suspende el test igual (`el servidor no paró limpio: código de salida -1`, medido con un test temporal
   retirado, viejo y nuevo). Quien necesite matarlo adrede tendrá que añadir una marca de «salida esperada»; no se construye por adelantado.
@@ -241,3 +241,4 @@ directorio aparte, sin tocar la de Homebrew. Cada `RC` se leyó del log, no del 
   lo que sigue sin verse: la inferencia real, entrante → respuesta (P3) y el push de `intents`; es terreno de T9.15/T9.17.
 - No se tocó `main`; no se empezó F1 ni B1. Producción (`internal/**`, `cmd/**`): cero líneas; `test/procesos/` sin cambios (un test temporal creado y retirado, árbol limpio).
 - Siguiente: **F1-01** (el piloto `nucleo/contact`); B1 (F9-03) va tras la parada de F1 (F1-05), por D-F9-1 y el orden de `plan/sesiones/`.
+- ⚠️ **Revisión independiente (2026-10-01)**: este traspaso está cerrado y no se reescribe; la regla de triaje de H-1 («esas dos líneas exactas») y su alcance se matizan en la contradicción 19 del [README de F9](../plan/F9-procesos/README.md) (nota de revisión), y lo demás que encontró la revisión, en sus contradicciones 22–30. Aquí solo se corrigieron dos erratas de referencia: el nombre del test `TestArnes_ReintentoPuertoOcupado` y la ruta `plan/F9-procesos/diseno.md` §4.

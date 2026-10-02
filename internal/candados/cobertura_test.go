@@ -266,11 +266,15 @@ func TestCoberturaBordes(t *testing.T) {
 	exigeOrdenadas(t, vs)
 }
 
-// D-F1-6 (Jhoan, 2026-10-01): los paquetes …test (suites Contrato y dobles, p. ej.
-// contacttest) quedan exentos también de la cobertura por fichero (D-12). Su suite solo la
-// ejecutan los tests de las implementaciones, que viven en otros paquetes, y `go test -cover`
-// sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil del propio
-// paquete …test el fichero sale al 0 % y rompería `make cobertura-ficheros`.
+// D-F1-6 (Jhoan, 2026-10-01): los paquetes de suite y dobles (suites Contrato y dobles, p. ej.
+// contacthelpertest) quedan exentos también de la cobertura por fichero (D-12). Su suite solo
+// la ejecutan los tests de las implementaciones, que viven en otros paquetes, y
+// `go test -cover` sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil
+// del propio paquete el fichero sale al 0 % y rompería `make cobertura-ficheros`.
+//
+// D-F1-10 (Jhoan, 2026-10-02) ESTRECHA cómo se reconoce ese paquete: su nombre termina en el
+// sufijo compuesto «helpertest» (…helpertest), no en «test» a secas. Con «test», un paquete de
+// producción como latest quedaba sin medir; ahora latest y cosatest se miden y muerden.
 //
 // Los árboles de prueba están en testdata/cobertura/paquetes-test/{pasa,muerde} (aparte de
 // testdata/cobertura/{pasa,muerde}, cuyas cifras exactas comprueba cmd/cobertura-ficheros);
@@ -303,9 +307,10 @@ func exigeSinCubrirEn(t *testing.T, perfil map[string]Fichero, fuentes []Fuente,
 }
 
 // TestCoberturaPaquetesTestEvaluables: Evaluables no devuelve ningún fichero de un paquete
-// cuyo nombre termina en «test», aunque el perfil le dé sentencias y ninguna cubierta; el
-// paquete que no lo es sigue midiéndose; y el contrato en rojo y el adaptador Postgres
-// legítimo siguen fuera, como antes.
+// cuyo nombre termina en «helpertest», aunque el perfil le dé sentencias y ninguna cubierta;
+// el paquete que no lo es sigue midiéndose —también el de producción que termina en «test»
+// por casualidad (latest) y el del nombre viejo de las suites (cosatest), D-F1-10—; y el
+// contrato en rojo y el adaptador Postgres legítimo siguen fuera, como antes.
 func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 	casos := []struct {
 		nombre    string
@@ -313,21 +318,27 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 		sinCubrir map[string]string // fichero con sentencias y 0 cubiertas → su paquete
 		quiero    []string
 	}{
-		{"pasa: la suite y el doble del paquete …test no se miden; cosa.go sí", arbolPaquetesTestPasa,
+		{"pasa: la suite y el doble del paquete …helpertest no se miden; cosa.go sí", arbolPaquetesTestPasa,
 			map[string]string{
-				dirPaquetesTest + "cosatest/doble.go":    "cosatest",
-				dirPaquetesTest + "cosatest/contrato.go": "cosatest",
-				dirPaquetesTest + "pg/pg.go":             "pg",
-				dirPaquetesTest + "rojo/rojo.go":         "rojo",
+				dirPaquetesTest + "cosahelpertest/doble.go":    "cosahelpertest",
+				dirPaquetesTest + "cosahelpertest/contrato.go": "cosahelpertest",
+				dirPaquetesTest + "pg/pg.go":                   "pg",
+				dirPaquetesTest + "rojo/rojo.go":               "rojo",
 			},
 			[]string{dirPaquetesTest + "cosa/cosa.go"}},
-		{"muerde: el MISMO doble se mide si su paquete no acaba en test", arbolPaquetesTestMuerde,
+		{"muerde: el MISMO doble se mide si su paquete no acaba en helpertest, y latest también", arbolPaquetesTestMuerde,
 			map[string]string{
-				dirPaquetesTest + "cosa/doble.go":     "cosa",
-				dirPaquetesTest + "cosatest/doble.go": "cosatest",
-				dirPaquetesTest + "rojo/rojo.go":      "rojo",
+				dirPaquetesTest + "cosa/doble.go":           "cosa",
+				dirPaquetesTest + "cosahelpertest/doble.go": "cosahelpertest",
+				dirPaquetesTest + "cosatest/doble.go":       "cosatest",
+				dirPaquetesTest + "latest/latest.go":        "latest",
+				dirPaquetesTest + "rojo/rojo.go":            "rojo",
 			},
-			[]string{dirPaquetesTest + "cosa/doble.go"}},
+			[]string{
+				dirPaquetesTest + "cosa/doble.go",
+				dirPaquetesTest + "cosatest/doble.go",
+				dirPaquetesTest + "latest/latest.go",
+			}},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
@@ -342,13 +353,13 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 	}
 }
 
-// TestCoberturaPaquetesTestViolaciones: un árbol con un paquete …test al 0 %, un contrato en
-// rojo y un adaptador Postgres exento no da ninguna violación (el 80 % del resto sí se
-// mide), y el adaptador sigue contando como exento.
+// TestCoberturaPaquetesTestViolaciones: un árbol con un paquete …helpertest al 0 %, un
+// contrato en rojo y un adaptador Postgres exento no da ninguna violación (el 80 % del resto
+// sí se mide), y el adaptador sigue contando como exento.
 func TestCoberturaPaquetesTestViolaciones(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, arbolPaquetesTestPasa)
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosatest/doble.go", "cosatest")
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosatest/contrato.go", "cosatest")
+	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/doble.go", "cosahelpertest")
+	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/contrato.go", "cosahelpertest")
 
 	exigeCero(t, Cobertura(perfil, fuentes, 80))
 	if got, quiero := Exentos(fuentes), []string{dirPaquetesTest + "pg/pg.go"}; !reflect.DeepEqual(got, quiero) {
@@ -357,28 +368,36 @@ func TestCoberturaPaquetesTestViolaciones(t *testing.T) {
 }
 
 // TestCoberturaPaquetesTestContraste: el MISMO doble al 0 %, en un paquete cuyo nombre NO
-// termina en «test», sigue siendo violación por umbral; el de su vecino cosatest no.
+// termina en «helpertest», es violación por umbral —en cosa, el gemelo de control, y en
+// cosatest, el nombre viejo que D-F1-10 deja de eximir—; el de su vecino cosahelpertest no.
+// Y latest, un paquete de producción que termina en «test» por casualidad, también muerde.
 func TestCoberturaPaquetesTestContraste(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, arbolPaquetesTestMuerde)
 	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosa/doble.go", "cosa")
+	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/doble.go", "cosahelpertest")
 	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosatest/doble.go", "cosatest")
+	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"latest/latest.go", "latest")
 
 	vs := Cobertura(perfil, fuentes, 80)
 	exigeViolacion(t, vs, dirPaquetesTest+"cosa/doble.go", "0.0 %", "80")
-	exigeNingunaEn(t, vs, dirPaquetesTest+"cosatest/doble.go")
+	exigeViolacion(t, vs, dirPaquetesTest+"cosatest/doble.go", "0.0 %", "80")
+	exigeViolacion(t, vs, dirPaquetesTest+"latest/latest.go", "0.0 %", "80")
+	exigeNingunaEn(t, vs, dirPaquetesTest+"cosahelpertest/doble.go")
 	exigeNingunaEn(t, vs, dirPaquetesTest+"rojo/rojo.go")
-	if len(vs) != 1 {
-		t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+	if len(vs) != 3 {
+		t.Errorf("se esperaban 3 violaciones; hay %d: %v", len(vs), vs)
 	}
+	exigeOrdenadas(t, vs)
 }
 
 // TestCoberturaPaquetesTestBordes: la exención de D-F1-6 es por el nombre del PAQUETE (la
-// cláusula `package`, la misma condición que D-F1-3), no por el directorio ni por la nota:
-// un …test al 100 % tampoco se mide. No cambia lo demás: un …test en rojo o con adaptador
-// Postgres legítimo sigue fuera de Evaluables, y una marca de Postgres ilegítima en un …test
-// sigue siendo violación de marca (nadie se exime por decreto, 05 E-6) pero ya no de umbral.
+// cláusula `package`, la misma condición que D-F1-3: el sufijo «helpertest» de D-F1-10), no
+// por el directorio ni por la nota: un …helpertest al 100 % tampoco se mide. No cambia lo
+// demás: un …helpertest en rojo o con adaptador Postgres legítimo sigue fuera de Evaluables, y
+// una marca de Postgres ilegítima en un …helpertest sigue siendo violación de marca (nadie se
+// exime por decreto, 05 E-6) pero no de umbral.
 func TestCoberturaPaquetesTestBordes(t *testing.T) {
-	const fuenteRoja = "package cosatest\n\nimport \"mod/pendiente\"\n\nfunc R() { panic(pendiente.Implementar(\"R\")) }\n"
+	const fuenteRoja = "package cosahelpertest\n\nimport \"mod/pendiente\"\n\nfunc R() { panic(pendiente.Implementar(\"R\")) }\n"
 	casos := []struct {
 		nombre    string
 		ruta      string
@@ -386,16 +405,16 @@ func TestCoberturaPaquetesTestBordes(t *testing.T) {
 		cubiertas int // de las 2 sentencias que el perfil le da
 		medido    bool
 	}{
-		{"paquete que no es …test: se mide", "x/cosa/cosa.go", "package cosa\n\nfunc A() {}\n", 0, true},
-		{"paquete …test al 0 %: no se mide", "x/cosatest/mal.go", "package cosatest\n\nfunc C() {}\n", 0, false},
-		{"paquete …test al 100 %: tampoco, la exención no es por nota", "x/cosatest/bien.go", "package cosatest\n\nfunc B() {}\n", 2, false},
-		{"directorio …test con package que no lo es: se mide", "y/cosatest/dir.go", "package cosa\n\nfunc D() {}\n", 0, true},
-		{"package …test en un directorio que no lo es: no se mide", "z/otro/otro.go", "package otrotest\n\nfunc E() {}\n", 0, false},
-		{"paquete …test en rojo: fuera, como antes", "x/cosatest/rojo.go", fuenteRoja, 0, false},
-		{"paquete …test con adaptador Postgres legítimo: fuera, como antes", "x/cosatest/pg.go",
-			MarcaPostgres + "\n\npackage cosatest\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n", 0, false},
-		{"paquete …test con marca ilegítima: fuera del umbral", "x/cosatest/falsa.go",
-			MarcaPostgres + "\n\npackage cosatest\n\nfunc F() {}\n", 0, false},
+		{"paquete que no es …helpertest: se mide", "x/cosa/cosa.go", "package cosa\n\nfunc A() {}\n", 0, true},
+		{"paquete …helpertest al 0 %: no se mide", "x/cosahelpertest/mal.go", "package cosahelpertest\n\nfunc C() {}\n", 0, false},
+		{"paquete …helpertest al 100 %: tampoco, la exención no es por nota", "x/cosahelpertest/bien.go", "package cosahelpertest\n\nfunc B() {}\n", 2, false},
+		{"directorio …helpertest con package que no lo es: se mide", "y/cosahelpertest/dir.go", "package cosa\n\nfunc D() {}\n", 0, true},
+		{"package …helpertest en un directorio que no lo es: no se mide", "z/otro/otro.go", "package otrohelpertest\n\nfunc E() {}\n", 0, false},
+		{"paquete …helpertest en rojo: fuera, como antes", "x/cosahelpertest/rojo.go", fuenteRoja, 0, false},
+		{"paquete …helpertest con adaptador Postgres legítimo: fuera, como antes", "x/cosahelpertest/pg.go",
+			MarcaPostgres + "\n\npackage cosahelpertest\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n", 0, false},
+		{"paquete …helpertest con marca ilegítima: fuera del umbral", "x/cosahelpertest/falsa.go",
+			MarcaPostgres + "\n\npackage cosahelpertest\n\nfunc F() {}\n", 0, false},
 	}
 	fuentes := make([]Fuente, 0, len(casos))
 	perfil := make(map[string]Fichero, len(casos))
@@ -412,16 +431,46 @@ func TestCoberturaPaquetesTestBordes(t *testing.T) {
 			}
 		})
 	}
-	if got, quiero := Exentos(fuentes), []string{"x/cosatest/pg.go"}; !reflect.DeepEqual(got, quiero) {
+	if got, quiero := Exentos(fuentes), []string{"x/cosahelpertest/pg.go"}; !reflect.DeepEqual(got, quiero) {
 		t.Errorf("Exentos = %v; quiero %v", got, quiero)
 	}
 
 	vs := Cobertura(perfil, fuentes, 80)
 	exigeViolacion(t, vs, "x/cosa/cosa.go", "0.0 %", "80")
-	exigeViolacion(t, vs, "y/cosatest/dir.go", "0.0 %", "80")
-	exigeViolacion(t, vs, "x/cosatest/falsa.go", "marca", "postgres")
+	exigeViolacion(t, vs, "y/cosahelpertest/dir.go", "0.0 %", "80")
+	exigeViolacion(t, vs, "x/cosahelpertest/falsa.go", "marca", "postgres")
 	if len(vs) != 3 {
 		t.Errorf("se esperaban 3 violaciones (dos por umbral, una por marca); hay %d: %v", len(vs), vs)
 	}
 	exigeOrdenadas(t, vs)
+}
+
+// TestCoberturaHelperTestSuffix: la exención de suites y dobles es por el sufijo COMPUESTO
+// «helpertest» del nombre del paquete (D-F1-10), la cláusula `package` y no el directorio.
+// Cada nombre de helperTestSuffixCases se prueba con el MISMO fichero al 0 %: exento = fuera
+// de Evaluables y sin violación; no exento = en Evaluables y con violación por umbral.
+func TestCoberturaHelperTestSuffix(t *testing.T) {
+	for _, c := range helperTestSuffixCases {
+		t.Run(c.name, func(t *testing.T) {
+			ruta := "internal/modulos/m/" + c.dir + "/double.go"
+			fuentes := []Fuente{fuenteEnMemoria(t, ruta, "package "+c.pkg+helperTestDoubleBody)}
+			perfil := map[string]Fichero{"mod/" + ruta: {Sentencias: 1, Cubiertas: 0}}
+
+			evaluables, vs := Evaluables(perfil, fuentes), Cobertura(perfil, fuentes, 80)
+			if c.exempt {
+				if len(evaluables) != 0 {
+					t.Errorf("Evaluables = %v; quiero ninguno (paquete %s exento)", evaluables, c.pkg)
+				}
+				exigeCero(t, vs)
+				return
+			}
+			if !reflect.DeepEqual(evaluables, []string{ruta}) {
+				t.Errorf("Evaluables = %v; quiero [%s] (paquete %s no exento)", evaluables, ruta, c.pkg)
+			}
+			exigeViolacion(t, vs, ruta, "0.0 %", "80")
+			if len(vs) != 1 {
+				t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+			}
+		})
+	}
 }

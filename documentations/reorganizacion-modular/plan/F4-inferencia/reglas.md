@@ -62,4 +62,4 @@ F4 está hecha cuando, **leído del log y sin pipe**:
 8. El adaptador de `local.Frame` que dejó F3 **ya no existe**.
 9. `ESTADO.md` y este README actualizados; SHA de cada tarea en `tareas.md`.
 10. Si F9 está adelantado (lo evalúa `../F9-procesos/`): la sesión local corrió las suites
-    `tenantllmtest.Contrato` y `degradationtest.Contrato` contra Postgres (testcontainers) — T4.31.
+    `tenantllmhelpertest.Contrato` y `degradationhelpertest.Contrato` contra Postgres (testcontainers) — T4.31.

@@ -15,7 +15,7 @@ dio por cierto). No se adapta el proyecto al entorno: ni bajar Go, ni `t.Skip`, 
 |---|---|---|
 | Ve | **Solo este repo** (clon fresco de GitHub): `CLAUDE.md`, `.claude/skills/`, `.claude/agents/`, `.mcp.json`, hooks de `.claude/settings.json` (sesión de **un** repo) | Todo el ecosistema wApp |
 | No ve | Skills de la raíz de wApp (`ejecutar-plan`, `pasar-la-pelota`…), skills y `CLAUDE.md` personales, la documentación del ecosistema | — |
-| Máquina | VM Ubuntu 24.04 x86_64 · ~4 vCPU · 16 GB · 30 GB · Go, Docker (`docker`, `dockerd`, `docker compose`), `gh`, **PostgreSQL 16 preinstalado** (🚫 prohibido para tests: es un Postgres vivo) | macOS arm64, Go 1.27.1, Docker, lint v2.14.0 en el `PATH` (⚠️ [`tecnologia.md`](tecnologia.md) §1) |
+| Máquina | VM Ubuntu 24.04 x86_64 · ~4 vCPU · 16 GB · 30 GB · Go, Docker (`docker`, `dockerd`, `docker compose`), `gh`, **PostgreSQL 16 preinstalado** (🚫 prohibido para tests: es un Postgres vivo) | macOS arm64, Docker. En el `PATH`, Go 1.27.1 y lint v2.14.0 (Homebrew); ✎ 2026-10-02: bajo `make` corren los fijados, y `make tools` deja el lint en `.bin/` ([`../../06-entorno-web.md`](../../06-entorno-web.md) §6) |
 | Red | Nivel **Trusted**: `proxy.golang.org`, `sum.golang.org`, `index.golang.org`, `github.com`, `raw.githubusercontent.com`, `storage.googleapis.com`, Docker Hub… GitHub va por un **proxy propio** | Sin límite |
 | Git | `git push` **solo a su rama de trabajo actual**; fetch, clone y PR funcionan (`gh` preinstalado). El proxy de GitHub solo sirve *release assets* de los repos **adjuntos** a la sesión | Todo, incluido `dev` y (a petición de Jhoan) `main` |
 | Sub-agentes | ✅ funcionan igual que en local | ✅ |
@@ -69,7 +69,12 @@ TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/
 se pone.
 
 `GOTOOLCHAIN=go1.26.5` fija la versión **exacta** (con `auto`, un Go preinstalado más nuevo correría
-tal cual). Los dos `BASH_*` suben la espera por defecto a 10 min y el máximo a 30: `make ci-local`
+tal cual). ✎ 2026-10-02: el `Makefile` exporta la misma variable para todo lo que corre bajo `make`
+(`Makefile:36`), así que en el entorno web esta solo cubre el `go` **suelto**; se deja puesta. Al
+subir de Go cambia junto con `GO_VERSION`, `go.mod` y `ci.yml`, y el `GO_WANT`/`LINT_WANT` del
+script de abajo (`../../06-entorno-web.md` §6.4).
+
+Los dos `BASH_*` suben la espera por defecto a 10 min y el máximo a 30: `make ci-local`
 tardó **148 s en frío** en local con 8 núcleos ([`tecnologia.md`](tecnologia.md) §4); en 4 vCPU,
 sin medir.
 
@@ -128,13 +133,13 @@ descargar nada. **Sin verificar**: que el *snapshot* conserve las imágenes (`/v
 no las conserva, se descargan en la primera prueba y no pasa nada. El daemon **no** sobrevive al
 *snapshot* ni a reanudar la sesión: cada sesión lo arranca a mano cuando el hook avisa.
 
-## 4 · Hook `SessionStart` propuesto (lo implementa una tarea de F0)
+## 4 · Hook `SessionStart`
 
-Solo diseño. **Verifica y avisa; no instala nada.** Corre en web **y** en local (los hooks del repo
-corren en los dos; la doc lo dice): así también delata el lint v2.14.0 de la máquina local. Su
-salida estándar entra en el contexto de la sesión.
+**Verifica y avisa; no instala nada y nunca falla la sesión** (`exit 0` siempre). Corre en web **y**
+en local (los hooks del repo corren en los dos; la doc lo dice). Su salida estándar entra en el
+contexto de la sesión.
 
-`.claude/settings.json` (hoy **no existe** en el repo):
+`.claude/settings.json` (existe desde T0.1, `de04088`):
 
 ```json
 {
@@ -153,37 +158,52 @@ salida estándar entra en el contexto de la sesión.
 }
 ```
 
-`.claude/hooks/verificar-entorno.sh`:
+**El script es el fichero**:
+[`.claude/hooks/verificar-entorno.sh`](../../../../.claude/hooks/verificar-entorno.sh).
+✎ 2026-10-02: aquí estaba su texto íntegro (el borrador y, desde T0.1, lo implementado, con
+`GO_WANT=go1.26.5; LINT_WANT=2.12.2` escritos dentro y comparando el `go` y el `golangci-lint` del
+`PATH`). `26cbfbf` lo reescribió y la copia quedó caducada: se sustituye por la referencia y por lo
+que hace, que es lo que menos se desincroniza. Lo que hace hoy:
 
-```bash
-#!/bin/bash
-# Verifica la toolchain de la reconstrucción y AVISA. Nunca instala, nunca falla la sesión.
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
-ENT=local; [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && ENT=web
-GO_WANT=go1.26.5; LINT_WANT=2.12.2; AVISOS=0
-echo "== Verdad de campo ($ENT) =="
-GOV=$(GOWORK=off go env GOVERSION 2>/dev/null)
-[ "$GOV" = "$GO_WANT" ] || { echo "⚠️ Go es '$GOV', la fijada es $GO_WANT (GOTOOLCHAIN=$GO_WANT)"; AVISOS=1; }
-LV=$(golangci-lint version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-[ "$LV" = "$LINT_WANT" ] || { echo "⚠️ golangci-lint es '${LV:-ausente}', el fijado es v$LINT_WANT: NINGÚN gate es autoritativo"; AVISOS=1; }
-echo "Go: ${GOV:-ausente} · golangci-lint: ${LV:+v}${LV:-ausente}"
-if [ "$ENT" = web ]; then docker info >/dev/null 2>&1 && echo "Docker: responde" || echo "Docker: NO responde — el daemon no arranca solo: (nohup dockerd >/tmp/dockerd.log 2>&1 &)"; fi
-timeout 20 git fetch -q origin 2>/dev/null
-echo "Rama: $(git branch --show-current) · origin/dev: $(git log --oneline -1 origin/dev 2>/dev/null)"
-echo "Pendientes: $(grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal 2>/dev/null | grep -vc '_test\.go:')"
-ls documentations/reorganizacion-modular/traspasos/*.md 2>/dev/null | while read -r f; do
-  grep -q '^## CERRADO' "$f" || echo "Traspaso ABIERTO: $f"; done
-[ "$AVISOS" = 0 ] && echo "Toolchain: OK" || echo "Toolchain: NO LISTA — dilo en el informe, no la sustituyas"
-exit 0
+1. **Pregunta a `make toolchain`** (`:29`), con `GOPROXY=off` y un límite de 30 s: ni las versiones
+   fijadas ni la regla que elige el linter están escritas en el script; salen de `GO_PINNED`,
+   `GO_SYSTEM`, `GO_EFFECTIVE`, `GOFMT_EFFECTIVE`, `LINT_PINNED` y `LINT_EFFECTIVE`
+   (`../../06-entorno-web.md` §6.2). Con `GOPROXY=off`, si `go<fijado>` no está en la caché de Go,
+   `go` falla en el acto en vez de descargarlo: verificar no es instalar.
+2. **Avisa** (`⚠️`, una línea por caso, `:33-53`): `make toolchain` no contestó; el Go fijado no está
+   en la caché; el Go o el `gofmt` efectivos no son el fijado; ni `.bin/` ni el `PATH` traen el
+   `golangci-lint` fijado (y manda a `make tools`).
+3. **Informa** de lo que da un `go` suelto en la sesión, fuera de `make` (`:57-58`): solo si no es
+   el fijado, y **sin** contarlo como aviso.
+4. Docker (solo en web), `git fetch` con límite de 20 s, rama y `origin/dev`, pendientes y
+   traspasos abiertos: igual que en T0.1.
+
+Lo que imprime (entre corchetes, lo que solo sale si aplica):
+
+```text
+== Verdad de campo (web|local) ==
+[⚠️ … una línea por aviso]
+Go: <efectivo> bajo make (GOTOOLCHAIN=<fijado>) · en el sistema: <el del PATH>
+golangci-lint: <versión elegida> · <ruta>
+[Ojo: un `go` suelto, fuera de make, es '<versión>': los gates van por `make` (o con GOTOOLCHAIN=<fijado> delante)]
+[Docker: responde | Docker: NO responde — el daemon no arranca solo: (nohup dockerd >/tmp/dockerd.log 2>&1 &)]
+Rama: <rama> · origin/dev: <sha y asunto>
+Pendientes: <n>
+[Traspaso ABIERTO: <fichero>]
+Toolchain: OK | Toolchain: NO LISTA — dilo en el informe, no la sustituyas
 ```
 
-La tarea de F0 lo prueba en local (`CLAUDE_CODE_REMOTE` sin poner) y deja escrito en
-`../../06-entorno-web.md` lo que vio la primera sesión web.
+En local, con el Go 1.27.1 de Homebrew y sin `GOTOOLCHAIN` exportado en la sesión, la línea `Ojo:`
+sale (`go1.27.1`) aunque la última diga `Toolchain: OK`: las dos cosas son ciertas a la vez.
+`timeout` no viene en todos los macOS; el script prueba `timeout`, `gtimeout` y `perl`, y sin
+ninguno lo acota el `timeout: 90` de `settings.json` (`:13-24`).
 
-✎ **Implementado en T0.1 (`de04088`, 2026-09-30)** con dos líneas más que el primer borrador, ya
-en el texto de arriba: `Go: … · golangci-lint: …` siempre (R0.1.f pide imprimir las versiones, no
-solo avisar) y, si Docker no responde, el comando para arrancar el daemon (en la VM **no arranca
-solo**, `06` §5). Sigue sin instalar ni arrancar nada, y sale con `rc=0` siempre.
+**Historia.** Fue diseño hasta T0.1 («lo implementa una tarea de F0»): esa tarea lo probó en local
+(`CLAUDE_CODE_REMOTE` sin poner) y dejó escrito en `../../06-entorno-web.md` §5 lo que vio la primera
+sesión web. **Implementado en T0.1 (`de04088`, 2026-09-30)** con dos líneas más que el primer
+borrador: `Go: … · golangci-lint: …` siempre (R0.1.f pide imprimir las versiones, no solo avisar)
+y, si Docker no responde, el comando para arrancar el daemon (en la VM **no arranca solo**, `06`
+§5). **Reescrito en `26cbfbf` (2026-10-02)** para delegar en `make toolchain`.
 
 ## 5 · La prueba de Docker + testcontainers (primera sesión web)
 
@@ -217,7 +237,8 @@ por IP compartida (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` lo evit
 
 **Al empezar (toda sesión, web o local)** — verdad de campo antes que memoria:
 
-1. Leer la salida del hook (o correr sus comandos a mano si aún no existe).
+1. Leer la salida del hook (§4). Si no llegó: `make toolchain; echo "rc=$?"` → `TOOLCHAIN=OK` y
+   `rc=0`; en local, si falta el lint, `make tools`.
 2. `git fetch -q origin && git status --short && git branch --show-current && git log --oneline -1 origin/dev`.
 3. Leer `../../ESTADO.md`, el `README.md` de la fase y su `tareas.md`; localizar el **bloque** que
    toca y confirmar que sus dependencias están `[x]` **con SHA que existe** (`git cat-file -e <sha>`).

@@ -6,22 +6,32 @@ import (
 )
 
 // TestExportadosCubiertosMuerde: un exportado citado solo en un comentario, o solo en un
-// literal de cadena, no está cubierto; un método exportado se nombra "Tipo.Metodo".
+// literal de cadena, no está cubierto; un método exportado se nombra "Tipo.Metodo". Desde
+// D-F1-10 muerde también el paquete cuyo nombre termina en «test» sin terminar en
+// «helpertest»: uno de producción (latest) y uno con el nombre viejo de las suites (cosatest);
+// el MISMO doble no muerde en cosahelpertest y sí en su gemelo de control, cosa.
 func TestExportadosCubiertosMuerde(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/exportados/muerde", []string{"internal"}, true)
 	vs := ExportadosCubiertos(fuentes)
 
-	const fichero = "internal/modulos/m/cosa/cosa.go"
+	const m = "internal/modulos/m/"
 	casos := []struct {
 		nombre  string
+		fichero string
 		simbolo string
+		test    string
 	}{
-		{"constante citada solo en un comentario del test", "Limite"},
-		{"método exportado citado solo en un literal", "Cosa.Medir"},
+		{"constante citada solo en un comentario del test", m + "cosa/cosa.go", "Limite", "cosa_test.go"},
+		{"método exportado citado solo en un literal", m + "cosa/cosa.go", "Cosa.Medir", "cosa_test.go"},
+		{"exported function of a production package ending in test (latest)", m + "latest/latest.go", "Version", "latest_test.go"},
+		{"type of a package with the old bare test suffix (cosatest)", m + "cosatest/doble.go", "Doble no aparece", "doble_test.go"},
+		{"method of a package with the old bare test suffix (cosatest)", m + "cosatest/doble.go", "Doble.Leer", "doble_test.go"},
+		{"type of the control twin of the helpertest double", m + "cosa/doble.go", "Doble no aparece", "doble_test.go"},
+		{"method of the control twin of the helpertest double", m + "cosa/doble.go", "Doble.Leer", "doble_test.go"},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
-			exigeViolacion(t, vs, fichero, c.simbolo, "cosa_test.go")
+			exigeViolacion(t, vs, c.fichero, c.simbolo, c.test)
 		})
 	}
 	if len(vs) != len(casos) {
@@ -32,12 +42,15 @@ func TestExportadosCubiertosMuerde(t *testing.T) {
 			t.Errorf("Hacer aparece como identificador en el test y no debe violar: %v", v)
 		}
 	}
+	// El paquete …helpertest queda fuera (D-F1-3 = sí, con el sufijo compuesto de D-F1-10).
+	exigeNingunaEn(t, vs, m+"cosahelpertest/doble.go")
 	exigeOrdenadas(t, vs)
 }
 
 // TestExportadosCubiertosPasa: un test en rojo (etiqueta pendiente) del paquete externo que
 // nombra todo por selector cuenta; campos y no exportados no se exigen; un x.go sin test no
-// es asunto de este candado; un paquete …test queda fuera (D-F1-3 = sí).
+// es asunto de este candado; un paquete …helpertest queda fuera (D-F1-3 = sí; el sufijo,
+// D-F1-10).
 func TestExportadosCubiertosPasa(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/exportados/pasa", []string{"internal"}, true)
 	exigeCero(t, ExportadosCubiertos(fuentes))
@@ -123,4 +136,30 @@ func usar() {
 		}
 	}
 	exigeOrdenadas(t, vs)
+}
+
+// TestExportadosCubiertosHelperTestSuffix: la exención de suites y dobles es por el sufijo
+// COMPUESTO «helpertest» del nombre del paquete (D-F1-10), la cláusula `package` y no el
+// directorio. Cada nombre de helperTestSuffixCases se prueba con el MISMO fichero y un test
+// que no nombra su exportado: exento = cero violaciones; no exento = una, que nombra Next.
+func TestExportadosCubiertosHelperTestSuffix(t *testing.T) {
+	for _, c := range helperTestSuffixCases {
+		t.Run(c.name, func(t *testing.T) {
+			ruta := "internal/modulos/m/" + c.dir + "/double.go"
+			test := fuenteEnMemoria(t, "internal/modulos/m/"+c.dir+"/double_test.go", "package "+c.pkg+"\n")
+			test.EsTest = true
+			vs := ExportadosCubiertos([]Fuente{
+				fuenteEnMemoria(t, ruta, "package "+c.pkg+helperTestDoubleBody),
+				test,
+			})
+			if c.exempt {
+				exigeCero(t, vs)
+				return
+			}
+			exigeViolacion(t, vs, ruta, "Next", "double_test.go")
+			if len(vs) != 1 {
+				t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+			}
+		})
+	}
 }

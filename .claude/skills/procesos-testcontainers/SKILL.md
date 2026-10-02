@@ -29,6 +29,9 @@ protegen el código viejo. No se copian.
 - **Sesión local** (tiene Docker): `make test-procesos`, contra los dos binarios. **Es quien cierra
   F9.** Traspaso con la skill `traspaso-web-local`.
 - Sin Docker, el `TestMain` **falla**. No se salta.
+- 🔴 **En local, un `go` suelto es el del sistema** (`go1.27.1`), no el fijado: usa
+  `make vet-integracion` y `make test-procesos`, o antepón `GOTOOLCHAIN=go1.26.5`. Compruébalo
+  con `make toolchain` (`TOOLCHAIN=OK`). En la web da igual.
 
 ## La forma
 
@@ -108,7 +111,7 @@ func TestMain(m *testing.M) {
 
 El proceso entra por la puerta real (HTTP, gRPC con un Edge de prueba) y comprueba lo que devuelve
 y lo que queda en Postgres. **No importa paquetes de dominio**; solo puede importar las **suites
-de contrato** (`<paquete>test`) para correrlas contra la implementación Postgres (`05` E-6).
+de contrato** (`<paquete>helpertest`, D-F1-10) para correrlas contra la implementación Postgres (`05` E-6).
 
 Qué binario se prueba lo elige el arnés con `WAPP_PROCESOS_BINARIO=viejo|nuevo`. Orden
 obligatorio para cada proceso nuevo:

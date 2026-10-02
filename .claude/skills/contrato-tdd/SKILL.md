@@ -68,16 +68,26 @@ GOWORK=off go test -tags pendiente -run '^TestX$' ./internal/modulos/<modulo>/<p
 El segundo **debe fallar** (rc≠0) por el `panic`. ⚠️ Un `panic` **aborta el binario entero** del
 paquete: para ver un test concreto en rojo, córrelo solo con `-run`.
 
+> 🔴 **En local, un `go` suelto es el del sistema** (`go1.27.1`), no el fijado: a estos comandos y al
+> `go test -race` del Paso 3 antepónles `GOTOOLCHAIN=go1.26.5`, o usa `make` (`make vet-pendiente`,
+> `make ci-local`). Compruébalo con `make toolchain` (`TOOLCHAIN=OK`). En la web da igual.
+
 Commit: `rojo(<modulo>): contrato de <fichero>` — con el contrato **y** su test.
 
 ### Puertos (ficheros solo de interfaces) y adaptadores Postgres
 
-- **El puerto** lleva una **suite de contrato** exportada en un paquete `<paquete>test`
-  (patrón `internal/gateway/fleet/fleettest` de hoy):
-  `func Contrato(t *testing.T, nuevo func() Puerto)`.
+- **El puerto** lleva una **suite de contrato** exportada en un paquete `<paquete>helpertest`, en
+  `<dir>/<paquete>helpertest` (**D-F1-10**, 2026-10-02: el sufijo es el compuesto `helpertest`; una suite en
+  `<paquete>test` ya no exime al puerto ni está exenta ella. El origen del patrón es
+  `internal/gateway/fleet/fleettest`, código viejo, que conserva su nombre). Dos formas, según el puerto:
+  - **puerto con BD** (el que tiene adaptador Postgres):
+    `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` — **D-F1-1**, cerrada. El `Montaje` trae el puerto
+    **y** lo que el puerto no deja ver: los tenants sembrados (la FK los exige) y, si hace falta, un observador de estado.
+    Referencia: `internal/nucleo/contact/contacthelpertest/contrato.go`;
+  - **puerto sin BD**: `func Contrato(t *testing.T, nuevo func() Puerto)`, la forma de `05` E-3.
 - **Toda implementación** ejecuta esa suite desde su propio test. La implementación **en memoria**
   la ejecuta ya en unitario. Si el paquete no tiene gemelo en memoria (`05` E-6 lista los 12 que
-  no lo tienen), **créalo** en `<paquete>test` en esta misma pasada.
+  no lo tienen), **créalo** en `<paquete>helpertest` en esta misma pasada.
 - **El adaptador Postgres** prueba en unitario solo lo que no necesita BD: constructor,
   validación de argumentos, mapeo de filas y errores (extrae funciones puras para eso). Su SQL lo
   cubren los procesos de F9. Queda fuera del umbral de cobertura.

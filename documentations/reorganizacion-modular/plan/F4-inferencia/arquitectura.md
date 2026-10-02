@@ -12,8 +12,8 @@
 | `internal/prompts` | `…/inferencia/prompts` | 2 · 407 | Carga/vuelca/valida los `.tmpl` de P2–P5 (`WAPP_LLM_PROMPTS_DIR`) |
 | `internal/tenantllm` | `…/inferencia/tenantllm` | 2 · 404 | Vía y credencial cifrada por tenant (`public.tenant_llm`, migraciones 0071/0073) |
 | `internal/degradation` | `…/inferencia/degradation` | 2 · 676 | Avisos al dueño (`public.owner_degradation_notices`, 0075), dedupe por ventana |
-| — | `…/tenantllm/tenantllmtest` ✚ | 2 | Suite `Contrato` + doble en memoria (no existe hoy: es de los 12 de `05` E-6) |
-| — | `…/degradation/degradationtest` ✚ | 2 | Ídem |
+| — | `…/tenantllm/tenantllmhelpertest` ✚ | 2 | Suite `Contrato` + doble en memoria (no existe hoy: es de los 12 de `05` E-6) |
+| — | `…/degradation/degradationhelpertest` ✚ | 2 | Ídem |
 | — | `internal/arranque/puente_inferencia.go` ✚ | 1 | Adaptadores de tipos para dos consumidores viejos (§4). Nace en F4; muere por partes en F7 y F8 |
 
 Totales: `wc -l internal/{llmvia,llmvia/local,prompts,tenantllm,degradation}/*.go` sin `_test` →
@@ -25,7 +25,7 @@ ficheros, que se saltan sin `WAPP_TEST_DB_DSN`: `tenantllm/postgres_integration_
 memoria de producción (`ls internal/tenantllm internal/degradation` → solo `postgres.go` y el
 dominio). Los dobles que existen son **de test y no exportados**: `storeFake` en
 `internal/llmvia/selector_test.go:23` y `storeFalso` en `internal/degradation/degradation_test.go:44`.
-⇒ confirmado que están entre los 12 de `05` E-6: F4 crea `tenantllmtest` y `degradationtest`.
+⇒ confirmado que están entre los 12 de `05` E-6: F4 crea `tenantllmhelpertest` y `degradationhelpertest`.
 
 ## 2 · Grafo de imports y orden
 
@@ -40,7 +40,7 @@ degradation   → (nada interno; solo database/sql)
 ```
 
 Orden de contratos y de verde (hojas primero): **`prompts` · `degradation` · `tenantllm`** (en
-paralelo, independientes) → **dobles** (`degradationtest`, `tenantllmtest`) → **`llmvia/local`** →
+paralelo, independientes) → **dobles** (`degradationhelpertest`, `tenantllmhelpertest`) → **`llmvia/local`** →
 **`llmvia`** (`notify.go` antes que `llmvia.go` en el verde, porque `llmvia.go` llama a `avisar`).
 
 Tests: `degradation_test.go` importa `tenantllm` (compara `ViaLocal`/`ViaAPI` de los dos,

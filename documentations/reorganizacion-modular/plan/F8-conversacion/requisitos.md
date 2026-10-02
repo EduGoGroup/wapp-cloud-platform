@@ -35,12 +35,12 @@
 - **R8.2.d** · **SI** un test nuevo de `C` llama a `t.Skip`, **ENTONCES EL** gate **DEBERÁ**
   fallar. — Verifica: `grep -rn 't.Skip' C` vacío.
 - **R8.2.e** · **DONDE** un fichero es solo de interfaces o tiene gemelo en memoria (`store`,
-  `trigger`, `content`), **EL** paquete `…test` **DEBERÁ** exportar
+  `trigger`, `content`), **EL** paquete `…helpertest` **DEBERÁ** exportar
   `func Contrato(t *testing.T, nuevo func(t *testing.T) <Puerto>)` y cada implementación
-  ejecutarla. — Verifica: `go doc ./C/store/storetest Contrato`, ídem `triggertest`.
+  ejecutarla. — Verifica: `go doc ./C/store/storehelpertest Contrato`, ídem `triggerhelpertest`.
 - **R8.2.f** · **DONDE** un adaptador Postgres no tiene gemelo (`events.Store`,
-  `runtime.PostgresSelfNumbers`, `runtime.PostgresTenantResolver`), **EL** paquete `…test`
-  **DEBERÁ** traer un doble en memoria con su propio test en verde. — Verifica: `ls C/events/eventstest C/runtime/runtimetest`.
+  `runtime.PostgresSelfNumbers`, `runtime.PostgresTenantResolver`), **EL** paquete `…helpertest`
+  **DEBERÁ** traer un doble en memoria con su propio test en verde. — Verifica: `ls C/events/eventshelpertest C/runtime/runtimehelpertest`.
 - **R8.2.g** · **CUANDO** se cierre el bloque E, **`make test-pendiente`** **DEBERÁ** contar las
   llamadas de todo el módulo y **`make ci-local`** dar rc=0. — Verifica: los dos comandos.
 

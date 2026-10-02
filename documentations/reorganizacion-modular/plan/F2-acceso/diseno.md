@@ -10,18 +10,18 @@
 
 ```
 A/entitlements/          entitlements.go · middleware.go · postgres.go            (+3 _test.go)
-A/entitlements/entitlementstest/   suite.go (ContratoResolver) · fake.go (Fake ↦ de entitlements.go, D-F2-4)
+A/entitlements/entitlementshelpertest/   suite.go (ContratoResolver) · fake.go (Fake ↦ de entitlements.go, D-F2-4)
 A/iam/domain/            canje.go · entities.go · errors.go · invitation.go       (+4)
 A/iam/ports/in/          active_tenant.go · canje.go · usecases.go                (+1: usecases_test.go; D-F2-5)
 A/iam/ports/out/         active_tenant.go · canje.go · repos.go                   (solo interfaces: sin _test, E-3)
-A/iam/ports/out/outtest/ ✚ una suite por puerto persistente (7) + montaje común
+A/iam/ports/out/outhelpertest/ ✚ una suite por puerto persistente (7) + montaje común
 A/iam/usecase/           active_tenant · audit · canje · config · context_token · delegated_auth · exchange · grants · invitations · memberships · roles   (+11)
 A/iam/infra/memory/      active_tenant_store · audit_store · grant_store · invitation_store · membership_store · role_store · store · redeem_store ✚   (+8)
 A/iam/infra/postgres/    active_tenant · audit · canje · grants · invitations · memberships · postgres · roles   (+8 unitarios, +3 candados AST, +1 `integracion`)
 A/iam/infra/identity/    client.go · m2m.go                                       (+2, contra httptest)
 A/iam/transport/http/    active_tenant · auth · canje · http · invitations · roles (+6)
 A/platformadmin/         access_requests · access_requests_postgres ✚ · handlers · postgres · puertos ✚ · signup   (+5; puertos.go sin test, E-3)
-A/platformadmin/platformadmintest/ ✚ suite de los puertos + doble en memoria
+A/platformadmin/platformadminhelpertest/ ✚ suite de los puertos + doble en memoria
 internal/arranque/       puente_iam.go ✚ · puente_iam_test.go
 ```
 
@@ -29,10 +29,11 @@ internal/arranque/       puente_iam.go ✚ · puente_iam_test.go
 
 Firma común (D-F1-1 de F1): `func ContratoX(t *testing.T, nuevo func(t *testing.T) MontajeX)`,
 donde el montaje trae la implementación y los **dos tenants** con UUID sembrados (Postgres los exige
-por FK). Cada suite: casos en español que digan la regla; nada de BD ni reloj real en la versión en
+por FK). Cada suite: casos con nombre **en inglés** que digan la regla (`05` E-11, que rige lo nuevo desde el 2026-10-02; aquí decía
+«en español»); nada de BD ni reloj real en la versión en
 memoria; la versión Postgres la corre F9 (`//go:build integracion`).
 
-| Suite (`outtest`) | Casos mínimos (de las reglas de §4) | Doble | Postgres |
+| Suite (`outhelpertest`) | Casos mínimos (de las reglas de §4) | Doble | Postgres |
 |---|---|---|---|
 | `ContratoMembershipRepo` | `Add` idempotente; `Remove` acotado al tenant; `TenantsOfUser` y `UserTenants` **mismo orden** y lista **vacía no nil**; `MembersOf` solo del tenant; segunda empresa sin `multi_empresa` → `ErrConflict` idéntico; con `multi_empresa` escribe; resolver caído **mantiene** el rechazo | `memory.MembershipStore` | `iampostgres.MembershipRepo` |
 | `ContratoRoleRepo` | `List` = propios + plantillas globales, nunca ajenos; `ParentOf`; `AssignToUser` de rol de empresa con tenant nil **o `""`** → `ErrRoleScopeInvalid`; rol transversal sí se asigna global | `RoleStore` | `RoleRepo` |
@@ -41,11 +42,11 @@ memoria; la versión Postgres la corre F9 (`//go:build integracion`).
 | `ContratoInvitationRepo` | nace pendiente; digest de 32 bytes (otro tamaño → error); digest **único**; `Revoke` marca y **no borra**; tres desenlaces de la revocación; orden `(created_at DESC, id DESC)`; no cruza empresas; rol que se borra deja la invitación viva sin rol | `InvitationStore` | `InvitationRepo` |
 | `ContratoActiveTenantRepo` | ausencia → `ok=false`; alta; **reemplazo** (un valor por usuario) | `ActiveTenantStore` | `ActiveTenantRepo` |
 | `ContratoInvitationRedeemRepo` ✚ | camino feliz: membresía en el tenant **de la invitación**; inexistente/caducada/canjeada/revocada **sin rastro escrito**; ya-miembro-de-otra → conflicto y la invitación **no se quema**; sin solicitud pendiente no es fallo; el `tenant_id` del cuerpo **se ignora** | `memory.RedeemStore` ✚ | `InvitationRedeemRepo` |
-| `entitlementstest.ContratoResolver` | override gana en los dos sentidos; plan nil ⇒ `basic`; `ListEffective` ordenada, sin las apagadas; tenant inexistente ⇒ `("", nil, nil)`; error de infraestructura se propaga | `entitlementstest.Fake` | `entitlements.Postgres` |
-| `platformadmintest.Contrato…` ✚ (D-F2-3) | listado paginado estable con desempate; `GetTenant` inexistente → `ErrNotFound`; `CreateTenant` slug duplicado → `ErrConflict`; ciclo de una solicitud de acceso (pendiente → aprobada/rechazada); reaprobar con otro rol → `ErrRetryRoleMismatch` | doble ✚ | `Repository` |
+| `entitlementshelpertest.ContratoResolver` | override gana en los dos sentidos; plan nil ⇒ `basic`; `ListEffective` ordenada, sin las apagadas; tenant inexistente ⇒ `("", nil, nil)`; error de infraestructura se propaga | `entitlementshelpertest.Fake` | `entitlements.Postgres` |
+| `platformadminhelpertest.Contrato…` ✚ (D-F2-3) | listado paginado estable con desempate; `GetTenant` inexistente → `ErrNotFound`; `CreateTenant` slug duplicado → `ErrConflict`; ciclo de una solicitud de acceso (pendiente → aprobada/rechazada); reaprobar con otro rol → `ErrRetryRoleMismatch` | doble ✚ | `Repository` |
 
 Los tres clientes de identity (`IdentityClient`, `IdentityM2MClient`, `UserSystemsClient`) no llevan
-suite en `outtest`: su contrato es **traducir el protocolo de identity**, y se prueba en
+suite en `outhelpertest`: su contrato es **traducir el protocolo de identity**, y se prueba en
 `infra/identity` contra un `httptest.Server`; los usecases usan dobles propios en su `_test`.
 
 ## 3 · Contratos por fichero (lo que promete cada uno)

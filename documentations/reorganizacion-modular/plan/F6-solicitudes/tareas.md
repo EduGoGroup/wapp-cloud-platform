@@ -19,15 +19,15 @@ Para cuando: inventario recontado igual que `diseno.md` §1 (o corregido en el m
 - [ ] **T6.2 · rojo(solicitudes): contrato de `integrations/sigv1`** · 🌐 · dep. T6.1 · cumple R6.4.c
   - **Ficheros**: `S/integrations/sigv1/sigv1.go`, `sigv1_test.go` · **Hecho cuando**: 3 exportados con promesa (±300 s, tiempo constante, cuerpo crudo, reloj por parámetro); casos de `V/sigv1_test.go` (7) leídos
   - **Gate**: rojo · **Commit**: `rojo(solicitudes): contrato de integrations/sigv1`
-- [ ] **T6.3 · rojo(solicitudes): `tenantvars` + `tenantvarstest`** · 🌐 · dep. T6.1 · cumple R6.3.c
-  - **Ficheros**: `S/tenantvars/{tenantvars,memory,postgres}.go` + tests, `S/tenantvars/tenantvarstest/contrato.go`
+- [ ] **T6.3 · rojo(solicitudes): `tenantvars` + `tenantvarshelpertest`** · 🌐 · dep. T6.1 · cumple R6.3.c
+  - **Ficheros**: `S/tenantvars/{tenantvars,memory,postgres}.go` + tests, `S/tenantvars/tenantvarshelpertest/contrato.go`
   - **Hecho cuando**: 11 exportados; la suite escrita (sin `t.Skip`); `memory_test.go` la invoca · **Commit**: `rojo(solicitudes): contrato de tenantvars`
 - [ ] **T6.4 · rojo(solicitudes): `intakes/note.go`** · 🌐 · dep. T6.1 · cumple R6.1.d
   - **Hecho cuando**: `MaxNoteRunes`, `NoteTooLongError` (+`Error`), `SanitizeNote` con R-08 en el comentario; texto `cart: …` asertado (D-F6-4); 14 casos de `cart/notes_test.go` leídos · **Commit**: `rojo(solicitudes): contrato de intakes/note`
 - [ ] **T6.5 · Cierre del bloque A** · 🌐 · **Hecho cuando**: `ci-local` rc=0; `make test-pendiente` anotado; PR abierto
 
 ## Bloque B · contratos y rojo de `intakes` · 🌐 · T6.6–T6.9
-Para cuando: 24 ficheros de `S/intakes` en rojo + `intakestest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR.
+Para cuando: 24 ficheros de `S/intakes` en rojo + `intakeshelpertest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR.
 
 - [ ] **T6.6 · rojo(solicitudes): tipos puros de `intakes`** · 🌐 · dep. T6.5 · cumple R6.1.a–c, R6.1.e
   - **Ficheros**: `status.go`, `intakes.go`, `revisions.go`, `shipping.go`, `literal.go`, `customernote.go`, `summary.go`, `crm.go`, `metricas.go`, `revalidate.go` + tests (10 + 10)
@@ -36,7 +36,7 @@ Para cuando: 24 ficheros de `S/intakes` en rojo + `intakestest` + los 4 candados
   - **Ficheros**: `service.go`, `approve.go`, `aprobadas.go`, `edit.go`, `discard.go`, `deposit.go`, `requestinfo.go`, `vencimiento.go`, `reanalisis.go` + tests
   - **Hecho cuando**: R-01…R-06 en los contratos; reloj inyectado en `Summary` (D-F6-5); 🔶 `approve_contrato_test`, `correct_test`, `tres_puertas_crm_test`, `vencimiento_test` (16) leídos · **Commit**: `rojo(solicitudes): contratos de la bandeja`
 - [ ] **T6.8 · rojo(solicitudes): almacenes, comprador y notificador + suite** · 🌐 · dep. T6.7 · cumple R6.3.a, R6.3.d
-  - **Ficheros**: `memory.go`, `postgres.go`, `buyerdata.go` (+ `buyerdata_postgres.go` si D-F6-6), `notifier.go` + tests; `S/intakes/intakestest/contrato.go`
+  - **Ficheros**: `memory.go`, `postgres.go`, `buyerdata.go` (+ `buyerdata_postgres.go` si D-F6-6), `notifier.go` + tests; `S/intakes/intakeshelpertest/contrato.go`
   - **Hecho cuando**: suite `Contrato(t, func(t) Montaje)` escrita; `memory_test.go` la invoca; T-1 (homónimo DEK) en el comentario de `buyerdata.go`; 🔶 plantillas de `notifier` inventariadas · **Commit**: `rojo(solicitudes): almacenes, comprador y notificador de intakes`
 - [ ] **T6.9 · rojo(solicitudes): candados de invariante de `intakes`** · 🌐 · dep. T6.7 · cumple R6.2.a–c
   - **Ficheros**: `S/intakes/inv1_aprobar_test.go` (aprobar + pedir info), candados de vencimiento en `vencimiento_test.go`
@@ -51,7 +51,7 @@ Para cuando: todo el módulo en rojo · puente declarado · `make test-pendiente
 - [ ] **T6.11 · rojo(solicitudes): `intakes/quotetext` (P5)** · 🌐 · dep. T6.6
   - **Ficheros**: 4 + 4 tests · **Hecho cuando**: 47 exportados; puertos `:192,:202,:210,:219` estructurales; 🔶 los nueve motivos de `fallback_reason` y los 8 tests viejos leídos · **Commit**: `rojo(solicitudes): contrato de quotetext`
 - [ ] **T6.12 · rojo(solicitudes): `integrations`, `crmpush`, suite y doble** · 🌐 · dep. T6.2, T6.3, T6.8 · cumple R6.3.b, R6.4.a–b, R6.4.d
-  - **Ficheros**: `S/integrations/{store,gate,worker,crud,outbox_stats,postgres}.go` + tests; `integrationstest/{contrato,memoria}.go` (+ `memoria_test.go`: el doble tiene lógica); `integrations/contrato_wapp_crm_v1_test.go` (D-F6-3); `crmpush/{push,desde_intakes}.go` + tests; `crmpush/contrato_test.go` (candado R-12, dirs de `diseno.md` §6)
+  - **Ficheros**: `S/integrations/{store,gate,worker,crud,outbox_stats,postgres}.go` + tests; `integrationshelpertest/{contrato,memoria}.go` (+ `memoria_test.go`: el doble tiene lógica); `integrations/contrato_wapp_crm_v1_test.go` (D-F6-3); `crmpush/{push,desde_intakes}.go` + tests; `crmpush/contrato_test.go` (candado R-12, dirs de `diseno.md` §6)
   - **Hecho cuando**: el doble `Memoria` nace **completo** y en verde (no es código de producción); reloj inyectado en el worker · **Commit**: `rojo(solicitudes): contratos del puente CRM`
   - **Heredado de F9-02 (H-1, D-F6-7)**: el contrato de `integrations/worker.go` promete «contexto cancelado → vuelve **sin** loguear a `ERROR`» (hoy lo hacen `worker.go:209` y `:225`, y `TestP0_Arranque/sin_errores` falló por ello 1 de 161 veces); se escribe aquí, con su caso en `worker_test.go` (cancelar a mitad de la primera llamada), no al final
 - [ ] **T6.13 · Cierre del bloque C** · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` anotado (≈191 esperado) y coincide con `make test-pendiente`; `ci-local` rc=0; PR
@@ -61,7 +61,7 @@ Para cuando: `sigv1`, `tenantvars`, `note.go`, tipos puros y acciones en verde �
 
 - [ ] **T6.14 · verde(solicitudes): `sigv1`, `tenantvars`** · 🌐 · un commit por fichero (`verde(solicitudes): <fichero>`) · **Gate**: tests + `make cobertura-ficheros`
 - [ ] **T6.15 · verde(solicitudes): `note.go` y los 10 tipos puros de `intakes`** · 🌐 · un commit por fichero; cabecera `// Porta internal/… @ <sha>` (E-10)
-- [ ] **T6.16 · verde(solicitudes): `memory.go` y las 9 acciones** · 🌐 · `memory.go` primero: la suite `intakestest` pasa entera con `-race`, 0 SKIP
+- [ ] **T6.16 · verde(solicitudes): `memory.go` y las 9 acciones** · 🌐 · `memory.go` primero: la suite `intakeshelpertest` pasa entera con `-race`, 0 SKIP
 
 ## Bloque E · verde de `intakes` (2/2) · 🌐 · T6.17–T6.18
 - [ ] **T6.17 · verde(solicitudes): `notifier.go`, `buyerdata(_postgres).go`** · 🌐 · textos de plantilla asertados byte a byte
@@ -97,7 +97,8 @@ Para cuando: huella igual · `go list -deps` prueba lo nuevo · candados verdes 
 
 ## Bloque I · cierre local · 💻 · T6.27–T6.29
 - [ ] **T6.27 · procesos(solicitudes): pasada 9C (= T9.27)** · 🌐→💻 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34)
-  - **Hecho cuando**: suites `intakestest`, `integrationstest`, `tenantvarstest` contra Postgres (testcontainers) verdes; P5 (bandeja) y P6 (CRM) verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 leído del log
+  - **Hecho cuando**: suites `intakeshelpertest`, `integrationshelpertest`, `tenantvarshelpertest` contra Postgres (testcontainers) verdes; P5 (bandeja) y P6 (CRM) verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`; 0 SKIP · **Gate**: `make test-procesos` rc=0 leído del log
   - **Heredado de F9-02 (H-1, D-F6-7)**: con el worker nuevo, se vuelve a medir `TestP0_Arranque/sin_errores` (`CUENTA=3`, arranques en frío, ambos binarios). Si deja de ser intermitente, se queda; si no, se **redefine el criterio** o lo sustituye un test más acorde, y se anota en el README de F9 (contradicción 19) y en `deuda.md` §5
+  - ⚠️ **Revisión independiente (2026-10-01)** — hechos; el criterio de arriba **no se cambia** (es de Jhoan: pregunta abierta D-F9-10 del [README de F9](../F9-procesos/README.md)). (i) «Ambos binarios» no cuadra con D-F6-7: `viejo` (`cmd/server`) conserva el worker viejo hasta F10 y contra él la carrera **persiste**; en `nuevo` quedan además tres goroutines de fondo con el mismo patrón que F6 no reconstruye (el colector de `platform`, el agregador de F8 y el pipeline de F7; contradicción 19, hecho 1). (ii) La remedición con `CUENTA=3` **no discrimina**: son 2 arranques en frío expuestos (uno por binario) y, con 1/161 por arranque, da verde (160/161)² ≈ 98,8 % de las veces **sin arreglar nada**
 - [ ] **T6.28 · Integración en `dev`** · 💻 · merge sin squash; `ci-local` rc=0 en local con lint v2.12.2
 - [ ] **T6.29 · Cierre de F6** · 💻 · `ESTADO.md` y este `README.md` (estado «cerrada», SHA); `CERRADO <fecha>` en el traspaso · **Commit**: `docs(reorganizacion-modular): F6 cerrada`

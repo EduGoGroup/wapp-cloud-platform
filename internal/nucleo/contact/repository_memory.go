@@ -16,7 +16,7 @@ import (
 // Imita la semántica de PostgresResolver: dedup por (tenant, kind, value); aislamiento por tenant
 // (N-01), de modo que las mismas refs en dos tenants son dos contactos; y el kind es parte de la
 // clave (N-02), de modo que "88887777" como phone_e164 y como wa_lid son dos contactos. Cumple TODO
-// lo que fija contacttest.Contrato, que se corre contra esta implementación en unitario. Y añade lo
+// lo que fija contacthelpertest.Contrato, que se corre contra esta implementación en unitario. Y añade lo
 // que solo ella tiene, el migrador de la fusión (ver Resolve), porque PostgresResolver migra el
 // estado en SQL y no usa StateMigrator.
 //
@@ -79,7 +79,7 @@ func NewMemoryResolver(migrator StateMigrator) *MemoryResolver {
 //
 // 🔴 La consecuencia, para quien escriba tests: un test sobre este resolver que afirme CUÁL de dos
 // nombres sobrevive no dice nada del comportamiento real. Esa propiedad solo se puede clavar contra
-// Postgres, en los procesos de F9; por eso contacttest.Contrato no la afirma.
+// Postgres, en los procesos de F9; por eso contacthelpertest.Contrato no la afirma.
 //
 // Errores. Solo dos: ErrNoRefs, y el del migrador, envuelto como queda dicho. No hay almacén, cifrado
 // ni red que puedan fallar.
@@ -96,8 +96,8 @@ func (r *MemoryResolver) Resolve(ctx context.Context, tenantID string, refs []Re
 // Errores, con la Ref cero:
 //   - ErrContactNotFound, envuelto con %w y el contactID entre comillas (%q), si el contacto no
 //     existe, es de otro tenant (N-01) o es el de un huérfano que una fusión ya borró (R-21, N-03);
-//   - ErrNoDestino si el contacto existe pero ninguna de sus refs es direccionable (p. ej. solo un
-//     wa_username, R-20).
+//   - ErrNoDestino, sin envolver, si el contacto existe pero ninguna de sus refs es direccionable
+//     (p. ej. solo un wa_username, R-20).
 //
 // Un tenantID o un contactID mal formados (no UUID) dan ErrContactNotFound: la memoria no parsea
 // nada y los trata como claves opacas. Postgres da en ese caso un error de parseo (ver Resolver):

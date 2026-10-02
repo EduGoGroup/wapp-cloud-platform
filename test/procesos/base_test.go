@@ -5,15 +5,18 @@ package procesos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // registra el driver «pgx» de database/sql para baseClonada.Abrir
 )
 
@@ -135,7 +138,7 @@ func esperarSinSesiones(base string) error {
 
 // nuevaBase recibe el test y el nombre de un proceso, y crea su base propia con
 // CREATE DATABASE proc_<proceso>_<binario> TEMPLATE plantilla, desde la base de mantenimiento.
-// Devuelve la base clonada, ya migrada. Registra en t.Cleanup un DROP DATABASE … WITH (FORCE),
+// Devuelve la base clonada, ya migrada y que SÍ acepta conexiones (la plantilla no: closeTemplate). Registra en t.Cleanup un DROP DATABASE … WITH (FORCE),
 // que echa a quien siga conectado (un servidor, un *sql.DB). Llama a t.Fatalf si el nombre no es
 // válido (ver nombreDeBase) o si no se puede clonar (p. ej. el mismo proceso dos veces).
 func nuevaBase(t *testing.T, proceso string) baseClonada {
@@ -289,6 +292,54 @@ func TestArnes_BasePorProceso(t *testing.T) {
 	}
 	if visible := consultaTexto(t, dbB, `SELECT to_regclass('public.marca_arnes') IS NOT NULL`); visible != "false" {
 		t.Errorf("la marca escrita en %s se ve en %s: las bases no están aisladas", a.Nombre, b.Nombre)
+	}
+}
+
+// sqlstateTemplateClosed es el SQLSTATE con el que Postgres rechaza una conexión a una base con
+// ALLOW_CONNECTIONS false: 55000, object_not_in_prerequisite_state.
+const sqlstateTemplateClosed = "55000"
+
+// TestArnes_TemplateClosed prueba que nadie puede abrir una sesión en `plantilla`: conectarse con la
+// cadena de conexión del contenedor (la que da instancia.ConnectionString, que apunta a ella) falla
+// con un error de Postgres que nombra la base y dice que no acepta conexiones (SQLSTATE 55000), no
+// queda ninguna sesión en ella, y aun así clonar funciona y el clon sí acepta conexiones. Es lo que
+// impide que un test rompa el CREATE DATABASE … TEMPLATE de los demás.
+func TestArnes_TemplateClosed(t *testing.T) {
+	t.Parallel()
+	ctx, cancelar := context.WithTimeout(t.Context(), topeAbrir)
+	defer cancelar()
+
+	cadena, err := instancia.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("cadena de conexión del contenedor: %v", err)
+	}
+	if cadena != dsnDeBase(basePlantilla) {
+		t.Fatalf("la cadena de conexión del contenedor ya no apunta a %s: este test no prueba lo que dice", basePlantilla)
+	}
+	conn, err := pgx.Connect(ctx, cadena)
+	if err == nil {
+		cerrarMantenimiento(ctx, conn)
+		t.Fatalf("se pudo abrir una sesión en %s: un test conectado ahí rompe los clones de los demás", basePlantilla)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != sqlstateTemplateClosed || !strings.Contains(pgErr.Message, basePlantilla) {
+		t.Errorf("conectar a %s falló con %v; quería el rechazo de Postgres con SQLSTATE %s que nombra la base", basePlantilla, err, sqlstateTemplateClosed)
+	}
+	t.Logf("conectar a %s: %v", basePlantilla, err)
+
+	base := nuevaBase(t, "arnes_template_closed")
+	db := base.Abrir(t)
+	if actual := consultaTexto(t, db, `SELECT current_database()`); actual != base.Nombre {
+		t.Errorf("conectado a %q, quería %q", actual, base.Nombre)
+	}
+	if migrada := consultaTexto(t, db, `SELECT to_regclass('public.tenants') IS NOT NULL`); migrada != "true" {
+		t.Errorf("la base %s no trae public.tenants: el clon de la plantilla cerrada no salió migrado", base.Nombre)
+	}
+	if permite := consultaTexto(t, db, `SELECT datallowconn FROM pg_database WHERE datname = 'plantilla'`); permite != "false" {
+		t.Errorf("pg_database.datallowconn de %s = %s, quería false", basePlantilla, permite)
+	}
+	if sesiones := consultaTexto(t, db, `SELECT count(*) FROM pg_stat_activity WHERE datname = 'plantilla' AND backend_type = 'client backend'`); sesiones != "0" {
+		t.Errorf("%s tiene %s sesiones de cliente, quería 0", basePlantilla, sesiones)
 	}
 }
 

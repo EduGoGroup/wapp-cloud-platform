@@ -15,6 +15,13 @@
 
 🚫 No se baja `go 1.26.5` para acomodar un entorno, ni se cambia `LINT_VERSION` por comodidad.
 
+✎ **2026-10-02** (`0b78cd1`, `26cbfbf`, `3ed9bd0`): la tabla es la medida del 2026-09-28 y sus dos
+⚠️ **ya no son el estado**. Hoy el `Makefile` exporta `GOTOOLCHAIN=go$(GO_VERSION)` (`Makefile:36`),
+`lint` elige el `golangci-lint` de `.bin/` (lo deja `make tools`) o el del `PATH` y falla si ninguno
+es `LINT_VERSION` (T-1, desde `d05ac3a`), y `make toolchain` dice qué corre de verdad. Las líneas
+citadas se movieron: `GO_VERSION` `:15`, `LINT_VERSION` `:16`, `GO` `:17`. Lo vigente, web y local:
+[`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
+
 ## 2 · Los `make` targets
 
 **Existen hoy** (`Makefile:30`, `.PHONY`):
@@ -30,6 +37,13 @@
 | `test-integration` | `docker run postgres:16` con **nombre fijo** y puerto `5432` (sobrescribible con `INTEGRATION_PG_PORT`) + `WAPP_TEST_REQUIRE_DB=1 go test -p 1 ./...` | La batería **vieja**: solo importa en F0 (✎ de `platform`) y en F10. 💻 |
 | `ci-docker` | `ci-local` dentro de `golang:1.26.5-bookworm` con el lint v2.12.2 instalado | Toolchain exacta; **no** corre integración. 💻 |
 | `migrate` · `migrate-status` | `go run ./cmd/migrate [-status]` | leen `WAPP_DB_*`. 🚫 Nunca contra UAT desde el plan |
+
+✎ **2026-10-02**: dos targets más y dos cambios sobre la tabla de arriba (`Makefile:103`, `.PHONY`).
+`tools` deja el `golangci-lint` fijado en `.bin/` (binario oficial, sha256 verificado; en local, una
+vez por *checkout*); `toolchain` imprime la toolchain efectiva y sale ≠ 0 si no es la fijada.
+`fmt-check` usa el `gofmt` del `GOROOT` fijado, no el del `PATH`; `ci-docker` monta
+`$(go env GOMODCACHE)` e instala el lint con `make tools TOOLS_DIR=/usr/local/bin`. Detalle en
+[`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
 
 **Nacen en F0** (los escribe la fase `F0`; aquí solo su contrato):
 
@@ -99,7 +113,10 @@ tail -1 "$L"                                          # GATE_RC=0 o nada que cel
    `grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal | grep -vc '_test\.go:'`.
    Se informa **antes → después**. En F10 debe ser 0 (`sin_pendientes_test.go`).
 4. **Versión de herramienta.** Un gate corrido con un lint distinto de v2.12.2 o un Go distinto de
-   1.26.5 se informa **con la versión usada** y como **no autoritativo**.
+   1.26.5 se informa **con la versión usada** y como **no autoritativo**. ✎ 2026-10-02: se comprueba
+   con `make toolchain` (`TOOLCHAIN=OK`, `rc=0`). Bajo `make` la versión es la fijada; un `go`
+   **suelto** en local (los de los puntos 2 y de «Cobertura por fichero») es `go1.27.1` salvo que
+   lleve `GOTOOLCHAIN=go1.26.5` delante.
 5. **Lo no corrido se dice «no corrido»**, con el motivo. Nunca «debería pasar».
 
 Formato del informe: el de la skill `validar-antes-de-cerrar` («Cómo se informa»).
@@ -153,7 +170,7 @@ tools»): es exactamente un «Postgres vivo». El candado `sin_bd_viva_test.go` 
 |---|---|
 | ORM, *query builder* | SQL crudo con `pgx/v5` stdlib (constitución §4) |
 | Redis, broker, cola externa | ADR-0003 y constitución I-ECO-3: la durabilidad va en tablas (`webhook_outbox`, `intake_jobs`) |
-| Frameworks de *mocks* (gomock, mockery…) | Los dobles se escriben a mano en `<paquete>test` (E-6) |
+| Frameworks de *mocks* (gomock, mockery…) | Los dobles se escriben a mano en `<paquete>helpertest` (E-6, D-F1-10) |
 | Otra librería de aserciones | `testify v1.11.1` ya está en `go.mod`; no se suma otra |
 | `godotenv` o lectura de `.env` | El proceso no lee `.env` (contratos §5) |
 | Un repo `edugo-*` | ADR-0004: copia-adaptación. Única excepción ya presente: `identity-shared/auth` |
@@ -183,4 +200,4 @@ son **las buenas**, con su comando; si una fase dice otra cifra, manda esta (y s
 | Tests de cableado del arranque viejo | **9** | ficheros con `cablead` en el nombre: `ls internal/bootstrap/arranque/*cablead*_test.go \| wc -l` → 9 = **8** `*_cableado_test.go` + `flow_options_cableadas_test.go`. «8» (constitución, `deuda.md` D-9) cuenta solo el sufijo exacto; «11» (`05` §3.2) es otra cosa: los ficheros de test del arranque que **leen AST** (9 + `platform_permissions_test.go` + `astpaquete_test.go`) |
 | Paquetes de dominio con SQL | **22** | `grep -rlE '"database/sql"\|"github.com/jackc/pgx' --include='*.go' internal \| grep -v '_test\.go' \| xargs -n1 dirname \| sort -u \| grep -vE '^internal/(platform/\|bootstrap\|publicapi)' \| wc -l` → 22. Fuera: `platform/**` (se queda), el arranque y la cara vieja (`publicapi/eventstelemetry_store.go`, que se queda en la cara por D-FX-4). `05` E-6 dice 20: le faltan `flujos/events` y `flujos/runtime` |
 | … de ellos, **con** gemelo en memoria | **15** | por paquete, `grep -lE '^func (\([a-z]+ \*?[A-Za-z]+\) )?(NewMemory\|NuevaMemoria\|NewFake)\|^type (Memory\|Memoria\|Fake)[A-Za-z]* struct' <paquete>/*.go \| grep -v _test`, más `iam/infra/memory` para `iam/infra/postgres`: `diagnostics`, `entitlements` (`Fake`), `flujos/contact`, `flujos/store`, `flujos/trigger`, `gateway/enroll`, `gateway/fleet`, `gateway/lease`, `iam/infra/postgres`, `ingest`, `intake`, `intakes`, `intentcfg`, `receipts`, `tenantvars` |
-| … **sin** gemelo en memoria | **7** | `casebank`, `degradation`, `flujos/events`, `flujos/runtime` (`self_numbers.go`, `tenant_resolver.go`), `integrations`, `platformadmin`, `tenantllm`. Necesitan **doble nuevo** en su `<paquete>test` (E-6). `05` E-6 dice «12 sin gemelo» (contaba por nombre de fichero `memory*`); las fases dijeron 11 (F7) o 6+2 (F9, que además daba `entitlements` sin gemelo) |
+| … **sin** gemelo en memoria | **7** | `casebank`, `degradation`, `flujos/events`, `flujos/runtime` (`self_numbers.go`, `tenant_resolver.go`), `integrations`, `platformadmin`, `tenantllm`. Necesitan **doble nuevo** en su `<paquete>helpertest` (E-6, D-F1-10). `05` E-6 dice «12 sin gemelo» (contaba por nombre de fichero `memory*`); las fases dijeron 11 (F7) o 6+2 (F9, que además daba `entitlements` sin gemelo) |

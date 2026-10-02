@@ -76,7 +76,7 @@ Referencia de lectura (no se importa): `cmd/server/integration_test.go:185-360` 
 | `enrolar(t, s, codigo) *edge` | Genera clave P-256 y CSR, llama `Enrollment/EnrollEdge` en `:8102` con TLS de servidor (raíz = CA de la PKI, `ServerName=localhost`) | Guarda `edge_cert_pem`, `ca_chain_pem`, `tenant_id`, `cloud_enc_pubkey`, `lease_pubkey` |
 | `conectar(t, sesion)` | Abre `CloudLink/Connect` en `:8101` con `mtls.ClientCreds(cert, pool, "localhost")`; lanza el bucle `Recv` | — |
 | `latir(n)` | `Heartbeat{lease_counter:n, state, inference_readiness: READY}` | La disponibilidad READY es condición para recibir inferencia (`internal/gateway/grpc/readiness.go:132-142`, `inference.go:439-450`) |
-| bucle `Recv` | `LeaseUpdate` → `cllease.Validator.Apply`; `SendText` → `Ack{ok}` y lo publica en un canal; `InferenceRequest` → §3.4; `ConfigPush` y peticiones de diagnóstico → las registra (P9) | Serializa `Send` con un mutex (gRPC no admite `Send` concurrentes) |
+| bucle `Recv` | `LeaseUpdate` → `cllease.Validator.Apply` (si el `Validator` **rechaza el primero** de la conexión, `conectar` falla con ese error; una revocación aceptada no es un rechazo). `SendText` y `SendMedia` → **gate de lease, como el Edge real**: solo si `puedeOperar()` se publica el texto en un canal y se acusa `Ack{ok=true}`; sin lease vigente (ninguno aún, rechazado, vencido o revocado) **no se publica nada** y se acusa `Ack{ok=false, error="lease no vigente"}`. Es la regla y el texto de `handleSendText`/`handleSendMedia` de `wapp-edge-agent` (`internal/adapters/cloudlink/adapter.go`: `!validator.CanOperate(hasDEK)`, ADR-0007), sin su modo sombra. `InferenceRequest` → §3.4, **sin gate** en el doble: el Edge real tiene para la inferencia otra regla (`inferencia.go`, `leaseVigente`: de alcance daemon —basta una sesión operable— y con 2 s de gracia; si ninguna lo es, contesta `INFERENCE_ERROR_LEASE_INVALID`) y el doble **no** la reproduce. `ConfigPush` y peticiones de diagnóstico → las registra (P9), sin gate | Serializa `Send` con un mutex (gRPC no admite `Send` concurrentes) |
 | `entrante(de, texto, waID)` | `IncomingMessage` **sellado**: `SensitivePayload` marshalado y `envelope.SealFor(cloud_enc_pubkey)` en `enc_payload`, planos sensibles vacíos | Como el Edge real (proto: «si va, los planos sensibles viajan vacíos»). El camino en claro es compatibilidad (`connect.go:502`) y no se usa |
 | `acuse(waID, delivered/read)` · `bundle(cmd)` | `Receipt` · `DiagnosticsBundle` | P3 · P9 |
 | `puedeOperar()` · `revocado()` | Lo que dice el `Validator` | P1 |
@@ -114,6 +114,9 @@ Convenciones: «admin» = Context Token de `tenant_admin` del tenant del proceso
 terminan comprobando que el log del servidor no tiene líneas `level=ERROR` inesperadas. ⚠️ Esa comprobación se hace **antes** de parar
 el servidor: tras el SIGTERM, el *webhook worker* puede loguear dos `ERROR` de cancelación si su primera llamada a BD seguía en vuelo
 (H-1, contradicción 19 del README; diferida a F6, D-F6-7). P0, que comprueba también la parada, es el único expuesto hoy.
+⚠️ Revisión independiente (2026-10-01): no es solo el *webhook worker*; el mismo patrón está, sin haberse observado, en otras tres
+goroutines de fondo (colector de `platform`, agregador de `flujos/runtime`, pipeline de `intake`), que F6 no reconstruye: nota de
+revisión de la contradicción 19 y D-F9-10 del README.
 
 ### P0 · Humo del arranque (`p0_arranque_test.go`) — T9.11
 
@@ -287,7 +290,7 @@ borrar `make test-integration` y dejar el repo sin `WAPP_TEST_DB_DSN`.
 ## 5 · Las suites de contrato contra Postgres (H9.5)
 
 Cada suite la crea **su fase** (E-3/E-6: `func Contrato(t *testing.T, nuevo func() Puerto)` en
-`<paquete>test`); F9 solo la **ejecuta** contra el adaptador Postgres, con una base clonada por
+`<paquete>helpertest`, D-F1-10); F9 solo la **ejecuta** contra el adaptador Postgres, con una base clonada por
 subtest. «Memoria» = implementación en memoria hoy (medido con
 `grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test` y los `memory*.go`).
 
@@ -295,7 +298,7 @@ subtest. «Memoria» = implementación en memoria hoy (medido con
 |---|---|---|---|
 | `flujos/contact` | `nucleo` (F1) | sí | T9.22 (o F1 · T1.13) |
 | `iam/infra/postgres` | `acceso` (F2) | sí (`iam/infra/memory`) | T9.23 |
-| `entitlements` · `platformadmin` | `acceso` (F2) | **sí** (`Fake`, `entitlements.go`; D-F2-4 lo muda a `entitlementstest`) · no | T9.23 |
+| `entitlements` · `platformadmin` | `acceso` (F2) | **sí** (`Fake`, `entitlements.go`; D-F2-4 lo muda a `entitlementshelpertest`) · no | T9.23 |
 | `gateway/enroll` · `gateway/fleet` · `gateway/lease` | `edge` (F3) | **sí** (`NewMemory…`) ×3 | T9.24 |
 | `diagnostics` · `ingest` · `receipts` | `edge` (F3) | sí · sí · sí | T9.24 |
 | `tenantllm` · `degradation` | `inferencia` (F4) | no · no | T9.25 |

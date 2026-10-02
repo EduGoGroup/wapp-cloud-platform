@@ -86,7 +86,7 @@ Excepciones cerradas, y ninguna más sin decisión escrita:
 |---|---|
 | `doc.go` (solo comentario de paquete) | Nada |
 | `embed.go` / ficheros solo con `//go:embed` | Lo prueba el test de quien lee lo embebido |
-| Fichero **solo de interfaces** (puertos) | Una **suite de contrato** exportada en un paquete `…test` (patrón `fleettest`): `func Contrato(t *testing.T, nuevo func() Puerto)`. Cada implementación la ejecuta desde **su** test (E-6) |
+| Fichero **solo de interfaces** (puertos) | Una **suite de contrato** exportada en un paquete `…helpertest` (D-F1-10, decisión de Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest` del código viejo): `func Contrato(t *testing.T, nuevo func() Puerto)`. Cada implementación la ejecuta desde **su** test (E-6) |
 | Dobles de test (`fleettest/slowrepo.go`) | Su propio test solo si tienen lógica |
 
 ### E-4 · El test sale del contrato, y nace en rojo
@@ -128,8 +128,8 @@ Los tests de esta reconstrucción **no tocan Postgres**. Para los ficheros que s
   (`memory.go`, `repository_memory.go`, `iam/infra/memory`…). Para los **12** que no
   (`casebank`, `degradation`, `diagnostics`, `entitlements`, `gateway/enroll`, `gateway/fleet`,
   `gateway/lease`, `ingest`, `integrations`, `intentcfg`, `platformadmin`, `tenantllm`), la
-  reconstrucción **crea un doble en memoria** en el paquete `…test` del puerto, en la misma pasada
-  del contrato. Sin él, la suite no correría hasta F9.
+  reconstrucción **crea un doble en memoria** en el paquete `…helpertest` del puerto (D-F1-10, decisión de
+  Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest`), en la misma pasada del contrato. Sin él, la suite no correría hasta F9.
 - **El adaptador Postgres** tiene su `x_test.go` unitario con lo que se prueba sin BD: el
   constructor, la validación de argumentos, el mapeo de filas y de errores de `pgx` a los errores
   del dominio (con funciones puras extraídas para eso).

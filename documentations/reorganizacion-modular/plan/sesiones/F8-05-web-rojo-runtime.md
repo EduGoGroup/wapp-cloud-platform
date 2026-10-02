@@ -6,7 +6,7 @@
 | Tareas | T8.18–T8.21 |
 | Depende de | F8-04 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F8 bloque E» |
-| Se para cuando | los 23 ficheros de `runtime` en rojo, `runtimetest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0. |
+| Se para cuando | los 23 ficheros de `runtime` en rojo, `runtimehelpertest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque(s): E · rojo del runtime
 - Tareas: T8.18–T8.21 de plan/F8-conversacion/tareas.md
-- Te paras cuando: los 23 ficheros de `runtime` en rojo, `runtimetest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0.
+- Te paras cuando: los 23 ficheros de `runtime` en rojo, `runtimehelpertest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F8 bloque E» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

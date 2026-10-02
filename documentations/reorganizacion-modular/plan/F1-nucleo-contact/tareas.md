@@ -10,6 +10,10 @@
 ## Bloque A · contratos y rojo de `nucleo/contact` · 🌐 · T1.1–T1.7
 Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make ci-local` rc=0 · PR abierto hacia `dev`.
 
+> ✎ **D-F1-10 (2026-10-02): hoy `contacthelpertest`** (`a18d4c0`), y el sufijo que exime de los tres candados de fichero es
+> `helpertest` (`06f08a8`). Las tareas `[x]` de este bloque conservan el nombre `contacttest`, el sufijo `…test` y la cifra
+> `FICHEROS_EVALUADOS=9` con que se cerraron; hoy son 10, porque `huellatest` vuelve a medirse (README, hallazgos 9 y 21).
+
 - [x] **T1.1 · Verdad de campo y entradas** · 🌐 · dep. F0 cerrado · cumple R1.1.e — cerrada en `afa63f3`
   - **Ficheros**: `plan/F1-nucleo-contact/README.md` (estado → «en curso», SHA de arranque)
   - **Hecho cuando**: las 6 entradas del README se comprueban con su comando y el resultado queda en el commit; la sonda `internal/nucleo/sonda/x.go` sin test hace fallar `make ci-local` (entrada E2) y **se borra sin commitear**; T-1 reconfirmado con golangci-lint v2.12.2 (sonda fuera del repo).
@@ -31,7 +35,7 @@ Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make c
   - **Hecho cuando**: `go test -race ./internal/candados/... ./cmd/cobertura-ficheros/...` rc=0 (131 PASS, 0 SKIP) · cobertura de `cobertura.go` 99,3 % · `make cobertura-ficheros` rc=0 con `FICHEROS_EVALUADOS=9` (era 10: sale `internal/arranque/huellatest`, efecto colateral anotado en D-F1-6).
   - **Commits**: `rojo(candados): los paquetes …test no se miden en cobertura (D-F1-6)` · `verde(candados): Evaluables no mide los paquetes …test (D-F1-6)`
 - [x] **T1.4 · rojo(nucleo): suite `contacttest.Contrato` y doble de estado** · 🌐 · dep. T1.3 · cumple R1.3.a — cerrada en `8f2a4db`
-  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go` (tras el cierre del bloque, `contrato.go` se partió en 9 ficheros por tema: README hallazgo 20)
+  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go` (tras el cierre del bloque, `contrato.go` se partió en 9 ficheros por tema, en `7069532`: README hallazgo 20)
   - **Hecho cuando**: los 19 casos de diseño §3 escritos, sin `t.Skip`; el doble (`NuevoEstado()`, implementa `StateMigrator` y `Estado`, conserva el canónico en conflicto) nace **completo** con su test en verde (D-F1-3); `go doc` muestra `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`.
   - **Gate**: `GOWORK=off go test -race ./internal/nucleo/contact/contacttest/; echo rc=$?` → 0
   - **Commit**: `rojo(nucleo): suite de contrato de contact.Resolver y doble de estado`
@@ -49,11 +53,12 @@ Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make c
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/nucleo | wc -l` → **11**; `make test-pendiente` coincide; `ci-local` rc=0; PR abierto; minutos del bloque anotados.
   - **Gate**: skill `validar-antes-de-cerrar` completa
   - **Commit**: — (solo PR)
-  - **Medido (sesión F1-01, 2026-10-01)**: `GOWORK=off make ci-local` → `GATE_RC=0` (86 paquetes `ok`, 0 issues, golangci-lint v2.12.2, go1.26.5) · `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` → `PENDIENTES=11`, `ROJOS=4` · `grep` en `internal/nucleo` → 11 · `--- SKIP` = 0 (con `-v`) · cada rojo corrido solo (`TestNormalize_Telefono`, `TestRefsFrom`, `TestPostgresResolver_SinRefs_ErrNoRefs`, `TestMemoryResolver_Contrato`) rc=1 por el `panic` · `make cobertura-ficheros` rc=0 (`FICHEROS_EVALUADOS=9`, `POR_DEBAJO=0`, `EXENTOS_POSTGRES=1`) · `git diff --stat origin/dev..HEAD -- internal/flujos internal/bootstrap internal/gateway internal/intakes internal/publicapi cmd/server` vacío · `git cat-file -e` de los 9 SHA.
+  - **Medido (sesión F1-01, 2026-10-01)**: `GOWORK=off make ci-local` → `GATE_RC=0` (86 líneas `ok` —80 paquetes con tests + 6 que `cobertura-ficheros` vuelve a correr; no son 86 paquetes—, 0 issues, golangci-lint v2.12.2, go1.26.5) · `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` → `PENDIENTES=11`, `ROJOS=4` · `grep` en `internal/nucleo` → 11 · `--- SKIP` = 0 (con `-v`) · cada rojo corrido solo (`TestNormalize_Telefono`, `TestRefsFrom`, `TestPostgresResolver_SinRefs_ErrNoRefs`, `TestMemoryResolver_Contrato`) rc=1 por el `panic` · `make cobertura-ficheros` rc=0 (`FICHEROS_EVALUADOS=9`, `POR_DEBAJO=0`, `EXENTOS_POSTGRES=1`) · `git diff --stat origin/dev..HEAD -- internal/flujos internal/bootstrap internal/gateway internal/intakes internal/publicapi cmd/server` vacío · `git cat-file -e` de los 9 SHA.
   - **Minutos del bloque**: 53 min de pared desde el arranque hasta `b001c35` (14:05 → 14:58 UTC), con la ola 2 (candados ‖ `contacttest` ‖ postgres) y las olas 0–1 en paralelo; las líneas `Piloto:` de cada commit dan 9 · 10 · 0 · 6 · 0 · 15 · 5 · 7 · 1 min (T1.1, T1.2, T1.3, T1.3b, T1.4, T1.6, T1.5 y la precisión de `resolver.go`; los sub-agentes corrieron en paralelo, **no son aditivos**). Se corrió `ci-local` 4 veces (sonda de E2, gate base —una falló por la caché de lint, ver README «Fricción»—, base repetido y cierre): duración por corrida **sin medir** con precisión.
+  - **Tras el cierre, en la misma rama y el mismo PR** (anotado por la revisión independiente, 2026-10-01): `8365132` (`docs`: la regla de idioma **E-11** en `05`, L-1 en `DECISIONES.md` y el hallazgo 19 del README) y `7069532` (`refactor(nucleo)`: `contacttest/contrato.go` partido en 9 ficheros `*_contrato.go`, movimiento puro; hallazgo 20). **PR #19 integrado en `dev` sin squash**: merge `6650e55` (12 commits, de `afa63f3` a `7069532`).
 
 ## Bloque B · verde fichero a fichero · 🌐 · T1.8–T1.13
-Entrada: PR del bloque A integrado en `dev`. Para cuando: 0 pendientes en `internal/nucleo` · `make cobertura-ficheros` ≥ 80 % en 3 ficheros · `vet -tags integracion ./test/procesos/...` rc=0 · PR abierto.
+Entrada: PR del bloque A integrado en `dev` (✔ PR #19, merge `6650e55`, 2026-10-01). Para cuando: 0 pendientes en `internal/nucleo` · `make cobertura-ficheros` ≥ 80 % en 3 ficheros · `vet -tags integracion ./test/procesos/...` rc=0 · PR abierto.
 
 - [ ] **T1.8 · verde(nucleo): `contact.go`** · 🌐 · dep. T1.7 · cumple R1.1.d
   - **Ficheros**: `N/contact.go`, `N/contact_test.go` (sin etiqueta)
@@ -69,12 +74,13 @@ Entrada: PR del bloque A integrado en `dev`. Para cuando: 0 pendientes en `inter
   - **Commit**: `verde(nucleo): contact/repository_memory`
 - [ ] **T1.11 · verde(nucleo): `repository_postgres.go`** · 🌐 · dep. T1.9 · cumple R1.4.a–b, R1.4.d
   - **Hecho cuando**: SQL copiado literal (`diff <(grep -o 'public\.[a-z_]*' V/repository_postgres.go | sort -u) <(… N …)` vacío); funciones puras de diseño §2 con sus tests unitarios (sin BD); fuera del umbral (E-6), cobertura anotada.
+  - **Nombres (E-11: correspondencia de la fase)**: [`diseno.md`](diseno.md) §2 nombra en español funciones que aún no existen; se escriben en inglés: `codificarRef` → `encodeRef`, `sobrePushName` → `pushNameEnvelope`, `elegirCanonico` → `pickCanonicalDB` (los tres, los nombres del código viejo: `V/repository_postgres.go:184`, `:221` y `:363`), `abrirFilas` → `openRows` (nuevo); `nullStr` se queda. Es la misma tabla del README, hallazgo 19, traída aquí porque `05` E-11 manda anotarla en el `tareas.md` de la fase. Los textos observables (errores, columnas) no se traducen.
   - **Gate** y **Commit**: igual que T1.8 · `verde(nucleo): contact/repository_postgres`
 - [ ] **T1.12 · refactor(nucleo) y medición del verde** · 🌐 · dep. T1.10, T1.11
   - **Hecho cuando**: pendientes en `internal/nucleo` = 0; tabla de cobertura por fichero anotada en el PR; `refactor` solo si hace falta (tests verdes antes y después).
   - **Commit**: `refactor(nucleo): …` o ninguno
 - [ ] **T1.13 · procesos(contact): la suite contra `PostgresResolver`** · 🌐→💻 · dep. T1.11 · cumple R1.3.c · **solo si D-F1-2**
-  - **Ficheros**: `test/procesos/contact_contrato_test.go` (`//go:build integracion`) y **reutiliza el arnés que ya dejó F9-A** (F9-02, 2026-10-01: `main_test.go` —un contenedor `postgres:17-alpine`, plantilla migrada una vez— y `base_test.go` —`nuevaBase`, una base clonada por prueba—; skill `procesos-testcontainers`): **no se recrea**, y la suite de contrato pide su base con `nuevaBase`
+  - **Ficheros**: `test/procesos/contact_contrato_test.go` (`//go:build integracion`) y **reutiliza el arnés que ya dejó F9-A** (F9-02, 2026-10-01: `main_test.go` —un contenedor `postgres:17-alpine`, plantilla migrada una vez— y `base_test.go` —`nuevaBase(t, proceso)`, una base clonada por **nombre de proceso**, `proc_<proceso>_<binario>`, no por prueba (`test/procesos/base_test.go:136-141`): pedir dos veces el mismo nombre mientras la primera base sigue viva hace fallar el `CREATE DATABASE` y `nuevaBase` llama a `t.Fatalf`—; skill `procesos-testcontainers`): **no se recrea**, y la suite de contrato pide su base con `nuevaBase` y un nombre propio. ⚠️ `contacthelpertest.Contrato` llama a `nuevo` **una vez por caso** (19, en serie: no hay `t.Parallel`) y exige un `Montaje` limpio: el de Postgres necesita un nombre de proceso distinto por caso, o el mismo solo si la base del caso anterior ya se borró (el `Cleanup` del subtest)
   - **Hecho cuando**: el `Montaje` de Postgres siembra 2 tenants con `postgres.NewTenantRepository(db).Create` y observa `flow_state` por SQL; `vet -tags integracion` rc=0; si Docker responde en la web, corrida de **pre-chequeo** anotada (no cierra).
   - **Gate**: `GOWORK=off go vet -tags integracion ./test/procesos/...; echo rc=$?` → 0 · candado `sin_bd_viva_test.go` verde
   - **Commit**: `procesos(contact): la suite de contrato contra Postgres`
@@ -120,7 +126,7 @@ Cada número con su comando. Lo no medido se escribe «sin medir», nunca se est
 ## 1 · Coste por fichero
 | Fichero | Sesiones | Min. rojo | Min. verde | Commits | Líneas contrato (rojo) | Líneas finales (coment./código) | Líneas de test |
 (fuentes: líneas `Piloto:` de los commits · `git log --format='%h %ad %s' --date=iso -- <fichero>` ·
-`git show <sha-rojo>:<fichero> | wc -l` · `grep -cE '^\s*//'`) — incluir contacttest y puente_contact.
+`git show <sha-rojo>:<fichero> | wc -l` · `grep -cE '^\s*//'`) — incluir contacthelpertest y puente_contact.
 Comparar con la referencia vieja: 170 · 151 · 183 · 460 líneas (59/47/33/190 de comentario).
 ## 2 · Cobertura por fichero
 Obtenida (`make cobertura-ficheros`) frente a la base vieja 98,0 % · 95,2 % · 91,1 % · 0 %; minutos

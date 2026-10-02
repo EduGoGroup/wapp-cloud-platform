@@ -13,7 +13,8 @@ import (
 // nil o []Ref{}, una vez deduplicada. NO es un filtro de refs inválidas: Resolve no descarta una
 // Ref vacía ni una no normalizable, porque exige como precondición que cada Ref venga de NewRef
 // (R-18). Se inspecciona con errors.Is. Su texto es observable y no cambia: «contact: se requiere
-// al menos una contact_ref».
+// al menos una contact_ref». Resolve lo devuelve SIN envolver: el texto del error es exactamente
+// ese, sin el tenant ni ningún otro detalle.
 var ErrNoRefs = errors.New("contact: se requiere al menos una contact_ref")
 
 // ErrNoDestino lo devuelven Destino y Ref.Sendable cuando no hay ninguna referencia direccionable:
@@ -26,13 +27,16 @@ var ErrNoDestino = errors.New("contact: sin destino enviable para el contact_id"
 // ErrContactNotFound lo devuelve Destino cuando el contact_id no existe, no pertenece al tenant
 // o es el de un huérfano que una fusión ya borró (R-21, N-01, N-03). Los adaptadores lo envuelven
 // con %w y el id entre comillas (%q), así que se inspecciona con errors.Is, no por igualdad. Su
-// texto base es observable y no cambia: «contact: contact_id no encontrado».
+// texto base es observable y no cambia: «contact: contact_id no encontrado». El envoltorio
+// también lo es, y es el mismo en las dos implementaciones: el formato es "%w: %q" con el
+// contactID tal como se recibió, así que el texto completo es exactamente «contact: contact_id no
+// encontrado: "<contactID>"».
 var ErrContactNotFound = errors.New("contact: contact_id no encontrado")
 
 // Resolver es el puerto de identidad de contactos: traduce entre las referencias del mundo
 // (número, LID, username) y el contact_id opaco con el que opera el motor de flujos. Lo
 // implementan MemoryResolver (en memoria) y PostgresResolver (public.contacts, con el value
-// cifrado en reposo), y la suite contacttest.Contrato fija lo que las dos prometen.
+// cifrado en reposo), y la suite contacthelpertest.Contrato fija lo que las dos prometen.
 //
 // Todo es por tenant (N-01): las mismas refs en dos tenants son dos contactos distintos, y un
 // contact_id solo existe dentro del tenant que lo creó. tenantID y contactID son UUID: con uno mal
@@ -80,9 +84,20 @@ type Resolver interface {
 	// direccionable, así que en la práctica se degrada a wa_lid: un contacto con teléfono y LID da
 	// el teléfono, y uno solo con LID da el LID.
 	//
+	// Si el contacto tiene VARIAS refs direccionables del kind elegido (dos teléfonos, porque se ató
+	// un segundo número o tras una fusión), Destino devuelve UNA de ellas, y cuál NO es parte del
+	// contrato. La memoria da la primera que se ató al contacto (en una fusión, las del canónico van
+	// antes que las de los huérfanos). Postgres lee las filas del contacto sin ORDER BY y da la
+	// primera de ese kind que le llegue: un orden que la base no garantiza y que puede cambiar de una
+	// llamada a otra. Lo que sí se promete es el kind (el de mejor preferencia entre los
+	// direccionables) y que la ref es del contacto. Quien necesite un destino estable entre varios
+	// números no puede apoyarse en Destino.
+	//
 	// Devuelve ErrNoDestino si el contacto existe pero ninguna de sus refs es direccionable
 	// (p. ej. solo un wa_username), y ErrContactNotFound si contactID no existe o es de otro tenant
-	// (R-21, N-01).
+	// (R-21, N-01). ErrNoDestino llega SIN envolver: el texto del error es exactamente el del
+	// centinela, sin el detalle del kind que añade Ref.Sendable. ErrContactNotFound llega envuelto,
+	// con el texto exacto que dice su comentario.
 	Destino(ctx context.Context, tenantID, contactID string) (Ref, error)
 }
 

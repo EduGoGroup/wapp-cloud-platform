@@ -4,6 +4,10 @@
 > [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Rutas: **autoridad**
 > [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas I1–I19 · J18–J22).
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
+> **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
+> nombraba con `…test` (`triggertest`, `storetest`, `contenttest`, `eventstest`, `runtimetest`): se actualizó el sufijo, nada más.
 
 ## Objetivo en tres líneas
 
