@@ -1,7 +1,7 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
 > **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`** e integrado en `dev` por el
-> PR #19 (sin squash, merge `6650e55`)
+> PR #19 (sin squash, merge `6650e55`); **bloque B (sesión F1-02, 🌐, 2026-10-02) escrito** en la rama `reorg/f1-b-verde` sobre `origin/dev` @ `5847ad4`, PR hacia `dev`
 > (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
@@ -327,6 +327,25 @@
       cosas. Lo único escrito es la nota del ejemplo de §10 (`:461-462`, D-F1-12): «los mensajes de fallo de los tests, que no son
       nombres, quedan como estaban», que habla de ese ejemplo y no da una regla.
 
+### Hallazgos de la sesión F1-02 (bloque B, 2026-10-02)
+
+27. **El `grep` de R9.4.d no detectaba nada** (→ D-F1-8, decidida). `go list -tags integracion -deps ./test/procesos`
+    sin `-test` solo mira los ficheros que no son de test, y en `test/procesos` el único es `doc.go`. Por eso daba
+    vacío aunque `sin_bd_viva_test.go` importa `internal/candados`. Con `-test -deps` habría marcado lo transitivo de
+    la propia suite (`nucleo/contact`, `platform/*`). Ahora mira los imports **directos** (`Imports`, `TestImports`
+    y `XTestImports`), y se comprobó que una sonda que importa `platform/storage/postgres` sale en la lista (`4bc398d`).
+    De paso, `F9-procesos/arquitectura.md` §3 admitía los adaptadores Postgres solo en `suites_<m>_test.go`, frente
+    a `<paquete>_contrato_test.go` (R9.5.a, T1.13); se alineó con el segundo.
+28. **`make test-pendiente` cuenta lo que hay en `.claude/worktrees/`**. Con dos *worktrees* de sub-agentes vivos dio
+    `PENDIENTES=14 · ROJOS=5` sobre un árbol con 0 y 0. Al borrarlos, 0 y 0. No es un falso verde, es un falso rojo,
+    pero confunde a quien orquesta con *worktrees*. Para que no pase, el target podría excluir `.claude/`. Hasta
+    entonces, se borran los *worktrees* antes de medir. Sin decisión: lo anoto.
+29. **E-11 en `test/procesos`**: el arnés de F9-A está en castellano (`nuevaBase`, `Abrir`, `clavesSecretoB64`), y lo
+    nuevo de T1.13 va en inglés (`newContactMontaje`, `seedContactTenant`, `postgresState`), porque L-1 rige «desde esa
+    fecha». El sub-agente lo escribió primero en castellano, imitando al arnés, y se corrigió antes del commit, igual
+    que el auxiliar `filasDe` → `rowsOf` de D-F1-7. La mezcla dentro de un mismo paquete es la que E-11 acepta (lo ya
+    escrito no se renombra), pero invita a imitar lo viejo.
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |
@@ -337,8 +356,8 @@
 | D-F1-4 | No portar el tipo `Contact` (`contact.go:54-61`): no se instancia en todo el repo (medido) | **No portarlo**, y decirlo en el commit (E-8) |
 | D-F1-5 | El adaptador de tipos en `internal/arranque` (viejo `contact.Resolver` ← nuevo) como mecanismo estándar: aparecerá en cada fase cuyos tipos consuma código viejo | **Sí**, con tabla de vida (nace/muere) en cada `arquitectura.md` |
 | D-F1-6 | *(decidida en F1-01)* Los paquetes `…test` quedan exentos también de la cobertura por fichero | **Sí** (decidido el 2026-10-01 por Jhoan; `DECISIONES.md`). ✎ **Estrechada por D-F1-10** (2026-10-02): el paquete exento es `…helpertest`, y el efecto en `huellatest` queda resuelto: vuelve a medirse, `FICHEROS_EVALUADOS=10` (hallazgo 9). ✎ **Estrechada por D-F1-13** (2026-10-02, `88b1d85`): de ese paquete solo quedan exentos de la cobertura los ficheros de suite; `FICHEROS_EVALUADOS=11` |
-| D-F1-7 | ¿`Estado` gana una **marca** (p. ej. `Sembrar(t, tenant, sesión, contacto, marca)` y `Dueno(…) (contacto, marca, ok)`) para que la suite distinga «se conserva el estado del canónico» de «se re-clava el del huérfano» (R-17)? Hoy solo ve el dueño (hallazgo 13) | **Sí, antes de T1.13** (el adaptador de Postgres de `Estado` aún no existe: cambiarlo ahora es barato; el doble `EstadoMemoria` y la suite se tocan en un commit `refactor`) |
-| D-F1-8 | R9.4.d de F9 admite en `test/procesos` solo imports de paquetes `…helpertest` (`…test` hasta D-F1-10) de `nucleo`; T1.13 necesita `nucleo/contact` (hallazgo 16). ¿Se amplía R9.4.d a «los paquetes `…helpertest` y el constructor del adaptador Postgres del puerto que prueban»? | **Sí**, con el `grep` de F9 ajustado en el mismo commit |
+| D-F1-7 | ✅ **Decidida (Jhoan, 2026-10-02)**: sí, en un `refactor(nucleo)` propio antes de T1.13; lo nuevo en inglés, lo ya escrito no se renombra (D-F1-9 sigue abierta) · ¿`Estado` gana una **marca** (p. ej. `Sembrar(t, tenant, sesión, contacto, marca)` y `Dueno(…) (contacto, marca, ok)`) para que la suite distinga «se conserva el estado del canónico» de «se re-clava el del huérfano» (R-17)? Hoy solo ve el dueño (hallazgo 13) | **Sí, antes de T1.13** (el adaptador de Postgres de `Estado` aún no existe: cambiarlo ahora es barato; el doble `EstadoMemoria` y la suite se tocan en un commit `refactor`) |
+| D-F1-8 | ✅ **Decidida (Jhoan, 2026-10-02)**: sí, con el `grep` sobre imports **directos** y los tenants sembrados por SQL (detalle en `DECISIONES.md`) · R9.4.d de F9 admite en `test/procesos` solo imports de paquetes `…helpertest` (`…test` hasta D-F1-10) de `nucleo`; T1.13 necesita `nucleo/contact` (hallazgo 16). ¿Se amplía R9.4.d a «los paquetes `…helpertest` y el constructor del adaptador Postgres del puerto que prueban»? | **Sí**, con el `grep` de F9 ajustado en el mismo commit |
 | D-F1-9 | ¿Se traduce también lo ya decidido que `05` E-11 exceptúa: los siete módulos de D-5, el vocabulario del método (`pendiente`/`Implementar`/`Contrato`/`Montaje`, las etiquetas) y `puente_<x>.go` (D-F1-5)? Aparecen en los candados, el `Makefile`, el hook y 81 sesiones | **No en bloque** (renombrar es caro y no cambia comportamiento). **Sí** para lo nuevo de F1 que aún no existe (`puente_contact.go`, `puenteContact`, `nuevoResolverDeContactos`, T1.14–T1.16): decidir antes de T1.14, porque D-F1-5 fijó el nombre `puente_<x>.go` |
 | D-F1-10 | ✅ **Decidida (Jhoan, 2026-10-02)** · *(de la revisión independiente, 2026-10-01; hallazgo 21)* ¿Se **estrecha** la exención de los paquetes `…test`? Era por sufijo del nombre: un paquete de producción `latest` o `contest` quedaba exento de los tres candados, y los dobles con lógica no se miden. Estrecha D-F1-3 y D-F1-6, que siguen en pie | **Sufijo compuesto `helpertest`** (`a18d4c0`, `06f08a8`; resolución en el hallazgo 21): queda exento solo el paquete cuyo nombre termina en `helpertest` con algo delante. Jhoan eligió el sufijo compuesto **frente a** la parte **(i)** de la propuesta de la revisión, que era estructural: eximir `Xtest` solo si vive en `<dir de X>/Xtest` y existe el paquete `X` (la forma de `haySuiteContrato`). Efectos: `latest` deja de estar exento; `contacttest` pasa a llamarse `contacthelpertest` y sigue exento; `huellatest` vuelve a medirse, lo que cierra el «pendiente de mirar» de D-F1-6. **Queda fuera** la parte **(ii)** de la propuesta (eximir de la cobertura solo los ficheros de suite): los dobles con lógica dentro de `…helpertest` siguen sin medirse → **D-F1-13**. ✎ **Estrechada por D-F1-13** (2026-10-02, `88b1d85`): la parte (ii) queda aplicada para la cobertura por fichero |
 | D-F1-11 | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `4b226c9` · *(de la revisión independiente, 2026-10-01; hallazgo 22)* ¿Se añaden R-27, R-28 y R-29 (el nombre tardío se sella, gana el primer nombre, ráfaga sin `40P01` con la siembra sin nombre) a la spec de **P3** de F9 (`plan/F9-procesos/diseno.md` §4)? Hoy el código las difiere allí y la spec no las nombra | **Sí**, antes de F9-03 (B1 escribe P3 en T9.15): si no, en F10 se borran los tests viejos y quedan sin test. **Aplicado**: P3, pasos 6–8 y su tabla (`plan/F9-procesos/diseno.md` §4), R9.6.d y T9.15. Queda «sin medir» si P3 vigila el reintento de `postgres.WithTx` (nota ✎ del hallazgo 22) |

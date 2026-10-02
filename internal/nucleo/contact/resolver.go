@@ -5,9 +5,15 @@ package contact
 import (
 	"context"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"strings"
 )
+
+// lidServer es el servidor JID de los LID de WhatsApp (whatsmeow types.HiddenUserServer). Se usa
+// para formatear un wa_lid como destino direccionable ("<lid>@lid", ver Ref.Sendable) y para
+// inferir el kind del JID crudo en RefsFrom. Es una copia literal, no una importación: este repo
+// no depende de whatsmeow, y el valor es parte del protocolo de WhatsApp, no nuestro.
+const lidServer = "lid"
 
 // ErrNoRefs lo devuelve Resolve cuando no recibe ninguna referencia: la lista de refs está vacía,
 // nil o []Ref{}, una vez deduplicada. NO es un filtro de refs inválidas: Resolve no descarta una
@@ -113,6 +119,17 @@ type StateMigrator interface {
 	MigrateContactID(ctx context.Context, tenantID, fromContactID, toContactID string) error
 }
 
+// destinoPref fija la preferencia de destino enviable (menor = mejor): phone_e164 > wa_username >
+// wa_lid (R-19). wa_username figura en el orden pero hoy NO es direccionable (Sendable lo rechaza),
+// así que en la práctica se degrada a wa_lid; está aquí para que el día que el Edge sepa
+// direccionar un username baste con tocar Sendable, sin reordenar nada. Un kind ausente del mapa
+// no es candidato a destino. Es de solo lectura: estado de paquete inmutable.
+var destinoPref = map[string]int{
+	KindPhoneE164:  0,
+	KindWAUsername: 1,
+	KindWALID:      2,
+}
+
 // Sendable devuelve la cadena de destino que el Edge sabe direccionar para esta Ref (R-20): el
 // cloud resuelve el destino real (ADR-0005) y el Edge solo completa el servidor.
 //   - phone_e164: el número tal cual, sin servidor (el Edge le añade "@s.whatsapp.net").
@@ -123,7 +140,14 @@ type StateMigrator interface {
 //
 // No valida ni re-normaliza el Value: confía en que la Ref viene de NewRef.
 func (r Ref) Sendable() (string, error) {
-	panic(pendiente.Implementar("contact.Ref.Sendable"))
+	switch r.Kind {
+	case KindPhoneE164:
+		return r.Value, nil
+	case KindWALID:
+		return r.Value + "@" + lidServer, nil
+	default:
+		return "", fmt.Errorf("%w: kind %q no direccionable", ErrNoDestino, r.Kind)
+	}
 }
 
 // RefsFrom construye las Ref de un mensaje entrante a partir de la identidad enriquecida que
@@ -143,5 +167,84 @@ func (r Ref) Sendable() (string, error) {
 // pierde el sufijo. Los índices ciegos se calculan sobre esa salida, así que cualquier
 // corrección se hace a la vez en el paquete anterior y en este.
 func RefsFrom(fromPn, fromLid, from string) []Ref {
-	panic(pendiente.Implementar("contact.RefsFrom"))
+	refs := make([]Ref, 0, 2)
+	// Los errores de NewRef se tragan a propósito: el Edge manda lo que tiene y el mapeo
+	// LID↔número puede no existir todavía; un entrante con una identidad parcial sigue siendo
+	// procesable con la otra.
+	if fromPn != "" {
+		if ref, err := NewRef(KindPhoneE164, fromPn); err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	if fromLid != "" {
+		if ref, err := NewRef(KindWALID, fromLid); err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	// El JID crudo es el último recurso: solo cuando la identidad enriquecida no dio nada. El
+	// kind se infiere por el servidor del JID con Contains, no con HasSuffix (el contrato lo
+	// promete así y un "@lid" seguido de más texto sigue siendo un LID).
+	if len(refs) == 0 && from != "" {
+		kind := KindPhoneE164
+		if strings.Contains(from, "@"+lidServer) {
+			kind = KindWALID
+		}
+		if ref, err := NewRef(kind, from); err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	// Una lista vacía (no nil) cuando nada normaliza: quien llama decide qué hacer con un
+	// entrante sin identidad utilizable.
+	return refs
+}
+
+// pickDestino elige, entre refs, la DIRECCIONABLE de mejor preferencia según destinoPref (R-19).
+// Descarta las de un kind fuera de destinoPref y las que Ref.Sendable rechaza (hoy wa_username).
+// Entre dos refs del mismo kind gana la primera de la lista: los adaptadores le pasan las refs en
+// su orden, y por eso «cuál de varios teléfonos» no es parte del contrato de Destino. Devuelve
+// ErrNoDestino SIN envolver si ninguna sirve (incluida la lista vacía), que es lo que Destino
+// promete. La usan los dos adaptadores (repository_memory.go y repository_postgres.go) para que
+// la preferencia viva en un solo sitio.
+func pickDestino(refs []Ref) (Ref, error) {
+	best := Ref{}
+	bestRank := -1
+	for _, ref := range refs {
+		rank, known := destinoPref[ref.Kind]
+		if !known {
+			continue
+		}
+		if _, err := ref.Sendable(); err != nil {
+			continue
+		}
+		// Estrictamente menor: ante un empate de kind se queda la primera.
+		if bestRank == -1 || rank < bestRank {
+			bestRank = rank
+			best = ref
+		}
+	}
+	if bestRank == -1 {
+		return Ref{}, ErrNoDestino
+	}
+	return best, nil
+}
+
+// dedupeRefs elimina las refs repetidas por (kind, value) conservando el orden de la primera
+// aparición: es el primer paso de Resolve en los dos adaptadores (una ref repetida cuenta una vez,
+// y ErrNoRefs se decide sobre la lista ya deduplicada). Ref es comparable,
+// así que sirve de clave del mapa tal cual. Con menos de dos refs devuelve la misma slice sin
+// copiarla (nil sigue siendo nil): no hay nada que deduplicar.
+func dedupeRefs(refs []Ref) []Ref {
+	if len(refs) < 2 {
+		return refs
+	}
+	seen := make(map[Ref]struct{}, len(refs))
+	out := make([]Ref, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		out = append(out, ref)
+	}
+	return out
 }

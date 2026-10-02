@@ -1,7 +1,7 @@
 // Casos de fusión (R-16, R-17, N-03): el canónico es el contacto más antiguo, el huérfano desaparece y
 // su estado conversacional migra. Incluye la pareja de contactos que los casos fusionan.
-// Aquí crece lo que dependa de Estado: si Estado gana una marca (D-F1-7), este es el sitio donde se
-// distingue qué contenido sobrevive en el conflicto de una sesión.
+// Aquí crece lo que dependa de Estado. Cada fila sembrada lleva una marca distinta (D-F1-7): así se
+// distingue qué fila sobrevive en el conflicto de una sesión y que la del huérfano migra entera.
 
 package contacthelpertest
 
@@ -19,6 +19,18 @@ const (
 	sesionDelCanonico  = "sesion-del-canonico"
 	sesionConflicto    = "sesion-en-conflicto"
 	sesionSoloHuerfano = "sesion-solo-huerfano"
+)
+
+// Las marcas de las filas de estado que siembran los casos de fusión: una distinta por fila, para
+// que Dueno diga cuál sobrevivió y no solo de quién es.
+const (
+	markOrphanSessionOne    = "orphan-session-one"
+	markOrphanSessionTwo    = "orphan-session-two"
+	markCanonicalOwnSession = "canonical-own-session"
+	markOtherTenantSession  = "other-tenant-session-one"
+	markCanonicalInConflict = "canonical-in-conflict"
+	markOrphanInConflict    = "orphan-in-conflict"
+	markOrphanOnlySession   = "orphan-only-session"
 )
 
 // rondasFusion es cuántas parejas independientes funde Fusion_CanonicoElMasAntiguo. Los id de
@@ -75,40 +87,42 @@ func fusionDeTres(t *testing.T, m Montaje) {
 }
 
 // casoFusionMigraElEstado (R-16): el estado conversacional del huérfano, en todas sus sesiones,
-// pasa al canónico. El del propio canónico queda donde estaba y el de otro tenant, aunque sea
-// de un contacto con la misma ref y de una sesión con el mismo nombre, no se toca.
+// pasa al canónico tal cual, con la marca que tenía (la fila se re-clava, no se rehace). El del
+// propio canónico queda donde estaba, con la suya, y el de otro tenant, aunque sea de un contacto
+// con la misma ref y de una sesión con el mismo nombre, no se toca.
 func casoFusionMigraElEstado(t *testing.T, m Montaje) {
 	p := crearPareja(t, m, m.TenantA, 0, true)
 	enOtroTenant := resolverOK(t, m, m.TenantB, p.tel)
-	m.Estado.Sembrar(t, m.TenantA, sesionUno, p.huerfano())
-	m.Estado.Sembrar(t, m.TenantA, sesionDos, p.huerfano())
-	m.Estado.Sembrar(t, m.TenantA, sesionDelCanonico, p.antiguo())
-	m.Estado.Sembrar(t, m.TenantB, sesionUno, enOtroTenant)
+	m.Estado.Sembrar(t, m.TenantA, sesionUno, p.huerfano(), markOrphanSessionOne)
+	m.Estado.Sembrar(t, m.TenantA, sesionDos, p.huerfano(), markOrphanSessionTwo)
+	m.Estado.Sembrar(t, m.TenantA, sesionDelCanonico, p.antiguo(), markCanonicalOwnSession)
+	m.Estado.Sembrar(t, m.TenantB, sesionUno, enOtroTenant, markOtherTenantSession)
 
 	canonico := resolverOK(t, m, m.TenantA, p.refsHuerfanoPrimero()...)
 
 	mismoID(t, "canónico de la fusión", canonico, p.antiguo())
-	exigirDueno(t, m, m.TenantA, sesionUno, canonico)
-	exigirDueno(t, m, m.TenantA, sesionDos, canonico)
-	exigirDueno(t, m, m.TenantA, sesionDelCanonico, canonico)
-	exigirDueno(t, m, m.TenantB, sesionUno, enOtroTenant)
+	exigirDueno(t, m, m.TenantA, sesionUno, canonico, markOrphanSessionOne)
+	exigirDueno(t, m, m.TenantA, sesionDos, canonico, markOrphanSessionTwo)
+	exigirDueno(t, m, m.TenantA, sesionDelCanonico, canonico, markCanonicalOwnSession)
+	exigirDueno(t, m, m.TenantB, sesionUno, enOtroTenant, markOtherTenantSession)
 }
 
 // casoFusionConflictoConservaElCanonico (R-17): si el canónico y el huérfano tienen estado en
 // la MISMA sesión, tras la fusión la sesión tiene un único dueño, el canónico (Dueno falla el
-// test si quedaran los dos); y el conflicto de una sesión no arrastra a las demás: la sesión que
-// solo tenía el huérfano sí migra. Qué contenido sobrevive no lo ve Estado (ver Contrato).
+// test si quedaran los dos), y su fila es la del canónico: conserva la marca del canónico, no la
+// del huérfano re-clavada. El conflicto de una sesión no arrastra a las demás: la sesión que solo
+// tenía el huérfano sí migra, con la marca del huérfano.
 func casoFusionConflictoConservaElCanonico(t *testing.T, m Montaje) {
 	p := crearPareja(t, m, m.TenantA, 0, true)
-	m.Estado.Sembrar(t, m.TenantA, sesionConflicto, p.antiguo())
-	m.Estado.Sembrar(t, m.TenantA, sesionConflicto, p.huerfano())
-	m.Estado.Sembrar(t, m.TenantA, sesionSoloHuerfano, p.huerfano())
+	m.Estado.Sembrar(t, m.TenantA, sesionConflicto, p.antiguo(), markCanonicalInConflict)
+	m.Estado.Sembrar(t, m.TenantA, sesionConflicto, p.huerfano(), markOrphanInConflict)
+	m.Estado.Sembrar(t, m.TenantA, sesionSoloHuerfano, p.huerfano(), markOrphanOnlySession)
 
 	canonico := resolverOK(t, m, m.TenantA, p.refsHuerfanoPrimero()...)
 
 	mismoID(t, "canónico de la fusión", canonico, p.antiguo())
-	exigirDueno(t, m, m.TenantA, sesionConflicto, canonico)
-	exigirDueno(t, m, m.TenantA, sesionSoloHuerfano, canonico)
+	exigirDueno(t, m, m.TenantA, sesionConflicto, canonico, markCanonicalInConflict)
+	exigirDueno(t, m, m.TenantA, sesionSoloHuerfano, canonico, markOrphanOnlySession)
 }
 
 // pareja son dos contactos del mismo tenant que describen a la misma persona y aún no se han

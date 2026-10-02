@@ -16,8 +16,8 @@ package contact
 
 import (
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"strings"
 )
 
 // Kinds de contact_ref soportados. Sus valores literales viajan a la columna contacts.kind y
@@ -35,6 +35,11 @@ const (
 	// defina el formato de username.
 	KindWAUsername = "wa_username"
 )
+
+// maxE164Digits es el máximo de dígitos de un número E.164: la recomendación E.164 admite hasta
+// 15 dígitos, sin contar el "+". Más que eso no es un teléfono, y aceptarlo dejaría entrar al
+// índice ciego un value que ningún envío podrá usar.
+const maxE164Digits = 15
 
 // ErrInvalidRef es la base de todo error de referencia inválida: un kind desconocido o un value
 // que no normaliza. Se inspecciona con errors.Is. Su texto es «contact_ref inválida» y es
@@ -60,7 +65,12 @@ type Ref struct {
 // «contact_ref inválida: kind desconocido "<kind>"» (R-01). La comparación es exacta y sensible
 // a mayúsculas: "", "phone", "lid", "email" y "PHONE_E164" son desconocidos.
 func ValidateKind(kind string) error {
-	panic(pendiente.Implementar("contact.ValidateKind"))
+	switch kind {
+	case KindPhoneE164, KindWALID, KindWAUsername:
+		return nil
+	default:
+		return fmt.Errorf("%w: kind desconocido %q", ErrInvalidRef, kind)
+	}
 }
 
 // Normalize valida el kind y devuelve el value normalizado: el que se guarda, se deduplica y se
@@ -99,7 +109,21 @@ func ValidateKind(kind string) error {
 // y la comprobación anti-self-loop del runtime. Cambiar UN byte de lo que devuelve parte contactos
 // y rompe esas comparaciones sin dar un solo error: no se "mejora" sin migrar esos índices.
 func Normalize(kind, value string) (string, error) {
-	panic(pendiente.Implementar("contact.Normalize"))
+	if err := ValidateKind(kind); err != nil {
+		return "", err
+	}
+	switch kind {
+	case KindPhoneE164:
+		return normalizePhone(value)
+	case KindWALID:
+		return normalizeLID(value)
+	case KindWAUsername:
+		return normalizeUsername(value)
+	default:
+		// Inalcanzable: ValidateKind ya filtró los kinds desconocidos. Se deja el mismo error
+		// para que un kind nuevo añadido a ValidateKind y olvidado aquí no pase como válido.
+		return "", fmt.Errorf("%w: kind desconocido %q", ErrInvalidRef, kind)
+	}
 }
 
 // NewRef construye la Ref de (kind, value): el kind recibido tal cual y el value que devuelve
@@ -108,5 +132,76 @@ func Normalize(kind, value string) (string, error) {
 //
 // Si Normalize falla, devuelve la Ref cero y ese mismo error, con el mismo texto.
 func NewRef(kind, value string) (Ref, error) {
-	panic(pendiente.Implementar("contact.NewRef"))
+	norm, err := Normalize(kind, value)
+	if err != nil {
+		return Ref{}, err
+	}
+	return Ref{Kind: kind, Value: norm}, nil
+}
+
+// normalizePhone deja solo los dígitos ASCII del número (E.164 sin "+" ni separadores). No
+// recorta ceros a la izquierda: el value es la base del índice ciego, y "arreglarlo" partiría
+// contactos ya guardados.
+func normalizePhone(value string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	digits := b.String()
+	// Higiene (R-11): estos errores suben tal cual a los logs del runtime y al cliente HTTP, así
+	// que NO embeben el value crudo (PII): describen la causa con una cuenta, nunca el número.
+	if digits == "" {
+		return "", fmt.Errorf("%w: phone_e164 sin dígitos", ErrInvalidRef)
+	}
+	if len(digits) > maxE164Digits {
+		return "", fmt.Errorf("%w: phone_e164 con %d dígitos excede el máximo %d",
+			ErrInvalidRef, len(digits), maxE164Digits)
+	}
+	return digits, nil
+}
+
+// normalizeLID extrae la parte de usuario canónica (numérica) del LID, sin el servidor "@lid" ni
+// los sufijos de agente "_N" o dispositivo ":N". El orden de los cortes da igual para el
+// resultado (siempre queda lo anterior al primero de los tres), y el segundo TrimSpace existe
+// porque un blanco puede quedar pegado al sufijo descartado ("123 :2@lid").
+func normalizeLID(value string) (string, error) {
+	v := strings.TrimSpace(value)
+	// Descarta el servidor: "<user>@lid" -> "<user>".
+	if at := strings.IndexByte(v, '@'); at >= 0 {
+		v = v[:at]
+	}
+	// Descarta el sufijo de agente "_N".
+	if us := strings.IndexByte(v, '_'); us >= 0 {
+		v = v[:us]
+	}
+	// Descarta el sufijo de dispositivo ":N".
+	if colon := strings.IndexByte(v, ':'); colon >= 0 {
+		v = v[:colon]
+	}
+	v = strings.TrimSpace(v)
+	// Higiene (R-11): sin el value crudo (PII) en el error; solo su longitud en bytes, que no es
+	// reversible.
+	if v == "" {
+		return "", fmt.Errorf("%w: wa_lid vacío", ErrInvalidRef)
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return "", fmt.Errorf("%w: wa_lid con parte de usuario no numérica (longitud %d)", ErrInvalidRef, len(v))
+		}
+	}
+	return v, nil
+}
+
+// normalizeUsername pasa a minúsculas y recorta los blancos de borde. No quita sufijos: en un
+// username "_" y "." son parte del nombre. Su error de vacío sí lleva el value (%q) porque, por
+// construcción, solo son blancos y no es PII. PREPARADO, no ejercido (ver KindWAUsername).
+func normalizeUsername(value string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return "", fmt.Errorf("%w: wa_username vacío: %q", ErrInvalidRef, value)
+	}
+	return v, nil
 }

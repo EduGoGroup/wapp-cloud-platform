@@ -50,24 +50,35 @@ type Montaje struct {
 }
 
 // Estado es la vista que la suite necesita del estado conversacional (flow_state): sembrarlo y
-// observar a quién pertenece. Lo implementa EstadoMemoria (que además es el
+// observar a quién pertenece y qué fila es. Lo implementa EstadoMemoria (que además es el
 // contact.StateMigrator de la memoria) y, para Postgres, un adaptador sobre public.flow_state.
 //
 // El estado se identifica por (tenant, sesión) y pertenece a un contact_id. Antes de una fusión
 // pueden coexistir DOS dueños de la misma sesión, el huérfano y el canónico: es el conflicto de
-// R-17. Después de la fusión tiene que quedar uno solo, el canónico. Estado solo expone quién es
-// el dueño, no qué contiene el estado.
+// R-17. Después de la fusión tiene que quedar uno solo, el canónico.
+//
+// La marca (mark, D-F1-7) es lo que deja ver QUÉ fila sobrevivió, no solo de quién es: una cadena
+// opaca que la implementación guarda con la fila de estado al sembrarla y devuelve sin tocar al
+// observarla. No significa nada para el puerto ni para la implementación, que no la interpreta
+// ni la valida más allá de exigir que no venga vacía. En la memoria va junto al contact_id; en
+// Postgres irá en una columna de la propia fila de public.flow_state (cuál, lo decide su adaptador
+// en T1.13). Con ella la suite distingue «se conserva el estado del canónico» de «se re-clava el
+// del huérfano en el canónico», que dejan el mismo dueño y marcas distintas (R-17). Fuera de eso,
+// Estado no expone qué contiene el estado.
 type Estado interface {
-	// Sembrar da estado a la sesión sessionID del tenant tenantID, con contactID como dueño
-	// (un contacto que ya existe en ese tenant). Sembrar dos contactos distintos en la misma
-	// sesión los deja a los dos como dueños; repetir lo ya sembrado no cambia nada. Si no puede,
-	// falla el test t.
-	Sembrar(t *testing.T, tenantID, sessionID, contactID string)
-	// Dueno devuelve el contact_id dueño del estado de la sesión sessionID del tenant tenantID,
-	// y ok=false si la sesión no tiene estado. Si tuviera más de un dueño (una fusión que no
-	// resolvió el conflicto) la implementación falla el test t en vez de elegir uno: es
-	// justamente el defecto que la suite quiere ver.
-	Dueno(t *testing.T, tenantID, sessionID string) (contactID string, ok bool)
+	// Sembrar da estado a la sesión sessionID del tenant tenantID, con contactID como dueño (un
+	// contacto que ya existe en ese tenant) y mark como marca de esa fila. Sembrar dos contactos
+	// distintos en la misma sesión los deja a los dos como dueños, cada uno con su marca. Repetir
+	// un (tenant, sesión, contacto) ya sembrado no cambia nada, tampoco la marca: se queda la de
+	// la primera siembra (como un INSERT … ON CONFLICT DO NOTHING sobre la clave de flow_state).
+	// Si no puede, o si alguno de los argumentos viene vacío, falla el test t.
+	Sembrar(t *testing.T, tenantID, sessionID, contactID, mark string)
+	// Dueno devuelve el contact_id dueño del estado de la sesión sessionID del tenant tenantID y
+	// la marca de esa fila tal como se sembró, y ok=false (con contactID y mark vacíos) si la
+	// sesión no tiene estado. Si tuviera más de un dueño (una fusión que no resolvió el
+	// conflicto) la implementación falla el test t en vez de elegir uno: es justamente el defecto
+	// que la suite quiere ver.
+	Dueno(t *testing.T, tenantID, sessionID string) (contactID, mark string, ok bool)
 }
 
 // Contrato ejecuta todas las promesas de contact.Resolver contra la implementación que
@@ -97,12 +108,14 @@ type Estado interface {
 //     contact.NewRef, que no puede construirlas. Resolve las cuenta como una ref más, pero la
 //     suite no las ejercita: lo fija el test propio de MemoryResolver, y qué hace Postgres con
 //     una ref así después de contarla solo se ve contra una base real.
-//   - Cuál de los dos contenidos de estado sobrevive en el conflicto de una sesión (R-17).
-//     Estado solo expone QUIÉN es el dueño, no el contenido: «se conserva el estado del canónico»
-//     y «se conserva el del huérfano, re-clavado en el canónico» dejan el mismo dueño. Lo que la
-//     suite afirma es lo observable: tras el conflicto la sesión tiene un solo dueño, el
-//     canónico, y las sesiones sin conflicto del huérfano migran igualmente. Distinguir el
-//     contenido pediría que Sembrar y Dueno llevaran una marca.
+//   - Que el nombre que llega tarde se selle (R-27): un push_name que llega después a un contacto
+//     creado sin él se guarda cifrado en su sobre, y ese sobre no se ve por el puerto (Resolve
+//     solo devuelve el contact_id). Lo afirma el proceso «entrante a respuesta» de F9 (P3, paso 6),
+//     como R-28 y R-29.
+//
+// Qué fila de estado sobrevive al conflicto de una sesión (R-17) SÍ lo afirma, por la marca de
+// Estado: tras la fusión la sesión en conflicto conserva la marca del canónico, no la del huérfano,
+// y las sesiones sin conflicto del huérfano pasan al canónico con la marca del huérfano.
 //
 // Con memoria, los dos casos de fusión de estado (Fusion_MigraElEstadoDelHuerfano y
 // Fusion_ConflictoConservaElCanonico) prueban que MemoryResolver llama bien al migrador: la

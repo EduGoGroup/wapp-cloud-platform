@@ -111,13 +111,19 @@
   **DEBERÁ** registrarlo como hallazgo de la reconstrucción (no se toca el test). — Verifica: sección
   §7 del traspaso.
 - **R9.4.d** · **EL** proceso **DEBERÁ** entrar solo por las puertas reales (HTTP `:8100`/`:8103`,
-  gRPC `:8101`/`:8102`) y leer Postgres por SQL; **NO DEBERÁ** importar paquetes de dominio. —
-  Verifica: `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/' | grep -v '/internal/modulos/.*helpertest$\|/internal/nucleo/.*helpertest$'`
-  vacío (solo se admiten los paquetes `…helpertest` de suites de contrato, H9.5). ✎ **D-F1-10 (2026-10-02)**: el filtro era
+  gRPC `:8101`/`:8102`) y leer Postgres por SQL; **NO DEBERÁ** importar paquetes de dominio. La excepción
+  son las suites de contrato (H9.5, D-F1-8): los paquetes `…helpertest` y el constructor del adaptador Postgres
+  del puerto que prueban, con los argumentos de ese constructor. —
+  Verifica (imports **directos** del paquete, D-F1-8): `GOWORK=off go list -tags integracion -f '{{join .Imports "\n"}}{{"\n"}}{{join .TestImports "\n"}}{{"\n"}}{{join .XTestImports "\n"}}' ./test/procesos | sort -u | grep 'wapp-cloud-platform/internal/' | grep -v -e '/internal/\(modulos\|nucleo\)/.*helpertest$' -e '/internal/nucleo/contact$' -e '/internal/platform/crypto$' -e '/internal/candados$'`
+  vacío. Se admiten `…helpertest`, `internal/nucleo/contact` (el adaptador, T1.13), `internal/platform/crypto` (sus
+  argumentos) y `internal/candados` (el candado `sin_bd_viva_test.go`); cada suite nueva que necesite otro adaptador añade
+  su `-e` en el mismo commit. ✎ **D-F1-8 (2026-10-02)**: el comando anterior usaba `-deps` sin `-test`, que solo veía
+  `doc.go` y no detectaba nada; con `-test -deps` marcaría lo transitivo de la propia suite (`nucleo/contact`,
+  `platform/*`). `-test` no hace falta: `TestImports` y `XTestImports` son campos del paquete base. Muerde: una sonda
+  `_test.go` con `//go:build integracion` que importe `internal/platform/storage/postgres` sale en la lista. ✎ **D-F1-10 (2026-10-02)**: el filtro era
   `.*test$`, que admitía también un paquete de producción `latest` o `contest` —el defecto del hallazgo 21 del
   [README de F1](../F1-nucleo-contact/README.md)—; pasa a `helpertest$`, el sufijo que reconocen los candados. Hoy da vacío con
-  los dos filtros: `test/procesos` no importa nada de `internal/`. D-F1-8, que pide ampliar este requisito al adaptador
-  Postgres del puerto, sigue abierta.
+  los dos filtros: `test/procesos` no importa nada de `internal/`. D-F1-8 se decidió el 2026-10-02 (arriba).
 - **R9.4.e** · **MIENTRAS** corre la suite, **EL** gate **DEBERÁ** leer el `rc` del log y contar
   `--- SKIP` = 0 y `--- FAIL` = 0 con `-v`. — Verifica: bloque «Antes de dar un proceso por bueno»
   de la skill `procesos-testcontainers`.

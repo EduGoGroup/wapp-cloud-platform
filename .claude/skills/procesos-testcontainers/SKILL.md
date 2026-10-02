@@ -130,7 +130,9 @@ func TestMain(m *testing.M) {
 
 El proceso entra por la puerta real (HTTP, gRPC con un Edge de prueba) y comprueba lo que devuelve
 y lo que queda en Postgres. **No importa paquetes de dominio**; solo puede importar las **suites
-de contrato** (`<paquete>helpertest`, D-F1-10) para correrlas contra la implementación Postgres (`05` E-6).
+de contrato** (`<paquete>helpertest`, D-F1-10) y, en su `<paquete>_contrato_test.go`, el constructor del
+adaptador Postgres que prueban con sus argumentos (D-F1-8), para correrlas contra Postgres (`05` E-6).
+Lo comprueba el comando de R9.4.d (`plan/F9-procesos/requisitos.md`), que mira imports directos.
 
 Qué binario se prueba lo elige el arnés con `WAPP_PROCESOS_BINARIO=viejo|nuevo`. Orden
 obligatorio para cada proceso nuevo:

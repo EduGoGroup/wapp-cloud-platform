@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package contact
 
 import (
@@ -187,5 +185,121 @@ func TestRefsFrom_JIDDeDispositivoConservaElDigito(t *testing.T) {
 	quiere := []Ref{{Kind: KindPhoneE164, Value: "5730011122335"}}
 	if !slices.Equal(got, quiere) {
 		t.Errorf("RefsFrom con JID de dispositivo = %+v; quiere %+v (el dígito del dispositivo se conserva)", got, quiere)
+	}
+}
+
+// pickDestino (E-7: lo usan repository_memory.go y repository_postgres.go) elige la ref
+// direccionable de mejor preferencia según destinoPref: phone_e164 > wa_username > wa_lid (R-19).
+// Las no direccionables (wa_username) y los kinds fuera de destinoPref se saltan; entre dos del
+// mismo kind gana la primera de la lista.
+func TestPickDestino_ChoosesBestSendable(t *testing.T) {
+	phone := Ref{Kind: KindPhoneE164, Value: "573001112233"}
+	phone2 := Ref{Kind: KindPhoneE164, Value: "573009998877"}
+	lid := Ref{Kind: KindWALID, Value: "88887777"}
+	user := Ref{Kind: KindWAUsername, Value: "juanito"}
+	unknown := Ref{Kind: "email", Value: "ana"}
+	for _, c := range []struct {
+		name string
+		refs []Ref
+		want Ref
+	}{
+		{"phone beats lid", []Ref{lid, phone}, phone},
+		{"phone beats lid regardless of order", []Ref{phone, lid}, phone},
+		{"username is skipped: degrades to lid", []Ref{user, lid}, lid},
+		{"phone beats username and lid", []Ref{user, lid, phone}, phone},
+		{"unknown kind is skipped", []Ref{unknown, lid}, lid},
+		{"same kind: the first one wins", []Ref{phone, phone2}, phone},
+		{"same kind, reversed: the first one wins", []Ref{phone2, lid, phone}, phone2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := pickDestino(c.refs)
+			if err != nil {
+				t.Fatalf("pickDestino(%+v): error inesperado: %v", c.refs, err)
+			}
+			if got != c.want {
+				t.Errorf("pickDestino(%+v) = %+v; quiere %+v", c.refs, got, c.want)
+			}
+		})
+	}
+}
+
+// pickDestino devuelve ErrNoDestino SIN envolver (el texto exacto del centinela) y la Ref cero
+// cuando ninguna ref es direccionable, incluida la lista vacía o nil.
+func TestPickDestino_NoSendable(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		refs []Ref
+	}{
+		{"nil", nil},
+		{"empty", []Ref{}},
+		{"only username", []Ref{{Kind: KindWAUsername, Value: "juanito"}}},
+		{"only unknown kinds", []Ref{{Kind: "email", Value: "ana"}, {}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := pickDestino(c.refs)
+			if !errors.Is(err, ErrNoDestino) || err.Error() != ErrNoDestino.Error() {
+				t.Fatalf("pickDestino(%+v) err = %v; quiere ErrNoDestino sin envolver", c.refs, err)
+			}
+			if got != (Ref{}) {
+				t.Errorf("con error la Ref debe ser la cero; dio %+v", got)
+			}
+		})
+	}
+}
+
+// destinoPref fija el orden phone_e164 < wa_username < wa_lid (menor = mejor) y solo conoce
+// esos tres kinds.
+func TestDestinoPref_Order(t *testing.T) {
+	if destinoPref[KindPhoneE164] >= destinoPref[KindWAUsername] {
+		t.Errorf("destinoPref = %v; quiere phone_e164 < wa_username", destinoPref)
+	}
+	if destinoPref[KindWAUsername] >= destinoPref[KindWALID] {
+		t.Errorf("destinoPref = %v; quiere wa_username < wa_lid", destinoPref)
+	}
+	if len(destinoPref) != 3 {
+		t.Errorf("destinoPref tiene %d kinds; quiere los 3 de Kind*", len(destinoPref))
+	}
+}
+
+// dedupeRefs (E-7: primer paso de Resolve en los dos adaptadores) quita las refs repetidas por
+// (kind, value) y conserva el orden de la primera aparición; el kind es parte de la clave.
+func TestDedupeRefs(t *testing.T) {
+	phone := Ref{Kind: KindPhoneE164, Value: "88887777"}
+	lid := Ref{Kind: KindWALID, Value: "88887777"}
+	other := Ref{Kind: KindPhoneE164, Value: "573001112233"}
+	for _, c := range []struct {
+		name string
+		in   []Ref
+		want []Ref
+	}{
+		{"no duplicates: same list, same order", []Ref{lid, phone, other}, []Ref{lid, phone, other}},
+		{"duplicates removed, first occurrence order kept", []Ref{other, phone, other, lid, phone}, []Ref{other, phone, lid}},
+		{"all the same: one left", []Ref{phone, phone, phone}, []Ref{phone}},
+		{"same value, different kind: both kept", []Ref{phone, lid}, []Ref{phone, lid}},
+		{"single ref", []Ref{phone}, []Ref{phone}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := dedupeRefs(c.in); !slices.Equal(got, c.want) {
+				t.Errorf("dedupeRefs(%+v) = %+v; quiere %+v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// dedupeRefs con la entrada vacía devuelve vacía: nil sigue siendo nil y []Ref{} sigue vacía, que
+// es lo que Resolve convierte en ErrNoRefs.
+func TestDedupeRefs_Empty(t *testing.T) {
+	if got := dedupeRefs(nil); got != nil {
+		t.Errorf("dedupeRefs(nil) = %#v; quiere nil", got)
+	}
+	if got := dedupeRefs([]Ref{}); len(got) != 0 {
+		t.Errorf("dedupeRefs([]Ref{}) = %#v; quiere vacía", got)
+	}
+}
+
+// lidServer es el servidor JID de los LID de WhatsApp: "lid", parte del protocolo.
+func TestLidServer(t *testing.T) {
+	if lidServer != "lid" {
+		t.Errorf("lidServer = %q; quiere \"lid\"", lidServer)
 	}
 }
