@@ -1,6 +1,7 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
-> **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`**
+> **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`** e integrado en `dev` por el
+> PR #19 (sin squash, merge `6650e55`)
 > (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
@@ -154,6 +155,45 @@
     largo tiene 168 líneas. Es un movimiento puro: las 56 declaraciones (con su comentario) tienen el mismo hash antes y
     después. Cada fichero lleva una cabecera que dice qué crece ahí, y el comentario de paquete, cómo añadir un caso.
 
+### Hallazgos de la revisión independiente de S9–S11 (2026-10-01, sobre `dev` @ `6650e55`)
+
+> Revisión de F9-01, F9-02 y F1-01 (`45e01a4..6650e55`). Son **hechos** comprobados contra el código de `6650e55`; lo que pide una
+> decisión va a la tabla de abajo (D-F1-10…D-F1-12) y **no se decide aquí**. Los de F9, en el
+> [README de F9](../F9-procesos/README.md) (contradicción 19 y 22–29). Las correcciones de código viajan en la rama `reorg/revision-s9-s11`.
+
+21. **La exención de los paquetes `…test` es por SUFIJO del nombre de paquete** (→ **D-F1-10**; matiza D-F1-3 y D-F1-6). Los tres
+    candados usan la misma condición, `strings.HasSuffix(f.Paquete, "test")` (`internal/candados/cobertura.go:165`,
+    `unfichero.go:49`, `exportados.go:41`): un paquete de **producción** cuyo nombre acabe en «test» (`latest`, `contest`, `attest`,
+    `protest`, `fastest`…) queda exento de los **tres**. Medido con una sonda en un árbol desechable de `6650e55`
+    (`internal/nucleo/latest/x.go` e `internal/nucleo/contest/x.go`: un exportado sin test, sin mención y al 0 %):
+    `go test ./internal/modulos/` rc=0 y `make cobertura-ficheros` rc=0 con `FICHEROS_EVALUADOS=9 · POR_DEBAJO=0` (no los lista). Con
+    el mismo fichero en `manifest`, `digest`, `request` e `ingest`, que **no** acaban en «test», `un_fichero_un_test` sí muerde
+    («falta x_test.go»). Hoy no hay ningún paquete afectado: en el alcance de los candados solo acaban en `test` `huellatest` y
+    `contacttest` (y `fleettest`, en el árbol viejo). Los árboles de `testdata` **no fijan ese borde**: con el mutante
+    `HasSuffix(f.Paquete, "est")` en los tres ficheros, `go test ./internal/candados/ ./internal/modulos/ ./cmd/cobertura-ficheros/`
+    da rc=0. Dos matices a D-F1-6: `contacttest/estado.go` es un doble **con lógica** y test propio (31 de 34 sentencias, 91,2 %) y
+    queda sin medir; y `05` E-6 manda crear un doble en memoria en el paquete `…test` de 12 puertos, que serán implementaciones
+    completas exentas de los tres candados.
+22. **R-27, R-28 y R-29 están diferidas a un proceso de F9 cuya spec no las recoge** (→ **D-F1-11**). El código nuevo las manda a F9 en
+    sus comentarios: «Hoy ningún test pone rojo la ausencia del reintento: es cosa del proceso «entrante a respuesta» de F9»
+    (`internal/nucleo/contact/repository_postgres.go:146-147`, R-29); «Esa propiedad solo se puede clavar contra Postgres, en los
+    procesos de F9» (`repository_memory.go:81-82`, R-28); y la lista «Lo que la suite NO afirma» (`contacttest/contrato.go:82-86`).
+    [`diseno.md`](diseno.md) §4 dice lo mismo en las filas R-26·R-27, R-28 y R-29. La spec de F9 no las nombra:
+    `grep -n -i 'deadlock\|40P01\|push_name\|primer nombre\|R-27\|R-28\|R-29' plan/F9-procesos/*.md` → vacío (P3, «Del entrante a
+    la respuesta», T9.15, incluido). En F10 se borran los tests viejos que hoy las fijan
+    (`internal/flujos/contact/push_name_cifrado_integration_test.go` y `deadlock_integration_test.go`): esas reglas quedarían sin test.
+23. **E-11 deja sin tocar la propia norma** (→ **D-F1-12**; `05` solo lo edita Jhoan). Tres sitios de `05` siguen con nombres en
+    español para cosas nuevas: el ejemplo de §10 (`casos`, `entrada`, `quiere`, `textoNorm`, `frase`; `:465`, `:480-487`), la firma de
+    E-3 (`:89`, `func Contrato(t *testing.T, nuevo func() Puerto)`, que además es la contraria a D-F1-1) y `sin_pendientes_test.go`
+    (§5, `:289`: un fichero que aún no existe). Y E-11 no dice si el sufijo de fichero `_contrato` (`resolve_contrato.go`…, creado en
+    `7069532`, **después** de E-11 —`8365132`— y a petición de Jhoan: hallazgo 20) entra en su excepción 3, que lista `Contrato` y
+    `Montaje` como vocabulario del método pero no nombres de fichero.
+24. **Promesas sin aserción y comentarios-contrato imprecisos** (se corrigen en el mismo PR de la revisión, rama
+    `reorg/revision-s9-s11`; sin SHA todavía). La lista de la revisión, cuyo detalle va en ese PR: una `Ref{}` vacía cuenta; los
+    textos exactos de `contact_id no encontrado`, `ErrNoRefs` y `ErrNoDestino`; `@lid` no es sufijo; `WithTx` sin prefijo en dos
+    casos más (el hallazgo 15 ya anotaba el patrón); el `push_name` en la rama de carrera; y `Destino` con varias refs del mismo
+    `kind`. No piden decisión.
+
 #### Fricción de método y de entorno web (alimenta §4 del informe)
 
 - Los sub-agentes con `isolation: worktree` **arrancaron en `2da10b4` (`main`)**, no en la rama de trabajo: el primer paso de
@@ -179,3 +219,6 @@
 | D-F1-7 | ¿`Estado` gana una **marca** (p. ej. `Sembrar(t, tenant, sesión, contacto, marca)` y `Dueno(…) (contacto, marca, ok)`) para que la suite distinga «se conserva el estado del canónico» de «se re-clava el del huérfano» (R-17)? Hoy solo ve el dueño (hallazgo 13) | **Sí, antes de T1.13** (el adaptador de Postgres de `Estado` aún no existe: cambiarlo ahora es barato; el doble `EstadoMemoria` y la suite se tocan en un commit `refactor`) |
 | D-F1-8 | R9.4.d de F9 admite en `test/procesos` solo imports de paquetes `…test` de `nucleo`; T1.13 necesita `nucleo/contact` (hallazgo 16). ¿Se amplía R9.4.d a «los paquetes `…test` y el constructor del adaptador Postgres del puerto que prueban»? | **Sí**, con el `grep` de F9 ajustado en el mismo commit |
 | D-F1-9 | ¿Se traduce también lo ya decidido que `05` E-11 exceptúa: los siete módulos de D-5, el vocabulario del método (`pendiente`/`Implementar`/`Contrato`/`Montaje`, las etiquetas) y `puente_<x>.go` (D-F1-5)? Aparecen en los candados, el `Makefile`, el hook y 81 sesiones | **No en bloque** (renombrar es caro y no cambia comportamiento). **Sí** para lo nuevo de F1 que aún no existe (`puente_contact.go`, `puenteContact`, `nuevoResolverDeContactos`, T1.14–T1.16): decidir antes de T1.14, porque D-F1-5 fijó el nombre `puente_<x>.go` |
+| D-F1-10 | *(de la revisión independiente, 2026-10-01; hallazgo 21)* ¿Se **estrecha** la exención de los paquetes `…test`? Hoy es por sufijo del nombre: un paquete de producción `latest` o `contest` queda exento de los tres candados, y los dobles con lógica no se miden. Estrecha D-F1-3 y D-F1-6, que están **cerradas** | Propuesta de la revisión, en dos partes: **(i)** eximir `Xtest` solo si vive en `<dir de X>/Xtest` y existe el paquete `X` (la forma que ya usa `haySuiteContrato`, `internal/candados/unfichero.go:162-164`): `latest` deja de estar exento, `contacttest` sigue, y `huellatest` (cuyo padre es `arranque`) volvería a medirse, lo que resuelve de paso el «pendiente de mirar» de D-F1-6; **(ii)** además, eximir de la cobertura solo los ficheros de suite (`contrato.go` y `*_contrato.go`), para que los dobles con lógica se midan. Decide Jhoan |
+| D-F1-11 | *(de la revisión independiente, 2026-10-01; hallazgo 22)* ¿Se añaden R-27, R-28 y R-29 (el nombre tardío se sella, gana el primer nombre, ráfaga sin `40P01` con la siembra sin nombre) a la spec de **P3** de F9 (`plan/F9-procesos/diseno.md` §4)? Hoy el código las difiere allí y la spec no las nombra | **Sí**, antes de F9-03 (B1 escribe P3 en T9.15): si no, en F10 se borran los tests viejos y quedan sin test |
+| D-F1-12 | *(de la revisión independiente, 2026-10-01; hallazgo 23)* ¿Se actualiza `05` para que cumpla E-11 (el ejemplo de §10, la firma de E-3 con las dos formas de D-F1-1, `sin_pendientes_test.go`) y se dice si el sufijo de fichero `_contrato` es vocabulario del método (excepción 3)? | **Sí** (solo Jhoan toca la norma). Mientras tanto, la skill `contrato-tdd`, `00-marco/glosario.md` y `00-marco/estructura.md` ya dan las dos formas de la firma |
