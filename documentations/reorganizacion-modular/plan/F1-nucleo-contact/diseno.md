@@ -12,7 +12,10 @@ internal/nucleo/contact/
 ├── repository_memory.go       repository_memory_test.go      package contact_test (EXTERNO: ver §6)
 ├── repository_postgres.go     repository_postgres_test.go    package contact (interno)
 └── contacttest/
-    ├── contrato.go            (sin test propio: D-F1-3)      la suite del puerto
+    ├── contrato.go            (sin test propio: D-F1-3)      la suite del puerto: Montaje, Estado, Contrato y la tabla de casos
+    ├── resolve_contrato.go · isolation_contrato.go · merge_contrato.go · destination_contrato.go
+    │   concurrency_contrato.go · pushname_contrato.go          los casos, un fichero por tema
+    ├── fixtures_contrato.go · assertions_contrato.go           las ayudas compartidas por los casos
     ├── estado.go              estado_test.go                 doble de flow_state (tiene lógica)
 internal/arranque/
 ├── puente_contact.go          puente_contact_test.go         adaptador viejo ← nuevo (arquitectura §3)

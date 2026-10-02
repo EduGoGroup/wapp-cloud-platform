@@ -58,6 +58,9 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 
 - **La norma**: [`documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md`](documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md). Manda sobre los documentos 01–04 de esa carpeta.
 - **El plan ejecutable**: [`documentations/reorganizacion-modular/plan/`](documentations/reorganizacion-modular/plan/README.md) — una *spec* por fase, [`DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) y [`sesiones/`](documentations/reorganizacion-modular/plan/sesiones/README.md). **Si te arrancaron con el prompt de una sesión, su protocolo (`plan/sesiones/PROTOCOLO-WEB.md` o `PROTOCOLO-CLI.md`) te dice qué leer; no leas el plan entero.**
+- 🔤 **Idioma (E-11)**: en lo **nuevo**, los nombres (ficheros, tipos, funciones, variables, tests) van en
+  **inglés** y solo los comentarios y la documentación en español. Lo ya escrito no se renombra; los textos
+  observables se copian literales. Detalle en `05` E-11.
 - 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
 - **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
   `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (web ↔ local) ·

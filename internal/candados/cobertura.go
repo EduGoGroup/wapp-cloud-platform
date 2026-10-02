@@ -76,11 +76,15 @@ func Agregar(perfil io.Reader) (map[string]Fichero, error) {
 // Fuente casan, gana la de Ruta más larga. Las entradas de fs sin Fuente (fuera del alcance)
 // se ignoran.
 //
-// Se evalúan exactamente los ficheros que devuelve Evaluables. Además, y con independencia
-// del perfil y de si el fichero está en rojo, todo fichero de producción con MarcaPostgres
-// en la cabecera que NO importa "database/sql" ni "github.com/jackc/pgx" (o un subpaquete,
-// p. ej. ".../pgx/v5/pgxpool") es una violación: nadie se exime por decreto. Ese fichero
-// marcado de forma ilegítima se evalúa además como cualquier otro.
+// Se evalúan exactamente los ficheros que devuelve Evaluables: los de un paquete …test no
+// (D-F1-6: su suite solo la ejecutan los tests de las implementaciones, en otros paquetes,
+// y `go test -cover` sin -coverpkg no lo cuenta; ver Evaluables). Además, y con
+// independencia del perfil, de si el fichero está en rojo y de si su paquete es …test, todo
+// fichero de producción con MarcaPostgres en la cabecera que NO importa "database/sql" ni
+// "github.com/jackc/pgx" (o un subpaquete, p. ej. ".../pgx/v5/pgxpool") es una violación:
+// nadie se exime por decreto. Ese fichero marcado de forma ilegítima se evalúa además como
+// cualquier otro (salvo que sea de un paquete …test: entonces solo queda la violación de
+// marca).
 //
 // Violaciones: Fichero es la Ruta de la Fuente. Por umbral, Motivo contiene el porcentaje
 // con un decimal y "%" (p. ej. "50.0 %") y el umbral; por marca ilegítima, Motivo contiene
@@ -137,6 +141,13 @@ func Exentos(fuentes []Fuente) []string {
 
 // Evaluables devuelve, ordenadas, las Ruta de los ficheros que Cobertura mide contra el
 // umbral: ficheros de producción (no EsTest) de fuentes que
+//   - no son de un paquete …test: su Paquete (la cláusula `package`, no el directorio) no
+//     termina en "test" (D-F1-6, la misma condición que D-F1-3 aplica en UnFicheroUnTest y
+//     ExportadosCubiertos). Es una exención por paquete, no por nota: un paquete …test al
+//     100 % tampoco se mide. El porqué: la suite Contrato y los dobles de un puerto solo los
+//     ejecutan los tests de las implementaciones, que viven en OTROS paquetes, y
+//     `go test -cover` sin -coverpkg no cuenta lo que se ejecuta desde otro paquete; en el
+//     perfil del propio paquete …test el fichero saldría al 0 %;
 //   - están en verde: no contienen ninguna llamada pendiente.Implementar(…) —detectada en el
 //     AST como selector cuyo X es el identificador "pendiente" y cuyo Sel es "Implementar";
 //     una mención en un comentario no cuenta—;
@@ -149,7 +160,12 @@ func Evaluables(fs map[string]Fichero, fuentes []Fuente) []string {
 	medidas := cruzar(fs, fuentes)
 	out := make([]string, 0)
 	for _, f := range fuentes {
-		if f.EsTest || enRojo(f.Archivo) || esExento(f) {
+		// D-F1-6: un paquete …test entero (suite Contrato y dobles) queda fuera de la medida,
+		// igual que D-F1-3 lo deja fuera de UnFicheroUnTest y ExportadosCubiertos.
+		if f.EsTest || strings.HasSuffix(f.Paquete, "test") {
+			continue
+		}
+		if enRojo(f.Archivo) || esExento(f) {
 			continue
 		}
 		if medidas[f.Ruta].Sentencias > 0 {

@@ -118,14 +118,15 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
 
 ## 3 · Convenciones de nombres
 
-- **Módulos en español**, sin tilde (`conversacion`, `captacion`, `catalogo`): son carpetas nuevas.
+- **Módulos en español**, sin tilde (`conversacion`, `captacion`, `catalogo`): carpetas nuevas ya decididas
+  (D-5). La regla de idioma de lo nuevo (**E-11**: nombres en inglés) **no las renombra**; solo Jhoan lo reabre (D-F1-9).
 - **La carpeta hoja conserva el nombre del paquete viejo** (D-3 aplanar, D-4). Excepción obligada:
   `intake/catalogo` → **`indice`** (`04` §5.1). `05` §8 permite renombrar si **los textos
   observables no cambian**; cualquier otro renombre va a «Decisiones que necesita» de su fase.
 - 🔴 **`intake` ≠ `intakes`**: `captacion/intake` es la cola (solo `intake_jobs`);
   `solicitudes/intakes` es la solicitud. No se funden ni se renombran.
-- **Tests**: `x_test.go` junto a `x.go`; funciones `TestX` y subtests con **nombres en español que
-  digan la regla** (`"una frase vacía no es evidencia"`). Tabla de casos cuando hay varias entradas.
+- **Tests**: `x_test.go` junto a `x.go`; funciones `TestX` y subtests con **nombres en inglés que
+  digan la regla** (`"an empty phrase is not evidence"`, E-11). Tabla de casos cuando hay varias entradas.
 - **Suite de contrato de un puerto**: paquete `<paquete>test` (precedente `internal/gateway/fleet/fleettest`),
   función `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (**D-F1-1**): el `Montaje`
   trae el puerto **y** lo que el puerto no deja ver (tenants sembrados por la FK, un observador de
@@ -135,7 +136,9 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
   test» y de «exportados cubiertos», pero un doble con lógica lleva su test igual.
 - **Adaptadores Postgres**: `postgres.go`, `*_postgres.go`, `repository_postgres.go`. El nombre es
   lo que los excluye del umbral de cobertura: no se inventan otros.
-- **Identificadores y claves de wire en inglés**, comentarios y nombres internos en español (I-CP-8).
+- **Nombres de fichero, identificadores y claves de wire en inglés; solo los comentarios (y la documentación)
+  en español** (`05` E-11, desde 2026-10-02; sustituye en lo nuevo a la segunda mitad de I-CP-8). Lo ya escrito
+  y lo ya decidido no se renombra. Los textos observables se copian literales.
 - **Sin `TODO`/`FIXME`**: la deuda se marca `DEUDA-NNN.N` y va a `deuda.md` (constitución §5).
 
 ## 4 · Cabecera de origen y commits

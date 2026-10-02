@@ -10,40 +10,47 @@
 ## Bloque A · contratos y rojo de `nucleo/contact` · 🌐 · T1.1–T1.7
 Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make ci-local` rc=0 · PR abierto hacia `dev`.
 
-- [ ] **T1.1 · Verdad de campo y entradas** · 🌐 · dep. F0 cerrado · cumple R1.1.e
+- [x] **T1.1 · Verdad de campo y entradas** · 🌐 · dep. F0 cerrado · cumple R1.1.e — cerrada en `afa63f3`
   - **Ficheros**: `plan/F1-nucleo-contact/README.md` (estado → «en curso», SHA de arranque)
   - **Hecho cuando**: las 6 entradas del README se comprueban con su comando y el resultado queda en el commit; la sonda `internal/nucleo/sonda/x.go` sin test hace fallar `make ci-local` (entrada E2) y **se borra sin commitear**; T-1 reconfirmado con golangci-lint v2.12.2 (sonda fuera del repo).
   - **Gate**: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo GATE_RC=$? >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`
   - **Commit**: `docs(reorganizacion-modular): F1 arranca — entradas verificadas`
-- [ ] **T1.2 · rojo(nucleo): contrato y test de `contact.go`** · 🌐 · dep. T1.1 · cumple R1.1.a–c, R1.2.a–c, R1.4.c–d
+- [x] **T1.2 · rojo(nucleo): contrato y test de `contact.go`** · 🌐 · dep. T1.1 · cumple R1.1.a–c, R1.2.a–c, R1.4.c–d — cerrada en `b37a8c8`
   - **Ficheros**: `N/contact.go`, `N/contact_test.go`
   - **Hecho cuando**: 8 exportados (sin `Contact`, D-F1-4) con comentario-promesa de reglas R-01…R-11 y textos de [`diseno.md`](diseno.md) §5; 3 `panic(pendiente.Implementar)`; el test cubre cada promesa y cada texto; `-run '^TestNormalize_Telefono$'` da rc≠0.
   - **Gate**: `GOWORK=off go vet -tags pendiente ./internal/nucleo/...; echo rc=$?` → 0
   - **Commit**: `rojo(nucleo): contrato de contact/contact`
-- [ ] **T1.3 · rojo(nucleo): contrato y test de `resolver.go`** · 🌐 · dep. T1.2 · cumple R1.2.a–b, R1.4.c
+- [x] **T1.3 · rojo(nucleo): contrato y test de `resolver.go`** · 🌐 · dep. T1.2 · cumple R1.2.a–b, R1.4.c — cerrada en `d915d41` (+ precisión del comentario de `Resolver` en `b001c35`)
   - **Ficheros**: `N/resolver.go`, `N/resolver_test.go`
   - **Hecho cuando**: centinelas, `Resolver`, `StateMigrator` (comentarios corregidos T-4, T-5, diseño §2), `Ref.Sendable` y `RefsFrom` con `panic`; el test fija R-20, R-22, N-05 y los textos; menciona `Resolver`/`StateMigrator` con aserciones de compilación (diseño §6).
   - **Gate**: igual que T1.2
   - **Commit**: `rojo(nucleo): contrato de contact/resolver`
-- [ ] **T1.4 · rojo(nucleo): suite `contacttest.Contrato` y doble de estado** · 🌐 · dep. T1.3 · cumple R1.3.a
-  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go`
+- [x] **T1.3b · rojo/verde(candados): los paquetes `…test` no se miden en cobertura** · 🌐 · dep. T1.3 · **nueva, D-F1-6 (Jhoan, 2026-10-01)** — cerrada en `68897a8` (rojo) y `776d6a2` (verde)
+  - **Por qué**: `contacttest/contrato.go` (la suite) saldría al 0 % en `make cobertura-ficheros` y rompería `ci-local` (README §Hallazgos 9). Se ejecutó **antes** de T1.4 para que ningún commit de la rama rompa el gate.
+  - **Ficheros**: `internal/candados/cobertura.go` (solo `Evaluables` y los comentarios de contrato), `cobertura_test.go` (el test del rojo se fusionó aquí en el verde) y los árboles `testdata/cobertura/paquetes-test/{pasa,muerde}/`.
+  - **Hecho cuando**: `go test -race ./internal/candados/... ./cmd/cobertura-ficheros/...` rc=0 (131 PASS, 0 SKIP) · cobertura de `cobertura.go` 99,3 % · `make cobertura-ficheros` rc=0 con `FICHEROS_EVALUADOS=9` (era 10: sale `internal/arranque/huellatest`, efecto colateral anotado en D-F1-6).
+  - **Commits**: `rojo(candados): los paquetes …test no se miden en cobertura (D-F1-6)` · `verde(candados): Evaluables no mide los paquetes …test (D-F1-6)`
+- [x] **T1.4 · rojo(nucleo): suite `contacttest.Contrato` y doble de estado** · 🌐 · dep. T1.3 · cumple R1.3.a — cerrada en `8f2a4db`
+  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go` (tras el cierre del bloque, `contrato.go` se partió en 9 ficheros por tema: README hallazgo 20)
   - **Hecho cuando**: los 19 casos de diseño §3 escritos, sin `t.Skip`; el doble (`NuevoEstado()`, implementa `StateMigrator` y `Estado`, conserva el canónico en conflicto) nace **completo** con su test en verde (D-F1-3); `go doc` muestra `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`.
   - **Gate**: `GOWORK=off go test -race ./internal/nucleo/contact/contacttest/; echo rc=$?` → 0
   - **Commit**: `rojo(nucleo): suite de contrato de contact.Resolver y doble de estado`
-- [ ] **T1.5 · rojo(nucleo): contrato y test de `repository_memory.go`** · 🌐 · dep. T1.4 · cumple R1.3.b
+- [x] **T1.5 · rojo(nucleo): contrato y test de `repository_memory.go`** · 🌐 · dep. T1.4 · cumple R1.3.b — cerrada en `89b223b`
   - **Ficheros**: `N/repository_memory.go`, `N/repository_memory_test.go` (`package contact_test`, T-2)
   - **Hecho cuando**: struct sin campos, `NewMemoryResolver`/`Resolve`/`Destino` con `panic`; el test corre `contacttest.Contrato` y añade: migrador nil, migrador que falla (texto `contact: migrar flow_state en fusión:`), una llamada por huérfano.
   - **Gate**: vet `-tags pendiente` rc=0 · `go test -tags pendiente -run '^TestMemoryResolver_Contrato$' ./internal/nucleo/contact/` rc≠0
   - **Commit**: `rojo(nucleo): contrato de contact/repository_memory`
-- [ ] **T1.6 · rojo(nucleo): contrato y test de `repository_postgres.go`** · 🌐 · dep. T1.3 · cumple R1.2.a, R1.4.a
+- [x] **T1.6 · rojo(nucleo): contrato y test de `repository_postgres.go`** · 🌐 · dep. T1.3 · cumple R1.2.a, R1.4.a — cerrada en `32b7bfb`
   - **Ficheros**: `N/repository_postgres.go`, `N/repository_postgres_test.go`
   - **Hecho cuando**: `PostgresResolver` (sin campos), `NewPostgresResolver`, `Resolve`, `Destino` con `panic` y el comentario largo del porqué (MD-046.5, deadlock, sin lector de `push_name`) **sin** referencias por línea (T-6, T-7); el test afirma `ErrNoRefs` sin BD con `db` nil. Los tests de las funciones puras llegan con ellas en T1.11 (T-1).
   - **Gate**: igual que T1.5
   - **Commit**: `rojo(nucleo): contrato de contact/repository_postgres`
-- [ ] **T1.7 · Cierre del bloque A** · 🌐 · dep. T1.2–T1.6
+- [x] **T1.7 · Cierre del bloque A** · 🌐 · dep. T1.2–T1.6 — cerrada en `b001c35` (último commit de código del bloque; T1.7 no tiene commit propio: el cierre es el `docs(reorganizacion-modular): F1-01 cierra el bloque A` y el PR)
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/nucleo | wc -l` → **11**; `make test-pendiente` coincide; `ci-local` rc=0; PR abierto; minutos del bloque anotados.
   - **Gate**: skill `validar-antes-de-cerrar` completa
   - **Commit**: — (solo PR)
+  - **Medido (sesión F1-01, 2026-10-01)**: `GOWORK=off make ci-local` → `GATE_RC=0` (86 paquetes `ok`, 0 issues, golangci-lint v2.12.2, go1.26.5) · `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` → `PENDIENTES=11`, `ROJOS=4` · `grep` en `internal/nucleo` → 11 · `--- SKIP` = 0 (con `-v`) · cada rojo corrido solo (`TestNormalize_Telefono`, `TestRefsFrom`, `TestPostgresResolver_SinRefs_ErrNoRefs`, `TestMemoryResolver_Contrato`) rc=1 por el `panic` · `make cobertura-ficheros` rc=0 (`FICHEROS_EVALUADOS=9`, `POR_DEBAJO=0`, `EXENTOS_POSTGRES=1`) · `git diff --stat origin/dev..HEAD -- internal/flujos internal/bootstrap internal/gateway internal/intakes internal/publicapi cmd/server` vacío · `git cat-file -e` de los 9 SHA.
+  - **Minutos del bloque**: 53 min de pared desde el arranque hasta `b001c35` (14:05 → 14:58 UTC), con la ola 2 (candados ‖ `contacttest` ‖ postgres) y las olas 0–1 en paralelo; las líneas `Piloto:` de cada commit dan 9 · 10 · 0 · 6 · 0 · 15 · 5 · 7 · 1 min (T1.1, T1.2, T1.3, T1.3b, T1.4, T1.6, T1.5 y la precisión de `resolver.go`; los sub-agentes corrieron en paralelo, **no son aditivos**). Se corrió `ci-local` 4 veces (sonda de E2, gate base —una falló por la caché de lint, ver README «Fricción»—, base repetido y cierre): duración por corrida **sin medir** con precisión.
 
 ## Bloque B · verde fichero a fichero · 🌐 · T1.8–T1.13
 Entrada: PR del bloque A integrado en `dev`. Para cuando: 0 pendientes en `internal/nucleo` · `make cobertura-ficheros` ≥ 80 % en 3 ficheros · `vet -tags integracion ./test/procesos/...` rc=0 · PR abierto.

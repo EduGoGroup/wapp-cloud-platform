@@ -175,6 +175,42 @@ El estilo de la casa es *comentario-como-ADR* (~47 % del código de producción)
 nuevo dice en su cabecera **de dónde porta**: `// Porta internal/flujos/contact/contact.go @ <sha>`,
 para que `git log` del fichero viejo siga siendo la historia.
 
+### E-11 · Nombres en inglés; en español, solo los comentarios
+
+*(Regla de Jhoan, 2026-10-02, sesión F1-01. Rige para lo que se escriba **desde ahora**.)*
+
+En todo fichero **nuevo** de la reconstrucción:
+
+| En **inglés** | En **español** |
+|---|---|
+| Nombres de fichero, de directorio nuevo y de paquete · tipos, interfaces, structs, funciones, métodos, campos, variables, constantes y errores centinela · nombres de `Test…`, de los subtests (`t.Run`) y de las etiquetas de caso | Los **comentarios** (de paquete, de cada exportado, los internos) · la documentación (`documentations/`) · los mensajes de commit |
+
+```go
+// FullName une el nombre y el apellido con UN espacio y recorta los bordes.
+func (person Person) FullName() string { /* … */ }
+```
+
+Lo que **no** cambia:
+
+1. **Los textos observables** (§3.1): mensajes de error, literales de protocolo, nombres de métricas,
+   patrones de ruta, claves del wire, y nombres de tablas y columnas. Son contrato hacia fuera y se copian
+   literales aunque estén en español: `var ErrInvalidRef = errors.New("contact_ref inválida")`. El
+   **identificador** va en inglés; el **texto** no se toca.
+2. **Lo ya escrito**: el código viejo (E-1) y lo nuevo ya commiteado conservan sus nombres. No hay
+   renombres masivos ni «de paso».
+3. **Lo ya decidido**: los siete módulos de D-5 (`conversacion`, `captacion`, `catalogo`…), las carpetas
+   hoja que conservan el nombre del paquete viejo (D-3, D-4), los directorios ya creados (`nucleo`,
+   `modulos`, `arranque`, `apipublica`) y el vocabulario del propio método (`pendiente`, `Implementar`,
+   `Contrato`, `Montaje`, las etiquetas `pendiente`/`integracion`, los prefijos `rojo`/`verde`). Traducirlos
+   sería una decisión aparte (D-F1-9 en el README de F1).
+
+Al **portar** (E-10): si el símbolo viejo tiene nombre en español, el nuevo lleva uno en inglés y el
+comentario o el commit dicen cuál era; si ya estaba en inglés, se conserva. Si una spec nombra en español
+algo que aún no existe, se escribe en inglés y la correspondencia se anota en el `tareas.md` de la fase.
+
+No tiene candado automático (el idioma no se puede medir): lo vigila el revisor. Un candado barato, por
+decidir, sería marcar identificadores con letras no ASCII (`á é í ó ú ñ`).
+
 ---
 
 ## 3 · Lo que NO se limpia

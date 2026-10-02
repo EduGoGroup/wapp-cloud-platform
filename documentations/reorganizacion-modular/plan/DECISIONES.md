@@ -20,6 +20,7 @@
 | D-10 | 🔄 **Cara HTTP única NUEVA, `internal/apipublica`, construida por olas** (estrangulador delante del `publicapi` viejo; cada módulo muda sus rutas al conmutar) — sustituye la recomendación original de repartir en `modulos/<m>/http` | [`FX-cara-http/`](FX-cara-http/README.md) |
 | D-11 | Etiquetas `pendiente` e `integracion`; **cero `t.Skip`** en código nuevo | Todo |
 | D-12 | 80 % de sentencias por fichero al llegar a verde, fuera adaptadores Postgres; se recalibra tras F1 | Todo |
+| L-1 | *(2026-10-02, sesión F1-01)* **Nombres en inglés** (ficheros, tipos, funciones, variables, tests) y **solo los comentarios y la documentación en español**, en todo lo **nuevo** (`05` E-11). Lo ya escrito y lo ya decidido (módulos de D-5, vocabulario del método) no se renombra | Todo, desde esa fecha |
 | W-1 | Docker en la web: la primera sesión web **prueba** Docker + testcontainers; si funciona, la web corre los procesos como pre-chequeo; **cierra la sesión local** | F0-A, F9 |
 
 ## 1 · Antes de F0 — bloquean la primera sesión o un bloque de F0
@@ -49,6 +50,7 @@
 | D-F1-1 | Suite de contrato con forma `Contrato(t, func(t) Montaje)` como patrón para **todo** puerto con BD (la forma `func() Puerto` no basta: FK de tenants, estado no visible por el puerto) | Sí | F1 bloque A | sí (2026-09-30) |
 | D-F1-4 | No portar el tipo `Contact` (cero instancias) | Sí | F1 bloque A | sí (2026-09-30) |
 | D-F1-5 | Los tipos nuevos que consumen paquetes aún viejos se adaptan en `internal/arranque/puente_<x>.go` (nace al conmutar, muere cuando conmuta el consumidor) — mecanismo estándar, distinto de los «puentes» de import de `05` §4.1 | Sí | F1 bloque C | sí (2026-09-30) |
+| D-F1-6 | *(de F1-01, sesión web, 2026-10-01)* Los paquetes `…test` (suites de contrato y dobles) quedan exentos **también de la cobertura por fichero** (D-12): `Evaluables` salta todo fichero cuyo paquete termina en `test` (la misma condición de D-F1-3). Sin esto, `contacttest/contrato.go` —que solo ejecutan los tests de las implementaciones, desde otros paquetes, y `go test -cover` sin `-coverpkg` no lo cuenta— saldría al 0 % y rompería `make ci-local`. ⚠️ Efecto colateral medido: `internal/arranque/huellatest` (paquete `huellatest`, 91,8 %) también sale de la medida y `FICHEROS_EVALUADOS` pasa de 10 a 9 | Sí (alternativa: renombrar `huellatest` o acotar la condición a `internal/{modulos,nucleo}`) | F1 bloque A (T1.3b: `68897a8` rojo, `776d6a2` verde) | sí (2026-10-01, Jhoan en la sesión F1-01, elegida entre «auto-test de la suite», «eximir …test» y «parar») |
 
 ## 3 · La parada tras F1 (T1.20)
 
