@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-10-02** (D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`). Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
+> **Última actualización: 2026-10-02** (aplicadas las recomendaciones de la revisión independiente de S9–S11 en siete decisiones, rama `reorg/decisiones-revision-s9-s11`: última entrada de «Dónde estamos»). Antes, el mismo día, D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`. Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -135,6 +135,34 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   linter con `make tools`. Los gates de la línea anterior se midieron con el entorno **pelado** del Mac, sin exportar nada.
   ⚠️ Un `go` suelto, fuera de `make`, sigue siendo el del sistema: en local lleva `GOTOOLCHAIN=go1.26.5` delante. La diferencia entre
   web y local, en [`06-entorno-web.md`](06-entorno-web.md).
+- **2026-10-02 · Aplicadas las recomendaciones de la revisión independiente de S9–S11** (a petición de Jhoan de aplicar las
+  recomendaciones; se confirman al integrar el PR; rama `reorg/decisiones-revision-s9-s11`, partida de `dev` @ `c63aca7`, el merge del
+  PR #20). Jhoan **no** decidió cada una por separado. Son siete, cada una en su commit:
+  **D-F1-11** `4b226c9` (solo `.md`): R-27, R-28 y R-29 entran en la spec de P3 de F9 (`diseno.md` §4, pasos 6–8; R9.6.d; T9.15);
+  queda «sin medir» si P3 vigila el reintento de `postgres.WithTx`.
+  **D-F1-12** `1507d78` (solo `.md`): `05` cumple E-11 —el ejemplo de §10 en inglés, las dos firmas de D-F1-1 bajo la tabla de E-3,
+  `sin_pendientes_test.go` → `no_pending_test.go`, el sufijo `_contrato` es vocabulario del método—.
+  **D-F9-12** `5b817ba`: el Edge de prueba aplica a la inferencia el gate de lease del Edge real (2 s de gracia, sondeo de 50 ms,
+  `InferenceResult{INFERENCE_ERROR_LEASE_INVALID}`, sin `Ack`); sin contador de bloqueos.
+  **D-F9-7** `b7321bb`: `TestMain` sale con código 2 si `GOWORK` no es `off` (rc=2 el binario de test; `go test` lo devuelve como rc=1).
+  **D-F9-8** `2a5aea1`: `TestMain` barre al entrar los directorios `procesos-<cifras>` huérfanos, solo los que llevan su marcador y
+  tienen más de una hora. 🔴 Al probarlo, una mutación corrida sin aislar `TMPDIR` borró los tres directorios del 2026-10-01 que
+  citaba la contradicción 24 del README de F9; no los borró el barrido publicado.
+  **D-F9-6** `0e3a0f3`: `SinBDViva` añade la lista blanca de quién abre conexiones (solo `test/procesos/base_test.go`) y conserva la
+  negra entera; 64 mutantes, caen los 64; lo que sigue sin ver, en `TestSinBDVivaKnownGaps` (10 casos).
+  **D-F1-13** `88b1d85`: de un paquete `…helpertest`, la cobertura por fichero exime solo los ficheros de suite (`contrato.go`,
+  `*_contrato.go`); `FICHEROS_EVALUADOS` pasa de 10 a **11** (entra `contacthelpertest/estado.go`, 91,1 %; medido por la sesión que lo
+  implementó).
+  **Registro**: las siete tienen fila en [`plan/DECISIONES.md`](plan/DECISIONES.md) (§2 y §4) y su nota ✎, con lo que cada una deja
+  abierto, en los hallazgos 21–23 del [README de F1](plan/F1-nucleo-contact/README.md) y en las contradicciones 22–24 y 30 del
+  [README de F9](plan/F9-procesos/README.md). De paso: `GOWORK=off` en las invocaciones `go test` documentadas que no lo llevaban,
+  `no_pending_test` en los README de F10 y F0, F0 `diseno.md` §4.2/§4.4/§4.5 y la skill `procesos-testcontainers` al día, y dos
+  hallazgos nuevos en el README de F1, **sin corregir** (25: firmas de suite contrarias a D-F1-1 en specs de F4, F8, F9 y el marco;
+  26: restos de `05`).
+  **Queda abierto**, todo ya con fila en `DECISIONES.md`: **D-F9-9**, **D-F9-10**, **D-F9-11** (recomendación sí; se aplica en un PR
+  aparte, a continuación de este), **D-F1-7**, **D-F1-8**, **D-F1-9** y **D-F1-14** (nueva: extender «solo los ficheros de suite» a
+  `un_fichero_un_test` y `exportados_cubiertos`).
+  Gates: <los rellena el orquestador tras la corrida final>
 
 **Siguiente paso:**
 1. **Jhoan**:
@@ -142,7 +170,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
 2. **F1-01 ✅ hecha (🌐, 2026-10-01)**: bloque A del piloto `nucleo/contact`, T1.1–T1.7 + T1.3b; **PR #19 integrado en `dev` sin squash** (merge `6650e55`, 2026-10-01:
-   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que abre la revisión independiente (D-F1-11, D-F1-12 y D-F9-6…11; **D-F1-10 ya está decidida**, 2026-10-02, y deja abierta D-F1-13). Luego **F1-02 (🌐)**: el verde,
+   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que siguen abiertas de la revisión independiente (D-F9-9, D-F9-10, D-F9-11 y D-F1-14, además de D-F1-9; ✎ 2026-10-02: **D-F1-10 ya está decidida**, y D-F1-11, D-F1-12, D-F1-13, D-F9-6, D-F9-7, D-F9-8 y D-F9-12 llevan aplicada la recomendación de la revisión, que se confirma al integrar el PR). Luego **F1-02 (🌐)**: el verde,
    T1.8–T1.13 ([`plan/sesiones/`](plan/sesiones/README.md)). Las F9-03…F9-05 (B1/B2) van **después** de la parada de F1 (F1-05), por D-F9-1. Para repetir los gates en local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`.
 3. **H-1 no bloquea nada**: se difirió a F6 (D-F6-7). Hasta entonces, un rojo de `TestP0_Arranque/sin_errores` con las dos líneas `ERROR` del *webhook worker* es esa carrera: se repite
    **una vez**, se compara y se anota (≈ 1–2 % de falso rojo por corrida). ⚠️ Revisión independiente (2026-10-01): la regla se **matiza**
@@ -186,6 +214,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
 | 2026-10-01 | **F1-01, tras el cierre del bloque** (🌐): la regla de idioma **E-11** (`8365132`; L-1 en `DECISIONES.md`; hallazgo 19 del README de F1) y `contacttest/contrato.go` partido por tema en 9 ficheros (`7069532`, movimiento puro; hallazgo 20). **PR #19 integrado en `dev` sin squash** (`6650e55`) | [`05`](05-metodo-contratos-y-tdd.md) E-11 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) |
 | 2026-10-01 | **Revisión independiente de S9–S11** (F9-01, F9-02, F1-01; `45e01a4..6650e55`): gates repetidos, erratas corregidas (R9.1.d, cifras, referencias, restos contrarios a E-11) y hallazgos anotados con sus decisiones abiertas, sin tomar ninguna | [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 21–24 · [`plan/F9-procesos/README.md`](plan/F9-procesos/README.md) contradicciones 19 y 22–30 |
 | 2026-10-02 | **D-F1-10 aplicada** (decisión de Jhoan; rama `reorg/revision-s9-s11`, PR #20): el sufijo que exime a suites de contrato y dobles de los tres candados de fichero es el compuesto `helpertest`. `contacttest` → `contacthelpertest` (`a18d4c0`); `isHelperTestPackage` en `internal/candados` (`06f08a8`); `huellatest` vuelve a medirse (`FICHEROS_EVALUADOS` 9→10). `05` (E-3, E-6), las specs de F0–F9 y FX, el marco y las skills nombran ya `…helpertest`. Queda abierta D-F1-13 | [`plan/DECISIONES.md`](plan/DECISIONES.md) D-F1-10 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 9 y 21 |
+| 2026-10-02 | **Aplicadas las recomendaciones de la revisión de S9–S11** (a petición de Jhoan; se confirman al integrar el PR; rama `reorg/decisiones-revision-s9-s11`): D-F1-11 `4b226c9`, D-F1-12 `1507d78`, D-F9-12 `5b817ba`, D-F9-7 `b7321bb`, D-F9-8 `2a5aea1`, D-F9-6 `0e3a0f3` y D-F1-13 `88b1d85`. Todas las decisiones de F1 y de F9 que vivían solo en su README tienen ya fila en `DECISIONES.md`. Siguen abiertas D-F9-9, D-F9-10, D-F9-11 (PR aparte), D-F1-7, D-F1-8, D-F1-9 y D-F1-14 (nueva) | [`plan/DECISIONES.md`](plan/DECISIONES.md) §2 y §4 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 21–23, 25 y 26 · [`plan/F9-procesos/README.md`](plan/F9-procesos/README.md) contradicciones 22–24, 29 y 30 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -220,11 +249,16 @@ excepciones a E-1 de F0 (**D-F0-1/2/3**, **D-F4-1**) y la **parada tras F1**.
 **D-F1-10** (Jhoan, 2026-10-02): el sufijo que exime a las suites de contrato y a los dobles de los tres candados de fichero es el
 compuesto `helpertest` (`a18d4c0`, `06f08a8`); estrecha D-F1-3 y D-F1-6 y tiene fila en `DECISIONES.md` §2.
 
-⚠️ **Todavía sin fila en `DECISIONES.md`** (viven en el README de su fase): **D-F1-7, D-F1-8 y D-F1-9** (de F1-01) y las que abre la
-revisión independiente del 2026-10-01: **D-F1-11** (R-27/R-28/R-29 a P3), **D-F1-12** (actualizar `05` por E-11) y **D-F1-13** (medir
-los dobles con lógica de los paquetes `…helpertest`: lo que D-F1-10 deja fuera) en el [README de F1](plan/F1-nucleo-contact/README.md), y **D-F9-6…D-F9-12** (candado `SinBDViva`,
-`GOWORK=off`, directorios `procesos-*`, las dos respuestas al §8 del traspaso, el alcance de D-F6-7, los ficheros de test largos y el gate de lease de la inferencia en el Edge de prueba) en el
-[README de F9](plan/F9-procesos/README.md).
+**Las que abrió F1-01 y la revisión independiente del 2026-10-01** tienen fila en `DECISIONES.md` desde el 2026-10-02 (§2 las de F1,
+§4 las de F9); hasta entonces vivían solo en el README de su fase.
+- **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al
+  integrar el PR): **D-F1-11** (R-27/R-28/R-29 a P3), **D-F1-12** (`05` cumple E-11), **D-F1-13** (medir los dobles con lógica de los
+  paquetes `…helpertest`), **D-F9-6** (lista blanca en `SinBDViva`), **D-F9-7** (`GOWORK=off`), **D-F9-8** (directorios `procesos-*`)
+  y **D-F9-12** (gate de lease de la inferencia en el Edge de prueba).
+- ⚠️ **Abiertas**: **D-F1-7**, **D-F1-8** (bloquea T1.13) y **D-F1-9**, de F1-01; **D-F1-14** (nueva: extender «solo los ficheros
+  de suite exentos» a `un_fichero_un_test` y `exportados_cubiertos`), en el [README de F1](plan/F1-nucleo-contact/README.md); y
+  **D-F9-9** (las dos respuestas al §8 del traspaso), **D-F9-10** (el alcance de D-F6-7) y **D-F9-11** (los ficheros de test largos:
+  recomendación sí; se aplica en un PR aparte, a continuación de este), en el [README de F9](plan/F9-procesos/README.md).
 
 ## Lo que el plan corrigió de los documentos 01–05 (resumen)
 
@@ -269,7 +303,8 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 ## Estado de git
 
 - **F1-01 (bloque A de F1)**: rama `reorg/f1-a-contratos-rojo`, partida de `origin/dev` @ `77df20f`; **PR #19 integrado en `dev` sin squash** (merge `6650e55`, 2026-10-01 22:52 −03; 12 commits, de `afa63f3` a `7069532`). El `dev` local de la VM web iba 17 commits por detrás: se trabajó siempre desde `origin/dev`.
-- **Revisión independiente de S9–S11** (2026-10-01): rama `reorg/revision-s9-s11`, partida de `dev` @ `6650e55` (PR hacia `dev`, **pendiente de revisar por Jhoan**; integrar sin squash). Commits: arriba, «Revisión independiente».
+- **Decisiones de la revisión de S9–S11** (2026-10-02): rama `reorg/decisiones-revision-s9-s11`, partida de `dev` @ `c63aca7` (PR nuevo hacia `dev`; integrar sin squash, para que cada decisión conserve su commit). Commits: arriba, «Aplicadas las recomendaciones».
+- **Revisión independiente de S9–S11** (2026-10-01): rama `reorg/revision-s9-s11`, partida de `dev` @ `6650e55` (PR hacia `dev`, **pendiente de revisar por Jhoan**; integrar sin squash). Commits: arriba, «Revisión independiente». ✎ 2026-10-02: **PR #20 integrado en `dev`** (merge `c63aca7`, sin squash).
 - `origin/dev` contiene **F0 entera** (PR #13–#17, sin squash; el último merge es `835a7be`) más el cierre de F0-06.
   `origin/main` = `2da10b4`, sin tocar. Traspaso de F0: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md), **CERRADO**.
 - `origin/dev` contiene también el bloque A de F9 (PR #18, sin squash; el merge es `af7b8e9`; la rama `reorg/f9-a-arnes` ya está borrada). El cierre local
