@@ -59,7 +59,7 @@ Entrada: T10.6 con «sigue». Para cuando: la definición de hecho del bloque C 
   - **Ficheros**: los 26 directorios restantes de `diseno.md` §1; `go.mod`/`go.sum` tras `GOWORK=off go mod tidy`
   - **Hecho cuando**: `ls -d internal/*/` → `apipublica arranque modulos nucleo platform`; `go build ./... && go vet ./...` rc=0; `go mod tidy` sin diff pendiente
 - [ ] **T10.12 · relevo: cero pendientes** · 🌐 · dep. T10.11 · cumple R10.4.a–b
-  - **Ficheros**: `sin_pendientes_test.go` (donde lo ubique `00-marco/estructura.md`) con su caso `muerde`; `internal/modulos/fronteras_test.go` (puentes: lista vacía y caso `muerde`); con D-F10-3: `internal/pendiente/` borrado, `Makefile` sin `test-pendiente` ni `vet -tags pendiente`, `.golangci.yml` sin la etiqueta
+  - **Ficheros**: `no_pending_test.go` (donde lo ubique `00-marco/estructura.md`; las specs lo llamaban `sin_pendientes_test.go`: como aún no existe, nace con nombre en inglés, `05` E-11 y D-F1-12, 2026-10-02) con su caso `muerde`; `internal/modulos/fronteras_test.go` (puentes: lista vacía y caso `muerde`); con D-F10-3: `internal/pendiente/` borrado, `Makefile` sin `test-pendiente` ni `vet -tags pendiente`, `.golangci.yml` sin la etiqueta
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar\|go:build pendiente' --include='*.go' . | wc -l` → 0
 - [ ] **T10.13 · relevo: la integración vieja, retirada** · 🌐 · dep. T10.11 · cumple R10.5.b–c
   - **Ficheros**: `Makefile` (`test-integration`: fuera, o acotado a `./internal/platform/...` con `postgres:17-alpine` si D-F10-5 = no), `.github/workflows/ci.yml` (job `integration` → procesos), los 9 tests de BD de `internal/platform` si D-F10-5 = sí (P10 verde en F9)

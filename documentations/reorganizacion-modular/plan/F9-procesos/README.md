@@ -114,16 +114,21 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 
 > Las plantea la revisión de F9-01, F9-02 y F1-01 sobre `dev` @ `6650e55`; **ninguna está tomada**. El hecho que motiva cada una
 > está en la contradicción 19 (nota de revisión) y en las 22–30, abajo. Aún no tienen fila en [`../DECISIONES.md`](../DECISIONES.md).
+>
+> ✎ **2026-10-02**: las siete tienen ya fila en [`../DECISIONES.md`](../DECISIONES.md) §4. **D-F9-6, D-F9-7, D-F9-8 y D-F9-12** llevan
+> «aplicada la recomendación de la revisión»: Jhoan no decidió cada una por separado; pidió aplicar las recomendaciones de la revisión
+> y las confirma al integrar el PR. **D-F9-9, D-F9-10 y D-F9-11 siguen abiertas** (la 11, con recomendación sí, se aplica en un PR
+> aparte, a continuación de este). Lo que quedó y lo que sigue abierto de cada una, en la nota ✎ de su contradicción.
 
 | # | Pregunta | Propuesta de la revisión |
 |---|---|---|
-| **D-F9-6** | ¿El candado `SinBDViva` pasa de lista negra de patrones a **lista blanca de quién abre conexiones**? Cambia el contrato del candado que fija `05` §5 (contradicción 22) | Lista blanca: `sql.Open`, `pgx.Connect*` y `pgxpool.New*` solo en `test/procesos/base_test.go` (donde se llaman hoy: `:72` y `:188`), y auto-exención solo para la ruta exacta `test/procesos/sin_bd_viva_test.go`. Toca la norma: decide Jhoan |
-| **D-F9-7** | ¿`TestMain` exige `GOWORK=off`? (contradicción 23) | Que salga con código 2 si `GOWORK` no es `off` |
-| **D-F9-8** | ¿Quién limpia los directorios `procesos-*` que deja una corrida muerta? (contradicción 24) | Barrer al entrar en `TestMain` los de más de una hora, o añadir el `rm` al procedimiento |
+| **D-F9-6** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `0e3a0f3` · ¿El candado `SinBDViva` pasa de lista negra de patrones a **lista blanca de quién abre conexiones**? Cambia el contrato del candado que fija `05` §5 (contradicción 22) | Lista blanca: `sql.Open`, `pgx.Connect*` y `pgxpool.New*` solo en `test/procesos/base_test.go` (donde se llaman; ✎ la fila citaba `:72` y `:188`, las dos aperturas de `6650e55`: en `88b1d85` son **tres** —`pgx.Connect` ×2 y `sql.Open`— y se cita sin número de línea), y auto-exención solo para la ruta exacta `test/procesos/sin_bd_viva_test.go`. Toca la norma: decide Jhoan. **Aplicado**: la lista blanca se **añade** y la lista negra se conserva entera; cubre las aperturas de `database/sql`, `pgx`, `pgconn`, `pgxpool` y `pgx/stdlib`; la auto-exención pasa del nombre base a la ruta exacta. 64 mutantes, caen los 64. Lo que sigue sin ver: 10 casos en `TestSinBDVivaKnownGaps` (nota ✎ de la contradicción 22) |
+| **D-F9-7** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `b7321bb` · ¿`TestMain` exige `GOWORK=off`? (contradicción 23) | Que salga con código 2 si `GOWORK` no es `off`. **Aplicado**: sale con código 2 antes de levantar Postgres y de compilar. El binario de test da rc=2; `go test` lo devuelve como rc=1. Solo cuenta la variable de entorno (`go env -w GOWORK=off` no vale) |
+| **D-F9-8** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `2a5aea1` · ¿Quién limpia los directorios `procesos-*` que deja una corrida muerta? (contradicción 24) | Barrer al entrar en `TestMain` los de más de una hora, o añadir el `rm` al procedimiento. **Aplicado** lo primero (`sweep_test.go`): solo los `procesos-<cifras>` con el marcador `.wapp-procesos-harness`, directamente bajo `os.TempDir()`, sin seguir enlaces y de más de una hora; un fallo del barrido se dice y no rompe la corrida. Los anteriores al marcador no se reconocen nunca |
 | **D-F9-9** | ¿Acepta Jhoan las dos respuestas que F9-02 dio al §8 del traspaso (dejar el alcance extra del Edge de prueba; mantener la regla del `Cleanup`)? (contradicción 27) | Preguntarlo: hoy no tienen fila en `DECISIONES.md` ni la fórmula «decisión de Jhoan» |
 | **D-F9-10** | **Alcance y criterio de D-F6-7** (contradicciones 19 y 28): ¿cubre las otras tres goroutines de fondo, que no son de F6?; ¿qué se hace con el binario `viejo`, que conserva el worker viejo hasta F10?; ¿con qué se remide, si `CUENTA=3` da verde ≈ 98,8 % de las veces sin arreglar nada? | Sin propuesta: es rumbo. Las salidas (a)–(c) de la contradicción 19 siguen siendo las candidatas |
-| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacthelpertest/contrato.go` (entonces `contacttest/`)? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer |
-| **D-F9-12** | ¿El Edge de prueba replica también el gate de lease de la **inferencia** (y lleva cuenta de los envíos bloqueados)? (contradicción 30) | Sí al gate de inferencia, antes del proceso que la recorra (P3/P4, T9.15/T9.17): es el mismo agujero que la 25 (b) en el camino LLM. El contador, solo si un proceso lo necesita |
+| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacthelpertest/contrato.go` (entonces `contacttest/`)? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer. ✎ 2026-10-02: **sigue abierta**; recomendación sí, y se aplica en un PR aparte, a continuación de este. Cifras de hoy, en la nota ✎ de la contradicción 29 |
+| **D-F9-12** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `5b817ba` · ¿El Edge de prueba replica también el gate de lease de la **inferencia** (y lleva cuenta de los envíos bloqueados)? (contradicción 30) | Sí al gate de inferencia, antes del proceso que la recorra (P3/P4, T9.15/T9.17): es el mismo agujero que la 25 (b) en el camino LLM. El contador, solo si un proceso lo necesita. **Aplicado** el gate: tras 2 s de gracia con sondeo de 50 ms el doble contesta `InferenceResult{INFERENCE_ERROR_LEASE_INVALID}`, sin `Ack` y sin consultar el guion; **sin** contador de bloqueos. Probado contra el servidor real (`TestArnes_EdgeInferenceLeaseGate`). Siguen abiertos (b), (c) y (d) de la contradicción 30 |
 
 ## Encaje con F0 y F1 (escritas antes que esta spec)
 
@@ -325,16 +330,77 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     `cmd.Environ()` y un `exec.Cmd` con `Env == nil`, que hereda el entorno entero; `os.Exit(0)` en `TestMain`; y la auto-exención por
     **nombre base** `sin_bd_viva_test.go` en cualquier subdirectorio (`:47`). Hoy `test/procesos` abre conexiones en dos sitios, los
     dos en `base_test.go`: `pgx.Connect` (`:72`) y `sql.Open` (`:188`).
+    ✎ **2026-10-02 · D-F9-6 aplicada (`0e3a0f3`).** `SinBDViva` tiene ahora **dos reglas**, y cada exención lo es de la suya.
+    (1) **Lista blanca**, nueva: toda referencia —llamada o como valor— a una apertura de conexión de `database/sql`, `pgx`,
+    `pgconn`, `pgxpool` o `pgx/stdlib` es una violación fuera de la ruta exacta `test/procesos/base_test.go`. No mira la cadena:
+    persigue la apertura, y resuelve el paquete por la ruta del import (nombre, alias, import de punto; el `/v5` no cuenta).
+    (2) **Lista negra**, la de antes, entera; de ella solo se salta la ruta exacta `test/procesos/sin_bd_viva_test.go`, ya no el
+    nombre base. `base_test.go` no está exento de la lista negra, ni el propio candado de la blanca. 64 mutantes, caen los 64
+    (medido por la sesión que lo implementó). **Cierra**, de la lista de arriba y cuando la conexión se abre en el proceso de test:
+    el DSN vacío o sin host ni puerto, el DSN clave=valor, los literales construidos y `net.JoinHostPort`, el `os.Getenv` de
+    `DATABASE_URL` o `PGHOST`, y la auto-exención por nombre base. La cita de las aperturas caducó: en `88b1d85`, `base_test.go`
+    tiene **tres** (`grep -n 'pgx.Connect\|sql.Open' test/procesos/base_test.go`: `pgx.Connect` ×2 y `sql.Open` ×1), no dos.
+    **Siguen abiertas** las diez evasiones que `TestSinBDVivaKnownGaps` fija como casos que hoy dan 0 violaciones
+    (`internal/candados/sinbdviva_openers_test.go`; contadas por caso de la tabla del test; si alguna empieza a morder es una
+    mejora: su caso pasa a la tabla de los que muerden y esta lista se actualiza):
+    1. un cliente lanzado como subproceso (`exec.Command("psql", …)` contra un servidor vivo);
+    2. un subproceso con `Env` en `nil`, que hereda el entorno entero del shell;
+    3. el entorno por otra puerta: `syscall.Environ` y `cmd.Environ`;
+    4. una base de fuera entregada al binario del servidor por su entorno (`WAPP_DB_HOST` desde `os.Getenv("PGHOST")`, el puerto
+       construido);
+    5. `os.Exit(0)` en `TestMain`: la corrida acaba en verde sin correr nada;
+    6. una apertura por método sobre un valor (`db.Driver().Open(…)`): el candado no resuelve tipos;
+    7. un ayudante del fichero permitido llamado con una cadena propia (`baseClonada{DSN: …}.Abrir(t)`);
+    8. una librería que no está en la tabla (`sqlx`, `lib/pq`, `gorm`; ninguna está hoy en `go.mod`);
+    9. un socket crudo al servidor (`net.Dial`);
+    10. dentro del propio `base_test.go`, una cadena que no es la del contenedor (`pgx.Connect(nil, "")`).
 23. **El arnés no fija `GOWORK=off` al compilar** (→ **D-F9-7**). `compilar` (`test/procesos/main_test.go:272`) lanza `go build` con
     `cmd.Env` en `nil`, a propósito (`:278`: «go build necesita el entorno de Go del desarrollador»). En la ubicación real del repo
     hay un `go.work` en la raíz del ecosistema (`wApp/go.work`) cuyas líneas `use` incluyen `./cloud/wapp-cloudlink` y los módulos de
     `./shared/wapp-shared/`: `go test -tags integracion ./test/procesos/` **sin** `GOWORK=off` compila el servidor y el Edge de prueba
     contra los árboles de al lado, no contra las versiones de `go.mod`. `make test-procesos` sí lo fija (`GO := GOWORK=off go`,
     `Makefile:15`); una invocación directa, o la de un IDE, no.
+    ✎ **2026-10-02 · D-F9-7 aplicada (`b7321bb`).** `TestMain` comprueba `GOWORK` al entrar (`requireGoworkOff`), junto a
+    `WAPP_PROCESOS_BINARIO` y antes de levantar Postgres o de compilar nada, y sale con **código 2** si no vale exactamente `off`.
+    `compilar` no cambia: sigue heredando el entorno, que ya solo puede traer `off`. Los tres primeros puntos, medidos el 2026-10-02 sobre
+    `88b1d85` con `go1.26.5`, en un *worktree* fuera del árbol del ecosistema (sin `go.work` por encima):
+    - **rc=2 el binario, rc=1 `go test`.** El binario de test (`go test -c`) sale con 2;
+      `go test -tags integracion ./test/procesos/` lo devuelve como **1** (`FAIL` en menos de 1 s, sin una línea de Postgres ni de build): quien lea el código
+      de salida de `go test` no verá un 2.
+    - **Solo cuenta la variable de entorno.** `go env -w GOWORK=off` no vale: Go lo rechaza (`go: GOWORK cannot be modified`,
+      rc=1), y el arnés lee `os.Getenv("GOWORK")`.
+    - **Donde no hay `go.work`** (la VM web, un *worktree* fuera del árbol), una invocación directa sin `GOWORK=off` era inocua
+      —compilaba contra `go.mod` igual— y **ahora falla**: se antepone `GOWORK=off` o se usa `make test-procesos`.
+    - **Invocaciones documentadas.** Las `go test` que no lo llevaban se corrigieron con esta nota: R9.5.a de
+      [`requisitos.md`](requisitos.md), R1.3.c de F1, R10.5.c de F10 y la fila `test-procesos` de
+      [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md).
+    - **Sigue abierto**: `go vet -tags integracion` y `go list -tags integracion` no pasan por `TestMain`, así que esta
+      comprobación no los cubre. Varias specs y sesiones los dan sin `GOWORK=off`
+      (`grep -rn 'tags integracion' documentations .claude/skills --include='*.md'`), y donde haya un `go.work` siguen resolviendo
+      contra él. `make vet-integracion` sí lo fija.
 24. **Matiz a H-4 (contradicción 21 b): lo que sí queda huérfano es el directorio temporal** (→ **D-F9-8**). `TestMain` crea
     `procesos-*` con `os.MkdirTemp("", "procesos-")` (`main_test.go:90`) y lo borra con un `defer` (`:96`, `borrarDirectorio`), que no
     corre si el binario de test muere por `kill -9`, pánico o *timeout*. En el `os.TempDir()` del Mac había **tres** del 2026-10-01
     (09:31–09:34; 64 + 64 + 14 MB: los binarios compilados), de los experimentos de F9-02.
+    ✎ **2026-10-02 · D-F9-8 aplicada (`2a5aea1`).** `TestMain` barre al entrar —pasada la comprobación de `GOWORK` y antes de
+    levantar Postgres— los directorios de corrida huérfanos de `os.TempDir()` (`sweepOrphanRunDirs`, en
+    `test/procesos/sweep_test.go`). Un directorio solo se borra si cumple **todo**: cuelga directamente de la raíz; su nombre casa
+    con `^procesos-[0-9]+$`; es un directorio de verdad (un enlace simbólico no se sigue); lleva el marcador
+    `.wapp-procesos-harness`, fichero regular cuyo contenido es la ruta de importación del paquete; y su última modificación es de
+    hace más de una hora. Un fallo al listar o al borrar se dice por stderr y no rompe la corrida. Lo que queda:
+    - **El barrido solo reconoce directorios con marcador**: los que dejaron las corridas anteriores a `2a5aea1` no lo llevan y
+      no se reconocen **nunca**; quien los quiera fuera los borra a mano.
+    - **La evidencia de esta contradicción ya no existe**: los tres directorios del 2026-10-01 que esta contradicción citaba como
+      evidencia (`procesos-2778903666`, `procesos-3247760773`, `procesos-3490416234`; binarios compilados por el arnés) ya no
+      existen: los borró por error, el 2026-10-02, una mutación de prueba de la sesión que implementó el barrido, corrida sin
+      aislar `TMPDIR`; no los borró el barrido publicado, que no los habría reconocido.
+    - **Lección operativa**: cualquier corrida del paquete —también la que se lanza para probar un cambio— barre el `TMPDIR`
+      **real**. Quien toque las condiciones de `sweep_test.go` aísla antes `TMPDIR` en un directorio de usar y tirar. La cabecera
+      del fichero ya lo avisa («⚠️ QUIEN TOQUE ESTAS CONDICIONES…»; comprobado en `88b1d85`).
+    - **Riesgo residual**: la antigüedad es la última modificación del directorio de la corrida, no una señal de vida. Una
+      corrida viva más de una hora (un depurador parado en un test) puede perder su directorio —los binarios compilados— si
+      arranca otra corrida del paquete en la misma máquina. `make test-procesos` tiene un tope de 30 minutos por binario; una
+      sesión de depuración, no.
 25. **Corregido en el PR de la revisión** (rama `reorg/revision-s9-s11`: (a) `af372b6`, (b) `41db3e4`, (c) `5db3a72`, (d) `1e135e5`;
     además `84021ef`, que para en el `Cleanup` el proceso de `TestArnes_Parar*` si el test falla antes). (a) el reintento por puerto ocupado
     (`servidor_test.go:122-132`) relanzaba el servidor contra el **mismo** doble de S3, que quedaba con dos `HeadBucket`: falso rojo
@@ -364,6 +430,10 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     `servidor_test.go` **1.033**, `clientes_test.go` **750**, `pki_test.go` **653** y `p0_arranque_test.go` **611** (de este
     convendría sacar el parser de exposición Prometheus, que reutilizarán otros procesos). El paquete suma 7.785 líneas en 12
     ficheros `*_test.go`. Tras el arreglo del gate de lease (`41db3e4`), `edge_falso_test.go` tiene **3.012**.
+    ✎ **2026-10-02 · cifras de hoy** (`wc -l test/procesos/*_test.go` en `88b1d85`). Siguen siendo cinco los que pasan de 500
+    líneas: `edge_falso_test.go` **3.406**, `servidor_test.go` **1.087**, `clientes_test.go` **750**, `pki_test.go` **653** y
+    `p0_arranque_test.go` **611**. El paquete suma **9.413** líneas en **13** ficheros `*_test.go` (entra `sweep_test.go`, 447;
+    `main_test.go` tiene 483). D-F9-11 **sigue abierta**: recomendación sí, y se aplica en un PR aparte, a continuación de este.
 30. **Lo que el Edge de prueba sigue sin replicar del Edge real, tras el arreglo de la 25 (b)** (→ **D-F9-12**; salió al escribir
     el arreglo, leyendo `wapp-edge-agent`, `internal/adapters/cloudlink/`): (a) **la inferencia no pasa por el lease**: el doble la
     sirve siempre, también revocado; el Edge real aplica un gate propio (`inferencia.go`, `leaseVigente`: de alcance daemon —basta
@@ -373,3 +443,24 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     se ve por el `Ack` o por la respuesta de la API: el doble no cuenta bloqueos ni los anota en `Errores()`, y un proceso donde
     envía el motor de flujos (no HTTP) tendría que mirar el estado del servidor; (d) el doble acusa `ok=true` cualquier comando que
     no interpreta si trae `command_id` (*esto último no se contrastó línea a línea con el Edge real: queda como PLAUSIBLE*).
+    ✎ **2026-10-02 · D-F9-12 aplicada (`5b817ba`): cerrado (a).** El doble aplica a la inferencia el gate del Edge real
+    (`inferenceBlockedByLease`, la regla de `carrilInferencia.leaseVigente`): si no puede operar vuelve a mirar cada 50 ms hasta
+    agotar 2 s de gracia, y entonces contesta un `InferenceResult` con el `command_id` de la petición e
+    `INFERENCE_ERROR_LEASE_INVALID`, **sin `Ack`** y sin consultar el guion (tampoco para un calentamiento); si el lease llega
+    dentro de la gracia, sirve. Probado contra el servidor real en `TestArnes_EdgeInferenceLeaseGate` (tras
+    `POST /admin/leases/revoke`, ni un calentamiento servido). **Siguen abiertos (b), (c) y (d)**, tal como están arriba: (b) el
+    doble no late solo; (c) no cuenta bloqueos ni los anota en `Errores()` —tampoco los de inferencia: la recomendación deja el
+    contador para cuando un proceso lo necesite—; (d) acusa `ok=true` cualquier comando que no interpreta si trae `command_id`
+    (sigue PLAUSIBLE, sin contrastar). Dos hechos nuevos, del informe de implementación y **verificados** el 2026-10-02 contra
+    `test/procesos/edge_falso_test.go` (`alRecibirInferencia`, `sesionDe`) y, solo en lectura, contra `wapp-edge-agent`,
+    `internal/adapters/cloudlink/inferencia.go` (`responder`, `sessionIDDe`):
+    - (e) **el sobre de la respuesta de inferencia difiere del real.** El Edge real pone un `EdgeToCloud.CommandId` propio
+      (`uuid.NewString()`) y, como sesión, **prefiere el `session_id` del request** (`InferenceRequest.session_id`) y cae al del
+      sobre. El doble deja vacío el `CommandId` del sobre y usa la sesión del **sobre** (`CloudToEdge.session_id`; si viene vacía,
+      la suya). Hoy no se observa: el servidor correlaciona por `InferenceResult.command_id` (`internal/gateway/grpc/inference.go`,
+      `deliverInference`). Un proceso que afirmara la sesión o el `command_id` del **sobre** de una respuesta de inferencia
+      afirmaría sobre el doble, no sobre el Edge.
+    - (f) **cada inferencia bloqueada cuesta 2 s**, como en el real: el doble agota la gracia entera (`edgeInferenceLeaseGrace`)
+      antes de contestar. Cada petición se atiende en su goroutine y el gate va antes de la plaza única, así que no retiene el
+      bucle `Recv` ni el guion; pero quien espera la respuesta —el servidor, y el proceso que lo mira— espera esos 2 s por
+      petición. Solo los tests **del propio doble** acortan la gracia (campo privado `inferenceLeaseGrace`).

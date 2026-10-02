@@ -12,7 +12,7 @@
 |---|---|---|
 | `doc.go` | F0 · T0.8 | Comentario del paquete: qué es, la regla «nunca un Postgres vivo», cómo se corre |
 | `sin_bd_viva_test.go` | F0 · T0.8 · ampliado en T9.3 | Falla con `fichero:línea` si aparece un patrón prohibido (§6) |
-| `main_test.go` | F1 · T1.13 (mínimo, si D-F1-2) · completado en T9.5 | `TestMain`: un contenedor, plantilla migrada con `cmd/migrate`, binarios compilados una vez en `os.MkdirTemp`; `Terminate` al salir; **falla** sin Docker. Expone `instancia`, `rutaBinario(b)`, `binarioElegido()` |
+| `main_test.go` | F1 · T1.13 (mínimo, si D-F1-2) · completado en T9.5 | `TestMain`: un contenedor, plantilla migrada con `cmd/migrate`, binarios compilados una vez en `os.MkdirTemp`; `Terminate` al salir; **falla** sin Docker. Al entrar, antes de levantar nada, sale con código 2 si `WAPP_PROCESOS_BINARIO` no vale `viejo`/`nuevo` o si `GOWORK` no vale `off` (D-F9-7: el `go build` del arnés hereda el entorno y, sin `GOWORK=off`, compilaría contra los árboles vecinos del `go.work`). El directorio de la corrida nace con un marcador (`.wapp-procesos-harness`, con la ruta de importación del paquete), y pasada la entrada `TestMain` **barre** de `os.TempDir()` los que dejó huérfanos una corrida muerta (D-F9-8, `sweep_test.go`): solo directorios de verdad —un enlace simbólico no se sigue—, directamente bajo `os.TempDir()`, de nombre `procesos-<cifras>`, **con ese marcador** y sin modificar desde hace más de una hora; un fallo al barrer se dice y no hace fallar la corrida. Expone `instancia`, `rutaBinario(b)`, `binarioElegido()` |
 | `base_test.go` | T9.5 | `nuevaBase(t, nombre) (dsn string)`: `CREATE DATABASE <nombre> TEMPLATE plantilla` sobre la base de mantenimiento; nombre `[a-z0-9_]` validado; `DROP DATABASE … WITH (FORCE)` en `t.Cleanup`. `abrir(t, dsn) *sql.DB` con `pgx/v5/stdlib`. Las DSN se derivan de `ctr.ConnectionString(ctx, "sslmode=disable")` cambiando la base; **nunca** un literal |
 | `pki_test.go` | T9.6 | `nuevaPKI(t) pki`: CA EC P-256 (SEC1, como `scripts/gen-dev-certs.sh`), certificado de servidor con SAN `localhost` e IP `127.0.0.1`, cuatro ficheros PEM en `t.TempDir()`; `pki.Pool()` para los clientes |
 | `claves_test.go` | T9.6 | `nuevasClaves(t) claves`: semilla Ed25519 del lease (base64), privada X25519 de la nube (base64, 32 B), KEK e índice (base64, 32 B), clave ES256 del emisor en fichero `0600` y su `kid`. Aleatorias por corrida: **ni una en el repo** |
@@ -76,8 +76,8 @@ Referencia de lectura (no se importa): `cmd/server/integration_test.go:185-360` 
 | `enrolar(t, s, codigo) *edge` | Genera clave P-256 y CSR, llama `Enrollment/EnrollEdge` en `:8102` con TLS de servidor (raíz = CA de la PKI, `ServerName=localhost`) | Guarda `edge_cert_pem`, `ca_chain_pem`, `tenant_id`, `cloud_enc_pubkey`, `lease_pubkey` |
 | `conectar(t, sesion)` | Abre `CloudLink/Connect` en `:8101` con `mtls.ClientCreds(cert, pool, "localhost")`; lanza el bucle `Recv` | — |
 | `latir(n)` | `Heartbeat{lease_counter:n, state, inference_readiness: READY}` | La disponibilidad READY es condición para recibir inferencia (`internal/gateway/grpc/readiness.go:132-142`, `inference.go:439-450`) |
-| bucle `Recv` | `LeaseUpdate` → `cllease.Validator.Apply` (si el `Validator` **rechaza el primero** de la conexión, `conectar` falla con ese error; una revocación aceptada no es un rechazo). `SendText` y `SendMedia` → **gate de lease, como el Edge real**: solo si `puedeOperar()` se publica el texto en un canal y se acusa `Ack{ok=true}`; sin lease vigente (ninguno aún, rechazado, vencido o revocado) **no se publica nada** y se acusa `Ack{ok=false, error="lease no vigente"}`. Es la regla y el texto de `handleSendText`/`handleSendMedia` de `wapp-edge-agent` (`internal/adapters/cloudlink/adapter.go`: `!validator.CanOperate(hasDEK)`, ADR-0007), sin su modo sombra. `InferenceRequest` → §3.4, **sin gate** en el doble: el Edge real tiene para la inferencia otra regla (`inferencia.go`, `leaseVigente`: de alcance daemon —basta una sesión operable— y con 2 s de gracia; si ninguna lo es, contesta `INFERENCE_ERROR_LEASE_INVALID`) y el doble **no** la reproduce. `ConfigPush` y peticiones de diagnóstico → las registra (P9), sin gate | Serializa `Send` con un mutex (gRPC no admite `Send` concurrentes) |
-| `entrante(de, texto, waID)` | `IncomingMessage` **sellado**: `SensitivePayload` marshalado y `envelope.SealFor(cloud_enc_pubkey)` en `enc_payload`, planos sensibles vacíos | Como el Edge real (proto: «si va, los planos sensibles viajan vacíos»). El camino en claro es compatibilidad (`connect.go:502`) y no se usa |
+| bucle `Recv` | `LeaseUpdate` → `cllease.Validator.Apply` (si el `Validator` **rechaza el primero** de la conexión, `conectar` falla con ese error; una revocación aceptada no es un rechazo). `SendText` y `SendMedia` → **gate de lease, como el Edge real**: solo si `puedeOperar()` se publica el texto en un canal y se acusa `Ack{ok=true}`; sin lease vigente (ninguno aún, rechazado, vencido o revocado) **no se publica nada** y se acusa `Ack{ok=false, error="lease no vigente"}`. Es la regla y el texto de `handleSendText`/`handleSendMedia` de `wapp-edge-agent` (`internal/adapters/cloudlink/adapter.go`: `!validator.CanOperate(hasDEK)`, ADR-0007), sin su modo sombra. `InferenceRequest` → §3.4, **con el gate de lease propio de la inferencia, como el Edge real** (D-F9-12): si `puedeOperar()`, contesta con el guion; si no, vuelve a mirar cada 50 ms durante una gracia de 2 s y, agotada, contesta `InferenceResult{error: INFERENCE_ERROR_LEASE_INVALID}` **sin consultar el guion** (también a un calentamiento) y sin `Ack`; la petición queda registrada igual. Es la regla de `carrilInferencia.leaseVigente` de `wapp-edge-agent` (`internal/adapters/cloudlink/inferencia.go`: alcance daemon —basta una sesión operable; el doble tiene una sola, así que es su `puedeOperar()`—, `defaultInferenceLeaseGracia` y `sondeoLease`), sin su modo sombra y sin su rama «sin ninguna sesión registrada se sirve» (el doble siempre tiene la suya). El doble **no cuenta** los bloqueos. `ConfigPush` y peticiones de diagnóstico → las registra (P9), sin gate | Serializa `Send` con un mutex (gRPC no admite `Send` concurrentes) |
+| `entrante(de, texto, waID)` | `IncomingMessage` **sellado**: `SensitivePayload` marshalado y `envelope.SealFor(cloud_enc_pubkey)` en `enc_payload`, planos sensibles vacíos | Como el Edge real (proto: «si va, los planos sensibles viajan vacíos»). El camino en claro es compatibilidad (`connect.go:502`) y no se usa. ✎ **D-F1-11 (2026-10-02)**: hoy sella solo `text` y `from_pn` (`armarEntrante`); los pasos 6–8 de P3 (§4) necesitan además `push_name` y `from_lid` dentro del sobre, y un entrante **solo** con `from_lid`: T9.15 añade esa variante (nombre en inglés, `05` E-11) |
 | `acuse(waID, delivered/read)` · `bundle(cmd)` | `Receipt` · `DiagnosticsBundle` | P3 · P9 |
 | `puedeOperar()` · `revocado()` | Lo que dice el `Validator` | P1 |
 
@@ -189,6 +189,35 @@ revisión de la contradicción 19 y D-F9-10 del README.
 5. Perfil **pasivo**: entrante → **ninguna** auto-respuesta; el aviso que recibe el Edge es,
    byte a byte, el literal `AVISO_SESION_PASIVA_V1` leído de `documentations/literal-aviso-sesion-pasiva.md`
    (🔒 contrato congelado: se lee, no se copia al test).
+
+Los pasos 6–8 son las **tres reglas de `public.contacts` que F1 difiere a este proceso** (D-F1-11, decisión de
+Jhoan, 2026-10-02; tabla de más abajo). Van con el perfil **activo** —con el pasivo, `reactiveBlocked` corta
+antes de `Resolve` (`internal/flujos/runtime/incoming.go`, `HandleIncoming`) y no se escribiría nada en
+`contacts`— y con un `wa_message_id` **distinto** por entrante (el dedupe del paso 3 también corta antes).
+El valor de la ref va cifrado y el proceso no calcula el índice ciego (R9.4.d): el contacto se identifica
+por el `contact_id` que **aparece** en `contacts` del tenant tras el primer entrante de un remitente nuevo.
+
+6. **R-27 · el nombre tardío se sella** (y, de paso, R-26). Edge: entrante de un número nuevo **sin**
+   `push_name` → la fila del contacto nace con las tres piezas del sobre (`push_name_enc`, `push_name_dek`,
+   `push_name_kek_id`) a **NULL**. Otro entrante del **mismo** número, con `push_name` «Ana» → el **mismo**
+   `contact_id` (ni una fila más) y las tres piezas **pobladas** («las tres o ninguna»).
+7. **R-28 · gana el primer nombre.** Un tercer entrante del mismo número, con `push_name` «Beto» →
+   `push_name_enc` es, **byte a byte**, el que dejó el paso 6. No es un defecto que arreglar: es el precio
+   aceptado del centinela `push_name_enc IS NULL` (MD-046.5); si el sobre cambia, cada entrante vuelve a tomar
+   row-locks sobre todas las filas del contacto y se reabre el ciclo del paso 8.
+8. **R-29 · ráfaga sin `40P01`, con la siembra SIN nombre.** Siembra: **un** entrante que trae `from_pn` **y**
+   `from_lid` y **ningún** `push_name` → un contacto con **dos** filas (`phone_e164` y `wa_lid`, el mismo
+   `contact_id`). 🔴 **Precondición afirmada, antes de la ráfaga**: las dos filas tienen `push_name_enc` a NULL.
+   Sembrado **con** nombre el centinela ya no casa, el `UPDATE` no toma ni un row-lock, no hay ciclo que
+   reproducir y el paso queda **verde y hueco**: por eso la siembra sin nombre es contrato del test y no
+   montaje. Ráfaga: N entrantes seguidos, la mitad **solo** con `from_pn` y la mitad **solo** con `from_lid`
+   (identidad parcial y disjunta), **todos** con el mismo `push_name` (el servidor lanza una goroutine por
+   entrante: `incoming.go`). Aserta: **(a)** ningún entrante perdido: cero líneas `level=ERROR` con
+   `runtime: procesar entrante` en el log (un `40P01` que aflora de `Resolve` sale ahí como
+   `runtime: resolver contacto: …`, y más arriba no hay reintento); **(b)** el contacto sigue siendo **uno**, con
+   sus dos filas; **(c)** las dos filas acaban con el sobre **poblado** (la ráfaga sí casó el centinela y cruzó
+   los locks: si no escribe, no reproduce nada) y un entrante más, con **otro** nombre, no cambia un byte de
+   ninguna de las dos (el sobre se sella una vez).
 - **Postgres**: `fleet_sessions`, `flow_definitions`, `flow_triggers`, `flow_state`, `contacts` (el teléfono
   **no** aparece en claro: se busca el literal en la fila y no está), `ingest_dedupe`, `message_receipts`,
   `flow_events`, `conversation_events`.
@@ -197,6 +226,36 @@ revisión de la contradicción 19 y D-F9-10 del README.
 - **Viejos (E-8)**: `cmd/server/flows_integration_test.go`, `internal/publicapi/{terminalflow_ola6,passiveprofile_o5,conversationchain_w45}_e2e_integration_test.go`,
   `internal/flujos/runtime/exit_menu_e2e_test.go`, `internal/ingest/integration_test.go`, `internal/receipts/integration_test.go`,
   `internal/flujos/contact/*_integration_test.go` (3).
+- **Reglas que F1 difiere a este proceso (D-F1-11, decisión de Jhoan, 2026-10-02)**. `internal/nucleo/contact`
+  manda a F9 tres reglas que su suite de contrato **no** afirma, y nombra este proceso como «entrante a
+  respuesta» (el nombre de `05` §7.4), no como «P3». Hoy solo las fijan tests de integración viejos, que
+  F10 borra: sin los pasos 6–8 quedarían sin test. Se afirman **contra los dos binarios** (R9.4): contra
+  `viejo`, para validar el test con el código que ya las cumple; contra `nuevo`, para que
+  `internal/nucleo/contact` las cumpla una vez conmutado (P3 es gate de `nucleo`: `arquitectura.md` §5.1).
+  `V` = `internal/flujos/contact` · `N` = `internal/nucleo/contact`.
+
+  | Regla de F1 ([`diseno.md`](../F1-nucleo-contact/diseno.md) §4) | Paso | Qué se afirma, por SQL sobre `contacts` | Contrato de `N` que la difiere | Test viejo que la cubre hoy (`fichero:función`) |
+  |---|---|---|---|---|
+  | **R-27** (fila «R-26 · R-27») · el nombre tardío se sella | 6 | Sin nombre, las tres piezas a NULL; con el nombre que llega después, las tres pobladas, en el mismo contacto | `N/repository_postgres.go`: comentario de `PostgresResolver` («push_name (R-26, R-27)») y de `PostgresResolver.Resolve` («push_name (R-27, R-28)»: «el nombre que llega tarde a un contacto creado sin él […] se guarda entonces») | `V/push_name_cifrado_integration_test.go:TestIntegration_PushName_ElNombreQueLlegaTardeSeGuarda` |
+  | **R-28** · gana el primer nombre | 7 | Con un segundo nombre, `push_name_enc` no cambia un byte | `N/repository_memory.go`, comentario de `MemoryResolver.Resolve` («Esa propiedad solo se puede clavar contra Postgres, en los procesos de F9») · `N/contacthelpertest/contrato.go`, lista «Lo que la suite NO afirma» de `Contrato` · `N/contacthelpertest/pushname_contrato.go` | `V/push_name_cifrado_integration_test.go:TestIntegration_PushName_GanaElPrimerNombreNoVacio` |
+  | **R-29** · ráfaga sin `40P01`; la siembra sin nombre es contrato del test | 8 | La precondición (dos filas, sobre a NULL), ningún entrante perdido, un solo contacto, el sobre sellado una vez | `N/repository_postgres.go`, comentario de `PostgresResolver.Resolve` («Reintento y deadlock (R-29, R-31)»: «Hoy ningún test pone rojo la ausencia del reintento: es cosa del proceso «entrante a respuesta» de F9») · `N/contacthelpertest/contrato.go`, la misma lista | `V/deadlock_integration_test.go:TestIntegration_ContactResolve_ConcurrentUpsert_NoDeadlock` (con `assertSobresPushNameSinEscribir` y `assertSobreSelladoUnaVez`) |
+
+  Lo que la caja negra **no** reproduce de esos tests, dicho para que T9.15 no lo dé por hecho:
+  - **La ida y vuelta del nombre** (el viejo abre el sobre con el `FieldCipher` y compara con «Ana»): el proceso no
+    importa `internal/platform/crypto` (R9.4.d) y no hay lector de `push_name` (R-33 de F1). Aquí se afirma
+    «tres piezas o ninguna» y la igualdad de bytes. El descifrado solo puede quedar en el test unitario de
+    `pushNameEnvelope` (F1 · T1.11); ⚠️ su fila en [`diseno.md`](../F1-nucleo-contact/diseno.md) §2 de F1 pide hoy
+    «tres pobladas», no abrir el sobre: es un pendiente de F1, no de este proceso.
+  - **La barrera de la primera oleada** (el viejo para sus 16 goroutines tras el primer `Resolve` y mide ahí):
+    desde fuera no hay dónde pararlas. La estabilidad del sobre se afirma con el entrante de más del paso 8 (c).
+  - **El reintento acotado de `postgres.WithTx`**: 🔴 el test viejo **tampoco** lo vigila (medido el 2026-08-21: con
+    `maxTxAttempts = 1` sigue en PASS; trampa T-13 de [`reglas.md`](../F1-nucleo-contact/reglas.md) de F1 y MP-12
+    del ecosistema, abierto), y el contrato nuevo se lo deja a este proceso. **Sin medir** si el paso 8 lo
+    consigue: T9.15 lo **mide** con ese mutante en una copia desechable (`internal/platform/storage/postgres/tx.go`,
+    que comparten los dos binarios) y escribe el resultado en el traspaso. Si sigue verde, la carencia se queda
+    declarada con su dueño (MP-12), no resuelta por omisión.
+  - **Cuántos entrantes y cómo se sabe que la ráfaga terminó**: los fija T9.15 leyendo `HandleIncoming` (el viejo
+    usa 16 goroutines × 60 llamadas). Espera por sondeo de Postgres, nunca `time.Sleep` fijo (como P4).
 
 ### P4 · De mensaje a borrador (`p4_borrador_test.go`) — T9.17
 
@@ -322,6 +381,17 @@ Nace en F0 (T0.8, patrones de su `diseno.md` §4.4: `WAPP_TEST_DB_DSN`, literale
 |---|---|
 | `os.Environ()` | El servidor hereda el entorno del shell: un `.env` exportado apuntaría a otra base (§2) |
 | `t.Skip` / `t.SkipNow` / `testing.Short()` | E-5: nunca un SKIP en código nuevo; un proceso que no puede correr **falla** |
+
+**D-F9-6 (Jhoan, 2026-10-02)** añade una segunda regla, que no mira literales: una **lista blanca de quién
+abre conexiones**. Toda referencia a una apertura (`sql.Open`/`OpenDB`; `pgx.Connect`/`ConnectConfig`/
+`ConnectWithOptions`; las tres de `pgconn`; `pgxpool.New`/`NewWithConfig`; `stdlib.OpenDB`,
+`OpenDBFromPool`, `GetConnector`, `GetPoolConnector`, `GetDefaultDriver`, `Driver`), con el nombre del
+paquete, con alias o con import de punto, es una violación en cualquier fichero que no sea
+**`test/procesos/base_test.go`** (ruta exacta). La lista negra de arriba se conserva, y de ella solo se
+salta el propio candado, también por ruta exacta (`test/procesos/sin_bd_viva_test.go`; antes era por
+nombre base). Lo que el candado sigue sin ver está fijado como caso en
+`internal/candados/sinbdviva_openers_test.go` (`TestSinBDVivaKnownGaps`, 10 casos; enumerados en la contradicción 22 del
+[README](README.md)).
 
 ## 7 · `make test-procesos` (T9.4)
 

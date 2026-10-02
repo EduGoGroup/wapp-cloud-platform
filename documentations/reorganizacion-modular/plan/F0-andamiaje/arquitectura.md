@@ -35,7 +35,7 @@ flowchart LR
 | Arranques | `internal/bootstrap/arranque` | los dos; el nuevo **cablea paquetes viejos** |
 | Módulos (`internal/modulos/<m>/`) | — | **ninguno** (solo `doc.go` y tres candados) |
 | Cara HTTP `:8103` | `publicapi` viejo | `apipublica` (vacía) **delante** del viejo |
-| Candados de la reconstrucción (`05` §5) | — | siete activos; `sin_pendientes_test` nace en F10 |
+| Candados de la reconstrucción (`05` §5) | — | siete activos; `no_pending_test` (D-F1-12, 2026-10-02; antes `sin_pendientes_test`) nace en F10 |
 | `platform → dominio` | 3 aristas (`02` §3.3) | **0** |
 | Ficheros viejos tocados | — | 3 de `platform` (✎) + 3 líneas de alias en dominio (D-F0-3) + 1 test añadido al arranque viejo (D-F0-2) |
 

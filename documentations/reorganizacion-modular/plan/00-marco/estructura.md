@@ -49,12 +49,12 @@ test/
 | `internal/arranque/huella_test.go` | F0 | se queda (compara contra el viejo hasta F10) | La huella: rutas, rpc, métricas, goroutines, variables |
 | `internal/apipublica/` | F0, **vacía** | se queda | Se monta **delante** de `publicapi`: sus rutas ganan, el resto cae al viejo. Crece fase a fase |
 | `internal/publicapi/` (vieja) | — | F10 | Sirve al arranque viejo siempre, y al nuevo lo que `apipublica` aún no tiene. Tras F8 no sirve nada en el binario nuevo |
-| `internal/pendiente/` | F0 | F10 (cero usos; `sin_pendientes_test.go`) | `func Implementar(nombre string) …` para `panic(pendiente.Implementar("pkg.Func"))` |
+| `internal/pendiente/` | F0 | F10 (cero usos; `no_pending_test.go`) | `func Implementar(nombre string) …` para `panic(pendiente.Implementar("pkg.Func"))` |
 | `internal/modulos/fronteras_test.go` | F0 | se queda (sin puentes en F10) | Lista blanca de imports entre módulos + **puentes** declarados al código viejo |
 | `internal/modulos/un_fichero_un_test_test.go` · `exportados_cubiertos_test.go` | F0 | se quedan | E-3 y E-9. Candados AST permitidos (E-7). 🔴 Viven en `modulos/` pero su **alcance** es todo el código nuevo: `internal/{modulos,nucleo,apipublica,pendiente,candados}` y `internal/arranque/huellatest` (F0 [`diseno.md`](../F0-andamiaje/diseno.md) §4); `05` §5 solo nombra `modulos/`. `fronteras` alcanza además `internal/arranque` |
 | `test/procesos/sin_bd_viva_test.go` | F0 (sin etiqueta) | se queda | Ninguna referencia a `WAPP_TEST_DB_DSN`, puerto fijo o `WithReuseByName` |
 | `test/procesos/{main,arnes}_test.go` y un fichero por proceso | F9 | se quedan | `//go:build integracion`. `WAPP_PROCESOS_BINARIO=viejo\|nuevo` |
-| `sin_pendientes_test.go` | F10 | se queda | Cero `pendiente.Implementar` |
+| `no_pending_test.go` (D-F1-12, 2026-10-02; antes `sin_pendientes_test.go`) | F10 | se queda | Cero `pendiente.Implementar` |
 | `documentations/reorganizacion-modular/traspasos/` | primera vez que un bloque lo necesite | se queda (historia) | `TRASPASO-<fase>-<tema>.md` (skill `traspaso-web-local`) |
 
 Si `internal/modulos/` solo tiene ficheros de test, lleva además un `doc.go` con el comentario de
@@ -137,6 +137,8 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
   «un fichero, un test», de «exportados cubiertos» y de la cobertura por fichero, pero un doble con lógica
   lleva su test igual. Un paquete que acabe en `test` sin acabar en `helpertest` (`latest`, `huellatest`) y
   uno llamado `helpertest` a secas **no** están exentos (`internal/candados/candados.go`, `isHelperTestPackage`).
+  ✎ **D-F1-13** (2026-10-02, `88b1d85`): de la **cobertura por fichero** ya no queda fuera el paquete entero, solo sus ficheros de
+  suite (`contrato.go` y `*_contrato.go`); el doble con lógica se mide (≥ 80 %). De los otros dos candados sigue fuera entero.
 - **Adaptadores Postgres**: `postgres.go`, `*_postgres.go`, `repository_postgres.go`. El nombre es
   lo que los excluye del umbral de cobertura: no se inventan otros.
 - **Nombres de fichero, identificadores y claves de wire en inglés; solo los comentarios (y la documentación)

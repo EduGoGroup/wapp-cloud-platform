@@ -138,6 +138,6 @@ de R2/S3 del arnés de F9 (`ESTADO.md`, «Pendientes»). D-6 y D-8 quedaron supe
 
 El plan termina en **F10 · Relevo** cuando, a la vez: `cmd/server` arranca `internal/arranque`;
 `internal/bootstrap/`, `cmd/server-modular/`, `internal/publicapi/` y los paquetes viejos no
-existen; `sin_pendientes_test.go` pasa (cero `pendiente.Implementar`); `fronteras_test.go` no
+existen; `no_pending_test.go` pasa (cero `pendiente.Implementar`; D-F1-12, 2026-10-02: antes `sin_pendientes_test.go`); `fronteras_test.go` no
 declara **ningún** puente; los procesos de F9 pasan contra el binario único; y **un** despliegue de
 UAT con el binario de siempre funcionó (lo cierra la sesión local).

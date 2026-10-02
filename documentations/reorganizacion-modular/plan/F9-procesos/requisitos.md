@@ -61,6 +61,13 @@
 - **R9.2.c** · **EL** candado **DEBERÁ** probar su propio detector con un caso `muerde` por patrón,
   para que un detector roto no dé verde. — Verifica: el test del detector en `internal/candados/`
   (mecánica de F0) con un caso por cada uno de los seis patrones.
+- **R9.2.d** · *(D-F9-6, Jhoan, 2026-10-02)* **SI** un fichero de `test/procesos/` que no es
+  `test/procesos/base_test.go` (ruta exacta) nombra una apertura de conexión de `database/sql`, `pgx`,
+  `pgconn`, `pgxpool` o `pgx/stdlib` —con el nombre del paquete, con alias o con import de punto, llamada o
+  como valor—, **ENTONCES EL** candado **DEBERÁ** fallar nombrando fichero, línea y apertura, diga lo que
+  diga la cadena que recibe. La auto-exención de R9.2.a vale solo para la ruta exacta
+  `test/procesos/sin_bd_viva_test.go`. — Verifica: `TestSinBDVivaMuerde`, `TestSinBDVivaOpenersBite` y
+  `TestSinBDVivaExactPaths` en `internal/candados/`, y `GOWORK=off go test ./test/procesos/; echo rc=$?` → `rc=0`.
 
 ## H9.3 · Los dobles: el servidor de verdad arranca sin nada de fuera
 
@@ -95,7 +102,8 @@
 
 - **R9.4.a** · **EL** arnés **DEBERÁ** elegir el binario por `WAPP_PROCESOS_BINARIO=viejo|nuevo`
   (leída por el arnés, nunca por el test) y **DEBERÁ** fallar si falta o vale otra cosa. — Verifica:
-  `WAPP_PROCESOS_BINARIO=otro go test -tags integracion ./test/procesos/; echo rc=$?` → `rc≠0`.
+  `WAPP_PROCESOS_BINARIO=otro GOWORK=off go test -tags integracion ./test/procesos/; echo rc=$?` → `rc≠0`
+  (con `GOWORK=off`, para que el `rc≠0` sea el del binario y no el de D-F9-7: sin él, `TestMain` sale también con código 2).
 - **R9.4.b** · **CUANDO** se escribe un proceso nuevo, **EL** proceso **DEBERÁ** pasar contra `viejo`
   antes de su commit `procesos(<proceso>)`. — Verifica: el traspaso del bloque cita el log con
   `RC=0` contra `viejo` y el conteo `--- PASS`.
@@ -123,8 +131,9 @@
 - **R9.5.a** · **CUANDO** un módulo conmuta (ola 9C) — o en 9D si D-F9-1 se rechaza —, **EL** fichero
   `test/procesos/<paquete>_contrato_test.go` (convención que estrena F1, T1.13) **DEBERÁ** ejecutar
   `…helpertest.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
-  base clonada propia**. — Verifica: `go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
-  con un `--- PASS` por puerto (tabla de `diseno.md` §5).
+  base clonada propia**. — Verifica: `WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
+  con un `--- PASS` por puerto (tabla de `diseno.md` §5). ✎ 2026-10-02: `TestMain` sale con código 2 sin `GOWORK=off` (D-F9-7) y sin
+  `WAPP_PROCESOS_BINARIO=viejo|nuevo` (desde T9.5); a la suite le da igual cuál de los dos.
 - **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con
   SQL medidos (`05` E-6 dice 20; ver `diseno.md` §5). — Verifica: la tabla de `diseno.md` §5 con 22 filas marcadas y su
   `--- PASS` en el log de T9.30.
@@ -145,6 +154,14 @@
 - **R9.6.c** · **EL** proceso P5 **DEBERÁ** asertar INV-1 (la aprobación tiene una sola puerta) como
   conducta: dos aprobaciones de la misma solicitud dejan **un** `intake_approved` en `flow_events`.
   — Verifica: `TestP5_AprobarDosVecesUnSoloEfecto`.
+- **R9.6.d** · *(D-F1-11, decisión de Jhoan, 2026-10-02)* **EL** proceso P3 **DEBERÁ** asertar, sobre Postgres y
+  contra los dos binarios, las tres reglas de `public.contacts` que `internal/nucleo/contact` difiere a F9 y
+  que hoy solo fijan los tests de integración viejos de `internal/flujos/contact` (F10 los borra): **R-27** (el
+  nombre tardío se sella), **R-28** (gana el primer nombre) y **R-29** (ráfaga sin `40P01`, con la siembra **sin**
+  nombre como precondición afirmada). No son candados AST de `05` §3.2: entran en esta historia porque el
+  motivo es el mismo, no perder una regla que solo se ve contra Postgres. — Verifica:
+  `TestP3_LatePushNameIsSealed`, `TestP3_FirstPushNameWins` y `TestP3_HistoryBurstWithoutDeadlock` (pasos 6–8 de
+  P3 y su tabla, `diseno.md` §4; nombres en inglés por `05` E-11).
 
 ## H9.7 · El reparto web ↔ local
 

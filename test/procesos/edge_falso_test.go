@@ -48,8 +48,10 @@ import (
 //
 // Lo que SÍ hace igual que el Edge de verdad es obedecer al lease (el kill-switch, ADR-0007): sin
 // un lease vigente NO «entrega» —ni SendText ni SendMedia— y lo dice con el mismo Ack que el Edge
-// real (ok=false, «lease no vigente»). Un doble más permisivo que el Edge daría por buena una
-// entrega que en producción no ocurre.
+// real (ok=false, «lease no vigente»); y tampoco sirve INFERENCIA: tras la gracia del Edge real,
+// contesta el mismo InferenceResult con INFERENCE_ERROR_LEASE_INVALID, sin consultar el guion. Un
+// doble más permisivo que el Edge daría por buena una entrega, o una inferencia, que en producción
+// no ocurre.
 //
 // Está partido en dos a propósito. El NÚCLEO (edge.manejar y sus alRecibir…) decide qué hace el
 // Edge con cada comando y emite sus frames por edge.salida, una función inyectada: se prueba sin
@@ -81,6 +83,16 @@ const (
 	// contesta lo mismo, letra por letra: es lo que la nube devuelve en el campo «error» de su API
 	// de envío.
 	edgeLeaseNotValidText = "lease no vigente"
+	// edgeInferenceLeaseGrace es lo que el Edge REAL espera a que el lease se vuelva operable antes
+	// de rechazar una inferencia con INFERENCE_ERROR_LEASE_INVALID (wapp-edge-agent,
+	// internal/adapters/cloudlink/inferencia.go: `defaultInferenceLeaseGracia = 2000 *
+	// time.Millisecond`). Allí existe porque el Validator nace cerrado y el primer LeaseUpdate tarda
+	// en llegar; aquí cubre la misma ventana: una petición que el servidor mande antes de su
+	// LeaseUpdate inicial no se rechaza, espera.
+	edgeInferenceLeaseGrace = 2000 * time.Millisecond
+	// edgeInferenceLeasePoll es cada cuánto se vuelve a mirar el lease durante esa gracia (en el
+	// Edge real, `sondeoLease = 50 * time.Millisecond`).
+	edgeInferenceLeasePoll = 50 * time.Millisecond
 
 	// edgeTopeEnrolar acota la llamada EnrollEdge.
 	edgeTopeEnrolar = 15 * time.Second
@@ -159,8 +171,9 @@ type edge struct {
 	// Inferir es el guion de inferencia (T9.17): recibe la petición que bajó la nube y devuelve el
 	// JSON crudo que contestaría el modelo o, si lo hay, el error nombrado que el Edge reportaría
 	// (un nil en fallo significa «sin error»). Si es nil, toda inferencia se contesta con
-	// INFERENCE_ERROR_OLLAMA_DOWN. Las peticiones de calentamiento (Warmup) no lo consultan. Se
-	// asigna ANTES de conectar; se invoca de una en una (una sola plaza, como el Ollama real).
+	// INFERENCE_ERROR_OLLAMA_DOWN. Las peticiones de calentamiento (Warmup) no lo consultan, y
+	// tampoco las que el gate de lease bloquea (inferenceBlockedByLease). Se asigna ANTES de
+	// conectar; se invoca de una en una (una sola plaza, como el Ollama real).
 	Inferir func(req *cloudlinkv1.InferenceRequest) (rawJSON string, fallo *cloudlinkv1.InferenceError)
 
 	conectarAddr string
@@ -187,6 +200,11 @@ type edge struct {
 
 	salidaMu sync.Mutex
 	salida   func(*cloudlinkv1.EdgeToCloud) error
+
+	// inferenceLeaseGrace es la gracia del gate de lease de la inferencia (inferenceBlockedByLease).
+	// Cero o negativa vale edgeInferenceLeaseGrace, la del Edge real; solo la cambian los tests del
+	// propio doble, y ANTES de mandarle la primera petición (después solo se lee).
+	inferenceLeaseGrace time.Duration
 
 	inferMu sync.Mutex
 	enVuelo sync.WaitGroup
@@ -813,8 +831,9 @@ func (e *edge) usarCanalControl(t *testing.T) {
 // ---------------------------------------------------------------------------------------------
 
 // despachar es lo que hace el bucle de recepción con cada comando. Las peticiones de inferencia
-// van a su propia goroutine, para que un guion lento no frene los acuses, los leases ni los pings
-// (las inferencias entre sí sí van de una en una); el resto se atiende en línea.
+// van a su propia goroutine, para que ni un guion lento ni la gracia del gate de lease frenen los
+// acuses, los leases ni los pings (las inferencias entre sí sí van de una en una); el resto se
+// atiende en línea.
 func (e *edge) despachar(cmd *cloudlinkv1.CloudToEdge) {
 	if cmd.GetInferenceRequest() != nil {
 		e.enVuelo.Go(func() { e.manejar(cmd) })
@@ -827,15 +846,14 @@ func (e *edge) despachar(cmd *cloudlinkv1.CloudToEdge) {
 // del Edge. SendText: si el lease está vigente publica el texto y lo acusa; si no, lo rechaza.
 // SendMedia: si el lease está vigente lo acusa; si no, lo rechaza. LeaseUpdate: lo aplica al
 // Validator. ConfigUpdate: lo registra y lo acusa. DiagnosticsRequest: lo registra (no responde
-// solo). InferenceRequest: contesta con el guion (o con un error). Ping: Pong. Cualquier otro
-// comando con command_id se acusa como correcto.
+// solo). InferenceRequest: si el lease está vigente contesta con el guion (o con un error); si no,
+// tras la gracia, con INFERENCE_ERROR_LEASE_INVALID. Ping: Pong. Cualquier otro comando con
+// command_id se acusa como correcto.
 //
-// El gate de lease cubre SOLO los dos comandos «de operar» (los que en el Edge real despachan a
-// WhatsApp), igual que wapp-edge-agent: ConfigUpdate, DiagnosticsRequest y Ping no pasan por él.
-// La inferencia tiene en el Edge real su propia regla (inferencia.go, leaseVigente: de alcance
-// daemon —basta una sesión operable— y con 2 s de gracia; si ninguna lo es, contesta
-// INFERENCE_ERROR_LEASE_INVALID) y aquí NO se reproduce: el doble la sirve siempre, también
-// revocado.
+// El gate de lease cubre lo que en el Edge real es «operar», igual que wapp-edge-agent: los dos
+// comandos que despachan a WhatsApp (blockedByLease) y la inferencia, que allí tiene su propia
+// regla y aquí también (inferenceBlockedByLease: con gracia y con otra respuesta, un
+// InferenceResult y no un Ack). ConfigUpdate, DiagnosticsRequest y Ping no pasan por ninguno.
 func (e *edge) manejar(cmd *cloudlinkv1.CloudToEdge) {
 	switch p := cmd.GetPayload().(type) {
 	case *cloudlinkv1.CloudToEdge_LeaseUpdate:
@@ -990,9 +1008,15 @@ func (e *edge) alRecibirPing(cmd *cloudlinkv1.CloudToEdge, p *cloudlinkv1.Ping) 
 	})
 }
 
-// alRecibirInferencia registra la petición (con una copia) y la contesta con un InferenceResult:
-// la salida del guion sellada con la pública de la nube, o el error nombrado. Las inferencias se
-// atienden de una en una.
+// alRecibirInferencia registra la petición (con una copia), le aplica el gate de lease y la
+// contesta con un InferenceResult: si el Edge puede operar, la salida del guion sellada con la
+// pública de la nube o el error nombrado; si no, INFERENCE_ERROR_LEASE_INVALID sin consultar el
+// guion (también a un calentamiento), que es lo que contesta el Edge real
+// (internal/adapters/cloudlink/inferencia.go, atender: `c.responderError(c2e,
+// app.ErrInferenciaLeaseInvalido)`). La respuesta bloqueada tiene la misma forma que cualquier
+// otra del doble: un InferenceResult correlacionado por command_id y NINGÚN Ack. La petición
+// bloqueada queda registrada igual (la nube la pidió). El gate va ANTES de la plaza única: una
+// petición que espera su gracia no retiene el guion. Las inferencias se atienden de una en una.
 func (e *edge) alRecibirInferencia(cmd *cloudlinkv1.CloudToEdge, req *cloudlinkv1.InferenceRequest) {
 	if copia, ok := proto.Clone(req).(*cloudlinkv1.InferenceRequest); ok {
 		e.mu.Lock()
@@ -1003,13 +1027,53 @@ func (e *edge) alRecibirInferencia(cmd *cloudlinkv1.CloudToEdge, req *cloudlinkv
 	if id == "" {
 		id = cmd.GetCommandId()
 	}
-	e.inferMu.Lock()
-	res := e.resultadoDe(id, req)
-	e.inferMu.Unlock()
+	var res *cloudlinkv1.InferenceResult
+	if e.inferenceBlockedByLease() {
+		res = edgeErrorInferencia(id, cloudlinkv1.InferenceError_INFERENCE_ERROR_LEASE_INVALID)
+	} else {
+		e.inferMu.Lock()
+		res = e.resultadoDe(id, req)
+		e.inferMu.Unlock()
+	}
 	e.emitirOAnotar(&cloudlinkv1.EdgeToCloud{
 		SessionId: e.sesionDe(cmd),
 		Payload:   &cloudlinkv1.EdgeToCloud_InferenceResult{InferenceResult: res},
 	})
+}
+
+// inferenceBlockedByLease aplica a una inferencia el gate de lease del Edge real (ADR-0007: servir
+// inferencia es operar). Devuelve true si NO se puede servir —y quien llama contesta
+// INFERENCE_ERROR_LEASE_INVALID— y false si el Edge puede operar. Es la regla de
+// carrilInferencia.leaseVigente de wapp-edge-agent (internal/adapters/cloudlink/inferencia.go), que
+// NO es la de los envíos (blockedByLease):
+//
+//   - Alcance DAEMON. Allí basta con que UNA sesión cualquiera tenga su lease vigente
+//     (algunaSesionOperable), porque el session_id de un inference_request viene normalmente vacío.
+//     El doble tiene una sola sesión con su Validator, así que la pregunta acaba siendo la misma que
+//     la de los envíos, puedeOperar(); y como esa sesión existe siempre, la rama «sin ninguna sesión
+//     registrada se sirve» del Edge real aquí no ocurre.
+//   - Con GRACIA. Si el Edge no puede operar no rechaza en el acto: vuelve a mirar cada
+//     edgeInferenceLeasePoll hasta agotar la gracia (inferenceLeaseGrace; por defecto
+//     edgeInferenceLeaseGrace) y solo entonces bloquea. Si el lease se vuelve vigente antes, sirve.
+//     Con el lease vigente desde el principio no espera nada.
+//   - Si el enlace se cierra durante la espera deja de esperar y bloquea (en el Edge real, el
+//     contexto del carril cancelado), para que cerrar no tarde lo que dure la gracia.
+//
+// Sin su modo sombra, igual que blockedByLease. Un bloqueo no es un error del núcleo: no se anota en
+// Errores, y el doble no lleva cuenta de los bloqueos.
+func (e *edge) inferenceBlockedByLease() bool {
+	grace := e.inferenceLeaseGrace
+	if grace <= 0 {
+		grace = edgeInferenceLeaseGrace
+	}
+	start := time.Now()
+	for !e.puedeOperar() {
+		if time.Since(start) >= grace || e.estaCerrando() {
+			return true
+		}
+		time.Sleep(edgeInferenceLeasePoll)
+	}
+	return false
 }
 
 // resultadoDe decide qué contesta el Edge a una inferencia: un calentamiento, una salida vacía
@@ -1095,8 +1159,9 @@ func (e *edge) Diagnosticos() []diagnosticoPedido {
 	return slices.Clone(e.diagnosticos)
 }
 
-// Inferencias devuelve una copia de las InferenceRequest recibidas (calentamientos incluidos), en
-// orden de llegada. Sirve para ver qué pidió la nube: el prompt, el techo de tokens, la clase.
+// Inferencias devuelve una copia de las InferenceRequest recibidas (calentamientos incluidos, y
+// también las que el gate de lease bloqueó), en orden de llegada. Sirve para ver qué pidió la nube:
+// el prompt, el techo de tokens, la clase. No dice cuáles se sirvieron: eso lo dice el guion.
 func (e *edge) Inferencias() []*cloudlinkv1.InferenceRequest {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1129,8 +1194,9 @@ func (e *edge) Errores() []error {
 
 // puedeOperar dice lo que dice el Validator con la DEK presente: hay un lease vigente aplicado y
 // no está revocado ni vencido. Falso antes de recibir el primero. Es el gate de los envíos
-// (blockedByLease). El doble no late solo: el lease vence a su TTL (15 min por defecto en el
-// servidor) contado desde la última renovación, y un proceso que durase más tendría que latir.
+// (blockedByLease) y, con gracia, el de la inferencia (inferenceBlockedByLease). El doble no late
+// solo: el lease vence a su TTL (15 min por defecto en el servidor) contado desde la última
+// renovación, y un proceso que durase más tendría que latir.
 func (e *edge) puedeOperar() bool {
 	e.mu.Lock()
 	v := e.validador
@@ -1321,8 +1387,8 @@ func edgeLeaseCommand(t *testing.T, e *edge, lu *cloudlinkv1.LeaseUpdate, err er
 
 // edgeGrantLease deja a un Edge sin servidor como lo deja conectar contra uno de verdad: con un
 // lease vigente (una hora, contador 1) firmado con las claves dadas y aplicado por el Validator.
-// Sin esto el Edge no «entrega» nada (blockedByLease). Falla el test (t.Fatalf) si tras aplicarlo
-// el Edge no puede operar.
+// Sin esto el Edge no «entrega» nada (blockedByLease) ni sirve inferencia
+// (inferenceBlockedByLease). Falla el test (t.Fatalf) si tras aplicarlo el Edge no puede operar.
 func edgeGrantLease(t *testing.T, e *edge, k claves) {
 	t.Helper()
 	lu, err := edgeEmisorLease(t, k).Issue(e.EdgeID, e.TenantID, time.Hour, edgeContadorInicial)
@@ -1806,12 +1872,18 @@ func edgeProbarCopias(t *testing.T) {
 	}
 }
 
-// TestArnes_EdgeInferencia prueba, sin servidor, cómo contesta el Edge a una InferenceRequest: con
-// guion, el JSON sale sellado y se abre con la privada de la nube; si el guion falla, sale el error
-// nombrado; sin guion, OLLAMA_DOWN; un calentamiento no consulta el guion; las peticiones quedan
-// registradas; un guion lento no frena el resto de comandos; y las inferencias van de una en una.
+// TestArnes_EdgeInferencia prueba, sin servidor, cómo contesta el Edge a una InferenceRequest. Con
+// lease vigente: con guion, el JSON sale sellado y se abre con la privada de la nube; si el guion
+// falla, sale el error nombrado; sin guion, OLLAMA_DOWN; un calentamiento no consulta el guion; las
+// peticiones quedan registradas; un guion lento no frena el resto de comandos; y las inferencias
+// van de una en una. Sin lease vigente —ninguno todavía, rechazado, vencido o revocado—, y como el
+// Edge real: agotada la gracia contesta INFERENCE_ERROR_LEASE_INVALID sin consultar el guion; si el
+// lease llega dentro de la gracia, sirve; y cerrar el enlace corta la espera.
 func TestArnes_EdgeInferencia(t *testing.T) {
 	t.Parallel()
+	t.Run("gate de lease: sin lease vigente no se infiere y se contesta LEASE_INVALID", edgeCheckInferenceLeaseGate)
+	t.Run("gate de lease: un lease vencido tampoco deja inferir", edgeCheckInferenceLeaseGateExpired)
+	t.Run("gate de lease: la gracia espera al lease y el cierre la corta", edgeCheckInferenceLeaseGrace)
 	t.Run("con guion: la salida va sellada", edgeProbarInferenciaConGuion)
 	t.Run("el guion falla: error nombrado", edgeProbarInferenciaFalla)
 	t.Run("sin guion: OLLAMA_DOWN", edgeProbarInferenciaSinGuion)
@@ -1853,12 +1925,189 @@ func edgeAbrirSalida(t *testing.T, f *cloudlinkv1.EdgeToCloud, k claves) (id, cr
 	return res.GetCommandId(), salida.GetRawJson()
 }
 
+// edgeInferenceTestGrace es la gracia corta con la que los tests del núcleo recorren el gate de
+// lease de la inferencia sin pagar los 2 s del Edge real en cada bloqueo.
+const edgeInferenceTestGrace = 100 * time.Millisecond
+
+// edgeCheckInferenceBlocked manda al Edge una inferencia normal y un calentamiento y comprueba que
+// NINGUNO se sirve: cada uno se contesta con un solo frame, un InferenceResult con el command_id de
+// la petición, INFERENCE_ERROR_LEASE_INVALID y sin salida sellada, en la sesión del comando; no es
+// un Ack. Recibe la etapa (para los mensajes y para que los command_id no se repitan). Falla el
+// test con t.Errorf por cada incumplimiento.
+func edgeCheckInferenceBlocked(t *testing.T, e *edge, c *edgeColector, stage string) {
+	t.Helper()
+	for _, warmup := range []bool{false, true} {
+		before := len(c.todos())
+		id := fmt.Sprintf("%s-warmup-%v", stage, warmup)
+		e.manejar(edgePeticion(id, "p", warmup, nil))
+		frames := c.todos()[before:]
+		if len(frames) != 1 {
+			t.Errorf("%s, warmup=%v: %d frames emitidos, quería 1 (el InferenceResult de rechazo)", stage, warmup, len(frames))
+			continue
+		}
+		res := frames[0].GetInferenceResult()
+		if res == nil {
+			t.Errorf("%s, warmup=%v: el frame es %T, quería un InferenceResult (la inferencia no se acusa con Ack)", stage, warmup, frames[0].GetPayload())
+			continue
+		}
+		if res.GetCommandId() != id || res.GetError() != cloudlinkv1.InferenceError_INFERENCE_ERROR_LEASE_INVALID ||
+			len(res.GetEncOutput()) != 0 || frames[0].GetSessionId() != "sesion-x" {
+			t.Errorf("%s, warmup=%v: InferenceResult de %q con error %v y %d bytes de salida sellada, en la sesión %q; quería LEASE_INVALID de %s, sin salida, en sesion-x",
+				stage, warmup, res.GetCommandId(), res.GetError(), len(res.GetEncOutput()), frames[0].GetSessionId(), id)
+		}
+	}
+}
+
+// edgeCheckInferenceLeaseGate recorre la vida del lease y comprueba el gate de la inferencia en cada
+// etapa, igual que el Edge real (carrilInferencia.leaseVigente de wapp-edge-agent): sin ningún lease
+// todavía, bloquea; con uno que el Validator rechazó por firma ajena, bloquea; con uno vigente, la
+// inferencia consulta el guion y sale sellada, y el calentamiento sale; tras la revocación, bloquea;
+// y un lease vigente posterior no lo reabre (la revocación es pegajosa). El guion solo se consulta
+// la vez que se sirvió, las peticiones bloqueadas quedan registradas, y los bloqueos no se anotan
+// en Errores. La gracia y el sondeo por defecto son literalmente los del Edge real.
+func edgeCheckInferenceLeaseGate(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	e.inferenceLeaseGrace = edgeInferenceTestGrace
+	iss := edgeEmisorLease(t, k)
+	foreign := edgeEmisorLease(t, nuevasClaves(t))
+	apply := func(lu *cloudlinkv1.LeaseUpdate, err error) {
+		t.Helper()
+		e.manejar(edgeLeaseCommand(t, e, lu, err))
+	}
+	if edgeInferenceLeaseGrace != 2000*time.Millisecond || edgeInferenceLeasePoll != 50*time.Millisecond {
+		t.Fatalf("la gracia y el sondeo por defecto son %s y %s: deben ser los del Edge real, 2 s y 50 ms",
+			edgeInferenceLeaseGrace, edgeInferenceLeasePoll)
+	}
+	var calls atomic.Int64
+	e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
+		calls.Add(1)
+		return `{"servida":true}`, nil
+	}
+
+	edgeCheckInferenceBlocked(t, e, c, "sin-lease")
+	apply(foreign.Issue(e.EdgeID, e.TenantID, time.Hour, 1))
+	edgeCheckInferenceBlocked(t, e, c, "lease-rechazado")
+
+	apply(iss.Issue(e.EdgeID, e.TenantID, time.Hour, 2))
+	before := len(c.todos())
+	e.manejar(edgePeticion("vigente", "p", false, nil))
+	e.manejar(edgePeticion("vigente-calentamiento", "p", true, nil))
+	frames := c.todos()[before:]
+	if len(frames) != 2 {
+		t.Fatalf("con lease vigente: %d frames, quería 2 InferenceResult", len(frames))
+	}
+	if id, raw := edgeAbrirSalida(t, frames[0], k); id != "vigente" || raw != `{"servida":true}` {
+		t.Errorf("con lease vigente, la inferencia = (%q, %q); quería la salida del guion", id, raw)
+	}
+	if id, raw := edgeAbrirSalida(t, frames[1], k); id != "vigente-calentamiento" || raw != edgeSalidaCalentamiento {
+		t.Errorf("con lease vigente, el calentamiento = (%q, %q); quería %q", id, raw, edgeSalidaCalentamiento)
+	}
+
+	apply(iss.Revoke(e.EdgeID, e.TenantID))
+	edgeCheckInferenceBlocked(t, e, c, "revocado")
+	apply(iss.Issue(e.EdgeID, e.TenantID, time.Hour, 9))
+	edgeCheckInferenceBlocked(t, e, c, "revocado-y-renovado")
+
+	if n := calls.Load(); n != 1 {
+		t.Errorf("el guion se consultó %d veces, quería 1: una inferencia bloqueada no llega al guion", n)
+	}
+	if n := len(e.Inferencias()); n != 10 {
+		t.Errorf("Inferencias registra %d peticiones, quería 10 (las 8 bloqueadas también: la nube las pidió)", n)
+	}
+	if errs := e.Errores(); len(errs) != 1 || !errors.Is(errs[0], cllease.ErrBadSignature) {
+		t.Errorf("Errores = %v, quería solo el lease de firma ajena (un bloqueo no es un error del núcleo)", errs)
+	}
+}
+
+// edgeCheckInferenceLeaseGateExpired comprueba que el gate de la inferencia mira la vigencia y no
+// solo «hubo un lease»: con un lease bien firmado y aceptado por el Validator, pero ya vencido, no
+// se infiere.
+func edgeCheckInferenceLeaseGateExpired(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	e.inferenceLeaseGrace = edgeInferenceTestGrace
+	lu, err := edgeEmisorLease(t, k).Issue(e.EdgeID, e.TenantID, -time.Minute, edgeContadorInicial)
+	e.manejar(edgeLeaseCommand(t, e, lu, err))
+	if errs := e.Errores(); len(errs) != 0 || e.puedeOperar() {
+		t.Fatalf("el lease vencido debía aceptarse y no dejar operar: errores %v, puedeOperar %v", errs, e.puedeOperar())
+	}
+	edgeCheckInferenceBlocked(t, e, c, "vencido")
+}
+
+// edgeCheckInferenceLeaseGrace comprueba la gracia del gate, con el camino real del bucle
+// (despachar) y sin depender de cuánto tarde la máquina: (a) el rechazo no sale antes de agotar la
+// gracia; (b) una petición que llega ANTES que el lease —la ventana del arranque— espera y, en
+// cuanto el lease es vigente, se sirve (con una gracia de 30 s: si el gate no sondeara, el test
+// agotaría su espera en vez de pasar por suerte); y (c) cerrar el enlace corta la espera, y la
+// petición se contesta LEASE_INVALID sin anotar errores.
+func edgeCheckInferenceLeaseGrace(t *testing.T) {
+	t.Parallel()
+	const long = 30 * time.Second
+
+	t.Run("el rechazo espera la gracia entera", func(t *testing.T) {
+		t.Parallel()
+		e, c, _ := edgeDePrueba(t)
+		e.inferenceLeaseGrace = 3 * edgeInferenceTestGrace
+		start := time.Now()
+		e.manejar(edgePeticion("espera", "p", false, nil))
+		if d := time.Since(start); d < e.inferenceLeaseGrace {
+			t.Errorf("el rechazo salió a los %s, antes de agotar la gracia de %s", d, e.inferenceLeaseGrace)
+		}
+		if res := c.esperar(t, 1)[0].GetInferenceResult(); res.GetError() != cloudlinkv1.InferenceError_INFERENCE_ERROR_LEASE_INVALID {
+			t.Errorf("resultado = %+v, quería LEASE_INVALID", res)
+		}
+	})
+
+	t.Run("el lease llega dentro de la gracia: se sirve", func(t *testing.T) {
+		t.Parallel()
+		e, c, k := edgeDePrueba(t)
+		e.inferenceLeaseGrace = long
+		e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
+			return `{"a tiempo":true}`, nil
+		}
+		e.despachar(edgePeticion("temprana", "p", false, nil))
+		edgeEsperar(t, 5*time.Second, "la petición registrada", func() bool { return len(e.Inferencias()) == 1 })
+		if n := len(c.todos()); n != 0 {
+			t.Fatalf("sin lease y dentro de la gracia el Edge ya emitió %d frames", n)
+		}
+		edgeGrantLease(t, e, k)
+		if id, raw := edgeAbrirSalida(t, c.esperar(t, 1)[0], k); id != "temprana" || raw != `{"a tiempo":true}` {
+			t.Errorf("salida = (%q, %q); quería la del guion", id, raw)
+		}
+		if !edgeEsperarGrupo(&e.enVuelo, 5*time.Second) {
+			t.Errorf("la inferencia en vuelo no terminó")
+		}
+	})
+
+	t.Run("cerrar el enlace corta la espera", func(t *testing.T) {
+		t.Parallel()
+		e, c, _ := edgeDePrueba(t)
+		e.inferenceLeaseGrace = long
+		e.despachar(edgePeticion("al-cerrar", "p", false, nil))
+		edgeEsperar(t, 5*time.Second, "la petición registrada", func() bool { return len(e.Inferencias()) == 1 })
+		if err := e.cerrarEnlace(); err != nil {
+			t.Fatalf("cerrarEnlace: %v", err)
+		}
+		if !edgeEsperarGrupo(&e.enVuelo, 5*time.Second) {
+			t.Fatalf("la inferencia siguió esperando su gracia de %s tras empezar el cierre", long)
+		}
+		if res := c.esperar(t, 1)[0].GetInferenceResult(); res.GetCommandId() != "al-cerrar" || res.GetError() != cloudlinkv1.InferenceError_INFERENCE_ERROR_LEASE_INVALID {
+			t.Errorf("resultado = %+v, quería LEASE_INVALID de al-cerrar", res)
+		}
+		if errs := e.Errores(); len(errs) != 0 {
+			t.Errorf("Errores = %v; cortar la gracia al cerrar no es un error del núcleo", errs)
+		}
+	})
+}
+
 // edgeProbarInferenciaConGuion comprueba que el guion recibe la petición, que su JSON vuelve sellado
 // (se abre con NubePriv y reproduce el JSON), con el command_id de la petición y en la sesión del
 // comando, y que la petición queda registrada entera.
 func edgeProbarInferenciaConGuion(t *testing.T) {
 	t.Parallel()
 	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	var visto atomic.Pointer[cloudlinkv1.InferenceRequest]
 	e.Inferir = func(req *cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
 		visto.Store(req)
@@ -1888,7 +2137,8 @@ func edgeProbarInferenciaConGuion(t *testing.T) {
 // sellada.
 func edgeProbarInferenciaFalla(t *testing.T) {
 	t.Parallel()
-	e, c, _ := edgeDePrueba(t)
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
 		return "ignorado", cloudlinkv1.InferenceError_INFERENCE_ERROR_TIMEOUT.Enum()
 	}
@@ -1902,7 +2152,8 @@ func edgeProbarInferenciaFalla(t *testing.T) {
 // edgeProbarInferenciaSinGuion comprueba que sin guion se contesta OLLAMA_DOWN.
 func edgeProbarInferenciaSinGuion(t *testing.T) {
 	t.Parallel()
-	e, c, _ := edgeDePrueba(t)
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	e.manejar(edgePeticion("inf-3", "p", false, nil))
 	res := c.todos()[0].GetInferenceResult()
 	if res.GetCommandId() != "inf-3" || res.GetError() != cloudlinkv1.InferenceError_INFERENCE_ERROR_OLLAMA_DOWN || len(res.GetEncOutput()) != 0 {
@@ -1915,6 +2166,7 @@ func edgeProbarInferenciaSinGuion(t *testing.T) {
 func edgeProbarCalentamiento(t *testing.T) {
 	t.Parallel()
 	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	var llamadas atomic.Int64
 	e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
 		llamadas.Add(1)
@@ -1935,6 +2187,7 @@ func edgeProbarCalentamiento(t *testing.T) {
 func edgeProbarInferenciaLenta(t *testing.T) {
 	t.Parallel()
 	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	entro, suelta := make(chan struct{}), make(chan struct{})
 	e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
 		close(entro)
@@ -1968,7 +2221,8 @@ func edgeProbarInferenciaLenta(t *testing.T) {
 // la vez (una plaza única, como el Ollama real) y que las dos se contestan.
 func edgeProbarInferenciasSerializadas(t *testing.T) {
 	t.Parallel()
-	e, c, _ := edgeDePrueba(t)
+	e, c, k := edgeDePrueba(t)
+	edgeGrantLease(t, e, k)
 	var dentro, maximo atomic.Int64
 	e.Inferir = func(*cloudlinkv1.InferenceRequest) (string, *cloudlinkv1.InferenceError) {
 		n := dentro.Add(1)
@@ -2757,8 +3011,9 @@ func edgeCheckForeignLeaseKey(t *testing.T, esc edgeEscenario, e *edge) {
 // reconexión, y la revocación del lease con su efecto: tras revocar, el envío del servidor ya no se
 // entrega (200 con ok=false y «lease no vigente»), tampoco tras reconectar. Necesita Docker.
 //
-// NO ejercita contra el servidor: los Ping (no hay ruta que los provoque), la inferencia (la pide la
-// canalización LLM, que monta T9.17), ni el camino del entrante hasta una respuesta (perfil y flujos,
+// NO ejercita contra el servidor: los Ping (no hay ruta que los provoque), la inferencia (aquí no:
+// el calentamiento y su gate de lease los recorre TestArnes_EdgeInferenceLeaseGate; la que pide la
+// canalización LLM la monta T9.17), ni el camino del entrante hasta una respuesta (perfil y flujos,
 // que monta P3).
 func TestArnes_EdgeFrames(t *testing.T) {
 	t.Parallel()
@@ -3009,4 +3264,143 @@ func edgeCheckNotDelivered(t *testing.T, esc edgeEscenario, e *edge, stage strin
 	if n := len(e.Textos()); n != 0 {
 		t.Errorf("%s: hay %d textos en el canal de un Edge que no puede operar", stage, n)
 	}
+}
+
+// Los dos mensajes con los que el servidor dice, en su log de nivel debug, cómo acabó un
+// calentamiento de la caché de prefijo de un Edge (internal/intakeahead/calentamiento.go, calentar):
+// el Edge lo sirvió, o no; en el segundo caso el campo «error» trae el motivo del gateway.
+const (
+	edgeLogWarmupServed    = "calentamiento: emitido contra el Edge"
+	edgeLogWarmupNotServed = "calentamiento: no se emitió"
+)
+
+// edgeIntentsCatalog arma un catálogo de intenciones mínimo y válido para PUT /api/v1/intents (una
+// intención con un ejemplo), con la versión dada. Dos versiones distintas dan dos catálogos
+// distintos: el servidor empuja un ConfigUpdate nuevo y pide otro calentamiento.
+func edgeIntentsCatalog(version string) map[string]any {
+	return map[string]any{
+		"version": version,
+		"intents": []map[string]any{{
+			"name":        "solicitud_pedido",
+			"descripcion": "El cliente pide productos o un presupuesto",
+			"ejemplos":    []map[string]any{{"mensaje": "quiero 3 cajas de tornillos"}},
+		}},
+	}
+}
+
+// edgePublishIntents publica el catálogo de la versión dada por la puerta HTTP de la administradora
+// (PUT /api/v1/intents) y espera a que el Edge reciba, por su efecto, una InferenceRequest más de
+// las want-1 que ya tenía: el servidor persiste el catálogo, empuja el ConfigUpdate «intents» a las
+// sesiones vivas y pide UN calentamiento por Edge. Devuelve esa petición. Falla (t.Fatalf) si el PUT
+// no da 200 o si la petición no llega.
+func edgePublishIntents(t *testing.T, esc edgeEscenario, e *edge, version string, want int) *cloudlinkv1.InferenceRequest {
+	t.Helper()
+	r := esc.S.Publica(esc.TokenAdmin).Put(t, "/api/v1/intents", edgeIntentsCatalog(version))
+	if r.Codigo != http.StatusOK {
+		t.Fatalf("publicar el catálogo %q: HTTP %d, quería 200\ncuerpo: %s", version, r.Codigo, recortar(r.Cuerpo))
+	}
+	edgeEsperar(t, edgeTopeFila, fmt.Sprintf("la InferenceRequest número %d en el Edge", want), func() bool { return len(e.Inferencias()) >= want })
+	return e.Inferencias()[want-1]
+}
+
+// edgeWarmupLogLines devuelve las líneas del log del servidor con el mensaje msg (uno de los dos
+// de arriba) cuya sesión es la del Edge, en orden.
+func edgeWarmupLogLines(s *servidor, e *edge, msg string) []map[string]any {
+	var lines []map[string]any
+	for _, l := range s.LineasLog() {
+		if l["msg"] == msg && l["session_id"] == e.SessionID {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// edgeCheckWarmupRefused espera a que el servidor haya registrado want calentamientos NO servidos
+// por el Edge y comprueba que el último lo fue por el lease: el campo «error» de la línea trae el
+// motivo `lease_invalid` del gateway y el nombre del error del contrato,
+// INFERENCE_ERROR_LEASE_INVALID. Recibe la etapa, para los mensajes. Falla el test (t.Fatalf) si las
+// líneas no llegan, y con t.Errorf si el motivo es otro.
+func edgeCheckWarmupRefused(t *testing.T, esc edgeEscenario, e *edge, stage string, want int) {
+	t.Helper()
+	var lines []map[string]any
+	edgeEsperar(t, edgeTopeFila, fmt.Sprintf("%s: %d líneas %q en el log del servidor", stage, want, edgeLogWarmupNotServed), func() bool {
+		lines = edgeWarmupLogLines(esc.S, e, edgeLogWarmupNotServed)
+		return len(lines) >= want
+	})
+	reason := fmt.Sprint(lines[want-1]["error"])
+	if !strings.Contains(reason, "lease_invalid") ||
+		!strings.Contains(reason, cloudlinkv1.InferenceError_INFERENCE_ERROR_LEASE_INVALID.String()) {
+		t.Errorf("%s: el servidor dice que el calentamiento no salió por %q; quería el motivo lease_invalid (INFERENCE_ERROR_LEASE_INVALID)", stage, reason)
+	}
+}
+
+// TestArnes_EdgeInferenceLeaseGate prueba contra el servidor real que el Edge de prueba obedece al
+// lease también en la INFERENCIA, como el Edge real (ADR-0007: servir inferencia es operar). La
+// inferencia se provoca por la única puerta que hoy no exige montar la canalización LLM: publicar
+// el catálogo de intenciones, tras lo cual el servidor pide al Edge un calentamiento
+// (InferenceRequest con warmup=true).
+//
+//  1. Con lease vigente (el control: sin él, lo de abajo pasaría en falso): el Edge recibe el
+//     ConfigUpdate «intents» y el calentamiento, lo sirve, y el servidor lo registra como emitido.
+//  2. Tras POST /admin/leases/revoke, otro catálogo provoca otro calentamiento: el Edge lo recibe y,
+//     agotada su gracia, contesta INFERENCE_ERROR_LEASE_INVALID; el servidor registra que no salió,
+//     con el motivo lease_invalid.
+//  3. Reconectar no lo arregla: el servidor vuelve a pedir el calentamiento al Edge revocado, y
+//     vuelve a recibir lease_invalid.
+//
+// En ningún momento el servidor da un calentamiento por servido después de la revocación. Necesita
+// Docker.
+func TestArnes_EdgeInferenceLeaseGate(t *testing.T) {
+	t.Parallel()
+	esc := edgeEscenarioNuevo(t, "edge_inference_gate", "edge-inference-gate", true)
+	e := enrolar(t, esc.S, edgeEmitirCodigo(t, esc.S, esc.TokenStaff, esc.Tenant))
+	e.conectar(t)
+	// El latido de conectar ya provocó la renovación del lease y el aviso de calentamiento del
+	// arranque, que sin catálogo publicado termina sin pedir nada: se espera a esa renovación para
+	// que el calentamiento del primer PUT no coincida con aquel (el servidor lleva uno en vuelo por
+	// Edge y descartaría el segundo).
+	e.esperarLeases(t, 2, edgeTopeFila)
+	if n := len(e.Inferencias()); n != 0 {
+		t.Fatalf("sin catálogo publicado el Edge ya recibió %d peticiones de inferencia", n)
+	}
+
+	req := edgePublishIntents(t, esc, e, "1", 1)
+	if !req.GetWarmup() || req.GetPrompt() == "" {
+		t.Errorf("la petición tras publicar el catálogo: warmup=%v, prompt de %d bytes; quería un calentamiento con prompt", req.GetWarmup(), len(req.GetPrompt()))
+	}
+	if cfg := e.esperarConfig(t, "intents", edgeTopeFila); cfg.Sesion != e.SessionID || !json.Valid(cfg.Payload) {
+		t.Errorf("el ConfigUpdate intents = sesión %q, payload válido %v", cfg.Sesion, json.Valid(cfg.Payload))
+	}
+	edgeEsperar(t, edgeTopeFila, "el calentamiento servido, en el log del servidor", func() bool {
+		return len(edgeWarmupLogLines(esc.S, e, edgeLogWarmupServed)) == 1
+	})
+	if lines := edgeWarmupLogLines(esc.S, e, edgeLogWarmupNotServed); len(lines) != 0 {
+		t.Fatalf("con lease vigente el servidor registró calentamientos no servidos: %v", lines)
+	}
+
+	r := esc.S.Admin(esc.TokenAdmin).Post(t, "/admin/leases/revoke", map[string]string{"edge_id": e.EdgeID})
+	if r.Codigo != http.StatusNoContent {
+		t.Fatalf("revocar el lease: HTTP %d, quería 204\ncuerpo: %s", r.Codigo, recortar(r.Cuerpo))
+	}
+	edgeEsperar(t, edgeTopeFila, "que el Edge quede revocado", e.revocado)
+
+	if req := edgePublishIntents(t, esc, e, "2", 2); !req.GetWarmup() {
+		t.Errorf("la petición tras publicar el segundo catálogo no es un calentamiento: %+v", req)
+	}
+	edgeCheckWarmupRefused(t, esc, e, "tras revocar", 1)
+
+	e.conectar(t) // no falla: una revocación aceptada por el Validator no es un rechazo
+	if e.puedeOperar() || !e.revocado() {
+		t.Errorf("tras reconectar el Edge revocado: puedeOperar=%v revocado=%v; quería falso y verdadero", e.puedeOperar(), e.revocado())
+	}
+	edgeEsperar(t, edgeTopeFila, "el calentamiento del arranque en el Edge reconectado", func() bool { return len(e.Inferencias()) >= 3 })
+	edgeCheckWarmupRefused(t, esc, e, "tras reconectar revocado", 2)
+
+	if lines := edgeWarmupLogLines(esc.S, e, edgeLogWarmupServed); len(lines) != 1 {
+		t.Errorf("el servidor dio por servidos %d calentamientos, quería 1 (el de antes de revocar): %v", len(lines), lines)
+	}
+	if errs := e.Errores(); len(errs) != 0 {
+		t.Errorf("el núcleo del Edge anotó errores: %v", errs)
+	}
+	edgeSinErrores(t, esc.S, nil)
 }

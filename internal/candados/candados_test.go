@@ -117,10 +117,12 @@ const helperTestDoubleBody = "\n\n// Next devuelve el siguiente.\nfunc Next(n in
 
 // helperTestSuffixCases son los nombres de paquete que fijan el borde de D-F1-10 (Jhoan,
 // 2026-10-02) en los TRES candados (UnFicheroUnTest, ExportadosCubiertos y la cobertura por
-// fichero): queda exento el paquete cuyo nombre (la cláusula `package`, pkg; no el
+// fichero): es de suite y dobles el paquete cuyo nombre (la cláusula `package`, pkg; no el
 // directorio, dir) termina en «helpertest» y tiene algo delante. Un nombre que termina en
 // «test» a secas —uno de producción como latest, o el nombre viejo de las suites, cosatest—
-// ya no lo está, y «helpertest» sin prefijo tampoco (no es la suite de ningún paquete).
+// ya no lo es, y «helpertest» sin prefijo tampoco (no es la suite de ningún paquete). Los dos
+// primeros candados dejan fuera ese paquete entero; la cobertura por fichero, solo sus
+// ficheros de suite (D-F1-13), y por eso prueba estos nombres con un contrato.go.
 var helperTestSuffixCases = []struct {
 	name   string
 	dir    string
@@ -163,6 +165,77 @@ func TestIsHelperTestPackage(t *testing.T) {
 	for _, name := range []string{"", "cosaHelperTest", "cosaHELPERTEST", "cosa_helper_test", "cosahelpertest_test"} {
 		if isHelperTestPackage(name) {
 			t.Errorf("isHelperTestPackage(%q) = true; quiero false", name)
+		}
+	}
+}
+
+// ── El fichero de suite: contrato.go y *_contrato.go de un paquete …helpertest (D-F1-13) ──
+
+// contractSuiteFileCases son los nombres base que fijan el borde de D-F1-13 (Jhoan,
+// 2026-10-02): dentro de un paquete …helpertest, es fichero de suite —y por eso queda fuera de
+// la cobertura por fichero— el que se llama exactamente «contrato.go» o termina en
+// «_contrato.go» con algo delante. Todo lo demás es un doble o una ayuda, y se mide.
+var contractSuiteFileCases = []struct {
+	name  string
+	base  string
+	suite bool
+}{
+	{"contrato.go holds the Contrato suite", "contrato.go", true},
+	{"merge_contrato.go is a themed piece of the suite", "merge_contrato.go", true},
+	{"a one-letter theme is enough", "x_contrato.go", true},
+	{"a theme with underscores", "push_name_contrato.go", true},
+	{"estado.go is a double with logic", "estado.go", false},
+	{"memory.go is an in-memory double", "memory.go", false},
+	{"doble.go is a double", "doble.go", false},
+	{"_contrato.go has nothing before the suffix", "_contrato.go", false},
+	{"micontrato.go lacks the underscore", "micontrato.go", false},
+	{"contrato_merge.go has the word at the wrong end", "contrato_merge.go", false},
+	{"contratos.go is a plural", "contratos.go", false},
+	{"xcontrato.go is not contrato.go", "xcontrato.go", false},
+	{"Contrato.go has another spelling", "Contrato.go", false},
+	{"merge_Contrato.go has another spelling", "merge_Contrato.go", false},
+	{"merge_contrato.go.go ends in something else", "merge_contrato.go.go", false},
+	{"contract.go is the translation, not the method word", "contract.go", false},
+}
+
+// TestIsContractSuiteFile: la única definición de «fichero de suite» (D-F1-13). Lo es el
+// fichero de un paquete …helpertest (por su cláusula `package`, no por su directorio) cuyo
+// nombre base es contrato.go o <algo>_contrato.go. El MISMO nombre en un paquete que no es
+// …helpertest no lo es, y lo que cuenta es el nombre base: un directorio llamado como un
+// fichero de suite no convierte en suite lo que contiene.
+func TestIsContractSuiteFile(t *testing.T) {
+	if contractSuiteFile != "contrato.go" || contractSuiteSuffix != "_contrato.go" {
+		t.Errorf("contractSuiteFile = %q, contractSuiteSuffix = %q; D-F1-13 fija contrato.go y _contrato.go",
+			contractSuiteFile, contractSuiteSuffix)
+	}
+	const d = "internal/nucleo/cosa/cosahelpertest/"
+	for _, c := range contractSuiteFileCases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isContractSuiteFile(Fuente{Ruta: d + c.base, Paquete: "cosahelpertest"}); got != c.suite {
+				t.Errorf("isContractSuiteFile(%s, package cosahelpertest) = %v; quiero %v", c.base, got, c.suite)
+			}
+			for _, pkg := range []string{"cosa", "cosatest", "latest", "helpertest", "cosahelpertest_test"} {
+				if isContractSuiteFile(Fuente{Ruta: d + c.base, Paquete: pkg}) {
+					t.Errorf("isContractSuiteFile(%s, package %s) = true; quiero false: no es un paquete …helpertest", c.base, pkg)
+				}
+			}
+		})
+	}
+	// Sin directorio, el nombre base es la ruta entera; y el directorio no cuenta.
+	edges := []struct {
+		path  string
+		suite bool
+	}{
+		{"contrato.go", true},
+		{"merge_contrato.go", true},
+		{"a/b/c/contrato.go", true},
+		{"internal/contrato.go/estado.go", false},
+		{"internal/merge_contrato.go/estado.go", false},
+		{"", false},
+	}
+	for _, b := range edges {
+		if got := isContractSuiteFile(Fuente{Ruta: b.path, Paquete: "cosahelpertest"}); got != b.suite {
+			t.Errorf("isContractSuiteFile(%q) = %v; quiero %v", b.path, got, b.suite)
 		}
 	}
 }

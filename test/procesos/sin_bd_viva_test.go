@@ -10,8 +10,12 @@ import (
 // vivo; la única cadena de conexión válida es la del contenedor de la corrida (05 §7.2). Va sin
 // etiqueta integracion para correr en ci-local (plan/F0-andamiaje/reglas.md §3), y recorre
 // todos los .go del paquete, con o sin etiqueta, tests incluidos (los procesos de F9 son
-// _test.go). Los patrones los define candados.SinBDViva, que se salta este fichero por nombre;
-// su caso que muerde vive en internal/candados/testdata/sinbdviva/muerde (T0.5).
+// _test.go). Las reglas las define candados.SinBDViva, y son dos (D-F9-6, 2026-10-02): una
+// lista blanca de quién abre conexiones —sql.Open, pgx.Connect, pgxpool.New y las demás
+// aperturas solo pueden estar en test/procesos/base_test.go— y la lista negra de patrones, de
+// la que se salta solo este fichero. Las dos exenciones son rutas exactas relativas a la raíz
+// del repo, que es la que recibe Recorrer. Sus casos que muerden viven en
+// internal/candados/testdata/sinbdviva/muerde (T0.5).
 func TestSinBDViva(t *testing.T) {
 	fuentes, err := candados.Recorrer("../..", []string{"test/procesos"}, true)
 	if err != nil {

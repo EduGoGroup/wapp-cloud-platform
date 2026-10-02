@@ -127,7 +127,7 @@ sirve un MinIO (`docker run … minio/minio`) con `WAPP_STORAGE_S3_ENDPOINT` apu
 | `make vet` | `GOWORK=off go vet ./...` | errores estáticos del compilador extendido |
 | `make vet-pendiente` | `GOWORK=off go vet -tags pendiente ./...` | que los tests en rojo de la reconstrucción modular compilan |
 | `make vet-integracion` | `GOWORK=off go vet -tags integracion ./test/procesos/...` | que los procesos de F9 compilan, sin Docker |
-| `make lint` | `golangci-lint` **v2.12.2 fijado**: el de `.bin/` si existe, ejecuta y es esa versión; si no, el del `PATH`. Falla si ninguno lo es y manda a `make tools` | los **16** linters de `.golangci.yml` (`linters.enable`) más sus 2 formateadores (`formatters.enable`) |
+| `make lint` | `golangci-lint` **v2.12.2 fijado**: el de `.bin/` si existe, ejecuta y es esa versión; si no, el del `PATH`. Falla si ninguno lo es y manda a `make tools`. ✎ 2026-10-02: su caché es **por *checkout*** (`.bin/lint-cache`, `LINT_CACHE_DIR`), no la del usuario: la compartida entre *worktrees* devolvía resultados con rutas de otro *checkout* y daba como *issues* los silenciados con `//nolint` (medido: 36 *issues* falsos, rc=2). La primera pasada de cada *checkout* va en frío | los **16** linters de `.golangci.yml` (`linters.enable`) más sus 2 formateadores (`formatters.enable`) |
 | `make test` | `GOWORK=off go test -race ./...` | unitarios con detector de carreras. **Los `*_integration_test.go` se saltan solos sin `WAPP_TEST_DB_DSN`** |
 | `make cobertura-ficheros` | cobertura de sentencias por fichero en verde del árbol nuevo, umbral 80 %; imprime `FICHEROS_EVALUADOS`, `POR_DEBAJO` y `EXENTOS_POSTGRES` | D-12 de la reconstrucción modular |
 | `make build` | `GOWORK=off go build ./...` | compila |

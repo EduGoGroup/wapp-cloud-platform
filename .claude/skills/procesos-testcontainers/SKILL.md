@@ -17,7 +17,10 @@ ni una prueba contra Postgres.
 **Nunca un Postgres vivo.** Ni `WAPP_TEST_DB_DSN`, ni `localhost:5432`, ni un contenedor con nombre
 fijo levantado a mano, ni UAT, ni `testcontainers.WithReuseByName` (experimental, y es el mismo
 vicio con otro nombre). La única cadena de conexión válida es la que devuelve el contenedor de la
-corrida. El candado `test/procesos/sin_bd_viva_test.go` hace fallar el gate si aparece alguna.
+corrida. El candado `test/procesos/sin_bd_viva_test.go` hace fallar el gate si aparece alguna, y
+además si **cualquier fichero que no sea `test/procesos/base_test.go` abre una conexión**
+(`sql.Open`, `pgx.Connect`, `pgxpool.New`…; lista blanca por ruta exacta, D-F9-6, 2026-10-02): un
+proceso no abre la suya, usa la que le da el arnés (`nuevaBase(t, …)` y `base.Abrir(t)`).
 
 Los tests **viejos** sí usan `WAPP_TEST_DB_DSN` (135 usos): siguen así hasta el relevo, porque
 protegen el código viejo. No se copian.
@@ -29,6 +32,10 @@ protegen el código viejo. No se copian.
 - **Sesión local** (tiene Docker): `make test-procesos`, contra los dos binarios. **Es quien cierra
   F9.** Traspaso con la skill `traspaso-web-local`.
 - Sin Docker, el `TestMain` **falla**. No se salta.
+- 🔴 **`TestMain` exige `GOWORK=off`** (D-F9-7): sin la variable en el entorno sale con código 2 antes de
+  levantar nada (`go test` lo devuelve como rc=1). `make test-procesos` ya la pone; un
+  `go test -tags integracion ./test/procesos/` directo la lleva delante, también donde no hay
+  `go.work`, junto a `WAPP_PROCESOS_BINARIO=viejo|nuevo`. `go env -w` no vale.
 - 🔴 **En local, un `go` suelto es el del sistema** (`go1.27.1`), no el fijado: usa
   `make vet-integracion` y `make test-procesos`, o antepón `GOTOOLCHAIN=go1.26.5`. Compruébalo
   con `make toolchain` (`TOOLCHAIN=OK`). En la web da igual.
@@ -38,6 +45,7 @@ protegen el código viejo. No se copian.
 ```
 test/procesos/
 ├── main_test.go             TestMain: un contenedor, la plantilla migrada, los binarios compilados
+├── sweep_test.go            el directorio de la corrida y el barrido de los huérfanos (D-F9-8)
 ├── arnes_test.go            base clonada por proceso + servidor por proceso + clientes HTTP/gRPC
 ├── doc.go                   el comentario del paquete (sin etiqueta)
 ├── sin_bd_viva_test.go      el candado (sin etiqueta: corre en ci-local)
@@ -50,6 +58,10 @@ test/procesos/
 Todo con `//go:build integracion` en la primera línea, **salvo el candado `sin_bd_viva_test.go`**,
 que va sin etiqueta para morder en `ci-local` (F0 T0.8, `reglas.md` §3), y `doc.go`. **Un solo
 paquete**: Go compila un binario de test por paquete, y dos paquetes serían dos contenedores.
+
+⚠️ `TestMain` barre al entrar los directorios `procesos-<cifras>` huérfanos del `TMPDIR` **real** (los de
+más de una hora y con su marcador): quien toque las condiciones de `sweep_test.go` corre el paquete con
+`TMPDIR` en un directorio de usar y tirar.
 
 ### `TestMain`: una instancia por corrida
 

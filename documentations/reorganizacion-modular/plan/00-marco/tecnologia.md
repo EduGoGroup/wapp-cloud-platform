@@ -52,7 +52,7 @@ vez por *checkout*); `toolchain` imprime la toolchain efectiva y sale ≠ 0 si n
 | `ci-local` += `vet-pendiente` | `GOWORK=off go vet -tags pendiente ./...`: un rojo que no compila rompe el gate (`05` §5) |
 | `test-pendiente` | Imprime el **número de llamadas a `pendiente.Implementar(`** en ficheros de producción **fuera de `internal/pendiente/`** (el paquete que la define no cuenta) y corre `go test -tags pendiente` sobre `internal/modulos/... internal/nucleo/... internal/arranque/...` **sin** que su fallo rompa el target: el rojo es esperado. La cifra que importa es la cuenta, no los FAIL (un `panic` aborta el binario del paquete entero, `05` E-5) |
 | `cobertura-ficheros` | §5: cobertura de sentencias **por fichero** ≥ 80 % (D-12) sobre los ficheros **ya en verde**; sale con rc≠0 y lista los que no llegan |
-| `test-procesos` | `go test -tags integracion -v -count=1 ./test/procesos/...` contra `WAPP_PROCESOS_BINARIO=viejo` y luego `=nuevo`. En F0 puede nacer solo con el candado `sin_bd_viva_test.go`; el arnés y los procesos llegan en F9. ⚠️ La skill `procesos-testcontainers` dice que lo crea F9: **cualquiera de las dos vale** si F0 lo deja escrito |
+| `test-procesos` | `GOWORK=off go test -tags integracion -v -count=1 ./test/procesos/...` contra `WAPP_PROCESOS_BINARIO=viejo` y luego `=nuevo` (✎ D-F9-7, 2026-10-02: `TestMain` sale con código 2 si `GOWORK` no vale `off`; el `Makefile` lo pone, una invocación directa lo lleva delante). En F0 puede nacer solo con el candado `sin_bd_viva_test.go`; el arnés y los procesos llegan en F9. ⚠️ La skill `procesos-testcontainers` dice que lo crea F9: **cualquiera de las dos vale** si F0 lo deja escrito |
 
 ## 3 · Las dos etiquetas de build (D-11)
 
@@ -111,7 +111,7 @@ tail -1 "$L"                                          # GATE_RC=0 o nada que cel
    `GOWORK=off go test -v ./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... 2>&1 | grep -c -- '--- SKIP'` → **0**, siempre.
 3. **Pendientes, por cuenta estática.** Hasta que exista `make test-pendiente`:
    `grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal | grep -vc '_test\.go:'`.
-   Se informa **antes → después**. En F10 debe ser 0 (`sin_pendientes_test.go`).
+   Se informa **antes → después**. En F10 debe ser 0 (`no_pending_test.go`; D-F1-12, 2026-10-02: antes `sin_pendientes_test.go`).
 4. **Versión de herramienta.** Un gate corrido con un lint distinto de v2.12.2 o un Go distinto de
    1.26.5 se informa **con la versión usada** y como **no autoritativo**. ✎ 2026-10-02: se comprueba
    con `make toolchain` (`TOOLCHAIN=OK`, `rc=0`). Bajo `make` la versión es la fijada; un `go`

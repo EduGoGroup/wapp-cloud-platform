@@ -3,6 +3,7 @@ package candados
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -266,15 +267,20 @@ func TestCoberturaBordes(t *testing.T) {
 	exigeOrdenadas(t, vs)
 }
 
-// D-F1-6 (Jhoan, 2026-10-01): los paquetes de suite y dobles (suites Contrato y dobles, p. ej.
-// contacthelpertest) quedan exentos también de la cobertura por fichero (D-12). Su suite solo
-// la ejecutan los tests de las implementaciones, que viven en otros paquetes, y
-// `go test -cover` sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil
-// del propio paquete el fichero sale al 0 % y rompería `make cobertura-ficheros`.
+// D-F1-6 (Jhoan, 2026-10-01): las suites de contrato quedan exentas de la cobertura por
+// fichero (D-12). Solo las ejecutan los tests de las implementaciones, que viven en otros
+// paquetes, y `go test -cover` sin -coverpkg no cuenta lo que se ejecuta desde otro paquete:
+// en el perfil del propio paquete el fichero sale al 0 % y rompería `make cobertura-ficheros`.
 //
-// D-F1-10 (Jhoan, 2026-10-02) ESTRECHA cómo se reconoce ese paquete: su nombre termina en el
-// sufijo compuesto «helpertest» (…helpertest), no en «test» a secas. Con «test», un paquete de
-// producción como latest quedaba sin medir; ahora latest y cosatest se miden y muerden.
+// D-F1-10 (Jhoan, 2026-10-02) ESTRECHA cómo se reconoce el paquete de suite y dobles: su nombre
+// termina en el sufijo compuesto «helpertest» (…helpertest), no en «test» a secas. Con «test»,
+// un paquete de producción como latest quedaba sin medir; ahora latest y cosatest se miden.
+//
+// D-F1-13 (Jhoan, 2026-10-02) ESTRECHA qué queda exento DENTRO de ese paquete: solo los
+// ficheros de suite, contrato.go y *_contrato.go (isContractSuiteFile). Los demás —los dobles
+// con lógica, como contacthelpertest/estado.go— los ejecuta el test de su propio paquete, así
+// que se miden con el umbral normal: uno por debajo muerde, uno por encima pasa. Y un fichero
+// que se llama contrato.go o x_contrato.go en un paquete que NO es …helpertest no es de suite.
 //
 // Los árboles de prueba están en testdata/cobertura/paquetes-test/{pasa,muerde} (aparte de
 // testdata/cobertura/{pasa,muerde}, cuyas cifras exactas comprueba cmd/cobertura-ficheros);
@@ -306,11 +312,13 @@ func exigeSinCubrirEn(t *testing.T, perfil map[string]Fichero, fuentes []Fuente,
 	t.Fatalf("%s no está entre las fuentes recorridas", ruta)
 }
 
-// TestCoberturaPaquetesTestEvaluables: Evaluables no devuelve ningún fichero de un paquete
-// cuyo nombre termina en «helpertest», aunque el perfil le dé sentencias y ninguna cubierta;
-// el paquete que no lo es sigue midiéndose —también el de producción que termina en «test»
-// por casualidad (latest) y el del nombre viejo de las suites (cosatest), D-F1-10—; y el
-// contrato en rojo y el adaptador Postgres legítimo siguen fuera, como antes.
+// TestCoberturaPaquetesTestEvaluables: de un paquete cuyo nombre termina en «helpertest»,
+// Evaluables deja fuera SOLO los ficheros de suite (contrato.go y *_contrato.go), aunque el
+// perfil les dé sentencias y ninguna cubierta; su doble con lógica se mide (D-F1-13). Fuera
+// de un paquete …helpertest, llamarse contrato.go o merge_contrato.go no exime: se miden en
+// cosa, y en cosatest, el nombre viejo de las suites. Siguen midiéndose el paquete de
+// producción que termina en «test» por casualidad (latest, D-F1-10), y siguen fuera el
+// contrato en rojo y el adaptador Postgres legítimo, como antes.
 func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 	casos := []struct {
 		nombre    string
@@ -318,24 +326,36 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 		sinCubrir map[string]string // fichero con sentencias y 0 cubiertas → su paquete
 		quiero    []string
 	}{
-		{"pasa: la suite y el doble del paquete …helpertest no se miden; cosa.go sí", arbolPaquetesTestPasa,
+		{"pasa: los ficheros de suite del paquete …helpertest no se miden; su doble y cosa.go sí", arbolPaquetesTestPasa,
 			map[string]string{
-				dirPaquetesTest + "cosahelpertest/doble.go":    "cosahelpertest",
-				dirPaquetesTest + "cosahelpertest/contrato.go": "cosahelpertest",
-				dirPaquetesTest + "pg/pg.go":                   "pg",
-				dirPaquetesTest + "rojo/rojo.go":               "rojo",
-			},
-			[]string{dirPaquetesTest + "cosa/cosa.go"}},
-		{"muerde: el MISMO doble se mide si su paquete no acaba en helpertest, y latest también", arbolPaquetesTestMuerde,
-			map[string]string{
-				dirPaquetesTest + "cosa/doble.go":           "cosa",
-				dirPaquetesTest + "cosahelpertest/doble.go": "cosahelpertest",
-				dirPaquetesTest + "cosatest/doble.go":       "cosatest",
-				dirPaquetesTest + "latest/latest.go":        "latest",
-				dirPaquetesTest + "rojo/rojo.go":            "rojo",
+				dirPaquetesTest + "cosahelpertest/contrato.go":       "cosahelpertest",
+				dirPaquetesTest + "cosahelpertest/merge_contrato.go": "cosahelpertest",
+				dirPaquetesTest + "pg/pg.go":                         "pg",
+				dirPaquetesTest + "rojo/rojo.go":                     "rojo",
 			},
 			[]string{
+				dirPaquetesTest + "cosa/cosa.go",
+				dirPaquetesTest + "cosahelpertest/doble.go",
+			}},
+		{"muerde: el doble de …helpertest se mide; contrato.go y merge_contrato.go, solo fuera de …helpertest", arbolPaquetesTestMuerde,
+			map[string]string{
+				dirPaquetesTest + "cosa/contrato.go":                 "cosa",
+				dirPaquetesTest + "cosa/doble.go":                    "cosa",
+				dirPaquetesTest + "cosa/merge_contrato.go":           "cosa",
+				dirPaquetesTest + "cosahelpertest/contrato.go":       "cosahelpertest",
+				dirPaquetesTest + "cosahelpertest/doble.go":          "cosahelpertest",
+				dirPaquetesTest + "cosahelpertest/merge_contrato.go": "cosahelpertest",
+				dirPaquetesTest + "cosatest/contrato.go":             "cosatest",
+				dirPaquetesTest + "cosatest/doble.go":                "cosatest",
+				dirPaquetesTest + "latest/latest.go":                 "latest",
+				dirPaquetesTest + "rojo/rojo.go":                     "rojo",
+			},
+			[]string{
+				dirPaquetesTest + "cosa/contrato.go",
 				dirPaquetesTest + "cosa/doble.go",
+				dirPaquetesTest + "cosa/merge_contrato.go",
+				dirPaquetesTest + "cosahelpertest/doble.go",
+				dirPaquetesTest + "cosatest/contrato.go",
 				dirPaquetesTest + "cosatest/doble.go",
 				dirPaquetesTest + "latest/latest.go",
 			}},
@@ -353,13 +373,18 @@ func TestCoberturaPaquetesTestEvaluables(t *testing.T) {
 	}
 }
 
-// TestCoberturaPaquetesTestViolaciones: un árbol con un paquete …helpertest al 0 %, un
-// contrato en rojo y un adaptador Postgres exento no da ninguna violación (el 80 % del resto
-// sí se mide), y el adaptador sigue contando como exento.
+// TestCoberturaPaquetesTestViolaciones: un árbol con los dos ficheros de suite de un paquete
+// …helpertest al 0 %, su doble con lógica POR ENCIMA del umbral (medido, y pasa), un contrato
+// en rojo y un adaptador Postgres exento no da ninguna violación, y el adaptador sigue
+// contando como exento.
 func TestCoberturaPaquetesTestViolaciones(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, arbolPaquetesTestPasa)
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/doble.go", "cosahelpertest")
 	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/contrato.go", "cosahelpertest")
+	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/merge_contrato.go", "cosahelpertest")
+	// El doble pasa porque está cubierto, no porque no se mire: tiene sentencias, todas cubiertas.
+	if fi := perfil[prefijoPerfil+dirPaquetesTest+"cosahelpertest/doble.go"]; fi.Sentencias == 0 || fi.Cubiertas != fi.Sentencias {
+		t.Fatalf("el perfil no deja cosahelpertest/doble.go cubierto entero: %+v", fi)
+	}
 
 	exigeCero(t, Cobertura(perfil, fuentes, 80))
 	if got, quiero := Exentos(fuentes), []string{dirPaquetesTest + "pg/pg.go"}; !reflect.DeepEqual(got, quiero) {
@@ -367,110 +392,191 @@ func TestCoberturaPaquetesTestViolaciones(t *testing.T) {
 	}
 }
 
-// TestCoberturaPaquetesTestContraste: el MISMO doble al 0 %, en un paquete cuyo nombre NO
-// termina en «helpertest», es violación por umbral —en cosa, el gemelo de control, y en
-// cosatest, el nombre viejo que D-F1-10 deja de eximir—; el de su vecino cosahelpertest no.
-// Y latest, un paquete de producción que termina en «test» por casualidad, también muerde.
+// TestCoberturaPaquetesTestContraste: el doble con lógica al 0 % muerde en su paquete
+// …helpertest igual que sus gemelos de cosa y de cosatest (D-F1-13: POR DEBAJO del umbral,
+// muerde). El MISMO contrato.go y el MISMO merge_contrato.go, al 0 %, no muerden en
+// cosahelpertest —son ficheros de suite— y sí en cosa y en cosatest, que no son paquetes
+// …helpertest. Y latest, un paquete de producción que termina en «test» por casualidad,
+// sigue mordiendo (D-F1-10).
 func TestCoberturaPaquetesTestContraste(t *testing.T) {
 	perfil, fuentes := casoCobertura(t, arbolPaquetesTestMuerde)
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosa/doble.go", "cosa")
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosahelpertest/doble.go", "cosahelpertest")
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"cosatest/doble.go", "cosatest")
-	exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+"latest/latest.go", "latest")
+	biting := []string{
+		"cosa/contrato.go", "cosa/doble.go", "cosa/merge_contrato.go",
+		"cosahelpertest/doble.go",
+		"cosatest/contrato.go", "cosatest/doble.go",
+		"latest/latest.go",
+	}
+	exempt := []string{"cosahelpertest/contrato.go", "cosahelpertest/merge_contrato.go"}
+	for _, f := range append(slices.Clone(biting), exempt...) {
+		exigeSinCubrirEn(t, perfil, fuentes, dirPaquetesTest+f, path.Dir(f)) // el directorio es el paquete
+	}
 
 	vs := Cobertura(perfil, fuentes, 80)
-	exigeViolacion(t, vs, dirPaquetesTest+"cosa/doble.go", "0.0 %", "80")
-	exigeViolacion(t, vs, dirPaquetesTest+"cosatest/doble.go", "0.0 %", "80")
-	exigeViolacion(t, vs, dirPaquetesTest+"latest/latest.go", "0.0 %", "80")
-	exigeNingunaEn(t, vs, dirPaquetesTest+"cosahelpertest/doble.go")
+	for _, f := range biting {
+		exigeViolacion(t, vs, dirPaquetesTest+f, "0.0 %", "80")
+	}
+	for _, f := range exempt {
+		exigeNingunaEn(t, vs, dirPaquetesTest+f)
+	}
 	exigeNingunaEn(t, vs, dirPaquetesTest+"rojo/rojo.go")
-	if len(vs) != 3 {
-		t.Errorf("se esperaban 3 violaciones; hay %d: %v", len(vs), vs)
+	if len(vs) != len(biting) {
+		t.Errorf("se esperaban %d violaciones; hay %d: %v", len(biting), len(vs), vs)
 	}
 	exigeOrdenadas(t, vs)
 }
 
-// TestCoberturaPaquetesTestBordes: la exención de D-F1-6 es por el nombre del PAQUETE (la
-// cláusula `package`, la misma condición que D-F1-3: el sufijo «helpertest» de D-F1-10), no
-// por el directorio ni por la nota: un …helpertest al 100 % tampoco se mide. No cambia lo
-// demás: un …helpertest en rojo o con adaptador Postgres legítimo sigue fuera de Evaluables, y
-// una marca de Postgres ilegítima en un …helpertest sigue siendo violación de marca (nadie se
-// exime por decreto, 05 E-6) pero no de umbral.
+// TestCoberturaPaquetesTestBordes: la exención es del FICHERO DE SUITE de un paquete
+// …helpertest (D-F1-13), y el paquete se reconoce por su nombre (la cláusula `package`, el
+// sufijo «helpertest» de D-F1-10), no por el directorio. No es por nota: un fichero de suite
+// al 100 % tampoco se mide, y un doble se mide esté al 0 % (muerde), al 79,9 % (muerde) o al
+// 80 % justo (pasa). No cambia lo demás: un doble en rojo o que es un adaptador Postgres
+// legítimo sigue fuera de Evaluables; y una marca de Postgres ilegítima es violación de marca
+// siempre (nadie se exime por decreto, 05 E-6), y además de umbral salvo en un fichero de suite.
 func TestCoberturaPaquetesTestBordes(t *testing.T) {
 	const fuenteRoja = "package cosahelpertest\n\nimport \"mod/pendiente\"\n\nfunc R() { panic(pendiente.Implementar(\"R\")) }\n"
 	casos := []struct {
-		nombre    string
-		ruta      string
-		src       string
-		cubiertas int // de las 2 sentencias que el perfil le da
-		medido    bool
+		nombre     string
+		ruta       string
+		src        string
+		statements int
+		cubiertas  int
+		medido     bool
+		below      bool // da violación por umbral (80)
 	}{
-		{"paquete que no es …helpertest: se mide", "x/cosa/cosa.go", "package cosa\n\nfunc A() {}\n", 0, true},
-		{"paquete …helpertest al 0 %: no se mide", "x/cosahelpertest/mal.go", "package cosahelpertest\n\nfunc C() {}\n", 0, false},
-		{"paquete …helpertest al 100 %: tampoco, la exención no es por nota", "x/cosahelpertest/bien.go", "package cosahelpertest\n\nfunc B() {}\n", 2, false},
-		{"directorio …helpertest con package que no lo es: se mide", "y/cosahelpertest/dir.go", "package cosa\n\nfunc D() {}\n", 0, true},
-		{"package …helpertest en un directorio que no lo es: no se mide", "z/otro/otro.go", "package otrohelpertest\n\nfunc E() {}\n", 0, false},
-		{"paquete …helpertest en rojo: fuera, como antes", "x/cosahelpertest/rojo.go", fuenteRoja, 0, false},
-		{"paquete …helpertest con adaptador Postgres legítimo: fuera, como antes", "x/cosahelpertest/pg.go",
-			MarcaPostgres + "\n\npackage cosahelpertest\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n", 0, false},
-		{"paquete …helpertest con marca ilegítima: fuera del umbral", "x/cosahelpertest/falsa.go",
-			MarcaPostgres + "\n\npackage cosahelpertest\n\nfunc F() {}\n", 0, false},
+		{"paquete que no es …helpertest: se mide", "x/cosa/cosa.go", "package cosa\n\nfunc A() {}\n", 2, 0, true, true},
+		{"contrato.go de un …helpertest al 0 %: no se mide", "x/cosahelpertest/contrato.go", "package cosahelpertest\n\nfunc C() {}\n", 2, 0, false, false},
+		{"x_contrato.go de un …helpertest al 0 %: no se mide", "x/cosahelpertest/merge_contrato.go", "package cosahelpertest\n\nfunc M() {}\n", 2, 0, false, false},
+		{"fichero de suite al 100 %: tampoco, la exención no es por nota", "x/cosahelpertest/resolve_contrato.go", "package cosahelpertest\n\nfunc B() {}\n", 2, 2, false, false},
+		{"doble de un …helpertest al 0 %: se mide y muerde", "x/cosahelpertest/doble.go", "package cosahelpertest\n\nfunc D() {}\n", 2, 0, true, true},
+		{"doble de un …helpertest justo por debajo del umbral: muerde", "x/cosahelpertest/casi.go", "package cosahelpertest\n\nfunc K() {}\n", 1000, 799, true, true},
+		{"doble de un …helpertest justo en el umbral: se mide y pasa", "x/cosahelpertest/justo.go", "package cosahelpertest\n\nfunc J() {}\n", 1000, 800, true, false},
+		{"doble de un …helpertest al 100 %: se mide y pasa", "x/cosahelpertest/memory.go", "package cosahelpertest\n\nfunc G() {}\n", 2, 2, true, false},
+		{"contrato.go en un directorio …helpertest con package que no lo es: se mide", "y/cosahelpertest/contrato.go", "package cosa\n\nfunc D() {}\n", 2, 0, true, true},
+		{"contrato.go de un package …helpertest en un directorio que no lo es: no se mide", "z/otro/contrato.go", "package otrohelpertest\n\nfunc E() {}\n", 2, 0, false, false},
+		{"doble de un package …helpertest en un directorio que no lo es: se mide", "z/otro/otro.go", "package otrohelpertest\n\nfunc E() {}\n", 2, 0, true, true},
+		{"doble de un …helpertest en rojo: fuera, como antes", "x/cosahelpertest/rojo.go", fuenteRoja, 2, 0, false, false},
+		{"adaptador Postgres legítimo en un …helpertest: fuera, como antes", "x/cosahelpertest/pg.go",
+			MarcaPostgres + "\n\npackage cosahelpertest\n\nimport \"database/sql\"\n\nvar _ *sql.DB\n", 2, 0, false, false},
+		{"doble de un …helpertest con marca ilegítima: marca y umbral", "x/cosahelpertest/falsa.go",
+			MarcaPostgres + "\n\npackage cosahelpertest\n\nfunc F() {}\n", 2, 0, true, true},
+		{"fichero de suite con marca ilegítima: marca, pero no umbral", "x/cosahelpertest/falsa_contrato.go",
+			MarcaPostgres + "\n\npackage cosahelpertest\n\nfunc F() {}\n", 2, 0, false, false},
 	}
 	fuentes := make([]Fuente, 0, len(casos))
 	perfil := make(map[string]Fichero, len(casos))
 	for _, c := range casos {
 		fuentes = append(fuentes, fuenteEnMemoria(t, c.ruta, c.src))
-		perfil["mod/"+c.ruta] = Fichero{Sentencias: 2, Cubiertas: c.cubiertas}
+		perfil["mod/"+c.ruta] = Fichero{Sentencias: c.statements, Cubiertas: c.cubiertas}
 	}
 
 	evaluables := Evaluables(perfil, fuentes)
+	vs := Cobertura(perfil, fuentes, 80)
+	belowCount := 0
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			if got := slices.Contains(evaluables, c.ruta); got != c.medido {
 				t.Errorf("%s en Evaluables = %v; quiero %v (Evaluables = %v)", c.ruta, got, c.medido, evaluables)
 			}
+			got := slices.ContainsFunc(vs, func(v Violacion) bool {
+				return v.Fichero == c.ruta && strings.Contains(v.Motivo, "< umbral 80 %")
+			})
+			if got != c.below {
+				t.Errorf("%s da violación por umbral = %v; quiero %v (%v)", c.ruta, got, c.below, vs)
+			}
 		})
+		if c.below {
+			belowCount++
+		}
 	}
 	if got, quiero := Exentos(fuentes), []string{"x/cosahelpertest/pg.go"}; !reflect.DeepEqual(got, quiero) {
 		t.Errorf("Exentos = %v; quiero %v", got, quiero)
 	}
 
-	vs := Cobertura(perfil, fuentes, 80)
-	exigeViolacion(t, vs, "x/cosa/cosa.go", "0.0 %", "80")
-	exigeViolacion(t, vs, "y/cosahelpertest/dir.go", "0.0 %", "80")
+	exigeViolacion(t, vs, "x/cosahelpertest/casi.go", "79.9 %", "80")
 	exigeViolacion(t, vs, "x/cosahelpertest/falsa.go", "marca", "postgres")
-	if len(vs) != 3 {
-		t.Errorf("se esperaban 3 violaciones (dos por umbral, una por marca); hay %d: %v", len(vs), vs)
+	exigeViolacion(t, vs, "x/cosahelpertest/falsa_contrato.go", "marca", "postgres")
+	if len(vs) != belowCount+2 {
+		t.Errorf("se esperaban %d violaciones (%d por umbral, dos por marca); hay %d: %v", belowCount+2, belowCount, len(vs), vs)
 	}
 	exigeOrdenadas(t, vs)
 }
 
-// TestCoberturaHelperTestSuffix: la exención de suites y dobles es por el sufijo COMPUESTO
-// «helpertest» del nombre del paquete (D-F1-10), la cláusula `package` y no el directorio.
-// Cada nombre de helperTestSuffixCases se prueba con el MISMO fichero al 0 %: exento = fuera
-// de Evaluables y sin violación; no exento = en Evaluables y con violación por umbral.
+// TestCoberturaHelperTestSuffix: el paquete de suite y dobles se reconoce por el sufijo
+// COMPUESTO «helpertest» de su nombre (D-F1-10), la cláusula `package` y no el directorio.
+// Cada nombre de helperTestSuffixCases se prueba con el MISMO fichero de suite, contrato.go,
+// al 0 %: en un paquete …helpertest queda fuera de Evaluables y sin violación; en cualquier
+// otro, contrato.go es un fichero más: está en Evaluables y da violación por umbral. Y con el
+// MISMO código en un fichero que no es de suite (double.go), se mide en TODOS (D-F1-13): el
+// paquete …helpertest ya no exime por sí solo.
 func TestCoberturaHelperTestSuffix(t *testing.T) {
 	for _, c := range helperTestSuffixCases {
 		t.Run(c.name, func(t *testing.T) {
-			ruta := "internal/modulos/m/" + c.dir + "/double.go"
+			ruta := "internal/modulos/m/" + c.dir + "/contrato.go"
 			fuentes := []Fuente{fuenteEnMemoria(t, ruta, "package "+c.pkg+helperTestDoubleBody)}
 			perfil := map[string]Fichero{"mod/" + ruta: {Sentencias: 1, Cubiertas: 0}}
 
 			evaluables, vs := Evaluables(perfil, fuentes), Cobertura(perfil, fuentes, 80)
 			if c.exempt {
 				if len(evaluables) != 0 {
-					t.Errorf("Evaluables = %v; quiero ninguno (paquete %s exento)", evaluables, c.pkg)
+					t.Errorf("Evaluables = %v; quiero ninguno (contrato.go del paquete %s es de suite)", evaluables, c.pkg)
 				}
 				exigeCero(t, vs)
-				return
+			} else {
+				if !reflect.DeepEqual(evaluables, []string{ruta}) {
+					t.Errorf("Evaluables = %v; quiero [%s] (paquete %s no exento)", evaluables, ruta, c.pkg)
+				}
+				exigeViolacion(t, vs, ruta, "0.0 %", "80")
+				if len(vs) != 1 {
+					t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+				}
 			}
-			if !reflect.DeepEqual(evaluables, []string{ruta}) {
-				t.Errorf("Evaluables = %v; quiero [%s] (paquete %s no exento)", evaluables, ruta, c.pkg)
+
+			double := "internal/modulos/m/" + c.dir + "/double.go"
+			fuentes = []Fuente{fuenteEnMemoria(t, double, "package "+c.pkg+helperTestDoubleBody)}
+			perfil = map[string]Fichero{"mod/" + double: {Sentencias: 1, Cubiertas: 0}}
+			if got := Evaluables(perfil, fuentes); !reflect.DeepEqual(got, []string{double}) {
+				t.Errorf("Evaluables = %v; quiero [%s]: un doble se mide en cualquier paquete", got, double)
 			}
-			exigeViolacion(t, vs, ruta, "0.0 %", "80")
-			if len(vs) != 1 {
-				t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+			exigeViolacion(t, Cobertura(perfil, fuentes, 80), double, "0.0 %", "80")
+		})
+	}
+}
+
+// TestCoberturaContractSuiteFile: dentro de un paquete …helpertest, la cobertura deja fuera
+// exactamente los ficheros que contractSuiteFileCases marca como de suite (D-F1-13). Cada
+// nombre se prueba con el MISMO código al 0 %: de suite = fuera de Evaluables y sin
+// violación; no de suite = en Evaluables y con violación por umbral. Y el MISMO nombre en un
+// paquete que no es …helpertest se mide siempre.
+func TestCoberturaContractSuiteFile(t *testing.T) {
+	for _, c := range contractSuiteFileCases {
+		t.Run(c.name, func(t *testing.T) {
+			file := "internal/modulos/m/cosa/cosahelpertest/" + c.base
+			sources := []Fuente{fuenteEnMemoria(t, file, "package cosahelpertest"+helperTestDoubleBody)}
+			profile := map[string]Fichero{"mod/" + file: {Sentencias: 1, Cubiertas: 0}}
+
+			measured, vs := Evaluables(profile, sources), Cobertura(profile, sources, 80)
+			if c.suite {
+				if len(measured) != 0 {
+					t.Errorf("Evaluables = %v; quiero ninguno (%s es un fichero de suite)", measured, c.base)
+				}
+				exigeCero(t, vs)
+			} else {
+				if !reflect.DeepEqual(measured, []string{file}) {
+					t.Errorf("Evaluables = %v; quiero [%s] (%s no es un fichero de suite)", measured, file, c.base)
+				}
+				exigeViolacion(t, vs, file, "0.0 %", "80")
+				if len(vs) != 1 {
+					t.Errorf("se esperaba 1 violación; hay %d: %v", len(vs), vs)
+				}
 			}
+
+			plain := "internal/modulos/m/cosa/" + c.base
+			sources = []Fuente{fuenteEnMemoria(t, plain, "package cosa"+helperTestDoubleBody)}
+			profile = map[string]Fichero{"mod/" + plain: {Sentencias: 1, Cubiertas: 0}}
+			if got := Evaluables(profile, sources); !reflect.DeepEqual(got, []string{plain}) {
+				t.Errorf("Evaluables = %v; quiero [%s]: fuera de un paquete …helpertest todo se mide", got, plain)
+			}
+			exigeViolacion(t, Cobertura(profile, sources, 80), plain, "0.0 %", "80")
 		})
 	}
 }

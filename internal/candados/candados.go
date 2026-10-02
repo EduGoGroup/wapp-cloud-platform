@@ -13,10 +13,12 @@
 // a igual Fichero, por Motivo (salida determinista, diffable); cero violaciones es un slice
 // de longitud 0; no leen el disco (trabajan sobre las Fuente ya parseadas), salvo Recorrer.
 //
-// Tres de ellos (un fichero un test, exportados cubiertos y cobertura por fichero) dejan
-// fuera a los paquetes de suite de contrato y dobles (D-F1-3 y D-F1-6). Qué paquete es ese
+// Tres de ellos (un fichero un test, exportados cubiertos y cobertura por fichero) tratan
+// aparte a los paquetes de suite de contrato y dobles (D-F1-3 y D-F1-6). Qué paquete es ese
 // se decide en UN sitio, isHelperTestPackage: aquel cuyo nombre termina en el sufijo
-// compuesto «helpertest» (D-F1-10), p. ej. contacthelpertest.
+// compuesto «helpertest» (D-F1-10), p. ej. contacthelpertest. Los dos primeros lo dejan fuera
+// entero; la cobertura por fichero, solo sus ficheros de suite —contrato.go y *_contrato.go,
+// isContractSuiteFile—, y mide sus dobles con lógica (D-F1-13).
 package candados
 
 import (
@@ -27,6 +29,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -66,11 +69,12 @@ type Fuente struct {
 	Paquete string
 }
 
-// helperTestSuffix es el sufijo COMPUESTO del nombre de paquete que exime a las suites de
-// contrato y a los dobles de un puerto de los tres candados de fichero (UnFicheroUnTest,
-// ExportadosCubiertos y la cobertura por fichero de Evaluables y Cobertura). La suite del
-// paquete <paquete> vive en el paquete <paquete>helpertest, en <dir>/<paquete>helpertest
-// (p. ej. internal/nucleo/contact/contacthelpertest).
+// helperTestSuffix es el sufijo COMPUESTO del nombre de paquete que distingue al paquete de
+// las suites de contrato y los dobles de un puerto. UnFicheroUnTest y ExportadosCubiertos lo
+// dejan fuera entero; la cobertura por fichero (Evaluables y Cobertura), desde D-F1-13, solo
+// sus ficheros de suite (isContractSuiteFile). La suite del paquete <paquete> vive en el
+// paquete <paquete>helpertest, en <dir>/<paquete>helpertest (p. ej.
+// internal/nucleo/contact/contacthelpertest).
 //
 // D-F1-10 (Jhoan, 2026-10-02). ESTRECHA D-F1-3 (exentos de UnFicheroUnTest y de
 // ExportadosCubiertos) y D-F1-6 (exentos de la cobertura por fichero); no las deroga: lo que
@@ -82,8 +86,8 @@ const helperTestSuffix = "helpertest"
 
 // isHelperTestPackage dice si name —el nombre de un paquete: la cláusula `package`
 // (Fuente.Paquete), no su directorio— es el de un paquete de suite de contrato y dobles, el
-// único que los tres candados de fichero dejan fuera (D-F1-3, D-F1-6, estrechadas por
-// D-F1-10).
+// único al que los tres candados de fichero tratan aparte (D-F1-3, D-F1-6, estrechadas por
+// D-F1-10; la cobertura por fichero, además, por D-F1-13: ver isContractSuiteFile).
 //
 // Lo es si y solo si termina en helperTestSuffix Y tiene al menos un carácter delante:
 // "contacthelpertest" y "xhelpertest" sí. No lo son:
@@ -96,10 +100,53 @@ const helperTestSuffix = "helpertest"
 //   - el sufijo en otro sitio ("helpertestcosa", "cosahelpertests") o con otra grafía
 //     ("cosaHelperTest"): la comparación es exacta, con mayúsculas y minúsculas.
 //
-// Es la ÚNICA definición del criterio: los tres candados y haySuiteContrato la usan, para
-// que no puedan divergir.
+// Es la ÚNICA definición del criterio: UnFicheroUnTest, ExportadosCubiertos, haySuiteContrato
+// e isContractSuiteFile (y por él la cobertura por fichero) la usan, para que no puedan
+// divergir.
 func isHelperTestPackage(name string) bool {
 	return len(name) > len(helperTestSuffix) && strings.HasSuffix(name, helperTestSuffix)
+}
+
+// contractSuiteFile y contractSuiteSuffix son los dos nombres de un FICHERO DE SUITE de
+// contrato: «contrato.go», donde vive `func Contrato(t *testing.T, …)`, y «<tema>_contrato.go»,
+// los trozos por tema en que se parte una suite grande (p. ej. merge_contrato.go). «contrato»
+// es vocabulario del método (05 E-11, excepción 3), y por eso no se traduce.
+const (
+	contractSuiteFile   = "contrato.go"
+	contractSuiteSuffix = "_contrato.go"
+)
+
+// isContractSuiteFile dice si f es un fichero de suite de contrato: el ÚNICO que la cobertura
+// por fichero (Evaluables y Cobertura) deja sin medir dentro de un paquete …helpertest
+// (D-F1-13, Jhoan, 2026-10-02, que estrecha D-F1-6).
+//
+// Lo es si y solo si se cumplen LAS DOS:
+//   - su paquete es de suite y dobles: isHelperTestPackage(f.Paquete), la cláusula `package`
+//     y no el directorio. Un contrato.go o un x_contrato.go en un paquete que no lo es (uno de
+//     producción, o uno con el sufijo viejo «test») NO es un fichero de suite: se mide;
+//   - su nombre base (el último elemento de f.Ruta) es exactamente «contrato.go», o termina en
+//     «_contrato.go» con al menos un carácter delante. No lo son «_contrato.go» a secas (la
+//     toolchain de Go ni lo compila), «micontrato.go» (sin el guion bajo), «contrato_x.go»
+//     (el sufijo en otro sitio), «Contrato.go» (otra grafía) ni un _test.go.
+//
+// El porqué de la exención es mecánico, no de confianza: la suite de un puerto solo la
+// ejecutan los tests de sus implementaciones, que viven en OTROS paquetes, y `go test -cover`
+// sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil de su propio
+// paquete el fichero sale al 0 % aunque esté ejercitado entero. Los demás ficheros de un
+// paquete …helpertest —los dobles con lógica, como contacthelpertest/estado.go— sí se
+// ejecutan desde el test de su propio paquete, así que se miden con el umbral normal. Hasta
+// D-F1-13 quedaba exento el paquete entero, y los dobles en memoria que 05 E-6 manda crear
+// habrían nacido sin medir.
+//
+// Solo lo usa la cobertura por fichero. UnFicheroUnTest y ExportadosCubiertos siguen dejando
+// fuera el paquete …helpertest ENTERO (D-F1-3), con isHelperTestPackage.
+func isContractSuiteFile(f Fuente) bool {
+	if !isHelperTestPackage(f.Paquete) {
+		return false
+	}
+	base := path.Base(f.Ruta)
+	return base == contractSuiteFile ||
+		(len(base) > len(contractSuiteSuffix) && strings.HasSuffix(base, contractSuiteSuffix))
 }
 
 // Recorrer parsea, recursivamente, todos los ficheros .go bajo raiz/dir para cada dir de

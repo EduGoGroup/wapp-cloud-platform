@@ -41,11 +41,23 @@ export GOTOOLCHAIN := go$(GO_VERSION)
 # y en ci-docker, donde un .bin/ de macOS montado en el contenedor Linux no ejecuta y se
 # descarta solo). Si ninguno es la versión fijada, `lint` falla (decisión T-1: otra versión da
 # otro resultado). LINT_BIN=<ruta> fuerza un binario concreto, que también debe ser la fijada.
-# TOOLS_DIR, LINT_BIN y LINT_RELEASE_URL son `:=` a propósito: se cambian SOLO en la línea de
-# comandos (`make lint LINT_BIN=…`), nunca por una variable que casualmente esté en el entorno.
+# TOOLS_DIR, LINT_BIN, LINT_CACHE_DIR y LINT_RELEASE_URL son `:=` a propósito: se cambian SOLO en
+# la línea de comandos (`make lint LINT_BIN=…`), nunca por una variable que casualmente esté en
+# el entorno.
+# ⚠️ La caché de golangci-lint es POR CHECKOUT (LINT_CACHE_DIR), no la del usuario: la de
+# ~/Library/Caches (o ~/.cache) la comparten todos los checkouts y `git worktree`, y un lint
+# corrido en un worktree deja en ella resultados con SUS rutas; el siguiente lint, desde otro
+# checkout, los devuelve con rutas ajenas y salen como issues los que el código silencia con
+# `//nolint` (la directiva no se aplica a un fichero que ya no está en esa ruta). Medido el
+# 2026-10-02: 36 issues, rc=2, todos con rutas de dos worktrees ya borrados y sobre líneas que
+# llevan su `//nolint`; con caché propia, 0 issues. La primera pasada de cada checkout va en frío.
+# ci-docker le pasa LINT_CACHE_DIR=/tmp/lint-cache: el checkout va montado en /workspace, y sin
+# eso el contenedor escribe en el .bin/lint-cache del host resultados con rutas /workspace/…
+# (en la única corrida medida así no dio issues falsos en el host; se separa por construcción).
 TOOLS_DIR        := $(CURDIR)/.bin
 LINT_LOCAL       := $(TOOLS_DIR)/golangci-lint
 LINT_BIN         :=
+LINT_CACHE_DIR   := $(TOOLS_DIR)/lint-cache
 LINT_RELEASE_URL := https://github.com/golangci/golangci-lint/releases/download
 
 # Fragmento de shell: versión `X.Y.Z` que dice un binario de golangci-lint; vacío si no existe
@@ -240,10 +252,12 @@ vet-integracion: ## go vet -tags integracion ./test/procesos/... — los proceso
 # marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
 # comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
 # arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest, que SÍ se
-# evalúa: los paquetes exentos son solo los de suite de contrato y dobles, los que terminan en
-# el sufijo compuesto `helpertest` (D-F1-10, que estrecha D-F1-6: p. ej. contacthelpertest), y
-# `huellatest` no termina así. Entre D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test`
-# a secas, `huellatest` quedó sin medir y FICHEROS_EVALUADOS bajó de 10 a 9; vuelve a ser 10.
+# evalúa: lo único exento por suite son los FICHEROS de suite de contrato —`contrato.go` y
+# `*_contrato.go`— de un paquete que termina en el sufijo compuesto `helpertest` (D-F1-13, que
+# estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go); los dobles con lógica de
+# ese paquete se miden (contacthelpertest/estado.go), y `huellatest` no termina así. Entre
+# D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test` a secas, `huellatest` quedó sin medir
+# y FICHEROS_EVALUADOS bajó de 10 a 9; con D-F1-10 volvió a 10, y con D-F1-13 es 11.
 # Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
@@ -273,8 +287,9 @@ lint: ## golangci-lint $(LINT_VERSION): el de .bin/ (make tools) o el del PATH �
 		echo "lint: $$lint_fix"; \
 		exit 1; \
 	fi; \
-	echo "GOWORK=off $$lint_bin run --timeout=5m"; \
-	GOWORK=off "$$lint_bin" run --timeout=5m
+	mkdir -p "$(LINT_CACHE_DIR)"; \
+	echo "GOLANGCI_LINT_CACHE=$(LINT_CACHE_DIR) GOWORK=off $$lint_bin run --timeout=5m"; \
+	GOLANGCI_LINT_CACHE="$(LINT_CACHE_DIR)" GOWORK=off "$$lint_bin" run --timeout=5m
 
 build: ## go build ./...
 	$(GO) build ./...
@@ -360,5 +375,5 @@ ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VE
 		-v "$$(go env GOMODCACHE):/go/pkg/mod" \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		golang:$(GO_VERSION)-bookworm \
-		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local"
+		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local LINT_CACHE_DIR=/tmp/lint-cache"
 	@echo "NOTA: ci-docker no corre test-integration (requeriría Docker-in-Docker); ejecuta 'make test-integration' aparte en el host."
