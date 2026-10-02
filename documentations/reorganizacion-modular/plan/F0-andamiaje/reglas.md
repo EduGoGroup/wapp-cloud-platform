@@ -67,7 +67,7 @@
 
 ## 3 · Decisiones de F0 que no necesitan a Jhoan (tomadas aquí, con su porqué)
 
-- **`sin_pendientes_test.go` no nace en F0: nace en F10.** Nacer «apagado» exigiría una tercera
+- **`no_pending_test.go` no nace en F0: nace en F10.** (D-F1-12, 2026-10-02: antes `sin_pendientes_test.go`.) Nacer «apagado» exigiría una tercera
   etiqueta (D-11 fija dos: `pendiente` e `integracion`) o un `t.Skip` (prohibido, E-5). Hasta
   F10, la cifra la da `make test-pendiente`.
 - **`sin_bd_viva_test.go` va sin etiqueta `integracion`**, aunque la skill

@@ -111,7 +111,7 @@ tail -1 "$L"                                          # GATE_RC=0 o nada que cel
    `GOWORK=off go test -v ./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... 2>&1 | grep -c -- '--- SKIP'` → **0**, siempre.
 3. **Pendientes, por cuenta estática.** Hasta que exista `make test-pendiente`:
    `grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal | grep -vc '_test\.go:'`.
-   Se informa **antes → después**. En F10 debe ser 0 (`sin_pendientes_test.go`).
+   Se informa **antes → después**. En F10 debe ser 0 (`no_pending_test.go`; D-F1-12, 2026-10-02: antes `sin_pendientes_test.go`).
 4. **Versión de herramienta.** Un gate corrido con un lint distinto de v2.12.2 o un Go distinto de
    1.26.5 se informa **con la versión usada** y como **no autoritativo**. ✎ 2026-10-02: se comprueba
    con `make toolchain` (`TOOLCHAIN=OK`, `rc=0`). Bajo `make` la versión es la fijada; un `go`

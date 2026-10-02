@@ -89,6 +89,15 @@ Excepciones cerradas, y ninguna más sin decisión escrita:
 | Fichero **solo de interfaces** (puertos) | Una **suite de contrato** exportada en un paquete `…helpertest` (D-F1-10, decisión de Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest` del código viejo): `func Contrato(t *testing.T, nuevo func() Puerto)`. Cada implementación la ejecuta desde **su** test (E-6) |
 | Dobles de test (`fleettest/slowrepo.go`) | Su propio test solo si tienen lógica |
 
+**La firma de la suite de contrato tiene dos formas, según el puerto** (D-F1-12, decisión de Jhoan,
+2026-10-02; la tabla de arriba da solo la segunda):
+
+- puerto **con BD** (el que tiene adaptador Postgres):
+  `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` — **D-F1-1**, cerrada el 2026-09-30. El
+  `Montaje` trae el puerto **y** lo que el puerto no deja ver: los tenants sembrados (la FK los exige) y,
+  si hace falta, un observador de estado. Referencia: `internal/nucleo/contact/contacthelpertest/contrato.go`;
+- puerto **sin BD**: `func Contrato(t *testing.T, nuevo func() Puerto)`, la forma original de esta regla.
+
 ### E-4 · El test sale del contrato, y nace en rojo
 
 El test de `x.go` se escribe **leyendo el comentario del contrato**, no el código viejo: por cada
@@ -202,7 +211,10 @@ Lo que **no** cambia:
    hoja que conservan el nombre del paquete viejo (D-3, D-4), los directorios ya creados (`nucleo`,
    `modulos`, `arranque`, `apipublica`) y el vocabulario del propio método (`pendiente`, `Implementar`,
    `Contrato`, `Montaje`, las etiquetas `pendiente`/`integracion`, los prefijos `rojo`/`verde`). Traducirlos
-   sería una decisión aparte (D-F1-9 en el README de F1).
+   sería una decisión aparte (D-F1-9 en el README de F1). El sufijo de fichero `_contrato` también es
+   vocabulario del método (D-F1-12, decisión de Jhoan, 2026-10-02): nombra los ficheros de una suite de
+   contrato dentro de un paquete `…helpertest` —`contrato.go`, la entrada, y los `*_contrato.go` en que se
+   divide (`resolve_contrato.go`, `merge_contrato.go`…)—; lo que va delante del sufijo se escribe en inglés.
 
 Al **portar** (E-10): si el símbolo viejo tiene nombre en español, el nuevo lleva uno en inglés y el
 comentario o el commit dicen cuál era; si ya estaba en inglés, se conserva. Si una spec nombra en español
@@ -286,7 +298,7 @@ El orden de §6 minimiza los puentes, pero no los elimina.
 | `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
 | `test/procesos/sin_bd_viva_test.go` | Cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
-| `sin_pendientes_test.go` | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
+| `no_pending_test.go` (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test.go`: el fichero aún no existe y nace con nombre en inglés, E-11) | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
 
 ---
 
@@ -306,7 +318,7 @@ Orden **de la base hacia arriba**, para que cada módulo encuentre reconstruido 
 | **F7 · `captacion`** | `intake`, `pipeline`, `stages`, `anclaje`, `intakeahead`, `evidence`, `reanalisis`, `casebank`, `intentcfg` | Puentes a `conversacion` hasta F8 |
 | **F8 · `conversacion`** | `flujos/**` y `turnoacotado` | La mayor: **23 ficheros de producción solo en `runtime`**. Al cerrar, se retiran todos los puentes |
 | **F9 · Procesos** | La suite de integración **de cero, por proceso**, con testcontainers y una instancia compartida (§7) | 🔴 **Condición del relevo**: sin ella, el código nuevo no tendría ni una prueba contra Postgres. **La cierra Claude Code en local** (necesita Docker, §7.3) |
-| **F10 · Relevo** | `cmd/server` → `internal/arranque` · se borran los paquetes viejos (con sus tests viejos), `internal/bootstrap` y `cmd/server-modular` · `sin_pendientes_test` activo | Un despliegue de UAT con el binario de siempre |
+| **F10 · Relevo** | `cmd/server` → `internal/arranque` · se borran los paquetes viejos (con sus tests viejos), `internal/bootstrap` y `cmd/server-modular` · `no_pending_test` activo (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test`) | Un despliegue de UAT con el binario de siempre |
 
 Dentro de cada módulo, la pasada de **contratos y rojo de todo el módulo** va primero (y puede
 ser una sola ola), y la de **verde** va **fichero a fichero**, cada uno en su commit.
@@ -443,6 +455,11 @@ arranque viejo hasta el relevo. Es la decisión **D-10** de `03`.
 `TestContains_LasTresDecisionesDeLaRegla`), que dicen las tres decisiones de la regla. Van al
 comentario del contrato.
 
+**Los nombres del ejemplo (E-11)** (D-F1-12, decisión de Jhoan, 2026-10-02): los nombres van en inglés y
+los comentarios, en español. Los parámetros `textoNorm` y `frase` del fichero viejo pasan a
+`normalizedText` y `phrase`; los dos tests viejos conservan su nombre (lo ya escrito no se renombra) y los
+mensajes de fallo de los tests, que no son nombres, quedan como estaban.
+
 **Commit `rojo(captacion): contrato de evidence`** — `evidence.go`:
 
 ```go
@@ -462,7 +479,7 @@ func Normalize(s string) string {
 
 // Contains dice si la frase, normalizada, aparece en un texto YA normalizado.
 // Una frase vacía tras normalizar no es evidencia: devuelve false.
-func Contains(textoNorm, frase string) bool {
+func Contains(normalizedText, phrase string) bool {
 	panic(pendiente.Implementar("evidence.Contains"))
 }
 ```
@@ -477,27 +494,27 @@ package evidence
 import "testing"
 
 func TestNormalize(t *testing.T) {
-	casos := []struct{ entrada, quiere string }{
+	cases := []struct{ input, want string }{
 		{"  Hola   MUNDO ", "hola mundo"},
 		{"a\t\nb", "a b"},
 		{"", ""},
 	}
-	for _, c := range casos {
-		if got := Normalize(c.entrada); got != c.quiere {
-			t.Errorf("Normalize(%q) = %q, quiere %q", c.entrada, got, c.quiere)
+	for _, c := range cases {
+		if got := Normalize(c.input); got != c.want {
+			t.Errorf("Normalize(%q) = %q, quiere %q", c.input, got, c.want)
 		}
 	}
 }
 
 func TestContains(t *testing.T) {
-	texto := Normalize("Quiero 2 hamburguesas con QUESO para el sábado")
-	if !Contains(texto, "hamburguesas  con queso") {
+	text := Normalize("Quiero 2 hamburguesas con QUESO para el sábado")
+	if !Contains(text, "hamburguesas  con queso") {
 		t.Error("una frase presente, con otro espaciado y otra caja, es evidencia")
 	}
-	if Contains(texto, "sin cebolla") {
+	if Contains(text, "sin cebolla") {
 		t.Error("una frase ausente no es evidencia")
 	}
-	if Contains(texto, "   ") {
+	if Contains(text, "   ") {
 		t.Error("una frase vacía tras normalizar no es evidencia")
 	}
 }

@@ -50,7 +50,7 @@ Comando: `for d in cmd/*/; do GOWORK=off go list -f '{{join .Imports "\n"}}{{"\n
 | 4 | `relevo: fuera la cara vieja y el estrangulador` — TX.25 de [`FX-cara-http`](../FX-cara-http/tareas.md) | Tras F8 no sirve ninguna ruta del binario nuevo |
 | 5 | `relevo: fuera el arranque viejo` — `internal/bootstrap/**` (22 de producción + 21 tests: los 20 de hoy más `huella_vieja_test.go` de F0), incluidos `platform_permissions_test.go` y los **9** `*cablead*_test.go` viejos (`ls internal/bootstrap/arranque/*cablead*_test.go \| wc -l` → 9; «11» son los que leen AST, F0 README contradicción 1) | Sus reglas viven ya en `internal/arranque` (F0) |
 | 6 | `relevo: fuera los paquetes viejos` — los 26 directorios restantes, con sus tests | Nada los importa desde el commit 5 |
-| 7 | `relevo: cero pendientes` — `sin_pendientes_test.go` activo y, con D-F10-3, fuera `internal/pendiente`, la etiqueta y sus targets | Solo tiene sentido con todo lo viejo fuera |
+| 7 | `relevo: cero pendientes` — `no_pending_test.go` (D-F1-12, 2026-10-02; antes `sin_pendientes_test.go`) activo y, con D-F10-3, fuera `internal/pendiente`, la etiqueta y sus targets | Solo tiene sentido con todo lo viejo fuera |
 | 8 | `relevo: la integración vieja, retirada` — `Makefile`, `ci.yml` (y los 9 tests de BD de `platform` si D-F10-5) | El relevo deja **una** forma de probar contra Postgres |
 | 9 | `docs(reorganizacion-modular): relevo` + las rutas nuevas en la doc del repo | La doc dice lo que hay |
 
@@ -67,7 +67,7 @@ no resucita el arranque viejo.
 | `internal/arranque/huella_test.go` | Viejo en ejecución ↔ nuevo | **Dorada** ↔ arranque único. La dorada solo se regenera con decisión escrita (cambiar una ruta, rpc, métrica o variable es cambiar un contrato: `03` §1) |
 | `go vet -tags pendiente` | En `ci-local` | Fuera con D-F10-3 |
 | `test/procesos/sin_bd_viva_test.go` | Sobre `test/procesos` | Igual |
-| `sin_pendientes_test.go` | No existe (nace aquí, F0 `reglas.md`) | Activo |
+| `no_pending_test.go` | No existe (nace aquí, F0 `reglas.md`) | Activo |
 | I-CP-5, cableado (`05` §3.2) | En el arranque nuevo (F0) y en el viejo | Solo en el nuevo |
 
 ## 5 · Estado en memoria, goroutines y UAT

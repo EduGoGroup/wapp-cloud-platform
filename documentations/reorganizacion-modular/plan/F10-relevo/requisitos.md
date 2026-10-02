@@ -65,7 +65,7 @@
 
 - **R10.4.a** · **EL** candado `internal/modulos/fronteras_test.go` **DEBERÁ** tener la lista de puentes
   **vacía** y fallar si se añade uno. — Verifica: la lista en el fichero; caso `muerde`.
-- **R10.4.b** · **EL** candado `sin_pendientes_test.go` **DEBERÁ** estar activo y fallar ante cualquier
+- **R10.4.b** · **EL** candado `no_pending_test.go` (D-F1-12, 2026-10-02; antes `sin_pendientes_test.go`) **DEBERÁ** estar activo y fallar ante cualquier
   `pendiente.Implementar` (y, si D-F10-3, ante la etiqueta `//go:build pendiente`). — Verifica: caso
   `muerde` y `grep -rn 'pendiente.Implementar\|go:build pendiente' --include='*.go' . | wc -l` → 0.
 - **R10.4.c** · **EN** el código nuevo, `--- SKIP` **DEBERÁ** ser 0. — Verifica:
