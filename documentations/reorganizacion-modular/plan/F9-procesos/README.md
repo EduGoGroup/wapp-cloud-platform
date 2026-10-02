@@ -39,7 +39,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 |---|---|---|
 | 9A | F0 cerrada: existen `cmd/server-modular` y `internal/arranque`, y los dos binarios compilan | `GOWORK=off go build ./cmd/server ./cmd/server-modular; echo rc=$?` → `rc=0` |
 | 9A | D-13 (lista de procesos) y D-F9-1..D-F9-4 decididas por Jhoan | Sección «Decisiones» de este README con fecha |
-| 9A | El candado `test/procesos/sin_bd_viva_test.go` y `test/procesos/doc.go` existen (**F0**, T0.8) y, si Jhoan aceptó **D-F1-2**, el mínimo de `test/procesos/main_test.go` y `contact_contrato_test.go` (**F1**, T1.13) | `ls test/procesos/` |
+| 9A | El candado `test/procesos/sin_bd_viva_test.go` y `test/procesos/doc.go` existen (**F0**, T0.8) y, si Jhoan aceptó **D-F1-2**, el mínimo de `test/procesos/main_test.go` y `contact_contrato_test.go` (**F1**, T1.13). ⚠️ *Corrección (revisión independiente, 2026-10-01)*: quedó al revés: `main_test.go` lo creó **F9-A** (T9.5, `576ba9a`) y T1.13 lo **reutiliza**; `contact_contrato_test.go` aún no existe (T1.13, bloque B de F1) | `ls test/procesos/` |
 | 9A | La sesión que cierra tiene Docker (la local siempre; la web solo si la prueba de T9.12 salió bien) | `docker info >/dev/null; echo rc=$?` → `rc=0` |
 | 9B | 9A cerrada por la sesión local (P0 verde contra el viejo **y** el nuevo) | Traspaso `TRASPASO-F9-arnes.md` con sección `CERRADO` |
 | 9C(m) | El módulo `m` está en verde y su commit `conmutar(<m>)` existe | `git log --oneline --grep='conmutar(<m>)'` |
@@ -108,7 +108,21 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-3** | **Sí**: S3 falso dentro del proceso de test (`s3falso_test.go`, `net/http` puro) | 2026-09-30 | Sin MinIO ni `gofakes3` |
 | **D-F9-4** | **Sí**: P10 · plataforma para los 9 ficheros / 25 `Test*` de `internal/platform/` con BD | 2026-09-30 | T9.35 **activa** (bloque B2) |
 | **D-F9-5** | **Sí** (opcional, informativa, sin umbral): medir la cobertura que dan los procesos al código nuevo | 2026-09-30 | No bloquea nada; se decide cuándo en el bloque D |
-| **T-2** | **Sí**: se aceptan las subidas de `httpsnoop` 1.0.4→1.1.0, `otelhttp` 0.67→0.69 y `klauspost/compress` que trae testcontainers v0.44.0 | 2026-09-30 | T9.2 va en un commit `chore(deps)` **aislado** (ver contradicción 10) |
+| **T-2** | **Sí**: se aceptan las subidas de `httpsnoop` 1.0.4→1.1.0, `otelhttp` 0.67→0.69 y `klauspost/compress` que trae testcontainers v0.44.0 | 2026-09-30 | T9.2 va en un commit `chore(deps)` **aislado** (ver contradicción 10; qué llega de verdad a los binarios, en la 26) |
+
+### Decisiones abiertas por la revisión independiente de S9–S11 (2026-10-01)
+
+> Las plantea la revisión de F9-01, F9-02 y F1-01 sobre `dev` @ `6650e55`; **ninguna está tomada**. El hecho que motiva cada una
+> está en la contradicción 19 (nota de revisión) y en las 22–29, abajo. Aún no tienen fila en [`../DECISIONES.md`](../DECISIONES.md).
+
+| # | Pregunta | Propuesta de la revisión |
+|---|---|---|
+| **D-F9-6** | ¿El candado `SinBDViva` pasa de lista negra de patrones a **lista blanca de quién abre conexiones**? Cambia el contrato del candado que fija `05` §5 (contradicción 22) | Lista blanca: `sql.Open`, `pgx.Connect*` y `pgxpool.New*` solo en `test/procesos/base_test.go` (donde se llaman hoy: `:72` y `:188`), y auto-exención solo para la ruta exacta `test/procesos/sin_bd_viva_test.go`. Toca la norma: decide Jhoan |
+| **D-F9-7** | ¿`TestMain` exige `GOWORK=off`? (contradicción 23) | Que salga con código 2 si `GOWORK` no es `off` |
+| **D-F9-8** | ¿Quién limpia los directorios `procesos-*` que deja una corrida muerta? (contradicción 24) | Barrer al entrar en `TestMain` los de más de una hora, o añadir el `rm` al procedimiento |
+| **D-F9-9** | ¿Acepta Jhoan las dos respuestas que F9-02 dio al §8 del traspaso (dejar el alcance extra del Edge de prueba; mantener la regla del `Cleanup`)? (contradicción 27) | Preguntarlo: hoy no tienen fila en `DECISIONES.md` ni la fórmula «decisión de Jhoan» |
+| **D-F9-10** | **Alcance y criterio de D-F6-7** (contradicciones 19 y 28): ¿cubre las otras tres goroutines de fondo, que no son de F6?; ¿qué se hace con el binario `viejo`, que conserva el worker viejo hasta F10?; ¿con qué se remide, si `CUENTA=3` da verde ≈ 98,8 % de las veces sin arreglar nada? | Sin propuesta: es rumbo. Las salidas (a)–(c) de la contradicción 19 siguen siendo las candidatas |
+| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacttest/contrato.go`? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer |
 
 ## Encaje con F0 y F1 (escritas antes que esta spec)
 
@@ -121,6 +135,9 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
   servidor por proceso) en vez de crearlo, y la pasada 9C de `nucleo` (T9.22) solo añade la corrida de
   la suite entera contra el nuevo. D-F1-2 y D-F9-1 empujan en la misma dirección: si se acepta una,
   conviene aceptar la otra.
+  ⚠️ *Corrección (revisión independiente, 2026-10-01)*: el orden quedó **invertido**. F9-A se ejecutó antes que el bloque B de F1:
+  `main_test.go` y `base_test.go` los **creó** T9.5 (`576ba9a`, F9-01) y T1.13 los **reutiliza** sin recrearlos
+  ([`../F1-nucleo-contact/tareas.md`](../F1-nucleo-contact/tareas.md), T1.13). T9.5 no «amplió» nada.
 
 ## Contradicciones encontradas (con `04`/`05`/`ESTADO`/docs, medidas el 2026-09-28)
 
@@ -167,7 +184,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 11. **`key_source=config` (R9.3.a, `diseno.md` §4 P0, `arquitectura.md` §2)**: solo lo emite la clave de cifrado de la
     nube (`internal/bootstrap/arranque/pki.go:105`). La del **lease** emite `base64` con `WAPP_LEASE_PRIVATE_KEY_B64`
     (`internal/gateway/lease/signingkey.go:21`, `lease.go:44`), nunca `config`. P0 aserta cada una con su mensaje exacto.
-12. **«Los 17 nombres estáticos `wapp_*` de `contratos.md` §8 salen sin tráfico»**: solo **9** (`wapp_db_*` ×7,
+12. **«Los 17 nombres estáticos `wapp_*` de `contratos.md` §8 salen sin tráfico»**: solo **9** (`wapp_db_*` ×6 —`internal/platform/metrics/metrics.go:482-502`; decía «×7», que sumaba 10: corregido en la revisión del 2026-10-01—,
     `wapp_flow_autoreply_streak{,_max}`, `wapp_edge_inference_reporting_edges`). Siete `CounterVec` no aparecen hasta su
     primer incremento (T-10), cuatro familias de Edge solo salen con un Edge reportando, y los dos `wapp_http_*` solo con
     tráfico (el sondeo del propio arnés ya lo provoca). La lista medida y los motivos están en `p0MetricasSinTrafico`.
@@ -189,11 +206,17 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     `desktop-linux`, `~/Library/Containers/com.docker.docker/Data/docker-cli.sock`; `/var/run/docker.sock` no existe en este
     Mac, así que no es ese el fallback). **Lo que sí mide R9.1.d sin parar Docker**: anular también lo que testcontainers
     descubre desde `HOME` (contexto y `~/.docker/run/docker.sock`), fijando el entorno de Go a mano porque `HOME` es donde
-    `go` busca su caché: `HOME=$(mktemp -d) GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
-    GOENV=$(go env GOENV) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
+    `go` busca su caché: `GOCACHE=$(go env GOCACHE) GOPATH=$(go env GOPATH) GOMODCACHE=$(go env GOMODCACHE)
+    GOENV=$(go env GOENV) HOME=$(mktemp -d) DOCKER_HOST=unix:///nada WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -count=1 -v
     ./test/procesos/` → `rc=1`, `procesos: no se pudo levantar Postgres (¿hay Docker?)`, 0 PASS y 0 SKIP (control: el mismo
     comando con el `HOME` real pasa). Vale donde no hay `/var/run/docker.sock`; en Linux con ese socket sigue haciendo falta
-    el `unshare`. En cambio **R9.1.a sí se mide con su comando literal en este Mac** (la imagen está etiquetada
+    el `unshare`. ⚠️ **El orden de las asignaciones importa** (revisión independiente, 2026-10-01): en una misma línea se
+    evalúan de izquierda a derecha y cada `$(go env …)` ya ve el `HOME` asignado antes. Hasta hoy este comando llevaba
+    `HOME=$(mktemp -d)` **delante**: así `GOCACHE`, `GOPATH` y `GOENV` salen **bajo el `HOME` vacío** (medido en bash 3.2.57, zsh 5.9,
+    `sh` y `dash` de macOS; `GOMODCACHE` también, salvo que esté exportada en el entorno) y «fijar el entorno de Go a mano» no fijaba
+    nada. El veredicto de R9.1.d no cambia (los dos órdenes dan `rc=1` y el mismo mensaje, 0 PASS y 0 SKIP), pero con `HOME` delante
+    se compila sin caché (16 s frente a 3 s, y 324 MB de caché nueva dentro del directorio temporal) y, en una máquina sin
+    `GOMODCACHE` exportada, `go` buscaría los módulos en una caché vacía (no medido: aquí está exportada). En cambio **R9.1.a sí se mide con su comando literal en este Mac** (la imagen está etiquetada
     `postgres:17-alpine`): `docker ps --filter ancestor=postgres:17-alpine -q | wc -l` muestreó **1** durante la corrida y
     **0** a los ~15 s (el *reaper* de Ryuk); el ID de imagen sin etiqueta que muestran los contenedores viejos de otros
     proyectos no lo contamina.
@@ -234,7 +257,39 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
       que se barajaron: (a) en el test, que `p0SinErrores` ignore los `ERROR` de cancelación posteriores a la señal de parada; (b) en el test,
       que P0 espere a la primera vuelta del worker (no hay una señal observable hoy); (c) que el worker **reconstruido** no loguee a `ERROR`
       cuando `ctx.Err() != nil` (en el viejo, no). **Hasta F6**, un rojo de `sin_errores` con exactamente esas dos líneas `ERROR` es esta
-      carrera y no una regresión: se repite la corrida **una vez**, se compara y se anota; cualquier otro rojo no lo es.
+      carrera y no una regresión: se repite la corrida **una vez**, se compara y se anota; cualquier otro rojo no lo es
+      (⚠️ regla **matizada** en la nota de revisión que sigue).
+    - ⚠️ **Revisión independiente (2026-10-01, sobre `dev` @ `6650e55`).** Tres hechos comprobados en el código y una matización de la
+      regla de triaje. **No cambian la decisión D-F6-7 ni su criterio**, que son de Jhoan; lo que abren es la pregunta **D-F9-10**
+      (contradicción 28).
+      - **Hecho 1 · el mismo patrón está en otras tres de las cinco goroutines de fondo.** `fase9_fondo.go` lanza cinco
+        (`internal/bootstrap/arranque/fase9_fondo.go:54`, `:63`, `:75`, `:84` y `:99`; una línea más abajo en la copia `internal/arranque`).
+        Además del *webhook worker*, tres llaman a la BD nada más arrancar y loguean a `ERROR` sin mirar `ctx.Err()`:
+        el colector `internal/platform/metrics/flowlifecycle/collector.go` (`Run` `:204` → `pollOnce` `:215` → `becomeLeader`: `Error` en
+        `:255` «reservar conexión para el advisory lock» y `:263` «intentar el advisory lock»; ya líder, `:348` «leer max(id) inicial» y
+        `:372` «consultar flow_events»), el agregador `internal/flujos/runtime/aggregator.go` (`Run` `:699` → `RecoverAtBoot` `:703` →
+        `Sweep` → `:741` «agregador: no se pudieron listar las ventanas vivas») y el pipeline `internal/intake/pipeline/pipeline.go`
+        (`Run` `:423` → `Drenar` `:451` → `:547` «pipeline: no se pudo reclamar trabajo»; el bucle mira `ctx.Err()` **antes** de reclamar,
+        `:544`, no al volver con error). La quinta (`internal/intakeahead/intakeahead.go:335`) espera en una cola y no toca la BD al
+        arrancar. **Ninguna de las tres se ha observado** en una corrida: es la misma carrera con otra firma en el log.
+      - **Hecho 2 · esos tres paquetes no se reconstruyen en F6.** El colector es `platform` (no se reconstruye ni se borra: lo enlazan
+        los dos binarios), el agregador es `flujos/runtime` (F8) y el pipeline es `intake/pipeline` (F7). Y el binario `viejo`
+        (`cmd/server`) conserva el worker viejo hasta el relevo (F10): D-F6-7 dice que el worker viejo no se arregla. Con el worker nuevo
+        cableado en `nuevo`, `viejo` sigue expuesto por las cuatro goroutines y `nuevo`, por las otras tres.
+      - **Hecho 3 · una remedición con `CUENTA=3` no distingue «arreglado» de «sin arreglar».** Con las cifras de arriba (1/161 ≈ 0,6 %
+        por arranque en frío expuesto), `CUENTA=3 make test-procesos` tiene **2** arranques expuestos (uno por binario: `-count=3` repite
+        dentro del mismo proceso de `go test`, y solo el primer servidor arranca en frío) y da verde (160/161)² ≈ **98,8 %** de las veces
+        sin haber arreglado nada.
+      - **La regla de triaje, matizada.** Es esta carrera, y no una regresión, un rojo de `sin_errores` cuyas líneas `ERROR` cumplan
+        las tres condiciones: (1) **todas** son de cancelación (`context canceled` u `operation was canceled`); (2) las emite una
+        goroutine de fondo (prefijos `webhook worker:`, `colector de telemetría de flow_events:`, `agregador:` o `pipeline:`); y
+        (3) caen en la parada: junto a la línea `señal de parada recibida, cerrando` (`internal/bootstrap/arranque/servir.go:53`,
+        `internal/arranque/servir.go:54`; `p0MsgSenal`, `test/procesos/p0_arranque_test.go:37`). ⚠️ «Posteriores a la señal» **no** es exigible línea a línea: la línea de la señal y el `ERROR` salen del
+        mismo `ctx.Done()` en goroutines distintas (`servir.go:52-53` frente al retorno de la llamada a BD) y su orden en el log no está
+        garantizado (leído en el código, no observado). «Exactamente esas dos líneas» era estrecho por dos lados: las otras tres
+        goroutines darían otro texto, y el propio worker puede dar **una sola** línea (si la cancelación cae durante `pollOnce`, con
+        `recoverOrphans` ya de vuelta, solo sale la de `worker.go:225`). Un rojo que no cumpla las tres condiciones no es esta carrera.
+        El procedimiento no cambia: se repite **una vez**, se compara y se anota.
 20. **La regla del `Cleanup` («el servidor sale con 0») no tiene la escapatoria que decía el traspaso.** `limpiar` vuelve a
     llamar a `Parar`, que es idempotente y devuelve **el mismo código**; así que un proceso que mata al servidor a propósito y
     llama a `Parar` antes falla igual con `el servidor no paró limpio: código de salida -1` (medido con un test temporal, ya
@@ -249,3 +304,59 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     Postgres desapareció a los ~15 s por el *reaper*; un pánico por *timeout* con `TestP0_Arranque` en marcha dejó 0. No hay
     huérfano persistente en esas dos muestras; un servidor **callado** podría vivir más (no medido); (c) el `-timeout` de `go test`
     cuenta desde `m.Run`, no desde el `TestMain`: la suite entera cabe en ≈ 3 s, el resto de los ≈ 10 s del paquete es el `TestMain`.
+
+### Hallazgos de la revisión independiente de S9–S11 (2026-10-01, sobre `dev` @ `6650e55`)
+
+> Revisión de F9-01, F9-02 y F1-01 (`45e01a4..6650e55`). Son **hechos** comprobados contra el código de `6650e55`; lo que pide una
+> decisión está en «Decisiones abiertas por la revisión», arriba, y **no se decide aquí**. Los hallazgos de F1 están en el
+> [README de F1](../F1-nucleo-contact/README.md) (21–24). Las correcciones de código viajan en la rama `reorg/revision-s9-s11`.
+
+22. **El candado `SinBDViva` es una lista negra sintáctica, con falsos negativos** (→ **D-F9-6**). `internal/candados/sinbdviva.go`
+    persigue formas concretas en el AST (`:95-129` y `patronesLiteral`): literales con `WAPP_TEST_DB_DSN`, con `:5432` o que empiezan
+    por `postgres://`/`postgresql://`, el identificador `WithReuseByName`, los selectores `os.Environ` y `testing.Short` **con ese
+    nombre de paquete exacto** (`esIdent`, `:132-135`) y `Skip*`. La revisión lo midió con una sonda de ~20 evasiones: mordió 1. El
+    alias y el import con punto de `os`/`testing` se corrigen en el PR de la revisión. Quedan **sin cerrar**: un DSN sin host ni
+    puerto (`pgx.Connect(ctx, "")`, `sql.Open("pgx", "dbname=…")`: pgx completa lo que falta con `PGHOST`/`PGPORT` o con sus valores
+    por defecto, puerto 5432); un DSN clave=valor (`port=5432`, sin los dos puntos); literales construidos (`"localhost:"+"5432"`,
+    `net.JoinHostPort`); `os.Getenv("DATABASE_URL")` o `PGHOST` (el candado declara legítimo `os.Getenv`, `:28-29`); `syscall.Environ`,
+    `cmd.Environ()` y un `exec.Cmd` con `Env == nil`, que hereda el entorno entero; `os.Exit(0)` en `TestMain`; y la auto-exención por
+    **nombre base** `sin_bd_viva_test.go` en cualquier subdirectorio (`:47`). Hoy `test/procesos` abre conexiones en dos sitios, los
+    dos en `base_test.go`: `pgx.Connect` (`:72`) y `sql.Open` (`:188`).
+23. **El arnés no fija `GOWORK=off` al compilar** (→ **D-F9-7**). `compilar` (`test/procesos/main_test.go:272`) lanza `go build` con
+    `cmd.Env` en `nil`, a propósito (`:278`: «go build necesita el entorno de Go del desarrollador»). En la ubicación real del repo
+    hay un `go.work` en la raíz del ecosistema (`wApp/go.work`) cuyas líneas `use` incluyen `./cloud/wapp-cloudlink` y los módulos de
+    `./shared/wapp-shared/`: `go test -tags integracion ./test/procesos/` **sin** `GOWORK=off` compila el servidor y el Edge de prueba
+    contra los árboles de al lado, no contra las versiones de `go.mod`. `make test-procesos` sí lo fija (`GO := GOWORK=off go`,
+    `Makefile:15`); una invocación directa, o la de un IDE, no.
+24. **Matiz a H-4 (contradicción 21 b): lo que sí queda huérfano es el directorio temporal** (→ **D-F9-8**). `TestMain` crea
+    `procesos-*` con `os.MkdirTemp("", "procesos-")` (`main_test.go:90`) y lo borra con un `defer` (`:96`, `borrarDirectorio`), que no
+    corre si el binario de test muere por `kill -9`, pánico o *timeout*. En el `os.TempDir()` del Mac había **tres** del 2026-10-01
+    (09:31–09:34; 64 + 64 + 14 MB: los binarios compilados), de los experimentos de F9-02.
+25. **Corregido en el PR de la revisión** (rama `reorg/revision-s9-s11`; sin SHA todavía): (a) el reintento por puerto ocupado
+    (`servidor_test.go:122-132`) relanzaba el servidor contra el **mismo** doble de S3, que quedaba con dos `HeadBucket`: falso rojo
+    de `TestP0_Arranque/almacenes_s3`, que exige exactamente uno (`p0_arranque_test.go:354`); (b) el Edge de prueba daba por buena
+    una conexión con el lease inicial rechazado y acusaba `SendText` con `ok=true` sin lease vigente o tras la revocación (el Edge
+    real responde `Ack{ok=false}`, «lease no vigente»); (c) nada impedía abrir una sesión en la base `plantilla`; (d)
+    `make test-procesos` no fallaba con `--- SKIP` (los cuenta, pero su código de salida solo mira el `rc` de `go test`,
+    `Makefile:158-164`).
+26. **`klauspost/compress` no va en ningún binario de producción** (matiz al §2 del traspaso y a la fila T-2, que dicen «sube lo
+    que va en producción»). Es una línea nueva de `go.mod` (`:80`, `// indirect`) que solo usa un test de `promhttp`
+    (`go mod why -m github.com/klauspost/compress` → `promhttp.test` → `klauspost/compress/zstd`); `go list -deps` da 0 en
+    `./cmd/server`, `./cmd/server-modular` y `./cmd/migrate`. De los **81** módulos enlazados en esos tres binarios (regla:
+    `go list -deps -f '{{with .Module}}{{.Path}} {{.Version}}{{end}}' … | sort -u`, cuenta el propio) solo cambian dos entre `a374cdb`
+    (el padre de `37c7db7`) y `6650e55`: `httpsnoop` 1.0.4 → 1.1.0 y `otelhttp` 0.67.0 → 0.69.0. Entran por el cliente HTTP de
+    `cloud.google.com/go/kms` (`go mod why`: `internal/platform/crypto` → `kms/apiv1` → `google.golang.org/api/transport/http` →
+    `otelhttp` → `httpsnoop`); ningún fichero de `cmd/`, `internal/` ni `test/` los importa. `cmd/migrate` no enlaza ninguno de los tres.
+27. **Dos preguntas del §8 del traspaso se cerraron en voz de la sesión** (→ **D-F9-9**). «Dejar el alcance extra del Edge» y
+    «mantener la regla del `Cleanup`» figuran como hechas en «Qué queda» del `CERRADO` de
+    [`TRASPASO-F9-arnes.md`](../../traspasos/TRASPASO-F9-arnes.md), sin fila en [`../DECISIONES.md`](../DECISIONES.md) y sin la
+    fórmula «decisión de Jhoan» que sí lleva H-1. El §8 las titulaba «Decisiones que necesitan a Jhoan».
+28. **D-F6-7: el alcance y el criterio de remedición quedan abiertos** (→ **D-F9-10**; hechos en la nota de revisión de la
+    contradicción 19). La decisión dice «se evalúa al reconstruir `integrations`»; tres de las cuatro goroutines con la carrera no
+    son de F6, el binario `viejo` la conserva hasta F10, y la remedición prevista (T6.27 y T9.30, `CUENTA=3`) no discrimina. Las
+    tareas llevan la nota: [`../F6-solicitudes/tareas.md`](../F6-solicitudes/tareas.md) T6.27 y [`tareas.md`](tareas.md) T9.30.
+29. **Cinco ficheros de test de `test/procesos` pasan de 500 líneas** (→ **D-F9-11**; `wc -l` en `6650e55`): `edge_falso_test.go`
+    **2.534** (cuatro temas: transporte y enrolamiento · núcleo y frames · tests sin servidor · tests contra el servidor real),
+    `servidor_test.go` **1.033**, `clientes_test.go` **750**, `pki_test.go` **653** y `p0_arranque_test.go` **611** (de este
+    convendría sacar el parser de exposición Prometheus, que reutilizarán otros procesos). El paquete suma 7.785 líneas en 12
+    ficheros `*_test.go`.
