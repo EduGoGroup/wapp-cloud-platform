@@ -145,6 +145,14 @@
 - **R9.6.c** · **EL** proceso P5 **DEBERÁ** asertar INV-1 (la aprobación tiene una sola puerta) como
   conducta: dos aprobaciones de la misma solicitud dejan **un** `intake_approved` en `flow_events`.
   — Verifica: `TestP5_AprobarDosVecesUnSoloEfecto`.
+- **R9.6.d** · *(D-F1-11, decisión de Jhoan, 2026-10-02)* **EL** proceso P3 **DEBERÁ** asertar, sobre Postgres y
+  contra los dos binarios, las tres reglas de `public.contacts` que `internal/nucleo/contact` difiere a F9 y
+  que hoy solo fijan los tests de integración viejos de `internal/flujos/contact` (F10 los borra): **R-27** (el
+  nombre tardío se sella), **R-28** (gana el primer nombre) y **R-29** (ráfaga sin `40P01`, con la siembra **sin**
+  nombre como precondición afirmada). No son candados AST de `05` §3.2: entran en esta historia porque el
+  motivo es el mismo, no perder una regla que solo se ve contra Postgres. — Verifica:
+  `TestP3_LatePushNameIsSealed`, `TestP3_FirstPushNameWins` y `TestP3_HistoryBurstWithoutDeadlock` (pasos 6–8 de
+  P3 y su tabla, `diseno.md` §4; nombres en inglés por `05` E-11).
 
 ## H9.7 · El reparto web ↔ local
 

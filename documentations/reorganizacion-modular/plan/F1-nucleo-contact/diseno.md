@@ -159,9 +159,9 @@ integración (`openTestDB`, `WAPP_TEST_DB_DSN`, `repository_postgres_test.go:48-
 | R-23 | Valor cifrado en reposo; no hay columna `value` | `repository_postgres_test.go:253-297` | `codificarRef` + F9 |
 | R-24 | `value_kek_id` = KEK current; `Destino` abre cada fila con su `kek_id`; KEK ausente → error | `:304-365`, `rekey_integration_test.go:111-200` | `abrirFilas` + F9 |
 | R-25 | Migración 0007 re-aplicable | `repository_postgres_test.go:370-410` | **No se porta**: es del runner de `platform` |
-| R-26 · R-27 | `push_name` vacío → sobre NULL; el nombre tardío se sella | `push_name_cifrado_integration_test.go:138-195` | `sobrePushName` + F9 |
-| R-28 | Gana el primer nombre (centinela `push_name_enc IS NULL`, MD-046.5) | `:197-228`, `repository_postgres.go:283-320` | comentario + SQL literal + F9 |
-| R-29 | Ráfaga sin `40P01`; la siembra **sin nombre** es contrato del test | `deadlock_integration_test.go:29-150` | Proceso «entrante a respuesta» (F9) |
+| R-26 · R-27 | `push_name` vacío → sobre NULL; el nombre tardío se sella | `push_name_cifrado_integration_test.go:138-195` | `sobrePushName` + F9 (✎ D-F1-11: P3, paso 6) |
+| R-28 | Gana el primer nombre (centinela `push_name_enc IS NULL`, MD-046.5) | `:197-228`, `repository_postgres.go:283-320` | comentario + SQL literal + F9 (✎ D-F1-11: P3, paso 7) |
+| R-29 | Ráfaga sin `40P01`; la siembra **sin nombre** es contrato del test | `deadlock_integration_test.go:29-150` | Proceso «entrante a respuesta» (F9) (✎ D-F1-11: P3, paso 8) |
 | R-30 | Rotación: todo legible; reanudable | `rekey_integration_test.go:111-262` | F9 (el `Rekey` es de `platform`) |
 | R-31 · R-32 | Una transacción con reintento; get-or-create con `ON CONFLICT DO UPDATE … RETURNING` | `repository_postgres.go:83-110,140-178` | SQL literal + suite (R-32) |
 | R-33 | No hay lector de `push_name`, a propósito | `repository_postgres.go:32-43` | comentario |
@@ -170,6 +170,10 @@ integración (`openTestDB`, `WAPP_TEST_DB_DSN`, `repository_postgres_test.go:48-
 | N-03 | Tras la fusión el huérfano no existe | `repository_memory.go:165` · `repository_postgres.go:408-412` | suite |
 | N-04 | `pushName` no cambia el `contact_id` | código | suite |
 | N-05 | JID de dispositivo `57300…:5@s.whatsapp.net` en el respaldo de `RefsFrom` normaliza **con** el dígito del dispositivo (`contact.go:112-131` guarda todo dígito) | lectura del código | `resolver_test` fija el comportamiento **actual**; si es un defecto, se arregla en `V` y en `N` a la vez (fuera de F1) |
+
+✎ **D-F1-11 (decisión de Jhoan, 2026-10-02)**: el «F9» de las filas R-26 · R-27, R-28 y R-29 tiene ya sitio en la spec de
+F9: los pasos 6–8 de **P3** ([`../F9-procesos/diseno.md`](../F9-procesos/diseno.md) §4, requisito R9.6.d, tarea T9.15), que dicen
+también qué no puede reproducir la caja negra.
 
 ## 5 · Textos observables (se copian byte a byte)
 

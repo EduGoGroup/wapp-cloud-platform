@@ -96,7 +96,8 @@ hay Docker); local: `make test-procesos` RC=0 ×2 · **Commit** `procesos(<proce
 
 - [ ] **T9.13 · procesos(enrolamiento): P1, enrolamiento y lease** · 🌐→💻 · dep. T9.12 · cumple R9.4.b–d
 - [ ] **T9.14 · procesos(canje): P2, canje y permisos, con I-CP-5 y el canje único** · 🌐→💻 · dep. T9.12 · cumple R9.6.a–b
-- [ ] **T9.15 · procesos(entrante): P3, del entrante a la respuesta, con el literal del aviso** · 🌐→💻 · dep. T9.13
+- [ ] **T9.15 · procesos(entrante): P3, del entrante a la respuesta, con el literal del aviso** · 🌐→💻 · dep. T9.13 · cumple R9.6.d
+  - Además (D-F1-11, decisión de Jhoan, 2026-10-02): los pasos 6–8 de P3 (`diseno.md` §4), que afirman R-27, R-28 y R-29 de F1 —las tres reglas de `contacts` que `internal/nucleo/contact` difiere a este proceso—; la variante de `entrante` con `push_name` y `from_lid` en `edge_falso_test.go` (`diseno.md` §3.3); y la **medición** del mutante `maxTxAttempts = 1`, con su resultado en el traspaso (se cierre o no la carencia de MP-12)
 - [ ] **T9.16 · procesos(diagnostico): P9, diagnóstico remoto y config empujada** · 🌐→💻 · dep. T9.13
   - Cierre del bloque: traspaso `TRASPASO-F9-procesos-b1.md` con `CERRADO`.
 
