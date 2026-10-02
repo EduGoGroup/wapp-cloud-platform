@@ -1007,9 +1007,19 @@ func esperarEnLog(t *testing.T, h *procesoHijo, texto string) {
 	}
 }
 
+// stopOnCleanup registra en t.Cleanup la parada del proceso (SIGTERM, su plazo, SIGKILL). Es para
+// los tests que lanzan un proceso con iniciarProceso sin pasar por arrancar: se llama justo después
+// de lanzarlo, para que un t.Fatalf anterior a la parada del propio test no deje el proceso suelto.
+// Como parar es idempotente, si el test ya lo paró el Cleanup no vuelve a señalar ni a esperar.
+func stopOnCleanup(t *testing.T, h *procesoHijo) {
+	t.Helper()
+	t.Cleanup(func() { h.parar(t) })
+}
+
 // TestArnes_PararMataSiNoCede prueba la rama SIGKILL de la parada con un proceso que ignora
 // SIGTERM: tras el plazo se mata, el código es -1, es idempotente y varias goroutines que paran
-// a la vez reciben el mismo código. No necesita Docker ni el binario del servidor, solo `sh`.
+// a la vez reciben el mismo código. No necesita Docker ni el binario del servidor, solo `sh`. Si
+// falla antes de parar, el Cleanup mata el proceso: no queda un `sleep 60` suelto.
 func TestArnes_PararMataSiNoCede(t *testing.T) {
 	t.Parallel()
 	const tope = 300 * time.Millisecond
@@ -1019,6 +1029,7 @@ func TestArnes_PararMataSiNoCede(t *testing.T) {
 	if err != nil {
 		t.Fatalf("iniciarProceso: %v", err)
 	}
+	stopOnCleanup(t, h)
 	esperarEnLog(t, h, "listo") // sin esto SIGTERM podría llegar antes del trap y matarlo sin SIGKILL
 
 	codigos := make([]int, 3)
@@ -1044,13 +1055,15 @@ func TestArnes_PararMataSiNoCede(t *testing.T) {
 
 // TestArnes_PararLimpio prueba la parada que sí cede: un proceso que sale con 0 al recibir
 // SIGTERM da código 0, la segunda llamada devuelve lo mismo, y parar un proceso que ya había
-// salido por su cuenta devuelve su código de salida. Solo necesita `sh`.
+// salido por su cuenta devuelve su código de salida. Solo necesita `sh`. Los dos procesos quedan
+// con su parada en el Cleanup, por si el test falla antes de pararlos.
 func TestArnes_PararLimpio(t *testing.T) {
 	t.Parallel()
 	h, err := iniciarProceso(exec.Command("sh", "-c", `trap 'exit 0' TERM; echo listo; while :; do sleep 1; done`), 10*time.Second)
 	if err != nil {
 		t.Fatalf("iniciarProceso: %v", err)
 	}
+	stopOnCleanup(t, h)
 	esperarEnLog(t, h, "listo")
 	if c := h.parar(t); c != 0 {
 		t.Errorf("parar devolvió %d, quería 0", c)
@@ -1063,6 +1076,7 @@ func TestArnes_PararLimpio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("iniciarProceso: %v", err)
 	}
+	stopOnCleanup(t, salido)
 	<-salido.salio
 	if c := salido.parar(t); c != 7 {
 		t.Errorf("parar de un proceso que ya salió con 7 devolvió %d", c)
