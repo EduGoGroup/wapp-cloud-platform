@@ -1,4 +1,4 @@
-package cosatest
+package cosahelpertest
 
 import "testing"
 

@@ -12,6 +12,11 @@
 // Promesas comunes a todos los candados: devuelven las violaciones ordenadas por Fichero y,
 // a igual Fichero, por Motivo (salida determinista, diffable); cero violaciones es un slice
 // de longitud 0; no leen el disco (trabajan sobre las Fuente ya parseadas), salvo Recorrer.
+//
+// Tres de ellos (un fichero un test, exportados cubiertos y cobertura por fichero) dejan
+// fuera a los paquetes de suite de contrato y dobles (D-F1-3 y D-F1-6). Qué paquete es ese
+// se decide en UN sitio, isHelperTestPackage: aquel cuyo nombre termina en el sufijo
+// compuesto «helpertest» (D-F1-10), p. ej. contacthelpertest.
 package candados
 
 import (
@@ -50,14 +55,51 @@ func (v Violacion) String() string {
 //     a Recorrer comparten el mismo.
 //   - EsTest: true si el nombre del fichero termina en "_test.go".
 //   - Paquete: el nombre de paquete de la cláusula `package` (p. ej. "lease", "lease_test",
-//     "leasetest"). Lo expone para que la exención de D-F1-3 (paquetes cuyo nombre termina
-//     en "test") sea UNA condición en este paquete y no una lista de rutas.
+//     "leasehelpertest"). Lo expone para que la exención de D-F1-3 y D-F1-6 (paquetes cuyo
+//     nombre termina en "helpertest", D-F1-10: isHelperTestPackage) sea UNA condición en este
+//     paquete y no una lista de rutas.
 type Fuente struct {
 	Ruta    string
 	Archivo *ast.File
 	Fset    *token.FileSet
 	EsTest  bool
 	Paquete string
+}
+
+// helperTestSuffix es el sufijo COMPUESTO del nombre de paquete que exime a las suites de
+// contrato y a los dobles de un puerto de los tres candados de fichero (UnFicheroUnTest,
+// ExportadosCubiertos y la cobertura por fichero de Evaluables y Cobertura). La suite del
+// paquete <paquete> vive en el paquete <paquete>helpertest, en <dir>/<paquete>helpertest
+// (p. ej. internal/nucleo/contact/contacthelpertest).
+//
+// D-F1-10 (Jhoan, 2026-10-02). ESTRECHA D-F1-3 (exentos de UnFicheroUnTest y de
+// ExportadosCubiertos) y D-F1-6 (exentos de la cobertura por fichero); no las deroga: lo que
+// cambia es cómo se reconoce el paquete. Hasta D-F1-10 el sufijo era "test" a secas, y un
+// paquete de PRODUCCIÓN cuyo nombre acabara en «test» por casualidad (latest, contest,
+// attest…) quedaba exento de los tres sin que nadie lo hubiera decidido (hallazgo 21 de la
+// revisión de S9–S11, medido con una sonda en internal/nucleo/latest).
+const helperTestSuffix = "helpertest"
+
+// isHelperTestPackage dice si name —el nombre de un paquete: la cláusula `package`
+// (Fuente.Paquete), no su directorio— es el de un paquete de suite de contrato y dobles, el
+// único que los tres candados de fichero dejan fuera (D-F1-3, D-F1-6, estrechadas por
+// D-F1-10).
+//
+// Lo es si y solo si termina en helperTestSuffix Y tiene al menos un carácter delante:
+// "contacthelpertest" y "xhelpertest" sí. No lo son:
+//   - un nombre que termina en "test" sin terminar en "helpertest": un paquete de producción
+//     como "latest" o "contest", el nombre viejo de las suites ("cosatest", "fleettest") y
+//     "huellatest", que conserva su nombre y por tanto se mide como cualquier otro;
+//   - "helpertest" a secas: el sufijo nombra de QUIÉN es la suite (<paquete>helpertest), y
+//     sin paquete delante no es la suite de nadie —haySuiteContrato nunca la buscaría—. Se
+//     trata como producción: un candado, ante la duda, muerde;
+//   - el sufijo en otro sitio ("helpertestcosa", "cosahelpertests") o con otra grafía
+//     ("cosaHelperTest"): la comparación es exacta, con mayúsculas y minúsculas.
+//
+// Es la ÚNICA definición del criterio: los tres candados y haySuiteContrato la usan, para
+// que no puedan divergir.
+func isHelperTestPackage(name string) bool {
+	return len(name) > len(helperTestSuffix) && strings.HasSuffix(name, helperTestSuffix)
 }
 
 // Recorrer parsea, recursivamente, todos los ficheros .go bajo raiz/dir para cada dir de

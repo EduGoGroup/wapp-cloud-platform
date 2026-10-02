@@ -107,6 +107,66 @@ func TestAyudasComunes(t *testing.T) {
 	}
 }
 
+// ── La exención de suites y dobles: el sufijo compuesto «helpertest» (D-F1-10) ───────────
+
+// helperTestDoubleBody es lo que sigue a la cláusula `package` en el fichero con el que los
+// tres candados prueban cada nombre de helperTestSuffixCases: una función exportada con
+// lógica. Es el MISMO código para todos los nombres: lo único que cambia entre un caso exento
+// y uno que muerde es el nombre del paquete.
+const helperTestDoubleBody = "\n\n// Next devuelve el siguiente.\nfunc Next(n int) int { return n + 1 }\n"
+
+// helperTestSuffixCases son los nombres de paquete que fijan el borde de D-F1-10 (Jhoan,
+// 2026-10-02) en los TRES candados (UnFicheroUnTest, ExportadosCubiertos y la cobertura por
+// fichero): queda exento el paquete cuyo nombre (la cláusula `package`, pkg; no el
+// directorio, dir) termina en «helpertest» y tiene algo delante. Un nombre que termina en
+// «test» a secas —uno de producción como latest, o el nombre viejo de las suites, cosatest—
+// ya no lo está, y «helpertest» sin prefijo tampoco (no es la suite de ningún paquete).
+var helperTestSuffixCases = []struct {
+	name   string
+	dir    string
+	pkg    string
+	exempt bool
+}{
+	{"cosahelpertest is the suite or the doubles of package cosa", "cosahelpertest", "cosahelpertest", true},
+	{"contacthelpertest is the suite of the pilot", "contacthelpertest", "contacthelpertest", true},
+	{"a one-letter prefix before helpertest is enough", "xhelpertest", "xhelpertest", true},
+	{"a helpertest package in a directory that is not one stays exempt", "other", "otherhelpertest", true},
+	{"a helpertest directory holding a regular package is not exempt", "cosahelpertest", "cosa", false},
+	{"cosa is the control twin", "cosa", "cosa", false},
+	{"latest is a production package ending in test by chance", "latest", "latest", false},
+	{"contest is another production package ending in test", "contest", "contest", false},
+	{"cosatest carries the old bare suffix", "cosatest", "cosatest", false},
+	{"huellatest keeps its name and loses the exemption", "huellatest", "huellatest", false},
+	{"wrappertest ends in pertest, not in helpertest", "wrappertest", "wrappertest", false},
+	{"yelpertest ends in elpertest, not in helpertest", "yelpertest", "yelpertest", false},
+	{"helpertest alone has no package before the suffix", "helpertest", "helpertest", false},
+	{"helpertestcosa has the suffix at the wrong end", "helpertestcosa", "helpertestcosa", false},
+	{"cosahelpertests is a plural, not the suffix", "cosahelpertests", "cosahelpertests", false},
+	{"test alone is not exempt either", "test", "test", false},
+}
+
+// TestIsHelperTestPackage: la única definición del criterio de D-F1-10. Exento es el nombre
+// que termina en «helpertest» con algo delante; ni «test» a secas (latest, cosatest,
+// huellatest), ni un trozo del sufijo (pertest, elpertest), ni «helpertest» sin prefijo, ni
+// el sufijo en otro sitio, ni con otra grafía, ni el nombre vacío.
+func TestIsHelperTestPackage(t *testing.T) {
+	if helperTestSuffix != "helpertest" {
+		t.Errorf("helperTestSuffix = %q; D-F1-10 fija %q", helperTestSuffix, "helpertest")
+	}
+	for _, c := range helperTestSuffixCases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isHelperTestPackage(c.pkg); got != c.exempt {
+				t.Errorf("isHelperTestPackage(%q) = %v; quiero %v", c.pkg, got, c.exempt)
+			}
+		})
+	}
+	for _, name := range []string{"", "cosaHelperTest", "cosaHELPERTEST", "cosa_helper_test", "cosahelpertest_test"} {
+		if isHelperTestPackage(name) {
+			t.Errorf("isHelperTestPackage(%q) = true; quiero false", name)
+		}
+	}
+}
+
 // ── Violacion ────────────────────────────────────────────────────────────────────────────
 
 // TestViolacionString: el formato es exactamente "fichero: motivo".

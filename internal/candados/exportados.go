@@ -13,8 +13,11 @@ import (
 //
 // Solo mira los x.go de producción cuyo x_test.go (mismo directorio) está entre fuentes; un
 // x.go sin test no es asunto de este candado (lo es de UnFicheroUnTest). Quedan fuera los
-// paquetes cuyo nombre termina en "test" (D-F1-3 = sí, la misma condición que
-// UnFicheroUnTest).
+// paquetes de suite y dobles (D-F1-3 = sí), con la misma condición que UnFicheroUnTest,
+// isHelperTestPackage: el nombre del paquete —la cláusula `package`, no el directorio—
+// termina en el sufijo compuesto "helpertest" (D-F1-10, Jhoan, 2026-10-02, que estrecha
+// D-F1-3). Un paquete que termina en "test" a secas NO queda fuera: con esa regla, la de
+// antes, los exportados de un paquete de producción llamado latest no se exigían.
 //
 // Exportados de x.go: las funciones, tipos, variables y constantes de primer nivel con nombre
 // exportado, y los métodos exportados de sus tipos exportados. Los campos de struct no se
@@ -37,8 +40,9 @@ func ExportadosCubiertos(fuentes []Fuente) []Violacion {
 	}
 	vs := make([]Violacion, 0)
 	for _, f := range fuentes {
-		// D-F1-3 = sí: un paquete …test entero (suite Contrato y dobles) queda fuera.
-		if f.EsTest || strings.HasSuffix(f.Paquete, "test") {
+		// D-F1-3 = sí: un paquete …helpertest entero (suite Contrato y dobles) queda fuera;
+		// el sufijo es el de D-F1-10 (uno que acaba en "test" a secas, como latest, no).
+		if f.EsTest || isHelperTestPackage(f.Paquete) {
 			continue
 		}
 		ruta := strings.TrimSuffix(f.Ruta, ".go") + "_test.go"

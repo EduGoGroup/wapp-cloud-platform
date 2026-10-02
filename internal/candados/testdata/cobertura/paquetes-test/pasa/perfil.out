@@ -1,7 +1,7 @@
 mode: set
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/cosa.go:5.24,7.2 1 1
-github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/doble.go:9.28,12.2 2 0
-github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/contrato.go:7.50,9.25 2 0
-github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/contrato.go:9.25,11.4 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/doble.go:10.28,13.2 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/contrato.go:8.50,10.25 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/contrato.go:10.25,12.4 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/rojo/rojo.go:6.18,8.2 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/pg/pg.go:9.25,9.37 1 0
