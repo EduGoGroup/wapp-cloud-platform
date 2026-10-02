@@ -382,6 +382,16 @@ Nace en F0 (T0.8, patrones de su `diseno.md` §4.4: `WAPP_TEST_DB_DSN`, literale
 | `os.Environ()` | El servidor hereda el entorno del shell: un `.env` exportado apuntaría a otra base (§2) |
 | `t.Skip` / `t.SkipNow` / `testing.Short()` | E-5: nunca un SKIP en código nuevo; un proceso que no puede correr **falla** |
 
+**D-F9-6 (Jhoan, 2026-10-02)** añade una segunda regla, que no mira literales: una **lista blanca de quién
+abre conexiones**. Toda referencia a una apertura (`sql.Open`/`OpenDB`; `pgx.Connect`/`ConnectConfig`/
+`ConnectWithOptions`; las tres de `pgconn`; `pgxpool.New`/`NewWithConfig`; `stdlib.OpenDB`,
+`OpenDBFromPool`, `GetConnector`, `GetPoolConnector`, `GetDefaultDriver`, `Driver`), con el nombre del
+paquete, con alias o con import de punto, es una violación en cualquier fichero que no sea
+**`test/procesos/base_test.go`** (ruta exacta). La lista negra de arriba se conserva, y de ella solo se
+salta el propio candado, también por ruta exacta (`test/procesos/sin_bd_viva_test.go`; antes era por
+nombre base). Lo que el candado sigue sin ver está fijado como caso en
+`internal/candados/sinbdviva_test.go` (`TestSinBDVivaKnownGaps`).
+
 ## 7 · `make test-procesos` (T9.4)
 
 ```make

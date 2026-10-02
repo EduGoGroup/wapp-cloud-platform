@@ -297,7 +297,7 @@ El orden de §6 minimiza los puentes, pero no los elimina.
 | `make cobertura-ficheros` | Un fichero ya en verde por debajo del umbral (E-9), salvo adaptadores Postgres |
 | `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
-| `test/procesos/sin_bd_viva_test.go` | Cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
+| `test/procesos/sin_bd_viva_test.go` | Una **apertura de conexión** a la base de datos (`sql.Open`/`OpenDB`, `pgx.Connect*`, `pgconn.Connect*`, `pgxpool.New*`, las de `pgx/stdlib`) en cualquier fichero de `test/procesos/` que no sea `test/procesos/base_test.go`: lista blanca de quién abre conexiones, por ruta exacta (D-F9-6, decisión de Jhoan, 2026-10-02; antes solo había lista negra). Y, como antes, cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
 | `no_pending_test.go` (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test.go`: el fichero aún no existe y nace con nombre en inglés, E-11) | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
 
 ---

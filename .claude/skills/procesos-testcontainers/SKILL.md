@@ -17,7 +17,10 @@ ni una prueba contra Postgres.
 **Nunca un Postgres vivo.** Ni `WAPP_TEST_DB_DSN`, ni `localhost:5432`, ni un contenedor con nombre
 fijo levantado a mano, ni UAT, ni `testcontainers.WithReuseByName` (experimental, y es el mismo
 vicio con otro nombre). La única cadena de conexión válida es la que devuelve el contenedor de la
-corrida. El candado `test/procesos/sin_bd_viva_test.go` hace fallar el gate si aparece alguna.
+corrida. El candado `test/procesos/sin_bd_viva_test.go` hace fallar el gate si aparece alguna, y
+además si **cualquier fichero que no sea `test/procesos/base_test.go` abre una conexión**
+(`sql.Open`, `pgx.Connect`, `pgxpool.New`…; lista blanca por ruta exacta, D-F9-6, 2026-10-02): un
+proceso no abre la suya, usa la que le da el arnés (`nuevaBase(t, …)` y `base.Abrir(t)`).
 
 Los tests **viejos** sí usan `WAPP_TEST_DB_DSN` (135 usos): siguen así hasta el relevo, porque
 protegen el código viejo. No se copian.

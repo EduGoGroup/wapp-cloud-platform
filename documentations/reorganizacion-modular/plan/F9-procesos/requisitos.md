@@ -61,6 +61,13 @@
 - **R9.2.c** · **EL** candado **DEBERÁ** probar su propio detector con un caso `muerde` por patrón,
   para que un detector roto no dé verde. — Verifica: el test del detector en `internal/candados/`
   (mecánica de F0) con un caso por cada uno de los seis patrones.
+- **R9.2.d** · *(D-F9-6, Jhoan, 2026-10-02)* **SI** un fichero de `test/procesos/` que no es
+  `test/procesos/base_test.go` (ruta exacta) nombra una apertura de conexión de `database/sql`, `pgx`,
+  `pgconn`, `pgxpool` o `pgx/stdlib` —con el nombre del paquete, con alias o con import de punto, llamada o
+  como valor—, **ENTONCES EL** candado **DEBERÁ** fallar nombrando fichero, línea y apertura, diga lo que
+  diga la cadena que recibe. La auto-exención de R9.2.a vale solo para la ruta exacta
+  `test/procesos/sin_bd_viva_test.go`. — Verifica: `TestSinBDVivaMuerde`, `TestSinBDVivaOpenersBite` y
+  `TestSinBDVivaExactPaths` en `internal/candados/`, y `GOWORK=off go test ./test/procesos/; echo rc=$?` → `rc=0`.
 
 ## H9.3 · Los dobles: el servidor de verdad arranca sin nada de fuera
 

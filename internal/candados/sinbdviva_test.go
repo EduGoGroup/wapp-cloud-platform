@@ -10,6 +10,14 @@ import (
 // apariciones del patrón en el fichero: cada aparición es una violación (skip_test.go tiene
 // tres llamadas Skip*, así que t.Skip da tres). Un alias o un import de punto de os o de
 // testing no esconde el patrón, y el motivo lo sigue nombrando «os.Environ» / «testing.Short».
+//
+// Desde D-F9-6 (Jhoan, 2026-10-02) muerde además toda APERTURA de conexión fuera de la lista
+// blanca (test/procesos/base_test.go), diga lo que diga su cadena: son las evasiones de la
+// contradicción 22 del README de F9 que la lista negra de literales no veía (DSN vacío o
+// clave=valor, literales construidos, os.Getenv de la cadena de fuera), más el alias, el
+// import de punto y las otras puertas de las mismas librerías. La lista blanca y la
+// auto-exención son rutas EXACTAS: sub/base_test.go y sub/sin_bd_viva_test.go muerden; y cada
+// una exime de SU regla: base_test.go sigue bajo la lista negra, y el candado, bajo la blanca.
 func TestSinBDVivaMuerde(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/sinbdviva/muerde", []string{"test/procesos"}, true)
 	vs := SinBDViva(fuentes)
@@ -33,6 +41,27 @@ func TestSinBDVivaMuerde(t *testing.T) {
 		{"aliased testing import: tt.Short()", d + "alias_test.go", "testing.Short", 1},
 		{"dot import of os: bare Environ()", d + "dot_import_test.go", "os.Environ", 1},
 		{"dot import of testing: bare Short()", d + "dot_import_test.go", "testing.Short", 1},
+		{"empty DSN: pgx fills host and port from PGHOST/PGPORT", d + "open_empty_dsn_test.go", "pgx.Connect", 1},
+		{"DSN without host or port through database/sql", d + "open_empty_dsn_test.go", "sql.Open", 1},
+		{"key=value DSN: the port without the colon", d + "open_keyvalue_dsn_test.go", "pgxpool.New", 1},
+		{"URL built from pieces and net.JoinHostPort", d + "open_built_literal_test.go", "pgx.Connect", 1},
+		{"config parsed from a built literal", d + "open_built_literal_test.go", "pgx.ConnectConfig", 1},
+		{"os.Getenv of an outside connection string", d + "open_getenv_test.go", "sql.Open", 1},
+		{"os.Getenv of PGHOST", d + "open_getenv_test.go", "pgx.Connect", 1},
+		{"aliased database/sql: db.Open", d + "open_alias_test.go", "sql.Open", 1},
+		{"aliased pgx: p.Connect", d + "open_alias_test.go", "pgx.Connect", 1},
+		{"aliased pgxpool: pool.NewWithConfig", d + "open_alias_test.go", "pgxpool.NewWithConfig", 1},
+		{"dot import of pgx: bare Connect()", d + "open_dot_import_test.go", "pgx.Connect", 1},
+		{"low-level pgconn connection", d + "open_other_openers_test.go", "pgconn.Connect", 1},
+		{"stdlib.OpenDB builds a *sql.DB without sql.Open", d + "open_other_openers_test.go", "stdlib.OpenDB", 1},
+		{"sql.OpenDB over a connector", d + "open_other_openers_test.go", "sql.OpenDB", 1},
+		{"the stdlib connector", d + "open_other_openers_test.go", "stdlib.GetConnector", 1},
+		{"the stdlib driver opens by method", d + "open_other_openers_test.go", "stdlib.GetDefaultDriver", 1},
+		{"the opener taken as a value and called later", d + "open_other_openers_test.go", "pgx.Connect", 1},
+		{"self-exemption is an exact path: sub/sin_bd_viva_test.go bites", d + "sub/sin_bd_viva_test.go", "WAPP_TEST_DB_DSN", 1},
+		{"the allowlist is an exact path: sub/base_test.go bites", d + "sub/base_test.go", "pgx.Connect", 1},
+		{"the allowlisted file stays under the denylist", d + "base_test.go", ":5432", 1},
+		{"the lock itself may not open a connection", d + "sin_bd_viva_test.go", "pgx.Connect", 1},
 	}
 	esperadas := 0
 	for _, c := range casos {
@@ -47,8 +76,26 @@ func TestSinBDVivaMuerde(t *testing.T) {
 	if len(vs) != esperadas {
 		t.Errorf("se esperaban %d violaciones; hay %d: %v", esperadas, len(vs), vs)
 	}
-	exigeNingunaEn(t, vs, d+"sin_bd_viva_test.go")
+	// Lo que cada exención SÍ cubre: los cinco literales que el candado nombra no muerden en
+	// su fichero (solo su apertura), y la apertura de base_test.go no muerde (solo su literal).
+	if got := countInFile(vs, d+"sin_bd_viva_test.go"); got != 1 {
+		t.Errorf("sin_bd_viva_test.go: %d violaciones; se esperaba 1 (su apertura): %v", got, vs)
+	}
+	if got := countInFile(vs, d+"base_test.go"); got != 1 {
+		t.Errorf("base_test.go: %d violaciones; se esperaba 1 (su literal): %v", got, vs)
+	}
 	exigeOrdenadas(t, vs)
+}
+
+// countInFile cuenta las violaciones que nombran file, sean del patrón que sean.
+func countInFile(vs []Violacion, file string) int {
+	n := 0
+	for _, v := range vs {
+		if v.Fichero == file {
+			n++
+		}
+	}
+	return n
 }
 
 // contarPatron cuenta las violaciones de fichero cuyo Motivo empieza por el patrón (el motivo
@@ -67,6 +114,9 @@ func contarPatron(vs []Violacion, fichero, patron string) int {
 // ctr.ConnectionString es válida y sin_bd_viva_test.go se salta. Tampoco muerde un alias de
 // os o de testing que no llega a Environ ni a Short (alias_getenv_test.go), ni un método
 // propio llamado Environ o Short en un fichero sin import de punto (own_methods_test.go).
+// Y desde D-F9-6: base_test.go, el fichero de la lista blanca, abre conexiones con pgx.Connect
+// y sql.Open sin morder; y usar lo que otro abrió (tipos y errores de database/sql y de pgx),
+// un método propio llamado Connect, Open o New y os.Open tampoco muerden (db_user_test.go).
 func TestSinBDVivaPasa(t *testing.T) {
 	fuentes := recorrerCaso(t, "testdata/sinbdviva/pasa", []string{"test/procesos"}, true)
 	exigeCero(t, SinBDViva(fuentes))
@@ -74,7 +124,8 @@ func TestSinBDVivaPasa(t *testing.T) {
 
 // TestSinBDVivaBordes: un literal que dispara dos patrones da dos violaciones; cada aparición
 // cuenta (dos literales iguales, dos violaciones); WithReuseByName suelto y como selector; el
-// candado se salta por nombre base en cualquier directorio; salida ordenada.
+// candado se salta SOLO por su ruta exacta (D-F9-6: hasta entonces era por nombre base, y un
+// sin_bd_viva_test.go en cualquier subdirectorio quedaba sin mirar); salida ordenada.
 func TestSinBDVivaBordes(t *testing.T) {
 	const d = "test/procesos/"
 	fuentes := []Fuente{
@@ -95,6 +146,9 @@ var _ = tc.WithReuseByName
 		fuenteEnMemoria(t, d+"sub/sin_bd_viva_test.go", `package sub
 var _ = "WAPP_TEST_DB_DSN"
 `),
+		fuenteEnMemoria(t, d+"sin_bd_viva_test.go", `package procesos
+var _ = "WAPP_TEST_DB_DSN"
+`),
 	}
 	vs := SinBDViva(fuentes)
 	exigeViolacion(t, vs, d+"doble_test.go", "postgres://", "línea 4")
@@ -103,9 +157,10 @@ var _ = "WAPP_TEST_DB_DSN"
 	exigeViolacion(t, vs, d+"doble_test.go", ":5432", "línea 6")
 	exigeViolacion(t, vs, d+"ident_test.go", "WithReuseByName", "línea 3")
 	exigeViolacion(t, vs, d+"ident_test.go", "WithReuseByName", "línea 4")
-	exigeNingunaEn(t, vs, d+"sub/sin_bd_viva_test.go")
-	if len(vs) != 6 {
-		t.Errorf("se esperaban 6 violaciones; hay %d: %v", len(vs), vs)
+	exigeViolacion(t, vs, d+"sub/sin_bd_viva_test.go", "WAPP_TEST_DB_DSN", "línea 2")
+	exigeNingunaEn(t, vs, d+"sin_bd_viva_test.go")
+	if len(vs) != 7 {
+		t.Errorf("se esperaban 7 violaciones; hay %d: %v", len(vs), vs)
 	}
 	exigeOrdenadas(t, vs)
 }
@@ -433,13 +488,15 @@ var f = Short()
 
 // TestSinBDVivaRazon: el motivo conserva su estilo «<patrón> en la línea N: <razón>» y la
 // razón es la del patrón: los de conexión siguen explicando ctr.ConnectionString, los nuevos
-// citan E-5 (SKIP) o el entorno armado desde cero, y ninguna razón nombra OTRO patrón (así
-// contarPatron y exigeViolacion no se confunden).
+// citan E-5 (SKIP) o el entorno armado desde cero, las aperturas (D-F9-6) dicen cuál es el
+// fichero de la lista blanca, y ninguna razón nombra OTRO patrón (así contarPatron y
+// exigeViolacion no se confunden).
 func TestSinBDVivaRazon(t *testing.T) {
-	casos := []struct {
+	type reasonCase struct {
 		patron string
 		razon  string
-	}{
+	}
+	denylist := []reasonCase{
 		{"WAPP_TEST_DB_DSN", "ctr.ConnectionString"},
 		{":5432", "ctr.ConnectionString"},
 		{"postgres://", "ctr.ConnectionString"},
@@ -449,8 +506,20 @@ func TestSinBDVivaRazon(t *testing.T) {
 		{"t.Skip", "E-5"},
 		{"testing.Short", "E-5"},
 	}
-	patrones := []string{"WAPP_TEST_DB_DSN", ":5432", "postgres://", "postgresql://",
-		"WithReuseByName", "os.Environ", "t.Skip", "testing.Short"}
+	openers := dbOpenerPatternNames()
+	casos := make([]reasonCase, 0, len(denylist)+3*len(openers))
+	patrones := make([]string, 0, len(denylist)+len(openers))
+	for _, c := range denylist {
+		casos = append(casos, c)
+		patrones = append(patrones, c.patron)
+	}
+	for _, opener := range openers {
+		casos = append(casos,
+			reasonCase{opener, "lista blanca"},
+			reasonCase{opener, "test/procesos/base_test.go"},
+			reasonCase{opener, "D-F9-6"})
+		patrones = append(patrones, opener)
+	}
 	for _, c := range casos {
 		t.Run(c.patron, func(t *testing.T) {
 			razon := razonBDViva(c.patron)
