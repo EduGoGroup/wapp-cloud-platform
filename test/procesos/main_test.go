@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -31,7 +32,9 @@ const (
 	imagenPostgres = "postgres:17-alpine"
 	// basePlantilla es la base que migra cmd/migrate una sola vez y de la que se clona la de
 	// cada proceso. El arnés NO abre jamás una conexión a ella (T-13): CREATE DATABASE …
-	// TEMPLATE falla si la plantilla tiene una sesión abierta.
+	// TEMPLATE falla si la plantilla tiene una sesión abierta. Y desde que migrarPlantilla
+	// termina, NADIE puede: closeTemplate la deja con ALLOW_CONNECTIONS false, así que un test
+	// que lo intente recibe un error de Postgres en vez de romper los clones de los demás.
 	basePlantilla = "plantilla"
 	// baseMantenimiento es la base `postgres` del contenedor: desde ella se crean y se borran
 	// las bases clonadas.
@@ -51,7 +54,9 @@ var (
 
 	// urlInstancia es la URL que devolvió instancia.ConnectionString(ctx, "sslmode=disable"),
 	// apuntando a la base `plantilla`. De ella salen el host, el puerto y, cambiando solo el
-	// Path, la DSN de cualquier otra base del contenedor (nunca un literal).
+	// Path, la DSN de cualquier otra base del contenedor (nunca un literal). 🚫 No se conecta
+	// con ella tal cual —ni con instancia.ConnectionString—: apunta a la plantilla, que no acepta
+	// conexiones (closeTemplate). La base de un proceso se pide con nuevaBase.
 	urlInstancia *url.URL
 
 	// binElegido es el binario bajo prueba, «viejo» o «nuevo», ya validado.
@@ -204,8 +209,8 @@ func borrarDirectorio(dir string) {
 }
 
 // prepararPlantilla recibe el directorio temporal de la corrida, compila en él cmd/migrate y el
-// servidor elegido, y migra la base `plantilla`. Devuelve el primer error: sin raíz del módulo,
-// sin compilar o sin migrar no hay corrida.
+// servidor elegido, y migra la base `plantilla`, que queda cerrada a conexiones nuevas. Devuelve
+// el primer error: sin raíz del módulo, sin compilar o sin migrar no hay corrida.
 func prepararPlantilla(dir string) error {
 	raiz, err := raizDelModulo()
 	if err != nil {
@@ -286,8 +291,9 @@ func compilar(raiz, paquete, destino string) error {
 // migrate ya compilado, que sale (y cierra su conexión) al terminar. El entorno del subproceso
 // se construye desde cero: PATH, TMPDIR, un HOME vacío y entornoBD("plantilla"). Vuelca la salida
 // de migrate a stderr y exige la línea «migraciones aplicadas: … skipped=false»; después espera,
-// sin abrir nunca una conexión a `plantilla`, a que Postgres haya cerrado sus sesiones. Falla si
-// migrate falla, no aplica el esquema o la plantilla se queda con sesiones.
+// sin abrir nunca una conexión a `plantilla`, a que Postgres haya cerrado sus sesiones, y la
+// cierra a conexiones nuevas (closeTemplate). Falla si migrate falla, no aplica el esquema, la
+// plantilla se queda con sesiones o no se puede cerrar.
 func migrarPlantilla(dir string) error {
 	home := filepath.Join(dir, "home")
 	if err := os.Mkdir(home, 0o700); err != nil {
@@ -317,6 +323,28 @@ func migrarPlantilla(dir string) error {
 	if err := esperarSinSesiones(basePlantilla); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "procesos: plantilla migrada en %s\n", time.Since(inicio).Round(time.Millisecond))
+	if err := closeTemplate(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "procesos: plantilla migrada y cerrada a conexiones en %s\n", time.Since(inicio).Round(time.Millisecond))
+	return nil
+}
+
+// closeTemplate deja la base `plantilla` sin admitir conexiones nuevas (ALTER DATABASE … WITH
+// ALLOW_CONNECTIONS false), desde la base de mantenimiento y sin conectarse nunca a ella. Se llama
+// una vez, cuando la plantilla ya está migrada y sin sesiones. A partir de ahí, quien intente
+// conectarse recibe de Postgres «database "plantilla" is not currently accepting connections»
+// (SQLSTATE 55000) y no llega a tener una sesión: sin esto, una sola sesión abierta en la
+// plantilla hace fallar el CREATE DATABASE … TEMPLATE de todos los demás tests («source database
+// "plantilla" is being accessed by other users», SQLSTATE 55006). Clonar sigue funcionando: una
+// plantilla no necesita aceptar conexiones (template0 tampoco las acepta), y el clon nace
+// aceptándolas. Devuelve el error de la conexión de mantenimiento o de la sentencia.
+func closeTemplate() error {
+	ctx, cancelar := context.WithTimeout(context.Background(), topeSesiones)
+	defer cancelar()
+	sentencia := "ALTER DATABASE " + pgx.Identifier{basePlantilla}.Sanitize() + " WITH ALLOW_CONNECTIONS false"
+	if err := ejecutarMantenimiento(ctx, sentencia); err != nil {
+		return fmt.Errorf("cerrar %s a conexiones nuevas: %w", basePlantilla, err)
+	}
 	return nil
 }
