@@ -86,7 +86,7 @@ Excepciones cerradas, y ninguna más sin decisión escrita:
 |---|---|
 | `doc.go` (solo comentario de paquete) | Nada |
 | `embed.go` / ficheros solo con `//go:embed` | Lo prueba el test de quien lee lo embebido |
-| Fichero **solo de interfaces** (puertos) | Una **suite de contrato** exportada en un paquete `…helpertest` (D-F1-10, decisión de Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest` del código viejo): `func Contrato(t *testing.T, nuevo func() Puerto)`. Cada implementación la ejecuta desde **su** test (E-6) |
+| Fichero **solo de interfaces** (puertos) | Una **suite de contrato** exportada en un paquete `…helpertest` (D-F1-10, decisión de Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest` del código viejo): `func Contrato(t *testing.T, nuevo func() Puerto)`. Cada implementación la ejecuta desde **su** test (E-6). La suite vive en `contrato.go` y `*_contrato.go`: son los únicos ficheros de ese paquete exentos de la cobertura por fichero (D-F1-13, 2026-10-02) |
 | Dobles de test (`fleettest/slowrepo.go`) | Su propio test solo si tienen lógica |
 
 **La firma de la suite de contrato tiene dos formas, según el puerto** (D-F1-12, decisión de Jhoan,
@@ -139,6 +139,7 @@ Los tests de esta reconstrucción **no tocan Postgres**. Para los ficheros que s
   `gateway/lease`, `ingest`, `integrations`, `intentcfg`, `platformadmin`, `tenantllm`), la
   reconstrucción **crea un doble en memoria** en el paquete `…helpertest` del puerto (D-F1-10, decisión de
   Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest`), en la misma pasada del contrato. Sin él, la suite no correría hasta F9.
+  Ese doble **se mide** como cualquier fichero, cobertura por fichero ≥ 80 % con su propio test: estar en `…helpertest` ya no lo exime (D-F1-13, 2026-10-02).
 - **El adaptador Postgres** tiene su `x_test.go` unitario con lo que se prueba sin BD: el
   constructor, la validación de argumentos, el mapeo de filas y de errores de `pgx` a los errores
   del dominio (con funciones puras extraídas para eso).

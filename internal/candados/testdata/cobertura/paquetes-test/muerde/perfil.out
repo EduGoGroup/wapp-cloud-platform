@@ -1,6 +1,16 @@
 mode: set
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/contrato.go:8.50,10.25 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/contrato.go:10.25,12.3 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/doble.go:9.28,12.2 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/merge_contrato.go:8.52,11.27 3 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosa/merge_contrato.go:11.27,13.3 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/contrato.go:8.50,10.25 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/contrato.go:10.25,12.3 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/doble.go:10.28,13.2 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/merge_contrato.go:8.52,11.27 3 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosahelpertest/merge_contrato.go:11.27,13.3 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/contrato.go:8.50,10.25 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/contrato.go:10.25,12.3 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/cosatest/doble.go:9.28,12.2 2 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/latest/latest.go:7.31,9.26 2 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/latest/latest.go:9.26,11.3 1 0

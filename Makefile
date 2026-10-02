@@ -240,10 +240,12 @@ vet-integracion: ## go vet -tags integracion ./test/procesos/... — los proceso
 # marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
 # comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
 # arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest, que SÍ se
-# evalúa: los paquetes exentos son solo los de suite de contrato y dobles, los que terminan en
-# el sufijo compuesto `helpertest` (D-F1-10, que estrecha D-F1-6: p. ej. contacthelpertest), y
-# `huellatest` no termina así. Entre D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test`
-# a secas, `huellatest` quedó sin medir y FICHEROS_EVALUADOS bajó de 10 a 9; vuelve a ser 10.
+# evalúa: lo único exento por suite son los FICHEROS de suite de contrato —`contrato.go` y
+# `*_contrato.go`— de un paquete que termina en el sufijo compuesto `helpertest` (D-F1-13, que
+# estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go); los dobles con lógica de
+# ese paquete se miden (contacthelpertest/estado.go), y `huellatest` no termina así. Entre
+# D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test` a secas, `huellatest` quedó sin medir
+# y FICHEROS_EVALUADOS bajó de 10 a 9; con D-F1-10 volvió a 10, y con D-F1-13 es 11.
 # Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).

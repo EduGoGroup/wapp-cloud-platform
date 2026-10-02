@@ -76,16 +76,17 @@ func Agregar(perfil io.Reader) (map[string]Fichero, error) {
 // Fuente casan, gana la de Ruta más larga. Las entradas de fs sin Fuente (fuera del alcance)
 // se ignoran.
 //
-// Se evalúan exactamente los ficheros que devuelve Evaluables: los de un paquete …helpertest
-// no (D-F1-6: su suite solo la ejecutan los tests de las implementaciones, en otros paquetes,
-// y `go test -cover` sin -coverpkg no lo cuenta; D-F1-10: el paquete se reconoce por el
-// sufijo compuesto "helpertest", no por "test" a secas; ver Evaluables). Además, y con
-// independencia del perfil, de si el fichero está en rojo y de si su paquete es
-// …helpertest, todo fichero de producción con MarcaPostgres en la cabecera que NO importa
-// "database/sql" ni "github.com/jackc/pgx" (o un subpaquete, p. ej. ".../pgx/v5/pgxpool") es
-// una violación: nadie se exime por decreto. Ese fichero marcado de forma ilegítima se evalúa
-// además como cualquier otro (salvo que sea de un paquete …helpertest: entonces solo queda la
-// violación de marca).
+// Se evalúan exactamente los ficheros que devuelve Evaluables: los ficheros de suite de un
+// paquete …helpertest no (D-F1-6: la suite solo la ejecutan los tests de las implementaciones,
+// en otros paquetes, y `go test -cover` sin -coverpkg no lo cuenta; D-F1-10: el paquete se
+// reconoce por el sufijo compuesto "helpertest", no por "test" a secas; D-F1-13: dentro de
+// ese paquete solo se eximen contrato.go y *_contrato.go, y los dobles con lógica se miden;
+// ver Evaluables). Además, y con independencia del perfil, de si el fichero está en rojo y de
+// si es un fichero de suite, todo fichero de producción con MarcaPostgres en la cabecera que
+// NO importa "database/sql" ni "github.com/jackc/pgx" (o un subpaquete, p. ej.
+// ".../pgx/v5/pgxpool") es una violación: nadie se exime por decreto. Ese fichero marcado de
+// forma ilegítima se evalúa además como cualquier otro (salvo que sea un fichero de suite:
+// entonces solo queda la violación de marca).
 //
 // Violaciones: Fichero es la Ruta de la Fuente. Por umbral, Motivo contiene el porcentaje
 // con un decimal y "%" (p. ej. "50.0 %") y el umbral; por marca ilegítima, Motivo contiene
@@ -142,17 +143,22 @@ func Exentos(fuentes []Fuente) []string {
 
 // Evaluables devuelve, ordenadas, las Ruta de los ficheros que Cobertura mide contra el
 // umbral: ficheros de producción (no EsTest) de fuentes que
-//   - no son de un paquete …helpertest: su Paquete (la cláusula `package`, no el directorio)
-//     no cumple isHelperTestPackage, es decir, no termina en el sufijo compuesto "helpertest"
-//     (D-F1-6, la misma condición que D-F1-3 aplica en UnFicheroUnTest y
-//     ExportadosCubiertos). Es una exención por paquete, no por nota: un paquete …helpertest
-//     al 100 % tampoco se mide. El porqué: la suite Contrato y los dobles de un puerto solo
-//     los ejecutan los tests de las implementaciones, que viven en OTROS paquetes, y
-//     `go test -cover` sin -coverpkg no cuenta lo que se ejecuta desde otro paquete; en el
-//     perfil del propio paquete …helpertest el fichero saldría al 0 %.
+//   - no son un fichero de suite de contrato (isContractSuiteFile): contrato.go o
+//     <tema>_contrato.go en un paquete …helpertest, es decir, uno cuyo Paquete (la cláusula
+//     `package`, no el directorio) termina en el sufijo compuesto "helpertest" (D-F1-6). Es
+//     una exención por fichero, no por nota: un fichero de suite al 100 % tampoco se mide. El
+//     porqué: la suite Contrato de un puerto solo la ejecutan los tests de las
+//     implementaciones, que viven en OTROS paquetes, y `go test -cover` sin -coverpkg no
+//     cuenta lo que se ejecuta desde otro paquete; en el perfil del propio paquete
+//     …helpertest el fichero saldría al 0 %.
 //     D-F1-10 (Jhoan, 2026-10-02) estrecha D-F1-6: el sufijo era "test" a secas, y un paquete
 //     de producción cuyo nombre acabara así por casualidad (latest, contest…) quedaba sin
-//     medir. Ahora ese paquete SÍ se mide, y también huellatest, que conserva su nombre;
+//     medir. Ahora ese paquete SÍ se mide, y también huellatest, que conserva su nombre.
+//     D-F1-13 (Jhoan, 2026-10-02) la estrecha otra vez: hasta ella quedaba fuera el paquete
+//     …helpertest ENTERO, y con él sus dobles con lógica (contacthelpertest/estado.go, y los
+//     dobles en memoria que 05 E-6 manda crear). A un doble lo ejecuta el test de su propio
+//     paquete, así que su cobertura es real: se mide con el umbral normal. Un contrato.go o un
+//     x_contrato.go fuera de un paquete …helpertest tampoco es de suite: se mide;
 //   - están en verde: no contienen ninguna llamada pendiente.Implementar(…) —detectada en el
 //     AST como selector cuyo X es el identificador "pendiente" y cuyo Sel es "Implementar";
 //     una mención en un comentario no cuenta—;
@@ -165,10 +171,10 @@ func Evaluables(fs map[string]Fichero, fuentes []Fuente) []string {
 	medidas := cruzar(fs, fuentes)
 	out := make([]string, 0)
 	for _, f := range fuentes {
-		// D-F1-6: un paquete …helpertest entero (suite Contrato y dobles) queda fuera de la
-		// medida, igual que D-F1-3 lo deja fuera de UnFicheroUnTest y ExportadosCubiertos; el
-		// sufijo es el de D-F1-10 (uno que acaba en "test" a secas, como latest, sí se mide).
-		if f.EsTest || isHelperTestPackage(f.Paquete) {
+		// D-F1-6: la suite Contrato de un puerto queda fuera de la medida. D-F1-13: solo sus
+		// ficheros (contrato.go y *_contrato.go de un paquete …helpertest, el del sufijo de
+		// D-F1-10); un doble con lógica del mismo paquete se mide como cualquier fichero.
+		if f.EsTest || isContractSuiteFile(f) {
 			continue
 		}
 		if enRojo(f.Archivo) || esExento(f) {
