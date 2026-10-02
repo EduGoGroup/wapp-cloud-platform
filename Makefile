@@ -239,12 +239,12 @@ vet-integracion: ## go vet -tags integracion ./test/procesos/... — los proceso
 # los contratos en rojo (con pendiente.Implementar) no se miden y los adaptadores Postgres
 # marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
 # comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
-# arranque copiado (internal/arranque, D-F0-1) queda fuera. ⚠️ `internal/arranque/huellatest`
-# sigue en la lista pero HOY NO SE EVALÚA: desde D-F1-6 (`776d6a2`) los paquetes cuyo nombre
-# acaba en `test` están exentos de la cobertura por fichero, y `huellatest` cae en esa
-# condición (FICHEROS_EVALUADOS pasó de 10 a 9). Sus tests sí corren aquí; lo que no hay es
-# umbral sobre `huellatest.go`. Qué hacer con él (renombrarlo, acotar la exención) está
-# pendiente de decisión. Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
+# arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest, que SÍ se
+# evalúa: los paquetes exentos son solo los de suite de contrato y dobles, los que terminan en
+# el sufijo compuesto `helpertest` (D-F1-10, que estrecha D-F1-6: p. ej. contacthelpertest), y
+# `huellatest` no termina así. Entre D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test`
+# a secas, `huellatest` quedó sin medir y FICHEROS_EVALUADOS bajó de 10 a 9; vuelve a ser 10.
+# Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
 COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
@@ -348,11 +348,17 @@ migrate: ## Aplica las migraciones de esquema y sale (lee WAPP_DB_*)
 migrate-status: ## Consulta la versión/hash del esquema SIN escribir nada
 	$(GO) run ./cmd/migrate -status
 
+# La caché de módulos se monta desde `go env GOMODCACHE`, no desde `GOPATH/pkg/mod`: son lo
+# mismo por defecto, pero una máquina con GOMODCACHE propio (la de desarrollo lo tiene en otro
+# volumen) montaría un directorio vacío y el contenedor no encontraría los módulos privados.
+# El linter lo instala `make tools` DENTRO del contenedor, en /usr/local/bin (el mismo binario
+# oficial verificado por sha256 que en local; antes era `curl … install.sh | sh` desde HEAD).
+# El .bin/ del host viaja montado, pero es de otro SO: `lint` lo descarta solo y usa el del PATH.
 ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VERSION)) — requiere Docker
 	@docker run --rm \
 		-e GOFLAGS=-buildvcs=false \
-		-v "$$(go env GOPATH)/pkg/mod:/go/pkg/mod" \
+		-v "$$(go env GOMODCACHE):/go/pkg/mod" \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		golang:$(GO_VERSION)-bookworm \
-		bash -c "set -e; curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin $(LINT_VERSION) && make ci-local"
+		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local"
 	@echo "NOTA: ci-docker no corre test-integration (requeriría Docker-in-Docker); ejecuta 'make test-integration' aparte en el host."
