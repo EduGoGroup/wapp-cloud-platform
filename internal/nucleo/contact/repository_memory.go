@@ -96,8 +96,8 @@ func (r *MemoryResolver) Resolve(ctx context.Context, tenantID string, refs []Re
 // Errores, con la Ref cero:
 //   - ErrContactNotFound, envuelto con %w y el contactID entre comillas (%q), si el contacto no
 //     existe, es de otro tenant (N-01) o es el de un huérfano que una fusión ya borró (R-21, N-03);
-//   - ErrNoDestino si el contacto existe pero ninguna de sus refs es direccionable (p. ej. solo un
-//     wa_username, R-20).
+//   - ErrNoDestino, sin envolver, si el contacto existe pero ninguna de sus refs es direccionable
+//     (p. ej. solo un wa_username, R-20).
 //
 // Un tenantID o un contactID mal formados (no UUID) dan ErrContactNotFound: la memoria no parsea
 // nada y los trata como claves opacas. Postgres da en ese caso un error de parseo (ver Resolver):

@@ -153,6 +153,11 @@ func TestRefsFrom(t *testing.T) {
 		{"JID crudo con @s.whatsapp.net: infiere phone_e164", "", "", "573001112233@s.whatsapp.net",
 			[]Ref{phone}},
 		{"JID crudo de LID con dispositivo: pierde el sufijo", "", "", "88887777:5@lid", []Ref{lid}},
+		// El contrato dice «si CONTIENE "@lid"», no «si termina en "@lid"»: con el "@lid" en medio
+		// del JID crudo el kind inferido sigue siendo wa_lid (y Normalize corta en el "@"). Con
+		// «termina en», estas dos entradas darían el phone_e164 "88887777".
+		{"raw JID with text after @lid: still infers wa_lid", "", "", "88887777@lid.whatsapp.net", []Ref{lid}},
+		{"raw JID with a trailing blank after @lid: still infers wa_lid", "", "", "88887777@lid ", []Ref{lid}},
 		{"fromPn no normaliza: cae al JID crudo", "abc", "", "573001112233@s.whatsapp.net", []Ref{phone}},
 		{"fromPn y fromLid no normalizan: caen al JID crudo", "abc", "xyz", "573001112233@s.whatsapp.net",
 			[]Ref{phone}},

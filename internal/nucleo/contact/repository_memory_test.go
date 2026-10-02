@@ -236,10 +236,63 @@ func TestMemoryResolver_SinFusion_NoLlamaAlMigrador(t *testing.T) {
 	}
 }
 
+// Una Ref que NO viene de NewRef cuenta como una ref más: Resolve no la valida, no la re-normaliza y
+// no la descarta. Una lista con solo la Ref cero, o con solo una ref que NewRef rechazaría, NO es una
+// lista vacía: no da ErrNoRefs, crea un contacto y la ref queda atada a él como cualquier otra (la
+// misma ref vuelve a dar el mismo contact_id, y una ref válida que llega con ella se ata a ese
+// contacto en vez de crear otro).
+//
+// Va aquí y no en contacttest.Contrato, a propósito: la suite solo usa refs de NewRef, que es la
+// precondición del puerto. Postgres tampoco las filtra antes de contar, pero qué hace después con
+// una ref así (cifrar un value vacío, insertar un kind que no es de los tres) solo se ve contra un
+// Postgres real y su contrato no lo promete.
+func TestMemoryResolver_Resolve_RefNotFromNewRefCountsAsARef(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ref  contact.Ref
+	}{
+		{"zero Ref", contact.Ref{}},
+		{"value that does not normalize", contact.Ref{Kind: contact.KindPhoneE164, Value: "not-a-number"}},
+		{"unknown kind", contact.Ref{Kind: "email", Value: "ana@example.com"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := contact.NewMemoryResolver(nil)
+			tenant := uuid.NewString()
+			if _, err := contact.NewRef(c.ref.Kind, c.ref.Value); err == nil {
+				t.Fatalf("precondición: contact.NewRef(%q, %q) debía rechazar esta ref", c.ref.Kind, c.ref.Value)
+			}
+
+			id, err := r.Resolve(t.Context(), tenant, []contact.Ref{c.ref}, "")
+
+			if errors.Is(err, contact.ErrNoRefs) {
+				t.Fatalf("Resolve([]Ref{%+v}) = %q, ErrNoRefs; quiere un contact_id: la ref cuenta, no se descarta", c.ref, id)
+			}
+			if err != nil {
+				t.Fatalf("Resolve([]Ref{%+v}): %v; quiere nil", c.ref, err)
+			}
+			if _, perr := uuid.Parse(id); perr != nil {
+				t.Fatalf("Resolve([]Ref{%+v}) devolvió %q, que no es un UUID: %v", c.ref, id, perr)
+			}
+			if again := resolverOK(t, r, tenant, c.ref); again != id {
+				t.Errorf("la misma ref otra vez resuelve a %q; quiere %q: la ref quedó atada al contacto", again, id)
+			}
+			phone := nuevaRef(t, contact.KindPhoneE164, numeroAna)
+			if got := resolverOK(t, r, tenant, c.ref, phone); got != id {
+				t.Errorf("la ref junto a un teléfono nuevo resuelve a %q; quiere %q: es una ref existente y el teléfono se ata a su contacto", got, id)
+			}
+			if got := resolverOK(t, r, tenant, phone); got != id {
+				t.Errorf("el teléfono, ya atado, resuelve a %q; quiere %q", got, id)
+			}
+		})
+	}
+}
+
 // Destino devuelve la Ref cero con cada error, y el error es el que promete el comentario:
-// ErrContactNotFound con el contactID entre comillas (%q) si el contacto no existe, es de otro tenant
-// o el id o el tenant vienen mal formados (la memoria no parsea nada: Postgres daría un error de
-// parseo); y ErrNoDestino, sin ErrContactNotFound, si el contacto solo tiene un wa_username.
+// ErrContactNotFound, con el texto exacto «contact: contact_id no encontrado: "<contactID>"» (el
+// contactID recibido, entre comillas con %q), si el contacto no existe, es de otro tenant o el id o
+// el tenant vienen mal formados (la memoria no parsea nada: Postgres daría un error de parseo); y
+// ErrNoDestino sin envolver —su texto exacto, sin ErrContactNotFound— si el contacto solo tiene un
+// wa_username.
 func TestMemoryResolver_Destino_Errores(t *testing.T) {
 	r := contact.NewMemoryResolver(nil)
 	tenant, otroTenant := uuid.NewString(), uuid.NewString()
@@ -268,8 +321,12 @@ func TestMemoryResolver_Destino_Errores(t *testing.T) {
 			if got != (contact.Ref{}) {
 				t.Errorf("con error la Ref debe ser la cero; dio %+v", got)
 			}
-			if errors.Is(c.quiere, contact.ErrContactNotFound) && !strings.Contains(err.Error(), strconv.Quote(c.contactID)) {
-				t.Errorf("el error %q no lleva el contactID entre comillas (%s)", err, strconv.Quote(c.contactID))
+			wantText := "contact: sin destino enviable para el contact_id"
+			if errors.Is(c.quiere, contact.ErrContactNotFound) {
+				wantText = "contact: contact_id no encontrado: " + strconv.Quote(c.contactID)
+			}
+			if err.Error() != wantText {
+				t.Errorf("texto observable = %q; quiere exactamente %q", err.Error(), wantText)
 			}
 			if errors.Is(c.quiere, contact.ErrNoDestino) && errors.Is(err, contact.ErrContactNotFound) {
 				t.Errorf("Destino de un contacto que existe dio también ErrContactNotFound: %v", err)

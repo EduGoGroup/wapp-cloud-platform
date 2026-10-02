@@ -13,6 +13,7 @@ import (
 
 // casoSinRefs (R-18): sin ninguna ref, tras deduplicar, Resolve devuelve ErrNoRefs y contactID
 // "", se llame con nil o con []Ref{} y venga o no con push_name (el nombre solo no crea nada).
+// El centinela llega SIN envolver: el texto es exactamente el suyo, sin el tenant ni otro detalle.
 func casoSinRefs(t *testing.T, m Montaje) {
 	listas := []struct {
 		nombre string
@@ -27,6 +28,7 @@ func casoSinRefs(t *testing.T, m Montaje) {
 			if !errors.Is(err, contact.ErrNoRefs) {
 				t.Errorf("Resolve(refs %s, push_name %q): error %v; quiere contact.ErrNoRefs", l.nombre, nombre, err)
 			}
+			requireErrorText(t, err, noRefsText, fmt.Sprintf("Resolve(refs %s, push_name %q)", l.nombre, nombre))
 			if id != "" {
 				t.Errorf("Resolve(refs %s, push_name %q) con error devolvió contact_id %q; quiere \"\"", l.nombre, nombre, id)
 			}

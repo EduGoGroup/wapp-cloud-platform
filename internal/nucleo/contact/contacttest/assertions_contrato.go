@@ -1,12 +1,28 @@
-// Aserciones compartidas por los casos: comparar contact_id, exigir Destino, errores y dueño del estado.
+// Aserciones compartidas por los casos: comparar contact_id, exigir Destino, errores (centinela y
+// texto exacto) y dueño del estado.
 
 package contacttest
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
+)
+
+// Los textos observables de los errores del puerto que las dos implementaciones devuelven byte a
+// byte iguales. Van como literales, no leídos de contact.ErrXxx.Error(): así un caso falla tanto si
+// una implementación envuelve o reescribe el error como si alguien cambia el texto del centinela.
+const (
+	// noRefsText es el de Resolve sin refs: ErrNoRefs sin envolver.
+	noRefsText = "contact: se requiere al menos una contact_ref"
+	// noDestinationText es el de Destino sin ref direccionable: ErrNoDestino sin envolver (sin el
+	// detalle del kind que añade Ref.Sendable).
+	noDestinationText = "contact: sin destino enviable para el contact_id"
+	// notFoundTextPrefix precede al contact_id entre comillas en el de Destino de un contacto que no
+	// está en el tenant: ErrContactNotFound envuelto con "%w: %q".
+	notFoundTextPrefix = "contact: contact_id no encontrado: "
 )
 
 // mismoID falla el test si obtenido no es esperado.
@@ -56,10 +72,33 @@ func exigirErrorIs(t *testing.T, err, quiere error, que string) {
 	}
 }
 
-// exigirNoEncontrado exige que Destino del contactID en el tenant dé ErrContactNotFound.
+// requireErrorText falla el test si el texto de err no es exactamente want: fija el texto
+// observable, que errors.Is no mira (un error envuelto con más detalle sigue pasando errors.Is).
+func requireErrorText(t *testing.T, err error, want, what string) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("%s: sin error; quiere uno con el texto %q", what, want)
+		return
+	}
+	if got := err.Error(); got != want {
+		t.Errorf("%s: texto observable %q; quiere exactamente %q", what, got, want)
+	}
+}
+
+// notFoundText es el texto exacto del error de Destino para un contactID que no está en el tenant:
+// el del centinela, ": " y el contactID tal como se pidió, entre comillas (%q).
+func notFoundText(contactID string) string {
+	return notFoundTextPrefix + strconv.Quote(contactID)
+}
+
+// exigirNoEncontrado exige que Destino del contactID en el tenant dé ErrContactNotFound, con el
+// texto exacto que promete el puerto (ver notFoundText). Vale para las tres formas de no estar: no
+// existir, ser de otro tenant y ser el huérfano de una fusión.
 func exigirNoEncontrado(t *testing.T, m Montaje, tenantID, contactID, que string) {
 	t.Helper()
-	exigirErrorIs(t, destinoError(t, m, tenantID, contactID), contact.ErrContactNotFound, que)
+	err := destinoError(t, m, tenantID, contactID)
+	exigirErrorIs(t, err, contact.ErrContactNotFound, que)
+	requireErrorText(t, err, notFoundText(contactID), que)
 }
 
 // exigirDueno exige que el estado de la sesión del tenant pertenezca a quiere.

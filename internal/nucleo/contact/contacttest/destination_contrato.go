@@ -5,8 +5,6 @@ package contacttest
 
 import (
 	"errors"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
@@ -49,13 +47,16 @@ func casoDestinoSoloLID(t *testing.T, m Montaje) {
 }
 
 // casoDestinoSoloUsername (R-20): un contacto que existe pero solo tiene un wa_username (aún no
-// direccionable) da ErrNoDestino, y no ErrContactNotFound: el contacto sí existe.
+// direccionable) da ErrNoDestino, y no ErrContactNotFound: el contacto sí existe. El centinela
+// llega SIN envolver: el texto es exactamente el suyo, sin el detalle del kind que añade
+// Ref.Sendable ni ningún otro.
 func casoDestinoSoloUsername(t *testing.T, m Montaje) {
 	id := resolverOK(t, m, m.TenantA, refUsuario(t, usuarioAna))
 
 	err := destinoError(t, m, m.TenantA, id)
 
 	exigirErrorIs(t, err, contact.ErrNoDestino, "Destino de un contacto solo con username")
+	requireErrorText(t, err, noDestinationText, "Destino de un contacto solo con username")
 	if errors.Is(err, contact.ErrContactNotFound) {
 		t.Errorf("Destino de un contacto que existe dio también ErrContactNotFound: %v", err)
 	}
@@ -63,7 +64,8 @@ func casoDestinoSoloUsername(t *testing.T, m Montaje) {
 
 // casoDestinoInexistente (R-21): un contact_id bien formado que no existe en el tenant da
 // ErrContactNotFound (no ErrNoDestino), envuelto con el id entre comillas como promete el
-// puerto. Se prueba en un tenant que ya tiene un contacto, para que no sea solo «tenant vacío».
+// puerto: el texto es exactamente «contact: contact_id no encontrado: "<id>"». Se prueba en un
+// tenant que ya tiene un contacto, para que no sea solo «tenant vacío».
 func casoDestinoInexistente(t *testing.T, m Montaje) {
 	resolverOK(t, m, m.TenantA, refTel(t, numeroAna))
 
@@ -74,9 +76,7 @@ func casoDestinoInexistente(t *testing.T, m Montaje) {
 	if errors.Is(err, contact.ErrNoDestino) {
 		t.Errorf("Destino de un contact_id inexistente dio también ErrNoDestino: %v", err)
 	}
-	if !strings.Contains(err.Error(), strconv.Quote(id)) {
-		t.Errorf("el error %q no lleva el contact_id entre comillas (%s)", err, strconv.Quote(id))
-	}
+	requireErrorText(t, err, notFoundText(id), "Destino de un contact_id inexistente")
 	exigirNoEncontrado(t, m, m.TenantB, uuid.NewString(), "Destino de otro contact_id inexistente, en el tenant vacío")
 }
 

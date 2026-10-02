@@ -180,19 +180,30 @@ func TestEstadoMemoria_MigrarConContextoCancelado(t *testing.T) {
 // Sembrar, observar y migrar desde muchas goroutines a la vez: cada sesión termina en el
 // canónico, también cuando varias goroutines migran el mismo huérfano a la vez (idempotencia
 // bajo contención). Corre bajo -race, que es el que ve la carrera si falta el cerrojo.
+//
+// Sembrar y Dueno pueden hacer t.Fatalf, y FailNow solo es válido en la goroutine que corre el
+// test: llamarlos con el t del padre desde otra goroutine sería un uso incorrecto de testing. Por
+// eso cada goroutine abre SU subtest con t.Run: el cuerpo corre en la goroutine propia de ese
+// subtest y con su *testing.T, donde un Fatalf es legítimo y solo corta ese subtest. testing lo
+// admite expresamente (Run puede llamarse a la vez desde varias goroutines) a condición de que
+// todas las llamadas vuelvan antes que el test padre, que es lo que garantiza wg.Wait. Los 64
+// subtests siguen corriendo a la vez: Run solo bloquea a la goroutine que lo llamó. No hay otra
+// vía sin tocar el doble: Sembrar es su único camino de siembra y pide un *testing.T.
 func TestEstadoMemoria_Concurrencia(t *testing.T) {
 	const sesiones = 64
 	e := NuevoEstado()
 	var wg sync.WaitGroup
 	for i := range sesiones {
 		wg.Go(func() {
-			sesion, suyo := fmt.Sprintf("s-%d", i), fmt.Sprintf("huerfano-%d", i)
-			e.Sembrar(t, tenantUno, sesion, suyo)
-			exigirDuenoEs(t, e, tenantUno, sesion, suyo)
-			if err := e.MigrateContactID(t.Context(), tenantUno, suyo, idCanonico); err != nil {
-				t.Errorf("MigrateContactID(%s): %v", suyo, err)
-			}
-			exigirDuenoEs(t, e, tenantUno, sesion, idCanonico)
+			t.Run(fmt.Sprintf("session-%d", i), func(t *testing.T) {
+				sesion, suyo := fmt.Sprintf("s-%d", i), fmt.Sprintf("huerfano-%d", i)
+				e.Sembrar(t, tenantUno, sesion, suyo)
+				exigirDuenoEs(t, e, tenantUno, sesion, suyo)
+				if err := e.MigrateContactID(t.Context(), tenantUno, suyo, idCanonico); err != nil {
+					t.Errorf("MigrateContactID(%s): %v", suyo, err)
+				}
+				exigirDuenoEs(t, e, tenantUno, sesion, idCanonico)
+			})
 		})
 	}
 	wg.Wait()
@@ -200,6 +211,8 @@ func TestEstadoMemoria_Concurrencia(t *testing.T) {
 		exigirDuenoEs(t, e, tenantUno, fmt.Sprintf("s-%d", i), idCanonico)
 	}
 
+	// Aquí no hace falta subtest: estas goroutines solo llaman a MigrateContactID y a t.Errorf,
+	// que no hace FailNow y sí puede llamarse desde cualquier goroutine.
 	e.Sembrar(t, tenantUno, "s-contendida", idCanonico)
 	e.Sembrar(t, tenantUno, "s-contendida", idHuerfano)
 	for range sesiones {

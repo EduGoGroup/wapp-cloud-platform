@@ -13,7 +13,8 @@ import (
 // nil o []Ref{}, una vez deduplicada. NO es un filtro de refs inválidas: Resolve no descarta una
 // Ref vacía ni una no normalizable, porque exige como precondición que cada Ref venga de NewRef
 // (R-18). Se inspecciona con errors.Is. Su texto es observable y no cambia: «contact: se requiere
-// al menos una contact_ref».
+// al menos una contact_ref». Resolve lo devuelve SIN envolver: el texto del error es exactamente
+// ese, sin el tenant ni ningún otro detalle.
 var ErrNoRefs = errors.New("contact: se requiere al menos una contact_ref")
 
 // ErrNoDestino lo devuelven Destino y Ref.Sendable cuando no hay ninguna referencia direccionable:
@@ -26,7 +27,10 @@ var ErrNoDestino = errors.New("contact: sin destino enviable para el contact_id"
 // ErrContactNotFound lo devuelve Destino cuando el contact_id no existe, no pertenece al tenant
 // o es el de un huérfano que una fusión ya borró (R-21, N-01, N-03). Los adaptadores lo envuelven
 // con %w y el id entre comillas (%q), así que se inspecciona con errors.Is, no por igualdad. Su
-// texto base es observable y no cambia: «contact: contact_id no encontrado».
+// texto base es observable y no cambia: «contact: contact_id no encontrado». El envoltorio
+// también lo es, y es el mismo en las dos implementaciones: el formato es "%w: %q" con el
+// contactID tal como se recibió, así que el texto completo es exactamente «contact: contact_id no
+// encontrado: "<contactID>"».
 var ErrContactNotFound = errors.New("contact: contact_id no encontrado")
 
 // Resolver es el puerto de identidad de contactos: traduce entre las referencias del mundo
@@ -82,7 +86,9 @@ type Resolver interface {
 	//
 	// Devuelve ErrNoDestino si el contacto existe pero ninguna de sus refs es direccionable
 	// (p. ej. solo un wa_username), y ErrContactNotFound si contactID no existe o es de otro tenant
-	// (R-21, N-01).
+	// (R-21, N-01). ErrNoDestino llega SIN envolver: el texto del error es exactamente el del
+	// centinela, sin el detalle del kind que añade Ref.Sendable. ErrContactNotFound llega envuelto,
+	// con el texto exacto que dice su comentario.
 	Destino(ctx context.Context, tenantID, contactID string) (Ref, error)
 }
 

@@ -85,10 +85,15 @@ type Estado interface {
 //     contact_id (PushName_NoCambiaLaIdentidad).
 //   - La ausencia de deadlock 40P01 (R-29): es del proceso «entrante a respuesta» de F9.
 //   - El desempate por id menor cuando dos contactos tienen la misma antigüedad: no se puede
-//     forzar sin controlar el reloj de la implementación. Lo cubren los tests de cada una.
+//     forzar sin controlar el reloj de la implementación. Hoy NO lo cubre ningún test. En la
+//     memoria no puede cubrirse: cada alta recibe un número de orden propio y el empate nunca
+//     llega a darse (lo dice MemoryResolver.Resolve). En Postgres lo cubrirá el test unitario
+//     de la función pura que elige el canónico (pickCanonicalDB), que nace con el verde de
+//     repository_postgres.go (T1.11): hasta entonces es una promesa del puerto sin aserción.
 //   - Una Ref vacía o no normalizable: la precondición del puerto es que cada Ref venga de
 //     contact.NewRef, que no puede construirlas. Resolve las cuenta como una ref más, pero la
-//     suite no las ejercita.
+//     suite no las ejercita: lo fija el test propio de MemoryResolver, y qué hace Postgres con
+//     una ref así después de contarla solo se ve contra una base real.
 //   - Cuál de los dos contenidos de estado sobrevive en el conflicto de una sesión (R-17).
 //     Estado solo expone QUIÉN es el dueño, no el contenido: «se conserva el estado del canónico»
 //     y «se conserva el del huérfano, re-clavado en el canónico» dejan el mismo dueño. Lo que la
