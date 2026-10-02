@@ -68,6 +68,10 @@ GOWORK=off go test -tags pendiente -run '^TestX$' ./internal/modulos/<modulo>/<p
 El segundo **debe fallar** (rc≠0) por el `panic`. ⚠️ Un `panic` **aborta el binario entero** del
 paquete: para ver un test concreto en rojo, córrelo solo con `-run`.
 
+> 🔴 **En local, un `go` suelto es el del sistema** (`go1.27.1`), no el fijado: a estos comandos y al
+> `go test -race` del Paso 3 antepónles `GOTOOLCHAIN=go1.26.5`, o usa `make` (`make vet-pendiente`,
+> `make ci-local`). Compruébalo con `make toolchain` (`TOOLCHAIN=OK`). En la web da igual.
+
 Commit: `rojo(<modulo>): contrato de <fichero>` — con el contrato **y** su test.
 
 ### Puertos (ficheros solo de interfaces) y adaptadores Postgres

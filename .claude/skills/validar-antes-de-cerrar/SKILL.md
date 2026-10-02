@@ -26,29 +26,45 @@ repo se ha dado por verde lo que no lo estaba más de una vez.
 ```bash
 L=/tmp/gate-$(date +%s).log
 
-# 1 · El gate del repo: fmt + vet + lint + test -race + build
+# 0 · La toolchain EFECTIVA es la fijada. Si no, nada de lo de abajo es autoritativo
+make toolchain; echo "TOOLCHAIN_RC=$?"         # última línea TOOLCHAIN=OK y TOOLCHAIN_RC=0
+
+# 1 · El gate del repo: fmt-check + vet + vet-pendiente + vet-integracion + lint + test -race
+#     + cobertura-ficheros + build
 GOWORK=off make ci-local > "$L" 2>&1; echo "GATE_RC=$?" >> "$L"
 tail -1 "$L"                                   # GATE_RC=0, o no hay nada que celebrar
 grep -E '^(FAIL|--- FAIL)|issues' "$L" | head
 
-# 2 · Los rojos compilan (hasta que F0 lo meta dentro de ci-local)
-GOWORK=off go vet -tags pendiente ./... ; echo "vet-pendiente rc=$?"
+# 2 · Los rojos compilan (va dentro de ci-local; suelto, para iterar)
+make vet-pendiente; echo "vet-pendiente rc=$?"
 
 # 3 · Lo que falta por implementar (cuenta estática y exacta)
 grep -rn 'pendiente.Implementar' --include='*.go' internal | wc -l
-make test-pendiente          # nace en F0
+make test-pendiente          # PENDIENTES=<n> y ROJOS=<n>; su rc es el de vet-pendiente
 
-# 4 · Cobertura por fichero de lo que ya está en verde (≥ 80 %, D-12)
-make cobertura-ficheros      # nace en F0
+# 4 · Cobertura por fichero de lo que ya está en verde (≥ 80 %, D-12; va dentro de ci-local)
+make cobertura-ficheros; echo "cobertura rc=$?"   # FICHEROS_EVALUADOS, POR_DEBAJO, EXENTOS_POSTGRES
 
 # 5 · SKIP: en código NUEVO debe ser cero
-GOWORK=off go test -v ./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... 2>&1 \
+GOTOOLCHAIN=go1.26.5 GOWORK=off go test -v ./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... 2>&1 \
   | grep -c -- '--- SKIP'     # 0, siempre. Uno solo es un defecto
 ```
 
-`golangci-lint` tiene que ser **`v2.12.2`** (`Makefile:12`): otra versión da otro resultado. Si
-no está instalado, el entorno no está preparado (ver el setup del entorno web en
-`documentations/reorganizacion-modular/06-entorno-web.md`); no lo sustituyas por el que haya.
+**La toolchain la pone el `Makefile`, en web y en local** (desde el 2026-10-02): exporta
+`GOTOOLCHAIN=go$(GO_VERSION)` y `lint` exige `golangci-lint` `$(LINT_VERSION)` (hoy `go1.26.5` y
+`v2.12.2`; se citan por el nombre de la variable, no por su línea). Otra versión da otro resultado.
+
+- **`make toolchain` da `TOOLCHAIN=NOT_READY`** (`rc≠0`): el entorno no está preparado. La salida
+  dice qué falta. Si es el linter y estás en **local**: `make tools` (deja el fijado en `.bin/`,
+  una vez por *checkout*; un clon o un `git worktree` nuevo no lo tiene) y repite el paso 0. En la
+  **web** el linter fijado viene en el `PATH`; si no está, el entorno web no está preparado
+  (`documentations/reorganizacion-modular/06-entorno-web.md` §3 y §6) y se dice. **No lo sustituyas
+  por el que haya**, ni con `LINT_BIN` apuntando a otra versión.
+- 🔴 **Un `go` suelto, fuera de `make`, es el del sistema**: en local `go1.27.1`, y un gate corrido
+  con él **no es autoritativo**. Por eso el paso 5 lleva `GOTOOLCHAIN=go1.26.5` delante y los pasos
+  2–4 van por `make`. Cualquier otro `go vet`/`go test` que corras como gate: igual, o su target
+  (`make vet-pendiente`, `make vet-integracion`, `make test-pendiente`, `make cobertura-ficheros`).
+  En la web da igual: el `go` de la sesión ya es el fijado.
 
 Los candados de la reconstrucción (`fronteras_test`, `un_fichero_un_test_test`,
 `exportados_cubiertos_test`, `huella_test`) corren **dentro** de `ci-local` como tests normales:
@@ -71,6 +87,7 @@ Si algo de esto hace falta para cerrar, **no está cerrado**: escribe el traspas
 Siempre con números, nunca con adjetivos:
 
 ```
+Toolchain: make toolchain rc=0 · TOOLCHAIN=OK · GO_EFFECTIVE=go1.26.5 · LINT_EFFECTIVE=v2.12.2 <ruta>
 Gate ci-local: rc=0 · <N> paquetes ok · lint 0 issues
 vet -tags pendiente: rc=0
 Pendientes: <N> llamadas a pendiente.Implementar (antes: <M>)
@@ -78,6 +95,9 @@ Cobertura: <fichero> 87 % … (o: target aún no existe — F0 no completo)
 SKIP en código nuevo: 0
 No corrido: <lista>, y por qué
 ```
+
+Si `make toolchain` dio `NOT_READY`, la primera línea lo dice con su salida y **ningún** gate de
+debajo se declara pasado.
 
 Si algo falló, se dice primero y con su salida. No se escribe «debería pasar».
 

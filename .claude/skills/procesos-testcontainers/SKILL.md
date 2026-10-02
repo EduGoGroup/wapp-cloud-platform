@@ -29,6 +29,9 @@ protegen el código viejo. No se copian.
 - **Sesión local** (tiene Docker): `make test-procesos`, contra los dos binarios. **Es quien cierra
   F9.** Traspaso con la skill `traspaso-web-local`.
 - Sin Docker, el `TestMain` **falla**. No se salta.
+- 🔴 **En local, un `go` suelto es el del sistema** (`go1.27.1`), no el fijado: usa
+  `make vet-integracion` y `make test-procesos`, o antepón `GOTOOLCHAIN=go1.26.5`. Compruébalo
+  con `make toolchain` (`TOOLCHAIN=OK`). En la web da igual.
 
 ## La forma
 
