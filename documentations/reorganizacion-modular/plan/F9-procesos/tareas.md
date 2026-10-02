@@ -31,6 +31,7 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Hecho cuando**: cada caso `muerde` hace fallar el detector; `test/procesos/` limpio pasa
   - **Gate**: gate de la web; `GOWORK=off go test -v ./test/procesos/ ./internal/candados/... 2>&1 | grep -c -- '--- SKIP'` → 0
   - **Commit**: `procesos(arnes): el candado sin_bd_viva prohíbe os.Environ y t.Skip`
+  - ⚠️ **Revisión independiente (2026-10-01)**: `os.Environ` y `testing.Short` se esquivaban con un import con alias o con punto; corregido en `1c247f9` (`verde(candados)`, con el rojo medido en el cuerpo; `sinbdviva.go` sigue al 100 %). Lo que el candado sigue sin ver: contradicción 22 del README y D-F9-6.
 
 - [x] **T9.4 · procesos(arnes): `make test-procesos`, `vet-integracion` y lint** · 🌐 · dep. T9.2 · cumple R9.7.a, R9.4.e — cerrada en `b5f1601` (sesión F9-01, 2026-10-01): `make test-procesos` (BINARIO, CUENTA, PROCESOS_LOG_DIR), `vet-integracion` dentro de `ci-local` y `run.build-tags: [integracion]`; probado con un test que falla adrede (retirado)
   - **Ficheros**: `Makefile` (target `test-procesos` de `diseno.md` §7; `vet-integracion` dentro de `ci-local`), `.golangci.yml` (`run.build-tags: [integracion]`)

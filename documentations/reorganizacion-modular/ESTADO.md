@@ -98,14 +98,19 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
 - Detalle en el `CERRADO` de [`traspasos/TRASPASO-F9-arnes.md`](traspasos/TRASPASO-F9-arnes.md).
 
 **Revisión independiente de S9–S11 (2026-10-01)**: F9-01, F9-02 y F1-01 revisadas sobre `dev` @ `6650e55` (alcance `45e01a4..6650e55`).
-Correcciones de código y de documentación en la rama `reorg/revision-s9-s11` (SHA: pendiente).
+Correcciones de código y de documentación en la rama `reorg/revision-s9-s11`: candado `SinBDViva` `1c247f9` · arnés `af372b6`, `84021ef`,
+`5db3a72`, `41db3e4` · `Makefile` `1e135e5` · `nucleo/contact` `01ae55a`, `73eb2a5` · documentación `1c1040d`, `4fe2291`, `79cc073` y el commit de cierre.
+**Gates sobre la rama, ya con las correcciones** (misma toolchain): `ci-local` `GATE_RC=0` (86 líneas `ok`, lint `0 issues`,
+`FICHEROS_EVALUADOS=9 · POR_DEBAJO=0 · EXENTOS_POSTGRES=1`); `PENDIENTES=11 · ROJOS=4` (sin cambio); los dos `vet` rc=0; SKIP en código
+nuevo 0; `make test-procesos`: `viejo RC=0 · PASS=158 FAIL=0 SKIP=0` y `nuevo RC=0 · PASS=158 FAIL=0 SKIP=0` (+12 por los tests de las
+correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gateway`, `intakes`, `publicapi`, `cmd/server`) frente a `dev`, vacío.
 - **Gates medidos hoy** con `go1.26.5` y `golangci-lint v2.12.2`: `ci-local` `GATE_RC=0` (86 líneas `ok`), lint `0 issues`,
   `FICHEROS_EVALUADOS=9 · POR_DEBAJO=0 · EXENTOS_POSTGRES=1`; `make test-pendiente` `PENDIENTES=11 · ROJOS=4`; `go vet -tags pendiente ./...`
   y `go vet -tags integracion ./test/procesos/...` rc=0; SKIP en código nuevo: 0; E-1: el diff del código viejo en el alcance, vacío;
   pre-chequeo `make test-procesos` en local: `viejo RC=0 PASS=146` y `nuevo RC=0 PASS=146`, 0 SKIP.
 - **Hallazgos y decisiones que abre** (ninguna tomada): de F1, los hallazgos 21–24 y D-F1-10…D-F1-12 del
-  [README de F1](plan/F1-nucleo-contact/README.md); de F9, la nota de revisión de la contradicción 19, las contradicciones 22–29 y
-  D-F9-6…D-F9-11 del [README de F9](plan/F9-procesos/README.md).
+  [README de F1](plan/F1-nucleo-contact/README.md); de F9, la nota de revisión de la contradicción 19, las contradicciones 22–30 y
+  D-F9-6…D-F9-12 del [README de F9](plan/F9-procesos/README.md).
 - **Regla de conteo de «N `ok`»** (regla 6 del `CLAUDE.md` del ecosistema): los «84» y «86» de este fichero son **líneas `ok` del log de
   `make ci-local`**, no paquetes distintos: los paquetes con tests que corre `make test` más los que `make cobertura-ficheros` vuelve a
   correr. 84 = 79 + 5 (en `835a7be`, `6ee1c5e` y `77df20f`: 88 paquetes, 79 con tests); 86 = 80 + 6 (en `6650e55`: 90 paquetes, 80 con
@@ -160,7 +165,7 @@ Correcciones de código y de documentación en la rama `reorg/revision-s9-s11` (
 | 2026-10-01 | **F9-02** (💻): **bloque A de F9 cerrado**. `make test-procesos` `RC=0 · 146 PASS · 0 SKIP` por binario (pasadas 2 y 3; `CUENTA=3`: 438) salvo la pasada 1, con un rojo intermitente de `TestP0_Arranque/sin_errores` contra `nuevo` (H-1, diferida a F6); `ci-local` `GATE_RC=0`; integración vieja con `-v` 4.631 PASS · 0 SKIP · 0 FAIL (T-2); R9.1.d corregido (el comando de la spec no mide nada en macOS) y la «escapatoria» `Parar` refutada | [`plan/F9-procesos/tareas.md`](plan/F9-procesos/tareas.md) T9.5, T9.8, T9.11, T9.12 · [`traspasos/`](traspasos/TRASPASO-F9-arnes.md) `CERRADO` |
 | 2026-10-01 | **F1-01** (🌐): **bloque A de F1**. `internal/nucleo/contact` nace en rojo: 4 contratos sin lógica (11 `pendiente.Implementar`: 3+2+3+3) con su test tras `pendiente` (`ROJOS=4`), la suite `contacttest.Contrato` (19 casos, validada contra el `MemoryResolver` viejo: 19/19 y 28 de 31 mutantes cazados) y el doble `EstadoMemoria`. **D-F1-6** (Jhoan): los paquetes `…test` salen también de la cobertura por fichero (`internal/candados`, rojo→verde; `FICHEROS_EVALUADOS` 10→9 por `huellatest`). 10 hallazgos nuevos (9–18) en el README de F1; D-F1-7 y D-F1-8 abiertas. Sin traspaso: nada del bloque lo cierra la local | [`plan/F1-nucleo-contact/`](plan/F1-nucleo-contact/README.md) · [`tareas.md`](plan/F1-nucleo-contact/tareas.md) |
 | 2026-10-01 | **F1-01, tras el cierre del bloque** (🌐): la regla de idioma **E-11** (`8365132`; L-1 en `DECISIONES.md`; hallazgo 19 del README de F1) y `contacttest/contrato.go` partido por tema en 9 ficheros (`7069532`, movimiento puro; hallazgo 20). **PR #19 integrado en `dev` sin squash** (`6650e55`) | [`05`](05-metodo-contratos-y-tdd.md) E-11 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) |
-| 2026-10-01 | **Revisión independiente de S9–S11** (F9-01, F9-02, F1-01; `45e01a4..6650e55`): gates repetidos, erratas corregidas (R9.1.d, cifras, referencias, restos contrarios a E-11) y hallazgos anotados con sus decisiones abiertas, sin tomar ninguna | [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 21–24 · [`plan/F9-procesos/README.md`](plan/F9-procesos/README.md) contradicciones 19 y 22–29 |
+| 2026-10-01 | **Revisión independiente de S9–S11** (F9-01, F9-02, F1-01; `45e01a4..6650e55`): gates repetidos, erratas corregidas (R9.1.d, cifras, referencias, restos contrarios a E-11) y hallazgos anotados con sus decisiones abiertas, sin tomar ninguna | [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 21–24 · [`plan/F9-procesos/README.md`](plan/F9-procesos/README.md) contradicciones 19 y 22–30 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -194,8 +199,8 @@ excepciones a E-1 de F0 (**D-F0-1/2/3**, **D-F4-1**) y la **parada tras F1**.
 
 ⚠️ **Todavía sin fila en `DECISIONES.md`** (viven en el README de su fase): **D-F1-7, D-F1-8 y D-F1-9** (de F1-01) y las que abre la
 revisión independiente del 2026-10-01: **D-F1-10** (estrechar la exención de los paquetes `…test`), **D-F1-11** (R-27/R-28/R-29 a P3),
-**D-F1-12** (actualizar `05` por E-11) en el [README de F1](plan/F1-nucleo-contact/README.md), y **D-F9-6…D-F9-11** (candado `SinBDViva`,
-`GOWORK=off`, directorios `procesos-*`, las dos respuestas al §8 del traspaso, el alcance de D-F6-7 y los ficheros de test largos) en el
+**D-F1-12** (actualizar `05` por E-11) en el [README de F1](plan/F1-nucleo-contact/README.md), y **D-F9-6…D-F9-12** (candado `SinBDViva`,
+`GOWORK=off`, directorios `procesos-*`, las dos respuestas al §8 del traspaso, el alcance de D-F6-7, los ficheros de test largos y el gate de lease de la inferencia en el Edge de prueba) en el
 [README de F9](plan/F9-procesos/README.md).
 
 ## Lo que el plan corrigió de los documentos 01–05 (resumen)
@@ -241,7 +246,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 ## Estado de git
 
 - **F1-01 (bloque A de F1)**: rama `reorg/f1-a-contratos-rojo`, partida de `origin/dev` @ `77df20f`; **PR #19 integrado en `dev` sin squash** (merge `6650e55`, 2026-10-01 22:52 −03; 12 commits, de `afa63f3` a `7069532`). El `dev` local de la VM web iba 17 commits por detrás: se trabajó siempre desde `origin/dev`.
-- **Revisión independiente de S9–S11** (2026-10-01): rama `reorg/revision-s9-s11`, partida de `dev` @ `6650e55` (SHA: pendiente).
+- **Revisión independiente de S9–S11** (2026-10-01): rama `reorg/revision-s9-s11`, partida de `dev` @ `6650e55` (PR hacia `dev`, **pendiente de revisar por Jhoan**; integrar sin squash). Commits: arriba, «Revisión independiente».
 - `origin/dev` contiene **F0 entera** (PR #13–#17, sin squash; el último merge es `835a7be`) más el cierre de F0-06.
   `origin/main` = `2da10b4`, sin tocar. Traspaso de F0: [`traspasos/TRASPASO-F0-andamiaje.md`](traspasos/TRASPASO-F0-andamiaje.md), **CERRADO**.
 - `origin/dev` contiene también el bloque A de F9 (PR #18, sin squash; el merge es `af7b8e9`; la rama `reorg/f9-a-arnes` ya está borrada). El cierre local

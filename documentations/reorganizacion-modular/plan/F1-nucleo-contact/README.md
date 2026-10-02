@@ -159,7 +159,7 @@
 
 > Revisión de F9-01, F9-02 y F1-01 (`45e01a4..6650e55`). Son **hechos** comprobados contra el código de `6650e55`; lo que pide una
 > decisión va a la tabla de abajo (D-F1-10…D-F1-12) y **no se decide aquí**. Los de F9, en el
-> [README de F9](../F9-procesos/README.md) (contradicción 19 y 22–29). Las correcciones de código viajan en la rama `reorg/revision-s9-s11`.
+> [README de F9](../F9-procesos/README.md) (contradicción 19 y 22–30). Las correcciones de código viajan en la rama `reorg/revision-s9-s11`.
 
 21. **La exención de los paquetes `…test` es por SUFIJO del nombre de paquete** (→ **D-F1-10**; matiza D-F1-3 y D-F1-6). Los tres
     candados usan la misma condición, `strings.HasSuffix(f.Paquete, "test")` (`internal/candados/cobertura.go:165`,
@@ -189,10 +189,13 @@
     `7069532`, **después** de E-11 —`8365132`— y a petición de Jhoan: hallazgo 20) entra en su excepción 3, que lista `Contrato` y
     `Montaje` como vocabulario del método pero no nombres de fichero.
 24. **Promesas sin aserción y comentarios-contrato imprecisos** (se corrigen en el mismo PR de la revisión, rama
-    `reorg/revision-s9-s11`; sin SHA todavía). La lista de la revisión, cuyo detalle va en ese PR: una `Ref{}` vacía cuenta; los
+    `reorg/revision-s9-s11`: `01ae55a` las aserciones y `73eb2a5` los comentarios). La lista de la revisión, cuyo detalle va en esos commits: una `Ref{}` vacía cuenta; los
     textos exactos de `contact_id no encontrado`, `ErrNoRefs` y `ErrNoDestino`; `@lid` no es sufijo; `WithTx` sin prefijo en dos
     casos más (el hallazgo 15 ya anotaba el patrón); el `push_name` en la rama de carrera; y `Destino` con varias refs del mismo
-    `kind`. No piden decisión.
+    `kind`. No piden decisión. Validado con la lógica vieja como oráculo (los 4 ficheros de `internal/flujos/contact` puestos en el
+    sitio de los contratos, en una copia desechable): la suite pasa entera y los siete mutantes que antes sobrevivían caen.
+    Siguen **sin aserción**, y escritos como tales en el contrato: el desempate por id menor (lo cubrirá el test de
+    `pickCanonicalDB`, T1.11) y qué hace Postgres con una `Ref{}` después de contarla (solo se ve contra una base real: T1.13/T1.18).
 
 #### Fricción de método y de entorno web (alimenta §4 del informe)
 

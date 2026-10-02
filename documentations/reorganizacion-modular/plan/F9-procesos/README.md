@@ -113,7 +113,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 ### Decisiones abiertas por la revisión independiente de S9–S11 (2026-10-01)
 
 > Las plantea la revisión de F9-01, F9-02 y F1-01 sobre `dev` @ `6650e55`; **ninguna está tomada**. El hecho que motiva cada una
-> está en la contradicción 19 (nota de revisión) y en las 22–29, abajo. Aún no tienen fila en [`../DECISIONES.md`](../DECISIONES.md).
+> está en la contradicción 19 (nota de revisión) y en las 22–30, abajo. Aún no tienen fila en [`../DECISIONES.md`](../DECISIONES.md).
 
 | # | Pregunta | Propuesta de la revisión |
 |---|---|---|
@@ -123,6 +123,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-9** | ¿Acepta Jhoan las dos respuestas que F9-02 dio al §8 del traspaso (dejar el alcance extra del Edge de prueba; mantener la regla del `Cleanup`)? (contradicción 27) | Preguntarlo: hoy no tienen fila en `DECISIONES.md` ni la fórmula «decisión de Jhoan» |
 | **D-F9-10** | **Alcance y criterio de D-F6-7** (contradicciones 19 y 28): ¿cubre las otras tres goroutines de fondo, que no son de F6?; ¿qué se hace con el binario `viejo`, que conserva el worker viejo hasta F10?; ¿con qué se remide, si `CUENTA=3` da verde ≈ 98,8 % de las veces sin arreglar nada? | Sin propuesta: es rumbo. Las salidas (a)–(c) de la contradicción 19 siguen siendo las candidatas |
 | **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacttest/contrato.go`? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer |
+| **D-F9-12** | ¿El Edge de prueba replica también el gate de lease de la **inferencia** (y lleva cuenta de los envíos bloqueados)? (contradicción 30) | Sí al gate de inferencia, antes del proceso que la recorra (P3/P4, T9.15/T9.17): es el mismo agujero que la 25 (b) en el camino LLM. El contador, solo si un proceso lo necesita |
 
 ## Encaje con F0 y F1 (escritas antes que esta spec)
 
@@ -315,7 +316,8 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     persigue formas concretas en el AST (`:95-129` y `patronesLiteral`): literales con `WAPP_TEST_DB_DSN`, con `:5432` o que empiezan
     por `postgres://`/`postgresql://`, el identificador `WithReuseByName`, los selectores `os.Environ` y `testing.Short` **con ese
     nombre de paquete exacto** (`esIdent`, `:132-135`) y `Skip*`. La revisión lo midió con una sonda de ~20 evasiones: mordió 1. El
-    alias y el import con punto de `os`/`testing` se corrigen en el PR de la revisión. Quedan **sin cerrar**: un DSN sin host ni
+    alias y el import con punto de `os`/`testing` se corrigieron en el PR de la revisión (`1c247f9`: el candado resuelve por fichero el
+    nombre local de `os` y de `testing`, y con import de punto muerde el identificador suelto). Quedan **sin cerrar**: un DSN sin host ni
     puerto (`pgx.Connect(ctx, "")`, `sql.Open("pgx", "dbname=…")`: pgx completa lo que falta con `PGHOST`/`PGPORT` o con sus valores
     por defecto, puerto 5432); un DSN clave=valor (`port=5432`, sin los dos puntos); literales construidos (`"localhost:"+"5432"`,
     `net.JoinHostPort`); `os.Getenv("DATABASE_URL")` o `PGHOST` (el candado declara legítimo `os.Getenv`, `:28-29`); `syscall.Environ`,
@@ -332,7 +334,8 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     `procesos-*` con `os.MkdirTemp("", "procesos-")` (`main_test.go:90`) y lo borra con un `defer` (`:96`, `borrarDirectorio`), que no
     corre si el binario de test muere por `kill -9`, pánico o *timeout*. En el `os.TempDir()` del Mac había **tres** del 2026-10-01
     (09:31–09:34; 64 + 64 + 14 MB: los binarios compilados), de los experimentos de F9-02.
-25. **Corregido en el PR de la revisión** (rama `reorg/revision-s9-s11`; sin SHA todavía): (a) el reintento por puerto ocupado
+25. **Corregido en el PR de la revisión** (rama `reorg/revision-s9-s11`: (a) `af372b6`, (b) `41db3e4`, (c) `5db3a72`, (d) `1e135e5`;
+    además `84021ef`, que para en el `Cleanup` el proceso de `TestArnes_Parar*` si el test falla antes). (a) el reintento por puerto ocupado
     (`servidor_test.go:122-132`) relanzaba el servidor contra el **mismo** doble de S3, que quedaba con dos `HeadBucket`: falso rojo
     de `TestP0_Arranque/almacenes_s3`, que exige exactamente uno (`p0_arranque_test.go:354`); (b) el Edge de prueba daba por buena
     una conexión con el lease inicial rechazado y acusaba `SendText` con `ok=true` sin lease vigente o tras la revocación (el Edge
@@ -359,4 +362,13 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     **2.534** (cuatro temas: transporte y enrolamiento · núcleo y frames · tests sin servidor · tests contra el servidor real),
     `servidor_test.go` **1.033**, `clientes_test.go` **750**, `pki_test.go` **653** y `p0_arranque_test.go` **611** (de este
     convendría sacar el parser de exposición Prometheus, que reutilizarán otros procesos). El paquete suma 7.785 líneas en 12
-    ficheros `*_test.go`.
+    ficheros `*_test.go`. Tras el arreglo del gate de lease (`41db3e4`), `edge_falso_test.go` tiene **3.012**.
+30. **Lo que el Edge de prueba sigue sin replicar del Edge real, tras el arreglo de la 25 (b)** (→ **D-F9-12**; salió al escribir
+    el arreglo, leyendo `wapp-edge-agent`, `internal/adapters/cloudlink/`): (a) **la inferencia no pasa por el lease**: el doble la
+    sirve siempre, también revocado; el Edge real aplica un gate propio (`inferencia.go`, `leaseVigente`: de alcance daemon —basta
+    una sesión operable—, con gracia, y sin ninguna contesta un error de lease), así que un proceso «tras revocar no se infiere»
+    pasaría en falso; (b) **el doble no late solo**: con el gate, un proceso que dure más que el TTL del lease vería sus envíos
+    bloqueados si no llama a `latir` (hoy ninguno se acerca; lo dice el comentario de `puedeOperar`); (c) un envío bloqueado solo
+    se ve por el `Ack` o por la respuesta de la API: el doble no cuenta bloqueos ni los anota en `Errores()`, y un proceso donde
+    envía el motor de flujos (no HTTP) tendría que mirar el estado del servidor; (d) el doble acusa `ok=true` cualquier comando que
+    no interpreta si trae `command_id` (*esto último no se contrastó línea a línea con el Edge real: queda como PLAUSIBLE*).

@@ -37,7 +37,8 @@
   sin `GOMODCACHE` exportada, caché de módulos vacía). Medido en bash 3.2, zsh, `sh` y `dash`: README, contradicción 15.
 - **R9.1.e** · **EL** arnés **DEBERÁ** lanzar cada servidor con un entorno **construido desde cero**
   (nunca `os.Environ()`), con los cuatro listeners en `127.0.0.1:<puerto libre>`. — Verifica: el
-  candado de H9.2 falla si aparece `os.Environ()` en `test/procesos/`; `TestArnes_EntornoLimpio`
+  candado de H9.2 falla si aparece `os.Environ()` en `test/procesos/` (también con `os` importado con alias o con punto, desde
+  `1c247f9`; lo que el candado sigue sin ver, en la contradicción 22 del README); `TestArnes_EntornoLimpio`
   arranca con `WAPP_DB_HOST=trampa` exportado en el shell y el servidor igualmente usa el contenedor.
 - **R9.1.f** · **MIENTRAS** dos procesos corren en paralelo (`t.Parallel()`), **EL** arnés **DEBERÁ**
   darles puertos y bases disjuntos. — Verifica: `make test-procesos` con `-parallel 4` sin

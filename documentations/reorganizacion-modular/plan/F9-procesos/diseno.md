@@ -114,6 +114,9 @@ Convenciones: «admin» = Context Token de `tenant_admin` del tenant del proceso
 terminan comprobando que el log del servidor no tiene líneas `level=ERROR` inesperadas. ⚠️ Esa comprobación se hace **antes** de parar
 el servidor: tras el SIGTERM, el *webhook worker* puede loguear dos `ERROR` de cancelación si su primera llamada a BD seguía en vuelo
 (H-1, contradicción 19 del README; diferida a F6, D-F6-7). P0, que comprueba también la parada, es el único expuesto hoy.
+⚠️ Revisión independiente (2026-10-01): no es solo el *webhook worker*; el mismo patrón está, sin haberse observado, en otras tres
+goroutines de fondo (colector de `platform`, agregador de `flujos/runtime`, pipeline de `intake`), que F6 no reconstruye: nota de
+revisión de la contradicción 19 y D-F9-10 del README.
 
 ### P0 · Humo del arranque (`p0_arranque_test.go`) — T9.11
 
