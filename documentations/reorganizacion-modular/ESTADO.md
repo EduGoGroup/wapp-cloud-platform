@@ -159,6 +159,7 @@ por hechos Docker y la toolchain; no lo estaban y se prepararon aislados).
    la recomendación de repartir en `modulos/<m>/http` y el §9.2 de `05`. Ver [`plan/FX-cara-http/`](plan/FX-cara-http/README.md).
 10. **Docker en la web**: la primera sesión web lo prueba; si testcontainers funciona, la web corre
     los procesos como pre-chequeo; **cierra la sesión local**.
+11. **Idioma (L-1 · `05` E-11, 2026-10-02)**: en lo nuevo, nombres en inglés y solo los comentarios en español; lo ya escrito y lo ya decidido no se renombra.
 
 ## Decisiones abiertas
 

@@ -222,8 +222,10 @@ Las claves que viajan por el wire y viven en la BD van en inglés (`pending_appr
 `needs_info`); el nombre bonito vive en la UI y en la documentación, **nunca** en la base.
 Ejemplo canónico: `internal/intakes/status.go:13`.
 
-Los **comentarios y los nombres de función internos van en español**, que es la convención de
-este repo. No la «corrijas».
+Los **comentarios van en español**. Los **nombres** del código que ya existe (ficheros, funciones,
+variables, tests) están en español en muchos sitios: **no los «corrijas»**. En el código **nuevo** de la
+reconstrucción los nombres van en **inglés** y solo los comentarios en español
+([`05` E-11](reorganizacion-modular/05-metodo-contratos-y-tdd.md#e-11--nombres-en-inglés-en-español-solo-los-comentarios), 2026-10-02).
 
 ### I-CP-9 · ⚠️ wApp NO autentica personas: aquí no hay padrón ni contraseñas
 

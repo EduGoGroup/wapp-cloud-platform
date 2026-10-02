@@ -38,6 +38,11 @@ El fichero nuevo lleva **solo**:
 🔴 **Nunca un valor cero como cuerpo** (`return nil, nil`, `return ""`, `return false`): puede
 hacer pasar un test por accidente. Solo `panic`.
 
+🔴 **Nombres en inglés, comentarios en español (E-11).** Ficheros, paquetes, tipos, funciones, métodos,
+campos, variables, constantes, centinelas y nombres de test van en **inglés**; solo los comentarios van en
+español. Portando un símbolo viejo con nombre en español, el nuevo lleva uno en inglés y el comentario dice
+cuál era. Lo ya escrito y lo ya decidido (módulos de D-5, `pendiente`, `Contrato`, `Montaje`) no se renombra.
+
 🔴 **Los textos observables no cambian.** Un mensaje de error que hoy ve un humano (el BFF y
 `wapp-ctl` muestran en texto plano los de `/api/v1/signup`) se copia **literal** del fichero viejo.
 
@@ -48,7 +53,7 @@ hacer pasar un test por accidente. Solo `panic`.
 - **Una aserción por promesa del comentario.** Se escribe leyendo el contrato, no el código viejo.
 - **Todo símbolo exportado de `x.go` aparece en `x_test.go`**: lo exige el candado
   `exportados_cubiertos_test.go` (E-9), y se cumple ya en rojo.
-- **Tabla de casos** cuando hay varias entradas; nombres de caso en español y que digan la regla.
+- **Tabla de casos** cuando hay varias entradas; nombres de caso **en inglés** (E-11) y que digan la regla.
 - **Sin BD, sin red, sin reloj real, sin `t.Skip`.** Postgres → ver «Puertos» abajo. Reloj →
   inyectado.
 - **Sin leer código como texto** (AST), salvo que sea un candado de invariante de `05` §3.2.
@@ -101,6 +106,7 @@ verde: `refactor(<modulo>): …`.
 - Copiar el fichero viejo entero y «ya luego» escribir el test. Eso es mover, no reconstruir.
 - Portar un test viejo tal cual. Se consultan; el nuevo sale del contrato.
 - Un test que solo comprueba que «no hace panic» o que la función existe.
+- Un nombre en español en un fichero, tipo, función, variable o test **nuevo** (E-11).
 - `t.Skip` por cualquier motivo. Es la deuda DT-52: un SKIP bajo `rc=0` parece verde.
 - Editar el paquete viejo «de paso». El viejo es lo que corre en UAT y el oráculo.
 - Declarar verde con `| tail` delante del `go test`: el `rc` sería el de `tail`.

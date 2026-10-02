@@ -20,6 +20,7 @@
 | D-10 | 🔄 **Cara HTTP única NUEVA, `internal/apipublica`, construida por olas** (estrangulador delante del `publicapi` viejo; cada módulo muda sus rutas al conmutar) — sustituye la recomendación original de repartir en `modulos/<m>/http` | [`FX-cara-http/`](FX-cara-http/README.md) |
 | D-11 | Etiquetas `pendiente` e `integracion`; **cero `t.Skip`** en código nuevo | Todo |
 | D-12 | 80 % de sentencias por fichero al llegar a verde, fuera adaptadores Postgres; se recalibra tras F1 | Todo |
+| L-1 | *(2026-10-02, sesión F1-01)* **Nombres en inglés** (ficheros, tipos, funciones, variables, tests) y **solo los comentarios y la documentación en español**, en todo lo **nuevo** (`05` E-11). Lo ya escrito y lo ya decidido (módulos de D-5, vocabulario del método) no se renombra | Todo, desde esa fecha |
 | W-1 | Docker en la web: la primera sesión web **prueba** Docker + testcontainers; si funciona, la web corre los procesos como pre-chequeo; **cierra la sesión local** | F0-A, F9 |
 
 ## 1 · Antes de F0 — bloquean la primera sesión o un bloque de F0

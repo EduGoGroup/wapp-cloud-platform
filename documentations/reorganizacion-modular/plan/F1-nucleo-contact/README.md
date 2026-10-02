@@ -138,6 +138,14 @@
     del `grep` de T1.7 (que no excluye comentarios: no escribir el literal en comentarios). Reparto: 3 (`contact.go`) + 2
     (`resolver.go`) + 3 (memory) + 3 (postgres); `ROJOS=4`.
 
+19. **Idioma (L-1 · `05` E-11, 2026-10-02): desde ahora, nombres en inglés y solo los comentarios en español.**
+    Lo escrito en el bloque A **se queda como está** (`Contrato`, `Montaje`, `Estado`, `NuevoEstado`, `Sembrar`,
+    `Dueno`, `EstadoMemoria`, los nombres de `Test…` y de casos, `pasa`/`muerde`). Lo que la spec nombra en español y
+    **aún no existe** se escribe en inglés; correspondencia para el bloque B (T1.11): `codificarRef` → `encodeRef`,
+    `sobrePushName` → `pushNameEnvelope`, `elegirCanonico` → `pickCanonicalDB` (los tres son los nombres del código
+    viejo), `abrirFilas` → `openRows` (nuevo) y `nullStr` se queda. Los textos observables (errores, columnas) no se
+    traducen. Si D-F1-7 se toma, el `refactor` de `Estado` es el momento natural de ponerle nombres en inglés.
+
 #### Fricción de método y de entorno web (alimenta §4 del informe)
 
 - Los sub-agentes con `isolation: worktree` **arrancaron en `2da10b4` (`main`)**, no en la rama de trabajo: el primer paso de
@@ -162,3 +170,4 @@
 | D-F1-6 | *(decidida en F1-01)* Los paquetes `…test` quedan exentos también de la cobertura por fichero | **Sí** (decidido el 2026-10-01 por Jhoan; `DECISIONES.md`). Pendiente de mirar: el efecto en `huellatest` (hallazgo 9) |
 | D-F1-7 | ¿`Estado` gana una **marca** (p. ej. `Sembrar(t, tenant, sesión, contacto, marca)` y `Dueno(…) (contacto, marca, ok)`) para que la suite distinga «se conserva el estado del canónico» de «se re-clava el del huérfano» (R-17)? Hoy solo ve el dueño (hallazgo 13) | **Sí, antes de T1.13** (el adaptador de Postgres de `Estado` aún no existe: cambiarlo ahora es barato; el doble `EstadoMemoria` y la suite se tocan en un commit `refactor`) |
 | D-F1-8 | R9.4.d de F9 admite en `test/procesos` solo imports de paquetes `…test` de `nucleo`; T1.13 necesita `nucleo/contact` (hallazgo 16). ¿Se amplía R9.4.d a «los paquetes `…test` y el constructor del adaptador Postgres del puerto que prueban»? | **Sí**, con el `grep` de F9 ajustado en el mismo commit |
+| D-F1-9 | ¿Se traduce también lo ya decidido que `05` E-11 exceptúa: los siete módulos de D-5, el vocabulario del método (`pendiente`/`Implementar`/`Contrato`/`Montaje`, las etiquetas) y `puente_<x>.go` (D-F1-5)? Aparecen en los candados, el `Makefile`, el hook y 81 sesiones | **No en bloque** (renombrar es caro y no cambia comportamiento). **Sí** para lo nuevo de F1 que aún no existe (`puente_contact.go`, `puenteContact`, `nuevoResolverDeContactos`, T1.14–T1.16): decidir antes de T1.14, porque D-F1-5 fijó el nombre `puente_<x>.go` |

@@ -57,6 +57,9 @@ go version && golangci-lint version        # go1.26.5 y v2.12.2; si no, el entor
 - **Conmutar**: el arranque nuevo cablea lo nuevo; `huella_test` idéntica; los tipos nuevos que aún
   consumen paquetes viejos se adaptan en `internal/arranque/puente_<x>.go`; las rutas que tocan, a
   `apipublica` según el mapa de FX, **patrón byte a byte**.
+- **Idioma (E-11)**: nombres (ficheros, tipos, funciones, variables, tests) en **inglés**; solo los
+  comentarios y la documentación en español. Lo ya escrito no se renombra; los textos observables se copian
+  literales. Dilo en el prompt de cada sub-agente.
 - **Puentes** de import al código viejo: solo los que declare la spec, y **declarados** en
   `internal/modulos/fronteras_test.go` en el mismo commit.
 
@@ -80,7 +83,7 @@ código nuevo · 🚫 conectar un test a un Postgres vivo: ni `WAPP_TEST_DB_DSN`
 el **PostgreSQL 16 preinstalado en la VM**; solo testcontainers · 🚫 bajar `go 1.26.5` o generar
 `go.sum` sin red real · 🚫 cambiar un texto observable (errores, literales de protocolo, nombres de
 métricas y patrones de ruta) · 🚫 levantar `cmd/server` y `cmd/server-modular` a la vez contra la
-misma BD o los mismos puertos · 🚫 empujar a `dev` o a `main` · 🚫 decidir rumbo en solitario: ante
+misma BD o los mismos puertos · 🚫 empujar a `dev` o a `main` · 🚫 un nombre en español en lo nuevo, salvo las excepciones de `05` E-11 · 🚫 decidir rumbo en solitario: ante
 un conflicto con la spec, `05` o un ADR, **para y pregunta**.
 
 ## 6 · Cerrar la sesión
