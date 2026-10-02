@@ -160,7 +160,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   hallazgos nuevos en el README de F1, **sin corregir** (25: firmas de suite contrarias a D-F1-1 en specs de F4, F8, F9 y el marco;
   26: restos de `05`).
   **Queda abierto**, todo ya con fila en `DECISIONES.md`: **D-F9-9**, **D-F9-10**, **D-F9-11** (recomendación sí; se aplica en un PR
-  aparte, a continuación de este), **D-F1-7**, **D-F1-8**, **D-F1-9** y **D-F1-14** (nueva: extender «solo los ficheros de suite» a
+  aparte, a continuación de este; ✎ ya aplicada, abajo), **D-F1-7**, **D-F1-8**, **D-F1-9** y **D-F1-14** (nueva: extender «solo los ficheros de suite» a
   `un_fichero_un_test` y `exportados_cubiertos`).
   **De paso, el gate**: `make lint` usa ahora una caché de `golangci-lint` **por *checkout*** (`.bin/lint-cache`; `fdbc0b2`, `6649ee6`).
   La del usuario, compartida entre *worktrees*, devolvió en esta rama 36 *issues* falsos (rc=2), todos con rutas de *worktrees* ya
@@ -170,6 +170,18 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   ROJOS=4` (sin cambio); `make ci-docker` → rc=0 (estos cuatro sobre `6649ee6`). `make test-procesos` → `viejo` y `nuevo` `RC=0 ·
   PASS=176 · FAIL=0 · SKIP=0` (158 en `dev`) y SKIP en código nuevo 0 con 674 PASS (estos dos sobre `88b1d85`; después solo cambian
   `.md` y el `Makefile`). **No corrido**: `make test-integration`, UAT.
+- **2026-10-02 · D-F9-11 aplicada: los ficheros de test largos de `test/procesos`, partidos por tema** (misma petición de Jhoan; se
+  confirma al integrar el PR; rama `reorg/partir-tests-procesos`, encima de `reorg/decisiones-revision-s9-s11`). Cinco commits
+  `refactor(procesos)`, uno por fichero de origen (`6ed524b`, `4ac3dbd`, `c8f7d31`, `e9d93f4`, `eae418d`): 5 ficheros → 34, el
+  paquete pasa de 14 a 43 ficheros `.go` y ninguno pasa de 500 líneas. **Solo se mueven declaraciones**: 461 de primer nivel y 140
+  *specs*, iguales byte a byte, 0 comentarios perdidos (`go/parser` sobre los bytes del fuente). Detalle en la contradicción 29 del
+  [README de F9](plan/F9-procesos/README.md).
+  Cada pieza se llama `<fichero de origen>_<tema>_test.go` (`edge_falso_*`, `servidor_*`, `clientes_*`, `pki_*`, `p0_arranque_*`;
+  indicación de Jhoan al revisar; `b4d9417`, 27 renombres sin tocar una declaración).
+  Gates (sobre `b4d9417`, el último commit con código; rc leído del log): `make ci-local` → `GATE_RC=0`, 86 líneas `ok`, lint 0
+  *issues*, `FICHEROS_EVALUADOS=11 · POR_DEBAJO=0`; `make test-procesos` → `viejo` y `nuevo` `RC=0 · PASS=176 · FAIL=0 · SKIP=0`, y
+  los nombres de los 176 PASS, idénticos a los de antes de partir en los dos binarios. **No corrido**: `make ci-docker` (no cambia
+  nada de lo que mira frente al PR anterior salvo ficheros con etiqueta `integracion`), `make test-integration`, UAT.
 
 **Siguiente paso:**
 1. **Jhoan**:
@@ -177,7 +189,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
 2. **F1-01 ✅ hecha (🌐, 2026-10-01)**: bloque A del piloto `nucleo/contact`, T1.1–T1.7 + T1.3b; **PR #19 integrado en `dev` sin squash** (merge `6650e55`, 2026-10-01:
-   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que siguen abiertas de la revisión independiente (D-F9-9, D-F9-10, D-F9-11 y D-F1-14, además de D-F1-9; ✎ 2026-10-02: **D-F1-10 ya está decidida**, y D-F1-11, D-F1-12, D-F1-13, D-F9-6, D-F9-7, D-F9-8 y D-F9-12 llevan aplicada la recomendación de la revisión, que se confirma al integrar el PR). Luego **F1-02 (🌐)**: el verde,
+   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que siguen abiertas de la revisión independiente (D-F9-9, D-F9-10 y D-F1-14, además de D-F1-9; D-F9-11 ya está aplicada, en su PR; ✎ 2026-10-02: **D-F1-10 ya está decidida**, y D-F1-11, D-F1-12, D-F1-13, D-F9-6, D-F9-7, D-F9-8 y D-F9-12 llevan aplicada la recomendación de la revisión, que se confirma al integrar el PR). Luego **F1-02 (🌐)**: el verde,
    T1.8–T1.13 ([`plan/sesiones/`](plan/sesiones/README.md)). Las F9-03…F9-05 (B1/B2) van **después** de la parada de F1 (F1-05), por D-F9-1. Para repetir los gates en local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`.
 2b. **F1-02 ✅ escrita (🌐, 2026-10-02)**: bloque B, T1.8–T1.13, rama `reorg/f1-b-verde` (último commit de código `4bc398d`), **PR hacia `dev`: integrar SIN squash**. D-F1-7 y D-F1-8 ya decididas. **Jhoan**: integrar el PR y decidir **D-F1-9** antes de T1.14. Luego **F1-03 (🌐)**: bloque C (T1.14–T1.16). La sesión local **F1-04** corre T1.18 con el [traspaso del bloque B](traspasos/TRASPASO-F1-B-suite-postgres.md), además del de T1.16.
 3. **H-1 no bloquea nada**: se difirió a F6 (D-F6-7). Hasta entonces, un rojo de `TestP0_Arranque/sin_errores` con las dos líneas `ERROR` del *webhook worker* es esa carrera: se repite
@@ -267,7 +279,7 @@ compuesto `helpertest` (`a18d4c0`, `06f08a8`); estrecha D-F1-3 y D-F1-6 y tiene 
 - ⚠️ **Abiertas**: **D-F1-9**, de F1-01 (✎ 2026-10-02: **D-F1-7** y **D-F1-8** ya decididas por Jhoan, registradas en F1-02, `ccc9a6b`); **D-F1-14** (nueva: extender «solo los ficheros
   de suite exentos» a `un_fichero_un_test` y `exportados_cubiertos`), en el [README de F1](plan/F1-nucleo-contact/README.md); y
   **D-F9-9** (las dos respuestas al §8 del traspaso), **D-F9-10** (el alcance de D-F6-7) y **D-F9-11** (los ficheros de test largos:
-  recomendación sí; se aplica en un PR aparte, a continuación de este), en el [README de F9](plan/F9-procesos/README.md).
+  ✎ aplicada el 2026-10-02 en su propio PR; se confirma al integrarlo), en el [README de F9](plan/F9-procesos/README.md).
 
 ## Lo que el plan corrigió de los documentos 01–05 (resumen)
 
