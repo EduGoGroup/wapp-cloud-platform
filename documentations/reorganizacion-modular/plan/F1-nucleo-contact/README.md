@@ -146,6 +146,14 @@
     viejo), `abrirFilas` → `openRows` (nuevo) y `nullStr` se queda. Los textos observables (errores, columnas) no se
     traducen. Si D-F1-7 se toma, el `refactor` de `Estado` es el momento natural de ponerle nombres en inglés.
 
+20. **`contacttest/contrato.go` (737 líneas) se partió por tema** (petición de Jhoan, 2026-10-02): es el único sitio donde
+    están escritas todas las promesas del puerto (19 casos, sus ayudas y los comentarios de cada regla) y crece con cada
+    promesa nueva, con cada divergencia memoria ↔ Postgres que aparezca (T1.10, T1.18) y con D-F1-7. Ahora: `contrato.go`
+    (entrada: `Montaje`, `Estado`, `Contrato`, tabla de casos), `resolve_`, `isolation_`, `merge_`, `destination_`,
+    `concurrency_` y `pushname_contrato.go` (los casos) y `fixtures_` y `assertions_contrato.go` (las ayudas); el más
+    largo tiene 168 líneas. Es un movimiento puro: las 56 declaraciones (con su comentario) tienen el mismo hash antes y
+    después. Cada fichero lleva una cabecera que dice qué crece ahí, y el comentario de paquete, cómo añadir un caso.
+
 #### Fricción de método y de entorno web (alimenta §4 del informe)
 
 - Los sub-agentes con `isolation: worktree` **arrancaron en `2da10b4` (`main`)**, no en la rama de trabajo: el primer paso de

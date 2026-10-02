@@ -11,7 +11,7 @@
 | `resolver.go` | 151 (47/92) | `N/resolver.go` | El **puerto** `Resolver` + `StateMigrator`, centinelas, `Ref.Sendable`, `RefsFrom`, auxiliares |
 | `repository_memory.go` | 183 (33/134) | `N/repository_memory.go` | Gemelo en memoria. **0 usos en producción**; 89 líneas en 57 ficheros de test ajenos |
 | `repository_postgres.go` | 460 (190/254) | `N/repository_postgres.go` | Adaptador `database/sql` sobre `public.contacts` (+ `public.flow_state` en la fusión) |
-| — | — | ✚ `N/contacttest/contrato.go` | Suite `Contrato` del puerto (E-3) |
+| — | — | ✚ `N/contacttest/contrato.go` y 8 `*_contrato.go` | Suite `Contrato` del puerto (E-3), un fichero por tema (README hallazgo 20) |
 | — | — | ✚ `N/contacttest/estado.go` | Doble de `flow_state` en memoria (implementa `StateMigrator` y el observador de la suite) |
 | — | — | ✚ `internal/arranque/puente_contact.go` | Adaptador de tipos viejo ← nuevo (§3). Nace en F1, muere en F8 |
 

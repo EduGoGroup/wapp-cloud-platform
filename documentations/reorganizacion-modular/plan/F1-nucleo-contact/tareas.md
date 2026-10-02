@@ -31,7 +31,7 @@ Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make c
   - **Hecho cuando**: `go test -race ./internal/candados/... ./cmd/cobertura-ficheros/...` rc=0 (131 PASS, 0 SKIP) · cobertura de `cobertura.go` 99,3 % · `make cobertura-ficheros` rc=0 con `FICHEROS_EVALUADOS=9` (era 10: sale `internal/arranque/huellatest`, efecto colateral anotado en D-F1-6).
   - **Commits**: `rojo(candados): los paquetes …test no se miden en cobertura (D-F1-6)` · `verde(candados): Evaluables no mide los paquetes …test (D-F1-6)`
 - [x] **T1.4 · rojo(nucleo): suite `contacttest.Contrato` y doble de estado** · 🌐 · dep. T1.3 · cumple R1.3.a — cerrada en `8f2a4db`
-  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go`
+  - **Ficheros**: `N/contacttest/contrato.go`, `N/contacttest/estado.go`, `N/contacttest/estado_test.go` (tras el cierre del bloque, `contrato.go` se partió en 9 ficheros por tema: README hallazgo 20)
   - **Hecho cuando**: los 19 casos de diseño §3 escritos, sin `t.Skip`; el doble (`NuevoEstado()`, implementa `StateMigrator` y `Estado`, conserva el canónico en conflicto) nace **completo** con su test en verde (D-F1-3); `go doc` muestra `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`.
   - **Gate**: `GOWORK=off go test -race ./internal/nucleo/contact/contacttest/; echo rc=$?` → 0
   - **Commit**: `rojo(nucleo): suite de contrato de contact.Resolver y doble de estado`
