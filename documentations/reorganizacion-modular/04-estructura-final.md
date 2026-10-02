@@ -442,7 +442,7 @@ internal/
 │   │   │   ├── fleet.go
 │   │   │   ├── repository_postgres.go
 │   │   │   ├── (+ 6 _test.go)
-│   │   │   └── fleettest/                    ← internal/gateway/fleet/fleettest
+│   │   │   └── fleethelpertest/              ← internal/gateway/fleet/fleettest   (D-F1-10: sufijo helpertest)
 │   │   │       └── slowrepo.go
 │   │   ├── grpc/                             ← internal/gateway/grpc
 │   │   │   ├── auth.go
@@ -629,7 +629,7 @@ internal/
     ├── reanalyze.go                                                                         F7 · captación
     ├── flows.go · media.go · tenantcontent.go · catalogimport.go · catalogtabular.go ·
     │   catalogtemplate.go · conversationevents.go · conversationeventcancel.go               F8 · conversación
-    ├── apipublicatest/arnes.go
+    ├── apipublicahelpertest/arnes.go
     └── (+ 1 _test.go por fichero)   fichero a fichero, con su origen: plan/FX-cara-http/diseno.md §1
                                      (internal/publicapi/ — 33 + 64 _test.go — se borra en F10)
 ```

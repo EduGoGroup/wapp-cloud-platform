@@ -35,7 +35,7 @@
 | # | Trampa | Dónde | Qué hacer |
 |---|---|---|---|
 | T-1 | **`unused` rompe el rojo**: un `const`, `func` o campo no exportado sin uso hace fallar el lint | Sonda del 2026-09-28 (golangci-lint 2.14.0 local; **reconfirmar con v2.12.2**) | En el rojo, solo exportados y structs sin campos. Tipo no exportado que implementa un puerto (el adaptador): `var _ viejo.Resolver = (*puenteContact)(nil)` lo mantiene «usado» (sonda: 0 issues) |
-| T-2 | **Ciclo de imports**: un test interno de `N` no puede importar `contacttest` | Sonda: `import cycle not allowed in test` | `repository_memory_test.go` en `package contact_test` |
+| T-2 | **Ciclo de imports**: un test interno de `N` no puede importar `contacthelpertest` | Sonda: `import cycle not allowed in test` | `repository_memory_test.go` en `package contact_test` |
 | T-3 | Postgres exige tenants **UUID existentes** (FK) y `contactID` UUID: con `"no-existe"` da error de parseo, no `ErrContactNotFound` | `0006_contacts_cifrado.sql:45-46` · `V/resolver_test.go:263` usa `"no-existe"` | La suite usa `uuid.NewString()` y los tenants del `Montaje` |
 | T-4 | El comentario de `ErrNoRefs` promete filtrar refs vacías y no lo hace | `V/resolver.go:15-16` vs `V/repository_memory.go:52-55` | El contrato nuevo dice lo que hace el código (diseño §2) |
 | T-5 | El comentario de `Resolver.Resolve` dice «actualiza el push_name»: en Postgres solo el primero | `V/resolver.go:39` vs `V/repository_postgres.go:316` | Contrato: qué nombre sobrevive no es parte del puerto |

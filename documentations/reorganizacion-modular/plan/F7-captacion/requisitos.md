@@ -72,10 +72,10 @@
 > hoy prueban los tests de integración quede especificado antes de F9.
 
 - **R7.5.a** · **LOS** puertos `intake.JobStore` y `intake.PipelineStore` **DEBERÁN** tener su suite en
-  `intaketest` corrida por `MemoryStore`. — Verifica: `go test ./internal/modulos/captacion/intake/`.
-- **R7.5.b** · **EL** puerto `casebank.Store` **DEBERÁ** tener `casebanktest.Contrato` y un doble
-  nuevo `casebanktest.Memoria` (idempotencia por literal exacto: `Existe`). — Verifica: ídem.
-- **R7.5.c** · **EL** puerto `intentcfg.Store` **DEBERÁ** tener `intentcfgtest.Contrato`, que pasa el
+  `intakehelpertest` corrida por `MemoryStore`. — Verifica: `go test ./internal/modulos/captacion/intake/`.
+- **R7.5.b** · **EL** puerto `casebank.Store` **DEBERÁ** tener `casebankhelpertest.Contrato` y un doble
+  nuevo `casebankhelpertest.Memoria` (idempotencia por literal exacto: `Existe`). — Verifica: ídem.
+- **R7.5.c** · **EL** puerto `intentcfg.Store` **DEBERÁ** tener `intentcfghelpertest.Contrato`, que pasa el
   `MemoryStore` de producción. — Verifica: ídem.
 
 ## H7.6 · El ciclo de negocio queda congelado, no roto

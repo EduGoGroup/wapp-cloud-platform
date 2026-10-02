@@ -21,7 +21,7 @@ internal/
 └── modulos/
     ├── fronteras_test.go · un_fichero_un_test_test.go · exportados_cubiertos_test.go   ✚ candados
     ├── acceso/        entitlements · iam/{domain, infra/{identity,memory,postgres}, ports/{in,out}, transport/http, usecase} · platformadmin
-    ├── edge/          diagnostics · enroll · filtercfg · fleet(/fleettest) · grpc · inferstats · ingest · lease 🔒 · receipts · session
+    ├── edge/          diagnostics · enroll · filtercfg · fleet(/fleethelpertest) · grpc · inferstats · ingest · lease 🔒 · receipts · session
     ├── inferencia/    degradation · llmvia(/local) · prompts · tenantllm
     ├── catalogo/      (raíz: catalog.go, sacado de cart) · catalogimport · indice ⚠️ renombre de intake/catalogo
     ├── solicitudes/   intakes(/quotetext, /telemetria) · integrations(/crmpush, /sigv1) · tenantvars
@@ -127,13 +127,16 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
   `solicitudes/intakes` es la solicitud. No se funden ni se renombran.
 - **Tests**: `x_test.go` junto a `x.go`; funciones `TestX` y subtests con **nombres en inglés que
   digan la regla** (`"an empty phrase is not evidence"`, E-11). Tabla de casos cuando hay varias entradas.
-- **Suite de contrato de un puerto**: paquete `<paquete>test` (precedente `internal/gateway/fleet/fleettest`),
+- **Suite de contrato de un puerto**: paquete `<paquete>helpertest`, en `<dir>/<paquete>helpertest`
+  (**D-F1-10**, Jhoan, 2026-10-02: sufijo compuesto; antes `<paquete>test`, precedente `internal/gateway/fleet/fleettest`),
   función `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (**D-F1-1**): el `Montaje`
   trae el puerto **y** lo que el puerto no deja ver (tenants sembrados por la FK, un observador de
   estado). La forma de `05` E-3, `func() <Puerto>`, solo vale para un puerto sin BD y queda como
   alternativa si D-F1-1 = no. El **doble en memoria** que la corre en unitario vive en el mismo
-  `<paquete>test` (E-6); con **D-F1-3** el paquete `…test` entero queda fuera de «un fichero, un
-  test» y de «exportados cubiertos», pero un doble con lógica lleva su test igual.
+  `<paquete>helpertest` (E-6); con **D-F1-3** y **D-F1-6** el paquete `…helpertest` entero queda fuera de
+  «un fichero, un test», de «exportados cubiertos» y de la cobertura por fichero, pero un doble con lógica
+  lleva su test igual. Un paquete que acabe en `test` sin acabar en `helpertest` (`latest`, `huellatest`) y
+  uno llamado `helpertest` a secas **no** están exentos (`internal/candados/candados.go`, `isHelperTestPackage`).
 - **Adaptadores Postgres**: `postgres.go`, `*_postgres.go`, `repository_postgres.go`. El nombre es
   lo que los excluye del umbral de cobertura: no se inventan otros.
 - **Nombres de fichero, identificadores y claves de wire en inglés; solo los comentarios (y la documentación)

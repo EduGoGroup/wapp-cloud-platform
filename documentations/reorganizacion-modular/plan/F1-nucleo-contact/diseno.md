@@ -11,7 +11,7 @@ internal/nucleo/contact/
 ├── resolver.go                resolver_test.go               package contact (interno)
 ├── repository_memory.go       repository_memory_test.go      package contact_test (EXTERNO: ver §6)
 ├── repository_postgres.go     repository_postgres_test.go    package contact (interno)
-└── contacttest/
+└── contacthelpertest/
     ├── contrato.go            (sin test propio: D-F1-3)      la suite del puerto: Montaje, Estado, Contrato y la tabla de casos
     ├── resolve_contrato.go · isolation_contrato.go · merge_contrato.go · destination_contrato.go
     │   concurrency_contrato.go · pushname_contrato.go          los casos, un fichero por tema
@@ -88,12 +88,12 @@ extraídas para probar sin BD (nacen en su `verde`, no exportadas):
 BD**: es el único camino de `Resolve` probable en unitario. El resto del SQL lo cubre §3 contra
 Postgres (T1.13/T1.18) y los procesos de F9.
 
-## 3 · La suite de contrato `contacttest.Contrato`
+## 3 · La suite de contrato `contacthelpertest.Contrato`
 
 ```go
-// Package contacttest es la suite de contrato del puerto contact.Resolver y sus dobles.
+// Package contacthelpertest es la suite de contrato del puerto contact.Resolver y sus dobles.
 // Ningún código de producción lo importa (mismo criterio que internal/gateway/fleet/fleettest).
-package contacttest
+package contacthelpertest
 
 // Montaje es lo que cada implementación entrega a la suite.
 type Montaje struct {
@@ -130,7 +130,7 @@ func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)
 
 La suite **no** afirma qué `push_name` sobrevive (R-28: divergencia aceptada) ni la ausencia de
 `40P01` (R-29, proceso de F9). Con memoria, los dos casos de estado prueban que `MemoryResolver`
-llama bien al migrador; la política de conflicto que se ve es la del doble `contacttest.Estado…`
+llama bien al migrador; la política de conflicto que se ve es la del doble `contacthelpertest.Estado…`
 (así lo dice su comentario). Con Postgres prueban el SQL de `fuseDB`.
 
 ## 4 · Reglas de los tests viejos (E-8) — dónde aterriza cada una
@@ -186,10 +186,10 @@ del adaptador: `contact: buscar ref:` · `insertar contacto:` · `cifrar value:`
 ## 6 · Reparto de los tests (E-3, E-6, E-9) y una trampa de Go
 
 - `repository_memory_test.go` es **`package contact_test`**: un test interno (`package contact`) que
-  importe `contacttest` —que importa `contact`— da `import cycle not allowed in test` (verificado con
+  importe `contacthelpertest` —que importa `contact`— da `import cycle not allowed in test` (verificado con
   una sonda, 2026-09-28). Consecuencia: prueba solo por exportados (E-7 lo pide igual).
 - `contact_test.go`, `resolver_test.go`, `repository_postgres_test.go`: internos (prueban auxiliares
-  que usan sus hermanos, E-7), **sin** importar `contacttest`.
+  que usan sus hermanos, E-7), **sin** importar `contacthelpertest`.
 - Candado de exportados: `resolver_test.go` menciona `Resolver` y `StateMigrator` con aserciones de
   compilación (`var _ Resolver = (*MemoryResolver)(nil)`, idem `PostgresResolver`); si F0 contó
   también métodos, `Destino` de Postgres solo es mencionable así (sin BD no se puede llamar).
@@ -263,9 +263,9 @@ func TestNormalize_ErrorNoContieneElValor(t *testing.T) {
 package contact_test
 
 func TestMemoryResolver_Contrato(t *testing.T) {
-	contacttest.Contrato(t, func(t *testing.T) contacttest.Montaje {
-		est := contacttest.NuevoEstado()
-		return contacttest.Montaje{Resolver: contact.NewMemoryResolver(est),
+	contacthelpertest.Contrato(t, func(t *testing.T) contacthelpertest.Montaje {
+		est := contacthelpertest.NuevoEstado()
+		return contacthelpertest.Montaje{Resolver: contact.NewMemoryResolver(est),
 			TenantA: uuid.NewString(), TenantB: uuid.NewString(), Estado: est}
 	})
 }

@@ -104,8 +104,12 @@
   §7 del traspaso.
 - **R9.4.d** · **EL** proceso **DEBERÁ** entrar solo por las puertas reales (HTTP `:8100`/`:8103`,
   gRPC `:8101`/`:8102`) y leer Postgres por SQL; **NO DEBERÁ** importar paquetes de dominio. —
-  Verifica: `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/' | grep -v '/internal/modulos/.*test$\|/internal/nucleo/.*test$'`
-  vacío (solo se admiten los paquetes `…test` de suites de contrato, H9.5).
+  Verifica: `GOWORK=off go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/' | grep -v '/internal/modulos/.*helpertest$\|/internal/nucleo/.*helpertest$'`
+  vacío (solo se admiten los paquetes `…helpertest` de suites de contrato, H9.5). ✎ **D-F1-10 (2026-10-02)**: el filtro era
+  `.*test$`, que admitía también un paquete de producción `latest` o `contest` —el defecto del hallazgo 21 del
+  [README de F1](../F1-nucleo-contact/README.md)—; pasa a `helpertest$`, el sufijo que reconocen los candados. Hoy da vacío con
+  los dos filtros: `test/procesos` no importa nada de `internal/`. D-F1-8, que pide ampliar este requisito al adaptador
+  Postgres del puerto, sigue abierta.
 - **R9.4.e** · **MIENTRAS** corre la suite, **EL** gate **DEBERÁ** leer el `rc` del log y contar
   `--- SKIP` = 0 y `--- FAIL` = 0 con `-v`. — Verifica: bloque «Antes de dar un proceso por bueno»
   de la skill `procesos-testcontainers`.
@@ -118,7 +122,7 @@
 
 - **R9.5.a** · **CUANDO** un módulo conmuta (ola 9C) — o en 9D si D-F9-1 se rechaza —, **EL** fichero
   `test/procesos/<paquete>_contrato_test.go` (convención que estrena F1, T1.13) **DEBERÁ** ejecutar
-  `…test.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
+  `…helpertest.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
   base clonada propia**. — Verifica: `go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
   con un `--- PASS` por puerto (tabla de `diseno.md` §5).
 - **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con

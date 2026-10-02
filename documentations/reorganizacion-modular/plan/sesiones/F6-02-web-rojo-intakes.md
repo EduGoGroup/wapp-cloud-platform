@@ -6,7 +6,7 @@
 | Tareas | T6.6–T6.9 |
 | Depende de | F6-01 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F6 bloque B» |
-| Se para cuando | 24 ficheros de `S/intakes` en rojo + `intakestest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR. |
+| Se para cuando | 24 ficheros de `S/intakes` en rojo + `intakeshelpertest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F6 · solicitudes → documentations/reorganizacion-modular/plan/F6-solicitudes/
 - Bloque(s): B · contratos y rojo de `intakes`
 - Tareas: T6.6–T6.9 de plan/F6-solicitudes/tareas.md
-- Te paras cuando: 24 ficheros de `S/intakes` en rojo + `intakestest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR.
+- Te paras cuando: 24 ficheros de `S/intakes` en rojo + `intakeshelpertest` + los 4 candados de invariante que pueden nacer en rojo · `vet -tags pendiente` rc=0 · PR.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F6 bloque B» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

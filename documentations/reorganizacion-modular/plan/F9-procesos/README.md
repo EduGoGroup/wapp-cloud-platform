@@ -122,7 +122,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-8** | ¿Quién limpia los directorios `procesos-*` que deja una corrida muerta? (contradicción 24) | Barrer al entrar en `TestMain` los de más de una hora, o añadir el `rm` al procedimiento |
 | **D-F9-9** | ¿Acepta Jhoan las dos respuestas que F9-02 dio al §8 del traspaso (dejar el alcance extra del Edge de prueba; mantener la regla del `Cleanup`)? (contradicción 27) | Preguntarlo: hoy no tienen fila en `DECISIONES.md` ni la fórmula «decisión de Jhoan» |
 | **D-F9-10** | **Alcance y criterio de D-F6-7** (contradicciones 19 y 28): ¿cubre las otras tres goroutines de fondo, que no son de F6?; ¿qué se hace con el binario `viejo`, que conserva el worker viejo hasta F10?; ¿con qué se remide, si `CUENTA=3` da verde ≈ 98,8 % de las veces sin arreglar nada? | Sin propuesta: es rumbo. Las salidas (a)–(c) de la contradicción 19 siguen siendo las candidatas |
-| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacttest/contrato.go`? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer |
+| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacthelpertest/contrato.go` (entonces `contacttest/`)? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer |
 | **D-F9-12** | ¿El Edge de prueba replica también el gate de lease de la **inferencia** (y lleva cuenta de los envíos bloqueados)? (contradicción 30) | Sí al gate de inferencia, antes del proceso que la recorra (P3/P4, T9.15/T9.17): es el mismo agujero que la 25 (b) en el camino LLM. El contador, solo si un proceso lo necesita |
 
 ## Encaje con F0 y F1 (escritas antes que esta spec)
@@ -131,7 +131,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
   `diseno.md` §4.4) y hace la **sonda de testcontainers en la web** fuera del árbol (T0.0, veredicto
   en `06-entorno-web.md` §5). F9 **amplía** el candado (T9.3) y **usa** ese veredicto (T9.12).
 - **F1**, si Jhoan acepta **D-F1-2**, adelanta el mínimo del arnés (`main_test.go`: contenedor +
-  plantilla + base clonada) para correr `contacttest.Contrato` contra `PostgresResolver`
+  plantilla + base clonada) para correr `contacthelpertest.Contrato` contra `PostgresResolver`
   (`contact_contrato_test.go`, T1.13/T1.18). Entonces T9.5 **amplía** ese `main_test.go` (binarios,
   servidor por proceso) en vez de crearlo, y la pasada 9C de `nucleo` (T9.22) solo añade la corrida de
   la suite entera contra el nuevo. D-F1-2 y D-F9-1 empujan en la misma dirección: si se acepta una,

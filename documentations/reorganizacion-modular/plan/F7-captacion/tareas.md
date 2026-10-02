@@ -15,11 +15,11 @@ Para cuando: inventario recontado · `evidence`, `intake`, `anclaje`, `intentcfg
   - **Hecho cuando**: entradas del README comprobadas; recuento de `diseno.md` §1; resueltos los 🔶 de inventario: D-F7-3 (`memoria.go`), `Plazas` estructural, reloj de `machine_postgres.go`, nombre de la tabla de intenciones, textos observables de `V` y de `publicapi/{reanalyze,intents}.go`
   - **Commit**: `docs(reorganizacion-modular): F7 arranca — inventario verificado`
 - [ ] **T7.2 · rojo(captacion): contrato de `evidence`** · 🌐 · dep. T7.1 · cumple R7.1.c · el ejemplo de `05` §10 tal cual · **Commit**: `rojo(captacion): contrato de evidence`
-- [ ] **T7.3 · rojo(captacion): `intake` + `intaketest`** · 🌐 · dep. T7.1 · cumple R7.1.b, R7.5.a
-  - **Ficheros**: 6 + 6 tests, `C/intake/intaketest/{cola,maquina}.go` · **Hecho cuando**: `WindowKey` idéntico (4 `string`, mismo orden); las dos suites escritas; `memory_test.go` las invoca · **Commit**: `rojo(captacion): contrato de intake (la cola)`
+- [ ] **T7.3 · rojo(captacion): `intake` + `intakehelpertest`** · 🌐 · dep. T7.1 · cumple R7.1.b, R7.5.a
+  - **Ficheros**: 6 + 6 tests, `C/intake/intakehelpertest/{cola,maquina}.go` · **Hecho cuando**: `WindowKey` idéntico (4 `string`, mismo orden); las dos suites escritas; `memory_test.go` las invoca · **Commit**: `rojo(captacion): contrato de intake (la cola)`
 - [ ] **T7.4 · rojo(captacion): `anclaje`** · 🌐 · dep. T7.2 · 🔶 19 casos de `V/anclaje_test.go` · **Commit**: `rojo(captacion): contrato de anclaje`
 - [ ] **T7.5 · rojo(captacion): `intentcfg` + suite, `casebank` + suite y doble** · 🌐 · dep. T7.1 · cumple R7.5.b–c
-  - **Hecho cuando**: `casebanktest.Memoria` nace completo y en verde; `intentcfg.MemoryStore` corre `intentcfgtest.Contrato` · **Commit**: `rojo(captacion): contratos de intentcfg y casebank`
+  - **Hecho cuando**: `casebankhelpertest.Memoria` nace completo y en verde; `intentcfg.MemoryStore` corre `intentcfghelpertest.Contrato` · **Commit**: `rojo(captacion): contratos de intentcfg y casebank`
 - [ ] **T7.6 · Cierre del bloque A** · 🌐 · `ci-local` rc=0 · `make test-pendiente` anotado · PR
 
 ## Bloque B · rojo de `stages` · 🌐 · T7.7–T7.9

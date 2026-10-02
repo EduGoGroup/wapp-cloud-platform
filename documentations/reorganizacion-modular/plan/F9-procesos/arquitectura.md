@@ -68,7 +68,7 @@ tenant, en BD** (`tenant_settings.aggregation_window_seconds` y `aggregation_max
 | `github.com/EduGoGroup/wapp-cloudlink/{gen/wapp/cloudlink/v1,lease,mtls}` (v0.17.0) | El Edge de prueba habla el contrato real y valida el lease con el `Validator` de verdad |
 | `github.com/EduGoGroup/wapp-shared/envelope` (v0.2.1) | Sellar `IncomingMessage.enc_payload` y `InferenceOutput` con `cloud_enc_pubkey` |
 | `github.com/EduGoGroup/identity-shared/auth/jwt` (v0.3.1) | `NewManager(priv, "identity-core", kid)` + `GenerateIdentityToken` (`manager.go:40,139`) |
-| Paquetes `…test` de suites de contrato del árbol nuevo (`internal/modulos/**/…test`, `internal/nucleo/**/…test`) y **sus adaptadores Postgres** | Solo en `suites_<modulo>_test.go` (H9.5) |
+| Paquetes `…helpertest` (D-F1-10; antes `…test`) de suites de contrato del árbol nuevo (`internal/modulos/**/…helpertest`, `internal/nucleo/**/…helpertest`) y **sus adaptadores Postgres** | Solo en `suites_<modulo>_test.go` (H9.5) |
 | stdlib (`crypto/*`, `net/http/httptest`, `os/exec`…) | PKI, dobles, subprocesos |
 
 | No | Por qué |

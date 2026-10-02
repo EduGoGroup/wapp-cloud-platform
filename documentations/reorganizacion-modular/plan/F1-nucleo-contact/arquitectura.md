@@ -11,8 +11,8 @@
 | `resolver.go` | 151 (47/92) | `N/resolver.go` | El **puerto** `Resolver` + `StateMigrator`, centinelas, `Ref.Sendable`, `RefsFrom`, auxiliares |
 | `repository_memory.go` | 183 (33/134) | `N/repository_memory.go` | Gemelo en memoria. **0 usos en producción**; 89 líneas en 57 ficheros de test ajenos |
 | `repository_postgres.go` | 460 (190/254) | `N/repository_postgres.go` | Adaptador `database/sql` sobre `public.contacts` (+ `public.flow_state` en la fusión) |
-| — | — | ✚ `N/contacttest/contrato.go` y 8 `*_contrato.go` | Suite `Contrato` del puerto (E-3), un fichero por tema (README hallazgo 20) |
-| — | — | ✚ `N/contacttest/estado.go` | Doble de `flow_state` en memoria (implementa `StateMigrator` y el observador de la suite) |
+| — | — | ✚ `N/contacthelpertest/contrato.go` y 8 `*_contrato.go` | Suite `Contrato` del puerto (E-3), un fichero por tema (README hallazgo 20) |
+| — | — | ✚ `N/contacthelpertest/estado.go` | Doble de `flow_state` en memoria (implementa `StateMigrator` y el observador de la suite) |
 | — | — | ✚ `internal/arranque/puente_contact.go` | Adaptador de tipos viejo ← nuevo (§3). Nace en F1, muere en F8 |
 
 Contado con `wc -l` y `grep -cE '^\s*//'`. `go list -f '{{.GoFiles}}'` confirma **4** ficheros de
@@ -21,7 +21,7 @@ producción. `05` §6 acierta: **solo depende de `platform`**.
 **Imports de `V`** (`go list -f '{{join .Imports "\n"}}'`): `context`, `database/sql`, `errors`,
 `fmt`, `strings`, `sync`, `time`, `github.com/google/uuid`, `internal/platform/crypto`,
 `internal/platform/storage/postgres`. `N` importa lo mismo. **Puentes (`05` §4.1): cero.**
-`N/contacttest` importa `testing` + `N` + `uuid`.
+`N/contacthelpertest` importa `testing` + `N` + `uuid`.
 
 **Tablas**: `public.contacts` (PK `(tenant_id, kind, value_bidx)`, índice `(tenant_id, contact_id)`,
 `0006_contacts_cifrado.sql:44-58`; sobre de `push_name` en `0069`; columnas en claro retiradas en

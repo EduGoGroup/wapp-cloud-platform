@@ -57,13 +57,13 @@
 > Como **la sesión web**, quiero que cada puerto con adaptador Postgres tenga su suite de contrato
 > corrida ya por un doble en memoria, para no esperar a F9 para saber si el comportamiento es el pactado.
 
-- **R6.3.a** · **EL** puerto `intakes.Store` **DEBERÁ** tener `intakestest.Contrato(t, …)` y
+- **R6.3.a** · **EL** puerto `intakes.Store` **DEBERÁ** tener `intakeshelpertest.Contrato(t, …)` y
   **EL** `MemoryStore` nuevo **DEBERÁ** pasarla en unitario. — Verifica:
   `go test -race ./internal/modulos/solicitudes/intakes/ -run Contrato`.
-- **R6.3.b** · **EL** puerto `integrations.Store` **DEBERÁ** tener `integrationstest.Contrato` **Y**
-  un doble nuevo `integrationstest.Memoria` (el paquete no tiene gemelo, `05` E-6). — Verifica:
-  `go test ./internal/modulos/solicitudes/integrations/integrationstest/`.
-- **R6.3.c** · **EL** puerto `tenantvars.Store` **DEBERÁ** tener `tenantvarstest.Contrato`, que
+- **R6.3.b** · **EL** puerto `integrations.Store` **DEBERÁ** tener `integrationshelpertest.Contrato` **Y**
+  un doble nuevo `integrationshelpertest.Memoria` (el paquete no tiene gemelo, `05` E-6). — Verifica:
+  `go test ./internal/modulos/solicitudes/integrations/integrationshelpertest/`.
+- **R6.3.c** · **EL** puerto `tenantvars.Store` **DEBERÁ** tener `tenantvarshelpertest.Contrato`, que
   pasan `MemoryStore` (unitario) y `Postgres` (F9). — Verifica: ídem.
 - **R6.3.d** · **DONDE** un fichero sea adaptador Postgres (`*postgres*.go`, D-F6-6), **SU** test
   unitario **DEBERÁ** cubrir constructor, validación, mapeo de filas y de errores con funciones

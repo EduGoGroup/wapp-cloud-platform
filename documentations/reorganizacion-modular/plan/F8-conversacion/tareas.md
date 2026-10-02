@@ -28,27 +28,27 @@ Para cuando: el README tiene el inventario re-medido, la lista real de puentes y
   - **Commit**: `docs(reorganizacion-modular): F8 — inventario y puentes verificados`
 
 ## Bloque B · contratos y rojo de las hojas · 🌐 · T8.3–T8.8
-Para cuando: `model`, `trigger`, `content`, `store`, `modules` en rojo; `storetest` y `triggertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.)
+Para cuando: `model`, `trigger`, `content`, `store`, `modules` en rojo; `storehelpertest` y `triggerhelpertest` exportan `Contrato`; `G` y `V` rc=0. (~18 ficheros de producción + 2 suites.)
 
 - [ ] **T8.3 · rojo(conversacion): `model/model.go`** · 🌐 · dep. T8.2 · cumple R8.2.a–c — *solo si D-F8-1 = no*
   - **Ficheros**: `C/model/model.go`, `…/model_test.go`
   - **Hecho cuando**: 24 exportados con promesa; `ErrInvalidFlow` y sus textos de `diseno.md` §1.1 escritos en el comentario; test rojo por `-run`.
   - **Gate**: `V` · test suelto rc≠0
   - **Commit**: `rojo(conversacion): contrato de model`
-- [ ] **T8.4 · rojo(conversacion): `trigger` (5) y `triggertest.Contrato`** · 🌐 · dep. T8.3 · cumple R8.2.a–e
-  - **Ficheros**: `C/trigger/{trigger,config_resolver,store,store_memory,store_postgres}.go` + tests; `C/trigger/triggertest/contrato.go`
+- [ ] **T8.4 · rojo(conversacion): `trigger` (5) y `triggerhelpertest.Contrato`** · 🌐 · dep. T8.3 · cumple R8.2.a–e
+  - **Ficheros**: `C/trigger/{trigger,config_resolver,store,store_memory,store_postgres}.go` + tests; `C/trigger/triggerhelpertest/contrato.go`
   - **Hecho cuando**: 54 exportados; `store.go` sin test propio (puerto, E-3) y su suite corrida desde `store_memory_test.go`; regla D-5 (`KindLLM`) escrita; `ErrTriggerNotFound` literal.
-  - **Gate**: `V` · `go doc ./internal/modulos/conversacion/trigger/triggertest Contrato`
+  - **Gate**: `V` · `go doc ./internal/modulos/conversacion/trigger/triggerhelpertest Contrato`
   - **Commit**: `rojo(conversacion): contrato de trigger y su suite`
 - [ ] **T8.5 · rojo(conversacion): `content` (4)** · 🌐 · dep. T8.3 · cumple R8.2.a–c
   - **Ficheros**: `C/content/{content,static,json,router}.go` + tests (`content.go` es puerto: lo prueban los de sus 3 implementaciones)
   - **Hecho cuando**: 11 exportados; textos de error de `diseno.md` §1.3 en los comentarios.
   - **Gate**: `V`
   - **Commit**: `rojo(conversacion): contrato de content`
-- [ ] **T8.6 · rojo(conversacion): `store` (3) y `storetest.Contrato`** · 🌐 · dep. T8.3 · cumple R8.2.a–e
-  - **Ficheros**: `C/store/{store,repository_memory,repository_postgres}.go` + tests; `C/store/storetest/contrato.go`
+- [ ] **T8.6 · rojo(conversacion): `store` (3) y `storehelpertest.Contrato`** · 🌐 · dep. T8.3 · cumple R8.2.a–e
+  - **Ficheros**: `C/store/{store,repository_memory,repository_postgres}.go` + tests; `C/store/storehelpertest/contrato.go`
   - **Hecho cuando**: 107 exportados; la suite cubre las 13 interfaces de `store.go` (lectura de los 18 tests viejos, 12 de integración); `repository_memory` con **reloj inyectable**; `repository_postgres_test.go` solo lo que no necesita BD.
-  - **Gate**: `V` · `go doc ./internal/modulos/conversacion/store/storetest Contrato`
+  - **Gate**: `V` · `go doc ./internal/modulos/conversacion/store/storehelpertest Contrato`
   - **Commit**: `rojo(conversacion): contrato de store y su suite`
 - [ ] **T8.7 · rojo(conversacion): `modules` (5)** · 🌐 · dep. T8.3 · cumple R8.2.a–c
   - **Ficheros**: `C/modules/{registry,ports,numbered,consulta,coerce}.go` + tests
@@ -60,7 +60,7 @@ Para cuando: `model`, `trigger`, `content`, `store`, `modules` en rojo; `storete
   - **Gate**: skill `validar-antes-de-cerrar`
 
 ## Bloque C · rojo del motor y sus satélites · 🌐 · T8.9–T8.14
-Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventstest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.)
+Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventshelpertest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.)
 
 - [ ] **T8.9 · rojo(conversacion): `engine` (2)** · 🌐 · dep. T8.8 · cumple R8.2.a–c
   - **Ficheros**: `C/engine/{engine,consulta}.go` + tests
@@ -74,10 +74,10 @@ Para cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `adm
   - **Ficheros**: `C/turnoacotado/{turnoacotado,troceado,prompt}.go` + tests
   - **Hecho cuando**: importa `modulos/inferencia/llmvia` (no el viejo); `prompt.go` sin exportados con su test rojo a través de la API.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato de turnoacotado`
-- [ ] **T8.12 · rojo(conversacion): `events` (7) y el doble `eventstest`** · 🌐 · dep. T8.4 · cumple R8.2.f, R8.4.d
-  - **Ficheros**: `C/events/{events,kinds,dispatcher,menu,summary,thread_reader,store}.go` + tests; `C/events/eventstest/store.go` (+ test **verde**)
+- [ ] **T8.12 · rojo(conversacion): `events` (7) y el doble `eventshelpertest`** · 🌐 · dep. T8.4 · cumple R8.2.f, R8.4.d
+  - **Ficheros**: `C/events/{events,kinds,dispatcher,menu,summary,thread_reader,store}.go` + tests; `C/events/eventshelpertest/store.go` (+ test **verde**)
   - **Hecho cuando**: 114 exportados; reglas de `diseno.md` §2.4 (INV-13 incluida) en los comentarios; D-1 citada en `store.go`; el doble satisface `EventStore`, `SummaryAppender`, `ThreadReader`.
-  - **Gate**: `V` · `go test ./internal/modulos/conversacion/events/eventstest/; echo rc=$?` → 0
+  - **Gate**: `V` · `go test ./internal/modulos/conversacion/events/eventshelpertest/; echo rc=$?` → 0
   - **Commit**: `rojo(conversacion): contrato de events y su doble en memoria`
 - [ ] **T8.13 · rojo(conversacion): `admin` (4, sin `sessions.go`)** · 🌐 · dep. T8.6, T8.9 · cumple R8.6.d
   - **Ficheros**: `C/admin/{doc,handlers,triggers,durable_flow}.go` + tests (menos `doc.go`)
@@ -102,10 +102,10 @@ Para cuando: los 14 ficheros de `cart` en rojo, goldens copiados, candado de ord
   - **Gate**: `V` · **Commit**: `rojo(conversacion): candado del orden de la consulta en cart`
 
 ## Bloque E · rojo del runtime · 🌐 · T8.18–T8.21
-Para cuando: los 23 ficheros de `runtime` en rojo, `runtimetest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0.
+Para cuando: los 23 ficheros de `runtime` en rojo, `runtimehelpertest` en verde, candado de rachas escrito; `make test-pendiente` cuenta **todo** el módulo; `G`, `V` rc=0.
 
-- [ ] **T8.18 · rojo(conversacion): runtime — soporte (12) y `runtimetest`** · 🌐 · dep. T8.12, T8.16 · cumple R8.2.a–f
-  - **Ficheros**: `C/runtime/{runtime,keyedmutex,event_sink,log_sink,tenant_resolver,self_numbers,summary_sources,streak,welcome,thread,send,webhook_sink}.go` + tests; `C/runtime/runtimetest/*.go` (+ tests verdes)
+- [ ] **T8.18 · rojo(conversacion): runtime — soporte (12) y `runtimehelpertest`** · 🌐 · dep. T8.12, T8.16 · cumple R8.2.a–f
+  - **Ficheros**: `C/runtime/{runtime,keyedmutex,event_sink,log_sink,tenant_resolver,self_numbers,summary_sources,streak,welcome,thread,send,webhook_sink}.go` + tests; `C/runtime/runtimehelpertest/*.go` (+ tests verdes)
   - **Hecho cuando**: puertos de `runtime.go` con los motivos y perfiles; `webhook_sink` importa `modulos/solicitudes/integrations/crmpush`; dobles de §4 de `diseno.md`.
   - **Gate**: `V` · **Commit**: `rojo(conversacion): contrato del runtime (soporte) y sus dobles`
 - [ ] **T8.19 · rojo(conversacion): runtime — núcleo (11)** · 🌐 · dep. T8.18 · cumple R8.2.a–c
@@ -125,7 +125,7 @@ Para cuando: 27 ficheros verdes, un commit cada uno, ≥ 80 %.
 
 - [ ] **T8.22 · verde(conversacion): `model`, `trigger`, `content`, `store`, `modules`** · 🌐 · dep. T8.21 · cumple R8.3.a–e
   - **Ficheros**: los 18 del bloque B, en el orden de `arquitectura.md` §2
-  - **Hecho cuando**: por fichero, `GOWORK=off go test -race ./C/<pkg>/; echo rc=$?` → 0 y `make cobertura-ficheros` ≥ 80 % (fuera `repository_postgres.go`, `store_postgres.go`); `storetest`/`triggertest` verdes contra memoria.
+  - **Hecho cuando**: por fichero, `GOWORK=off go test -race ./C/<pkg>/; echo rc=$?` → 0 y `make cobertura-ficheros` ≥ 80 % (fuera `repository_postgres.go`, `store_postgres.go`); `storehelpertest`/`triggerhelpertest` verdes contra memoria.
   - **Gate**: `G` por commit · **Commit**: `verde(conversacion): <fichero>` (uno por fichero)
 - [ ] **T8.23 · verde(conversacion): `engine`, `menu`, `survey`, `media`, `turnoacotado`** · 🌐 · dep. T8.22
   - **Ficheros**: los 9 · **Gate**: ídem · **Commit**: ídem

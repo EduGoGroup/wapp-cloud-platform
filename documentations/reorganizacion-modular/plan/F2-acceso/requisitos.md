@@ -27,10 +27,10 @@
 > Como **la sesión web**, quiero una suite de contrato por puerto de salida del IAM ejecutada ya por
 > su doble en memoria, para que el comportamiento de cada puerto esté especificado antes de F9.
 
-- **R2.2.a** · **EL** paquete `A/iam/ports/out/outtest` **DEBERÁ** exportar una suite por puerto
+- **R2.2.a** · **EL** paquete `A/iam/ports/out/outhelpertest` **DEBERÁ** exportar una suite por puerto
   (`ContratoMembershipRepo`, `ContratoRoleRepo`, `ContratoGrantRepo`, `ContratoAuditRepo`,
   `ContratoInvitationRepo`, `ContratoActiveTenantRepo`, `ContratoInvitationRedeemRepo`) con la firma
-  `func(t *testing.T, nuevo func(t *testing.T) Montaje…)` que fije D-F1-1. — Verifica: `go doc ./internal/modulos/acceso/iam/ports/out/outtest`.
+  `func(t *testing.T, nuevo func(t *testing.T) Montaje…)` que fije D-F1-1. — Verifica: `go doc ./internal/modulos/acceso/iam/ports/out/outhelpertest`.
 - **R2.2.b** · **EL** doble `A/iam/infra/memory` **DEBERÁ** pasar las 7 suites con `-race` y 0 SKIP.
   — Verifica: `go test -race -v ./internal/modulos/acceso/iam/infra/memory/ | grep -c -- '--- FAIL\|--- SKIP'` → 0.
 - **R2.2.c** · **EL** adaptador `A/iam/infra/postgres` **DEBERÁ** ejecutar las mismas 7 suites desde un
@@ -40,7 +40,7 @@
   `UserSystemsClient`), **EL** cliente real **DEBERÁ** probarse contra un `httptest.Server` que imita
   identity, sin red. — Verifica: `go test ./internal/modulos/acceso/iam/infra/identity/` rc=0.
 - **R2.2.e** · **EL** paquete `A/platformadmin` **DEBERÁ** declarar sus puertos (D-F2-3) y
-  `A/platformadmin/platformadmintest` **DEBERÁ** traer suite y doble en memoria. — Verifica: los tests
+  `A/platformadmin/platformadminhelpertest` **DEBERÁ** traer suite y doble en memoria. — Verifica: los tests
   de `handlers.go`, `access_requests.go` y `signup.go` corren sin BD.
 
 ## H2.3 · El canje y los permisos no cambian de conducta

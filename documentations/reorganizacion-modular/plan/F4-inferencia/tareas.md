@@ -29,14 +29,14 @@ Para cuando: `make test-pendiente` cuenta **≈54** llamadas en `internal/modulo
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de prompts`
 - [ ] **T4.4 · rojo(inferencia): contrato de `degradation/degradation.go`** · 🌐 · dep. T4.1 · cumple R4.5.a–c
   - **Ficheros**: `…/degradation/degradation.go`, `degradation_test.go`
-  - **Hecho cuando**: vocabulario, errores, `Notice`, `ListFilter`, `Store`, `Notifier`, `VentanaDe`; el test lee `../../../platform/storage/postgres/migrations/structure/*.sql`, extrae la lista del `CHECK owner_degradation_notices_reason_check` y la compara como **conjunto** con `Reasons()` (candado D-F4-2), afirma `ViaLocal/ViaAPI` iguales a los de `tenantllm` **nuevo**, `Reasons()` es copia, `VentanaDe` pura (dos TZ ⇒ misma clave), motivo sano ⇒ `saves == 0` (usa `degradationtest.Memoria`)
+  - **Hecho cuando**: vocabulario, errores, `Notice`, `ListFilter`, `Store`, `Notifier`, `VentanaDe`; el test lee `../../../platform/storage/postgres/migrations/structure/*.sql`, extrae la lista del `CHECK owner_degradation_notices_reason_check` y la compara como **conjunto** con `Reasons()` (candado D-F4-2), afirma `ViaLocal/ViaAPI` iguales a los de `tenantllm` **nuevo**, `Reasons()` es copia, `VentanaDe` pura (dos TZ ⇒ misma clave), motivo sano ⇒ `saves == 0` (usa `degradationhelpertest.Memoria`)
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de degradation`
-- [ ] **T4.5 · rojo(inferencia): `degradation/postgres.go` y el doble `degradationtest`** · 🌐 · dep. T4.4 · cumple R4.5.c
-  - **Ficheros**: `…/degradation/postgres.go`, `postgres_test.go`, `…/degradationtest/{contrato,memoria,memoria_test}.go`
+- [ ] **T4.5 · rojo(inferencia): `degradation/postgres.go` y el doble `degradationhelpertest`** · 🌐 · dep. T4.4 · cumple R4.5.c
+  - **Ficheros**: `…/degradation/postgres.go`, `postgres_test.go`, `…/degradationhelpertest/{contrato,memoria,memoria_test}.go`
   - **Hecho cuando**: `Contrato` escrita **entera** (es especificación: dedupe, ventana siguiente, `creado`, INV-7, orden y `[]`); `memoria_test.go` la corre; `postgres_test.go` prueba las funciones puras de `diseno.md` §2 (acotar, `LastSeenAt` cero, `NULL read_at`) y el constructor
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de degradation/postgres y su doble`
 - [ ] **T4.6 · rojo(inferencia): `tenantllm` (dominio, adaptador y doble)** · 🌐 · dep. T4.1 · cumple R4.4.a–e
-  - **Ficheros**: `…/tenantllm/{tenantllm,postgres}.go` y tests, `…/tenantllmtest/{contrato,memoria,memoria_test}.go`
+  - **Ficheros**: `…/tenantllm/{tenantllm,postgres}.go` y tests, `…/tenantllmhelpertest/{contrato,memoria,memoria_test}.go`
   - **Hecho cuando**: `Config` sin campo de clave (test por reflexión); `Contrato` con los casos de conducta de los 15 tests de integración viejos salvo `TestBackfill0073_*` (van a F9); `postgres_test.go` prueba la validación previa al SQL con sus tres textos exactos
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de tenantllm y su doble`
 - [ ] **T4.7 · rojo(inferencia): `llmvia/local`** · 🌐 · dep. T4.1 · cumple R4.6.a, R4.6.b, R4.6.d
@@ -65,10 +65,10 @@ test; el comentario-ADR del fichero viejo viaja con la lógica (E-10). Dentro de
 - [ ] **T4.11 · verde: `prompts/prompts.go`** · 🌐 · dep. T4.3 · cumple R4.3.b, R4.3.e
 - [ ] **T4.12 · verde: `prompts/volcar.go`** · 🌐 · dep. T4.11 · cumple R4.3.a
 - [ ] **T4.13 · verde: `degradation/degradation.go`** · 🌐 · dep. T4.4, **T4.2** · cumple R4.5.a–c — primera comparación por vía del árbol nuevo (`ValidVia`): si el C2 viejo se pone rojo, **T4.2 no está hecha**
-- [ ] **T4.14 · verde: `degradationtest/memoria.go`** · 🌐 · dep. T4.13
+- [ ] **T4.14 · verde: `degradationhelpertest/memoria.go`** · 🌐 · dep. T4.13
 - [ ] **T4.15 · verde: `degradation/postgres.go`** · 🌐 · dep. T4.13 · SQL copiado literal; fuera del umbral
 - [ ] **T4.16 · verde: `tenantllm/tenantllm.go`** · 🌐 · dep. T4.6, T4.2 · cumple R4.4.a
-- [ ] **T4.17 · verde: `tenantllmtest/memoria.go`** · 🌐 · dep. T4.16 · cumple R4.4.b–e
+- [ ] **T4.17 · verde: `tenantllmhelpertest/memoria.go`** · 🌐 · dep. T4.16 · cumple R4.4.b–e
 - [ ] **T4.18 · verde: `tenantllm/postgres.go`** · 🌐 · dep. T4.16 · SQL literal; fuera del umbral
   - **Gate de las ocho**: gate verde · **Commit**: `verde(inferencia): <fichero>`
 
@@ -117,5 +117,5 @@ Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 se cumple e
   - **Hecho cuando**: estado «cerrada», SHA por tarea, cifra de coste (ficheros, commits, horas de sesión) para recalibrar D-12
   - **Commit**: `docs(reorganizacion-modular): F4 cerrada`
 - [ ] **T4.31 · suites contra Postgres (= T9.25, 9C de `inferencia`)** · 🌐→💻 · dep. T4.29 · con **D-F9-1 = sí** (recomendación; si no, se tacha y lo cubre T9.34)
-  - **Hecho cuando**: la sesión web escribe en `test/procesos/` las dos pasadas (`tenantllmtest.Contrato` y `degradationtest.Contrato` sobre `NewPostgres` con la base clonada) y comprueba `go vet -tags integracion ./test/procesos/...` rc=0; la **local** corre `make test-procesos` (testcontainers, `postgres:17-alpine`) y cuenta PASS/FAIL/SKIP con `-v`; traspaso `documentations/reorganizacion-modular/traspasos/TRASPASO-F4-inferencia.md` (skill `traspaso-web-local`)
+  - **Hecho cuando**: la sesión web escribe en `test/procesos/` las dos pasadas (`tenantllmhelpertest.Contrato` y `degradationhelpertest.Contrato` sobre `NewPostgres` con la base clonada) y comprueba `go vet -tags integracion ./test/procesos/...` rc=0; la **local** corre `make test-procesos` (testcontainers, `postgres:17-alpine`) y cuenta PASS/FAIL/SKIP con `-v`; traspaso `documentations/reorganizacion-modular/traspasos/TRASPASO-F4-inferencia.md` (skill `traspaso-web-local`)
   - **Commit**: `procesos(inferencia): suites de tenantllm y degradation contra Postgres`

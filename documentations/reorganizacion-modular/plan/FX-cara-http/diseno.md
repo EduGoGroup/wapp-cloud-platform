@@ -5,7 +5,7 @@
 > ⚠️ **`05` E-11 (2026-10-02) sustituye esa última frase para lo que aún no existe** (nota de la revisión independiente,
 > 2026-10-01): un fichero nuevo se crea con nombre **en inglés** y la correspondencia se anota en el `tareas.md` de la fase que
 > lo cree. Del árbol de §1 piden correspondencia `cadena.go`, `respuesta.go`, `autenticacion.go`, `plazos.go`, `instantes.go` y
-> `apipublicatest/arnes.go`; `apipublica.go` y `estrangulador.go` ya existen (F0) y no se renombran; los que conservan el nombre
+> `apipublicahelpertest/arnes.go`; `apipublica.go` y `estrangulador.go` ya existen (F0) y no se renombran; los que conservan el nombre
 > del fichero viejo (`plazoescritura.go` incluido) se quedan como están. Lo mismo vale para los identificadores que esta spec
 > nombra en español y aún no existen (`Comun`, `Montar<Área>`…). Esta spec **no** se renombra aquí: lo hace la sesión que cree
 > cada fichero.
@@ -23,7 +23,7 @@ internal/apipublica/
 ├── roleplane.go             F2  ↦ roleplane.go (B1–B14)
 ├── audit.go                 F2  ↦ audit.go (C1)
 ├── entitlements.go          F2  ↦ entitlements.go (C2)
-├── apipublicatest/arnes.go  F2  ✚ el arnés de test: firma Context Tokens y llama a una Cara
+├── apipublicahelpertest/arnes.go  F2  ✚ el arnés de test: firma Context Tokens y llama a una Cara
 ├── plazos.go                F3  ↦ publicapi.go:289-428 (dbCtx, defaultDBTimeout, SendBudgetFrom, sendCtx, dbTimedOut504)
 ├── limits.go                F3  ↦ limits.go (tooLarge, writeTooLarge, errorBody)
 ├── messages.go              F3  ↦ messages.go (D1) + sessionBelongsToTenant, streamCaidoFrom, commandIDFrom
@@ -56,7 +56,7 @@ internal/apipublica/
 └── conversationeventcancel.go F8 ↦ conversationeventcancel.go (I19)
 ```
 
-**39** ficheros de producción + `apipublicatest/arnes.go`, cada uno con su `x_test.go`
+**39** ficheros de producción + `apipublicahelpertest/arnes.go`, cada uno con su `x_test.go`
 (`publicapi` tiene 33; la diferencia: el estrangulador, la `Cara`, `autenticacion.go`,
 `sessionadmin.go`, y las utilidades partidas en `cadena`, `respuesta`, `plazos`, `instantes`).
 
@@ -112,7 +112,7 @@ vieja) · `TestComponer_404` · `TestComponer_NoEscribeNada` · `TestComponer_Ni
 - **`respuesta.go`** — `writeJSON` descarta el fallo de escritura **por contrato**; `writeJSONErr`
   lo devuelve (el incidente del 2026-08-06, `publicapi.go:1155-1159`); `writeError` con cuerpo
   `{"error": msg}`; `parseIntQuery` con su valor por defecto.
-- **`apipublicatest/arnes.go`** — `Arnes` con `Llamar(cara, credencial, método, destino, cuerpo)
+- **`apipublicahelpertest/arnes.go`** — `Arnes` con `Llamar(cara, credencial, método, destino, cuerpo)
   *httptest.ResponseRecorder`, que firma un Context Token real con `sharedjwt` y grants dados (el
   patrón de `publicapi/publicapi_test.go:131-168`), un `AuditorDoble` que cuenta registros y un
   `Comun` de prueba. Tiene lógica (firma) → lleva su test.
@@ -122,7 +122,7 @@ vieja) · `TestComponer_404` · `TestComponer_NoEscribeNada` · `TestComponer_Ni
 ```go
 // entitlements_test.go — cubre el contrato de entitlements.go
 func TestMontarDerechos(t *testing.T) {
-	a := apipublicatest.Nuevo(t)
+	a := apipublicahelpertest.Nuevo(t)
 	cara := apipublica.Nueva()
 	apipublica.MontarDerechos(cara, a.Comun(), apipublica.DepsDerechos{
 		Entitlements: resolverDoble{plan: "basic", features: []string{"cart_basic"}, ttl: time.Minute},
@@ -142,7 +142,7 @@ grant, **403 `feature_not_enabled`** sin la feature (si la hay), el **camino fel
 **un registro** en el auditor doble solo si es W (y ninguno si es R), **404** sin dependencia (si es
 condicional), y cada **código de error del dominio** que el handler traduce (centinelas → 404,
 409, 410, 504…). Los dobles de los puertos van en el propio `x_test.go` o, si los comparten varios
-ficheros, en `apipublicatest/`. `t.Skip` prohibido.
+ficheros, en `apipublicahelpertest/`. `t.Skip` prohibido.
 
 ## 5 · Tests viejos que hay que LEER antes de cada contrato (E-8)
 

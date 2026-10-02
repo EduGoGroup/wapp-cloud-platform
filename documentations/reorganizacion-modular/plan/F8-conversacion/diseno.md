@@ -43,7 +43,7 @@ error de definición la envuelve con `%w` (`:304-336`: JSON mal formado, `flow_i
 | `store_memory.go` | 91 | 7 | Gemelo en memoria (`sync.Mutex`) |
 | `store_postgres.go` | 172 | 7 | Adaptador `flow_triggers` (fuera del 80 %) |
 
-Suite: **`C/trigger/triggertest.Contrato(t, func(t) trigger.Store)`**, la corren `store_memory_test`
+Suite: **`C/trigger/triggerhelpertest.Contrato(t, func(t) trigger.Store)`**, la corren `store_memory_test`
 (unitario) y el proceso de F9 contra Postgres. Reglas: 🔴 `KindLLM` (`trigger.go:45`) **no puede
 disparar en producción** (`Signal.Intent` siempre `nil`, deuda D-5, `runtime/incoming.go:963`): se
 conserva la rama y su test, **no se arregla**. INV-6: sin resolver real (`NoopResolver`) el
@@ -59,7 +59,7 @@ comportamiento es el previo al Plan 019. Leer: `config_resolver_test.go`, `trigg
 | `json.go` | 81 | 4 | Fuente `tenant_content` por `ref`; errores envueltos en `ErrInvalidFlow` («el adapter json exige node.content con una ref», «…una ref no vacía», «leer contenido %q del tenant», «blob de contenido %q mal formado», `json.go:47-61`) |
 | `router.go` | 46 | 3 | Enruta **por nodo** entre static y json; fuente desconocida → `"%w: content source %q no soportado"` (`:44`). El switch por fuente vive **solo** aquí |
 
-Suite `C/content/contenttest.Contrato` opcional (tres implementaciones pequeñas): recomendación,
+Suite `C/content/contenthelpertest.Contrato` opcional (tres implementaciones pequeñas): recomendación,
 test directo por fichero. Leer: 3 · 11.
 
 ### 1.4 · `C/store` ← `internal/flujos/store`
@@ -70,7 +70,7 @@ test directo por fichero. Leer: 3 · 11.
 | `repository_memory.go` | 817 | 37 | Gemelo en memoria (`sync.Mutex`, `time.Now()` en 8 sitios: **inyectar reloj** en el nuevo) |
 | `repository_postgres.go` | 1.074 | 28 | Adaptador (fuera del 80 %); 4 `rows.Close` rituales (D-17, se portan igual, D-F8-6) |
 
-Suite: **`C/store/storetest.Contrato(t, func(t) store.Repository)`** — la más grande del módulo
+Suite: **`C/store/storehelpertest.Contrato(t, func(t) store.Repository)`** — la más grande del módulo
 (conversación, definiciones, `flow_events`, `tenant_content` con versiones, solicitudes abiertas,
 ajustes, bienvenidas). Reglas: ISP del runtime (H12, Plan 027 · Ola 2 · T9): el runtime pide
 `FlowStore` = `ConversationStore + DefinitionReader + IntakeReader + TenantSettingsReader`; un
@@ -137,7 +137,7 @@ cableado: `turno_acotado_cableado_test.go` (arranque).
 | `thread_reader.go` | 298 | 8 | `ListThread`, `ThreadEntry`, `KindMessage` (descifra con `FieldCipher`) |
 | `store.go` | 1.060 | 32 | **Adaptador Postgres sin gemelo** (`Store{db, cipher, now}`, `WithClock :43`); escribe `conversation_event_messages` cifrada (`:811`) — 🔴 fuera del censo `rekeyTargets` (deuda D-1): **no se arregla aquí** |
 
-Doble nuevo: **`C/events/eventstest`** con un `Store` en memoria que satisfaga los puertos que
+Doble nuevo: **`C/events/eventshelpertest`** con un `Store` en memoria que satisfaga los puertos que
 consumen `runtime` (`EventStore`, `SummaryAppender`, `ThreadReader`), `apipublica` y
 `captacion/reanalisis` (contradicción 2 del README). Reglas (de `summary_test.go`, `dispatcher_test.go`):
 `LoadSummary` **devuelve error** si falta el lector del tipo (no inventa un resumen vacío);
@@ -217,7 +217,7 @@ sobre todo `cart_test`, `consulta_test`, `preresolutor_test`, `projection_*`, `c
 | `events.go` | 1.501 | 6 | Plano de eventos (Plan 043): `EventStore :28`, `IntakeAbandoner :108`, `Dispatcher :120`, `OpeningBuilder :148`, `FlowForKind :169`, `StartNewOfKind :372` |
 | `incoming.go` | 1.328 | 2 | `OnIncoming`, `HandleIncoming`; `defaultEscapeMessage`, `defaultDurableSinkFailureNotice` |
 
-Dobles nuevos en **`C/runtime/runtimetest`**: `Sender`, `Presigner`, `TenantResolver`,
+Dobles nuevos en **`C/runtime/runtimehelpertest`**: `Sender`, `Presigner`, `TenantResolver`,
 `SelfNumberChecker`, `IngestDeduper`, `ReplyLimiter`, `DepositReminder` y los dos adaptadores sin
 gemelo (`PostgresTenantResolver`, `PostgresSelfNumbers`). Reloj: **siempre** `WithClock` y
 `WithAggregatorClock`; los dos relojes de un guion (runtime y `events.WithClock`) sobre la **misma**

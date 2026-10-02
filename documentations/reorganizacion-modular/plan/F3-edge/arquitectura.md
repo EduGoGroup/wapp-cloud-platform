@@ -11,7 +11,7 @@
 | `internal/gateway/lease` 🔒 | `E/lease` | 4 | 611 | 39 | 3 · 26 (8) | `Repository` · `repository_postgres.go` · `MemoryRepository` (`repository.go:62`) |
 | `internal/gateway/session` | `E/session` | 1 | 228 | 14 | 1 · 7 (0) | `Sender` |
 | `internal/gateway/fleet` | `E/fleet` | 2 | 1.665 | 48 | 6 · 33 (13) | `Repository` · `repository_postgres.go` · `MemoryRepository` (`fleet.go:380`) |
-| `internal/gateway/fleet/fleettest` | `E/fleet/fleettest` | 1 | 177 | 13 | 0 | doble `SlowRepository` |
+| `internal/gateway/fleet/fleettest` | `E/fleet/fleethelpertest` (D-F1-10) | 1 | 177 | 13 | 0 | doble `SlowRepository` |
 | `internal/diagnostics` | `E/diagnostics` | 2 | 353 | 23 | 2 · 9 (3) | `Store`, `BundleReceiver` · `postgres.go` · `MemoryStore` (`diagnostics.go:107`) |
 | `internal/inferstats` | `E/inferstats` | 1 | 233 | 7 | 1 · 7 (0) | — (memoria pura) |
 | `internal/receipts` | `E/receipts` | 4 | 305 | 17 | 2 · 4 (1) | `Store` · `postgres.go` · `memory.go` |
@@ -40,7 +40,7 @@ grpc         → session, lease, fleet, diagnostics, inferstats, flujos/contact 
 ```
 
 Orden de contratos y de verde: hojas (`session`, `inferstats`, `receipts`, `ingest`, `diagnostics`,
-`lease`, `enroll`) → `fleet` (+`fleettest`) → `filtercfg` → `grpc`.
+`lease`, `enroll`) → `fleet` (+`fleethelpertest`) → `filtercfg` → `grpc`.
 
 ## 3 · Imports hacia fuera
 

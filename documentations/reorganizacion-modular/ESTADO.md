@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-10-01** (revisión independiente de S9–S11, sobre `dev` @ `6650e55`). Antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
+> **Última actualización: 2026-10-02** (D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`). Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -9,7 +9,7 @@
 **Fase: F0 (andamiaje) ✅ cerrada el 2026-09-30 · F9 bloque A (el arnés) ✅ cerrado el 2026-10-01 (F9-01 🌐 + F9-02 💻), con una intermitencia de P0 diferida a F6 (H-1) · **F1 bloque A (contratos y rojo de `nucleo/contact`) escrito el 2026-10-01 (F1-01 🌐), PR #19 integrado en `dev` (`6650e55`)** · siguiente: F1-02 (el verde).** El árbol
 nuevo tiene el andamiaje (`pendiente`, `candados`, `arranque`, `apipublica` vacía, `cmd/server-modular`) y, **en rojo**,
 `internal/nucleo/contact` (4 contratos sin lógica: 11 `pendiente.Implementar` y 4 tests tras la etiqueta `pendiente`; del paquete
-`contacttest`, el doble `EstadoMemoria` ya está en verde): **ningún módulo** de `internal/modulos/` existe aún. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
+`contacthelpertest` (✎ D-F1-10, 2026-10-02: antes `contacttest`, y así lo nombran las entradas anteriores a esa fecha), el doble `EstadoMemoria` ya está en verde): **ningún módulo** de `internal/modulos/` existe aún. Existe el **plan ejecutable** en [`plan/`](plan/README.md): el marco común,
 una *spec* por fase (F0–F10 y la transversal FX), el registro de decisiones y **81 sesiones** con
 su prompt. **00-02 hecho (2026-09-30)**: Jhoan acepta en bloque las recomendaciones de
 [`plan/DECISIONES.md`](plan/DECISIONES.md) §1, §2, §4, §5 y §6 (§3 sigue abierta hasta la parada de F1).
@@ -116,6 +116,15 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   correr. 84 = 79 + 5 (en `835a7be`, `6ee1c5e` y `77df20f`: 88 paquetes, 79 con tests); 86 = 80 + 6 (en `6650e55`: 90 paquetes, 80 con
   tests; entra `contacttest`, y `nucleo/contact` no da línea `ok` porque sus tests van tras la etiqueta `pendiente`). Los documentos de
   F0 y los traspasos cerrados que dicen «84 paquetes `ok`» cuentan con esta misma regla.
+- **2026-10-02 · D-F1-10 aplicada** (decisión de Jhoan; misma rama, PR #20): el sufijo de nombre de paquete que exime a las suites de
+  contrato y a los dobles de los tres candados de fichero (`un_fichero_un_test`, `exportados_cubiertos`, cobertura por fichero) pasa
+  de `test` al compuesto **`helpertest`**. `a18d4c0`: `internal/nucleo/contact/contacttest` → `contacthelpertest` (movimiento puro).
+  `06f08a8`: una definición, `isHelperTestPackage` (`internal/candados/candados.go:101`), para los tres candados y para
+  `haySuiteContrato`; 17 mutantes, los 17 caen. `internal/arranque/huellatest` no se renombra (lo importa un test del código viejo,
+  E-1), pierde la exención y vuelve a medirse sin morder: `FICHEROS_EVALUADOS` pasa de 9 a **10** (`POR_DEBAJO=0 ·
+  EXENTOS_POSTGRES=1`). Cierra el hallazgo 21 del README de F1 y el «pendiente de mirar» de D-F1-6; deja abierta **D-F1-13** (los
+  dobles con lógica dentro de `…helpertest` siguen sin medirse). Las cifras de arriba son las medidas el 2026-10-01 y no se
+  reescriben. Gates sobre la rama, ya con D-F1-10: (gates: pendiente)
 
 **Siguiente paso:**
 1. **Jhoan**:
@@ -123,7 +132,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
    - para repetir el gate local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`
      (`GOTOOLCHAIN=go1.26.5 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
 2. **F1-01 ✅ hecha (🌐, 2026-10-01)**: bloque A del piloto `nucleo/contact`, T1.1–T1.7 + T1.3b; **PR #19 integrado en `dev` sin squash** (merge `6650e55`, 2026-10-01:
-   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que abre la revisión independiente (D-F1-10…12 y D-F9-6…11). Luego **F1-02 (🌐)**: el verde,
+   rojo y verde de `candados` y `nucleo` siguen siendo commits distintos). **Jhoan**: decidir D-F1-7 y D-F1-8 del README de F1 (la 8 bloquea T1.13, bloque B) y mirar las que abre la revisión independiente (D-F1-11, D-F1-12 y D-F9-6…11; **D-F1-10 ya está decidida**, 2026-10-02, y deja abierta D-F1-13). Luego **F1-02 (🌐)**: el verde,
    T1.8–T1.13 ([`plan/sesiones/`](plan/sesiones/README.md)). Las F9-03…F9-05 (B1/B2) van **después** de la parada de F1 (F1-05), por D-F9-1. Para repetir los gates en local: `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` en el `PATH`.
 3. **H-1 no bloquea nada**: se difirió a F6 (D-F6-7). Hasta entonces, un rojo de `TestP0_Arranque/sin_errores` con las dos líneas `ERROR` del *webhook worker* es esa carrera: se repite
    **una vez**, se compara y se anota (≈ 1–2 % de falso rojo por corrida). ⚠️ Revisión independiente (2026-10-01): la regla se **matiza**
@@ -166,6 +175,7 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
 | 2026-10-01 | **F1-01** (🌐): **bloque A de F1**. `internal/nucleo/contact` nace en rojo: 4 contratos sin lógica (11 `pendiente.Implementar`: 3+2+3+3) con su test tras `pendiente` (`ROJOS=4`), la suite `contacttest.Contrato` (19 casos, validada contra el `MemoryResolver` viejo: 19/19 y 28 de 31 mutantes cazados) y el doble `EstadoMemoria`. **D-F1-6** (Jhoan): los paquetes `…test` salen también de la cobertura por fichero (`internal/candados`, rojo→verde; `FICHEROS_EVALUADOS` 10→9 por `huellatest`). 10 hallazgos nuevos (9–18) en el README de F1; D-F1-7 y D-F1-8 abiertas. Sin traspaso: nada del bloque lo cierra la local | [`plan/F1-nucleo-contact/`](plan/F1-nucleo-contact/README.md) · [`tareas.md`](plan/F1-nucleo-contact/tareas.md) |
 | 2026-10-01 | **F1-01, tras el cierre del bloque** (🌐): la regla de idioma **E-11** (`8365132`; L-1 en `DECISIONES.md`; hallazgo 19 del README de F1) y `contacttest/contrato.go` partido por tema en 9 ficheros (`7069532`, movimiento puro; hallazgo 20). **PR #19 integrado en `dev` sin squash** (`6650e55`) | [`05`](05-metodo-contratos-y-tdd.md) E-11 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) |
 | 2026-10-01 | **Revisión independiente de S9–S11** (F9-01, F9-02, F1-01; `45e01a4..6650e55`): gates repetidos, erratas corregidas (R9.1.d, cifras, referencias, restos contrarios a E-11) y hallazgos anotados con sus decisiones abiertas, sin tomar ninguna | [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 21–24 · [`plan/F9-procesos/README.md`](plan/F9-procesos/README.md) contradicciones 19 y 22–30 |
+| 2026-10-02 | **D-F1-10 aplicada** (decisión de Jhoan; rama `reorg/revision-s9-s11`, PR #20): el sufijo que exime a suites de contrato y dobles de los tres candados de fichero es el compuesto `helpertest`. `contacttest` → `contacthelpertest` (`a18d4c0`); `isHelperTestPackage` en `internal/candados` (`06f08a8`); `huellatest` vuelve a medirse (`FICHEROS_EVALUADOS` 9→10). `05` (E-3, E-6), las specs de F0–F9 y FX, el marco y las skills nombran ya `…helpertest`. Queda abierta D-F1-13 | [`plan/DECISIONES.md`](plan/DECISIONES.md) D-F1-10 · [`plan/F1-nucleo-contact/README.md`](plan/F1-nucleo-contact/README.md) hallazgos 9 y 21 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
 
@@ -197,9 +207,12 @@ Todas, con su recomendación y la sesión que bloquean, en [`plan/DECISIONES.md`
 Las que cambian el plan entero: **D-F9-1** (adelantar F9: el orden de sesiones lo asume), las
 excepciones a E-1 de F0 (**D-F0-1/2/3**, **D-F4-1**) y la **parada tras F1**.
 
+**D-F1-10** (Jhoan, 2026-10-02): el sufijo que exime a las suites de contrato y a los dobles de los tres candados de fichero es el
+compuesto `helpertest` (`a18d4c0`, `06f08a8`); estrecha D-F1-3 y D-F1-6 y tiene fila en `DECISIONES.md` §2.
+
 ⚠️ **Todavía sin fila en `DECISIONES.md`** (viven en el README de su fase): **D-F1-7, D-F1-8 y D-F1-9** (de F1-01) y las que abre la
-revisión independiente del 2026-10-01: **D-F1-10** (estrechar la exención de los paquetes `…test`), **D-F1-11** (R-27/R-28/R-29 a P3),
-**D-F1-12** (actualizar `05` por E-11) en el [README de F1](plan/F1-nucleo-contact/README.md), y **D-F9-6…D-F9-12** (candado `SinBDViva`,
+revisión independiente del 2026-10-01: **D-F1-11** (R-27/R-28/R-29 a P3), **D-F1-12** (actualizar `05` por E-11) y **D-F1-13** (medir
+los dobles con lógica de los paquetes `…helpertest`: lo que D-F1-10 deja fuera) en el [README de F1](plan/F1-nucleo-contact/README.md), y **D-F9-6…D-F9-12** (candado `SinBDViva`,
 `GOWORK=off`, directorios `procesos-*`, las dos respuestas al §8 del traspaso, el alcance de D-F6-7, los ficheros de test largos y el gate de lease de la inferencia en el Edge de prueba) en el
 [README de F9](plan/F9-procesos/README.md).
 

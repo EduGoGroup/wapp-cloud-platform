@@ -31,8 +31,8 @@
 
 ## H1.3 · Como **la sesión web**, quiero una suite de contrato del puerto `Resolver` que ejecuten memoria y Postgres, para escribir el comportamiento una vez y probarlo en las dos.
 
-- **R1.3.a** · **EL** paquete `N/contacttest` **DEBERÁ** exportar `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`. — Verifica: `go doc ./internal/nucleo/contact/contacttest Contrato`.
-- **R1.3.b** · **EL** test de `repository_memory.go` **DEBERÁ** ejecutar `contacttest.Contrato`
+- **R1.3.a** · **EL** paquete `N/contacthelpertest` **DEBERÁ** exportar `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`. — Verifica: `go doc ./internal/nucleo/contact/contacthelpertest Contrato`.
+- **R1.3.b** · **EL** test de `repository_memory.go` **DEBERÁ** ejecutar `contacthelpertest.Contrato`
   contra `NewMemoryResolver` sin BD y con `-race`. — Verifica:
   `GOWORK=off go test -race -run Contrato -v ./internal/nucleo/contact/; echo rc=$?` → rc=0, 0 SKIP.
 - **R1.3.c** · **DONDE** Jhoan acepte D-F1-2, **EL** paquete `test/procesos` **DEBERÁ** ejecutar la

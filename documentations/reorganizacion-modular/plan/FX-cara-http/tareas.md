@@ -39,7 +39,7 @@ huella igual, `FaseActual = 0` y el candado de mudanzas en verde.
 Para cuando: 23 rutas de `:8103` por la cara nueva, J4–J11 con handlers nuevos, `FaseActual = 2`.
 
 - [ ] **TX.5 · rojo(apipublica): lo común, el arnés y las cuatro áreas de acceso** · 🌐 · dep. TX.4 y el verde de `modulos/acceso` · cumple RX.2.b, RX.2.d, RX.2.e, RX.5.a–d, RX.6.a
-  - **Ficheros**: `cadena.go`, `respuesta.go`, `apipublicatest/arnes.go`, `autenticacion.go`, `roleplane.go`, `audit.go`, `entitlements.go` y sus 7 `_test.go` (16)
+  - **Ficheros**: `cadena.go`, `respuesta.go`, `apipublicahelpertest/arnes.go`, `autenticacion.go`, `roleplane.go`, `audit.go`, `entitlements.go` y sus 7 `_test.go` (16)
   - **Hecho cuando**: antes de escribir, leídos los tests viejos de F2 ([`diseno.md`](diseno.md) §5); cada `Montar*` declara la condición de montaje del mapa §2.1–2.3; los puertos usan tipos de `modulos/acceso` **nuevos**; cada test cubre 401/403/feature/feliz/auditoría/404-sin-dependencia de sus filas
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0` · `make test-pendiente` cuenta los pendientes nuevos
   - **Commit**: `rojo(apipublica): comunes y acceso`

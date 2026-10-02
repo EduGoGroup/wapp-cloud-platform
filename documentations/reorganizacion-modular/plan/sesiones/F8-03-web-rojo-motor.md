@@ -6,7 +6,7 @@
 | Tareas | T8.9–T8.14 |
 | Depende de | F8-02 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F8 bloque C» |
-| Se para cuando | `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventstest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.) |
+| Se para cuando | `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventshelpertest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.) |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque(s): C · rojo del motor y sus satélites
 - Tareas: T8.9–T8.14 de plan/F8-conversacion/tareas.md
-- Te paras cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventstest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.)
+- Te paras cuando: `engine`, `menu`, `survey`, `media`, `turnoacotado`, `events`, `admin` en rojo; `eventshelpertest` con doble en verde; `G`, `V` rc=0. (~20 ficheros + doble.)
 - Decisiones: las que en plan/DECISIONES.md bloquean «F8 bloque C» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

@@ -148,9 +148,9 @@ excepciones de E-3 se **verifican**, no se listan:
 |---|---|
 | `doc.go` | cero declaraciones, solo `package` y su comentario |
 | fichero de `//go:embed` | todas sus declaraciones son `var` precedidas de `//go:embed` |
-| fichero solo de interfaces (puerto) | todas sus declaraciones son `type X interface{…}`; y existe un paquete hermano `<paquete>test` con una `func Contrato(t *testing.T, …)` |
-| doble en un paquete `…test` | su paquete termina en `test` y no tiene ninguna `func` con cuerpo; si tiene lógica, necesita test |
-| paquete `…test` entero (**D-F1-3**, condicionada) | si D-F1-3 = sí: todo fichero de un paquete cuyo nombre termina en `test` (suite `Contrato` y dobles) queda fuera de este candado **y** del de §4.3; los dobles con lógica llevan igualmente su test (lo exige la fase: F1 T1.4, F2 T2.2…). Si D-F1-3 = no, solo vale la fila anterior. `Recorrer` expone el nombre de paquete para que la exención sea **una** condición en `candados`, no una lista |
+| fichero solo de interfaces (puerto) | todas sus declaraciones son `type X interface{…}`; y existe un paquete hermano `<paquete>helpertest`, en `<dir>/<paquete>helpertest`, con una `func Contrato(t *testing.T, …)` (D-F1-10, 2026-10-02; antes `<paquete>test`) |
+| doble en un paquete `…helpertest` | su paquete termina en `helpertest` (D-F1-10; antes `test`) y no tiene ninguna `func` con cuerpo; si tiene lógica, necesita test |
+| paquete `…helpertest` entero (**D-F1-3**, condicionada; estrechada por **D-F1-10**, 2026-10-02) | si D-F1-3 = sí (lo es desde el 2026-09-30): todo fichero de un paquete cuyo nombre termina en `helpertest` **con al menos un carácter delante** (suite `Contrato` y dobles) queda fuera de este candado **y** del de §4.3 (y, desde D-F1-6, de la cobertura por fichero de §4.5); los dobles con lógica llevan igualmente su test (lo exige la fase: F1 T1.4, F2 T2.2…). Si D-F1-3 = no, solo vale la fila anterior. `Recorrer` expone el nombre de paquete para que la exención sea **una** condición en `candados` (`candados.go`, `isHelperTestPackage`), no una lista. Hasta D-F1-10 la condición era «termina en `test`», que eximía también un paquete de producción `latest` o `contest` (README, contradicción 16): hoy un paquete que acaba en `test` sin acabar en `helpertest` (`huellatest`) y uno llamado `helpertest` a secas **no** están exentos |
 
 ### 4.3 · `exportados_cubiertos` — cómo se detecta «mencionado en su test»
 
@@ -160,7 +160,7 @@ contenido en el conjunto de **identificadores** de `x_test.go` (`*ast.Ident` sue
 paquete, o `Sel` de un `*ast.SelectorExpr` en el paquete externo `…_test`). `go/parser` ignora
 las etiquetas de compilación: un test en rojo **cuenta** (`05` E-9, «se cumple ya en rojo»). No
 se exige mencionar campos de struct. Un comentario **no** es una mención. Con **D-F1-3** = sí, los
-paquetes `…test` quedan fuera (la misma condición que §4.2).
+paquetes `…helpertest` quedan fuera (la misma condición que §4.2, D-F1-10).
 
 ### 4.4 · `sin_bd_viva`
 

@@ -32,8 +32,8 @@ por algún helper del paquete; AST = usa `go/parser`. Detalle por fichero en [`d
 
 **Nuevos ✚** (no están en `04` §3): `A/iam/infra/memory/redeem_store.go` (gemelo del canje),
 `A/platformadmin/puertos.go` y `A/platformadmin/access_requests_postgres.go` (D-F2-3),
-`A/iam/ports/out/outtest/` (suites), `A/entitlements/entitlementstest/` (suite + `Fake`, D-F2-4),
-`A/platformadmin/platformadmintest/` (suite + doble), `internal/arranque/puente_iam.go`.
+`A/iam/ports/out/outhelpertest/` (suites), `A/entitlements/entitlementshelpertest/` (suite + `Fake`, D-F2-4),
+`A/platformadmin/platformadminhelpertest/` (suite + doble), `internal/arranque/puente_iam.go`.
 
 ## 2 · Grafo interno y orden de las pasadas
 
@@ -54,7 +54,7 @@ platformadmin           → iam/domain, iam/infra/postgres, iam/ports/out, platf
 ```
 
 **Orden de la pasada de contratos (hojas primero)** y el mismo para la de verde:
-`entitlements` · `iam/domain` → `iam/ports/out` (+ `outtest`) · `iam/ports/in` → `iam/infra/memory` ·
+`entitlements` · `iam/domain` → `iam/ports/out` (+ `outhelpertest`) · `iam/ports/in` → `iam/infra/memory` ·
 `iam/infra/identity` → `iam/usecase` → `iam/infra/postgres` → `iam/transport/http` → `platformadmin`.
 
 ## 3 · Imports hacia fuera del módulo

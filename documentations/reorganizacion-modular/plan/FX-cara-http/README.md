@@ -4,6 +4,10 @@
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > **Transversal**: no es una fase con sesiones propias. Sus tareas `TX.n` **se ejecutan dentro** de
 > F0, F2–F8 y F10, y cada fase las copia a su `tareas.md` citando el ID.
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: el arnés y los dobles compartidos de la cara van en `apipublicahelpertest` (esta spec
+> decía `apipublicatest`). Los candados de fichero recorren `internal/apipublica` y solo eximen el sufijo compuesto
+> `helpertest` ([`DECISIONES.md`](../DECISIONES.md) §2): con el nombre viejo el paquete se mediría como producción.
 
 ## Objetivo, en tres líneas
 

@@ -36,10 +36,10 @@ Para cuando: números de [`arquitectura.md`](arquitectura.md) §1 re-medidos, D-
 ## Bloque B · rojo de las hojas · 🌐 · T2.2–T2.8
 Para cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo · `ci-local` rc=0 · PR abierto.
 
-- [ ] **T2.2 · rojo(acceso): `entitlements/entitlements.go` + `entitlementstest`** · 🌐 · dep. T2.1 · cumple R2.1.a–b, R2.3.d
-  - **Ficheros**: `A/entitlements/entitlements.go`, `…/entitlements_test.go`, `A/entitlements/entitlementstest/{suite.go,fake.go,fake_test.go}`
+- [ ] **T2.2 · rojo(acceso): `entitlements/entitlements.go` + `entitlementshelpertest`** · 🌐 · dep. T2.1 · cumple R2.1.a–b, R2.3.d
+  - **Ficheros**: `A/entitlements/entitlements.go`, `…/entitlements_test.go`, `A/entitlements/entitlementshelpertest/{suite.go,fake.go,fake_test.go}`
   - **Hecho cuando**: las 11 constantes con su valor **literal** y su comentario-ADR (R-E5), `Resolver` con su promesa; `ContratoResolver` con los casos de diseño §2; `Fake` (D-F2-4) nace **completo** y pasa la suite en verde (es un doble, D-F1-3).
-  - **Gate**: G-rojo · `go test -race ./internal/modulos/acceso/entitlements/entitlementstest/; echo rc=$?` → 0
+  - **Gate**: G-rojo · `go test -race ./internal/modulos/acceso/entitlements/entitlementshelpertest/; echo rc=$?` → 0
   - **Commit**: `rojo(acceso): contrato de entitlements y su suite`
 - [ ] **T2.3 · rojo(acceso): `entitlements/middleware.go`** · 🌐 · dep. T2.2 · cumple R2.3.d
   - **Ficheros**: `A/entitlements/middleware.go`, `…/middleware_test.go`
@@ -56,10 +56,10 @@ Para cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo
   - **Hecho cuando**: 50 exportados; los 20 centinelas con texto literal (diseño §5); R-D1…R-D5 en comentario y test (largo **exacto** del token, 32 bytes del digest, simetría de normalización, precedencia de estados, 4 veredictos).
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contratos de iam/domain` (un commit por fichero si el bloque se parte)
-- [ ] **T2.6 · rojo(acceso): `iam/ports/out` + `outtest` (las 7 suites)** · 🌐 · dep. T2.5 · cumple R2.2.a
-  - **Ficheros**: `A/iam/ports/out/{active_tenant,canje,repos}.go` (sin `_test`, E-3), `A/iam/ports/out/outtest/{montaje,membresias,roles,grants,auditoria,invitaciones,empresa_activa,canje}.go`
+- [ ] **T2.6 · rojo(acceso): `iam/ports/out` + `outhelpertest` (las 7 suites)** · 🌐 · dep. T2.5 · cumple R2.2.a
+  - **Ficheros**: `A/iam/ports/out/{active_tenant,canje,repos}.go` (sin `_test`, E-3), `A/iam/ports/out/outhelpertest/{montaje,membresias,roles,grants,auditoria,invitaciones,empresa_activa,canje}.go`
   - **Hecho cuando**: las 10 interfaces con su comentario-contrato; las 7 suites (diseño §2) con la firma de D-F1-1, casos con nombre **en inglés** (`05` E-11; decía «en español» hasta la revisión del 2026-10-01), sin `t.Skip`; `go doc` las muestra.
-  - **Nombres (E-11)**: `outtest/` aún no existe y esta tarea nombra en español seis de sus ficheros (`montaje`, `membresias`, `auditoria`, `invitaciones`, `empresa_activa`, `canje`): la sesión que los cree los escribe en inglés y anota aquí la correspondencia (`05` E-11; si `montaje` cuenta como vocabulario del método, depende de D-F1-12 del README de F1). `ports/out/canje.go` conserva el nombre del fichero viejo.
+  - **Nombres (E-11)**: `outhelpertest/` aún no existe y esta tarea nombra en español seis de sus ficheros (`montaje`, `membresias`, `auditoria`, `invitaciones`, `empresa_activa`, `canje`): la sesión que los cree los escribe en inglés y anota aquí la correspondencia (`05` E-11; si `montaje` cuenta como vocabulario del método, depende de D-F1-12 del README de F1). `ports/out/canje.go` conserva el nombre del fichero viejo.
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): puertos de salida del IAM y sus suites de contrato`
 - [ ] **T2.7 · rojo(acceso): `iam/ports/in`** · 🌐 · dep. T2.5 · cumple R2.1.a–b
@@ -76,7 +76,7 @@ Para cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo
 Entrada: PR de B integrado. Para cuando: todo `acceso` en rojo · `vet -tags pendiente` rc=0 · PR.
 
 - [ ] **T2.9 · rojo(acceso): `iam/infra/memory` (7 + `redeem_store.go` ✚)** · 🌐 · dep. T2.6 · cumple R2.2.b
-  - **Ficheros**: `A/iam/infra/memory/*.go` y 8 `_test.go` (cada uno ejecuta **su** suite de `outtest`)
+  - **Ficheros**: `A/iam/infra/memory/*.go` y 8 `_test.go` (cada uno ejecuta **su** suite de `outhelpertest`)
   - **Hecho cuando**: structs **sin campos** en rojo (T-14), constructores y métodos con `panic`; `var _ out.X = (*Y)(nil)` para los 7 puertos; `RedeemStore` documenta cómo reproduce los 4 pasos del canje en memoria.
   - **Gate**: G-rojo · `go test -tags pendiente -run '^TestMembershipStore_Contrato$' ./internal/modulos/acceso/iam/infra/memory/; echo rc=$?` → ≠0
   - **Commit**: `rojo(acceso): dobles en memoria del IAM` (uno por fichero si se parte)
@@ -100,10 +100,10 @@ Entrada: PR de B integrado. Para cuando: todo `acceso` en rojo · `vet -tags pen
   - **Hecho cuando**: R-H1…R-H9; los textos de diseño §5 como constantes o literales afirmados byte a byte (anti-oráculo del canje con `bytes.Equal`).
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contratos de iam/transport/http`
-- [ ] **T2.14 · rojo(acceso): `platformadmin/puertos.go` ✚ + `platformadmintest`** · 🌐 · dep. T2.5 · cumple R2.2.e
-  - **Ficheros**: `A/platformadmin/puertos.go`, `A/platformadmin/platformadmintest/{suite,doble,doble_test}.go`
+- [ ] **T2.14 · rojo(acceso): `platformadmin/puertos.go` ✚ + `platformadminhelpertest`** · 🌐 · dep. T2.5 · cumple R2.2.e
+  - **Ficheros**: `A/platformadmin/puertos.go`, `A/platformadmin/platformadminhelpertest/{suite,doble,doble_test}.go`
   - **Hecho cuando**: `TenantStore` y `AccessRequestStore` cubren los métodos de `V/postgres.go:99-277` y `V/access_requests.go:136-485`; doble completo y verde contra la suite.
-  - **Gate**: G-rojo · `go test -race ./internal/modulos/acceso/platformadmin/platformadmintest/; echo rc=$?` → 0
+  - **Gate**: G-rojo · `go test -race ./internal/modulos/acceso/platformadmin/platformadminhelpertest/; echo rc=$?` → 0
   - **Commit**: `rojo(acceso): puertos de platformadmin y su doble`
 - [ ] **T2.15 · rojo(acceso): `platformadmin` (5 ficheros)** · 🌐 · dep. T2.14, T2.12 · cumple R2.2.e
   - **Ficheros**: `A/platformadmin/{access_requests,access_requests_postgres,handlers,postgres,signup}.go` y 4 `_test.go` + el de integración

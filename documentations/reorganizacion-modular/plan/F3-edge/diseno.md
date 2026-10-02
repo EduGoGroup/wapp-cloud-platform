@@ -9,18 +9,18 @@
 ```
 E/session/      registry.go                                                         (+1)
 E/inferstats/   inferstats.go                                                       (+1)
-E/receipts/     receipts.go · sink.go · postgres.go · memory.go→receiptstest (D-F3-1) (+3)
-E/receipts/receiptstest/      ContratoStore · Memoria
+E/receipts/     receipts.go · sink.go · postgres.go · memory.go→receiptshelpertest (D-F3-1) (+3)
+E/receipts/receiptshelpertest/      ContratoStore · Memoria
 E/ingest/       dedupe.go · postgres.go · deduper.go ✚ (solo interfaz, D-F3-3)       (+2)
-E/ingest/ingesttest/          ContratoDeduper · Memoria (↦ MemoryDeduper)
+E/ingest/ingesthelpertest/          ContratoDeduper · Memoria (↦ MemoryDeduper)
 E/diagnostics/  diagnostics.go · postgres.go                                         (+2)
-E/diagnostics/diagnosticstest/ ContratoStore · Memoria (↦ MemoryStore)
+E/diagnostics/diagnosticshelpertest/ ContratoStore · Memoria (↦ MemoryStore)
 E/lease/ 🔒     lease.go · repository.go · repository_postgres.go · signingkey.go      (+4)
-E/lease/leasetest/            ContratoRepository · Memoria (↦ MemoryRepository)
+E/lease/leasehelpertest/            ContratoRepository · Memoria (↦ MemoryRepository)
 E/enroll/       ca.go · doc.go · edgecert.go · server.go · service.go · store.go · store_postgres.go   (+6; doc.go sin test)
-E/enroll/enrolltest/          ContratoCodeStore · ContratoEdgeCertRepository · dobles
+E/enroll/enrollhelpertest/          ContratoCodeStore · ContratoEdgeCertRepository · dobles
 E/fleet/        fleet.go · repository_postgres.go                                    (+2)
-E/fleet/fleettest/            slowrepo.go (hoy) + ContratoRepository + Memoria (↦ MemoryRepository)
+E/fleet/fleethelpertest/            slowrepo.go (hoy, en fleettest) + ContratoRepository + Memoria (↦ MemoryRepository)
 E/filtercfg/    filtercfg.go                                                         (+1)
 E/grpc/         auth · config_push · connect · diagnostics · greeting · inference · plaza · readiness · receipt_sink · send · server · types · worklane   (+13)
 internal/arranque/  puente_gateway.go ✚ · puente_gateway_test.go   (y se BORRA puente_iam.go de F2)
@@ -30,13 +30,13 @@ internal/arranque/  puente_gateway.go ✚ · puente_gateway_test.go   (y se BORR
 
 | Suite | Casos mínimos (reglas de §4) | Doble | Postgres (F9) |
 |---|---|---|---|
-| `leasetest.ContratoRepository` 🔒 | `Upsert` **nunca** escribe `revoked` ni resucita un revocado; `MarkRevoked` pegajoso; `Get` de un Edge nunca visto → `found=false`; `MarkTenantRevoked`/`TenantRevoked`/`RestoreTenant` independientes de las filas por Edge | `leasetest.Memoria` | `lease.PostgresRepository` |
-| `enrolltest.ContratoCodeStore` | código de un solo uso: el segundo consumo falla (`ErrCodeUsed`/`ErrCodeNotFound`); consumo **atómico** | memoria | `PostgresCodeStore` |
-| `enrolltest.ContratoEdgeCertRepository` | guarda y recupera el registro del certificado | memoria | `PostgresEdgeCertRepository` |
-| `fleettest.ContratoRepository` | online→offline; offline de desconocida no es error; `SaveHealth` marca `degraded_since` al **entrar** y lo limpia al salir; perfil por defecto **pasivo** en los **tres** llamantes de `defaultProfile`; `SetProfile` sobrevive a la reconexión (activo y pasivo); perfil inválido → `ErrInvalidProfile` sin mutar; aislamiento por tenant; `MarkLoggedOut` ≠ offline; `SetState` solo `offline\|loggedout`; `CountLiveBySelfPn` excluye zombies; `ProfilesByTenant` foto completa, versión solo la mueve `SetProfile`, filas discordantes → gana `passive`, sin sesiones → mapa vacío; bloque del worker: desconocido ≠ cero, rancio limpia lo anterior | `fleettest.Memoria` | `PostgresRepository` (+ self_pn cifrado y su índice ciego, solo en F9) |
-| `diagnosticstest.ContratoStore` | consentimiento por defecto **ON** (opt-out); solicitud ⇒ bundle ⇒ descarga correlada por `command_id` + (tenant, sesión); bundle huérfano o de otro tenant no rompe; vencido → `ErrExpired` y borrado perezoso; crear purga vencidas; borrar solicitud (rollback) | memoria | `diagnostics.Postgres` |
-| `receiptstest.ContratoStore` | idempotente por (sesión, mensaje, estado) | memoria | `PostgresStore` |
-| `ingesttest.ContratoDeduper` | primera vez `false`, segunda `true` para la **misma** (sesión, wa_message_id) | memoria | `PostgresDeduper` (poda perezosa por retención, solo F9) |
+| `leasehelpertest.ContratoRepository` 🔒 | `Upsert` **nunca** escribe `revoked` ni resucita un revocado; `MarkRevoked` pegajoso; `Get` de un Edge nunca visto → `found=false`; `MarkTenantRevoked`/`TenantRevoked`/`RestoreTenant` independientes de las filas por Edge | `leasehelpertest.Memoria` | `lease.PostgresRepository` |
+| `enrollhelpertest.ContratoCodeStore` | código de un solo uso: el segundo consumo falla (`ErrCodeUsed`/`ErrCodeNotFound`); consumo **atómico** | memoria | `PostgresCodeStore` |
+| `enrollhelpertest.ContratoEdgeCertRepository` | guarda y recupera el registro del certificado | memoria | `PostgresEdgeCertRepository` |
+| `fleethelpertest.ContratoRepository` | online→offline; offline de desconocida no es error; `SaveHealth` marca `degraded_since` al **entrar** y lo limpia al salir; perfil por defecto **pasivo** en los **tres** llamantes de `defaultProfile`; `SetProfile` sobrevive a la reconexión (activo y pasivo); perfil inválido → `ErrInvalidProfile` sin mutar; aislamiento por tenant; `MarkLoggedOut` ≠ offline; `SetState` solo `offline\|loggedout`; `CountLiveBySelfPn` excluye zombies; `ProfilesByTenant` foto completa, versión solo la mueve `SetProfile`, filas discordantes → gana `passive`, sin sesiones → mapa vacío; bloque del worker: desconocido ≠ cero, rancio limpia lo anterior | `fleethelpertest.Memoria` | `PostgresRepository` (+ self_pn cifrado y su índice ciego, solo en F9) |
+| `diagnosticshelpertest.ContratoStore` | consentimiento por defecto **ON** (opt-out); solicitud ⇒ bundle ⇒ descarga correlada por `command_id` + (tenant, sesión); bundle huérfano o de otro tenant no rompe; vencido → `ErrExpired` y borrado perezoso; crear purga vencidas; borrar solicitud (rollback) | memoria | `diagnostics.Postgres` |
+| `receiptshelpertest.ContratoStore` | idempotente por (sesión, mensaje, estado) | memoria | `PostgresStore` |
+| `ingesthelpertest.ContratoDeduper` | primera vez `false`, segunda `true` para la **misma** (sesión, wa_message_id) | memoria | `PostgresDeduper` (poda perezosa por retención, solo F9) |
 
 ## 3 · Contratos por fichero — lo que promete cada uno
 
@@ -45,7 +45,7 @@ internal/arranque/  puente_gateway.go ✚ · puente_gateway_test.go   (y se BORR
 | `session/registry.go` | `Registry`, `NewRegistry`, `WithSendTimeout`, `Sender`, `SendAcotado`, `ErrSessionOffline`, `ErrPushTimeout`, `ErrPushAbandonado` | `Push` a sesión inexistente → `ErrSessionOffline` (gana a un ctx cancelado); Edge que no lee → `ErrPushTimeout`; ctx cancelado antes de enviar → `ErrPushAbandonado`, **no** timeout; doble registro **última-gana** y `release` compara identidad (el stream reemplazado no borra al nuevo); envíos concurrentes serializados. `ErrSessionOffline` **es** el de `platform` (D-F3-2) |
 | `inferstats/inferstats.go` | `Store`, `New`, `Parte`, `Clave`, `Agregado` (alias de `platform/metrics`, F0) | clave (tenant, **edge**): tres teléfonos de un Edge **no triplican**; el último parte **sustituye** (es acumulado, no delta); entre Edges se suma; un Edge que se va **no hace bajar** la suma; `nil` + `nil` = `nil` (no medible); copia los mapas; nil-safe y concurrente |
 | `receipts/{receipts,sink}.go` | `Status` (`delivered`, `read`), `Receipt`, `Stored`, `Store`, `Sink`, `NewSink` | una fila por `message_id`; `UNSPECIFIED` no persiste nada; callback de métrica por fila |
-| `ingest/{dedupe,postgres}.go` · `deduper.go` ✚ | `Deduper`, `MemoryDeduper`→`ingesttest`, `PostgresDeduper`, `WithRetention`, `WithSweep` | idempotente; opciones ≤0 se ignoran |
+| `ingest/{dedupe,postgres}.go` · `deduper.go` ✚ | `Deduper`, `MemoryDeduper`→`ingesthelpertest`, `PostgresDeduper`, `WithRetention`, `WithSweep` | idempotente; opciones ≤0 se ignoran |
 | `diagnostics/diagnostics.go` | `Store`, `BundleReceiver`, `Bundle`, `Record`, `NewCommandID`, 3 centinelas | los de la suite; `NewCommandID` aleatorio |
 | `lease/lease.go` 🔒 | `Manager`, `NewManager`, `Option`, `WithTTL`, `DefaultTTL` | ver R-L1…R-L8 |
 | `lease/signingkey.go` | `ResolveSigningKey`, `KeySource*`, `ParsePrivateKeyBase64`, `LoadPrivateKeyPEM`, `GenerateDevKey` | fichero > base64 > **efímera** (`KeySourceGenerated`); una configurada es **estable** entre llamadas; la generada no |

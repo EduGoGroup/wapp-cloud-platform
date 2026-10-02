@@ -290,7 +290,7 @@ borrar `make test-integration` y dejar el repo sin `WAPP_TEST_DB_DSN`.
 ## 5 · Las suites de contrato contra Postgres (H9.5)
 
 Cada suite la crea **su fase** (E-3/E-6: `func Contrato(t *testing.T, nuevo func() Puerto)` en
-`<paquete>test`); F9 solo la **ejecuta** contra el adaptador Postgres, con una base clonada por
+`<paquete>helpertest`, D-F1-10); F9 solo la **ejecuta** contra el adaptador Postgres, con una base clonada por
 subtest. «Memoria» = implementación en memoria hoy (medido con
 `grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test` y los `memory*.go`).
 
@@ -298,7 +298,7 @@ subtest. «Memoria» = implementación en memoria hoy (medido con
 |---|---|---|---|
 | `flujos/contact` | `nucleo` (F1) | sí | T9.22 (o F1 · T1.13) |
 | `iam/infra/postgres` | `acceso` (F2) | sí (`iam/infra/memory`) | T9.23 |
-| `entitlements` · `platformadmin` | `acceso` (F2) | **sí** (`Fake`, `entitlements.go`; D-F2-4 lo muda a `entitlementstest`) · no | T9.23 |
+| `entitlements` · `platformadmin` | `acceso` (F2) | **sí** (`Fake`, `entitlements.go`; D-F2-4 lo muda a `entitlementshelpertest`) · no | T9.23 |
 | `gateway/enroll` · `gateway/fleet` · `gateway/lease` | `edge` (F3) | **sí** (`NewMemory…`) ×3 | T9.24 |
 | `diagnostics` · `ingest` · `receipts` | `edge` (F3) | sí · sí · sí | T9.24 |
 | `tenantllm` · `degradation` | `inferencia` (F4) | no · no | T9.25 |

@@ -60,7 +60,7 @@
 3. `go test -v ./internal/modulos/acceso/... 2>&1 | grep -c -- '--- SKIP'` → **0**.
 4. `make cobertura-ficheros` → ≥ 80 % en cada fichero de `acceso` salvo los Postgres
    (`postgres.go`, `*_postgres.go` y los de `iam/infra/postgres/`).
-5. Las 7 suites de `outtest` + `ContratoResolver` + la de `platformadmintest` verdes contra sus dobles.
+5. Las 7 suites de `outhelpertest` + `ContratoResolver` + la de `platformadminhelpertest` verdes contra sus dobles.
 6. Los 3 candados AST verdes en `A/iam/infra/postgres/` y el I-CP-5 verde en `internal/arranque`.
 7. `huella_test.go` igual; `go list -deps ./cmd/server-modular` con `internal/modulos/acceso` y sin
    `internal/entitlements`/`internal/platformadmin`; `cmd/server` intacto.

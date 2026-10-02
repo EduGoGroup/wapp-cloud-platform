@@ -25,13 +25,13 @@ Comando: `for d in …; do ls $d/*.go | grep -v _test.go | wc -l; cat … | wc -
 
 ```
 internal/modulos/solicitudes/
-├── intakes/            24 ficheros (+ buyerdata_postgres.go si D-F6-6) · intakestest/ (suite de Store)
+├── intakes/            24 ficheros (+ buyerdata_postgres.go si D-F6-6) · intakeshelpertest/ (suite de Store)
 │   ├── quotetext/      borrador · precios · quotetext · render
 │   └── telemetria/     telemetria                       ← único PUENTE de import (→ internal/flujos/store)
-├── integrations/       crud · gate · outbox_stats · postgres · store · worker · integrationstest/ (suite + doble NUEVO)
+├── integrations/       crud · gate · outbox_stats · postgres · store · worker · integrationshelpertest/ (suite + doble NUEVO)
 │   ├── crmpush/        desde_intakes · push
 │   └── sigv1/          sigv1
-└── tenantvars/         memory · postgres · tenantvars · tenantvarstest/
+└── tenantvars/         memory · postgres · tenantvars · tenantvarshelpertest/
 ```
 
 ## 2 · Imports hacia fuera del módulo (producción, medido con `go list`)

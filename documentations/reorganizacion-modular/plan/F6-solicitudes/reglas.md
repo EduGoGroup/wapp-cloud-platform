@@ -41,8 +41,8 @@
 
 ## 4 · Definición de hecho (F6)
 
-1. 41 ficheros de producción + `note.go` en `S/…`, cada uno con `x_test.go`; `intakestest`,
-   `integrationstest` (con doble), `tenantvarstest`.
+1. 41 ficheros de producción + `note.go` en `S/…`, cada uno con `x_test.go`; `intakeshelpertest`,
+   `integrationshelpertest` (con doble), `tenantvarshelpertest`.
 2. `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes | wc -l` → 0.
 3. `GOWORK=off go test -count=1 -race -v ./internal/modulos/solicitudes/... > "$TMPDIR/s.log" 2>&1; echo rc=$?; grep -c -- '--- SKIP' "$TMPDIR/s.log"` → `rc=0` y `0`.
 4. `make cobertura-ficheros` ≥ 80 % por fichero, fuera los adaptadores Postgres (D-F6-6).

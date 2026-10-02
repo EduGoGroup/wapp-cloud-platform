@@ -3,6 +3,10 @@
 > **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
+>
+> ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
+> **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
+> nombraba con `…test` (`intakestest`, `integrationstest`, `tenantvarstest`): se actualizó el sufijo, nada más.
 
 ## Objetivo, en tres líneas
 
@@ -30,8 +34,8 @@
 
 - `internal/modulos/solicitudes/{intakes,intakes/quotetext,intakes/telemetria,integrations,integrations/crmpush,integrations/sigv1,tenantvars}`
   con **41** ficheros de producción en verde y su `x_test.go` cada uno; paquetes de suite
-  `intakestest`, `integrationstest` (con el **doble nuevo**: `integrations` no tiene gemelo) y
-  `tenantvarstest`.
+  `intakeshelpertest`, `integrationshelpertest` (con el **doble nuevo**: `integrations` no tiene gemelo) y
+  `tenantvarshelpertest`.
 - `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes | wc -l` → **0**; SKIP → **0**;
   `make cobertura-ficheros` ≥ 80 % en todo fichero salvo `postgres.go` (×3), `buyerdata.go` en su
   parte SQL (ver [`diseno.md`](diseno.md) §2) y `apipublica/eventstelemetry_store.go` (D-FX-4).
@@ -60,7 +64,7 @@
 | Bloque | Entorno | Tareas | Punto de parada |
 |---|---|---|---|
 | **A** · inventario verificado + hojas | 🌐 | T6.1–T6.5 | inventario confirmado (§1 de `diseno.md` recontado); `sigv1`, `tenantvars`, `note.go` y los tipos puros de `intakes` en rojo · `ci-local` rc=0 · PR |
-| **B** · contratos y rojo de `intakes` (dominio y bandeja) | 🌐 | T6.6–T6.9 | los 24 ficheros de `intakes` + `intakestest` en rojo; los 4 candados de invariante escritos · `vet -tags pendiente` rc=0 · PR |
+| **B** · contratos y rojo de `intakes` (dominio y bandeja) | 🌐 | T6.6–T6.9 | los 24 ficheros de `intakes` + `intakeshelpertest` en rojo; los 4 candados de invariante escritos · `vet -tags pendiente` rc=0 · PR |
 | **C** · contratos y rojo de `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐 | T6.10–T6.13 | todo el módulo en rojo; puente declarado; `make test-pendiente` = cifra anotada · PR |
 | **D** · verde de las hojas y de `intakes` (1/2) | 🌐 | T6.14–T6.16 | `sigv1`, `tenantvars`, `note.go`, tipos puros y máquina de estados en verde · PR |
 | **E** · verde de `intakes` (2/2) | 🌐 | T6.17–T6.18 | `intakes` en verde entero (incluidos `memory.go`, `postgres.go`, `notifier.go`) · PR |
