@@ -1,7 +1,7 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
 > **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`** e integrado en `dev` por el
-> PR #19 (sin squash, merge `6650e55`)
+> PR #19 (sin squash, merge `6650e55`); **bloque B (sesión F1-02, 🌐, 2026-10-02) escrito** en la rama `reorg/f1-b-verde` sobre `origin/dev` @ `5847ad4`, PR hacia `dev`
 > (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 
@@ -326,6 +326,25 @@
       nombres (inglés) y comentarios, documentación y mensajes de commit (español); un mensaje de fallo no es ninguna de esas
       cosas. Lo único escrito es la nota del ejemplo de §10 (`:461-462`, D-F1-12): «los mensajes de fallo de los tests, que no son
       nombres, quedan como estaban», que habla de ese ejemplo y no da una regla.
+
+### Hallazgos de la sesión F1-02 (bloque B, 2026-10-02)
+
+27. **El `grep` de R9.4.d no detectaba nada** (→ D-F1-8, decidida). `go list -tags integracion -deps ./test/procesos`
+    sin `-test` solo mira los ficheros que no son de test, y en `test/procesos` el único es `doc.go`. Por eso daba
+    vacío aunque `sin_bd_viva_test.go` importa `internal/candados`. Con `-test -deps` habría marcado lo transitivo de
+    la propia suite (`nucleo/contact`, `platform/*`). Ahora mira los imports **directos** (`Imports`, `TestImports`
+    y `XTestImports`), y se comprobó que una sonda que importa `platform/storage/postgres` sale en la lista (`4bc398d`).
+    De paso, `F9-procesos/arquitectura.md` §3 admitía los adaptadores Postgres solo en `suites_<m>_test.go`, frente
+    a `<paquete>_contrato_test.go` (R9.5.a, T1.13); se alineó con el segundo.
+28. **`make test-pendiente` cuenta lo que hay en `.claude/worktrees/`**. Con dos *worktrees* de sub-agentes vivos dio
+    `PENDIENTES=14 · ROJOS=5` sobre un árbol con 0 y 0. Al borrarlos, 0 y 0. No es un falso verde, es un falso rojo,
+    pero confunde a quien orquesta con *worktrees*. Para que no pase, el target podría excluir `.claude/`. Hasta
+    entonces, se borran los *worktrees* antes de medir. Sin decisión: lo anoto.
+29. **E-11 en `test/procesos`**: el arnés de F9-A está en castellano (`nuevaBase`, `Abrir`, `clavesSecretoB64`), y lo
+    nuevo de T1.13 va en inglés (`newContactMontaje`, `seedContactTenant`, `postgresState`), porque L-1 rige «desde esa
+    fecha». El sub-agente lo escribió primero en castellano, imitando al arnés, y se corrigió antes del commit, igual
+    que el auxiliar `filasDe` → `rowsOf` de D-F1-7. La mezcla dentro de un mismo paquete es la que E-11 acepta (lo ya
+    escrito no se renombra), pero invita a imitar lo viejo.
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 

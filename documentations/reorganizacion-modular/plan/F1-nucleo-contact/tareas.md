@@ -61,26 +61,26 @@ Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make c
 ## Bloque B · verde fichero a fichero · 🌐 · T1.8–T1.13
 Entrada: PR del bloque A integrado en `dev` (✔ PR #19, merge `6650e55`, 2026-10-01). Para cuando: 0 pendientes en `internal/nucleo` · `make cobertura-ficheros` ≥ 80 % en 3 ficheros · `vet -tags integracion ./test/procesos/...` rc=0 · PR abierto.
 
-- [ ] **T1.8 · verde(nucleo): `contact.go`** · 🌐 · dep. T1.7 · cumple R1.1.d
+- [x] **T1.8 · verde(nucleo): `contact.go`** · 🌐 · dep. T1.7 · cumple R1.1.d — cerrada en `9e8f740` (contact.go 97,6 %)
   - **Ficheros**: `N/contact.go`, `N/contact_test.go` (sin etiqueta)
   - **Hecho cuando**: lógica de `V/contact.go` con su porqué; `go test -race ./internal/nucleo/contact/ -run 'Normalize|NewRef|ValidateKind|ErrInvalidRef'` rc=0; cobertura del fichero ≥ 80 % (base vieja 98,0 %).
   - **Gate**: `GOWORK=off go test -race ./internal/nucleo/contact/; echo rc=$?` → 0 · `make cobertura-ficheros`
   - **Commit**: `verde(nucleo): contact/contact`
-- [ ] **T1.9 · verde(nucleo): `resolver.go`** · 🌐 · dep. T1.8
+- [x] **T1.9 · verde(nucleo): `resolver.go`** · 🌐 · dep. T1.8 — cerrada en `8e7a891` (resolver.go 100,0 %; tests de `pickDestino`, `dedupeRefs`, `destinoPref` y `lidServer`)
   - **Hecho cuando**: `Sendable`, `RefsFrom`, `pickDestino`, `dedupeRefs`, `lidServer`, `destinoPref`; tests de los dos auxiliares añadidos (E-7); ≥ 80 % (base 95,2 %).
   - **Gate** y **Commit**: igual · `verde(nucleo): contact/resolver`
-- [ ] **T1.10 · verde(nucleo): `repository_memory.go`** · 🌐 · dep. T1.9 · cumple R1.3.b
+- [x] **T1.10 · verde(nucleo): `repository_memory.go`** · 🌐 · dep. T1.9 · cumple R1.3.b — cerrada en `222c4c8` (repository_memory.go 95,6 %; suite 19/19 con `-race`, 0 SKIP)
   - **Hecho cuando**: la suite pasa entera contra memoria con `-race`, 0 SKIP (`-v`); ≥ 80 % (base 91,1 %).
   - **Gate**: `GOWORK=off go test -race -v ./internal/nucleo/... > /tmp/t.log 2>&1; echo rc=$?; grep -c -- '--- SKIP' /tmp/t.log` → `rc=0` y `0`
   - **Commit**: `verde(nucleo): contact/repository_memory`
-- [ ] **T1.11 · verde(nucleo): `repository_postgres.go`** · 🌐 · dep. T1.9 · cumple R1.4.a–b, R1.4.d
+- [x] **T1.11 · verde(nucleo): `repository_postgres.go`** · 🌐 · dep. T1.9 · cumple R1.4.a–b, R1.4.d — cerrada en `8307afb` (exento E-6, 31,1 %; funciones puras al 100 %; SQL idéntico; hallazgo 15: se conserva lo viejo)
   - **Hecho cuando**: SQL copiado literal (`diff <(grep -o 'public\.[a-z_]*' V/repository_postgres.go | sort -u) <(… N …)` vacío); funciones puras de diseño §2 con sus tests unitarios (sin BD); fuera del umbral (E-6), cobertura anotada.
   - **Nombres (E-11: correspondencia de la fase)**: [`diseno.md`](diseno.md) §2 nombra en español funciones que aún no existen; se escriben en inglés: `codificarRef` → `encodeRef`, `sobrePushName` → `pushNameEnvelope`, `elegirCanonico` → `pickCanonicalDB` (los tres, los nombres del código viejo: `V/repository_postgres.go:184`, `:221` y `:363`), `abrirFilas` → `openRows` (nuevo); `nullStr` se queda. Es la misma tabla del README, hallazgo 19, traída aquí porque `05` E-11 manda anotarla en el `tareas.md` de la fase. Los textos observables (errores, columnas) no se traducen.
   - **Gate** y **Commit**: igual que T1.8 · `verde(nucleo): contact/repository_postgres`
-- [ ] **T1.12 · refactor(nucleo) y medición del verde** · 🌐 · dep. T1.10, T1.11
+- [x] **T1.12 · refactor(nucleo) y medición del verde** · 🌐 · dep. T1.10, T1.11 — cerrada sin commit propio (no hizo falta `refactor`); medida sobre `4bc398d`: `PENDIENTES=0 · ROJOS=0`; cobertura contact.go 97,6 % · resolver.go 100,0 % · repository_memory.go 95,6 % · contacthelpertest/estado.go 92,6 % · repository_postgres.go EXENTO (31,1 %). D-F1-7 se aplicó después, en `4bbd138` (`refactor(nucleo)`, decisión de Jhoan)
   - **Hecho cuando**: pendientes en `internal/nucleo` = 0; tabla de cobertura por fichero anotada en el PR; `refactor` solo si hace falta (tests verdes antes y después).
   - **Commit**: `refactor(nucleo): …` o ninguno
-- [ ] **T1.13 · procesos(contact): la suite contra `PostgresResolver`** · 🌐→💻 · dep. T1.11 · cumple R1.3.c · **solo si D-F1-2**
+- [x] **T1.13 · procesos(contact): la suite contra `PostgresResolver`** · 🌐→💻 · dep. T1.11 · cumple R1.3.c · **solo si D-F1-2** — cerrada en la web en `4bc398d` (fichero, `vet -tags integracion` rc=0, `sin_bd_viva` verde, grep de R9.4.d ajustado); pre-chequeo web viejo y nuevo rc=0 · 20 PASS · 0 SKIP. **La corrida que cuenta es T1.18** (💻 F1-04, [traspaso](../../traspasos/TRASPASO-F1-B-suite-postgres.md))
   - **Ficheros**: `test/procesos/contact_contrato_test.go` (`//go:build integracion`) y **reutiliza el arnés que ya dejó F9-A** (F9-02, 2026-10-01: `main_test.go` —un contenedor `postgres:17-alpine`, plantilla migrada una vez— y `base_test.go` —`nuevaBase(t, proceso)`, una base clonada por **nombre de proceso**, `proc_<proceso>_<binario>`, no por prueba (`test/procesos/base_test.go:136-141`): pedir dos veces el mismo nombre mientras la primera base sigue viva hace fallar el `CREATE DATABASE` y `nuevaBase` llama a `t.Fatalf`—; skill `procesos-testcontainers`): **no se recrea**, y la suite de contrato pide su base con `nuevaBase` y un nombre propio. ⚠️ `contacthelpertest.Contrato` llama a `nuevo` **una vez por caso** (19, en serie: no hay `t.Parallel`) y exige un `Montaje` limpio: el de Postgres necesita un nombre de proceso distinto por caso, o el mismo solo si la base del caso anterior ya se borró (el `Cleanup` del subtest)
   - ✎ **Desviación decidida (D-F1-8, Jhoan, 2026-10-02)**: los 2 tenants se siembran **por SQL** (`INSERT INTO public.tenants … RETURNING id::text`), no con `postgres.NewTenantRepository`; el fichero importa solo `contacthelpertest`, `internal/nucleo/contact` (constructor del adaptador) e `internal/platform/crypto` (sus argumentos), y el `grep` de R9.4.d pasa a mirar imports directos. D-F1-7 (la marca de `Estado`) se aplica antes, en su `refactor(nucleo)` propio.
   - **Hecho cuando**: el `Montaje` de Postgres siembra 2 tenants con `postgres.NewTenantRepository(db).Create` y observa `flow_state` por SQL; `vet -tags integracion` rc=0; si Docker responde en la web, corrida de **pre-chequeo** anotada (no cierra).
