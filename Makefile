@@ -85,8 +85,12 @@ vet-integracion: ## go vet -tags integracion ./test/procesos/... — los proceso
 # los contratos en rojo (con pendiente.Implementar) no se miden y los adaptadores Postgres
 # marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
 # comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
-# arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest. Esta lista
-# es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
+# arranque copiado (internal/arranque, D-F0-1) queda fuera. ⚠️ `internal/arranque/huellatest`
+# sigue en la lista pero HOY NO SE EVALÚA: desde D-F1-6 (`776d6a2`) los paquetes cuyo nombre
+# acaba en `test` están exentos de la cobertura por fichero, y `huellatest` cae en esa
+# condición (FICHEROS_EVALUADOS pasó de 10 a 9). Sus tests sí corren aquí; lo que no hay es
+# umbral sobre `huellatest.go`. Qué hacer con él (renombrarlo, acotar la exención) está
+# pendiente de decisión. Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
 COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
@@ -149,18 +153,26 @@ test-integration: ## Tests de integración con Postgres efímero en Docker — e
 #   PROCESOS_LOG_DIR     dónde dejar los logs (por defecto /tmp → /tmp/procesos-<binario>.log)
 # El rc de `go test` se escribe como última línea `RC=<n>` del log ANTES de pasar al
 # siguiente binario: nunca se lee detrás de una tubería (la tubería devolvería el rc de grep).
-# El target sale ≠ 0 si cualquiera de los binarios falló. Un SKIP NO es verde: la línea de
-# resumen imprime SKIP= y quien lee el resultado lo cuenta (E-5: un proceso que no puede
-# correr falla, no se salta). La etiqueta `integracion` es obligatoria: sin ella el paquete
-# solo tiene el candado y `go test` da `ok` sin ejecutar ningún proceso (T-15).
+# Las tres cuentas (PASS, FAIL, SKIP) se sacan del log UNA vez por binario, con `grep -c` sin
+# tubería, y son las que imprime la línea de resumen.
+# El target sale ≠ 0 si en cualquiera de los binarios `go test` salió ≠ 0 **o hubo algún
+# `--- SKIP`**. Un SKIP NO es verde y aquí no se deja a quien lee: `go test` da rc=0 con un
+# proceso saltado, así que es el target el que lo pone en rojo y lo dice en una línea propia
+# (E-5: un proceso que no puede correr falla, no se salta). La etiqueta `integracion` es
+# obligatoria: sin ella el paquete solo tiene el candado y `go test` da `ok` sin ejecutar
+# ningún proceso (T-15).
 PROCESOS_LOG_DIR ?= /tmp
 
-test-procesos: ## Procesos (F9) contra los DOS binarios, testcontainers; necesita Docker (BINARIO=viejo|nuevo, CUENTA=n)
+test-procesos: ## Procesos (F9) contra los DOS binarios, testcontainers; necesita Docker (BINARIO=viejo|nuevo, CUENTA=n). Rojo si rc≠0 o SKIP>0
 	@fallo=0; for b in $${BINARIO:-viejo nuevo}; do \
 		L=$(PROCESOS_LOG_DIR)/procesos-$$b.log; \
 		WAPP_PROCESOS_BINARIO=$$b $(GO) test -tags integracion -count=$${CUENTA:-1} -v -timeout 30m -parallel 4 ./test/procesos/... > $$L 2>&1; \
 		rc=$$?; echo "RC=$$rc" >> $$L; [ $$rc -eq 0 ] || fallo=1; \
-		echo "$$b: RC=$$rc · PASS=$$(grep -c -- '--- PASS' $$L) FAIL=$$(grep -c -- '--- FAIL' $$L) SKIP=$$(grep -c -- '--- SKIP' $$L) · $$L"; \
+		pass=$$(grep -c -- '--- PASS' $$L); fail=$$(grep -c -- '--- FAIL' $$L); skip=$$(grep -c -- '--- SKIP' $$L); \
+		echo "$$b: RC=$$rc · PASS=$$pass FAIL=$$fail SKIP=$$skip · $$L"; \
+		if [ "$${skip:-0}" != "0" ]; then \
+			fallo=1; echo "$$b: ROJO por SKIP=$$skip — un proceso que no puede correr falla, no se salta (E-5)"; \
+		fi; \
 	done; exit $$fallo
 
 ci-local: fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + vet-integracion + lint + test + cobertura-ficheros + build (sin integración: correr test-integration y test-procesos aparte)
