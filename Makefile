@@ -9,7 +9,7 @@
 #   - test-integration espeja el job "integration" (Postgres efímero).
 #   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
-#   - tools           deja el golangci-lint fijado en .bin/ (una vez por máquina).
+#   - tools           deja el golangci-lint fijado en .bin/ (una vez por checkout: .bin/ vive en el repo, y un worktree nuevo no lo trae).
 #   - toolchain       dice qué Go, gofmt y golangci-lint corren DE VERDAD bajo este Makefile.
 
 GO_VERSION   := 1.26.5

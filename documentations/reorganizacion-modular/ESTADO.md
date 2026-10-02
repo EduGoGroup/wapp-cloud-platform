@@ -124,7 +124,17 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   E-1), pierde la exención y vuelve a medirse sin morder: `FICHEROS_EVALUADOS` pasa de 9 a **10** (`POR_DEBAJO=0 ·
   EXENTOS_POSTGRES=1`). Cierra el hallazgo 21 del README de F1 y el «pendiente de mirar» de D-F1-6; deja abierta **D-F1-13** (los
   dobles con lógica dentro de `…helpertest` siguen sin medirse). Las cifras de arriba son las medidas el 2026-10-01 y no se
-  reescriben. Gates sobre la rama, ya con D-F1-10: (gates: pendiente)
+  reescriben. Gates sobre la rama, ya con D-F1-10 y con la toolchain fijada (línea siguiente): `make ci-local` `GATE_RC=0` (86 líneas
+  `ok`, 0 issues, `FICHEROS_EVALUADOS=10 · POR_DEBAJO=0 · EXENTOS_POSTGRES=1`); `PENDIENTES=11 · ROJOS=4`; SKIP en código nuevo 0
+  (430 PASS); `make test-procesos` `viejo RC=0 · PASS=158` y `nuevo RC=0 · PASS=158`, 0 FAIL, 0 SKIP; `make ci-docker` rc=0.
+- **2026-10-02 · La toolchain fijada se usa sola** (decisión de Jhoan; misma rama, PR #20): no se aceptan dos versiones de Go ni de
+  linter; lo que cambia es que la fijada ya no pide trabajo manual en la sesión local, cuyo `PATH` trae `go1.27.1` y
+  `golangci-lint 2.14.0`. `0b78cd1`: el `Makefile` exporta `GOTOOLCHAIN=go$(GO_VERSION)`, `fmt-check` usa el `gofmt` de esa
+  toolchain, `make tools` deja el `golangci-lint v2.12.2` oficial (sha256 verificado) en `.bin/` y `make toolchain` dice lo que corre
+  de verdad. `26cbfbf`: el hook de `SessionStart` delega en `make toolchain`. `3ed9bd0`: `ci-docker` monta `GOMODCACHE` e instala el
+  linter con `make tools`. Los gates de la línea anterior se midieron con el entorno **pelado** del Mac, sin exportar nada.
+  ⚠️ Un `go` suelto, fuera de `make`, sigue siendo el del sistema: en local lleva `GOTOOLCHAIN=go1.26.5` delante. La diferencia entre
+  web y local, en [`06-entorno-web.md`](06-entorno-web.md).
 
 **Siguiente paso:**
 1. **Jhoan**:
