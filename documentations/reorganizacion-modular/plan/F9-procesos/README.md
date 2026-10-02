@@ -300,7 +300,8 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     la necesite (B1/B2); no se construye por adelantado.
 21. **Medido en local además** (F9-02): (a) el Go del sistema es `1.27.1` y `golangci-lint` `2.14.0`, y `make lint` aborta con
     ellos (por diseño, T-1): se usó `GOTOOLCHAIN=go1.26.5` y `golangci-lint v2.12.2` instalado en un directorio aparte, sin tocar
-    el de Homebrew; (b) **huérfanos** (§7.1 del traspaso): con `kill -9` al binario de test en mitad de la suite quedó **1 servidor
+    el de Homebrew (✎ 2026-10-02: hoy lo hace solo el `Makefile` —`GOTOOLCHAIN` exportado y `make tools`—; `06` §6);
+    (b) **huérfanos** (§7.1 del traspaso): con `kill -9` al binario de test en mitad de la suite quedó **1 servidor
     vivo en t+0 y 0 a los 3 s** (muere por SIGPIPE en su siguiente escritura al log, que ya no tiene lector), y el contenedor
     Postgres desapareció a los ~15 s por el *reaper*; un pánico por *timeout* con `TestP0_Arranque` en marcha dejó 0. No hay
     huérfano persistente en esas dos muestras; un servidor **callado** podría vivir más (no medido); (c) el `-timeout` de `go test`

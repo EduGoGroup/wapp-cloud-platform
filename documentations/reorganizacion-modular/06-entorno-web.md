@@ -9,6 +9,11 @@
 > **impedido arrancar** la sesión si fallaba. Cada fila o párrafo que cambió lleva ✎. El reparto
 > completo web ↔ local, las ramas, el hook propuesto y el protocolo de sesión viven en
 > [`plan/00-marco/flujo-web-local.md`](plan/00-marco/flujo-web-local.md).
+>
+> ✎ **2026-10-02** (`0b78cd1`, `26cbfbf`, `3ed9bd0`): la toolchain fijada la pone **el `Makefile`**
+> en los dos entornos. Qué hay en cada uno, cómo se comprueba (`make toolchain`) y cómo se sube de
+> versión: **§6**. La §4 pasa a ese comando; §3 y §5 se quedan como estaban (son el entorno web y lo
+> que se midió en él).
 
 ## 1 · Qué llega a la sesión web
 
@@ -19,7 +24,7 @@
 | **Skills del repo** (`.claude/skills/`) | ✅ | Documentado: las skills de proyecto se cargan en las sesiones en la nube. ✎ También `.claude/agents/` y `.mcp.json` |
 | Skills de la raíz de wApp (`ejecutar-plan`, `pasar-la-pelota`…) | ❌ | Viven en otro repo |
 | Skills personales (`~/.claude/skills`) | ❌ | Solo en local |
-| Hooks de `.claude/settings.json` | ✅ ✎ | **Corren** en una sesión de **un solo repo** (la doc lo dice en «What carries over»). Corren también en local: para limitar algo a la nube, el script comprueba `CLAUDE_CODE_REMOTE=true` (vale `true` en la VM, **nunca** en local). Los candados en tests de `05` §5 siguen siendo la única garantía; el hook **avisa**, no hace cumplir (diseño en `flujo-web-local.md` §4). Hoy el repo **no tiene** `.claude/settings.json` |
+| Hooks de `.claude/settings.json` | ✅ ✎ | **Corren** en una sesión de **un solo repo** (la doc lo dice en «What carries over»). Corren también en local: para limitar algo a la nube, el script comprueba `CLAUDE_CODE_REMOTE=true` (vale `true` en la VM, **nunca** en local). Los candados en tests de `05` §5 siguen siendo la única garantía; el hook **avisa**, no hace cumplir (`flujo-web-local.md` §4). ✎ `.claude/settings.json` y `.claude/hooks/verificar-entorno.sh` existen desde T0.1 (`de04088`, 2026-09-30); desde `26cbfbf` (2026-10-02) el hook pregunta a `make toolchain` (§6) |
 | Docker | ✅ ✎ | **Preinstalado**: `docker`, `dockerd`, `docker compose`; Docker Hub está en la lista *Trusted*. ⚠️ **Sin probar** que testcontainers funcione ahí: lo prueba la primera sesión web (`flujo-web-local.md` §5). 🔒 Aunque funcione, **F9 y el relevo los cierra la sesión local**; la web corre los procesos solo como pre-chequeo |
 | PostgreSQL 16 preinstalado ✎ | ⚠️ | Viene en la VM. **Prohibido** para cualquier test: es un Postgres vivo (`05` §7.2) |
 | Red ✎ | *Trusted* | Por defecto: `proxy.golang.org`, `sum.golang.org`, `index.golang.org`, `github.com`, `raw.githubusercontent.com`, `storage.googleapis.com`, Docker Hub… GitHub va por un **proxy propio** que solo sirve *release assets* de los repos **adjuntos** a la sesión |
@@ -59,6 +64,9 @@ No es un fichero del repo: se pega en la configuración del entorno en claude.ai
 3. **`GOTOOLCHAIN=auto` no fija la versión**: la línea `go 1.26.5` es un mínimo y un Go
    preinstalado más nuevo correría tal cual. Se fija con `GOTOOLCHAIN=go1.26.5` como **variable del
    entorno**, junto a `GOWORK=off`, `BASH_DEFAULT_TIMEOUT_MS=600000` y `BASH_MAX_TIMEOUT_MS=1800000`.
+   ✎ 2026-10-02: además la exporta el `Makefile` (`export GOTOOLCHAIN := go$(GO_VERSION)`,
+   `Makefile:36`) para todo lo que corre bajo `make`; la variable del entorno sigue haciendo falta
+   para el `go` **suelto** de la sesión web (§6).
 
 Además: el script corre **como root** y, si termina en menos de ~5 min, su resultado se guarda como
 **snapshot** del entorno (≈7 días; se rehace al cambiar el script o la red). Por eso también trae
@@ -71,17 +79,18 @@ fuente) y en qué directorio está el clon mientras corre. La primera sesión we
 ## 4 · Comprobación al empezar cualquier sesión web
 
 ```bash
-go version                          # go1.26.5 (con GOTOOLCHAIN=go1.26.5 en el entorno)
-golangci-lint version               # v2.12.2 — si no, el entorno no está preparado
-GOWORK=off go build ./... ; echo "rc=$?"
+make toolchain; echo "rc=$?"        # ✎ TOOLCHAIN=OK y rc=0 — si no, el entorno no está preparado (§6)
+make build; echo "rc=$?"            # GOWORK=off go build ./...
 git fetch -q origin && git log --oneline -1 origin/dev
 docker info >/dev/null 2>&1; echo "docker rc=$?"   # ✎ informativo
 ```
 
-Si `golangci-lint` no es la `v2.12.2`, **no se declara ningún gate pasado**: se dice que el entorno
-no está listo (skill `validar-antes-de-cerrar`). ✎ Cuando F0 añada el hook `SessionStart`
-(`plan/00-marco/flujo-web-local.md` §4), estos comandos los corre el hook y su salida llega sola al
-contexto de la sesión.
+Si `make toolchain` no termina en `TOOLCHAIN=OK` con `rc=0`, **no se declara ningún gate pasado**:
+se dice que el entorno no está listo (skill `validar-antes-de-cerrar`). ✎ 2026-10-02: hasta
+`0b78cd1` esta comprobación era `go version` + `golangci-lint version` a mano; esos dos comandos
+dicen lo que hay en el `PATH`, no lo que usa `make`. El hook `SessionStart`
+(`plan/00-marco/flujo-web-local.md` §4, desde T0.1) corre `make toolchain` al arrancar y su salida
+llega sola al contexto de la sesión.
 
 ## 5 · Resultados de la primera sesión web ✎
 
@@ -144,3 +153,103 @@ cambia el proyecto:
 2. **Docker Hub limita por IP compartida (429)**: si pasa, `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/`
    (espejo público de Google, probado arriba en frío) en la línea de `go test`. Que vaya a las
    variables del entorno es decisión de Jhoan (README de F0, «Decisiones que necesita»).
+
+## 6 · Web y local: la misma toolchain, por dos caminos ✎
+
+> **2026-10-02** · decisión de Jhoan, en la cabecera del bloque del `Makefile` (`:19-36`): **no hay
+> dos versiones válidas**. Todo lo que lanza `make` corre con `go$(GO_VERSION)` y `golangci-lint
+> $(LINT_VERSION)` (`Makefile:15-16`; hoy `go1.26.5` y `v2.12.2`) en la sesión web y en la local,
+> sin exportar nada a mano. Commits: `0b78cd1` (`GOTOOLCHAIN`, `make tools`, `make toolchain`),
+> `26cbfbf` (el hook delega en `make toolchain`), `3ed9bd0` (`ci-docker`).
+
+### 6.1 · La tabla
+
+| | 🌐 Web (VM de claude.ai/code) | 💻 Local (el Mac de desarrollo) |
+|---|---|---|
+| Go del `PATH` (`GO_SYSTEM`, que es `GOTOOLCHAIN=local go version`) | **Sin medir.** `go version` a secas dio `go1.26.5 linux/amd64` (§5 fila 1), pero con `GOTOOLCHAIN=go1.26.5` en las variables del entorno: eso no distingue si la VM trae ese Go o si Go lo bajó | `go1.27.1`, Homebrew (`/opt/homebrew/bin/go`) |
+| `golangci-lint` del sistema | `v2.12.2` en `/usr/local/bin` (lo deja el *setup script*; §5 fila 2) | `v2.14.0`, Homebrew (`/opt/homebrew/bin/golangci-lint`) |
+| Cómo llega el **Go** fijado | Por el mismo `GOTOOLCHAIN=go1.26.5`, puesto dos veces: la variable del entorno (`flujo-web-local.md` §3) y el `export` del `Makefile`. Si el Go de la VM ya es el 1.26.5, ninguna hace nada | `export GOTOOLCHAIN := go$(GO_VERSION)` (`Makefile:36`): el `go` del `PATH` no compila él, ejecuta la toolchain `go1.26.5`, que Go descarga **una vez** a la caché de módulos (`golang.org/toolchain@v0.0.1-go1.26.5.darwin-arm64`) y verifica contra `sum.golang.org`. Sin `+auto` |
+| Cómo llega el **`gofmt`** fijado | `$(go env GOROOT)/bin/gofmt` de la toolchain efectiva (`fmt-check`, `Makefile:184-192`) | Lo mismo. El `gofmt` del `PATH` (el de `go1.27.1`) **no** obedece a `GOTOOLCHAIN` y no se usa |
+| Cómo llega el **linter** fijado | El del `PATH`: no hay `.bin/`, y `lint` cae al `PATH` (`RESOLVE_LINT`, `Makefile:61-86`) | `make tools` deja el binario oficial de la release, con el sha256 verificado contra el fichero de checksums de la misma release, en `.bin/golangci-lint` (ignorado por git, `.gitignore:17`); `lint` elige ese antes que el del `PATH` |
+| Qué lo comprueba | `make toolchain` → `TOOLCHAIN=OK`, `rc=0` | `make toolchain` → `TOOLCHAIN=OK`, `rc=0` |
+| Quién lo corre al arrancar | El hook `SessionStart`, con `GOPROXY=off` | El mismo hook |
+| Qué hay que hacer **una vez** | Nada en la sesión. Las variables y el *setup script* del entorno (`flujo-web-local.md` §3) los aplicó Jhoan (F-2) | **`make tools`** (idempotente). ⚠️ Es por *checkout*, no por máquina: `TOOLS_DIR` es `$(CURDIR)/.bin` (`Makefile:46`), así que un clon o un `git worktree` nuevo no lo tiene |
+| Un `go` **suelto**, fuera de `make` | `go1.26.5` (por la variable del entorno) | 🔴 `go1.27.1`, salvo que lleve `GOTOOLCHAIN=go1.26.5` delante. Un gate corrido así **no es autoritativo** |
+| Docker | El daemon no arranca solo: `(nohup dockerd >/tmp/dockerd.log 2>&1 &)`; Docker Hub da 429 y se va por `mirror.gcr.io` (§5). `make ci-docker` en la VM: **no probado** | `make ci-docker` monta `$(go env GOMODCACHE)` e instala el linter **dentro** del contenedor con `make tools TOOLS_DIR=/usr/local/bin` (`Makefile:357-363`): necesita red hacia `github.com` en cada corrida (el contenedor es `--rm`). El `.bin/` del host viaja montado, es de otro SO, no ejecuta y `lint` lo descarta solo |
+
+### 6.2 · Lo que imprime `make toolchain`
+
+Seis líneas `CLAVE=valor ruta` y el veredicto (`Makefile:155-182`). En el Mac, el 2026-10-02, con
+el entorno **pelado** (sin exportar `GOTOOLCHAIN` ni tocar el `PATH`) y después de `make tools`:
+
+```text
+GO_PINNED=go1.26.5
+GO_SYSTEM=go1.27.1 /opt/homebrew/bin/go
+GO_EFFECTIVE=go1.26.5 <GOMODCACHE>/golang.org/toolchain@v0.0.1-go1.26.5.darwin-arm64/bin/go
+GOFMT_EFFECTIVE=go1.26.5 <GOMODCACHE>/golang.org/toolchain@v0.0.1-go1.26.5.darwin-arm64/bin/gofmt
+LINT_PINNED=v2.12.2
+LINT_EFFECTIVE=v2.12.2 <repo>/.bin/golangci-lint
+TOOLCHAIN=OK
+```
+
+- **`rc≠0` y `TOOLCHAIN=NOT_READY`** si el Go o el `gofmt` efectivos no son `go$(GO_VERSION)`, o si
+  el `golangci-lint` elegido no es `$(LINT_VERSION)`. Antes de esa línea dice qué miró y cómo se
+  arregla (`toolchain: ningún golangci-lint es v2.12.2 — <ruta>: ausente · PATH <ruta>: v2.14.0` y
+  `toolchain: se arregla con 'make tools'`). Medido el 2026-10-02 en un `git worktree` sin `.bin/`:
+  `LINT_EFFECTIVE=v2.14.0 /opt/homebrew/bin/golangci-lint`, `TOOLCHAIN=NOT_READY`, `make` sale con 2.
+- **Verificar no es instalar.** `make toolchain` a secas puede hacer que Go descargue la toolchain
+  si no está en la caché; el hook lo llama con `GOPROXY=off` (`verificar-entorno.sh:29`) para que
+  falle en el acto en vez de descargar.
+- **La regla de elección del linter es una sola** y la comparten `lint` y `toolchain`: `LINT_BIN`
+  si se pasó en la línea de comandos; si no, `.bin/golangci-lint` si existe, ejecuta y es la
+  versión fijada; si no, el del `PATH`. Si ninguno es la fijada, `lint` falla (T-1, sin cambios).
+- **Los tres *overrides*** (`TOOLS_DIR`, `LINT_BIN`, `LINT_RELEASE_URL`, `Makefile:46-49`) son `:=`:
+  se cambian **solo** en la línea de comandos (`make lint LINT_BIN=<ruta>`), nunca por una variable
+  que esté en el entorno. `LINT_BIN` también tiene que ser la versión fijada.
+
+**Medido el 2026-10-02 en el Mac, entorno pelado** (PR #20): `make tools` `rc=0` · `make toolchain`
+`TOOLCHAIN=OK` · `make ci-local` `GATE_RC=0`, `0 issues`, `FICHEROS_EVALUADOS=10 · POR_DEBAJO=0 ·
+EXENTOS_POSTGRES=1` · `make test-procesos` viejo y nuevo `RC=0 · PASS=158 · SKIP=0` ·
+`make ci-docker` `rc=0`.
+
+### 6.3 · Lo que NO cambia
+
+1. **Sin toolchain fijada, ningún gate es autoritativo.** La regla es la misma; cambia quién la
+   comprueba (`make toolchain`) y quién la arregla (`make tools`, o nada).
+2. **Un `go` suelto en local es `go1.27.1`.** Los comandos que las skills y los protocolos dan
+   fuera de `make` (`GOWORK=off go vet -tags pendiente …`, `GOWORK=off go test -race …`) llevan
+   `GOTOOLCHAIN=go1.26.5` delante, o se sustituyen por su target (`make vet-pendiente`,
+   `make vet-integracion`, `make test-pendiente`, `make cobertura-ficheros`). El hook lo dice en
+   una línea cuando no coincide (`Ojo: un go suelto, fuera de make, es '…'`,
+   `verificar-entorno.sh:58`). En la web da igual.
+3. **`make tools` en la web: no probado.** El proxy de GitHub de la sesión solo sirve *release
+   assets* de los repos adjuntos (§3), y `make tools` baja uno de `golangci/golangci-lint`: lo
+   esperable es que falle. No hace falta: el linter fijado ya viene en el `PATH`.
+4. **No se ejecuta ningún script remoto.** `make tools` descarga un tarball y un fichero de
+   checksums, compara el sha256 **antes** de extraer y, si no casa, no deja binario
+   (`Makefile:113-148`). El `curl … install.sh | sh` de `ci-docker` desapareció en `3ed9bd0`; el del
+   *setup script* del entorno web (`flujo-web-local.md` §3) sigue ahí como segundo intento: es
+   configuración de claude.ai/code, no del repo.
+5. **El hook sigue sin instalar nada y sin fallar la sesión** (`exit 0` siempre).
+
+### 6.4 · Subir de versión
+
+**Go.** Cambian **a la vez**, en el mismo commit los tres del repo:
+
+| Dónde | Qué |
+|---|---|
+| `Makefile:15` | `GO_VERSION` |
+| `go.mod:3` | la línea `go` |
+| `.github/workflows/ci.yml:17` | `GO_VERSION` |
+| Entorno web (claude.ai/code, lo aplica Jhoan) | la variable `GOTOOLCHAIN` y el `GO_WANT` del *setup script* (`flujo-web-local.md` §3) |
+
+- Si `go.mod` pide **más** que `GO_VERSION`, todo `make` que compile **falla** diciéndolo
+  (`go: go.mod requires go >= X (running go Y; GOTOOLCHAIN=goY)`): es a propósito, por eso no hay
+  `+auto`. 🔴 **`make toolchain` no detecta ese desfase**: `go env GOVERSION` no carga `go.mod`
+  (sonda del 2026-10-02 fuera del repo: `go env` `rc=0`, `go vet` `rc=1` con ese mensaje).
+- Si `go.mod` pide **menos**, nada falla y el gate corre con `GO_VERSION`: el desfase es silencioso.
+
+**`golangci-lint`.** `LINT_VERSION` (`Makefile:16`), `version:` de `.github/workflows/ci.yml:113` y
+el `LINT_WANT` del *setup script* del entorno web. En local el `.bin/` viejo se queda: `make lint`
+**falla** (ya no es la fijada, y el del `PATH` tampoco) y `make tools` lo reemplaza. En la web,
+hasta que el *snapshot* del entorno se rehaga con el script nuevo, `make toolchain` da `NOT_READY`.

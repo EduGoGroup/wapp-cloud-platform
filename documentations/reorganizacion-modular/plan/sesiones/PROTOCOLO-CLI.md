@@ -11,9 +11,21 @@
 ```bash
 git fetch -q origin && git status --short && git branch --show-current
 git log --oneline -1 origin/dev
-go version && golangci-lint version        # la toolchain fijada: go1.26.5 (GOTOOLCHAIN) y v2.12.2
+make toolchain; echo "rc=$?"               # TOOLCHAIN=OK y rc=0: go1.26.5 y v2.12.2 EFECTIVOS
 docker info >/dev/null && echo docker-ok
 ```
+
+**La toolchain la pone el `Makefile`** (desde el 2026-10-02): no hace falta exportar `GOTOOLCHAIN`
+ni instalar el lint aparte. En el Mac el sistema trae `go1.27.1` y `golangci-lint 2.14.0`
+(Homebrew); `GO_SYSTEM` dice ese Go, pero lo que cuenta es `GO_EFFECTIVE` y `LINT_EFFECTIVE`.
+
+- **Una vez por *checkout*** (el clon, y cada `git worktree` nuevo): `make tools`. Deja el
+  `golangci-lint` fijado en `.bin/`, ignorado por git. Es idempotente.
+- Si `make toolchain` da `TOOLCHAIN=NOT_READY` por el lint → `make tools` y otra vez
+  `make toolchain`. Si es por el Go → hace falta red una vez (Go baja la toolchain a su caché).
+- 🔴 **Un `go` suelto, fuera de `make`, es `go1.27.1`**: como gate lleva `GOTOOLCHAIN=go1.26.5`
+  delante, o se usa su target. Sin toolchain fijada, **ningún gate es autoritativo**.
+- Detalle, web y local lado a lado: [`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
 
 1. Localiza la rama / el PR de la sesión web que cierras y el **traspaso** en
    `documentations/reorganizacion-modular/traspasos/`. **Léelo entero** (skill `traspaso-web-local`).
@@ -34,9 +46,10 @@ rojo y el verde de un fichero son commits distintos.
 
 ## 3 · Repetir los gates con TU toolchain (skill `validar-antes-de-cerrar`)
 
-`make ci-local` (rc sin pipe), `go vet -tags pendiente ./...`, `make test-pendiente`, SKIP en código
-nuevo = 0 con `-v`, y los que diga el bloque. Compara con la §3 del traspaso: una diferencia es un
-hallazgo, no un ruido.
+`make toolchain` (`TOOLCHAIN=OK`, `rc=0`), `make ci-local` (rc sin pipe), `make vet-pendiente`,
+`make test-pendiente`, SKIP en código nuevo = 0 con `-v` (es un `go` suelto:
+`GOTOOLCHAIN=go1.26.5 GOWORK=off go test -v …`), y los que diga el bloque. Compara con la §3 del
+traspaso: una diferencia es un hallazgo, no un ruido.
 
 ## 4 · Lo que solo la local puede hacer (lo que diga tu bloque)
 

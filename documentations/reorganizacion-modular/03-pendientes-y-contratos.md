@@ -41,7 +41,7 @@ verdad**.
 | P-4 | **Decidir el alcance y los nombres** (§3) y escribir entonces el plan ejecutable: olas, tareas, criterios de cierre, prompts | Este análisis no es un plan | ⏳ Pendiente de Jhoan |
 | P-5 | **Ventana de congelación**: mientras dure cada ola de movimiento, nada más entra en `dev` | Un diff que toca casi todos los ficheros choca con cualquier rama viva | Hoy no hay ramas vivas por delante de `dev` (`feat/047-o10-puerta-plano-roles` ya está fusionada: 0 commits por delante) |
 | P-6 | **Docker solo hace falta en local** | Con el método de `05`, los tests de fichero son unitarios (sin BD) y los de integración se escriben de cero en F9 con **testcontainers**, que necesita Docker: los corre **Claude Code en local** (`05` §7.3). La web escribe y compila; no cierra F9 | ✅ Resuelto por el método (2026-09-27) |
-| P-7 | **Toolchain fijada**: Go `1.26.5` y golangci-lint `v2.12.2` (`Makefile:11-12`) | El gate es `make ci-local`; otra versión de lint da otro resultado. (La máquina local tiene Go 1.27.1: `go.mod` manda) | Anotado |
+| P-7 | **Toolchain fijada**: Go `1.26.5` y golangci-lint `v2.12.2` (`Makefile:11-12`) | El gate es `make ci-local`; otra versión de lint da otro resultado. (La máquina local tiene Go 1.27.1: `go.mod` manda) | Anotado. ✎ 2026-10-02: la fija sola el `Makefile` (`GOTOOLCHAIN`, `make tools`, `make toolchain`; hoy `Makefile:15-16`): [`06`](06-entorno-web.md) §6 |
 
 ### 2.1 · Lo que queda DESPUÉS, fuera de este repo
 

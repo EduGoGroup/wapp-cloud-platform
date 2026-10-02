@@ -17,7 +17,7 @@ portada del paquete viejo. El código viejo **no se toca**: es la referencia y l
 ```bash
 git fetch -q origin && git status --short && git branch --show-current
 git log --oneline -1 origin/dev
-go version && golangci-lint version        # go1.26.5 y v2.12.2; si no, el entorno NO está listo
+make toolchain; echo "rc=$?"               # TOOLCHAIN=OK y rc=0; si no, el entorno NO está listo
 ```
 
 1. Tu rama de trabajo debe partir de **`origin/dev` actual**. Si no, `git rebase origin/dev` (o
@@ -29,8 +29,11 @@ go version && golangci-lint version        # go1.26.5 y v2.12.2; si no, el entor
    alguna se decidió **distinta** de la recomendación, aplícalo y anótalo en tu `tareas.md`.
 4. Si hay un traspaso abierto de tu fase en `documentations/reorganizacion-modular/traspasos/`,
    léelo entero (skill `traspaso-web-local`).
-5. Si `golangci-lint` no es la `v2.12.2`, **no declaras ningún gate pasado**: lo dices y sigues solo
-   con lo que no dependa del lint.
+5. Si `make toolchain` no termina en `TOOLCHAIN=OK` con `rc=0`, **no declaras ningún gate pasado**:
+   lo dices, con su salida, y sigues solo con lo que no dependa de lo que falte (si es el
+   `golangci-lint`, lo que no dependa del lint). En la web el lint fijado viene en el `PATH`;
+   `make tools` es para la máquina local y aquí **no está probado**
+   ([`../../06-entorno-web.md`](../../06-entorno-web.md) §6). No lo sustituyas por otro.
 
 ## 2 · Qué leer, y nada más (protege tu contexto)
 
@@ -66,15 +69,19 @@ go version && golangci-lint version        # go1.26.5 y v2.12.2; si no, el entor
 ## 4 · Gates (skill `validar-antes-de-cerrar`)
 
 ```bash
+make toolchain; echo "rc=$?"                             # paso 0: TOOLCHAIN=OK y rc=0
 make ci-local > /tmp/ci.log 2>&1; echo "rc=$?"          # el rc SIN pipe
-go vet -tags pendiente ./... ; echo "rc=$?"
+make vet-pendiente; echo "rc=$?"                         # go vet -tags pendiente ./...
 make test-pendiente                                       # cuenta lo que falta (existe desde F0-02/T0.4;
                                                           # antes, di «el target aún no existe»)
 go test -v ./internal/<lo tuyo>/... 2>&1 | grep -c -- '--- SKIP'   # SKIP en código nuevo = 0
 ```
 
-Más los que diga tu bloque (`make cobertura-ficheros`, `huella_test`, `go vet -tags integracion
-./test/procesos/...`). Un gate corrido con otra versión de la toolchain **no es autoritativo**: dilo.
+Más los que diga tu bloque (`make cobertura-ficheros`, `huella_test`, `make vet-integracion`). Un
+gate corrido con otra versión de la toolchain **no es autoritativo**: dilo. El `go test` suelto de
+arriba corre con el `go` de la sesión, que en la web es el fijado (variable `GOTOOLCHAIN` del
+entorno); si no lo fuera, el hook lo dice en su línea `Ojo:` y el comando lleva
+`GOTOOLCHAIN=go1.26.5` delante.
 
 ## 5 · Prohibiciones
 

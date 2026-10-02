@@ -15,6 +15,13 @@
 
 🚫 No se baja `go 1.26.5` para acomodar un entorno, ni se cambia `LINT_VERSION` por comodidad.
 
+✎ **2026-10-02** (`0b78cd1`, `26cbfbf`, `3ed9bd0`): la tabla es la medida del 2026-09-28 y sus dos
+⚠️ **ya no son el estado**. Hoy el `Makefile` exporta `GOTOOLCHAIN=go$(GO_VERSION)` (`Makefile:36`),
+`lint` elige el `golangci-lint` de `.bin/` (lo deja `make tools`) o el del `PATH` y falla si ninguno
+es `LINT_VERSION` (T-1, desde `d05ac3a`), y `make toolchain` dice qué corre de verdad. Las líneas
+citadas se movieron: `GO_VERSION` `:15`, `LINT_VERSION` `:16`, `GO` `:17`. Lo vigente, web y local:
+[`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
+
 ## 2 · Los `make` targets
 
 **Existen hoy** (`Makefile:30`, `.PHONY`):
@@ -30,6 +37,13 @@
 | `test-integration` | `docker run postgres:16` con **nombre fijo** y puerto `5432` (sobrescribible con `INTEGRATION_PG_PORT`) + `WAPP_TEST_REQUIRE_DB=1 go test -p 1 ./...` | La batería **vieja**: solo importa en F0 (✎ de `platform`) y en F10. 💻 |
 | `ci-docker` | `ci-local` dentro de `golang:1.26.5-bookworm` con el lint v2.12.2 instalado | Toolchain exacta; **no** corre integración. 💻 |
 | `migrate` · `migrate-status` | `go run ./cmd/migrate [-status]` | leen `WAPP_DB_*`. 🚫 Nunca contra UAT desde el plan |
+
+✎ **2026-10-02**: dos targets más y dos cambios sobre la tabla de arriba (`Makefile:103`, `.PHONY`).
+`tools` deja el `golangci-lint` fijado en `.bin/` (binario oficial, sha256 verificado; en local, una
+vez por *checkout*); `toolchain` imprime la toolchain efectiva y sale ≠ 0 si no es la fijada.
+`fmt-check` usa el `gofmt` del `GOROOT` fijado, no el del `PATH`; `ci-docker` monta
+`$(go env GOMODCACHE)` e instala el lint con `make tools TOOLS_DIR=/usr/local/bin`. Detalle en
+[`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
 
 **Nacen en F0** (los escribe la fase `F0`; aquí solo su contrato):
 
@@ -99,7 +113,10 @@ tail -1 "$L"                                          # GATE_RC=0 o nada que cel
    `grep -rn --include='*.go' --exclude-dir=pendiente 'pendiente\.Implementar(' internal | grep -vc '_test\.go:'`.
    Se informa **antes → después**. En F10 debe ser 0 (`sin_pendientes_test.go`).
 4. **Versión de herramienta.** Un gate corrido con un lint distinto de v2.12.2 o un Go distinto de
-   1.26.5 se informa **con la versión usada** y como **no autoritativo**.
+   1.26.5 se informa **con la versión usada** y como **no autoritativo**. ✎ 2026-10-02: se comprueba
+   con `make toolchain` (`TOOLCHAIN=OK`, `rc=0`). Bajo `make` la versión es la fijada; un `go`
+   **suelto** en local (los de los puntos 2 y de «Cobertura por fichero») es `go1.27.1` salvo que
+   lleve `GOTOOLCHAIN=go1.26.5` delante.
 5. **Lo no corrido se dice «no corrido»**, con el motivo. Nunca «debería pasar».
 
 Formato del informe: el de la skill `validar-antes-de-cerrar` («Cómo se informa»).

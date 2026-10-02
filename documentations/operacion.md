@@ -47,6 +47,22 @@ con todo saltado.
 Go **1.26.5** (el toolchain que fija `go.mod:3` y el `Makefile`), Docker (solo para los tests
 de integración y para levantar un Postgres), `openssl` y un almacén S3-compatible vivo.
 
+✎ **2026-10-02** (`0b78cd1`): el `go` del `PATH` **no** tiene que ser el 1.26.5. El `Makefile`
+exporta `GOTOOLCHAIN=go1.26.5` (`Makefile:36`) y cualquier `go` ≥ 1.21 ejecuta esa toolchain, que
+Go descarga una vez a su caché de módulos. En la máquina de desarrollo el del `PATH` es el 1.27.1
+de Homebrew. **El primer paso en una máquina nueva (o en un clon o `git worktree` nuevo) es:**
+
+```bash
+make tools                      # golangci-lint v2.12.2 en .bin/ (ignorado por git); idempotente
+make toolchain; echo "rc=$?"    # TOOLCHAIN=OK y rc=0: lo que corre bajo make es lo fijado
+```
+
+🔴 **Un `go` suelto, fuera de `make`, sigue siendo el del sistema.** Los `go run` y `go test` de este
+documento, tecleados tal cual en esa máquina, corren con `go1.27.1`: para el Go fijado, antepón
+`GOTOOLCHAIN=go1.26.5` o usa el target de `make`. Un gate corrido con otro Go no es autoritativo.
+Web y local, lado a lado:
+[`reorganizacion-modular/06-entorno-web.md`](reorganizacion-modular/06-entorno-web.md) §6.
+
 ### 2.2 · Los cuatro pasos
 
 ```bash
@@ -105,15 +121,29 @@ sirve un MinIO (`docker run … minio/minio`) con `WAPP_STORAGE_S3_ENDPOINT` apu
 
 | Target | Qué corre | Qué demuestra |
 |---|---|---|
-| `make fmt-check` | `gofmt -l .` tiene que salir vacío | formato |
+| `make tools` | descarga el binario **oficial** de `golangci-lint` v2.12.2 a `.bin/` (ignorado por git), comparando su sha256 con el fichero de checksums de la release **antes** de extraer; si `.bin/` ya tiene esa versión, no descarga nada. No ejecuta ningún script remoto | nada: prepara. Una vez por *checkout*, en local (✎ 2026-10-02) |
+| `make toolchain` | imprime `GO_PINNED`, `GO_SYSTEM`, `GO_EFFECTIVE`, `GOFMT_EFFECTIVE`, `LINT_PINNED`, `LINT_EFFECTIVE` y `TOOLCHAIN=OK` o `TOOLCHAIN=NOT_READY`; `rc≠0` si lo efectivo no es lo fijado | que lo que va a correr `make` es Go 1.26.5 y `golangci-lint` v2.12.2. **Paso 0 de cualquier gate** (✎ 2026-10-02) |
+| `make fmt-check` | `gofmt -l .` tiene que salir vacío, con el `gofmt` del `GOROOT` de Go 1.26.5 (el del `PATH` no obedece a `GOTOOLCHAIN`) | formato |
 | `make vet` | `GOWORK=off go vet ./...` | errores estáticos del compilador extendido |
-| `make lint` | `golangci-lint` **v2.12.2 fijado** (no el de `~/go/bin`) | los **16** linters de `.golangci.yml` (`linters.enable`) más sus 2 formateadores (`formatters.enable`) |
+| `make vet-pendiente` | `GOWORK=off go vet -tags pendiente ./...` | que los tests en rojo de la reconstrucción modular compilan |
+| `make vet-integracion` | `GOWORK=off go vet -tags integracion ./test/procesos/...` | que los procesos de F9 compilan, sin Docker |
+| `make lint` | `golangci-lint` **v2.12.2 fijado**: el de `.bin/` si existe, ejecuta y es esa versión; si no, el del `PATH`. Falla si ninguno lo es y manda a `make tools` | los **16** linters de `.golangci.yml` (`linters.enable`) más sus 2 formateadores (`formatters.enable`) |
 | `make test` | `GOWORK=off go test -race ./...` | unitarios con detector de carreras. **Los `*_integration_test.go` se saltan solos sin `WAPP_TEST_DB_DSN`** |
+| `make cobertura-ficheros` | cobertura de sentencias por fichero en verde del árbol nuevo, umbral 80 %; imprime `FICHEROS_EVALUADOS`, `POR_DEBAJO` y `EXENTOS_POSTGRES` | D-12 de la reconstrucción modular |
 | `make build` | `GOWORK=off go build ./...` | compila |
-| **`make ci-local`** | los cinco de arriba, en ese orden, **sin integración** | el gate de pre-push |
+| **`make ci-local`** | `fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build`, en ese orden (`Makefile:334`), **sin integración** | el gate de pre-push |
+| `make test-pendiente` | imprime `PENDIENTES=<n>` y `ROJOS=<n>`, corre los rojos (su fallo no rompe el target) y `vet-pendiente` | lo que falta por implementar. Informa, no juzga |
 | `make test-integration` | levanta un `postgres:16` efímero, corre `go test -p 1 ./...` con `WAPP_TEST_DB_DSN` y `WAPP_TEST_REQUIRE_DB=1`, y lo destruye | el 14 % de la suite que solo corre con base |
-| `make ci-docker` | repite `ci-local` dentro de `golang:1.26.5-bookworm` | que no dependes de tu toolchain local |
+| `make test-procesos` | los procesos de F9 contra los dos binarios (`viejo`, `nuevo`) con testcontainers; necesita Docker. Rojo si `rc≠0` **o** hay algún `--- SKIP` | el comportamiento de caja negra, por proceso de negocio |
+| `make ci-docker` | repite `ci-local` dentro de `golang:1.26.5-bookworm`. ✎ 2026-10-02 (`3ed9bd0`): monta `$(go env GOMODCACHE)` (antes `GOPATH/pkg/mod`, que en la máquina de desarrollo no existe: su `GOMODCACHE` está en otro volumen) e instala el linter con `make tools TOOLS_DIR=/usr/local/bin` dentro del contenedor (antes `curl … install.sh \| sh`) | que no dependes de tu toolchain local |
 | `make migrate` / `make migrate-status` | `go run ./cmd/migrate` [`-status`] | aplica / consulta el esquema |
+
+**Por qué todos corren con Go 1.26.5 aunque el `go` del `PATH` sea otro**: el `Makefile` exporta
+`GOTOOLCHAIN=go$(GO_VERSION)` a todo subproceso (los `$(MAKE)` anidados, el `go build` del arnés de
+`test/procesos`, el `go` que lanza `golangci-lint`). Sin `+auto`: si `go.mod` pidiera un Go más
+nuevo que `GO_VERSION`, `go` falla y lo dice, en vez de subir de versión por su cuenta.
+`TOOLS_DIR`, `LINT_BIN` y `LINT_RELEASE_URL` se cambian **solo** en la línea de comandos
+(`make lint LINT_BIN=<ruta>`).
 
 **Por qué `GOWORK=off`**: el repo vive dentro de un `go.work` del ecosistema. Con el workspace
 activo compilas contra el árbol de al lado, no contra la versión **publicada** de
@@ -140,6 +170,10 @@ GOWORK=off go test ./...    → rc=0 · 71 paquetes ok · 5 sin tests
 ```
 **NO VERIFICADO**: `make lint` (no comprobé que exista `golangci-lint v2.12.2` en la máquina) y
 `make test-integration` (no levanté Docker).
+
+✎ 2026-10-02: hoy `make lint` no depende de lo que haya instalado: `make tools` deja el fijado en
+`.bin/`. Medido ese día en la máquina de desarrollo (PR #20), sin exportar nada: `make toolchain` `TOOLCHAIN=OK`,
+`make ci-local` `GATE_RC=0` con `0 issues`, `make ci-docker` `rc=0`.
 
 La suite entera son **3.116** funciones `Test*`/`Benchmark*`/`Fuzz*` en **528** ficheros.
 
