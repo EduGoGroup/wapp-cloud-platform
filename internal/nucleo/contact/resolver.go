@@ -84,6 +84,15 @@ type Resolver interface {
 	// direccionable, así que en la práctica se degrada a wa_lid: un contacto con teléfono y LID da
 	// el teléfono, y uno solo con LID da el LID.
 	//
+	// Si el contacto tiene VARIAS refs direccionables del kind elegido (dos teléfonos, porque se ató
+	// un segundo número o tras una fusión), Destino devuelve UNA de ellas, y cuál NO es parte del
+	// contrato. La memoria da la primera que se ató al contacto (en una fusión, las del canónico van
+	// antes que las de los huérfanos). Postgres lee las filas del contacto sin ORDER BY y da la
+	// primera de ese kind que le llegue: un orden que la base no garantiza y que puede cambiar de una
+	// llamada a otra. Lo que sí se promete es el kind (el de mejor preferencia entre los
+	// direccionables) y que la ref es del contacto. Quien necesite un destino estable entre varios
+	// números no puede apoyarse en Destino.
+	//
 	// Devuelve ErrNoDestino si el contacto existe pero ninguna de sus refs es direccionable
 	// (p. ej. solo un wa_username), y ErrContactNotFound si contactID no existe o es de otro tenant
 	// (R-21, N-01). ErrNoDestino llega SIN envolver: el texto del error es exactamente el del

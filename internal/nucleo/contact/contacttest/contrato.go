@@ -90,6 +90,9 @@ type Estado interface {
 //     llega a darse (lo dice MemoryResolver.Resolve). En Postgres lo cubrirá el test unitario
 //     de la función pura que elige el canónico (pickCanonicalDB), que nace con el verde de
 //     repository_postgres.go (T1.11): hasta entonces es una promesa del puerto sin aserción.
+//   - Cuál de varias refs direccionables del mismo kind devuelve Destino (dos teléfonos en un
+//     contacto): la memoria da la primera atada y Postgres lee sin ORDER BY, así que el puerto
+//     solo promete el kind. Los casos de Destino usan contactos con una sola ref por kind.
 //   - Una Ref vacía o no normalizable: la precondición del puerto es que cada Ref venga de
 //     contact.NewRef, que no puede construirlas. Resolve las cuenta como una ref más, pero la
 //     suite no las ejercita: lo fija el test propio de MemoryResolver, y qué hace Postgres con
