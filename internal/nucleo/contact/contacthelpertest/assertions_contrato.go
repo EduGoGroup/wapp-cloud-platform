@@ -1,5 +1,5 @@
 // Aserciones compartidas por los casos: comparar contact_id, exigir Destino, errores (centinela y
-// texto exacto) y dueño del estado.
+// texto exacto) y dueño y marca del estado.
 
 package contacthelpertest
 
@@ -101,14 +101,21 @@ func exigirNoEncontrado(t *testing.T, m Montaje, tenantID, contactID, que string
 	requireErrorText(t, err, notFoundText(contactID), que)
 }
 
-// exigirDueno exige que el estado de la sesión del tenant pertenezca a quiere.
-func exigirDueno(t *testing.T, m Montaje, tenantID, sessionID, quiere string) {
+// exigirDueno exige que el estado de la sesión del tenant pertenezca a quiere y que su fila lleve la
+// marca wantMark: el dueño dice de quién es el estado; la marca, qué fila es (la del canónico o la del
+// huérfano re-clavada, R-17). Dueño y marca se comprueban por separado para que el mensaje diga cuál
+// de los dos falla.
+func exigirDueno(t *testing.T, m Montaje, tenantID, sessionID, quiere, wantMark string) {
 	t.Helper()
-	got, ok := m.Estado.Dueno(t, tenantID, sessionID)
-	switch {
-	case !ok:
-		t.Errorf("la sesión %q del tenant %s no tiene estado; quiere el de %q", sessionID, tenantID, quiere)
-	case got != quiere:
+	got, gotMark, ok := m.Estado.Dueno(t, tenantID, sessionID)
+	if !ok {
+		t.Errorf("la sesión %q del tenant %s no tiene estado; quiere el de %q con la marca %q", sessionID, tenantID, quiere, wantMark)
+		return
+	}
+	if got != quiere {
 		t.Errorf("el estado de la sesión %q del tenant %s es de %q; quiere el de %q", sessionID, tenantID, got, quiere)
+	}
+	if gotMark != wantMark {
+		t.Errorf("el estado de la sesión %q del tenant %s lleva la marca %q; quiere %q", sessionID, tenantID, gotMark, wantMark)
 	}
 }
