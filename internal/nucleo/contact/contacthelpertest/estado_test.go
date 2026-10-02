@@ -1,4 +1,4 @@
-package contacttest
+package contacthelpertest
 
 import (
 	"context"

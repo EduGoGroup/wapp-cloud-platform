@@ -3,7 +3,7 @@
 // Aquí crece lo que dependa de Estado: si Estado gana una marca (D-F1-7), este es el sitio donde se
 // distingue qué contenido sobrevive en el conflicto de una sesión.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"fmt"

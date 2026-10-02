@@ -10,12 +10,12 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact/contacttest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact/contacthelpertest"
 	"github.com/google/uuid"
 )
 
-// Este test es EXTERNO (package contact_test): contacttest importa contact, así que un test interno
-// que importara contacttest daría un ciclo de imports. Por eso prueba solo por los exportados.
+// Este test es EXTERNO (package contact_test): contacthelpertest importa contact, así que un test interno
+// que importara contacthelpertest daría un ciclo de imports. Por eso prueba solo por los exportados.
 
 // Aserciones de compilación de lo que MemoryResolver promete: es un Resolver (el puerto), el
 // constructor recibe el migrador (nil se admite) y NO devuelve un error, y Resolve y Destino tienen
@@ -57,7 +57,7 @@ type llamadaMigrador struct {
 
 // migradorStub es el StateMigrator con el que estos tests cuentan y miran las llamadas de la
 // fusión. Registra cada llamada, con lo que cuelga de su ctx bajo claveMarca, y devuelve err (nil
-// si no falla). No tiene estado de flow_state: eso lo hace contacttest.EstadoMemoria.
+// si no falla). No tiene estado de flow_state: eso lo hace contacthelpertest.EstadoMemoria.
 type migradorStub struct {
 	err      error
 	llamadas []llamadaMigrador
@@ -77,9 +77,9 @@ func (m *migradorStub) MigrateContactID(ctx context.Context, tenantID, fromConta
 // resolver nuevo con un EstadoMemoria que es a la vez su migrador y lo que la suite observa. Con
 // -race, porque la suite incluye la ráfaga concurrente (R-32).
 func TestMemoryResolver_Contrato(t *testing.T) {
-	contacttest.Contrato(t, func(t *testing.T) contacttest.Montaje {
-		est := contacttest.NuevoEstado()
-		return contacttest.Montaje{
+	contacthelpertest.Contrato(t, func(t *testing.T) contacthelpertest.Montaje {
+		est := contacthelpertest.NuevoEstado()
+		return contacthelpertest.Montaje{
 			Resolver: contact.NewMemoryResolver(est),
 			TenantA:  uuid.NewString(),
 			TenantB:  uuid.NewString(),
@@ -242,7 +242,7 @@ func TestMemoryResolver_SinFusion_NoLlamaAlMigrador(t *testing.T) {
 // misma ref vuelve a dar el mismo contact_id, y una ref válida que llega con ella se ata a ese
 // contacto en vez de crear otro).
 //
-// Va aquí y no en contacttest.Contrato, a propósito: la suite solo usa refs de NewRef, que es la
+// Va aquí y no en contacthelpertest.Contrato, a propósito: la suite solo usa refs de NewRef, que es la
 // precondición del puerto. Postgres tampoco las filtra antes de contar, pero qué hace después con
 // una ref así (cifrar un value vacío, insertar un kind que no es de los tres) solo se ve contra un
 // Postgres real y su contrato no lo promete.

@@ -15,7 +15,7 @@ import (
 // public.flow_state. Es la implementación que corre en producción: la identidad de los contactos
 // vive en Postgres, con el identificador cifrado en reposo. Se construye con NewPostgresResolver y
 // es seguro para uso concurrente (cada Resolve abre su propia transacción). La suite
-// contacttest.Contrato fija lo que promete junto a MemoryResolver; su SQL solo lo ejercita un
+// contacthelpertest.Contrato fija lo que promete junto a MemoryResolver; su SQL solo lo ejercita un
 // Postgres real (esa misma suite contra esta implementación y los procesos de F9), no un test
 // unitario.
 //

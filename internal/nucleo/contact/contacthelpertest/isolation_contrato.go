@@ -1,7 +1,7 @@
 // Casos de aislamiento: el kind y el tenant forman parte de la clave de un contacto (N-01, N-02),
 // también al pedir su Destino desde otro tenant (R-21).
 
-package contacttest
+package contacthelpertest
 
 import (
 	"fmt"

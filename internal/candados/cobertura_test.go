@@ -267,7 +267,7 @@ func TestCoberturaBordes(t *testing.T) {
 }
 
 // D-F1-6 (Jhoan, 2026-10-01): los paquetes …test (suites Contrato y dobles, p. ej.
-// contacttest) quedan exentos también de la cobertura por fichero (D-12). Su suite solo la
+// contacthelpertest) quedan exentos también de la cobertura por fichero (D-12). Su suite solo la
 // ejecutan los tests de las implementaciones, que viven en otros paquetes, y `go test -cover`
 // sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil del propio
 // paquete …test el fichero sale al 0 % y rompería `make cobertura-ficheros`.

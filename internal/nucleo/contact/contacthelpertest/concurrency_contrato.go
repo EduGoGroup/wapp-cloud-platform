@@ -1,6 +1,6 @@
 // Caso de concurrencia: get-or-create atómico con llamadas simultáneas (R-32). Corre con -race.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"fmt"

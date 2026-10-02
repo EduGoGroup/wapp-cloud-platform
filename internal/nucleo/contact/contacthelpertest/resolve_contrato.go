@@ -1,7 +1,7 @@
 // Casos de Resolve: crear, reutilizar, atar refs, refs repetidas y lista vacía (R-12 a R-15, R-18).
 // Aquí se añade cualquier promesa nueva sobre qué contact_id devuelve Resolve y cuándo.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"errors"

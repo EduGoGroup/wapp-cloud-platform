@@ -1,7 +1,7 @@
 // Valores y ayudas compartidos por los casos: los datos de las refs, su construcción con
 // contact.NewRef y la llamada a Resolve que exige éxito.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"testing"

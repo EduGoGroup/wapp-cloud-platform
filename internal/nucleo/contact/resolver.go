@@ -36,7 +36,7 @@ var ErrContactNotFound = errors.New("contact: contact_id no encontrado")
 // Resolver es el puerto de identidad de contactos: traduce entre las referencias del mundo
 // (número, LID, username) y el contact_id opaco con el que opera el motor de flujos. Lo
 // implementan MemoryResolver (en memoria) y PostgresResolver (public.contacts, con el value
-// cifrado en reposo), y la suite contacttest.Contrato fija lo que las dos prometen.
+// cifrado en reposo), y la suite contacthelpertest.Contrato fija lo que las dos prometen.
 //
 // Todo es por tenant (N-01): las mismas refs en dos tenants son dos contactos distintos, y un
 // contact_id solo existe dentro del tenant que lo creó. tenantID y contactID son UUID: con uno mal

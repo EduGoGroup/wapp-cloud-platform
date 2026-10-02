@@ -1,4 +1,4 @@
-package contacttest
+package contacthelpertest
 
 import (
 	"context"
@@ -99,7 +99,7 @@ func (e *EstadoMemoria) duenosDe(tenantID, sessionID string) []string {
 // sin tocar nada.
 func (e *EstadoMemoria) MigrateContactID(ctx context.Context, tenantID, fromContactID, toContactID string) error {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("contacttest: migrar estado de %q a %q: %w", fromContactID, toContactID, err)
+		return fmt.Errorf("contacthelpertest: migrar estado de %q a %q: %w", fromContactID, toContactID, err)
 	}
 	if fromContactID == toContactID {
 		return nil

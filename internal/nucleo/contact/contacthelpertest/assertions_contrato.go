@@ -1,7 +1,7 @@
 // Aserciones compartidas por los casos: comparar contact_id, exigir Destino, errores (centinela y
 // texto exacto) y dueño del estado.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"errors"

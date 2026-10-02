@@ -1,7 +1,7 @@
 // Casos de Destino: preferencia, solo LID, solo username, id inexistente y valor normalizado
 // (R-19 a R-21, R-23).
 
-package contacttest
+package contacthelpertest
 
 import (
 	"errors"

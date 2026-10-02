@@ -1,7 +1,7 @@
 // Caso de push_name: no cambia la identidad (N-04). Qué nombre sobrevive NO se afirma (R-28), a
 // propósito: ver Contrato.
 
-package contacttest
+package contacthelpertest
 
 import (
 	"fmt"

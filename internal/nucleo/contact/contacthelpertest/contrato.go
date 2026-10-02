@@ -1,4 +1,4 @@
-// Package contacttest es la suite de contrato del puerto contact.Resolver y sus dobles.
+// Package contacthelpertest es la suite de contrato del puerto contact.Resolver y sus dobles.
 // Ningún código de producción lo importa (mismo criterio que internal/gateway/fleet/fleettest).
 //
 // A diferencia de fleettest, este paquete SÍ importa "testing" (las firmas de Contrato y de
@@ -21,7 +21,7 @@
 //
 // Para añadir un caso: escribe su función en el fichero de su tema, añade su fila a la tabla de
 // casos (con su regla R-xx o N-xx) y apóyate en las ayudas de fixtures y assertions.
-package contacttest
+package contacthelpertest
 
 import (
 	"testing"
@@ -111,7 +111,7 @@ type Estado interface {
 func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje) {
 	t.Helper()
 	if nuevo == nil {
-		t.Fatal("contacttest.Contrato: nuevo es nil; hace falta una función que devuelva un Montaje")
+		t.Fatal("contacthelpertest.Contrato: nuevo es nil; hace falta una función que devuelva un Montaje")
 	}
 	for _, c := range casos() {
 		t.Run(c.nombre, func(t *testing.T) {
