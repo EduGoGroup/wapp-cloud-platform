@@ -41,11 +41,20 @@ export GOTOOLCHAIN := go$(GO_VERSION)
 # y en ci-docker, donde un .bin/ de macOS montado en el contenedor Linux no ejecuta y se
 # descarta solo). Si ninguno es la versión fijada, `lint` falla (decisión T-1: otra versión da
 # otro resultado). LINT_BIN=<ruta> fuerza un binario concreto, que también debe ser la fijada.
-# TOOLS_DIR, LINT_BIN y LINT_RELEASE_URL son `:=` a propósito: se cambian SOLO en la línea de
-# comandos (`make lint LINT_BIN=…`), nunca por una variable que casualmente esté en el entorno.
+# TOOLS_DIR, LINT_BIN, LINT_CACHE_DIR y LINT_RELEASE_URL son `:=` a propósito: se cambian SOLO en
+# la línea de comandos (`make lint LINT_BIN=…`), nunca por una variable que casualmente esté en
+# el entorno.
+# ⚠️ La caché de golangci-lint es POR CHECKOUT (LINT_CACHE_DIR), no la del usuario: la de
+# ~/Library/Caches (o ~/.cache) la comparten todos los checkouts y `git worktree`, y un lint
+# corrido en un worktree deja en ella resultados con SUS rutas; el siguiente lint, desde otro
+# checkout, los devuelve con rutas ajenas y salen como issues los que el código silencia con
+# `//nolint` (la directiva no se aplica a un fichero que ya no está en esa ruta). Medido el
+# 2026-10-02: 36 issues, rc=2, todos con rutas de dos worktrees ya borrados y sobre líneas que
+# llevan su `//nolint`; con caché propia, 0 issues. La primera pasada de cada checkout va en frío.
 TOOLS_DIR        := $(CURDIR)/.bin
 LINT_LOCAL       := $(TOOLS_DIR)/golangci-lint
 LINT_BIN         :=
+LINT_CACHE_DIR   := $(TOOLS_DIR)/lint-cache
 LINT_RELEASE_URL := https://github.com/golangci/golangci-lint/releases/download
 
 # Fragmento de shell: versión `X.Y.Z` que dice un binario de golangci-lint; vacío si no existe
@@ -275,8 +284,9 @@ lint: ## golangci-lint $(LINT_VERSION): el de .bin/ (make tools) o el del PATH �
 		echo "lint: $$lint_fix"; \
 		exit 1; \
 	fi; \
-	echo "GOWORK=off $$lint_bin run --timeout=5m"; \
-	GOWORK=off "$$lint_bin" run --timeout=5m
+	mkdir -p "$(LINT_CACHE_DIR)"; \
+	echo "GOLANGCI_LINT_CACHE=$(LINT_CACHE_DIR) GOWORK=off $$lint_bin run --timeout=5m"; \
+	GOLANGCI_LINT_CACHE="$(LINT_CACHE_DIR)" GOWORK=off "$$lint_bin" run --timeout=5m
 
 build: ## go build ./...
 	$(GO) build ./...
