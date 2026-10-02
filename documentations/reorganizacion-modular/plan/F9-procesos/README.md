@@ -127,7 +127,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-8** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `2a5aea1` · ¿Quién limpia los directorios `procesos-*` que deja una corrida muerta? (contradicción 24) | Barrer al entrar en `TestMain` los de más de una hora, o añadir el `rm` al procedimiento. **Aplicado** lo primero (`sweep_test.go`): solo los `procesos-<cifras>` con el marcador `.wapp-procesos-harness`, directamente bajo `os.TempDir()`, sin seguir enlaces y de más de una hora; un fallo del barrido se dice y no rompe la corrida. Los anteriores al marcador no se reconocen nunca |
 | **D-F9-9** | ¿Acepta Jhoan las dos respuestas que F9-02 dio al §8 del traspaso (dejar el alcance extra del Edge de prueba; mantener la regla del `Cleanup`)? (contradicción 27) | Preguntarlo: hoy no tienen fila en `DECISIONES.md` ni la fórmula «decisión de Jhoan» |
 | **D-F9-10** | **Alcance y criterio de D-F6-7** (contradicciones 19 y 28): ¿cubre las otras tres goroutines de fondo, que no son de F6?; ¿qué se hace con el binario `viejo`, que conserva el worker viejo hasta F10?; ¿con qué se remide, si `CUENTA=3` da verde ≈ 98,8 % de las veces sin arreglar nada? | Sin propuesta: es rumbo. Las salidas (a)–(c) de la contradicción 19 siguen siendo las candidatas |
-| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacthelpertest/contrato.go` (entonces `contacttest/`)? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer. ✎ 2026-10-02: **sigue abierta**; recomendación sí, y se aplica en un PR aparte, a continuación de este. Cifras de hoy, en la nota ✎ de la contradicción 29 |
+| **D-F9-11** | ¿Se parten los ficheros de test de más de 500 líneas de `test/procesos`, como se hizo con `contacthelpertest/contrato.go` (entonces `contacttest/`)? (contradicción 29) | Sí, por tema y solo moviendo declaraciones, antes de que B1 los haga crecer. ✎ 2026-10-02: ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `6ed524b`, `4ac3dbd`, `c8f7d31`, `e9d93f4`, `eae418d`, en un PR aparte encima del de las otras. Hechos, en la nota ✎ de la contradicción 29 |
 | **D-F9-12** | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `5b817ba` · ¿El Edge de prueba replica también el gate de lease de la **inferencia** (y lleva cuenta de los envíos bloqueados)? (contradicción 30) | Sí al gate de inferencia, antes del proceso que la recorra (P3/P4, T9.15/T9.17): es el mismo agujero que la 25 (b) en el camino LLM. El contador, solo si un proceso lo necesita. **Aplicado** el gate: tras 2 s de gracia con sondeo de 50 ms el doble contesta `InferenceResult{INFERENCE_ERROR_LEASE_INVALID}`, sin `Ack` y sin consultar el guion; **sin** contador de bloqueos. Probado contra el servidor real (`TestArnes_EdgeInferenceLeaseGate`). Siguen abiertos (b), (c) y (d) de la contradicción 30 |
 
 ## Encaje con F0 y F1 (escritas antes que esta spec)
@@ -433,7 +433,23 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     ✎ **2026-10-02 · cifras de hoy** (`wc -l test/procesos/*_test.go` en `88b1d85`). Siguen siendo cinco los que pasan de 500
     líneas: `edge_falso_test.go` **3.406**, `servidor_test.go` **1.087**, `clientes_test.go` **750**, `pki_test.go` **653** y
     `p0_arranque_test.go` **611**. El paquete suma **9.413** líneas en **13** ficheros `*_test.go` (entra `sweep_test.go`, 447;
-    `main_test.go` tiene 483). D-F9-11 **sigue abierta**: recomendación sí, y se aplica en un PR aparte, a continuación de este.
+    `main_test.go` tiene 483).
+    ✎ **2026-10-02 · D-F9-11 aplicada** (en un PR aparte, encima del de las otras siete; un commit por fichero de origen):
+    `edge_falso_test.go` → 19 ficheros (`6ed524b`), `servidor_test.go` → 6 (`4ac3dbd`), `clientes_test.go` → 3 (`c8f7d31`),
+    `pki_test.go` → 3 (`e9d93f4`) y `p0_arranque_test.go` → 3 (`eae418d`; el parser de Prometheus queda en
+    `p0_arranque_prometheus_parser_test.go`). El paquete pasa de 14 a **43** ficheros `.go` y **ninguno pasa de 500 líneas** (`wc -l`): el
+    mayor es `main_test.go`, 483, sin tocar; de los nuevos, `edge_falso_connection_test.go`, 336. Los cinco ficheros de origen conservan
+    su nombre y el núcleo de su tema; **cada pieza se llama `<fichero de origen>_<tema>_test.go`**, para que se vea de qué fichero
+    salió y queden juntas en un listado (indicación de Jhoan al revisar, 2026-10-02): `edge_falso_*`, `servidor_*`, `clientes_*`,
+    `pki_*` y `p0_arranque_*`. El tema va en inglés (`05` E-11) y el nombre de origen no se traduce; los `TestArnes_…` van en
+    hermanos `…_selftest_*`. **Solo se movieron declaraciones**: 461 de primer nivel (291
+    funciones, 102 métodos, 32 `type`, 23 `const`, 13 `var`) y 140 *specs* de bloque, iguales byte a byte antes y después, y 0
+    comentarios perdidos (los 58 grupos nuevos son 29 etiquetas `//go:build integracion` y 29 cabeceras de fichero), medido con
+    `go/parser` sobre los bytes del fuente; lo único que cambia además es el bloque `import` de cada fichero. No hay ningún
+    `func init`. No se tocaron `base_test.go` (el único que abre conexiones, D-F9-6), `sin_bd_viva_test.go`, `sweep_test.go` ni
+    `main_test.go`. Los nombres de los 176 PASS son idénticos antes y después en los dos binarios. **Queda**: los identificadores
+    `p0…` del parser de Prometheus conservan su prefijo aunque el fichero ya sea reutilizable (renombrarlos no era mover), y
+    `identidad_test.go` (470) y `fixtures_test.go` (469) quedan cerca del límite.
 30. **Lo que el Edge de prueba sigue sin replicar del Edge real, tras el arreglo de la 25 (b)** (→ **D-F9-12**; salió al escribir
     el arreglo, leyendo `wapp-edge-agent`, `internal/adapters/cloudlink/`): (a) **la inferencia no pasa por el lease**: el doble la
     sirve siempre, también revocado; el Edge real aplica un gate propio (`inferencia.go`, `leaseVigente`: de alcance daemon —basta
