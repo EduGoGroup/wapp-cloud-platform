@@ -14,7 +14,7 @@
 > `GOWORK=off go test -tags pendiente -run '^TestX$' ./C/<pkg>/; echo rc=$?` → rc≠0.
 
 ## Bloque A · verdad de campo e inventario · 🌐 · T8.1–T8.2
-Para cuando: el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`, y D-F8-1 aplicada.
+Para cuando: el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`/`bridge_*.go`, y D-F8-1 aplicada.
 
 - [ ] **T8.1 · Verdad de campo** · 🌐 · dep. F7 cerrado · cumple R8.1.a
   - **Ficheros**: `plan/F8-conversacion/README.md` (estado «en curso», SHA)
@@ -23,7 +23,7 @@ Para cuando: el README tiene el inventario re-medido, la lista real de puentes y
   - **Commit**: `docs(reorganizacion-modular): F8 arranca — entradas verificadas`
 - [ ] **T8.2 · Inventario verificado y puentes reales** · 🌐 · dep. T8.1 · cumple R8.1.a–c
   - **Ficheros**: `README.md` (tabla de tamaño), `arquitectura.md` §1 y §5 (si difieren)
-  - **Hecho cuando**: re-contados ficheros/líneas/exportados/tests de los 14 paquetes (comandos de `diseno.md` §0); `grep -n 'flujos\|turnoacotado\|gateway/session' internal/modulos/fronteras_test.go` y `ls internal/arranque/puente_*.go` volcados en `arquitectura.md` §5 con «retira: T8.3x»; decidido si `send_budget_cableado_test.go` es de F3 o F8; si `C/model` ya existe (F5), T8.3 se tacha.
+  - **Hecho cuando**: re-contados ficheros/líneas/exportados/tests de los 14 paquetes (comandos de `diseno.md` §0); `grep -n 'flujos\|turnoacotado\|gateway/session' internal/modulos/fronteras_test.go` y `ls internal/arranque/puente_*.go internal/arranque/bridge_*.go` volcados en `arquitectura.md` §5 con «retira: T8.3x»; decidido si `send_budget_cableado_test.go` es de F3 o F8; si `C/model` ya existe (F5), T8.3 se tacha.
   - **Gate**: `G`
   - **Commit**: `docs(reorganizacion-modular): F8 — inventario y puentes verificados`
 
@@ -178,9 +178,9 @@ con un párrafo por tarea en el mensaje.
 - [ ] **T8.31 · Retirar los puentes de import de F5–F7** · 🌐 · dep. T8.30 · cumple R8.7.a, R8.7.c
   - **Ficheros**: `internal/modulos/catalogo/catalog.go` y `catalogo/indice/cache.go` (si D-F8-1 = no) · `solicitudes/intakes/telemetria/telemetria.go` · `captacion/stages/draft.go` · `captacion/reanalisis/reanalisis.go` · sus `_test.go` · `internal/modulos/fronteras_test.go` (lista de puentes → vacía)
   - **Hecho cuando**: `grep -rn 'internal/flujos\|internal/turnoacotado' internal/modulos --include='*.go'` → vacío; cada fichero re-tocado ≥ 80 %.
-- [ ] **T8.32 · Borrar los adaptadores `internal/arranque/puente_*.go`** · 🌐 · dep. T8.31 · cumple R8.7.b
-  - **Ficheros**: todos los `puente_*.go` y sus tests (lista de T8.2); `internal/arranque/fase{3,5,6,8,9}_*.go` re-cableados con los tipos nuevos
-  - **Hecho cuando**: `ls internal/arranque/puente_*.go` → nada (quedaban `puente_contact`, `puenteTurnero` de `puente_inferencia` y `puente_captacion`: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1); fuera las dos **segundas instancias viejas** (`intakes.Postgres` de F6, `intake.Postgres` de F7); un solo `entResolver`, un solo `flowDeps.kp`, un solo `gw` (T-2, T-3).
+- [ ] **T8.32 · Borrar los adaptadores `internal/arranque/puente_*.go` y `bridge_*.go`** · 🌐 · dep. T8.31 · cumple R8.7.b
+  - **Ficheros**: todos los `puente_*.go` y `bridge_*.go` y sus tests (lista de T8.2); `internal/arranque/fase{3,5,6,8,9}_*.go` re-cableados con los tipos nuevos
+  - **Hecho cuando**: `ls internal/arranque/puente_*.go internal/arranque/bridge_*.go` → nada (✎ D-F1-9: el de F1 se llama `bridge_contact.go`; quedaban `bridge_contact`, `puenteTurnero` de `puente_inferencia` y `puente_captacion`: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1); fuera las dos **segundas instancias viejas** (`intakes.Postgres` de F6, `intake.Postgres` de F7); un solo `entResolver`, un solo `flowDeps.kp`, un solo `gw` (T-2, T-3).
 - [ ] **T8.33 · `fase7_flujos.go` y `:8100`** · 🌐 · dep. T8.32 · cumple R8.5.a–c, R8.6.b
   - **Ficheros**: `internal/arranque/fase7_flujos.go`, `rutas_admin.go` (J18–J22 con `C/admin`), los candados de cableado portados (`flow_options_cableadas`, `turno_acotado_cableado`)
   - **Hecho cuando**: un `runtime.New`, un `NewIntakeAggregator`, las 22 opciones, los 4 hooks y la fuente del gauge; test de identidad del `Runtime` (gateway = Starter = EventCanceller).

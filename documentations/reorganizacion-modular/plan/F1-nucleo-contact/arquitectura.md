@@ -13,7 +13,7 @@
 | `repository_postgres.go` | 460 (190/254) | `N/repository_postgres.go` | Adaptador `database/sql` sobre `public.contacts` (+ `public.flow_state` en la fusión) |
 | — | — | ✚ `N/contacthelpertest/contrato.go` y 8 `*_contrato.go` | Suite `Contrato` del puerto (E-3), un fichero por tema (README hallazgo 20) |
 | — | — | ✚ `N/contacthelpertest/estado.go` | Doble de `flow_state` en memoria (implementa `StateMigrator` y el observador de la suite) |
-| — | — | ✚ `internal/arranque/puente_contact.go` | Adaptador de tipos viejo ← nuevo (§3). Nace en F1, muere en F8 |
+| — | — | ✚ `internal/arranque/bridge_contact.go` | Adaptador de tipos viejo ← nuevo (§3). Nace en F1, muere en F8 |
 
 Contado con `wc -l` y `grep -cE '^\s*//'`. `go list -f '{{.GoFiles}}'` confirma **4** ficheros de
 producción. `05` §6 acierta: **solo depende de `platform`**.
@@ -62,9 +62,9 @@ ambos con `c.flowDeps.contacts`, construido en `fase3_almacenes.go:57` → `flow
 | `N` con alias hacia `V` | ❌ puente de `nucleo` hacia `flujos`: el revés de lo que se busca |
 | **Adaptador en `internal/arranque`** | ✅ el único sitio que ve a los dos por diseño (F0 ya cablea paquetes viejos) |
 
-`internal/arranque/puente_contact.go` (sin exportados):
+`internal/arranque/bridge_contact.go` (sin exportados; ✎ D-F1-9, 2026-10-02: los nombres de esta sección eran `puente_contact.go`, `puenteContact` y `nuevoResolverDeContactos`):
 
-- `type puenteContact struct{ nuevo *contact.PostgresResolver }` que implementa `viejo.Resolver`
+- `type contactBridge struct{ nuevo *contact.PostgresResolver }` que implementa `viejo.Resolver`
   (y por tanto `intakes.Destinations`).
 - `Resolve`: copia `[]viejo.Ref` → `[]contact.Ref` campo a campo y delega. `Destino`: delega y copia
   de vuelta. **No re-normaliza** (hoy `Resolve` tampoco: confía en refs de `NewRef`).
@@ -80,7 +80,7 @@ ambos con `c.flowDeps.contacts`, construido en `fase3_almacenes.go:57` → `flow
 
 - La copia de F0 de `bootstrap/arranque/flows.go` (`buildFlowRuntimeDeps`, llamada desde la copia de
   `fase3_almacenes.go:57`) es la que cambia. Si F0 renombró esos ficheros, **manda F0**.
-- Se extrae una costura probable sin R2: `nuevoResolverDeContactos(db, cipher, kp) *puenteContact`,
+- Se extrae una costura probable sin R2: `newContactResolver(db, cipher, kp) *contactBridge`,
   que construye `contact.NewPostgresResolver(db, cipher, kp)` **con el `cipher` y el `kp` que ya
   construyó la fase** (los mismos que usan `fleet`, `events`, `intakes`, `integrations`,
   `tenantllm`: `fase3_almacenes.go:98-190`). 🔴 Un segundo `KeyProvider` con otro índice haría que

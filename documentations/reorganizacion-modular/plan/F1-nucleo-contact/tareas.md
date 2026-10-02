@@ -90,16 +90,17 @@ Entrada: PR del bloque A integrado en `dev` (✔ PR #19, merge `6650e55`, 2026-1
 ## Bloque C · adaptador y conmutación · 🌐 · T1.14–T1.16
 Entrada: PR del bloque B integrado. Para cuando: huella igual · `go list -deps` prueba el paquete nuevo · traspaso escrito · PR abierto.
 
-- [ ] **T1.14 · rojo(arranque): contrato y test de `puente_contact.go`** · 🌐 · dep. T1.12 · cumple R1.4.e
-  - **Ficheros**: `internal/arranque/puente_contact.go`, `…/puente_contact_test.go`
-  - **Hecho cuando**: `puenteContact` con `Resolve`/`Destino` en `panic` y `var _ viejo.Resolver = (*puenteContact)(nil)` (T-1); el test afirma copia de refs, texto de error idéntico, `errors.Is` con centinela viejo **y** nuevo, y el **corpus de equivalencia** viejo ↔ nuevo de `Normalize`/`NewRef`/`RefsFrom`/`Sendable` (casos de R-02…R-07, R-22, N-05).
+- [ ] **T1.14 · rojo(arranque): contrato y test de `bridge_contact.go`** · 🌐 · dep. T1.12 · cumple R1.4.e
+  - ✎ **D-F1-9 (Jhoan, 2026-10-02)**: los nombres nuevos del bloque C van en inglés — `bridge_contact.go` (antes `puente_contact.go`), `contactBridge` (antes `puenteContact`), `newContactResolver` (antes `nuevoResolverDeContactos`); los commits y la prosa siguen en español
+  - **Ficheros**: `internal/arranque/bridge_contact.go`, `…/bridge_contact_test.go`
+  - **Hecho cuando**: `contactBridge` con `Resolve`/`Destino` en `panic` y `var _ viejo.Resolver = (*contactBridge)(nil)` (T-1); el test afirma copia de refs, texto de error idéntico, `errors.Is` con centinela viejo **y** nuevo, y el **corpus de equivalencia** viejo ↔ nuevo de `Normalize`/`NewRef`/`RefsFrom`/`Sendable` (casos de R-02…R-07, R-22, N-05).
   - **Gate**: vet `-tags pendiente` rc=0 · el test solo, rc≠0
   - **Commit**: `rojo(arranque): contrato del adaptador de contact`
-- [ ] **T1.15 · verde(arranque): `puente_contact.go`** · 🌐 · dep. T1.14
+- [ ] **T1.15 · verde(arranque): `bridge_contact.go`** · 🌐 · dep. T1.14
   - **Hecho cuando**: test en verde con `-race`; ≥ 80 %.
   - **Commit**: `verde(arranque): adaptador de contact`
 - [ ] **T1.16 · conmutar(nucleo): el arranque nuevo cablea `nucleo/contact`** · 🌐 · dep. T1.15 · cumple R1.4.b, R1.5.a–d
-  - **Ficheros**: la copia de `flows.go` en `internal/arranque` (y la de `fase3_almacenes.go` si hace falta), `puente_contact.go` (+ `nuevoResolverDeContactos(db, cipher, kp)`), su test (aserción de cableado: devuelve `*puenteContact` sobre `*contact.PostgresResolver`); se elimina `contactsPG` de la copia (T-8); `traspasos/TRASPASO-F1-nucleo-contact.md`
+  - **Ficheros**: la copia de `flows.go` en `internal/arranque` (y la de `fase3_almacenes.go` si hace falta), `bridge_contact.go` (+ `newContactResolver(db, cipher, kp)`), su test (aserción de cableado: devuelve `*contactBridge` sobre `*contact.PostgresResolver`); se elimina `contactsPG` de la copia (T-8); `traspasos/TRASPASO-F1-nucleo-contact.md`
   - **Hecho cuando**: `go list -deps ./cmd/server-modular | grep -c 'internal/nucleo/contact$'` → 1 · `go list -deps ./cmd/server | grep -c 'internal/nucleo/'` → 0 · `grep -rn 'viejo\.NewPostgresResolver\|flujos/contact.*NewPostgresResolver' internal/arranque` → 0 · huella sin diferencias · `git diff --stat <inicio>..HEAD -- internal/flujos internal/bootstrap cmd/server` vacío.
   - **Gate**: `validar-antes-de-cerrar` completa
   - **Commit**: `conmutar(nucleo): el arranque nuevo cablea nucleo/contact`
@@ -128,7 +129,7 @@ Cada número con su comando. Lo no medido se escribe «sin medir», nunca se est
 ## 1 · Coste por fichero
 | Fichero | Sesiones | Min. rojo | Min. verde | Commits | Líneas contrato (rojo) | Líneas finales (coment./código) | Líneas de test |
 (fuentes: líneas `Piloto:` de los commits · `git log --format='%h %ad %s' --date=iso -- <fichero>` ·
-`git show <sha-rojo>:<fichero> | wc -l` · `grep -cE '^\s*//'`) — incluir contacthelpertest y puente_contact.
+`git show <sha-rojo>:<fichero> | wc -l` · `grep -cE '^\s*//'`) — incluir contacthelpertest y bridge_contact.
 Comparar con la referencia vieja: 170 · 151 · 183 · 460 líneas (59/47/33/190 de comentario).
 ## 2 · Cobertura por fichero
 Obtenida (`make cobertura-ficheros`) frente a la base vieja 98,0 % · 95,2 % · 91,1 % · 0 %; minutos

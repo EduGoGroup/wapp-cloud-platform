@@ -88,7 +88,7 @@ F1, F2, F3 y F4 no declaran ningún puente (F3: la única arista de `gateway/**`
 
 | Pieza | Nace | Muere | Qué adapta | ⚠️ |
 |---|---|---|---|---|
-| `puente_contact.go` | F1 (T1.14) | F8 (T8.32) | `flujos/contact.Resolver` viejo (runtime, admin) ← `nucleo/contact` nuevo; F6 deja de necesitarlo para el notificador | — |
+| `bridge_contact.go` (✎ D-F1-9: era `puente_contact.go`) | F1 (T1.14) | F8 (T8.32) | `flujos/contact.Resolver` viejo (runtime, admin) ← `nucleo/contact` nuevo; F6 deja de necesitarlo para el notificador | — |
 | `puente_iam.go` | F2 (T2.28) | **F3** (T3.28 lo borra) | `in.Authenticator`/`in.Auditor` viejos del gateway viejo ← `acceso` nuevo; traduce 4 centinelas | F8 [`arquitectura.md`](../F8-conversacion/arquitectura.md) §5.2 lo daba vivo hasta F8 (corregido) |
 | `puente_gateway.go` | F3 (T3.24) | **F4** (T4.24 lo borra) | `llmvia/local.Frame` viejo (`Infer` con `InferRequest` viejo) ← `edge/grpc` nuevo; implementa `Infer` **y** `PlazaDe` (F3 reglas T-1) | F8 §5.2 lo daba hasta F8; F3 (arquitectura §4) y F4 (T4.24, reglas §5.8) dicen F4, y mandan ellas: con `llmvia` nuevo el `Frame` ya habla el tipo nuevo |
 | `puente_inferencia.go` | F4 (T4.10, T4.25) | por partes: `puenteConfigLLM` en **F7**, `puenteTurnero` en **F8** | `reanalisis` viejo pide `tenantllm.Config` viejo; `turnoacotado` viejo pide `llmvia.TurnoRequest` y `ErrViaSinTurnoAcotado` viejos (D-F4-4) | — |
@@ -98,7 +98,7 @@ F1, F2, F3 y F4 no declaran ningún puente (F3: la única arista de `gateway/**`
 | *(ninguno)* `entitlements.Resolver`, gw para runtime/notificador/`filtercfg`/J12–J15, puertos de solicitudes del runtime y del sink | — | — | **estructurales**: el objeto nuevo se inyecta tal cual (F2 arquitectura §4, F3 §4, F6 §4) | F8 §5.2 los daba «sin medir» |
 
 Al cerrar **F8** tienen que quedar **cero**: T8.31 retira los puentes de import de F6–F7 (y F5 si
-D-F5-1 = A), T8.32 borra los `puente_*.go` que queden (`puente_contact`, la parte `puenteTurnero`
+D-F5-1 = A), T8.32 borra los `puente_*.go` y `bridge_*.go` que queden (`bridge_contact`, ✎ D-F1-9, la parte `puenteTurnero`
 de `puente_inferencia`, `puente_captacion`) **y las dos segundas instancias viejas**; T8.34 comprueba
 `grep -rn 'internal/publicapi\|internal/gateway/session' internal/arranque internal/modulos internal/apipublica` → vacío.
 

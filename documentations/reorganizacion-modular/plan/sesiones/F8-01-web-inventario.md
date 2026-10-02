@@ -6,7 +6,7 @@
 | Tareas | T8.1–T8.2 |
 | Depende de | F7-09 |
 | Decisiones | Las de [`../DECISIONES.md`](../DECISIONES.md) que bloquean «F8 bloque A» |
-| Se para cuando | el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`, y D-F8-1 aplicada. |
+| Se para cuando | el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`/`bridge_*.go`, y D-F8-1 aplicada. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -26,7 +26,7 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque(s): A · verdad de campo e inventario
 - Tareas: T8.1–T8.2 de plan/F8-conversacion/tareas.md
-- Te paras cuando: el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`, y D-F8-1 aplicada.
+- Te paras cuando: el README tiene el inventario re-medido, la lista real de puentes y `puente_*.go`/`bridge_*.go`, y D-F8-1 aplicada.
 - Decisiones: las que en plan/DECISIONES.md bloquean «F8 bloque A» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd (pasada de contrato y rojo), validar-antes-de-cerrar.
 

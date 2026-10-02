@@ -133,7 +133,7 @@ No son puentes (medido): `captacion/pipeline` (`memoria.go`: tipos de catálogo 
 comentario, `match_lineas.go:56`), `catalogo/catalogimport` (tipos de catálogo → `catalogo`),
 `solicitudes/intakes/quotetext` (`LectorSemilla` estructural, `quotetext.go:210`).
 
-### 5.2 · Adaptadores del arranque nuevo (`internal/arranque/puente_*.go`)
+### 5.2 · Adaptadores del arranque nuevo (`internal/arranque/puente_*.go` y `bridge_*.go`)
 
 Patrón fijado por F1: cuando un paquete **nuevo** tiene que cooperar con uno **viejo** que el
 arranque nuevo aún cablea, el tipo se adapta en `internal/arranque/puente_<x>.go`. El runtime viejo
@@ -141,7 +141,7 @@ es el mayor consumidor de tipos de otros módulos, así que **todos los que qued
 
 | Adaptador | Nace | Por qué existe | Muere |
 |---|---|---|---|
-| `puente_contact.go` | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | **aquí** (T8.32) |
+| `bridge_contact.go` (✎ D-F1-9: era `puente_contact.go`) | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | **aquí** (T8.32) |
 | `puente_iam.go` | F2 | el gateway viejo pide `in.Authenticator`/`in.Auditor` viejos | **F3** (T3.28): ya no existe al llegar aquí |
 | `puente_gateway.go` (`Infer` + `PlazaDe`) | F3 | el `local.Frame` del `llmvia` viejo pide `InferRequest` viejo. El runtime viejo recibe `c.gw` **sin** adaptador (estructural, F3 `arquitectura.md` §4) | **F4** (T4.24): ya no existe al llegar aquí |
 | `puente_inferencia.go` | F4 | `puenteConfigLLM` (`reanalisis` viejo, `tenantllm.Config` viejo) y `puenteTurnero` (`turnoacotado` viejo recibe `llmvia.TurnoRequest` y compara `ErrViaSinTurnoAcotado` viejos) | `puenteConfigLLM` en **F7**; `puenteTurnero` **aquí** (T8.32) |
@@ -154,7 +154,7 @@ Tabla única del plan (con las discrepancias que había): [`../00-marco/estructu
 T8.2 la re-mide contra el árbol real antes de tocar nada.
 
 **Dimensión del re-toque** (lo más arriesgado de F8): **6 paquetes nuevos** re-tocados (§5.1, ~6
-ficheros y sus tests), **todos** los `puente_*.go` que quedan borrados (3: `puente_contact`, `puente_inferencia`, `puente_captacion`), las dos segundas instancias viejas fuera, y
+ficheros y sus tests), **todos** los `puente_*.go` y `bridge_*.go` que quedan borrados (3: `bridge_contact`, `puente_inferencia`, `puente_captacion`), las dos segundas instancias viejas fuera, y
 `fase7_flujos.go` + `fase5_captacion.go` + `fase6_solicitudes.go` + `fase8_transporte.go` +
 `fase9_fondo.go` + `rutas_admin.go` del arranque nuevo re-cableados en la misma ola. El
 riesgo no es de compilación (el compilador lo caza) sino de **identidad**: dos instancias de algo
