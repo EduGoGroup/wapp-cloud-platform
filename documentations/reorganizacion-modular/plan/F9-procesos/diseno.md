@@ -71,7 +71,7 @@ Identity Tokens llevan `iss=identity-core`, `sub=<uuid de usuario>`, `system` �
 `wapp.edge`, `wapp.platform`} (`exchange.go:24-33`). El canje (`POST /api/v1/auth/exchange`) los
 cambia por un Context Token ES256 firmado por el servidor, que es lo que usan todas las rutas.
 
-### 3.3 · El Edge de prueba (`edge_falso_test.go`)
+### 3.3 · El Edge de prueba (`edge_falso_test.go` y, desde D-F9-11, `edge_*_test.go`)
 
 Referencia de lectura (no se importa): `cmd/server/integration_test.go:185-360` (`enroll`,
 `connect`, `edgeSim`). Contrato:
