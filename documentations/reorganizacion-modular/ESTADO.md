@@ -162,7 +162,14 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   **Queda abierto**, todo ya con fila en `DECISIONES.md`: **D-F9-9**, **D-F9-10**, **D-F9-11** (recomendación sí; se aplica en un PR
   aparte, a continuación de este), **D-F1-7**, **D-F1-8**, **D-F1-9** y **D-F1-14** (nueva: extender «solo los ficheros de suite» a
   `un_fichero_un_test` y `exportados_cubiertos`).
-  Gates: <los rellena el orquestador tras la corrida final>
+  **De paso, el gate**: `make lint` usa ahora una caché de `golangci-lint` **por *checkout*** (`.bin/lint-cache`; `fdbc0b2`, `6649ee6`).
+  La del usuario, compartida entre *worktrees*, devolvió en esta rama 36 *issues* falsos (rc=2), todos con rutas de *worktrees* ya
+  borrados y sobre líneas con su `//nolint`; con caché propia, 0.
+  Gates (entorno pelado de la máquina local, rc leído del log): `make toolchain` → `TOOLCHAIN=OK`; `make ci-local` → `GATE_RC=0`, 86
+  líneas `ok`, lint 0 *issues*, `FICHEROS_EVALUADOS=11 · POR_DEBAJO=0 · EXENTOS_POSTGRES=1`; `make test-pendiente` → `PENDIENTES=11 ·
+  ROJOS=4` (sin cambio); `make ci-docker` → rc=0 (estos cuatro sobre `6649ee6`). `make test-procesos` → `viejo` y `nuevo` `RC=0 ·
+  PASS=176 · FAIL=0 · SKIP=0` (158 en `dev`) y SKIP en código nuevo 0 con 674 PASS (estos dos sobre `88b1d85`; después solo cambian
+  `.md` y el `Makefile`). **No corrido**: `make test-integration`, UAT.
 
 **Siguiente paso:**
 1. **Jhoan**:
