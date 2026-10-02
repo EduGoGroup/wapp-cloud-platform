@@ -131,8 +131,9 @@
 - **R9.5.a** · **CUANDO** un módulo conmuta (ola 9C) — o en 9D si D-F9-1 se rechaza —, **EL** fichero
   `test/procesos/<paquete>_contrato_test.go` (convención que estrena F1, T1.13) **DEBERÁ** ejecutar
   `…helpertest.Contrato(t, nuevo)` del puerto con un `nuevo` que abre el adaptador Postgres sobre **una
-  base clonada propia**. — Verifica: `go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
-  con un `--- PASS` por puerto (tabla de `diseno.md` §5).
+  base clonada propia**. — Verifica: `WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -v -run '<Paquete>' ./test/procesos/`
+  con un `--- PASS` por puerto (tabla de `diseno.md` §5). ✎ 2026-10-02: `TestMain` sale con código 2 sin `GOWORK=off` (D-F9-7) y sin
+  `WAPP_PROCESOS_BINARIO=viejo|nuevo` (desde T9.5); a la suite le da igual cuál de los dos.
 - **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con
   SQL medidos (`05` E-6 dice 20; ver `diseno.md` §5). — Verifica: la tabla de `diseno.md` §5 con 22 filas marcadas y su
   `--- PASS` en el log de T9.30.

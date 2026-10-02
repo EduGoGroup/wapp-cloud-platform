@@ -13,6 +13,7 @@ Para cuando: `make test-pendiente` cuenta **11** en `internal/nucleo` · `make c
 > ✎ **D-F1-10 (2026-10-02): hoy `contacthelpertest`** (`a18d4c0`), y el sufijo que exime de los tres candados de fichero es
 > `helpertest` (`06f08a8`). Las tareas `[x]` de este bloque conservan el nombre `contacttest`, el sufijo `…test` y la cifra
 > `FICHEROS_EVALUADOS=9` con que se cerraron; hoy son 10, porque `huellatest` vuelve a medirse (README, hallazgos 9 y 21).
+> ✎ **D-F1-13 (2026-10-02, `88b1d85`)**: son 11: de `contacthelpertest` la cobertura solo exime los ficheros de suite, y `estado.go` se mide.
 
 - [x] **T1.1 · Verdad de campo y entradas** · 🌐 · dep. F0 cerrado · cumple R1.1.e — cerrada en `afa63f3`
   - **Ficheros**: `plan/F1-nucleo-contact/README.md` (estado → «en curso», SHA de arranque)
@@ -108,7 +109,7 @@ Para cuando: suite contra Postgres corrida · todo en `dev` · `informe-piloto.m
 - [ ] **T1.17 · Recibir el traspaso y repetir los gates** · 💻 · dep. T1.16 · cumple R1.6.a
   - **Hecho cuando**: `make ci-local` con v2.12.2 rc=0 leído del log; los tres PR integrados en `dev` sin squash (`git log --oneline` muestra cada `rojo`/`verde` por separado); la §7 del traspaso refutada o confirmada contra el código.
 - [ ] **T1.18 · La suite contra Postgres, en local** · 💻 · dep. T1.13, T1.17 · cumple R1.3.c–d
-  - **Hecho cuando**: `GOWORK=off go test -tags integracion -race -v -run Contact ./test/procesos/ > /tmp/p.log 2>&1; echo rc=$?` → 0, `--- SKIP` = 0, tiempo total y de arranque del contenedor anotados; divergencias memoria ↔ Postgres listadas. Sin D-F1-2: «no corrido» y motivo.
+  - **Hecho cuando**: `WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -race -v -run Contact ./test/procesos/ > /tmp/p.log 2>&1; echo rc=$?` → 0 (✎ 2026-10-02: sin `WAPP_PROCESOS_BINARIO=viejo|nuevo`, `TestMain` sale con código 2; a la suite le da igual cuál), `--- SKIP` = 0, tiempo total y de arranque del contenedor anotados; divergencias memoria ↔ Postgres listadas. Sin D-F1-2: «no corrido» y motivo.
 - [ ] **T1.19 · docs(reorganizacion-modular): informe del piloto F1** · 💻 · dep. T1.18 · cumple R1.7.a
   - **Ficheros**: `plan/F1-nucleo-contact/informe-piloto.md` (plantilla abajo), `README.md` (estado), sección `CERRADO` del traspaso
   - **Commit**: `docs(reorganizacion-modular): informe del piloto F1`

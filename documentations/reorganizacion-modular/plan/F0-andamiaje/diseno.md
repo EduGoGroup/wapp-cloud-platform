@@ -152,6 +152,12 @@ excepciones de E-3 se **verifican**, no se listan:
 | doble en un paquete `…helpertest` | su paquete termina en `helpertest` (D-F1-10; antes `test`) y no tiene ninguna `func` con cuerpo; si tiene lógica, necesita test |
 | paquete `…helpertest` entero (**D-F1-3**, condicionada; estrechada por **D-F1-10**, 2026-10-02) | si D-F1-3 = sí (lo es desde el 2026-09-30): todo fichero de un paquete cuyo nombre termina en `helpertest` **con al menos un carácter delante** (suite `Contrato` y dobles) queda fuera de este candado **y** del de §4.3 (y, desde D-F1-6, de la cobertura por fichero de §4.5); los dobles con lógica llevan igualmente su test (lo exige la fase: F1 T1.4, F2 T2.2…). Si D-F1-3 = no, solo vale la fila anterior. `Recorrer` expone el nombre de paquete para que la exención sea **una** condición en `candados` (`candados.go`, `isHelperTestPackage`), no una lista. Hasta D-F1-10 la condición era «termina en `test`», que eximía también un paquete de producción `latest` o `contest` (README, contradicción 16): hoy un paquete que acaba en `test` sin acabar en `helpertest` (`huellatest`) y uno llamado `helpertest` a secas **no** están exentos |
 
+✎ **2026-10-02 · D-F1-13 (`88b1d85`)**: el «desde D-F1-6, de la cobertura por fichero» de la última fila ya no es el paquete
+entero. De un paquete `…helpertest`, la cobertura exime solo los **ficheros de suite** (`contrato.go` y `*_contrato.go`;
+`isContractSuiteFile`, §4.5) y mide los dobles con lógica. Este candado y el de §4.3 **no cambian**: siguen dejando fuera el
+paquete entero (D-F1-3); extenderles la regla por fichero es **D-F1-14**, abierta, y pediría la excepción de la fila «doble en un
+paquete `…helpertest`».
+
 ### 4.3 · `exportados_cubiertos` — cómo se detecta «mencionado en su test»
 
 Por cada `x.go` con `x_test.go`: el conjunto de exportados de `x.go` (funciones, tipos,
@@ -170,6 +176,13 @@ falla si aparece: el literal `WAPP_TEST_DB_DSN`; un literal que contenga `:5432`
 por `postgres://` o `postgresql://` (la única cadena válida es la de
 `ctr.ConnectionString(ctx, "sslmode=disable")`, `05` §7.2).
 
+✎ **2026-10-02 · D-F9-6 (`0e3a0f3`)**: lo de arriba es la **lista negra** con la que el candado nació en F0 (F9 le añadió
+`os.Environ`, `Skip*` y `testing.Short`, T9.3), y se conserva entera. Hoy el candado tiene además una **lista blanca de quién abre
+conexiones**: toda referencia a una apertura de `database/sql`, `pgx`, `pgconn`, `pgxpool` o `pgx/stdlib` es una violación fuera de
+la ruta exacta `test/procesos/base_test.go`, diga lo que diga la cadena. Y el «salvo él mismo» es por **ruta exacta**
+(`test/procesos/sin_bd_viva_test.go`), no por nombre base, y solo lo exime de la lista negra. Detalle y límites conocidos, en
+[`../F9-procesos/diseno.md`](../F9-procesos/diseno.md) §6 y en la contradicción 22 del [README de F9](../F9-procesos/README.md).
+
 ### 4.5 · `cobertura-ficheros` — agregación, umbral y exentos
 
 - **Agregación**: cada línea del perfil `-coverprofile` es
@@ -183,6 +196,10 @@ por `postgres://` o `postgresql://` (la única cadena válida es la de
   marca: un fichero marcado que no importa `database/sql` ni `github.com/jackc/pgx/…` es una
   violación (nadie se exime por decreto). Sin marca, un adaptador Postgres se evalúa como
   cualquiera. La tabla que imprime el comando cuenta aparte `EXENTOS_POSTGRES=N`.
+- ✎ **2026-10-02 · Exentos: los ficheros de suite de contrato** (D-F1-13, `88b1d85`): `contrato.go` y `*_contrato.go` de un
+  paquete `…helpertest` (`isContractSuiteFile`), y **solo** ellos. La suite la ejecutan los tests de las implementaciones, desde
+  otros paquetes, y `go test -cover` sin `-coverpkg` le daría 0 %. Entre D-F1-6 y D-F1-13 quedaba fuera el paquete `…helpertest`
+  **entero**; hoy sus dobles con lógica se miden con el umbral normal.
 
 ## 5 · `internal/arranque/` — la copia (D-F0-1)
 

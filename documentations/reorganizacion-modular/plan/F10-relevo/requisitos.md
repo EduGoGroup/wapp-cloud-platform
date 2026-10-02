@@ -84,7 +84,8 @@
   `WAPP_TEST_REQUIRE_DB` ni el target `test-integration`. — Verifica:
   `grep -rn 'WAPP_TEST_DB_DSN\|WAPP_TEST_REQUIRE_DB\|test-integration' --include='*.go' --include=Makefile --include='*.yml' . | wc -l` → 0.
 - **R10.5.c** · **EL** job `integration` de `.github/workflows/ci.yml` **DEBERÁ** correr los procesos
-  (`go test -tags integracion ./test/procesos/...`) en vez de `postgres:16` + `WAPP_TEST_DB_DSN`. —
+  (`GOWORK=off go test -tags integracion ./test/procesos/...`; ✎ D-F9-7, 2026-10-02: sin `GOWORK=off` en el entorno del job,
+  `TestMain` sale con código 2, también donde no hay `go.work`) en vez de `postgres:16` + `WAPP_TEST_DB_DSN`. —
   Verifica: `grep -n 'tags integracion\|postgres:16' .github/workflows/ci.yml`.
 
 ## H10.6 · UAT con el binario de siempre

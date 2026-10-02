@@ -2,7 +2,7 @@
 
 > **Estado**: ⏳ sin empezar (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes), §5
-> (`sin_pendientes_test`). Forma: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
+> (`no_pending_test`; antes `sin_pendientes_test.go`, D-F1-12). Forma: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Decisiones que la fundan: **D-9** (una prueba en UAT en sustitución antes del relevo; el despliegue
 > `go build -o bin/server ./cmd/server` no cambia) y **D-10** (la cara vieja `internal/publicapi` se
 > borra aquí: [`FX-cara-http`](../FX-cara-http/README.md) TX.25).
@@ -36,7 +36,7 @@ ecosistema, ADR-0010, comentarios en repos hermanos) lo cierra la sesión local.
   ([`diseno.md`](diseno.md) §1).
 - `internal/` contiene solo `arranque/`, `apipublica/`, `modulos/`, `nucleo/`, `platform/` (y, según
   D-F10-3, nada de `pendiente/`).
-- `sin_pendientes_test.go` activo; `fronteras_test.go` con **cero** puentes; `huella_test.go` compara
+- `no_pending_test.go` activo; `fronteras_test.go` con **cero** puentes; `huella_test.go` compara
   contra una **dorada** congelada del viejo.
 - `make test-procesos` corre contra `cmd/server` (ya nuevo) y `WAPP_PROCESOS_BINARIO` desaparece.
 - Según D-F9-4/D-F10-5: `make test-integration`, `WAPP_TEST_DB_DSN` y `WAPP_TEST_REQUIRE_DB` fuera del
@@ -68,7 +68,7 @@ paso a paso, lo de fuera del repo) → [`reglas.md`](reglas.md) → [`tareas.md`
 |---|---|---|
 | **D-F10-1** | La prueba en UAT: ¿cuánto dura y quién la da por buena? | **24 h mínimo**, con al menos una jornada de tráfico real (el e2e con WhatsApp real del runbook del ecosistema `e2e-con-whatsapp-real.md`) y los criterios de [`diseno.md`](diseno.md) §2.4. Veredicto de Jhoan, por escrito en el traspaso. El tráfico real de UAT **no está medido** |
 | **D-F10-2** | Si la prueba sale bien, ¿se deja el binario modular corriendo hasta el despliegue del relevo? | **Sí, si el relevo aterriza en ≤ 7 días** (es el mismo código que se va a desplegar). Si no, vuelta al viejo: no dejar en UAT un binario de una rama que ya no existirá |
-| **D-F10-3** | ¿Qué se hace con `internal/pendiente`, la etiqueta `pendiente`, `make test-pendiente` y `vet -tags pendiente`? | **Retirarlos** en el mismo commit que activa `sin_pendientes_test.go`, que entonces prohíbe el identificador **y** la etiqueta. `00-marco/estructura.md` dice «desaparece o queda vacía de usos»: vacía de usos y viva invita a reabrir el método sin decidirlo. Si Jhoan quiere el método para trabajo futuro, es una decisión nueva |
+| **D-F10-3** | ¿Qué se hace con `internal/pendiente`, la etiqueta `pendiente`, `make test-pendiente` y `vet -tags pendiente`? | **Retirarlos** en el mismo commit que activa `no_pending_test.go`, que entonces prohíbe el identificador **y** la etiqueta. `00-marco/estructura.md` dice «desaparece o queda vacía de usos»: vacía de usos y viva invita a reabrir el método sin decidirlo. Si Jhoan quiere el método para trabajo futuro, es una decisión nueva |
 | **D-F10-4** | `cmd/server/integration_test.go` (en proceso, sin BD, `bufconn`) y `cmd/server/flows_integration_test.go` (con BD, importa `internal/flujos/**`) | **Portar** el primero contra los paquetes nuevos (`04` §3 lo marca ✎: es el único e2e del gRPC que corre en `ci-local` sin Docker). **Borrar** el segundo: su escenario lo cubre P3 |
 | **D-F10-5** | Los 9 ficheros / 25 `Test*` con BD de `internal/platform/` (sobreviven: `platform` no se borra) | Depende de **D-F9-4**. Si hay P10: borrarlos, borrar `make test-integration` y dejar el repo sin `WAPP_TEST_DB_DSN`. Si no: `make test-integration` se queda acotado a `./internal/platform/...` y sube a `postgres:17-alpine` |
 | **D-F10-6** | ¿Tag de versión tras pasar a `main`? (no hay `release.yml`; hoy `v0.1.0` y `v0.2.0`, `documentations/operacion.md` §4) | **`v0.3.0`**, sobre `main`, tras `ci-local` y `test-procesos` verdes, con `CHANGELOG.md` rellenado. Decide Jhoan |

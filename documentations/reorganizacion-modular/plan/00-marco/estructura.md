@@ -137,6 +137,8 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
   «un fichero, un test», de «exportados cubiertos» y de la cobertura por fichero, pero un doble con lógica
   lleva su test igual. Un paquete que acabe en `test` sin acabar en `helpertest` (`latest`, `huellatest`) y
   uno llamado `helpertest` a secas **no** están exentos (`internal/candados/candados.go`, `isHelperTestPackage`).
+  ✎ **D-F1-13** (2026-10-02, `88b1d85`): de la **cobertura por fichero** ya no queda fuera el paquete entero, solo sus ficheros de
+  suite (`contrato.go` y `*_contrato.go`); el doble con lógica se mide (≥ 80 %). De los otros dos candados sigue fuera entero.
 - **Adaptadores Postgres**: `postgres.go`, `*_postgres.go`, `repository_postgres.go`. El nombre es
   lo que los excluye del umbral de cobertura: no se inventan otros.
 - **Nombres de fichero, identificadores y claves de wire en inglés; solo los comentarios (y la documentación)

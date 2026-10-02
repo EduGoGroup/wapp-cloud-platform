@@ -37,7 +37,8 @@
   `GOWORK=off go test -race -run Contrato -v ./internal/nucleo/contact/; echo rc=$?` → rc=0, 0 SKIP.
 - **R1.3.c** · **DONDE** Jhoan acepte D-F1-2, **EL** paquete `test/procesos` **DEBERÁ** ejecutar la
   misma suite contra `NewPostgresResolver` con testcontainers (`postgres:17-alpine`), sin
-  `WAPP_TEST_DB_DSN`. — Verifica: `make test-procesos` (o `go test -tags integracion -run Contact ./test/procesos/`) rc=0 en local · candado `sin_bd_viva_test.go`.
+  `WAPP_TEST_DB_DSN`. — Verifica: `make test-procesos` (o `WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -run Contact ./test/procesos/`) rc=0 en local · candado `sin_bd_viva_test.go`.
+  ✎ 2026-10-02: sin `GOWORK=off` (D-F9-7) o sin `WAPP_PROCESOS_BINARIO=viejo|nuevo` (desde T9.5), `TestMain` sale con código 2 antes de levantar Postgres.
 - **R1.3.d** · **SI** las dos implementaciones divergen en un caso de la suite, **ENTONCES EL**
   informe del piloto **DEBERÁ** listarlo, y la suite no se relaja para ocultarlo. — Verifica: §Informe.
 

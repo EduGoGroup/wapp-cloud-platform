@@ -85,7 +85,7 @@ La numeración global de sesiones (`S0n`) la pone [`../sesiones/`](../sesiones/R
 | **F0-A-1** *(de F0-01, 2026-09-30)* — ✅ **sí (Jhoan, 2026-09-30)** y ✅ **aplicada en claude.ai/code (2026-09-30)**; texto en `flujo-web-local.md` §3 | Docker en la VM: el daemon **no arranca solo** y Docker Hub responde **429** (`06` §5). ¿Se añade `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` a las variables del entorno y, al *setup script*, `(dockerd >/tmp/dockerd.log 2>&1 &)` + espera antes del `docker pull` (con la imagen tirada de `mirror.gcr.io/library/postgres:17-alpine`)? | **Sí a la variable** (probada en frío, `TC_RC=0`; en local no aplica porque no está puesta). El cambio del *setup* **sin verificar**: que el *snapshot* conserve `/var/lib/docker` no está probado; si no lo conserva, sobra. Mientras tanto, cada sesión arranca `dockerd` a mano (el hook lo recuerda) | F9 (pre-chequeo web); no bloquea F0 |
 
 Decididas en esta fase sin necesitar a Jhoan (con su porqué en [`reglas.md`](reglas.md) §3):
-`sin_pendientes_test` nace en F10; `sin_bd_viva_test` sin etiqueta; `cobertura-ficheros` dentro
+`no_pending_test` (antes `sin_pendientes_test.go`, D-F1-12) nace en F10; `sin_bd_viva_test` sin etiqueta; `cobertura-ficheros` dentro
 de `ci-local`; exención de adaptadores Postgres por marca verificada; `make test-procesos` en F9.
 
 ## Contradicciones encontradas (no corregidas en `04`/`05`; se señalan)

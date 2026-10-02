@@ -390,7 +390,8 @@ paquete, con alias o con import de punto, es una violación en cualquier fichero
 **`test/procesos/base_test.go`** (ruta exacta). La lista negra de arriba se conserva, y de ella solo se
 salta el propio candado, también por ruta exacta (`test/procesos/sin_bd_viva_test.go`; antes era por
 nombre base). Lo que el candado sigue sin ver está fijado como caso en
-`internal/candados/sinbdviva_test.go` (`TestSinBDVivaKnownGaps`).
+`internal/candados/sinbdviva_openers_test.go` (`TestSinBDVivaKnownGaps`, 10 casos; enumerados en la contradicción 22 del
+[README](README.md)).
 
 ## 7 · `make test-procesos` (T9.4)
 
