@@ -2,6 +2,13 @@
 
 > Nombres de fichero: se **conserva** el del fichero viejo que se porta (así la cabecera E-10
 > `// Porta internal/publicapi/x.go @ <sha>` se lee sola). Los nuevos llevan nombre en español.
+> ⚠️ **`05` E-11 (2026-10-02) sustituye esa última frase para lo que aún no existe** (nota de la revisión independiente,
+> 2026-10-01): un fichero nuevo se crea con nombre **en inglés** y la correspondencia se anota en el `tareas.md` de la fase que
+> lo cree. Del árbol de §1 piden correspondencia `cadena.go`, `respuesta.go`, `autenticacion.go`, `plazos.go`, `instantes.go` y
+> `apipublicatest/arnes.go`; `apipublica.go` y `estrangulador.go` ya existen (F0) y no se renombran; los que conservan el nombre
+> del fichero viejo (`plazoescritura.go` incluido) se quedan como están. Lo mismo vale para los identificadores que esta spec
+> nombra en español y aún no existen (`Comun`, `Montar<Área>`…). Esta spec **no** se renombra aquí: lo hace la sesión que cree
+> cada fichero.
 > Cada fichero sigue el ciclo de `05` §4 con la skill `contrato-tdd`.
 
 ## 1 · El árbol, y cuándo nace cada fichero

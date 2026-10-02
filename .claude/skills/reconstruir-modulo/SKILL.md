@@ -48,6 +48,10 @@ internas del módulo: primero las hojas.
 - Un sub-agente **por paquete** (no por módulo: satura), con la skill **`contrato-tdd`** y el
   inventario de su paquete. Devuelve: ficheros creados, exportados de cada uno, candados de
   invariante que tocó (`05` §3.2), puentes que necesitó, y la salida de `go vet -tags pendiente`.
+- 🔤 **Idioma (`05` E-11): dilo en el prompt de CADA sub-agente**, en el rojo y en el verde. Nombres (ficheros, paquetes,
+  tipos, funciones, variables, tests y casos) en **inglés**; solo los comentarios y la documentación en español. Lo ya escrito
+  y lo ya decidido no se renombra; los textos observables se copian literales. Si la spec nombra en español algo que aún no
+  existe, se escribe en inglés y la correspondencia se anota en el `tareas.md` de la fase.
 - Paquetes independientes → **en paralelo** (varias llamadas en un mismo mensaje).
 - Los **puentes** al código viejo se declaran en `internal/modulos/fronteras_test.go` en el mismo
   commit que los introduce. Un puente no declarado rompe el gate: es la señal buscada, no un
@@ -104,6 +108,7 @@ los targets `test-pendiente` y `cobertura-ficheros` · los candados de §5 · lo
 - Pasar a verde antes de tener los contratos del módulo completos: los contratos se hablan entre
   sí, y es en esa pasada donde aparecen los puentes.
 - Conmutar un módulo con ficheros aún en rojo.
+- Lanzar un sub-agente sin la regla de idioma (E-11) en su prompt.
 - Seguir más allá de F1 sin la decisión de Jhoan.
 - Commitear o decidir sobre un claim de un sub-agente sin evidencia (`fichero:línea`, `rc`, SHA).
 

@@ -58,7 +58,8 @@ Para cuando: `entitlements`, `iam/domain`, `ports/{in,out}` y sus suites en rojo
   - **Commit**: `rojo(acceso): contratos de iam/domain` (un commit por fichero si el bloque se parte)
 - [ ] **T2.6 · rojo(acceso): `iam/ports/out` + `outtest` (las 7 suites)** · 🌐 · dep. T2.5 · cumple R2.2.a
   - **Ficheros**: `A/iam/ports/out/{active_tenant,canje,repos}.go` (sin `_test`, E-3), `A/iam/ports/out/outtest/{montaje,membresias,roles,grants,auditoria,invitaciones,empresa_activa,canje}.go`
-  - **Hecho cuando**: las 10 interfaces con su comentario-contrato; las 7 suites (diseño §2) con la firma de D-F1-1, casos en español, sin `t.Skip`; `go doc` las muestra.
+  - **Hecho cuando**: las 10 interfaces con su comentario-contrato; las 7 suites (diseño §2) con la firma de D-F1-1, casos con nombre **en inglés** (`05` E-11; decía «en español» hasta la revisión del 2026-10-01), sin `t.Skip`; `go doc` las muestra.
+  - **Nombres (E-11)**: `outtest/` aún no existe y esta tarea nombra en español seis de sus ficheros (`montaje`, `membresias`, `auditoria`, `invitaciones`, `empresa_activa`, `canje`): la sesión que los cree los escribe en inglés y anota aquí la correspondencia (`05` E-11; si `montaje` cuenta como vocabulario del método, depende de D-F1-12 del README de F1). `ports/out/canje.go` conserva el nombre del fichero viejo.
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): puertos de salida del IAM y sus suites de contrato`
 - [ ] **T2.7 · rojo(acceso): `iam/ports/in`** · 🌐 · dep. T2.5 · cumple R2.1.a–b

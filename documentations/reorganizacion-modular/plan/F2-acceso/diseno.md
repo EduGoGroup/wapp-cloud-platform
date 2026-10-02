@@ -29,7 +29,8 @@ internal/arranque/       puente_iam.go ✚ · puente_iam_test.go
 
 Firma común (D-F1-1 de F1): `func ContratoX(t *testing.T, nuevo func(t *testing.T) MontajeX)`,
 donde el montaje trae la implementación y los **dos tenants** con UUID sembrados (Postgres los exige
-por FK). Cada suite: casos en español que digan la regla; nada de BD ni reloj real en la versión en
+por FK). Cada suite: casos con nombre **en inglés** que digan la regla (`05` E-11, que rige lo nuevo desde el 2026-10-02; aquí decía
+«en español»); nada de BD ni reloj real en la versión en
 memoria; la versión Postgres la corre F9 (`//go:build integracion`).
 
 | Suite (`outtest`) | Casos mínimos (de las reglas de §4) | Doble | Postgres |

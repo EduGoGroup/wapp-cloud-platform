@@ -73,8 +73,12 @@ Commit: `rojo(<modulo>): contrato de <fichero>` — con el contrato **y** su tes
 ### Puertos (ficheros solo de interfaces) y adaptadores Postgres
 
 - **El puerto** lleva una **suite de contrato** exportada en un paquete `<paquete>test`
-  (patrón `internal/gateway/fleet/fleettest` de hoy):
-  `func Contrato(t *testing.T, nuevo func() Puerto)`.
+  (patrón `internal/gateway/fleet/fleettest` de hoy). Dos formas, según el puerto:
+  - **puerto con BD** (el que tiene adaptador Postgres):
+    `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` — **D-F1-1**, cerrada. El `Montaje` trae el puerto
+    **y** lo que el puerto no deja ver: los tenants sembrados (la FK los exige) y, si hace falta, un observador de estado.
+    Referencia: `internal/nucleo/contact/contacttest/contrato.go`;
+  - **puerto sin BD**: `func Contrato(t *testing.T, nuevo func() Puerto)`, la forma de `05` E-3.
 - **Toda implementación** ejecuta esa suite desde su propio test. La implementación **en memoria**
   la ejecuta ya en unitario. Si el paquete no tiene gemelo en memoria (`05` E-6 lista los 12 que
   no lo tienen), **créalo** en `<paquete>test` en esta misma pasada.
