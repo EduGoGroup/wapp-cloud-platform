@@ -51,6 +51,9 @@ export GOTOOLCHAIN := go$(GO_VERSION)
 # `//nolint` (la directiva no se aplica a un fichero que ya no está en esa ruta). Medido el
 # 2026-10-02: 36 issues, rc=2, todos con rutas de dos worktrees ya borrados y sobre líneas que
 # llevan su `//nolint`; con caché propia, 0 issues. La primera pasada de cada checkout va en frío.
+# ci-docker le pasa LINT_CACHE_DIR=/tmp/lint-cache: el checkout va montado en /workspace, y sin
+# eso el contenedor escribe en el .bin/lint-cache del host resultados con rutas /workspace/…
+# (en la única corrida medida así no dio issues falsos en el host; se separa por construcción).
 TOOLS_DIR        := $(CURDIR)/.bin
 LINT_LOCAL       := $(TOOLS_DIR)/golangci-lint
 LINT_BIN         :=
@@ -372,5 +375,5 @@ ci-docker: ## Simula el CI en Docker (Go $(GO_VERSION) + golangci-lint $(LINT_VE
 		-v "$$(go env GOMODCACHE):/go/pkg/mod" \
 		-v "$(CURDIR):/workspace" -w /workspace \
 		golang:$(GO_VERSION)-bookworm \
-		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local"
+		bash -c "set -e; make tools TOOLS_DIR=/usr/local/bin && make ci-local LINT_CACHE_DIR=/tmp/lint-cache"
 	@echo "NOTA: ci-docker no corre test-integration (requeriría Docker-in-Docker); ejecuta 'make test-integration' aparte en el host."
