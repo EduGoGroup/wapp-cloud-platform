@@ -46,13 +46,19 @@ protegen el código viejo. No se copian.
 test/procesos/
 ├── main_test.go             TestMain: un contenedor, la plantilla migrada, los binarios compilados
 ├── sweep_test.go            el directorio de la corrida y el barrido de los huérfanos (D-F9-8)
-├── arnes_test.go            base clonada por proceso + servidor por proceso + clientes HTTP/gRPC
+├── base_test.go             la base clonada por proceso: el ÚNICO fichero que abre conexiones (D-F9-6)
+├── servidor_test.go         el servidor por proceso; sus puertos, log y subproceso: server_*_test.go
+├── clientes_test.go         el cliente HTTP, el canje y el alta de empresa
+├── edge_falso_test.go       el Edge de prueba (gRPC); el resto del doble por tema: edge_*_test.go
+├── pki_test.go              la PKI; y claves_, s3falso_, identidad_, fixtures_test.go, una pieza cada uno
+├── *_selftest_*_test.go     los tests propios del arnés (TestArnes_…) de las piezas partidas (D-F9-11)
 ├── doc.go                   el comentario del paquete (sin etiqueta)
 ├── sin_bd_viva_test.go      el candado (sin etiqueta: corre en ci-local)
 ├── enrolamiento_lease_test.go
 ├── canje_permisos_test.go
 ├── mensaje_a_borrador_test.go
-└── …                        un fichero por proceso (05 §7.4)
+└── …                        un fichero por proceso (05 §7.4), hoy p0_arranque_test.go; ninguno pasa
+                             de 500 líneas: se parte por tema (p0_metrics_test.go, p0_prometheus_parser_test.go)
 ```
 
 Todo con `//go:build integracion` en la primera línea, **salvo el candado `sin_bd_viva_test.go`**,
