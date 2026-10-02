@@ -76,11 +76,12 @@ func TestMain(m *testing.M) {
 }
 
 // ejecutar es el cuerpo de TestMain: recibe el *testing.M y devuelve el código de salida del
-// proceso. Devuelve 2 si WAPP_PROCESOS_BINARIO no vale «viejo» o «nuevo» (antes de arrancar
-// nada), 1 si no se pudo levantar Postgres, compilar o migrar, y el código de m.Run en otro caso.
+// proceso. Devuelve 2 si WAPP_PROCESOS_BINARIO no vale «viejo» o «nuevo» o si GOWORK no vale
+// «off» (las dos cosas se miran al entrar, antes de arrancar nada, y se dicen las dos si fallan
+// las dos), 1 si no se pudo levantar Postgres, compilar o migrar, y el código de m.Run en otro caso.
 func ejecutar(m *testing.M) int {
 	cual, err := validarBinario(os.Getenv("WAPP_PROCESOS_BINARIO"))
-	if err != nil {
+	if err := errors.Join(err, requireGoworkOff(os.Getenv("GOWORK"))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -114,6 +115,23 @@ func validarBinario(valor string) (string, error) {
 		return "", fmt.Errorf("procesos: WAPP_PROCESOS_BINARIO debe ser «viejo» o «nuevo» (vale %q)", valor)
 	}
 	return valor, nil
+}
+
+// requireGoworkOff recibe el valor de la variable de entorno GOWORK y devuelve nil solo si es
+// exactamente «off». En cualquier otro caso —vacía, «auto», la ruta de un go.work— devuelve el
+// error con el mensaje que ve el desarrollador (D-F9-7). El arnés compila el servidor y cmd/migrate
+// con un `go build` que hereda el entorno (compilar): sin GOWORK=off, en la ubicación real del repo
+// ese build usa el go.work de la raíz del ecosistema y enlaza los árboles vecinos de wapp-cloudlink
+// y wapp-shared en vez de las versiones de go.mod, así que la corrida probaría un servidor que no es
+// el que se publica. `make test-procesos` ya la pone; una invocación directa o la de un IDE, no.
+// Solo cuenta la variable de entorno: un `go env -w GOWORK=off` no la pone en el entorno del test y
+// no se da por bueno. No toca el entorno ni lanza nada.
+func requireGoworkOff(value string) error {
+	if value != "off" {
+		return fmt.Errorf("procesos: GOWORK debe ser «off» (vale %q): sin él, el arnés compilaría el servidor contra "+
+			"los módulos vecinos del go.work y no contra las versiones de go.mod; usa `make test-procesos` o antepón GOWORK=off", value)
+	}
+	return nil
 }
 
 // binarioElegido devuelve el binario bajo prueba, «viejo» o «nuevo», ya validado por TestMain.
@@ -272,8 +290,9 @@ func compilarBinarios(raiz, dir string) error {
 
 // compilar recibe la raíz del módulo, un paquete main («./cmd/…») y la ruta del ejecutable a
 // producir, y corre `go build -o` con el directorio de trabajo en la raíz. Hereda el entorno
-// (GOCACHE, GOFLAGS, GOWORK, GOTOOLCHAIN… hacen falta para compilar). Falla con la salida del
-// compilador incluida en el error.
+// (GOCACHE, GOFLAGS, GOWORK, GOTOOLCHAIN… hacen falta para compilar); el GOWORK que hereda es
+// «off», porque TestMain no llega hasta aquí con otro valor (requireGoworkOff). Falla con la
+// salida del compilador incluida en el error.
 func compilar(raiz, paquete, destino string) error {
 	ctx, cancelar := context.WithTimeout(context.Background(), topeCompilar)
 	defer cancelar()
@@ -347,4 +366,109 @@ func closeTemplate() error {
 		return fmt.Errorf("cerrar %s a conexiones nuevas: %w", basePlantilla, err)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tests propios del arnés
+// ---------------------------------------------------------------------------------------------
+
+// topeEntryCheck acota la reejecución del binario de test en TestArnes_GoworkOff: sale al entrar en
+// TestMain, así que tarda lo que tarda en arrancar un proceso.
+const topeEntryCheck = 30 * time.Second
+
+// TestArnes_GoworkOff prueba que el arnés exige GOWORK=off (D-F9-7). La función pura acepta solo
+// «off», letra por letra, y el mensaje nombra la variable y el valor que vio. Y de punta a punta:
+// el propio binario de test, reejecutado con otro GOWORK (o sin él), sale de TestMain con código 2
+// y ese mensaje ANTES de levantar nada —ni Postgres ni un build—; si además WAPP_PROCESOS_BINARIO
+// no vale, dice las dos cosas. No necesita Docker más que para la corrida que lo contiene.
+func TestArnes_GoworkOff(t *testing.T) {
+	t.Parallel()
+	t.Run("requireGoworkOff", func(t *testing.T) {
+		t.Parallel()
+		if err := requireGoworkOff("off"); err != nil {
+			t.Errorf("requireGoworkOff(«off») = %v, quería nil", err)
+		}
+		for _, value := range []string{"", "auto", "OFF", "Off", " off", "off ", "0", "false", "/ruta/al/go.work"} {
+			err := requireGoworkOff(value)
+			if err == nil {
+				t.Errorf("requireGoworkOff(%q) = nil, quería un error", value)
+				continue
+			}
+			if msg := err.Error(); !strings.Contains(msg, "GOWORK debe ser «off»") || !strings.Contains(msg, fmt.Sprintf("(vale %q)", value)) {
+				t.Errorf("requireGoworkOff(%q): el mensaje no nombra la variable y el valor: %s", value, msg)
+			}
+		}
+	})
+
+	const goworkMsg, binaryMsg = "procesos: GOWORK debe ser «off»", "procesos: WAPP_PROCESOS_BINARIO debe ser"
+	cases := []struct {
+		name    string
+		env     []string // lo que se añade al entorno mínimo del subproceso
+		want    []string // lo que debe decir stderr
+		wantNot []string // lo que no debe decir
+	}{
+		{"sin GOWORK", []string{"WAPP_PROCESOS_BINARIO=viejo"}, []string{goworkMsg, `(vale "")`}, []string{binaryMsg}},
+		{"GOWORK con la ruta de un go.work", []string{"WAPP_PROCESOS_BINARIO=nuevo", "GOWORK=/ruta/al/go.work"},
+			[]string{goworkMsg, `(vale "/ruta/al/go.work")`}, []string{binaryMsg}},
+		{"GOWORK y el binario mal a la vez", []string{"WAPP_PROCESOS_BINARIO=otro", "GOWORK=auto"},
+			[]string{goworkMsg, `(vale "auto")`, binaryMsg}, nil},
+		{"GOWORK=off y el binario mal", []string{"WAPP_PROCESOS_BINARIO=otro", "GOWORK=off"}, []string{binaryMsg}, []string{goworkMsg}},
+	}
+	for _, c := range cases {
+		t.Run("TestMain: "+c.name, func(t *testing.T) {
+			t.Parallel()
+			code, stderr := rerunTestMain(t, c.env)
+			if code != 2 {
+				t.Fatalf("el binario de test salió con código %d, quería 2\nstderr: %s", code, stderr)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(stderr, w) {
+					t.Errorf("stderr no dice %q:\n%s", w, stderr)
+				}
+			}
+			// «Postgres» lo dicen tanto el contenedor listo como el fallo al levantarlo: si aparece,
+			// TestMain pasó de la comprobación de entrada.
+			for _, w := range append(c.wantNot, "Postgres", "compilado") {
+				if strings.Contains(stderr, w) {
+					t.Errorf("stderr dice %q y no debía:\n%s", w, stderr)
+				}
+			}
+		})
+	}
+}
+
+// rerunTestMain reejecuta el binario de test en curso sin ningún test que correr (-test.run=^$),
+// con un entorno construido desde cero —PATH, TMPDIR, un HOME vacío, un DOCKER_HOST que no existe
+// y lo que traiga extra—, y devuelve su código de salida y su stderr. El HOME vacío y el
+// DOCKER_HOST están para que, si la comprobación de entrada de TestMain dejara pasar, el subproceso
+// falle al buscar Docker en vez de levantar un segundo Postgres. Falla el test (t.Fatalf) si el
+// binario no se puede lanzar o pasa del tope.
+func rerunTestMain(t *testing.T, extra []string) (code int, stderr string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("rerunTestMain: la ruta del binario de test: %v", err)
+	}
+	ctx, cancelar := context.WithTimeout(t.Context(), topeEntryCheck)
+	defer cancelar()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, self, "-test.run=^$") //nolint:gosec // el propio binario de test, con argumentos fijos
+	cmd.Env = append([]string{
+		"PATH=" + os.Getenv("PATH"),
+		"TMPDIR=" + os.TempDir(),
+		"HOME=" + t.TempDir(),
+		"DOCKER_HOST=unix:///nada",
+	}, extra...)
+	cmd.Stderr = &out
+	err = cmd.Run()
+	var salida *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, out.String()
+	case errors.As(err, &salida) && ctx.Err() == nil:
+		return salida.ExitCode(), out.String()
+	default:
+		t.Fatalf("rerunTestMain: lanzar %s: %v (contexto: %v)\nstderr: %s", self, err, ctx.Err(), out.String())
+		return 0, ""
+	}
 }

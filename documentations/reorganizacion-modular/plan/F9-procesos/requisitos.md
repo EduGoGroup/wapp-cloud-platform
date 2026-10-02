@@ -95,7 +95,8 @@
 
 - **R9.4.a** · **EL** arnés **DEBERÁ** elegir el binario por `WAPP_PROCESOS_BINARIO=viejo|nuevo`
   (leída por el arnés, nunca por el test) y **DEBERÁ** fallar si falta o vale otra cosa. — Verifica:
-  `WAPP_PROCESOS_BINARIO=otro go test -tags integracion ./test/procesos/; echo rc=$?` → `rc≠0`.
+  `WAPP_PROCESOS_BINARIO=otro GOWORK=off go test -tags integracion ./test/procesos/; echo rc=$?` → `rc≠0`
+  (con `GOWORK=off`, para que el `rc≠0` sea el del binario y no el de D-F9-7: sin él, `TestMain` sale también con código 2).
 - **R9.4.b** · **CUANDO** se escribe un proceso nuevo, **EL** proceso **DEBERÁ** pasar contra `viejo`
   antes de su commit `procesos(<proceso>)`. — Verifica: el traspaso del bloque cita el log con
   `RC=0` contra `viejo` y el conteo `--- PASS`.
