@@ -19,7 +19,7 @@
 | `testcontainers.WithReuseByName` | Ídem. Es experimental y es el contenedor vivo con otro nombre (`05` §7.2) |
 | `os.Environ()` en el entorno del servidor | Ídem (T9.3). Ver trampa T-1 |
 | `t.Skip`, `t.SkipNow`, `testing.Short()` | Ídem (T9.3) y `grep -c -- '--- SKIP'` = 0 (E-5, DT-52) |
-| Importar un paquete de dominio (viejo o nuevo) fuera de las suites de contrato | `go list -tags integracion -deps ./test/procesos` (R9.4.d) |
+| Importar un paquete de dominio (viejo o nuevo) fuera de las suites de contrato (`…helpertest` y el adaptador Postgres que prueban, D-F1-8) | `go list -tags integracion -f` con los imports directos (comando en R9.4.d) |
 | Ramas por binario dentro de un proceso (`if binario == "nuevo"`) | `grep -n WAPP_PROCESOS_BINARIO test/procesos/*_test.go` solo en `main_test.go` (R9.8.b). Un proceso que necesita distinguir es un **hallazgo**, no un `if` |
 | Vía LLM `api` en cualquier proceso | El cliente del arnés rechaza el `PUT` (R9.3.e). Cero gasto: la vía `api` llamaría al proveedor real (`llmvia.go:275` sin `BaseURL`) |
 | `time.Sleep` fijo como espera | Revisión: se espera **sondeando** Postgres o un canal con tope (trampa T-6) |

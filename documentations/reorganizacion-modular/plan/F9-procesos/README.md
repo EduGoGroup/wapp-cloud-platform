@@ -200,7 +200,8 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 14. **Lista blanca de imports (`arquitectura.md` §3)**: no nombra `google.golang.org/grpc`, `google.golang.org/protobuf` ni
     el módulo raíz `identity-shared/auth` (para `ErrTokenExpired`), pero son inevitables para hablar el contrato de
     `wapp-cloudlink` y para el doble de identidad. La regla que se comprueba de verdad es la de `internal/`:
-    `go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío.
+    `go list -tags integracion -deps ./test/procesos | grep 'wapp-cloud-platform/internal/'` vacío. ✎ D-F1-8 (2026-10-02):
+    ese `-deps` solo veía `doc.go`; la regla y su comando (imports directos) están hoy en R9.4.d.
 15. **R9.1.d y R9.1.a no se miden con los comandos de la spec en una máquina con `/var/run/docker.sock`**:
     `DOCKER_HOST=unix:///nada` no basta (testcontainers prueba ese host, falla y cae al socket por defecto, y la corrida
     pasa), y `docker ps --filter ancestor=postgres:17-alpine` da 0 siempre si la imagen local es
