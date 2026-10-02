@@ -79,6 +79,11 @@ func TestMain(m *testing.M) {
 // proceso. Devuelve 2 si WAPP_PROCESOS_BINARIO no vale «viejo» o «nuevo» o si GOWORK no vale
 // «off» (las dos cosas se miran al entrar, antes de arrancar nada, y se dicen las dos si fallan
 // las dos), 1 si no se pudo levantar Postgres, compilar o migrar, y el código de m.Run en otro caso.
+//
+// Pasada la entrada, y antes de levantar nada, barre del directorio temporal del sistema los
+// directorios de corrida que dejaron huérfanos las corridas que murieron sin llegar a su defer
+// (sweepOrphanRunDirs, en sweep_test.go, con las condiciones que hacen seguro ese borrado). Un
+// barrido que falla se dice por stderr y no cambia el código de salida.
 func ejecutar(m *testing.M) int {
 	cual, err := validarBinario(os.Getenv("WAPP_PROCESOS_BINARIO"))
 	if err := errors.Join(err, requireGoworkOff(os.Getenv("GOWORK"))); err != nil {
@@ -87,13 +92,15 @@ func ejecutar(m *testing.M) int {
 	}
 	binElegido = cual
 
+	sweepOrphanRunDirs(os.TempDir(), time.Now(), os.RemoveAll, stderrf)
+
 	if err := levantarPostgres(); err != nil {
 		fmt.Fprintf(os.Stderr, "procesos: no se pudo levantar Postgres (¿hay Docker?): %v\n", err)
 		return 1
 	}
 	defer terminarPostgres()
 
-	dir, err := os.MkdirTemp("", "procesos-")
+	dir, err := createRunDir(os.TempDir())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "procesos: no se pudo crear el directorio temporal: %v\n", err)
 		return 1
@@ -219,7 +226,9 @@ func terminarPostgres() {
 }
 
 // borrarDirectorio borra el directorio temporal de la corrida con los binarios compilados.
-// Un fallo se vuelca a stderr y no cambia el código de salida.
+// Un fallo se vuelca a stderr y no cambia el código de salida. Si el binario de test muere antes
+// de llegar aquí, el directorio queda huérfano y lo barre una corrida posterior
+// (sweepOrphanRunDirs).
 func borrarDirectorio(dir string) {
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "procesos: no se pudo borrar %s: %v\n", dir, err)
