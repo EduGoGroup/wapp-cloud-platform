@@ -26,6 +26,8 @@ pushear.
 | `4bc398d` | `procesos(contact): la suite de contrato contra Postgres` | T1.13 + el grep de R9.4.d (D-F1-8) |
 | (cierre) | `docs(reorganizacion-modular): F1-02 cierra el bloque B` | tareas, ESTADO, este traspaso |
 
+✎ Después del cierre, Jhoan integró en `dev` el PR #22 (D-F9-11, partir los tests largos de `test/procesos`; `dev` @ `0a377bc`). La rama lo trae por **merge** (`a5d17b5`, sin conflictos), no por rebase, para que los SHA de esta tabla sigan valiendo. El merge no toca `base_test.go` ni `claves_test.go`, que son lo único del arnés que usa T1.13.
+
 T1.12 no tiene commit: no hizo falta ningún `refactor`; la medición está en `tareas.md` y en el PR.
 
 ═══ 2. go.mod ═══
@@ -61,6 +63,14 @@ WAPP_PROCESOS_BINARIO=nuevo  (lo mismo)  → rc=0 · 20 PASS · 0 SKIP
 
 Postgres estuvo listo en unos 2,5 s (7,5 s con la imagen en frío) y la plantilla migró en unos 0,6 s; estas
 cifras las dio el sub-agente, que leyó el log. No hubo divergencias memoria ↔ Postgres.
+
+**Repetidos sobre el merge `a5d17b5`** (con el PR #22 dentro), mismo método:
+
+```
+make toolchain → TOOLCHAIN=OK · GOWORK=off make ci-local → GATE_RC=0 · 88 ok · 0 issues · FICHEROS_EVALUADOS=14 · POR_DEBAJO=0
+make test-pendiente → PENDIENTES=0 · ROJOS=0 · SKIP en código nuevo 0 · vet -tags integracion rc=0 · R9.4.d vacío
+pre-chequeo -run Contact: viejo rc=0 · 20 PASS · 0 FAIL · 0 SKIP (padre 2,73 s) · nuevo rc=0 · 20 PASS · 0 FAIL · 0 SKIP
+```
 
 **No corrido**: `make test-procesos` completo, `make test-integration` y UAT.
 
