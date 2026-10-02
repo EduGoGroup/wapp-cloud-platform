@@ -176,7 +176,9 @@ correcciones); el diff del código viejo (`internal/flujos`, `bootstrap`, `gatew
   paquete pasa de 14 a 43 ficheros `.go` y ninguno pasa de 500 líneas. **Solo se mueven declaraciones**: 461 de primer nivel y 140
   *specs*, iguales byte a byte, 0 comentarios perdidos (`go/parser` sobre los bytes del fuente). Detalle en la contradicción 29 del
   [README de F9](plan/F9-procesos/README.md).
-  Gates (sobre `e78846b`, el último commit con código; rc leído del log): `make ci-local` → `GATE_RC=0`, 86 líneas `ok`, lint 0
+  Cada pieza se llama `<fichero de origen>_<tema>_test.go` (`edge_falso_*`, `servidor_*`, `clientes_*`, `pki_*`, `p0_arranque_*`;
+  indicación de Jhoan al revisar; `b4d9417`, 27 renombres sin tocar una declaración).
+  Gates (sobre `b4d9417`, el último commit con código; rc leído del log): `make ci-local` → `GATE_RC=0`, 86 líneas `ok`, lint 0
   *issues*, `FICHEROS_EVALUADOS=11 · POR_DEBAJO=0`; `make test-procesos` → `viejo` y `nuevo` `RC=0 · PASS=176 · FAIL=0 · SKIP=0`, y
   los nombres de los 176 PASS, idénticos a los de antes de partir en los dos binarios. **No corrido**: `make ci-docker` (no cambia
   nada de lo que mira frente al PR anterior salvo ficheros con etiqueta `integracion`), `make test-integration`, UAT.
