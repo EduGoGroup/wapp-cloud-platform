@@ -54,7 +54,7 @@
 | 10 | [`F9-02-cli-arnes-cierre`](F9-02-cli-arnes-cierre.md) | 💻 | F9 | A | T9.1–T9.12 🕐 | hecha (2026-10-01; H-1 diferida a F6) |
 | 11 | [`F1-01-web-contratos-y-rojo`](F1-01-web-contratos-y-rojo.md) | 🌐 | F1 | A | T1.1–T1.7 (+ T1.3b) | hecha (2026-10-01; PR #19, fusionado en `dev` sin squash: `6650e55`) |
 | 12 | [`F1-02-web-verde`](F1-02-web-verde.md) | 🌐 | F1 | B | T1.8–T1.13 | pendiente |
-| 13 | [`F1-03-web-adaptador-y-conmutacion`](F1-03-web-adaptador-y-conmutacion.md) | 🌐 | F1 | C | T1.14–T1.16 | pendiente |
+| 13 | [`F1-03-web-adaptador-y-conmutacion`](F1-03-web-adaptador-y-conmutacion.md) | 🌐 | F1 | C | T1.14–T1.16 | escrita (2026-10-03; rama `reorg/f1-c-adaptador`, PR hacia `dev`, integrar sin squash) |
 | 14 | [`F1-04-cli-cierre-e-informe`](F1-04-cli-cierre-e-informe.md) | 💻 | F1 | D | T1.17–T1.19 | pendiente |
 | 15 | [`F1-05-jhoan-parada`](F1-05-jhoan-parada.md) | 🧑 | F1 | — | — | pendiente |
 | 16 | [`F9-03-web-procesos-plataforma-y-acceso`](F9-03-web-procesos-plataforma-y-acceso.md) | 🌐 | F9 | B1 | T9.13–T9.16 🕐 | pendiente |

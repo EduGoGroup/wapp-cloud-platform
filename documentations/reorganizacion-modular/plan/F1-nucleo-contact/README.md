@@ -346,6 +346,37 @@
     que el auxiliar `filasDe` → `rowsOf` de D-F1-7. La mezcla dentro de un mismo paquete es la que E-11 acepta (lo ya
     escrito no se renombra), pero invita a imitar lo viejo.
 
+### Hallazgos de la sesión F1-03 (bloque C, 2026-10-03)
+
+30. **`Conmutados` y el adaptador no caben juntos** (→ D-F1-15). El comentario de `Conmutados` en
+    `internal/modulos/fronteras_test.go` dice «lo añade el commit `conmutar(<m>)`», y la regla 3 de
+    `internal/candados/fronteras.go` prohíbe que `internal/arranque` importe lo viejo de un módulo conmutado. Pero el
+    adaptador **existe para importar lo viejo**: `bridge_contact.go` implementa `viejo.Resolver`, y la copia de
+    `flows.go` guarda el campo como `viejo.Resolver`, porque es lo que piden `flowruntime.New` e `intakes.NewNotifier`.
+    Medido con `"nucleo"` en `Conmutados`: rc=1, tres violaciones de la regla 3 (`bridge_contact.go`, su test y
+    `flows.go`). T1.16 no lista `fronteras_test.go` entre sus ficheros, así que se siguió la spec: **`Conmutados` queda
+    vacía**. Lo mismo pasará en cada fase que use `bridge_<x>.go` (D-F1-5): F2–F7.
+31. **`go list -deps ./cmd/server-modular | grep -c 'internal/nucleo/contact$'` no prueba la conmutación**: da 1 desde
+    el rojo (`09f4b72`), porque `bridge_contact.go` importa el paquete nuevo aunque nadie lo cablee. La prueba es el test
+    de cableado: `TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys` arranca la fase 3 **real** (el contenedor de
+    la huella) y afirma que `flowDeps.contacts` es un `*contactBridge` sobre `*contact.PostgresResolver` con **la misma
+    instancia** de `db`, `cipher` y `kp` que la fase (R1.4.b). Para eso lee por reflexión los campos no exportados del
+    resolver nuevo: es un acoplamiento a sabiendas (si `N` los renombra, el test lo dice con su nombre). Muerde con dos
+    mutaciones: otro `FieldCipher` y el `NewPostgresResolver` viejo. Para F2+: el gate de la conmutación es el test de
+    cableado; el `go list -deps` solo prueba el enlace.
+32. **Los candados de fichero no miran `internal/arranque`**. `un_fichero_un_test` lo deja fuera por D-F0-1
+    (`internal/modulos/un_fichero_un_test_test.go:16`): quitar `bridge_contact_test.go` no lo pone rojo (medido por el
+    sub-agente del rojo). `make cobertura-ficheros` tampoco evalúa `internal/arranque` (`FICHEROS_EVALUADOS=14` antes y
+    después del bloque). El ≥ 80 % de T1.15 se midió **a mano**: `bridge_contact.go` 100 % (18/18 sentencias). Los
+    `bridge_<x>.go` de F2–F7 nacerán igual de invisibles para los candados (→ D-F1-16).
+33. **El arranque de la fase 3 ya no construye nada viejo de `contact`**, pero el binario nuevo sigue **enlazando** `V`
+    (las funciones puras que usan `runtime`, `gateway`, `admin` y `publicapi`, y los tipos del adaptador). Es lo
+    previsto (arquitectura §2, §5: estado inmutable, sin duplicación); se dice para que nadie lea el `go list` de `V`
+    como un fallo de la conmutación.
+34. **E-11 en un verde delegado**: el sub-agente del verde dejó `nuevas` y los campos `nuevo`/`viejo` de
+    `sentinelPairs`; se corrigió en un `refactor(arranque)` aparte (`a62abea`) para no reescribir el commit `verde` ya
+    empujado. El alias de import `viejo` se conserva: es el vocabulario de la spec (arquitectura §3, T1.14).
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |
@@ -364,3 +395,5 @@
 | D-F1-12 | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `1507d78` · *(de la revisión independiente, 2026-10-01; hallazgo 23)* ¿Se actualiza `05` para que cumpla E-11 (el ejemplo de §10, la firma de E-3 con las dos formas de D-F1-1, `sin_pendientes_test.go`) y se dice si el sufijo de fichero `_contrato` es vocabulario del método (excepción 3)? | **Sí** (solo Jhoan toca la norma). Mientras tanto, la skill `contrato-tdd`, `00-marco/glosario.md` y `00-marco/estructura.md` ya dan las dos formas de la firma. **Aplicado**: `05` da las dos firmas bajo la tabla de E-3, el ejemplo de §10 va en inglés, el candado de F10 se llama `no_pending_test.go` (esta fila conserva el nombre anterior: es registro) y el sufijo `_contrato` es vocabulario del método. Lo que queda, en la nota ✎ del hallazgo 23 y en el hallazgo 26 |
 | D-F1-13 | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `88b1d85` · *(resto de D-F1-10, 2026-10-02; hallazgo 21)* ¿Se miden los **dobles con lógica** que viven en un paquete `…helpertest`? D-F1-10 no lo resuelve: `contacthelpertest/estado.go` (doble con lógica y test propio, 91,2 %) sigue fuera de la cobertura por fichero, y `05` E-6 manda crear un doble en memoria en el `…helpertest` de 12 puertos, que serán implementaciones completas exentas de los tres candados | La revisión propuso, como parte (ii) de D-F1-10, eximir de la cobertura solo los ficheros de suite (`contrato.go` y `*_contrato.go`), para que los dobles con lógica se midan (hasta el 2026-10-02 esta fila decía «abierta, sin recomendación nueva»). **Aplicado** eso mismo (`isContractSuiteFile`): `FICHEROS_EVALUADOS` 10 → 11, entra `contacthelpertest/estado.go` (91,1 %; medido por la sesión que lo implementó). Estrecha D-F1-6 y D-F1-10; `un_fichero_un_test` y `exportados_cubiertos` siguen eximiendo el paquete entero (D-F1-3) → **D-F1-14** |
 | D-F1-14 | *(resto de D-F1-13, 2026-10-02; nota ✎ del hallazgo 21)* ¿Se extiende «solo los ficheros de suite exentos» a `un_fichero_un_test` y `exportados_cubiertos`, que hoy eximen el paquete `…helpertest` entero (D-F1-3)? | **Abierta**, sin recomendación: solo hechos. Hoy pasarían en verde (44 y 88 ficheros recorridos, 0 violaciones; medido por la sesión que aplicó D-F1-13, cambio local revertido). Para `un_fichero_un_test` choca con `05` E-3, fila «Dobles de test» («su propio test solo si tienen lógica»), y con D-F1-3: haría falta la excepción «doble sin ninguna `func` con cuerpo». Decide Jhoan |
+| D-F1-15 | *(de F1-03, 2026-10-03; hallazgo 30)* ¿Cuándo entra un módulo en `Conmutados` si el arranque nuevo sigue necesitando sus tipos viejos a través de un `bridge_<x>.go`? Hoy la regla 3 lo impide mientras viva el adaptador | **Cuando muere su último adaptador** (para `nucleo`, en F8), y corregir en ese sentido el comentario de `Conmutados` («lo añade el commit `conmutar(<m>)`» → «…el commit que retira su último `bridge_<x>.go`, o el `conmutar(<m>)` si no tuvo»). Alternativa: que la regla 3 exima los ficheros `bridge_*.go` — no basta, porque `flows.go` también guarda el tipo viejo |
+| D-F1-16 | *(de F1-03, 2026-10-03; hallazgo 32)* ¿`make cobertura-ficheros` (y `un_fichero_un_test`) evalúan los `internal/arranque/bridge_*.go`? Hoy D-F0-1 deja `internal/arranque` fuera porque es una copia; los adaptadores son código **nuevo con lógica** | **Sí, solo `bridge_*.go`** (la copia sigue fuera): que el 80 % de cada adaptador de F2–F7 lo mida el candado y no la memoria de quien cierra. Hoy `bridge_contact.go` está al 100 %, así que entraría en verde |
