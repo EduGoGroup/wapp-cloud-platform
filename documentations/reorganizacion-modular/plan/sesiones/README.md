@@ -30,7 +30,7 @@
 - **El orden supone D-F9-1 = sí** (F9 adelantado). Si decides que no, los pasos de F9 que están
   antes de F2 (F9-01…F9-05) se saltan en su sitio y F9 entero se hace tras F8 (T9.34); las sesiones
   de cierre de cada módulo ignoran su pasada de procesos.
-- **Lo primero es [F1-06](F1-06-cli-ajustes-previos-a-f2.md)**: los ajustes de código que piden P2, P4 y P5.
+- **[F1-06](F1-06-cli-ajustes-previos-a-f2.md) está hecha** (2026-10-03): los ajustes de código que pedían P2, P4 y P5. **Lo siguiente es [F9-03](F9-03-cli-procesos-plataforma-y-acceso.md).**
   Sin ella no arranca F9-B ni F2.
 - **Cada fase empieza por su inventario E-12** (`05` E-12): la primera sesión clasifica cada archivo (simple,
   medio, complejo) y lista los adaptadores `bridge_<x>.go`; **para hasta que lo apruebes**, y luego sigue.
@@ -82,7 +82,7 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 13 | [`F1-03-web-adaptador-y-conmutacion`](F1-03-web-adaptador-y-conmutacion.md) | 🌐 | F1 | C | T1.14–T1.16 | — | hecha (2026-10-03; PR #25, fusionado en `dev` sin squash: `ddcf7de`) |
 | 14 | [`F1-04-cli-cierre-e-informe`](F1-04-cli-cierre-e-informe.md) | 💻 | F1 | D | T1.17–T1.19 | — | hecha (2026-10-02; sobre `dev` @ `ddcf7de`, cierre `d5228ac`) |
 | 15 | [`F1-05-jhoan-parada`](F1-05-jhoan-parada.md) | 🧑 | F1 | — | — | — | hecha (2026-10-03, Jhoan contestó P1–P7) |
-| 16 | [`F1-06-cli-ajustes-previos-a-f2`](F1-06-cli-ajustes-previos-a-f2.md) | 💻 | F1 | ajustes | A1–A6 (código: candados, cobertura a informe, cableado, marca de `Estado`, R9.4.d, corpus) | complejo | pendiente |
+| 16 | [`F1-06-cli-ajustes-previos-a-f2`](F1-06-cli-ajustes-previos-a-f2.md) | 💻 | F1 | ajustes | A1–A6 (código: candados, cobertura a informe, cableado, marca de `Estado`, R9.4.d, corpus) | complejo | hecha (2026-10-03; A1–A6 `0689b4e`…`7937772`, cierre `596fc13`, en `dev`) |
 | 17 | [`F9-03-cli-procesos-plataforma-y-acceso`](F9-03-cli-procesos-plataforma-y-acceso.md) | 💻 | F9 | B1 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | — | pendiente |
 | 18 | [`F9-04-cli-procesos-de-negocio`](F9-04-cli-procesos-de-negocio.md) | 💻 | F9 | B2 | T9.17–T9.21, T9.35, T9.22 (P4–P8, P10; cierre de B1 y B2) | — | pendiente |
 | 19 | [`F2-01-web-inventario-y-hojas`](F2-01-web-inventario-y-hojas.md) | 🌐 | F2 | inventario + hojas | T2.1, T2.34, T2.2–T2.3, T2.5–T2.9, T2.17–T2.21 | simple | pendiente |
