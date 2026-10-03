@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-10-03** (**recalibración del plan tras el piloto**: specs F2–F10 y FX y `plan/sesiones/` alineadas con P1–P7; 81 sesiones → 56; siguiente paso, **F1-06**, ajustes de código previos a F2). Antes, 2026-10-03 (**parada de F1 resuelta**: Jhoan contestó P1–P7, `04` y `05` corregidos —`05` E-12 y §4.2—, skills y `CLAUDE.md` al día; ver `plan/DECISIONES.md` §3 y la §10 del informe). Antes, 2026-10-02 (noche, −03) (sesión **F1-04** 💻, bloque D de F1, el cierre local del piloto `nucleo/contact` sobre `dev` @ `ddcf7de`: T1.17–T1.19, [`informe-piloto.md`](plan/F1-nucleo-contact/informe-piloto.md) escrito, los dos traspasos de F1 **CERRADOS**; última fila de «Qué se hizo» y paso 2d de «Siguiente paso». **F1 espera la PARADA (T1.20)**). Antes, 2026-10-03 (UTC) (sesión **F1-03** 🌐, bloque C de F1, el adaptador `bridge_contact.go` y la conmutación de `nucleo/contact`, rama `reorg/f1-c-adaptador` sobre `origin/dev` @ `61a3c8b`: última fila de «Qué se hizo» y paso 2c de «Siguiente paso»). Antes, 2026-10-02 (sesión **F1-02** 🌐, bloque B de F1, el verde de `nucleo/contact`, rama `reorg/f1-b-verde`, que trae `dev` @ `0a377bc` —con el PR #22, D-F9-11— por el merge `a5d17b5`: última fila de «Qué se hizo» y paso 2b de «Siguiente paso»). Antes, (aplicadas las recomendaciones de la revisión independiente de S9–S11 en siete decisiones, rama `reorg/decisiones-revision-s9-s11`: última entrada de «Dónde estamos»). Antes, el mismo día, D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`. Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
+> **Última actualización: 2026-10-03** (**F9-03 hecha**: bloque B1 de F9 —P1, P2, P3 y P9— verde contra los dos binarios y el mutante `maxTxAttempts = 1` cae; siguiente paso, **F9-04**). Antes, 2026-10-03 (**recalibración del plan tras el piloto**: specs F2–F10 y FX y `plan/sesiones/` alineadas con P1–P7; 81 sesiones → 56; siguiente paso, **F1-06**, ajustes de código previos a F2). Antes, 2026-10-03 (**parada de F1 resuelta**: Jhoan contestó P1–P7, `04` y `05` corregidos —`05` E-12 y §4.2—, skills y `CLAUDE.md` al día; ver `plan/DECISIONES.md` §3 y la §10 del informe). Antes, 2026-10-02 (noche, −03) (sesión **F1-04** 💻, bloque D de F1, el cierre local del piloto `nucleo/contact` sobre `dev` @ `ddcf7de`: T1.17–T1.19, [`informe-piloto.md`](plan/F1-nucleo-contact/informe-piloto.md) escrito, los dos traspasos de F1 **CERRADOS**; última fila de «Qué se hizo» y paso 2d de «Siguiente paso». **F1 espera la PARADA (T1.20)**). Antes, 2026-10-03 (UTC) (sesión **F1-03** 🌐, bloque C de F1, el adaptador `bridge_contact.go` y la conmutación de `nucleo/contact`, rama `reorg/f1-c-adaptador` sobre `origin/dev` @ `61a3c8b`: última fila de «Qué se hizo» y paso 2c de «Siguiente paso»). Antes, 2026-10-02 (sesión **F1-02** 🌐, bloque B de F1, el verde de `nucleo/contact`, rama `reorg/f1-b-verde`, que trae `dev` @ `0a377bc` —con el PR #22, D-F9-11— por el merge `a5d17b5`: última fila de «Qué se hizo» y paso 2b de «Siguiente paso»). Antes, (aplicadas las recomendaciones de la revisión independiente de S9–S11 en siete decisiones, rama `reorg/decisiones-revision-s9-s11`: última entrada de «Dónde estamos»). Antes, el mismo día, D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`. Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -235,6 +235,40 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
   integración vieja (no se tocó código compartido).
 - **Siguiente paso: F9-03** (F9-B). `main` sin tocar.
 
+**F9-03 · F9 bloque B1, procesos de plataforma y acceso (2026-10-03, 💻, rama `reorg/f9-b1` desde `dev` @ `25052d1`).**
+Sesión completa (escribe, corre y cierra). Cuatro commits, uno por proceso, escritos por sub-agentes en *worktrees*
+fijados en `25052d1` e integrados con `cherry-pick` en la rama; llega a `dev` por PR, sin squash:
+
+- **T9.13** `679ea52` · **P1** `TestP1_EnrollmentAndLease`: alta, código, enrolamiento, lease, renovación, revocación,
+  corte comercial y reactivación, con el candado de la doble llave (ADR-0007) como aserción.
+- **T9.14** `052089e` · **P2**: `TestP2_InvitacionUnSoloCanje` (R9.6.a), `TestP2_RutasDePlataformaDenegadasAlCliente`
+  (R9.6.b, I-CP-5) y `TestP2_ExchangeAndPermissions`.
+- **T9.16** `8febd52` · **P9** `TestP9_DiagnosticsAndConfigPush`: diagnóstico remoto (ciclo, TTL, opt-out, aislamiento) y
+  configuración empujada (`intents`, `filters`, reconexión).
+- **T9.15** `250916a` · **P3**: `TestP3_IncomingToReply` (con el literal del aviso leído del `.md`), las tres reglas de
+  `contacts` (`TestP3_LatePushNameIsSealed`, `TestP3_FirstPushNameWins`, `TestP3_HistoryBurstWithoutDeadlock`) y
+  `TestP3_TxRetryOnSerializationFailure`. El Edge de prueba gana `sealedIncoming` (`push_name`, `from_lid`).
+- **`make test-procesos`** (rc leído del log, suite entera, sobre el código final), **dos pasadas**:
+  viejo `RC=0 · PASS=287 · FAIL=0 · SKIP=0` y nuevo `RC=0 · PASS=287 · FAIL=0 · SKIP=0`, las dos veces (≈ 15 s por
+  binario). Antes de arreglar el lint, otras dos pasadas con el mismo resultado. **Ningún rojo solo contra el nuevo.**
+- 🔴 **El reintento de `postgres.WithTx`, ejecutado de verdad (R9.6.e)**: `TestP3_TxRetryOnSerializationFailure` provoca
+  un `40P01` real en el `Resolve` del contacto (dos transacciones del test hacen de compuerta; la suya con
+  `deadlock_timeout = 60s`, así que la víctima es el servidor) y afirma que `pg_stat_database.deadlocks` sube, que el
+  entrante se contesta y el sobre queda sellado, y que no hay `ERROR`. **Mutante `maxTxAttempts = 1`** (copia desechable,
+  ya borrada): el test **cae 3 de 3 contra el viejo y 3 de 3 contra el nuevo**, con
+  `(c) el entrante se perdió: WithTx no reintentó tras el deadlock: … runtime: resolver contacto: postgres: transacción tras 1 intentos (último deadlock/serialización): contact: buscar ref: ERROR: deadlock detected (SQLSTATE 40P01)`.
+  Control sin mutar: 3 de 3 en verde en los dos. Con el mutante cae además `TestP3_HistoryBurstWithoutDeadlock` (medido
+  por el sub-agente, solo contra el viejo).
+- **Gates** (toolchain fijada, rc sin pipe): `make ci-local` `GATE_RC=0` (89 líneas `ok`, lint 0 issues,
+  `FICHEROS_EVALUADOS=18`, `POR_DEBAJO=1`) · `make vet-pendiente` rc=0 · `make test-pendiente` rc=0 (`PENDIENTES=0`,
+  `ROJOS=0`). La primera corrida de `ci-local` dio **`GATE_RC=2`** por 19 avisos de lint en los ficheros nuevos
+  (corregidos sin tocar aserciones y fundidos en su commit; hallazgo 31 del README de F9).
+- **Sin tocar**: `internal/**` y `cmd/**` (`git diff --stat dev -- internal cmd` vacío). Ningún fichero de
+  `test/procesos` pasa de 500 líneas (el mayor, `p9_diagnostico_config_push_test.go`, 498).
+- **No corrido**: `CUENTA=3 make test-procesos` (es de T9.30) y la integración vieja (no se tocó código compartido).
+- **Hallazgos 31–43** en el [README de F9](plan/F9-procesos/README.md), «Hallazgos de la sesión F9-03».
+- **Siguiente paso: F9-04** (F9 bloque B2). `main` sin tocar.
+
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
@@ -243,7 +277,7 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
 | F9-A (adelantado) | ✅ cerrado (2026-10-01): escrito en la web (F9-01), cerrado en local (F9-02); H-1 (intermitencia de P0) diferida a F6 | T9.1–T9.12 | `a374cdb`, `37c7db7`, `f300aff`, `b5f1601`, `576ba9a`, `2e2ecc1`, `7c63d9e`, `660947d`, `fa03e6b`, `5519343`, `10179d6`, `6ee1c5e` (en `dev` por el merge `af7b8e9`, PR #18); el cierre local es solo documental, en **tres** commits: `ac8ac5f` (el cierre), `79c7160` (su SHA) y `77df20f` (H-1 diferida a F6: ahí vive D-F6-7) |
 | Recalibración (docs) | ✅ hecha (2026-10-03) | specs F2–F10, FX y sesiones | commit `docs(reorganizacion-modular): recalibración tras el piloto` |
 | F1-06 (ajustes previos a F2) | ✅ hecha (2026-10-03) | A1–A6 | `0689b4e`, `1622231`, `0a91857`, `cccee37`, `9001720`, `7937772` |
-| F9-B (adelantado) | pendiente | — | — |
+| F9-B (adelantado) | 🟡 **B1 hecho** (2026-10-03, F9-03); B2 pendiente (F9-04) | B1 · T9.13–T9.16 (P1, P2, P3, P9) | `679ea52`, `052089e`, `8febd52`, `250916a` (rama `reorg/f9-b1`, por PR a `dev`) |
 | F1 | ✅ **cerrada** (A–D en `dev`: PR #19, #23, #25; cierre local F1-04 el 2026-10-02; **parada resuelta el 2026-10-03**) | D · cierre local e informe (T1.17–T1.19) | **D**: T1.17–T1.19 sin commit de código sobre `ddcf7de`, cierre documental `d5228ac` · T1.14 `09f4b72` · T1.15 `0c2bddf` (+ `a62abea`) · T1.16 `ce98595` · T1.1 `afa63f3` · T1.2 `b37a8c8` · T1.3 `d915d41` (+ `b001c35`) · T1.3b `68897a8`, `776d6a2` · T1.4 `8f2a4db` · T1.5 `89b223b` · T1.6 `32b7bfb` · cierre del bloque `b9dd1e7` · tras el cierre: E-11 `8365132` y el troceo de `contacttest/contrato.go` `7069532`; sobre `origin/dev` @ `77df20f`, rama `reorg/f1-a-contratos-rojo`. Gate `ci-local` `GATE_RC=0` (86 líneas `ok`, 0 issues); `make test-pendiente` `PENDIENTES=11` `ROJOS=4`; 0 SKIP · **B**: decisiones `ccc9a6b` · T1.8 `9e8f740` · T1.9 `8e7a891` · T1.10 `222c4c8` · T1.11 `8307afb` · D-F1-7 `4bbd138` · T1.13 `4bc398d` (sobre `origin/dev` @ `5847ad4`). Gate `GATE_RC=0` (88 `ok`, 0 issues); `PENDIENTES=0 · ROJOS=0`; cobertura 97,6 · 100 · 95,6 · 92,6 % y Postgres exento (31,1 %); 0 SKIP; pre-chequeo de T1.13 viejo y nuevo 20 PASS |
 | F2–F8 | pendiente | — | — |
 | F9-D | pendiente | — | — |
@@ -279,6 +313,7 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
 
 | 2026-10-03 | **F1-03** (🌐): **bloque C de F1**. `internal/arranque/bridge_contact.go` (D-F1-9: nombres en inglés) en rojo (`09f4b72`: 4 tests del adaptador en rojo y el corpus de equivalencia viejo ↔ nuevo, 109 casos, **sin una diferencia**) y en verde (`0c2bddf` + `a62abea`, 100 %); la copia de `flows.go` cablea `newContactResolver` y pierde `contactsPG` (T-8) (`ce98595`). Huella igual; `go list -deps` 1 · 0; código viejo intacto desde `77df20f`. Hallazgos 30–34 (`Conmutados` choca con el adaptador; `go list -deps` no prueba la conmutación; los candados de fichero no miran `internal/arranque`) y **D-F1-15**, **D-F1-16** abiertas | [`plan/F1-nucleo-contact/tareas.md`](plan/F1-nucleo-contact/tareas.md) T1.14–T1.16 · [`traspasos/TRASPASO-F1-nucleo-contact.md`](traspasos/TRASPASO-F1-nucleo-contact.md) |
 | 2026-10-02 | **F1-04** (💻): **bloque D de F1**, el cierre local del piloto. Gates idénticos a la web (`GATE_RC=0`, 542 PASS · 0 SKIP en el código nuevo); T1.18: suite de `contact` contra Postgres con los dos binarios rc=0 · 20 PASS · 0 SKIP, sin divergencias; `make test-procesos` 196 PASS × 2; arranque real de `server-modular` 9/9. Refutadas las dos §7 con mutantes (hallazgos 35–41). Escrito `informe-piloto.md`; traspasos de F1 **CERRADOS** | [`plan/F1-nucleo-contact/informe-piloto.md`](plan/F1-nucleo-contact/informe-piloto.md) · [`traspasos/TRASPASO-F1-B-suite-postgres.md`](traspasos/TRASPASO-F1-B-suite-postgres.md) · [`traspasos/TRASPASO-F1-nucleo-contact.md`](traspasos/TRASPASO-F1-nucleo-contact.md) |
+| 2026-10-03 | **F9-03** (💻): **bloque B1 de F9**. P1, P2, P3 y P9 escritos y verdes contra los dos binarios (`make test-procesos` ×2: `RC=0 · 287 PASS · 0 FAIL · 0 SKIP` por binario); el reintento de `postgres.WithTx` se ejecuta de verdad y el mutante `maxTxAttempts = 1` cae en los dos binarios; `ci-local` `GATE_RC=0`; ningún rojo solo-nuevo; hallazgos 31–43 en el README de F9 | `679ea52`, `052089e`, `8febd52`, `250916a` |
 | 2026-10-03 | **Recalibración tras el piloto** (💻, solo `.md`): P1–P7 aplicadas a las specs F2–F10 y FX, al marco, a los protocolos y a las sesiones (81 → 56; 9 sub-agentes, uno por fase); hallazgos 35–41 a F9; ficha F1-06; D-R-1…D-R-6 abiertas | [`plan/README.md`](plan/README.md) · [`plan/sesiones/README.md`](plan/sesiones/README.md) · [`plan/DECISIONES.md`](plan/DECISIONES.md) §7 |
 
 ## 🔒 Decisiones de Jhoan (cerradas)
@@ -381,7 +416,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: F9-03 (F9-B), en [`plan/sesiones/`](plan/sesiones/README.md). F1-06 está hecha (2026-10-03).
+0. **Siguiente sesión**: F9-04 (F9 bloque B2), en [`plan/sesiones/`](plan/sesiones/README.md). F1-06 y F9-03 están hechas (2026-10-03).
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).
