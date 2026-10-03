@@ -14,7 +14,7 @@ admin/health · `:8103` HTTP API pública · `:8101` gRPC CloudLink bidi con mTL
 frontend**. Tamaño con su descomposición («244k líneas» engaña): **92.451 líneas de producción**
 en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 
-## Las cinco reglas innegociables
+## Las seis reglas innegociables
 
 1. **Zero-knowledge y doble llave.** La nube nunca accede a credenciales ni llaves privadas: la
    **DEK** que descifra el almacén de `whatsmeow` la custodia el cliente y **jamás cruza el
@@ -35,6 +35,11 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
 5. **La inferencia la orquesta ESTE repo; el Edge solo la sirve** — lo contrario de lo que decía
    el diseño original. El Cloud construye el prompt y valida la salida; el Edge es *prompt entra
    → JSON sale* y **no interpreta nada**.
+6. 🔴 **Ningún código nace en `dev` ni en `main`.** Todo código se escribe en una **rama partida de
+   `dev`** y llega a `dev` por **PR** (sin squash). Commitear o hacer `cherry-pick` directamente sobre
+   `dev` o `main` solo si Jhoan lo pide **expresamente** en la conversación: que una ficha o un prompt
+   de sesión diga «push a `dev`» **no** cuenta. Vale también para los sub-agentes en *worktrees*: sus
+   commits se integran en la rama. (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
 
 ## Antes de tocar nada
 

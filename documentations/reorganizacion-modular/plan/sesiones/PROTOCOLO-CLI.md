@@ -88,6 +88,8 @@ que corre**, no contra la documentación. Lo que se refute, se corrige (o se ano
    estado del `README.md` de la fase.
 3. Los hallazgos nuevos, en el `README.md` de la fase.
 
-Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; `git push origin dev` (rc sin
-pipe); **`main` no se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
+Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; 🔴 **el código va en una rama
+partida de `dev` y entra por PR** (regla innegociable 6 del `CLAUDE.md`, 2026-10-03): `git push origin <rama>` (rc sin
+pipe) y PR hacia `dev`, sin squash. Directo a `dev` solo si Jhoan lo pide expresamente en la conversación; **`main` no
+se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
 cabe, para en un punto limpio, cierra con las tres cosas y se relanza.
