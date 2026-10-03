@@ -7,10 +7,10 @@ package arranque
 
 import (
 	"context"
+	"errors"
 
 	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // contactBridge presenta un contact.Resolver NUEVO como el viejo.Resolver que piden los paquetes
@@ -43,26 +43,74 @@ import (
 // Vida: nace en F1 · F6 lo deja de usar para el notificador (el intakes nuevo recibe tipos del
 // núcleo) · muere en F8, cuando el runtime nuevo recibe un contact.Resolver.
 type contactBridge struct {
-	// next es el resolver nuevo en el que se delega todo.
-	//
-	// El nolint es solo del rojo (trampa T-1): con los cuerpos en panic nada lee el campo y el
-	// test que lo escribe lleva la etiqueta pendiente, que el linter no ve. El verde (T1.15) lo lee
-	// y QUITA esta marca.
-	next contact.Resolver //nolint:unused // rojo T1.14: lo lee el verde (T1.15), que quita la marca
-
+	// next es el resolver nuevo en el que se delega todo; el adaptador no guarda más estado.
+	next contact.Resolver
 }
 
-// contactBridge es un viejo.Resolver (y por tanto un intakes.Destinations). La aserción además
-// lo mantiene «usado» para el linter mientras los cuerpos son panic (trampa T-1).
+// contactBridge es un viejo.Resolver (y por tanto un intakes.Destinations): si alguna de las dos
+// firmas cambia, esto no compila.
 var _ viejo.Resolver = (*contactBridge)(nil)
 
 // Resolve implementa viejo.Resolver: copia las refs al tipo nuevo y delega (ver contactBridge).
 func (b *contactBridge) Resolve(ctx context.Context, tenantID string, refs []viejo.Ref, pushName string) (string, error) {
-	panic(pendiente.Implementar("arranque.contactBridge.Resolve"))
+	// Copia campo a campo y nada más: NewRef ya normalizó en origen, y normalizar otra vez aquí
+	// podría cambiar el value del que sale el índice ciego de filas que ya existen. Una lista nil
+	// llega como lista vacía de longitud 0: next decide (ErrNoRefs), no el adaptador.
+	nuevas := make([]contact.Ref, len(refs))
+	for i, r := range refs {
+		nuevas[i] = contact.Ref{Kind: r.Kind, Value: r.Value}
+	}
+	contactID, err := b.next.Resolve(ctx, tenantID, nuevas, pushName)
+	if err != nil {
+		return "", translateContactErr(err)
+	}
+	return contactID, nil
 }
 
 // Destino implementa viejo.Resolver: delega y copia la ref de vuelta al tipo viejo (ver
 // contactBridge).
 func (b *contactBridge) Destino(ctx context.Context, tenantID, contactID string) (viejo.Ref, error) {
-	panic(pendiente.Implementar("arranque.contactBridge.Destino"))
+	ref, err := b.next.Destino(ctx, tenantID, contactID)
+	if err != nil {
+		return viejo.Ref{}, translateContactErr(err)
+	}
+	return viejo.Ref{Kind: ref.Kind, Value: ref.Value}, nil
 }
+
+// sentinelPairs empareja cada centinela del resolver nuevo con su equivalente viejo. El contrato
+// de viejo.Resolver promete sus propios centinelas: aunque hoy ningún paquete viejo fuera de
+// flujos/contact los compare con errors.Is, el adaptador cumple ese contrato entero para que
+// quien lo haga mañana (o un log que lo clasifique) no vea un error distinto según el arranque.
+var sentinelPairs = []struct{ nuevo, viejo error }{
+	{contact.ErrNoRefs, viejo.ErrNoRefs},
+	{contact.ErrNoDestino, viejo.ErrNoDestino},
+	{contact.ErrContactNotFound, viejo.ErrContactNotFound},
+}
+
+// translateContactErr envuelve en un bridgeError el error de next que casa con un centinela del
+// resolver nuevo, para que case también con el viejo; cualquier otro error (el de la BD, el del
+// ctx, ErrInvalidRef) sale tal cual, porque no hay centinela viejo con el que emparejarlo y
+// envolverlo solo cambiaría su tipo.
+func translateContactErr(err error) error {
+	for _, p := range sentinelPairs {
+		if errors.Is(err, p.nuevo) {
+			return &bridgeError{original: err, oldSentinel: p.viejo}
+		}
+	}
+	return err
+}
+
+// bridgeError es un error del resolver nuevo presentado a la vez como su centinela viejo. Su
+// texto es el del original, byte a byte (los dos paquetes comparten literales, y alguno acaba en
+// un log o en una respuesta), y Unwrap() []error expone los dos para que errors.Is case con el
+// centinela nuevo, con el viejo y con el propio original.
+type bridgeError struct {
+	original    error
+	oldSentinel error
+}
+
+// Error devuelve el texto del error original sin añadir nada.
+func (e *bridgeError) Error() string { return e.original.Error() }
+
+// Unwrap devuelve el error original y el centinela viejo equivalente (Go 1.20+, árbol de errores).
+func (e *bridgeError) Unwrap() []error { return []error{e.original, e.oldSentinel} }
