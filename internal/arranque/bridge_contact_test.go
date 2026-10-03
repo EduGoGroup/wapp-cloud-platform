@@ -5,7 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"go/ast"
 	"reflect"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
@@ -606,5 +611,133 @@ func TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys(t *testing.T) {
 	}
 	if !sameInstance(postgresResolverField(t, b, "kp"), c.flowDeps.kp) {
 		t.Error("el resolver de contactos no usa el KeyProvider de la fase 3 (flowDeps.kp): otro value_bidx")
+	}
+}
+
+// ── Cableado completo: ninguna fase usa el resolver viejo (05 §4.2, hallazgo 39 de F1) ───────
+
+// oldContactImportPath es la ruta de import del paquete VIEJO de contactos.
+const oldContactImportPath = "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+
+// oldContactImporters es la lista blanca, por nombre de fichero, de los ficheros de producción de
+// internal/arranque que pueden importar el paquete viejo de contactos, con los ÚNICOS símbolos
+// que cada uno puede usar de él. Ninguno es un constructor: así el arranque nuevo no puede
+// levantar un resolver viejo, ni en una fase ni en el propio adaptador.
+//
+//   - bridge_contact.go: es el adaptador (05 §4.2). Implementa viejo.Resolver, copia viejo.Ref
+//     campo a campo y empareja los tres centinelas viejos.
+//   - flows.go: solo el TIPO del campo flowRuntimeDeps.contacts, viejo.Resolver, que es lo que
+//     piden flowruntime.New (fase 7) e intakes.NewNotifier (fase 6).
+//
+// Los dos salen de aquí en F8, cuando muere el adaptador (y entonces nucleo entra en Conmutados).
+var oldContactImporters = map[string][]string{
+	"bridge_contact.go": {"ErrContactNotFound", "ErrNoDestino", "ErrNoRefs", "Ref", "Resolver"},
+	"flows.go":          {"Resolver"},
+}
+
+// oldContactUse es lo que un fichero de producción del arranque hace con el paquete viejo de
+// contactos: con qué nombre lo importa y qué símbolos usa de él.
+type oldContactUse struct {
+	localName string   // nombre local del import: el alias, o "contact" si no lleva alias
+	selectors []string // símbolos usados sobre localName, sin repetir y ordenados
+}
+
+// oldContactUses recorre los ficheros de producción de internal/arranque y devuelve, por nombre de
+// fichero, los que importan el paquete viejo de contactos (o un subpaquete suyo) y lo que usan.
+func oldContactUses(t *testing.T) map[string]oldContactUse {
+	t.Helper()
+	fset, files := astDelArranque(t)
+	uses := make(map[string]oldContactUse)
+	for _, f := range files {
+		name := fset.Position(f.Pos()).Filename
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Fatalf("%s: import %s ilegible: %v", name, imp.Path.Value, err)
+			}
+			if path != oldContactImportPath && !strings.HasPrefix(path, oldContactImportPath+"/") {
+				continue
+			}
+			local := "contact"
+			if imp.Name != nil {
+				local = imp.Name.Name
+			}
+			uses[name] = oldContactUse{localName: local, selectors: selectorsOn(f, local)}
+		}
+	}
+	return uses
+}
+
+// selectorsOn devuelve los símbolos que f usa como <local>.<símbolo>, sin repetir y ordenados.
+func selectorsOn(f *ast.File, local string) []string {
+	seen := make(map[string]bool)
+	ast.Inspect(f, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if x, ok := sel.X.(*ast.Ident); ok && x.Name == local {
+			seen[sel.Sel.Name] = true
+		}
+		return true
+	})
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestBootWiring_OnlyBridgeAndFlowsImportOldContact es la mitad «ninguna fase importa el viejo
+// fuera del adaptador» del test de cableado obligatorio (05 §4.2). Sin ella, una fase puede
+// construir el resolver VIEJO y pasárselo a su consumidor sin tocar flowDeps.contacts: con las
+// mismas claves el comportamiento es idéntico y nucleo/contact deja de usarse sin que nadie lo
+// note (hallazgo 39 de F1: el mutante de fase7_flujos.go sobrevivía a go vet y a todo el paquete).
+func TestBootWiring_OnlyBridgeAndFlowsImportOldContact(t *testing.T) {
+	uses := oldContactUses(t)
+	for name := range uses {
+		if _, ok := oldContactImporters[name]; !ok {
+			t.Errorf("%s importa %s: en el arranque nuevo solo pueden importarlo bridge_contact.go (el adaptador) "+
+				"y flows.go (el tipo del campo contacts); una fase recibe el resolver por flowDeps.contacts",
+				name, oldContactImportPath)
+		}
+	}
+	// La lista blanca no puede quedarse atrás: una entrada que ya no importa el viejo (o cuyo
+	// fichero se borró) es un permiso que nadie usa, y se retira en el mismo commit.
+	for name := range oldContactImporters {
+		if _, ok := uses[name]; !ok {
+			t.Errorf("%s está en la lista blanca oldContactImporters pero ya no importa %s (o el fichero ya no existe): "+
+				"quítalo de la lista", name, oldContactImportPath)
+		}
+	}
+}
+
+// TestBootWiring_OldContactUsedOnlyAsTypes cierra la otra puerta: los dos ficheros de la lista
+// blanca usan del paquete viejo SOLO los símbolos declarados —tipos y centinelas, ningún
+// constructor—. flows.go, en particular, solo viejo.Resolver: no puede construir nada viejo.
+func TestBootWiring_OldContactUsedOnlyAsTypes(t *testing.T) {
+	uses := oldContactUses(t)
+	for name, allowed := range oldContactImporters {
+		use, ok := uses[name]
+		if !ok {
+			continue // lo dice TestBootWiring_OnlyBridgeAndFlowsImportOldContact, con su mensaje
+		}
+		if use.localName == "." || use.localName == "_" {
+			t.Errorf("%s importa %s como %q: con ese import no se puede ver qué símbolos usa; impórtalo con nombre",
+				name, oldContactImportPath, use.localName)
+			continue
+		}
+		if len(use.selectors) == 0 {
+			t.Errorf("%s importa %s como %q pero no se ve ningún uso %s.<símbolo>: el test se quedó ciego",
+				name, oldContactImportPath, use.localName, use.localName)
+		}
+		for _, sel := range use.selectors {
+			if !slices.Contains(allowed, sel) {
+				t.Errorf("%s usa %s.%s del paquete viejo de contactos; solo puede usar %v "+
+					"(el resolver se construye con newContactResolver, el de nucleo/contact)",
+					name, use.localName, sel, allowed)
+			}
+		}
 	}
 }
