@@ -179,6 +179,13 @@ func Recorrer(raiz string, dirs []string, incluirTests bool) ([]Fuente, error) {
 			return nil, err
 		}
 	}
+	return parseFiles(vistos)
+}
+
+// parseFiles parsea cada fichero de vistos (Ruta con barras → ruta en disco) una vez y devuelve
+// las Fuente ordenadas por Ruta, todas con el mismo Fset. Es el final común de Recorrer y de
+// WalkBridges: lo que cambia entre ellos es QUÉ ficheros se reúnen, no cómo se leen.
+func parseFiles(vistos map[string]string) ([]Fuente, error) {
 	claves := make([]string, 0, len(vistos))
 	for ruta := range vistos {
 		claves = append(claves, ruta)

@@ -1,0 +1,8 @@
+mode: set
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/bridge_x.go:4.28,5.11 1 1
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/bridge_x.go:5.11,7.3 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/bridge_x.go:8.2,8.10 3 1
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/otro.go:4.18,4.30 2 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/bridge.go:4.20,4.32 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/sub/bridge_y.go:5.21,5.33 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/bridge_dir.go/dentro.go:5.19,5.31 1 0

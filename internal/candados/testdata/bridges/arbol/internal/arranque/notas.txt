@@ -1,0 +1,1 @@
+bridge_notas.txt no es .go; este fichero tampoco.

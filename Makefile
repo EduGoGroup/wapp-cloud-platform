@@ -261,21 +261,29 @@ vet-integracion: ## go vet -tags integracion ./test/procesos/... — los proceso
 # `helpertest` (D-F1-13, que estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go);
 # los dobles con lógica de ese paquete se miden (contacthelpertest/estado.go), y `huellatest`
 # no termina así. La lógica vive en internal/candados; el comando cmd/cobertura-ficheros la
-# cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el arranque copiado (internal/arranque,
-# D-F0-1) queda fuera salvo su huellatest, que SÍ se evalúa.
-# Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
+# cablea. Alcance: el árbol NUEVO (diseno.md §3/§4). El arranque copiado (internal/arranque,
+# D-F0-1) NO entra entero: de él se miden su huellatest (en COBERTURA_DIRS) y sus adaptadores
+# `bridge_*.go`, y SOLO esos (D-F1-16, P5, 05 §4.2), que salen de COBERTURA_BRIDGE_DIRS: de
+# cada directorio de esa lista se corre el PAQUETE (sin `/...`) para que el perfil traiga sus
+# ficheros, y el comando recibe el directorio por -bridges y se queda con los `bridge_*.go`
+# directos. El resto del arranque está en el perfil y el informe lo ignora.
+# Estas dos listas son las ÚNICAS: el comando las recibe por -dirs y -bridges y no tiene otras.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
 COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
+COBERTURA_BRIDGE_DIRS := internal/arranque
 
 cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuevo (P2, 05 E-9): FICHEROS_EVALUADOS y POR_DEBAJO de 80 % — no bloquea por un fichero bajo
-	@dirs=""; pats=""; \
+	@dirs=""; pats=""; bridges=""; \
 	for d in $(COBERTURA_DIRS); do \
 		if [ -d "$$d" ]; then dirs="$${dirs:+$$dirs,}$$d"; pats="$$pats ./$$d/..."; fi; \
 	done; \
 	if [ -z "$$pats" ]; then \
 		echo "cobertura-ficheros: aún no existe ningún directorio de $(COBERTURA_DIRS)"; exit 0; \
 	fi; \
+	for d in $(COBERTURA_BRIDGE_DIRS); do \
+		if [ -d "$$d" ]; then bridges="$${bridges:+$$bridges,}$$d"; pats="$$pats ./$$d"; fi; \
+	done; \
 	paqs=$$($(GO) list $$pats) || exit 2; \
 	if [ -z "$$paqs" ]; then \
 		echo "cobertura-ficheros: ningún paquete en$$pats"; exit 0; \
@@ -283,7 +291,7 @@ cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuev
 	perfil=$$(mktemp "$${TMPDIR:-/tmp}/cobertura-ficheros.XXXXXX") || exit 2; \
 	trap 'rm -f "$$perfil"' EXIT; \
 	$(GO) test -covermode=set -coverprofile="$$perfil" $$paqs || exit $$?; \
-	$(GO) run ./cmd/cobertura-ficheros -perfil "$$perfil" -umbral 80 -dirs "$$dirs"
+	$(GO) run ./cmd/cobertura-ficheros -perfil "$$perfil" -umbral 80 -dirs "$$dirs" -bridges "$$bridges"
 
 lint: ## golangci-lint $(LINT_VERSION): el de .bin/ (make tools) o el del PATH — falla si ninguno es la versión fijada (decisión T-1)
 	@$(RESOLVE_LINT); \

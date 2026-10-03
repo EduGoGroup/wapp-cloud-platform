@@ -8,7 +8,11 @@
 //
 // Uso (lo invoca `make cobertura-ficheros`, que es quien fija el alcance):
 //
-//	cobertura-ficheros -perfil <cobertura.out> -dirs <dir1,dir2,…> [-umbral 80] [-raiz .]
+//	cobertura-ficheros -perfil <cobertura.out> -dirs <dir1,dir2,…> [-bridges <dir,…>] [-umbral 80] [-raiz .]
+//
+// -dirs son directorios que entran ENTEROS (recursivos). -bridges son directorios de los que
+// entran SOLO los adaptadores de arranque bridge_<x>.go, hijos directos (D-F1-16, 05 §4.2):
+// así el informe mide internal/arranque/bridge_contact.go sin medir el resto del arranque.
 //
 // Salida: una línea por fichero evaluado con su porcentaje, una "BAJO fichero: motivo" por
 // cada fichero por debajo de -umbral, y el resumen FICHEROS_EVALUADOS=N y POR_DEBAJO=M.
@@ -31,6 +35,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/candados"
@@ -63,7 +68,7 @@ func ejecutar(args []string, salida io.Writer) int {
 		out.linea("cobertura-ficheros: %v", err)
 		return rcUso
 	}
-	fuentes, err := candados.Recorrer(opc.raiz, opc.dirs, false)
+	fuentes, err := leerFuentes(opc)
 	if err != nil {
 		out.linea("cobertura-ficheros: %v", err)
 		return rcUso
@@ -73,6 +78,9 @@ func ejecutar(args []string, salida io.Writer) int {
 	evaluables := candados.Evaluables(perfil, fuentes)
 
 	out.linea("cobertura-ficheros: informe (no bloquea), referencia %g %%, alcance %s", opc.umbral, strings.Join(opc.dirs, ", "))
+	if len(opc.bridges) > 0 {
+		out.linea("cobertura-ficheros: más los bridge_*.go de %s", strings.Join(opc.bridges, ", "))
+	}
 	medidas := medirPorFichero(perfil, fuentes)
 	for _, ruta := range evaluables {
 		m := medidas[ruta]
@@ -115,15 +123,18 @@ type opciones struct {
 	umbral float64
 	raiz   string
 	dirs   []string
+	// bridges son los directorios de los que solo entran los bridge_<x>.go (puede ir vacío).
+	bridges []string
 }
 
 // leerOpciones interpreta args; -perfil y -dirs son obligatorios y el umbral va en (0, 100].
 // El alcance no tiene valor por defecto a propósito: la lista vive en UN sitio, la variable
-// COBERTURA_DIRS del Makefile.
+// COBERTURA_DIRS del Makefile. -bridges es opcional (vacío = ningún adaptador) y su lista es
+// COBERTURA_BRIDGE_DIRS.
 func leerOpciones(args []string, salida io.Writer) (opciones, error) {
 	var (
-		opc  opciones
-		dirs string
+		opc           opciones
+		dirs, bridges string
 	)
 	fs := flag.NewFlagSet("cobertura-ficheros", flag.ContinueOnError)
 	fs.SetOutput(salida)
@@ -131,6 +142,7 @@ func leerOpciones(args []string, salida io.Writer) (opciones, error) {
 	fs.Float64Var(&opc.umbral, "umbral", 80, "línea de referencia de POR_DEBAJO, en % de sentencias cubiertas por fichero (no bloquea)")
 	fs.StringVar(&opc.raiz, "raiz", ".", "raíz desde la que se resuelven los -dirs")
 	fs.StringVar(&dirs, "dirs", "", "directorios del alcance, relativos a -raiz y separados por comas (obligatorio)")
+	fs.StringVar(&bridges, "bridges", "", "directorios de los que solo entran los bridge_*.go directos, relativos a -raiz y separados por comas (opcional)")
 	if err := fs.Parse(args); err != nil {
 		return opc, err
 	}
@@ -142,15 +154,51 @@ func leerOpciones(args []string, salida io.Writer) (opciones, error) {
 	case opc.umbral <= 0 || opc.umbral > 100:
 		return opc, fmt.Errorf("-umbral %g fuera de (0, 100]", opc.umbral)
 	}
-	for _, d := range strings.Split(dirs, ",") {
-		if d = strings.TrimSpace(d); d != "" {
-			opc.dirs = append(opc.dirs, d)
-		}
-	}
+	opc.dirs = splitList(dirs)
 	if len(opc.dirs) == 0 {
 		return opc, errors.New("falta -dirs")
 	}
+	opc.bridges = splitList(bridges)
 	return opc, nil
+}
+
+// splitList parte una lista separada por comas, quita los espacios y descarta los vacíos.
+func splitList(lista string) []string {
+	var out []string
+	for _, d := range strings.Split(lista, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// leerFuentes reúne las fuentes de producción del informe: los -dirs enteros más los
+// bridge_<x>.go directos de cada -bridges. Un fichero que llegue por los dos caminos (un
+// -bridges dentro de un -dirs) cuenta UNA vez; el resultado va ordenado por Ruta.
+func leerFuentes(opc opciones) ([]candados.Fuente, error) {
+	fuentes, err := candados.Recorrer(opc.raiz, opc.dirs, false)
+	if err != nil {
+		return nil, err
+	}
+	vistas := make(map[string]bool, len(fuentes))
+	for _, f := range fuentes {
+		vistas[f.Ruta] = true
+	}
+	for _, dir := range opc.bridges {
+		bridges, err := candados.WalkBridges(opc.raiz, dir, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range bridges {
+			if !vistas[b.Ruta] {
+				vistas[b.Ruta] = true
+				fuentes = append(fuentes, b)
+			}
+		}
+	}
+	sort.Slice(fuentes, func(i, j int) bool { return fuentes[i].Ruta < fuentes[j].Ruta })
+	return fuentes, nil
 }
 
 // leerPerfil abre y agrega el perfil de cobertura.

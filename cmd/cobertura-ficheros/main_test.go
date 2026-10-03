@@ -117,6 +117,93 @@ func TestEjecutarUmbral(t *testing.T) {
 		"BAJO internal/modulos/m/bien/bien.go: cobertura 80.0 % < umbral 81 % (8 de 10 sentencias cubiertas)")
 }
 
+// bridgesFixture es el árbol de prueba de candados.WalkBridges, con su perfil: en
+// internal/arranque hay un adaptador (bridge_x.go, 80 %), un otro.go y un bridge.go que no lo
+// son, y un subdirectorio con otro adaptador (sub/bridge_y.go), todos en el perfil.
+func bridgesFixture() string {
+	return filepath.Join("..", "..", "internal", "candados", "testdata", "bridges", "arbol")
+}
+
+// TestEjecutarBridges: -bridges suma al alcance SOLO los bridge_<x>.go directos del directorio
+// (D-F1-16): bridge_x.go sale medido y ni otro.go, ni bridge.go, ni el adaptador del
+// subdirectorio aparecen, aunque el perfil los traiga. Sin -bridges no entra ninguno.
+func TestEjecutarBridges(t *testing.T) {
+	raiz := bridgesFixture()
+	perfil := filepath.Join(raiz, "perfil.out")
+
+	rc, salida := correr(t, "-perfil", perfil, "-raiz", raiz, "-dirs", "internal/modulos",
+		"-bridges", " internal/arranque ,")
+	if rc != rcBien {
+		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcBien, salida)
+	}
+	contiene(t, salida,
+		"cobertura-ficheros: más los bridge_*.go de internal/arranque",
+		"  80.0 %  internal/arranque/bridge_x.go",
+		"FICHEROS_EVALUADOS=1",
+		"POR_DEBAJO=0",
+	)
+	for _, fuera := range []string{"otro.go", "bridge.go", "bridge_y.go", "dentro.go"} {
+		if strings.Contains(salida, fuera) {
+			t.Errorf("%s no es un adaptador directo y no debe salir:\n%s", fuera, salida)
+		}
+	}
+
+	rc, salida = correr(t, "-perfil", perfil, "-raiz", raiz, "-dirs", "internal/modulos")
+	if rc != rcBien {
+		t.Fatalf("sin -bridges: rc = %d; quiero %d. Salida:\n%s", rc, rcBien, salida)
+	}
+	contiene(t, salida, "FICHEROS_EVALUADOS=0", "POR_DEBAJO=0")
+	if strings.Contains(salida, "bridge_") {
+		t.Errorf("sin -bridges no entra ningún adaptador:\n%s", salida)
+	}
+}
+
+// TestEjecutarBridgesSinRepetir: un adaptador que llega por -dirs y por -bridges cuenta una
+// vez, y la tabla sigue ordenada por ruta.
+func TestEjecutarBridgesSinRepetir(t *testing.T) {
+	raiz := bridgesFixture()
+	rc, salida := correr(t, "-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,
+		"-dirs", "internal/arranque/sub,internal/arranque", "-bridges", "internal/arranque,internal/arranque/sub")
+	if rc != rcBien {
+		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcBien, salida)
+	}
+	contiene(t, salida, "FICHEROS_EVALUADOS=5", "POR_DEBAJO=4")
+	if n := strings.Count(salida, "%  internal/arranque/bridge_x.go"); n != 1 {
+		t.Errorf("bridge_x.go sale %d veces en la tabla; quiero 1:\n%s", n, salida)
+	}
+	if n := strings.Count(salida, "%  internal/arranque/sub/bridge_y.go"); n != 1 {
+		t.Errorf("sub/bridge_y.go sale %d veces en la tabla; quiero 1:\n%s", n, salida)
+	}
+}
+
+// TestLeerFuentesOrden: -dirs y -bridges juntos dan las fuentes ordenadas por Ruta, aunque el
+// adaptador vaya alfabéticamente antes que lo recorrido por -dirs.
+func TestLeerFuentesOrden(t *testing.T) {
+	fuentes, err := leerFuentes(opciones{raiz: bridgesFixture(),
+		dirs: []string{"internal/arranque/sub"}, bridges: []string{"internal/arranque"}})
+	if err != nil {
+		t.Fatalf("leerFuentes: %v", err)
+	}
+	got := make([]string, 0, len(fuentes))
+	for _, f := range fuentes {
+		got = append(got, f.Ruta)
+	}
+	quiero := []string{"internal/arranque/bridge_x.go", "internal/arranque/sub/bridge_y.go"}
+	if strings.Join(got, " ") != strings.Join(quiero, " ") {
+		t.Errorf("leerFuentes = %v; quiero %v", got, quiero)
+	}
+}
+
+// TestSplitList: comas, espacios y vacíos.
+func TestSplitList(t *testing.T) {
+	if got := splitList(" a , ,b,"); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("splitList = %q; quiero [a b]", got)
+	}
+	if got := splitList(" , "); len(got) != 0 {
+		t.Errorf("splitList de solo comas = %q; quiero vacío", got)
+	}
+}
+
 // TestEjecutarAlcanceInexistente: un dir que no existe aporta cero ficheros y no es error.
 func TestEjecutarAlcanceInexistente(t *testing.T) {
 	raiz := fixture("pasa")
@@ -147,6 +234,9 @@ func TestEjecutarErrores(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(roto, "internal", "x", "x.go"), []byte("package x\nfunc {"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(roto, "internal", "x", "bridge_x.go"), []byte("package x\nfunc {"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	casos := []struct {
 		nombre string
@@ -163,6 +253,7 @@ func TestEjecutarErrores(t *testing.T) {
 		{"perfil inexistente", []string{"-perfil", filepath.Join(tmp, "no.out"), "-dirs", "a"}, "no.out"},
 		{"perfil mal formado", []string{"-perfil", malo, "-dirs", "a"}, "línea 1"},
 		{"fuente que no parsea", []string{"-perfil", perfil, "-raiz", roto, "-dirs", "internal"}, "x.go"},
+		{"adaptador que no parsea", []string{"-perfil", perfil, "-raiz", roto, "-dirs", "a", "-bridges", "internal/x"}, "bridge_x.go"},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
