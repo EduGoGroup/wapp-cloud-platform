@@ -350,8 +350,9 @@ type equivalenceCase struct {
 	rule, name, kind, value string
 }
 
-// equivalenceCorpus cubre R-01 (kinds), R-02…R-07 y N-05, válidos e inválidos. Para cada entrada,
-// el viejo y el nuevo deben dar la MISMA salida y el MISMO texto de error.
+// equivalenceCorpus cubre R-01 (kinds), R-02…R-07 y N-05, válidos e inválidos, y los casos
+// adversarios ADV. Para cada entrada, el viejo y el nuevo deben dar la MISMA salida y el MISMO
+// texto de error.
 var equivalenceCorpus = []equivalenceCase{
 	// R-01 · R-08: kinds fuera de los tres soportados.
 	{"R-01", "empty kind", "", "573001112233"},
@@ -402,6 +403,48 @@ var equivalenceCorpus = []equivalenceCase{
 	{"N-05", "phone device jid keeps device digit", contact.KindPhoneE164, "573001112233:5@s.whatsapp.net"},
 	{"N-05", "phone plain jid", contact.KindPhoneE164, "573001112233@s.whatsapp.net"},
 	{"N-05", "lid device jid drops device", contact.KindWALID, "88887777:5@lid"},
+	// ADV · casos adversarios (hallazgo 40 de F1): el corpus de arriba no distinguía un
+	// normalizeLID que cortara por el ÚLTIMO «@» en vez de por el primero. Tres familias, en los
+	// tres kinds: «@» repetidos, dígitos que no son ASCII y espacios Unicode. Van con escapes
+	// \u para que se vean: U+0660–U+0669 son los dígitos arábigo-índicos, U+FF10–U+FF19 los de
+	// ancho completo, U+00A0 es NBSP, U+2003 EM SPACE y U+3000 IDEOGRAPHIC SPACE.
+	{"ADV", "lid with doubled at", contact.KindWALID, "123@@lid"},
+	{"ADV", "lid letters with doubled at", contact.KindWALID, "a@@b"},
+	{"ADV", "lid with two servers", contact.KindWALID, "123@x@lid"},
+	{"ADV", "lid with repeated lid server", contact.KindWALID, "123@lid@lid"},
+	{"ADV", "lid with device after a second at", contact.KindWALID, "123@lid:2@lid"},
+	{"ADV", "lid with trailing at", contact.KindWALID, "123@"},
+	{"ADV", "lid only ats", contact.KindWALID, "@@"},
+	{"ADV", "lid arabic-indic digits", contact.KindWALID, "١٢٣٤٥@lid"},
+	{"ADV", "lid fullwidth digits", contact.KindWALID, "１２３４５@lid"},
+	{"ADV", "lid ascii mixed with fullwidth digits", contact.KindWALID, "123４５"},
+	{"ADV", "lid with nbsp edges", contact.KindWALID, " 981054321@lid "},
+	{"ADV", "lid with em space edges", contact.KindWALID, " 981054321 "},
+	{"ADV", "lid with ideographic space edges", contact.KindWALID, "　981054321@lid　"},
+	{"ADV", "lid with nbsp before server", contact.KindWALID, "981054321 @lid"},
+	{"ADV", "lid with em space in the middle", contact.KindWALID, "9810 54321@lid"},
+	{"ADV", "lid with ideographic space before device", contact.KindWALID, "981054321　:2@lid"},
+	{"ADV", "lid only unicode spaces", contact.KindWALID, "  　"},
+	{"ADV", "phone with doubled at", contact.KindPhoneE164, "573001112233@@s.whatsapp.net"},
+	{"ADV", "phone with two servers", contact.KindPhoneE164, "573001112233@1@s.whatsapp.net"},
+	{"ADV", "phone arabic-indic digits only", contact.KindPhoneE164, "٥٧٣٠٠"},
+	{"ADV", "phone ascii mixed with arabic-indic digits", contact.KindPhoneE164, "57٣٠٠1112233"},
+	{"ADV", "phone ascii mixed with fullwidth digits", contact.KindPhoneE164, "57３００1112233"},
+	{"ADV", "phone with nbsp edges", contact.KindPhoneE164, " 573001112233 "},
+	{"ADV", "phone with em space in the middle", contact.KindPhoneE164, "57 300 1112233"},
+	{"ADV", "phone with ideographic space in the middle", contact.KindPhoneE164, "57　300　1112233"},
+	{"ADV", "phone only unicode spaces", contact.KindPhoneE164, "  　"},
+	{"ADV", "username with doubled at", contact.KindWAUsername, "Juan@@Perez"},
+	{"ADV", "username with at and server", contact.KindWAUsername, "JuanPerez@lid"},
+	{"ADV", "username with nbsp edges", contact.KindWAUsername, " JuanPerez "},
+	{"ADV", "username with em space edges", contact.KindWAUsername, " JuanPerez "},
+	{"ADV", "username with ideographic space edges", contact.KindWAUsername, "　JuanPerez　"},
+	{"ADV", "username with nbsp in the middle", contact.KindWAUsername, "Juan Perez"},
+	{"ADV", "username only unicode spaces", contact.KindWAUsername, "  　"},
+	{"ADV", "username fullwidth uppercase", contact.KindWAUsername, "ＪＵＡＮ"},
+	{"ADV", "username with arabic-indic digits", contact.KindWAUsername, "Juan١٢٣"},
+	{"ADV", "kind with trailing nbsp", contact.KindWALID + " ", "123@lid"},
+	{"ADV", "kind with fullwidth underscore", "wa＿lid", "123@lid"},
 }
 
 // sameErrText dice si dos errores son ambos nil o ambos no nil con el mismo texto.
@@ -481,6 +524,23 @@ func TestContactEquivalence_RefsFrom(t *testing.T) {
 		{"N-05", "raw phone device jid keeps device digit", "", "", "573001112233:5@s.whatsapp.net"},
 		{"N-05", "raw lid device jid drops device", "", "", "88887777:5@lid"},
 		{"N-05", "raw lid agent and device jid", "", "", "88887777_1:5@lid"},
+		// ADV · los mismos casos adversarios del corpus (hallazgo 40 de F1), por las tres entradas.
+		{"ADV", "raw lid jid with doubled at", "", "", "88887777@@lid"},
+		{"ADV", "raw lid jid with two servers", "", "", "88887777@x@lid"},
+		{"ADV", "raw lid jid with repeated lid server", "", "", "88887777@lid@lid"},
+		{"ADV", "lid with two servers", "", "88887777@x@lid", ""},
+		{"ADV", "lid with repeated lid server and pn", "573001112233", "88887777@lid@lid", ""},
+		{"ADV", "raw phone jid with doubled at", "", "", "573001112233@@s.whatsapp.net"},
+		{"ADV", "raw phone jid followed by lid server", "", "", "573001112233@s.whatsapp.net@lid"},
+		{"ADV", "pn arabic-indic digits falls back to raw", "٥٧٣٠٠", "", "573001112233@s.whatsapp.net"},
+		{"ADV", "pn ascii mixed with fullwidth digits", "57３００1112233", "", ""},
+		{"ADV", "lid fullwidth digits dropped, pn kept", "573001112233", "８８８８@lid", ""},
+		{"ADV", "raw lid jid arabic-indic digits", "", "", "٨٨٨٨@lid"},
+		{"ADV", "lid with nbsp edges", "", " 88887777@lid ", ""},
+		{"ADV", "raw lid jid with em space before server", "", "", "88887777 @lid"},
+		{"ADV", "raw lid jid with ideographic space edges", "", "", "　88887777@lid　"},
+		{"ADV", "pn with ideographic spaces", "57　300　1112233", "", ""},
+		{"ADV", "pn and lid only unicode spaces fall back to raw", " ", " ", "88887777@lid"},
 	}
 	for _, c := range cases {
 		t.Run(c.rule+" "+c.name, func(t *testing.T) {
@@ -515,6 +575,12 @@ func TestContactEquivalence_Sendable(t *testing.T) {
 		{"username not addressable", contact.KindWAUsername, "juanperez"},
 		{"empty kind not addressable", "", "573001112233"},
 		{"unknown kind not addressable", "email", "x"},
+		// Adversarios (hallazgo 40 de F1): Sendable no re-normaliza, tampoco esto.
+		{"lid value with doubled at not renormalized", contact.KindWALID, "123@@lid"},
+		{"lid value with fullwidth digits not renormalized", contact.KindWALID, "１２３"},
+		{"phone value with nbsp edges not renormalized", contact.KindPhoneE164, " 573001112233 "},
+		{"phone value with arabic-indic digits not renormalized", contact.KindPhoneE164, "٥٧٣"},
+		{"kind with trailing nbsp not addressable", contact.KindPhoneE164 + " ", "573001112233"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
