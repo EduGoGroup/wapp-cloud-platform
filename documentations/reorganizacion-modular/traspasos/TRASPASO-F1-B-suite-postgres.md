@@ -129,3 +129,47 @@ quedan como commits distintos. No hay que reordenar nada.
   - el grep ciego de R9.4.d;
   - `make test-pendiente`, que cuenta los *worktrees* de `.claude/worktrees`;
   - E-11 en `test/procesos`: lo nuevo va en inglés, junto a un arnés que está en castellano.
+
+## CERRADO 2026-10-02
+
+Sesión **F1-04** (💻 CLI), sobre `dev` @ `ddcf7de`. La rama `reorg/f1-b-verde` ya estaba integrada sin squash (PR #23,
+merge `ca364de`): no se re-fusionó nada. Toolchain: `make toolchain` → `TOOLCHAIN=OK` · `go1.26.5` · lint `v2.12.2`
+(`.bin/`). Docker Desktop 29.8.0. Ningún `rc` se leyó con pipe.
+
+### Qué se hizo
+
+- **§3 repetida** (T1.17): `GOWORK=off make ci-local` → `GATE_RC=0` · 88 `ok` · 0 issues · `FICHEROS_EVALUADOS=14` ·
+  `POR_DEBAJO=0` · `EXENTOS_POSTGRES=1`. `make test-pendiente` → `PENDIENTES=0 · ROJOS=0`. `vet -tags integracion` rc=0.
+  R9.4.d vacío. Cobertura: 97,6 · 100 · 95,6 · 92,6 %. **Idéntico a la §3.**
+- **T1.18, la corrida que cuenta**:
+  - `-run Contact`, con `-race -count=1`:
+    - `viejo`: rc=0 · 20 PASS · 0 FAIL · 0 SKIP · padre 1,77 s · paquete 14,9 s · Postgres listo en 2,58 s · plantilla en 0,65 s.
+    - `nuevo`: rc=0 · 20 PASS · 0 FAIL · 0 SKIP · padre 1,87 s · paquete 10,7 s · Postgres listo en 1,59 s · plantilla en 0,57 s.
+  - `make test-procesos`: viejo y nuevo `RC=0 · PASS=196 · FAIL=0 · SKIP=0` (33 s en total).
+  - **Divergencias memoria ↔ Postgres: ninguna** (19/19 en los dos).
+
+### §7, punto por punto
+
+1. **La marca en `current_node`: confirmada, con un hueco.**
+   - Dos mutantes de `fuseDB` caen: en conflicto se borra el canónico, y se copia el `current_node` del huérfano. En los dos
+     falla `Fusion_ConflictoConservaElCanonico` (rc=1, 18 PASS · 2 FAIL).
+   - Un tercero, que copia del huérfano `vars`, `last_wa_message_id`, `event_id` y `flow_version`, **sobrevive**
+     (rc=0, 20 PASS): la marca solo vigila `current_node` (hallazgo 35 del README de F1).
+2. **R9.4.d: refutada en parte.**
+   - La sonda que importa `internal/flujos/contact` sí sale.
+   - La regla y el comando no dicen lo mismo: el comando mira el paquete, no el fichero. Una sonda `p2_*_test.go` que
+     importa `internal/nucleo/contact` y usa `NewMemoryResolver` **no** sale (hallazgo 36).
+   - El comando no está en ningún gate (hallazgo 37).
+3. **SQL byte a byte: confirmado.**
+   - Las 9 cadenas SQL y sus 9 listas de argumentos son iguales en orden y bytes.
+   - La cifra de cobertura se leía mal: la suite contra Postgres cubre el **80,7 %** de `repository_postgres.go` (85,2 %
+     con los unitarios). El 31,1 % es solo el de los unitarios.
+   - El reintento de `WithTx` (36,6 %) **no tiene test de ejecución en ningún árbol**: la afirmación de la §7.3 se queda
+     corta (hallazgo 38). T9.15 tiene que cubrirlo antes de F10.
+
+### Qué queda
+
+- La parada **T1.20** (Jhoan, con [`informe-piloto.md`](../plan/F1-nucleo-contact/informe-piloto.md) delante).
+- Hallazgos 35–38 sin decisión. Están en el README de F1 y entran en la P7 del informe.
+- **No corrido**: `make test-integration`, porque el bloque no toca código viejo (diff desde `77df20f` vacío). Tampoco
+  `make ci-docker` ni UAT.

@@ -110,11 +110,11 @@ Entrada: PR del bloque B integrado. Para cuando: huella igual · `go list -deps`
 ## Bloque D · cierre local e informe · 💻 · T1.17–T1.19
 Para cuando: suite contra Postgres corrida · todo en `dev` · `informe-piloto.md` escrito.
 
-- [ ] **T1.17 · Recibir el traspaso y repetir los gates** · 💻 · dep. T1.16 · cumple R1.6.a
+- [x] **T1.17 · Recibir el traspaso y repetir los gates** · 💻 · dep. T1.16 · cumple R1.6.a — cerrada (F1-04, 2026-10-02) sin commit de código, sobre `dev` @ `ddcf7de` (PR #23, #24, #25 ya integrados sin squash); cierre documental en `@CIERRE@` · `ci-local` `GATE_RC=0` (88 `ok`, 0 issues, 14 evaluados, 0 por debajo) · `PENDIENTES=0 · ROJOS=0` · nuevo con `-race -count=1`: 542 PASS · 0 SKIP · las dos §7 refutadas o confirmadas con mutantes (hallazgos 35–41)
   - **Hecho cuando**: `make ci-local` con v2.12.2 rc=0 leído del log; los tres PR integrados en `dev` sin squash (`git log --oneline` muestra cada `rojo`/`verde` por separado); la §7 del traspaso refutada o confirmada contra el código.
-- [ ] **T1.18 · La suite contra Postgres, en local** · 💻 · dep. T1.13, T1.17 · cumple R1.3.c–d
+- [x] **T1.18 · La suite contra Postgres, en local** · 💻 · dep. T1.13, T1.17 · cumple R1.3.c–d — cerrada (F1-04, 2026-10-02) sin commit de código, sobre `ddcf7de`; anotada en `@CIERRE@` · `-run Contact` viejo rc=0 · 20 PASS · 0 SKIP (paquete 14,9 s, Postgres 2,58 s, plantilla 0,65 s) · nuevo rc=0 · 20 PASS · 0 SKIP (10,7 s) · `make test-procesos` viejo y nuevo `RC=0 · 196 PASS · 0 SKIP` · divergencias memoria ↔ Postgres: ninguna · arranque real de `server-modular` 9/9, `healthz` 200, `EXIT=0`
   - **Hecho cuando**: `WAPP_PROCESOS_BINARIO=viejo GOWORK=off go test -tags integracion -race -v -run Contact ./test/procesos/ > /tmp/p.log 2>&1; echo rc=$?` → 0 (✎ 2026-10-02: sin `WAPP_PROCESOS_BINARIO=viejo|nuevo`, `TestMain` sale con código 2; a la suite le da igual cuál), `--- SKIP` = 0, tiempo total y de arranque del contenedor anotados; divergencias memoria ↔ Postgres listadas. Sin D-F1-2: «no corrido» y motivo.
-- [ ] **T1.19 · docs(reorganizacion-modular): informe del piloto F1** · 💻 · dep. T1.18 · cumple R1.7.a
+- [x] **T1.19 · docs(reorganizacion-modular): informe del piloto F1** · 💻 · dep. T1.18 · cumple R1.7.a — cerrada en `@CIERRE@` ([`informe-piloto.md`](informe-piloto.md); los dos traspasos con `CERRADO 2026-10-02`)
   - **Ficheros**: `plan/F1-nucleo-contact/informe-piloto.md` (plantilla abajo), `README.md` (estado), sección `CERRADO` del traspaso
   - **Commit**: `docs(reorganizacion-modular): informe del piloto F1`
 

@@ -1,6 +1,11 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
-> **Estado: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`** e integrado en `dev` por el
+> **Estado (2026-10-02, F1-04): bloques A–D cerrados y en `dev`; [`informe-piloto.md`](informe-piloto.md) escrito.
+> Falta la PARADA (T1.20): Jhoan contesta P1–P7 en la §10 del informe. Hasta entonces no empieza F2.**
+> Historia: bloques A, B y C integrados sin squash (PR #19, #23, #25; D-F1-9 en el #24); bloque D (sesión F1-04, 💻)
+> cerrado en local sobre `dev` @ `ddcf7de`.
+>
+> Estado anterior: en curso — bloque A (sesión F1-01, 🌐, 2026-10-01), arrancado sobre `origin/dev` @ `77df20f`** e integrado en `dev` por el
 > PR #19 (sin squash, merge `6650e55`); **bloque B (sesión F1-02, 🌐, 2026-10-02) escrito** en la rama `reorg/f1-b-verde` sobre `origin/dev` @ `5847ad4`, PR hacia `dev`
 > (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
@@ -376,6 +381,60 @@
 34. **E-11 en un verde delegado**: el sub-agente del verde dejó `nuevas` y los campos `nuevo`/`viejo` de
     `sentinelPairs`; se corrigió en un `refactor(arranque)` aparte (`a62abea`) para no reescribir el commit `verde` ya
     empujado. El alias de import `viejo` se conserva: es el vocabulario de la spec (arquitectura §3, T1.14).
+
+### Hallazgos de la sesión F1-04 (bloque D, 💻, 2026-10-02, sobre `dev` @ `ddcf7de`)
+
+Resultado de refutar las dos §7 con mutantes en *worktrees* desechables (nada commiteado). Detalle en los `CERRADO` de
+los dos traspasos y en [`informe-piloto.md`](informe-piloto.md).
+
+35. **La marca de `Estado` (D-F1-7) vigila solo `current_node`.**
+    - Dos mutantes de `fuseDB` caen contra Postgres: borrar la fila del canónico, y copiar el `current_node` del huérfano.
+      Cae `Fusion_ConflictoConservaElCanonico` con `lleva la marca "orphan-in-conflict"`.
+    - Un tercero **sobrevive** (rc=0, 20 PASS): en conflicto copia del huérfano `vars`, `last_wa_message_id`, `event_id`
+      y `flow_version`.
+    - `Sembrar` deja las dos filas idénticas en todo lo demás, y `last_wa_message_id` es la marca de idempotencia.
+    - Remedio barato: que la marca viaje también en `last_wa_message_id`, o sembrar `vars` distintas. Es un `refactor` de
+      `contacthelpertest` y de `postgresState`. Sin decisión: lo anoto.
+36. **R9.4.d: el comando no dice lo mismo que la regla.**
+    - La regla admite el adaptador «en las suites de contrato» y solo «el constructor del puerto que prueban».
+    - El comando mira los imports del **paquete** `test/procesos`, no del fichero, y admite `nucleo/contact` entero y
+      cualquier `…helpertest`.
+    - Medido con sondas: un `p1_sonda_test.go` que importa `internal/flujos/contact` **sí** sale. Un `p2_sonda_test.go`
+      (no es `*_contrato_test.go`) que importa `internal/nucleo/contact` y usa `NewMemoryResolver` **no** sale.
+    - Además, la frase «`test/procesos` no importa nada de `internal/`» de `F9-procesos/requisitos.md` (cerca de R9.4.d)
+      está caducada.
+37. **El comando de R9.4.d no está en ningún gate**: ni `Makefile`, ni `scripts/`, ni `internal/candados`; solo en la
+    spec y en la skill `procesos-testcontainers`. Su falso verde del hallazgo 27 no lo habría cazado nada automático.
+38. **El reintento de `postgres.WithTx` no tiene test de ejecución en ningún árbol.**
+    - Con la suite contra Postgres, `repository_postgres.go` llega al **80,7 %**, y al **85,2 %** sumando los unitarios.
+      El «31,1 %» del traspaso B es solo el de los unitarios.
+    - Las 20 sentencias sin cubrir son todas ramas de error.
+    - `WithTx` queda al **36,6 %**: ni `IsSerializationFailure` ni `backoffBeforeRetry` se ejercen. `tx_test.go` de
+      `platform` solo prueba los clasificadores con `PgError` de juguete.
+    - Lo único que lo ejerce es el viejo `deadlock_integration_test.go`, que F10 borra. T9.15 (P3, mutante
+      `maxTxAttempts = 1`) **tiene** que cubrirlo antes.
+39. **El test de cableado mira `flowDeps.contacts`, no lo que reciben las fases.**
+    - Un mutante que en `fase7_flujos.go:229` pasa `contact.NewPostgresResolver(…)` **viejo** a `flowruntime.New`
+      sobrevive: `go vet` rc=0, `go test ./internal/arranque/` rc=0 con 536 PASS, y el `grep` de la §3 da 0.
+    - Con las mismas claves el comportamiento sería idéntico, y `nucleo/contact` dejaría de usarse sin que nadie lo note.
+    - Cierres baratos:
+      - un `grep` por ruta de import (`internal/flujos/contact"` en `internal/arranque/*.go`, salvo `bridge_contact.go`
+        y `flows.go`);
+      - o una costura `var newPostgresContactResolver = contact.NewPostgresResolver` que el test sustituya por un espía.
+        Esto quita, de paso, la reflexión sobre campos privados de `nucleo`.
+40. **El corpus de equivalencia (109 casos) es ciego a un mutante realista.**
+    - El mutante `IndexByte` → `LastIndexByte` en `normalizeLID` pasa los 114 `TestContactEquivalence_*`.
+    - Lo caza una tabla adversaria (`Normalize("wa_lid", "a@@b")`).
+    - La equivalencia es cierta: el código es idéntico token a token, y 3.370.994 ejecuciones de *fuzz* diferencial no
+      dan ni una diferencia. Pero se sostiene por esa identidad, no por el corpus.
+    - Para F2+: los corpus de equivalencia llevan casos con `@` repetidos, dígitos no ASCII y espacios Unicode.
+    - Rareza heredada, no divergencia: el error de `normalizeUsername` lleva el valor en crudo con `%q`, es decir, PII en
+      un error.
+41. **Los *worktrees* de sub-agentes nacen de `2da10b4` (`origin/main`), no de `dev`.**
+    - Los dos sub-agentes de F1-04 tuvieron que moverse a `ddcf7de` antes de medir.
+    - Quien orqueste con `isolation: worktree` tiene que decirle al sub-agente que se ponga en el SHA de `dev`. Si no, mide
+      un árbol sin F1.
+    - Junto al hallazgo 28: borrar los *worktrees* antes de `make test-pendiente`, como se hizo.
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
