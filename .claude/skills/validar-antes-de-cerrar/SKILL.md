@@ -42,7 +42,8 @@ make vet-pendiente; echo "vet-pendiente rc=$?"
 grep -rn 'pendiente.Implementar' --include='*.go' internal | wc -l
 make test-pendiente          # PENDIENTES=<n> y ROJOS=<n>; su rc es el de vet-pendiente
 
-# 4 · Cobertura por fichero de lo que ya está en verde (≥ 80 %, D-12; va dentro de ci-local)
+# 4 · Cobertura por fichero: es un INFORME desde el 2026-10-03 (P2); no persigas un número. Ojo: mientras el
+#     cambio de código pendiente no se haga, `make cobertura-ficheros` aún falla por debajo de 80 % (va dentro de ci-local)
 make cobertura-ficheros; echo "cobertura rc=$?"   # FICHEROS_EVALUADOS, POR_DEBAJO, EXENTOS_POSTGRES
 
 # 5 · SKIP: en código NUEVO debe ser cero

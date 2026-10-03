@@ -20,6 +20,12 @@
 > cifras y afirmaciones de este documento y las corrige sin cambiar el método: la lista, en
 > [`ESTADO.md`](ESTADO.md) §«Lo que el plan corrigió».
 >
+> 🔄 **2026-10-03 (parada de F1, decisiones de Jhoan)**: el piloto midió el método y Jhoan lo ajustó. **Tres niveles de
+> ceremonia** según la complejidad del archivo (E-12); el **80 % de cobertura deja de bloquear** y pasa a informe (E-9);
+> los tests de los auxiliares no exportados nacen en el `verde` (E-4); la suite con `Montaje` rige para todo puerto con BD
+> (E-3); el **adaptador de arranque `bridge_<x>.go`** es el mecanismo estándar para consumidores viejos (§4.2). Resumen
+> y fechas en [`plan/DECISIONES.md`](plan/DECISIONES.md) §3.
+>
 > Este documento es **normativo**: quien implemente lo cumple. Donde choca con un documento
 > anterior, **manda este** (la lista de lo sustituido está en §8).
 
@@ -55,9 +61,15 @@ de [`04`](04-estructura-final.md) §3 se **crea** en su sitio nuevo. El código 
 mientras dure la reconstrucción: es la **implementación de referencia**, es lo que corre en UAT, y
 sus tests viejos lo siguen protegiendo hasta el relevo.
 
-*Única excepción*: los tres ✎ de `platform` (`httpapi/admin.go`, `httpapi/audit_mw.go`,
-`metrics/inferstats.go`) se corrigen **en su sitio** en F0, porque `platform` lo comparten los dos
-arranques y hoy depende de dominios (`02` §3.3).
+*Excepciones cerradas, y ninguna más sin decisión escrita*: los tres ✎ de `platform` (`httpapi/admin.go`,
+`httpapi/audit_mw.go`, `metrics/inferstats.go`), corregidos **en su sitio** en F0 porque `platform` lo comparten los dos
+arranques y hoy depende de dominios (`02` §3.3); D-F0-2 (un fichero de test en el paquete viejo,
+`huella_vieja_test.go`); D-F0-3 (tres líneas de alias en el dominio viejo); D-F4-1 (una línea en dos barridos AST
+viejos).
+
+🔴 **El código viejo es la hoja de respuestas.** Los procesos de F9 y la equivalencia viejo ↔ nuevo se comparan contra
+él. **No se modifica para que acepte tipos nuevos**: si empezara a usar código nuevo, un fallo del nuevo saldría en los
+dos y la comparación diría «iguales» (P5, 2026-10-03). Para eso están los adaptadores (§4.2).
 
 ### E-2 · Primero el contrato, sin lógica
 
@@ -108,6 +120,17 @@ El commit que crea un contrato **incluye su test**, y ese test **falla** contra 
 el `panic` de E-2). El verde llega en un commit **posterior**, que añade la lógica. Los mensajes lo
 dicen: `rojo(<módulo>): …` · `verde(<módulo>): …` · `refactor(<módulo>): …`.
 
+**Excepción (P6 de la parada de F1, Jhoan, 2026-10-03): los auxiliares no exportados.** El contrato solo declara lo
+exportado, y un `const`, `func` o campo no exportado sin uso rompe el lint `unused` (T-1): un auxiliar **no puede existir
+en el rojo**, y su test tampoco. Por eso **el test de un auxiliar no exportado nace en el commit `verde`**, junto a la
+lógica que lo crea, no antes. Es una excepción escrita a «el test nace en rojo»; no afecta a lo exportado.
+
+*Qué auxiliares llevan test propio* (la meta no es un número, es detectar fallos de lógica): solo el que lleva una **regla de
+negocio** o ramas no triviales que los tests del contrato no alcanzan con claridad, o cuyo fallo se diagnosticaría mal desde
+el contrato. **No** se testea el auxiliar trivial, la fontanería ni las ramas de error (`if err != nil { return … }`) solo
+para subir una cifra. Lo que quede sin test propio **lo cubre el test de proceso** de F9, que recorre el flujo entero y
+ejercita implícitamente esos huecos (como probar la receta de la salsa entera, no su tiempo de cocción por separado).
+
 ### E-5 · `dev` siempre verde: el rojo vive detrás de una etiqueta
 
 La regla del ecosistema es que toda ola aterriza en `dev`, y `dev` pasa el gate. Un test rojo no
@@ -139,15 +162,16 @@ Los tests de esta reconstrucción **no tocan Postgres**. Para los ficheros que s
   `gateway/lease`, `ingest`, `integrations`, `intentcfg`, `platformadmin`, `tenantllm`), la
   reconstrucción **crea un doble en memoria** en el paquete `…helpertest` del puerto (D-F1-10, decisión de
   Jhoan, 2026-10-02; antes `…test`; el origen es el patrón `fleettest`), en la misma pasada del contrato. Sin él, la suite no correría hasta F9.
-  Ese doble **se mide** como cualquier fichero, cobertura por fichero ≥ 80 % con su propio test: estar en `…helpertest` ya no lo exime (D-F1-13, 2026-10-02).
+  Ese doble **entra en el informe de cobertura** como cualquier fichero y lleva su propio test si tiene lógica: estar en `…helpertest` no lo exime del informe (D-F1-13, 2026-10-02).
 - **El adaptador Postgres** tiene su `x_test.go` unitario con lo que se prueba sin BD: el
-  constructor, la validación de argumentos, el mapeo de filas y de errores de `pgx` a los errores
-  del dominio (con funciones puras extraídas para eso).
+  constructor, la validación de argumentos, el mapeo de filas y de errores a los errores del
+  dominio (con funciones puras extraídas para eso). El reintento ante `40P01`/`40001` vive en
+  `platform/storage/postgres.WithTx`, no en el adaptador.
 - **Su SQL** lo cubren los tests de **proceso** de §7, que ejecutan **la misma suite de contrato**
   contra la implementación Postgres. La suite se escribe una vez y sirve a las dos.
 
-Consecuencia aceptada: un adaptador Postgres **nace con cobertura de sentencias baja**, a
-propósito, y se excluye del umbral de E-9. Su verdad la da §7.
+Consecuencia aceptada: un adaptador Postgres **nace con cobertura unitaria baja**, a propósito. Su verdad la da §7:
+la suite de contrato contra Postgres (en `contact`, 80,7 % del fichero, medido en F1).
 
 ### E-7 · El test prueba comportamiento por el contrato
 
@@ -171,9 +195,12 @@ commit, con el motivo.
 - **Desde el rojo**: cada símbolo exportado de `x.go` aparece en `x_test.go`, y cada promesa del
   comentario tiene su aserción. **Candado estático** (§5): un exportado sin mención en su test hace
   fallar el gate, aunque la lógica aún no exista.
-- **Al llegar a verde**: cobertura de sentencias **por fichero** (`go test -coverprofile`,
-  agregada por fichero) **≥ 80 %** (umbral propuesto, D-12). Los adaptadores Postgres quedan fuera
-  (E-6). Un fichero por debajo no cierra su `verde(…)`.
+- **Al llegar a verde**: **no hay umbral de cobertura que bloquee** (P2, Jhoan, 2026-10-03; deroga D-12). La cobertura
+  por fichero (`make cobertura-ficheros`) es un **informe**: se mira, no hace fallar el gate. En el piloto todos los
+  ficheros pasaron del 95 % y aun así sobrevivieron mutantes: la cobertura mide líneas ejecutadas, no que el test detecte
+  un fallo. La meta son **tests válidos que detecten fallos de lógica**, no una cifra.
+- **Lo que sustituye al número**: un test por cada promesa del contrato (E-4); en el nivel **complejo** (E-12), mutantes;
+  y los **procesos de F9**, que recorren el flujo entero y cubren los huecos que ningún test de fichero toca.
 
 Así, cuando la lógica de verdad llegue, **ya hay algo que la valide**: ese es el objetivo de todo
 el método.
@@ -207,7 +234,7 @@ Lo que **no** cambia:
    literales aunque estén en español: `var ErrInvalidRef = errors.New("contact_ref inválida")`. El
    **identificador** va en inglés; el **texto** no se toca.
 2. **Lo ya escrito**: el código viejo (E-1) y lo nuevo ya commiteado conservan sus nombres. No hay
-   renombres masivos ni «de paso».
+   renombres masivos ni «de paso». Única excepción: `contacttest` → `contacthelpertest` (D-F1-10).
 3. **Lo ya decidido**: los siete módulos de D-5 (`conversacion`, `captacion`, `catalogo`…), las carpetas
    hoja que conservan el nombre del paquete viejo (D-3, D-4), los directorios ya creados (`nucleo`,
    `modulos`, `arranque`, `apipublica`) y el vocabulario del propio método (`pendiente`, `Implementar`,
@@ -223,6 +250,27 @@ algo que aún no existe, se escribe en inglés y la correspondencia se anota en 
 
 No tiene candado automático (el idioma no se puede medir): lo vigila el revisor. Un candado barato, por
 decidir, sería marcar identificadores con letras no ASCII (`á é í ó ú ñ`).
+
+
+### E-12 · Tres niveles de ceremonia según la complejidad del archivo
+
+*(Decisión de Jhoan, 2026-10-03, parada de F1: el piloto salió caro y casi todo el coste fue método, no lógica.)*
+
+| Nivel | Qué archivos | Qué se hace |
+|---|---|---|
+| **Simple** | Sin estado ni concurrencia, sin BD, pocos consumidores, lógica corta (y los adaptadores `bridge_<x>.go`) | Contrato, test y lógica **en una sola pasada**; varios archivos por sesión; solo tests de comportamiento; código limpio con poca documentación |
+| **Medio** | Lógica de negocio o varios consumidores, sin estado compartido ni concurrencia | Rojo y verde **por archivo, agrupados por paquete**; un test por promesa del contrato, sin más |
+| **Complejo** | Estado en memoria, concurrencia, Postgres o transacciones, muchos consumidores (p. ej. `runtime`) | El esquema completo de E-2 a E-9, con **mutantes** donde haga falta |
+
+- **Quién clasifica**: el **inventario de cada fase** lista sus archivos con nivel y criterio medible (estado,
+  concurrencia, BD, nº de consumidores) y **cuántos adaptadores harán falta**. Jhoan lo aprueba. Si un archivo sale peor de
+  lo previsto, **sube de nivel**.
+- 🔴 **No se relaja en ningún nivel**: la equivalencia viejo ↔ nuevo, `make ci-local` en verde con **0 SKIP**, y los
+  procesos de F9 contra los dos binarios.
+- **Horas ahorradas: sin medir.** El piloto solo tuvo archivos complejos; se mide tras la primera fase hecha así.
+- **Sesiones**: de tamaño medio, un bloque coherente (45–90 min en el piloto); varios módulos pequeños si son simples.
+  Cada sesión deja siempre tres cosas: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en el README
+  de la fase. El traspaso web ↔ local solo existe mientras haya dos entornos, y después, solo si una sesión se corta.
 
 ---
 
@@ -259,7 +307,7 @@ se puede verificar contra Postgres, pasa a la lista de procesos de §7.
 ```mermaid
 flowchart LR
   C["1 · CONTRATO<br/>carpetas + ficheros<br/>doc que promete · firmas<br/>panic(pendiente…)"] --> R["2 · ROJO<br/>x_test.go desde el contrato<br/>//go:build pendiente<br/>cada exportado cubierto"]
-  R --> V["3 · VERDE<br/>la lógica, portada del paquete viejo<br/>con su porqué · ≥ 80 % por fichero<br/>se quita la etiqueta"]
+  R --> V["3 · VERDE<br/>la lógica, portada del paquete viejo<br/>con su porqué · tests de auxiliares (E-4)<br/>se quita la etiqueta"]
   V --> F["4 · REFACTOR<br/>con los tests en verde"]
   F --> K["5 · CONMUTAR<br/>el arranque nuevo cablea el paquete nuevo<br/>huella idéntica al viejo"]
   K -.-> RET["6 · RETIRAR<br/>(solo en el relevo, F10)"]
@@ -267,8 +315,11 @@ flowchart LR
 
 **El oráculo.** Durante toda la transición, `cmd/server` corre **el código viejo** con el arranque
 viejo, y `cmd/server-modular` corre **el código nuevo** con el arranque nuevo. Los dos binarios
-**no comparten los paquetes de dominio**, y la huella (`internal/arranque/huella_test.go`: rutas,
-rpc, métricas, goroutines) compara lo que expone cada uno.
+**no comparten estado**. Hasta F10 el binario nuevo sigue enlazando las funciones **puras** del dominio viejo (sin
+estado) que usan consumidores viejos; «no comparten paquetes» solo vale en el relevo. La huella
+(`internal/arranque/huella_test.go`: rutas, rpc, métricas, goroutines) compara lo que expone cada uno, y es **ciega** a un
+módulo que no registra ninguna de esas cosas (p. ej. `contact`): su conmutación la prueba el **test de cableado** (§4.2),
+no la huella ni `go list -deps`, que da 1 desde el rojo.
 
 🔴 Siguen sin poder correr **a la vez** contra la misma BD o los mismos puertos (`04` §2.2).
 
@@ -286,17 +337,33 @@ paquete nuevo hacia uno viejo, **declarado** en la lista de `internal/modulos/fr
 
 El orden de §6 minimiza los puentes, pero no los elimina.
 
+### 4.2 · Los adaptadores de arranque (`bridge_<x>.go`)
+
+*(P5, Jhoan, 2026-10-03; cierra D-F1-5, D-F1-9, D-F1-15 y D-F1-16. Distinto de los «puentes» de §4.1, que son imports.)*
+
+Cuando un módulo nuevo se conmuta pero un consumidor **viejo** sigue pidiendo el tipo viejo, el arranque nuevo los une con
+un **adaptador**: `internal/arranque/bridge_<x>.go`, que traduce sin estado. **No se modifica el consumidor viejo** (E-1).
+
+- **Nombre**: `bridge_<x>.go` (+ `bridge_<x>_test.go`) y tipos en inglés (`contactBridge`, `newContactResolver`).
+- **Nivel**: **simple** (E-12): traducir, sin estado, en una pasada.
+- **Vida**: nace al conmutar y muere cuando conmuta su último consumidor viejo (`contact`: F8).
+- **`Conmutados`** (`internal/modulos/fronteras_test.go`): un módulo entra cuando **muere su último adaptador**, no antes.
+- **Candados de fichero**: `un_fichero_un_test` y el informe de cobertura **incluyen** los `bridge_*.go`, y solo esos.
+- **Test de cableado obligatorio**: afirma que el arranque construye el resolver nuevo **y** que ninguna fase importa el
+  viejo fuera del adaptador (grep por import), no solo el campo del contenedor.
+- **Cuántos**: el inventario de cada fase los lista de entrada. Si uno sale desproporcionado, se consulta a Jhoan.
+
 ---
 
 ## 5 · Los candados de la reconstrucción (nacen en F0)
 
 | Candado | Qué hace fallar el gate |
 |---|---|
-| `internal/modulos/fronteras_test.go` | Un import entre módulos fuera de la lista blanca, o un puente al código viejo no declarado |
-| `internal/modulos/un_fichero_un_test_test.go` | Un `x.go` sin `x_test.go` al lado, salvo las excepciones de E-3 |
+| `internal/modulos/fronteras_test.go` | Un import entre módulos fuera de la lista blanca, o un puente al código viejo no declarado. `Conmutados`: ver §4.2 |
+| `internal/modulos/un_fichero_un_test_test.go` | Un `x.go` sin `x_test.go` al lado, salvo las excepciones de E-3. Incluye `internal/arranque/bridge_*.go` (§4.2) |
 | `internal/modulos/exportados_cubiertos_test.go` | Un símbolo exportado de `x.go` que no aparece en `x_test.go` (E-9) |
-| `make cobertura-ficheros` | Un fichero ya en verde por debajo del umbral (E-9), salvo adaptadores Postgres |
-| `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado |
+| `make cobertura-ficheros` | **Nada: es un informe** (P2, E-9). Hasta que se haga el cambio de código, aún falla por debajo de 80 % |
+| `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado. Ciega a módulos sin rutas/rpc/métricas/goroutines (§4) |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
 | `test/procesos/sin_bd_viva_test.go` | Una **apertura de conexión** a la base de datos (`sql.Open`/`OpenDB`, `pgx.Connect*`, `pgconn.Connect*`, `pgxpool.New*`, las de `pgx/stdlib`) en cualquier fichero de `test/procesos/` que no sea `test/procesos/base_test.go`: lista blanca de quién abre conexiones, por ruta exacta (D-F9-6, decisión de Jhoan, 2026-10-02; antes solo había lista negra). Y, como antes, cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
 | `no_pending_test.go` (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test.go`: el fichero aún no existe y nace con nombre en inglés, E-11) | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
@@ -310,7 +377,7 @@ Orden **de la base hacia arriba**, para que cada módulo encuentre reconstruido 
 | Fase | Qué | Notas |
 |---|---|---|
 | **F0 · Andamiaje** | `cmd/server-modular` + `internal/arranque`, **copia exacta** del arranque viejo, que al principio cablea **paquetes viejos** · `internal/pendiente` · la etiqueta `pendiente` y sus `make` · los candados de §5 · los tres ✎ de `platform` en su sitio | No se crea ningún módulo |
-| **F1 · `nucleo` — el piloto** | `nucleo/contact` completo: contrato → rojo → verde → conmutar | **4 ficheros de producción, solo depende de `platform`**, y tiene implementación en memoria y en Postgres: prueba también la suite de contrato de E-6. Calibra el método: cuánto cuesta un fichero, si el umbral es razonable, si los candados estorban. **Tras F1, parada para decidir si se sigue igual** |
+| **F1 · `nucleo` — el piloto** | `nucleo/contact` completo: contrato → rojo → verde → conmutar | **4 ficheros de producción, solo depende de `platform`**, y tiene implementación en memoria y en Postgres: prueba también la suite de contrato de E-6. Calibró el método (coste, umbral, candados). **La parada se resolvió el 2026-10-03: E-12** |
 | **F2 · `acceso`** | `iam/**`, `platformadmin`, `entitlements` | `iam` ya es hexagonal: sus puertos piden suites de contrato |
 | **F3 · `edge`** | `grpc`, `enroll`, `lease`, `session`, `fleet`, `diagnostics`, `inferstats`, `receipts`, `ingest`, `filtercfg` | 🔒 `lease` es la mitad servidora de la doble llave: se reconstruye sin cambiar comportamiento |
 | **F4 · `inferencia`** | `llmvia/**`, `prompts`, `tenantllm`, `degradation` | — |
@@ -379,7 +446,7 @@ no el entorno web. El reparto:
 - `testcontainers-go` y su módulo `postgres` entran en el `go.mod` del repo. Solo los importa
   `test/procesos/`, así que no llegan al binario de producción.
 
-### 7.4 · Procesos candidatos (a cerrar en D-13)
+### 7.4 · Procesos candidatos (cerrados en D-13: P0–P9, y P10 por D-F9-4; la lista vigente está en [`plan/F9-procesos/`](plan/F9-procesos/README.md))
 
 | Proceso | Recorre |
 |---|---|
@@ -425,7 +492,7 @@ Mientras dure:
   binarios (§7).
 
 Por eso **F1 es un piloto con parada**: el coste real por fichero se mide ahí, y con ese dato se
-decide si el resto sigue igual, se acelera o se acota.
+decide si el resto sigue igual, se acelera o se acota. **Resultado (2026-10-03): E-12.**
 
 ### 9.2 · `publicapi` no puede quedarse como está
 

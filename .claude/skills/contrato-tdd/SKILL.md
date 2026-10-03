@@ -13,6 +13,17 @@ La reorganización **no mueve ficheros: los crea**. Cada fichero nuevo nace con 
 test que lo cubre, **antes** que la lógica. El objetivo: que cuando llegue la lógica de verdad, ya
 exista lo que la valida.
 
+## Nivel del archivo (E-12)
+
+Antes de empezar, mira el nivel que el inventario de la fase le dio a este archivo (`05` E-12):
+- **Simple**: contrato, test y lógica en **una sola pasada** (no hace falta rojo y verde separados); solo tests de
+  comportamiento; código limpio, poca documentación. Los `bridge_<x>.go` son simples.
+- **Medio**: rojo y verde por archivo, agrupados por paquete; un test por promesa del contrato.
+- **Complejo**: todo lo que sigue, con mutantes donde haga falta.
+
+Si el archivo sale peor de lo previsto, **sube de nivel** y dilo. En ningún nivel se relaja: equivalencia viejo ↔ nuevo,
+`ci-local` con 0 SKIP y los procesos de F9.
+
 ## Antes de escribir nada
 
 1. **Localiza la referencia.** La tabla de `04-estructura-final.md` §4 dice qué paquete viejo
@@ -90,18 +101,23 @@ Commit: `rojo(<modulo>): contrato de <fichero>` — con el contrato **y** su tes
   no lo tienen), **créalo** en `<paquete>helpertest` en esta misma pasada.
 - **El adaptador Postgres** prueba en unitario solo lo que no necesita BD: constructor,
   validación de argumentos, mapeo de filas y errores (extrae funciones puras para eso). Su SQL lo
-  cubren los procesos de F9. Queda fuera del umbral de cobertura.
+  cubre la **suite de contrato contra Postgres** de F9 (adoptada para todo puerto con BD, P4).
 
 ## Paso 3 · Verde
 
 1. Sustituye cada `panic` por la lógica del fichero viejo, **con sus comentarios del porqué**
    (el estilo *comentario-como-ADR* de la casa no se pierde).
 2. Quita `//go:build pendiente` del test.
-3. Comprueba:
+3. **Tests de los auxiliares no exportados (excepción a E-4, P6 de la parada de F1, 2026-10-03).** Un auxiliar no puede
+   existir en el rojo (el lint `unused`, T-1), así que su test nace **ahora**, en este commit `verde`. Solo para el que lleva
+   una **regla de negocio** o ramas no triviales que los tests del contrato no alcanzan con claridad, o cuyo fallo se
+   diagnosticaría mal desde el contrato. **No** testees el trivial, la fontanería ni las ramas `if err != nil { return … }`
+   para subir un número: lo que quede sin test propio lo cubre el test de proceso de F9, que recorre el flujo entero.
+4. Comprueba:
 
 ```bash
 GOWORK=off go test -race ./internal/modulos/<modulo>/<paquete>/ ; echo "rc=$?"
-make cobertura-ficheros   # ≥ 80 % por fichero (D-12); fuera los adaptadores Postgres
+make cobertura-ficheros   # INFORME, no bloquea (P2, 2026-10-03): mira qué queda sin test, no persigas la cifra
 ```
 
 Commit: `verde(<modulo>): <fichero>`. Un fichero por commit. Si luego limpias con los tests en
@@ -116,6 +132,8 @@ verde: `refactor(<modulo>): …`.
 - Copiar el fichero viejo entero y «ya luego» escribir el test. Eso es mover, no reconstruir.
 - Portar un test viejo tal cual. Se consultan; el nuevo sale del contrato.
 - Un test que solo comprueba que «no hace panic» o que la función existe.
+- Un test de un auxiliar no exportado trivial, o de una rama de error, **solo para llegar a un porcentaje**. La cobertura
+  no es la meta: lo son los tests que detectan un fallo de lógica (decisión P2, 2026-10-03).
 - Un nombre en español en un fichero, tipo, función, variable o test **nuevo** (E-11).
 - `t.Skip` por cualquier motivo. Es la deuda DT-52: un SKIP bajo `rc=0` parece verde.
 - Editar el paquete viejo «de paso». El viejo es lo que corre en UAT y el oráculo.

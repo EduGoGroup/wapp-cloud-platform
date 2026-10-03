@@ -27,8 +27,9 @@ ls internal/modulos internal/nucleo internal/arranque 2>/dev/null       # qué e
   partida de `origin/dev`, y abre PR `--base dev` (`plan/sesiones/PROTOCOLO-WEB.md`). Toda ola aterriza en `dev`; `main` solo lo
   mueve la sesión local cuando Jhoan lo pide.
 - **¿En qué fase estás?** Lo dice lo que existe, no lo que recuerdes. Si `internal/arranque` no
-  existe, estás en **F0**. Si F1 cerró y nadie decidió seguir, **para**: F1 es un piloto con parada
-  (`05` §6), y la decisión es de Jhoan.
+  existe, estás en **F0**. La parada de F1 se resolvió el 2026-10-03 (`05` E-12): en cada fase, el
+  inventario **clasifica cada archivo** en simple / medio / complejo y lista cuántos adaptadores `bridge_<x>.go` harán
+  falta; Jhoan lo aprueba antes de escribir código.
 
 ## Paso 1 · Inventario del módulo (delegado)
 
@@ -64,7 +65,7 @@ internas del módulo: primero las hojas.
 - **Un fichero por commit**, `verde(<m>): <fichero>`. Puedes delegar varios ficheros en paralelo si
   son de paquetes distintos; dentro de un paquete, en serie (comparten `_test` y compilación).
 - Cada sub-agente vuelve con: el `rc` del test del paquete **leído sin pipe**, la cobertura del
-  fichero, y cualquier regla del fichero viejo que decidió no portar (con motivo).
+  fichero (informe, no bloquea), y cualquier regla del fichero viejo que decidió no portar (con motivo).
 - **Valida tú** lo que decide el rumbo: que el test salió del contrato (no un test viejo copiado) y
   que ningún texto observable cambió.
 
@@ -90,8 +91,9 @@ partirían las ráfagas (`04` §2.2).
 - `validar-antes-de-cerrar` completo.
 - Actualiza `documentations/reorganizacion-modular/` si la fase enseñó algo que la norma no decía
   (un coste, una excepción, un candado que estorba). En F1, **escribe el informe del piloto**:
-  coste real por fichero, si el 80 % es razonable, qué candado estorbó. Es lo que Jhoan necesita
-  para decidir si se sigue.
+  coste real por fichero y por nivel, qué candado estorbó. (El informe de F1 ya está: `plan/F1-nucleo-contact/informe-piloto.md`.)
+  Cierra la sesión con las tres cosas fijas de `05` E-12: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos
+  en el README de la fase.
 - Si queda trabajo que solo puede hacer la sesión local (Docker, UAT, `main`), escribe el traspaso
   con **`traspaso-web-local`**.
 

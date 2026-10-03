@@ -171,6 +171,7 @@ internal/
 │   ├── conversacion_flowforkind.go           ↦ de flowforkind.go
 │   ├── transporte_http.go                    ↦ de http.go
 │   ├── transporte_rutas_admin.go             ↦ de rutas_admin.go
+│   ├── bridge_<x>.go                         ✚ adaptadores de tipos al código viejo (`05` §4.2); mueren al conmutar su último consumidor
 │   ├── huella_test.go                        ✚ la huella de contratos: rutas, rpc, métricas, variables
 │   └── (+ tests: los 20 de hoy, portados (11 son candados AST de cableado))
 ├── modulos/                                  ✚ los módulos de negocio
@@ -566,7 +567,8 @@ internal/
 │       ├── repository_memory.go
 │       ├── repository_postgres.go
 │       ├── resolver.go
-│       └── (+ 6 _test.go)
+│       ├── contacthelpertest/                ✚ la suite de contrato y el doble de estado (D-F1-10; sufijo `helpertest`)
+│       └── (+ 4 _test.go nuevos: los 6 viejos no se mueven, E-8)
 ├── platform/                                 soporte transversal (no es módulo); no se mueve
 │   ├── config/
 │   │   ├── config.go
