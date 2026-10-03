@@ -7,10 +7,12 @@ package arranque
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
 // contactBridge presenta un contact.Resolver NUEVO como el viejo.Resolver que piden los paquetes
@@ -50,6 +52,19 @@ type contactBridge struct {
 // contactBridge es un viejo.Resolver (y por tanto un intakes.Destinations): si alguna de las dos
 // firmas cambia, esto no compila.
 var _ viejo.Resolver = (*contactBridge)(nil)
+
+// newContactResolver es la costura del arranque nuevo (T1.16): construye el resolver de contactos
+// que cablea la fase 3 (buildFlowRuntimeDeps), el *contact.PostgresResolver NUEVO envuelto en un
+// contactBridge para que los paquetes viejos lo reciban como viejo.Resolver.
+//
+// 🔴 cipher y kp tienen que ser EL MISMO FieldCipher y EL MISMO KeyProvider que construye la fase
+// 3 y reciben el resto de almacenes (fleet, events, intakes, integrations, tenantllm): nunca uno
+// construido aquí. Otro KeyProvider calcularía otro value_bidx para la misma ref, no encontraría
+// los contactos ya guardados y los duplicaría sin un solo error. No valida sus argumentos (tampoco
+// NewPostgresResolver): un nil se descubre en el primer uso.
+func newContactResolver(db *sql.DB, cipher *crypto.FieldCipher, kp crypto.KeyProvider) *contactBridge {
+	return &contactBridge{next: contact.NewPostgresResolver(db, cipher, kp)}
+}
 
 // Resolve implementa viejo.Resolver: copia las refs al tipo nuevo y delega (ver contactBridge).
 func (b *contactBridge) Resolve(ctx context.Context, tenantID string, refs []viejo.Ref, pushName string) (string, error) {

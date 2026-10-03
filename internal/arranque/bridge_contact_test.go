@@ -2,12 +2,15 @@ package arranque
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
 // Los tests de este fichero se derivan del comentario de contactBridge (una aserción por promesa)
@@ -521,5 +524,87 @@ func TestContactEquivalence_Sendable(t *testing.T) {
 					c.kind, c.value, newErr, oldErr)
 			}
 		})
+	}
+}
+
+// stubKeyProvider es un crypto.KeyProvider que nadie llama: el test de la costura solo mira QUÉ
+// instancia acaba dentro del resolver, no la usa.
+type stubKeyProvider struct{ crypto.KeyProvider }
+
+// postgresResolverField lee por reflexión el campo no exportado name del *contact.PostgresResolver
+// que hay detrás de b (falla el test si no es ese tipo). Es la única forma de afirmar, sin BD, que
+// el resolver recibió EXACTAMENTE las instancias de la fase: el puerto no las expone.
+func postgresResolverField(t *testing.T, b *contactBridge, name string) reflect.Value {
+	t.Helper()
+	pr, ok := b.next.(*contact.PostgresResolver)
+	if !ok {
+		t.Fatalf("contactBridge.next = %T; quiero *contact.PostgresResolver (el resolver NUEVO)", b.next)
+	}
+	f := reflect.ValueOf(pr).Elem().FieldByName(name)
+	if !f.IsValid() {
+		t.Fatalf("*contact.PostgresResolver no tiene el campo %q: el test de cableado se quedó atrás", name)
+	}
+	return f
+}
+
+// sameInstance dice si el valor de un campo (puntero, o interfaz que guarda un puntero) es la misma
+// instancia que want.
+func sameInstance(field reflect.Value, want any) bool {
+	if field.Kind() == reflect.Interface {
+		if field.IsNil() {
+			return want == nil
+		}
+		field = field.Elem()
+	}
+	w := reflect.ValueOf(want)
+	if !w.IsValid() || field.Kind() != reflect.Pointer || w.Kind() != reflect.Pointer {
+		return false
+	}
+	return field.Type() == w.Type() && field.Pointer() == w.Pointer()
+}
+
+// TestNewContactResolver_WrapsNewPostgresResolverWithSameInstances fija la costura de T1.16: un
+// contactBridge sobre el *contact.PostgresResolver NUEVO, construido con el db, el cipher y el kp
+// recibidos, no con copias (R1.4.b, R1.5.b).
+func TestNewContactResolver_WrapsNewPostgresResolverWithSameInstances(t *testing.T) {
+	db := new(sql.DB)
+	kp := &stubKeyProvider{}
+	cipher := crypto.NewFieldCipher(kp)
+
+	b := newContactResolver(db, cipher, kp)
+
+	if b == nil {
+		t.Fatal("newContactResolver devolvió nil")
+	}
+	for _, f := range []struct {
+		name string
+		want any
+	}{{"db", db}, {"cipher", cipher}, {"kp", kp}} {
+		if !sameInstance(postgresResolverField(t, b, f.name), f.want) {
+			t.Errorf("PostgresResolver.%s no es la instancia recibida por newContactResolver", f.name)
+		}
+	}
+}
+
+// TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys es la aserción de cableado del arranque
+// nuevo (T1.16): tras la fase 3 real (el contenedor de la huella), el resolver que reciben
+// flowruntime.New (fase 7) e intakes.NewNotifier (fase 6) es un contactBridge sobre el resolver
+// NUEVO, y ese resolver lleva EL MISMO cipher y EL MISMO KeyProvider que la fase guarda en
+// flowDeps y reparte al resto de almacenes. 🔴 Otro KeyProvider duplicaría contactos en silencio.
+func TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys(t *testing.T) {
+	c := contenedorDeHuella(t, "minimo")
+
+	b, ok := c.flowDeps.contacts.(*contactBridge)
+	if !ok {
+		t.Fatalf("flowDeps.contacts = %T; quiero *contactBridge (el resolver nuevo de nucleo/contact)", c.flowDeps.contacts)
+	}
+	if !sameInstance(postgresResolverField(t, b, "db"), c.db) {
+		t.Error("el resolver de contactos no usa el pool de la fase 1")
+	}
+	if !sameInstance(postgresResolverField(t, b, "cipher"), c.flowDeps.cipher) {
+		t.Error("el resolver de contactos no usa el FieldCipher de la fase 3 (flowDeps.cipher)")
+	}
+	if !sameInstance(postgresResolverField(t, b, "kp"), c.flowDeps.kp) {
+		t.Error("el resolver de contactos no usa el KeyProvider de la fase 3 (flowDeps.kp): otro value_bidx")
 	}
 }
