@@ -12,11 +12,6 @@ import (
 	"strings"
 )
 
-// MarcaPostgres es la línea que exime a un adaptador Postgres del umbral de cobertura
-// (05 E-6). Va en la CABECERA del propio fichero —un comentario antes de la cláusula
-// `package`—, como línea exacta.
-const MarcaPostgres = "// cobertura: adaptador postgres (05 E-6)"
-
 // Fichero es la cobertura agregada de un fichero del perfil: Ruta es la ruta tal como la
 // escribe `go test -coverprofile` (forma de import, p. ej.
 // "github.com/EduGoGroup/wapp-cloud-platform/internal/x/y.go"); Sentencias, el total de
@@ -68,40 +63,36 @@ func Agregar(perfil io.Reader) (map[string]Fichero, error) {
 	return sumarBloques(bloques), nil
 }
 
-// Cobertura exige a cada fichero en verde del alcance un porcentaje de sentencias cubiertas
-// ≥ umbral (80 en D-12): 100·Cubiertas/Sentencias ≥ umbral.
+// Cobertura INFORMA de los ficheros en verde del alcance cuyo porcentaje de sentencias
+// cubiertas queda por debajo de umbral: 100·Cubiertas/Sentencias < umbral. No es un candado:
+// desde P2 (Jhoan, 2026-10-03; 05 E-9, que deroga D-12) ningún umbral de cobertura bloquea, y
+// umbral es solo la línea de referencia del informe (80 por defecto en cmd/cobertura-ficheros,
+// que con ficheros por debajo sale igual con rc=0). Lo que devuelve es la lista de «por
+// debajo»; reutiliza el tipo Violacion por su forma (fichero + motivo) y su orden, no porque
+// rompa nada.
 //
 // Cruce perfil ↔ fuentes: la entrada k de fs corresponde a la Fuente f si k == f.Ruta o si
 // k termina en "/"+f.Ruta (la forma de import lleva delante la ruta del módulo); si varias
 // Fuente casan, gana la de Ruta más larga. Las entradas de fs sin Fuente (fuera del alcance)
 // se ignoran.
 //
-// Se evalúan exactamente los ficheros que devuelve Evaluables: los ficheros de suite de un
+// Se miran exactamente los ficheros que devuelve Evaluables: los ficheros de suite de un
 // paquete …helpertest no (D-F1-6: la suite solo la ejecutan los tests de las implementaciones,
 // en otros paquetes, y `go test -cover` sin -coverpkg no lo cuenta; D-F1-10: el paquete se
 // reconoce por el sufijo compuesto "helpertest", no por "test" a secas; D-F1-13: dentro de
-// ese paquete solo se eximen contrato.go y *_contrato.go, y los dobles con lógica se miden;
-// ver Evaluables). Además, y con independencia del perfil, de si el fichero está en rojo y de
-// si es un fichero de suite, todo fichero de producción con MarcaPostgres en la cabecera que
-// NO importa "database/sql" ni "github.com/jackc/pgx" (o un subpaquete, p. ej.
-// ".../pgx/v5/pgxpool") es una violación: nadie se exime por decreto. Ese fichero marcado de
-// forma ilegítima se evalúa además como cualquier otro (salvo que sea un fichero de suite:
-// entonces solo queda la violación de marca).
+// ese paquete solo quedan fuera contrato.go y *_contrato.go, y los dobles con lógica se miden;
+// ver Evaluables), ni los contratos en rojo. Ninguna de las dos es una exención por umbral:
+// son ficheros que no se pueden medir.
 //
-// Violaciones: Fichero es la Ruta de la Fuente. Por umbral, Motivo contiene el porcentaje
-// con un decimal y "%" (p. ej. "50.0 %") y el umbral; por marca ilegítima, Motivo contiene
-// "marca" y "postgres".
+// Ya no hay exentos por umbral. Hasta P2, un adaptador Postgres con la línea
+// "// cobertura: adaptador postgres (05 E-6)" en la cabecera quedaba fuera, y esa marca sin
+// un import de Postgres era una violación. Hoy esa línea es un comentario inerte: el fichero
+// que la lleva se mide y sale en el informe como cualquier otro.
+//
+// Resultado: Fichero es la Ruta de la Fuente; Motivo contiene el porcentaje con un decimal y
+// "%" (p. ej. "50.0 %") y el umbral.
 func Cobertura(fs map[string]Fichero, fuentes []Fuente, umbral float64) []Violacion {
 	vs := make([]Violacion, 0)
-	for _, f := range fuentes {
-		if !f.EsTest && tieneMarca(f.Archivo) && !importaPostgres(f.Archivo) {
-			vs = append(vs, Violacion{
-				Fichero: f.Ruta,
-				Motivo: "marca de adaptador postgres en la cabecera sin importar database/sql ni " +
-					"github.com/jackc/pgx: nadie se exime por decreto (05 E-6)",
-			})
-		}
-	}
 	medidas := cruzar(fs, fuentes)
 	for _, ruta := range Evaluables(fs, fuentes) {
 		m := medidas[ruta]
@@ -113,7 +104,7 @@ func Cobertura(fs map[string]Fichero, fuentes []Fuente, umbral float64) []Violac
 		// imprimirse como "80.0 %" junto a un umbral de 80.
 		vs = append(vs, Violacion{
 			Fichero: ruta,
-			Motivo: fmt.Sprintf("cobertura %.1f %% < umbral %g %% (%d de %d sentencias cubiertas, D-12)",
+			Motivo: fmt.Sprintf("cobertura %.1f %% < umbral %g %% (%d de %d sentencias cubiertas)",
 				math.Floor(pct*10)/10, umbral, m.Cubiertas, m.Sentencias),
 		})
 	}
@@ -126,27 +117,12 @@ func Cobertura(fs map[string]Fichero, fuentes []Fuente, umbral float64) []Violac
 	return vs
 }
 
-// Exentos devuelve, ordenadas, las Ruta de los ficheros de producción de fuentes exentos
-// LEGÍTIMAMENTE del umbral: llevan MarcaPostgres en la cabecera e importan "database/sql" o
-// "github.com/jackc/pgx" (o un subpaquete). No mira el perfil. Los tests nunca están.
-// Es lo que cmd/cobertura-ficheros cuenta como EXENTOS_POSTGRES.
-func Exentos(fuentes []Fuente) []string {
-	out := make([]string, 0)
-	for _, f := range fuentes {
-		if esExento(f) {
-			out = append(out, f.Ruta)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// Evaluables devuelve, ordenadas, las Ruta de los ficheros que Cobertura mide contra el
-// umbral: ficheros de producción (no EsTest) de fuentes que
+// Evaluables devuelve, ordenadas, las Ruta de los ficheros que el informe de cobertura mide
+// (los que Cobertura compara con el umbral): ficheros de producción (no EsTest) de fuentes que
 //   - no son un fichero de suite de contrato (isContractSuiteFile): contrato.go o
 //     <tema>_contrato.go en un paquete …helpertest, es decir, uno cuyo Paquete (la cláusula
 //     `package`, no el directorio) termina en el sufijo compuesto "helpertest" (D-F1-6). Es
-//     una exención por fichero, no por nota: un fichero de suite al 100 % tampoco se mide. El
+//     una exclusión por fichero, no por nota: un fichero de suite al 100 % tampoco se mide. El
 //     porqué: la suite Contrato de un puerto solo la ejecutan los tests de las
 //     implementaciones, que viven en OTROS paquetes, y `go test -cover` sin -coverpkg no
 //     cuenta lo que se ejecuta desde otro paquete; en el perfil del propio paquete
@@ -157,14 +133,16 @@ func Exentos(fuentes []Fuente) []string {
 //     D-F1-13 (Jhoan, 2026-10-02) la estrecha otra vez: hasta ella quedaba fuera el paquete
 //     …helpertest ENTERO, y con él sus dobles con lógica (contacthelpertest/estado.go, y los
 //     dobles en memoria que 05 E-6 manda crear). A un doble lo ejecuta el test de su propio
-//     paquete, así que su cobertura es real: se mide con el umbral normal. Un contrato.go o un
+//     paquete, así que su cobertura es real: se mide como cualquier fichero. Un contrato.go o un
 //     x_contrato.go fuera de un paquete …helpertest tampoco es de suite: se mide;
 //   - están en verde: no contienen ninguna llamada pendiente.Implementar(…) —detectada en el
 //     AST como selector cuyo X es el identificador "pendiente" y cuyo Sel es "Implementar";
 //     una mención en un comentario no cuenta—;
-//   - no están en Exentos;
 //   - tienen entrada en fs (con el cruce de Cobertura) con Sentencias > 0 (un fichero sin
 //     sentencias, p. ej. solo tipos, no aparece o no tiene nada que medir).
+//
+// Nada más queda fuera: un adaptador Postgres marcado en la cabecera se mide (P2, 2026-10-03;
+// ver Cobertura).
 //
 // Es lo que cmd/cobertura-ficheros cuenta como FICHEROS_EVALUADOS.
 func Evaluables(fs map[string]Fichero, fuentes []Fuente) []string {
@@ -177,7 +155,7 @@ func Evaluables(fs map[string]Fichero, fuentes []Fuente) []string {
 		if f.EsTest || isContractSuiteFile(f) {
 			continue
 		}
-		if enRojo(f.Archivo) || esExento(f) {
+		if enRojo(f.Archivo) {
 			continue
 		}
 		if medidas[f.Ruta].Sentencias > 0 {
@@ -333,43 +311,6 @@ func casar(k string, rutas map[string]bool) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// esExento dice si f es un fichero de producción exento legítimamente: marca en la
-// cabecera y un import de Postgres que la respalda.
-func esExento(f Fuente) bool {
-	return !f.EsTest && tieneMarca(f.Archivo) && importaPostgres(f.Archivo)
-}
-
-// tieneMarca dice si MarcaPostgres aparece, como comentario de línea exacto, ANTES de la
-// cláusula `package`. Una marca más abajo (p. ej. junto a los imports) no cuenta: la
-// exención se declara en la cabecera, donde se ve al abrir el fichero.
-func tieneMarca(a *ast.File) bool {
-	for _, grupo := range a.Comments {
-		if grupo.Pos() >= a.Package {
-			break // los grupos vienen en orden de posición
-		}
-		for _, c := range grupo.List {
-			if c.Text == MarcaPostgres {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// importaPostgres dice si a importa "database/sql" o "github.com/jackc/pgx" (o un
-// subpaquete suyo): lo que hace creíble que el fichero sea un adaptador Postgres.
-func importaPostgres(a *ast.File) bool {
-	for _, imp := range a.Imports {
-		// El parser ya validó el literal: basta quitarle las comillas (o el acento grave).
-		ruta := strings.Trim(imp.Path.Value, "`\"")
-		if ruta == "database/sql" || ruta == "github.com/jackc/pgx" ||
-			strings.HasPrefix(ruta, "github.com/jackc/pgx/") {
-			return true
-		}
-	}
-	return false
 }
 
 // enRojo dice si a contiene un selector pendiente.Implementar: el contrato sigue sin lógica

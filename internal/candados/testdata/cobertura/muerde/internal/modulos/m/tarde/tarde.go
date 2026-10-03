@@ -1,4 +1,4 @@
-// Package tarde importa database/sql, pero su marca no está en la cabecera.
+// Package tarde importa database/sql y lleva la marca vieja fuera de la cabecera: inerte.
 package tarde
 
 // cobertura: adaptador postgres (05 E-6)

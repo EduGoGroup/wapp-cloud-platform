@@ -1,6 +1,6 @@
 mode: count
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/bien/bien.go:4.24,5.12 8 3
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/bien/bien.go:5.12,7.3 2 0
-github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/pg/pg.go:9.25,9.37 1 0
+github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/pg/pg.go:9.25,9.37 1 1
 github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/m/rojo/rojo.go:6.18,8.2 1 0
 github.com/EduGoGroup/wapp-cloud-platform/internal/iam/viejo.go:3.20,5.2 4 0

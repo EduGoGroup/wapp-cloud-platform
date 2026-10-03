@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// fixture es la raíz de un árbol de prueba del candado de cobertura (internal/candados, T0.5).
+// fixture es la raíz de un árbol de prueba del informe de cobertura (internal/candados, T0.5).
 func fixture(caso string) string {
 	return filepath.Join("..", "..", "internal", "candados", "testdata", "cobertura", caso)
 }
@@ -39,8 +39,22 @@ func contiene(t *testing.T, salida string, lineas ...string) {
 	}
 }
 
-// TestEjecutarPasa: el árbol que pasa (un fichero justo al 80 %, un exento legítimo, un
-// rojo y uno sin sentencias) sale con rc=0 y el resumen exacto.
+// retiradas son las líneas que el comando imprimía cuando era un candado con exentos y que
+// desde P2 (Jhoan, 2026-10-03; 05 E-9) ya no existen.
+var retiradas = []string{"EXENTO", "EXENTOS_POSTGRES", "VIOLACION"}
+
+// sinRetiradas exige que la salida no traiga ninguna de las líneas retiradas.
+func sinRetiradas(t *testing.T, salida string) {
+	t.Helper()
+	for _, r := range retiradas {
+		if strings.Contains(salida, r) {
+			t.Errorf("la salida aún dice %q, retirado con P2:\n%s", r, salida)
+		}
+	}
+}
+
+// TestEjecutarPasa: el árbol sin ficheros por debajo (uno justo al 80 %, un adaptador Postgres
+// marcado que ahora SE MIDE, un rojo y uno sin sentencias) sale con rc=0 y el resumen exacto.
 func TestEjecutarPasa(t *testing.T) {
 	raiz := fixture("pasa")
 	rc, salida := correr(t, "-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,
@@ -50,58 +64,57 @@ func TestEjecutarPasa(t *testing.T) {
 	}
 	contiene(t, salida,
 		"  80.0 %  internal/modulos/m/bien/bien.go",
-		"EXENTO postgres  internal/modulos/m/pg/pg.go",
-		"FICHEROS_EVALUADOS=1",
+		" 100.0 %  internal/modulos/m/pg/pg.go",
+		"FICHEROS_EVALUADOS=2",
 		"POR_DEBAJO=0",
-		"EXENTOS_POSTGRES=1",
 	)
-	if strings.Contains(salida, "VIOLACION") {
-		t.Errorf("no esperaba violaciones:\n%s", salida)
+	if strings.Contains(salida, "BAJO ") {
+		t.Errorf("no esperaba ficheros por debajo:\n%s", salida)
 	}
+	sinRetiradas(t, salida)
 }
 
-// TestEjecutarMuerde: el árbol que muerde da rc=1 y nombra cada violación con su motivo:
-// un fichero al 50 %, uno al 0 % cuya marca no está en la cabecera y una marca ilegítima.
-func TestEjecutarMuerde(t *testing.T) {
+// TestEjecutarInforma: el árbol con ficheros por debajo los nombra con su motivo y aun así
+// sale con rc=0 (P2: es un informe, no un gate). El adaptador Postgres marcado sale MEDIDO, al
+// 0 %; el fichero con la marca y sin import de Postgres, al 90 %, sin «violación de marca».
+func TestEjecutarInforma(t *testing.T) {
 	raiz := fixture("muerde")
 	rc, salida := correr(t, "-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,
 		"-dirs", " internal/modulos ,")
-	if rc != rcViolacion {
-		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcViolacion, salida)
+	if rc != rcBien {
+		t.Fatalf("rc = %d; quiero %d: un fichero por debajo no bloquea. Salida:\n%s", rc, rcBien, salida)
 	}
 	contiene(t, salida,
 		"  90.0 %  internal/modulos/m/falso/falso.go",
 		"  50.0 %  internal/modulos/m/medio/medio.go",
+		"   0.0 %  internal/modulos/m/pg/pg.go",
 		"   0.0 %  internal/modulos/m/tarde/tarde.go",
-		"EXENTO postgres  internal/modulos/m/pg/pg.go",
-		"FICHEROS_EVALUADOS=3",
+		"BAJO internal/modulos/m/medio/medio.go: cobertura 50.0 % < umbral 80 % (2 de 4 sentencias cubiertas)",
+		"BAJO internal/modulos/m/pg/pg.go: cobertura 0.0 % < umbral 80 % (0 de 10 sentencias cubiertas)",
+		"BAJO internal/modulos/m/tarde/tarde.go: cobertura 0.0 % < umbral 80 % (0 de 1 sentencias cubiertas)",
+		"FICHEROS_EVALUADOS=4",
 		"POR_DEBAJO=3",
-		"EXENTOS_POSTGRES=1",
 	)
-	for _, quiero := range []string{
-		"VIOLACION internal/modulos/m/medio/medio.go: cobertura 50.0 % < umbral 80 %",
-		"VIOLACION internal/modulos/m/tarde/tarde.go: cobertura 0.0 % < umbral 80 %",
-		"VIOLACION internal/modulos/m/falso/falso.go: marca de adaptador postgres",
-	} {
-		if !strings.Contains(salida, quiero) {
-			t.Errorf("falta %q en la salida:\n%s", quiero, salida)
-		}
+	if strings.Contains(salida, "BAJO internal/modulos/m/falso/falso.go") {
+		t.Errorf("falso.go está al 90 %%: no va por debajo, y la marca ya no es motivo:\n%s", salida)
 	}
 	if strings.Contains(salida, "rojo.go") {
 		t.Errorf("un fichero en rojo no se evalúa:\n%s", salida)
 	}
+	sinRetiradas(t, salida)
 }
 
-// TestEjecutarUmbral: el mismo árbol que pasa al 80 muerde al 81 (el umbral se respeta).
+// TestEjecutarUmbral: -umbral es la línea de referencia de POR_DEBAJO: el mismo árbol que da 0
+// con 80 da 1 con 81. Y sigue sin decidir el código de salida: rc=0.
 func TestEjecutarUmbral(t *testing.T) {
 	raiz := fixture("pasa")
 	rc, salida := correr(t, "-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,
 		"-dirs", "internal/modulos", "-umbral", "81")
-	if rc != rcViolacion {
-		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcViolacion, salida)
+	if rc != rcBien {
+		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcBien, salida)
 	}
 	contiene(t, salida, "POR_DEBAJO=1",
-		"VIOLACION internal/modulos/m/bien/bien.go: cobertura 80.0 % < umbral 81 % (8 de 10 sentencias cubiertas, D-12)")
+		"BAJO internal/modulos/m/bien/bien.go: cobertura 80.0 % < umbral 81 % (8 de 10 sentencias cubiertas)")
 }
 
 // TestEjecutarAlcanceInexistente: un dir que no existe aporta cero ficheros y no es error.
@@ -112,10 +125,12 @@ func TestEjecutarAlcanceInexistente(t *testing.T) {
 	if rc != rcBien {
 		t.Fatalf("rc = %d; quiero %d. Salida:\n%s", rc, rcBien, salida)
 	}
-	contiene(t, salida, "FICHEROS_EVALUADOS=0", "POR_DEBAJO=0", "EXENTOS_POSTGRES=0")
+	contiene(t, salida, "FICHEROS_EVALUADOS=0", "POR_DEBAJO=0")
+	sinRetiradas(t, salida)
 }
 
-// TestEjecutarErrores: uso incorrecto o fallo de E/S → rc=2, con el motivo en la salida.
+// TestEjecutarErrores: uso incorrecto o fallo de E/S → rc=2, con el motivo en la salida. Que
+// el comando sea un informe no los ablanda: un error real sí rompe.
 func TestEjecutarErrores(t *testing.T) {
 	raiz := fixture("pasa")
 	perfil := filepath.Join(raiz, "perfil.out")
@@ -201,8 +216,8 @@ type fallido struct{}
 
 func (fallido) Write([]byte) (int, error) { return 0, os.ErrClosed }
 
-// TestEjecutarSalidaRota: si la tabla no se puede escribir, el veredicto no se puede leer →
-// rc=2, aunque no haya violaciones.
+// TestEjecutarSalidaRota: si la tabla no se puede escribir, el informe no se puede leer →
+// rc=2, aunque no haya ficheros por debajo.
 func TestEjecutarSalidaRota(t *testing.T) {
 	raiz := fixture("pasa")
 	rc := ejecutar([]string{"-perfil", filepath.Join(raiz, "perfil.out"), "-raiz", raiz,

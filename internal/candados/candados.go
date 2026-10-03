@@ -6,6 +6,10 @@
 // vive aquí para demostrar que MUERDE contra árboles de prueba en testdata/<candado>/muerde
 // (≥ 1 violación nombrando fichero y motivo) y testdata/<candado>/pasa (0 violaciones).
 //
+// La cobertura por fichero es la excepción: desde P2 (Jhoan, 2026-10-03; 05 E-9) es un INFORME,
+// no un candado. Cobertura devuelve los ficheros por debajo de la línea de referencia y nadie
+// falla por ellos (make cobertura-ficheros sale con rc=0); ver cobertura.go.
+//
 // Leer código como texto (AST) está prohibido en los tests del árbol nuevo (05 E-7) salvo en
 // los candados: este paquete y la huella del arranque son esa excepción, y ninguna otra.
 //
@@ -134,7 +138,7 @@ const (
 // sin -coverpkg no cuenta lo que se ejecuta desde otro paquete: en el perfil de su propio
 // paquete el fichero sale al 0 % aunque esté ejercitado entero. Los demás ficheros de un
 // paquete …helpertest —los dobles con lógica, como contacthelpertest/estado.go— sí se
-// ejecutan desde el test de su propio paquete, así que se miden con el umbral normal. Hasta
+// ejecutan desde el test de su propio paquete, así que se miden como cualquier fichero. Hasta
 // D-F1-13 quedaba exento el paquete entero, y los dobles en memoria que 05 E-6 manda crear
 // habrían nacido sin medir.
 //

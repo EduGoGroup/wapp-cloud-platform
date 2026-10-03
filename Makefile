@@ -5,7 +5,8 @@
 # corridas manuales y de base para releases futuros. La red real es este
 # Makefile: valida en LOCAL antes de mergear y pushear.
 #   - ci-local        espeja los jobs "test" + "lint" del ci.yml, más los gates de la
-#                     reconstrucción modular (vet-pendiente, vet-integracion, cobertura-ficheros).
+#                     reconstrucción modular (vet-pendiente, vet-integracion) y el INFORME
+#                     cobertura-ficheros, que no bloquea por un fichero bajo (P2, 05 E-9).
 #   - test-integration espeja el job "integration" (Postgres efímero).
 #   - test-procesos   procesos de negocio (F9) contra los dos binarios, con testcontainers.
 #   - ci-docker       reproduce el toolchain exacto del CI (imagen golang).
@@ -246,24 +247,28 @@ test-pendiente: ## Informa, no juzga: PENDIENTES, ROJOS, corre los rojos y vet-p
 vet-integracion: ## go vet -tags integracion ./test/procesos/... — los procesos también compilan (sin Docker)
 	$(GO) vet -tags integracion ./test/procesos/...
 
-# ── Cobertura por fichero (reconstrucción modular, 05 §5 · D-12 · F0 T0.9) ────
-# Cada fichero de producción EN VERDE del alcance exige ≥ 80 % de sentencias cubiertas;
-# los contratos en rojo (con pendiente.Implementar) no se miden y los adaptadores Postgres
-# marcados en su cabecera quedan exentos (05 E-6). La lógica vive en internal/candados; el
-# comando cmd/cobertura-ficheros la cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el
-# arranque copiado (internal/arranque, D-F0-1) queda fuera salvo su huellatest, que SÍ se
-# evalúa: lo único exento por suite son los FICHEROS de suite de contrato —`contrato.go` y
-# `*_contrato.go`— de un paquete que termina en el sufijo compuesto `helpertest` (D-F1-13, que
-# estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go); los dobles con lógica de
-# ese paquete se miden (contacthelpertest/estado.go), y `huellatest` no termina así. Entre
-# D-F1-6 (`776d6a2`) y D-F1-10 la exención era por `test` a secas, `huellatest` quedó sin medir
-# y FICHEROS_EVALUADOS bajó de 10 a 9; con D-F1-10 volvió a 10, y con D-F1-13 es 11.
+# ── Cobertura por fichero (reconstrucción modular, 05 §5 · E-9 · F0 T0.9) ─────
+# Es un INFORME, no un gate (P2, Jhoan, 2026-10-03; 05 E-9, que deroga el ≥ 80 % de D-12):
+# imprime el % de sentencias cubiertas de cada fichero de producción EN VERDE del alcance y
+# cuenta en POR_DEBAJO los que no llegan a la línea de referencia (-umbral 80), pero un fichero
+# bajo NO hace fallar el target: sale con rc=0. Lo que SÍ rompe es un error real: `go list` que
+# falla, un test del alcance que no compila o falla (sin perfil no hay informe), o un perfil o
+# una fuente ilegibles (rc=2 del comando).
+# Ya no hay exentos por umbral: los adaptadores Postgres marcados en su cabecera se MIDEN y
+# salen en la tabla (la marca es hoy un comentario inerte). Quedan fuera solo los que no son
+# medibles: los contratos en rojo (con pendiente.Implementar) y los FICHEROS de suite de
+# contrato —`contrato.go` y `*_contrato.go`— de un paquete que termina en el sufijo compuesto
+# `helpertest` (D-F1-13, que estrecha D-F1-6 y D-F1-10: p. ej. contacthelpertest/contrato.go);
+# los dobles con lógica de ese paquete se miden (contacthelpertest/estado.go), y `huellatest`
+# no termina así. La lógica vive en internal/candados; el comando cmd/cobertura-ficheros la
+# cablea. Alcance: el árbol NUEVO (diseno.md §3/§4); el arranque copiado (internal/arranque,
+# D-F0-1) queda fuera salvo su huellatest, que SÍ se evalúa.
 # Esta lista es la ÚNICA: el comando la recibe por -dirs y no tiene otra.
 # Los directorios que aún no existen se filtran con `[ -d ]` ANTES de `go list`: con un solo
 # patrón inexistente `go list` falla y no lista ninguno (contradicción 13 del README de F0).
 COBERTURA_DIRS := internal/modulos internal/nucleo internal/apipublica internal/pendiente internal/candados internal/arranque/huellatest
 
-cobertura-ficheros: ## Cobertura ≥ 80 % por fichero en verde del árbol nuevo (D-12): FICHEROS_EVALUADOS, POR_DEBAJO, EXENTOS_POSTGRES
+cobertura-ficheros: ## INFORME de cobertura por fichero en verde del árbol nuevo (P2, 05 E-9): FICHEROS_EVALUADOS y POR_DEBAJO de 80 % — no bloquea por un fichero bajo
 	@dirs=""; pats=""; \
 	for d in $(COBERTURA_DIRS); do \
 		if [ -d "$$d" ]; then dirs="$${dirs:+$$dirs,}$$d"; pats="$$pats ./$$d/..."; fi; \
@@ -346,7 +351,7 @@ test-procesos: ## Procesos (F9) contra los DOS binarios, testcontainers; necesit
 		fi; \
 	done; exit $$fallo
 
-ci-local: fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + vet-integracion + lint + test + cobertura-ficheros + build (sin integración: correr test-integration y test-procesos aparte)
+ci-local: fmt-check vet vet-pendiente vet-integracion lint test cobertura-ficheros build ## Pre-push: fmt + vet + vet-pendiente + vet-integracion + lint + test + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build (sin integración: correr test-integration y test-procesos aparte)
 
 # ── Esquema ───────────────────────────────────────────────────────────────────
 # cmd/migrate aplica el DDL y SALE: sin listeners HTTP/gRPC ni plano de control

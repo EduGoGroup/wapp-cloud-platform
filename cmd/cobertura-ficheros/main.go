@@ -1,18 +1,23 @@
-// Command cobertura-ficheros es el candado de cobertura POR FICHERO de la reconstrucción
-// modular (05 §5, D-12; F0 T0.9): lee un perfil de `go test -coverprofile`, recorre los
-// ficheros de producción del alcance y exige a cada fichero en verde un porcentaje de
-// sentencias cubiertas ≥ umbral. La lógica vive en internal/candados (probada contra
-// árboles que muerden); este comando solo la cablea e imprime la tabla.
+// Command cobertura-ficheros es el INFORME de cobertura POR FICHERO de la reconstrucción
+// modular (05 §5 y E-9; F0 T0.9): lee un perfil de `go test -coverprofile`, recorre los
+// ficheros de producción del alcance e imprime el porcentaje de sentencias cubiertas de cada
+// fichero en verde. Nació como candado (D-12: ≥ 80 % o rc=1); desde P2 (Jhoan, 2026-10-03) NO
+// bloquea: un fichero por debajo se cuenta y se nombra, pero el comando sale con rc=0. La
+// lógica vive en internal/candados (probada contra árboles de prueba); este comando solo la
+// cablea e imprime la tabla.
 //
 // Uso (lo invoca `make cobertura-ficheros`, que es quien fija el alcance):
 //
 //	cobertura-ficheros -perfil <cobertura.out> -dirs <dir1,dir2,…> [-umbral 80] [-raiz .]
 //
-// Salida: una línea por fichero evaluado con su porcentaje, una por exento Postgres, una
-// por violación ("fichero: motivo") y el resumen FICHEROS_EVALUADOS=N, POR_DEBAJO=M (todas
-// las violaciones, también las marcas de exención ilegítimas) y EXENTOS_POSTGRES=K.
+// Salida: una línea por fichero evaluado con su porcentaje, una "BAJO fichero: motivo" por
+// cada fichero por debajo de -umbral, y el resumen FICHEROS_EVALUADOS=N y POR_DEBAJO=M.
+// -umbral ya no decide nada: es la línea de referencia con la que se cuenta POR_DEBAJO. No hay
+// exentos por umbral: los adaptadores Postgres se miden y salen en la tabla como los demás.
 //
-// Código de salida: 0 sin violaciones, 1 con alguna, 2 por error de uso o de E/S.
+// Código de salida: 0 siempre que el informe se haya podido hacer, haya o no ficheros por
+// debajo; 2 por un error real: de uso, perfil ilegible o mal formado, fuente que no parsea o
+// salida que no se pudo escribir.
 //
 // Solo importa internal/candados y la biblioteca estándar: el comando está fuera de los
 // alcances de los candados, pero no debe arrastrar ningún paquete viejo.
@@ -33,9 +38,8 @@ import (
 
 // Códigos de salida del comando.
 const (
-	rcBien      = 0
-	rcViolacion = 1
-	rcUso       = 2
+	rcBien = 0
+	rcUso  = 2
 )
 
 func main() {
@@ -65,11 +69,10 @@ func ejecutar(args []string, salida io.Writer) int {
 		return rcUso
 	}
 
-	violaciones := candados.Cobertura(perfil, fuentes, opc.umbral)
-	exentos := candados.Exentos(fuentes)
+	porDebajo := candados.Cobertura(perfil, fuentes, opc.umbral)
 	evaluables := candados.Evaluables(perfil, fuentes)
 
-	out.linea("cobertura-ficheros: umbral %g %%, alcance %s", opc.umbral, strings.Join(opc.dirs, ", "))
+	out.linea("cobertura-ficheros: informe (no bloquea), referencia %g %%, alcance %s", opc.umbral, strings.Join(opc.dirs, ", "))
 	medidas := medirPorFichero(perfil, fuentes)
 	for _, ruta := range evaluables {
 		m := medidas[ruta]
@@ -78,24 +81,17 @@ func ejecutar(args []string, salida io.Writer) int {
 		// imprime como 80.0 %.
 		out.linea("%6.1f %%  %s", math.Floor(pct*10)/10, ruta)
 	}
-	for _, ruta := range exentos {
-		out.linea("EXENTO postgres  %s", ruta)
-	}
-	for _, v := range violaciones {
-		out.linea("VIOLACION %s", v)
+	for _, v := range porDebajo {
+		out.linea("BAJO %s", v)
 	}
 	out.linea("FICHEROS_EVALUADOS=%d", len(evaluables))
-	out.linea("POR_DEBAJO=%d", len(violaciones))
-	out.linea("EXENTOS_POSTGRES=%d", len(exentos))
+	out.linea("POR_DEBAJO=%d", len(porDebajo))
 
-	switch {
-	case out.err != nil:
-		return rcUso // la tabla no llegó entera: el veredicto no se puede leer
-	case len(violaciones) > 0:
-		return rcViolacion
-	default:
-		return rcBien
+	if out.err != nil {
+		return rcUso // la tabla no llegó entera: el informe no se puede leer
 	}
+	// P2 (05 E-9): un fichero por debajo NO cambia el código de salida. Es un informe.
+	return rcBien
 }
 
 // escritor escribe líneas en w y recuerda el primer error de escritura; tras él no escribe
@@ -132,7 +128,7 @@ func leerOpciones(args []string, salida io.Writer) (opciones, error) {
 	fs := flag.NewFlagSet("cobertura-ficheros", flag.ContinueOnError)
 	fs.SetOutput(salida)
 	fs.StringVar(&opc.perfil, "perfil", "", "perfil de `go test -coverprofile` (obligatorio)")
-	fs.Float64Var(&opc.umbral, "umbral", 80, "porcentaje mínimo de sentencias cubiertas por fichero (D-12)")
+	fs.Float64Var(&opc.umbral, "umbral", 80, "línea de referencia de POR_DEBAJO, en % de sentencias cubiertas por fichero (no bloquea)")
 	fs.StringVar(&opc.raiz, "raiz", ".", "raíz desde la que se resuelven los -dirs")
 	fs.StringVar(&dirs, "dirs", "", "directorios del alcance, relativos a -raiz y separados por comas (obligatorio)")
 	if err := fs.Parse(args); err != nil {
@@ -168,8 +164,8 @@ func leerPerfil(ruta string) (map[string]candados.Fichero, error) {
 
 // medirPorFichero lleva el perfil a las Ruta de las fuentes de producción para imprimir el
 // porcentaje de cada fichero evaluado. Sigue el cruce que documenta candados.Cobertura (la
-// clave entera o un sufijo tras «/»; gana la Ruta más larga). Es solo presentación: el
-// veredicto lo da candados.Cobertura.
+// clave entera o un sufijo tras «/»; gana la Ruta más larga). Es solo presentación: la lista
+// de ficheros por debajo la da candados.Cobertura.
 func medirPorFichero(perfil map[string]candados.Fichero, fuentes []candados.Fuente) map[string]candados.Fichero {
 	produccion := make(map[string]bool, len(fuentes))
 	for _, f := range fuentes {
