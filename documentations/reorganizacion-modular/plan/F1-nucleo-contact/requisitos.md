@@ -59,7 +59,7 @@
 - **R1.4.e** · **MIENTRAS** dure la transición, `Normalize`, `NewRef`, `RefsFrom` y `Ref.Sendable`
   nuevos **DEBERÁN** dar la misma salida que los viejos para el corpus del adaptador (el índice ciego
   de `contacts`, de `fleet_sessions.self_pn_bidx` y del anti-self-loop se calcula sobre esa salida).
-  — Verifica: test de equivalencia en `internal/arranque/puente_contact_test.go` (T1.14).
+  — Verifica: test de equivalencia en `internal/arranque/bridge_contact_test.go` (T1.14).
 
 ## H1.5 · Como **la operación de UAT**, quiero que el binario desplegado no cambie y que el nuevo cablee el paquete nuevo con la misma huella, para seguir desplegando `cmd/server` sin sorpresas.
 

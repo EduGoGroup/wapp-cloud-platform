@@ -18,7 +18,7 @@ internal/nucleo/contact/
     ├── fixtures_contrato.go · assertions_contrato.go           las ayudas compartidas por los casos
     ├── estado.go              estado_test.go                 doble de flow_state (tiene lógica)
 internal/arranque/
-├── puente_contact.go          puente_contact_test.go         adaptador viejo ← nuevo (arquitectura §3)
+├── bridge_contact.go          bridge_contact_test.go         adaptador viejo ← nuevo (arquitectura §3; ✎ D-F1-9: nombre en inglés)
 test/procesos/                                                (si D-F1-2)
 └── contact_contrato_test.go                                  la suite contra PostgresResolver
 ```
