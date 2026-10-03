@@ -9,7 +9,7 @@
 | Tareas | T7.27–T7.29 (T7.27 = T9.28) |
 | Depende de | F7-04 |
 | Decisiones | D-F9-1 (adelantar F9) |
-| Se para cuando | las suites de `intake`, `casebank` e `intentcfg` pasan contra Postgres con el arnés · P4 y P8 verdes contra `viejo` y `nuevo` · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · `dev` empujado |
+| Se para cuando | las suites de `intake`, `casebank` e `intentcfg` pasan contra Postgres con el arnés · P4 y P8 verdes contra `viejo` y `nuevo` · `make test-procesos` y `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -37,13 +37,13 @@ Integra la rama de F7-04 en `dev` sin squash. Corre las suites de contrato de lo
 
 Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Si hubo traspaso, ciérralo con «CERRADO <fecha>». `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Si hubo traspaso, ciérralo con «CERRADO <fecha>». Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 
 ## Al terminar debe existir
 
-- La rama de F7-04 integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de F7-04) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F7-captacion/tareas.md`](../F7-captacion/tareas.md): T7.27–T7.29 `[x]` con SHA.
 - Un bloque de la sesión en `ESTADO.md` de la reorganización, con F7 «cerrada».
 - Los hallazgos nuevos en el [README de la fase](../F7-captacion/README.md) y su estado «cerrada» con SHA.

@@ -61,7 +61,7 @@ Idioma: nombres en inglés; comentarios, documentación, commits y mensajes de f
 Al terminar, las tres cosas: (1) en plan/F1-nucleo-contact/tareas.md, una sección «Ajustes previos a F2» con
 A1–A6 [x] y su SHA; (2) un bloque en ESTADO.md; (3) los hallazgos nuevos en el README de F1, y D-F1-15 y D-F1-16
 marcadas como aplicadas en código. Actualiza también la skill validar-antes-de-cerrar si aún trata
-cobertura-ficheros como gate. Luego `git push origin dev` leyendo el rc sin pipe. No toques main.
+cobertura-ficheros como gate. Luego push de TU rama y PR a `dev` (`gh pr create --base dev`, rc sin pipe); nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques main.
 No empieces F9-B (F9-03) ni F2.
 ```
 

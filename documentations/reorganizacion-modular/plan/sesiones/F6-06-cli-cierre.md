@@ -9,7 +9,7 @@
 | Tareas | T6.27–T6.29 |
 | Depende de | F6-05 |
 | Decisiones | D-F9-1, D-F6-7 y la pregunta abierta D-F9-10 (en [`../DECISIONES.md`](../DECISIONES.md)) |
-| Se para cuando | suites `intakeshelpertest`, `integrationshelpertest` y `tenantvarshelpertest` verdes en memoria **y** contra Postgres (testcontainers) · P5 y P6 verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`, 0 SKIP · `make test-procesos` rc=0 leído del log · `dev` empujado |
+| Se para cuando | suites `intakeshelpertest`, `integrationshelpertest` y `tenantvarshelpertest` verdes en memoria **y** contra Postgres (testcontainers) · P5 y P6 verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`, 0 SKIP · `make test-procesos` rc=0 leído del log · PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -30,13 +30,13 @@ Tu encargo (y solo este):
 - Fase: F6 · solicitudes → documentations/reorganizacion-modular/plan/F6-solicitudes/
 - Bloque: F6-06 · cierre local
 - Tareas: T6.27–T6.29 de plan/F6-solicitudes/tareas.md
-- Te paras cuando: suites `intakeshelpertest`, `integrationshelpertest` y `tenantvarshelpertest` verdes en memoria y contra Postgres (testcontainers) · P5 y P6 verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`, 0 SKIP · `make test-procesos` rc=0 leído del log · `dev` empujado.
+- Te paras cuando: suites `intakeshelpertest`, `integrationshelpertest` y `tenantvarshelpertest` verdes en memoria y contra Postgres (testcontainers) · P5 y P6 verdes con `WAPP_PROCESOS_BINARIO=viejo` y `=nuevo`, 0 SKIP · `make test-procesos` rc=0 leído del log · PR a `dev` abierto desde la rama de la sesión.
 - Decisiones: D-F9-1, D-F6-7 y la pregunta abierta D-F9-10 deben estar rellenas en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar, procesos-testcontainers, traspaso-web-local.
 - Incluye los procesos de F9 del módulo (T9.27 de `plan/F9-procesos/tareas.md`) contra el binario NUEVO, si D-F9-1 = sí. Nunca contra un Postgres vivo.
 
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 

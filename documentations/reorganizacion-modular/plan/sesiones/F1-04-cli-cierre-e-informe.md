@@ -30,12 +30,12 @@ Tu encargo (y solo este):
 - Decisiones: las que en plan/DECISIONES.md bloquean «F1 bloque D» deben estar rellenas. Si falta alguna, PARA y dilo.
 - Skills: validar-antes-de-cerrar, traspaso-web-local.
 
-Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 ```
 
 ## Al terminar debe existir
 
-- La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de la web) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F1-nucleo-contact/tareas.md`](../F1-nucleo-contact/tareas.md): las tareas 💻 y 🌐→💻 de T1.17–T1.19 `[x]` con SHA.
 - El traspaso con su sección `CERRADO <fecha>` (qué se refutó de su §7).
 - `ESTADO.md` de la reorganización al día.

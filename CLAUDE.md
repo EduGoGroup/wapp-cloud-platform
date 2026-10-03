@@ -39,7 +39,8 @@ en 333 ficheros —46,8 % comentario— más 151.891 de test en 528.
    `dev`** y llega a `dev` por **PR** (sin squash). Commitear o hacer `cherry-pick` directamente sobre
    `dev` o `main` solo si Jhoan lo pide **expresamente** en la conversación: que una ficha o un prompt
    de sesión diga «push a `dev`» **no** cuenta. Vale también para los sub-agentes en *worktrees*: sus
-   commits se integran en la rama. (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
+   commits se integran en la rama. El PR lo integra Jhoan en GitHub: ninguna sesión fusiona en `dev` en
+   local (`plan/sesiones/PROTOCOLO-CLI.md` §2). (Regla de Jhoan, 2026-10-03, tras F1-06, que aterrizó en `dev`.)
 
 ## Antes de tocar nada
 

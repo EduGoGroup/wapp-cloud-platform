@@ -34,12 +34,12 @@ Tu encargo (y solo este):
 
 Cierras F0 entero: la parte 💻 del bloque E (integración vieja con `WAPP_TEST_REQUIRE_DB=1` tras los ✎ de `platform`, SKIP contados con `-v`) y el bloque F.
 
-Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 ```
 
 ## Al terminar debe existir
 
-- La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de la web) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F0-andamiaje/tareas.md`](../F0-andamiaje/tareas.md): las tareas 💻 y 🌐→💻 de T0.16–T0.21, T0.27 + T0.22–T0.25 `[x]` con SHA.
 - El traspaso con su sección `CERRADO <fecha>` (qué se refutó de su §7).
 - `ESTADO.md` de la reorganización al día.

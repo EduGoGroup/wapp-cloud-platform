@@ -38,7 +38,7 @@ Tu encargo (y solo este):
 Empieza por el inventario E-12 (tabla de niveles + adaptadores `bridge_<x>.go`), preséntaselo a Jhoan y PARA hasta que lo apruebe; luego sigue.
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 Orquesta con sub-agentes (por paquete) y protege tu contexto.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama y `gh pr create --base dev` con «integrar SIN squash»; traspaso solo si algo lo cierra la local. Si corres esto en local (sin saldo web): mismo encargo, sin PR ni traspaso, `git push origin dev` leyendo el rc sin pipe.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama y `gh pr create --base dev` con «integrar SIN squash»; traspaso solo si algo lo cierra la local. Si corres esto en local (sin saldo web): mismo encargo, sin traspaso, pero también en TU rama partida de `dev` y con PR (`gh pr create --base dev`, «integrar SIN squash»), leyendo el rc sin pipe. Nunca directo a `dev` (regla 6 del `CLAUDE.md`).
 No empieces la sesión siguiente.
 ```
 
@@ -47,7 +47,7 @@ No empieces la sesión siguiente.
 - En [`../F6-solicitudes/tareas.md`](../F6-solicitudes/tareas.md): T6.1–T6.5, T6.14 `[x]` con SHA (o `[~]` con lo que falta).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [`README.md`](../F6-solicitudes/README.md) de la fase (o «ninguno», dicho).
-- Un PR con `--base dev`, con el informe de gates y «integrar SIN squash» (si corrió en local: `dev` empujado, sin PR).
+- Un PR con `--base dev`, con el informe de gates y «integrar SIN squash» (si corrió en local: igual, rama y PR; nunca directo a `dev`).
 
 ## Si algo sale mal
 

@@ -33,12 +33,12 @@ Tu encargo (y solo este):
 
 Corre P0 contra los DOS binarios (`cmd/server` y `cmd/server-modular`) con testcontainers; `go.sum` con red real si cambió `go.mod` (decisión T-2: commit `chore(deps)` aislado).
 
-Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar: traspaso con «CERRADO <fecha>», tareas [x] con SHA, ESTADO.md, push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 ```
 
 ## Al terminar debe existir
 
-- La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de la web) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md): las tareas 💻 y 🌐→💻 de T9.1–T9.12 🕐 `[x]` con SHA.
 - El traspaso con su sección `CERRADO <fecha>` (qué se refutó de su §7).
 - `ESTADO.md` de la reorganización al día.

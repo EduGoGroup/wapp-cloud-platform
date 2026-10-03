@@ -38,7 +38,7 @@ Tu encargo (y solo este):
 
 Empieza por la verdad de campo (T10.1): adaptadores `bridge_*.go` = 0, puentes (import) = 0, `Conmutados` completo, pendientes = 0, y el resultado de T9.15 sobre el mutante `maxTxAttempts = 1` (hallazgo 38 de F1). Si alguna falla, PARA y dilo: el relevo no procede.
 Nivel de ceremonia: no hay inventario E-12 (F10 no reconstruye un módulo). Sin umbral de cobertura: `make cobertura-ficheros` es un informe.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 

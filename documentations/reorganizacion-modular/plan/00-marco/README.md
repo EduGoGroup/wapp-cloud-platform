@@ -53,5 +53,5 @@ Una sesión que **escribe** el plan (no que lo ejecuta) lee primero `plantilla-d
 |---|---|---|---|
 | T-1 | ¿F0 hace que `make lint` falle si la versión no es `v2.12.2`? | Sí | F0 |
 | T-2 | ¿Se acepta que testcontainers suba `httpsnoop`/`otelhttp` de producción? | Sí, en commit aislado en F9 con `test-integration` antes | F9 |
-| F-1 | ¿Quién fusiona los PR de la web? | Jhoan («Rebase and merge») en bloques 🌐; la local (`merge --no-ff`) en 🌐→💻. Nunca squash | S01 |
+| F-1 | ¿Quién fusiona los PR de la web? | Jhoan («Rebase and merge») en bloques 🌐; la local (`merge --no-ff`) en 🌐→💻. Nunca squash. ✎ 2026-10-03: la local ya no fusiona (regla innegociable 6 del `CLAUDE.md`); todo PR lo integra Jhoan | S01 |
 | F-2 | Configurar variables y *setup script* del entorno web | Las de [`flujo-web-local.md`](flujo-web-local.md) §3 | S01 |

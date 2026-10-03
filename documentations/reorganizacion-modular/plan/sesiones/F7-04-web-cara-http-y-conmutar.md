@@ -13,7 +13,7 @@
 
 ## Antes de pegar el prompt (Jhoan)
 
-- [ ] La sesión anterior (F7-03) está integrada en `dev` (PR fusionado **sin squash**, o empujada si corrió en local).
+- [ ] La sesión anterior (F7-03) está integrada en `dev` (PR fusionado **sin squash**, también si corrió en local).
 - [ ] Las decisiones de la cabecera están rellenas en [`../DECISIONES.md`](../DECISIONES.md).
 - [ ] Arrancar en claude.ai/code: repo `EduGoGroup/wapp-cloud-platform`, **rama base `dev`**, el entorno de [`00-01-jhoan-preparar-entorno-web.md`](00-01-jhoan-preparar-entorno-web.md). Sin saldo web: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`.
 
@@ -37,7 +37,7 @@ El adaptador es nivel simple (una pasada) y construye dentro la segunda instanci
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
 Orquesta con sub-agentes por paquete y protege tu contexto.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama y `gh pr create --base dev` con «integrar SIN squash»; traspaso solo si algo lo cierra la local. Si corres esto en local (sin saldo web): mismo encargo, sin PR ni traspaso, `git push origin dev` leyendo el rc sin pipe.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama y `gh pr create --base dev` con «integrar SIN squash»; traspaso solo si algo lo cierra la local. Si corres esto en local (sin saldo web): mismo encargo, sin traspaso, pero también en TU rama partida de `dev` y con PR (`gh pr create --base dev`, «integrar SIN squash»), leyendo el rc sin pipe. Nunca directo a `dev` (regla 6 del `CLAUDE.md`).
 No empieces la sesión siguiente.
 ```
 
@@ -46,7 +46,7 @@ No empieces la sesión siguiente.
 - En [`../F7-captacion/tareas.md`](../F7-captacion/tareas.md): T7.21–T7.26 (= TX.19–TX.21) `[x]` con SHA (o `[~]` con lo que falta).
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F7-captacion/README.md).
-- Un PR con `--base dev`, con el informe de gates y «integrar SIN squash» (en local: `dev` empujado).
+- Un PR con `--base dev`, con el informe de gates y «integrar SIN squash» (en local: igual, rama y PR; nunca directo a `dev`).
 
 ## Si algo sale mal
 

@@ -9,7 +9,7 @@
 | Tareas | T3.29–T3.30 y la parte 💻 de T3.27 |
 | Depende de | F3-04 |
 | Decisiones | D-F9-1 (adelantar F9) y D-F3-6 de [`../DECISIONES.md`](../DECISIONES.md) |
-| Se para cuando | e2e de `cmd/server-modular` con mTLS real verde · las 7 suites de puerto con BD verdes contra Postgres con el arnés · `make test-procesos` rc=0 con 0 SKIP contra los dos binarios · `make ci-local` rc=0 · `dev` empujado. |
+| Se para cuando | e2e de `cmd/server-modular` con mTLS real verde · las 7 suites de puerto con BD verdes contra Postgres con el arnés · `make test-procesos` rc=0 con 0 SKIP contra los dos binarios · `make ci-local` rc=0 · PR a `dev` abierto desde la rama de la sesión. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -37,7 +37,7 @@ Tu encargo (y solo este):
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase.
-Si hubo traspaso, ciérralo con «CERRADO <fecha>». `git push origin dev` (rc sin pipe). No toques `main`.
+Si hubo traspaso, ciérralo con «CERRADO <fecha>». Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 
@@ -46,7 +46,7 @@ No empieces la sesión siguiente.
 - En [`../F3-edge/tareas.md`](../F3-edge/tareas.md): T3.27 (parte 💻), T3.29 y T3.30 `[x]` con SHA.
 - Un bloque de la sesión en `ESTADO.md` de la reorganización, y F3 «cerrada» con SHA en su [README](../F3-edge/README.md).
 - Los hallazgos nuevos en el README de F3.
-- `dev` empujado; el traspaso, si lo hubo, con su sección `CERRADO <fecha>`.
+- PR a `dev` abierto desde la rama de la sesión; el traspaso, si lo hubo, con su sección `CERRADO <fecha>`.
 
 ## Si algo sale mal
 

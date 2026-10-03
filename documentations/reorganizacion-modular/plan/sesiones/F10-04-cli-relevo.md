@@ -39,7 +39,7 @@ Tu encargo (y solo este):
 Un commit por tarea, directo en `dev`, en el orden de `arquitectura.md` §3. Sin squash.
 🔴 Antes de T10.11 y T10.13: comprueba en el acta que T9.15 (P3) ejerce el reintento de `postgres.WithTx` y que el mutante `maxTxAttempts = 1` cae (hallazgo 38 de F1). Si no, NO borres `deadlock_integration_test.go` ni la integración vieja: PARA.
 Nivel de ceremonia: no hay inventario E-12 (F10 no reconstruye un módulo). Sin umbral de cobertura: `make cobertura-ficheros` es un informe.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 

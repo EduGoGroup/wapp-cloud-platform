@@ -36,7 +36,7 @@
 
 | # | Pregunta | Recomendación | Bloquea | Decisión |
 |---|---|---|---|---|
-| F-1 | ¿Quién fusiona los PR de la web en `dev`? | Jhoan con «Rebase and merge» (bloques 🌐); la sesión local con `merge --no-ff` (bloques 🌐→💻). **Nunca squash** | Toda sesión web | sí (2026-09-30) |
+| F-1 | ¿Quién fusiona los PR de la web en `dev`? | Jhoan con «Rebase and merge» (bloques 🌐); la sesión local con `merge --no-ff` (bloques 🌐→💻). **Nunca squash**. ✎ **2026-10-03 (Jhoan)**: la mitad de la sesión local queda sustituida por la regla innegociable 6 del `CLAUDE.md` —ningún código nace ni se fusiona en `dev` en local; rama y PR, que integra Jhoan— | Toda sesión web | sí (2026-09-30) |
 | F-2 | Aplicar en claude.ai/code el *setup script* y las variables de [`00-marco/flujo-web-local.md`](00-marco/flujo-web-local.md) §3 | Sí, antes de la primera sesión web | F0-01 (= F0 bloque A) | sí (2026-09-30); **aplicado en claude.ai/code** (2026-09-30: variables y *setup script*, confirmado por Jhoan) |
 | T-1 | Que `make lint` **falle** si `golangci-lint` no es `v2.12.2` (hoy `Makefile:42` usa el del `PATH`; en local hay v2.14.0) | Sí (T0.26) | F0 bloque B | sí (2026-09-30) |
 | D-F0-1 | `internal/arranque` nace **por copia** del arranque viejo, sin ciclo contrato→rojo→verde, y queda fuera de «un fichero, un test» y de la cobertura por fichero | Sí | F0 bloque D | sí (2026-09-30) |

@@ -39,7 +39,7 @@ Tu encargo (y solo este):
 La prueba en UAT en sustitución (D-9, D-F10-1, D-F10-2): con acta y vuelta atrás preparada. Sin secretos en la documentación.
 Primer tramo: T10.4 y PARA (la ventana corre sola). Segundo tramo, al relanzarte tras la ventana: T10.5 y T10.6. Si salta un criterio de corte, vuelta atrás en < 5 min (`diseno.md` §2.5) y PARA.
 Nivel de ceremonia: no hay inventario E-12 (F10 no reconstruye un módulo). Sin umbral de cobertura: `make cobertura-ficheros` es un informe.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 

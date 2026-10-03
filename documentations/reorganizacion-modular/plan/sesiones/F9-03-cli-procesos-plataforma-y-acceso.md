@@ -49,7 +49,7 @@ Si los cuatro procesos no caben en 45–90 min, para en un punto limpio tras un 
 Orquesta con sub-agentes (uno por proceso) y protege tu contexto. Los worktrees de sub-agentes nacen de
 origin/main: ponlos en el SHA de dev antes de medir.
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase.
-`git push origin dev` (rc sin pipe). No toques `main`. No empieces la sesión siguiente.
+Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`. No empieces la sesión siguiente.
 ```
 
 ## Al terminar debe existir

@@ -9,7 +9,7 @@
 | Tareas | T2.32–T2.33 (= T9.23) |
 | Depende de | F2-04 |
 | Decisiones | D-F9-1 de [`../DECISIONES.md`](../DECISIONES.md) (sí, 2026-09-30) |
-| Se para cuando | las suites de los puertos con BD pasan contra Postgres sin divergencias con memoria · `make test-procesos` rc=0 con 0 SKIP contra `cmd/server` y `cmd/server-modular` · `make ci-local` rc=0 con 0 SKIP · `dev` empujado. |
+| Se para cuando | las suites de los puertos con BD pasan contra Postgres sin divergencias con memoria · `make test-procesos` rc=0 con 0 SKIP contra `cmd/server` y `cmd/server-modular` · `make ci-local` rc=0 con 0 SKIP · PR a `dev` abierto desde la rama de la sesión. |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -36,13 +36,13 @@ Tu encargo (y solo este):
 - Skills: validar-antes-de-cerrar, procesos-testcontainers.
 
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase (y README de F2 → «cerrada» con SHA; si hubo traspaso, su sección «CERRADO <fecha>»).
-`git push origin dev` (rc sin pipe). No toques `main`.
+Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 
 ## Al terminar debe existir
 
-- La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de la web) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F2-acceso/tareas.md`](../F2-acceso/tareas.md): T2.32–T2.33 `[x]` con SHA; T9.23 `[x]` en [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md).
 - Un bloque de la sesión en `ESTADO.md`.
 - Los hallazgos nuevos en el [README de F2](../F2-acceso/README.md), con el informe de fase (minutos por sesión, mutantes, lo que subió de nivel).

@@ -9,7 +9,7 @@
 | Tareas | T8.13, T8.29–T8.35 |
 | Depende de | F8-05 |
 | Decisiones | D-F8-2 (`admin` sin `Register`), D-F8-5, D-F3-2 |
-| Se para cuando | `admin` y los handlers I1–I19 verdes; un commit `conmutar(conversacion)`; huella igual (`go test -run Huella ./internal/arranque/` rc=0); `ls internal/arranque/bridge_*.go` vacío; lista de puentes (import) vacía; `Conmutados` completo; `go list -deps ./cmd/server-modular` sin paquetes viejos; `make ci-local` rc=0 con 0 SKIP; `dev` empujado |
+| Se para cuando | `admin` y los handlers I1–I19 verdes; un commit `conmutar(conversacion)`; huella igual (`go test -run Huella ./internal/arranque/` rc=0); `ls internal/arranque/bridge_*.go` vacío; lista de puentes (import) vacía; `Conmutados` completo; `go list -deps ./cmd/server-modular` sin paquetes viejos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión |
 
 ## Antes de pegar el prompt (Jhoan)
 
@@ -30,18 +30,18 @@ Tu encargo (y solo este):
 - Fase: F8 · conversacion → documentations/reorganizacion-modular/plan/F8-conversacion/
 - Bloque: 6 · la cara HTTP y conmutar
 - Tareas: T8.13 y T8.29–T8.35 (T8.29 = TX.22–TX.23 y T8.34 = TX.24 de plan/FX-cara-http/tareas.md) de plan/F8-conversacion/tareas.md
-- Te paras cuando: `admin` y los handlers I1–I19 están verdes; hay un commit `conmutar(conversacion)`; la huella es igual (`go test -run Huella ./internal/arranque/` rc=0); `ls internal/arranque/bridge_*.go` no devuelve nada; la lista de puentes (import) está vacía; `Conmutados` está completo; `go list -deps ./cmd/server-modular` no lista paquetes viejos; `make ci-local` rc=0 con 0 SKIP; `dev` empujado.
+- Te paras cuando: `admin` y los handlers I1–I19 están verdes; hay un commit `conmutar(conversacion)`; la huella es igual (`go test -run Huella ./internal/arranque/` rc=0); `ls internal/arranque/bridge_*.go` no devuelve nada; la lista de puentes (import) está vacía; `Conmutados` está completo; `go list -deps ./cmd/server-modular` no lista paquetes viejos; `make ci-local` rc=0 con 0 SKIP; PR a `dev` abierto desde la rama de la sesión.
 - Decisiones: D-F8-2 (`admin` sin `Register`), D-F8-5, D-F3-2 en plan/DECISIONES.md. Si falta alguna, PARA y dilo.
 - Skills: reconstruir-modulo, contrato-tdd, validar-antes-de-cerrar.
 
-No hay rama web que integrar ni traspaso que cerrar: trabajas sobre `dev`.
+No hay rama web que integrar ni traspaso que cerrar: creas TU rama desde `dev` (`git checkout -b <rama> dev`) y trabajas en ella, nunca sobre `dev` (regla 6 del `CLAUDE.md`).
 T8.31–T8.34 no compilan por separado: van en UN commit `conmutar(conversacion)`, tras el ensayo en seco de T8.30.
 F8 no crea adaptadores: retira TODOS los `bridge_*.go` vivos y las dos segundas instancias viejas (T8.32). Con cada muerte, su módulo dueño entra en `Conmutados`; al acabar, cero adaptadores y `Conmutados` completo. Los «puentes» de `05` §4.1 son imports: esa lista también queda vacía.
 El test de cableado afirma que el arranque construye lo NUEVO y que ninguna fase importa un paquete viejo (grep por ruta de import). Un solo `runtime.New`, un solo `entResolver`, un solo `kp`, un solo `gw`.
 
 Nivel de ceremonia: el del inventario aprobado (`05` E-12). Sin umbral de cobertura: un test por promesa del contrato; mutantes en lo complejo.
 
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe). No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 
@@ -51,7 +51,7 @@ No empieces la sesión siguiente.
 - Un bloque de la sesión en `ESTADO.md` de la reorganización.
 - Los hallazgos nuevos en el [README de la fase](../F8-conversacion/README.md).
 - El commit `conmutar(conversacion)` en `dev`.
-- `dev` empujado (`git push origin dev`, rc sin pipe).
+- Un PR con `--base dev` desde la rama de la sesión (push de la rama, rc sin pipe), con «integrar SIN squash»; nada commiteado directamente en `dev` (regla 6 del `CLAUDE.md`).
 
 ## Si algo sale mal
 
