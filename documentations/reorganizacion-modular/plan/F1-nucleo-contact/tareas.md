@@ -121,6 +121,24 @@ Para cuando: suite contra Postgres corrida · todo en `dev` · `informe-piloto.m
 - [x] **T1.20 · PARADA — decide Jhoan** · Jhoan · dep. T1.19 · cumple R1.7.b — cerrada el 2026-10-03: P1–P7 contestadas una a una en la §10 del informe (tres niveles de ceremonia; el 80 % pasa a informe; sesiones medias; suite con `Montaje` para todo puerto con BD; `bridge_<x>.go` estándar; auxiliares en el verde; `04`/`05` corregidos)
   - **Hecho cuando**: la sección 10 del informe tiene la respuesta de Jhoan a P1–P7, con fecha. Hasta entonces **no empieza F2**.
 
+## Ajustes previos a F2 · 💻 · sesión F1-06 (2026-10-03) · A1–A6
+
+Vienen de P2, P4 y P5 de la parada y de los hallazgos 35, 36, 37, 39 y 40. Cada uno se cerró reproduciendo antes el
+mutante o la sonda que sobrevivía (tabla de rc en el [README](README.md), «Hallazgos de la sesión F1-06»).
+
+- [x] **A1 · `make cobertura-ficheros` de gate a informe** (P2) · `0689b4e` — rc=0 con ficheros por debajo; sin exentos:
+  los adaptadores Postgres se miden. Un error real (perfil roto, test que no compila) sigue rompiendo.
+- [x] **A2 · Los candados de fichero ven `internal/arranque/bridge_*.go`, y solo esos** (D-F1-16) · `1622231` —
+  `candados.WalkBridges`; `un_fichero_un_test` y el informe de cobertura (`-bridges`, `COBERTURA_BRIDGE_DIRS`).
+- [x] **A3 · `Conmutados` entra cuando muere el último adaptador** (D-F1-15) · `0a91857` — comentarios y mensaje propio
+  de la regla 3 para un `bridge_*.go`. `Conmutados` sigue vacía (`nucleo`: F8).
+- [x] **A4 · Test de cableado completo** (hallazgo 39) · `cccee37` — `TestBootWiring_OnlyBridgeAndFlowsImportOldContact`
+  y `TestBootWiring_OldContactUsedOnlyAsTypes`, sin costura en producción.
+- [x] **A5 · Marca de `Estado` más fuerte** (P4, hallazgo 35) · `9001720` — `postgresState` deriva de la marca
+  `current_node`, `last_wa_message_id`, `vars`, `event_id` y `flow_version`, y `Dueno` falla ante una fila mezclada.
+- [x] **A6 · R9.4.d en un gate y corpus adversario** (hallazgos 36, 37, 40) · `7937772` — candado
+  `candados.ProcessImports` cableado por `test/procesos/domain_imports_test.go` (corre en `ci-local`); 58 filas `ADV`.
+
 ## Informe — plantilla de `informe-piloto.md` (se escribe en T1.19, no antes)
 
 Cada número con su comando. Lo no medido se escribe «sin medir», nunca se estima en silencio.

@@ -136,6 +136,23 @@
     `internal/candados`; solo en esta spec y en la skill. Lo mete en un gate la sesión **F1-06** (ajustes previos a F2).
     Desde entonces lo que se verifica es **el gate que crea F1-06**, y T9.31 comprueba que sigue en él.
     Si F1-06 lo afina para mirar fichero a fichero, la comprobación a mano de arriba sobra y T9.31 lo dice.
+  - ✅ **Hecho en F1-06 (2026-10-03, `7937772`): el gate es un candado y mira fichero a fichero.** El comando de arriba
+    queda como registro; lo que verifica R9.4.d desde ahora es `TestProcessImports`
+    (`test/procesos/domain_imports_test.go`, sin etiqueta: corre en `make test`, dentro de `make ci-local`) sobre
+    `candados.ProcessImports` (`internal/candados/processimports.go`). Juzga los imports **directos** de
+    `<módulo>/internal/…` de cada fichero de `test/procesos`, con o sin etiqueta (un literal de cadena no cuenta):
+    1. un fichero cualquiera no importa nada de `internal/`;
+    2. `internal/candados` solo lo importan, por ruta exacta, `sin_bd_viva_test.go` y `domain_imports_test.go`, sin
+       etiqueta de compilación y sin ningún otro import de `internal/`;
+    3. un `*_contrato_test.go` puede importar solo (a) paquetes `…helpertest` bajo `internal/modulos` o
+       `internal/nucleo`; (b) el paquete del puerto —el directorio padre de un `…helpertest` importado en ese mismo
+       fichero—, del que solo usa selectores que empiezan por `New` (importarlo con `.` o `_` es violación); y
+       (c) `internal/platform/crypto`.
+
+    Una suite nueva que necesite otro argumento de constructor añade su ruta al candado, con su fixture, en el mismo
+    commit. Medido: `p1_sonda_test.go` y `p2_sonda_test.go` dan rc=1; en un `*_contrato_test.go`,
+    `contact.NewMemoryResolver` pasa y `contact.Normalize` cae. Límites en el hallazgo 49 del README de F1. La
+    comprobación **a mano** de T9.31 sobra.
 - **R9.4.e** · **MIENTRAS** corre la suite, **EL** gate **DEBERÁ** leer el `rc` del log y contar
   `--- SKIP` = 0 y `--- FAIL` = 0 con `-v`. — Verifica: bloque «Antes de dar un proceso por bueno»
   de la skill `procesos-testcontainers`.

@@ -67,7 +67,7 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
   `procesos-testcontainers` (F9).
 - **La parada de F1 se resolvió el 2026-10-03**: manda `05` E-12 (tres niveles de ceremonia) y, para lo que decidió
   Jhoan, [`plan/DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) §3. **El 80 % de cobertura ya no
-  bloquea** (es un informe). Hasta la sesión de ajustes previa a F2, `make cobertura-ficheros` aún lo aplica.
+  bloquea**: `make cobertura-ficheros` es un informe (rc=0 con ficheros por debajo, sin exentos) desde F1-06.
 
 ## Índice de `documentations/`
 

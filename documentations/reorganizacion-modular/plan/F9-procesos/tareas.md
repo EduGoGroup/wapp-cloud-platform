@@ -158,7 +158,7 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b
-  - **Hecho cuando**: el comando de R9.4.d (imports directos, D-F1-8) vacío **y verificado contra el gate que crea F1-06** (el comando sigue en ese gate y el gate lo corre: hallazgo 37 de F1); a mano, lo que el comando no ve (hallazgo 36): `grep -ln 'wapp-cloud-platform/internal/' test/procesos/*_test.go` solo lista `*_contrato_test.go` y `sin_bd_viva_test.go`; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
+  - **Hecho cuando**: `TestProcessImports` en verde (`test/procesos/domain_imports_test.go`: el candado por fichero de R9.4.d que creó F1-06, `7937772`) **y** sigue corriendo en `make ci-local` (hallazgo 37 de F1); la comprobación a mano del hallazgo 36 ya no hace falta; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
 - [ ] **T9.32 · docs: F9 cerrada** · 💻 · dep. T9.31
   - **Ficheros**: `plan/F9-procesos/README.md` (estado, números medidos), `ESTADO.md`, `documentations/operacion.md` §3 (fila `make test-procesos`), la skill `procesos-testcontainers` si algo de lo aprendido la contradice (T-4, T-7, T-8 de `reglas.md`)
   - **Commit**: `docs(reorganizacion-modular): F9 cerrada, la condición del relevo`

@@ -30,7 +30,7 @@ L=/tmp/gate-$(date +%s).log
 make toolchain; echo "TOOLCHAIN_RC=$?"         # última línea TOOLCHAIN=OK y TOOLCHAIN_RC=0
 
 # 1 · El gate del repo: fmt-check + vet + vet-pendiente + vet-integracion + lint + test -race
-#     + cobertura-ficheros + build
+#     + cobertura-ficheros (informe: no bloquea por un fichero bajo) + build
 GOWORK=off make ci-local > "$L" 2>&1; echo "GATE_RC=$?" >> "$L"
 tail -1 "$L"                                   # GATE_RC=0, o no hay nada que celebrar
 grep -E '^(FAIL|--- FAIL)|issues' "$L" | head
@@ -42,9 +42,9 @@ make vet-pendiente; echo "vet-pendiente rc=$?"
 grep -rn 'pendiente.Implementar' --include='*.go' internal | wc -l
 make test-pendiente          # PENDIENTES=<n> y ROJOS=<n>; su rc es el de vet-pendiente
 
-# 4 · Cobertura por fichero: es un INFORME desde el 2026-10-03 (P2); no persigas un número. Ojo: mientras el
-#     cambio de código pendiente no se haga, `make cobertura-ficheros` aún falla por debajo de 80 % (va dentro de ci-local)
-make cobertura-ficheros; echo "cobertura rc=$?"   # FICHEROS_EVALUADOS, POR_DEBAJO, EXENTOS_POSTGRES
+# 4 · Cobertura por fichero: es un INFORME (P2; en código desde F1-06, 2026-10-03); no persigas un número.
+#     rc=0 aunque haya ficheros por debajo; rc≠0 solo si un test falla o no compila. No hay exentos.
+make cobertura-ficheros; echo "cobertura rc=$?"   # la tabla, FICHEROS_EVALUADOS y POR_DEBAJO (líneas BAJO …)
 
 # 5 · SKIP: en código NUEVO debe ser cero
 GOTOOLCHAIN=go1.26.5 GOWORK=off go test -v ./internal/modulos/... ./internal/nucleo/... ./internal/arranque/... 2>&1 \
@@ -92,7 +92,7 @@ Toolchain: make toolchain rc=0 · TOOLCHAIN=OK · GO_EFFECTIVE=go1.26.5 · LINT_
 Gate ci-local: rc=0 · <N> paquetes ok · lint 0 issues
 vet -tags pendiente: rc=0
 Pendientes: <N> llamadas a pendiente.Implementar (antes: <M>)
-Cobertura: <fichero> 87 % … (o: target aún no existe — F0 no completo)
+Cobertura (informe, no bloquea): FICHEROS_EVALUADOS=<n> · POR_DEBAJO=<m> · <los BAJO …, si los hay>
 SKIP en código nuevo: 0
 No corrido: <lista>, y por qué
 ```

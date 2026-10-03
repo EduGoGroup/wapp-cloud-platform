@@ -132,7 +132,8 @@ El proceso entra por la puerta real (HTTP, gRPC con un Edge de prueba) y comprue
 y lo que queda en Postgres. **No importa paquetes de dominio**; solo puede importar las **suites
 de contrato** (`<paquete>helpertest`, D-F1-10) y, en su `<paquete>_contrato_test.go`, el constructor del
 adaptador Postgres que prueban con sus argumentos (D-F1-8), para correrlas contra Postgres (`05` E-6).
-Lo comprueba el comando de R9.4.d (`plan/F9-procesos/requisitos.md`), que mira imports directos.
+Lo comprueba, fichero a fichero, el candado `candados.ProcessImports` (`test/procesos/domain_imports_test.go`, sin
+etiqueta: corre en `make ci-local`); la regla exacta está en R9.4.d (`plan/F9-procesos/requisitos.md`).
 
 Qué binario se prueba lo elige el arnés con `WAPP_PROCESOS_BINARIO=viejo|nuevo`. Orden
 obligatorio para cada proceso nuevo:

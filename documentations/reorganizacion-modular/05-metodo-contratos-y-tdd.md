@@ -362,9 +362,10 @@ un **adaptador**: `internal/arranque/bridge_<x>.go`, que traduce sin estado. **N
 | `internal/modulos/fronteras_test.go` | Un import entre módulos fuera de la lista blanca, o un puente al código viejo no declarado. `Conmutados`: ver §4.2 |
 | `internal/modulos/un_fichero_un_test_test.go` | Un `x.go` sin `x_test.go` al lado, salvo las excepciones de E-3. Incluye `internal/arranque/bridge_*.go` (§4.2) |
 | `internal/modulos/exportados_cubiertos_test.go` | Un símbolo exportado de `x.go` que no aparece en `x_test.go` (E-9) |
-| `make cobertura-ficheros` | **Nada: es un informe** (P2, E-9). Hasta que se haga el cambio de código, aún falla por debajo de 80 % |
+| `make cobertura-ficheros` | **Nada: es un informe** (P2, E-9), sin exentos; incluye los `internal/arranque/bridge_*.go` (§4.2). Solo rompe un error real: un test que falla o no compila, o un perfil ilegible (F1-06, 2026-10-03) |
 | `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado. Ciega a módulos sin rutas/rpc/métricas/goroutines (§4) |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
+| `test/procesos/domain_imports_test.go` | Un import de `internal/…` desde `test/procesos` fuera de lo que admite R9.4.d de F9, **fichero a fichero** (`candados.ProcessImports`, F1-06) |
 | `test/procesos/sin_bd_viva_test.go` | Una **apertura de conexión** a la base de datos (`sql.Open`/`OpenDB`, `pgx.Connect*`, `pgconn.Connect*`, `pgxpool.New*`, las de `pgx/stdlib`) en cualquier fichero de `test/procesos/` que no sea `test/procesos/base_test.go`: lista blanca de quién abre conexiones, por ruta exacta (D-F9-6, decisión de Jhoan, 2026-10-02; antes solo había lista negra). Y, como antes, cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
 | `no_pending_test.go` (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test.go`: el fichero aún no existe y nace con nombre en inglés, E-11) | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
 

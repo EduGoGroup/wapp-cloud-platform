@@ -212,8 +212,28 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
 - **Abierto**: D-R-1…D-R-6 en [`plan/DECISIONES.md`](plan/DECISIONES.md) §7 (dónde corre la suite contra Postgres, las
   segundas instancias viejas frente a P5, `Conmutados` sin adaptador, el prefijo de commit del nivel simple y el tamaño
   de sesión, que está **sin medir**).
-- **Siguiente paso: F1-06.** No se ha tocado código: `make cobertura-ficheros` **aún** falla por debajo del umbral
-  antiguo hasta que F1-06 lo cambie.
+- ✎ **F1-06 lo cambió el mismo día** (bloque siguiente): `make cobertura-ficheros` ya es informe.
+
+**F1-06 · ajustes de código previos a F2 (2026-10-03, 💻, sobre `dev` @ `3e181f6`).** Seis commits, uno por ajuste:
+
+- **A1** `0689b4e` · `make cobertura-ficheros` es un **informe**: rc=0 con ficheros por debajo, sin exentos (los
+  adaptadores Postgres se miden; fuera `EXENTOS_POSTGRES`). Un error real sigue rompiendo.
+- **A2** `1622231` · `un_fichero_un_test` y el informe ven los `internal/arranque/bridge_*.go`, y solo esos (D-F1-16).
+- **A3** `0a91857` · `Conmutados`: entra cuando muere el último adaptador (D-F1-15); sigue vacía.
+- **A4** `cccee37` · el test de cableado prueba que ninguna fase importa el `contact` viejo fuera de
+  `bridge_contact.go` y `flows.go` (hallazgo 39).
+- **A5** `9001720` · la marca de `Estado` viaja en cinco columnas de `flow_state` (hallazgo 35).
+- **A6** `7937772` · R9.4.d es un candado por fichero (`candados.ProcessImports`) dentro de `ci-local`, y el corpus de
+  equivalencia gana 58 filas adversarias (hallazgos 36, 37, 40).
+- **Mutantes**: todos los que sobrevivían caen (tabla en el [README de F1](plan/F1-nucleo-contact/README.md),
+  «Hallazgos de la sesión F1-06», con los hallazgos 42–51).
+- **Gates** (toolchain fijada, rc sin pipe): `make ci-local` rc=0 (`FICHEROS_EVALUADOS=18`, `POR_DEBAJO=1`, lint
+  0 issues) · `make vet-pendiente` rc=0 · `make test-pendiente` rc=0 (`PENDIENTES=0`, `ROJOS=0`) · código nuevo con `-v`:
+  1193 PASS, **0 SKIP** · suite de `contact` en memoria 20 PASS, 0 SKIP, y contra Postgres (testcontainers,
+  `TestContactContrato_Postgres`, binario `nuevo`) 20 PASS, 0 SKIP.
+- **No corrido**: `make test-procesos` entero contra los dos binarios (la sesión solo pedía la suite de `contact`) ni la
+  integración vieja (no se tocó código compartido).
+- **Siguiente paso: F9-03** (F9-B). `main` sin tocar.
 
 ## Avance de la ejecución
 
@@ -222,7 +242,7 @@ a las specs de F2–F10 y FX, al marco (`plan/00-marco/`), a los dos protocolos 
 | F0 | ✅ cerrada (2026-09-30) | F · cierre local (T0.22–T0.25) | A: `98e806d`, `de04088`. B: `d7600d3`, `f3b322c`, `d74dd7f`, `d05ac3a`. C: `3040e82`, `2c2bbd6`, `b2ecfce`, `65d4bc0`, `e61567e`, `681d84e`, `d48e319`, `42884fb`, `b522b0f`, `ca462a6`, `3e85144` (en `dev` @ `80807ba`). D: `d64dbbf`, `a953834`, `c7ae487`, `141d960`, `fde5849`, `61ce04b` (en `dev` @ `d3deb27`). E: `8096232`, `5a11f5b`, `6d83620`, `b65b788`, `5305134`, `de0c29b`, `9dcf7e8`, `7b7e01f`, `dd1e2bd`, `15223ff` (en `dev` @ `835a7be`, PR #17). F: T0.22 y T0.23 sin commit (evidencia en el `CERRADO` del traspaso), T0.24 `835a7be` verificado, T0.25 `d3b3f3f` |
 | F9-A (adelantado) | ✅ cerrado (2026-10-01): escrito en la web (F9-01), cerrado en local (F9-02); H-1 (intermitencia de P0) diferida a F6 | T9.1–T9.12 | `a374cdb`, `37c7db7`, `f300aff`, `b5f1601`, `576ba9a`, `2e2ecc1`, `7c63d9e`, `660947d`, `fa03e6b`, `5519343`, `10179d6`, `6ee1c5e` (en `dev` por el merge `af7b8e9`, PR #18); el cierre local es solo documental, en **tres** commits: `ac8ac5f` (el cierre), `79c7160` (su SHA) y `77df20f` (H-1 diferida a F6: ahí vive D-F6-7) |
 | Recalibración (docs) | ✅ hecha (2026-10-03) | specs F2–F10, FX y sesiones | commit `docs(reorganizacion-modular): recalibración tras el piloto` |
-| F1-06 (ajustes previos a F2) | pendiente · **siguiente** | — | — |
+| F1-06 (ajustes previos a F2) | ✅ hecha (2026-10-03) | A1–A6 | `0689b4e`, `1622231`, `0a91857`, `cccee37`, `9001720`, `7937772` |
 | F9-B (adelantado) | pendiente | — | — |
 | F1 | ✅ **cerrada** (A–D en `dev`: PR #19, #23, #25; cierre local F1-04 el 2026-10-02; **parada resuelta el 2026-10-03**) | D · cierre local e informe (T1.17–T1.19) | **D**: T1.17–T1.19 sin commit de código sobre `ddcf7de`, cierre documental `d5228ac` · T1.14 `09f4b72` · T1.15 `0c2bddf` (+ `a62abea`) · T1.16 `ce98595` · T1.1 `afa63f3` · T1.2 `b37a8c8` · T1.3 `d915d41` (+ `b001c35`) · T1.3b `68897a8`, `776d6a2` · T1.4 `8f2a4db` · T1.5 `89b223b` · T1.6 `32b7bfb` · cierre del bloque `b9dd1e7` · tras el cierre: E-11 `8365132` y el troceo de `contacttest/contrato.go` `7069532`; sobre `origin/dev` @ `77df20f`, rama `reorg/f1-a-contratos-rojo`. Gate `ci-local` `GATE_RC=0` (86 líneas `ok`, 0 issues); `make test-pendiente` `PENDIENTES=11` `ROJOS=4`; 0 SKIP · **B**: decisiones `ccc9a6b` · T1.8 `9e8f740` · T1.9 `8e7a891` · T1.10 `222c4c8` · T1.11 `8307afb` · D-F1-7 `4bbd138` · T1.13 `4bc398d` (sobre `origin/dev` @ `5847ad4`). Gate `GATE_RC=0` (88 `ok`, 0 issues); `PENDIENTES=0 · ROJOS=0`; cobertura 97,6 · 100 · 95,6 · 92,6 % y Postgres exento (31,1 %); 0 SKIP; pre-chequeo de T1.13 viejo y nuevo 20 PASS |
 | F2–F8 | pendiente | — | — |
@@ -347,6 +367,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
+- **F1-06 (ajustes previos a F2)**: seis commits de código y uno de documentación directamente sobre `dev`, partiendo de `3e181f6`. Escritos por sub-agentes en *worktrees* fijados en ese SHA e integrados con `cherry-pick`; los *worktrees* ya están borrados. `origin/main` sin tocar.
 - **F1-04 (bloque D de F1)**: commits solo de documentación directamente sobre `dev` (`d5228ac` y el que anota su SHA), partiendo de `ddcf7de` (PR #25). Los dos traspasos de F1 están **CERRADOS**. `origin/main` sin tocar.
 - **F1-03 (bloque C de F1)**: rama `reorg/f1-c-adaptador`, partida de `origin/dev` @ `61a3c8b` (PR #23 y #24 dentro). Commits `09f4b72`, `0c2bddf`, `a62abea`, `ce98595` y el cierre documental; PR hacia `dev`, **integrar sin squash**. Traspasos **abiertos** para F1-04: [`TRASPASO-F1-B-suite-postgres.md`](traspasos/TRASPASO-F1-B-suite-postgres.md) y [`TRASPASO-F1-nucleo-contact.md`](traspasos/TRASPASO-F1-nucleo-contact.md).
 - **F1-02 (bloque B de F1)**: rama `reorg/f1-b-verde`, partida de `origin/dev` @ `5847ad4` (el `dev` local de la VM iba 66 commits por detrás: se avanzó con `--ff-only` antes de nada). PR #23 hacia `dev`, **integrar sin squash**. ✎ Tras integrarse el PR #22 en `dev` (`0a377bc`), la rama lo trae por merge (`a5d17b5`, sin conflictos; merge y no rebase para que los SHA citados sigan valiendo) y los gates se repitieron sobre él: `GATE_RC=0` (88 `ok`), `PENDIENTES=0 · ROJOS=0`, `POR_DEBAJO=0`, 0 SKIP, `vet -tags integracion` rc=0, R9.4.d vacío y el pre-chequeo `-run Contact` viejo y nuevo 20 PASS · 0 SKIP. Traspaso **abierto**: [`traspasos/TRASPASO-F1-B-suite-postgres.md`](traspasos/TRASPASO-F1-B-suite-postgres.md) (T1.18).
@@ -360,7 +381,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: [`plan/sesiones/F1-06-cli-ajustes-previos-a-f2.md`](plan/sesiones/F1-06-cli-ajustes-previos-a-f2.md) (💻, código). Después, F9-03.
+0. **Siguiente sesión**: F9-03 (F9-B), en [`plan/sesiones/`](plan/sesiones/README.md). F1-06 está hecha (2026-10-03).
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).
