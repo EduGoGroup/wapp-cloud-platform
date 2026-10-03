@@ -60,24 +60,33 @@ type Montaje struct {
 // La marca (mark, D-F1-7) es lo que deja ver QUÉ fila sobrevivió, no solo de quién es: una cadena
 // opaca que la implementación guarda con la fila de estado al sembrarla y devuelve sin tocar al
 // observarla. No significa nada para el puerto ni para la implementación, que no la interpreta
-// ni la valida más allá de exigir que no venga vacía. En la memoria va junto al contact_id; en
-// Postgres irá en una columna de la propia fila de public.flow_state (cuál, lo decide su adaptador
-// en T1.13). Con ella la suite distingue «se conserva el estado del canónico» de «se re-clava el
-// del huérfano en el canónico», que dejan el mismo dueño y marcas distintas (R-17). Fuera de eso,
-// Estado no expone qué contiene el estado.
+// ni la valida más allá de exigir que no venga vacía. Con ella la suite distingue «se conserva el
+// estado del canónico» de «se re-clava el del huérfano en el canónico», que dejan el mismo dueño y
+// marcas distintas (R-17). Fuera de eso, Estado no expone qué contiene el estado.
+//
+// La marca identifica la fila ENTERA, no una parte de ella (hallazgo 35 de F1). Una implementación
+// cuya fila tiene un solo contenido la guarda ahí: en la memoria va junto al contact_id. Una cuya
+// fila tiene varias columnas de contenido tiene que hacer que la marca viaje en TODAS las que una
+// fusión podría mezclar con las de otra fila —tal cual o como un valor derivado de ella que se
+// pueda volver a calcular—, y comprobar al observar que todas concuerdan: una fusión que conserva la
+// fila del canónico pero le copia alguna columna del huérfano deja una fila que no es de ninguna de
+// las dos siembras, y eso tiene que verse. El adaptador de Postgres lo hace con current_node, vars,
+// last_wa_message_id, event_id y flow_version de public.flow_state.
 type Estado interface {
 	// Sembrar da estado a la sesión sessionID del tenant tenantID, con contactID como dueño (un
-	// contacto que ya existe en ese tenant) y mark como marca de esa fila. Sembrar dos contactos
-	// distintos en la misma sesión los deja a los dos como dueños, cada uno con su marca. Repetir
-	// un (tenant, sesión, contacto) ya sembrado no cambia nada, tampoco la marca: se queda la de
-	// la primera siembra (como un INSERT … ON CONFLICT DO NOTHING sobre la clave de flow_state).
-	// Si no puede, o si alguno de los argumentos viene vacío, falla el test t.
+	// contacto que ya existe en ese tenant) y mark como marca de esa fila, en todo su contenido.
+	// Sembrar dos contactos distintos en la misma sesión los deja a los dos como dueños, cada uno
+	// con su marca. Repetir un (tenant, sesión, contacto) ya sembrado no cambia nada, tampoco la
+	// marca: se queda la de la primera siembra (como un INSERT … ON CONFLICT DO NOTHING sobre la
+	// clave de flow_state). Si no puede, o si alguno de los argumentos viene vacío, falla el test t.
 	Sembrar(t *testing.T, tenantID, sessionID, contactID, mark string)
 	// Dueno devuelve el contact_id dueño del estado de la sesión sessionID del tenant tenantID y
 	// la marca de esa fila tal como se sembró, y ok=false (con contactID y mark vacíos) si la
 	// sesión no tiene estado. Si tuviera más de un dueño (una fusión que no resolvió el
 	// conflicto) la implementación falla el test t en vez de elegir uno: es justamente el defecto
-	// que la suite quiere ver.
+	// que la suite quiere ver. Y si la fila observada mezcla contenido de dos siembras (parte de
+	// su contenido lleva una marca y parte, otra) también falla el test t, diciendo qué parte no
+	// concuerda: la marca que devuelve solo vale como «qué fila es» si la fila es de una pieza.
 	Dueno(t *testing.T, tenantID, sessionID string) (contactID, mark string, ok bool)
 }
 
