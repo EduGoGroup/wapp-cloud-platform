@@ -55,8 +55,8 @@
 | 11 | [`F1-01-web-contratos-y-rojo`](F1-01-web-contratos-y-rojo.md) | 🌐 | F1 | A | T1.1–T1.7 (+ T1.3b) | hecha (2026-10-01; PR #19, fusionado en `dev` sin squash: `6650e55`) |
 | 12 | [`F1-02-web-verde`](F1-02-web-verde.md) | 🌐 | F1 | B | T1.8–T1.13 | hecha (2026-10-02; PR #23, fusionado en `dev` sin squash: `ca364de`) |
 | 13 | [`F1-03-web-adaptador-y-conmutacion`](F1-03-web-adaptador-y-conmutacion.md) | 🌐 | F1 | C | T1.14–T1.16 | hecha (2026-10-03; PR #25, fusionado en `dev` sin squash: `ddcf7de`) |
-| 14 | [`F1-04-cli-cierre-e-informe`](F1-04-cli-cierre-e-informe.md) | 💻 | F1 | D | T1.17–T1.19 | hecha (2026-10-02; sobre `dev` @ `ddcf7de`, cierre `d5228ac`; espera la parada T1.20) |
-| 15 | [`F1-05-jhoan-parada`](F1-05-jhoan-parada.md) | 🧑 | F1 | — | — | pendiente |
+| 14 | [`F1-04-cli-cierre-e-informe`](F1-04-cli-cierre-e-informe.md) | 💻 | F1 | D | T1.17–T1.19 | hecha (2026-10-02; sobre `dev` @ `ddcf7de`, cierre `d5228ac`) |
+| 15 | [`F1-05-jhoan-parada`](F1-05-jhoan-parada.md) | 🧑 | F1 | — | — | hecha (2026-10-03, Jhoan contestó P1–P7) |
 | 16 | [`F9-03-web-procesos-plataforma-y-acceso`](F9-03-web-procesos-plataforma-y-acceso.md) | 🌐 | F9 | B1 | T9.13–T9.16 🕐 | pendiente |
 | 17 | [`F9-04-web-procesos-de-negocio`](F9-04-web-procesos-de-negocio.md) | 🌐 | F9 | B2 | T9.17–T9.21, T9.35 🕐 | pendiente |
 | 18 | [`F9-05-cli-procesos-cierre`](F9-05-cli-procesos-cierre.md) | 💻 | F9 | B1/B2 | T9.13–T9.16 🕐 + T9.17–T9.21, T9.35 🕐 | pendiente |

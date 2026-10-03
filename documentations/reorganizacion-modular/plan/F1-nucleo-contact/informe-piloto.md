@@ -202,4 +202,102 @@ No incluye los `bridge_<x>.go` (fuera del árbol de `04`), `apipublica` (FX) ni 
 
 ## 10 · Decisión de Jhoan (fecha)
 
-*Pendiente (T1.20).* Hasta que Jhoan conteste P1–P7 aquí, con fecha, **no empieza F2** (ni F9-B).
+*Contestadas (T1.20).* Hasta que Jhoan contestó P1–P7 aquí, con fecha, **no empieza F2** (ni F9-B).
+
+Respuestas, una a una (las siete contestadas el 2026-10-03; **T1.20 cerrada**):
+
+- **P1 · ✅ 2026-10-03 (Jhoan): tres niveles de ceremonia según la complejidad del archivo.** Ni seguir igual ni acotar en
+  bloque: un esquema mixto. Dos metas: que cada archivo nazca cubierto con tests **válidos** (el contrato antes que el
+  test; nada de tests solo para llegar a un número) y poder **revalidar** la lógica vieja aunque ya estuviera bien probada.
+
+  | Nivel | Qué archivos | Qué se hace |
+  |---|---|---|
+  | **Simple** | Sin estado ni concurrencia, sin BD, pocos consumidores, lógica corta | Contrato, test y lógica en una sola pasada; varios archivos por sesión; solo tests de comportamiento; código de calidad, con poca documentación |
+  | **Medio** | Lógica de negocio o varios consumidores, sin estado compartido ni concurrencia | Rojo y verde por archivo, agrupados por paquete; un test por cada promesa del contrato, sin más |
+  | **Complejo** | Estado en memoria, concurrencia, Postgres o transacciones, muchos consumidores (p. ej. `runtime`) | El esquema actual completo, con mutantes donde haga falta |
+
+  - **Quién clasifica**: se propone al inicio de cada fase, en su inventario de archivos, con criterios medibles (estado,
+    concurrencia, BD, nº de consumidores). Jhoan la aprueba; si un archivo sale peor de lo previsto, sube de nivel.
+  - **No se relaja en ningún nivel**: equivalencia viejo ↔ nuevo, `ci-local` en verde con 0 SKIP, y los procesos de F9
+    contra los dos binarios.
+  - **Efecto en horas**: *sin medir*. El piloto solo tuvo archivos complejos; se mide tras la primera fase hecha así.
+  - **Pendiente de aplicar** a las specs de F2–F10 y a `plan/sesiones/` en la sesión de recalibración (F1-05).
+- **P2 · ✅ 2026-10-03 (Jhoan): se quita el 80 % por fichero (D-12) como regla que bloquea; el número queda solo como informe.**
+  - Motivo: en el piloto los ficheros llegaron al 95–100 % y aun así sobrevivieron mutantes (hallazgos 35, 39, 40): la
+    cobertura mide líneas ejecutadas, no que el test detecte un fallo. Forzar el último tramo (ramas `if err != nil`) sería
+    escribir tests para el número.
+  - Qué hace el trabajo del número: los tests necesarios por promesa del contrato; en el nivel **complejo** (P1), los
+    mutantes; y al final, los procesos de F9 por funcionalidad (contra el viejo antes de F2, y de nuevo en cada conmutación),
+    que es donde se cubren los huecos.
+  - Siguen igual `un_fichero_un_test` y `exportados_cubiertos`.
+  - `make cobertura-ficheros` pasa de gate a informe (sin `POR_DEBAJO` que falle). El cambio toca `Makefile` e
+    `internal/candados`, es **código**, y se hace en **una próxima sesión**, no en la de recalibración (solo documentación).
+  - Los huecos de los hallazgos 35–41 se pasan como casos concretos a las specs de F9 (p. ej. reintento de `WithTx` en
+    T9.15, marca de `Estado`).
+- **P3 · ✅ 2026-10-03 (Jhoan): sesiones de tamaño medio, con cierre documental fijo y corto.**
+  - **Tamaño**: un bloque coherente por sesión (en el piloto, 45–90 min). Con archivos simples (P1) caben varios módulos
+    pequeños (F4 y F5, ≈ 10 archivos cada uno); con archivos complejos, medio módulo. Ni sesiones largas ni minúsculas.
+  - **Contexto de la decisión**: Jhoan tiene una promoción de 250 USD para sesiones web, con ≈ 100 USD consumidos en las 9
+    sesiones web hechas (≈ 11 USD por sesión, **estimación**: no hay gasto real por sesión). Con los ≈ 150 USD restantes
+    alcanzan **entre 13 y 19 sesiones web** (de las 53 pendientes). Cuando se acabe, **desaparece la separación web/local**
+    y todo se hace en una sola sesión local.
+  - **Uso de la promoción**: escribir código, que es lo que la web hace bien; lo que necesita Docker, UAT o `main` sigue
+    siendo de la sesión local. F4 y F5 son buenos candidatos. Si se afina con el gasto real por sesión, esta cifra se corrige.
+  - **Cierre fijo de cada sesión** (siempre las mismas tres cosas): tareas `[x]` con SHA, un bloque en `ESTADO.md` y los
+    hallazgos nuevos en el README de la fase.
+  - **Traspaso web ↔ local**: solo mientras existan los dos entornos, y después, solo si una sesión se corta a medias.
+    Con un único entorno se ahorran ≈ 25 min por cruce (coste medido de la documentación del bloque C).
+- **P4 · ✅ 2026-10-03 (Jhoan): opción A, la suite con `Montaje` y el arnés adelantado se adoptan para todo puerto con BD de F2–F8.**
+  - Cada puerto que use Postgres tiene su suite corrida en memoria **y** en Postgres. Es lo que sustituye al 80 % (P2) como
+    garantía de que memoria y Postgres se comportan igual.
+  - **Cambio pequeño, antes de F2**: reforzar la marca de `Estado` (D-F1-7) para que vigile más que `current_node`
+    (`vars`, `last_wa_message_id`, `event_id`, `flow_version`; hallazgo 35). Toca `contacthelpertest` y `postgresState`: es
+    **código** y va en una sesión aparte, junto con el cambio de P2, **antes** de F2.
+- **P5 · ✅ 2026-10-03 (Jhoan): opción A, el adaptador de tipos en el arranque (D-F1-5) es el mecanismo estándar, con cuatro arreglos.**
+  - **Por qué no modificar lo viejo (B)**: se sopesó con Jhoan (alpha, sin usuarios en UAT, código viejo condenado a
+    borrarse). El riesgo de dañar el flujo es bajo (compilador, ≈ 4.600 tests), pero el servidor viejo es la **hoja de
+    respuestas** contra la que se comparan los procesos de F9 y la equivalencia (P2, P4): si empieza a usar código nuevo,
+    un fallo del nuevo sale en los dos y la comparación dice «iguales»; además se rompe `go list -deps ./cmd/server` → 0.
+    Y en módulos anchos B sale más caro: medido en `acceso`, **34 ficheros de producción y 63 de test viejos** importan
+    `iam` (11 + 14), `platformadmin` (4 + 0) y `entitlements` (19 + 49), frente a ≈ 3 adaptadores (uno por paquete, **sin
+    medir**). B solo ganaría con 1–2 consumidores, y ahí se pierde la hoja de respuestas por ahorrar poco.
+  - **Coste**: el adaptador de `contact` fue 131 líneas y 36 min de commits (+ 25 de documentación); lo caro fue la
+    ceremonia, no el adaptador. Con P1, el adaptador es un archivo **simple** (traducir, sin estado, en una pasada).
+  - **Los cuatro arreglos**:
+    1. nombre `bridge_<x>.go` para los adaptadores de F2–F7 (resto de D-F1-9);
+    2. un módulo entra en `Conmutados` cuando **muere su último adaptador** (D-F1-15), corrigiendo el comentario;
+    3. `un_fichero_un_test` y el informe de cobertura incluyen los `bridge_*.go`, y solo esos (D-F1-16); sin umbral (P2);
+    4. el test de cableado se completa (hallazgo 39): un chequeo de que el arranque nuevo no importa el resolver viejo
+       fuera del adaptador (grep por import) y/o una costura con espía.
+  - **Salida de emergencia**: si el inventario de una fase saca un adaptador desproporcionado, se trae aquí y se decide.
+    El inventario de cada fase **lista de entrada cuántos adaptadores harán falta**.
+  - Cierra **D-F1-15**, **D-F1-16** y el resto de **D-F1-9**. Los cambios en `internal/candados` y el test de cableado son
+    **código**: entran en la sesión de ajustes previa a F2.
+- **P6 · ✅ 2026-10-03 (Jhoan): sí, los tests de los auxiliares no exportados nacen en el `verde`, como excepción escrita a E-4.**
+  - Criterio de Jhoan: solo los auxiliares que lo merezcan (regla de negocio, ramas no triviales); no se testea «el tiempo de
+    cocción de la salsa». Los huecos que queden los cubre el **test de proceso** de F9, que recorre el flujo entero y los
+    ejercita implícitamente.
+  - **Aplicado en la documentación (solo `.md`)**: `05` E-4 (nueva excepción), skill `contrato-tdd` (Paso 3 y un antipatrón)
+    y `reglas.md` de F1 (T-1).
+- **P7 · ✅ 2026-10-03 (Jhoan): se corrigen `04` y `05` ahora, claras, cortas y directas, para que ninguna sesión futura
+  insista en lo que ya no vale.**
+  - **Aplicado** (solo `.md`):
+    - **`05`**: cabecera con las decisiones de la parada · E-1 (excepciones cerradas y la hoja de respuestas) · E-4
+      (auxiliares, P6) · E-6 (sin `pgx`; el reintento vive en `WithTx`; sin umbral) · E-9 (cobertura = informe) · E-11 (la
+      excepción `contacthelpertest`) · **E-12 nuevo** (tres niveles, P1/P3) · §4 (el oráculo no comparte estado, no
+      paquetes; huella ciega) · **§4.2 nuevo** (adaptadores `bridge_<x>.go`, P5) · §5 (tabla de candados) · §6 (F1) ·
+      §7.4 (D-13 cerrada) · §9.1.
+    - **`04`** §3: `contact` con 4 tests nuevos y `contacthelpertest/`; `bridge_<x>.go` en el árbol de `arranque`.
+    - **Skills** `contrato-tdd`, `reconstruir-modulo`, `validar-antes-de-cerrar` y el `CLAUDE.md` del repo.
+  - **Sigue sin decidir** (hallazgo 26 del README): en qué idioma van los **mensajes de fallo** de los tests
+    (`t.Errorf`, `t.Fatalf`). La práctica de F1 es el español; E-11 no lo dice. Requiere una línea de Jhoan.
+  - **Pendiente de aplicar** (no está hecho; no se da por hecho):
+    1. **Sesión de ajustes de código previa a F2**: `make cobertura-ficheros` de gate a informe (P2); candados de fichero
+       sobre `bridge_*.go` y `Conmutados` (P5); test de cableado completo (hallazgo 39); marca de `Estado` más fuerte (P4,
+       hallazgo 35); el comando de R9.4.d en un gate (hallazgos 36–37); casos con `@` repetidos y dígitos no ASCII en los
+       corpus de equivalencia (hallazgo 40).
+    2. **Sesión de recalibración**: aplicar E-12 a las specs de F2–F10 y a `plan/sesiones/` (inventario con niveles y nº
+       de adaptadores; tamaño de sesión; cierre de tres cosas); pasar los hallazgos 35–41 a las specs de F9 (T9.15 y el
+       reintento de `WithTx`).
+
+Hasta que esas dos sesiones se hagan, **las specs de F2–F10 siguen diciendo lo de antes** en lo que choque con `05`: manda `05`.

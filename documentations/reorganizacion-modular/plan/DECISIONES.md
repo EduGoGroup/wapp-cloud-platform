@@ -65,14 +65,40 @@
 | D-F1-12 | *(de la revisión independiente, 2026-10-01; hallazgo 23)* ¿Se actualiza `05` para que cumpla E-11 (el ejemplo de §10, la firma de E-3 con las dos formas de D-F1-1, `sin_pendientes_test.go`) y se dice si el sufijo de fichero `_contrato` es vocabulario del método (excepción 3 de E-11)? | Sí (solo Jhoan toca la norma) | La norma `05` (E-3, E-11, §5, §6, §10) y el nombre del candado de F10 (T10.12) | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `1507d78`: el ejemplo de §10 con nombres en inglés; bajo la tabla de E-3, las dos firmas de D-F1-1 (la fila de la tabla sigue dando una sola); `sin_pendientes_test.go` → `no_pending_test.go` en §5 y §6 (el fichero aún no existe); el sufijo `_contrato` **es** vocabulario del método (E-11, excepción 3). Lo que `05` sigue sin recoger, en los hallazgos 23 y 26 del README de F1 |
 | D-F1-13 | *(resto de D-F1-10, 2026-10-02; hallazgo 21)* ¿Se miden los **dobles con lógica** que viven en un paquete `…helpertest`? D-F1-6 (con el sufijo de D-F1-10) dejaba fuera de la cobertura por fichero al paquete entero: quedaba sin medir `contacthelpertest/estado.go`, y habrían nacido exentos los 12 dobles en memoria que manda crear `05` E-6 | La parte (ii) de la propuesta de la revisión a D-F1-10: eximir de la cobertura solo los ficheros de suite (`contrato.go` y `*_contrato.go`) | La cobertura por fichero (`internal/candados`); F1 bloque B y F2–F8, cuyos dobles en memoria nacen ya medidos | ✅ **Aplicada la recomendación de la revisión** (2026-10-02, a petición de Jhoan de aplicar las recomendaciones; se confirma al integrar el PR) · `88b1d85`: `isContractSuiteFile` (`internal/candados/candados.go`), junto a `isHelperTestPackage`; de un paquete `…helpertest` solo quedan exentos de la cobertura `contrato.go` y `*_contrato.go`, y el resto se mide con el umbral normal (80 %, D-12). `FICHEROS_EVALUADOS` 10 → **11** (entra `contacthelpertest/estado.go`, 91,1 %; medido por la sesión que lo implementó). 26 mutantes, caen los 26. **Estrecha D-F1-6 y D-F1-10, no las deroga**; `un_fichero_un_test` y `exportados_cubiertos` siguen eximiendo el paquete entero (D-F1-3) → **D-F1-14** |
 | D-F1-14 | *(resto de D-F1-13, 2026-10-02; hallazgo 21)* ¿Se extiende «solo los ficheros de suite exentos» a `un_fichero_un_test` y `exportados_cubiertos`, que hoy eximen el paquete `…helpertest` **entero** (D-F1-3)? | **Sin recomendación; solo hechos.** Medido por la sesión que aplicó D-F1-13 (cambio local, revertido): hoy pasarían en verde (`un_fichero_un_test`, 44 ficheros recorridos y 0 violaciones; `exportados_cubiertos`, 88 y 0). Para `un_fichero_un_test` choca con `05` E-3, fila «Dobles de test» («su propio test solo si tienen lógica»), y con D-F1-3 (cerrada): un doble **sin** lógica mordería, y haría falta la excepción «doble sin ninguna `func` con cuerpo» (la de [`F0-andamiaje/diseno.md`](F0-andamiaje/diseno.md) §4.2). En `internal/candados` habría que volver a fijar 8 tests (18 subtests) | Los candados de fichero (`internal/candados`); no bloquea ninguna sesión | — **abierta** (2026-10-02: decide Jhoan) |
-| D-F1-15 | *(de F1-03, 2026-10-03; hallazgo 30 del [README de F1](F1-nucleo-contact/README.md))* ¿Cuándo entra un módulo en `Conmutados` (`internal/modulos/fronteras_test.go`) si el arranque nuevo sigue necesitando sus tipos viejos a través de un `bridge_<x>.go`? Con `"nucleo"` dentro, la regla 3 da 3 violaciones (`bridge_contact.go`, su test, `flows.go`); F1-03 la dejó vacía | Cuando muere su último adaptador (para `nucleo`, F8), y corregir el comentario de `Conmutados` en ese sentido | F2 bloque de conmutación (el primero con `bridge_<x>.go` tras F1) | — **abierta** (2026-10-03: decide Jhoan) |
-| D-F1-16 | *(de F1-03, 2026-10-03; hallazgo 32)* ¿`make cobertura-ficheros` y `un_fichero_un_test` evalúan los `internal/arranque/bridge_*.go`? D-F0-1 deja `internal/arranque` fuera (es una copia), pero los adaptadores son código nuevo con lógica; el 80 % de T1.15 se midió a mano | Sí, solo `bridge_*.go` | Ninguna sesión (los candados de fichero); conviene antes de F2 | — **abierta** (2026-10-03: decide Jhoan) |
+| D-F1-15 | *(de F1-03, 2026-10-03; hallazgo 30 del [README de F1](F1-nucleo-contact/README.md))* ¿Cuándo entra un módulo en `Conmutados` (`internal/modulos/fronteras_test.go`) si el arranque nuevo sigue necesitando sus tipos viejos a través de un `bridge_<x>.go`? Con `"nucleo"` dentro, la regla 3 da 3 violaciones (`bridge_contact.go`, su test, `flows.go`); F1-03 la dejó vacía | Cuando muere su último adaptador (para `nucleo`, F8), y corregir el comentario de `Conmutados` en ese sentido | F2 bloque de conmutación (el primero con `bridge_<x>.go` tras F1) | ✅ **decidida (2026-10-03, Jhoan, P5 de la parada)**: la recomendación, dentro de los cuatro arreglos de P5 |
+| D-F1-16 | *(de F1-03, 2026-10-03; hallazgo 32)* ¿`make cobertura-ficheros` y `un_fichero_un_test` evalúan los `internal/arranque/bridge_*.go`? D-F0-1 deja `internal/arranque` fuera (es una copia), pero los adaptadores son código nuevo con lógica; el 80 % de T1.15 se midió a mano | Sí, solo `bridge_*.go` | Ninguna sesión (los candados de fichero); conviene antes de F2 | ✅ **decidida (2026-10-03, Jhoan, P5 de la parada)**: la recomendación, dentro de los cuatro arreglos de P5 |
 
 ## 3 · La parada tras F1 (T1.20)
 
 Las preguntas P1–P7 de [`F1-nucleo-contact/tareas.md`](F1-nucleo-contact/tareas.md) (seguir igual /
 acelerar / acotar; recalibrar D-12; tamaño de bloque…), **con el `informe-piloto.md` delante**. Sin
 esta decisión no arranca nada de F2 en adelante (ni F9-B).
+
+**Respuestas de Jhoan** (se van registrando una a una; el detalle está en la §10 del informe):
+- **P1 · ✅ 2026-10-03**: tres niveles de ceremonia según la complejidad del archivo (simple / medio / complejo),
+  clasificados al inicio de cada fase con criterios medibles y aprobados por Jhoan. Lo que no se relaja nunca:
+  equivalencia viejo ↔ nuevo, `ci-local` con 0 SKIP y los procesos de F9. Pendiente de aplicar a F2–F10.
+- **P2 · ✅ 2026-10-03**: se quita el 80 % por fichero (D-12) como gate; el número queda como **informe** sin bloquear.
+  Lo sustituyen los tests necesarios por contrato, los mutantes en el nivel complejo y los procesos de F9. El cambio de
+  código (`Makefile`, `internal/candados`) va en una próxima sesión.
+- **P3 · ✅ 2026-10-03**: sesiones de tamaño medio (un bloque coherente, 45–90 min; varios módulos pequeños si son
+  simples), cierre documental fijo de tres cosas (tareas con SHA, bloque en `ESTADO.md`, hallazgos en el README de la
+  fase). La promoción web de 250 USD (≈ 100 gastados) cubre entre 13 y 19 sesiones web más (estimación); luego se
+  quita la separación web/local y el traspaso solo se escribe si una sesión se corta.
+- **P4 · ✅ 2026-10-03**: la suite con `Montaje` (D-F1-1) y el arnés adelantado (D-F1-2) se adoptan para todo puerto con BD
+  de F2–F8. Antes de F2 se refuerza la marca de `Estado` (hallazgo 35), en la sesión de código previa a F2 (junto con el
+  cambio de P2).
+- **P5 · ✅ 2026-10-03**: el adaptador `bridge_<x>.go` es el mecanismo estándar para F2–F7 (no se modifica el código
+  viejo: es la hoja de respuestas de F9). Con cuatro arreglos: nombre `bridge_<x>.go`; `Conmutados` cuando muere el último
+  adaptador; los candados de fichero incluyen `bridge_*.go` (sin umbral); test de cableado completado. **Cierra
+  D-F1-15, D-F1-16 y el resto de D-F1-9.** Cada inventario de fase lista de entrada cuántos adaptadores harán falta.
+- **P6 · ✅ 2026-10-03**: el test de un auxiliar no exportado nace en el `verde` (excepción escrita a E-4), solo si lleva
+  regla de negocio o ramas no triviales; lo demás lo cubre el test de proceso de F9. Aplicado en `05` E-4, en la skill
+  `contrato-tdd` y en `reglas.md` de F1.
+- **P7 · ✅ 2026-10-03**: se corrigen `04` y `05` ahora (E-12, §4.2, E-9, E-4, E-1, E-6, E-11, §5–§7.4, §9.1), las skills
+  `contrato-tdd`, `reconstruir-modulo` y `validar-antes-de-cerrar`, y el `CLAUDE.md` del repo. **Sin decidir**: el idioma de los
+  mensajes de fallo de los tests. **Pendiente**: una sesión de ajustes de código previa a F2 y una de recalibración de las
+  specs F2–F10 (detalle en la §10 del informe). **La parada de F1 queda resuelta.**
 
 ## 4 · Antes de F9 (según D-F9-1: antes de 9A / 9B)
 

@@ -1,7 +1,8 @@
 # F1 · `nucleo/contact` — el piloto con parada
 
-> **Estado (2026-10-02, F1-04): bloques A–D cerrados y en `dev`; [`informe-piloto.md`](informe-piloto.md) escrito.
-> Falta la PARADA (T1.20): Jhoan contesta P1–P7 en la §10 del informe. Hasta entonces no empieza F2.**
+> **Estado (2026-10-03): F1 cerrada. Bloques A–D en `dev`, [`informe-piloto.md`](informe-piloto.md) escrito y la PARADA
+> (T1.20) resuelta: Jhoan contestó P1–P7 (§10 del informe) y `04`/`05` se corrigieron (`05` E-12). Antes de F2 faltan una
+> sesión de ajustes de código y una de recalibración de specs (§10 del informe).**
 > Historia: bloques A, B y C integrados sin squash (PR #19, #23, #25; D-F1-9 en el #24); bloque D (sesión F1-04, 💻)
 > cerrado en local sobre `dev` @ `ddcf7de`.
 >

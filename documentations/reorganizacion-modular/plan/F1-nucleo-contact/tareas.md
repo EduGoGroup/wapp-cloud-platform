@@ -118,7 +118,7 @@ Para cuando: suite contra Postgres corrida · todo en `dev` · `informe-piloto.m
   - **Ficheros**: `plan/F1-nucleo-contact/informe-piloto.md` (plantilla abajo), `README.md` (estado), sección `CERRADO` del traspaso
   - **Commit**: `docs(reorganizacion-modular): informe del piloto F1`
 
-- [ ] **T1.20 · PARADA — decide Jhoan** · Jhoan · dep. T1.19 · cumple R1.7.b
+- [x] **T1.20 · PARADA — decide Jhoan** · Jhoan · dep. T1.19 · cumple R1.7.b — cerrada el 2026-10-03: P1–P7 contestadas una a una en la §10 del informe (tres niveles de ceremonia; el 80 % pasa a informe; sesiones medias; suite con `Montaje` para todo puerto con BD; `bridge_<x>.go` estándar; auxiliares en el verde; `04`/`05` corregidos)
   - **Hecho cuando**: la sección 10 del informe tiene la respuesta de Jhoan a P1–P7, con fecha. Hasta entonces **no empieza F2**.
 
 ## Informe — plantilla de `informe-piloto.md` (se escribe en T1.19, no antes)
