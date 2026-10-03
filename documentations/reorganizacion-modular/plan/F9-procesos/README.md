@@ -2,7 +2,9 @@
 
 > **Estado**: ✅ **bloque A cerrado** (F9-01 🌐 lo escribió el 2026-10-01 → PR #18, `dev` @ `af7b8e9`; F9-02 💻 lo cerró el mismo
 > día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
-> conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01). B1, B2, C y D sin empezar.
+> conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01).
+> ✅ **Bloque B1 hecho** (F9-03 💻, 2026-10-03, rama `reorg/f9-b1`): P1, P2, P3 y P9 dan `RC=0 · PASS=287 · SKIP=0 · FAIL=0` por binario
+> (suite entera, dos pasadas) y **el mutante `maxTxAttempts = 1` cae** en los dos binarios; hallazgos 31–43, abajo. B2, C y D sin empezar.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3): B1–D pasan a
 > **solo local** (💻) y entran los hallazgos 35–41 del [piloto F1](../F1-nucleo-contact/README.md).
@@ -86,7 +88,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 | Bloque | Sesión | Entorno | Tareas | Para cuando |
 |---|---|---|---|---|
 | **A · arnés** ✅ | F9-01, F9-02 | 🌐→💻 | T9.1–T9.12 | P0 verde contra los dos binarios en local; `ci-local` rc=0 con el candado |
-| **B1 · procesos de plataforma y acceso** | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
+| **B1 · procesos de plataforma y acceso** ✅ | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
 | **B2 · procesos de negocio** | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
 | **C · pasada por conmutación** 🕐 | el cierre local de cada módulo (F2…F8) | 💻 | T9.23–T9.29, **una por módulo** | Suites del módulo contra Postgres + suite entera contra el nuevo + test de cableado completo |
 | **D · cierre** | F9-05 | 💻 | T9.30–T9.33 | `-count=3` limpio contra los dos; recuento contra el código; docs al día |
@@ -497,3 +499,100 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
       antes de contestar. Cada petición se atiende en su goroutine y el gate va antes de la plaza única, así que no retiene el
       bucle `Recv` ni el guion; pero quien espera la respuesta —el servidor, y el proceso que lo mira— espera esos 2 s por
       petición. Solo los tests **del propio doble** acortan la gracia (campo privado `inferenceLeaseGrace`).
+
+### Hallazgos de la sesión F9-03 (2026-10-03, bloque B1, rama `reorg/f9-b1` desde `dev` @ `25052d1`)
+
+> Medidos al escribir P1, P2, P3 y P9 (`679ea52`, `052089e`, `250916a`, `8febd52`). Son **hechos**; lo que pide una
+> decisión se dice y **no se decide aquí**. Ningún proceso dio rojo solo contra el nuevo (R9.4.c): no hay hallazgo de
+> reconstrucción en este bloque.
+
+31. **El lint no está en la definición de hecho de un proceso, y mordió.** `reglas.md` §4 pide `go vet -tags integracion`,
+    no `make lint`. Los cuatro procesos llegaron con vet limpio y verdes en los dos binarios, y el primer `make ci-local`
+    dio **`GATE_RC=2`**: 19 avisos (8 `errcheck`, 7 `gocyclo`, 3 `gosec`, 1 `prealloc`) en los ficheros nuevos. Se
+    corrigieron sin tocar aserciones (funciones partidas en ayudantes, errores comprobados, sin ningún `//nolint`), con los
+    mismos nombres de test y subtest antes y después, y se fundieron en el commit de su proceso. Para B2: `make lint` por
+    proceso, antes de su commit.
+32. **El límite de peticiones de la API pública alcanza a las tablas adversarias.** 20 rps con ráfaga de 40 por credencial
+    (`WAPP_RATELIMIT_PUBLIC_RPS` / `…_BURST`, que el arnés no pone: `diseno.md` §2). P9 pasa de la ráfaga y recibía
+    429 «demasiadas peticiones»; su cliente reintenta el 429 sondeando con tope (41–49 reintentos por corrida, anotados
+    con `t.Logf`). Vive en `p9_diagnostico_test.go`, no en el arnés: cualquier proceso de B2 con muchas peticiones
+    seguidas se lo encontrará. Subirlo en el entorno del arnés o llevar el reintento a `clientes_test.go` es decisión
+    pendiente (cambia qué prueba el arnés: el limitador dejaría de ejercerse).
+33. **`conectar(t)` desde un subtest ata el stream a ese subtest.** El doble usa `t.Context()` y `t.Cleanup` del `t` que
+    recibe: una (re)conexión hecha dentro de un `t.Run` muere al acabar el subtest y la sesión queda `offline` para los
+    siguientes. P1 abre sus Edges en el test padre y P9 reconecta con el `t` del proceso (`reconnectEdge`). El comentario
+    de `conectar` no lo avisa.
+34. **P3, paso 2: antes del menú llega la bienvenida.** `diseno.md` §4 dice «el servidor responde `SendText` con el
+    menú». Con el plan por defecto del arnés (`advisor_ai_local`, con `llm_intake`), el primer entrante de un contacto
+    nuevo recibe antes «¡Hola! Recibimos tu mensaje y lo estamos procesando. Te respondemos en unos minutos.» (y se
+    escribe `conversation_welcomes`, que P3 no afirma). El test afirma las dos respuestas, en orden. Igual en los dos
+    binarios.
+35. **El tope de auto-respuestas condiciona las tablas de P3.** Ráfaga de 3 y 0,5/s por conversación (`WAPP_FLOW_REPLY_RATE`;
+    el arnés no lo pone): la cuarta respuesta seguida a un mismo contacto se corta con `WARN`. Por eso cada caso
+    adversario de P3 usa un contacto propio, y la ráfaga del paso 8 cuenta `{replies, rateLimited, failed, saturated}`
+    hasta sumar N en vez de esperar N respuestas.
+36. **Paso 8 (R-29): mandada sin más, la ráfaga queda verde y hueca.** Con N = 64 (el cupo de entrantes concurrentes:
+    ninguno espera plaza ni se descarta por saturación) y sin forzar nada, la única corrida así contó **0** deadlocks. El
+    test pone la primera oleada (un entrante solo-pn y uno solo-lid) contra una compuerta de row-locks suya y **afirma
+    `deadlocks ≥ 1`**: 15 de 15 corridas con ciclo vivo (medido por el sub-agente contra el viejo). Con el mutante
+    `maxTxAttempts = 1` este test **también cae** (`R-29: la ráfaga perdió entrantes: {replies:2 rateLimited:61 failed:1
+    saturated:0}`; medido solo contra el viejo).
+    - ⚠️ **Conducta del viejo que queda sin test y sin decidir**: en una variante previa del paso 8 (no está en el commit)
+      en la que la compuerta retenía a **los 64** entrantes, 3 de 10 corridas dieron rojo; en una, 65 deadlocks y los 64
+      entrantes perdidos con `context deadline exceeded` a los 30 s. Lectura del sub-agente, **sin demostrar**: los ciclos
+      se encadenan a 1 s cada uno (`deadlock_timeout`) y agotan el plazo del entrante antes que los 8 intentos. No se
+      probó contra el nuevo. Si es deuda del `Resolve` viejo (y del nuevo, que porta el mismo SQL), lo decide Jhoan.
+37. **Paso 9 (R9.6.e): cómo se provoca el reintento y quién es la víctima.** `WithTx` **no loguea** al reintentar, así
+    que un reintento que acaba bien es invisible en el log: la prueba de que el fallo ocurrió es
+    `pg_stat_database.deadlocks` (0 → 1 en todas las corridas). Técnica: el test toma con una transacción la fila
+    `phone_e164` del contacto (T2) y con otra la `wa_lid` (T1, con `SET LOCAL deadlock_timeout = '60s'`); manda el
+    entrante; cuando el servidor espera a T2, T1 pide la fila phone y T2 confirma. El servidor toma phone y pide lid: el
+    ciclo se cierra dentro de Postgres y, al vencer su `deadlock_timeout` de 1 s, **la víctima es el servidor** (T1 no
+    comprobaría hasta los 60 s). Las esperas se sondean en `pg_stat_activity` (`wait_event_type = 'Lock'`,
+    `pg_blocking_pids`), sin `time.Sleep`. El test tarda 1,3–2,1 s. Servidor y base propios (`p3_txretry`), para que el
+    contador no se mezcle con el del paso 8. **Mutante `maxTxAttempts = 1`** (copia desechable de
+    `internal/platform/storage/postgres/tx.go`): `TestP3_TxRetryOnSerializationFailure` cae **3 de 3 contra el viejo y 3
+    de 3 contra el nuevo** con `(c) el entrante se perdió: WithTx no reintentó tras el deadlock: … postgres: transacción
+    tras 1 intentos (último deadlock/serialización): contact: buscar ref: ERROR: deadlock detected (SQLSTATE 40P01)`; sin
+    mutar, 3 de 3 en verde en los dos. Ya puede borrarse `deadlock_integration_test.go` en F10.
+38. **P1: tras `restore`, el Edge conectado no vuelve a operar hasta reconectar.** `diseno.md` §4 dice «`restore` →
+    vuelve». Medido: `POST /admin/tenants/restore` no empuja nada; el siguiente latido recibe un lease vigente
+    (`leases.counter` avanza), pero el `Validator` del Edge es pegajoso y lo descarta sin error; operan de nuevo **al
+    reconectar**. Además el corte comercial no toca `leases.revoked`, y un Edge que nace con la empresa cortada se enrola
+    y conecta, pero revocado y sin fila en `leases`. Conductas del viejo que P1 **deja fijadas** y que quizá no sean las
+    deseadas (decide Jhoan; el nuevo coincide): el `slug` no se recorta ni se valida (`acme`, `acme` + U+00A0 y un
+    espacio solo son empresas distintas); `/admin/leases/revoke` con un `edge_id` desconocido contesta 204 y crea una
+    fila de revocación anticipada; `/admin/tenants/revoke` de una empresa inexistente contesta 204 y se audita como
+    `success`; los 401/403 de middleware no dejan fila en `audit_events`.
+39. **P2: tres desajustes con lo escrito.** (a) `GET /api/v1/auth/tenants` con una sola empresa devuelve `active: true`
+    aunque no haya fila en `user_active_tenant`. (b) `POST /admin/access-requests/{id}/approve` exige
+    `{"tenant_id","role"}` y `reject` un cuerpo (`{"reason"}`): con cuerpo vacío dan 400, no el 404 del id inexistente;
+    la tabla de I-CP-5 usa cuerpos válidos. (c) `diseno.md` §4 P2 cita `platform_permissions_test.go` bajo
+    `internal/iam/infra/postgres/`; está en `internal/bootstrap/arranque/` (y su copia en `internal/arranque/`).
+    Además: los 7 perdedores del canje simultáneo reciben **409** («esa invitación ya no está disponible, o esta cuenta
+    ya pertenece a una empresa»); inexistente → 404 y caducada → 410 con el **mismo cuerpo**; ni el canje de invitación
+    ni la elección de empresa se auditan.
+40. **P3: lo que el recorrido deja en Postgres no es lo que lista `diseno.md`.** `flow_events` y `conversation_events`
+    quedan a **0** en un keyword hacia un menú plano (el test lo afirma); `flow_state` de un flujo terminado no se borra
+    (queda en `__wapp_flow_end__`); y `wapp_receipts_total` cuenta **acuses**, no filas (un «leído» repetido suma 2 con
+    una sola fila en `message_receipts`). Normalización del viejo, fijada por la tabla adversaria: `from_pn`
+    `57١٢٣3001110003` se queda en `573001110003` (**otro número, sin aviso**); `١٢٣@lid` o `١٢٣` sin `from` utilizable
+    pierden el entrante con `ERROR` `contact: se requiere al menos una contact_ref` (y, con el `wa_message_id` ya en
+    `ingest_dedupe`, un reenvío se descartaría); el `push_name` no se recorta.
+41. **P9: el `scope` del diagnóstico no se valida y el opt-out va antes que la sesión.** `a@@b`, `١٢٣` o un espacio
+    Unicode interior se reenvían tal cual al Edge (los de los extremos se recortan; solo espacios → `full`). Con
+    `tenant_diagnostics_consent.enabled = false`, una sesión ajena da 403 y no 404; el opt-out solo gatea el `POST`: un
+    bundle ya recibido se sigue descargando. El `intents` de la reconexión trae la misma versión y el mismo valor JSON,
+    no los mismos bytes (sale de `jsonb`).
+42. **Límite del arnés: no se puede reiniciar un servidor sobre su misma base.** Por eso P1 no lleva «la revocación
+    sobrevive a un reinicio del gestor» (`TestIntegration_RevokeSurvivesManagerRestart`); lleva la reconexión. Va a la
+    suite de contrato de `lease` (T9.24) o pide una ampliación del arnés (misma familia que la contradicción 20).
+43. **Sobre cómo se midió.** (a) Los sub-agentes de P2 y P3 localizaron varios tests viejos de E-8 por nombre de función y
+    no los leyeron enteros (P2: `membership_integration_test.go`, `canje_internal_test.go`; P3: los seis de su lista
+    salvo `greeting_internal_test.go`); las reglas no llevadas están en el cuerpo de cada commit. (b) Dos `go test` del
+    paquete lanzados uno detrás de otro pueden chocar con el *reaper* de testcontainers de la corrida anterior:
+    `could not start container`, `RC=1` y **cero tests ejecutados** (1 vez en la sesión, en la primera corrida del
+    mutante contra el viejo). No es un resultado: se mira que haya `--- PASS`/`--- FAIL` antes de leer el `RC`, y se
+    repite. (c) Los *worktrees* de los sub-agentes nacieron en `2da10b4` (`main`), como avisa T-17; se fijaron en
+    `25052d1` antes de medir y se borraron antes de `make test-pendiente`. (d) `p2_canje_test.go` (496),
+    `p3_entrante_test.go` (492) y `p9_diagnostico_config_push_test.go` (498) quedan al borde de las 500 líneas.

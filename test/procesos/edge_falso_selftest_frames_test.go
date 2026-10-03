@@ -87,6 +87,66 @@ func edgeVerificarEntrante(t *testing.T, f *cloudlinkv1.EdgeToCloud, k claves, d
 	}
 }
 
+// TestArnes_EdgeSealedIncoming prueba, sin servidor, la variante campo a campo del entrante sellado
+// (sendSealedIncoming, D-F1-11): text, from_pn, from_lid y push_name viajan dentro del sobre tal
+// como se escribieron —sin normalizar— y los cuatro planos sensibles van vacíos; en claro solo
+// from, wa_message_id, el instante y el modo de direccionamiento. Cubre el entrante completo, el
+// que trae SOLO from_lid, el que trae solo from_pn y sin nombre, y uno con valores adversarios.
+func TestArnes_EdgeSealedIncoming(t *testing.T) {
+	t.Parallel()
+	e, c, k := edgeDePrueba(t)
+	cases := []struct {
+		in   sealedIncoming
+		mode string
+	}{
+		{sealedIncoming{From: "573001110000@s.whatsapp.net", WaID: "WA-S1", Text: "hola", FromPn: "573001110000", FromLid: "99887766@lid", PushName: "Ana"}, "pn"},
+		{sealedIncoming{From: "99887766@lid", WaID: "WA-S2", Text: "solo LID", FromLid: "99887766@lid", PushName: "Ana"}, "lid"},
+		{sealedIncoming{From: "573001110000@s.whatsapp.net", WaID: "WA-S3", Text: "sin nombre", FromPn: "573001110000"}, "pn"},
+		{sealedIncoming{From: "x@@y", WaID: "WA-S4", Text: " 1 ", FromPn: "57\u0661\u0662300@@s.whatsapp.net", FromLid: "123@@lid", PushName: "\u00a0Ana\u2003"}, "pn"},
+		{sealedIncoming{From: "sin-identidad", WaID: "WA-S5", Text: "nada"}, ""},
+	}
+	for _, tc := range cases {
+		e.sendSealedIncoming(t, tc.in)
+	}
+	frames := c.esperar(t, len(cases))
+	for i, tc := range cases {
+		m := frames[i].GetIncoming()
+		if m == nil {
+			t.Fatalf("caso %d: el frame es %T, quería un IncomingMessage", i, frames[i].GetPayload())
+		}
+		edgeCheckSealedClear(t, i, frames[i], tc.in, tc.mode)
+		edgeCheckSealedEnvelope(t, i, m, tc.in, k)
+	}
+}
+
+// edgeCheckSealedClear mira lo que el frame del caso i lleva EN CLARO: sesión, from, wa_message_id,
+// instante y modo de direccionamiento, y los cuatro planos sensibles vacíos.
+func edgeCheckSealedClear(t *testing.T, i int, frame *cloudlinkv1.EdgeToCloud, in sealedIncoming, mode string) {
+	m := frame.GetIncoming()
+	if frame.GetSessionId() != "sesion-prueba" || m.GetFrom() != in.From || m.GetWaMessageId() != in.WaID ||
+		m.GetTsUnix() == 0 || m.GetAddressingMode() != mode {
+		t.Errorf("caso %d, en claro: sesión %q from %q wa_message_id %q ts %d modo %q", i,
+			frame.GetSessionId(), m.GetFrom(), m.GetWaMessageId(), m.GetTsUnix(), m.GetAddressingMode())
+	}
+	if m.GetText() != "" || m.GetPushName() != "" || m.GetFromPn() != "" || m.GetFromLid() != "" {
+		t.Errorf("caso %d: lo sensible viaja en claro: text %q push_name %q from_pn %q from_lid %q", i,
+			m.GetText(), m.GetPushName(), m.GetFromPn(), m.GetFromLid())
+	}
+}
+
+// edgeCheckSealedEnvelope abre el sobre del caso i y mira que los cuatro campos sensibles viajan
+// dentro tal como se escribieron. Falla (t.Fatalf) si el sobre va vacío o con el texto a la vista.
+func edgeCheckSealedEnvelope(t *testing.T, i int, m *cloudlinkv1.IncomingMessage, in sealedIncoming, k claves) {
+	if len(m.GetEncPayload()) == 0 || strings.Contains(string(m.GetEncPayload()), in.Text) {
+		t.Fatalf("caso %d: enc_payload vacío o con el texto a la vista", i)
+	}
+	sp := edgeAbrirSensible(t, m.GetEncPayload(), k)
+	if sp.GetText() != in.Text || sp.GetFromPn() != in.FromPn || sp.GetFromLid() != in.FromLid || sp.GetPushName() != in.PushName {
+		t.Errorf("caso %d: SensitivePayload = text %q from_pn %q from_lid %q push_name %q, quería %+v", i,
+			sp.GetText(), sp.GetFromPn(), sp.GetFromLid(), sp.GetPushName(), in)
+	}
+}
+
 // edgeAbrirSensible abre un enc_payload con la privada de la nube y lo interpreta como
 // SensitivePayload. Falla el test (t.Fatalf) si no se abre o no se interpreta.
 func edgeAbrirSensible(t *testing.T, sellado []byte, k claves) *cloudlinkv1.SensitivePayload {

@@ -108,6 +108,67 @@ func (e *edge) armarEntrante(de, texto, waID string) (*cloudlinkv1.EdgeToCloud, 
 	}, nil
 }
 
+// sealedIncoming describe un entrante sellado campo a campo (D-F1-11): lo que entrante y
+// armarEntrante no saben mandar. From y WaID viajan en claro, como en el Edge real; Text, FromPn,
+// FromLid y PushName viajan SOLO dentro del sobre. Ningún campo se normaliza ni se deriva de otro:
+// lo que el test escribe es lo que llega, para poder mandar identidades parciales (solo FromLid,
+// solo FromPn) y valores adversarios (separadores repetidos, dígitos no ASCII, espacios Unicode).
+type sealedIncoming struct {
+	From     string // en claro: el JID del remitente («…@s.whatsapp.net», «…@lid»)
+	WaID     string // en claro: wa_message_id
+	Text     string // sellado
+	FromPn   string // sellado; vacío = el entrante no trae número
+	FromLid  string // sellado; vacío = el entrante no trae LID
+	PushName string // sellado; vacío = el entrante no trae nombre de perfil
+}
+
+// buildSealedIncoming construye el frame de un sealedIncoming: un SensitivePayload con text,
+// push_name, from_pn y from_lid, marshalado y sellado con la pública de la nube (enc_payload), y
+// los cuatro planos sensibles VACÍOS. addressing_mode es «pn» si trae número, «lid» si solo trae
+// LID y vacío si no trae ninguno. Devuelve error si el sellado falla.
+func (e *edge) buildSealedIncoming(in sealedIncoming) (*cloudlinkv1.EdgeToCloud, error) {
+	plain, err := proto.Marshal(&cloudlinkv1.SensitivePayload{
+		Text: in.Text, PushName: in.PushName, FromPn: in.FromPn, FromLid: in.FromLid,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("serializar el SensitivePayload: %w", err)
+	}
+	sealed, err := envelope.SealFor(e.CloudEncPub, plain)
+	if err != nil {
+		return nil, fmt.Errorf("sellar el SensitivePayload: %w", err)
+	}
+	mode := ""
+	switch {
+	case in.FromPn != "":
+		mode = "pn"
+	case in.FromLid != "":
+		mode = "lid"
+	}
+	return &cloudlinkv1.EdgeToCloud{
+		SessionId: e.SessionID,
+		Payload: &cloudlinkv1.EdgeToCloud_Incoming{Incoming: &cloudlinkv1.IncomingMessage{
+			From:           in.From,
+			TsUnix:         time.Now().Unix(),
+			WaMessageId:    in.WaID,
+			AddressingMode: mode,
+			EncPayload:     sealed,
+		}},
+	}, nil
+}
+
+// sendSealedIncoming manda un sealedIncoming por la salida del Edge. Falla (t.Fatalf) si no puede
+// sellar o emitir.
+func (e *edge) sendSealedIncoming(t *testing.T, in sealedIncoming) {
+	t.Helper()
+	msg, err := e.buildSealedIncoming(in)
+	if err != nil {
+		t.Fatalf("sendSealedIncoming %s: %v", in.WaID, err)
+	}
+	if err := e.emitir(msg); err != nil {
+		t.Fatalf("sendSealedIncoming %s: %v", in.WaID, err)
+	}
+}
+
 // edgeNumeroDe saca el número de un remitente: la parte anterior a «@» sin el «+» inicial, si son
 // solo dígitos. Devuelve "" si no lo es (un LID, un texto cualquiera).
 func edgeNumeroDe(de string) string {
