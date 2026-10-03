@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/flows.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/flows.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo el resolver de contactos, que desde F1 (T1.16, conmutar(nucleo)) es el de
+// internal/nucleo/contact detrás del adaptador contactBridge (bridge_contact.go).
 package arranque
 
 import (
@@ -6,7 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
@@ -17,23 +19,14 @@ import (
 // 011) y el almacén de objetos R2 (Plan 017). Se devuelven juntas para que el
 // arranque tenga UNA sola rama de error (cualquier fallo aborta el proceso).
 type flowRuntimeDeps struct {
-	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII).
-	contacts contact.Resolver
-	// contactsPG es EXACTAMENTE LA MISMA INSTANCIA que contacts, sin el envoltorio
-	// de la interfaz. Existe por una sola razón: el backfill de arranque de T4.2
-	// (BackfillPushName) es una operación de MANTENIMIENTO del almacén, no parte del
-	// contrato Resolver —el runtime del motor de flujos no tiene por qué poder
-	// dispararla— así que no se añade al interfaz, y desde fuera hace falta el tipo
-	// concreto para llamarla.
+	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII). Es el
+	// viejo.Resolver que piden flowruntime.New e intakes.NewNotifier, pero detrás hay
+	// el resolver NUEVO (nucleo/contact) envuelto en contactBridge (F1 · T1.16).
 	//
-	// 🔴 SE COMPARTE LA INSTANCIA, NO SE CONSTRUYE UNA SEGUNDA. Un segundo
-	// NewPostgresResolver aquí traería su propio cipher y su propio KeyProvider, y
-	// los sobres que escribiera el backfill quedarían cerrados con un keyring que la
-	// persistencia no conoce: el mismo modo de fallo que el aviso de fleetRepo en
-	// bootstrap.go describe para la flota. La alternativa —una aserción de tipo sobre
-	// `contacts`— haría lo mismo pero fallando en tiempo de ejecución el día que
-	// alguien meta un decorador por en medio.
-	contactsPG *contact.PostgresResolver
+	// ✎ F1 (T-8 de la spec de F1): la copia ya no tiene el campo contactsPG del viejo.
+	// Se escribía y no se leía en ningún sitio: su único motivo, el backfill de arranque
+	// BackfillPushName (T4.2), murió en 58e92a2 (T5.4).
+	contacts viejo.Resolver
 	// cipher y kp son el stack de cifrado de PII (Plan 011); el runtime los usa vía
 	// el resolver, y el endpoint admin /admin/crypto/rekey los necesita en crudo
 	// para la rotación de KEK (Plan 012).
@@ -84,14 +77,14 @@ func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB)
 	if err != nil {
 		return flowRuntimeDeps{}, fmt.Errorf("construyendo PresignClient R2 (Plan 017): %w", err)
 	}
-	// Una sola instancia, dos vistas: la interfaz para el runtime, el tipo concreto
-	// para el backfill de arranque de T4.2 (ver el comentario de contactsPG).
-	contacts := contact.NewPostgresResolver(db, cipher, kp)
+	// 🔴 El resolver se construye con ESTE cipher y ESTE kp, los mismos que reciben
+	// fleet, events, intakes, integrations y tenantllm en la fase 3: otro KeyProvider
+	// calcularía otro value_bidx y duplicaría contactos en silencio.
+	contacts := newContactResolver(db, cipher, kp)
 	return flowRuntimeDeps{
-		contacts:   contacts,
-		contactsPG: contacts,
-		cipher:     cipher,
-		kp:         kp,
-		presign:    presignClient,
+		contacts: contacts,
+		cipher:   cipher,
+		kp:       kp,
+		presign:  presignClient,
 	}, nil
 }
