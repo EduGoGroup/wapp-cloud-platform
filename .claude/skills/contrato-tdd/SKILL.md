@@ -52,7 +52,7 @@ hacer pasar un test por accidente. Solo `panic`.
 🔴 **Nombres en inglés, comentarios en español (E-11).** Ficheros, paquetes, tipos, funciones, métodos,
 campos, variables, constantes, centinelas y nombres de test van en **inglés**; solo los comentarios van en
 español. Portando un símbolo viejo con nombre en español, el nuevo lleva uno en inglés y el comentario dice
-cuál era. Lo ya escrito y lo ya decidido (módulos de D-5, `pendiente`, `Contrato`, `Montaje`) no se renombra.
+cuál era. Los **mensajes de fallo de los tests** (`t.Errorf`, `t.Fatalf`) van en **español**. Lo ya escrito y lo ya decidido (módulos de D-5, `pendiente`, `Contrato`, `Montaje`) no se renombra.
 
 🔴 **Los textos observables no cambian.** Un mensaje de error que hoy ve un humano (el BFF y
 `wapp-ctl` muestran en texto plano los de `/api/v1/signup`) se copia **literal** del fichero viejo.

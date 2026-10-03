@@ -220,7 +220,7 @@ En todo fichero **nuevo** de la reconstrucción:
 
 | En **inglés** | En **español** |
 |---|---|
-| Nombres de fichero, de directorio nuevo y de paquete · tipos, interfaces, structs, funciones, métodos, campos, variables, constantes y errores centinela · nombres de `Test…`, de los subtests (`t.Run`) y de las etiquetas de caso | Los **comentarios** (de paquete, de cada exportado, los internos) · la documentación (`documentations/`) · los mensajes de commit |
+| Nombres de fichero, de directorio nuevo y de paquete · tipos, interfaces, structs, funciones, métodos, campos, variables, constantes y errores centinela · nombres de `Test…`, de los subtests (`t.Run`) y de las etiquetas de caso | Los **comentarios** (de paquete, de cada exportado, los internos) · la documentación (`documentations/`) · los mensajes de commit · los **mensajes de fallo de los tests** (`t.Errorf`, `t.Fatalf`; decisión de Jhoan, 2026-10-03) |
 
 ```go
 // FullName une el nombre y el apellido con UN espacio y recorta los bordes.

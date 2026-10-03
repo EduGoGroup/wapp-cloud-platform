@@ -96,8 +96,8 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
   regla de negocio o ramas no triviales; lo demás lo cubre el test de proceso de F9. Aplicado en `05` E-4, en la skill
   `contrato-tdd` y en `reglas.md` de F1.
 - **P7 · ✅ 2026-10-03**: se corrigen `04` y `05` ahora (E-12, §4.2, E-9, E-4, E-1, E-6, E-11, §5–§7.4, §9.1), las skills
-  `contrato-tdd`, `reconstruir-modulo` y `validar-antes-de-cerrar`, y el `CLAUDE.md` del repo. **Sin decidir**: el idioma de los
-  mensajes de fallo de los tests. **Pendiente**: una sesión de ajustes de código previa a F2 y una de recalibración de las
+  `contrato-tdd`, `reconstruir-modulo` y `validar-antes-de-cerrar`, y el `CLAUDE.md` del repo. **Idioma de los mensajes de fallo de los
+  tests: español** (decidido el mismo día; `05` E-11). **Pendiente**: una sesión de ajustes de código previa a F2 y una de recalibración de las
   specs F2–F10 (detalle en la §10 del informe). **La parada de F1 queda resuelta.**
 
 ## 4 · Antes de F9 (según D-F9-1: antes de 9A / 9B)

@@ -289,8 +289,9 @@ Respuestas, una a una (las siete contestadas el 2026-10-03; **T1.20 cerrada**):
       §7.4 (D-13 cerrada) · §9.1.
     - **`04`** §3: `contact` con 4 tests nuevos y `contacthelpertest/`; `bridge_<x>.go` en el árbol de `arranque`.
     - **Skills** `contrato-tdd`, `reconstruir-modulo`, `validar-antes-de-cerrar` y el `CLAUDE.md` del repo.
-  - **Sigue sin decidir** (hallazgo 26 del README): en qué idioma van los **mensajes de fallo** de los tests
-    (`t.Errorf`, `t.Fatalf`). La práctica de F1 es el español; E-11 no lo dice. Requiere una línea de Jhoan.
+  - **Decidido después (2026-10-03, Jhoan)**: los **mensajes de fallo de los tests** (`t.Errorf`, `t.Fatalf`) van en
+    **español**, como los comentarios y los mensajes de commit (cierra ese punto del hallazgo 26). Escrito en `05` E-11 y en
+    la skill `contrato-tdd`.
   - **Pendiente de aplicar** (no está hecho; no se da por hecho):
     1. **Sesión de ajustes de código previa a F2**: `make cobertura-ficheros` de gate a informe (P2); candados de fichero
        sobre `bridge_*.go` y `Conmutados` (P5); test de cableado completo (hallazgo 39); marca de `Estado` más fuerte (P4,
