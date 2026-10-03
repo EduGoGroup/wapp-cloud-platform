@@ -85,8 +85,11 @@ var reglas = candados.Reglas{
 		"internal/contracts":    "solicitudes",
 		"internal/tenantvars":   "solicitudes",
 	},
-	// Módulos conmutados (el arranque nuevo ya los cablea con lo nuevo): lo añade el commit
-	// conmutar(<m>). Vacía en F0.
+	// Módulos conmutados (el arranque nuevo ya los cablea SOLO con lo nuevo). Un módulo entra con
+	// el commit que retira su ÚLTIMO adaptador internal/arranque/bridge_<x>.go, o con su
+	// conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador, la
+	// regla 3 falla, porque el adaptador existe para importar lo viejo. Por eso nucleo, conmutado
+	// en F1 con bridge_contact.go, no está aquí: entra en F8, cuando muera ese adaptador.
 	Conmutados: []string{},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía en F0.
 	Puentes: []candados.Puente{},

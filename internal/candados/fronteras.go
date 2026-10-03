@@ -33,7 +33,10 @@ type Puente struct {
 //     importar ningún otro.
 //   - Mapa: prefijo viejo ("internal/iam") → módulo ("acceso"), según 04 §4. Gana el prefijo
 //     más largo que case en frontera de «/».
-//   - Conmutados: módulos que el arranque nuevo ya cablea con lo nuevo (commit conmutar(<m>)).
+//   - Conmutados: módulos que el arranque nuevo ya cablea SOLO con lo nuevo. Un módulo entra
+//     con el commit que retira su ÚLTIMO adaptador internal/arranque/bridge_<x>.go, o con su
+//     conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador,
+//     el arranque sigue importando lo viejo del módulo y la regla 3 lo diría.
 //   - Puentes: imports nuevo → viejo declarados.
 //   - FasesCerradas: fases ya cerradas ("F0", "F1"…); un Puente cuyo Muere está aquí debió
 //     borrarse.
@@ -72,7 +75,9 @@ type Reglas struct {
 //     composition root, en F0 cablea lo viejo), importa un paquete VIEJO sin un Puente
 //     cuyo Desde y Hacia casen;
 //  3. un fichero de internal/arranque importa un paquete viejo cuyo módulo según Mapa
-//     (prefijo más largo) está en Conmutados;
+//     (prefijo más largo) está en Conmutados. Si el fichero es un adaptador
+//     internal/arranque/bridge_<x>.go (o su test), el Motivo dice además que el módulo aún
+//     tiene un adaptador vivo y que no entra en Conmutados hasta que muera (05 §4.2);
 //  4. un fichero de internal/apipublica importa CUALQUIER paquete viejo, aunque haya un
 //     Puente que lo declare (la cara nueva solo habla con lo nuevo);
 //  5. un fichero VIEJO importa algo del árbol nuevo. Única excepción: el test
@@ -199,15 +204,28 @@ func juzgarImport(ruta, dir, rel string, r Reglas) string {
 	case bajo(ruta, prefijoArranque):
 		// El composition root puede cablear lo viejo (exento de la regla 2) salvo lo de un
 		// módulo ya conmutado.
-		if m := moduloViejo(r.Mapa, rel); m != "" && slices.Contains(r.Conmutados, m) {
-			return "regla 3: " + arista + ": el módulo " + m + " ya está conmutado; el arranque cablea lo nuevo"
+		m := moduloViejo(r.Mapa, rel)
+		if m == "" || !slices.Contains(r.Conmutados, m) {
+			return ""
 		}
-		return ""
+		if isBootBridge(ruta) {
+			// El adaptador existe para importar lo viejo (05 §4.2): el error no es el import,
+			// es haber metido el módulo en Conmutados antes de tiempo (D-F1-15).
+			return "regla 3: " + arista + ": el módulo " + m + " aún tiene un adaptador vivo (" +
+				path.Base(ruta) + "); no entra en Conmutados hasta que muera su último bridge_<x>.go"
+		}
+		return "regla 3: " + arista + ": el módulo " + m + " ya está conmutado; el arranque cablea lo nuevo"
 	case hayPuente(r.Puentes, dir, rel):
 		return ""
 	default:
 		return "regla 2: " + arista + ": árbol nuevo que importa lo viejo sin un Puente declarado"
 	}
+}
+
+// isBootBridge dice si ruta es un adaptador de arranque (05 §4.2): un bridge_<x>.go o su
+// bridge_<x>_test.go, directamente en internal/arranque (no en un subpaquete).
+func isBootBridge(ruta string) bool {
+	return path.Dir(ruta) == prefijoArranque && strings.HasPrefix(path.Base(ruta), "bridge_")
 }
 
 // juzgarModulos aplica la regla 1 a una arista nuevo → nuevo: solo muerde entre módulos
