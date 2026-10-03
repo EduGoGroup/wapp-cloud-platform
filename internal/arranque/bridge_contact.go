@@ -56,11 +56,11 @@ func (b *contactBridge) Resolve(ctx context.Context, tenantID string, refs []vie
 	// Copia campo a campo y nada más: NewRef ya normalizó en origen, y normalizar otra vez aquí
 	// podría cambiar el value del que sale el índice ciego de filas que ya existen. Una lista nil
 	// llega como lista vacía de longitud 0: next decide (ErrNoRefs), no el adaptador.
-	nuevas := make([]contact.Ref, len(refs))
+	newRefs := make([]contact.Ref, len(refs))
 	for i, r := range refs {
-		nuevas[i] = contact.Ref{Kind: r.Kind, Value: r.Value}
+		newRefs[i] = contact.Ref{Kind: r.Kind, Value: r.Value}
 	}
-	contactID, err := b.next.Resolve(ctx, tenantID, nuevas, pushName)
+	contactID, err := b.next.Resolve(ctx, tenantID, newRefs, pushName)
 	if err != nil {
 		return "", translateContactErr(err)
 	}
@@ -81,7 +81,7 @@ func (b *contactBridge) Destino(ctx context.Context, tenantID, contactID string)
 // de viejo.Resolver promete sus propios centinelas: aunque hoy ningún paquete viejo fuera de
 // flujos/contact los compare con errors.Is, el adaptador cumple ese contrato entero para que
 // quien lo haga mañana (o un log que lo clasifique) no vea un error distinto según el arranque.
-var sentinelPairs = []struct{ nuevo, viejo error }{
+var sentinelPairs = []struct{ current, old error }{
 	{contact.ErrNoRefs, viejo.ErrNoRefs},
 	{contact.ErrNoDestino, viejo.ErrNoDestino},
 	{contact.ErrContactNotFound, viejo.ErrContactNotFound},
@@ -93,8 +93,8 @@ var sentinelPairs = []struct{ nuevo, viejo error }{
 // envolverlo solo cambiaría su tipo.
 func translateContactErr(err error) error {
 	for _, p := range sentinelPairs {
-		if errors.Is(err, p.nuevo) {
-			return &bridgeError{original: err, oldSentinel: p.viejo}
+		if errors.Is(err, p.current) {
+			return &bridgeError{original: err, oldSentinel: p.old}
 		}
 	}
 	return err
