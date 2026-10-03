@@ -5,7 +5,7 @@
 > repo y, por herencia, el `CLAUDE.md` de la raíz de wApp). Hay dos clases de sesión local:
 > **de cierre** (la web abrió: la local hace lo que la web no puede e intenta **refutar** lo que la web dio
 > por cierto; §2 y §5) y **completa** (no hubo web: la sesión escribe el código ella misma, como dice
-> [`PROTOCOLO-WEB.md`](PROTOCOLO-WEB.md) §2, §3 y §5, y se cierra aquí; se salta §2 y §5). La ficha dice cuál es.
+> [`PROTOCOLO-WEB.md`](PROTOCOLO-WEB.md) §2, §3 y §5, y se cierra aquí; de §2 le toca la parte de «sesión completa» y se salta §5). La ficha dice cuál es.
 > La separación web/local dura lo que dure la promoción web; después todo es local.
 
 ## 1 · Verdad de campo
@@ -40,15 +40,26 @@ ni instalar el lint aparte. En el Mac el sistema trae `go1.27.1` y `golangci-lin
    `isolation: worktree`, dile al sub-agente que se ponga en el SHA de `dev` antes de medir, y borra los
    worktrees antes de `make test-pendiente`.
 
-## 2 · Integrar en `dev`, sin squash
+## 2 · Trabajar en la rama, nunca en `dev`
 
-```bash
-git checkout dev && git pull --ff-only origin dev
-git merge --no-ff origin/<rama-de-la-web>; echo "rc=$?"
-```
+🔴 **Regla innegociable 6 del `CLAUDE.md`** (Jhoan, 2026-10-03): ningún código nace en `dev` ni en `main`, y **ninguna
+sesión fusiona en `dev` en local**. Sustituye a la mitad «la local fusiona con `merge --no-ff`» de la decisión F-1.
 
-(o, si Jhoan ya lo fusionó en GitHub con «Rebase and merge», solo `git pull`). **Nunca squash**: el
-rojo y el verde de un fichero son commits distintos.
+- **Sesión de cierre** (la web abrió un PR): te pones en **la rama de ese PR**, al día con `dev`, y ahí corres los
+  gates y commiteas lo tuyo. Tu cierre viaja en el mismo PR.
+
+  ```bash
+  git fetch -q origin && git checkout <rama-de-la-web> && git pull --ff-only
+  git merge --no-ff origin/dev; echo "rc=$?"     # solo si dev avanzó; la rama se pone al día, no al revés
+  ```
+
+- **Sesión completa** (no hubo web): `git checkout -b reorg/<fase>-<bloque> dev` antes del primer commit, y PR al
+  terminar (`gh pr create --base dev`).
+- **Sub-agentes en *worktrees***: sus commits se integran (`cherry-pick`) en **tu rama**, no en `dev`.
+- **Quién integra el PR**: Jhoan, en GitHub, con «Create a merge commit» o «Rebase and merge». **Nunca squash**: el
+  rojo y el verde de un fichero son commits distintos. La sesión solo lo fusiona (`gh pr merge --merge`) si Jhoan lo
+  pide expresamente en la conversación.
+- Si Jhoan ya lo integró: `git checkout dev && git pull --ff-only origin dev`, y tu cierre va en una rama nueva.
 
 ## 3 · Repetir los gates con TU toolchain (skill `validar-antes-de-cerrar`)
 
@@ -88,6 +99,8 @@ que corre**, no contra la documentación. Lo que se refute, se corrige (o se ano
    estado del `README.md` de la fase.
 3. Los hallazgos nuevos, en el `README.md` de la fase.
 
-Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; `git push origin dev` (rc sin
-pipe); **`main` no se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
+Y además: si había un traspaso abierto, su sección final **`CERRADO <fecha>`**; 🔴 **el código va en una rama
+partida de `dev` y entra por PR** (regla innegociable 6 del `CLAUDE.md`, 2026-10-03): `git push origin <rama>` (rc sin
+pipe) y PR hacia `dev`, sin squash. Directo a `dev` solo si Jhoan lo pide expresamente en la conversación; **`main` no
+se toca** salvo petición expresa de Jhoan. Una sesión es un bloque de **45–90 min**: si no
 cabe, para en un punto limpio, cierra con las tres cosas y se relanza.

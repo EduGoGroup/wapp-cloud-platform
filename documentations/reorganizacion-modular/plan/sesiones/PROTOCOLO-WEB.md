@@ -129,9 +129,9 @@ Y para entregar:
 ### Si esta ficha 🌐 se corre en local
 
 Cuando se acabe la promoción web, las fichas 🌐 y 🌐❓ se corren en la máquina de Jhoan con el **mismo
-encargo**: se trabaja sobre `dev`, **sin PR ni traspaso**, se cierran los gates con la toolchain local
-([`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md) §1 y §3) y se termina con `git push origin dev` leyendo el rc sin
-pipe. La prohibición de empujar a `dev` de la §5 es solo de la web.
+encargo**: se trabaja en una **rama partida de `dev`, con PR hacia `dev`** (regla innegociable 6 del `CLAUDE.md`, 2026-10-03; antes: sobre `dev`, sin PR) y sin traspaso, se cierran los gates con la toolchain local
+([`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md) §1 y §3) y se termina con `git push origin <rama>` leyendo el rc sin
+pipe, y el PR hacia `dev`.
 
 ## 7 · Si la sesión se corta a medias
 

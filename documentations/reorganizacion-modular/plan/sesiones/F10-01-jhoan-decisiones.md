@@ -9,4 +9,4 @@
 - **D-F10-6** (tag `v0.3.0`) y el paso a `main` (F10-06) solo ocurren **si lo pides expresamente** en
   esa sesión.
 - **D-F10-7** (regla de conteo del ADR-0010) toca la documentación del ecosistema: la hace F10-05.
-- Todo F10 es **local** (💻): sin sesión web, sin PR y sin traspaso, salvo que una sesión se corte.
+- Todo F10 es **local** (💻): sin sesión web y sin traspaso, pero con rama y PR a `dev` (regla 6 del `CLAUDE.md`), salvo que una sesión se corte.

@@ -44,7 +44,7 @@ Tu encargo (y solo este):
 No aplica nivel de ceremonia E-12. Sin umbral de cobertura: los procesos son parte de lo que lo sustituye.
 Si no cabe en ~90 min, para en un punto limpio y se relanza.
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase.
-`git push origin dev` (rc sin pipe). No toques `main`. No empieces la sesión siguiente.
+Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`. No empieces la sesión siguiente.
 ```
 
 ## Al terminar debe existir
@@ -52,7 +52,7 @@ Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos 
 - En [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md): T9.30–T9.33 `[x]` con SHA.
 - Un bloque en `ESTADO.md` con los dos logs (`RC`, PASS, SKIP por binario, duración) y `F9 CERRADA <fecha>`: es la condición del relevo que lee F10.
 - El [README de F9](../F9-procesos/README.md) con el estado y los números medidos, y los hallazgos nuevos.
-- `dev` empujado.
+- PR a `dev` abierto desde la rama de la sesión.
 
 ## Si algo sale mal
 

@@ -39,7 +39,7 @@ Tu encargo (y solo este):
 Primero el bloque D (T10.15–T10.17), luego el E (T10.18–T10.21). En el E, cada tarea va en SU repo, con SU gate y commit a SU `dev`. No escribas en `docs/` de la raíz. Las citas históricas no se reescriben: se anota la ruta nueva al lado.
 T10.19: presenta a Jhoan el texto nuevo del ADR-0010 y PARA hasta que lo apruebe.
 Nivel de ceremonia: no hay inventario E-12 (F10 no reconstruye un módulo). Sin umbral de cobertura: `make cobertura-ficheros` es un informe.
-Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. `git push origin dev` (rc sin pipe) en cada repo tocado. No toques `main`.
+Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase. Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`) en cada repo tocado. No toques `main`.
 No empieces la sesión siguiente.
 ```
 

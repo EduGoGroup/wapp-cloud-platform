@@ -40,13 +40,13 @@ Tu encargo (y solo este): el cierre local de F4 y de F5.
 - Skills: validar-antes-de-cerrar, procesos-testcontainers, traspaso-web-local.
 
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase.
-`git push origin dev` (rc sin pipe). No toques `main`.
+Push de TU rama (`git push origin <rama>`, rc sin pipe) y PR a `dev` (`gh pr create --base dev`, o el PR ya abierto de esa rama; «integrar SIN squash»): nunca directo a `dev` (regla 6 del `CLAUDE.md`). No toques `main`.
 No empieces la sesión siguiente.
 ```
 
 ## Al terminar debe existir
 
-- La rama de la web integrada en `dev` **sin squash** y `dev` empujado.
+- El cierre empujado a **la rama del PR** (la de la web) y el PR listo para que Jhoan lo integre **sin squash**; nada commiteado ni fusionado directamente en `dev` (regla 6 del `CLAUDE.md`).
 - En [`../F4-inferencia/tareas.md`](../F4-inferencia/tareas.md): T4.29–T4.31 `[x]` con SHA; en [`../F5-catalogo/tareas.md`](../F5-catalogo/tareas.md): T5.20–T5.21; en [`../F9-procesos/tareas.md`](../F9-procesos/tareas.md): T9.25 y T9.26.
 - Un bloque de la sesión en `ESTADO.md`: F4 y F5 «cerrada», con la cifra de coste (ficheros, commits, horas de sesión).
 - Los hallazgos nuevos en el README de F4 y en el de F5.

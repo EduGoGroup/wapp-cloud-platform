@@ -43,8 +43,10 @@ dio por cierto). No se adapta el proyecto al entorno: ni bajar Go, ni `t.Skip`, 
   «Squash and merge».
 - **Quién fusiona** (propuesta, **decisión F-1**): por defecto **Jhoan** desde GitHub, con
   «Rebase and merge», cuando el bloque es 🌐 y el PR trae `GATE_RC=0`. Si el bloque deja tareas
-  🌐→💻, fusiona **la sesión local** tras sus gates: `git fetch origin && git checkout dev &&
-  git merge --no-ff origin/<rama>` y `git push origin dev`, leyendo cada `rc`.
+  🌐→💻, la sesión local **trabaja en la rama del PR** (gates y cierre, empujados a esa rama) y el PR lo
+  integra Jhoan igualmente. ✎ **2026-10-03, regla innegociable 6 del `CLAUDE.md`**: ninguna sesión fusiona ni commitea
+  en `dev` en local (antes: la local fusionaba con `git merge --no-ff origin/<rama>` y `git push origin dev`);
+  detalle en [`../sesiones/PROTOCOLO-CLI.md`](../sesiones/PROTOCOLO-CLI.md) §2.
 - **`dev` siempre verde**: antes de fusionar, la rama está **al día con `origin/dev`** y su gate se
   corrió **sobre esa base**. Si `dev` avanzó, la web rebasa (`git rebase origin/dev`) y empuja su
   rama (`git push --force-with-lease`; ✎ **verificado** el 2026-09-30 en F0-01: el proxy lo acepta
@@ -294,6 +296,7 @@ por IP compartida (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` lo evit
 ## 9 · Decisiones que necesita Jhoan
 
 - **F-1 · Quién fusiona los PR de la web.** Recomendación: Jhoan con «Rebase and merge» para
-  bloques 🌐; la sesión local con `merge --no-ff` para bloques 🌐→💻. Nunca squash.
+  bloques 🌐; la sesión local con `merge --no-ff` para bloques 🌐→💻. Nunca squash. ✎ **2026-10-03**: la segunda
+  mitad queda sustituida por la regla innegociable 6 del `CLAUDE.md`: todo PR lo integra Jhoan en GitHub (§2).
 - **F-2 · Aplicar las variables y el script de §3** en el entorno de claude.ai/code antes de la
   primera sesión (solo lo puede hacer Jhoan).
