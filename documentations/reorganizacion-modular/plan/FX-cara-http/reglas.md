@@ -38,7 +38,9 @@
 - Ni `git mv` ni copia por script de `publicapi` a `apipublica`: cada fichero se **crea** (E-1) por
   contrato → rojo → verde, leyendo antes los tests viejos de [`diseno.md`](diseno.md) §5.
 - `t.Skip` en `internal/apipublica` (E-5). Postgres en un test de `apipublica` (E-6): el único
-  adaptador SQL (`eventstelemetry_store.go`) tiene test unitario de mapeo y su SQL lo cubre F9.
+  adaptador SQL (`eventstelemetry_store.go`) tiene test unitario de mapeo; su puerto lleva la suite
+  `Contrato(t, func(t) Montaje)`, que corre **en memoria** aquí y **en Postgres** con el arnés de F9-A (P4).
+  La marca de estado de la suite vigila **todas** las columnas que la operación puede tocar (hallazgo 35).
 - Mudar una ruta fuera de su fila del mapa sin corregir el mapa **y** `testdata/mapa.tsv` en el
   mismo commit.
 - Un import de `apipublica` a código viejo que no esté en la lista de puentes.
@@ -51,10 +53,35 @@
    `go test ./internal/arranque -run 'Mudanzas|Huella' -v` → PASS, **0 SKIP** (contados con `-v`).
 2. En la cara vieja, los campos de `Deps` de esas rutas van a `nil` (tabla de
    [`arquitectura.md`](arquitectura.md) §4).
-3. Cada fichero nuevo de `apipublica` en verde, ≥ 80 % de sentencias (salvo
-   `eventstelemetry_store.go`), con su cabecera `Porta …`.
+3. Cada fichero nuevo de `apipublica` en verde, con su cabecera `Porta …` y **un test por promesa del
+   contrato; mutantes en el nivel complejo; procesos de F9**. Sin umbral de cobertura (P2):
+   `make cobertura-ficheros` es un informe (la tabla va al PR; no bloquea). La verdad de
+   `eventstelemetry_store.go` la da la suite contra Postgres (P4) y F9.
 4. `make ci-local; echo rc=$?` → `rc=0` (sin pipe), con la toolchain fijada.
 5. Si Fn cambia handlers de `:8100` (F2, F3, F8), el test de registro del mux admin del arranque
    nuevo pasa y la huella de `:8100` es igual.
 
+6. `FaseActual` avanza al conmutar, pero el módulo entra en `Conmutados`
+   (`internal/modulos/fronteras_test.go`) solo cuando muere su último adaptador `bridge_<x>.go`
+   (`05` §4.2). FX no crea adaptadores: nacen y mueren en las fases de módulo.
+
 **De FX entero** (F8 + F10): RX.3.d, RX.6.b y RX.6.c verdaderos.
+
+## 5 · Nivel de ceremonia y tests (`05` E-12, E-4, E-9)
+
+- **Quién clasifica**: FX no tiene inventario. Cada fichero de `apipublica` entra en el **inventario E-12 de la
+  fase que lo crea** (F2…F8), que aprueba Jhoan antes de escribir código. Si un fichero sale peor, sube de nivel.
+- **Criterio**: un handler que solo traduce HTTP ↔ puerto es **simple** (contrato, test y lógica en una pasada,
+  varios ficheros por sesión) o **medio** (rojo y verde por fichero, agrupados por paquete, un test por promesa).
+  Un fichero con store/BD (`eventstelemetry_store.go`) es **complejo**: esquema completo E-2…E-9, mutantes donde
+  haga falta y suite con `Montaje` en memoria y en Postgres (P4).
+- **No se relaja en ningún nivel**: la equivalencia viejo ↔ nuevo (huella y candado de mudanzas),
+  `make ci-local` con `rc=0` y **0 SKIP**, y los procesos de F9.
+- **Auxiliares no exportados** (P6, `05` E-4): su test nace en el **verde** y solo si llevan regla de negocio o
+  ramas no triviales. No se testea fontanería ni `if err != nil`; el resto lo cubre F9.
+- **Corpus de equivalencia** (hallazgo 40): donde un test compare viejo ↔ nuevo con una tabla de entradas
+  (patrones, caminos, valores de query, cabeceras), lleva **casos adversarios** —separadores repetidos (`a@@b`,
+  `//`), dígitos no ASCII, espacios Unicode— y no solo casos felices.
+- **Adaptadores**: un adaptador de arranque se llama `internal/arranque/bridge_<x>.go` (nivel simple, con test de
+  cableado completo). «Puente» en esta spec es siempre un **import** declarado (`05` §4.1) o la convivencia con
+  `publicapi`, y no se renombra.

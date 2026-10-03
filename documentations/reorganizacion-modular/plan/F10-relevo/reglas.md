@@ -17,6 +17,11 @@
 - 🚫 **Borrar antes de probar en UAT.** El orden es: prueba en sustitución (bloque B) → relevo en el repo
   (bloque C). Tras el borrado ya no hay oráculo ni binario viejo que restaurar desde el repo.
 - 🚫 **Borrar el arranque viejo antes de congelar su huella** (commit 1 de `arquitectura.md` §3).
+- 🚫 **Borrar `deadlock_integration_test.go` (y el resto de la integración vieja) sin que T9.15 (P3) ejerza el
+  reintento de `postgres.WithTx` y haga caer el mutante `maxTxAttempts = 1`** (hallazgo 38 de F1): es lo único que
+  hoy ejerce ese reintento. Si el mutante sobrevive, se para y se arregla P3 antes (R10.3.d, T10.11).
+- 🚫 **Empezar el relevo con un adaptador `bridge_*.go` vivo, un puente (import) declarado o `Conmutados`
+  incompleto** (`05` §4.1 y §4.2). Son tres comprobaciones distintas; la entrada exige las tres.
 - 🚫 **Dos binarios contra la misma base o los mismos puertos**, tampoco en UAT: la prueba es **en
   sustitución**, nunca al lado (`04` §2.2).
 - 🚫 **`stop` + `start`** de `wapp-cloud`: el BFF (`PartOf=`) no vuelve con el `start`; siempre `restart`.
@@ -27,7 +32,8 @@
   el relevo cambió un contrato: se para.
 - 🚫 **Reescribir citas históricas** del ecosistema (bitácoras, planes cerrados): se anota la ruta
   nueva al lado, no se falsea lo que era cierto.
-- 🚫 **Squash** al integrar la rama de la web en `dev`: los commits del relevo son pasos revertibles.
+- 🚫 **Squash** o juntar commits del relevo: un commit por tarea, directo en `dev`; cada uno es un paso revertible.
+- 🚫 **Tratar `make cobertura-ficheros` como gate**: es un informe sin umbral (P2).
 - 🚫 Un secreto en el acta de UAT: se dice dónde vive la credencial, nunca cuál es.
 
 ## 3 · Trampas conocidas
@@ -59,13 +65,20 @@ culpable y F10 vuelve a su entrada.
 L=/tmp/gate-f10.log
 GOWORK=off make ci-local > $L 2>&1; echo "GATE_RC=$?" >> $L; tail -1 $L                 # GATE_RC=0
 ls -d internal/*/                                                                           # apipublica arranque modulos nucleo platform
+ls internal/arranque/bridge_*.go 2>/dev/null | wc -l                                        # 0 adaptadores (05 §4.2)
 grep -rn 'pendiente.Implementar' --include='*.go' . | wc -l                                 # 0
 GOWORK=off go test -v ./... 2>&1 | grep -c -- '--- SKIP'                                   # 0 (o solo platform, nombrados, si D-F10-5 = no)
 grep -rn 'WAPP_PROCESOS_BINARIO' --include='*.go' --include=Makefile . | wc -l              # 0
 GOWORK=off go list -deps ./cmd/server | grep -c 'internal/bootstrap\|internal/publicapi'    # 0
 ```
 
-**De la fase**: además, `make test-procesos` `RC=0` contra `cmd/server` en local; UAT desplegado desde el
-commit del relevo con §6 y §9 del runbook verificados; traspaso `CERRADO`; `ESTADO.md` dice «relevo
+Y, leídos en `internal/modulos/fronteras_test.go`: `Puentes` (import) **vacía** y `Conmutados` con **todos** los
+módulos de F1–F8. F10 no crea ni retira adaptadores: los exige a cero desde la entrada.
+
+**De la fase**: además, `make test-procesos` `RC=0` contra `cmd/server` (necesita Docker); UAT desplegado desde el
+commit del relevo con §6 y §9 del runbook verificados; acta `CERRADO`; `ESTADO.md` dice «relevo
 hecho»; los 12 comentarios hermanos y la doc del ecosistema re-apuntados (bloque E) o, si no se
 hicieron, listados como pendientes en `ESTADO.md` con su comando de recuento.
+
+**De cada sesión** (45–90 min, todas locales): tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos
+nuevos en el README de la fase. Sin PR ni traspaso, salvo que la sesión se corte.

@@ -5,7 +5,9 @@
 > métodos, tipos, `var`/`const` de primer nivel y dentro de bloques) — **aprox.**, incluye métodos
 > exportados de tipos no exportados. 🔴 En el **rojo** solo existen exportados (regla T-1 de F1:
 > `unused` rompe el lint); los auxiliares (`motivoDe`, `avisar`, `etapa`, `plazo`, `seccion`…)
-> nacen en su `verde`.
+> nacen en su `verde`. Su test nace también en el **verde** y **solo si llevan regla de negocio o ramas no triviales**
+> (`05` E-4, P6): `motivoDe` sí (su orden de ramas es contrato, T-6); no se testea fontanería ni `if err != nil`; el resto
+> lo cubre F9. Niveles de ceremonia por paquete: §6.
 
 ## 1 · El árbol que se crea
 
@@ -16,13 +18,13 @@ internal/modulos/inferencia/
 │   └── volcar.go        volcar_test.go       porta V/prompts/volcar.go    (4 · 108 l)
 ├── degradation/
 │   ├── degradation.go   degradation_test.go  porta V/degradation/degradation.go (28 · 449 l)
-│   ├── postgres.go      postgres_test.go     porta V/degradation/postgres.go    (4 · 227 l) — fuera del umbral
+│   ├── postgres.go      postgres_test.go     porta V/degradation/postgres.go    (4 · 227 l) — su verdad: suite contra Postgres (P4) y F9
 │   └── degradationhelpertest/
 │       ├── contrato.go  (sin test propio, D-F1-3)   suite del puerto Store
 │       └── memoria.go   memoria_test.go             doble con el arbitrio del índice único
 ├── tenantllm/
 │   ├── tenantllm.go     tenantllm_test.go    porta V/tenantllm/tenantllm.go (9 · 182 l)
-│   ├── postgres.go      postgres_test.go     porta V/tenantllm/postgres.go  (6 · 222 l) — fuera del umbral
+│   ├── postgres.go      postgres_test.go     porta V/tenantllm/postgres.go  (6 · 222 l) — su verdad: suite contra Postgres (P4) y F9
 │   └── tenantllmhelpertest/
 │       ├── contrato.go  (sin test propio)
 │       └── memoria.go   memoria_test.go
@@ -34,7 +36,7 @@ internal/modulos/inferencia/
         ├── local.go         local_test.go         porta V/llmvia/local/local.go (21 · 533 l)
         └── calentamiento.go calentamiento_test.go porta V/llmvia/local/calentamiento.go (2 · 116 l)
 internal/arranque/
-└── puente_inferencia.go  puente_inferencia_test.go   adaptadores de transición (arquitectura §4)
+└── bridge_inferencia.go  bridge_inferencia_test.go   adaptador de arranque, nivel simple (arquitectura §4; `05` §4.2)
 ```
 
 26 ficheros en `N` + 2 en `internal/arranque`. Tests viejos que hay que **leer** (E-8), por paquete
@@ -80,14 +82,14 @@ nuevo: `prompts` ← `V/prompts/prompts_test.go` (7) · `degradation` ← `degra
 | `Notifier{Ventana, Ahora}` · `NewNotifier(store, ventana)` · `Record(ctx, tenant, reason, via, at) (bool, error)` · `RecordAhora` | `Record` valida tenant → motivo → vía **antes** de tocar el store; `Notifier` sin store ⇒ error (no panic); ventana ≤ 0 ⇒ 15 min, resuelto **en el uso** (un `&Notifier{}` literal se comporta igual); `LastSeenAt = at.UTC()` |
 | `VentanaDe(at, v) (inicio, fin)` | `inicio = at.UTC().Truncate(v)`, `fin = inicio+v`; v ≤ 0 ⇒ 15 min; función pura (misma clave en dos procesos y dos TZ) |
 
-### `degradation/postgres.go` (adaptador; fuera del umbral de cobertura)
+### `degradation/postgres.go` (adaptador Postgres; su verdad la da la suite contra Postgres, P4, y F9)
 
 `Postgres` · `NewPostgres(db)` · `Save` · `List`. **SQL idéntico** a `V/degradation/postgres.go:84-91`
 (`INSERT … AS n … ON CONFLICT (tenant_id, reason, via, window_start) DO UPDATE SET occurrences = n.occurrences + 1, last_seen_at = GREATEST(…) RETURNING …`, `created_at` y `last_seen_at` con el mismo `$6`)
 y `:143-150` (`NOT $2::boolean OR read_at IS NULL`, orden `window_start DESC, created_at DESC, id`).
 Unitario sin BD: extraer y probar como funciones puras `acotar` (limit ≤ 0 ⇒ 50; > 200 ⇒ 200;
 offset < 0 ⇒ 0), el «`LastSeenAt` cero ⇒ `WindowEnd`» y el mapeo `NULL read_at ⇒ cero`. Sin
-`FieldCipher` a propósito (no hay nada sensible). Su SQL lo prueba F9 con la suite.
+`FieldCipher` a propósito (no hay nada sensible). Su SQL lo prueba la suite `Contrato` corrida contra Postgres con el arnés (T4.31).
 
 ### `tenantllm/tenantllm.go`
 
@@ -112,10 +114,15 @@ DEK del ADR-0007 (la del almacén de `whatsmeow`, que custodia el cliente y nunc
 
 | Fichero | Contrato |
 |---|---|
-| `tenantllmhelpertest/contrato.go` | `func Contrato(t *testing.T, nuevo func() tenantllm.Store)`: las promesas del puerto de arriba, **con UUID bien formados** y un tenant ajeno para INV-7 (reproduce en conducta los 15 casos de `V/tenantllm/postgres_integration_test.go`, salvo los 4 `TestBackfill0073_*`, que son de la migración → F9) |
+| `tenantllmhelpertest/contrato.go` | `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (`05` E-6, P4; el `Montaje` trae el `tenantllm.Store` y los tenants sembrados): las promesas del puerto de arriba, **con UUID bien formados** y un tenant ajeno para INV-7 (reproduce en conducta los 15 casos de `V/tenantllm/postgres_integration_test.go`, salvo los 4 `TestBackfill0073_*`, que son de la migración → F9) |
 | `tenantllmhelpertest/memoria.go` + test | Doble que cumple la suite; guarda la clave en claro **solo en memoria de test**; su test corre `Contrato` |
-| `degradationhelpertest/contrato.go` | `Contrato(t, nuevo func() degradation.Store)`: N `Save` misma clave ⇒ una fila y `creado` solo el primero; ventana siguiente ⇒ fila nueva; `List` acotada al tenant, orden y `[]` no nil (de `V/degradation/postgres_integration_test.go`) |
+| `degradationhelpertest/contrato.go` | `Contrato(t, nuevo func(t) Montaje)` (ídem, con `degradation.Store`): N `Save` misma clave ⇒ una fila y `creado` solo el primero; ventana siguiente ⇒ fila nueva; `List` acotada al tenant, orden y `[]` no nil (de `V/degradation/postgres_integration_test.go`) |
 | `degradationhelpertest/memoria.go` + test | Arbitrio del índice único `(tenant, reason, via, window_start.UTC())`; cuenta llamadas (`Saves()`) para R4.5.b |
+
+Las dos suites corren **en memoria y en Postgres** con el arnés de F9-A: es lo que garantiza que el doble y el adaptador
+se comportan igual. La marca de estado de cada suite vigila **todas** las columnas que la operación puede tocar, no una
+sola (hallazgo 35): en `tenant_llm`, vía, proveedor, modelo, sobre de la clave y consentimiento; en
+`owner_degradation_notices`, `occurrences`, `last_seen_at`, `read_at` y la ventana.
 
 ### `llmvia/notify.go`
 
@@ -176,13 +183,19 @@ transporte (o `ErrSinPresupuesto`).
 
 `var _ enrutadorDeEdges = (*edgegrpc.Server)(nil)` (comprobación en compilación de `PlazaDe`) nace en verde.
 
-### `internal/arranque/puente_inferencia.go`
+### `internal/arranque/bridge_inferencia.go` (adaptador de arranque, `05` §4.2 · nivel simple)
 
-Sin exportados (patrón F1). `puenteTurnero{sel *N.Selector}` implementa el `Turnero` del
+Sin exportados, sin estado, una pasada. `turneroBridge{sel *N.Selector}` implementa el `Turnero` del
 `turnoacotado` **viejo** (`var _ turnoacotado.Turnero = …`), traduce `TurnoRequest` y el centinela
-(R4.7.c). `puenteConfigLLM{store *N/tenantllm.Postgres}` implementa `reanalisis.ConfigLLM` **viejo**
-convirtiendo `Config` campo a campo. Test: los dos caminos de cada uno, más `errors.Is` sobre el
-centinela viejo. **Muere**: `puenteConfigLLM` en F7 (conmuta `reanalisis`), `puenteTurnero` en F8.
+(R4.7.c). `llmConfigBridge{store *N/tenantllm.Postgres}` implementa `reanalisis.ConfigLLM` **viejo**
+convirtiendo `Config` campo a campo. **Muere**: `llmConfigBridge` en F7 (conmuta `reanalisis`), `turneroBridge` y el
+fichero en F8.
+
+Test (`bridge_inferencia_test.go`), dos partes obligatorias:
+- **traducción**: los dos caminos de cada tipo, más `errors.Is` sobre el centinela viejo;
+- **cableado completo** (hallazgo 39): el arranque construye el selector y los almacenes **nuevos**, *y* ninguna fase
+  de `internal/arranque` importa `internal/{llmvia,tenantllm,degradation,prompts}` viejos fuera del adaptador (grep por
+  ruta de import), no solo el campo del contenedor.
 
 ## 3 · Candados de invariante que aterrizan aquí
 
@@ -221,3 +234,22 @@ centinela viejo. **Muere**: `puenteConfigLLM` en F7 (conmuta `reanalisis`), `pue
 8. **`created_at` con el reloj de Postgres** dejaba `last_seen_at < created_at` (`degradation/postgres.go:66-76`).
 9. **`Truncate` sin `.UTC()`** partiría la ventana entre procesos con TZ distinta (`degradation.go:379-385`).
 10. **Tenant sin fila = vía `local`** y no «desconocido» (REQ-33; hoy lo son todos los tenants de UAT).
+
+## 6 · Clasificación provisional por paquete (`05` E-12)
+
+> **Provisional, sin medir: la fija el inventario E-12** (T4.1), que la baja a archivo y la aprueba Jhoan. Deducida de
+> `arquitectura.md` §4 y §5. Si un archivo sale peor, sube de nivel.
+
+| Paquete | Estado en memoria | Concurrencia | BD / transacciones | Consumidores (prod.) | Nivel provisional |
+|---|---|---|---|---|---|
+| `prompts` (2) | no | no | no | 2 (`arranque`, `cmd/prompts`) | **medio** (reglas de parseo y validación) |
+| `degradation/degradation.go` | no | no | no (puerto) | 3 | **medio** |
+| `degradation/postgres.go` + `degradationhelpertest` | no (el doble sí, de test) | no | **sí** (`ON CONFLICT`) | — | **complejo** (puerto con BD: suite con `Montaje`, memoria y Postgres) |
+| `tenantllm/tenantllm.go` | no | no | no (puerto) | 4 | **medio** |
+| `tenantllm/postgres.go` + `tenantllmhelpertest` | no (el doble sí, de test) | no | **sí** (+ cifrado) | — | **complejo** (ídem) |
+| `llmvia/local` (2) | no (inmutable) | no | no | 1 (`llmvia`) | **medio** (relojes y presupuesto) |
+| `llmvia` (2) | no (inmutable) | uso concurrente (T-4, test con `-race`); 0 goroutines | no | 7 (por interfaz, §4 de `arquitectura.md`) | **complejo** (muchos consumidores; mutantes en `motivoDe` y en la copia de opciones) |
+| `internal/arranque/bridge_inferencia.go` | no | no | no | — | **simple** (adaptador) |
+
+`c2_via_test.go` es un candado, no lleva nivel. **Adaptadores**: nace 1 fichero (`bridge_inferencia.go`, dos tipos) y
+muere 1 (`bridge_gateway.go` de F3, en T4.24).

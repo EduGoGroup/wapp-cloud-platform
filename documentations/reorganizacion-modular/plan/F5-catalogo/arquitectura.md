@@ -13,7 +13,7 @@
 
 Total (con B): **11 ficheros · 4.195 líneas** de producción; 12 ficheros · 82 `Test*` viejos que leer
 (ninguno de integración: no hay SQL en F5). **No hay adaptador Postgres** ni puerto sin gemelo:
-`05` E-6 no aplica. El único puerto (`indice.Fuente`, `cache.go:84`) tiene su adaptador puro
+`05` E-6 no aplica, ni la suite con `Montaje` (P4). **Tampoco hay adaptador de arranque** (`bridge_<x>.go`, `05` §4.2): 0 nacen, 0 mueren. El único puerto (`indice.Fuente`, `cache.go:84`) tiene su adaptador puro
 (`fuenteContenido`, sobre un `LectorContenido{GetTenantContent}` estructural) y dobles de test.
 
 Lo que **no** entra en F5 (y por qué, `04` §5):
@@ -52,7 +52,7 @@ Tests viejos con imports de fuera: `catalogimport` tests → `flujos/model`, `ca
 | `wapp-shared/textmatch` (solo en tests y en quien construye la caché: el normalizador se **inyecta**) | externo | permitido |
 | `internal/platform/config` (solo test de `contract.go`) | `platform` | permitido |
 | `modulos/conversacion/model` | módulo, **arista medida** `catalogo → conversacion` (`02` §4, ciclo 2) | permitido con D-F5-1 = B |
-| `internal/flujos/model` | **puente** al viejo | solo con D-F5-1 = A: nace en T5.2, muere en F8 re-tocando `catalog.go`, `indice/cache.go` y sus tests |
+| `internal/flujos/model` | **puente (import)** al viejo, `05` §4.1 | solo con D-F5-1 = A: nace en T5.2, muere en F8 re-tocando `catalog.go`, `indice/cache.go` y sus tests |
 
 **Por qué la arista a `model` no forma ciclo**: `model` no importa nada interno. Lo que `catalogo`
 usa de él: `model.Content{Raw map[string]any}` (entrada de `ParseCatalog`; `cache.go:306`
@@ -81,7 +81,7 @@ motor, F8): cambio de conducta, descartado (`04` §5.2).
 `catalogo.NewCache(catalogo.NewFuenteContenido(c.flowStore, ""), textmatch.Normalize, 0)`
 (`fase5_captacion.go:245`) y su consumidor `pipeline.NewWorker` pide `Catalogos{Obtener(ctx, tenant)
 (*catalogo.Indice, error)}` con el tipo **viejo** (`pipeline.go:137`, afirmado en `:158`); `stages/match.go:303`
-también. `*Indice` tiene campos no exportados: no hay adaptador posible. ⇒ el índice nuevo lo cablea
+también. `*Indice` tiene campos no exportados: no hay adaptador `bridge_<x>.go` posible. ⇒ el índice nuevo lo cablea
 **F7** al conmutar `captacion`; el modelo nuevo lo usan **F7** (`stages`, `pipeline`, `reanalisis`) y
 **F8** (`cart`, rutas I14–I17).
 

@@ -64,7 +64,7 @@ paquete (excepción de E-3), para que `go vet ./...` y los candados tengan un pa
 
 Dos mecanismos distintos, que no se confunden: el **puente de import** (`05` §4.1) es un import de
 un paquete **nuevo** a uno **viejo**, declarado en `internal/modulos/fronteras_test.go` con su
-`Muere`; el **adaptador** (D-F1-5) es un tipo no exportado en `internal/arranque/puente_<x>.go`
+`Muere`; el **adaptador** (D-F1-5; `05` §4.2) es un tipo no exportado en `internal/arranque/bridge_<x>.go`
 que deja a un consumidor **viejo** usar un objeto **nuevo** (o viceversa) sin que ningún paquete
 nuevo importe lo viejo. Sacado de las fases, con las recomendaciones de
 [`../DECISIONES.md`](../DECISIONES.md); la columna ⚠️ dice dónde discrepaban.
@@ -89,18 +89,24 @@ F1, F2, F3 y F4 no declaran ningún puente (F3: la única arista de `gateway/**`
 | Pieza | Nace | Muere | Qué adapta | ⚠️ |
 |---|---|---|---|---|
 | `bridge_contact.go` (✎ D-F1-9: era `puente_contact.go`) | F1 (T1.14) | F8 (T8.32) | `flujos/contact.Resolver` viejo (runtime, admin) ← `nucleo/contact` nuevo; F6 deja de necesitarlo para el notificador | — |
-| `puente_iam.go` | F2 (T2.28) | **F3** (T3.28 lo borra) | `in.Authenticator`/`in.Auditor` viejos del gateway viejo ← `acceso` nuevo; traduce 4 centinelas | F8 [`arquitectura.md`](../F8-conversacion/arquitectura.md) §5.2 lo daba vivo hasta F8 (corregido) |
-| `puente_gateway.go` | F3 (T3.24) | **F4** (T4.24 lo borra) | `llmvia/local.Frame` viejo (`Infer` con `InferRequest` viejo) ← `edge/grpc` nuevo; implementa `Infer` **y** `PlazaDe` (F3 reglas T-1) | F8 §5.2 lo daba hasta F8; F3 (arquitectura §4) y F4 (T4.24, reglas §5.8) dicen F4, y mandan ellas: con `llmvia` nuevo el `Frame` ya habla el tipo nuevo |
-| `puente_inferencia.go` | F4 (T4.10, T4.25) | por partes: `puenteConfigLLM` en **F7**, `puenteTurnero` en **F8** | `reanalisis` viejo pide `tenantllm.Config` viejo; `turnoacotado` viejo pide `llmvia.TurnoRequest` y `ErrViaSinTurnoAcotado` viejos (D-F4-4) | — |
-| 2.ª instancia **vieja** de `intakes.Postgres` (sin estado) | F6 (T6.24, D-F6-1) | F8 | `cart.NewProjector` viejo pide `RevisionWriter`/`ShippingEnsurer` con tipos viejos. Alternativa: `puente_intakes.go` si D-F6-1 = no | — |
-| `puente_captacion.go` | F7 (T7.23, D-F7-1) | F8 (T8.32) | `adelantoViejo`, `compositorViejo` y la clausura del sink: conversión de `WindowKey` entre el agregador/compositor viejos y `intakeahead`/`reanalisis` nuevos | — |
+| `bridge_iam.go` | F2 (T2.28) | **F3** (T3.28 lo borra) | `in.Authenticator`/`in.Auditor` viejos del gateway viejo ← `acceso` nuevo; traduce 4 centinelas | F8 [`arquitectura.md`](../F8-conversacion/arquitectura.md) §5.2 lo daba vivo hasta F8 (corregido) |
+| `bridge_gateway.go` | F3 (T3.24) | **F4** (T4.24 lo borra) | `llmvia/local.Frame` viejo (`Infer` con `InferRequest` viejo) ← `edge/grpc` nuevo; implementa `Infer` **y** `PlazaDe` (F3 reglas T-1) | F8 §5.2 lo daba hasta F8; F3 (arquitectura §4) y F4 (T4.24, reglas §5.8) dicen F4, y mandan ellas: con `llmvia` nuevo el `Frame` ya habla el tipo nuevo |
+| `bridge_inferencia.go` | F4 (T4.10, T4.25) | por partes: `llmConfigBridge` en **F7**, `turneroBridge` en **F8** | `reanalisis` viejo pide `tenantllm.Config` viejo; `turnoacotado` viejo pide `llmvia.TurnoRequest` y `ErrViaSinTurnoAcotado` viejos (D-F4-4) | — |
+| 2.ª instancia **vieja** de `intakes.Postgres` (sin estado) | F6 (T6.24, D-F6-1) | F8 | `cart.NewProjector` viejo pide `RevisionWriter`/`ShippingEnsurer` con tipos viejos. Alternativa: `bridge_intakes.go` si D-F6-1 = no | — |
+| `bridge_captacion.go` | F7 (T7.23, D-F7-1) | F8 (T8.32) | `aheadBridge`, `composerBridge` y la clausura del sink: conversión de `WindowKey` entre el agregador/compositor viejos y `intakeahead`/`reanalisis` nuevos | — |
 | 2.ª instancia **vieja** de `intake.Postgres` (sin estado) | F7 (T7.23, D-F7-1) | F8 | `NewIntakeAggregator`/`NewSourceTextComposer` viejos piden `JobStore`/`SourceTextWriter` viejos | — |
 | *(ninguno)* `entitlements.Resolver`, gw para runtime/notificador/`filtercfg`/J12–J15, puertos de solicitudes del runtime y del sink | — | — | **estructurales**: el objeto nuevo se inyecta tal cual (F2 arquitectura §4, F3 §4, F6 §4) | F8 §5.2 los daba «sin medir» |
 
 Al cerrar **F8** tienen que quedar **cero**: T8.31 retira los puentes de import de F6–F7 (y F5 si
-D-F5-1 = A), T8.32 borra los `puente_*.go` y `bridge_*.go` que queden (`bridge_contact`, ✎ D-F1-9, la parte `puenteTurnero`
-de `puente_inferencia`, `puente_captacion`) **y las dos segundas instancias viejas**; T8.34 comprueba
+D-F5-1 = A), T8.32 borra los `bridge_*.go` que queden (`bridge_contact`, la parte `turneroBridge`
+de `bridge_inferencia`, `bridge_captacion`) **y las dos segundas instancias viejas**; T8.34 comprueba
 `grep -rn 'internal/publicapi\|internal/gateway/session' internal/arranque internal/modulos internal/apipublica` → vacío.
+
+**Reglas de los adaptadores** (`05` §4.2, P5 de la parada de F1): nombre `bridge_<x>.go` y tipos en inglés;
+nivel **simple** (E-12); **test de cableado** obligatorio (el arranque construye lo nuevo **y** nadie importa
+lo viejo fuera del adaptador); los candados de fichero los incluyen; y un módulo entra en `Conmutados` cuando
+**muere su último adaptador**: `acceso` en F3, `edge` en F4, `inferencia`, `captacion` y `nucleo/contact` en
+F8. El inventario E-12 de cada fase confirma esta tabla contra el código antes de escribir nada.
 
 ### 2.2 · Los ficheros de `internal/arranque` conservan los nombres de la copia de F0
 
@@ -138,7 +144,7 @@ nombres de `04` §3, es un `refactor` aislado en F10 (decisión D-V-1 de
   lleva su test igual. Un paquete que acabe en `test` sin acabar en `helpertest` (`latest`, `huellatest`) y
   uno llamado `helpertest` a secas **no** están exentos (`internal/candados/candados.go`, `isHelperTestPackage`).
   ✎ **D-F1-13** (2026-10-02, `88b1d85`): de la **cobertura por fichero** ya no queda fuera el paquete entero, solo sus ficheros de
-  suite (`contrato.go` y `*_contrato.go`); el doble con lógica se mide (≥ 80 %). De los otros dos candados sigue fuera entero.
+  suite (`contrato.go` y `*_contrato.go`); el doble con lógica se mide (desde P2, sin umbral: es un informe). De los otros dos candados sigue fuera entero.
 - **Adaptadores Postgres**: `postgres.go`, `*_postgres.go`, `repository_postgres.go`. El nombre es
   lo que los excluye del umbral de cobertura: no se inventan otros.
 - **Nombres de fichero, identificadores y claves de wire en inglés; solo los comentarios (y la documentación)

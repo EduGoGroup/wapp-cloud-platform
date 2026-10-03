@@ -3,6 +3,29 @@
 > Comunes en [`00-marco/`](../00-marco/README.md). Aquí lo de `edge`, con `fichero:línea` sobre
 > `dev` @ `1b18932`.
 
+## 0 · Nivel de ceremonia (`05` E-12) y lo que no se relaja
+
+El nivel de cada archivo lo fija el **inventario E-12** (T3.1), que aprueba Jhoan; la clasificación provisional por
+paquete está en [`arquitectura.md`](arquitectura.md) §1.1. Si un archivo sale peor de lo previsto, sube de nivel.
+
+- **Simple**: contrato, test y lógica en **una pasada**; varios archivos por sesión. Aquí entran los adaptadores
+  `bridge_<x>.go`.
+- **Medio**: rojo y verde por archivo, **agrupados por paquete**; un test por promesa del contrato.
+- **Complejo**: el esquema completo E-2…E-9, con **mutantes** donde haga falta.
+- 🔴 **No se relaja en ningún nivel**: la equivalencia viejo ↔ nuevo, `make ci-local` rc=0 con **0 SKIP** y los
+  procesos de F9.
+- **Sin umbral de cobertura (P2)**: un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9.
+  `make cobertura-ficheros` es un informe: la tabla va al PR; no bloquea.
+- **Auxiliares no exportados (P6, `05` E-4)**: nacen con el verde, y su test también, **solo si llevan regla de
+  negocio o ramas no triviales**. No se testea fontanería ni `if err != nil`; el resto lo cubre F9.
+- **Puertos con BD (P4)**: los 7 de `edge` tienen su suite `Contrato(t, func(t) Montaje)` corrida **en memoria y en
+  Postgres** con el arnés de F9-A: es lo que garantiza que las dos implementaciones se comportan igual. La marca de
+  estado de la suite vigila **todas** las columnas que la operación puede tocar, no una sola (hallazgo 35 de F1).
+- **Corpus de equivalencia** viejo ↔ nuevo (índice ciego de `fleet`, `self_pn`): con casos **adversarios**
+  (separadores repetidos como `a@@b`, dígitos no ASCII, espacios Unicode), no solo casos felices (hallazgo 40 de F1).
+- **Adaptadores (`05` §4.2)**: `bridge_gateway.go` es nivel simple y lleva **test de cableado obligatorio y completo**
+  (hallazgo 39 de F1). `un_fichero_un_test` y el informe de cobertura incluyen los `bridge_*.go`.
+
 ## 1 · Lo que no se toca
 
 - El código viejo (`internal/gateway/**`, `internal/{diagnostics,inferstats,receipts,ingest,filtercfg}`,
@@ -20,9 +43,9 @@
 
 | # | Trampa | Dónde | Qué hacer |
 |---|---|---|---|
-| T-1 | **El aforo por Edge se apaga en silencio** si el adaptador del selector no implementa `PlazaDe`: la aserción de tipo da `false` y solo sale un `Warn` | `internal/llmvia/llmvia.go:163,411-419` | `puente_gateway.go` implementa `Infer` **y** `PlazaDe`; test con aserción de tipo (R3.6.b) |
-| T-2 | **`InferRequest` es nominal**: `local.Frame` pide el tipo **viejo** | `internal/llmvia/local/local.go:270-272` | `puente_gateway.go` convierte campo a campo; `InferError` pasa tal cual (duck-typing `Motivo()`, `llmvia/notify.go:57-70`) |
-| T-3 | **Centinelas por identidad**: I4/J19 (hasta F8) comparan `session.ErrSessionOffline` viejo | `publicapi/flows.go:235`, `flujos/admin/handlers.go:326` | `ErrSessionOffline` nuevo = el de `platform` (D-F3-2) o el puente D-FX-3; test `errors.Is(nuevo, viejo)` |
+| T-1 | **El aforo por Edge se apaga en silencio** si el adaptador del selector no implementa `PlazaDe`: la aserción de tipo da `false` y solo sale un `Warn` | `internal/llmvia/llmvia.go:163,411-419` | `bridge_gateway.go` implementa `Infer` **y** `PlazaDe`; test con aserción de tipo (R3.6.b) |
+| T-2 | **`InferRequest` es nominal**: `local.Frame` pide el tipo **viejo** | `internal/llmvia/local/local.go:270-272` | `bridge_gateway.go` convierte campo a campo; `InferError` pasa tal cual (duck-typing `Motivo()`, `llmvia/notify.go:57-70`) |
+| T-3 | **Centinelas por identidad**: I4/J19 (hasta F8) comparan `session.ErrSessionOffline` viejo | `publicapi/flows.go:235`, `flujos/admin/handlers.go:326` | `ErrSessionOffline` nuevo = el de `platform` (D-F3-2) o el puente (import) D-FX-3; test `errors.Is(nuevo, viejo)` |
 | T-4 | **Dos `grpc.Server` en el proceso** = Edge conectado a uno y envíos buscándolo en otro; acks e inferencias sin respuesta | `grpc/server.go:~255-270` | una instancia; aserciones de identidad de FX TX.11 |
 | T-5 | **`__wapp_control__` como clave** del registro filtró tokens y configs entre inquilinos (HS-14/HS-15) | `grpc/connect.go:109`, `:710`; `readiness.go:190`; ADR-0048 | tests de R3.4.a–c; `pushConfigsInBand`; **sin** fallback a `registry.Push` |
 | T-6 | **«Filtrar por `READY` obligatorio»** está **refutado**: apaga la inferencia de la flota que no reporta el campo (la mutación puso 9 tests en rojo) | `grpc/readiness.go:132-160`; ADR-0048 alternativas | `UNSPECIFIED` elegible; excluir solo `DOWN` |
@@ -36,7 +59,7 @@
 | T-14 | **D3/J16 son el mismo handler por dos vías**: encender una sola deja la otra muda sin ningún rojo | `bootstrap/arranque/fase8_transporte.go:77-85,133-138` | las dos en el **mismo** commit (FX TX.11) |
 | T-15 | **`InferError.Error()` lleva el prefijo `gatewaygrpc:`** aunque el paquete nuevo se llame `grpc` | `grpc/inference.go:193` | texto literal (diseño §5) |
 | T-16 | **Tests viejos con `time.Sleep`** como sincronización en carril/acks | `worklane_internal_test.go`, `send_cancel_internal_test.go` (sin medir cuántos) | en lo nuevo, canales y `ctx`; ni `Sleep` ni reloj real |
-| T-17 | **`unused` en rojo** (T-1 de F1) | — | solo exportados; `var _ viejo.X = (*y)(nil)` en los puentes |
+| T-17 | **`unused` en rojo** (T-1 de F1) | — | solo exportados; `var _ viejo.X = (*y)(nil)` en los adaptadores `bridge_<x>.go`; los auxiliares no exportados nacen con el verde (§0, P6) |
 
 ## 3 · Prohibiciones
 
@@ -51,10 +74,15 @@
 
 1. `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/edge | wc -l` → **0**.
 2. `make ci-local` → `GATE_RC=0` leído del log; `go test -v ./internal/modulos/edge/... | grep -c -- '--- SKIP'` → 0.
-3. `make cobertura-ficheros` ≥ 80 % salvo `*postgres*.go`.
-4. Las 7 suites verdes contra sus dobles; `go vet -tags integracion ./...` rc=0.
+3. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. La tabla de
+   `make cobertura-ficheros` va al PR como informe; no bloquea.
+4. Las 7 suites verdes contra sus dobles **y** contra Postgres con el arnés (P4); `go vet -tags integracion ./...` rc=0.
 5. Literal verde contra golden **y** `.md`; la pareja ADR-0048 verde.
-6. Un solo `grpc.Server`; `puente_gateway.go` verde; `puente_iam.go` borrado; huella igual;
-   `go.mod` sin cambio en `wapp-cloudlink`; `cmd/server` intacto.
-7. e2e local con mTLS real (T3.29); el proceso de enrolamiento corrido o anotado «no corrido» (T3.30).
-8. `ESTADO.md`, README de F3 y traspaso con `CERRADO`.
+6. Un solo `grpc.Server`; `bridge_gateway.go` verde con su test de cableado completo; `bridge_iam.go` borrado;
+   huella igual; `go.mod` sin cambio en `wapp-cloudlink`; `cmd/server` intacto.
+7. **`Conmutados`** (`internal/modulos/fronteras_test.go`): un módulo entra cuando **muere su último adaptador**, no al
+   conmutar. En F3 **nace** `bridge_gateway.go` y **muere** `bridge_iam.go` (nacido en F2): **`acceso` entra** en
+   `Conmutados` al cerrar F3; **`edge` no entra** hasta F4, cuando muere `bridge_gateway.go`. `FaseActual` sigue
+   existiendo y no cambia.
+8. e2e local con mTLS real (T3.29); el proceso de enrolamiento corrido o anotado «no corrido» (T3.30).
+9. `ESTADO.md` y README de F3 al día; traspaso con `CERRADO` si lo hubo.

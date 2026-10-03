@@ -6,11 +6,14 @@
 ## H3.1 · Contratos y rojo de todo el módulo
 
 > Como **la sesión web**, quiero el contrato y el test en rojo de cada fichero de `edge` antes que su
-> lógica, para que cada fichero nazca con lo que lo valida.
+> lógica, para que cada fichero nazca con lo que lo valida. (En nivel **simple**, contrato, test y lógica van en una
+> pasada; el nivel lo fija el inventario E-12, [`reglas.md`](reglas.md) §0.)
 
 - **R3.1.a** · **EL** contrato de cada fichero de `E/**` **DEBERÁ** llevar solo exportados, cabecera
   `// Porta <ruta vieja> @ <sha>` y cuerpos `panic(pendiente.Implementar(…))`. — Verifica:
   `golangci-lint run ./internal/modulos/edge/...` sin `unused`; ningún `return nil, nil` en rojo.
+  Los auxiliares no exportados nacen con el verde, y su test también, solo si llevan regla de negocio o ramas no
+  triviales (P6, `05` E-4); el resto lo cubre F9.
 - **R3.1.b** · **EL** `x_test.go` **DEBERÁ** llevar `//go:build pendiente` en rojo y mencionar todo
   exportado de `x.go`. — Verifica: `exportados_cubiertos_test.go`.
 - **R3.1.c** · **SI** un test de `E/**` llama a `t.Skip` o usa `time.Sleep` como sincronización,
@@ -26,10 +29,12 @@
 
 - **R3.2.a** · **CADA** puerto con implementación en memoria y en Postgres (`lease.Repository`,
   `enroll.CodeStore`, `enroll.EdgeCertRepository`, `fleet.Repository`, `diagnostics.Store`,
-  `receipts.Store`, `ingest.Deduper` ✚) **DEBERÁ** tener `<paq>test.Contrato…` con la firma de D-F1-1
-  y un doble que la pase con `-race`. — Verifica: `go test -race -v ./internal/modulos/edge/...` 0 FAIL, 0 SKIP.
-- **R3.2.b** · **CADA** adaptador Postgres **DEBERÁ** correr su suite desde un test
-  `//go:build integracion`. — Verifica: `go vet -tags integracion ./internal/modulos/edge/...` rc=0.
+  `receipts.Store`, `ingest.Deduper` ✚) **DEBERÁ** tener `<paq>helpertest.Contrato…(t, func(t) Montaje)` (firma de
+  D-F1-1) y un doble que la pase con `-race`; su marca de estado **DEBERÁ** vigilar todas las columnas que la operación
+  puede tocar. — Verifica: `go test -race -v ./internal/modulos/edge/...` 0 FAIL, 0 SKIP.
+- **R3.2.b** · **CADA** uno de esos 7 puertos **DEBERÁ** correr la **misma** suite contra su adaptador Postgres con el
+  arnés de F9-A, desde un test `//go:build integracion` (P4). — Verifica: `go vet -tags integracion ./internal/modulos/edge/...`
+  rc=0 en la web; la corrida que cuenta, en F3-05 (T3.30), 0 SKIP.
 
 ## H3.3 · 🔒 La doble llave no cambia (ADR-0007)
 
@@ -107,19 +112,25 @@
 - **R3.6.a** · **EL** arranque nuevo **DEBERÁ** construir **un** `edge/grpc.Server` y pasarlo a: los
   hooks del runtime viejo (`OnIncoming`, `OnHeartbeat`), `OnWarmup`/`OnEdgeReady` de captación, el
   `Sender` del runtime viejo, el `MessageSender` del notificador viejo de solicitudes, el
-  `ConfigPusher` de `filtercfg` nuevo, el `Deps.ConfigPush` de la cara vieja (E2, hasta F7), los handlers de `:8100` J12–J15 y (por `puente_gateway.go`)
+  `ConfigPusher` de `filtercfg` nuevo, el `Deps.ConfigPush` de la cara vieja (E2, hasta F7), los handlers de `:8100` J12–J15 y (por `bridge_gateway.go`)
   el `local.Frame` y el `enrutadorDeEdges` del selector LLM viejo. — Verifica: aserciones de
-  identidad de FX TX.11 (`==` sobre el puntero o sobre `puenteGateway.gw`).
-- **R3.6.b** · **EL** adaptador `puente_gateway.go` **DEBERÁ** implementar **también** `PlazaDe`:
+  identidad de FX TX.11 (`==` sobre el puntero o sobre `gatewayBridge.gw`).
+- **R3.6.b** · **EL** adaptador `bridge_gateway.go` **DEBERÁ** implementar **también** `PlazaDe`:
   sin él, `llmvia.go:163` (`s.frame.(enrutadorDeEdges)`) da `false` y el aforo por Edge queda
-  **inerte sin error**. — Verifica: `puente_gateway_test.go` con aserción de tipo sobre la interfaz.
+  **inerte sin error**. — Verifica: `bridge_gateway_test.go` con aserción de tipo sobre la interfaz.
 - **R3.6.c** · **EL** binario nuevo **NO DEBERÁ** enlazar `internal/gateway/grpc` salvo por
-  `puente_gateway.go` y `llmvia` viejo, ni instanciar un `gatewaygrpc.Server` viejo. — Verifica:
+  `bridge_gateway.go` y `llmvia` viejo, ni instanciar un `gatewaygrpc.Server` viejo. — Verifica:
   `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío.
-- **R3.6.d** · **CUANDO** conmute `edge`, `puente_iam.go` (F2) **DEBERÁ** borrarse: el gw nuevo
-  recibe el `in.Authenticator` e `in.Auditor` **nuevos** de `acceso`. — Verifica: `ls internal/arranque/puente_iam.go` → no existe.
+- **R3.6.d** · **CUANDO** conmute `edge`, `bridge_iam.go` (F2) **DEBERÁ** borrarse: el gw nuevo
+  recibe el `in.Authenticator` e `in.Auditor` **nuevos** de `acceso`; y, muerto su último adaptador, `acceso` **DEBERÁ**
+  entrar en `Conmutados` (`edge` no, hasta F4). — Verifica: `ls internal/arranque/bridge_iam.go` → no existe;
+  `internal/modulos/fronteras_test.go`.
 - **R3.6.e** · **EL** binario nuevo **DEBERÁ** servir por `apipublica` D1–D6 (E1–E2 siguen en la vieja hasta F7) y por los
   handlers nuevos J12–J17 (D3/J16 y D4/J17 en el mismo commit). — Verifica: `huella_test.go` y FX TX.11.
+- **R3.6.f** · **EL** test de cableado de `bridge_gateway.go` **DEBERÁ** afirmar que el arranque construye el
+  `edge/grpc.Server` **nuevo** *y* que ninguna fase de `internal/arranque` importa `internal/gateway/grpc` fuera del
+  adaptador (grep por ruta de import), no solo el campo del contenedor (`05` §4.2, hallazgo 39 de F1). — Verifica:
+  `go test -run Cableado ./internal/arranque` (T3.25).
 
 ## H3.7 · El kill-switch se prueba de punta a punta
 

@@ -33,7 +33,7 @@ por algún helper del paquete; AST = usa `go/parser`. Detalle por fichero en [`d
 **Nuevos ✚** (no están en `04` §3): `A/iam/infra/memory/redeem_store.go` (gemelo del canje),
 `A/platformadmin/puertos.go` y `A/platformadmin/access_requests_postgres.go` (D-F2-3),
 `A/iam/ports/out/outhelpertest/` (suites), `A/entitlements/entitlementshelpertest/` (suite + `Fake`, D-F2-4),
-`A/platformadmin/platformadminhelpertest/` (suite + doble), `internal/arranque/puente_iam.go`.
+`A/platformadmin/platformadminhelpertest/` (suite + doble), `internal/arranque/bridge_iam.go` (adaptador de arranque, `05` §4.2).
 
 ## 2 · Grafo interno y orden de las pasadas
 
@@ -53,9 +53,10 @@ iam/transport/http      → iam/domain, iam/ports/in
 platformadmin           → iam/domain, iam/infra/postgres, iam/ports/out, platform/httpapi, platform/ratelimit
 ```
 
-**Orden de la pasada de contratos (hojas primero)** y el mismo para la de verde:
+**Orden de construcción (hojas primero)**; dentro de cada paquete, la ceremonia de su nivel E-12
+([`diseno.md`](diseno.md) §1.1):
 `entitlements` · `iam/domain` → `iam/ports/out` (+ `outhelpertest`) · `iam/ports/in` → `iam/infra/memory` ·
-`iam/infra/identity` → `iam/usecase` → `iam/infra/postgres` → `iam/transport/http` → `platformadmin`.
+`iam/infra/identity` → `iam/usecase` → `iam/infra/postgres` (+ `entitlements/postgres.go`) → `iam/transport/http` → `platformadmin`.
 
 ## 3 · Imports hacia fuera del módulo
 
@@ -66,7 +67,7 @@ platformadmin           → iam/domain, iam/infra/postgres, iam/ports/out, platf
 | `github.com/EduGoGroup/identity-shared/auth{,/jwt,/rbac}` | `iam/usecase` (`exchange.go`, `grants.go`) | 🔒 **la única dependencia `edugo`-del-grupo permitida** (SDK del SSO; constitución I-ECO-4). No añadir otra |
 | `wapp-shared/{auth/jwt,logger}`, `google/uuid`, `jackc/pgx/v5/pgconn` | varios | externas ya en `go.mod` |
 
-**Puentes al código viejo: cero.** Ningún paquete viejo de `acceso` importa otro módulo que no sea
+**Puentes (import, `05` §4.1) al código viejo: cero.** Ningún paquete viejo de `acceso` importa otro módulo que no sea
 `platform` (medido: la lista de arriba). Por eso **el ciclo 1 de `02` §4 desaparece**: las aristas
 `acceso→operador`/`operador→acceso` quedan dentro del módulo fusionado, `plataforma→acceso` y
 `plataforma→edge` las quita F0, y `edge→acceso` es la dirección permitida. Comprobación al cerrar:
@@ -74,29 +75,34 @@ platformadmin           → iam/domain, iam/infra/postgres, iam/ports/out, platf
 
 Lista blanca en `internal/modulos/fronteras_test.go`: `acceso → platform` y nada más.
 
-## 4 · Quién consume `acceso` desde el código viejo — y el puente de tipos
+## 4 · Quién consume `acceso` desde el código viejo — y el adaptador de arranque
 
 Consumidores de producción de los paquetes viejos (medido: `go list` inverso):
 
 | Paquete viejo | Lo importan (producción) | ¿Qué tipo cruza? | En el binario nuevo tras F2 |
 |---|---|---|---|
 | `entitlements` | `bootstrap/arranque` (4 ficheros), `flujos/events`, `flujos/runtime` (4), `reanalisis`, `publicapi` (6), `iam/infra/{memory,postgres}` | la interfaz `Resolver` (`Has`, `ListEffective`, `CacheTTL`: solo stdlib) y las constantes `Feature*` | **estructural**: el resolver nuevo se inyecta tal cual en los consumidores viejos. Las constantes son `string` sin tipo: el viejo sigue usando las suyas, mismos valores |
-| `iam/ports/in` | `bootstrap/arranque`, `gateway/grpc`, `publicapi`, (`platform/httpapi` hasta F0) | `in.Authenticator` (`LoginInput`, `RefreshInput`, `LogoutInput`, `domain.AuthResult`), `in.Auditor` (`AuditInput`, `[]domain.AuditEvent`) | **nominal**: el gateway viejo (hasta F3) necesita `puente_iam.go` |
-| `iam/domain` | `gateway/grpc` (`auth.go:200-206` compara 4 centinelas con `errors.Is`), `publicapi` | centinelas y `AuthResult` | ídem: el puente **traduce los centinelas** nuevos a los viejos |
+| `iam/ports/in` | `bootstrap/arranque`, `gateway/grpc`, `publicapi`, (`platform/httpapi` hasta F0) | `in.Authenticator` (`LoginInput`, `RefreshInput`, `LogoutInput`, `domain.AuthResult`), `in.Auditor` (`AuditInput`, `[]domain.AuditEvent`) | **nominal**: el gateway viejo (hasta F3) necesita el adaptador `bridge_iam.go` |
+| `iam/domain` | `gateway/grpc` (`auth.go:200-206` compara 4 centinelas con `errors.Is`), `publicapi` | centinelas y `AuthResult` | ídem: el adaptador **traduce los centinelas** nuevos a los viejos |
 | `iam/transport/http` · `platformadmin` · `iam/usecase` · `iam/infra/*` | solo `bootstrap/arranque` y `publicapi` | — | el arranque nuevo cablea los nuevos; `publicapi` viejo recibe `nil` en `Roles`, `Members`, `Invitations`, `Audit` (FX §4) |
 
-`internal/arranque/puente_iam.go` (nace en F2, **muere en F3** cuando el gw nuevo recibe el
-`in.Authenticator` nuevo), sin exportados, patrón de F1:
+`internal/arranque/bridge_iam.go` (nace en F2, **muere en F3** cuando el gw nuevo recibe el
+`in.Authenticator` nuevo), sin exportados, sin estado, nivel **simple** (`05` §4.2):
 
-- `puenteAutenticador` implementa el `in.Authenticator` **viejo** sobre el `usecase.DelegatedAuthService`
+- `authenticatorBridge` implementa el `in.Authenticator` **viejo** sobre el `usecase.DelegatedAuthService`
   **nuevo**: copia `LoginInput/RefreshInput/LogoutInput` campo a campo, convierte `domain.AuthResult`
   nuevo → viejo, y **traduce errores**: `errors.Is(err, nuevo.ErrX)` → devuelve `fmt.Errorf("%w", viejo.ErrX)`
   envolviendo el original, para los centinelas que el gateway viejo compara (`ErrInvalidCredentials`,
   `ErrUserInactive`, `ErrRefreshInvalid`, `ErrInvalidInput`); el resto pasa tal cual.
-- `puenteAuditor` implementa el `in.Auditor` **viejo** (`Record` con el `AuditInput` alias de
+- `auditorBridge` implementa el `in.Auditor` **viejo** (`Record` con el `AuditInput` alias de
   `platform` —mismo tipo en los dos lados tras F0— y `ListAudit` convirtiendo `[]domain.AuditEvent`).
-- `var _ viejoin.Authenticator = (*puenteAutenticador)(nil)` y el hermano, para que `unused` no los
+- `var _ viejoin.Authenticator = (*authenticatorBridge)(nil)` y el hermano, para que `unused` no los
   marque (T-1 de F1).
+
+**Adaptadores de la fase**: nace **1** (`bridge_iam.go`), muere **0**. `entitlements` no necesita adaptador (el puerto
+viejo es estructural). Por eso `acceso` entra en `Conmutados` (`internal/modulos/fronteras_test.go`) en **F3**, cuando
+muere `bridge_iam.go`, no al conmutar; `FaseActual` no cambia de significado. `un_fichero_un_test` y el informe de
+cobertura incluyen `bridge_iam.go`.
 
 ## 5 · Estado en memoria, goroutines, métricas y relojes
 
@@ -128,11 +134,13 @@ Qué fases del arranque (copia de F0) tocan `acceso` hoy (`internal/bootstrap/ar
 
 `conmutar(acceso)` cambia, **en la copia de `internal/arranque`** (el viejo no se toca): los imports a
 `internal/modulos/acceso/...`; `c.entResolver` pasa a `*acceso/entitlements.Postgres`; el gateway
-(aún viejo) recibe `puente_iam`; `http.go` monta A1–A7 en `apipublica`
+(aún viejo) recibe los tipos de `bridge_iam.go`; `http.go` monta A1–A7 en `apipublica`
 (FX TX.7); `rutas_admin.go` construye J4–J11 **inline** con `platformadmin.*` nuevo
 (I-CP-5). La huella (`huella_test.go`) tiene que dar lo mismo: rutas, permisos, rpc, métricas,
-goroutines. **Cómo se prueba que usa lo nuevo**: `go list -deps ./cmd/server-modular` (R2.5.d) y una
-aserción de cableado en `internal/arranque` sobre el tipo concreto de `c.entResolver`.
+goroutines. **Cómo se prueba que usa lo nuevo**: `go list -deps ./cmd/server-modular` (R2.5.d) y el
+**test de cableado** (T2.29, obligatorio y completo): el arranque construye el resolver, el autenticador y el
+auditor **nuevos**, *y* ninguna fase de `internal/arranque` importa `internal/iam/...`, `internal/entitlements`
+ni `internal/platformadmin` fuera de `bridge_iam.go` (grep por ruta de import). No basta el tipo de `c.entResolver`.
 
 ## 7 · Rutas (autoridad: [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md))
 

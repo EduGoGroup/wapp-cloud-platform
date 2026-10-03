@@ -27,6 +27,28 @@ Comandos: los de F2 (`ls`/`wc -l`/recorrido `go/ast`/`grep -c '^func Test'`; BD 
 `grpc/auth.go` 378 · `grpc/server.go` 364. `grpc` sola es la mitad del módulo: se verdea en tres
 tandas (T3.21–T3.23).
 
+### 1.1 · Nivel provisional por paquete (`05` E-12)
+
+**Provisional, sin medir: la fija el inventario E-12 (T3.1), archivo a archivo, y la aprueba Jhoan.** Deducida de las
+tablas de §1 y §5. El nº de consumidores por paquete está **sin medir** (solo se conoce el de `grpc.Server`, §4).
+
+| Paquete nuevo | Estado en memoria | Concurrencia | BD | Nivel provisional |
+|---|---|---|---|---|
+| `E/session` | sí (registro de sesiones vivas) | sí (envíos serializados, `Send` acotado) | no | **complejo** |
+| `E/inferstats` | sí (último parte por Edge) | sí | no | **complejo** (pequeño: 233 l) |
+| `E/receipts` | no | no | sí (`postgres.go`) | **medio**; el adaptador Postgres, complejo |
+| `E/ingest` | caché de poda | sin medir | sí (`postgres.go`) | **medio**; el adaptador Postgres, complejo; `deduper.go` ✚ (solo interfaz), simple |
+| `E/diagnostics` | no | no | sí (`postgres.go`) | **medio**; el adaptador Postgres, complejo |
+| `E/lease` 🔒 | no | sin medir | sí (y escribe en `public.tenants`) | **complejo** (kill-switch, ADR-0007) |
+| `E/enroll` | no | sin medir | sí (consumo atómico del código) | **medio**; `store_postgres.go`, complejo; `doc.go` sin test |
+| `E/fleet` | no | sin medir | sí (921 l de SQL, cifrado e índice ciego) | **complejo** |
+| `E/fleet/fleethelpertest` | doble | — | no | **medio** (`slowrepo.go` tiene lógica) |
+| `E/filtercfg` | no | no | no (lee por `Source`) | **medio** (reglas R-C1…R-C5) |
+| `E/grpc` | sí (acks, inferencias, readiness) | sí (carril por sesión, fan-out) | vía puertos | **complejo** (ADR-0048) |
+| `internal/arranque/bridge_gateway.go` | no | no | no | **simple** (adaptador, `05` §4.2) |
+
+**Adaptadores de arranque**: nace **1** (`bridge_gateway.go`, muere en F4) y muere **1** (`bridge_iam.go`, nacido en F2).
+
 ## 2 · Grafo interno y orden
 
 `GOWORK=off go list -f '{{.ImportPath}} {{.Imports}}' ./internal/gateway/... ./internal/{diagnostics,inferstats,receipts,ingest,filtercfg}`:
@@ -52,7 +74,7 @@ Orden de contratos y de verde: hojas (`session`, `inferstats`, `receipts`, `inge
 | `wapp-cloudlink v0.17.0` (`gen/wapp/cloudlink/v1`, `transport`, `lease`) | `grpc`, `lease`, `session`, `enroll`, `receipts` | 🔒 externa, **versión fija** |
 | `wapp-shared/{envelope,logger}`, `grpc`, `protobuf` | `grpc`, `enroll` | externas |
 
-**Puentes al código viejo: cero** (contradicción 2 del README). Lista blanca en
+**Puentes (imports) al código viejo: cero** (contradicción 2 del README). Lista blanca en
 `fronteras_test.go`: `edge → {platform, nucleo, acceso}`. Comprobación:
 `go list -deps ./internal/modulos/edge/... | grep -E 'internal/(gateway|flujos|iam|entitlements|intake|llmvia)'` → vacío.
 
@@ -65,10 +87,10 @@ Consumidores del `*gatewaygrpc.Server` hoy (`grep -n 'c\.gw' internal/bootstrap/
 | `flujos/runtime` (F8) | `flowruntime.New(…, c.gw, …)` (`fase7_flujos.go:228`): `Sender` = `SendText`, `SendMedia` | stdlib + `*cloudlinkv1.Ack` | **estructural**: gw nuevo tal cual |
 | hooks `c.gw.OnIncoming/OnHeartbeat/OnWarmup/OnEdgeReady` (`fase7_flujos.go:127-222`) | campos `func` | stdlib + `cloudlinkv1` | **estructural** |
 | `intakes.Notifier` (F6) | `intakes.NewNotifier(c.gw, …)` (`fase6_solicitudes.go:42`), `MessageSender.SendText` | ídem; lee `CommandID()` por duck-typing (`intakes/notifier.go:141`) | **estructural** |
-| `llmvia.Selector` + `llmvia/local.Provider` (F4) | `llmvia.WithFrame(c.gw)` (`fase5_captacion.go:92`): `local.Frame.Infer(ctx, tenantID, gatewaygrpc.InferRequest)` (`llmvia/local/local.go:270-272`); capacidad **opcional** `PlazaDe` por aserción de tipo (`llmvia.go:163`, `:411-419`) | `InferRequest` **viejo** (nominal); `*InferError` se lee por `Motivo()` duck-typed (`llmvia/notify.go:57`) | **`internal/arranque/puente_gateway.go`** (nace F3, muere F4): convierte `InferRequest` viejo → nuevo campo a campo y expone `PlazaDe`. `Clase*` son `string` sin tipo: mismos valores |
+| `llmvia.Selector` + `llmvia/local.Provider` (F4) | `llmvia.WithFrame(c.gw)` (`fase5_captacion.go:92`): `local.Frame.Infer(ctx, tenantID, gatewaygrpc.InferRequest)` (`llmvia/local/local.go:270-272`); capacidad **opcional** `PlazaDe` por aserción de tipo (`llmvia.go:163`, `:411-419`) | `InferRequest` **viejo** (nominal); `*InferError` se lee por `Motivo()` duck-typed (`llmvia/notify.go:57`) | **`internal/arranque/bridge_gateway.go`** (nace F3, muere F4): convierte `InferRequest` viejo → nuevo campo a campo y expone `PlazaDe`. `Clase*` son `string` sin tipo: mismos valores |
 | `platform/httpapi` (J12–J15: `RevokeLease`, `RevokeTenant`, `RestoreTenant`, `SendText`) | interfaces de `admin.go` | stdlib; errores por `errors.Is(ErrSessionOffline)` (tras F0, el de `platform`) y duck-typing `StreamCaido()`, `CommandID()` (`admin.go:343-352`) | **estructural** |
 | `publicapi` viejo (D1, D5, E2) | `Deps.Sender/DiagnosticsRequester/ConfigPush` | `ConfigPusher` estructural | `Sender`/`DiagnosticsRequester` **`nil`** (rutas mudadas, FX TX.11); `ConfigPush` = **gw nuevo** hasta F7 (E2 sigue en la vieja, D-FX-1/D-F7-4) |
-| `flujos/admin` + `publicapi/flows.go` (I4, J19 hasta F8) | comparan `session.ErrSessionOffline` (`flujos/admin/handlers.go:326`, `publicapi/flows.go:235`) | centinela | identidad compartida vía `platform` (D-F3-2, recomendación; alternativa: puente de FX D-FX-3) |
+| `flujos/admin` + `publicapi/flows.go` (I4, J19 hasta F8) | comparan `session.ErrSessionOffline` (`flujos/admin/handlers.go:326`, `publicapi/flows.go:235`) | centinela | identidad compartida vía `platform` (D-F3-2, recomendación; alternativa: puente (import) de FX D-FX-3) |
 | `ConfigProvider` del arranque (`auth.go:457-638`: jwks, intents, filters) | `WithConfigProvider` | `[]gatewaygrpc.ConfigPayload` | el arranque (que puede importar viejo y nuevo) devuelve el tipo **nuevo** |
 
 Otros adaptadores del arranque cuyo tipo cambia en F3: `receipts.NewSink(…, c.mtx.Receipt)`
@@ -112,9 +134,11 @@ con `mtls.ServerCreds` de `wapp-cloudlink` —TLS 1.3 y `RequireAndVerifyClientC
 `internal/arranque`: imports a `internal/modulos/edge/...`, un `grpc.New(session.NewRegistry(session.WithSendTimeout(cfg.GRPCPushTimeout)), …)`
 con las mismas 12 opciones y los mismos valores (`WAPP_GRPC_PUSH_TIMEOUT` 10 s, `WAPP_GRPC_ACK_TIMEOUT`
 8 s, `WAPP_GATEWAY_WORK_QUEUE` 64, `WAPP_GATEWAY_WORK_TIMEOUT` 5 s), `WithAuthenticator`/`WithAuthAuditor`
-con los de `acceso` **nuevos** (se borra `puente_iam.go`), el `puente_gateway.go` para el selector.
+con los de `acceso` **nuevos** (se borra `bridge_iam.go` y `acceso` entra en `Conmutados`), el adaptador
+`bridge_gateway.go` para el selector (`edge` entra en `Conmutados` cuando muera, en F4).
 **Cómo se prueba que usa lo nuevo**: `go list -deps ./cmd/server-modular | grep internal/gateway/`
-→ solo `internal/gateway/grpc` (lo arrastra `llmvia` viejo hasta F4); aserciones de identidad de FX
+→ solo `internal/gateway/grpc` (lo arrastra `llmvia` viejo hasta F4); el test de cableado de `bridge_gateway.go`
+(ninguna fase importa el gw viejo fuera del adaptador, grep por ruta de import); aserciones de identidad de FX
 TX.11; huella igual (2 rpc, rutas, métricas, goroutines).
 
 ## 7 · Rutas (autoridad: FX `mapa-de-rutas.md` §2.4, §2.5, §3)

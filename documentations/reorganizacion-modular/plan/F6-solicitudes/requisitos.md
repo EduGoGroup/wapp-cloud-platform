@@ -52,10 +52,11 @@
 - **R6.2.e** · **SI** una de estas reglas solo se puede comprobar con BD, **ENTONCES** **DEBERÁ**
   estar como aserción de un proceso de F9 (P5). — Verifica: `R9.6.c` de F9 (`TestP5_AprobarDosVecesUnSoloEfecto`).
 
-## H6.3 · Los puertos nacen cubiertos sin BD
+## H6.3 · Los puertos nacen cubiertos, en memoria y en Postgres
 
 > Como **la sesión web**, quiero que cada puerto con adaptador Postgres tenga su suite de contrato
-> corrida ya por un doble en memoria, para no esperar a F9 para saber si el comportamiento es el pactado.
+> `Contrato(t, func(t) Montaje)` corrida por un doble en memoria y, con el arnés, contra Postgres (P4),
+> para saber que los dos se comportan igual.
 
 - **R6.3.a** · **EL** puerto `intakes.Store` **DEBERÁ** tener `intakeshelpertest.Contrato(t, …)` y
   **EL** `MemoryStore` nuevo **DEBERÁ** pasarla en unitario. — Verifica:
@@ -64,10 +65,12 @@
   un doble nuevo `integrationshelpertest.Memoria` (el paquete no tiene gemelo, `05` E-6). — Verifica:
   `go test ./internal/modulos/solicitudes/integrations/integrationshelpertest/`.
 - **R6.3.c** · **EL** puerto `tenantvars.Store` **DEBERÁ** tener `tenantvarshelpertest.Contrato`, que
-  pasan `MemoryStore` (unitario) y `Postgres` (F9). — Verifica: ídem.
+  pasan `MemoryStore` (unitario) y `Postgres` (arnés, T6.27). — Verifica: ídem.
 - **R6.3.d** · **DONDE** un fichero sea adaptador Postgres (`*postgres*.go`, D-F6-6), **SU** test
   unitario **DEBERÁ** cubrir constructor, validación, mapeo de filas y de errores con funciones
   puras, sin BD. — Verifica: `grep -rn 'sql.Open\|WAPP_TEST_DB_DSN' internal/modulos/solicitudes` vacío.
+- **R6.3.e** · **LA** marca de estado de cada suite **DEBERÁ** vigilar todas las columnas que la operación
+  puede tocar, no una sola (hallazgo 35 de F1). — Verifica: revisión del `contrato.go` de cada `…helpertest`.
 
 ## H6.4 · El contrato CRM no se mueve ni un campo
 
@@ -112,13 +115,15 @@
 - **R6.6.a** · **EL** arranque nuevo **DEBERÁ** construir **un solo** `intakes.Service` (nuevo),
   **un solo** notificador y **un solo** par de recordatorios, y dárselos al motor viejo por sus
   puertos estructurales (`IntakeAbandoner`, `DepositReminder`). — Verifica: test de cableado
-  `internal/arranque/solicitudes_cableado_test.go` (T6.24).
+  `internal/arranque/solicitudes_cableado_test.go` (T6.24), que además afirma por grep de import que
+  ninguna fase importa los paquetes viejos de solicitudes fuera del sitio declarado para el carrito.
 - **R6.6.b** · **EL** carrito viejo **DEBERÁ** recibir el escritor de revisiones y el garante del
-  envío por la vía que decida D-F6-1, con fecha de muerte F8 anotada. — Verifica: ídem + tabla de
+  envío por la vía que decida D-F6-1 (segunda instancia vieja o adaptador `bridge_intakes.go`), con
+  fecha de muerte F8 anotada. — Verifica: ídem + tabla de
   [`arquitectura.md`](arquitectura.md) §4.
 - **R6.6.c** · **EL** `WebhookSink` viejo **DEBERÁ** encolar por el `integrations.Postgres` nuevo y
   consultar el `EntitlementsGate` nuevo (puertos estructurales `crmpush.Queuer`/`Gate`). — Verifica: ídem.
-- **R6.6.d** · **SI** `internal/modulos/solicitudes/**` importa un paquete viejo fuera del puente
+- **R6.6.d** · **SI** `internal/modulos/solicitudes/**` importa un paquete viejo fuera del puente (import)
   declarado (`telemetria → internal/flujos/store`), **ENTONCES EL** gate **DEBERÁ** fallar. —
   Verifica: `fronteras_test.go`.
 
@@ -129,6 +134,7 @@
 
 - **R6.7.a** · **DONDE** D-F9-1 (F9 adelantado) esté aceptada, **LA** sesión local **DEBERÁ** correr
   las suites de contrato de `intakes`, `integrations` y `tenantvars` contra Postgres y P5/P6 contra
-  `viejo` y `nuevo` (T9.27). — Verifica: traspaso `TRASPASO-F6-solicitudes.md`, sección `CERRADO`.
+  `viejo` y `nuevo` (T9.27). — Verifica: el bloque de F6-06 en `ESTADO.md` y, mientras existan los dos
+  entornos, la sección `CERRADO` del traspaso `TRASPASO-F6-solicitudes.md`.
 - **R6.7.b** · **EL** binario `cmd/server` **NO DEBERÁ** cambiar. — Verifica:
   `git diff <sha-inicio>..HEAD -- cmd/server internal/bootstrap internal/publicapi internal/intakes internal/integrations internal/tenantvars` vacío.

@@ -8,7 +8,7 @@ flowchart LR
     S1["cmd/server"] --> B["internal/bootstrap → bootstrap/arranque<br/>(el viejo, lo que corre en UAT)"]
     S2["cmd/server-modular"] --> A1["internal/arranque"]
     B --> V["26 directorios viejos<br/>+ internal/publicapi"]
-    A1 --> N1["internal/modulos · nucleo · apipublica<br/>(0 puentes: nada del nuevo importa lo viejo)"]
+    A1 --> N1["internal/modulos · nucleo · apipublica<br/>(0 puentes de import, 0 adaptadores bridge_*.go)"]
     B --> P1["internal/platform"]
     A1 --> P1
   end
@@ -20,8 +20,9 @@ flowchart LR
   antes ==> despues
 ```
 
-Con **cero puentes** a la entrada (condición de F8), el grafo del binario nuevo ya no toca ningún
-paquete viejo: el borrado de F10 no rompe `cmd/server-modular` ni un solo test nuevo. Lo único que
+Con **cero puentes (import)** en `fronteras_test.go`, **cero adaptadores `bridge_*.go`** en `internal/arranque` y
+**`Conmutados` completo** a la entrada (condición de F8; `05` §4.1 y §4.2), el grafo del binario nuevo ya no toca
+ningún paquete viejo: el borrado de F10 no rompe `cmd/server-modular` ni un solo test nuevo. Lo único que
 todavía importa lo viejo es **el arranque viejo, sus binarios y sus tests**, y eso es justo lo que se
 borra.
 
@@ -61,9 +62,10 @@ no resucita el arranque viejo.
 
 | Candado (`05` §5) | Antes de F10 | Después |
 |---|---|---|
-| `internal/modulos/fronteras_test.go` | Lista blanca + lista de puentes | Lista de puentes **vacía** y prohibida de crecer (caso `muerde`) |
+| `internal/modulos/fronteras_test.go` | Lista blanca + lista de puentes (import) + `Conmutados` | Lista de puentes (import) **vacía** y prohibida de crecer (caso `muerde`); `Conmutados` con todos los módulos |
+| Adaptadores `internal/arranque/bridge_*.go` (`05` §4.2) | Cero (el último murió antes de F10) | Cero: tras el borrado no hay tipo viejo que adaptar |
 | `internal/modulos/un_fichero_un_test_test.go` · `exportados_cubiertos_test.go` | Sobre el árbol nuevo | Igual |
-| `make cobertura-ficheros` | ≥ 80 % por fichero en verde | Igual (ya no hay ficheros en rojo) |
+| `make cobertura-ficheros` | **Informe** sin umbral (P2): se mira, no bloquea | Igual |
 | `internal/arranque/huella_test.go` | Viejo en ejecución ↔ nuevo | **Dorada** ↔ arranque único. La dorada solo se regenera con decisión escrita (cambiar una ruta, rpc, métrica o variable es cambiar un contrato: `03` §1) |
 | `go vet -tags pendiente` | En `ci-local` | Fuera con D-F10-3 |
 | `test/procesos/sin_bd_viva_test.go` | Sobre `test/procesos` | Igual |

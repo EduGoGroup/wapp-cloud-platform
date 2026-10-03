@@ -5,29 +5,36 @@
 
 ## H8.1 · Inventario verificado antes de tocar nada
 
-> Como **la sesión web**, quiero **re-medir el módulo y la lista real de puentes y adaptadores**
-> contra `dev`, para **no reconstruir sobre cifras de otra fecha**.
+> Como **la sesión**, quiero **re-medir el módulo, clasificarlo por niveles (E-12) y listar los puentes
+> (import) y adaptadores reales** contra `dev`, para **no reconstruir sobre cifras de otra fecha**.
 
-- **R8.1.a** · **CUANDO** empiece F8, **LA** sesión web **DEBERÁ** re-contar ficheros, líneas y
+- **R8.1.a** · **CUANDO** empiece F8, **LA** sesión **DEBERÁ** re-contar ficheros, líneas y
   exportados de los 14 paquetes viejos y dejar el resultado en el `README.md`. — Verifica: los
   comandos de [`README.md`](README.md) §Tamaño; diff con la tabla ≤ lo que haya entrado en `dev`.
-- **R8.1.b** · **LA** sesión web **DEBERÁ** listar los puentes declarados en
+- **R8.1.b** · **LA** sesión **DEBERÁ** listar los puentes (import) declarados en
   `internal/modulos/fronteras_test.go` que apuntan a `internal/flujos/**` o `internal/turnoacotado`
-  y los ficheros `internal/arranque/puente_*.go`. — Verifica: `grep -n 'flujos\|turnoacotado' internal/modulos/fronteras_test.go` · `ls internal/arranque/puente_*.go`.
+  y los adaptadores `internal/arranque/bridge_*.go` vivos. — Verifica: `grep -n 'flujos\|turnoacotado' internal/modulos/fronteras_test.go` · `ls internal/arranque/bridge_*.go`.
 - **R8.1.c** · **SI** la lista real difiere de [`arquitectura.md`](arquitectura.md) §5, **ENTONCES
-  LA** sesión web **DEBERÁ** corregir esa tabla en el mismo commit y avisar en el README. — Verifica:
+  LA** sesión **DEBERÁ** corregir esa tabla en el mismo commit y avisar en el README. — Verifica:
   el diff de T8.2 toca `arquitectura.md` §5 y el README.
+- **R8.1.d** · **ANTES** de escribir código, **LA** sesión **DEBERÁ** presentar el inventario E-12 (`archivo ·
+  estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel`) y **Jhoan aprobarlo**. —
+  Verifica: la tabla en el README con la fecha de la aprobación.
 
-## H8.2 · Contratos y rojo de todo el módulo
+## H8.2 · Contratos y rojo, con la ceremonia de su nivel
 
-> Como **la sesión web**, quiero **escribir primero el contrato y su test en rojo de los 74–75
+> Como **la sesión**, quiero **escribir el contrato y su test antes que la lógica de los 74–75
 > ficheros**, para **que los contratos se hablen entre sí antes de que exista lógica** (`05` E-2).
+> En el nivel **simple** contrato, test y lógica van en una pasada; en **medio**, rojo y verde por
+> paquete; en **complejo**, el esquema completo (`05` E-12).
 
 - **R8.2.a** · **EL** fichero de contrato **DEBERÁ** contener solo comentario-promesa, tipos,
   firmas, centinelas y cuerpos `panic(pendiente.Implementar("<pkg>.<Func>"))`. — Verifica:
   `grep -rn 'return nil, nil\|return ""$' C` sin aciertos en ficheros con `pendiente`.
 - **R8.2.b** · **EL** contrato en rojo **DEBERÁ** llevar solo **exportados** (patrón F1: el linter
-  `unused` rompe el gate con no exportados sin uso); los no exportados nacen con el verde. —
+  `unused` rompe el gate con no exportados sin uso); los no exportados nacen con el verde, y su test
+  también, solo si llevan regla de negocio o ramas no triviales (P6; no se testea fontanería ni
+  `if err != nil`; el resto lo cubre F9). —
   Verifica: `make ci-local` rc=0 tras cada commit `rojo(conversacion)`.
 - **R8.2.c** · **EL** test de cada `x.go` **DEBERÁ** mencionar cada exportado de `x.go` y llevar
   `//go:build pendiente`. — Verifica: candado `exportados_cubiertos_test.go` y
@@ -36,22 +43,24 @@
   fallar. — Verifica: `grep -rn 't.Skip' C` vacío.
 - **R8.2.e** · **DONDE** un fichero es solo de interfaces o tiene gemelo en memoria (`store`,
   `trigger`, `content`), **EL** paquete `…helpertest` **DEBERÁ** exportar
-  `func Contrato(t *testing.T, nuevo func(t *testing.T) <Puerto>)` y cada implementación
-  ejecutarla. — Verifica: `go doc ./C/store/storehelpertest Contrato`, ídem `triggerhelpertest`.
+  `func Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)`; si el puerto tiene BD (`store`, `trigger`),
+  la suite **DEBERÁ** correrse **en memoria y en Postgres** con el arnés de F9-A (P4), y su marca de estado vigilar
+  todas las columnas que la operación puede tocar. — Verifica: `go doc ./C/store/storehelpertest Contrato`, ídem `triggerhelpertest`.
 - **R8.2.f** · **DONDE** un adaptador Postgres no tiene gemelo (`events.Store`,
   `runtime.PostgresSelfNumbers`, `runtime.PostgresTenantResolver`), **EL** paquete `…helpertest`
-  **DEBERÁ** traer un doble en memoria con su propio test en verde. — Verifica: `ls C/events/eventshelpertest C/runtime/runtimehelpertest`.
-- **R8.2.g** · **CUANDO** se cierre el bloque E, **`make test-pendiente`** **DEBERÁ** contar las
-  llamadas de todo el módulo y **`make ci-local`** dar rc=0. — Verifica: los dos comandos.
+  **DEBERÁ** traer un doble en memoria y la suite `Contrato`, corrida contra el doble y contra Postgres (P4). — Verifica: `ls C/events/eventshelpertest C/runtime/runtimehelpertest`.
+- **R8.2.g** · **CUANDO** se cierren los contratos del runtime (F8-04), **`make test-pendiente`** **DEBERÁ** contar las
+  llamadas que queden en rojo y **`make ci-local`** dar rc=0. — Verifica: los dos comandos.
 
-## H8.3 · Verde fichero a fichero, sin olvidar comportamiento
+## H8.3 · Verde sin olvidar comportamiento
 
 > Como **la dueña del negocio**, quiero **que la conversación con mis clientes siga igual byte a
 > byte**, para **no notar la reconstrucción**.
 
-- **R8.3.a** · **CUANDO** un fichero pase a verde, **EL** commit **DEBERÁ** ser uno por fichero,
-  quitar `//go:build pendiente` y alcanzar ≥ 80 % de sentencias (salvo adaptadores Postgres). —
-  Verifica: `make cobertura-ficheros` · `git log --oneline` (un `verde(conversacion): <f>` por fichero).
+- **R8.3.a** · **CUANDO** un fichero pase a verde, **EL** commit **DEBERÁ** quitar `//go:build pendiente`
+  y dejar **un test por promesa del contrato** (uno por fichero en el nivel complejo, por paquete en medio, una
+  pasada en simple); en el nivel complejo, mutantes. Sin umbral de cobertura (P2). —
+  Verifica: revisión promesa ↔ aserción · `git log --oneline` · `make cobertura-ficheros` como informe (no bloquea).
 - **R8.3.b** · **EL** código nuevo **DEBERÁ** conservar literal cada texto de [`diseno.md`](diseno.md)
   §5 (mensajes al cliente, cabeceras del sobre de P2, nombres de efecto y de `flow_events`, etiquetas
   de métrica, centinelas). — Verifica: test de cada fichero dueño con el literal; `grep -F` del literal en `C`.
@@ -111,29 +120,30 @@
   `ErrSessionOffline` de `modulos/edge/session`, **ENTONCES** la ruta **DEBERÁ** responder el mismo
   código y cuerpo que hoy (`publicapi/flows.go:214-235`, `flujos/admin/handlers.go:326`). — Verifica: tests de `apipublica/flows.go` y `C/admin/handlers.go`.
 
-## H8.7 · Cero puentes, cero adaptadores
+## H8.7 · Cero puentes (import), cero adaptadores
 
 > Como **Jhoan**, quiero **que al cerrar F8 el binario nuevo no importe ni una línea del código
 > viejo**, para **que el relevo (F10) sea solo borrar**.
 
-- **R8.7.a** · **CUANDO** cierre F8, **LA** lista de puentes de `fronteras_test.go` **DEBERÁ** estar
+- **R8.7.a** · **CUANDO** cierre F8, **LA** lista de puentes (import) de `fronteras_test.go` **DEBERÁ** estar
   vacía. — Verifica: el test con la lista vacía y `grep -c 'retira:' internal/modulos/fronteras_test.go` → 0.
-- **R8.7.b** · **CUANDO** cierre F8, **NO DEBERÁ** quedar ningún `internal/arranque/puente_*.go`. — Verifica: `ls internal/arranque/puente_*.go` → sin coincidencias.
+- **R8.7.b** · **CUANDO** cierre F8, **NO DEBERÁ** quedar ningún adaptador `internal/arranque/bridge_*.go`, y
+  `Conmutados` **DEBERÁ** listar todos los módulos (cada uno entra cuando muere su último adaptador). — Verifica: `ls internal/arranque/bridge_*.go` → sin coincidencias · `Conmutados` en `internal/modulos/fronteras_test.go`.
 - **R8.7.c** · **LOS** paquetes re-tocados (`catalogo`, `catalogo/indice`,
   `solicitudes/intakes/telemetria`, `captacion/stages`, `captacion/reanalisis`, `edge/session`)
-  **DEBERÁN** seguir en verde y ≥ 80 % tras el re-toque. — Verifica: `make cobertura-ficheros`.
+  **DEBERÁN** seguir en verde tras el re-toque. — Verifica: `go test -race` de cada paquete re-tocado, rc=0.
 - **R8.7.d** · **EL** centinela `ErrSessionOffline` **DEBERÁ** ser uno solo, el de
   `modulos/edge/session` (que con D-F3-2 es el de `platform`), sin alias al viejo. — Verifica: `grep -rn 'gateway/session' internal/modulos` vacío.
 
-## H8.8 · Cierre por la sesión local
+## H8.8 · Cierre
 
-> Como **la sesión local**, quiero **correr lo que la web no puede cerrar**, para **dar F8 por
-> hecha con evidencia**.
+> Como **la sesión de cierre**, quiero **correr el binario nuevo, las suites contra Postgres y los
+> procesos de F9**, para **dar F8 por hecha con evidencia**.
 
-- **R8.8.a** · **LA** sesión local **DEBERÁ** arrancar `cmd/server-modular` en local (nunca a la vez
+- **R8.8.a** · **LA** sesión de cierre **DEBERÁ** arrancar `cmd/server-modular` en local (nunca a la vez
   que `cmd/server`) y hacer un recorrido de conversación con un Edge de prueba o el e2e de
-  `cmd/server-modular`. — Verifica: el traspaso `TRASPASO-F8-conversacion.md` con la salida.
-- **R8.8.b** · **DONDE** F9 esté adelantado, **LA** sesión local **DEBERÁ** correr los procesos
+  `cmd/server-modular`. — Verifica: el bloque de `ESTADO.md` con la salida.
+- **R8.8.b** · **DONDE** F9 esté adelantado, **LA** sesión de cierre **DEBERÁ** correr los procesos
   «Entrante a respuesta», «De mensaje a borrador» y «Re-análisis» contra el binario nuevo (🕐). —
   Verifica: `make test-procesos` rc=0 y 0 SKIP con `-v`.
 - **R8.8.c** · **EL** cierre **DEBERÁ** reportar SKIP en código nuevo = 0. — Verifica:

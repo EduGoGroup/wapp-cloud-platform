@@ -1,7 +1,9 @@
 # F10 · Relevo — `cmd/server` pasa al arranque nuevo y lo viejo se borra
 
 > **Estado**: ⏳ sin empezar (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`).
-> **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes), §5
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
+> **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §6 (fila F10), §4.1 (cero puentes de import), §4.2 (cero
+> adaptadores `bridge_*.go`, `Conmutados` completo), §5
 > (`no_pending_test`; antes `sin_pendientes_test.go`, D-F1-12). Forma: [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Decisiones que la fundan: **D-9** (una prueba en UAT en sustitución antes del relevo; el despliegue
 > `go build -o bin/server ./cmd/server` no cambia) y **D-10** (la cara vieja `internal/publicapi` se
@@ -12,15 +14,21 @@
 Probar `cmd/server-modular` **en sustitución** del viejo en UAT, una vez, con marcha atrás en minutos.
 Después, `cmd/server` pasa a llamar a `internal/arranque`, se borran `cmd/server-modular`,
 `internal/bootstrap`, `internal/publicapi` y los otros 26 directorios viejos de primer nivel **con sus tests**, y el repo
-queda con **cero puentes, cero pendientes** y un solo arranque. Lo de fuera del repo (doc del
-ecosistema, ADR-0010, comentarios en repos hermanos) lo cierra la sesión local.
+queda con **cero adaptadores `bridge_*.go`, cero puentes (import), `Conmutados` completo, cero pendientes** y un
+solo arranque. Lo de fuera del repo (doc del ecosistema, ADR-0010, comentarios en repos hermanos) lo cierra F10-05.
+
+F10 **no reconstruye un módulo**: no lleva inventario E-12, y no crea ni retira adaptadores (exige que ya no quede
+ninguno). Sin umbral de cobertura (P2): `make cobertura-ficheros` es un informe.
 
 ## Entradas (tiene que ser cierto para empezar)
 
 | Condición | Cómo se comprueba |
 |---|---|
-| **F9 cerrada** (`TRASPASO-F9-cierre.md` con `CERRADO`): procesos `RC=0` ×3 contra viejo **y** nuevo | Los dos logs de `CUENTA=3 make test-procesos` |
-| F8 conmutada; la lista de puentes de `internal/modulos/fronteras_test.go` **vacía** | Leer la lista; `GOWORK=off go test ./internal/modulos/` rc=0 |
+| **F9 cerrada** (bloque `F9 CERRADA <fecha>` en `ESTADO.md`, sesión F9-05): procesos `RC=0` ×3 contra viejo **y** nuevo | Los dos logs de `CUENTA=3 make test-procesos` |
+| F8 conmutada; **cero adaptadores** `bridge_*.go` en `internal/arranque` (`05` §4.2) | `ls internal/arranque/bridge_*.go 2>/dev/null \| wc -l` → 0 |
+| **Cero puentes (import)**: la lista `Puentes` de `internal/modulos/fronteras_test.go` **vacía** (`05` §4.1) | Leer la lista; `GOWORK=off go test ./internal/modulos/` rc=0 |
+| **`Conmutados` completo**: están todos los módulos de F1–F8 (cada uno entra cuando muere su último adaptador) | Leer `Conmutados` en el mismo fichero |
+| T9.15 (P3) ejerce el reintento de `postgres.WithTx` y hace caer el mutante `maxTxAttempts = 1` (hallazgo 38 de F1) | El resultado del mutante, escrito por F9; T10.1 lo copia al acta. Si no cae, **no se borra** `deadlock_integration_test.go` |
 | `pendiente.Implementar` = 0 en todo el árbol | `grep -rn 'pendiente.Implementar' --include='*.go' internal cmd \| wc -l` → 0 |
 | La huella del nuevo es igual a la del viejo (F0, `internal/arranque/huella_test.go` contra `internal/bootstrap/arranque/huella_vieja_test.go`, D-F0-2) | `make ci-local` GATE_RC=0 |
 | La cara vieja no sirve **ninguna** ruta en el binario nuevo (FX, cierre de F8) | Test del estrangulador de FX en verde |
@@ -30,19 +38,19 @@ ecosistema, ADR-0010, comentarios en repos hermanos) lo cierra la sesión local.
 ## Salidas (es cierto al cerrar)
 
 - UAT corrió `cmd/server-modular` en sustitución durante la ventana acordada, con los criterios de
-  [`diseno.md`](diseno.md) §2.4 verdes; hay acta en el traspaso.
+  [`diseno.md`](diseno.md) §2.4 verdes; hay acta (`traspasos/TRASPASO-F10-relevo.md`).
 - `cmd/server/main.go` llama a `internal/arranque`; **no existen** `cmd/server-modular/`,
   `internal/bootstrap/`, `internal/publicapi/` ni los 26 directorios viejos restantes
   ([`diseno.md`](diseno.md) §1).
 - `internal/` contiene solo `arranque/`, `apipublica/`, `modulos/`, `nucleo/`, `platform/` (y, según
   D-F10-3, nada de `pendiente/`).
-- `no_pending_test.go` activo; `fronteras_test.go` con **cero** puentes; `huella_test.go` compara
-  contra una **dorada** congelada del viejo.
+- `no_pending_test.go` activo; `fronteras_test.go` con **cero** puentes (import) y `Conmutados` completo;
+  **cero** `bridge_*.go` en `internal/arranque`; `huella_test.go` compara contra una **dorada** congelada del viejo.
 - `make test-procesos` corre contra `cmd/server` (ya nuevo) y `WAPP_PROCESOS_BINARIO` desaparece.
 - Según D-F9-4/D-F10-5: `make test-integration`, `WAPP_TEST_DB_DSN` y `WAPP_TEST_REQUIRE_DB` fuera del
   repo, y el job `integration` de `.github/workflows/ci.yml` corre los procesos.
 - UAT desplegado desde el commit del relevo con el procedimiento de siempre.
-- La documentación del repo (y, en la sesión local, la del ecosistema) dice las rutas nuevas.
+- La documentación del repo y la del ecosistema dicen las rutas nuevas.
 - `main` **no** se ha movido salvo petición expresa de Jhoan.
 
 ## Orden de lectura
@@ -53,20 +61,26 @@ paso a paso, lo de fuera del repo) → [`reglas.md`](reglas.md) → [`tareas.md`
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Para cuando |
-|---|---|---|---|
-| **A · preparación y dorada** | 🌐 | T10.1–T10.3 | Dorada de la huella commiteada; `huella_test` ya puede vivir sin el viejo |
-| **B · la prueba en UAT en sustitución** | 💻 | T10.4–T10.6 | Acta de la ventana: veredicto «sigue» o «vuelta atrás», con evidencia |
-| **C · el relevo en el repo** | 🌐 | T10.7–T10.14 | `ci-local` GATE_RC=0 con un solo arranque, cero puentes, cero pendientes, doc del repo al día; PR a `dev` sin squash |
-| **D · cierre local** | 💻 | T10.15–T10.17 | `make test-procesos` RC=0 contra `cmd/server`; UAT desplegado desde el commit del relevo; traspaso `CERRADO` |
-| **E · fuera del repo** | 💻 | T10.18–T10.21 | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
-| **F · `main`** | 💻 | T10.22 | **Solo a petición de Jhoan** |
+**Todo F10 es local (💻)**: ya no hay sesión web, ni PR, ni traspaso (solo si una sesión se corta). Cada sesión
+commitea directo en `dev`, dura **45–90 min** y cierra con tres cosas: tareas `[x]` con SHA, un bloque en `ESTADO.md`
+y los hallazgos nuevos en este README. `traspasos/TRASPASO-F10-relevo.md` conserva el nombre, pero aquí es el **acta** del
+relevo (verdad de campo, prueba de UAT, cierre), no un traspaso.
+
+| Sesión | Bloque | Tareas | Necesita | Para cuando |
+|---|---|---|---|---|
+| F10-01 🧑 | — | — | — | D-F10-1, D-F10-2 y D-F10-6 decididas; fecha de la ventana de UAT |
+| F10-02 | **A · preparación y dorada** | T10.1–T10.3 | — | Dorada de la huella commiteada y verificada contra el viejo; SHA a desplegar escrito en el acta |
+| F10-03 | **B · la prueba en UAT en sustitución** | T10.4–T10.6 | **UAT (SSH)** | Acta de la ventana: veredicto «sigue» o «vuelta atrás», con evidencia. La ventana (≥ 24 h) es espera, no sesión: se abre (T10.4) y se relanza para cerrar (T10.5–T10.6) |
+| F10-04 | **C · el relevo en el repo** | T10.7–T10.14 | — | `ci-local` GATE_RC=0 con un solo arranque, cero adaptadores, cero puentes (import), `Conmutados` completo, cero pendientes, doc del repo al día; un commit por tarea |
+| F10-05 | **D · cierre local** | T10.15–T10.17 | **Docker**, **UAT (SSH)** | `make test-procesos` RC=0 contra `cmd/server`; UAT desplegado desde el commit del relevo; acta `CERRADO` |
+| F10-05 | **E · fuera del repo** | T10.18–T10.21 | la raíz de wApp y los repos hermanos | Doc del ecosistema, ADR-0010, 12 comentarios hermanos, bóveda `analisis/` con las rutas nuevas |
+| F10-06 | **F · `main`** | T10.22 | **`main`**, **Docker**, UAT (SSH) | **Solo a petición expresa de Jhoan** |
 
 ## Decisiones que necesita (Jhoan)
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| **D-F10-1** | La prueba en UAT: ¿cuánto dura y quién la da por buena? | **24 h mínimo**, con al menos una jornada de tráfico real (el e2e con WhatsApp real del runbook del ecosistema `e2e-con-whatsapp-real.md`) y los criterios de [`diseno.md`](diseno.md) §2.4. Veredicto de Jhoan, por escrito en el traspaso. El tráfico real de UAT **no está medido** |
+| **D-F10-1** | La prueba en UAT: ¿cuánto dura y quién la da por buena? | **24 h mínimo**, con al menos una jornada de tráfico real (el e2e con WhatsApp real del runbook del ecosistema `e2e-con-whatsapp-real.md`) y los criterios de [`diseno.md`](diseno.md) §2.4. Veredicto de Jhoan, por escrito en el acta. El tráfico real de UAT **no está medido** |
 | **D-F10-2** | Si la prueba sale bien, ¿se deja el binario modular corriendo hasta el despliegue del relevo? | **Sí, si el relevo aterriza en ≤ 7 días** (es el mismo código que se va a desplegar). Si no, vuelta al viejo: no dejar en UAT un binario de una rama que ya no existirá |
 | **D-F10-3** | ¿Qué se hace con `internal/pendiente`, la etiqueta `pendiente`, `make test-pendiente` y `vet -tags pendiente`? | **Retirarlos** en el mismo commit que activa `no_pending_test.go`, que entonces prohíbe el identificador **y** la etiqueta. `00-marco/estructura.md` dice «desaparece o queda vacía de usos»: vacía de usos y viva invita a reabrir el método sin decidirlo. Si Jhoan quiere el método para trabajo futuro, es una decisión nueva |
 | **D-F10-4** | `cmd/server/integration_test.go` (en proceso, sin BD, `bufconn`) y `cmd/server/flows_integration_test.go` (con BD, importa `internal/flujos/**`) | **Portar** el primero contra los paquetes nuevos (`04` §3 lo marca ✎: es el único e2e del gRPC que corre en `ci-local` sin Docker). **Borrar** el segundo: su escenario lo cubre P3 |

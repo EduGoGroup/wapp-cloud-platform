@@ -123,6 +123,11 @@ el servidor: tras el SIGTERM, el *webhook worker* puede loguear dos `ERROR` de c
 goroutines de fondo (colector de `platform`, agregador de `flujos/runtime`, pipeline de `intake`), que F6 no reconstruye: nota de
 revisión de la contradicción 19 y D-F9-10 del README.
 
+**Casos adversarios** (hallazgo 40 de F1): la tabla de entradas de cada proceso lleva, además de los casos felices,
+separadores repetidos (`a@@b`), dígitos no ASCII y espacios Unicode allí donde el proceso mete un identificador o un
+texto por la puerta (teléfono, LID, `push_name`, opción de menú, SKU). Se afirma lo que hace el **viejo**; si el nuevo
+difiere, es hallazgo (R9.4.c).
+
 ### P0 · Humo del arranque (`p0_arranque_test.go`) — T9.11
 
 - **Entra por**: el arranque del binario; `GET :8100/healthz`, `GET :8100/metrics`, `GET :8103/healthz`.
@@ -223,6 +228,17 @@ por el `contact_id` que **aparece** en `contacts` del tenant tras el primer entr
    sus dos filas; **(c)** las dos filas acaban con el sobre **poblado** (la ráfaga sí casó el centinela y cruzó
    los locks: si no escribe, no reproduce nada) y un entrante más, con **otro** nombre, no cambia un byte de
    ninguna de las dos (el sobre se sella una vez).
+9. 🔴 **El reintento de `postgres.WithTx`, ejecutado de verdad** (hallazgo 38 de F1; R9.6.e;
+   `TestP3_TxRetryOnSerializationFailure`). El proceso provoca contra Postgres un fallo reintentable **real**
+   (`40001` o `40P01`) en una transacción que el servidor abre con `WithTx`, y afirma: **(a)** el fallo ocurrió
+   (se ve en Postgres o en el log del servidor: si no ocurre, el paso está **verde y hueco**, y eso es rojo);
+   **(b)** la operación terminó bien —el efecto está en la base— y **(c)** no hay `level=ERROR` de esa operación.
+   **Cómo se provoca: sin fijar.** Candidata, leída y no ejecutada: una conexión del propio test (`abrir`, de
+   `base_test.go`) toma row-locks sobre las filas del contacto en el orden contrario al del servidor y los suelta
+   cuando Postgres ya abortó a la víctima. T9.15 la fija leyendo `tx.go` y los consumidores de `WithTx`, y anota
+   qué transacción elige Postgres como víctima. **La prueba de que el paso vale es el mutante**: con
+   `maxTxAttempts = 1` en `internal/platform/storage/postgres/tx.go` (copia desechable; lo comparten los dos
+   binarios) el paso **cae**. Si no cae, el paso no ejerce el reintento y T9.15 no se cierra.
 - **Postgres**: `fleet_sessions`, `flow_definitions`, `flow_triggers`, `flow_state`, `contacts` (el teléfono
   **no** aparece en claro: se busca el literal en la fila y no está), `ingest_dedupe`, `message_receipts`,
   `flow_events`, `conversation_events`.
@@ -255,10 +271,10 @@ por el `contact_id` que **aparece** en `contacts` del tenant tras el primer entr
     desde fuera no hay dónde pararlas. La estabilidad del sobre se afirma con el entrante de más del paso 8 (c).
   - **El reintento acotado de `postgres.WithTx`**: 🔴 el test viejo **tampoco** lo vigila (medido el 2026-08-21: con
     `maxTxAttempts = 1` sigue en PASS; trampa T-13 de [`reglas.md`](../F1-nucleo-contact/reglas.md) de F1 y MP-12
-    del ecosistema, abierto), y el contrato nuevo se lo deja a este proceso. **Sin medir** si el paso 8 lo
-    consigue: T9.15 lo **mide** con ese mutante en una copia desechable (`internal/platform/storage/postgres/tx.go`,
-    que comparten los dos binarios) y escribe el resultado en el traspaso. Si sigue verde, la carencia se queda
-    declarada con su dueño (MP-12), no resuelta por omisión.
+    del ecosistema, abierto), y F1-04 midió que **nada** lo ejecuta en ningún árbol: `WithTx` al 36,6 %, con
+    `IsSerializationFailure` y `backoffBeforeRetry` sin ejercer (hallazgo 38 de F1). La ráfaga del paso 8 **no** se da
+    por suficiente: el **paso 9** lo ejecuta de verdad y T9.15 exige que el mutante `maxTxAttempts = 1` **caiga**. Tiene
+    que existir antes de que F10 borre `deadlock_integration_test.go`.
   - **Cuántos entrantes y cómo se sabe que la ráfaga terminó**: los fija T9.15 leyendo `HandleIncoming` (el viejo
     usa 16 goroutines × 60 llamadas). Espera por sondeo de Postgres, nunca `time.Sleep` fijo (como P4).
 
@@ -357,6 +373,10 @@ Cada suite la crea **su fase** (E-3/E-6: `func Contrato(t *testing.T, nuevo func
 `<paquete>helpertest`, D-F1-10); F9 solo la **ejecuta** contra el adaptador Postgres, con una base clonada por
 subtest. «Memoria» = implementación en memoria hoy (medido con
 `grep -rn '^func NewMemory' --include='*.go' internal | grep -v _test` y los `memory*.go`).
+
+Desde la parada de F1 (P4, 2026-10-03) la forma es `Contrato(t, func(t) Montaje)`, corrida **en memoria y en
+Postgres**: es lo que garantiza que los dos se comportan igual. La marca de `Estado` vigila **todas** las columnas que
+la operación puede tocar (R9.5.c, hallazgo 35 de F1), y las tablas llevan casos adversarios (hallazgo 40).
 
 | Paquete viejo con SQL | Módulo (fase) | Memoria hoy | Tarea 9C |
 |---|---|---|---|

@@ -16,6 +16,27 @@
   exportados, `grep -hE '^func (\([a-z]+ \*?[A-Z]\w*\) )?[A-Z]'`): **≈191** (cota superior; la cifra
   real la fija T6.13 con `make test-pendiente`).
 
+### 1.1 · Clasificación E-12 por paquete — provisional, sin medir: la fija el inventario E-12 (T6.1)
+
+Deducida de `arquitectura.md` §1, §2 y §5. No clasifica fichero a fichero donde falta el dato (nº de consumidores:
+**sin medir**, salvo `intakes` ← `publicapi`, README contradicción 7). Si un archivo sale peor, sube de nivel.
+
+| Paquete | ¿Estado en memoria? | ¿Concurrencia? | ¿BD / transacciones? | Nivel provisional |
+|---|---|---|---|---|
+| `integrations/sigv1` | no | no | no | **simple** |
+| `intakes/note.go` | no | no | no | **simple** |
+| `intakes/telemetria` | no | no | no (escribe por un puerto) | **simple** |
+| `integrations/crmpush` | no | no | no | **medio** (lógica de contrato externo, candado R-12) |
+| `intakes/quotetext` | no | no | no | **medio** (lógica de negocio y fallback de P5) |
+| `tenantvars` | `MemoryStore` con `sync.Mutex` | no | `postgres.go`: `Replace` en transacción | `tenantvars.go` **simple**; `memory.go` y `postgres.go` **complejo** por criterio, aunque pequeños (219 líneas) |
+| `intakes` · tipos puros (10) | no | no | no | **medio** |
+| `intakes` · acciones (9) | no (la marca vive en BD) | no | por el puerto `Store` | **medio**, salvo lo que el inventario suba (`approve.go`: INV-1 y tres efectos) |
+| `intakes` · `memory.go`, `postgres.go`, `buyerdata_postgres.go`, `notifier.go` | `MemoryStore` con `sync.Mutex` | no | `WithTx` ×5, cifrado por campo | **complejo** (`notifier.go`: sin BD propia, sale a WhatsApp; nivel a confirmar) |
+| `integrations` | no | worker: 1 goroutine, 2 tickers | `postgres.go` | `worker.go` y `postgres.go` **complejo**; `store.go`, `gate.go`, `crud.go`, `outbox_stats.go` **medio** |
+| `internal/arranque/bridge_<x>.go` | no | no | no | **simple** (`05` §4.2) |
+
+Qué se hace en cada nivel: [`reglas.md`](reglas.md) §5.
+
 ## 2 · Por paquete: ficheros, exportados y contrato
 
 ### 2.1 · `S/intakes` (24 ficheros · 279 + 4 exportados)
@@ -50,8 +71,9 @@
 **Suite `S/intakes/intakeshelpertest`**: `Contrato(t *testing.T, nuevo func(t *testing.T) Montaje)` (firma
 D-F1-1) sobre el puerto `Store` (`intakes.go:325`): alta por evento, lectura por tenant (otro tenant
 → `ErrNotFound`), paginación y filtros, transición válida/ inválida (`TransitionError`), revisiones
-con número creciente, envío idempotente (`EnsureShippingLine`), historial aprobado. La corre
-`memory_test.go` ya; `postgres.go` en F9 (T9.27). 🔶 los casos exactos salen de
+con número creciente, envío idempotente (`EnsureShippingLine`), historial aprobado. Se corre **en memoria** (`memory_test.go`, desde F6-02/F6-03) **y en Postgres** con el
+arnés (P4; la pasada que cuenta es T6.27 = T9.27). La marca de estado de la suite vigila **todas** las
+columnas que cada operación puede tocar, no una sola (hallazgo 35 de F1). 🔶 los casos exactos salen de
 `postgres_integration_test.go` (16 tests).
 
 ### 2.2 · `S/intakes/quotetext` (4 · 47 exp.)
@@ -117,7 +139,11 @@ del llamante; `event_history_id` omitido; no congela lo que rellena el worker; g
 
 ## 3 · Dobles y suites (E-6)
 
-| Puerto | Suite | Implementación en unitario | Postgres (F9) |
+Todo **puerto con BD** tiene su suite `Contrato(t, func(t) Montaje)` corrida **en memoria y en Postgres** con el
+arnés de F9-A (P4): es lo que garantiza que memoria y Postgres se comportan igual. En F6 son tres. La marca de estado
+vigila todas las columnas que la operación puede tocar (hallazgo 35).
+
+| Puerto | Suite | Implementación en memoria | Postgres (arnés) |
 |---|---|---|---|
 | `intakes.Store` | `intakeshelpertest.Contrato` | `MemoryStore` (producción, `memory.go`) | `Postgres`, T9.27 |
 | `integrations.Store` | `integrationshelpertest.Contrato` | `integrationshelpertest.Memoria` **nuevo** | `Postgres`, T9.27 |
@@ -164,6 +190,6 @@ del llamante; `event_history_id` omitido; no congela lo que rellena el worker; g
 | `intakes/inv1_aprobar_ast_test.go` (1 test) | R-01 (aprobar) | `S/intakes/inv1_aprobar_test.go` (AST permitido, E-7) | Control positivo `../../../apipublica` (exactamente 1). Directorios automáticos **en F6**: `../../../../flujos/runtime`, `../../../../flujos/modules/cart`, `../../../../intake`, `../../../../intake/pipeline`, `../../../../intake/stages`, `.` · **F7** sustituye los tres de `intake` por `../../captacion/{intake,pipeline,stages}` · **F8** los dos de `flujos` por `../../conversacion/{runtime,modules/cart}`. Guarda anti-hueco intacta (dir inexistente o vacío → `Fatalf`); no recursivo |
 | `intakes/inv1_pedirinfo_ast_test.go` | R-01 (pedir info) | mismo fichero, `TestINV1_SoloElPOSTDelDueñoPregunta` | reusa el barrido (una sola lista de directorios) |
 | `intakes/inv_vencimiento_ast_test.go` (2 tests) | R-06 | `S/intakes/vencimiento_test.go` (dos tests con nombre `Candado`) | `raízDelRepo = "../../../.."`; nombre del evento **por concatenación** (si se escribiera entero, el candado **viejo**, que barre el repo, se pondría rojo); control positivo `deposit_reminded_at` (texto) y `QuoteDeadline` (AST del paquete) |
-| `intakes/sello_poda_ast_test.go` | R-07 | `S/intakes/postgres_test.go` | Nombres **no exportados** (`revisionsOf`, `ejecutarPoda`, `sellarPodada`): entra con el **verde** de `postgres.go` (T6.18), no en el rojo (patrón F1: el rojo solo lleva exportados) |
+| `intakes/sello_poda_ast_test.go` | R-07 | `S/intakes/postgres_test.go` | Nombres **no exportados** (`revisionsOf`, `ejecutarPoda`, `sellarPodada`): entra con el **verde** de `postgres.go` (T6.18), no en el rojo (patrón F1: el rojo solo lleva exportados; `05` E-4, P6: llevan test porque cargan regla de negocio, R-07) |
 | `integrations/crmpush/contrato_ast_test.go` | R-12 | `S/integrations/crmpush/contrato_test.go` | `directoriosVigilados = {".", "../../../../flujos/runtime"}` hasta F8; en F8 `../../../conversacion/runtime`. Exige sitios en **cada** directorio |
 | (BD) dos aprobaciones → un `intake_approved` | R-01 conducta | F9 P5 `TestP5_AprobarDosVecesUnSoloEfecto` (R9.6.c) | — |

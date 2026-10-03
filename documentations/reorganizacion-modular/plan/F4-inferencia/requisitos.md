@@ -17,7 +17,8 @@
 - **R4.1.c** · **CUANDO** se corre un test rojo solo, **EL** test **DEBERÁ** fallar por el `panic`. —
   Verifica: `go test -tags pendiente -run '^TestFor$' ./internal/modulos/inferencia/llmvia/; echo rc=$?` → rc≠0.
 - **R4.1.d** · **EL** rojo **DEBERÁ** declarar solo exportados (el linter `unused` rompe el gate con
-  no exportados sin uso; regla T-1 de F1). — Verifica: `make lint` rc=0 tras cada `rojo(inferencia)`.
+  no exportados sin uso; regla T-1 de F1). El test de un auxiliar no exportado nace en el **verde**, y solo si lleva
+  regla de negocio o ramas no triviales (`05` E-4). — Verifica: `make lint` rc=0 tras cada `rojo(inferencia)`.
 - **R4.1.e** · **SI** un test de `N` llama a `t.Skip`, **ENTONCES EL** gate **DEBERÁ** fallar. —
   Verifica: `grep -rn 't.Skip' internal/modulos/inferencia` vacío.
 
@@ -65,7 +66,7 @@
 - **R4.4.b** · **CUANDO** el tenant no tiene fila, **EL** selector **DEBERÁ** usar la vía `local` y
   no pedir la credencial (REQ-33). — Verifica: `TestFor` caso «sin fila» con `pedidasLa == 0`.
 - **R4.4.c** · **SI** se pide `APIKey` de un tenant sin fila, sin sobre o con `via='local'`,
-  **ENTONCES EL** store **DEBERÁ** devolver `ErrNotConfigured`. — Verifica: suite `tenantllmhelpertest.Contrato` sobre el doble (y sobre Postgres en F9).
+  **ENTONCES EL** store **DEBERÁ** devolver `ErrNotConfigured`. — Verifica: suite `tenantllmhelpertest.Contrato` en memoria y en Postgres con el arnés (P4; T4.31).
 - **R4.4.d** · **CUANDO** un `Upsert` pasa de `api` a `local`, **EL** store **DEBERÁ** retirar la
   credencial y el consentimiento. — Verifica: la misma suite.
 - **R4.4.e** · **SI** un `Upsert` en vía `api` llega sin clave o sin consentimiento, o con una vía
@@ -86,7 +87,7 @@
   Verifica: doble que cuenta llamadas (`saves == 0`).
 - **R4.5.c** · **CUANDO** N fallos del mismo (tenant, motivo, vía) caen en la misma ventana de
   15 min (`VentanaDe`: `at.UTC().Truncate(v)`), **EL** escritor **DEBERÁ** producir una sola fila.
-  — Verifica: suite `degradationhelpertest.Contrato` sobre el doble; la del índice único, en F9.
+  — Verifica: suite `degradationhelpertest.Contrato` en memoria y en Postgres con el arnés (P4; T4.31), que es donde se prueba el índice único.
 - **R4.5.d** · **EL** mapeo error→motivo (`motivoDe`) **DEBERÁ** cumplir la tabla de
   [`diseno.md`](diseno.md) §3.2 — incluidos los 6 casos que **no** avisan (`llm.ErrLLMQuality`
   envuelto o no, `api.ErrUnsupportedProvider`, motivo inventado, motivo sano, error cualquiera). —
@@ -120,10 +121,10 @@
   **DEBERÁ** ser idéntica a la del viejo (rutas, rpc, métricas, variables, goroutines). — Verifica: `internal/arranque/huella_test.go`.
 - **R4.7.b** · **EL** arranque nuevo **DEBERÁ** construir **un solo** `*llmvia.Selector` (nuevo) y
   pasárselo a etapas, aforo, `quotetext`, `intakeahead` y —por el adaptador— a `turnoacotado`. —
-  Verifica: test de cableado en `internal/arranque` (T4.27).
+  Verifica: test de cableado en `internal/arranque` (T4.25, T4.27), que afirma además que ninguna fase importa los paquetes viejos fuera de `bridge_inferencia.go`.
 - **R4.7.c** · **SI** el tenant está en vía `api` y el `turnoacotado` viejo pide un turno,
   **ENTONCES EL** adaptador **DEBERÁ** devolver un error que satisface
-  `errors.Is(err, <llmvia viejo>.ErrViaSinTurnoAcotado)`. — Verifica: `puente_inferencia_test.go`.
+  `errors.Is(err, <llmvia viejo>.ErrViaSinTurnoAcotado)`. — Verifica: `bridge_inferencia_test.go`.
 - **R4.7.d** · **LAS** rutas F1–F4 del mapa FX **DEBERÁN** servirse desde `apipublica` con el mismo
   scope, feature, auditoría y condición de montaje. — Verifica: TX.14 y la huella.
 - **R4.7.e** · **EL** nombre de la métrica `wapp_llm_degradacion_total{origen,via,reason}` y los

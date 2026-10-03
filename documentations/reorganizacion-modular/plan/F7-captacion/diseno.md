@@ -10,6 +10,25 @@ Igual que F6 `diseno.md` §1 (ficheros, líneas, `^func Test`, exportados con bl
 y métodos de tipos exportados). F7: **32** ficheros, **11.144** líneas, **305** exportados, **≈119**
 cuerpos de función/método exportados (cota de `make test-pendiente`, se fija en T7.13).
 
+### 1.1 · Clasificación E-12 por paquete — **provisional, sin medir: la fija el inventario E-12** (T7.1)
+
+Deducida de `arquitectura.md` §1, §2 y §5. «Consumidores» = paquetes de producción de F7 que lo importan según §2 de
+`arquitectura.md`; el recuento exacto por archivo está **sin medir**.
+
+| Paquete | Estado en memoria | Concurrencia | BD | Consumidores | Nivel provisional |
+|---|---|---|---|---|---|
+| `evidence` (1) | no | no | no | `anclaje`, `stages`, `intakeahead` | **simple** |
+| `anclaje` (1) | no | no | no | `stages`, `pipeline` (sin llamante de `Repartir`) | **medio** |
+| `intentcfg` (2) | `MemoryStore` con `sync.Mutex` | no | `PostgresStore` | `intakeahead`, cara HTTP | **complejo** por criterio (128 líneas: lo confirma o lo baja Jhoan) |
+| `casebank` (4) | no | no | `postgres.go` | solo `cmd/casebank` | **medio**; `postgres.go` **complejo** |
+| `intake` (6) | `MemoryStore` con `sync.Mutex` | `FOR UPDATE SKIP LOCKED` | `postgres.go`, `machine_postgres.go` | `pipeline`, `stages`, `intakeahead`, `reanalisis` | **complejo** |
+| `stages` (10) | no | no | no (por puertos) | `pipeline`, `reanalisis` | **medio**; `plazo.go` y `tope.go` candidatos a simple |
+| `pipeline` (4) | canal, aforo con `sync.Mutex`/`sync.Once` | goroutine, ticker | por `PipelineStore` | el arranque | **complejo** (`pipeline.go`, `plaza.go`); `backoff.go` medio; `memoria.go` según D-F7-3 |
+| `intakeahead` (3) | marcas por clave, cola | 4 workers, goroutine suelta | no | el arranque, agregador viejo (por adaptador) | **complejo**; `saneo.go` sin exportados |
+| `reanalisis` (1) | no | no | no (seis puertos) | cara HTTP | **medio** |
+| `apipublica/{reanalyze,intents}.go` | no | no | no | la cara | **medio** |
+| `internal/arranque/bridge_captacion.go` | no | no | no | el arranque | **simple** (`05` §4.2) |
+
 ## 2 · Por paquete
 
 ### 2.1 · `C/evidence` (1 · 2 exp.) — primera hoja, y el ejemplo de `05` §10
@@ -31,9 +50,9 @@ cuerpos de función/método exportados (cota de `make test-pendiente`, se fija e
 | `postgres.go` | 260 | 6 | Adaptador de `JobStore` — **sin cipher a propósito** (D-044.26: lo que llega a `PutSourceText` son bytes ya cifrados; `fase3_almacenes.go:171-176`) |
 | `machine_postgres.go` | 431 | 7 | Adaptador de `PipelineStore` (reclamo, avance de etapa, castigo con causa, backoff, `Despertar`) 🔶 `FOR UPDATE SKIP LOCKED` y reloj |
 
-Suites `C/intake/intakehelpertest`: `ContratoCola(t, …)` sobre `JobStore` (abrir o anexar a la ventana de
+Suites `C/intake/intakehelpertest`: `ContratoCola(t, func(t) Montaje)` sobre `JobStore` (abrir o anexar a la ventana de
 una clave; cerrar devuelve `true` una sola vez; listar solo `aggregating`; `PutSourceText` idempotente
-por clave) y `ContratoMaquina(t, …)` sobre `PipelineStore` (reclamar solo `pending`; un job reclamado
+por clave) y `ContratoMaquina(t, func(t) Montaje)` sobre `PipelineStore` (reclamar solo `pending`; un job reclamado
 no lo reclama otro; terminar/castigar; reintentos). 🔶 los casos exactos de
 `V/{machine_test,backoff_integration,despertar_integration,machine_integration,postgres_integration,retry_integration,reanalisis_internal}_test.go`
 (39 tests; 34 van a F9: P4, P8).
@@ -56,7 +75,7 @@ llamante de producción** (deuda D-6: `ThreadEntry` no trae media refs ni instan
 | `fechas.go` | 389 | 1 | Normalización de fechas con `evidence.Normalize` 🔶 |
 | `match.go` | 457 | 26 | `NewMatch(log, store, …OpciónMatch)`: `OpciónMatch` es **otro tipo** que `Opción` para que «match con plazo» **no compile**; cascada `Exact → Fuzzy(0,85)`; **sin zona gris** en producción (`ConZonaGris` existe pero no se cablea: el tercer escalón llamaría al LLM por la misma plaza); `unmatched` con aviso; DEUDA-044.16 (un ítem malo no tira el borrador, `:42`, `:265`); nota del pedido por `SanitizeNote` (F6) |
 | `match_cascada.go` | 481 | 8 | La cascada con `textmatch`; `VerificarNormalizador`: el normalizador de la caché y el del match son **el mismo** (`textmatch.Normalize`) o el arranque aborta |
-| `match_lineas.go` | 404 | 0 | Solo no exportados (líneas, variantes en rango, envío): **no tiene contrato propio en el rojo** (patrón F1); su test nace con el verde de `match.go` 🔶 |
+| `match_lineas.go` | 404 | 0 | Solo no exportados (líneas, variantes en rango, envío): **no tiene contrato propio en el rojo** (patrón F1); su test nace con el verde de `match.go` y cubre solo sus reglas de negocio y ramas no triviales, no la fontanería ni los `if err != nil`; el resto lo cubre F9 (E-4) 🔶 |
 | `draft.go` | 1.038 | 27 | `NewDraft(log, store, solicitudes AlmacenSolicitudes, revision EscritorRevision, eventos EscritorEvento, …OpciónDraft)`; puertos `:330`, `:341`, `:347`, `EmpujadorCRM` `:367`; `ConEmpujeCRM`, `EmpujadorCRMFunc`; la revisión **solo** por `EscritorRevision` (el único store con cipher del literal: por el otro, texto en claro, `fase5_captacion.go:195-199`); empuje al CRM **solo** si `intake_jobs.requested_by` es de la dueña (D-044.19; el pipeline normal no empuja); eventos `intake_draft_created` (`:90`) e `intake_reanalyzed` (`:107`) 🔶 payload; `anclaje` importado sin `Repartir` (D-6); DEUDA-044.16 (`:259`) |
 
 Por tamaño, `draft.go` **no** se parte (cambiaría el árbol de `04` sin necesidad); su contrato se
@@ -77,7 +96,7 @@ agrupa en el comentario por responsabilidad: cabecera · revisión · eventos ·
 (sin uso, texto vacío o clave inválida ⇒ no hace nada; marca por clave para no pedir dos veces; cola
 llena ⇒ suelta la marca y la ventana cierra por su reloj); `Run(ctx)` (4 workers); `Warm(tenantID,
 edgeID, sessionID, kind)` (no bloquea; `WithCalentador`, `WithCalentamiento(bool)`); `SinkFunc`;
-`saneo.go`: la clasificación se sanea con `evidence` (sin exportados). Es **el único consumidor real
+`saneo.go`: la clasificación se sanea con `evidence` (sin exportados: su test nace en el verde, solo por su regla de saneo, E-4). Es **el único consumidor real
 de una clasificación** hoy (`arquitectura.md` del repo §2.4). 🔶 los 29 tests de
 `intakeahead_test`/`calentamiento_test` (tiempos y dedupe).
 
@@ -111,9 +130,14 @@ de `anonimizar_test`. `semilla.go`: `CasoAmbar`, `NombresDelCaso`, `EsperadoCaso
 `PostgresStore`. **Aquí vive P1** (constitución §3.3: no en `prompts`). Suite `intentcfghelpertest.Contrato`
 (sin versión ⇒ `ErrNotFound`; `Upsert` sustituye; por tenant).
 
-## 3 · Dobles y suites (E-6)
+## 3 · Dobles y suites (E-6, P4)
 
-| Puerto | Suite | Unitario | Postgres (F9, T9.28) |
+Todo puerto con BD tiene su suite `Contrato…(t, func(t) Montaje)`, corrida **en memoria y en Postgres** con el arnés de
+F9-A: garantiza que los dos se comportan igual, y es la verdad de `postgres.go`, `machine_postgres.go` y
+`store_postgres.go`. La marca de estado vigila **todas** las columnas que la operación puede tocar (hallazgo 35); la
+lista de columnas de `intake_jobs` por operación se fija en T7.3 🔶.
+
+| Puerto | Suite | En memoria | Postgres (arnés; T7.27 = T9.28) |
 |---|---|---|---|
 | `intake.JobStore`, `intake.PipelineStore` | `intakehelpertest.ContratoCola`, `ContratoMaquina` | `MemoryStore` | `Postgres`, `machine_postgres` |
 | `casebank.Store` | `casebankhelpertest.Contrato` | `casebankhelpertest.Memoria` **nuevo** | `Postgres` |

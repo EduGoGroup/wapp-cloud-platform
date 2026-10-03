@@ -5,7 +5,9 @@
 > Marco común (no se repite aquí): [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md). Patrones heredados de
 > [`F1`](../F1-nucleo-contact/README.md): rojo **solo con exportados** (T-1 de F1: `unused` rompe el
-> lint) y adaptador de tipos viejo ← nuevo en `internal/arranque/puente_<x>.go`.
+> lint) y adaptador de arranque viejo ← nuevo en `internal/arranque/bridge_<x>.go` (`05` §4.2).
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 >
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
 > **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
@@ -14,8 +16,9 @@
 ## Objetivo, en tres líneas
 
 1. Reconstruir `internal/iam/**` (la única zona hexagonal), `internal/entitlements` e
-   `internal/platformadmin` en `internal/modulos/acceso/…` por contrato → rojo → verde, con **suites
-   de contrato** para los 10 puertos de salida del IAM y dobles nuevos donde faltan.
+   `internal/platformadmin` en `internal/modulos/acceso/…` con la ceremonia que fije el inventario E-12
+   (simple / medio / complejo), con **suites de contrato** para los puertos con BD —corridas en memoria
+   y en Postgres— y dobles nuevos donde faltan.
 2. Conmutar: `cmd/server-modular` cablea el **único** resolver de derechos nuevo, el IAM nuevo y el
    plano de plataforma nuevo, y muda **23 rutas** de `:8103` a `internal/apipublica` y **8** de
    `:8100` a los handlers nuevos (mapa FX §5), con la huella idéntica.
@@ -31,39 +34,44 @@
 | E3 | F1 cerrado **y** la parada del piloto resuelta por Jhoan a favor de seguir | `plan/F1-nucleo-contact/informe-piloto.md` con la decisión fechada |
 | E4 | El código viejo de referencia no cambió desde esta spec | `git log --oneline 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` vacío; si no, se relee [`diseno.md`](diseno.md) §E-8 |
 | E5 | `dev` verde con la toolchain fijada | skill `validar-antes-de-cerrar` |
+| E6 | Los ajustes de código previos a F2 (sesión F1-06: P2 en `Makefile` e `internal/candados`, marca de `Estado` de P4) y el cierre de F9-B (sesión F9-04) están en `dev` | `ESTADO.md` y los `[x]` con SHA de esas sesiones |
 
 ## Salidas (es cierto al cerrar)
 
 - `internal/modulos/acceso/{entitlements,iam/**,platformadmin}` con **51 + 6 ✚** ficheros de producción en
   verde, cada uno con su `x_test.go`, y los paquetes `…test` de [`diseno.md`](diseno.md) §2.
 - `grep -rn 'pendiente.Implementar' internal/modulos/acceso | wc -l` → **0**; SKIP en `acceso` → **0**.
-- `make cobertura-ficheros` ≥ 80 % en todo fichero no-Postgres de `acceso`.
+- Sin umbral de cobertura (P2): un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9.
+  `make cobertura-ficheros` es un **informe**: la tabla va al PR; no bloquea.
+- Las suites de los puertos con BD (7 de `outhelpertest`, `ContratoResolver`, `platformadminhelpertest`) verdes
+  **en memoria y en Postgres** con el arnés, sin divergencias.
 - `cmd/server-modular`: una sola instancia de `acceso/entitlements.Postgres`, las 23 rutas públicas
   servidas por `apipublica`, las 8 de plataforma con los handlers nuevos; `huella_test` igual;
   `cmd/server` sin un byte cambiado.
-- `internal/arranque/puente_iam.go` en verde (nace en F2, muere en F3).
-- Traspaso escrito para la sesión local (procesos de acceso en F9, candado viejo tocado).
+- `internal/arranque/bridge_iam.go` en verde, con su test de cableado completo (nace en F2, muere en F3).
+  `acceso` **no** entra en `Conmutados` al cerrar F2: entra cuando muere ese adaptador (F3).
+- Traspaso web → local solo mientras existan los dos entornos, y solo si algo lo cierra la local.
 
 ## Orden de lectura
 
 1. [`requisitos.md`](requisitos.md) — historias y criterios EARS.
-2. [`arquitectura.md`](arquitectura.md) — paquetes, imports, estado, puente, cableado, rutas.
-3. [`diseno.md`](diseno.md) — contratos por paquete, suites, dobles, reglas E-8, candados.
+2. [`arquitectura.md`](arquitectura.md) — paquetes, imports, estado, adaptador de arranque, cableado, rutas.
+3. [`diseno.md`](diseno.md) — contratos por paquete, niveles E-12 provisionales, suites, dobles, reglas E-8, candados.
 4. [`reglas.md`](reglas.md) — trampas con `fichero:línea` y definición de hecho.
-5. [`tareas.md`](tareas.md) — tareas y bloques de sesión.
+5. [`tareas.md`](tareas.md) — tareas y sesiones.
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
+Un bloque = una sesión de 45–90 min (duración **sin medir** para F2). Cada una cierra con tres cosas: tareas `[x]`
+con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
+
+| Sesión | Entorno | Tareas | Punto de parada |
 |---|---|---|---|
-| **A** · inventario verificado | 🌐 | T2.1 | números de [`arquitectura.md`](arquitectura.md) §1 re-medidos · decisiones D-F2-* contestadas |
-| **B** · rojo: hojas (`entitlements`, `iam/domain`, `ports`) | 🌐 | T2.2–T2.8 | `make test-pendiente` cuenta lo de esos paquetes · `ci-local` rc=0 · PR |
-| **C** · rojo: `usecase`, `infra/*`, `transport/http`, `platformadmin` | 🌐 | T2.9–T2.16 | pendientes de `acceso` contados · `vet -tags pendiente` rc=0 · PR |
-| **D** · verde: hojas y dobles | 🌐 | T2.17–T2.21 | `entitlements`, `domain`, `ports`, `infra/memory` a 0 pendientes · cobertura ≥ 80 % · PR |
-| **E** · verde: `usecase` + `identity` | 🌐 | T2.22–T2.23 | 0 pendientes en esos paquetes · PR |
-| **F** · verde: `infra/postgres`, `transport/http`, `platformadmin` | 🌐 | T2.24–T2.27 | 0 pendientes en `acceso` · candados AST verdes · PR |
-| **G** · puente y conmutación + rutas | 🌐 | T2.28–T2.31 | huella igual · 23+8 rutas nuevas · `go list -deps` · PR · traspaso |
-| **H** · cierre local | 💻 (🌐→💻) | T2.32–T2.33 | procesos de acceso compilan (y corren si F9 adelantado) · `dev` integrado |
+| **F2-01** · inventario E-12 + hojas simples (`entitlements` sin `postgres.go`, `iam/domain`, `ports`, suites, dobles `infra/memory`) | 🌐 | T2.1, T2.34, T2.2–T2.3, T2.5–T2.9, T2.17–T2.21 | **Jhoan aprueba el inventario** (antes no hay código) · esos paquetes a 0 pendientes · las 7 suites verdes en memoria · `ci-local` rc=0, 0 SKIP · PR |
+| **F2-02** · `usecase` e `identity` (rojo y verde por paquete) | 🌐 | T2.10–T2.11, T2.16, T2.22–T2.23 | 0 pendientes en los dos paquetes · `ci-local` rc=0, 0 SKIP · PR |
+| **F2-03** · `infra/postgres`, `entitlements/postgres.go`, `transport/http`, `platformadmin` | 🌐 | T2.4, T2.12–T2.15, T2.24–T2.27 | 0 pendientes en `acceso` · candados AST verdes · `vet -tags integracion` rc=0 · PR |
+| **F2-04** · `bridge_iam.go`, conmutación y rutas | 🌐 | T2.28–T2.31 | huella igual · 23+8 rutas nuevas · `go list -deps` · test de cableado completo · PR |
+| **F2-05** · cierre local | 💻 | T2.32–T2.33 | suites contra Postgres sin divergencias · procesos de acceso contra los dos binarios, 0 SKIP · `dev` empujado |
 
 ## Contradicciones encontradas (con `04`/`05`/FX, medidas contra el código)
 
@@ -97,7 +105,8 @@
 8. **FX `mapa-de-rutas.md` §4.4 / `arquitectura.md` §5** proponen un puente de identidad para
    `session.ErrSessionOffline`; **no es de F2**, pero el mismo problema (centinelas por identidad) sí
    aparece aquí: el `gatewaygrpc` viejo compara `domain.ErrInvalidCredentials` & co. **viejos**
-   (`internal/gateway/grpc/auth.go:200-206`). Lo resuelve `puente_iam.go` (arquitectura §4).
+   (`internal/gateway/grpc/auth.go:200-206`). Lo resuelve el adaptador de arranque (arquitectura §4).
+   ✎ 2026-10-03: ese adaptador se llama `bridge_iam.go` (P5, `05` §4.2).
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 

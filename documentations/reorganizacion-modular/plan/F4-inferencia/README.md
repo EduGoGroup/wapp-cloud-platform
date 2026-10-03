@@ -8,6 +8,8 @@
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
 > **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
 > nombraba con `…test` (`degradationtest`, `tenantllmtest`): se actualizó el sufijo, nada más.
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 
 ## Objetivo en tres líneas
 
@@ -55,8 +57,8 @@ sirve las 4 rutas de la fase. Hacia fuera no cambia nada (ni una ruta, métrica,
 | # | Condición | Verifica |
 |---|---|---|
 | S1 | 26 ficheros nuevos bajo `internal/modulos/inferencia/` (10 de producción + 4 de dobles/suites + 12 de test) en verde, sin etiqueta `pendiente` | `grep -rln 'go:build pendiente' internal/modulos/inferencia` vacío |
-| S2 | Cobertura ≥ 80 % por fichero, fuera los dos `postgres.go` | `make cobertura-ficheros` rc=0 |
-| S3 | El arranque nuevo construye `tenantllm`, `degradation`, `prompts` y `llmvia` **nuevos**; los viejos solo los usan los adaptadores `puente_inferencia.go` hasta F7/F8 | `grep -n 'internal/llmvia\|internal/tenantllm"' internal/arranque/*.go` → solo `puente_inferencia.go` |
+| S2 | Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Sin umbral de cobertura (P2): `make cobertura-ficheros` es informe (la tabla va al PR; no bloquea). Los dos `postgres.go`: su verdad la da la suite contra Postgres (P4) y F9 | revisión del PR · T4.31 |
+| S3 | El arranque nuevo construye `tenantllm`, `degradation`, `prompts` y `llmvia` **nuevos**; los viejos solo los usa el adaptador `bridge_inferencia.go` hasta F7/F8, con su test de cableado completo | `grep -n 'internal/llmvia\|internal/tenantllm"' internal/arranque/*.go` → solo `bridge_inferencia.go` |
 | S4 | Las 4 rutas F1–F4 las sirve `apipublica`; en la vieja `TenantLLM` y `DegradationNotices` = `nil`; `FaseActual = 4` | TX.14 · huella idéntica |
 | S5 | El candado C2 nuevo (`modulos/inferencia/llmvia/c2_via_test.go`) en verde, y el viejo sigue verde | `make ci-local` rc=0 |
 | S6 | 0 `t.Skip`, 0 `pendiente.Implementar` en el módulo | `grep -rn 't.Skip\|pendiente.Implementar' internal/modulos/inferencia` vacío |
@@ -68,14 +70,14 @@ sirve las 4 rutas de la fase. Hacia fuera no cambia nada (ni una ruta, métrica,
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
+F4 y F5 **comparten sesiones** (son pequeñas: ≈ 10 archivos de producción cada una). Cada sesión: 45–90 min y cierre
+de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este README).
+
+| Sesión | Entorno | Tareas de F4 | Punto de parada |
 |---|---|---|---|
-| **A** · inventario verificado + D-F4-1 verificada (la aplicó F0, T0.27) | 🌐 | T4.1–T4.2 | Números de [`diseno.md`](diseno.md) §1 reconfirmados; candados viejos ciegos al árbol nuevo; `ci-local` rc=0 |
-| **B** · contratos y rojo de todo el módulo | 🌐 | T4.3–T4.10 | `make test-pendiente` cuenta las llamadas de la tabla de T4.10; `vet -tags pendiente` rc=0; `ci-local` rc=0 |
-| **C** · verde, hojas (`prompts`, `tenantllm`, `degradation`, dobles) | 🌐 | T4.11–T4.18 | 9 ficheros sin etiqueta; cobertura ≥ 80 % |
-| **D** · verde, `llmvia/local` y `llmvia` + candado C2 | 🌐 | T4.19–T4.23 | todo el módulo en verde; C2 nuevo verde |
-| **E** · conmutar + 4 rutas a `apipublica` (TX.12–TX.14) | 🌐 | T4.24–T4.28 | huella idéntica; `FaseActual = 4` |
-| **F** · cierre | 🌐→💻 | T4.29–T4.31 | gates; `ESTADO.md`; traspaso a la local si F9 adelantado |
+| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 🌐 | T4.1–T4.9, T4.11–T4.23 | Jhoan aprobó la tabla de niveles; `internal/modulos/inferencia` sin etiqueta `pendiente`; C2 nuevo y viejo verdes; `ci-local` rc=0 con 0 SKIP |
+| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · adaptador, conmutar y 4 rutas (y F5 entero) | 🌐 | T4.10, T4.24–T4.28 (+ TX.12–TX.14) | huella idéntica con `FaseActual = 4`; test de cableado de `bridge_inferencia.go` verde |
+| [`F45-03`](../sesiones/F45-03-cli-cierre.md) · cierre local de las dos fases | 💻 | T4.29–T4.31 (+ T9.25) | definición de hecho de [`reglas.md`](reglas.md) §4; suites contra Postgres y procesos de F9 contra el binario nuevo |
 
 ## Decisiones que necesita (con recomendación)
 
@@ -84,7 +86,7 @@ sirve las 4 rutas de la fase. Hacia fuera no cambia nada (ni una ruta, métrica,
 | 🔴 **D-F4-1** | Dos candados **viejos** barren **todo** `internal/` y se ponen rojos con ficheros **nuevos**: `internal/llmvia/c2_via_test.go:117` (`WalkDir("..")`, lista exacta de ficheros que comparan por vía) y `internal/iam/infra/postgres/membresia_unica_ast_test.go:74` (`"../../.."`, lista exacta de escritores de `tenant_members`, F2). E-1 prohíbe tocarlos | **Segunda excepción a E-1, en F0** (T0.27, según `DECISIONES.md`): los dos barridos saltan los directorios nuevos de primer nivel (`internal/modulos`, `internal/nucleo`, `internal/arranque`, `internal/apipublica`, `internal/pendiente`, y `internal/candados` de F0) con **una línea** cada uno, comparando la **ruta relativa a `internal/`** (no `d.Name()`: `internal/bootstrap/arranque` también se llama `arranque` y debe seguir barriéndose); el árbol nuevo tiene su propio C2. Alternativa peor: ampliar la lista vieja fase a fase (toca código viejo 3 veces: F4, TX.13, F7). Prohibido: renombrar la variable `via` para esquivar el barrido | **F4** (y F2) |
 | **D-F4-2** | El candado C2 (I-CP-3, `constitucion.md`) y el de vocabulario Go ↔ `.sql` (`degradation_test.go:170`) **no están** en la tabla de `05` §3.2, y E-7 prohíbe tests que lean código como texto salvo esos | Añadirlos a `05` §3.2: C2 → contrato de `inferencia/llmvia` (AST); vocabulario → contrato de `inferencia/degradation` (lee la `0075`) | T4.9 |
 | **D-F4-3** | ¿Se parten las fases del arranque nuevo (`fase4_inferencia.go` de `04` §3) al conmutar? | **No en F4**: se sustituye dentro de las copias de `fase3_almacenes.go`, `fase5_captacion.go` y `prompts.go`; el orden de fases y el primer error visible no cambian. El reparto por módulo, en F10 o en un `refactor(arranque)` aparte | T4.24 |
-| **D-F4-4** | Los dos adaptadores de transición (`turnoacotado` viejo necesita `llmvia.TurnoRequest` y `ErrViaSinTurnoAcotado` **viejos**; `reanalisis` viejo necesita `tenantllm.Config` **viejo**) | En `internal/arranque/puente_inferencia.go` (patrón F1), con test de equivalencia. Mueren en F7 (`reanalisis`) y F8 (`turnoacotado`) | T4.25 |
+| **D-F4-4** | Los dos adaptadores de transición (`turnoacotado` viejo necesita `llmvia.TurnoRequest` y `ErrViaSinTurnoAcotado` **viejos**; `reanalisis` viejo necesita `tenantllm.Config` **viejo**) | En `internal/arranque/bridge_inferencia.go` (`05` §4.2; tipos `llmConfigBridge` y `turneroBridge`), con test de equivalencia y de cableado. Mueren en F7 (`reanalisis`) y F8 (`turnoacotado`) | T4.25 |
 
 ## Contradicciones encontradas (con `04`/`05`/el encargo)
 

@@ -8,10 +8,12 @@
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
 > **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
 > nombraba con `…test` (`intaketest`, `casebanktest`, `intentcfgtest`, `pipelinetest`): se actualizó el sufijo, nada más.
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 
 ## Objetivo, en tres líneas
 
-1. Reconstruir por contrato → rojo → verde los **32 ficheros de producción** (11.144 líneas) de
+1. Reconstruir, con el nivel de ceremonia que fije el inventario E-12 (T7.1), los **32 ficheros de producción** (11.144 líneas) de
    `internal/intake` (la cola `intake_jobs`), `intake/{pipeline,stages,anclaje}`, `internal/{intakeahead,
    evidence,reanalisis,casebank,intentcfg}` en `internal/modulos/captacion/…` (aplanado, `04` §4).
 2. Conmutar: `cmd/server-modular` cablea el worker del pipeline (W=1), el aforo (K=1), las cinco
@@ -19,8 +21,8 @@
    (`/reanalyze`) y E1–E2 (`/intents`); huella idéntica; `cmd/server` no cambia.
 3. Congelar el **ciclo 2** de `02` §4 (`conversacion · captacion · catalogo · solicitudes`) con
    **dos o tres puentes declarados** a la conversación vieja (el tercero, `reanalisis → flujos/runtime`,
-   se evita si T7.12 pasa `DefaultThreadLimit` por parámetro: recomendado) y **adaptadores** en `internal/arranque` hacia el
-   agregador y el compositor viejos, todos con muerte en F8 (D-7).
+   se evita si T7.12 pasa `DefaultThreadLimit` por parámetro: recomendado) y **un adaptador de arranque**,
+   `internal/arranque/bridge_captacion.go` (`05` §4.2), hacia el agregador y el compositor viejos. Todo muere en F8 (D-7).
 
 ## Entradas (tiene que ser cierto para empezar)
 
@@ -37,13 +39,16 @@
 - `internal/modulos/captacion/{intake,pipeline,stages,anclaje,intakeahead,evidence,reanalisis,casebank,intentcfg}`
   con **32** ficheros en verde, cada uno con su `x_test.go`; suites `intakehelpertest` (dos puertos:
   `JobStore` y `PipelineStore`), `intentcfghelpertest` y `casebankhelpertest` (con **doble nuevo**: `casebank` no
-  tiene gemelo).
-- Pendientes en `internal/modulos/captacion` → **0**; SKIP → **0**; cobertura ≥ 80 % por fichero salvo
-  `postgres.go`/`machine_postgres.go`/`store_postgres.go` (E-6).
+  tiene gemelo). Las cuatro suites son `Contrato…(t, func(t) Montaje)` y corren **en memoria y en Postgres** (P4).
+- Pendientes en `internal/modulos/captacion` → **0**; SKIP → **0**; sin umbral de cobertura (P2): un test por promesa
+  del contrato; mutantes en el nivel complejo; procesos de F9. La verdad de `postgres.go`/`machine_postgres.go`/
+  `store_postgres.go` la da la suite contra Postgres (P4) y F9.
 - Puentes en `fronteras_test.go`: `captacion/stages → internal/flujos/store`,
   `captacion/reanalisis → internal/flujos/events` y, solo si T7.12 no lo evita,
   `captacion/reanalisis → internal/flujos/runtime` (todos «muere F8»; tabla única en
-  [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1). Adaptadores `internal/arranque/puente_captacion.go` (muere F8).
+  [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1). Adaptador `internal/arranque/bridge_captacion.go` con su
+  test de cableado (muere F8); el adaptador `llmConfigBridge` de `bridge_inferencia.go` (F4) **muere aquí**.
+- `Conmutados` (`fronteras_test.go`): `captacion` **no** entra en F7; entra en F8, cuando muere `bridge_captacion.go`.
 - `cmd/server-modular` enlaza `modulos/captacion/**`; H1, E1, E2 por la cara nueva (`FaseActual = 7`);
   G7 lee el plazo del `pipeline` **nuevo**; huella igual; candados I-CP-4 (W=1) e INV-1 en verde con
   sus rutas nuevas.
@@ -57,17 +62,17 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
+| Bloque = sesión | Entorno | Tareas | Punto de parada |
 |---|---|---|---|
-| **A** · inventario + hojas en rojo | 🌐 | T7.1–T7.6 | `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en rojo con suites · PR |
-| **B** · rojo de `stages` | 🌐 | T7.7–T7.9 | 10 ficheros de `stages` en rojo; puente a `flujos/store` declarado · PR |
-| **C** · rojo de `pipeline`, `intakeahead`, `reanalisis` | 🌐 | T7.10–T7.13 | todo el módulo en rojo; 2 puentes (3 si T7.12 no evita el de `runtime`); `make test-pendiente` anotado · PR |
-| **D** · verde de las hojas | 🌐 | T7.14–T7.15 | 5 paquetes hoja en verde · PR |
-| **E** · verde de `stages` | 🌐 | T7.16–T7.17 | `stages` en verde · PR |
-| **F** · verde de `pipeline`, `intakeahead`, `reanalisis` | 🌐 | T7.18–T7.20 | pendientes del módulo = 0 · PR |
-| **G** · cara HTTP (TX.19–TX.20 + intenciones) | 🌐 | T7.21–T7.22 | `reanalyze.go`, `intents.go` nuevos en verde · PR |
-| **H** · conmutar (incl. TX.21) | 🌐 | T7.23–T7.26 | huella igual · cableado por tipo · INV-1 re-tocado · traspaso · PR |
-| **I** · cierre local | 💻 | T7.27–T7.29 | P4 y P8 (y 9C si D-F9-1) contra los dos binarios · `dev` · `ESTADO.md` |
+| **A** · [`F7-01`](../sesiones/F7-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐❓ | T7.1–T7.6, T7.14–T7.15 | inventario **aprobado por Jhoan** · `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en verde con sus suites en memoria |
+| **B** · [`F7-02`](../sesiones/F7-02-web-stages.md) · `stages` | 🌐❓ | T7.7–T7.9, T7.16–T7.17 | 10 ficheros de `stages` en verde; puente (import) a `flujos/store` declarado |
+| **C** · [`F7-03`](../sesiones/F7-03-web-pipeline-reanalisis.md) · `pipeline`, `intakeahead`, `reanalisis` | 🌐❓ | T7.10–T7.13, T7.18–T7.20 | pendientes del módulo = 0; 2 puentes (import) (3 si T7.12 no evita el de `runtime`) |
+| **D** · [`F7-04`](../sesiones/F7-04-web-cara-http-y-conmutar.md) · cara HTTP + conmutar | 🌐❓ | T7.21–T7.26 (= TX.19–TX.21) | `reanalyze.go`, `intents.go` en verde · `bridge_captacion.go` con test de cableado · huella igual · INV-1 re-tocado |
+| **E** · [`F7-05`](../sesiones/F7-05-cli-cierre.md) · cierre local | 💻 | T7.27–T7.29 | suites contra Postgres · P4 y P8 (T9.28) contra los dos binarios · `dev` · `ESTADO.md` |
+
+Cada sesión: un bloque de 45–90 min y cierre de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos
+aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques A–I de antes se reagruparon por paquete
+(rojo y verde juntos); `DECISIONES.md` aún dice «F7 bloque H» para D-F7-1: hoy es el bloque **D**.
 
 ## Contradicciones encontradas (medidas contra el código)
 
@@ -103,7 +108,7 @@ estado en memoria) → [`diseno.md`](diseno.md) → [`reglas.md`](reglas.md) →
 
 | # | Pregunta | Recomendación |
 |---|---|---|
-| D-F7-1 | Costura con el agregador y el compositor viejos (F8): ¿segunda instancia **vieja** de `intake.Postgres` (sin estado) para ellos + adaptador de tipos para `Request`/`OnClassified`/`ComposeAtFlush`, o adaptar también la cola? | **Segunda instancia vieja** para `JobStore`/`SourceTextWriter` (solo `*sql.DB`, `grep -n 'sync\.' internal/intake/postgres.go` vacío) + **`puente_captacion.go`** con las tres conversiones de `WindowKey` (struct idéntico de 4 `string`, `store.go:60-65`: conversión directa `intakeviejo.WindowKey(k)`). Todo muere en F8 |
+| D-F7-1 | Costura con el agregador y el compositor viejos (F8): ¿segunda instancia **vieja** de `intake.Postgres` (sin estado) para ellos + adaptador de tipos para `Request`/`OnClassified`/`ComposeAtFlush`, o adaptar también la cola? | **Segunda instancia vieja** para `JobStore`/`SourceTextWriter` (solo `*sql.DB`, `grep -n 'sync\.' internal/intake/postgres.go` vacío) + **`bridge_captacion.go`** con las tres conversiones de `WindowKey` (struct idéntico de 4 `string`, `store.go:60-65`: conversión directa `intakeviejo.WindowKey(k)`). Todo muere en F8 |
 | D-F7-2 | `cmd/casebank` (CLI que siembra `intake_case_bank`) importa `internal/casebank`: ¿cambia a `modulos/captacion/casebank` en F7 o en F10? | **F10**, con `cmd/server`: `cmd/` no se toca durante la transición y el operador sigue usando el código de UAT. En F7 el paquete nuevo se prueba por su suite y su doble |
 | D-F7-3 | `pipeline/memoria.go` (414 l, `sync.Mutex` `:86`, construye `cart.Article`/`catalogo.Construir` `:371-380`) está entre los ficheros de producción: ¿es producción o un doble para los guiones de test? | Verificar en T7.1 (`grep -rn 'NuevaMemoria\|memoria\.' internal --include='*.go' \| grep -v _test`): si solo lo usan tests, **pasa a `pipelinehelpertest/`** (E-3, dobles); si no, se reconstruye como producción |
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |

@@ -73,8 +73,9 @@ salidas, **en este orden de preferencia**:
 
 1. **Inyectar el objeto nuevo** si el puerto viejo es **estructural** (métodos con tipos de stdlib,
    `cloudlinkv1` o `platform`): una sola instancia, cero puentes de import.
-2. **Adaptador de tipos en `internal/arranque`** (como el de F1 para `contact`) si el puerto exige un
-   tipo viejo y el objeto tiene estado.
+2. **Adaptador de tipos en `internal/arranque`** (`bridge_<x>.go`, `05` §4.2; como el de F1 para
+   `contact`) si el puerto exige un tipo viejo y el objeto tiene estado. Lo lista el inventario E-12 de
+   la fase que lo crea.
 3. **Segunda instancia vieja** solo si el objeto **no tiene estado** (adaptador Postgres puro).
 
 | Campo(s) de `publicapi.Deps` | Objeto (fase del dominio) | Estado | Rutas que lo usan (mapa) | En la cara vieja |
@@ -97,7 +98,7 @@ depende de ellos entre F3 y F8):
 
 1. **El selector LLM viejo recibe el gw por `local.Frame`**, cuyo método `Infer` pide
    `gatewaygrpc.InferRequest` **viejo** (`internal/llmvia/local/local.go:270-272`): **no** es
-   estructural. Entre F3 y F4 hace falta un adaptador de tipos en el arranque (salida 2). Afecta a
+   estructural. Entre F3 y F4 hace falta un adaptador de tipos en el arranque (salida 2: `bridge_gateway.go`, de F3). Afecta a
    G7 y a todo el pipeline, no solo a la cara.
 2. **El runtime viejo** recibe el gw por `flowruntime.New(…, c.gw, …)` (`fase7_flujos.go:228`) y el
    gateway recibe ganchos del runtime (`c.gw.OnIncoming = c.flowRuntime.OnIncoming`, `:127`): los

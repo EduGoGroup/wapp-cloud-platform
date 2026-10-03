@@ -7,6 +7,12 @@
 
 ## 1 · Qué hace cada entorno
 
+> ✎ **2026-10-03 (P3 de la parada de F1)**: la separación web/local **dura lo que dure la promoción web**
+> (≈ 13–19 sesiones más, estimación). La web se reserva para **escribir código**; lo que necesita Docker,
+> UAT o `main` es local. Cuando se acabe, todo se hace en una sola sesión local, y el **traspaso** solo se
+> escribe si algo lo tiene que cerrar el otro entorno o si una sesión se corta. Qué sesión usa cada entorno:
+> [`../sesiones/README.md`](../sesiones/README.md).
+
 **Regla madre**: la **web abre** (escribe contratos, tests, lógica y docs, corre los gates que su
 entorno permite); la **local cierra** (solo lo que la web no puede, e intenta refutar lo que la web
 dio por cierto). No se adapta el proyecto al entorno: ni bajar Go, ni `t.Skip`, ni un Postgres vivo.
@@ -272,13 +278,13 @@ por IP compartida (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/` lo evit
 | Tipo de trabajo | Escribe | Corre | Cierra |
 |---|---|---|---|
 | Contrato + rojo (`rojo(<m>)`) | 🌐 | 🌐 `vet -tags pendiente`, `ci-local` | 🌐 |
-| Verde de un fichero (`verde(<m>)`) | 🌐 | 🌐 test del paquete, `cobertura-ficheros`, `ci-local` | 🌐 |
+| Verde de un fichero (`verde(<m>)`) | 🌐 | 🌐 test del paquete, `ci-local` (`cobertura-ficheros` solo como informe) | 🌐 |
 | Conmutar un módulo (`conmutar(<m>)`) | 🌐 | 🌐 `huella_test`, `ci-local` · 💻 `test-integration` si toca `platform` | 🌐, o 🌐→💻 si hubo cambio en `platform` |
 | Mudar rutas a `apipublica` | 🌐 | 🌐 huella de rutas | 🌐 |
 | F0: ✎ de `platform` (código que comparten los dos arranques) | 🌐 | 🌐 `ci-local` · 💻 `make test-integration` (`WAPP_TEST_REQUIRE_DB=1`, SKIP contados) | 🌐→💻 |
 | F0: hook `SessionStart`, targets `make` | 🌐 | 🌐 (T0.1 prueba las dos ramas del script, con y sin `CLAUDE_CODE_REMOTE`); 💻 lo ve correr al arrancar F0-06 | 🌐 (sin traspaso propio: F0 bloque A es 🌐) |
 | Cambio de `go.mod` (testcontainers) | 🌐 | 💻 `go.sum` con red real, `test-integration` | 🌐→💻 |
-| Proceso de F9 (`procesos(<p>)`) | 🌐 | 🌐 `vet -tags integracion`; pre-chequeo con Docker si §5 salió bien · 💻 `make test-procesos` viejo **y** nuevo | 💻 |
+| Proceso de F9 (`procesos(<p>)`) | 💻 (desde el 2026-10-03; el bloque A lo escribió la web) | 💻 `make test-procesos` viejo **y** nuevo | 💻 |
 | Prueba en UAT en sustitución (D-9) | — | 💻 | 💻 |
 | Relevo F10 | 🌐 | 🌐 `ci-local` · 💻 procesos, `test-integration`, despliegue UAT | 💻 |
 | Docs del plan, `ESTADO.md`, `tareas.md` | 🌐 / 💻 | — | quien cierra la tarea |

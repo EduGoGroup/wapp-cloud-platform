@@ -84,7 +84,7 @@ flowchart LR
 La conversación (`flujos/**`) se reconstruye **después** (F8) y **consume** objetos de solicitudes.
 El código viejo **no se toca** (E-1), así que el arranque nuevo tiene que dárselos con tipos que el
 viejo acepte. Regla de preferencia de FX [`arquitectura.md`](../FX-cara-http/arquitectura.md) §4:
-(1) objeto nuevo si el puerto es **estructural**; (2) adaptador en `internal/arranque/puente_<x>.go`;
+(1) objeto nuevo si el puerto es **estructural**; (2) adaptador en `internal/arranque/bridge_<x>.go` (`05` §4.2);
 (3) segunda instancia **vieja** solo si **no tiene estado**.
 
 | Consumidor viejo (fase que lo rehace) | Puerto que exige (`fichero:línea`) | Tipos | Salida | Muere |
@@ -109,6 +109,23 @@ efecto único (Service, notificador, recordatorios, worker del outbox) son **una
 | Worker del outbox (`integrations.NewWorker` + `Run`) | goroutine con dos `time.Ticker` (`PollInterval`, `ClaimLease`); dos workers reclamarían lotes a la vez y duplicarían la métrica | `integrations/worker.go:183,185` · `fase9_fondo.go:54` |
 | `intakes.Service` | «dos serían dos máquinas de estados opinando sobre las mismas filas» (`fase6_solicitudes.go:14-18`); no tiene estado en memoria (medido: sin `sync.`), pero cablea notificador, recordatorios, CRM y telemetría: dos instancias con cables distintos darían efectos distintos por puerta | `service.go` |
 | Notificador y recordatorios | una sola salida hacia WhatsApp y un solo criterio de «ya recordé» (la marca vive en BD: `deposit_reminded_at`, `expiry_reminded_at`) | `fase6_solicitudes.go:28-50` |
+
+### 4.1 · Adaptadores de arranque `bridge_<x>.go` (`05` §4.2) — provisional, lo fija el inventario E-12 (T6.1)
+
+Distintos del **puente (import)** del §2, que sigue siendo uno. El adaptador es nivel **simple** (traduce, sin estado,
+una pasada), lleva `bridge_<x>_test.go` y cuenta para `un_fichero_un_test` y para el informe de cobertura.
+
+| Adaptador | En F6 | Muere |
+|---|---|---|
+| `bridge_intakes.go` (tipo `intakesBridge`: `RevisionWriter`/`ShippingEnsurer` del carrito viejo sobre el `Postgres` nuevo) | **nace solo si** Jhoan cambia D-F6-1; con D-F6-1 vigente **no nace** y la salida es la segunda instancia vieja de `intakes.Postgres` (fila 4 de la tabla de arriba) | F8 |
+| `bridge_contact` (F1) | **no muere**: el notificador nuevo usa `nucleo/contact` directo (§6) y deja de necesitarlo; el motor viejo lo sigue usando | F8 |
+
+Recuento provisional: **nacen 0** (1 si se cambia D-F6-1) · **mueren 0**. Los adaptadores de F2–F4 que el notificador o
+P5 dejen de usar al conmutar se anotan en el inventario (**sin medir** aquí: los listan sus fases).
+
+**`Conmutados`** (`internal/modulos/fronteras_test.go`): `solicitudes` entra cuando muere su último adaptador, no al
+conmutar. Con cualquiera de las dos salidas, lo transitorio del carrito muere en **F8**: ahí entra. `FaseActual = 6`
+sube en T6.25, como siempre.
 
 ## 5 · Estado en memoria, goroutines, relojes y métricas
 
@@ -147,8 +164,11 @@ la aserción del campo `QuoteSuggestions` pasa a mirar las dependencias de la **
 
 **Cómo se prueba que el binario nuevo usa lo nuevo**: (a) `go list -deps ./cmd/server-modular`
 contiene `internal/modulos/solicitudes/…` y (b) un test de cableado `solicitudes_cableado_test.go`
-en `internal/arranque` afirma, por tipo (`%T`), que `Service`, notificador, recordatorios, worker y
-los stores de las rutas son de `modulos/solicitudes`. La huella sola **no basta**: rutas, rpc,
+en `internal/arranque`, **completo** (hallazgo 39 de F1): afirma, por tipo (`%T`), que `Service`,
+notificador, recordatorios, worker y los stores de las rutas son de `modulos/solicitudes`, **y**, con
+un grep por ruta de import, que ninguna fase del arranque importa `internal/intakes`,
+`internal/integrations` ni `internal/tenantvars` viejos fuera del sitio declarado para el carrito
+(la segunda instancia vieja o `bridge_intakes.go`). La huella sola **no basta**: rutas, rpc,
 métricas y goroutines son los mismos nombres antes y después (F1 contradicción 7).
 
 ## 7 · Rutas HTTP — la cara nueva (D-10)

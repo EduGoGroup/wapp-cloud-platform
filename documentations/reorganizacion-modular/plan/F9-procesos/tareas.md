@@ -1,10 +1,14 @@
 # F9 · Tareas
 
 > Skills: `procesos-testcontainers` (todas), `validar-antes-de-cerrar` (gates),
-> `traspaso-web-local` (cierre de cada bloque), `contrato-tdd` (solo para leer cómo nace una suite).
+> `traspaso-web-local` (solo el bloque A, o si una sesión se corta), `contrato-tdd` (solo para leer cómo nace una suite).
 > **🕐** = la tarea cambia si Jhoan **no** acepta adelantar F9 (D-F9-1): ver T9.34.
-> Gate de la web en todas: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo "GATE_RC=$?" >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`.
-> Gate local de procesos: `make test-procesos` (nace en T9.4), `RC=0` por binario leído del log.
+> **Entorno**: el bloque A fue 🌐→💻 (hecho). **B1, B2, C y D son 💻, solo local** (P3, 2026-10-03): la misma sesión
+> escribe, corre y cierra; sin pre-chequeo web ni traspaso.
+> Gate en todas: `GOWORK=off make ci-local > /tmp/g.log 2>&1; echo "GATE_RC=$?" >> /tmp/g.log; tail -1 /tmp/g.log` → `GATE_RC=0`, con 0 `--- SKIP`.
+> Gate de procesos: `make test-procesos` (nace en T9.4), `RC=0` por binario leído del log.
+> Sin umbral de cobertura (P2): los procesos son parte de lo que lo sustituye.
+> Cierre de cada sesión (`05` E-12): tareas `[x]` con SHA, un bloque en `ESTADO.md`, hallazgos nuevos en el README.
 
 ## Bloque A · el arnés · 🌐→💻 · T9.1–T9.12 🕐
 
@@ -87,45 +91,54 @@ dos binarios **en local** y `ci-local` rc=0 con el candado ampliado.
   - **Gate**: local `make test-procesos` RC=0 ×2; `make ci-local` GATE_RC=0
   - **Commit**: `docs(reorganizacion-modular): F9, traspaso del arnés`
 
-## Bloque B1 · procesos de plataforma y acceso · 🌐→💻 · T9.13–T9.16 🕐
+## Bloque B1 · procesos de plataforma y acceso · 💻 · T9.13–T9.16 🕐 · sesión F9-03
 
-Entrada: bloque A `CERRADO`. Para cuando: P1, P2, P3, P9 con `RC=0` contra viejo y nuevo, en local.
+Entrada: bloque A `CERRADO` y **F1-06** (ajustes previos a F2) hecha. Para cuando: P1, P2, P3, P9 con `RC=0` contra
+el **viejo** (y corridos contra el nuevo: un rojo solo contra el nuevo es hallazgo, R9.4.c), **y el mutante
+`maxTxAttempts = 1` cae** (T9.15).
 Cada tarea: **Ficheros** el `p<n>_…_test.go` de `diseno.md` §4 · **Hecho cuando** la definición de
-hecho de un proceso (`reglas.md` §4) · **Gate** web: vet `-tags integracion` rc=0 (y pre-chequeo si
-hay Docker); local: `make test-procesos` RC=0 ×2 · **Commit** `procesos(<proceso>): …`.
+hecho de un proceso (`reglas.md` §4) · **Gate** `make test-procesos` RC=0 ×2, 0 SKIP · **Commit** `procesos(<proceso>): …`.
+Las tablas de casos de cada proceso llevan **casos adversarios** (`reglas.md` §2). Si los cuatro procesos no caben en
+45–90 min, la sesión para en un punto limpio tras un proceso cerrado y se relanza.
 
-- [ ] **T9.13 · procesos(enrolamiento): P1, enrolamiento y lease** · 🌐→💻 · dep. T9.12 · cumple R9.4.b–d
-- [ ] **T9.14 · procesos(canje): P2, canje y permisos, con I-CP-5 y el canje único** · 🌐→💻 · dep. T9.12 · cumple R9.6.a–b
-- [ ] **T9.15 · procesos(entrante): P3, del entrante a la respuesta, con el literal del aviso** · 🌐→💻 · dep. T9.13 · cumple R9.6.d
-  - Además (D-F1-11, decisión de Jhoan, 2026-10-02): los pasos 6–8 de P3 (`diseno.md` §4), que afirman R-27, R-28 y R-29 de F1 —las tres reglas de `contacts` que `internal/nucleo/contact` difiere a este proceso—; la variante de `entrante` con `push_name` y `from_lid` en `edge_falso_test.go` (`diseno.md` §3.3); y la **medición** del mutante `maxTxAttempts = 1`, con su resultado en el traspaso (se cierre o no la carencia de MP-12)
-- [ ] **T9.16 · procesos(diagnostico): P9, diagnóstico remoto y config empujada** · 🌐→💻 · dep. T9.13
-  - Cierre del bloque: traspaso `TRASPASO-F9-procesos-b1.md` con `CERRADO`.
+- [ ] **T9.13 · procesos(enrolamiento): P1, enrolamiento y lease** · 💻 · dep. T9.12 · cumple R9.4.b–d
+- [ ] **T9.14 · procesos(canje): P2, canje y permisos, con I-CP-5 y el canje único** · 💻 · dep. T9.12 · cumple R9.6.a–b
+- [ ] **T9.15 · procesos(entrante): P3, del entrante a la respuesta, con el literal del aviso y el reintento de `WithTx`** · 💻 · dep. T9.13 · cumple R9.6.d, R9.6.e
+  - Además (D-F1-11, decisión de Jhoan, 2026-10-02): los pasos 6–8 de P3 (`diseno.md` §4), que afirman R-27, R-28 y R-29 de F1 —las tres reglas de `contacts` que `internal/nucleo/contact` difiere a este proceso—; y la variante de `entrante` con `push_name` y `from_lid` en `edge_falso_test.go` (`diseno.md` §3.3).
+  - 🔴 **El reintento de `postgres.WithTx`, con ejecución real** (hallazgo 38 de F1; R9.6.e): el paso 9 de P3 (`diseno.md` §4) provoca contra Postgres un conflicto de serialización o un deadlock y afirma que la operación termina bien tras reintentar. Ya no basta con **medir** el mutante: **Hecho cuando** `TestP3_TxRetryOnSerializationFailure` pasa contra los dos binarios **y el mutante `maxTxAttempts = 1` cae** (copia desechable de `internal/platform/storage/postgres/tx.go`; el nombre del test que cae y su mensaje van al bloque de `ESTADO.md`). Si el mutante sobrevive, T9.15 **no se cierra**: se queda `[~]` y vuelve a Jhoan. Tiene que existir **antes** de que F10 borre `deadlock_integration_test.go`.
+- [ ] **T9.16 · procesos(diagnostico): P9, diagnóstico remoto y config empujada** · 💻 · dep. T9.13
+  - Cierre de la sesión F9-03: las tres cosas (sin traspaso).
 
-## Bloque B2 · procesos de negocio · 🌐→💻 · T9.17–T9.21, T9.35 🕐
+## Bloque B2 · procesos de negocio · 💻 · T9.17–T9.21, T9.35 🕐 (+ T9.22) · sesión F9-04
 
-Entrada: B1 `CERRADO`. Misma forma que B1. Para cuando: P4–P8 (y P10 si D-F9-4) con `RC=0` contra
-viejo y nuevo, en local; traspaso `TRASPASO-F9-procesos-b2.md` con `CERRADO`.
+Entrada: F9-03 cerrada. Misma forma que B1. Para cuando: P4–P8 (y P10, D-F9-4 = sí) con `RC=0` contra el viejo, y
+**toda la suite B1 + B2** con `RC=0` contra viejo y nuevo; T9.22 hecha. De esta sesión depende **F2-01**. Si no cabe
+en 45–90 min, para en un punto limpio tras un proceso cerrado y se relanza.
 
-- [ ] **T9.17 · procesos(borrador): el guion de inferencia y P4, de mensaje a borrador** · 🌐→💻 · dep. T9.15
+- [ ] **T9.17 · procesos(borrador): el guion de inferencia y P4, de mensaje a borrador** · 💻 · dep. T9.15
   - Además: `test/procesos/guion_test.go`; el comentario del guion dice **cómo** reconoce cada etapa (marcador del prompt o `max_output_tokens`, `diseno.md` §3.4) y de qué test viejo sale cada JSON
-- [ ] **T9.18 · procesos(bandeja): P5, la bandeja, con INV-1** · 🌐→💻 · dep. T9.17 · cumple R9.6.c
-- [ ] **T9.19 · procesos(crm): el CRM falso y P6** · 🌐→💻 · dep. T9.18
-- [ ] **T9.20 · procesos(catalogo): P7, catálogo** · 🌐→💻 · dep. T9.17
-- [ ] **T9.21 · procesos(reanalisis): P8, re-análisis** · 🌐→💻 · dep. T9.17
+- [ ] **T9.18 · procesos(bandeja): P5, la bandeja, con INV-1** · 💻 · dep. T9.17 · cumple R9.6.c
+- [ ] **T9.19 · procesos(crm): el CRM falso y P6** · 💻 · dep. T9.18
+- [ ] **T9.20 · procesos(catalogo): P7, catálogo** · 💻 · dep. T9.17
+- [ ] **T9.21 · procesos(reanalisis): P8, re-análisis** · 💻 · dep. T9.17
 
-## Bloque C · pasada por conmutación · 🌐→💻 · T9.22–T9.29 🕐
+## Bloque C · pasada por conmutación · 💻 · T9.22–T9.29 🕐 · en el cierre local de cada módulo
 
-Una tarea por módulo, **dentro de la sesión del `conmutar(<m>)` de su fase** (la fase del módulo la
-cita como dependencia de su cierre). Forma común:
+Una tarea por módulo, **dentro de la sesión 💻 que cierra el `conmutar(<m>)` de su fase** (F2…F8; la fase del módulo
+la cita como dependencia de su cierre). T9.22 (`nucleo`, F1) cae en **F9-04**. Forma común:
 
 - **Ficheros**: `test/procesos/<paquete>_contrato_test.go`, uno por paquete de la fila de `diseno.md` §5
-- **Hecho cuando**: web: vet rc=0 (y pre-chequeo si hay Docker); local: las suites del módulo
-  `RC=0` contra Postgres **y** `BINARIO=nuevo make test-procesos` `RC=0`; los procesos marcados para
-  el módulo en `arquitectura.md` §5.1 son el gate del `conmutar`
-- **Gate**: local `make test-procesos` RC=0 ×2
+- **Hecho cuando**: las suites del módulo `RC=0` contra Postgres **y** `BINARIO=nuevo make test-procesos` `RC=0`; los
+  procesos marcados para el módulo en `arquitectura.md` §5.1 son el gate del `conmutar`. Además:
+  - 🔴 **el test de cableado del módulo está completo** (hallazgo 39 de F1; `05` §4.2): afirma que el arranque
+    construye lo **nuevo** y que nadie importa lo viejo fuera de `bridge_<x>.go` (grep por ruta de import). Los
+    procesos **no lo detectan**: con el resolver viejo cableado por error el comportamiento es el mismo y la suite pasa;
+  - la marca de `Estado` de cada suite vigila todas las columnas que la operación puede tocar (R9.5.c);
+  - las tablas de la suite y del corpus de equivalencia llevan casos adversarios (`reglas.md` §2).
+- **Gate**: `make test-procesos` RC=0 ×2, 0 SKIP
 - **Commit**: `procesos(<modulo>): suites de contrato contra Postgres`
 
-- [ ] **T9.22 · `nucleo` (F1)** · dep. T9.12 · retroactiva: si F1 · T1.13/T1.18 ya corrió `contact_contrato_test.go`, solo la suite entera contra el nuevo
+- [ ] **T9.22 · `nucleo` (F1)** · sesión F9-04 · dep. T9.12 · retroactiva: si F1 · T1.13/T1.18 ya corrió `contact_contrato_test.go`, solo la suite entera contra el nuevo
 - [ ] **T9.23 · `acceso` (F2)** · dep. `conmutar(acceso)` · `iam/infra/postgres`, `entitlements`, `platformadmin`
 - [ ] **T9.24 · `edge` (F3)** · dep. `conmutar(edge)` · `enroll`, `fleet`, `lease`, `diagnostics`, `ingest`, `receipts`
 - [ ] **T9.25 · `inferencia` (F4)** · dep. `conmutar(inferencia)` · `tenantllm`, `degradation`
@@ -134,7 +147,7 @@ cita como dependencia de su cierre). Forma común:
 - [ ] **T9.28 · `captacion` (F7)** · dep. `conmutar(captacion)` · `intake`, `casebank`, `intentcfg`
 - [ ] **T9.29 · `conversacion` (F8)** · dep. `conmutar(conversacion)` · `flujos/store`, `flujos/trigger`, `flujos/events`, `flujos/runtime`
 
-## Bloque D · cierre · 💻 · T9.30–T9.33
+## Bloque D · cierre · 💻 · T9.30–T9.33 · sesión F9-05
 
 Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del relevo cumplida.
 
@@ -145,18 +158,18 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
   - **Gate**: los dos logs, leídos sin pipe
   - **Commit**: — (resultado en T9.33)
 - [ ] **T9.31 · Recuento contra el código** · 💻 · dep. T9.30 · cumple R9.4.d, R9.8.b
-  - **Hecho cuando**: el comando de R9.4.d (imports directos, D-F1-8) vacío; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
+  - **Hecho cuando**: el comando de R9.4.d (imports directos, D-F1-8) vacío **y verificado contra el gate que crea F1-06** (el comando sigue en ese gate y el gate lo corre: hallazgo 37 de F1); a mano, lo que el comando no ve (hallazgo 36): `grep -ln 'wapp-cloud-platform/internal/' test/procesos/*_test.go` solo lista `*_contrato_test.go` y `sin_bd_viva_test.go`; `WAPP_PROCESOS_BINARIO` solo en `main_test.go`; `grep -rn 't.Skip' test/procesos` vacío; el candado verde
 - [ ] **T9.32 · docs: F9 cerrada** · 💻 · dep. T9.31
   - **Ficheros**: `plan/F9-procesos/README.md` (estado, números medidos), `ESTADO.md`, `documentations/operacion.md` §3 (fila `make test-procesos`), la skill `procesos-testcontainers` si algo de lo aprendido la contradice (T-4, T-7, T-8 de `reglas.md`)
   - **Commit**: `docs(reorganizacion-modular): F9 cerrada, la condición del relevo`
-- [ ] **T9.33 · Traspaso final e integración** · 💻 · dep. T9.32
-  - **Ficheros**: `traspasos/TRASPASO-F9-cierre.md` con `CERRADO <fecha>`; `git push origin dev` leyendo su `rc`
+- [ ] **T9.33 · Cierre e integración** · 💻 · dep. T9.32
+  - **Hecho cuando**: las tres cosas del cierre (tareas `[x]` con SHA, bloque en `ESTADO.md` con los dos `RC` y el estado `F9 CERRADA <fecha>`, hallazgos en el README); `git push origin dev` leyendo su `rc`. Sin traspaso (solo si la sesión se corta)
 
 ## Tareas condicionales
 
-- [ ] **T9.34 · 🕐 (solo si D-F9-1 = no) · todas las suites de contrato contra Postgres de una vez** · 🌐→💻 · dep. T9.21 y F8 cerrada
+- [ ] **T9.34 · 🕐 (solo si D-F9-1 = no) · todas las suites de contrato contra Postgres de una vez** · 💻 · dep. T9.21 y F8 cerrada
   - Sustituye a T9.22–T9.29 (que se tachan: `~~T9.2x~~ — anulada: D-F9-1 rechazada`). Mismo contenido, en un bloque tras B2.
-- [ ] **T9.35 · procesos(plataforma): P10 (solo si D-F9-4 = sí)** · 🌐→💻 · dep. T9.12
+- [ ] **T9.35 · procesos(plataforma): P10 (solo si D-F9-4 = sí; lo es)** · 💻 · dep. T9.12 · sesión F9-04
   - **Ficheros**: `test/procesos/p10_plataforma_test.go` (`diseno.md` §4 P10)
   - **Hecho cuando**: cubre las reglas de los 9 ficheros de BD de `internal/platform/` (lista en `F10-relevo/diseno.md` §3), leídos (E-8); `RC=0` ×2 en local
   - **Commit**: `procesos(plataforma): migraciones, grants, rekey y colector contra Postgres`

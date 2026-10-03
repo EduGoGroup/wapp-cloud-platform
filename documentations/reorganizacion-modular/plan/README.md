@@ -1,15 +1,15 @@
 # El plan de trabajo de la reconstrucción modular
 
-> **Estado: ESCRITO Y VALIDADO · sin ejecutar** (2026-09-28). Es el plan **ejecutable** que pedía
+> **Estado: EN EJECUCIÓN** — F0, F9-A y F1 (el piloto) cerradas; **recalibrado el 2026-10-03** tras la parada
+> de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
 > [`05-metodo-contratos-y-tdd.md`](../05-metodo-contratos-y-tdd.md) §6 en *specs* con sus historias
-> de usuario, su arquitectura, su diseño, sus reglas y sus tareas, y en **81 sesiones** con su prompt.
+> de usuario, su arquitectura, su diseño, sus reglas y sus tareas, y en **56 sesiones** con su prompt
+> (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso: tú.** [`sesiones/00-01`](sesiones/00-01-jhoan-preparar-entorno-web.md) (el
-> entorno web) y [`sesiones/00-02`](sesiones/00-02-jhoan-decisiones-iniciales.md) (las decisiones de
-> [`DECISIONES.md`](DECISIONES.md) §1, §2 y §4). Después, la tabla de
-> [`sesiones/README.md`](sesiones/README.md), en orden.
+> **Siguiente paso:** [`sesiones/F1-06`](sesiones/F1-06-cli-ajustes-previos-a-f2.md) (ajustes de código
+> previos a F2, 💻). Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
 
@@ -30,18 +30,21 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 | Fase | Qué | Producción viejo → nuevo | Rutas a `apipublica` | Sesiones | Spec |
 |---|---|---:|---:|---|---|
 | **F0** | Andamiaje: `cmd/server-modular` + `internal/arranque` (copia), `internal/pendiente`, los candados, la huella en proceso, la cara vacía, los ✎ de `platform` | 21 (arranque, por copia) | 0 | 5 🌐 · 1 💻 | [F0](F0-andamiaje/README.md) |
-| **F9-A/B** | ⏩ *Adelantado (D-F9-1)*: el arnés de procesos con testcontainers y los procesos contra el binario **viejo** | — | — | 3 🌐 · 2 💻 | [F9](F9-procesos/README.md) |
-| **F1** | `nucleo/contact` — **el piloto, con parada** | 4 | 0 | 3 🌐 · 1 💻 · 🧑 parada | [F1](F1-nucleo-contact/README.md) |
-| **F2** | `acceso` (iam, platformadmin, entitlements) | 51 | 23 (+8 en `:8100`) | 6 🌐 · 1 💻 | [F2](F2-acceso/README.md) |
-| **F3** | `edge` (gateway, lease, fleet, grpc…) | 38 | 8 (+6) | 6 🌐 · 1 💻 | [F3](F3-edge/README.md) |
-| **F4** | `inferencia` (llmvia, prompts, tenantllm, degradation) | 10 | 4 | 6 🌐 · 1 💻 | [F4](F4-inferencia/README.md) |
-| **F5** | `catalogo` (+ `conversacion/model`, D-F5-1) | 10 + 1 | 0 | 4 🌐 | [F5](F5-catalogo/README.md) |
-| **F6** | `solicitudes` (intakes, integrations, tenantvars) | 41 | 18 | 8 🌐 · 1 💻 | [F6](F6-solicitudes/README.md) |
-| **F7** | `captacion` (intake, pipeline, stages, reanalisis…) | 32 | 1 (+ intenciones) | 8 🌐 · 1 💻 | [F7](F7-captacion/README.md) |
-| **F8** | `conversacion` (el motor, `runtime`, el carrito) — la mayor; **retira todos los puentes** | 75 | 19 (+5) | 11 🌐 · 1 💻 | [F8](F8-conversacion/README.md) |
+| **F9-A/B** | ⏩ *Adelantado (D-F9-1)*: el arnés de procesos con testcontainers y los procesos contra el binario **viejo** | — | — | 1 🌐 · 3 💻 | [F9](F9-procesos/README.md) |
+| **F1** | `nucleo/contact` — **el piloto, con parada** | 4 | 0 | 3 🌐 · 1 💻 · 🧑 parada · 1 💻 ajustes (F1-06) | [F1](F1-nucleo-contact/README.md) |
+| **F2** | `acceso` (iam, platformadmin, entitlements) | 51 | 23 (+8 en `:8100`) | 4 🌐 · 1 💻 | [F2](F2-acceso/README.md) |
+| **F3** | `edge` (gateway, lease, fleet, grpc…) | 38 | 8 (+6) | 4 🌐 · 1 💻 | [F3](F3-edge/README.md) |
+| **F4** | `inferencia` (llmvia, prompts, tenantllm, degradation) | 10 | 4 | con F5: 2 🌐 · 1 💻 | [F4](F4-inferencia/README.md) |
+| **F5** | `catalogo` (+ `conversacion/model`, D-F5-1) | 10 + 1 | 0 | (las de F4) | [F5](F5-catalogo/README.md) |
+| **F6** | `solicitudes` (intakes, integrations, tenantvars) | 41 | 18 | 3 🌐 · 2 🌐❓ · 1 💻 | [F6](F6-solicitudes/README.md) |
+| **F7** | `captacion` (intake, pipeline, stages, reanalisis…) | 32 | 1 (+ intenciones) | 4 🌐❓ · 1 💻 | [F7](F7-captacion/README.md) |
+| **F8** | `conversacion` (el motor, `runtime`, el carrito) — la mayor; **retira todos los puentes y adaptadores** | 75 | 19 (+5) | 7 💻 | [F8](F8-conversacion/README.md) |
 | **F9-D** | Cierre de los procesos contra los dos binarios — **condición del relevo** | — | — | 1 💻 | [F9](F9-procesos/README.md) |
-| **F10** | Relevo: `cmd/server` usa el arranque nuevo, se borra lo viejo, prueba en UAT | 317 prod + 497 test se borran | — | 🧑 · 2 🌐 · 4 💻 | [F10](F10-relevo/README.md) |
+| **F10** | Relevo: `cmd/server` usa el arranque nuevo, se borra lo viejo, prueba en UAT | 317 prod + 497 test se borran | — | 🧑 · 5 💻 | [F10](F10-relevo/README.md) |
 | **FX** | Transversal: la cara HTTP única nueva, por olas | 33 → `apipublica` | **73** (+19 en `:8100`) | dentro de F0, F2–F8, F10 | [FX](FX-cara-http/README.md) |
+
+Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
+F0, F9-A y F1 (salvo F1-06) ya están hechas.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go
 list`; el comando está en cada `README`). Rutas: el mapa de FX, contando lo que se registra en
@@ -59,8 +62,10 @@ flowchart LR
   FX["FX · apipublica por olas"] -. "TX en cada fase" .-> F0 & F2 & F3 & F4 & F6 & F7 & F8
 ```
 
-Cada módulo (F2–F8) sigue el ciclo de `05` §4: **contratos y rojo** de todo el módulo → **verde**
-fichero a fichero → **conmutar** (el arranque nuevo cablea lo nuevo, huella idéntica, sus rutas a
+Cada módulo (F2–F8) empieza por su **inventario E-12** (cada archivo con su nivel —simple, medio, complejo— y
+los adaptadores `bridge_<x>.go` que harán falta; lo aprueba Jhoan) y sigue el ciclo de `05` §4 con la
+ceremonia de su nivel: en el simple, contrato, test y lógica en una pasada; en el medio, rojo y verde por
+paquete; en el complejo, el esquema completo con mutantes → **conmutar** (el arranque nuevo cablea lo nuevo, huella idéntica, sus rutas a
 `apipublica`) → **cierre** local (y, con D-F9-1, sus procesos contra el binario nuevo).
 
 ## Lo que el análisis del plan descubrió (y cambia cómo se trabaja)
@@ -69,9 +74,10 @@ Hallazgos transversales, medidos sobre el código; el detalle, en la fase que lo
 
 1. 🔴 **El rojo lleva solo exportados.** El linter `unused` hace fallar el gate con un no exportado
    sin uso ([F1](F1-nucleo-contact/README.md)). Regla del marco.
-2. **Adaptadores de tipos en el arranque** (`internal/arranque/puente_<x>.go`): cuando un paquete
+2. **Adaptadores de tipos en el arranque** (`internal/arranque/bridge_<x>.go`, `05` §4.2): cuando un paquete
    nuevo conmuta pero sus consumidores aún son viejos, el arranque adapta el tipo nuevo al puerto
-   viejo. Nacen al conmutar y mueren cuando conmuta el consumidor (`puente_iam` en F3, `puente_gateway` en F4…); **en F8 no queda ninguno**
+   viejo. Nacen al conmutar y mueren cuando conmuta el consumidor (`bridge_iam` en F3, `bridge_gateway` en F4…); **en F8 no queda ninguno**.
+   Un módulo entra en `Conmutados` cuando muere su último adaptador
    ([`00-marco/estructura.md`](00-marco/estructura.md)). Son distintos de los «puentes» de import
    de `05` §4.1.
 3. 🔴 **Dos barridos AST viejos recorren todo `internal/`** y se pondrían rojos con el árbol nuevo:

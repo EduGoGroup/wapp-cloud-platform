@@ -15,7 +15,7 @@
 - **R10.1.a** · **CUANDO** empieza la ventana, **LA** operación **DEBERÁ** tener copia del binario vivo
   (`bin/server` → `bin/server.viejo-<sha>`) y un volcado de la base, y **DEBERÁ** comprobar que el
   `content_hash` de `public.schema_version` que espera el binario modular es el mismo que el del viejo.
-  — Verifica: acta del traspaso con `md5sum`, ruta del volcado y las dos salidas de `migrate -status`.
+  — Verifica: acta (`traspasos/TRASPASO-F10-relevo.md`) con `md5sum`, ruta del volcado y las dos salidas de `migrate -status`.
 - **R10.1.b** · **MIENTRAS** dura la ventana, **EL** proceso vivo de `wapp-cloud.service` **DEBERÁ**
   ser el modular. — Verifica: `go version -m /proc/$(systemctl show -p MainPID --value wapp-cloud)/exe`
   muestra `path …/cmd/server-modular` y `vcs.revision` = el SHA de `dev` desplegado, `vcs.modified=false`.
@@ -30,7 +30,7 @@
 
 ## H10.2 · Un solo arranque
 
-> Como **la sesión web**, quiero que `cmd/server` llame a `internal/arranque` y que desaparezcan
+> Como **quien mantiene el repo**, quiero que `cmd/server` llame a `internal/arranque` y que desaparezcan
 > `cmd/server-modular` e `internal/bootstrap`, para que haya un solo cableado que mantener.
 
 - **R10.2.a** · **EL** fichero `cmd/server/main.go` **DEBERÁ** llamar a `arranque.Ejecutar` y **NO
@@ -57,13 +57,17 @@
   `cmd/debug_inferencia`) **DEBERÁN** conservar sus flags y su conducta tras re-apuntar sus imports. —
   Verifica: `go run ./cmd/prompts -comprobar <dir>` y `go run ./cmd/casebank` sin `-consentido`
   («se niega») dan la misma salida antes y después (capturada en T10.1).
+- **R10.3.d** · **ANTES** de borrar `internal/flujos/contact/deadlock_integration_test.go` y el resto de la
+  integración vieja, **T9.15 (P3)** **DEBERÁ** ejercer el reintento de `postgres.WithTx` y hacer caer el mutante
+  `maxTxAttempts = 1` (hallazgo 38 de F1). — Verifica: el resultado del mutante, copiado al acta en T10.1; si
+  sobrevive, T10.11 no borra ese test y la sesión para.
 
-## H10.4 · Cero puentes, cero pendientes
+## H10.4 · Cero adaptadores, cero puentes (import), cero pendientes
 
-> Como **Jhoan**, quiero que el gate pruebe que no queda ni un puente al código viejo ni un contrato
-> sin lógica, para que el relevo no deje deuda escondida.
+> Como **Jhoan**, quiero que el gate pruebe que no queda ni un adaptador de arranque, ni un puente (import) al
+> código viejo, ni un contrato sin lógica, para que el relevo no deje deuda escondida.
 
-- **R10.4.a** · **EL** candado `internal/modulos/fronteras_test.go` **DEBERÁ** tener la lista de puentes
+- **R10.4.a** · **EL** candado `internal/modulos/fronteras_test.go` **DEBERÁ** tener la lista de puentes (import)
   **vacía** y fallar si se añade uno. — Verifica: la lista en el fichero; caso `muerde`.
 - **R10.4.b** · **EL** candado `no_pending_test.go` (D-F1-12, 2026-10-02; antes `sin_pendientes_test.go`) **DEBERÁ** estar activo y fallar ante cualquier
   `pendiente.Implementar` (y, si D-F10-3, ante la etiqueta `//go:build pendiente`). — Verifica: caso
@@ -71,10 +75,13 @@
 - **R10.4.c** · **EN** el código nuevo, `--- SKIP` **DEBERÁ** ser 0. — Verifica:
   `GOWORK=off go test -v ./... 2>&1 | grep -c -- '--- SKIP'` → 0 (con D-F10-5 = borrar) o solo los de
   `internal/platform` contados y nombrados (si no).
+- **R10.4.d** · **EN** `internal/arranque` **NO DEBERÁ** existir ningún adaptador `bridge_*.go`, y la lista
+  `Conmutados` de `fronteras_test.go` **DEBERÁ** contener todos los módulos de F1–F8 (`05` §4.2). — Verifica:
+  `ls internal/arranque/bridge_*.go 2>/dev/null | wc -l` → 0; la lista en el fichero.
 
 ## H10.5 · La integración nueva sustituye a la vieja
 
-> Como **la sesión local**, quiero que `make test-procesos` corra contra el único binario y que la
+> Como **quien mantiene el repo**, quiero que `make test-procesos` corra contra el único binario y que la
 > batería vieja se retire, para que no queden dos formas de probar contra Postgres.
 
 - **R10.5.a** · **EL** arnés **DEBERÁ** compilar solo `cmd/server` y **NO DEBERÁ** leer
@@ -100,13 +107,13 @@
 
 ## H10.7 · La documentación dice las rutas nuevas
 
-> Como **la sesión local**, quiero actualizar la documentación del repo y la del ecosistema con la
+> Como **quien mantiene el repo**, quiero actualizar la documentación del repo y la del ecosistema con la
 > tabla ruta vieja → nueva, para que nadie siga una ruta que ya no existe.
 
 - **R10.7.a** · **LA** documentación del repo (`CLAUDE.md`, `README.md`, `documentations/*.md`, las
   cinco skills) **NO DEBERÁ** citar rutas de paquetes borrados salvo como historia. — Verifica: el
   comando de [`diseno.md`](diseno.md) §4 → 0 fuera de `reorganizacion-modular/` y de citas marcadas «(histórico)».
-- **R10.7.b** · **LA** sesión local **DEBERÁ** reescribir las menciones del ecosistema con la tabla de
+- **R10.7.b** · **LA** sesión F10-05 **DEBERÁ** reescribir las menciones del ecosistema con la tabla de
   `04` §4 y proponer a Jhoan la regla nueva de ADR-0010. — Verifica: recuento de [`diseno.md`](diseno.md)
   §3.1 → 0 menciones de rutas borradas en `documentations/` de la raíz fuera de lo histórico.
 - **R10.7.c** · **LOS** 12 comentarios de repos hermanos **DEBERÁN** citar la ruta nueva, cada uno en

@@ -71,7 +71,7 @@
 
 ## H9.3 · Los dobles: el servidor de verdad arranca sin nada de fuera
 
-> Como **la sesión web**, quiero dobles para todo lo que el servidor exige al arrancar (PKI, claves,
+> Como **la sesión que escribe los procesos**, quiero dobles para todo lo que el servidor exige al arrancar (PKI, claves,
 > S3, identity, LLM, CRM), para que el binario completo arranque en el arnés **sin tocar su código**.
 
 - **R9.3.a** · **EL** arnés **DEBERÁ** generar en `t.TempDir()` una CA EC P-256, un certificado de
@@ -105,11 +105,11 @@
   `WAPP_PROCESOS_BINARIO=otro GOWORK=off go test -tags integracion ./test/procesos/; echo rc=$?` → `rc≠0`
   (con `GOWORK=off`, para que el `rc≠0` sea el del binario y no el de D-F9-7: sin él, `TestMain` sale también con código 2).
 - **R9.4.b** · **CUANDO** se escribe un proceso nuevo, **EL** proceso **DEBERÁ** pasar contra `viejo`
-  antes de su commit `procesos(<proceso>)`. — Verifica: el traspaso del bloque cita el log con
+  antes de su commit `procesos(<proceso>)`. — Verifica: el bloque de la sesión en `ESTADO.md` cita el log con
   `RC=0` contra `viejo` y el conteo `--- PASS`.
 - **R9.4.c** · **SI** un proceso falla contra `nuevo` y pasa contra `viejo`, **ENTONCES** la sesión
-  **DEBERÁ** registrarlo como hallazgo de la reconstrucción (no se toca el test). — Verifica: sección
-  §7 del traspaso.
+  **DEBERÁ** registrarlo como hallazgo de la reconstrucción (no se toca el test). — Verifica: el hallazgo,
+  numerado, en el README de la fase del módulo.
 - **R9.4.d** · **EL** proceso **DEBERÁ** entrar solo por las puertas reales (HTTP `:8100`/`:8103`,
   gRPC `:8101`/`:8102`) y leer Postgres por SQL; **NO DEBERÁ** importar paquetes de dominio. La excepción
   son las suites de contrato (H9.5, D-F1-8): los paquetes `…helpertest` y el constructor del adaptador Postgres
@@ -122,15 +122,27 @@
   `platform/*`). `-test` no hace falta: `TestImports` y `XTestImports` son campos del paquete base. Muerde: una sonda
   `_test.go` con `//go:build integracion` que importe `internal/platform/storage/postgres` sale en la lista. ✎ **D-F1-10 (2026-10-02)**: el filtro era
   `.*test$`, que admitía también un paquete de producción `latest` o `contest` —el defecto del hallazgo 21 del
-  [README de F1](../F1-nucleo-contact/README.md)—; pasa a `helpertest$`, el sufijo que reconocen los candados. Hoy da vacío con
-  los dos filtros: `test/procesos` no importa nada de `internal/`. D-F1-8 se decidió el 2026-10-02 (arriba).
+  [README de F1](../F1-nucleo-contact/README.md)—; pasa a `helpertest$`, el sufijo que reconocen los candados.
+  D-F1-8 se decidió el 2026-10-02 (arriba).
+  - 🔴 **El comando es más laxo que la regla** (hallazgo 36 de F1). La regla admite el adaptador solo en los
+    `*_contrato_test.go` y solo su constructor. El comando mira los imports del **paquete** `test/procesos`, no los de
+    cada fichero: una vez admitido `internal/nucleo/contact`, lo admite **entero** y desde **cualquier** fichero, y lo
+    mismo con cualquier `…helpertest`. Medido en F1-04: un `p2_sonda_test.go` que importa `internal/nucleo/contact` y usa
+    `NewMemoryResolver` **no** sale; un `p1_sonda_test.go` que importa `internal/flujos/contact` **sí**. Lo que el
+    comando no ve —un proceso `p<n>_…_test.go` que usa un paquete ya admitido— se mira **a mano** en T9.31
+    (`grep -ln 'wapp-cloud-platform/internal/' test/procesos/*_test.go`: solo `*_contrato_test.go` y
+    `sin_bd_viva_test.go`).
+  - **Entra en un gate** (hallazgo 37 de F1): hoy el comando no está en `Makefile`, ni en `scripts/`, ni en
+    `internal/candados`; solo en esta spec y en la skill. Lo mete en un gate la sesión **F1-06** (ajustes previos a F2).
+    Desde entonces lo que se verifica es **el gate que crea F1-06**, y T9.31 comprueba que sigue en él.
+    Si F1-06 lo afina para mirar fichero a fichero, la comprobación a mano de arriba sobra y T9.31 lo dice.
 - **R9.4.e** · **MIENTRAS** corre la suite, **EL** gate **DEBERÁ** leer el `rc` del log y contar
   `--- SKIP` = 0 y `--- FAIL` = 0 con `-v`. — Verifica: bloque «Antes de dar un proceso por bueno»
   de la skill `procesos-testcontainers`.
 
 ## H9.5 · Las suites de contrato contra Postgres
 
-> Como **la sesión web**, quiero que las suites de contrato de cada puerto (E-6) corran también
+> Como **la sesión que conmuta un módulo**, quiero que las suites de contrato de cada puerto (E-6) corran también
 > contra su adaptador Postgres, para que el SQL de los 20 adaptadores quede probado sin tests de
 > integración por fichero.
 
@@ -143,6 +155,13 @@
 - **R9.5.b** · **AL** cerrar F9, **EL** conjunto de suites **DEBERÁ** cubrir los **22** paquetes con
   SQL medidos (`05` E-6 dice 20; ver `diseno.md` §5). — Verifica: la tabla de `diseno.md` §5 con 22 filas marcadas y su
   `--- PASS` en el log de T9.30.
+- **R9.5.c** · *(hallazgo 35 de F1; P4, Jhoan, 2026-10-03)* **LA** marca de `Estado` de una suite **DEBERÁ** vigilar
+  **todas** las columnas que la operación puede tocar, no una sola. En `contact`: `current_node`, `vars`,
+  `last_wa_message_id`, `event_id` y `flow_version` (en F1-04 sobrevivió un mutante de `fuseDB` que copiaba las cuatro
+  últimas del huérfano, porque la marca solo viajaba en `current_node`). El refuerzo de `contacthelpertest` y de
+  `postgresState` lo hace la sesión **F1-06** (ajustes previos a F2); **de F2 en adelante es regla para toda suite**
+  con `Montaje`. — Verifica: en la pasada 9C de cada módulo, la suite siembra valores distintos en cada columna que la
+  operación puede escribir, y un mutante que copie una sola de ellas hace caer la suite contra Postgres.
 
 ## H9.6 · Los candados de invariante que necesitan BD
 
@@ -168,19 +187,31 @@
   motivo es el mismo, no perder una regla que solo se ve contra Postgres. — Verifica:
   `TestP3_LatePushNameIsSealed`, `TestP3_FirstPushNameWins` y `TestP3_HistoryBurstWithoutDeadlock` (pasos 6–8 de
   P3 y su tabla, `diseno.md` §4; nombres en inglés por `05` E-11).
+- **R9.6.e** · *(hallazgo 38 de F1)* **EL** proceso P3 **DEBERÁ** provocar contra Postgres un fallo reintentable real
+  —un conflicto de serialización o un deadlock (`40001`/`40P01`)— en una transacción de `postgres.WithTx`, y afirmar
+  que la operación **termina bien tras reintentar**. Hoy ningún test ejecuta ese reintento en ningún árbol
+  (`IsSerializationFailure` y `backoffBeforeRetry` sin ejercer); lo único que lo roza es
+  `deadlock_integration_test.go`, que F10 borra: este caso **tiene que existir antes**. — Verifica:
+  `TestP3_TxRetryOnSerializationFailure` pasa contra los dos binarios **y cae** con el mutante `maxTxAttempts = 1`
+  (`internal/platform/storage/postgres/tx.go`, en una copia desechable). Si el mutante sobrevive, el requisito no
+  está cumplido.
 
-## H9.7 · El reparto web ↔ local
+## H9.7 · El entorno: solo local (antes «el reparto web ↔ local»)
 
-> Como **la sesión web**, quiero escribir y compilar los procesos, y correrlos como pre-chequeo si
-> mi Docker lo permite, para que la sesión local solo tenga que cerrar.
+> Como **Jhoan**, quiero que lo que queda de F9 corra entero en la sesión local, que tiene Docker y los dos
+> binarios, para no gastar el saldo de la promoción web en algo que la web no puede cerrar.
+
+*(P3, Jhoan, 2026-10-03.)* El bloque A se repartió 🌐→💻 y está cerrado. **Los bloques B1, B2, C y D son 💻**: la misma
+sesión escribe, corre y cierra. No hay pre-chequeo web ni traspaso, salvo que una sesión se corte.
 
 - **R9.7.a** · **EL** `ci-local` **DEBERÁ** incluir `GOWORK=off go vet -tags integracion
   ./test/procesos/...`. — Verifica: `grep -n 'tags integracion' Makefile`.
-- **R9.7.b** · **DONDE** la prueba de T9.12 confirme que testcontainers funciona en la web, **LA**
-  sesión web **DEBERÁ** correr `make test-procesos` como pre-chequeo y citar su log en el traspaso,
-  **sin** declarar el proceso cerrado. — Verifica: sección §3 del traspaso con «pre-chequeo web».
-- **R9.7.c** · **EL** cierre de cada bloque de F9 **DEBERÁ** hacerlo la sesión local con
-  `make test-procesos` contra los dos binarios. — Verifica: sección `CERRADO <fecha>` del traspaso.
+- **R9.7.b** · *(solo bloque A, hecho)* La sesión web corrió `make test-procesos` como pre-chequeo, sin declarar nada
+  cerrado. **No aplica a B1–D.**
+- **R9.7.c** · **EL** cierre de cada sesión de F9 **DEBERÁ** hacerse con `make test-procesos` contra los dos binarios,
+  en local, y dejar las tres cosas de `05` E-12: tareas `[x]` con SHA, un bloque en `ESTADO.md` (con el `RC`, los
+  `--- PASS` y los `--- SKIP` por binario) y los hallazgos nuevos en el README de la fase. — Verifica: el bloque de
+  `ESTADO.md`. Un traspaso solo se escribe si la sesión se corta.
 
 ## H9.8 · Condición del relevo
 

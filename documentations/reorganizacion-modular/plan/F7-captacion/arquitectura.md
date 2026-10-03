@@ -92,15 +92,17 @@ corta el ciclo**: lo delimita (D-7, `03` §3).
 ## 4 · 🔴 Costuras con la conversación vieja (hasta F8) — resolución en el arranque
 
 Regla de FX `arquitectura.md` §4: (1) objeto nuevo si el puerto es estructural; (2) adaptador en
-`internal/arranque/puente_captacion.go`; (3) segunda instancia vieja si no tiene estado.
+`internal/arranque/bridge_captacion.go` (`05` §4.2: nivel simple, sin estado, con test de cableado completo); (3) segunda
+instancia vieja si no tiene estado, **construida dentro del adaptador** para que ninguna fase importe el `intake` viejo.
+«Puente» en este documento es siempre el **import** nuevo → viejo de `05` §4.1; el fichero de arranque es «adaptador».
 
 | Consumidor viejo o nuevo | Exige | Salida (D-F7-1) |
 |---|---|---|
 | `flowruntime.NewIntakeAggregator(log, jobs intake.JobStore, …)` (`aggregator.go:461`) | `JobStore` **viejo**: `OpenOrAppend(ctx, Append)`, `CloseWindow(ctx, WindowKey) (bool, error)`, `ListAggregating(ctx, limit) ([]OpenJob, error)` | **(3)** `intakeviejo.NewPostgres(db)` — solo guarda `*sql.DB` |
 | `flowruntime.NewSourceTextComposer(log, thread, jobs SourceTextWriter, cipher)` (`source_composer.go:324`) | `PutSourceText(ctx, intake.WindowKey, intake.SourceText) (bool, error)` viejo | **(3)** la misma instancia vieja |
-| `flowruntime.WithAheadRequester(ah)` | `AheadRequester.Request(key intake.WindowKey, text string)` viejo (`aggregator.go:320`) | **(2)** `adelantoViejo{p *intakeahead.Pool}` convierte `intake.WindowKey(k)` |
+| `flowruntime.WithAheadRequester(ah)` | `AheadRequester.Request(key intake.WindowKey, text string)` viejo (`aggregator.go:320`) | **(2)** `aheadBridge{p *intakeahead.Pool}` convierte `intake.WindowKey(k)` |
 | `intakeahead.New(…, sink Sink, …)` nuevo | `Sink.OnClassified(key intake.WindowKey, intent string, confidence float64)` **nuevo** (`intakeahead.go:188`) | **(2)** `SinkFunc` que llama `c.intakeAggregator.OnClassified(intakeviejo.WindowKey(k), …)` (clausura diferida, como hoy `fase7_flujos.go:150`) |
-| `reanalisis.NewServicio(…, compositor Compositor, …)` nuevo | `ComposeAtFlush(ctx, intake.WindowKey) error` **nuevo** (`reanalisis.go:269`) | **(2)** `compositorViejo{c *flowruntime.SourceTextComposer}` — **el mismo** compositor que el agregador: dos divergirían en el primer rótulo (`fase5_captacion.go:53-62`) |
+| `reanalisis.NewServicio(…, compositor Compositor, …)` nuevo | `ComposeAtFlush(ctx, intake.WindowKey) error` **nuevo** (`reanalisis.go:269`) | **(2)** `composerBridge{c *flowruntime.SourceTextComposer}` — **el mismo** compositor que el agregador: dos divergirían en el primer rótulo (`fase5_captacion.go:53-62`) |
 | `reanalisis` puerto `Hilo` | `events.Store` viejo | **directo** por el puente 2 (el puerto nombra `events.ThreadEntry` viejo) |
 | `stages.NewDraft(…, solicitudes AlmacenSolicitudes, revision EscritorRevision, eventos EscritorEvento, …)` | `flowStore` viejo (puertos con tipos de `flujos/store`) · revisión por el `intakes.Postgres` **nuevo** (F6, cipher del literal) | **directo** por el puente 1 |
 | `gw.OnWarmup = pool.Warm` · `gw.OnEdgeReady = worker.Despertar` | `func(tenantID, edgeID, sessionID, kind string)` · `func(tenantID, edgeID string)` (`gateway/grpc/server.go:154,177`) | **(1)** directo (gw nuevo desde F3) |
@@ -110,6 +112,11 @@ Nota PUENTE 3: `runtime.DefaultThreadLimit` es una constante (200). Alternativa 
 contrato de `reanalisis` la **recibe** como parámetro del constructor y el arranque la lee del runtime
 viejo (derivada, no copiada — mismo criterio que el plazo de G7 en FX §4.3). Recomendado: así F7 queda
 con **2** puentes. Se decide en T7.12 y se dice en el commit.
+
+**Adaptadores de arranque en F7** (el inventario E-12 los confirma): **nace 1**, `bridge_captacion.go` (`aheadBridge`,
+`composerBridge`, la clausura del sink y la segunda instancia vieja), que muere en F8; **muere 1 por partes**:
+`llmConfigBridge` de `bridge_inferencia.go` (F4), porque el `reanalisis` nuevo recibe el `tenantllm` nuevo. `captacion`
+entra en `Conmutados` en F8, al morir `bridge_captacion.go`.
 
 ## 5 · Estado en memoria, goroutines, relojes y métricas
 
@@ -132,9 +139,9 @@ hasta F8. El número no cambia.
 
 | Fichero de `internal/arranque` | Hoy (copia de F0) | Pasa a |
 |---|---|---|
-| `fase3_almacenes.go` | `intentcfg.NewPostgresStore(db)` `:79` · `intake.NewPostgres(db)` `:181` | `intentcfg` **nuevo**; `intake` **nuevo** para worker y re-análisis + `intakeviejo.NewPostgres(db)` para agregador y compositor |
+| `fase3_almacenes.go` | `intentcfg.NewPostgresStore(db)` `:79` · `intake.NewPostgres(db)` `:181` | `intentcfg` **nuevo**; `intake` **nuevo** para worker y re-análisis; la instancia vieja (`intakeviejo.NewPostgres(db)`) para agregador y compositor la construye `bridge_captacion.go` |
 | `fase5_captacion.go` | compositor `flowruntime.NewSourceTextComposer(…intakeJobStore…)` `:52` · P2/P3/P4/match/draft · `pipeline.NewWorker` · `reanalisis.NewServicio` · `quotetext…ConPlazo(pipeline.PlazoPorLlamadaSuelo)` | compositor viejo con la instancia vieja; etapas, worker, aforo y re-análisis **nuevos**; `ConPlazo` y G7 leen `PlazoPorLlamadaSuelo` (48 s) del `pipeline` **nuevo** (TX.21) |
-| `fase7_flujos.go` | `intakeahead.New(log, intentStore, llmSelector, SinkFunc(…), WithCalentador, WithCalentamiento)` `:149-159` · `gw.OnWarmup` `:166` · agregador `:208-210` · `gw.OnEdgeReady = intakePipeline.Despertar` `:222` | `Pool` **nuevo** + adaptadores de §4; los dos ganchos del gw con los objetos nuevos |
+| `fase7_flujos.go` | `intakeahead.New(log, intentStore, llmSelector, SinkFunc(…), WithCalentador, WithCalentamiento)` `:149-159` · `gw.OnWarmup` `:166` · agregador `:208-210` · `gw.OnEdgeReady = intakePipeline.Despertar` `:222` | `Pool` **nuevo** + adaptadores de §4 (`bridge_captacion.go`); los dos ganchos del gw con los objetos nuevos |
 | `fase8_transporte.go` | `Deps{Reanalysis, Intents, …}` | `nil` en la vieja; la cara nueva los recibe |
 | `fase9_fondo.go` | `go c.intakeAhead.Run(ctx)` `:84` · `go c.intakePipeline.Run(ctx)` `:99` | mismos campos, objetos nuevos |
 
@@ -149,7 +156,8 @@ F0 buscan el texto `"pipeline.NewWorker"`, `"pipeline.ConAforo"`, `"pipeline.Con
 
 **Prueba de que el binario usa lo nuevo**: `go list -deps ./cmd/server-modular | grep modulos/captacion`
 y `internal/arranque/captacion_cableado_test.go` (por tipo `%T`: worker, aforo, `Pool`, servicio de
-re-análisis y store de intenciones de `modulos/captacion`).
+re-análisis y store de intenciones de `modulos/captacion`; **y** grep por ruta de import: ninguna fase importa
+`internal/{intake,intakeahead,reanalisis,intentcfg}` viejos fuera de `bridge_captacion.go` — hallazgo 39).
 
 ## 7 · Rutas (D-10) — autoridad FX
 

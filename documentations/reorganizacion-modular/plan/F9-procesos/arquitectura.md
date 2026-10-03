@@ -68,7 +68,7 @@ tenant, en BD** (`tenant_settings.aggregation_window_seconds` y `aggregation_max
 | `github.com/EduGoGroup/wapp-cloudlink/{gen/wapp/cloudlink/v1,lease,mtls}` (v0.17.0) | El Edge de prueba habla el contrato real y valida el lease con el `Validator` de verdad |
 | `github.com/EduGoGroup/wapp-shared/envelope` (v0.2.1) | Sellar `IncomingMessage.enc_payload` y `InferenceOutput` con `cloud_enc_pubkey` |
 | `github.com/EduGoGroup/identity-shared/auth/jwt` (v0.3.1) | `NewManager(priv, "identity-core", kid)` + `GenerateIdentityToken` (`manager.go:40,139`) |
-| Paquetes `…helpertest` (D-F1-10; antes `…test`) de suites de contrato del árbol nuevo (`internal/modulos/**/…helpertest`, `internal/nucleo/**/…helpertest`), **el paquete del adaptador Postgres que prueban y los argumentos de su constructor** (D-F1-8: hoy `internal/nucleo/contact` e `internal/platform/crypto`) | Solo en `<paquete>_contrato_test.go` (H9.5); comando en R9.4.d |
+| Paquetes `…helpertest` (D-F1-10; antes `…test`) de suites de contrato del árbol nuevo (`internal/modulos/**/…helpertest`, `internal/nucleo/**/…helpertest`), **el paquete del adaptador Postgres que prueban y los argumentos de su constructor** (D-F1-8: hoy `internal/nucleo/contact` e `internal/platform/crypto`) | Solo en `<paquete>_contrato_test.go` (H9.5); comando en R9.4.d. ⚠️ El comando mira el **paquete**, no el fichero: no ve un `p<n>_…_test.go` que use un paquete ya admitido (hallazgo 36 de F1); eso se mira a mano en T9.31. Entra en el gate que crea F1-06 |
 | stdlib (`crypto/*`, `net/http/httptest`, `os/exec`…) | PKI, dobles, subprocesos |
 
 | No | Por qué |
@@ -112,11 +112,22 @@ antes, el nuevo cablea paquetes viejos (F0 copia exacta) y el proceso pasa sin d
 una conmutación); las columnas marcadas dicen qué procesos son **gate** de ese módulo: si uno de ellos
 falla, el `conmutar` no se da por cerrado.
 
+🔴 **Lo que 9C no ve** (hallazgo 39 de F1): que el arranque cablee por error el paquete **viejo**. El comportamiento es
+el mismo y la suite pasa. Eso lo cierra el **test de cableado** del módulo (`05` §4.2: el arranque construye lo nuevo y
+nadie importa lo viejo fuera de `bridge_<x>.go`), que tiene que estar completo antes de dar la pasada por buena.
+
+### 5.1 bis · Qué cubre F9 ahora que no hay umbral de cobertura (P2)
+
+Los procesos son una de las tres cosas que sustituyen al umbral, junto con «un test por promesa del contrato» y los
+mutantes del nivel complejo (`05` E-9, E-12). A F9 le toca lo que ningún test de fichero alcanza: los auxiliares no
+exportados sin test propio (`05` E-4), las ramas de error y la fontanería. Ejemplo medido: el reintento de `WithTx`
+(R9.6.e).
+
 ### 5.2 · Pros y contras, con honestidad
 
 | A favor de adelantar | En contra |
 |---|---|
-| **El SQL nuevo se prueba cuando nace.** E-6 excluye los adaptadores Postgres del 80 % y fía su verdad a F9: con el orden de `05`, siete conmutaciones (F2–F8) llevarían a `dev` SQL que **nunca** ha tocado una base | **~8 pasadas 💻 más** (una por conmutación), cortas (correr, leer, cerrar). Si la web tiene Docker (T9.12), baja a un pre-chequeo web + cierre local |
+| **El SQL nuevo se prueba cuando nace.** La verdad de los adaptadores Postgres la da su suite contra Postgres (P4) y F9, no un test de fichero (E-6; sin umbral de cobertura, P2): con el orden de `05`, siete conmutaciones (F2–F8) llevarían a `dev` SQL que **nunca** ha tocado una base | **~8 pasadas 💻 más** (una por conmutación), cortas (correr, leer, cerrar), dentro del cierre local de cada módulo |
 | **Cada conmutación con oráculo de conducta**, no solo de nombres: la huella (`internal/arranque/huella_test.go`) compara rutas, rpc, métricas y goroutines, no lo que devuelven | Mientras un módulo no conmuta, sus procesos **no prueban nada nuevo** (pasan contra paquetes viejos). No es un coste, pero conviene no leer ese verde como mérito |
 | **Estable**: se escribe contra el viejo, que está congelado (E-1, P-5) | Un arreglo en el viejo durante la transición puede obligar a tocar un proceso (pasaría igual en F9 tardía, solo que antes) |
 | **El riesgo del arnés se descubre al principio**: R2 (D-F9-2), JWKS, PKI, Edge de prueba. Hoy `ESTADO.md` lo apunta como obstáculo abierto del relevo | La ola 9A retrasa F2 **solo si** se serializa; puede ir en paralelo con F1 (toca `test/procesos/`, `go.mod`, `Makefile`, `.golangci.yml`; F1 toca `internal/nucleo/`). Conflicto posible en `Makefile` si F0 no ha cerrado: por eso 9A depende de F0 cerrada |

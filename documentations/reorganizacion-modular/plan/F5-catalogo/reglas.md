@@ -26,7 +26,7 @@
 | T-9 | El prompt del import es una **hipótesis** no probada contra un LLM (D-20) y no se va a probar (cero gasto) | `catalogimport/prompt.go:41` | Portar literal; no «mejorarlo» |
 | T-10 | Test de rendimiento con reloj real en una VM compartida | `rendimiento_test.go:22,31` | D-F5-3; sin `t.Skip` |
 | T-11 | Querer conmutar el índice en F5 | `pipeline.go:137,158` pide el tipo viejo | No hay conmutación hasta F7 (arquitectura §5) |
-| T-12 | Con D-F5-1 = A, un test nuevo que importe `internal/flujos/model` es el **mismo** puente | `05` §4.1 | Declararlo una vez en `fronteras_test.go` y listarlo para su retirada en F8 |
+| T-12 | Con D-F5-1 = A, un test nuevo que importe `internal/flujos/model` es el **mismo** puente (import) | `05` §4.1 | Declararlo una vez en `fronteras_test.go` y listarlo para su retirada en F8 |
 
 ## 3 · Prohibiciones
 
@@ -42,11 +42,32 @@
 1. `GOWORK=off make ci-local` → `GATE_RC=0`, leído del log.
 2. `GOWORK=off go vet -tags pendiente ./...` → `rc=0`.
 3. `grep -rn 'pendiente.Implementar\|go:build pendiente\|t.Skip' internal/modulos/catalogo internal/modulos/conversacion/model` → vacío.
-4. `make cobertura-ficheros` → rc=0 (≥ 80 % en los 11 ficheros).
+4. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Sin umbral de cobertura (P2):
+   `make cobertura-ficheros` es informe (la tabla de los 11 ficheros va al PR; no bloquea).
 5. `GOWORK=off go test -v ./internal/modulos/catalogo/... 2>&1 | grep -c -- '--- SKIP'` → `0`.
 6. `fronteras_test.go` con la arista prohibida y la mutación documentada.
 7. Huella idéntica, `FaseActual = 5` (TX.15).
 8. `ESTADO.md`, este README y `tareas.md` con los SHA.
-9. **No aplica** el pre-chequeo de F9: F5 no tiene adaptador Postgres; el proceso «Catálogo»
-   (`05` §7.4: importación estricta y tabular → caché → match) solo puede correr contra el binario
-   nuevo cuando F7 y F8 hayan cableado índice y rutas.
+9. **T9.26** (sesión F45-03): F5 no tiene SQL propio ni adaptador Postgres, así que no hay suite de contrato que
+   correr contra Postgres; se corre la suite entera de procesos de F9 contra el binario nuevo, con 0 SKIP. El proceso
+   «Catálogo» (`05` §7.4: importación estricta y tabular → caché → match) no ejercita todavía el código nuevo: eso
+   llega cuando F7 y F8 cableen índice y rutas.
+10. **`Conmutados`** (`internal/modulos/fronteras_test.go`): F5 **no crea ni retira adaptadores** `bridge_<x>.go`, así
+    que la regla «entra cuando muere su último adaptador» (`05` §4.2) no retiene a `catalogo`: entra con la conmutación
+    nominal (T5.19). ⚠️ A confirmar por Jhoan en el inventario E-12: sus consumidores siguen con el código viejo hasta
+    F7 y F8. `FaseActual = 5` se fija en T5.19.
+
+## 5 · Ceremonia y tests (`05` E-12, E-4)
+
+- **Niveles** (los fija el inventario E-12, T5.1; provisional en [`diseno.md`](diseno.md) §6):
+  simple = contrato, test y lógica en **una pasada**, varios archivos por sesión;
+  medio = rojo y verde por archivo, **agrupados por paquete**, un test por promesa;
+  complejo = esquema completo E-2…E-9, con **mutantes** donde haga falta (aquí, `indice/cache.go`).
+- **No se relaja en ningún nivel**: equivalencia viejo ↔ nuevo, `make ci-local` rc=0 con **0 SKIP**, procesos de F9.
+- **Auxiliares no exportados** (`warnBag`, `parseCategory`, `huella`…): nacen en el verde; su test, también en el verde
+  y solo si llevan regla de negocio o ramas no triviales. No se testea fontanería ni `if err != nil`; el resto lo cubre F9.
+- **Sin adaptadores y sin BD**: no hay `bridge_<x>.go` ni test de cableado, y no hay suite con `Montaje` contra Postgres.
+- **Corpus de equivalencia adversario** (hallazgo 40): los corpus viejo ↔ nuevo (diferencial del índice, goldens,
+  fixtures de plantilla y prompt, planilla) llevan casos adversarios, no solo felices: separadores repetidos (`a@@b`;
+  aquí `;;` y `||` en la planilla), dígitos no ASCII (en precios y `qty`) y espacios Unicode (en SKU, etiquetas y tags).
+  Lo que el viejo haga con ellos es lo que el nuevo debe hacer; no se «arregla» (§3).

@@ -27,7 +27,7 @@ tarea T10.1 los vuelve a medir.
 (F0), `cmd/server/flows_integration_test.go` (D-F10-4) y, si D-F10-5, los 9 de §6.
 Se queda `internal/platform/` (27 + 34), y `cmd/` con sus 5 `main.go`.
 
-## 2 · La prueba en UAT en sustitución (D-9) — 💻
+## 2 · La prueba en UAT en sustitución (D-9) — necesita UAT por SSH
 
 Datos de UAT citados de la documentación de operación del ecosistema (fuera de este repo:
 `documentations/operacion/despliegue-uat.md`, medido allí el 2026-08-30). **Ni un secreto aquí**: las
@@ -106,11 +106,11 @@ de 2.1 es la red para el caso que nadie espera.
 
 ### 2.6 · Acta
 
-En el traspaso de T10.6: hora de inicio y fin, SHA, salidas de 2.3, tabla de 2.4 rellenada con
+En el acta de T10.6 (`traspasos/TRASPASO-F10-relevo.md`): hora de inicio y fin, SHA, salidas de 2.3, tabla de 2.4 rellenada con
 números, veredicto de Jhoan («sigue» → D-F10-2; «vuelta atrás» → hallazgos y vuelta a la fase del
 módulo culpable).
 
-## 3 · Fuera del repo (lo cierra la sesión local)
+## 3 · Fuera del repo (F10-05: necesita la raíz de wApp y los repos hermanos)
 
 ### 3.1 · La documentación del ecosistema
 
@@ -174,7 +174,7 @@ Aparte, y sin ruta (no cambian): `platformadmin.ApprovePartialResult` en
 `wapp-platform-console/internal/adminclient/{transport.go:81,access_requests.go:95}` — el nombre del
 paquete se conserva (D-4).
 
-## 4 · La documentación de este repo (🌐, commit 9)
+## 4 · La documentación de este repo (commit 9)
 
 Comando: `P='internal/(bootstrap|casebank|…|turnoacotado)\b'` (el de §3.1) `; for f in CLAUDE.md README.md documentations/*.md .claude/skills/*/SKILL.md; do n=$(grep -oE "$P" $f | wc -l); [ $n -gt 0 ] && echo "$n $f"; done`.
 

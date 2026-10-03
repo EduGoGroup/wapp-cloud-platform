@@ -52,14 +52,24 @@ make toolchain; echo "rc=$?"               # TOOLCHAIN=OK y rc=0; si no, el ento
 - **Eres orquestador**: skill **`reconstruir-modulo`**. Delega **por paquete** (contratos) o **por
   fichero** (verde) en sub-agentes con la skill **`contrato-tdd`**; quédate con conclusiones y
   evidencia (`fichero:línea`, `rc`, SHA). Paquetes independientes, en paralelo.
+- **Nivel de ceremonia (`05` E-12)**: el del **inventario de la fase, aprobado por Jhoan**. *Simple*: contrato,
+  test y lógica en una pasada, varios archivos por sesión. *Medio*: rojo y verde por archivo, agrupados por
+  paquete. *Complejo*: el esquema completo, con mutantes. Si un archivo sale peor de lo previsto, **sube de
+  nivel** y lo dices. La primera sesión de una fase **empieza por el inventario y para** hasta que Jhoan lo
+  apruebe. No se relaja en ningún nivel: equivalencia viejo ↔ nuevo, `ci-local` con 0 SKIP, procesos de F9.
 - **Rojo**: el contrato lleva **solo exportados** (el linter `unused` rompe el gate con no
   exportados sin uso); cuerpos `panic(pendiente.Implementar("paq.Func"))`, nunca un valor cero; el
   test nace con `//go:build pendiente` y **una aserción por promesa** del comentario.
 - **Verde**: un fichero por commit; cabecera `// Porta <ruta vieja> @ <sha>`; el porqué viaja con la
-  lógica (E-10); se quita la etiqueta; `make cobertura-ficheros` ≥ 80 % (salvo adaptadores Postgres).
+  lógica (E-10); se quita la etiqueta. **Sin umbral de cobertura** (`05` E-9): un test por promesa del contrato, mutantes en
+  el nivel complejo; `make cobertura-ficheros` es un **informe** que va al PR. El test de un auxiliar no
+  exportado nace aquí, y solo si lleva regla de negocio o ramas no triviales (`05` E-4). Todo puerto con BD
+  lleva su suite `Contrato(t, func(t) Montaje)` en memoria **y** en Postgres.
 - **Conmutar**: el arranque nuevo cablea lo nuevo; `huella_test` idéntica; los tipos nuevos que aún
-  consumen paquetes viejos se adaptan en `internal/arranque/puente_<x>.go`; las rutas que tocan, a
-  `apipublica` según el mapa de FX, **patrón byte a byte**.
+  consumen paquetes viejos se adaptan en `internal/arranque/bridge_<x>.go` (`05` §4.2: nivel simple, con
+  **test de cableado** que afirma que el arranque construye lo nuevo **y** que nadie importa lo viejo fuera
+  del adaptador); un módulo entra en `Conmutados` cuando **muere su último adaptador**; las rutas que tocan,
+  a `apipublica` según el mapa de FX, **patrón byte a byte**.
 - **Idioma (E-11)**: nombres (ficheros, tipos, funciones, variables, tests) en **inglés**; solo los
   comentarios y la documentación en español. Lo ya escrito no se renombra; los textos observables se copian
   literales. Dilo en el prompt de cada sub-agente.
@@ -77,7 +87,8 @@ make test-pendiente                                       # cuenta lo que falta 
 go test -v ./internal/<lo tuyo>/... 2>&1 | grep -c -- '--- SKIP'   # SKIP en código nuevo = 0
 ```
 
-Más los que diga tu bloque (`make cobertura-ficheros`, `huella_test`, `make vet-integracion`). Un
+Más los que diga tu bloque (`huella_test`, `make vet-integracion`; `make cobertura-ficheros` como informe,
+no como gate). Un
 gate corrido con otra versión de la toolchain **no es autoritativo**: dilo. El `go test` suelto de
 arriba corre con el `go` de la sesión, que en la web es el fijado (variable `GOTOOLCHAIN` del
 entorno); si no lo fuera, el hook lo dice en su línea `Ojo:` y el comando lleva
@@ -95,19 +106,32 @@ un conflicto con la spec, `05` o un ADR, **para y pregunta**.
 
 ## 6 · Cerrar la sesión
 
+**Siempre las mismas tres cosas** (`05` E-12), y nada más de documentación:
+
 1. `tareas.md`: `[x] … — cerrada en \`<sha>\`` (o `[~]` diciendo qué falta). Nunca `[x]` sin SHA.
-2. `documentations/reorganizacion-modular/ESTADO.md`: fase, bloque, siguiente paso, SHA de
+2. Un bloque en `documentations/reorganizacion-modular/ESTADO.md`: fase, sesión, siguiente paso, SHA de
    `origin/dev` y de tu rama.
-3. Si algo del bloque lo cierra la local (🌐→💻): **traspaso** con la skill `traspaso-web-local`
-   (ocho secciones; la §7 con contenido real).
-4. Lo que aprendiste y la norma no decía → «Contradicciones encontradas» o «Decisiones que necesita»
-   del `README.md` de la fase.
+3. Los hallazgos nuevos (lo que aprendiste y la norma no decía) → «Contradicciones encontradas» o
+   «Decisiones que necesita» del `README.md` de la fase.
+
+Y para entregar:
+
+4. **Traspaso** (skill `traspaso-web-local`) **solo si** algo de tu sesión lo tiene que cerrar la local, o si
+   la sesión se corta a medias. Si no, no se escribe: la sesión 💻 de cierre de la fase lee `tareas.md` y el PR.
 5. `git push` de **tu** rama y **`gh pr create --base dev`** (la rama por defecto del remoto es
    `main`). Título: `<id de sesión> · <bloque>`. Cuerpo: el informe de gates, el enlace a la sesión
    (`https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID/#cse_/session_}`) y la frase
    **«Integrar SIN squash: rojo y verde son commits distintos»**.
-6. **No sigas con el bloque siguiente** aunque te sobre tiempo: la sesión termina en su punto de
-   parada.
+6. **No sigas con la sesión siguiente** aunque te sobre tiempo: la sesión termina en su punto de
+   parada. Una sesión es un bloque coherente de **45–90 min**; si no cabe, para en un punto limpio (commits
+   empujados, `[~]` en la tarea), cierra con las tres cosas y se relanza.
+
+### Si esta ficha 🌐 se corre en local
+
+Cuando se acabe la promoción web, las fichas 🌐 y 🌐❓ se corren en la máquina de Jhoan con el **mismo
+encargo**: se trabaja sobre `dev`, **sin PR ni traspaso**, se cierran los gates con la toolchain local
+([`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md) §1 y §3) y se termina con `git push origin dev` leyendo el rc sin
+pipe. La prohibición de empujar a `dev` de la §5 es solo de la web.
 
 ## 7 · Si la sesión se corta a medias
 

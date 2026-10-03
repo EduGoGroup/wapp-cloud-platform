@@ -3,29 +3,35 @@
 > Formato de [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md) §2. `A` =
 > `internal/modulos/acceso`. Cada criterio nombra el comando o el test que lo verifica.
 
-## H2.1 · Contratos y rojo de todo el módulo
+## H2.1 · Cada fichero nace con su contrato y su test
 
-> Como **la sesión web**, quiero escribir el contrato y el test en rojo de cada fichero de `acceso`
-> antes que su lógica, para que cada fichero nazca con lo que lo valida.
+> Como **la sesión web**, quiero que cada fichero de `acceso` nazca con su contrato y el test que lo
+> valida, con la ceremonia de su nivel (`05` E-12): en una pasada si es simple, rojo antes que verde si
+> es medio o complejo.
 
 - **R2.1.a** · **EL** contrato de cada fichero de `A/**` **DEBERÁ** contener solo comentario de
   paquete, cabecera `// Porta <ruta vieja> @ <sha>`, tipos, interfaces, constantes, centinelas y
   firmas **exportados**, con cuerpos `panic(pendiente.Implementar("<paq>.<Func>"))`. — Verifica:
   `golangci-lint run ./internal/modulos/acceso/...` sin `unused` (T-1 de F1) y
   `grep -rn 'return nil, nil\|return "", nil\|return false, nil' internal/modulos/acceso` vacío en rojo.
+  En el nivel **simple** no hay commit de rojo: contrato, test y lógica llegan juntos.
 - **R2.1.b** · **EL** test `x_test.go` de cada fichero **DEBERÁ** llevar `//go:build pendiente` en
-  rojo y mencionar todo exportado de `x.go`. — Verifica: `exportados_cubiertos_test.go` en `ci-local`.
+  rojo, mencionar todo exportado de `x.go` y traer **un test por promesa del contrato**. **EL** test de un
+  auxiliar no exportado **DEBERÁ** nacer en el verde, y solo si lleva regla de negocio o ramas no triviales
+  (`05` E-4). — Verifica: `exportados_cubiertos_test.go` en `ci-local`.
 - **R2.1.c** · **SI** un test de `A/**` llama a `t.Skip`, **ENTONCES EL** gate **DEBERÁ** fallar. —
   Verifica: `grep -rn 't.Skip' internal/modulos/acceso` vacío; `go test -v … | grep -c -- '--- SKIP'` → 0.
-- **R2.1.d** · **CUANDO** se cierre el bloque C, **EL** recuento **DEBERÁ** coincidir:
+- **R2.1.d** · **CUANDO** se cierre una sesión con ficheros en rojo, **EL** recuento **DEBERÁ** coincidir:
   `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/acceso | wc -l` = lo que diga
   `make test-pendiente` para `acceso`, y `go vet -tags pendiente ./...` rc=0. — Verifica: esos dos
-  comandos, en el cierre del bloque C (T2.16).
+  comandos, en T2.8, T2.16, T2.21 y T2.27.
+- **R2.1.e** · **ANTES** de escribir código, **EL** inventario E-12 (tabla de niveles por archivo y lista de
+  adaptadores `bridge_<x>.go`) **DEBERÁ** estar aprobado por Jhoan. — Verifica: T2.1 `[x]` y [`diseno.md`](diseno.md) §1.1.
 
-## H2.2 · Los puertos de salida nacen cubiertos (suite en memoria)
+## H2.2 · Los puertos con BD nacen cubiertos (suite en memoria y en Postgres)
 
-> Como **la sesión web**, quiero una suite de contrato por puerto de salida del IAM ejecutada ya por
-> su doble en memoria, para que el comportamiento de cada puerto esté especificado antes de F9.
+> Como **la sesión web**, quiero una suite de contrato por puerto con BD, corrida por su doble en memoria
+> y por el adaptador Postgres con el arnés, para que memoria y Postgres se comporten igual (P4).
 
 - **R2.2.a** · **EL** paquete `A/iam/ports/out/outhelpertest` **DEBERÁ** exportar una suite por puerto
   (`ContratoMembershipRepo`, `ContratoRoleRepo`, `ContratoGrantRepo`, `ContratoAuditRepo`,
@@ -33,9 +39,11 @@
   `func(t *testing.T, nuevo func(t *testing.T) Montaje…)` que fije D-F1-1. — Verifica: `go doc ./internal/modulos/acceso/iam/ports/out/outhelpertest`.
 - **R2.2.b** · **EL** doble `A/iam/infra/memory` **DEBERÁ** pasar las 7 suites con `-race` y 0 SKIP.
   — Verifica: `go test -race -v ./internal/modulos/acceso/iam/infra/memory/ | grep -c -- '--- FAIL\|--- SKIP'` → 0.
-- **R2.2.c** · **EL** adaptador `A/iam/infra/postgres` **DEBERÁ** ejecutar las mismas 7 suites desde un
-  test con `//go:build integracion` que F9 corre con testcontainers. — Verifica:
-  `go vet -tags integracion ./internal/modulos/acceso/...` rc=0 (la web) · la corrida (la local).
+- **R2.2.c** · **TODO** puerto con BD de `acceso` (los 7 de `outhelpertest`, `entitlements.Resolver` y los dos
+  de `platformadmin`) **DEBERÁ** correr su suite `Contrato(t, func(t) Montaje)` también contra Postgres, desde un
+  test con `//go:build integracion` y el arnés de F9-A (testcontainers); la marca de estado del `Montaje`
+  **DEBERÁ** vigilar todas las columnas que la operación puede tocar. — Verifica:
+  `go vet -tags integracion ./internal/modulos/acceso/...` rc=0 (la web) · la corrida, sin divergencias (T2.33).
 - **R2.2.d** · **DONDE** el puerto sea un cliente de identity (`IdentityClient`, `IdentityM2MClient`,
   `UserSystemsClient`), **EL** cliente real **DEBERÁ** probarse contra un `httptest.Server` que imita
   identity, sin red. — Verifica: `go test ./internal/modulos/acceso/iam/infra/identity/` rc=0.
@@ -88,9 +96,9 @@
 > mientras el gateway es aún el viejo, para no perder la consola local.
 
 - **R2.5.a** · **CUANDO** el arranque nuevo conmute `acceso`, **EL** gateway viejo **DEBERÁ** recibir
-  un `in.Authenticator` e `in.Auditor` **viejos** implementados por `internal/arranque/puente_iam.go`
+  un `in.Authenticator` e `in.Auditor` **viejos** implementados por el adaptador `internal/arranque/bridge_iam.go`
   sobre los usecases nuevos, traduciendo DTOs y **centinelas** (`ErrInvalidCredentials`,
-  `ErrUserInactive`, `ErrRefreshInvalid`, `ErrInvalidInput`). — Verifica: `puente_iam_test.go`
+  `ErrUserInactive`, `ErrRefreshInvalid`, `ErrInvalidInput`). — Verifica: `bridge_iam_test.go`
   (equivalencia de los cuatro centinelas con `errors.Is` contra el viejo).
 - **R2.5.b** · **EL** binario nuevo **DEBERÁ** servir por `internal/apipublica` las 23 rutas F2 del
   mapa FX (A1–A7, B1–B14, C1–C2) y por los handlers nuevos las 8 de `:8100` (J4–J11). — Verifica:
@@ -101,10 +109,14 @@
   `internal/iam/...`, `internal/entitlements` ni `internal/platformadmin`… salvo a través de los
   paquetes viejos aún no reconstruidos que los importan (gateway viejo hasta F3). — Verifica:
   `go list -deps ./cmd/server-modular | grep -E 'internal/(iam|entitlements|platformadmin)'` → solo
-  `internal/iam/{domain,ports/in}` (tipos del puente, arquitectura §4).
+  `internal/iam/{domain,ports/in}` (tipos del adaptador, arquitectura §4).
 - **R2.5.e** · **SI** falta `WAPP_IDENTITY_API_KEY`, **ENTONCES** `POST /api/v1/members` **DEBERÁ**
   responder 503 (nunca 404) y `POST /api/v1/signup` el 503 fijo `registro no disponible`. — Verifica:
   tests de `apipublica` y de `A/iam/transport/http/roles.go`.
+- **R2.5.f** · **EL** test de cableado **DEBERÁ** afirmar que el arranque construye el resolver, el autenticador y
+  el auditor **nuevos**, y que ninguna fase de `internal/arranque` importa `internal/iam/...`,
+  `internal/entitlements` ni `internal/platformadmin` fuera de `bridge_iam.go`. **EL** módulo `acceso` **NO DEBERÁ**
+  entrar en `Conmutados` hasta que muera ese adaptador (F3). — Verifica: T2.29 y `internal/modulos/fronteras_test.go`.
 
 ## H2.6 · Los procesos de acceso (F9) tienen su guion
 

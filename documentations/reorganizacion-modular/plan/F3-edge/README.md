@@ -5,7 +5,9 @@
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
 > sus tareas TX.8–TX.11. Patrones de [`F1`](../F1-nucleo-contact/README.md): rojo **solo con
-> exportados** y adaptadores `internal/arranque/puente_<x>.go`.
+> exportados** y adaptadores de arranque `internal/arranque/bridge_<x>.go` (`05` §4.2).
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 >
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
 > **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
@@ -20,7 +22,7 @@
    servidora de la doble llave y el kill-switch anti-clon.
 2. Conmutar: `cmd/server-modular` construye **un solo** `*grpc.Server` nuevo (conexiones vivas,
    carriles, acuses e inferencias en vuelo) y lo **inyecta** en los consumidores viejos que aún lo
-   usan (runtime, notificador de solicitudes, selector LLM vía `puente_gateway.go`, y el `ConfigPush` de
+   usan (runtime, notificador de solicitudes, selector LLM vía `bridge_gateway.go`, y el `ConfigPush` de
    la cara vieja para E1–E2 hasta F7); muda 6 rutas de `:8103` y 6 de `:8100` (FX TX.8–TX.11).
 3. Conservar byte a byte el literal `AVISO_SESION_PASIVA_V1`, las tres reglas del ADR-0048 (el canal
    de control no es una sesión) y el contrato `wapp-cloudlink v0.17.0`, que no cambia.
@@ -29,7 +31,7 @@
 
 | # | Condición | Cómo se comprueba |
 |---|---|---|
-| E1 | F2 cerrado: `internal/modulos/acceso` en verde y conmutado; `puente_iam.go` vivo | `ls internal/modulos/acceso` · `grep -rn 'pendiente.Implementar' internal/modulos/acceso \| wc -l` → 0 |
+| E1 | F2 cerrado: `internal/modulos/acceso` en verde y conmutado; `bridge_iam.go` vivo | `ls internal/modulos/acceso` · `grep -rn 'pendiente.Implementar' internal/modulos/acceso \| wc -l` → 0 |
 | E2 | F1 cerrado: `internal/nucleo/contact` en verde (lo importan `fleet` y `grpc`) | `ls internal/nucleo/contact` |
 | E3 | F0: `session.ErrSessionOffline` **es** el centinela de `platform` y `inferstats.Agregado` **es** alias del tipo de `platform/metrics` (F0 `arquitectura.md` §✎, filas de `admin.go` e `inferstats.go`) | `go list -f '{{.Imports}}' ./internal/platform/... \| grep -cE 'internal/(gateway\|inferstats)'` → 0 |
 | E4 | El código viejo no cambió desde esta spec | `git log --oneline 1b18932..origin/dev -- internal/gateway internal/diagnostics internal/inferstats internal/receipts internal/ingest internal/filtercfg` vacío |
@@ -40,14 +42,17 @@
 
 - `internal/modulos/edge/{grpc,enroll,lease,session,fleet,fleet/fleethelpertest,diagnostics,inferstats,receipts,ingest,filtercfg}`
   con **38** ficheros de producción (+ ✚ de [`diseno.md`](diseno.md) §1) en verde; 0 pendientes; 0 SKIP.
-- `make cobertura-ficheros` ≥ 80 % en todo fichero no-Postgres de `edge`.
+- Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. `make cobertura-ficheros` es
+  informe (la tabla va al PR; no bloquea). Las 7 suites de puerto con BD, verdes en memoria **y** en Postgres (P4).
 - El literal `AVISO_SESION_PASIVA_V1` afirmado byte a byte **y** contra `documentations/literal-aviso-sesion-pasiva.md`
   (solo cambia la ruta relativa: `../../../../documentations/…`).
 - `cmd/server-modular`: **un** `*edge/grpc.Server`, inyectado en runtime, notificador, `filtercfg`,
-  handlers de `:8100` y (vía `puente_gateway.go`) en el selector LLM; `puente_iam.go` **borrado**;
+  handlers de `:8100` y (vía `bridge_gateway.go`, con su test de cableado) en el selector LLM; `bridge_iam.go`
+  **borrado** y, con él, `acceso` dentro de `Conmutados` (`edge` entra en F4, al morir `bridge_gateway.go`);
   `huella_test` igual (2 rpc, 22 + 73 rutas); `cmd/server` intacto; `go.mod` sin cambios en
   `wapp-cloudlink`.
-- Traspaso para la sesión local: e2e de gRPC con mTLS y el proceso «Enrolamiento de un Edge y su lease».
+- e2e de gRPC con mTLS y el proceso «Enrolamiento de un Edge y su lease», en local (con traspaso solo mientras
+  existan los dos entornos).
 
 ## Orden de lectura
 
@@ -56,16 +61,20 @@
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
+Un bloque por sesión, 45–90 min, **por paquete** (rojo y verde del paquete seguidos, según su nivel E-12). Cada sesión
+cierra con tres cosas: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README. Traspaso
+web ↔ local solo mientras existan los dos entornos.
+
+| Sesión | Entorno | Tareas | Punto de parada |
 |---|---|---|---|
-| **A** · inventario verificado | 🌐 | T3.1 | tabla de arquitectura §1 re-medida · D-F3-* contestadas |
-| **B** · rojo de las hojas (`session`, `inferstats`, `receipts`, `ingest`, `diagnostics`, `lease`, `enroll`) | 🌐 | T3.2–T3.9 | pendientes contados · `ci-local` rc=0 · PR |
-| **C** · rojo de `fleet`, `filtercfg` y `grpc` (13 ficheros) | 🌐 | T3.10–T3.14 | todo `edge` en rojo · `vet -tags pendiente` rc=0 · PR |
-| **D** · verde de las hojas | 🌐 | T3.15–T3.18 | 0 pendientes salvo `fleet`, `filtercfg`, `grpc` · PR |
-| **E** · verde de `fleet`, `filtercfg` | 🌐 | T3.19–T3.20 | 0 pendientes en esos dos · PR |
-| **F** · verde de `grpc` (13 ficheros, el grueso) | 🌐 | T3.21–T3.23 | 0 pendientes en `edge` · literal verde · PR |
-| **G** · puente, cara nueva y conmutación | 🌐 (TX.10 🌐→💻) | T3.24–T3.28 | huella igual · un gw · 6+6 rutas · `puente_iam` borrado · PR · traspaso |
-| **H** · cierre local (mTLS real, e2e, procesos) | 💻 (🌐→💻) | T3.29–T3.30 | e2e gRPC verde · `dev` integrado |
+| [**F3-01**](../sesiones/F3-01-web-inventario-y-hojas.md) · inventario E-12 + hojas (`session`, `inferstats`, `receipts`, `ingest`, `diagnostics`, `lease`, `enroll`) | 🌐 | T3.1–T3.9, T3.15–T3.18 | **Jhoan aprueba el inventario** (antes, ni una línea de código) · 0 pendientes en las hojas · PR |
+| [**F3-02**](../sesiones/F3-02-web-fleet-filtercfg.md) · `fleet` y `filtercfg` | 🌐 | T3.10, T3.11, T3.19, T3.20 | 0 pendientes en esos dos · suite de `fleet` verde · PR |
+| [**F3-03**](../sesiones/F3-03-web-grpc.md) · `grpc` (13 ficheros, complejo; ADR-0048) | 🌐 | T3.12–T3.14, T3.21–T3.23 | 0 pendientes en `edge` · literal y pareja ADR-0048 verdes · PR |
+| [**F3-04**](../sesiones/F3-04-web-bridge-conmutar-y-rutas.md) · adaptador, cara nueva y conmutación | 🌐 (TX.10 🌐→💻) | T3.24–T3.28 | huella igual · un gw · 6+6 rutas · cableado verde · `bridge_iam.go` borrado · `acceso` en `Conmutados` · PR |
+| [**F3-05**](../sesiones/F3-05-cli-cierre-mtls.md) · cierre local (mTLS real, suites contra Postgres, procesos) | 💻 | T3.29–T3.30 (+ parte 💻 de T3.27) | e2e gRPC verde · 7 suites en Postgres · proceso contra los dos binarios · `dev` empujado |
+
+⚠️ Tamaño **sin medir**: F3-01 (7 paquetes, 2.576 líneas viejas) y F3-03 (`grpc`, 4.566) pueden no caber en 90 min. Si
+no caben, la sesión para en un punto limpio de [`tareas.md`](tareas.md), cierra con las tres cosas y se relanza.
 
 ## Contradicciones encontradas (con `04`/`05`/marco/FX, medidas contra el código)
 

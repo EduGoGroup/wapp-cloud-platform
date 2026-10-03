@@ -4,6 +4,8 @@
 > código. Marco: [`../00-marco/`](../00-marco/README.md). Norma: [`05`](../../05-metodo-contratos-y-tdd.md).
 > Rutas: [`../FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) — **F5 no muda
 > ninguna** (TX.15).
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 
 ## Objetivo en tres líneas
 
@@ -13,12 +15,16 @@ carrito** (`internal/flujos/modules/cart/catalog.go`), su índice en memoria (`i
 contrato → rojo → verde. **F5 no conmuta nada en el arranque**: sus consumidores (pipeline, carrito y
 rutas de import) se reconstruyen en F7 y F8, y son ellos quienes lo cablearán.
 
+**0 adaptadores `bridge_<x>.go` y sin BD**: F5 no crea ni retira ningún adaptador de arranque (`05` §4.2) y no tiene
+ningún puerto con BD (no hay suite con `Montaje` que correr contra Postgres). La conmutación es **nominal**:
+`FaseActual = 5`.
+
 ## Entradas
 
 | # | Condición | Cómo se comprueba |
 |---|---|---|
 | E1 | F0 cerrado (`pendiente`, `make test-pendiente`, `cobertura-ficheros`, `fronteras_test.go`) | `ls internal/pendiente internal/modulos` |
-| E2 | F4 cerrado (orden de `05` §6; F5 no depende de F4 en código, pero comparte gate) | `ESTADO.md` |
+| E2 | F4 conmutado antes de escribir código de F5 (orden de `05` §6; F5 no depende de F4 en código, pero comparte gate y sesiones). El inventario E-12 (T5.1) se adelanta a la sesión F45-01, junto al de F4 | `ESTADO.md` |
 | E3 | 🔴 **D-F5-1 decidida** (¿`conversacion/model` se reconstruye aquí o se tiende un puente?) | [`arquitectura.md`](arquitectura.md) §3 |
 | E4 | `dev` verde | skill `validar-antes-de-cerrar` |
 
@@ -27,20 +33,21 @@ rutas de import) se reconstruyen en F7 y F8, y son ellos quienes lo cablearán.
 | # | Condición | Verifica |
 |---|---|---|
 | S1 | 11 ficheros de producción (10 + `conversacion/model/model.go` si D-F5-1 = B) y 11 tests en verde, más `testdata/` con los goldens | `grep -rln 'go:build pendiente' internal/modulos/catalogo internal/modulos/conversacion/model` vacío |
-| S2 | ≥ 80 % por fichero (no hay adaptador Postgres en F5) | `make cobertura-ficheros` rc=0 |
+| S2 | Un test por promesa del contrato; mutantes en el nivel complejo (`indice/cache.go`); procesos de F9. Sin umbral de cobertura (P2): `make cobertura-ficheros` es informe (la tabla va al PR; no bloquea) | revisión del PR |
 | S3 | `fronteras_test.go` prohíbe `conversacion/** → catalogo/indice` y permite `catalogo → conversacion/model` | T5.6 |
 | S4 | El arranque nuevo **no** cambia; `FaseActual = 5`; huella idéntica (TX.15) | T5.19 |
 | S5 | 0 `t.Skip`, 0 `pendiente.Implementar` | `grep` |
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
+F4 y F5 **comparten sesiones** (son pequeñas: ≈ 10 archivos de producción cada una). Cada sesión: 45–90 min y cierre
+de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este README).
+
+| Sesión | Entorno | Tareas de F5 | Punto de parada |
 |---|---|---|---|
-| **A** · inventario y D-F5-1 | 🌐 | T5.1 | números reconfirmados; decisión anotada |
-| **B1** · rojo de `model`, `catalog.go` e `indice` | 🌐 | T5.2–T5.6 | `vet -tags pendiente` rc=0; ci-local rc=0 |
-| **B2** · rojo de `catalogimport` | 🌐 | T5.7–T5.8 | `make test-pendiente` ≈ 37 (cifra exacta anotada en T5.8) |
-| **C** · verde fichero a fichero | 🌐 | T5.9–T5.18 | todo sin etiqueta, ≥ 80 % |
-| **D** · «conmutar» (solo TX.15) y cierre | 🌐 | T5.19–T5.21 | definición de hecho de [`reglas.md`](reglas.md) §4 |
+| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 🌐 | T5.1 | Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada |
+| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · (conmutar F4 y) F5 entero + conmutación nominal | 🌐 | T5.2–T5.19 (+ TX.15) | todo sin etiqueta `pendiente`; huella idéntica con `FaseActual = 5`; `ci-local` rc=0 con 0 SKIP |
+| [`F45-03`](../sesiones/F45-03-cli-cierre.md) · cierre local de las dos fases | 💻 | T5.20–T5.21 (+ T9.26) | definición de hecho de [`reglas.md`](reglas.md) §4; procesos de F9 contra el binario nuevo |
 
 ## Decisiones que necesita (con recomendación)
 

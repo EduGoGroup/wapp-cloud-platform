@@ -12,9 +12,9 @@
 | `internal/prompts` | `…/inferencia/prompts` | 2 · 407 | Carga/vuelca/valida los `.tmpl` de P2–P5 (`WAPP_LLM_PROMPTS_DIR`) |
 | `internal/tenantllm` | `…/inferencia/tenantllm` | 2 · 404 | Vía y credencial cifrada por tenant (`public.tenant_llm`, migraciones 0071/0073) |
 | `internal/degradation` | `…/inferencia/degradation` | 2 · 676 | Avisos al dueño (`public.owner_degradation_notices`, 0075), dedupe por ventana |
-| — | `…/tenantllm/tenantllmhelpertest` ✚ | 2 | Suite `Contrato` + doble en memoria (no existe hoy: es de los 12 de `05` E-6) |
+| — | `…/tenantllm/tenantllmhelpertest` ✚ | 2 | Suite `Contrato(t, func(t) Montaje)` + doble en memoria (no existe hoy: es de los 12 de `05` E-6). La suite corre en memoria **y** en Postgres con el arnés (P4) |
 | — | `…/degradation/degradationhelpertest` ✚ | 2 | Ídem |
-| — | `internal/arranque/puente_inferencia.go` ✚ | 1 | Adaptadores de tipos para dos consumidores viejos (§4). Nace en F4; muere por partes en F7 y F8 |
+| — | `internal/arranque/bridge_inferencia.go` ✚ | 1 | Adaptador de arranque (`05` §4.2) para dos consumidores viejos (§4). Nace en F4; muere por partes en F7 (`llmConfigBridge`) y F8 (`turneroBridge`) |
 
 Totales: `wc -l internal/{llmvia,llmvia/local,prompts,tenantllm,degradation}/*.go` sin `_test` →
 **10 ficheros · 3.072 líneas**; tests viejos **14 ficheros · 88 `Test*`** (21 de integración en 2
@@ -54,7 +54,7 @@ importan `platform/storage/postgres{,/migrations}` (F9, no se escriben aquí).
 | `internal/platform/crypto` (`FieldCipher`) | `platform` | permitido |
 | `internal/modulos/edge/grpc` (`InferRequest`, `InferError` por duck-typing, `ClaseInteractivo`/`ClaseLote`, `DefaultInferGrace`, `*Server`) | módulo reconstruido en F3 | permitido si `fronteras_test.go` tiene `inferencia → edge` en la lista blanca (arista medida hoy: `llmvia → gateway`, `02` §2) |
 | `wapp-shared/{llm,llm/api,logger}` | externo | permitido |
-| — | **puente al código viejo** | **ninguno** |
+| — | **puente (import) al código viejo**, `05` §4.1 | **ninguno** |
 
 ⚠️ **Arista inversa solo de test**: el test viejo `internal/gateway/grpc/inference_vocabulario_internal_test.go:9`
 importa `internal/degradation` (los `Motivo*` del transporte ⊆ `degradation.Reasons()`). Si F3
@@ -76,8 +76,8 @@ selector por **interfaz** (`internal/bootstrap/arranque/fase5_captacion.go:91-12
 | `intake/pipeline.ConAforo` (F7) | `PlazaDe(ctx, tenantID, origin) (string, bool, error)` (`pipeline/plaza.go:98`) | **Sí** |
 | `intakes/quotetext.NewServicio` (F6) | `For` (`quotetext.go:219`) | **Sí** |
 | `intakeahead.New` + `WithCalentador` (F7) | `For` (`intakeahead.go:161`) y `Warm(ctx, tenantID, sessionID, llm.ClassifyRequestInput) error` (`calentamiento.go:71`); no compara `ErrViaSinCalentamiento` (solo lo loguea, `:167-178`) | **Sí** |
-| `turnoacotado.New` (F8) | `Turno(ctx, t, s string, llmvia.TurnoRequest) (string, error)` con el tipo **viejo** (`turnoacotado.go:72`) y `errors.Is(err, llmvia.ErrViaSinTurnoAcotado)` **viejo** (`:133`, `troceado.go:149`) | 🔴 **No** ⇒ adaptador `puenteTurnero` |
-| `reanalisis.NewServicio` (F7) | `ConfigLLM{ Get(ctx, tenantID) (tenantllm.Config, bool, error) }` con `Config` **viejo** (`reanalisis.go:283`) | 🔴 **No** ⇒ adaptador `puenteConfigLLM` |
+| `turnoacotado.New` (F8) | `Turno(ctx, t, s string, llmvia.TurnoRequest) (string, error)` con el tipo **viejo** (`turnoacotado.go:72`) y `errors.Is(err, llmvia.ErrViaSinTurnoAcotado)` **viejo** (`:133`, `troceado.go:149`) | 🔴 **No** ⇒ adaptador `turneroBridge` |
+| `reanalisis.NewServicio` (F7) | `ConfigLLM{ Get(ctx, tenantID) (tenantllm.Config, bool, error) }` con `Config` **viejo** (`reanalisis.go:283`) | 🔴 **No** ⇒ adaptador `llmConfigBridge` |
 | `publicapi` vieja (`Deps.TenantLLM`, `Deps.DegradationNotices`) | tipos viejos | Se ponen a `nil` en la vieja: las 4 rutas se mudan a `apipublica` (TX.12–14) |
 
 **El caso que obliga al adaptador y no a un segundo selector.** Si `turnoacotado` recibiera el
@@ -85,11 +85,11 @@ selector nuevo sin adaptar, no compilaría (tipo de `TurnoRequest`); y si se «a
 selector viejo aparte, habría **dos selectores** y el viejo necesitaría el adaptador de
 `local.Frame` de F3 para siempre. Peor aún, sin traducir el centinela, un tenant en vía `api`
 recibiría un **error** en vez de `modules.MotivoSinResolutor` (`turnoacotado.go:133-141`): cambio de
-conducta observable. ⇒ `puenteTurnero.Turno` llama al selector nuevo y, si
+conducta observable. ⇒ `turneroBridge.Turno` llama al selector nuevo y, si
 `errors.Is(err, N.ErrViaSinTurnoAcotado)`, devuelve el centinela **viejo**; el resto de errores pasa
 intacto (el decorador de avisos ya corrió dentro del nuevo).
 
-**El adaptador de F3 muere aquí.** F3 dejó en `internal/arranque/` un adaptador que hace que el
+**El adaptador de F3 muere aquí.** F3 dejó en `internal/arranque/` un adaptador (`bridge_gateway.go`) que hace que el
 `*Server` nuevo de `modulos/edge/grpc` satisfaga el `local.Frame` **viejo** (su `Infer` pide
 `gatewaygrpc.InferRequest` viejo, `internal/llmvia/local/local.go:270-272`; ver
 `../FX-cara-http/arquitectura.md` §4.1). Con el `llmvia/local` nuevo, el `*Server` nuevo satisface
@@ -97,7 +97,7 @@ intacto (el decorador de avisos ya corrió dentro del nuevo).
 adaptador y su test (T4.24).
 
 **Dos `tenantllm.Postgres` en el mismo proceso hasta F7** (el nuevo para selector y `apipublica`; el
-viejo solo si se elige esa vía en vez de `puenteConfigLLM`). Es inocuo: el store no guarda estado
+viejo solo si se elige esa vía en vez de `llmConfigBridge`). Es inocuo: el store no guarda estado
 (solo `*sql.DB` y `*crypto.FieldCipher`, `internal/tenantllm/postgres.go:16-19`). Se recomienda el
 adaptador (una conversión de struct con los mismos campos) para no abrir un segundo camino al SQL.
 
@@ -117,8 +117,8 @@ adaptador (una conversión de struct con los mismos campos) para no abrir un seg
 |---|---|---|
 | `fase3_almacenes.go` | `tenantllm.NewPostgres(c.db, c.flowDeps.cipher)` (`:157`) · `degradation.NewPostgres(c.db)` + `NewNotifier(store, 0)` (`:169-170`) | Los mismos constructores del paquete **nuevo**; campos del contenedor con tipos nuevos |
 | `prompts.go` | `prompts.Cargar(dir)` + línea de log (`:25-39`) | `N/prompts.Cargar`; misma línea de log, mismo prefijo de error `prompts ajustables de P2-P5: ` |
-| `fase5_captacion.go` · `construirSelectorDeVia` | `llmvia.NewSelector(c.tenantLLMStore, c.log, WithFrame(c.gw), WithNotifier(…), WithLocalOptions(local.ConPlantillas(…)), WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)), WithDegradacionObservada(c.mtx.LLMDegradacion))` (`:91-112`) — **dos** llamadas a `WithLocalOptions` que **acumulan** | Idéntico con el paquete nuevo y `c.gw` **sin** adaptador; `turnoacotado.New(puenteTurnero{c.llmSelector})` |
-| `fase5_captacion.go` · `construirPuertasDelDueno` | `reanalisis.NewServicio(…, c.tenantLLMStore)` (`:319-320`) | `…, puenteConfigLLM{c.tenantLLMStore}` |
+| `fase5_captacion.go` · `construirSelectorDeVia` | `llmvia.NewSelector(c.tenantLLMStore, c.log, WithFrame(c.gw), WithNotifier(…), WithLocalOptions(local.ConPlantillas(…)), WithLocalOptions(local.WithMaxOutputTokens(cfg.LLM.MaxOutputTokensEnabled)), WithDegradacionObservada(c.mtx.LLMDegradacion))` (`:91-112`) — **dos** llamadas a `WithLocalOptions` que **acumulan** | Idéntico con el paquete nuevo y `c.gw` **sin** adaptador; `turnoacotado.New(turneroBridge{c.llmSelector})` |
+| `fase5_captacion.go` · `construirPuertasDelDueno` | `reanalisis.NewServicio(…, c.tenantLLMStore)` (`:319-320`) | `…, llmConfigBridge{c.tenantLLMStore}` |
 | `fase8_transporte.go` | `TenantLLM: c.tenantLLMStore` (`:242`) y `DegradationNotices: c.degradationStore` (`:247`) en `publicapi.Deps` | `nil` en la vieja; `apipublica` recibe los nuevos (TX.14) |
 | orden y `requiere()` | `faseCaptacion.requiere() = gateway, almacenes, cipher` | **sin cambio** (el primer error visible de un arranque caído no cambia) |
 
@@ -134,7 +134,7 @@ adaptador (una conversión de struct con los mismos campos) para no abrir un seg
 Monta si: F1–F3 `TenantLLM ≠ nil && Entitlements ≠ nil`; F4 `DegradationNotices ≠ nil && Entitlements ≠ nil`
 (`publicapi.go:981,1025`). Se cuentan **registros en ejecución**: 4 patrones, 4 `mux.Handle`.
 Ficheros de `apipublica`: `tenantllm.go` (449 l hoy) y `degradationnotices.go` (202 l); sus tareas
-son TX.12–TX.14 de [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md), ejecutadas en el bloque E.
+son TX.12–TX.14 de [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md), ejecutadas en la sesión F45-02.
 
 ## 8 · Lo que no cambia hacia fuera
 

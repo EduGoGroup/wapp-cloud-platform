@@ -71,7 +71,7 @@ Orden de la pasada de contratos **y** de la de verde: `model` → `trigger` → 
 | `C/runtime/aggregator.go`, `source_composer.go` | `internal/modulos/captacion/intake` (F7: `WindowKey`, `JobStore`, `OpenJob`, …) | módulo anterior ✔ |
 | externos | `wapp-cloudlink v0.17.0` (`cloudlinkv1`), `wapp-shared/{logger,textmatch,llm}`, `google/uuid`, `golang.org/x/text/unicode/norm` | sin cambio de versión |
 
-**Ningún puente sale de `C`**: todo destino ya está reconstruido. La lista blanca de
+**Ningún puente (import) sale de `C`**: todo destino ya está reconstruido. La lista blanca de
 `fronteras_test.go` necesita, para `conversacion`: `acceso`, `edge`, `inferencia`, `catalogo`,
 `solicitudes`, `captacion` (D-F8-5), `nucleo`, `platform`. Y en sentido contrario siguen
 **permitidas** (ciclo de negocio congelado, D-7): `captacion → conversacion` (`stages`, `reanalisis`),
@@ -133,28 +133,33 @@ No son puentes (medido): `captacion/pipeline` (`memoria.go`: tipos de catálogo 
 comentario, `match_lineas.go:56`), `catalogo/catalogimport` (tipos de catálogo → `catalogo`),
 `solicitudes/intakes/quotetext` (`LectorSemilla` estructural, `quotetext.go:210`).
 
-### 5.2 · Adaptadores del arranque nuevo (`internal/arranque/puente_*.go` y `bridge_*.go`)
+### 5.2 · Adaptadores de arranque (`internal/arranque/bridge_<x>.go`, `05` §4.2)
 
-Patrón fijado por F1: cuando un paquete **nuevo** tiene que cooperar con uno **viejo** que el
-arranque nuevo aún cablea, el tipo se adapta en `internal/arranque/puente_<x>.go`. El runtime viejo
-es el mayor consumidor de tipos de otros módulos, así que **todos los que quedan** mueren aquí (dos ya murieron antes: `puente_iam` en F3, `puente_gateway` en F4):
+Cuando un módulo **nuevo** ya conmutado tiene que servir a un consumidor **viejo** que el arranque nuevo aún
+cablea, el tipo se traduce en `internal/arranque/bridge_<x>.go` (nivel simple, sin estado). No son los puentes
+(import) de §5.1. **F8 no crea ninguno**: el runtime viejo es el mayor consumidor de tipos de otros módulos, así que
+**todos los que quedan vivos** mueren aquí, y con cada muerte su módulo dueño entra en `Conmutados`:
 
-| Adaptador | Nace | Por qué existe | Muere |
-|---|---|---|---|
-| `bridge_contact.go` (✎ D-F1-9: era `puente_contact.go`) | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | **aquí** (T8.32) |
-| `puente_iam.go` | F2 | el gateway viejo pide `in.Authenticator`/`in.Auditor` viejos | **F3** (T3.28): ya no existe al llegar aquí |
-| `puente_gateway.go` (`Infer` + `PlazaDe`) | F3 | el `local.Frame` del `llmvia` viejo pide `InferRequest` viejo. El runtime viejo recibe `c.gw` **sin** adaptador (estructural, F3 `arquitectura.md` §4) | **F4** (T4.24): ya no existe al llegar aquí |
-| `puente_inferencia.go` | F4 | `puenteConfigLLM` (`reanalisis` viejo, `tenantllm.Config` viejo) y `puenteTurnero` (`turnoacotado` viejo recibe `llmvia.TurnoRequest` y compara `ErrViaSinTurnoAcotado` viejos) | `puenteConfigLLM` en **F7**; `puenteTurnero` **aquí** (T8.32) |
-| `puente_captacion.go` | F7 | `adelantoViejo`, `compositorViejo` y la clausura del sink (`intakeahead.SinkFunc` → `IntakeAggregator.OnClassified` viejo), conversión de `WindowKey` | **aquí** (T8.32) |
-| 2.ª instancia vieja de `intakes.Postgres` | F6 (D-F6-1) | `cart.NewProjector` viejo pide `RevisionWriter`/`ShippingEnsurer` con tipos de `intakes` viejo | **aquí** (T8.32) |
-| 2.ª instancia vieja de `intake.Postgres` | F7 (D-F7-1) | `NewIntakeAggregator`/`NewSourceTextComposer` viejos piden `JobStore`/`SourceTextWriter` viejos | **aquí** (T8.32) |
-| — acceso · solicitudes | — | `WithEntitlements`, `events.NewDispatcher` (`entitlements.Resolver`) y los puertos del runtime/sink de solicitudes son **estructurales** (F2 §4, F6 §4): el objeto nuevo entra tal cual, sin adaptador | — |
+| Adaptador | Nace | Por qué existe | Muere | Entra en `Conmutados` |
+|---|---|---|---|---|
+| `bridge_contact.go` (✎ D-F1-9) | F1 | el runtime/admin viejos piden `flujos/contact.Resolver`; se les da el `nucleo/contact` nuevo | **aquí** (T8.32) | `nucleo` |
+| `bridge_iam.go` | F2 | el gateway viejo pide `in.Authenticator`/`in.Auditor` viejos | **F3** (T3.28): ya no existe al llegar aquí | lo anota F3 |
+| `bridge_gateway.go` (`Infer` + `PlazaDe`) | F3 | el `local.Frame` del `llmvia` viejo pide `InferRequest` viejo. El runtime viejo recibe `c.gw` **sin** adaptador (estructural, F3 `arquitectura.md` §4) | **F4** (T4.24): ya no existe al llegar aquí | lo anota F4 |
+| `bridge_inferencia.go` | F4 | `llmConfigBridge` (`reanalisis` viejo, `tenantllm.Config` viejo) y `turneroBridge` (`turnoacotado` viejo recibe `llmvia.TurnoRequest` y compara `ErrViaSinTurnoAcotado` viejos) | `llmConfigBridge` en **F7**; `turneroBridge` **aquí** (T8.32), y con él el fichero | `inferencia` |
+| `bridge_captacion.go` | F7 | los adaptadores del adelanto y del compositor (`aheadBridge`, `composerBridge` en la spec de F7, con el nombre en inglés que F7 les dé) y la clausura del sink (`intakeahead.SinkFunc` → `IntakeAggregator.OnClassified` viejo), conversión de `WindowKey` | **aquí** (T8.32) | `captacion` |
+| 2.ª instancia vieja de `intakes.Postgres` (no es fichero; si D-F6-1 = no, es `bridge_intakes.go`) | F6 (D-F6-1) | `cart.NewProjector` viejo pide `RevisionWriter`/`ShippingEnsurer` con tipos de `intakes` viejo | **aquí** (T8.32) | `solicitudes` |
+| 2.ª instancia vieja de `intake.Postgres` | F7 (D-F7-1) | `NewIntakeAggregator`/`NewSourceTextComposer` viejos piden `JobStore`/`SourceTextWriter` viejos | **aquí** (T8.32) | `captacion` (junto con `bridge_captacion`) |
+| — acceso · solicitudes | — | `WithEntitlements`, `events.NewDispatcher` (`entitlements.Resolver`) y los puertos del runtime/sink de solicitudes son **estructurales** (F2 §4, F6 §4): el objeto nuevo entra tal cual, sin adaptador | — | — |
 
-Tabla única del plan (con las discrepancias que había): [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1.
-T8.2 la re-mide contra el árbol real antes de tocar nada.
+`conversacion` no tiene adaptador propio: entra en `Conmutados` con su `conmutar(conversacion)`. Al cerrar F8 la lista
+está **completa**. `FaseActual` sigue existiendo y no cambia.
+
+Tabla única del plan: [`../00-marco/estructura.md`](../00-marco/estructura.md) §2.1.
+T8.2 la re-mide contra el árbol real (hoy, 2026-10-03, en `internal/arranque` solo existe `bridge_contact.go`) antes de tocar nada.
 
 **Dimensión del re-toque** (lo más arriesgado de F8): **6 paquetes nuevos** re-tocados (§5.1, ~6
-ficheros y sus tests), **todos** los `puente_*.go` y `bridge_*.go` que quedan borrados (3: `bridge_contact`, `puente_inferencia`, `puente_captacion`), las dos segundas instancias viejas fuera, y
+ficheros y sus tests), **todos** los `bridge_*.go` que quedan borrados (3: `bridge_contact`, `bridge_inferencia`,
+`bridge_captacion`), las dos segundas instancias viejas fuera, y
 `fase7_flujos.go` + `fase5_captacion.go` + `fase6_solicitudes.go` + `fase8_transporte.go` +
 `fase9_fondo.go` + `rutas_admin.go` del arranque nuevo re-cableados en la misma ola. El
 riesgo no es de compilación (el compilador lo caza) sino de **identidad**: dos instancias de algo

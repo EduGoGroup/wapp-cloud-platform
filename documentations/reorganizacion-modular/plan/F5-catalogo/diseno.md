@@ -2,7 +2,9 @@
 
 > `V` = referencia @ `1b18932`. Exportados con la regla awk de F4 (`diseno.md` de F4, cabecera) —
 > aprox. 🔴 En el rojo **solo exportados** (regla T-1 de F1); `warnBag`, `parseCategory`,
-> `variantRejection`, `huella`, `parsear`, `fuenteContenido`, `entradaCache`… nacen en su verde.
+> `variantRejection`, `huella`, `parsear`, `fuenteContenido`, `entradaCache`… nacen en su verde. Su test nace también en
+> el **verde** y **solo si llevan regla de negocio o ramas no triviales** (`05` E-4, P6): p. ej. `variantRejection` y
+> `huella`; no se testea fontanería ni `if err != nil`; el resto lo cubre F9. Niveles de ceremonia por paquete: §6.
 
 ## 1 · El árbol que se crea
 
@@ -106,3 +108,20 @@ registrados…). Etiquetas JSON **idénticas** (el JSON de `flow_definitions` es
 | `TestParseCatalogGoldenV1` | No regresión del v1 | `catalog_test.go` + `testdata/` |
 
 El viejo `frontera_test.go` sigue verde (barre solo `internal/flujos`, que F5 no toca).
+
+## 6 · Clasificación provisional por paquete (`05` E-12)
+
+> **Provisional, sin medir: la fija el inventario E-12** (T5.1), que la baja a archivo y la aprueba Jhoan. Deducida de
+> `arquitectura.md` §1–§4. Si un archivo sale peor, sube de nivel. Consumidores: los que tendrá el paquete nuevo
+> (F7/F8); hoy, en producción, ninguno.
+
+| Paquete | Estado en memoria | Concurrencia | BD / transacciones | Consumidores | Nivel provisional |
+|---|---|---|---|---|---|
+| `conversacion/model` (1, si D-F5-1 = B) | no | no | no | `catalogo`, `indice` y todo `conversacion` (F8) | **medio** (reglas de `Validate`) |
+| `catalogo/catalog.go` (1) | no | no | no | `indice`, `catalogimport`, `captacion` (F7), carrito (F8) | **medio** (parser tolerante, 10 reglas) |
+| `catalogo/indice` · `normalizador.go` | no | no | no | `indice`, `cache` | **simple** |
+| `catalogo/indice` · `indice.go` | no (inmutable tras `Construir`) | no | no | `cache`, `stages`/`pipeline` (F7) | **medio** |
+| `catalogo/indice` · `cache.go` | **sí** (`sync.Mutex`, mapa por tenant, LRU) | **sí** (test con `-race`) | no | 1 (`pipeline`, F7) | **complejo** (mutantes) |
+| `catalogo/catalogimport` (6) | no | no | no | 1 (rutas I14–I17, F8) | **medio**; `contract.go` y `prompt.go`, candidatos a **simple** |
+
+**Adaptadores `bridge_<x>.go`**: nacen 0, mueren 0. **Puertos con BD**: ninguno.

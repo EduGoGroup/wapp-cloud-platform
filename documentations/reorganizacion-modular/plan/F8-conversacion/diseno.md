@@ -19,6 +19,30 @@
   `_test.go` rojo que llama a la API del paquete que los ejercita; el candado
   `un_fichero_un_test` exige el test, `exportados_cubiertos` no tiene nada que exigir. Su test
   nombra los no exportados en el verde (E-7: se prueban los no exportados que los hermanos usan).
+- **Auxiliares no exportados (P6, `05` E-4)**: su test nace en el **verde**, y **solo si llevan regla de
+  negocio o ramas no triviales**. No se testea fontanería ni `if err != nil`; el resto lo cubre F9.
+
+### 0.1 · Niveles de ceremonia por paquete (`05` E-12)
+
+**Provisional, sin medir: la fija el inventario E-12 (T8.2), que aprueba Jhoan.** Deducida de los datos de esta
+spec; el nº de consumidores no está medido. Si un archivo sale peor, sube de nivel.
+
+| Paquete | Estado en memoria | Concurrencia | BD | Nivel provisional |
+|---|---|---|---|---|
+| `model` (1) | no | no | no | **medio** (hoja con muchos consumidores) |
+| `trigger` (5) | `store_memory` (mutex) | no | `store_postgres` | **medio**; `store_memory` y `store_postgres` **complejo** (puerto con BD) |
+| `content` (4) | no | no | no (lee por un puerto) | **simple** |
+| `store` (3) | `repository_memory` (mutex) | no | `repository_postgres` | **complejo** |
+| `modules` (5) | `Registry` (`sync.RWMutex`) | no | no | **medio**; `registry.go` candidato a complejo |
+| `engine` (2) | no (núcleo puro) | no | no | **medio** |
+| `menu` (1), `media` (1) | no | no | no | **simple** |
+| `survey` (2) | no | no | por un puerto | **medio** |
+| `turnoacotado` (3) | no | no | no (llama al modelo) | **medio** |
+| `events` (7) | no | no | `store.go`, `thread_reader.go` | **medio**; `store.go` y `thread_reader.go` **complejo** |
+| `cart` (14) | no (estado en `Vars`) | no | `projection.go` por puertos | **medio**; `projection.go` candidato a complejo |
+| `admin` (4) | no | no | no (handlers) | **medio** |
+| `runtime` (23) | sí (§4 de [`arquitectura.md`](arquitectura.md)) | sí | `self_numbers`, `tenant_resolver`, agregador | **complejo**, con mutantes |
+| adaptadores `bridge_*.go` | — | — | — | F8 no crea ninguno |
 
 ## 1 · Hojas: `model`, `trigger`, `content`, `store`, `modules`
 
@@ -41,10 +65,10 @@ error de definición la envuelve con `%w` (`:304-336`: JSON mal formado, `flow_i
 | `config_resolver.go` | 375 | 5 | `ConfigResolver` sobre `Store`: `Resolve` e `IsEscape` |
 | `store.go` | 36 | 2 | **Puerto**: `Store` + `ErrTriggerNotFound` = `"regla de disparo no encontrada"` (`:10`) |
 | `store_memory.go` | 91 | 7 | Gemelo en memoria (`sync.Mutex`) |
-| `store_postgres.go` | 172 | 7 | Adaptador `flow_triggers` (fuera del 80 %) |
+| `store_postgres.go` | 172 | 7 | Adaptador `flow_triggers`; su verdad la da la suite contra Postgres (P4) y F9 |
 
-Suite: **`C/trigger/triggerhelpertest.Contrato(t, func(t) trigger.Store)`**, la corren `store_memory_test`
-(unitario) y el proceso de F9 contra Postgres. Reglas: 🔴 `KindLLM` (`trigger.go:45`) **no puede
+Suite (P4): **`C/trigger/triggerhelpertest.Contrato(t, func(t) Montaje)`**, corrida **en memoria**
+(`store_memory_test`) **y en Postgres** con el arnés de F9-A. Reglas: 🔴 `KindLLM` (`trigger.go:45`) **no puede
 disparar en producción** (`Signal.Intent` siempre `nil`, deuda D-5, `runtime/incoming.go:963`): se
 conserva la rama y su test, **no se arregla**. INV-6: sin resolver real (`NoopResolver`) el
 comportamiento es el previo al Plan 019. Leer: `config_resolver_test.go`, `trigger_test.go`,
@@ -68,15 +92,16 @@ test directo por fichero. Leer: 3 · 11.
 |---|---:|---:|---|
 | `store.go` | 875 | 42 | Tipos (`Key`, `FlowEvent`, `Intake`, `TenantContentSummary`, `VersionSourceImportJSON/Tabular`, `DefaultConversationTTL`…), centinelas (`ErrTenantContentNotFound`…) y **13 interfaces** segregadas (`ConversationStore :43`, `DefinitionReader :59`, `DefinitionStore :71`, `SurveyResultStore :81`, `FlowEventStore :116`, `TenantContentReader :124`, `IntakeReader :133`, `IntakeWriter :182`, `IntakeStore :236`, `TenantSettingsReader :242`, `WelcomeStore :280`, `Repository :305`, `TenantContentVersioner :406`) |
 | `repository_memory.go` | 817 | 37 | Gemelo en memoria (`sync.Mutex`, `time.Now()` en 8 sitios: **inyectar reloj** en el nuevo) |
-| `repository_postgres.go` | 1.074 | 28 | Adaptador (fuera del 80 %); 4 `rows.Close` rituales (D-17, se portan igual, D-F8-6) |
+| `repository_postgres.go` | 1.074 | 28 | Adaptador; su verdad la da la suite contra Postgres (P4) y F9; 4 `rows.Close` rituales (D-17, se portan igual, D-F8-6) |
 
-Suite: **`C/store/storehelpertest.Contrato(t, func(t) store.Repository)`** — la más grande del módulo
+Suite (P4): **`C/store/storehelpertest.Contrato(t, func(t) Montaje)`** — la más grande del módulo
 (conversación, definiciones, `flow_events`, `tenant_content` con versiones, solicitudes abiertas,
-ajustes, bienvenidas). Reglas: ISP del runtime (H12, Plan 027 · Ola 2 · T9): el runtime pide
+ajustes, bienvenidas), corrida **en memoria y en Postgres** con el arnés de F9-A. La marca de estado
+vigila **todas** las columnas que la operación puede tocar, no una sola (hallazgo 35). Reglas: ISP del runtime (H12, Plan 027 · Ola 2 · T9): el runtime pide
 `FlowStore` = `ConversationStore + DefinitionReader + IntakeReader + TenantSettingsReader`; un
 tenant sin fila en `tenant_settings` hereda TTL **2 h** (`DefaultConversationTTL`, Plan 046 ·
 T4.4), no cero. `flow_events.name` es TEXT libre (migración 0009). Leer: los 18 (12 de integración
-son el guion de la suite contra Postgres en F9).
+son el guion de la suite contra Postgres).
 
 ### 1.5 · `C/modules` ← `internal/flujos/modules`
 
@@ -139,7 +164,8 @@ cableado: `turno_acotado_cableado_test.go` (arranque).
 
 Doble nuevo: **`C/events/eventshelpertest`** con un `Store` en memoria que satisfaga los puertos que
 consumen `runtime` (`EventStore`, `SummaryAppender`, `ThreadReader`), `apipublica` y
-`captacion/reanalisis` (contradicción 2 del README). Reglas (de `summary_test.go`, `dispatcher_test.go`):
+`captacion/reanalisis` (contradicción 2 del README). Es un puerto con BD (P4): el mismo paquete exporta
+`Contrato(t, func(t) Montaje)` y la corren el doble **y** `events.Store` contra Postgres (arnés de F9-A). Reglas (de `summary_test.go`, `dispatcher_test.go`):
 `LoadSummary` **devuelve error** si falta el lector del tipo (no inventa un resumen vacío);
 `PersistSummary` escribe **una** fila y un segundo abandono **no pisa** al primero; vacío no se
 resume; el render habla de «pedido» y **nunca** de identificadores; el resumen es una **foto**
@@ -219,7 +245,8 @@ sobre todo `cart_test`, `consulta_test`, `preresolutor_test`, `projection_*`, `c
 
 Dobles nuevos en **`C/runtime/runtimehelpertest`**: `Sender`, `Presigner`, `TenantResolver`,
 `SelfNumberChecker`, `IngestDeduper`, `ReplyLimiter`, `DepositReminder` y los dos adaptadores sin
-gemelo (`PostgresTenantResolver`, `PostgresSelfNumbers`). Reloj: **siempre** `WithClock` y
+gemelo (`PostgresTenantResolver`, `PostgresSelfNumbers`), que como puertos con BD (P4) llevan su suite
+`Contrato(t, func(t) Montaje)` corrida contra el doble y contra Postgres. Reloj: **siempre** `WithClock` y
 `WithAggregatorClock`; los dos relojes de un guion (runtime y `events.WithClock`) sobre la **misma**
 función movible (precedente `event_clock_test.go`); 🚫 `time.Sleep`.
 

@@ -1,4 +1,4 @@
-# F8 · `conversacion` — el Motor de Flujos, su runtime y el cierre de todos los puentes
+# F8 · `conversacion` — el Motor de Flujos, su runtime y el cierre de todos los puentes y adaptadores
 
 > **Estado: sin empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Forma:
 > [`../00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Norma:
@@ -8,6 +8,8 @@
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: los paquetes de suite de contrato y de dobles llevan el sufijo compuesto
 > **`helpertest`**, el único que los candados de fichero eximen ([`DECISIONES.md`](../DECISIONES.md) §2). Esta spec los
 > nombraba con `…test` (`triggertest`, `storetest`, `contenttest`, `eventstest`, `runtimetest`): se actualizó el sufijo, nada más.
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 
 ## Objetivo en tres líneas
 
@@ -15,8 +17,9 @@
    `admin/sessions.go`) e `internal/turnoacotado` en `internal/modulos/conversacion/…`, aplanado.
 2. Conmutar **de una vez** el singleton `*runtime.Runtime` (y su `IntakeAggregator`) y mudar a
    `internal/apipublica` las **19 + 5** rutas que lo usan o escriben por su almacén.
-3. Dejar el binario nuevo con **cero puentes** al código viejo y **cero adaptadores**
-   `internal/arranque/puente_*.go`: es la última fase de módulo.
+3. Dejar el binario nuevo con **cero puentes (import)** al código viejo y **cero adaptadores**
+   `internal/arranque/bridge_*.go`: es la última fase de módulo. F8 **no crea** adaptadores: retira
+   todos los que queden, y con cada muerte su módulo dueño entra en `Conmutados` (`05` §4.2).
 
 ## Tamaño medido (2026-09-28, `1b18932`)
 
@@ -34,7 +37,7 @@
 
 | # | Entrada | Cómo se comprueba |
 |---|---|---|
-| E1 | F0 cerrado: `internal/pendiente`, `make test-pendiente`, `make cobertura-ficheros`, candados de `05` §5, `internal/apipublica` con el estrangulador | `ls internal/pendiente internal/apipublica internal/modulos/fronteras_test.go` |
+| E1 | F0 cerrado: `internal/pendiente`, `make test-pendiente`, `make cobertura-ficheros` (informe, no bloquea), candados de `05` §5, `internal/apipublica` con el estrangulador | `ls internal/pendiente internal/apipublica internal/modulos/fronteras_test.go` |
 | E2 | F1–F7 **cerrados y conmutados** (`nucleo/contact`, `acceso`, `edge`, `inferencia`, `catalogo`, `solicitudes`, `captacion`) | `ls internal/modulos` → 6 módulos · `ESTADO.md` |
 | E3 | Las rutas de F2–F7 ya viven en `apipublica` (54 de 73) | `grep -c 'Handle(' internal/apipublica/*.go` contra el mapa §5 |
 | E4 | `grep -rn 'pendiente.Implementar' --include='*.go' internal/ \| wc -l` → **0** (nada a medias de otra fase) | el comando |
@@ -42,38 +45,45 @@
 
 ## Salidas (es cierto al cerrar)
 
-- `internal/modulos/conversacion/` con 74–75 ficheros, cada uno con su `_test.go` en verde,
-  ≥ 80 % por fichero (fuera los adaptadores Postgres, E-6) y **0** `t.Skip`.
+- `internal/modulos/conversacion/` con 74–75 ficheros, cada uno con su `_test.go` en verde y
+  **0** `t.Skip`. Sin umbral de cobertura (P2): un test por promesa del contrato; mutantes en el
+  nivel complejo; procesos de F9. La verdad de los adaptadores Postgres la da la suite contra
+  Postgres (P4) y F9.
 - `internal/arranque/fase7_flujos.go` cablea **solo** paquetes nuevos; `huella_test.go`
   igual para el módulo (rutas, rpc, métricas, goroutines).
 - `apipublica` sirve las **73** rutas públicas; el `publicapi` viejo **no se construye** en el
   binario nuevo (TX.24).
 - `grep -rlE 'internal/(flujos|turnoacotado|intake|intakes|gateway|iam|…)/' internal/modulos internal/nucleo internal/arranque internal/apipublica` → **vacío**: ni un import viejo en el binario
   nuevo (la lista exacta del patrón, en [`reglas.md`](reglas.md) §4).
-- `ls internal/arranque/puente_*.go` → **vacío**; la lista de puentes de `fronteras_test.go` → **vacía**.
+- `ls internal/arranque/bridge_*.go` → **vacío**; la lista de puentes (import) de `fronteras_test.go` → **vacía**;
+  `Conmutados` → **completa** (todos los módulos).
 
 ## Orden de lectura
 
-`README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes) →
-[`reglas.md`](reglas.md) (trampas) → [`diseno.md`](diseno.md) del paquete que toque →
+`README` → [`arquitectura.md`](arquitectura.md) (sobre todo §4 singleton y §5 puentes y adaptadores) →
+[`reglas.md`](reglas.md) (niveles E-12 y trampas) → [`diseno.md`](diseno.md) §0.1 (niveles) y el paquete que toque →
 [`requisitos.md`](requisitos.md) → [`tareas.md`](tareas.md).
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Punto de parada |
-|---|---|---|---|
-| A · verdad de campo e inventario | 🌐 | T8.1–T8.2 | inventario re-medido y lista de puentes/adaptadores real en el README |
-| B · rojo de las hojas | 🌐 | T8.3–T8.8 | `model`·`trigger`·`content`·`store`·`modules` en rojo, suites de contrato, `ci-local` rc=0 |
-| C · rojo del motor y sus satélites | 🌐 | T8.9–T8.14 | `engine`·`menu`·`survey`·`media`·`turnoacotado`·`events`·`admin` en rojo |
-| D · rojo del carrito | 🌐 | T8.15–T8.17 | `cart` (14) en rojo + candado de orden + goldens |
-| E · rojo del runtime | 🌐 | T8.18–T8.21 | `runtime` (23) en rojo + candado de rachas; `make test-pendiente` cuenta todo el módulo |
-| F · verde de las hojas | 🌐 | T8.22–T8.23 | 27 ficheros verdes (un commit cada uno) |
-| G · verde de `events`, `admin` y `cart` | 🌐 | T8.24–T8.25 | 25 ficheros verdes |
-| H · verde del runtime (I) | 🌐 | T8.26 | 12 ficheros de soporte verdes |
-| I · verde del runtime (II) | 🌐 | T8.27–T8.28 | los 11 grandes verdes, `pendiente` del módulo = 0 |
-| J · la cara: rojo y verde de conversación | 🌐 | T8.29 (= FX TX.22–TX.23) | handlers de I1–I19 verdes en `apipublica`, aún sin montar |
-| K · conmutar y retirar puentes | 🌐→💻 | T8.30–T8.35 (incluye FX TX.24) | huella igual, 0 puentes, 0 adaptadores, binario nuevo arranca en local |
-| L · cierre | 💻 | T8.36–T8.38 | `validar-antes-de-cerrar`, procesos (🕐 si F9 adelantado), `ESTADO.md` |
+Siete sesiones, **todas 💻** (para F8 ya no queda promoción web): sin PR ni traspaso, `git push origin dev`.
+Cada una es un bloque de 45–90 min (objetivo, **sin medir**) y cierra con las tres cosas: tareas `[x]` con SHA,
+bloque en `ESTADO.md`, hallazgos nuevos aquí. Fichas en [`../sesiones/`](../sesiones/README.md).
+
+| Sesión | Bloque | Nivel E-12 (provisional) | Tareas | Punto de parada |
+|---|---|---|---|---|
+| F8-01 | inventario E-12 y hojas | medio · `store` complejo · `content` simple | T8.1–T8.8, T8.22 | inventario **aprobado por Jhoan** (antes no se escribe código); `model`·`trigger`·`content`·`store`·`modules` verdes; suites `Contrato` en memoria y en Postgres |
+| F8-02 | motor | medio · `menu`/`media` simple | T8.9–T8.11, T8.14, T8.23 | `engine`·`menu`·`survey`·`media`·`turnoacotado` verdes |
+| F8-03 | `events` y `cart` | medio · `events/store` y `thread_reader` complejo | T8.12, T8.15–T8.17, T8.24, T8.25 | `events` (7) y `cart` (14) verdes; goldens idénticos; candado de orden verde y mutado |
+| F8-04 | `runtime` (1): contratos de los 23 y soporte | complejo | T8.18–T8.21, T8.26 | 23 contratos en rojo, candado de rachas escrito, los 12 de soporte verdes |
+| F8-05 | `runtime` (2): núcleo | complejo, con mutantes | T8.27, T8.28 | los 11 del núcleo verdes, mutantes muertos, `pendiente` del runtime = 0 |
+| F8-06 | la cara HTTP y conmutar | medio (`admin`, `apipublica`) | T8.13, T8.29–T8.35 | `admin` y handlers I1–I19 verdes; huella igual; 0 puentes (import), 0 adaptadores, `Conmutados` completo |
+| F8-07 | cierre | — | T8.36–T8.38 | definición de hecho de [`reglas.md`](reglas.md) §4 entera |
+
+Dos ajustes sobre el reparto por paquetes, por dependencias de compilación (medido en el código viejo):
+`admin` importa `runtime` (`handlers.go:24,306,308`), así que no puede nacer antes que sus contratos y va con la cara
+(F8-06); y `send.go`, `thread.go` y `welcome.go` cuelgan de `*Runtime`, así que F8-04 escribe los contratos de los
+**23** antes de poner verdes los 12 de soporte.
 
 ## Decisiones que necesita (de Jhoan)
 

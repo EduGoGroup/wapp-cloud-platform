@@ -51,7 +51,7 @@ vez por *checkout*); `toolchain` imprime la toolchain efectiva y sale ≠ 0 si n
 |---|---|
 | `ci-local` += `vet-pendiente` | `GOWORK=off go vet -tags pendiente ./...`: un rojo que no compila rompe el gate (`05` §5) |
 | `test-pendiente` | Imprime el **número de llamadas a `pendiente.Implementar(`** en ficheros de producción **fuera de `internal/pendiente/`** (el paquete que la define no cuenta) y corre `go test -tags pendiente` sobre `internal/modulos/... internal/nucleo/... internal/arranque/...` **sin** que su fallo rompa el target: el rojo es esperado. La cifra que importa es la cuenta, no los FAIL (un `panic` aborta el binario del paquete entero, `05` E-5) |
-| `cobertura-ficheros` | §5: cobertura de sentencias **por fichero** ≥ 80 % (D-12) sobre los ficheros **ya en verde**; sale con rc≠0 y lista los que no llegan |
+| `cobertura-ficheros` | **Informe** de cobertura de sentencias por fichero sobre los ficheros ya en verde, incluidos los `internal/arranque/bridge_*.go`. **No bloquea** (P2, `05` E-9). ⚠️ Hasta la sesión [F1-06](../sesiones/F1-06-cli-ajustes-previos-a-f2.md) el target aún sale con rc≠0: esa sesión lo cambia |
 | `test-procesos` | `GOWORK=off go test -tags integracion -v -count=1 ./test/procesos/...` contra `WAPP_PROCESOS_BINARIO=viejo` y luego `=nuevo` (✎ D-F9-7, 2026-10-02: `TestMain` sale con código 2 si `GOWORK` no vale `off`; el `Makefile` lo pone, una invocación directa lo lleva delante). En F0 puede nacer solo con el candado `sin_bd_viva_test.go`; el arnés y los procesos llegan en F9. ⚠️ La skill `procesos-testcontainers` dice que lo crea F9: **cualquiera de las dos vale** si F0 lo deja escrito |
 
 ## 3 · Las dos etiquetas de build (D-11)
@@ -77,8 +77,10 @@ contrato con ayudantes privados, o con un struct que ya declara sus campos, **ro
 - Los no exportados (ayudantes, campos, constantes internas) **nacen con la lógica**, en el commit
   `verde`, junto con sus casos de test. Un exportado cuyo único propósito es un ayudante tampoco se
   inventa para esquivarlo.
-- Un tipo **no exportado** que implementa un puerto (los adaptadores `internal/arranque/puente_<x>.go`)
-  se mantiene «usado» con una aserción de compilación: `var _ viejo.Puerto = (*puenteX)(nil)`.
+- Un tipo **no exportado** que implementa un puerto (los adaptadores `internal/arranque/bridge_<x>.go`)
+  se mantiene «usado» con una aserción de compilación: `var _ viejo.Puerto = (*xBridge)(nil)`.
+- El **test** de un auxiliar no exportado nace también en el `verde`, y solo si lleva regla de negocio o
+  ramas no triviales (`05` E-4, P6); el resto lo cubre el proceso de F9.
 - Lo mismo vale para `internal/apipublica` y `internal/nucleo`: la regla es del linter, no del
   módulo. Toda fase la cita como «T-1 de F1»; si una fase dice otra cosa, manda esta.
 
@@ -135,7 +137,7 @@ awk 'NR>1 { split($1,a,":"); k=$1; n[k]=$2; if ($3>0) hit[k]=1; f[k]=a[1] }
 ```
 
 - El bloque se deduplica por su clave (`fichero:rango`), por si un bloque aparece dos veces.
-- **Se excluyen** del umbral: los adaptadores Postgres (`postgres.go`, `*_postgres.go`,
+- **Se excluyen** del informe: los adaptadores Postgres (`postgres.go`, `*_postgres.go`,
   `repository_postgres.go`: E-6) y todo `x.go` cuyo `x_test.go` aún lleva `//go:build pendiente`
   (está en rojo: sin etiqueta no hay test que lo cubra). `make cobertura-ficheros` codifica esta
   lista; una exclusión nueva es decisión escrita.

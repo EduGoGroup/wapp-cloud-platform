@@ -44,7 +44,7 @@ internal/apipublica/
 ├── integrations.go          F6  ↦ integrations.go (G13–G16)
 ├── crmcallback.go           F6  ↦ crmcallback.go (G17)
 ├── eventstelemetry.go       F6  ↦ eventstelemetry.go (G18)
-├── eventstelemetry_store.go F6  ↦ eventstelemetry_store.go — adaptador Postgres (E-6: fuera del 80 %) — D-FX-4
+├── eventstelemetry_store.go F6  ↦ eventstelemetry_store.go — adaptador Postgres (complejo: suite contra Postgres, P4, y F9) — D-FX-4
 ├── reanalyze.go             F7  ↦ reanalyze.go (H1)
 ├── flows.go                 F8  ↦ flows.go (I2–I4) + el montaje de I1 e I11–I13 (handlers de conversacion/admin)
 ├── media.go                 F8  ↦ media.go (I5)
@@ -64,6 +64,14 @@ internal/apipublica/
 consumidor, con tipos del módulo **nuevo**) y un `Deps<Área>` + `Montar<Área>(c *Cara, k Comun,
 d Deps<Área>)`. Así cada fase toca solo sus ficheros y el arranque llama a un `Montar` más por fase.
 La condición de montaje de cada ruta (mapa, «Monta si») viaja **dentro** de su `Montar`.
+
+**Nivel de ceremonia (`05` E-12)** — provisional, sin medir: lo fija el inventario E-12 de la fase que crea cada
+fichero (F2…F8); FX no tiene inventario propio.
+
+| Ficheros | Nivel provisional | Por qué |
+|---|---|---|
+| Handlers de área y utilidades (HTTP ↔ puerto, sin estado ni BD) | simple o medio | solo traducen; los dobles de sus puertos están en memoria |
+| `eventstelemetry_store.go` | complejo | adaptador Postgres: suite con `Montaje` en memoria y en Postgres (P4) |
 
 ## 2 · F0 · `apipublica.go` y `estrangulador.go`
 
@@ -104,7 +112,9 @@ vieja) · `TestComponer_404` · `TestComponer_NoEscribeNada` · `TestComponer_Ni
 - **`cadena.go`** — `type Comun struct { MW *httpapi.Middleware; Auditor httpapi.AuditRecorder;
   Log sharedlogger.Logger }` y los no exportados `protect`, `protectRead`, `accessLog`,
   `anotarTenant`, `respuestaObservada` (estos **nacen con el verde**: el rojo lleva solo exportados,
-  [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §3.1). Promesas que salen de los comentarios viejos
+  [`../00-marco/tecnologia.md`](../00-marco/tecnologia.md) §3.1; su test nace también en el verde y **solo si
+  llevan regla de negocio o ramas no triviales** —no se testea fontanería ni `if err != nil`; el resto lo cubre
+  F9—, P6). Promesas que salen de los comentarios viejos
   (`publicapi.go:1126-1144`, `accesslog.go:12-126`) y que el test afirma: orden exacto de la
   cadena; `accessLog` por **fuera** de `Authenticate` (ve el 401); cero PII en el log (solo
   `r.URL.Path`, nunca la query); `write_error` a nivel error cuando el `Write` falla; logger `nil`
@@ -170,7 +180,8 @@ escenarios de proceso y alimentan la lista de F9 (`05` §7.4).
 
 `FaseActual` es una constante de `internal/arranque` que la tarea `conmutar(<m>)` de cada fase
 incrementa **en el mismo commit** que muda las rutas: el candado obliga a que la tabla y el
-cableado avancen juntos.
+cableado avancen juntos. `FaseActual` avanza al conmutar, pero un módulo entra en `Conmutados`
+(`internal/modulos/fronteras_test.go`) solo cuando muere su último adaptador `bridge_<x>.go` (`05` §4.2).
 
 **Cómo se enumera una cara sin poder listar un `ServeMux`**: por cada fila de `mapa.tsv` se
 sintetiza una petición (método del patrón o `GET` si no tiene; cada comodín → `x`) y se pregunta a

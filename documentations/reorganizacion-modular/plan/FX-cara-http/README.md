@@ -8,6 +8,8 @@
 > ✎ **D-F1-10 (Jhoan, 2026-10-02)**: el arnés y los dobles compartidos de la cara van en `apipublicahelpertest` (esta spec
 > decía `apipublicatest`). Los candados de fichero recorren `internal/apipublica` y solo eximen el sufijo compuesto
 > `helpertest` ([`DECISIONES.md`](../DECISIONES.md) §2): con el nombre viejo el paquete se mediría como producción.
+>
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 
 ## Objetivo, en tres líneas
 
@@ -56,17 +58,27 @@ instancia vieja.
 
 ## Dónde caen las tareas (no hay sesiones propias)
 
-| Fase | Tareas TX | Qué deja hecho | Rutas `:8103` mudadas |
-|---|---|---|---|
-| F0 | TX.1–TX.4 | `apipublica` con `Cara` y `estrangulador` en verde; el arranque compone las dos caras; candado de mudanzas; la huella resuelve por la composición | 0 |
-| F2 | TX.5–TX.7 | ficheros comunes (`cadena`, `respuesta`, arnés) · acceso · 8 handlers de `:8100` | 23 |
-| F3 | TX.8–TX.11 | `plazos`, `limits` · edge · handlers de sesión portados (también para `:8100`) · identidad del centinela vía `platform` (D-F3-2, sin puente) · el gw nuevo inyectado en la cara vieja para E1–E2 | 6 |
-| F4 | TX.12–TX.14 | inferencia | 4 |
-| F5 | TX.15 | solo `FaseActual = 5`: sus 4 rutas escriben por `flujos/store` (mapa §2.9) | 0 |
-| F6 | TX.16–TX.18 | solicitudes (G7 con plazo inyectado) | 18 |
-| F7 | TX.19–TX.21 | re-análisis · intenciones (E1–E2, D-FX-1/D-F7-4) | 3 |
-| F8 | TX.22–TX.24 | conversación · la cara vieja deja de construirse | 19 |
-| F10 | TX.25 | borrar `publicapi` y el estrangulador | — |
+| Fase | Tareas TX | Ficha de sesión | Qué deja hecho | Rutas `:8103` mudadas |
+|---|---|---|---|---|
+| F0 | TX.1–TX.4 ✅ | [`F0-05`](../sesiones/F0-05-web-cara-vacia-platform-deriva.md) (cerrada) | `apipublica` con `Cara` y `estrangulador` en verde; el arranque compone las dos caras; candado de mudanzas; la huella resuelve por la composición | 0 |
+| F2 | TX.5–TX.7 | [`F2-04`](../sesiones/F2-04-web-bridge-conmutar-y-rutas.md) | ficheros comunes (`cadena`, `respuesta`, arnés) · acceso · 8 handlers de `:8100` | 23 |
+| F3 | TX.8–TX.11 | [`F3-04`](../sesiones/F3-04-web-bridge-conmutar-y-rutas.md) (TX.8–TX.11) · [`F3-05`](../sesiones/F3-05-cli-cierre-mtls.md) (el e2e local de TX.10) | `plazos`, `limits` · edge · handlers de sesión portados (también para `:8100`) · identidad del centinela vía `platform` (D-F3-2, sin puente) · el gw nuevo inyectado en la cara vieja para E1–E2 | 6 |
+| F4 | TX.12–TX.14 | [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) | inferencia | 4 |
+| F5 | TX.15 | [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) | solo `FaseActual = 5`: sus 4 rutas escriben por `flujos/store` (mapa §2.9) | 0 |
+| F6 | TX.16–TX.18 | [`F6-05`](../sesiones/F6-05-web-cara-http-y-conmutar.md) | solicitudes (G7 con plazo inyectado) | 18 |
+| F7 | TX.19–TX.21 | [`F7-04`](../sesiones/F7-04-web-cara-http-y-conmutar.md) | re-análisis · intenciones (E1–E2, D-FX-1/D-F7-4) | 3 |
+| F8 | TX.22–TX.24 | [`F8-06`](../sesiones/F8-06-cli-cara-http-y-conmutar.md) | conversación · la cara vieja deja de construirse | 19 |
+| F10 | TX.25 | [`F10-04`](../sesiones/F10-04-cli-relevo.md) | borrar `publicapi` y el estrangulador | — |
+
+**Nivel de ceremonia (`05` E-12).** FX no tiene inventario propio: los ficheros de `apipublica` de cada ola **se
+clasifican en el inventario E-12 de la fase que los crea** (F2…F8), con el mismo criterio que el resto de la fase y la
+aprobación de Jhoan. Un handler que solo traduce HTTP ↔ puerto es **simple o medio**; un fichero con store/BD
+(`eventstelemetry_store.go`) es **complejo** y su puerto lleva suite con `Montaje` en memoria y en Postgres (P4). Sin
+umbral de cobertura (P2): un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9.
+
+**Adaptadores de arranque (`05` §4.2).** FX no crea ninguno. Los que el arranque necesite por la cara vieja
+([`arquitectura.md`](arquitectura.md) §4, salida 2) son `internal/arranque/bridge_<x>.go` y los lista el inventario de la
+fase que los crea. Los «puentes» de esta spec son **imports** (`05` §4.1) y conservan ese nombre.
 
 ## Decisiones que necesita (de Jhoan)
 
@@ -75,7 +87,7 @@ instancia vieja.
 | **D-FX-1** (= D-F7-4) | `GET/PUT /api/v1/intents`: su código es de captación (F7) pero el `PUT` usa el gw directo. ¿Se mudan en **F3** con un puente declarado `apipublica → internal/intentcfg` (D-10 literal), o se quedan en la cara vieja hasta **F7** recibiendo el gw **nuevo** por su puerto estructural (`publicapi.ConfigPusher`, solo tipos de stdlib; su error solo se registra, `intents.go:167`)? | **F7** (recomendación de [`../DECISIONES.md`](../DECISIONES.md), la línea base del plan): cero puentes en `apipublica` (encaja sin excepciones con la regla 4 de fronteras de F0), un solo gw y sin re-toque en F7; es válida **porque** el mismo mecanismo de inyección ya es obligatorio para G1–G7, G17 e I4 (mapa §4.1). **El mapa y las tareas planifican F7.** *Nota — alternativa (D-10 literal, F3 con puente)*: si Jhoan la eligiera, E1–E2 vuelven a la fila F3 del mapa, TX.8 añade `intents.go` con el puente, TX.21 lo retira, y F0 activa la vía de excepción de su regla 4 (contradicción 7) |
 | **D-FX-2** | Los handlers `SetSessionProfileHandler`/`SetSessionStatusHandler` viven hoy en `internal/flujos/admin/sessions.go` (conversación, F8) pero están tipados con `fleet` (edge, F3) y los usan **los dos** listeners. ¿Dónde nacen en F3? | En `apipublica/sessionadmin.go`, **exportados** para que `rutas_admin.go` los use en `:8100`. Consecuencia: `04` §3 `conversacion/admin/sessions.go` **no se reconstruye** en F8 (queda en la cara) |
 | **D-FX-3** *(alternativa a D-F3-2)* | Del cierre de F3 al de F8, `POST /api/v1/flows/{id}/start` y `/admin/flows/start` comparan el centinela **viejo** `session.ErrSessionOffline` con errores que devuelve el gw **nuevo** (mapa §4.4) | **Solo si D-F3-2 = no.** La recomendación es **D-F3-2**: desde el ✎ de F0 (T0.17) el centinela viejo **es** el de `platform`, y `modulos/edge/session` declara el mismo: identidad compartida sin puente (TX.10 queda en un test de identidad). La alternativa: `modulos/edge/session` declara `var ErrSessionOffline = <viejo>.ErrSessionOffline` (puente de **identidad** en `fronteras_test.go`), retirado al cerrar F8. Igual para `ErrPushTimeout`/`ErrPushAbandonado` si algún consumidor viejo los compara (hoy: ninguno fuera de `publicapi/messages.go`, que se muda en F3) |
-| **D-FX-4** | El adaptador SQL `publicapi/eventstelemetry_store.go` (lee `flow_events`) vive en la cara HTTP. ¿Se conserva así o baja a `conversacion/events`? | **Se conserva** en `apipublica` (F6), como hoy; bajarlo es una mejora de diseño que el plan no hace (sería cambiar dos cosas a la vez). Queda fuera del 80 % por E-6 |
+| **D-FX-4** | El adaptador SQL `publicapi/eventstelemetry_store.go` (lee `flow_events`) vive en la cara HTTP. ¿Se conserva así o baja a `conversacion/events`? | **Se conserva** en `apipublica` (F6), como hoy; bajarlo es una mejora de diseño que el plan no hace (sería cambiar dos cosas a la vez). Nivel **complejo** (E-12): su verdad la da la suite contra Postgres (P4) y F9 |
 | **D-FX-5** | Los ficheros comunes de la cara: ¿nacen en F0/F1 o con su primer consumidor? | **Con su primer consumidor** (F2 y F3). F0 solo crea el mecanismo (`Cara`, `estrangulador`) porque la huella lo necesita desde el día uno; F1 no muda ninguna ruta y un piloto no debe crecer |
 
 ## Contradicciones encontradas (medidas contra el código)

@@ -9,7 +9,7 @@
 
 - **D-F9-1 · adelantar F9.** Con «sí», el orden de [`README.md`](README.md) es el que vale: el arnés
   de procesos nace tras F0 y cada conmutación se valida contra los dos binarios. Con «no», se saltan
-  F9-01…F9-05 en su sitio y F9 se hace entero tras F8 (tarea T9.34).
+  F9-01…F9-04 en su sitio y F9 se hace entero tras F8 (tarea T9.34).
 - **D-F1-2** va con D-F9-1: el arnés mínimo para la suite de `contact` contra Postgres.
 
 ## Las que bloquean un bloque concreto de F0

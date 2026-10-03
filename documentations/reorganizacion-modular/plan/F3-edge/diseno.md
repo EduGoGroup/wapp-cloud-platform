@@ -1,8 +1,10 @@
 # F3 · Diseño — contratos, suites, dobles y reglas que se llevan (E-8)
 
 > `E` = `internal/modulos/edge` · `V` = paquete viejo. Cabecera `// Porta <V>/<f>.go @ <sha>`. En
-> rojo **solo exportados** (T-1 de F1). Las reglas salen de los tests viejos (258 `Test*`) y de los
-> comentarios-ADR, leídos el 2026-09-28.
+> rojo **solo exportados** (T-1 de F1); los auxiliares no exportados nacen con el verde, y su test también, solo si
+> llevan regla de negocio o ramas no triviales (P6, `05` E-4). Las reglas salen de los tests viejos (258 `Test*`) y de
+> los comentarios-ADR, leídos el 2026-09-28. Nivel de ceremonia por paquete (provisional):
+> [`arquitectura.md`](arquitectura.md) §1.1; lo fija el inventario E-12 (T3.1).
 
 ## 1 · Árbol nuevo (producción ↔ test)
 
@@ -23,12 +25,15 @@ E/fleet/        fleet.go · repository_postgres.go                              
 E/fleet/fleethelpertest/            slowrepo.go (hoy, en fleettest) + ContratoRepository + Memoria (↦ MemoryRepository)
 E/filtercfg/    filtercfg.go                                                         (+1)
 E/grpc/         auth · config_push · connect · diagnostics · greeting · inference · plaza · readiness · receipt_sink · send · server · types · worklane   (+13)
-internal/arranque/  puente_gateway.go ✚ · puente_gateway_test.go   (y se BORRA puente_iam.go de F2)
+internal/arranque/  bridge_gateway.go ✚ · bridge_gateway_test.go   (y se BORRA bridge_iam.go de F2)
 ```
 
 ## 2 · Suites de contrato (firma D-F1-1) y dobles
 
-| Suite | Casos mínimos (reglas de §4) | Doble | Postgres (F9) |
+Los 7 puertos con BD: cada suite es `Contrato(t, func(t) Montaje)` y corre **en memoria y en Postgres** con el arnés de
+F9-A (P4). La marca de estado vigila **todas** las columnas que la operación puede tocar (hallazgo 35 de F1).
+
+| Suite | Casos mínimos (reglas de §4) | Doble | Postgres (arnés de F9-A) |
 |---|---|---|---|
 | `leasehelpertest.ContratoRepository` 🔒 | `Upsert` **nunca** escribe `revoked` ni resucita un revocado; `MarkRevoked` pegajoso; `Get` de un Edge nunca visto → `found=false`; `MarkTenantRevoked`/`TenantRevoked`/`RestoreTenant` independientes de las filas por Edge | `leasehelpertest.Memoria` | `lease.PostgresRepository` |
 | `enrollhelpertest.ContratoCodeStore` | código de un solo uso: el segundo consumo falla (`ErrCodeUsed`/`ErrCodeNotFound`); consumo **atómico** | memoria | `PostgresCodeStore` |

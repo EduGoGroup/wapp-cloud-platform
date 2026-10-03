@@ -63,7 +63,8 @@ gate **DEBERÁ** fallar. — Verifica: `grep -rn 't.Skip' internal/nucleo` vací
   **con el SHA** del commit que la cierra: `[x] … — cerrada en \`abc1234\``.
 - **Entorno**: 🌐 la sesión web la hace entera · 💻 solo la local (Docker obligatorio sin
   alternativa, integración vieja con `WAPP_TEST_REQUIRE_DB=1`, UAT, `main`, ecosistema fuera del
-  repo) · 🌐→💻 la web la escribe y la **local la cierra**.
+  repo) · 🌐→💻 la web la escribe y la **local la cierra**. La separación dura lo que dure la promoción
+  web (P3, 2026-10-03); cuando se acabe, todo es 💻 y el traspaso solo se escribe si una sesión se corta.
 - **«Hecho cuando»** es observable: un `rc`, un conteo, un fichero que existe, una huella igual.
   Prohibido «queda implementado».
 - **Commits** (`05` E-4): `rojo(<m>): …` · `verde(<m>): …` · `refactor(<m>): …` ·
@@ -72,8 +73,18 @@ gate **DEBERÁ** fallar. — Verifica: `grep -rn 't.Skip' internal/nucleo` vací
   aislados** en su propio commit). Un `rojo` y su `verde` **nunca** en el mismo commit.
 
 **Bloques de sesión.** Las tareas se agrupan en bloques, cada uno lo que cabe en **una** sesión
-de Claude Code (orientativo: hasta ~25 ficheros nuevos o una conmutación, y un solo entorno). El
-bloque dice su entorno y su punto de parada:
+de Claude Code: un bloque coherente de **45–90 min** (`05` E-12); con archivos simples caben varios
+paquetes o un módulo pequeño entero, con archivos complejos, medio módulo. Toda sesión cierra con las
+mismas **tres cosas**: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos en el README de la
+fase. El bloque dice su entorno y su punto de parada:
+
+**Inventario E-12.** La primera tarea de una fase que reconstruye un módulo es su inventario: una tabla
+`archivo · estado · concurrencia · BD · nº de consumidores · nivel` (simple / medio / complejo) y la lista
+de adaptadores `bridge_<x>.go` que nacen y mueren en la fase. **Jhoan la aprueba antes de escribir código.**
+Ninguna tarea lleva una cifra de cobertura como «hecho cuando»: vale un test por promesa del contrato,
+mutantes en el nivel complejo y los procesos de F9.
+
+Formato de la cabecera de un bloque:
 
 ```markdown
 ## Bloque B · contratos y rojo de `nucleo/contact` · 🌐 · T1.3–T1.7

@@ -33,8 +33,11 @@ Tres promesas, las tres comprobables por un candado (`05` §5):
    errores da **antes** de que exista la lógica; esa es la conversación de fronteras que ADR-0010
    pedía (ADR-0010, fuera de este repo: *monolito modular por dominios; la comunicación entre
    módulos pasa por una API interna explícita*).
-3. **Cobertura desde el nacimiento** (E-9): cada exportado aparece en su test ya en rojo; en verde,
-   ≥ 80 % de sentencias **por fichero** (D-12), fuera los adaptadores Postgres.
+3. **Cobertura desde el nacimiento** (E-9): cada exportado aparece en su test ya en rojo, y cada promesa
+   del contrato tiene su aserción. **No hay umbral de cobertura** (P2, 2026-10-03): la cifra es un informe;
+   la garantía son los tests por promesa, los mutantes del nivel complejo y los procesos de F9.
+4. **Ceremonia a la medida** (E-12): tres niveles (simple, medio, complejo) según estado, concurrencia, BD y
+   consumidores de cada archivo, fijados en el inventario de cada fase y aprobados por Jhoan.
 
 ## 3 · Qué NO es
 
@@ -126,7 +129,7 @@ es la del **envelope de PII de negocio**, otra cosa: ver [`glosario.md`](glosari
 | D-9 | `cmd/server-modular` temporal → `internal/arranque`; desaparece en F10, donde `cmd/server` usa el arranque nuevo (`go build -o bin/server ./cmd/server` no cambia). **Una** prueba en UAT en sustitución antes del relevo | 2026-09-27 | sesión de plan |
 | D-10 | **Cara HTTP única nueva, por olas (estrangulador)**: `internal/apipublica` nace vacía en F0, el arranque nuevo la monta **delante** de `publicapi`; cada fase muda sus rutas en el ciclo en que conmuta; al cerrar F8 el viejo no sirve ninguna ruta en el binario nuevo; en F10 se borra. **Sustituye** a la recomendación de `03` D-10 y a `05` §9.2 («repartir en `modulos/<m>/http/`») | 2026-09-27 | sesión de plan · [`FX-cara-http/`](../FX-cara-http/README.md) |
 | D-11 | Etiquetas `pendiente` (rojo) e `integracion` (procesos); **cero `t.Skip`** en código nuevo | 2026-09-27 | sesión de plan |
-| D-12 | **80 %** de sentencias por fichero al llegar a verde, fuera los adaptadores Postgres; se recalibra tras F1 | 2026-09-27 | sesión de plan |
+| D-12 | ~~Umbral de cobertura de sentencias por fichero al llegar a verde~~ — **derogada el 2026-10-03** (P2 de la parada de F1): la cobertura es un informe y no bloquea (`05` E-9) | 2026-09-27 | sesión de plan |
 | W-1 | **Docker en la web**: la primera sesión web **prueba** testcontainers; si funciona, la web corre los procesos como **pre-chequeo**, pero **F9 y el relevo los cierra la sesión local** | 2026-09-27 | sesión de plan |
 
 **Abiertas, que el plan asume con su recomendación** (`03` §3): D-1 alcance (opción 2: corregir

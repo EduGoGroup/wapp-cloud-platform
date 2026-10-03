@@ -1,7 +1,9 @@
 # F2 · Diseño — contratos por paquete, suites, dobles y reglas que se llevan (E-8)
 
 > `A` = `internal/modulos/acceso` · `V` = el paquete viejo de referencia. Todo fichero nuevo lleva
-> `// Porta <V>/<fichero>.go @ <sha>` (o `// Nuevo: …`). **En rojo, solo exportados** (T-1 de F1).
+> `// Porta <V>/<fichero>.go @ <sha>` (o `// Nuevo: …`). **En rojo, solo exportados** (T-1 de F1): los
+> auxiliares no exportados nacen en el verde, y su test también, **solo si llevan regla de negocio o ramas no
+> triviales**; no se testea fontanería ni `if err != nil`; el resto lo cubre F9 (`05` E-4, P6).
 > Las reglas `R-xx` de §4 son lo que el comentario del contrato **tiene que decir** y el test
 > **tiene que afirmar**; salen de los tests viejos y de los comentarios-ADR del código, leídos el
 > 2026-09-28. Una regla que se decida no mantener se dice en el commit, con motivo (E-8).
@@ -22,8 +24,33 @@ A/iam/infra/identity/    client.go · m2m.go                                    
 A/iam/transport/http/    active_tenant · auth · canje · http · invitations · roles (+6)
 A/platformadmin/         access_requests · access_requests_postgres ✚ · handlers · postgres · puertos ✚ · signup   (+5; puertos.go sin test, E-3)
 A/platformadmin/platformadminhelpertest/ ✚ suite de los puertos + doble en memoria
-internal/arranque/       puente_iam.go ✚ · puente_iam_test.go
+internal/arranque/       bridge_iam.go ✚ · bridge_iam_test.go   (adaptador de arranque, `05` §4.2)
 ```
+
+### 1.1 · Niveles de ceremonia (`05` E-12) — provisional, sin medir: la fija el inventario E-12 (T2.1)
+
+Deducido de [`arquitectura.md`](arquitectura.md) §1, §4 y §5. No está medido fichero a fichero; el nº de consumidores
+es el de paquetes viejos de producción que importan el paquete.
+
+| Paquete | BD / transacciones | Estado en memoria | Concurrencia | Consumidores (prod.) | Nivel provisional |
+|---|---|---|---|---|---|
+| `entitlements` (`entitlements.go`) | no | no | no | ~10 paquetes (solo constantes y el puerto) | **simple** |
+| `entitlements` (`middleware.go`) | no | no | no | `publicapi` | **medio** (fail-closed, I-CP-6) |
+| `entitlements` (`postgres.go`) | sí | caché con TTL | mutex | uno (el arranque), una instancia | **complejo** |
+| `iam/domain` | no | no | no | `gateway/grpc`, `publicapi` y todo el IAM | **simple** (`invitation.go` y `canje.go` llevan reglas R-D1…R-D5: candidatos a medio) |
+| `iam/ports/in` · `iam/ports/out` | no | no | no | arranque, `gateway/grpc`, `publicapi` | **simple** (interfaces y DTOs) |
+| `outhelpertest` · `entitlementshelpertest` · `platformadminhelpertest` | no | — | — | solo tests | **simple** (suites y dobles, D-F1-3) |
+| `iam/infra/memory` | no | sí (es un doble) | sin medir | 0 en producción (T-13) | **simple** como doble; 🔴 E-12 manda «estado en memoria» a complejo: lo decide el inventario |
+| `iam/usecase` | no | sin medir | 0 goroutines | arranque, `publicapi` | **medio** |
+| `iam/infra/identity` | no (HTTP) | `m2m.go`: token y caché negativa | `m2m.go`: candado que serializa el canje | arranque | `client.go` **medio** · `m2m.go` **complejo** |
+| `iam/infra/postgres` | sí, con transacciones y cerrojo | no | cerrojo `pg_advisory_xact_lock` | arranque, `platformadmin` | **complejo** |
+| `iam/transport/http` | no | no | no | arranque, `publicapi` | **medio** |
+| `platformadmin` (`handlers`, `access_requests`, `signup`) | no (tras D-F2-3) | no | no | arranque | **medio** |
+| `platformadmin` (`postgres.go`, `access_requests_postgres.go`) | sí, con transacción (R-A7) | no | no | arranque | **complejo** |
+| `platformadmin` (`puertos.go`) | no | no | no | — | **simple** |
+| `internal/arranque/bridge_iam.go` | no | no | no | gateway viejo | **simple** (`05` §4.2) |
+
+Qué se hace en cada nivel: [`reglas.md`](reglas.md) §5.
 
 ## 2 · Suites de contrato y dobles (E-3, E-6)
 
@@ -31,7 +58,10 @@ Firma común (D-F1-1 de F1): `func ContratoX(t *testing.T, nuevo func(t *testing
 donde el montaje trae la implementación y los **dos tenants** con UUID sembrados (Postgres los exige
 por FK). Cada suite: casos con nombre **en inglés** que digan la regla (`05` E-11, que rige lo nuevo desde el 2026-10-02; aquí decía
 «en español»); nada de BD ni reloj real en la versión en
-memoria; la versión Postgres la corre F9 (`//go:build integracion`).
+memoria. **Todo puerto con BD** corre su suite `Contrato(t, func(t) Montaje)` **en memoria y en Postgres** con el arnés
+de F9-A (`//go:build integracion`, testcontainers; P4): es lo que garantiza que memoria y Postgres se comportan igual.
+Vale para las 7 de `outhelpertest`, `ContratoResolver` y la de `platformadminhelpertest`. La marca de estado de cada
+`Montaje` vigila **todas** las columnas que la operación puede tocar, no una sola (hallazgo 35 de F1).
 
 | Suite (`outhelpertest`) | Casos mínimos (de las reglas de §4) | Doble | Postgres |
 |---|---|---|---|

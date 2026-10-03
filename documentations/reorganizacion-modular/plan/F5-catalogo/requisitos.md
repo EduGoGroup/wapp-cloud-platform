@@ -10,7 +10,7 @@
 > lógica llegue validada**.
 
 - **R5.1.a** · **EL** contrato de cada fichero **DEBERÁ** tener cuerpos `panic(pendiente.Implementar(…))`, sin valores cero. — Verifica: revisión de T5.2–T5.8 y `make test-pendiente`.
-- **R5.1.b** · **EL** rojo **DEBERÁ** compilar con `-tags pendiente` y declarar solo exportados. — Verifica: `GOWORK=off go vet -tags pendiente ./internal/modulos/catalogo/...; echo rc=$?` → 0 y `make lint` rc=0.
+- **R5.1.b** · **EL** rojo **DEBERÁ** compilar con `-tags pendiente` y declarar solo exportados (el test de un auxiliar no exportado nace en el verde, y solo si lleva regla de negocio o ramas no triviales, `05` E-4). — Verifica: `GOWORK=off go vet -tags pendiente ./internal/modulos/catalogo/...; echo rc=$?` → 0 y `make lint` rc=0.
 - **R5.1.c** · **SI** un test de `N` llama a `t.Skip`, **ENTONCES EL** gate **DEBERÁ** fallar. — Verifica: `grep -rn 't.Skip' internal/modulos/catalogo` vacío.
 
 ## H5.2 · El parser de runtime tolera el v2 y no deja a nadie sin catálogo
@@ -63,7 +63,7 @@
 > entrante no espere a parsear catálogos** (INV-02 / T1.5).
 
 - **R5.5.a** · **SI** un paquete bajo `internal/modulos/conversacion/**` importa `internal/modulos/catalogo/indice`, **ENTONCES** `fronteras_test.go` **DEBERÁ** fallar. — Verifica: mutación en T5.6.
-- **R5.5.b** · **EL** único import de `catalogo` hacia otro módulo **DEBERÁ** ser `conversacion/model` (o el puente declarado a `internal/flujos/model` si D-F5-1 = A). — Verifica: `fronteras_test.go`.
+- **R5.5.b** · **EL** único import de `catalogo` hacia otro módulo **DEBERÁ** ser `conversacion/model` (o el puente de import declarado a `internal/flujos/model` si D-F5-1 = A). — Verifica: `fronteras_test.go`.
 
 ## H5.6 · Hacia fuera no cambia nada
 

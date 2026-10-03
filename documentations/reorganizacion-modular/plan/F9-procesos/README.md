@@ -4,6 +4,8 @@
 > día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
 > conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01). B1, B2, C y D sin empezar.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
+> Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3): B1–D pasan a
+> **solo local** (💻) y entran los hallazgos 35–41 del [piloto F1](../F1-nucleo-contact/README.md).
 > **Norma**: [`05`](../../05-metodo-contratos-y-tdd.md) §7 (y E-5, E-6, §3.2). **Cómo**: skill
 > [`procesos-testcontainers`](../../../../.claude/skills/procesos-testcontainers/SKILL.md). Forma:
 > [`plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md). Si esta fase choca con `05`, manda `05`.
@@ -16,6 +18,10 @@ base plantilla por proceso y arranca **el binario de verdad** (viejo o nuevo) co
 la puerta real y mira Postgres. Es el oráculo de comportamiento entre `cmd/server` y
 `cmd/server-modular`, y la **condición del relevo** (F10).
 
+Sin umbral de cobertura (P2), los procesos son además parte de lo que lo **sustituye**, con «un test por promesa del
+contrato» y los mutantes del nivel complejo: F9 cubre los huecos que ningún test de fichero toca (auxiliares sin test
+propio, ramas de error, fontanería).
+
 ## 🔍 La propuesta de orden: adelantar F9 (decisión D-F9-1, abajo)
 
 `05` §6 pone F9 **después** de F8. Esta spec recomienda **partirla en cuatro olas** y adelantar las dos
@@ -26,7 +32,7 @@ reconstruido:
 |---|---|---|---|
 | **9A · Arnés** | `TestMain`, dobles, Edge de prueba, candado, `make test-procesos`, proceso P0 (humo) | En cuanto cierre **F0** (en paralelo con F1: no comparten ficheros) | A |
 | **9B · Procesos contra el viejo** | P1–P9 escritos y en verde contra `cmd/server`; corridos también contra el nuevo | Tras 9A, **antes de conmutar F2** | B1, B2 |
-| **9C · Pasada por conmutación** | Al conmutar cada módulo: suites de contrato de sus adaptadores Postgres contra Postgres + toda la suite contra el nuevo | Dentro de cada ciclo `conmutar(<m>)` de F1–F8 | C (una por módulo) |
+| **9C · Pasada por conmutación** | Al conmutar cada módulo: suites de contrato de sus adaptadores Postgres contra Postgres + toda la suite contra el nuevo + el test de cableado del módulo completo (los procesos no ven un cableado al paquete viejo) | Dentro de cada ciclo `conmutar(<m>)` de F1–F8 | C (una por módulo) |
 | **9D · Cierre** | Corrida final contra los dos binarios, sin intermitencias, 0 SKIP, D-13 cerrada | Tras F8, **antes de F10** | D |
 
 Si Jhoan **no** acepta adelantar, las olas 9A, 9B y 9D se ejecutan en bloque tras F8 (el orden de
@@ -42,6 +48,8 @@ marca **🕐** en [`tareas.md`](tareas.md).
 | 9A | El candado `test/procesos/sin_bd_viva_test.go` y `test/procesos/doc.go` existen (**F0**, T0.8) y, si Jhoan aceptó **D-F1-2**, el mínimo de `test/procesos/main_test.go` y `contact_contrato_test.go` (**F1**, T1.13). ⚠️ *Corrección (revisión independiente, 2026-10-01)*: quedó al revés: `main_test.go` lo creó **F9-A** (T9.5, `576ba9a`) y T1.13 lo **reutiliza**; `contact_contrato_test.go` aún no existe (T1.13, bloque B de F1) | `ls test/procesos/` |
 | 9A | La sesión que cierra tiene Docker (la local siempre; la web solo si la prueba de T9.12 salió bien) | `docker info >/dev/null; echo rc=$?` → `rc=0` |
 | 9B | 9A cerrada por la sesión local (P0 verde contra el viejo **y** el nuevo) | Traspaso `TRASPASO-F9-arnes.md` con sección `CERRADO` |
+| 9B | **F1-06** (ajustes previos a F2) hecha: la marca de `Estado` reforzada y el comando de R9.4.d dentro de un gate | Su bloque en `ESTADO.md` |
+| 9B · 9C · 9D | Sesión **local** (💻): Docker y los dos binarios | `docker info >/dev/null; echo rc=$?` → `rc=0` |
 | 9C(m) | El módulo `m` está en verde y su commit `conmutar(<m>)` existe | `git log --oneline --grep='conmutar(<m>)'` |
 | 9D | F8 conmutada; `fronteras_test` sin puentes declarados | La lista de puentes de `internal/modulos/fronteras_test.go` vacía |
 
@@ -56,6 +64,9 @@ marca **🕐** en [`tareas.md`](tareas.md).
 - Las **suites de contrato** (E-6) de los **22** paquetes con SQL (medidos; `05` dice 20) corren contra
   Postgres desde `test/procesos/<paquete>_contrato_test.go` (la convención que estrena F1, T1.13).
 - Los candados de invariante que necesitan BD (`05` §3.2) son aserciones de su proceso.
+- El reintento de `postgres.WithTx` tiene un caso de ejecución real en P3 que hace caer el mutante
+  `maxTxAttempts = 1` (R9.6.e).
+- El comando de R9.4.d corre dentro del gate que crea F1-06.
 - Ni un `WAPP_TEST_DB_DSN`, ni un puerto fijo, ni `WithReuseByName` en `test/procesos/` (el candado lo
   prueba en `ci-local`).
 - **Ni una línea de código de producción cambiada** por F9 (salvo `go.mod`, `go.sum`, `Makefile`,
@@ -68,17 +79,22 @@ marca **🕐** en [`tareas.md`](tareas.md).
 3. [`diseno.md`](diseno.md) — fichero a fichero de `test/procesos/`, el entorno del servidor, los
    dobles, y **los diez procesos** con su recorrido, tablas, candados, suites y tests viejos.
 4. [`reglas.md`](reglas.md) — las trampas medidas y la definición de hecho.
-5. [`tareas.md`](tareas.md) — T9.1–T9.34 en bloques de sesión.
+5. [`tareas.md`](tareas.md) — T9.1–T9.35 en bloques de sesión.
 
 ## Bloques de sesión
 
-| Bloque | Entorno | Tareas | Para cuando |
-|---|---|---|---|
-| **A · arnés** | 🌐→💻 | T9.1–T9.12 | P0 verde contra los dos binarios en local; `ci-local` rc=0 con el candado |
-| **B1 · procesos de plataforma y acceso** | 🌐→💻 | T9.13–T9.16 (P1, P2, P3, P9) | Los cuatro verdes contra el viejo y el nuevo, en local |
-| **B2 · procesos de negocio** | 🌐→💻 | T9.17–T9.21 (P4–P8, doble CRM) y T9.35 (P10, solo si D-F9-4) | Los cinco (o seis) verdes contra el viejo y el nuevo, en local |
-| **C · pasada por conmutación** 🕐 | 🌐→💻 | T9.22–T9.29, **una por módulo**, dentro de la sesión que conmuta | Suites del módulo contra Postgres + suite entera contra el nuevo, en local |
-| **D · cierre** | 💻 | T9.30–T9.33 | `-count=3` limpio contra los dos; traspaso `CERRADO`; docs al día |
+| Bloque | Sesión | Entorno | Tareas | Para cuando |
+|---|---|---|---|---|
+| **A · arnés** ✅ | F9-01, F9-02 | 🌐→💻 | T9.1–T9.12 | P0 verde contra los dos binarios en local; `ci-local` rc=0 con el candado |
+| **B1 · procesos de plataforma y acceso** | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
+| **B2 · procesos de negocio** | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
+| **C · pasada por conmutación** 🕐 | el cierre local de cada módulo (F2…F8) | 💻 | T9.23–T9.29, **una por módulo** | Suites del módulo contra Postgres + suite entera contra el nuevo + test de cableado completo |
+| **D · cierre** | F9-05 | 💻 | T9.30–T9.33 | `-count=3` limpio contra los dos; recuento contra el código; docs al día |
+
+Desde B1, F9 es **solo local**: necesita testcontainers y los dos binarios, y así no gasta el saldo de la promoción
+web. Sesiones de 45–90 min; si un bloque no cabe, para en un punto limpio tras un proceso cerrado y se relanza. Cada
+sesión cierra con tres cosas: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos aquí. Sin traspaso,
+salvo que una sesión se corte.
 
 La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/README.md).
 
@@ -91,7 +107,7 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
 | **D-F9-2** | 🔴 R2: ¿hace falta una opción nueva en el arranque para el doble de S3? (la pendiente de `ESTADO.md`) | **No.** El SDK usa *path-style* cuando el endpoint es una **IP**, aunque `UsePathStyle=false` (leído en `aws-sdk-go-v2/service/s3@v1.98.0/endpoints.go:5573` rama `ForcePathStyle == false`, y `:6185`, `:6298`, `:6496`: `if _url.IsIp == true` → `scheme://authority/<bucket>`). Con `WAPP_STORAGE_S3_ENDPOINT=http://127.0.0.1:<puerto>`, el `HeadBucket` de `r2_factory.go:63` llega como `HEAD /<bucket>` a un doble en proceso. **Leído en el código, no ejecutado**: lo confirma T9.11. Si T9.11 lo refuta, vuelve a Jhoan con la salida (la alternativa sería una variable nueva, que cambia la huella de las variables: `03` §1) |
 | **D-F9-3** | Doble de S3: ¿servidor falso en el proceso de test o MinIO por testcontainers? | **En el proceso** (`s3falso_test.go`, `net/http` puro): el servidor solo hace `HeadBucket` al arrancar y **firma** URLs sin red (`presign.go`). MinIO (lo que corre UAT, `documentations/operacion.md` §6) sería un segundo contenedor por corrida sin ganar cobertura. Sin dependencia nueva (`gofakes3` no hace falta) |
 | **D-F9-4** | 🔴 Los **9 ficheros / 25 `Test*`** de integración de `internal/platform/` **sobreviven** al relevo (platform no se borra) y seguirían leyendo `WAPP_TEST_DB_DSN` con `t.Skip` (DT-52) | **Re-expresarlos como P10 · plataforma** (réplica de migraciones sobre un clon, grants, rekey por `/admin/crypto/rekey`, el colector de `/metrics`) y borrarlos en F10 junto con `make test-integration`. Sin esto, F10 no puede dejar el repo sin `WAPP_TEST_DB_DSN`. Toca tests viejos de `platform`: por eso es decisión |
-| **D-F9-5** (opcional) | ¿Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`)? | **Sí, informativa, sin umbral**: diría cuánto SQL de los adaptadores excluidos de E-9 ejecutan los procesos. No bloquea nada |
+| **D-F9-5** (opcional) | ¿Medir la cobertura que los procesos dan al código nuevo (`go build -cover` + `GOCOVERDIR`)? | **Sí, informativa, sin umbral**: diría cuánto SQL de los adaptadores ejecutan los procesos. No bloquea nada |
 
 ### Decisiones tomadas (T9.1)
 
