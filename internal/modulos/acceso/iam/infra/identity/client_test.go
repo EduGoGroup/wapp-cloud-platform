@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamidentity_test
 
 import (
