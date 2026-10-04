@@ -201,6 +201,7 @@ func TestP2_ExchangeAndPermissions(t *testing.T) {
 	t.Run("patrones de grant adversarios", func(t *testing.T) { p2AdversarialGrantPatterns(t, esc) })
 	t.Run("alta de miembro sin identity: 503, nunca 404", func(t *testing.T) { p2AddMemberWithoutIdentity(t, esc, admin) })
 	t.Run("canjes rechazados", func(t *testing.T) { p2RejectedExchanges(t, esc) })
+	t.Run("el IAM propio no sobrevive a la 0038", func(t *testing.T) { p2OwnIAMDidNotSurvive(t, esc.DB) })
 
 	// El alta de miembro sin credencial M2M no deja línea ERROR: se contesta 503 y nada más.
 	edgeSinErrores(t, esc.S, nil)
