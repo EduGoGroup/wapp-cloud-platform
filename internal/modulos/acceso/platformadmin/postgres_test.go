@@ -1,14 +1,65 @@
-//go:build pendiente
-
 package platformadmin
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// Repository implementa el puerto de empresas (el de solicitudes llega con
+// access_requests_postgres.go).
+var _ TenantStore = (*Repository)(nil)
+
+// clampPage es la regla de la página de empresas que comparten el adaptador y el handler. Su tope
+// superior (500) no lo afirma la suite del puerto (sembrar 501 empresas por caso no compensa).
+func TestClampPage(t *testing.T) {
+	for _, c := range []struct {
+		name                  string
+		limit, offset         int
+		wantLimit, wantOffset int
+	}{
+		{"ZeroLimit_Default50", 0, 0, 50, 0},
+		{"NegativeLimit_Default50", -7, 3, 50, 3},
+		{"InRange_Kept", 1, 1, 1, 1},
+		{"AtMax_Kept", 500, 0, 500, 0},
+		{"AboveMax_500", 501, 0, 500, 0},
+		{"NegativeOffset_Zero", 10, -1, 10, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			limit, offset := clampPage(c.limit, c.offset)
+			if limit != c.wantLimit || offset != c.wantOffset {
+				t.Fatalf("clampPage(%d, %d) = (%d, %d), quiero (%d, %d)", c.limit, c.offset, limit, offset, c.wantLimit, c.wantOffset)
+			}
+		})
+	}
+}
+
+// isUniqueViolation reconoce el 23505 de Postgres, también envuelto, y solo ese: es lo que
+// convierte un slug repetido en ErrConflict (409) en vez de un 500.
+func TestIsUniqueViolation(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"UniqueViolation", &pgconn.PgError{Code: "23505"}, true},
+		{"Wrapped", fmt.Errorf("insert: %w", &pgconn.PgError{Code: "23505"}), true},
+		{"ForeignKeyViolation", &pgconn.PgError{Code: "23503"}, false},
+		{"NotPostgres", errors.New("23505"), false},
+		{"Nil", nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isUniqueViolation(c.err); got != c.want {
+				t.Fatalf("isUniqueViolation(%v) = %v, quiero %v", c.err, got, c.want)
+			}
+		})
+	}
+}
 
 // Este test es INTERNO (package platformadmin): prueba del adaptador Postgres solo lo que no
 // necesita base (05 E-6). Su SQL lo prueba la suite platformadminhelpertest.Contrato contra

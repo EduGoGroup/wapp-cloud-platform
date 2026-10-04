@@ -18,10 +18,13 @@ package platformadmin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Los centinelas de los adaptadores. Su texto es observable (los envuelven los errores que llegan
@@ -87,34 +90,260 @@ type InstallationItem struct {
 // Repository es el adaptador Postgres de TenantStore (este fichero) y de AccessRequestStore
 // (access_requests_postgres.go): SQL crudo sobre database/sql, sin ORM. Las promesas de cada
 // método son las del puerto; aquí solo se añade lo propio del adaptador.
-type Repository struct{}
+// Repository es el adaptador Postgres de TenantStore (este fichero) y de AccessRequestStore
+// (access_requests_postgres.go): SQL crudo sobre database/sql, sin ORM. Las promesas de cada
+// método son las del puerto; aquí solo se añade lo propio del adaptador.
+type Repository struct {
+	db *sql.DB
+}
 
 // ListTenants implementa TenantStore.ListTenants: ORDER BY created_at DESC, id DESC, con limit
 // acotado a [1, 500] (≤0 ⇒ 50) y offset negativo ⇒ 0. Nunca devuelve nil.
+//
+// El ORDER BY lleva `id DESC` como desempate: `created_at` NO es único (el seed de varios tenants
+// en la misma transacción comparte `now()`), así que sin un segundo criterio estable, dos páginas
+// consecutivas (limit=1&offset=0 y offset=1) pueden devolver la MISMA fila empatada y omitir la
+// otra -- el orden entre empates de un ORDER BY de una sola columna no está garantizado entre
+// ejecuciones.
 func (r *Repository) ListTenants(ctx context.Context, limit, offset int) ([]TenantListItem, error) {
-	panic(pendiente.Implementar("platformadmin.Repository.ListTenants"))
+	limit, offset = clampPage(limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id::text, slug, display_name, plan_id, revoked_at, created_at, updated_at
+		FROM public.tenants
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("platformadmin: listar tenants: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
+
+	items := []TenantListItem{}
+	for rows.Next() {
+		var (
+			item      TenantListItem
+			planID    sql.NullString
+			revokedAt sql.NullTime
+		)
+		if err := rows.Scan(&item.ID, &item.Slug, &item.DisplayName, &planID, &revokedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("platformadmin: escanear tenant: %w", err)
+		}
+		if planID.Valid {
+			item.PlanID = &planID.String
+		}
+		if revokedAt.Valid {
+			item.RevokedAt = &revokedAt.Time
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("platformadmin: iterar tenants: %w", err)
+	}
+	return items, nil
 }
 
 // GetTenant implementa TenantStore.GetTenant: tres consultas (fila, COUNT(DISTINCT edge_id) de
 // fleet_sessions y features efectivas). ErrNotFound si no existe.
 func (r *Repository) GetTenant(ctx context.Context, id string) (TenantDetail, error) {
-	panic(pendiente.Implementar("platformadmin.Repository.GetTenant"))
+	var (
+		detail    TenantDetail
+		planID    sql.NullString
+		revokedAt sql.NullTime
+	)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id::text, slug, display_name, plan_id, revoked_at, created_at, updated_at
+		FROM public.tenants
+		WHERE id = $1
+	`, id).Scan(&detail.ID, &detail.Slug, &detail.DisplayName, &planID, &revokedAt, &detail.CreatedAt, &detail.UpdatedAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return TenantDetail{}, ErrNotFound
+	case err != nil:
+		return TenantDetail{}, fmt.Errorf("platformadmin: leer tenant: %w", err)
+	}
+
+	if planID.Valid {
+		detail.PlanID = &planID.String
+	}
+	if revokedAt.Valid {
+		detail.RevokedAt = &revokedAt.Time
+	}
+
+	// Conteo de instalaciones (edges distintos en fleet_sessions)
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT edge_id)
+		FROM public.fleet_sessions
+		WHERE tenant_id = $1
+	`, id).Scan(&detail.InstallationsCount)
+	if err != nil {
+		return TenantDetail{}, fmt.Errorf("platformadmin: contar instalaciones: %w", err)
+	}
+
+	// Resolver features efectivas (plan + tenant overrides)
+	plan := "basic"
+	if detail.PlanID != nil && *detail.PlanID != "" {
+		plan = *detail.PlanID
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT f.feature
+		FROM (
+			SELECT pf.feature
+			FROM public.plan_features pf
+			WHERE pf.plan_id = $2
+			UNION
+			SELECT tf.feature
+			FROM public.tenant_features tf
+			WHERE tf.tenant_id = $1 AND tf.enabled
+		) AS f
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM public.tenant_features apagada
+			WHERE apagada.tenant_id = $1
+			  AND apagada.feature = f.feature
+			  AND NOT apagada.enabled
+		)
+	`, id, plan)
+	if err != nil {
+		return TenantDetail{}, fmt.Errorf("platformadmin: leer features efectivas: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
+
+	detail.Features = []string{}
+	for rows.Next() {
+		var feat string
+		if err := rows.Scan(&feat); err != nil {
+			return TenantDetail{}, fmt.Errorf("platformadmin: escanear feature: %w", err)
+		}
+		detail.Features = append(detail.Features, feat)
+	}
+	if err := rows.Err(); err != nil {
+		return TenantDetail{}, fmt.Errorf("platformadmin: iterar features: %w", err)
+	}
+	slices.Sort(detail.Features)
+
+	return detail, nil
 }
 
 // ExistsTenant implementa TenantStore.ExistsTenant con UNA consulta ligera (SELECT EXISTS).
+// Está pensada para los handlers que solo necesitan decidir un 404 antes de una operación
+// (listar instalaciones, emitir un código de enrolamiento): llamar a GetTenant para eso paga tres
+// consultas (fila + COUNT(DISTINCT edge_id) + features efectivas) que nadie usa.
 func (r *Repository) ExistsTenant(ctx context.Context, id string) (bool, error) {
-	panic(pendiente.Implementar("platformadmin.Repository.ExistsTenant"))
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM public.tenants WHERE id = $1)
+	`, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("platformadmin: comprobar existencia de tenant: %w", err)
+	}
+	return exists, nil
 }
 
 // CreateTenant implementa TenantStore.CreateTenant. Valida ANTES de tocar la base: slug o
 // display_name vacíos ⇒ ErrInvalidInput sin consulta. La violación de unicidad del slug (23505)
 // ⇒ ErrConflict envuelto con el slug.
 func (r *Repository) CreateTenant(ctx context.Context, slug, displayName string, planID *string) (CreatedTenant, error) {
-	panic(pendiente.Implementar("platformadmin.Repository.CreateTenant"))
+	if slug == "" || displayName == "" {
+		return CreatedTenant{}, fmt.Errorf("%w: slug y display_name son requeridos", ErrInvalidInput)
+	}
+
+	var pID *string
+	if planID != nil && *planID != "" {
+		pID = planID
+	}
+
+	var created CreatedTenant
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO public.tenants (id, slug, display_name, plan_id)
+		VALUES (gen_random_uuid(), $1, $2, $3)
+		RETURNING id::text, slug
+	`, slug, displayName, pID).Scan(&created.ID, &created.Slug)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return CreatedTenant{}, fmt.Errorf("%w: slug=%s", ErrConflict, slug)
+		}
+		return CreatedTenant{}, fmt.Errorf("platformadmin: crear tenant: %w", err)
+	}
+	return created, nil
 }
 
 // ListInstallations implementa TenantStore.ListInstallations: fleet_sessions agrupadas por
 // edge_id con LEFT JOIN a leases, ORDER BY edge_id ASC. Nunca devuelve nil.
 func (r *Repository) ListInstallations(ctx context.Context, tenantID string) ([]InstallationItem, error) {
-	panic(pendiente.Implementar("platformadmin.Repository.ListInstallations"))
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT 
+			f.edge_id,
+			COUNT(f.session_id) as sessions,
+			MAX(f.last_seen_at) as last_seen_at,
+			COALESCE(bool_or(l.revoked), false) as lease_revoked
+		FROM public.fleet_sessions f
+		LEFT JOIN public.leases l ON l.tenant_id = f.tenant_id AND l.edge_id = f.edge_id
+		WHERE f.tenant_id = $1
+		GROUP BY f.edge_id
+		ORDER BY f.edge_id ASC
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("platformadmin: listar instalaciones: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
+
+	items := []InstallationItem{}
+	for rows.Next() {
+		var (
+			item       InstallationItem
+			lastSeenAt sql.NullTime
+		)
+		if err := rows.Scan(&item.EdgeID, &item.Sessions, &lastSeenAt, &item.LeaseRevoked); err != nil {
+			return nil, fmt.Errorf("platformadmin: escanear instalacion: %w", err)
+		}
+		if lastSeenAt.Valid {
+			item.LastSeenAt = &lastSeenAt.Time
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("platformadmin: iterar instalaciones: %w", err)
+	}
+	return items, nil
+}
+
+// maxLimit es el tope de una página de empresas.
+const maxLimit = 500
+
+// defaultLimit es la página de empresas cuando no se pide una válida.
+const defaultLimit = 50
+
+// pgUniqueViolation es el SQLSTATE de una violación de unicidad.
+const pgUniqueViolation = "23505"
+
+// clampPage acota una página de empresas como la promete TenantStore.ListTenants: limit ≤ 0 ⇒ 50,
+// limit > 500 ⇒ 500, offset < 0 ⇒ 0. La usan el adaptador (la página que pide) y
+// ListTenantsHandler (la que responde): en el viejo eran dos copias de la misma regla.
+func clampPage(limit, offset int) (int, int) {
+	if limit <= 0 {
+		limit = defaultLimit
+	} else if limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit, max(offset, 0)
+}
+
+// isUniqueViolation informa si err es (o envuelve) una violación de unicidad de Postgres.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
 }
