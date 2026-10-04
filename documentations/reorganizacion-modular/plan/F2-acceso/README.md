@@ -377,7 +377,8 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     cinco pasadas completas contra el viejo, dos rojas, cada una en un proceso distinto (P5 y P4); de cuatro contra el
     nuevo, ninguna. Las rojas coincidieron con más carga en la máquina (gates o sub-agentes en paralelo). Sin causa
     medida: ¿carrera del compositor del *flush* en el código viejo (interesa a F7, que lo reconstruye) o efecto de la
-    carga sobre los plazos del test? Pide decisión: reproducir bajo carga antes de F7, o anotarlo en su spec.
+    carga sobre los plazos del test? **Decidido (Jhoan, 2026-10-04): no se reproduce ahora; queda anotado en la spec de F7**
+    ([contradicción 8 de su README](../F7-captacion/README.md)), con el aviso de que el compositor vive en `flujos/runtime` (F8).
 
 ### Informe de fase (plantilla de [`tareas.md`](tareas.md), al cerrar F2)
 
