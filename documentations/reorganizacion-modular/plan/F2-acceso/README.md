@@ -368,6 +368,16 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
 51. **Un `errcheck` propio que solo vio el gate entero**: `d243f15` dejó `n, _ := res.RowsAffected()` en el montaje de
     Postgres de `platformadmin` y `make ci-local` dio `GATE_RC=2` (1 issue); corregido en `73b4541`. El lint acotado a un
     paquete que corren los sub-agentes no cubre `test/procesos`: el que cierra es `make ci-local`.
+52. 🟡 **Otra intermitencia contra el binario viejo, esta vez en P4 y con un `ERROR` del servidor** (medida en la pasada de
+    gates de la revisión de las 🟡, sobre `d0f7ec9`; no es de `acceso` ni la tocó ninguna decisión). `TestP4_WindowRules/segunda_ventana`:
+    el job de la segunda ventana quedó `failed` y el log del servidor **viejo** dice `pipeline: job FAILED … causa:job_invalido
+    … el job no trae literal que analizar (el compositor del flush no llegó a escribir el sobre)`. A diferencia del
+    hallazgo 50, aquí el rojo no es de lectura del test: el servidor viejo falló el job. Repetido: verde en una pasada
+    completa contra el viejo (`RC=0 · PASS=668`) y en cinco corridas sueltas de `TestP4_WindowRules`. **Cuenta del día**: de
+    cinco pasadas completas contra el viejo, dos rojas, cada una en un proceso distinto (P5 y P4); de cuatro contra el
+    nuevo, ninguna. Las rojas coincidieron con más carga en la máquina (gates o sub-agentes en paralelo). Sin causa
+    medida: ¿carrera del compositor del *flush* en el código viejo (interesa a F7, que lo reconstruye) o efecto de la
+    carga sobre los plazos del test? Pide decisión: reproducir bajo carga antes de F7, o anotarlo en su spec.
 
 ### Informe de fase (plantilla de [`tareas.md`](tareas.md), al cerrar F2)
 

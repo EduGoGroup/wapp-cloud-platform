@@ -355,6 +355,25 @@ Sesión completa. Ola 1 en dos *worktrees* en paralelo (identity; simples + rojo
 - **No corrido**: nada de este bloque necesita BD ni Docker; sin traspaso.
 - **Siguiente paso: F2-03** (`infra/postgres`, `entitlements/postgres.go`, `transport/http`, `platformadmin`). `main` sin tocar.
 
+**Revisión de las 🟡 abiertas de F2 (2026-10-04, 💻, rama `reorg/f2-decisiones-abiertas`, partida de `reorg/f2-05-cierre-local`).**
+Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por decisión:
+
+- `478b70a` **D-F2-10** (hallazgo 13): el valor cero de `RedemptionVerdict` es `RedemptionMissing`.
+- `4cd6066` **D-F2-11** (14): el token de invitación recorta U+200B y U+FEFF de los bordes (se aparta del viejo).
+- `70395a4` (18): `05` E-3 recoge la excepción de los puertos de entrada.
+- `20dd6ca` **D-F2-12** (29 y 45): la revocación en medio del canje, por conducta contra Postgres; la `tx` del alta, por
+  candado AST nuevo. **Mutantes del nivel complejo: 131 sembrados · 126 muertos · 5 equivalentes · 0 vivos.**
+- `0b8d089` **D-F2-13** (34): el alta solo acepta una dirección pelada y recorta los invisibles de los bordes (se aparta del
+  viejo, también en lo que llega a identity).
+- `96903ab` (36): los ficheros de `OversizedFiles` se parten cuando su fase los toque.
+- `d0f7ec9` (50): P5 espera las líneas de log antes de contarlas.
+- **Gates sobre `d0f7ec9`** (toolchain fijada, rc sin pipe): `make ci-local` `GATE_RC=0` (113 `ok`, lint 0 issues) ·
+  `PENDIENTES=0 · ROJOS=0` · código nuevo `-v` 2.721 PASS, 0 SKIP · suites `Contrato` + `TestIAMRedeem_` 150 PASS, 0 SKIP con
+  cada binario · `make test-procesos`: nuevo `RC=0 · PASS=668 · SKIP=0`; viejo, **rojo en la primera pasada**
+  (`PASS=665 · FAIL=3`, `TestP4_WindowRules/segunda_ventana`) y `RC=0 · PASS=668 · SKIP=0` al repetir. 🟡 Hallazgo 52.
+- Quedan fuera, sin decidir: el `switch` sin `default` que consume el veredicto del canje; un invisible **dentro** del
+  correo; `ErrSignupNotAvailable` (hasta F10).
+
 **F2-05 · F2, cierre local (2026-10-04, 💻, rama `reorg/f2-05-cierre-local` desde `origin/dev` @ `bfd31ce`).** El PR #32
 (F2-04) está integrado en `dev` (merge `bfd31ce`). Sesión de cierre, sin traspaso; cuatro sub-agentes (tres de mutantes en
 copias desechables fuera del repo, uno para los tests de `canje.go`). **F2 queda cerrada.** Llega a `dev` por PR, **sin squash**:
