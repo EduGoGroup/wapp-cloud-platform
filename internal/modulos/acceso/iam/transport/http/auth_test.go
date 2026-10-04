@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamhttp
 
 // Una aserción por promesa de R-H3, R-H5 y R-H6 (auth.go), con dobles de los puertos: el
@@ -10,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -49,6 +48,11 @@ func (e *fakeExchanger) Exchange(_ context.Context, input in.ExchangeInput) (in.
 	e.calls++
 	e.received = input
 	return e.res, e.err
+}
+
+// newAuthHandler construye el handler sin logger (puede ser nil).
+func newAuthHandler(v in.TokenVerifier, e in.Exchanger) *AuthHandler {
+	return NewAuthHandler(v, e, nil)
 }
 
 // authMux monta Register sobre un mux nuevo. exchange nil ⇒ modo dual apagado.
@@ -123,7 +127,7 @@ func TestVerify_NoTokenIs400(t *testing.T) {
 
 // Verify: método ajeno ⇒ 405; fallo del puerto ⇒ 500 con su texto.
 func TestVerify_MethodAndPortFailure(t *testing.T) {
-	var h *AuthHandler = NewAuthHandler(&fakeVerifier{err: errors.New("caído")}, nil, nil)
+	h := newAuthHandler(&fakeVerifier{err: errors.New("caído")}, nil)
 	if rec := serve(t, h.Verify(), http.MethodPut, "/api/v1/auth/verify", `{"token":"t"}`); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("PUT: código = %d; se esperaba 405", rec.Code)
 	}
@@ -232,10 +236,50 @@ func TestExchange_NoTenantIs200WithEmptyTenant(t *testing.T) {
 
 // R-H5: el token viaja tal cual y un tenant_id del cuerpo no llega al puerto.
 func TestExchange_BodyTenantHasNowhereToLand(t *testing.T) {
+	const noisy = "  id-token  "
 	e := &fakeExchanger{}
-	body := `{"identity_token":"  id-token  ","tenant_id":"` + tenantB + `"}`
+	body := `{"identity_token":"` + noisy + `","tenant_id":"` + tenantB + `"}`
 	serve(t, NewAuthHandler(&fakeVerifier{}, e, nil).Exchange(), http.MethodPost, "/api/v1/auth/exchange", body)
-	if e.received != (in.ExchangeInput{IdentityToken: "  id-token  "}) {
+	if e.received != (in.ExchangeInput{IdentityToken: noisy}) {
 		t.Errorf("el puerto recibió %+v; se esperaba solo el identity_token tal cual", e.received)
+	}
+}
+
+// jsonFieldNames devuelve los nombres JSON de los campos de un struct, ordenados: es el conjunto
+// de claves que un cuerpo puede aportar.
+func jsonFieldNames(v any) []string {
+	typ := reflect.TypeOf(v)
+	var names []string
+	for i := range typ.NumField() {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = typ.Field(i).Name
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// R-H5, la mitad estructural (nace en el verde: el DTO es no exportado): el cuerpo del exchange
+// tiene EXACTAMENTE la clave identity_token, y un tenant_id no sobrevive a un round-trip.
+func TestExchangeRequest_OnlyCarriesIdentityToken(t *testing.T) {
+	if got := jsonFieldNames(exchangeRequest{}); !slices.Equal(got, []string{"identity_token"}) {
+		t.Fatalf("el cuerpo del exchange acepta %v; solo puede aceptar [identity_token]: un tenant_id viajaría en "+
+			"cada re-canje desatendido (INV-8, D-047.14); la empresa se elige en /api/v1/auth/active-tenant", got)
+	}
+	var req exchangeRequest
+	if err := json.Unmarshal([]byte(`{"identity_token":"a.b.c","tenant_id":"`+tenantB+`"}`), &req); err != nil {
+		t.Fatalf("decodificar: %v", err)
+	}
+	back, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("serializar: %v", err)
+	}
+	if strings.Contains(string(back), "tenant") {
+		t.Errorf("el cuerpo retuvo algo de tenant tras el round-trip: %s", back)
 	}
 }
