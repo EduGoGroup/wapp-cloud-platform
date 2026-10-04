@@ -77,7 +77,8 @@
 package inferstats
 
 import (
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"sync"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/inferencia"
 )
 
@@ -122,13 +123,14 @@ type Key struct {
 // goroutines distintas (y `Gather` colecta EN PARALELO).
 //
 // El cero-valor NO es utilizable: usa New.
-type Store struct{}
+type Store struct {
+	mu   sync.RWMutex
+	last map[Key]Report
+}
 
 // New construye el almacén vacío: su Aggregated() tiene Edges == 0, los tres mapas vacíos
 // (no nil) y las dos muestras nil.
-func New() *Store {
-	panic(pendiente.Implementar("inferstats.New"))
-}
+func New() *Store { return &Store{last: make(map[Key]Report)} }
 
 // Observe (en el paquete viejo, Observa) registra el parte de un Edge, SUSTITUYENDO al
 // anterior de esa misma Key: lo que el parte nuevo no trae (una clave de mapa, una
@@ -148,7 +150,18 @@ func New() *Store {
 // Nil-safe: sobre un *Store nil no hace nada, para que un arranque sin observabilidad
 // no obligue a poner guardas en el camino del latido.
 func (s *Store) Observe(k Key, r Report) {
-	panic(pendiente.Implementar("inferstats.Store.Observe"))
+	if s == nil || k.EdgeID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.last[k] = Report{
+		ByRegime:          cloneCounts(r.ByRegime),
+		ByClass:           cloneCounts(r.ByClass),
+		SkippedByReason:   cloneCounts(r.SkippedByReason),
+		PrefillSamples:    cloneInt(r.PrefillSamples),
+		GenerationSamples: cloneInt(r.GenerationSamples),
+	}
 }
 
 // Aggregate (en el paquete viejo, Agregado) es la suma de la flota, lista para publicar.
@@ -184,5 +197,65 @@ type Aggregate = inferencia.Agregado
 // la flota crece hasta que los reinicios sean frecuentes, ESTA es la decisión que hay
 // que revisar, y `Edges` es el número que lo dirá.
 func (s *Store) Aggregated() Aggregate {
-	panic(pendiente.Implementar("inferstats.Store.Aggregated"))
+	out := Aggregate{
+		PorRegimen:        map[string]int64{},
+		PorClase:          map[string]int64{},
+		OmitidasPorMotivo: map[string]int64{},
+	}
+	if s == nil {
+		return out
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out.Edges = len(s.last)
+	for _, r := range s.last {
+		addCounts(out.PorRegimen, r.ByRegime)
+		addCounts(out.PorClase, r.ByClass)
+		addCounts(out.OmitidasPorMotivo, r.SkippedByReason)
+		out.MuestrasPrefill = addSamples(out.MuestrasPrefill, r.PrefillSamples)
+		out.MuestrasGeneracion = addSamples(out.MuestrasGeneracion, r.GenerationSamples)
+	}
+	return out
+}
+
+// cloneCounts (en el viejo, copiar) copia el mapa; uno vacío se guarda como nil.
+func cloneCounts(m map[string]int64) map[string]int64 {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneInt (en el viejo, copiarInt) copia el valor apuntado; nil sigue siendo nil.
+func cloneInt(p *int64) *int64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// addCounts (en el viejo, sumar) suma src sobre dst, clave a clave.
+func addCounts(dst, src map[string]int64) {
+	for k, v := range src {
+		dst[k] += v
+	}
+}
+
+// addSamples (en el viejo, sumarInt) suma conservando el «no medible»: nil + nil sigue
+// siendo nil, y nil + n es n. Lo que NO puede pasar es que un Edge que no mide arrastre
+// la suma a 0 y la convierta en «cero muestras», que es una afirmación distinta.
+func addSamples(acc, v *int64) *int64 {
+	if v == nil {
+		return acc
+	}
+	total := *v
+	if acc != nil {
+		total += *acc
+	}
+	return &total
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package inferstats
 
 import (
@@ -298,5 +296,37 @@ func TestConcurrentObserveAndAggregated(t *testing.T) {
 	}
 	if ag.Edges != 8 || ag.MuestrasPrefill == nil || *ag.MuestrasPrefill != 8 {
 		t.Fatalf("Edges=%d MuestrasPrefill=%v, quiero 8 y 8", ag.Edges, ag.MuestrasPrefill)
+	}
+}
+
+// addSamples lleva la regla del «no medible» (auxiliar con regla de negocio, 05 E-4/P6): la
+// tabla la fija en los cuatro cruces, sin depender del orden de recorrido del mapa.
+func TestAddSamples(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		acc, v *int64
+		want   *int64
+	}{
+		{"nil plus nil stays not measurable", nil, nil, nil},
+		{"nil plus n is n", nil, ptr(7), ptr(7)},
+		{"n plus nil is n", ptr(7), nil, ptr(7)},
+		{"n plus m is the sum", ptr(7), ptr(5), ptr(12)},
+		{"a measured zero is kept", nil, ptr(0), ptr(0)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := addSamples(c.acc, c.v)
+			if (got == nil) != (c.want == nil) {
+				t.Fatalf("addSamples = %v, quiero %v", got, c.want)
+			}
+			if got != nil && *got != *c.want {
+				t.Fatalf("addSamples = %d, quiero %d", *got, *c.want)
+			}
+			if got != nil && got == c.v {
+				t.Fatal("addSamples devolvió el puntero del parte guardado: quien mute el agregado mutaría el almacén")
+			}
+		})
 	}
 }
