@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamhttp
 
 // Una aserción por promesa de R-H7 y R-H9 (roles.go), con dobles de in.RoleAdmin e
@@ -19,65 +17,62 @@ import (
 
 // fakeRoleAdmin devuelve siempre lo mismo y guarda el método llamado y su entrada.
 type fakeRoleAdmin struct {
-	roles      []domain.Role
-	role       domain.Role
-	err        error
-	calls      int
-	method     string
-	create     in.CreateRoleInput
-	assignment in.RoleAssignmentInput
-	roleGrant  in.RoleGrantInput
-	userGrant  in.UserGrantInput
+	roles  []domain.Role
+	role   domain.Role
+	err    error
+	calls  int
+	method string
+	create in.CreateRoleInput
+	// last es la entrada de la última llamada con entrada comparable (asignaciones y grants).
+	last any
 }
 
 var _ in.RoleAdmin = (*fakeRoleAdmin)(nil)
 
-func (f *fakeRoleAdmin) note(m string) { f.calls++; f.method = m }
+func (f *fakeRoleAdmin) note(m string, input any) {
+	f.calls++
+	f.method = m
+	f.last = input
+}
 
 func (f *fakeRoleAdmin) ListRoles(context.Context) ([]domain.Role, error) {
-	f.note("ListRoles")
+	f.note("ListRoles", nil)
 	return f.roles, f.err
 }
 
 func (f *fakeRoleAdmin) CreateRole(_ context.Context, input in.CreateRoleInput) (domain.Role, error) {
-	f.note("CreateRole")
+	f.note("CreateRole", nil)
 	f.create = input
 	return f.role, f.err
 }
 
 func (f *fakeRoleAdmin) AssignRole(_ context.Context, input in.RoleAssignmentInput) error {
-	f.note("AssignRole")
-	f.assignment = input
+	f.note("AssignRole", input)
 	return f.err
 }
 
 func (f *fakeRoleAdmin) UnassignRole(_ context.Context, input in.RoleAssignmentInput) error {
-	f.note("UnassignRole")
-	f.assignment = input
+	f.note("UnassignRole", input)
 	return f.err
 }
 
 func (f *fakeRoleAdmin) GrantToRole(_ context.Context, input in.RoleGrantInput) error {
-	f.note("GrantToRole")
-	f.roleGrant = input
+	f.note("GrantToRole", input)
 	return f.err
 }
 
 func (f *fakeRoleAdmin) RevokeFromRole(_ context.Context, input in.RoleGrantInput) error {
-	f.note("RevokeFromRole")
-	f.roleGrant = input
+	f.note("RevokeFromRole", input)
 	return f.err
 }
 
 func (f *fakeRoleAdmin) GrantToUser(_ context.Context, input in.UserGrantInput) error {
-	f.note("GrantToUser")
-	f.userGrant = input
+	f.note("GrantToUser", input)
 	return f.err
 }
 
 func (f *fakeRoleAdmin) RevokeFromUser(_ context.Context, input in.UserGrantInput) error {
-	f.note("RevokeFromUser")
-	f.userGrant = input
+	f.note("RevokeFromUser", input)
 	return f.err
 }
 
@@ -112,10 +107,14 @@ func (f *fakeMembershipAdmin) RemoveMember(_ context.Context, input in.Membershi
 	return f.err
 }
 
+// newRoleHandlers construye los dos handlers de este fichero.
+func newRoleHandlers(roles in.RoleAdmin, members in.MembershipAdmin) (*RoleAdminHandler, *MembershipHandler) {
+	return NewRoleAdminHandler(roles), NewMembershipHandler(members)
+}
+
 // rolesMux monta los handlers con los patrones del arranque.
 func rolesMux(roles in.RoleAdmin, members in.MembershipAdmin) *http.ServeMux {
-	var rh *RoleAdminHandler = NewRoleAdminHandler(roles)
-	var mh *MembershipHandler = NewMembershipHandler(members)
+	rh, mh := newRoleHandlers(roles, members)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/roles", rh.List())
 	mux.Handle("POST /api/v1/roles", rh.Create())
@@ -190,48 +189,25 @@ func TestRoleAdmin_RoutesReachPort(t *testing.T) {
 	allowFlows := domain.Grant{Pattern: "flows.*", Effect: domain.EffectAllow}
 	denySessions := domain.Grant{Pattern: "sessions.*", Effect: domain.EffectDeny}
 	cases := []struct {
-		name   string
-		method string
-		target string
-		body   string
-		check  func(t *testing.T, f *fakeRoleAdmin)
+		name       string
+		method     string
+		target     string
+		body       string
+		wantMethod string
+		wantInput  any
 	}{
 		{"add_role_grant_from_body", http.MethodPost, "/api/v1/roles/r-1/grants", `{"pattern":" flows.* ","effect":" allow "}`,
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "GrantToRole" || f.roleGrant != (in.RoleGrantInput{RoleID: "r-1", Grant: allowFlows}) {
-					t.Errorf("%s %+v", f.method, f.roleGrant)
-				}
-			}},
+			"GrantToRole", in.RoleGrantInput{RoleID: "r-1", Grant: allowFlows}},
 		{"remove_role_grant_from_query", http.MethodDelete, "/api/v1/roles/r-1/grants?pattern=%20sessions.*%20&effect=deny", "",
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "RevokeFromRole" || f.roleGrant != (in.RoleGrantInput{RoleID: "r-1", Grant: denySessions}) {
-					t.Errorf("%s %+v", f.method, f.roleGrant)
-				}
-			}},
+			"RevokeFromRole", in.RoleGrantInput{RoleID: "r-1", Grant: denySessions}},
 		{"assign_role", http.MethodPost, "/api/v1/members/u-1/roles", `{"role_id":" r-1 "}`,
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "AssignRole" || f.assignment != (in.RoleAssignmentInput{UserID: "u-1", RoleID: "r-1"}) {
-					t.Errorf("%s %+v", f.method, f.assignment)
-				}
-			}},
+			"AssignRole", in.RoleAssignmentInput{UserID: "u-1", RoleID: "r-1"}},
 		{"unassign_role", http.MethodDelete, "/api/v1/members/u-1/roles/r-1", "",
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "UnassignRole" || f.assignment != (in.RoleAssignmentInput{UserID: "u-1", RoleID: "r-1"}) {
-					t.Errorf("%s %+v", f.method, f.assignment)
-				}
-			}},
+			"UnassignRole", in.RoleAssignmentInput{UserID: "u-1", RoleID: "r-1"}},
 		{"add_user_grant_from_body", http.MethodPost, "/api/v1/members/u-1/grants", `{"pattern":"flows.*","effect":"allow"}`,
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "GrantToUser" || f.userGrant != (in.UserGrantInput{UserID: "u-1", Grant: allowFlows}) {
-					t.Errorf("%s %+v", f.method, f.userGrant)
-				}
-			}},
+			"GrantToUser", in.UserGrantInput{UserID: "u-1", Grant: allowFlows}},
 		{"remove_user_grant_from_query", http.MethodDelete, "/api/v1/members/u-1/grants?pattern=sessions.*&effect=%20deny%20", "",
-			func(t *testing.T, f *fakeRoleAdmin) {
-				if f.method != "RevokeFromUser" || f.userGrant != (in.UserGrantInput{UserID: "u-1", Grant: denySessions}) {
-					t.Errorf("%s %+v", f.method, f.userGrant)
-				}
-			}},
+			"RevokeFromUser", in.UserGrantInput{UserID: "u-1", Grant: denySessions}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -240,10 +216,9 @@ func TestRoleAdmin_RoutesReachPort(t *testing.T) {
 			if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 				t.Errorf("respuesta = %d %q; se esperaba 204 sin cuerpo", rec.Code, rec.Body.String())
 			}
-			if f.calls != 1 {
-				t.Fatalf("llamadas al puerto = %d; se esperaba 1", f.calls)
+			if f.calls != 1 || f.method != c.wantMethod || f.last != c.wantInput {
+				t.Errorf("puerto: %d llamadas a %s con %+v; se esperaba 1 a %s con %+v", f.calls, f.method, f.last, c.wantMethod, c.wantInput)
 			}
-			c.check(t, f)
 		})
 	}
 }
