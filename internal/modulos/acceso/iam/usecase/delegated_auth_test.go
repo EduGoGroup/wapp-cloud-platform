@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package usecase
 
 import (
@@ -319,7 +317,7 @@ func TestDelegatedLogout_AllSessionsRevokesWithoutCarryingUserID(t *testing.T) {
 func TestDelegatedLogout_AllSessionsWithDeadRefreshRevokesNothing(t *testing.T) {
 	f := newDelegatedFixture(t, quietLogger())
 	f.identity.refreshErr = domain.ErrRefreshInvalid
-	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_quemado", AllSessions: true})
+	err := f.svc.Logout(context.Background(), in.LogoutInput{RefreshToken: "rft_quemado", AllSessions: true}) //nolint:gosec // token de mentira de un test
 	if !errors.Is(err, domain.ErrRefreshInvalid) {
 		t.Fatalf("err = %v; quiere ErrRefreshInvalid", err)
 	}
@@ -393,6 +391,28 @@ func TestLogoutAll_LogNamesStateWithTruncatedToken(t *testing.T) {
 			}
 			if !strings.Contains(written, rotatedRefresh[:12]) || strings.Contains(written, rotatedRefresh) {
 				t.Fatalf("el rastro tiene que llevar el refresh truncado a 12 y nunca entero: %s", written)
+			}
+		})
+	}
+}
+
+// truncateSecret (auxiliar nuevo del verde, E-4/P6): nunca deja ver más de 12 caracteres, y un
+// token que no pasa de 12 no deja ver ninguno (su prefijo sería el token entero).
+func TestTruncateSecret_NeverRevealsMoreThanThePrefix(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+		want  string
+	}{
+		{"long_token_keeps_12_chars", rotatedRefresh, rotatedRefresh[:12] + "…"},
+		{"exactly_12_reveals_nothing", "abcdefghijkl", "…"},
+		{"short_reveals_nothing", "abc", "…"},
+		{"empty_reveals_nothing", "", "…"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := truncateSecret(c.token); got != c.want {
+				t.Fatalf("truncateSecret(%q) = %q; quiere %q", c.token, got, c.want)
 			}
 		})
 	}
