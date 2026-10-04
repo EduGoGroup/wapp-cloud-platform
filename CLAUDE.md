@@ -67,6 +67,9 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 - 🔤 **Idioma (E-11)**: en lo **nuevo**, los nombres (ficheros, tipos, funciones, variables, tests) van en
   **inglés** y solo los comentarios y la documentación en español. Lo ya escrito no se renombra; los textos
   observables se copian literales. Detalle en `05` E-11.
+- 📏 **Tamaño (E-13)**: en lo **nuevo**, ≤ 500 líneas por `.go`; tolerancia hasta 600; por encima, se parte por tema
+  solo moviendo declaraciones, con el sufijo del origen. Lo vigila `internal/modulos/file_size_test.go`. El código viejo no
+  se parte (muere en F10).
 - 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
 - **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
   `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (web ↔ local) ·

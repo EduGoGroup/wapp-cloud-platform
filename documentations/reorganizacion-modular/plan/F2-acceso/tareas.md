@@ -172,6 +172,9 @@ Entrada: PR de F2-02 integrado. Para cuando: 0 pendientes en `acceso` · candado
 > `platformadmin/access_requests_{helpers,approve}_test.go` (`de3f593`) · `access_requests_postgres_fakesql_test.go`
 > (`c1a4acc`) · `handlers_{helpers,enrollment}_test.go` (`5a91467`). El fichero con el nombre del gemelo conserva las
 > menciones a los exportados (`exportados_cubiertos`).
+> Después, con la regla ya escrita (D-R-7, `05` E-13, candado `file_size_test.go` `181458d` → `bec5116`), los de F2-02
+> de más de 600: `identity/m2m{,_token,_wire}.go` con sus gemelos `m2m{,_token,_wire,_fake}_test.go` (`f26af82`) y
+> `usecase/exchange{,_fixture,_tenant,_audit_roles}_test.go` (`4f6e178`).
 
 - [x] **T2.4 · `entitlements/postgres.go`: rojo y verde** · 🌐 · complejo (prov.: caché, mutex, Postgres) · dep. T2.2 · cumple R2.4.c — cerrada en `90b786b` (rojo) → `f7d36eb` (verde) + `368d2fd` (suite contra Postgres); 15 mutantes sembrados · 15 muertos · 0 vivos · 0 equivalentes; 98,5 % (informe)
   - **Ficheros**: `A/entitlements/postgres.go`, `…/postgres_test.go` (unitario: caché con `lookupFn`/`listFn` sustituidos y `WithReloj`, D-F2-6), `…/postgres_integracion_test.go` (`//go:build integracion`, corre `ContratoResolver` con el arnés)

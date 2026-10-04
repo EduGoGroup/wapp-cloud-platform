@@ -228,15 +228,18 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     gosec G101 (literales en campos `Token`) y gocyclo en tablas de casos; se resolvió solo en los tests, sin tocar promesas.
     `invitations.go` (HTTP) y el handler del código de enrolamiento siguen con `time.Now()` como el viejo (sin reloj
     inyectable sin decisión).
-36. 🟡 **Ficheros de más de 500 líneas (Jhoan, tras abrir el PR #31: «no es aceptable»).** Los 6 de F2-03 (el mayor,
-    `platformadminhelpertest/contrato.go`, 887; el que nombró, `entitlements/postgres_test.go`, 822) se partieron por tema
-    **solo moviendo declaraciones**, con el sufijo de su origen (`postgres_has_test.go`, `tenants_contrato.go`…): ninguno
-    de los `.go` del PR pasa ya de 400 salvo `signup_test.go` (498). Dos reglas que el corte tuvo que respetar:
-    `exportados_cubiertos` solo mira el gemelo exacto (el `x_test.go` que conserva el nombre se queda con las menciones), y
-    la cobertura solo exime `contrato.go` y `*_contrato.go` (los trozos de suite se llaman `<tema>_contrato.go`, no
-    `contrato_<tema>.go`). **Quedan 4 de F2-02, ya en `dev`**: `iam/infra/identity/m2m_test.go` (1.141), `m2m.go` (802),
-    `iam/usecase/exchange_test.go` (761) y `exchange.go` (500). ¿Se pone el tope (500) como regla en `05` y como candado
-    de fichero, y se parten esos cuatro en una sesión aparte?
+36. **Ficheros de más de 500 líneas (Jhoan, tras abrir el PR #31: «no es aceptable»).** Los 6 de F2-03 (el mayor,
+    `platformadminhelpertest/contrato.go`, 887; el que nombró, `entitlements/postgres_test.go`, 822) y, a continuación, los
+    de F2-02 que pasaban de 600 (`identity/m2m.go` 802 y `m2m_test.go` 1.141, `f26af82`; `usecase/exchange_test.go` 761,
+    `4f6e178`) se partieron por tema **solo moviendo declaraciones**, con el sufijo de su origen. `exchange.go` (500) cabe.
+    Jhoan lo hizo regla: **D-R-7**, `05` **E-13** (objetivo 500, tolerancia 600, estricto por encima) y el candado
+    `internal/modulos/file_size_test.go` (`181458d` → `bec5116`). Tres reglas que el corte respeta: un trozo de producción
+    lleva su gemelo de test (E-3) con sus exportados (E-9); el `x_test.go` que conserva el nombre sigue nombrando todos los
+    exportados de `x.go` (lo destapó el corte: `M2MOption` e `IdentityTokenVerifier` solo los nombraba un helper); los
+    trozos de suite se llaman `<tema>_contrato.go` (D-F1-13). 🟡 **Quedan 5 del árbol nuevo de más de 600**, en la lista
+    cerrada `candados.OversizedFiles` con su techo (no crecen): `arranque/bridge_contact_test.go` (809),
+    `arranque/huellatest/huellatest.go` (732) y su test (669), `candados/sinbdviva_openers_test.go` (629) y
+    `nucleo/contact/repository_postgres.go` (618). ¿Se parten en una sesión dedicada o cuando su fase los toque?
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
