@@ -181,8 +181,16 @@ func TestSignCSR_IssuesAClientLeafForTheTenant(t *testing.T) {
 		t.Errorf("el cert hoja no está firmado por la CA: %v", err)
 	}
 	requireWindow(t, leaf, before, after, 2*time.Hour)
+}
 
-	// Los metadatos del SignedCert son los del cert emitido.
+// TestSignCSR_ReturnsTheMetadataOfTheIssuedCert: los metadatos del SignedCert (los que se
+// persisten en edge_certs) son los del cert emitido, y el serial es aleatorio.
+func TestSignCSR_ReturnsTheMetadataOfTheIssuedCert(t *testing.T) {
+	ca := newDevCA(t)
+	csrPEM, _ := newCSR(t, testEdgeCN)
+	signed := signLeaf(t, ca, csrPEM, testTenant)
+	leaf := parseCertPEM(t, signed.EdgeCertPEM)
+
 	block, _ := pem.Decode(signed.EdgeCertPEM)
 	if signed.SubjectCN != testEdgeCN {
 		t.Errorf("SignedCert.SubjectCN = %q, quería %q", signed.SubjectCN, testEdgeCN)
