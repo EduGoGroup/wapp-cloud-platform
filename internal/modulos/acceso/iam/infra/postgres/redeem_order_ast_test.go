@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iampostgres_test
 
 // redeem_order_ast_test.go — EL CANDADO DEL ORDEN DE LOS PASOS DEL CANJE (Plan 047 · Ola A ·

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iampostgres_test
 
 // redeem_single_query_ast_test.go — EL CANDADO DE LA LATENCIA SIMÉTRICA DEL CANJE (Plan 047 · Ola
