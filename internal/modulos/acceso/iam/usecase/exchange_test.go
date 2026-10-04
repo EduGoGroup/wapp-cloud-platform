@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package usecase
 
 import (
@@ -496,14 +494,24 @@ func TestExchange_SingleMembershipTokenIsUnchanged(t *testing.T) {
 		t.Errorf("roles = %v; quiere [operator]", c.Roles)
 	case len(c.Grants.Allow) != 2 || len(c.Grants.Deny) != 0:
 		t.Errorf("grants = %+v; quiere los 2 allow del rol operator y ningún deny", c.Grants)
+	case !slices.Equal(res.Context.Roles, []string{"operator"}) || res.Context.TenantID != testTenant:
+		t.Errorf("contexto devuelto = %+v", res.Context)
+	}
+	checkRegisteredClaims(t, c, identityExp)
+}
+
+// checkRegisteredClaims afirma la parte registrada del token de una membresía: token_use
+// "access", iss del emisor, iat/nbf/exp presentes y exp no posterior al del Identity Token.
+// Separada de TestExchange_SingleMembershipTokenIsUnchanged solo por el límite de gocyclo.
+func checkRegisteredClaims(t *testing.T, c *sharedjwt.Claims, identityExp time.Time) {
+	t.Helper()
+	switch {
 	case c.TokenUse != sharedjwt.TokenUseAccess || c.Issuer != testIssuer:
 		t.Errorf("token_use/iss = %q/%q; quiere %q/%q", c.TokenUse, c.Issuer, sharedjwt.TokenUseAccess, testIssuer)
 	case c.IssuedAt == nil || c.NotBefore == nil || c.ExpiresAt == nil:
 		t.Errorf("iat/nbf/exp = %v/%v/%v; ninguno puede faltar", c.IssuedAt, c.NotBefore, c.ExpiresAt)
 	case c.ExpiresAt.Unix() > identityExp.Unix():
 		t.Errorf("context.exp=%d > identity.exp=%d", c.ExpiresAt.Unix(), identityExp.Unix())
-	case !slices.Equal(res.Context.Roles, []string{"operator"}) || res.Context.TenantID != testTenant:
-		t.Errorf("contexto devuelto = %+v", res.Context)
 	}
 }
 
@@ -682,7 +690,7 @@ func TestExchange_AuditFailureDoesNotAbort(t *testing.T) {
 
 func TestExchange_IdentityDownIsNotARejectedCredential(t *testing.T) {
 	svc, _ := newStubbedExchange(t, &stubIdentityVerifier{err: fmt.Errorf("%w: sin claves frescas", identityauth.ErrJWKSUnavailable)})
-	_, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: "token.que.no.se.puede.juzgar"})
+	_, err := svc.Exchange(context.Background(), in.ExchangeInput{IdentityToken: "token.que.no.se.puede.juzgar"}) //nolint:gosec // token de mentira de un test
 	if !errors.Is(err, domain.ErrIdentityUnavailable) || errors.Is(err, domain.ErrIdentityTokenInvalid) {
 		t.Fatalf("err = %v; quiere ErrIdentityUnavailable y no ErrIdentityTokenInvalid", err)
 	}
