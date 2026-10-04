@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package lease_test
 
 // Los tests de fichero de lease.PostgresRepository, con un driver de database/sql de mentira
