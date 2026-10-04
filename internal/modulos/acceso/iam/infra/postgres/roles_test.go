@@ -1,12 +1,12 @@
-//go:build pendiente
-
 package iampostgres
 
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/domain"
 )
@@ -143,4 +143,100 @@ func TestUnassignFromUser_NoScopeGuard(t *testing.T) {
 		t.Fatalf("UnassignFromUser global de un rol de empresa = %v; no lleva guarda de ámbito", err)
 	}
 	wantInfraError(t, "UnassignFromUser", err, "iam: quitar rol de usuario: ")
+}
+
+// fakeRow es una fila sin base: Scan copia values en dest, en orden, como haría database/sql
+// (un destino sql.Scanner recibe el valor por su Scan; nil es NULL). Con err, Scan falla con él.
+type fakeRow struct {
+	values []any
+	err    error
+}
+
+func (f fakeRow) Scan(dest ...any) error {
+	if f.err != nil {
+		return f.err
+	}
+	if len(dest) != len(f.values) {
+		return fmt.Errorf("fakeRow: %d destinos para %d columnas", len(dest), len(f.values))
+	}
+	for i, d := range dest {
+		if err := assignColumn(d, f.values[i]); err != nil {
+			return fmt.Errorf("fakeRow: columna %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// assignColumn copia v en el destino d de un Scan.
+func assignColumn(d, v any) error {
+	switch p := d.(type) {
+	case sql.Scanner:
+		return p.Scan(v)
+	case *string:
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("quiere string y es %T", v)
+		}
+		*p = s
+	case *[]byte:
+		b, ok := v.([]byte)
+		if !ok {
+			return fmt.Errorf("quiere []byte y es %T", v)
+		}
+		*p = b
+	case *time.Time:
+		tm, ok := v.(time.Time)
+		if !ok {
+			return fmt.Errorf("quiere time.Time y es %T", v)
+		}
+		*p = tm
+	default:
+		return fmt.Errorf("destino %T no soportado", d)
+	}
+	return nil
+}
+
+// optString describe un *string para un mensaje: <nil> o el valor entre comillas.
+func optString(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%q", *p)
+}
+
+// describeRole describe un rol campo a campo, con los punteros desreferenciados, para comparar.
+func describeRole(r domain.Role) string {
+	return fmt.Sprintf("{id %q tenant %s name %q parent %s created %s}",
+		r.ID, optString(r.TenantID), r.Name, optString(r.ParentRoleID), r.CreatedAt.UTC().Format(time.RFC3339Nano))
+}
+
+// TestScanRole: la fila de iam_roles (orden de roleCols) llega entera a la entidad; tenant_id
+// NULL es una plantilla global (TenantID nil) y parent_role_id NULL, un rol sin padre; un error de
+// Scan se devuelve tal cual, con el rol vacío.
+func TestScanRole(t *testing.T) {
+	at := time.Date(2026, 10, 4, 9, 30, 0, 0, time.UTC)
+	tenant, parentID := testTenantID, "3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99"
+	cases := []struct {
+		name    string
+		row     fakeRow
+		want    domain.Role
+		wantErr error
+	}{
+		{"global_template_without_parent", fakeRow{values: []any{companyRoleID, nil, "tenant_admin", nil, at}},
+			domain.Role{ID: companyRoleID, Name: "tenant_admin", CreatedAt: at}, nil},
+		{"tenant_role_with_parent", fakeRow{values: []any{companyRoleID, tenant, "ventas", parentID, at}},
+			domain.Role{ID: companyRoleID, TenantID: &tenant, Name: "ventas", ParentRoleID: &parentID, CreatedAt: at}, nil},
+		{"scan_error_returned_as_is", fakeRow{err: sql.ErrNoRows}, domain.Role{}, sql.ErrNoRows},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := scanRole(c.row)
+			if !errors.Is(err, c.wantErr) || (c.wantErr == nil && err != nil) {
+				t.Fatalf("scanRole error = %v; quiere %v", err, c.wantErr)
+			}
+			if describeRole(got) != describeRole(c.want) {
+				t.Errorf("scanRole = %s; quiere %s", describeRole(got), describeRole(c.want))
+			}
+		})
+	}
 }
