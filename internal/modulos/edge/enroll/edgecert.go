@@ -5,9 +5,8 @@ package enroll
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // EdgeCertRecord son los metadatos de un certificado de Edge emitido que se
@@ -41,17 +40,27 @@ type EdgeCertRepository interface {
 
 // PostgresEdgeCertRepository implementa EdgeCertRepository con SQL raw sobre
 // *sql.DB.
-type PostgresEdgeCertRepository struct{}
+type PostgresEdgeCertRepository struct {
+	db *sql.DB
+}
 
 // NewPostgresEdgeCertRepository construye el repo sobre el pool dado. No abre
 // ni comprueba la conexión.
 func NewPostgresEdgeCertRepository(db *sql.DB) *PostgresEdgeCertRepository {
-	panic(pendiente.Implementar("enroll.NewPostgresEdgeCertRepository"))
+	return &PostgresEdgeCertRepository{db: db}
 }
 
 // Create inserta los metadatos del cert emitido en edge_certs: un INSERT, con
 // los siete campos del registro en su orden y CertPEM como texto. Un fallo del
 // driver vuelve envuelto como "enroll: persistiendo edge_cert: …".
 func (r *PostgresEdgeCertRepository) Create(ctx context.Context, rec EdgeCertRecord) error {
-	panic(pendiente.Implementar("enroll.PostgresEdgeCertRepository.Create"))
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO public.edge_certs
+			(tenant_id, subject_cn, serial_number, fingerprint, not_before, not_after, cert_pem)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, rec.TenantID, rec.SubjectCN, rec.SerialNumber, rec.Fingerprint, rec.NotBefore, rec.NotAfter, string(rec.CertPEM))
+	if err != nil {
+		return fmt.Errorf("enroll: persistiendo edge_cert: %w", err)
+	}
+	return nil
 }

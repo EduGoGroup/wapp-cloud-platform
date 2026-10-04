@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package enroll_test
 
 // Los tests de fichero de enroll.PostgresEdgeCertRepository, con el driver de database/sql de
