@@ -7,10 +7,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
 )
 
 // providerFijo devuelve las configs que se le dan (o un error).
@@ -101,7 +102,7 @@ func TestBuildConfigProvider_TresKindsConLlmIntent_YDosSinElla(t *testing.T) {
 	}
 
 	// La ÚNICA diferencia entre los dos tenants.
-	ents := entitlements.NewFake()
+	ents := entitlementshelpertest.NewFake()
 	ents.Enable(tenantConFeature, entitlements.FeatureLLMIntent)
 
 	profiles := fuentePerfiles{tp: fleet.TenantProfiles{
@@ -169,7 +170,7 @@ func TestBuildConfigProvider_FiltersSobreviveAlFalloDeIntents_YViceversa(t *test
 	boom := errors.New("neon con hipo")
 
 	t.Run("cae intents", func(t *testing.T) {
-		ents := entitlements.NewFake()
+		ents := entitlementshelpertest.NewFake()
 		ents.Err = boom // Has() falla ⇒ intentsConfigProvider devuelve error.
 		provider := buildConfigProvider(jwks, intentcfg.NewMemoryStore(), ents,
 			fuentePerfiles{tp: fleet.TenantProfiles{Version: 7, Sessions: map[string]fleet.Profile{}}}, nil)
@@ -185,7 +186,7 @@ func TestBuildConfigProvider_FiltersSobreviveAlFalloDeIntents_YViceversa(t *test
 	})
 
 	t.Run("cae filters", func(t *testing.T) {
-		ents := entitlements.NewFake()
+		ents := entitlementshelpertest.NewFake()
 		ents.Enable("t1", entitlements.FeatureLLMIntent)
 		intents := intentcfg.NewMemoryStore()
 		if err := intents.Upsert(context.Background(), "t1", "v1", []byte(`{"version":"v1"}`)); err != nil {

@@ -110,6 +110,11 @@
   paquetes viejos aún no reconstruidos que los importan (gateway viejo hasta F3). — Verifica:
   `go list -deps ./cmd/server-modular | grep -E 'internal/(iam|entitlements|platformadmin)'` → solo
   `internal/iam/{domain,ports/in}` (tipos del adaptador, arquitectura §4).
+  ✎ **Corregido en F2-04 (hallazgo 37)**: esa salida es imposible mientras `publicapi`, `flujos/{events,runtime}` y
+  `reanalisis` importen el `internal/entitlements` viejo y `publicapi` el `internal/iam/transport/http` viejo. Se verifica
+  por la cláusula: `go list -deps -f '{{.ImportPath}}: {{join .Imports " "}}' ./cmd/server-modular` → todo importador de
+  un paquete viejo de `acceso` es un paquete viejo sin reconstruir o `internal/arranque`, y en éste solo `bridge_iam.go`
+  (`access_wiring_test.go`).
 - **R2.5.e** · **SI** falta `WAPP_IDENTITY_API_KEY`, **ENTONCES** `POST /api/v1/members` **DEBERÁ**
   responder 503 (nunca 404) y `POST /api/v1/signup` el 503 fijo `registro no disponible`. — Verifica:
   tests de `apipublica` y de `A/iam/transport/http/roles.go`.

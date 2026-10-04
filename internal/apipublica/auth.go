@@ -1,0 +1,168 @@
+// Porta internal/bootstrap/arranque/http.go @ 9a77307 (líneas 80-171: el registro de A1–A7 que
+// el arranque viejo hacía fuera de publicapi) e internal/iam/transport/http/auth.go @ 9a77307
+// (Register, líneas 49-50).
+//
+// auth.go — LAS SIETE RUTAS DE AUTENTICACIÓN Y EMPRESA (mapa §2.1, A1–A7). En la spec FX era
+// `autenticacion.go`, `DepsAutenticacion` y `MontarAutenticacion` (05 E-11).
+//
+// Son las rutas de quien TODAVÍA no tiene empresa en su token, o ni siquiera token: por eso
+// ninguna lleva RequirePermission ni auditoría, y por eso viven aparte de las áreas de negocio.
+
+package apipublica
+
+import (
+	"net/http"
+	"time"
+
+	"golang.org/x/time/rate"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	iamhttp "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/transport/http"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
+)
+
+// AuthDeps son los puertos de A1–A7, todos del módulo acceso NUEVO. Cada campo dice qué ruta
+// enciende; los que pueden faltar lo dicen.
+type AuthDeps struct {
+	// Verifier inspecciona Context Tokens (A1). Obligatorio.
+	Verifier in.TokenVerifier
+	// Exchanger canjea Identity Tokens por Context Tokens (A2). Puede ser nil: es el modo dual
+	// APAGADO (sin WAPP_IDENTITY_JWKS_URL); A2 sigue montada y responde 503.
+	Exchanger in.Exchanger
+	// Redeemer canjea una invitación de un solo uso (A4).
+	Redeemer in.InvitationRedeemer
+	// TenantSelector y TenantLister son las dos mitades de la empresa activa (A5 y A6). En el
+	// arranque son el MISMO servicio.
+	TenantSelector in.ActiveTenantSelector
+	TenantLister   in.TenantLister
+	// SignupRequests siembra la solicitud de acceso pendiente del alta pública (A7). Obligatorio
+	// si M2M no es nil.
+	SignupRequests platformadmin.AccessRequestStore
+	// M2M es el cliente de identity con el que el alta pública registra a la persona (A7). nil =
+	// despliegue sin WAPP_IDENTITY_API_KEY: A7 queda montada con un 503 fijo.
+	M2M out.IdentityM2MClient
+	// SignupTrustProxy decide la IP del limitador de A7 (cfg.RateLimit.TrustProxy): con false,
+	// siempre la de socket; con true, la primera de X-Forwarded-For (ver SignupHandler).
+	SignupTrustProxy bool
+}
+
+// MountAuth registra en c las rutas A1–A7 con los patrones EXACTOS del mapa §2.1 (byte a byte:
+// son la etiqueta `route` de las métricas) y sus condiciones de montaje:
+//
+//   - A1 "/api/v1/auth/verify" y A2 "/api/v1/auth/exchange", SIN método en el patrón (el método
+//     lo comprueba cada handler), SIEMPRE, públicas (sin Authenticate): los handlers de
+//     iamhttp.NewAuthHandler(d.Verifier, d.Exchanger, k.Log). Con d.Exchanger nil, A2 responde
+//     503 {"error":"modo dual apagado: identity no está configurado en este despliegue"};
+//   - A3 "/api/v1/auth/whoami", sin método, SIEMPRE: k.MW.Authenticate(httpapi.WhoAmIHandler()).
+//     Un token SIN empresa la atraviesa (200 con "tenant_id" vacío, D-056.12); sin token, 401;
+//   - A4 "POST /api/v1/invitations/accept", solo si d.Redeemer no es nil;
+//   - A5 "POST /api/v1/auth/active-tenant" y A6 "GET /api/v1/auth/tenants", las DOS juntas y
+//     solo si d.TenantSelector y d.TenantLister no son nil (en el arranque viejo nacían del
+//     mismo servicio, mapa §2.1 «Monta si»);
+//   - A7 "POST /api/v1/signup", SIEMPRE, pública, con una de dos ramas según d.M2M.
+//
+// A3–A6 llevan k.MW.Authenticate A SECAS (cadena «A»): sin RequirePermission —quien las
+// necesita es justo quien no tiene empresa ni grants en su token, y cualquier permiso le daría
+// 403— y sin AuditMiddleware —la bitácora es por tenant y quien llama no trae ninguno; el
+// rastro del canje queda en la invitación y el de la elección en user_active_tenant—. Así: sin
+// token, 401; con un token SIN empresa, la petición llega al puerto. Ninguna de las siete deja
+// registro de auditoría ni línea de access-log (como en el arranque viejo).
+//
+// A7: con d.M2M no nil, platformadmin.SignupHandler(d.SignupRequests, d.M2M, limitador,
+// d.SignupTrustProxy, k.Log), con un limitador PROPIO de esta ruta y de esta llamada a
+// MountAuth —ratelimit.NewLimiter(rate.Every(time.Minute), 5): por IP, una alta por minuto con
+// ráfaga de 5 (A-06a)—, distinto del limitador público del arranque: la sexta alta seguida
+// desde la misma IP es 429 «demasiadas solicitudes desde esta IP». Con d.M2M nil (C-02), un
+// handler fijo que, sea cual sea el cuerpo, responde 503 con el texto plano de http.Error
+// «registro no disponible» (cuerpo "registro no disponible\n") sin tocar d.SignupRequests; y,
+// si k.Log no es nil, MountAuth deja al montar un Warn con el mensaje literal
+// "POST /api/v1/signup: falta WAPP_IDENTITY_API_KEY; el registro público responde 503 (servicio no disponible)".
+//
+// Fallos de cableado, con panic AL MONTAR y un mensaje propio: k.MW nil (ver Common), d.Verifier
+// nil, o d.M2M no nil con d.SignupRequests nil.
+//
+// Solapes (mapa §4.2): A4 convive en la misma cara con "DELETE /api/v1/invitations/{id}" (B14,
+// MountRolePlane) sin conflicto; las dos se mudan juntas en F2.
+func MountAuth(c *Cara, k Common, d AuthDeps) {
+	mustHaveMW(k, "MountAuth")
+	if d.Verifier == nil {
+		panic("apipublica.MountAuth: AuthDeps.Verifier es nil; /api/v1/auth/verify no tiene con qué verificar")
+	}
+	if d.M2M != nil && d.SignupRequests == nil {
+		panic("apipublica.MountAuth: AuthDeps.M2M sin SignupRequests; el alta pública no tendría dónde sembrar la solicitud")
+	}
+
+	// A1 y A2 por PATH pelado (sin verbo: el método lo comprueba cada handler), como
+	// iamhttp.Register, que no se usa porque registra en un *http.ServeMux y la cara necesita
+	// anotar sus patrones (Cara.Handle).
+	auth := iamhttp.NewAuthHandler(d.Verifier, d.Exchanger, k.Log)
+	c.Handle("/api/v1/auth/verify", auth.Verify())
+	c.Handle("/api/v1/auth/exchange", auth.Exchange())
+	// Ruta protegida de referencia: ejercita el middleware de extremo a extremo y
+	// documenta el contrato de identidad (tenant/subject del token).
+	c.Handle("/api/v1/auth/whoami", k.MW.Authenticate(httpapi.WhoAmIHandler()))
+
+	// EL CANJE DE UNA INVITACIÓN (Plan 047 · Ola A · T-A3/T-A4/T-A5). Es la otra mitad de
+	// las tres rutas de invitación que MountRolePlane monta para la dueña.
+	//
+	// 🔴 ES LA SEGUNDA RUTA QUE UN TOKEN SIN EMPRESA ATRAVIESA, y la primera está justo
+	// encima. Quien canjea acaba de registrarse por el signup público: tiene CERO
+	// membresías, así que su Context Token se emitió sin tenant y sin un solo grant
+	// (D-056.12). Cualquier protect/protectRead le contestaría 403 —los dos llevan
+	// RequirePermission—, y el 403 sería para TODAS las personas para las que este endpoint
+	// existe. Por eso la cadena es Authenticate a secas, exactamente la de whoami.
+	//
+	// No es una puerta abierta: Authenticate sigue exigiendo un Context Token válido de
+	// wApp, así que un anónimo se lleva 401. Lo que autoriza el canje no es un grant, es
+	// POSEER el token de invitación — y ese lo reparte la dueña.
+	//
+	// ⚠️ Y por eso tampoco se audita con AuditMiddleware: la bitácora graba por tenant y
+	// quien llama no trae ninguno. El rastro del canje queda en `redeemed_by`/`redeemed_at`
+	// de la propia invitación, que es del tenant que la emitió y que su dueña sí ve.
+	if d.Redeemer != nil {
+		c.Handle("POST /api/v1/invitations/accept",
+			k.MW.Authenticate(iamhttp.NewInvitationRedeemHandler(d.Redeemer).Accept()))
+	}
+
+	// LA ELECCIÓN DE EMPRESA (Plan 047 · Ola 5 · T5.1, D-047.14). La TERCERA ruta que un
+	// token SIN EMPRESA atraviesa: las tres son los momentos en que alguien todavía no tiene
+	// empresa en su token y necesita hacer algo al respecto (mirarse, entrar por invitación,
+	// elegir entre las suyas). Lo que autoriza aquí no es un grant: es SER MIEMBRO de la
+	// empresa que se pide, y eso lo comprueba el usecase contra tenant_members. Tampoco se
+	// audita: el rastro de la elección queda en `user_active_tenant.updated_at`.
+	//
+	// Las DOS mitades van juntas: sin la lista el selector no se puede ni pintar —el token
+	// de quien tiene CERO empresas y el de quien tiene DOS y no ha elegido son IDÉNTICOS—, y
+	// sin la elección la lista no sirve de nada.
+	if d.TenantSelector != nil && d.TenantLister != nil {
+		tenantPlane := iamhttp.NewActiveTenantHandler(d.TenantSelector, d.TenantLister)
+		c.Handle("POST /api/v1/auth/active-tenant", k.MW.Authenticate(tenantPlane.Select()))
+		c.Handle("GET /api/v1/auth/tenants", k.MW.Authenticate(tenantPlane.List()))
+	}
+
+	c.Handle("POST /api/v1/signup", signupHandler(k, d))
+}
+
+// signupHandler elige la rama de A7 (Plan 056 · T3.2). A-06a: el freno era 5 rps/burst 10 por
+// IP —432 000 altas/día para un formulario que una persona rellena una vez—; baja a 1 cada 60 s
+// con ráfaga de 5. C-02 (defensa en profundidad): sin cliente M2M (falta WAPP_IDENTITY_API_KEY)
+// la ruta NO se cablea al handler real —que necesita el M2M para operar—, sino a un 503 fijo. La
+// guarda `m2m == nil` dentro de SignupHandler es la SEGUNDA capa, por si algún día alguien lo
+// registra desde otro sitio.
+func signupHandler(k Common, d AuthDeps) http.Handler {
+	if d.M2M != nil {
+		// Un limitador por llamada: es estado PROPIO de esta ruta, distinto del limitador
+		// público del arranque.
+		limiter := ratelimit.NewLimiter(rate.Every(time.Minute), 5)
+		return platformadmin.SignupHandler(d.SignupRequests, d.M2M, limiter, d.SignupTrustProxy, k.Log)
+	}
+	if k.Log != nil {
+		k.Log.Warn("POST /api/v1/signup: falta WAPP_IDENTITY_API_KEY; el registro público responde 503 (servicio no disponible)")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "registro no disponible", http.StatusServiceUnavailable)
+	})
+}

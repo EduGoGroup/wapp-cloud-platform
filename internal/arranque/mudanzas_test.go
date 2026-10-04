@@ -21,6 +21,11 @@ import (
 	"testing"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // filaDelMapa es una fila de testdata/mapa.tsv: id · listener · patrón · fase.
@@ -173,32 +178,88 @@ func TestMudanzas_ElMapa(t *testing.T) {
 	}
 }
 
-// TestMudanzas_FaseActual: con FaseActual la cara nueva (caraNueva) sirve exactamente las
-// filas del :8103 con fase ≤ FaseActual y no registra nada más (RX.3.a). En F0,
-// FaseActual = 0 y la cara nace vacía: no resuelve ninguna fila.
+// TestMudanzas_FaseActual: con FaseActual la cara nueva (caraNueva, montada con dobles de
+// TODAS sus dependencias, FX diseño §6) sirve exactamente las filas del :8103 con fase ≤
+// FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F2
+// (conmutar(acceso)), FaseActual = 2 y la cara sirve las 23 rutas de acceso: A1–A7, B1–B14,
+// C1–C2.
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 0 {
-		t.Fatalf("FaseActual = %d; F0 la deja en 0 y solo la sube la tarea conmutar(<m>) de cada fase", FaseActual)
+	if FaseActual != 2 {
+		t.Fatalf("FaseActual = %d; conmutar(acceso) la deja en 2 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
-	cara := caraNueva()
-	if got := cara.Patrones(); len(got) != 0 {
-		t.Errorf("caraNueva() en F0 registra %v; debe nacer vacía", got)
-	}
-	var viejas []filaDelMapa
+	cara := caraNueva(newFaceDepsWithDoubles())
+
+	var del8103 []filaDelMapa
+	var esperadas []string
 	for _, f := range filas {
-		if f.listener == ":8103" {
-			viejas = append(viejas, f)
+		if f.listener != ":8103" {
+			continue
+		}
+		del8103 = append(del8103, f)
+		if n, ok := numeroDeFase(f.fase); ok && n <= FaseActual {
+			esperadas = append(esperadas, f.patron)
 		}
 	}
+	if len(esperadas) != 23 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2)", len(esperadas), FaseActual)
+	}
+	patrones := cara.Patrones()
+	slices.Sort(patrones)
+	slices.Sort(esperadas)
+	if !slices.Equal(patrones, esperadas) {
+		t.Errorf("caraNueva registra:\n%s\ny el mapa le asigna:\n%s", strings.Join(patrones, "\n"), strings.Join(esperadas, "\n"))
+	}
+
+	// Sola, sin la vieja detrás: cada fila con fase ≤ FaseActual la resuelve la nueva con su
+	// MISMO patrón; ninguna otra fila casa con nada de la nueva (ni por comodín).
 	sinVieja := apipublica.Componer(cara, http.NewServeMux())
-	for _, f := range viejas {
-		if got, p := sinVieja.Resolver(peticionDe(f.patron)); got != "" {
-			t.Errorf("con FaseActual = %d la cara nueva resuelve %s %q como (%q, %q)", FaseActual, f.id, f.patron, got, p)
+	for _, f := range del8103 {
+		got, p := sinVieja.Resolver(peticionDe(f.patron))
+		if n, _ := numeroDeFase(f.fase); n <= FaseActual {
+			if got != "nueva" || p != f.patron {
+				t.Errorf("%s %q: la cara nueva sola la resuelve como (%q, %q); se espera (\"nueva\", %q)", f.id, f.patron, got, p, f.patron)
+			}
+		} else if got != "" {
+			t.Errorf("con FaseActual = %d la cara nueva resuelve %s %q (fase %s) como (%q, %q)", FaseActual, f.id, f.patron, f.fase, got, p)
 		}
 	}
-	if p := problemasDeMudanza(filas, cara, apipublica.Componer(cara, muxDe(viejas)), FaseActual); len(p) > 0 {
+	// Con la vieja entera detrás (las 73 filas): las de fase ≤ FaseActual por la nueva, el
+	// resto por la vieja, sin solapes rotos ni familias partidas.
+	if p := problemasDeMudanza(filas, cara, apipublica.Componer(cara, muxDe(del8103)), FaseActual); len(p) > 0 {
 		t.Errorf("candado de mudanzas con FaseActual = %d:\n%s", FaseActual, strings.Join(p, "\n"))
+	}
+}
+
+// newFaceDepsWithDoubles devuelve las dependencias de caraNueva con un doble NO nil en cada
+// campo que enciende rutas: así se monta todo lo que la fase puede montar. Los dobles no se
+// llaman nunca (Resolver no sirve): cada uno es un valor que satisface su puerto.
+func newFaceDepsWithDoubles() newFaceDeps {
+	var signupStore struct {
+		platformadmin.AccessRequestStore
+	}
+	return newFaceDeps{
+		common: apipublica.Common{
+			MW:      httpapi.NewMiddleware(nil, nil),
+			Auditor: struct{ httpapi.AuditRecorder }{},
+			Log:     quietLogger(),
+		},
+		auth: apipublica.AuthDeps{
+			Verifier:       struct{ in.TokenVerifier }{},
+			Exchanger:      struct{ in.Exchanger }{},
+			Redeemer:       struct{ in.InvitationRedeemer }{},
+			TenantSelector: struct{ in.ActiveTenantSelector }{},
+			TenantLister:   struct{ in.TenantLister }{},
+			SignupRequests: signupStore,
+			M2M:            struct{ out.IdentityM2MClient }{},
+		},
+		rolePlane: apipublica.RolePlaneDeps{
+			Roles:       struct{ in.RoleAdmin }{},
+			Members:     struct{ in.MembershipAdmin }{},
+			Invitations: struct{ in.InvitationAdmin }{},
+		},
+		audit:        apipublica.AuditDeps{Audit: struct{ apipublica.AuditReader }{}},
+		entitlements: apipublica.EntitlementsDeps{Entitlements: entitlementshelpertest.NewFake()},
 	}
 }
 
@@ -266,14 +327,15 @@ func TestMudanzas_SobraEnLaNueva(t *testing.T) {
 // TestMudanzas_HuellaPorElCompuesto (RX.2.a): sobre el arranque NUEVO real (el contenedor
 // de la huella, en los dos perfiles), las 73 filas del :8103 las resuelve el compuesto que
 // sirve publicSrv —cada una por la cara que le toca con FaseActual y con el MISMO texto de
-// patrón que el arranque viejo— y el candado de mudanzas no da ningún fallo.
+// patrón que el arranque viejo— y el candado de mudanzas no da ningún fallo, mirando los
+// Patrones() de la cara REAL que la fase 8 compuso (no de una rearmada aquí).
 func TestMudanzas_HuellaPorElCompuesto(t *testing.T) {
 	filas := leerMapa(t)
 	for _, perfil := range perfilesDeHuella {
 		t.Run(perfil, func(t *testing.T) {
 			c := contenedorDeHuella(t, perfil)
-			if c.publicCompuesto == nil {
-				t.Fatal("la fase 8 no guardó el compuesto del :8103 en el contenedor")
+			if c.publicCompuesto == nil || c.publicCara == nil {
+				t.Fatal("la fase 8 no guardó el compuesto del :8103 (o su cara nueva) en el contenedor")
 			}
 			resueltas := 0
 			for _, f := range filas {
@@ -287,7 +349,7 @@ func TestMudanzas_HuellaPorElCompuesto(t *testing.T) {
 			if resueltas != 73 {
 				t.Errorf("el compuesto resuelve %d de las 73 rutas del :8103 con su mismo patrón", resueltas)
 			}
-			if p := problemasDeMudanza(filas, caraNueva(), c.publicCompuesto, FaseActual); len(p) > 0 {
+			if p := problemasDeMudanza(filas, c.publicCara, c.publicCompuesto, FaseActual); len(p) > 0 {
 				t.Errorf("candado de mudanzas sobre el arranque real:\n%s", strings.Join(p, "\n"))
 			}
 		})

@@ -241,6 +241,38 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     `arranque/huellatest/huellatest.go` (732) y su test (669), `candados/sinbdviva_openers_test.go` (629) y
     `nucleo/contact/repository_postgres.go` (618). ¿Se parten en una sesión dedicada o cuando su fase los toque?
 
+37. **R2.5.d no podía verificarse con su comando** (`go list -deps … | grep` → «solo `iam/{domain,ports/in}`»): `publicapi`
+    (sirve aún 72 rutas) importa el `internal/entitlements` viejo y `internal/iam/transport/http`, y `flujos/{events,runtime}`
+    y `reanalisis` el `internal/entitlements` viejo. Tras conmutar, el binario nuevo enlaza de lo viejo **solo**
+    `internal/entitlements`, `iam/domain`, `iam/ports/in` e `iam/transport/http` (ningún usecase, infra ni `platformadmin`
+    viejo), y sus importadores son esos paquetes viejos sin reconstruir más `internal/arranque`, donde solo `bridge_iam.go`.
+    **Decisión de Jhoan (F2-04)**: se verifica por la cláusula del requisito; comando corregido en
+    [`requisitos.md`](requisitos.md) R2.5.d.
+38. **`bridge_iam.go` adapta más de lo que dice arquitectura §4**: también `in.VerifyResult` (el `Authenticator` viejo
+    embebe `TokenVerifier`), y el auditor **también** traduce centinelas (el `AuditService.Record` nuevo devuelve el
+    `ErrInvalidInput` nuevo). Y la traducción no es `fmt.Errorf("%w", viejo.ErrX)` como dice §4: eso cambiaría el `Error()`
+    y perdería el prefijo; se usa el `bridgeError` de `bridge_contact.go` (texto byte a byte, `Unwrap() []error{orig, viejo}`).
+    La regla del **nil de verdad** se conserva: sin identity, el gateway recibe una interfaz nil, no un adaptador vacío.
+39. **El rojo de un paquete medio dejó los tests acoplados entre ficheros** (`audit_test.go` usa ayudantes de
+    `chain_test.go`, éste dobles de `roleplane_test.go`, `auth_test.go`…): con `//go:build pendiente` por fichero, ningún
+    test se puede destapar solo. El verde fue un commit por fichero, comprobado con `-tags pendiente -run …`, y las cinco
+    etiquetas se quitaron en el último (`4f28f4f`). Y `chain.go` (solo `Common` exportado) no pudo nacer solo: sus ayudantes
+    (`protect`, `protectRead`…) no tienen consumidor hasta una ruta W, y `unused` no cuenta los tests etiquetados; nacieron
+    con `roleplane.go` (`52a5d09`). Lección para el rojo de un paquete medio: los ayudantes comunes de test, en un
+    `<paquete>_helpers_test.go` sin dobles de otras áreas.
+40. **Elecciones del contrato de `apipublica` que el mapa no dice** (aceptadas al revisar el rojo): `panic` de cableado **al
+    montar** (MW nil si va a registrar algo, `Verifier` nil, `M2M` sin `SignupRequests`); A5 y A6 se montan **juntas**; el
+    limitador del alta (`rate.Every(time.Minute), 5`) nace dentro de `MountAuth`, y el `Warn` de «signup sin M2M» se emite
+    allí (no se duplica en `http.go`); `parseIntQuery` vive en `response.go` (lo usarán F4, F6, F8); la rama muerta de C2
+    «resolver nil ⇒ 500» no se porta (la ruta solo se monta con resolver; ya era inalcanzable).
+41. **C2 queda registrada en las dos caras**: el `publicapi` viejo la monta porque `Deps.Entitlements` (el resolver nuevo)
+    no es nil, y la cara nueva la tapa. Ni la huella ni el candado de mudanzas lo rechazan; muere con `publicapi`. Los
+    candados viejos reapuntados (`roleplane_cableado_test.go`, `invitaciones_cableado_test.go`) conservan sus nombres
+    `TestCableado_*` (código ya escrito, E-11) y ahora miran `apipublica/roleplane.go` y los `RolePlaneDeps`;
+    `http.go` guarda la cara real en `c.publicCara` para que `TestMudanzas_HuellaPorElCompuesto` mire la del arranque.
+42. **La caché compartida de `golangci-lint` entre *worktrees* da falsos positivos** (3 gosec bajo la ruta de **otro**
+    *worktree*). Con `GOLANGCI_LINT_CACHE` propio por *worktree*, 0 issues. Va al prompt de los sub-agentes.
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |

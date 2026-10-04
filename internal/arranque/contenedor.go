@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
@@ -13,7 +15,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
@@ -35,11 +36,12 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
@@ -161,6 +163,10 @@ type contenedor struct {
 	// publicapi viejo). F0 · desviación de la copia (TX.4): se guarda para que el
 	// candado de mudanzas resuelva las 73 rutas del :8103 por Compuesto.Resolver.
 	publicCompuesto *apipublica.Compuesto
+	// publicCara es la cara nueva que va dentro de publicCompuesto. F2 · conmutar(acceso):
+	// se guarda para que el candado de mudanzas compare sus Patrones() con el mapa sobre
+	// el arranque REAL, no sobre una cara rearmada en el test.
+	publicCara *apipublica.Cara
 
 	// hitos son las precondiciones ya cumplidas. No es un mapa de «objetos
 	// construidos» —eso son los campos de arriba— sino de ETAPAS alcanzadas: lo que

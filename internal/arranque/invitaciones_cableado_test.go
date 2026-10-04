@@ -1,13 +1,14 @@
-// Copia de internal/bootstrap/arranque/invitaciones_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/invitaciones_cableado_test.go @ 80807ba (F0 · 05 §6), retargeteada
+// en F2 (T2.31, conmutar(acceso)): las invitaciones las sirve la cara NUEVA (apipublica).
 package arranque
 
 // invitaciones_cableado_test.go — QUE LA PUERTA DE INVITACIONES ESTÉ ENCHUFADA
 // (Plan 047 · Ola A · T-A2 y T-A8).
 //
 // Mismo modo de fallo MUDO que vigila roleplane_cableado_test.go, y por eso el
-// mismo método: `registerRolePlane` monta las tres rutas SOLO si
-// `Deps.Invitations` viene informado. Con nil no falla nada, no avisa nada, y los
-// contract tests de publicapi siguen VERDES —construyen sus propias Deps— mientras
+// mismo método: `apipublica.MountRolePlane` monta las tres rutas SOLO si
+// `RolePlaneDeps.Invitations` viene informado. Con nil no falla nada, no avisa nada, y
+// los tests de apipublica siguen VERDES —construyen sus propias Deps— mientras
 // en producción las rutas no existen y contestan 404 de ruta inexistente, que es
 // indistinguible del 404 que estas mismas rutas dan a la invitación ajena.
 //
@@ -22,18 +23,30 @@ import (
 )
 
 // TestCableado_LaPuertaDeInvitacionesEstaEnchufada exige las dos cosas que el
-// arranque tiene que hacer para que T-A2 y T-A8 existan en producción: que
-// buildRolePlane construya el servicio y que buildPublicAPIServer se lo pase a
-// las Deps.
+// arranque tiene que hacer para que T-A2 y T-A8 existan en producción, retargeteadas en
+// F2 (T2.31, conmutar(acceso)): que buildRolePlane construya el servicio con el usecase
+// NUEVO (internal/modulos/acceso/iam/usecase) y que buildPublicAPIServer se lo pase a la
+// cara nueva (apipublica.RolePlaneDeps.Invitations), dejando a nil el de la vieja.
 func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
 
-	construido := false
 	archivoAuth, err := parser.ParseFile(fset, "auth_roleplane.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parseando auth_roleplane.go: %v", err)
 	}
+	const usecaseNuevo = `"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/usecase"`
+	aliasNuevo := false
+	for _, imp := range archivoAuth.Imports {
+		if imp.Path.Value == usecaseNuevo && imp.Name != nil && imp.Name.Name == "iamusecase" {
+			aliasNuevo = true
+		}
+	}
+	if !aliasNuevo {
+		t.Errorf("auth_roleplane.go no importa %s como iamusecase: el InvitationService tiene que ser el de acceso NUEVO", usecaseNuevo)
+	}
+
+	construido := false
 	ast.Inspect(archivoAuth, func(n ast.Node) bool {
 		if llamada, ok := n.(*ast.CallExpr); ok && campoDe(llamada.Fun) == "iamusecase.NewInvitationService" {
 			construido = true
@@ -46,37 +59,16 @@ func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 			"in.IssueInvitationInput no tiene campo TenantID, y esa ausencia es la regla escrita en el tipo.")
 	}
 
-	cableado := false
-	archivoHTTP, err := parser.ParseFile(fset, "http.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parseando http.go: %v", err)
+	// La otra mitad: construirla y no pasarla tiene el MISMO efecto que no construirla —las
+	// tres rutas /api/v1/invitations no se montan y la dueña se queda sin la ÚNICA vía para
+	// incorporar a alguien a quien no puede buscar—. Y dársela también a la vieja la
+	// registraría dos veces, tapada por la nueva.
+	visto := cableadoDelPlanoDeRolesEn(t)
+	if visto.planoDe == "" {
+		t.Fatal("internal/arranque/http.go NO llama a buildRolePlane")
 	}
-	ast.Inspect(archivoHTTP, func(n ast.Node) bool {
-		asignacion, ok := n.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for i, lhs := range asignacion.Lhs {
-			if campoDe(lhs) != "pub.Invitations" {
-				continue
-			}
-			// 🔴 Ver el campo escrito NO basta: es una interfaz, y `pub.Invitations =
-			// nil` compila igual de bien que el cable bueno. Un nil desmonta las tres
-			// rutas en silencio.
-			if i < len(asignacion.Rhs) && campoDe(asignacion.Rhs[i]) == "nil" {
-				t.Fatalf("pub.Invitations se cablea a nil: las rutas /api/v1/invitations NO se montarían (%s)",
-					fset.Position(asignacion.Pos()))
-			}
-			cableado = true
-		}
-		return true
-	})
-	if !cableado {
-		t.Error("buildPublicAPIServer NO le pasa a publicapi.Deps la administración de invitaciones " +
-			"(pub.Invitations).\nConstruirla y no pasarla tiene el MISMO efecto que no construirla: las tres " +
-			"rutas /api/v1/invitations no se montan, y la dueña se queda sin la ÚNICA vía para incorporar a " +
-			"alguien a quien no puede buscar.")
-	}
+	visto.exigeDelPlano(t, "Invitations")
+	visto.exigeViejoANil(t, "Invitations")
 }
 
 // TestCableado_LasTresRutasDeInvitacionesLlevanSuScope.
@@ -91,14 +83,14 @@ func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 //     emisión convertiría en administradora a quien solo tenía que mirar, porque
 //     emitir una invitación ES meter gente en la empresa, en diferido.
 //
-// Cruza a ../publicapi/roleplane.go porque el registro vive ahí: un test de AST en
-// el paquete del registro no podría decir nada de bootstrap, ni al revés.
+// Cruza a ../apipublica/roleplane.go porque el registro vive ahí: un test de AST en
+// el paquete del registro no podría decir nada del arranque, ni al revés.
 func TestCableado_LasTresRutasDeInvitacionesLlevanSuScope(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
-	archivo, err := parser.ParseFile(fset, "../publicapi/roleplane.go", nil, 0)
+	archivo, err := parser.ParseFile(fset, "../apipublica/roleplane.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parseando ../publicapi/roleplane.go: %v", err)
+		t.Fatalf("parseando ../apipublica/roleplane.go: %v", err)
 	}
 
 	type esperada struct {
@@ -114,7 +106,7 @@ func TestCableado_LasTresRutasDeInvitacionesLlevanSuScope(t *testing.T) {
 
 	ast.Inspect(archivo, func(n ast.Node) bool {
 		llamada, ok := n.(*ast.CallExpr)
-		if !ok || campoDe(llamada.Fun) != "mux.Handle" || len(llamada.Args) < 2 {
+		if !ok || campoCompletoDe(llamada.Fun) != "c.Handle" || len(llamada.Args) < 2 {
 			return true
 		}
 		patron, ok := llamada.Args[0].(*ast.BasicLit)
@@ -144,7 +136,7 @@ func TestCableado_LasTresRutasDeInvitacionesLlevanSuScope(t *testing.T) {
 	// fallar y enterarse alguien, en vez de vigilar una pared.
 	for ruta := range quiero {
 		if !vistas[ruta] {
-			t.Errorf("internal/publicapi/roleplane.go NO monta %s: sin ella, la administración de "+
+			t.Errorf("internal/apipublica/roleplane.go NO monta %s: sin ella, la administración de "+
 				"invitaciones no existe en el proceso y el síntoma es un 404 mudo", ruta)
 		}
 	}

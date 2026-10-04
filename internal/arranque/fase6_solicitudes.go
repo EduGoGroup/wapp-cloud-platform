@@ -1,14 +1,16 @@
-// Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
 	"context"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/telemetria"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 )
 
 // faseSolicitudes arma la bandeja del dueño: la salida hacia WhatsApp, los dos

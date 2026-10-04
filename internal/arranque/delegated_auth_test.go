@@ -9,7 +9,7 @@ import (
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 )
 
@@ -42,8 +42,10 @@ func TestWireDelegatedAuth_SinURLElReleSeQuedaSinAutenticador(t *testing.T) {
 	if s.edgeAuthSvc != nil {
 		t.Error("sin WAPP_IDENTITY_URL no debe construirse el delegado")
 	}
-	if got := s.edgeAuthenticator(); got != nil {
-		t.Errorf("edgeAuthenticator = %T (%v), want un nil de verdad", got, got)
+	// Lo que recibe el gateway viejo (fase4_gateway.go) es el adaptador de bridge_iam.go
+	// alrededor del delegado: sin delegado, un nil de verdad.
+	if got := newAuthenticatorBridge(s.edgeAuthSvc); got != nil {
+		t.Errorf("newAuthenticatorBridge(edgeAuthSvc) = %T (%v), want un nil de verdad", got, got)
 	}
 }
 
@@ -57,8 +59,9 @@ func TestWireDelegatedAuth_ConURLElReleDelegaEnIdentity(t *testing.T) {
 	if s.edgeAuthSvc == nil {
 		t.Fatal("con WAPP_IDENTITY_URL debe construirse el delegado")
 	}
-	if got := s.edgeAuthenticator(); got != s.edgeAuthSvc {
-		t.Errorf("edgeAuthenticator = %T, want el delegado", got)
+	bridge, ok := newAuthenticatorBridge(s.edgeAuthSvc).(*authenticatorBridge)
+	if !ok || bridge.next != s.edgeAuthSvc {
+		t.Errorf("newAuthenticatorBridge(edgeAuthSvc) no envuelve el delegado: %T", bridge)
 	}
 }
 

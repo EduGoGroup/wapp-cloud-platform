@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
@@ -6,7 +8,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
@@ -16,6 +17,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 )

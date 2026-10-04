@@ -64,6 +64,7 @@ código (no en comentarios); consumidores = `grep -rl '"github.com/EduGoGroup/wa
 | ✚ `platformadmin/access_requests_postgres.go` (SQL de `access_requests.go:135-336,481-526`) | ~300 | — | no | lock indirecto (`GrantTenantAccess`) | **Tx** (`executeApprovalTx`) | 1 | **complejo** (mutantes) | F2-03 |
 | ✚ `platformadmin/platformadminhelpertest/` | — | — | doble | — | — | tests | **simple** | F2-03 |
 | ✚ `internal/arranque/bridge_iam.go` | nuevo | 0 | no | no | no | gateway viejo | **simple** (`05` §4.2) | F2-04 |
+| ✚ `internal/apipublica/{chain,response,auth,roleplane,audit,entitlements}.go` + `apipublicahelpertest/harness.go` (FX TX.5–TX.6; añadida en F2-04, aprobada por Jhoan el 2026-10-04) | nuevo | 9 (+ `Harness` & co.) | no | no | no | arranque nuevo | **medio** (rojo + verde por fichero; el arnés nace verde) | F2-04 |
 
 Goroutines en producción de `acceso`: **0**. Métricas propias: **0**.
 

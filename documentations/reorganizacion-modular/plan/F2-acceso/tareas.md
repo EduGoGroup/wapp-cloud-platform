@@ -212,22 +212,38 @@ Entrada: PR de F2-02 integrado. Para cuando: 0 pendientes en `acceso` · candado
 ## Sesión F2-04 · adaptador, conmutación y rutas · 🌐 · T2.28–T2.31
 Entrada: PR de F2-03 integrado. Para cuando: huella igual · 23 + 8 rutas nuevas · `go list -deps` · test de cableado completo · PR.
 
-- [ ] **T2.28 · `bridge_iam.go`: el adaptador de arranque** · 🌐 · simple (`05` §4.2) · dep. T2.27 · cumple R2.5.a
+> **Decisiones y correspondencias de F2-04 (Jhoan, 2026-10-04)**:
+> - **Nivel de `apipublica`**: **medio** (rojo TX.5 en un commit, verde TX.6 por fichero), sin umbral de cobertura; fila
+>   añadida en [`diseno.md`](diseno.md) §1.1.
+> - **R2.5.d se verifica por su cláusula** (hallazgo 37): todo importador de un paquete viejo de `acceso` en
+>   `go list -deps ./cmd/server-modular` es un paquete viejo sin reconstruir (`publicapi`, `flujos/{events,runtime}`,
+>   `reanalisis`, `gateway/grpc`) o `internal/arranque`, y en éste solo `bridge_iam.go` (lo prueba `access_wiring_test.go`).
+> - **Gate de T2.31 ampliado**: `-run 'Mudanzas|Huella|PlatformPermissions|Cableado|BootWiring'`: el test de cableado de
+>   T2.29 se nombra en inglés (`TestBootWiring_Access*`, E-11) y el patrón de la spec no lo casaba.
+> - **Nombres (E-11)**: `cadena.go` → `chain.go` · `respuesta.go` → `response.go` · `autenticacion.go` → `auth.go` ·
+>   `apipublicahelpertest/arnes.go` → `harness.go` · `Comun` → `Common` · `Montar{Autenticacion,RolePlane,Auditoria,Derechos}`
+>   → `Mount{Auth,RolePlane,Audit,Entitlements}` · `Deps<Área>` → `{Auth,RolePlane,Audit,Entitlements}Deps` · `Arnes`,
+>   `Nuevo`, `Con`, `Llamar`, `AuditorDoble` → `Harness`, `New`, `With`, `Call`, `AuditRecorderFake` · `anotarTenant` →
+>   `annotateTenant` · `respuestaObservada` → `observedResponse` (campo `errEscribir` → `writeErr`) ·
+>   `TestRolePlane_AltaSinM2M_503` (RX.2.e) → `TestRolePlane_AddMemberWithoutM2MIs503` · en `bridge_iam.go`:
+>   `iamSentinelPairs`, `translateIAMErr` (los de contacto ya ocupaban `sentinelPairs`/`translateContactErr`).
+
+- [x] **T2.28 · `bridge_iam.go`: el adaptador de arranque** · 🌐 · simple (`05` §4.2) · dep. T2.27 · cumple R2.5.a — cerrada en `94f2d26` (196 + 445 l; traduce también `VerifyResult` y los centinelas que devuelve el auditor; `bridgeError` reutilizado de `bridge_contact.go`)
   - **Ficheros**: `internal/arranque/bridge_iam.go`, `…/bridge_iam_test.go`
   - **Hecho cuando**: contrato, test y lógica en una pasada; tipos no exportados, sin estado, con `var _ viejoin.Authenticator = (*authenticatorBridge)(nil)` y el de `auditorBridge`; test de equivalencia de los 4 centinelas (`errors.Is` contra el **viejo**) y de los DTOs. `un_fichero_un_test` lo incluye.
   - **Gate**: G-verde sobre `./internal/arranque/...` · **Commit**: `verde(arranque): bridge_iam`
-- [ ] **T2.29 · Test de cableado de `acceso`, completo** · 🌐 · dep. T2.28, T2.31 (va en el mismo commit que la conmutación) · cumple R2.4.a, R2.5.f
+- [x] **T2.29 · Test de cableado de `acceso`, completo** · 🌐 · dep. T2.28, T2.31 (va en el mismo commit que la conmutación) · cumple R2.4.a, R2.5.f — cerrada en `8482dad` (`internal/arranque/access_wiring_test.go`, 267 l: `bridge_iam_test.go` pasaría de 500; tests `TestBootWiring_Access*`)
   - **Ficheros**: `internal/arranque/bridge_iam_test.go` (o el `_test.go` de cableado de la fase que toque)
   - **Hecho cuando** (hallazgo 39 de F1): afirma que el arranque construye el `entitlements.Postgres`, el `DelegatedAuthService` y el auditor **nuevos**, **y** que ninguna fase de `internal/arranque` importa `internal/iam/...`, `internal/entitlements` ni `internal/platformadmin` fuera de `bridge_iam.go` (grep por ruta de import, dentro del test); no basta el campo del contenedor.
   - **Gate**: G-verde · **Commit**: parte de `conmutar(acceso)`
-- [ ] **T2.30 · FX TX.5–TX.6 (cara nueva: comunes + acceso)** · 🌐 · dep. T2.27 · cumple R2.5.b
+- [x] **T2.30 · FX TX.5–TX.6 (cara nueva: comunes + acceso)** · 🌐 · dep. T2.27 · cumple R2.5.b — cerrada en `799d821` (rojo) → `3745079`, `52a5d09`, `e546523`, `8a11c8d`, `4f28f4f` (verde); nivel **medio**; 0 pendientes en `apipublica`, 170 PASS, 0 SKIP
   - **Ficheros**: los de [`FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.5–TX.6 (`apipublica/{cadena,respuesta,autenticacion,roleplane,audit,entitlements}.go`, arnés)
   - **Hecho cuando**: lo que dice TX.6 (0 pendientes en `apipublica`), sin umbral de cobertura (P2): un test por promesa del contrato. Esta tarea **es** TX.5+TX.6: se marcan las dos.
-- [ ] **T2.31 · conmutar(acceso): el arranque nuevo cablea `acceso` (= FX TX.7)** · 🌐 · dep. T2.28, T2.30, T2.34 · cumple R2.4.a–b, R2.5.b–e, R2.3.e
+- [x] **T2.31 · conmutar(acceso): el arranque nuevo cablea `acceso` (= FX TX.7)** · 🌐 · dep. T2.28, T2.30, T2.34 · cumple R2.4.a–b, R2.5.b–e, R2.3.e
   - **Ficheros**: en `internal/arranque`: `auth_*.go` (partidos en T2.34), `fase3_almacenes.go`, `fase4_gateway.go`, `fase8_transporte.go`, `http.go`, `rutas_admin.go`, `contenedor.go`; `huella_test.go` si hace falta un caso
   - **Hecho cuando**: **un** `entitlements.NewPostgres` (nuevo) inyectado en todos los consumidores —incluida la cara vieja: `Deps.Entitlements` = el nuevo (FX TX.7)—; `Deps.{Roles,Members,Invitations,Audit}` = `nil`; A1–A7 fuera del mux viejo; J4–J11 inline con `platformadmin` nuevo sin alias; gateway viejo con `bridge_iam.go`; test de cableado de T2.29 verde; `go list -deps ./cmd/server-modular` cumple R2.5.d; `git diff --stat -- cmd/server internal/bootstrap` vacío. **`acceso` no entra en `Conmutados`**: entra cuando muera `bridge_iam.go` (F3).
   - **Gate**: `GOWORK=off go test -count=1 -v -run 'Mudanzas|Huella|PlatformPermissions|Cableado' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$? >> "$TMPDIR/m.log"; tail -1 "$TMPDIR/m.log"` → `rc=0`, `grep -c -- '--- SKIP' "$TMPDIR/m.log"` → 0 · `make ci-local` rc=0
-  - **Commit**: `conmutar(acceso): el arranque nuevo cablea acceso y muda 23 rutas`
+  - **Commit**: `conmutar(acceso): el arranque nuevo cablea acceso y muda 23 rutas` — cerrada en `8482dad` (huella igual en los dos perfiles; gate ampliado con `BootWiring` → rc=0, 0 SKIP; R2.5.d por su cláusula, hallazgo 37)
 
 ## Sesión F2-05 · cierre local · 💻 · T2.32–T2.33
 - [ ] **T2.32 · Cierre de F2** · 💻 · dep. T2.31
