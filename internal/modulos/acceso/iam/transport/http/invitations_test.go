@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamhttp
 
 // Una aserción por promesa de R-H7 y R-H8 (invitations.go), con un doble de in.InvitationAdmin.
@@ -48,14 +46,22 @@ func (f *fakeInvitationAdmin) RevokeInvitation(_ context.Context, id string) err
 	return f.err
 }
 
+// newInvitationHandler construye el handler sobre el doble.
+func newInvitationHandler(f in.InvitationAdmin) *InvitationHandler {
+	return NewInvitationHandler(f)
+}
+
 func invitationsMux(f in.InvitationAdmin) *http.ServeMux {
-	var h *InvitationHandler = NewInvitationHandler(f)
+	h := newInvitationHandler(f)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/invitations", h.Issue())
 	mux.Handle("GET /api/v1/invitations", h.List())
 	mux.Handle("DELETE /api/v1/invitations/{id}", h.Revoke())
 	return mux
 }
+
+// issuedCode es el código en claro que devuelve el doble (no es una credencial).
+const issuedCode = "WAPP-INV-abc"
 
 var (
 	farFuture = time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -65,7 +71,7 @@ var (
 // R-H8: sin cuerpo o con `{}` es válido (sin rol, ttl 0 = el default del usecase).
 func TestIssue_BodyIsOptional(t *testing.T) {
 	for _, body := range []string{"", `{}`} {
-		f := &fakeInvitationAdmin{issued: in.IssuedInvitation{Invitation: domain.Invitation{ID: "i-1", ExpiresAt: farFuture}, Token: "WAPP-INV-x"}}
+		f := &fakeInvitationAdmin{issued: in.IssuedInvitation{Invitation: domain.Invitation{ID: "i-1", ExpiresAt: farFuture}, Token: issuedCode}}
 		rec := serve(t, invitationsMux(f), http.MethodPost, "/api/v1/invitations", body)
 		if rec.Code != http.StatusCreated || f.calls != 1 || f.issueInput.RoleID != nil || f.issueInput.TTLSeconds != 0 {
 			t.Errorf("cuerpo %q: %d (llamadas %d, entrada %+v); se esperaba 201, sin rol y ttl 0", body, rec.Code, f.calls, f.issueInput)
@@ -102,10 +108,10 @@ func TestIssue_201WithTokenOnce(t *testing.T) {
 	created := time.Date(2030, 1, 2, 3, 4, 5, 0, time.FixedZone("x", 3600))
 	f := &fakeInvitationAdmin{issued: in.IssuedInvitation{
 		Invitation: domain.Invitation{ID: "i-1", TenantID: tenantA, TokenHash: []byte("digest"), RoleID: strPtr("r-1"), ExpiresAt: farFuture, CreatedAt: created},
-		Token:      "WAPP-INV-abc",
+		Token:      issuedCode,
 	}}
 	rec := serve(t, invitationsMux(f), http.MethodPost, "/api/v1/invitations", `{"role_id":"r-1"}`)
-	want := `{"id":"i-1","status":"pending","expires_at":"2999-01-01T00:00:00Z","role_id":"r-1","created_at":"2030-01-02T02:04:05Z","token":"WAPP-INV-abc"}`
+	want := `{"id":"i-1","status":"pending","expires_at":"2999-01-01T00:00:00Z","role_id":"r-1","created_at":"2030-01-02T02:04:05Z","token":"` + issuedCode + `"}`
 	if rec.Code != http.StatusCreated || rec.Body.String() != want {
 		t.Errorf("respuesta = %d %s; se esperaba 201 %s", rec.Code, rec.Body.String(), want)
 	}
@@ -213,5 +219,28 @@ func TestRevoke_EmptyIDIs400(t *testing.T) {
 	rec := serve(t, NewInvitationHandler(f).Revoke(), http.MethodDelete, "/x", "")
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != errorBody("id requerido en la ruta") || f.calls != 0 {
 		t.Errorf("respuesta = %d %s (llamadas %d); se esperaba 400 sin llamar al puerto", rec.Code, rec.Body.String(), f.calls)
+	}
+}
+
+// instant: nil y el instante cero no se sirven (la clave desaparece por omitempty); el resto, en
+// RFC 3339 UTC.
+func TestInstant(t *testing.T) {
+	zero := time.Time{}
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.FixedZone("x", -3600))
+	cases := []struct {
+		name string
+		in   *time.Time
+		want string
+	}{
+		{"nil_is_empty", nil, ""},
+		{"zero_is_empty", &zero, ""},
+		{"utc_rfc3339", &at, "2030-01-02T04:04:05Z"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := instant(c.in); got != c.want {
+				t.Errorf("instant = %q; se esperaba %q", got, c.want)
+			}
+		})
 	}
 }
