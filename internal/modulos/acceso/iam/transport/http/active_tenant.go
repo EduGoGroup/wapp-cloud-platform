@@ -50,8 +50,18 @@ import (
 	"net/http"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
+
+// selectActiveTenantRequest es el cuerpo de POST /api/v1/auth/active-tenant.
+//
+// ⚠️ TIENE UN CAMPO Y ES UN TENANT, que es lo contrario de lo que hace el resto
+// de este paquete. No es una grieta en INV-8: es la puerta que permite que INV-8
+// siga entero en el canje, que es donde importa. La empresa que entra aquí no se
+// cree — se comprueba contra las membresías de quien llama antes de guardarse, y
+// se vuelve a comprobar en CADA canje posterior.
+type selectActiveTenantRequest struct {
+	TenantID string `json:"tenant_id"`
+}
 
 // ActiveTenantHandler sirve las DOS mitades de la empresa del sujeto: LEER entre
 // cuáles puede elegir (List) y ESCRIBIR cuál elige (Select). Es transporte y nada
@@ -61,12 +71,49 @@ import (
 // Recibe DOS puertos y no uno aunque hoy los satisfaga el mismo servicio: leer y
 // escribir son capacidades distintas, y un handler que solo pintara el selector
 // no tendría por qué recibir de paso la de cambiar la empresa activa.
-type ActiveTenantHandler struct{}
+type ActiveTenantHandler struct {
+	selector in.ActiveTenantSelector
+	lister   in.TenantLister
+}
 
 // NewActiveTenantHandler construye el handler sobre los puertos de entrada. No valida nada: el
 // cableado lo hace el arranque.
 func NewActiveTenantHandler(selector in.ActiveTenantSelector, lister in.TenantLister) *ActiveTenantHandler {
-	panic(pendiente.Implementar("iamhttp.NewActiveTenantHandler"))
+	return &ActiveTenantHandler{selector: selector, lister: lister}
+}
+
+// tenantOptionDTO es UNA empresa en la respuesta de GET /api/v1/auth/tenants.
+//
+// Tiene TRES campos y ninguno sobra: sin `id` el selector no puede mandar la
+// elección de vuelta, sin `display_name` pinta UUIDs y sin `active` no sabe cuál marcar al
+// cargar.
+//
+// 🔴 Y NO TIENE UN CUARTO. Nada de `slug`, `plan_id`, `revoked_at`, `created_at`
+// ni conteos: eso es el detalle de empresa del plano de PLATAFORMA
+// (platformadmin.TenantListItem), cuya audiencia es el operador. Aquí la
+// audiencia es alguien que solo quiere saber por cuál puerta entra.
+type tenantOptionDTO struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	// Active marca la que llevará el PRÓXIMO Context Token. Como mucho una es
+	// true, y puede que ninguna — «ninguna» es un estado legítimo y se expresa
+	// sin marcar nada, sin necesidad de un elemento centinela.
+	Active bool `json:"active"`
+}
+
+// tenantListDTO es la respuesta de GET /api/v1/auth/tenants.
+//
+// 🔴 NO LLEVA UN `active_tenant_id` AL LADO, y es deliberado aunque fuera cómodo:
+// sería una SEGUNDA fuente del mismo hecho que ya expresa el `active` de cada
+// elemento, y dos fuentes para el mismo dato es como se desincronizan.
+//
+// ⚠️ Es un OBJETO y no un array pelado, aunque hoy solo tenga una clave: un array
+// en la raíz no admite añadir nada después sin romper a todos los clientes.
+type tenantListDTO struct {
+	// Tenants NUNCA es null: cero empresas se serializa como `[]`. Que el cliente
+	// tenga que distinguir `null` de `[]` para el mismo hecho es un defecto, no
+	// una economía.
+	Tenants []tenantOptionDTO `json:"tenants"`
 }
 
 // Select sirve POST /api/v1/auth/active-tenant. Cuerpo `{"tenant_id":"…"}` (un campo, y es un
@@ -85,7 +132,21 @@ func NewActiveTenantHandler(selector in.ActiveTenantSelector, lister in.TenantLi
 //     existencia: no es oráculo.
 //   - 500 — cualquier otro error (infraestructura).
 func (h *ActiveTenantHandler) Select() http.Handler {
-	panic(pendiente.Implementar("iamhttp.ActiveTenantHandler.Select"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req selectActiveTenantRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if err := h.selector.SelectActiveTenant(r.Context(), req.TenantID); err != nil {
+			writeDomainError(w, err)
+			return
+		}
+		// 204 y no 200 con cuerpo: no hay nada que devolver. Lo que la persona
+		// necesita después —su empresa y sus grants— no está en esta respuesta,
+		// está en su SIGUIENTE Context Token; el que tiene en la mano se emitió
+		// antes y sigue diciendo lo que decía.
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
 // List sirve GET /api/v1/auth/tenants: las empresas del sujeto, con su nombre y
@@ -107,5 +168,26 @@ func (h *ActiveTenantHandler) Select() http.Handler {
 // Fallos: el listado NO tiene 404. domain.ErrInvalidInput (el contexto no acredita a nadie:
 // cableado) ⇒ 400; cualquier otro ⇒ 500.
 func (h *ActiveTenantHandler) List() http.Handler {
-	panic(pendiente.Implementar("iamhttp.ActiveTenantHandler.List"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenants, activeID, err := h.lister.TenantsOfCaller(r.Context())
+		if err != nil {
+			writeDomainError(w, err)
+			return
+		}
+		// La proyección, y el `active` calculado en UN solo sitio: comparando
+		// contra el activeID que el puerto ya resolvió con la misma regla que el
+		// canje. Aquí no se decide cuál es la activa, se pinta.
+		// (options: `opciones` en el viejo, E-11.) make con capacidad, nunca nil: un nil del
+		// puerto también sale como `[]`.
+		options := make([]tenantOptionDTO, 0, len(tenants))
+		for _, t := range tenants {
+			options = append(options, tenantOptionDTO{
+				ID:          t.ID,
+				DisplayName: t.DisplayName,
+				// activeID vacío ("ninguna") no marca nada: ningún ID real es "".
+				Active: activeID != "" && t.ID == activeID,
+			})
+		}
+		writeJSON(w, http.StatusOK, tenantListDTO{Tenants: options})
+	})
 }

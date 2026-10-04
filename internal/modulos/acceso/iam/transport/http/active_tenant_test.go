@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamhttp
 
 // Se prueba el TRANSPORTE y nada más: los dobles no comprueban membresías porque el transporte
@@ -93,15 +91,19 @@ const (
 	tenantB = "22222222-2222-2222-2222-222222222222"
 )
 
+// newActiveTenantHandler construye el handler sobre los dos dobles.
+func newActiveTenantHandler(sel *fakeSelector, l *fakeLister) *ActiveTenantHandler {
+	return NewActiveTenantHandler(sel, l)
+}
+
 func selectTenant(t *testing.T, sel *fakeSelector, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	var h *ActiveTenantHandler = NewActiveTenantHandler(sel, &fakeLister{})
-	return serve(t, h.Select(), http.MethodPost, "/api/v1/auth/active-tenant", body)
+	return serve(t, newActiveTenantHandler(sel, &fakeLister{}).Select(), http.MethodPost, "/api/v1/auth/active-tenant", body)
 }
 
 func listTenants(t *testing.T, l *fakeLister) *httptest.ResponseRecorder {
 	t.Helper()
-	return serve(t, NewActiveTenantHandler(&fakeSelector{}, l).List(), http.MethodGet, "/api/v1/auth/tenants", "")
+	return serve(t, newActiveTenantHandler(&fakeSelector{}, l).List(), http.MethodGet, "/api/v1/auth/tenants", "")
 }
 
 // R-H1: 204 sin cuerpo Y el dato llega al puerto, juntos (un 204 sin llamar al puerto pasaría
