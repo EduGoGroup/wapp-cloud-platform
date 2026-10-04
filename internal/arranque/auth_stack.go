@@ -11,11 +11,11 @@ import (
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/identity"
-	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/identity"
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/postgres"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
@@ -222,18 +222,6 @@ func (s *authStack) wireDelegatedAuth(cfg config.AppConfig, validator iamusecase
 		"identity_url", identityURL,
 		"system", iamusecase.SystemWappEdge)
 	return nil
-}
-
-// edgeAuthenticator devuelve el autenticador que atiende las RPCs de auth del
-// Edge: el delegado, o un nil DE VERDAD si no hay delegación (mismo cuidado que
-// exchanger con las interfaces nil de Go). El gateway ya sabe responder "auth no
-// disponible" ante un puerto ausente, que es lo honesto: sin identity no hay
-// quien valide credenciales, y wApp dejó de tener un camino propio.
-func (s *authStack) edgeAuthenticator() in.Authenticator {
-	if s.edgeAuthSvc == nil {
-		return nil
-	}
-	return s.edgeAuthSvc
 }
 
 // exchanger expone el canje como puerto in, o un nil DE VERDAD cuando el modo

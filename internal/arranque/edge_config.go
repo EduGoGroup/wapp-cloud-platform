@@ -7,10 +7,10 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 )
 
 // jwksConfigProvider entrega SIEMPRE la config kind:"jwks" (la pública ES256 del

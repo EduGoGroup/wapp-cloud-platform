@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/rutas_admin.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/rutas_admin.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
@@ -6,9 +8,9 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 )
 
 // adminRouteDeps agrupa lo que registerAdminRoutes necesita para cablear el mux
@@ -87,7 +89,7 @@ func registerAdminRoutes(mux *http.ServeMux, d adminRouteDeps) {
 	mux.Handle("GET /admin/access-requests", adminHandler(d.authMW, d.auditor, d.log,
 		"users.provision.any", "user", platformadmin.ListAccessRequestsHandler(d.platformRepo, d.platformTenantID)))
 	mux.Handle("POST /admin/access-requests/{id}/approve", adminHandler(d.authMW, d.auditor, d.log,
-		"users.provision.any", "user", platformadmin.ApproveAccessRequestHandler(d.platformRepo, d.m2mClient, d.platformTenantID)))
+		"users.provision.any", "user", platformadmin.ApproveAccessRequestHandler(d.platformRepo, d.platformRepo, d.m2mClient, d.platformTenantID)))
 	mux.Handle("POST /admin/access-requests/{id}/reject", adminHandler(d.authMW, d.auditor, d.log,
 		"users.provision.any", "user", platformadmin.RejectAccessRequestHandler(d.platformRepo, d.platformTenantID)))
 	mux.Handle("POST /admin/tenants/revoke", adminHandler(d.authMW, d.auditor, d.log,

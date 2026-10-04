@@ -6,9 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
-	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/postgres"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
+	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 

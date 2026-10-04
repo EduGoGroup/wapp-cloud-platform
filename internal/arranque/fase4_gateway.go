@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/fase4_gateway.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase4_gateway.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
@@ -80,8 +82,8 @@ func (faseGateway) ejecutar(_ context.Context, c *contenedor) error {
 		// edge.auth.* (CERO PII) con el mismo auditor del :8103. Detrás del puerto está
 		// identity-core si la delegación de la Ola 3 está encendida (WAPP_IDENTITY_URL),
 		// o el IAM local si no; el gateway no distingue los dos casos.
-		gatewaygrpc.WithAuthenticator(c.authStk.edgeAuthenticator()),
-		gatewaygrpc.WithAuthAuditor(c.authStk.auditor),
+		gatewaygrpc.WithAuthenticator(newAuthenticatorBridge(c.authStk.edgeAuthSvc)),
+		gatewaygrpc.WithAuthAuditor(newAuditorBridge(c.authStk.auditor)),
 	)
 
 	c.marca("gateway")

@@ -8,10 +8,10 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/postgres"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/in"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/iam/ports/out"
-	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/usecase"
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/postgres"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	iamusecase "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/usecase"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 

@@ -31,7 +31,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/huellatest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
-	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/iam/infra/identity"
+	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/identity"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 )

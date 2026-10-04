@@ -55,7 +55,8 @@ var _ viejoin.Authenticator = (*authenticatorBridge)(nil)
 
 // newAuthenticatorBridge envuelve el autenticador delegado nuevo para el gateway viejo. Con svc
 // nil devuelve un nil DE VERDAD (interfaz nil, no un puntero nil dentro de una interfaz), el
-// mismo cuidado que authStack.edgeAuthenticator: el gateway compara el puerto con nil para
+// mismo cuidado que authStack.exchanger (y que el edgeAuthenticator viejo, al que sustituye en
+// fase4_gateway.go): el gateway compara el puerto con nil para
 // responder «auth no disponible», y un adaptador alrededor de nada lo engañaría.
 func newAuthenticatorBridge(svc *usecase.DelegatedAuthService) viejoin.Authenticator {
 	if svc == nil {

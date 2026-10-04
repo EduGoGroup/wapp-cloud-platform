@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
+// gateway viejo lo recibe detrás de bridge_iam.go).
 package arranque
 
 import (
@@ -15,10 +17,10 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
@@ -85,12 +87,12 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	// cada vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
-	publicSrv, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
+	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
 		depsDeLaAPIPublica(c), c.platformRepo)
 	if err != nil {
 		return err
 	}
-	c.publicSrv, c.publicCompuesto, c.authMW, c.auditor = publicSrv, compuesto, authMW, auditor
+	c.publicSrv, c.publicCara, c.publicCompuesto, c.authMW, c.auditor = publicSrv, cara, compuesto, authMW, auditor
 
 	c.httpSrv = servidorAdmin(c)
 

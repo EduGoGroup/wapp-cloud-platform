@@ -20,10 +20,33 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 // cara nueva: 0 en F0 (la cara nace vacía y todo cae al publicapi viejo), 2 tras
 // conmutar acceso, … 8 tras conmutar conversacion. La fase de una fila del mapa se
 // escribe «F<n>»; la fila pertenece a la cara nueva si n ≤ FaseActual.
-const FaseActual = 0
+const FaseActual = 2
 
-// caraNueva construye la cara nueva con las rutas de las fases ≤ FaseActual. En F0
-// no monta ninguna: cada fase añadirá aquí su apipublica.Montar<Área>.
-func caraNueva() *apipublica.Cara {
-	return apipublica.Nueva()
+// newFaceDeps es todo lo que la cara nueva necesita para montar sus áreas, agrupado por
+// el Mount* que lo recibe. Lo arma buildPublicAPIServer (http.go) con los servicios del
+// módulo acceso NUEVO; el candado de mudanzas lo arma con dobles.
+type newFaceDeps struct {
+	// common es lo compartido por todas las áreas: middleware, auditor y logger.
+	common apipublica.Common
+	// auth enciende A1–A7 (F2).
+	auth apipublica.AuthDeps
+	// rolePlane enciende B1–B14 (F2).
+	rolePlane apipublica.RolePlaneDeps
+	// audit enciende C1 (F2).
+	audit apipublica.AuditDeps
+	// entitlements enciende C2 (F2).
+	entitlements apipublica.EntitlementsDeps
+}
+
+// caraNueva construye la cara nueva con las rutas de las fases ≤ FaseActual: desde F2,
+// las 23 de acceso (A1–A7, B1–B14, C1–C2). Cada fase añade aquí su apipublica.Mount<Área>
+// en el MISMO commit que sube FaseActual. Las condiciones de montaje (qué dependencia nil
+// apaga qué ruta) son las de cada Mount*: aquí no se decide nada.
+func caraNueva(d newFaceDeps) *apipublica.Cara {
+	cara := apipublica.Nueva()
+	apipublica.MountAuth(cara, d.common, d.auth)
+	apipublica.MountRolePlane(cara, d.common, d.rolePlane)
+	apipublica.MountAudit(cara, d.common, d.audit)
+	apipublica.MountEntitlements(cara, d.common, d.entitlements)
+	return cara
 }
