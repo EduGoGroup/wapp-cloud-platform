@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package platformadmin
 
 import (
@@ -54,6 +52,8 @@ type fakeSQL struct {
 	args      map[string][]driver.Value
 	beginErr  error
 	commitErr error
+	// openTx cuenta las transacciones abiertas (en cualquier conexión).
+	openTx int
 }
 
 // newFakeSQL devuelve un fakeSQL con las reglas por defecto de un alta limpia: la persona no es
@@ -145,7 +145,9 @@ func (f *fakeSQL) argsOf(l string) []driver.Value {
 
 type fakeConnector struct{ f *fakeSQL }
 
-func (c fakeConnector) Connect(context.Context) (driver.Conn, error) { return fakeConn(c), nil }
+// Connect da una conexión nueva cada vez: con una transacción abierta, una sentencia por el POOL
+// va por otra conexión, y el fake la registra con el prefijo "pool:" (ver fakeConn.step).
+func (c fakeConnector) Connect(context.Context) (driver.Conn, error) { return &fakeConn{f: c.f}, nil }
 func (c fakeConnector) Driver() driver.Driver                        { return fakeDriver{} }
 
 type fakeDriver struct{}
@@ -154,24 +156,43 @@ func (fakeDriver) Open(string) (driver.Conn, error) {
 	return nil, errors.New("fakeSQL: usa el conector")
 }
 
-type fakeConn struct{ f *fakeSQL }
+// fakeConn es una conexión del fake; inTx dice si tiene una transacción abierta.
+type fakeConn struct {
+	f    *fakeSQL
+	inTx bool
+}
 
-func (fakeConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("fakeSQL: sin Prepare") }
-func (fakeConn) Close() error                        { return nil }
-func (c fakeConn) Begin() (driver.Tx, error) {
+func (*fakeConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("fakeSQL: sin Prepare") }
+func (*fakeConn) Close() error                        { return nil }
+func (c *fakeConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 
-func (c fakeConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+func (c *fakeConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 	if c.f.beginErr != nil {
 		return nil, c.f.beginErr
 	}
+	c.f.mu.Lock()
+	c.f.openTx++
+	c.f.mu.Unlock()
+	c.inTx = true
 	c.f.record("BEGIN", "", nil)
-	return fakeTx(c), nil
+	return fakeTx{c}, nil
 }
 
-func (c fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	c.f.record(label(query), query, args)
+// step es la etiqueta de la sentencia: con una transacción abierta en OTRA conexión, una
+// sentencia fuera de ella lleva el prefijo "pool:" (escribir por el pool y no por la tx).
+func (c *fakeConn) step(query string) string {
+	c.f.mu.Lock()
+	defer c.f.mu.Unlock()
+	if !c.inTx && c.f.openTx > 0 {
+		return "pool:" + label(query)
+	}
+	return label(query)
+}
+
+func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.f.record(c.step(query), query, args)
 	r, ok := c.f.rule(query)
 	if !ok {
 		return fakeResult{affected: 1}, nil
@@ -182,8 +203,8 @@ func (c fakeConn) ExecContext(_ context.Context, query string, args []driver.Nam
 	return fakeResult{affected: r.affected, err: r.affectedErr}, nil
 }
 
-func (c fakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.f.record(label(query), query, args)
+func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.f.record(c.step(query), query, args)
 	r, _ := c.f.rule(query)
 	if r.err != nil {
 		return nil, r.err
@@ -191,18 +212,26 @@ func (c fakeConn) QueryContext(_ context.Context, query string, args []driver.Na
 	return &fakeRows{rows: r.rows}, nil
 }
 
-type fakeTx struct{ f *fakeSQL }
+type fakeTx struct{ c *fakeConn }
+
+func (t fakeTx) end(step string) {
+	t.c.f.mu.Lock()
+	t.c.f.openTx--
+	t.c.f.mu.Unlock()
+	t.c.inTx = false
+	t.c.f.record(step, "", nil)
+}
 
 func (t fakeTx) Commit() error {
-	if t.f.commitErr != nil {
-		return t.f.commitErr
+	if t.c.f.commitErr != nil {
+		return t.c.f.commitErr
 	}
-	t.f.record("COMMIT", "", nil)
+	t.end("COMMIT")
 	return nil
 }
 
 func (t fakeTx) Rollback() error {
-	t.f.record("ROLLBACK", "", nil)
+	t.end("ROLLBACK")
 	return nil
 }
 
@@ -538,6 +567,19 @@ func TestCheckRetryApproved_OrderAndOutcomes(t *testing.T) {
 	}
 }
 
+// wantListedRow exige la fila programada en TestListAccessRequests_StatusDefaultAndShape, con
+// Systems [] y SystemsKnown false (C-05).
+func wantListedRow(t *testing.T, it AccessRequestItem) {
+	t.Helper()
+	got := []string{it.ID, it.UserID, it.Email, it.Origin, it.Status}
+	if !slices.Equal(got, []string{reqID, userID, "a@x.com", "bff", "rejected"}) || !it.CreatedAt.Equal(fixedNow) {
+		t.Fatalf("fila = %+v", it)
+	}
+	if it.Systems == nil || len(it.Systems) != 0 || it.SystemsKnown {
+		t.Fatalf("Systems = %#v, SystemsKnown = %v; quiero [] y false", it.Systems, it.SystemsKnown)
+	}
+}
+
 // ListAccessRequests: "" se pregunta como 'pending'; sin filas, arreglo vacío; cada fila con
 // Systems [] y SystemsKnown false; los fallos, envueltos.
 func TestListAccessRequests_StatusDefaultAndShape(t *testing.T) {
@@ -555,10 +597,7 @@ func TestListAccessRequests_StatusDefaultAndShape(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("ListAccessRequests = (%+v, %v)", items, err)
 	}
-	if it := items[0]; it.ID != reqID || it.UserID != userID || it.Email != "a@x.com" || it.Origin != "bff" || it.Status != "rejected" ||
-		!it.CreatedAt.Equal(fixedNow) || it.Systems == nil || len(it.Systems) != 0 || it.SystemsKnown {
-		t.Fatalf("fila = %+v", it)
-	}
+	wantListedRow(t, items[0])
 	boom := errors.New("bd caída")
 	h := newFakeSQL(fakeRule{match: "WHERE status = $1", err: boom})
 	if _, err := h.repo(t, nil).ListAccessRequests(ctx, "pending"); !errors.Is(err, boom) ||
