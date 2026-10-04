@@ -107,21 +107,36 @@ Para cuando: inventario aprobado por Jhoan · `auth.go` partido con la huella in
 ## Sesión F2-02 · `usecase` e `identity` · 🌐 · T2.10–T2.11, T2.16, T2.22–T2.23
 Entrada: PR de F2-01 integrado. Para cuando: 0 pendientes en `iam/usecase` e `iam/infra/identity` · `ci-local` rc=0 con 0 SKIP · PR.
 
-- [ ] **T2.10 · rojo(acceso): `iam/infra/identity`** · 🌐 · `client.go` medio, `m2m.go` complejo (prov.) · dep. T2.6 · cumple R2.2.d
+> **Correspondencias de nombres (E-11) de F2-02**: `WithReloj` (D-F2-6, nombre que la spec daba a un símbolo que aún no
+> existía) → **`WithClock`**, con su tipo `M2MOption` y `NewM2M(…, opts ...M2MOption)` variádico (convención de la casa:
+> `memory.Store.WithClock`) · auxiliares de `iam/usecase`: `tenantEfectivo` → `effectiveTenant` y `esMiembro` → `isMember`
+> (viven en `exchange.go`, su primer consumidor en verde; `active_tenant.go` los reutiliza), `vidaDe` → `lifetimeOf`,
+> `rolPedido` → `requestedRole`, `exigirRolVisible` → `requireVisibleRole`, `ttlInvitacion{PorDefecto,Minimo,Maximo}` →
+> `invitationTTL{Default,Min,Max}`, `acreditar` → `accredit`, `anotarFallo` → `recordFailure`, `pasoLeer/pasoDeclarar` →
+> `stepRead/stepDeclare` (los valores literales `"leer_accesos"`/`"declarar_accesos"` no cambian) · tests: los invariantes
+> cruzados son `TestSelectorAndExchangeNeverDisagree` (R-U18), `TestExchange_ActiveTenantReadFailureAborts` (R-U6) y
+> `TestLogoutAll_PartialFailureClosesRotatedSession` (R-U12). Reparto de R-U30…R-U33: `audit` R-U30, `context_token` R-U31,
+> `grants` R-U32, `config` R-U33.
+>
+> **Desviaciones de orden (aplicadas, ver README hallazgos 19–20)**: los tres simples (`config`, `context_token`, `audit`)
+> nacieron completos **antes** del rojo de los medios, porque los contratos de `exchange` y `delegated_auth` usan `Config` y
+> `TokenValidator`; `grants.go` (0 exportados) no tiene rojo: nace entero en su verde. El resto del verde sigue el orden de T2.23.
+
+- [x] **T2.10 · rojo(acceso): `iam/infra/identity`** · 🌐 · `client.go` medio, `m2m.go` complejo (prov.) · dep. T2.6 · cumple R2.2.d — cerrada en `5a686b8` (`WithReloj` → `WithClock`, E-11; cabeceras corregidas a `@ 9a77307` en `86912f7`)
   - **Ficheros**: `A/iam/infra/identity/{client,m2m}.go`, `…/{client,m2m}_test.go` (con `httptest.Server` que imita identity)
   - **Hecho cuando**: R-I1…R-I9 en comentario y test; `WithReloj` en el M2M (D-F2-6); textos `"iam: …"` literales.
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contratos de iam/infra/identity`
-- [ ] **T2.22 · verde(acceso): `iam/infra/identity/{client,m2m}.go`** · 🌐 · dep. T2.10 · cumple R2.2.d · 2 commits · **Hecho cuando**: verde sin red; un test por promesa (R-I1…R-I9); mutantes sobre la caché y el candado del M2M (R-I3, R-I5) · **Gate**: G-verde
-- [ ] **T2.11 · rojo(acceso): `iam/usecase` (11 ficheros)** · 🌐 · medio (prov.) · dep. T2.6, T2.7, T2.20 · cumple R2.3.a
+- [x] **T2.22 · verde(acceso): `iam/infra/identity/{client,m2m}.go`** · 🌐 · dep. T2.10 · cumple R2.2.d · 2 commits · **Hecho cuando**: verde sin red; un test por promesa (R-I1…R-I9); mutantes sobre la caché y el candado del M2M (R-I3, R-I5) · **Gate**: G-verde — cerrada en `39688bf` (client), `744dd2a` (m2m); 129 PASS, 0 SKIP, `-race -count=30` estable; mutantes del M2M 19 sembrados · 18 muertos · 0 vivos · 1 equivalente (umbral `>`→`>=` de `usableLifetime` con 60 s); cobertura 91,6 % · 95,4 %
+- [x] **T2.11 · rojo(acceso): `iam/usecase` (11 ficheros)** · 🌐 · medio (prov.) · dep. T2.6, T2.7, T2.20 · cumple R2.3.a — cerrada en `803cd77` (config), `0214e6a` (context_token), `79ded5c` (audit) —simples, una pasada (D-R-5)— y rojos `08cced4` (exchange), `4f3d718` (delegated_auth), `cbf703d` (active_tenant), `ff462e6` (roles), `5ad7390` (memberships), `563c7f9` (invitations), `482682e` (canje); 29 pendientes al cerrar el rojo; `grants.go` sin rojo (0 exportados)
   - **Ficheros**: `A/iam/usecase/*.go` y 11 `_test.go` (usan `infra/memory` y dobles propios de identity)
   - **Hecho cuando**: R-U1…R-U33 en los comentarios y una aserción por promesa; los tres invariantes cruzados (R-U18 selector ↔ canje, R-U6 corte, R-U12 mitigación) como tests con nombre propio.
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contrato de iam/usecase/<fichero>` — uno por fichero
-- [ ] **T2.23 · verde(acceso): `iam/usecase/*` (11)** · 🌐 · dep. T2.11 · cumple R2.3.a · 11 commits, en el orden `config`, `grants`, `context_token`, `audit`, `exchange`, `delegated_auth`, `active_tenant`, `roles`, `memberships`, `invitations`, `canje` · **Gate**: G-verde
-- [ ] **T2.16 · Cierre de F2-02** · 🌐 · dep. T2.22, T2.23
+- [x] **T2.23 · verde(acceso): `iam/usecase/*` (11)** · 🌐 · dep. T2.11 · cumple R2.3.a · 11 commits, en el orden `config`, `grants`, `context_token`, `audit`, `exchange`, `delegated_auth`, `active_tenant`, `roles`, `memberships`, `invitations`, `canje` · **Gate**: G-verde — cerrada en `d09ff88` (grants, nace entero), `e32e4b5` (exchange), `fe49dda` (delegated_auth), `505aeac` (active_tenant), `68696d9` (roles), `55a9a67` (memberships), `b743b50` (invitations), `93aeb9d` (canje) + `7295586` (test de la promesa de `Refresh` que el rojo no afirmaba) y `f0d777e` (comentario de `ports/in` con el nombre nuevo); config/context_token/audit llegaron verdes en T2.11; cobertura 87,0–100 % por fichero (informe)
+- [x] **T2.16 · Cierre de F2-02** · 🌐 · dep. T2.22, T2.23
   - **Hecho cuando**: 0 pendientes en los dos paquetes; pendientes de `acceso` anotados; `ci-local` rc=0; `exportados_cubiertos` y `un_fichero_un_test` verdes; 0 SKIP; las tres cosas del cierre; PR.
-  - **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR)
+  - **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR) — cerrada sobre `f0d777e`: `make toolchain` OK (go1.26.5, lint v2.12.2) · `make ci-local` `GATE_RC=0` (103 `ok`, lint 0 issues) · `make vet-pendiente` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` (pendientes de `acceso`: 0; quedan `entitlements/postgres.go`, `infra/postgres`, `transport/http`, `platformadmin`, que aún no existen) · `go test -v ./internal/{modulos,nucleo,arranque,candados}/...` rc=0, 1.852 PASS, **0 SKIP** · `cobertura-ficheros` (informe) 45 evaluados, 1 por debajo (`nucleo/contact/repository_postgres.go`, previo) · `go list -deps ./internal/modulos/acceso/...` sin `internal/{iam,entitlements,platformadmin,gateway,flujos,intake}`
 
 ## Sesión F2-03 · `infra/postgres`, `entitlements/postgres.go`, `transport/http`, `platformadmin` · 🌐 · T2.4, T2.12–T2.15, T2.24–T2.27
 Entrada: PR de F2-02 integrado. Para cuando: 0 pendientes en `acceso` · candados AST verdes · suites compilan contra Postgres · PR.
