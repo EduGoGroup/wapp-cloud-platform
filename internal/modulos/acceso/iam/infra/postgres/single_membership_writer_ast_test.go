@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iampostgres_test
 
 // single_membership_writer_ast_test.go — EL CANDADO DE «UNA SOLA EMPRESA POR USUARIO» (Plan 047 ·

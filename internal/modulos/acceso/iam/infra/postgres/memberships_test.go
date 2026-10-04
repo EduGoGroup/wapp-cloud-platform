@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iampostgres
 
 import (
@@ -179,4 +177,35 @@ func TestGrantTenantAccess_CountFailureStopsBeforeWriting(t *testing.T) {
 	if strings.Contains(err.Error(), "ya es miembro") {
 		t.Errorf("un conteo fallido se tradujo en el rechazo de negocio: %v", err)
 	}
+}
+
+// TestMultiCompanyGranted es el fail-closed invertido de T5.2 (T-11): solo un «sí» sin error del
+// resolver concede; un «no», un error (aunque venga con true) y un resolver nil MANTIENEN el
+// rechazo. Pregunta por multi_empresa del tenant que RECIBE al miembro, y solo por él.
+func TestMultiCompanyGranted(t *testing.T) {
+	errResolver := errors.New("resolver caído (test)")
+	cases := []struct {
+		name     string
+		resolver *recordingResolver
+		want     bool
+	}{
+		{"has_feature_grants", &recordingResolver{has: true}, true},
+		{"lacks_feature_keeps_rejection", &recordingResolver{has: false}, false},
+		{"resolver_error_keeps_rejection", &recordingResolver{has: true, err: errResolver}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := multiCompanyGranted(t.Context(), c.resolver, testTenantID); got != c.want {
+				t.Errorf("multiCompanyGranted = %v; quiere %v", got, c.want)
+			}
+			if want := []string{testTenantID + "/multi_empresa"}; !slices.Equal(c.resolver.asked, want) {
+				t.Errorf("preguntó por %v; quiere %v", c.resolver.asked, want)
+			}
+		})
+	}
+	t.Run("nil_resolver_keeps_rejection", func(t *testing.T) {
+		if multiCompanyGranted(t.Context(), nil, testTenantID) {
+			t.Error("multiCompanyGranted con resolver nil concedió multi_empresa")
+		}
+	})
 }
