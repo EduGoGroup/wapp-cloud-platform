@@ -340,6 +340,23 @@ func TestPostgres_GetBundle_ReadFails(t *testing.T) {
 	}
 }
 
+// TestPostgres_GetBundle_RowDoesNotScan: una fila que no se puede leer entera (aquí, un
+// vencimiento que no es un instante) es un fallo de la lectura, y el Record vuelve VACÍO aunque
+// las primeras columnas ya se hubieran leído.
+func TestPostgres_GetBundle_RowDoesNotScan(t *testing.T) {
+	row := []driver.Value{"session-1", "user-1", requestedAt, "no-es-un-instante", "ready", nil, nil, nil, nil}
+	rec, seen, err := getBundle(t, reply{row: row})
+	if err == nil || !strings.HasPrefix(err.Error(), "diagnostics: leer bundle: ") {
+		t.Fatalf("err = %v, quería un error con el prefijo \"diagnostics: leer bundle: \"", err)
+	}
+	if rec != (Record{}) {
+		t.Errorf("GetBundle con una fila ilegible devolvió %+v, quería el Record vacío", rec)
+	}
+	if len(seen) != 1 {
+		t.Errorf("llegaron %d sentencias, quería 1 (no borra nada)", len(seen))
+	}
+}
+
 // TestPostgres_GetBundle_LazyDeleteFails: son dos sentencias sin transacción; si el borrado de
 // la vencida falla, sale ESE error, no ErrExpired.
 func TestPostgres_GetBundle_LazyDeleteFails(t *testing.T) {
