@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package enroll_test
 
 // Los tests de enroll.Service: el orden de sus dos escrituras (sin transacción) y qué pasa en
