@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -73,6 +74,23 @@ func caseCreateRequestIdempotent(t *testing.T, m Montaje) {
 	again := findRequest(t, m, "pending", user)
 	if again.ID != first.ID || again.Email != "ana@x.com" || again.Origin != "bff" {
 		t.Fatalf("la pendiente cambió: %+v, quiero la primera %+v sin tocar", *again, *first)
+	}
+}
+
+// caseListRequestsOrder fija que el orden lo pone created_at y no el orden de alta: la segunda
+// solicitud se deja con una fecha anterior a la primera y tiene que listarse antes. Sin esto, un
+// listado sin ordenar pasa, porque el orden físico de inserción coincide con el de creación
+// (mutante vivo de F2-05).
+func caseListRequestsOrder(t *testing.T, m Montaje) {
+	first, second := newUser(), newUser()
+	mustCreateRequest(t, m, first, "primera@x.com", "bff")
+	mustCreateRequest(t, m, second, "segunda@x.com", "bff")
+	r1 := findRequest(t, m, "pending", first)
+	r2 := findRequest(t, m, "pending", second)
+	m.State.SetRequestCreatedAt(t, r2.ID, r1.CreatedAt.Add(-time.Hour))
+	pending := listRequests(t, m, "pending")
+	if indexOfUser(pending, second) > indexOfUser(pending, first) {
+		t.Fatal("pending: la solicitud con created_at anterior se lista antes, aunque se diera de alta después")
 	}
 }
 
