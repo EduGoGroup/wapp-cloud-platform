@@ -74,6 +74,10 @@ type State interface {
 	SeedFleetSession(t *testing.T, tenantID, edgeID, sessionID string, lastSeenAt *time.Time)
 	// SeedLease siembra el lease del edge edgeID de la empresa tenantID, revocado o no.
 	SeedLease(t *testing.T, tenantID, edgeID string, revoked bool)
+	// SeedMembership hace a userID miembro de tenantID con esos roles EN esa empresa, sin pasar
+	// por la regla de una sola empresa (es una siembra: deja a una persona en dos empresas, que
+	// el puerto solo permite con multi_empresa). Repetirla no duplica nada.
+	SeedMembership(t *testing.T, userID, tenantID string, roleIDs ...string)
 	// Request devuelve la fila completa de la solicitud requestID; falla el test si no existe.
 	Request(t *testing.T, requestID string) RequestRow
 	// Access devuelve si userID es miembro de tenantID y los ids de los roles que tiene EN esa
@@ -156,6 +160,7 @@ func cases() []contractCase {
 		{"ExecuteApprovalTx_OtherCompany_ErrConflictNothingWritten", caseApproveOtherCompany},
 		{"ExecuteApprovalTx_SameCompanyAgain_Converges", caseApproveSameCompanyAgain},
 		{"CheckRetryApproved_SameRole_DifferentRole_OtherTenant", caseCheckRetry}, // R-A6
+		{"CheckRetryApproved_RoleHeldInAnotherCompany_Mismatch", caseCheckRetryRoleScoped},
 	}
 }
 
@@ -368,6 +373,7 @@ func caseListInstallations(t *testing.T, m Montaje) {
 	m.State.SeedFleetSession(t, m.TenantA, "edge-c", "s1", nil)
 	m.State.SeedLease(t, m.TenantA, "edge-c", false)
 	m.State.SeedFleetSession(t, m.TenantB, "edge-a", "s9", &late) // otra empresa, mismo edge_id
+	m.State.SeedLease(t, m.TenantB, "edge-a", true)               // su lease revocado no es el de A
 	got, err := m.Tenants.ListInstallations(bg(), m.TenantA)
 	if err != nil {
 		t.Fatalf("ListInstallations: %v", err)
@@ -698,6 +704,21 @@ func caseCheckRetry(t *testing.T, m Montaje) {
 	// Solo lee: el rol pedido en el reintento NO se escribe.
 	assertAccess(t, m, user, m.TenantA, true, m.RoleA.ID)
 	assertAccess(t, m, user, m.TenantB, false)
+}
+
+// El rol del reintento se mira EN la empresa de la solicitud: tener ese rol en OTRA empresa no
+// hace converger (iam_user_roles es por empresa desde la 0060).
+func caseCheckRetryRoleScoped(t *testing.T, m Montaje) {
+	user := newUser()
+	mustApprove(t, m, user, m.TenantA, m.RoleA.ID)
+	m.State.SeedMembership(t, user, m.TenantB, m.RoleB.ID)
+	assertAccess(t, m, user, m.TenantB, true, m.RoleB.ID)
+	if err := m.Requests.CheckRetryApproved(bg(), user, m.TenantA, m.RoleB.ID); !errors.Is(err, platformadmin.ErrRetryRoleMismatch) {
+		t.Fatalf("reintento en A con el rol que tiene en B = %v, quiero ErrRetryRoleMismatch", err)
+	}
+	if err := m.Requests.CheckRetryApproved(bg(), user, m.TenantB, m.RoleB.ID); err != nil {
+		t.Fatalf("reintento en B con su rol de B = %v, quiero nil", err)
+	}
 }
 
 // ── ayudas ───────────────────────────────────────────────────────────────────────────────────

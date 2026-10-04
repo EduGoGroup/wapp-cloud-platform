@@ -472,6 +472,27 @@ func (f *Fake) SeedLease(t *testing.T, tenantID, edgeID string, revoked bool) {
 	f.leases[edgeKey{tenantID, edgeID}] = revoked
 }
 
+// SeedMembership implementa State. Falla el test si la empresa o algún rol no existen.
+func (f *Fake) SeedMembership(t *testing.T, userID, tenantID string, roleIDs ...string) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.tenants[tenantID]; !ok {
+		t.Fatalf("Fake.SeedMembership: la empresa %s no existe", tenantID)
+	}
+	k := accessKey{userID, tenantID}
+	f.members[k] = true
+	for _, roleID := range roleIDs {
+		if !slices.ContainsFunc(f.roles, func(r Role) bool { return r.ID == roleID }) {
+			t.Fatalf("Fake.SeedMembership: el rol %s no existe", roleID)
+		}
+		if !slices.Contains(f.userRoles[k], roleID) {
+			f.userRoles[k] = append(f.userRoles[k], roleID)
+		}
+	}
+	slices.Sort(f.userRoles[k])
+}
+
 // Request implementa State: devuelve una COPIA de la fila.
 func (f *Fake) Request(t *testing.T, requestID string) RequestRow {
 	t.Helper()
