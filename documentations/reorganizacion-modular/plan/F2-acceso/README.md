@@ -1,6 +1,7 @@
 # F2 · `acceso` — IAM, derechos comerciales y operador de plataforma
 
-> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`).
+> **Estado: en curso** desde el 2026-10-04 (sesión F2-01 🌐, arranque sobre `dev` @ `9a77307`; inventario E-12 aprobado por
+> Jhoan el 2026-10-04, [`diseno.md`](diseno.md) §1.1). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común (no se repite aquí): [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md). Patrones heredados de
@@ -35,6 +36,15 @@
 | E4 | El código viejo de referencia no cambió desde esta spec | `git log --oneline 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` vacío; si no, se relee [`diseno.md`](diseno.md) §E-8 |
 | E5 | `dev` verde con la toolchain fijada | skill `validar-antes-de-cerrar` |
 | E6 | Los ajustes de código previos a F2 (sesión F1-06: P2 en `Makefile` e `internal/candados`, marca de `Estado` de P4) y el cierre de F9-B (sesión F9-04) están en `dev` | `ESTADO.md` y los `[x]` con SHA de esas sesiones |
+
+**Comprobadas en T2.1 (2026-10-04, `dev` @ `9a77307`)**: E1 ✔ (`internal/{arranque,apipublica,pendiente,candados}` existen;
+`test-pendiente` y `cobertura-ficheros` en el `Makefile`) · E2 ✔ (`platform/httpapi` no importa `iam`: la única mención es un
+comentario, `audit_mw.go:31`) · E3 ✔ (parada de F1 resuelta el 2026-10-03, `informe-piloto.md` §10) · E4 ✔ con matiz: `git diff
+1b18932 origin/dev -- internal/{iam,entitlements,platformadmin}` solo trae los dos ✎ de F0 (`dd1e2bd`, +3 líneas en
+`membresia_unica_ast_test.go`; `b65b788`, el alias de `AuditInput` en `ports/in/usecases.go`), previstos; `git log` lista además
+`8096232` porque el clon es superficial y ese commit es su raíz, no porque cambie el código · E5 ✔ (go1.26.5, lint v2.12.2) ·
+E6 ✔ (F1-06 y F9-04 en `ESTADO.md`). **D-F4-1** verificada: `grep -c SkipDir internal/iam/infra/postgres/membresia_unica_ast_test.go`
+→ 1 y `dd1e2bd` en `origin/dev`. **D-F2-\***: 1, 3, 4, 5, 6 y 8 = sí (2026-09-30); 2 ⊂ D-F4-1 (sí); 7 ⊂ D-F9-1 (sí).
 
 ## Salidas (es cierto al cerrar)
 

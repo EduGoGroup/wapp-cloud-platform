@@ -10,7 +10,10 @@
 > de verde (**G-verde**): `GOWORK=off go test -race ./<paquete>/ > "$TMPDIR/t.log" 2>&1; echo rc=$? >> "$TMPDIR/t.log"; tail -1 "$TMPDIR/t.log"` → `rc=0`,
 > 0 SKIP · un test por promesa del contrato · `make cobertura-ficheros` como **informe** (la tabla va al PR; no bloquea).
 >
-> **Niveles (`05` E-12)**: los fija el inventario de T2.1; los de aquí son **provisionales** ([`diseno.md`](diseno.md) §1.1).
+> **Niveles (`05` E-12)**: los fija el inventario de T2.1, **aprobado por Jhoan el 2026-10-04** ([`diseno.md`](diseno.md) §1.1,
+> definitivo). Cambian respecto a lo provisional: `iam/infra/memory` (T2.9) **simple**, nace completo (P1; T2.20 solo pasa el
+> gate) · `iam/usecase/{config,audit,context_token}.go` (T2.11) **simple** · `iam/infra/postgres/postgres.go` (T2.12) **simple**
+> y sus 5 adaptadores sin Tx más `platformadmin/postgres.go` (T2.15) **medio** (P2) · `iam/domain` los 4 **simples** (P4).
 > Las tareas conservan su número. En un paquete **simple**, la tarea «contrato» trae contrato, test y lógica en una
 > pasada (commit `verde(acceso): …`) y su tarea «verde» solo pasa el gate. En **medio**, rojo y verde por fichero,
 > agrupados por paquete. En **complejo**, el esquema completo E-2…E-9 con mutantes donde haga falta. Si un fichero sale
@@ -43,7 +46,7 @@ Para cuando: inventario aprobado por Jhoan · `auth.go` partido con la huella in
     - `auth_roleplane.go`: `rolePlane`, `buildRolePlane`;
     - `auth_invitaciones.go`: `buildInvitationRedeem`;
     - `auth_empresa_activa.go`: `buildActiveTenantPlane`;
-    - se borra `internal/arranque/auth.go`; `invitaciones_cableado_test.go:33` pasa a parsear `auth_invitaciones.go` (el candado lee el fichero **por nombre**: sin este cambio falla ruidoso); el comentario de `es256_key_test.go:229` nombra `auth_jwt.go`. Si algún símbolo no está en esta lista, va con el que lo usa y se dice en el commit.
+    - se borra `internal/arranque/auth.go`; `invitaciones_cableado_test.go:33` pasa a parsear ~~`auth_invitaciones.go`~~ **`auth_roleplane.go`** (✎ T2.1, P3 de Jhoan, 2026-10-04: la llamada que busca, `iamusecase.NewInvitationService`, vive en `buildRolePlane`, no en `buildInvitationRedeem`) (el candado lee el fichero **por nombre**: sin este cambio falla ruidoso); el comentario de `es256_key_test.go:229` nombra `auth_jwt.go`. Si algún símbolo no está en esta lista, va con el que lo usa y se dice en el commit.
   - **Cómo**: solo **mover** declaraciones, sin cambiar un byte de ninguna (comentarios incluidos); imports por fichero con `goimports`; cabecera de cada fichero `// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: <tema>.`
   - **Hecho cuando**: el multiconjunto de declaraciones de primer nivel (texto de `go/printer`, con su comentario) de los seis ficheros es **igual** al de `auth.go` antes del corte; ningún fichero nuevo pasa de 300 líneas; `go test -run '^TestHuella' ./internal/arranque/ ./internal/bootstrap/arranque/` → rc=0 (huella idéntica a la dorada); `go test -race -v ./internal/arranque/...` → rc=0, 0 SKIP; `git diff --stat -- internal/bootstrap cmd/server` vacío.
   - **Gate**: gate ci-local en un *worktree* limpio de **ruta fija** (contradicción 21 de F0) → `GATE_RC=0`
