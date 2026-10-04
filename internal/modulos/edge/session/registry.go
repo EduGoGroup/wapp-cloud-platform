@@ -12,11 +12,12 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
@@ -56,6 +57,11 @@ var ErrPushTimeout = errors.New("timeout empujando comando al Edge")
 // viajar al Edge DESPUÉS de que el llamante haya recibido su error.
 var ErrPushAbandoned = errors.New("el llamante se rindió empujando el comando al Edge")
 
+// defaultSendTimeout acota cada Send hacia un Edge cuando no se configura otro con
+// WithSendTimeout. 10s es holgado para un stream sano y a la vez desatasca al
+// llamante si el Edge dejó de leer (control de flujo gRPC).
+const defaultSendTimeout = 10 * time.Second
+
 // Sender es el contrato mínimo que el Registry necesita para empujar mensajes
 // hacia un Edge. DEBE ser seguro para Send concurrente: un stream gRPC crudo NO
 // lo es (grpc-go prohíbe SendMsg concurrente sobre el mismo stream), así que el
@@ -70,7 +76,17 @@ type Sender interface {
 // Registry es el registro concurrente de sesiones online, indexadas por
 // session_id. Es seguro para uso concurrente. El valor cero NO es utilizable:
 // se construye con NewRegistry.
-type Registry struct{}
+type Registry struct {
+	mu          sync.Mutex
+	sessions    map[string]*liveSession
+	sendTimeout time.Duration
+}
+
+// liveSession asocia un session_id a su Sender. No serializa: la seguridad de
+// concurrencia del Send es responsabilidad del Sender (ver el contrato de Sender).
+type liveSession struct {
+	sender Sender
+}
 
 // RegistryOption configura el Registry al construirlo (functional-options).
 type RegistryOption func(*Registry)
@@ -78,7 +94,7 @@ type RegistryOption func(*Registry)
 // WithSendTimeout fija el deadline de cada Send hacia un Edge (Plan 027 · Ola 1 ·
 // T5, cierra H6). Un valor <=0 se ignora y cae al plazo por defecto (10 s).
 func WithSendTimeout(d time.Duration) RegistryOption {
-	panic(pendiente.Implementar("session.WithSendTimeout"))
+	return func(r *Registry) { r.sendTimeout = d }
 }
 
 // NewRegistry construye un Registry vacío listo para usar: ninguna sesión online,
@@ -86,7 +102,14 @@ func WithSendTimeout(d time.Duration) RegistryOption {
 // por defecto, 10 s: holgado para un stream sano y a la vez desatasca al llamante
 // si el Edge dejó de leer (control de flujo gRPC).
 func NewRegistry(opts ...RegistryOption) *Registry {
-	panic(pendiente.Implementar("session.NewRegistry"))
+	r := &Registry{sessions: make(map[string]*liveSession)}
+	for _, opt := range opts {
+		opt(r)
+	}
+	if r.sendTimeout <= 0 {
+		r.sendTimeout = defaultSendTimeout
+	}
+	return r
 }
 
 // Register asocia un Sender a la sesión dada y devuelve una función release que
@@ -96,7 +119,19 @@ func NewRegistry(opts ...RegistryOption) *Registry {
 // por esta llamada (se compara la identidad de la entrada), de modo que el
 // release de una sesión ya reemplazada es un no-op seguro e idempotente.
 func (r *Registry) Register(sessionID string, s Sender) (release func()) {
-	panic(pendiente.Implementar("session.Registry.Register"))
+	ls := &liveSession{sender: s}
+
+	r.mu.Lock()
+	r.sessions[sessionID] = ls
+	r.mu.Unlock()
+
+	return func() {
+		r.mu.Lock()
+		if r.sessions[sessionID] == ls {
+			delete(r.sessions, sessionID)
+		}
+		r.mu.Unlock()
+	}
 }
 
 // Push envía un comando hacia el Edge de la sesión dada, ACOTADO por DOS relojes
@@ -132,7 +167,15 @@ func (r *Registry) Register(sessionID string, s Sender) (release func()) {
 // ⚠️ Cancelar el ctx NO desbloquea el stream.Send de gRPC, y esta función no lo
 // promete (Enmienda 1, regla 1). El detalle está en BoundedSend.
 func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.CloudToEdge) error {
-	panic(pendiente.Implementar("session.Registry.Push"))
+	r.mu.Lock()
+	ls := r.sessions[sessionID]
+	r.mu.Unlock()
+
+	if ls == nil {
+		return fmt.Errorf("%w: %q", ErrSessionOffline, sessionID)
+	}
+
+	return BoundedSend(ctx, ls.sender, msg, r.sendTimeout, sessionID)
 }
 
 // SendTimeout expone el plazo propio del Registry —el que cablea
@@ -143,9 +186,7 @@ func (r *Registry) Push(ctx context.Context, sessionID string, msg *cloudlinkv1.
 // WAPP_GRPC_PUSH_TIMEOUT y la mitad de los envíos seguiría con el viejo, sin dar
 // error. INV-050.6 dice que ese timeout no se toca; esto es lo que hace que siga
 // valiendo cuando hay dos caminos de escritura y no uno.
-func (r *Registry) SendTimeout() time.Duration {
-	panic(pendiente.Implementar("session.Registry.SendTimeout"))
-}
+func (r *Registry) SendTimeout() time.Duration { return r.sendTimeout }
 
 // BoundedSend (en el paquete viejo, SendAcotado) escribe msg en el Sender dado bajo
 // los DOS RELOJES de Push —el ctx del llamante y un plazo propio— y es la ÚNICA
@@ -183,15 +224,31 @@ func (r *Registry) SendTimeout() time.Duration {
 // igual que sobrevive a la salida por timer. Lo que el ctx compra es que el LLAMANTE
 // deje de esperar, no que el envío se cancele (Enmienda 1, regla 1).
 func BoundedSend(ctx context.Context, s Sender, msg *cloudlinkv1.CloudToEdge, timeout time.Duration, target string) error {
-	panic(pendiente.Implementar("session.BoundedSend"))
+	done := make(chan error, 1)
+	go func() { done <- s.Send(msg) }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %q: %w", ErrPushAbandoned, target, ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("%w: %q", ErrPushTimeout, target)
+	}
 }
 
 // Online indica si hay un stream vivo para la sesión dada.
 func (r *Registry) Online(sessionID string) bool {
-	panic(pendiente.Implementar("session.Registry.Online"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.sessions[sessionID]
+	return ok
 }
 
 // Count devuelve el número de sesiones online.
 func (r *Registry) Count() int {
-	panic(pendiente.Implementar("session.Registry.Count"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.sessions)
 }
