@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package enroll_test
 
 // Los tests del rpc EnrollEdge, por bufconn (en memoria, sin red): los códigos gRPC y los textos
