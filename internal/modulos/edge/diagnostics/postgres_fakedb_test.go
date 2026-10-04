@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package diagnostics
 
 // El driver de database/sql de mentira sobre el que corren los tests del adaptador: apunta cada
