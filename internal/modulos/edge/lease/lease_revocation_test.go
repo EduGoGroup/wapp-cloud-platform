@@ -231,9 +231,9 @@ func TestSignTenantRevocation_SignsWithoutPersisting(t *testing.T) {
 func TestIssue_ReadFailure_FailsClosed(t *testing.T) {
 	cause := errors.New("base caída")
 	failures := []struct {
-		name   string
+		name      string
 		breakRepo func(r *spyRepo)
-		prefix string
+		prefix    string
 	}{
 		{"tenant read fails", func(r *spyRepo) { r.errTenantRevoked = cause }, "lease: decidir corte por tenant: "},
 		{"edge read fails", func(r *spyRepo) { r.errGet = cause }, "lease: consultar estado previo: "},

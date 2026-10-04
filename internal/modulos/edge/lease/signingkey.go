@@ -4,8 +4,13 @@ package lease
 
 import (
 	"crypto/ed25519"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"os"
 )
 
 // KeySource describe de dónde salió la clave de firma resuelta, para que el
@@ -26,7 +31,11 @@ const (
 // Cada llamada devuelve una clave DISTINTA: no hay ninguna clave fija ni por
 // defecto en el código.
 func GenerateDevKey() (ed25519.PrivateKey, error) {
-	panic(pendiente.Implementar("lease.GenerateDevKey"))
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("lease: generar clave de dev: %w", err)
+	}
+	return priv, nil
 }
 
 // ParsePrivateKeyBase64 decodifica una clave privada Ed25519 desde base64
@@ -35,7 +44,18 @@ func GenerateDevKey() (ed25519.PrivateKey, error) {
 // da "lease: base64 de clave inválido: …"; cualquier otro tamaño (incluida la
 // cadena vacía), "lease: tamaño de clave Ed25519 inesperado: N bytes".
 func ParsePrivateKeyBase64(s string) (ed25519.PrivateKey, error) {
-	panic(pendiente.Implementar("lease.ParsePrivateKeyBase64"))
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("lease: base64 de clave inválido: %w", err)
+	}
+	switch len(raw) {
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(raw), nil
+	case ed25519.PrivateKeySize:
+		return ed25519.PrivateKey(raw), nil
+	default:
+		return nil, fmt.Errorf("lease: tamaño de clave Ed25519 inesperado: %d bytes", len(raw))
+	}
 }
 
 // LoadPrivateKeyPEM carga una clave privada Ed25519 desde un archivo PEM PKCS#8.
@@ -43,7 +63,23 @@ func ParsePrivateKeyBase64(s string) (ed25519.PrivateKey, error) {
 // ("… no es PEM válido"), no es PKCS#8 ("lease: parsear clave PKCS#8: …") o es
 // PKCS#8 de otro algoritmo ("lease: la clave PEM no es Ed25519").
 func LoadPrivateKeyPEM(path string) (ed25519.PrivateKey, error) {
-	panic(pendiente.Implementar("lease.LoadPrivateKeyPEM"))
+	data, err := os.ReadFile(path) // #nosec G304 -- ruta provista por la config de confianza del operador
+	if err != nil {
+		return nil, fmt.Errorf("lease: leer clave PEM %q: %w", path, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("lease: %q no es PEM válido", path)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("lease: parsear clave PKCS#8: %w", err)
+	}
+	priv, ok := key.(ed25519.PrivateKey)
+	if !ok {
+		return nil, errors.New("lease: la clave PEM no es Ed25519")
+	}
+	return priv, nil
 }
 
 // ResolveSigningKey resuelve la clave de firma del lease con precedencia
@@ -63,5 +99,15 @@ func LoadPrivateKeyPEM(path string) (ed25519.PrivateKey, error) {
 //   - si la fuente elegida falla, devuelve el error CON su fuente, y no cae a
 //     la siguiente: un fichero ilegible no degrada a base64 ni a efímera.
 func ResolveSigningKey(pemFile, base64Key string) (ed25519.PrivateKey, KeySource, error) {
-	panic(pendiente.Implementar("lease.ResolveSigningKey"))
+	switch {
+	case pemFile != "":
+		priv, err := LoadPrivateKeyPEM(pemFile)
+		return priv, KeySourceFile, err
+	case base64Key != "":
+		priv, err := ParsePrivateKeyBase64(base64Key)
+		return priv, KeySourceBase64, err
+	default:
+		priv, err := GenerateDevKey()
+		return priv, KeySourceGenerated, err
+	}
 }

@@ -38,7 +38,7 @@ type spyRepo struct {
 	upserts, markRevokeds, gets            atomic.Int64
 	tenantReads, tenantMarks, tenantResets atomic.Int64
 
-	errUpsert, errMarkRevoked, errGet                error
+	errUpsert, errMarkRevoked, errGet                 error
 	errTenantRevoked, errMarkTenant, errRestoreTenant error
 }
 

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package lease_test
 
 // Los tests de la resolución de la clave de firma del lease. Todas las claves se generan en el
@@ -200,8 +198,10 @@ func TestResolveSigningKey_ConfiguredIsStable_GeneratedIsNot(t *testing.T) {
 	pemPath := writeEd25519PEM(t, priv)
 
 	for name, resolve := range map[string]func() (ed25519.PrivateKey, lease.KeySource, error){
-		"file":   func() (ed25519.PrivateKey, lease.KeySource, error) { return lease.ResolveSigningKey(pemPath, "") },
-		"base64": func() (ed25519.PrivateKey, lease.KeySource, error) { return lease.ResolveSigningKey("", seedBase64(priv)) },
+		"file": func() (ed25519.PrivateKey, lease.KeySource, error) { return lease.ResolveSigningKey(pemPath, "") },
+		"base64": func() (ed25519.PrivateKey, lease.KeySource, error) {
+			return lease.ResolveSigningKey("", seedBase64(priv))
+		},
 	} {
 		first, _, err1 := resolve()
 		second, _, err2 := resolve()
