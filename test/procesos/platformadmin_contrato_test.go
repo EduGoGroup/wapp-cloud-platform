@@ -190,7 +190,11 @@ func (s *paState) SetRequestCreatedAt(t *testing.T, requestID string, at time.Ti
 	if err != nil {
 		t.Fatalf("cambiar el created_at de la solicitud %s: %v", requestID, err)
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("contar las filas de la solicitud %s: %v", requestID, err)
+	}
+	if n != 1 {
 		t.Fatalf("la solicitud %s no existe", requestID)
 	}
 }
