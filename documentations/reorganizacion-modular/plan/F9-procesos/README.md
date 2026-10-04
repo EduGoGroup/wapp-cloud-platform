@@ -4,7 +4,10 @@
 > día en local): `make test-procesos` da `RC=0 · PASS=146 · SKIP=0 · FAIL=0` por binario (`CUENTA=3`: 438), con **una intermitencia
 > conocida en `TestP0_Arranque/sin_errores`, diferida a F6** (contradicción 19; decisión de Jhoan, 2026-10-01).
 > ✅ **Bloque B1 hecho** (F9-03 💻, 2026-10-03, rama `reorg/f9-b1`): P1, P2, P3 y P9 dan `RC=0 · PASS=287 · SKIP=0 · FAIL=0` por binario
-> (suite entera, dos pasadas) y **el mutante `maxTxAttempts = 1` cae** en los dos binarios; hallazgos 31–43, abajo. B2, C y D sin empezar.
+> (suite entera, dos pasadas) y **el mutante `maxTxAttempts = 1` cae** en los dos binarios; hallazgos 31–43, abajo.
+> ✅ **Bloque B2 hecho** (F9-04 💻, 2026-10-03, rama `reorg/f9-b2`): P4–P8 y P10, más T9.22 (`nucleo`); la suite entera (P0–P10) da
+> `RC=0 · PASS=537 · SKIP=0 · FAIL=0` por binario y **ningún rojo solo contra el nuevo**; hallazgos 44–61, abajo. 🔴 La rotación real de KEK
+> no cabe en el arnés (hallazgo 57). C (salvo T9.22) y D sin empezar.
 > Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`.
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3): B1–D pasan a
 > **solo local** (💻) y entran los hallazgos 35–41 del [piloto F1](../F1-nucleo-contact/README.md).
@@ -89,7 +92,7 @@ marca **🕐** en [`tareas.md`](tareas.md).
 |---|---|---|---|---|
 | **A · arnés** ✅ | F9-01, F9-02 | 🌐→💻 | T9.1–T9.12 | P0 verde contra los dos binarios en local; `ci-local` rc=0 con el candado |
 | **B1 · procesos de plataforma y acceso** ✅ | F9-03 | 💻 | T9.13–T9.16 (P1, P2, P3 con el reintento de `WithTx`, P9) | Los cuatro verdes contra el viejo (y corridos contra el nuevo); el mutante `maxTxAttempts = 1` cae |
-| **B2 · procesos de negocio** | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
+| **B2 · procesos de negocio** ✅ | F9-04 | 💻 | T9.17–T9.21 (P4–P8, doble CRM), T9.35 (P10) y T9.22 (`nucleo`) | B1 + B2 verdes contra el viejo y el nuevo. De ella depende F2-01 |
 | **C · pasada por conmutación** 🕐 | el cierre local de cada módulo (F2…F8) | 💻 | T9.23–T9.29, **una por módulo** | Suites del módulo contra Postgres + suite entera contra el nuevo + test de cableado completo |
 | **D · cierre** | F9-05 | 💻 | T9.30–T9.33 | `-count=3` limpio contra los dos; recuento contra el código; docs al día |
 
@@ -596,3 +599,135 @@ La numeración global de sesiones (`S0n`) vive en [`../sesiones/`](../sesiones/R
     repite. (c) Los *worktrees* de los sub-agentes nacieron en `2da10b4` (`main`), como avisa T-17; se fijaron en
     `25052d1` antes de medir y se borraron antes de `make test-pendiente`. (d) `p2_canje_test.go` (496),
     `p3_entrante_test.go` (492) y `p9_diagnostico_config_push_test.go` (498) quedan al borde de las 500 líneas.
+
+### Hallazgos de la sesión F9-04 (2026-10-03, bloque B2, rama `reorg/f9-b2` desde `dev` @ `7b092d5`)
+
+> Medidos al escribir P4–P8 y P10 (`49d6d9e` y `39c38be`, `56b99f6`, `2bb7989`, `0a2762d`, `9da68f7`, `e3fc0de`). Son
+> **hechos**; lo que pide una decisión se dice y **no se decide aquí**. **Ningún proceso dio rojo solo contra el nuevo**
+> (R9.4.c): no hay hallazgo de reconstrucción en este bloque. Todo lo que sigue es igual en los dos binarios.
+
+44. **P8 y P6: sobre una solicitud aprobada el re-análisis NO se rechaza.** `diseno.md` §4 P8 dice «sobre una aprobada →
+    rechazo». Medido: tras `PUT …/items` y `POST …/approve` (`confirmed`), `POST …/reanalyze` contesta **200** y añade
+    una revisión `interpreted`/`owner`; la solicitud sigue `confirmed` con su importe y al cliente no le llega nada. Con
+    puente CRM activo, esa revisión **se entrega al CRM** con `lifecycle_status: confirmed` (P6). Sobre una `rejected`,
+    igual: 200 y revisión nueva. `internal/intakes/reanalisis.go` lo dice expresamente: no se filtra por estado. Los dos
+    procesos fijan la conducta del viejo; si es la deseada lo decide Jhoan.
+45. **P5 y P8: ningún borrador del pipeline es descartable.** `POST /api/v1/intakes/discard` sobre `pending_approval`,
+    `confirmed` o `needs_info` contesta 200 con `skipped: not_open` y no toca nada: el descarte solo procede desde `open`
+    (el carrito numérico) y desde el `expired` legado (`internal/intakes/status.go`, mapa `discardable`), y desde
+    `pending_approval` no hay transición a ninguno. `diseno.md` §4 P5 lista el descarte «sobre un borrador de P4». P5
+    fuerza `expired` por SQL (`p5ForceLegacyExpired`) para recorrer el descarte de verdad (evento vivo → `live_event`;
+    evento cancelado → descartada; repetido → `already_discarded`). El descarte desde `open` queda **sin cubrir**.
+46. **P4 y P5: un borrador recién nacido tiene `intake_items` a 0 y no se puede aprobar ni cotizar.** Las líneas casadas
+    con el catálogo viven en `revisions[0].payload.lines`; `GET /api/v1/intakes/{id}` devuelve `items: []` y `total: 0`.
+    `approve` da 400 `lines_without_price` y `quote-suggestion` 400 «no tiene líneas que cotizar» hasta un
+    `PUT …/items`. La línea `_shipping` no se materializa nunca en `intake_items`. `diseno.md` lista `intake_items` entre
+    lo que deja P4 y no dice lo del `PUT` previo.
+47. **P4: sin evento vivo no hay ventana.** Además de lo que dice el paso 1 del diseño, hace falta un flujo publicado y un
+    disparo `event_start` con `event_kind`; un primer mensaje que no casa recibe solo la bienvenida. El plan elegido es
+    `advisor_ai_local` (migración `0074`; el de por defecto del arnés): trae `llm_intake`, `cart_basic` y
+    `catalog_import`, y no `api_llm`. Sin catálogo de intenciones publicado no se pide P1; todas las inferencias llevan
+    `class=lote` y techos 512/512/1024 (T-8 confirmada).
+48. **El guion reconoce la etapa por un marcador del prompt, no por `max_output_tokens`** (decisión de T9.17, escrita en
+    el comentario de `guion_test.go`): P2 y P3 comparten techo (512), el techo se puede apagar por configuración y
+    entonces viaja ausente, y el texto de la plantilla es ajustable (`WAPP_LLM_PROMPTS_DIR`) pero el rótulo del
+    constructor `Build…PromptCon` no. Gana el marcador que aparece **antes** (el rótulo precede al texto del cliente).
+    Para probarlo con los constructores reales, `test/procesos` importa `github.com/EduGoGroup/wapp-shared/llm`
+    (`TestProcessImports` pasa: no es `internal/`).
+49. **P4: una segunda ventana sobre el mismo evento vuelve a correr el pipeline entero** (5 inferencias, sobre todo el
+    hilo) y deja la **revisión 2 `interpreted` de `system` en la misma solicitud**, sin otra fila en `intakes`. Y el
+    servidor acepta un `ts_unix` de hace meses sin objeción y lo usa como base de fechas.
+50. **P4: lo que queda en claro.** `intake_jobs.artifacts` conserva las `evidence` (subcadenas literales del cliente),
+    productos y notas tras `done`; INV-13 solo vacía el trío `source_text_*`. El payload de `intake_revisions` no lleva
+    `source_text` ni `evidence` (van cifrados en `literal_*`), pero sí `label` y `customization` con palabras del
+    cliente. Y el servidor escribe los `wa_message_id` en el log a INFO. Si alguno es deuda, lo decide Jhoan.
+51. **P4: el comentario de `ventanaInmediata` (`fixtures_test.go`) no se cumple al pie.** Los plazos se leen en cada
+    barrido, no al abrir: con 0/0 puesto de antemano, un barrido a media ráfaga la parte en dos jobs. El helper de P4
+    retiene la ventana (3600 s) mientras manda y la suelta después. Y el orden de una ráfaga mandada de golpe no está
+    garantizado (cada entrante va en su goroutine): se manda mensaje a mensaje. El comentario del fixture sigue como
+    estaba.
+52. **P5: desajustes menores con `diseno.md`.** (a) `quote-suggestion` solo llama al modelo si la empresa ya tiene una
+    cotización aprobada (o semilla `quote_style_examples`); sin historial contesta el texto determinista con
+    `fallback_reason: sin_ejemplos` y cero inferencias: el retardo de 12 s de T-12 solo se ejercita **después** de una
+    aprobación (medido: 200 a los ~12,0 s, `source: llm`). (b) `intakes_export` está en los seis planes sembrados y
+    ninguna ruta cambia el plan ni escribe `tenant_features`: la empresa sin la feature se consigue con un override por
+    SQL. (c) Aprobar no cierra el evento conversacional (sigue `open`) y sin CRM no encola nada. (d) De 8 aprobaciones
+    simultáneas gana una (200) y las otras contestan 409 **o** 422; el test acepta ambos y el reparto no se midió.
+    (e) `summary.json` suma en `revenue` también la solicitud descartada. (f) `GET /api/v1/conversation-events` sin
+    filtros devolvió `events: []` con cuatro eventos `cart` en `open` (visto en la exploración, **sin afirmar** en el
+    test). **Mutante de INV-1** (copia desechable de `internal/intakes/approve.go`: re-aprobar una `confirmed` repite los
+    efectos): `TestP5_AprobarDosVecesUnSoloEfecto` cae en `dos_veces`, `simultaneas` y `cierre`; medido solo contra el
+    viejo.
+53. **P6: el callback del CRM.** (a) Un `intake_id` que no es UUID da **500**, no 422, con un `ERROR` «callback CRM: no se
+    pudo reflejar el estado» (SQLSTATE 22P02); el schema publicado pide `format: uuid`. El test espera esos `ERROR`.
+    (b) La firma es más laxa que el contrato: se acepta el hexadecimal en mayúsculas y la firma **sin** el prefijo `v1=`.
+    (c) Las cabeceras se recortan (U+00A0 incluido) y `X-Wapp-Timestamp` acepta el signo `+`. (d) El techo de 64 KiB va
+    antes que la firma y después que la ventana. (e) El callback pasa por el limitador aunque no lleva token (429).
+    (f) El reflejo (`crm_status`, `crm_external_ref`, `crm_synced_at`) no sale por ninguna ruta de la API: se afirma en
+    Postgres. (g) El mismo estado con otra `external_ref` cuenta como cambio y el cliente recibe el aviso otra vez.
+    (h) Los bordes de la ventana van exactos solo en −301 s y +299 s; los otros dos con margen (+310, −290), porque el
+    servidor mide contra su reloj al recibir.
+54. **P6: el pipeline normal no empuja su borrador al CRM** (`empujarAlCRM` solo actúa en jobs de re-análisis); empujan
+    `PUT …/items`, `approve` y `reanalyze`. Las `items` del documento son las de `intake_items` (la última corrección),
+    no las del re-análisis. `variables{}` puede diferir entre el primer intento y el reintento si la empresa las cambia.
+    En el `PUT` de configuración, un `endpoint_url` con U+00A0 dentro del host se acepta y el mínimo de 24 del secreto
+    se cuenta en bytes.
+55. **P7: la feature `catalog_import` no gatea ni el `PUT` genérico ni la media.** Con el plan `basic`: plantilla,
+    prompt, import y planilla dan 403 `feature_not_enabled`; `PUT /api/v1/tenant-content/{ref}` y
+    `POST /api/v1/media/upload-url` dan 200: una empresa sin la feature puede escribir a mano la ref `catalogo`. Además:
+    **nunca hay 422** (`diseno.md` dice «400/422»; siempre 400 `validation_failed`, o 413), y «la línea que falla» solo
+    existe para un archivo que no es JSON; un defecto de campo se ubica por índice o por `row`.
+56. **P7: JSON y planilla no normalizan igual.** El import JSON no recorta ni el SKU ni el código de artículo (`PAN`,
+    `PAN`+U+00A0, U+3000+`PAN`, ` PAN `, `PAN`+U+200B y `pan` son seis artículos); la planilla recorta todo y los da por
+    repetidos. U+00A0+`_x` pasa el prefijo reservado por JSON y no por planilla. U+200B no es espacio para
+    `strings.TrimSpace`: un SKU que es solo U+200B se acepta. El precio de la planilla (`strconv.ParseFloat`) acepta
+    `1e3`, `+5`, `.5`, `0x10p0` (= 16) y **`1_000` (= 1000)**. La ref del query no se valida ni se recorta. Reaplicar el
+    mismo documento archiva igualmente una versión nueva; el `PUT` a mano no versiona.
+57. **P10: la rotación de KEK de verdad no cabe en el arnés** (misma familia que el hallazgo 42). Re-envolver una DEK
+    pide un servidor con `WAPP_KEK_KEYRING`/`WAPP_KEK_CURRENT` arrancado sobre la base en la que otro ya cifró:
+    `opcionesServidor` no admite entorno y `arrancar` siempre clona una base nueva. Quedan **sin test de proceso**:
+    `Processed` cuenta sobres, el `kek_id` pasa a la current, el dato no cambia, `self_pn_bidx` no se toca, el dato sigue
+    legible con la KEK vieja retirada, el mapa de pendientes con valores, y «el colector no recuenta el histórico»
+    (pide filas antes del arranque). P10 lleva la pasada sin nada que rotar, la lectura posterior y la pertenencia de
+    cada sobre al censo (un sobre bajo un `key_id` ausente → 500 sin tocar nada). De los 25 `Test*` viejos: **17 llevados
+    enteros, 5 parciales, 3 no llevados** (tabla en el cuerpo de `e3fc0de`). 🔴 **Antes de que F10 borre
+    `rekey_integration_test.go`** hace falta ampliar el arnés (entorno extra y arranque sobre base existente) o llevar
+    la rotación a una suite de contrato: lo decide Jhoan.
+58. **P10: lo demás.** (a) El censo del rekey tiene **8** entradas, no 7 (`intake_jobs.source_text` entró después; el test
+    viejo no la siembra). (b) El 500 del rekey no deja rastro en el log (el handler descarta el error); la única huella
+    es la fila `failure` de `audit_events`. (c) La puerta: `?batch=+5` y `?batch=007` se aceptan, el cuerpo no se lee, la
+    administradora de **otra** empresa obtiene 200 (operación global) y el staff de plataforma 403. (d) `grants_seed`
+    fija el total de grants de `platform_admin` (11) y `tenant_admin` (2): una migración que conceda algo nuevo lo pone
+    en rojo hasta actualizarlo. (e) `TestP10_MigrationsReplay` corre `cmd/migrate`, que es el mismo binario en las dos
+    pasadas: no distingue viejo de nuevo. (f) Para no usar `//nolint:gosec` (G204) construye el `exec.Cmd` como literal:
+    es rodear la regla por la forma; la salida limpia es una función del arnés que corra `cmd/migrate` sobre una base.
+    (g) La lista de los 9 ficheros está en `F10-relevo/diseno.md` **§6**, no §3 como dice T9.35.
+59. **Límites del arnés que B2 encontró.** (a) `draftScenario` y `edgeEscenarioNuevo` arrancan con
+    `opcionesServidor{Proceso}` y no dejan pasar `SondeoWebhook`/`MaxIntentosWebhook`: `p6Scenario` repite su montaje
+    (~50 líneas duplicadas). (b) `respuesta` no expone cabeceras: `Content-Type` y `Content-Disposition` del export no
+    se afirman. (c) El 429, otra vez (hallazgo 32): 25–42 reintentos por corrida en P5, ~75 en P6, 150–185 en P7; con un
+    cuerpo de ~1 MiB el 429 llega a veces como error de transporte (`broken pipe`), que `(*p9World).call` convertiría en
+    `t.Fatal`, así que P7 repite el bucle para cuerpos crudos (`(*p7World).send`). Llevar el reintento a
+    `clientes_test.go` sigue pendiente de decisión. (d) `arrancar` no tiene perilla para `WAPP_IMPORT_MAX_ITEMS` ni
+    `WAPP_TENANT_CONTENT_MAX_BYTES`: solo se afirman los defectos. (e) P8: los 11 rechazos «con el primero pendiente» se
+    hacen dentro del backoff de ~30 s; en una máquina tan cargada que tardaran más, el worker reintentaría (no ocurrió).
+60. **Sin cubrir en B2**, por proceso. P4: el adelanto por intent (P1), el cierre real por silencio o techo, los fallos de
+    calidad (JSON inválido: 3 intentos con backoff no caben en 60 s), los demás motivos de degradación, media y audio.
+    P5: `POST …/status` y la seña, el fallo del envío al aprobar (Edge offline), `customer_note` y `buyer_data`.
+    P6: dos réplicas del worker (`SKIP LOCKED`, claim vencido: T9.27), la puerta del cierre de carrito, el puente
+    apagado entre encolar y entregar. P7: XLSX adversario (pide construir un `.xlsx`), INV-10 con carrito en curso.
+    P8: la vía `api` (el arnés la veta), `422 source_unavailable`, el 422 contra una ventana `aggregating` viva.
+    Las reglas de E-8 no llevadas, con su motivo, están en el cuerpo de cada commit.
+61. **Sobre cómo se midió.** (a) El sub-agente de P4 entregó sin leer enteros diez de sus tests viejos (lo mismo que el
+    43 a); se le devolvió, los leyó, y salieron **tres reglas observables que P4 no afirmaba** (anclas de fecha, segunda
+    ventana, flanco DOWN→READY por empresa): commit `39c38be`. Los demás declaran sus listas leídas enteras; P8 no leyó
+    `internal/reanalisis/dobles_test.go` ni `internal/publicapi/reanalyze_test.go` (fuera de su lista). (b) P5–P8 se
+    escribieron a la vez, en cuatro *worktrees* sobre `49d6d9e`, con prefijo propio por proceso y sin editar ficheros
+    existentes: los cuatro `cherry-pick` entraron sin conflicto. (c) `make lint` por proceso antes del commit (hallazgo
+    31): P7 y P8 dieron rc=2 en su primera pasada (gocyclo, gosec, ST1018) y lo corrigieron antes de commitear. (d) P7
+    no verificó ninguna aserción haciéndola fallar a propósito; P10 rompió cuatro adrede y P5 corrió el mutante de
+    INV-1. (e) Los *worktrees* nacieron en `main` (T-17), se fijaron en `7b092d5` / `49d6d9e` antes de medir y se
+    borraron antes de `make test-pendiente`. (f) **T9.22, test de cableado de `nucleo`**: el mutante del hallazgo 39 de
+    F1 (`fase7_flujos.go` pasa el `NewPostgresResolver` viejo a `flowruntime.New`), reproducido en copia desechable
+    sobre `7b092d5`: `go vet` rc=0 y `go test ./internal/arranque/` **rc=1** por
+    `TestBootWiring_OnlyBridgeAndFlowsImportOldContact`.

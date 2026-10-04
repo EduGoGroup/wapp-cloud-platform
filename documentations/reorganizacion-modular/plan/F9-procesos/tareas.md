@@ -115,12 +115,12 @@ Entrada: F9-03 cerrada. Misma forma que B1. Para cuando: P4–P8 (y P10, D-F9-4 
 **toda la suite B1 + B2** con `RC=0` contra viejo y nuevo; T9.22 hecha. De esta sesión depende **F2-01**. Si no cabe
 en 45–90 min, para en un punto limpio tras un proceso cerrado y se relanza.
 
-- [ ] **T9.17 · procesos(borrador): el guion de inferencia y P4, de mensaje a borrador** · 💻 · dep. T9.15
+- [x] **T9.17 · procesos(borrador): el guion de inferencia y P4, de mensaje a borrador** · 💻 · dep. T9.15 — cerrada en `49d6d9e` y `39c38be` (sesión F9-04, 2026-10-03): `guion_test.go` (reconoce la etapa por un marcador del prompt; `TestArnes_GuionRecognizesStages`, `…RepliesPassTheirValidator`, `…Modes`), `TestP4_MessageToDraft` y `TestP4_WindowRules` (las tres reglas que salieron al leer enteros los tests viejos), más los helpers `draftScenario`/`createDraft` que usan P5–P8; viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario); hallazgos 46–51 del README
   - Además: `test/procesos/guion_test.go`; el comentario del guion dice **cómo** reconoce cada etapa (marcador del prompt o `max_output_tokens`, `diseno.md` §3.4) y de qué test viejo sale cada JSON
-- [ ] **T9.18 · procesos(bandeja): P5, la bandeja, con INV-1** · 💻 · dep. T9.17 · cumple R9.6.c
-- [ ] **T9.19 · procesos(crm): el CRM falso y P6** · 💻 · dep. T9.18
-- [ ] **T9.20 · procesos(catalogo): P7, catálogo** · 💻 · dep. T9.17
-- [ ] **T9.21 · procesos(reanalisis): P8, re-análisis** · 💻 · dep. T9.17
+- [x] **T9.18 · procesos(bandeja): P5, la bandeja, con INV-1** · 💻 · dep. T9.17 · cumple R9.6.c — cerrada en `56b99f6` (sesión F9-04, 2026-10-03): `TestP5_OwnerInbox` y `TestP5_AprobarDosVecesUnSoloEfecto` (INV-1 como aserción; su mutante cae, medido contra el viejo); viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario); hallazgos 45, 46 y 52
+- [x] **T9.19 · procesos(crm): el CRM falso y P6** · 💻 · dep. T9.18 — cerrada en `2bb7989` (sesión F9-04, 2026-10-03): `crmfalso_test.go` (`TestArnes_CRM`) y `TestP6_CRMBridge` (20 subtests; los campos del contrato como aserción sobre lo recibido); viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario); hallazgos 44, 53 y 54
+- [x] **T9.20 · procesos(catalogo): P7, catálogo** · 💻 · dep. T9.17 — cerrada en `0a2762d` (sesión F9-04, 2026-10-03): `TestP7_Catalog` (16 subtests; 56 casos adversarios entre JSON y planilla); viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario); hallazgos 55 y 56
+- [x] **T9.21 · procesos(reanalisis): P8, re-análisis** · 💻 · dep. T9.17 — cerrada en `9da68f7` (sesión F9-04, 2026-10-03): `TestP8_Reanalysis` (8 subtests); viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario); 🔴 sobre una aprobada el viejo **no** rechaza (hallazgo 44)
 
 ## Bloque C · pasada por conmutación · 💻 · T9.22–T9.29 🕐 · en el cierre local de cada módulo
 
@@ -138,7 +138,7 @@ la cita como dependencia de su cierre). T9.22 (`nucleo`, F1) cae en **F9-04**. F
 - **Gate**: `make test-procesos` RC=0 ×2, 0 SKIP
 - **Commit**: `procesos(<modulo>): suites de contrato contra Postgres`
 
-- [ ] **T9.22 · `nucleo` (F1)** · sesión F9-04 · dep. T9.12 · retroactiva: si F1 · T1.13/T1.18 ya corrió `contact_contrato_test.go`, solo la suite entera contra el nuevo
+- [x] **T9.22 · `nucleo` (F1)** · sesión F9-04 · dep. T9.12 · retroactiva: si F1 · T1.13/T1.18 ya corrió `contact_contrato_test.go`, solo la suite entera contra el nuevo — hecha en la sesión F9-04 (2026-10-03), sin commit de código, sobre `2bb7989`: `TestContactContrato_Postgres` 20 PASS, 0 SKIP en cada pasada; suite entera (P0–P10) contra el nuevo `RC=0 · PASS=537 · FAIL=0 · SKIP=0`; test de cableado completo: el mutante del hallazgo 39 de F1 da `go test ./internal/arranque/` rc=1 por `TestBootWiring_OnlyBridgeAndFlowsImportOldContact` (hallazgo 61 f)
 - [ ] **T9.23 · `acceso` (F2)** · dep. `conmutar(acceso)` · `iam/infra/postgres`, `entitlements`, `platformadmin`
 - [ ] **T9.24 · `edge` (F3)** · dep. `conmutar(edge)` · `enroll`, `fleet`, `lease`, `diagnostics`, `ingest`, `receipts`
 - [ ] **T9.25 · `inferencia` (F4)** · dep. `conmutar(inferencia)` · `tenantllm`, `degradation`
@@ -169,7 +169,7 @@ Entrada: F8 conmutada, T9.29 `CERRADO`, puentes = 0. Para cuando: condición del
 
 - [ ] **T9.34 · 🕐 (solo si D-F9-1 = no) · todas las suites de contrato contra Postgres de una vez** · 💻 · dep. T9.21 y F8 cerrada
   - Sustituye a T9.22–T9.29 (que se tachan: `~~T9.2x~~ — anulada: D-F9-1 rechazada`). Mismo contenido, en un bloque tras B2.
-- [ ] **T9.35 · procesos(plataforma): P10 (solo si D-F9-4 = sí; lo es)** · 💻 · dep. T9.12 · sesión F9-04
+- [x] **T9.35 · procesos(plataforma): P10 (solo si D-F9-4 = sí; lo es)** · 💻 · dep. T9.12 · sesión F9-04 — cerrada en `e3fc0de` (sesión F9-04, 2026-10-03): `TestP10_MigrationsReplay` y `TestP10_Platform` (14 subtests); viejo y nuevo `RC=0`, 0 SKIP (suite entera: 537 PASS por binario). De los 25 `Test*` viejos: 17 enteros, 5 parciales, 3 no llevados; 🔴 **la rotación real de KEK no cabe en el arnés** (hallazgo 57: hay que resolverlo antes de que F10 borre `rekey_integration_test.go`)
   - **Ficheros**: `test/procesos/p10_plataforma_test.go` (`diseno.md` §4 P10)
   - **Hecho cuando**: cubre las reglas de los 9 ficheros de BD de `internal/platform/` (lista en `F10-relevo/diseno.md` §3), leídos (E-8); `RC=0` ×2 en local
   - **Commit**: `procesos(plataforma): migraciones, grants, rekey y colector contra Postgres`
