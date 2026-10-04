@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package lease_test
 
 import (
