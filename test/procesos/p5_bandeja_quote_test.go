@@ -129,8 +129,13 @@ func p5SlowQuote(t *testing.T, w *p5World) {
 	p5ExpectSuggestion(t, r, p5DeterministicQuote, "deterministic", "llm_fallo", "la sugerencia con el modelo caído")
 	warns[p5MsgQuoteFailed]++
 
+	// El log del servidor llega por una tubería y la respuesta HTTP puede adelantarse a su última
+	// línea: se espera con tope a que estén las n y después se exige que sean exactamente n
+	// (hallazgo 50 de F2: sin la espera, este paso dio rojo una vez contra el binario viejo).
 	for msg, n := range warns {
-		if got := len(p9LogLines(sc.S, msg, map[string]string{"intake_id": w.open})); got != n {
+		fields := map[string]string{"intake_id": w.open}
+		p9WaitLogLines(t, sc.S, msg, fields, n)
+		if got := len(p9LogLines(sc.S, msg, fields)); got != n {
 			t.Errorf("el log tiene %d líneas %q de la solicitud, quería %d", got, msg, n)
 		}
 	}

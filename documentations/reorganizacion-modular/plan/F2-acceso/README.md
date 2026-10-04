@@ -354,14 +354,17 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
 49. **Lo que la web dio por cierto, repetido en local: idéntico.** `GATE_RC=0` con 113 `ok`, 148 PASS en las suites y 94 en
     `TestP2_*` + `TestP10_Platform` sobre `bfd31ce`; R2.5.d por su cláusula. Tras los commits de esta sesión las cifras suben
     por los casos nuevos, no por otra cosa. Las suites corren los **mismos 144 casos** en memoria y en Postgres.
-50. 🟡 **`TestP5_OwnerInbox/sugerencia_con_plazo` es intermitente contra el binario viejo** (no es de `acceso`: es la bandeja
+50. ✅ ~~🟡~~ **`TestP5_OwnerInbox/sugerencia_con_plazo` es intermitente contra el binario viejo** (no es de `acceso`: es la bandeja
     y `quotetext`, F6). En una de las tres pasadas completas de `make test-procesos` de esta sesión dio rojo contra el viejo
     (`RC=1 · PASS=665 · FAIL=2`; el nuevo, `RC=0 · PASS=667`): `p5_bandeja_quote_test.go:134` encontró 0 líneas de log
     «quotetext: el proveedor no redactó la cotización; sale el texto determinista» y quería 1, con la respuesta HTTP
     correcta. Repetida: verde en la pasada completa siguiente y en tres corridas sueltas de `TestP5_OwnerInbox`. La sesión no
     tocó ni el código viejo ni ese proceso. Esa aserción lee el log **sin esperar** (`p9LogLines`; existe `p9WaitLogLines`):
     es la causa probable, **no medida**. No se arregló: ¿se cambia a la lectura con espera en F9-D o al reconstruir
-    `quotetext` (F6)?
+    `quotetext` (F6)? **Decidido (Jhoan, 2026-10-04, tras el cierre de F2): esa aserción espera con tope**
+    (`p9WaitLogLines`) y después exige la cuenta exacta. No tapa un defecto real: si la línea no llega nunca, falla tras el
+    tope. La causa sigue **sin reproducir**; si vuelve a dar rojo, entonces se reproduce bajo carga guardando el log del
+    servidor. Las demás lecturas de log sin espera de los procesos no se tocaron.
 51. **Un `errcheck` propio que solo vio el gate entero**: `d243f15` dejó `n, _ := res.RowsAffected()` en el montaje de
     Postgres de `platformadmin` y `make ci-local` dio `GATE_RC=2` (1 issue); corregido en `73b4541`. El lint acotado a un
     paquete que corren los sub-agentes no cubre `test/procesos`: el que cierra es `make ci-local`.
@@ -398,7 +401,9 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
   aceptado) y la rama muerta de C2 (hallazgo 40). El resto, por equivalencia, incluidas las 🟡 13, 14 y 34.
 - **Lo que la web no pudo correr y cerró la local**: la pasada que cuenta de las suites contra Postgres, los mutantes contra
   Postgres, `make test-procesos` contra los dos binarios, el arranque real y las tres peticiones.
-- **🟡 abiertas al cerrar** (no bloquean): 13, 14, 18, 29 (re-medida en 45), 34, 36 y 50 (intermitencia de P5, de F6).
+- **🟡 abiertas al cerrar** (no bloqueaban): 13, 14, 18, 29 (re-medida en 45), 34, 36 y 50 (intermitencia de P5, de F6).
+  ✎ **Las siete se decidieron con Jhoan el mismo día, tras el cierre** (D-F2-10…D-F2-13, la fila de `05` E-3, D-R-7 ✎ y la
+  espera de P5): cada hallazgo lleva su resolución arriba. No queda ninguna 🟡 abierta en F2.
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
