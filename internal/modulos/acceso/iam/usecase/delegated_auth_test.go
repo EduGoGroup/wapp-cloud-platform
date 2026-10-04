@@ -277,6 +277,18 @@ func TestDelegatedRefresh_RotatesInIdentityAndReexchanges(t *testing.T) {
 	}
 }
 
+// Un rechazo de identity al rotar sube tal cual y no se re-canjea nada.
+func TestDelegatedRefresh_IdentityRejectionPropagatesWithoutExchange(t *testing.T) {
+	f := newDelegatedFixture(t, quietLogger())
+	f.identity.refreshErr = domain.ErrRefreshInvalid
+	if _, err := f.svc.Refresh(context.Background(), in.RefreshInput{RefreshToken: "rft_quemado"}); !errors.Is(err, domain.ErrRefreshInvalid) { //nolint:gosec // token de mentira de un test
+		t.Fatalf("err = %v; quiere ErrRefreshInvalid", err)
+	}
+	if len(f.exchange.seen) != 0 {
+		t.Errorf("se re-canjeó %v con el refresh rechazado", f.exchange.seen)
+	}
+}
+
 func TestDelegatedRefreshAndLogout_EmptyTokenIsInvalidInput(t *testing.T) {
 	f := newDelegatedFixture(t, quietLogger())
 	if _, err := f.svc.Refresh(context.Background(), in.RefreshInput{}); !errors.Is(err, domain.ErrInvalidInput) {
