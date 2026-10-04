@@ -1,6 +1,7 @@
 # F2 · `acceso` — IAM, derechos comerciales y operador de plataforma
 
-> **Estado: en curso** desde el 2026-10-04 (sesión F2-01 🌐, arranque sobre `dev` @ `9a77307`; inventario E-12 aprobado por
+> **Estado: cerrada** el 2026-10-04 (sesión F2-05 💻, cierre local sobre `dev` @ `bfd31ce`, PR #32 integrado; último commit de
+> código de la fase `73b4541`; informe de fase al final de «Contradicciones encontradas»). En curso desde el 2026-10-04 (sesión F2-01 🌐, arranque sobre `dev` @ `9a77307`; inventario E-12 aprobado por
 > Jhoan el 2026-10-04, [`diseno.md`](diseno.md) §1.1). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común (no se repite aquí): [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
@@ -81,7 +82,7 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
 | **F2-02** · `usecase` e `identity` (rojo y verde por paquete) | 🌐 | T2.10–T2.11, T2.16, T2.22–T2.23 | 0 pendientes en los dos paquetes · `ci-local` rc=0, 0 SKIP · PR |
 | **F2-03** · `infra/postgres`, `entitlements/postgres.go`, `transport/http`, `platformadmin` | 🌐 | T2.4, T2.12–T2.15, T2.24–T2.27 | 0 pendientes en `acceso` · candados AST verdes · `vet -tags integracion` rc=0 · PR |
 | **F2-04** · `bridge_iam.go`, conmutación y rutas | 🌐 | T2.28–T2.31 | huella igual · 23+8 rutas nuevas · `go list -deps` · test de cableado completo · PR |
-| **F2-05** · cierre local | 💻 | T2.32–T2.33 | suites contra Postgres sin divergencias · procesos de acceso contra los dos binarios, 0 SKIP · `dev` empujado |
+| **F2-05** · cierre local | 💻 | T2.32–T2.33 | suites contra Postgres sin divergencias · procesos de acceso contra los dos binarios, 0 SKIP · PR a `dev` desde la rama de la sesión (regla 6) |
 
 ## Contradicciones encontradas (con `04`/`05`/FX, medidas contra el código)
 
@@ -272,6 +273,109 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     `http.go` guarda la cara real en `c.publicCara` para que `TestMudanzas_HuellaPorElCompuesto` mire la del arranque.
 42. **La caché compartida de `golangci-lint` entre *worktrees* da falsos positivos** (3 gosec bajo la ruta de **otro**
     *worktree*). Con `GOLANGCI_LINT_CACHE` propio por *worktree*, 0 issues. Va al prompt de los sub-agentes.
+
+**De la sesión F2-05 (2026-10-04, 💻, cierre local)** — medido contra lo que corre; lo que pide decisión está marcado 🟡:
+
+43. **El «e2e de `cmd/server-modular` (`integration_test.go` de F0)» que pedía T2.32 no existe**: F0 `diseno.md` §5.3 decidió
+    no copiar `cmd/server/integration_test.go` (compone paquetes en proceso y no ejerce el arranque nuevo); `cmd/server-modular`
+    solo tiene `main.go`. **Decisión de Jhoan (F2-05)**: la cláusula se cumple con `BINARIO=nuevo make test-procesos` más el
+    arranque real 9/9 con `/healthz` 200; texto de T2.32 corregido en [`tareas.md`](tareas.md).
+44. **T2.33 decía que el proceso P2 «incluye» R-P1…R-P8, R-A5…R-A7, I-CP-5 y la 0038; por caja negra no las incluía todas.**
+    **Decisión de Jhoan (F2-05)**: matriz regla → prueba contra Postgres, y al proceso solo lo que no pide decisión.
+
+    | Regla | Quién la prueba contra Postgres |
+    |---|---|
+    | R-P1 (membresía y rol en una llamada; la guarda antes del rol; sin rol global) | suite `InvitationRedeemRepo/HappyPath_WithRole_AssignsItScopedToTheTenant`, `…/MemberOfAnotherCompany_Conflict_InvitationNotBurned`; `RoleRepo/AssignToUser_CompanyRoleWithGlobalScope_ErrRoleScopeInvalid`; el orden guarda → rol y el rol global, **solo unitarios** (`TestGrantTenantAccess_*`) |
+    | R-P2 (cerrojo → guarda → `INSERT`) | candado AST `TestSingleMembershipWriter_LockThenGuardThenInsert` y unitarios; por conducta, proceso `TestP2_InvitacionUnSoloCanje/ocho canjes simultáneos`; la suite (`Add_ConcurrentInTwoCompanies_OnlyOneWrites`) **no** lo distingue (hallazgo 45) |
+    | R-P3 (409 idéntico sin `multi_empresa`) | suite `MembershipRepo/Add_SecondCompanyWithoutMultiCompany_SameConflictAndNothingWritten`; proceso `…/quien ya es de otra empresa no quema la invitación` |
+    | R-P4 (`MembersOf` solo ese tenant) | suite `MembershipRepo/MembersOf_OnlyThatTenant_InOrder` |
+    | R-P5 (una transacción; acceso antes de marcar) | candado AST `TestRedeem_GrantsAccessBeforeMarkingInvitation`; proceso «ocho canjes simultáneos» (mata `GrantTenantAccess` fuera de la `tx`); unitarios con *driver* falso (hallazgo 46) |
+    | R-P6 (una consulta, `now()` de la base) | candado AST `TestRedeem_ReadInvitationMakesOneQuery`; proceso `…/inexistente y caducada contestan lo mismo`; el reloj de la base, unitario con *driver* falso (hallazgo 46) |
+    | R-P7 (las cuatro NULLables) | unitario `TestInvitationFromRow`; suite `InvitationRedeemRepo/DeletedRole_InvitationStaysAliveWithoutRole` |
+    | R-P8 (`redeemed_at IS NULL AND revoked_at IS NULL`) | `redeemed_at`: proceso «ocho canjes simultáneos». 🟡 `revoked_at` **por carrera: nadie** (hallazgo 45) |
+    | R-A5…R-A7 (reintento, otro rol, atomicidad) | suite `TestPlatformadminContrato_Postgres` (`ExecuteApprovalTx_*`, `CheckRetryApproved_*`) y unitarios con *driver* falso. **Sin caja negra**: el arnés no levanta el M2M de identity y la aprobación por HTTP contesta 503 |
+    | I-CP-5 | proceso `TestP2_RutasDePlataformaDenegadasAlCliente` (10 rutas × 2) y la petición real de T2.32 (403) |
+    | Migración 0038 | **nuevo**: `TestP2_ExchangeAndPermissions/el IAM propio no sobrevive a la 0038` (`8677404`, `test/procesos/p2_canje_schema_test.go`) |
+
+45. 🟡 **Hallazgo 29, medido otra vez (33 mutantes sobre `memberships.go` y `canje.go`)**. De los cuatro de carrera de `canje.go`,
+    **tres mueren ya, pero solo por el proceso P2** («ocho canjes simultáneos», 3 de 3 corridas cada uno): el `UPDATE` sin
+    `redeemed_at IS NULL`, sin comprobar filas afectadas, y `GrantTenantAccess` sobre `r.db`. La suite de contrato contra
+    Postgres no mata ninguno (0 de 4). **Siguen vivos dos**: el `UPDATE` sin `revoked_at IS NULL` (el caso «revocada» de P2
+    revoca antes del canje y lo corta el paso 1) y `Add` sin su transacción en `memberships.go` (muere **0 de 6**, no 1 de 6:
+    `Add_ConcurrentInTwoCompanies_OnlyOneWrites` lanza dos goroutines y no produce la carrera; tampoco ve quitar el cerrojo
+    entero, que solo matan los unitarios y el candado AST). No se resolvió nada (decisión pendiente de Jhoan): lo que los
+    mataría es una revocación intercalada entre el paso 1 y el 3 (o N canjes contra N revocaciones), y subir la concurrencia
+    del caso de `Add` o exigir por AST que `Add` pase la `tx`.
+46. **Cinco mutantes vivos nuevos del nivel complejo, arreglados con su commit; ninguno tocó producción**:
+    `do` sin el prefijo `Bearer ` y `NewM2M` con `timeout < 0` (`40d1582`; el doble recortaba el prefijo, y el 0 exacto no
+    tenía test) · `ListAccessRequests` sin `ORDER BY` (`d243f15`: el caso creaba las solicitudes en el orden en que esperaba
+    leerlas; `State` gana `SetRequestCreatedAt` y el doble ordena de verdad) · `Redeem` sin `Rollback` en el `defer` y el `now`
+    del proceso en vez del `now()` de la base (`7f2b745`, con un *driver* `database/sql` falso, el patrón del hallazgo 30;
+    de paso, ese *driver* mata también por unitario `GrantTenantAccess` sobre `r.db`, uno de los cuatro del hallazgo 29:
+    efecto lateral del camino feliz, no una decisión sobre el 29).
+    Y **cuatro equivalentes nuevos**, con su razón: `rows.Close` ignorado en `entitlements/postgres.go` (`database/sql` cierra
+    al agotar la iteración y entrega el fallo por `rows.Err`: la rama del `defer` no se alcanza; el caso `closeFails` de
+    `8c53ecf` fija la conducta real) · el `AND tf.enabled` del `UNION` (la PK `(tenant_id, feature)` y el anti-join lo
+    hacen redundante) · `storeToken` sin limpiar la caché negativa (solo se canjea con el fallo ya caducado) · el 503 de
+    `mapExchangeError` (lo mapea igual el mapper de cada operación). `iam/infra/identity/client.go` repite el patrón
+    `timeout <= 0` sin test del 0 exacto: no es del nivel complejo y no se mutó.
+47. **Lo que solo ve Postgres, y lo que Postgres no ve.** En `entitlements/postgres.go`, los cinco mutantes de semántica SQL
+    (override en los dos sentidos, anti-join, plan NULL, filtro por tenant) **solo** los mata la suite contra Postgres; el
+    `fakeDB` unitario clasifica las consultas por literal y mata uno de ellos por dejar de reconocerla, no por la regla. En
+    `platformadmin`, 11 de 31 solo mueren con Postgres y 3 solo con unitarios; quitar el `Rollback` de `ExecuteApprovalTx`
+    hace que la suite contra Postgres **se cuelgue** (ningún aserto lo dice; lo cazan los unitarios), y el `UPDATE` de la
+    aprobación por el pool en vez de la `tx` solo lo ven los unitarios. Sin `test/procesos`, esas reglas quedan sin red.
+48. **El arranque real pide más que `.env`**: además del R2 de desarrollo, `WAPP_KEK_PROVIDER=env` con su material, y correr
+    desde la raíz del repo (lee `certs/ca.crt` relativo). Se hizo contra un `postgres:17-alpine` efímero en puerto libre, con
+    claves generadas en el momento. Y **la cara que sirve C2 no se distingue en ejecución** (hallazgo 41): el log dice
+    `petición pública … /api/v1/entitlements 200` venga de donde venga; que es la nueva lo prueba `TestMudanzas_HuellaPorElCompuesto`.
+49. **Lo que la web dio por cierto, repetido en local: idéntico.** `GATE_RC=0` con 113 `ok`, 148 PASS en las suites y 94 en
+    `TestP2_*` + `TestP10_Platform` sobre `bfd31ce`; R2.5.d por su cláusula. Tras los commits de esta sesión las cifras suben
+    por los casos nuevos, no por otra cosa. Las suites corren los **mismos 144 casos** en memoria y en Postgres.
+50. 🟡 **`TestP5_OwnerInbox/sugerencia_con_plazo` es intermitente contra el binario viejo** (no es de `acceso`: es la bandeja
+    y `quotetext`, F6). En una de las tres pasadas completas de `make test-procesos` de esta sesión dio rojo contra el viejo
+    (`RC=1 · PASS=665 · FAIL=2`; el nuevo, `RC=0 · PASS=667`): `p5_bandeja_quote_test.go:134` encontró 0 líneas de log
+    «quotetext: el proveedor no redactó la cotización; sale el texto determinista» y quería 1, con la respuesta HTTP
+    correcta. Repetida: verde en la pasada completa siguiente y en tres corridas sueltas de `TestP5_OwnerInbox`. La sesión no
+    tocó ni el código viejo ni ese proceso. Esa aserción lee el log **sin esperar** (`p9LogLines`; existe `p9WaitLogLines`):
+    es la causa probable, **no medida**. No se arregló: ¿se cambia a la lectura con espera en F9-D o al reconstruir
+    `quotetext` (F6)?
+51. **Un `errcheck` propio que solo vio el gate entero**: `d243f15` dejó `n, _ := res.RowsAffected()` en el montaje de
+    Postgres de `platformadmin` y `make ci-local` dio `GATE_RC=2` (1 issue); corregido en `73b4541`. El lint acotado a un
+    paquete que corren los sub-agentes no cubre `test/procesos`: el que cierra es `make ci-local`.
+
+### Informe de fase (plantilla de [`tareas.md`](tareas.md), al cerrar F2)
+
+- **Minutos por sesión (D-R-6)**: F2-01 ≈ 81 (activos) · F2-02 ≈ 60 · F2-03 ≈ 90 · F2-04 ≈ 65 · F2-05 ≈ 47 (de pared) →
+  ≈ 343 min para la fase. En F2-05 el cuello fueron los mutantes contra Postgres (tres sub-agentes: 12, 18 y 23 min).
+- **Ficheros**: `internal/modulos/acceso` cierra con 56 de producción, 17 de suites y dobles (`…helpertest`) y 71 de test;
+  `internal/apipublica` con 8 de producción más su arnés; `internal/arranque/bridge_iam.go`. **Subieron de nivel**: ninguno
+  respecto del inventario aprobado; `apipublica` no estaba en él y entró como **medio** (F2-04).
+- **Pendientes en cada cierre**: `PENDIENTES=0 · ROJOS=0` al cerrar F2-01 (sus paquetes), F2-02, F2-03, F2-04 y F2-05.
+- **Cobertura por fichero (informe, no gate)**: 51 ficheros de `acceso` medidos, mínimo 10,7 % (`platformadmin/postgres.go`),
+  media 90,6 %; 6 por debajo de 80 %, todos adaptadores Postgres (`iam/infra/postgres/{active_tenant,audit,invitations,
+  memberships,roles}.go` y `platformadmin/postgres.go`), cuyo SQL prueban las suites contra Postgres, que el perfil no
+  ve. `canje.go` salió de la lista (20 % → por encima de 80 %) con el *driver* falso de `7f2b745`: efecto, no objetivo. `apipublica` 87,5–100 %; `bridge_iam.go` 100 %.
+- **Mutantes del nivel complejo (F2-05, a mano, contra unitarios y Postgres)**:
+
+  | Pieza | Sembrados | Muertos | Vivos | Equivalentes |
+  |---|---|---|---|---|
+  | `entitlements/postgres.go` | 28 | 26 | 0 | 2 |
+  | `iam/infra/identity/m2m*.go` | 38 | 35 | 0 | 3 |
+  | `iam/infra/postgres/memberships.go` | 18 | 17 | 1 🟡 | 0 |
+  | `iam/infra/postgres/canje.go` | 15 | 14 | 1 🟡 | 0 |
+  | `platformadmin/access_requests_postgres.go` (+ 1 en `postgres.go`) | 32 | 32 | 0 | 0 |
+  | **Total** | **131** | **124** | **2 🟡** | **5** |
+
+  Cifras **después** de los arreglos de la sesión (hallazgo 46): antes sobrevivían 8 (5 arreglados, 1 resultó equivalente). Los dos que quedan son del hallazgo 45.
+- **Candados que estorbaron**: `un_fichero_un_test` frente a D-F2-5 (hallazgo 10) y a un rojo nuevo en un medio ya verde
+  (33); `ProcessImports` frente a la zona hexagonal (26, D-F2-9); `SinBDViva` (27: las pasadas contra Postgres no caben en el
+  paquete); el tamaño (36, E-13). En F2-05, ninguno.
+- **Reglas E-8 que no se mantienen**: las de los dobles viejos del hallazgo 16 (desempate por ordinal; digest de ≠ 32 bytes
+  aceptado) y la rama muerta de C2 (hallazgo 40). El resto, por equivalencia, incluidas las 🟡 13, 14 y 34.
+- **Lo que la web no pudo correr y cerró la local**: la pasada que cuenta de las suites contra Postgres, los mutantes contra
+  Postgres, `make test-procesos` contra los dos binarios, el arranque real y las tres peticiones.
+- **🟡 abiertas al cerrar** (no bloquean): 13, 14, 18, 29 (re-medida en 45), 34, 36 y 50 (intermitencia de P5, de F6).
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
