@@ -1,4 +1,4 @@
-// Porta internal/iam/infra/identity/client.go @ 048412a
+// Porta internal/iam/infra/identity/client.go @ 9a77307
 
 // Package iamidentity implementa los clientes de identity-api, el SSO del grupo (identity
 // Plan 003 · Ola 3): Client (out.IdentityClient, la PERSONA) en este fichero y M2MClient

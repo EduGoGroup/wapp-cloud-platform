@@ -1,4 +1,4 @@
-// Porta internal/iam/infra/identity/m2m.go @ 048412a
+// Porta internal/iam/infra/identity/m2m.go @ 9a77307
 //
 // m2m.go implementa out.IdentityM2MClient: el adaptador HTTP con el que wApp habla con
 // identity-api como MÁQUINA (Plan 056 · T2.4).
