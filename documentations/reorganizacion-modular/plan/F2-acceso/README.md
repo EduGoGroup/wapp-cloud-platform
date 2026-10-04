@@ -252,6 +252,8 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     cerrada `candados.OversizedFiles` con su techo (no crecen): `arranque/bridge_contact_test.go` (809),
     `arranque/huellatest/huellatest.go` (732) y su test (669), `candados/sinbdviva_openers_test.go` (629) y
     `nucleo/contact/repository_postgres.go` (618). ¿Se parten en una sesión dedicada o cuando su fase los toque?
+    ✅ **Decidido (Jhoan, 2026-10-04, tras el cierre de F2): cuando su fase los toque.** No hay sesión dedicada; la lista
+    sigue cerrada y con techo (no crecen). Quien toque uno de los cinco, lo parte en ese mismo trabajo.
 
 37. **R2.5.d no podía verificarse con su comando** (`go list -deps … | grep` → «solo `iam/{domain,ports/in}`»): `publicapi`
     (sirve aún 72 rutas) importa el `internal/entitlements` viejo y `internal/iam/transport/http`, y `flujos/{events,runtime}`
