@@ -5,9 +5,9 @@ package enroll
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // PostgresCodeStore es la implementación de CodeStore (y repositorio de
@@ -15,12 +15,14 @@ import (
 // enrolamiento porque debe hablar sus errores sentinela (ErrCodeInvalid) e
 // implementar CodeStore; toma un *sql.DB directamente (sin acoplarse al paquete
 // platform/storage/postgres).
-type PostgresCodeStore struct{}
+type PostgresCodeStore struct {
+	db *sql.DB
+}
 
 // NewPostgresCodeStore construye el store sobre el pool dado. No abre ni
 // comprueba la conexión.
 func NewPostgresCodeStore(db *sql.DB) *PostgresCodeStore {
-	panic(pendiente.Implementar("enroll.NewPostgresCodeStore"))
+	return &PostgresCodeStore{db: db}
 }
 
 // Create siembra un código de activación para un tenant (lo emite la plataforma;
@@ -29,7 +31,14 @@ func NewPostgresCodeStore(db *sql.DB) *PostgresCodeStore {
 // se guarda TAL CUAL, sin normalizar. Un fallo del driver vuelve envuelto como
 // "enroll: sembrando enrollment_code: …".
 func (s *PostgresCodeStore) Create(ctx context.Context, code, tenantID string, expiresAt time.Time) error {
-	panic(pendiente.Implementar("enroll.PostgresCodeStore.Create"))
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO public.enrollment_codes (code, tenant_id, expires_at)
+		VALUES ($1, $2, $3)
+	`, code, tenantID, expiresAt)
+	if err != nil {
+		return fmt.Errorf("enroll: sembrando enrollment_code: %w", err)
+	}
+	return nil
 }
 
 // Consume implementa CodeStore de forma ATÓMICA en un único UPDATE condicional:
@@ -50,5 +59,18 @@ func (s *PostgresCodeStore) Create(ctx context.Context, code, tenantID string, e
 // el texto exacto de la sentencia. Otro fallo del driver vuelve envuelto como
 // "enroll: consumiendo enrollment_code: …", con tenant vacío.
 func (s *PostgresCodeStore) Consume(ctx context.Context, code string) (string, error) {
-	panic(pendiente.Implementar("enroll.PostgresCodeStore.Consume"))
+	var tenantID string
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE public.enrollment_codes
+		SET used_at = now()
+		WHERE code = $1 AND used_at IS NULL AND expires_at > now()
+		RETURNING tenant_id::text
+	`, code).Scan(&tenantID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", ErrCodeInvalid
+	case err != nil:
+		return "", fmt.Errorf("enroll: consumiendo enrollment_code: %w", err)
+	}
+	return tenantID, nil
 }
