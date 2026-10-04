@@ -1,6 +1,6 @@
 # Estado de la reorganización modular — punto de retoma
 
-> **Última actualización: 2026-10-03** (**F9-04 hecha**: bloque B2 de F9 —P4–P8 y P10, más T9.22— verde contra los dos binarios, suite entera P0–P10 `RC=0 · PASS=537 · SKIP=0`; siguiente paso, **F2-01**). Antes, 2026-10-03 (**F9-03 hecha**: bloque B1 de F9 —P1, P2, P3 y P9— verde contra los dos binarios y el mutante `maxTxAttempts = 1` cae; siguiente paso, **F9-04**). Antes, 2026-10-03 (**recalibración del plan tras el piloto**: specs F2–F10 y FX y `plan/sesiones/` alineadas con P1–P7; 81 sesiones → 56; siguiente paso, **F1-06**, ajustes de código previos a F2). Antes, 2026-10-03 (**parada de F1 resuelta**: Jhoan contestó P1–P7, `04` y `05` corregidos —`05` E-12 y §4.2—, skills y `CLAUDE.md` al día; ver `plan/DECISIONES.md` §3 y la §10 del informe). Antes, 2026-10-02 (noche, −03) (sesión **F1-04** 💻, bloque D de F1, el cierre local del piloto `nucleo/contact` sobre `dev` @ `ddcf7de`: T1.17–T1.19, [`informe-piloto.md`](plan/F1-nucleo-contact/informe-piloto.md) escrito, los dos traspasos de F1 **CERRADOS**; última fila de «Qué se hizo» y paso 2d de «Siguiente paso». **F1 espera la PARADA (T1.20)**). Antes, 2026-10-03 (UTC) (sesión **F1-03** 🌐, bloque C de F1, el adaptador `bridge_contact.go` y la conmutación de `nucleo/contact`, rama `reorg/f1-c-adaptador` sobre `origin/dev` @ `61a3c8b`: última fila de «Qué se hizo» y paso 2c de «Siguiente paso»). Antes, 2026-10-02 (sesión **F1-02** 🌐, bloque B de F1, el verde de `nucleo/contact`, rama `reorg/f1-b-verde`, que trae `dev` @ `0a377bc` —con el PR #22, D-F9-11— por el merge `a5d17b5`: última fila de «Qué se hizo» y paso 2b de «Siguiente paso»). Antes, (aplicadas las recomendaciones de la revisión independiente de S9–S11 en siete decisiones, rama `reorg/decisiones-revision-s9-s11`: última entrada de «Dónde estamos»). Antes, el mismo día, D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`. Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
+> **Última actualización: 2026-10-04** (**F2-01 hecha**: inventario E-12 de `acceso` aprobado por Jhoan, `auth.go` partido y las hojas simples de `acceso` en verde —`entitlements` sin `postgres.go`, `iam/domain`, `iam/ports/{in,out}`, las 7 suites de `outhelpertest` e `iam/infra/memory`—; siguiente paso, **F2-02**). Antes, 2026-10-03 (**F9-04 hecha**: bloque B2 de F9 —P4–P8 y P10, más T9.22— verde contra los dos binarios, suite entera P0–P10 `RC=0 · PASS=537 · SKIP=0`; siguiente paso, **F2-01**). Antes, 2026-10-03 (**F9-03 hecha**: bloque B1 de F9 —P1, P2, P3 y P9— verde contra los dos binarios y el mutante `maxTxAttempts = 1` cae; siguiente paso, **F9-04**). Antes, 2026-10-03 (**recalibración del plan tras el piloto**: specs F2–F10 y FX y `plan/sesiones/` alineadas con P1–P7; 81 sesiones → 56; siguiente paso, **F1-06**, ajustes de código previos a F2). Antes, 2026-10-03 (**parada de F1 resuelta**: Jhoan contestó P1–P7, `04` y `05` corregidos —`05` E-12 y §4.2—, skills y `CLAUDE.md` al día; ver `plan/DECISIONES.md` §3 y la §10 del informe). Antes, 2026-10-02 (noche, −03) (sesión **F1-04** 💻, bloque D de F1, el cierre local del piloto `nucleo/contact` sobre `dev` @ `ddcf7de`: T1.17–T1.19, [`informe-piloto.md`](plan/F1-nucleo-contact/informe-piloto.md) escrito, los dos traspasos de F1 **CERRADOS**; última fila de «Qué se hizo» y paso 2d de «Siguiente paso». **F1 espera la PARADA (T1.20)**). Antes, 2026-10-03 (UTC) (sesión **F1-03** 🌐, bloque C de F1, el adaptador `bridge_contact.go` y la conmutación de `nucleo/contact`, rama `reorg/f1-c-adaptador` sobre `origin/dev` @ `61a3c8b`: última fila de «Qué se hizo» y paso 2c de «Siguiente paso»). Antes, 2026-10-02 (sesión **F1-02** 🌐, bloque B de F1, el verde de `nucleo/contact`, rama `reorg/f1-b-verde`, que trae `dev` @ `0a377bc` —con el PR #22, D-F9-11— por el merge `a5d17b5`: última fila de «Qué se hizo» y paso 2b de «Siguiente paso»). Antes, (aplicadas las recomendaciones de la revisión independiente de S9–S11 en siete decisiones, rama `reorg/decisiones-revision-s9-s11`: última entrada de «Dónde estamos»). Antes, el mismo día, D-F1-10 aplicada en la rama de la revisión, `reorg/revision-s9-s11`, PR #20: el sufijo que exime a suites y dobles es `helpertest`. Antes, el 2026-10-01, la revisión independiente de S9–S11, sobre `dev` @ `6650e55`; y antes, al cerrar la sesión **F1-01** (🌐 · F1 · bloque A, contratos y rojo de `nucleo/contact`: PR #19, **integrado en `dev` sin squash**, merge `6650e55`). Este fichero es
 > para **retomar**: dónde estamos, qué está decidido, qué falta decidir y cuál es el siguiente paso.
 > Cada sesión de ejecución lo actualiza al cerrar (fase, bloque, siguiente paso, SHA).
 
@@ -307,6 +307,33 @@ por PR, sin squash:
 - **Hallazgos 44–61** en el [README de F9](plan/F9-procesos/README.md), «Hallazgos de la sesión F9-04».
 - **Siguiente paso: F2-01**. `main` sin tocar.
 
+**F2-01 · F2, inventario E-12 y hojas simples de `acceso` (2026-10-04, 🌐, rama `reorg/f2-01-inventario-hojas` desde `origin/dev` @ `9a77307`).**
+Sesión completa. El código lo escribieron sub-agentes en *worktrees* (paquete por paquete) integrados con `cherry-pick`;
+llega a `dev` por PR, **sin squash**:
+
+- **T2.1** `1d73874` · inventario E-12 de los 51 ficheros viejos de `acceso` y sus ✚, medido fichero a fichero (líneas,
+  exportados, estado, concurrencia, BD, consumidores), en `plan/F2-acceso/diseno.md` §1.1. **Jhoan lo aprobó** con cuatro
+  respuestas: P1 `iam/infra/memory` simple (dobles) · P2 adaptadores Postgres sin Tx medio (mutantes solo en los de Tx/cerrojo
+  y estado) · P3 el candado de invitaciones parsea `auth_roleplane.go` · P4 `iam/domain` simple. Adaptadores: nace **1**
+  (`bridge_iam.go`, F2-04), se retira 0. Re-medición: `ports/in` 447 líneas y total 10.444.
+- **T2.34** `f46a107` · `internal/arranque/auth.go` → `auth_{stack,jwt,roleplane,invitaciones,empresa_activa}.go` y
+  `edge_config.go` (268/178/106/57/57/233 l); multiconjunto de las 31 declaraciones igual; huella idéntica.
+- **Hojas**: `entitlements` + `entitlementshelpertest` `01950de` · `middleware.go` rojo `43704f1` → verde `3742090` ·
+  `iam/domain` `30345e7`, `e64cc3a`, `9b4e407`, `2868e61` + refactor E-11 `2776d82` · `ports/out` + 7 suites (63 casos)
+  `8290814` · `iam/infra/memory` (7 + `redeem_store.go` ✚) `13d4171` … `38a8d0b` · `ports/in` `354f060`.
+- **Candado** (decisión de Jhoan en la sesión): D-F2-5 chocaba con `un_fichero_un_test`; excepción verificada por lista
+  cerrada en `internal/candados/inbound_ports.go`, rojo `4e97ee3` → verde `1d3b10b`.
+- **Gates** (toolchain fijada, rc sin pipe, sobre `354f060`): `make ci-local` `GATE_RC=0` (99 `ok`, lint 0 issues) · `go vet
+  -tags pendiente ./...` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` · código nuevo con `-race -v` 1.210 PASS,
+  **0 SKIP** · `cobertura-ficheros` (informe) 32 evaluados, 1 por debajo (`nucleo/contact/repository_postgres.go`, previo).
+  Mutantes a mano: 12/12 `iam/domain`, 5/5 middleware, 4/4 `Fake`, 8/8 dobles y canje en memoria, 4/4 candado.
+- ⏱️ **D-R-6, minutos con E-12**: ≈ **81 min activos** (02:35–03:31 Z, con la espera de la aprobación del inventario dentro,
+  y 12:10–12:35 Z tras un reinicio del contenedor; el hueco 03:31–12:10 no cuenta). Simple fue la mayoría: 26 ficheros de
+  producción nuevos + suites, en 4–5 sub-agentes a la vez; el cuello fue la suite + dobles de memoria (≈ 24 min un solo agente).
+- 🟡 **Para Jhoan**: hallazgos 13 (cero de `RedemptionVerdict` = «procede»), 14 (U+200B/U+FEFF no se recortan en el
+  token) y 18 (`05` E-3 sin la excepción nueva) del [README de F2](plan/F2-acceso/README.md); hallazgos 9–18 en total.
+- **Siguiente paso: F2-02** (`usecase` e `identity`). `main` sin tocar.
+
 ## Avance de la ejecución
 
 | Fase | Estado | Último bloque cerrado | SHA |
@@ -317,7 +344,8 @@ por PR, sin squash:
 | F1-06 (ajustes previos a F2) | ✅ hecha (2026-10-03) | A1–A6 | `0689b4e`, `1622231`, `0a91857`, `cccee37`, `9001720`, `7937772` |
 | F9-B (adelantado) | ✅ **B1 y B2 hechos** (2026-10-03, F9-03 y F9-04) | B2 · T9.17–T9.21, T9.35 (P4–P8, P10) y T9.22 | B1: `679ea52`, `052089e`, `8febd52`, `250916a` (en `dev` por el PR #27, merge `7b092d5`). B2: `e3fc0de`, `49d6d9e`, `39c38be`, `9da68f7`, `0a2762d`, `56b99f6`, `2bb7989` (rama `reorg/f9-b2`, por PR a `dev`) |
 | F1 | ✅ **cerrada** (A–D en `dev`: PR #19, #23, #25; cierre local F1-04 el 2026-10-02; **parada resuelta el 2026-10-03**) | D · cierre local e informe (T1.17–T1.19) | **D**: T1.17–T1.19 sin commit de código sobre `ddcf7de`, cierre documental `d5228ac` · T1.14 `09f4b72` · T1.15 `0c2bddf` (+ `a62abea`) · T1.16 `ce98595` · T1.1 `afa63f3` · T1.2 `b37a8c8` · T1.3 `d915d41` (+ `b001c35`) · T1.3b `68897a8`, `776d6a2` · T1.4 `8f2a4db` · T1.5 `89b223b` · T1.6 `32b7bfb` · cierre del bloque `b9dd1e7` · tras el cierre: E-11 `8365132` y el troceo de `contacttest/contrato.go` `7069532`; sobre `origin/dev` @ `77df20f`, rama `reorg/f1-a-contratos-rojo`. Gate `ci-local` `GATE_RC=0` (86 líneas `ok`, 0 issues); `make test-pendiente` `PENDIENTES=11` `ROJOS=4`; 0 SKIP · **B**: decisiones `ccc9a6b` · T1.8 `9e8f740` · T1.9 `8e7a891` · T1.10 `222c4c8` · T1.11 `8307afb` · D-F1-7 `4bbd138` · T1.13 `4bc398d` (sobre `origin/dev` @ `5847ad4`). Gate `GATE_RC=0` (88 `ok`, 0 issues); `PENDIENTES=0 · ROJOS=0`; cobertura 97,6 · 100 · 95,6 · 92,6 % y Postgres exento (31,1 %); 0 SKIP; pre-chequeo de T1.13 viejo y nuevo 20 PASS |
-| F2–F8 | pendiente | — | — |
+| F2 | 🔄 en curso: **F2-01 hecha** (2026-10-04) | F2-01 · T2.1, T2.34, T2.2–T2.3, T2.5–T2.9, T2.17–T2.21 | `1d73874`, `f46a107`, `01950de`, `43704f1`, `3742090`, `30345e7`, `e64cc3a`, `9b4e407`, `2868e61`, `2776d82`, `8290814`, `13d4171`…`38a8d0b`, `4e97ee3`, `1d3b10b`, `354f060` (rama `reorg/f2-01-inventario-hojas`, por PR a `dev`) |
+| F3–F8 | pendiente | — | — |
 | F9-D | pendiente | — | — |
 | F10 | pendiente | — | — |
 
@@ -440,6 +468,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
+- **F2-01**: rama `reorg/f2-01-inventario-hojas`, partida de `origin/dev` @ `9a77307`; commits de arriba y el cierre documental; PR hacia `dev`, **integrar sin squash**. Los *worktrees* de los sub-agentes se borran al cerrar. `origin/main` sin tocar.
 - **F9-04 (bloque B2 de F9)**: rama `reorg/f9-b2`, partida de `dev` @ `7b092d5` (PR #27 dentro). Siete commits de proceso (`e3fc0de`, `49d6d9e`, `39c38be`, `9da68f7`, `0a2762d`, `56b99f6`, `2bb7989`) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Los *worktrees* de los sub-agentes ya están borrados. `origin/main` sin tocar.
 - **F1-06 (ajustes previos a F2)**: seis commits de código y uno de documentación directamente sobre `dev`, partiendo de `3e181f6`. Escritos por sub-agentes en *worktrees* fijados en ese SHA e integrados con `cherry-pick`; los *worktrees* ya están borrados. `origin/main` sin tocar.
 - **F1-04 (bloque D de F1)**: commits solo de documentación directamente sobre `dev` (`d5228ac` y el que anota su SHA), partiendo de `ddcf7de` (PR #25). Los dos traspasos de F1 están **CERRADOS**. `origin/main` sin tocar.
@@ -455,7 +484,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Para retomar
 
-0. **Siguiente sesión**: F2-01, en [`plan/sesiones/`](plan/sesiones/README.md). F1-06, F9-03 y F9-04 están hechas (2026-10-03).
+0. **Siguiente sesión**: F2-02, en [`plan/sesiones/`](plan/sesiones/README.md), con el PR de F2-01 integrado. F2-01 está hecha (2026-10-04).
 1. Lee [`plan/README.md`](plan/README.md) y, si vas a ejecutar, el fichero de tu sesión en
    [`plan/sesiones/`](plan/sesiones/README.md) (él te dice qué más leer).
 2. La norma: [`05-metodo-contratos-y-tdd.md`](05-metodo-contratos-y-tdd.md).
