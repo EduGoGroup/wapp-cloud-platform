@@ -15,10 +15,10 @@ package diagnostics
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ErrNotFound lo devuelve GetBundle cuando no hay ninguna solicitud del tenant con
@@ -99,5 +99,11 @@ type BundleReceiver interface {
 // Gateway usa para sus comandos. Si la fuente de azar falla devuelve "" y el error
 // con el prefijo "diagnostics: generando command_id: ".
 func NewCommandID() (string, error) {
-	panic(pendiente.Implementar("diagnostics.NewCommandID"))
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("diagnostics: generando command_id: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // versión 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variante 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
