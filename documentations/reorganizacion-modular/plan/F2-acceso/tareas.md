@@ -141,38 +141,61 @@ Entrada: PR de F2-01 integrado. Para cuando: 0 pendientes en `iam/usecase` e `ia
 ## Sesión F2-03 · `infra/postgres`, `entitlements/postgres.go`, `transport/http`, `platformadmin` · 🌐 · T2.4, T2.12–T2.15, T2.24–T2.27
 Entrada: PR de F2-02 integrado. Para cuando: 0 pendientes en `acceso` · candados AST verdes · suites compilan contra Postgres · PR.
 
-- [ ] **T2.4 · `entitlements/postgres.go`: rojo y verde** · 🌐 · complejo (prov.: caché, mutex, Postgres) · dep. T2.2 · cumple R2.4.c
+> **Correspondencias de nombres (E-11) de F2-03**: `WithReloj` → `WithClock` (ya fijada en F2-02) · `puertos.go` → **`ports.go`**
+> · `platformadminhelpertest/{suite,doble,doble_test}.go` → `contrato.go`, `fake.go`, `fake_test.go` (como `entitlementshelpertest`)
+> · `iam/infra/postgres`: `leerInvitacion` → `readInvitation`, `cerrarSolicitudDeAcceso` → `closeAccessRequest`,
+> `bloqueoAltaDeMembresia` → `membershipWriteLock` (mismo valor, 47052: viejo y nuevo se serializan entre sí),
+> `multiEmpresaConcedida` → `multiCompanyGranted`, `porQueNoSeRevoco` → `whyNotRevoked`, `validarAmbitoDeAsignacion` →
+> `validateAssignmentScope`, `filaAInvitacion` (nombre de la spec; el viejo tenía `scanInvitation`) → `invitationFromRow` +
+> `invitationRow`; candados AST `membresia_unica_ast_test.go` → `single_membership_writer_ast_test.go`,
+> `canje_orden_ast_test.go` → `redeem_order_ast_test.go`, `canje_una_consulta_ast_test.go` (test 1) →
+> `redeem_single_query_ast_test.go` (el test 2 es conducta de `invitationFromRow`, `canje_test.go`), y sus constantes
+> `ficheroDelCanje`/`lecturaDelCanje`/`escritoresEsperados` → `redeemFile`/`invitationReader`/`expectedWriters` ·
+> `iam/transport/http`: `mensajeInvitacionInservible` → `unusableInvitationMessage`, `codigoIndistinguible` →
+> `indistinguishableCode`, `instante` → `instant` · `platformadmin`: `vigentes`/`deseados` → `current`/`desired`;
+> `lookupAccessRequestStatus`/`resolveRoleID`/`checkRetryApproved`/`executeApprovalTx` pasan a métodos **exportados** del
+> puerto `AccessRequestStore` (mismo nombre en mayúscula) · candado nuevo `internal/candados/contract_adapters.go`
+> (`ContractAdapterDirs`, D-F2-9) · `outhelpertest.Invitation`/`Membership` (alias de `domain`, decisión de Jhoan en la sesión).
+> Los ficheros conservan el nombre del viejo (`canje.go`, `memberships.go`, T-15).
+>
+> **Desviaciones (aplicadas, ver README hallazgos 26–35)**: las pasadas contra Postgres viven en
+> `test/procesos/{entitlements,iam,platformadmin}_contrato_test.go` (convención H9.5/F1, el arnés no se exporta), no en
+> `postgres_integracion_test.go`/`suites_integracion_test.go` dentro del paquete · el unitario de la caché de
+> `entitlements/postgres.go` sustituye un *driver* falso de `database/sql` en vez de `lookupFn`/`listFn` (T-1) · los commits
+> rojos son uno por fichero (`rojo(acceso): contrato de iam/transport/http/<f>`), no uno por paquete.
+
+- [x] **T2.4 · `entitlements/postgres.go`: rojo y verde** · 🌐 · complejo (prov.: caché, mutex, Postgres) · dep. T2.2 · cumple R2.4.c — cerrada en `90b786b` (rojo) → `f7d36eb` (verde) + `368d2fd` (suite contra Postgres); 15 mutantes sembrados · 15 muertos · 0 vivos · 0 equivalentes; 98,5 % (informe)
   - **Ficheros**: `A/entitlements/postgres.go`, `…/postgres_test.go` (unitario: caché con `lookupFn`/`listFn` sustituidos y `WithReloj`, D-F2-6), `…/postgres_integracion_test.go` (`//go:build integracion`, corre `ContratoResolver` con el arnés)
   - **Hecho cuando**: promesas de diseño §3 (cachés separadas, `false` cacheado, copia, TTL 60 s por defecto, mutex fuera de la consulta); el test unitario no usa reloj real; mutantes sobre la caché (TTL, `false` cacheado, copia).
   - **Gate**: G-rojo · `go vet -tags integracion ./internal/modulos/acceso/...; echo rc=$?` → 0 · G-verde
   - **Commit**: `rojo(acceso): contrato de entitlements/postgres` · `verde(acceso): entitlements/postgres`
-- [ ] **T2.12 · rojo(acceso): `iam/infra/postgres` (8) + candados AST** · 🌐 · complejo (prov.) · dep. T2.6 · cumple R2.2.c, R2.3.b–c
+- [x] **T2.12 · rojo(acceso): `iam/infra/postgres` (8) + candados AST** · 🌐 · complejo (prov.) · dep. T2.6 · cumple R2.2.c, R2.3.b–c — cerrada en `c182a0a` (`postgres.go`, simple, una pasada) y los rojos `6cd7dcc`, `1e3648e`, `cdba8b0`, `e0b7dff`, `a82e5d3`, `975d92b` (con el candado de escritor único), `e72425d` (con los dos del canje) + `e87b552`/`f812cfb` (las 7 suites contra Postgres), sobre el candado D-F2-9 `7da5367` → `a9a5fdf`
   - **Ficheros**: `A/iam/infra/postgres/*.go`, 8 `_test.go` unitarios (constructores, `filaAInvitacion` pura, mapeo de `pgconn` 23505 → `ErrConflict`), `…/suites_integracion_test.go` (`//go:build integracion`, las 7 suites con su `Montaje` de Postgres y el arnés), y los 3 candados AST portados (D-F2-1) con la guarda anti-hueco
   - **Hecho cuando**: los candados, **en rojo con su guarda** (el contrato no tiene aún el SQL: su «no encontré X» es el rojo esperado, bajo `//go:build pendiente`); el de membresía barre `internal/` y espera **dos** escritores.
   - **Gate**: G-rojo · `go vet -tags integracion ./internal/modulos/acceso/...; echo rc=$?` → 0
   - **Commit**: `rojo(acceso): contratos de iam/infra/postgres y sus candados`
-- [ ] **T2.24 · verde(acceso): `iam/infra/postgres/*` (8)** · 🌐 · dep. T2.12, T2.23 · cumple R2.3.b–c
+- [x] **T2.24 · verde(acceso): `iam/infra/postgres/*` (8)** · 🌐 · dep. T2.12, T2.23 · cumple R2.3.b–c — cerrada en `95cb3e3`, `3183dd2`, `a8660ed`, `dc9abcc`, `2851eab`, `c482ae4` (memberships), `798bbb3` (canje); los 3 candados AST verdes; el viejo sigue verde sin tocarlo (D-F4-1 verificada: `SkipDir` = 1); mutantes sin BD muertos 8/8 en memberships y los estructurales de canje; con BD (pre-chequeo) sobreviven 4, todos de carrera (hallazgo 29)
   - **Hecho cuando**: SQL **literal** del viejo (T-2); los 3 candados AST en verde sin etiqueta; el candado viejo sigue verde **sin tocarlo** porque F0 ya lo dejó ciego al árbol nuevo (T0.27, D-F4-1; si D-F4-1 = no: `memberships.go` en el mismo commit que la línea de D-F2-2, T-1); unitarios verdes; mutantes sobre `memberships.go` y `canje.go` (los corre quien tenga Postgres: pre-chequeo en la web si hay Docker, cierre en T2.33).
   - **Gate**: G-verde (su verdad la da la suite contra Postgres, P4, y F9) · `make ci-local` rc=0 (el candado viejo sigue verde)
   - **Commit**: `verde(acceso): iam/infra/postgres/<f>` — uno por fichero
-- [ ] **T2.13 · rojo(acceso): `iam/transport/http` (6)** · 🌐 · medio (prov.) · dep. T2.7 · cumple R2.3.b, R2.5.e
+- [x] **T2.13 · rojo(acceso): `iam/transport/http` (6)** · 🌐 · medio (prov.) · dep. T2.7 · cumple R2.3.b, R2.5.e — cerrada en `9452ca0`, `1da40da`, `8792bd9`, `aa8a009`, `674e13e` (un rojo por fichero); `http.go` sin exportados nace en su verde `00ed7e4`
   - **Ficheros**: `A/iam/transport/http/*.go` y 6 `_test.go`
   - **Hecho cuando**: R-H1…R-H9; los textos de diseño §5 como constantes o literales afirmados byte a byte (anti-oráculo del canje con `bytes.Equal`).
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contratos de iam/transport/http`
-- [ ] **T2.25 · verde(acceso): `iam/transport/http/*` (6)** · 🌐 · dep. T2.13, T2.23 · 6 commits · **Gate**: G-verde
-- [ ] **T2.14 · `platformadmin/puertos.go` ✚ + `platformadminhelpertest`** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.2.e
+- [x] **T2.25 · verde(acceso): `iam/transport/http/*` (6)** · 🌐 · dep. T2.13, T2.23 · 6 commits · **Gate**: G-verde — cerrada en `95aa600`, `dd1d345`, `65b4e52`, `9c3f5d6`, `75bd52d`; R-H1…R-H9; 157 PASS, 0 SKIP; 94,0–100 % (informe)
+- [x] **T2.14 · `platformadmin/puertos.go` ✚ + `platformadminhelpertest`** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.2.e — cerrada en `3b58eba` (`ports.go` + `platformadminhelpertest`, simple, una pasada) y `7a32260` (dos casos de alcance por empresa que destaparon los mutantes de BD; 29 casos); los tipos van antes: rojos `2cb4954`, `5299fd5`
   - **Ficheros**: `A/platformadmin/puertos.go`, `A/platformadmin/platformadminhelpertest/{suite,doble,doble_test}.go`
   - **Hecho cuando**: `TenantStore` y `AccessRequestStore` cubren los métodos de `V/postgres.go:99-277` y `V/access_requests.go:136-485`; suite con la firma `Contrato(t, func(t) Montaje)`; doble completo y verde contra la suite.
   - **Gate**: `go test -race ./internal/modulos/acceso/platformadmin/platformadminhelpertest/; echo rc=$?` → 0
   - **Commit**: `verde(acceso): puertos de platformadmin y su doble`
-- [ ] **T2.15 · rojo(acceso): `platformadmin` (5 ficheros)** · 🌐 · medio; `postgres.go` y `access_requests_postgres.go` complejo (prov.) · dep. T2.14, T2.12 · cumple R2.2.e
+- [x] **T2.15 · rojo(acceso): `platformadmin` (5 ficheros)** · 🌐 · medio; `postgres.go` y `access_requests_postgres.go` complejo (prov.) · dep. T2.14, T2.12 · cumple R2.2.e — cerrada en `2cb4954`, `5299fd5`, `49a2cf8`, `0600a15`, `681ece7` y `a4464e6` (`access_requests_postgres.go` ✚)
   - **Ficheros**: `A/platformadmin/{access_requests,access_requests_postgres,handlers,postgres,signup}.go` y 4 `_test.go` + el de integración (la suite de `platformadminhelpertest` con su `Montaje` de Postgres y el arnés)
   - **Hecho cuando**: handlers reciben **puertos**; R-A1…R-A10; los 30 `http.Error` y los 9 centinelas literales; `generateEnrollmentCode` `"WAPP-"` + 20 hex. El corpus de equivalencia del correo del signup (R-A8) lleva entradas adversarias ([`reglas.md`](reglas.md) §5).
   - **Gate**: G-rojo
   - **Commit**: `rojo(acceso): contrato de platformadmin/<fichero>` — uno por fichero
-- [ ] **T2.26 · verde(acceso): `platformadmin/*` (5)** · 🌐 · dep. T2.15, T2.24 · 5 commits; la verdad de `access_requests_postgres.go` y `postgres.go` la da la suite contra Postgres (P4) y F9 · **Gate**: G-verde
-- [ ] **T2.27 · Cierre de F2-03** · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' internal/modulos/acceso | wc -l` → 0; `go vet -tags integracion ./...` rc=0; minutos anotados; las tres cosas del cierre · **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR)
+- [x] **T2.26 · verde(acceso): `platformadmin/*` (5)** · 🌐 · dep. T2.15, T2.24 · 5 commits; la verdad de `access_requests_postgres.go` y `postgres.go` la da la suite contra Postgres (P4) y F9 · **Gate**: G-verde — cerrada en `20330c6`, `e500186`, `3706323`, `8a38c67`, `a7e72b4` (`NewRepository`), `27028a8` (`access_requests_postgres.go`, complejo) + `99336f3` (suite contra Postgres); mutantes 16/16 sin BD y 13/13 contra Postgres; 95,0–100 % fuera de los adaptadores (informe)
+- [x] **T2.27 · Cierre de F2-03** · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' internal/modulos/acceso | wc -l` → 0; `go vet -tags integracion ./...` rc=0; minutos anotados; las tres cosas del cierre · **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR) — cerrada sobre `99336f3`: `make toolchain` OK (go1.26.5, lint v2.12.2) · `make ci-local` `GATE_RC=0` (111 `ok`, lint 0 issues) · `make vet-pendiente` rc=0 · `go vet -tags integracion ./...` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` · `grep pendiente.Implementar internal/modulos/acceso` → **0** · `go test -v ./internal/{modulos,nucleo,arranque,candados}/...` rc=0, 2.445 PASS, **0 SKIP** · los 3 candados AST verdes · `cobertura-ficheros` (informe) 67 evaluados, 8 por debajo: los 7 adaptadores Postgres nuevos (fuera del umbral por spec) y `nucleo/contact/repository_postgres.go` (previo) · `go list -deps ./internal/modulos/acceso/...` sin `internal/{iam,entitlements,platformadmin}` · pre-chequeo (no cierra; cierra F2-05) de las 4 suites contra Postgres en la web: rc=0, 148 PASS, 0 FAIL, 0 SKIP · ≈ 90 min de pared (D-R-6, ESTADO)
 
 ## Sesión F2-04 · adaptador, conmutación y rutas · 🌐 · T2.28–T2.31
 Entrada: PR de F2-03 integrado. Para cuando: huella igual · 23 + 8 rutas nuevas · `go list -deps` · test de cableado completo · PR.

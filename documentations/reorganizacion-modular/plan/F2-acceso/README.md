@@ -182,6 +182,53 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     carácter). `TenantsOfCaller` normaliza a lista vacía un `nil` del repositorio (R-U17 lo promete en el servicio; ningún
     adaptador devuelve `nil` hoy).
 
+**De la sesión F2-03 (2026-10-04)** — medido contra el código; lo que pide decisión está marcado 🟡:
+
+26. **El candado `ProcessImports` no admitía la zona hexagonal.** Su regla 3b solo deja a un `*_contrato_test.go` importar
+    el **padre** del `…helpertest`; en `iam` la suite cuelga de `ports/out` y los adaptadores viven en `infra/postgres`.
+    Jhoan eligió una **lista cerrada** de pares en el candado: D-F2-9, `internal/candados/contract_adapters.go`
+    (`7da5367` → `a9a5fdf`). Y para los tipos del dominio que cruzan los montajes (`InvitationTables.Seed`, `RedeemState`),
+    alias en `outhelpertest` (`Invitation`, `Membership`, `f812cfb`) en lugar del rodeo con genéricos restringidos por la
+    forma del struct que el sub-agente había escrito (cumplía la letra del candado, no su espíritu).
+27. **Las pasadas contra Postgres no caben dentro del paquete.** T2.4/T2.12/T2.15 pedían `postgres_integracion_test.go` /
+    `suites_integracion_test.go` en el paquete, pero el arnés de F9-A (`nuevaBase`, `Abrir`) no se exporta y
+    `test/procesos/base_test.go` es el único fichero que puede abrir conexiones (`SinBDViva`). Viven en
+    `test/procesos/{entitlements,iam,platformadmin}_contrato_test.go`, la convención de H9.5 que estrenó F1 (T1.13).
+28. **Pre-chequeo en la web (Docker respondió, no cierra nada; cierra F2-05)**: las cuatro suites (`contact`, `entitlements`,
+    las 7 de `iam`, `platformadmin`) contra testcontainers con `WAPP_PROCESOS_BINARIO=viejo`: rc=0, **148 PASS, 0 FAIL,
+    0 SKIP**. **Sin divergencias** memoria ↔ Postgres en ninguna: los hallazgos 15 y 16 se resolvieron en los montajes
+    (`Seed` de `entitlements` antes de la primera consulta, planes `contract_*`, `basic` ampliado sin borrar; invitaciones
+    y canje sembrados por SQL; el rol transversal de la migración 0059).
+29. 🟡 **Cuatro mutantes de `canje.go` sobreviven incluso contra Postgres**: el `UPDATE` sin `revoked_at IS NULL`, sin
+    `redeemed_at IS NULL`, sin comprobar filas afectadas, y `GrantTenantAccess` sobre `r.db` en vez de la `tx`. Los tres
+    primeros solo los destapa una **carrera** (el viejo ya lo había medido: el veredicto previo los enmascara); el cuarto,
+    porque el comentario viejo dice que `canje_orden_ast_test.go` vigila que el canje pase la `tx`, y **solo vigila el
+    orden**. Además, `Add` sin su transacción en `memberships.go` solo muere 1 de cada 6 corridas (el caso de altas
+    concurrentes es probabilístico). ¿Se añade al candado AST la comprobación «`GrantTenantAccess` recibe la `tx`», y un
+    proceso de carrera en F9 (R-P8)?
+30. **Probar la transacción sin BD funciona** con un *driver* `database/sql` en memoria que registra BEGIN/COMMIT/ROLLBACK
+    y marca lo que sale por el pool con la `tx` abierta: mató los 16 mutantes unitarios de `access_requests_postgres.go`
+    (incluida la atomicidad de R-A7). El mismo patrón sirvió al unitario de la caché de `entitlements/postgres.go`, que
+    por eso **no** porta `lookupFn`/`listFn` (los campos no exportados no caben en el rojo, T-1). Podría servir a
+    `iam/infra/postgres` para sus mutantes de Tx.
+31. **Los mutantes contra Postgres destaparon dos huecos de alcance por empresa** en la suite de `platformadmin` (el rol del
+    reintento leído sin la empresa; el lease unido solo por `edge_id`), que el doble ya hacía bien porque sus claves son por
+    empresa: `7a32260` añade los casos (29). La suite gana cuando se mutan los dos lados.
+32. **El orden lo fuerzan los tipos, también al revés del hallazgo 20**: `ports.go` (simple, solo interfaces) necesita los
+    DTO y centinelas de `postgres.go` y `access_requests.go` (medios), así que sus rojos van **antes** del simple, y el rojo
+    de `access_requests.go` se partió en dos commits (tipos y centinelas; lógica y handlers). Y `http.go` de
+    `transport/http` no pudo nacer entero: `toVerifyResultDTO` escribe en un DTO de `auth.go`; vive en `auth.go`.
+33. **Un medio ya verde no admite un rojo nuevo**: `NewRepository` (que esperaba al `FeatureResolver` de `iam/infra/postgres`)
+    llegó directo en verde (`a7e72b4`), porque un segundo `_test.go` tras `pendiente` lo rechaza `un_fichero_un_test`.
+    Convendría decirlo en `05` E-12.
+34. **`platformadmin` declara 10 centinelas, no 9** (diseño §3/§5): `ErrSignupNotAvailable` (`signup.go`), que nada devuelve.
+    Y 🟡 `net/mail` acepta un correo con nombre visible (`Ana <ana@x.com>`, se guarda `ana <ana@x.com>`) y no recorta
+    U+200B/U+FEFF (como el hallazgo 14): se mantiene por equivalencia y el corpus adversario (26 entradas) lo fija.
+35. **Lint en el verde de los tests**: con la etiqueta `pendiente` el rojo no se lintea, y el verde destapó staticcheck ST1023,
+    gosec G101 (literales en campos `Token`) y gocyclo en tablas de casos; se resolvió solo en los tests, sin tocar promesas.
+    `invitations.go` (HTTP) y el handler del código de enrolamiento siguen con `time.Now()` como el viejo (sin reloj
+    inyectable sin decisión).
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |
