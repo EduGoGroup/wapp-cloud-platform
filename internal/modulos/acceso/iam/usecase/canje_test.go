@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package usecase
 
 import (
@@ -84,7 +82,9 @@ func TestRedeemInvitation_PassesDigestNeverClearToken(t *testing.T) {
 			if !bytes.Equal(repo.hash, domain.HashInvitationToken(token)) {
 				t.Fatalf("digest = %x; quiere HashInvitationToken(%q)", repo.hash, token)
 			}
-			if bytes.Contains(repo.hash, []byte(token)) {
+			// Con un token de un carácter, ese byte puede aparecer por azar entre los 32 del digest:
+			// ahí la igualdad de arriba ya prueba que viajó el digest y no el texto.
+			if len(token) > 1 && bytes.Contains(repo.hash, []byte(token)) {
 				t.Fatal("el token en claro cruzó hacia el repositorio")
 			}
 		})
@@ -132,7 +132,7 @@ func TestRedeemInvitation_RepoOutcomesPropagate(t *testing.T) {
 // De punta a punta con el doble: la empresa sale de la FILA, no de quien llama.
 func TestRedeemInvitation_CompanyComesFromInvitationRow(t *testing.T) {
 	store := memory.NewStore().WithClock(tickingClock())
-	const token = "WAPP-INV-0123456789abcdef0123456789abcdef"
+	const token = "WAPP-INV-0123456789abcdef0123456789abcdef" //nolint:gosec // token de mentira de un test
 	store.Invitations.Seed(domain.Invitation{
 		TenantID:  testTenantB,
 		TokenHash: domain.HashInvitationToken(token),
