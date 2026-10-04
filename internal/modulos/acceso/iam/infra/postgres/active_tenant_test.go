@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iampostgres
 
 import (
@@ -37,7 +35,11 @@ func (downDriver) Open(string) (driver.Conn, error) { return nil, errPoolDown }
 func downPool(t *testing.T) *sql.DB {
 	t.Helper()
 	db := sql.OpenDB(downConnector{})
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("cerrar el pool caído: %v", err)
+		}
+	})
 	return db
 }
 
