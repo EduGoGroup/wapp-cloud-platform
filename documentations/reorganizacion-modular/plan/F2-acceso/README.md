@@ -230,7 +230,11 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     llegó directo en verde (`a7e72b4`), porque un segundo `_test.go` tras `pendiente` lo rechaza `un_fichero_un_test`.
     Convendría decirlo en `05` E-12.
 34. **`platformadmin` declara 10 centinelas, no 9** (diseño §3/§5): `ErrSignupNotAvailable` (`signup.go`), que nada devuelve.
-    Y 🟡 `net/mail` acepta un correo con nombre visible (`Ana <ana@x.com>`, se guarda `ana <ana@x.com>`) y no recorta
+    Y ✅ ~~🟡~~ *(resuelto por D-F2-13, Jhoan, 2026-10-04, tras el cierre de F2: el alta solo acepta una **dirección pelada**
+    —con nombre visible, ángulos o comentario contesta 400— y recorta U+200B y U+FEFF de los **bordes**; el nuevo se
+    aparta ahí del viejo y manda a identity otra cosa que él. Quedan como en el viejo, a propósito: la parte local entre
+    comillas (`"a b"@x.com`, una dirección legal) y un invisible **dentro** del correo, que `net/mail` acepta. El
+    centinela `ErrSignupNotAvailable` se deja hasta F10)* `net/mail` aceptaba un correo con nombre visible (`Ana <ana@x.com>`, se guardaba `ana <ana@x.com>`) y no recortaba
     U+200B/U+FEFF (como el hallazgo 14): se mantiene por equivalencia y el corpus adversario (26 entradas) lo fija.
 35. **Lint en el verde de los tests**: con la etiqueta `pendiente` el rojo no se lintea, y el verde destapó staticcheck ST1023,
     gosec G101 (literales en campos `Token`) y gocyclo en tablas de casos; se resolvió solo en los tests, sin tocar promesas.
