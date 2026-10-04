@@ -1,0 +1,155 @@
+// Porta internal/iam/domain/errors.go @ 9a77307
+
+package domain
+
+import "errors"
+
+// Errores tipados del dominio IAM. Se inspeccionan SOLO con errors.Is: sus textos son
+// observables (los mapea transport/http y los enseñan el BFF y wapp-ctl) y se copian byte a
+// byte del viejo (diseño F2 §5), pero nadie decide comparando cadenas. Los adaptadores
+// (infra/postgres) mapean sus errores nativos a estos centinelas (sql.ErrNoRows → ErrNotFound,
+// unique_violation 23505 → ErrConflict); los usecases razonan sobre ellos sin conocer el
+// almacenamiento.
+//
+// El vigésimo centinela del dominio, ErrInvitationExpired, vive en canje.go: es el único
+// desenlace del canje que ninguno de estos sabe expresar.
+var (
+	// ErrNotFound indica que un recurso solicitado no existe (o no es visible para el tenant
+	// del contexto). Lo devuelven los repos GetByID/GetByEmail/…
+	ErrNotFound = errors.New("iam: recurso no encontrado")
+
+	// ErrConflict indica una violación de unicidad (nombre de rol por tenant, …). Lo mapean los
+	// repos desde el unique_violation de Postgres.
+	ErrConflict = errors.New("iam: conflicto de unicidad")
+
+	// ErrInvalidInput indica un argumento de entrada inválido (vacío/mal formado) detectado por
+	// un usecase antes de tocar el repositorio.
+	ErrInvalidInput = errors.New("iam: entrada inválida")
+
+	// ErrNoTenant indica que quien llama no trae empresa en su contexto de identidad. NO es lo
+	// mismo que "no autenticado": desde D-056.12 el canje emite un Context Token válido y SIN
+	// tenant para quien todavía no tiene membresía, y ese token no puede administrar nada. Los
+	// usecases acotados a un tenant fallan con esto antes de tocar un repositorio, porque sin
+	// tenant del CONTEXTO no hay dónde acotar (INV-8) y el único sustituto posible sería un
+	// tenant elegido por el llamante.
+	ErrNoTenant = errors.New("iam: el contexto de identidad no trae tenant")
+
+	// ErrGlobalRoleImmutable indica un intento de MODIFICAR una plantilla global (iam_roles con
+	// tenant_id NULL) desde la administración de un tenant. Las plantillas son visibles y
+	// asignables por todos, y justo por eso no son editables por ninguno: cambiar sus grants
+	// cambiaría los permisos de todos los tenants a la vez. Leerlas y asignarlas sigue
+	// permitido.
+	ErrGlobalRoleImmutable = errors.New("iam: las plantillas de rol globales no se modifican desde un tenant")
+
+	// ErrRoleScopeInvalid indica un intento de asignar un rol de EMPRESA con ámbito GLOBAL: una
+	// fila de public.iam_user_roles con tenant_id NULL (Plan 047 · Ola 5 · T5.6).
+	//
+	// Una asignación global vale en TODAS las empresas —así la resuelve RoleRepo.RolesOfUser:
+	// `WHERE ur.tenant_id = $2 OR ur.tenant_id IS NULL`—, y eso es correcto SOLO para el rol
+	// transversal por diseño (RolTransversalID, el platform_admin del ADR-0039). Para cualquier
+	// otro convierte a esa persona en administradora de todas las empresas de las que sea
+	// miembro, sin que nadie se lo haya dado. Abrir la multi-empresa (T5.2) es exactamente lo
+	// que despierta ese daño.
+	//
+	// 🔴 NO SE TRADUCE A UN CÓDIGO HTTP, y es deliberado: ninguna ruta viva puede producirlo.
+	// El único llamante de RoleRepo.AssignToUser (RoleService.AssignRole) pasa SIEMPRE el
+	// tenant del contexto, así que quien vea este error habrá escrito código nuevo que se salta
+	// esa regla — es un defecto de programación, no una entrada de usuario, y el 500 genérico
+	// lo dice mejor que un 422.
+	ErrRoleScopeInvalid = errors.New("iam: un rol de empresa no puede asignarse con ámbito global")
+
+	// ErrInvalidCredentials indica que el par (email, password) no autentica. Lo devuelve
+	// identity-core, que es quien las valida desde la Ola 3; wApp solo lo traduce. Es
+	// deliberadamente OPACO (no distingue "usuario inexistente" de "password incorrecta") para
+	// no filtrar la existencia de cuentas.
+	ErrInvalidCredentials = errors.New("iam: credenciales inválidas")
+
+	// ErrUserInactive indica que identity acreditó a la persona pero le negó ESTA aplicación:
+	// usuario deshabilitado o System Gate cerrado. NO nace de una bandera local — desde la
+	// Ola 5 wApp no guarda ninguna (dos banderas de "activo" en dos bases dan dos sitios donde
+	// desactivar).
+	ErrUserInactive = errors.New("iam: usuario inactivo")
+
+	// ErrRefreshInvalid indica que un refresh token no es utilizable: no existe, está revocado
+	// o expiró. Lo dictamina identity, dueño de la sesión. Opaco por diseño (no distingue el
+	// motivo).
+	ErrRefreshInvalid = errors.New("iam: refresh token inválido")
+
+	// --- Canje de Identity Token por Context Token (identity Plan 003 · T3.1) ---
+
+	// ErrIdentityTokenInvalid indica que el Identity Token presentado al canje no se acepta:
+	// firma/emisor/`kid` que no cuadran, `token_use` distinto de "identity", o emitido para una
+	// aplicación que no es de wApp. Opaco por diseño (no distingue el motivo hacia fuera).
+	ErrIdentityTokenInvalid = errors.New("iam: identity token inválido")
+
+	// ErrIdentityTokenExpiring indica que el Identity Token es válido pero le queda menos vida
+	// que el mínimo emitible de un Context Token. No se emite uno más largo que su origen
+	// (identity ADR-0003, «pasaporte > visa»): el cliente tiene que refrescar contra identity
+	// antes de volver a canjear.
+	ErrIdentityTokenExpiring = errors.New("iam: al identity token le queda muy poca vida para canjearlo")
+
+	// ErrUserNotMigrated indica que el `sub` del Identity Token no tiene membresía de tenant en
+	// wApp (tabla tenant_members). Desde la Ola 5 esa es la ÚNICA forma de pertenecer a wApp:
+	// el padrón local murió con `iam_users`. Los UUID se preservaron en la migración
+	// EXACTAMENTE para que esto no pase: un sujeto sin membresía es un usuario sin migrar, no
+	// uno que crear al vuelo.
+	ErrUserNotMigrated = errors.New("iam: el sujeto del identity token no es miembro de ningún tenant de wApp")
+
+	// 🪦 ErrMultipleTenants vivió aquí y se retiró con el Plan 047 · Ola 5 · T5.1 (D-047.14):
+	// el canje ya decide con la empresa activa (usecase/exchange.go:resolveTenant), así que
+	// nadie lo producía. Un centinela que no se devuelve nunca es peor que ninguno: da la
+	// impresión de que existe una rama que ya no existe. No se porta.
+
+	// ErrIdentityUnavailable indica que no se pudo decidir sobre el Identity Token porque
+	// identity no está alcanzable (JWKS sin claves frescas). Es indisponibilidad de una
+	// dependencia, NO un rechazo de la credencial: se distingue para no contestar "no
+	// autorizado" a quien traía un token bueno.
+	ErrIdentityUnavailable = errors.New("iam: identity no está disponible")
+
+	// --- Cliente M2M de identity (Plan 056 · T2.4) ---
+	//
+	// Aquí wApp no habla como persona sino como MÁQUINA: canjea su API key por un Service Token
+	// y con él asegura personas en el padrón global y les abre aplicaciones. Los errores de
+	// abajo son los que el llamante NECESITA distinguir para decidir; todo lo demás cae en
+	// ErrIdentityUnavailable o sube envuelto tal cual.
+
+	// ErrMachineCredentialInvalid indica que identity rechazó la credencial M2M de wApp: el
+	// canje devolvió 401 (key desconocida, revocada o vencida —un solo código para las tres—) o
+	// una ruta M2M devolvió 403 FORBIDDEN por scope insuficiente. NO es culpa de quien pidió el
+	// alta: es la configuración de wApp (WAPP_IDENTITY_API_KEY y sus scopes) lo que hay que
+	// arreglar.
+	ErrMachineCredentialInvalid = errors.New("iam: identity rechazó la credencial M2M de wApp")
+
+	// ErrEmailTaken indica que el correo ya tiene dueño en identity y la clave presentada no es
+	// la suya (409 de POST /auth/signup —identity ADR-0027, caso D—), o que esa cuenta está
+	// bloqueada o inactiva. Los tres comparten respuesta: identity NO los distingue en el
+	// cable, así que wApp tampoco puede. ⚠️ Esta ruta no es anti-enumerante y eso es deliberado
+	// de identity: quien la exponga al público hereda ese trato, no lo empeora.
+	ErrEmailTaken = errors.New("iam: el correo ya está registrado en identity")
+
+	// ErrPasswordPolicy indica que la contraseña no cumple la política de identity: mínimo 12
+	// CARACTERES, máximo 72 BYTES, normalización NFKC y NINGUNA regla de composición. El motivo
+	// textual que devolvió identity viaja envuelto con %w, así que se reconoce con errors.Is y
+	// se lee con Error().
+	ErrPasswordPolicy = errors.New("iam: la contraseña no cumple la política de identity")
+
+	// ErrRateLimited indica que identity aplicó su freno por IP (429). Su cuerpo NO trae
+	// Retry-After, así que no hay cuándo reintentar: quien lo reciba decide su propia espera.
+	ErrRateLimited = errors.New("iam: identity aplicó su límite de peticiones")
+
+	// ErrIdentityNotConfigured indica que ESTE despliegue no tiene cliente M2M de identity
+	// (falta WAPP_IDENTITY_API_KEY o WAPP_IDENTITY_URL) y la operación pedida NO se puede
+	// completar sin él.
+	//
+	// 🔴 No es un fallo de quien llamó ni una indisponibilidad de identity: es configuración
+	// que falta AQUÍ, y por eso no se colapsa ni en el 400 ni en el 500 genérico. El alta de un
+	// miembro lo devuelve antes de escribir nada: sin acreditar la aplicación en identity, la
+	// fila de tenant_members solo produciría una persona que es miembro y no puede entrar.
+	ErrIdentityNotConfigured = errors.New("iam: el cliente M2M de identity no está configurado en este despliegue")
+
+	// ErrSystemNotAllowed indica que identity rechazó (403 SYSTEM_ACCESS_DENIED) el conjunto de
+	// aplicaciones de un PUT /users/{id}/systems porque alguna no es del ecosistema de la
+	// credencial o no existe. Es ATÓMICO: no se escribió NADA, ni siquiera las claves legítimas
+	// que iban en el mismo conjunto.
+	ErrSystemNotAllowed = errors.New("iam: identity rechazó alguna aplicación del conjunto")
+)
