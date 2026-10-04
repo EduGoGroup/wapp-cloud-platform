@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // roleplane_test.go — cubre el contrato de roleplane.go (MountRolePlane, RolePlaneDeps): el

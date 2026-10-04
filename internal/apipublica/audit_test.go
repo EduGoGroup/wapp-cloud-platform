@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // audit_test.go — cubre el contrato de audit.go (AuditReader, AuditDeps, MountAudit): C1.

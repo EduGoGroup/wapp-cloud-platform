@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // entitlements_test.go — cubre el contrato de entitlements.go (EntitlementsDeps,

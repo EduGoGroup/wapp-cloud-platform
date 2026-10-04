@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // chain_test.go — cubre el contrato de chain.go: las cadenas W y R que los Mount* arman con

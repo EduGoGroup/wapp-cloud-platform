@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // auth_test.go — cubre el contrato de auth.go (AuthDeps, MountAuth): A1–A7, los patrones, las
