@@ -1,0 +1,380 @@
+// Porta internal/iam/ports/out/repos.go @ 9a77307
+
+// Package out declara los puertos DE SALIDA del módulo IAM: las interfaces de
+// repositorio que los usecases necesitan para persistir/leer estado. Son
+// contratos PUROS (context + tipos de dominio); las implementaciones viven en
+// infra/postgres (SQL raw) e infra/memory (tests). Todas las operaciones
+// acotadas a un tenant reciben el tenant_id del CONTEXTO de identidad (nunca lo
+// inventan): la regla de aislamiento multi-tenant (INV-8) se cumple en el
+// usecase pasando el tenant del token y en el repo con `WHERE tenant_id = $1`.
+//
+// Convención de errores (verdad de campo del repo): "no encontrado" que es un
+// resultado normal se expresa con `found bool`; "no encontrado" que es fallo de
+// negocio se expresa devolviendo domain.ErrNotFound (errors.Is). La violación de
+// unicidad se mapea a domain.ErrConflict.
+//
+// Cada puerto PERSISTENTE (los siete que no son clientes de identity) tiene su
+// suite de contrato en outhelpertest (ContratoMembershipRepo, ContratoRoleRepo,
+// ContratoGrantRepo, ContratoAuditRepo, ContratoInvitationRepo,
+// ContratoActiveTenantRepo, ContratoInvitationRedeemRepo; Contrato corre las
+// siete): la pasan el doble en memoria (infra/memory) en unitario y el adaptador
+// Postgres en los procesos de F9. Lo que el comentario de un método promete y la
+// suite no afirma, lo dice la propia suite. Los tres clientes de identity
+// (IdentityClient, IdentityM2MClient, UserSystemsClient) NO llevan suite: su
+// contrato es traducir el protocolo de identity y se prueba en infra/identity
+// contra un httptest.Server (diseño F2 §2).
+package out
+
+import (
+	"context"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/domain"
+)
+
+// IdentityClient habla con identity-api, el SSO del grupo (identity Plan 003 ·
+// Ola 3). Es el ÚNICO puerto de este módulo que sale del proceso hacia otro
+// servicio: los demás son almacenamiento.
+//
+// A partir de la delegación, las credenciales de una persona se validan AHÍ y no
+// aquí. Lo que wApp sigue decidiendo —el tenant y los grants— viaja en el
+// Context Token que se emite después, con el canje.
+type IdentityClient interface {
+	// Login autentica a la persona contra identity para una aplicación concreta
+	// (`system`: wapp.bff o wapp.edge). El System Gate de identity puede negar el
+	// acceso a esa aplicación aunque las credenciales sean correctas.
+	Login(ctx context.Context, email, password, system string) (domain.IdentitySession, error)
+	// Refresh rota la sesión en identity a partir del refresh presentado. La
+	// aplicación NO se manda: sale de la fila de la sesión, y mandarla sortearía
+	// el System Gate.
+	Refresh(ctx context.Context, refreshToken string) (domain.IdentitySession, error)
+	// Logout revoca en identity la sesión de ESE refresh. Idempotente: revocar
+	// una sesión que ya no existe no es error.
+	Logout(ctx context.Context, refreshToken string) error
+	// LogoutAll revoca TODAS las sesiones de la persona que acredita el Identity
+	// Token presentado, en todas sus aplicaciones.
+	LogoutAll(ctx context.Context, identityToken string) error
+}
+
+// IdentityM2MClient habla con identity-api como MÁQUINA, no como persona (Plan
+// 056 · T2.4). Es HERMANO de IdentityClient y no una ampliación suya, y la
+// diferencia no es de comodidad: aquel presenta las credenciales de alguien y
+// devuelve su sesión; este presenta la credencial de wApp —una API key que se
+// CANJEA, nunca se presenta (identity ADR-0025)— y opera sobre el padrón global
+// del grupo en nombre del ecosistema `wapp`.
+//
+// El canje del Service Token y su caché son asunto de la implementación: ningún
+// usecase pasa tokens por aquí. Lo único que hace falta configurar es la API
+// key (WAPP_IDENTITY_API_KEY).
+//
+// 🔴 El orden importa y no es negociable: una cuenta recién nacida —por Signup o
+// por EnsureUser— NO puede entrar a ninguna aplicación hasta que
+// ReplaceUserSystems le abra el System Gate, porque identity lo evalúa en el
+// login ANTES de emitir token y contesta 403 (identity ADR-0020, «el acceso de
+// onboarding se escribe, no se infiere»).
+type IdentityM2MClient interface {
+	// EnsureUser asegura la persona en el padrón GLOBAL de identity por su
+	// correo: la crea si no existe y la devuelve si ya existía (create-or-attach).
+	// Es idempotente y NUNCA modifica una cuenta que ya estaba —nombre y
+	// apellido solo se escriben en el alta—. La cuenta nace SIN contraseña
+	// utilizable: identity veta por escrito que un ecosistema fije la credencial
+	// de nadie.
+	//
+	// ⚠️ NO está acotado por ecosistema: con este scope se puede asegurar
+	// —y por tanto descubrir— cualquier correo del grupo.
+	EnsureUser(ctx context.Context, email, firstName, lastName string) (domain.IdentityUser, error)
+	// UserSystemsClient aporta el par LEER/DECLARAR accesos. Va embebido y no
+	// declarado aquí para que quien solo necesite ese par pueda pedirlo sin
+	// heredar de paso la capacidad de crear cuentas en el padrón del grupo (ver
+	// su propia documentación, justo debajo).
+	UserSystemsClient
+	// Signup registra a la persona en identity CON SU PROPIA contraseña y
+	// devuelve el UUID de su cuenta. Es la única vía por la que un hash
+	// utilizable entra en identity, y por eso la clave la escribe su dueño y no
+	// pasa por ninguna base de wApp.
+	//
+	// ⚠️ La ruta de identity es PÚBLICA (no lleva el Service Token) y se expone
+	// aquí solo para que el alta viva en una pieza. El 201 es AMBIGUO a
+	// propósito —cuenta creada, adoptada o reconocida dan el mismo cuerpo— y
+	// devuelve SIEMPRE el id real (identity ADR-0027).
+	Signup(ctx context.Context, email, password, firstName, lastName string) (userID string, err error)
+}
+
+// UserSystemsClient es la MITAD de IdentityM2MClient que gobierna a qué
+// aplicaciones de wApp puede entrar una persona: leer el conjunto vigente y
+// declararlo entero. Lo satisface el mismo adaptador (iamidentity.M2MClient).
+//
+// Es un puerto PROPIO y no un par de métodos sueltos del cliente entero porque
+// la administración de membresía (Plan 047 · Ola B) necesita exactamente estas
+// dos operaciones y NINGUNA de las otras dos: dar de alta a alguien en una
+// empresa no puede crear cuentas en el padrón global del grupo (EnsureUser) ni
+// registrar contraseñas (Signup). Con el cliente completo como dependencia esa
+// frontera sería una convención que alguien puede ampliar sin querer; como
+// puerto separado la impone el compilador.
+type UserSystemsClient interface {
+	// GetUserSystems devuelve las aplicaciones a las que la persona puede entrar
+	// HOY dentro del ecosistema de wApp. NUNCA es nil: sin ninguna es un arreglo
+	// vacío, y ese desenlace es DISTINTO de que la persona no exista (identity
+	// dto/user_systems_dto.go:57 lo declara como contrato, no como cortesía).
+	//
+	// 🔴 ES LO QUE HACE POSIBLE UNA UNIÓN EN VEZ DE UN REEMPLAZO CIEGO. El PUT de
+	// aquí abajo es declarativo: sin leer antes, añadir una aplicación revoca
+	// todas las demás. Aproximar esta lectura con una tabla local —«¿le
+	// aprobamos algo antes?»— es lo que se hacía hasta esta ola y está
+	// documentado como estructuralmente equivocado: una tabla de wApp no sabe
+	// qué escribió identity.
+	//
+	// ⚠️ El conjunto está ACOTADO AL ECOSISTEMA de la credencial (identity
+	// ADR-0016): NO enumera los accesos que otro ecosistema le haya dado a la
+	// misma persona. Lejos de ser una limitación, es lo que hace segura la
+	// unión — lo que no se ve tampoco se pisa, porque el PUT hermano revoca
+	// dentro del mismo ecosistema y solo ahí.
+	//
+	// 🔧 Consume el scope `identity.users.systems.read`, que es DISTINTO del de
+	// escritura (`...manage`): una credencial M2M que hoy solo escribe recibe 403
+	// aquí hasta que un operador le añada el de lectura.
+	//
+	// domain.ErrNotFound si la persona no está en el padrón de identity.
+	GetUserSystems(ctx context.Context, userID string) ([]string, error)
+	// ReplaceUserSystems declara el conjunto COMPLETO de aplicaciones a las que
+	// esa persona puede entrar dentro del ecosistema de wApp. Es DECLARATIVO, no
+	// aditivo: lo que no aparece queda REVOCADO, y un conjunto vacío es legítimo
+	// («ninguna»). Devuelve el conjunto vigente y el diff aplicado.
+	//
+	// Falla con domain.ErrSystemNotAllowed si alguna clave no es del ecosistema
+	// de wApp o no existe, y entonces no se escribió NADA (atómico); con
+	// domain.ErrNotFound si la persona no existe en identity.
+	ReplaceUserSystems(ctx context.Context, userID string, systems []string) (domain.IdentitySystemsDiff, error)
+}
+
+// MembershipRepo persiste la membresía usuario↔tenant (tabla
+// public.tenant_members, migración 0037). Es el vínculo de NEGOCIO que se queda
+// en wApp cuando los usuarios pasan a identity (identity ADR-0001, INV-1):
+// identity dice QUIÉN es la persona y esta tabla a QUÉ tenant pertenece.
+//
+// Dejó de ser SOLO LECTURA en el Plan 047 · Ola 1.0 (T1.0-2): hasta entonces la
+// única alta la escribía el operador al aprobar un access-request
+// (platformadmin.executeApprovalTx) y no había forma de darla de alta desde el
+// plano de administración del propio tenant.
+type MembershipRepo interface {
+	// TenantsOfUser devuelve los tenants de los que el usuario es miembro, en
+	// orden estable: el de alta (created_at, y tenant_id para desempatar). Una
+	// lista VACÍA no es error: significa que ese usuario no tiene membresía en
+	// wApp (quien lo llame decide qué hacer con eso). ⚠️ Vacía puede venir nil:
+	// las dos implementaciones viejas la devolvían así y aquí nadie la serializa.
+	//
+	// 🔴 EL ORDEN NO ELIGE NADA: con varias membresías y sin empresa activa el
+	// canje NO toma la primera, emite un token sin empresa (D-047.14).
+	TenantsOfUser(ctx context.Context, userID string) ([]string, error)
+	// MembersOf devuelve los miembros de UN tenant, y solo de ese, en orden
+	// estable (created_at, user_id). Es la lectura INVERSA de TenantsOfUser y la sirve el
+	// índice que la migración 0037 creó exactamente para ella
+	// (idx_tenant_members_tenant): la PK (user_id, tenant_id) sirve al acceso por
+	// usuario —el del canje—, este índice al de administración por tenant.
+	//
+	// Una lista VACÍA no es error y no es nil: una empresa sin miembros es un
+	// estado legítimo (los tenants nacen antes que su gente).
+	//
+	// ⚠️ Devuelve lo que la TABLA guarda —id opaco y fecha de alta— y nada más.
+	// El nombre y el correo viven en identity (INV-02) y este puerto no sale a
+	// buscarlos: hacerlo convertiría el listado de una empresa en una consulta al
+	// padrón del grupo.
+	MembersOf(ctx context.Context, tenantID string) ([]domain.Membership, error)
+	// UserTenants devuelve las empresas del usuario CON SU NOMBRE legible, en el
+	// mismo orden estable que TenantsOfUser. Lista vacía —NO nil: se serializa
+	// como `[]`— si no es miembro de ninguna, y eso NO es un error: es el estado
+	// de quien acaba de registrarse (D-056.12).
+	//
+	// 🔴 SON DOS MÉTODOS Y NO UNO, Y ESA ES LA DECISIÓN. TenantsOfUser corre en el
+	// CAMINO DE EMISIÓN DE TOKENS —una vez por canje, y los consumidores web
+	// canjean solos— y no necesita el nombre para nada: el token no lo lleva.
+	// Fundirlos pagaría un JOIN contra public.tenants en cada canje del sistema
+	// para servir a una pantalla que se pinta cuando alguien abre el selector.
+	// Éste es la lectura FRÍA, y por eso puede permitirse el JOIN.
+	//
+	// 🔴 SOLO LAS SUYAS, Y POR CONSTRUCCIÓN. La implementación es un INNER JOIN
+	// gobernado por `WHERE tenant_members.user_id = $1`: no hay forma de que
+	// devuelva una empresa de la que no sea miembro sin reescribir la consulta, y
+	// no hay ningún parámetro por el que pedir «las de otro». Tampoco devuelve
+	// conteos ni totales — nada que insinúe cuántas empresas hay fuera.
+	UserTenants(ctx context.Context, userID string) ([]domain.UserTenant, error)
+	// Add da de alta la membresía (userID, tenantID). Es IDEMPOTENTE: repetirla
+	// no duplica ni falla. NO asigna rol: eso es otra decisión y tiene su propia
+	// puerta (in.RoleAdmin.AssignRole).
+	//
+	// 🔴 Devuelve domain.ErrConflict si el usuario ya es miembro de OTRO tenant
+	// y el tenant de DESTINO (el que lo recibe, no el de origen) no tiene el
+	// entitlement multi_empresa (entitlements.FeatureMultiCompany, Plan 047 ·
+	// Ola 5 · T5.2). El error es SIEMPRE el mismo —el centinela y el texto
+	// "iam: conflicto de unicidad: el usuario ya es miembro de otra empresa"—, el
+	// 409 de siempre (R-P3). Con la feature, escribe. FAIL-CLOSED con el sentido
+	// invertido: si el derecho no se puede resolver (resolver ausente o caído) se
+	// MANTIENE el rechazo. Un rechazo no escribe nada. La primera membresía no
+	// pregunta por ningún derecho. Dos altas simultáneas de la misma persona en
+	// dos empresas sin la feature: solo una escribe (R-P2).
+	//
+	// 🔧 SU JUSTIFICACIÓN CAMBIÓ EL 2026-08-29 Y LA GUARDA SE QUEDA (Plan 047 ·
+	// Ola 5 · T5.1, D-047.14). Hasta hoy se defendía diciendo que una segunda
+	// membresía «le rompe el login», porque el canje fallaba con dos filas de
+	// esta tabla. ESO YA NO ES CIERTO: el canje resuelve por la empresa ACTIVA y,
+	// sin elección válida, emite un token sin empresa. T5.1 abrió el lado de la
+	// LECTURA; el de la ESCRITURA —qué significa un alta en una segunda empresa,
+	// y quién puede hacerla— sigue sin decidirse, así que la guarda se mantiene y
+	// su levantamiento sigue siendo MD-055.2.
+	//
+	// La escritura la comparte con la vía del operador en el adaptador
+	// (GrantTenantAccess de infra/postgres): este puerto es PURO y no conoce
+	// transacciones, y la del operador necesita pasar la suya.
+	Add(ctx context.Context, userID, tenantID string) error
+	// Remove da de baja la membresía (userID, tenantID), y solo esa: las de esa
+	// persona en otras empresas y las de otras personas en esa empresa siguen.
+	// No-op si no existía.
+	//
+	// ⚠️ NO toca los roles ni los grants de esa persona: las filas de
+	// iam_user_roles acotadas a ese tenant sobreviven. No es un descuido — el
+	// canje ya ignora los permisos de quien no tiene tenant (resolveGrants
+	// devuelve cero grants sin membresía), así que la baja deja a la persona sin
+	// poder operar aunque su asignación siga escrita, y readmitirla no obliga a
+	// reconstruir su rol.
+	Remove(ctx context.Context, userID, tenantID string) error
+}
+
+// RoleRepo persiste roles, sus grants y la asignación usuario↔rol (tablas
+// iam_roles, iam_role_grants, iam_user_roles).
+type RoleRepo interface {
+	// Create inserta un rol custom del tenant y devuelve la fila con ID y
+	// created_at asignados (el resto, como vino). Devuelve domain.ErrConflict si
+	// el nombre ya existe para el tenant; el mismo nombre en otro tenant no
+	// choca. El padre (ParentRoleID), si viene, es un rol que existe.
+	Create(ctx context.Context, r domain.Role) (domain.Role, error)
+	// GetByID busca un rol por PK (global o de tenant). domain.ErrNotFound si no.
+	GetByID(ctx context.Context, id string) (domain.Role, error)
+	// List devuelve los roles VISIBLES para el tenant: sus roles custom más las
+	// plantillas globales (tenant_id NULL), y NUNCA los de otro tenant. El orden
+	// no forma parte del contrato.
+	List(ctx context.Context, tenantID string) ([]domain.Role, error)
+	// ParentOf resuelve el parent_role_id de un rol para la cadena de herencia
+	// (auth.ResolveRoleChain). ok=false (sin error) si el rol no tiene padre
+	// (raíz) y también si el rol no existe.
+	ParentOf(ctx context.Context, id string) (parentID string, ok bool, err error)
+	// GrantsOf devuelve los grants directos de UN rol (sin herencia).
+	GrantsOf(ctx context.Context, roleID string) ([]domain.Grant, error)
+	// AddGrant añade un grant al rol (idempotente por (role_id, pattern, effect)).
+	AddGrant(ctx context.Context, roleID string, g domain.Grant) error
+	// RemoveGrant elimina un grant del rol (no-op si no existía).
+	RemoveGrant(ctx context.Context, roleID string, g domain.Grant) error
+	// RolesOfUser devuelve los roles ASIGNADOS a un usuario que valen en el
+	// tenant dado: los acotados a ESE tenant más los asignados globales (tenant_id
+	// NULL en la asignación), sin repetir un rol que esté de las dos formas. Con
+	// tenantID "" devuelve solo los globales. Los acotados a otro tenant no
+	// salen nunca.
+	RolesOfUser(ctx context.Context, userID, tenantID string) ([]domain.Role, error)
+	// AssignToUser asigna un rol a un usuario, opcionalmente acotado a un
+	// tenant (D-056.11): tenantID nil asigna GLOBAL, tenantID no nil acota la
+	// asignación a esa empresa. Idempotente por los índices únicos de
+	// iam_user_roles; ya NO hay PK desde la migración 0060.
+	//
+	// 🔴 EL ÁMBITO GLOBAL ES DEL ROL TRANSVERSAL Y DE NINGÚN OTRO (Plan 047 ·
+	// Ola 5 · T5.6): con tenantID nil o "" y un rol que no es
+	// domain.TransversalRoleID devuelve domain.ErrRoleScopeInvalid y no escribe
+	// nada. Una asignación global vale en TODAS las empresas, y para un rol de
+	// empresa eso haría a la persona administradora de todas aquellas de las que
+	// sea miembro sin que nadie se lo diera. El rol transversal SÍ se asigna
+	// global.
+	AssignToUser(ctx context.Context, userID, roleID string, tenantID *string) error
+	// UnassignFromUser retira un rol de un usuario (no-op si no estaba),
+	// SIMÉTRICO a AssignToUser: tenantID nil retira la asignación GLOBAL,
+	// tenantID no nil retira solo la acotada a esa empresa.
+	//
+	// El parámetro se añadió en el Plan 047 · Ola 1.0 y no es simetría estética:
+	// sin él, el DELETE borraba TODAS las filas de esa pareja (user, role) sin
+	// mirar el tenant, y un administrador de la empresa A podía retirarle a
+	// alguien la asignación de un rol GLOBAL que también valía en la empresa B.
+	UnassignFromUser(ctx context.Context, userID, roleID string, tenantID *string) error
+}
+
+// GrantRepo persiste los overrides de grants por usuario (tabla
+// iam_user_grants) que se mergean sobre los del rol al emitir el token.
+type GrantRepo interface {
+	// GrantsOfUser devuelve los overrides de grants de un usuario, y solo los
+	// suyos; vacía (sin error) si no tiene. El orden no forma parte del contrato.
+	GrantsOfUser(ctx context.Context, userID string) ([]domain.Grant, error)
+	// AddUserGrant añade un override (idempotente por (user_id, pattern, effect)).
+	AddUserGrant(ctx context.Context, userID string, g domain.Grant) error
+	// RemoveUserGrant elimina un override (no-op si no existía).
+	RemoveUserGrant(ctx context.Context, userID string, g domain.Grant) error
+}
+
+// AuditRepo persiste la bitácora de auditoría (tabla audit_events). CERO PII.
+type AuditRepo interface {
+	// Record inserta un evento de auditoría append-only: registrar dos veces el
+	// mismo evento deja dos filas. El ID lo asigna el almacén; el instante, si el
+	// evento no lo trae, también.
+	Record(ctx context.Context, e domain.AuditEvent) error
+	// List devuelve los eventos del tenant, y solo de ese (ni de otro tenant ni
+	// los pre-auth sin tenant), más recientes primero (at DESC, id DESC),
+	// saltándose los `offset` primeros y devolviendo como mucho `limit`. Más allá
+	// del final, vacía y sin error.
+	List(ctx context.Context, tenantID string, limit, offset int) ([]domain.AuditEvent, error)
+}
+
+// InvitationRepo persiste las invitaciones de un solo uso con las que una
+// empresa incorpora a alguien a quien NO PUEDE BUSCAR (tabla
+// public.tenant_invitations, migración 0085; Plan 047 · Ola A).
+//
+// 🔴 EL TOKEN EN CLARO NO ENTRA NI SALE POR AQUÍ. Lo que este puerto mueve es
+// domain.Invitation, cuyo TokenHash son los 32 bytes del SHA-256. Quien emite ve
+// el texto una sola vez, en la respuesta HTTP, y a partir de ahí ni la base ni
+// este puerto pueden reconstruirlo.
+//
+// ⚠️ EL CANJE NO PASA POR AQUÍ, Y HAY UN SEGUNDO REPOSITORIO SOBRE LA MISMA
+// TABLA A PROPÓSITO. Este puerto se quedó con las tres operaciones de la
+// ADMINISTRACIÓN (T-A2 y T-A8); consumir la invitación vive en
+// `out.InvitationRedeemRepo` (ports/out/canje.go), del canje (T-A3).
+//
+// No es duplicación por descuido ni una fusión pendiente: el canje hace CUATRO
+// pasos —leer, GrantTenantAccess, marcar canjeada y cerrar la solicitud
+// huérfana— dentro de UNA transacción, y una *sql.Tx no cabe en un puerto PURO
+// como este (context y tipos de dominio, ver la cabecera del paquete). Partirlo
+// en dos métodos sueltos aquí obligaría al usecase del canje a orquestar la
+// transacción y, con ella, a conocer database/sql. Es la misma razón por la que
+// GrantTenantAccess recibe un Executor en vez de vivir detrás de
+// out.MembershipRepo. Quien venga a unificarlos que empiece por ahí.
+type InvitationRepo interface {
+	// Create inserta la invitación y devuelve la fila con `id` y `created_at` ya
+	// asignados por la base, el resto de columnas como vinieron y la invitación
+	// PENDIENTE (sin canje ni revocación). El TokenHash tiene que medir 32 bytes
+	// exactos: si no, la implementación devuelve un error (en Postgres, el CHECK
+	// tenant_invitations_token_hash_len_check; no es un centinela del dominio) y
+	// no escribe nada. Un digest repetido —aunque sea de otra empresa— es
+	// domain.ErrConflict (índice único sobre token_hash).
+	//
+	// Si el rol de la invitación se borra después, la invitación sigue viva y
+	// pasa a no tener rol (FK ON DELETE SET NULL).
+	Create(ctx context.Context, inv domain.Invitation) (domain.Invitation, error)
+	// ListByTenant devuelve las invitaciones de UNA empresa, en orden estable
+	// (las más recientes primero: created_at DESC, id DESC), y NUNCA las de otra
+	// empresa. Una lista VACÍA no es error y no es nil.
+	//
+	// Devuelve la FILA ENTERA, TokenHash incluido, con el mismo criterio que
+	// MembersOf: el repositorio lee lo que la tabla guarda y quien decide qué sale
+	// por el cable es la proyección, que es donde vive el test que lo vigila.
+	ListByTenant(ctx context.Context, tenantID string) ([]domain.Invitation, error)
+	// Revoke anula una invitación VIVA de esa empresa (T-A8).
+	//
+	// 🔴 Es un UPDATE ATÓMICO CONDICIONADO —`WHERE id=$1 AND tenant_id=$2 AND
+	// redeemed_at IS NULL AND revoked_at IS NULL`— y no un SELECT seguido de un
+	// UPDATE: la exclusividad entre los dos estados terminales NO la vigila
+	// ningún CHECK de la tabla (la migración 0085 explica por qué), así que lo
+	// único que impide revocar algo que se está canjeando en ese mismo instante
+	// es que la condición viaje DENTRO de la escritura.
+	//
+	// Desenlaces: nil si se revocó, y también si ya estaba revocada (la baja de
+	// algo ya dado de baja es el estado que se pedía); domain.ErrNotFound si no
+	// existe o es de OTRA empresa —los dos casos comparten código a propósito,
+	// distinguirlos confirmaría que ese id existe fuera—; domain.ErrConflict si
+	// ya fue canjeada, porque revocarla NO deshace la membresía y contestar que
+	// sí sería mentir. Revocar MARCA revoked_at y no borra la fila ni toca otra
+	// columna; repetirlo conserva la primera marca; los desenlaces de error no
+	// escriben nada.
+	Revoke(ctx context.Context, id, tenantID string) error
+}
