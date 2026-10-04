@@ -228,6 +228,15 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     gosec G101 (literales en campos `Token`) y gocyclo en tablas de casos; se resolvió solo en los tests, sin tocar promesas.
     `invitations.go` (HTTP) y el handler del código de enrolamiento siguen con `time.Now()` como el viejo (sin reloj
     inyectable sin decisión).
+36. 🟡 **Ficheros de más de 500 líneas (Jhoan, tras abrir el PR #31: «no es aceptable»).** Los 6 de F2-03 (el mayor,
+    `platformadminhelpertest/contrato.go`, 887; el que nombró, `entitlements/postgres_test.go`, 822) se partieron por tema
+    **solo moviendo declaraciones**, con el sufijo de su origen (`postgres_has_test.go`, `tenants_contrato.go`…): ninguno
+    de los `.go` del PR pasa ya de 400 salvo `signup_test.go` (498). Dos reglas que el corte tuvo que respetar:
+    `exportados_cubiertos` solo mira el gemelo exacto (el `x_test.go` que conserva el nombre se queda con las menciones), y
+    la cobertura solo exime `contrato.go` y `*_contrato.go` (los trozos de suite se llaman `<tema>_contrato.go`, no
+    `contrato_<tema>.go`). **Quedan 4 de F2-02, ya en `dev`**: `iam/infra/identity/m2m_test.go` (1.141), `m2m.go` (802),
+    `iam/usecase/exchange_test.go` (761) y `exchange.go` (500). ¿Se pone el tope (500) como regla en `05` y como candado
+    de fichero, y se parten esos cuatro en una sesión aparte?
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 

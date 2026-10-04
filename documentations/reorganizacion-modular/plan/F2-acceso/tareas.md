@@ -163,6 +163,15 @@ Entrada: PR de F2-02 integrado. Para cuando: 0 pendientes en `acceso` · candado
 > `postgres_integracion_test.go`/`suites_integracion_test.go` dentro del paquete · el unitario de la caché de
 > `entitlements/postgres.go` sustituye un *driver* falso de `database/sql` en vez de `lookupFn`/`listFn` (T-1) · los commits
 > rojos son uno por fichero (`rojo(acceso): contrato de iam/transport/http/<f>`), no uno por paquete.
+>
+> **Corte por tamaño (a petición de Jhoan, tras abrir el PR #31; ver README hallazgo 36)**: los 6 ficheros de F2-03 de más
+> de 500 líneas se partieron por tema **solo moviendo declaraciones** (multiconjunto igual, byte a byte), con el sufijo del
+> fichero de origen: `entitlements/postgres_{fakedb,has,list,concurrency}_test.go` (`3aacb27`) ·
+> `platformadminhelpertest/{tenants,access_requests,approval}_contrato.go` (`3147c55`; `*_contrato.go` para seguir exentos
+> de la cobertura, D-F1-13) · `platformadminhelpertest/fake_{access_requests,state}.go` (`23ab8e1`) ·
+> `platformadmin/access_requests_{helpers,approve}_test.go` (`de3f593`) · `access_requests_postgres_fakesql_test.go`
+> (`c1a4acc`) · `handlers_{helpers,enrollment}_test.go` (`5a91467`). El fichero con el nombre del gemelo conserva las
+> menciones a los exportados (`exportados_cubiertos`).
 
 - [x] **T2.4 · `entitlements/postgres.go`: rojo y verde** · 🌐 · complejo (prov.: caché, mutex, Postgres) · dep. T2.2 · cumple R2.4.c — cerrada en `90b786b` (rojo) → `f7d36eb` (verde) + `368d2fd` (suite contra Postgres); 15 mutantes sembrados · 15 muertos · 0 vivos · 0 equivalentes; 98,5 % (informe)
   - **Ficheros**: `A/entitlements/postgres.go`, `…/postgres_test.go` (unitario: caché con `lookupFn`/`listFn` sustituidos y `WithReloj`, D-F2-6), `…/postgres_integracion_test.go` (`//go:build integracion`, corre `ContratoResolver` con el arnés)

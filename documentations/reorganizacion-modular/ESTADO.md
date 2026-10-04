@@ -389,6 +389,9 @@ en paralelo (entitlements, iam/infra/postgres, transport/http, platformadmin en 
   mutantes de carrera, *driver* SQL falso para Tx, huecos de alcance por empresa, orden forzado por los tipos).
 - **No corrido**: la pasada que **cuenta** de las suites contra Postgres y los procesos de acceso contra los dos binarios
   (T2.32–T2.33 = T9.23, sesión F2-05 💻). Sin traspaso: nada de F2-03 queda a medias; F2-05 ya lo tiene en su ficha.
+- **Corte por tamaño** (a petición de Jhoan, tras abrir el PR #31): los 6 ficheros de más de 500 líneas, partidos por tema
+  solo moviendo declaraciones (`3aacb27`, `3147c55`, `23ab8e1`, `de3f593`, `c1a4acc`, `5a91467`); gates repetidos
+  (`GATE_RC=0`, 2.445 PASS, 0 SKIP; pre-chequeo 148 PASS). Quedan 4 de F2-02 (hallazgo 36, 🟡).
 - **Siguiente paso: F2-04** (`bridge_iam.go`, conmutación y rutas). `main` sin tocar.
 
 ## Avance de la ejecución
