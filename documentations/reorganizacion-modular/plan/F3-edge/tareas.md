@@ -13,6 +13,12 @@
 > `verde` son una sola pasada (las dos se marcan `[x]` con el mismo SHA); en **medio**, rojo y verde por archivo dentro
 > del paquete; en **complejo**, el esquema completo E-2…E-9. El nivel lo fija el inventario aprobado (T3.1).
 >
+> **Correspondencias de F3-01 (E-11)**: `session.SendAcotado` → `BoundedSend`, `ErrPushAbandonado` → `ErrPushAbandoned`;
+> `inferstats`: `Parte` → `Report`, `Clave` → `Key`, `Agregado` → `Aggregate` (sigue siendo alias de `platform/metrics/inferencia.Agregado`),
+> `Observa` → `Observe`, `Agrega` → `Aggregated`, y los campos `PorRegimen`/`PorClase`/`OmitidasPorMotivo`/`MuestrasPrefill`/`MuestrasGeneracion`
+> → `ByRegime`/`ByClass`/`SkippedByReason`/`PrefillSamples`/`GenerationSamples`. Los dobles: `Memory…` → `<paq>helpertest.Memoria…` (D-F3-1).
+> F3-03 (`grpc`) y F3-04 (arranque) usan estos nombres.
+>
 > **Nombres (E-11)**: el adaptador de arranque que esta spec llamaba «puente gateway» (tipo `puenteGateway`) es
 > `bridge_gateway.go` / `gatewayBridge`; el de F2 es `bridge_iam.go`. «Puente» a secas queda para los imports
 > nuevo → viejo de `05` §4.1.
@@ -21,27 +27,27 @@
 Para cuando: 0 pendientes en `session`, `inferstats`, `receipts`, `ingest`, `diagnostics`, `lease`, `enroll`; sus
 suites verdes contra los dobles · PR. Puntos limpios si no cabe en ~90 min: tras T3.1, tras T3.9, tras T3.17.
 
-- [ ] **T3.1 · Inventario E-12, verdad de campo y entradas** · 🌐 · dep. F2 cerrado · cumple R3.1.a
+- [x] (`3ae565c`) **T3.1 · Inventario E-12, verdad de campo y entradas** · 🌐 · dep. F2 cerrado · cumple R3.1.a
   - **Ficheros**: `plan/F3-edge/README.md` (estado, SHA, respuestas D-F3-* y D-FX-1/2/3), `plan/F3-edge/arquitectura.md` §1.1 (la tabla de niveles, ya medida)
   - **Produce**: la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 38 (+✚) ficheros, y la **lista de adaptadores**: nace `bridge_gateway.go` (muere en F4), muere `bridge_iam.go` (nació en F2). Si un archivo sale peor de lo previsto, **sube de nivel**.
   - **Además**: las 6 entradas comprobadas; tabla §1 de arquitectura re-medida; confirmado con `go doc` que `session.ErrSessionOffline` viejo **es** el de `platform` (E3) — si F0 no lo hizo así, D-F3-2 cae y se aplica el puente (import) de FX D-FX-3; contados los `time.Sleep` de los tests viejos de `grpc` (T-16).
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.**
   - **Gate**: `make ci-local` → `GATE_RC=0` · **Commit**: `docs(reorganizacion-modular): F3 arranca — inventario E-12 y entradas verificadas`
-- [ ] **T3.2 · rojo(edge): `session/registry.go`** · 🌐 · dep. T3.1 · cumple R3.1.a–b · R-S1…R-S4; `ErrSessionOffline` = el de `platform` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de session/registry`
-- [ ] **T3.3 · rojo(edge): `inferstats/inferstats.go`** · 🌐 · `Agregado` alias de `platform/metrics` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de inferstats`
-- [ ] **T3.4 · rojo(edge): `receipts` (3) + `receiptshelpertest`** · 🌐 · cumple R3.2.a–b · doble nace completo y verde contra la suite (D-F3-1) · **Gate**: G-rojo · `go test -race ./internal/modulos/edge/receipts/receiptshelpertest/` rc=0 · **Commit**: `rojo(edge): contratos de receipts y su suite`
-- [ ] **T3.5 · rojo(edge): `ingest` (2 + `deduper.go` ✚) + `ingesthelpertest`** · 🌐 · cumple R3.2.a · D-F3-3 · **Gate**: igual · **Commit**: `rojo(edge): contratos de ingest y su suite`
-- [ ] **T3.6 · rojo(edge): `diagnostics` (2) + `diagnosticshelpertest`** · 🌐 · cumple R3.2.a · **Gate**: igual · **Commit**: `rojo(edge): contratos de diagnostics y su suite`
-- [ ] **T3.7 · rojo(edge): 🔒 `lease` (4) + `leasehelpertest`** · 🌐 · cumple R3.3.a–e
+- [x] (`bcd0f4e`) **T3.2 · rojo(edge): `session/registry.go`** · 🌐 · dep. T3.1 · cumple R3.1.a–b · R-S1…R-S4; `ErrSessionOffline` = el de `platform` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de session/registry`
+- [x] (`6ece585`) **T3.3 · rojo(edge): `inferstats/inferstats.go`** · 🌐 · `Agregado` alias de `platform/metrics` · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de inferstats`
+- [x] (`79d83c8`) **T3.4 · rojo(edge): `receipts` (3) + `receiptshelpertest`** · 🌐 · cumple R3.2.a–b · doble nace completo y verde contra la suite (D-F3-1) · **Gate**: G-rojo · `go test -race ./internal/modulos/edge/receipts/receiptshelpertest/` rc=0 · **Commit**: `rojo(edge): contratos de receipts y su suite`
+- [x] (`76c760f`) **T3.5 · rojo(edge): `ingest` (2 + `deduper.go` ✚) + `ingesthelpertest`** · 🌐 · cumple R3.2.a · D-F3-3 · **Gate**: igual · **Commit**: `rojo(edge): contratos de ingest y su suite`
+- [x] (`03db7b8`) **T3.6 · rojo(edge): `diagnostics` (2) + `diagnosticshelpertest`** · 🌐 · cumple R3.2.a · **Gate**: igual · **Commit**: `rojo(edge): contratos de diagnostics y su suite`
+- [x] (`f783e76` (sin `repository_integracion_test.go`: D-F3-8)) **T3.7 · rojo(edge): 🔒 `lease` (4) + `leasehelpertest`** · 🌐 · cumple R3.3.a–e
   - **Ficheros**: `E/lease/{lease,repository,repository_postgres,signingkey}.go` y 4 `_test.go`, `E/lease/leasehelpertest/{suite,memoria,memoria_test}.go`, `…/repository_integracion_test.go` (`integracion`)
   - **Hecho cuando**: R-L1…R-L8 en los comentarios, con la cita de ADR-0007 en el de paquete; suite con `Montaje` (P4), con «Upsert no resucita» y los dos sujetos de corte; SQL de `repository_postgres.go` **pendiente de copiar literal** en el verde (T-9); los tests usan claves Ed25519 generadas en el test, nunca un fichero.
   - **Gate**: G-rojo · **Commit**: `rojo(edge): contrato del lease (mitad servidora de la doble llave)`
-- [ ] **T3.8 · rojo(edge): `enroll` (7, `doc.go` sin test) + `enrollhelpertest`** · 🌐 · cumple R3.1.d, R3.2.a · CA de prueba con `NewDevCA`; `EnrollEdge` por `bufconn` · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de enroll y sus suites`
-- [ ] **T3.9 · Punto limpio de las hojas** · 🌐 · ningún paquete a medias; pendientes de `edge` anotados = `make test-pendiente`; `ci-local` rc=0. Si la sesión se corta aquí, cierra con las tres cosas y se relanza · **Gate**: `validar-antes-de-cerrar`
-- [ ] **T3.15 · verde(edge): `session`, `inferstats`** · 🌐 · dep. T3.2, T3.3 · 2 commits `verde(edge): <paq>/<f>` · **Gate**: G-verde
-- [ ] **T3.16 · verde(edge): `receipts`, `ingest`, `diagnostics`** · 🌐 · dep. T3.4–T3.6 · 7 commits · **Gate**: G-verde
-- [ ] **T3.17 · verde(edge): 🔒 `lease`** · 🌐 · dep. T3.7 · 4 commits; SQL literal; `git diff --no-index` de la lógica de `Manager` contra la vieja sin cambios de comportamiento (revisión explícita en el PR) · **Gate**: G-verde
-- [ ] **T3.18 · verde(edge): `enroll`** · 🌐 · dep. T3.8 · 6 commits · cierre de la sesión con las tres cosas y PR · **Gate**: G-verde
+- [x] (`a2a5259`) **T3.8 · rojo(edge): `enroll` (7, `doc.go` sin test) + `enrollhelpertest`** · 🌐 · cumple R3.1.d, R3.2.a · CA de prueba con `NewDevCA`; `EnrollEdge` por `bufconn` · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de enroll y sus suites`
+- [x] (gates sobre `8a4dd34`: `ci-local` rc=0, `PENDIENTES=0`, `ROJOS=0`) **T3.9 · Punto limpio de las hojas** · 🌐 · ningún paquete a medias; pendientes de `edge` anotados = `make test-pendiente`; `ci-local` rc=0. Si la sesión se corta aquí, cierra con las tres cosas y se relanza · **Gate**: `validar-antes-de-cerrar`
+- [x] (`84c6352`, `b7d5e0b`) **T3.15 · verde(edge): `session`, `inferstats`** · 🌐 · dep. T3.2, T3.3 · 2 commits `verde(edge): <paq>/<f>` · **Gate**: G-verde
+- [x] (`178bbe7`, `9dc9045`, `84e0789` · `70e4605`, `9170205` · `832ffd8`, `b086329`, `67129db` (mata un mutante)) **T3.16 · verde(edge): `receipts`, `ingest`, `diagnostics`** · 🌐 · dep. T3.4–T3.6 · 7 commits · **Gate**: G-verde
+- [x] (`99f7e75`, `10b8d4e`, `36a054d`, `9b57756`, `715cfcf` (reparto de tests); `lease.go` contra el viejo: 0 líneas de lógica distintas) **T3.17 · verde(edge): 🔒 `lease`** · 🌐 · dep. T3.7 · 4 commits; SQL literal; `git diff --no-index` de la lógica de `Manager` contra la vieja sin cambios de comportamiento (revisión explícita en el PR) · **Gate**: G-verde
+- [x] (`17dd728`, `87767bb`, `bb9fd66`, `4decfc1`, `2880255`, `096fb3b`, `8a4dd34`) **T3.18 · verde(edge): `enroll`** · 🌐 · dep. T3.8 · 6 commits · cierre de la sesión con las tres cosas y PR · **Gate**: G-verde
 
 ## Bloque F3-02 · `fleet` y `filtercfg` · 🌐 · T3.10, T3.11, T3.19, T3.20
 Para cuando: 0 pendientes en `fleet`, `fleethelpertest` y `filtercfg`; suite de `fleet` verde contra su doble · PR.

@@ -151,3 +151,30 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 8. **No hay herramienta de mutantes** en el `Makefile`: se hacen a mano (mutar, ver el rojo, deshacer) y se listan en el PR.
 9. **T3.7 cita un `repository_integracion_test.go` junto a `lease`** que contradice el patrón de F1/F2 (el tag `integracion`
    solo vive en `test/procesos`). No se escribe: D-F3-8.
+10. **R-S4 dice «envíos concurrentes serializados» y el `Registry` no serializa el `Send`**: lo hace el envoltorio por
+    stream del gateway (R-G12, F3-03). Se portó lo que hace el código (el registro es seguro en concurrencia y no retiene
+    el mutex durante el `Send`); la redacción de `diseno.md` §3 queda por corregir al abrir F3-03.
+11. **`diagnostics.Record` y `diagnostics.Bundle` son nominales**: el `Store` nuevo no encaja en los consumidores viejos
+    (`publicapi.DiagnosticsStore`, el `BundleReceiver` del gateway viejo) sin convertir tipos. No hace falta adaptador si
+    D5/D6 se mudan a `apipublica` y el gateway es el nuevo en el mismo commit (F3-04, T3.28): se comprueba allí.
+    `receipts.Sink.Record` e `ingest.Deduper.Seen` sí encajan tal cual.
+12. **Para los montajes de F3-05 contra Postgres**: `diagnostics` pide `SetConsent` (upsert en `tenant_diagnostics_consent`)
+    y `Expire` (`UPDATE … expires_at` al pasado), y su purga de `CreateRequest` es **global** (borra vencidas de cualquier
+    tenant): base propia por caso. `enroll` pide `SeedCode` y un observador `Records` (`SELECT` sobre `edge_certs`); `lease`,
+    `SeedTenant`. `receipts` e `ingest` solo piden dos `session_id` únicos.
+13. **Divergencias doble ↔ Postgres que las suites no afirman a propósito**: `receipts` (un `ReceiptAt` cero vuelve como
+    la época Unix desde Postgres y como cero desde el doble); `lease` (`MarkTenantRevoked` de un tenant inexistente: el doble
+    lo marca, Postgres no toca fila); `enroll` (`fingerprint` es `UNIQUE` en Postgres; el doble mira el vencimiento antes
+    que el uso).
+14. **`diagnostics.Postgres` gana un campo no exportado `now`** (fijado a `time.Now` en `NewPostgres`, sin opción pública)
+    para poder matar el mutante del borde exacto del vencimiento. No cambia la API ni la conducta.
+15. **Mutantes de F3-01: 132, 131 muertos.** `session` 21/21 · `inferstats` 26/27 · `ingest/postgres` 22/22 ·
+    `diagnostics/postgres` 36/36 · `lease/lease` 13/13 · `lease/repository_postgres` 8/8 · `enroll/store_postgres` 5/5. Dos
+    nacieron vivos y se mataron con un test (`session`: fuga de la goroutine del `Send`, con `testing/synctest`;
+    `diagnostics`: `Record` a medias, `67129db`). 🟡 El vivo es equivalente (`inferstats.cloneCounts` guarda un mapa vacío
+    como vacío en vez de `nil`: no se ve por la API exportada); lo mataría un test interno que fije ese detalle.
+16. **Sin test**: las ramas de error de `issuer.Issue`/`issuer.Revoke` en `lease.go` (el `Issuer` de `wapp-cloudlink` no
+    falla con una clave válida y no se puede inyectar sin tocar producción). `fakedb_test.go` está duplicado en `lease` y
+    `enroll` (129 líneas): compartirlo pediría un paquete nuevo.
+17. **Dos commits intermedios no pasan todos los gates por sí solos** (el PR entero sí): `9b57756` falla `exportados_cubiertos`
+    hasta `715cfcf`, y `f783e76` lleva tres tests sin `gofmt` hasta `10b8d4e`.
