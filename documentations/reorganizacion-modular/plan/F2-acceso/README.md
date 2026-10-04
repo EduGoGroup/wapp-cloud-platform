@@ -158,6 +158,30 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     «ninguna más sin decisión escrita» siguen sin ella; la decisión escrita está en `DECISIONES.md` (D-F2-5, ✎ 2026-10-04) y
     en el comentario de `UnFicheroUnTest`. La norma solo la toca Jhoan.
 
+19. **`grants.go` no tiene exportados** (`grantsToAuth`, `resolveEffectiveGrants`): nivel medio, pero no hay contrato que
+    poner en rojo (T-14: un no exportado sin uso rompe `unused`; E-4: los auxiliares nacen en el verde). Nació entero en su
+    verde (`d09ff88`) con el test de sus reglas (R-U32). Un fichero sin exportados no tiene rojo: convendría decirlo en `05` E-12.
+20. **Los contratos de un paquete se citan entre sí y fuerzan el orden**: `exchange` usa `Config` y `delegated_auth` usa
+    `TokenValidator`, así que los simples (`config`, `context_token`, `audit`) nacieron completos **antes** del rojo de los
+    medios, no en el orden de T2.23. Sus auxiliares compartidos (`withDefaults`, `verifyWithValidator`, `tokenTypeBearer`)
+    sobreviven a `unused` porque `.golangci.yml` tiene `tests: true` y el test del simple los ejerce; los *helpers* de test
+    comunes viven en el `_test.go` del primer fichero que los usa en verde (no hay `helpers_test.go`).
+21. **El candado `exportados_cubiertos` del árbol real vive en `./internal/modulos/`**, no en `./internal/candados/...`: un
+    sub-agente que solo corría este último commiteó un rojo sin mencionar `ContextTokenService` (corregido antes de integrar).
+    El gate de los sub-agentes debe incluir `go test ./internal/modulos/`.
+22. **El clon de la web es superficial** (`git rev-parse --is-shallow-repository` → `true`): `git log -1 --format=%h -- <fichero
+    viejo>` devuelve el límite del injerto (`048412a`), no el último cambio real. Las cabeceras `// Porta … @` de `acceso` usan
+    `9a77307` (sin diff en `internal/iam/` hasta `origin/dev`); corregido en `86912f7`.
+23. **`make test-pendiente` cuenta también los *worktrees* de sub-agentes** (`grep -rn … .` incluye `.claude/worktrees/`): con un
+    *worktree* vivo dio `PENDIENTES=29 · ROJOS=7` sobre una rama con 0. Hay que retirar los *worktrees* antes de leer la cifra
+    (o excluir `.claude` en el target).
+24. **Un mutante equivalente en el M2M**: cambiar `>` por `>=` en `usableLifetime` no se distingue con 60 s (`60−30 = 60/2`). El
+    `select` de «ctx cancelado» elige al azar entre dos casos listos: el test que lo mata repite la llamada 64 veces.
+25. **Dos reglas que el rojo no afirmaba y el verde destapó**: `DelegatedAuthService.Refresh` propagando el rechazo de identity
+    (test añadido en `7295586`) y, en canje, un falso positivo del test (`bytes.Contains(digest, "x")` con un token de un
+    carácter). `TenantsOfCaller` normaliza a lista vacía un `nil` del repositorio (R-U17 lo promete en el servicio; ningún
+    adaptador devuelve `nil` hoy).
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |

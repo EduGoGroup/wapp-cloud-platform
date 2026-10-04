@@ -70,11 +70,11 @@ type TenantLister interface {
 	// lo que hay que enseñarle.
 	//
 	// 🔴 `activeID` NO es «lo que hay guardado en user_active_tenant»: es lo que el canje
-	// resolvería AHORA MISMO, calculado con la misma función (usecase.tenantEfectivo). La
-	// diferencia se ve justo donde importa: con UNA sola membresía manda la membresía y no la
-	// fila guardada, así que devolver la fila cruda marcaría la opción equivocada —o ninguna—
-	// sobre un token que sí va acotado. Un selector que discrepe del token es peor que no
-	// tenerlo.
+	// resolvería AHORA MISMO, calculado con la misma función (usecase.effectiveTenant (era
+	// tenantEfectivo)). La diferencia se ve justo donde importa: con UNA sola membresía manda la
+	// membresía y no la fila guardada, así que devolver la fila cruda marcaría la opción
+	// equivocada —o ninguna— sobre un token que sí va acotado. Un selector que discrepe del token
+	// es peor que no tenerlo.
 	//
 	// Cero empresas devuelve lista VACÍA y sin error (D-056.12), nunca ErrNotFound: no
 	// pertenecer a ninguna empresa todavía es un estado del producto, no un fallo.
