@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // InvitationTokenPrefix encabeza todo token de invitación: el literal "WAPP-INV-".
@@ -82,17 +83,25 @@ func NewInvitationToken() (string, error) {
 // es hex más un prefijo fijo, ya insensible a la caja.
 //
 // Lo que esa normalización hace con lo raro (fijado por el corpus adversario del test):
-//   - TrimSpace recorta en los bordes todo lo que unicode.IsSpace llama espacio, no solo el
+//   - El recorte quita de los bordes todo lo que unicode.IsSpace llama espacio, no solo el
 //     ASCII: U+00A0 (el espacio duro que meten los móviles al pegar), U+2003, U+202F, U+3000,
 //     U+0085, tabuladores y saltos de línea. Por dentro no recorta nada.
-//   - NO recorta U+200B (espacio de ancho cero) ni U+FEFF (BOM): no son espacios para Go, así
-//     que un token pegado con uno de ellos da otro digest y no canjea.
+//   - Recorta TAMBIÉN en los bordes U+200B (espacio de ancho cero) y U+FEFF (BOM), que no son
+//     espacios para Go y TrimSpace dejaba: un token pegado con uno de ellos daba otro digest y
+//     no canjeaba, sin que quien lo pegó pudiera verlo. Aquí el nuevo se APARTA del viejo
+//     (D-F2-11, Jhoan, 2026-10-04). Solo en los bordes: por dentro siguen dando otro digest.
 //   - ToUpper es Unicode, no ASCII: U+0131 («ı» sin punto) sube a «I» ASCII y colisiona con el
 //     canónico; los dígitos no ASCII (arábigos, de ancho completo) no se pliegan a 0-9.
 //   - Separadores repetidos o espacios interiores se quedan: dan otro digest.
 func HashInvitationToken(token string) []byte {
-	sum := sha256.Sum256([]byte(strings.ToUpper(strings.TrimSpace(token))))
+	sum := sha256.Sum256([]byte(strings.ToUpper(strings.TrimFunc(token, isTokenPadding))))
 	return sum[:]
+}
+
+// isTokenPadding dice si r es relleno que se recorta de los bordes de un token: todo lo que Go
+// llama espacio, más los dos invisibles que no lo son para Go y que llegan al pegar (D-F2-11).
+func isTokenPadding(r rune) bool {
+	return unicode.IsSpace(r) || r == '\u200B' || r == '\uFEFF'
 }
 
 // InvitationStatus es el estado DERIVADO de una invitación: no hay columna que lo guarde, y no
