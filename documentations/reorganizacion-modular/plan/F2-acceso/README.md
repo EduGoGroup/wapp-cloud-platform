@@ -160,7 +160,9 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     0059).
 17. **Los *worktrees* de sub-agente nacen en `2da10b4`**, un ancestro viejo sin `internal/modulos`: cada sub-agente tuvo que
     hacer `git reset --hard` a la rama antes de empezar. Conviene decirlo en el prompt.
-18. 🟡 **`05` E-3 no recoge la excepción de los puertos de entrada** (hallazgo 10): su tabla de excepciones verificadas y su
+18. ✅ ~~🟡~~ **`05` E-3 no recogía la excepción de los puertos de entrada** (hallazgo 10). **Resuelto (Jhoan, 2026-10-04, tras
+    el cierre de F2): fila nueva en la tabla de excepciones de `05` E-3**, que cita D-F2-5 y la lista cerrada del candado,
+    sin ampliar la excepción. Texto original: su tabla de excepciones verificadas y su
     «ninguna más sin decisión escrita» siguen sin ella; la decisión escrita está en `DECISIONES.md` (D-F2-5, ✎ 2026-10-04) y
     en el comentario de `UnFicheroUnTest`. La norma solo la toca Jhoan.
 
