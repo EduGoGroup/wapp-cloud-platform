@@ -176,7 +176,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F10-7 | Nueva regla de conteo en ADR-0010 (propuesta en [`F10-relevo/diseno.md`](F10-relevo/diseno.md) §3.2) | Sí | F10 bloque E | sí (2026-09-30) |
 | D-V-1 | *(de la validación de coherencia, 2026-09-29)* `internal/arranque` conserva de F0 a F8 los nombres de la copia (`http.go`, `rutas_admin.go`, `fase7_flujos.go`…), no los de `04` §3 (`transporte_http.go`, `transporte_rutas_admin.go`, `fase7_conversacion.go`, `fase3_edge.go`, `fase4_inferencia.go`): tres tests copiados leen `http.go`/`auth.go` por nombre ([`00-marco/estructura.md`](00-marco/estructura.md) §2.2). ¿Se renombran en F10? | **No** (el nombre de la copia ya dice lo que hace; renombrar obliga a re-tocar los candados): `04` §3 queda superado en ese punto, como ya dice el marco. Si sí: un `refactor(arranque)` aislado en F10, con los tres tests en el mismo commit | F10 bloque C | no (2026-09-30) |
 
-## 7 · Abiertas tras la recalibración (2026-10-03)
+## 7 · Salidas de la recalibración (2026-10-03) — decididas el 2026-10-03
 
 Salieron al aplicar P1–P7 a las specs. Ninguna bloquea [F1-06](sesiones/F1-06-cli-ajustes-previos-a-f2.md) salvo D-R-4.
 
