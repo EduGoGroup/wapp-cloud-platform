@@ -5,8 +5,13 @@
 package platformadmin
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"time"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 var (
@@ -94,4 +99,87 @@ type ApproveAccessRequestRequest struct {
 // RejectAccessRequestRequest es el cuerpo JSON de POST /admin/access-requests/{id}/reject.
 type RejectAccessRequestRequest struct {
 	Reason string `json:"reason"`
+}
+
+// ApproveAccessRequest aprueba la solicitud requestID: da a su persona acceso a la empresa
+// tenantID con el rol role (nombre o id) y le concede en identity los systems pedidos, UNIDOS a
+// los que ya tenga. Es la orquestación que el viejo hacía en Repository.ApproveAccessRequest, ahora
+// sobre los puertos: la escritura local la hace requests.ExecuteApprovalTx, atómica.
+//
+// En este orden, y cortando en el primer error:
+//  1. requestID, tenantID o role vacíos ⇒ ErrInvalidInput, sin tocar los almacenes.
+//  2. systems contiene "wapp.platform" ⇒ ErrPlatformSystemForbidden, sin tocar nada: la consola
+//     de plataforma NO se concede desde la bandeja (segundo cerrojo; el servidor no se fía de que
+//     la consola haya quitado la casilla).
+//  3. La solicitud: ErrNotFound si no existe (LookupAccessRequestStatus).
+//  4. El rol se resuelve UNA vez, ANTES de bifurcar por status (ResolveRoleID; ErrInvalidInput si
+//     no existe): así el reintento no se salta la validación del rol.
+//  5. La escritura local, según el status:
+//     - 'pending': la empresa tiene que existir (ExistsTenant; ErrTenantNotFound si no, y un fallo
+//     al comprobarlo se devuelve envuelto) y se escribe con ExecuteApprovalTx (ErrConflict si
+//     la persona ya es de otra empresa o la solicitud dejó de estar pendiente);
+//     - 'approved': un REINTENTO, que converge sin volver a escribir si CheckRetryApproved
+//     acepta (misma empresa y mismo rol); si no, ErrConflict (otra empresa) o
+//     ErrRetryRoleMismatch (otro rol), y no se toca nada más (ni identity);
+//     - cualquier otro ('rejected') ⇒ ErrConflict.
+//  6. Los systems, DESPUÉS de lo local (lo local queda escrito pase lo que pase aquí):
+//     - sin systems ⇒ nil, aunque m2m sea nil (no había nada que conceder);
+//     - m2m nil ⇒ ErrIdentityM2MUnavailable;
+//     - se LEEN los vigentes (GetUserSystems); si la lectura falla ⇒ ErrSystemsUnionUnavailable
+//     envolviendo ese error, y NO se declara nada (un PUT declarativo a ciegas borraría lo que
+//     concedió otra vía);
+//     - se declara la UNIÓN (ReplaceUserSystems): los vigentes en el orden de identity y, al
+//     final, los pedidos que falten, sin repetir. La unión conserva lo que ya tuviera,
+//     wapp.platform incluido (no se concede: se evita borrarlo). El arreglo que devolvió
+//     identity no se modifica;
+//     - si la unión no añade nada, NO se escribe (nil);
+//     - si la escritura falla ⇒ ErrSystemsSyncFailed envolviendo ese error.
+//
+// operatorID es el sujeto de quien aprueba; se guarda como decided_by solo si es un UUID.
+func ApproveAccessRequest(ctx context.Context, tenants TenantStore, requests AccessRequestStore, requestID, tenantID, role, operatorID string, systems []string, m2m out.IdentityM2MClient) error {
+	panic(pendiente.Implementar("platformadmin.ApproveAccessRequest"))
+}
+
+// ListAccessRequestsHandler devuelve el handler de GET /admin/access-requests: corta con
+// httpapi.EnforcePlatformCaller ANTES de tocar el almacén (401 sin identidad o sin tenant; 403 si
+// el tenant no es el de plataforma). Lista las solicitudes con el status de ?status= ("" ⇒
+// pending) como 200 {"items":[…]} (nunca null). Un fallo del almacén ⇒ 500 «error al listar
+// solicitudes de acceso».
+func ListAccessRequestsHandler(requests AccessRequestStore, platformTenantID string) http.Handler {
+	panic(pendiente.Implementar("platformadmin.ListAccessRequestsHandler"))
+}
+
+// ApproveAccessRequestHandler devuelve el handler de POST /admin/access-requests/{id}/approve.
+// Corta con httpapi.EnforcePlatformCaller ANTES de tocar nada. Después:
+//   - {id} vacío ⇒ 400 «id de solicitud requerido»; {id} que no es UUID ⇒ 404 «solicitud no
+//     encontrada», sin consultar (R-A2);
+//   - cuerpo que no es JSON ⇒ 400 «cuerpo JSON inválido»; sin tenant_id o sin role ⇒ 400
+//     «tenant_id y role son requeridos»;
+//   - publica tenant_id como tenant objetivo de la auditoría y aprueba con ApproveAccessRequest,
+//     con el Subject de la identidad como operador.
+//
+// Desenlaces: nil ⇒ 204; ErrNotFound ⇒ 404 «solicitud no encontrada»; ErrTenantNotFound ⇒ 404
+// «empresa no encontrada»; ErrConflict ⇒ 409 «la solicitud ya fue resuelta o la persona ya
+// pertenece a otra empresa»; ErrInvalidInput ⇒ 400 «datos de solicitud o rol inválidos»;
+// ErrPlatformSystemForbidden ⇒ 400 «wapp.platform no se concede desde la bandeja de solicitudes
+// de acceso»; ErrRetryRoleMismatch ⇒ 409 «la solicitud ya fue aprobada con un rol distinto; el
+// reintento no converge»; y, con lo local escrito, un JSON ApprovePartialResult con local "ok":
+// ErrSystemsUnionUnavailable ⇒ 409 identity "skipped" (hace falta mirar; reintentar a ciegas no
+// lo arregla), ErrSystemsSyncFailed ⇒ 502 identity "failed" con el texto del error como motivo,
+// ErrIdentityM2MUnavailable ⇒ 503 identity "skipped". Cualquier otro error ⇒ 500 «error al
+// aprobar solicitud».
+func ApproveAccessRequestHandler(tenants TenantStore, requests AccessRequestStore, m2m out.IdentityM2MClient, platformTenantID string) http.Handler {
+	panic(pendiente.Implementar("platformadmin.ApproveAccessRequestHandler"))
+}
+
+// RejectAccessRequestHandler devuelve el handler de POST /admin/access-requests/{id}/reject.
+// Corta con httpapi.EnforcePlatformCaller ANTES de tocar nada; {id} como en el de aprobar
+// (400 vacío, 404 no UUID). El cuerpo {"reason":…} solo se lee si trae contenido: uno que no es
+// JSON ⇒ 400 «cuerpo JSON inválido»; sin cuerpo, el motivo es "". Rechaza con
+// RejectAccessRequest y el Subject de la identidad como operador. Desenlaces: nil ⇒ 204;
+// ErrNotFound ⇒ 404 «solicitud no encontrada»; ErrConflict ⇒ 409 «la solicitud ya fue resuelta»;
+// ErrInvalidInput (motivo en blanco) ⇒ 400 «entrada inválida»; otro ⇒ 500 «error al rechazar
+// solicitud».
+func RejectAccessRequestHandler(requests AccessRequestStore, platformTenantID string) http.Handler {
+	panic(pendiente.Implementar("platformadmin.RejectAccessRequestHandler"))
 }
