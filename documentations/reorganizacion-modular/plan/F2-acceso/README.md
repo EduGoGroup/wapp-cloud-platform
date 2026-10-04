@@ -118,6 +118,43 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
    (`internal/gateway/grpc/auth.go:200-206`). Lo resuelve el adaptador de arranque (arquitectura §4).
    ✎ 2026-10-03: ese adaptador se llama `bridge_iam.go` (P5, `05` §4.2).
 
+**De la sesión F2-01 (2026-10-04)** — medido contra el código; lo que pide decisión está marcado 🟡:
+
+9. **T2.34 nombraba mal el fichero del candado de invitaciones.** Mandaba que `invitaciones_cableado_test.go:33` parseara
+   `auth_invitaciones.go`, pero lo que busca, `iamusecase.NewInvitationService` (`auth.go:742`), vive en `buildRolePlane`,
+   que va a `auth_roleplane.go`. Jhoan (P3 del inventario): parsea `auth_roleplane.go` (`f46a107`).
+10. **D-F2-5 chocaba con el candado `un_fichero_un_test`.** Ese candado solo exime un fichero de solo interfaces si existe
+    `<dir>/<paquete>helpertest` con una función `Contrato(t *testing.T, …)`; D-F2-5 dice que `ports/in` no lleva suite, y
+    `ports/in/{active_tenant,canje}.go` mordían. Jhoan (2026-10-04): excepción **en el candado**, verificada y por lista
+    cerrada, `internal/candados/inbound_ports.go` (`InboundPortDirsWithoutSuite`); añadir un directorio exige decisión.
+11. **El candado pide una función llamada exactamente `Contrato`.** Las suites `ContratoX` de diseño §2 no eximen el puerto
+    por sí solas: `outhelpertest` añade `Contrato(t, Montajes)`, que corre las siete (y sirve a F9 para correrlas de una vez).
+    Lo mismo valdrá para `platformadminhelpertest` (F2-03).
+12. **E-11 mal aplicado en el primer verde de `iam/domain`.** Conservó siete símbolos con el nombre español del viejo
+    (`EvaluarCanje`, `ResultadoCanje`, `Canje*`, `RolTransversalID`) invocando «lo ya decidido»; esa excepción cubre lo ya
+    escrito en el árbol nuevo, no los nombres que la spec cita del viejo. Corregido en `2776d82`; correspondencias en
+    `tareas.md`. Conviene que los prompts de sesión lo digan con un ejemplo.
+13. 🟡 **El valor cero de `RedemptionVerdict` es `RedemptionProceeds`** (`iota`, como el viejo `CanjeProcede`): un veredicto
+    sin inicializar dejaría pasar un canje. Se mantuvo el orden del viejo (equivalencia) y el test lo fija. ¿Se invierte
+    (cero = `RedemptionMissing`) cuando muera el viejo?
+14. 🟡 **`HashInvitationToken` no recorta U+200B ni U+FEFF.** `strings.TrimSpace` quita U+00A0, U+2003, U+202F, U+3000,
+    U+0085 y los ASCII, pero no el espacio de ancho cero ni el BOM: un token pegado con uno de ellos no se canjea. Se
+    mantiene la conducta del viejo y el corpus adversario (22 entradas) la fija; cambiarla (NFKC, quitar invisibles) es
+    decisión.
+15. **El `Fake` de `entitlements` y Postgres no responden igual a un tenant inexistente** (`("basic", [])` frente a
+    `("", nil, nil)`), igual que en el viejo. Contra el `Fake`, `ContratoResolver` prueba la mecánica del doble; las reglas de
+    resolución (override en los dos sentidos, plan NULL ⇒ `basic`, tenant inexistente) solo las prueba de verdad la misma
+    suite contra Postgres (F2-03/F9). El `Seed` de Postgres tendrá que sembrar antes de la primera consulta (caché), crear
+    los planes `contract_*` y añadir claves a `basic` sin borrar las de las migraciones; el caso de orden usa
+    `contract_a_b`/`contract_ab` para cazar un `ORDER BY` con *collation*.
+16. **Reglas de los dobles viejos que no se mantienen** (los dobles nuevos se alinean con Postgres, que es lo que promete el
+    puerto): desempate de listados por ordinal → `created_at DESC, id DESC` en invitaciones y `(created_at, tenant_id|user_id)`
+    en membresías; `InvitationStore.Create` rechaza un digest de ≠ 32 bytes (el viejo lo aceptaba). La suite de invitaciones
+    necesitará del montaje Postgres `Seed` y `DeleteRole` por SQL; la de roles da por sembrado el rol transversal (migración
+    0059).
+17. **Los *worktrees* de sub-agente nacen en `2da10b4`**, un ancestro viejo sin `internal/modulos`: cada sub-agente tuvo que
+    hacer `git reset --hard` a la rama antes de empezar. Conviene decirlo en el prompt.
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |
