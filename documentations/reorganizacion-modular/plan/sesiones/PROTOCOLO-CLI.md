@@ -1,5 +1,12 @@
 # Protocolo de una sesión CLI (Claude Code en la máquina de Jhoan)
 
+> 🔴 **Desde el 2026-10-04 este es el ÚNICO protocolo (D-R-8, Jhoan): todo es local.** La promoción web se acabó. Toda
+> sesión que escribe código es una **sesión completa** (§2), y lo hace como dice [`PROTOCOLO-WEB.md`](PROTOCOLO-WEB.md)
+> §2, §3 y §5, que quedan como referencia del *cómo se escribe*; lo demás de ese fichero (entorno web, traspaso) es
+> historia. Las sesiones `…-cli-cierre` siguen existiendo como bloque propio (suites y mutantes contra Postgres,
+> procesos, arranque real), pero ya no «cierran a la web»: §5 se lee como **refutar lo que la sesión anterior dio por
+> cierto**. No se escriben traspasos nuevos. Lo que no cambia: rama partida de `dev` y PR sin squash (§2).
+
 > Lo lee **entero**, antes de nada, toda sesión local del plan. Se arranca con
 > `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude` (así cargan las skills del
 > repo y, por herencia, el `CLAUDE.md` de la raíz de wApp). Hay dos clases de sesión local:

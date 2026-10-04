@@ -1,5 +1,9 @@
 # Protocolo de una sesión WEB (claude.ai/code)
 
+> ⚠️ **Fuera de uso como protocolo desde el 2026-10-04 (D-R-8, Jhoan): la promoción web se acabó y todo es local.** Las
+> sesiones leen [`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md). De este fichero siguen valiendo, como referencia de cómo se
+> escribe el código, §2, §3 y §5 (el protocolo CLI las cita); el entorno web y el traspaso son historia.
+
 > Lo lee **entero**, antes de nada, toda sesión web del plan. El prompt que la arrancó solo dice
 > **qué bloque** le toca; el **cómo** está aquí. Si algo de aquí choca con
 > [`05-metodo-contratos-y-tdd.md`](../../05-metodo-contratos-y-tdd.md), manda `05`; si choca con la

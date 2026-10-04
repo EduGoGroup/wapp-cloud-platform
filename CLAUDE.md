@@ -63,7 +63,7 @@ arranques (`cmd/server` viejo, `cmd/server-modular` nuevo), y los tests de integ
 reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 
 - **La norma**: [`documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md`](documentations/reorganizacion-modular/05-metodo-contratos-y-tdd.md). Manda sobre los documentos 01–04 de esa carpeta.
-- **El plan ejecutable**: [`documentations/reorganizacion-modular/plan/`](documentations/reorganizacion-modular/plan/README.md) — una *spec* por fase, [`DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) y [`sesiones/`](documentations/reorganizacion-modular/plan/sesiones/README.md). **Si te arrancaron con el prompt de una sesión, su protocolo (`plan/sesiones/PROTOCOLO-WEB.md` o `PROTOCOLO-CLI.md`) te dice qué leer; no leas el plan entero.**
+- **El plan ejecutable**: [`documentations/reorganizacion-modular/plan/`](documentations/reorganizacion-modular/plan/README.md) — una *spec* por fase, [`DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) y [`sesiones/`](documentations/reorganizacion-modular/plan/sesiones/README.md). **Si te arrancaron con el prompt de una sesión, su protocolo (`plan/sesiones/PROTOCOLO-CLI.md`) te dice qué leer; no leas el plan entero.** 💻 **Desde el 2026-10-04 todas las sesiones son locales** (D-R-8): se acabó la división web/local; `PROTOCOLO-WEB.md` queda solo como referencia de cómo se escribe el código (§2, §3, §5).
 - 🔤 **Idioma (E-11)**: en lo **nuevo**, los nombres (ficheros, tipos, funciones, variables, tests) van en
   **inglés** y solo los comentarios y la documentación en español. Lo ya escrito no se renombra; los textos
   observables se copian literales. Detalle en `05` E-11.
@@ -72,7 +72,7 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
   se parte (muere en F10).
 - 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
 - **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
-  `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (web ↔ local) ·
+  `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (en desuso desde el 2026-10-04: ya no hay sesiones web) ·
   `procesos-testcontainers` (F9) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
 - **La parada de F1 se resolvió el 2026-10-03**: manda `05` E-12 (tres niveles de ceremonia) y, para lo que decidió
   Jhoan, [`plan/DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) §3. **El 80 % de cobertura ya no

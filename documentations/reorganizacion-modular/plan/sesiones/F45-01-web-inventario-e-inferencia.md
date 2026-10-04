@@ -1,9 +1,9 @@
-# F45-01 · F4+F5 · inventario E-12 de las dos fases e `inferencia` en verde · 🌐 web
+# F45-01 · F4+F5 · inventario E-12 de las dos fases e `inferencia` en verde · 💻 CLI
 
 | | |
 |---|---|
-| Fase · bloque | [F4 · inferencia](../F4-inferencia/README.md) y [F5 · catalogo](../F5-catalogo/README.md) · inventario E-12 de las dos + F4 entero en verde (🌐) |
-| Entorno | 🌐 web |
+| Fase · bloque | [F4 · inferencia](../F4-inferencia/README.md) y [F5 · catalogo](../F5-catalogo/README.md) · inventario E-12 de las dos + F4 entero en verde (💻) |
+| Entorno | 💻 local (era 🌐 web: desde el 2026-10-04 todo es local, D-R-8) |
 | Nivel (E-12) | Provisional: F4 medio (`prompts`, dominios, `llmvia/local`) y complejo (los dos `postgres.go` con su suite, `llmvia`). Lo fija el inventario |
 | Duración objetivo | 45–90 min |
 | Tareas | T4.1–T4.9, T4.11–T4.23 de F4 · T5.1 de F5 |
@@ -16,15 +16,15 @@
 - [ ] La sesión anterior (F3-05) está integrada en `dev` (PR fusionado **sin squash**).
 - [ ] D-F4-1, D-F4-2 y D-F5-1 están rellenas en [`../DECISIONES.md`](../DECISIONES.md).
 - [ ] El inventario E-12 (de F4 y de F5) lo apruebas tú **dentro** de la sesión: no cierres la pestaña hasta contestarle.
-- [ ] Arrancar en claude.ai/code: repo `EduGoGroup/wapp-cloud-platform`, **rama base `dev`**, el entorno de [`00-01-jhoan-preparar-entorno-web.md`](00-01-jhoan-preparar-entorno-web.md).
+- [ ] Arrancar: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude`, con `dev` al día.
 
 ## Prompt
 
 ```text
-Sesión F45-01 del plan de reconstrucción modular de wapp-cloud-platform · 🌐 web.
+Sesión F45-01 del plan de reconstrucción modular de wapp-cloud-platform · 💻 CLI.
 
 Antes de nada, lee ENTERO y sigue al pie de la letra el protocolo:
-documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-WEB.md
+documentations/reorganizacion-modular/plan/sesiones/PROTOCOLO-CLI.md
 
 Tu encargo (y solo este):
 - Fases: F4 · inferencia → documentations/reorganizacion-modular/plan/F4-inferencia/
@@ -45,8 +45,8 @@ Tu encargo (y solo este):
 
 Orquesta con sub-agentes (por paquete) y protege tu contexto.
 Al terminar, las tres cosas: tareas [x] con SHA, bloque en ESTADO.md, hallazgos en el README de la fase.
-Push de TU rama y `gh pr create --base dev` con "integrar SIN squash"; traspaso solo si algo lo cierra la local.
-Si corres esto en local (sin saldo web): mismo encargo, sin traspaso, pero también en TU rama partida de `dev` y con PR (`gh pr create --base dev`, «integrar SIN squash»), leyendo el rc sin pipe. Nunca directo a `dev` (regla 6 del `CLAUDE.md`).
+Push de TU rama y `gh pr create --base dev` con "integrar SIN squash".
+Trabaja en TU rama partida de `dev` y con PR (`gh pr create --base dev`, «integrar SIN squash»), leyendo el rc sin pipe. Nunca directo a `dev` (regla 6 del `CLAUDE.md`).
 No empieces la sesión siguiente.
 ```
 
@@ -61,6 +61,6 @@ No empieces la sesión siguiente.
 
 - Una dependencia sin `[x]`, una decisión vacía o una contradicción con la spec, `05` o un ADR: la sesión **para y pregunta**; no se esquiva.
 - D-F4-1 no está aplicada (T4.2 falla): 🛑 no hay primer verde; se vuelve a Jhoan.
-- Una limitación del entorno (lint distinto, sin Docker, red): se **anota** (en el traspaso o en `06-entorno-web.md` §5), no se adapta el proyecto a ella.
+- Una limitación del entorno (lint distinto, sin Docker, red): se **anota** (en el README de la fase), no se adapta el proyecto a ella.
 - Si el bloque no cabe en ~90 min, para en un punto limpio (un paquete entero en verde), cierra con las tres cosas y se relanza.
 - Si se corta a medias: lo commiteado y empujado es la verdad; se relanza **la misma sesión** con el mismo prompt, y la verdad de campo del protocolo dirá por dónde seguir.

@@ -1,5 +1,9 @@
 # 06 · El entorno de Claude Code en la web
 
+> ⚠️ **Historia desde el 2026-10-04 (D-R-8, Jhoan)**: la promoción web se acabó y todas las sesiones son locales
+> ([`plan/sesiones/PROTOCOLO-CLI.md`](plan/sesiones/PROTOCOLO-CLI.md)). Este documento se conserva por lo que midió; §6 (la
+> toolchain en local) sigue valiendo.
+
 > Qué ve una sesión de claude.ai/code sobre este repo, qué hay que prepararle, y qué no puede
 > hacer. Verificado contra la documentación de Claude Code el 2026-09-27.
 >

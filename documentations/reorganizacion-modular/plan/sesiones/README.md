@@ -5,7 +5,12 @@
 > dos protocolos que la propia sesión lee al empezar: [`PROTOCOLO-WEB.md`](PROTOCOLO-WEB.md) y
 > [`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md). Así el prompt es corto y la regla no se duplica.
 >
-> **56 pasos**: 15 hechos y **41 pendientes** (13 🌐 · 6 🌐❓ · 21 💻 · 1 🧑). Recalibrado el 2026-10-03 tras la
+> 🔴 **Desde el 2026-10-04 todo es local (D-R-8, Jhoan)**: se acabó la promoción web y con ella la división web/local.
+> Toda sesión pendiente es 💻 y lee [`PROTOCOLO-CLI.md`](PROTOCOLO-CLI.md); las fichas que eran 🌐 conservan «web» en el
+> **nombre del fichero** (no se renombran: lo enlazan las specs) pero su prompt ya es local. No hay traspasos nuevos.
+> Lo que NO cambia: el código nace en una rama partida de `dev` y entra por PR sin squash (regla 6 del `CLAUDE.md`).
+>
+> **56 pasos**: 23 hechos y **33 pendientes** (32 💻 · 1 🧑; recuento del 2026-10-04). Recalibrado el 2026-10-03 tras la
 > parada de F1 ([`../DECISIONES.md`](../DECISIONES.md) §3): eran 81; las 66 pendientes se reagruparon en 41.
 
 ## Cómo se usa
@@ -14,14 +19,12 @@
    [`00-02`](00-02-jhoan-decisiones-iniciales.md) (las decisiones de [`../DECISIONES.md`](../DECISIONES.md) §1, §2 y §4).
 2. **Sigue la tabla en orden.** Abre el fichero del paso, cumple su «Antes de pegar el prompt», y
    pega el bloque `Prompt`:
-   - 🌐 **web**: claude.ai/code → repo `EduGoGroup/wapp-cloud-platform` → **rama base `dev`** → el
-     entorno de 00-01 → pegar. (O desde la terminal: `claude --cloud "<prompt>"`, tras empujar.)
-   - 💻 **CLI**: `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude` → pegar.
-   - 🌐❓ **web si queda saldo**: como 🌐 mientras dure la promoción; si no, se pega en local (el prompt lo prevé).
+   - 💻 **CLI** (todas, desde el 2026-10-04): `cd /Volumes/Projects/source/wApp/cloud/wapp-cloud-platform && claude` → pegar.
+   - 🌐 / 🌐❓ en una fila **hecha** de la tabla: así se corrió entonces; es historia.
    - 🧑 **tuyas**: no hay prompt; es una lista de lo que decides tú.
-3. **Entre dos sesiones**: la web termina con un **PR hacia `dev`**. Antes de arrancar la siguiente,
-   ese PR tiene que estar **integrado sin squash** (en GitHub, «Rebase and merge» o «Create a merge
-   commit»; nunca «Squash and merge»). Una sesión 💻 trabaja y empuja directamente en `dev`.
+3. **Entre dos sesiones**: toda sesión termina con un **PR hacia `dev`** desde su rama (regla 6 del `CLAUDE.md`). Antes
+   de arrancar la siguiente, ese PR tiene que estar **integrado sin squash** (en GitHub, «Rebase and merge» o «Create a
+   merge commit»; nunca «Squash and merge»). Directo a `dev` solo si Jhoan lo pide expresamente en la conversación.
 4. **Marca el estado** en la columna de la tabla (`hecha`, con la fecha) cuando la sesión cierre. La
    verdad, de todos modos, son los `[x]` con SHA de cada `tareas.md`.
 
@@ -30,7 +33,7 @@
 - **El orden supone D-F9-1 = sí** (F9 adelantado). Si decides que no, los pasos de F9 que están
   antes de F2 (F9-01…F9-05) se saltan en su sitio y F9 entero se hace tras F8 (T9.34); las sesiones
   de cierre de cada módulo ignoran su pasada de procesos.
-- **[F1-06](F1-06-cli-ajustes-previos-a-f2.md) está hecha** (2026-10-03): los ajustes de código que pedían P2, P4 y P5. Y **[F9-04](F9-04-cli-procesos-de-negocio.md) está hecha** (2026-10-03): P4–P8 y P10, T9.22, y la suite P0–P10 verde contra los dos binarios. Y **[F9-03](F9-03-cli-procesos-plataforma-y-acceso.md) está hecha** (2026-10-03): P1, P2, P3 y P9, y el mutante `maxTxAttempts = 1` cae. **Lo siguiente es [F9-04](F9-04-cli-procesos-de-negocio.md).** ✎ **[F2-01](F2-01-web-inventario-y-hojas.md) está hecha** (2026-10-04): inventario E-12 aprobado y las hojas simples de `acceso` en verde. ✎ **[F2-02](F2-02-web-usecase-identity.md) está hecha** (2026-10-04): `iam/infra/identity` e `iam/usecase` en verde. ✎ **[F2-03](F2-03-web-postgres-http-platformadmin.md) y [F2-04](F2-04-web-bridge-conmutar-y-rutas.md) están hechas** (2026-10-04): 0 pendientes en `acceso` y `conmutar(acceso)`. ✎ **[F2-05](F2-05-cli-cierre.md) está hecha** (2026-10-04, 💻): suites y mutantes del nivel complejo contra Postgres, procesos contra los dos binarios, arranque real; **F2 cerrada**. **Lo siguiente es [F3-01](F3-01-web-inventario-y-hojas.md).**
+- **[F1-06](F1-06-cli-ajustes-previos-a-f2.md) está hecha** (2026-10-03): los ajustes de código que pedían P2, P4 y P5. Y **[F9-04](F9-04-cli-procesos-de-negocio.md) está hecha** (2026-10-03): P4–P8 y P10, T9.22, y la suite P0–P10 verde contra los dos binarios. Y **[F9-03](F9-03-cli-procesos-plataforma-y-acceso.md) está hecha** (2026-10-03): P1, P2, P3 y P9, y el mutante `maxTxAttempts = 1` cae. **Lo siguiente es [F9-04](F9-04-cli-procesos-de-negocio.md).** ✎ **[F2-01](F2-01-web-inventario-y-hojas.md) está hecha** (2026-10-04): inventario E-12 aprobado y las hojas simples de `acceso` en verde. ✎ **[F2-02](F2-02-web-usecase-identity.md) está hecha** (2026-10-04): `iam/infra/identity` e `iam/usecase` en verde. ✎ **[F2-03](F2-03-web-postgres-http-platformadmin.md) y [F2-04](F2-04-web-bridge-conmutar-y-rutas.md) están hechas** (2026-10-04): 0 pendientes en `acceso` y `conmutar(acceso)`. ✎ **[F2-05](F2-05-cli-cierre.md) está hecha** (2026-10-04, 💻): suites y mutantes del nivel complejo contra Postgres, procesos contra los dos binarios, arranque real; **F2 cerrada**. **Lo siguiente es [F3-01](F3-01-web-inventario-y-hojas.md)**, ya en local (D-R-8). ✎ Los PR #33 (F2-05) y #34 (las siete 🟡 de F2 decididas) están integrados en `dev` (`4f0ed06`).
   Sin ella no arranca F9-B ni F2.
 - **Cada fase empieza por su inventario E-12** (`05` E-12): la primera sesión clasifica cada archivo (simple,
   medio, complejo) y lista los adaptadores `bridge_<x>.go`; **para hasta que lo apruebes**, y luego sigue.
@@ -47,6 +50,9 @@
   se corta.
 
 ## Qué sesiones usan la web
+
+✎ **2026-10-04 (D-R-8): la promoción se acabó; lo que sigue es historia.** Todas las pendientes son 💻. La frase final de
+este apartado («no hay PR ni traspaso») quedó corregida por la regla 6 del `CLAUDE.md` (2026-10-03): PR sigue habiendo.
 
 La promoción web (250 USD; ≈ 100 gastados; ≈ 11 USD por sesión, **estimación**) alcanza para unas **13–19
 sesiones** más. Se gasta en lo que la web hace bien, **escribir código**; lo que necesita Docker, UAT o `main`
@@ -90,24 +96,24 @@ La columna «Nivel» es el **provisional** de la spec (`05` E-12); el que vale e
 | 21 | [`F2-03-web-postgres-http-platformadmin`](F2-03-web-postgres-http-platformadmin.md) | 🌐 | F2 | Postgres, HTTP, `platformadmin` | T2.4, T2.12–T2.15, T2.24–T2.27 | complejo | hecha (2026-10-04; `7da5367` … `99336f3`; `GATE_RC=0`, 0 SKIP; pre-chequeo Postgres 148 PASS; ≈ 90 min de pared, D-R-6) |
 | 22 | [`F2-04-web-bridge-conmutar-y-rutas`](F2-04-web-bridge-conmutar-y-rutas.md) | 🌐 | F2 | `bridge_iam` + conmutar + rutas | T2.28–T2.31 (= TX.5–TX.7) | simple + medio | hecha (2026-10-04; `94f2d26` … `8482dad`; `GATE_RC=0`, 0 SKIP; huella igual; pre-chequeo P2/P10 contra el binario nuevo 94 PASS; ≈ 65 min de pared, D-R-6) |
 | 23 | [`F2-05-cli-cierre`](F2-05-cli-cierre.md) | 💻 | F2 | cierre | T2.32–T2.33 (= T9.23) | — | hecha (2026-10-04; `8677404` … `73b4541`; `GATE_RC=0`, 0 SKIP; suites 149 PASS y procesos 667 PASS × 2 binarios; 131 mutantes, 2 vivos 🟡; **F2 cerrada**; ≈ 47 min de pared, D-R-6) |
-| 24 | [`F3-01-web-inventario-y-hojas`](F3-01-web-inventario-y-hojas.md) | 🌐 | F3 | inventario + hojas | T3.1–T3.9, T3.15–T3.18 | medio / complejo | pendiente |
-| 25 | [`F3-02-web-fleet-filtercfg`](F3-02-web-fleet-filtercfg.md) | 🌐 | F3 | `fleet`, `filtercfg` | T3.10, T3.11, T3.19, T3.20 | complejo / medio | pendiente |
-| 26 | [`F3-03-web-grpc`](F3-03-web-grpc.md) | 🌐 | F3 | `grpc` | T3.12–T3.14, T3.21–T3.23 | complejo | pendiente |
-| 27 | [`F3-04-web-bridge-conmutar-y-rutas`](F3-04-web-bridge-conmutar-y-rutas.md) | 🌐 | F3 | `bridge_gateway` + conmutar + rutas | T3.24–T3.28 (TX.8–TX.11) | simple + cara | pendiente |
+| 24 | [`F3-01-web-inventario-y-hojas`](F3-01-web-inventario-y-hojas.md) | 💻 | F3 | inventario + hojas | T3.1–T3.9, T3.15–T3.18 | medio / complejo | pendiente |
+| 25 | [`F3-02-web-fleet-filtercfg`](F3-02-web-fleet-filtercfg.md) | 💻 | F3 | `fleet`, `filtercfg` | T3.10, T3.11, T3.19, T3.20 | complejo / medio | pendiente |
+| 26 | [`F3-03-web-grpc`](F3-03-web-grpc.md) | 💻 | F3 | `grpc` | T3.12–T3.14, T3.21–T3.23 | complejo | pendiente |
+| 27 | [`F3-04-web-bridge-conmutar-y-rutas`](F3-04-web-bridge-conmutar-y-rutas.md) | 💻 | F3 | `bridge_gateway` + conmutar + rutas | T3.24–T3.28 (TX.8–TX.11) | simple + cara | pendiente |
 | 28 | [`F3-05-cli-cierre-mtls`](F3-05-cli-cierre-mtls.md) | 💻 | F3 | cierre, mTLS | T3.29–T3.30 (= T9.24) y la parte local de T3.27 | — | pendiente |
-| 29 | [`F45-01-web-inventario-e-inferencia`](F45-01-web-inventario-e-inferencia.md) | 🌐 | F4 + F5 | inventario de las dos + F4 entero | T4.1–T4.9, T4.11–T4.23 · T5.1 | medio / complejo | pendiente |
-| 30 | [`F45-02-web-conmutar-inferencia-y-catalogo`](F45-02-web-conmutar-inferencia-y-catalogo.md) | 🌐 | F4 + F5 | `bridge_inferencia` + conmutar F4 · F5 entero | T4.10, T4.24–T4.28 (TX.12–TX.14) · T5.2–T5.19 (TX.15) | simple / medio | pendiente |
+| 29 | [`F45-01-web-inventario-e-inferencia`](F45-01-web-inventario-e-inferencia.md) | 💻 | F4 + F5 | inventario de las dos + F4 entero | T4.1–T4.9, T4.11–T4.23 · T5.1 | medio / complejo | pendiente |
+| 30 | [`F45-02-web-conmutar-inferencia-y-catalogo`](F45-02-web-conmutar-inferencia-y-catalogo.md) | 💻 | F4 + F5 | `bridge_inferencia` + conmutar F4 · F5 entero | T4.10, T4.24–T4.28 (TX.12–TX.14) · T5.2–T5.19 (TX.15) | simple / medio | pendiente |
 | 31 | [`F45-03-cli-cierre`](F45-03-cli-cierre.md) | 💻 | F4 + F5 | cierre de las dos | T4.29–T4.31 · T5.20–T5.21 · T9.25, T9.26 | — | pendiente |
-| 32 | [`F6-01-web-inventario-y-hojas`](F6-01-web-inventario-y-hojas.md) | 🌐 | F6 | inventario + hojas | T6.1–T6.5, T6.14 | simple | pendiente |
-| 33 | [`F6-02-web-intakes-1`](F6-02-web-intakes-1.md) | 🌐 | F6 | `intakes` 1/2 | T6.6–T6.8, T6.15 | medio | pendiente |
-| 34 | [`F6-03-web-intakes-2`](F6-03-web-intakes-2.md) | 🌐 | F6 | `intakes` 2/2 y candados | T6.9, T6.16–T6.18 | complejo | pendiente |
-| 35 | [`F6-04-web-quotetext-integrations-crmpush`](F6-04-web-quotetext-integrations-crmpush.md) | 🌐❓ | F6 | `quotetext`, `integrations`, `crmpush` | T6.10–T6.13, T6.19–T6.21 | medio / complejo | pendiente |
-| 36 | [`F6-05-web-cara-http-y-conmutar`](F6-05-web-cara-http-y-conmutar.md) | 🌐❓ | F6 | cara HTTP + conmutar | T6.22–T6.26 (= TX.16–TX.18) | cara | pendiente |
+| 32 | [`F6-01-web-inventario-y-hojas`](F6-01-web-inventario-y-hojas.md) | 💻 | F6 | inventario + hojas | T6.1–T6.5, T6.14 | simple | pendiente |
+| 33 | [`F6-02-web-intakes-1`](F6-02-web-intakes-1.md) | 💻 | F6 | `intakes` 1/2 | T6.6–T6.8, T6.15 | medio | pendiente |
+| 34 | [`F6-03-web-intakes-2`](F6-03-web-intakes-2.md) | 💻 | F6 | `intakes` 2/2 y candados | T6.9, T6.16–T6.18 | complejo | pendiente |
+| 35 | [`F6-04-web-quotetext-integrations-crmpush`](F6-04-web-quotetext-integrations-crmpush.md) | 💻 | F6 | `quotetext`, `integrations`, `crmpush` | T6.10–T6.13, T6.19–T6.21 | medio / complejo | pendiente |
+| 36 | [`F6-05-web-cara-http-y-conmutar`](F6-05-web-cara-http-y-conmutar.md) | 💻 | F6 | cara HTTP + conmutar | T6.22–T6.26 (= TX.16–TX.18) | cara | pendiente |
 | 37 | [`F6-06-cli-cierre`](F6-06-cli-cierre.md) | 💻 | F6 | cierre | T6.27–T6.29 (T6.27 = T9.27) | — | pendiente |
-| 38 | [`F7-01-web-inventario-y-hojas`](F7-01-web-inventario-y-hojas.md) | 🌐❓ | F7 | inventario + hojas | T7.1–T7.6, T7.14–T7.15 | medio / complejo | pendiente |
-| 39 | [`F7-02-web-stages`](F7-02-web-stages.md) | 🌐❓ | F7 | `stages` | T7.7–T7.9, T7.16–T7.17 | medio | pendiente |
-| 40 | [`F7-03-web-pipeline-reanalisis`](F7-03-web-pipeline-reanalisis.md) | 🌐❓ | F7 | `pipeline`, `intakeahead`, `reanalisis` | T7.10–T7.13, T7.18–T7.20 | complejo | pendiente |
-| 41 | [`F7-04-web-cara-http-y-conmutar`](F7-04-web-cara-http-y-conmutar.md) | 🌐❓ | F7 | cara HTTP + `bridge_captacion` + conmutar | T7.21–T7.26 (= TX.19–TX.21) | simple + cara | pendiente |
+| 38 | [`F7-01-web-inventario-y-hojas`](F7-01-web-inventario-y-hojas.md) | 💻 | F7 | inventario + hojas | T7.1–T7.6, T7.14–T7.15 | medio / complejo | pendiente |
+| 39 | [`F7-02-web-stages`](F7-02-web-stages.md) | 💻 | F7 | `stages` | T7.7–T7.9, T7.16–T7.17 | medio | pendiente |
+| 40 | [`F7-03-web-pipeline-reanalisis`](F7-03-web-pipeline-reanalisis.md) | 💻 | F7 | `pipeline`, `intakeahead`, `reanalisis` | T7.10–T7.13, T7.18–T7.20 | complejo | pendiente |
+| 41 | [`F7-04-web-cara-http-y-conmutar`](F7-04-web-cara-http-y-conmutar.md) | 💻 | F7 | cara HTTP + `bridge_captacion` + conmutar | T7.21–T7.26 (= TX.19–TX.21) | simple + cara | pendiente |
 | 42 | [`F7-05-cli-cierre`](F7-05-cli-cierre.md) | 💻 | F7 | cierre | T7.27–T7.29 (T7.27 = T9.28) | — | pendiente |
 | 43 | [`F8-01-cli-inventario-y-hojas`](F8-01-cli-inventario-y-hojas.md) | 💻 | F8 | inventario + hojas | T8.1–T8.8, T8.22 | medio | pendiente |
 | 44 | [`F8-02-cli-motor`](F8-02-cli-motor.md) | 💻 | F8 | motor | T8.9–T8.11, T8.14, T8.23 | medio | pendiente |
