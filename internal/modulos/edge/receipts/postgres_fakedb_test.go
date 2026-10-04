@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package receipts_test
 
 // El driver de database/sql de mentira sobre el que corre postgres_test.go: apunta cada sentencia
