@@ -1,0 +1,193 @@
+// Package domain define las entidades PURAS del IAM del módulo acceso y sus errores tipados. No
+// conoce SQL ni HTTP: es el núcleo que consumen los usecases y que los adaptadores
+// (infra/postgres, infra/memory) materializan.
+//
+// Convención del repo: los identificadores UUID viajan como `string` (nunca uuid.UUID); en
+// Postgres se leen casteados a texto (`::text`). Los campos nullable de BD se modelan como
+// punteros (nil = ausente/NULL). CERO PII y CERO material de la doble llave (DEK/lease) viven
+// aquí (ADR-0007/0009).
+//
+// Ficheros: entities.go (las entidades), errors.go (los 19 centinelas genéricos),
+// invitation.go (el token de invitación y su estado derivado) y canje.go (el veredicto de un
+// canje y su centinela).
+//
+// Los nombres en español que conserva el paquete (RolTransversalID, EvaluarCanje,
+// ResultadoCanje y los Canje*) son los del viejo, ya decididos en la spec de F2 y esperados por
+// sus consumidores: no se traducen (E-11, «lo ya decidido»).
+//
+// Porta internal/iam/domain/entities.go @ 9a77307.
+package domain
+
+import "time"
+
+// Effect es el efecto de un grant en la evaluación RBAC glob. deny precede a allow; el default
+// es DENY (lo aplica auth.EvaluateGrants). Sus valores literales viajan a la columna `effect`
+// de iam_role_grants/iam_user_grants y no cambian.
+type Effect string
+
+const (
+	// EffectAllow concede el patrón. Literal "allow".
+	EffectAllow Effect = "allow"
+	// EffectDeny niega el patrón (precede a cualquier allow al evaluar). Literal "deny".
+	EffectDeny Effect = "deny"
+)
+
+// RolTransversalID es el id FIJO del rol `platform_admin`, sembrado por la migración
+// 0059_platform_admin.sql. Es el ÚNICO rol cuya ASIGNACIÓN puede ir con ámbito global
+// (public.iam_user_roles.tenant_id NULL), porque es el único que por diseño actúa sobre
+// empresas que no son la suya (ADR-0039).
+//
+// 🔴 EL DISCRIMINADOR ES EL ID Y NO EL NOMBRE, y la diferencia es de seguridad, no de estilo.
+// `iam_roles` solo impone unicidad de nombre ENTRE PLANTILLAS GLOBALES (índice parcial
+// iam_roles_global_name_uidx); cualquier administradora puede crear en SU empresa un rol
+// llamado `platform_admin`, y una guarda que mirase el NOMBRE le daría a ese rol falsificado el
+// privilegio de asignarse global. El id, en cambio, no se puede pedir: ninguna vía de producto
+// lo elige, solo lo escribe la migración.
+//
+// 🔴 Y SI ALGÚN DÍA NO COINCIDIERA con el id sembrado en una base concreta, el fallo es
+// FAIL-CLOSED: se rechazaría la asignación global del platform_admin —ruidoso y reparable— en
+// vez de dejar pasar la de un rol de empresa.
+const RolTransversalID = "10000000-0000-0000-0000-000000000004"
+
+// Role es un rol RBAC (tabla public.iam_roles, migración 0015). TenantID nil = PLANTILLA global
+// canónica (tenant_admin/operator/viewer), referenciable por cualquier tenant; TenantID set =
+// rol propio del tenant. ParentRoleID modela la herencia de grants (cadena,
+// auth.ResolveRoleChain).
+type Role struct {
+	ID           string
+	TenantID     *string // nil = plantilla global
+	Name         string
+	ParentRoleID *string // nil = raíz
+	CreatedAt    time.Time
+}
+
+// Membership es la pertenencia de una persona a una empresa (tabla public.tenant_members,
+// migración 0037). Es el vínculo de NEGOCIO que se queda en wApp: identity dice QUIÉN es la
+// persona y esta fila a QUÉ empresa pertenece.
+//
+// 🔴 SON LAS TRES COLUMNAS DE LA TABLA Y NI UNA MÁS. No trae nombre ni correo, y no es un recorte
+// pendiente: la persona vive en identity-core (INV-02), en otra base, y `user_id` no tiene FK
+// que cruzar. Rellenar esos campos saliendo a identity al listar convertiría una lectura del
+// propio tenant en una consulta al padrón del grupo. CERO PII.
+type Membership struct {
+	// UserID es el UUID de la cuenta en identity. Es un identificador OPACO.
+	UserID string
+	// TenantID es la empresa: la mitad de la clave primaria, y omitirla obligaría a
+	// reconstruirla desde el contexto en cada consumidor.
+	TenantID string
+	// CreatedAt es cuándo entró en la empresa: lo que permite ordenar el listado de forma
+	// estable.
+	CreatedAt time.Time
+}
+
+// UserTenant es UNA de las empresas del sujeto, vista DESDE el sujeto: lo mínimo que un
+// selector de empresa necesita para pintarse (Plan 047 · Ola 5 · T5.1).
+//
+// ⚠️ NO es Membership con otro nombre, y la diferencia es la dirección. Membership mira desde la
+// EMPRESA y por eso no trae nombres (la persona vive en identity). Ésta mira desde la PERSONA y
+// SÍ trae el nombre: la empresa vive en public.tenants, en esta misma base.
+//
+// 🔴 NO LLEVA `Active`, y es deliberado: cuál es la activa no es una propiedad de la empresa
+// —dos personas distintas tienen activas empresas distintas—. El dato viaja APARTE, en el
+// segundo valor de retorno de in.TenantLister, que además admite el «ninguna».
+//
+// CERO PII: un UUID y el nombre COMERCIAL de una empresa de la que quien pregunta ya es miembro.
+type UserTenant struct {
+	// ID es la empresa (public.tenants.id): lo que el selector manda de vuelta a
+	// POST /api/v1/auth/active-tenant.
+	ID string
+	// DisplayName es el nombre legible (public.tenants.display_name). Existe porque un
+	// selector de UUIDs es inservible.
+	DisplayName string
+}
+
+// Grant es un patrón de permiso glob `recurso.accion` con su efecto (public.iam_role_grants /
+// public.iam_user_grants). Es la unidad que se agrega (rol + cadena ⊕ overrides de usuario)
+// para formar los grants EFECTIVOS que se embeben en el token al emitir. CERO PII.
+type Grant struct {
+	Pattern string
+	Effect  Effect
+}
+
+// AuditEvent es una fila de la bitácora append-only de auditoría (tabla public.audit_events,
+// migración 0019). REGLA DURA (INV-5): CERO PII. Actor y Resource son identidades OPACAS (UUID
+// de user/client/recurso), NUNCA email, número/JID de contacto ni contenido de mensajes. Meta
+// transporta contexto NO sensible (endpoint, método, código). TenantID nil = evento pre-auth
+// (p. ej. login fallido sin tenant resuelto).
+type AuditEvent struct {
+	ID       int64
+	TenantID *string
+	Actor    string
+	Action   string
+	Resource string
+	Result   string
+	Meta     map[string]any
+	At       time.Time
+}
+
+// IdentityContext es la identidad multi-tenant PLANA de wApp (Decisión C): solo {TenantID,
+// UserID, Roles}. La devuelve el login/refresh para que el cliente conozca su contexto; los
+// grants efectivos ya viajan en el access token.
+type IdentityContext struct {
+	TenantID string
+	UserID   string
+	Roles    []string
+}
+
+// IdentitySession es la sesión que identity-core abre para una persona: lo que devuelve su
+// login o su refresh (identity Plan 003 · Ola 3).
+//
+// El IdentityToken NO se persiste NUNCA en wApp: vive solo el instante server-side que dura el
+// canje por un Context Token. Lo que se entrega al cliente es el RefreshToken, que es de
+// identity y solo identity puede rotar o revocar.
+type IdentitySession struct {
+	SessionID     string
+	IdentityToken string
+	RefreshToken  string
+	// ExpiresAt es la expiración del IdentityToken, la que acota al Context Token que salga de
+	// canjearlo.
+	ExpiresAt time.Time
+}
+
+// AuthResult es el resultado de un login/refresh: el par de tokens y el contexto de identidad.
+// RefreshToken es el token OPACO en CLARO, entregado UNA vez al cliente. ExpiresAt es la
+// expiración del AccessToken. TokenType es siempre "Bearer".
+type AuthResult struct {
+	AccessToken  string
+	RefreshToken string
+	TokenType    string
+	ExpiresAt    time.Time
+	Context      IdentityContext
+}
+
+// IdentityUser es la persona tal y como la deja el padrón GLOBAL de identity tras un
+// `POST /api/v1/users/ensure` (create-or-attach, identity Plan 003 · T3.4).
+//
+// No trae nombre ni apellido, y esa ausencia es de identity: devolverlos convertiría el
+// endpoint en un directorio del grupo consultable por correo.
+type IdentityUser struct {
+	// ID es el UUID de la cuenta en identity: lo único que sirve para el paso siguiente
+	// (`PUT /users/{id}/systems`).
+	ID string
+	// Email es el correo NORMALIZADO con el que quedó la cuenta —minúsculas y sin espacios en
+	// los extremos—, que puede no ser el texto que se mandó.
+	Email string
+	// Created dice si ESTA llamada creó la cuenta. Falso cuando ya existía: una cuenta
+	// preexistente NO se modifica.
+	Created bool
+}
+
+// IdentitySystemsDiff es lo que devuelve el `PUT /api/v1/users/{id}/systems`: el conjunto
+// vigente más el diff que esa llamada aplicó (identity Plan 003 · T3.8).
+//
+// El diff hace observable la idempotencia: repetir el mismo PUT devuelve Granted y Revoked
+// VACÍOS. ⚠️ Systems está acotado al ecosistema de la credencial de wApp: NO enumera los
+// accesos que otro ecosistema le haya dado a la misma persona.
+type IdentitySystemsDiff struct {
+	// Systems es el conjunto vigente tras la llamada, ordenado. Nunca nil.
+	Systems []string
+	// Granted son las claves que GANARON acceso en esta llamada.
+	Granted []string
+	// Revoked son las claves que lo PERDIERON en esta llamada.
+	Revoked []string
+}
