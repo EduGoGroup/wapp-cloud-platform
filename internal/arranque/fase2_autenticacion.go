@@ -12,7 +12,7 @@ import "context"
 // lo reusa tal cual. Un segundo stack aquí sería un segundo verificador, y entonces el
 // :8103 podría aceptar tokens que el relé del Edge rechaza.
 //
-// El detalle de qué construye vive en auth.go, que es donde está buildAuthStack: esta
+// El detalle de qué construye vive en auth_stack.go, que es donde está buildAuthStack: esta
 // fase solo dice CUÁNDO.
 type faseAutenticacion struct{}
 
