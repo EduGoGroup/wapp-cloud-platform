@@ -1,6 +1,7 @@
 # F3 · `edge` — el túnel con cada Edge: gRPC, enrolamiento, lease, flota, acuses
 
-> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`).
+> **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
+> **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -114,3 +115,66 @@ no caben, la sesión para en un punto limpio de [`tareas.md`](tareas.md), cierra
 | D-F3-4 | 🔒 `lease/repository_postgres.go:106,117` escribe `public.tenants.revoked_at` (deuda D-9: tabla de otro módulo sin API interna). ¿Se corrige en la reconstrucción? | **No**: el lease se reconstruye **sin cambiar comportamiento** (`05` §6); el SQL se copia literal y la deuda sigue anotada |
 | D-F3-5 | Los 7 tests de carga/pool del gateway (`load_integration_test.go`, `load_ack_integration_test.go`, `curva_pool_t55_integration_test.go`, `deuda_050_2_pool_integration_test.go`): ¿se reescriben? | **No**: son mediciones publicadas (Plan 050 · T5.x, DEUDA-050.2). Se conservan en el árbol viejo hasta F10 y se dice en el commit |
 | D-F3-6 | ¿Se adelanta F9 para correr «Enrolamiento de un Edge y su lease» contra el binario nuevo al cerrar F3? | **Subsumida por D-F9-1** (recomendación: sí): T3.30 **es** la pasada 9C de `edge` (T9.24); solo se tacha si D-F9-1 = no. Es el único oráculo del kill-switch extremo a extremo con mTLS real |
+| D-F3-7 | Nivel de los adaptadores Postgres de una sola sentencia (`receipts/postgres.go`, `enroll/edgecert.go`) | ✅ **medio** (Jhoan, 2026-10-04, F3-01) |
+| D-F3-8 | Dónde y cuándo van las pasadas de las suites de las hojas contra Postgres | ✅ **en F3-05, en `test/procesos/<x>_contrato_test.go`** (Jhoan, 2026-10-04, F3-01) |
+
+## Entradas, comprobadas el 2026-10-04 (F3-01, `dev` @ `8896f13`)
+
+E1 ✅ (`acceso`, 0 pendientes) · E2 ✅ · E3 ✅ (0) · E4 ✅ con matiz: `git log 1b18932..origin/dev` sobre el código viejo da
+**dos** commits, `5305134` y `6d83620`, que son justo los de F0 que E3 exige (`platform` deja de depender de `inferstats` y
+de `gateway/session`) · E5 ✅ · E6 ✅ (`make toolchain` `TOOLCHAIN=OK`; `make ci-local` rc=0 antes de tocar nada).
+`session.ErrSessionOffline` viejo **es** `platform/httpapi.ErrSessionOffline` (`gateway/session/registry.go:24`): D-F3-2 se
+sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficheros (`mtls_test` 9, `server_test` 5,
+`load_integration` 2, y 1 en `load_ack_integration`, `readiness_orden`, `worklane_internal` y `tenant_revoke`).
+
+## Hallazgos
+
+### F3-01 (2026-10-04)
+
+1. **`ingest/dedupe.go` y `receipts/memory.go` no nacen.** Su único contenido era el doble en memoria, que se muda a
+   `<paq>helpertest` (D-F3-1). `ingest` queda en `deduper.go` ✚ + `postgres.go`, y el «38» de la spec baja a **37 (+1 ✚)**
+   ficheros de producción (regla: ficheros con declaraciones tras la mudanza).
+2. **Valor cero = «procede» (D-F2-10): se dice y no se cambia.** 🔒 `lease.State.Revoked bool` (cero = vigente),
+   `TenantRevoked` sin fila → `false` y `Get` con `found=false` → no revocado: cambiarlo es cambiar el lease (`05` §6,
+   D-F3-4); el fail-closed lo lleva el `error` (R-L5). `Deduper.Seen` devuelve `false` = «nuevo, procésalo», también con
+   error, y el consumidor es fail-open a propósito (`flujos/runtime/incoming.go:1141`); la firma es estructural con
+   `runtime.IngestDeduper`. No hay ningún enum con `iota` en los 7 paquetes.
+3. **`enroll` no normaliza el código de activación** (ni `TrimSpace`, ni rechaza el vacío): se compara tal cual en memoria
+   y en SQL. D-F2-11/13 no aplican; se porta igual y el test lo afirma con un corpus adversario.
+4. **Los dobles divergen del real a propósito.** `enroll` en memoria distingue `ErrCodeNotFound`/`Expired`/`Used` y
+   Postgres solo devuelve `ErrCodeInvalid`; `diagnostics` en memoria sobrescribe un `command_id` repetido y Postgres falla
+   por clave primaria. La suite afirma solo lo común.
+5. **`inferstats.Agregado` es alias de `platform/metrics/inferencia`**, no de `platform/metrics` (E3 y `diseno.md` §3 lo abrevian).
+6. **Los `integration_test.go` viejos de `lease` y `enroll` llevan tests ajenos**: `fleet` y las migraciones `0002`, `0003`
+   y `0058`. No son de estos paquetes; van a F9 (`diseno.md` §6).
+7. **Exportados sin uso en producción que se portan igual** (E-1): `receipts.Store.List`, `ingest.WithRetention` y `WithSweep`.
+8. **No hay herramienta de mutantes** en el `Makefile`: se hacen a mano (mutar, ver el rojo, deshacer) y se listan en el PR.
+9. **T3.7 cita un `repository_integracion_test.go` junto a `lease`** que contradice el patrón de F1/F2 (el tag `integracion`
+   solo vive en `test/procesos`). No se escribe: D-F3-8.
+10. **R-S4 dice «envíos concurrentes serializados» y el `Registry` no serializa el `Send`**: lo hace el envoltorio por
+    stream del gateway (R-G12, F3-03). Se portó lo que hace el código (el registro es seguro en concurrencia y no retiene
+    el mutex durante el `Send`); la redacción de `diseno.md` §3 queda por corregir al abrir F3-03.
+11. **`diagnostics.Record` y `diagnostics.Bundle` son nominales**: el `Store` nuevo no encaja en los consumidores viejos
+    (`publicapi.DiagnosticsStore`, el `BundleReceiver` del gateway viejo) sin convertir tipos. No hace falta adaptador si
+    D5/D6 se mudan a `apipublica` y el gateway es el nuevo en el mismo commit (F3-04, T3.28): se comprueba allí.
+    `receipts.Sink.Record` e `ingest.Deduper.Seen` sí encajan tal cual.
+12. **Para los montajes de F3-05 contra Postgres**: `diagnostics` pide `SetConsent` (upsert en `tenant_diagnostics_consent`)
+    y `Expire` (`UPDATE … expires_at` al pasado), y su purga de `CreateRequest` es **global** (borra vencidas de cualquier
+    tenant): base propia por caso. `enroll` pide `SeedCode` y un observador `Records` (`SELECT` sobre `edge_certs`); `lease`,
+    `SeedTenant`. `receipts` e `ingest` solo piden dos `session_id` únicos.
+13. **Divergencias doble ↔ Postgres que las suites no afirman a propósito**: `receipts` (un `ReceiptAt` cero vuelve como
+    la época Unix desde Postgres y como cero desde el doble); `lease` (`MarkTenantRevoked` de un tenant inexistente: el doble
+    lo marca, Postgres no toca fila); `enroll` (`fingerprint` es `UNIQUE` en Postgres; el doble mira el vencimiento antes
+    que el uso).
+14. **`diagnostics.Postgres` gana un campo no exportado `now`** (fijado a `time.Now` en `NewPostgres`, sin opción pública)
+    para poder matar el mutante del borde exacto del vencimiento. No cambia la API ni la conducta.
+15. **Mutantes de F3-01: 132, 131 muertos.** `session` 21/21 · `inferstats` 26/27 · `ingest/postgres` 22/22 ·
+    `diagnostics/postgres` 36/36 · `lease/lease` 13/13 · `lease/repository_postgres` 8/8 · `enroll/store_postgres` 5/5. Dos
+    nacieron vivos y se mataron con un test (`session`: fuga de la goroutine del `Send`, con `testing/synctest`;
+    `diagnostics`: `Record` a medias, `67129db`). 🟡 El vivo es equivalente (`inferstats.cloneCounts` guarda un mapa vacío
+    como vacío en vez de `nil`: no se ve por la API exportada); lo mataría un test interno que fije ese detalle.
+16. **Sin test**: las ramas de error de `issuer.Issue`/`issuer.Revoke` en `lease.go` (el `Issuer` de `wapp-cloudlink` no
+    falla con una clave válida y no se puede inyectar sin tocar producción). `fakedb_test.go` está duplicado en `lease` y
+    `enroll` (129 líneas): compartirlo pediría un paquete nuevo.
+17. **Dos commits intermedios no pasan todos los gates por sí solos** (el PR entero sí): `9b57756` falla `exportados_cubiertos`
+    hasta `715cfcf`, y `f783e76` lleva tres tests sin `gofmt` hasta `10b8d4e`.
