@@ -47,17 +47,17 @@ Sesión: [`F2-04`](../sesiones/F2-04-web-bridge-conmutar-y-rutas.md).
 
 Para cuando: 23 rutas de `:8103` por la cara nueva, J4–J11 con handlers nuevos, `FaseActual = 2`.
 
-- [ ] **TX.5 · rojo(apipublica): lo común, el arnés y las cuatro áreas de acceso** · 🌐 · dep. TX.4 y el verde de `modulos/acceso` · cumple RX.2.b, RX.2.d, RX.2.e, RX.5.a–d, RX.6.a
+- [x] **TX.5 · rojo(apipublica): lo común, el arnés y las cuatro áreas de acceso** · 🌐 · dep. TX.4 y el verde de `modulos/acceso` · cumple RX.2.b, RX.2.d, RX.2.e, RX.5.a–d, RX.6.a — cerrada en `799d821` (F2-04; nombres en inglés, ver `F2-acceso/tareas.md` §F2-04; `response.go` sin exportados no tuvo rojo: nace en su verde)
   - **Ficheros**: `cadena.go`, `respuesta.go`, `apipublicahelpertest/arnes.go`, `autenticacion.go`, `roleplane.go`, `audit.go`, `entitlements.go` y sus 7 `_test.go` (16)
   - **Hecho cuando**: antes de escribir, leídos los tests viejos de F2 ([`diseno.md`](diseno.md) §5); cada `Montar*` declara la condición de montaje del mapa §2.1–2.3; los puertos usan tipos de `modulos/acceso` **nuevos**; cada test cubre 401/403/feature/feliz/auditoría/404-sin-dependencia de sus filas
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0` · `make test-pendiente` cuenta los pendientes nuevos
   - **Commit**: `rojo(apipublica): comunes y acceso`
-- [ ] **TX.6 · verde(apipublica): comunes y acceso, fichero a fichero** · 🌐 · dep. TX.5 · cumple RX.2.b, RX.2.e, RX.5.a
+- [x] **TX.6 · verde(apipublica): comunes y acceso, fichero a fichero** · 🌐 · dep. TX.5 · cumple RX.2.b, RX.2.e, RX.5.a — cerrada en `3745079`, `52a5d09`, `e546523`, `8a11c8d`, `4f28f4f` (F2-04; las etiquetas de los cinco tests se quitan en el último: el rojo los dejó acoplados, hallazgo 39 de F2)
   - **Ficheros**: los 8 de producción de TX.5, con su cabecera `// Porta …`
   - **Hecho cuando**: pendientes de `internal/apipublica` = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9
   - **Gate**: el de cabecera · `make cobertura-ficheros` como informe (la tabla va al PR; no bloquea)
   - **Commit**: `verde(apipublica): <fichero>` — uno por fichero
-- [ ] **TX.7 · conmutar(acceso): 23 rutas a la cara nueva** · 🌐 · dep. TX.6 · cumple RX.3.a, RX.4.a
+- [x] **TX.7 · conmutar(acceso): 23 rutas a la cara nueva** · 🌐 · dep. TX.6 · cumple RX.3.a, RX.4.a — cerrada en `8482dad` (F2-04; `FaseActual = 2`)
   - **Ficheros**: `internal/arranque/http.go`, `rutas_admin.go`, la constante `FaseActual`
   - **Hecho cuando**: A1–A7 ya no se registran en el mux viejo; `Montar{Autenticacion,RolePlane,Auditoria,Derechos}` montados; en los `Deps` viejos `Roles`, `Members`, `Invitations`, `Audit` = `nil` y `Entitlements` = **el resolver nuevo** (una sola caché, [`arquitectura.md`](arquitectura.md) §4); J4–J11 con `platformadmin` **nuevo**, construidos inline (T-16); `FaseActual = 2`
   - **Gate**: `go test -count=1 -v -run 'Mudanzas|Huella|PlatformPermissions' ./internal/arranque > "$TMPDIR/m.log" 2>&1; echo rc=$?` → `rc=0`, 0 SKIP · `make ci-local; echo rc=$?` → `rc=0`
