@@ -110,5 +110,5 @@ La sesión **web** no empuja a `dev`: empuja **su** rama y abre `gh pr create --
 - `GATE_RC=0` leído del log, no de una notificación.
 - `git status --short` sin restos que no sean del commit.
 - `git fetch origin && git log --oneline -1 origin/dev`: que nadie empujó entretanto.
-- `git push origin <rama>` y PR hacia `dev`, leyendo **su** `rc`. 🔴 Nunca código directo en `dev` ni `main` salvo
+- `git push origin <rama>` y PR hacia `dev`, leyendo **su** `rc`; el cuerpo del PR, con la skill **`describir-pr`** (la tabla de gates de aquí va en su sección «🔬 Gates»). 🔴 Nunca código directo en `dev` ni `main` salvo
   orden expresa de Jhoan (regla innegociable 6 del `CLAUDE.md`).

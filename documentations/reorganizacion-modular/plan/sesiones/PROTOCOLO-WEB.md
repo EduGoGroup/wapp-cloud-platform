@@ -119,9 +119,11 @@ Y para entregar:
 4. **Traspaso** (skill `traspaso-web-local`) **solo si** algo de tu sesión lo tiene que cerrar la local, o si
    la sesión se corta a medias. Si no, no se escribe: la sesión 💻 de cierre de la fase lee `tareas.md` y el PR.
 5. `git push` de **tu** rama y **`gh pr create --base dev`** (la rama por defecto del remoto es
-   `main`). Título: `<id de sesión> · <bloque>`. Cuerpo: el informe de gates, el enlace a la sesión
-   (`https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID/#cse_/session_}`) y la frase
-   **«Integrar SIN squash: rojo y verde son commits distintos»**.
+   `main`). Título: `<id de sesión> · <bloque>`. Cuerpo: con la skill **`describir-pr`** (Jhoan, 2026-10-04):
+   objetivo explicado, dónde encaja en la fase y en el plan, resultado con desvíos y pendientes, y después el
+   informe de gates, el enlace a la sesión (`https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID/#cse_/session_}`)
+   y la frase **«Integrar SIN squash: rojo y verde son commits distintos»**. En la web no hay `gh`: la herramienta
+   MCP de GitHub (`create_pull_request`).
 6. **No sigas con la sesión siguiente** aunque te sobre tiempo: la sesión termina en su punto de
    parada. Una sesión es un bloque coherente de **45–90 min**; si no cabe, para en un punto limpio (commits
    empujados, `[~]` en la tarea), cierra con las tres cosas y se relanza.
