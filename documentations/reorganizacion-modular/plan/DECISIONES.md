@@ -129,7 +129,7 @@ esta decisión no arranca nada de F2 en adelante (ni F9-B).
 | D-F2-1 | Los 3 candados AST del canje se quedan como **AST** (no pasan a procesos de F9: vigilan cosas que ningún proceso observa) | Sí | F2 bloque C | sí (2026-09-30) |
 | D-F2-3 | Crear `platformadmin/puertos.go` y separar el SQL de `access_requests.go` | Sí | F2 bloque B | sí (2026-09-30) |
 | D-F2-4 | `entitlements.Fake` → paquete `entitlementshelpertest` | Sí | F2 bloque B | sí (2026-09-30, con el nombre `entitlementstest`; el sufijo es `helpertest` por D-F1-10, 2026-10-02) |
-| D-F2-5 | Sin suites de contrato para `ports/in` | Sí | F2 bloque B | sí (2026-09-30) |
+| D-F2-5 | Sin suites de contrato para `ports/in` | Sí | F2 bloque B | sí (2026-09-30) · ✎ **2026-10-04 (F2-01)**: chocaba con `un_fichero_un_test`, que solo exime un puerto con suite `Contrato`; Jhoan eligió una excepción **en el candado**, verificada y por lista cerrada: `internal/candados/inbound_ports.go` (`InboundPortDirsWithoutSuite`, hoy solo `internal/modulos/acceso/iam/ports/in`), `4e97ee3` → `1d3b10b`. Añadir un directorio exige otra decisión aquí |
 | D-F2-6 | Relojes inyectables | Sí | F2 bloque B | sí (2026-09-30) |
 | D-F2-8 | *(de la revisión del PR de F0-04)* Partir la copia `internal/arranque/auth.go` (835 l, seis temas, crece en F2 y F3) en `auth_{stack,jwt,roleplane,invitaciones,empresa_activa}.go` y `edge_config.go`, solo moviendo declaraciones. En F0 no: R0.4.b exige copia exacta hasta cerrar F0 | Sí, como **primera tarea de F2** (T2.34), con la huella como prueba | F2 bloque A | sí (2026-09-30) |
 | D-F3-1 | Gemelos en memoria a `<paquete>helpertest` | Sí | F3 bloque B | sí (2026-09-30, con el nombre `<paquete>test`; el sufijo es `helpertest` por D-F1-10, 2026-10-02) |

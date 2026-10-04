@@ -54,7 +54,8 @@ sesión fusiona en `dev` en local**. Sustituye a la mitad «la local fusiona con
   ```
 
 - **Sesión completa** (no hubo web): `git checkout -b reorg/<fase>-<bloque> dev` antes del primer commit, y PR al
-  terminar (`gh pr create --base dev`).
+  terminar (`gh pr create --base dev --body-file …`), con el cuerpo de la skill **`describir-pr`**. La sesión de
+  cierre que trabaja en la rama de un PR de la web **reescribe** su cuerpo con esa skill: «Resultado» y «Gates» dicen lo de ahora.
 - **Sub-agentes en *worktrees***: sus commits se integran (`cherry-pick`) en **tu rama**, no en `dev`.
 - **Quién integra el PR**: Jhoan, en GitHub, con «Create a merge commit» o «Rebase and merge». **Nunca squash**: el
   rojo y el verde de un fichero son commits distintos. La sesión solo lo fusiona (`gh pr merge --merge`) si Jhoan lo

@@ -226,7 +226,7 @@ func TestBuildES256Key_ProdInvalidFileFailsFast(t *testing.T) {
 }
 
 // Movido aquí desde el bootstrap_test.go que era un cajón de sastre: prueba
-// buildJWTManagers, que vive en auth.go, no en el arranque por fases.
+// buildJWTManagers, que vive en auth_jwt.go, no en el arranque por fases.
 func TestBuildJWTManagers_Table(t *testing.T) {
 	log := logging.New(config.AppConfig{})
 

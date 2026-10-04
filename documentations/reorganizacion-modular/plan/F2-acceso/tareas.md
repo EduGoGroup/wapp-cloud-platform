@@ -10,7 +10,10 @@
 > de verde (**G-verde**): `GOWORK=off go test -race ./<paquete>/ > "$TMPDIR/t.log" 2>&1; echo rc=$? >> "$TMPDIR/t.log"; tail -1 "$TMPDIR/t.log"` → `rc=0`,
 > 0 SKIP · un test por promesa del contrato · `make cobertura-ficheros` como **informe** (la tabla va al PR; no bloquea).
 >
-> **Niveles (`05` E-12)**: los fija el inventario de T2.1; los de aquí son **provisionales** ([`diseno.md`](diseno.md) §1.1).
+> **Niveles (`05` E-12)**: los fija el inventario de T2.1, **aprobado por Jhoan el 2026-10-04** ([`diseno.md`](diseno.md) §1.1,
+> definitivo). Cambian respecto a lo provisional: `iam/infra/memory` (T2.9) **simple**, nace completo (P1; T2.20 solo pasa el
+> gate) · `iam/usecase/{config,audit,context_token}.go` (T2.11) **simple** · `iam/infra/postgres/postgres.go` (T2.12) **simple**
+> y sus 5 adaptadores sin Tx más `platformadmin/postgres.go` (T2.15) **medio** (P2) · `iam/domain` los 4 **simples** (P4).
 > Las tareas conservan su número. En un paquete **simple**, la tarea «contrato» trae contrato, test y lógica en una
 > pasada (commit `verde(acceso): …`) y su tarea «verde» solo pasa el gate. En **medio**, rojo y verde por fichero,
 > agrupados por paquete. En **complejo**, el esquema completo E-2…E-9 con mutantes donde haga falta. Si un fichero sale
@@ -27,14 +30,25 @@
 ## Sesión F2-01 · inventario E-12 y hojas simples · 🌐 · T2.1, T2.34, T2.2–T2.3, T2.5–T2.9, T2.17–T2.21
 Para cuando: inventario aprobado por Jhoan · `auth.go` partido con la huella intacta · `entitlements` (sin `postgres.go`), `iam/domain`, `iam/ports/{in,out}`, las 7 suites e `iam/infra/memory` en verde · `ci-local` rc=0 con 0 SKIP · PR.
 
-- [ ] **T2.1 · Inventario E-12, verdad de campo y re-medición** · 🌐 · dep. F1 cerrado, parada resuelta, F1-06 y F9-04 · cumple R2.1.d, R2.1.e
+> **Correspondencias de nombres (E-11) de F2-01**: `TestRequireFeature_SinIdentidad` → `TestRequireFeature_NoIdentity` ·
+> `FeatureMultiEmpresa` → `FeatureMultiCompany` (valor `"multi_empresa"`) · `entitlementshelpertest/suite.go` → `contrato.go`
+> (`_contrato` es vocabulario del método, D-F1-12) · `outhelpertest/{montaje,membresias,roles,grants,auditoria,invitaciones,empresa_activa,canje}`
+> → `contrato.go`, `memberships_contrato.go`, `roles_contrato.go`, `grants_contrato.go`, `audit_contrato.go`,
+> `invitations_contrato.go`, `active_tenant_contrato.go`, `redeem_contrato.go` (suites `ContratoMembershipRepo`… y
+> `Contrato(t, Montajes)`) · `iam/domain`: `RolTransversalID` → `TransversalRoleID`, `EvaluarCanje` → `EvaluateRedemption`,
+> `ResultadoCanje` → `RedemptionVerdict`, `CanjeProcede/Ausente/Caducado/Consumido` → `RedemptionProceeds/Missing/Expired/Consumed`
+> · `iam/infra/memory`: `ConFeatures` → `WithFeatures`, `SeedAsignacion` → `SeedAssignment` · candado nuevo
+> `internal/candados/inbound_ports.go` (`InboundPortDirsWithoutSuite`). Los ficheros portados conservan el nombre del viejo
+> (`canje.go`).
+
+- [x] **T2.1 · Inventario E-12, verdad de campo y re-medición** · 🌐 · dep. F1 cerrado, parada resuelta, F1-06 y F9-04 · cumple R2.1.d, R2.1.e — cerrada en `1d73874` (inventario aprobado por Jhoan el 2026-10-04 con P1–P4; `GATE_RC=0`)
   - **Ficheros**: `plan/F2-acceso/README.md` (estado «en curso», SHA de arranque, respuestas D-F2-*), [`diseno.md`](diseno.md) §1.1 (la tabla definitiva)
   - **Qué produce**: la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 51 + 6 ✚ ficheros, medida sobre el código viejo, y la **lista de adaptadores**: nace `bridge_iam.go` (muere en F3); F2 no retira ninguno.
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.** Además: las entradas del README comprobadas con su comando; tabla §1 de arquitectura re-medida (si difiere, se corrige **aquí** y se dice en el commit); `git log 1b18932..origin/dev -- internal/iam internal/entitlements internal/platformadmin` revisado; D-F2-1…D-F2-7 con respuesta de Jhoan (o la recomendación marcada «asumida» si Jhoan lo delegó). **Verificado D-F4-1** (lo hizo F0, T0.27): `grep -c 'SkipDir' internal/iam/infra/postgres/membresia_unica_ast_test.go` → ≥ 1 y el commit `andamiaje(f0): los barridos AST viejos…` en `git log origin/dev`; si falta, **parar** (sin él el verde de `memberships.go` pone rojo `ci-local`).
   - **Gate**: `GOWORK=off make ci-local > "$TMPDIR/g.log" 2>&1; echo GATE_RC=$? >> "$TMPDIR/g.log"; tail -1 "$TMPDIR/g.log"` → `GATE_RC=0`
   - **Commit**: `docs(reorganizacion-modular): F2 arranca — inventario E-12 y entradas verificadas`
 
-- [ ] **T2.34 · refactor(arranque): `auth.go` se parte en `auth_*.go` y `edge_config.go`** · 🌐 · dep. F0 cerrada (T0.25), T2.1 aprobado · decisión **D-F2-8** *(añadida el 2026-09-30, revisión del PR de F0-04; el ID no se renumera)*
+- [x] **T2.34 · refactor(arranque): `auth.go` se parte en `auth_*.go` y `edge_config.go`** · 🌐 · dep. F0 cerrada (T0.25), T2.1 aprobado · decisión **D-F2-8** *(añadida el 2026-09-30, revisión del PR de F0-04; el ID no se renumera)* — cerrada en `f46a107` (multiconjunto de las 31 declaraciones igual; huella idéntica; 359 PASS, 0 SKIP en `internal/arranque`; `GATE_RC=0`; ficheros 268/233/178/106/57/57 l)
   - **Por qué**: la copia `internal/arranque/auth.go` (835 l) mezcla seis cosas y **crece**: la editan T2.31 (`conmutar(acceso)`) y F3 (los config providers con el `ConfigPayload` nuevo), y es el código que sobrevive a F10. En F0 no se pudo partir: R0.4.b exige copia exacta del viejo hasta cerrar F0.
   - **Ficheros** (solo en `internal/arranque`; **el viejo no se toca**), por símbolos:
     - `auth_stack.go`: `identityTokenIssuer`, `authStack`, `buildAuthStack`, `wireIdentityM2M`, `wireDelegatedAuth`, `edgeAuthenticator`, `exchanger`, `buildIdentityVerifier`;
@@ -43,52 +57,52 @@ Para cuando: inventario aprobado por Jhoan · `auth.go` partido con la huella in
     - `auth_roleplane.go`: `rolePlane`, `buildRolePlane`;
     - `auth_invitaciones.go`: `buildInvitationRedeem`;
     - `auth_empresa_activa.go`: `buildActiveTenantPlane`;
-    - se borra `internal/arranque/auth.go`; `invitaciones_cableado_test.go:33` pasa a parsear `auth_invitaciones.go` (el candado lee el fichero **por nombre**: sin este cambio falla ruidoso); el comentario de `es256_key_test.go:229` nombra `auth_jwt.go`. Si algún símbolo no está en esta lista, va con el que lo usa y se dice en el commit.
+    - se borra `internal/arranque/auth.go`; `invitaciones_cableado_test.go:33` pasa a parsear ~~`auth_invitaciones.go`~~ **`auth_roleplane.go`** (✎ T2.1, P3 de Jhoan, 2026-10-04: la llamada que busca, `iamusecase.NewInvitationService`, vive en `buildRolePlane`, no en `buildInvitationRedeem`) (el candado lee el fichero **por nombre**: sin este cambio falla ruidoso); el comentario de `es256_key_test.go:229` nombra `auth_jwt.go`. Si algún símbolo no está en esta lista, va con el que lo usa y se dice en el commit.
   - **Cómo**: solo **mover** declaraciones, sin cambiar un byte de ninguna (comentarios incluidos); imports por fichero con `goimports`; cabecera de cada fichero `// Parte de internal/arranque/auth.go (copia de internal/bootstrap/arranque/auth.go @ 80807ba), T2.34: <tema>.`
   - **Hecho cuando**: el multiconjunto de declaraciones de primer nivel (texto de `go/printer`, con su comentario) de los seis ficheros es **igual** al de `auth.go` antes del corte; ningún fichero nuevo pasa de 300 líneas; `go test -run '^TestHuella' ./internal/arranque/ ./internal/bootstrap/arranque/` → rc=0 (huella idéntica a la dorada); `go test -race -v ./internal/arranque/...` → rc=0, 0 SKIP; `git diff --stat -- internal/bootstrap cmd/server` vacío.
   - **Gate**: gate ci-local en un *worktree* limpio de **ruta fija** (contradicción 21 de F0) → `GATE_RC=0`
   - **Commit**: `refactor(arranque): auth.go se parte en auth_*.go y edge_config.go`
 
-- [ ] **T2.2 · `entitlements/entitlements.go` + `entitlementshelpertest`** · 🌐 · simple (prov.) · dep. T2.1 · cumple R2.1.a–b, R2.3.d
+- [x] **T2.2 · `entitlements/entitlements.go` + `entitlementshelpertest`** · 🌐 · simple (prov.) · dep. T2.1 · cumple R2.1.a–b, R2.3.d — cerrada en `01950de` (simple, una pasada; suite `ContratoResolver` 13 casos contra el `Fake`)
   - **Ficheros**: `A/entitlements/entitlements.go`, `…/entitlements_test.go`, `A/entitlements/entitlementshelpertest/{suite.go,fake.go,fake_test.go}`
   - **Hecho cuando**: las 11 constantes con su valor **literal** y su comentario-ADR (R-E5), `Resolver` con su promesa; `ContratoResolver` con los casos de diseño §2 y la firma `Contrato(t, func(t) Montaje)`; `Fake` (D-F2-4) nace **completo** y pasa la suite en verde (es un doble, D-F1-3).
   - **Gate**: G-verde · `go test -race ./internal/modulos/acceso/entitlements/entitlementshelpertest/; echo rc=$?` → 0
   - **Commit**: `verde(acceso): entitlements y su suite`
-- [ ] **T2.3 · `entitlements/middleware.go`** · 🌐 · medio (prov.) · dep. T2.2 · cumple R2.3.d
+- [x] **T2.3 · `entitlements/middleware.go`** · 🌐 · medio (prov.) · dep. T2.2 · cumple R2.3.d — cerrada en `43704f1` (rojo) → `3742090` (verde); 5 mutantes muertos
   - **Ficheros**: `A/entitlements/middleware.go`, `…/middleware_test.go`
   - **Hecho cuando**: `RequireFeature`/`RequireAnyFeature` con R-E1…R-E4 en el comentario; el test cubre los 3 modos fail-closed, el corte en el primer error, la lista vacía y los dos cuerpos **byte a byte**. Rojo: `go test -tags pendiente -run '^TestRequireFeature_SinIdentidad' ./internal/modulos/acceso/entitlements/; echo rc=$?` → ≠0.
   - **Gate**: G-rojo y, tras la lógica, G-verde
   - **Commit**: `rojo(acceso): contrato de entitlements/middleware` · `verde(acceso): entitlements/middleware`
-- [ ] **T2.5 · `iam/domain` (4 ficheros)** · 🌐 · simple (prov.) · dep. T2.1 · cumple R2.1.a–b
+- [x] **T2.5 · `iam/domain` (4 ficheros)** · 🌐 · simple (prov.) · dep. T2.1 · cumple R2.1.a–b — cerrada en `30345e7`, `e64cc3a`, `9b4e407`, `2868e61` + `2776d82` (refactor E-11); 50 exportados, 20 centinelas literales, 12/12 mutantes
   - **Ficheros**: `A/iam/domain/{canje,entities,errors,invitation}.go` y sus 4 `_test.go`
   - **Hecho cuando**: 50 exportados; los 20 centinelas con texto literal (diseño §5); R-D1…R-D5 en comentario y test (largo **exacto** del token, 32 bytes del digest, simetría de normalización, precedencia de estados, 4 veredictos). Los casos de equivalencia de `HashInvitationToken` (R-D3) llevan entradas adversarias ([`reglas.md`](reglas.md) §5).
   - **Gate**: G-verde
   - **Commit**: `verde(acceso): iam/domain/<fichero>` — uno por fichero
-- [ ] **T2.6 · `iam/ports/out` + `outhelpertest` (las 7 suites)** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.2.a
+- [x] **T2.6 · `iam/ports/out` + `outhelpertest` (las 7 suites)** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.2.a — cerrada en `8290814` (7 suites, 63 casos, y `Contrato(t, Montajes)` que las corre todas)
   - **Ficheros**: `A/iam/ports/out/{active_tenant,canje,repos}.go` (sin `_test`, E-3), `A/iam/ports/out/outhelpertest/{montaje,membresias,roles,grants,auditoria,invitaciones,empresa_activa,canje}.go`
   - **Hecho cuando**: las 10 interfaces con su comentario-contrato; las 7 suites (diseño §2) con la firma de D-F1-1, casos con nombre **en inglés** (`05` E-11; decía «en español» hasta la revisión del 2026-10-01), sin `t.Skip`; `go doc` las muestra. La marca de estado de cada `Montaje` vigila **todas** las columnas que la operación puede tocar (hallazgo 35 de F1).
   - **Nombres (E-11)**: `outhelpertest/` aún no existe y esta tarea nombra en español seis de sus ficheros (`montaje`, `membresias`, `auditoria`, `invitaciones`, `empresa_activa`, `canje`): la sesión que los cree los escribe en inglés y anota aquí la correspondencia (`05` E-11; si `montaje` cuenta como vocabulario del método, depende de D-F1-12 del README de F1). `ports/out/canje.go` conserva el nombre del fichero viejo.
   - **Gate**: `go vet ./internal/modulos/acceso/...; echo rc=$?` → 0
   - **Commit**: `verde(acceso): puertos de salida del IAM y sus suites de contrato`
-- [ ] **T2.7 · `iam/ports/in`** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.1.a–b
+- [x] **T2.7 · `iam/ports/in`** · 🌐 · simple (prov.) · dep. T2.5 · cumple R2.1.a–b — cerrada en `354f060`, con la excepción del candado `4e97ee3` (rojo) → `1d3b10b` (verde) por D-F2-5 (ver README, hallazgo 10)
   - **Ficheros**: `A/iam/ports/in/{active_tenant,canje,usecases}.go`, `…/usecases_test.go`
   - **Hecho cuando**: `AuditInput` es **alias** del DTO de `platform/httpapi` (F0); `CallerResolverFunc.Caller` delega en la función; el test menciona los 25 exportados de `usecases.go`; excepción de suite para `ports/in` escrita en el comentario de paquete (D-F2-5).
   - **Gate**: G-verde
   - **Commit**: `verde(acceso): puertos de entrada del IAM`
-- [ ] **T2.8 · Punto de control: hojas y puertos** · 🌐 · dep. T2.2–T2.7
+- [x] **T2.8 · Punto de control: hojas y puertos** · 🌐 · dep. T2.2–T2.7 — cerrada sobre `354f060` (sin commit): ver T2.21
   - **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/acceso | wc -l` anotado y = `make test-pendiente`; `ci-local` rc=0; `fronteras_test` sin puentes (import) de `acceso`; minutos anotados. **Punto limpio de corte** si la sesión no cabe en ~90 min: se cierra con las tres cosas y se relanza.
   - **Gate**: skill `validar-antes-de-cerrar` completa
   - **Commit**: —
-- [ ] **T2.9 · `iam/infra/memory` (7 + `redeem_store.go` ✚)** · 🌐 · simple (prov.: dobles, D-F1-3) · dep. T2.6 · cumple R2.2.b
+- [x] **T2.9 · `iam/infra/memory` (7 + `redeem_store.go` ✚)** · 🌐 · simple (prov.: dobles, D-F1-3) · dep. T2.6 · cumple R2.2.b — cerrada en `13d4171`, `d551edf`, `1093835`, `8009cc6`, `930e7d5`, `1cebb56`, `feae908`, `38a8d0b` (simple, P1; 8/8 mutantes)
   - **Ficheros**: `A/iam/infra/memory/*.go` y 8 `_test.go` (cada uno ejecuta **su** suite de `outhelpertest`)
   - **Hecho cuando**: `var _ out.X = (*Y)(nil)` para los 7 puertos; `RedeemStore` documenta cómo reproduce los 4 pasos del canje en memoria; nacen completos, en una pasada. Si el inventario los sube de nivel (tienen estado en memoria), el rojo va con structs **sin campos** (T-14) y métodos con `panic`, y el verde es T2.20.
   - **Gate**: G-verde
   - **Commit**: `verde(acceso): iam/infra/memory/<fichero>` — uno por fichero
-- [ ] **T2.17 · verde de `entitlements/entitlements.go` y `middleware.go`** · 🌐 · dep. T2.2, T2.3 · cumple R2.3.d · si llegaron verdes en T2.2–T2.3, aquí solo se pasa el gate · **Gate**: G-verde (base vieja: `go test -cover ./internal/entitlements/`, anotarla como informe)
-- [ ] **T2.18 · verde de `iam/domain/*`** · 🌐 · dep. T2.5 · ídem · **Gate**: G-verde
-- [ ] **T2.19 · verde de `iam/ports/in/usecases.go`** · 🌐 · dep. T2.7 · ídem · **Gate**: G-verde
-- [ ] **T2.20 · verde de `iam/infra/memory/*`** · 🌐 · dep. T2.9 · cumple R2.2.b · **Hecho cuando**: las 7 suites verdes con `-race -v` y 0 SKIP · **Gate**: G-verde
-- [ ] **T2.21 · Cierre de F2-01** · 🌐 · dep. T2.17–T2.20 · **Hecho cuando**: 0 pendientes en `entitlements` (salvo `postgres.go`, que aún no existe), `iam/domain`, `iam/ports/in`, `iam/infra/memory`; `exportados_cubiertos` y `un_fichero_un_test` verdes; las tres cosas del cierre · **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR)
+- [x] **T2.17 · verde de `entitlements/entitlements.go` y `middleware.go`** · 🌐 · dep. T2.2, T2.3 · cumple R2.3.d · si llegaron verdes en T2.2–T2.3, aquí solo se pasa el gate · **Gate**: G-verde (base vieja: `go test -cover ./internal/entitlements/`, anotarla como informe) — cerrada en `3742090` (base vieja `go test -cover ./internal/entitlements/` 73,4 %, informe; nuevo `middleware.go` 91,6 %, `fake.go` 100 %)
+- [x] **T2.18 · verde de `iam/domain/*`** · 🌐 · dep. T2.5 · ídem · **Gate**: G-verde — cerrada en `2776d82` (`canje.go` 100 %, `invitation.go` 90,9 %)
+- [x] **T2.19 · verde de `iam/ports/in/usecases.go`** · 🌐 · dep. T2.7 · ídem · **Gate**: G-verde — cerrada en `354f060` (100 %)
+- [x] **T2.20 · verde de `iam/infra/memory/*`** · 🌐 · dep. T2.9 · cumple R2.2.b · **Hecho cuando**: las 7 suites verdes con `-race -v` y 0 SKIP · **Gate**: G-verde — cerrada en `38a8d0b` (las 7 suites verdes con `-race -v`, 0 SKIP; 97,7–100 % por fichero)
+- [x] **T2.21 · Cierre de F2-01** · 🌐 · dep. T2.17–T2.20 · **Hecho cuando**: 0 pendientes en `entitlements` (salvo `postgres.go`, que aún no existe), `iam/domain`, `iam/ports/in`, `iam/infra/memory`; `exportados_cubiertos` y `un_fichero_un_test` verdes; las tres cosas del cierre · **Gate**: `validar-antes-de-cerrar` · **Commit**: — (PR) — cerrada sobre `354f060`: `make ci-local` `GATE_RC=0` (99 `ok`, lint 0 issues) · `go vet -tags pendiente ./...` rc=0 · `make test-pendiente` `PENDIENTES=0 · ROJOS=0` · `go test -race -v ./internal/{modulos,arranque,candados}/...` rc=0, 1.210 PASS, **0 SKIP** · `grep pendiente.Implementar internal/modulos/acceso` → 0 · `exportados_cubiertos` (147 recorridos) y `un_fichero_un_test` (98) verdes · `fronteras_test` sin puentes de `acceso` · `make cobertura-ficheros` (informe) `FICHEROS_EVALUADOS=32`, `POR_DEBAJO=1` (`nucleo/contact/repository_postgres.go`, previo) · ~81 min activos (D-R-6, ESTADO)
 
 ## Sesión F2-02 · `usecase` e `identity` · 🌐 · T2.10–T2.11, T2.16, T2.22–T2.23
 Entrada: PR de F2-01 integrado. Para cuando: 0 pendientes en `iam/usecase` e `iam/infra/identity` · `ci-local` rc=0 con 0 SKIP · PR.

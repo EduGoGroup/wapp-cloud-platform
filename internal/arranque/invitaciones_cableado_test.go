@@ -30,9 +30,9 @@ func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 	fset := token.NewFileSet()
 
 	construido := false
-	archivoAuth, err := parser.ParseFile(fset, "auth.go", nil, 0)
+	archivoAuth, err := parser.ParseFile(fset, "auth_roleplane.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parseando auth.go: %v", err)
+		t.Fatalf("parseando auth_roleplane.go: %v", err)
 	}
 	ast.Inspect(archivoAuth, func(n ast.Node) bool {
 		if llamada, ok := n.(*ast.CallExpr); ok && campoDe(llamada.Fun) == "iamusecase.NewInvitationService" {
@@ -41,7 +41,7 @@ func TestCableado_LaPuertaDeInvitacionesEstaEnchufada(t *testing.T) {
 		return true
 	})
 	if !construido {
-		t.Error("internal/bootstrap/auth.go NO construye el InvitationService.\n" +
+		t.Error("internal/arranque/auth_roleplane.go NO construye el InvitationService.\n" +
 			"Sin él no hay CallerResolver, que es lo ÚNICO que le da un tenant a este usecase (INV-04): " +
 			"in.IssueInvitationInput no tiene campo TenantID, y esa ausencia es la regla escrita en el tipo.")
 	}

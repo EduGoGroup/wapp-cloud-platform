@@ -70,7 +70,7 @@ reescriben **por proceso con testcontainers**, nunca contra un Postgres vivo.
 - 🔄 **D-10**: la cara HTTP es **única y nueva**, `internal/apipublica`, construida por olas delante del `publicapi` viejo ([`plan/FX-cara-http/`](documentations/reorganizacion-modular/plan/FX-cara-http/README.md)).
 - **Las skills del repo**: `contrato-tdd` (un fichero) · `reconstruir-modulo` (una fase) ·
   `validar-antes-de-cerrar` (los gates) · `traspaso-web-local` (web ↔ local) ·
-  `procesos-testcontainers` (F9).
+  `procesos-testcontainers` (F9) · `describir-pr` (el cuerpo de **todo** PR: objetivo, dónde encaja, resultado).
 - **La parada de F1 se resolvió el 2026-10-03**: manda `05` E-12 (tres niveles de ceremonia) y, para lo que decidió
   Jhoan, [`plan/DECISIONES.md`](documentations/reorganizacion-modular/plan/DECISIONES.md) §3. **El 80 % de cobertura ya no
   bloquea**: `make cobertura-ficheros` es un informe (rc=0 con ficheros por debajo, sin exentos) desde F1-06.

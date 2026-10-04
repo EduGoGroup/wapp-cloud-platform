@@ -89,6 +89,7 @@ partirían las ráfagas (`04` §2.2).
 ## Paso 5 · Cerrar la fase
 
 - `validar-antes-de-cerrar` completo.
+- El PR de cada sesión se describe con **`describir-pr`** (objetivo, dónde encaja en la fase y en el plan, resultado).
 - Actualiza `documentations/reorganizacion-modular/` si la fase enseñó algo que la norma no decía
   (un coste, una excepción, un candado que estorba). En F1, **escribe el informe del piloto**:
   coste real por fichero y por nivel, qué candado estorbó. (El informe de F1 ya está: `plan/F1-nucleo-contact/informe-piloto.md`.)
@@ -116,4 +117,4 @@ los targets `test-pendiente` y `cobertura-ficheros` · los candados de §5 · lo
 
 ## Relacionadas
 
-`contrato-tdd` · `validar-antes-de-cerrar` · `traspaso-web-local` · `procesos-testcontainers` (F9)
+`contrato-tdd` · `validar-antes-de-cerrar` · `traspaso-web-local` · `procesos-testcontainers` (F9) · `describir-pr` (el PR)

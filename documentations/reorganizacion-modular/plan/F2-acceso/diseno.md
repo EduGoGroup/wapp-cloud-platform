@@ -27,28 +27,61 @@ A/platformadmin/platformadminhelpertest/ ✚ suite de los puertos + doble en mem
 internal/arranque/       bridge_iam.go ✚ · bridge_iam_test.go   (adaptador de arranque, `05` §4.2)
 ```
 
-### 1.1 · Niveles de ceremonia (`05` E-12) — provisional, sin medir: la fija el inventario E-12 (T2.1)
+### 1.1 · Niveles de ceremonia (`05` E-12) — **definitivo**: inventario de T2.1, aprobado por Jhoan el 2026-10-04
 
-Deducido de [`arquitectura.md`](arquitectura.md) §1, §4 y §5. No está medido fichero a fichero; el nº de consumidores
-es el de paquetes viejos de producción que importan el paquete.
+Medido fichero a fichero sobre el código viejo en `dev` @ `9a77307` (sesión F2-01). **Consumidores** = paquetes viejos de
+producción que importan el paquete (sin `_test.go`, sin el propio paquete y sin la copia `internal/arranque`). Comandos:
+`wc -l`; exportados por recorrido de las declaraciones de primer nivel; estado = campos o mapas mutados tras construir;
+concurrencia = `grep -nE 'sync\.|atomic\.|chan |<-|^\s*go |pg_advisory'`; BD = `database/sql`/`pgconn`/SQL/`BeginTx` en
+código (no en comentarios); consumidores = `grep -rl '"github.com/EduGoGroup/wapp-cloud-platform/internal/<paq>"' --include='*.go' internal cmd | grep -v _test.go`.
 
-| Paquete | BD / transacciones | Estado en memoria | Concurrencia | Consumidores (prod.) | Nivel provisional |
-|---|---|---|---|---|---|
-| `entitlements` (`entitlements.go`) | no | no | no | ~10 paquetes (solo constantes y el puerto) | **simple** |
-| `entitlements` (`middleware.go`) | no | no | no | `publicapi` | **medio** (fail-closed, I-CP-6) |
-| `entitlements` (`postgres.go`) | sí | caché con TTL | mutex | uno (el arranque), una instancia | **complejo** |
-| `iam/domain` | no | no | no | `gateway/grpc`, `publicapi` y todo el IAM | **simple** (`invitation.go` y `canje.go` llevan reglas R-D1…R-D5: candidatos a medio) |
-| `iam/ports/in` · `iam/ports/out` | no | no | no | arranque, `gateway/grpc`, `publicapi` | **simple** (interfaces y DTOs) |
-| `outhelpertest` · `entitlementshelpertest` · `platformadminhelpertest` | no | — | — | solo tests | **simple** (suites y dobles, D-F1-3) |
-| `iam/infra/memory` | no | sí (es un doble) | sin medir | 0 en producción (T-13) | **simple** como doble; 🔴 E-12 manda «estado en memoria» a complejo: lo decide el inventario |
-| `iam/usecase` | no | sin medir | 0 goroutines | arranque, `publicapi` | **medio** |
-| `iam/infra/identity` | no (HTTP) | `m2m.go`: token y caché negativa | `m2m.go`: candado que serializa el canje | arranque | `client.go` **medio** · `m2m.go` **complejo** |
-| `iam/infra/postgres` | sí, con transacciones y cerrojo | no | cerrojo `pg_advisory_xact_lock` | arranque, `platformadmin` | **complejo** |
-| `iam/transport/http` | no | no | no | arranque, `publicapi` | **medio** |
-| `platformadmin` (`handlers`, `access_requests`, `signup`) | no (tras D-F2-3) | no | no | arranque | **medio** |
-| `platformadmin` (`postgres.go`, `access_requests_postgres.go`) | sí, con transacción (R-A7) | no | no | arranque | **complejo** |
-| `platformadmin` (`puertos.go`) | no | no | no | — | **simple** |
-| `internal/arranque/bridge_iam.go` | no | no | no | gateway viejo | **simple** (`05` §4.2) |
+| Fichero (viejo → `A/…`) | Líneas | Export. | Estado en memoria | Concurrencia | BD / transacciones | Consum. | Nivel | Sesión |
+|---|---:|---:|---|---|---|---:|---|---|
+| `entitlements/entitlements.go` (sin `Fake`) | 296 | 20 | no (el `Fake` sí: mapas `:213,:216`) | no | no | 7 | **simple** | F2-01 |
+| ✚ `entitlements/entitlementshelpertest/` (suite + `Fake`, de `:203-296`, D-F2-4) | ~94 | — | doble | no | no | tests | **simple** (D-F1-3) | F2-01 |
+| `entitlements/middleware.go` | 144 | 2 | no | no | no | 1 (`publicapi`) | **medio** (fail-closed, I-CP-6) | F2-01 |
+| `entitlements/postgres.go` | 243 | 7 | caché TTL (`:34`, `:39`) | `sync.Mutex` `:32` | 4 consultas, sin Tx | 1 | **complejo** | F2-03 |
+| `iam/domain/canje.go` | 110 | 7 | no | no | no | 2 | **simple** (P4) | F2-01 |
+| `iam/domain/entities.go` | 208 | 14 | no | no | no | 9 | **simple** | F2-01 |
+| `iam/domain/errors.go` (19 centinelas) | 171 | 19 | no | no | no | 7 | **simple** | F2-01 |
+| `iam/domain/invitation.go` | 173 | 10 | no | no | no (`crypto/rand`, `sha256`) | 6 | **simple** (P4) | F2-01 |
+| `iam/ports/in/{active_tenant,canje,usecases}.go` | 86 · 35 · 326 | 2 · 1 · 25 | no | no | no | 5 | **simple** | F2-01 |
+| `iam/ports/out/{active_tenant,canje,repos}.go` | 43 · 49 · 321 | 1 · 1 · 8 | no | no | no | 6 | **simple** | F2-01 |
+| ✚ `iam/ports/out/outhelpertest/` (7 suites + montaje) | — | — | — | — | — | tests | **simple** (D-F1-3) | F2-01 |
+| `iam/infra/memory/{active_tenant,audit,grant,invitation,membership,role}_store.go` · `store.go` | 47 · 63 · 48 · 138 · 249 · 252 · 52 | 4 · 5 · 5 · 7 · 11 · 14 · 2 | **sí** (mapas) | `Mutex`/`RWMutex` | no | **0** en producción | **simple** (dobles, D-F1-3; P1) | F2-01 |
+| ✚ `iam/infra/memory/redeem_store.go` | nuevo | — | sí | `Mutex` | no | 0 | **simple** (P1) | F2-01 |
+| `iam/usecase/{config,audit,context_token}.go` | 36 · 64 · 82 | 2 · 4 · 4 | no | no | no | 1 | **simple** | F2-02 |
+| `iam/usecase/{active_tenant,canje,delegated_auth,exchange,grants,invitations,memberships,roles}.go` | 198 · 99 · 204 · 378 · 79 · 230 · 254 · 264 | 4 · 3 · 6 · 7 · 0 · 5 · 5 · 10 | no | no | Tx solo **indirecta**, en el adaptador (`canje`, `memberships`) | 1 | **medio** | F2-02 |
+| `iam/infra/identity/client.go` | 273 | 6 | no | no | no (HTTP) | 1 | **medio** | F2-02 |
+| `iam/infra/identity/m2m.go` | 735 | 8 | caché del token (`:95-101`) | `RWMutex` + candado de canal (`:93`) | no (HTTP) | 1 | **complejo** | F2-02 |
+| `iam/infra/postgres/postgres.go` | 56 | 0 | no | no | solo mapeo de `pgconn` | 2 | **simple** | F2-03 |
+| `iam/infra/postgres/{active_tenant,audit,grants,invitations,roles}.go` | 77 · 85 · 53 · 218 · 319 | 4 · 4 · 5 · 5 · 12 | no | no | SQL, una sentencia por método, sin Tx | 2 | **medio** (P2) | F2-03 |
+| `iam/infra/postgres/{memberships,canje}.go` | 426 · 295 | 10 · 3 | no | `pg_advisory_xact_lock` (`memberships.go:310`) | **Tx** | 2 | **complejo** (mutantes) | F2-03 |
+| `iam/transport/http/*` (6) | 1.407 | 32 | no | no | no | 2 | **medio** | F2-03 |
+| ✚ `platformadmin/puertos.go` | nuevo | — | no | no | no | — | **simple** | F2-03 |
+| `platformadmin/{handlers,signup}.go` · `access_requests.go` (reglas + handlers) | 293 · 207 · ~400 | 11 · 4 · — | no | no | no (tras D-F2-3) | 1 | **medio** | F2-03 |
+| `platformadmin/postgres.go` | 322 | 14 | no | no | SQL sin Tx | 1 | **medio** (P2) | F2-03 |
+| ✚ `platformadmin/access_requests_postgres.go` (SQL de `access_requests.go:135-336,481-526`) | ~300 | — | no | lock indirecto (`GrantTenantAccess`) | **Tx** (`executeApprovalTx`) | 1 | **complejo** (mutantes) | F2-03 |
+| ✚ `platformadmin/platformadminhelpertest/` | — | — | doble | — | — | tests | **simple** | F2-03 |
+| ✚ `internal/arranque/bridge_iam.go` | nuevo | 0 | no | no | no | gateway viejo | **simple** (`05` §4.2) | F2-04 |
+
+Goroutines en producción de `acceso`: **0**. Métricas propias: **0**.
+
+**Adaptadores de arranque**: nace **1**, `internal/arranque/bridge_iam.go` (F2-04; muere en F3 con el gateway nuevo); se
+retira **0**. `entitlements` no lo necesita (puerto estructural, constantes `string` sin tipo). Puentes de import: **0**.
+
+**Respuestas de Jhoan al inventario (2026-10-04)** — donde el criterio literal de E-12 y la medida no casaban:
+- **P1** · `iam/infra/memory` tiene estado y candados (E-12 diría «complejo»), pero son **dobles** con 0 consumidores en
+  producción y su test es la suite de `outhelpertest`: **simple**, nacen completos en una pasada.
+- **P2** · Los adaptadores Postgres **sin transacción** (una sentencia por método): **medio**; su verdad la da la suite
+  compartida con memoria contra Postgres (P4, D-R-1) y F9. Mutantes solo en los de Tx/cerrojo (`memberships.go`,
+  `canje.go`, `access_requests_postgres.go`) y en los de estado y concurrencia (`entitlements/postgres.go`, `m2m.go`).
+- **P3** · T2.34: el candado de invitaciones parsea `auth_roleplane.go` (ver `tareas.md` T2.34).
+- **P4** · Los cuatro de `iam/domain` son **simples** (puros, 1–3 funciones), con R-D1…R-D5 afirmadas y corpus adversario.
+
+Cambios frente a la tabla provisional: bajan a **simple** `iam/usecase/{config,audit,context_token}.go`,
+`iam/infra/postgres/postgres.go` e `iam/infra/memory`; bajan a **medio** los 5 adaptadores SQL sin Tx de
+`iam/infra/postgres` y `platformadmin/postgres.go`. Ninguno sube.
 
 Qué se hace en cada nivel: [`reglas.md`](reglas.md) §5.
 

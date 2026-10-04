@@ -1,6 +1,9 @@
 # F2 · Arquitectura — la vista macro de `acceso`
 
 > Medido el 2026-09-28 sobre `dev` @ `1b18932` (el código de referencia no cambió en `bad573a`).
+> ✎ **Re-medido el 2026-10-04 (T2.1, sobre `dev` @ `9a77307`)**: todo igual salvo `ports/in`, 447 líneas (eran 453: el
+> alias de `AuditInput` de F0, `b65b788`, quita 6), y el total, 10.444. El inventario E-12 por fichero está en
+> [`diseno.md`](diseno.md) §1.1.
 > `A` = `internal/modulos/acceso`. Comandos al pie de cada tabla.
 
 ## 1 · Paquetes viejos → nuevos, y su tamaño
@@ -8,7 +11,7 @@
 | Paquete viejo (referencia, E-8) | Paquete nuevo | Prod. | Líneas | Export. | Tests viejos · `Test*` (BD · AST) | Puertos (solo interfaces) | Adaptador Postgres · gemelo |
 |---|---|---:|---:|---:|---|---|---|
 | `internal/iam/domain` | `A/iam/domain` | 4 | 662 | 50 | 2 · 6 (0 · 0) | — | — |
-| `internal/iam/ports/in` | `A/iam/ports/in` | 3 | 453 | 28 | 0 | `active_tenant.go`, `canje.go` (`usecases.go` es mixto) | — |
+| `internal/iam/ports/in` | `A/iam/ports/in` | 3 | 447 ✎ | 28 | 0 | `active_tenant.go`, `canje.go` (`usecases.go` es mixto) | — |
 | `internal/iam/ports/out` | `A/iam/ports/out` | 3 | 413 | 10 | 0 | los 3 | — |
 | `internal/iam/usecase` | `A/iam/usecase` | 11 | 1.888 | 50 | 11 · 93 (2 · 0) | — | — |
 | `internal/iam/infra/memory` | `A/iam/infra/memory` | 7 (+1 ✚) | 849 | 48 | 1 · 7 | — | **es** el gemelo de 6 puertos; falta `InvitationRedeemRepo` |
@@ -17,10 +20,10 @@
 | `internal/iam/transport/http` | `A/iam/transport/http` | 6 | 1.407 | 32 | 6 · 27 (0 · 0) | — | — |
 | `internal/platformadmin` | `A/platformadmin` | 4 (+2 ✚) | 1.558 | 47 | 5 · 40 (33 · 0) | **ninguno** (D-F2-3) | `postgres.go` + SQL dentro de `access_requests.go` · **sin gemelo** |
 | `internal/entitlements` | `A/entitlements` | 3 | 683 | 29 | 6 · 24 (3 · 0) | `Resolver` dentro de `entitlements.go` (mixto) | `postgres.go` · gemelo = `Fake` (`entitlements.go:211`) |
-| **Total** | | **51** (+6 ✚) | **10.450** | **351** | **42 · 263 (75 · 4)** | | |
+| **Total** | | **51** (+6 ✚) | **10.444** ✎ | **351** | **42 · 263 (75 · 4)** | | |
 
 Comandos: `ls <dir>/*.go | grep -v _test.go | wc -l` y `cat … | wc -l` por paquete (total de líneas:
-`cat $(for d in …; do ls $d/*.go | grep -v _test.go; done) | wc -l` → 10.450); exportados: recorrido
+`cat $(for d in …; do ls $d/*.go | grep -v _test.go; done) | wc -l` → 10.450 el 2026-09-28; 10.444 el 2026-10-04); exportados: recorrido
 `go/ast` de las declaraciones de nivel superior (tipos, funcs, métodos exportados de tipos
 exportados, const, var); `Test*`: `grep -c '^func Test'`; BD = el `Test*` alcanza `WAPP_TEST_DB_DSN`
 por algún helper del paquete; AST = usa `go/parser`. Detalle por fichero en [`diseno.md`](diseno.md).

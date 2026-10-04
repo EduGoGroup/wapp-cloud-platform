@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,7 +37,14 @@ import (
 //     internal/nucleo/contact/contacthelpertest; es el patrón de
 //     internal/gateway/fleet/fleettest con el sufijo de D-F1-10) que declara una función de
 //     primer nivel `Contrato` cuyo primer parámetro es *testing.T. Sin esa suite entre
-//     fuentes, el puerto necesita test; una suite en <paquete>test, el nombre viejo, no vale.
+//     fuentes, el puerto necesita test; una suite en <paquete>test, el nombre viejo, no vale;
+//   - puerto de ENTRADA sin suite por decisión (D-F2-5, Jhoan, 2026-09-30; excepción en el
+//     candado, 2026-10-04): el mismo fichero de solo interfaces se exime SIN suite si su
+//     directorio, path.Dir(Ruta), es IGUAL a uno de InboundPortDirsWithoutSuite (hoy solo
+//     internal/modulos/acceso/iam/ports/in: lo cubre el test del usecase que lo implementa).
+//     Ni un subdirectorio del listado ni un hermano con el mismo prefijo heredan la excepción,
+//     y en el directorio listado un fichero con una func, var, const o tipo que no sea
+//     interfaz necesita test como cualquiera. Ampliar la lista exige decisión escrita.
 //
 // Una violación por fichero sin test y sin excepción: Fichero es la Ruta del x.go y Motivo
 // contiene "falta x_test.go" (el nombre base del test que falta).
@@ -71,8 +79,10 @@ func UnFicheroUnTest(fuentes []Fuente) []Violacion {
 	return vs
 }
 
-// eximido aplica las tres excepciones verificadas de E-3. Se comprueba la condición, nunca
-// el nombre suelto: un doc.go con lógica o un «puerto» con una función necesitan test.
+// eximido aplica las excepciones verificadas de E-3 (doc.go, //go:embed y puerto, este con
+// suite Contrato o en un directorio de InboundPortDirsWithoutSuite, D-F2-5). Se comprueba la
+// condición, nunca el nombre suelto: un doc.go con lógica o un «puerto» con una función
+// necesitan test, también en un directorio de la lista.
 func eximido(f Fuente, fuentes []Fuente) bool {
 	decls := declsSinImport(f.Archivo)
 	if path.Base(f.Ruta) == "doc.go" && len(f.Archivo.Decls) == 0 {
@@ -85,7 +95,10 @@ func eximido(f Fuente, fuentes []Fuente) bool {
 	if todas(decls, esVarEmbed) {
 		return true
 	}
-	return todas(decls, esTipoInterfaz) && haySuiteContrato(f, fuentes)
+	// El puerto sin suite solo se exime en un directorio de la lista cerrada de D-F2-5, por
+	// IGUALDAD de directorio: ni un subdirectorio ni un hermano con el mismo prefijo.
+	return todas(decls, esTipoInterfaz) &&
+		(haySuiteContrato(f, fuentes) || slices.Contains(InboundPortDirsWithoutSuite(), path.Dir(f.Ruta)))
 }
 
 // declsSinImport devuelve las declaraciones de primer nivel que no son import.
