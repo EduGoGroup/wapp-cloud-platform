@@ -47,8 +47,10 @@ type m2mRequest struct {
 	path        string
 	escapedPath string
 	bearer      string
-	rawBody     string
-	body        map[string]any
+	// authorization es la cabecera Authorization tal cual viajó, con su esquema.
+	authorization string
+	rawBody       string
+	body          map[string]any
 }
 
 // m2mReply es la respuesta del fake a una petición de negocio. status >= 400 contesta el cuerpo
@@ -107,7 +109,8 @@ func newFakeM2M(t *testing.T) *fakeM2M {
 		}
 		req := m2mRequest{
 			method: r.Method, path: r.URL.Path, escapedPath: r.URL.EscapedPath(),
-			bearer: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), rawBody: string(raw), body: body,
+			bearer:        strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
+			authorization: r.Header.Get("Authorization"), rawBody: string(raw), body: body,
 		}
 		f.mu.Lock()
 		f.calls = append(f.calls, req)
