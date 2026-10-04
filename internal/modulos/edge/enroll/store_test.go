@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package enroll_test
 
 import (
