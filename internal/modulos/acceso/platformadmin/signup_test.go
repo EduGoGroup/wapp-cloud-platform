@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package platformadmin_test
 
 import (
@@ -491,8 +489,8 @@ func TestSignupDTOsAndSentinel(t *testing.T) {
 	if req != (platformadmin.SignupRequest{Email: "e", Password: "p", FirstName: "f", LastName: "l", Origin: "o"}) {
 		t.Fatalf("SignupRequest = %+v", req)
 	}
-	if got, _ := json.Marshal(platformadmin.SignupResponse{Message: "m"}); string(got) != `{"message":"m"}` {
-		t.Fatalf("SignupResponse = %s", got)
+	if got, err := json.Marshal(platformadmin.SignupResponse{Message: "m"}); err != nil || string(got) != `{"message":"m"}` {
+		t.Fatalf("SignupResponse = %s (%v)", got, err)
 	}
 	if platformadmin.ErrSignupNotAvailable.Error() != "platformadmin: servicio de registro no disponible" {
 		t.Fatalf("ErrSignupNotAvailable = %q", platformadmin.ErrSignupNotAvailable.Error())
