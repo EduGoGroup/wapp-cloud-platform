@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package lease_test
 
 // Las reglas de revocación de lease.Manager (R-L2…R-L6): es el kill-switch anti-clon, la mitad

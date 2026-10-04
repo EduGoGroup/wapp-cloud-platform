@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package lease_test
 
 // Los tests de lease.Manager: construcción, claves, emisión y renovación (R-L1, R-L7, R-L8).
