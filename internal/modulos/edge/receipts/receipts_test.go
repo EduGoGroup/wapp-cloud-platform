@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package receipts_test
 
 import (
