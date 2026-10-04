@@ -87,6 +87,42 @@ fichero viejo; «→» = lo que queda al mudar el doble en memoria a `<paq>helpe
 - **`ingest/dedupe.go` y `receipts/memory.go` no nacen** (hallazgo 1 del README): su único contenido era el doble.
 - `fleet`, `filtercfg` y `grpc` se inventarían fichero a fichero al abrir F3-02 y F3-03.
 
+#### 1.1.b · Inventario E-12 de `fleet` y `filtercfg`, fichero a fichero (medido el 2026-10-04 sobre `dev` @ `809345b`; **aprobado por Jhoan** en F3-02)
+
+Manda sobre la tabla provisional de §1.1 para estos paquetes. Mismas columnas y misma regla de conteo que §1.1.a.
+
+| Fichero nuevo (`E/…`) | L. viejo | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `fleet/fleet.go` (modelo, `Repository`, validadores, 2 centinelas, `DeviceLimit`, `HealthSnapshot`) | 744 → ~390 | no (el doble se va) | no | no | 6 | **medio** (+ corpus de equivalencia de `self_pn`) |
+| `fleet/repository_postgres.go` (constructor, `Logger`/`Option`, `Mark*`, `SetState`, `Get`, `List`, escaneo) | 921 → ~350 | no | no | 6 sentencias sueltas, 1 `ON CONFLICT`; sin tx | 2 | **medio** (D-F3-7) |
+| `fleet/repository_postgres_selfpn.go` (sobre, índice ciego, `SetSelfPn`, `CountLiveBySelfPn`, tally) | ~255 | no | no | 2 sentencias; guarda de re-cifrado en el `WHERE` | 1 | **complejo** (mutantes) |
+| `fleet/repository_postgres_greeting.go` (`PendingGreeting`, `MarkGreeted`) | ~145 | no | no | 2 sentencias; CAS `greeted_at IS NULL` | 1 | **complejo** (mutantes) |
+| `fleet/repository_postgres_profile.go` (`SetProfile`, `ProfilesByTenant`) | ~125 | no | no | 2 sentencias sueltas | 3 | **medio** (D-F3-7) |
+| `fleet/repository_postgres_health.go` (`SaveHealth`, `nullText`, `nullInt64`) | ~90 | no | no | 1 sentencia, 19 parámetros | 1 | **medio** (D-F3-7) |
+| `fleet/fleethelpertest` suite (`contrato.go` + `<tema>_contrato.go`) | — | — | — | no | — | **medio** |
+| `fleet/fleethelpertest/memoria.go` (← `MemoryRepository`, `fleet.go:378-732`) | ~345 | 2 mapas + reloj de perfil | `Mutex` | no | — | **medio** (test propio) |
+| `fleet/fleethelpertest/slowrepo.go` | 177 | `atomic.Int64` | espera cancelable | no | — | **medio** (test propio) |
+| `filtercfg/filtercfg.go` | 180 | no | no | no (lee por `Source`) | 2 | **medio** (R-C1…R-C5) |
+
+- **Medido en `repository_postgres.go`**: 442 líneas de código y 444 de comentario; 11 métodos, **todos de una sentencia,
+  sin `BeginTx`, sin cerrojo advisory, sin `FOR UPDATE`**; `database/sql` puro. Por la letra de D-F3-7 sería medio entero;
+  sube a complejo lo que lleva cifrado, índice ciego y compare-and-set (decisión de Jhoan: **mixto por trozo**). No hay
+  carrera que forzar dentro del adaptador (D-F2-12 no aplica): la única ventana —el saludo— la cierra el CAS de `MarkGreeted`.
+- **E-13**: al irse el doble, `fleet.go` queda bajo 500 y no se parte. `repository_postgres.go` nace en **5 trozos por
+  tema**, solo moviendo declaraciones, cada uno con su gemelo `_test.go`.
+- **Adaptadores `bridge_<x>.go` en F3-02: ninguno. Puertos de entrada sin suite: ninguno.**
+- **E-11**: los exportados de `fleet`, `fleettest` y `filtercfg` ya estaban en inglés. Única correspondencia:
+  `fleet.MemoryRepository` / `NewMemoryRepository` → `fleethelpertest.Memoria` / `NewMemoria` (D-F3-1).
+- **Valor cero (D-F2-10), dicho y no cambiado**: `Profile ""` → `passive` (`defaultProfile`; el cero es el caso seguro, y
+  solo convierte el vacío: un desconocido pasa intacto) · `State ""` cuenta como **vivo** en `CountLiveBySelfPn` ·
+  `WhatsappState ""` (aún sin salud) → `Degraded() == false`: **aquí el cero sí es «sano»** · `*filtercfg.Pusher` nil o sin
+  gateway → `nil`, y una sesión ausente del mapa el Edge la asume `active` (fail-open del contrato externo).
+- **Tipos nominales** (como el hallazgo 11): `fleet.Profile` y `fleet.TenantProfiles` nuevos no encajan en los
+  consumidores viejos (`flowadmin.ProfilePusher`, el `Source` viejo). En F3-02 no se cablea nada: lo resuelve F3-04 (T3.28).
+- **Decidido por Jhoan al aprobarlo**: driver falso = variante **local** en `fleet` (`repository_postgres_fakedb_test.go`;
+  7.º `*fakedb*`) · `fleethelpertest.Memoria` **porta tal cual** al doble viejo (crea la fila en `MarkOffline` /
+  `MarkLoggedOut` de una sesión desconocida; Postgres no): la suite afirma solo lo común.
+
 **Adaptadores de arranque**: nace **1** (`bridge_gateway.go`, muere en F4) y muere **1** (`bridge_iam.go`, nacido en F2).
 
 ## 2 · Grafo interno y orden
