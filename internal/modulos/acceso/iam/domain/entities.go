@@ -11,9 +11,10 @@
 // invitation.go (el token de invitación y su estado derivado) y canje.go (el veredicto de un
 // canje y su centinela).
 //
-// Los nombres en español que conserva el paquete (RolTransversalID, EvaluarCanje,
-// ResultadoCanje y los Canje*) son los del viejo, ya decididos en la spec de F2 y esperados por
-// sus consumidores: no se traducen (E-11, «lo ya decidido»).
+// Los símbolos que en el viejo tenían nombre en español llevan aquí nombre en inglés (E-11); el
+// comentario de cada uno dice cuál era: TransversalRoleID (RolTransversalID), EvaluateRedemption
+// (EvaluarCanje), RedemptionVerdict (ResultadoCanje) y los Redemption* (Canje*). El adaptador de
+// arranque (bridge_iam.go, F2-04) traduce lo que cruce hacia el código viejo.
 //
 // Porta internal/iam/domain/entities.go @ 9a77307.
 package domain
@@ -32,7 +33,7 @@ const (
 	EffectDeny Effect = "deny"
 )
 
-// RolTransversalID es el id FIJO del rol `platform_admin`, sembrado por la migración
+// TransversalRoleID (era RolTransversalID) es el id FIJO del rol `platform_admin`, sembrado por la migración
 // 0059_platform_admin.sql. Es el ÚNICO rol cuya ASIGNACIÓN puede ir con ámbito global
 // (public.iam_user_roles.tenant_id NULL), porque es el único que por diseño actúa sobre
 // empresas que no son la suya (ADR-0039).
@@ -47,7 +48,7 @@ const (
 // 🔴 Y SI ALGÚN DÍA NO COINCIDIERA con el id sembrado en una base concreta, el fallo es
 // FAIL-CLOSED: se rechazaría la asignación global del platform_admin —ruidoso y reparable— en
 // vez de dejar pasar la de un rol de empresa.
-const RolTransversalID = "10000000-0000-0000-0000-000000000004"
+const TransversalRoleID = "10000000-0000-0000-0000-000000000004"
 
 // Role es un rol RBAC (tabla public.iam_roles, migración 0015). TenantID nil = PLANTILLA global
 // canónica (tenant_admin/operator/viewer), referenciable por cualquier tenant; TenantID set =

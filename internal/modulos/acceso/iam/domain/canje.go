@@ -17,8 +17,8 @@ package domain
 // El otro extremo del mismo requisito —que los dos desenlaces salgan por la MISMA sentencia de
 // escritura HTTP, con el código como única diferencia— vive en transport/http/canje.go.
 //
-// Los nombres en español de este fichero (EvaluarCanje, ResultadoCanje, Canje*) son los del
-// viejo y se conservan: ya están decididos en la spec de F2 y los consumirá el adaptador.
+// Los nombres de este fichero eran en español en el viejo (EvaluarCanje, ResultadoCanje, Canje*):
+// aquí van en inglés (E-11), y cada uno dice en su comentario cuál era.
 
 import (
 	"errors"
@@ -40,65 +40,65 @@ import (
 // oráculo que esto evita.
 var ErrInvitationExpired = errors.New("iam: invitación caducada")
 
-// ResultadoCanje es el veredicto sobre una invitación en el instante en que alguien la
+// RedemptionVerdict (era ResultadoCanje) es el veredicto sobre una invitación en el instante en que alguien la
 // presenta. Son CUATRO y no tres: la ausencia es un veredicto de pleno derecho, no la falta de
 // uno.
 //
 // ⚠️ NO es InvitationStatus con otro nombre. Aquél describe la FILA («esta invitación está
 // revocada»); éste describe el INTENTO («este canje no procede, y por eso»). `redeemed` y
-// `revoked` son dos estados de la fila y UN SOLO veredicto aquí (CanjeConsumido), a propósito.
-type ResultadoCanje int
+// `revoked` son dos estados de la fila y UN SOLO veredicto aquí (RedemptionConsumed), a propósito.
+type RedemptionVerdict int
 
 const (
-	// CanjeProcede es el ÚNICO veredicto que deja seguir: la invitación existe, nadie la usó,
+	// RedemptionProceeds (era CanjeProcede) es el ÚNICO veredicto que deja seguir: la invitación existe, nadie la usó,
 	// nadie la anuló y no ha vencido.
-	CanjeProcede ResultadoCanje = iota
-	// CanjeAusente es el veredicto cuando no hay ninguna fila con ese digest: un token
+	RedemptionProceeds RedemptionVerdict = iota
+	// RedemptionMissing (era CanjeAusente) es el veredicto cuando no hay ninguna fila con ese digest: un token
 	// inventado, uno de otro sistema, o uno bien tecleado de una empresa que se borró (la FK va
 	// ON DELETE CASCADE). El canje no distingue entre esos tres casos y no debe: son todos «eso
 	// no abre nada».
-	CanjeAusente
-	// CanjeCaducado es el veredicto cuando la fila existe y su `expires_at` ya pasó. Es el único
+	RedemptionMissing
+	// RedemptionExpired (era CanjeCaducado) es el veredicto cuando la fila existe y su `expires_at` ya pasó. Es el único
 	// terminal SIN escritura: ocurre por el paso del tiempo, y nadie lo marca.
-	CanjeCaducado
-	// CanjeConsumido es el veredicto cuando la fila existe y ya es terminal por una ESCRITURA:
+	RedemptionExpired
+	// RedemptionConsumed (era CanjeConsumido) es el veredicto cuando la fila existe y ya es terminal por una ESCRITURA:
 	// el canje de otra persona (`redeemed_at`) o la revocación de la dueña (`revoked_at`).
 	//
 	// 🔴 LOS DOS COMPARTEN VEREDICTO A PROPÓSITO. Quien presenta un token que no es suyo no
 	// tiene por qué enterarse de si alguien se le adelantó o de si la dueña se arrepintió: son
 	// dos hechos sobre TERCERAS personas, y separarlos convertiría el canje en un chivato de lo
 	// que pasa dentro de una empresa a la que quien pregunta no pertenece.
-	CanjeConsumido
+	RedemptionConsumed
 )
 
-// EvaluarCanje decide si un canje procede, y si no, por qué (R-D5): inv nil → CanjeAusente;
-// estado InvitationPending en `ahora` → CanjeProcede; InvitationExpired → CanjeCaducado;
+// EvaluateRedemption (era EvaluarCanje) decide si un canje procede, y si no, por qué (R-D5): inv nil → RedemptionMissing;
+// estado InvitationPending en `now` → RedemptionProceeds; InvitationExpired → RedemptionExpired;
 // cualquier otro estado (InvitationRedeemed, InvitationRevoked y todo estado futuro) →
-// CanjeConsumido. La precedencia entre estados es la de Invitation.Status, sin repetirla.
+// RedemptionConsumed. La precedencia entre estados es la de Invitation.Status, sin repetirla.
 //
 // `inv` es un PUNTERO y nil es un valor esperado, no un descuido del llamante: es exactamente
 // como se representa «no había fila». Que la ausencia entre por el mismo parámetro que la
 // presencia es lo que permite que los dos caminos compartan de aquí en adelante todo el
 // código, que es lo que iguala su coste.
 //
-// `ahora` es un parámetro y no `time.Now()` dentro: la caducidad es la única transición que
+// `now` es un parámetro y no `time.Now()` dentro: la caducidad es la única transición que
 // ocurre sin que nadie escriba, así que probarla exige poder mover el reloj. Esta función es la
 // traducción de Invitation.Status: el ORDEN de las ramas de allí es la regla, y aquí no se
 // repite para no tener dos sitios donde equivocarse.
-func EvaluarCanje(inv *Invitation, ahora time.Time) ResultadoCanje {
+func EvaluateRedemption(inv *Invitation, now time.Time) RedemptionVerdict {
 	if inv == nil {
-		return CanjeAusente
+		return RedemptionMissing
 	}
-	switch inv.Status(ahora) {
+	switch inv.Status(now) {
 	case InvitationPending:
-		return CanjeProcede
+		return RedemptionProceeds
 	case InvitationExpired:
-		return CanjeCaducado
+		return RedemptionExpired
 	default:
 		// InvitationRedeemed e InvitationRevoked. El `default` y no dos `case` explícitos: si
 		// mañana nace un quinto estado terminal, el canje lo rechaza por omisión en vez de
 		// dejarlo pasar como pendiente. Un estado nuevo que abriera la puerta por olvido es el
 		// fallo caro; uno que la cierre de más se ve el primer día.
-		return CanjeConsumido
+		return RedemptionConsumed
 	}
 }

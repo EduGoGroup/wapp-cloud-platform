@@ -46,7 +46,7 @@ var (
 	//
 	// Una asignación global vale en TODAS las empresas —así la resuelve RoleRepo.RolesOfUser:
 	// `WHERE ur.tenant_id = $2 OR ur.tenant_id IS NULL`—, y eso es correcto SOLO para el rol
-	// transversal por diseño (RolTransversalID, el platform_admin del ADR-0039). Para cualquier
+	// transversal por diseño (TransversalRoleID, el platform_admin del ADR-0039). Para cualquier
 	// otro convierte a esa persona en administradora de todas las empresas de las que sea
 	// miembro, sin que nadie se lo haya dado. Abrir la multi-empresa (T5.2) es exactamente lo
 	// que despierta ese daño.

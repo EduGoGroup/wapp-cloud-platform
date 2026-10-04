@@ -26,9 +26,9 @@ func TestEffect_LiteralValues(t *testing.T) {
 // cambiara, la asignación global del platform_admin fallaría (fail-closed), así que un cambio
 // aquí tiene que verse.
 func TestRolTransversalID_IsTheSeededID(t *testing.T) {
-	if RolTransversalID != "10000000-0000-0000-0000-000000000004" {
-		t.Errorf("RolTransversalID = %q; quiere el id sembrado por 0059 %q",
-			RolTransversalID, "10000000-0000-0000-0000-000000000004")
+	if TransversalRoleID != "10000000-0000-0000-0000-000000000004" {
+		t.Errorf("TransversalRoleID = %q; quiere el id sembrado por 0059 %q",
+			TransversalRoleID, "10000000-0000-0000-0000-000000000004")
 	}
 }
 

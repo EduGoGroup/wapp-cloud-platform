@@ -25,9 +25,9 @@ func TestErrInvitationExpired_LiteralAndDistinct(t *testing.T) {
 }
 
 // Los cuatro veredictos son valores distintos, y su orden es el del viejo (iota). Se fija para
-// que un cambio de orden se decida y no se cuele: el valor cero del tipo es CanjeProcede.
+// que un cambio de orden se decida y no se cuele: el valor cero del tipo es RedemptionProceeds.
 func TestResultadoCanje_FourDistinctVerdicts(t *testing.T) {
-	verdicts := []ResultadoCanje{CanjeProcede, CanjeAusente, CanjeCaducado, CanjeConsumido}
+	verdicts := []RedemptionVerdict{RedemptionProceeds, RedemptionMissing, RedemptionExpired, RedemptionConsumed}
 	for i, v := range verdicts {
 		if int(v) != i {
 			t.Errorf("veredicto %d vale %d; quiere %d (orden del viejo)", i, v, i)
@@ -46,22 +46,22 @@ func TestEvaluarCanje_FourVerdicts(t *testing.T) {
 	cases := []struct {
 		name string
 		inv  *Invitation
-		want ResultadoCanje
+		want RedemptionVerdict
 	}{
-		{"alive_proceeds", &Invitation{TenantID: "t-1", ExpiresAt: after}, CanjeProcede},
-		{"nil_is_absent", nil, CanjeAusente},
-		{"expired", &Invitation{TenantID: "t-1", ExpiresAt: before}, CanjeCaducado},
-		{"expires_exactly_now", &Invitation{TenantID: "t-1", ExpiresAt: now}, CanjeCaducado},
-		{"already_redeemed", &Invitation{TenantID: "t-1", ExpiresAt: after, RedeemedBy: &someone, RedeemedAt: &before}, CanjeConsumido},
-		{"revoked", &Invitation{TenantID: "t-1", ExpiresAt: after, RevokedAt: &before}, CanjeConsumido},
-		// Si esto saliera CanjeCaducado, un token ya usado daría 410 en vez de 409.
-		{"redeemed_and_expired_is_consumed", &Invitation{TenantID: "t-1", ExpiresAt: before, RedeemedBy: &someone, RedeemedAt: &before}, CanjeConsumido},
-		{"revoked_and_expired_is_consumed", &Invitation{TenantID: "t-1", ExpiresAt: before, RevokedAt: &before}, CanjeConsumido},
+		{"alive_proceeds", &Invitation{TenantID: "t-1", ExpiresAt: after}, RedemptionProceeds},
+		{"nil_is_absent", nil, RedemptionMissing},
+		{"expired", &Invitation{TenantID: "t-1", ExpiresAt: before}, RedemptionExpired},
+		{"expires_exactly_now", &Invitation{TenantID: "t-1", ExpiresAt: now}, RedemptionExpired},
+		{"already_redeemed", &Invitation{TenantID: "t-1", ExpiresAt: after, RedeemedBy: &someone, RedeemedAt: &before}, RedemptionConsumed},
+		{"revoked", &Invitation{TenantID: "t-1", ExpiresAt: after, RevokedAt: &before}, RedemptionConsumed},
+		// Si esto saliera RedemptionExpired, un token ya usado daría 410 en vez de 409.
+		{"redeemed_and_expired_is_consumed", &Invitation{TenantID: "t-1", ExpiresAt: before, RedeemedBy: &someone, RedeemedAt: &before}, RedemptionConsumed},
+		{"revoked_and_expired_is_consumed", &Invitation{TenantID: "t-1", ExpiresAt: before, RevokedAt: &before}, RedemptionConsumed},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := EvaluarCanje(c.inv, now); got != c.want {
-				t.Errorf("EvaluarCanje = %d; quiere %d", got, c.want)
+			if got := EvaluateRedemption(c.inv, now); got != c.want {
+				t.Errorf("EvaluateRedemption = %d; quiere %d", got, c.want)
 			}
 		})
 	}
