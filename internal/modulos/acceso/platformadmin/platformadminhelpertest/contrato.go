@@ -76,6 +76,9 @@ type State interface {
 	// por la regla de una sola empresa (es una siembra: deja a una persona en dos empresas, que
 	// el puerto solo permite con multi_empresa). Repetirla no duplica nada.
 	SeedMembership(t *testing.T, userID, tenantID string, roleIDs ...string)
+	// SetRequestCreatedAt cambia el created_at de la solicitud requestID; falla el test si no
+	// existe. Es una siembra: deja el orden por fecha distinto del orden de alta.
+	SetRequestCreatedAt(t *testing.T, requestID string, at time.Time)
 	// Request devuelve la fila completa de la solicitud requestID; falla el test si no existe.
 	Request(t *testing.T, requestID string) RequestRow
 	// Access devuelve si userID es miembro de tenantID y los ids de los roles que tiene EN esa
@@ -146,6 +149,7 @@ func cases() []contractCase {
 		{"CreateAccessRequest_ListedAsPending", caseCreateRequestListed},                 // la fila
 		{"CreateAccessRequest_SecondPending_IsNoop", caseCreateRequestIdempotent},        // ON CONFLICT
 		{"ListAccessRequests_FiltersByStatus_InCreationOrder", caseListRequestsByStatus}, // filtro
+		{"ListAccessRequests_OrderedByCreatedAt_NotByInsertion", caseListRequestsOrder},  // ORDER BY
 		{"LookupAccessRequestStatus_FoundAndMissing", caseLookupStatus},                  // ErrNotFound
 		{"ResolveRoleID_ByNameOrID_UnknownInvalid", caseResolveRoleID},                   // ErrInvalidInput
 		{"RejectAccessRequest_PendingBecomesRejected", caseRejectPending},                // ciclo

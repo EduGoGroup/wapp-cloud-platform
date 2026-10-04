@@ -29,6 +29,20 @@ func (f *Fake) SeedTenantsCreatedAt(t *testing.T, n int, at time.Time) []string 
 	return out
 }
 
+// SetRequestCreatedAt implementa State.
+func (f *Fake) SetRequestCreatedAt(t *testing.T, requestID string, at time.Time) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for r, id := range f.requestID {
+		if id == requestID {
+			r.CreatedAt = at
+			return
+		}
+	}
+	t.Fatalf("Fake.SetRequestCreatedAt: la solicitud %s no existe", requestID)
+}
+
 // SeedFleetSession implementa State. Repetir la misma sesión reemplaza su última señal. Falla el
 // test si la empresa no existe (en Postgres, la clave foránea).
 func (f *Fake) SeedFleetSession(t *testing.T, tenantID, edgeID, sessionID string, lastSeenAt *time.Time) {

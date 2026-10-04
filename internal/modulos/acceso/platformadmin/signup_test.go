@@ -337,12 +337,12 @@ func TestSignupHandler_FieldValidation(t *testing.T) {
 	})
 }
 
-// R-A8, corpus adversario del correo (reglas §5, hallazgo 40 de F1): la equivalencia con el viejo,
-// medida corriendo internal/platformadmin.SignupHandler @ 9a77307 con este mismo corpus (el correo
-// que llegó a Signup, o el 400 sin llamada). Fija lo que el viejo HACE, quirks incluidos: los
-// espacios Unicode que strings.TrimSpace conoce se recortan, U+200B y U+FEFF no (hallazgo 14 de
-// F2 para el token de invitación, aquí igual); net/mail acepta una dirección con nombre visible
-// («Ana <ana@x.com>») y se guarda tal cual en minúsculas.
+// R-A8, corpus adversario del correo (reglas §5, hallazgo 40 de F1). La base es la equivalencia con
+// el viejo, medida corriendo internal/platformadmin.SignupHandler @ 9a77307 con este mismo corpus
+// (el correo que llegó a Signup, o el 400 sin llamada), quirks incluidos. 🔴 Las entradas marcadas
+// «D-F2-13» se APARTAN del viejo por decisión de Jhoan (2026-10-04): U+200B y U+FEFF se recortan
+// de los bordes (el viejo los dejaba dentro del correo), y solo se acepta una dirección pelada (el
+// viejo guardaba «ana <ana@x.com>» entero). Su comentario dice qué hacía el viejo.
 func TestSignupHandler_EmailCorpus_EquivalentToOld(t *testing.T) {
 	for _, c := range []struct {
 		in   string
@@ -355,14 +355,19 @@ func TestSignupHandler_EmailCorpus_EquivalentToOld(t *testing.T) {
 		{"ana@x.com\u2003", "ana@x.com"},
 		{"\u202fana@x.com", "ana@x.com"},
 		{"ana@x.com\n", "ana@x.com"},
-		{"ana@x.com\u200b", "ana@x.com\u200b"},
-		{"\ufeffana@x.com", "\ufeffana@x.com"},
+		{"ana@x.com\u200b", "ana@x.com"},                // D-F2-13; el viejo: "ana@x.com\u200b"
+		{"\ufeffana@x.com", "ana@x.com"},                // D-F2-13; el viejo: "\ufeffana@x.com"
+		{" \ufeff\u00a0Ana@X.com\u200b\n", "ana@x.com"}, // D-F2-13; mezclados con espacios
+		{"ana\u200b@x.com", "ana\u200b@x.com"},          // por dentro no se recorta (solo bordes): como el viejo
 		{"ana\u0661\u0662@x.com", "ana\u0661\u0662@x.com"},
 		{"ana@x\u0661.com", "ana@x\u0661.com"},
 		{"\uff21\uff2e\uff21@x.com", "\uff41\uff4e\uff41@x.com"},
 		{"\u0130nes@x.com", "ines@x.com"},
 		{"ana@x", "ana@x"},
-		{"Ana <ana@x.com>", "ana <ana@x.com>"},
+		{"Ana <ana@x.com>", ""},   // D-F2-13; el viejo: "ana <ana@x.com>"
+		{"<ana@x.com>", ""},       // D-F2-13: ni con solo los ángulos
+		{"ana@x.com (Ana)", ""},   // D-F2-13: ni con comentario
+		{`"Ana" <ana@x.com>`, ""}, // D-F2-13
 		{`"a b"@x.com`, `"a b"@x.com`},
 		{"ana@[127.0.0.1]", "ana@[127.0.0.1]"},
 		{"a@@b.com", ""},

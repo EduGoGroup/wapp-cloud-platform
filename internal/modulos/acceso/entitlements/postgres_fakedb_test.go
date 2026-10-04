@@ -88,6 +88,8 @@ type fakeDB struct {
 	// featuresEndErr: si no es nil, la iteración de la consulta de features termina con él en
 	// vez de con io.EOF.
 	featuresEndErr error
+	// featuresCloseErr: si no es nil, cerrar las filas de la consulta de features falla con él.
+	featuresCloseErr error
 	// fail: la consulta de ese tipo falla con ese error.
 	fail map[queryKind]error
 	// calls: cuántas consultas de cada tipo llegaron.
@@ -170,7 +172,7 @@ func (f *fakeDB) answer(query string, args []driver.NamedValue) (driver.Rows, er
 		}
 		return &fakeRows{}, nil
 	default:
-		return &fakeRows{values: slices.Clone(f.features[tenant]), endErr: f.featuresEndErr}, nil
+		return &fakeRows{values: slices.Clone(f.features[tenant]), endErr: f.featuresEndErr, closeErr: f.featuresCloseErr}, nil
 	}
 }
 
@@ -200,11 +202,13 @@ func queryArgs(kind queryKind, args []driver.NamedValue) (tenant, feature string
 type fakeRows struct {
 	values []driver.Value
 	endErr error
-	next   int
+	// closeErr es lo que devuelve Close.
+	closeErr error
+	next     int
 }
 
 func (r *fakeRows) Columns() []string { return []string{"c"} }
-func (r *fakeRows) Close() error      { return nil }
+func (r *fakeRows) Close() error      { return r.closeErr }
 func (r *fakeRows) Next(dest []driver.Value) error {
 	if r.next >= len(r.values) {
 		if r.endErr != nil {

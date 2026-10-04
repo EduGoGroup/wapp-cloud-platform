@@ -120,52 +120,61 @@ func TestHashInvitationToken_WriterReaderSymmetry(t *testing.T) {
 	}
 }
 
-// R-D3, corpus ADVERSARIO (reglas F2 §5): en TODA entrada el digest nuevo es el de la regla
-// vieja (equivalencia), y además se fija si cae en el digest canónico o no, para que un cambio
-// de normalización (NFKC, recorte de invisibles…) se vea aquí y se decida, no se cuele.
+// R-D3, corpus ADVERSARIO (reglas F2 §5): en toda entrada el digest nuevo es el de la regla
+// vieja (equivalencia), SALVO en las marcadas divergesFromOld, que son la decisión D-F2-11 (los
+// invisibles U+200B y U+FEFF se recortan de los bordes). Además se fija si cae en el digest
+// canónico o no, para que otro cambio de normalización (NFKC…) se vea aquí y se decida.
 func TestHashInvitationToken_AdversarialCorpus(t *testing.T) {
 	canonical := HashInvitationToken(fixedToken)
 	const body = "0123456789abcdef0123456789abcdef"
 	cases := []struct {
-		name          string
-		input         string
-		sameCanonical bool
+		name            string
+		input           string
+		sameCanonical   bool
+		divergesFromOld bool
 	}{
 		// Espacios Unicode no ASCII en los bordes: Go los trata como espacio (unicode.IsSpace).
-		{"nbsp_u00a0_edges", r(0x00A0) + fixedToken + r(0x00A0), true},
-		{"em_space_u2003_edges", r(0x2003) + fixedToken + r(0x2003), true},
-		{"narrow_nbsp_u202f_trailing", fixedToken + r(0x202F), true},
-		{"ideographic_space_u3000_leading", r(0x3000) + fixedToken, true},
-		{"next_line_u0085_trailing", fixedToken + r(0x0085), true},
-		{"tabs_cr_lf_vt_ff_edges", "\t\r\n" + fixedToken + "\t\v\f", true},
-		{"repeated_spaces_and_newlines", "   \n\n " + fixedToken + " \r\n\r\n", true},
+		{"nbsp_u00a0_edges", r(0x00A0) + fixedToken + r(0x00A0), true, false},
+		{"em_space_u2003_edges", r(0x2003) + fixedToken + r(0x2003), true, false},
+		{"narrow_nbsp_u202f_trailing", fixedToken + r(0x202F), true, false},
+		{"ideographic_space_u3000_leading", r(0x3000) + fixedToken, true, false},
+		{"next_line_u0085_trailing", fixedToken + r(0x0085), true, false},
+		{"tabs_cr_lf_vt_ff_edges", "\t\r\n" + fixedToken + "\t\v\f", true, false},
+		{"repeated_spaces_and_newlines", "   \n\n " + fixedToken + " \r\n\r\n", true, false},
 		// Caja.
-		{"all_lower", strings.ToLower(fixedToken), true},
-		{"mixed_case", "wApP-iNv-" + strings.ToUpper(body[:16]) + body[16:], true},
+		{"all_lower", strings.ToLower(fixedToken), true, false},
+		{"mixed_case", "wApP-iNv-" + strings.ToUpper(body[:16]) + body[16:], true, false},
 		// ToUpper es Unicode: «ı» sin punto sube a «I» ASCII y colisiona con el canónico.
-		{"dotless_i_u0131_in_prefix", "wapp-" + r(0x0131) + "nv-" + body, true},
-		// Invisibles que NO son espacio para Go: no se recortan y cambian el digest.
-		{"zero_width_space_u200b_leading", r(0x200B) + fixedToken, false},
-		{"bom_ufeff_leading", r(0xFEFF) + fixedToken, false},
-		{"nbsp_inside", "WAPP-INV-" + r(0x00A0) + body, false},
+		{"dotless_i_u0131_in_prefix", "wapp-" + r(0x0131) + "nv-" + body, true, false},
+		// Invisibles que NO son espacio para Go: en los bordes se recortan (D-F2-11), y ahí el
+		// nuevo se aparta del viejo; por dentro siguen cambiando el digest, como en el viejo.
+		{"zero_width_space_u200b_leading", r(0x200B) + fixedToken, true, true},
+		{"zero_width_space_u200b_trailing", fixedToken + r(0x200B), true, true},
+		{"bom_ufeff_leading", r(0xFEFF) + fixedToken, true, true},
+		{"bom_ufeff_trailing", fixedToken + r(0xFEFF), true, true},
+		{"invisibles_mixed_with_spaces_edges", " " + r(0xFEFF) + r(0x00A0) + r(0x200B) + fixedToken + r(0x200B) + "\n" + r(0xFEFF), true, true},
+		{"zero_width_space_u200b_inside", "WAPP-INV-" + r(0x200B) + body, false, false},
+		{"bom_ufeff_inside", "WAPP-INV-" + body[:16] + r(0xFEFF) + body[16:], false, false},
+		{"only_invisibles", r(0x200B) + r(0xFEFF), false, true},
+		{"nbsp_inside", "WAPP-INV-" + r(0x00A0) + body, false, false},
 		// Separadores repetidos y espacios interiores: el recorte es solo de bordes.
-		{"repeated_dash_separator", "WAPP--INV-" + body, false},
-		{"double_prefix", "WAPP-INV-" + fixedToken, false},
-		{"inner_space", "WAPP-INV- " + body, false},
+		{"repeated_dash_separator", "WAPP--INV-" + body, false, false},
+		{"double_prefix", "WAPP-INV-" + fixedToken, false, false},
+		{"inner_space", "WAPP-INV- " + body, false, false},
 		// Dígitos no ASCII: ToUpper no los pliega a 0-9.
-		{"arabic_indic_zero_u0660", "WAPP-INV-" + r(0x0660) + body[1:], false},
-		{"fullwidth_zero_uff10", "WAPP-INV-" + r(0xFF10) + body[1:], false},
-		{"fullwidth_letter_a_uff41", "WAPP-INV-0123456789" + r(0xFF41) + body[11:], false},
+		{"arabic_indic_zero_u0660", "WAPP-INV-" + r(0x0660) + body[1:], false, false},
+		{"fullwidth_zero_uff10", "WAPP-INV-" + r(0xFF10) + body[1:], false, false},
+		{"fullwidth_letter_a_uff41", "WAPP-INV-0123456789" + r(0xFF41) + body[11:], false, false},
 		// Bordes del dominio.
-		{"empty", "", false},
-		{"only_spaces", " " + r(0x00A0) + "\t", false},
-		{"prefix_only", "WAPP-INV-", false},
+		{"empty", "", false, false},
+		{"only_spaces", " " + r(0x00A0) + "\t", false, false},
+		{"prefix_only", "WAPP-INV-", false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := HashInvitationToken(c.input)
-			if want := oldRuleDigest(c.input); !bytes.Equal(got, want) {
-				t.Fatalf("diverge de la regla vieja: %x; la vieja da %x (entrada %+q)", got, want, c.input)
+			if diverges := !bytes.Equal(got, oldRuleDigest(c.input)); diverges != c.divergesFromOld {
+				t.Fatalf("¿diverge de la regla vieja? = %v; quiere %v (entrada %+q)", diverges, c.divergesFromOld, c.input)
 			}
 			if same := bytes.Equal(got, canonical); same != c.sameCanonical {
 				t.Errorf("¿mismo digest que el canónico? = %v; quiere %v (entrada %+q)", same, c.sameCanonical, c.input)

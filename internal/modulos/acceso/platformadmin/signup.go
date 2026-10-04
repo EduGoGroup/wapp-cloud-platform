@@ -13,6 +13,7 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode"
 
 	iamdomain "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
@@ -156,12 +157,36 @@ func SignupHandler(requests AccessRequestStore, m2m out.IdentityM2MClient, limit
 	})
 }
 
+// isEmailPadding dice si r es relleno que se recorta de los bordes del correo: lo que Go llama
+// espacio y los dos invisibles que llegan al pegar (D-F2-13; la misma regla que el token de
+// invitación, D-F2-11).
+func isEmailPadding(r rune) bool {
+	return unicode.IsSpace(r) || r == '\u200B' || r == '\uFEFF'
+}
+
+// isBareAddress dice si raw es la dirección de parsed y nada más: sin nombre visible, sin ángulos
+// y sin comentario (D-F2-13). Se compara con la forma canónica que net/mail escribe para esa
+// dirección, de modo que una parte local entre comillas («"a b"@x.com»), que es una dirección
+// legal y no un adorno, sigue valiendo.
+func isBareAddress(raw string, parsed *mail.Address) bool {
+	if parsed.Name != "" {
+		return false
+	}
+	return "<"+raw+">" == (&mail.Address{Address: parsed.Address}).String()
+}
+
 // validateSignupRequest normaliza los campos de req EN SITIO y dice si el alta es válida.
 func validateSignupRequest(req *SignupRequest) bool {
 	// El correo se normaliza a minúsculas y sin espacios (A-09): identity y la bandeja local usan
 	// el correo como clave "humana", y sin esto "Ana@X.com" y "ana@x.com" producen dos filas
 	// distintas.
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	//
+	// D-F2-13 (Jhoan, 2026-10-04), y aquí el nuevo se APARTA del viejo: de los bordes se recortan
+	// también U+200B y U+FEFF, que TrimSpace deja y que quien pega el correo no ve; y lo que se
+	// acepta es una dirección PELADA. net/mail está pensado para cabeceras y da por buena «Ana
+	// <ana@x.com>» o «ana@x.com (Ana)»: un formulario de alta que recibe eso contesta 400 en vez
+	// de guardar el adorno como si fuera el correo.
+	req.Email = strings.ToLower(strings.TrimFunc(req.Email, isEmailPadding))
 	req.FirstName = strings.TrimSpace(req.FirstName)
 	req.LastName = strings.TrimSpace(req.LastName)
 	req.Origin = strings.TrimSpace(req.Origin)
@@ -169,7 +194,8 @@ func validateSignupRequest(req *SignupRequest) bool {
 	if req.Email == "" || req.Password == "" || req.FirstName == "" || req.LastName == "" {
 		return false
 	}
-	if _, err := mail.ParseAddress(req.Email); err != nil {
+	addr, err := mail.ParseAddress(req.Email)
+	if err != nil || !isBareAddress(req.Email, addr) {
 		return false
 	}
 	if len(req.Email) > maxEmailLen || len(req.FirstName) > maxNameLen ||

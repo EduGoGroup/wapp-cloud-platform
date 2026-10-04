@@ -183,6 +183,22 @@ func (s *paState) SeedMembership(t *testing.T, userID, tenantID string, roleIDs 
 	}
 }
 
+// SetRequestCreatedAt implementa platformadminhelpertest.State.
+func (s *paState) SetRequestCreatedAt(t *testing.T, requestID string, at time.Time) {
+	t.Helper()
+	res, err := s.db.ExecContext(paCtx(t), `UPDATE public.access_requests SET created_at = $2 WHERE id = $1`, requestID, at)
+	if err != nil {
+		t.Fatalf("cambiar el created_at de la solicitud %s: %v", requestID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("contar las filas de la solicitud %s: %v", requestID, err)
+	}
+	if n != 1 {
+		t.Fatalf("la solicitud %s no existe", requestID)
+	}
+}
+
 // Request implementa platformadminhelpertest.State: la fila entera de public.access_requests.
 func (s *paState) Request(t *testing.T, requestID string) platformadminhelpertest.RequestRow {
 	t.Helper()

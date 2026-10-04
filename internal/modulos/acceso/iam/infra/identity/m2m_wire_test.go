@@ -208,3 +208,23 @@ func TestM2M_Signup_MapsCodes(t *testing.T) {
 		t.Errorf("err = %q, quería el motivo de identity en el texto", err.Error())
 	}
 }
+
+// TestM2M_BusinessCallsPresentBearerScheme (R-I4): la ruta de negocio recibe el Service Token con
+// el esquema Bearer, literal. El fake recorta el prefijo para leer el token, así que sin esta
+// afirmación una cabecera sin esquema pasaría por buena (mutante vivo de F2-05).
+func TestM2M_BusinessCallsPresentBearerScheme(t *testing.T) {
+	t.Parallel()
+	f := newFakeM2M(t)
+	if err := ensure(f.client(t, newFakeClock())); err != nil {
+		t.Fatalf("EnsureUser: %v", err)
+	}
+	_, calls := f.snapshot()
+	if len(calls) == 0 {
+		t.Fatal("la ruta de negocio no recibió ninguna llamada")
+	}
+	for _, c := range calls {
+		if c.bearer == "" || c.authorization != "Bearer "+c.bearer {
+			t.Errorf("Authorization = %q, quería \"Bearer <service_token>\"", c.authorization)
+		}
+	}
+}

@@ -103,6 +103,18 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
    a F7 con el gw nuevo inyectado.
 7. **`04` §2.3 (vieja)** decía que `inv1_aprobar_ast_test` «lee sus seis directorios» en F7: con
    `05` es el candado **nuevo** de `solicitudes/intakes` (F6) el que se re-toca aquí (T7.25).
+8. 🟡 **Heredado del hallazgo 52 de F2 (2026-10-04; decisión de Jhoan: se anota aquí, sin reproducirlo ahora).** El proceso
+   `TestP4_WindowRules/segunda_ventana` dio rojo **una vez** contra el binario **viejo**: el job de la segunda ventana
+   quedó `failed` y el servidor dejó `pipeline: job FAILED … causa:job_invalido … stages: el job no trae literal que
+   analizar (el compositor del flush no llegó a escribir el sobre)` (`internal/intake/stages/p2.go:90`,
+   `ErrSinLiteral`). Verde al repetir: una pasada completa contra el viejo y cinco corridas sueltas. Ese día, de cinco
+   pasadas completas contra el viejo, dos rojas (ésta y P5, hallazgo 50 de F2); de cuatro contra el nuevo, ninguna; las
+   rojas coincidieron con más carga en la máquina. **Sin causa medida.** Qué mirar al reconstruir `stages` y `pipeline`:
+   si el worker puede tomar el job **antes** de que el compositor del *flush* haya escrito el sobre (carrera real, que el
+   nuevo heredaría al portar la conducta), o si son los plazos del test bajo carga. ⚠️ El compositor **no** es de F7: vive
+   en `flujos/runtime` (T-2 de [`reglas.md`](reglas.md)), así que si es una carrera, la mitad del arreglo es de F8. Antes
+   de portar `p2.go`, reproducir bajo carga (`TestP4_WindowRules` en bucle con la suite entera en paralelo) guardando el
+   log del servidor.
 
 ## Decisiones que necesita (de Jhoan, con recomendación)
 

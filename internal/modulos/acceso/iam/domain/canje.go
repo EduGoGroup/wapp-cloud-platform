@@ -50,14 +50,18 @@ var ErrInvitationExpired = errors.New("iam: invitación caducada")
 type RedemptionVerdict int
 
 const (
-	// RedemptionProceeds (era CanjeProcede) es el ÚNICO veredicto que deja seguir: la invitación existe, nadie la usó,
-	// nadie la anuló y no ha vencido.
-	RedemptionProceeds RedemptionVerdict = iota
 	// RedemptionMissing (era CanjeAusente) es el veredicto cuando no hay ninguna fila con ese digest: un token
 	// inventado, uno de otro sistema, o uno bien tecleado de una empresa que se borró (la FK va
 	// ON DELETE CASCADE). El canje no distingue entre esos tres casos y no debe: son todos «eso
 	// no abre nada».
-	RedemptionMissing
+	//
+	// 🔴 ES EL VALOR CERO DEL TIPO, a propósito (D-F2-10, Jhoan, 2026-10-04): un veredicto que nadie
+	// calculó tiene que cerrar la puerta, no abrirla. En el viejo el cero era CanjeProcede; aquí el
+	// orden se aparta de él porque el número no sale del proceso (ni por HTTP ni a la base).
+	RedemptionMissing RedemptionVerdict = iota
+	// RedemptionProceeds (era CanjeProcede) es el ÚNICO veredicto que deja seguir: la invitación existe, nadie la usó,
+	// nadie la anuló y no ha vencido.
+	RedemptionProceeds
 	// RedemptionExpired (era CanjeCaducado) es el veredicto cuando la fila existe y su `expires_at` ya pasó. Es el único
 	// terminal SIN escritura: ocurre por el paso del tiempo, y nadie lo marca.
 	RedemptionExpired

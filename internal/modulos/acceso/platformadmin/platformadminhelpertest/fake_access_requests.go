@@ -27,7 +27,10 @@ func (f *Fake) ListAccessRequests(_ context.Context, status string) ([]platforma
 		status = "pending"
 	}
 	items := []platformadmin.AccessRequestItem{}
-	for _, r := range f.requests { // f.requests va en orden de alta: created_at ascendente
+	// created_at ascendente; a igual fecha, el orden de alta (f.requests), que es estable.
+	ordered := slices.Clone(f.requests)
+	slices.SortStableFunc(ordered, func(a, b *RequestRow) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	for _, r := range ordered {
 		if r.Status != status {
 			continue
 		}
