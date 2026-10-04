@@ -56,6 +56,16 @@ type Montajes struct {
 	InvitationRedeemRepo func(t *testing.T) MontajeInvitationRedeemRepo
 }
 
+// Invitation y Membership son las entidades del dominio que cruzan los montajes
+// (InvitationTables.Seed, RedeemState), con nombre de la suite: un montaje que vive fuera del
+// árbol de iam —la pasada contra Postgres de test/procesos, que no puede importar iam/domain
+// (R9.4.d, candado ProcessImports)— las nombra por aquí. Son alias, no copias: el tipo es el
+// mismo (D-F2-9, decisión de Jhoan del 2026-10-04 en la sesión F2-03).
+type Invitation = domain.Invitation
+
+// Membership es domain.Membership con nombre de la suite (ver Invitation).
+type Membership = domain.Membership
+
 // Contrato corre las siete suites de los puertos persistentes, cada una en su subtest con el
 // nombre del puerto, con las fábricas de montajes. Falla el test t, sin correr nada, si falta
 // alguna fábrica: un puerto sin implementación es un hueco, no un caso que no aplica.

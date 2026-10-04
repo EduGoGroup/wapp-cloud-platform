@@ -23,13 +23,10 @@ import (
 // iam/ports/out y los adaptadores viven en iam/infra/postgres): solo importa la suite y, del
 // paquete de los adaptadores, sus constructores.
 //
-// 🔴 NO IMPORTA iam/domain, y dos montajes lo necesitarían: InvitationTables.Seed recibe y
-// devuelve una domain.Invitation, y RedeemState lleva un *domain.Invitation y un
-// []domain.Membership. Se resuelve sin nombrar el tipo: funciones genéricas cuyo parámetro de
-// tipo se infiere de la suite (outhelpertest.InvitationTables.Seed, los campos de RedeemState) y
-// cuya restricción es la FORMA del struct (~invitationFields, ~membershipFields). Si la entidad
-// del dominio cambia de forma, esto deja de compilar en vez de sembrar mal. Es una salida a la
-// letra del candado ProcessImports, no a su espíritu: queda a decisión (ver el informe de F2-03).
+// 🔴 NO IMPORTA iam/domain, y dos montajes nombran sus entidades: InvitationTables.Seed recibe y
+// devuelve una invitación, y RedeemState lleva una invitación y membresías. Las nombra por los
+// alias de la suite (outhelpertest.Invitation y outhelpertest.Membership, decisión de Jhoan del
+// 2026-10-04 en la sesión F2-03, junto a D-F2-9).
 
 const (
 	// iamTimeout acota cada sentencia de los montajes: la base es local al contenedor.
@@ -201,7 +198,7 @@ func newIAMInvitationMontaje(t *testing.T) outhelpertest.MontajeInvitationRepo {
 		TenantA: b.tenantA,
 		TenantB: b.tenantB,
 		RoleA:   iamSeedRole(t, b.db, b.tenantA, "operador"),
-		Tables:  newIAMInvitationTables(outhelpertest.InvitationTables.Seed, b.db),
+		Tables:  &iamInvitationTables{db: b.db},
 	}
 }
 
@@ -219,43 +216,22 @@ func newIAMRedeemMontaje(t *testing.T) outhelpertest.MontajeInvitationRedeemRepo
 	}
 }
 
-// invitationFields es la FORMA de domain.Invitation (mismos campos, mismo orden, mismos tipos):
-// la restricción ~invitationFields deja convertir entre los dos sin nombrar el del dominio.
-type invitationFields = struct {
-	ID         string
-	TenantID   string
-	TokenHash  []byte
-	RoleID     *string
-	ExpiresAt  time.Time
-	CreatedBy  string
-	RedeemedBy *string
-	RedeemedAt *time.Time
-	RevokedAt  *time.Time
-	CreatedAt  time.Time
-}
-
-// membershipFields es la FORMA de domain.Membership.
-type membershipFields = struct {
-	UserID    string
-	TenantID  string
-	CreatedAt time.Time
-}
-
-// invitationCols es la proyección de public.tenant_invitations en el orden de invitationFields.
+// iamInvitationCols es la proyección de public.tenant_invitations en el orden de los campos de
+// outhelpertest.Invitation.
 const iamInvitationCols = `id::text, tenant_id::text, token_hash, role_id::text, expires_at,
 	created_by::text, redeemed_by::text, redeemed_at, revoked_at, created_at`
 
 // scanIAMInvitation lee una fila de iamInvitationCols.
-func scanIAMInvitation(row interface{ Scan(...any) error }) (invitationFields, error) {
+func scanIAMInvitation(row interface{ Scan(...any) error }) (outhelpertest.Invitation, error) {
 	var (
-		f                     invitationFields
+		f                     outhelpertest.Invitation
 		roleID, redeemedBy    sql.NullString
 		redeemedAt, revokedAt sql.NullTime
 	)
 	err := row.Scan(&f.ID, &f.TenantID, &f.TokenHash, &roleID, &f.ExpiresAt,
 		&f.CreatedBy, &redeemedBy, &redeemedAt, &revokedAt, &f.CreatedAt)
 	if err != nil {
-		return invitationFields{}, err
+		return outhelpertest.Invitation{}, err
 	}
 	if roleID.Valid {
 		f.RoleID = &roleID.String
@@ -272,22 +248,15 @@ func scanIAMInvitation(row interface{ Scan(...any) error }) (invitationFields, e
 	return f, nil
 }
 
-// iamInvitationTables es outhelpertest.InvitationTables sobre SQL directo. I es domain.Invitation,
-// inferido por newIAMInvitationTables.
-type iamInvitationTables[I interface{ ~invitationFields }] struct {
+// iamInvitationTables es outhelpertest.InvitationTables sobre SQL directo.
+type iamInvitationTables struct {
 	db *sql.DB
 }
 
-// newIAMInvitationTables construye las tablas de invitaciones; el primer argumento solo fija I
-// (se le pasa outhelpertest.InvitationTables.Seed).
-func newIAMInvitationTables[I interface{ ~invitationFields }](_ func(outhelpertest.InvitationTables, *testing.T, I) I, db *sql.DB) *iamInvitationTables[I] {
-	return &iamInvitationTables[I]{db: db}
-}
-
 // Seed inserta la invitación TAL CUAL; id y created_at vacíos los pone la base.
-func (it *iamInvitationTables[I]) Seed(t *testing.T, inv I) I {
+func (it *iamInvitationTables) Seed(t *testing.T, inv outhelpertest.Invitation) outhelpertest.Invitation {
 	t.Helper()
-	f := invitationFields(inv)
+	f := inv
 	var id, createdAt any
 	if f.ID != "" {
 		id = f.ID
@@ -305,11 +274,11 @@ func (it *iamInvitationTables[I]) Seed(t *testing.T, inv I) I {
 	if err != nil {
 		t.Fatalf("InvitationTables.Seed: %v", err)
 	}
-	return I(written)
+	return written
 }
 
 // DeleteRole borra el rol; la FK de tenant_invitations.role_id (ON DELETE SET NULL) hace el resto.
-func (it *iamInvitationTables[I]) DeleteRole(t *testing.T, roleID string) {
+func (it *iamInvitationTables) DeleteRole(t *testing.T, roleID string) {
 	t.Helper()
 	if _, err := it.db.ExecContext(iamCtx(t), `DELETE FROM public.iam_roles WHERE id = $1`, roleID); err != nil {
 		t.Fatalf("InvitationTables.DeleteRole(%s): %v", roleID, err)
@@ -375,7 +344,7 @@ func (rt *iamRedeemTables) Snapshot(t *testing.T, tokenHash []byte, userID strin
 	case err != nil:
 		t.Fatalf("Snapshot: leer la invitación: %v", err)
 	default:
-		setShaped(&state.Invitation, inv)
+		state.Invitation = &inv
 	}
 
 	rt.snapshotMemberships(t, userID, &state)
@@ -394,11 +363,11 @@ func (rt *iamRedeemTables) snapshotMemberships(t *testing.T, userID string, stat
 	}
 	defer closeIAMRows(t, rows)
 	for rows.Next() {
-		var m membershipFields
+		var m outhelpertest.Membership
 		if err := rows.Scan(&m.UserID, &m.TenantID, &m.CreatedAt); err != nil {
 			t.Fatalf("Snapshot: escanear membresía: %v", err)
 		}
-		appendShaped(&state.Memberships, m)
+		state.Memberships = append(state.Memberships, m)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("Snapshot: iterar membresías: %v", err)
@@ -464,15 +433,4 @@ func closeIAMRows(t *testing.T, rows *sql.Rows) {
 	if err := rows.Close(); err != nil {
 		t.Errorf("cerrar rows: %v", err)
 	}
-}
-
-// setShaped deja en *dst un puntero a la invitación leída, del tipo de dst (domain.Invitation).
-func setShaped[I interface{ ~invitationFields }](dst **I, f invitationFields) {
-	v := I(f)
-	*dst = &v
-}
-
-// appendShaped añade la membresía leída a *dst, del tipo de su elemento (domain.Membership).
-func appendShaped[M interface{ ~membershipFields }](dst *[]M, f membershipFields) {
-	*dst = append(*dst, M(f))
 }
