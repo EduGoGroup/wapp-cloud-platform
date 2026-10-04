@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package platformadmin_test
 
 import (
@@ -404,8 +402,11 @@ func TestApproveAccessRequest_DeclaresTheUnion(t *testing.T) {
 	if len(m2m.replaced) != 1 || !slices.Equal(m2m.replaced[0], want) {
 		t.Fatalf("declarado %v, quiero UNA vez %v (unión; wapp.platform se conserva, no se concede)", m2m.replaced, want)
 	}
-	if got := current[:3]; got[0] != "wapp.edge" || got[1] != "wapp.platform" || got[2] != "" {
-		t.Fatalf("el arreglo de identity se modificó: %q", got)
+	// Se mira hasta la capacidad: un append en sitio no cambia la longitud del de identity, pero
+	// escribe en su arreglo de respaldo.
+	backing := current[:cap(current)]
+	if !slices.Equal(backing, []string{"wapp.edge", "wapp.platform", "", "", "", "", "", ""}) {
+		t.Fatalf("el arreglo de identity se modificó: %q", backing)
 	}
 	b.wantApprovedLocally(t, id, user, b.tenantA, roleOperator.ID)
 }

@@ -6,13 +6,24 @@ package platformadmin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
+
+// systemWappPlatform es el namespace de la consola de plataforma (== usecase.SystemWappPlatform
+// de iam/usecase/exchange.go). Se re-declara aquí en vez de importar el paquete usecase --que
+// arrastra el canje de tokens completo-- porque lo único que hace falta es el valor de catálogo,
+// no el comportamiento (trampa T-12 de F2).
+const systemWappPlatform = "wapp.platform"
 
 var (
 	// ErrPlatformSystemForbidden se devuelve cuando la aprobación intenta conceder wapp.platform
@@ -136,8 +147,151 @@ type RejectAccessRequestRequest struct {
 //     - si la escritura falla ⇒ ErrSystemsSyncFailed envolviendo ese error.
 //
 // operatorID es el sujeto de quien aprueba; se guarda como decided_by solo si es un UUID.
+//
+// El reintento de una aprobación que falló al sincronizar systems CONVERGE (C-04): si la
+// solicitud ya está 'approved' hacia la MISMA empresa Y con el MISMO rol, se salta por completo la
+// escritura local --ya está hecha-- y va directo a reintentar solo la mitad que pudo haber
+// fallado. Un reintento que pide un rol distinto NO converge: se rechaza en vez de fingir que se
+// aplicó.
 func ApproveAccessRequest(ctx context.Context, tenants TenantStore, requests AccessRequestStore, requestID, tenantID, role, operatorID string, systems []string, m2m out.IdentityM2MClient) error {
-	panic(pendiente.Implementar("platformadmin.ApproveAccessRequest"))
+	if requestID == "" || tenantID == "" || role == "" {
+		return ErrInvalidInput
+	}
+	// (C) wapp.platform NO se concede desde la bandeja -- segundo cerrojo, el servidor no se fía
+	// de que la consola haya quitado la casilla.
+	if slices.Contains(systems, systemWappPlatform) {
+		return ErrPlatformSystemForbidden
+	}
+
+	userID, status, err := requests.LookupAccessRequestStatus(ctx, requestID)
+	if err != nil {
+		return err
+	}
+
+	// El rol se resuelve UNA vez, ANTES de bifurcar por status: tanto el camino 'pending'
+	// (ExecuteApprovalTx lo necesita para el INSERT) como el camino 'approved' (CheckRetryApproved
+	// lo necesita para comparar contra lo ya escrito) lo usan -- resolverlo aquí evita que el
+	// reintento se salte la validación por saltarse ExecuteApprovalTx entero (1.2).
+	roleID, err := requests.ResolveRoleID(ctx, role)
+	if err != nil {
+		return err
+	}
+
+	if err := resolveApprovalWrite(ctx, tenants, requests, status, requestID, tenantID, userID, roleID, operatorID); err != nil {
+		return err
+	}
+
+	return syncApprovedSystems(ctx, userID, systems, m2m)
+}
+
+// resolveApprovalWrite ejecuta -- o converge sobre -- la escritura LOCAL (tenant + rol) de la
+// aprobación, según el status con el que llegó la solicitud. Mismo cuerpo y mismo orden que el
+// viejo Repository.resolveApprovalWrite, sobre los puertos.
+func resolveApprovalWrite(ctx context.Context, tenants TenantStore, requests AccessRequestStore, status, requestID, tenantID, userID, roleID, operatorID string) error {
+	switch status {
+	case "pending":
+		// (P3) Un tenant_id sintácticamente válido pero inexistente violaba la FK
+		// tenant_members.tenant_id -> tenants(id) DENTRO de la tx y salía como 500 genérico.
+		// Comprobarlo aquí, antes de la escritura, lo convierte en un ErrTenantNotFound legible --
+		// no hace falta en el camino 'approved': un 'approved' de verdad ya exige que exista una
+		// fila en tenant_members para ese tenant_id (esa misma FK, satisfecha la primera vez).
+		exists, err := tenants.ExistsTenant(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("platformadmin: comprobar existencia de tenant: %w", err)
+		}
+		if !exists {
+			return ErrTenantNotFound
+		}
+		return requests.ExecuteApprovalTx(ctx, requestID, tenantID, userID, roleID, operatorID)
+	case "approved":
+		// Lo local (tenant + rol) ya está escrito de una pasada anterior: solo se acepta si
+		// coincide con lo que se pide ahora, y entonces NO se vuelve a escribir; solo se
+		// reintenta systems.
+		return requests.CheckRetryApproved(ctx, userID, tenantID, roleID)
+	default:
+		return ErrConflict
+	}
+}
+
+// syncApprovedSystems sincroniza en identity los systems pedidos, DESPUÉS de que la escritura
+// local ya quedó resuelta. Mismo cuerpo y mismo orden que el viejo
+// Repository.syncApprovedSystems, incluidos los desenlaces de (1.1) y (D).
+func syncApprovedSystems(ctx context.Context, userID string, systems []string, m2m out.IdentityM2MClient) error {
+	// (1.1) len(systems)==0 es un caso LEGÍTIMO -- no había nada que conceder -- y devuelve nil.
+	// m2m==nil es DISTINTO: SÍ había algo que conceder y no hay con qué. Antes ambos compartían
+	// la misma salida silenciosa.
+	if len(systems) == 0 {
+		return nil
+	}
+	if m2m == nil {
+		return ErrIdentityM2MUnavailable
+	}
+
+	// (D) Unión, no reemplazo: ReplaceUserSystems es declarativo, así que mandarle solo los
+	// systems de ESTA solicitud reemplazaría -- no sumaría -- el conjunto real de la persona. Se
+	// une de verdad, igual que la vía de la dueña (iam/usecase/memberships.go): leer, unir,
+	// declarar. (Hasta el 2026-08-28 se APROXIMABA la unión con una señal local, un proxy
+	// estructuralmente equivocado; su excusa caducó con GetUserSystems.)
+	//
+	// current era `vigentes` en el viejo.
+	current, err := m2m.GetUserSystems(ctx, userID)
+	if err != nil {
+		// Sin poder LEER no se puede unir, y un ReplaceUserSystems a ciegas borraría accesos que
+		// no son de esta bandeja. Se rehúsa por un fallo MEDIDO.
+		return fmt.Errorf("%w: %w", ErrSystemsUnionUnavailable, err)
+	}
+
+	// slices.Clone: no se escribe en el arreglo que devolvió el puerto, que no es nuestro. El
+	// orden es el que dio identity con los nuevos al final: estable y reproducible.
+	//
+	// desired era `deseados` en el viejo.
+	desired := slices.Clone(current)
+	for _, s := range systems {
+		if !slices.Contains(desired, s) {
+			desired = append(desired, s)
+		}
+	}
+	// Si no hay nada que añadir, no se escribe: identity no tiene por qué recibir un PUT que no
+	// cambia nada (mismo criterio que T-B4).
+	if len(desired) == len(current) {
+		return nil
+	}
+
+	// ⚠️ La unión PRESERVA lo que la persona ya tuviera, incluido wapp.platform. Eso NO contradice
+	// ErrPlatformSystemForbidden: esa guarda prohíbe CONCEDERLO desde esta bandeja, y aquí no se
+	// concede nada nuevo -- se evita borrar lo que otra vía otorgó.
+	if _, err := m2m.ReplaceUserSystems(ctx, userID, desired); err != nil {
+		return fmt.Errorf("%w: %w", ErrSystemsSyncFailed, err)
+	}
+
+	return nil
+}
+
+// accessRequestIDFromPath extrae y valida el {id} de solicitud del path, mismo criterio que
+// tenantIDFromPath (handlers.go) para M-03 (Tanda 6 · P3): un id vacío es 400 (falta el
+// parámetro); un id que no es UUID es 404, no 500 -- sin esto, un `WHERE id = $1` sobre una
+// columna UUID con un valor que no codifica revienta con un error que no es ErrNotFound y acababa
+// en el 500 genérico.
+func accessRequestIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "id de solicitud requerido", http.StatusBadRequest)
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+		return "", false
+	}
+	return id, true
+}
+
+// operatorFrom devuelve el Subject de la identidad de la petición ("" si no hay): el operador
+// que resuelve una solicitud.
+func operatorFrom(r *http.Request) string {
+	if id, ok := httpapi.IdentityFromContext(r.Context()); ok {
+		return id.Subject
+	}
+	return ""
 }
 
 // ListAccessRequestsHandler devuelve el handler de GET /admin/access-requests: corta con
@@ -146,7 +300,26 @@ func ApproveAccessRequest(ctx context.Context, tenants TenantStore, requests Acc
 // pending) como 200 {"items":[…]} (nunca null). Un fallo del almacén ⇒ 500 «error al listar
 // solicitudes de acceso».
 func ListAccessRequestsHandler(requests AccessRequestStore, platformTenantID string) http.Handler {
-	panic(pendiente.Implementar("platformadmin.ListAccessRequestsHandler"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpapi.EnforcePlatformCaller(w, r, platformTenantID) {
+			return
+		}
+
+		status := r.URL.Query().Get("status")
+		if status == "" {
+			status = "pending"
+		}
+
+		items, err := requests.ListAccessRequests(r.Context(), status)
+		if err != nil {
+			http.Error(w, "error al listar solicitudes de acceso", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, ListAccessRequestsResponse{
+			Items: items,
+		})
+	})
 }
 
 // ApproveAccessRequestHandler devuelve el handler de POST /admin/access-requests/{id}/approve.
@@ -169,7 +342,101 @@ func ListAccessRequestsHandler(requests AccessRequestStore, platformTenantID str
 // ErrIdentityM2MUnavailable ⇒ 503 identity "skipped". Cualquier otro error ⇒ 500 «error al
 // aprobar solicitud».
 func ApproveAccessRequestHandler(tenants TenantStore, requests AccessRequestStore, m2m out.IdentityM2MClient, platformTenantID string) http.Handler {
-	panic(pendiente.Implementar("platformadmin.ApproveAccessRequestHandler"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpapi.EnforcePlatformCaller(w, r, platformTenantID) {
+			return
+		}
+
+		requestID, ok := accessRequestIDFromPath(w, r)
+		if !ok {
+			return
+		}
+
+		req, ok := decodeApproveAccessRequestBody(w, r)
+		if !ok {
+			return
+		}
+
+		httpapi.SetAuditTargetTenant(r.Context(), req.TenantID)
+
+		err := ApproveAccessRequest(r.Context(), tenants, requests, requestID, req.TenantID, req.Role, operatorFrom(r), req.Systems, m2m)
+		writeApproveAccessRequestResult(w, err)
+	})
+}
+
+// decodeApproveAccessRequestBody decodifica y valida el cuerpo JSON de
+// POST /admin/access-requests/{id}/approve. Si el cuerpo es inválido o le faltan tenant_id/role,
+// ya escribió la respuesta de error y devuelve ok=false.
+func decodeApproveAccessRequestBody(w http.ResponseWriter, r *http.Request) (ApproveAccessRequestRequest, bool) {
+	var req ApproveAccessRequestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
+		return req, false
+	}
+	if req.TenantID == "" || req.Role == "" {
+		http.Error(w, "tenant_id y role son requeridos", http.StatusBadRequest)
+		return req, false
+	}
+	return req, true
+}
+
+// writeApproveAccessRequestResult mapea el resultado de ApproveAccessRequest al status y cuerpo
+// HTTP de la respuesta. Mismo switch, mismos casos y mismo orden que el viejo: ninguno de los
+// errors.Is coincide cuando err es nil, así que ese caso cae al 204 de abajo.
+func writeApproveAccessRequestResult(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrTenantNotFound):
+		http.Error(w, "empresa no encontrada", http.StatusNotFound)
+		return
+	case errors.Is(err, ErrConflict):
+		http.Error(w, "la solicitud ya fue resuelta o la persona ya pertenece a otra empresa", http.StatusConflict)
+		return
+	case errors.Is(err, ErrInvalidInput):
+		http.Error(w, "datos de solicitud o rol inválidos", http.StatusBadRequest)
+		return
+	case errors.Is(err, ErrPlatformSystemForbidden):
+		http.Error(w, "wapp.platform no se concede desde la bandeja de solicitudes de acceso", http.StatusBadRequest)
+		return
+	case errors.Is(err, ErrSystemsUnionUnavailable):
+		// (D) Lo local quedó escrito; los systems de identity NO se tocaron porque FALLÓ LA
+		// LECTURA de su conjunto actual, y sin leerlo un PUT declarativo borraría lo que otra vía
+		// concedió. 409 y no 502 porque hace falta mirar: reintentar a ciegas no lo arregla.
+		writeJSON(w, http.StatusConflict, ApprovePartialResult{
+			Local: "ok", Identity: "skipped",
+			Reason: "no se pudo leer el conjunto actual de systems del usuario en identity; para no reemplazarlo por accidente no se tocó nada en identity",
+		})
+		return
+	case errors.Is(err, ErrSystemsSyncFailed):
+		// (C-04) Lo local (tenant + rol) quedó escrito; solo falló la sincronización con
+		// identity. 502 distinguible para que la consola pueda decírselo al operador y
+		// reintentar más tarde.
+		writeJSON(w, http.StatusBadGateway, ApprovePartialResult{
+			Local: "ok", Identity: "failed", Reason: err.Error(),
+		})
+		return
+	case errors.Is(err, ErrIdentityM2MUnavailable):
+		// (1.1) Mismo cuerpo que los dos anteriores (lo local quedó escrito) pero 503: no es un
+		// conflicto de datos ni un fallo transitorio de red, es que este despliegue no tiene
+		// cliente M2M configurado (mismo código que SignupHandler para el mismo m2m == nil).
+		writeJSON(w, http.StatusServiceUnavailable, ApprovePartialResult{
+			Local: "ok", Identity: "skipped",
+			Reason: "no hay cliente M2M configurado hacia identity en este despliegue; lo local (empresa y rol) quedó escrito pero los systems solicitados NO se concedieron",
+		})
+		return
+	case errors.Is(err, ErrRetryRoleMismatch):
+		// (1.2) El reintento pide un rol distinto del que ya quedó aprobado la primera vez: NO
+		// converge, así que no se toca nada. 409: hace falta que el operador reconcilie a mano.
+		http.Error(w, "la solicitud ya fue aprobada con un rol distinto; el reintento no converge", http.StatusConflict)
+		return
+	case err != nil:
+		http.Error(w, "error al aprobar solicitud", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RejectAccessRequestHandler devuelve el handler de POST /admin/access-requests/{id}/reject.
@@ -181,5 +448,40 @@ func ApproveAccessRequestHandler(tenants TenantStore, requests AccessRequestStor
 // ErrInvalidInput (motivo en blanco) ⇒ 400 «entrada inválida»; otro ⇒ 500 «error al rechazar
 // solicitud».
 func RejectAccessRequestHandler(requests AccessRequestStore, platformTenantID string) http.Handler {
-	panic(pendiente.Implementar("platformadmin.RejectAccessRequestHandler"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpapi.EnforcePlatformCaller(w, r, platformTenantID) {
+			return
+		}
+
+		requestID, ok := accessRequestIDFromPath(w, r)
+		if !ok {
+			return
+		}
+
+		var req RejectAccessRequestRequest
+		if r.Body != nil && r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "cuerpo JSON inválido", http.StatusBadRequest)
+				return
+			}
+		}
+
+		err := requests.RejectAccessRequest(r.Context(), requestID, req.Reason, operatorFrom(r))
+		switch {
+		case errors.Is(err, ErrNotFound):
+			http.Error(w, "solicitud no encontrada", http.StatusNotFound)
+			return
+		case errors.Is(err, ErrConflict):
+			http.Error(w, "la solicitud ya fue resuelta", http.StatusConflict)
+			return
+		case errors.Is(err, ErrInvalidInput):
+			http.Error(w, "entrada inválida", http.StatusBadRequest)
+			return
+		case err != nil:
+			http.Error(w, "error al rechazar solicitud", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
