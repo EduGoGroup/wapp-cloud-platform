@@ -1,0 +1,69 @@
+// Porta internal/iam/infra/postgres/postgres.go @ 9a77307
+
+// Package iampostgres implementa los puertos out del IAM (MembershipRepo, RoleRepo, GrantRepo,
+// AuditRepo, InvitationRepo, ActiveTenantRepo e InvitationRedeemRepo) con SQL raw sobre
+// PostgreSQL, siguiendo el patrón de repos del repo (database/sql + driver pgx/v5 stdlib,
+// placeholders $N, ExecContext/QueryRowContext, tenant_id::text en los SELECT). Mapea
+// sql.ErrNoRows → domain.ErrNotFound y el unique_violation (23505) → domain.ErrConflict. CERO
+// PII y CERO material de la doble llave viven aquí.
+//
+// El nombre de paquete (iampostgres) difiere del directorio (postgres) para no colisionar con
+// internal/platform/storage/postgres al importar ambos, igual que gateway/grpc se declara
+// package gatewaygrpc. Conserva el nombre del paquete viejo.
+//
+// Su SQL no se prueba en unitario: lo cubre la suite compartida con los dobles en memoria
+// (iam/ports/out/outhelpertest) corrida contra Postgres en los procesos de F9 (P4). Los tests
+// del paquete afirman lo que no necesita base: constructores, errores de infraestructura,
+// guardas previas a la base, mapeos de filas y los tres candados AST del alta y el canje.
+//
+// Este fichero no tiene símbolos exportados: son los auxiliares comunes del paquete.
+package iampostgres
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// pgUniqueViolation es el SQLSTATE de violación de unicidad de PostgreSQL.
+const pgUniqueViolation = "23505"
+
+// isUniqueViolation reporta si err es un unique_violation de Postgres (SQLSTATE 23505),
+// también cuando viene envuelto. Cualquier otro SQLSTATE, o un error que no es de Postgres,
+// no lo es.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
+}
+
+// strPtr convierte un sql.NullString en *string (nil si NULL). Un "" válido NO es NULL: da un
+// puntero a "".
+func strPtr(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	s := ns.String
+	return &s
+}
+
+// nullString construye un sql.NullString desde *string: NULL si nil; si no, el valor (también
+// "", que no es NULL).
+func nullString(p *string) sql.NullString {
+	if p == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *p, Valid: true}
+}
+
+// timePtr convierte un sql.NullTime en *time.Time (nil si NULL). Es el gemelo de strPtr para
+// las columnas TIMESTAMPTZ nullables —redeemed_at, revoked_at—, donde nil significa «todavía
+// no pasó» y no «pasó en el instante cero».
+func timePtr(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	t := nt.Time
+	return &t
+}

@@ -272,6 +272,25 @@ decidir, sería marcar identificadores con letras no ASCII (`á é í ó ú ñ`)
   Cada sesión deja siempre tres cosas: tareas `[x]` con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en el README
   de la fase. El traspaso web ↔ local solo existe mientras haya dos entornos, y después, solo si una sesión se corta.
 
+### E-13 · Tamaño de fichero: 500 líneas, con un 20 % de tolerancia
+
+*(Decisión de Jhoan, 2026-10-04, sesión F2-03: «no es aceptable un archivo tan largo».)*
+
+- **Objetivo: ≤ 500 líneas** por fichero `.go` del árbol nuevo (`internal/{modulos,nucleo,arranque,apipublica,candados,pendiente}`,
+  `test/procesos`, `cmd/server-modular`), de producción **y** de test.
+- **Tolerancia hasta 600** (+20 %) cuando partir rompería un tema que se lee de una vez. **Por encima de 600, estricto**: se
+  parte. Lo vigila el candado `internal/modulos/file_size_test.go` (`candados.FileSize`).
+- **Cómo se parte**: por tema, **solo moviendo declaraciones** de primer nivel con su comentario (sin cambiar un byte; se
+  comprueba que el multiconjunto de declaraciones es igual), y cada trozo con el **sufijo de su origen** y una línea que lo
+  dice: `postgres_test.go` → `postgres_has_test.go`, `postgres_list_test.go`… Tres reglas de los candados que el corte
+  respeta: (1) un trozo de **producción** `x_<tema>.go` lleva su gemelo `x_<tema>_test.go` (E-3), y sus exportados se
+  nombran ahí (E-9); (2) el `x_test.go` que conserva el nombre **sigue nombrando todos los exportados de `x.go`**
+  (`exportados_cubiertos` solo mira el gemelo exacto); (3) los trozos de una suite se llaman `<tema>_contrato.go`, no
+  `contrato_<tema>.go`, para seguir exentos de la cobertura (D-F1-13).
+- **El código viejo no se parte**: muere en F10; la regla se le aplica cuando se reconstruye.
+- **Lo que ya pasaba de 600 al nacer la regla** vive en una lista cerrada con su techo (`candados.OversizedFiles`, D-R-7): no
+  puede crecer, y se parte cuando su fase o una sesión dedicada lo toque. Añadir un fichero a la lista exige decisión.
+
 ---
 
 ## 3 · Lo que NO se limpia
@@ -365,6 +384,7 @@ un **adaptador**: `internal/arranque/bridge_<x>.go`, que traduce sin estado. **N
 | `make cobertura-ficheros` | **Nada: es un informe** (P2, E-9), sin exentos; incluye los `internal/arranque/bridge_*.go` (§4.2). Solo rompe un error real: un test que falla o no compila, o un perfil ilegible (F1-06, 2026-10-03) |
 | `internal/arranque/huella_test.go` | Una diferencia en la huella entre los dos arranques, para un módulo ya conmutado. Ciega a módulos sin rutas/rpc/métricas/goroutines (§4) |
 | `go vet -tags pendiente ./...` en `ci-local` | Un test rojo que no compila |
+| `internal/modulos/file_size_test.go` | Un `.go` del árbol nuevo (producción o test, `test/procesos` incluido) de más de **600** líneas (500 + 20 %, E-13), o uno de la lista cerrada `candados.OversizedFiles` que pasa de su techo (D-R-7, 2026-10-04) |
 | `test/procesos/domain_imports_test.go` | Un import de `internal/…` desde `test/procesos` fuera de lo que admite R9.4.d de F9, **fichero a fichero** (`candados.ProcessImports`, F1-06) |
 | `test/procesos/sin_bd_viva_test.go` | Una **apertura de conexión** a la base de datos (`sql.Open`/`OpenDB`, `pgx.Connect*`, `pgconn.Connect*`, `pgxpool.New*`, las de `pgx/stdlib`) en cualquier fichero de `test/procesos/` que no sea `test/procesos/base_test.go`: lista blanca de quién abre conexiones, por ruta exacta (D-F9-6, decisión de Jhoan, 2026-10-02; antes solo había lista negra). Y, como antes, cualquier referencia en `test/procesos/` a `WAPP_TEST_DB_DSN`, a un puerto fijo de Postgres o a `WithReuseByName` (§7.2) |
 | `no_pending_test.go` (D-F1-12, decisión de Jhoan, 2026-10-02; antes `sin_pendientes_test.go`: el fichero aún no existe y nace con nombre en inglés, E-11) | **Solo en F10**: cualquier `pendiente.Implementar` que quede |
