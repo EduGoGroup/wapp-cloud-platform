@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package enroll_test
 
 // Los tests de la CA firmante. enroll.CA usa time.Now() sin reloj inyectable (se porta igual):
