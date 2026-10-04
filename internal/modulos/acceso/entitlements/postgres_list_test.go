@@ -154,6 +154,13 @@ func TestPostgres_ListEffective_ErrorTexts(t *testing.T) {
 			f.features[tenantA] = []driver.Value{"menu"}
 			f.featuresEndErr = errBoom
 		}, "entitlements: iterar features: ", true},
+		// database/sql cierra las filas al agotar la iteración y entrega el fallo de ese cierre por
+		// rows.Err: sale con el prefijo de iterar. El de "cerrar filas de features" queda para un
+		// cierre que falle sin haber iterado hasta el final, que este código no hace (F2-05).
+		{"closeFails", func(f *fakeDB) {
+			f.features[tenantA] = []driver.Value{"menu"}
+			f.featuresCloseErr = errBoom
+		}, "entitlements: iterar features: ", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
