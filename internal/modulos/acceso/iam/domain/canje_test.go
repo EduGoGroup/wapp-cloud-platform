@@ -24,14 +24,25 @@ func TestErrInvitationExpired_LiteralAndDistinct(t *testing.T) {
 	}
 }
 
-// Los cuatro veredictos son valores distintos, y su orden es el del viejo (iota). Se fija para
-// que un cambio de orden se decida y no se cuele: el valor cero del tipo es RedemptionProceeds.
-func TestResultadoCanje_FourDistinctVerdicts(t *testing.T) {
-	verdicts := []RedemptionVerdict{RedemptionProceeds, RedemptionMissing, RedemptionExpired, RedemptionConsumed}
-	for i, v := range verdicts {
-		if int(v) != i {
-			t.Errorf("veredicto %d vale %d; quiere %d (orden del viejo)", i, v, i)
+// Los cuatro veredictos son valores distintos y el valor cero del tipo es RedemptionMissing
+// (D-F2-10): un veredicto sin calcular rechaza. RedemptionProceeds NO puede ser el cero.
+func TestRedemptionVerdict_ZeroValueRejects(t *testing.T) {
+	var unset RedemptionVerdict
+	if unset != RedemptionMissing {
+		t.Errorf("el valor cero de RedemptionVerdict es %d; quiere RedemptionMissing (%d)", unset, RedemptionMissing)
+	}
+	if unset == RedemptionProceeds {
+		t.Error("el valor cero de RedemptionVerdict deja seguir: un veredicto sin calcular abriría el canje")
+	}
+	seen := map[RedemptionVerdict]string{}
+	for name, v := range map[string]RedemptionVerdict{
+		"RedemptionMissing": RedemptionMissing, "RedemptionProceeds": RedemptionProceeds,
+		"RedemptionExpired": RedemptionExpired, "RedemptionConsumed": RedemptionConsumed,
+	} {
+		if other, dup := seen[v]; dup {
+			t.Errorf("%s y %s valen lo mismo (%d)", name, other, v)
 		}
+		seen[v] = name
 	}
 }
 

@@ -135,9 +135,11 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     (`EvaluarCanje`, `ResultadoCanje`, `Canje*`, `RolTransversalID`) invocando «lo ya decidido»; esa excepción cubre lo ya
     escrito en el árbol nuevo, no los nombres que la spec cita del viejo. Corregido en `2776d82`; correspondencias en
     `tareas.md`. Conviene que los prompts de sesión lo digan con un ejemplo.
-13. 🟡 **El valor cero de `RedemptionVerdict` es `RedemptionProceeds`** (`iota`, como el viejo `CanjeProcede`): un veredicto
-    sin inicializar dejaría pasar un canje. Se mantuvo el orden del viejo (equivalencia) y el test lo fija. ¿Se invierte
-    (cero = `RedemptionMissing`) cuando muera el viejo?
+13. ✅ ~~🟡~~ **El valor cero de `RedemptionVerdict` era `RedemptionProceeds`** (`iota`, como el viejo `CanjeProcede`): un veredicto
+    sin inicializar dejaría pasar un canje. Se mantuvo el orden del viejo (equivalencia) y el test lo fijaba. **Resuelto
+    (D-F2-10, Jhoan, 2026-10-04, tras el cierre de F2): se invierte ya**, sin esperar a que muera el viejo: el cero es
+    `RedemptionMissing` y `TestRedemptionVerdict_ZeroValueRejects` lo fija. El número no sale del proceso (ni HTTP ni base),
+    así que nada observable cambia.
 14. 🟡 **`HashInvitationToken` no recorta U+200B ni U+FEFF.** `strings.TrimSpace` quita U+00A0, U+2003, U+202F, U+3000,
     U+0085 y los ASCII, pero no el espacio de ancho cero ni el BOM: un token pegado con uno de ellos no se canjea. Se
     mantiene la conducta del viejo y el corpus adversario (22 entradas) la fija; cambiarla (NFKC, quitar invisibles) es
