@@ -13,18 +13,27 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/domain"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/out"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ActiveTenantService implementa in.ActiveTenantSelector (escribe la elección) e
 // in.TenantLister (lee entre qué se puede elegir): comparten las tres dependencias y la regla.
-type ActiveTenantService struct{}
+type ActiveTenantService struct {
+	caller  in.CallerResolver
+	members out.MembershipRepo
+	active  out.ActiveTenantRepo
+}
 
 // compile-time: ActiveTenantService satisface los DOS puertos de entrada de este plano.
+//
+// Son dos puertos y un solo servicio porque comparten exactamente las tres dependencias y la
+// regla: quién llama, de qué es miembro, y qué eligió. Partirlo en dos servicios duplicaría el
+// cableado para no separar nada.
 var (
 	_ in.ActiveTenantSelector = (*ActiveTenantService)(nil)
 	_ in.TenantLister         = (*ActiveTenantService)(nil)
@@ -40,7 +49,18 @@ var (
 //     ser miembro)";
 //   - active nil ⇒ "iam: ActiveTenantService requiere un ActiveTenantRepo".
 func NewActiveTenantService(caller in.CallerResolver, members out.MembershipRepo, active out.ActiveTenantRepo) (*ActiveTenantService, error) {
-	panic(pendiente.Implementar("usecase.NewActiveTenantService"))
+	// Igual que en NewRedeemService: sin resolver quién llama no se sabe a nombre de quién se
+	// guarda, sin membresías no se puede comprobar nada, y sin repositorio no hay dónde guardar.
+	if caller == nil {
+		return nil, errors.New("iam: ActiveTenantService requiere un CallerResolver (quien elige sale del contexto)")
+	}
+	if members == nil {
+		return nil, errors.New("iam: ActiveTenantService requiere un MembershipRepo (elegir empresa exige ser miembro)")
+	}
+	if active == nil {
+		return nil, errors.New("iam: ActiveTenantService requiere un ActiveTenantRepo")
+	}
+	return &ActiveTenantService{caller: caller, members: members, active: active}, nil
 }
 
 // SelectActiveTenant implementa in.ActiveTenantSelector: guarda tenantID como empresa activa
@@ -62,7 +82,39 @@ func NewActiveTenantService(caller in.CallerResolver, members out.MembershipRepo
 //
 // R-U16: con UNA sola membresía también se puede fijar (desenlace normal, no error).
 func (s *ActiveTenantService) SelectActiveTenant(ctx context.Context, tenantID string) error {
-	panic(pendiente.Implementar("usecase.ActiveTenantService.SelectActiveTenant"))
+	// 🔴 SE EXIGE EL SUJETO Y NO LA EMPRESA DEL TOKEN, exactamente como en
+	// RedeemService.RedeemInvitation y por la misma familia de razones: con dos membresías y
+	// ninguna elegida el token sale sin tenant y sin grants, así que exigir la empresa del
+	// token rechazaría con 403 a todos los que necesitan este endpoint, siempre.
+	c, ok := s.caller.Caller(ctx)
+	if !ok || c.UserID == "" {
+		// Es 400 y no 401: a este método solo se llega DETRÁS de Authenticate, así que un
+		// contexto sin identidad es un error de cableado del servidor, no una credencial que
+		// falte. Mismo criterio que RedeemService.
+		return fmt.Errorf("%w: el contexto no acredita a nadie", domain.ErrInvalidInput)
+	}
+	if tenantID == "" {
+		return fmt.Errorf("%w: falta la empresa", domain.ErrInvalidInput)
+	}
+
+	tenants, err := s.members.TenantsOfUser(ctx, c.UserID)
+	if err != nil {
+		return err
+	}
+	// isMember es la MISMA función con la que el canje contrasta la empresa guardada
+	// (effectiveTenant, en exchange.go): la escritura y la lectura dan el mismo veredicto.
+	if !isMember(tenants, tenantID) {
+		// 🔴 EL 404 DE QUIEN NO ES MIEMBRO NO ES UN ERROR DE CORTESÍA: es anti-oráculo. Si «no
+		// eres miembro de esa empresa» y «esa empresa no existe» tuvieran respuestas
+		// distintas, cualquiera con un token válido podría sondear UUIDs y levantar el censo de
+		// empresas de la plataforma. El transporte lo traduce al MISMO cuerpo genérico
+		// («recurso no encontrado») con el que el resto del módulo contesta al recurso ajeno.
+		//
+		// Sin `fmt.Errorf` con contexto a propósito: lo que se envuelva aquí acaba en el log, y
+		// el log de este proceso no necesita una línea por cada UUID que alguien pruebe.
+		return domain.ErrNotFound
+	}
+	return s.active.SetActiveTenant(ctx, c.UserID, tenantID)
 }
 
 // TenantsOfCaller implementa in.TenantLister: las empresas del Caller con su nombre legible
@@ -82,5 +134,39 @@ func (s *ActiveTenantService) SelectActiveTenant(ctx context.Context, tenantID s
 // varias con elegida, varias con elegida que ya no es suya), el activeID de este método y el
 // tenant del Context Token que emite ExchangeService.Exchange son EL MISMO valor.
 func (s *ActiveTenantService) TenantsOfCaller(ctx context.Context) ([]domain.UserTenant, string, error) {
-	panic(pendiente.Implementar("usecase.ActiveTenantService.TenantsOfCaller"))
+	c, ok := s.caller.Caller(ctx)
+	if !ok || c.UserID == "" {
+		return nil, "", fmt.Errorf("%w: el contexto no acredita a nadie", domain.ErrInvalidInput)
+	}
+
+	tenants, err := s.members.UserTenants(ctx, c.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+	// Cero empresas ⇒ lista VACÍA y no nil. El contrato lo promete aquí y no lo deja al
+	// adaptador: es el estado de quien acaba de registrarse (D-056.12), el que la consola
+	// necesita distinguir de «dos empresas y ninguna elegida» —el Context Token de los dos es
+	// el MISMO—, y un `null` en el cable lo rompería. (El viejo devolvía lo que diera el
+	// repositorio; sus dos adaptadores ya devuelven vacía, así que la conducta no cambia.)
+	if tenants == nil {
+		tenants = []domain.UserTenant{}
+	}
+
+	ids := make([]string, 0, len(tenants))
+	for _, t := range tenants {
+		ids = append(ids, t.ID)
+	}
+	// 🔴 EL activeID SE CALCULA CON LA MISMA FUNCIÓN QUE USA EL CANJE (effectiveTenant, era
+	// tenantEfectivo), y no leyendo la fila guardada. Es la mitad que impide que el selector y
+	// el token discrepen (R-U18): con UNA sola membresía manda la membresía y la fila guardada
+	// ni se mira, así que devolver la fila cruda marcaría la casilla equivocada sobre un token
+	// que sí va acotado a la otra. Un selector que miente sobre con qué empresa estás operando
+	// es peor que no tener selector.
+	active, err := effectiveTenant(ids, func() (string, bool, error) {
+		return s.active.ActiveTenantOf(ctx, c.UserID)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return tenants, active, nil
 }
