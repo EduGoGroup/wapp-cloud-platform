@@ -1,6 +1,13 @@
 package candados
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import "slices"
+
+// inboundPortDirsWithoutSuite es la lista de la que InboundPortDirsWithoutSuite devuelve
+// copias. No se exporta: nadie fuera de este fichero la lee ni la cambia.
+var inboundPortDirsWithoutSuite = []string{
+	// D-F2-5 (Jhoan, 2026-09-30): los ports/in de iam los cubre el test del usecase.
+	"internal/modulos/acceso/iam/ports/in",
+}
 
 // InboundPortDirsWithoutSuite devuelve la lista CERRADA de directorios de puertos de ENTRADA
 // que, por decisión escrita, no llevan suite de contrato: en ellos, un fichero solo de
@@ -22,5 +29,7 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // documentations/reorganizacion-modular/plan/DECISIONES.md; sin ella, el puerto lleva su
 // suite como manda 05 E-3.
 func InboundPortDirsWithoutSuite() []string {
-	panic(pendiente.Implementar("candados.InboundPortDirsWithoutSuite"))
+	// Clone y no el slice: devolver la variable dejaría a cualquier llamante ampliar la
+	// excepción (o borrarla) para todos los demás.
+	return slices.Clone(inboundPortDirsWithoutSuite)
 }
