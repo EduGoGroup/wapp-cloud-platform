@@ -1,6 +1,13 @@
 package candados
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import "maps"
+
+// contractAdapterDirs es el mapa del que ContractAdapterDirs devuelve copias. No se exporta:
+// nadie fuera de este fichero lo lee ni lo cambia.
+var contractAdapterDirs = map[string]string{
+	// D-F2-9 (Jhoan, 2026-10-04): los adaptadores Postgres de los puertos de salida de iam.
+	"internal/modulos/acceso/iam/ports/out/outhelpertest": "internal/modulos/acceso/iam/infra/postgres",
+}
 
 // ContractAdapterDirs devuelve la lista CERRADA de pares «suite …helpertest → paquete del
 // adaptador» en los que el adaptador Postgres NO vive en el padre del helpertest, y que
@@ -26,5 +33,7 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // Añadir un par exige antes una decisión en
 // documentations/reorganizacion-modular/plan/DECISIONES.md.
 func ContractAdapterDirs() map[string]string {
-	panic(pendiente.Implementar("candados.ContractAdapterDirs"))
+	// Clone y no el mapa: devolver la variable dejaría a cualquier llamante ampliar la
+	// excepción (o borrarla) para todos los demás.
+	return maps.Clone(contractAdapterDirs)
 }

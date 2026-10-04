@@ -62,7 +62,9 @@ var helperTestRoots = []string{"internal/modulos", "internal/nucleo"}
 //     a. paquetes …helpertest: el último elemento de la ruta termina en «helpertest» con al
 //     menos un carácter delante (D-F1-10), bajo internal/modulos o internal/nucleo;
 //     b. el paquete del PUERTO que prueba: el directorio padre de un …helpertest importado
-//     en ESE MISMO fichero. De él solo puede usar el constructor: todo selector
+//     en ESE MISMO fichero o, si el par está en la lista cerrada ContractAdapterDirs
+//     (D-F2-9: la zona hexagonal de iam, cuyos adaptadores no viven en el padre de su
+//     suite), el adaptador de ese helpertest. De él solo puede usar el constructor: todo selector
 //     <nombre>.<símbolo> sobre el nombre local del import (el alias, o el último elemento
 //     de la ruta) debe empezar por «New». Importarlo con punto o en blanco es una
 //     violación: no se vería qué usa;
@@ -127,12 +129,17 @@ func judgeProcessFile(modulo string, f Fuente) []string {
 	imports := internalImports(modulo, f)
 	isLock := slices.Contains(processLockPaths, f.Ruta)
 	isContract := isProcessContractFile(f.Ruta)
-	// Los puertos que este fichero puede importar: el padre de cada …helpertest que importa.
+	// Los puertos que este fichero puede importar: el padre de cada …helpertest que importa y,
+	// si el par está en ContractAdapterDirs (D-F2-9), su adaptador.
 	ports := make(map[string]bool)
 	if isContract {
+		adapters := ContractAdapterDirs()
 		for _, imp := range imports {
 			if isHelperTestImport(imp.rel) {
 				ports[path.Dir(imp.rel)] = true
+				if adapter, ok := adapters[imp.rel]; ok {
+					ports[adapter] = true
+				}
 			}
 		}
 	}
