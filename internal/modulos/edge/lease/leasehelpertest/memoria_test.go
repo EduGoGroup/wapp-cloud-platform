@@ -57,7 +57,10 @@ func TestMemoria_StampsWithItsClock(t *testing.T) {
 	if err := repo.Upsert(ctx, lease.State{TenantID: "t", EdgeID: "e", Counter: 2}); err != nil {
 		t.Fatalf("Upsert: error inesperado %v", err)
 	}
-	st, _, _ := repo.Get(ctx, "t", "e")
+	st, _, err := repo.Get(ctx, "t", "e")
+	if err != nil {
+		t.Fatalf("Get: error inesperado %v", err)
+	}
 	if !st.IssuedAt.Equal(first) || st.IssuedAt.Location() != time.UTC {
 		t.Errorf("issued_at = %v, quería %v en UTC (el de la primera emisión)", st.IssuedAt, first.UTC())
 	}
@@ -68,7 +71,10 @@ func TestMemoria_StampsWithItsClock(t *testing.T) {
 	if err := repo.MarkRevoked(ctx, "t", "nunca-visto", first); err != nil {
 		t.Fatalf("MarkRevoked: error inesperado %v", err)
 	}
-	st, _, _ = repo.Get(ctx, "t", "nunca-visto")
+	st, _, err = repo.Get(ctx, "t", "nunca-visto")
+	if err != nil {
+		t.Fatalf("Get: error inesperado %v", err)
+	}
 	if !st.IssuedAt.Equal(current) || !st.UpdatedAt.Equal(current) {
 		t.Errorf("fila nacida revocada: issued_at = %v, updated_at = %v, quería %v en las dos", st.IssuedAt, st.UpdatedAt, current.UTC())
 	}

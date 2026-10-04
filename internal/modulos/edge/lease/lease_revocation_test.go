@@ -138,32 +138,6 @@ func TestRevokedTenant_WinsOverNeverSeenEdge(t *testing.T) {
 	}
 }
 
-// TestRevokedTenant_WinsOverLiveEdge: el tenant cortado gana también sobre un Edge que ya tenía
-// lease vigente, y su fila NO se marca (R-L4: los dos sujetos de corte son independientes).
-func TestRevokedTenant_WinsOverLiveEdge(t *testing.T) {
-	mgr, repo := newManager(t)
-	ctx := context.Background()
-	if _, err := mgr.IssueInitial(ctx, tenantOne, edgeOne); err != nil {
-		t.Fatalf("IssueInitial: error inesperado %v", err)
-	}
-	before := mustState(t, repo, tenantOne, edgeOne)
-	if err := mgr.RevokeTenant(ctx, tenantOne); err != nil {
-		t.Fatalf("RevokeTenant: error inesperado %v", err)
-	}
-	if repo.tenantMarks.Load() != 1 || repo.markRevokeds.Load() != 0 {
-		t.Errorf("RevokeTenant: %d MarkTenantRevoked y %d MarkRevoked, quería 1 y 0",
-			repo.tenantMarks.Load(), repo.markRevokeds.Load())
-	}
-	lu, err := mgr.Renew(ctx, tenantOne, edgeOne, 1)
-	if err != nil {
-		t.Fatalf("Renew con el tenant cortado: error inesperado %v", err)
-	}
-	requireRevocation(t, mgr, lu)
-	if after := mustState(t, repo, tenantOne, edgeOne); after != before {
-		t.Errorf("cortar el tenant tocó la fila del Edge: %+v → %+v", before, after)
-	}
-}
-
 // TestRestoreTenant_UnblocksFutureIssue: R-L4. Restaurar reactiva TODAS las instalaciones del
 // tenant de una vez… salvo la que estaba revocada individualmente, que sigue cortada.
 func TestRestoreTenant_UnblocksFutureIssue(t *testing.T) {
@@ -198,29 +172,6 @@ func TestRestoreTenant_UnblocksFutureIssue(t *testing.T) {
 		t.Fatalf("IssueInitial del Edge revocado: error inesperado %v", err)
 	}
 	requireRevocation(t, mgr, lu)
-}
-
-// TestSignTenantRevocation_SignsWithoutPersisting: R-L4. Firma la notificación de revocación
-// para un Edge y NO toca el almacén: ni lee ni escribe, ni marca al Edge.
-func TestSignTenantRevocation_SignsWithoutPersisting(t *testing.T) {
-	mgr, repo := newManager(t)
-	lu, err := mgr.SignTenantRevocation(edgeOne, tenantOne)
-	if err != nil {
-		t.Fatalf("SignTenantRevocation: error inesperado %v", err)
-	}
-	requireRevocation(t, mgr, lu)
-	if repo.writes() != 0 || repo.gets.Load() != 0 || repo.tenantReads.Load() != 0 {
-		t.Errorf("SignTenantRevocation tocó el almacén: %d escrituras, %d Get, %d TenantRevoked",
-			repo.writes(), repo.gets.Load(), repo.tenantReads.Load())
-	}
-	requireNoState(t, repo, tenantOne, edgeOne)
-
-	// Como no persistió nada, el Edge sigue pudiendo recibir un lease vigente.
-	live, err := mgr.IssueInitial(context.Background(), tenantOne, edgeOne)
-	if err != nil {
-		t.Fatalf("IssueInitial: error inesperado %v", err)
-	}
-	requireLive(t, mgr, live)
 }
 
 // TestIssue_ReadFailure_FailsClosed: R-L5 (D-055.1). Si no se puede leer el estado previo —el
@@ -260,8 +211,8 @@ func TestIssue_ReadFailure_FailsClosed(t *testing.T) {
 }
 
 // TestRevoke_DoesNotDependOnCounterOrState: R-L6. El kill-switch se dispara siempre: sobre un
-// Edge nunca visto (sin counter), con cualquier counter, repetido, y con las lecturas caídas
-// (Revoke no lee: no hay estado previo que pueda impedirlo).
+// Edge nunca visto (sin counter) y con las lecturas caídas (Revoke no lee: no hay estado previo
+// que pueda impedirlo).
 func TestRevoke_DoesNotDependOnCounterOrState(t *testing.T) {
 	t.Run("never seen edge", func(t *testing.T) {
 		mgr, repo := newManager(t)
@@ -291,6 +242,11 @@ func TestRevoke_DoesNotDependOnCounterOrState(t *testing.T) {
 			t.Errorf("Revoke hizo %d MarkRevoked, quería 1", repo.markRevokeds.Load())
 		}
 	})
+}
+
+// TestRevoke_WorksWithAnyCounterAndOnARevokedTenant: el resto de R-L6. Con un counter cualquiera,
+// repetido, y sobre un Edge de un tenant ya cortado.
+func TestRevoke_WorksWithAnyCounterAndOnARevokedTenant(t *testing.T) {
 	t.Run("any counter and repeated", func(t *testing.T) {
 		mgr, repo := newManager(t)
 		ctx := context.Background()

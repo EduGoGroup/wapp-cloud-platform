@@ -168,25 +168,36 @@ func TestResolveSigningKey_Precedence(t *testing.T) {
 	fileKey, b64Key := newKey(t), newKey(t)
 	pemPath := writeEd25519PEM(t, fileKey)
 
-	key, source, err := lease.ResolveSigningKey(pemPath, seedBase64(b64Key))
-	if err != nil || source != lease.KeySourceFile || !key.Equal(fileKey) {
-		t.Errorf("con fichero y base64 = (fuente %q, err %v, es la del fichero=%v); gana el fichero",
-			source, err, err == nil && key.Equal(fileKey))
+	cases := []struct {
+		name            string
+		pemFile, base64 string
+		wantSource      lease.KeySource
+		wantKey         ed25519.PrivateKey // nil: una efímera, distinta de las configuradas
+	}{
+		{"file wins over base64", pemPath, seedBase64(b64Key), lease.KeySourceFile, fileKey},
+		{"file alone", pemPath, "", lease.KeySourceFile, fileKey},
+		{"base64 alone", "", seedBase64(b64Key), lease.KeySourceBase64, b64Key},
+		{"nothing configured is ephemeral", "", "", lease.KeySourceGenerated, nil},
 	}
-	key, source, err = lease.ResolveSigningKey(pemPath, "")
-	if err != nil || source != lease.KeySourceFile || !key.Equal(fileKey) {
-		t.Errorf("solo fichero = (fuente %q, err %v), quería la del fichero", source, err)
-	}
-	key, source, err = lease.ResolveSigningKey("", seedBase64(b64Key))
-	if err != nil || source != lease.KeySourceBase64 || !key.Equal(b64Key) {
-		t.Errorf("solo base64 = (fuente %q, err %v), quería la de base64", source, err)
-	}
-	key, source, err = lease.ResolveSigningKey("", "")
-	if err != nil || source != lease.KeySourceGenerated || len(key) != ed25519.PrivateKeySize {
-		t.Errorf("sin configurar = (fuente %q, err %v, %d bytes), quería una efímera", source, err, len(key))
-	}
-	if key.Equal(fileKey) || key.Equal(b64Key) {
-		t.Error("la efímera coincide con una de las configuradas")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			key, source, err := lease.ResolveSigningKey(c.pemFile, c.base64)
+			if err != nil {
+				t.Fatalf("ResolveSigningKey: error inesperado %v", err)
+			}
+			if source != c.wantSource {
+				t.Errorf("fuente = %q, quería %q", source, c.wantSource)
+			}
+			if len(key) != ed25519.PrivateKeySize {
+				t.Fatalf("clave de %d bytes, quería %d", len(key), ed25519.PrivateKeySize)
+			}
+			if c.wantKey != nil && !key.Equal(c.wantKey) {
+				t.Error("la clave resuelta no es la de la fuente que debía ganar")
+			}
+			if c.wantKey == nil && (key.Equal(fileKey) || key.Equal(b64Key)) {
+				t.Error("la efímera coincide con una de las configuradas")
+			}
+		})
 	}
 }
 

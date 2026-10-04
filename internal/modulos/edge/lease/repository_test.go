@@ -48,7 +48,10 @@ func TestState_ZeroValueMeansLive(t *testing.T) {
 	if err := repo.Upsert(ctx, lease.State{TenantID: "t", EdgeID: "otro", Counter: 1, ExpiresAt: expiry, Revoked: true}); err != nil {
 		t.Fatalf("Upsert: error inesperado %v", err)
 	}
-	st, _, _ = repo.Get(ctx, "t", "otro")
+	st, _, err = repo.Get(ctx, "t", "otro")
+	if err != nil {
+		t.Fatalf("Get: error inesperado %v", err)
+	}
 	if st.Revoked {
 		t.Error("Upsert con Revoked=true revocó: para revocar está MarkRevoked")
 	}
