@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/postgres"
 )
 
 // Los centinelas de los adaptadores. Su texto es observable (los envuelven los errores que llegan
@@ -90,11 +92,23 @@ type InstallationItem struct {
 // Repository es el adaptador Postgres de TenantStore (este fichero) y de AccessRequestStore
 // (access_requests_postgres.go): SQL crudo sobre database/sql, sin ORM. Las promesas de cada
 // método son las del puerto; aquí solo se añade lo propio del adaptador.
-// Repository es el adaptador Postgres de TenantStore (este fichero) y de AccessRequestStore
-// (access_requests_postgres.go): SQL crudo sobre database/sql, sin ORM. Las promesas de cada
-// método son las del puerto; aquí solo se añade lo propio del adaptador.
 type Repository struct {
 	db *sql.DB
+	// features es el resolver de derechos que ExecuteApprovalTx pasa a GrantTenantAccess (ver
+	// NewRepository).
+	features iampostgres.FeatureResolver
+}
+
+// NewRepository construye el repositorio sobre el pool db. No valida sus argumentos ni toca la
+// base: con db nil devuelve igualmente un Repository (que fallará en la primera consulta).
+//
+// features es el resolver de derechos comerciales, y el repositorio lo usa para UNA sola cosa:
+// viaja tal cual hasta iampostgres.GrantTenantAccess cuando ExecuteApprovalTx da de alta (Plan
+// 047 · Ola 5 · T5.2): aprobar es DAR DE ALTA, y el desenlace de un alta depende del derecho
+// multi_empresa de la empresa de destino. nil no desactiva la regla: la deja contestando que no
+// (la persona que ya es de otra empresa no entra), el extremo fail-closed de entitlements.
+func NewRepository(db *sql.DB, features iampostgres.FeatureResolver) *Repository {
+	return &Repository{db: db, features: features}
 }
 
 // ListTenants implementa TenantStore.ListTenants: ORDER BY created_at DESC, id DESC, con limit

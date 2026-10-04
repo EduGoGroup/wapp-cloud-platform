@@ -2,6 +2,7 @@ package platformadmin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,11 +10,40 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	iampostgres "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/postgres"
 )
 
 // Repository implementa el puerto de empresas (el de solicitudes llega con
 // access_requests_postgres.go).
 var _ TenantStore = (*Repository)(nil)
+
+// El constructor recibe el pool y el resolver de derechos del alta, y no devuelve error.
+var _ func(*sql.DB, iampostgres.FeatureResolver) *Repository = NewRepository
+
+// yesResolver es un FeatureResolver que concede todo.
+type yesResolver struct{}
+
+func (yesResolver) Has(context.Context, string, string) (bool, error) { return true, nil }
+
+// NewRepository no valida ni toca la base: con db nil devuelve un repositorio (que valida igual
+// antes de consultar) y guarda el resolver tal cual, que es el que viajará a GrantTenantAccess.
+func TestNewRepository_KeepsTheResolverWithoutTouchingTheDB(t *testing.T) {
+	features := yesResolver{}
+	r := NewRepository(nil, features)
+	if r == nil {
+		t.Fatal("NewRepository(nil, …) devolvió nil")
+	}
+	if r.features != features {
+		t.Fatalf("features = %#v, quiero el resolver recibido", r.features)
+	}
+	if _, err := r.CreateTenant(context.Background(), "", "x", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateTenant sin slug = %v, quiero ErrInvalidInput sin tocar la base", err)
+	}
+	if NewRepository(nil, nil).features != nil {
+		t.Fatal("con features nil el repositorio guarda nil (la regla de una empresa queda en «no»)")
+	}
+}
 
 // clampPage es la regla de la página de empresas que comparten el adaptador y el handler. Su tope
 // superior (500) no lo afirma la suite del puerto (sembrar 501 empresas por caso no compensa).
