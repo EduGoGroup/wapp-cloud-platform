@@ -1,10 +1,9 @@
-//go:build pendiente
-
 package iampostgres
 
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -62,6 +61,65 @@ func TestInvitationRepo_InfraErrors(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			wantInfraError(t, c.name, c.call(NewInvitationRepo(downPool(t))), c.prefix)
+		})
+	}
+}
+
+// optTime describe un *time.Time para un mensaje: <nil> o el instante en UTC.
+func optTime(p *time.Time) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return p.UTC().Format(time.RFC3339Nano)
+}
+
+// describeInvitation describe una invitación campo a campo, con los punteros desreferenciados.
+func describeInvitation(inv domain.Invitation) string {
+	return fmt.Sprintf("{id %q tenant %q digest %x role %s expires %s by %q redeemedBy %s redeemedAt %s revokedAt %s created %s}",
+		inv.ID, inv.TenantID, inv.TokenHash, optString(inv.RoleID), inv.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		inv.CreatedBy, optString(inv.RedeemedBy), optTime(inv.RedeemedAt), optTime(inv.RevokedAt),
+		inv.CreatedAt.UTC().Format(time.RFC3339Nano))
+}
+
+// TestScanInvitation: la fila de tenant_invitations (orden de invitationCols) llega entera a la
+// entidad. Las cuatro NULLables (role_id, redeemed_by, redeemed_at, revoked_at) son nil si son
+// NULL y apuntan a su valor si no: perder revoked_at dejaría una invitación revocada diciendo
+// «pendiente». Un error de Scan se devuelve tal cual, con la invitación vacía.
+func TestScanInvitation(t *testing.T) {
+	created := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	expires, redeemed, revoked := created.Add(72*time.Hour), created.Add(time.Hour), created.Add(2*time.Hour)
+	digest := domain.HashInvitationToken("token-de-prueba")
+	roleID, redeemer := companyRoleID, "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a"
+	base := domain.Invitation{
+		ID: testInvitationID, TenantID: testTenantID, TokenHash: digest,
+		ExpiresAt: expires, CreatedBy: testUserID, CreatedAt: created,
+	}
+	all := base
+	all.RoleID, all.RedeemedBy, all.RedeemedAt, all.RevokedAt = &roleID, &redeemer, &redeemed, &revoked
+
+	cases := []struct {
+		name    string
+		row     fakeRow
+		want    domain.Invitation
+		wantErr error
+	}{
+		{"pending_all_nullables_null", fakeRow{values: []any{
+			testInvitationID, testTenantID, digest, nil, expires, testUserID, nil, nil, nil, created,
+		}}, base, nil},
+		{"all_nullables_set", fakeRow{values: []any{
+			testInvitationID, testTenantID, digest, roleID, expires, testUserID, redeemer, redeemed, revoked, created,
+		}}, all, nil},
+		{"scan_error_returned_as_is", fakeRow{err: sql.ErrNoRows}, domain.Invitation{}, sql.ErrNoRows},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := scanInvitation(c.row)
+			if !errors.Is(err, c.wantErr) || (c.wantErr == nil && err != nil) {
+				t.Fatalf("scanInvitation error = %v; quiere %v", err, c.wantErr)
+			}
+			if describeInvitation(got) != describeInvitation(c.want) {
+				t.Errorf("scanInvitation = %s;\nquiere          %s", describeInvitation(got), describeInvitation(c.want))
+			}
 		})
 	}
 }
