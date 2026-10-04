@@ -47,6 +47,46 @@ tablas de §1 y §5. El nº de consumidores por paquete está **sin medir** (sol
 | `E/grpc` | sí (acks, inferencias, readiness) | sí (carril por sesión, fan-out) | vía puertos | **complejo** (ADR-0048) |
 | `internal/arranque/bridge_gateway.go` | no | no | no | **simple** (adaptador, `05` §4.2) |
 
+#### 1.1.a · Inventario E-12 de las hojas, fichero a fichero (medido el 2026-10-04 sobre `dev` @ `8896f13`; **aprobado por Jhoan** en F3-01)
+
+Manda sobre la tabla provisional de arriba para estos 7 paquetes. Consumidores = paquetes de producción distintos, fuera
+del propio, que usan un símbolo de ese fichero (los dos `arranque`, viejo y nuevo, cuentan 2). Líneas = `wc -l` del
+fichero viejo; «→» = lo que queda al mudar el doble en memoria a `<paq>helpertest` (D-F3-1).
+
+| Fichero nuevo (`E/…`) | L. viejo | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `session/registry.go` | 230 | `map` de sesiones vivas | `Mutex`, goroutine + timer + `select` | no | 5 | **complejo** (mutantes) |
+| `inferstats/inferstats.go` | 223 | `map[Clave]Parte` | `RWMutex` | no | 3 | **complejo** (pequeño) |
+| `receipts/receipts.go` | 59 | no | no | no | 0 | **simple** |
+| `receipts/sink.go` | 81 | no | no | vía `Store` (N `Save` sin tx) | 2 | **medio** |
+| `receipts/postgres.go` | 84 | no | no | 2 sentencias sueltas, `ON CONFLICT DO UPDATE` | 2 | **medio** (D-F3-7) |
+| `receipts/receiptshelpertest` (suite + doble ← `memory.go`) | 81 | mapa + `seq` | `Mutex` | no | — | **medio** |
+| `ingest/deduper.go` ✚ | — | no | no | no | — | **simple** (solo interfaz) |
+| `ingest/postgres.go` | 125 | contador `atomic` de poda | `atomic.Uint64` | INSERT + DELETE de poda **sin tx**, reloj real | 2 | **complejo** |
+| `ingest/ingesthelpertest` (suite + doble ← `dedupe.go`) | 48 | mapa | `Mutex` | no | — | **medio** |
+| `diagnostics/diagnostics.go` | 203 → ~95 | no (el doble se va) | no | no | 2 | **simple** |
+| `diagnostics/postgres.go` | 150 | no | no | 7 sentencias; `CreateRequest` y `GetBundle` son 2 sin tx; dos relojes para el TTL | 2 | **complejo** |
+| `diagnostics/diagnosticshelpertest` | ~110 | 2 mapas | `Mutex`, reloj privado | no | — | **medio** |
+| 🔒 `lease/lease.go` | 236 | no | no (delega) | vía repo: SELECT + SELECT + UPSERT **sin tx** | 3 | **complejo** (mutantes; kill-switch) |
+| 🔒 `lease/repository.go` | 160 → ~60 | no (el doble se va) | no | no | 0 | **simple** (interfaz + `State`; lleva el contrato de `Upsert`) |
+| 🔒 `lease/repository_postgres.go` | 123 | no | no | 6 sentencias sueltas; escribe `public.tenants.revoked_at` (D-9) | 2 | **complejo** (SQL literal, driver falso) |
+| `lease/signingkey.go` | 92 | no | no | no (lee disco) | 2 | **medio** |
+| `lease/leasehelpertest` | ~100 | 2 mapas | `Mutex` | no | — | **medio** |
+| `enroll/ca.go` | 254 | no | no | no; 3 `time.Now` sin reloj inyectable | 2 | **medio** |
+| `enroll/doc.go` | 18 | — | — | — | 0 | sin test |
+| `enroll/edgecert.go` | 87 → ~50 | no (el doble se va) | no | 1 INSERT | 2 | **medio** (D-F3-7) |
+| `enroll/server.go` | 103 | no | no | no | 2 | **medio** |
+| `enroll/service.go` | 57 | no | no | 2 escrituras **sin tx** (consume, luego certificado) | 2 | **medio** |
+| `enroll/store.go` | 89 → ~40 | no (el doble se va) | no | no | 0 | **simple** |
+| `enroll/store_postgres.go` | 65 | no | no | `UPDATE … RETURNING` atómico (un solo uso) | 2 | **complejo** |
+| `enroll/enrollhelpertest` (2 suites + 2 dobles) | ~90 | mapa / slice | `Mutex` | no | — | **medio** |
+
+- **Adaptadores `bridge_<x>.go` en F3-01: ninguno** nace ni muere. Hoy viven `bridge_contact.go` (F1) y `bridge_iam.go` (F2).
+- **Puertos de entrada sin suite (`05` E-3): ninguno.** Los 7 paquetes solo declaran interfaces de repositorio/salida; sus
+  caras de entrada son tipos concretos. Nada que añadir a `candados.InboundPortDirsWithoutSuite`.
+- **`ingest/dedupe.go` y `receipts/memory.go` no nacen** (hallazgo 1 del README): su único contenido era el doble.
+- `fleet`, `filtercfg` y `grpc` se inventarían fichero a fichero al abrir F3-02 y F3-03.
+
 **Adaptadores de arranque**: nace **1** (`bridge_gateway.go`, muere en F4) y muere **1** (`bridge_iam.go`, nacido en F2).
 
 ## 2 · Grafo interno y orden
