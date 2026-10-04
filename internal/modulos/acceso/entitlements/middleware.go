@@ -3,10 +3,28 @@
 package entitlements
 
 import (
+	"encoding/json"
 	"net/http"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
+
+// featureDeniedBody es el cuerpo del 403 del gate: un código estable que la UI puede reconocer sin
+// parsear prosa (feature_not_enabled) + la clave que faltó. El orden de los campos es el del
+// contrato (design §D-040.5).
+//
+// `features` (plural) es de RequireAnyFeature y lleva las claves de las que BASTA UNA. Va aparte
+// del singular y no reutilizándolo porque son respuestas distintas: «te falta cart_basic» es
+// accionable, y decir eso cuando en realidad valía cualquiera de cuatro mandaría a la UI a ofrecer
+// el upgrade equivocado.
+//
+// Los dos llevan omitempty, así que el cuerpo de RequireFeature sale EXACTAMENTE igual que antes
+// de existir el plural (`features` nil se omite): el contrato del Plan 040 no se toca.
+type featureDeniedBody struct {
+	Error    string   `json:"error"`
+	Feature  string   `json:"feature,omitempty"`
+	Features []string `json:"features,omitempty"`
+}
 
 // RequireFeature devuelve un middleware net/http que exige la feature al tenant de la Identity
 // autenticada (httpapi.IdentityFromContext; INV-8: el tenant sale del token, nunca de la
@@ -28,7 +46,22 @@ import (
 // debe distinguir «no lo tienes» de «no pude averiguarlo», y un 5xx invitaría a reintentar hasta
 // colarse. Sin identidad o sin resolver no se pregunta al Resolver.
 func RequireFeature(resolver Resolver, feature string) func(http.Handler) http.Handler {
-	panic(pendiente.Implementar("entitlements.RequireFeature"))
+	denied := featureDeniedBody{Error: "feature_not_enabled", Feature: feature}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := httpapi.IdentityFromContext(r.Context())
+			if !ok || id.TenantID == "" || resolver == nil {
+				writeDenied(w, denied)
+				return
+			}
+			has, err := resolver.Has(r.Context(), id.TenantID, feature)
+			if err != nil || !has {
+				writeDenied(w, denied)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // RequireAnyFeature es el gate de una capacidad que NO pertenece a una feature sino a varias:
@@ -54,6 +87,57 @@ func RequireFeature(resolver Resolver, feature string) func(http.Handler) http.H
 // con la lista vacía, {"error":"feature_not_enabled"} (las dos claves del cuerpo son omitempty, y
 // por eso el cuerpo singular de RequireFeature no lleva "features"). El cuerpo no dice cuál falló
 // ni por qué: los tres modos de no-resolución y «ninguna concedida» responden lo mismo.
+//
+// La lista vacía la cierra el propio bucle —no itera y cae en la denegación final—, así que NO hay
+// una guarda `len(features) == 0` al principio: en el viejo se escribió, se comprobó que no
+// cambiaba nada y se quitó. Una guarda que no altera el comportamiento sugiere que sin ella
+// pasaría lo contrario; lo que sostiene la regla es TestRequireAnyFeature_EmptyListDoesNotOpen.
 func RequireAnyFeature(resolver Resolver, features ...string) func(http.Handler) http.Handler {
-	panic(pendiente.Implementar("entitlements.RequireAnyFeature"))
+	denied := featureDeniedBody{Error: "feature_not_enabled", Features: features}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := httpapi.IdentityFromContext(r.Context())
+			if !ok || id.TenantID == "" || resolver == nil {
+				writeDenied(w, denied)
+				return
+			}
+			for _, f := range features {
+				has, err := resolver.Has(r.Context(), id.TenantID, f)
+				if err != nil {
+					// Corta en el acto, no `continue`: la política ante un resolver medio caído
+					// tiene que ser una, no un sorteo según qué clave falle primero (R-E3).
+					writeDenied(w, denied)
+					return
+				}
+				if has {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			writeDenied(w, denied)
+		})
+	}
+}
+
+// writeDenied responde el 403 del gate, singular o plural según el cuerpo. En el viejo eran dos
+// funciones (writeFeatureDenied y writeAnyFeatureDenied) idénticas salvo el cuerpo; aquí es una.
+//
+// El cuerpo no dice cuál falló ni en qué orden se preguntó, y eso es deliberado: las
+// no-resoluciones (sin identidad, resolver caído o nil) y «no la tiene» responden EXACTAMENTE lo
+// mismo. Un cuerpo que distinguiera «no pude averiguarlo» de «no lo tienes» invitaría a reintentar
+// hasta colarse.
+//
+// Ante un fallo de codificación (imposible con este struct) responde igualmente 403, en texto
+// plano: nunca deja pasar por un error de serialización.
+func writeDenied(w http.ResponseWriter, denied featureDeniedBody) {
+	body, err := json.Marshal(denied)
+	if err != nil {
+		http.Error(w, "feature_not_enabled", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	if _, werr := w.Write(body); werr != nil {
+		return
+	}
 }

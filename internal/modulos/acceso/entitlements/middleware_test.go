@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package entitlements_test
 
 import (
