@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package iamidentity_test
 
 import (
@@ -102,14 +100,14 @@ type fakeM2M struct {
 	// onExchange, si no es nil, corre en cada canje ANTES de contestar y SIN el candado del fake:
 	// es donde un test retiene el canje para ver qué hacen los demás mientras tanto.
 	onExchange func(r *http.Request)
-	// reply decide la respuesta de negocio; por defecto, 200 con "{}".
+	// reply decide la respuesta de negocio; por defecto, el 201 de un alta (ensureOK).
 	reply func(req m2mRequest) m2mReply
 }
 
 func newFakeM2M(t *testing.T) *fakeM2M {
 	t.Helper()
 	f := &fakeM2M{expiresIn: 900, tokenStatus: http.StatusOK}
-	f.reply = func(m2mRequest) m2mReply { return m2mReply{status: http.StatusOK, body: "{}"} }
+	f.reply = func(m2mRequest) m2mReply { return m2mReply{status: http.StatusCreated, body: ensureOK} }
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -623,7 +621,7 @@ func TestM2M_ColdBurstProducesSingleExchange(t *testing.T) {
 		t.Errorf("llamadas de negocio = %d, quería %d", len(b), burst)
 	}
 	for _, bearer := range b {
-		if bearer != "svc-token-1" {
+		if bearer != "svc-token-1" { //nolint:gosec // token de mentira de un test
 			t.Errorf("portador = %q, quería el único token canjeado", bearer)
 		}
 	}
@@ -638,9 +636,15 @@ func TestM2M_CanceledContextDoesNotWaitForExchange(t *testing.T) {
 		f := newFakeM2M(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := f.client(t, newFakeClock()).EnsureUser(ctx, m2mEmail, "Ana", "Pérez")
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err = %v, quería context.Canceled", err)
+		c := f.client(t, newFakeClock())
+		// Se repite: con el turno libre y el ctx muerto, un select sin la comprobación previa
+		// elegiría al azar entre los dos casos, y una sola llamada acertaría por suerte la mitad
+		// de las veces.
+		for i := range 64 {
+			_, err := c.EnsureUser(ctx, m2mEmail, "Ana", "Pérez")
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("llamada #%d: err = %v, quería context.Canceled", i+1, err)
+			}
 		}
 		if exchanges, calls := f.snapshot(); exchanges != 0 || len(calls) != 0 {
 			t.Errorf("canjes = %d, llamadas = %d; quería ninguno con el ctx ya muerto", exchanges, len(calls))
@@ -1072,7 +1076,7 @@ func TestM2M_Signup_DoesNotPresentServiceToken(t *testing.T) {
 	if len(calls) != 1 || calls[0].method != http.MethodPost || calls[0].path != "/api/v1/auth/signup" || calls[0].bearer != "" {
 		t.Fatalf("llamadas = %+v, quería un POST /api/v1/auth/signup sin portador", calls)
 	}
-	want := map[string]any{"email": m2mEmail, "password": "una-frase-de-acceso-larga", "first_name": "Ana", "last_name": "Pérez"}
+	want := map[string]any{"email": m2mEmail, "password": "una-frase-de-acceso-larga", "first_name": "Ana", "last_name": "Pérez"} //nolint:gosec // credencial de mentira de un test
 	for k, v := range want {
 		if calls[0].body[k] != v {
 			t.Errorf("cuerpo[%s] = %v, quería %v", k, calls[0].body[k], v)
