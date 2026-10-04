@@ -207,7 +207,7 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     0 SKIP**. **Sin divergencias** memoria ↔ Postgres en ninguna: los hallazgos 15 y 16 se resolvieron en los montajes
     (`Seed` de `entitlements` antes de la primera consulta, planes `contract_*`, `basic` ampliado sin borrar; invitaciones
     y canje sembrados por SQL; el rol transversal de la migración 0059).
-29. 🟡 **Cuatro mutantes de `canje.go` sobreviven incluso contra Postgres**: el `UPDATE` sin `revoked_at IS NULL`, sin
+29. ✅ ~~🟡~~ *(resuelto por D-F2-12, ver el final del hallazgo 45)* **Cuatro mutantes de `canje.go` sobrevivían incluso contra Postgres**: el `UPDATE` sin `revoked_at IS NULL`, sin
     `redeemed_at IS NULL`, sin comprobar filas afectadas, y `GrantTenantAccess` sobre `r.db` en vez de la `tx`. Los tres
     primeros solo los destapa una **carrera** (el viejo ya lo había medido: el veredicto previo los enmascara); el cuarto,
     porque el comentario viejo dice que `canje_orden_ast_test.go` vigila que el canje pase la `tx`, y **solo vigila el
@@ -304,7 +304,7 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     | I-CP-5 | proceso `TestP2_RutasDePlataformaDenegadasAlCliente` (10 rutas × 2) y la petición real de T2.32 (403) |
     | Migración 0038 | **nuevo**: `TestP2_ExchangeAndPermissions/el IAM propio no sobrevive a la 0038` (`8677404`, `test/procesos/p2_canje_schema_test.go`) |
 
-45. 🟡 **Hallazgo 29, medido otra vez (33 mutantes sobre `memberships.go` y `canje.go`)**. De los cuatro de carrera de `canje.go`,
+45. ✅ ~~🟡~~ **Hallazgo 29, medido otra vez (33 mutantes sobre `memberships.go` y `canje.go`)**. De los cuatro de carrera de `canje.go`,
     **tres mueren ya, pero solo por el proceso P2** («ocho canjes simultáneos», 3 de 3 corridas cada uno): el `UPDATE` sin
     `redeemed_at IS NULL`, sin comprobar filas afectadas, y `GrantTenantAccess` sobre `r.db`. La suite de contrato contra
     Postgres no mata ninguno (0 de 4). **Siguen vivos dos**: el `UPDATE` sin `revoked_at IS NULL` (el caso «revocada» de P2
@@ -313,6 +313,15 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
     entero, que solo matan los unitarios y el candado AST). No se resolvió nada (decisión pendiente de Jhoan): lo que los
     mataría es una revocación intercalada entre el paso 1 y el 3 (o N canjes contra N revocaciones), y subir la concurrencia
     del caso de `Add` o exigir por AST que `Add` pase la `tx`.
+    **Resuelto (D-F2-12, Jhoan, 2026-10-04, tras el cierre de F2): conducta donde la carrera se puede forzar, candado AST
+    donde no.** (a) `TestIAMRedeem_RevokedWhileRedeeming_Conflict` (`test/procesos/iam_redeem_contrato_test.go`, contra
+    Postgres): el test toma el cerrojo advisory de la persona, el canje lee la invitación como pendiente y se queda
+    esperándolo (se afirma en `pg_locks`, no se supone), la dueña la revoca, se suelta el cerrojo y el canje tiene que
+    acabar en conflicto sin membresía ni rol; sin `revoked_at IS NULL` cae 3 de 3. (b) `TestGrantTenantAccess_ReceivesTheCallersTransaction`
+    (`iam/infra/postgres/grant_in_transaction_ast_test.go`): toda llamada a `GrantTenantAccess` del paquete recibe un
+    identificador ligado a `BeginTx` en la misma función, y exige encontrar las de `Add` y `Redeem`; con `r.db` cae. **Los
+    dos vivos del nivel complejo quedan en cero.** Límite del candado: mira solo ese paquete (la aprobación del operador en
+    `platformadmin` tiene su propio test de transacción con el *driver* falso).
 46. **Cinco mutantes vivos nuevos del nivel complejo, arreglados con su commit; ninguno tocó producción**:
     `do` sin el prefijo `Bearer ` y `NewM2M` con `timeout < 0` (`40d1582`; el doble recortaba el prefijo, y el 0 exacto no
     tenía test) · `ListAccessRequests` sin `ORDER BY` (`d243f15`: el caso creaba las solicitudes en el orden en que esperaba
@@ -369,12 +378,13 @@ con SHA, un bloque en `ESTADO.md` y los hallazgos nuevos en este README.
   |---|---|---|---|---|
   | `entitlements/postgres.go` | 28 | 26 | 0 | 2 |
   | `iam/infra/identity/m2m*.go` | 38 | 35 | 0 | 3 |
-  | `iam/infra/postgres/memberships.go` | 18 | 17 | 1 🟡 | 0 |
-  | `iam/infra/postgres/canje.go` | 15 | 14 | 1 🟡 | 0 |
+  | `iam/infra/postgres/memberships.go` | 18 | 18 | 0 | 0 |
+  | `iam/infra/postgres/canje.go` | 15 | 15 | 0 | 0 |
   | `platformadmin/access_requests_postgres.go` (+ 1 en `postgres.go`) | 32 | 32 | 0 | 0 |
-  | **Total** | **131** | **124** | **2 🟡** | **5** |
+  | **Total** | **131** | **126** | **0** | **5** |
 
-  Cifras **después** de los arreglos de la sesión (hallazgo 46): antes sobrevivían 8 (5 arreglados, 1 resultó equivalente). Los dos que quedan son del hallazgo 45.
+  Cifras **después** de los arreglos de la sesión (hallazgo 46): antes sobrevivían 8 (5 arreglados en F2-05, 1 resultó equivalente). ✎ Los dos que quedaban al cerrar F2-05
+  (hallazgo 45) los mata D-F2-12, en la revisión de las 🟡 posterior al cierre: la tabla ya los cuenta muertos.
 - **Candados que estorbaron**: `un_fichero_un_test` frente a D-F2-5 (hallazgo 10) y a un rojo nuevo en un medio ya verde
   (33); `ProcessImports` frente a la zona hexagonal (26, D-F2-9); `SinBDViva` (27: las pasadas contra Postgres no caben en el
   paquete); el tamaño (36, E-13). En F2-05, ninguno.
