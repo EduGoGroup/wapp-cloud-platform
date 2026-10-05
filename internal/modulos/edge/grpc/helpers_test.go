@@ -5,8 +5,12 @@ package grpc
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"io"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 )
@@ -38,4 +42,20 @@ func (b *logBuffer) contains(sub string) bool {
 func capturedLog() (logger.Logger, *logBuffer) {
 	buf := &logBuffer{}
 	return logger.New(logger.WithWriter(buf)), buf
+}
+
+// quietLog da un logger mudo para los tests que no miran lo que se escribe.
+func quietLog() logger.Logger {
+	return logger.New(logger.WithWriter(io.Discard))
+}
+
+// newSigningKey genera una clave Ed25519 para el lease del test. Ninguna clave del
+// repositorio: todas nacen aquí.
+func newSigningKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generando la clave del test: %v", err)
+	}
+	return priv
 }

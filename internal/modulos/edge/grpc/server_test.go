@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El contrato de server.go visto desde fuera: construcción, orden de las opciones, hooks y
@@ -9,22 +7,15 @@ package grpc
 // y WithWorkTimeout se afirma además donde se nota: en send_test.go y send_revoke_test.go.
 
 import (
-	"io"
 	"testing"
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
-	"github.com/EduGoGroup/wapp-shared/logger"
 	googlegrpc "google.golang.org/grpc"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
 )
-
-// quietLog da un logger mudo para los tests que no miran lo que se escribe.
-func quietLog() logger.Logger {
-	return logger.New(logger.WithWriter(io.Discard))
-}
 
 // recordingRegistrar es un googlegrpc.ServiceRegistrar que apunta lo que se le registra.
 type recordingRegistrar struct {
