@@ -74,12 +74,25 @@ cada tanda (T3.12+T3.21 · T3.13+T3.22 · T3.14+T3.23).
 > `onStreamClosed`; `trackSession` sustituye al `seedEdgeSessions` de los tests. Para la tanda 3: `infers`, `infersMu`,
 > `inferGrace`, `pendingInfer`, y que `New` materialice `DefaultInferGrace`. Correspondencias E-11 de no exportados:
 > `cancelados` → `cancelled`, `porTipo` → `byKind` (las claves de log siguen literales).
+>
+> **F3-03, segunda sesión (2026-10-05): tanda 2 hecha; falta la tanda 3.** Rama `reorg/f3-03-grpc-tandas-2-3`. `Connect` ya
+> atiende el stream. 🔴 `grep pendiente.Implementar` sigue dando 0 **porque los contratos de la tanda 3 aún no existen**. Lo
+> que la tanda 3 tiene que cablear está marcado con tres `// TODO(F3-03 tanda 3)`: `connect_route.go` (el `case
+> InferenceResult` → `deliverInference`, inline, entre Ack y Heartbeat; hoy cae en el `default` y **el resultado se pierde**
+> con un `Debug`), `connect_route.go` (`greetIfNeeded`, última llamada del job del latido, tras `renewLease`) y `connect.go`
+> (`cancelSessionInfers`, tras `cancelSessionAcks`). Faltan en `Server`/`types`: `infers`, `infersMu`, `inferGrace`,
+> `pendingInfer`, y que `New` materialice `DefaultInferGrace`; el saludo no pide campo (`s.fleet.(sessionGreeter)`). Los
+> tests que comparan `heartbeatTimeline` (`connect_route_heartbeat_test.go`) cambiarán al entrar el saludo.
+> `offlinePersistTimeout` **no nació** (hallazgo 49). Correspondencias E-11 de no exportados de la tanda 2:
+> `observaReadiness` → `observeReadiness`, `anotaReadiness` → `noteReadiness`, `readinessDelEdge` → `readinessOf`,
+> `calientaPorRegistro` → `warmOnRegister`, `calentarEdges` → `warmEdges`, `unaSesionPorEdge` → `oneSessionPerEdge`,
+> `muestrasDe` → `samplesOf`, `controlVisto` → `controlSeen`, `sesionNueva` → `newSession`.
 
 - [x] **T3.12 · rojo(edge): `grpc` — tipos, servidor y envío** (`types`, `server`, `send`, `receipt_sink`, `worklane`) · 🌐 · dep. T3.20 · cumple R3.5.d, R3.6.a · R-G3, R-G11, R-G12 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de grpc/<fichero>` — uno por fichero · ✅ `54682b7` (`server`), `e24c5ff` (`send`), `08e415f` (`send_revoke`); `receipt_sink` en una pasada (`dd4f984`, simple). `types`, `worklane` y `send_ack` no tienen exportados: no admiten rojo (T-17) y nacen en el verde con su test
-- [ ] **T3.13 · rojo(edge): `grpc` — conexión, auth, config, readiness** (`connect`, `auth`, `config_push`, `readiness`, `diagnostics`) · 🌐 · cumple R3.4.a–c, R3.5.d · R-G1…R-G10, R-G16, R-G17, R-G19…R-G21 · **Gate**: G-rojo
+- [x] **T3.13 · rojo(edge): `grpc` — conexión, auth, config, readiness** (`connect`, `auth`, `config_push`, `readiness`, `diagnostics`) · 🌐 · cumple R3.4.a–c, R3.5.d · R-G1…R-G10, R-G16, R-G17, R-G19…R-G21 · **Gate**: G-rojo · ✅ `af4b7ec` (`config_push`), `24cd0cb` (`auth`), `f5efab2` (`connect`); `diagnostics` en una pasada (`f0019af`, simple). `readiness`, `connect_heartbeat`, `connect_route` y `connect_session` no tienen exportados: no admiten rojo (T-17) y nacen en el verde con su test
 - [ ] **T3.14 · rojo(edge): `grpc` — inferencia, plaza y aviso** (`inference`, `plaza`, `greeting`) · 🌐 · cumple R3.4.d, R3.5.b · R-G13…R-G15, R-G23…R-G30; el test del literal lee el `.md` por la ruta de T-11 y **falla** si no lo encuentra · **Gate**: G-rojo · `validar-antes-de-cerrar`
 - [x] **T3.21 · verde(edge): `types`, `session`-dependientes y `worklane`, `send`, `receipt_sink`, `server`** · 🌐 · dep. T3.12 · 5 commits · mutantes en `worklane` y `send` (carril y acks) · **Gate**: G-verde · ✅ `66bbd83` (`types` + `server`, ciclo entre trozos), `2bcc7c8` (`worklane`), `d64b4f4` (`send_ack`), `cb9b3b1` (`send`), `49b43ae` (`connect_session`: solo `sessionsForEdge`, adelantado para la revocación), `e03c304` (test), `a0baf00` (`send_revoke`) · mutantes: 125 escritos, 120 muertos, 3 vivos equivalentes, 2 que no compilan
-- [ ] **T3.22 · verde(edge): `connect`, `auth`, `config_push`, `readiness`, `diagnostics`** · 🌐 · dep. T3.13 · 5 commits; `connect.go` (1.143 l) puede partirse en dos commits `verde` si pasa de una sesión · mutantes en `connect` y `readiness` (canal de control, ADR-0048) · **Gate**: G-verde
+- [x] **T3.22 · verde(edge): `connect`, `auth`, `config_push`, `readiness`, `diagnostics`** · 🌐 · dep. T3.13 · 5 commits; `connect.go` (1.143 l) puede partirse en dos commits `verde` si pasa de una sesión · mutantes en `connect` y `readiness` (canal de control, ADR-0048) · **Gate**: G-verde · ✅ `f0019af` (`diagnostics`), `174f0f6` (`readiness`), `60e1ed9` (`config_push`), `b0d758a` (`auth`), `2b7cd35` (`connect_heartbeat`), `d4b40ff` (`connect_route`), `a3f9474` (`connect_session`), `84c83f6` (`connect`) · mutantes: 221 escritos, 219 muertos, 2 vivos equivalentes (hallazgo 52)
 - [ ] **T3.23 · verde(edge): `inference`, `plaza`, `greeting`** · 🌐 · dep. T3.14 · 3 commits; `grep -rn 'pendiente.Implementar' internal/modulos/edge | wc -l` → 0 · **Gate**: G-verde · `make ci-local` rc=0 · cierre de la sesión con las tres cosas y PR
 
 ## Bloque F3-04 · adaptador, cara nueva y conmutación · 🌐 (TX.10 🌐→💻) · T3.24–T3.28
