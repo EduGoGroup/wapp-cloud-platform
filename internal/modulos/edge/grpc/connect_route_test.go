@@ -36,9 +36,10 @@ type timeline struct {
 	mu        sync.Mutex
 	events    []string
 	unbounded []string // llamadas que llegaron con un ctx SIN plazo
+	dead      []string // llamadas que llegaron con un ctx YA terminado
 }
 
-// at apunta la llamada y si su ctx traía plazo.
+// at apunta la llamada y cómo venía su ctx: con o sin plazo, vivo o ya terminado.
 func (tl *timeline) at(ctx context.Context, method string) {
 	event := method
 	if tl.probe != nil {
@@ -48,6 +49,9 @@ func (tl *timeline) at(ctx context.Context, method string) {
 	tl.events = append(tl.events, event)
 	if _, ok := ctx.Deadline(); !ok {
 		tl.unbounded = append(tl.unbounded, method)
+	}
+	if ctx.Err() != nil {
+		tl.dead = append(tl.dead, method)
 	}
 	tl.mu.Unlock()
 }
