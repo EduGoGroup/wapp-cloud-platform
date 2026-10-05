@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package filtercfg_test
 
 import (

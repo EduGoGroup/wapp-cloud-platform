@@ -41,9 +41,11 @@ package filtercfg
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Kind es el espacio de nombres de la config de filtros en el ConfigUpdate
@@ -138,7 +140,21 @@ type ConfigPusher interface {
 // da la versión "0" y "sessions":{}: es la foto de un tenant sin ni una fila, y se
 // empuja igual (regla 2).
 func Build(tp fleet.TenantProfiles) (version string, payload []byte, err error) {
-	panic(pendiente.Implementar("filtercfg.Build"))
+	// make y no un mapa nil: es lo que hace que un tenant sin sesiones salga como
+	// "sessions":{} y no como "sessions":null.
+	p := Payload{Version: tp.Version, Sessions: make(map[string]SessionFilter, len(tp.Sessions))}
+	for sessionID, profile := range tp.Sessions {
+		if !fleet.ValidProfile(profile) {
+			// Lado seguro: degrada SOLO esta sesión, no tumba el payload entero.
+			profile = fleet.ProfilePassive
+		}
+		p.Sessions[sessionID] = SessionFilter{Profile: string(profile)}
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return "", nil, fmt.Errorf("filtercfg: serializar payload: %w", err)
+	}
+	return strconv.FormatInt(tp.Version, 10), raw, nil
 }
 
 // ForTenant es la lectura + armado completos de un tenant: lo que necesitan LAS DOS
@@ -161,7 +177,11 @@ func Build(tp fleet.TenantProfiles) (version string, payload []byte, err error) 
 // Un fallo se PROPAGA (no se empuja config a medias): el llamante lo loguea y no
 // empuja nada, y el Edge conserva su last-known-good, que es la degradación correcta.
 func ForTenant(ctx context.Context, src Source, tenantID string) (version string, payload []byte, err error) {
-	panic(pendiente.Implementar("filtercfg.ForTenant"))
+	tp, err := src.ProfilesByTenant(ctx, tenantID)
+	if err != nil {
+		return "", nil, fmt.Errorf("filtercfg: leer perfiles del tenant: %w", err)
+	}
+	return Build(tp)
 }
 
 // Pusher adapta el cambio de perfil recién persistido a un ConfigUpdate del
@@ -177,13 +197,16 @@ func ForTenant(ctx context.Context, src Source, tenantID string) (version string
 //
 // Valor cero: un *Pusher nil, y uno sin ConfigPusher (incluido Pusher{}), son un
 // no-op silencioso. Ver PushProfile.
-type Pusher struct{}
+type Pusher struct {
+	src  Source
+	push ConfigPusher
+}
 
 // NewPusher construye el hook sobre la fuente de perfiles y el fan-out del Gateway.
 // No consulta ni empuja nada al construir. Un push nil es válido y da un Pusher
 // no-op (ver PushProfile).
 func NewPusher(src Source, push ConfigPusher) *Pusher {
-	panic(pendiente.Implementar("filtercfg.NewPusher"))
+	return &Pusher{src: src, push: push}
 }
 
 // PushProfile re-arma la foto COMPLETA del tenant y la empuja. Promete:
@@ -209,5 +232,13 @@ func NewPusher(src Source, push ConfigPusher) *Pusher {
 // Mismo criterio que el pusher nil del handler: sirve para montar el hook sin Gateway
 // en un test.
 func (p *Pusher) PushProfile(ctx context.Context, tenantID, sessionID string, profile fleet.Profile) error {
-	panic(pendiente.Implementar("filtercfg.Pusher.PushProfile"))
+	if p == nil || p.push == nil {
+		return nil
+	}
+	version, payload, err := ForTenant(ctx, p.src, tenantID)
+	if err != nil {
+		return fmt.Errorf("filtercfg: armar filtros del tenant (disparado por %s=%s): %w",
+			sessionID, profile, err)
+	}
+	return p.push.PushConfig(ctx, tenantID, Kind, version, payload)
 }
