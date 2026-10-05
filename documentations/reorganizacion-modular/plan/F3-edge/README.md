@@ -2,7 +2,8 @@
 
 > **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
 > **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
-> (inventario en §1.1.b). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> (inventario en §1.1.b). **F3-03, tanda 1 de 3 hecha el 2026-10-04**: inventario de `grpc` aprobado (§1.1.c) y `types`,
+> `server`, `receipt_sink`, `worklane` y `send` en verde; **faltan las tandas 2 y 3** (se relanza F3-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -221,3 +222,47 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     sobre ilegible, `PendingGreeting` / `MarkGreeted` (no están en el puerto) y la carrera de dos `MarkGreeted`.
 31. **Comentarios rancios del viejo corregidos al portar**: cuatro de nueve citas `fichero:línea` ya no casaban (ahora nombran
     el símbolo); «el comparando de (3)» → (2); y `SetSelfPn` ya no dice que vacía la columna en claro (retirada en la 0070).
+
+**De F3-03, primera sesión** (`grpc`, tanda 1: tipos, servidor, carril y envío; 2026-10-04):
+
+32. **Hallazgo 23 comprobado: `connect` NO limpia el JID.** `persistSelfPn` hace `contact.Normalize(KindPhoneE164, hb.GetSelfPn())`
+    sobre el valor crudo del latido. Un `573001112233:5@s.whatsapp.net` se persistiría como `5730011122335`. Conducta del viejo:
+    se copia y se afirma en la tanda 2 (`connect_heartbeat_test.go`); no se corrige. 🟡 Sin comprobar si el Edge manda hoy el
+    número ya limpio (vive en `wapp-edge-agent`).
+33. **`grep pendiente.Implementar` → 0 no significa «`grpc` entero»** cuando se trabaja por tanda: los contratos de las tandas
+    siguientes aún no existen. Entre tandas, `Connect` devuelve `Unimplemented` (el `Server` embebe
+    `UnimplementedCloudLinkServer`, que deja `Register` en verde sin adelantar el contrato de `Connect`).
+34. **Tres ficheros sin exportados no admiten rojo** (`types.go`, `worklane.go`, `send_ack.go`; T-17): nacen en el verde con su
+    test. Y el rojo de `server.go` es débil para las `With*` (solo «son `Option` no nulas»): lo que dejan dentro se afirma en
+    `server_defaults_test.go`, que nace en el verde porque mira campos no exportados.
+35. **El orden no fue «todo el rojo y luego el verde»**: el verde de `types` + `server` va antes del rojo de `send`, porque
+    `send_test.go` nombra `defaultAckTimeout` (invariante 8 s < 10 s) y tiene que compilar con `-tags pendiente`.
+36. **Cinco commits intermedios (`66bbd83` … `cb9b3b1`) llevan avisos `unused` del lint** (3–7: `acksMu`, `trackMu`, `connCtx`,
+    campos de `pendingAck` y `edgeKey`), que desaparecen según llegan sus usuarios; 0 desde `49b43ae`. Candados, `vet` y
+    `gofmt` sí pasan en los once. Es el coste del ciclo entre trozos (hallazgo 25).
+37. **`sessionsForEdge` se adelantó** a `connect_session.go` (su fichero de destino, tanda 2), solo, con su test: lo
+    necesitan `RevokeLease` y `RevokeTenant`. `offlinePersistTimeout` no nace aún: el carril usa `defaultWorkBudget`
+    (los dos valen 5 s).
+38. 🟡 **Negativas de concurrencia sin reloj: el mutante muere, pero de forma probabilística** (D-F2-12). «La cola llena frena»
+    y «`drain` espera» no admiten prueba estrictamente determinista sin tiempo. El test correcto no puede fallar; al mutante
+    se le da ocasión con idas y vueltas por el worker de otra sesión y `runtime.Gosched`. Murió en todas las corridas
+    (`-race -count=100`, `GOMAXPROCS=1 -count=10`). No se escribió candado AST. **Por decidir (Jhoan)** si basta.
+39. **Relojes reales que quedan en los tests**, solo donde el contrato ES un plazo: presupuesto del job de 1 ms, `drain` de
+    1 ns y 3 ms, `WithAckTimeout(1 ns)`, lectura de `ctx.Deadline()` y un `watchdog` de 5 s que convierte un cuelgue en fallo.
+    Ningún `time.Sleep`.
+40. 🟡 **Conducta del viejo afirmada tal cual, por decidir**: `RevokeTenant` solo avisa a los Edge que lista `fleet`. Un Edge
+    con sesión viva que `fleet` no lista —o cualquiera si no hay `fleet` inyectado— no recibe el push y se entera en su
+    siguiente `Renew` (`TestRevokeTenantOnlyNotifiesEdgesKnownToFleet`). Y `Ping` devuelve el error del empuje **sin**
+    `*SendError`, a diferencia de `SendText`/`SendMedia`; sigue sin llamante de producción.
+41. **Un test propio tenía una carrera** (corregido en `e03c304`): exigía la línea de log de la espera cuando el llamante
+    cancela justo tras el empuje, y ese llamante puede salir por el empuje (`ErrPushAbandoned`) o por la espera. Apareció
+    corriendo mutantes ajenos. Ahora el rastro se afirma sobre `awaitAck` directo.
+42. **`errcheck` con `check-blank` marca `var _ interface{…} = (*SendError)(nil)`** (el tipo implementa `error`): el contrato
+    de duck-typing (`StreamCaido()`, `CommandID()`) queda como test. Le pasará igual a `InferError`/`Motivo()` en la tanda 3.
+43. **Comentarios rancios retocados al portar**: los «⚠️ CORREGIDO el 2026-08-18» se funden en el enunciado ya corregido;
+    `ReceiptSink` ya no dice «la única implementación es log-only» (existe `receipts.Sink`); el comentario de paquete explica
+    por qué se llama `grpc` y conserva el prefijo `gatewaygrpc:` en los textos; «`OnEdgeReady` no tiene llamante en
+    `bootstrap.go`» no se portó (sin verificar contra el arranque nuevo). El google gRPC se importa como `googlegrpc`.
+44. **Mutantes de la tanda 1** (a mano): `worklane` 44 (42 muertos, 2 vivos equivalentes: el corte temprano del segundo
+    `seal()` y el `q.items[0] = nil`), `send_ack` 20 (19 y 1 equivalente: cerrar los canales dentro o fuera de `acksMu`),
+    `send` 47 (45 y 2 que no compilan), `send_revoke` 14 (14).

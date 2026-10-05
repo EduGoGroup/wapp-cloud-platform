@@ -66,10 +66,19 @@ Para cuando: 0 pendientes en `fleet`, `fleethelpertest` y `filtercfg`; suite de 
 Para cuando: 0 pendientes en `edge`; literal y pareja ADR-0048 verdes · PR. Puntos limpios si no cabe en ~90 min: tras
 cada tanda (T3.12+T3.21 · T3.13+T3.22 · T3.14+T3.23).
 
-- [ ] **T3.12 · rojo(edge): `grpc` — tipos, servidor y envío** (`types`, `server`, `send`, `receipt_sink`, `worklane`) · 🌐 · dep. T3.20 · cumple R3.5.d, R3.6.a · R-G3, R-G11, R-G12 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de grpc/<fichero>` — uno por fichero
+> **F3-03, primera sesión (2026-10-04): tanda 1 hecha; tandas 2 y 3 pendientes.** No cupo en 90 min y se paró en el punto
+> limpio. Inventario E-12 aprobado por Jhoan ([`arquitectura.md`](arquitectura.md) §1.1.c). 🔴 `grep pendiente.Implementar` da 0
+> **porque los contratos de las tandas 2 y 3 aún no existen**, no porque `grpc` esté entero: `Connect` devuelve `Unimplemented`
+> (el `Server` embebe `UnimplementedCloudLinkServer`). Para la tanda 2: añadir a `Server` `configProvider`, `authn`,
+> `authAuditor` y a `connCtx` `tenantID`, `edgeID`, `hasIdentity`, `sender`; `offlinePersistTimeout` nace con
+> `onStreamClosed`; `trackSession` sustituye al `seedEdgeSessions` de los tests. Para la tanda 3: `infers`, `infersMu`,
+> `inferGrace`, `pendingInfer`, y que `New` materialice `DefaultInferGrace`. Correspondencias E-11 de no exportados:
+> `cancelados` → `cancelled`, `porTipo` → `byKind` (las claves de log siguen literales).
+
+- [x] **T3.12 · rojo(edge): `grpc` — tipos, servidor y envío** (`types`, `server`, `send`, `receipt_sink`, `worklane`) · 🌐 · dep. T3.20 · cumple R3.5.d, R3.6.a · R-G3, R-G11, R-G12 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de grpc/<fichero>` — uno por fichero · ✅ `54682b7` (`server`), `e24c5ff` (`send`), `08e415f` (`send_revoke`); `receipt_sink` en una pasada (`dd4f984`, simple). `types`, `worklane` y `send_ack` no tienen exportados: no admiten rojo (T-17) y nacen en el verde con su test
 - [ ] **T3.13 · rojo(edge): `grpc` — conexión, auth, config, readiness** (`connect`, `auth`, `config_push`, `readiness`, `diagnostics`) · 🌐 · cumple R3.4.a–c, R3.5.d · R-G1…R-G10, R-G16, R-G17, R-G19…R-G21 · **Gate**: G-rojo
 - [ ] **T3.14 · rojo(edge): `grpc` — inferencia, plaza y aviso** (`inference`, `plaza`, `greeting`) · 🌐 · cumple R3.4.d, R3.5.b · R-G13…R-G15, R-G23…R-G30; el test del literal lee el `.md` por la ruta de T-11 y **falla** si no lo encuentra · **Gate**: G-rojo · `validar-antes-de-cerrar`
-- [ ] **T3.21 · verde(edge): `types`, `session`-dependientes y `worklane`, `send`, `receipt_sink`, `server`** · 🌐 · dep. T3.12 · 5 commits · mutantes en `worklane` y `send` (carril y acks) · **Gate**: G-verde
+- [x] **T3.21 · verde(edge): `types`, `session`-dependientes y `worklane`, `send`, `receipt_sink`, `server`** · 🌐 · dep. T3.12 · 5 commits · mutantes en `worklane` y `send` (carril y acks) · **Gate**: G-verde · ✅ `66bbd83` (`types` + `server`, ciclo entre trozos), `2bcc7c8` (`worklane`), `d64b4f4` (`send_ack`), `cb9b3b1` (`send`), `49b43ae` (`connect_session`: solo `sessionsForEdge`, adelantado para la revocación), `e03c304` (test), `a0baf00` (`send_revoke`) · mutantes: 125 escritos, 120 muertos, 3 vivos equivalentes, 2 que no compilan
 - [ ] **T3.22 · verde(edge): `connect`, `auth`, `config_push`, `readiness`, `diagnostics`** · 🌐 · dep. T3.13 · 5 commits; `connect.go` (1.143 l) puede partirse en dos commits `verde` si pasa de una sesión · mutantes en `connect` y `readiness` (canal de control, ADR-0048) · **Gate**: G-verde
 - [ ] **T3.23 · verde(edge): `inference`, `plaza`, `greeting`** · 🌐 · dep. T3.14 · 3 commits; `grep -rn 'pendiente.Implementar' internal/modulos/edge | wc -l` → 0 · **Gate**: G-verde · `make ci-local` rc=0 · cierre de la sesión con las tres cosas y PR
 

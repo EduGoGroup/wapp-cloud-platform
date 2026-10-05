@@ -47,7 +47,7 @@ F9-A (P4). La marca de estado vigila **todas** las columnas que la operación pu
 
 | Fichero | Exportados clave | Promesa (resumen del comentario) |
 |---|---|---|
-| `session/registry.go` | `Registry`, `NewRegistry`, `WithSendTimeout`, `Sender`, `SendAcotado`, `ErrSessionOffline`, `ErrPushTimeout`, `ErrPushAbandonado` | `Push` a sesión inexistente → `ErrSessionOffline` (gana a un ctx cancelado); Edge que no lee → `ErrPushTimeout`; ctx cancelado antes de enviar → `ErrPushAbandonado`, **no** timeout; doble registro **última-gana** y `release` compara identidad (el stream reemplazado no borra al nuevo); envíos concurrentes serializados. `ErrSessionOffline` **es** el de `platform` (D-F3-2) |
+| `session/registry.go` | `Registry`, `NewRegistry`, `WithSendTimeout`, `Sender`, `SendAcotado`, `ErrSessionOffline`, `ErrPushTimeout`, `ErrPushAbandonado` | `Push` a sesión inexistente → `ErrSessionOffline` (gana a un ctx cancelado); Edge que no lee → `ErrPushTimeout`; ctx cancelado antes de enviar → `ErrPushAbandonado`, **no** timeout; doble registro **última-gana** y `release` compara identidad (el stream reemplazado no borra al nuevo); el registro es **seguro en concurrencia** y **no retiene su mutex durante el `Send`** — 🔴 **no serializa los envíos**: eso lo hace el envoltorio por stream del gateway (`grpc.streamSender`, R-G12; corregido en F3-03, hallazgo 10). `ErrSessionOffline` **es** el de `platform` (D-F3-2) |
 | `inferstats/inferstats.go` | `Store`, `New`, `Parte`, `Clave`, `Agregado` (alias de `platform/metrics`, F0) | clave (tenant, **edge**): tres teléfonos de un Edge **no triplican**; el último parte **sustituye** (es acumulado, no delta); entre Edges se suma; un Edge que se va **no hace bajar** la suma; `nil` + `nil` = `nil` (no medible); copia los mapas; nil-safe y concurrente |
 | `receipts/{receipts,sink}.go` | `Status` (`delivered`, `read`), `Receipt`, `Stored`, `Store`, `Sink`, `NewSink` | una fila por `message_id`; `UNSPECIFIED` no persiste nada; callback de métrica por fila |
 | `ingest/{dedupe,postgres}.go` · `deduper.go` ✚ | `Deduper`, `MemoryDeduper`→`ingesthelpertest`, `PostgresDeduper`, `WithRetention`, `WithSweep` | idempotente; opciones ≤0 se ignoran |
@@ -76,7 +76,7 @@ el servidor y es el kill-switch anti-clon. Un clon del `.db` sin lease es inúti
 - R-L7 `NewManager` con clave inválida o repo nil → error (`"lease: construir issuer: …"`, `"lease: repositorio nil"`).
 - R-L8 El lease no contiene la DEK ni llaves privadas (`lease.go:12-13`). La revocación sobrevive al reinicio del `Manager` (REQ-055.4 → F9).
 
-**session** (7) — R-S1…R-S4: las de §3 (`registry_test.go:36-238`).
+**session** (7) — R-S1…R-S4: las de §3 (`registry_test.go:36-238`). R-S4 es «seguro en concurrencia sin retener el mutex durante el `Send`», **no** «envíos serializados» (hallazgo 10): la serialización es R-G12.
 
 **grpc** (144; ADR-0040, ADR-0045, ADR-0048)
 - R-G1 `route` atiende los 10 frames; inline solo `Incoming`, `Ack`, `InferenceResult`, `Pong` y el handshake; el `Ack` y el `Incoming` se resuelven **con el carril tapado** (`connect_lane_internal_test.go:256-347`).
