@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El contrato de config_push.go por la API exportada (R-G17): PushConfig llega a TODAS las

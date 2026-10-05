@@ -91,6 +91,11 @@ type Server struct {
 	// WithDiagnosticsSink.
 	diag diagnostics.BundleReceiver
 
+	// configProvider entrega las configs vigentes del tenant para el push al conectar
+	// (ADR-0021). nil = Connect no empuja config. Se inyecta con WithConfigProvider
+	// (config_push.go).
+	configProvider ConfigProvider
+
 	// inferStats guarda el último parte de inferencia de cada Edge para que /metrics
 	// lo publique (T1.7-9). nil = no se recoge; el resto sigue igual. Se inyecta con
 	// WithInferenceStats.
