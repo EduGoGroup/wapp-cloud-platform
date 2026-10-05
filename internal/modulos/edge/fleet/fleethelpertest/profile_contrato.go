@@ -144,22 +144,33 @@ func caseProfilesFullPhoto(t *testing.T, m Montaje) {
 }
 
 // caseProfilesDiscordant: una sesión con una fila por Edge es UNA entrada de la foto, y si las
-// filas discrepan gana passive: la lectura segura es «no auto-responde».
+// filas discrepan gana passive: la lectura segura es «no auto-responde». Gana aunque sea UNA
+// fila pasiva contra varias activas, y sea cual sea el orden en que la implementación las lea
+// (por eso son varias sesiones con varios Edge: un «gana la última» no las acierta todas).
 func caseProfilesDiscordant(t *testing.T, m Montaje) {
-	tenant, session := seedTenant(t, m), unique("session")
-	edgeOne, edgeTwo := unique("edge"), unique("edge")
-	markOnline(t, m, tenant, edgeOne, session)
-	setProfile(t, m, tenant, session, fleet.ProfileActive)
-	// La misma sesión aparece bajo otro Edge DESPUÉS de activarse: esa fila nace pasiva.
-	markOnline(t, m, tenant, edgeTwo, session)
-	requireProfile(t, m, tenant, edgeOne, session, fleet.ProfileActive)
-	requireProfile(t, m, tenant, edgeTwo, session, fleet.ProfilePassive)
-
-	requirePhoto(t, profiles(t, m, tenant), map[string]fleet.Profile{session: fleet.ProfilePassive})
+	tenant, lateEdge := seedTenant(t, m), unique("edge")
+	edges := []string{unique("edge"), unique("edge"), unique("edge"), unique("edge")}
+	sessions := []string{unique("session"), unique("session"), unique("session"), unique("session")}
+	want := make(map[string]fleet.Profile, len(sessions))
+	for _, session := range sessions {
+		for _, edge := range edges {
+			markOnline(t, m, tenant, edge, session)
+		}
+		setProfile(t, m, tenant, session, fleet.ProfileActive)
+		// La misma sesión aparece bajo otro Edge DESPUÉS de activarse: esa fila nace pasiva.
+		markOnline(t, m, tenant, lateEdge, session)
+		requireProfile(t, m, tenant, edges[0], session, fleet.ProfileActive)
+		requireProfile(t, m, tenant, lateEdge, session, fleet.ProfilePassive)
+		want[session] = fleet.ProfilePassive
+	}
+	requirePhoto(t, profiles(t, m, tenant), want)
 
 	// Y deja de discrepar en cuanto SetProfile las iguala.
-	setProfile(t, m, tenant, session, fleet.ProfileActive)
-	requirePhoto(t, profiles(t, m, tenant), map[string]fleet.Profile{session: fleet.ProfileActive})
+	for _, session := range sessions {
+		setProfile(t, m, tenant, session, fleet.ProfileActive)
+		want[session] = fleet.ProfileActive
+	}
+	requirePhoto(t, profiles(t, m, tenant), want)
 }
 
 // caseProfilesEmpty: un tenant sin sesiones tiene una foto vacía —mapa no nil— con versión 0.
