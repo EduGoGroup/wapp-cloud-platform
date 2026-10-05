@@ -98,7 +98,8 @@ func TestSendReturnsTheAckOfTheEdge(t *testing.T) {
 
 // R-G11: los caminos de salida dejan la correlación de acuses VACÍA, termine como termine el
 // envío: sesión sin stream, plazo propio vencido o llamante que se rinde con el envío en
-// vuelo. (El Ack recibido y el stream caído lo afirman sus propios tests.)
+// vuelo —que sale por el empuje o por la espera, según dónde lo pille—. (El Ack recibido y
+// el stream caído lo afirman sus propios tests.)
 func TestEveryExitLeavesNoPendingAck(t *testing.T) {
 	t.Parallel()
 	for _, kind := range sendKinds {
@@ -121,8 +122,7 @@ func TestEveryExitLeavesNoPendingAck(t *testing.T) {
 		t.Run(kind.name+"/caller gives up while waiting", func(t *testing.T) {
 			t.Parallel()
 			reg := session.NewRegistry()
-			log, logs := capturedLog()
-			srv := New(reg, log) // 8 s de plazo: quien corta es el llamante
+			srv := New(reg, quietLog()) // 8 s de plazo: quien corta es el llamante
 			pushed := inFlight(t, reg, "s-1")
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -138,11 +138,36 @@ func TestEveryExitLeavesNoPendingAck(t *testing.T) {
 			if se := asSendError(t, got.err); se.CommandID() != cmdID || se.StreamCaido() {
 				t.Errorf("el error no lleva el command_id del envío (%s): %v", cmdID, got.err)
 			}
-			if !logs.contains("gateway: se agotó la espera del ack del Edge") || !logs.contains("command_id="+cmdID) {
-				t.Errorf("la espera abandonada no dejó rastro con su command_id: %q", logs.String())
-			}
 			requireNoPendingAcks(t, srv)
 		})
+	}
+}
+
+// awaitAck atiende al ctx del LLAMANTE además de a su reloj: con el llamante ya rendido y
+// sin Ack, vuelve en el acto con su ctx.Err() envuelto —no espera los 8 s— y deja rastro a
+// nivel de comando. Se llama directo porque, por SendText, el llamante que se rinde justo
+// tras el empuje puede salir por el empuje o por la espera, y solo la espera deja esta línea.
+func TestAwaitAckGivesUpWithTheCaller(t *testing.T) {
+	t.Parallel()
+	log, logs := capturedLog()
+	srv := New(session.NewRegistry(), log)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ack, err := srv.awaitAck(ctx, make(chan *cloudlinkv1.Ack, 1), "cmd-1", "s-1")
+
+	if ack != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("awaitAck con el llamante rendido = (%v, %v), se esperaba su context.Canceled", ack, err)
+	}
+	if se := asSendError(t, err); se.CommandID() != "cmd-1" || se.SessionID() != "s-1" || se.StreamCaido() {
+		t.Errorf("SendError inesperado: %v", err)
+	}
+	for _, want := range []string{
+		"gateway: se agotó la espera del ack del Edge", "command_id=cmd-1", "session_id=s-1", "ack_timeout=8s",
+	} {
+		if !logs.contains(want) {
+			t.Errorf("la espera abandonada no dejó %q en el log: %s", want, logs.String())
+		}
 	}
 }
 
