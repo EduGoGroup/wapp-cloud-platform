@@ -86,14 +86,16 @@ func TestNewMaterializesClocksAndQueueCap(t *testing.T) {
 	}
 }
 
-// recordingSink es un ReceiptSink que apunta lo que recibe.
+// recordingSink es un ReceiptSink que apunta lo que recibe, y con qué ctx.
 type recordingSink struct {
-	got []*cloudlinkv1.MessageReceipt
-	err error
+	got  []*cloudlinkv1.MessageReceipt
+	ctxs []context.Context
+	err  error
 }
 
-func (r *recordingSink) Record(_ context.Context, receipt *cloudlinkv1.MessageReceipt) error {
+func (r *recordingSink) Record(ctx context.Context, receipt *cloudlinkv1.MessageReceipt) error {
 	r.got = append(r.got, receipt)
+	r.ctxs = append(r.ctxs, ctx)
 	return r.err
 }
 
