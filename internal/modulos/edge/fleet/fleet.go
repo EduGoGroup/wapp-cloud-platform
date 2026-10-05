@@ -404,9 +404,9 @@ type Repository interface {
 	// fila no existe todavía (UPDATE de 0 filas es válido).
 	//
 	// 🔒 EL NÚMERO SE GUARDA CIFRADO (Plan 046 · T4.1): en Postgres van el sobre
-	// (enc/dek/kek_id) y el índice ciego, y la columna en claro se VACÍA en el
-	// mismo UPDATE. Lo que se persiste es siempre el valor NORMALIZADO; un número
-	// que no normaliza devuelve error y no escribe nada.
+	// (enc/dek/kek_id) y el índice ciego; la columna en claro ya no existe (se
+	// retiró con la 0070). Lo que se persiste es siempre el valor NORMALIZADO; un
+	// número que no normaliza devuelve error y no escribe nada.
 	SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error
 	// SetProfile fija el PERFIL (active|passive) de la sesión sessionID del tenant
 	// tenantID (Plan 046 · T1.2). Es la ÚNICA escritura del eje: el alias legado
