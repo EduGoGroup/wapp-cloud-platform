@@ -1,11 +1,13 @@
-//go:build pendiente
-
 package fleet
 
 import (
+	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 )
 
 // Las promesas de Repository las fija la suite fleethelpertest.ContratoRepository, contra
@@ -161,5 +163,137 @@ func TestRepository_IsTheClosedListOfTenMethods(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("fleet.Repository tiene los métodos %v, quería %v", got, want)
+	}
+}
+
+// TestDefaultProfile_OnlyTheEmptyBecomesPassive: el perfil por defecto es el de la columna
+// (pasivo, D-07: privacidad por defecto) y SOLO convierte el vacío. Un perfil desconocido pasa
+// intacto: no se «arregla» a pasivo ni a activo.
+func TestDefaultProfile_OnlyTheEmptyBecomesPassive(t *testing.T) {
+	cases := map[Profile]Profile{
+		"":             ProfilePassive,
+		ProfilePassive: ProfilePassive,
+		ProfileActive:  ProfileActive,
+		"bot":          "bot",
+		" ":            " ",
+	}
+	for in, want := range cases {
+		if got := defaultProfile(in); got != want {
+			t.Errorf("defaultProfile(%q) = %q, quería %q", in, got, want)
+		}
+	}
+}
+
+// oldRuleSelfPn es la regla del viejo escrita a mano (internal/gateway/fleet/fleet.go @ 809345b,
+// normalizeSelfPn → internal/flujos/contact.Normalize con phone_e164): recorrer las runas,
+// conservar solo los dígitos ASCII '0'..'9', y es inválido si no queda ninguno o si quedan más
+// de 15. Es el oráculo de equivalencia; el paquete viejo no se importa.
+func oldRuleSelfPn(value string) (digits string, ok bool) {
+	digits = asciiDigits(value)
+	if digits == "" || len(digits) > 15 {
+		return "", false
+	}
+	return digits, true
+}
+
+// asciiDigits recorre las runas de value y conserva solo los dígitos ASCII.
+func asciiDigits(value string) string {
+	var b strings.Builder
+	for _, c := range value {
+		if c >= '0' && c <= '9' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// r convierte un punto de código en cadena; así el corpus nombra cada carácter invisible o no
+// ASCII por su número en vez de llevarlo crudo en el fuente.
+func r(c rune) string { return string(c) }
+
+// selfPnCorpus es el corpus ADVERSARIO del self_pn (reglas de F3 §0, hallazgo 40 de F1). want es
+// el valor canónico esperado, escrito a mano; "" significa que el número no normaliza.
+func selfPnCorpus() []struct{ name, input, want string } {
+	const plain = "573001112233"
+	arabicIndic573 := r(0x0665) + r(0x0667) + r(0x0663) // ٥٧٣
+	fullwidth012 := r(0xFF10) + r(0xFF11) + r(0xFF12)   // ０１２
+	return []struct{ name, input, want string }{
+		{"already_canonical", plain, plain},
+		{"plus_spaces_and_dash", "+56 9 8446-7443", "56984467443"},
+		{"parentheses_and_dots", "(56) 9.8446.7443", "56984467443"},
+		{"leading_zeros_are_kept", "0056984467443", "0056984467443"},
+		{"whatsapp_jid", plain + "@s.whatsapp.net", plain},
+		// Trampa heredada: el sufijo de dispositivo ":5" de un JID NO se descarta, sus dígitos se
+		// suman al número. Se afirma tal cual: quien llama entrega el número, no el JID.
+		{"whatsapp_jid_with_device_keeps_its_digit", plain + ":5@s.whatsapp.net", plain + "5"},
+		{"repeated_separators", "a@@b", ""},
+		{"repeated_separators_around_digits", "57@@300--111  2233", plain},
+		{"letters_only", "sin-digitos", ""},
+		{"empty", "", ""},
+		{"only_spaces", "   ", ""},
+		// Dígitos que no son ASCII: no son dígitos para la regla. Solos no dejan nada; mezclados,
+		// quedan solo los ASCII.
+		{"arabic_indic_only", arabicIndic573, ""},
+		{"arabic_indic_mixed_with_ascii", "57" + arabicIndic573 + "3001112233", plain},
+		{"fullwidth_only", fullwidth012, ""},
+		{"fullwidth_mixed_with_ascii", fullwidth012 + plain, plain},
+		// Espacios Unicode e invisibles, en los bordes y por dentro: se descartan como cualquier
+		// otro carácter que no sea un dígito ASCII.
+		{"nbsp_u00a0_edges_and_inside", r(0x00A0) + "573" + r(0x00A0) + "001112233" + r(0x00A0), plain},
+		{"em_space_u2003_edges_and_inside", r(0x2003) + "573001" + r(0x2003) + "112233" + r(0x2003), plain},
+		{"zero_width_space_u200b_edges_and_inside", r(0x200B) + "5730011" + r(0x200B) + "12233" + r(0x200B), plain},
+		{"bom_ufeff_edges_and_inside", r(0xFEFF) + "57300111223" + r(0xFEFF) + "3" + r(0xFEFF), plain},
+		{"only_invisibles", r(0x200B) + r(0xFEFF) + r(0x00A0) + r(0x2003), ""},
+		// UTF-8 inválido: cada byte suelto se lee como U+FFFD y se descarta.
+		{"invalid_utf8", "\xff573\xfe001112233\xc3", plain},
+		{"invalid_utf8_only", "\xff\xfe", ""},
+		// El máximo de E.164 son 15 dígitos, contados después de limpiar.
+		{"fifteen_digits", "123456789012345", "123456789012345"},
+		{"fifteen_digits_with_separators", "+12 345 678 901 2345", "123456789012345"},
+		{"sixteen_digits", "1234567890123456", ""},
+		{"sixteen_digits_with_separators", "+1234 5678 9012 3456", ""},
+	}
+}
+
+// TestNormalizeSelfPn_MatchesTheOldRule es la equivalencia viejo ↔ nuevo del self_pn sobre el
+// corpus adversario: en TODA entrada el normalizador nuevo (nucleo/contact) da lo que daba la
+// regla vieja (flujos/contact), y además el valor esperado está fijado a mano, para que un
+// cambio de normalización se vea aquí y se decida. De esa salida sale el índice ciego
+// fleet_sessions.self_pn_bidx: una diferencia de un byte deja sin casar lo ya guardado.
+func TestNormalizeSelfPn_MatchesTheOldRule(t *testing.T) {
+	for _, c := range selfPnCorpus() {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := normalizeSelfPn(c.input)
+			oldValue, oldOK := oldRuleSelfPn(c.input)
+			if got != oldValue || (err == nil) != oldOK {
+				t.Fatalf("DIVERGE del viejo: nuevo = (%q, err=%v), viejo = (%q, ok=%v)", got, err, oldValue, oldOK)
+			}
+			if got != c.want {
+				t.Errorf("normalizeSelfPn = %q, quería %q", got, c.want)
+			}
+			if c.want == "" {
+				requireSelfPnError(t, c.input, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeSelfPn: error inesperado %v", err)
+			}
+			// Idempotencia: lo ya normalizado no cambia al volver a pasar.
+			if again, err := normalizeSelfPn(got); err != nil || again != got {
+				t.Errorf("normalizeSelfPn del valor ya normalizado = (%q, %v), quería (%q, nil)", again, err, got)
+			}
+		})
+	}
+}
+
+// requireSelfPnError afirma el error de un número que no normaliza: envuelve
+// contact.ErrInvalidRef y NO lleva dentro el valor recibido, que es PII y acaba en los logs.
+func requireSelfPnError(t *testing.T, input string, err error) {
+	t.Helper()
+	if !errors.Is(err, contact.ErrInvalidRef) {
+		t.Fatalf("err = %v, quería uno que envuelva contact.ErrInvalidRef", err)
+	}
+	if digits := asciiDigits(input); len(digits) > 2 && strings.Contains(err.Error(), digits) {
+		t.Errorf("el error lleva dentro los dígitos del número recibido: %v", err)
 	}
 }

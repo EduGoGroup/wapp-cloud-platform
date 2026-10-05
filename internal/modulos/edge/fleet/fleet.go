@@ -22,8 +22,64 @@ import (
 	"errors"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 )
+
+// normalizeSelfPn canoniza un número propio a E.164 sin '+' ni separadores (solo
+// dígitos). Es el ÚNICO normalizador del self_pn de este paquete: lo usa el
+// adaptador Postgres en la escritura Y en la lectura, y el doble
+// fleethelpertest.Memoria lleva la misma regla (contact.Normalize con
+// contact.KindPhoneE164), porque no puede llamar a esta función.
+//
+// 🔴 POR QUÉ ESTÁ AQUÍ Y NO INLINE EN CADA USO (Plan 046 · T4.1). Desde que el
+// número va cifrado, Postgres ya no compara textos: compara ÍNDICES CIEGOS —HMAC
+// del valor NORMALIZADO— y el doble en memoria compara strings. Si el doble
+// guardara el valor CRUDO y Postgres indexara el normalizado, las dos mitades
+// dejarían de responder lo mismo, y la divergencia se manifiesta EN LAS DOS
+// DIRECCIONES:
+//
+//	→ VERDE EN MEMORIA, ROJO EN POSTGRES. Un test escribe "+34600111222" y
+//	  consulta por esa MISMA cadena. El doble crudo compara string contra
+//	  string: casa, y el test pasa. Postgres normaliza en la escritura —el bidx
+//	  se calcula sobre "34600111222"— y si la lectura no normaliza, compara
+//	  contra el HMAC de "+34600111222": dos índices distintos para el mismo
+//	  número, no casa, y el conteo del tope de dispositivos devuelve 0. El fallo
+//	  aparece en el suite de integración, no en el unitario que lo cubría.
+//
+//	→ VERDE EN MEMORIA, MAL EN PRODUCCIÓN, que es el peor. El doble crudo trata
+//	  "+34600111222" y "34600111222" como DOS números distintos: un test que
+//	  siembre las dos formas ve dos sesiones y pasa verde. Postgres, con el bidx
+//	  sobre el valor normalizado, las COLAPSA en una sola: el tope de
+//	  dispositivos (REQ-D4) cuenta uno donde el test contó dos. Nadie se entera
+//	  hasta que un teléfono real supera el límite sin que salte el aviso.
+//
+// Los dos modos se cierran igual: normalizar en LOS DOS lados, con ESTA regla,
+// en la escritura Y en la lectura. Un doble que no comparte el normalizador con
+// lo que emula no es un doble, es una segunda semántica.
+//
+// La regla es la de contact.Normalize para phone_e164: conserva solo los dígitos
+// ASCII 0-9, y es un error que no quede ninguno o que queden más de 15. Su salida
+// es la base del índice ciego fleet_sessions.self_pn_bidx: cambiar UN byte de lo
+// que devuelve deja sin casar los números ya guardados, sin dar un solo error.
+func normalizeSelfPn(selfPn string) (string, error) {
+	// El error de contact.Normalize NUNCA embebe el número: describe la causa con
+	// una cuenta. Se puede envolver y loguear sin filtrar PII.
+	return contact.Normalize(contact.KindPhoneE164, selfPn)
+}
+
+// defaultProfile normaliza un perfil vacío a ProfilePassive, espejando el DEFAULT
+// de la columna profile (0063, D-07). Solo convierte el vacío: un perfil
+// desconocido pasa intacto.
+//
+// 🔴 El default es PASIVO y eso es una decisión de producto, no un detalle: la
+// 0025 ponía DEFAULT 'bot' (una sesión nueva auto-respondía) y la 0063 lo invirtió
+// (una sesión nueva NO auto-responde hasta que su dueño la active, D-07).
+func defaultProfile(p Profile) Profile {
+	if p == "" {
+		return ProfilePassive
+	}
+	return p
+}
 
 // State es el conjunto de estados posibles de una sesión: el del LINK CloudLink, no
 // el del socket de WhatsApp (ese es Session.WhatsappState). Sus tres valores
@@ -61,9 +117,7 @@ var ErrInvalidState = errors.New("estado de sesión inválido (usar offline|logg
 // offline. StateOnline NO se admite: es DERIVADO del stream vivo (no se falsea).
 // La comparación es exacta: el vacío, otra caja ("OFFLINE") o un valor con
 // espacios dan false.
-func ValidAdminState(s State) bool {
-	panic(pendiente.Implementar("fleet.ValidAdminState"))
-}
+func ValidAdminState(s State) bool { return s == StateOffline || s == StateLoggedOut }
 
 // Profile es el PERFIL DE NEGOCIO de una sesión (Plan 046 · T1.1, D-046.1): el eje
 // que SUSTITUYE a Role. Mismo par de estados, otra palabra y otro vocabulario de
@@ -143,9 +197,7 @@ type TenantProfiles struct {
 // ValidProfile indica si p es un perfil conocido (active|passive). La comparación
 // es exacta: el vacío, otra caja ("ACTIVE") o los valores del eje retirado
 // ("bot", "human") dan false.
-func ValidProfile(p Profile) bool {
-	panic(pendiente.Implementar("fleet.ValidProfile"))
-}
+func ValidProfile(p Profile) bool { return p == ProfileActive || p == ProfilePassive }
 
 // Session refleja una fila de public.fleet_sessions. Capabilities se omite a
 // propósito: el contrato CloudLink v0.1.0 no transporta capacidades aún.
@@ -289,7 +341,7 @@ type HealthSnapshot struct {
 // de un Edge que aún no sabe su salud, y se porta tal cual: «no lo sé» no abre un
 // degradado, y si lo había lo cierra.
 func (h HealthSnapshot) Degraded() bool {
-	panic(pendiente.Implementar("fleet.HealthSnapshot.Degraded"))
+	return h.DegradedReason != "" || h.WhatsappState == "degraded" || h.WhatsappState == "dead"
 }
 
 // Repository persiste el estado de las sesiones. La clave lógica es
