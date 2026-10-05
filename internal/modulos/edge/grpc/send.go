@@ -6,11 +6,11 @@ package grpc
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ErrStreamClosed indica que el stream CloudLink de la sesión cayó mientras un envío
@@ -52,15 +52,19 @@ var ErrStreamClosed = errors.New("gatewaygrpc: el stream de la sesión se cerró
 // fue empujar (sesión offline) el mensaje NO salió, pero si fue esperar el ack, el
 // comando ya viajó y el cliente pudo haberlo recibido — y saber cuál de las dos
 // cosas pasó es exactamente lo que se busca cuando alguien pregunta «¿le llegó?».
-type SendError struct{}
+type SendError struct {
+	commandID string
+	sessionID string
+	err       error
+}
 
 // CommandID devuelve el command_id del comando que falló. Se consume por
 // duck-typing (`interface{ CommandID() string }`) para que un llamante pueda
 // loguearlo sin importar este paquete.
-func (e *SendError) CommandID() string { panic(pendiente.Implementar("grpc.SendError.CommandID")) }
+func (e *SendError) CommandID() string { return e.commandID }
 
 // SessionID devuelve la sesión a la que iba dirigido el comando.
-func (e *SendError) SessionID() string { panic(pendiente.Implementar("grpc.SendError.SessionID")) }
+func (e *SendError) SessionID() string { return e.sessionID }
 
 // StreamCaido indica que el stream CloudLink de la sesión se cerró mientras se
 // esperaba el ack, y que la sesión no quedó con otro stream detrás (ErrStreamClosed).
@@ -78,18 +82,27 @@ func (e *SendError) SessionID() string { panic(pendiente.Implementar("grpc.SendE
 // El bool que devuelve es el que separa el 504 «se cayó» del 504 «no contestó a
 // tiempo»: falso NO significa que el envío fuera bien, significa que falló por otra
 // cosa (plazo vencido, sesión offline al empujar). No lo uses como «hubo error».
-func (e *SendError) StreamCaido() bool {
-	panic(pendiente.Implementar("grpc.SendError.StreamCaido"))
-}
+func (e *SendError) StreamCaido() bool { return errors.Is(e.err, ErrStreamClosed) }
 
 // Error implementa error con el formato literal
 // "gatewaygrpc: comando <command_id> a la sesión <session_id>: <causa>". NO incluye
 // el destino ni el texto: un log de error no es sitio para PII ni para el contenido
 // del mensaje.
-func (e *SendError) Error() string { panic(pendiente.Implementar("grpc.SendError.Error")) }
+func (e *SendError) Error() string {
+	return fmt.Sprintf("gatewaygrpc: comando %s a la sesión %s: %v", e.commandID, e.sessionID, e.err)
+}
 
 // Unwrap expone la causa para errors.Is/As.
-func (e *SendError) Unwrap() error { panic(pendiente.Implementar("grpc.SendError.Unwrap")) }
+func (e *SendError) Unwrap() error { return e.err }
+
+// sendErr envuelve la causa de un envío fallido con su command_id. Un err nil
+// devuelve nil: así el llamante puede envolver sin ramificar.
+func sendErr(cmdID, sessionID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &SendError{commandID: cmdID, sessionID: sessionID, err: err}
+}
 
 // SendText empuja un comando SendText hacia la sesión dada y espera su Ack,
 // correlacionado por command_id. El command_id se genera AQUÍ DENTRO (UUIDv4, uno
@@ -111,8 +124,90 @@ func (e *SendError) Unwrap() error { panic(pendiente.Implementar("grpc.SendError
 // ⚠️ Un Ack devuelto NO significa "entregado": el Edge puede acusar con Ok=false y
 // su motivo en Error. Quien necesite saber si el mensaje salió de verdad tiene que
 // mirar ack.GetOk(), no solo el error.
-func (s *Server) SendText(_ context.Context, _, _, _ string) (*cloudlinkv1.Ack, error) {
-	panic(pendiente.Implementar("grpc.Server.SendText"))
+func (s *Server) SendText(ctx context.Context, sessionID, to, text string) (*cloudlinkv1.Ack, error) {
+	cmdID, err := newCommandID()
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *cloudlinkv1.Ack, 1)
+	s.acksMu.Lock()
+	s.acks[cmdID] = pendingAck{ch: ch, sessionID: sessionID}
+	s.acksMu.Unlock()
+	defer s.clearAck(cmdID)
+
+	msg := &cloudlinkv1.CloudToEdge{
+		CommandId: cmdID,
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.CloudToEdge_SendText{
+			SendText: &cloudlinkv1.SendText{To: to, Text: text},
+		},
+	}
+	if pushErr := s.registry.Push(ctx, sessionID, msg); pushErr != nil {
+		return nil, sendErr(cmdID, sessionID, pushErr)
+	}
+
+	return s.awaitAck(ctx, ch, cmdID, sessionID)
+}
+
+// awaitAck espera el Ack correlacionado CON RELOJ PROPIO (s.ackTimeout), no solo
+// contra el contexto del llamante. La distinción es la que costó el incidente del
+// 2026-08-06: el ctx de un handler HTTP no trae deadline —el WriteTimeout del
+// http.Server no interrumpe al handler ni cancela su contexto, solo hace fallar el
+// Write posterior—, así que esperar únicamente por ctx.Done() significaba esperar
+// indefinidamente. Un POST /api/v1/messages colgó 88s contra un Edge saturado y el
+// servidor cerró la conexión sin responder ni loguear nada.
+//
+// Hay un segundo motivo, independiente del llamante: sin este reloj el select
+// esperaría al Ack de un Edge que ya no existe. ⚠️ El eje de ese defecto es LATENCIA,
+// no memoria (Plan 050 · T1.1, ADR-0040 §Contexto): SendText y SendMedia dejan un
+// defer s.clearAck(cmdID) en todos sus caminos de salida, así que la entrada de la
+// correlación se borra siempre —haya llegado el Ack, haya vencido el reloj o haya
+// caído el stream— y vive como mucho lo que dura el ackTimeout. No hay entradas
+// huérfanas que limpiar; lo que había era un llamante HTTP esperando el plazo entero
+// por un acuse que el gateway ya sabía perdido.
+//
+// El error viaja envuelto en *SendError, así que el llamante conserva el command_id
+// —el único hilo que correlaciona lo que la nube intentó con el outbox del Edge y
+// con los acuses del Plan 013— y errors.Is(err, context.DeadlineExceeded) sigue
+// diciendo la verdad.
+//
+// Desde el Plan 050 · Ola 2 · T2.3 hay TRES salidas, no dos, y la nueva es la que da
+// sentido a la ola: el canal CERRADO. Cuando el stream de la sesión cae y nadie lo
+// reemplaza, closeStream cancela sus acuses en vuelo (cancelSessionAcks) cerrando
+// estos canales, y esta espera termina en el acto con ErrStreamClosed en vez de
+// consumir el ackTimeout entero contra un Edge que ya no está. El llamante distingue
+// las dos cosas con errors.Is, que es justo lo que el mapeo HTTP necesita: «no
+// contestó a tiempo» y «se cayó» merecen respuestas distintas.
+func (s *Server) awaitAck(ctx context.Context, ch <-chan *cloudlinkv1.Ack, cmdID, sessionID string) (*cloudlinkv1.Ack, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.ackTimeout)
+	defer cancel()
+
+	select {
+	case ack, ok := <-ch:
+		if ok {
+			return ack, nil
+		}
+		// Canal cerrado = el stream murió con este envío en vuelo. Se loguea a nivel de
+		// COMANDO —igual que el timeout, y por el mismo motivo— porque el command_id es
+		// lo único que permite después averiguar si el mensaje llegó a salir: el Warn
+		// agregado de cancelSessionAcks dice CUÁNTOS cayeron de golpe, este dice CUÁLES.
+		s.log.Warn("gateway: el ack se canceló porque el stream de la sesión cayó",
+			"command_id", cmdID,
+			"session_id", sessionID,
+		)
+		return nil, sendErr(cmdID, sessionID, ErrStreamClosed)
+	case <-ctx.Done():
+		// El comando YA viajó al Edge: esto NO dice que el mensaje no saliera, dice
+		// que no sabemos si salió. De ahí que el command_id sea obligatorio aquí.
+		s.log.Warn("gateway: se agotó la espera del ack del Edge",
+			"command_id", cmdID,
+			"session_id", sessionID,
+			"ack_timeout", s.ackTimeout.String(),
+			"error", ctx.Err(),
+		)
+		return nil, sendErr(cmdID, sessionID, ctx.Err())
+	}
 }
 
 // SendMedia empuja un comando SendMedia (adjunto por URL prefirmada) hacia la
@@ -124,8 +219,52 @@ func (s *Server) SendText(_ context.Context, _, _, _ string) (*cloudlinkv1.Ack, 
 // El frame lleva to, caption, mime, filename y la URL tal cual. kind elige el
 // MediaKind: "document" → DOCUMENT, "image" → IMAGE y cualquier otro valor (también
 // el vacío) → UNSPECIFIED, y el Edge decide el fallback.
-func (s *Server) SendMedia(_ context.Context, _, _, _, _, _, _, _ string) (*cloudlinkv1.Ack, error) {
-	panic(pendiente.Implementar("grpc.Server.SendMedia"))
+func (s *Server) SendMedia(ctx context.Context, sessionID, to, presignedURL, filename, mime, caption, kind string) (*cloudlinkv1.Ack, error) {
+	cmdID, err := newCommandID()
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *cloudlinkv1.Ack, 1)
+	s.acksMu.Lock()
+	s.acks[cmdID] = pendingAck{ch: ch, sessionID: sessionID}
+	s.acksMu.Unlock()
+	defer s.clearAck(cmdID)
+
+	msg := &cloudlinkv1.CloudToEdge{
+		CommandId: cmdID,
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.CloudToEdge_SendMedia{
+			SendMedia: &cloudlinkv1.SendMedia{
+				To:       to,
+				Caption:  caption,
+				Mime:     mime,
+				Filename: filename,
+				Kind:     mapKind(kind),
+				Src:      &cloudlinkv1.SendMedia_PresignedUrl{PresignedUrl: presignedURL},
+			},
+		},
+	}
+	if pushErr := s.registry.Push(ctx, sessionID, msg); pushErr != nil {
+		return nil, sendErr(cmdID, sessionID, pushErr)
+	}
+
+	return s.awaitAck(ctx, ch, cmdID, sessionID)
+}
+
+// mapKind traduce el kind del descriptor (MediaRef.Kind) al enum MediaKind del
+// proto. Un kind desconocido cae a UNSPECIFIED (el Edge decide el fallback);
+// "document" e "image" son los soportados en 017. Se usan literales (no el paquete
+// media) para no acoplar el Gateway al módulo del Motor.
+func mapKind(kind string) cloudlinkv1.MediaKind {
+	switch kind {
+	case "document":
+		return cloudlinkv1.MediaKind_MEDIA_KIND_DOCUMENT
+	case "image":
+		return cloudlinkv1.MediaKind_MEDIA_KIND_IMAGE
+	default:
+		return cloudlinkv1.MediaKind_MEDIA_KIND_UNSPECIFIED
+	}
 }
 
 // Ping empuja un comando Ping con el nonce dado hacia la sesión, con su command_id
@@ -137,6 +276,30 @@ func (s *Server) SendMedia(_ context.Context, _, _, _, _, _, _, _ string) (*clou
 // transporte HTTP/2 y la vivacidad la reporta el Heartbeat; nadie de la plataforma
 // llama a este método. Se CONSERVA a propósito, y no por inercia: es la costura más
 // barata para empujar un frame sin esperar Ack.
-func (s *Server) Ping(_ context.Context, _ string, _ int64) error {
-	panic(pendiente.Implementar("grpc.Server.Ping"))
+func (s *Server) Ping(ctx context.Context, sessionID string, nonce int64) error {
+	cmdID, err := newCommandID()
+	if err != nil {
+		return err
+	}
+
+	msg := &cloudlinkv1.CloudToEdge{
+		CommandId: cmdID,
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.CloudToEdge_Ping{
+			Ping: &cloudlinkv1.Ping{Nonce: nonce},
+		},
+	}
+	return s.registry.Push(ctx, sessionID, msg)
+}
+
+// newCommandID genera un identificador único de comando con el formato UUIDv4,
+// usando crypto/rand (sin dependencias externas).
+func newCommandID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generando command_id: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // versión 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variante 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

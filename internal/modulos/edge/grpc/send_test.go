@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El contrato de send.go por la API exportada: el frame que se empuja, el *SendError y sus
@@ -20,15 +18,6 @@ import (
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
-)
-
-// El contrato por duck-typing de los handlers HTTP: las interfaces anónimas, no un tipo
-// compartido. Si un método cambia de nombre o de firma, esto deja de compilar.
-var (
-	_ interface{ StreamCaido() bool } = (*SendError)(nil)
-	_ interface{ CommandID() string } = (*SendError)(nil)
-	_ interface{ SessionID() string } = (*SendError)(nil)
-	_ error                           = (*SendError)(nil)
 )
 
 // uuidV4 es la forma del command_id: UUID versión 4, variante 10, en minúsculas.
@@ -134,6 +123,32 @@ func TestSendTextOfflineReturnsSendErrorWithCommandID(t *testing.T) {
 	}
 	if strings.Contains(se.Error(), "573001112233") || strings.Contains(se.Error(), "texto secreto") {
 		t.Errorf("Error() filtra el destino o el texto: %q", se.Error())
+	}
+}
+
+// El contrato por duck-typing de los handlers HTTP: reconocen el fallo por interfaces
+// ANÓNIMAS, sin importar este paquete. Si un método cambia de nombre o de firma —StreamCaido
+// no se traduce—, esto deja de reconocerlo.
+func TestSendErrorIsRecognisedByDuckTyping(t *testing.T) {
+	t.Parallel()
+	srv := New(session.NewRegistry(), quietLog())
+	_, err := srv.SendText(context.Background(), "ghost", "57301", "hola")
+	se := asSendError(t, err)
+
+	var withCommand interface{ CommandID() string }
+	if !errors.As(err, &withCommand) || withCommand.CommandID() != se.CommandID() {
+		t.Errorf("el error no expone CommandID() por duck-typing: %v", err)
+	}
+	var withSession interface{ SessionID() string }
+	if !errors.As(err, &withSession) || withSession.SessionID() != "ghost" {
+		t.Errorf("el error no expone SessionID() por duck-typing: %v", err)
+	}
+	var fallen interface{ StreamCaido() bool }
+	if !errors.As(err, &fallen) {
+		t.Fatalf("el error no expone StreamCaido() por duck-typing: %v", err)
+	}
+	if fallen.StreamCaido() {
+		t.Error("StreamCaido() = true para una sesión offline al empujar")
 	}
 }
 
