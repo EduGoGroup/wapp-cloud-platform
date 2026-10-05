@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El canal de control visto desde Connect (ADR-0048; R-G8, R3.4.a–c; T-5, HS-14/HS-15):

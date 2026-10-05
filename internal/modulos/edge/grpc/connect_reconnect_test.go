@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El cierre del stream (closeStream) y la reconexión rápida (R-G4, R-G5; DEUDA-050.1): al

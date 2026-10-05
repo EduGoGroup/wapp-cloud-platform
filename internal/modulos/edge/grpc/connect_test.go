@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El contrato de Connect, por su cara exportada (R-G1, R-G5, R-G12, R3.5.d): el bucle Recv

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El orden entre el latido y el calentamiento del registro, que lo pone el bucle de Connect

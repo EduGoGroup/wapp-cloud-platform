@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El camino Connect COMPLETO por un cable gRPC de verdad (bufconn, en memoria): un gateway y
