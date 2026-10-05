@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 )
@@ -58,4 +59,21 @@ func newSigningKey(t *testing.T) ed25519.PrivateKey {
 		t.Fatalf("generando la clave del test: %v", err)
 	}
 	return priv
+}
+
+// watchdog es el plazo tras el cual un test da por COLGADA una espera que debía resolverse
+// en el acto. No sincroniza nada: solo convierte un cuelgue en un fallo legible.
+const watchdog = 5 * time.Second
+
+// await espera a que ch entregue (o se cierre) y devuelve lo recibido; si no ocurre dentro
+// del watchdog, falla diciendo qué se esperaba.
+func await[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(watchdog):
+		t.Fatalf("colgado esperando: %s", what)
+		panic("inalcanzable")
+	}
 }
