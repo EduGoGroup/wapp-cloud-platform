@@ -31,6 +31,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 	googlegrpc "google.golang.org/grpc"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/ports/in"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/inferstats"
@@ -95,6 +96,17 @@ type Server struct {
 	// (ADR-0021). nil = Connect no empuja config. Se inyecta con WithConfigProvider
 	// (config_push.go).
 	configProvider ConfigProvider
+
+	// authn es el puerto de autenticación de usuario del IAM (Plan 033 · T2.2,
+	// ADR-0025): con él el gateway atiende UserLogin/UserRefresh/UserLogout relayados
+	// por el Edge. nil = esas peticiones responden UserAuthError{internal}. Se inyecta
+	// con WithAuthenticator (auth.go).
+	authn in.Authenticator
+
+	// authAuditor registra los eventos edge.auth.* y edge.session.open del plano de
+	// control del Edge. nil = la auth funciona pero no se audita. Se inyecta con
+	// WithAuthAuditor (auth.go).
+	authAuditor in.Auditor
 
 	// inferStats guarda el último parte de inferencia de cada Edge para que /metrics
 	// lo publique (T1.7-9). nil = no se recoge; el resto sigue igual. Se inyecta con
