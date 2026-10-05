@@ -1,7 +1,8 @@
 # F3 · `edge` — el túnel con cada Edge: gRPC, enrolamiento, lease, flota, acuses
 
 > **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
-> **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
+> (inventario en §1.1.b). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -178,3 +179,45 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `enroll` (129 líneas): compartirlo pediría un paquete nuevo.
 17. **Dos commits intermedios no pasan todos los gates por sí solos** (el PR entero sí): `9b57756` falla `exportados_cubiertos`
     hasta `715cfcf`, y `f783e76` lleva tres tests sin `gofmt` hasta `10b8d4e`.
+
+**De F3-02** (`fleet` y `filtercfg`, 2026-10-04):
+
+18. **7.º `*fakedb*`**: `fleet/repository_postgres_fakedb_test.go` (292 l) une guion por sentencia, `endErr`, `closeErr`,
+    `affected` y `affectedErr` (decisión de Jhoan: variante local). Si aparece un octavo, toca paquete compartido. En el
+    driver falso, un NULL para `sql.NullString` es `nil` sin tipo: un `[]byte(nil)` se escanea como válido y vacío.
+19. **`repository_postgres.go` medido**: 11 métodos de **una** sentencia, sin transacción ni cerrojo; nivel mixto por trozo
+    (complejo `_selfpn` y `_greeting`, medio el resto, D-F3-7). **Mutantes a mano: 31, 31 muertos** (21 de `self_pn`, 10 del
+    saludo; 9 solo-SQL los mata la comparación byte a byte). En `filtercfg`, 9 de 9; contra `Memoria`, 10 de 10.
+20. **Ramas inalcanzables portadas tal cual**: `"fleet: cerrar filas: …"` y `"fleet: cerrar filas de perfiles: …"` (tras agotar
+    las filas, `database/sql` entrega el fallo de `Close` por `rows.Err()`, que sale como `"… iterar …"`), y
+    `"filtercfg: serializar payload: %w"` (el `json.Marshal` de esos tipos no falla). Sin test; el contrato lo dice.
+21. 🟡 **Única línea que se aparta del viejo**: `scanSession` hace `defaultProfile(Profile(profile))`; el viejo, `Profile(profile)`.
+    Inobservable con Postgres (`COALESCE(profile,'passive')` y el `CHECK` de la 0063). Así `defaultProfile` tiene llamante de
+    producción en el paquete nuevo (el doble se llevó su copia). Si se prefiere la letra, es revertir una línea y un caso de test.
+22. **Divergencias doble ↔ Postgres que la suite no afirma a propósito**: `MarkOffline` / `MarkLoggedOut` de una sesión
+    desconocida (el doble crea la fila pasiva, Postgres no: decisión de Jhoan, portar tal cual; lo fija `memoria_test.go`) ·
+    orden de `List` · marca nunca fijada (`time.Time{}` frente a `'epoch'`, que **no** es `IsZero`) · errores (prefijo `fleet: …`
+    frente al de `contact` desnudo) · contexto cancelado · perfil desconocido en la foto.
+23. **Trampa heredada del índice ciego** (afirmada en el corpus, no corregida): con `phone_e164`, `573001112233:5@s.whatsapp.net`
+    normaliza a `5730011122335` —el dígito del *device* se concatena— y da **otro** índice. El corpus (26 entradas: `a@@b`,
+    árabe-índicos, *fullwidth*, U+00A0, U+2003, U+200B, U+FEFF…) **no diverge** entre la regla vieja y `nucleo/contact.Normalize`.
+    Queda por comprobar en F3-03 que `grpc/connect` limpia el JID antes de `SetSelfPn`.
+24. **Un caso «gana X entre filas» con dos filas es probabilístico** contra un doble basado en mapa (7 de 8 falsos verdes): se
+    siembran varias sesiones y varias filas (`792af20`).
+25. **Un adaptador partido por E-13 puede tener un ciclo entre trozos** (el *struct* en uno, los auxiliares en otro): el primer
+    verde, `e106e6d`, toca dos ficheros de producción. Y en rojo el *struct* nace vacío (`unused`); los campos llegan con el verde.
+26. **`unused` corre con `tests: true`**: un auxiliar no exportado que solo usa su test no se marca; puede nacer un commit antes
+    que su llamante. Los tests de auxiliares van en fichero aparte que nace en el verde, para que el rojo compile.
+27. **Un `x_test.go` interno no puede importar su `…helpertest`** (ciclo): `fleet.Repository` se nombra por reflexión, con la
+    lista cerrada de sus 10 métodos, lo que además vigila que no crezca.
+28. **`fleethelpertest` importa `testing`** al compartir paquete con la suite; el `fleettest` viejo lo evitaba a propósito.
+    `slowrepo_test.go` usa un temporizador real de 1 ns (ni duerme ni mide) para la rama en que vence la espera.
+29. **Tipos nominales** (como el 11): `fleet.Profile` y `TenantProfiles` nuevos no encajan en `flowadmin.ProfilePusher` ni en el
+    `Source` viejo; `ConfigPusher` sí es estructural. Lo resuelve F3-04 (T3.28). **Valores cero dichos y no cambiados**
+    (D-F2-10): `Profile ""` → pasivo; `State ""` cuenta como vivo; `HealthSnapshot{}.Degraded() == false`; `*Pusher` nil → `nil`.
+30. **Para F3-05** (suite de `fleet` contra Postgres): `crypto.NewEnvKeyProvider` con `IndexB64` explícita + `NewFieldCipher`;
+    `SeedTenant` inserta en `public.tenants`; `Profiles` llama a `ProfilesByTenant`. Casos propios fuera de la suite, con siembra
+    por SQL: guarda de `SetSelfPn` (no reescribe; se auto-sana al rotar la KEK, dos KEK), `degraded_since`, «gana passive»,
+    sobre ilegible, `PendingGreeting` / `MarkGreeted` (no están en el puerto) y la carrera de dos `MarkGreeted`.
+31. **Comentarios rancios del viejo corregidos al portar**: cuatro de nueve citas `fichero:línea` ya no casaban (ahora nombran
+    el símbolo); «el comparando de (3)» → (2); y `SetSelfPn` ya no dice que vacía la columna en claro (retirada en la 0070).
