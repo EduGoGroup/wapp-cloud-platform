@@ -19,6 +19,11 @@
 > → `ByRegime`/`ByClass`/`SkippedByReason`/`PrefillSamples`/`GenerationSamples`. Los dobles: `Memory…` → `<paq>helpertest.Memoria…` (D-F3-1).
 > F3-03 (`grpc`) y F3-04 (arranque) usan estos nombres.
 >
+> **Correspondencias de F3-02 (E-11)**: los exportados de `fleet`, `fleettest` y `filtercfg` ya estaban en inglés y conservan
+> su nombre. Única mudanza: `fleet.MemoryRepository` / `NewMemoryRepository` → `fleethelpertest.Memoria` / `NewMemoria` (D-F3-1);
+> `fleettest.SlowRepository` / `NewSlow` → `fleethelpertest.SlowRepository` / `NewSlow`. `repository_postgres.go` nace partido en
+> `repository_postgres{,_selfpn,_greeting,_profile,_health}.go` (E-13).
+>
 > **Nombres (E-11)**: el adaptador de arranque que esta spec llamaba «puente gateway» (tipo `puenteGateway`) es
 > `bridge_gateway.go` / `gatewayBridge`; el de F2 es `bridge_iam.go`. «Puente» a secas queda para los imports
 > nuevo → viejo de `05` §4.1.
@@ -47,15 +52,15 @@ suites verdes contra los dobles · PR. Puntos limpios si no cabe en ~90 min: tra
 - [x] (`84c6352`, `b7d5e0b`) **T3.15 · verde(edge): `session`, `inferstats`** · 🌐 · dep. T3.2, T3.3 · 2 commits `verde(edge): <paq>/<f>` · **Gate**: G-verde
 - [x] (`178bbe7`, `9dc9045`, `84e0789` · `70e4605`, `9170205` · `832ffd8`, `b086329`, `67129db` (mata un mutante)) **T3.16 · verde(edge): `receipts`, `ingest`, `diagnostics`** · 🌐 · dep. T3.4–T3.6 · 7 commits · **Gate**: G-verde
 - [x] (`99f7e75`, `10b8d4e`, `36a054d`, `9b57756`, `715cfcf` (reparto de tests); `lease.go` contra el viejo: 0 líneas de lógica distintas) **T3.17 · verde(edge): 🔒 `lease`** · 🌐 · dep. T3.7 · 4 commits; SQL literal; `git diff --no-index` de la lógica de `Manager` contra la vieja sin cambios de comportamiento (revisión explícita en el PR) · **Gate**: G-verde
-- [x] (`17dd728`, `87767bb`, `bb9fd66`, `4decfc1`, `2880255`, `096fb3b`, `8a4dd34`) **T3.18 · verde(edge): `enroll`** · 🌐 · dep. T3.8 · 6 commits · cierre de la sesión con las tres cosas y PR · **Gate**: G-verde
+- [x] (`17dd728`, `87767bb`, `bb9fd66`, `4decfc1`, `2880255`, `096fb3b`, `8a4dd34`) **T3.18 · verde(edge): `enroll`** · 🌐 · dep. T3.8 · 6 commits · cierre de la sesión con las tres cosas y PR · ✅ `b86dd62` · **Gate**: G-verde
 
 ## Bloque F3-02 · `fleet` y `filtercfg` · 🌐 · T3.10, T3.11, T3.19, T3.20
 Para cuando: 0 pendientes en `fleet`, `fleethelpertest` y `filtercfg`; suite de `fleet` verde contra su doble · PR.
 
-- [ ] **T3.10 · rojo(edge): `fleet` (2) + `fleethelpertest` (suite, memoria, `slowrepo.go`)** · 🌐 · dep. T3.18 · cumple R3.2.a · suite de diseño §2 completa, con `Montaje` (P4); `slowrepo.go` con test propio (tiene lógica) · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de fleet y su suite`
-- [ ] **T3.11 · rojo(edge): `filtercfg/filtercfg.go`** · 🌐 · R-C1…R-C5 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de filtercfg`
-- [ ] **T3.19 · verde(edge): `fleet/fleet.go`, `fleet/repository_postgres.go`, `fleethelpertest/slowrepo.go`** · 🌐 · dep. T3.10 · el índice ciego usa `nucleo/contact.Normalize`; corpus de equivalencia con casos adversarios (reglas §0) · **Gate**: G-verde
-- [ ] **T3.20 · verde(edge): `filtercfg`** · 🌐 · dep. T3.11, T3.19 · **Gate**: G-verde · cierre de la sesión con las tres cosas y PR
+- [x] **T3.10 · rojo(edge): `fleet` (2) + `fleethelpertest` (suite, memoria, `slowrepo.go`)** · 🌐 · dep. T3.18 · cumple R3.2.a · suite de diseño §2 completa, con `Montaje` (P4); `slowrepo.go` con test propio (tiene lógica) · **Gate**: G-rojo · **Commit**: `rojo(edge): contratos de fleet y su suite` · ✅ `532e62f` (modelo, suite, doble) y `607434c` (los 5 trozos de `repository_postgres`)
+- [x] **T3.11 · rojo(edge): `filtercfg/filtercfg.go`** · 🌐 · R-C1…R-C5 · **Gate**: G-rojo · **Commit**: `rojo(edge): contrato de filtercfg` · ✅ `8fa8f44`
+- [x] **T3.19 · verde(edge): `fleet/fleet.go`, `fleet/repository_postgres.go`, `fleethelpertest/slowrepo.go`** · 🌐 · dep. T3.10 · el índice ciego usa `nucleo/contact.Normalize`; corpus de equivalencia con casos adversarios (reglas §0) · **Gate**: G-verde · ✅ `d9641b1` (`fleet.go`, corpus de 26 entradas sin divergencia), `792af20`, `147d178` (`slowrepo.go`), `e106e6d` · `70e55d7` · `4b4006b` · `eead41e` · `3b9c91e` (los 5 trozos de `repository_postgres`)
+- [x] **T3.20 · verde(edge): `filtercfg`** · 🌐 · dep. T3.11, T3.19 · **Gate**: G-verde · cierre de la sesión con las tres cosas y PR
 
 ## Bloque F3-03 · `grpc` (complejo; ADR-0048) · 🌐 · T3.12–T3.14, T3.21–T3.23
 Para cuando: 0 pendientes en `edge`; literal y pareja ADR-0048 verdes · PR. Puntos limpios si no cabe en ~90 min: tras
