@@ -3,7 +3,7 @@ package grpc
 // El contrato de config_push.go por la API exportada (R-G17): PushConfig llega a TODAS las
 // sesiones vivas del tenant y a ninguna más, a la vez, sin fallar nunca, y avisa del
 // calentamiento UNA VEZ POR EDGE cuando todos los empujes han terminado. Las sesiones vivas
-// se siembran por dentro (seedEdgeSessions) hasta que connect.go las registre.
+// se dejan con trackSession, como hace el registro de la sesión en Connect.
 //
 // El push al conectar —por la sesión (pushConfigsOnConnect) y por el propio stream
 // (pushConfigsInBand, ADR-0048)— no tiene cara exportada hasta que exista Connect: se afirma
@@ -68,7 +68,7 @@ func (r *configRig) goLive(t *testing.T, tenantID, edgeID, sessionID string, b *
 	t.Helper()
 	live := &liveSession{id: sessionID, barrier: b}
 	t.Cleanup(r.reg.Register(sessionID, live))
-	seedEdgeSessions(r.srv, tenantID, edgeID, sessionID)
+	r.srv.trackSession(phone(tenantID, edgeID, sessionID))
 	return live
 }
 
@@ -165,11 +165,11 @@ func TestPushConfigNeverFailsAndKeepsDelivering(t *testing.T) {
 	t.Parallel()
 	rig := newConfigRig(nil)
 	healthy := rig.goLive(t, "tenant-1", "edge-1", "s-ok", nil)
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-gone") // en el seguimiento, sin stream
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-gone")) // en el seguimiento, sin stream
 	t.Cleanup(rig.reg.Register("s-broken", funcSender(func(*cloudlinkv1.CloudToEdge) error {
 		return errors.New("stream roto")
 	})))
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-2", "s-broken")
+	rig.srv.trackSession(phone("tenant-1", "edge-2", "s-broken"))
 
 	if err := pushIntents(context.Background(), rig.srv, "tenant-1"); err != nil {
 		t.Fatalf("PushConfig = %v, se esperaba nil: un fallo de entrega no es fallo del PUT", err)
@@ -202,7 +202,7 @@ func TestPushConfigStopsWaitingWhenTheCallerLeaves(t *testing.T) {
 		<-stuck
 		return nil
 	})))
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-stuck")
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-stuck"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -304,7 +304,7 @@ func TestPushConfigWarmsOnlyAfterEveryPushHasLanded(t *testing.T) {
 func TestPushConfigWarmsEveryTrackedEdgeEvenIfItsPushFailed(t *testing.T) {
 	t.Parallel()
 	rig := newConfigRig(nil)
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-gone") // sin stream: su empuje falla
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-gone")) // sin stream: su empuje falla
 	var warms []warmedEdge
 	rig.srv.OnWarmup = func(tenantID, edgeID, sessionID, kind string) {
 		warms = append(warms, warmedEdge{tenantID, edgeID, sessionID, kind})

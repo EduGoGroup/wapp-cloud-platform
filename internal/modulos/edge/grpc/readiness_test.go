@@ -277,8 +277,8 @@ func TestReadinessHooksRunWithoutTheTrackingLock(t *testing.T) {
 	t.Parallel()
 	rig := newReadinessRig()
 	cc := phone("tenant-1", "edge-1", "s-1")
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-1")
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-2", "s-9")
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-1"))
+	rig.srv.trackSession(phone("tenant-1", "edge-2", "s-9"))
 	var seen []string
 	rig.srv.OnWarmup = func(tenantID, edgeID, _, _ string) {
 		seen = append(seen, "warmup:"+strings.Join(rig.srv.sessionsForEdge(tenantID, edgeID), ","))
