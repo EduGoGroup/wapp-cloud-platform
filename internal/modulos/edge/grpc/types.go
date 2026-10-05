@@ -10,12 +10,17 @@ import (
 
 // connCtx agrupa la identidad de un stream Connect, derivada del cert mTLS.
 //
-// En esta tanda solo lleva el session_id, que es lo único que leen los ficheros ya
-// portados (handleReceipt). La identidad mTLS (tenantID, edgeID, hasIdentity) y el
-// cable físico del stream (sender, con su comentario del incidente del 2026-09-03)
-// llegan con connect.go, que es quien los rellena y los lee.
+// Lo rellena connect.go, que llega después: hasta entonces los ficheros que lo leen
+// (handleReceipt, la recepción del bundle de diagnóstico, el readiness) lo reciben ya
+// armado. El cable físico del stream (sender, con su comentario del incidente del
+// 2026-09-03) nace con config_push.go, que es el primero que escribe por él.
 type connCtx struct {
 	sessionID string
+	tenantID  string
+	edgeID    string
+	// hasIdentity es true solo si se extrajo (tenantID, edgeID) del cert mTLS.
+	// false en streams sin TLS (tests T2): se degrada sin lease ni fleet.
+	hasIdentity bool
 }
 
 // edgeKey identifica un Edge dentro de un tenant.
