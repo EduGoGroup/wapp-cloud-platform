@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleethelpertest
 
 import (
@@ -164,10 +162,10 @@ func TestSlowCalls_CoverTheWholePort(t *testing.T) {
 
 // requireDelegated afirma que la llamada llegó al envuelto, una vez y con sus argumentos, y que
 // lo que sale del decorador es exactamente lo que el envuelto devolvió.
-func requireDelegated(t *testing.T, c slowCall, repo *SlowRepository, spy *spyRepository) {
+func requireDelegated(ctx context.Context, t *testing.T, c slowCall, repo *SlowRepository, spy *spyRepository) {
 	t.Helper()
 	spy.calls = nil
-	got, err := c.call(context.Background(), repo)
+	got, err := c.call(ctx, repo)
 	if !errors.Is(err, errSpy) {
 		t.Errorf("err = %v, quería el del repositorio envuelto", err)
 	}
@@ -204,7 +202,7 @@ func TestSlowRepository_LiveContextWithoutDelay_Delegates(t *testing.T) {
 		for _, c := range slowCalls() {
 			t.Run(fmt.Sprintf("%s/delay=%s", c.name, delay), func(t *testing.T) {
 				spy := &spyRepository{}
-				requireDelegated(t, c, NewSlow(spy, delay), spy)
+				requireDelegated(context.Background(), t, c, NewSlow(spy, delay), spy)
 			})
 		}
 	}
@@ -243,7 +241,8 @@ func TestSlowRepository_DeadContext_ReturnsItsErrorWithoutDelegating(t *testing.
 // decorador que nació con una hora de latencia delega al instante en cuanto se le quita, y
 // vuelve a cortar con el contexto muerto cuando se le repone.
 func TestSlowRepository_SetDelay_AppliesToLaterCalls(t *testing.T) {
-	canceled, cancel := context.WithCancel(context.Background())
+	live := context.Background()
+	canceled, cancel := context.WithCancel(live)
 	cancel()
 	for _, c := range slowCalls() {
 		t.Run(c.name, func(t *testing.T) {
@@ -252,7 +251,7 @@ func TestSlowRepository_SetDelay_AppliesToLaterCalls(t *testing.T) {
 			requireCut(canceled, t, c, repo, spy, context.Canceled)
 			// Si SetDelay no surtiera efecto, la llamada siguiente esperaría la hora entera.
 			repo.SetDelay(0)
-			requireDelegated(t, c, repo, spy)
+			requireDelegated(live, t, c, repo, spy)
 			repo.SetDelay(time.Hour)
 			requireCut(canceled, t, c, repo, spy, context.Canceled)
 		})
@@ -266,7 +265,7 @@ func TestSlowRepository_PositiveDelay_DelegatesAfterWaiting(t *testing.T) {
 	for _, c := range slowCalls() {
 		t.Run(c.name, func(t *testing.T) {
 			spy := &spyRepository{}
-			requireDelegated(t, c, NewSlow(spy, time.Nanosecond), spy)
+			requireDelegated(context.Background(), t, c, NewSlow(spy, time.Nanosecond), spy)
 		})
 	}
 }

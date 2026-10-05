@@ -4,10 +4,10 @@ package fleethelpertest
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // SlowRepository decora un fleet.Repository añadiendo una latencia ajustable antes
@@ -47,7 +47,10 @@ import (
 //
 // En el paquete viejo vivía en fleettest, que no importaba "testing"; aquí
 // comparte paquete con la suite, que sí.
-type SlowRepository struct{}
+type SlowRepository struct {
+	inner   fleet.Repository
+	delayNs atomic.Int64
+}
 
 // SlowRepository cumple el puerto.
 var _ fleet.Repository = (*SlowRepository)(nil)
@@ -56,66 +59,127 @@ var _ fleet.Repository = (*SlowRepository)(nil)
 // en inner. Una d <= 0 desactiva la latencia (el decorador queda como paso a
 // través, salvo por la comprobación del contexto).
 func NewSlow(inner fleet.Repository, d time.Duration) *SlowRepository {
-	panic(pendiente.Implementar("fleethelpertest.NewSlow"))
+	s := &SlowRepository{inner: inner}
+	s.delayNs.Store(int64(d))
+	return s
+}
+
+// delay devuelve la latencia vigente con una lectura atómica.
+func (s *SlowRepository) delay() time.Duration {
+	return time.Duration(s.delayNs.Load())
+}
+
+// wait bloquea la latencia vigente o hasta que el contexto muera, lo que ocurra
+// antes. Devuelve nil si la espera se completó y el error del contexto si este se
+// canceló o venció; el llamante DEBE retornar ese error sin tocar el repositorio
+// envuelto.
+//
+// Con latencia <= 0 devolvemos ctx.Err() (y no nil directamente) para que el
+// decorador se comporte igual con y sin latencia: un contexto ya muerto corta la
+// llamada en ambos casos. Si el contexto está vivo, ctx.Err() es nil y la llamada
+// se delega con normalidad, así que el caso feliz no cambia.
+func (s *SlowRepository) wait(ctx context.Context) error {
+	d := s.delay()
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetDelay ajusta la latencia en caliente: vale para las llamadas que empiecen
 // después. Seguro para uso concurrente.
 func (s *SlowRepository) SetDelay(d time.Duration) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.SetDelay"))
+	s.delayNs.Store(int64(d))
 }
 
 // MarkOnline implementa fleet.Repository tras la latencia inyectada.
 func (s *SlowRepository) MarkOnline(ctx context.Context, tenantID, edgeID, sessionID string) error {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.MarkOnline"))
+	if err := s.wait(ctx); err != nil {
+		return err
+	}
+	return s.inner.MarkOnline(ctx, tenantID, edgeID, sessionID)
 }
 
 // MarkOffline implementa fleet.Repository tras la latencia inyectada.
 func (s *SlowRepository) MarkOffline(ctx context.Context, tenantID, edgeID, sessionID string) error {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.MarkOffline"))
+	if err := s.wait(ctx); err != nil {
+		return err
+	}
+	return s.inner.MarkOffline(ctx, tenantID, edgeID, sessionID)
 }
 
 // MarkLoggedOut implementa fleet.Repository tras la latencia inyectada.
 func (s *SlowRepository) MarkLoggedOut(ctx context.Context, tenantID, edgeID, sessionID string) error {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.MarkLoggedOut"))
+	if err := s.wait(ctx); err != nil {
+		return err
+	}
+	return s.inner.MarkLoggedOut(ctx, tenantID, edgeID, sessionID)
 }
 
 // SetState implementa fleet.Repository tras la latencia inyectada. Si el contexto
 // muere durante la espera devuelve found=false y el error del contexto.
 func (s *SlowRepository) SetState(ctx context.Context, tenantID, sessionID string, state fleet.State) (bool, error) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.SetState"))
+	if err := s.wait(ctx); err != nil {
+		return false, err
+	}
+	return s.inner.SetState(ctx, tenantID, sessionID, state)
 }
 
 // CountLiveBySelfPn implementa fleet.Repository tras la latencia inyectada. Si el
 // contexto muere durante la espera devuelve 0 y el error del contexto.
 func (s *SlowRepository) CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.CountLiveBySelfPn"))
+	if err := s.wait(ctx); err != nil {
+		return 0, err
+	}
+	return s.inner.CountLiveBySelfPn(ctx, tenantID, selfPn)
 }
 
 // SaveHealth implementa fleet.Repository tras la latencia inyectada.
 func (s *SlowRepository) SaveHealth(ctx context.Context, tenantID, edgeID, sessionID string, h fleet.HealthSnapshot) error {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.SaveHealth"))
+	if err := s.wait(ctx); err != nil {
+		return err
+	}
+	return s.inner.SaveHealth(ctx, tenantID, edgeID, sessionID, h)
 }
 
 // Get implementa fleet.Repository tras la latencia inyectada. Si el contexto muere
 // durante la espera devuelve la sesión cero, found=false y el error del contexto.
 func (s *SlowRepository) Get(ctx context.Context, tenantID, edgeID, sessionID string) (fleet.Session, bool, error) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.Get"))
+	if err := s.wait(ctx); err != nil {
+		return fleet.Session{}, false, err
+	}
+	return s.inner.Get(ctx, tenantID, edgeID, sessionID)
 }
 
 // List implementa fleet.Repository tras la latencia inyectada. Si el contexto
 // muere durante la espera devuelve nil y el error del contexto.
 func (s *SlowRepository) List(ctx context.Context, tenantID string) ([]fleet.Session, error) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.List"))
+	if err := s.wait(ctx); err != nil {
+		return nil, err
+	}
+	return s.inner.List(ctx, tenantID)
 }
 
 // SetSelfPn implementa fleet.Repository tras la latencia inyectada.
 func (s *SlowRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.SetSelfPn"))
+	if err := s.wait(ctx); err != nil {
+		return err
+	}
+	return s.inner.SetSelfPn(ctx, tenantID, edgeID, sessionID, selfPn)
 }
 
 // SetProfile implementa fleet.Repository tras la latencia inyectada. Si el contexto
 // muere durante la espera devuelve found=false y el error del contexto.
 func (s *SlowRepository) SetProfile(ctx context.Context, tenantID, sessionID string, profile fleet.Profile) (bool, error) {
-	panic(pendiente.Implementar("fleethelpertest.SlowRepository.SetProfile"))
+	if err := s.wait(ctx); err != nil {
+		return false, err
+	}
+	return s.inner.SetProfile(ctx, tenantID, sessionID, profile)
 }
