@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // Los tests de fichero de la mitad del self_pn de fleet.PostgresRepository: SetSelfPn y

@@ -7,9 +7,44 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
+
+// selfPnEnvelope prepara las CUATRO columnas cifradas del número propio:
+// self_pn_bidx (índice ciego), self_pn_enc (envelope), self_pn_dek (DEK
+// envuelta) y el key_id de la KEK que la envolvió. Es el gemelo de
+// contact.encodeRef; el número en claro no sale de aquí.
+//
+// 🔴 NORMALIZA ANTES DE INDEXAR, Y ESE ORDEN ES TODO EL ASUNTO. BlindIndex es un
+// HMAC crudo: no normaliza nada por su cuenta (keyprovider.go:322-328), así que
+// "+34600111222" y "34600111222" darían DOS índices distintos para el MISMO
+// número y el conteo del tope de dispositivos (REQ-D4) contaría dos veces al
+// mismo teléfono. Con la columna en claro ese fallo era visible al mirar la
+// tabla; con el índice ciego es invisible por construcción.
+//
+// ⚠️ SE NORMALIZA AQUÍ AUNQUE EL LLAMADOR YA NORMALICE (persistSelfPn, en el
+// connect.go del gateway). Normalize es idempotente sobre un valor ya normalizado —solo
+// deja dígitos— así que el segundo paso cuesta un recorrido de ≤15 caracteres y
+// compra la garantía de que el bidx es canónico VENGA DE DONDE VENGA el valor.
+// Confiar en el llamador ataría la integridad del índice a una convención no
+// verificable: mañana un backfill, un endpoint de admin o un test escriben aquí
+// sin pasar por el Heartbeat y el índice queda partido en dos poblaciones que ya
+// nadie puede reconciliar (el valor en claro para compararlas ya no existe).
+func (r *PostgresRepository) selfPnEnvelope(tenantID, selfPn string) (bidx string, enc, dek []byte, kekID string, err error) {
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		// El error de Normalize NUNCA lleva el número (lo promete el contrato de
+		// Normalize en internal/nucleo/contact/contact.go: para phone_e164 describe
+		// la causa con una cuenta, no con el valor), así que se puede envolver y
+		// subir tal cual sin filtrar PII a los logs.
+		return "", nil, nil, "", fmt.Errorf("fleet: normalizar self_pn: %w", err)
+	}
+	bidx = r.kp.BlindIndex(tenantID, norm)
+	enc, dek, kekID, err = r.cipher.Encrypt(norm)
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("fleet: cifrar self_pn: %w", err)
+	}
+	return bidx, enc, dek, kekID, nil
+}
 
 // decryptSelfPn descifra el sobre leído de una fila y devuelve el número en
 // claro. Un sobre AUSENTE (las cuatro columnas NULL: sesión sin emparejar, o
@@ -54,7 +89,24 @@ func (r *PostgresRepository) decryptSelfPn(enc, dek []byte, kekID sql.NullString
 // emitir sentencia; un fallo del driver, con "fleet: contar sesiones vivas por
 // self_pn: ".
 func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, selfPn string) (int, error) {
-	panic(pendiente.Implementar("fleet.PostgresRepository.CountLiveBySelfPn"))
+	if selfPn == "" {
+		return 0, nil
+	}
+	// Se normaliza por el MISMO camino que la escritura: si escritura y lectura
+	// normalizaran distinto, el conteo daría 0 siempre y el aviso no saltaría nunca.
+	norm, err := normalizeSelfPn(selfPn)
+	if err != nil {
+		return 0, fmt.Errorf("fleet: normalizar self_pn para contar: %w", err)
+	}
+	var n int
+	err = r.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM public.fleet_sessions
+		WHERE tenant_id = $1 AND self_pn_bidx = $2 AND state <> 'loggedout'
+	`, tenantID, r.kp.BlindIndex(tenantID, norm)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("fleet: contar sesiones vivas por self_pn: %w", err)
+	}
+	return n, nil
 }
 
 // SetSelfPn persiste el self_pn reportado en el Heartbeat (Plan 020 · T2). UPDATE
@@ -131,7 +183,28 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // cifrar self_pn: …", los dos SIN emitir sentencia; un fallo del driver vuelve
 // envuelto como "fleet: fijar self_pn: …".
 func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error {
-	panic(pendiente.Implementar("fleet.PostgresRepository.SetSelfPn"))
+	if selfPn == "" {
+		return nil
+	}
+	bidx, enc, dek, kekID, err := r.selfPnEnvelope(tenantID, selfPn)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET self_pn_enc    = $4,
+		    self_pn_dek    = $5,
+		    self_pn_kek_id = $6,
+		    self_pn_bidx   = $7,
+		    updated_at     = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		  AND (self_pn_bidx   IS DISTINCT FROM $7
+		    OR self_pn_kek_id IS DISTINCT FROM $6)
+	`, tenantID, edgeID, sessionID, enc, dek, kekID, bidx)
+	if err != nil {
+		return fmt.Errorf("fleet: fijar self_pn: %w", err)
+	}
+	return nil
 }
 
 // selfPnDecryptTally acumula los sobres de self_pn que NO abrieron durante UNA
