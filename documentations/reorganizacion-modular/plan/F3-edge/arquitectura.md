@@ -123,6 +123,74 @@ Manda sobre la tabla provisional de §1.1 para estos paquetes. Mismas columnas y
   7.º `*fakedb*`) · `fleethelpertest.Memoria` **porta tal cual** al doble viejo (crea la fila en `MarkOffline` /
   `MarkLoggedOut` de una sesión desconocida; Postgres no): la suite afirma solo lo común.
 
+#### 1.1.c · Inventario E-12 de `grpc`, fichero a fichero (medido el 2026-10-04 sobre `dev` @ `c851591`; **aprobado por Jhoan** en F3-03, tal cual: niveles mixtos por trozo y nombres E-11)
+
+Manda sobre la tabla provisional de §1.1 para `grpc`. Mismas columnas que §1.1.a. Consumidores = paquetes de producción
+distintos, fuera del propio, que usan un símbolo de ese fichero; aquí se separan **n** (nominal: importa el paquete) y
+**e** (estructural: lo consume por una interfaz propia o por duck-typing, sin importarlo), porque en `grpc` casi todo el
+consumo es estructural. Los dos `arranque` cuentan 2. Importan el paquete viejo **4** paquetes: los dos `arranque`,
+`llmvia` y `llmvia/local`. «→» = trozos en que nace el fichero (E-13).
+
+| Fichero nuevo (`E/grpc/…`) | L. viejo | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `types.go` (`connCtx`, `edgeKey`, `streamSender`, `pendingAck`, `pendingInfer`) | 118 | no (tipos de las entradas de los mapas del `Server`) | `Mutex` por stream (`streamSender`, R-G12) | no | 0 | **complejo** (pequeño; R-G12 con candado de conducta) |
+| `server.go` (`Server`, `Option`, `New`, 9 `With*`, `Register`, 4 hooks) | 364 | 4 mapas: `acks`, `infers`, `edgeSessions`, `edgeReadiness` | 3 `Mutex` (`acksMu`, `trackMu`, `infersMu`); la lógica que los usa vive en otros ficheros | no | 2 n | **medio** (constructor: valores por defecto y opciones; 275 de 364 líneas son comentario) |
+| `receipt_sink.go` (`ReceiptSink`, `LogReceiptSink`) | 51 | no | no | no | 0 n · 2 e (`receipts`, `flujos/runtime`) | **simple** |
+| `worklane.go` (carril por sesión) | 428 | cola por sesión con tope | `Mutex` + 2 `sync.Cond`, worker por sesión, goroutine de drenaje, presupuesto por job | no | 0 | **complejo** (mutantes) |
+| `send.go` → `send.go` (`SendText`, `SendMedia`, `Ping`, `SendError`, `ErrStreamClosed`, `awaitAck`) · `send_ack.go` (`deliverAck`, `clearAck`, `cancelSessionAcks`, `handleReceipt`) · `send_revoke.go` (`RevokeLease`, `RevokeTenant`, `RestoreTenant`) | 578 → ~330 · ~120 · ~135 | mapa `acks` | canal por envío, 2 relojes (`ackTimeout` y el del push), fan-out de revocación (2 `go`) | vía `lease.Manager` | 0 n · 5 e (`flujos/runtime`, `intakes`, `platform/httpapi`, `publicapi`, `flujos/admin`) | **complejo** (mutantes en `send.go` y `send_ack.go`; `send_revoke.go` complejo sin mutantes: fan-out, R-G21) |
+| `connect.go` → `connect.go` (`Connect`, `closeStream`, `peerIdentity`) · `connect_route.go` (`route`, `submitHeartbeat`, `submitJob`, `decodeIncoming`) · `connect_session.go` (`registerSession`, `onSessionRegistered`, `onControlChannel`, `onStreamClosed`, `track`/`untrackSession`, `sessionsForEdge`) · `connect_heartbeat.go` (`persistSelfPn`, `warnDeviceLimit`, `markLoggedOut`, `persistHealth`, `observeInference`, `renewLease` y 4 auxiliares puros) | 1.143 → ~270 · ~345 · ~275 · ~250 | `edgeSessions` (y registra en `session.Registry`) | bucle `Recv`, reparto inline/carril, `MarkOffline` diferido (R-G4), canal de control (ADR-0048) | vía `fleet`, `lease` | 0 (se sirve por `Register`) | **complejo** (mutantes en `connect.go`, `connect_route.go` y `connect_session.go`; `connect_heartbeat.go` **medio**: persistencia por puertos, sin estado propio) |
+| `auth.go` (`WithAuthenticator`, `WithAuthAuditor`, login/refresh/logout en banda) | 378 | no | no propia (corre en el carril) | vía `in.Authenticator`, `in.Auditor` | 2 n | **medio** (R-G9, R-G10; el caso multi-Edge se afirma con dos streams) |
+| `config_push.go` (`ConfigPayload`, `ConfigProvider`, `WithConfigProvider`, `PushConfig`, `pushConfigsInBand`) | 247 | no | fan-out a las sesiones del tenant (1 `go`) | no | 2 n · 2 e (`publicapi`, `filtercfg`) | **complejo** (ADR-0048: `pushConfigsInBand` sin caer al registro, T-5; sin mutantes salvo esa rama) |
+| `readiness.go` (flanco a `READY`, `calientaPorRegistro`) | 199 | `edgeReadiness` | `trackMu` | no | 0 | **complejo** (mutantes; T-6) |
+| `diagnostics.go` (`RequestDiagnostics`, recepción del bundle) | 69 | no | no | vía `diagnostics.BundleReceiver` | 1 e (`publicapi`) | **simple** |
+| `inference.go` → `inference.go` (`InferRequest`, `InferError`, motivos, clases, centinelas, `DefaultInferGrace`) · `inference_dispatch.go` (`Infer`, elección de sesión, `candidatasPorReadiness`, `inferToCloud`) · `inference_result.go` (`awaitInference`, `readInference`, `openInference`, `motivoDeFrame`, `deliverInference`, `clearInfer`, `cancelSessionInfers`) | 697 → ~315 · ~200 · ~185 | mapa `infers` | canal por inferencia, reloj propio + margen | no | 2 n (`llmvia`, `llmvia/local`) | `inference.go` **medio** (vocabulario, R-G14) · los otros dos **complejo** (mutantes en la elección de sesión: es la mitad de la pareja ADR-0048) |
+| `plaza.go` (`PlazaDe`) | 66 | lee `edgeSessions`/`edgeReadiness` | `trackMu` (delegado) | no | 1 e (`llmvia`, por aserción de tipo; T-1) | **medio** (la otra mitad de la pareja ADR-0048, R-G15) |
+| `greeting.go` 🔒 (literal, `sessionGreeter`, `greetIfNeeded`) | 228 | no | no propia (corre en el job del latido) | vía `sessionGreeter` (CAS de `MarkGreeted`) | 0 | **complejo** (literal byte a byte; mutantes en «sin Ack no hay marca») |
+
+- **Totales**: 13 ficheros viejos → **20 de producción** (4 + 3 + 3 trozos y 10 enteros), cada uno con su gemelo. Niveles:
+  2 simples, 5 medios (contando 2 trozos), 13 complejos. Tests viejos: 37 ficheros, 144 `Test*`; **7 no se portan** (D-F3-5:
+  `load_*`, `curva_pool_t55`, `deuda_050_2`) y `mtls_test.go` (732 l, mTLS real) va a F3-05 (D-F3-8).
+- **E-13**: se parten **desde el rojo** `connect.go`, `inference.go` y `send.go`, solo moviendo declaraciones. Ningún otro
+  de producción pasa de 500. De los tests viejos pasan de 500 `server_test.go` (917) y `worklane_internal_test.go` (641):
+  sus gemelos nuevos nacen partidos por tema. ⚠️ Ciclo entre trozos previsto (hallazgo 25): `Server` (en `server.go`) usa
+  `pendingAck`, `pendingInfer` y `edgeKey` (`types.go`) y `workLane`; el primer verde toca `types.go` + `server.go` juntos.
+- **Adaptadores `bridge_<x>.go` en F3-03: ninguno** (el `bridge_gateway.go` nace en F3-04). **Puertos de entrada sin
+  suite: ninguno**: `ConfigProvider`, `ReceiptSink` y `sessionGreeter` son puertos de **salida** del gateway, sin BD
+  propia. **Driver SQL falso: no hace falta** (todo va por puertos; no hay 8.º `*fakedb*`).
+- **Dobles**: `fleethelpertest.Memoria` no tiene `PendingGreeting`/`MarkGreeted`; `greeting_test.go` usa un doble local
+  del `sessionGreeter` (interfaz estrecha propia del consumidor, R-G23…R-G30). El resto, los `<paq>helpertest` de F3-01/02
+  y un stream en memoria (`bufconn` solo para el camino `Connect` completo).
+- **E-11 (propuesta de nombres)**. Se renombran, con el texto observable literal:
+  `ClaseInteractivo`/`ClaseLote` → `ClassInteractive`/`ClassBatch` (valores `"interactivo"`, `"lote"`) ·
+  `Motivo*` (6) → `Reason*` (valores literales) · `ErrInferenceSinClaveDeCifrado` → `ErrInferenceNoEncryptionKey` ·
+  `ErrInferenceSelladoIlegible` → `ErrInferenceSealedUnreadable` · `ErrInferenceSinSalida` → `ErrInferenceNoOutput` ·
+  `ErrInferenceAbandonada` → `ErrInferenceAbandoned`. Ninguno se consume por interfaz estructural (medido: fuera del
+  paquete solo se usan `Clase*`, `InferRequest` e `InferError`, por import nominal desde `llmvia`, que el
+  `bridge_gateway.go` de F3-04 traduce). 🔴 **NO se renombran** (se consumen por duck-typing o aserción de tipo desde
+  código que no se reconstruye en F3, y un renombrado los apagaría **sin ningún rojo**): `(*SendError).StreamCaido()`
+  (`platform/httpapi`, `publicapi`, `flujos/admin`), `(*InferError).Motivo()` (`llmvia/notify.go`, `llmvia/local`),
+  `(*Server).PlazaDe` (`llmvia`, T-1) y `CommandID()` (ya en inglés). Los no exportados nuevos van en inglés
+  (`observaReadiness` → `observeReadiness`, `calientaPorRegistro` → `warmOnRegister`, …).
+- **Valor cero (D-F2-10), dicho y no cambiado**: `InferenceReadiness` `UNSPECIFIED` (0) y la **ausencia de entrada** en
+  `edgeReadiness` son la misma respuesta, «no lo dice», y el Edge **sigue siendo elegible**: aquí el cero **es** «procede»,
+  a propósito (T-6, ADR-0048: filtrar por `READY` obligatorio está refutado) · `SessionState` `UNSPECIFIED` en el latido
+  → la sesión sigue **online** (R-G6) · `InferRequest.Timeout` ≤ 0 → 30 s; `Class ""` no se valida en el gateway ·
+  `New` con `ackTimeout`/`workQueue`/`workBudget`/`inferGrace` ≤ 0 → 8 s / 64 / 5 s / 5 s (el cero **nunca** es «sin
+  reloj» ni «cola infinita») · `receiptSink` nil → `LogReceiptSink` · sin `fleet`, sin `leaseMgr`, sin `authn` o sin
+  `configProvider`, el gateway degrada a no-op en esa pieza (se afirma tal cual).
+- **Hallazgo 23, comprobado**: `persistSelfPn` hace `contact.Normalize(contact.KindPhoneE164, hb.GetSelfPn())` **sobre el
+  valor crudo del latido, sin limpiar el JID**. Si el Edge mandara `573001112233:5@s.whatsapp.net`, se persistiría
+  `5730011122335` y `CountLiveBySelfPn` buscaría por ese índice. Es conducta del viejo: se copia y se afirma en un test
+  (`connect_heartbeat_test.go`); **no se corrige**. Que el Edge mande hoy el número ya limpio no se ha podido comprobar
+  desde este repo (vive en `wapp-edge-agent`).
+- **Concurrencia (D-F2-12)**: se prueban por conducta el carril (serial dentro de la sesión, paralelo entre sesiones,
+  coalescencia, cola llena), los acks y las inferencias (cierre del stream, Ack tardío, reloj propio), el fan-out y el
+  canal de control. `streamSender` (R-G12) se afirma con un stream falso que detecta dos `Send` solapados. Si alguna
+  carrera no se puede forzar sin `Sleep`, se plantea antes de escribir un candado AST. De los tests viejos, 7 ficheros
+  usan `time.Sleep` (20 usos; 3 ficheros y 12 usos son de carga o mTLS, que no se portan): en lo nuevo, canales y `ctx` (T-16).
+- **Tipos nominales**: `ConfigPayload`, `InferRequest`, `fleet.*` y `diagnostics.*` nuevos no encajan en los consumidores
+  viejos. En F3-03 **no se cablea nada**: lo resuelve F3-04 (T3.24, T3.28).
+
 **Adaptadores de arranque**: nace **1** (`bridge_gateway.go`, muere en F4) y muere **1** (`bridge_iam.go`, nacido en F2).
 
 ## 2 · Grafo interno y orden
