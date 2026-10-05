@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // Los tests de fichero del eje de perfil en fleet.PostgresRepository: SetProfile (la única

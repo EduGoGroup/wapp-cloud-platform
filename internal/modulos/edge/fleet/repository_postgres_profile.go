@@ -4,8 +4,8 @@ package fleet
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"time"
 )
 
 // SetProfile fija el PERFIL (active|passive) de la sesión del tenant.
@@ -40,7 +40,22 @@ import (
 // como "fleet: fijar perfil: …" y el de leer las filas afectadas como "fleet: filas
 // afectadas al fijar perfil: …".
 func (r *PostgresRepository) SetProfile(ctx context.Context, tenantID, sessionID string, profile Profile) (bool, error) {
-	panic(pendiente.Implementar("fleet.PostgresRepository.SetProfile"))
+	if !ValidProfile(profile) {
+		return false, ErrInvalidProfile
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET profile = $3, profile_updated_at = now(), updated_at = now()
+		WHERE tenant_id = $1 AND session_id = $2
+	`, tenantID, sessionID, string(profile))
+	if err != nil {
+		return false, fmt.Errorf("fleet: fijar perfil: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al fijar perfil: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ProfilesByTenant devuelve la FOTO del eje `profile` de TODAS las sesiones del
@@ -82,5 +97,38 @@ func (r *PostgresRepository) SetProfile(ctx context.Context, tenantID, sessionID
 // rows.Err(), así que la rama "fleet: cerrar filas de perfiles: …" del defer no se
 // alcanza por ese camino; se porta tal cual).
 func (r *PostgresRepository) ProfilesByTenant(ctx context.Context, tenantID string) (tp TenantProfiles, err error) {
-	panic(pendiente.Implementar("fleet.PostgresRepository.ProfilesByTenant"))
+	tp = TenantProfiles{Sessions: make(map[string]Profile)}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT session_id,
+		       max(COALESCE(profile, 'passive')) AS profile,
+		       max(profile_updated_at)           AS profile_updated_at
+		FROM public.fleet_sessions
+		WHERE tenant_id = $1
+		GROUP BY session_id
+		ORDER BY session_id
+	`, tenantID)
+	if err != nil {
+		return TenantProfiles{}, fmt.Errorf("fleet: leer perfiles del tenant: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("fleet: cerrar filas de perfiles: %w", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var sessionID, profile string
+		var profileUpdatedAt time.Time
+		if scanErr := rows.Scan(&sessionID, &profile, &profileUpdatedAt); scanErr != nil {
+			return TenantProfiles{}, fmt.Errorf("fleet: escanear perfil de sesión: %w", scanErr)
+		}
+		tp.Sessions[sessionID] = Profile(profile)
+		if us := profileUpdatedAt.UnixMicro(); us > tp.Version {
+			tp.Version = us
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return TenantProfiles{}, fmt.Errorf("fleet: iterar perfiles del tenant: %w", rowsErr)
+	}
+	return tp, nil
 }
