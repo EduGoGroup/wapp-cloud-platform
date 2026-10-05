@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // Los tests de fichero de fleet.PostgresRepository.SaveHealth: una sentencia y diecinueve
