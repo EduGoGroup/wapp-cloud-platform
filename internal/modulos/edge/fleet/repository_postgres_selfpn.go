@@ -4,9 +4,35 @@ package fleet
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
+
+// decryptSelfPn descifra el sobre leído de una fila y devuelve el número en
+// claro. Un sobre AUSENTE (las cuatro columnas NULL: sesión sin emparejar, o
+// fila anterior al backfill) devuelve "" sin error — es el mismo «todavía no hay
+// número» que antes representaba el COALESCE sobre la columna. Un sobre INCOMPLETO o
+// que no abre SÍ es error: ahí hay un dato corrupto y callarlo lo entierra.
+//
+// Se desenvuelve con la KEK que envolvió ESTA fila (self_pn_kek_id) y no con la
+// current: tras una rotación parcial coexisten filas de varias KEK (Plan 012).
+func (r *PostgresRepository) decryptSelfPn(enc, dek []byte, kekID sql.NullString) (string, error) {
+	if len(enc) == 0 && len(dek) == 0 && !kekID.Valid {
+		return "", nil
+	}
+	if len(enc) == 0 || len(dek) == 0 || !kekID.Valid {
+		// Sin el número en el mensaje: solo el HECHO de que el sobre está a medias.
+		return "", errors.New("fleet: sobre de self_pn incompleto (enc/dek/kek_id no viajan juntos)")
+	}
+	pn, err := r.cipher.Decrypt(enc, dek, kekID.String)
+	if err != nil {
+		return "", fmt.Errorf("fleet: descifrar self_pn: %w", err)
+	}
+	return pn, nil
+}
 
 // CountLiveBySelfPn cuenta las sesiones vivas (state != 'loggedout') del tenant con
 // el self_pn dado (REQ-D4, aviso del tope de dispositivos). selfPn vacío ⇒ 0 sin
@@ -106,4 +132,67 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // envuelto como "fleet: fijar self_pn: …".
 func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, sessionID, selfPn string) error {
 	panic(pendiente.Implementar("fleet.PostgresRepository.SetSelfPn"))
+}
+
+// selfPnDecryptTally acumula los sobres de self_pn que NO abrieron durante UNA
+// llamada al repositorio (un Get, o un List entero), para emitir UN SOLO Warn al
+// final en vez de uno por fila.
+//
+// 🔴 POR QUÉ AGREGAR EN VEZ DE AVISAR POR FILA (corrección del 2026-08-21,
+// revisión de T4.1). El aviso vivía dentro de scanSession, o sea DENTRO del bucle
+// de List, y sin acotar. El modo de fallo realista que el propio docstring de
+// scanSession nombra —un keyring incompleto tras una rotación— no rompe UNA fila:
+// rompe TODAS a la vez. Y el consumidor de List es el dashboard del BFF, que
+// POLEA. El resultado era N líneas idénticas por poll, para siempre, sepultando
+// el log justo en el momento en que el operador lo abre para diagnosticar la
+// rotación mal cerrada. Un aviso que solo se puede leer cuando no hace falta no
+// es un aviso.
+//
+// 🔴 POR QUÉ AGREGADO Y NO MUESTREO. Se descartó el muestreo (1 de cada N, o uno
+// cada X segundos) por dos razones. La primera: el muestreo pierde el CONTEO, que
+// aquí es el dato que decide la gravedad —«1 fila ilegible» es una fila corrupta,
+// «las 40» es una KEK que falta— y es justo lo que el operador necesita para
+// distinguirlas. La segunda: un muestreo temporal exige estado compartido y por
+// tanto un mutex en un repositorio que hoy NO tiene estado mutable (sus campos se
+// fijan al construirlo y no cambian), y ese candado se pagaría en TODAS las lecturas para acotar
+// un caso excepcional. El tally vive en la pila de la llamada: cero contención,
+// cero estado en el repositorio, y una línea por llamada como cota dura.
+//
+// ⚠️ CERO PII, igual que antes: ni el número (que no se pudo obtener) ni el
+// contenido del sobre. Solo identidades opacas y la causa. El key_id SÍ va —dice
+// QUÉ KEK falta y no revela nada del número (§10.I)— y se conserva el de la
+// PRIMERA fila que falló: en el fallo masivo todas comparten el mismo key_id, que
+// es precisamente el dato accionable.
+type selfPnDecryptTally struct {
+	failed       int
+	firstTenant  string
+	firstEdge    string
+	firstSession string
+	firstKekID   string
+	firstErr     error
+}
+
+// record anota un sobre que no abrió. Solo el PRIMERO deja muestra: los demás
+// suman al contador.
+func (t *selfPnDecryptTally) record(tenantID, edgeID, sessionID, kekID string, err error) {
+	t.failed++
+	if t.failed == 1 {
+		t.firstTenant, t.firstEdge, t.firstSession = tenantID, edgeID, sessionID
+		t.firstKekID, t.firstErr = kekID, err
+	}
+}
+
+// flush emite el aviso agregado, o nada si no hubo fallos (el caso normal). Se
+// llama SIEMPRE al terminar la lectura, incluso en el camino de error: si el
+// listado se cortó a media iteración, las filas que ya fallaron siguen siendo
+// información válida sobre el estado del keyring.
+func (t *selfPnDecryptTally) flush(log Logger) {
+	if t.failed == 0 {
+		return
+	}
+	log.Warn("fleet: hay self_pn que no se pudieron descifrar; se sirven vacíos",
+		"filas_afectadas", t.failed,
+		"muestra_tenant_id", t.firstTenant, "muestra_edge_id", t.firstEdge,
+		"muestra_session_id", t.firstSession,
+		"muestra_kek_id", t.firstKekID, "error", t.firstErr)
 }

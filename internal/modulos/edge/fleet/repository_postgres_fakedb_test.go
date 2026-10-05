@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // El driver de database/sql de mentira sobre el que corren los cinco repository_postgres*_test.go:

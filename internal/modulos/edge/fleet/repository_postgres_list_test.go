@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // La otra mitad de los tests del núcleo (E-13: se parte por tema): List con filas y sus errores,

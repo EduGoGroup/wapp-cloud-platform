@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // Los tests de fichero del núcleo de fleet.PostgresRepository (constructor, logger, Mark*,
