@@ -5,8 +5,11 @@ package grpc
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 )
 
 // RevokeLease dispara el kill-switch del Edge: persiste la revocación y empuja
@@ -43,8 +46,34 @@ import (
 // (sendTimeout, 10 s), y por esta vía el ctx pasa a ser el más corto de los dos. No
 // se movió NINGÚN timeout (INV-050.6): WAPP_GRPC_PUSH_TIMEOUT sigue valiendo lo
 // mismo y sigue siendo el techo para los llamantes que traen un ctx sin deadline.
-func (s *Server) RevokeLease(_ context.Context, _, _ string) error {
-	panic(pendiente.Implementar("grpc.Server.RevokeLease"))
+func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
+	lu, err := s.leaseMgr.Revoke(ctx, tenantID, edgeID)
+	if err != nil {
+		return err
+	}
+	// Push CONCURRENTE del LeaseUpdate(Revoked) a todas las sesiones del Edge (Plan
+	// 027 · Ola 1 · T5, cierra H6): cada Push ya está acotado por sendTimeout, y
+	// paralelizarlos evita que una sesión bloqueada retrase la revocación en el resto
+	// (el kill-switch debe llegar a TODAS cuanto antes). La revocación en el lease.
+	// Manager ya está persistida; estos push son la notificación best-effort.
+	var wg sync.WaitGroup
+	for _, sid := range s.sessionsForEdge(tenantID, edgeID) {
+		wg.Add(1)
+		go func(sid string) {
+			defer wg.Done()
+			if pushErr := s.registry.Push(ctx, sid, leaseToCloud(sid, lu)); pushErr != nil {
+				s.log.Debug("revoke: push a sesión", "session_id", sid, "error", pushErr)
+			}
+		}(sid)
+	}
+	wg.Wait()
+	return nil
 }
 
 // RevokeTenant dispara el kill-switch COMERCIAL de un tenant completo
@@ -68,8 +97,54 @@ func (s *Server) RevokeLease(_ context.Context, _, _ string) error {
 // "gatewaygrpc: listar instalaciones del tenant: …" envolviendo el error de
 // fleet.List (el corte YA quedó persistido). Un empuje que falla no es error.
 // Mismo reloj que RevokeLease, que aquí cubre además el fleet.List.
-func (s *Server) RevokeTenant(_ context.Context, _ string) error {
-	panic(pendiente.Implementar("grpc.Server.RevokeTenant"))
+func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	// Reloj de T3.4, con el enunciado completo en RevokeLease. Aquí cubre además el
+	// fleet.List de abajo: el SELECT sin LIMIT que motivó la tarea.
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
+	if err := s.leaseMgr.RevokeTenant(ctx, tenantID); err != nil {
+		return err
+	}
+
+	edgeIDs := map[string]struct{}{}
+	if s.fleet != nil {
+		sessions, err := s.fleet.List(ctx, tenantID)
+		if err != nil {
+			return fmt.Errorf("gatewaygrpc: listar instalaciones del tenant: %w", err)
+		}
+		for _, sess := range sessions {
+			edgeIDs[sess.EdgeID] = struct{}{}
+		}
+	}
+
+	// Push CONCURRENTE por instalación e independiente entre instalaciones: el
+	// mismo argumento que RevokeLease -- ninguna sesión bloqueada debe
+	// retrasar la notificación al resto, y aquí hay potencialmente muchas más
+	// sesiones en juego (todas las instalaciones del tenant, no solo una).
+	var wg sync.WaitGroup
+	for edgeID := range edgeIDs {
+		lu, signErr := s.leaseMgr.SignTenantRevocation(edgeID, tenantID)
+		if signErr != nil {
+			s.log.Error("revoke tenant: firmar revocación de instalación",
+				"edge_id", edgeID, "error", signErr)
+			continue
+		}
+		for _, sid := range s.sessionsForEdge(tenantID, edgeID) {
+			wg.Add(1)
+			go func(sid string, lu *cloudlinkv1.LeaseUpdate) {
+				defer wg.Done()
+				if pushErr := s.registry.Push(ctx, sid, leaseToCloud(sid, lu)); pushErr != nil {
+					s.log.Debug("revoke tenant: push a sesión", "session_id", sid, "error", pushErr)
+				}
+			}(sid, lu)
+		}
+	}
+	wg.Wait()
+	return nil
 }
 
 // RestoreTenant reactiva un tenant previamente revocado (Plan 055 · T3.3,
@@ -84,6 +159,24 @@ func (s *Server) RevokeTenant(_ context.Context, _ string) error {
 // Devuelve "gatewaygrpc: lease no configurado" sin gestor de leases. Mismo reloj
 // que RevokeLease: un solo viaje, pero entra igual — es la hermana de las otras dos
 // y la excepción de hoy es el defecto de mañana (REQ-050.12).
-func (s *Server) RestoreTenant(_ context.Context, _ string) error {
-	panic(pendiente.Implementar("grpc.Server.RestoreTenant"))
+func (s *Server) RestoreTenant(ctx context.Context, tenantID string) error {
+	if s.leaseMgr == nil {
+		return errors.New("gatewaygrpc: lease no configurado")
+	}
+	// Reloj de T3.4, con el enunciado completo en RevokeLease. Un solo viaje, pero
+	// entra igual: es la hermana de las otras dos y la excepción de hoy es el defecto
+	// de mañana (REQ-050.12).
+	ctx, cancel := context.WithTimeout(ctx, s.workBudget)
+	defer cancel()
+
+	return s.leaseMgr.RestoreTenant(ctx, tenantID)
+}
+
+// leaseToCloud envuelve un LeaseUpdate en un CloudToEdge dirigido a la sesión
+// dada. No lleva command_id: es un push del servidor, no un comando con Ack.
+func leaseToCloud(sessionID string, lu *cloudlinkv1.LeaseUpdate) *cloudlinkv1.CloudToEdge {
+	return &cloudlinkv1.CloudToEdge{
+		SessionId: sessionID,
+		Payload:   &cloudlinkv1.CloudToEdge_LeaseUpdate{LeaseUpdate: lu},
+	}
 }

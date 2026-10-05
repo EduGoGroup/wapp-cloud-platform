@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El contrato de send_revoke.go por la API exportada: lo que se persiste, los errores y el
@@ -117,6 +115,26 @@ func newRevokeRig(t *testing.T, opts ...Option) *revokeRig {
 	return &revokeRig{srv: srv, reg: reg, leaseRepo: repo, mgr: mgr}
 }
 
+// tenantRevoked dice si el corte del tenant está persistido.
+func (r *revokeRig) tenantRevoked(t *testing.T, tenantID string) bool {
+	t.Helper()
+	revoked, err := r.leaseRepo.TenantRevoked(t.Context(), tenantID)
+	if err != nil {
+		t.Fatalf("TenantRevoked(%s): %v", tenantID, err)
+	}
+	return revoked
+}
+
+// leaseState dice si el Edge tiene estado de lease persistido y si está revocado.
+func (r *revokeRig) leaseState(t *testing.T, tenantID, edgeID string) (found, revoked bool) {
+	t.Helper()
+	st, found, err := r.leaseRepo.Get(t.Context(), tenantID, edgeID)
+	if err != nil {
+		t.Fatalf("Get(%s, %s): %v", tenantID, edgeID, err)
+	}
+	return found, found && st.Revoked
+}
+
 // Sin gestor de leases (sin WithLease, o con nil) las tres entradas devuelven el mismo error
 // literal y no hacen nada más.
 func TestRevocationFamilyWithoutLeaseIsAnError(t *testing.T) {
@@ -161,10 +179,10 @@ func TestRevokeLeasePersistsTheRevocation(t *testing.T) {
 	if err != nil || !found || !st.Revoked {
 		t.Fatalf("lease de edge-1 = (%+v, found=%v, err=%v), se esperaba revocado", st, found, err)
 	}
-	if _, other, _ := rig.leaseRepo.Get(ctx, "tenant-1", "edge-2"); other {
+	if found, _ := rig.leaseState(t, "tenant-1", "edge-2"); found {
 		t.Error("la revocación de edge-1 tocó el lease de edge-2")
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(ctx, "tenant-1"); revoked {
+	if rig.tenantRevoked(t, "tenant-1") {
 		t.Error("RevokeLease cortó el tenant entero: ese es otro sujeto de corte (D-055.2)")
 	}
 }
@@ -185,14 +203,14 @@ func TestRevokeTenantAndRestoreTenantPersistTheCut(t *testing.T) {
 	if err := rig.srv.RevokeTenant(ctx, "tenant-1"); err != nil {
 		t.Fatalf("RevokeTenant = %v", err)
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(ctx, "tenant-1"); !revoked {
+	if !rig.tenantRevoked(t, "tenant-1") {
 		t.Fatal("RevokeTenant no persistió el corte del tenant")
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(ctx, "tenant-2"); revoked {
+	if rig.tenantRevoked(t, "tenant-2") {
 		t.Error("el corte de tenant-1 se filtró a tenant-2")
 	}
 	for _, edgeID := range []string{"edge-1", "edge-2", "edge-3"} {
-		if st, found, _ := rig.leaseRepo.Get(ctx, "tenant-1", edgeID); found && st.Revoked {
+		if _, revoked := rig.leaseState(t, "tenant-1", edgeID); revoked {
 			t.Errorf("RevokeTenant marcó revocado el lease de %s: RestoreTenant ya no podría reactivarlo (D-055.2)", edgeID)
 		}
 	}
@@ -200,7 +218,7 @@ func TestRevokeTenantAndRestoreTenantPersistTheCut(t *testing.T) {
 	if err := rig.srv.RestoreTenant(ctx, "tenant-1"); err != nil {
 		t.Fatalf("RestoreTenant = %v", err)
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(ctx, "tenant-1"); revoked {
+	if rig.tenantRevoked(t, "tenant-1") {
 		t.Fatal("RestoreTenant no reactivó el tenant")
 	}
 }
@@ -212,7 +230,7 @@ func TestRevokeTenantWithoutFleetStillPersists(t *testing.T) {
 	if err := rig.srv.RevokeTenant(context.Background(), "tenant-1"); err != nil {
 		t.Fatalf("RevokeTenant sin fleet = %v", err)
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(context.Background(), "tenant-1"); !revoked {
+	if !rig.tenantRevoked(t, "tenant-1") {
 		t.Fatal("RevokeTenant sin fleet no persistió el corte")
 	}
 }
@@ -254,7 +272,7 @@ func TestRevokeTenantWrapsTheFleetListError(t *testing.T) {
 	if want := "gatewaygrpc: listar instalaciones del tenant: " + errList.Error(); err.Error() != want {
 		t.Errorf("error = %q, se esperaba %q", err.Error(), want)
 	}
-	if revoked, _ := rig.leaseRepo.TenantRevoked(context.Background(), "tenant-1"); !revoked {
+	if !rig.tenantRevoked(t, "tenant-1") {
 		t.Error("el corte no quedó persistido antes de listar")
 	}
 }
@@ -293,7 +311,9 @@ func TestRevocationFamilyPutsItsOwnClock(t *testing.T) {
 			}
 			within(t, "RevokeLease (persistencia)", rig.leaseRepo.lastDeadline(t), tc.budget)
 
-			_ = rig.srv.RevokeTenant(ctx, "tenant-1") // falla en List, a propósito
+			if err := rig.srv.RevokeTenant(ctx, "tenant-1"); err == nil { // falla en List, a propósito
+				t.Fatal("RevokeTenant no devolvió el error de fleet.List")
+			}
 			within(t, "RevokeTenant (persistencia)", rig.leaseRepo.lastDeadline(t), tc.budget)
 			within(t, "RevokeTenant (fleet.List)", listed.deadline, tc.budget)
 
