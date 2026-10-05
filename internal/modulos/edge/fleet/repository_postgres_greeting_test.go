@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package fleet
 
 // Los tests de fichero del aviso de sesión pasiva en fleet.PostgresRepository: PendingGreeting

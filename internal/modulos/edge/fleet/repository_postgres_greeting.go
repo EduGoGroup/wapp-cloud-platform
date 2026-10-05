@@ -4,8 +4,9 @@ package fleet
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"database/sql"
+	"errors"
+	"fmt"
 )
 
 // PendingGreeting responde a la ÚNICA pregunta del emisor del saludo de T3.2 (b):
@@ -78,7 +79,36 @@ import (
 // pendiente: …"; un sobre incompleto o que no abre, el error de decryptSelfPn tal
 // cual; y una fila con índice ciego pero sin sobre, su error propio.
 func (r *PostgresRepository) PendingGreeting(ctx context.Context, tenantID, edgeID, sessionID string) (string, bool, error) {
-	panic(pendiente.Implementar("fleet.PostgresRepository.PendingGreeting"))
+	var (
+		enc, dek []byte
+		kekID    sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT self_pn_enc, self_pn_dek, self_pn_kek_id
+		FROM public.fleet_sessions
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		  AND greeted_at IS NULL
+		  AND self_pn_bidx IS NOT NULL
+		  AND profile = 'passive'
+	`, tenantID, edgeID, sessionID).Scan(&enc, &dek, &kekID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("fleet: consultar saludo pendiente: %w", err)
+	}
+	// A partir de aquí el número vive en memoria y no se loguea (§8 del Plan 011).
+	selfPn, err := r.decryptSelfPn(enc, dek, kekID)
+	if err != nil {
+		return "", false, err
+	}
+	if selfPn == "" {
+		// El bidx estaba pero el sobre no: la fila casó el WHERE y aun así no hay
+		// destino. No puede pasar si el sobre se escribe entero (SetSelfPn y el
+		// backfill lo hacen), pero si pasara, «pendiente sin número» sería mentira.
+		return "", false, errors.New("fleet: la fila tiene índice ciego de self_pn pero no sobre; no hay destino para el saludo")
+	}
+	return selfPn, true, nil
 }
 
 // MarkGreeted deja constancia de que a esta sesión YA se le entregó el aviso
@@ -107,5 +137,18 @@ func (r *PostgresRepository) PendingGreeting(ctx context.Context, tenantID, edge
 // entregado: …", y el de leer las filas afectadas, como "fleet: filas afectadas al
 // marcar el saludo: …".
 func (r *PostgresRepository) MarkGreeted(ctx context.Context, tenantID, edgeID, sessionID string) (bool, error) {
-	panic(pendiente.Implementar("fleet.PostgresRepository.MarkGreeted"))
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE public.fleet_sessions
+		SET greeted_at = now(), updated_at = now()
+		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
+		  AND greeted_at IS NULL
+	`, tenantID, edgeID, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("fleet: marcar saludo entregado: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fleet: filas afectadas al marcar el saludo: %w", err)
+	}
+	return n > 0, nil
 }
