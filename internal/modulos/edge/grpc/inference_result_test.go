@@ -422,3 +422,30 @@ func TestReasonOfFrameMapsEveryProtoValue(t *testing.T) {
 		}
 	}
 }
+
+// El sobre ilegible conserva SU CAUSA (doble %w): quien investiga un ErrInferenceSealedUnreadable
+// tiene que poder distinguir «no abre» —clave cruzada o sellado manipulado— de «abre y no es un
+// InferenceOutput» sin leer el texto del error.
+func TestReadInferenceUnreadableSealKeepsItsCause(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	for name, tc := range map[string]struct {
+		enc   []byte
+		cause error
+	}{
+		"corrupt envelope":                    {[]byte("no es un sobre"), envelope.ErrOpenFailed},
+		"sealed for another key":              {newInferRig(t).seal(t, modelOutput), envelope.ErrOpenFailed},
+		"opens but is not an InferenceOutput": {rig.sealBytes(t, []byte{0xff, 0xff, 0xff}), proto.Error},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			out, err := rig.srv.readInference(sealedResult("cmd-1", tc.enc), "cmd-1", "s-1")
+			if !errors.Is(err, ErrInferenceSealedUnreadable) || out != "" {
+				t.Fatalf("readInference = (%q, %v), se esperaba ErrInferenceSealedUnreadable", out, err)
+			}
+			if !errors.Is(err, tc.cause) {
+				t.Errorf("el error perdió su causa (%v): %v", tc.cause, err)
+			}
+		})
+	}
+}
