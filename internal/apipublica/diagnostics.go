@@ -111,8 +111,14 @@ type DiagnosticsDeps struct {
 //     feliz NO hay DeleteRequest.
 //
 // Ninguno de los desenlaces anteriores al empuje emite nada al Edge, así que sus 504 sí dicen
-// «reintenta». CreateRequest, RequestDiagnostics y DeleteRequest reciben el contexto de la
-// petición SIN plazo propio (d.DBTimeout acota solo las lecturas).
+// «reintenta». CreateRequest y RequestDiagnostics reciben el contexto de la petición SIN plazo
+// propio (d.DBTimeout acota las lecturas).
+//
+// 🔴 El ROLLBACK no: DeleteRequest va DESENGANCHADO de la cancelación de la petición y con plazo
+// propio, d.DBTimeout (<= 0 ⇒ 1,5 s). Aquí la cara nueva SE APARTA de la vieja a propósito
+// (D-F3-11, 2026-10-06): la vieja lo llamaba con r.Context(), y si el cliente se iba mientras se
+// empujaba al Edge —justo cuando el empuje suele fallar— el DELETE moría con el contexto
+// cancelado y la solicitud quedaba pendiente hasta su TTL.
 //
 // D6 descarga el bundle {command_id} del tenant DEL TOKEN: GetBundle(tenant, command_id),
 // acotado por d.DBTimeout. El plazo vencido se mira ANTES que los centinelas del store:
@@ -268,6 +274,8 @@ func resolveScope(w http.ResponseWriter, r *http.Request) (string, bool) {
 // AuditMiddleware, y aquí se añade un log estructurado con command_id/session_id/subject.
 // Las respuestas, una a una, están en el contrato de MountDiagnostics.
 //
+// El rollback va por rollbackRequest (D-F3-11).
+//
 // gw y store nunca son nil: MountDiagnostics no monta la ruta sin ellos (la cara vieja
 // repetía aquí esa guarda con un 500 «diagnóstico remoto no configurado» inalcanzable).
 func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, sessions SessionLister, ttl, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
@@ -297,7 +305,7 @@ func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, 
 		// rollback de la fila pendiente para no dejar una solicitud que nunca recibirá
 		// bundle, y se traduce el error (offline ⇒ 502).
 		if err := gw.RequestDiagnostics(r.Context(), sessionID, commandID, scope); err != nil {
-			if derr := store.DeleteRequest(r.Context(), id.TenantID, commandID); derr != nil && log != nil {
+			if derr := rollbackRequest(r.Context(), store, id.TenantID, commandID, dbTimeout); derr != nil && log != nil {
 				log.Warn("diagnóstico: rollback de solicitud tras push fallido falló",
 					"tenant_id", id.TenantID, "command_id", commandID, "error", derr)
 			}
@@ -320,6 +328,17 @@ func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, 
 			ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
 		})
 	})
+}
+
+// rollbackRequest borra la solicitud que D5 acaba de registrar y no pudo emitir. Lo hace con un
+// contexto que NO hereda la cancelación de la petición (context.WithoutCancel) y acotado por el
+// plazo de las consultas a BD (dbCtx; <= 0 ⇒ defaultDBTimeout): el borrado tiene que ocurrir
+// también cuando el cliente ya se fue, que es el caso que lo necesita, y no puede esperar sin fin
+// a una base lenta (D-F3-11). Mismo criterio que el empuje de perfil de sessionadmin.go.
+func rollbackRequest(ctx context.Context, store DiagnosticsStore, tenantID, commandID string, dbTimeout time.Duration) error {
+	rctx, cancel := dbCtx(context.WithoutCancel(ctx), dbTimeout)
+	defer cancel()
+	return store.DeleteRequest(rctx, tenantID, commandID)
 }
 
 // getDiagnosticsHandler devuelve GET /api/v1/diagnostics/{command_id}: descarga el

@@ -193,7 +193,8 @@ func TestMountDiagnostics_Request_RollbackFailureIsLogged(t *testing.T) {
 }
 
 // TestMountDiagnostics_Request_Clocks: DBTimeout acota las DOS lecturas del preflight (<= 0 ⇒
-// 1,5 s) y nada más: registrar y emitir van con el contexto de la petición, sin plazo propio.
+// 1,5 s); registrar y emitir van con el contexto de la petición, sin plazo propio. El rollback
+// tiene su reloj aparte: ver TestMountDiagnostics_Request_RollbackSurvivesTheClientLeaving.
 func TestMountDiagnostics_Request_Clocks(t *testing.T) {
 	for name, tc := range map[string]struct{ wired, floor, ceil time.Duration }{
 		"zero_falls_to_1500ms": {0, time.Second, 1500 * time.Millisecond},

@@ -54,6 +54,9 @@ type requesterSpy struct {
 	calls                     int
 	session, commandID, scope string
 	bounded                   bool
+	// onCall, si no es nil, corre dentro de RequestDiagnostics, antes de devolver: sirve para
+	// simular lo que pasa MIENTRAS se empuja (p. ej. que el cliente se vaya).
+	onCall func()
 }
 
 var _ apipublica.DiagnosticsRequester = (*requesterSpy)(nil)
@@ -62,6 +65,9 @@ func (r *requesterSpy) RequestDiagnostics(ctx context.Context, sessionID, comman
 	r.calls++
 	r.session, r.commandID, r.scope = sessionID, commandID, scope
 	_, r.bounded = ctx.Deadline()
+	if r.onCall != nil {
+		r.onCall()
+	}
 	return r.err
 }
 
@@ -83,6 +89,8 @@ type storeSpy struct {
 	deleted                                  []string
 	gets                                     []string
 	remaining                                map[string]time.Duration
+	// deleteCtxErr es el ctx.Err() del contexto con el que llegó DeleteRequest.
+	deleteCtxErr error
 }
 
 var _ apipublica.DiagnosticsStore = (*storeSpy)(nil)
@@ -121,6 +129,7 @@ func (s *storeSpy) CreateRequest(ctx context.Context, tenantID, sessionID, comma
 
 func (s *storeSpy) DeleteRequest(ctx context.Context, tenantID, commandID string) error {
 	s.note(ctx, "delete")
+	s.deleteCtxErr = ctx.Err()
 	s.deleted = append(s.deleted, tenantID+"/"+commandID)
 	if s.deleteErr != nil {
 		return s.deleteErr
