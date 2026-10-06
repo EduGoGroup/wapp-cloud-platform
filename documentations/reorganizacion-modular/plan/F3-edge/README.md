@@ -243,7 +243,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 37. **`sessionsForEdge` se adelantó** a `connect_session.go` (su fichero de destino, tanda 2), solo, con su test: lo
     necesitan `RevokeLease` y `RevokeTenant`. `offlinePersistTimeout` no nace aún: el carril usa `defaultWorkBudget`
     (los dos valen 5 s).
-38. 🟡 **Negativas de concurrencia sin reloj: el mutante muere, pero de forma probabilística** (D-F2-12). «La cola llena frena»
+38. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan, `6446e10`: los cuatro tests del carril —los tres del freno y `TestWorkLaneDrainWaitsForTheWork`— corren en burbuja de `testing/synctest`; el mutante «la cola no frena» cae en 40 de 40 procesos con `GOMAXPROCS` de 1 a 4, y «`drain` no espera» cae también. `letOthersRun` desaparece. Contrapartida: un fallo dentro de la burbuja con goroutines aún bloqueadas acaba en `panic: deadlock` y corta la corrida del paquete. Las negativas con `letRun` de `connect` e `inference_result` no se tocaron. Lo que sigue describe cómo estaba)* **Negativas de concurrencia sin reloj: el mutante moría, pero de forma probabilística** (D-F2-12). «La cola llena frena»
     y «`drain` espera» no admiten prueba estrictamente determinista sin tiempo. El test correcto no puede fallar; al mutante
     se le da ocasión con idas y vueltas por el worker de otra sesión y `runtime.Gosched`. Murió en todas las corridas
     (`-race -count=100`, `GOMAXPROCS=1 -count=10`). No se escribió candado AST. **Por decidir (Jhoan)** si basta.
