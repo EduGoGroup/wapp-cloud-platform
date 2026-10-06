@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
@@ -223,6 +224,34 @@ func TestAwaitInferenceOwnBudgetExpiresAsTimeout(t *testing.T) {
 	}
 	requireLogHas(t, rig.log, `level=WARN msg="inferencia: se agotó el presupuesto del Cloud sin respuesta del Edge"`,
 		"command_id=cmd-1", "session_id=s-1", "budget=5ms")
+}
+
+// R-G13, la cota por ARRIBA (hallazgo 56): la espera vence al cumplirse el plazo del Edge más
+// UN margen, ni antes ni después. En la burbuja de synctest el reloj es simulado y solo avanza
+// cuando todo está bloqueado, así que lo transcurrido es exactamente lo que duró el
+// temporizador: un presupuesto alargado (dos márgenes, p. ej.) se ve aquí aunque el motivo y
+// el rastro sigan siendo los buenos.
+func TestAwaitInferenceExpiresExactlyAtTheTimeoutPlusOneGrace(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct{ timeout, want time.Duration }{
+		"caller timeout":      {30 * time.Second, 30*time.Second + DefaultInferGrace},
+		"zero timeout is 30s": {0, defaultInferTimeout + DefaultInferGrace},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				rig := newInferRig(t)
+				start := time.Now()
+
+				_, err := rig.srv.awaitInference(context.Background(), make(chan *cloudlinkv1.InferenceResult), "cmd-1", "s-1", tc.timeout)
+
+				requireReason(t, err, ReasonTimeout)
+				if waited := time.Since(start); waited != tc.want {
+					t.Errorf("la espera duró %v, se esperaba el plazo más un margen: %v", waited, tc.want)
+				}
+			})
+		})
+	}
 }
 
 // Los DOS sumandos del presupuesto cuentan: el plazo del Edge y el margen. Con uno de ellos
