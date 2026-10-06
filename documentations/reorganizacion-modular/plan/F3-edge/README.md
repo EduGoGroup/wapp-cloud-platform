@@ -192,7 +192,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 20. **Ramas inalcanzables portadas tal cual**: `"fleet: cerrar filas: …"` y `"fleet: cerrar filas de perfiles: …"` (tras agotar
     las filas, `database/sql` entrega el fallo de `Close` por `rows.Err()`, que sale como `"… iterar …"`), y
     `"filtercfg: serializar payload: %w"` (el `json.Marshal` de esos tipos no falla). Sin test; el contrato lo dice.
-21. 🟡 **Única línea que se aparta del viejo**: `scanSession` hace `defaultProfile(Profile(profile))`; el viejo, `Profile(profile)`.
+21. ✅ ~~🟡~~ *(aceptado por Jhoan el 2026-10-06: se queda como está, divergencia inobservable)* **Única línea que se aparta del viejo**: `scanSession` hace `defaultProfile(Profile(profile))`; el viejo, `Profile(profile)`.
     Inobservable con Postgres (`COALESCE(profile,'passive')` y el `CHECK` de la 0063). Así `defaultProfile` tiene llamante de
     producción en el paquete nuevo (el doble se llevó su copia). Si se prefiere la letra, es revertir una línea y un caso de test.
 22. **Divergencias doble ↔ Postgres que la suite no afirma a propósito**: `MarkOffline` / `MarkLoggedOut` de una sesión
@@ -227,8 +227,10 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 
 32. **Hallazgo 23 comprobado: `connect` NO limpia el JID.** `persistSelfPn` hace `contact.Normalize(KindPhoneE164, hb.GetSelfPn())`
     sobre el valor crudo del latido. Un `573001112233:5@s.whatsapp.net` se persistiría como `5730011122335`. Conducta del viejo:
-    se copia y se afirma en la tanda 2 (`connect_heartbeat_test.go`); no se corrige. 🟡 Sin comprobar si el Edge manda hoy el
-    número ya limpio (vive en `wapp-edge-agent`).
+    se copia y se afirma en la tanda 2 (`connect_heartbeat_test.go`); no se corrige. ✅ ~~🟡~~ Comprobado el 2026-10-06 contra `main` de
+    `wapp-edge-agent`: el latido lleva `SelfPn: e.selfPN`, y ese valor sale de `domain.SelfPNFromJID`
+    (`internal/domain/jid.go`), que corta el agente (`.`), el dispositivo (`:`) y el servidor. **El Edge manda hoy el número
+    ya limpio**; que el Cloud no limpie solo muerde con un Edge que no pase por esa función.
 33. **`grep pendiente.Implementar` → 0 no significa «`grpc` entero»** cuando se trabaja por tanda: los contratos de las tandas
     siguientes aún no existen. Entre tandas, `Connect` devuelve `Unimplemented` (el `Server` embebe
     `UnimplementedCloudLinkServer`, que deja `Register` en verde sin adelantar el contrato de `Connect`).
@@ -243,14 +245,14 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 37. **`sessionsForEdge` se adelantó** a `connect_session.go` (su fichero de destino, tanda 2), solo, con su test: lo
     necesitan `RevokeLease` y `RevokeTenant`. `offlinePersistTimeout` no nace aún: el carril usa `defaultWorkBudget`
     (los dos valen 5 s).
-38. 🟡 **Negativas de concurrencia sin reloj: el mutante muere, pero de forma probabilística** (D-F2-12). «La cola llena frena»
+38. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan, `6446e10`: los cuatro tests del carril —los tres del freno y `TestWorkLaneDrainWaitsForTheWork`— corren en burbuja de `testing/synctest`; el mutante «la cola no frena» cae en 40 de 40 procesos con `GOMAXPROCS` de 1 a 4, y «`drain` no espera» cae también. `letOthersRun` desaparece. Contrapartida: un fallo dentro de la burbuja con goroutines aún bloqueadas acaba en `panic: deadlock` y corta la corrida del paquete. Las negativas con `letRun` de `connect` e `inference_result` no se tocaron. Lo que sigue describe cómo estaba)* **Negativas de concurrencia sin reloj: el mutante moría, pero de forma probabilística** (D-F2-12). «La cola llena frena»
     y «`drain` espera» no admiten prueba estrictamente determinista sin tiempo. El test correcto no puede fallar; al mutante
     se le da ocasión con idas y vueltas por el worker de otra sesión y `runtime.Gosched`. Murió en todas las corridas
     (`-race -count=100`, `GOMAXPROCS=1 -count=10`). No se escribió candado AST. **Por decidir (Jhoan)** si basta.
 39. **Relojes reales que quedan en los tests**, solo donde el contrato ES un plazo: presupuesto del job de 1 ms, `drain` de
     1 ns y 3 ms, `WithAckTimeout(1 ns)`, lectura de `ctx.Deadline()` y un `watchdog` de 5 s que convierte un cuelgue en fallo.
     Ningún `time.Sleep`.
-40. 🟡 **Conducta del viejo afirmada tal cual, por decidir**: `RevokeTenant` solo avisa a los Edge que lista `fleet`. Un Edge
+40. ✅ ~~🟡~~ *(resuelto por D-F3-10 el 2026-10-06, `ce6911a`: `RevokeTenant` avisa también a los Edge vivos que `fleet` no lista, y el test se llama ahora `TestRevokeTenantNotifiesLiveEdgesUnknownToFleet`; el `Ping` sin `*SendError` queda aceptado. Lo que sigue describe la conducta tal como se copió)* **Conducta del viejo afirmada tal cual**: `RevokeTenant` solo avisa a los Edge que lista `fleet`. Un Edge
     con sesión viva que `fleet` no lista —o cualquiera si no hay `fleet` inyectado— no recibe el push y se entera en su
     siguiente `Renew` (`TestRevokeTenantOnlyNotifiesEdgesKnownToFleet`). Y `Ping` devuelve el error del empuje **sin**
     `*SendError`, a diferencia de `SendText`/`SendMedia`; sigue sin llamante de producción.
@@ -269,7 +271,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 
 **De F3-03, segunda sesión** (`grpc`, tanda 2: conexión, auth, config, readiness y diagnóstico; 2026-10-05):
 
-45. 🟡 **Defecto del viejo copiado y afirmado, por decidir (tanda 2)**: el seguimiento por Edge (`edgeSessions`) **no
+45. ✅ ~~🟡~~ *(resuelto por D-F3-9 el 2026-10-06, `1f96651`: el cierre del stream viejo ya no deja de rastrear una sesión que reconectó; el nuevo se aparta del viejo. Lo que sigue describe el defecto tal como se copió)* **Defecto del viejo copiado y afirmado (tanda 2)**: el seguimiento por Edge (`edgeSessions`) **no
     distingue streams**. En una reconexión rápida, el cierre del stream viejo hace `untrackSession` de una sesión que sigue
     viva por el nuevo, y nada vuelve a rastrearla: hasta su siguiente reconexión, `PushConfig`, `RevokeLease`, `warmEdges` y
     la elección por `edgeSessions` no la alcanzan, y con la última se borra el readiness del Edge. R-G4 solo protege
@@ -323,7 +325,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `cancelSessionInfers`, dos mapas con candados distintos; 1 hueco cerrado). Los **10 huecos** obligaron a **8 tests**
     nuevos (`3758144`, `af8a160`, `3aff23c`, `8360ab0`, `746e5fa`, `fdaf4d7`, `231c74b`). Los dos mutantes del literal 🔒 y
     el de su id mueren por `TestPassiveSessionNotice*`.
-56. 🟡 **Hueco de test abierto, por decidir**: en `awaitInference` el presupuesto se calcula **dos veces**
+56. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan: `edb08bf`, un test con `testing/synctest` que acota la espera a plazo + un margen y mata el mutante sin tocar producción; y `04eedd7`, el presupuesto se calcula una sola vez, conducta idéntica)* **Hueco de test, cerrado**: en `awaitInference` el presupuesto se calcula **dos veces**
     (`inference_result.go`: el `time.NewTimer(inferTimeout(timeout) + s.inferGrace)` y, aparte, el `budget` del log), igual
     que en el viejo (`internal/gateway/grpc/inference.go:519` y `:535`). El mutante `+ 2*s.inferGrace` en el temporizador
     **sobrevive**: ningún test acota por arriba el plazo real, y el log no lo delata. Matarlo pide un reloj inyectable o
@@ -331,7 +333,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 57. **Conductas del viejo copiadas tal cual y afirmadas** (`Infer` / `PlazaDe`): el candidato vivo no se contrasta con el
     tenant; un destino sin stream no cae al origen; un fallo de escritura del stream se rotula `timeout`; un plazo positivo
     por debajo del milisegundo viaja como `timeout_ms = 0`; con un origen vivo que no está en el seguimiento del tenant
-    (sesión de otro tenant, o la reconexión rápida del hallazgo 45), `Infer` **envía** y `PlazaDe` dice que **no hay plaza**.
+    (sesión de otro tenant; la reconexión rápida del hallazgo 45 ya no lleva a este caso, D-F3-9), `Infer` **envía** y `PlazaDe` dice que **no hay plaza**.
 58. **`origin != ""` es la única defensa contra una sesión de id vacío** en `inferenceSession`: `session.Registry.Register`
     acepta el id vacío. Hoy es inalcanzable desde `connect` (no registra un `session_id` vacío); queda afirmado por
     `TestInferWithoutCandidateNeverRoutesThroughABlankSession`.

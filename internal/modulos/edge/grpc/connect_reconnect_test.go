@@ -277,17 +277,19 @@ func TestConnectReconnectionSurvivesTheOldStreamClosing(t *testing.T) {
 		t.Error("el empuje a la sesión reconectada no salió por el stream nuevo")
 	}
 
-	// 🟡 Conducta del viejo, copiada tal cual: el seguimiento por Edge NO distingue streams. El
-	// cierre del viejo deja de rastrear la sesión aunque siga viva por el nuevo, y nada vuelve a
-	// rastrearla (el nuevo ya la registró): hasta su siguiente reconexión, el fan-out de config y
-	// el kill-switch por Edge no la alcanzan. No se corrige aquí (equivalencia); queda afirmado.
-	if got := sortedSessions(rig.srv, "tenant-1", "edge-1"); got != "" {
-		t.Errorf("seguimiento tras la reconexión = %q; el viejo la deja sin rastrear", got)
+	// D-F3-9 (hallazgo 45), donde el nuevo se aparta del viejo: el seguimiento por Edge tampoco
+	// pierde a la sesión. El fan-out de config, el kill-switch por Edge y la plaza la siguen
+	// alcanzando, y lo aprendido del readiness del Edge no se borra.
+	if got := sortedSessions(rig.srv, "tenant-1", "edge-1"); got != "s-1" {
+		t.Errorf("seguimiento tras la reconexión = %q; la sesión sigue viva por el stream nuevo", got)
 	}
 
 	// Y el gemelo: cuando cuelga el stream que SÍ la tiene, la sesión queda sin nadie.
 	fresh.hangUp(t)
 	if _, closed := ackState(inFlight); !closed || rig.reg.Online("s-1") || rig.row(t, cc).State != fleet.StateOffline {
 		t.Error("al colgar el stream nuevo la sesión no quedó cancelada, fuera del Registry y offline")
+	}
+	if got := sortedSessions(rig.srv, "tenant-1", "edge-1"); got != "" {
+		t.Errorf("seguimiento tras colgar el stream nuevo = %q; la sesión se quedó sin nadie", got)
 	}
 }

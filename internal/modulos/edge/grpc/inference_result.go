@@ -32,7 +32,9 @@ import (
 func (s *Server) awaitInference(ctx context.Context, ch <-chan *cloudlinkv1.InferenceResult,
 	cmdID, sessionID string, timeout time.Duration,
 ) (string, error) {
-	timer := time.NewTimer(inferTimeout(timeout) + s.inferGrace)
+	// Una sola cuenta para el temporizador y para el rastro: así no pueden divergir.
+	budget := inferTimeout(timeout) + s.inferGrace
+	timer := time.NewTimer(budget)
 	defer timer.Stop()
 
 	select {
@@ -48,7 +50,7 @@ func (s *Server) awaitInference(ctx context.Context, ch <-chan *cloudlinkv1.Infe
 	case <-timer.C:
 		s.log.Warn("inferencia: se agotó el presupuesto del Cloud sin respuesta del Edge",
 			"command_id", cmdID, "session_id", sessionID,
-			"budget", (inferTimeout(timeout) + s.inferGrace).String())
+			"budget", budget.String())
 		return "", inferErr(cmdID, sessionID, ReasonTimeout, context.DeadlineExceeded)
 	}
 }
