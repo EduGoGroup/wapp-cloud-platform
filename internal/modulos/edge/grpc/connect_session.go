@@ -223,7 +223,7 @@ func (s *Server) onStreamClosed(lane *workLane, cc connCtx) {
 	if !cc.hasIdentity || cc.sessionID == "" {
 		return
 	}
-	s.untrackSession(cc)
+	s.untrackClosedSession(cc)
 
 	if s.fleet == nil {
 		return
@@ -318,6 +318,32 @@ func (s *Server) trackSession(cc connCtx) {
 func (s *Server) untrackSession(cc connCtx) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
+	s.untrackLocked(cc)
+}
+
+// untrackClosedSession es el untrack del CIERRE de un stream: deja de rastrear la sesión
+// solo si se quedó sin nadie. Si el Edge ya reconectó por otro stream, la sesión sigue
+// viva y sigue rastreada: sin esta guarda el cierre del stream viejo la borraba del
+// seguimiento y nada volvía a apuntarla, de modo que PushConfig, RevokeLease, warmEdges
+// y la elección de plaza no la alcanzaban hasta su siguiente reconexión (D-F3-9; el
+// viejo no la tiene). Es la misma pregunta que closeStream hace para los acuses y que
+// el jobOffline hace para la flota: tras el release() del stream que cae, «hay entrada
+// en el Registry» significa «alguien reconectó».
+//
+// La pregunta se hace BAJO trackMu y eso la cierra del todo: el stream nuevo registra
+// en el Registry ANTES de rastrear, así que o ya se le ve aquí, o su trackSession
+// espera a este candado y apunta después del borrado.
+func (s *Server) untrackClosedSession(cc connCtx) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	if s.registry.Online(cc.sessionID) {
+		return
+	}
+	s.untrackLocked(cc)
+}
+
+// untrackLocked es el cuerpo del untrack. Exige trackMu tomado.
+func (s *Server) untrackLocked(cc connCtx) {
 	k := edgeKey{tenantID: cc.tenantID, edgeID: cc.edgeID}
 	set := s.edgeSessions[k]
 	if set == nil {
