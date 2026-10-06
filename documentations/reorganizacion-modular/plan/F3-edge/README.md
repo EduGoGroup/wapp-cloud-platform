@@ -323,7 +323,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `cancelSessionInfers`, dos mapas con candados distintos; 1 hueco cerrado). Los **10 huecos** obligaron a **8 tests**
     nuevos (`3758144`, `af8a160`, `3aff23c`, `8360ab0`, `746e5fa`, `fdaf4d7`, `231c74b`). Los dos mutantes del literal 🔒 y
     el de su id mueren por `TestPassiveSessionNotice*`.
-56. 🟡 **Hueco de test abierto, por decidir**: en `awaitInference` el presupuesto se calcula **dos veces**
+56. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan: `edb08bf`, un test con `testing/synctest` que acota la espera a plazo + un margen y mata el mutante sin tocar producción; y `04eedd7`, el presupuesto se calcula una sola vez, conducta idéntica)* **Hueco de test, cerrado**: en `awaitInference` el presupuesto se calcula **dos veces**
     (`inference_result.go`: el `time.NewTimer(inferTimeout(timeout) + s.inferGrace)` y, aparte, el `budget` del log), igual
     que en el viejo (`internal/gateway/grpc/inference.go:519` y `:535`). El mutante `+ 2*s.inferGrace` en el temporizador
     **sobrevive**: ningún test acota por arriba el plazo real, y el log no lo delata. Matarlo pide un reloj inyectable o
