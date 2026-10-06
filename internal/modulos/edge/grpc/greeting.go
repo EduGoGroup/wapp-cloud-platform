@@ -1,0 +1,253 @@
+// Porta internal/gateway/grpc/greeting.go @ 3a2fd80 (el aviso de sesión pasiva: el
+// literal 🔒, el puerto propio del saludo y su emisor, que cuelga del job del latido).
+//
+// Nombres (E-11), viejo → nuevo: avisoSesionPasivaID → passiveSessionNoticeID;
+// avisoSesionPasivaV1 → passiveSessionNoticeV1; commandIDDe → commandIDOf.
+// sessionGreeter y greetIfNeeded ya estaban en inglés. Los VALORES de las dos
+// constantes, los mensajes de log y sus claves son los del viejo, literales.
+
+package grpc
+
+import (
+	"context"
+	"errors"
+)
+
+// passiveSessionNoticeID (antes avisoSesionPasivaID) identifica la VERSIÓN del literal
+// que se emite. Va en los logs (no es PII: es el nombre del texto, no el texto) para
+// que un operador que vea un saludo raro en un teléfono pueda decir CUÁL de las
+// versiones salió. Si el texto cambia, cambia este ID: `_V1` → `_V2`, y con él los dos
+// canales y sus dos tests de render, en el mismo commit.
+//
+//nolint:gosec // G101: es el nombre de un aviso público, no una credencial («passive» lleva «pass» dentro).
+const passiveSessionNoticeID = "AVISO_SESION_PASIVA_V1"
+
+// passiveSessionNoticeV1 (antes avisoSesionPasivaV1) es el aviso que la nube le entrega
+// a la sesión recién emparejada, EN SU PROPIO NÚMERO (Plan 046 · T3.2 (b), D-046.8).
+//
+// 🔒 FUENTE ÚNICA: el texto canónico vive en
+// `documentations/literal-aviso-sesion-pasiva.md`, bajo el ID de arriba, y esto es su
+// transcripción CARÁCTER A CARÁCTER. No se edita aquí: se edita allí y se vuelve a
+// copiar. Lo vigilan los tres tests de greeting_literal_test.go: el golden byte a
+// byte, el de contenido y el que compara estos bytes contra ese fichero —y que FALLA,
+// no salta, si no lo encuentra—. (El viejo todavía nombraba como fuente
+// `docs/runbooks/perfiles-de-sesion.md` §4; dejó de serlo el 2026-08-30.)
+//
+// Tres reglas del contrato que se ven en los bytes y conviene no "arreglar":
+//
+//   - TEXTO PLANO, SIN MARCADO. Ni Markdown ni HTML. El otro canal es una pantalla
+//     web (wapp-ctl) y las dos sintaxis no coinciden: un '*' aquí sería negrita en
+//     WhatsApp y un asterisco literal en la pantalla — dos textos distintos.
+//   - LAS MAYÚSCULAS HACEN DE NEGRITA. Son el único énfasis que sobrevive igual en
+//     los dos canales.
+//   - CERO PII. No nombra al dueño, ni un tercero, ni el propio self_pn. El
+//     destinatario ya sabe qué teléfono es: lo tiene en la mano.
+//
+// ⚠️ La otra mitad de T3.2 —la pantalla de éxito de `wapp-ctl`— vive en OTRO REPO
+// (edge/wapp-edge-agent), así que no puede importar esta constante: son dos
+// transcripciones del mismo literal, cada una con su golden. Ese es el precio de que
+// el literal sea contrato documental y no una librería compartida.
+//
+//nolint:gosec // G101: es el texto de un aviso público, no una credencial («passive» lleva «pass» dentro).
+const passiveSessionNoticeV1 = `Tu WhatsApp quedó vinculado a wApp, y esta sesión nació en perfil PASIVA.
+
+Qué significa: por esta sesión SOLO SE ENVÍAN mensajes. Lo que te escriban NO SALE
+DE ESTE EQUIPO: se queda aquí y no sube a la nube, así que wApp todavía no responde
+solo.
+
+Para que responda, cambia el perfil de la sesión a ACTIVA desde el panel de wApp, o
+llama a POST /api/v1/sessions/{id}/profile con {"profile":"active"}.`
+
+// sessionGreeter es la parte del repositorio de flota que el saludo necesita: saber
+// si una sesión está pendiente de aviso y dejar constancia de que ya se le dio.
+//
+// 🔴 POR QUÉ ES UN PUERTO PROPIO Y NO DOS MÉTODOS MÁS EN fleet.Repository. Es
+// interfaz-segregación: quien solo necesita dos preguntas no depende de las del
+// repositorio entero. Aquí además evita hacerle crecer el contrato a TODOS los dobles
+// de prueba de fleet por una funcionalidad que solo este camino usa
+// (fleethelpertest.Memoria no tiene ninguno de los dos métodos).
+//
+// ⚠️ EL PRECIO, ESCRITO PARA QUE NO SORPRENDA: como s.fleet se declara
+// fleet.Repository, la capacidad se descubre con una ASERCIÓN DE TIPO en tiempo de
+// ejecución. *fleet.PostgresRepository —lo que monta el arranque— la cumple, así que
+// en producción funciona (lo ata el `var _` de greeting_port_test.go). Un DECORADOR
+// que envuelva el repo POR DELEGACIÓN y no por embebido NO la cumpliría, y el saludo
+// dejaría de emitirse EN SILENCIO. De ahí el Debug del camino de abajo: es la única
+// línea que lo delataría. Si algún día ese decorador llega a producción, la salida es
+// promover estos dos métodos a fleet.Repository (con su espejo en el gemelo en
+// memoria), no parchear aquí.
+type sessionGreeter interface {
+	// PendingGreeting devuelve el número propio de la sesión y pending=true si hay
+	// que saludarla: self_pn conocido, greeted_at IS NULL y —🔴 la tercera, que no
+	// estaba y hacía que el aviso llegara a sesiones ACTIVAS, a las que miente—
+	// profile = 'passive'. El número es PII.
+	PendingGreeting(ctx context.Context, tenantID, edgeID, sessionID string) (selfPn string, pending bool, err error)
+	// MarkGreeted marca la sesión como saludada y devuelve marked=true solo si esta
+	// llamada fue la que puso la marca (centinela greeted_at IS NULL).
+	MarkGreeted(ctx context.Context, tenantID, edgeID, sessionID string) (marked bool, err error)
+}
+
+// greetIfNeeded le manda a la sesión recién emparejada, A SU PROPIO NÚMERO, el aviso
+// de que nació en perfil pasivo (Plan 046 · T3.2 (b), MD-046.3 ✅ salida 2).
+//
+// Lo que promete (R-G23…R-G30), y lo que sus tests fijan:
+//
+//   - No hace NADA —ni consulta— sin flota, sin identidad mTLS o sin session_id.
+//   - Si la flota montada no sabe saludar (no cumple sessionGreeter), no saluda ni
+//     rompe: deja una línea de Debug y vuelve.
+//   - Pregunta SIEMPRE a la flota (no hay memoria en proceso), con el (tenant, edge,
+//     sesión) del stream. Si la consulta falla, Warn y nada más; si la sesión no está
+//     pendiente —ya saludada, sin self_pn, activa o sin fila—, vuelve en silencio.
+//   - Envía EXACTAMENTE passiveSessionNoticeV1 al número que devolvió la flota, por
+//     SendText: la misma puerta que todo envío, con su Ack.
+//   - SIN ACK NO HAY MARCA: si el envío falla (sesión sin stream, plazo vencido,
+//     stream caído), Warn con el command_id y no se marca.
+//   - RECHAZO NO MARCA: un Ack con ok=false es Warn con el motivo del Edge y no se
+//     marca. En los dos casos el reintento es el siguiente latido, y nada más.
+//   - Solo con un Ack ok=true llama a MarkGreeted, UNA vez: marcó ⇒ Info; no pudo ⇒
+//     Error (el dueño recibirá un duplicado); otro latido marcó antes ⇒ Warn.
+//   - CERO PII EN LOS LOGS: ni el número ni el texto, en ningún camino.
+//
+// POR QUÉ LO EMITE LA NUBE Y NO EL EDGE (MD-046.3, decisión de Jhoan del 2026-08-21).
+// El Edge no tiene NINGÚN camino local de envío: el único es el SendText que llega de
+// la nube y pasa por el gate del lease. Construirle uno para un mensaje de cortesía
+// sería abrirle al kill-switch una puerta lateral (ADR-0007). El mensaje sale por la
+// misma puerta que todos.
+//
+// 🔴 POR QUÉ EL PRIMER INTENTO ESTÁ CONDENADO A FALLAR, Y POR QUÉ ESO ESTÁ BIEN. El
+// Edge manda un Heartbeat INMEDIATO al registrar (ya lleva SelfPn) y la nube registra
+// la sesión con ese mismo frame (connect.go, register-on-first-frame), así que este
+// código corre a ~4 ms del emparejamiento. Pero el Validator del lease del Edge NACE
+// CERRADO y tarda 0,5-1,1 s en abrirse (dos arranques medidos en campo, 18-08 y
+// 21-08): el SendText muere ahí con Ack{ok=false, "lease no vigente"} y SIN error de
+// Go. La respuesta NO es esperar: es NO MARCAR. El latido siguiente —30 s después,
+// con la puerta ya abierta— reintenta solo. Sin temporizadores, sin goroutines de
+// espera, sin backoff propio: el latido YA es el reintento.
+//
+// 🔧 MATIZ DE CAMPO (PC-17, 2026-08-21): «CONDENADO A FALLAR» ES CIERTO SOLO PARA EL
+// CASO QUE DESCRIBE, EL DEL EMPAREJAMIENTO. Al ejercitarlo en UAT contra WhatsApp real
+// —dos disparos— el aviso se entregó al PRIMER intento las dos veces, y en el log del
+// Edge no apareció ni un «SendText BLOQUEADO por lease no vigente». El motivo: allí el
+// saludo NO se disparó en el registro sino en un latido posterior, con el lease ya
+// abierto. La ventana existe y se midió esa misma noche —0,637 s entre «sesión
+// registrada» y «lease renovado/aplicado»—, pero el envío cayó 2 s DESPUÉS de ella.
+//
+// Lo que esto cambia y lo que no. NO cambia el diseño: no marcar y dejar que el
+// siguiente latido reintente sigue siendo correcto, y es gratis. SÍ cambia lo que un
+// operador debe esperar: el camino normal es que el aviso llegue A LA PRIMERA, y un
+// rechazo por lease es la excepción del alta, no la regla. Quien lea el párrafo de
+// arriba sin este y no vea el WARN puede creer que el emisor no corrió.
+//
+// ⚠️ DÓNDE CUELGA Y POR QUÉ AHÍ. Va en el job del latido (submitHeartbeat, en
+// connect_route.go), el ÚLTIMO de los cuatro: después de persistSelfPn (que es quien
+// deja el número en la fila que esta consulta lee) y también después de renewLease.
+// Los cuatro comparten UN presupuesto (workBudget, 5 s), no uno cada uno, así que el
+// orden ES el reparto: puesto al final, el saludo solo puede gastar el reloj que los
+// otros tres no gastaron, y nunca al revés. Puesto ANTES de renewLease le robaría el
+// presupuesto al lease —y este paso espera un Ack, que es lo más lento que hay en el
+// carril—, dejando sin renovar precisamente el lease que hace falta para que el
+// saludo salga. Sería el defecto mordiéndose la cola.
+//
+// ⚠️ INTERACCIÓN CONOCIDA Y ACOTADA (no es un defecto nuevo, pero conviene tenerla
+// escrita): esta es la primera espera de Ack que ocurre DENTRO del carril. El Ack lo
+// entrega el bucle Recv inline (route, case EdgeToCloud_Ack), y ese bucle puede estar
+// frenado en submitJob si la cola de esta sesión llegó a su tope. Si eso pasa justo
+// mientras se espera este acuse, la espera no se resuelve hasta que vence el
+// presupuesto del job: entonces SendText devuelve DeadlineExceeded, no se marca, y el
+// siguiente latido reintenta. Se rinde sola, no se cuelga — y por eso importa que el
+// ackTimeout (8 s) sea MAYOR que el presupuesto del job (5 s): quien corta es el
+// presupuesto, que es de este carril, y no el reloj del acuse.
+//
+// COSTE EN ESTADO ESTABLE, dicho sin adornos: una consulta indexada por la PK
+// (tenant_id, edge_id, session_id) por latido y por sesión, para siempre — la misma
+// fila que el job ya escribió dos veces (SetSelfPn, SaveHealth). Es el precio de no
+// llevar en memoria un registro de «a quién ya saludé», que se perdería en cada
+// reinicio y volvería a preguntar igual. Si algún día aparece en un perfil, la salida
+// es memoizar el «ya saludada» por sesión, no quitar la marca de la BD.
+func (s *Server) greetIfNeeded(ctx context.Context, cc connCtx) {
+	if s.fleet == nil || !cc.hasIdentity || cc.sessionID == "" {
+		return
+	}
+	greeter, ok := s.fleet.(sessionGreeter)
+	if !ok {
+		// Ver el ⚠️ del docstring de sessionGreeter: sin esta línea, un repositorio
+		// decorado dejaría de saludar sin que nadie se enterara nunca.
+		s.log.Debug("saludo: el repositorio de flota no sabe marcar sesiones saludadas; no se avisa a nadie",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID)
+		return
+	}
+
+	to, pending, err := greeter.PendingGreeting(ctx, cc.tenantID, cc.edgeID, cc.sessionID)
+	if err != nil {
+		s.log.Warn("saludo: no se pudo consultar si la sesión está pendiente de aviso",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID, "error", err)
+		return
+	}
+	if !pending {
+		// Ya saludada, sin número todavía, YA ACTIVA, o sin fila (el canal de
+		// control). Lo de «ya activa» no es un caso raro: el aviso describe el perfil
+		// pasivo y a una sesión activa le mentiría, así que PendingGreeting lo filtra
+		// en el SQL (ver su docstring, decisión del 2026-08-21).
+		return
+	}
+
+	// A partir de aquí `to` es PII en memoria: se pasa a SendText y NO se loguea.
+	ack, err := s.SendText(ctx, cc.sessionID, to, passiveSessionNoticeV1)
+	if err != nil {
+		// Warn y no Error: en la ventana del lease esto es lo ESPERADO, y el
+		// reintento está garantizado por el siguiente latido. Un Error aquí
+		// entrenaría al operador a ignorar la línea.
+		s.log.Warn("saludo: el envío del aviso de sesión pasiva falló; se reintentará en el siguiente latido",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"literal", passiveSessionNoticeID, "command_id", commandIDOf(err), "error", err)
+		return
+	}
+	if !ack.GetOk() {
+		// 🔴 ESTE ES EL CAMINO NORMAL DEL PRIMER LATIDO, no una anomalía: el Edge
+		// acusó el comando y avisó de que NO lo envió (típicamente «lease no
+		// vigente»). No se marca ⇒ el siguiente latido reintenta.
+		s.log.Warn("saludo: el Edge rechazó el aviso de sesión pasiva; NO se marca y se reintentará en el siguiente latido",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"literal", passiveSessionNoticeID,
+			"command_id", ack.GetAckedCommandId(), "edge_error", ack.GetError())
+		return
+	}
+
+	marked, err := greeter.MarkGreeted(ctx, cc.tenantID, cc.edgeID, cc.sessionID)
+	switch {
+	case err != nil:
+		// El mensaje YA SALIÓ y la marca no se puso: el siguiente latido lo mandará
+		// otra vez. Es Error y no Warn porque el precio lo paga el dueño en su
+		// teléfono, con un mensaje repetido, y porque —a diferencia del rechazo del
+		// Edge— aquí no hay nada que se arregle solo.
+		s.log.Error("saludo: el aviso se entregó pero no se pudo marcar; el dueño recibirá un duplicado",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"literal", passiveSessionNoticeID, "command_id", ack.GetAckedCommandId(), "error", err)
+	case !marked:
+		// Otro latido ganó la carrera entre el SELECT y este UPDATE (dos streams
+		// durante una reconexión). El centinela hizo su trabajo en la BD, pero el
+		// mensaje de ESTE camino ya se mandó: el duplicado se ve aquí y en ningún
+		// otro sitio.
+		s.log.Warn("saludo: otro latido marcó el aviso primero; este envío fue un duplicado",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"literal", passiveSessionNoticeID, "command_id", ack.GetAckedCommandId())
+	default:
+		s.log.Info("saludo: aviso de sesión pasiva entregado al número de la propia sesión",
+			"session_id", cc.sessionID, "edge_id", cc.edgeID,
+			"literal", passiveSessionNoticeID, "command_id", ack.GetAckedCommandId())
+	}
+}
+
+// commandIDOf (antes commandIDDe) extrae el command_id de un error de envío, si lo
+// lleva; cadena vacía si el fallo ocurrió antes de que hubiera comando. Es el mismo
+// duck-typing que send.go documenta sobre CommandID: aquí se resuelve contra
+// *SendError sin acoplarse a él, por si el camino de envío devuelve mañana otro error
+// que también sepa decir su comando. Un command_id inventado sería peor que ninguno:
+// quien lo buscara en los acuses del Edge no encontraría nada.
+func commandIDOf(err error) string {
+	var carrier interface{ CommandID() string }
+	if !errors.As(err, &carrier) {
+		return ""
+	}
+	return carrier.CommandID()
+}

@@ -36,6 +36,19 @@ func TestDefaultsAreTheAgreedNumbers(t *testing.T) {
 	}
 }
 
+// R-G13: el margen de la inferencia está SIEMPRE materializado a DefaultInferGrace —no hay
+// opción que lo cambie—, y el Server nace sin inferencias en vuelo, con su mapa listo.
+func TestNewMaterializesTheInferenceGrace(t *testing.T) {
+	t.Parallel()
+	srv := New(session.NewRegistry(), quietLog(), WithAckTimeout(time.Second), WithWorkTimeout(time.Minute))
+	if srv.inferGrace != DefaultInferGrace {
+		t.Errorf("inferGrace = %v, se esperaban los 5s de DefaultInferGrace", srv.inferGrace)
+	}
+	if srv.infers == nil || len(srv.infers) != 0 {
+		t.Errorf("infers = %v, se esperaba un mapa vacío y listo", srv.infers)
+	}
+}
+
 // D-F2-10: el cero NUNCA es «sin reloj» ni «cola infinita». Sin opción, o con un valor no
 // positivo, New cae al valor por defecto; un valor positivo se respeta.
 func TestNewMaterializesClocksAndQueueCap(t *testing.T) {

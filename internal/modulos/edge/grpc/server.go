@@ -250,6 +250,19 @@ type Server struct {
 	trackMu       sync.Mutex
 	edgeSessions  map[edgeKey]map[string]struct{}
 	edgeReadiness map[edgeKey]cloudlinkv1.InferenceReadiness
+
+	// infers correlaciona command_id -> inferencia en vuelo que espera su
+	// InferenceResult (Plan 044 · Ola 1.6 · T1.6-3, REQ-34). Es el GEMELO de acks:
+	// misma invariante de cierre, mismo reloj propio, misma cancelación al caer el
+	// stream. El porqué de que sean dos mapas y no uno genérico está en
+	// pendingInfer (types.go).
+	infersMu sync.Mutex
+	infers   map[string]pendingInfer
+
+	// inferGrace es el margen que el Cloud espera POR ENCIMA del timeout_ms que le
+	// dio al Edge. Nunca es cero: New lo materializa a DefaultInferGrace. Ver el
+	// porqué del margen en Infer. No tiene opción With*: lo fija el paquete.
+	inferGrace time.Duration
 }
 
 // Option configura el Server al construirlo. New aplica las opciones en el orden
@@ -316,14 +329,17 @@ func WithWorkTimeout(d time.Duration) Option { return func(s *Server) { s.workBu
 //   - sin sink de acuses → un LogReceiptSink sobre el mismo logger;
 //   - plazo del Ack <= 0 → 8 s;
 //   - tope de cola del carril <= 0 → 64;
-//   - presupuesto de trabajo <= 0 → 5 s.
+//   - presupuesto de trabajo <= 0 → 5 s;
+//   - margen de la inferencia → DefaultInferGrace, 5 s (no hay opción que lo cambie).
 //
-// Los cuatro hooks nacen nil. El Server devuelto no tiene sesiones ni envíos en vuelo.
+// Los cuatro hooks nacen nil. El Server devuelto no tiene sesiones, ni envíos ni
+// inferencias en vuelo.
 func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server {
 	s := &Server{
 		registry:      registry,
 		log:           log,
 		acks:          make(map[string]pendingAck),
+		infers:        make(map[string]pendingInfer),
 		edgeSessions:  make(map[edgeKey]map[string]struct{}),
 		edgeReadiness: make(map[edgeKey]cloudlinkv1.InferenceReadiness),
 	}
@@ -345,6 +361,10 @@ func New(registry *session.Registry, log logger.Logger, opts ...Option) *Server 
 	}
 	if s.workBudget <= 0 {
 		s.workBudget = defaultWorkBudget
+	}
+	// La espera de la inferencia nunca queda sin margen (ver inferGrace e Infer).
+	if s.inferGrace <= 0 {
+		s.inferGrace = DefaultInferGrace
 	}
 	return s
 }
