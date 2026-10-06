@@ -405,7 +405,9 @@ tanda 2 (PR #38) quedó integrada en `dev` sin squash. **Con esta tanda `grpc` e
   `testing/synctest` que acota la espera a plazo + un margen (el mutante `+ 2*s.inferGrace` cae: «duró 40s, se esperaba
   35s»), y `04eedd7`, el presupuesto se calcula una sola vez.
 - ✅ **Hallazgo 45, resuelto el 2026-10-06 por D-F3-9** (misma rama): `1f96651`, el cierre del stream viejo no deja de rastrear
-  una sesión que ya reconectó. 🔴 El nuevo se aparta del viejo. Siguen abiertos el 38 y el 40.
+  una sesión que ya reconectó. 🔴 El nuevo se aparta del viejo.
+- ✅ **Hallazgo 40, resuelto el 2026-10-06 por D-F3-10** (misma rama): `ce6911a`, `RevokeTenant` avisa también a los Edge vivos
+  que `fleet` no lista. 🔴 El nuevo se aparta del viejo. El `Ping` sin `*SendError` queda aceptado. Sigue abierto el 38.
 - **No corrido**: `make test-procesos`, `make test-integration` y mTLS real (son de F3-05; `grpc` nuevo aún no está
   conmutado: lo construye F3-04).
 - **Siguiente paso: F3-04** (`bridge_gateway`, cara nueva de `edge` y conmutación). `main` sin tocar.

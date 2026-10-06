@@ -250,7 +250,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 39. **Relojes reales que quedan en los tests**, solo donde el contrato ES un plazo: presupuesto del job de 1 ms, `drain` de
     1 ns y 3 ms, `WithAckTimeout(1 ns)`, lectura de `ctx.Deadline()` y un `watchdog` de 5 s que convierte un cuelgue en fallo.
     Ningún `time.Sleep`.
-40. 🟡 **Conducta del viejo afirmada tal cual, por decidir**: `RevokeTenant` solo avisa a los Edge que lista `fleet`. Un Edge
+40. ✅ ~~🟡~~ *(resuelto por D-F3-10 el 2026-10-06, `ce6911a`: `RevokeTenant` avisa también a los Edge vivos que `fleet` no lista, y el test se llama ahora `TestRevokeTenantNotifiesLiveEdgesUnknownToFleet`; el `Ping` sin `*SendError` queda aceptado. Lo que sigue describe la conducta tal como se copió)* **Conducta del viejo afirmada tal cual**: `RevokeTenant` solo avisa a los Edge que lista `fleet`. Un Edge
     con sesión viva que `fleet` no lista —o cualquiera si no hay `fleet` inyectado— no recibe el push y se entera en su
     siguiente `Renew` (`TestRevokeTenantOnlyNotifiesEdgesKnownToFleet`). Y `Ping` devuelve el error del empuje **sin**
     `*SendError`, a diferencia de `SendText`/`SendMedia`; sigue sin llamante de producción.
