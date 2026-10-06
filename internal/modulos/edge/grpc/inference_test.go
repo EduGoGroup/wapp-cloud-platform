@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El VOCABULARIO de la inferencia (R-G14): los motivos, las clases, los centinelas, el margen
@@ -8,9 +6,11 @@ package grpc
 // el lado del que los escribe, que es donde se escribiría el equivocado.
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +175,85 @@ func TestInferRequestHasTheNineFieldsTheBridgeConverts(t *testing.T) {
 		f := rt.Field(i)
 		if f.Name != w.name || f.Type.String() != w.typ {
 			t.Errorf("campo %d = %s %s, se esperaba %s %s", i, f.Name, f.Type, w.name, w.typ)
+		}
+	}
+}
+
+// El vocabulario es CERRADO: la lista recorrible tiene los seis motivos, cada uno una vez. Es
+// la que usan los tests de simetría; un motivo que falte aquí quedaría sin vigilar.
+func TestInferenceReasonsListsTheSixOnce(t *testing.T) {
+	t.Parallel()
+	want := []string{
+		ReasonOllamaDown, ReasonBreakerOpen, ReasonTimeout,
+		ReasonLeaseInvalid, ReasonEdgeSinCapacidad, ReasonEdgeOffline,
+	}
+	got := slices.Clone(inferenceReasons)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("inferenceReasons = %v, se esperaban los seis motivos una vez: %v", got, want)
+	}
+}
+
+// InferError lleva lo que le dieron —command_id, sesión, motivo— y deja ver su causa a
+// errors.Is. Se lee por la interfaz anónima, que es como lo consume el escritor de avisos.
+func TestInferErrorCarriesItsReasonAndCause(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("la causa")
+	err := inferErr("cmd-1", "s-1", ReasonBreakerOpen, cause)
+
+	var withReason interface{ Motivo() string }
+	if !errors.As(err, &withReason) || withReason.Motivo() != "breaker_open" {
+		t.Fatalf("el error no expone su motivo por duck-typing: %v", err)
+	}
+	var ie *InferError
+	if !errors.As(err, &ie) {
+		t.Fatalf("inferErr no devolvió un *InferError: %T", err)
+	}
+	if ie.CommandID() != "cmd-1" || ie.SessionID() != "s-1" {
+		t.Errorf("InferError = (%q, %q), se esperaba (cmd-1, s-1)", ie.CommandID(), ie.SessionID())
+	}
+	if !errors.Is(err, cause) || ie.Unwrap() != cause { //nolint:errorlint // se afirma la identidad de la causa
+		t.Errorf("la causa no se ve a través del InferError: %v", err)
+	}
+}
+
+// §5, T-15: el texto de InferError, byte a byte, con el prefijo gatewaygrpc:.
+func TestInferErrorTextIsLiteral(t *testing.T) {
+	t.Parallel()
+	err := inferErr("cmd-1", "s-1", ReasonTimeout, context.DeadlineExceeded)
+	const want = "gatewaygrpc: inferencia cmd-1 por la sesión s-1: timeout: context deadline exceeded"
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, se esperaba %q", err.Error(), want)
+	}
+	if !strings.HasPrefix(err.Error(), "gatewaygrpc: ") {
+		t.Error("el texto perdió el prefijo gatewaygrpc:")
+	}
+}
+
+// Sin causa no hay error: inferErr(nil) es nil de verdad (no un *InferError nulo dentro de
+// una interfaz, que sería != nil para quien lo reciba).
+func TestInferErrWithoutCauseIsNil(t *testing.T) {
+	t.Parallel()
+	if err := inferErr("cmd-1", "s-1", ReasonTimeout, nil); err != nil {
+		t.Fatalf("inferErr sin causa = %#v, se esperaba nil", err)
+	}
+}
+
+// D-F2-10: el cero NUNCA es «sin reloj». Un plazo no positivo son 30 s; uno positivo se respeta.
+func TestInferTimeoutFallsBackToThirtySeconds(t *testing.T) {
+	t.Parallel()
+	if defaultInferTimeout != 30*time.Second {
+		t.Fatalf("defaultInferTimeout = %v, se esperaban 30s", defaultInferTimeout)
+	}
+	for in, want := range map[time.Duration]time.Duration{
+		0:                30 * time.Second,
+		-time.Second:     30 * time.Second,
+		1:                1,
+		90 * time.Second: 90 * time.Second,
+	} {
+		if got := inferTimeout(in); got != want {
+			t.Errorf("inferTimeout(%v) = %v, se esperaba %v", in, got, want)
 		}
 	}
 }

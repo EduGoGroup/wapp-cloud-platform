@@ -7,9 +7,8 @@ package grpc
 
 import (
 	"errors"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ============================================================================
@@ -80,6 +79,13 @@ import (
 // el otro extremo del cable: el plazo de DENTRO vence primero, siempre.
 const DefaultInferGrace = 5 * time.Second
 
+// defaultInferTimeout es el presupuesto de la inferencia cuando el llamante no fija
+// uno. No pretende ser el bueno para nada en concreto: quien conoce su ventana es el
+// llamante (los 45 s de agregación del Nivel C, el turno acotado del Nivel B), y por
+// eso el timeout viaja en la petición. Este valor solo evita que un llamante
+// descuidado deje una inferencia sin techo.
+const defaultInferTimeout = 30 * time.Second
+
 // Vocabulario CERRADO de motivos por los que una inferencia no dio salida.
 //
 // 🔴 SON LITERALMENTE LOS MISMOS VALORES QUE degradation.Reason, y esa coincidencia
@@ -116,6 +122,18 @@ const (
 	// hay a quién preguntar.
 	ReasonEdgeOffline = "edge_offline"
 )
+
+// inferenceReasons (en el paquete viejo, motivosInferencia) es el vocabulario en forma
+// recorrible, para el test de simetría con el de degradación. No se exporta: quien lo necesita fuera usa el motivo
+// que trae el error concreto, no la lista.
+var inferenceReasons = []string{
+	ReasonOllamaDown,
+	ReasonBreakerOpen,
+	ReasonTimeout,
+	ReasonLeaseInvalid,
+	ReasonEdgeSinCapacidad,
+	ReasonEdgeOffline,
+}
 
 // Errores de inferencia SIN motivo de degradación, y esa ausencia es la decisión. (En
 // el paquete viejo: ErrInferenceSinClaveDeCifrado, ErrInferenceSelladoIlegible,
@@ -157,28 +175,43 @@ var (
 // allí: el contrato es la interfaz anónima, no un tipo compartido, y ese desacople
 // es lo que permite que el adaptador LLM y el escritor de notificaciones no tengan
 // que importar el Gateway.
-type InferError struct{}
+type InferError struct {
+	commandID string
+	sessionID string
+	reason    string
+	err       error
+}
 
 // Motivo devuelve el motivo del vocabulario cerrado. Es el método que el escritor de
 // notificaciones consume por duck-typing, y por eso NO se renombra (E-11): quien lo
 // lee (llmvia) lo busca por ese nombre, y un renombrado lo apagaría sin ningún rojo.
-func (e *InferError) Motivo() string { panic(pendiente.Implementar("grpc.InferError.Motivo")) }
+func (e *InferError) Motivo() string { return e.reason }
 
 // CommandID devuelve el command_id de la inferencia que falló. Vacío si el fallo
 // ocurrió ANTES de generarlo (no había sesión a la que preguntar).
-func (e *InferError) CommandID() string { panic(pendiente.Implementar("grpc.InferError.CommandID")) }
+func (e *InferError) CommandID() string { return e.commandID }
 
 // SessionID devuelve la sesión por cuyo stream se pidió (o se iba a pedir).
-func (e *InferError) SessionID() string { panic(pendiente.Implementar("grpc.InferError.SessionID")) }
+func (e *InferError) SessionID() string { return e.sessionID }
 
 // Error implementa error. NO incluye el prompt ni la salida: un log de error no es
 // sitio para el texto del cliente (INV-6). El prefijo `gatewaygrpc:` es texto
-// observable y se conserva aunque el paquete se llame grpc (T-15). La forma es
-// "gatewaygrpc: inferencia <command_id> por la sesión <session_id>: <motivo>: <causa>".
-func (e *InferError) Error() string { panic(pendiente.Implementar("grpc.InferError.Error")) }
+// observable y se conserva aunque el paquete se llame grpc (T-15).
+func (e *InferError) Error() string {
+	return fmt.Sprintf("gatewaygrpc: inferencia %s por la sesión %s: %s: %v",
+		e.commandID, e.sessionID, e.reason, e.err)
+}
 
 // Unwrap expone la causa para errors.Is/As.
-func (e *InferError) Unwrap() error { panic(pendiente.Implementar("grpc.InferError.Unwrap")) }
+func (e *InferError) Unwrap() error { return e.err }
+
+// inferErr envuelve una causa con su motivo. Un err nil devuelve nil.
+func inferErr(cmdID, sessionID, reason string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &InferError{commandID: cmdID, sessionID: sessionID, reason: reason, err: err}
+}
 
 // InferRequest es lo que el Cloud le pide al Edge. Es el frame del proto sin los dos
 // campos que decide el transporte (command_id y session_id).
@@ -258,3 +291,12 @@ const (
 	// ClassBatch: trabajo de fondo, sin nadie esperando el turno.
 	ClassBatch = "lote"
 )
+
+// inferTimeout resuelve el presupuesto efectivo de la inferencia: un plazo <= 0 es
+// defaultInferTimeout (D-F2-10: el cero nunca es «sin reloj»).
+func inferTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return defaultInferTimeout
+	}
+	return d
+}
