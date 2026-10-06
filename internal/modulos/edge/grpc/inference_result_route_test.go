@@ -1,11 +1,13 @@
 package grpc
 
 // El cableado del resultado de la inferencia en el stream (R-G13): el InferenceResult que
-// manda el Edge se entrega INLINE en el bucle Recv. Va aparte de los tests de
+// manda el Edge se entrega INLINE en el bucle Recv, y al caer el stream las inferencias en
+// vuelo de la sesión que se queda sin él despiertan en el acto. Va aparte de los tests de
 // connect_route.go y connect.go porque lo que afirma es de la inferencia.
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
@@ -82,4 +84,53 @@ func TestConnectCarriesAnInferenceOutAndItsResultBack(t *testing.T) {
 		t.Errorf("lo último que recibió el Edge no es el InferenceRequest de s-1: %v", frame)
 	}
 	requireNoPendingInfers(t, rig.srv)
+}
+
+// Al colgar el ÚNICO stream de una sesión, sus inferencias en vuelo dejan de esperar YA —su
+// presupuesto es de 35 s— con edge_offline; las de otras sesiones siguen esperando.
+func TestConnectCancelsTheInferencesInFlightOfASessionLeftWithoutStream(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	edge := openStream(t, rig.srv, forgedIdentity("tenant-1", "edge-1"))
+	edge.send(t, pongFrame("s-1", 1))
+	elsewhere := seedInfer(rig.srv, "cmd-elsewhere", "s-elsewhere")
+
+	cmdID, res := inferOverStream(t, rig.srv, edge, "s-1")
+	edge.hangUp(t)
+
+	got := await(t, res, "que la inferencia en vuelo deje de esperar al colgar el Edge")
+	requireReason(t, got.err, ReasonEdgeOffline)
+	if ie := asInferError(t, got.err); !errors.Is(got.err, ErrStreamClosed) || ie.CommandID() != cmdID || ie.SessionID() != "s-1" {
+		t.Errorf("la inferencia volvió con %v, se esperaba ErrStreamClosed de (%s, s-1)", got.err, cmdID)
+	}
+	if r, closed := inferState(elsewhere); r != nil || closed {
+		t.Error("colgar un stream canceló la inferencia en vuelo de una sesión que no era suya")
+	}
+	requireLogHas(t, rig.log, `msg="gateway: el stream cayó con inferencias en vuelo"`, "session_id=s-1", "cancelados=1")
+}
+
+// R-G4: la reconexión rápida. El Edge vuelve por un stream NUEVO antes de que el viejo termine
+// de morir; el cierre del viejo NO cancela las inferencias de una sesión que sigue viva —el
+// resultado puede llegar, y llega, por el stream nuevo—.
+func TestConnectReconnectionKeepsTheInferencesInFlight(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	stale := openStream(t, rig.srv, forgedIdentity("tenant-1", "edge-1"))
+	stale.send(t, pongFrame("s-1", 1))
+	cmdID, res := inferOverStream(t, rig.srv, stale, "s-1")
+	fresh := openStream(t, rig.srv, forgedIdentity("tenant-1", "edge-1"))
+	fresh.send(t, pongFrame("s-1", 1))
+
+	stale.hangUp(t)
+
+	if ids := pendingInferIDs(rig.srv); len(ids) != 1 || ids[0] != cmdID {
+		t.Fatalf("el cierre del stream viejo canceló la inferencia de una sesión viva: pendientes %v", ids)
+	}
+	if rig.log.contains("el stream cayó con inferencias en vuelo") {
+		t.Error("el cierre del stream viejo se anotó como caída con inferencias en vuelo")
+	}
+	fresh.send(t, inferenceResultFrame("s-1", sealedResult(cmdID, rig.seal(t, modelOutput))))
+	if got := await(t, res, "que la inferencia reciba su resultado por el stream nuevo"); got.err != nil || got.out != modelOutput {
+		t.Fatalf("Infer = (%q, %v), se esperaba la salida del modelo", got.out, got.err)
+	}
 }

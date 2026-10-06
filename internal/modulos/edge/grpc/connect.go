@@ -244,7 +244,11 @@ func (s *Server) closeStream(lane *workLane, cc connCtx, releases map[string]fun
 		// onStreamClosed (connect_session.go) sobre este mismo cierre.
 		if !s.registry.Online(sid) {
 			s.cancelSessionAcks(sid)
-			// TODO(F3-03 tanda 3): aquí va `s.cancelSessionInfers(sid)`, justo después de cancelSessionAcks y bajo la MISMA condición (`!s.registry.Online(sid)`): las inferencias en vuelo de una sesión que se quedó sin stream dejan de esperar ya.
+			// Y las inferencias en vuelo por el mismo motivo y bajo la misma condición
+			// (Plan 044 · T1.6-3): su presupuesto es de decenas de segundos, así que
+			// dejarlas esperando a un Edge que ya no está cuesta MÁS que en el caso del
+			// ack. Ver cancelSessionInfers.
+			s.cancelSessionInfers(sid)
 		}
 		cc2 := cc
 		cc2.sessionID = sid
