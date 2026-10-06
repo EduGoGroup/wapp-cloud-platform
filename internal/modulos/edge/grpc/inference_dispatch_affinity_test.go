@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // POR QUÉ STREAM sale una inferencia (R-G15, R3.4.d; ADR-0048 regla 3). La pareja que no vale

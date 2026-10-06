@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // El despacho de la inferencia por la API exportada (R-G13): el frame que sale, lo que vuelve,
@@ -102,19 +100,22 @@ func asInferError(t *testing.T, err error) *InferError {
 	return ie
 }
 
-// R-G13: prompt entra, JSON crudo sale. Y el frame: command_id nuevo en el envelope y en el
-// payload, el stream elegido en el envelope, la conversación de origen en el payload, y todo
-// lo que pidió el llamante, verbatim.
+// fullRequest pide todo lo que un llamante puede pedir.
+var fullRequest = InferRequest{
+	Prompt: "clasifica esto:\n«dos empanadas»", Format: `{"type":"object"}`, Temperature: 0.7,
+	Timeout: 2 * time.Second, OriginSessionID: "s-origin-gone", MaxOutputTokens: 512,
+	Class: ClassBatch, Warmup: true,
+}
+
+// R-G13: prompt entra, JSON crudo sale. Y el envelope del frame: command_id nuevo —el mismo
+// en el envelope y en el payload—, el stream elegido en el envelope y la conversación de
+// origen en el payload (aunque ya no tenga stream: es trazabilidad, no enrutado).
 func TestInferSendsThePromptAndReturnsTheRawJSON(t *testing.T) {
 	t.Parallel()
 	rig := newInferRig(t)
 	edge := rig.live(t, "tenant-1", "edge-1", "s-1", rig.answers(t, modelOutput))
 
-	out, err := rig.srv.Infer(context.Background(), "tenant-1", InferRequest{
-		Prompt: "clasifica esto:\n«dos empanadas»", Format: `{"type":"object"}`, Temperature: 0.7,
-		Timeout: 2 * time.Second, OriginSessionID: "s-origin-gone", MaxOutputTokens: 512,
-		Class: ClassBatch, Warmup: true,
-	})
+	out, err := rig.srv.Infer(context.Background(), "tenant-1", fullRequest)
 
 	if err != nil || out != modelOutput {
 		t.Fatalf("Infer = (%q, %v), se esperaba la salida del modelo", out, err)
@@ -133,6 +134,21 @@ func TestInferSendsThePromptAndReturnsTheRawJSON(t *testing.T) {
 	if req.GetSessionId() != "s-origin-gone" {
 		t.Errorf("session_id del payload = %q, se esperaba la conversación de origen, tal cual", req.GetSessionId())
 	}
+	requireNoPendingInfers(t, rig.srv)
+}
+
+// El payload lleva lo que pidió el llamante, verbatim: prompt, formato, temperatura y tope de
+// salida con presencia, el plazo en milisegundos, la clase y la marca de calentamiento.
+func TestInferPayloadCarriesWhatTheCallerAsked(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	edge := rig.live(t, "tenant-1", "edge-1", "s-1", rig.answers(t, modelOutput))
+
+	if _, err := rig.srv.Infer(context.Background(), "tenant-1", fullRequest); err != nil {
+		t.Fatalf("Infer = %v", err)
+	}
+
+	req := edge.only(t).GetInferenceRequest()
 	if req.GetPrompt() != "clasifica esto:\n«dos empanadas»" || req.GetFormat() != `{"type":"object"}` {
 		t.Errorf("el prompt o el formato no viajaron verbatim: %q / %q", req.GetPrompt(), req.GetFormat())
 	}
@@ -148,7 +164,6 @@ func TestInferSendsThePromptAndReturnsTheRawJSON(t *testing.T) {
 	if req.GetClass() != "lote" || !req.GetWarmup() {
 		t.Errorf("class = %q, warmup = %v; se esperaba lote y calentamiento", req.GetClass(), req.GetWarmup())
 	}
-	requireNoPendingInfers(t, rig.srv)
 }
 
 // El frame de lo que el llamante NO fija: la temperatura viaja SIEMPRE con presencia (0.0 es
