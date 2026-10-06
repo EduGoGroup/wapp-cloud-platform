@@ -6,9 +6,9 @@ package grpc
 import (
 	"context"
 	"errors"
-	"runtime"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -89,59 +89,64 @@ func TestWorkLaneOfflineBouncesIfItsWorkerAlreadyDied(t *testing.T) {
 // vez de dejarlo colgado de un carril que ya nadie tiene por qué vaciar. Su job no se ejecuta.
 func TestWorkLaneSealWakesABrakedSubmitter(t *testing.T) {
 	t.Parallel()
-	lane := newWorkLane(context.Background(), 1, time.Minute, quietLog())
-	rec := &laneRecorder{}
-	release := plugLane(t, lane, "s-1", jobReceipt)
-	mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1")) // cola llena
+	synctest.Test(t, func(t *testing.T) {
+		lane := newWorkLane(context.Background(), 1, time.Minute, quietLog())
+		rec := &laneRecorder{}
+		release := plugLane(t, lane, "s-1", jobReceipt)
+		mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1")) // cola llena
 
-	var unused atomic.Bool
-	braked := brakedSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"), &unused)
+		var unused atomic.Bool
+		braked := brakedSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"), &unused)
 
-	lane.seal()
-	// Con el worker TODAVÍA tapado: quien lo despierta tiene que ser el sellado.
-	if got := await(t, braked, "el sellado despierta al submit frenado"); !errors.Is(got.err, errLaneSealed) {
-		t.Fatalf("submit frenado tras seal = %v, se esperaba errLaneSealed", got.err)
-	}
+		lane.seal()
+		// Con el worker TODAVÍA tapado: quien lo despierta tiene que ser el sellado.
+		if got := await(t, braked, "el sellado despierta al submit frenado"); !errors.Is(got.err, errLaneSealed) {
+			t.Fatalf("submit frenado tras seal = %v, se esperaba errLaneSealed", got.err)
+		}
 
-	release()
-	waitWorkers(t, lane)
-	if got := rec.order(); got != "[r1]" {
-		t.Fatalf("ejecutados = %s, se esperaba [r1]: el job rechazado no corre", got)
-	}
+		release()
+		waitWorkers(t, lane)
+		if got := rec.order(); got != "[r1]" {
+			t.Fatalf("ejecutados = %s, se esperaba [r1]: el job rechazado no corre", got)
+		}
+	})
 }
 
 // R-G3: drain ESPERA al trabajo. El job en vuelo y lo que quedaba encolado terminan antes de
 // que drain vuelva, y no hay aviso de abandono.
+//
+// En burbuja de synctest (hallazgo 38): el job duerme un segundo SIMULADO, que solo pasa
+// cuando todo lo demás está bloqueado. Un drain que no espera vuelve con el job dormido.
 func TestWorkLaneDrainWaitsForTheWork(t *testing.T) {
 	t.Parallel()
-	log, logs := capturedLog()
-	lane := newWorkLane(context.Background(), 4, time.Minute, log)
+	synctest.Test(t, func(t *testing.T) {
+		log, logs := capturedLog()
+		lane := newWorkLane(context.Background(), 4, time.Minute, log)
 
-	entered := make(chan struct{})
-	gate := make(chan struct{})
-	var finished atomic.Int32
-	mustSubmit(t, lane, "s-1", jobAuth, func(context.Context) {
-		close(entered)
-		<-gate
-		for range 200 { // sigue «trabajando» un rato después de que drain haya empezado
-			runtime.Gosched()
+		entered := make(chan struct{})
+		gate := make(chan struct{})
+		var finished atomic.Int32
+		mustSubmit(t, lane, "s-1", jobAuth, func(context.Context) {
+			close(entered)
+			<-gate
+			time.Sleep(time.Second) // sigue «trabajando» después de que drain haya empezado (reloj simulado)
+			finished.Add(1)
+		})
+		await(t, entered, "el job en vuelo arranca")
+		mustSubmit(t, lane, "s-1", jobReceipt, func(context.Context) { finished.Add(1) })
+		mustSubmit(t, lane, "s-1", jobOffline, func(context.Context) { finished.Add(1) })
+
+		lane.seal()
+		close(gate)
+		lane.drain(watchdog)
+
+		if n := finished.Load(); n != 3 {
+			t.Fatalf("drain volvió con %d de 3 jobs terminados: no esperó al trabajo", n)
 		}
-		finished.Add(1)
+		if logs.contains("drenaje abandonado") {
+			t.Fatalf("drain avisó de abandono sin haberse agotado: %s", logs.String())
+		}
 	})
-	await(t, entered, "el job en vuelo arranca")
-	mustSubmit(t, lane, "s-1", jobReceipt, func(context.Context) { finished.Add(1) })
-	mustSubmit(t, lane, "s-1", jobOffline, func(context.Context) { finished.Add(1) })
-
-	lane.seal()
-	close(gate)
-	lane.drain(watchdog)
-
-	if n := finished.Load(); n != 3 {
-		t.Fatalf("drain volvió con %d de 3 jobs terminados: no esperó al trabajo", n)
-	}
-	if logs.contains("drenaje abandonado") {
-		t.Fatalf("drain avisó de abandono sin haberse agotado: %s", logs.String())
-	}
 }
 
 // R-G3: si el presupuesto del drenaje se agota, lo que queda se abandona CON AVISO —cuántos

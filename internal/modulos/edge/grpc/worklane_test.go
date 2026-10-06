@@ -111,19 +111,6 @@ func queueLen(lane *workLane, sessionID string) int {
 	return len(q.items)
 }
 
-// letOthersRun da al resto de goroutines ocasión de sobra para avanzar, SIN reloj: hace ida y
-// vuelta por el worker de otra sesión varias veces. Se usa donde hay que dejar que un submit
-// que debería estar frenado demuestre que lo está; no sincroniza la aserción, que es de estado.
-func letOthersRun(t *testing.T, lane *workLane) {
-	t.Helper()
-	for range 50 {
-		ran := make(chan struct{})
-		mustSubmit(t, lane, "another-session", jobReceipt, func(context.Context) { close(ran) })
-		await(t, ran, "el job de la sesión auxiliar corre")
-		runtime.Gosched()
-	}
-}
-
 // R-G3: dentro de UNA sesión el carril es serial. Los jobs no se solapan NUNCA —el pico de
 // jobs simultáneos es 1— y salen en el orden en que llegaron. Con una goroutine por job, el
 // pico subiría y el orden dejaría de estar garantizado.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -184,8 +185,12 @@ func TestWorkLaneCoalescingIsPerSession(t *testing.T) {
 }
 
 // brakedSubmit lanza un submit que DEBERÍA frenar y devuelve por dónde llega su resultado: el
-// error y si, cuando volvió, el test ya había dado paso (gate). Deja que el resto avance
-// antes de volver, para que un submit que NO frena tenga ocasión de sobra de demostrarlo.
+// error y si, cuando volvió, el test ya había dado paso (gate).
+//
+// Exige correr DENTRO de una burbuja de synctest (hallazgo 38): synctest.Wait solo vuelve
+// cuando todas las goroutines de la burbuja están bloqueadas de verdad, así que al volver de
+// aquí el submit o está frenado en su sync.Cond o ya terminó. Un submit que NO frena queda
+// delatado siempre, no «casi siempre».
 type brakedResult struct {
 	err          error
 	afterTheGate bool
@@ -201,7 +206,7 @@ func brakedSubmit(t *testing.T, lane *workLane, sessionID string, kind jobKind, 
 		res <- brakedResult{err: err, afterTheGate: gate.Load()}
 	}()
 	await(t, started, "arranca el submit que debe frenar")
-	letOthersRun(t, lane)
+	synctest.Wait()
 	return res
 }
 
@@ -210,63 +215,67 @@ func brakedSubmit(t *testing.T, lane *workLane, sessionID string, kind jobKind, 
 // hasta que el worker hace sitio.
 func TestWorkLaneFullQueueBrakesWithoutLosingOrGrowing(t *testing.T) {
 	t.Parallel()
-	lane := newWorkLane(context.Background(), 2, time.Minute, quietLog())
-	rec := &laneRecorder{}
-	release := plugLane(t, lane, "s-1", jobReceipt)
+	synctest.Test(t, func(t *testing.T) {
+		lane := newWorkLane(context.Background(), 2, time.Minute, quietLog())
+		rec := &laneRecorder{}
+		release := plugLane(t, lane, "s-1", jobReceipt)
 
-	mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1"))
-	mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"))
+		mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1"))
+		mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"))
 
-	var released atomic.Bool
-	third := brakedSubmit(t, lane, "s-1", jobReceipt, rec.task("r3"), &released)
+		var released atomic.Bool
+		third := brakedSubmit(t, lane, "s-1", jobReceipt, rec.task("r3"), &released)
 
-	if n := queueLen(lane, "s-1"); n != 2 {
-		t.Fatalf("con el worker tapado la cola tiene %d jobs, se esperaba su tope (2): creció", n)
-	}
+		if n := queueLen(lane, "s-1"); n != 2 {
+			t.Fatalf("con el worker tapado la cola tiene %d jobs, se esperaba su tope (2): creció", n)
+		}
 
-	released.Store(true)
-	release()
-	got := await(t, third, "el submit frenado vuelve cuando hay sitio")
-	if got.err != nil {
-		t.Fatalf("el submit frenado acabó en error: %v", got.err)
-	}
-	if !got.afterTheGate {
-		t.Fatal("el tercer submit volvió ANTES de que el worker hiciera sitio: no frenó")
-	}
-	closeLane(t, lane)
+		released.Store(true)
+		release()
+		got := await(t, third, "el submit frenado vuelve cuando hay sitio")
+		if got.err != nil {
+			t.Fatalf("el submit frenado acabó en error: %v", got.err)
+		}
+		if !got.afterTheGate {
+			t.Fatal("el tercer submit volvió ANTES de que el worker hiciera sitio: no frenó")
+		}
+		closeLane(t, lane)
 
-	if order := rec.order(); order != "[r1 r2 r3]" {
-		t.Fatalf("procesados = %s, se esperaba [r1 r2 r3]: frenar significa no perder nada", order)
-	}
+		if order := rec.order(); order != "[r1 r2 r3]" {
+			t.Fatalf("procesados = %s, se esperaba [r1 r2 r3]: frenar significa no perder nada", order)
+		}
+	})
 }
 
 // REQ-050.4 manda sobre REQ-050.5: un heartbeat SIN hueco que sustituir (no hay ninguno
 // pendiente) frena con la cola llena igual que cualquier otro job.
 func TestWorkLaneHeartbeatWithoutPendingSlotBrakesToo(t *testing.T) {
 	t.Parallel()
-	lane := newWorkLane(context.Background(), 2, time.Minute, quietLog())
-	rec := &laneRecorder{}
-	release := plugLane(t, lane, "s-1", jobReceipt)
+	synctest.Test(t, func(t *testing.T) {
+		lane := newWorkLane(context.Background(), 2, time.Minute, quietLog())
+		rec := &laneRecorder{}
+		release := plugLane(t, lane, "s-1", jobReceipt)
 
-	mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1"))
-	mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"))
+		mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r1"))
+		mustSubmit(t, lane, "s-1", jobReceipt, rec.task("r2"))
 
-	var released atomic.Bool
-	hb := brakedSubmit(t, lane, "s-1", jobHeartbeat, rec.task("hb"), &released)
-	if n := queueLen(lane, "s-1"); n != 2 {
-		t.Fatalf("la cola tiene %d jobs, se esperaba su tope (2): el latido se coló", n)
-	}
+		var released atomic.Bool
+		hb := brakedSubmit(t, lane, "s-1", jobHeartbeat, rec.task("hb"), &released)
+		if n := queueLen(lane, "s-1"); n != 2 {
+			t.Fatalf("la cola tiene %d jobs, se esperaba su tope (2): el latido se coló", n)
+		}
 
-	released.Store(true)
-	release()
-	if got := await(t, hb, "el latido frenado vuelve cuando hay sitio"); got.err != nil || !got.afterTheGate {
-		t.Fatalf("latido sin hueco con la cola llena = %+v, se esperaba que frenara y entrara después", got)
-	}
-	closeLane(t, lane)
+		released.Store(true)
+		release()
+		if got := await(t, hb, "el latido frenado vuelve cuando hay sitio"); got.err != nil || !got.afterTheGate {
+			t.Fatalf("latido sin hueco con la cola llena = %+v, se esperaba que frenara y entrara después", got)
+		}
+		closeLane(t, lane)
 
-	if order := rec.order(); order != "[r1 r2 hb]" {
-		t.Fatalf("procesados = %s, se esperaba [r1 r2 hb]", order)
-	}
+		if order := rec.order(); order != "[r1 r2 hb]" {
+			t.Fatalf("procesados = %s, se esperaba [r1 r2 hb]", order)
+		}
+	})
 }
 
 // Con hueco, en cambio, el heartbeat NO frena aunque la cola esté llena: sustituir no ocupa
