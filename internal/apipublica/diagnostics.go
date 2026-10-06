@@ -14,10 +14,17 @@ package apipublica
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // DiagnosticsRequester emite un DiagnosticsRequest por el stream CloudLink a una sesión. Lo
@@ -131,5 +138,257 @@ type DiagnosticsDeps struct {
 //
 // Fallo de cableado: k.MW nil hace panic AL MONTAR (ver Common), se monten las rutas o no.
 func MountDiagnostics(c *Cara, k Common, d DiagnosticsDeps) {
-	panic(pendiente.Implementar("apipublica.MountDiagnostics"))
+	mustHaveMW(k, "MountDiagnostics")
+
+	// Diagnóstico remoto bajo demanda (Plan 031 · T5, ADR-0023 capa 3). POST emite un
+	// DiagnosticsRequest a la sesión {id} (gate de consentimiento por tenant default
+	// ON ⇒ 403 si opt-out; aislamiento session→tenant ⇒ 404); GET descarga el bundle
+	// por command_id (202 pendiente / 200 listo / 410 expirado / 404 no encontrado).
+	// AMBAS rutas exigen el grant diagnostics.request y se AUDITAN (protect: la descarga
+	// se audita a propósito, es una lectura sensible). Solo se montan con el store, el
+	// emisor y el listador de sesiones cableados.
+	if d.Diagnostics == nil || d.DiagnosticsRequester == nil || d.Sessions == nil {
+		return
+	}
+	ttl := d.BundleTTL
+	if ttl <= 0 {
+		ttl = defaultDiagnosticsTTL
+	}
+	c.Handle("POST /api/v1/sessions/{id}/diagnostics", protect(k, "diagnostics.request", "session",
+		requestDiagnosticsHandler(d.DiagnosticsRequester, d.Diagnostics, d.Sessions, ttl, d.DBTimeout, k.Log)))
+	c.Handle("GET /api/v1/diagnostics/{command_id}", protect(k, "diagnostics.request", "diagnostics",
+		getDiagnosticsHandler(d.Diagnostics, d.DBTimeout, k.Log)))
+}
+
+// diagnosticsRequestBody es el cuerpo JSON (OPCIONAL) de POST .../diagnostics: solo
+// el scope. El tenant y el session_id NO viajan aquí (INV-8 / ruta). Cuerpo vacío ⇒
+// scope "full".
+type diagnosticsRequestBody struct {
+	Scope string `json:"scope"`
+}
+
+// diagnosticsRequestResponse confirma la solicitud emitida: el command_id con el que
+// se descargará el bundle cuando el Edge responda.
+type diagnosticsRequestResponse struct {
+	CommandID string `json:"command_id"`
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// diagnosticsBundleResponse es el bundle ya recibido, para la descarga.
+type diagnosticsBundleResponse struct {
+	CommandID      string `json:"command_id"`
+	SessionID      string `json:"session_id"`
+	RequestedBy    string `json:"requested_by"`
+	RequestedAt    string `json:"requested_at"`
+	ReceivedAt     string `json:"received_at"`
+	LogTail        string `json:"log_tail"`
+	GoroutineDump  string `json:"goroutine_dump"`
+	SubsystemsJSON string `json:"subsystems_json"`
+}
+
+// preflightDiagnostics valida identidad + ruta + consentimiento (default ON, opt-out)
+// + aislamiento session→tenant (INV-8). Escribe el error apropiado y devuelve ok=false
+// para cortar; con ok=true devuelve la Identity y el session_id ya validados.
+//
+// Sus DOS consultas a BD —el consentimiento y la guarda de tenant— van acotadas con
+// el mismo presupuesto (dbTimeout, ver dbCtx en deadlines.go; Plan 050 · Ola 3 ·
+// T3.3). Las dos ocurren ANTES de emitir nada al Edge, así que un plazo vencido
+// responde 504 y reintentar es seguro. <=0 cae al suelo de dbCtx.
+func preflightDiagnostics(w http.ResponseWriter, r *http.Request, store DiagnosticsStore, sessions SessionLister, dbTimeout time.Duration, log sharedlogger.Logger) (httpapi.Identity, string, bool) {
+	id, ok := httpapi.IdentityFromContext(r.Context())
+	if !ok || id.TenantID == "" {
+		writeError(w, http.StatusUnauthorized, "autenticación requerida")
+		return id, "", false
+	}
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "session id requerido en la ruta")
+		return id, "", false
+	}
+	// Gate de CONSENTIMIENTO (ADR-0023): opt-out ⇒ 403. Un fallo del checker NO abre la
+	// capacidad (se trata como no verificable ⇒ 500, no como consentido).
+	ctx, cancel := dbCtx(r.Context(), dbTimeout)
+	consented, err := store.ConsentEnabled(ctx, id.TenantID)
+	cancel()
+	if err != nil {
+		if dbTimedOut504(w, log, err, "la verificación del consentimiento no respondió a tiempo, reintenta",
+			"op", "diagnostics.consent", "tenant_id", id.TenantID, "session_id", sessionID) {
+			return id, "", false
+		}
+		writeError(w, http.StatusInternalServerError, "no se pudo verificar el consentimiento")
+		return id, "", false
+	}
+	if !consented {
+		writeError(w, http.StatusForbidden, "el tenant desactivó el diagnóstico remoto (opt-out)")
+		return id, "", false
+	}
+	// Aislamiento por tenant (INV-8): la sesión debe ser del tenant del token.
+	belongs, err := sessionBelongsToTenant(r.Context(), sessions, id.TenantID, sessionID, dbTimeout)
+	if err != nil {
+		if dbTimedOut504(w, log, err, "la verificación de la sesión no respondió a tiempo, reintenta",
+			"op", "diagnostics.guarda_tenant", "tenant_id", id.TenantID, "session_id", sessionID) {
+			return id, "", false
+		}
+		writeError(w, http.StatusInternalServerError, "no se pudo verificar la sesión")
+		return id, "", false
+	}
+	if !belongs {
+		writeError(w, http.StatusNotFound, "sesión no encontrada para el tenant")
+		return id, "", false
+	}
+	return id, sessionID, true
+}
+
+// resolveScope lee el scope OPCIONAL del cuerpo (cuerpo vacío ⇒ "full"). ok=false si
+// el cuerpo es un JSON inválido (ya escribió 400).
+func resolveScope(w http.ResponseWriter, r *http.Request) (string, bool) {
+	scope := "full"
+	if r.Body == nil {
+		return scope, true
+	}
+	var body diagnosticsRequestBody
+	if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil && !errors.Is(derr, io.EOF) {
+		writeError(w, http.StatusBadRequest, "cuerpo JSON inválido")
+		return "", false
+	}
+	if s := strings.TrimSpace(body.Scope); s != "" {
+		scope = s
+	}
+	return scope, true
+}
+
+// requestDiagnosticsHandler devuelve POST /api/v1/sessions/{id}/diagnostics: emite un
+// DiagnosticsRequest a la sesión {id} del tenant del token (Plan 031 · T5, ADR-0023).
+// Orden: gate de CONSENTIMIENTO por tenant (default ON; opt-out ⇒ 403) → aislamiento
+// session→tenant (INV-8 ⇒ 404) → genera command_id → persiste la solicitud pendiente →
+// empuja el request por el stream (rollback de la fila si el push falla). El grant
+// diagnostics.request lo exige el middleware (protect); la auditoría durable la deja
+// AuditMiddleware, y aquí se añade un log estructurado con command_id/session_id/subject.
+// Las respuestas, una a una, están en el contrato de MountDiagnostics.
+//
+// gw y store nunca son nil: MountDiagnostics no monta la ruta sin ellos (la cara vieja
+// repetía aquí esa guarda con un 500 «diagnóstico remoto no configurado» inalcanzable).
+func requestDiagnosticsHandler(gw DiagnosticsRequester, store DiagnosticsStore, sessions SessionLister, ttl, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Identidad + consentimiento (default ON, opt-out) + aislamiento session→tenant.
+		id, sessionID, ok := preflightDiagnostics(w, r, store, sessions, dbTimeout, log)
+		if !ok {
+			return
+		}
+		scope, ok := resolveScope(w, r)
+		if !ok {
+			return
+		}
+
+		commandID, err := diagnostics.NewCommandID()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo generar el command_id")
+			return
+		}
+		expiresAt := time.Now().Add(ttl)
+		if err := store.CreateRequest(r.Context(), id.TenantID, sessionID, commandID, id.Subject, expiresAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudo registrar la solicitud")
+			return
+		}
+
+		// Push del DiagnosticsRequest por el stream. Si falla (sesión offline), se hace
+		// rollback de la fila pendiente para no dejar una solicitud que nunca recibirá
+		// bundle, y se traduce el error (offline ⇒ 502).
+		if err := gw.RequestDiagnostics(r.Context(), sessionID, commandID, scope); err != nil {
+			if derr := store.DeleteRequest(r.Context(), id.TenantID, commandID); derr != nil && log != nil {
+				log.Warn("diagnóstico: rollback de solicitud tras push fallido falló",
+					"tenant_id", id.TenantID, "command_id", commandID, "error", derr)
+			}
+			writeSendError(w, err, log, sessionID)
+			return
+		}
+
+		// Rastro de auditoría OPERATIVO (además del audit_events de AuditMiddleware):
+		// quién (subject del JWT), qué sesión, qué command_id. CERO PII.
+		if log != nil {
+			log.Info("diagnóstico remoto solicitado",
+				"tenant_id", id.TenantID, "subject", id.Subject,
+				"session_id", sessionID, "command_id", commandID, "scope", scope)
+		}
+
+		writeJSON(w, http.StatusAccepted, diagnosticsRequestResponse{
+			CommandID: commandID,
+			SessionID: sessionID,
+			Status:    "pending",
+			ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		})
+	})
+}
+
+// getDiagnosticsHandler devuelve GET /api/v1/diagnostics/{command_id}: descarga el
+// bundle almacenado del tenant del token (Plan 031 · T5). Mismo grant que el request
+// (diagnostics.request) y también auditado (protect). Las respuestas, una a una, están
+// en el contrato de MountDiagnostics.
+//
+// dbTimeout acota la lectura del bundle (Plan 050 · Ola 3 · T3.3, ver dbCtx en
+// deadlines.go). <=0 cae al suelo de dbCtx. store nunca es nil (ver
+// requestDiagnosticsHandler).
+func getDiagnosticsHandler(store DiagnosticsStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		commandID := r.PathValue("command_id")
+		if commandID == "" {
+			writeError(w, http.StatusBadRequest, "command_id requerido en la ruta")
+			return
+		}
+
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		rec, err := store.GetBundle(ctx, id.TenantID, commandID)
+		// El plazo vencido va ANTES del switch a propósito: los errores tipados del
+		// store (ErrNotFound/ErrExpired/ErrPending) responden sobre lo que se LEYÓ, y
+		// aquí no se llegó a leer nada. Colarlo en el `case err != nil` lo convertiría
+		// en un 500 indistinguible de una base rota.
+		if dbTimedOut504(w, log, err, "la lectura del diagnóstico no respondió a tiempo, reintenta la descarga",
+			"op", "diagnostics.bundle", "tenant_id", id.TenantID, "command_id", commandID) {
+			return
+		}
+		switch {
+		case errors.Is(err, diagnostics.ErrNotFound):
+			writeError(w, http.StatusNotFound, "diagnóstico no encontrado")
+			return
+		case errors.Is(err, diagnostics.ErrExpired):
+			writeError(w, http.StatusGone, "diagnóstico expirado")
+			return
+		case errors.Is(err, diagnostics.ErrPending):
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"command_id": commandID,
+				"status":     "pending",
+				"message":    "el Edge aún no respondió; reintentar la descarga",
+			})
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "no se pudo leer el diagnóstico")
+			return
+		}
+
+		// Rastro de auditoría de la DESCARGA (además del audit_events de AuditMiddleware).
+		if log != nil {
+			log.Info("diagnóstico remoto descargado",
+				"tenant_id", id.TenantID, "subject", id.Subject,
+				"session_id", rec.SessionID, "command_id", commandID)
+		}
+
+		writeJSON(w, http.StatusOK, diagnosticsBundleResponse{
+			CommandID:      rec.CommandID,
+			SessionID:      rec.SessionID,
+			RequestedBy:    rec.RequestedBy,
+			RequestedAt:    rec.RequestedAt.UTC().Format(time.RFC3339),
+			ReceivedAt:     rec.ReceivedAt.UTC().Format(time.RFC3339),
+			LogTail:        rec.Bundle.LogTail,
+			GoroutineDump:  rec.Bundle.GoroutineDump,
+			SubsystemsJSON: rec.Bundle.SubsystemsJSON,
+		})
+	})
 }

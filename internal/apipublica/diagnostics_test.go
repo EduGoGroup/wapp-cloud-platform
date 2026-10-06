@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // diagnostics_test.go — cubre el contrato de diagnostics.go (DiagnosticsRequester,
@@ -280,15 +278,22 @@ func TestMountDiagnostics_Request_OK(t *testing.T) {
 	if len(store.deleted) != 0 {
 		t.Errorf("el camino feliz borró %v: el rollback es solo del empuje fallido", store.deleted)
 	}
+	wantDiagAudit(t, h, "session", "success", http.StatusAccepted)
+}
+
+// TestMountDiagnostics_Request_LeavesAnOperationalTrace: quién, qué sesión y qué command_id.
+func TestMountDiagnostics_Request_LeavesAnOperationalTrace(t *testing.T) {
+	h := apipublicahelpertest.New(t)
+	requester := &requesterSpy{}
+	wantCode(t, "D5", requestDiag(h, diagDeps(newStore(), requester), requestTarget, `{"scope":"logs"}`), http.StatusAccepted)
 	lines := logLines(h, msgDiagRequested)
 	if len(lines) != 1 || lines[0].Level != "info" {
 		t.Fatalf("línea %q: %+v; quiero una, de nivel info", msgDiagRequested, lines)
 	}
 	if f := lines[0].Fields; f["tenant_id"] != tenantA || f["subject"] != subject || f["session_id"] != "sess-a" ||
-		f["command_id"] != c.commandID || f["scope"] != "logs" {
+		f["command_id"] != requester.commandID || f["scope"] != "logs" {
 		t.Errorf("campos = %v; quiero tenant_id, subject, session_id, command_id y scope", f)
 	}
-	wantDiagAudit(t, h, "session", "success", http.StatusAccepted)
 }
 
 // TestMountDiagnostics_Request_Scope: el cuerpo es opcional y el scope cae a "full".

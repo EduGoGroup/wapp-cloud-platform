@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // diagnostics_request_test.go — la mitad de diagnostics_test.go que cubre los desenlaces de D5
@@ -24,12 +22,14 @@ func TestMountDiagnostics_Request_OptOutIs403(t *testing.T) {
 	h := apipublicahelpertest.New(t)
 	store, requester := newStore(), &requesterSpy{}
 	store.SetConsent(tenantA, false)
+	lister := sessA()
 	d := diagDeps(store, requester)
+	d.Sessions = lister
 	rec := requestDiag(h, d, requestTarget, "")
 	wantCode(t, "D5 con opt-out", rec, http.StatusForbidden)
 	wantErrorBody(t, "D5 con opt-out", rec, msgOptOut)
 	wantNothingEmitted(t, "D5 con opt-out", store, requester)
-	if lister := d.Sessions.(*listerFake); lister.calls != 0 {
+	if lister.calls != 0 {
 		t.Error("se consultó la flota de un tenant que desactivó el diagnóstico")
 	}
 	wantDiagAudit(t, h, "session", "failure", http.StatusForbidden)
@@ -84,12 +84,14 @@ func TestMountDiagnostics_Request_CrossTenantIs404(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := apipublicahelpertest.New(t)
 			store, requester := newStore(), &requesterSpy{}
+			lister := sessA()
 			d := diagDeps(store, requester)
+			d.Sessions = lister
 			rec := requestDiag(h, d, target, "")
 			wantCode(t, name, rec, http.StatusNotFound)
 			wantErrorBody(t, name, rec, "sesión no encontrada para el tenant")
 			wantNothingEmitted(t, name, store, requester)
-			if lister := d.Sessions.(*listerFake); lister.calls != 1 || lister.tenant != tenantA {
+			if lister.calls != 1 || lister.tenant != tenantA {
 				t.Errorf("List(%q) en %d llamadas; quiero el tenant del token en 1", lister.tenant, lister.calls)
 			}
 			wantDiagAudit(t, h, "session", "failure", http.StatusNotFound)
@@ -184,7 +186,8 @@ func TestMountDiagnostics_Request_RollbackFailureIsLogged(t *testing.T) {
 	if len(lines) != 1 || lines[0].Level != "warn" {
 		t.Fatalf("línea %q: %+v; quiero una, de nivel warn", msgRollbackFailed, lines)
 	}
-	if f := lines[0].Fields; f["tenant_id"] != tenantA || f["command_id"] != requester.commandID || f["error"] != store.deleteErr {
+	f := lines[0].Fields
+	if err, ok := f["error"].(error); !ok || !errors.Is(err, store.deleteErr) || f["tenant_id"] != tenantA || f["command_id"] != requester.commandID {
 		t.Errorf("campos = %v; quiero tenant_id, command_id y el error del borrado", f)
 	}
 }
@@ -199,10 +202,10 @@ func TestMountDiagnostics_Request_Clocks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := apipublicahelpertest.New(t)
 			store, requester := newStore(), &requesterSpy{}
+			lister := sessA()
 			d := diagDeps(store, requester)
-			d.DBTimeout = tc.wired
+			d.Sessions, d.DBTimeout = lister, tc.wired
 			wantCode(t, name, requestDiag(h, d, requestTarget, ""), http.StatusAccepted)
-			lister := d.Sessions.(*listerFake)
 			for op, got := range map[string]time.Duration{"consent": store.remaining["consent"], "guard": lister.remaining} {
 				if got <= tc.floor || got > tc.ceil {
 					t.Errorf("%s: al contexto le quedaban %s, quiero entre %s y %s", op, got, tc.floor, tc.ceil)

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // diagnostics_download_test.go — la mitad de diagnostics_test.go que cubre la descarga D6
