@@ -8,6 +8,7 @@ package grpc
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 
@@ -262,10 +263,10 @@ func TestRevokeTenantNotifiesAllLiveEdgesOfThatTenantOnly(t *testing.T) {
 	}
 }
 
-// Lo que NO hace el fan-out de RevokeTenant, afirmado tal cual lo hace el código de
-// referencia: sin fleet no hay instalaciones «conocidas» y no se avisa a nadie (el corte sí
-// se persiste); y una sesión viva cuyo Edge fleet no lista tampoco recibe aviso.
-func TestRevokeTenantOnlyNotifiesEdgesKnownToFleet(t *testing.T) {
+// D-F3-10 (hallazgo 40), donde el nuevo se aparta del viejo: el aviso no depende de que fleet
+// conozca la instalación. Una sesión viva del tenant lo recibe aunque no haya fleet inyectado
+// o aunque fleet no liste su Edge (el canal de control de un Edge sin teléfono, p. ej.).
+func TestRevokeTenantNotifiesLiveEdgesUnknownToFleet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -276,7 +277,7 @@ func TestRevokeTenantOnlyNotifiesEdgesKnownToFleet(t *testing.T) {
 		if err := rig.srv.RevokeTenant(ctx, "tenant-1"); err != nil {
 			t.Fatalf("RevokeTenant = %v", err)
 		}
-		requireNothing(t, live)
+		rig.requireRevocation(t, live)
 		if revoked, err := rig.leaseRepo.TenantRevoked(ctx, "tenant-1"); err != nil || !revoked {
 			t.Error("sin fleet el corte no se persistió")
 		}
@@ -291,13 +292,38 @@ func TestRevokeTenantOnlyNotifiesEdgesKnownToFleet(t *testing.T) {
 		}
 		listed := rig.goLive(t, "tenant-1", "edge-1", "s-1", nil)
 		unlisted := rig.goLive(t, "tenant-1", "edge-ghost", "s-2", nil)
+		foreign := rig.goLive(t, "tenant-2", "edge-ghost", "s-3", nil)
 
 		if err := rig.srv.RevokeTenant(ctx, "tenant-1"); err != nil {
 			t.Fatalf("RevokeTenant = %v", err)
 		}
 		rig.requireRevocation(t, listed)
-		requireNothing(t, unlisted)
+		rig.requireRevocation(t, unlisted)
+		requireNothing(t, foreign)
 	})
+}
+
+// Los Edge vivos de un tenant son los SUYOS: el mismo edge_id bajo otro tenant es otro Edge, y
+// un Edge ajeno no entra (no se le firmaría una revocación que no es suya). Un Edge con varias
+// sesiones cuenta una vez.
+func TestLiveEdgesOfTenantAreItsOwnOnly(t *testing.T) {
+	t.Parallel()
+	srv := newRevokeRig(t).srv
+	for _, cc := range []connCtx{
+		phone("tenant-1", "edge-1", "s-1"), phone("tenant-1", "edge-1", "s-2"),
+		phone("tenant-1", "edge-2", "s-3"), phone("tenant-2", "edge-9", "s-4"),
+	} {
+		srv.trackSession(cc)
+	}
+
+	got := srv.liveEdgesOfTenant("tenant-1")
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"edge-1", "edge-2"}) {
+		t.Errorf("Edge vivos de tenant-1 = %v, se esperaban edge-1 y edge-2", got)
+	}
+	if got := srv.liveEdgesOfTenant("tenant-none"); len(got) != 0 {
+		t.Errorf("un tenant sin sesiones tiene Edge vivos: %v", got)
+	}
 }
 
 // RestoreTenant NO empuja nada: la revocación previa no se retracta con un push, se deja de

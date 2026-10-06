@@ -79,13 +79,15 @@ func (s *Server) RevokeLease(ctx context.Context, tenantID, edgeID string) error
 // RevokeTenant dispara el kill-switch COMERCIAL de un tenant completo
 // (D-055.2, Plan 055 · T3.3): persiste el corte (tenants.revoked_at, vía
 // lease.Manager.RevokeTenant) y empuja el LeaseUpdate(Revoked) a las sesiones
-// VIVAS de TODAS las instalaciones YA CONOCIDAS de ese tenant, y a ninguna de otro
-// (R-G21). "Conocidas" se resuelve con fleet.Repository.List (persistente, sobrevive
-// reinicios y cubre instalaciones offline en este momento pero registradas alguna
-// vez); las instalaciones NUEVAS que ese tenant abra después no necesitan push --
+// VIVAS de TODAS las instalaciones de ese tenant, y a ninguna de otro (R-G21). Las
+// instalaciones salen de DOS sitios (D-F3-10; el viejo solo mira el primero): las
+// que lista fleet.Repository.List y las que tienen sesión viva en el seguimiento
+// (edgeSessions). El segundo cubre lo que fleet no lista a propósito —un Edge sin
+// teléfono emparejado solo tiene el canal de control, que no es flota (MP-11)— y
+// al Server sin fleet inyectado: sin él esos Edge se enteraban en su siguiente
+// Renew. Las instalaciones NUEVAS que ese tenant abra después no necesitan push --
 // nacen revocadas solas porque el gestor consulta tenants.revoked_at en cada
-// IssueInitial (T3.2). Sin fleet inyectado no hay instalaciones que notificar: el
-// corte se persiste y no se empuja nada.
+// IssueInitial (T3.2).
 //
 // NO marca leases.revoked de cada instalación (a diferencia de RevokeLease):
 // eso dejaría sin retorno a un RestoreTenant posterior (D-055.2, ver el
@@ -120,6 +122,9 @@ func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
 			edgeIDs[sess.EdgeID] = struct{}{}
 		}
 	}
+	for _, edgeID := range s.liveEdgesOfTenant(tenantID) {
+		edgeIDs[edgeID] = struct{}{}
+	}
 
 	// Push CONCURRENTE por instalación e independiente entre instalaciones: el
 	// mismo argumento que RevokeLease -- ninguna sesión bloqueada debe
@@ -145,6 +150,20 @@ func (s *Server) RevokeTenant(ctx context.Context, tenantID string) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+// liveEdgesOfTenant devuelve los Edge del tenant con al menos una sesión viva en el
+// seguimiento, y ninguno de otro tenant. El orden no está definido.
+func (s *Server) liveEdgesOfTenant(tenantID string) []string {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	var out []string
+	for k := range s.edgeSessions {
+		if k.tenantID == tenantID {
+			out = append(out, k.edgeID)
+		}
+	}
+	return out
 }
 
 // RestoreTenant reactiva un tenant previamente revocado (Plan 055 · T3.3,
