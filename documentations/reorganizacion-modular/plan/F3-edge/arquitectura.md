@@ -281,7 +281,11 @@ con las mismas 12 opciones y los mismos valores (`WAPP_GRPC_PUSH_TIMEOUT` 10 s, 
 con los de `acceso` **nuevos** (se borra `bridge_iam.go` y `acceso` entra en `Conmutados`), el adaptador
 `bridge_gateway.go` para el selector (`edge` entra en `Conmutados` cuando muera, en F4).
 **Cómo se prueba que usa lo nuevo**: `go list -deps ./cmd/server-modular | grep internal/gateway/`
-→ solo `internal/gateway/grpc` (lo arrastra `llmvia` viejo hasta F4); el test de cableado de `bridge_gateway.go`
+→ **cuatro** paquetes, y ninguno por `internal/arranque` salvo el adaptador (✎ 2026-10-06, hallazgo 68 de F3: esta
+línea decía «solo `internal/gateway/grpc`», y lo medido en F3-04 es otra cosa): `grpc` (lo importan `bridge_gateway.go`
+y `llmvia` viejo, hasta F4), `lease` (lo arrastra `gateway/grpc`), y `fleet` y `session` (los importan además
+`internal/publicapi` e `internal/flujos/admin`, hasta F7/F8). Lo que se exige y se vigila no es la lista del binario,
+sino que el arranque no instancie ni cablee el gateway viejo; el test de cableado de `bridge_gateway.go`
 (ninguna fase importa el gw viejo fuera del adaptador, grep por ruta de import); aserciones de identidad de FX
 TX.11; huella igual (2 rpc, rutas, métricas, goroutines).
 
