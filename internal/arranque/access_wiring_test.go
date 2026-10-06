@@ -5,17 +5,17 @@ package arranque
 // sobre el arranque nuevo REAL (las fases 2–8 del contenedor de la huella, sin red ni BD), que
 // construye el resolver de derechos, el autenticador delegado y el auditor NUEVOS y que esas
 // MISMAS instancias llegan a sus consumidores; y, por import, que ningún fichero de producción de
-// internal/arranque salvo el adaptador (bridge_iam.go) toca los paquetes viejos de acceso.
+// internal/arranque toca los paquetes viejos de acceso.
 //
-// `acceso` NO entra en Conmutados (internal/modulos/fronteras_test.go) mientras viva
-// bridge_iam.go: entra en F3, cuando el gateway nuevo reciba el in.Authenticator nuevo.
+// Desde F3 (T3.28, conmutar(edge)) el gateway es el NUEVO y recibe el in.Authenticator y el
+// in.Auditor nuevos SIN adaptador: murió bridge_iam.go y `acceso` entró en Conmutados
+// (internal/modulos/fronteras_test.go).
 
 import (
 	"errors"
 	"go/ast"
 	"net"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,26 +33,6 @@ const (
 	oldPlatformadminImportPath = "github.com/EduGoGroup/wapp-cloud-platform/internal/platformadmin"
 )
 
-// oldAccessImporters es la lista blanca, por fichero y por ruta de import, de los ficheros de
-// producción de internal/arranque que pueden importar un paquete viejo de acceso, con los ÚNICOS
-// símbolos que pueden usar de él. Solo el adaptador, y solo tipos y centinelas: ningún
-// constructor, así que el arranque nuevo no puede levantar un servicio viejo de acceso.
-//
-// Cada símbolo de la lista tiene que usarse: un permiso que nadie usa se retira en el mismo
-// commit (TestBootWiring_AccessWhitelistIsTight). Todo sale de aquí en F3, cuando muere
-// bridge_iam.go.
-var oldAccessImporters = map[string]map[string][]string{
-	"bridge_iam.go": {
-		oldIAMImportPath + "/domain": {
-			"AuditEvent", "AuthResult", "ErrInvalidCredentials", "ErrInvalidInput",
-			"ErrRefreshInvalid", "ErrUserInactive", "IdentityContext",
-		},
-		oldIAMImportPath + "/ports/in": {
-			"AuditInput", "Auditor", "Authenticator", "LoginInput", "LogoutInput", "RefreshInput", "VerifyResult",
-		},
-	},
-}
-
 // isOldAccessPath dice si path es un paquete viejo de acceso (o un subpaquete suyo).
 func isOldAccessPath(path string) bool {
 	for _, old := range []string{oldIAMImportPath, oldEntitlementsImportPath, oldPlatformadminImportPath} {
@@ -63,12 +43,15 @@ func isOldAccessPath(path string) bool {
 	return false
 }
 
-// oldAccessUses recorre los ficheros de producción de internal/arranque y devuelve, por fichero y
-// por ruta de import, lo que hacen con los paquetes viejos de acceso.
-func oldAccessUses(t *testing.T) map[string]map[string]oldContactUse {
-	t.Helper()
+// TestBootWiring_AccessNoFileImportsOldPackages es la mitad «ninguna fase importa el viejo»
+// (R2.5.f): sin ella, una fase podría construir el resolver o el auditor VIEJOS y pasárselos a
+// su consumidor sin tocar ningún campo del contenedor. Hasta F3 había una excepción con lista
+// blanca de símbolos, bridge_iam.go (el adaptador hacia el gateway viejo); murió con él en
+// conmutar(edge), así que ya no hay ninguna: ni un fichero de producción de internal/arranque
+// importa internal/iam, internal/entitlements o internal/platformadmin. (Los _test.go los cubre
+// la regla 3 de internal/modulos/fronteras_test.go, con acceso en Conmutados.)
+func TestBootWiring_AccessNoFileImportsOldPackages(t *testing.T) {
 	fset, files := astDelArranque(t)
-	uses := make(map[string]map[string]oldContactUse)
 	for _, f := range files {
 		name := fset.Position(f.Pos()).Filename
 		for _, imp := range f.Imports {
@@ -76,63 +59,9 @@ func oldAccessUses(t *testing.T) map[string]map[string]oldContactUse {
 			if err != nil {
 				t.Fatalf("%s: import %s ilegible: %v", name, imp.Path.Value, err)
 			}
-			if !isOldAccessPath(path) {
-				continue
-			}
-			local := path[strings.LastIndex(path, "/")+1:]
-			if imp.Name != nil {
-				local = imp.Name.Name
-			}
-			if uses[name] == nil {
-				uses[name] = make(map[string]oldContactUse)
-			}
-			uses[name][path] = oldContactUse{localName: local, selectors: selectorsOn(f, local)}
-		}
-	}
-	return uses
-}
-
-// TestBootWiring_AccessOnlyBridgeImportsOldPackages es la mitad «ninguna fase importa el viejo
-// fuera del adaptador» (R2.5.f): sin ella, una fase podría construir el resolver o el auditor
-// VIEJOS y pasárselos a su consumidor sin tocar ningún campo del contenedor.
-func TestBootWiring_AccessOnlyBridgeImportsOldPackages(t *testing.T) {
-	uses := oldAccessUses(t)
-	for name, paths := range uses {
-		for path := range paths {
-			if _, ok := oldAccessImporters[name][path]; !ok {
-				t.Errorf("%s importa %s: en el arranque nuevo solo bridge_iam.go (el adaptador del gateway viejo) "+
-					"puede importar un paquete viejo de acceso, y solo los de su lista blanca", name, path)
-			}
-		}
-	}
-}
-
-// TestBootWiring_AccessWhitelistIsTight cierra la otra puerta: el adaptador usa del paquete viejo
-// SOLO los símbolos declarados (ningún constructor), y la lista no se queda atrás —un fichero, una
-// ruta o un símbolo que ya nadie usa es un permiso sobrante y falla—.
-func TestBootWiring_AccessWhitelistIsTight(t *testing.T) {
-	uses := oldAccessUses(t)
-	for name, paths := range oldAccessImporters {
-		for path, allowed := range paths {
-			use, ok := uses[name][path]
-			if !ok {
-				t.Errorf("%s tiene %s en la lista blanca oldAccessImporters pero ya no lo importa (o el fichero "+
-					"ya no existe): quítalo de la lista", name, path)
-				continue
-			}
-			if use.localName == "." || use.localName == "_" {
-				t.Errorf("%s importa %s como %q: así no se ve qué símbolos usa; impórtalo con nombre", name, path, use.localName)
-				continue
-			}
-			for _, sel := range use.selectors {
-				if !slices.Contains(allowed, sel) {
-					t.Errorf("%s usa %s.%s del paquete viejo %s; solo puede usar %v", name, use.localName, sel, path, allowed)
-				}
-			}
-			for _, sym := range allowed {
-				if !slices.Contains(use.selectors, sym) {
-					t.Errorf("%s ya no usa %s.%s (%s): quítalo de la lista blanca", name, use.localName, sym, path)
-				}
+			if isOldAccessPath(path) {
+				t.Errorf("%s importa %s: en el arranque nuevo ningún fichero puede importar un paquete "+
+					"viejo de acceso (bridge_iam.go, la única excepción, murió en F3)", name, path)
 			}
 		}
 	}
@@ -160,9 +89,10 @@ func TestBootWiring_AccessSingleNewEntitlementsResolver(t *testing.T) {
 // TestBootWiring_AccessNewServicesReachEveryConsumer (R2.4.a, R2.5.a, R2.5.f), sobre el arranque
 // real en el perfil «minimo» (sin identity): el resolver de derechos es el *entitlements.Postgres
 // NUEVO y la MISMA instancia llega a la cara vieja (publicapi.Deps.Entitlements), a la bandeja de
-// plataforma (platformadmin.Repository) y al gate del puente CRM; el gateway viejo recibe como
-// auditor un auditorBridge sobre el *usecase.AuditService NUEVO del authStack, y como
-// autenticador un nil DE VERDAD (sin identity no hay quien valide credenciales).
+// plataforma (platformadmin.Repository) y al gate del puente CRM; el gateway (el nuevo) recibe
+// como auditor el MISMO *usecase.AuditService NUEVO del authStack, sin nada alrededor, y como
+// autenticador un nil DE VERDAD (sin identity no hay quien valide credenciales): un
+// *usecase.DelegatedAuthService nil metido en la interfaz le haría creer que tiene autenticador.
 func TestBootWiring_AccessNewServicesReachEveryConsumer(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
@@ -185,44 +115,41 @@ func TestBootWiring_AccessNewServicesReachEveryConsumer(t *testing.T) {
 	if got := gatewayField(t, c, "authn"); !got.IsNil() {
 		t.Errorf("sin identity el gateway recibe un autenticador %s; se espera un nil de verdad", got.Elem().Type())
 	}
-	assertBridgeOver(t, gatewayField(t, c, "authAuditor"), reflect.TypeFor[*auditorBridge](), c.authStk.auditor)
+	assertGatewayHolds(t, gatewayField(t, c, "authAuditor"), c.authStk.auditor)
 }
 
-// TestBootWiring_AccessGatewayGetsBridgeOverNewDelegatedAuth (R2.5.a): con la delegación a identity
-// encendida —la que construye wireDelegatedAuth, la función de producción—, el gateway viejo
-// recibe un authenticatorBridge sobre el *usecase.DelegatedAuthService NUEVO del authStack, no un
-// autenticador viejo.
-func TestBootWiring_AccessGatewayGetsBridgeOverNewDelegatedAuth(t *testing.T) {
+// TestBootWiring_AccessGatewayGetsTheNewDelegatedAuth (R2.5.a): con la delegación a identity
+// encendida —la que construye wireDelegatedAuth, la función de producción—, el gateway recibe
+// EXACTAMENTE el *usecase.DelegatedAuthService NUEVO del authStack (y su auditor), no un
+// autenticador viejo ni un adaptador.
+func TestBootWiring_AccessGatewayGetsTheNewDelegatedAuth(t *testing.T) {
 	c := containerWithDelegatedAuth(t)
 	if c.authStk.edgeAuthSvc == nil {
 		t.Fatal("wireDelegatedAuth no construyó el autenticador delegado")
 	}
-	assertBridgeOver(t, gatewayField(t, c, "authn"), reflect.TypeFor[*authenticatorBridge](), c.authStk.edgeAuthSvc)
-	assertBridgeOver(t, gatewayField(t, c, "authAuditor"), reflect.TypeFor[*auditorBridge](), c.authStk.auditor)
+	assertGatewayHolds(t, gatewayField(t, c, "authn"), c.authStk.edgeAuthSvc)
+	assertGatewayHolds(t, gatewayField(t, c, "authAuditor"), c.authStk.auditor)
 }
 
-// gatewayField lee por reflexión el campo name (una interfaz) del *gatewaygrpc.Server de la fase 4.
+// gatewayField lee por reflexión el campo name (una interfaz) del *edgegrpc.Server de la fase 4.
 func gatewayField(t *testing.T, c *contenedor, name string) reflect.Value {
 	t.Helper()
 	f := reflect.ValueOf(c.gw).Elem().FieldByName(name)
 	if !f.IsValid() || f.Kind() != reflect.Interface {
-		t.Fatalf("*gatewaygrpc.Server no tiene el campo de interfaz %q: el test de cableado se quedó atrás", name)
+		t.Fatalf("*edgegrpc.Server no tiene el campo de interfaz %q: el test de cableado se quedó atrás", name)
 	}
 	return f
 }
 
-// assertBridgeOver afirma que la interfaz field guarda un adaptador del tipo bridge cuyo next es
-// EXACTAMENTE la instancia want (un servicio nuevo del authStack).
-func assertBridgeOver(t *testing.T, field reflect.Value, bridge reflect.Type, want any) {
+// assertGatewayHolds afirma que la interfaz field del gateway guarda EXACTAMENTE la instancia
+// want (un servicio nuevo del authStack), sin adaptador de por medio.
+func assertGatewayHolds(t *testing.T, field reflect.Value, want any) {
 	t.Helper()
 	if field.IsNil() {
-		t.Fatalf("el gateway recibe nil; se espera un %s", bridge)
+		t.Fatalf("el gateway recibe nil; se espera el %T del authStack", want)
 	}
-	if got := field.Elem().Type(); got != bridge {
-		t.Fatalf("el gateway recibe un %s; se espera un %s (bridge_iam.go) sobre el servicio NUEVO", got, bridge)
-	}
-	if !sameInstance(field.Elem().Elem().FieldByName("next"), want) {
-		t.Errorf("el %s del gateway no envuelve la instancia %T del authStack", bridge, want)
+	if !sameInstance(field, want) {
+		t.Errorf("el gateway recibe un %s que no es la instancia %T del authStack", field.Elem().Type(), want)
 	}
 }
 

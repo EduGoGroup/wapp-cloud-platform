@@ -25,7 +25,7 @@ internal/apipublica/
 ├── entitlements.go          F2  ↦ entitlements.go (C2)
 ├── apipublicahelpertest/arnes.go  F2  ✚ el arnés de test: firma Context Tokens y llama a una Cara
 ├── plazos.go                F3  ↦ publicapi.go:289-428 (dbCtx, defaultDBTimeout, SendBudgetFrom, sendCtx, dbTimedOut504)
-├── limits.go                F3  ↦ limits.go (tooLarge, writeTooLarge, errorBody)
+├── limits.go                F3  ↦ limits.go (tooLarge, writeTooLarge; `errorBody` nació en `response.go` en F2)
 ├── messages.go              F3  ↦ messages.go (D1) + sessionBelongsToTenant, streamCaidoFrom, commandIDFrom
 ├── sessions.go              F3  ↦ sessions.go (D2)
 ├── health.go                F3  ↦ health.go (HealthRules, Alerter, NoopAlerter)

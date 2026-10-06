@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/logging"
 )

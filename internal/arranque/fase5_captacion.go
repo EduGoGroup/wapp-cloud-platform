@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
 package arranque
 
 import (
@@ -83,14 +84,16 @@ func construirSelectorDeVia(c *contenedor) error {
 	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
 	// pide un provider a él y no vuelve a mirar la vía nunca más.
 	//
-	// El frame de la vía local ES el gateway: su método Infer tiene exactamente la
-	// firma del puerto, así que satisface local.Frame sin adaptador de por medio.
+	// El frame de la vía local ES el gateway, detrás de gatewayBridge (bridge_gateway.go):
+	// desde F3 (conmutar(edge)) el gateway es el NUEVO y local.Frame pide el InferRequest
+	// del paquete viejo, así que el adaptador convierte campo a campo y conserva PlazaDe
+	// (sin ella el aforo por Edge se apaga en silencio, T-1). Muere en F4.
 	plantillas, err := cargarPlantillasDePrompt(c.log, c.cfg.LLM.PromptsDir)
 	if err != nil {
 		return err
 	}
 	llmSelector, err := llmvia.NewSelector(c.tenantLLMStore, c.log,
-		llmvia.WithFrame(c.gw),
+		llmvia.WithFrame(&gatewayBridge{gw: c.gw}),
 		llmvia.WithNotifier(c.degradationNotifier),
 		// LOS PROMPTS AJUSTABLES DE P2–P5 (WAPP_LLM_PROMPTS_DIR). Sin directorio esto
 		// entrega las plantillas COMPILADAS y el proveedor se comporta igual que antes

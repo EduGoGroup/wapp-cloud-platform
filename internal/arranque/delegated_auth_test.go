@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/delegated_auth_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/delegated_auth_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo acceso (F2) y el gateway (F3), que son los de internal/modulos.
 package arranque
 
 import (
@@ -42,10 +43,10 @@ func TestWireDelegatedAuth_SinURLElReleSeQuedaSinAutenticador(t *testing.T) {
 	if s.edgeAuthSvc != nil {
 		t.Error("sin WAPP_IDENTITY_URL no debe construirse el delegado")
 	}
-	// Lo que recibe el gateway viejo (fase4_gateway.go) es el adaptador de bridge_iam.go
-	// alrededor del delegado: sin delegado, un nil de verdad.
-	if got := newAuthenticatorBridge(s.edgeAuthSvc); got != nil {
-		t.Errorf("newAuthenticatorBridge(edgeAuthSvc) = %T (%v), want un nil de verdad", got, got)
+	// Lo que recibe el gateway (fase4_gateway.go) es el delegado por la costura
+	// edgeAuthenticatorPort: sin delegado, un nil de verdad.
+	if got := edgeAuthenticatorPort(s.edgeAuthSvc); got != nil {
+		t.Errorf("edgeAuthenticatorPort(edgeAuthSvc) = %T (%v), want un nil de verdad", got, got)
 	}
 }
 
@@ -59,9 +60,9 @@ func TestWireDelegatedAuth_ConURLElReleDelegaEnIdentity(t *testing.T) {
 	if s.edgeAuthSvc == nil {
 		t.Fatal("con WAPP_IDENTITY_URL debe construirse el delegado")
 	}
-	bridge, ok := newAuthenticatorBridge(s.edgeAuthSvc).(*authenticatorBridge)
-	if !ok || bridge.next != s.edgeAuthSvc {
-		t.Errorf("newAuthenticatorBridge(edgeAuthSvc) no envuelve el delegado: %T", bridge)
+	// Con delegado, el gateway recibe ESA instancia, sin nada alrededor.
+	if got, ok := edgeAuthenticatorPort(s.edgeAuthSvc).(*iamusecase.DelegatedAuthService); !ok || got != s.edgeAuthSvc {
+		t.Errorf("edgeAuthenticatorPort(edgeAuthSvc) no entrega el delegado: %T", got)
 	}
 }
 

@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/lease.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/lease.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
 package arranque
 
 import (
@@ -9,7 +10,7 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 )
 

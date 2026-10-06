@@ -180,12 +180,12 @@ func TestMudanzas_ElMapa(t *testing.T) {
 
 // TestMudanzas_FaseActual: con FaseActual la cara nueva (caraNueva, montada con dobles de
 // TODAS sus dependencias, FX diseño §6) sirve exactamente las filas del :8103 con fase ≤
-// FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F2
-// (conmutar(acceso)), FaseActual = 2 y la cara sirve las 23 rutas de acceso: A1–A7, B1–B14,
-// C1–C2.
+// FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F3
+// (conmutar(edge)), FaseActual = 3 y la cara sirve 29 rutas: las 23 de acceso (A1–A7, B1–B14,
+// C1–C2) y las 6 de edge (D1–D6).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 2 {
-		t.Fatalf("FaseActual = %d; conmutar(acceso) la deja en 2 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 3 {
+		t.Fatalf("FaseActual = %d; conmutar(edge) la deja en 3 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -201,8 +201,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 23 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2)", len(esperadas), FaseActual)
+	if len(esperadas) != 29 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2) y edge 6 (D1–D6): 29", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -260,6 +260,24 @@ func newFaceDepsWithDoubles() newFaceDeps {
 		},
 		audit:        apipublica.AuditDeps{Audit: struct{ apipublica.AuditReader }{}},
 		entitlements: apipublica.EntitlementsDeps{Entitlements: entitlementshelpertest.NewFake()},
+		// F3 · edge: D1 se monta siempre; D2–D4 cada una con su almacén; D5–D6 con los tres.
+		messages: apipublica.MessagesDeps{
+			Sender:   struct{ apipublica.MessageSender }{},
+			Sessions: struct{ apipublica.SessionLister }{},
+		},
+		sessions: apipublica.SessionsDeps{
+			Sessions:        struct{ apipublica.SessionLister }{},
+			SessionProfiles: struct{ apipublica.SessionProfileStore }{},
+			ProfilePush:     struct{ apipublica.ProfilePusher }{},
+			SessionStatus:   struct{ apipublica.SessionStatusStore }{},
+		},
+		diagnostics: apipublica.DiagnosticsDeps{
+			Diagnostics: struct{ apipublica.DiagnosticsStore }{},
+			DiagnosticsRequester: struct {
+				apipublica.DiagnosticsRequester
+			}{},
+			Sessions: struct{ apipublica.SessionLister }{},
+		},
 	}
 }
 

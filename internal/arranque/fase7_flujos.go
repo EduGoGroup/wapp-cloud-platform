@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
 package arranque
 
 import (
@@ -19,9 +20,9 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/modules/survey"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/ingest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 )
 

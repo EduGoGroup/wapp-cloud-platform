@@ -1,6 +1,6 @@
 // Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
-// gateway viejo lo recibe detrás de bridge_iam.go).
+// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
+// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
 package arranque
 
 import (
@@ -14,8 +14,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -23,11 +21,6 @@ import (
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
-	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/lease"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
@@ -38,12 +31,19 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/inferstats"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
@@ -85,7 +85,7 @@ type contenedor struct {
 
 	// ─── Fase 2 · autenticación ─────────────────────────────────────────────
 	authStk *authStack
-	jwksCfg gatewaygrpc.ConfigPayload
+	jwksCfg edgegrpc.ConfigPayload
 
 	// ─── Fase 3 · almacenes ─────────────────────────────────────────────────
 	flowDeps            flowRuntimeDeps
@@ -108,7 +108,7 @@ type contenedor struct {
 
 	// ─── Fase 4 · gateway ───────────────────────────────────────────────────
 	inferStats *inferstats.Store
-	gw         *gatewaygrpc.Server
+	gw         *edgegrpc.Server
 
 	// ─── Fase 5 · captación (el stack LLM P2→P5) ────────────────────────────
 	intakeComposer   *flowruntime.SourceTextComposer

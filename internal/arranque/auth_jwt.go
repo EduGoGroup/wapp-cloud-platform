@@ -16,7 +16,7 @@ import (
 	sharedjwt "github.com/EduGoGroup/wapp-shared/auth/jwt"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 )
 
@@ -151,11 +151,11 @@ func validateP256(ec *ecdsa.PrivateKey) (*ecdsa.PrivateKey, error) {
 // (mismo MultiVerifier por `kid` de wapp-shared/auth). La llave pública NO es
 // secreta. Se versiona por `kid` (Version=kid): una rotación de llave ⇒ nuevo kid ⇒
 // nueva version ⇒ el push idempotente del Edge la adopta.
-func buildJWKSConfig(pub *ecdsa.PublicKey, kid string) (gatewaygrpc.ConfigPayload, error) {
+func buildJWKSConfig(pub *ecdsa.PublicKey, kid string) (edgegrpc.ConfigPayload, error) {
 	// Bytes() devuelve el punto sin comprimir: 0x04 || X(32) || Y(32) (P-256).
 	uncompressed, err := pub.Bytes()
 	if err != nil {
-		return gatewaygrpc.ConfigPayload{}, fmt.Errorf("serializando llave pública EC: %w", err)
+		return edgegrpc.ConfigPayload{}, fmt.Errorf("serializando llave pública EC: %w", err)
 	}
 	xb := uncompressed[1:33]
 	yb := uncompressed[33:65]
@@ -172,7 +172,7 @@ func buildJWKSConfig(pub *ecdsa.PublicKey, kid string) (gatewaygrpc.ConfigPayloa
 	}
 	payload, err := json.Marshal(jwks)
 	if err != nil {
-		return gatewaygrpc.ConfigPayload{}, fmt.Errorf("serializando JWKS: %w", err)
+		return edgegrpc.ConfigPayload{}, fmt.Errorf("serializando JWKS: %w", err)
 	}
-	return gatewaygrpc.ConfigPayload{Kind: "jwks", Version: kid, Payload: payload}, nil
+	return edgegrpc.ConfigPayload{Kind: "jwks", Version: kid, Payload: payload}, nil
 }

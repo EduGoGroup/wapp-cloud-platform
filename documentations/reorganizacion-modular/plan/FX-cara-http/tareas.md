@@ -70,21 +70,21 @@ Sesión: [`F3-04`](../sesiones/F3-04-web-bridge-conmutar-y-rutas.md) (TX.8–TX.
 Para cuando: 6 rutas más (29), J12–J17 nuevos, un solo gw (también el de E1–E2, que siguen en la
 cara vieja hasta F7: D-FX-1/D-F7-4), `FaseActual = 3`.
 
-- [ ] **TX.8 · rojo(apipublica): edge** · 🌐 · dep. TX.7 y el verde de `modulos/edge` · cumple RX.2.b, RX.2.d, RX.5.a, RX.6.a
+- [x] **TX.8 · rojo(apipublica): edge** · 🌐 · dep. TX.7 y el verde de `modulos/edge` · cumple RX.2.b, RX.2.d, RX.5.a, RX.6.a — cerrada en `0e5b69a`, `be818c9`, `488539b` (F3-04; un rojo por grupo de ficheros; `plazos.go` nace como `deadlines.go` y `limits.go`, sin exportados, nace en su verde; ver `F3-edge/tareas.md` T3.26)
   - **Ficheros**: `plazos.go`, `limits.go`, `messages.go`, `sessions.go`, `health.go`, `sessionadmin.go`, `diagnostics.go` y sus 7 tests (14)
   - **Hecho cuando**: `sessionadmin.go` **exporta** los dos constructores (D-FX-2) para `:8100`; `messages.go` mapea los centinelas del `edge/session` **nuevo**; `fronteras_test.go` sin ningún puente desde `apipublica`. *(Alternativa D-FX-1 literal: se añade aquí `intents.go` sobre `internal/intentcfg` viejo con su puente «retira: TX.21».)*
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0`
   - **Commit**: `rojo(apipublica): edge`
-- [ ] **TX.9 · verde(apipublica): edge, fichero a fichero** · 🌐 · dep. TX.8
+- [x] **TX.9 · verde(apipublica): edge, fichero a fichero** · 🌐 · dep. TX.8 — cerrada en `d1722ba`, `d32b26f`, `1aeadf4`, `7017b28`, `06c4cb9`, `291cd76`, `d4ef6e6` (F3-04)
   - **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9; `SendBudgetFrom` de `plazos.go` da el mismo valor que el viejo para 10 s (9 s) y para ≤ 1 s (0)
   - **Gate**: el de cabecera · `make cobertura-ficheros` como informe (la tabla va al PR; no bloquea)
   - **Commit**: `verde(apipublica): <fichero>` — uno por fichero
-- [ ] **TX.10 · identidad del centinela `ErrSessionOffline` (D-F3-2)** · 🌐→💻 · dep. decisión D-F3-2 · cumple RX.4.c
+- [~] **TX.10 · identidad del centinela `ErrSessionOffline` (D-F3-2)** · 🌐→💻 · dep. decisión D-F3-2 · cumple RX.4.c — 🟡 test de identidad en `dd4cbd2` (F3-04); falta el e2e local, que confirma F3-05
   - **Ficheros**: con **D-F3-2** (recomendación): `internal/modulos/edge/session/registry.go` declara `var ErrSessionOffline = <el de platform>` (el mismo que el viejo desde F0 T0.17) y un test de identidad en `internal/arranque`; **sin** puente. *(Alternativa D-FX-3, si D-F3-2 = no: la línea apunta al viejo y `fronteras_test.go` declara el puente de identidad, «retira: TX.24».)*
   - **Hecho cuando**: `errors.Is(<nuevo>.ErrSessionOffline, <viejo>.ErrSessionOffline)` es `true`; la sesión local lo confirma con el e2e de `cmd/server-modular` (`/admin/flows/start` a una sesión offline → mismo código que el binario viejo)
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/a.log" 2>&1; echo rc=$?` → `rc=0`
   - **Commit**: `refactor(edge): el centinela de sesión offline conserva su identidad`
-- [ ] **TX.11 · conmutar(edge): 6 rutas a la cara nueva, un solo gw** · 🌐 · dep. TX.9, TX.10 · cumple RX.3.a, RX.4.a–b
+- [x] **TX.11 · conmutar(edge): 6 rutas a la cara nueva, un solo gw** · 🌐 · dep. TX.9, TX.10 · cumple RX.3.a, RX.4.a–b — cerrada en `0ebb743` (F3-04; `Mount{Messages,Sessions,Diagnostics}`, `FaseActual = 3`, 29 rutas)
   - **Hecho cuando**: `Montar{Mensajes,Sesiones,Diagnosticos}` montados; en los `Deps` viejos `Sender`, `DiagnosticsRequester`, `Sessions`, `SessionProfiles`, `SessionStatus`, `ProfilePush`, `Diagnostics` = `nil`; `ConfigPush` = el gw **nuevo** e `Intents` = el `intentcfg` viejo (E1–E2 siguen en la vieja hasta TX.21, D-FX-1/D-F7-4); J12–J15 reciben el gw **nuevo**, J16–J17 los handlers de `sessionadmin.go` **en el mismo commit que D3–D4** (T-10); aserciones de identidad: el `MessageSender` del notificador viejo, el `ConfigPusher` del `filtercfg` nuevo, el `Deps.ConfigPush` de la cara vieja y el `Frame` (o su adaptador) del selector LLM viejo apuntan al **mismo** gw; `FaseActual = 3`
   - **Gate**: el de TX.7 · `make ci-local; echo rc=$?` → `rc=0`
   - **Commit**: parte del `conmutar(edge): …` de F3

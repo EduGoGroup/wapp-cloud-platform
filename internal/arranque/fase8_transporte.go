@@ -1,6 +1,6 @@
 // Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
-// gateway viejo lo recibe detrás de bridge_iam.go).
+// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
+// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
 package arranque
 
 import (
@@ -14,10 +14,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
@@ -82,13 +83,13 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	// tenant, hacia sus sesiones vivas.
 	//
 	// 🔴 Se cablea en LOS DOS SITIOS que montan la ruta /sessions/{id}/profile —el
-	// SessionDeps de la API pública, en depsDeLaAPIPublica, y el adminRouteDeps de más
+	// SessionsDeps de la cara nueva, en edgeDepsOfTheNewFace, y el adminRouteDeps de más
 	// abajo—. Encender solo uno deja la otra vía MUDA y no da ningún rojo: los tests de
 	// cada vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
 	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
-		depsDeLaAPIPublica(c), c.platformRepo)
+		depsDeLaAPIPublica(c), edgeDepsOfTheNewFace(c), c.platformRepo)
 	if err != nil {
 		return err
 	}
@@ -135,11 +136,15 @@ func servidorAdmin(c *contenedor) *http.Server {
 		triggersDelete: flowadmin.DeleteTriggerHandler(c.triggerStore, c.durableFlowChecker),
 		// 🔴 SITIO 2 DE 2 del hook de filtros (Plan 046 · T2.1). El tercer argumento
 		// era nil desde T1.2 y aquí se enciende, EN PAREJA con el ProfilePush del
-		// SessionDeps de depsDeLaAPIPublica: las dos vías llevan al MISMO handler y
+		// SessionsDeps de edgeDepsOfTheNewFace: las dos vías llevan al MISMO handler y
 		// encender solo una deja la otra muda sin dar ningún rojo (los tests de cada
 		// vía pasan por separado). Si un día se apaga, se apagan las dos.
-		sessionProfile: flowadmin.SetSessionProfileHandler(c.fleetRepo, c.filtersPusher, c.log),
-		sessionStatus:  flowadmin.SetSessionStatusHandler(c.fleetRepo),
+		//
+		// 🔀 F3 · conmutar(edge) (D-FX-2, T-14): J16/J17 son los constructores que
+		// exporta la cara nueva (apipublica/sessionadmin.go), los MISMOS que sirven
+		// D3/D4 en el :8103, y se mudan en el mismo commit que ellas.
+		sessionProfile: apipublica.SetSessionProfileHandler(c.fleetRepo, c.filtersPusher, c.log),
+		sessionStatus:  apipublica.SetSessionStatusHandler(c.fleetRepo),
 		revokeTenant:   httpapi.RevokeTenantHandler(c.gw, c.cfg.PlatformTenantID),
 		restoreTenant:  httpapi.RestoreTenantHandler(c.gw, c.cfg.PlatformTenantID),
 
@@ -171,24 +176,20 @@ func servidorAdmin(c *contenedor) *http.Server {
 // 🔴 UNA AUSENCIA AQUÍ NO DA ERROR: la ruta simplemente no se monta y responde 404 de
 // ruta inexistente, que desde fuera es indistinguible del 404 al recurso ajeno. Es el
 // modo de fallo que vigilan los tests de cableado de este paquete.
+//
+// 🔀 F3 · conmutar(edge) (FX TX.11): la cara VIEJA ya no sirve D1–D6. Sender, Sessions,
+// SessionStatus, SessionProfiles, ProfilePush, Diagnostics y DiagnosticsRequester se quedan
+// SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra D2–D6, que sirve la cara
+// nueva con lo que arma edgeDepsOfTheNewFace; D1 la registra SIEMPRE (no tiene condición
+// de montaje) pero queda tapada por la nueva en el compuesto. Con ellos se van los campos
+// que solo leían esas rutas (Health, DiagnosticsBundleTTL). ConfigPush e Intents SIGUEN
+// puestos: E1–E2 viven en la cara vieja hasta F7 y empujan por el MISMO gateway nuevo.
 func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 	return publicapi.Deps{
-		Sender: c.gw,
 		FlowDeps: publicapi.FlowDeps{
 			Flows:   c.flowStore,
 			Modules: c.flowReg,
 			Starter: c.flowRuntime,
-		},
-		SessionDeps: publicapi.SessionDeps{
-			Sessions:      c.fleetRepo,
-			SessionStatus: c.fleetRepo,
-			// Plan 046 · T1.2: el mismo repo por el eje NUEVO (SetProfile).
-			SessionProfiles: c.fleetRepo,
-			// 🔴 SITIO 1 DE 2 del hook de filtros (Plan 046 · T2.1). El otro es el
-			// `sessionProfile` de adminRouteDeps: son DOS vías distintas hacia el MISMO
-			// handler y encender solo una deja la otra muda sin dar ningún rojo.
-			// Best-effort: un fallo del push NO cambia el 200 del POST.
-			ProfilePush: c.filtersPusher,
 		},
 		MediaDeps: publicapi.MediaDeps{
 			Media:           c.flowDeps.presign,
@@ -196,11 +197,6 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 			ContentMaxBytes: c.cfg.TenantContent.MaxBytes,
 			ContentVersions: c.flowStore,
 			ImportMaxItems:  c.cfg.Import.MaxItems,
-		},
-		DiagDeps: publicapi.DiagDeps{
-			Diagnostics:          c.diagStore,
-			DiagnosticsRequester: c.gw,
-			DiagnosticsBundleTTL: c.cfg.Diagnostics.BundleTTL,
 		},
 		Triggers:            c.triggerStore,
 		TriggersDurableFlow: c.durableFlowChecker,
@@ -254,8 +250,8 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		CRMGate:    c.webhookGate,
 		CRMReflect: c.intakeStore,
 		CRMNotify:  c.intakeNotifier,
+		// El gateway NUEVO, el único del proceso: el PUT de intents (E2) empuja por él.
 		ConfigPush: c.gw,
-		Health:     publicapi.HealthRules{DegradedAfter: c.cfg.Health.DegradedAfter, StaleAfter: c.cfg.Health.StaleAfter},
 		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
 		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
 		// con el reloj del Ack, no cada consulta por separado.
@@ -266,5 +262,47 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		// pool. Ver el comentario de propiedad en
 		// internal/publicapi/eventstelemetry_store.go.
 		EventTelemetry: publicapi.NewPostgresEventTelemetryStore(c.db),
+	}
+}
+
+// edgeDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir D1–D6 (F3 ·
+// conmutar(edge), FX TX.11), con los MISMOS valores que hasta F3 iban a la cara vieja en
+// depsDeLaAPIPublica: el gateway como Sender y DiagnosticsRequester, la flota por sus tres
+// ejes, el almacén de diagnóstico y los umbrales de salud. Alerter no se cablea (como hasta
+// ahora): nil ⇒ NoopAlerter. messages.SendBudget lo pone buildPublicAPIServer, que es quien
+// conoce el writeTimeout del que se deriva.
+//
+// 🔴 Las condiciones de montaje no cambian: los tres punteros (c.gw, c.fleetRepo,
+// c.diagStore) se construyen siempre en sus fases, y viajan a las interfaces tal como
+// viajaban a las de la cara vieja.
+func edgeDepsOfTheNewFace(c *contenedor) edgeFaceDeps {
+	return edgeFaceDeps{
+		messages: apipublica.MessagesDeps{
+			Sender:   c.gw,
+			Sessions: c.fleetRepo,
+			// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): el
+			// mismo valor de config que el resto de la API.
+			DBTimeout: c.cfg.PublicAPIDBTimeout,
+		},
+		sessions: apipublica.SessionsDeps{
+			Sessions:  c.fleetRepo,
+			Health:    apipublica.HealthRules{DegradedAfter: c.cfg.Health.DegradedAfter, StaleAfter: c.cfg.Health.StaleAfter},
+			DBTimeout: c.cfg.PublicAPIDBTimeout,
+			// Plan 046 · T1.2: el mismo repo por el eje del perfil (SetProfile).
+			SessionProfiles: c.fleetRepo,
+			// 🔴 SITIO 1 DE 2 del hook de filtros (Plan 046 · T2.1). El otro es el
+			// `sessionProfile` de adminRouteDeps: son DOS vías distintas hacia el MISMO
+			// handler y encender solo una deja la otra muda sin dar ningún rojo.
+			// Best-effort: un fallo del push NO cambia el 200 del POST.
+			ProfilePush:   c.filtersPusher,
+			SessionStatus: c.fleetRepo,
+		},
+		diagnostics: apipublica.DiagnosticsDeps{
+			Diagnostics:          c.diagStore,
+			DiagnosticsRequester: c.gw,
+			Sessions:             c.fleetRepo,
+			BundleTTL:            c.cfg.Diagnostics.BundleTTL,
+			DBTimeout:            c.cfg.PublicAPIDBTimeout,
+		},
 	}
 }

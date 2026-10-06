@@ -120,7 +120,10 @@
   **inerte sin error**. — Verifica: `bridge_gateway_test.go` con aserción de tipo sobre la interfaz.
 - **R3.6.c** · **EL** binario nuevo **NO DEBERÁ** enlazar `internal/gateway/grpc` salvo por
   `bridge_gateway.go` y `llmvia` viejo, ni instanciar un `gatewaygrpc.Server` viejo. — Verifica:
-  `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío.
+  `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío **y**, porque ese grep depende del alias del import (✎ 2026-10-06,
+  hallazgo 68), `TestCableado_OnlyTheBridgeImportsTheOldGateway` y `TestCableado_TheBootBuildsOneNewGateway`
+  (`internal/arranque/gateway_wiring_test.go`), que lo afirman por ruta de import y por tipo. El binario sigue enlazando
+  `internal/gateway/{lease,fleet,session}` por otros caminos viejos hasta F7/F8 ([`arquitectura.md`](arquitectura.md) §6).
 - **R3.6.d** · **CUANDO** conmute `edge`, `bridge_iam.go` (F2) **DEBERÁ** borrarse: el gw nuevo
   recibe el `in.Authenticator` e `in.Auditor` **nuevos** de `acceso`; y, muerto su último adaptador, `acceso` **DEBERÁ**
   entrar en `Conmutados` (`edge` no, hasta F4). — Verifica: `ls internal/arranque/bridge_iam.go` → no existe;

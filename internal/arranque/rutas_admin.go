@@ -1,6 +1,6 @@
 // Copia de internal/bootstrap/arranque/rutas_admin.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
-// gateway viejo lo recibe detrás de bridge_iam.go).
+// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
+// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
 package arranque
 
 import (
