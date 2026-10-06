@@ -8,7 +8,10 @@ package grpc
 import (
 	"context"
 	"errors"
+	"io"
+	"sync"
 	"testing"
+	"time"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 )
@@ -107,6 +110,43 @@ func TestConnectCancelsTheInferencesInFlightOfASessionLeftWithoutStream(t *testi
 		t.Error("colgar un stream canceló la inferencia en vuelo de una sesión que no era suya")
 	}
 	requireLogHas(t, rig.log, `msg="gateway: el stream cayó con inferencias en vuelo"`, "session_id=s-1", "cancelados=1")
+}
+
+// «YA» es antes de drenar el carril: con un trabajo de la sesión parado dentro del carril —el
+// cierre lo espera, y puede esperar el presupuesto entero—, la inferencia en vuelo despierta
+// igual, con Connect todavía sin volver. Cancelar después del drenaje sería hacerle pagar a la
+// inferencia la cola de la sesión que ya no tiene Edge.
+func TestConnectCancelsTheInferencesInFlightBeforeDrainingTheLane(t *testing.T) {
+	t.Parallel()
+	inSink, letGo := make(chan struct{}), make(chan struct{})
+	var entered sync.Once
+	rig := newRouteRig(t, WithWorkTimeout(time.Hour), WithReceiptSink(sinkFunc(func(context.Context, *cloudlinkv1.MessageReceipt) error {
+		entered.Do(func() { close(inSink) })
+		<-letGo
+		return nil
+	})))
+	edge := openStream(t, rig.srv, nil)
+	release := sync.OnceFunc(func() { close(letGo) })
+	t.Cleanup(release)
+	edge.send(t, receiptFrame("s-1", "cmd-1"))
+	await(t, inSink, "que el acuse entre en el sink y tape el carril")
+	waiting := seedInfer(rig.srv, "cmd-infer", "s-1")
+
+	edge.hung.Store(true)
+	edge.end <- io.EOF
+
+	if res := await(t, waiting, "que la inferencia en vuelo despierte con el carril todavía tapado"); res != nil {
+		t.Fatalf("la inferencia recibió un resultado (%v), se esperaba la cancelación por stream caído", res)
+	}
+	select {
+	case err := <-edge.done:
+		t.Fatalf("Connect volvió (%v) con el carril tapado: el test no probó el orden", err)
+	default:
+	}
+	release()
+	if err := await(t, edge.done, "que Connect vuelva al destaparse el carril"); err != nil {
+		t.Errorf("Connect devolvió %v", err)
+	}
 }
 
 // R-G4: la reconexión rápida. El Edge vuelve por un stream NUEVO antes de que el viejo termine
