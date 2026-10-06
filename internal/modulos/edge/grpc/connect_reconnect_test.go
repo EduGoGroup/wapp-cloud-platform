@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -199,6 +200,43 @@ func TestConnectCancelsTheSendsInFlightOfASessionLeftWithoutStream(t *testing.T)
 	}
 	if ack, closed := ackState(elsewhere); ack != nil || closed {
 		t.Error("colgar un stream canceló el envío en vuelo de una sesión que no era suya")
+	}
+}
+
+// «YA» es antes de drenar el carril: con un trabajo de la sesión parado dentro del carril —el
+// cierre lo espera, y puede esperar el presupuesto entero—, el envío en vuelo despierta igual,
+// con Connect todavía sin volver. Cancelar después del drenaje sería hacerle pagar al llamante
+// HTTP la cola de una sesión que ya no tiene Edge.
+func TestConnectCancelsTheSendsInFlightBeforeDrainingTheLane(t *testing.T) {
+	t.Parallel()
+	inSink, letGo := make(chan struct{}), make(chan struct{})
+	var entered sync.Once
+	rig := newRouteRig(t, WithWorkTimeout(time.Hour), WithReceiptSink(sinkFunc(func(context.Context, *cloudlinkv1.MessageReceipt) error {
+		entered.Do(func() { close(inSink) })
+		<-letGo
+		return nil
+	})))
+	edge := openStream(t, rig.srv, nil)
+	release := sync.OnceFunc(func() { close(letGo) })
+	t.Cleanup(release)
+	edge.send(t, receiptFrame("s-1", "cmd-1"))
+	await(t, inSink, "que el acuse entre en el sink y tape el carril")
+	waiting := seedAck(rig.srv, "cmd-send", "s-1")
+
+	edge.hung.Store(true)
+	edge.end <- io.EOF
+
+	if ack := await(t, waiting, "que el envío en vuelo despierte con el carril todavía tapado"); ack != nil {
+		t.Fatalf("el envío recibió un Ack (%v), se esperaba la cancelación por stream caído", ack)
+	}
+	select {
+	case err := <-edge.done:
+		t.Fatalf("Connect volvió (%v) con el carril tapado: el test no probó el orden", err)
+	default:
+	}
+	release()
+	if err := await(t, edge.done, "que Connect vuelva al destaparse el carril"); err != nil {
+		t.Errorf("Connect devolvió %v", err)
 	}
 }
 
