@@ -7,6 +7,7 @@ package grpc
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,5 +107,28 @@ func TestGreetingWithoutAckIsNotMarked(t *testing.T) {
 				t.Errorf("PendingGreeting se llamó %d veces, se esperaban 2: el siguiente latido reintenta", got)
 			}
 		})
+	}
+}
+
+// La espera del Ack corre con el PRESUPUESTO DEL JOB, no con un reloj propio: quien corta es el
+// carril. Con el presupuesto ya gastado y un Edge que no acusa, el envío vuelve en el acto con
+// el error del contexto del job —no con el del plazo del acuse, que aquí vence más tarde—.
+func TestGreetingWaitsForTheAckOnTheBudgetOfTheJob(t *testing.T) {
+	t.Parallel()
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
+	rig := newGreetingRig(t, ownNumber, []edgeReply{staysSilent}, WithAckTimeout(100*time.Millisecond))
+
+	rig.srv.greetIfNeeded(spent, rig.cc)
+
+	if rig.fleet.isGreeted() || rig.fleet.count("MarkGreeted") != 0 {
+		t.Fatalf("sin Ack: marcada=%v con %d llamadas a MarkGreeted; se esperaba sin marca y 0",
+			rig.fleet.isGreeted(), rig.fleet.count("MarkGreeted"))
+	}
+	line := requireLog(t, rig.log, "WARN",
+		"saludo: el envío del aviso de sesión pasiva falló; se reintentará en el siguiente latido",
+		"session_id=s-1", "context canceled")
+	if strings.Contains(line, "deadline exceeded") {
+		t.Errorf("el envío esperó el plazo del acuse en vez de rendirse con el presupuesto del job: %q", line)
 	}
 }
