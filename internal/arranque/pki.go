@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/pki.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/pki.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
 package arranque
 
 import (
@@ -13,7 +14,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 )
 

@@ -147,14 +147,14 @@ func TestInferenceStatsCableado(t *testing.T) {
 		}
 		switch campo(llamada.Fun) {
 		case "mtx.RegisterInferenceStats":
-			// La fuente tiene que ser el Agrega del almacén y no una función suelta: es
+			// La fuente tiene que ser el Aggregated del almacén y no una función suelta: es
 			// lo único que lee lo que el Gateway escribe.
-			if len(llamada.Args) != 1 || ruta(llamada.Args[0]) != "inferStats.Agrega" {
-				t.Fatalf("RegisterInferenceStats no recibe inferStats.Agrega (%s)",
+			if len(llamada.Args) != 1 || ruta(llamada.Args[0]) != "inferStats.Aggregated" {
+				t.Fatalf("RegisterInferenceStats no recibe inferStats.Aggregated (%s)",
 					fset.Position(llamada.Pos()))
 			}
 			lector = true
-		case "gatewaygrpc.WithInferenceStats":
+		case "edgegrpc.WithInferenceStats":
 			if len(llamada.Args) != 1 || ruta(llamada.Args[0]) != "inferStats" {
 				t.Fatalf("WithInferenceStats no recibe el MISMO almacén que lee /metrics: dos "+
 					"almacenes distintos publicarían series vacías sin ningún error (%s)",
@@ -166,7 +166,7 @@ func TestInferenceStatsCableado(t *testing.T) {
 	})
 
 	if !escritor {
-		t.Error("bootstrap.go no cablea gatewaygrpc.WithInferenceStats: el parte de inferencia " +
+		t.Error("el arranque no cablea edgegrpc.WithInferenceStats: el parte de inferencia " +
 			"del Edge sigue subiendo y muriendo en la base, que es lo que T1.7-9 arregla.")
 	}
 	if !lector {

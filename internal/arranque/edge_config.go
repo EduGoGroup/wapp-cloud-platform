@@ -7,10 +7,10 @@ import (
 
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/filtercfg"
-	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )
 
 // jwksConfigProvider entrega SIEMPRE la config kind:"jwks" (la pública ES256 del
@@ -26,14 +26,14 @@ import (
 // intents y sin filters de una vez. Ahora el error del siguiente se LOGUEA y el jwks
 // viaja igual. Ver el porqué completo en chainConfigProvider.
 type jwksConfigProvider struct {
-	jwks gatewaygrpc.ConfigPayload
-	next gatewaygrpc.ConfigProvider
+	jwks edgegrpc.ConfigPayload
+	next edgegrpc.ConfigProvider
 	log  sharedlogger.Logger
 }
 
-func (p jwksConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
+func (p jwksConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]edgegrpc.ConfigPayload, error) {
 	if p.next == nil {
-		return []gatewaygrpc.ConfigPayload{p.jwks}, nil
+		return []edgegrpc.ConfigPayload{p.jwks}, nil
 	}
 	rest, err := p.next.ConfigsForConnect(ctx, tenantID)
 	if err != nil {
@@ -42,7 +42,7 @@ func (p jwksConfigProvider) ConfigsForConnect(ctx context.Context, tenantID stri
 		logConfigLinkError(p.log, "jwks:next", tenantID, err)
 	}
 	// El jwks va SIEMPRE el primero de la lista, haya fallado o no el eslabón siguiente.
-	out := make([]gatewaygrpc.ConfigPayload, 0, 1+len(rest))
+	out := make([]edgegrpc.ConfigPayload, 0, 1+len(rest))
 	out = append(out, p.jwks)
 	return append(out, rest...), nil
 }
@@ -61,7 +61,7 @@ type intentConfigStore interface {
 }
 
 // intentsConfigProvider adapta el store de config de intents + los entitlements al
-// puerto gatewaygrpc.ConfigProvider (ADR-0021): al conectar un Edge, entrega la
+// puerto edgegrpc.ConfigProvider (ADR-0021): al conectar un Edge, entrega la
 // config de intents vigente del tenant SOLO si tiene la feature llm_intent (gate de
 // verdad, ADR-0022) y hay config persistida. Es el ÚNICO punto que ata el kind
 // "intents" al push al conectar; el Gateway permanece genérico (no conoce kinds).
@@ -75,7 +75,7 @@ type intentsConfigProvider struct {
 // al llamante; quien lo trata es chainConfigProvider, que lo LOGUEA con el kind y
 // sigue con los demás eslabones (best-effort por eslabón): que Neon tosa al resolver
 // la feature no puede costarle al Edge el jwks ni los filtros.
-func (p intentsConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
+func (p intentsConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]edgegrpc.ConfigPayload, error) {
 	has, err := p.ents.Has(ctx, tenantID, entitlements.FeatureLLMIntent)
 	if err != nil {
 		return nil, err
@@ -90,11 +90,11 @@ func (p intentsConfigProvider) ConfigsForConnect(ctx context.Context, tenantID s
 		}
 		return nil, err
 	}
-	return []gatewaygrpc.ConfigPayload{{Kind: intentcfg.Kind, Version: cfg.Version, Payload: cfg.Blob}}, nil
+	return []edgegrpc.ConfigPayload{{Kind: intentcfg.Kind, Version: cfg.Version, Payload: cfg.Blob}}, nil
 }
 
 // filtersConfigProvider adapta la foto de perfiles del tenant (fleet_sessions.profile)
-// al puerto gatewaygrpc.ConfigProvider: al conectar un Edge, le entrega el
+// al puerto edgegrpc.ConfigProvider: al conectar un Edge, le entrega el
 // kind:"filters" vigente (Plan 046 · T2.1, ADR-0027). Es el TERCER eslabón de la
 // cadena, junto a jwks e intents.
 //
@@ -121,12 +121,12 @@ type filtersConfigProvider struct {
 // chainConfigProvider lo loguea con el kind "filters" y sigue. El Edge se queda con el
 // mapa de filtros que ya tenía —su last-known-good de ESTE kind, que sigue siendo
 // válido— y lo reconcilia en la próxima conexión o en el próximo cambio de perfil.
-func (p filtersConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
+func (p filtersConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]edgegrpc.ConfigPayload, error) {
 	version, payload, err := filtercfg.ForTenant(ctx, p.src, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return []gatewaygrpc.ConfigPayload{{Kind: filtercfg.Kind, Version: version, Payload: payload}}, nil
+	return []edgegrpc.ConfigPayload{{Kind: filtercfg.Kind, Version: version, Payload: payload}}, nil
 }
 
 // chainLink es un eslabón de la cadena con el KIND que aporta. El kind no se usa para
@@ -135,7 +135,7 @@ func (p filtersConfigProvider) ConfigsForConnect(ctx context.Context, tenantID s
 // las 3 de la mañana.
 type chainLink struct {
 	kind     string
-	provider gatewaygrpc.ConfigProvider
+	provider edgegrpc.ConfigProvider
 }
 
 // chainConfigProvider concatena N proveedores en el orden dado y devuelve la unión de
@@ -169,8 +169,8 @@ type chainConfigProvider struct {
 	log   sharedlogger.Logger
 }
 
-func (c chainConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]gatewaygrpc.ConfigPayload, error) {
-	var out []gatewaygrpc.ConfigPayload
+func (c chainConfigProvider) ConfigsForConnect(ctx context.Context, tenantID string) ([]edgegrpc.ConfigPayload, error) {
+	var out []edgegrpc.ConfigPayload
 	for _, l := range c.links {
 		if l.provider == nil {
 			continue
@@ -213,12 +213,12 @@ func logConfigLinkError(log sharedlogger.Logger, kind, tenantID string, err erro
 // ejercer sin levantar el proceso entero. El test vive en filters_config_test.go y se
 // pone ROJO si alguien le cuelga a `filters` un gate por entitlement.
 func buildConfigProvider(
-	jwks gatewaygrpc.ConfigPayload,
+	jwks edgegrpc.ConfigPayload,
 	intents intentConfigStore,
 	ents entitlements.Resolver,
 	profiles filtercfg.Source,
 	log sharedlogger.Logger,
-) gatewaygrpc.ConfigProvider {
+) edgegrpc.ConfigProvider {
 	return jwksConfigProvider{
 		jwks: jwks,
 		log:  log,

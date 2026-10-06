@@ -89,8 +89,10 @@ var reglas = candados.Reglas{
 	// el commit que retira su ÚLTIMO adaptador internal/arranque/bridge_<x>.go, o con su
 	// conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador, la
 	// regla 3 falla, porque el adaptador existe para importar lo viejo. Por eso nucleo, conmutado
-	// en F1 con bridge_contact.go, no está aquí: entra en F8, cuando muera ese adaptador.
-	Conmutados: []string{},
+	// en F1 con bridge_contact.go, no está aquí: entra en F8, cuando muera ese adaptador. acceso
+	// (conmutado en F2) entra en F3, con el conmutar(edge) que borra bridge_iam.go; edge no entra
+	// hasta F4, cuando muera su adaptador bridge_gateway.go.
+	Conmutados: []string{"acceso"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía en F0.
 	Puentes: []candados.Puente{},
 	// Fases cerradas: el commit que cierra cada fase añade aquí su id ("F0", "F1"…); un Puente

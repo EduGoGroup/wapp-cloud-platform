@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/arranque/huellatest"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/enroll"
 	iamidentity "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/iam/infra/identity"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 )
@@ -102,6 +102,11 @@ func metodosDeMetrics() []string {
 // internal/arranque/huella_test.go: el tipo contenedor es privado a cada paquete y no se
 // puede compartir, así que se escribe dos veces. Una diferencia entre las dos copias es un
 // defecto de la huella, no una adaptación (compárense con `diff`).
+//
+// 🔀 F3 · conmutar(edge): el texto del bloque sigue siendo el mismo, pero ya no nombra lo mismo.
+// El `enroll` de este fichero es internal/modulos/edge/enroll (el NUEVO: el contenedor de este
+// paquete guarda su *enroll.CA) y el del fichero viejo sigue siendo internal/gateway/enroll: la
+// única diferencia entre las dos copias es esa línea de import.
 //
 // Arma el arranque SIN red y SIN Postgres, con las fases 2–8 REALES:
 //

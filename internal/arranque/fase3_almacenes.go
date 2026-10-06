@@ -1,24 +1,24 @@
 // Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
-// gateway viejo lo recibe detrás de bridge_iam.go).
+// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
+// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
 package arranque
 
 import (
 	"context"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/receipts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 )
 

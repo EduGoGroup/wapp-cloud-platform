@@ -1,6 +1,6 @@
 // Copia de internal/bootstrap/arranque/http.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso, que desde F2 (T2.31, conmutar(acceso)) es internal/modulos/acceso (el
-// gateway viejo lo recibe detrás de bridge_iam.go).
+// salvo acceso (F2, T2.31) y edge (F3, T3.28), que son internal/modulos/{acceso,edge}: sus
+// rutas del :8103 (A–C y D1–D6) las sirve la cara nueva, internal/apipublica.
 package arranque
 
 import (
@@ -27,11 +27,24 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
+// edgeFaceDeps es lo que la cara nueva necesita para D1–D6 (F3 · conmutar(edge)). Lo arma la
+// fase 8 (edgeDepsOfTheNewFace) con el gateway, la flota y el almacén de diagnóstico del
+// contenedor; buildPublicAPIServer solo le añade el presupuesto de envío, que deriva de su
+// propio writeTimeout.
+type edgeFaceDeps struct {
+	// messages enciende D1.
+	messages apipublica.MessagesDeps
+	// sessions enciende D2–D4.
+	sessions apipublica.SessionsDeps
+	// diagnostics enciende D5–D6.
+	diagnostics apipublica.DiagnosticsDeps
+}
+
 // buildPublicAPIServer arma el :8103: la cara NUEVA (internal/apipublica, con las rutas de las
 // fases ≤ FaseActual) delante del mux VIEJO (publicapi), compuestas una vez y envueltas una vez
 // con rate-limit y métricas. Devuelve también la cara y el compuesto, que el contenedor guarda
 // para el candado de mudanzas.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, edge edgeFaceDeps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -98,8 +111,12 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// abajo. Las dos líneas están a la vista una de otra a propósito: el defecto que
 	// esto cierra nació de una aritmética escrita a mano en otro fichero que nadie
 	// rehizo al añadir un reloj. Aquí no hay aritmética que mantener — mover
-	// writeTimeout arrastra el presupuesto solo. Ver publicapi.SendBudgetFrom.
-	pub.SendBudget = publicapi.SendBudgetFrom(writeTimeout)
+	// writeTimeout arrastra el presupuesto solo. Ver apipublica.SendBudgetFrom.
+	//
+	// 🔀 F3 · conmutar(edge): D1 la sirve la cara nueva, así que el presupuesto va a SUS
+	// deps. La D1 del mux viejo sigue registrada (no tiene condición de montaje) pero
+	// queda tapada por la nueva y nunca atiende: no se le cablea nada.
+	edge.messages.SendBudget = apipublica.SendBudgetFrom(writeTimeout)
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras
@@ -115,7 +132,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	//
 	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux viejo va la
 	// cara NUEVA (internal/apipublica) con las rutas de las fases ≤ FaseActual
-	// (caraNueva, mudanzas.go; desde F2, las 23 de acceso). El Compuesto sirve por la
+	// (caraNueva, mudanzas.go; desde F3, las 23 de acceso y las 6 de edge). El Compuesto sirve por la
 	// nueva lo que ella registre y delega el resto en publicMux con el MISMO
 	// *http.Request, así que r.Pattern sigue llegando a la métrica. Rate-limit y métricas
 	// envuelven el COMPUESTO una sola vez (RX.2.c; lo vigila cara_nueva_cableado_test.go).
@@ -147,6 +164,10 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		},
 		audit:        apipublica.AuditDeps{Audit: auditor},
 		entitlements: apipublica.EntitlementsDeps{Entitlements: pub.Entitlements},
+		// 🔀 F3 · conmutar(edge) (FX TX.11): D1–D6, con lo que hasta F3 iba a la vieja.
+		messages:    edge.messages,
+		sessions:    edge.sessions,
+		diagnostics: edge.diagnostics,
 	})
 	compuesto := apipublica.Componer(cara, publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
@@ -159,7 +180,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
-		// 🔴 El MISMO writeTimeout del que se derivó pub.SendBudget arriba. Si mueves
+		// 🔴 El MISMO writeTimeout del que se derivó el SendBudget de D1 arriba. Si mueves
 		// este valor no hay nada más que ajustar: el presupuesto lo sigue.
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,

@@ -1,4 +1,6 @@
-// Copia de internal/bootstrap/arranque/send_budget_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/send_budget_cableado_test.go @ 80807ba (F0 · 05 §6). Desde
+// F3 (T3.28, conmutar(edge)) D1 la sirve la cara nueva: lo que se vigila es el SendBudget de
+// apipublica.MessagesDeps, derivado con apipublica.SendBudgetFrom.
 package arranque
 
 import (
@@ -9,18 +11,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 )
 
 // TestSendBudgetCableado fija, contra el ÁRBOL DE SINTAXIS de http.go, que el
-// presupuesto de la petición de envío se cablea de verdad en las Deps de la API
-// pública (Plan 050 · Ola 5 · T5.4, REQ-050.19).
+// presupuesto de la petición de envío se cablea de verdad en las deps de D1 de la cara
+// NUEVA (Plan 050 · Ola 5 · T5.4, REQ-050.19; desde F3, apipublica.MessagesDeps).
 //
 // POR QUÉ UN TEST DE AST, igual que TestFlowRuntimeOptionsCableadas y por el mismo
-// motivo: Deps.SendBudget es un campo con cero-valor útil —<=0 significa «sin plazo»,
+// motivo: MessagesDeps.SendBudget es un campo con cero-valor útil —<=0 significa «sin plazo»,
 // el comportamiento anterior a esta tarea—, así que **olvidar la asignación compila,
 // pasa el vet, pasa el lint y deja TODOS los tests en verde**. Los tests de
-// internal/publicapi cablean el presupuesto ellos mismos para poder medirlo, de modo
+// internal/apipublica cablean el presupuesto ellos mismos para poder medirlo, de modo
 // que no pueden notar que producción no lo cablea. Sin esta red, el arreglo entero
 // quedaría inerte en el binario real y el único síntoma volvería a ser un POST que
 // cuelga 88 s contra un Edge saturado.
@@ -40,7 +42,8 @@ func TestSendBudgetCableado(t *testing.T) {
 		if !ok || len(asig.Lhs) != 1 || len(asig.Rhs) != 1 {
 			return true
 		}
-		if campo(asig.Lhs[0]) != "pub.SendBudget" {
+		// ruta y no campo: el destino tiene dos niveles (edge.messages.SendBudget).
+		if ruta(asig.Lhs[0]) != "edge.messages.SendBudget" {
 			return true
 		}
 		// No basta con que se asigne ALGO: tiene que ser la derivación. Una constante
@@ -48,8 +51,8 @@ func TestSendBudgetCableado(t *testing.T) {
 		// mecanismo por el que la aritmética de config.go se desincronizó— y este test
 		// pasaría sin decir nada.
 		llamada, ok := asig.Rhs[0].(*ast.CallExpr)
-		if !ok || campo(llamada.Fun) != "publicapi.SendBudgetFrom" {
-			t.Fatalf("pub.SendBudget se asigna con algo que NO es publicapi.SendBudgetFrom: "+
+		if !ok || campo(llamada.Fun) != "apipublica.SendBudgetFrom" {
+			t.Fatalf("edge.messages.SendBudget se asigna con algo que NO es apipublica.SendBudgetFrom: "+
 				"el presupuesto tiene que DERIVARSE del writeTimeout, no ser un número suelto "+
 				"(%s)", fset.Position(asig.Pos()))
 		}
@@ -63,8 +66,8 @@ func TestSendBudgetCableado(t *testing.T) {
 	})
 
 	if !asignado {
-		t.Fatal("internal/bootstrap/http.go NO cablea pub.SendBudget.\n" +
-			"Sin esa línea, Deps.SendBudget queda en cero, sendCtx no pone plazo y el " +
+		t.Fatal("internal/arranque/http.go NO cablea edge.messages.SendBudget.\n" +
+			"Sin esa línea, MessagesDeps.SendBudget queda en cero, sendCtx no pone plazo y el " +
 			"handler de envío vuelve a poder pasarse del WriteTimeout: el cliente se queda " +
 			"con la conexión cerrada y sin cuerpo (incidente del 2026-08-06). Todos los " +
 			"demás tests siguen verdes, por eso existe este.")
@@ -77,7 +80,7 @@ func TestSendBudgetCableado(t *testing.T) {
 // mano: se afirma que hay presupuesto y que cabe por debajo del deadline de escritura,
 // que son las dos propiedades de las que depende que exista respuesta.
 func TestSendBudgetDejaMargenConElWriteTimeoutReal(t *testing.T) {
-	presupuesto := publicapi.SendBudgetFrom(writeTimeout)
+	presupuesto := apipublica.SendBudgetFrom(writeTimeout)
 	if presupuesto <= 0 {
 		t.Fatalf("con writeTimeout=%v no hay presupuesto (%v): el handler de envío se "+
 			"quedaría sin plazo", writeTimeout, presupuesto)

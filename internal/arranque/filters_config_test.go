@@ -7,20 +7,20 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/fleet"
-	gatewaygrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/gateway/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements/entitlementshelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )
 
 // providerFijo devuelve las configs que se le dan (o un error).
 type providerFijo struct {
-	cfgs []gatewaygrpc.ConfigPayload
+	cfgs []edgegrpc.ConfigPayload
 	err  error
 }
 
-func (p providerFijo) ConfigsForConnect(context.Context, string) ([]gatewaygrpc.ConfigPayload, error) {
+func (p providerFijo) ConfigsForConnect(context.Context, string) ([]edgegrpc.ConfigPayload, error) {
 	return p.cfgs, p.err
 }
 
@@ -39,7 +39,7 @@ func (f fuentePerfiles) ProfilesByTenant(context.Context, string) (fleet.TenantP
 
 // kindsDe extrae los kinds en orden, que es lo que se afirma en casi todos los tests
 // de aquí (el contenido de cada payload lo cubren los tests de su propio paquete).
-func kindsDe(cfgs []gatewaygrpc.ConfigPayload) []string {
+func kindsDe(cfgs []edgegrpc.ConfigPayload) []string {
 	out := make([]string, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, c.Kind)
@@ -87,7 +87,7 @@ func TestBuildConfigProvider_TresKindsConLlmIntent_YDosSinElla(t *testing.T) {
 		tenantSinFeature = "t-sin-llm-intent"
 	)
 
-	jwks := gatewaygrpc.ConfigPayload{
+	jwks := edgegrpc.ConfigPayload{
 		Kind: "jwks", Version: "kid-1", Payload: []byte(`{"keys":[]}`),
 	}
 
@@ -166,7 +166,7 @@ func TestBuildConfigProvider_TresKindsConLlmIntent_YDosSinElla(t *testing.T) {
 // que ni siquiera hace I/O. Con T2.1 hay una query más a Neon en cada connect, así que
 // la probabilidad de ese hipo sube justo ahora.
 func TestBuildConfigProvider_FiltersSobreviveAlFalloDeIntents_YViceversa(t *testing.T) {
-	jwks := gatewaygrpc.ConfigPayload{Kind: "jwks", Version: "kid-1", Payload: []byte(`{"keys":[]}`)}
+	jwks := edgegrpc.ConfigPayload{Kind: "jwks", Version: "kid-1", Payload: []byte(`{"keys":[]}`)}
 	boom := errors.New("neon con hipo")
 
 	t.Run("cae intents", func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestBuildConfigProvider_FiltersSobreviveAlFalloDeIntents_YViceversa(t *test
 func TestChainConfigProvider_NoSeComeElEslabonSiguiente(t *testing.T) {
 	c := chainConfigProvider{links: []chainLink{
 		{kind: "intents", provider: providerFijo{cfgs: nil}}, // el que "no aplica"
-		{kind: "filters", provider: providerFijo{cfgs: []gatewaygrpc.ConfigPayload{{Kind: "filters", Version: "7"}}}},
+		{kind: "filters", provider: providerFijo{cfgs: []edgegrpc.ConfigPayload{{Kind: "filters", Version: "7"}}}},
 	}}
 	got, err := c.ConfigsForConnect(context.Background(), "t1")
 	if err != nil {
@@ -231,9 +231,9 @@ func TestChainConfigProvider_NoSeComeElEslabonSiguiente(t *testing.T) {
 // TestChainConfigProvider_ConservaElOrdenYSaltaLosNil.
 func TestChainConfigProvider_ConservaElOrdenYSaltaLosNil(t *testing.T) {
 	c := chainConfigProvider{links: []chainLink{
-		{kind: "intents", provider: providerFijo{cfgs: []gatewaygrpc.ConfigPayload{{Kind: "intents"}}}},
+		{kind: "intents", provider: providerFijo{cfgs: []edgegrpc.ConfigPayload{{Kind: "intents"}}}},
 		{kind: "fantasma", provider: nil},
-		{kind: "filters", provider: providerFijo{cfgs: []gatewaygrpc.ConfigPayload{{Kind: "filters"}}}},
+		{kind: "filters", provider: providerFijo{cfgs: []edgegrpc.ConfigPayload{{Kind: "filters"}}}},
 	}}
 	got, err := c.ConfigsForConnect(context.Background(), "t1")
 	if err != nil {
@@ -255,9 +255,9 @@ func TestChainConfigProvider_ConservaElOrdenYSaltaLosNil(t *testing.T) {
 // sin jwks, sin intents y sin filters de golpe, con un solo Error en el log.
 func TestChainConfigProvider_UnEslabonRotoNoSeLlevaALosDemas(t *testing.T) {
 	c := chainConfigProvider{links: []chainLink{
-		{kind: "intents", provider: providerFijo{cfgs: []gatewaygrpc.ConfigPayload{{Kind: "intents"}}}},
+		{kind: "intents", provider: providerFijo{cfgs: []edgegrpc.ConfigPayload{{Kind: "intents"}}}},
 		{kind: "roto", provider: providerFijo{err: errors.New("bd caída")}},
-		{kind: "filters", provider: providerFijo{cfgs: []gatewaygrpc.ConfigPayload{{Kind: "filters"}}}},
+		{kind: "filters", provider: providerFijo{cfgs: []edgegrpc.ConfigPayload{{Kind: "filters"}}}},
 	}}
 	got, err := c.ConfigsForConnect(context.Background(), "t1")
 	if err != nil {
@@ -275,7 +275,7 @@ func TestChainConfigProvider_UnEslabonRotoNoSeLlevaALosDemas(t *testing.T) {
 // única config que estaba garantizada — y sin jwks el Edge no verifica offline los
 // access tokens del operador (ADR-0025).
 func TestJwksConfigProvider_ConservaSuJwksAunqueFalleElResto(t *testing.T) {
-	jwks := gatewaygrpc.ConfigPayload{Kind: "jwks", Version: "kid-1", Payload: []byte(`{"keys":[]}`)}
+	jwks := edgegrpc.ConfigPayload{Kind: "jwks", Version: "kid-1", Payload: []byte(`{"keys":[]}`)}
 	p := jwksConfigProvider{jwks: jwks, next: providerFijo{err: errors.New("bd caída")}}
 
 	got, err := p.ConfigsForConnect(context.Background(), "t1")
