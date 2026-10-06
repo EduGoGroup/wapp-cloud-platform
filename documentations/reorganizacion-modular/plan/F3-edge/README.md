@@ -3,7 +3,7 @@
 > **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
 > **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
 > (inventario en §1.1.b). **F3-03, tanda 1 de 3 hecha el 2026-10-04**: inventario de `grpc` aprobado (§1.1.c) y `types`,
-> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **falta la tanda 3** (`inference`, `plaza`, `greeting`; se relanza F3-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **F3-03, tanda 3 de 3 hecha el 2026-10-05**: `inference` (en 3 trozos), `plaza` y `greeting` en verde, con el literal 🔒 afirmado byte a byte y la pareja ADR-0048 completa: **`grpc` está entero** (F3-03 cerrada; sigue F3-04). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -310,3 +310,53 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 54. **Tests viejos no portados en la tanda 2**: `TestConnectMultiSesionRace` y los dos `TestConnectCarril…` (su promesa ya
     está en `worklane_*` y `types_test`), `TestElHandshakeSigueResolviendoseEnElBucleRecv` (cubierto por el orden que afirma
     `TestConnectRegistersEachSessionOnItsFirstFrame`). `seedEdgeSessions` murió: lo sustituye `trackSession`.
+
+**De F3-03, tercera sesión** (`grpc`, tanda 3: inferencia, plaza y aviso de sesión pasiva; 2026-10-05):
+
+55. **Mutantes de la tanda 3** (a mano, 323 escritos): `inference` 45 (44 muertos, 1 vivo equivalente: el orden de
+    `inferenceReasons`, que se consume como conjunto), `inference_result` 87 (80; 4 equivalentes: sin `defer timer.Stop()`,
+    sin el `if res == nil` de `readInference` —los *getters* del proto son nil-safe—, sin `UNSPECIFIED` en `reasonOfFrame`
+    —cae al mismo `default`— y sin el `return` del huérfano de `deliverInference`; 2 huecos cerrados; **1 abierto**, el 56),
+    `inference_dispatch` 88 (85 y 3 huecos cerrados), `greeting` 66 (61, 2 que no compilan, 3 huecos cerrados), `plaza` 18
+    (14, 2 que no compilan, 1 equivalente: sin el `if !ok` se llega al mismo `("", false)`; 1 hueco cerrado), el cableado
+    de la tanda en `connect_route` 15 (15) y en `connect` 7 (5, 1 equivalente: el orden entre `cancelSessionAcks` y
+    `cancelSessionInfers`, dos mapas con candados distintos; 1 hueco cerrado). Los **10 huecos** obligaron a **8 tests**
+    nuevos (`3758144`, `af8a160`, `3aff23c`, `8360ab0`, `746e5fa`, `fdaf4d7`, `231c74b`). Los dos mutantes del literal 🔒 y
+    el de su id mueren por `TestPassiveSessionNotice*`.
+56. 🟡 **Hueco de test abierto, por decidir**: en `awaitInference` el presupuesto se calcula **dos veces**
+    (`inference_result.go`: el `time.NewTimer(inferTimeout(timeout) + s.inferGrace)` y, aparte, el `budget` del log), igual
+    que en el viejo (`internal/gateway/grpc/inference.go:519` y `:535`). El mutante `+ 2*s.inferGrace` en el temporizador
+    **sobrevive**: ningún test acota por arriba el plazo real, y el log no lo delata. Matarlo pide un reloj inyectable o
+    calcular el presupuesto una sola vez; las dos cosas tocan producción y se apartan del viejo, así que no se hizo.
+57. **Conductas del viejo copiadas tal cual y afirmadas** (`Infer` / `PlazaDe`): el candidato vivo no se contrasta con el
+    tenant; un destino sin stream no cae al origen; un fallo de escritura del stream se rotula `timeout`; un plazo positivo
+    por debajo del milisegundo viaja como `timeout_ms = 0`; con un origen vivo que no está en el seguimiento del tenant
+    (sesión de otro tenant, o la reconexión rápida del hallazgo 45), `Infer` **envía** y `PlazaDe` dice que **no hay plaza**.
+58. **`origin != ""` es la única defensa contra una sesión de id vacío** en `inferenceSession`: `session.Registry.Register`
+    acepta el id vacío. Hoy es inalcanzable desde `connect` (no registra un `session_id` vacío); queda afirmado por
+    `TestInferWithoutCandidateNeverRoutesThroughABlankSession`.
+59. **Hueco de la tanda 2 cerrado de paso** (`db2d5bd`): `defer s.cancelSessionAcks(sid)` sobrevivía. Nada fijaba que los
+    envíos en vuelo despierten **antes** de drenar el carril; ahora lo fija
+    `TestConnectCancelsTheSendsInFlightBeforeDrainingTheLane`, gemelo del de las inferencias (`8360ab0`). El mutante muere
+    por el *watchdog* de 5 s, no por una aserción inmediata.
+60. **Candados que solo delata `-race`**: quitar `infersMu` (dos sitios), el candado del registro de la inferencia o
+    `trackMu` en `edgeOfSession` sobrevive a `go test` sin `-race` y muere siempre con él. `ci-local` corre con `-race`:
+    un gate sin él no los ve. `trackMu` en `candidatesByReadiness` no moría ni con `-race` hasta
+    `TestInferFallbackReadsTheFleetUnderItsLock`.
+61. **Los tests de `connect_route_heartbeat_test.go` NO cambiaron al entrar el saludo**, contra lo que anotó la tanda 2: su
+    flota no cumple `sessionGreeter`, y una flota sin el puerto ni saluda ni rompe. La línea de tiempo con saludo
+    (`SetSelfPn` > `SaveHealth` > `Upsert` > `PendingGreeting` > `MarkGreeted`) la fija `greeting_route_test.go`.
+62. **Hallazgo 47 resuelto** (`8f87d7e`): `route` entrega el `InferenceResult` *inline*, entre el Ack y el Heartbeat. Y al
+    caer el stream las inferencias en vuelo despiertan con `edge_offline` en vez de agotar su plazo (`d3dd137`). No queda
+    ningún `// TODO(F3-03 tanda 3)`.
+63. **`inference.go` nació en tres trozos** (E-13) con ciclo entre ellos (hallazgo 25): `infers`, `infersMu`, `inferGrace`
+    (en `Server`) y `pendingInfer` (en `types.go`) van en el commit de `inference_result` (`5db5b76`), su primer usuario.
+    `inference_result.go`, `greeting.go` y `types.go` no tienen exportados: nacen en el verde con su test (T-17).
+    Correspondencias E-11 de la tanda 3: `Motivo*` → `Reason*` (valores intactos), `motivosInferencia` →
+    `inferenceReasons`, `motivoDeFrame` → `reasonOfFrame`, `motivoDePush` → `reasonOfPush`, `rutaPreferida` →
+    `preferredRoute`, `candidatasPorReadiness` → `candidatesByReadiness`, `edgeDeSesion` → `edgeOfSession`,
+    `avisoSesionPasivaID` → `passiveSessionNoticeID`, `avisoSesionPasivaV1` → `passiveSessionNoticeV1`, `commandIDDe` →
+    `commandIDOf`. `PlazaDe` **no** se traduce (T-1: el aforo lo busca por aserción de tipo).
+64. **La sesión se cortó a medias y el saludo quedó en un *worktree* nacido de `dev`**, no de la rama de la tanda: sus dos
+    commits (`7b76b3d`, `f8d6920`) se integraron al relanzar con `cherry-pick` (`ad9886d`, `c7a61a1`), sin conflictos. Las
+    copias de los mutantes se crearon **fuera** del árbol del repo, para no cruzarse con `ci-local`, y ya están borradas.
