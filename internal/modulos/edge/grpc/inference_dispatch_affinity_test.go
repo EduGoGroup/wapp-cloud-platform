@@ -265,13 +265,16 @@ func TestInferNeverUsesTheControlChannel(t *testing.T) {
 	edge.onSend = func() { pushed <- struct{}{} }
 	res := goInfer(context.Background(), rig.srv, "tenant-1", InferRequest{Prompt: "p", OriginSessionID: control})
 	await(t, pushed, "que el InferenceRequest salga por el stream del Edge")
-	frames := edge.received()
-	frame := frames[len(frames)-1]
-	if frame.GetInferenceRequest() == nil || frame.GetSessionId() != "s-phone" {
-		t.Fatalf("el frame no es un InferenceRequest dirigido a la sesión del teléfono: %v", frame)
+	ids := pendingInferIDs(rig.srv)
+	if len(ids) != 1 {
+		t.Fatalf("inferencias en vuelo = %v, se esperaba una", ids)
 	}
-	rig.srv.deliverInference(sealedResult(frame.GetCommandId(), rig.seal(t, modelOutput)))
+	rig.srv.deliverInference(sealedResult(ids[0], rig.seal(t, modelOutput)))
 	if got := await(t, res, "que la inferencia vuelva"); got.err != nil || got.out != modelOutput {
 		t.Fatalf("Infer = (%q, %v)", got.out, got.err)
+	}
+	frames := edge.received()
+	if frame := frames[len(frames)-1]; frame.GetInferenceRequest() == nil || frame.GetCommandId() != ids[0] || frame.GetSessionId() != "s-phone" {
+		t.Fatalf("el frame no es el InferenceRequest dirigido a la sesión del teléfono: %v", frame)
 	}
 }
