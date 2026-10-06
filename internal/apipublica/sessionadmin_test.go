@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // sessionadmin_test.go — cubre el contrato de sessionadmin.go (SessionProfileStore,
