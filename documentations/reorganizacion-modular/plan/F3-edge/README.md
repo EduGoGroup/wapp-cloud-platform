@@ -192,7 +192,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 20. **Ramas inalcanzables portadas tal cual**: `"fleet: cerrar filas: …"` y `"fleet: cerrar filas de perfiles: …"` (tras agotar
     las filas, `database/sql` entrega el fallo de `Close` por `rows.Err()`, que sale como `"… iterar …"`), y
     `"filtercfg: serializar payload: %w"` (el `json.Marshal` de esos tipos no falla). Sin test; el contrato lo dice.
-21. 🟡 **Única línea que se aparta del viejo**: `scanSession` hace `defaultProfile(Profile(profile))`; el viejo, `Profile(profile)`.
+21. ✅ ~~🟡~~ *(aceptado por Jhoan el 2026-10-06: se queda como está, divergencia inobservable)* **Única línea que se aparta del viejo**: `scanSession` hace `defaultProfile(Profile(profile))`; el viejo, `Profile(profile)`.
     Inobservable con Postgres (`COALESCE(profile,'passive')` y el `CHECK` de la 0063). Así `defaultProfile` tiene llamante de
     producción en el paquete nuevo (el doble se llevó su copia). Si se prefiere la letra, es revertir una línea y un caso de test.
 22. **Divergencias doble ↔ Postgres que la suite no afirma a propósito**: `MarkOffline` / `MarkLoggedOut` de una sesión

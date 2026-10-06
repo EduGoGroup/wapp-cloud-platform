@@ -410,6 +410,8 @@ tanda 2 (PR #38) quedó integrada en `dev` sin squash. **Con esta tanda `grpc` e
   que `fleet` no lista. 🔴 El nuevo se aparta del viejo. El `Ping` sin `*SendError` queda aceptado.
 - ✅ **Hallazgo 38, resuelto el 2026-10-06** (misma rama): `6446e10`, «la cola llena frena» y «`drain` espera» pasan a burbuja de
   `testing/synctest` y sus mutantes caen siempre. **No queda ninguna 🟡 de F3 por decidir entre los hallazgos 38, 40, 45 y 56.**
+- ✅ **Menores, 2026-10-06**: hallazgo 21 aceptado (`defaultProfile` en `scanSession`, inobservable) y hallazgo 32 comprobado
+  (el Edge manda `self_pn` ya limpio, `domain.SelfPNFromJID` en `main` de `wapp-edge-agent`).
 - **No corrido**: `make test-procesos`, `make test-integration` y mTLS real (son de F3-05; `grpc` nuevo aún no está
   conmutado: lo construye F3-04).
 - **Siguiente paso: F3-04** (`bridge_gateway`, cara nueva de `edge` y conmutación). `main` sin tocar.
