@@ -278,3 +278,62 @@ func TestInferNeverUsesTheControlChannel(t *testing.T) {
 		t.Fatalf("el frame no es el InferenceRequest dirigido a la sesión del teléfono: %v", frame)
 	}
 }
+
+// «Sin candidato» es sin candidato: el origen vacío NO se busca en el Registry. Si alguien
+// registrara un stream bajo el session_id vacío —hoy connect no lo hace—, la inferencia que no
+// nombra sesión no sale por él: ni cuando el tenant tiene a quién preguntar, ni cuando no.
+func TestInferWithoutCandidateNeverRoutesThroughABlankSession(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	answer := rig.answers(t, modelOutput)
+	blank := &inferSession{id: "", pushed: make(chan string, 64)}
+	t.Cleanup(rig.reg.Register("", funcSender(func(msg *cloudlinkv1.CloudToEdge) error {
+		blank.mu.Lock()
+		blank.frames = append(blank.frames, msg)
+		blank.mu.Unlock()
+		rig.srv.deliverInference(answer(msg.GetInferenceRequest()))
+		return nil
+	})))
+
+	rig.requireNobody(t, "tenant-1", InferRequest{Prompt: "p"}, blank)
+
+	own := rig.live(t, "tenant-1", "edge-1", "s-1", answer)
+	rig.requireWentThrough(t, "tenant-1", InferRequest{Prompt: "p"}, own, blank)
+}
+
+// El reparto sin candidato lee la flota BAJO SU CANDADO: mientras otros Edge conectan, laten y
+// se van, las inferencias siguen eligiendo. Sin el candado es una carrera sobre el mapa de
+// sesiones, y quien la ve es el detector (-race).
+func TestInferFallbackReadsTheFleetUnderItsLock(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	own := rig.live(t, "tenant-1", "edge-1", "s-1", rig.answers(t, modelOutput))
+
+	stop, churned := make(chan struct{}), make(chan struct{})
+	started := make(chan struct{}, 1)
+	go func() {
+		defer close(churned)
+		other := phone("tenant-2", "edge-9", "s-churn")
+		for {
+			rig.srv.trackSession(other)
+			rig.srv.noteReadiness(other, saysReady)
+			rig.srv.untrackSession(other)
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+
+	await(t, started, "que la flota empiece a moverse")
+	for range 5 {
+		rig.requireWentThrough(t, "tenant-1", InferRequest{Prompt: "p"}, own)
+	}
+	close(stop)
+	await(t, churned, "que la flota deje de moverse")
+}
