@@ -3,7 +3,7 @@
 > **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
 > **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
 > (inventario en §1.1.b). **F3-03, tanda 1 de 3 hecha el 2026-10-04**: inventario de `grpc` aprobado (§1.1.c) y `types`,
-> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **F3-03, tanda 3 de 3 hecha el 2026-10-05**: `inference` (en 3 trozos), `plaza` y `greeting` en verde, con el literal 🔒 afirmado byte a byte y la pareja ADR-0048 completa: **`grpc` está entero** (F3-03 cerrada; sigue F3-04). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **F3-03, tanda 3 de 3 hecha el 2026-10-05**: `inference` (en 3 trozos), `plaza` y `greeting` en verde, con el literal 🔒 afirmado byte a byte y la pareja ADR-0048 completa: **`grpc` está entero** (F3-03 cerrada). **F3-04 hecha el 2026-10-06**: `bridge_gateway.go`, la cara nueva de `edge` en `apipublica` (D1–D6) y `conmutar(edge)`: el arranque nuevo cablea **un solo** `edge/grpc.Server`, `bridge_iam.go` borrado, `acceso` en `Conmutados`, huella igual (hallazgos 65–73; **sigue F3-05**, el cierre local con mTLS). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -362,3 +362,47 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 64. **La sesión se cortó a medias y el saludo quedó en un *worktree* nacido de `dev`**, no de la rama de la tanda: sus dos
     commits (`7b76b3d`, `f8d6920`) se integraron al relanzar con `cherry-pick` (`ad9886d`, `c7a61a1`), sin conflictos. Las
     copias de los mutantes se crearon **fuera** del árbol del repo, para no cruzarse con `ci-local`, y ya están borradas.
+65. **Correspondencias E-11 de F3-04** (la spec nombraba en español lo que aún no existía): `plazos.go` → `deadlines.go`;
+    `Montar{Mensajes,Sesiones,Diagnosticos}` → `Mount{Messages,Sessions,Diagnostics}`; `margenDeEscritura` → `writeMargin`;
+    `streamCaidoFrom` → `streamClosedFrom`; `msgGuardaVencida`/`msgStreamCaido`/`msgEdgeNoLee`/`msgPresupuestoAgotado` →
+    `msgGuardExpired`/`msgStreamClosed`/`msgEdgeNotReading`/`msgBudgetExhausted`; `Deps.DiagnosticsBundleTTL` →
+    `DiagnosticsDeps.BundleTTL`. Los textos observables son literales y el método `StreamCaido()` del *duck-typing* no se
+    traduce. El rojo de TX.8 fueron **tres** commits (uno por grupo de ficheros: `0e5b69a`, `be818c9`, `488539b`), no uno.
+66. **`apipublica/limits.go` no tiene consumidor de producción en F3**: el 413 lo usan áreas de F6–F8, y hasta entonces lo
+    sostiene ante `unused` solo su test. `FX-cara-http/diseno.md` §1 dice que porta `errorBody`, que nació en `response.go`
+    en F2: esa línea está caducada. `TestTechos_TodosNombranSuCifra` (viejo) recorre siete endpoints de F6–F8: cada área
+    afirmará su cifra al mudarse.
+67. **La lista de ficheros de T3.28 se quedó corta y `http.go` no ve el contenedor.** También cambiaron `auth_jwt.go`
+    (`buildJWKSConfig` devuelve el `ConfigPayload` nuevo) y `send_budget_cableado_test.go` (vigila ahora
+    `edge.messages.SendBudget`). Los *deps* de D1–D6 los arma `edgeDepsOfTheNewFace(c)` en `fase8_transporte.go` y viajan a
+    `buildPublicAPIServer` en un parámetro nuevo. En `publicapi.Deps`, los siete campos de TX.11 **se quitan** en vez de
+    asignarse a `nil`: con el `fleet` nuevo ya no compilaría asignarlos. Con ellos se fueron tres cables que solo leían
+    D1–D6 en la cara vieja (`SendBudget`, `Health`, `DiagnosticsBundleTTL`).
+68. 🟡 **R3.6.c y `arquitectura.md` §6 esperan de más**: `go list -deps ./cmd/server-modular | grep internal/gateway/` no da
+    solo `internal/gateway/grpc`, da **cuatro** (`grpc`, `lease`, `fleet`, `session`). `lease` lo arrastra `gateway/grpc`;
+    `fleet` y `session` los importan además `internal/publicapi` e `internal/flujos/admin`, así que no salen del binario al
+    morir `bridge_gateway.go` (F4), sino en F7/F8. Lo que sí se cumple y se vigila: en `internal/arranque`, de producción,
+    solo `bridge_gateway.go` importa `internal/gateway/**` (`TestCableado_OnlyTheBridgeImportsTheOldGateway`).
+69. **El `nil` de interfaz que resolvía `bridge_iam.go` lo resuelven ahora dos costuras** de `fase4_gateway.go`
+    (`edgeAuthenticatorPort`, `edgeAuditorPort`): sin delegado, el gateway recibe un `nil` de verdad, no un puntero nulo
+    dentro de una interfaz (`TestCableado_AbsentAccessServicesReachTheGatewayAsTrueNil`). 🟡 Con `bridge_iam.go` desaparece
+    la traducción de centinelas nuevo → viejo: el gateway nuevo habla los de `acceso` nuevo. Lo cubren los tests de
+    `edge/grpc`; **que un login con credenciales malas dé lo mismo que el binario viejo no se midió aquí**: va al e2e de
+    F3-05.
+70. 🟡 **D1 sigue registrada en el mux viejo, con `Sender` a `nil`**, tapada por la nueva en el compuesto (no tiene
+    condición de montaje). Si algo la alcanzara sería un *nil-pointer*: el e2e de F3-05 debe confirmar que
+    `POST /api/v1/messages` resuelve por la cara nueva. Y `MountMessages` tampoco comprueba `Sender`/`Sessions` (conducta
+    del viejo, copiada y fijada por `TestMountMessages_AlwaysMounts`).
+71. **Conductas heredadas, copiadas y ahora fijadas por test** (ninguna se «arregló»): D3/D4 responden sus errores en
+    **texto plano** y la cadena su 401/403 en JSON; D5 hace el *rollback* (`DeleteRequest`) con el contexto de la petición,
+    sin plazo propio (si el cliente se va, la fila puede quedar pendiente hasta el TTL); el 400 de cuerpo inválido de D5 va
+    **después** de las dos consultas (cuerpo roto sobre sesión ajena → 404); `context.Canceled` en `GetBundle` es 500, no
+    504; el fallo de empuje de D5 contesta con textos de mensajes («no se pudo enviar el texto»). No se portó la guarda
+    inalcanzable «diagnóstico remoto no configurado» (el montaje ya exige las tres dependencias).
+72. **El gate de la ficha no selecciona los `TestBootWiring_*`** de `access_wiring_test.go` y `bridge_contact_test.go`
+    (`-run 'Mudanzas|Huella|Cableado|Identidad'`): solo corren en el gate amplio y en `ci-local`. Los tests nuevos de F3-04
+    sí casan (`TestCableado_…`, `TestIdentidad_…`). `TestBootWiring_AccessWhitelistIsTight` se borró con su lista blanca: la
+    sustituye la regla 3 de fronteras, que con `acceso` en `Conmutados` ya prohíbe a `internal/arranque` importar
+    `internal/{iam,platformadmin,entitlements}`.
+73. **Entorno**: `.bin/golangci-lint run` a pelo usa la caché **del usuario**, y dio 3 `gosec` falsos sobre un *worktree*
+    ya borrado de otra sesión. `make lint` (caché por *checkout*) da 0. El lint se corre siempre por `make`.
