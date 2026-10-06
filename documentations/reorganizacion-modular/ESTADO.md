@@ -410,7 +410,8 @@ principal** (sin *worktrees*); los gates los repitió el agente principal tras c
   de `internal/gateway/`, no uno, y no por el arranque); 69, con `TestCableado_RealAccessServicesSpeakTheSentinelsTheGatewayClassifies`
   (más el `diff` vacío de `authErrorCode` entre los dos gateways); 70, con `TestCableado_TheOldFaceNeverServesMessages` (la
   D1 vieja es inalcanzable, no solo tapada). También se corrigieron la línea caducada de `FX-cara-http/diseno.md` (66) y
-  `PROTOCOLO-CLI.md` §1 (73). Queda sin tocar, a propósito, el 71: conductas heredadas, copiadas y fijadas por test.
+  `PROTOCOLO-CLI.md` §1 (73). Del 71 (conductas heredadas) se corrigió una por **D-F3-11**: el *rollback* de D5 ya no muere con el contexto de la
+  petición (🔴 la cara nueva se aparta de la vieja); el resto se queda, copiado y fijado por test.
 
 **F3-03 (tercera sesión) · F3, `grpc` — tanda 3 de 3 (2026-10-05, 💻, rama `reorg/f3-03-grpc-tanda-3` desde `origin/dev` @ `ec236b3`).**
 Sesión completa (D-R-8), **cortada a medias y relanzada**: al relanzar, la rama tenía la inferencia y la plaza, y el saludo

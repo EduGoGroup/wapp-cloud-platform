@@ -405,12 +405,16 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     perfiles) y con cualquier otro método la vieja no casa, porque solo registró el `POST`, así que responde el 405 de la
     nueva. Lo fija `TestCableado_TheOldFaceNeverServesMessages` con siete métodos. Y `MountMessages` tampoco comprueba `Sender`/`Sessions` (conducta
     del viejo, copiada y fijada por `TestMountMessages_AlwaysMounts`).
-71. **Conductas heredadas, copiadas y ahora fijadas por test** (ninguna se «arregló»): D3/D4 responden sus errores en
+71. **Conductas heredadas, copiadas y ahora fijadas por test** (✅ una se corrigió por **D-F3-11**, ver al final; el resto
+    se queda): D3/D4 responden sus errores en
     **texto plano** y la cadena su 401/403 en JSON; D5 hace el *rollback* (`DeleteRequest`) con el contexto de la petición,
     sin plazo propio (si el cliente se va, la fila puede quedar pendiente hasta el TTL); el 400 de cuerpo inválido de D5 va
     **después** de las dos consultas (cuerpo roto sobre sesión ajena → 404); `context.Canceled` en `GetBundle` es 500, no
     504; el fallo de empuje de D5 contesta con textos de mensajes («no se pudo enviar el texto»). No se portó la guarda
-    inalcanzable «diagnóstico remoto no configurado» (el montaje ya exige las tres dependencias).
+    inalcanzable «diagnóstico remoto no configurado» (el montaje ya exige las tres dependencias). *Resolución (D-F3-11,
+    2026-10-06, en el mismo PR)*: el *rollback* de D5 va ahora por `rollbackRequest`, desenganchado de la cancelación de
+    la petición y con el plazo de BD; 🔴 la cara nueva **se aparta de la vieja** en eso, como en D-F3-9 y D-F3-10. Lo fija
+    `TestMountDiagnostics_Request_RollbackSurvivesTheClientLeaving`, visto en rojo contra el código copiado.
 72. **El gate de la ficha no selecciona los `TestBootWiring_*`** de `access_wiring_test.go` y `bridge_contact_test.go`
     (`-run 'Mudanzas|Huella|Cableado|Identidad'`): solo corren en el gate amplio y en `ci-local`. Los tests nuevos de F3-04
     sí casan (`TestCableado_…`, `TestIdentidad_…`). `TestBootWiring_AccessWhitelistIsTight` se borró con su lista blanca: la
