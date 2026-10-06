@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // health_test.go — cubre el contrato de health.go (HealthRules, Alerter, NoopAlerter) por donde
@@ -59,14 +57,15 @@ func healthOf(t *testing.T, rules apipublica.HealthRules, s fleet.Session) strin
 	if len(rows) != 1 {
 		t.Fatalf("D2: %d filas, quiero 1", len(rows))
 	}
-	health, present := rows[0]["health"]
+	raw, present := rows[0]["health"]
 	if !present {
 		return ""
 	}
-	if health == "" {
-		t.Error(`D2: "health" viaja vacío; una salud sin etiqueta se OMITE`)
+	health, isString := raw.(string)
+	if !isString || health == "" {
+		t.Errorf(`D2: "health" = %v; una salud sin etiqueta se OMITE, no viaja vacía ni con otro tipo`, raw)
 	}
-	return health.(string)
+	return health
 }
 
 func TestHealthRules_DeriveTheHealthField(t *testing.T) {

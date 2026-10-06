@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // sessions_test.go — cubre el contrato de sessions.go (SessionsDeps, MountSessions): el montaje
