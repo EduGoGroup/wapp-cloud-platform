@@ -227,8 +227,10 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 
 32. **Hallazgo 23 comprobado: `connect` NO limpia el JID.** `persistSelfPn` hace `contact.Normalize(KindPhoneE164, hb.GetSelfPn())`
     sobre el valor crudo del latido. Un `573001112233:5@s.whatsapp.net` se persistiría como `5730011122335`. Conducta del viejo:
-    se copia y se afirma en la tanda 2 (`connect_heartbeat_test.go`); no se corrige. 🟡 Sin comprobar si el Edge manda hoy el
-    número ya limpio (vive en `wapp-edge-agent`).
+    se copia y se afirma en la tanda 2 (`connect_heartbeat_test.go`); no se corrige. ✅ ~~🟡~~ Comprobado el 2026-10-06 contra `main` de
+    `wapp-edge-agent`: el latido lleva `SelfPn: e.selfPN`, y ese valor sale de `domain.SelfPNFromJID`
+    (`internal/domain/jid.go`), que corta el agente (`.`), el dispositivo (`:`) y el servidor. **El Edge manda hoy el número
+    ya limpio**; que el Cloud no limpie solo muerde con un Edge que no pase por esa función.
 33. **`grep pendiente.Implementar` → 0 no significa «`grpc` entero»** cuando se trabaja por tanda: los contratos de las tandas
     siguientes aún no existen. Entre tandas, `Connect` devuelve `Unimplemented` (el `Server` embebe
     `UnimplementedCloudLinkServer`, que deja `Register` en verde sin adelantar el contrato de `Connect`).
