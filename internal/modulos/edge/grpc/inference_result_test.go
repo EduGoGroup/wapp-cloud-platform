@@ -33,16 +33,15 @@ type inferRig struct {
 	pub []byte
 }
 
-func newInferRig(t *testing.T, opts ...Option) *inferRig {
+func newInferRig(t *testing.T, regOpts ...session.RegistryOption) *inferRig {
 	t.Helper()
 	pub, priv, err := envelope.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 	log, buf := debugLog()
-	reg := session.NewRegistry()
-	opts = append([]Option{WithCloudEncPrivKey(priv)}, opts...)
-	return &inferRig{srv: New(reg, log, opts...), reg: reg, log: buf, pub: pub}
+	reg := session.NewRegistry(regOpts...)
+	return &inferRig{srv: New(reg, log, WithCloudEncPrivKey(priv)), reg: reg, log: buf, pub: pub}
 }
 
 // sealBytes sella esos bytes hacia la pública de la nube, como hace el Edge.
