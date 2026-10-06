@@ -3,7 +3,7 @@
 > **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
 > **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
 > (inventario en §1.1.b). **F3-03, tanda 1 de 3 hecha el 2026-10-04**: inventario de `grpc` aprobado (§1.1.c) y `types`,
-> `server`, `receipt_sink`, `worklane` y `send` en verde; **faltan las tandas 2 y 3** (se relanza F3-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **falta la tanda 3** (`inference`, `plaza`, `greeting`; se relanza F3-03). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -266,3 +266,47 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 44. **Mutantes de la tanda 1** (a mano): `worklane` 44 (42 muertos, 2 vivos equivalentes: el corte temprano del segundo
     `seal()` y el `q.items[0] = nil`), `send_ack` 20 (19 y 1 equivalente: cerrar los canales dentro o fuera de `acksMu`),
     `send` 47 (45 y 2 que no compilan), `send_revoke` 14 (14).
+
+**De F3-03, segunda sesión** (`grpc`, tanda 2: conexión, auth, config, readiness y diagnóstico; 2026-10-05):
+
+45. 🟡 **Defecto del viejo copiado y afirmado, por decidir (tanda 2)**: el seguimiento por Edge (`edgeSessions`) **no
+    distingue streams**. En una reconexión rápida, el cierre del stream viejo hace `untrackSession` de una sesión que sigue
+    viva por el nuevo, y nada vuelve a rastrearla: hasta su siguiente reconexión, `PushConfig`, `RevokeLease`, `warmEdges` y
+    la elección por `edgeSessions` no la alcanzan, y con la última se borra el readiness del Edge. R-G4 solo protege
+    Registry, acuses y flota. Fijado en `TestConnectReconnectionSurvivesTheOldStreamClosing`.
+46. **Hallazgo 32 (el 23) afirmado, no corregido**: `persistSelfPn` no limpia el JID antes de normalizar. Corpus de 29 casos
+    escritos a mano (`connect_heartbeat_selfpn_test.go`), contrastado una vez contra el `Normalize` viejo fuera del commit:
+    29 de 29. Consecuencia fijada en `TestDeviceLimitMissesASessionThatReportsItsJID`: una sesión que reporta su JID con
+    sufijo de dispositivo **no cuenta** para el tope del número real. Adversario del corpus: un dígito no ASCII entre dígitos
+    ASCII se pierde en silencio y sale **otro número válido**.
+47. **Mientras falte la tanda 3, un `InferenceResult` se pierde**: `route` no tiene su `case` y el frame cae en el `default`
+    (un `Debug "payload EdgeToCloud desconocido"`); tampoco se saluda a ninguna sesión (`greetIfNeeded`) ni se cancelan
+    inferencias al caer el stream. Los tres sitios llevan `// TODO(F3-03 tanda 3)`. No afecta a nada que corra: el paquete
+    nuevo no se cablea hasta F3-04.
+48. **Los rojos de `auth`, `config_push` y `connect` son débiles**, como el 34: las `With*` solo pueden afirmar «es una
+    `Option` que `New` acepta» y los handlers no tienen cara exportada sin `Connect`. R-G9, R-G10 y el multi-Edge nacen en
+    el verde.
+49. **`offlinePersistTimeout` no nació**, contra lo que anotó la tanda 1: en el viejo solo lo usa `worklane.go` como
+    presupuesto por defecto, y el nuevo ya usa `defaultWorkBudget`. Sería una constante sin llamante de producción.
+50. **Conductas del viejo copiadas tal cual y afirmadas**: `PushConfig` calienta cada Edge del seguimiento **aunque su
+    empuje fallara**; `warmOnRegister` no deduplica ni tiene guarda de `sessionID` vacío; `observeReadiness` no excluye el
+    canal de control; `pushConfigsInBand` sin `sender` es un no-op sin log; el logout en banda no exige identidad mTLS y se
+    audita con actor vacío; sin `authn` no se audita nada; `renewLease` de un Edge revocado no da error (re-empuja la
+    revocación); si `IssueInitial` falla, `registerSession` vuelve **sin** empujar la config, pero si falla el push del
+    lease sí la empuja. La guarda de `registerSession` que excluye `__wapp_control__` es **rama muerta** bajo `Connect`
+    (que nunca registra ese id); su comentario viejo contradice ADR-0048 y se copió tal cual.
+51. **Negativas de concurrencia con muerte probabilística del mutante** (misma clase que el 38): «calentar antes del
+    `wg.Wait()`» en `PushConfig` y «`seal()` antes de encolar los `MarkOffline`» en el cierre del stream. El test correcto
+    no puede fallar. Dos mutantes de `connect_route`/`connect` mueren por el `watchdog` de 5 s, no por aserción inmediata.
+52. **Mutantes de la tanda 2** (a mano): `readiness` 52 (52 muertos; los cuatro de T-6), `config_push` rama ADR-0048 20 (20;
+    los cuatro de T-5), `connect_route` 49 (49), `connect_session` 50 (50), `connect` 50 (48 y **2 vivos equivalentes** en
+    `peerIdentity`: sin `p.AuthInfo == nil` o ignorando el `ok` de la aserción se llega al mismo `TLSInfo` cero). Tres
+    supervivientes de la primera pasada de `connect` obligaron a añadir dos tests (el `ctx` del stream hacia
+    `onSessionRegistered`/`onControlChannel`, y el orden de `seal()`).
+53. **Identidad por `bufconn` sin mTLS**: una credencial de transporte de test que no cifra y da a cada conexión un
+    `credentials.TLSInfo` con solo el sujeto. `peerIdentity` se ejercita por el cable; el rechazo de un certificado ajeno
+    sigue siendo de F3-05. Relojes reales que quedan en los tests: `WithSendTimeout`/`WithWorkTimeout` de 1 ms donde el
+    contrato **es** el plazo, y el `watchdog`. Ningún `time.Sleep`, ningún `t.Skip`.
+54. **Tests viejos no portados en la tanda 2**: `TestConnectMultiSesionRace` y los dos `TestConnectCarril…` (su promesa ya
+    está en `worklane_*` y `types_test`), `TestElHandshakeSigueResolviendoseEnElBucleRecv` (cubierto por el orden que afirma
+    `TestConnectRegistersEachSessionOnItsFirstFrame`). `seedEdgeSessions` murió: lo sustituye `trackSession`.

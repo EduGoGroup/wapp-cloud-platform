@@ -1,8 +1,8 @@
 package grpc
 
 // El fan-out de la revocación a las sesiones vivas (R-G21 y su hermana por Edge). Nace con el
-// verde: las sesiones vivas de un Edge se siembran por dentro (seedEdgeSessions) hasta que
-// connect.go las registre. Sin reloj: que los empujes son CONCURRENTES se afirma con una
+// verde: las sesiones vivas de un Edge se dejan con trackSession, como hace el registro de la
+// sesión en Connect. Sin reloj: que los empujes son CONCURRENTES se afirma con una
 // barrera que solo se abre cuando todos han entrado a la vez.
 
 import (
@@ -84,7 +84,7 @@ func (r *revokeRig) goLive(t *testing.T, tenantID, edgeID, sessionID string, b *
 	t.Helper()
 	live := &liveSession{id: sessionID, barrier: b}
 	t.Cleanup(r.reg.Register(sessionID, live))
-	seedEdgeSessions(r.srv, tenantID, edgeID, sessionID)
+	r.srv.trackSession(phone(tenantID, edgeID, sessionID))
 	return live
 }
 
@@ -173,7 +173,7 @@ func TestRevokeLeaseABlockedSessionDoesNotDelayTheRest(t *testing.T) {
 		<-release
 		return nil
 	})))
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-stuck")
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-stuck"))
 
 	others := newBarrier(t, 3)
 	healthy := make([]*liveSession, 0, 3)
@@ -204,7 +204,7 @@ func TestRevokeLeaseLogsAFailedPushAtDebug(t *testing.T) {
 	buf := &logBuffer{}
 	rig := newRevokeRig(t)
 	rig.srv.log = logger.New(logger.WithWriter(buf), logger.WithLevel(slog.LevelDebug))
-	seedEdgeSessions(rig.srv, "tenant-1", "edge-1", "s-gone") // en el seguimiento, pero sin stream
+	rig.srv.trackSession(phone("tenant-1", "edge-1", "s-gone")) // en el seguimiento, pero sin stream
 
 	if err := rig.srv.RevokeLease(context.Background(), "tenant-1", "edge-1"); err != nil {
 		t.Fatalf("RevokeLease = %v", err)

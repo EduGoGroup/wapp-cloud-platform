@@ -10,12 +10,32 @@ import (
 
 // connCtx agrupa la identidad de un stream Connect, derivada del cert mTLS.
 //
-// En esta tanda solo lleva el session_id, que es lo único que leen los ficheros ya
-// portados (handleReceipt). La identidad mTLS (tenantID, edgeID, hasIdentity) y el
-// cable físico del stream (sender, con su comentario del incidente del 2026-09-03)
-// llegan con connect.go, que es quien los rellena y los lee.
+// Lo rellena connect.go, que llega después: hasta entonces los ficheros que lo leen
+// (handleReceipt, la recepción del bundle de diagnóstico, el readiness, el push de
+// config) lo reciben ya armado.
 type connCtx struct {
 	sessionID string
+	tenantID  string
+	edgeID    string
+	// hasIdentity es true solo si se extrajo (tenantID, edgeID) del cert mTLS.
+	// false en streams sin TLS (tests T2): se degrada sin lease ni fleet.
+	hasIdentity bool
+	// sender es EL CABLE FÍSICO de ESTE Edge: el streamSender que Connect construye
+	// una vez por stream (Plan 057 · Ola 1 · T1.2). Existe para que una respuesta a
+	// una petición que llegó por este stream vuelva POR ESTE STREAM, sin pasar por
+	// session.Registry (INV-057.1).
+	//
+	// 🔴 POR QUÉ HACÍA FALTA, con el incidente del 2026-09-03 detrás. Los frames de
+	// auth del Edge estampan `__wapp_control__`, una constante IDÉNTICA en todos los
+	// Edge del planeta, y el Registry indexa por session_id SIN tenant y con política
+	// última-gana: el segundo Edge que conectaba pisaba la entrada del primero, y la
+	// respuesta del login —con sus tokens— salía por el cable de OTRO cliente. Con el
+	// cable aquí, no hay clave que confundir porque no hay lookup.
+	//
+	// Es la cara de escritura del stream (cloudToEdgeSender), no el stream crudo: las
+	// escrituras siguen serializadas POR-STREAM, que es la granularidad que exige
+	// ADR-0008 (un Edge multiplexa N sesiones sobre un solo stream).
+	sender cloudToEdgeSender
 }
 
 // edgeKey identifica un Edge dentro de un tenant.

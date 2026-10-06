@@ -1,0 +1,74 @@
+// Porta internal/gateway/grpc/diagnostics.go @ cbc5736
+
+package grpc
+
+import (
+	"context"
+
+	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
+)
+
+// RequestDiagnostics empuja un DiagnosticsRequest (ADR-0023 capa 3, Plan 031 · T5) a
+// la sesión dada por el stream CloudLink. El commandID lo genera y persiste el
+// llamante (la solicitud pendiente) ANTES de llamar aquí, para que el bundle que
+// devuelva el Edge se correlacione sin carrera. scope acota qué pide (p. ej. "full");
+// el Edge ignora un scope que no reconoce (compat aditiva). No espera el bundle: este
+// sube más tarde por el demux (storeDiagnosticsBundle). Un error propaga el de Push
+// (ErrSessionOffline si la sesión no tiene stream vivo).
+//
+// El frame lleva el command_id y el session_id dos veces, iguales: en el sobre y
+// dentro del DiagnosticsRequest.
+//
+// El ctx es el del handler HTTP que pidió el diagnóstico y desde el Plan 050 ·
+// T1.5-bis SÍ se usa: acota el Push (antes se descartaba con `_`). Un handler HTTP no
+// trae deadline, así que en la práctica sigue mandando el sendTimeout del Registry;
+// lo que cambia es que un cliente que se va corta la espera.
+func (s *Server) RequestDiagnostics(ctx context.Context, sessionID, commandID, scope string) error {
+	msg := &cloudlinkv1.CloudToEdge{
+		CommandId: commandID,
+		SessionId: sessionID,
+		Payload: &cloudlinkv1.CloudToEdge_DiagnosticsRequest{
+			DiagnosticsRequest: &cloudlinkv1.DiagnosticsRequest{
+				CommandId: commandID,
+				SessionId: sessionID,
+				Scope:     scope,
+			},
+		},
+	}
+	return s.registry.Push(ctx, sessionID, msg)
+}
+
+// storeDiagnosticsBundle correlaciona un DiagnosticsBundle recibido del Edge con su
+// solicitud pendiente (por command_id, acotado por el tenant+sesión de la identidad
+// mTLS del stream) y lo almacena (Plan 031 · T5). Best-effort: sin sink, sin identidad,
+// sin session_id o sin bundle es un no-op silencioso; un bundle HUÉRFANO (sin solicitud
+// pendiente que case — llegó tarde/duplicado, venció, o vino de otra sesión) se IGNORA
+// con log y NO tumba el stream. El bundle es material operativo saneado por el Edge (gate
+// ZK, T8): aquí solo se persiste OPACO (CERO llaves/DEK/credenciales/PII).
+//
+// Desde el Plan 050 · T1.10 corre en el carril de su sesión (jobDiagnostics) y no en
+// el bucle Recv: es la escritura MÁS GRANDE que llega por el stream (log tail +
+// goroutine dump) y la que menos urgencia tiene — nadie espera su respuesta, el
+// bundle sube por correlación diferida. El ctx es el del job, con su presupuesto: un
+// bundle que no quepa en él se pierde con el aviso del carril, no en silencio.
+func (s *Server) storeDiagnosticsBundle(ctx context.Context, cc connCtx, db *cloudlinkv1.DiagnosticsBundle) {
+	if s.diag == nil || !cc.hasIdentity || cc.sessionID == "" || db == nil {
+		return
+	}
+	found, err := s.diag.SaveBundle(ctx, cc.tenantID, cc.sessionID, db.GetCommandId(), diagnostics.Bundle{
+		LogTail:        db.GetLogTail(),
+		GoroutineDump:  db.GetGoroutineDump(),
+		SubsystemsJSON: db.GetSubsystemsJson(),
+	})
+	if err != nil {
+		s.log.Error("diagnóstico: persistir bundle", "error", err,
+			"edge_id", cc.edgeID, "session_id", cc.sessionID, "command_id", db.GetCommandId())
+		return
+	}
+	if !found {
+		s.log.Warn("diagnóstico: bundle sin solicitud pendiente; ignorado",
+			"session_id", cc.sessionID, "command_id", db.GetCommandId())
+	}
+}
