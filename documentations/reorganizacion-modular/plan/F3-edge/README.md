@@ -370,7 +370,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     traduce. El rojo de TX.8 fueron **tres** commits (uno por grupo de ficheros: `0e5b69a`, `be818c9`, `488539b`), no uno.
 66. **`apipublica/limits.go` no tiene consumidor de producción en F3**: el 413 lo usan áreas de F6–F8, y hasta entonces lo
     sostiene ante `unused` solo su test. `FX-cara-http/diseno.md` §1 dice que porta `errorBody`, que nació en `response.go`
-    en F2: esa línea está caducada. `TestTechos_TodosNombranSuCifra` (viejo) recorre siete endpoints de F6–F8: cada área
+    en F2: esa línea estaba caducada y **se corrigió en el mismo PR**. `TestTechos_TodosNombranSuCifra` (viejo) recorre siete endpoints de F6–F8: cada área
     afirmará su cifra al mudarse.
 67. **La lista de ficheros de T3.28 se quedó corta y `http.go` no ve el contenedor.** También cambiaron `auth_jwt.go`
     (`buildJWKSConfig` devuelve el `ConfigPayload` nuevo) y `send_budget_cableado_test.go` (vigila ahora
@@ -378,20 +378,32 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `buildPublicAPIServer` en un parámetro nuevo. En `publicapi.Deps`, los siete campos de TX.11 **se quitan** en vez de
     asignarse a `nil`: con el `fleet` nuevo ya no compilaría asignarlos. Con ellos se fueron tres cables que solo leían
     D1–D6 en la cara vieja (`SendBudget`, `Health`, `DiagnosticsBundleTTL`).
-68. 🟡 **R3.6.c y `arquitectura.md` §6 esperan de más**: `go list -deps ./cmd/server-modular | grep internal/gateway/` no da
+68. ✅ **Resuelto en el mismo PR** (la spec ya dice lo medido; ver al final). **`arquitectura.md` §6 esperaba de más**: `go list -deps ./cmd/server-modular | grep internal/gateway/` no da
     solo `internal/gateway/grpc`, da **cuatro** (`grpc`, `lease`, `fleet`, `session`). `lease` lo arrastra `gateway/grpc`;
     `fleet` y `session` los importan además `internal/publicapi` e `internal/flujos/admin`, así que no salen del binario al
     morir `bridge_gateway.go` (F4), sino en F7/F8. Lo que sí se cumple y se vigila: en `internal/arranque`, de producción,
-    solo `bridge_gateway.go` importa `internal/gateway/**` (`TestCableado_OnlyTheBridgeImportsTheOldGateway`).
+    solo `bridge_gateway.go` importa `internal/gateway/**` (`TestCableado_OnlyTheBridgeImportsTheOldGateway`). *Resolución*:
+    R3.6.c en sí era cierto (habla solo de `gateway/grpc`); lo falso era la línea «solo `internal/gateway/grpc`» de
+    `arquitectura.md` §6, que se corrige, y la verificación por `grep` de R3.6.c, que depende del alias del import, se
+    apoya ahora en los dos tests de cableado.
 69. **El `nil` de interfaz que resolvía `bridge_iam.go` lo resuelven ahora dos costuras** de `fase4_gateway.go`
     (`edgeAuthenticatorPort`, `edgeAuditorPort`): sin delegado, el gateway recibe un `nil` de verdad, no un puntero nulo
-    dentro de una interfaz (`TestCableado_AbsentAccessServicesReachTheGatewayAsTrueNil`). 🟡 Con `bridge_iam.go` desaparece
+    dentro de una interfaz (`TestCableado_AbsentAccessServicesReachTheGatewayAsTrueNil`). ✅ **Resuelto en el mismo PR.** Con `bridge_iam.go` desaparece
     la traducción de centinelas nuevo → viejo: el gateway nuevo habla los de `acceso` nuevo. Lo cubren los tests de
-    `edge/grpc`; **que un login con credenciales malas dé lo mismo que el binario viejo no se midió aquí**: va al e2e de
-    F3-05.
-70. 🟡 **D1 sigue registrada en el mux viejo, con `Sender` a `nil`**, tapada por la nueva en el compuesto (no tiene
+    `edge/grpc`; que un login con credenciales malas dé lo mismo que el binario viejo quedó sin medir en la conmutación. *Resolución*:
+    da lo mismo **por construcción**, y está afirmado en tres eslabones: (a) `authErrorCode` es **idéntico byte a byte** en
+    los dos gateways (`diff` vacío) y los cuatro centinelas tienen el mismo texto en `internal/iam/domain` y en
+    `acceso/iam/domain`; (b) el gateway nuevo clasifica los de `acceso` nuevo (`auth_inband_test.go`, tabla de los cuatro
+    más uno envuelto); (c) los servicios **reales**, por las costuras del arranque, devuelven esos centinelas:
+    `TestCableado_RealAccessServicesSpeakTheSentinelsTheGatewayClassifies`, que sustituye a los dos
+    `…RealServiceInvalidInputIsOldSentinel` que murieron con el adaptador. El e2e de F3-05 lo confirmará por el cable, pero
+    ya no es una duda abierta.
+70. ✅ **Resuelto en el mismo PR.** **D1 sigue registrada en el mux viejo, con `Sender` a `nil`**, tapada por la nueva en el compuesto (no tiene
     condición de montaje). Si algo la alcanzara sería un *nil-pointer*: el e2e de F3-05 debe confirmar que
-    `POST /api/v1/messages` resuelve por la cara nueva. Y `MountMessages` tampoco comprueba `Sender`/`Sessions` (conducta
+    `POST /api/v1/messages` resuelve por la cara nueva. *Resolución*: el handler viejo no está «tapado», es **inalcanzable**:
+    el `POST` lo resuelve siempre la nueva (lo afirma ya el candado de mudanzas sobre el compuesto real, en los dos
+    perfiles) y con cualquier otro método la vieja no casa, porque solo registró el `POST`, así que responde el 405 de la
+    nueva. Lo fija `TestCableado_TheOldFaceNeverServesMessages` con siete métodos. Y `MountMessages` tampoco comprueba `Sender`/`Sessions` (conducta
     del viejo, copiada y fijada por `TestMountMessages_AlwaysMounts`).
 71. **Conductas heredadas, copiadas y ahora fijadas por test** (ninguna se «arregló»): D3/D4 responden sus errores en
     **texto plano** y la cadena su 401/403 en JSON; D5 hace el *rollback* (`DeleteRequest`) con el contexto de la petición,
@@ -405,4 +417,4 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     sustituye la regla 3 de fronteras, que con `acceso` en `Conmutados` ya prohíbe a `internal/arranque` importar
     `internal/{iam,platformadmin,entitlements}`.
 73. **Entorno**: `.bin/golangci-lint run` a pelo usa la caché **del usuario**, y dio 3 `gosec` falsos sobre un *worktree*
-    ya borrado de otra sesión. `make lint` (caché por *checkout*) da 0. El lint se corre siempre por `make`.
+    ya borrado de otra sesión. `make lint` (caché por *checkout*) da 0. El lint se corre siempre por `make`: **anotado en `PROTOCOLO-CLI.md` §1 en el mismo PR**.

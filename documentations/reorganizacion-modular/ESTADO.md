@@ -405,9 +405,12 @@ principal** (sin *worktrees*); los gates los repitió el agente principal tras c
   88,5 % y 100 %) · `ls internal/arranque/bridge_iam.go` no existe · `grep -rn 'gatewaygrpc.New(' internal/arranque` vacío.
 - **No corrido** (es de F3-05): el e2e con mTLS real, el arranque real de `cmd/server-modular`, `make test-procesos` contra
   los dos binarios, las suites contra Postgres. Sin mutantes: el bloque es nivel simple + cara.
-- Hallazgos 65–73 en el [README de F3](plan/F3-edge/README.md). Los 🟡 que hereda F3-05: 68 (`go list -deps` da cuatro
-  paquetes de `internal/gateway/`, no uno), 69 (login con credenciales malas, sin `bridge_iam.go`) y 70 (D1 tapada en el
-  mux viejo).
+- Hallazgos 65–73 en el [README de F3](plan/F3-edge/README.md). Los tres 🟡 (68, 69, 70) **se resolvieron en el mismo PR**,
+  a petición de Jhoan: 68, corrigiendo `arquitectura.md` §6 y la verificación de R3.6.c (el binario enlaza cuatro paquetes
+  de `internal/gateway/`, no uno, y no por el arranque); 69, con `TestCableado_RealAccessServicesSpeakTheSentinelsTheGatewayClassifies`
+  (más el `diff` vacío de `authErrorCode` entre los dos gateways); 70, con `TestCableado_TheOldFaceNeverServesMessages` (la
+  D1 vieja es inalcanzable, no solo tapada). También se corrigieron la línea caducada de `FX-cara-http/diseno.md` (66) y
+  `PROTOCOLO-CLI.md` §1 (73). Queda sin tocar, a propósito, el 71: conductas heredadas, copiadas y fijadas por test.
 
 **F3-03 (tercera sesión) · F3, `grpc` — tanda 3 de 3 (2026-10-05, 💻, rama `reorg/f3-03-grpc-tanda-3` desde `origin/dev` @ `ec236b3`).**
 Sesión completa (D-R-8), **cortada a medias y relanzada**: al relanzar, la rama tenía la inferencia y la plaza, y el saludo

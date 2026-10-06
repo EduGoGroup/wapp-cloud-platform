@@ -34,6 +34,9 @@ ni instalar el lint aparte. En el Mac el sistema trae `go1.27.1` y `golangci-lin
   `make toolchain`. Si es por el Go → hace falta red una vez (Go baja la toolchain a su caché).
 - 🔴 **Un `go` suelto, fuera de `make`, es `go1.27.1`**: como gate lleva `GOTOOLCHAIN=go1.26.5`
   delante, o se usa su target. Sin toolchain fijada, **ningún gate es autoritativo**.
+- 🔴 **El lint, siempre `make lint`**, nunca `.bin/golangci-lint run` a pelo: el target usa una caché **por *checkout***
+  y el binario suelto la del usuario, que puede arrastrar rutas de un *worktree* ya borrado y dar avisos falsos
+  (hallazgo 73 de F3).
 - Detalle, web y local lado a lado: [`../../06-entorno-web.md`](../../06-entorno-web.md) §6.
 
 1. Si cierras una sesión web: localiza su rama / PR y, **si lo hay**, el traspaso en
