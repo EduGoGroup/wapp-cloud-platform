@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // messages_senderror_test.go — la mitad de messages_test.go que cubre la traducción de un error
@@ -42,22 +40,22 @@ const (
 	msgSendErrorNotWritten = "no se pudo escribir la respuesta de error del envío"
 )
 
-// sendErrorFake es el doble de grpc.SendError: cumple los DOS contratos por duck-typing que D1
+// fakeSendError es el doble de grpc.SendError: cumple los DOS contratos por duck-typing que D1
 // consume. closed es configurable a propósito: un doble que solo supiera decir «sí» no probaría
 // que se mira el BOOL y no la mera presencia del método.
-type sendErrorFake struct {
+type fakeSendError struct {
 	cmdID  string
 	cause  error
 	closed bool
 }
 
-func (e *sendErrorFake) Error() string     { return fmt.Sprintf("comando %s: %v", e.cmdID, e.cause) }
-func (e *sendErrorFake) Unwrap() error     { return e.cause }
-func (e *sendErrorFake) CommandID() string { return e.cmdID }
-func (e *sendErrorFake) StreamCaido() bool { return e.closed }
+func (e *fakeSendError) Error() string     { return fmt.Sprintf("comando %s: %v", e.cmdID, e.cause) }
+func (e *fakeSendError) Unwrap() error     { return e.cause }
+func (e *fakeSendError) CommandID() string { return e.cmdID }
+func (e *fakeSendError) StreamCaido() bool { return e.closed }
 
 // withID envuelve cause como lo hace el gateway: con su command_id y sin stream caído.
-func withID(cause error) error { return &sendErrorFake{cmdID: "cmd-42", cause: cause} }
+func withID(cause error) error { return &fakeSendError{cmdID: "cmd-42", cause: cause} }
 
 // sendFailing pide D1 con un Sender que falla con err.
 func sendFailing(h *apipublicahelpertest.Harness, err error) *httptest.ResponseRecorder {
@@ -73,7 +71,7 @@ func TestMountMessages_SendError(t *testing.T) {
 		msg  string
 	}{
 		{"offline_is_502", withID(fmt.Errorf("%w: %q", session.ErrSessionOffline, "sess-a")), http.StatusBadGateway, msgOffline},
-		{"stream_closed_is_504", &sendErrorFake{cmdID: "cmd-42", cause: errors.New("stream cerrado"), closed: true},
+		{"stream_closed_is_504", &fakeSendError{cmdID: "cmd-42", cause: errors.New("stream cerrado"), closed: true},
 			http.StatusGatewayTimeout, msgStreamClosed},
 		{"push_timeout_is_504", withID(fmt.Errorf("%w: %q", session.ErrPushTimeout, "sess-a")), http.StatusGatewayTimeout, msgEdgeNotReading},
 		{"push_abandoned_is_504", withID(abandoned), http.StatusGatewayTimeout, msgBudgetExhausted},
@@ -82,11 +80,11 @@ func TestMountMessages_SendError(t *testing.T) {
 		{"anything_else_is_500", withID(errors.New("otra cosa")), http.StatusInternalServerError, msgSendFailed},
 
 		// El ORDEN: cada uno de estos casaría también con un caso posterior.
-		{"offline_wins_over_stream_closed", &sendErrorFake{cmdID: "cmd-42", cause: session.ErrSessionOffline, closed: true},
+		{"offline_wins_over_stream_closed", &fakeSendError{cmdID: "cmd-42", cause: session.ErrSessionOffline, closed: true},
 			http.StatusBadGateway, msgOffline},
-		{"stream_closed_wins_over_deadline", &sendErrorFake{cmdID: "cmd-42", cause: context.DeadlineExceeded, closed: true},
+		{"stream_closed_wins_over_deadline", &fakeSendError{cmdID: "cmd-42", cause: context.DeadlineExceeded, closed: true},
 			http.StatusGatewayTimeout, msgStreamClosed},
-		{"stream_not_closed_falls_to_deadline", &sendErrorFake{cmdID: "cmd-42", cause: context.DeadlineExceeded, closed: false},
+		{"stream_not_closed_falls_to_deadline", &fakeSendError{cmdID: "cmd-42", cause: context.DeadlineExceeded, closed: false},
 			http.StatusGatewayTimeout, msgAckTimeout},
 		{"push_abandoned_wins_over_its_context_error",
 			withID(fmt.Errorf("%w: %w", context.Canceled, session.ErrPushAbandoned)), http.StatusGatewayTimeout, msgBudgetExhausted},
@@ -109,7 +107,8 @@ func TestMountMessages_SendError(t *testing.T) {
 				t.Fatalf("línea %q: %+v; quiero una, de nivel error", msgSendErrorLog, lines)
 			}
 			f := lines[0].Fields
-			if f["status"] != tc.code || f["command_id"] != "cmd-42" || f["session_id"] != "sess-a" || f["error"] != tc.err {
+			logged, ok := f["error"].(error)
+			if !ok || !errors.Is(logged, tc.err) || f["status"] != tc.code || f["command_id"] != "cmd-42" || f["session_id"] != "sess-a" {
 				t.Errorf("campos = %v; quiero status %d, command_id cmd-42, session_id sess-a y el error", f, tc.code)
 			}
 			wantNoPII(t, h)

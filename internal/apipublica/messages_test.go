@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // messages_test.go — cubre el contrato de messages.go (MessageSender, SessionLister,
@@ -45,12 +43,19 @@ const (
 var (
 	_ apipublica.MessageSender = (*edgegrpc.Server)(nil)
 	_ apipublica.SessionLister = fleet.Repository(nil)
-	// El duck-typing que consume la traducción de errores lo cumple el error real del gateway.
-	_ interface {
-		CommandID() string
-		StreamCaido() bool
-	} = (*edgegrpc.SendError)(nil)
 )
+
+// TestSendErrorContract_TheGatewayErrorFulfilsIt: el duck-typing que consume la traducción de
+// errores (CommandID y StreamCaido, sin importar el gateway) lo cumple el error REAL del módulo
+// edge. Un renombrado allí apagaría el 504 del stream caído y el command_id sin ningún rojo.
+func TestSendErrorContract_TheGatewayErrorFulfilsIt(t *testing.T) {
+	var gatewayErr error = &edgegrpc.SendError{}
+	var withID interface{ CommandID() string }
+	var closed interface{ StreamCaido() bool }
+	if !errors.As(gatewayErr, &withID) || !errors.As(gatewayErr, &closed) {
+		t.Error("grpc.SendError ya no cumple CommandID() string y StreamCaido() bool")
+	}
+}
 
 // senderFake es MessageSender: devuelve ack o err y apunta lo que recibió, incluido cuánto le
 // quedaba al contexto (remaining) y si traía plazo (bounded).
