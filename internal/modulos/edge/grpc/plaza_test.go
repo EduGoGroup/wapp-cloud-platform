@@ -7,6 +7,7 @@ package grpc
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
@@ -163,4 +164,30 @@ func TestPlazaDeHasNoPlazaForALiveOriginItCannotPlace(t *testing.T) {
 	rig.requirePlaza(t, "tenant-1", "s-foreign", "")
 	rig.requirePlaza(t, "tenant-1", "s-untracked", "")
 	rig.requirePlaza(t, "tenant-1", "s-own", "edge-1")
+}
+
+// La plaza se lee BAJO EL CANDADO del seguimiento: mientras las sesiones de otro Edge entran y
+// salen (cada registro y cada cierre de stream escriben ese mapa), PlazaDe sigue contestando
+// lo mismo. Sin el candado, el detector de carreras lo canta aquí.
+func TestPlazaDeIsSafeWhileSessionsComeAndGo(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	rig.live(t, "tenant-1", "edge-1", "s-1", nil)
+	const rounds = 300
+
+	var churn sync.WaitGroup
+	churn.Go(func() {
+		passing := phone("tenant-1", "edge-2", "s-passing")
+		for range rounds {
+			rig.srv.trackSession(passing)
+			rig.srv.untrackSession(passing)
+		}
+	})
+	for range rounds {
+		if edgeID, ok := rig.srv.PlazaDe("tenant-1", "s-1"); !ok || edgeID != "edge-1" {
+			t.Errorf("PlazaDe = (%q, %v) con otro Edge entrando y saliendo, se esperaba edge-1", edgeID, ok)
+			break
+		}
+	}
+	churn.Wait()
 }
