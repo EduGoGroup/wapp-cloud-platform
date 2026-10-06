@@ -401,9 +401,11 @@ tanda 2 (PR #38) quedó integrada en `dev` sin squash. **Con esta tanda `grpc` e
 - **Mutantes** (a mano, dos sub-agentes en copias fuera del árbol): 323 escritos; **10 huecos cerrados con 8 tests**
   (`3758144` … `231c74b`), 7 vivos equivalentes (hallazgo 55) y un hueco de la tanda 2 cerrado de paso (`db2d5bd`,
   hallazgo 59).
-- ✅ **Hallazgo 56, resuelto el 2026-10-06** (decisión de Jhoan; rama `reorg/f3-hallazgo-56-plazo-inferencia`): `edb08bf`, test con
+- ✅ **Hallazgo 56, resuelto el 2026-10-06** (decisión de Jhoan; rama `reorg/f3-decisiones-abiertas`): `edb08bf`, test con
   `testing/synctest` que acota la espera a plazo + un margen (el mutante `+ 2*s.inferGrace` cae: «duró 40s, se esperaba
-  35s»), y `04eedd7`, el presupuesto se calcula una sola vez. Siguen abiertos el 38, el 40 y el 45.
+  35s»), y `04eedd7`, el presupuesto se calcula una sola vez.
+- ✅ **Hallazgo 45, resuelto el 2026-10-06 por D-F3-9** (misma rama): `1f96651`, el cierre del stream viejo no deja de rastrear
+  una sesión que ya reconectó. 🔴 El nuevo se aparta del viejo. Siguen abiertos el 38 y el 40.
 - **No corrido**: `make test-procesos`, `make test-integration` y mTLS real (son de F3-05; `grpc` nuevo aún no está
   conmutado: lo construye F3-04).
 - **Siguiente paso: F3-04** (`bridge_gateway`, cara nueva de `edge` y conmutación). `main` sin tocar.

@@ -269,7 +269,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 
 **De F3-03, segunda sesión** (`grpc`, tanda 2: conexión, auth, config, readiness y diagnóstico; 2026-10-05):
 
-45. 🟡 **Defecto del viejo copiado y afirmado, por decidir (tanda 2)**: el seguimiento por Edge (`edgeSessions`) **no
+45. ✅ ~~🟡~~ *(resuelto por D-F3-9 el 2026-10-06, `1f96651`: el cierre del stream viejo ya no deja de rastrear una sesión que reconectó; el nuevo se aparta del viejo. Lo que sigue describe el defecto tal como se copió)* **Defecto del viejo copiado y afirmado (tanda 2)**: el seguimiento por Edge (`edgeSessions`) **no
     distingue streams**. En una reconexión rápida, el cierre del stream viejo hace `untrackSession` de una sesión que sigue
     viva por el nuevo, y nada vuelve a rastrearla: hasta su siguiente reconexión, `PushConfig`, `RevokeLease`, `warmEdges` y
     la elección por `edgeSessions` no la alcanzan, y con la última se borra el readiness del Edge. R-G4 solo protege
@@ -331,7 +331,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 57. **Conductas del viejo copiadas tal cual y afirmadas** (`Infer` / `PlazaDe`): el candidato vivo no se contrasta con el
     tenant; un destino sin stream no cae al origen; un fallo de escritura del stream se rotula `timeout`; un plazo positivo
     por debajo del milisegundo viaja como `timeout_ms = 0`; con un origen vivo que no está en el seguimiento del tenant
-    (sesión de otro tenant, o la reconexión rápida del hallazgo 45), `Infer` **envía** y `PlazaDe` dice que **no hay plaza**.
+    (sesión de otro tenant; la reconexión rápida del hallazgo 45 ya no lleva a este caso, D-F3-9), `Infer` **envía** y `PlazaDe` dice que **no hay plaza**.
 58. **`origin != ""` es la única defensa contra una sesión de id vacío** en `inferenceSession`: `session.Registry.Register`
     acepta el id vacío. Hoy es inalcanzable desde `connect` (no registra un `session_id` vacío); queda afirmado por
     `TestInferWithoutCandidateNeverRoutesThroughABlankSession`.
