@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // La dirección de la plaza (R-G15, R3.4.d; T-12): QUÉ EDGE atendería una inferencia. Es la

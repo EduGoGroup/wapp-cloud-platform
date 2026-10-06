@@ -2,8 +2,6 @@
 
 package grpc
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-
 // plaza.go — LA DIRECCIÓN DE LA PLAZA (Plan 044 · Ola 2 · T2.7, ADR-0046 Mecanismo 1).
 //
 // El recurso escaso de la vía local es UN OLLAMA POR MÁQUINA, y la máquina es el
@@ -43,6 +41,34 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // El nombre NO se traduce (E-11): el aforo (llmvia) lo busca por aserción de tipo, y un
 // renombrado lo apagaría en silencio (T-1). El Edge se busca SOLO entre los del tenant:
 // si el stream resuelto no es de un Edge suyo en el seguimiento, no hay plaza.
-func (s *Server) PlazaDe(_, _ string) (string, bool) {
-	panic(pendiente.Implementar("grpc.Server.PlazaDe"))
+func (s *Server) PlazaDe(tenantID, originSessionID string) (string, bool) {
+	sid, ok := s.inferenceSession(tenantID, originSessionID)
+	if !ok {
+		return "", false
+	}
+	return s.edgeOfSession(tenantID, sid)
+}
+
+// edgeOfSession (en el paquete viejo, edgeOfSession) traduce una sesión viva al Edge que
+// la sostiene. Recorre el mismo
+// índice que `sessionsForTenant` y bajo el mismo candado.
+//
+// El recorrido es lineal sobre los Edges del proceso y no sobre un índice inverso
+// `sesión -> Edge` porque ese índice sería una TERCERA estructura que mantener en
+// sincronía con `edgeSessions` y `edgeReadiness` en cada track/untrack, a cambio de
+// ahorrar un bucle sobre unas decenas de entradas que se recorre una vez por JOB DE
+// LOTE — o sea, una vez cada varios minutos. La estructura de más se pagaría en
+// desincronizaciones, que es lo caro.
+func (s *Server) edgeOfSession(tenantID, sessionID string) (string, bool) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	for k, set := range s.edgeSessions {
+		if k.tenantID != tenantID {
+			continue
+		}
+		if _, live := set[sessionID]; live {
+			return k.edgeID, true
+		}
+	}
+	return "", false
 }
