@@ -212,8 +212,6 @@ func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Hea
 		s.observeInference(cc, hb)
 		s.persistHealth(ctx, cc, hb)
 		s.renewLease(ctx, cc, hb.GetLeaseCounter())
-		// TODO(F3-03 tanda 3): aquí va `s.greetIfNeeded(ctx, cc)`, la ÚLTIMA llamada del job, después de renewLease.
-		//
 		// 🔴 EL CUARTO VA AL FINAL A PROPÓSITO (Plan 046 · T3.2 (b)). El saludo de la
 		// sesión recién emparejada necesita ir DESPUÉS de persistSelfPn —que es quien
 		// deja el número en la fila que su consulta lee— y se pone DESPUÉS DE TODO
@@ -222,6 +220,7 @@ func (s *Server) submitHeartbeat(lane *workLane, cc connCtx, hb *cloudlinkv1.Hea
 		// solo puede gastar el reloj que los otros tres no gastaron. Antes de
 		// renewLease le robaría el presupuesto justo al lease del que depende para
 		// poder enviar. Su docstring tiene el reparto entero.
+		s.greetIfNeeded(ctx, cc)
 	})
 }
 
