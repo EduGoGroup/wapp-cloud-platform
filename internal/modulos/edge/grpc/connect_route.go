@@ -61,7 +61,15 @@ func (s *Server) route(lane *workLane, cc connCtx, msg *cloudlinkv1.EdgeToCloud)
 		// añadiría la latencia del trabajo pesado justo en el camino que este plan
 		// viene a proteger.
 		s.deliverAck(p.Ack)
-	// TODO(F3-03 tanda 3): aquí va `case *cloudlinkv1.EdgeToCloud_InferenceResult: s.deliverInference(p.InferenceResult)`, INLINE como el Ack (ADR-0040 §Decisión.3: un lookup en un mapa y un envío no bloqueante), entre el case del Ack y el del Heartbeat.
+	case *cloudlinkv1.EdgeToCloud_InferenceResult:
+		// 🔴 SE QUEDA INLINE, Y ES EL MISMO ARGUMENTO QUE EL ACK (ADR-0040
+		// §Decisión.3). deliverInference es O(1) en memoria: un lookup en un map y un
+		// envío no bloqueante a un canal con buffer. Lo caro de este frame —abrir el
+		// sobre X25519 y deserializar— NO se hace aquí: lo paga el llamante en su
+		// propia goroutine, que es quien está bloqueado esperando (ver el ⚠️ de
+		// deliverInference). Mandarlo al carril le pondría delante la cola de la
+		// sesión justo al camino que este plan viene a acortar.
+		s.deliverInference(p.InferenceResult)
 	case *cloudlinkv1.EdgeToCloud_Heartbeat:
 		// El hook es de test/observación, no I/O: se queda inline (design.md §3).
 		if s.OnHeartbeat != nil {
