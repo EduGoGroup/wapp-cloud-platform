@@ -17,6 +17,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet/fleethelpertest"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
 )
 
@@ -150,6 +152,69 @@ func TestGreetingQueryFailureOnlyWarns(t *testing.T) {
 	}
 	requireLog(t, rig.log, "WARN", "saludo: no se pudo consultar si la sesión está pendiente de aviso",
 		"session_id=s-1", "edge_id=edge-1", `error="sobre ilegible"`)
+}
+
+// answeringGreeter es un puerto del saludo que contesta SIEMPRE lo mismo, sea coherente o no:
+// sirve para las respuestas que el doble fiel (greeterFleet) no sabe dar —un número sin
+// pending, o pending junto a un error—.
+type answeringGreeter struct {
+	fleet.Repository
+	selfPn  string
+	pending bool
+	err     error
+	marks   int
+}
+
+func (g *answeringGreeter) PendingGreeting(context.Context, string, string, string) (string, bool, error) {
+	return g.selfPn, g.pending, g.err
+}
+
+func (g *answeringGreeter) MarkGreeted(context.Context, string, string, string) (bool, error) {
+	g.marks++
+	return true, nil
+}
+
+// Quien decide es lo que CONTESTA la flota, no lo que venga al lado. Un error corta aunque la
+// respuesta traiga número y pending=true (un Warn y nada más), y pending=false calla aunque
+// traiga número: una sesión activa TIENE self_pn, y a esa el aviso le mentiría.
+func TestGreetingObeysTheAnswerOfTheFleetNotTheNumberNextToIt(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		pending  bool
+		err      error
+		wantWarn bool
+	}{
+		{"error with a pending number", true, errors.New("fila a medio leer"), true},
+		{"number without pending", false, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			greeter := &answeringGreeter{Repository: fleethelpertest.NewMemoria(), selfPn: ownNumber, pending: tc.pending, err: tc.err}
+			log, buf := debugLog()
+			reg := session.NewRegistry()
+			srv := New(reg, log, WithFleet(greeter))
+			edge := &ackingEdge{srv: srv}
+			t.Cleanup(reg.Register("s-1", edge))
+
+			srv.greetIfNeeded(context.Background(), phone("tenant-1", "edge-1", "s-1"))
+
+			if n := len(edge.sent()); n != 0 {
+				t.Errorf("se enviaron %d avisos, se esperaba 0", n)
+			}
+			if greeter.marks != 0 {
+				t.Errorf("MarkGreeted se llamó %d veces, se esperaba 0", greeter.marks)
+			}
+			if tc.wantWarn {
+				requireLog(t, buf, "WARN", "saludo: no se pudo consultar si la sesión está pendiente de aviso",
+					"session_id=s-1", "edge_id=edge-1", `error="fila a medio leer"`)
+			} else {
+				requireSilent(t, buf)
+			}
+			requireNoPII(t, buf)
+		})
+	}
 }
 
 // El aviso salió y la marca no se pudo poner: es un Error —el dueño recibirá un duplicado— y,
