@@ -459,3 +459,21 @@ func TestInferConcurrentCallsEachGetTheirOwnOutput(t *testing.T) {
 	}
 	requireNoPendingInfers(t, rig.srv)
 }
+
+// El presupuesto que vence es el del LLAMANTE (su Timeout más el margen), no el de 30 s por
+// defecto: con 1 ms + 1 ms, Infer vuelve ya. Va con watchdog porque quien ignore el Timeout no
+// falla: tarda medio minuto y acaba dando el mismo error.
+func TestInferOwnBudgetIsTheCallersTimeout(t *testing.T) {
+	t.Parallel()
+	rig := newInferRig(t)
+	rig.srv.inferGrace = time.Millisecond // el contrato ES el plazo
+	rig.live(t, "tenant-1", "edge-1", "s-1", nil)
+
+	res := goInfer(context.Background(), rig.srv, "tenant-1", InferRequest{Prompt: "p", Timeout: time.Millisecond})
+
+	got := await(t, res, "que Infer venza con el Timeout que le dieron, no con los 30 s por defecto")
+	requireReason(t, got.err, ReasonTimeout)
+	if !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Errorf("Infer = %v, se esperaba el presupuesto del Cloud vencido", got.err)
+	}
+}
