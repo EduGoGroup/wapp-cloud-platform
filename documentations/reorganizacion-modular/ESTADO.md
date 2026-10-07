@@ -393,7 +393,7 @@ Sesión completa (D-R-8). **F4 arranca; `internal/modulos/inferencia` queda ente
 - **T4.2 verificada**: los dos barridos AST viejos saltan el árbol nuevo por ruta de primer nivel (`dd1e2bd`); una
   sonda `if via == "api"` en `internal/modulos/x` no los puso rojos y se borró.
 - **Rojo de todo el módulo** (7 commits, `bccfa4b` … `b8ae091`): 45 `pendiente.Implementar` (la spec estimaba ≈ 54,
-  con el adaptador), `ci-local` rc=0. **Verde** (18 commits, `24c0782` … `24f6450`): `prompts`, `tenantllm`,
+  con el adaptador), `ci-local` rc=0. **Verde** (15 commits, `24c0782` … `24f6450`): `prompts`, `tenantllm`,
   `degradation`, `llmvia/local`, `llmvia` y el **candado C2 nuevo**. Escrito por nueve sub-agentes en *worktrees*
   fijados en el SHA de la rama (uno por paquete; rojo antes que cualquier verde) e integrado con `cherry-pick`.
   45 ficheros `.go`, 12.133 líneas. E-13 partió `llmvia.go` (`llmvia_turno.go`) y `local.go` (`local_budget.go`).
@@ -852,7 +852,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F45-01**: rama `reorg/f45-01-inventario-inferencia`, partida de `dev` @ `ebf4eb7` (PR #42 dentro); `2783172` … `24f6450` (2 commits de inventario, 7 de rojo, 18 de verde y test) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Queda un *worktree* de sub-agente bloqueado por el harness (`.claude/worktrees/`, ignorado por los gates de Go), ya integrado.
+- **F45-01**: rama `reorg/f45-01-inventario-inferencia`, partida de `dev` @ `ebf4eb7` (PR #42 dentro); `2783172` … `24f6450` (2 commits de inventario, 7 de rojo, 15 de verde y test) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Queda un *worktree* de sub-agente bloqueado por el harness (`.claude/worktrees/`, ignorado por los gates de Go), ya integrado.
 - **F3-05**: rama `reorg/f3-05-cierre-mtls`, partida de `dev` @ `9d9c033` (PR #41 dentro); `8121564` … `876b096` (11 commits de test y arnés) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Los *worktrees* de los sub-agentes ya están borrados; quedan sus ramas locales `f305-*`, ya integradas por `cherry-pick`. `origin/main` sin tocar.
 - **F3-04** (integrada en `dev` @ `9d9c033`, PR #41): rama `reorg/f3-04-bridge-conmutar-rutas`, partida de `origin/dev` @ `115a4ba` (PR #40 dentro); `dd4cbd2` … `0ebb743` (13 commits de código) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
 - **F3-03 (tanda 3)** (integrada en `dev` @ `414b31b`, PR #39): rama `reorg/f3-03-grpc-tanda-3`, partida de `origin/dev` @ `ec236b3`; `185dcbc` … `231c74b` y el cierre documental; PR hacia `dev`, **integrar sin squash**. El *worktree* del sub-agente del saludo y las copias de los mutantes ya están borrados; queda la rama local `wt/f3-03-greeting`, ya integrada por `cherry-pick`. `origin/main` sin tocar.
