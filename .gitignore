@@ -43,3 +43,6 @@ certs/
 .vscode/
 *.swp
 *.swo
+
+# Worktrees de los sub-agentes de Claude Code (copias de trabajo temporales)
+.claude/worktrees/
