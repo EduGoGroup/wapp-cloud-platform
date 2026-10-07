@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package catalogo_test
 
 import (
