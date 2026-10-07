@@ -10,10 +10,10 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Tipos de nodo soportados en este corte (Menú). Ver design.md §4.
@@ -240,9 +240,7 @@ type Conversation struct {
 // Finished indica si la conversación llegó al fin del flujo (CurrentNode quedó
 // en el centinela NodeTerminal). Un Step sobre una conversación terminada no
 // avanza (ver engine.Step).
-func (c Conversation) Finished() bool {
-	panic(pendiente.Implementar("model.Conversation.Finished"))
-}
+func (c Conversation) Finished() bool { return c.CurrentNode == NodeTerminal }
 
 // Outcome devuelve el DESENLACE declarado por el módulo al terminar el flujo
 // (VarOutcome). Un estado sin la clave —o con algo que no sea uno de los valores
@@ -256,7 +254,18 @@ func (c Conversation) Finished() bool {
 // conservador (cerrar), no inventarse una tercera conducta. La comparación es
 // exacta: «Cancelled» o « cancelled» son desconocidos.
 func (c Conversation) Outcome() Outcome {
-	panic(pendiente.Implementar("model.Conversation.Outcome"))
+	v, ok := c.Vars[VarOutcome].(string)
+	if !ok {
+		return OutcomeUndeclared
+	}
+	switch Outcome(v) {
+	case OutcomeCompleted:
+		return OutcomeCompleted
+	case OutcomeCancelled:
+		return OutcomeCancelled
+	default:
+		return OutcomeUndeclared
+	}
 }
 
 // SetOutcome sella el desenlace en Vars, como texto plano (string, no Outcome:
@@ -267,21 +276,28 @@ func (c Conversation) Outcome() Outcome {
 // encuesta, media) — que son la mayoría. Con Vars nil, declarar crea el mapa y
 // «sin declarar» lo deja nil; las demás claves de Vars no se tocan.
 func (c *Conversation) SetOutcome(o Outcome) {
-	panic(pendiente.Implementar("model.Conversation.SetOutcome"))
+	if o == OutcomeUndeclared {
+		delete(c.Vars, VarOutcome)
+		return
+	}
+	if c.Vars == nil {
+		c.Vars = map[string]any{}
+	}
+	c.Vars[VarOutcome] = string(o)
 }
 
 // MarshalDefinition serializa una definición de flujo a JSON (cuerpo JSONB), con
 // las etiquetas de Flow y Node: es el JSON de flow_definitions, contrato con la BD.
-func MarshalDefinition(f Flow) ([]byte, error) {
-	panic(pendiente.Implementar("model.MarshalDefinition"))
-}
+func MarshalDefinition(f Flow) ([]byte, error) { return json.Marshal(f) }
 
 // UnmarshalDefinition deserializa una definición de flujo desde JSON. NO valida:
 // un JSON bien formado con un esquema inválido sale sin error; el error de un JSON
 // mal formado es el de encoding/json tal cual, SIN envolver en ErrInvalidFlow. Las
 // claves desconocidas se ignoran.
 func UnmarshalDefinition(data []byte) (Flow, error) {
-	panic(pendiente.Implementar("model.UnmarshalDefinition"))
+	var f Flow
+	err := json.Unmarshal(data, &f)
+	return f, err
 }
 
 // ParseAndValidate deserializa y valida en un paso: rechaza JSON mal formado y
@@ -297,7 +313,14 @@ func UnmarshalDefinition(data []byte) (Flow, error) {
 // la hace el módulo en runtime). Así el modelo NO se acopla a los módulos concretos
 // (los tipos se inyectan como strings, evitando el ciclo model→modules).
 func ParseAndValidate(data []byte, moduleTypes ...string) (Flow, error) {
-	panic(pendiente.Implementar("model.ParseAndValidate"))
+	f, err := UnmarshalDefinition(data)
+	if err != nil {
+		return Flow{}, fmt.Errorf("%w: JSON mal formado: %w", ErrInvalidFlow, err)
+	}
+	if err := Validate(f, moduleTypes...); err != nil {
+		return Flow{}, err
+	}
+	return f, nil
 }
 
 // Validate comprueba el esquema de la definición (design.md §4), en este orden, y
@@ -338,5 +361,81 @@ func ParseAndValidate(data []byte, moduleTypes ...string) (Flow, error) {
 // con una opción o con Next es «nodo inexistente». Los nodos se recorren en el
 // orden del mapa: con varios nodos rotos, cuál se informa no está fijado.
 func Validate(f Flow, moduleTypes ...string) error {
-	panic(pendiente.Implementar("model.Validate"))
+	if f.FlowID == "" {
+		return fmt.Errorf("%w: flow_id vacío", ErrInvalidFlow)
+	}
+	if f.Version < 1 {
+		return fmt.Errorf("%w: version %d inválida (debe ser >= 1)", ErrInvalidFlow, f.Version)
+	}
+	if len(f.Nodes) == 0 {
+		return fmt.Errorf("%w: nodes vacío", ErrInvalidFlow)
+	}
+	if _, reserved := f.Nodes[NodeTerminal]; reserved {
+		return fmt.Errorf("%w: un id de nodo usa la clave reservada de fin de flujo", ErrInvalidFlow)
+	}
+	if f.Initial == "" {
+		return fmt.Errorf("%w: initial vacío", ErrInvalidFlow)
+	}
+	if _, ok := f.Nodes[f.Initial]; !ok {
+		return fmt.Errorf("%w: initial %q no existe en nodes", ErrInvalidFlow, f.Initial)
+	}
+	mods := make(map[string]struct{}, len(moduleTypes))
+	for _, t := range moduleTypes {
+		mods[t] = struct{}{}
+	}
+	for id, n := range f.Nodes {
+		if err := validateNode(f, id, n, mods); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNode valida un nodo individual según su Type (extraído de Validate
+// para mantener acotada la complejidad ciclomática). Los tipos interactivos
+// (menu, survey_question) comparten la validación de options→destino existente;
+// survey_question exige además question_id. Un tipo que no es core pero sí está
+// en moduleTypes (Registry) se acepta LAXO (lo valida el módulo en runtime); solo
+// se rechaza como "tipo desconocido" lo que no es ni core ni de módulo.
+func validateNode(f Flow, id string, n Node, moduleTypes map[string]struct{}) error {
+	switch n.Type {
+	case NodeTypeMenu:
+		return validateOptions(f, id, "menu", n.Options)
+	case NodeTypeSurveyQuestion:
+		if n.QuestionID == "" {
+			return fmt.Errorf("%w: nodo %q survey sin question_id", ErrInvalidFlow, id)
+		}
+		return validateOptions(f, id, "survey", n.Options)
+	case NodeTypeMessage:
+		if n.Next != nil {
+			if _, ok := f.Nodes[*n.Next]; !ok {
+				return fmt.Errorf("%w: nodo message %q: next apunta a nodo inexistente %q",
+					ErrInvalidFlow, id, *n.Next)
+			}
+		}
+		return nil
+	default:
+		if _, ok := moduleTypes[n.Type]; ok {
+			// Tipo manejado por un módulo enchufable (p. ej. "cart"): validación
+			// laxa; el módulo valida su contenido en runtime.
+			return nil
+		}
+		return fmt.Errorf("%w: nodo %q: tipo desconocido %q", ErrInvalidFlow, id, n.Type)
+	}
+}
+
+// validateOptions comprueba que un nodo interactivo tenga options no vacío y que
+// cada destino exista en la definición. kind es la etiqueta del tipo para el
+// mensaje de error (p. ej. "menu", "survey").
+func validateOptions(f Flow, id, kind string, options map[string]string) error {
+	if len(options) == 0 {
+		return fmt.Errorf("%w: nodo %s %q sin options", ErrInvalidFlow, kind, id)
+	}
+	for opt, target := range options {
+		if _, ok := f.Nodes[target]; !ok {
+			return fmt.Errorf("%w: nodo %s %q: opción %q apunta a nodo inexistente %q",
+				ErrInvalidFlow, kind, id, opt, target)
+		}
+	}
+	return nil
 }
