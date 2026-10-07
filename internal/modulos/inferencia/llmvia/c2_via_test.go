@@ -1,10 +1,6 @@
-//go:build pendiente
-
 package llmvia_test
 
-// Porta internal/llmvia/c2_via_test.go @ ebf4eb7 (candado de invariante I-CP-3, D-F4-2). Lleva
-// la etiqueta `pendiente` hasta T4.23: mientras los hermanos del módulo estén en rojo, las
-// comparaciones que la lista de permitidos espera todavía no existen.
+// Porta internal/llmvia/c2_via_test.go @ ebf4eb7 (candado de invariante I-CP-3, D-F4-2).
 
 import (
 	"go/ast"
@@ -100,44 +96,11 @@ func TestC2_TheRouteIsOnlyAskedInTheSelection(t *testing.T) {
 	found := map[string][]string{}
 	scanned := 0
 	for _, root := range scanRoots {
-		before := scanned
-		err := filepath.WalkDir(filepath.Join(internalDir, root), func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if d.Name() == "testdata" {
-					return filepath.SkipDir // como la toolchain: no es código del árbol
-				}
-				return nil
-			}
-			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-				return nil
-			}
-			fset := token.NewFileSet()
-			// 🔴 UN FICHERO QUE NO PARSEA NO SE SALTA EN SILENCIO. Saltarlo dejaría un
-			// agujero por el que un `if via` podría esconderse: bastaría un error de
-			// sintaxis para que este test dijera «todo bien».
-			f := parseFile(t, fset, p)
-			if f == nil {
-				return nil
-			}
-			scanned++
-			rel := "internal/" + strings.TrimPrefix(filepath.ToSlash(p), internalDir+"/")
-			ast.Inspect(f, func(n ast.Node) bool {
-				if site := asksForTheRoute(n); site != "" {
-					found[rel] = append(found[rel], site+" (línea "+strconv.Itoa(fset.Position(n.Pos()).Line)+")")
-				}
-				return true
-			})
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("recorriendo internal/%s: %v", root, err)
-		}
-		if scanned == before {
+		n := scanTree(t, root, found)
+		if n == 0 {
 			t.Errorf("internal/%s: recorridos = 0; el candado no encontró código que mirar ahí", root)
 		}
+		scanned += n
 	}
 	if scanned == 0 {
 		t.Fatal("recorridos = 0: el candado no miró ningún fichero")
@@ -167,6 +130,48 @@ func TestC2_TheRouteIsOnlyAskedInTheSelection(t *testing.T) {
 		slices.Sort(files)
 		t.Logf("ficheros que hoy preguntan por la vía: %v", files)
 	}
+}
+
+// scanTree recorre internal/<root>, apunta en found cada sitio que compara por vía y
+// devuelve cuántos ficheros de producción miró.
+func scanTree(t *testing.T, root string, found map[string][]string) int {
+	t.Helper()
+	scanned := 0
+	err := filepath.WalkDir(filepath.Join(internalDir, root), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir // como la toolchain: no es código del árbol
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		// 🔴 UN FICHERO QUE NO PARSEA NO SE SALTA EN SILENCIO. Saltarlo dejaría un
+		// agujero por el que un `if via` podría esconderse: bastaría un error de
+		// sintaxis para que este test dijera «todo bien».
+		f := parseFile(t, fset, p)
+		if f == nil {
+			return nil
+		}
+		scanned++
+		rel := "internal/" + strings.TrimPrefix(filepath.ToSlash(p), internalDir+"/")
+		ast.Inspect(f, func(n ast.Node) bool {
+			if site := asksForTheRoute(n); site != "" {
+				found[rel] = append(found[rel], site+" (línea "+strconv.Itoa(fset.Position(n.Pos()).Line)+")")
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("recorriendo internal/%s: %v", root, err)
+	}
+	return scanned
 }
 
 // parseFile devuelve el AST del fichero, o nil habiendo reportado el fallo. No devuelve
