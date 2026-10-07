@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package local_test
 
 import (
@@ -318,7 +316,7 @@ func TestTransportErrorComesBackIntact(t *testing.T) {
 			cause := &transportError{reason: edgegrpc.ReasonOllamaDown}
 			f := &fakeFrame{out: validOutput, err: cause}
 			got, err := sc.call(context.Background(), newProvider(t, f), llm.Options{})
-			if err != error(cause) {
+			if err != error(cause) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 				t.Fatalf("el error del transporte no volvió tal cual: %v", err)
 			}
 			var withReason interface{ Motivo() string }

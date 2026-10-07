@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package local_test
 
 // Los dobles que comparten los tests del paquete: el transporte falso, un error del cable

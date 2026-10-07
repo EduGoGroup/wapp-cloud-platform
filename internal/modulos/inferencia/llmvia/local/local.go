@@ -98,7 +98,6 @@ import (
 	"github.com/EduGoGroup/wapp-shared/llm"
 
 	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // DefaultFormat es el formato que se le pide al modelo cuando no se configura otro.
@@ -106,40 +105,6 @@ import (
 // reenvía verbatim al proveedor sin parsearlo, y los artefactos versionados los valida
 // el llamante en Go.
 const DefaultFormat = "json"
-
-// MargenVeredicto es lo que este adaptador RESERVA del plazo del llamante para que el
-// veredicto lo emita el Edge y no un corte del cliente. Vale 7 s.
-//
-// LA ARITMÉTICA, que es lo único que justifica el número:
-//
-//	ctx del llamante                    D
-//	timeout_ms que se le da al Edge     D − MargenVeredicto   (el Edge corta aquí)
-//	timer del gateway (awaitInference)  D − MargenVeredicto + edgegrpc.DefaultInferGrace
-//
-// 🔴 Promete MargenVeredicto > edgegrpc.DefaultInferGrace (R4.6.d), y un test lo
-// custodia en vez de confiarlo a este párrafo. Con esa desigualdad el timer del
-// gateway vence ANTES que el ctx, así que el desenlace es determinista: o llega el
-// INFERENCE_ERROR_TIMEOUT nombrado del Edge, o el gateway emite `timeout` CON motivo.
-// Lo que NUNCA pasa es que gane un `ctx.Done()`, que es edgegrpc.ErrInferenceAbandoned:
-// SIN motivo, SIN aviso al dueño, y mintiendo sobre la causa. Si los dos márgenes
-// fueran iguales, el veredicto lo decidiría el `select` de Go, que elige al azar entre
-// casos listos: el aviso al dueño saldría o no según la moneda.
-//
-// SIETE SEGUNDOS = DefaultInferGrace (5 s) + 2 s de colchón, que son exactamente el
-// MargenSocket del Edge y están aquí por lo mismo: cubrir un viaje de vuelta sin
-// depender de que nadie lo esté midiendo.
-const MargenVeredicto = 7 * time.Second
-
-// DefaultTimeout es la RED DE SEGURIDAD: el `Timeout` del frame cuando el llamante no
-// trae deadline. Vale 30 s. Es el caso RARO, no el normal.
-//
-// El camino normal es el pipeline, que SIEMPRE llama con deadline; en ese camino esta
-// constante no se lee nunca. Un ctx sin deadline llegando aquí es un test o un
-// llamante nuevo que se olvidó de acotar su propia espera, y para ese quedarse sin
-// techo sería peor que un techo arbitrario. Quien necesite otro lo fija con
-// WithTimeout — y si lo que quiere es que las inferencias del pipeline duren más, el
-// número que tiene que mover NO es este, sino el presupuesto del llamante.
-const DefaultTimeout = 30 * time.Second
 
 // ErrSinTransporte indica que el Provider se construyó sin cable. Es un fallo de
 // PROGRAMACIÓN del arranque, no de una llamada, y por eso New lo devuelve al construir
@@ -151,25 +116,6 @@ var ErrSinTransporte = errors.New("llmvia/local: el adaptador local necesita un 
 // Edge preguntar (INV-7/INV-8: el tenant no es opcional en ningún camino). El texto
 // es observable y no cambia.
 var ErrSinTenant = errors.New("llmvia/local: el adaptador local necesita un tenant")
-
-// ErrSinPresupuesto indica que al llamante ya no le queda plazo útil: lo que resta de
-// su deadline no supera MargenVeredicto, así que ninguna respuesta podría llegar a
-// tiempo de servirle. El texto es observable y no cambia.
-//
-// Quien lo devuelve lo ENVUELVE (errors.Is lo encuentra) con el detalle, en este
-// formato literal: "<ErrSinPresupuesto>: quedan <resto redondeado al milisegundo>, y
-// el margen del veredicto es <MargenVeredicto>".
-//
-// 🔴 NO SE LLAMA AL EDGE, y esa es la decisión. Mandar el frame igual gastaría un
-// command_id, un viaje por el stream y —lo caro— una plaza del Ollama del cliente
-// para producir algo que nadie va a estar esperando cuando llegue.
-//
-// Es un error PELADO, sin Motivo(), y eso también es deliberado: el escritor de avisos
-// de llmvia solo notifica lo que trae motivo, y aquí no hay ninguna degradación de la
-// vía que contarle al dueño. Su equipo está perfectamente; lo que se acabó fue el
-// presupuesto de quien preguntó. Es la misma familia que
-// edgegrpc.ErrInferenceAbandoned.
-var ErrSinPresupuesto = errors.New("llmvia/local: al llamante no le queda plazo para una inferencia")
 
 // Frame es el transporte: empuja el InferenceRequest por el stream CloudLink del
 // tenant y devuelve el JSON crudo del modelo, o un error.
@@ -227,7 +173,34 @@ type Frame interface {
 //   - la salida pasa por llm.ExtractJSON, el MISMO de la vía API: JSON envuelto en
 //     texto o en fences se aísla; sin JSON, llm.ErrLLMQuality (calidad, no
 //     infraestructura).
-type Provider struct{}
+type Provider struct {
+	frame    Frame
+	tenantID string
+	// templates son los textos de prompt AJUSTADOS que este proveedor debe usar,
+	// por etapa. Un mapa vacío o una etapa ausente significan «usa el compilado»,
+	// que es el caso normal: quien decide si hay ajuste es el arranque, no aquí.
+	//
+	// Se guarda el mapa y no una copia por etapa porque las cuatro entradas viven y
+	// mueren juntas: vienen de una sola carga de disco y no se tocan en caliente.
+	templates map[llm.Etapa]llm.Plantilla
+	format    string
+	// timeout es la RED DE SEGURIDAD, no un techo: solo se lee cuando el ctx del
+	// llamante no trae deadline (ver frameTimeout, en local_budget.go).
+	timeout time.Duration
+	// origin es la sesión de WhatsApp cuya conversación originó la pregunta, cuando
+	// se conoce. Viaja al frame como trazabilidad y, si está viva, es además el
+	// stream por el que sale. Vacía es un estado legítimo: la inferencia es de
+	// alcance Edge, no de sesión.
+	origin string
+	// target es el stream por el que se EXIGE que salga la petición, sin afirmar
+	// nada sobre quién preguntó. No viaja en el payload. Solo el calentamiento lo
+	// usa: ver WithTargetSession.
+	target string
+	// capsOutput dice si el Cloud pone el presupuesto de salida en el frame. Nace en
+	// true (New lo materializa) y solo lo apaga el interruptor de campo: ver
+	// WithMaxOutputTokens.
+	capsOutput bool
+}
 
 // Option configura el Provider al construirlo. Las opciones se aplican en el orden
 // en que se pasan a New, y la última gana.
@@ -236,18 +209,11 @@ type Option func(*Provider)
 // WithFormat fija el formato que se le pide al modelo. Vacío se ignora y queda el
 // que hubiera (DefaultFormat si nadie fijó otro).
 func WithFormat(f string) Option {
-	panic(pendiente.Implementar("local.WithFormat"))
-}
-
-// WithTimeout fija la RED DE SEGURIDAD (ver DefaultTimeout): el `Timeout` del frame
-// cuando el ctx del llamante NO trae deadline. Un valor <= 0 se ignora.
-//
-// ⚠️ NO es un techo sobre el plazo heredado, y cambiarlo para que lo fuera sería
-// reintroducir el defecto que este paquete arregló: un techo local puede quedarse por
-// debajo de lo que el llamante estaba dispuesto a esperar. Con deadline en el ctx,
-// esta opción no se lee.
-func WithTimeout(d time.Duration) Option {
-	panic(pendiente.Implementar("local.WithTimeout"))
+	return func(p *Provider) {
+		if f != "" {
+			p.format = f
+		}
+	}
 }
 
 // WithOriginSession fija la sesión de WhatsApp cuya conversación originó la pregunta.
@@ -255,22 +221,7 @@ func WithTimeout(d time.Duration) Option {
 // está viva, es además el stream por el que sale. Vacía es un estado legítimo y viaja
 // vacía: la inferencia es de alcance Edge, no de sesión.
 func WithOriginSession(sessionID string) Option {
-	panic(pendiente.Implementar("local.WithOriginSession"))
-}
-
-// WithMaxOutputTokens enciende o apaga el presupuesto de SALIDA que el Cloud fija por
-// tarea (campo 7 del frame). Por defecto está ENCENDIDO — New lo materializa —, así
-// que un Provider construido sin esta opción manda el techo de su etapa.
-//
-// 🔴 APAGA EL ENVÍO, NO BAJA EL NÚMERO: con `false` el frame lleva MaxOutputTokens 0
-// (campo ausente), en las cinco etapas Y en el calentamiento. Lo que hay que poder
-// reproducir es la conducta ANTERIOR a T1.7-3, y esa era «el Cloud no dice nada y el
-// Edge aplica su 256», no «el Cloud pide 256».
-//
-// Existe para el control A/B de campo en la MISMA tanda, no para ajustar nada: quien
-// quiera otro techo lo cambia en la tabla de etapas, que es donde está su aritmética.
-func WithMaxOutputTokens(on bool) Option {
-	panic(pendiente.Implementar("local.WithMaxOutputTokens"))
+	return func(p *Provider) { p.origin = sessionID }
 }
 
 // WithTargetSession fija POR DÓNDE debe salir la petición (InferRequest.TargetSessionID),
@@ -278,7 +229,7 @@ func WithMaxOutputTokens(on bool) Option {
 // calentamiento: ver ese campo de edgegrpc.InferRequest para por qué origen y destino
 // son campos distintos y no dos usos del mismo.
 func WithTargetSession(sessionID string) Option {
-	panic(pendiente.Implementar("local.WithTargetSession"))
+	return func(p *Provider) { p.target = sessionID }
 }
 
 // ConPlantillas inyecta los prompts ajustados que cargó el arranque, por etapa. Sin
@@ -295,7 +246,7 @@ func WithTargetSession(sessionID string) Option {
 // que el proceso llegue aquí. Este paquete NO revalida ni tiene con qué, así que un
 // cambio que se salte al cargador se salta también la red.
 func ConPlantillas(p map[llm.Etapa]llm.Plantilla) Option {
-	panic(pendiente.Implementar("local.ConPlantillas"))
+	return func(pr *Provider) { pr.templates = p }
 }
 
 // New construye el adaptador local para un tenant.
@@ -312,14 +263,36 @@ func ConPlantillas(p map[llm.Etapa]llm.Plantilla) Option {
 // destino y sin plantillas. Ninguna inferencia sale sin formato ni sin reloj.
 // No llama al Frame al construir.
 func New(frame Frame, tenantID string, opts ...Option) (*Provider, error) {
-	panic(pendiente.Implementar("local.New"))
+	if frame == nil {
+		return nil, ErrSinTransporte
+	}
+	if tenantID == "" {
+		return nil, ErrSinTenant
+	}
+	p := &Provider{frame: frame, tenantID: tenantID, format: DefaultFormat, timeout: DefaultTimeout,
+		capsOutput: true}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
+}
+
+// templateFor devuelve la plantilla ajustada de una etapa y si la hay. El caso sin
+// ajuste es el normal, así que no se loguea ni se cuenta: lo que merece una línea
+// de log es lo que SÍ se cargó, y eso lo dice el arranque una vez.
+func (p *Provider) templateFor(e llm.Etapa) (llm.Plantilla, bool) {
+	if p.templates == nil {
+		return llm.Plantilla{}, false
+	}
+	pl, ok := p.templates[e]
+	return pl, ok
 }
 
 // ClassifyRequest es la etapa P1: elige UNA intención del catálogo del tenant.
 // Prompt: llm.BuildClassifyRequestPrompt(in), siempre el compilado. Techo 192, clase
 // edgegrpc.ClassInteractive. Lo demás, lo que promete Provider.
 func (p *Provider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestInput, opts llm.Options) (json.RawMessage, error) {
-	panic(pendiente.Implementar("local.Provider.ClassifyRequest"))
+	return p.run(ctx, stageP1, llm.BuildClassifyRequestPrompt(in), opts)
 }
 
 // ExtractMainIdeas es la etapa P2: las ideas principales del hilo. Prompt:
@@ -327,7 +300,17 @@ func (p *Provider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestIn
 // plantilla de llm.EtapaP2 si ConPlantillas la trae. Techo 512, clase
 // edgegrpc.ClassBatch. Lo demás, lo que promete Provider.
 func (p *Provider) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeasInput, opts llm.Options) (json.RawMessage, error) {
-	panic(pendiente.Implementar("local.Provider.ExtractMainIdeas"))
+	return p.run(ctx, stageP2, p.extractMainIdeasPrompt(in), opts)
+}
+
+// extractMainIdeasPrompt arma el prompt de la etapa con la plantilla ajustada si la
+// hay, y con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí
+// solo se elige el texto.
+func (p *Provider) extractMainIdeasPrompt(in llm.ExtractMainIdeasInput) string {
+	if pl, ok := p.templateFor(llm.EtapaP2); ok {
+		return llm.BuildExtractMainIdeasPromptCon(pl, in)
+	}
+	return llm.BuildExtractMainIdeasPrompt(in)
 }
 
 // ExtractItemSpecs es la etapa P3: especifica UN ítem por llamada. Prompt:
@@ -335,7 +318,17 @@ func (p *Provider) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeas
 // plantilla de llm.EtapaP3 si ConPlantillas la trae. Techo 512, clase
 // edgegrpc.ClassBatch. Lo demás, lo que promete Provider.
 func (p *Provider) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecsInput, opts llm.Options) (json.RawMessage, error) {
-	panic(pendiente.Implementar("local.Provider.ExtractItemSpecs"))
+	return p.run(ctx, stageP3, p.extractItemSpecsPrompt(in), opts)
+}
+
+// extractItemSpecsPrompt arma el prompt de la etapa con la plantilla ajustada si la
+// hay, y con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí
+// solo se elige el texto.
+func (p *Provider) extractItemSpecsPrompt(in llm.ExtractItemSpecsInput) string {
+	if pl, ok := p.templateFor(llm.EtapaP3); ok {
+		return llm.BuildExtractItemSpecsPromptCon(pl, in)
+	}
+	return llm.BuildExtractItemSpecsPrompt(in)
 }
 
 // NormalizeQuantities es la etapa P4: cantidades, paquetes, rangos y fecha. Prompt:
@@ -344,7 +337,17 @@ func (p *Provider) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecs
 // cuya salida crece con el pedido Y repite el esquema entero de cada ítem—, clase
 // edgegrpc.ClassBatch. Lo demás, lo que promete Provider.
 func (p *Provider) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuantitiesInput, opts llm.Options) (json.RawMessage, error) {
-	panic(pendiente.Implementar("local.Provider.NormalizeQuantities"))
+	return p.run(ctx, stageP4, p.normalizeQuantitiesPrompt(in), opts)
+}
+
+// normalizeQuantitiesPrompt arma el prompt de la etapa con la plantilla ajustada si la
+// hay, y con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí
+// solo se elige el texto.
+func (p *Provider) normalizeQuantitiesPrompt(in llm.NormalizeQuantitiesInput) string {
+	if pl, ok := p.templateFor(llm.EtapaP4); ok {
+		return llm.BuildNormalizeQuantitiesPromptCon(pl, in)
+	}
+	return llm.BuildNormalizeQuantitiesPrompt(in)
 }
 
 // GenerateQuoteText es la etapa P5: redacta la cotización con la voz del negocio.
@@ -353,5 +356,45 @@ func (p *Provider) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuan
 // literalmente lo que el cliente lee por WhatsApp: el peor sitio donde ahorrar
 // tokens—, clase edgegrpc.ClassBatch. Lo demás, lo que promete Provider.
 func (p *Provider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTextInput, opts llm.Options) (json.RawMessage, error) {
-	panic(pendiente.Implementar("local.Provider.GenerateQuoteText"))
+	return p.run(ctx, stageP5, p.generateQuoteTextPrompt(in), opts)
+}
+
+// generateQuoteTextPrompt arma el prompt de la etapa con la plantilla ajustada si la
+// hay, y con la compilada si no. La composición la hace SIEMPRE el módulo llm: aquí
+// solo se elige el texto.
+func (p *Provider) generateQuoteTextPrompt(in llm.GenerateQuoteTextInput) string {
+	if pl, ok := p.templateFor(llm.EtapaP5); ok {
+		return llm.BuildGenerateQuoteTextPromptCon(pl, in)
+	}
+	return llm.BuildGenerateQuoteTextPrompt(in)
+}
+
+// run es el camino común de las cinco tareas: mandar el prompt por el cable y aislar
+// el JSON de lo que venga. Es la MISMA forma que anthropicProvider.run, y esa
+// simetría es el requisito C2, no una casualidad.
+//
+// Los dos pasos fallan con vocabularios distintos, igual que en la vía API: el
+// transporte devuelve un error con motivo de degradación (*edgegrpc.InferError) y
+// el aislado devuelve llm.ErrLLMQuality. Quien los distingue —y decide si se avisa
+// al dueño— es el decorador de llmvia; aquí solo se propagan sin envolver, para que
+// ni errors.Is ni el duck-typing del motivo se pierdan por el camino.
+func (p *Provider) run(ctx context.Context, st stage, prompt string, opts llm.Options) (json.RawMessage, error) {
+	timeout, err := p.frameTimeout(ctx)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := p.frame.Infer(ctx, p.tenantID, edgegrpc.InferRequest{
+		Prompt:          prompt,
+		Format:          p.format,
+		Temperature:     opts.Temperature,
+		Timeout:         timeout,
+		OriginSessionID: p.origin,
+		TargetSessionID: p.target,
+		MaxOutputTokens: p.outputCap(st),
+		Class:           st.class,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return llm.ExtractJSON(raw)
 }

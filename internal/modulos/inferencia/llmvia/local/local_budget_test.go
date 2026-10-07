@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package local_test
 
 // Los dos presupuestos del adaptador: el de TIEMPO (el plazo se hereda del llamante,
