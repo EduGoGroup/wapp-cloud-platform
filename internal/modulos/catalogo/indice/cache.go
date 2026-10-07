@@ -4,10 +4,16 @@ package indice
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/conversacion/model"
 )
 
 // cache.go — LA CACHÉ POR PROCESO DEL ÍNDICE, INVALIDADA POR CONTENIDO (D-044.44).
@@ -90,6 +96,12 @@ type LectorContenido interface {
 // observable.
 var ErrSinFuente = errors.New("catalogo: la caché necesita una Fuente de la que leer el documento")
 
+// contentSource adapta un LectorContenido a Fuente (en el viejo, fuenteContenido).
+type contentSource struct {
+	reader LectorContenido
+	ref    string
+}
+
 // NewFuenteContenido envuelve el lector de `tenant_content` que ya existe: su
 // LeerCatalogo pide al lector el contenido del tenant bajo `ref`, con el mismo
 // contexto y el mismo tenant, y devuelve esos bytes en Documento.Raw. Con `ref`
@@ -99,7 +111,19 @@ var ErrSinFuente = errors.New("catalogo: la caché necesita una Fuente de la que
 // El Documento que devuelve lleva el Sello a CERO, y es honesto que así sea: la
 // consulta de abajo no selecciona `updated_at`. Ver Documento.Sello.
 func NewFuenteContenido(lector LectorContenido, ref string) Fuente {
-	panic(pendiente.Implementar("indice.NewFuenteContenido"))
+	if ref == "" {
+		ref = RefCatalogo
+	}
+	return contentSource{reader: lector, ref: ref}
+}
+
+// LeerCatalogo implementa Fuente sobre el lector de contenido de tenant.
+func (f contentSource) LeerCatalogo(ctx context.Context, tenantID string) (Documento, error) {
+	raw, err := f.reader.GetTenantContent(ctx, tenantID, f.ref)
+	if err != nil {
+		return Documento{}, err
+	}
+	return Documento{Raw: raw}, nil
 }
 
 // Estadisticas son los contadores de la caché. Van al log del worker y son lo que
@@ -118,6 +142,15 @@ type Estadisticas struct {
 	Desalojos uint64
 }
 
+// cacheEntry es un índice vivo más su marca de último uso (en el viejo,
+// entradaCache): el reloj lógico de la caché, no el de pared. Para ordenar por
+// antigüedad de uso no hace falta la hora, y un contador no se ve afectado por un
+// salto del reloj del sistema.
+type cacheEntry struct {
+	index   *Indice
+	lastUse uint64
+}
+
 // Cache es la caché por proceso de índices de catálogo, una entrada por tenant.
 //
 // ⚠️ ES POR PROCESO, y eso es una decisión, no un descuido. Con dos réplicas del
@@ -127,7 +160,16 @@ type Estadisticas struct {
 // documento y llegan al mismo índice; solo se paga dos veces un trabajo barato.
 //
 // Es segura para uso concurrente.
-type Cache struct{}
+type Cache struct {
+	source    Fuente
+	normalize Normalizador
+	limit     int
+
+	mu      sync.Mutex
+	clock   uint64
+	entries map[string]*cacheEntry
+	stats   Estadisticas
+}
 
 // NewCache construye la caché, vacía y con los contadores a cero. `max` es cuántos
 // tenants guarda a la vez; `max` <= 0 cae a MaxTenantsEnCache: igual que en el
@@ -140,7 +182,16 @@ type Cache struct{}
 //     VerificarNormalizador (ErrSinNormalizador, o uno que envuelve
 //     ErrNormalizadorInvalido).
 func NewCache(fuente Fuente, normalizar Normalizador, max int) (*Cache, error) {
-	panic(pendiente.Implementar("indice.NewCache"))
+	if fuente == nil {
+		return nil, ErrSinFuente
+	}
+	if err := VerificarNormalizador(normalizar); err != nil {
+		return nil, err
+	}
+	if max <= 0 {
+		max = MaxTenantsEnCache
+	}
+	return &Cache{source: fuente, normalize: normalizar, limit: max, entries: make(map[string]*cacheEntry, max)}, nil
 }
 
 // Obtener devuelve el índice del catálogo del tenant, construyéndolo solo si el
@@ -189,15 +240,115 @@ func NewCache(fuente Fuente, normalizar Normalizador, max int) (*Cache, error) {
 // queda como estaba —si el tenant tenía un índice de un contenido anterior, ahí
 // sigue— y el siguiente job vuelve a intentarlo.
 func (c *Cache) Obtener(ctx context.Context, tenantID string) (*Indice, error) {
-	panic(pendiente.Implementar("indice.Cache.Obtener"))
+	// La lectura va FUERA del candado: es la única operación con I/O de todo el
+	// método y retenerlo durante un round-trip a Postgres bloquearía a los demás
+	// tenants por algo que no es suyo.
+	doc, err := c.source.LeerCatalogo(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("catalogo: leer el documento del tenant %q: %w", tenantID, err)
+	}
+	h := fingerprint(doc.Raw)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if e, ok := c.entries[tenantID]; ok && e.index.hash == h {
+		c.stats.Aciertos++
+		c.clock++
+		e.lastUse = c.clock
+		return e.index, nil
+	}
+
+	idx, err := c.index(doc, h)
+	if err != nil {
+		return nil, fmt.Errorf("catalogo: tenant %q: %w", tenantID, err)
+	}
+
+	c.stats.Construcciones++
+	c.clock++
+	c.entries[tenantID] = &cacheEntry{index: idx, lastUse: c.clock}
+	c.evict()
+	return idx, nil
+}
+
+// index parsea el documento crudo y construye el índice (en el viejo, indexar). Se
+// hace CON el candado tomado a propósito: sin I/O de por medio es un trabajo
+// acotado (O(artículos), con el tope de MaxArticulos encima), y hacerlo dentro es
+// lo que garantiza que dos llamadas simultáneas del mismo tenant no construyan dos
+// veces.
+func (c *Cache) index(doc Documento, h string) (*Indice, error) {
+	cat, err := parse(doc.Raw)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := Construir(cat, c.normalize)
+	if err != nil {
+		return nil, err
+	}
+	idx.hash, idx.stamp = h, doc.Sello
+	return idx, nil
+}
+
+// evict tira los índices menos usados hasta caber en el tope (en el viejo,
+// desalojar). Se llama con el candado tomado.
+func (c *Cache) evict() {
+	for len(c.entries) > c.limit {
+		var victim string
+		var oldest uint64
+		for k, e := range c.entries {
+			if victim == "" || e.lastUse < oldest {
+				victim, oldest = k, e.lastUse
+			}
+		}
+		delete(c.entries, victim)
+		c.stats.Desalojos++
+	}
 }
 
 // Estadisticas devuelve una copia de los contadores.
 func (c *Cache) Estadisticas() Estadisticas {
-	panic(pendiente.Implementar("indice.Cache.Estadisticas"))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats
 }
 
 // Tamano es cuántos catálogos hay cacheados ahora mismo. Nunca pasa del tope.
 func (c *Cache) Tamano() int {
-	panic(pendiente.Implementar("indice.Cache.Tamano"))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
+
+// fingerprint es la identidad del contenido (en el viejo, huella): SHA-256 en
+// hexadecimal de los bytes del documento.
+//
+// No es un hash criptográfico por paranoia sino por AUSENCIA DE COLISIONES: un
+// resumen barato (longitud, CRC de los primeros bytes) daría por iguales dos
+// catálogos que solo difieren en un precio, y el síntoma sería cobrar el precio
+// viejo indefinidamente. El coste es de un documento de como mucho 1 MiB
+// (`catalogimport.DefaultMaxJSONBytes`) una vez por job, no por ítem.
+func fingerprint(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// parse lleva el documento crudo al árbol tipado del catálogo (en el viejo,
+// parsear).
+//
+// 🔴 SÍ, PAGA EL ROUND-TRIP DE `catalogo.ParseCatalog` (bytes → map → bytes →
+// tipos): esa función recibe `model.Content.Raw`, que es un `map[string]any`, y
+// re-serializa por dentro. No se evita reimplementando el parseo aquí, y no se
+// debe: `ParseCatalog` es el parser TOLERANTE del v2 —descarta lo mal formado con
+// aviso en vez de dejar al tenant sin catálogo, rechaza el prefijo de sku reservado
+// del sistema, resuelve variantes y combos— y un segundo parser divergiría de él en
+// silencio.
+//
+// Lo que esta pieza cambia no es el coste del parseo: es CUÁNTAS VECES se paga. Una
+// por contenido, en vez de una por ítem.
+func parse(raw []byte) (catalogo.Catalog, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return catalogo.Catalog{}, fmt.Errorf("el documento del catálogo no es un objeto JSON: %w", err)
+	}
+	return catalogo.ParseCatalog(model.Content{Raw: m})
 }
