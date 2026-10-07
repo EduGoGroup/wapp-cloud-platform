@@ -482,9 +482,14 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
 82. **No llevado o no afirmable de caja negra**: la mitad de R-C5 «un push fallido no cambia la respuesta HTTP»; el 504 y
     los 409 de `flows/start`; `tenant_mismatch` por canal sin identidad (el mTLS estricto lo impide) e `internal` sin
     autenticador; `UserLogout` con `all_sessions`; la firma del access token (se comprueba el `kid` y que `whoami` lo
-    acepta). **No corrido**: ninguna comprobación por mutante del test del cruce entre Edge (HS-14/HS-15): detectaría
-    una respuesta ajena por claims y por buzón, pero no se le vio morder. Ya cubierto antes y no duplicado: push de
-    filtros (P9, P3), migraciones idempotentes (P10), CA ajena (P1).
+    acepta). Ya cubierto antes y no duplicado: push de filtros (P9, P3), migraciones idempotentes (P10), CA ajena (P1).
+    ✅ **El mutante del cruce entre Edge (HS-14/HS-15) se corrió el 2026-10-06, con permiso de Jhoan**: en
+    `edge/grpc/auth.go`, toda respuesta de auth sale por el stream del primer Edge que hizo login, en vez de por
+    `cc.sender`. `TestP1_OperatorLoginOverControlChannel` contra el **nuevo**: rc=1, rojo en
+    `concurrent_logins_each_edge_gets_its_own` («no llegó el UserAuthResponse … al Edge»); contra el **viejo**, que no
+    lleva el mutante, rc=0 (control). Muere por la respuesta que **no llega** al Edge que la pidió, a los 15 s del tope,
+    y ese primer fallo detiene el proceso: las aserciones de claims y de buzón no llegaron a evaluarse con este mutante.
+    Mutante deshecho con `git checkout`; árbol limpio.
 83. **Las tres diferencias intencionadas (D-F3-9, D-F3-10, D-F3-11) no se comparan entre binarios**: los casos se
     diseñaron para no depender de ellas (en R-G21 los dos Edge están en la flota y no reconectaron). **Orquestación**:
     cuatro sub-agentes en *worktrees* puestos en el SHA de `dev`, en paralelo y sobre el mismo paquete `procesos`, con

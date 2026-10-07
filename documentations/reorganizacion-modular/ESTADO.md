@@ -399,7 +399,10 @@ producción, ni del código viejo, ni `go.mod`.
 - **Gates** (rc leído del log): `make toolchain` `TOOLCHAIN=OK`; `make test-procesos` **viejo `RC=0 · PASS=812 · FAIL=0 ·
   SKIP=0`, nuevo igual**; `make ci-local` rc=0 (145 `ok`, lint 0 issues; cobertura, informe: `FICHEROS_EVALUADOS=136`,
   `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`.
-- **No corrido**: una comprobación por mutante del test del cruce entre Edge (HS-14/HS-15); `make test-integration`
+- ✎ **El mutante del cruce entre Edge (HS-14/HS-15) sí se corrió** al final, con permiso de Jhoan: respuesta de auth
+  por el stream del primer Edge → `TestP1_OperatorLoginOverControlChannel` rc=1 contra el nuevo (la respuesta no llega
+  a quien la pidió), rc=0 contra el viejo; deshecho, árbol limpio (hallazgo 82).
+- **No corrido**: `make test-integration`
   viejo (no se tocó código compartido); el SKIP con `-v` sobre `internal/modulos/...` suelto. 🟡 Por decidir: hallazgo 81
   (parada de ≈ 10 s con Edge conectados); el 75 se resolvió en el mismo PR (abajo).
 - ✎ **Dos hallazgos corregidos en el mismo PR** (decisión de Jhoan, 2026-10-06): el **75** (`61ded8b`: los `helpertest`
