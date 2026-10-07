@@ -68,9 +68,9 @@ func (m *Memoria) Get(_ context.Context, tenantID string) (tenantllm.Config, boo
 // Upsert implementa tenantllm.Store, con las tres guardas del adaptador y sus textos: un doble
 // que aceptara lo que Postgres rechaza dejaría ciegos a los tests que se apoyan en él.
 func (m *Memoria) Upsert(_ context.Context, cfg tenantllm.Config, apiKey string, consentedAt time.Time) error {
-	// La vía se compara con los dos literales y NO con tenantllm.ValidVia: el doble nace
-	// completo en el commit rojo, cuando ValidVia todavía es un contrato sin lógica.
-	if cfg.Via != tenantllm.ViaLocal && cfg.Via != tenantllm.ViaAPI {
+	// La misma guarda que el adaptador, con la misma función: si el vocabulario de vías cambia,
+	// el doble cambia con él y no por su cuenta.
+	if !tenantllm.ValidVia(cfg.Via) {
 		return fmt.Errorf("tenantllm: upsert de %s con vía %q: fuera del vocabulario (%s|%s)",
 			cfg.TenantID, cfg.Via, tenantllm.ViaLocal, tenantllm.ViaAPI)
 	}
