@@ -213,3 +213,20 @@ func TestTurno_WithoutFrameFailsWithTheUsualError(t *testing.T) {
 	}
 	requireSilence(t, book, falls)
 }
+
+// TestTurno_AFailureReturnsNoText: fallo del frame ⇒ ("", ese error). Aunque el transporte
+// devolviera texto JUNTO al error, al llamante no le llega: un turno que falló no trae una
+// respuesta a medias que alguien pudiera interpretar.
+func TestTurno_AFailureReturnsNoText(t *testing.T) {
+	t.Parallel()
+	failure := &transportError{"timeout"}
+	s := newSelector(t, tenantllmhelpertest.NewMemoria(), llmvia.WithFrame(&fakeFrame{out: `{"a medias`, err: failure}))
+
+	raw, err := s.Turno(context.Background(), testTenant, "s-1", turnRequest())
+	if !errors.Is(err, failure) {
+		t.Fatalf("Turno = %v, quería el error del transporte", err)
+	}
+	if raw != "" {
+		t.Errorf("raw = %q junto a un error: quería la cadena vacía", raw)
+	}
+}
