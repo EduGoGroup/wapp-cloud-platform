@@ -79,7 +79,9 @@ func serveHold(t *testing.T) (*grpc.Server, *holdService) {
 	go func() { served <- gs.Serve(lis) }()
 	t.Cleanup(func() {
 		gs.Stop()
-		awaitWire(t, served, "Serve vuelve")
+		if err := awaitWire(t, served, "Serve vuelve"); err != nil {
+			t.Errorf("Serve: %v", err)
+		}
 	})
 
 	conn, err := grpc.NewClient("passthrough:///hold",
@@ -88,7 +90,11 @@ func serveHold(t *testing.T) (*grpc.Server, *holdService) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Logf("cerrando el cliente: %v", err)
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if _, err := conn.NewStream(ctx, &holdStream, "/arranque.test.Hold/Hold"); err != nil {

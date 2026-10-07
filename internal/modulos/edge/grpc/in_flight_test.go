@@ -175,9 +175,19 @@ func TestInFlightIsSafeUnderConcurrency(t *testing.T) {
 			}
 		}
 	}()
+	// Los resultados no importan —cada uno acaba por su reloj o por la caída, según le pille—:
+	// lo que se afirma es la cifra mientras tanto y al final.
 	for range rounds {
-		writers.Go(func() { _, _ = rig.srv.SendText(context.Background(), "s-1", "57301", "hola") })
-		writers.Go(func() { _, _ = rig.srv.Infer(context.Background(), "t-1", inferOf(time.Nanosecond)) })
+		writers.Go(func() {
+			if _, err := rig.srv.SendText(context.Background(), "s-1", "57301", "hola"); err == nil {
+				t.Error("un envío que nadie acusa volvió sin error")
+			}
+		})
+		writers.Go(func() {
+			if _, err := rig.srv.Infer(context.Background(), "t-1", inferOf(time.Nanosecond)); err == nil {
+				t.Error("una inferencia que nadie contesta volvió sin error")
+			}
+		})
 		writers.Go(func() { rig.srv.cancelSessionAcks("s-1"); rig.srv.cancelSessionInfers("s-1") })
 	}
 	writers.Wait()

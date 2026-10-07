@@ -294,7 +294,8 @@ func TestShutdownAllOnlyTheCloudLinkLooksAtTheCounter(t *testing.T) {
 		}
 
 		// Dos http.Server sin arrancar: su Shutdown vuelve en el acto.
-		shutdownAll(&http.Server{}, &http.Server{}, enroll, connect, counter, log)
+		idle := func() *http.Server { return &http.Server{ReadHeaderTimeout: readHeaderTimeout} }
+		shutdownAll(idle(), idle(), enroll, connect, counter, log)
 
 		enroll.requireStop(t, "enroll", 1, shutdownTimeout)
 		connect.requireStop(t, "cloudlink", 1, shutdownTimeout+quietWindow)
