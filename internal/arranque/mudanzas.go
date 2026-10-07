@@ -18,9 +18,9 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 
 // FaseActual es la última fase de la reconstrucción cuyas rutas del :8103 sirve la
 // cara nueva: 0 en F0 (la cara nace vacía y todo cae al publicapi viejo), 2 tras
-// conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, … 8 tras conmutar conversacion. La fase de una fila del mapa se
+// conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, 5 tras la conmutación nominal de catalogo (no muda ninguna ruta), … 8 tras conmutar conversacion. La fase de una fila del mapa se
 // escribe «F<n>»; la fila pertenece a la cara nueva si n ≤ FaseActual.
-const FaseActual = 4
+const FaseActual = 5
 
 // newFaceDeps es todo lo que la cara nueva necesita para montar sus áreas, agrupado por
 // el Mount* que lo recibe. Lo arma buildPublicAPIServer (http.go) con los servicios de los

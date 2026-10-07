@@ -183,10 +183,11 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F3
 // (conmutar(edge)), FaseActual = 3 y la cara sirve 29 rutas: las 23 de acceso (A1–A7, B1–B14,
 // C1–C2) y las 6 de edge (D1–D6). Desde F4 (conmutar(inferencia)), FaseActual = 4 y sirve 33:
-// además las 4 de inferencia (F1–F4).
+// además las 4 de inferencia (F1–F4). Desde F5 (conmutar(catalogo)), FaseActual = 5 y siguen
+// siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 4 {
-		t.Fatalf("FaseActual = %d; conmutar(inferencia) la deja en 4 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 5 {
+		t.Fatalf("FaseActual = %d; conmutar(catalogo) la deja en 5 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
