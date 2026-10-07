@@ -10,6 +10,12 @@
 > nombraba con `…test` (`degradationtest`, `tenantllmtest`): se actualizó el sufijo, nada más.
 >
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
+>
+> ✎ **Estado al 2026-10-07 (F45-02): CONMUTADA, sin cerrar.** `internal/modulos/inferencia` entero en verde (F45-01); el
+> arranque nuevo construye el selector, los almacenes y la carga de prompts nuevos y la cara `apipublica` sirve las 4
+> rutas F1–F4 (`98b24c5`); `FaseActual = 4` (hoy `5`, por F5). El adaptador `internal/arranque/bridge_inferencia.go`
+> vive hasta **F8** (`llmConfigBridge` muere en F7; `turneroBridge`, y con él el fichero, en F8), así que `inferencia`
+> sigue fuera de `Conmutados`. `bridge_gateway.go` de F3 está borrado. **Queda el cierre F45-03** (T4.29–T4.31 = T9.25).
 
 ## Objetivo en tres líneas
 
@@ -154,3 +160,64 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
     Otras del código viejo que el contrato escribe tal cual: un marcador repetido dentro de su sección de plantilla no
     da error (`internal/prompts/prompts.go:278-287`); `Volcar` no es atómico (`volcar.go:55-70`); la rama «cerrar
     filas» de `degradation.List` solo es alcanzable con un driver que deja otro conjunto de resultados pendiente.
+
+### F45-02 (2026-10-07; rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`)
+
+12. **T4.24 no es separable de TX.14.** Al cambiar los tipos del contenedor, `internal/arranque/fase8_transporte.go`
+    (los campos `TenantLLM` y `DegradationNotices` de `publicapi.Deps`) deja de compilar, y ponerlos a `nil` sin montar
+    F1–F4 en la cara nueva rompe `TestHuella`. Se fundieron en `98b24c5`, con `FaseActual = 4` (lo exige `mudanzas.go`:
+    la fase sube en el commit que monta las rutas). La lista de ficheros de T4.24 omite `fase8_transporte.go`, `http.go`
+    y `mudanzas*.go`.
+13. **T4.28 quedó sin contenido propio.** `internal/modulos/edge/grpc/inference_test.go` ya no importa `degradation`
+    (vocabulario escrito a mano); no se crea la arista `edge → inferencia`; el `grep` de su «Hecho cuando» solo casa la
+    entrada del `Mapa` en `fronteras_test.go`. Su `FaseActual = 4` viajó en `98b24c5`.
+14. **`gateway_wiring_test.go` no estaba en la lista de T4.24** y se rompía al borrar `bridge_gateway.go` (exigía
+    `*gatewayBridge` por reflexión; lo avisaba el hallazgo 11): reescrito en `98b24c5`; añade el campo `router` del
+    selector al test de identidad.
+15. 🟡 **`edge` no entra en `Conmutados`** (decisión (a) de Jhoan, 2026-10-07: entraba en T4.24 **salvo** que obligara a
+    tocar aserciones de `session_identity_test.go`; la salvedad se cumplió). `internal/arranque/session_identity_test.go:7`
+    importa `internal/gateway/session` viejo y 3 de sus 4 aserciones nombran el centinela viejo `ErrSessionOffline`: la
+    regla 3 lo pondría rojo. `Conmutados` sigue `{"acceso"}`. El comentario de `internal/modulos/fronteras_test.go`
+    (antes «edge no entra hasta F4») se actualizó. Contradice [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7
+    (`:83-85`). **Pendiente de Jhoan**: qué se hace con ese test (muere, se mueve o excepción).
+16. **Forma del adaptador.** `llmConfigBridge` guarda una interfaz mínima no exportada (`llmConfigReader`, solo `Get`)
+    para probarse sin BD; `inference_wiring_test.go` afirma por reflexión que lo cableado es el `*tenantllm.Postgres`
+    nuevo. `turneroBridge` guarda el `*llmvia.Selector` concreto. El centinela se traduce reutilizando `bridgeError` de
+    `bridge_contact.go`. Dos alias de import en el adaptador (`legacyllm`, `legacytenantllm`).
+17. **Test de cableado completo** en `internal/arranque/inference_wiring_test.go` (nombres `TestCableado_…` /
+    `TestIdentidad_…`, seleccionables por el gate estrecho). Comprobado por mutación a mano por el orquestador: turnero
+    sin selector, adaptador de config sin almacén, selector sin `WithFrame` y `FaseActual` a 3 dan rojo las cuatro
+    (`TestIdentidad_TheBridgesWrapTheContainerInstances`, `TestIdentidad_EveryConsumerSharesTheOneSelector`,
+    `TestTurnoAcotadoCableado`, `TestIdentidad_EveryConsumerSharesTheOneGateway`, `TestMudanzas_FaseActual`,
+    `TestMudanzas_HuellaPorElCompuesto`).
+18. **`internal/arranque/prompts.go` no tenía test** (nace `prompts_test.go` en `0e532e4`). `prompts.Volcar` escribe en
+    el preámbulo el texto `"package_size": 0` (`internal/modulos/inferencia/prompts/volcar.go:138`): para fabricar la
+    plantilla inválida se reemplaza `"package_size": 30`.
+19. **De los tests de cableado copiados (T4.27) solo cambió `turno_acotado_cableado_test.go`.**
+    `pipeline_captacion_cableado_test.go:156` es la única aserción copiada sobre el selector compartido y es por nombre;
+    la identidad real la cubre ahora `inference_wiring_test.go`.
+20. **El `grep` literal de [`reglas.md`](reglas.md) §4.7 casa también constantes de texto en tests**: en
+    `inference_wiring_test.go` las rutas viejas se componen con un prefijo.
+21. **`apipublica`**: `tenantllm.go` nace partido (`tenantllm_body.go` + gemelo) por E-13; entrada nueva en el C2
+    (`internal/modulos/inferencia/llmvia/c2_via_test.go`); primer uso de `entitlements.RequireFeature` en la cara nueva
+    (el resolver llega por `Deps`, no por `Common`); orden de cadena reproducido: Authenticate → RequirePermission →
+    (escrituras) auditoría → gate de feature → handler, así que en PUT/DELETE el 403 del gate deja registro de auditoría
+    `failure` y en los GET no. `upsertDesde` → `upsertFrom` (E-11).
+22. 🟡 **Conservado del viejo y fijado por test, candidato a decisión**: el plazo vencido en
+    `GET /degradation-notices` responde 500, no 504 (`internal/publicapi/degradationnotices.go:150-153`);
+    PUT/DELETE/relectura de `tenant-llm` sin plazo de BD (`internal/publicapi/tenantllm.go:188,252,259,319`).
+23. **No portado en `apipublica` (ramas inalcanzables)**: `ts == nil ⇒ 500` (`publicapi/tenantllm.go:184,237,315`),
+    `lister == nil ⇒ 500` (`degradationnotices.go:142`), `if offset < 0` (`:191-193`).
+24. **Restos en el arranque.** `internal/arranque/fase8_transporte.go:1-3`: la cabecera sigue diciendo «salvo acceso y
+    edge» (no actualizada para inferencia). `internal/arranque/http.go:47`: `buildPublicAPIServer` va por 9 parámetros,
+    uno más por fase que muda rutas: conviene un struct antes de F6–F8.
+25. **Lint.** `make lint` no ve los tests tras `//go:build pendiente`: los avisos aparecen al quitar la etiqueta
+    (hallazgo 8). Para verlos en rojo: `.bin/golangci-lint run --build-tags pendiente` (solo informativo). Y el candado
+    global de `golangci-lint` dio un `rc=2` espurio («parallel golangci-lint is running») con sub-agentes en paralelo:
+    reintentar (hallazgo 7).
+26. **Huella con `FaseActual = 4` y `5`: idéntica sin tocar la dorada**; perfiles `minimo` y `con-m2m`:
+    `:8100=22 :8103=73 rpc=2 metricas=11`. La cara nueva sirve 33 rutas (23 de acceso + 6 de edge + 4 de inferencia).
+
+**Decisiones de Jhoan en la sesión (2026-10-07)**: (a) `edge` y `Conmutados`, hallazgo 15; (b) `catalogo` no entra en
+`Conmutados` hasta F7 y (c) D-F5-2 sin ampliar el motor de fronteras, en el [README de F5](../F5-catalogo/README.md).
+Las tres, en [`DECISIONES.md`](../DECISIONES.md) §5 y §7.

@@ -94,27 +94,34 @@ Para cuando: `internal/modulos/inferencia` entero sin etiqueta; C2 nuevo en verd
 ## Sesión F45-02 · adaptador, conmutar y mudar las 4 rutas · 🌐 · T4.10, T4.24–T4.28 (+ TX.12–TX.14)
 Para cuando: la huella del arranque nuevo es idéntica a la del viejo con `FaseActual = 4`; el test de cableado de `bridge_inferencia.go` verde; gate ci-local rc=0. (La misma sesión sigue con F5 entero.)
 
-- [ ] **T4.10 · arranque: `bridge_inferencia.go` y su test de traducción** · 🌐 · dep. T4.18, T4.22 · cumple R4.7.c
+> ✅ **Hecha el 2026-10-07** (💻, rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`). Orden real de los
+> commits: T4.10 → TX.12 → TX.13 → T4.24 (+ TX.14 + `FaseActual = 4`) → T4.25 → T4.26 → T4.27. T4.24 y TX.14 no son
+> separables y T4.28 quedó sin contenido propio (hallazgos 12 y 13 del [README](README.md)).
+> **E-11**: en `apipublica/tenantllm.go`, `upsertDesde` → `upsertFrom` (`c619013`); en el adaptador, los alias de import
+> `legacyllm` y `legacytenantllm` y el puerto no exportado `llmConfigReader`; los tests de cableado nuevos se llaman
+> `TestCableado_…` / `TestIdentidad_…` (los selecciona el gate estrecho).
+
+- [x] (`65f5348`) **T4.10 · arranque: `bridge_inferencia.go` y su test de traducción** · 🌐 · dep. T4.18, T4.22 · cumple R4.7.c
   - **Ficheros**: `internal/arranque/bridge_inferencia.go`, `bridge_inferencia_test.go`
   - **Nivel**: simple (`05` §4.2): contrato, test y lógica en una pasada, sin estado
   - **Hecho cuando**: `var _ turnoacotado.Turnero = (*turneroBridge)(nil)` y `var _ reanalisis.ConfigLLM = (*llmConfigBridge)(nil)` compilan; el test afirma la traducción del centinela y la conversión campo a campo de `Config`
   - **Gate**: gate verde · **Commit**: `verde(arranque): bridge_inferencia`
-- [ ] **T4.24 · conmutar(inferencia): el arranque nuevo construye los paquetes nuevos** · 🌐 · dep. T4.23, T4.10 · cumple R4.7.a, R4.7.b
+- [x] (`98b24c5`; funde TX.14 y el `FaseActual = 4` de T4.28; toca además `fase8_transporte.go`, `http.go`, `mudanzas.go`, `mudanzas_test.go` y `gateway_wiring_test.go`, que la lista de abajo omite) **T4.24 · conmutar(inferencia): el arranque nuevo construye los paquetes nuevos** · 🌐 · dep. T4.23, T4.10 · cumple R4.7.a, R4.7.b
   - **Ficheros**: en `internal/arranque/`: la copia de `fase3_almacenes.go` (stores nuevos), `prompts.go` (cargador nuevo), `fase5_captacion.go` (`construirSelectorDeVia` con el paquete nuevo y `c.gw` directo), `contenedor.go` (tipos de los campos), y **se borra** el adaptador de `local.Frame` de F3 (`bridge_gateway.go`) con su test
   - **Hecho cuando**: `arquitectura.md` §6 aplicado tal cual (orden de fases y `requiere()` sin cambio, D-F4-3); `grep -rn 'internal/llmvia\b\|internal/tenantllm"\|internal/degradation"\|internal/prompts"' internal/arranque --include='*.go'` solo en `bridge_inferencia*.go`
   - **Gate**: gate ci-local + huella · **Commit**: `conmutar(inferencia): el arranque nuevo cablea inferencia`
-- [ ] **T4.25 · verde(arranque): cableado de `bridge_inferencia.go` y su test de cableado** · 🌐 · dep. T4.24 · cumple R4.7.b, R4.7.c
+- [x] (`c2f469a`; el test vive en `internal/arranque/inference_wiring_test.go`, aparte de `bridge_inferencia_test.go` por E-13) **T4.25 · verde(arranque): cableado de `bridge_inferencia.go` y su test de cableado** · 🌐 · dep. T4.24 · cumple R4.7.b, R4.7.c
   - **Hecho cuando**: `turnoacotado.New(&turneroBridge{…})` y `reanalisis.NewServicio(…, &llmConfigBridge{…})` en la copia de `fase5_captacion.go`; el **test de cableado completo** (hallazgo 39) afirma que el arranque construye el selector y los almacenes **nuevos** *y* que ninguna fase importa `internal/{llmvia,tenantllm,degradation,prompts}` viejos fuera del adaptador (grep por ruta de import), no solo el campo del contenedor
   - **Gate**: gate verde · **Commit**: `verde(arranque): cableado de bridge_inferencia`
-- [ ] **T4.26 · test del arranque: una plantilla inválida aborta y el log dice el origen** · 🌐 · dep. T4.24 · cumple R4.3.c, R4.3.d
+- [x] (`0e532e4`; nace `internal/arranque/prompts_test.go`, que no existía) **T4.26 · test del arranque: una plantilla inválida aborta y el log dice el origen** · 🌐 · dep. T4.24 · cumple R4.3.c, R4.3.d
   - **Hecho cuando**: el test de la copia de `prompts.go` monta un dir con `"package_size": 0` y afirma error con prefijo `prompts ajustables de P2-P5: ` que envuelve `prompts.ErrPromptsDir` nuevo; con dir válido, la línea `prompts: plantillas de las etapas ajustables` trae `p2…p5`
   - **Gate**: gate ci-local · **Commit**: `verde(arranque): prompts aborta el arranque`
-- [ ] **T4.27 · los tests de cableado copiados apuntan al selector nuevo** · 🌐 · dep. T4.25 · cumple R4.7.b
+- [x] (`75298b8`; solo cambió `turno_acotado_cableado_test.go`) **T4.27 · los tests de cableado copiados apuntan al selector nuevo** · 🌐 · dep. T4.25 · cumple R4.7.b
   - **Ficheros**: las copias de F0 de `turno_acotado_cableado_test.go`, `calentamiento_cableado_test.go`, `quotetext_cableado_test.go`, `pipeline_captacion_cableado_test.go` (solo lo que nombra tipos o paquetes de inferencia)
   - **Hecho cuando**: siguen afirmando **un** selector compartido por etapas, aforo, `quotetext`, `intakeahead` y el turno; verdes
   - **Gate**: gate ci-local · **Commit**: `conmutar(inferencia): cableado del selector en los candados del arranque`
-- [ ] **TX.12–TX.14** de [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md): `apipublica/tenantllm.go` y `degradationnotices.go` (rojo, verde, conmutar las filas F1–F4). **En el verde de `apipublica/tenantllm.go`** se añade su entrada a la lista del C2 nuevo (compara por vía: `publicapi/tenantllm.go` es permitido hoy). Con D-F4-1 aplicada, el C2 viejo no lo ve.
-- [ ] **T4.28 · el test de vocabulario de `edge/grpc` apunta al `degradation` nuevo; `FaseActual = 4`** · 🌐 · dep. TX.14 · cumple R4.7.a, R4.7.e
+- [x] (TX.12 `fee3ed2` · TX.13 `c619013`, `23a7d92` · TX.14 `98b24c5`) **TX.12–TX.14** de [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md): `apipublica/tenantllm.go` y `degradationnotices.go` (rojo, verde, conmutar las filas F1–F4). **En el verde de `apipublica/tenantllm.go`** se añade su entrada a la lista del C2 nuevo (compara por vía: `publicapi/tenantllm.go` es permitido hoy). Con D-F4-1 aplicada, el C2 viejo no lo ve.
+- [x] (`98b24c5`, sin commit propio: `FaseActual = 4` viajó con T4.24; el test de F3 `internal/modulos/edge/grpc/inference_test.go` no importa `degradation` —vocabulario escrito a mano— y no se toca, así que no nace la arista `edge → inferencia`; el `grep` de «Hecho cuando» solo casa la entrada del `Mapa` de `fronteras_test.go`) **T4.28 · el test de vocabulario de `edge/grpc` apunta al `degradation` nuevo; `FaseActual = 4`** · 🌐 · dep. TX.14 · cumple R4.7.a, R4.7.e
   - **Ficheros**: el test de F3 equivalente a `internal/gateway/grpc/inference_vocabulario_internal_test.go` (si importa el `degradation` viejo), `internal/arranque` (`FaseActual`)
   - **Hecho cuando**: `grep -rn 'internal/degradation"' internal/modulos` vacío; huella idéntica
   - **Gate**: gate ci-local + huella · **Commit**: `conmutar(inferencia): huella y vocabulario del transporte`

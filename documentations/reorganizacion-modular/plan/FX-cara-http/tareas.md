@@ -93,18 +93,18 @@ cara vieja hasta F7: D-FX-1/D-F7-4), `FaseActual = 3`.
 
 Sesión: [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md).
 
-- [ ] **TX.12 · rojo(apipublica): `tenantllm.go` y `degradationnotices.go`** · 🌐 · dep. TX.11 y el verde de `modulos/inferencia` · cumple RX.2.b, RX.2.d
+- [x] **TX.12 · rojo(apipublica): `tenantllm.go` y `degradationnotices.go`** · 🌐 · dep. TX.11 y el verde de `modulos/inferencia` · cumple RX.2.b, RX.2.d — cerrada en `fee3ed2` (F45-02; 2 contratos y 4 tests: los de `tenantllm` nacen partidos por tema, E-13, en `tenantllm_test.go`, `tenantllm_put_test.go` y `tenantllm_body_test.go`; primer uso de `entitlements.RequireFeature` en la cara nueva)
   - **Hecho cuando**: el puerto de `tenantllm.go` sigue **sin** método que devuelva la credencial (`publicapi/tenantllm.go:57-60`); el de avisos sigue siendo de solo lectura
   - **Gate**: `go vet -tags pendiente ./internal/apipublica/...; echo rc=$?` → `rc=0` · **Commit**: `rojo(apipublica): inferencia`
-- [ ] **TX.13 · verde(apipublica): inferencia** · 🌐 · dep. TX.12 · **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9 · **Gate**: el de cabecera · **Commit**: `verde(apipublica): <fichero>`
-- [ ] **TX.14 · conmutar(inferencia): 4 rutas** · 🌐 · dep. TX.13 · cumple RX.3.a
+- [x] **TX.13 · verde(apipublica): inferencia** · 🌐 · dep. TX.12 · **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9 · **Gate**: el de cabecera · **Commit**: `verde(apipublica): <fichero>` — cerrada en `c619013` (`tenantllm.go`, con `tenantllm_body.go` por E-13 y su entrada en el C2 nuevo; `upsertDesde` → `upsertFrom`, E-11) y `23a7d92` (`degradationnotices.go`) (F45-02; no se portan tres ramas inalcanzables del viejo: ver [`F4-inferencia/README.md`](../F4-inferencia/README.md), hallazgo 23)
+- [x] **TX.14 · conmutar(inferencia): 4 rutas** · 🌐 · dep. TX.13 · cumple RX.3.a — cerrada en `98b24c5` (F45-02; fundida con T4.24 de F4: `MountTenantLLM` y `MountDegradationNotices`, `FaseActual = 4`, 33 rutas = 23 de acceso + 6 de edge + 4 de inferencia; huella igual)
   - **Hecho cuando**: F1–F4 por la nueva; `TenantLLM`, `DegradationNotices` = `nil` en la vieja; `FaseActual = 4` · **Gate**: el de TX.7 · **Commit**: parte del `conmutar(inferencia)`
 
 ## Tramo F5 · `catalogo` · 🌐 · TX.15
 
 Sesión: [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md).
 
-- [ ] **TX.15 · conmutar(catalogo): ninguna ruta, solo `FaseActual = 5`** · 🌐 · dep. el conmutar de F5 · cumple RX.3.a
+- [x] **TX.15 · conmutar(catalogo): ninguna ruta, solo `FaseActual = 5`** · 🌐 · dep. el conmutar de F5 · cumple RX.3.a — cerrada en `13e869f` (F45-02; = T5.19 de F5: el diff solo toca `FaseActual` y su aserción; la cara sigue en 33 rutas; huella igual)
   - **Hecho cuando**: `FaseActual = 5` y el candado sigue verde **sin** mudar I14–I17 (se quedan en la vieja hasta F8: escriben por `flujos/store`) · **Gate**: el de TX.7 · **Commit**: parte del `conmutar(catalogo)`
 
 ## Tramo F6 · `solicitudes` · 🌐 · TX.16–TX.18

@@ -6,6 +6,12 @@
 > ninguna** (TX.15).
 >
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
+>
+> ✎ **Estado al 2026-10-07 (F45-02): código entero en verde y conmutación nominal, sin cerrar.**
+> `internal/modulos/catalogo` (`catalog.go`, `catalogimport`, `indice`) e `internal/modulos/conversacion/model` sin
+> etiqueta `pendiente`; `FaseActual = 5` (`13e869f`), huella igual, ninguna ruta mudada y ningún cableado. `catalogo`
+> **no** está en `Conmutados` (entra cuando F7 conmute el índice: [`reglas.md`](reglas.md) §4.10). **Queda F45-03**
+> (T5.20–T5.21, con T9.26).
 
 ## Objetivo en tres líneas
 
@@ -87,3 +93,82 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
    `internal/bootstrap/arranque/fase5_captacion.go:245`); la spec solo cita la segunda.
 5. **Los ayudantes de test del carrito no viajan solos**: `rawFromFile`, `readTestdata`, `assertGolden`, `dumpCatalog`
    (`golden_test.go`) y `rawFromJSON` (`catalog_test.go:14`) hay que recrearlos en el `catalog_test.go` nuevo.
+
+### F45-02 (2026-10-07; rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`)
+
+6. **`internal/modulos/catalogo/catalog.go` queda en 597 líneas** (a 3 del tope duro de 600, E-13): cualquier añadido
+   obliga a partirlo. `conversacion/model/model_test.go`, 518 (en tolerancia).
+7. **Sin tocar `Makefile` ni candados**: `PENDIENTE_DIRS` y `COBERTURA_DIRS` ya cubren `internal/modulos`.
+8. **`loadCatalog` no se porta** (T-2); el flag `-update` del golden tampoco (los goldens son los del carrito). Los
+   ayudantes del hallazgo 5 están recreados en `internal/modulos/catalogo/helpers_test.go`.
+9. **Los tests viejos de `model` solo miraban `errors.Is`** (`internal/flujos/model/model_test.go:176-186`): los textos
+   de rechazo de `Validate` y su orden ahora son literales. El tope de 50 avisos se cubre con 49/50/51/60/250.
+10. **El texto «el carrito exige content.raw…»** (`internal/modulos/catalogo/catalog.go:281`) es literal observable
+    aunque el paquete ya no sea del carrito.
+11. **Comportamientos del viejo fijados tal cual por el corpus adversario (`catalog` / `model`)**: el prefijo reservado
+    no recorta (`cart/catalog.go:342`: `" _shipping"`, NBSP o U+200B delante no se descartan; `＿shipping` tampoco); el
+    artículo con SKU reservado se cae sin mirar sus campos v2; solo las etiquetas pasan por `TrimSpace` (`:408`; U+200B
+    y BOM no son espacio); `qty` se trunca (`:528`: 2.9 → 2 sin aviso, 0.5 → 1 con aviso); dígitos no ASCII en `price`
+    de artículo tumban el blob y en variante/componente tumban toda su lista; una variante descartada no gasta su code
+    (`:470-474`); sin variantes utilizables sobreviven los `components` (`:362`); el v1 no valida negocio; `Validate` no
+    recorta ni detecta ciclos (`flujos/model/model.go:329,351`); tipo de nodo `""` pasa si está en `moduleTypes`
+    (`:383`); `Conversation.Outcome()` con un `Outcome` tipado en `Vars` devuelve «sin declarar» (`:253`).
+12. **`catalogimport` partido por E-13** (resuelve el hallazgo 2): `validator.go` (876) → `validator.go` 379 +
+    `validator_catalog.go` 181 + `validator_item.go` 267 + `validator_fields.go` 143; `tabular.go` (609) → `tabular.go`
+    400 + `tabular_cells.go` 160 + `tabular_locate.go` 118. Solo se movieron declaraciones (multiconjunto de líneas
+    viejo ↔ nuevo comparado). Los trozos de **producción** nacen en el verde, no en el rojo: solo contienen auxiliares
+    no exportados (lint `unused`); en el rojo nacen sus gemelos de test.
+13. **La spec no prevé tests de paquete interno; hicieron falta dos**: `contract_limits_test.go` y
+    `tabular_locate_column_test.go`. «≤ 0 ⇒ default» solo es observable por `ReadLimited` / `Validate`. `868f8d8`
+    (template) adelanta en `tabular.go` el bloque de constantes `col…`.
+14. **`limits_test.go:150`** (`TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo`) prueba `platform/config`: **no** se
+    porta (resuelve el hallazgo 3). [`diseno.md`](diseno.md) dice 6 casos de `limits_test.go`; son 5 + el no portado.
+15. **Cifra de T5.8**: `catalogimport` medía 120 `Test*` pendientes en 12 ficheros etiquetados (`ROJOS=12`,
+    `PENDIENTES=11`); el «≈37» de [`tareas.md`](tareas.md) no cuadra con lo medido.
+16. 🟡 **Corpus adversario en `catalogimport` (fijado tal cual)**: el prefijo reservado no se recorta en el camino JSON
+    (`internal/catalogimport/validator.go:558`) pero la planilla sí recorta la celda ⇒ `" _shipping "` se rechaza por
+    planilla y se acepta por JSON (decisión de producto, no tocado); `sku` y `code` viajan sin recortar (`:749-759`);
+    subcategoría asimétrica (referencia recortada `:572-575`, declaración no `:475`); U+200B no es espacio
+    (`tabular.go:573-581`); precio en planilla = `strconv.ParseFloat` (`tabular.go:452`: acepta `1e3`, `0x1p4`,
+    `1_000`, `+5`, `.5`); cantidad = `strconv.Atoi` (`:428`); `;;` se descarta y `||` rompe la entrada; atributo
+    repetido en celda gana el último sin aviso (`:375`); el BOM solo se quita si es lo primero de la celda (`:201`);
+    `null` como documento da dos defectos de cabecera. Rama inalcanzable desde `ParseTabular` en `tabularColumn`
+    (`tabular.go:532-537`).
+17. **`indice`: 47 `Test*`. Mutantes de `cache.go` a mano: 42 aplicados, 41 muertos, 1 vivo equivalente** (`<=` por `<`
+    al elegir víctima: el reloj no deja dos marcas iguales). Por grupo (aplicados/muertos): huella 8/8, reloj y
+    contadores 5/5 (el «acierto que no avanza el reloj» estaba vivo y **no** era equivalente: lo mata `3a79ba8`),
+    desalojo 10/9, candado 5/5 (`Estadisticas` y `Tamano` sin candado solo mueren con `-race`), tenant 2/2, documento
+    roto 6/6, adaptador y constructor 6/6. Los tests viejos de desalojo no fijaban que el acierto avance el reloj lógico
+    (`internal/intake/catalogo/cache_test.go:242-265`).
+18. **T5.14 · P99 por ítem** (`-count=5`, sin `-race`, plazo 5 ms, rc=0): 56,125 µs · 62,375 µs · 56,125 µs · 41,25 µs ·
+    76,917 µs. Con `-race`: 126 µs. El control «sin índice» del test de rendimiento cuesta ≈ 2 s sin `-race` y ≈ 24 s
+    con `-race` (`indice_performance_test.go:78-93`): casi todo el tiempo del paquete en cualquier gate con `-race` (el
+    viejo paga lo mismo).
+19. 🟡 **`cache.go:249`** (viejo `internal/intake/catalogo/cache.go:253`): el desalojo usa `victim == ""` como centinela;
+    con un tenant de id vacío la víctima puede no ser la menos usada, y `Obtener` no rechaza el id vacío. Portado tal
+    cual.
+20. **D-F5-2 sin ampliar el motor de fronteras** (decisión (c) de Jhoan, 2026-10-07): la arista
+    `conversacion → catalogo/indice` vive en la **regla 1**; comentario en la tabla y mutación documentada en `dec75e7`
+    (test temporal en `conversacion/model` importando `catalogo/indice` ⇒
+    `regla 1 … el módulo conversacion no puede importar catalogo (fuera de Capas)`, rc=1; revertido rc=0). 🟡 **F8 la
+    romperá** al añadir `catalogo` a `Capas["conversacion"]` para el carrito: hará falta una prohibición por subpaquete
+    que el motor no sabe expresar.
+21. **Corpus adversario del índice (fijado)**: SKU opaco (`"CAFE "`, `" TORTA"` y fullwidth son claves distintas); el
+    SKU vacío se indexa; label de solo espacios normaliza a `""`; separadores repetidos no se colapsan; dígitos no ASCII
+    no se pliegan; un documento roto no borra el índice anterior del tenant; mismos bytes con otro `Sello` son acierto y
+    conservan el sello antiguo; `null` y `{}` dan el error de `ParseCatalog` sobre `ErrInvalidFlow`.
+22. **Erratas de la spec**: `diseno.md:18-20` sitúa `Normalizador` en `normalizador.go` (vive en `indice.go`, viejo y
+    nuevo); `diseno.md:32` prevé 2 ficheros de test para dobles y rendimiento (han salido 8 por E-13);
+    `reglas.md:44`: el `grep` del gate §4.3 casa comentarios (motivo de `0977194`). Los exportados en español del índice
+    (`Construir`, `Obtener`…) se conservan (precedente de F4); dobles y auxiliares, en inglés (E-11; la correspondencia,
+    en la cabecera de la sesión en [`tareas.md`](tareas.md)).
+23. **`TestIndice_IsNotAFuente`** (sustituye la 2.ª mitad del `frontera_test.go` viejo) entró en `d84475c` porque
+    `Fuente` nace con el contrato de la caché. `textmatch` ya tiene release (v0.1.0 en `go.mod`): el puerto inyectado se
+    conserva para no tener dos normalizadores.
+24. **T5.19**: el diff de `13e869f` solo toca `FaseActual` y su aserción; el mapa no tiene filas de fase F5 (I14–I17
+    hasta F8) y la cara sigue sirviendo 33 rutas. **`catalogo` no entra en `Conmutados`** (decisión (b) de Jhoan,
+    2026-10-07): el arranque nuevo sigue cableando el índice viejo (hallazgo 4); entra cuando F7 lo conmute
+    ([`reglas.md`](reglas.md) §4.10).
+
+**No corrido en F45-02 (es de F45-03)**: `make test-procesos`, la integración vieja contra Postgres, el arranque real de
+`cmd/server-modular` y UAT.

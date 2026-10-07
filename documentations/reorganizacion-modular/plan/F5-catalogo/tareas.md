@@ -28,27 +28,38 @@ Para cuando: Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada aqu�
 ## Sesión F45-02 · F5 entero y conmutación nominal · 🌐 · T5.2–T5.19 (+ TX.15)
 Para cuando: todo sin etiqueta `pendiente`; huella idéntica con `FaseActual = 5`; gate ci-local rc=0 con 0 SKIP. (La misma sesión conmuta antes F4.)
 
+> ✅ **Hecha el 2026-10-07** (💻, rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`). Orden real de los
+> commits: T5.2 → T5.3 → T5.9 → T5.10 → T5.7 → T5.8 → T5.15–T5.18 → T5.4 → T5.5 → T5.6 → T5.11–T5.13 → T5.14 → T5.19
+> (`catalogimport` y `indice` se escribieron en ramas de sub-agente distintas).
+> **E-11** (nombres nuevos en inglés; los exportados en español del índice —`Construir`, `Obtener`, `Fuente`,
+> `LectorContenido`…— se conservan, precedente de F4): dobles del índice `fuenteFalsa` → `fakeSource` y `lectorFalso` →
+> `fakeReader` (`indice/cache_test.go`); auxiliares del diferencial `oraculoSKU` / `oraculoEtiqueta` / `oraculoTag` /
+> `oraculoVariante` → `linearBySKU` / `linearByLabel` / `linearByTag` / `linearByVariant`, `catalogoTramposo` →
+> `trickyCatalog`, `consultas` → `queries`, `indiceTramposo` → `trickyIndex` (`indice/helpers_test.go`).
+> **E-13**: `validator.go` y `tabular.go` nacen partidos, y los tests de `catalog`, `catalogimport` e `indice` también
+> (hallazgos 12 y 22 del [README](README.md)).
+
 ### Rojo de `model`, `catalog.go` e `indice` · T5.2–T5.6
 Para cuando: gate rojo rc=0; gate ci-local rc=0; `make lint` sin `unused`.
 
-- [ ] **T5.2 · rojo(conversacion): contrato de `model/model.go`** · 🌐 · dep. T5.1 (**solo si D-F5-1 = B**) · cumple R5.1.a–c
+- [x] (`523ef63`) **T5.2 · rojo(conversacion): contrato de `model/model.go`** · 🌐 · dep. T5.1 (**solo si D-F5-1 = B**) · cumple R5.1.a–c
   - **Ficheros**: `internal/modulos/conversacion/model/model.go`, `model_test.go`
   - **Hecho cuando**: los 24 exportados de `diseno.md` §2 con su promesa; el test cubre `NodeTerminal` imprimible, las reglas de `Validate`/`ParseAndValidate` de los 4 tests viejos, `ErrInvalidFlow` literal y la ida y vuelta de `Marshal/UnmarshalDefinition`
   - **Gate**: gate rojo · **Commit**: `rojo(conversacion): contrato de model (adelantado a F5, D-F5-1)`
   - *Si D-F5-1 = A*: esta tarea se tacha y T5.6 declara el puente de import `catalogo → internal/flujos/model` (muere en F8)
-- [ ] **T5.3 · rojo(catalogo): contrato de `catalog.go` y sus goldens** · 🌐 · dep. T5.2 · cumple R5.2.a–f
+- [x] (`2157217`) **T5.3 · rojo(catalogo): contrato de `catalog.go` y sus goldens** · 🌐 · dep. T5.2 · cumple R5.2.a–f
   - **Ficheros**: `internal/modulos/catalogo/catalog.go`, `catalog_test.go`, `testdata/` (los 4 JSON copiados de `internal/flujos/modules/cart/testdata/`)
   - **Hecho cuando**: tipos con **mismos nombres, orden y etiquetas** que `V` (T-1); el test cubre golden v1 y v2 byte a byte, v1 sin avisos, los errores sobre `ErrInvalidFlow`, las 10 reglas de `diseno.md` §3 con sus textos, el tope de 50; **sin** `loadCatalog`
   - **Gate**: gate rojo · **Commit**: `rojo(catalogo): contrato de catalog`
-- [ ] **T5.4 · rojo(catalogo): contrato de `indice/normalizador.go` e `indice/indice.go`** · 🌐 · dep. T5.3 · cumple R5.4.e–h, R5.6.b
+- [x] (`b5d4bb8`) **T5.4 · rojo(catalogo): contrato de `indice/normalizador.go` e `indice/indice.go`** · 🌐 · dep. T5.3 · cumple R5.4.e–h, R5.6.b
   - **Ficheros**: `…/catalogo/indice/{normalizador,indice}.go` y tests
   - **Hecho cuando**: paquete `indice`; textos `catalogo: …` exactos; `indice_test.go` con el diferencial contra búsqueda lineal (corpus de `V/intake/catalogo/indice_test.go`, ampliado con casos adversarios, `reglas.md` §5), variante con su precio, SKU repetido gana el primero, SKU sin normalizar, cota 2.000/2.001 sobre todas las categorías, normalizador obligatorio, `*Indice` no es `Fuente`, y el P99 ≤ 5 ms (D-F5-3)
   - **Gate**: gate rojo · **Commit**: `rojo(catalogo): contrato del índice`
-- [ ] **T5.5 · rojo(catalogo): contrato de `indice/cache.go`** · 🌐 · dep. T5.4 · cumple R5.4.a–d, R5.4.g
+- [x] (`d84475c`; trae también `TestIndice_IsNotAFuente`, porque `Fuente` nace con este contrato) **T5.5 · rojo(catalogo): contrato de `indice/cache.go`** · 🌐 · dep. T5.4 · cumple R5.4.a–d, R5.4.g
   - **Ficheros**: `…/indice/cache.go`, `cache_test.go` (con las fuentes falsas de `V/…/dobles_test.go`, no exportadas)
   - **Hecho cuando**: 1 lectura y ≤ 1 construcción por job; 0 con el mismo contenido; huella sobre lo leído; import y `PUT` invalidan igual; aislamiento por tenant; desalojo LRU a 64; documento roto no deja índice; adaptador sobre `LectorContenido` con ref por defecto `catalogo`; `-race` con dos `Obtener` concurrentes del mismo tenant. Nivel complejo: mutantes en el verde (T5.13)
   - **Gate**: gate rojo · **Commit**: `rojo(catalogo): contrato de la caché del índice`
-- [ ] **T5.6 · rojo: fronteras de `catalogo`** · 🌐 · dep. T5.5 · cumple R5.5.a, R5.5.b
+- [x] (`dec75e7`; D-F5-2 sin ampliar el motor de fronteras —decisión de Jhoan, 2026-10-07—: la tabla `reglas` no cambia, la arista prohibida la cubre la **regla 1** porque `Capas["conversacion"]` no incluye `catalogo`; solo se añade el comentario que lo dice; mutación en el cuerpo del commit: rc=1 con `regla 1 … el módulo conversacion no puede importar catalogo (fuera de Capas)`, revertida rc=0) **T5.6 · rojo: fronteras de `catalogo`** · 🌐 · dep. T5.5 · cumple R5.5.a, R5.5.b
   - **Ficheros**: `internal/modulos/fronteras_test.go` (tabla: permitido `catalogo → conversacion/model`; **prohibido** `conversacion/** → catalogo/indice`, producción **y** tests)
   - **Hecho cuando**: mutación documentada en el commit (un test temporal en `internal/modulos/conversacion/model/` que importe `…/catalogo/indice` ⇒ rojo; revertido)
   - **Gate**: gate ci-local · **Commit**: `rojo(catalogo): fronteras del índice`
@@ -56,11 +67,11 @@ Para cuando: gate rojo rc=0; gate ci-local rc=0; `make lint` sin `unused`.
 ### Rojo de `catalogimport` · T5.7–T5.8
 Para cuando: `make test-pendiente` cuenta **≈37** en `catalogo` + `conversacion/model` (cifra exacta anotada en T5.8); gate ci-local rc=0.
 
-- [ ] **T5.7 · rojo(catalogo): `catalogimport/contract.go` y `validator.go`** · 🌐 · dep. T5.3 · cumple R5.3.a, R5.3.b, R5.3.d–f
+- [x] (`07f5c17`; `TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo` de `limits_test.go:150` **no** se porta: prueba `platform/config`) **T5.7 · rojo(catalogo): `catalogimport/contract.go` y `validator.go`** · 🌐 · dep. T5.3 · cumple R5.3.a, R5.3.b, R5.3.d–f
   - **Ficheros**: `…/catalogo/catalogimport/{contract,validator}.go` y tests
   - **Hecho cuando**: etiquetas JSON exactas; `contract_test.go` con `DefaultLimits`, ≤ 0 ⇒ default y `DefaultMaxItems` = default de `platform/config` (importa `internal/platform/config`); `validator_test.go` con los 13 casos viejos (acumula, mensajes legibles **literales**, cabecera desconocida, archivo inservible, reglas de campo, categorías, tope de artículos y de defectos, variants+components, SKU repetido, prefijo desde `catalogo.SystemSKUPrefix`, «lo que valida lo parsea el runtime sin avisos») y los de `ReadLimited` (justo en el techo pasa; un byte más no; techo propio)
   - **Gate**: gate rojo · **Commit**: `rojo(catalogo): contrato del importador estricto`
-- [ ] **T5.8 · rojo(catalogo): `diff.go`, `template.go`, `prompt.go`, `tabular.go`** · 🌐 · dep. T5.7 · cumple R5.3.c, R5.3.g
+- [x] (`0b30c57`; **cifra medida** al cerrar el rojo de `catalogimport`: **120 `Test*`** pendientes en **12 ficheros** con la etiqueta —`ROJOS=12`— y `PENDIENTES=11` —`contract` 2, `validator` 2, `diff` 2, `template` 3, `prompt` 1, `tabular` 1—, sin contar `catalogo/indice`; el «≈37» de la cabecera de este bloque no cuadra con lo medido) **T5.8 · rojo(catalogo): `diff.go`, `template.go`, `prompt.go`, `tabular.go`** · 🌐 · dep. T5.7 · cumple R5.3.c, R5.3.g
   - **Ficheros**: los cuatro y sus tests
   - **Hecho cuando**: casos de `diff_test.go` (5), `template_test.go` (8), `tabular_test.go` (16) y el prompt dicta el contrato; plantilla y prompt comparados **byte a byte** con la salida del paquete viejo capturada **como fixture** en `testdata/` (no importando el paquete viejo: T-12)
   - **Gate**: gate rojo + gate ci-local · **Commit**: `rojo(catalogo): contrato de diff, plantilla, prompt y planilla`
@@ -71,21 +82,21 @@ Para cuando: los 11 ficheros sin etiqueta, un test por promesa de su contrato; g
 Un commit por fichero (por paquete en nivel medio): `verde(<módulo>): <fichero>`; se quita `//go:build pendiente` de su test; el
 comentario-ADR viaja (E-10); cabecera `// Porta <ruta vieja> @ <sha>`.
 
-- [ ] **T5.9 · verde: `conversacion/model/model.go`** · dep. T5.2 (si B)
-- [ ] **T5.10 · verde: `catalogo/catalog.go`** · dep. T5.3, T5.9
-- [ ] **T5.11 · verde: `indice/normalizador.go`** · dep. T5.4
-- [ ] **T5.12 · verde: `indice/indice.go`** · dep. T5.10, T5.11
-- [ ] **T5.13 · verde: `indice/cache.go`** · dep. T5.12, T5.5 — con mutantes (huella, desalojo, indexado dentro del candado)
-- [ ] **T5.14 · el test de rendimiento en la VM web (D-F5-3)** · dep. T5.12 — correrlo 5 veces (`-count=5`) y anotar el P99 medido en el PR (y en el traspaso, si lo hay); si falla por la VM, parada y decisión, **nunca** `t.Skip`
-- [ ] **T5.15 · verde: `catalogimport/contract.go`** · dep. T5.7, T5.10
-- [ ] **T5.16 · verde: `catalogimport/validator.go`** · dep. T5.15
-- [ ] **T5.17 · verde: `catalogimport/{diff,template,prompt}.go`** (tres commits) · dep. T5.16
-- [ ] **T5.18 · verde: `catalogimport/tabular.go`** · dep. T5.17
+- [x] (`b32145e`) **T5.9 · verde: `conversacion/model/model.go`** · dep. T5.2 (si B)
+- [x] (`f2591e6`) **T5.10 · verde: `catalogo/catalog.go`** · dep. T5.3, T5.9
+- [x] (`91f5c96`) **T5.11 · verde: `indice/normalizador.go`** · dep. T5.4
+- [x] (`f95e762`) **T5.12 · verde: `indice/indice.go`** · dep. T5.10, T5.11
+- [x] (`c71b785` · `3a79ba8`; mutantes de `cache.go` a mano: 42 aplicados, 41 muertos, 1 vivo equivalente; `3a79ba8` mata el único vivo no equivalente) **T5.13 · verde: `indice/cache.go`** · dep. T5.12, T5.5 — con mutantes (huella, desalojo, indexado dentro del candado)
+- [x] (medido en local, D-R-8; `0977194` retoca solo el comentario de cabecera del test; **P99 por ítem**, `-count=5`, sin `-race`, plazo 5 ms, rc=0: **56,125 µs · 62,375 µs · 56,125 µs · 41,25 µs · 76,917 µs**; con `-race`, 126 µs; sin `t.Skip`) **T5.14 · el test de rendimiento en la VM web (D-F5-3)** · dep. T5.12 — correrlo 5 veces (`-count=5`) y anotar el P99 medido en el PR (y en el traspaso, si lo hay); si falla por la VM, parada y decisión, **nunca** `t.Skip`
+- [x] (`59dadba`) **T5.15 · verde: `catalogimport/contract.go`** · dep. T5.7, T5.10
+- [x] (`464840b`; nace partido por E-13: `validator.go` + `validator_catalog.go` + `validator_item.go` + `validator_fields.go`) **T5.16 · verde: `catalogimport/validator.go`** · dep. T5.15
+- [x] (`79b13ad` · `868f8d8` · `47b5b90`) **T5.17 · verde: `catalogimport/{diff,template,prompt}.go`** (tres commits) · dep. T5.16
+- [x] (`1ffa9e8`; nace partido por E-13: `tabular.go` + `tabular_cells.go` + `tabular_locate.go`) **T5.18 · verde: `catalogimport/tabular.go`** · dep. T5.17
   - **Gate de todas**: gate verde · **Commit**: `verde(catalogo): <fichero>` (o `verde(conversacion): model`)
 
 ### Conmutación nominal · T5.19
 
-- [ ] **T5.19 · conmutar(catalogo): sin cableado, `FaseActual = 5` (TX.15 de FX)** · 🌐 · dep. T5.18 · cumple R5.6.a
+- [x] (`13e869f`; `catalogo` **no** entra en `Conmutados`: decisión de Jhoan, 2026-10-07, [`reglas.md`](reglas.md) §4.10) **T5.19 · conmutar(catalogo): sin cableado, `FaseActual = 5` (TX.15 de FX)** · 🌐 · dep. T5.18 · cumple R5.6.a
   - **Hecho cuando**: [`../FX-cara-http/tareas.md`](../FX-cara-http/tareas.md) TX.15 cerrada (el candado del estrangulador verde **sin** mudar I14–I17); `git diff --stat` del commit no toca `internal/arranque` salvo `FaseActual`; huella idéntica
   - **Gate**: gate ci-local + huella · **Commit**: `conmutar(catalogo): ninguna ruta ni cableado; FaseActual 5`
 

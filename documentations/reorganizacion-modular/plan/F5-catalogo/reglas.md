@@ -52,10 +52,11 @@
    correr contra Postgres; se corre la suite entera de procesos de F9 contra el binario nuevo, con 0 SKIP. El proceso
    «Catálogo» (`05` §7.4: importación estricta y tabular → caché → match) no ejercita todavía el código nuevo: eso
    llega cuando F7 y F8 cableen índice y rutas.
-10. **`Conmutados`** (`internal/modulos/fronteras_test.go`): F5 **no crea ni retira adaptadores** `bridge_<x>.go`, así
-    que la regla «entra cuando muere su último adaptador» (`05` §4.2) no retiene a `catalogo`: entra con la conmutación
-    nominal (T5.19). ⚠️ A confirmar por Jhoan en el inventario E-12: sus consumidores siguen con el código viejo hasta
-    F7 y F8. `FaseActual = 5` se fija en T5.19.
+10. **`Conmutados`** (`internal/modulos/fronteras_test.go`): `catalogo` **no** entra al cerrar F5 (decisión de Jhoan,
+    2026-10-07, F45-02; corrige lo que decía este punto y D-R-4 para `catalogo`). F5 no crea ni retira adaptadores
+    `bridge_<x>.go`, pero el arranque nuevo sigue cableando el índice **viejo** (`internal/arranque/fase5_captacion.go`
+    importa `internal/intake/catalogo`; T-11 prohíbe conmutarlo en F5), y con `catalogo` dentro la regla 3 daría rojo.
+    Entra cuando **F7** conmute el índice. `FaseActual = 5` se fija en T5.19 (`13e869f`).
 
 ## 5 · Ceremonia y tests (`05` E-12, E-4)
 
