@@ -23,7 +23,7 @@
 // sube. Los dos modelos no se contradicen: el test de coherencia los amarra.
 package catalogimport
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import "strconv"
 
 // ImportFormat es la marca del documento: identifica el contrato y evita que se
 // suba por error un JSON de otra cosa (un export de pedidos, una plantilla de
@@ -68,7 +68,19 @@ type Limits struct {
 // DefaultLimits devuelve los topes por defecto del import:
 // Limits{MaxJSONBytes: DefaultMaxJSONBytes, MaxItems: DefaultMaxItems}.
 func DefaultLimits() Limits {
-	panic(pendiente.Implementar("catalogimport.DefaultLimits"))
+	return Limits{MaxJSONBytes: DefaultMaxJSONBytes, MaxItems: DefaultMaxItems}
+}
+
+// normalized devuelve los límites con los valores no positivos sustituidos por su
+// default.
+func (l Limits) normalized() Limits {
+	if l.MaxJSONBytes <= 0 {
+		l.MaxJSONBytes = DefaultMaxJSONBytes
+	}
+	if l.MaxItems <= 0 {
+		l.MaxItems = DefaultMaxItems
+	}
+	return l
 }
 
 // CatalogImport es el documento de import completo. El JSON es PORTÁTIL (INV-05):
@@ -217,5 +229,11 @@ type ImportValidationError struct {
 // Reason; con N > 1, «el documento de import tiene N problemas; el primero: » más
 // el Reason del primero.
 func (e *ImportValidationError) Error() string {
-	panic(pendiente.Implementar("catalogimport.ImportValidationError.Error"))
+	if e == nil || len(e.Errors) == 0 {
+		return "el documento de import no es válido"
+	}
+	if len(e.Errors) == 1 {
+		return "el documento de import tiene 1 problema: " + e.Errors[0].Reason
+	}
+	return "el documento de import tiene " + strconv.Itoa(len(e.Errors)) + " problemas; el primero: " + e.Errors[0].Reason
 }
