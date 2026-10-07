@@ -2,8 +2,6 @@
 
 package grpc
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-
 // in_flight.go — CUÁNTO ESPERA RESPUESTA DEL EDGE AHORA MISMO (D-F3-13).
 //
 // El stream bidi Connect de un Edge no termina nunca por sí solo, así que un
@@ -43,5 +41,13 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // concurrencia con todo lo demás del Server y devuelve en el acto (dos len bajo dos
 // mutex que nunca envuelven una llamada).
 func (s *Server) InFlight() int {
-	panic(pendiente.Implementar("grpc.Server.InFlight"))
+	s.acksMu.Lock()
+	sends := len(s.acks)
+	s.acksMu.Unlock()
+
+	s.infersMu.Lock()
+	inferences := len(s.infers)
+	s.infersMu.Unlock()
+
+	return sends + inferences
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package grpc
 
 // Lo que hay EN VUELO (D-F3-13, hallazgo 81 de F3): InFlight cuenta los envíos que esperan Ack
@@ -154,7 +152,10 @@ func TestInFlightIsSafeUnderConcurrency(t *testing.T) {
 	rig := newInferRig(t)
 	rig.srv.ackTimeout = time.Nanosecond
 	rig.srv.inferGrace = time.Nanosecond
-	rig.live(t, "t-1", "e-1", "s-1", nil)
+	// Un Edge que traga todo sin avisar a nadie: el de rig.live avisa por un canal con tope, y
+	// aquí salen más frames de los que nadie va a leer.
+	t.Cleanup(rig.reg.Register("s-1", funcSender(func(*cloudlinkv1.CloudToEdge) error { return nil })))
+	rig.srv.trackSession(phone("t-1", "e-1", "s-1"))
 
 	const rounds = 50
 	var writers sync.WaitGroup
