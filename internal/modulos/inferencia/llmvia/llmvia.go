@@ -135,6 +135,24 @@ func WithNotifier(n Notifier) SelectorOption {
 	panic(pendiente.Implementar("llmvia.WithNotifier"))
 }
 
+// WithLocalOptions añade opciones del adaptador local (plantillas, techo de salida,
+// formato, red de seguridad). Llegan a TODO local.Provider que el selector arme: el
+// de For y el de Warm.
+//
+// 🔴 ACUMULA, NO ASIGNA — Y ES A PROPÓSITO (T-3). El arranque llama a esta función
+// DOS VECES en la misma construcción del Selector: una con local.ConPlantillas(...)
+// y otra, por separado, con local.WithMaxOutputTokens(...). Las opciones de TODAS las
+// llamadas llegan al provider, en el orden en que se pasaron. Cuando asignaba, la
+// segunda llamada pisaba en silencio a la primera, ConPlantillas nunca llegaba al
+// local.Provider y la palanca WAPP_LLM_PROMPTS_DIR estuvo MUERTA sin que nada
+// fallara — nadie la tenía encendida en UAT, así que el defecto no se notó en campo.
+//
+// La sesión de origen (For) y la de destino (Warm) van DESPUÉS de estas opciones, así
+// que una local.WithOriginSession o local.WithTargetSession pasada aquí no las pisa.
+func WithLocalOptions(opts ...local.Option) SelectorOption {
+	panic(pendiente.Implementar("llmvia.WithLocalOptions"))
+}
+
 // WithClock inyecta el reloj con el que se sella el instante del fallo: el `at` que
 // recibe Notifier.Record. Para tests. Sin esta opción —o con una función nil— es
 // time.Now.
@@ -230,4 +248,108 @@ func NewSelector(cfg Store, log logger.Logger, opts ...SelectorOption) (*Selecto
 // CUAL, sin envoltura.
 func (s *Selector) For(ctx context.Context, tenantID, originSessionID string) (llm.LLMProvider, error) {
 	panic(pendiente.Implementar("llmvia.Selector.For"))
+}
+
+// ErrViaSinCalentamiento indica que el tenant no está en una vía que tenga caché de
+// prefijo que calentar. NO es un fallo: es la respuesta correcta para un tenant en
+// vía API, y por eso es un error nombrado y no un `nil` mudo — quien lo reciba tiene
+// que poder decir «no había nada que hacer» en vez de «lo hice». El texto es
+// observable y no cambia.
+var ErrViaSinCalentamiento = errors.New("llmvia: la vía del tenant no tiene caché de prefijo que calentar")
+
+// Warm emite UN calentamiento de la caché de prefijo del Edge (T1.7-4).
+//
+// sessionID es la sesión POR LA QUE debe salir —el Edge cuya caché se quiere llenar—,
+// no la conversación que preguntó: aquí no hay ninguna. Viaja como TargetSessionID
+// (local.WithTargetSession) y el frame NO lleva sesión de origen.
+//
+// # Qué vía (el mismo switch de For, no uno nuevo)
+//
+//   - Store.Get falla ⇒ error con el prefijo literal
+//     "llmvia: leyendo la configuración LLM del tenant: ", sin tocar el cable.
+//   - sin fila, o vía `local` ⇒ arma el local.Provider del tenant con las opciones del
+//     arranque (WithLocalOptions, copiadas como en For) más la sesión de destino, y
+//     devuelve lo que devuelva su Warm: el frame sale marcado Warmup. Sin frame ⇒
+//     local.ErrSinTransporte.
+//   - vía `api` ⇒ ErrViaSinCalentamiento SIN tocar el cable ni pedir la credencial: el
+//     prefijo de un proveedor por API lo cachea —o no— el proveedor, y no hay nada en
+//     nuestra mano que empujar.
+//   - cualquier otro valor ⇒ ErrViaDesconocida envuelto, como For, y tampoco se toca
+//     el Edge.
+//
+// # 🔴 POR QUÉ ESTO VIVE AQUÍ Y NO EN EL PAQUETE DEL CALENTAMIENTO
+//
+// Porque preguntar «¿este tenant tiene una caché de prefijo?» ES preguntar por la
+// vía, y C2 dice que eso se hace en un solo sitio. La alternativa —calentar SIEMPRE,
+// sin mirar— no es gratis: al tenant en vía API le gastaría ~50 s del Ollama de SU
+// máquina y 250 MB de caché por un prefijo que nadie va a volver a pedir, compitiendo
+// además con el clasificador que el propio Edge sí ejecuta.
+//
+// # Lo que NO hace, y es deliberado
+//
+//   - 🔴 NUNCA AVISA NI CUENTA (T-10): un calentamiento que falla no es una
+//     degradación de la vía del dueño. Nadie lo pidió y su fallo no le quita nada al
+//     cliente; avisarle sería mandarlo a revisar un equipo que está bien. Ni escribe
+//     aviso ni llama al observador, falle con el motivo que falle. Misma familia que
+//     edgegrpc.ErrInferenceAbandoned.
+//   - NO bloquea al llamante por su cuenta ni se pone reloj: el ctx lo trae quien
+//     llama, que es quien sabe cuánto está dispuesto a esperar por algo que nadie
+//     está esperando.
+func (s *Selector) Warm(ctx context.Context, tenantID, sessionID string, in llm.ClassifyRequestInput) error {
+	panic(pendiente.Implementar("llmvia.Selector.Warm"))
+}
+
+// ============================================================================
+// QUÉ PLAZA OCUPA UNA INFERENCIA, Y SI OCUPA ALGUNA
+// (Plan 044 · Ola 2 · T2.7, ADR-0046 Mecanismo 1)
+// ============================================================================
+//
+// # POR QUÉ ESTA PREGUNTA VIVE AQUÍ Y NO EN EL WORKER DEL PIPELINE
+//
+// Porque la respuesta DEPENDE DE LA VÍA, y la vía se pregunta en un solo sitio: el
+// selector. El worker del pipeline recibe un `(edgeID, ok)` y no sabe —ni tiene por
+// qué— por qué un tenant no tiene plaza: puede ser que esté en vía API o que no
+// tenga ningún Edge conectado ahora mismo. Las dos cosas significan lo mismo para
+// él: no hay plaza que tomar, adelante.
+//
+// # POR QUÉ LA VÍA API NO TIENE PLAZA
+//
+// Porque el entero del Mecanismo 1 protege UNA MÁQUINA —un Ollama por Edge—, y por
+// la vía API no hay máquina del cliente en el camino: la llamada sale a un proveedor
+// remoto que atiende en paralelo. Allí el tope que importa es de PRECIO, no de
+// capacidad. Serializar dos cadenas de lote de un tenant en vía API sería una
+// restricción inventada: cuesta throughput y no protege nada.
+
+// PlazaDe devuelve el Edge cuya plaza ocuparía una inferencia de este tenant
+// originada en esa sesión, o `ok = false` si no ocupa ninguna.
+//
+// En la vía local (con fila `local` o SIN fila, REQ-33) se lo pregunta al transporte
+// de WithFrame, cuando sabe responder —tiene el método
+// `PlazaDe(tenantID, originSessionID string) (string, bool)`, el de
+// *edgegrpc.Server—, con el tenant y la sesión tal cual, y devuelve su respuesta.
+//
+// `ok = false` con error nil NO es un fallo y tiene tres orígenes legítimos, todos
+// con la misma consecuencia para el llamante:
+//
+//   - el tenant está en vía API (no hay máquina del cliente que proteger): 🔴 NI
+//     SIQUIERA SE LE PREGUNTA al transporte, y el edgeID es "";
+//   - el transporte dice que no hay Edge (ninguna sesión viva en esta réplica; la
+//     inferencia fallará por su cuenta con `edge_offline`);
+//   - el transporte no sabe responder a la pregunta, o no hay transporte (ver
+//     NewSelector: se avisa UNA vez al arrancar, no una vez por job); edgeID "".
+//
+// El error queda para lo que sí lo es, siempre con ("", false):
+//
+//   - Store.Get falla ⇒ error con el prefijo literal
+//     "llmvia: leyendo la configuración LLM del tenant: ";
+//   - vía fuera del vocabulario ⇒ ErrViaDesconocida envuelto, como For: una vía
+//     inventada no se degrada a «sin plaza», porque eso escondería una fila corrupta
+//     detrás de una conducta que parece normal.
+//
+// No pide la credencial, no avisa y no cuenta.
+//
+// ⚠️ CUESTA UNA LECTURA DE `tenant_llm` POR JOB DE LOTE, no por llamada al modelo:
+// se resuelve una vez, antes de la cadena, y la cadena dura minutos.
+func (s *Selector) PlazaDe(ctx context.Context, tenantID, originSessionID string) (string, bool, error) {
+	panic(pendiente.Implementar("llmvia.Selector.PlazaDe"))
 }
