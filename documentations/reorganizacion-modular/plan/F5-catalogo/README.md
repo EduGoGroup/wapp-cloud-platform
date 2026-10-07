@@ -73,3 +73,17 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
    también; no hay adaptador posible (campos no exportados). El índice nuevo se cablea en F7; las 4
    rutas de import, en F8 (FX: escriben por `flujos/store`, `publicapi/catalogimport.go:36-38`).
 4. `05` §6 fila F5 habla de «puente a `conversacion/model` hasta F8»: con D-F5-1 = B **no hay puente**.
+
+## Hallazgos
+
+### F45-01 (2026-10-06, inventario E-12; rama `reorg/f45-01-inventario-inferencia`)
+
+1. **Los tests viejos son 13 + 1 ficheros, no 12**; los 78 + 4 `Test*` sí cuadran (`dobles_test.go` no tiene ningún `Test*`).
+2. 🟡 **E-13 no está en esta spec y parte tres ficheros**: `validator.go` (876) y `tabular.go` (609) superan el tope de
+   600, y `catalog_test.go` fusionaría 614 líneas de tres tests viejos. El árbol de `diseno.md` §1 crecerá.
+3. 🟡 **`limits_test.go:150`** (`TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo`) prueba `platform/config`, no
+   `Limits` ni `ReadLimited`: la spec reparte «sus 6 casos» sin decir dónde va este. Por decidir en F45-02.
+4. **El índice viejo se cablea en las dos copias del arranque** (`internal/arranque/fase5_captacion.go:249` e
+   `internal/bootstrap/arranque/fase5_captacion.go:245`); la spec solo cita la segunda.
+5. **Los ayudantes de test del carrito no viajan solos**: `rawFromFile`, `readTestdata`, `assertGolden`, `dumpCatalog`
+   (`golden_test.go`) y `rawFromJSON` (`catalog_test.go:14`) hay que recrearlos en el `catalog_test.go` nuevo.
