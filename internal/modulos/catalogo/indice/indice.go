@@ -44,10 +44,10 @@ package indice
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // MaxArticulos es LA COTA DE TAMAÑO del índice: 2.000 artículos por catálogo
@@ -130,6 +130,29 @@ type Coincidencia struct {
 	HayVariante bool
 }
 
+// entry es un artículo del catálogo con su categoría (en el viejo, entrada), en el
+// orden EXACTO en el que aparece en el documento. Ese orden es el contrato de
+// salida de todas las búsquedas: es lo que hace que el índice y la búsqueda lineal
+// ingenua —el oráculo del test diferencial— devuelvan lo mismo, elemento a
+// elemento.
+type entry struct {
+	category      string
+	categoryLabel string
+	article       catalogo.Article
+}
+
+func (e entry) match() Coincidencia {
+	return Coincidencia{Categoria: e.category, CategoriaLabel: e.categoryLabel, Articulo: e.article}
+}
+
+// variantRef apunta a una variante concreta (en el viejo, refVariante): la
+// posición del artículo en `entries` y la de la variante dentro de
+// `article.Variants`.
+type variantRef struct {
+	article int
+	variant int
+}
+
 // Indice es el catálogo de UN tenant preparado para consultarse por ítem.
 //
 // 🔴 NO TIENE PUERTO DE LECTURA, Y ESO ES LA GARANTÍA (criterio (a) de T3.7). No
@@ -145,7 +168,24 @@ type Coincidencia struct {
 // artículo a artículo), y ese orden es el contrato de salida de todas las
 // búsquedas: es lo que hace que el índice y una búsqueda lineal ingenua devuelvan
 // lo mismo, elemento a elemento.
-type Indice struct{}
+type Indice struct {
+	// hash y stamp son la PROCEDENCIA: de qué contenido salió este índice. Los
+	// puebla la caché (cache.go); Construir los deja vacíos.
+	hash  string
+	stamp time.Time
+
+	normalize Normalizador
+
+	entries []entry
+
+	// Los cuatro accesos. El valor es SIEMPRE una posición en `entries`, nunca una
+	// copia del artículo: un catálogo de 2.000 artículos con 5 tags cada uno son
+	// 10.000 enteros en el mapa de tags, no 10.000 artículos.
+	bySKU     map[string]int
+	byLabel   map[string][]int
+	byTag     map[string][]int
+	byVariant map[string][]variantRef
+}
 
 // Construir indexa un catálogo ya parseado. Es PURO: sin I/O y sin estado global.
 //
@@ -181,13 +221,76 @@ type Indice struct{}
 // El coste es O(artículos + tags + variantes) y se paga UNA VEZ por contenido; lo
 // que se ahorra es ese mismo coste multiplicado por el número de ítems del pedido.
 func Construir(cat catalogo.Catalog, normalizar Normalizador) (*Indice, error) {
-	panic(pendiente.Implementar("indice.Construir"))
+	if normalizar == nil {
+		return nil, ErrSinNormalizador
+	}
+	if err := VerificarNormalizador(normalizar); err != nil {
+		return nil, err
+	}
+
+	total := 0
+	for _, c := range cat.Categories {
+		total += len(c.Items)
+	}
+	if total > MaxArticulos {
+		return nil, fmt.Errorf("%w: trae %d artículos y el tope es %d", ErrCatalogoDemasiadoGrande, total, MaxArticulos)
+	}
+
+	i := &Indice{
+		normalize: normalizar,
+		entries:   make([]entry, 0, total),
+		bySKU:     make(map[string]int, total),
+		byLabel:   make(map[string][]int, total),
+		byTag:     make(map[string][]int),
+		byVariant: make(map[string][]variantRef),
+	}
+	for _, c := range cat.Categories {
+		for _, a := range c.Items {
+			i.add(c, a)
+		}
+	}
+	return i, nil
+}
+
+// add mete UN artículo en las cuatro vías de acceso (en el viejo, agregar), con
+// las reglas de empate que el contrato de Construir enumera: son las de una
+// búsqueda lineal ingenua, que es el oráculo del test diferencial.
+func (i *Indice) add(c catalogo.Category, a catalogo.Article) {
+	n := len(i.entries)
+	i.entries = append(i.entries, entry{category: c.Code, categoryLabel: c.Label, article: a})
+
+	// sku repetido: gana el PRIMERO en orden de documento.
+	if _, seen := i.bySKU[a.SKU]; !seen {
+		i.bySKU[a.SKU] = n
+	}
+	appendPosition(i.byLabel, i.normalize(a.Label), n)
+	for _, t := range a.Tags {
+		appendPosition(i.byTag, i.normalize(t), n)
+	}
+	// Las variantes NO se deduplican: el resultado es el par (artículo, variante) y
+	// dos variantes que normalizan igual son dos pares distintos.
+	for v, variant := range a.Variants {
+		key := i.normalize(variant.Label)
+		i.byVariant[key] = append(i.byVariant[key], variantRef{article: n, variant: v})
+	}
+}
+
+// appendPosition añade la posición `n` bajo `key` salvo que ya sea la última (en el
+// viejo, anexar): el mismo artículo no puede aparecer dos veces en el resultado de
+// una sola búsqueda. Basta mirar la última porque las posiciones se añaden en orden
+// creciente.
+func appendPosition(m map[string][]int, key string, n int) {
+	s := m[key]
+	if len(s) > 0 && s[len(s)-1] == n {
+		return
+	}
+	m[key] = append(s, n)
 }
 
 // Articulos es cuántos artículos indexa. Es la cifra que se compara con
 // MaxArticulos y la que debe ir al log del worker.
 func (i *Indice) Articulos() int {
-	panic(pendiente.Implementar("indice.Indice.Articulos"))
+	return len(i.entries)
 }
 
 // Etiqueta devuelve la etiqueta CRUDA (sin normalizar) del artículo que ocupa la
@@ -209,7 +312,10 @@ func (i *Indice) Articulos() int {
 // NO abre el puerto de lectura que el criterio (a) de T3.7 cierra: sigue sin haber
 // forma de volver a `tenant_content` desde aquí.
 func (i *Indice) Etiqueta(n int) string {
-	panic(pendiente.Implementar("indice.Indice.Etiqueta"))
+	if n < 0 || n >= len(i.entries) {
+		return ""
+	}
+	return i.entries[n].article.Label
 }
 
 // En materializa la Coincidencia del artículo en la posición n —categoría,
@@ -217,21 +323,24 @@ func (i *Indice) Etiqueta(n int) string {
 // fuera. Es el complemento de Etiqueta: se recorre con Etiqueta —que no copia
 // nada— y se paga la copia UNA vez, la del ganador.
 func (i *Indice) En(n int) Coincidencia {
-	panic(pendiente.Implementar("indice.Indice.En"))
+	if n < 0 || n >= len(i.entries) {
+		return Coincidencia{}
+	}
+	return i.entries[n].match()
 }
 
 // Hash es la huella del documento del que salió el índice, y es la que decide la
 // invalidación. Vacía si el índice se construyó con Construir en vez de por la
 // caché (Construir indexa un catálogo, no un documento: no ha visto bytes).
 func (i *Indice) Hash() string {
-	panic(pendiente.Implementar("indice.Indice.Hash"))
+	return i.hash
 }
 
 // Sello es el `updated_at` del documento indexado, cuando la Fuente lo sirve; cero
 // si no, o si el índice salió de Construir. Es REFUERZO y observabilidad: quien
 // decide si el índice sigue valiendo es Hash.
 func (i *Indice) Sello() time.Time {
-	panic(pendiente.Implementar("indice.Indice.Sello"))
+	return i.stamp
 }
 
 // PorSKU busca por identificador de negocio. El sku es OPACO: se compara literal,
@@ -243,21 +352,25 @@ func (i *Indice) Sello() time.Time {
 // Con skus repetidos devuelve el primero en orden de documento. Sin acierto,
 // la coincidencia cero y false. La coincidencia no lleva variante.
 func (i *Indice) PorSKU(sku string) (Coincidencia, bool) {
-	panic(pendiente.Implementar("indice.Indice.PorSKU"))
+	n, ok := i.bySKU[sku]
+	if !ok {
+		return Coincidencia{}, false
+	}
+	return i.entries[n].match(), true
 }
 
 // PorEtiqueta busca por el label del artículo, normalizando los DOS lados: el texto
 // que llega y el del catálogo. Devuelve los artículos en orden de documento, sin
 // variante, o nil si ninguno casa.
 func (i *Indice) PorEtiqueta(texto string) []Coincidencia {
-	panic(pendiente.Implementar("indice.Indice.PorEtiqueta"))
+	return i.from(i.byLabel[i.normalize(texto)])
 }
 
 // PorTag busca por etiqueta informativa del artículo («vegano», «sin gluten»),
 // normalizando los dos lados. Un tag puede casar VARIOS artículos: los devuelve
 // todos, en orden de documento y cada uno UNA vez, sin variante; nil si ninguno.
 func (i *Indice) PorTag(texto string) []Coincidencia {
-	panic(pendiente.Implementar("indice.Indice.PorTag"))
+	return i.from(i.byTag[i.normalize(texto)])
 }
 
 // PorVariante busca por el label de una variante («grande», «12 porciones»),
@@ -267,5 +380,30 @@ func (i *Indice) PorTag(texto string) []Coincidencia {
 // (D-041.4). En orden de documento y, dentro del artículo, en el de sus
 // variantes; nil si ninguna casa.
 func (i *Indice) PorVariante(texto string) []Coincidencia {
-	panic(pendiente.Implementar("indice.Indice.PorVariante"))
+	refs := i.byVariant[i.normalize(texto)]
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]Coincidencia, 0, len(refs))
+	for _, r := range refs {
+		e := i.entries[r.article]
+		m := e.match()
+		m.Variante = e.article.Variants[r.variant]
+		m.HayVariante = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// from materializa las coincidencias de una lista de posiciones (en el viejo,
+// desde).
+func (i *Indice) from(positions []int) []Coincidencia {
+	if len(positions) == 0 {
+		return nil
+	}
+	out := make([]Coincidencia, 0, len(positions))
+	for _, n := range positions {
+		out = append(out, i.entries[n].match())
+	}
+	return out
 }
