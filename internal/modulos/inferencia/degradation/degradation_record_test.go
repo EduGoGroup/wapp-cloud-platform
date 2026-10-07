@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package degradation_test
 
 // Las promesas de Notifier.Record (R4.5.b, R4.5.c): los rechazos previos al store, lo que llega

@@ -42,9 +42,9 @@ package degradation
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Reason es el MOTIVO de la degradación, y es un TIPO PROPIO y no un `string`
@@ -118,6 +118,31 @@ const (
 	ReasonEdgeSinCapacidad Reason = "edge_sin_capacidad"
 )
 
+// validReasons es el vocabulario cerrado en forma recorrible (en el paquete viejo,
+// `reasonsValidos`). Se declara como variable de paquete y no dentro de Valid
+// para que el `slices.Contains` no reconstruya el slice en cada llamada.
+//
+// EL ORDEN ES EL DE LA MIGRACIÓN —el literal del `IN (…)` de la 0075— para que
+// leer los dos ficheros a la vez sea leer la misma lista. El candado contra la
+// migración compara CONJUNTOS y no depende de esto: en un `IN (…)` el orden no
+// significa nada, y hacerlo significar algo convertiría un reordenado inocente
+// en un rojo.
+//
+// 🔴 ES UN `var` Y NO SE EXPORTA. Un slice exportado es un slice que un llamante
+// puede modificar —`degradation.Reasons[0] = "fastlane"` sería legal— y eso
+// convertiría el vocabulario cerrado en uno abierto desde fuera. Quien necesite
+// recorrerlo usa Reasons(), que devuelve una copia.
+var validReasons = []Reason{
+	ReasonOllamaDown,
+	ReasonBreakerOpen,
+	ReasonEdgeOffline,
+	ReasonTimeout,
+	ReasonAPIError,
+	ReasonCredencial,
+	ReasonLeaseInvalid,
+	ReasonEdgeSinCapacidad,
+}
+
 // Reasons devuelve una COPIA del vocabulario cerrado de motivos: los ocho, en el
 // orden del `IN (…)` de la 0075 —ollama_down, breaker_open, edge_offline,
 // timeout, api_error, credencial, lease_invalid, edge_sin_capacidad— para que
@@ -127,7 +152,7 @@ const (
 // mano el respaldo del slice del paquete y `Reasons()[0] = "fastlane"` abriría el
 // vocabulario para todo el proceso. Mutar lo devuelto no cambia ni la siguiente
 // llamada ni lo que dice Valid.
-func Reasons() []Reason { panic(pendiente.Implementar("degradation.Reasons")) }
+func Reasons() []Reason { return slices.Clone(validReasons) }
 
 // Valid dice si r pertenece al vocabulario cerrado: true SOLO para los ocho
 // literales exactos. Un motivo SANO —«fastlane», «atajo_determinista»,
@@ -138,12 +163,12 @@ func Reasons() []Reason { panic(pendiente.Implementar("degradation.Reasons")) }
 // No recorta espacios, no pliega mayúsculas y no normaliza Unicode: "",
 // "OLLAMA_DOWN", " timeout", "timeout\n" y "ｔｉｍｅｏｕｔ" (ancho completo) son
 // false.
-func (r Reason) Valid() bool { panic(pendiente.Implementar("degradation.Reason.Valid")) }
+func (r Reason) Valid() bool { return slices.Contains(validReasons, r) }
 
 // String hace de Reason un fmt.Stringer para que un `%s` en un error o en un log
 // imprima el valor y no el tipo: devuelve el literal tal cual, también el de un
 // motivo fuera del vocabulario.
-func (r Reason) String() string { panic(pendiente.Implementar("degradation.Reason.String")) }
+func (r Reason) String() string { return string(r) }
 
 // Vocabulario CERRADO de VÍAS. Es el MISMO eje que `tenant_llm.via` (migración
 // 0073) y los mismos dos valores.
@@ -166,7 +191,7 @@ const (
 // ValidVia dice si v pertenece al vocabulario cerrado de vías: true SOLO para
 // los dos literales exactos, "local" y "api". No recorta espacios, no pliega
 // mayúsculas y no normaliza Unicode.
-func ValidVia(v string) bool { panic(pendiente.Implementar("degradation.ValidVia")) }
+func ValidVia(v string) bool { return v == ViaLocal || v == ViaAPI }
 
 // VentanaPorDefecto es el tamaño de la ventana de dedupe cuando no se configura
 // otra: una degradación sostenida produce, como mucho, UN aviso cada 15 minutos
@@ -239,7 +264,7 @@ type Notice struct {
 // Leida dice si el dueño ya vio el aviso: true si y solo si ReadAt no es el
 // instante cero. Existe para que quien proyecte al wire no tenga que saber que
 // «cero significa sin leer» — esa traducción vive en un solo sitio, aquí.
-func (n Notice) Leida() bool { panic(pendiente.Implementar("degradation.Notice.Leida")) }
+func (n Notice) Leida() bool { return !n.ReadAt.IsZero() }
 
 // ListFilter acota la lectura. El tenant NO está aquí a propósito: va como
 // argumento aparte de List, para que no exista la forma de construir un filtro
@@ -319,6 +344,7 @@ type Store interface {
 // NewNotifier. Un Notifier escrito con literal de struct (`&Notifier{}`) no tiene
 // store, y Record se lo dice al llamante con un error en vez de reventar.
 type Notifier struct {
+	store Store
 	// Ventana es el tamaño del bucket. <= 0 ⇒ VentanaPorDefecto, y eso se
 	// resuelve EN CADA USO, no en el constructor (T-13): un Notifier al que se
 	// le deja o se le pone la ventana a cero se comporta igual que uno
@@ -336,7 +362,29 @@ type Notifier struct {
 // en el campo Ventana tal cual llega: ventana <= 0 cae a VentanaPorDefecto al
 // usarse) y sin reloj inyectado. No llama al store.
 func NewNotifier(store Store, ventana time.Duration) *Notifier {
-	panic(pendiente.Implementar("degradation.NewNotifier"))
+	return &Notifier{store: store, Ventana: ventana}
+}
+
+// window resuelve el tamaño efectivo del bucket (en el paquete viejo,
+// `ventana()`). El default se aplica AQUÍ y no en el constructor porque un
+// `&Notifier{}` escrito a mano tiene que comportarse igual que uno construido
+// con NewNotifier; si el default viviera solo allí, ese Notifier truncaría con
+// duración cero y time.Truncate devolvería el instante intacto, o sea: un aviso
+// por fallo y REQ-38 roto sin que nada fallara (T-13).
+func (n *Notifier) window() time.Duration {
+	if n.Ventana <= 0 {
+		return VentanaPorDefecto
+	}
+	return n.Ventana
+}
+
+// now resuelve el reloj (en el paquete viejo, `ahora()`). Mismo criterio que
+// window(): en el uso.
+func (n *Notifier) now() time.Time {
+	if n.Ahora == nil {
+		return time.Now()
+	}
+	return n.Ahora()
 }
 
 // VentanaDe devuelve el bucket en el que cae at para una ventana de tamaño v:
@@ -359,7 +407,11 @@ func NewNotifier(store Store, ventana time.Duration) *Notifier {
 // no partan la ventana en dos. Truncate además descarta el reloj monótono, que es
 // lo que hace falta para que el valor sea comparable entre procesos.
 func VentanaDe(at time.Time, v time.Duration) (inicio, fin time.Time) {
-	panic(pendiente.Implementar("degradation.VentanaDe"))
+	if v <= 0 {
+		v = VentanaPorDefecto
+	}
+	inicio = at.UTC().Truncate(v)
+	return inicio, inicio.Add(v)
 }
 
 // Record registra que la vía `via` falló por el motivo `reason` para `tenantID`,
@@ -399,12 +451,38 @@ func VentanaDe(at time.Time, v time.Duration) (inicio, fin time.Time) {
 // dos fallos de la misma ventana caerían en buckets distintos y REQ-38 se rompería
 // por el camino largo. RecordAhora existe para el caso trivial.
 func (n *Notifier) Record(ctx context.Context, tenantID string, reason Reason, via string, at time.Time) (bool, error) {
-	panic(pendiente.Implementar("degradation.Notifier.Record"))
+	if tenantID == "" {
+		return false, ErrTenantVacio
+	}
+	if !reason.Valid() {
+		// El motivo se NOMBRA en el error: un log que diga «motivo desconocido» sin
+		// decir cuál obliga a reproducir el fallo para saber qué llegó.
+		return false, fmt.Errorf("%w: %q (los válidos son %v)", ErrMotivoDesconocido, reason, validReasons)
+	}
+	if !ValidVia(via) {
+		return false, fmt.Errorf("%w: %q", ErrViaDesconocida, via)
+	}
+	if n.store == nil {
+		// Guarda de programación: un Notifier sin store es un aviso que no se
+		// escribe, y descubrirlo con un panic en el camino de FALLO del pipeline
+		// —que es el único camino desde el que se llama— convertiría una
+		// degradación en una caída.
+		return false, errors.New("degradation: Notifier sin store: el aviso no se puede escribir")
+	}
+	inicio, fin := VentanaDe(at, n.window())
+	return n.store.Save(ctx, Notice{
+		TenantID:    tenantID,
+		Reason:      reason,
+		Via:         via,
+		WindowStart: inicio,
+		WindowEnd:   fin,
+		LastSeenAt:  at.UTC(),
+	})
 }
 
 // RecordAhora es Record con el instante del reloj: el de Ahora si está puesto,
 // el de time.Now si no. Es el caso normal del productor que registra el fallo en
 // cuanto lo ve.
 func (n *Notifier) RecordAhora(ctx context.Context, tenantID string, reason Reason, via string) (bool, error) {
-	panic(pendiente.Implementar("degradation.Notifier.RecordAhora"))
+	return n.Record(ctx, tenantID, reason, via, n.now())
 }

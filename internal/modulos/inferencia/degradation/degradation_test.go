@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package degradation_test
 
 // Los tests de fichero del dominio de degradation: el vocabulario cerrado de motivos (y su
