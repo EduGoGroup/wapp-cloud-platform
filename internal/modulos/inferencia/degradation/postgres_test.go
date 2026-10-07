@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package degradation_test
 
 // Los tests de fichero de degradation.Postgres, con un driver de database/sql de mentira
@@ -337,5 +335,34 @@ func TestPostgresList_Failure_IsWrapped(t *testing.T) {
 				requireWrapped(t, err, c.cause, c.prefix)
 			}
 		})
+	}
+}
+
+// TestPostgresList_CloseFailure_IsWrapped: si el cierre de las filas falla y no hay otro error en
+// curso, vuelve envuelto con su texto y el tenant, y sin lista aunque se hubieran leído filas: la
+// lectura pudo quedarse a medias. Con otro error en curso —una fila ilegible— manda ese otro.
+func TestPostgresList_CloseFailure_IsWrapped(t *testing.T) {
+	const prefix = "degradation: cerrar filas de avisos de " + pgTenant + ": "
+	cause := errors.New("cierre roto")
+	start, end := pgStart.UTC(), pgEnd.UTC()
+	good := []driver.Value{pgID, pgTenant, "timeout", "api", start, end, int64(1), nil, start, start}
+	unreadable := []driver.Value{pgID2, pgTenant, "timeout", "api", nil, end, int64(1), nil, start, start}
+
+	store, fake := newPostgres(t)
+	fake.answer(listColumns, good)
+	fake.failOnClose(cause)
+	got, err := store.List(context.Background(), pgTenant, degradation.ListFilter{})
+	if got != nil || err == nil || err.Error() != prefix+cause.Error() {
+		t.Fatalf("List con el cierre roto = (%+v, %v), quería (nil, %q)", got, err, prefix+cause.Error())
+	}
+	requireWrapped(t, err, cause, prefix)
+
+	store, fake = newPostgres(t)
+	fake.answer(listColumns, good, unreadable)
+	fake.failOnClose(cause)
+	got, err = store.List(context.Background(), pgTenant, degradation.ListFilter{})
+	if got != nil || err == nil || errors.Is(err, cause) ||
+		!strings.HasPrefix(err.Error(), "degradation: leer aviso de "+pgTenant+": ") {
+		t.Errorf("List con fila ilegible y cierre roto = (%+v, %v), quería (nil, el error de la fila)", got, err)
 	}
 }

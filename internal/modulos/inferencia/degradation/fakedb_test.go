@@ -1,14 +1,9 @@
-//go:build pendiente
-
 package degradation_test
 
 // El driver de database/sql de mentira de los tests del adaptador Postgres: apunta cada
 // sentencia que le llega (texto y argumentos, tal cual) y contesta lo que el test sembró. No
 // interpreta SQL. Es el driver de internal/modulos/inferencia/tenantllm/fakedb_test.go más el
-// fallo a mitad del recorrido (failAfterRows).
-//
-// Lleva la etiqueta `pendiente` mientras la lleve postgres_test.go, que es su único usuario: sin
-// ella el lint (`unused`) lo ve sin llamantes. Se le quita en el mismo commit verde.
+// fallo a mitad del recorrido (failAfterRows) y el del cierre de las filas (failOnClose).
 
 import (
 	"context"
@@ -28,12 +23,13 @@ type statement struct {
 
 // fakeDB es el estado del driver: lo que llegó y lo que contesta.
 type fakeDB struct {
-	mu      sync.Mutex
-	stmts   []statement
-	err     error            // si no es nil, toda sentencia falla con él
-	columns []string         // las columnas de la respuesta a una consulta
-	rows    [][]driver.Value // sus filas; ninguna ⇒ sql.ErrNoRows en QueryRow
-	rowsErr error            // si no es nil, el recorrido falla con él tras la última fila
+	mu       sync.Mutex
+	stmts    []statement
+	err      error            // si no es nil, toda sentencia falla con él
+	columns  []string         // las columnas de la respuesta a una consulta
+	rows     [][]driver.Value // sus filas; ninguna ⇒ sql.ErrNoRows en QueryRow
+	rowsErr  error            // si no es nil, el recorrido falla con él tras la última fila
+	closeErr error            // si no es nil, las filas quedan abiertas al acabarse y su cierre falla con él
 }
 
 // openFakeDB abre un *sql.DB sobre un fakeDB nuevo y lo cierra al acabar el test.
@@ -61,6 +57,14 @@ func (f *fakeDB) failAfterRows(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rowsErr = err
+}
+
+// failOnClose hace que el cierre de las filas falle con err. Ver fakeOpenRows: para que ese
+// fallo llegue al llamante, las filas tienen que seguir abiertas al acabar el recorrido.
+func (f *fakeDB) failOnClose(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeErr = err
 }
 
 // fail hace que toda sentencia falle con err.
@@ -121,7 +125,11 @@ func (c fakeConn) QueryContext(_ context.Context, query string, args []driver.Na
 	}
 	c.db.mu.Lock()
 	defer c.db.mu.Unlock()
-	return &fakeRows{columns: c.db.columns, rows: c.db.rows, err: c.db.rowsErr}, nil
+	rows := &fakeRows{columns: c.db.columns, rows: c.db.rows, err: c.db.rowsErr}
+	if c.db.closeErr != nil {
+		return &fakeOpenRows{fakeRows: rows, closeErr: c.db.closeErr}, nil
+	}
+	return rows, nil
 }
 
 // fakeRows son las filas sembradas.
@@ -145,3 +153,20 @@ func (r *fakeRows) Next(dest []driver.Value) error {
 	r.next++
 	return nil
 }
+
+// fakeOpenRows son unas filas cuyo cierre FALLA y a las que database/sql no cierra por su cuenta.
+//
+// El detalle es de database/sql (medido con go1.26.5): cuando el recorrido se acaba (io.EOF) o
+// falla, Rows.Next cierra las filas él mismo y el error de ese cierre sale por Rows.Err() —o sea,
+// como fallo «a mitad del recorrido»—; el Close posterior del llamante ya las encuentra cerradas y
+// devuelve nil. El fallo llega POR EL CIERRE del llamante solo si al acabarse las filas el driver
+// dice que queda otro conjunto de resultados (driver.RowsNextResultSet): entonces Next no cierra,
+// Err() no trae nada y el primer cierre —el que puede fallar— es el del llamante.
+type fakeOpenRows struct {
+	*fakeRows
+	closeErr error
+}
+
+func (r *fakeOpenRows) HasNextResultSet() bool { return true }
+func (r *fakeOpenRows) NextResultSet() error   { return io.EOF }
+func (r *fakeOpenRows) Close() error           { return r.closeErr }
