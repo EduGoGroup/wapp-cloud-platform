@@ -400,8 +400,14 @@ producción, ni del código viejo, ni `go.mod`.
   SKIP=0`, nuevo igual**; `make ci-local` rc=0 (145 `ok`, lint 0 issues; cobertura, informe: `FICHEROS_EVALUADOS=136`,
   `POR_DEBAJO=7`); `make vet-pendiente` rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0`.
 - **No corrido**: una comprobación por mutante del test del cruce entre Edge (HS-14/HS-15); `make test-integration`
-  viejo (no se tocó código compartido); el SKIP con `-v` sobre `internal/modulos/...` suelto. 🟡 Por decidir: hallazgo 75
-  (alias en los `helpertest` o genéricos) y 81 (parada de ≈ 10 s con Edge conectados).
+  viejo (no se tocó código compartido); el SKIP con `-v` sobre `internal/modulos/...` suelto. 🟡 Por decidir: hallazgo 81
+  (parada de ≈ 10 s con Edge conectados); el 75 se resolvió en el mismo PR (abajo).
+- ✎ **Dos hallazgos corregidos en el mismo PR** (decisión de Jhoan, 2026-10-06): el **75** (`61ded8b`: los `helpertest`
+  de `enroll` y `fleet` exportan alias de sus tipos, como `iam`; mueren los rodeos genéricos) y la parte de `fleet` del
+  **76** (`e41df74`: `PendingGreeting`, `MarkGreeted`, su carrera y el sobre incompleto contra Postgres; 12 mutantes,
+  todos muertos, los tres de `fleet` pendientes incluidos). Con ellos, `make test-procesos` **viejo y nuevo `RC=0 ·
+  PASS=821 · FAIL=0 · SKIP=0`** y `make ci-local` rc=0. 🟡 Nuevo, solo leído en el código: un sobre de `self_pn` a
+  medias con índice y `kek_id` intactos no se auto-sana (hallazgo 76).
 - **Hallazgos 74–83** en el [README de F3](plan/F3-edge/README.md). **Siguiente paso: F45-01** (F4 + F5). `main` sin tocar.
 
 **F3-04 · F3, adaptador, cara nueva y conmutación de `edge` (2026-10-06, 💻, rama `reorg/f3-04-bridge-conmutar-rutas` desde `origin/dev` @ `115a4ba`).**

@@ -431,7 +431,7 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     suite ni adaptador se retocó para llegar al verde. Un mutante por adaptador puso su suite en rojo (los de `lease`,
     `enroll`, `receipts` e `ingest`, en una sola corrida conjunta y no aislados; los de `fleet` se corrieron antes de un
     retoque de lint del test y no se repitieron después).
-75. 🟡 **El candado `ProcessImports` no deja nombrar tipos del puerto** (solo sus `New…`), y dos Montajes los devuelven:
+75. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan, `61ded8b`, en el mismo PR: `enrollhelpertest.EdgeCertRecord` y `fleethelpertest.{TenantProfiles,HealthSnapshot}` son alias exportados, como en `iam`; los rodeos genéricos de los dos `_contrato_test.go` desaparecen. Los candados no pidieron nada: los `…helpertest` están exentos. Lo que sigue describe cómo estaba)* **El candado `ProcessImports` no deja nombrar tipos del puerto** (solo sus `New…`), y dos Montajes los devuelven:
     `enroll.EdgeCertRecord` y `fleet.TenantProfiles`/`HealthSnapshot`. `enroll_contrato_test.go` y `fleet_contrato_test.go`
     lo resuelven con genéricos donde el compilador infiere el tipo (un tipo espejo con restricción `~struct{…}` en
     `enroll`): pasa el candado y deja de compilar si el registro cambia, pero se aparta del precedente de `iam` (alias
@@ -442,6 +442,17 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `…RotatedKEK_HealsTheRowOnce`. Del hallazgo 30 **no se llevaron** `PendingGreeting` / `MarkGreeted` y su carrera
     (fuera del puerto) ni el sobre incompleto sembrado por SQL (sí el ilegible por KEK ausente). La poda perezosa de
     `ingest` no se ejerce contra Postgres: el candado impide `WithSweep` / `WithRetention`.
+    ✅ *Resuelta la parte de `fleet` el 2026-10-06 por decisión de Jhoan (`e41df74`, en el mismo PR)*:
+    `fleet_contrato_greeting_test.go` lleva a Postgres `PendingGreeting` (solo una fila pasiva, con número y sin saludar;
+    preguntar no es un *claim*), `MarkGreeted` (marca una vez y solo su fila), la carrera (16 marcas con barrera, 12
+    rondas: exactamente una gana) y el sobre incompleto en cinco formas (`Get`/`List` sirven la sesión sin número y sin
+    error; `PendingGreeting` devuelve su error literal). Los dos métodos fuera del puerto se llaman por una interfaz
+    local del test. Nueve mutantes nuevos, todos muertos, y **repetidos** los tres de `fleet` que el 74 dejó sin
+    re-correr (guarda de `SetSelfPn`, `BlindIndex` sin normalizar, `degraded_since`): muertos. Sigue sin ejercerse la poda
+    de `ingest`. 🟡 **Leído en el código, no ejecutado ni afirmado**: una fila con el sobre a medias pero con
+    `self_pn_bidx` y `self_pn_kek_id` intactos no se auto-sanaría con el latido siguiente (ninguna rama de la guarda de
+    `SetSelfPn` casa; solo sana si falta el `kek_id`): serviría número vacío y daría error en `PendingGreeting` sin fin.
+    Sin contrastar con el viejo; por decidir si merece un test que la fije o una corrección.
 77. **D-F3-11 probada contra Postgres, en el adaptador** (`TestDiagnosticsContract_DeleteRequest_SurvivesTheCancelledRequest`):
     con el contexto de la petición cancelado, `DeleteRequest` falla y la fila queda; con
     `context.WithTimeout(context.WithoutCancel(ctx), plazo)`, la forma de `rollbackRequest`, la fila se borra de verdad.
