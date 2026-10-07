@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // degradationnotices_test.go — cubre el contrato de degradationnotices.go
@@ -278,7 +276,7 @@ func TestMountDegradationNotices_WithTheModuleFake(t *testing.T) {
 			} `json:"notices"`
 		}
 		wantJSON(t, query, rec, &body)
-		out := []string{}
+		out := make([]string, 0, len(body.Notices))
 		for _, n := range body.Notices {
 			out = append(out, n.Reason)
 		}
