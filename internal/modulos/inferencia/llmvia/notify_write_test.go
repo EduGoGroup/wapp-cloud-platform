@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia
 
 // La ESCRITURA del aviso (notify.go): con qué contexto y qué instante se llama al

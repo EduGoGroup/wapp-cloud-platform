@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia
 
 // Las promesas de notify.go (R4.5.d, R4.5.e), ejercidas por las tres puertas del Selector: la

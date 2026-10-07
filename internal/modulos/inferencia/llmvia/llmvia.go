@@ -544,3 +544,32 @@ func (s *Selector) PlazaDe(ctx context.Context, tenantID, originSessionID string
 		return "", false, fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
 	}
 }
+
+// turnRoute contesta la pregunta por la vía que hace Turno (llmvia_turno.go), que NO
+// puede hacerla él: ese fichero no está en la lista de permitidos del candado C2, y la
+// partición de E-13 no autoriza a ampliarla. En el paquete viejo era el switch del propio
+// Turno; es EL MISMO de For, Warm y PlazaDe —mismas dos ramas, mismo default de REQ-33
+// (sin fila ⇒ local) y mismo error para el valor fuera del vocabulario—. Cuatro hermanos
+// que se amplían JUNTOS o uno empieza a mentir.
+//
+// Devuelve la vía por la que se sirve el turno (hoy solo la local), para que Turno se la
+// ate al aviso sin mirarla; o el error que Turno devuelve tal cual: el de lectura,
+// ErrViaSinTurnoAcotado para la vía api o ErrViaDesconocida envuelto.
+func (s *Selector) turnRoute(ctx context.Context, tenantID string) (string, error) {
+	cfg, found, err := s.store.Get(ctx, tenantID)
+	if err != nil {
+		return "", fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+	switch via {
+	case tenantllm.ViaLocal:
+		return via, nil
+	case tenantllm.ViaAPI:
+		return "", ErrViaSinTurnoAcotado
+	default:
+		return "", fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
+}

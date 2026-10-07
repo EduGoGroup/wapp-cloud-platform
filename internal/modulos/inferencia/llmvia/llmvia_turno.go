@@ -50,7 +50,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 )
 
 // ErrViaSinTurnoAcotado indica que el tenant no está en una vía capaz de servir un
@@ -185,5 +186,46 @@ type TurnoRequest struct {
 // local: si tiene motivo, se cuenta (aunque no haya notificador) y se escribe el
 // aviso al dueño.
 func (s *Selector) Turno(ctx context.Context, tenantID, originSessionID string, t TurnoRequest) (string, error) {
-	panic(pendiente.Implementar("llmvia.Selector.Turno"))
+	// 🔴 La vía la contesta llmvia.go (turnRoute): aquí llega ya resuelta y solo se le
+	// ata al aviso. Este fichero no la compara (C2).
+	route, err := s.turnRoute(ctx, tenantID)
+	if err != nil {
+		return "", err
+	}
+	if s.frame == nil {
+		// Mismo error que devolvería local.New: un selector sin cable es un fallo de
+		// ARRANQUE, y decirlo con el vocabulario de siempre evita estrenar un tercer
+		// nombre para el mismo problema.
+		return "", local.ErrSinTransporte
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, PlazoTurno+local.MargenVeredicto)
+	defer cancel()
+	raw, err := s.frame.Infer(ctx, tenantID, edgegrpc.InferRequest{
+		Prompt: t.Prompt,
+		Format: t.Formato,
+		// TEMPERATURA 0, y no es configurable a propósito: esto no redacta nada, elige
+		// entre opciones que ya existen. El reintento a 0,3 por calidad que el pipeline
+		// tiene previsto (REQ-02/REQ-03) aquí NO aplica — un segundo viaje de 4–8 s
+		// dentro del mismo turno de WhatsApp cuesta más de lo que rescata.
+		Temperature: 0,
+		Timeout:     PlazoTurno,
+		// La sesión de la CONVERSACIÓN que preguntó: es trazabilidad y, si está viva,
+		// es además el stream por el que sale, así que contesta el mismo Edge que
+		// recibió el mensaje — el que tiene el prefijo de este prompt caliente.
+		OriginSessionID: originSessionID,
+		MaxOutputTokens: TechoTurno,
+		// SOLO RÓTULO (ver InferRequest.Class). Que sea `interactivo` no le pide nada
+		// al Edge ni mueve ningún umbral: es para que en el parte de inferencia se
+		// pueda separar lo que alguien estaba esperando de lo que corría de fondo.
+		Class: edgegrpc.ClassInteractive,
+	})
+	// EL AVISADOR, REUSADO. No se duplica el mapeo de motivos ni el dedupe ni el log: se
+	// llama al mismo sitio que llama el decorador de For, diciendo por qué puerta se
+	// entró. Un err nil no avisa ni cuenta (primera línea de notify).
+	s.notify(ctx, tenantID, route, OrigenTurno, err)
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
 }

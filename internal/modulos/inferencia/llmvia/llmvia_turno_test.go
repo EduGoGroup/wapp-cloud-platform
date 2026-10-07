@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia_test
 
 // EL TURNO ACOTADO DEL NIVEL B (llmvia_turno.go · R4.6.c).
@@ -195,7 +193,7 @@ func TestTurno_ARouteFailureNotifiesTheOwnerAndCountsAsTurn(t *testing.T) {
 		llmvia.WithFrame(&fakeFrame{err: failure}), book.option(), llmvia.WithDegradacionObservada(falls.count))
 
 	raw, err := s.Turno(context.Background(), testTenant, "s-1", turnRequest())
-	if err != error(failure) || raw != "" {
+	if err != error(failure) || raw != "" { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("Turno = (%q, %v), quería (\"\", el error del transporte intacto)", raw, err)
 	}
 	requireOneNotice(t, book, falls, llmvia.OrigenTurno, tenantllm.ViaLocal, degradation.ReasonTimeout)
