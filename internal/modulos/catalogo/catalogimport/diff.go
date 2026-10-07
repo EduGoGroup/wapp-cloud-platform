@@ -3,8 +3,11 @@
 package catalogimport
 
 import (
+	"slices"
+	"strconv"
+	"strings"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/catalogo"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Diff es la respuesta a la única pregunta que el dueño se hace antes de aplicar
@@ -69,7 +72,7 @@ type ItemRef struct {
 // bajas, ni precios, ni detalles. Los avisos del catálogo vigente NO cuentan como
 // cambio (describen lo que ya pasaba antes de este import), y Unchanged tampoco.
 func (d Diff) Empty() bool {
-	panic(pendiente.Implementar("catalogimport.Diff.Empty"))
+	return len(d.PriceChanges) == 0 && len(d.Added) == 0 && len(d.Removed) == 0 && len(d.ChangedDetails) == 0
 }
 
 // DiffCatalog compara el documento validado contra el catálogo vigente ya
@@ -106,5 +109,232 @@ func (d Diff) Empty() bool {
 //     « (el motor ya lo ignoraba, así que no entra en la comparación de arriba)».
 //     Sin avisos es nil y no viaja en el JSON.
 func DiffCatalog(current catalogo.Catalog, next ImportBody) Diff {
-	panic(pendiente.Implementar("catalogimport.DiffCatalog"))
+	oldItems := flattenCurrent(current)
+	newItems := flattenNext(next)
+
+	d := Diff{
+		PriceChanges:    make([]PriceChange, 0),
+		Added:           make([]ItemRef, 0),
+		Removed:         make([]ItemRef, 0),
+		ChangedDetails:  make([]string, 0),
+		CurrentWarnings: describeWarnings(current.Warnings),
+	}
+
+	for _, sku := range sortedSKUs(newItems) {
+		item := newItems[sku]
+		before, existed := oldItems[sku]
+		if !existed {
+			d.Added = append(d.Added, ItemRef{SKU: sku, Label: item.label})
+			continue
+		}
+		priceChanged := before.price != item.price
+		if priceChanged {
+			d.PriceChanges = append(d.PriceChanges, PriceChange{
+				SKU: sku, Label: item.label, OldPrice: before.price, NewPrice: item.price,
+			})
+		}
+		detailsChanged := !sameDetails(before, item)
+		if detailsChanged {
+			d.ChangedDetails = append(d.ChangedDetails, sku)
+		}
+		if !priceChanged && !detailsChanged {
+			d.Unchanged++
+		}
+	}
+
+	for _, sku := range sortedSKUs(oldItems) {
+		if _, stays := newItems[sku]; !stays {
+			d.Removed = append(d.Removed, ItemRef{SKU: sku, Label: oldItems[sku].label})
+		}
+	}
+	return d
+}
+
+// diffItem es la forma NORMALIZADA de un artículo, común a los dos lados de la
+// comparación. Existe para que el catálogo vigente (tipos de catalogo, campos
+// exportados sin etiquetas json) y el documento de import (tipos del contrato) se
+// comparen con UNA sola función y no con dos que puedan divergir.
+type diffItem struct {
+	label       string
+	code        string
+	description string
+	subcategory string
+	price       float64
+	tags        []string
+	attributes  map[string]string
+	variants    []ImportVariant
+	components  []ImportComponent
+}
+
+// flattenCurrent aplana el catálogo vigente parseado a sku → artículo.
+//
+// Un sku REPETIDO en el catálogo vigente se queda con su PRIMERA aparición: el
+// validador del import prohíbe los duplicados (D-041.5), pero el parseo de
+// runtime es tolerante y un blob viejo puede traerlos. Quedarse con el primero
+// —en vez de con el último— es la misma preferencia que aplica el runtime al
+// buscar, así que el diff describe el artículo que el cliente veía.
+func flattenCurrent(cat catalogo.Catalog) map[string]diffItem {
+	out := make(map[string]diffItem)
+	for _, c := range cat.Categories {
+		for _, a := range c.Items {
+			if _, dup := out[a.SKU]; dup {
+				continue
+			}
+			out[a.SKU] = diffItem{
+				label:       a.Label,
+				code:        a.Code,
+				description: a.Description,
+				subcategory: a.Subcategory,
+				price:       a.Price,
+				tags:        a.Tags,
+				attributes:  a.Attributes,
+				variants:    toImportVariants(a.Variants),
+				components:  toImportComponents(a.Components),
+			}
+		}
+	}
+	return out
+}
+
+// flattenNext aplana el documento de import a sku → artículo. Los duplicados no
+// se contemplan: el documento llega YA validado y el sku único en todo el
+// catálogo es una de sus reglas.
+func flattenNext(body ImportBody) map[string]diffItem {
+	out := make(map[string]diffItem)
+	for _, c := range body.Categories {
+		for _, it := range c.Items {
+			out[it.SKU] = diffItem{
+				label:       it.Label,
+				code:        it.Code,
+				description: it.Description,
+				subcategory: it.Subcategory,
+				price:       it.Price,
+				tags:        it.Tags,
+				attributes:  it.Attributes,
+				variants:    it.Variants,
+				components:  normalizeComponents(it.Components),
+			}
+		}
+	}
+	return out
+}
+
+// toImportVariants traduce las variantes del runtime a la forma del contrato.
+func toImportVariants(in []catalogo.Variant) []ImportVariant {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ImportVariant, 0, len(in))
+	for _, v := range in {
+		out = append(out, ImportVariant{Code: v.Code, Label: v.Label, Price: v.Price})
+	}
+	return out
+}
+
+// toImportComponents traduce los componentes del runtime a la forma del contrato.
+// El runtime ya materializó la qty ausente como 1 (parseComponents), igual que
+// hace normalizeComponents con el lado nuevo: los dos lados llegan comparables.
+func toImportComponents(in []catalogo.Component) []ImportComponent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ImportComponent, 0, len(in))
+	for _, c := range in {
+		out = append(out, ImportComponent{SKU: c.SKU, Qty: c.Qty})
+	}
+	return out
+}
+
+// normalizeComponents materializa la qty ausente como 1 en el lado nuevo. Sin
+// esto, un combo cuyo componente pasa de `qty` omitido a `"qty": 1` —el MISMO
+// combo— aparecería como cambio de detalle.
+func normalizeComponents(in []ImportComponent) []ImportComponent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ImportComponent, 0, len(in))
+	for _, c := range in {
+		if c.Qty == 0 {
+			c.Qty = 1
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// sameDetails compara todo lo que NO es el precio del artículo. El orden de tags
+// y variantes SÍ cuenta: es el orden en que se le enseñan al cliente, así que
+// reordenarlas cambia lo que ve.
+func sameDetails(a, b diffItem) bool {
+	if a.label != b.label || a.code != b.code || a.description != b.description || a.subcategory != b.subcategory {
+		return false
+	}
+	if !slices.Equal(a.tags, b.tags) {
+		return false
+	}
+	if !sameAttributes(a.attributes, b.attributes) {
+		return false
+	}
+	if !slices.Equal(a.variants, b.variants) {
+		return false
+	}
+	return slices.Equal(a.components, b.components)
+}
+
+// sameAttributes compara dos mapas de atributos tratando nil y vacío como lo
+// mismo (el JSON los produce indistintamente).
+func sameAttributes(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, va := range a {
+		if vb, ok := b[k]; !ok || va != vb {
+			return false
+		}
+	}
+	return true
+}
+
+// sortedSKUs devuelve los skus de un lado en orden alfabético. Las listas del
+// diff se ordenan SIEMPRE por sku, no por el orden del documento: el orden del
+// archivo no significa nada para quien lee «qué cambia» y sí haría que dos
+// corridas del mismo import se vieran distintas.
+func sortedSKUs(items map[string]diffItem) []string {
+	out := make([]string, 0, len(items))
+	for sku := range items {
+		out = append(out, sku)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// describeWarnings pasa a español llano los avisos del parseo tolerante del
+// catálogo VIGENTE. Cada línea dice dónde estaba el defecto y termina recordando
+// lo que de verdad importa: eso ya no está en la comparación.
+func describeWarnings(ws []catalogo.CatalogWarning) []string {
+	if len(ws) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ws))
+	for _, w := range ws {
+		var b strings.Builder
+		b.WriteString("catálogo vigente")
+		if w.Category != "" {
+			b.WriteString(" · categoría ")
+			b.WriteString(strconv.Quote(w.Category))
+		}
+		if w.SKU != "" {
+			b.WriteString(" · artículo ")
+			b.WriteString(strconv.Quote(w.SKU))
+		}
+		if w.Field != "" {
+			b.WriteString(" · campo ")
+			b.WriteString(strconv.Quote(w.Field))
+		}
+		b.WriteString(": ")
+		b.WriteString(w.Reason)
+		b.WriteString(" (el motor ya lo ignoraba, así que no entra en la comparación de arriba)")
+		out = append(out, b.String())
+	}
+	return out
 }
