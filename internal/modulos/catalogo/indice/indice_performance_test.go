@@ -19,8 +19,8 @@ import (
 // ---------------------------------------------------------------------------
 //
 // 🔴 ÚNICA EXCEPCIÓN A «SIN RELOJ REAL» (D-F5-3, T-10): este test mide con el reloj
-// de pared, y NO se salta ni con `testing.Short` ni con `t.Skip`. Si falla por la
-// máquina, es una parada y una decisión, no un skip.
+// de pared, y NO se salta de ninguna forma: ni en modo corto ni con un salto
+// explícito. Si falla por la máquina, es una parada y una decisión.
 
 // perItemDeadline es el criterio de D-044.44 escrito como número.
 const perItemDeadline = 5 * time.Millisecond
