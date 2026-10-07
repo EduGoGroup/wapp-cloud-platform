@@ -2,9 +2,7 @@
 
 package indice
 
-import (
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-)
+import "fmt"
 
 // normalizador.go — LA FRONTERA CON `wapp-shared/textmatch`, Y EL CONTRATO QUE
 // EXIGE (Plan 044 · Ola 3 · T3.7 ↔ T3.1).
@@ -29,6 +27,30 @@ import (
 // Por eso `Construir` llama a VerificarNormalizador ANTES de indexar nada. Se paga
 // una vez por contenido (no por ítem, no por mensaje) y convierte «el normalizador
 // tiene que preservar la ñ» de comentario en guarda.
+
+// normalizerCase es una exigencia del contrato (en el viejo, casoNormalizador): qué
+// entra, qué tiene que salir y qué propiedad se está protegiendo (el porqué va al
+// mensaje de error, para que quien lo vea no tenga que abrir este fichero).
+type normalizerCase struct {
+	input string
+	want  string
+	why   string
+}
+
+// normalizerContract es EL CONTRATO, caso a caso (en el viejo,
+// contratoNormalizador). Todos están derivados de lo que hace
+// `textmatch.Normalize` leyendo su implementación: minúsculas, plegado de
+// diacríticos latinos por tabla, recomposición de la «ñ» descompuesta ANTES del
+// barrido de marcas combinantes, y colapso de espacios con trim vía
+// `strings.Fields`.
+var normalizerContract = []normalizerCase{
+	{"Café", "cafe", "tiene que plegar los diacríticos latinos: sin esto, «Café» no casa «cafe»"},
+	{"PIÑA COLADA", "piña colada", "tiene que pasar a minúsculas PRESERVANDO la ñ"},
+	{"Jalapeño", "jalapeño", "🔴 la ñ es una LETRA, no una n con tilde: plegarla colapsa «año» con «ano»"},
+	{"An\u0303o Nuevo", "a\u00f1o nuevo", "tiene que recomponer la ñ DESCOMPUESTA (n + U+0303) ANTES de barrer las marcas combinantes: si la barre primero, queda «ano»"},
+	{"  Torta   de   Chocolate  ", "torta de chocolate", "tiene que colapsar los espacios internos y hacer trim"},
+	{"", "", "la cadena vacía se normaliza a la cadena vacía, no a un espacio"},
+}
 
 // VerificarNormalizador comprueba que una función cumple el contrato que el índice
 // necesita. Devuelve nil —y `textmatch.Normalize` lo cumple— o un error que dice
@@ -70,5 +92,27 @@ import (
 // Se exporta para que quien cablee `textmatch.Normalize` pueda saber con un test
 // de una línea si las dos piezas siguen hablando el mismo idioma.
 func VerificarNormalizador(n Normalizador) error {
-	panic(pendiente.Implementar("indice.VerificarNormalizador"))
+	if n == nil {
+		return ErrSinNormalizador
+	}
+	for _, c := range normalizerContract {
+		got := n(c.input)
+		if got != c.want {
+			return fmt.Errorf("%w: con %q devolvió %q y el contrato exige %q — %s",
+				ErrNormalizadorInvalido, c.input, got, c.want, c.why)
+		}
+		if twice := n(got); twice != got {
+			return fmt.Errorf("%w: no es idempotente — %q normaliza a %q y eso a %q; el catálogo se normaliza una vez y la consulta otra, así que la segunda pasada tiene que ser un no-op",
+				ErrNormalizadorInvalido, c.input, got, twice)
+		}
+	}
+	// Una comprobación que la tabla no puede dar: que no colapse dos textos que el
+	// español distingue. Es el invariante de la ñ dicho al revés, y caza a un
+	// normalizador que pase los casos de arriba por casualidad (p. ej. uno con una
+	// tabla de excepciones en vez de la regla).
+	if n("a\u00f1o") == n("ano") {
+		return fmt.Errorf("%w: colapsa «año» con «ano» — la ñ tiene que sobrevivir a la normalización",
+			ErrNormalizadorInvalido)
+	}
+	return nil
 }
