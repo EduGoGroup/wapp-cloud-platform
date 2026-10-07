@@ -12,6 +12,10 @@
 > **Auxiliares no exportados** (`05` E-4): su test nace en el verde y solo si llevan regla de negocio o ramas no triviales.
 > **Adaptadores `bridge_<x>.go`: ninguno. BD: ninguna.** El «puente» de D-F5-1 = A es de **import** (`05` §4.1).
 > **Sesiones**: F4 y F5 comparten las tres fichas `F45-*` de [`../sesiones/`](../sesiones/README.md).
+>
+> ✅ **D-F5-1 = B** (Jhoan, 2026-09-30; anotada aquí el 2026-10-06 en F45-01): `internal/flujos/model` se reconstruye en
+> F5 como `internal/modulos/conversacion/model`. No hay puente de import; T5.2 **se hace**. Inventario E-12 aprobado:
+> [`diseno.md`](diseno.md) §6.1.
 
 ## Sesión F45-01 · inventario E-12 (junto al de F4) · 🌐 · T5.1
 Para cuando: Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada aquí.
