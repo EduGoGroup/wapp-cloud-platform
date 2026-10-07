@@ -15,6 +15,9 @@ import (
 // no importa nada de internal/ (R9.4.d, regla 1): el adaptador, su KeyProvider y su FieldCipher le
 // llegan por el fleetContractRig que construye aquel fichero. Todo entra por el puerto
 // (SetSelfPn, Get, List, CountLiveBySelfPn) y se observa por SQL.
+//
+// La guarda tiene una tercera rama, la del sobre incompleto (D-F3-12): su caso está en
+// fleet_contrato_heal_test.go.
 
 const (
 	// fleetContractSelfPn es el número propio de los casos, en su forma canónica (E.164 sin «+» ni

@@ -34,8 +34,9 @@ import (
 // Los casos propios del hallazgo 30 —lo que solo existe contra Postgres— están aquí
 // (degraded_since) y en fleet_contrato_selfpn_test.go (el sobre del self_pn, su guarda y la
 // rotación de KEK). Los del hallazgo 76 —el aviso de sesión pasiva y el sobre incompleto— están en
-// fleet_contrato_greeting_test.go. Esos dos ficheros no importan nada de internal/: todo les llega
-// por el fleetContractRig.
+// fleet_contrato_greeting_test.go, y el de D-F3-12 —que ese sobre incompleto se auto-sana con el
+// latido siguiente— en fleet_contrato_heal_test.go. Esos tres ficheros no importan nada de
+// internal/: todo les llega por el fleetContractRig.
 //
 // 🔴 HOMÓNIMO: la «DEK» y la KEK de este fichero son las del envelope de PII de negocio
 // (internal/platform/crypto), NO la DEK del ADR-0007 que custodia el cliente. Todas se generan en
