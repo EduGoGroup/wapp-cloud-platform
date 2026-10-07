@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package prompts_test
 
 import (
@@ -162,7 +160,7 @@ func TestVolcar_WritesTheFourFiles(t *testing.T) {
 		if paths[n] != want {
 			t.Errorf("rutas[%d] = %q; se esperaba %q", n, paths[n], want)
 		}
-		raw, err := os.ReadFile(want)
+		raw, err := os.ReadFile(want) //nolint:gosec // ruta bajo el t.TempDir del propio test
 		if err != nil {
 			t.Fatalf("no se pudo leer el fichero volcado: %v", err)
 		}
@@ -212,7 +210,7 @@ func TestVolcar_DoesNotOverwrite(t *testing.T) {
 	if paths != nil {
 		t.Errorf("con error, Volcar devolvió las rutas %v; se esperaba ninguna", paths)
 	}
-	raw, err := os.ReadFile(existing)
+	raw, err := os.ReadFile(existing) //nolint:gosec // ruta bajo el t.TempDir del propio test
 	if err != nil {
 		t.Fatalf("no se pudo releer el fichero existente: %v", err)
 	}

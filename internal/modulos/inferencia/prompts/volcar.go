@@ -3,9 +3,12 @@
 package prompts
 
 import (
-	"github.com/EduGoGroup/wapp-shared/llm"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-shared/llm"
 )
 
 // NombreDeFichero es el nombre que Volcar le da a cada etapa. El prefijo es
@@ -57,7 +60,30 @@ var QueHaceLaEtapa = map[llm.Etapa]string{
 // Un `dir` vacío —también el que solo trae espacios— es un error: «volcar
 // necesita un directorio». Todo error envuelve ErrPromptsDir y llega sin rutas.
 func Volcar(dir string) ([]string, error) {
-	panic(pendiente.Implementar("prompts.Volcar"))
+	if strings.TrimSpace(dir) == "" {
+		return nil, fmt.Errorf("%w: volcar necesita un directorio", ErrPromptsDir)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("%w: no se puede crear %s: %w", ErrPromptsDir, dir, err)
+	}
+
+	paths := make([]string, 0, len(llm.EtapasAjustables))
+	for _, stage := range llm.EtapasAjustables {
+		p, ok := llm.PlantillaPorDefecto(stage)
+		if !ok {
+			return nil, fmt.Errorf("%w: la etapa %q no tiene plantilla compilada", ErrPromptsDir, stage)
+		}
+		path := filepath.Join(dir, NombreDeFichero[stage])
+		if _, err := os.Stat(path); err == nil {
+			return nil, fmt.Errorf("%w: %s ya existe y NO se sobrescribe; bórralo tú si de verdad "+
+				"quieres perder lo que tiene", ErrPromptsDir, path)
+		}
+		if err := os.WriteFile(path, []byte(Serializar(stage, p)), 0o600); err != nil {
+			return nil, fmt.Errorf("%w: no se puede escribir %s: %w", ErrPromptsDir, path, err)
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 // Serializar convierte una plantilla en el contenido de su fichero. Es la inversa
@@ -93,5 +119,28 @@ func Volcar(dir string) ([]string, error) {
 //	que ser válido tal cual está impreso. Esto ya costó una etapa entera: P4 fue 0 de 14
 //	en su primer día en campo porque su esquema imprimía `"package_size": 0`.
 func Serializar(e llm.Etapa, p llm.Plantilla) string {
-	panic(pendiente.Implementar("prompts.Serializar"))
+	version := fmt.Sprintf("%d", llm.ArtifactVersion)
+	schema := strings.Replace(p.Esquema, `"version": `+version, `"version": `+HuecoVersion, 1)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Prompt de la etapa %s — %s\n\n", strings.ToUpper(string(e)), QueHaceLaEtapa[e])
+	b.WriteString("Esto de aquí arriba, ANTES del primer marcador, es documentación y NO se le manda\n")
+	b.WriteString("al modelo. Escribe aquí lo que haga falta para el que venga detrás.\n\n")
+	b.WriteString("Cómo se usa este fichero:\n")
+	b.WriteString("  - Edítalo y REINICIA el cloud. No hay recarga en caliente, a propósito.\n")
+	b.WriteString("  - Si te equivocas, el cloud NO ARRANCA y te dice qué fichero y por qué.\n")
+	b.WriteString("  - " + HuecoVersion + " se sustituye por la versión de artefacto que el código sabe leer.\n")
+	b.WriteString("  - El texto entre marcadores se preserva EXACTO, líneas en blanco incluidas.\n\n")
+	b.WriteString("🔴 EN EL ESQUEMA NO PUEDE HABER UN VALOR QUE EL VALIDADOR RECHACE. El modelo COPIA\n")
+	b.WriteString("el ejemplo: un 0 escrito ahí es un 0 en su respuesta. Los `...` sí pueden quedarse\n")
+	b.WriteString("—son huecos reconocibles y se detectan si el modelo los ecoa—, pero un número tiene\n")
+	b.WriteString("que ser válido tal cual está impreso. Esto ya costó una etapa entera: P4 fue 0 de 14\n")
+	b.WriteString("en su primer día en campo porque su esquema imprimía `\"package_size\": 0`.\n\n")
+	// Sin recortes ni saltos añadidos: lo que se escribe es lo que Parsear devuelve.
+	// Serializar y Parsear son inversas exactas, y hay un test que lo exige.
+	b.WriteString(MarcaInstruccion + "\n")
+	b.WriteString(p.Instruccion)
+	b.WriteString(MarcaEsquema + "\n")
+	b.WriteString(schema)
+	return b.String()
 }
