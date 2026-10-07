@@ -253,3 +253,45 @@ Test (`bridge_inferencia_test.go`), dos partes obligatorias:
 
 `c2_via_test.go` es un candado, no lleva nivel. **Adaptadores**: nace 1 fichero (`bridge_inferencia.go`, dos tipos) y
 muere 1 (`bridge_gateway.go` de F3, en T4.24).
+
+### 6.1 · Inventario E-12, fichero a fichero (medido el 2026-10-06 sobre `dev` @ `ebf4eb7`; **aprobado por Jhoan** en F45-01)
+
+**Regla de conteo de consumidores**: paquetes de producción distintos que usan símbolos del fichero; las dos copias del
+arranque (`internal/arranque` e `internal/bootstrap/arranque`) cuentan como dos. Números reconfirmados: 10 ficheros de
+producción, **3.072 líneas**; 14 tests viejos, **88 `Test*`** (21 de integración); imports iguales a `arquitectura.md`
+§2. Ninguno de los 10 tiene `sync`, `atomic`, goroutines, canales ni timers.
+
+| Fichero nuevo (`N/…`) | L. viejo | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `prompts/prompts.go` | 299 | no | no | no (lee disco) | 3 | **medio** |
+| `prompts/volcar.go` | 108 | 2 mapas de paquete, solo lectura | no | no (escribe disco) | 1 | **medio** (ida y vuelta byte a byte con `Parsear`) |
+| `degradation/degradation.go` | 449 | no | no | no (puerto) | 4 | **medio** |
+| `degradation/postgres.go` | 227 | no | no | sentencias sueltas, `ON CONFLICT … RETURNING`, **sin tx** | 2 | **medio** (D-F3-7: driver SQL falso, SQL byte a byte, sin mutantes) |
+| `degradation/degradationhelpertest/contrato.go` | — | — | — | es la especificación del puerto | — | **complejo** (suite entera; sin test propio) |
+| `degradation/degradationhelpertest/memoria.go` | — | mapa + contador `Saves()` | `Mutex` | no | — | **simple** (P1 de F2: lo vigila la suite) |
+| `tenantllm/tenantllm.go` | 182 | no | no | no (puerto) | 3 | **medio** |
+| `tenantllm/postgres.go` | 222 | no | no | 4 sentencias, upsert, **cifrado** y `kek_id` de la fila (T-15) | 2 | **complejo** (mutantes en la validación previa al SQL) |
+| `tenantllm/tenantllmhelpertest/contrato.go` | — | — | — | es la especificación del puerto | — | **complejo** |
+| `tenantllm/tenantllmhelpertest/memoria.go` | — | mapa | `Mutex` | no | — | **simple** (P1 de F2) |
+| `llmvia/local/local.go` | 533 | no (`Provider` inmutable) | no; reloj real (`time.Until`, T-17) | no | 3 | **medio** |
+| `llmvia/local/calentamiento.go` | 116 | no | no | no | 1 | **simple** |
+| `llmvia/notify.go` | 280 | no | `WithoutCancel` + timeout | por el puerto | 2 | **complejo** (mutantes sobre el orden de `motivoDe`, T-6) |
+| `llmvia/llmvia.go` + `llmvia_turno.go` | 656 | slice `localOpts` compartido | uso concurrente, copia por petición (T-4) | por el puerto | 7 | **complejo** (mutantes; `-race`) |
+| `llmvia/c2_via_test.go` | — | — | — | — | — | candado (AST), sin nivel |
+
+Se aparta de la tabla provisional en cuatro filas, con jurisprudencia: `degradation/postgres.go` baja a medio
+(D-F3-7), los dos `memoria.go` a simple (P1 de F2) y `calentamiento.go` a simple (2 exportados, 1 consumidor, sin ramas
+de negocio).
+
+**Adaptadores `bridge_<x>.go`**: nace `internal/arranque/bridge_inferencia.go` (`llmConfigBridge`, `turneroBridge`;
+sesión F45-02, T4.10) y se retira `bridge_gateway.go` de F3 (F45-02, T4.24). **Puertos de entrada sin suite**: ninguno.
+
+**Particiones E-13** (D-R-7; esta spec es anterior a la regla): `llmvia.go` viejo mide 656 > 600 ⇒ nace partido en
+`llmvia.go` y `llmvia_turno.go` (`Turno` y lo suyo), cada uno con su gemelo `_test.go`. Las suites de contrato y los
+tests nuevos tienen el mismo tope: lo que no quepa nace en `<tema>_contrato.go` o en `x_<tema>_test.go`. El árbol de §1
+suma por tanto **27** ficheros (no 26) más los trozos de E-13.
+
+**Correspondencias con el código de F3** (la spec los nombraba antes de existir): `ClaseInteractivo` / `ClaseLote` →
+`edgegrpc.ClassInteractive` / `ClassBatch`; los `Motivo*` del transporte → `edgegrpc.Reason*` (el método `Motivo()` de
+`*InferError` sí se llama así). La tabla de `motivoDe` tiene **8 filas** (T4.8 decía 14); el test viejo la recorre con
+17 casos, que son los que se portan.

@@ -319,6 +319,8 @@ se puede verificar contra Postgres, pasa a la lista de procesos de §7.
 | `internal/flujos/runtime/streak_invariante_test.go` · `internal/flujos/modules/cart/orden_consulta_ast_test.go` · `internal/flujos/events/summary_test.go` | Invariantes del motor y del carrito | Contratos de `conversacion` |
 | `internal/gateway/grpc/greeting_internal_test.go` | 🔒 El literal `AVISO_SESION_PASIVA_V1`, byte a byte | Contrato de `edge/grpc` |
 | Los 11 `*_cableado_test.go` de `internal/bootstrap/arranque/` | El cableado del arranque | Contrato del arranque nuevo |
+| `internal/llmvia/c2_via_test.go` | I-CP-3 (C2): la vía solo se pregunta en la selección | Contrato de `inferencia/llmvia` (AST sobre el árbol nuevo; D-F4-2) |
+| `internal/degradation/degradation_test.go` (vocabulario Go ↔ `.sql`) | Los motivos de degradación son los del `CHECK` de la migración `0075` | Contrato de `inferencia/degradation` (lee la migración; D-F4-2) |
 
 ---
 
