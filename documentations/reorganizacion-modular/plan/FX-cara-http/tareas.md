@@ -79,7 +79,7 @@ cara vieja hasta F7: D-FX-1/D-F7-4), `FaseActual = 3`.
   - **Hecho cuando**: pendientes = 0; un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9; `SendBudgetFrom` de `plazos.go` da el mismo valor que el viejo para 10 s (9 s) y para ≤ 1 s (0)
   - **Gate**: el de cabecera · `make cobertura-ficheros` como informe (la tabla va al PR; no bloquea)
   - **Commit**: `verde(apipublica): <fichero>` — uno por fichero
-- [~] **TX.10 · identidad del centinela `ErrSessionOffline` (D-F3-2)** · 🌐→💻 · dep. decisión D-F3-2 · cumple RX.4.c — 🟡 test de identidad en `dd4cbd2` (F3-04); falta el e2e local, que confirma F3-05
+- [x] **TX.10 · identidad del centinela `ErrSessionOffline` (D-F3-2)** · 🌐→💻 · dep. decisión D-F3-2 · cumple RX.4.c — test de identidad en `dd4cbd2` (F3-04); e2e local en `f5b0fa6` (F3-05, 2026-10-06): `/admin/flows/start` a una sesión offline da 502 con el mismo cuerpo en los dos binarios
   - **Ficheros**: con **D-F3-2** (recomendación): `internal/modulos/edge/session/registry.go` declara `var ErrSessionOffline = <el de platform>` (el mismo que el viejo desde F0 T0.17) y un test de identidad en `internal/arranque`; **sin** puente. *(Alternativa D-FX-3, si D-F3-2 = no: la línea apunta al viejo y `fronteras_test.go` declara el puente de identidad, «retira: TX.24».)*
   - **Hecho cuando**: `errors.Is(<nuevo>.ErrSessionOffline, <viejo>.ErrSessionOffline)` es `true`; la sesión local lo confirma con el e2e de `cmd/server-modular` (`/admin/flows/start` a una sesión offline → mismo código que el binario viejo)
   - **Gate**: `go test -count=1 -v ./internal/arranque/... > "$TMPDIR/a.log" 2>&1; echo rc=$?` → `rc=0`
