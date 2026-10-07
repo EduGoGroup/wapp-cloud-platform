@@ -88,7 +88,52 @@ func TestCache_DefaultBoundIs64_AndAHitRefreshes(t *testing.T) {
 	assertStats(t, c, indice.Estadisticas{Construcciones: 66, Aciertos: 65, Desalojos: 2}, "t1 era el desalojado: se reconstruye")
 }
 
-// TestCache_NonPositiveMaxFallsBackTo64: la configuración nunca DESACTIVA el tope
+// TestCache_EveryUseAdvancesTheLogicalClock: cada uso —acierto o construcción—
+// deja su entrada ESTRICTAMENTE más reciente que todas las demás. Si un uso
+// reutilizara la marca del anterior habría dos entradas empatadas y la víctima la
+// elegiría el orden de recorrido del mapa, que es aleatorio: por eso cada caso se
+// repite con cachés nuevas, para que un empate no pase por suerte.
+func TestCache_EveryUseAdvancesTheLogicalClock(t *testing.T) {
+	const rounds = 32
+
+	t.Run("a hit is newer than the last build", func(t *testing.T) {
+		for round := range rounds {
+			f := newFakeSource()
+			c := newCache(t, f, 2)
+			for i := range 3 {
+				f.publish(tenant(i), docV1)
+			}
+			get(t, c, "t0")
+			get(t, c, "t1")
+			get(t, c, "t0") // acierto: t0 pasa por delante de t1
+			get(t, c, "t2") // desaloja al menos usado: tiene que ser t1
+			get(t, c, "t0")
+			if got, want := c.Estadisticas(), (indice.Estadisticas{Construcciones: 3, Aciertos: 2, Desalojos: 1}); got != want {
+				t.Fatalf("ronda %d: Estadisticas() = %+v; se esperaba %+v — tras el acierto de t0 el desalojado es t1, y t0 sigue dentro", round, got, want)
+			}
+		}
+	})
+
+	t.Run("a build is newer than the previous build", func(t *testing.T) {
+		for round := range rounds {
+			f := newFakeSource()
+			c := newCache(t, f, 2)
+			for i := range 3 {
+				f.publish(tenant(i), docV1)
+			}
+			get(t, c, "t0")
+			get(t, c, "t1")
+			get(t, c, "t2") // desaloja al primero que entró: t0
+			get(t, c, "t1")
+			get(t, c, "t2")
+			if got, want := c.Estadisticas(), (indice.Estadisticas{Construcciones: 3, Aciertos: 2, Desalojos: 1}); got != want {
+				t.Fatalf("ronda %d: Estadisticas() = %+v; se esperaba %+v — sin aciertos de por medio sale el primero que entró", round, got, want)
+			}
+		}
+	})
+}
+
+// TestCache_NonPositiveMaxFallsBackTo64:la configuración nunca DESACTIVA el tope
 // por accidente.
 func TestCache_NonPositiveMaxFallsBackTo64(t *testing.T) {
 	for _, limit := range []int{0, -1} {
