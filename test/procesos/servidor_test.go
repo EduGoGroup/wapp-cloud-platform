@@ -49,10 +49,14 @@ var errSalioAntes = errors.New("el servidor terminó antes de quedar listo")
 // [a-z0-9_]+ (lo valida nuevaBase). SondeoWebhook, si es > 0, fija WAPP_WEBHOOK_POLL_INTERVAL
 // (cada cuánto el worker mira webhook_outbox); MaxIntentosWebhook, si es > 0, fija
 // WAPP_WEBHOOK_MAX_ATTEMPTS. En cero no se pone la variable y manda el valor por defecto.
+// IdentityLogin, si es true, pone WAPP_IDENTITY_URL apuntando al doble de identity (su mitad
+// «identity-api», identidad_login_test.go): es lo que enciende el login de operador por el canal de
+// control. En false no se pone, y el servidor contesta «auth no disponible» a todo login.
 type opcionesServidor struct {
 	Proceso            string
 	SondeoWebhook      time.Duration
 	MaxIntentosWebhook int
+	IdentityLogin      bool
 }
 
 // servidor es un servidor de la nube corriendo como subproceso real, con todo lo que necesita
@@ -225,8 +229,8 @@ func (s *servidor) lanzar(ctx context.Context, o opcionesServidor, home string) 
 // construido desde cero (jamás se hereda el del test): lo mínimo del sistema (PATH, TMPDIR, un
 // HOME vacío para que el SDK de AWS no lea ~/.aws), el modo desarrollo con log JSON de nivel
 // debug, las cuatro direcciones y las salidas Entorno() de base, PKI, claves, S3 e identidad.
-// Los nombres van completos, con WAPP_. No pone WAPP_CONFIG_FILE, WAPP_IDENTITY_URL,
-// WAPP_IDENTITY_API_KEY, WAPP_LLM_PROMPTS_DIR ni WAPP_KEK_KMS_*. No falla.
+// Los nombres van completos, con WAPP_. No pone WAPP_CONFIG_FILE, WAPP_IDENTITY_URL (salvo con
+// o.IdentityLogin), WAPP_IDENTITY_API_KEY, WAPP_LLM_PROMPTS_DIR ni WAPP_KEK_KMS_*. No falla.
 func (s *servidor) entorno(o opcionesServidor, home string) []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -250,6 +254,9 @@ func (s *servidor) entorno(o opcionesServidor, home string) []string {
 	}
 	if o.MaxIntentosWebhook > 0 {
 		env = append(env, "WAPP_WEBHOOK_MAX_ATTEMPTS="+strconv.Itoa(o.MaxIntentosWebhook))
+	}
+	if o.IdentityLogin {
+		env = append(env, s.Identidad.loginEnv()...)
 	}
 	return env
 }

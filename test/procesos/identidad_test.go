@@ -52,6 +52,9 @@ type identidad struct {
 	emisor   *jwt.Manager // iss = identity-core
 	ajeno    *jwt.Manager // misma clave y kid, iss = emisor-ajeno
 	servidor *httptest.Server
+	// login es la mitad «identity-api» del doble (login, refresh y logout de un operador): solo la
+	// usa el servidor que arranca con opcionesServidor.IdentityLogin. Ver identidad_login_test.go.
+	login *identidadLogin
 }
 
 // jwkEC es una entrada del JWKS (RFC 7517 §5) con el formato que consume el cliente del
@@ -90,7 +93,11 @@ func nuevaIdentidad(t *testing.T) *identidad {
 		t.Fatalf("nuevaIdentidad: armando el JWKS: %v", err)
 	}
 
+	login := newIdentidadLogin(t, emisor)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if login.serve(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != identidadRutaJWKS {
 			http.NotFound(w, r)
 			return
@@ -104,7 +111,7 @@ func nuevaIdentidad(t *testing.T) *identidad {
 	if !strings.HasPrefix(srv.URL, "http://127.0.0.1:") {
 		t.Fatalf("nuevaIdentidad: el doble debe escuchar en 127.0.0.1 y escucha en %s", srv.URL)
 	}
-	return &identidad{t: t, clave: clave, emisor: emisor, ajeno: ajeno, servidor: srv}
+	return &identidad{t: t, clave: clave, emisor: emisor, ajeno: ajeno, servidor: srv, login: login}
 }
 
 // jwksDe arma el documento JWKS de una clave pública P-256: una sola clave

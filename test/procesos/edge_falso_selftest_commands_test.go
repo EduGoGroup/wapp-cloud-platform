@@ -192,16 +192,15 @@ func edgeProbarLeasesRechazados(t *testing.T) {
 	}
 }
 
-// edgeProbarDesconocido comprueba que un comando que el Edge no interpreta (un UserAuthResponse, la
-// respuesta al login del operador) se acusa como correcto si trae command_id, y no se acusa si no
-// lo trae. El Edge de este test NO tiene lease: lo que no es «de operar» no pasa por el gate. (El
-// SendMedia, que hacía de «desconocido» aquí, dejó de serlo: tiene su gate y sus propios tests.)
+// edgeProbarDesconocido comprueba que un comando que el Edge no interpreta (uno sin payload: lo que
+// vería de un campo del contrato posterior al suyo) se acusa como correcto si trae command_id, y no
+// se acusa si no lo trae. El Edge de este test NO tiene lease: lo que no es «de operar» no pasa por
+// el gate. (El SendMedia y el UserAuthResponse, que hicieron de «desconocido» aquí, dejaron de
+// serlo: tienen sus propios tests, edge_falso_selftest_send_test.go y …_auth_test.go.)
 func edgeProbarDesconocido(t *testing.T) {
 	t.Parallel()
 	e, c, _ := edgeDePrueba(t)
-	unknown := func(cmd *cloudlinkv1.CloudToEdge) {
-		cmd.Payload = &cloudlinkv1.CloudToEdge_UserAuthResponse{UserAuthResponse: &cloudlinkv1.UserAuthResponse{}}
-	}
+	unknown := func(*cloudlinkv1.CloudToEdge) {}
 	e.manejar(edgeComando("", "sesion-x", unknown))
 	if n := len(c.todos()); n != 0 {
 		t.Fatalf("un comando sin command_id emitió %d frames", n)

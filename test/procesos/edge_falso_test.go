@@ -183,6 +183,10 @@ type edge struct {
 
 	inferMu sync.Mutex
 	enVuelo sync.WaitGroup
+
+	// auth es el buzón de las respuestas de auth de operador (UserAuthResponse) que llegan por el
+	// stream; tiene su propio candado. Ver edge_falso_auth_test.go.
+	auth edgeAuthInbox
 }
 
 // nuevoEdge construye un Edge sin enlace: con su identidad, las dos públicas del servidor y un

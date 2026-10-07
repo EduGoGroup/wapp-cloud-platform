@@ -57,6 +57,8 @@ func (e *edge) manejar(cmd *cloudlinkv1.CloudToEdge) {
 		e.alRecibirInferencia(cmd, p.InferenceRequest)
 	case *cloudlinkv1.CloudToEdge_Ping:
 		e.alRecibirPing(cmd, p.Ping)
+	case *cloudlinkv1.CloudToEdge_UserAuthResponse:
+		e.handleUserAuthResponse(cmd, p.UserAuthResponse) // edge_falso_auth_test.go: se guarda, no se acusa
 	default:
 		e.acusar(cmd)
 	}

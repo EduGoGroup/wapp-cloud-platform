@@ -29,6 +29,13 @@ type MontajeEdgeCertRepository struct {
 	Records func(t *testing.T) []enroll.EdgeCertRecord
 }
 
+// EdgeCertRecord es el registro del puerto que cruza el montaje (MontajeEdgeCertRepository.Records),
+// con nombre de la suite: un montaje que vive fuera del árbol de enroll —la pasada contra Postgres
+// de test/procesos, que del paquete del puerto solo puede nombrar constructores (R9.4.d, candado
+// ProcessImports, regla 3b)— lo nombra por aquí. Es un alias, no una copia: el tipo es el mismo
+// (el precedente es outhelpertest.Invitation, D-F2-9; hallazgo 75 de F3).
+type EdgeCertRecord = enroll.EdgeCertRecord
+
 // ContratoEdgeCertRepository ejecuta las promesas de enroll.EdgeCertRepository contra la
 // implementación que devuelve nuevo, con un montaje limpio por caso. No salta nada.
 //

@@ -129,7 +129,7 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // adorno de rendimiento. Encrypt genera una DEK FRESCA por llamada, así que el
 // sobre sale distinto cada vez aunque el número sea el mismo: sin guarda, cada
 // sesión reescribiría cuatro columnas cada 30 s, para siempre, generando WAL y
-// bloat por un dato que no cambió. Con ella el UPDATE solo entra en DOS casos:
+// bloat por un dato que no cambió. Con ella el UPDATE solo entra en TRES casos:
 //
 //	(1) el número CAMBIÓ — bidx distinto. El bidx sí es determinista, por eso es
 //	    el comparando correcto y el sobre no lo sería. Mismo criterio que el
@@ -137,8 +137,11 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 //	(2) el sobre está envuelto por una KEK que YA NO ES LA CURRENT —
 //	    `self_pn_kek_id IS DISTINCT FROM $6`. Ver abajo: es una vía de
 //	    RECUPERACIÓN, no una optimización.
+//	(3) el sobre guardado está INCOMPLETO — le falta self_pn_enc o self_pn_dek
+//	    (NULL o vacío). Ver más abajo: es la otra vía de recuperación, y es
+//	    donde el nuevo se aparta del viejo (D-F3-12).
 //
-// 🔧 ERAN TRES HASTA T5.4. El que se fue era «queda plano que limpiar»
+// 🔧 YA HUBO OTRO TERCERO, HASTA T5.4. El que se fue era «queda plano que limpiar»
 // (`self_pn IS NOT NULL`), la condición que atrapaba la primera pasada tras la 0068
 // y el rollback a un binario viejo que volviera a escribir la columna en claro. La
 // 0070 borró esa columna: ese caso ya no puede darse, y una guarda que vigila un
@@ -176,7 +179,42 @@ func (r *PostgresRepository) CountLiveBySelfPn(ctx context.Context, tenantID, se
 // segundo testigo del mismo hecho, y dos testigos que pueden divergir son peores
 // que uno.
 //
-// Promesas que su test fija: la sentencia exacta y sus siete argumentos ($1-$3 la
+// 🔴 EL NUEVO SE APARTA DEL VIEJO: D-F3-12. El caso (3) no está en el viejo
+// (internal/gateway/fleet), que conserva el defecto. Con solo (1) y (2), una fila
+// con el sobre A MEDIAS —self_pn_enc o self_pn_dek NULL o vacío— pero con su
+// self_pn_bidx y su self_pn_kek_id intactos quedaba ATRAPADA PARA SIEMPRE, y por
+// el mismo mecanismo que la de la KEK perdida: el bidx casa (el número no cambió)
+// y el key_id casa (es el current), así que la guarda decía «nada que hacer»
+// mientras el Edge reportaba ese mismo número cada 30 s. Get y List servían ""
+// —el fallo blando— y PendingGreeting devolvía «fleet: sobre de self_pn
+// incompleto…» en cada latido, sin saludo y sin fin. Tampoco la rescata Rekey: solo
+// toma filas con key_id distinto del current, y aunque la tomara no puede
+// re-envolver una DEK que no está ni inventar un envelope que falta. Otra vez el
+// dato en claro llegaba en cada latido y no se usaba.
+//
+// «Incompleto» es aquí LO MISMO que en decryptSelfPn, y tiene que serlo: allí es
+// `len(enc) == 0 || len(dek) == 0 || !kekID.Valid`, y len() no distingue un bytea
+// NULL de uno vacío, así que la guarda tampoco puede — de ahí
+// `COALESCE(octet_length(col), 0) = 0`, que es ese len()==0 dicho en SQL, y no un
+// `IS NULL` a secas, que dejaría atrapada la fila con un bytea vacío. La tercera pata, el
+// key_id NULL, no necesita rama propia: NULL `IS DISTINCT FROM $6` ya es cierto,
+// la cubre (2). Si una definición se mueve sin la otra, vuelve a haber filas que
+// el lector rechaza y el escritor no repara.
+//
+// Converge en una sola escritura, igual que (2): el UPDATE escribe $4 y $5, y
+// Encrypt nunca devuelve un envelope ni una DEK envuelta vacíos (nonce y tag de
+// GCM, más el propio envoltorio de la DEK), así que tras él
+// `octet_length(self_pn_enc) > 0` y `octet_length(self_pn_dek) > 0` y la guarda
+// vuelve a bloquear. El comparando de (3) no es un parámetro: es el ESTADO de la
+// fila, y la propia escritura lo apaga. El precio es UNA reescritura por fila rota;
+// una fila sana no paga nada. No reintroduce la reescritura perpetua.
+//
+// ⚠️ LO QUE (3) NO SANA: un sobre ENTERO pero corrupto —bytes presentes que no
+// abren con una KEK que sí está—. Ese no se ve desde SQL sin descifrar, sigue
+// sirviendo "" con su Warn agregado, y no es de D-F3-12.
+//
+// Promesas que su test fija: la sentencia exacta —con las cuatro mitades de su
+// guarda— y sus siete argumentos ($1-$3 la
 // identidad, $4/$5 el sobre —que abierto da el número CANÓNICO—, $6 el key_id de
 // la KEK current y $7 el índice ciego del canónico); un número que no normaliza
 // devuelve "fleet: normalizar self_pn: …" y uno que no se puede cifrar "fleet:
@@ -199,7 +237,9 @@ func (r *PostgresRepository) SetSelfPn(ctx context.Context, tenantID, edgeID, se
 		    updated_at     = now()
 		WHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3
 		  AND (self_pn_bidx   IS DISTINCT FROM $7
-		    OR self_pn_kek_id IS DISTINCT FROM $6)
+		    OR self_pn_kek_id IS DISTINCT FROM $6
+		    OR COALESCE(octet_length(self_pn_enc), 0) = 0
+		    OR COALESCE(octet_length(self_pn_dek), 0) = 0)
 	`, tenantID, edgeID, sessionID, enc, dek, kekID, bidx)
 	if err != nil {
 		return fmt.Errorf("fleet: fijar self_pn: %w", err)

@@ -20,7 +20,8 @@ import (
 // Las dos sentencias, byte a byte y escritas a mano (ver repository_postgres_test.go).
 const (
 	// SetSelfPn: el sobre, el key_id y el índice ciego; la columna en claro ya no existe. La
-	// guarda del WHERE deja entrar el UPDATE solo si cambió el número ($7) o la KEK ($6).
+	// guarda del WHERE deja entrar el UPDATE solo si cambió el número ($7) o la KEK ($6), o si al
+	// sobre guardado le falta el envelope o la DEK (D-F3-12: el viejo no tiene esas dos mitades).
 	sqlSetSelfPn = "\n" +
 		"\t\tUPDATE public.fleet_sessions\n" +
 		"\t\tSET self_pn_enc    = $4,\n" +
@@ -30,7 +31,9 @@ const (
 		"\t\t    updated_at     = now()\n" +
 		"\t\tWHERE tenant_id = $1 AND edge_id = $2 AND session_id = $3\n" +
 		"\t\t  AND (self_pn_bidx   IS DISTINCT FROM $7\n" +
-		"\t\t    OR self_pn_kek_id IS DISTINCT FROM $6)\n" +
+		"\t\t    OR self_pn_kek_id IS DISTINCT FROM $6\n" +
+		"\t\t    OR COALESCE(octet_length(self_pn_enc), 0) = 0\n" +
+		"\t\t    OR COALESCE(octet_length(self_pn_dek), 0) = 0)\n" +
 		"\t"
 	sqlCountLive = "\n" +
 		"\t\tSELECT count(*) FROM public.fleet_sessions\n" +
@@ -171,9 +174,11 @@ func TestPostgresRepository_SetSelfPn_NumberNeverTravelsInClear(t *testing.T) {
 }
 
 // TestPostgresRepository_SetSelfPn_GuardAgainstRewriting: el sobre sale DISTINTO en cada llamada
-// (DEK fresca) aunque el número sea el mismo, y por eso la sentencia lleva la guarda con sus dos
-// mitades: solo reescribe si cambió el índice ciego o si la fila la envolvió otra KEK. Y no
-// escribe ninguna columna en claro.
+// (DEK fresca) aunque el número sea el mismo, y por eso la sentencia lleva la guarda con sus cuatro
+// mitades: solo reescribe si cambió el índice ciego, si la fila la envolvió otra KEK o si a su
+// sobre le falta el envelope o la DEK (D-F3-12). Las dos últimas comparan con CERO y con `=`: con
+// `>` casarían todas las filas sanas, que es la reescritura perpetua. Y no escribe ninguna columna
+// en claro.
 func TestPostgresRepository_SetSelfPn_GuardAgainstRewriting(t *testing.T) {
 	f := newFixture(t)
 	first := writeSelfPn(t, f, pgTenant, pnSpelled)
@@ -187,7 +192,9 @@ func TestPostgresRepository_SetSelfPn_GuardAgainstRewriting(t *testing.T) {
 	}
 	for _, half := range []string{
 		"AND (self_pn_bidx   IS DISTINCT FROM $7\n",
-		"OR self_pn_kek_id IS DISTINCT FROM $6)\n",
+		"OR self_pn_kek_id IS DISTINCT FROM $6\n",
+		"OR COALESCE(octet_length(self_pn_enc), 0) = 0\n",
+		"OR COALESCE(octet_length(self_pn_dek), 0) = 0)\n",
 	} {
 		if !strings.Contains(sqlSetSelfPn, half) {
 			t.Errorf("a la sentencia le falta una mitad de la guarda: %q", half)

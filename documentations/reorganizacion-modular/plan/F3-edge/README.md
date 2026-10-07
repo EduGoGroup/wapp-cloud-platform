@@ -1,9 +1,9 @@
 # F3 · `edge` — el túnel con cada Edge: gRPC, enrolamiento, lease, flota, acuses
 
-> **Estado: en curso** — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
+> **Estado: ✅ cerrada el 2026-10-06** (F3-05 💻: e2e con mTLS real, las 7 suites contra Postgres y el proceso de enrolamiento contra los dos binarios, `make test-procesos` `RC=0 · PASS=812 · SKIP=0` en cada uno; `8121564` … `876b096`, hallazgos 74–83) — F3-01 arrancó el 2026-10-04 sobre `dev` @ `8896f13`, con el inventario E-12 de las hojas
 > **aprobado por Jhoan** ([`arquitectura.md`](arquitectura.md) §1.1.a). **F3-02 hecha el 2026-10-04**: `fleet` y `filtercfg` en verde
 > (inventario en §1.1.b). **F3-03, tanda 1 de 3 hecha el 2026-10-04**: inventario de `grpc` aprobado (§1.1.c) y `types`,
-> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **F3-03, tanda 3 de 3 hecha el 2026-10-05**: `inference` (en 3 trozos), `plaza` y `greeting` en verde, con el literal 🔒 afirmado byte a byte y la pareja ADR-0048 completa: **`grpc` está entero** (F3-03 cerrada). **F3-04 hecha el 2026-10-06**: `bridge_gateway.go`, la cara nueva de `edge` en `apipublica` (D1–D6) y `conmutar(edge)`: el arranque nuevo cablea **un solo** `edge/grpc.Server`, `bridge_iam.go` borrado, `acceso` en `Conmutados`, huella igual (hallazgos 65–73; **sigue F3-05**, el cierre local con mTLS). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
+> `server`, `receipt_sink`, `worklane` y `send` en verde. **F3-03, tanda 2 de 3 hecha el 2026-10-05**: `connect` (en 4 trozos), `auth`, `config_push`, `readiness` y `diagnostics` en verde, `Connect` ya atiende el stream; **F3-03, tanda 3 de 3 hecha el 2026-10-05**: `inference` (en 3 trozos), `plaza` y `greeting` en verde, con el literal 🔒 afirmado byte a byte y la pareja ADR-0048 completa: **`grpc` está entero** (F3-03 cerrada). **F3-04 hecha el 2026-10-06**: `bridge_gateway.go`, la cara nueva de `edge` en `apipublica` (D1–D6) y `conmutar(edge)`: el arranque nuevo cablea **un solo** `edge/grpc.Server`, `bridge_iam.go` borrado, `acceso` en `Conmutados`, huella igual (hallazgos 65–73). **F3-05 hecha el 2026-10-06**: cierre local con mTLS (hallazgos 74–83); sigue F4. Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`, releída en `bad573a`.
 > Norma: [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Marco común: [`00-marco/`](../00-marco/README.md). Rutas: **autoridad**
 > [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) (filas D1–D6, J12–J17; E1–E2 se mudan en F7, D-FX-1/D-F7-4) y
@@ -422,3 +422,96 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `internal/{iam,platformadmin,entitlements}`.
 73. **Entorno**: `.bin/golangci-lint run` a pelo usa la caché **del usuario**, y dio 3 `gosec` falsos sobre un *worktree*
     ya borrado de otra sesión. `make lint` (caché por *checkout*) da 0. El lint se corre siempre por `make`: **anotado en `PROTOCOLO-CLI.md` §1 en el mismo PR**.
+
+**De F3-05** (cierre local con mTLS, 2026-10-06; rama `reorg/f3-05-cierre-mtls` desde `dev` @ `9d9c033`):
+
+74. **Las 7 suites de puerto con BD pasan contra Postgres sin ninguna divergencia con su doble** (regla de conteo: el
+    test padre más sus subtests con `-v`): `lease.Repository` 16, `enroll.CodeStore` 8, `enroll.EdgeCertRepository` 5,
+    `fleet.Repository` 43, `diagnostics.Store` 23, `receipts.Store` 13, `ingest.Deduper` 7 — **115 PASS, 0 SKIP**. Ninguna
+    suite ni adaptador se retocó para llegar al verde. Un mutante por adaptador puso su suite en rojo (los de `lease`,
+    `enroll`, `receipts` e `ingest`, en una sola corrida conjunta y no aislados; los de `fleet` se corrieron antes de un
+    retoque de lint del test y no se repitieron después).
+75. ✅ ~~🟡~~ *(resuelto el 2026-10-06 por decisión de Jhoan, `61ded8b`, en el mismo PR: `enrollhelpertest.EdgeCertRecord` y `fleethelpertest.{TenantProfiles,HealthSnapshot}` son alias exportados, como en `iam`; los rodeos genéricos de los dos `_contrato_test.go` desaparecen. Los candados no pidieron nada: los `…helpertest` están exentos. Lo que sigue describe cómo estaba)* **El candado `ProcessImports` no deja nombrar tipos del puerto** (solo sus `New…`), y dos Montajes los devuelven:
+    `enroll.EdgeCertRecord` y `fleet.TenantProfiles`/`HealthSnapshot`. `enroll_contrato_test.go` y `fleet_contrato_test.go`
+    lo resuelven con genéricos donde el compilador infiere el tipo (un tipo espejo con restricción `~struct{…}` en
+    `enroll`): pasa el candado y deja de compilar si el registro cambia, pero se aparta del precedente de `iam` (alias
+    exportados en el `helpertest`). **Por decidir (Jhoan)** si se prefieren los alias.
+    `fleet_contrato_selfpn_test.go` no importa nada de `internal/`: recibe el adaptador por un *rig* del otro fichero.
+76. **Lo que solo protegen los casos propios, y lo no llevado.** Quitando entera la guarda de `SetSelfPn`, los 42 casos
+    de la suite de `fleet` siguen verdes: solo la matan `TestFleetContract_SetSelfPn_SameNumber_DoesNotRewriteTheRow` y
+    `…RotatedKEK_HealsTheRowOnce`. Del hallazgo 30 **no se llevaron** `PendingGreeting` / `MarkGreeted` y su carrera
+    (fuera del puerto) ni el sobre incompleto sembrado por SQL (sí el ilegible por KEK ausente). La poda perezosa de
+    `ingest` no se ejerce contra Postgres: el candado impide `WithSweep` / `WithRetention`.
+    ✅ *Resuelta la parte de `fleet` el 2026-10-06 por decisión de Jhoan (`e41df74`, en el mismo PR)*:
+    `fleet_contrato_greeting_test.go` lleva a Postgres `PendingGreeting` (solo una fila pasiva, con número y sin saludar;
+    preguntar no es un *claim*), `MarkGreeted` (marca una vez y solo su fila), la carrera (16 marcas con barrera, 12
+    rondas: exactamente una gana) y el sobre incompleto en cinco formas (`Get`/`List` sirven la sesión sin número y sin
+    error; `PendingGreeting` devuelve su error literal). Los dos métodos fuera del puerto se llaman por una interfaz
+    local del test. Nueve mutantes nuevos, todos muertos, y **repetidos** los tres de `fleet` que el 74 dejó sin
+    re-correr (guarda de `SetSelfPn`, `BlindIndex` sin normalizar, `degraded_since`): muertos. Sigue sin ejercerse la poda
+    de `ingest`. 🟡 **Leído en el código, no ejecutado ni afirmado**: una fila con el sobre a medias pero con
+    `self_pn_bidx` y `self_pn_kek_id` intactos no se auto-sanaría con el latido siguiente (ninguna rama de la guarda de
+    `SetSelfPn` casa; solo sana si falta el `kek_id`): serviría número vacío y daría error en `PendingGreeting` sin fin.
+    ✅ *Resuelto por **D-F3-12** (2026-10-06, Jhoan, en el mismo PR)*: confirmado con un test en rojo (`5d8acbd`: no
+    sanaban `enc` o `dek` ausentes o vacíos; sí sanaban ya «falta el `kek_id`» e «índice sin sobre») y corregido
+    (`f9979fe`): la guarda gana una tercera rama, `COALESCE(octet_length(self_pn_enc), 0) = 0 OR
+    COALESCE(octet_length(self_pn_dek), 0) = 0`, y converge en una escritura. `SetSelfPn` era idéntico al viejo
+    (`diff` vacío): 🔴 el `fleet` nuevo **se aparta del viejo**. Cinco mutantes, todos muertos. No se encontró vía de
+    producción que deje un sobre a medias (los dos escritores escriben las columnas juntas; la 0068 no pone `CHECK` y
+    deja una consulta de vigilancia); no se comprobó si UAT tiene alguna fila así. No sana un sobre entero pero corrupto.
+77. **D-F3-11 probada contra Postgres, en el adaptador** (`TestDiagnosticsContract_DeleteRequest_SurvivesTheCancelledRequest`):
+    con el contexto de la petición cancelado, `DeleteRequest` falla y la fila queda; con
+    `context.WithTimeout(context.WithoutCancel(ctx), plazo)`, la forma de `rollbackRequest`, la fila se borra de verdad.
+    No es el handler HTTP (un `_contrato_test.go` no puede importar `apipublica`): el handler lo fija F3-04 con el doble.
+78. **Sin `WAPP_IDENTITY_URL` el gateway no tiene autenticador** y contesta `internal` a todo login: el arnés no la ponía.
+    Nace `opcionesServidor.IdentityLogin` (opt-in; solo lo usa el proceso nuevo) con la mitad «login» del doble de
+    identity (`identidad_login_test.go`, `TestArnes_IdentityLogin`) y el canal de control en el Edge de prueba
+    (`edge_falso_auth_test.go`, `TestArnes_EdgeAuth`). Ficheros del arnés tocados: `edge_falso_test.go` (un campo),
+    `edge_falso_commands_test.go` (un `case`), `edge_falso_selftest_commands_test.go` (su «comando desconocido» era un
+    `UserAuthResponse`, que ahora se interpreta), `identidad_test.go` y `servidor_test.go`.
+79. ✅ **Hallazgo 69 confirmado por el cable**: los códigos de error del login en banda son **idénticos** en los dos
+    binarios — `invalid_credentials` (contraseña mala, correo desconocido), `invalid_input` (campos vacíos, 400 de
+    identity), `tenant_mismatch` (operador de otra empresa, usuario sin empresa, refresh de A por el Edge de B),
+    `user_inactive` (403 de identity), `internal` (5xx de identity), `refresh_invalid`. Todos con `message` vacío y sin
+    tokens. **Tres** Edge (dos de una empresa y uno de otra; dos de ellos solo por el canal de control) hacen login a la
+    vez, 8 rondas: cada uno recibe lo suyo (claims, `whoami`, buzón por `command_id`), una fila `edge.auth.*` por
+    petición, y el canal de control no deja fila en `fleet_sessions` ni lease (ADR-0048).
+80. ✅ **Hallazgo 70 y T3.27 confirmados por el cable**, con los mismos literales en los dos binarios:
+    `POST /api/v1/messages` online 200 (el Edge recibe el `SendText` con ese `command_id`), offline 502, sesión
+    inexistente o de otra empresa 404, otros métodos 405, y ningún pánico en el log; `POST /admin/flows/start` a una
+    sesión offline, **502** `sesión offline: no hay stream vivo para el Edge` (las puertas de `/admin` y de flujos no
+    distinguen «offline» de «nunca existió»; `/api/v1/messages` sí).
+81. **El arnés sabe reiniciar el servidor** sobre la misma base, claves y puertos (`servidor_restart_test.go`,
+    `TestArnes_ServerRestart`). Con él, R-L2/R-L3/R-L8: un Edge revocado sigue revocado y su contador no retrocede, y un
+    Edge enrolado tras el reinicio con la empresa cortada nace revocado. 🟡 **Parar el servidor con tres Edge conectados
+    tarda ≈ 10 s en los dos binarios** (< 0,5 s sin Edge; dentro del tope de 15 s del arnés): causa sin investigar.
+    ✅ *Resuelto por **D-F3-13** (2026-10-06, Jhoan, en el mismo PR)*. **Causa**: `GracefulStop` espera a los streams
+    abiertos y el `Connect` de un Edge no termina solo, así que la parada agotaba siempre `shutdownTimeout` (10 s) y
+    acababa en el `Stop()` forzado. **Arreglo, solo en el arranque nuevo**: `edge/grpc.Server.InFlight()` (`66214d7`
+    rojo, `73407f2` verde: envíos esperando `Ack` + inferencias esperando resultado; no cuenta el carril ni los frames
+    entrantes) y `internal/arranque/servir_cloudlink.go` (`831e480`, `648d270`): el CloudLink para tras 3 lecturas
+    seguidas a cero cada 25 ms, con los 10 s como tope; el enrolamiento no cambia; huella igual. **Medido** en
+    `TestP1_EdgeFaceOverTheWireRestart`: viejo 10,014 s, nuevo 0,061 s. Doce mutantes: once mueren y uno sobrevivía
+    (no esperar a `done` tras `Stop()` en la rama del tope) hasta que se le añadió su aserción; el de «no respetar el
+    tope» muere por cuelgue (timeout de `go test`), no por aserción. `Stop()` no espera a los handlers en grpc-go
+    v1.82.1: los espera el `GracefulStop` concurrente, y por eso se sigue esperando a `done` (el `closeStream` se
+    conserva). 🔴 **Coste aceptado**: el trabajo que aún no pidió nada al Edge tenía hasta 10 s para llegar a su envío
+    y ahora ≈ 50 ms. 🟡 **Sin afirmar**: que el `MarkOffline` quede escrito en Postgres tras la parada rápida (ningún
+    proceso mira `fleet_sessions` tras parar), y la parada con algo realmente en vuelo en un proceso real (solo con
+    reloj simulado). El `Warn` del tope lleva un campo más, `en_vuelo`.
+82. **No llevado o no afirmable de caja negra**: la mitad de R-C5 «un push fallido no cambia la respuesta HTTP»; el 504 y
+    los 409 de `flows/start`; `tenant_mismatch` por canal sin identidad (el mTLS estricto lo impide) e `internal` sin
+    autenticador; `UserLogout` con `all_sessions`; la firma del access token (se comprueba el `kid` y que `whoami` lo
+    acepta). Ya cubierto antes y no duplicado: push de filtros (P9, P3), migraciones idempotentes (P10), CA ajena (P1).
+    ✅ **El mutante del cruce entre Edge (HS-14/HS-15) se corrió el 2026-10-06, con permiso de Jhoan**: en
+    `edge/grpc/auth.go`, toda respuesta de auth sale por el stream del primer Edge que hizo login, en vez de por
+    `cc.sender`. `TestP1_OperatorLoginOverControlChannel` contra el **nuevo**: rc=1, rojo en
+    `concurrent_logins_each_edge_gets_its_own` («no llegó el UserAuthResponse … al Edge»); contra el **viejo**, que no
+    lleva el mutante, rc=0 (control). Muere por la respuesta que **no llega** al Edge que la pidió, a los 15 s del tope,
+    y ese primer fallo detiene el proceso: las aserciones de claims y de buzón no llegaron a evaluarse con este mutante.
+    Mutante deshecho con `git checkout`; árbol limpio.
+83. **Las tres diferencias intencionadas (D-F3-9, D-F3-10, D-F3-11) no se comparan entre binarios**: los casos se
+    diseñaron para no depender de ellas (en R-G21 los dos Edge están en la flota y no reconectaron). **Orquestación**:
+    cuatro sub-agentes en *worktrees* puestos en el SHA de `dev`, en paralelo y sobre el mismo paquete `procesos`, con
+    prefijo de fichero en cada identificador: 11 `cherry-pick` sin un conflicto. El *scratchpad* compartido sí se pisó
+    (un agente sobrescribió el guion de otro): cada sub-agente debe usar nombres propios ahí.
