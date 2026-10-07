@@ -30,8 +30,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Vocabulario CERRADO de proveedores, el mismo que acota el CHECK
@@ -99,7 +97,7 @@ const (
 // Promesa: true SOLO para los dos literales exactos, "local" y "api". No recorta
 // espacios, no pliega mayúsculas y no normaliza Unicode: "", "API", " local",
 // "api\n" y "ａｐｉ" (ancho completo) son false.
-func ValidVia(v string) bool { panic(pendiente.Implementar("tenantllm.ValidVia")) }
+func ValidVia(v string) bool { return v == ViaLocal || v == ViaAPI }
 
 // ErrNotConfigured lo devuelve APIKey cuando el tenant no tiene vía API: no
 // tiene fila, o su fila no tiene sobre, o su fila declara otra vía. Es un

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package tenantllm_test
 
 // Los tests de fichero del dominio de tenantllm: los dos vocabularios con sus literales,
