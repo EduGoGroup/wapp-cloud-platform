@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // tenantllm_body_test.go — la LECTURA DEL CUERPO de F2 (PUT /api/v1/tenant-llm) del contrato de

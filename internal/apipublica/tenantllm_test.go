@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // tenantllm_test.go — cubre el contrato de tenantllm.go (TenantLLMStore, TenantLLMDeps,
@@ -404,7 +402,7 @@ func TestMountTenantLLM_TheKeyNeverLeaves(t *testing.T) {
 	}
 
 	port := reflect.TypeOf((*apipublica.TenantLLMStore)(nil)).Elem()
-	var methods []string
+	methods := make([]string, 0, port.NumMethod())
 	for i := range port.NumMethod() {
 		methods = append(methods, port.Method(i).Name)
 	}

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // tenantllm_put_test.go — la SEMÁNTICA de F2 (PUT /api/v1/tenant-llm) del contrato de
@@ -56,7 +54,8 @@ func TestMountTenantLLM_Put_APIRouteStores(t *testing.T) {
 	}
 	// Los instantes salen de la fila releída: si el handler devolviera lo que mandó, faltarían.
 	for _, key := range []string{"consented_at", "created_at", "updated_at"} {
-		if _, err := time.Parse(time.RFC3339, body[key].(string)); err != nil {
+		text, isText := body[key].(string)
+		if _, err := time.Parse(time.RFC3339, text); !isText || err != nil {
 			t.Errorf("F2: %q = %v, quiero un instante RFC 3339 de la fila releída", key, body[key])
 		}
 	}
