@@ -297,7 +297,19 @@ func TestIndice_WalkInDocumentOrder(t *testing.T) {
 	}
 }
 
-// TestConstruir_HasSeenNoBytes: Construir indexa un catálogo, no un documento. La
+// TestIndice_IsNotAFuente es «el índice no puede leer» dicho sobre los tipos
+// (D-F5-2): una búsqueda por ítem no tiene con qué ir a Postgres. El día que
+// alguien le cuelgue un LeerCatalogo al índice, esto se pone rojo.
+func TestIndice_IsNotAFuente(t *testing.T) {
+	if _, ok := any((*indice.Indice)(nil)).(indice.Fuente); ok {
+		t.Errorf("*Indice satisface Fuente: 🔴 el índice NO debe poder leer; si puede, la garantía deja de ser estructural")
+	}
+	if _, ok := any((*indice.Indice)(nil)).(indice.LectorContenido); ok {
+		t.Errorf("*Indice satisface LectorContenido: el índice no debe poder leer tenant_content")
+	}
+}
+
+// TestConstruir_HasSeenNoBytes:Construir indexa un catálogo, no un documento. La
 // procedencia la pone la caché.
 func TestConstruir_HasSeenNoBytes(t *testing.T) {
 	idx := trickyIndex(t)
