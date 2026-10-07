@@ -452,7 +452,13 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     de `ingest`. 🟡 **Leído en el código, no ejecutado ni afirmado**: una fila con el sobre a medias pero con
     `self_pn_bidx` y `self_pn_kek_id` intactos no se auto-sanaría con el latido siguiente (ninguna rama de la guarda de
     `SetSelfPn` casa; solo sana si falta el `kek_id`): serviría número vacío y daría error en `PendingGreeting` sin fin.
-    Sin contrastar con el viejo; por decidir si merece un test que la fije o una corrección.
+    ✅ *Resuelto por **D-F3-12** (2026-10-06, Jhoan, en el mismo PR)*: confirmado con un test en rojo (`5d8acbd`: no
+    sanaban `enc` o `dek` ausentes o vacíos; sí sanaban ya «falta el `kek_id`» e «índice sin sobre») y corregido
+    (`f9979fe`): la guarda gana una tercera rama, `COALESCE(octet_length(self_pn_enc), 0) = 0 OR
+    COALESCE(octet_length(self_pn_dek), 0) = 0`, y converge en una escritura. `SetSelfPn` era idéntico al viejo
+    (`diff` vacío): 🔴 el `fleet` nuevo **se aparta del viejo**. Cinco mutantes, todos muertos. No se encontró vía de
+    producción que deje un sobre a medias (los dos escritores escriben las columnas juntas; la 0068 no pone `CHECK` y
+    deja una consulta de vigilancia); no se comprobó si UAT tiene alguna fila así. No sana un sobre entero pero corrupto.
 77. **D-F3-11 probada contra Postgres, en el adaptador** (`TestDiagnosticsContract_DeleteRequest_SurvivesTheCancelledRequest`):
     con el contexto de la petición cancelado, `DeleteRequest` falla y la fila queda; con
     `context.WithTimeout(context.WithoutCancel(ctx), plazo)`, la forma de `rollbackRequest`, la fila se borra de verdad.
@@ -479,6 +485,20 @@ sostiene. `time.Sleep` en los tests viejos de `grpc` (T-16): **20**, en 7 ficher
     `TestArnes_ServerRestart`). Con él, R-L2/R-L3/R-L8: un Edge revocado sigue revocado y su contador no retrocede, y un
     Edge enrolado tras el reinicio con la empresa cortada nace revocado. 🟡 **Parar el servidor con tres Edge conectados
     tarda ≈ 10 s en los dos binarios** (< 0,5 s sin Edge; dentro del tope de 15 s del arnés): causa sin investigar.
+    ✅ *Resuelto por **D-F3-13** (2026-10-06, Jhoan, en el mismo PR)*. **Causa**: `GracefulStop` espera a los streams
+    abiertos y el `Connect` de un Edge no termina solo, así que la parada agotaba siempre `shutdownTimeout` (10 s) y
+    acababa en el `Stop()` forzado. **Arreglo, solo en el arranque nuevo**: `edge/grpc.Server.InFlight()` (`66214d7`
+    rojo, `73407f2` verde: envíos esperando `Ack` + inferencias esperando resultado; no cuenta el carril ni los frames
+    entrantes) y `internal/arranque/servir_cloudlink.go` (`831e480`, `648d270`): el CloudLink para tras 3 lecturas
+    seguidas a cero cada 25 ms, con los 10 s como tope; el enrolamiento no cambia; huella igual. **Medido** en
+    `TestP1_EdgeFaceOverTheWireRestart`: viejo 10,014 s, nuevo 0,061 s. Doce mutantes: once mueren y uno sobrevivía
+    (no esperar a `done` tras `Stop()` en la rama del tope) hasta que se le añadió su aserción; el de «no respetar el
+    tope» muere por cuelgue (timeout de `go test`), no por aserción. `Stop()` no espera a los handlers en grpc-go
+    v1.82.1: los espera el `GracefulStop` concurrente, y por eso se sigue esperando a `done` (el `closeStream` se
+    conserva). 🔴 **Coste aceptado**: el trabajo que aún no pidió nada al Edge tenía hasta 10 s para llegar a su envío
+    y ahora ≈ 50 ms. 🟡 **Sin afirmar**: que el `MarkOffline` quede escrito en Postgres tras la parada rápida (ningún
+    proceso mira `fleet_sessions` tras parar), y la parada con algo realmente en vuelo en un proceso real (solo con
+    reloj simulado). El `Warn` del tope lleva un campo más, `en_vuelo`.
 82. **No llevado o no afirmable de caja negra**: la mitad de R-C5 «un push fallido no cambia la respuesta HTTP»; el 504 y
     los 409 de `flows/start`; `tenant_mismatch` por canal sin identidad (el mTLS estricto lo impide) e `internal` sin
     autenticador; `UserLogout` con `all_sessions`; la firma del access token (se comprueba el `kid` y que `whoami` lo

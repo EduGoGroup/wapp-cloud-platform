@@ -384,8 +384,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 **F3-05 · F3, cierre local con mTLS (2026-10-06, 💻, rama `reorg/f3-05-cierre-mtls` desde `dev` @ `9d9c033`). F3 CERRADA.**
 Sesión completa (D-R-8), T3.29–T3.30 (= T9.24) y la parte 💻 de T3.27 (= TX.10). Sin traspaso. Orquestada con cuatro
 sub-agentes **en paralelo, cada uno en su *worktree*** puesto en el SHA de `dev`; sus 11 commits se integraron por
-`cherry-pick` y los gates los repitió el agente principal sobre la rama entera. **Solo tests y arnés**: ni una línea de
-producción, ni del código viejo, ni `go.mod`.
+`cherry-pick` y los gates los repitió el agente principal sobre la rama entera. El cierre fue **solo tests y arnés**;
+después, a petición de Jhoan, entraron en el mismo PR dos correcciones de producción del código nuevo (D-F3-12 y
+D-F3-13, abajo). Ni una línea del código viejo, ni `go.mod`.
 - **Línea base** (antes de tocar nada): `make test-procesos` viejo y nuevo `RC=0 · PASS=668 · FAIL=0 · SKIP=0`.
 - **T3.30 / T9.24 · las 7 suites contra Postgres** (`8121564` `lease`, `a28f28b` `enroll` ×2, `0caeef4` `receipts`,
   `aaed74c` `ingest`, `0133b4b` `diagnostics`, `93b145b` `fleet`): 115 PASS, 0 SKIP, ninguna divergencia con los dobles.
@@ -411,6 +412,19 @@ producción, ni del código viejo, ni `go.mod`.
   todos muertos, los tres de `fleet` pendientes incluidos). Con ellos, `make test-procesos` **viejo y nuevo `RC=0 ·
   PASS=821 · FAIL=0 · SKIP=0`** y `make ci-local` rc=0. 🟡 Nuevo, solo leído en el código: un sobre de `self_pn` a
   medias con índice y `kek_id` intactos no se auto-sana (hallazgo 76).
+- ✎ **Dos correcciones de producción en el mismo PR, las dos apartándose del viejo a propósito** (Jhoan, 2026-10-06;
+  [`DECISIONES.md`](plan/DECISIONES.md)): **D-F3-12** (`5d8acbd` rojo, `f9979fe` verde: `SetSelfPn` re-cifra un sobre de
+  `self_pn` a medias con el latido siguiente) y **D-F3-13** (`66214d7`, `73407f2`, `831e480`, `648d270`: el CloudLink
+  para en cuanto no queda nada en vuelo — `edge/grpc.Server.InFlight()` — en vez de agotar siempre los 10 s; medido
+  10,014 s → 0,061 s con Edge conectados; huella igual). Ya son **cinco** las conductas en que el nuevo se aparta del
+  viejo: D-F3-9 … D-F3-13. 🟡 Sin afirmar: el `MarkOffline` en Postgres tras la parada rápida (hallazgo 81).
+  **Gates sobre `648d270`**: `make ci-local` `GATE_RC=0` (145 `ok`, lint 0 issues); `make test-pendiente` rc=0,
+  `PENDIENTES=0 · ROJOS=0`; `make test-procesos`, **primera pasada en rojo** (viejo `RC=1 · PASS=826 · FAIL=2`:
+  `TestP6_CRMBridge/callback_body_adversarial`, `broken pipe` al mandar el cuerpo grande; nuevo `RC=1 · PASS=825 ·
+  FAIL=3`: `TestP4_WindowRules/segunda_ventana`, «el compositor del flush no llegó a escribir el sobre») — las dos son
+  **intermitencias ya anotadas** (hallazgo 52 de F2 y README de F9), en código que esta sesión no toca y distintas en
+  cada binario; los dos tests repetidos `-count=4` por binario, 16 de 16 PASS; **segunda pasada entera: viejo y nuevo
+  `RC=0 · PASS=828 · FAIL=0 · SKIP=0`**.
 - **Hallazgos 74–83** en el [README de F3](plan/F3-edge/README.md). **Siguiente paso: F45-01** (F4 + F5). `main` sin tocar.
 
 **F3-04 · F3, adaptador, cara nueva y conmutación de `edge` (2026-10-06, 💻, rama `reorg/f3-04-bridge-conmutar-rutas` desde `origin/dev` @ `115a4ba`).**
