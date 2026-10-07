@@ -51,9 +51,11 @@ func TestNotice_SurvivesTheDeadContext(t *testing.T) {
 
 	for name, fail := range map[string]func(s *Selector) error{
 		"pipeline door": func(s *Selector) error {
-			p, err := s.For(context.Background(), rigTenant, "")
+			// For va con un ctx VIVO a propósito: el que llega muerto es el de la llamada al
+			// provider, que es la que se quiere ver fallar y avisar.
+			p, err := s.For(context.Background(), rigTenant, "") //nolint:contextcheck // ver arriba: el ctx muerto es el de la P1
 			if err != nil {
-				return nil
+				return nil //nolint:nilerr // sin provider no hay fallo del pipeline que devolver: el test falla en «quería el error del transporte»
 			}
 			return classify(dead, p)
 		},
@@ -96,7 +98,7 @@ func TestNotice_RecordFailureOnlyGoesToTheLog(t *testing.T) {
 	spy := &ctxSpy{err: broken}
 
 	_, err := r.selector(t, WithNotifier(spy)).Turno(context.Background(), rigTenant, "s-1", rigTurn())
-	if err != error(failure) {
+	if err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("Turno = %v, quería el error del transporte y no el del aviso", err)
 	}
 	if len(r.falls.falls) != 1 {

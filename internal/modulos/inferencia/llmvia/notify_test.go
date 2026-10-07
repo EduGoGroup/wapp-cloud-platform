@@ -59,14 +59,7 @@ func (f *stubFrame) Infer(context.Context, string, edgegrpc.InferRequest) (strin
 	return f.out, f.err
 }
 
-// reasonError finge un error del transporte que expone Motivo() por duck-typing, igual que
-// *edgegrpc.InferError. Es un doble y no el tipo real a propósito: lo que este paquete
-// consume es la INTERFAZ ANÓNIMA, y probarlo contra el tipo concreto dejaría sin red el
-// desacople que se quiere conservar. Receptor puntero: así «el mismo error» es identidad.
-type reasonError struct{ reason string }
-
-func (e *reasonError) Error() string  { return "fallo del transporte: " + e.reason }
-func (e *reasonError) Motivo() string { return e.reason }
+// reasonError, el error del transporte con Motivo(), vive en notify_reason_test.go.
 
 // fallCounter recoge lo que sale por el observador: (origen, vía, motivo) por caída.
 type fallCounter struct{ falls [][3]string }
@@ -336,7 +329,7 @@ func TestDecorator_WrapsTheFiveStagesAndLeavesTheErrorIntact(t *testing.T) {
 	for i, st := range stages {
 		_, err := st.call()
 		// Identidad, no errors.Is: el decorador no envuelve.
-		if err != error(failure) {
+		if err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 			t.Fatalf("%s = %v, quería EL MISMO error del transporte, sin envolver", st.name, err)
 		}
 		var withReason interface{ Motivo() string }
@@ -406,7 +399,7 @@ func TestTurno_FailureNotifiesWithItsOrigin(t *testing.T) {
 	t.Parallel()
 	failure := &reasonError{edgegrpc.ReasonTimeout}
 	r := newRig(failure)
-	if _, err := r.selector(t, r.notifier()).Turno(context.Background(), rigTenant, "s-1", rigTurn()); err != error(failure) {
+	if _, err := r.selector(t, r.notifier()).Turno(context.Background(), rigTenant, "s-1", rigTurn()); err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("Turno = %v, quería el error del transporte intacto", err)
 	}
 	r.requireOne(t, OrigenTurno, tenantllm.ViaLocal, degradation.ReasonTimeout)

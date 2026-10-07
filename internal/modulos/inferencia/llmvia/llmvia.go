@@ -113,7 +113,16 @@ type Notifier interface {
 // Solo se construye con NewSelector. Es INMUTABLE tras construirse y seguro para uso
 // concurrente: ninguna de sus entradas lo muta, y dos goroutines pueden compartir el
 // mismo valor (R4.7.b: en el proceso hay UNO).
-type Selector struct{}
+type Selector struct {
+	notifier Notifier
+	log      logger.Logger
+
+	// observer cuenta las caídas a Nivel A (T3.5-2, D-044.41). nil ⇒ no se cuenta nada
+	// y el sistema se comporta igual: ver WithDegradacionObservada.
+	observer ObservadorDegradacion
+	// clock es el reloj con el que se sella el instante del fallo. nil ⇒ time.Now.
+	clock func() time.Time
+}
 
 // SelectorOption configura el Selector al construirlo. Las opciones se aplican en el
 // orden en que se pasan a NewSelector.
@@ -158,6 +167,17 @@ func WithLocalOptions(opts ...local.Option) SelectorOption {
 // time.Now.
 func WithClock(f func() time.Time) SelectorOption {
 	panic(pendiente.Implementar("llmvia.WithClock"))
+}
+
+// clockNow (en el paquete viejo, ahoraFn) resuelve el reloj. Mismo criterio que
+// degradation.Notifier: el default se aplica en el uso, no en el constructor, para que un
+// Selector armado con literal de struct en un test se comporte igual que uno construido
+// con NewSelector.
+func (s *Selector) clockNow() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
 }
 
 // NewSelector construye el selector sobre el store de tenant_llm.

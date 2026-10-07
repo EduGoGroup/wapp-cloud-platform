@@ -2,7 +2,18 @@
 
 package llmvia
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/EduGoGroup/wapp-shared/llm"
+	"github.com/EduGoGroup/wapp-shared/llm/api"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
+)
 
 // ============================================================================
 // EL AVISO AL DUEÑO CUANDO LA VÍA FALLA (T1.6-6, D-044.32, REQ-38, ADR-0044 §5)
@@ -141,5 +152,194 @@ type ObservadorDegradacion func(origen, via, reason string)
 // fn nil SE IGNORA: no apaga un observador que ya estuviera puesto por una opción
 // anterior.
 func WithDegradacionObservada(fn ObservadorDegradacion) SelectorOption {
-	panic(pendiente.Implementar("llmvia.WithDegradacionObservada"))
+	return func(s *Selector) {
+		if fn != nil {
+			s.observer = fn
+		}
+	}
+}
+
+// noticeTimeout (en el paquete viejo, avisoTimeout) acota la escritura del aviso de
+// degradación. Es un techo pequeño a propósito: el aviso corre en el camino de FALLO de
+// una inferencia que ya se perdió, y hacer esperar más al llamante por una notificación
+// sería pagar dos veces el mismo incidente.
+const noticeTimeout = 3 * time.Second
+
+// reasonOf (en el paquete viejo, motivoDe) traduce el error de una llamada al adaptador
+// en un motivo de notificación. El segundo valor dice si hay algo que notificar.
+//
+// 🔴 El orden de las ramas ES el contrato (T-6), y es el de la cabecera de este fichero:
+// de lo más específico a lo más general.
+func reasonOf(err error) (degradation.Reason, bool) {
+	// 1. La calidad NO avisa, y va PRIMERO: los providers envuelven este centinela dentro
+	// de errores más gordos y una rama más ancha se lo tragaría.
+	if err == nil || errors.Is(err, llm.ErrLLMQuality) {
+		return "", false
+	}
+
+	// 2. El motivo que trae el transporte. El vocabulario de *edgegrpc.InferError coincide
+	// LITERALMENTE con degradation.Reason (hay un test en el transporte que lo custodia).
+	// El .Valid() de aquí no es ceremonia: es lo que impide que un motivo nuevo del
+	// transporte entre en la tabla sin pasar por el enum.
+	var withReason interface{ Motivo() string }
+	if errors.As(err, &withReason) {
+		if r := degradation.Reason(withReason.Motivo()); r.Valid() {
+			return r, true
+		}
+		// Motivo que el transporte nombra y el enum no conoce: NO se inventa una fila.
+		// Que llegue aquí significa que alguien amplió el vocabulario del transporte
+		// sin ampliar el de la notificación, y el test de simetría del transporte debería
+		// haberlo cazado antes.
+		return "", false
+	}
+
+	// 3. Los centinelas de la vía API, que no tienen motivo dentro y hay que traducir.
+	switch {
+	case errors.Is(err, tenantllm.ErrNotConfigured):
+		// El tenant está en vía API y su credencial no existe: ni fila, ni sobre.
+		return degradation.ReasonCredencial, true
+	case errors.Is(err, api.ErrUnsupportedProvider):
+		// Config imposible (un `provider` fuera del CHECK de la 0073). NO es una
+		// degradación: nada se ha caído, la fila está mal escrita. Va ANTES de
+		// ErrInvalidConfig porque lo envuelve, y sin este orden se contaría como
+		// credencial — mandando al dueño a rotar una clave que está perfecta.
+		return "", false
+	case errors.Is(err, api.ErrInvalidConfig):
+		// En la práctica solo puede ser la credencial: el CHECK
+		// `tenant_llm_via_api_completa_check` garantiza que provider y model están
+		// cuando via='api', así que lo único que api.New puede echar en falta es la
+		// clave.
+		return degradation.ReasonCredencial, true
+	case errors.Is(err, api.ErrUpstream):
+		return degradation.ReasonAPIError, true
+	default:
+		// 4. Todo lo demás: nada. Lo que no mapea, no avisa.
+		return "", false
+	}
+}
+
+// notifying envuelve un provider para que cada fallo suyo escriba el aviso de
+// degradación del par (motivo, vía). Sin notificador cableado devuelve el provider
+// TAL CUAL, sin envoltura: una envoltura que no hace nada solo añade un marco en los
+// stack traces.
+func (s *Selector) notifying(p llm.LLMProvider, tenantID, via string) llm.LLMProvider {
+	if s.notifier == nil {
+		return p
+	}
+	return &notifyingProvider{inner: p, sel: s, tenantID: tenantID, via: via}
+}
+
+// notifyingProvider (en el paquete viejo, avisador) es el decorador. Los cinco métodos
+// son la misma línea: llamar, y si falló, avisar antes de propagar. NO altera el error
+// ni lo envuelve — quien lo reciba tiene que poder seguir usando errors.Is y el
+// duck-typing del motivo.
+type notifyingProvider struct {
+	inner    llm.LLMProvider
+	sel      *Selector
+	tenantID string
+	via      string
+}
+
+func (a *notifyingProvider) ClassifyRequest(ctx context.Context, in llm.ClassifyRequestInput, opts llm.Options) (json.RawMessage, error) {
+	out, err := a.inner.ClassifyRequest(ctx, in, opts)
+	a.sel.notify(ctx, a.tenantID, a.via, OrigenPipeline, err)
+	return out, err
+}
+
+func (a *notifyingProvider) ExtractMainIdeas(ctx context.Context, in llm.ExtractMainIdeasInput, opts llm.Options) (json.RawMessage, error) {
+	out, err := a.inner.ExtractMainIdeas(ctx, in, opts)
+	a.sel.notify(ctx, a.tenantID, a.via, OrigenPipeline, err)
+	return out, err
+}
+
+func (a *notifyingProvider) ExtractItemSpecs(ctx context.Context, in llm.ExtractItemSpecsInput, opts llm.Options) (json.RawMessage, error) {
+	out, err := a.inner.ExtractItemSpecs(ctx, in, opts)
+	a.sel.notify(ctx, a.tenantID, a.via, OrigenPipeline, err)
+	return out, err
+}
+
+func (a *notifyingProvider) NormalizeQuantities(ctx context.Context, in llm.NormalizeQuantitiesInput, opts llm.Options) (json.RawMessage, error) {
+	out, err := a.inner.NormalizeQuantities(ctx, in, opts)
+	a.sel.notify(ctx, a.tenantID, a.via, OrigenPipeline, err)
+	return out, err
+}
+
+func (a *notifyingProvider) GenerateQuoteText(ctx context.Context, in llm.GenerateQuoteTextInput, opts llm.Options) (json.RawMessage, error) {
+	out, err := a.inner.GenerateQuoteText(ctx, in, opts)
+	a.sel.notify(ctx, a.tenantID, a.via, OrigenPipeline, err)
+	return out, err
+}
+
+// notify (en el paquete viejo, avisar) escribe el aviso si el error tiene motivo. No
+// devuelve nada, y esa firma es la decisión: el aviso NO PUEDE tumbar nada. El fallo de
+// la inferencia ya ocurrió y ya se va a propagar; que además no se pueda anotar es un
+// segundo problema, no un motivo para cambiar lo que el llamante recibe.
+//
+// 🔴 EL CONTEXTO SE DESACOPLA (context.WithoutCancel) Y NO ES COSMÉTICO (T-7). Uno de
+// los fallos que más falta hace anotar —el llamante se rindió, la ventana se cerró, el
+// proceso se apaga— llega aquí con el ctx YA CANCELADO. Sin desacoplarlo, el aviso
+// fallaría exactamente en los casos en los que hay algo que contar, y el canal se
+// quedaría mudo justo cuando importa. El presupuesto propio (noticeTimeout) es lo que
+// impide que ese desacople se convierta en una espera sin techo.
+func (s *Selector) notify(ctx context.Context, tenantID, via, origin string, err error) {
+	if err == nil {
+		return
+	}
+	reason, ok := reasonOf(err)
+	if !ok {
+		return
+	}
+	// ════════════════════════════════════════════════════════════════════════
+	// LA MÉTRICA VA ANTES QUE LA TABLA, Y VA AUNQUE NO HAYA TABLA (T3.5-2, T-8)
+	// ════════════════════════════════════════════════════════════════════════
+	//
+	// Este punto es EL sitio: es el único del repo que tiene a la vez el motivo ya
+	// traducido al vocabulario cerrado, la vía y qué entrada del selector se estaba
+	// sirviendo. Contarlo en cada llamante sería el mismo razonamiento repetido N
+	// veces, y el N+1 se olvidaría.
+	//
+	// 🔴 NO ESTÁ DEBAJO DEL `if s.notifier == nil`, y esa colocación es la decisión:
+	// el notificador es la tabla de avisos AL DUEÑO —una fila deduplicada por
+	// ventana, pensada para que una persona la lea— y la métrica es el conteo para
+	// NOSOTROS. Colgar el contador del notificador ataría el dato de campo que
+	// desbloquea D-044.41 a que haya base de datos cableada, y encima lo dejaría
+	// subcontado por el dedupe: diez timeouts de la misma ventana escriben UN aviso
+	// y son DIEZ caídas a Nivel A. Son dos preguntas distintas y se responden por
+	// separado.
+	s.countFall(origin, via, reason)
+	if s.notifier == nil {
+		return
+	}
+	at := s.clockNow()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeTimeout)
+	defer cancel()
+
+	created, recErr := s.notifier.Record(ctx, tenantID, reason, via, at)
+	if recErr != nil {
+		if s.log != nil {
+			// El motivo y la vía SÍ van al log (son vocabulario cerrado, cero PII); el
+			// error original NO se repite aquí —ya lo va a ver el llamante— para no
+			// duplicar en el log lo que puede llevar reflejado texto del proveedor.
+			s.log.Error("degradación: no se pudo escribir el aviso al dueño",
+				"tenant_id", tenantID, "reason", reason.String(), "via", via, "error", recErr)
+		}
+		return
+	}
+	if created && s.log != nil {
+		// Solo cuando NACE. Un aviso que se colapsa sobre otro de la misma ventana es
+		// el dedupe funcionando, y loguearlo cada vez reintroduciría por el log el
+		// ruido que la tabla evita.
+		s.log.Warn("degradación: la vía LLM del tenant falló y se avisó al dueño",
+			"tenant_id", tenantID, "reason", reason.String(), "via", via)
+	}
+}
+
+// countFall (en el paquete viejo, contarDegradacion) avisa al contador si lo hay. Un
+// observador que entre en pánico se lleva la llamada por delante: mismo trato que los
+// demás hooks del repo.
+func (s *Selector) countFall(origin, via string, reason degradation.Reason) {
+	if s.observer == nil {
+		return
+	}
+	s.observer(origin, via, reason.String())
 }
