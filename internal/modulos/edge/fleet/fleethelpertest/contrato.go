@@ -44,6 +44,17 @@ type Montaje struct {
 	Profiles func(t *testing.T, tenantID string) fleet.TenantProfiles
 }
 
+// TenantProfiles y HealthSnapshot son los tipos del puerto que cruzan el montaje (lo que devuelve
+// Montaje.Profiles y lo que recibe Repository.SaveHealth), con nombre de la suite: un montaje que
+// vive fuera del árbol de fleet —la pasada contra Postgres de test/procesos, que del paquete del
+// puerto solo puede nombrar constructores (R9.4.d, candado ProcessImports, regla 3b)— los nombra
+// por aquí. Son alias, no copias: el tipo es el mismo (el precedente es outhelpertest.Invitation,
+// D-F2-9; hallazgo 75 de F3).
+type TenantProfiles = fleet.TenantProfiles
+
+// HealthSnapshot es fleet.HealthSnapshot con nombre de la suite (ver TenantProfiles).
+type HealthSnapshot = fleet.HealthSnapshot
+
 // ContratoRepository ejecuta las promesas de fleet.Repository contra la implementación que
 // devuelve nuevo, con un Montaje limpio por caso (nuevo se llama una vez por t.Run). No salta
 // nada. Toda siembra y toda observación pasan por el puerto o por las funciones del Montaje:

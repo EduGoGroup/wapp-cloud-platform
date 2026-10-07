@@ -24,10 +24,12 @@ import (
 // adaptador (su constructor) y crypto (sus argumentos).
 //
 // 🔴 DEL PAQUETE fleet SOLO SE NOMBRA NewPostgresRepository (candado ProcessImports, regla 3b), y
-// el Montaje y los casos propios necesitan tres de sus tipos. Ninguno se nombra:
-//   - fleet.Repository: el campo Montaje.Repository ya lo es; el fleetContractRig guarda el Montaje;
+// el Montaje y los casos propios necesitan tres de sus tipos:
+//   - fleet.Repository no se nombra: el campo Montaje.Repository ya lo es; el fleetContractRig
+//     guarda el Montaje;
 //   - fleet.TenantProfiles (lo que devuelve Montaje.Profiles) y fleet.HealthSnapshot (lo que recibe
-//     SaveHealth): los infiere el compilador en fleetContractProfilesReader y fleetContractZeroHealth.
+//     SaveHealth) se nombran por los alias de la suite, fleethelpertest.TenantProfiles y
+//     fleethelpertest.HealthSnapshot (hallazgo 75 de F3; el precedente es outhelpertest.Invitation).
 //
 // Los casos propios del hallazgo 30 —lo que solo existe contra Postgres— están aquí
 // (degraded_since) y en fleet_contrato_selfpn_test.go (el sobre del self_pn, su guarda y la
@@ -114,32 +116,18 @@ func newFleetContractRig(t *testing.T, db *sql.DB, keyringB64, currentID, indexB
 				return seedFleetContractTenant(t, db)
 			},
 			// ProfilesByTenant no está en el puerto a propósito: es del adaptador.
-			Profiles: fleetContractProfilesReader(repo.ProfilesByTenant),
+			Profiles: func(t *testing.T, tenantID string) fleethelpertest.TenantProfiles {
+				t.Helper()
+				ctx, cancel := context.WithTimeout(t.Context(), fleetContractTimeout)
+				defer cancel()
+				photo, err := repo.ProfilesByTenant(ctx, tenantID)
+				if err != nil {
+					t.Fatalf("ProfilesByTenant(%q): %v", tenantID, err)
+				}
+				return photo
+			},
 		},
 	}
-}
-
-// fleetContractProfilesReader convierte la lectura de la foto de perfiles del adaptador en el
-// Montaje.Profiles que pide la suite: la llama con un plazo y falla el test si da error. P es
-// fleet.TenantProfiles; lo infiere el compilador del método que recibe, y así este fichero no
-// nombra el tipo.
-func fleetContractProfilesReader[P any](read func(context.Context, string) (P, error)) func(*testing.T, string) P {
-	return func(t *testing.T, tenantID string) P {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(t.Context(), fleetContractTimeout)
-		defer cancel()
-		photo, err := read(ctx, tenantID)
-		if err != nil {
-			t.Fatalf("ProfilesByTenant(%q): %v", tenantID, err)
-		}
-		return photo
-	}
-}
-
-// fleetContractZeroHealth devuelve el valor cero del parte de salud que recibe SaveHealth (H es
-// fleet.HealthSnapshot, inferido del método). El caso rellena sus campos sobre ese valor.
-func fleetContractZeroHealth[H any](func(context.Context, string, string, string, H) error) (zero H) {
-	return zero
 }
 
 // seedFleetContractTenant inserta un tenant en public.tenants y devuelve su id, distinto en cada
@@ -240,8 +228,7 @@ func TestFleetContract_SaveHealth_DegradedSinceLivesInTheColumn(t *testing.T) {
 	repo := rig.m.Repository
 	save := func(whatsappState, reason string) {
 		t.Helper()
-		h := fleetContractZeroHealth(repo.SaveHealth)
-		h.WhatsappState, h.DegradedReason = whatsappState, reason
+		h := fleethelpertest.HealthSnapshot{WhatsappState: whatsappState, DegradedReason: reason}
 		if err := repo.SaveHealth(t.Context(), tenant, edge, session, h); err != nil {
 			t.Fatalf("SaveHealth(%q, %q): error inesperado %v", whatsappState, reason, err)
 		}

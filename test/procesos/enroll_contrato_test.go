@@ -25,6 +25,10 @@ import (
 // decidió D-F1-8, y por eso solo importa la suite y el paquete del adaptador, del que solo usa los
 // constructores (candado ProcessImports, regla 3).
 //
+// 🔴 DEL PAQUETE enroll SOLO SE NOMBRAN LOS CONSTRUCTORES, y el montaje de los certificados devuelve
+// registros del puerto (Montaje.Records). Los nombra por el alias de la suite,
+// enrollhelpertest.EdgeCertRecord (hallazgo 75 de F3; el precedente es outhelpertest.Invitation).
+//
 // Es la que prueba de verdad lo que los dobles solo imitan: que el UPDATE condicional de Consume es
 // atómico bajo el lock de fila (32 consumos a la vez, uno gana), que compara el código tal cual y
 // que vence contra el now() del servidor; y que Create guarda los siete campos del certificado.
@@ -101,18 +105,17 @@ func enrollContractNewEdgeCertMontaje(t *testing.T) enrollhelpertest.MontajeEdge
 	proceso := fmt.Sprintf("enroll_certs_contrato_%02d", enrollContractCases.Add(1))
 	db := nuevaBase(t, proceso).Abrir(t)
 
-	m := enrollhelpertest.MontajeEdgeCertRepository{
+	return enrollhelpertest.MontajeEdgeCertRepository{
 		Repository: enroll.NewPostgresEdgeCertRepository(db),
 		SeedTenant: func(t *testing.T) string {
 			t.Helper()
 			return enrollContractSeedTenant(t, db)
 		},
+		Records: func(t *testing.T) []enrollhelpertest.EdgeCertRecord {
+			t.Helper()
+			return enrollContractReadCerts(t, db)
+		},
 	}
-	enrollContractBindRecords(&m.Records, func(t *testing.T) []enrollContractCertRow {
-		t.Helper()
-		return enrollContractReadCerts(t, db)
-	})
-	return m
 }
 
 // enrollContractSeedTenant inserta un tenant en public.tenants y devuelve su id: enrollment_codes y
@@ -135,58 +138,11 @@ func enrollContractSeedTenant(t *testing.T, db *sql.DB) string {
 	return id
 }
 
-// enrollContractCertRow es una fila de public.edge_certs tal como la lee el observador. Tiene los
-// MISMOS campos, con los mismos nombres, tipos y orden, que enroll.EdgeCertRecord: es lo que deja
-// convertirla a ese tipo sin nombrarlo (ver enrollContractCertShape).
-type enrollContractCertRow struct {
-	TenantID     string
-	SubjectCN    string
-	SerialNumber string
-	Fingerprint  string
-	NotBefore    time.Time
-	NotAfter     time.Time
-	CertPEM      []byte
-}
-
-// enrollContractCertShape es la forma del registro que pide Montaje.Records: cualquier tipo cuya
-// estructura subyacente sea la de enrollContractCertRow.
-//
-// ⚠️ Existe por un límite del candado ProcessImports: Montaje.Records devuelve
-// []enroll.EdgeCertRecord, y del paquete del puerto un *_contrato_test.go solo puede nombrar
-// constructores (New…), así que este fichero no puede escribir ese tipo. enrollContractBindRecords
-// lo deja inferir al compilador a partir del campo del Montaje. Si enroll.EdgeCertRecord gana,
-// pierde o cambia un campo, este fichero deja de compilar: no se desincroniza en silencio.
-type enrollContractCertShape interface {
-	~struct {
-		TenantID     string
-		SubjectCN    string
-		SerialNumber string
-		Fingerprint  string
-		NotBefore    time.Time
-		NotAfter     time.Time
-		CertPEM      []byte
-	}
-}
-
-// enrollContractBindRecords escribe en dst (el campo Records del montaje) un observador que llama a
-// read y convierte cada fila al tipo R del registro, que el compilador infiere de dst.
-func enrollContractBindRecords[R enrollContractCertShape](dst *func(*testing.T) []R, read func(*testing.T) []enrollContractCertRow) {
-	*dst = func(t *testing.T) []R {
-		t.Helper()
-		rows := read(t)
-		records := make([]R, 0, len(rows))
-		for _, row := range rows {
-			records = append(records, R(row))
-		}
-		return records
-	}
-}
-
 // enrollContractReadCerts devuelve TODAS las filas de public.edge_certs de la base del caso, sin
 // filtrar por tenant: es el observador que pide Montaje.Records, y un registro de más (o de un
 // tenant que no toca) tiene que verse. tenant_id vuelve como texto y cert_pem, que es TEXT, como
 // bytes. Falla el test si no puede leer.
-func enrollContractReadCerts(t *testing.T, db *sql.DB) []enrollContractCertRow {
+func enrollContractReadCerts(t *testing.T, db *sql.DB) []enrollhelpertest.EdgeCertRecord {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), enrollContractTimeout)
 	defer cancel()
@@ -203,10 +159,10 @@ func enrollContractReadCerts(t *testing.T, db *sql.DB) []enrollContractCertRow {
 		}
 	}()
 
-	var found []enrollContractCertRow
+	var found []enrollhelpertest.EdgeCertRecord
 	for rows.Next() {
 		var (
-			r       enrollContractCertRow
+			r       enrollhelpertest.EdgeCertRecord
 			certPEM string
 		)
 		if err := rows.Scan(&r.TenantID, &r.SubjectCN, &r.SerialNumber, &r.Fingerprint, &r.NotBefore, &r.NotAfter, &certPEM); err != nil {
