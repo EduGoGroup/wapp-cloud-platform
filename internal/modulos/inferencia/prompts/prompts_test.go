@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package prompts_test
 
 import (
@@ -291,7 +289,7 @@ func TestCargar_AdversarialPrefixes(t *testing.T) {
 		{"leading space", " p4-x.tmpl"},
 		{"space before the hyphen", "p4 -x.tmpl"},
 		{"no-break space before the hyphen", "p4 -x.tmpl"},
-		{"zero-width space inside the prefix", "p​4-x.tmpl"},
+		{"zero-width space inside the prefix", "p\u200b4-x.tmpl"},
 		{"unicode hyphen", "p4‐x.tmpl"},
 		{"en dash", "p4–x.tmpl"},
 		{"stage without hyphen", "p4.tmpl"},

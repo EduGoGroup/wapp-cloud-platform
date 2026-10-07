@@ -89,10 +89,13 @@ package prompts
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // El formato de un fichero, en constantes porque lo comparten el lector y el
@@ -186,7 +189,93 @@ const OrigenCompilado = "compilada"
 // NUNCA degrada al texto compilado: ante cualquier fallo devuelve el Cargadas
 // cero (sin mapas) y el error.
 func Cargar(dir string) (Cargadas, error) {
-	panic(pendiente.Implementar("prompts.Cargar"))
+	out := Cargadas{
+		Plantillas: make(map[llm.Etapa]llm.Plantilla, len(llm.EtapasAjustables)),
+		Origen:     make(map[llm.Etapa]string, len(llm.EtapasAjustables)),
+	}
+	for _, stage := range llm.EtapasAjustables {
+		p, ok := llm.PlantillaPorDefecto(stage)
+		if !ok {
+			return Cargadas{}, fmt.Errorf("%w: la etapa %q está en EtapasAjustables y no tiene "+
+				"plantilla compilada; es un bug del módulo llm, no de la configuración", ErrPromptsDir, stage)
+		}
+		out.Plantillas[stage] = p
+		out.Origen[stage] = OrigenCompilado
+	}
+	if strings.TrimSpace(dir) == "" {
+		return out, nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return Cargadas{}, fmt.Errorf("%w: no se puede leer %s: %w", ErrPromptsDir, dir, err)
+	}
+
+	// Se recorre ORDENADO para que un directorio con dos ficheros en conflicto
+	// falle siempre nombrando los mismos, y no según el orden del sistema de
+	// ficheros: un error que cambia de texto entre dos ejecuciones idénticas no se
+	// puede buscar en un historial.
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), Extension) {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+
+	seen := make(map[llm.Etapa]string, len(names))
+	for _, name := range names {
+		stage, err := stageFromName(name)
+		if err != nil {
+			return Cargadas{}, err
+		}
+		if previous, dup := seen[stage]; dup {
+			return Cargadas{}, fmt.Errorf("%w: %s y %s reclaman la etapa %q; deja uno solo "+
+				"(el que sobra puede quedarse si le quitas la extensión %s)",
+				ErrPromptsDir, previous, name, stage, Extension)
+		}
+		path := filepath.Join(dir, name)
+		raw, err := os.ReadFile(path) //nolint:gosec // ruta de configuración del operador, no de un usuario
+		if err != nil {
+			return Cargadas{}, fmt.Errorf("%w: no se puede leer %s: %w", ErrPromptsDir, path, err)
+		}
+		template, err := Parsear(string(raw))
+		if err != nil {
+			return Cargadas{}, fmt.Errorf("%w: %s: %w", ErrPromptsDir, path, err)
+		}
+		if err := llm.ValidarPlantilla(stage, template); err != nil {
+			return Cargadas{}, fmt.Errorf("%w: %s no se puede servir: %w", ErrPromptsDir, path, err)
+		}
+		seen[stage] = name
+		out.Plantillas[stage] = template
+		out.Origen[stage] = path
+	}
+	return out, nil
+}
+
+// stageFromName saca la etapa del PREFIJO del nombre de fichero. Es la única
+// parte del nombre que este paquete interpreta. (En el paquete viejo era
+// `etapaDeNombre`.)
+func stageFromName(name string) (llm.Etapa, error) {
+	base := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+	for _, stage := range llm.EtapasAjustables {
+		if strings.HasPrefix(base, string(stage)+"-") {
+			return stage, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s no empieza por ninguna etapa conocida (%s) seguida de un guion; "+
+		"un fichero así se quedaría sin aplicar SIN avisar, que es justo lo que este error evita",
+		ErrPromptsDir, name, stagesAsText())
+}
+
+// stagesAsText lista las etapas ajustables para el mensaje de error, en el orden
+// de llm.EtapasAjustables. (En el paquete viejo era `etapasComoTexto`.)
+func stagesAsText() string {
+	ss := make([]string, 0, len(llm.EtapasAjustables))
+	for _, stage := range llm.EtapasAjustables {
+		ss = append(ss, string(stage))
+	}
+	return strings.Join(ss, ", ")
 }
 
 // Parsear convierte el contenido de un fichero en una plantilla. Es público
@@ -229,5 +318,66 @@ func Cargar(dir string) (Cargadas, error) {
 //     SOLO en su línea». Solo se mira lo que le SIGUE.
 //   - Una sección sin más que espacios: «la sección "<marcador>" está vacía».
 func Parsear(contenido string) (llm.Plantilla, error) {
-	panic(pendiente.Implementar("prompts.Parsear"))
+	// El orden se comprueba ANTES de trocear. Si no, un fichero con las secciones
+	// invertidas falla por «falta el marcador ESQUEMA» —porque ya se lo comió la
+	// sección anterior—, y ese mensaje manda a buscar un marcador que SÍ está.
+	instructionAt := strings.Index(contenido, MarcaInstruccion)
+	schemaAt := strings.Index(contenido, MarcaEsquema)
+	if instructionAt >= 0 && schemaAt >= 0 && schemaAt < instructionAt {
+		return llm.Plantilla{}, fmt.Errorf("%q va antes que %q: el orden de las secciones es el del prompt",
+			MarcaEsquema, MarcaInstruccion)
+	}
+
+	instruction, rest, err := section(contenido, MarcaInstruccion)
+	if err != nil {
+		return llm.Plantilla{}, err
+	}
+	schema, _, err := section(rest, MarcaEsquema)
+	if err != nil {
+		return llm.Plantilla{}, err
+	}
+	// TrimSpace solo para DECIDIR si la sección está vacía: lo que se devuelve es
+	// el texto sin recortar (T-11; ver el comentario de la función).
+	if strings.TrimSpace(instruction) == "" {
+		return llm.Plantilla{}, fmt.Errorf("la sección %q está vacía", MarcaInstruccion)
+	}
+	if strings.TrimSpace(schema) == "" {
+		return llm.Plantilla{}, fmt.Errorf("la sección %q está vacía", MarcaEsquema)
+	}
+
+	version := fmt.Sprintf("%d", llm.ArtifactVersion)
+	return llm.Plantilla{
+		Instruccion: strings.ReplaceAll(instruction, HuecoVersion, version),
+		Esquema:     strings.ReplaceAll(schema, HuecoVersion, version),
+	}, nil
+}
+
+// section devuelve el texto que sigue a un marcador hasta el siguiente marcador o
+// el final, y el resto del fichero a partir de ese marcador. (En el paquete viejo
+// era `seccion`.)
+//
+// Consume EXACTAMENTE el salto de línea que cierra la línea del marcador y ni uno
+// más: ese salto es del formato, y los que vengan detrás son del prompt.
+func section(content, marker string) (text, rest string, err error) {
+	i := strings.Index(content, marker)
+	if i < 0 {
+		return "", "", fmt.Errorf("falta el marcador %q", marker)
+	}
+	tail := content[i+len(marker):]
+	tail = strings.TrimPrefix(tail, "\r")
+	if !strings.HasPrefix(tail, "\n") {
+		return "", "", fmt.Errorf("el marcador %q tiene que ir SOLO en su línea", marker)
+	}
+	tail = tail[1:]
+
+	end := len(tail)
+	for _, other := range []string{MarcaInstruccion, MarcaEsquema} {
+		if other == marker {
+			continue
+		}
+		if j := strings.Index(tail, other); j >= 0 && j < end {
+			end = j
+		}
+	}
+	return tail[:end], tail[end:], nil
 }
