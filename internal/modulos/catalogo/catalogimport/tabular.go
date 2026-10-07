@@ -31,6 +31,24 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // fila). Los dos trozos solo llevan auxiliares no exportados, así que nacen en el
 // verde (05 E-4); sus tests, que salen de este contrato, nacen ya en rojo.
 
+// Nombres de las columnas de la planilla canónica. Los compone tabularColumns
+// (template.go), que es donde está fijado su ORDEN —contrato, porque las columnas
+// son posicionales para quien las llena—; aquí solo viven los nombres, que es lo que
+// el parser compara al leer la cabecera.
+const (
+	colCategoria    = "categoria"
+	colSubcategoria = "subcategoria"
+	colCodigo       = "codigo"
+	colSKU          = "sku"
+	colNombre       = "nombre"
+	colPrecio       = "precio"
+	colDescripcion  = "descripcion"
+	colTags         = "tags"
+	colAtributos    = "atributos"
+	colVariantes    = "variantes"
+	colComponentes  = "componentes"
+)
+
 // ParseTabular traduce las filas de la planilla canónica al documento del contrato y
 // lo valida con el MISMO validador del JSON. La primera fila es la CABECERA (los
 // nombres de las columnas) y cada fila siguiente es UN artículo con la cabecera de su
