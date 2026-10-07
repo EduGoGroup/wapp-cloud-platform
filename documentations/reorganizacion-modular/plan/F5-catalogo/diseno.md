@@ -125,3 +125,31 @@ El viejo `frontera_test.go` sigue verde (barre solo `internal/flujos`, que F5 no
 | `catalogo/catalogimport` (6) | no | no | no | 1 (rutas I14–I17, F8) | **medio**; `contract.go` y `prompt.go`, candidatos a **simple** |
 
 **Adaptadores `bridge_<x>.go`**: nacen 0, mueren 0. **Puertos con BD**: ninguno.
+
+### 6.1 · Inventario E-12, fichero a fichero (medido el 2026-10-06 sobre `dev` @ `ebf4eb7`; **aprobado por Jhoan** en F45-01)
+
+**D-F5-1 = B** (`plan/DECISIONES.md`, 2026-09-30): `model` se reconstruye aquí; no hay puente de import.
+**Regla de conteo de consumidores**: paquetes de producción **viejos** distintos que usan símbolos del fichero (las dos
+copias del arranque cuentan como dos). Números reconfirmados: 11 ficheros, **4.195 líneas** (3.789 + 406); **78 + 4
+`Test*`** en **13 + 1** ficheros de test (la spec decía 12); `flujos/model` sin imports internos; `catalogVarKey` en
+`cart/state.go:101`; ninguno de los 11 toca BD.
+
+| Fichero nuevo | L. viejo | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `conversacion/model/model.go` | 406 | no | no | no | 12 | **medio** (hoja pura; en lo nuevo solo la usa `catalogo` hasta F8) |
+| `catalogo/catalog.go` (sin `loadCatalog`) | 582 | no | no | no | 5 | **medio** |
+| `catalogo/indice/normalizador.go` | 111 | no | no | no | 3 | **simple** |
+| `catalogo/indice/indice.go` | 377 | 4 mapas inmutables tras `Construir` | no | no | 2 | **medio** |
+| `catalogo/indice/cache.go` | 307 | mapa por tenant, reloj lógico, estadísticas | `sync.Mutex` | no | 3 | **complejo** (mutantes) |
+| `catalogo/catalogimport/contract.go` | 226 | no | no | no | 1 | **simple** |
+| `catalogo/catalogimport/validator.go` | 876 | no | no | no | 1 | **medio** (se parte, E-13) |
+| `catalogo/catalogimport/diff.go` | 314 | no | no | no | 1 | **medio** |
+| `catalogo/catalogimport/template.go` | 320 | no | no | no | 1 | **medio** |
+| `catalogo/catalogimport/prompt.go` | 67 | no | no | no | 1 | **simple** |
+| `catalogo/catalogimport/tabular.go` | 609 | no | no | no | 1 | **medio** (se parte, E-13) |
+
+**Adaptadores `bridge_<x>.go`**: ninguno nace, ninguno se retira. **BD**: ninguna (no hay suite con `Montaje`).
+
+**Particiones E-13** (D-R-7; esta spec es anterior a la regla): `validator.go` (876) y `tabular.go` (609) nacen
+partidos en `x_<tema>.go` con su gemelo de test; `catalog.go` (≈ 567 sin `loadCatalog`) queda en tolerancia;
+`catalog_test.go` fusiona tres tests viejos que suman 614 líneas y también se parte. El total pasa de 11 ficheros.

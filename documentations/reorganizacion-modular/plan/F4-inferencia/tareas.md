@@ -21,12 +21,12 @@ Para cuando: Jhoan aprobó el inventario E-12; `internal/modulos/inferencia` ent
 
 ### Inventario y candados viejos · T4.1–T4.2
 
-- [ ] **T4.1 · docs: Inventario E-12 de F4** · 🌐 · dep. F3 cerrado · cumple —
+- [x] (`2783172`) **T4.1 · docs: Inventario E-12 de F4** · 🌐 · dep. F3 cerrado · cumple —
   - **Ficheros**: este `tareas.md` y `diseno.md` §1 y §6 (los números, solo si cambiaron)
   - **Produce**: (1) los números reconfirmados sobre `dev`: `wc -l internal/{llmvia,llmvia/local,prompts,tenantllm,degradation}/*.go | grep -v _test` suma 3.072 en 10 ficheros (o se corrige aquí con fecha); `grep -c '^func Test'` sobre los 14 tests viejos suma 88; `GOWORK=off go list -f '{{.Imports}}'` de los 5 paquetes coincide con `arquitectura.md` §2; existe el adaptador de `local.Frame` de F3 (`grep -rln 'InferRequest' internal/arranque`). (2) la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 10 ficheros, sus dobles y el adaptador. (3) la lista de adaptadores: **nace** `bridge_inferencia.go` (`llmConfigBridge`, `turneroBridge`); **se retira** `bridge_gateway.go` de F3
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.** Si un archivo sale peor, sube de nivel. Se presenta junto al inventario de F5 (T5.1)
   - **Gate**: ninguno de código · **Commit**: `docs(reorganizacion-modular): F4, inventario E-12`
-- [ ] **T4.2 · verificar que los candados viejos están ciegos al árbol nuevo (D-F4-1, hecho en F0)** · 🌐 · dep. T4.1 · cumple R4.2.c
+- [x] (`verificada, sin commit`) **T4.2 · verificar que los candados viejos están ciegos al árbol nuevo (D-F4-1, hecho en F0)** · 🌐 · dep. T4.1 · cumple R4.2.c
   - **Ficheros**: ninguno (solo lectura). La línea la puso **F0 · T0.27** en `internal/llmvia/c2_via_test.go` (`:117`) y en `internal/iam/infra/postgres/membresia_unica_ast_test.go` (`:97`); F4 **no** vuelve a tocar código viejo.
   - **Hecho cuando**: `git log --oneline origin/dev -- internal/llmvia/c2_via_test.go` muestra el commit de T0.27; los dos barridos saltan `modulos`, `nucleo`, `arranque`, `apipublica`, `pendiente`, `candados` **directamente bajo `internal/`** (por ruta, no por nombre) y siguen leyendo > 0 ficheros viejos; una sonda en el árbol, sin commitear (`internal/modulos/x/x.go` con `if via == "api"`), **no** los pone rojos y se borra.
   - **Gate**: gate ci-local · **Commit**: ninguno
@@ -35,31 +35,31 @@ Para cuando: Jhoan aprobó el inventario E-12; `internal/modulos/inferencia` ent
 ### Contratos y rojo · T4.3–T4.9
 Para cuando: `make test-pendiente` cuenta **≈54** llamadas en `internal/modulos/inferencia` (estimación previa al inventario, que incluía el adaptador; la cifra exacta se anota aquí al cerrar T4.9), gate rojo rc=0, gate ci-local rc=0, `make lint` sin `unused`.
 
-- [ ] **T4.3 · rojo(inferencia): contratos de `prompts/prompts.go` y `prompts/volcar.go`** · 🌐 · dep. T4.1 · cumple R4.1.a–e, R4.3.a, R4.3.b
+- [x] (`bccfa4b`) **T4.3 · rojo(inferencia): contratos de `prompts/prompts.go` y `prompts/volcar.go`** · 🌐 · dep. T4.1 · cumple R4.1.a–e, R4.3.a, R4.3.b
   - **Ficheros**: `internal/modulos/inferencia/prompts/{prompts,volcar}.go` y sus `_test.go`
   - **Hecho cuando**: los 13 exportados de `diseno.md` §2 existen con su comentario-promesa; `prompts_test.go` tiene la tabla de los 5 fallos de arranque con sus textos, «sin directorio ⇒ compiladas», «una etapa suelta», «ignora lo que no es plantilla», `P4-x.TMPL` carga (T-12), preámbulo fuera; `volcar_test.go` tiene ida y vuelta byte a byte sobre las 4 etapas contra `llm.PlantillaPorDefecto`, «no pisa», dir vacío; cabecera `// Porta internal/prompts/<f>.go @ <sha>`
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de prompts`
-- [ ] **T4.4 · rojo(inferencia): contrato de `degradation/degradation.go`** · 🌐 · dep. T4.1 · cumple R4.5.a–c
+- [x] (`143fa86`) **T4.4 · rojo(inferencia): contrato de `degradation/degradation.go`** · 🌐 · dep. T4.1 · cumple R4.5.a–c
   - **Ficheros**: `…/degradation/degradation.go`, `degradation_test.go`
   - **Hecho cuando**: vocabulario, errores, `Notice`, `ListFilter`, `Store`, `Notifier`, `VentanaDe`; el test lee `../../../platform/storage/postgres/migrations/structure/*.sql`, extrae la lista del `CHECK owner_degradation_notices_reason_check` y la compara como **conjunto** con `Reasons()` (candado D-F4-2), afirma `ViaLocal/ViaAPI` iguales a los de `tenantllm` **nuevo**, `Reasons()` es copia, `VentanaDe` pura (dos TZ ⇒ misma clave), motivo sano ⇒ `saves == 0` (usa `degradationhelpertest.Memoria`)
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de degradation`
-- [ ] **T4.5 · rojo(inferencia): `degradation/postgres.go` y el doble `degradationhelpertest`** · 🌐 · dep. T4.4 · cumple R4.5.c
+- [x] (`23c0e40`) **T4.5 · rojo(inferencia): `degradation/postgres.go` y el doble `degradationhelpertest`** · 🌐 · dep. T4.4 · cumple R4.5.c
   - **Ficheros**: `…/degradation/postgres.go`, `postgres_test.go`, `…/degradationhelpertest/{contrato,memoria,memoria_test}.go`
   - **Hecho cuando**: `Contrato(t, func(t) Montaje)` escrita **entera** (es especificación: dedupe, ventana siguiente, `creado`, INV-7, orden y `[]`), con la marca de estado sobre todas las columnas que `Save` puede tocar; `memoria_test.go` la corre (la pasada contra Postgres, T4.31); `postgres_test.go` prueba las funciones puras de `diseno.md` §2 (acotar, `LastSeenAt` cero, `NULL read_at`) y el constructor
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de degradation/postgres y su doble`
-- [ ] **T4.6 · rojo(inferencia): `tenantllm` (dominio, adaptador y doble)** · 🌐 · dep. T4.1 · cumple R4.4.a–e
+- [x] (`c97be5a`) **T4.6 · rojo(inferencia): `tenantllm` (dominio, adaptador y doble)** · 🌐 · dep. T4.1 · cumple R4.4.a–e
   - **Ficheros**: `…/tenantllm/{tenantllm,postgres}.go` y tests, `…/tenantllmhelpertest/{contrato,memoria,memoria_test}.go`
   - **Hecho cuando**: `Config` sin campo de clave (test por reflexión); `Contrato(t, func(t) Montaje)` con los casos de conducta de los 15 tests de integración viejos salvo `TestBackfill0073_*` (van a F9); `postgres_test.go` prueba la validación previa al SQL con sus tres textos exactos
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de tenantllm y su doble`
-- [ ] **T4.7 · rojo(inferencia): `llmvia/local`** · 🌐 · dep. T4.1 · cumple R4.6.a, R4.6.b, R4.6.d
+- [x] (`f55fea8`) **T4.7 · rojo(inferencia): `llmvia/local`** · 🌐 · dep. T4.1 · cumple R4.6.a, R4.6.b, R4.6.d
   - **Ficheros**: `…/llmvia/local/{local,calentamiento}.go` y tests; `internal/modulos/fronteras_test.go` (lista blanca: `inferencia → edge`; **sin** puentes de import)
   - **Hecho cuando**: `Frame` sobre `modulos/edge/grpc.InferRequest`; tests con un `frameFalso` que guarda la última petición: los 5 métodos usan el `Build…Prompt` compartido (y el `…Con` con plantilla), `ExtractJSON`, error del transporte intacto (`errors.As` sobre un tipo con `Motivo()`), temperatura del llamante, plazo heredado (`D − 7 s`, por rango), sin deadline 30 s, sin presupuesto ⇒ `ErrSinPresupuesto` y **cero** llamadas al frame, tabla de techos y `class`, techo apagado ⇒ 0, `MargenVeredicto > DefaultInferGrace`; calentamiento: `"hola"`, 16, `lote`, `Warmup`, no interpreta la salida, mismo prefijo que la P1 real
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de llmvia/local`
-- [ ] **T4.8 · rojo(inferencia): `llmvia/notify.go`** · 🌐 · dep. T4.4, T4.6, T4.7 · cumple R4.5.d, R4.5.e
+- [x] (`ddd960f`) **T4.8 · rojo(inferencia): `llmvia/notify.go`** · 🌐 · dep. T4.4, T4.6, T4.7 · cumple R4.5.d, R4.5.e
   - **Ficheros**: `…/llmvia/notify.go`, `notify_test.go` (paquete `llmvia` interno: `motivoDe` nace en verde y su test también —lleva regla de negocio, T-6—; en rojo el test cubre los 5 exportados y la tabla por la conducta de `For` con un frame que falla)
   - **Hecho cuando**: la tabla de `diseno.md` §2 entera (14 filas) expresada como casos; «el observador cuenta aunque no haya notificador»; «lo que no tiene motivo no se cuenta»; «el aviso sobrevive al contexto muerto»
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de llmvia/notify`
-- [ ] **T4.9 · rojo(inferencia): `llmvia/llmvia.go` y el candado C2** · 🌐 · dep. T4.8 · cumple R4.2.a, R4.2.b, R4.4.b, R4.6.c
+- [x] (`b8ae091`) **T4.9 · rojo(inferencia): `llmvia/llmvia.go` y el candado C2** · 🌐 · dep. T4.8 · cumple R4.2.a, R4.2.b, R4.4.b, R4.6.c
   - **Ficheros**: `…/llmvia/llmvia.go`, `llmvia_test.go`, `c2_via_test.go` (con `//go:build pendiente` hasta T4.23)
   - **Hecho cuando**: tests de `For` (tres estados de fila; vía inventada; fallo de `Get` ≠ vía; sesión de origen en el frame, vacía viaja vacía, **se añade** a las opciones; credencial rota avisa al construir; éxito no avisa; calidad no avisa; sin notificador no envuelve; `NewSelector(nil)`), `WithLocalOptions` acumula (dos llamadas llegan juntas), `Warm` (api ⇒ centinela sin cable; no avisa), `PlazaDe` (5 casos de `plaza_test.go`), `Turno` (parámetros medidos, ctx de 19 s no se queda sin presupuesto, api sin cable, fallo avisa y cuenta `turno`, sin cable ⇒ `local.ErrSinTransporte`), carrera de dos `For` concurrentes con `-race`; C2 con la lista de permitidos de `diseno.md` §3 **vacía de las entradas futuras** (solo las del módulo)
   - **Gate**: gate rojo · **Commit**: `rojo(inferencia): contrato de llmvia y candado C2`
@@ -69,24 +69,24 @@ Para cuando: 8 ficheros sin etiqueta, un test por promesa de su contrato, gate c
 Un commit por fichero (por paquete en nivel medio), `verde(inferencia): <fichero>`; se quita `//go:build pendiente` de **su**
 test; el comentario-ADR del fichero viejo viaja con la lógica (E-10). Dentro de un paquete, en serie.
 
-- [ ] **T4.11 · verde: `prompts/prompts.go`** · 🌐 · dep. T4.3 · cumple R4.3.b, R4.3.e
-- [ ] **T4.12 · verde: `prompts/volcar.go`** · 🌐 · dep. T4.11 · cumple R4.3.a
-- [ ] **T4.13 · verde: `degradation/degradation.go`** · 🌐 · dep. T4.4, **T4.2** · cumple R4.5.a–c — primera comparación por vía del árbol nuevo (`ValidVia`): si el C2 viejo se pone rojo, **T4.2 no está hecha**
-- [ ] **T4.14 · verde: `degradationhelpertest/memoria.go`** · 🌐 · dep. T4.13
-- [ ] **T4.15 · verde: `degradation/postgres.go`** · 🌐 · dep. T4.13 · SQL copiado literal; su verdad la da la suite contra Postgres (P4, T4.31) y F9
-- [ ] **T4.16 · verde: `tenantllm/tenantllm.go`** · 🌐 · dep. T4.6, T4.2 · cumple R4.4.a
-- [ ] **T4.17 · verde: `tenantllmhelpertest/memoria.go`** · 🌐 · dep. T4.16 · cumple R4.4.b–e
-- [ ] **T4.18 · verde: `tenantllm/postgres.go`** · 🌐 · dep. T4.16 · SQL literal; su verdad la da la suite contra Postgres (P4, T4.31) y F9
+- [x] (`24c0782`) **T4.11 · verde: `prompts/prompts.go`** · 🌐 · dep. T4.3 · cumple R4.3.b, R4.3.e
+- [x] (`6dff57f`) **T4.12 · verde: `prompts/volcar.go`** · 🌐 · dep. T4.11 · cumple R4.3.a
+- [x] (`4645e55`) **T4.13 · verde: `degradation/degradation.go`** · 🌐 · dep. T4.4, **T4.2** · cumple R4.5.a–c — primera comparación por vía del árbol nuevo (`ValidVia`): si el C2 viejo se pone rojo, **T4.2 no está hecha**
+- [x] (`143fa86, sin cambios en el verde`) **T4.14 · verde: `degradationhelpertest/memoria.go`** · 🌐 · dep. T4.13
+- [x] (`1bb1101`) **T4.15 · verde: `degradation/postgres.go`** · 🌐 · dep. T4.13 · SQL copiado literal; su verdad la da la suite contra Postgres (P4, T4.31) y F9
+- [x] (`287b031`) **T4.16 · verde: `tenantllm/tenantllm.go`** · 🌐 · dep. T4.6, T4.2 · cumple R4.4.a
+- [x] (`957487a`) **T4.17 · verde: `tenantllmhelpertest/memoria.go`** · 🌐 · dep. T4.16 · cumple R4.4.b–e
+- [x] (`1fc0de5`) **T4.18 · verde: `tenantllm/postgres.go`** · 🌐 · dep. T4.16 · SQL literal; su verdad la da la suite contra Postgres (P4, T4.31) y F9
   - **Gate de las ocho**: gate verde · **Commit**: `verde(inferencia): <fichero>`
 
 ### Verde de `llmvia` y el candado C2 · T4.19–T4.23
 Para cuando: `internal/modulos/inferencia` entero sin etiqueta; C2 nuevo en verde; gate ci-local rc=0.
 
-- [ ] **T4.19 · verde: `llmvia/local/local.go`** · 🌐 · dep. T4.7 · cumple R4.6.a, R4.6.b, R4.6.d
-- [ ] **T4.20 · verde: `llmvia/local/calentamiento.go`** · 🌐 · dep. T4.19
-- [ ] **T4.21 · verde: `llmvia/notify.go`** · 🌐 · dep. T4.8, T4.13, T4.16 · cumple R4.5.d, R4.5.e — mutantes sobre el orden de ramas de `motivoDe` (T-6), si el inventario lo deja en complejo
-- [ ] **T4.22 · verde: `llmvia/llmvia.go`** · 🌐 · dep. T4.19–T4.21 · cumple R4.2.b, R4.4.b, R4.6.c
-- [ ] **T4.23 · verde: candado C2 nuevo** · 🌐 · dep. T4.22, T4.13, T4.16–T4.18 · cumple R4.2.a
+- [x] (`e47b368`) **T4.19 · verde: `llmvia/local/local.go`** · 🌐 · dep. T4.7 · cumple R4.6.a, R4.6.b, R4.6.d
+- [x] (`e1925c9`) **T4.20 · verde: `llmvia/local/calentamiento.go`** · 🌐 · dep. T4.19
+- [x] (`096036b`) **T4.21 · verde: `llmvia/notify.go`** · 🌐 · dep. T4.8, T4.13, T4.16 · cumple R4.5.d, R4.5.e — mutantes sobre el orden de ramas de `motivoDe` (T-6), si el inventario lo deja en complejo
+- [x] (`c584f88` · `56dfe01` · `21e8a5a` · `c5b4b74`) **T4.22 · verde: `llmvia/llmvia.go`** · 🌐 · dep. T4.19–T4.21 · cumple R4.2.b, R4.4.b, R4.6.c
+- [x] (`24f6450`) **T4.23 · verde: candado C2 nuevo** · 🌐 · dep. T4.22, T4.13, T4.16–T4.18 · cumple R4.2.a
   - **Ficheros**: `…/llmvia/c2_via_test.go`
   - **Hecho cuando**: sin etiqueta; lista = los 5 permitidos del módulo; barre `internal/{modulos,nucleo,arranque,apipublica}` y afirma `recorridos > 0`; mutación documentada en el commit (un `if x.Via == "api"` en `…/prompts/prompts.go` ⇒ rojo; revertida)
   - **Gate**: gate ci-local · **Commit**: `verde(inferencia): candado C2`

@@ -105,3 +105,52 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 5. **`04` §2.3 (sustituida) y `04` §3 suponían que F4 era «pequeña y valida el script»**: con el
    método de `05` es una fase **con conmutación delicada** (tres consumidores viejos con tipos del
    paquete viejo, [`arquitectura.md`](arquitectura.md) §4).
+
+## Hallazgos
+
+### F45-01 (2026-10-06/07; rama `reorg/f45-01-inventario-inferencia` desde `dev` @ `ebf4eb7`)
+
+1. **La spec nombraba símbolos de `edge/grpc` antes de que existieran.** `ClaseInteractivo` / `ClaseLote` son
+   `edgegrpc.ClassInteractive` / `ClassBatch` (`internal/modulos/edge/grpc/inference.go:281-292`) y los `Motivo*` del
+   transporte son `Reason*`; el método `Motivo()` de `*InferError` sí se llama así. El código usa los reales
+   (`diseno.md` §6.1).
+2. **E-13 no estaba en la spec de F4 y partió dos ficheros.** `llmvia.go` (656 l. viejo) nació en `llmvia.go` (575) +
+   `llmvia_turno.go` (231); `local.go` (533 l. viejo), en `local.go` (400) + `local_budget.go` (253). El árbol tiene 45
+   ficheros `.go`, no los 26 de `diseno.md` §1 (los tests también se parten por tema).
+3. 🟡 **E-13 choca con C2 en `llmvia.go`.** El viejo prohíbe sacar `Turno` a otro fichero porque ampliaría la lista de
+   permitidos (`internal/llmvia/llmvia.go:473-477`). Resuelto sin ampliarla: la pregunta por la vía del turno vive en
+   `llmvia.go` (`turnRoute`) y `llmvia_turno.go` la recibe resuelta. Coste: `llmvia.go` queda en 575 líneas, dentro
+   de la tolerancia de 600 pero sobre el objetivo de 500, y no se puede partir más sin tocar la lista del C2.
+4. **La vía local nueva habla con el gateway nuevo sin adaptador.** `var _ local.Frame = (*edgegrpc.Server)(nil)`
+   (`llmvia/local/local_test.go:23`): cada inferencia entra en `s.infers`, que es lo que cuenta `InFlight()`
+   (D-F3-13). `bridge_gateway.go` puede morir en T4.24 sin que la parada corte inferencias en vuelo. `Frame` solo
+   tiene `Infer` (como el viejo, `internal/llmvia/local/local.go:270-272`); `PlazaDe` es un puerto aparte del selector.
+5. **T-8 es más estrecho de lo que dice `reglas.md`.** Sin notificador el provider no se envuelve
+   (`internal/llmvia/notify.go:108-111`): el observador cuenta en la selección y en el turno, **no** los fallos del
+   pipeline. El contrato fija la conducta vieja.
+6. **La tabla de `motivoDe` tiene 8 filas, no 14** (T4.8); el test viejo la recorre con 17 casos, que son los
+   portados. `motivoDe` se llama `reasonOf` en lo nuevo (E-11).
+7. 🟡 **Cuatro sub-agentes en paralelo chocan en el lint.** `golangci-lint` usa un candado global de máquina
+   («parallel golangci-lint is running»): tres `make ci-local` de sub-agente dieron `GATE_RC=2` sin culpa del código
+   y hubo que reintentar. Además el harness dejó **bloqueado** el *worktree* de un sub-agente ya integrado, y
+   `make test-pendiente` lo cuenta (`PENDIENTES=33 · ROJOS=17` con 0 en el árbol; es el hallazgo 23 de F2 otra vez).
+   El gate que cuenta lo repite el agente principal sobre su rama, a solas.
+8. **Quitar la etiqueta `pendiente` enseña al lint tests que no había visto.** En el verde aparecieron `gocyclo`,
+   `errorlint`, `gosec` (G304 sobre `t.TempDir`) y `ST1018` en tests escritos en el rojo. Se resolvieron sin tocar
+   ninguna aserción (auxiliares extraídos y `//nolint` con motivo). Conviene pasar el lint también con la etiqueta puesta ya en el rojo (hoy no hay target para eso).
+9. **Mutantes: 181 a mano, 5 vivos equivalentes.** `tenantllm/postgres.go` 53 (2 vivos: intercambiar dos guardas de
+   `APIKey` que devuelven el mismo centinela; devolver `plain` junto al error de descifrado, que ya es `""`),
+   `notify.go` 41 (2: quitar `err == nil`, que cae igual en el `default`), `llmvia.go` 57 (1: devolver `prov` cuando
+   falla el constructor, que ya es `nil`), `llmvia_turno.go` 30 (0). Cuatro vivos no equivalentes pidieron test
+   (`21e8a5a`, `c5b4b74`): `api.New` sin `Model` o sin la clave, opciones aplicadas al revés, y texto junto al error
+   en `Turno`. Los dos mutantes de T-4 (copia de opciones) solo mueren con `-race`.
+10. **Lo que la suite de `tenantllm` deja para F9**: `TestCheck_LaViaApiIncompletaLaRechazaPostgres`
+    (`internal/tenantllm/postgres_integration_test.go:515`) es SQL crudo contra los `CHECK`, no conducta del puerto; y
+    con T-16 (cero gasto) el **éxito** de `For` por la vía `api` no tiene test unitario (solo `api.New` fallando).
+11. **Para F45-02**: T4.24 no lista `internal/arranque/gateway_wiring_test.go`, que exige `*gatewayBridge` por
+    reflexión (`:161-173`); T4.7 ya no tiene nada que añadir a `fronteras_test.go` (`inferencia → edge` estaba);
+    T4.28 parte de que `edge/grpc` importa `degradation`, y F3 lo resolvió con una lista escrita a mano
+    (`internal/modulos/edge/grpc/inference_test.go:20-24`): queda decidir si pasa a importar el paquete nuevo.
+    Otras del código viejo que el contrato escribe tal cual: un marcador repetido dentro de su sección de plantilla no
+    da error (`internal/prompts/prompts.go:278-287`); `Volcar` no es atómico (`volcar.go:55-70`); la rama «cerrar
+    filas» de `degradation.List` solo es alcanzable con un driver que deja otro conjunto de resultados pendiente.

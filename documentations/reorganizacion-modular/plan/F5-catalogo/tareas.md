@@ -12,11 +12,15 @@
 > **Auxiliares no exportados** (`05` E-4): su test nace en el verde y solo si llevan regla de negocio o ramas no triviales.
 > **Adaptadores `bridge_<x>.go`: ninguno. BD: ninguna.** El «puente» de D-F5-1 = A es de **import** (`05` §4.1).
 > **Sesiones**: F4 y F5 comparten las tres fichas `F45-*` de [`../sesiones/`](../sesiones/README.md).
+>
+> ✅ **D-F5-1 = B** (Jhoan, 2026-09-30; anotada aquí el 2026-10-06 en F45-01): `internal/flujos/model` se reconstruye en
+> F5 como `internal/modulos/conversacion/model`. No hay puente de import; T5.2 **se hace**. Inventario E-12 aprobado:
+> [`diseno.md`](diseno.md) §6.1.
 
 ## Sesión F45-01 · inventario E-12 (junto al de F4) · 🌐 · T5.1
 Para cuando: Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada aquí.
 
-- [ ] **T5.1 · docs: Inventario E-12 de F5** · 🌐 · dep. F3 cerrado (se hace con T4.1) · cumple —
+- [x] (`5ba9fed`) **T5.1 · docs: Inventario E-12 de F5** · 🌐 · dep. F3 cerrado (se hace con T4.1) · cumple —
   - **Produce**: (1) los números reconfirmados: `wc -l` de los 10 (+1) ficheros suma 3.789 (+406); `grep -c '^func Test'` de los 12 tests viejos suma 78 (+4); `GOWORK=off go list -f '{{.Imports}}' ./internal/flujos/model` sin imports internos; `grep -n 'catalogVarKey' internal/flujos/modules/cart/state.go` sigue en `:101`. (2) la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 10 (+1) ficheros. (3) la lista de adaptadores `bridge_<x>.go`: **ninguno nace, ninguno se retira**; y «sin BD». (4) la decisión D-F5-1 (A o B) escrita en la cabecera de este fichero con fecha
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.** Si un archivo sale peor, sube de nivel
   - **Commit**: `docs(reorganizacion-modular): F5, inventario E-12 y D-F5-1`
