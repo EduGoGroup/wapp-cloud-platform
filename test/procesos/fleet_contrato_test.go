@@ -33,7 +33,9 @@ import (
 //
 // Los casos propios del hallazgo 30 —lo que solo existe contra Postgres— están aquí
 // (degraded_since) y en fleet_contrato_selfpn_test.go (el sobre del self_pn, su guarda y la
-// rotación de KEK). Ese fichero no importa nada de internal/: todo le llega por el fleetContractRig.
+// rotación de KEK). Los del hallazgo 76 —el aviso de sesión pasiva y el sobre incompleto— están en
+// fleet_contrato_greeting_test.go. Esos dos ficheros no importan nada de internal/: todo les llega
+// por el fleetContractRig.
 //
 // 🔴 HOMÓNIMO: la «DEK» y la KEK de este fichero son las del envelope de PII de negocio
 // (internal/platform/crypto), NO la DEK del ADR-0007 que custodia el cliente. Todas se generan en
@@ -72,12 +74,15 @@ func TestFleetContrato_Postgres(t *testing.T) {
 
 // fleetContractRig es lo que un caso necesita para ejercer el adaptador y mirar lo que dejó: la
 // base, las dos piezas de cifrado con las que se construyó el repositorio (para recalcular el
-// índice ciego y abrir el sobre leído por SQL) y el Montaje, cuyo campo Repository es el puerto.
+// índice ciego y abrir el sobre leído por SQL), el Montaje, cuyo campo Repository es el puerto, y
+// el mismo adaptador visto como fleetContractGreeter: los dos métodos del aviso de sesión pasiva,
+// que no están en el puerto (fleet_contrato_greeting_test.go).
 type fleetContractRig struct {
-	db     *sql.DB
-	kp     crypto.KeyProvider
-	cipher *crypto.FieldCipher
-	m      fleethelpertest.Montaje
+	db      *sql.DB
+	kp      crypto.KeyProvider
+	cipher  *crypto.FieldCipher
+	m       fleethelpertest.Montaje
+	greeter fleetContractGreeter
 }
 
 // newFleetContractDB clona una base con nuevaBase (que la borra en el Cleanup del test que la
@@ -106,9 +111,10 @@ func newFleetContractRig(t *testing.T, db *sql.DB, keyringB64, currentID, indexB
 	cipher := crypto.NewFieldCipher(kp)
 	repo := fleet.NewPostgresRepository(db, cipher, kp)
 	return fleetContractRig{
-		db:     db,
-		kp:     kp,
-		cipher: cipher,
+		db:      db,
+		kp:      kp,
+		cipher:  cipher,
+		greeter: repo,
 		m: fleethelpertest.Montaje{
 			Repository: repo,
 			SeedTenant: func(t *testing.T) string {
