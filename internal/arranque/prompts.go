@@ -1,4 +1,5 @@
-// Copia de internal/bootstrap/arranque/prompts.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/prompts.go @ 80807ba (F0 · 05 §6). Desde F4 (T4.24,
+// conmutar(inferencia)) el cargador es el de internal/modulos/inferencia/prompts.
 package arranque
 
 import (
@@ -7,7 +8,7 @@ import (
 	"github.com/EduGoGroup/wapp-shared/llm"
 	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/prompts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/prompts"
 )
 
 // cargarPlantillasDePrompt lee los prompts ajustables de las etapas P2–P5 y deja

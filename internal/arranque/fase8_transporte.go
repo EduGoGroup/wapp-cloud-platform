@@ -89,7 +89,7 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
 	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
-		depsDeLaAPIPublica(c), edgeDepsOfTheNewFace(c), c.platformRepo)
+		depsDeLaAPIPublica(c), edgeDepsOfTheNewFace(c), inferenceDepsOfTheNewFace(c), c.platformRepo)
 	if err != nil {
 		return err
 	}
@@ -184,6 +184,12 @@ func servidorAdmin(c *contenedor) *http.Server {
 // de montaje) pero queda tapada por la nueva en el compuesto. Con ellos se van los campos
 // que solo leían esas rutas (Health, DiagnosticsBundleTTL). ConfigPush e Intents SIGUEN
 // puestos: E1–E2 viven en la cara vieja hasta F7 y empujan por el MISMO gateway nuevo.
+//
+// 🔀 F4 · conmutar(inferencia) (FX TX.14): la cara VIEJA ya no sirve F1–F4. TenantLLM y
+// DegradationNotices se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra
+// ni las tres rutas de /api/v1/tenant-llm ni GET /api/v1/degradation-notices, que sirve la
+// cara nueva con lo que arma inferenceDepsOfTheNewFace. No es solo orden: los almacenes del
+// contenedor son ya los de internal/modulos/inferencia y no satisfacen los puertos viejos.
 func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 	return publicapi.Deps{
 		FlowDeps: publicapi.FlowDeps{
@@ -234,16 +240,7 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		// La CONFIGURACIÓN del puente (Plan 042 · T5.1): el MISMO store, otra
 		// pregunta. El CRUD lee y escribe tenant_integrations; el secreto solo
 		// entra (write-only) y sale como huella.
-		// Y la CONFIGURACIÓN de la vía LLM API (Plan 044 · T0.3): entra por el
-		// puerto RECORTADO publicapi.TenantLLMStore, que NO tiene el método APIKey
-		// — la capa HTTP no puede pedir la credencial ni por error.
 		Integrations: c.integrationsStore,
-		TenantLLM:    c.tenantLLMStore,
-		// Y la LECTURA de los avisos de degradación (Plan 044 · T1.5-4, REQ-38),
-		// por un puerto de solo lectura: la capa HTTP no puede escribir un aviso ni
-		// por error. En esta ola la tabla está vacía y una lista `[]` es la
-		// respuesta sana — significa que el LLM no se ha degradado.
-		DegradationNotices: c.degradationStore,
 		// La VUELTA del puente CRM y lo que cuelga de ella (Plan 042 · T4.2/T4.3/
 		// T4.4) más los umbrales de salud: piezas ya armadas, aquí solo el cable.
 		CRMSecrets: c.integrationsStore,
@@ -303,6 +300,34 @@ func edgeDepsOfTheNewFace(c *contenedor) edgeFaceDeps {
 			Sessions:             c.fleetRepo,
 			BundleTTL:            c.cfg.Diagnostics.BundleTTL,
 			DBTimeout:            c.cfg.PublicAPIDBTimeout,
+		},
+	}
+}
+
+// inferenceDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir F1–F4 (F4 ·
+// conmutar(inferencia), FX TX.14), con los MISMOS objetos del contenedor que usa el resto del
+// arranque: el almacén de tenant_llm del que lee el selector de vía, el almacén de avisos en el
+// que escribe su notificador, y el único resolver de derechos (una sola caché).
+//
+// La configuración de la vía LLM API (Plan 044 · T0.3) entra por el puerto RECORTADO
+// apipublica.TenantLLMStore, que NO tiene el método APIKey: la capa HTTP no puede pedir la
+// credencial ni por error. Y la lectura de los avisos de degradación (Plan 044 · T1.5-4,
+// REQ-38) entra por un puerto de solo lectura: la capa HTTP no puede escribir un aviso.
+//
+// 🔴 Las condiciones de montaje no cambian respecto a la cara vieja: los tres punteros
+// (c.tenantLLMStore, c.degradationStore, c.entResolver) se construyen siempre en la fase 3.
+func inferenceDepsOfTheNewFace(c *contenedor) inferenceFaceDeps {
+	return inferenceFaceDeps{
+		tenantLLM: apipublica.TenantLLMDeps{
+			TenantLLM:    c.tenantLLMStore,
+			Entitlements: c.entResolver,
+		},
+		degradationNotices: apipublica.DegradationNoticesDeps{
+			DegradationNotices: c.degradationStore,
+			Entitlements:       c.entResolver,
+			// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): el
+			// mismo valor de config que el resto de la API.
+			DBTimeout: c.cfg.PublicAPIDBTimeout,
 		},
 	}
 }

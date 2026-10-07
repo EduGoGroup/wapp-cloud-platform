@@ -2,14 +2,15 @@ package arranque
 
 // gateway_wiring_test.go — EL TEST DE CABLEADO DE edge, COMPLETO (F3 · T3.25, R3.6.f; FX TX.11;
 // 05 §4.2, hallazgo 39 de F1). No basta mirar el tipo de un campo del contenedor: se afirma, por
-// import, que ningún fichero de producción de internal/arranque salvo el adaptador
-// (bridge_gateway.go) toca el gateway viejo; que el arranque construye UN solo gateway y es el
-// nuevo; y, sobre el arranque REAL (las fases 2–8 del contenedor de la huella, sin red ni BD),
-// que todos sus consumidores apuntan a esa MISMA instancia. Dos gateways en el proceso son un
-// Edge conectado a uno y los envíos buscándolo en el otro (T-4).
+// import, que ningún fichero de producción de internal/arranque toca el gateway viejo; que el
+// arranque construye UN solo gateway y es el nuevo; y, sobre el arranque REAL (las fases 2–8 del
+// contenedor de la huella, sin red ni BD), que todos sus consumidores apuntan a esa MISMA
+// instancia. Dos gateways en el proceso son un Edge conectado a uno y los envíos buscándolo en el
+// otro (T-4).
 //
-// `edge` NO entra en Conmutados (internal/modulos/fronteras_test.go) mientras viva
-// bridge_gateway.go: entra en F4, cuando el selector de vía pida el InferRequest nuevo.
+// Desde F4 (T4.24, conmutar(inferencia)) el selector de vía es el NUEVO y recibe el
+// *edgegrpc.Server como local.Frame SIN adaptador: murió bridge_gateway.go, que era la única
+// excepción de este fichero.
 
 import (
 	"go/ast"
@@ -29,10 +30,6 @@ const (
 	newGatewayImportPath     = "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	newSessionImportPath     = "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/session"
 )
-
-// oldGatewayBridgeFile es el ÚNICO fichero de producción que puede importar el gateway viejo, y
-// solo su paquete grpc (por el viejo.InferRequest que pide local.Frame). Muere en F4.
-const oldGatewayBridgeFile = "bridge_gateway.go"
 
 // importsOf devuelve, de un fichero ya parseado, ruta de import → nombre local (el alias, o el
 // último elemento de la ruta si no tiene).
@@ -74,30 +71,21 @@ func callsTo(t *testing.T, importPath, fn string) int {
 	return calls
 }
 
-// TestCableado_OnlyTheBridgeImportsTheOldGateway (R3.6.f): ningún fichero de producción de
-// internal/arranque importa nada de internal/gateway/**, salvo bridge_gateway.go, que importa
-// SOLO internal/gateway/grpc. Sin esto, una fase podría levantar un gateway, un registro o un
-// lease viejos y pasárselos a su consumidor sin tocar ningún campo del contenedor.
-func TestCableado_OnlyTheBridgeImportsTheOldGateway(t *testing.T) {
+// TestCableado_NoBootFileImportsTheOldGateway (R3.6.f): ningún fichero de producción de
+// internal/arranque importa nada de internal/gateway/**. Sin esto, una fase podría levantar un
+// gateway, un registro o un lease viejos y pasárselos a su consumidor sin tocar ningún campo del
+// contenedor. Hasta F4 había una excepción, bridge_gateway.go (el adaptador hacia el local.Frame
+// viejo); murió en conmutar(inferencia), así que ya no hay ninguna.
+func TestCableado_NoBootFileImportsTheOldGateway(t *testing.T) {
 	fset, files := astDelArranque(t)
-	bridgeImports := false
 	for _, f := range files {
 		name := fset.Position(f.Pos()).Filename
 		for path := range importsOf(t, f) {
-			if path != oldGatewayTreeImportPath && !strings.HasPrefix(path, oldGatewayTreeImportPath+"/") {
-				continue
+			if path == oldGatewayTreeImportPath || strings.HasPrefix(path, oldGatewayTreeImportPath+"/") {
+				t.Errorf("%s importa %s: en el arranque nuevo ningún fichero de producción puede importar el "+
+					"gateway viejo (bridge_gateway.go, la única excepción, murió en F4)", name, path)
 			}
-			if name == oldGatewayBridgeFile && path == oldGatewayTreeImportPath+"/grpc" {
-				bridgeImports = true
-				continue
-			}
-			t.Errorf("%s importa %s: en el arranque nuevo solo %s puede importar el gateway viejo, y solo "+
-				"su paquete grpc", name, path, oldGatewayBridgeFile)
 		}
-	}
-	if !bridgeImports {
-		t.Errorf("%s ya no importa %s/grpc: si el adaptador murió, este test y la excepción sobran",
-			oldGatewayBridgeFile, oldGatewayTreeImportPath)
 	}
 }
 
@@ -144,22 +132,25 @@ func field(t *testing.T, ptr any, name string) reflect.Value {
 
 // TestIdentidad_EveryConsumerSharesTheOneGateway (FX TX.11, T-4): sobre el arranque real, todo el
 // que habla con un Edge lo hace por el MISMO puntero que c.gw: el notificador viejo de
-// solicitudes, el empuje de filtros nuevo, el ConfigPush de la cara vieja (E2), el adaptador que
-// viaja como Frame del selector LLM, el runtime viejo de flujos y las deps de D1 y D5 de la cara
-// nueva.
+// solicitudes, el empuje de filtros nuevo, el ConfigPush de la cara vieja (E2), el selector LLM
+// nuevo —que lo recibe como Frame y, del mismo valor, como enrutador de plazas—, y las deps de D1
+// y D5 de la cara nueva.
 func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 	if c.gw == nil {
 		t.Fatal("la fase 4 no construyó el gateway")
 	}
 
+	// Desde F4 no hay adaptador: el Frame del selector es el propio *edgegrpc.Server. Y el
+	// enrutador de plazas sale del mismo valor por aserción de tipo: si quedara nil, el aforo
+	// por Edge del pipeline de lote se apagaría con solo un Warn (T-1).
 	frame := field(t, c.llmSelector, "frame")
 	if frame.IsNil() {
 		t.Fatal("el selector LLM no tiene frame: la vía local quedaría sin gateway")
 	}
-	bridge := frame.Elem()
-	if bridge.Type() != reflect.TypeFor[*gatewayBridge]() {
-		t.Fatalf("el Frame del selector LLM es un %s; se espera un *gatewayBridge (bridge_gateway.go)", bridge.Type())
+	if got := frame.Elem().Type(); got != reflect.TypeFor[*edgegrpc.Server]() {
+		t.Fatalf("el Frame del selector LLM es un %s; se espera el *grpc.Server de internal/modulos/edge, "+
+			"sin adaptador", got)
 	}
 
 	edge := edgeDepsOfTheNewFace(c)
@@ -170,7 +161,8 @@ func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
 		{"el MessageSender del notificador de solicitudes (intakes.Notifier)", field(t, c.intakeNotifier, "sender")},
 		{"el ConfigPusher del empuje de filtros (filtercfg.Pusher)", field(t, c.filtersPusher, "push")},
 		{"el Deps.ConfigPush de la cara vieja (E2)", reflect.ValueOf(depsDeLaAPIPublica(c).ConfigPush)},
-		{"el gw del gatewayBridge que viaja como Frame del selector LLM", bridge.Elem().FieldByName("gw")},
+		{"el Frame del selector LLM", frame},
+		{"el enrutador de plazas del selector LLM (aforo por Edge)", field(t, c.llmSelector, "router")},
 		{"el Sender de D1 en la cara nueva", reflect.ValueOf(edge.messages.Sender)},
 		{"el DiagnosticsRequester de D5 en la cara nueva", reflect.ValueOf(edge.diagnostics.DiagnosticsRequester)},
 	}

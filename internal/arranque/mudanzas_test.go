@@ -182,10 +182,11 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // TODAS sus dependencias, FX diseño §6) sirve exactamente las filas del :8103 con fase ≤
 // FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F3
 // (conmutar(edge)), FaseActual = 3 y la cara sirve 29 rutas: las 23 de acceso (A1–A7, B1–B14,
-// C1–C2) y las 6 de edge (D1–D6).
+// C1–C2) y las 6 de edge (D1–D6). Desde F4 (conmutar(inferencia)), FaseActual = 4 y sirve 33:
+// además las 4 de inferencia (F1–F4).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 3 {
-		t.Fatalf("FaseActual = %d; conmutar(edge) la deja en 3 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 4 {
+		t.Fatalf("FaseActual = %d; conmutar(inferencia) la deja en 4 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -201,8 +202,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 29 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2) y edge 6 (D1–D6): 29", len(esperadas), FaseActual)
+	if len(esperadas) != 33 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6) e inferencia 4 (F1–F4): 33", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -277,6 +278,18 @@ func newFaceDepsWithDoubles() newFaceDeps {
 				apipublica.DiagnosticsRequester
 			}{},
 			Sessions: struct{ apipublica.SessionLister }{},
+		},
+		// F4 · inferencia: F1–F3 con el almacén y el resolver de derechos; F4 con el lector y el
+		// resolver.
+		tenantLLM: apipublica.TenantLLMDeps{
+			TenantLLM:    struct{ apipublica.TenantLLMStore }{},
+			Entitlements: entitlementshelpertest.NewFake(),
+		},
+		degradationNotices: apipublica.DegradationNoticesDeps{
+			DegradationNotices: struct {
+				apipublica.DegradationNoticeLister
+			}{},
+			Entitlements: entitlementshelpertest.NewFake(),
 		},
 	}
 }

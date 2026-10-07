@@ -1,12 +1,12 @@
 // Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
-// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
+// salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
+// T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
+// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo.
 package arranque
 
 import (
 	"context"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
 	flowruntime "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/runtime"
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
@@ -19,7 +19,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/fleet"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 )
 
 // faseAlmacenes construye el stack de cifrado de PII y TODOS los adaptadores de salida

@@ -40,11 +40,21 @@ type edgeFaceDeps struct {
 	diagnostics apipublica.DiagnosticsDeps
 }
 
+// inferenceFaceDeps es lo que la cara nueva necesita para F1–F4 (F4 · conmutar(inferencia)). Lo
+// arma la fase 8 (inferenceDepsOfTheNewFace) con los almacenes NUEVOS de tenant_llm y de avisos
+// de degradación y el resolver de derechos del contenedor; buildPublicAPIServer no le añade nada.
+type inferenceFaceDeps struct {
+	// tenantLLM enciende F1–F3.
+	tenantLLM apipublica.TenantLLMDeps
+	// degradationNotices enciende F4.
+	degradationNotices apipublica.DegradationNoticesDeps
+}
+
 // buildPublicAPIServer arma el :8103: la cara NUEVA (internal/apipublica, con las rutas de las
 // fases ≤ FaseActual) delante del mux VIEJO (publicapi), compuestas una vez y envueltas una vez
 // con rate-limit y métricas. Devuelve también la cara y el compuesto, que el contenedor guarda
 // para el candado de mudanzas.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, edge edgeFaceDeps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, edge edgeFaceDeps, inference inferenceFaceDeps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -132,7 +142,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	//
 	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux viejo va la
 	// cara NUEVA (internal/apipublica) con las rutas de las fases ≤ FaseActual
-	// (caraNueva, mudanzas.go; desde F3, las 23 de acceso y las 6 de edge). El Compuesto sirve por la
+	// (caraNueva, mudanzas.go; desde F4, las 23 de acceso, las 6 de edge y las 4 de inferencia). El Compuesto sirve por la
 	// nueva lo que ella registre y delega el resto en publicMux con el MISMO
 	// *http.Request, así que r.Pattern sigue llegando a la métrica. Rate-limit y métricas
 	// envuelven el COMPUESTO una sola vez (RX.2.c; lo vigila cara_nueva_cableado_test.go).
@@ -168,6 +178,9 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 		messages:    edge.messages,
 		sessions:    edge.sessions,
 		diagnostics: edge.diagnostics,
+		// 🔀 F4 · conmutar(inferencia) (FX TX.14): F1–F4, con los almacenes NUEVOS.
+		tenantLLM:          inference.tenantLLM,
+		degradationNotices: inference.degradationNotices,
 	})
 	compuesto := apipublica.Componer(cara, publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)

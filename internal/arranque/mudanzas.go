@@ -18,13 +18,13 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 
 // FaseActual es la última fase de la reconstrucción cuyas rutas del :8103 sirve la
 // cara nueva: 0 en F0 (la cara nace vacía y todo cae al publicapi viejo), 2 tras
-// conmutar acceso, 3 tras conmutar edge, … 8 tras conmutar conversacion. La fase de una fila del mapa se
+// conmutar acceso, 3 tras conmutar edge, 4 tras conmutar inferencia, … 8 tras conmutar conversacion. La fase de una fila del mapa se
 // escribe «F<n>»; la fila pertenece a la cara nueva si n ≤ FaseActual.
-const FaseActual = 3
+const FaseActual = 4
 
 // newFaceDeps es todo lo que la cara nueva necesita para montar sus áreas, agrupado por
 // el Mount* que lo recibe. Lo arma buildPublicAPIServer (http.go) con los servicios de los
-// módulos NUEVOS (acceso y, desde F3, edge); el candado de mudanzas lo arma con dobles.
+// módulos NUEVOS (acceso, desde F3 edge y desde F4 inferencia); el candado de mudanzas lo arma con dobles.
 type newFaceDeps struct {
 	// common es lo compartido por todas las áreas: middleware, auditor y logger.
 	common apipublica.Common
@@ -42,10 +42,14 @@ type newFaceDeps struct {
 	sessions apipublica.SessionsDeps
 	// diagnostics enciende D5–D6 (F3).
 	diagnostics apipublica.DiagnosticsDeps
+	// tenantLLM enciende F1–F3 (F4).
+	tenantLLM apipublica.TenantLLMDeps
+	// degradationNotices enciende F4 (F4).
+	degradationNotices apipublica.DegradationNoticesDeps
 }
 
 // caraNueva construye la cara nueva con las rutas de las fases ≤ FaseActual: desde F2,
-// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6). Cada fase añade aquí su apipublica.Mount<Área>
+// las 23 de acceso (A1–A7, B1–B14, C1–C2); desde F3, además las 6 de edge (D1–D6); desde F4, además las 4 de inferencia (F1–F4). Cada fase añade aquí su apipublica.Mount<Área>
 // en el MISMO commit que sube FaseActual. Las condiciones de montaje (qué dependencia nil
 // apaga qué ruta) son las de cada Mount*: aquí no se decide nada.
 func caraNueva(d newFaceDeps) *apipublica.Cara {
@@ -57,5 +61,7 @@ func caraNueva(d newFaceDeps) *apipublica.Cara {
 	apipublica.MountMessages(cara, d.common, d.messages)
 	apipublica.MountSessions(cara, d.common, d.sessions)
 	apipublica.MountDiagnostics(cara, d.common, d.diagnostics)
+	apipublica.MountTenantLLM(cara, d.common, d.tenantLLM)
+	apipublica.MountDegradationNotices(cara, d.common, d.degradationNotices)
 	return cara
 }
