@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package local_test
 
 // El calentamiento. Los dobles (fakeFrame, transportError, catalogInput, newProvider) viven
@@ -147,7 +145,7 @@ func TestWarmReturnsTheTransportErrorIntact(t *testing.T) {
 	cause := &transportError{reason: edgegrpc.ReasonEdgeOffline}
 	f := &fakeFrame{err: cause}
 	err := newProvider(t, f).Warm(context.Background(), catalogInput())
-	if err != error(cause) {
+	if err != error(cause) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("el error del transporte no volvió tal cual: %v", err)
 	}
 	var withReason interface{ Motivo() string }

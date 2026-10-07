@@ -7,7 +7,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-shared/llm"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -51,6 +51,22 @@ import (
 // constructor lo custodia el test de prefijo de wapp-shared/llm (I6, ADR-0046).
 const TextoDeCalentamiento = "hola"
 
+// warmupStage (en el paquete viejo, etapaCalentamiento) es la P1 con el techo de
+// salida bajado al mínimo útil.
+//
+// 🔴 TECHO 16, y es el único número del paquete que NO busca no truncar: aquí se
+// quiere TRUNCAR. Del calentamiento solo interesa el prefill; la generación es
+// desperdicio puro, y a 6–12 tok/s cada token de más son ~0,1 s de la plaza única.
+// Dieciséis es suficiente para que el modelo arranque a escribir (y por tanto para que
+// el prefill se haya consumido y quede cacheado) y ridículo como coste.
+//
+// `class` = lote porque nadie espera un turno detrás de esto. No es lo que lo
+// distingue de una inferencia real —eso es `warmup`, y tiene que serlo: si el breaker
+// excluyera por `class`, `class` estaría DECIDIENDO y el contrato lo prohíbe por
+// escrito—, solo evita que el parte del Edge cuente los calentamientos como turnos
+// interactivos, que es la etiqueta que el Edge pone cuando el campo llega vacío.
+var warmupStage = stage{maxOutputTokens: 16, class: edgegrpc.ClassBatch}
+
 // Warm emite UN calentamiento contra el Edge de la sesión que se fijó con
 // WithTargetSession, usando el catálogo del tenant para reproducir el prefijo real.
 // Promete, sobre la ÚNICA petición que hace al Frame (con el tenant de New):
@@ -85,5 +101,24 @@ const TextoDeCalentamiento = "hola"
 //     traducirse en un aviso de degradación al dueño: nadie pidió esto y su fallo no
 //     le quita nada al cliente (lo garantiza el llamante, en llmvia).
 func (p *Provider) Warm(ctx context.Context, in llm.ClassifyRequestInput) error {
-	panic(pendiente.Implementar("local.Provider.Warm"))
+	timeout, err := p.frameTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	in.Text = TextoDeCalentamiento
+	_, err = p.frame.Infer(ctx, p.tenantID, edgegrpc.InferRequest{
+		Prompt: llm.BuildClassifyRequestPrompt(in),
+		Format: p.format,
+		// Temperature se deja en su cero, que es exactamente lo que manda una P1 real
+		// (llm.TemperatureGreedy). No cambia el prefijo —solo el muestreo— pero
+		// mantenerla igual evita que alguien lea aquí una diferencia que no existe.
+		Timeout:         timeout,
+		TargetSessionID: p.target,
+		MaxOutputTokens: p.outputCap(warmupStage),
+		Class:           warmupStage.class,
+		Warmup:          true,
+	})
+	// La salida se TIRA sin mirarla: ni llm.ExtractJSON ni validación. Devolver un
+	// llm.ErrLLMQuality aquí invitaría a un reintento que solo gastaría plaza.
+	return err
 }
