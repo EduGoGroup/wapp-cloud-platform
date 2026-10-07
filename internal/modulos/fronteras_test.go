@@ -24,6 +24,16 @@ var reglas = candados.Reglas{
 	// alias; platform no es un módulo), ni las aristas que solo sumarían los tests viejos
 	// (acceso→edge, edge→conversacion, edge→inferencia, solicitudes→captacion): los tests
 	// viejos no se portan (05 E-8).
+	//
+	// El índice del catálogo (D-F5-2, F5): la arista PROHIBIDA `conversacion/** →
+	// catalogo/indice` —el índice no entra en el turno conversacional, INV-02/T1.5; era el
+	// candado AST internal/intake/catalogo/frontera_test.go— vive en esta regla 1, sin ampliar el
+	// motor (decisión de Jhoan, 2026-10-07): Capas["conversacion"] no incluye "catalogo", y el
+	// motor solo distingue MÓDULOS, así que hoy nada de conversacion (producción ni tests) puede
+	// importar nada de catalogo. La arista permitida `catalogo → conversacion/model` es
+	// Capas["catalogo"]. ⚠️ F8: cuando el carrito nuevo necesite catalogo.ParseCatalog y añada
+	// "catalogo" a Capas["conversacion"], esta regla dejará de cubrir al índice y hará falta una
+	// prohibición por SUBPAQUETE (catalogo/indice), que el motor hoy no sabe expresar.
 	Capas: map[string][]string{
 		"acceso":      {},
 		"edge":        {"acceso"},       // gateway/grpc → iam/domain
