@@ -50,15 +50,17 @@ package llmvia
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/llm"
+	"github.com/EduGoGroup/wapp-shared/llm/api"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
+	edgegrpc "github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/grpc"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ErrViaDesconocida indica que la fila del tenant declara una vía que este código no
@@ -114,14 +116,23 @@ type Notifier interface {
 // concurrente: ninguna de sus entradas lo muta, y dos goroutines pueden compartir el
 // mismo valor (R4.7.b: en el proceso hay UNO).
 type Selector struct {
+	store    Store
+	frame    local.Frame
 	notifier Notifier
 	log      logger.Logger
 
+	localOpts []local.Option
 	// observer cuenta las caídas a Nivel A (T3.5-2, D-044.41). nil ⇒ no se cuenta nada
 	// y el sistema se comporta igual: ver WithDegradacionObservada.
 	observer ObservadorDegradacion
 	// clock es el reloj con el que se sella el instante del fallo. nil ⇒ time.Now.
 	clock func() time.Time
+	// router es el frame VISTO COMO enrutador de Edges, cuando sabe serlo. Se resuelve
+	// UNA vez en NewSelector y no en cada PlazaDe: una aserción de tipo por job de lote
+	// no cuesta nada, pero el AVISO de que el transporte no sabe responder tiene que
+	// salir al arrancar, no escondido en el camino caliente. nil ⇒ no hay a quién
+	// preguntar (ver PlazaDe).
+	router edgeRouter
 }
 
 // SelectorOption configura el Selector al construirlo. Las opciones se aplican en el
@@ -131,18 +142,14 @@ type SelectorOption func(*Selector)
 // WithFrame inyecta el transporte de la vía local (lo satisface *edgegrpc.Server,
 // sin adaptador). Sin él, un tenant en vía local falla al construir su provider —
 // con local.ErrSinTransporte, nunca en silencio—.
-func WithFrame(f local.Frame) SelectorOption {
-	panic(pendiente.Implementar("llmvia.WithFrame"))
-}
+func WithFrame(f local.Frame) SelectorOption { return func(s *Selector) { s.frame = f } }
 
 // WithNotifier inyecta el escritor de avisos de degradación. Sin él el sistema
 // degrada igual (la conducta de Nivel A no depende de esto) pero NADIE SE ENTERA: no
 // se escribe aviso y el provider que devuelve For va SIN envoltura. Se admite nil a
 // propósito —equivale a no pasar la opción— para que los tests y los arranques
 // parciales no arrastren una base de datos.
-func WithNotifier(n Notifier) SelectorOption {
-	panic(pendiente.Implementar("llmvia.WithNotifier"))
-}
+func WithNotifier(n Notifier) SelectorOption { return func(s *Selector) { s.notifier = n } }
 
 // WithLocalOptions añade opciones del adaptador local (plantillas, techo de salida,
 // formato, red de seguridad). Llegan a TODO local.Provider que el selector arme: el
@@ -159,15 +166,13 @@ func WithNotifier(n Notifier) SelectorOption {
 // La sesión de origen (For) y la de destino (Warm) van DESPUÉS de estas opciones, así
 // que una local.WithOriginSession o local.WithTargetSession pasada aquí no las pisa.
 func WithLocalOptions(opts ...local.Option) SelectorOption {
-	panic(pendiente.Implementar("llmvia.WithLocalOptions"))
+	return func(s *Selector) { s.localOpts = append(s.localOpts, opts...) }
 }
 
 // WithClock inyecta el reloj con el que se sella el instante del fallo: el `at` que
 // recibe Notifier.Record. Para tests. Sin esta opción —o con una función nil— es
 // time.Now.
-func WithClock(f func() time.Time) SelectorOption {
-	panic(pendiente.Implementar("llmvia.WithClock"))
-}
+func WithClock(f func() time.Time) SelectorOption { return func(s *Selector) { s.clock = f } }
 
 // clockNow (en el paquete viejo, ahoraFn) resuelve el reloj. Mismo criterio que
 // degradation.Notifier: el default se aplica en el uso, no en el constructor, para que un
@@ -198,7 +203,24 @@ func (s *Selector) clockNow() time.Time {
 // aquí UNA vez (y no en cada PlazaDe) para que un transporte que no la tenga no deje
 // el aforo inerte en silencio, que es la forma cara de fallar.
 func NewSelector(cfg Store, log logger.Logger, opts ...SelectorOption) (*Selector, error) {
-	panic(pendiente.Implementar("llmvia.NewSelector"))
+	if cfg == nil {
+		return nil, ErrSinConfig
+	}
+	s := &Selector{store: cfg, log: log}
+	for _, opt := range opts {
+		opt(s)
+	}
+	// La capacidad opcional del transporte (T2.7): saber qué Edge atendería una
+	// inferencia. Se resuelve aquí y se AVISA aquí —una sola línea por proceso—.
+	if s.frame != nil {
+		if r, ok := s.frame.(edgeRouter); ok {
+			s.router = r
+		} else if log != nil {
+			log.Warn("llmvia: el transporte de la vía local no sabe decir qué Edge atiende; " +
+				"el aforo de plaza del pipeline de lote (T2.7) quedará INERTE para este proceso")
+		}
+	}
+	return s, nil
 }
 
 // For devuelve el llm.LLMProvider de la vía configurada del tenant.
@@ -267,7 +289,79 @@ func NewSelector(cfg Store, log logger.Logger, opts ...SelectorOption) (*Selecto
 // suyo con origen OrigenPipeline; si no hay notificador (WithNotifier) vuelve TAL
 // CUAL, sin envoltura.
 func (s *Selector) For(ctx context.Context, tenantID, originSessionID string) (llm.LLMProvider, error) {
-	panic(pendiente.Implementar("llmvia.Selector.For"))
+	cfg, found, err := s.store.Get(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+
+	var prov llm.LLMProvider
+	// ==================================================================
+	// 🔴 EL SWITCH POR VÍA VIVE EN ESTE FICHERO Y EN NINGÚN OTRO (C2). Si necesitas
+	// preguntar por la vía en otro sitio, lo que necesitas de verdad es otro método
+	// en el puerto — y así nacieron los hermanos de este switch (Warm, PlazaDe y
+	// turnRoute): misma fuente, mismo vocabulario cerrado, mismo default de REQ-33.
+	// ==================================================================
+	switch via {
+	case tenantllm.ViaLocal:
+		prov, err = s.localProvider(tenantID, originSessionID)
+	case tenantllm.ViaAPI:
+		prov, err = s.apiProvider(ctx, tenantID, cfg)
+	default:
+		return nil, fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
+	if err != nil {
+		// El fallo al CONSTRUIR el adaptador es un fallo de la vía tanto como el fallo
+		// al consumirlo. Por eso se avisa aquí también, con el mismo mapeo y el mismo
+		// dedupe.
+		s.notify(ctx, tenantID, via, OrigenSeleccion, err)
+		return nil, err
+	}
+	return s.notifying(prov, tenantID, via), nil
+}
+
+// localProvider arma el adaptador de la vía local con la sesión de origen de ESTA
+// petición, que es lo único que cambia entre dos llamadas a For.
+//
+// ⚠️ LAS OPCIONES SE COPIAN (T-4), no se le hace append a s.localOpts. El Selector se
+// comparte entre goroutines y For no lo muta: un append directo sobre el slice del
+// Selector escribiría en SU array subyacente en cuanto tuviera capacidad de sobra, y
+// dos peticiones concurrentes se pisarían la sesión de origen. La copia cuesta una
+// asignación por inferencia, al lado de un viaje al Ollama del cliente.
+func (s *Selector) localProvider(tenantID, originSessionID string) (llm.LLMProvider, error) {
+	opts := make([]local.Option, 0, len(s.localOpts)+1)
+	opts = append(opts, s.localOpts...)
+	opts = append(opts, local.WithOriginSession(originSessionID))
+	prov, err := local.New(s.frame, tenantID, opts...)
+	if err != nil {
+		// El nil concreto NO se devuelve como interfaz (T-5): un (*local.Provider)(nil)
+		// metido en un llm.LLMProvider deja de comparar igual a nil y el siguiente
+		// que escriba `if prov == nil` se llevará una sorpresa a la primera llamada.
+		return nil, err
+	}
+	return prov, nil
+}
+
+// apiProvider arma el provider de la vía API con la credencial descifrada del tenant.
+//
+// La clave se pide AQUÍ y en ningún otro sitio. Si el tenant no la tiene —fila sin
+// sobre, o sin fila— el store devuelve tenantllm.ErrNotConfigured, que el mapeo
+// traduce a motivo `credencial`: es literalmente el caso que REQ-38 nombra.
+func (s *Selector) apiProvider(ctx context.Context, tenantID string, cfg tenantllm.Config) (llm.LLMProvider, error) {
+	key, err := s.store.APIKey(ctx, tenantID)
+	if err != nil {
+		// 🔴 EL ERROR NO REPITE LA CLAVE NI SU LONGITUD, por el mismo motivo por el que
+		// no lo hace el 400 del PUT: este texto acaba en un log.
+		return nil, fmt.Errorf("llmvia: credencial del tenant no disponible: %w", err)
+	}
+	return api.New(api.Config{
+		Provider: cfg.Provider,
+		Model:    cfg.Model,
+		APIKey:   key,
+	})
 }
 
 // ErrViaSinCalentamiento indica que el tenant no está en una vía que tenga caché de
@@ -316,7 +410,45 @@ var ErrViaSinCalentamiento = errors.New("llmvia: la vía del tenant no tiene cac
 //     llama, que es quien sabe cuánto está dispuesto a esperar por algo que nadie
 //     está esperando.
 func (s *Selector) Warm(ctx context.Context, tenantID, sessionID string, in llm.ClassifyRequestInput) error {
-	panic(pendiente.Implementar("llmvia.Selector.Warm"))
+	cfg, found, err := s.store.Get(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+	// 🔴 EL MISMO SWITCH POR VÍA DE Selector.For, no uno nuevo: mismas dos ramas, mismo
+	// default de REQ-33 (sin fila ⇒ local) y mismo error para el valor fuera del
+	// vocabulario. Si algún día hay una tercera vía, se amplían juntos.
+	switch via {
+	case tenantllm.ViaLocal:
+	case tenantllm.ViaAPI:
+		return ErrViaSinCalentamiento
+	default:
+		return fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
+
+	prov, err := s.localWarmer(tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	// Sin notifying() ni notify() (T-10): ver «Lo que NO hace» arriba.
+	return prov.Warm(ctx, in)
+}
+
+// localWarmer (en el paquete viejo, localCalentador) arma el adaptador local apuntado a
+// UN Edge concreto.
+//
+// Copia s.localOpts por el mismo motivo que localProvider (T-4) y devuelve el tipo
+// CONCRETO a propósito: Warm no está en el puerto llm.LLMProvider y no debe estarlo. El
+// puerto es lo que el pipeline usa; el calentamiento no es una etapa del pipeline, es
+// mantenimiento de la máquina del cliente.
+func (s *Selector) localWarmer(tenantID, sessionID string) (*local.Provider, error) {
+	opts := make([]local.Option, 0, len(s.localOpts)+1)
+	opts = append(opts, s.localOpts...)
+	opts = append(opts, local.WithTargetSession(sessionID))
+	return local.New(s.frame, tenantID, opts...)
 }
 
 // ============================================================================
@@ -339,6 +471,25 @@ func (s *Selector) Warm(ctx context.Context, tenantID, sessionID string, in llm.
 // remoto que atiende en paralelo. Allí el tope que importa es de PRECIO, no de
 // capacidad. Serializar dos cadenas de lote de un tenant en vía API sería una
 // restricción inventada: cuesta throughput y no protege nada.
+
+// edgeRouter (en el paquete viejo, enrutadorDeEdges) es la CAPACIDAD OPCIONAL del
+// transporte de la vía local: saber decir qué Edge atendería una inferencia de este
+// (tenant, sesión). La satisface *edgegrpc.Server, que es el mismo objeto que ya viaja
+// como local.Frame.
+//
+// 🔴 ES EL MISMO COLABORADOR, NO UNO NUEVO, y esa es toda la gracia: quien sabe por
+// qué Edge sale una inferencia es exactamente quien la manda. Un segundo puerto que
+// cablear sería un segundo sitio donde olvidarse, y olvidarlo dejaría el aforo
+// INERTE sin un solo error.
+type edgeRouter interface {
+	PlazaDe(tenantID, originSessionID string) (string, bool)
+}
+
+// El transporte de PRODUCCIÓN la satisface, y se comprueba EN COMPILACIÓN. Sin esta
+// línea, el día que alguien renombrara `Server.PlazaDe` el aforo se apagaría entero
+// —la aserción de tipo devolvería false, saldría el Warn del arranque y nada más—
+// sin que un solo test se pusiera rojo.
+var _ edgeRouter = (*edgegrpc.Server)(nil)
 
 // PlazaDe devuelve el Edge cuya plaza ocuparía una inferencia de este tenant
 // originada en esa sesión, o `ok = false` si no ocupa ninguna.
@@ -371,5 +522,25 @@ func (s *Selector) Warm(ctx context.Context, tenantID, sessionID string, in llm.
 // ⚠️ CUESTA UNA LECTURA DE `tenant_llm` POR JOB DE LOTE, no por llamada al modelo:
 // se resuelve una vez, antes de la cadena, y la cadena dura minutos.
 func (s *Selector) PlazaDe(ctx context.Context, tenantID, originSessionID string) (string, bool, error) {
-	panic(pendiente.Implementar("llmvia.Selector.PlazaDe"))
+	cfg, found, err := s.store.Get(ctx, tenantID)
+	if err != nil {
+		return "", false, fmt.Errorf("llmvia: leyendo la configuración LLM del tenant: %w", err)
+	}
+	// Un tenant SIN FILA está en la vía local (REQ-33), igual que en For.
+	via := tenantllm.ViaLocal
+	if found {
+		via = cfg.Via
+	}
+	switch via {
+	case tenantllm.ViaLocal:
+		if s.router == nil {
+			return "", false, nil
+		}
+		edgeID, ok := s.router.PlazaDe(tenantID, originSessionID)
+		return edgeID, ok, nil
+	case tenantllm.ViaAPI:
+		return "", false, nil
+	default:
+		return "", false, fmt.Errorf("%w: %q (tenant %s)", ErrViaDesconocida, via, tenantID)
+	}
 }

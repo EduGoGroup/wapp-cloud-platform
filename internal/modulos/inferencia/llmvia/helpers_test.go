@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia_test
 
 // Los dobles que comparten los tests externos del paquete: el transporte falso (y el que

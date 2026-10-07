@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia_test
 
 // QUÉ PLAZA OCUPA UN TENANT (Selector.PlazaDe · ADR-0046 Mecanismo 1). Es la parte de los

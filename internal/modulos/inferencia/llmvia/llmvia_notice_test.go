@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia_test
 
 // El aviso al dueño visto desde For (REQ-38, R4.5.e): cuándo se escribe y cuándo no. Es la
@@ -50,7 +48,7 @@ func TestFor_AFailureWhileConsumingTheAdapterNotifiesTheOwner(t *testing.T) {
 	got := classify(context.Background(), p)
 	// El error tiene que seguir trayendo su motivo: el decorador NO lo envuelve.
 	var withReason interface{ Motivo() string }
-	if got != error(failure) || !errors.As(got, &withReason) || withReason.Motivo() != "breaker_open" {
+	if got != error(failure) || !errors.As(got, &withReason) || withReason.Motivo() != "breaker_open" { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("P1 = %v, quería el error del transporte intacto, con su motivo", got)
 	}
 	requireOneNotice(t, book, falls, llmvia.OrigenPipeline, tenantllm.ViaLocal, degradation.ReasonBreakerOpen)

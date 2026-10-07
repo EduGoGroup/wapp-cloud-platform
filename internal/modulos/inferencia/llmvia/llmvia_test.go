@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package llmvia_test
 
 // Las promesas de llmvia.go: la construcción del selector, la selección (For), las opciones
@@ -349,7 +347,7 @@ func TestWithNotifier_WithoutItTheProviderIsNotWrapped(t *testing.T) {
 			if _, bare := p.(*local.Provider); bare == tc.wrapped {
 				t.Errorf("provider = %T; ¿envuelto? quería %v", p, tc.wrapped)
 			}
-			if got := classify(context.Background(), p); got != error(failure) {
+			if got := classify(context.Background(), p); got != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 				t.Errorf("P1 = %v, quería el error del transporte intacto", got)
 			}
 		})
@@ -450,7 +448,7 @@ func TestWarm_NeverNotifiesNorCounts(t *testing.T) {
 	s := newSelector(t, tenantllmhelpertest.NewMemoria(),
 		llmvia.WithFrame(&fakeFrame{err: failure}), book.option(), llmvia.WithDegradacionObservada(falls.count))
 
-	if err := s.Warm(context.Background(), testTenant, "s-1", classifyInput()); err != error(failure) {
+	if err := s.Warm(context.Background(), testTenant, "s-1", classifyInput()); err != error(failure) { //nolint:errorlint // se afirma la IDENTIDAD: sin envolver
 		t.Fatalf("Warm = %v, quería el error del transporte intacto", err)
 	}
 	requireSilence(t, book, falls)
