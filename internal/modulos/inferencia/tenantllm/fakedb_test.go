@@ -1,13 +1,9 @@
-//go:build pendiente
-
 package tenantllm_test
 
 // El driver de database/sql de mentira de los tests del adaptador Postgres: apunta cada
 // sentencia que le llega (texto y argumentos, tal cual) y contesta lo que el test sembró. No
-// interpreta SQL. Mismo driver que internal/modulos/edge/lease/fakedb_test.go.
-//
-// Lleva la etiqueta `pendiente` mientras la lleve postgres_test.go, que es su único usuario: sin
-// ella el lint (`unused`) lo ve sin llamantes. Se le quita en el mismo commit verde.
+// interpreta SQL. Mismo driver que internal/modulos/edge/lease/fakedb_test.go. Su único usuario
+// es postgres_test.go.
 
 import (
 	"context"

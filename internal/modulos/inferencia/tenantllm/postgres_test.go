@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package tenantllm_test
 
 // Los tests de fichero de tenantllm.Postgres, con un driver de database/sql de mentira
@@ -206,21 +204,11 @@ func TestPostgresUpsert_RejectsBeforeSQL(t *testing.T) {
 	}
 }
 
-// TestPostgresUpsert_API_SealsTheKey: la sentencia exacta y sus ocho argumentos. La clave viaja
-// CIFRADA —ni entera ni su prefijo aparecen en el blob—, envuelta por la KEK current, y el sobre
-// que llegó al driver se abre con el cifrador y devuelve la clave. El consentimiento va en UTC.
-func TestPostgresUpsert_API_SealsTheKey(t *testing.T) {
-	store, fake := newPostgres(t)
-	if err := store.Upsert(context.Background(), apiConfig(), fakeAPIKey, pgConsent); err != nil {
-		t.Fatalf("Upsert: error inesperado %v", err)
-	}
-	args := requireOnlyQuery(t, fake, sqlUpsert)
-	if len(args) != 8 {
-		t.Fatalf("llegaron %d argumentos, quería 8: %#v", len(args), args)
-	}
-	if want := []driver.Value{pgTenant, tenantllm.ViaAPI, tenantllm.ProviderAnthropic, pgModel}; !reflect.DeepEqual(args[:4], want) {
-		t.Errorf("argumentos $1..$4 = %#v, quería %#v", args[:4], want)
-	}
+// requireSealedEnvelope afirma el sobre ($5..$7) de un upsert de la vía api: la clave viaja
+// cifrada, envuelta por la KEK current, y el sobre se abre con el cifrador y la devuelve. Va
+// aparte de TestPostgresUpsert_API_SealsTheKey solo para que ese test quepa en el tope de gocyclo.
+func requireSealedEnvelope(t *testing.T, args []driver.Value) {
+	t.Helper()
 	enc, okEnc := args[4].([]byte)
 	dek, okDEK := args[5].([]byte)
 	kekID, okKEK := args[6].(string)
@@ -239,6 +227,24 @@ func TestPostgresUpsert_API_SealsTheKey(t *testing.T) {
 	if plain, err := newCipher(t, kekNewID).Decrypt(enc, dek, kekID); err != nil || plain != fakeAPIKey {
 		t.Errorf("el sobre que llegó al driver no devuelve la clave al abrirlo (err=%v)", err)
 	}
+}
+
+// TestPostgresUpsert_API_SealsTheKey: la sentencia exacta y sus ocho argumentos. La clave viaja
+// CIFRADA —ni entera ni su prefijo aparecen en el blob—, envuelta por la KEK current, y el sobre
+// que llegó al driver se abre con el cifrador y devuelve la clave. El consentimiento va en UTC.
+func TestPostgresUpsert_API_SealsTheKey(t *testing.T) {
+	store, fake := newPostgres(t)
+	if err := store.Upsert(context.Background(), apiConfig(), fakeAPIKey, pgConsent); err != nil {
+		t.Fatalf("Upsert: error inesperado %v", err)
+	}
+	args := requireOnlyQuery(t, fake, sqlUpsert)
+	if len(args) != 8 {
+		t.Fatalf("llegaron %d argumentos, quería 8: %#v", len(args), args)
+	}
+	if want := []driver.Value{pgTenant, tenantllm.ViaAPI, tenantllm.ProviderAnthropic, pgModel}; !reflect.DeepEqual(args[:4], want) {
+		t.Errorf("argumentos $1..$4 = %#v, quería %#v", args[:4], want)
+	}
+	requireSealedEnvelope(t, args)
 	consent, ok := args[7].(time.Time)
 	if !ok || !consent.Equal(pgConsent) || consent.Location() != time.UTC {
 		t.Errorf("consented_at ($8) = %#v, quería %v en UTC", args[7], pgConsent.UTC())

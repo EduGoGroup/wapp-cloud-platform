@@ -5,9 +5,10 @@ package tenantllm
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -25,7 +26,10 @@ import (
 // por la KEK del keyring—. NO es la llave del almacén de whatsmeow que custodia
 // el Edge del cliente: esa jamás llega a la nube y este paquete no sabe nada de
 // ella.
-type Postgres struct{}
+type Postgres struct {
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+}
 
 // NewPostgres construye el store con la conexión y el cifrador de campo que
 // custodia la API key (el MISMO KeyProvider de los planes 011/012 que ya usan
@@ -36,7 +40,7 @@ type Postgres struct{}
 // No abre ni comprueba la conexión, ni cifra nada: construir no emite ninguna
 // sentencia.
 func NewPostgres(db *sql.DB, cipher *crypto.FieldCipher) *Postgres {
-	panic(pendiente.Implementar("tenantllm.NewPostgres"))
+	return &Postgres{db: db, cipher: cipher}
 }
 
 // Get implementa Store.Get.
@@ -58,7 +62,30 @@ func NewPostgres(db *sql.DB, cipher *crypto.FieldCipher) *Postgres {
 // otro fallo —del driver o de una fila ilegible— vuelve envuelto como
 // "tenantllm: leer configuración de <tenant>: …", con Config cero y found=false.
 func (p *Postgres) Get(ctx context.Context, tenantID string) (Config, bool, error) {
-	panic(pendiente.Implementar("tenantllm.Postgres.Get"))
+	var cfg Config
+	var provider, model sql.NullString
+	var consentedAt sql.NullTime
+	err := p.db.QueryRowContext(ctx, `
+		SELECT tenant_id, via, provider, model, api_key_enc IS NOT NULL, consented_at, created_at, updated_at
+		FROM public.tenant_llm
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&cfg.TenantID, &cfg.Via, &provider, &model, &cfg.HasAPIKey,
+		&consentedAt, &cfg.CreatedAt, &cfg.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Config{}, false, nil
+	}
+	if err != nil {
+		return Config{}, false, fmt.Errorf("tenantllm: leer configuración de %s: %w", tenantID, err)
+	}
+	// El valor cero es la traducción correcta del NULL en las tres: son las
+	// columnas que la vía local no tiene, y quien las lea ya sabe por `Via` si
+	// tienen sentido. `via` NO se escanea como NullString a propósito — es NOT
+	// NULL en la 0073, y si algún día llegara NULL, este Scan tiene que fallar
+	// ruidosamente en vez de devolver una vía vacía que nadie sabría interpretar.
+	cfg.Provider = provider.String
+	cfg.Model = model.String
+	cfg.ConsentedAt = consentedAt.Time
+	return cfg, true, nil
 }
 
 // Upsert implementa Store.Upsert.
@@ -106,7 +133,64 @@ func (p *Postgres) Get(ctx context.Context, tenantID string) (Config, bool, erro
 // <tenant>: …" y no emite la sentencia; uno del driver, como "tenantllm: upsert
 // de <tenant>: …". Ninguno de los dos lleva la clave en el texto.
 func (p *Postgres) Upsert(ctx context.Context, cfg Config, apiKey string, consentedAt time.Time) error {
-	panic(pendiente.Implementar("tenantllm.Postgres.Upsert"))
+	if !ValidVia(cfg.Via) {
+		// Guarda de programación: la API valida el vocabulario antes (400
+		// invalid_via). Si se llega aquí con una vía vacía o inventada, dejar que
+		// lo rechace el CHECK convertiría un error del cliente en un 500, y una
+		// vía vacía escrita por descuido sería una fila que nadie sabe leer.
+		return fmt.Errorf("tenantllm: upsert de %s con vía %q: fuera del vocabulario (%s|%s)",
+			cfg.TenantID, cfg.Via, ViaLocal, ViaAPI)
+	}
+
+	// Los seis valores del eje `api`. Nacen nil —la forma de la vía local— y solo
+	// se rellenan si la vía es `api`.
+	var provider, model, enc, dek, kekID, consent any
+
+	if cfg.Via == ViaAPI {
+		if apiKey == "" {
+			// La API ya rechaza el cuerpo sin clave con un 400. Si se llega aquí
+			// con la clave vacía, el INSERT cifraría la cadena vacía y dejaría una
+			// fila con sobre de no-valor — exactamente el estado que la 0071
+			// declara imposible y que la 0073 sigue prohibiendo para esta vía
+			// (tenant_llm_via_api_completa_check). Mejor un error nombrado que una
+			// fila que miente.
+			return fmt.Errorf("tenantllm: upsert de %s en vía %s sin API key: esa vía no existe sin credencial",
+				cfg.TenantID, ViaAPI)
+		}
+		if consentedAt.IsZero() {
+			// El consentimiento no es opcional en la vía que manda texto del
+			// cliente a un tercero (ADR-0030, REQ-05). Un cero aquí escribiría el
+			// año 1 en la columna, que pasaría el NOT NULL del CHECK y sería una
+			// mentira con fecha; se para antes.
+			return fmt.Errorf("tenantllm: upsert de %s en vía %s sin consentimiento: la fila no puede existir sin él",
+				cfg.TenantID, ViaAPI)
+		}
+		encBytes, dekBytes, keyID, err := p.cipher.Encrypt(apiKey)
+		if err != nil {
+			return fmt.Errorf("tenantllm: cifrar la API key de %s: %w", cfg.TenantID, err)
+		}
+		provider, model = cfg.Provider, cfg.Model
+		enc, dek, kekID = encBytes, dekBytes, keyID
+		consent = consentedAt.UTC()
+	}
+
+	if _, err := p.db.ExecContext(ctx, `
+		INSERT INTO public.tenant_llm
+			(tenant_id, via, provider, model, api_key_enc, api_key_dek, api_key_kek_id, consented_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+		ON CONFLICT (tenant_id) DO UPDATE SET
+			via            = EXCLUDED.via,
+			provider       = EXCLUDED.provider,
+			model          = EXCLUDED.model,
+			api_key_enc    = EXCLUDED.api_key_enc,
+			api_key_dek    = EXCLUDED.api_key_dek,
+			api_key_kek_id = EXCLUDED.api_key_kek_id,
+			consented_at   = EXCLUDED.consented_at,
+			updated_at     = now()
+	`, cfg.TenantID, cfg.Via, provider, model, enc, dek, kekID, consent); err != nil {
+		return fmt.Errorf("tenantllm: upsert de %s: %w", cfg.TenantID, err)
+	}
+	return nil
 }
 
 // Delete implementa Store.Delete: borra la fila entera y con ella la credencial
@@ -115,7 +199,12 @@ func (p *Postgres) Upsert(ctx context.Context, cfg Config, apiKey string, consen
 // Idempotente: borrar lo que no hay no es un error. Un fallo del driver vuelve
 // envuelto como "tenantllm: borrar configuración de <tenant>: …".
 func (p *Postgres) Delete(ctx context.Context, tenantID string) error {
-	panic(pendiente.Implementar("tenantllm.Postgres.Delete"))
+	if _, err := p.db.ExecContext(ctx, `
+		DELETE FROM public.tenant_llm WHERE tenant_id = $1
+	`, tenantID); err != nil {
+		return fmt.Errorf("tenantllm: borrar configuración de %s: %w", tenantID, err)
+	}
+	return nil
 }
 
 // APIKey implementa Store.APIKey: descifra con la KEK QUE ENVOLVIÓ ESTA FILA
@@ -146,5 +235,43 @@ func (p *Postgres) Delete(ctx context.Context, tenantID string) error {
 // <tenant>: …", SIN el valor y sin el blob: un fallo de KEK no es motivo para
 // volcar material cifrado a un log. En los dos la clave devuelta es "".
 func (p *Postgres) APIKey(ctx context.Context, tenantID string) (string, error) {
-	panic(pendiente.Implementar("tenantllm.Postgres.APIKey"))
+	var enc, dek []byte
+	var kekID sql.NullString
+	var via string
+	err := p.db.QueryRowContext(ctx, `
+		SELECT via, api_key_enc, api_key_dek, api_key_kek_id
+		FROM public.tenant_llm
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&via, &enc, &dek, &kekID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotConfigured
+	}
+	if err != nil {
+		return "", fmt.Errorf("tenantllm: leer la API key de %s: %w", tenantID, err)
+	}
+	// FILA SIN SOBRE = tenant en la vía local (0073). Es ErrNotConfigured, el
+	// MISMO desenlace que «no hay fila», y a propósito: el llamante responde 422
+	// llm_credentials_missing en los dos casos, así que darle dos errores
+	// distintos le daría una rama que no sabría qué hacer. Se comprueba por
+	// `kekID` y no por `enc` porque el CHECK del sobre garantiza que las tres van
+	// juntas, y ésta es la que Decrypt necesita para elegir la KEK: sin ella no
+	// hay descifrado posible ni con el blob delante.
+	if !kekID.Valid {
+		return "", ErrNotConfigured
+	}
+	// LA GUARDA DE LA VÍA, después del sobre y antes del descifrado. Va aquí y no
+	// en el WHERE a propósito: un `AND via = 'api'` en el SELECT devolvería
+	// ErrNoRows y no se distinguiría de «no hay fila» al depurar; así el caso
+	// queda en una línea que se puede leer, y el error que sale sigue siendo el
+	// mismo para quien llama.
+	if via != ViaAPI {
+		return "", ErrNotConfigured
+	}
+	plain, err := p.cipher.Decrypt(enc, dek, kekID.String)
+	if err != nil {
+		// El error del descifrado se envuelve SIN el valor y sin el blob: un
+		// fallo de KEK no es motivo para volcar material cifrado a un log.
+		return "", fmt.Errorf("tenantllm: descifrar la API key de %s: %w", tenantID, err)
+	}
+	return plain, nil
 }
