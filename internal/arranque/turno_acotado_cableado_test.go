@@ -1,8 +1,11 @@
-// Copia de internal/bootstrap/arranque/turno_acotado_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/turno_acotado_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo el selector de vía, que desde F4 (T4.27, conmutar(inferencia)) es el de internal/modulos/inferencia y
+// llega al resolutor viejo detrás de turneroBridge (bridge_inferencia.go).
 package arranque
 
 import (
 	"go/ast"
+	"go/token"
 	"testing"
 )
 
@@ -28,10 +31,17 @@ func TestTurnoAcotadoCableado(t *testing.T) {
 
 	// llamadas[paquete][función] = los argumentos, en texto.
 	llamadas := map[string]map[string][]string{}
+	// turnBridgesTheSelector: turnoacotado.New recibe el adaptador sobre EL selector del
+	// contenedor (F4 · T4.27). Va aparte de `llamadas` porque su argumento no es un
+	// identificador ni un selector, que es lo único que textoDe sabe rendir.
+	turnBridgesTheSelector := false
 	inspecciona(ficheros, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
+		}
+		if esLlamada(call, "turnoacotado", "New") {
+			turnBridgesTheSelector = len(call.Args) == 1 && isTurnBridgeOver(call.Args[0], "llmSelector")
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok {
@@ -57,6 +67,14 @@ func TestTurnoAcotadoCableado(t *testing.T) {
 		t.Error("turnoacotado.New NO se llama en bootstrap.go: el turno acotado del Nivel B " +
 			"está construido y NO LO EJECUTA NADIE — el engine devolvería «sin_resolutor» " +
 			"en todas las consultas, sin un solo error")
+	} else if !turnBridgesTheSelector {
+		// Desde F4 el resolutor (viejo hasta F8) no puede recibir el selector nuevo a pelo:
+		// lo recibe detrás de turneroBridge. Y tiene que ser EL selector del contenedor, el
+		// mismo de las etapas, el aforo, quotetext e intakeahead: un adaptador sobre otro
+		// selector serían dos verdades sobre la vía de un tenant (R4.7.b).
+		t.Error("turnoacotado.New no recibe &turneroBridge{sel: c.llmSelector}: el turno acotado " +
+			"tiene que preguntar al MISMO selector de vía que el resto del arranque, detrás de su " +
+			"adaptador (bridge_inferencia.go)")
 	}
 
 	// (b) Y se ENCHUFA al engine. Es la línea que separa una ola cerrada de una ola
@@ -87,6 +105,28 @@ func TestTurnoAcotadoCableado(t *testing.T) {
 		t.Error("llmvia.WithDegradacionObservada NO está cableada: wapp_llm_degradacion_total " +
 			"no se publicaría y D-044.41 seguiría sin poder decidirse")
 	}
+}
+
+// isTurnBridgeOver dice si e es exactamente `&turneroBridge{sel: c.<containerField>}`: el adaptador de
+// bridge_inferencia.go construido sobre ese campo del contenedor, y sobre nada más.
+func isTurnBridgeOver(e ast.Expr, containerField string) bool {
+	addr, ok := e.(*ast.UnaryExpr)
+	if !ok || addr.Op != token.AND {
+		return false
+	}
+	lit, ok := addr.X.(*ast.CompositeLit)
+	if !ok || len(lit.Elts) != 1 {
+		return false
+	}
+	if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "turneroBridge" {
+		return false
+	}
+	kv, ok := lit.Elts[0].(*ast.KeyValueExpr)
+	if !ok {
+		return false
+	}
+	key, ok := kv.Key.(*ast.Ident)
+	return ok && key.Name == "sel" && textoDe(kv.Value) == containerField
 }
 
 // textoDe rinde un argumento como el texto que se lee en el fuente. Cubre lo que hace
