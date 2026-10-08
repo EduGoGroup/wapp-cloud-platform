@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // integrations_put_test.go — la semántica de G15 (PUT /api/v1/integrations) del contrato de

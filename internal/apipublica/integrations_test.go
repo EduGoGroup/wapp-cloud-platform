@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // integrations_test.go — cubre el contrato de integrations.go (IntegrationsStore,
