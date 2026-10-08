@@ -48,8 +48,9 @@ func caseLiveJobNone(t *testing.T, m ReanalysisMontaje) {
 	if id, ok := liveJob(t, m, k); ok {
 		t.Errorf("un evento sin jobs tiene el job vivo %q", id)
 	}
-	var seeded []Row
-	for _, status := range []string{intake.StatusDone, intake.StatusFailed} {
+	terminal := []string{intake.StatusDone, intake.StatusFailed}
+	seeded := make([]Row, 0, len(terminal))
+	for _, status := range terminal {
 		seeded = append(seeded, m.Row(t, seedJob(t, m.Table, m.TenantA, status, loaded, onEvent(k))))
 	}
 	if id, ok := liveJob(t, m, k); ok {

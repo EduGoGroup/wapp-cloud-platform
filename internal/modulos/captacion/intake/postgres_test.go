@@ -140,8 +140,8 @@ func TestPostgres_OpenOrAppend_EmitsOneStatement(t *testing.T) {
 	if !reflect.DeepEqual(stmt.args, want) {
 		t.Errorf("argumentos = %#v, quería %#v", stmt.args, want)
 	}
-	if sent, _ := stmt.args[4].(time.Time); sent.Location() != time.UTC {
-		t.Errorf("message_ts viaja en %v, quería UTC", sent.Location())
+	if sent, ok := stmt.args[4].(time.Time); !ok || sent.Location() != time.UTC {
+		t.Errorf("message_ts viaja como %#v, quería un instante en UTC", stmt.args[4])
 	}
 }
 

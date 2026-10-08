@@ -239,6 +239,7 @@ func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.N
 	}
 	rows := &fakeRows{rows: r.rows, endErr: r.endErr}
 	if r.closeErr != nil {
+		//nolint:nilerr // el error guionizado es el del Close de las filas, no el de la consulta
 		return &fakeOpenRows{fakeRows: rows, closeErr: r.closeErr}, nil
 	}
 	return rows, nil

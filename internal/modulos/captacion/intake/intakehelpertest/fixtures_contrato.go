@@ -46,6 +46,8 @@ func artifact(stage, tag string) intake.Artifact {
 
 // diffRow lista las columnas en que got y want difieren, SIN mirar `updated_at` (cada llamante
 // decide si debía moverse). Es la marca de estado: la fila entera.
+//
+//nolint:gocyclo // una comparación por columna, en el orden de la tabla: partirla la haría menos legible
 func diffRow(got, want Row) []string {
 	var diffs []string
 	add := func(column string, g, w any) {
@@ -67,7 +69,7 @@ func diffRow(got, want Row) []string {
 		add("message_ts", got.MessageTS, want.MessageTS)
 	}
 	// Un array vacío y uno nil son la misma columna `[]`.
-	if !(len(got.SourceRefs) == 0 && len(want.SourceRefs) == 0) && !slices.Equal(got.SourceRefs, want.SourceRefs) {
+	if (len(got.SourceRefs) != 0 || len(want.SourceRefs) != 0) && !slices.Equal(got.SourceRefs, want.SourceRefs) {
 		add("source_refs", got.SourceRefs, want.SourceRefs)
 	}
 	if !bytes.Equal(got.SourceText.Enc, want.SourceText.Enc) {

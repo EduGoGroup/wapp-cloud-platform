@@ -30,9 +30,16 @@ func TestMemory_Calls_CountsEveryCall(t *testing.T) {
 	if inserts, exists := mem.Calls(); inserts != 0 || exists != 0 {
 		t.Fatalf("un doble nuevo dice Calls() = (%d, %d), se esperaba (0, 0)", inserts, exists)
 	}
-	_, _ = mem.Insert(ctx, casebank.Case{TenantID: "t", Consented: true, SourceText: "a"})
-	_, _ = mem.Insert(ctx, casebank.Case{TenantID: "t", Consented: false, SourceText: "b"}) // rechazada: cuenta
-	_, _ = mem.Exists(ctx, "t", "a")
+	if _, err := mem.Insert(ctx, casebank.Case{TenantID: "t", Consented: true, SourceText: "a"}); err != nil {
+		t.Fatalf("Insert consentido: error inesperado %v", err)
+	}
+	// Rechazada, y cuenta igual.
+	if _, err := mem.Insert(ctx, casebank.Case{TenantID: "t", Consented: false, SourceText: "b"}); err == nil {
+		t.Fatal("Insert sin consentimiento: se esperaba un error")
+	}
+	if _, err := mem.Exists(ctx, "t", "a"); err != nil {
+		t.Fatalf("Exists: error inesperado %v", err)
+	}
 	if inserts, exists := mem.Calls(); inserts != 2 || exists != 1 {
 		t.Errorf("Calls() = (%d, %d), se esperaba (2, 1)", inserts, exists)
 	}

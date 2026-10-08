@@ -122,8 +122,7 @@ type pgTransition struct {
 	noID string
 }
 
-func pgTransitions() []pgTransition {
-	ctx := context.Background()
+func pgTransitions(ctx context.Context) []pgTransition {
 	a := validArtifact()
 	return []pgTransition{
 		{"SaveStage", func(p *Postgres, id string) (bool, error) { return p.SaveStage(ctx, id, a) },
@@ -156,7 +155,7 @@ func TestPostgres_Machine_NilReceiverOrNilDB_IsANoOp(t *testing.T) {
 			if job, ok, err := p.ClaimNextIgnoringBackoff(ctx, "tenant-1"); ok || err != nil || job.ID != "" {
 				t.Errorf("ClaimNextIgnoringBackoff = (%+v, %v, %v), quería (ClaimedJob{}, false, nil)", job, ok, err)
 			}
-			for _, tr := range pgTransitions() {
+			for _, tr := range pgTransitions(ctx) {
 				if ok, err := tr.run(p, pgJobID); ok || err != nil {
 					t.Errorf("%s = (%v, %v), quería (false, nil)", tr.name, ok, err)
 				}
@@ -306,7 +305,7 @@ func TestPostgres_Claim_Failures_AreWrapped(t *testing.T) {
 // la suya, byte a byte, con sus argumentos; devuelve true si afectó una fila y (false, nil) si
 // ninguna —otro llegó antes, o el job ya estaba terminado—. La marca de Retry viaja en UTC.
 func TestPostgres_Transitions_EmitOneStatementAndMapRowsAffected(t *testing.T) {
-	for _, tr := range pgTransitions() {
+	for _, tr := range pgTransitions(context.Background()) {
 		t.Run(tr.name, func(t *testing.T) {
 			for affected, want := range map[int64]bool{0: false, 1: true} {
 				store, fake := newFakePostgres(t)
@@ -329,7 +328,7 @@ func TestPostgres_Transitions_EmitOneStatementAndMapRowsAffected(t *testing.T) {
 // "intake: <qué>: " y el de contar las filas como "intake: contar filas al <qué>: ", con el
 // texto de operador de cada transición.
 func TestPostgres_Transitions_Failures_AreWrapped(t *testing.T) {
-	for _, tr := range pgTransitions() {
+	for _, tr := range pgTransitions(context.Background()) {
 		t.Run(tr.name, func(t *testing.T) {
 			cases := map[string]fakeReply{
 				"intake: " + tr.what + ": ":                 {err: errFakeBoom},
@@ -351,7 +350,7 @@ func TestPostgres_Transitions_Failures_AreWrapped(t *testing.T) {
 // TestPostgres_Transitions_EmptyJobID_RejectedBeforeTheDatabase: sin id de job cada transición
 // se rechaza con su texto, sin mandar nada a la base.
 func TestPostgres_Transitions_EmptyJobID_RejectedBeforeTheDatabase(t *testing.T) {
-	for _, tr := range pgTransitions() {
+	for _, tr := range pgTransitions(context.Background()) {
 		store, fake := newFakePostgres(t)
 		ok, err := tr.run(store, "")
 		if ok || err == nil || err.Error() != tr.noID {

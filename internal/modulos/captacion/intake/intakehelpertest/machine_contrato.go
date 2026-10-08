@@ -168,8 +168,9 @@ func caseWakeOnlyItsTenant(t *testing.T, m MachineMontaje) {
 // solo toma `pending`: lo que ya está tomado o terminado no se toca.
 func caseWakeOnlyPendingInOrder(t *testing.T, m MachineMontaje) {
 	now := base(t, m.Table)
-	var others []Row
-	for _, status := range []string{intake.StatusAggregating, intake.StatusProcessing, intake.StatusDone, intake.StatusFailed} {
+	statuses := []string{intake.StatusAggregating, intake.StatusProcessing, intake.StatusDone, intake.StatusFailed}
+	others := make([]Row, 0, len(statuses))
+	for _, status := range statuses {
 		others = append(others, m.Row(t, seedJob(t, m.Table, m.TenantA, status, loaded, at(now.Add(-24*time.Hour), now.Add(-24*time.Hour)))))
 	}
 	createdFirst := seedJob(t, m.Table, m.TenantA, intake.StatusPending, at(now.Add(2*time.Hour), now.Add(-10*time.Minute)))

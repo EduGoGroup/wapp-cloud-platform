@@ -301,7 +301,9 @@ func TestMemoryStore_ConcurrentAppends_OneLiveWindowPerKey(t *testing.T) {
 			if err := store.OpenOrAppend(context.Background(), a); err != nil {
 				t.Errorf("OpenOrAppend: error inesperado %v", err)
 			}
-			_, _ = store.ListAggregating(context.Background(), 10)
+			if _, err := store.ListAggregating(context.Background(), 10); err != nil {
+				t.Errorf("ListAggregating: error inesperado %v", err)
+			}
 			_ = store.Counters()
 		}()
 	}

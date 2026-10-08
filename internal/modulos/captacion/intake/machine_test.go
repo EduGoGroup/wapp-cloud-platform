@@ -35,7 +35,7 @@ func TestIsTerminal_OnlyDoneAndFailed(t *testing.T) {
 	cases := map[string]bool{
 		StatusAggregating: false, StatusPending: false, StatusProcessing: false,
 		StatusDone: true, StatusFailed: true,
-		"": false, "DONE": false, "done ": false, "cancelled": false,
+		"": false, "DONE": false, "done ": false, "cancelled": false, //nolint:gocritic // el blanco final es el caso: no se recorta
 	}
 	for status, want := range cases {
 		if got := IsTerminal(status); got != want {
@@ -114,20 +114,20 @@ func TestArtifact_Validate(t *testing.T) {
 // del cliente (P2 guarda `evidence`, que son frases suyas). Un error que lo vuelque acaba en el
 // log, y ADR-0034 lo prohíbe.
 func TestArtifact_Validate_ErrorNeverQuotesThePayload(t *testing.T) {
-	const secret = "quiero-dos-tortas-para-el-sabado"
+	const clientText = "quiero-dos-tortas-para-el-sabado"
 	payloads := []string{
-		`{"evidence":"` + secret + `"`,              // JSON roto
-		`["` + secret + `"]`,                        // un array
-		`{"evidence":"` + secret + `"}`,             // sin version
-		`{"version":"` + secret + `"}`,              // version inválida
-		`{"version":0,"evidence":"` + secret + `"}`, // version cero
+		`{"evidence":"` + clientText + `"`,              // JSON roto
+		`["` + clientText + `"]`,                        // un array
+		`{"evidence":"` + clientText + `"}`,             // sin version
+		`{"version":"` + clientText + `"}`,              // version inválida
+		`{"version":0,"evidence":"` + clientText + `"}`, // version cero
 	}
 	for _, p := range payloads {
 		err := Artifact{Stage: StageP2, Payload: json.RawMessage(p)}.Validate()
 		if err == nil {
 			t.Fatalf("Validate(%s) = nil, quería error", p)
 		}
-		if strings.Contains(err.Error(), secret) {
+		if strings.Contains(err.Error(), clientText) {
 			t.Errorf("el error cita el payload: %q", err)
 		}
 	}
@@ -139,6 +139,7 @@ func TestReanalysis_IsFromOwner(t *testing.T) {
 	if RequestedByOwner != "owner" {
 		t.Errorf("RequestedByOwner = %q, quería \"owner\"", RequestedByOwner)
 	}
+	//nolint:gocritic // el blanco final de "owner " es el caso: no se recorta
 	cases := map[string]bool{RequestedByOwner: true, "": false, "system": false, "Owner": false, "owner ": false}
 	for role, want := range cases {
 		r := Reanalysis{RequestedBy: role, Via: "api", Source: "both", From: 2}
