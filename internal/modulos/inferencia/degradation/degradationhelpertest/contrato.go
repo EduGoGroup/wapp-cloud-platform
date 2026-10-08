@@ -58,6 +58,15 @@ type Montaje struct {
 	MarkRead func(t *testing.T, tenantID, id string, at time.Time)
 }
 
+// Notice es el aviso del puerto que cruza el montaje (lo que devuelve Montaje.Rows), con nombre de
+// la suite: un montaje que vive fuera del árbol de degradation —la pasada contra Postgres de
+// test/procesos, que del paquete del puerto solo puede nombrar constructores (R9.4.d, candado
+// ProcessImports, regla 3b)— lo nombra por aquí. Es un alias, no una copia: el tipo es el mismo,
+// así que un []Notice ES un []degradation.Notice y sus campos (entre ellos Reason) se rellenan sin
+// nombrar nada más del puerto. Los precedentes son fleethelpertest.TenantProfiles y
+// enrollhelpertest.EdgeCertRecord (hallazgo 75 de F3).
+type Notice = degradation.Notice
+
 // Contrato ejecuta las promesas de degradation.Store contra la implementación que devuelve
 // nuevo, con un Montaje limpio por caso (nuevo se llama una vez por t.Run). No salta nada.
 //
