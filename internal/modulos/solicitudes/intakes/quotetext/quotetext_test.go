@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package quotetext_test
 
 // quotetext_test.go — el generador: su vocabulario, su construcción y el ORDEN de
@@ -36,7 +34,6 @@ var (
 	_ func(quotetext.SeedReader) quotetext.Option                                             = quotetext.WithSeed
 	_ func(int) quotetext.Option                                                              = quotetext.WithExamples
 	_ func(time.Duration) quotetext.Option                                                    = quotetext.WithTimeout
-	_ func([]byte) ([]string, error)                                                          = quotetext.ParseSeed
 
 	_ quotetext.IntakeReader     = (*intakes.MemoryStore)(nil)
 	_ quotetext.IntakeReader     = (*intakes.Service)(nil)
@@ -378,6 +375,8 @@ func TestWithTimeout(t *testing.T) {
 		{"negative is ignored", []quotetext.Option{quotetext.WithTimeout(-time.Second)}, false},
 		{"a non-positive value does not undo an earlier one",
 			[]quotetext.Option{quotetext.WithTimeout(time.Minute), quotetext.WithTimeout(0)}, true},
+		{"a negative value does not undo an earlier one",
+			[]quotetext.Option{quotetext.WithTimeout(time.Minute), quotetext.WithTimeout(-time.Second)}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -390,59 +389,6 @@ func TestWithTimeout(t *testing.T) {
 			}
 			if c.bounded && (call.timeLeft <= 0 || call.timeLeft > time.Minute) {
 				t.Errorf("al plazo le quedaban %v; se esperaba como mucho un minuto", call.timeLeft)
-			}
-		})
-	}
-}
-
-func TestParseSeed(t *testing.T) {
-	const notAList = "quotetext: la semilla no es un array de textos ni un objeto con `examples`"
-	const noKey = "quotetext: el objeto de la semilla no trae la clave `examples`"
-	cases := []struct {
-		name    string
-		blob    string
-		want    []string
-		wantErr string
-	}{
-		{"bare array", `["uno","dos"]`, []string{"uno", "dos"}, ""},
-		{"wrapped", `{"examples":["uno","dos"]}`, []string{"uno", "dos"}, ""},
-		{"wrapped with more keys", `{"v":2,"examples":["uno"]}`, []string{"uno"}, ""},
-		{"texts are returned as they come", `["  uno  ","","uno"]`, []string{"  uno  ", "", "uno"}, ""},
-		{"empty bare array", `[]`, []string{}, ""},
-		{"empty wrapped array", `{"examples":[]}`, []string{}, ""},
-		{"json null reads as no examples", `null`, nil, ""},
-
-		{"object without the key", `{"nope":1}`, nil, noKey},
-		{"empty object", `{}`, nil, noKey},
-		{"object with the key set to null", `{"examples":null}`, nil, noKey},
-		{"json matches the key without minding the case", `{"EXAMPLES":["uno"]}`, []string{"uno"}, ""},
-		{"a number", `42`, nil, notAList},
-		{"a bare string", `"texto suelto"`, nil, notAList},
-		{"not json", `no es json`, nil, notAList},
-		{"empty blob", ``, nil, notAList},
-		{"array of numbers", `[1,2]`, nil, notAList},
-		{"array with a non-text element", `["uno",2]`, nil, notAList},
-		{"wrapped array of numbers", `{"examples":[1]}`, nil, notAList},
-		{"wrapped value that is not an array", `{"examples":"uno"}`, nil, notAList},
-		{"trailing garbage", `["uno"] x`, nil, notAList},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := quotetext.ParseSeed([]byte(c.blob))
-			if c.wantErr != "" {
-				if err == nil || err.Error() != c.wantErr {
-					t.Fatalf("err = %v; se esperaba %q", err, c.wantErr)
-				}
-				if got != nil {
-					t.Errorf("con error no se devuelven ejemplos; vino %q", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ParseSeed devolvió error: %v", err)
-			}
-			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("ejemplos = %#v; se esperaba %#v", got, c.want)
 			}
 		})
 	}

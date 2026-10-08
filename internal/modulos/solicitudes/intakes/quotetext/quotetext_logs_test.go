@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package quotetext_test
 
 // quotetext_logs_test.go — parte de quotetext_test.go: lo que Suggest deja en el log,

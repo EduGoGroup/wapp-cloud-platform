@@ -1,9 +1,7 @@
-//go:build pendiente
-
 package quotetext_test
 
 // doubles_test.go — los dobles y el montaje que comparten los tests de precios.go y
-// quotetext.go. Lleva la etiqueta `pendiente` mientras solo lo usen tests en rojo.
+// quotetext.go.
 
 import (
 	"bytes"

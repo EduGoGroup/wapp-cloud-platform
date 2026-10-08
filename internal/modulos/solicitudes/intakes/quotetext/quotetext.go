@@ -4,6 +4,7 @@ package quotetext
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // DefaultExamples es el N de D-044.11: cuántas cotizaciones aprobadas del tenant se
@@ -20,33 +20,6 @@ import (
 //
 // Era `EjemplosPorDefecto` en el paquete viejo.
 const DefaultExamples = 5
-
-// MaxExampleRunes es la PRIMERA cota del few-shot, por ejemplo: 1200 runas. Un
-// ejemplo más largo se descarta ENTERO, nunca se trunca (uno de justo 1200 entra).
-// Es ~8 veces una cotización real, así que no muerde en el caso normal: corta el blob
-// que un tenant pegue por error en `quote_style_examples` —que admite 1 MiB— o un
-// `rendered_text` desmesurado, que no tiene tope en ningún otro sitio.
-//
-// Era `MaxRunasEjemplo` en el paquete viejo.
-const MaxExampleRunes = 1200
-
-// MaxFewShotRunes es la SEGUNDA cota: el presupuesto AGREGADO del bloque de
-// ejemplos, 3000 runas (justo 3000 cabe). Existe porque el bloque de ejemplos es
-// PREFIJO del prompt de P5 y su tamaño es lo que se paga en cada prefill frío de la
-// vía local; sin cota, cinco cotizaciones largas matan a P5 por timeout.
-//
-// 🔴 NO ES UN NÚMERO HEREDADO NI MEDIDO: se eligió en T5.1 porque el plan no
-// declaraba ninguna cota. Quien lo mueva tiene que mover el razonamiento.
-//
-// Era `MaxRunasFewShot` en el paquete viejo.
-const MaxFewShotRunes = 3000
-
-// SeedStyleRef es la `ref` de `public.tenant_content` donde el tenant deja sus
-// cotizaciones de muestra (D-044.11). Que el generador funcione sin ella no es un
-// fallback: es el caso normal mientras ningún tenant la escriba.
-//
-// Era `RefEstiloSemilla` en el paquete viejo.
-const SeedStyleRef = "quote_style_examples"
 
 // Origen de la sugerencia. Vocabulario cerrado: viaja por la API y por el log. Eran
 // `OrigenLLM` y `OrigenDeterminista` en el paquete viejo.
@@ -89,6 +62,38 @@ var ErrNotWired = errors.New("quotetext: faltan piezas obligatorias (log, solici
 //
 // Era `ErrSinLineas` en el paquete viejo.
 var ErrNoLines = errors.New("quotetext: la solicitud no tiene líneas que cotizar")
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🔴 DEUDA DECLARADA: NO HAY FORMA DE MEDIR CUÁNTAS VECES SE CAE AL DETERMINISTA
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Esto NO es un olvido, es un hueco conocido que se deja abierto con nombre y apellido.
+//
+// LO QUE HAY: cuando el texto del modelo se descarta, el motivo sale por DOS sitios y
+// los dos son de consumo individual — una línea de `log.Warn` con `motivo` y `detalle`,
+// y el campo `fallback_reason` de la respuesta HTTP, que ve la consola de UN dueño en
+// UNA pantalla.
+//
+// LO QUE NO HAY: ninguna serie agregable. No se emite `flow_event` ni métrica Prometheus
+// alguna, así que NADIE puede responder «¿qué porcentaje de sugerencias las escribe de
+// verdad el modelo?» ni «¿cuál de los nueve motivos manda?». Y esas dos preguntas son
+// las que deciden si la voz de la dueña funciona o si se está sirviendo el texto sobrio
+// todo el rato: exactamente el modo de fallo MUDO que ya se pagó una vez en esta tarea
+// —el umbral que apagaba el generador con una galleta barata en el carrito— y que solo
+// apareció porque alguien fue a buscarlo a mano.
+//
+// POR QUÉ NO SE CONSTRUYE AQUÍ: la telemetría de esta ola es T5.2, y su lista de
+// eventos está CERRADA en design §10 (`intake_draft_created`, `intake_line_corrected`,
+// `intake_approved`, `intake_info_requested`, `intake_reanalyzed`). Ninguno de los cinco
+// cubre esto, y añadir un sexto es una decisión de esa tarea, no de ésta. Meterlo por mi
+// cuenta dejaría un evento fuera del contrato que T5.2 tiene que emitir con payloads
+// exactos.
+//
+// QUÉ HARÍA FALTA, para que quien lo recoja no tenga que redescubrirlo: un contador con
+// las etiquetas `origen` (llm|deterministic) y `motivo` —el vocabulario ya es cerrado y
+// ya viaja por este struct, así que el productor es una línea en Suggest—, o un
+// `flow_event` equivalente si se prefiere la vía del outbox. Dueño natural: T5.2.
+// ════════════════════════════════════════════════════════════════════════════
 
 // Suggestion es lo que devuelve el generador: un texto y la verdad sobre quién lo
 // escribió.
@@ -152,7 +157,15 @@ type ProviderSelector interface {
 // forma de que siga siendo verdad es que el generador no tenga por dónde hacerlo).
 //
 // Era `Servicio` en el paquete viejo.
-type Service struct{}
+type Service struct {
+	log      logger.Logger
+	reader   IntakeReader
+	history  HistoryReader
+	seed     SeedReader
+	selector ProviderSelector
+	quota    int
+	timeout  time.Duration
+}
 
 // Option configura el servicio al construirlo.
 //
@@ -164,7 +177,11 @@ type Option func(*Service)
 //
 // Era `ConSemilla` en el paquete viejo.
 func WithSeed(seed SeedReader) Option {
-	panic(pendiente.Implementar("quotetext.WithSeed"))
+	return func(service *Service) {
+		if seed != nil {
+			service.seed = seed
+		}
+	}
 }
 
 // WithExamples fija el N del few-shot: el cupo de ejemplos y el `limit` con el que
@@ -174,7 +191,11 @@ func WithSeed(seed SeedReader) Option {
 //
 // Era `ConEjemplos` en el paquete viejo.
 func WithExamples(n int) Option {
-	panic(pendiente.Implementar("quotetext.WithExamples"))
+	return func(service *Service) {
+		if n > 0 {
+			service.quota = n
+		}
+	}
 }
 
 // WithTimeout acota cuánto puede durar LA llamada al modelo: el contexto que recibe
@@ -183,7 +204,11 @@ func WithExamples(n int) Option {
 //
 // Era `ConPlazo` en el paquete viejo.
 func WithTimeout(d time.Duration) Option {
-	panic(pendiente.Implementar("quotetext.WithTimeout"))
+	return func(service *Service) {
+		if d > 0 {
+			service.timeout = d
+		}
+	}
 }
 
 // NewService construye el generador con N = DefaultExamples, sin semilla y sin plazo
@@ -194,7 +219,16 @@ func WithTimeout(d time.Duration) Option {
 // Era `NewServicio` en el paquete viejo.
 func NewService(log logger.Logger, intakeReader IntakeReader, history HistoryReader,
 	selector ProviderSelector, opts ...Option) (*Service, error) {
-	panic(pendiente.Implementar("quotetext.NewService"))
+	if log == nil || intakeReader == nil || history == nil || selector == nil {
+		return nil, ErrNotWired
+	}
+	service := &Service{log: log, reader: intakeReader, history: history, selector: selector, quota: DefaultExamples}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service, nil
 }
 
 // Suggest devuelve el texto sugerido para la cotización de una solicitud. No escribe
@@ -272,28 +306,114 @@ func NewService(log logger.Logger, intakeReader IntakeReader, history HistoryRea
 //
 // Era `Sugerir` en el paquete viejo.
 func (s *Service) Suggest(ctx context.Context, tenantID, intakeID string) (Suggestion, error) {
-	panic(pendiente.Implementar("quotetext.Service.Suggest"))
+	detail, err := s.reader.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Suggestion{}, err
+	}
+	if !HasCustomerLines(detail.Items) {
+		return Suggestion{}, ErrNoLines
+	}
+	if pending := intakes.PendingPriceLines(detail.Revisions); len(pending) > 0 {
+		return Suggestion{}, &intakes.PendingPriceError{Lines: pending}
+	}
+
+	draft := DraftOf(detail.Items)
+	if !sameAmount(draft.Total, detail.Total) {
+		// No corrige nada: manda la suma de las líneas, que es lo que el cliente puede
+		// comprobar a mano. Pero se dice, porque el store promete que coinciden
+		// (EnsureShippingLine cuadra la cabecera) y que dejen de hacerlo es un dato.
+		s.log.Warn("quotetext: el total de la cabecera no es la suma de las líneas; manda la suma",
+			"tenant_id", tenantID, "intake_id", intakeID,
+			"total_cabecera", detail.Total, "suma_lineas", draft.Total)
+	}
+	deterministic := Render(draft)
+
+	if len(ExpectedSequence(draft)) == 0 {
+		// Todas las líneas están por confirmar: no hay ni un importe que el modelo
+		// pudiera copiar ni que se le pudiera verificar. Llamarlo sería gastar una
+		// inferencia para tirar su respuesta.
+		return Suggestion{Text: deterministic, Source: SourceDeterministic, Reason: ReasonDraftWithoutAmounts}, nil
+	}
+
+	examples := s.examples(ctx, tenantID)
+	if len(examples) == 0 {
+		return Suggestion{Text: deterministic, Source: SourceDeterministic, Reason: ReasonNoExamples}, nil
+	}
+
+	text, reason := s.compose(ctx, tenantID, detail, draft, examples)
+	if reason != "" {
+		return Suggestion{Text: deterministic, Source: SourceDeterministic, Reason: reason}, nil
+	}
+	return Suggestion{Text: text, Source: SourceLLM}, nil
 }
 
-// ParseSeed lee el blob de `tenant_content` ref `quote_style_examples`. Admite las
-// DOS formas obvias y devuelve los textos tal cual, sin sanear:
+// compose hace LA llamada al modelo y verifica lo que conteste. Devuelve el texto y
+// un motivo VACÍO cuando el texto se puede mandar; en cualquier otro caso devuelve el
+// motivo por el que no, y el llamante usa el determinista.
 //
-//	["texto 1", "texto 2"]                 — el array pelado
-//	{"examples": ["texto 1", "texto 2"]}   — envuelto, por si algún día lleva más claves
+// 🔴 NO DEVUELVE ERROR, Y NO ES PEREZA: aquí no hay ningún fallo que deba tumbar la
+// petición del dueño. El proveedor caído, el timeout, la salida ilegible y el precio
+// inventado tienen todos la misma respuesta correcta —el texto sobrio— y convertir
+// alguno en un 500 le quitaría al dueño una sugerencia que sí se podía dar.
 //
-// Un array vacío, en cualquiera de las dos formas, es válido. El `null` de JSON se
-// lee como el array pelado sin ejemplos: (nil, nil). Cualquier otra cosa es un
-// error, y son dos:
+// Era `redactar` en el paquete viejo.
+func (s *Service) compose(ctx context.Context, tenantID string, detail intakes.Detail,
+	draft Draft, examples []string) (string, string) {
+	quote, err := draft.JSON()
+	if err != nil {
+		s.log.Warn("quotetext: no se pudo serializar el borrador para el prompt",
+			"intake_id", detail.ID, "error", err)
+		return "", ReasonUnreadableOutput
+	}
+	provider, err := s.selector.For(ctx, tenantID, detail.SessionID)
+	if err != nil {
+		s.log.Warn("quotetext: no hay proveedor LLM para este tenant; sale el texto determinista",
+			"intake_id", detail.ID, "error", err)
+		return "", ReasonProviderUnavailable
+	}
+
+	raw, err := s.request(ctx, provider, quote, examples)
+	if err != nil {
+		s.log.Warn("quotetext: el proveedor no redactó la cotización; sale el texto determinista",
+			"intake_id", detail.ID, "calidad", errors.Is(err, llm.ErrLLMQuality), "error", err)
+		return "", ReasonLLMFailed
+	}
+	artifact, err := llm.ParseQuoteText(raw)
+	if err != nil {
+		// 🔴 El error NO cita `raw`: es texto redactado, no metadato.
+		s.log.Warn("quotetext: la salida del modelo no es un artefacto P5 legible; sale el texto determinista",
+			"intake_id", detail.ID, "error", err)
+		return "", ReasonUnreadableOutput
+	}
+
+	if verdict := Verify(draft, artifact.Text); !verdict.OK {
+		s.log.Warn("quotetext: el texto del modelo NO cuadra con las líneas (INV-2); sale el texto determinista",
+			"intake_id", detail.ID, "motivo", verdict.Reason, "detalle", verdict.Detail)
+		return "", verdict.Reason
+	}
+	return artifact.Text, ""
+}
+
+// request es LA llamada, acotada por su propio plazo. Extraída por lo mismo que
+// `pedirCantidades` en P4: el `defer cancel()` tiene que cerrar donde acaba la llamada.
 //
-//   - «quotetext: la semilla no es un array de textos ni un objeto con `examples`»
-//     — no es JSON, es un escalar, o el array (o `examples`) no es de textos;
-//   - «quotetext: el objeto de la semilla no trae la clave `examples`» — es un
-//     objeto sin esa clave, o con ella a null.
+// Era `pedir` en el paquete viejo.
+func (s *Service) request(ctx context.Context, provider llm.LLMProvider,
+	quote json.RawMessage, examples []string) (json.RawMessage, error) {
+	callCtx, cancel := s.bound(ctx)
+	defer cancel()
+	return provider.GenerateQuoteText(callCtx,
+		llm.GenerateQuoteTextInput{Quote: quote, Examples: examples},
+		llm.Options{Temperature: llm.TemperatureGreedy})
+}
+
+// bound envuelve el ctx con el plazo por llamada. Devuelve SIEMPRE una cancelación
+// llamable, para que el `defer cancel()` no necesite un `if` alrededor.
 //
-// El llamante ignora el error con un aviso: un blob mal formado no puede dejar sin
-// cotización a nadie.
-//
-// Era `ParseSemilla` en el paquete viejo.
-func ParseSeed(blob []byte) ([]string, error) {
-	panic(pendiente.Implementar("quotetext.ParseSeed"))
+// Era `acotar` en el paquete viejo.
+func (s *Service) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.timeout)
 }

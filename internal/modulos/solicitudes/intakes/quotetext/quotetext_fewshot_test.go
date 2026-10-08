@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package quotetext_test
 
 // quotetext_fewshot_test.go — parte de quotetext_test.go: EL FEW-SHOT de D-044.11,
@@ -16,6 +14,9 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
 )
+
+// Aserción de compilación del contrato de quotetext_fewshot.go.
+var _ func([]byte) ([]string, error) = quotetext.ParseSeed
 
 // textOf fabrica un ejemplo de `runes` runas, distinguible por su marca.
 func textOf(mark string, runes int) string {
@@ -64,6 +65,18 @@ func TestFewShot_SeedAloneFeedsIt(t *testing.T) {
 			seed.refs, seed.tenants, quotetext.SeedStyleRef)
 	}
 	wantExamples(t, scene, sampleQuoteOld, sampleQuoteNew)
+}
+
+// TestWithSeed_NilDoesNotUndoAnEarlierSeed: un lector nil se ignora, no desenchufa el
+// que ya estaba.
+func TestWithSeed_NilDoesNotUndoAnEarlierSeed(t *testing.T) {
+	seed := seedOf(t, sampleQuoteOld)
+	scene := newScene(t, p5Artifact(t, modelText), quotetext.WithSeed(seed), quotetext.WithSeed(nil))
+
+	if out := scene.suggest(t); out.Source != quotetext.SourceLLM {
+		t.Fatalf("origen = %q motivo = %q; la semilla enchufada primero sigue valiendo", out.Source, out.Reason)
+	}
+	wantExamples(t, scene, sampleQuoteOld)
 }
 
 // TestFewShot_UnusableSeedIsIgnored: hoy NINGÚN tenant tiene esta ref escrita, así que
@@ -284,6 +297,59 @@ func TestFewShot_AggregateBudget(t *testing.T) {
 			}
 			if c.logged != "" && !strings.Contains(logs, "tenant_id="+testTenant+" "+c.logged) {
 				t.Errorf("al aviso le faltan sus cifras (%s):\n%s", c.logged, logs)
+			}
+		})
+	}
+}
+
+func TestParseSeed(t *testing.T) {
+	const notAList = "quotetext: la semilla no es un array de textos ni un objeto con `examples`"
+	const noKey = "quotetext: el objeto de la semilla no trae la clave `examples`"
+	cases := []struct {
+		name    string
+		blob    string
+		want    []string
+		wantErr string
+	}{
+		{"bare array", `["uno","dos"]`, []string{"uno", "dos"}, ""},
+		{"wrapped", `{"examples":["uno","dos"]}`, []string{"uno", "dos"}, ""},
+		{"wrapped with more keys", `{"v":2,"examples":["uno"]}`, []string{"uno"}, ""},
+		{"texts are returned as they come", `["  uno  ","","uno"]`, []string{"  uno  ", "", "uno"}, ""},
+		{"empty bare array", `[]`, []string{}, ""},
+		{"empty wrapped array", `{"examples":[]}`, []string{}, ""},
+		{"json null reads as no examples", `null`, nil, ""},
+
+		{"object without the key", `{"nope":1}`, nil, noKey},
+		{"empty object", `{}`, nil, noKey},
+		{"object with the key set to null", `{"examples":null}`, nil, noKey},
+		{"json matches the key without minding the case", `{"EXAMPLES":["uno"]}`, []string{"uno"}, ""},
+		{"a number", `42`, nil, notAList},
+		{"a bare string", `"texto suelto"`, nil, notAList},
+		{"not json", `no es json`, nil, notAList},
+		{"empty blob", ``, nil, notAList},
+		{"array of numbers", `[1,2]`, nil, notAList},
+		{"array with a non-text element", `["uno",2]`, nil, notAList},
+		{"wrapped array of numbers", `{"examples":[1]}`, nil, notAList},
+		{"wrapped value that is not an array", `{"examples":"uno"}`, nil, notAList},
+		{"trailing garbage", `["uno"] x`, nil, notAList},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := quotetext.ParseSeed([]byte(c.blob))
+			if c.wantErr != "" {
+				if err == nil || err.Error() != c.wantErr {
+					t.Fatalf("err = %v; se esperaba %q", err, c.wantErr)
+				}
+				if got != nil {
+					t.Errorf("con error no se devuelven ejemplos; vino %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseSeed devolvió error: %v", err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("ejemplos = %#v; se esperaba %#v", got, c.want)
 			}
 		})
 	}
