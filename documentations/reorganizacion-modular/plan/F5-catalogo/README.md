@@ -7,7 +7,12 @@
 >
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 >
-> ✎ **Estado al 2026-10-07 (F45-02): código entero en verde y conmutación nominal, sin cerrar.**
+> ✅ **Estado al 2026-10-07 (F45-03): CERRADA.** La definición de hecho de [`reglas.md`](reglas.md) §4 se cumple en sus
+> 10 puntos, con números (hallazgo 25); T9.26: la suite entera de procesos contra el binario nuevo da
+> `RC=0 · PASS=869 · FAIL=0 · SKIP=0`. `catalogo` sigue **fuera** de `Conmutados` hasta que F7 conmute el índice (§4.10).
+> Lo que heredan F7 y F8, al final de este fichero.
+>
+> ✎ **Estado anterior, al 2026-10-07 (F45-02): código entero en verde y conmutación nominal, sin cerrar.**
 > `internal/modulos/catalogo` (`catalog.go`, `catalogimport`, `indice`) e `internal/modulos/conversacion/model` sin
 > etiqueta `pendiente`; `FaseActual = 5` (`13e869f`), huella igual, ninguna ruta mudada y ningún cableado. `catalogo`
 > **no** está en `Conmutados` (entra cuando F7 conmute el índice: [`reglas.md`](reglas.md) §4.10). **Queda F45-03**
@@ -178,5 +183,46 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
     2026-10-07): el arranque nuevo sigue cableando el índice viejo (hallazgo 4); entra cuando F7 lo conmute
     ([`reglas.md`](reglas.md) §4.10).
 
-**No corrido en F45-02 (es de F45-03)**: `make test-procesos`, la integración vieja contra Postgres, el arranque real de
-`cmd/server-modular` y UAT.
+**No corrido en F45-02 (es de F45-03)**: `make test-procesos`, la integración vieja contra Postgres y el arranque real de
+`cmd/server-modular`. ✎ *(F45-03: aquí decía también «y UAT»; UAT no es de F45-03, es de **F10**,
+[`plan/README.md`](../README.md).)*
+
+**De la sesión F45-03 (2026-10-07, cierre local, rama `reorg/f45-03-cierre`):**
+
+25. **Definición de hecho, punto a punto** (sobre `59a3e6b`, rc leído del log, sin pipe; `go1.26.5`, lint `v2.12.2`):
+    (1) `GOWORK=off make ci-local` `GATE_RC=0`: 167 `ok`, 0 `FAIL`, lint `0 issues.`; (2) `make vet-pendiente` rc=0;
+    (3) el `grep` da 0 líneas; `PENDIENTES=0 · ROJOS=0`; (4) cobertura (informe), los 15 ficheros de
+    `internal/modulos/catalogo` (§4.4 dice 11: E-13 partió `catalogimport`, hallazgo 12): 10 al 100,0 % y `diff.go` 98,9 %, `tabular.go` 98,0 %, `template.go` 97,7 %,
+    `validator_fields.go` 96,0 %, `normalizador.go` 98,9 %; ninguno entre los 7 `POR_DEBAJO`; (5) `go test -v` de
+    `catalogo` y `conversacion/model` rc=0, 547 PASS, **0 SKIP**; (6) `fronteras_test.go` sin cambio desde `dec75e7`;
+    (7) huella idéntica con `FaseActual = 5`; (8) esta documentación; (9) T9.26: `BINARIO=nuevo make test-procesos`
+    `MAKE_RC=0`, `RC=0 · PASS=869 · FAIL=0 · SKIP=0`, `TestP7_Catalog` PASS; (10) `Conmutados` = `{"acceso","edge"}`.
+26. 🟡 **T9.26 no prueba el código de F5, y hay que decirlo.** `internal/modulos/catalogo` no tiene un solo consumidor
+    fuera de su árbol: el arranque nuevo cablea el índice **viejo** (`internal/arranque/fase5_captacion.go` importa
+    `internal/intake/catalogo`) y `publicapi` usa el `internal/catalogimport` viejo. `TestP7_Catalog` pasa contra el
+    binario nuevo ejercitando código viejo (`reglas.md` §4.9 ya lo avisa). Lo que sostiene a F5 hasta F7 y F8 son sus
+    tests unitarios, los mutantes del índice y el corpus adversario; el primer proceso que toque el índice nuevo será el
+    de F7.
+27. 🟡 **Una pasada entera contra el nuevo dio rojo en `TestP7_Catalog/index_cache`**, y no es de `catalogo`: es la
+    intermitencia del compositor del *flush* (el job de la ráfaga quedó `failed`, `el job no trae literal que
+    analizar`), en el código viejo de captación. Repetido `-count=4` contra el nuevo, 4 de 4, y dos pasadas enteras
+    verdes. Detalle y cuenta del día, en el hallazgo 30 del [README de F4](../F4-inferencia/README.md).
+
+**Coste (D-R-6)**: F5 entera en tres sesiones compartidas con F4 (F45-01 el inventario, F45-02 el código, F45-03 el
+cierre). En esta, ningún commit de código de `catalogo`. D-24…D-29 de `documentations/deuda.md`, sin tocar.
+
+## Lo que heredan F7 y F8
+
+- **F7 (captación) cablea el índice nuevo.** En el arranque:
+  `indice.NewCache(indice.NewFuenteContenido(<content store>, ""), textmatch.Normalize, 0)`, y sus `stages` y
+  `pipeline` nombran `*indice.Indice` (no el tipo de `internal/intake/catalogo`). Al conmutarlo deja de importarse
+  `internal/intake/catalogo` desde `internal/arranque/fase5_captacion.go` y **ahí entra `catalogo` en `Conmutados`**
+  ([`reglas.md`](reglas.md) §4.10; D-R-4). Es el primer momento en que un proceso de F9 ejercita código de F5: P7
+  (`index_cache`) y P4 (el `match`) son su gate. Antes de portar `stages/p2.go`, la carrera del hallazgo 27.
+- **F8 (conversación) reescribe `loadCatalog` en el carrito nuevo** (no se portó, hallazgo 8) y **muda I14–I17** (las
+  rutas de importación de catálogo: hasta entonces las sirve `publicapi` con el `catalogimport` viejo, y el mapa no
+  tiene filas de fase F5). **D-F5-1 = B**: `conversacion/model` se reconstruyó en F5, así que **no hay puente de import
+  que retirar**. 🟡 Cuando el carrito nuevo añada `"catalogo"` a `Capas["conversacion"]`, la regla 1 de
+  `fronteras_test.go` dejará de cubrir la arista prohibida `conversacion → catalogo/indice` y hará falta una
+  prohibición por subpaquete (hallazgo 20, D-F5-2).
+- **Los dos**: D-26…D-29 están fijadas por test en el código nuevo y no se corrigen antes de F10.

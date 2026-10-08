@@ -129,12 +129,12 @@ Para cuando: la huella del arranque nuevo es idéntica a la del viejo con `FaseA
 ## Sesión F45-03 · cierre local · 💻 · T4.29–T4.31 (+ T9.25)
 Para cuando: la definición de hecho de [`reglas.md`](reglas.md) §4 se cumple entera. (La misma sesión cierra F5.)
 
-- [ ] **T4.29 · validar-antes-de-cerrar** · 💻 · dep. T4.28, T4.31
+- [x] **T4.29 · validar-antes-de-cerrar** · 💻 · dep. T4.28, T4.31 — hecha en F45-03 (2026-10-07), sin commit, sobre `59a3e6b`: los 11 puntos con números en el hallazgo 31 del [README](README.md) (`GATE_RC=0`, 167 `ok`; 0 SKIP; procesos contra el nuevo `RC=0 · PASS=869`)
   - **Hecho cuando**: los 11 puntos de `reglas.md` §4, con números (informe de la skill)
   - **Commit**: ninguno (o `refactor(inferencia): …` si la limpieza con tests en verde lo pide)
-- [ ] **T4.30 · docs: `ESTADO.md` y este README** · 💻 · dep. T4.29
+- [x] **T4.30 · docs: `ESTADO.md` y este README** · 💻 · dep. T4.29 — hecha en F45-03 (2026-10-07): el commit `docs(reorganizacion-modular): F4 cerrada` de la rama `reorg/f45-03-cierre`
   - **Hecho cuando**: estado «cerrada» (con `inferencia` **fuera** de `Conmutados` hasta F8, `reglas.md` §4.11), SHA por tarea, hallazgos nuevos en el README, cifra de coste (ficheros, commits, horas de sesión) para medir el ahorro de E-12
   - **Commit**: `docs(reorganizacion-modular): F4 cerrada`
-- [ ] **T4.31 · suites contra Postgres (= T9.25, 9C de `inferencia`)** · 💻 · dep. T4.28
+- [x] **T4.31 · suites contra Postgres (= T9.25, 9C de `inferencia`)** · 💻 · dep. T4.28 — hecha en F45-03 (2026-10-07): `ddb8baa` (las dos suites: 16 + 18 casos PASS, 0 SKIP, en cada binario, sin divergencia con los dobles) y `59a3e6b` (lo que ningún proceso cubría: `tenant-llm` por el cable)
   - **Hecho cuando**: en `test/procesos/` están las dos pasadas (`tenantllmhelpertest.Contrato` y `degradationhelpertest.Contrato` con un `Montaje` sobre `NewPostgres` y la base clonada del arnés); `go vet -tags integracion ./test/procesos/...` rc=0; `make test-procesos` (testcontainers, `postgres:17-alpine`) contra el binario **nuevo**, contando PASS/FAIL/SKIP con `-v` (0 SKIP). Traspaso (skill `traspaso-web-local`) solo mientras existan los dos entornos, o si la sesión se corta
   - **Commit**: `procesos(inferencia): suites de tenantllm y degradation contra Postgres`

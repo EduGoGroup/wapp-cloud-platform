@@ -2,8 +2,8 @@
 
 > **Estado: EN EJECUCIÓN** — resumen al 2026-10-07 (**el estado al día vive en [`../ESTADO.md`](../ESTADO.md)**,
 > § «Avance de la ejecución», y en la tabla de [`sesiones/README.md`](sesiones/README.md)): F0, F1 (el piloto), F2 y
-> F3 cerradas y en `dev`; F4 conmutada y F5 con el código entero en verde y su conmutación nominal
-> (`FaseActual = 5`), las dos sin cerrar (falta F45-03) y con lo de F45-02 en el PR #44, aún sin integrar en `dev`;
+> F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03, por PR a `dev`; `FaseActual = 5`, las dos fuera de
+> `Conmutados`);
 > F9-A y F9-B hechos, F9-D pendiente; F6, F7, F8 y F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
 > de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
@@ -12,7 +12,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-07): [`sesiones/F45-03`](sesiones/F45-03-cli-cierre.md) (cierre de F4 y F5).
+> **Siguiente paso** (al 2026-10-07, con F4 y F5 cerradas): [`sesiones/F6-01`](sesiones/F6-01-web-inventario-y-hojas.md) (inventario y hojas de `solicitudes`).
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
@@ -49,7 +49,7 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
 Al 2026-10-07 están hechas las sesiones de F0, F9-A/B, F1 (con F1-06), F2, F3 y las dos primeras de F4+F5
-(F45-01 y F45-02); la siguiente es F45-03. Qué sesión está hecha lo dice la tabla de
+(F45-01, F45-02 y F45-03); la siguiente es F6-01. Qué sesión está hecha lo dice la tabla de
 [`sesiones/README.md`](sesiones/README.md), no esta línea.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go
