@@ -18,16 +18,17 @@
 // El texto que se le manda al cliente NO se arma aquí sino en el módulo del carrito:
 // aquí vive la ARITMÉTICA y el RASTRO; allí, las palabras.
 //
-// Este fichero lleva solo lo PURO. La escritura (`Service.ApplyRevalidation`) nace
-// con el `Service`, y la revisión `revalidated` que arma cada store, con los stores.
+// Este fichero lleva solo lo PURO, incluida la revisión `revalidated` que escriben
+// los stores. La escritura (`Service.ApplyRevalidation`) vive con el `Service`.
 
 package intakes
 
 import (
 	"encoding/json"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"math"
+	"strings"
 )
 
 // CatalogEntry es lo ÚNICO que la revalidación necesita saber de un artículo del
@@ -53,7 +54,10 @@ type CatalogEntry struct {
 // una lista resuelta es NewPriceList: quien no consiga leer el catálogo pasa el
 // valor cero —o simplemente no la construye— y la revalidación queda en no-op. El
 // camino del olvido es el seguro.
-type PriceList struct{}
+type PriceList struct {
+	entries  map[string]CatalogEntry
+	resolved bool
+}
 
 // NewPriceList construye la lista de precios VIGENTE a partir del catálogo ya
 // leído. Marca la lista como RESUELTA siempre, también con un mapa `nil` o vacío:
@@ -64,14 +68,15 @@ type PriceList struct{}
 // entrada que el llamante añada después se ve desde Lookup. Las claves se usan TAL
 // CUAL (ver Lookup).
 func NewPriceList(entries map[string]CatalogEntry) PriceList {
-	panic(pendiente.Implementar("intakes.NewPriceList"))
+	if entries == nil {
+		entries = map[string]CatalogEntry{}
+	}
+	return PriceList{entries: entries, resolved: true}
 }
 
 // Resolved dice si el catálogo llegó a leerse: true en toda lista salida de
 // NewPriceList, false en el valor cero. En falso, Revalidate no toca nada.
-func (p PriceList) Resolved() bool {
-	panic(pendiente.Implementar("intakes.PriceList.Resolved"))
-}
+func (p PriceList) Resolved() bool { return p.resolved }
 
 // Lookup devuelve la entrada vigente del sku. ok=false —con la entrada en su valor
 // cero— cuando el artículo ya no está en el catálogo o cuando la lista ni siquiera
@@ -81,7 +86,11 @@ func (p PriceList) Resolved() bool {
 // («pan», « PAN» y «PAN » no son «PAN»), y el sku vacío es una clave como otra
 // cualquiera. Normalizar es cosa de quien arma la lista.
 func (p PriceList) Lookup(sku string) (CatalogEntry, bool) {
-	panic(pendiente.Implementar("intakes.PriceList.Lookup"))
+	if !p.resolved {
+		return CatalogEntry{}, false
+	}
+	e, ok := p.entries[sku]
+	return e, ok
 }
 
 // LineChange es UN cambio que la revalidación le hace a UNA línea del pedido: o le
@@ -127,21 +136,27 @@ type Revalidation struct {
 // cliente pidió un producto, no una cadena de texto. La etiqueta vigente sí queda
 // aplicada en Items —para que la escritura que ocurra por otro motivo la lleve—,
 // pero por sí sola no despierta ni un aviso ni una revisión.
-func (r Revalidation) Changed() bool {
-	panic(pendiente.Implementar("intakes.Revalidation.Changed"))
-}
+func (r Revalidation) Changed() bool { return len(r.Changes) > 0 }
 
 // Repriced son los cambios de precio (Removed=false), en el orden de las líneas.
 // Sin ninguno devuelve una lista VACÍA y nunca `nil`, también sobre el valor cero.
-func (r Revalidation) Repriced() []LineChange {
-	panic(pendiente.Implementar("intakes.Revalidation.Repriced"))
-}
+func (r Revalidation) Repriced() []LineChange { return r.changesWhere(false) }
 
 // Removed son las líneas retiradas (Removed=true), en el orden que tenían en el
 // pedido. Sin ninguna devuelve una lista VACÍA y nunca `nil`, también sobre el
 // valor cero.
-func (r Revalidation) Removed() []LineChange {
-	panic(pendiente.Implementar("intakes.Revalidation.Removed"))
+func (r Revalidation) Removed() []LineChange { return r.changesWhere(true) }
+
+// changesWhere filtra Changes por su marca Removed, conservando el orden. Parte de
+// una lista vacía y no de `nil`: las dos vistas se serializan `[]`.
+func (r Revalidation) changesWhere(removed bool) []LineChange {
+	out := make([]LineChange, 0, len(r.Changes))
+	for _, c := range r.Changes {
+		if c.Removed == removed {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Revalidate contrasta las líneas de una solicitud con el catálogo vigente y
@@ -188,7 +203,58 @@ func (r Revalidation) Removed() []LineChange {
 // Items y Changes del resultado nunca son `nil`: sin líneas o sin cambios van
 // vacíos, también con una entrada `nil`.
 func Revalidate(items []Item, catalog PriceList) Revalidation {
-	panic(pendiente.Implementar("intakes.Revalidate"))
+	out := Revalidation{
+		Items:       make([]Item, 0, len(items)),
+		Changes:     []LineChange{},
+		TotalBefore: itemsTotal(items),
+	}
+	if !catalog.Resolved() {
+		out.Items = append(out.Items, items...)
+		out.TotalAfter = out.TotalBefore
+		return out
+	}
+
+	for _, it := range items {
+		if strings.HasPrefix(it.SKU, ReservedSKUPrefix) {
+			out.Items = append(out.Items, it)
+			continue
+		}
+		entry, live := catalog.Lookup(it.SKU)
+		if !live {
+			out.Changes = append(out.Changes, LineChange{
+				SKU: it.SKU, Label: it.Label, Qty: it.Qty, From: it.UnitPrice, Removed: true,
+			})
+			continue
+		}
+		if !sameMoney(it.UnitPrice, entry.Price) {
+			out.Changes = append(out.Changes, LineChange{
+				SKU: it.SKU, Label: entry.Label, Qty: it.Qty, From: it.UnitPrice, To: entry.Price,
+			})
+		}
+		it.Label, it.UnitPrice = entry.Label, entry.Price
+		out.Items = append(out.Items, it)
+	}
+
+	out.TotalAfter = itemsTotal(out.Items)
+	return out
+}
+
+// sameMoney compara dos importes con la tolerancia de UN CÉNTIMO. No es paranoia
+// numérica gratuita: los precios llegan de dos sitios distintos —una columna
+// NUMERIC y un número de JSON— y basta un bit de diferencia para que la
+// revalidación declare «cambió de precio» y le mande al cliente la viñeta absurda
+// «Pan: $2.00 → $2.00». Por debajo del céntimo no hay cambio que contar, porque no
+// hay céntimo que cobrar.
+func sameMoney(a, b float64) bool { return math.Abs(a-b) < 0.005 }
+
+// itemsTotal suma qty × unit_price. La personalización NO entra jamás (INV-13): el
+// perro caliente no es más barato por quitarle la cebolla.
+func itemsTotal(items []Item) float64 {
+	var t float64
+	for _, it := range items {
+		t += float64(it.Qty) * it.UnitPrice
+	}
+	return t
 }
 
 // ErrEmptyRevalidationText lo devuelve la escritura de la revalidación cuando hay
@@ -230,5 +296,76 @@ var ErrEmptyRevalidationText = errors.New("la revalidación cambió el pedido pe
 // `nil`— cuando un importe no es serializable (NaN o infinito), envuelto como
 // "intakes: serializar payload de la revisión de revalidación: <causa>".
 func RevalidatedRevisionPayload(rv Revalidation) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.RevalidatedRevisionPayload"))
+	repriced := make([]repricedEntry, 0, len(rv.Changes))
+	for _, c := range rv.Repriced() {
+		repriced = append(repriced, repricedEntry{SKU: c.SKU, From: c.From, To: c.To})
+	}
+	removed := make([]removedEntry, 0, len(rv.Changes))
+	for _, c := range rv.Removed() {
+		removed = append(removed, removedEntry{SKU: c.SKU, Label: c.Label, Qty: c.Qty, UnitPrice: c.From})
+	}
+
+	raw, err := json.Marshal(revalidatedRevisionPayload{
+		Version:     RevisionPayloadVersion,
+		Repriced:    repriced,
+		Removed:     removed,
+		TotalBefore: rv.TotalBefore,
+		TotalAfter:  rv.TotalAfter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("intakes: serializar payload de la revisión de revalidación: %w", err)
+	}
+	return raw, nil
+}
+
+// repricedEntry y removedEntry son las dos formas del payload v1 (D-041.25 §d); por
+// qué llevan campos distintos y por qué ninguna lleva `customization` lo cuenta
+// RevalidatedRevisionPayload.
+type repricedEntry struct {
+	SKU  string  `json:"sku"`
+	From float64 `json:"from"`
+	To   float64 `json:"to"`
+}
+
+type removedEntry struct {
+	SKU       string  `json:"sku"`
+	Label     string  `json:"label"`
+	Qty       int     `json:"qty"`
+	UnitPrice float64 `json:"unit_price"`
+}
+
+// revalidatedRevisionPayload es la forma canónica del payload de la revisión de
+// revalidación. Las etiquetas json son contrato versionado: cambiarlas exige subir
+// RevisionPayloadVersion.
+type revalidatedRevisionPayload struct {
+	Version     int             `json:"version"`
+	Repriced    []repricedEntry `json:"repriced"`
+	Removed     []removedEntry  `json:"removed"`
+	TotalBefore float64         `json:"total_before"`
+	TotalAfter  float64         `json:"total_after"`
+}
+
+// revalidatedRevision arma la revisión que deja UNA revalidación con cambios. Vive
+// aquí y no en cada store para que las dos implementaciones no puedan divergir: un
+// MemoryStore que escribiera otra foto haría que los tests de handler dijeran algo
+// falso sobre producción (mismo criterio que la revisión de corrección y la de
+// descarte).
+//
+// `created_by` es `system` —y no `owner` como en el descarte— porque aquí no decide
+// nadie: es el catálogo del tenant el que ya cambió y la plataforma la que se limita
+// a contarlo. Sigue siendo un ROL y jamás una persona (CERO PII).
+//
+// No numera la revisión ni la fecha: eso lo pone el store que la escribe.
+func revalidatedRevision(intakeID string, rv Revalidation, renderedText string) (Revision, error) {
+	payload, err := RevalidatedRevisionPayload(rv)
+	if err != nil {
+		return Revision{}, err
+	}
+	return Revision{
+		IntakeID:     intakeID,
+		Kind:         RevisionKindRevalidated,
+		Payload:      payload,
+		RenderedText: renderedText,
+		CreatedBy:    RevisionBySystem,
+	}, nil
 }

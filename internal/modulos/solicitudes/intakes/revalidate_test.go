@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -72,10 +70,11 @@ func TestNewPriceList_IsAlwaysResolved(t *testing.T) {
 
 // TestPriceList_LookupIsExact: la clave se busca byte a byte, sin plegar mayúsculas ni recortar.
 func TestPriceList_LookupIsExact(t *testing.T) {
+	spaced := " ESP " // clave con espacios a propósito: no se recorta
 	list := NewPriceList(map[string]CatalogEntry{
-		"PAN":   {Label: "Pan", Price: 2.5},
-		" ESP ": {Label: "e", Price: 1},
-		"":      {Label: "vacio", Price: 0},
+		"PAN":  {Label: "Pan", Price: 2.5},
+		spaced: {Label: "e", Price: 1},
+		"":     {Label: "vacio", Price: 0},
 	})
 	cases := []struct {
 		name   string
