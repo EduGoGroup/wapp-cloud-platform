@@ -2,7 +2,10 @@
 
 package intakes
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // ShippingSKU es el sku de la LÍNEA ESTÁNDAR DE ENVÍO (D-041.11): "_shipping".
 // Empieza por `_` porque ese prefijo está RESERVADO para las líneas que pone wApp:
@@ -29,6 +32,14 @@ const ShippingSKU = "_shipping"
 // "Envío — <zona>" (ver DesiredShippingLine).
 const ShippingPendingLabel = "Envío por confirmar"
 
+// shippingZonePrefix encabeza la línea cuando la zona SÍ dicta el precio:
+// "Envío — Providencia".
+const shippingZonePrefix = "Envío — "
+
+// shippingQty es la cantidad de la línea de envío: un envío por pedido. No es
+// configurable a propósito — «dos envíos» no es una cantidad, es otro pedido.
+const shippingQty = 1
+
 // ShippingZone es una zona de envío del tenant, tal como viaja en
 // tenant_settings.shipping_zones (JSONB, migración 0045):
 // `[{"code":"z1","label":"Providencia","price":3000}]`.
@@ -36,6 +47,17 @@ type ShippingZone struct {
 	Code  string  `json:"code"`
 	Label string  `json:"label"`
 	Price float64 `json:"price"`
+}
+
+// name es cómo se nombra la zona en la línea del pedido: la etiqueta si la hay y
+// si no el código. Una zona sin ninguna de las dos no se puede nombrar, y una
+// línea que dijera "Envío — " no le dice nada a nadie: DesiredShippingLine la
+// descarta.
+func (z ShippingZone) name() string {
+	if z.Label != "" {
+		return z.Label
+	}
+	return z.Code
 }
 
 // ShippingLine es la línea de envío que la CONFIGURACIÓN del tenant dicta. No es
@@ -70,6 +92,14 @@ const (
 	ShippingOnlyIfZones
 )
 
+// applies responde si esta política materializa la línea con las zonas dadas.
+// Cuenta las zonas CONFIGURADAS, no las resolubles: un tenant con tres zonas cobra
+// envío —aunque wApp todavía no sepa cuál le toca a este cliente y la línea salga
+// «por confirmar»—, y el pedido tiene que llevarla.
+func (p ShippingPolicy) applies(zones []ShippingZone) bool {
+	return p == ShippingAlways || len(zones) > 0
+}
+
 // ParseShippingZones lee tenant_settings.shipping_zones. Un valor vacío o nil es
 // «sin zonas» (el DEFAULT de la columna), no un error: devuelve (nil, nil). El JSON
 // `null` también da (nil, nil), y `[]` una lista vacía no nil.
@@ -87,7 +117,14 @@ const (
 // Un fallo ruidoso en una columna que nadie toca es más barato que un pedido menos
 // facturado por pedido.
 func ParseShippingZones(raw []byte) ([]ShippingZone, error) {
-	panic(pendiente.Implementar("intakes.ParseShippingZones"))
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var zones []ShippingZone
+	if err := json.Unmarshal(raw, &zones); err != nil {
+		return nil, fmt.Errorf("intakes: zonas de envío del tenant ilegibles: %w", err)
+	}
+	return zones, nil
 }
 
 // DesiredShippingLine resuelve qué línea de envío dicta la configuración.
@@ -114,7 +151,20 @@ func ParseShippingZones(raw []byte) ([]ShippingZone, error) {
 //
 // Es PURA: misma entrada, misma salida, sin BD ni reloj.
 func DesiredShippingLine(zones []ShippingZone) ShippingLine {
-	panic(pendiente.Implementar("intakes.DesiredShippingLine"))
+	var named []ShippingZone
+	for _, z := range zones {
+		if z.name() != "" {
+			named = append(named, z)
+		}
+	}
+	if len(named) == 1 {
+		return ShippingLine{
+			Label:     shippingZonePrefix + named[0].name(),
+			UnitPrice: named[0].Price,
+			Priced:    true,
+		}
+	}
+	return ShippingLine{Label: ShippingPendingLabel}
 }
 
 // Supersedes responde si la línea que dicta la configuración tiene que SUSTITUIR a
@@ -139,5 +189,19 @@ func DesiredShippingLine(zones []ShippingZone) ShippingLine {
 //     ocurra. Por eso sin zona solo se garantiza la PRESENCIA de la línea, nunca su
 //     contenido: devuelve SIEMPRE false, sea cual sea la guardada.
 func (l ShippingLine) Supersedes(stored Item) bool {
-	panic(pendiente.Implementar("intakes.ShippingLine.Supersedes"))
+	if !l.Priced {
+		return false
+	}
+	return stored.Label != l.Label || stored.UnitPrice != l.UnitPrice || stored.Qty != shippingQty
+}
+
+// item proyecta la línea dictada a la fila que se persiste. La personalización va
+// vacía: «sin cebolla» es del cliente y esta línea no es suya (D-041.17).
+func (l ShippingLine) item() Item {
+	return Item{
+		SKU:       ShippingSKU,
+		Label:     l.Label,
+		Qty:       shippingQty,
+		UnitPrice: l.UnitPrice,
+	}
 }

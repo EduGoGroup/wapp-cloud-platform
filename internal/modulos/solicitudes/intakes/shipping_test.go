@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -241,5 +239,43 @@ func TestShippingLine_Supersedes(t *testing.T) {
 				t.Errorf("lo que decide es Priced, no la etiqueta: una línea sin Priced no pisa %+v", c.stored)
 			}
 		})
+	}
+}
+
+// TestShippingPolicy_Applies: la regla de CUÁNDO se materializa la línea. Cuenta las
+// zonas CONFIGURADAS, no las resolubles: una zona sin nombre también es cobrar
+// envío. Es un auxiliar no exportado con regla de negocio (05 E-4, P6): su
+// consumidor —el servicio y los stores— nace en otra tarea.
+func TestShippingPolicy_Applies(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		policy ShippingPolicy
+		zones  []ShippingZone
+		want   bool
+	}{
+		{"always without zones", ShippingAlways, nil, true},
+		{"always with zones", ShippingAlways, []ShippingZone{shippingTestFlatZone()}, true},
+		{"only if zones without zones", ShippingOnlyIfZones, nil, false},
+		{"only if zones with an empty list", ShippingOnlyIfZones, []ShippingZone{}, false},
+		{"only if zones with one zone", ShippingOnlyIfZones, []ShippingZone{shippingTestFlatZone()}, true},
+		{"only if zones counts a zone that cannot be named", ShippingOnlyIfZones, []ShippingZone{{Price: 1}}, true},
+		{"only if zones with several zones still applies", ShippingOnlyIfZones, []ShippingZone{shippingTestFlatZone(), {Code: "z2"}}, true},
+	}
+	for _, c := range cases {
+		if got := c.policy.applies(c.zones); got != c.want {
+			t.Errorf("%s: applies = %v, quería %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestShippingLine_ItemIsTheStoredRow: la línea dictada se persiste con el sku
+// reservado, UNA unidad y sin personalización, que es del cliente y no de wApp.
+func TestShippingLine_ItemIsTheStoredRow(t *testing.T) {
+	t.Parallel()
+	got := ShippingLine{Label: "Envío — Providencia", UnitPrice: 3000, Priced: true}.item()
+	want := Item{SKU: "_shipping", Label: "Envío — Providencia", Qty: 1, UnitPrice: 3000}
+	if got != want {
+		t.Errorf("fila = %+v, quería %+v", got, want)
 	}
 }
