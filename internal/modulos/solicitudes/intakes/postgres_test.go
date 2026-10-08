@@ -1,10 +1,11 @@
-//go:build pendiente
-
 package intakes
 
 import (
 	"database/sql/driver"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"slices"
 	"strings"
 	"sync"
@@ -20,10 +21,10 @@ import (
 // los postgres_<tema>_test.go: el montaje sobre el driver de mentira, las filas de ejemplo, el
 // logger que captura y el cifrador de prueba.
 //
-// LO QUE EL VERDE AÑADIRÁ A ESTOS TESTS (F6-03): el texto BYTE A BYTE de cada sentencia, contra
-// constantes escritas aparte en el test (hoy solo se afirma la forma: cuántas sentencias, de qué
-// clase, en qué orden, dentro o fuera de transacción y con qué argumentos). El comportamiento del
-// SQL contra un Postgres de verdad es de intakeshelpertest.Contrato en test/procesos.
+// El texto BYTE A BYTE de cada sentencia lo afirma el test de su tema, contra constantes escritas
+// aparte y sacadas del paquete viejo. Al final va el candado AST de la poda (R-07). El
+// comportamiento del SQL contra un Postgres de verdad es de intakeshelpertest.Contrato en
+// test/procesos.
 
 // Identificadores de ejemplo. Los dos ids son UUID porque el adaptador rechaza lo que no lo es
 // sin ir a la base.
@@ -246,5 +247,116 @@ func TestWithRetentionLog_Nil_KeepsTheLogger(t *testing.T) {
 	}
 	if got := sink.logged(); len(got) != 1 || got[0].level != "info" {
 		t.Errorf("el logger de retención recibió %+v, quería el evento de poda", got)
+	}
+}
+
+// Las tres piezas del candado de la poda. En el diseño y en el paquete viejo se llamaban
+// revisionsOf, ejecutarPoda y sellarPodada, y vivían en postgres.go; por E-11 las dos últimas
+// nacieron aquí como runPrune y sealPruned, y la lectura se partió a postgres_revisions_read.go.
+const (
+	pruneLockFile   = "postgres_revisions_read.go"
+	pruneLockReader = "revisionsOf"
+	pruneLockPruner = "runPrune"
+	pruneLockSealer = "sealPruned"
+)
+
+// calledName devuelve el identificador final de una llamada: `f(...)` → "f", `p.f(...)` → "f".
+// El receptor no importa: mirarlo ataría el candado a que la variable se siga llamando `p`.
+func calledName(call *ast.CallExpr) string {
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return fn.Name
+	case *ast.SelectorExpr:
+		return fn.Sel.Name
+	}
+	return ""
+}
+
+// discardsItsValue dice si el nodo tira el valor de una llamada a `name`: la llamada suelta como
+// sentencia, o asignada entera al identificador en blanco.
+func discardsItsValue(n ast.Node, name string) bool {
+	switch stmt := n.(type) {
+	case *ast.ExprStmt:
+		call, ok := stmt.X.(*ast.CallExpr)
+		return ok && calledName(call) == name
+	case *ast.AssignStmt:
+		if len(stmt.Rhs) != 1 {
+			return false
+		}
+		call, ok := stmt.Rhs[0].(*ast.CallExpr)
+		if !ok || calledName(call) != name {
+			return false
+		}
+		for _, lhs := range stmt.Lhs {
+			if id, ok := lhs.(*ast.Ident); !ok || id.Name != "_" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// TestPrune_TheSealedInstantIsNotDiscarded es el candado del cableado de la poda (R-07, R6.2.d).
+// Era TestPoda_ElInstanteSelladoNoSeDescarta en el viejo. La poda del literal SELLA su instante
+// y lo devuelve; la lectura que poda no puede decir «esta revisión nunca tuvo texto» de la que
+// acaba de destruir. Por eso, dentro de revisionsOf, lo que devuelve runPrune no se descarta y
+// sealPruned se llama. Un resultado descartado no da error y no lo caza ni el compilador ni vet:
+// hay que preguntarle al AST.
+//
+// La regla es «no se descarta», no «se compone en una línea»: partirlo en `sealed := p.runPrune(…)`
+// y `sealPruned(out, n, sealed)` es un refactor legítimo y sigue pasando.
+//
+// GUARDA ANTI-HUECO: un barrido que no encuentra nada pasa siempre. Si la función se renombra o
+// se muda de fichero, el candado exige encontrar las tres piezas antes de dar veredicto.
+func TestPrune_TheSealedInstantIsNotDiscarded(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, pruneLockFile, nil, 0)
+	if err != nil {
+		t.Fatalf("parseando %s: %v", pruneLockFile, err)
+	}
+
+	var reader *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == pruneLockReader {
+			reader = fn
+			break
+		}
+	}
+	if reader == nil {
+		t.Fatalf("no se encontró %s en %s: el candado estaría vigilando una pared", pruneLockReader, pruneLockFile)
+	}
+
+	var sawPruner, sawSealer bool
+	var discarded token.Pos
+	ast.Inspect(reader, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			switch calledName(call) {
+			case pruneLockPruner:
+				sawPruner = true
+			case pruneLockSealer:
+				sawSealer = true
+			}
+		}
+		if discardsItsValue(n, pruneLockPruner) {
+			discarded = n.Pos()
+		}
+		return true
+	})
+
+	// Control positivo ANTES del veredicto: sin las dos llamadas, el silencio de abajo no
+	// significaría nada.
+	if !sawPruner {
+		t.Fatalf("%s no llama a %s: ¿se movió la poda de sitio?", pruneLockReader, pruneLockPruner)
+	}
+	if !sawSealer {
+		t.Fatalf("%s no llama a %s: el instante de la poda no llega a la respuesta, "+
+			"así que la lectura que poda vuelve a decir «nunca hubo texto»", pruneLockReader, pruneLockSealer)
+	}
+	if discarded.IsValid() {
+		t.Fatalf("%s: el resultado de %s se descarta en %s. Ese valor es el "+
+			"literal_pruned_at que la respuesta tiene que publicar en ESTA lectura, "+
+			"porque la columna todavía es NULL cuando el cursor la lee",
+			pruneLockReader, pruneLockPruner, fset.Position(discarded))
 	}
 }
