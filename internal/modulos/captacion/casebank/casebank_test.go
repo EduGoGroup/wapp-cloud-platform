@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package casebank_test
 
 import (

@@ -33,8 +33,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"strings"
 )
 
 // Los tres motivos por los que `Insert` y `Seed` se niegan ANTES de ir a la base.
@@ -99,7 +99,10 @@ type Store interface {
 }
 
 // Service (antes `Servicio`) es la puerta de escritura del banco.
-type Service struct{}
+type Service struct {
+	store Store
+	anon  Anonymizer
+}
 
 // NewService (antes `NewServicio`) construye el servicio sobre el store y el
 // anonimizador. Falla con el error "casebank: NewServicio sin store" (texto del
@@ -107,7 +110,10 @@ type Service struct{}
 // luego panique en la primera llamada es peor que un error en el arranque (mismo
 // criterio que `NewP2`/`NewP3` del pipeline). El anonimizador vacío es legítimo.
 func NewService(store Store, anon Anonymizer) (*Service, error) {
-	panic(pendiente.Implementar("casebank.NewService"))
+	if store == nil {
+		return nil, errors.New("casebank: NewServicio sin store")
+	}
+	return &Service{store: store, anon: anon}, nil
 }
 
 // Insert (antes `Servicio.Insertar`) mete un caso en el banco. Devuelve el `id`
@@ -130,12 +136,20 @@ func NewService(store Store, anon Anonymizer) (*Service, error) {
 // `casebank: insertar el caso del tenant "<tenant>": `.
 //
 // 🔴 NO se vuelve a barrer con `Remains` después de anonimizar para «confirmar»
-// que quedó limpio: sería una tautología (los dos usan los mismos detectores) y
+// que quedó limpio: sería casi una tautología (los dos usan los mismos detectores) y
 // una red que se comprueba a sí misma tapa a los tests que sí miran. El barrido
 // se aplica al texto que NO pasó por aquí — el fixture escrito a mano, ver
 // `seed.go`.
 func (s *Service) Insert(ctx context.Context, c Case) (int64, error) {
-	panic(pendiente.Implementar("casebank.Service.Insert"))
+	if err := validate(c); err != nil {
+		return 0, err
+	}
+	c.SourceText = s.anon.Anonymize(c.SourceText)
+	id, err := s.store.Insert(ctx, c)
+	if err != nil {
+		return 0, fmt.Errorf("casebank: insertar el caso del tenant %q: %w", c.TenantID, err)
+	}
+	return id, nil
 }
 
 // Seed (antes `Sembrar`) inserta el caso si ese tenant no lo tiene ya, y dice si
@@ -159,5 +173,38 @@ func (s *Service) Insert(ctx context.Context, c Case) (int64, error) {
 // La alternativa (un índice único sobre un TEXT sin cota) haría FALLAR el insert
 // de los casos largos, que son los que más falta hacen (ver la 0082).
 func (s *Service) Seed(ctx context.Context, c Case) (int64, bool, error) {
-	panic(pendiente.Implementar("casebank.Service.Seed"))
+	if err := validate(c); err != nil {
+		return 0, false, err
+	}
+	c.SourceText = s.anon.Anonymize(c.SourceText)
+
+	found, err := s.store.Exists(ctx, c.TenantID, c.SourceText)
+	if err != nil {
+		return 0, false, fmt.Errorf("casebank: comprobar si el caso ya estaba: %w", err)
+	}
+	if found {
+		return 0, false, nil
+	}
+	id, err := s.store.Insert(ctx, c)
+	if err != nil {
+		return 0, false, fmt.Errorf("casebank: sembrar el caso del tenant %q: %w", c.TenantID, err)
+	}
+	return id, true, nil
+}
+
+// validate (antes `validar`) es el guard. Está extraído para que `Insert` y
+// `Seed` no puedan divergir: dos copias de una regla de admisión se
+// desincronizan, y la que se queda vieja es siempre la del camino menos
+// transitado.
+func validate(c Case) error {
+	if strings.TrimSpace(c.TenantID) == "" {
+		return ErrNoTenant
+	}
+	if strings.TrimSpace(c.SourceText) == "" {
+		return ErrNoText
+	}
+	if !c.Consented {
+		return ErrNoConsent
+	}
+	return nil
 }
