@@ -161,7 +161,8 @@ método** (hallazgo 63 de F6).
 | `postgres.go` | 260 | 6 | Adaptador de `JobStore` — **sin cipher a propósito** (D-044.26: lo que llega a `PutSourceText` son bytes ya cifrados; `fase3_almacenes.go:171-176`) |
 | `machine_postgres.go` | 431 | 7 | Adaptador de `PipelineStore` (reclamo, avance de etapa, castigo con causa, backoff, `Despertar`) 🔶 `FOR UPDATE SKIP LOCKED` y reloj |
 
-Suites `C/intake/intakehelpertest`: `ContratoCola(t, func(t) Montaje)` sobre `JobStore` (abrir o anexar a la ventana de
+✎ F7-01: en el código son `ContratoQueue`, `ContratoMachine` y una tercera, `ContratoReanalysis` (hallazgo 2 del README;
+correspondencia de nombres en [`tareas.md`](tareas.md)). Suites `C/intake/intakehelpertest`: `ContratoCola(t, func(t) Montaje)` sobre `JobStore` (abrir o anexar a la ventana de
 una clave; cerrar devuelve `true` una sola vez; listar solo `aggregating`; `PutSourceText` idempotente
 por clave) y `ContratoMaquina(t, func(t) Montaje)` sobre `PipelineStore` (reclamar solo `pending`; un job reclamado
 no lo reclama otro; terminar/castigar; reintentos). 🔶 los casos exactos de

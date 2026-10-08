@@ -1,7 +1,8 @@
 # F7 · `captacion` — la cola que convierte una conversación en borrador (P2→P4, match, draft)
 
 > **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
-> ese día ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
+> ese día ([`diseno.md`](diseno.md) §1.2). **F7-01 hecha** (bloque A): `evidence`, `anclaje`, `intake`, `intentcfg` y `casebank` en verde
+> (18 ficheros de producción y dobles, 5 suites en memoria; `PENDIENTES=0`, `ROJOS=0`). Falta `stages` (F7-02). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -143,3 +144,68 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
 ## Hallazgos de la ejecución
 
 *(Se numeran aparte de las contradicciones de la spec.)*
+
+1. 🟡 **El anonimizador de `casebank` deja pasar PII en tres casos que el viejo no declara** (F7-01; para Jhoan, sin
+   bloquear). Medido ejecutando el viejo: (a) dos JID pegados (`584121234567@s.whatsapp.net584121234567@s.whatsapp.net`)
+   dejan el segundo número en claro, contra la cabecera de `internal/casebank/anonimizar.go:84-86` («`Restos(Anonimizar(x))`
+   está VACÍO SIEMPRE»); (b) dos teléfonos seguidos separados solo por un espacio o un salto se funden en una racha de más
+   de 15 dígitos y pasan enteros, con `Restos` vacío; (c) los dígitos árabes-índicos o de ancho completo pasan enteros. **Se
+   conservó la conducta** (manda el viejo), se corrigió el comentario y los tres casos quedan fijados en
+   `anonymize_corpus_test.go` y `TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind`. Cerrarlos cambia el alcance del
+   anonimizador que siembra `intake_case_bank`: decisión de Jhoan.
+2. **Las suites son cinco, no cuatro**: nació `intakehelpertest.ContratoReanalysis` (10 casos) para `LiveJobOfEvent` y
+   `OpenReanalysis`, que en el viejo solo tenían tests del texto del SQL y no pertenecen a `JobStore` ni a
+   `PipelineStore` (hallazgo 63 de F6: un caso por método con BD). Su puerto es `intakehelpertest.ReanalysisStore` y su
+   doble, `reanalysis_memory.go` sobre `MachineMemory` (nuevo, sin fichero viejo): F7-03 puede usarlo para `reanalisis`.
+   **F7-05 corre cinco suites contra Postgres** (`ContratoQueue` 14 casos, `ContratoMachine` 29, `ContratoReanalysis` 10,
+   `intentcfg` 9, `casebank` 12).
+3. **`intake/reanalisis.go` se partió en dos**: `reanalysis.go` (tipos) y `postgres_reanalysis.go` (los dos métodos SQL
+   de `*Postgres`), siguiendo D-F6-6. Es convención, no candado: nada en `internal/candados/` exige que el SQL viva en
+   `*postgres*`. El módulo pasa a 7 ficheros de producción en `intake`.
+4. **El orden del verde de `intake` no fue el de T7.15** (`memory.go` primero): `store`, `machine` y `reanalysis` van
+   antes, porque los dobles llaman a `SourceText.Complete`, `Artifact.Validate`/`StageIndex` y
+   `ReanalysisRequest.Valid`; con esos en rojo el paquete no pasaba sin la etiqueta.
+5. **`MachineMemory` no es una copia de `StoreEnMemoria`** (`pipeline/memoria.go:163-318`): para que `ContratoMachine`
+   valga igual en Postgres guarda y mueve `updated_at`, el reclamo devuelve `Reanalysis` (el viejo lo dejaba a cero,
+   `:228`), una transición con `jobID` vacío da error como el adaptador (el viejo, `(false, nil)`) y `View` devuelve
+   copias profundas. Conserva el texto corto del viejo en `Fail` sin causa. F7-03, al portar los guiones de `pipeline`,
+   tiene que contar con estas cuatro diferencias.
+6. **`MemoryStore.Jobs` ya no ordena por `ID`** (`internal/intake/memory.go:152`): el viejo ordenaba como cadena y con
+   10 filas o más `job-10` salía antes que `job-2`, contra su propio comentario. Es una ayuda de observación para tests,
+   no conducta de producción: mejora clara, se hizo.
+7. 🟡 **Divergencia heredada, sin corregir: la clave de ventana incompleta.** `MemoryStore` la acepta (abre la ventana)
+   y `Postgres` la rechaza (`postgres.go:73,120,174`). `ContratoQueue` no lo afirma; lo fija solo el test del adaptador.
+   Si el gemelo debe rechazarla, hay que mirar antes los tests del agregador (F8) que usen claves a medias.
+8. **`intentcfg`: memoria y Postgres divergen en el blob, y la suite lo absorbe.** Memoria devuelve los bytes exactos;
+   Postgres guarda JSONB y lee `config::text`, que reordena claves. La suite compara por equivalencia JSON (como el test de
+   integración viejo). Un blob que no sea JSON, memoria lo acepta y Postgres lo rechazaría: queda fuera de la suite,
+   documentado en el contrato de `Upsert` (validar es del llamante). `UpdatedAt` se refresca **siempre**, también
+   reescribiendo lo mismo (al revés que `tenantvars`): fijado como promesa.
+9. **`casebank`: el consentimiento lo rechazan los dos, con errores distintos.** El `Service` devuelve el centinela sin
+   llamar al store; el store pasa `consented` como parámetro a propósito y lo rechaza el CHECK
+   `intake_case_bank_consented_check`. La suite exige al store error, id 0, nada escrito y el nombre de la constraint
+   en el texto, **no** `ErrNoConsent`; `Memory` lo reproduce. El caso `Insert_InvalidExpectedJSON_…` no tiene respaldo
+   en el viejo (se da por cierto por ser JSONB): si en F7-05 diverge, se quita el caso y la validación del doble.
+10. **Lo que F7-05 necesita para montar las suites en Postgres** (dicho por quienes las escribieron): la tabla
+    `intake_jobs` **vacía por caso** (`ClaimNext` y `ListAggregating` no filtran por tenant; `validateMachineMontaje` lo
+    comprueba); `EventID` e `IntakeID` son UUID; `Seed` inserta la fila tal cual (los ceros son NULL); `Now` es el
+    `now()` de la base; `casebankhelpertest.Montaje.Rows` es un `SELECT id, tenant_id, consented, source_text, expected
+    FROM public.intake_case_bank WHERE tenant_id=$1 ORDER BY id`; el `Advance` de `intentcfg` espera a que `now()` pase
+    del microsegundo, como el de `tenantvars`. Fuera de las suites, para los procesos: `SKIP LOCKED` en carrera, un job
+    `failed` que no impide abrir el siguiente, y el default de `consented` (`TestElDefaultDeConsentedRECHAZAALDescuidado`).
+11. 🟡 **Hallazgo 63 de F6, repetido aquí como se esperaba**: de 115 mutantes sobre `intake` (114 muertos, 1 equivalente:
+    el `if messageTS.Valid` de `scanClaim`), los de las guardas SQL —`status =`, `next_attempt_at <= now()`,
+    `tenant_id = $1`, `array_position`, el vaciado de las tres columnas, el predicado del `ON CONFLICT`, el `IS NULL` del
+    sobre— **solo los mata el test del texto de la sentencia**. En memoria no puede ser de otro modo; F7-05 los repite
+    contra Postgres con las tres suites. `anclaje`: 22 mutantes, 2 vivos tras el rojo, 0 tras añadir sus dos tests.
+    `casebank`: 6, 0 vivos.
+12. **`anclaje` no consulta el reloj**: el `time.Now()` que contó el inventario es un comentario
+    (`internal/intake/anclaje/anclaje.go:41`). Reglas que el test viejo no fijaba y ahora tienen caso: la ventana es `>`
+    estricto (5 min exactos siguen dentro), un turno sin texto fuera de ventana también corta, una mención ambigua cae a
+    proximidad, el mínimo de 4 se cuenta en runas. Los 115 casos del rojo pasaron también contra el paquete viejo.
+13. **El lint encontró 14 avisos en los tests al cerrar** (los sub-agentes no corren `make lint`, que es del árbol
+    entero): corregidos en `9bbc2dd` sin tocar producción. Coste: una pasada extra de gates. Para F7-02: que cada
+    sub-agente corra el lint **solo de su paquete** antes de devolver.
+14. **Un `\uFEFF` escrito con un heredoc llega al disco como el carácter literal** y no compila («illegal byte order
+    mark»); durante un par de minutos rompió el parseo de los candados de `./internal/modulos/` para los otros
+    sub-agentes, que comparten árbol. Los invisibles del corpus adversario se escriben escapados con un script.

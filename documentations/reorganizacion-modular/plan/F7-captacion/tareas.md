@@ -19,20 +19,49 @@
 ## Bloque A · inventario E-12 y hojas · 🌐❓ · sesión F7-01 · T7.1–T7.6, T7.14–T7.15
 Para cuando: inventario **aprobado por Jhoan** · `evidence`, `intake`, `anclaje`, `intentcfg`, `casebank` en verde con sus suites en memoria · `ci-local` rc=0 · PR.
 
-- [ ] **T7.1 · Inventario E-12** · 🌐❓ · dep. F6 cerrada · cumple R7.1.a
+- [x] **T7.1 · Inventario E-12** — `6c461c6` (aprobado por Jhoan el 2026-10-08) · 🌐❓ · dep. F6 cerrada · cumple R7.1.a
   - **Produce**: (1) la tabla `archivo · estado en memoria · concurrencia · BD/transacciones · nº de consumidores · nivel (simple/medio/complejo)` de los 32 ficheros, más los 2 de la cara HTTP y el adaptador; (2) la **lista de adaptadores**: nace `bridge_captacion.go` (muere F8); muere `llmConfigBridge` de `bridge_inferencia.go` (F4). Parte de la clasificación provisional de [`diseno.md`](diseno.md) §1.1; si un archivo sale peor, sube de nivel
   - **Además**: entradas del README comprobadas; recuento de `diseno.md` §1; resueltos los 🔶 de inventario: D-F7-3 (`memoria.go`), `Plazas` estructural, reloj de `machine_postgres.go`, nombre de la tabla de intenciones, textos observables de `V` y de `publicapi/{reanalyze,intents}.go`
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.**
   - **Commit**: `docs(reorganizacion-modular): F7 arranca — inventario E-12 aprobado`
-- [ ] **T7.2 · rojo(captacion): contrato de `evidence`** · 🌐❓ · dep. T7.1 · cumple R7.1.c · el ejemplo de `05` §10 tal cual · **Commit**: `rojo(captacion): contrato de evidence`
-- [ ] **T7.3 · rojo(captacion): `intake` + `intakehelpertest`** · 🌐❓ · dep. T7.1 · cumple R7.1.b, R7.5.a
+- [x] **T7.2 · rojo(captacion): contrato de `evidence`** — `06c7ffc` (nivel **simple**: contrato, test y lógica en una pasada, `verde(captacion): evidence.go`) · 🌐❓ · dep. T7.1 · cumple R7.1.c · el ejemplo de `05` §10 tal cual · **Commit**: `rojo(captacion): contrato de evidence`
+- [x] **T7.3 · rojo(captacion): `intake` + `intakehelpertest`** — `eb20115` (tres suites: `ContratoQueue`, `ContratoMachine` y `ContratoReanalysis`) · 🌐❓ · dep. T7.1 · cumple R7.1.b, R7.5.a
   - **Ficheros**: 6 + 6 tests, `C/intake/intakehelpertest/{cola,maquina}.go` · **Hecho cuando**: `WindowKey` idéntico (4 `string`, mismo orden); las dos suites escritas como `Contrato…(t, func(t) Montaje)`, con la marca de estado sobre **todas** las columnas que cada operación puede tocar; `memory_test.go` las invoca · **Commit**: `rojo(captacion): contrato de intake (la cola)`
-- [ ] **T7.4 · rojo(captacion): `anclaje`** · 🌐❓ · dep. T7.2 · 🔶 19 casos de `V/anclaje_test.go` · **Commit**: `rojo(captacion): contrato de anclaje`
-- [ ] **T7.5 · rojo(captacion): `intentcfg` + suite, `casebank` + suite y doble** · 🌐❓ · dep. T7.1 · cumple R7.5.b–c
+- [x] **T7.4 · rojo(captacion): `anclaje`** — `e344915` · 🌐❓ · dep. T7.2 · 🔶 19 casos de `V/anclaje_test.go` · **Commit**: `rojo(captacion): contrato de anclaje`
+- [x] **T7.5 · rojo(captacion): `intentcfg` + suite, `casebank` + suite y doble** — `5ca038e` (`intentcfg`) y `e4a0e97` (`casebank`): un commit de rojo por paquete · 🌐❓ · dep. T7.1 · cumple R7.5.b–c
   - **Hecho cuando**: `casebankhelpertest.Memoria` nace completo y en verde; `intentcfg.MemoryStore` corre `intentcfghelpertest.Contrato`; las dos suites reciben `Montaje` · **Commit**: `rojo(captacion): contratos de intentcfg y casebank`
-- [ ] **T7.6 · Punto de control del rojo de las hojas** · 🌐❓ · `ci-local` rc=0 · `make test-pendiente` anotado (sin PR: la sesión sigue)
-- [ ] **T7.14 · verde(captacion): `evidence`, `anclaje`, `intentcfg`, `casebank`** · 🌐❓ · un commit por fichero (`verde(captacion): <fichero>`), cabecera `// Porta … @ <sha>`
-- [ ] **T7.15 · verde(captacion): `intake`** · 🌐❓ · `memory.go` primero (las dos suites en verde con `-race`), luego `store`, `machine`, `reanalisis`, y los dos adaptadores Postgres (`postgres.go`, `machine_postgres.go`: SQL literal, funciones puras; su suite contra Postgres la corre T7.27) · cierra la sesión: `ci-local` rc=0 · PR
+- [x] **T7.6 · Punto de control del rojo de las hojas** — hecho por paquete (cada sub-agente comprobó su rojo antes de commitearlo); al cierre `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0` · 🌐❓ · `ci-local` rc=0 · `make test-pendiente` anotado (sin PR: la sesión sigue)
+- [x] **T7.14 · verde(captacion): `evidence`, `anclaje`, `intentcfg`, `casebank`** — `06c7ffc` · `24bae38` · `c4f3f7c`, `75d456e` · `45d4efc`, `07d1326`, `1eda2f8`, `fc2588a` · 🌐❓ · un commit por fichero (`verde(captacion): <fichero>`), cabecera `// Porta … @ <sha>`
+- [x] **T7.15 · verde(captacion): `intake`** — `10785c4`, `8acda6d`, `62f3728`, `5fc13a1`, `8305b3b`, `aa45d2d`, `7b25bb8`, `0508f52`, `6f37362` (+ `9bbc2dd`, lint de los tests) · orden real: `store`, `machine`, `reanalysis` **antes** que los dobles, que los usan (hallazgo 4) · 🌐❓ · `memory.go` primero (las dos suites en verde con `-race`), luego `store`, `machine`, `reanalisis`, y los dos adaptadores Postgres (`postgres.go`, `machine_postgres.go`: SQL literal, funciones puras; su suite contra Postgres la corre T7.27) · cierra la sesión: `ci-local` rc=0 · PR
+
+### Correspondencia de nombres (E-11) — F7-01
+
+La spec nombra en español lo que el código nuevo lleva en inglés. Textos observables, SQL y `WindowKey` no cambian.
+
+| Paquete | Viejo / spec | Nuevo |
+|---|---|---|
+| `intake` | `ClaimNextIgnorandoBackoff` | `ClaimNextIgnoringBackoff` |
+| `intake` | `Reanalisis` (tipo y campo) · `EsDelDueño` | `Reanalysis` · `IsFromOwner` |
+| `intake` | `SolicitudReanalisis` (campo `Contexto`) | `ReanalysisRequest` (`Context`) |
+| `intake` | `JobNoTerminalDeEvento` · `AbrirReanalisis` | `LiveJobOfEvent` · `OpenReanalysis` |
+| `intake` | `reanalisis.go` | `reanalysis.go` (tipos) + `postgres_reanalysis.go` (SQL) |
+| `intakehelpertest` | `ContratoCola` · `ContratoMaquina` (spec) | `ContratoQueue` · `ContratoMachine` (+ `ContratoReanalysis`, nueva) |
+| `intakehelpertest` | `pipeline.Fila` · `StoreEnMemoria` · `NuevoStoreEnMemoria` | `Row` · `MachineMemory` · `NewMachineMemory` |
+| `intakehelpertest` | `Sembrar` · `Ver` · `RomperElClaim` | `Seed` · `View` · `BreakClaim` (`Claims` igual) |
+| `anclaje` | `Repartir` · `Reparto{PorLinea, Solicitud}` | `Distribute` · `Distribution{ByLine, Request}` |
+| `anclaje` | `Turno{Seq, Texto, En}` · `Linea{Idx, Evidencia, Etiqueta}` | `Turn{Seq, Text, At}` · `Line{Idx, Evidence, Label}` |
+| `anclaje` | `Opciones{MaxMensajesAtras, Ventana}` · `MediaRef.En` | `Options{MaxMessagesBack, Window}` · `MediaRef.At` |
+| `anclaje` | `EtiquetaAudio` · `MaxMensajesAtrasPorDefecto` · `VentanaPorDefecto` | `AudioLabel` · `DefaultMaxMessagesBack` · `DefaultWindow` |
+| `casebank` | `anonimizar.go` · `semilla.go` | `anonymize.go` · `seed.go` |
+| `casebank` | `Caso` · `Store.Insertar`/`Existe` | `Case` · `Store.Insert`/`Exists` |
+| `casebank` | `Servicio` · `NewServicio` · `Insertar` · `Sembrar` | `Service` · `NewService` · `Insert` · `Seed` |
+| `casebank` | `ErrSinConsentimiento` · `ErrSinTenant` · `ErrSinTexto` | `ErrNoConsent` · `ErrNoTenant` · `ErrNoText` |
+| `casebank` | `Marca{JID,Telefono,Nombre}` · `Clase…` · `Hallazgo{Clase, Texto, Ini, Fin}` | `Mark{JID,Phone,Name}` · `Class…` · `Finding{Class, Text, Start, End}` |
+| `casebank` | `Anonimizador` · `NuevoAnonimizador` · `Anonimizar` · `Restos` · `Nombres` | `Anonymizer` · `NewAnonymizer` · `Anonymize` · `Remains` · `Names` |
+| `casebank` | `TextoCasoAmbar` · `NombresDelCaso` · `EsperadoCasoAmbar` · `CasoAmbar` | `AmbarCaseText` · `CaseNames` · `AmbarCaseExpected` · `AmbarCase` |
+| `casebankhelpertest` | `Memoria` (spec) | `Memory` |
+
+`evidence` e `intentcfg` no renombran nada (ya estaban en inglés).
 
 ## Bloque B · `stages` · 🌐❓ · sesión F7-02 · T7.7–T7.9, T7.16–T7.17
 Para cuando: 10 ficheros de `stages` en verde · puente (import) 1 declarado · `ci-local` rc=0 · PR.
