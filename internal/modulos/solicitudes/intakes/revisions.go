@@ -6,9 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Clases de revisión (columna `kind` de public.intake_revisions, migración 0045).
@@ -218,6 +217,32 @@ type CorrectionSignal struct {
 	CorrectsKind string `json:"corrects_kind,omitempty"`
 }
 
+// linesRevisionPayload es la forma canónica del payload de las revisiones que
+// retratan un conjunto de líneas con su total: RevisionKindCart (lo que armó el
+// carrito), RevisionKindCorrected (cómo quedó tras la corrección del dueño) y
+// RevisionKindApproved (lo que el dueño aprobó y cotizó, Plan 044 · T4.3). Es UNA
+// forma y no tres porque es la misma pregunta —qué líneas y por cuánto— contestada
+// por tres puertas; `kind` es lo que dice cuál fue.
+//
+// La señal va EMBEBIDA (json inline) y no en un objeto anidado: `as_correction` es
+// el nombre que el contrato del PUT ya usa (D-044.48 §1), y repetirlo dentro de un
+// objeto llamado «correction» lo diría dos veces. Los tres campos son opcionales, así
+// que una señal VACÍA —la de las otras dos clases de revisión, y la del PUT del 041—
+// serializa exactamente lo que se serializaba antes de esta tarea: nada.
+//
+// ⚠️ NO SUBE RevisionPayloadVersion, y es deliberado: son campos ADITIVOS y
+// opcionales. Ningún lector de la v1 se rompe (no hay un solo DisallowUnknownFields
+// sobre este payload en el repo), mientras que subir la versión la habría subido para
+// las TRES clases —`cart` y `approved` incluidas, que no han cambiado en nada— y
+// habría movido todos los golden files por un campo que la mayoría de las revisiones
+// no lleva.
+type linesRevisionPayload struct {
+	Version int            `json:"version"`
+	Total   float64        `json:"total"`
+	Items   []RevisionLine `json:"items"`
+	*CorrectionSignal
+}
+
 // CartRevisionPayload arma el payload de la revisión de CIERRE DE CARRITO
 // (`{"version":1,"total":…,"items":[…]}`, design §3): las claves salen en ESE orden
 // —`version` (siempre RevisionPayloadVersion), `total`, `items`— y cada línea con
@@ -235,7 +260,7 @@ type CorrectionSignal struct {
 // el error "intakes: serializar payload de la revisión del carrito: " envolviendo
 // (%w) el de encoding/json.
 func CartRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.CartRevisionPayload"))
+	return linesPayload("del carrito", total, lines, CorrectionSignal{})
 }
 
 // CorrectedRevisionPayload arma el payload de la revisión de CORRECCIÓN MANUAL
@@ -254,7 +279,7 @@ func CartRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, 
 // El error de serialización es "intakes: serializar payload de la revisión de la
 // corrección manual: " envolviendo (%w) el de encoding/json.
 func CorrectedRevisionPayload(total float64, lines []RevisionLine, signal CorrectionSignal) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.CorrectedRevisionPayload"))
+	return linesPayload("de la corrección manual", total, lines, signal)
 }
 
 // ApprovedRevisionPayload arma el payload de la revisión de APROBACIÓN del dueño
@@ -268,5 +293,28 @@ func CorrectedRevisionPayload(total float64, lines []RevisionLine, signal Correc
 // El error de serialización es "intakes: serializar payload de la revisión de la
 // aprobación: " envolviendo (%w) el de encoding/json.
 func ApprovedRevisionPayload(total float64, lines []RevisionLine) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.ApprovedRevisionPayload"))
+	return linesPayload("de la aprobación", total, lines, CorrectionSignal{})
+}
+
+// linesPayload serializa la forma compartida. `what` solo entra en el mensaje de
+// error: sin él, un fallo de serialización no diría qué revisión se perdió.
+//
+// La señal se embebe SIEMPRE y no bajo un `if`: con los tres campos vacíos, los tres
+// `omitempty` la borran entera del JSON. Una rama aquí sería un segundo sitio donde
+// se decide si hay señal, y quien decide eso es la edición (edit.go) — una sola vez,
+// que es lo que hace que una mutación en esa guarda se vea.
+func linesPayload(what string, total float64, lines []RevisionLine, signal CorrectionSignal) (json.RawMessage, error) {
+	if lines == nil {
+		lines = []RevisionLine{}
+	}
+	raw, err := json.Marshal(linesRevisionPayload{
+		Version:          RevisionPayloadVersion,
+		Total:            total,
+		Items:            lines,
+		CorrectionSignal: &signal,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("intakes: serializar payload de la revisión %s: %w", what, err)
+	}
+	return raw, nil
 }
