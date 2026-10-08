@@ -20,8 +20,10 @@ package intakes
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -43,7 +45,10 @@ import (
 // Por eso los fallos de (de)serialización NO envuelven su causa —el mensaje de
 // encoding/json cita el fragmento que no supo leer, y ese fragmento es el dato en
 // claro—.
-type PostgresBuyerData struct{}
+type PostgresBuyerData struct {
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+}
 
 // NewPostgresBuyerData construye el adaptador sobre el pool y el cifrador de
 // campo dados. El cifrador es OBLIGATORIO: un escritor sin él guardaría datos
@@ -54,7 +59,7 @@ type PostgresBuyerData struct{}
 // No abre ni comprueba la conexión, ni cifra nada: construir no emite ninguna
 // sentencia.
 func NewPostgresBuyerData(db *sql.DB, cipher *crypto.FieldCipher) *PostgresBuyerData {
-	panic(pendiente.Implementar("intakes.NewPostgresBuyerData"))
+	return &PostgresBuyerData{db: db, cipher: cipher}
 }
 
 // PutBuyerField fusiona UN campo del checklist en la fila cifrada de la
@@ -116,8 +121,60 @@ func NewPostgresBuyerData(db *sql.DB, cipher *crypto.FieldCipher) *PostgresBuyer
 // NO filtra por tenant: el llamante (el proyector del carrito) obtuvo el intakeID
 // resolviendo la solicitud ABIERTA de (tenant, contacto), y la FK garantiza que
 // la fila es de esa solicitud. Ningún camino recibe un intakeID de fuera.
-func (p *PostgresBuyerData) PutBuyerField(ctx context.Context, intakeID, key, value string) error {
-	panic(pendiente.Implementar("intakes.PostgresBuyerData.PutBuyerField"))
+func (p *PostgresBuyerData) PutBuyerField(ctx context.Context, intakeID, key, value string) (err error) {
+	if key == "" {
+		return ErrBuyerFieldEmpty
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("intakes: abrir transacción de datos del comprador: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rerr := tx.Rollback(); rerr != nil && !errors.Is(rerr, sql.ErrTxDone) {
+				err = errors.Join(err, fmt.Errorf("intakes: rollback de datos del comprador: %w", rerr))
+			}
+		}
+	}()
+
+	data, existed, err := p.currentBuyerData(ctx, tx, intakeID)
+	if err != nil {
+		return err
+	}
+	data[key] = value
+
+	blob, err := json.Marshal(data)
+	if err != nil {
+		// El error de json.Marshal NO se envuelve con %w ni se propaga tal cual: su
+		// mensaje puede citar el valor que no supo serializar. Un map[string]string
+		// no puede fallar aquí, pero la regla se sostiene igual.
+		return fmt.Errorf("intakes: serializando los datos del comprador de la solicitud %s", intakeID)
+	}
+	enc, dek, kekID, err := p.cipher.Encrypt(string(blob))
+	if err != nil {
+		return fmt.Errorf("intakes: cifrando los datos del comprador: %w", err)
+	}
+
+	if existed {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE public.intake_buyer_data
+			SET data_enc = $2, data_dek = $3, data_kek_id = $4, updated_at = now()
+			WHERE intake_id = $1
+		`, intakeID, enc, dek, kekID)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO public.intake_buyer_data (intake_id, data_enc, data_dek, data_kek_id)
+			VALUES ($1, $2, $3, $4)
+		`, intakeID, enc, dek, kekID)
+	}
+	if err != nil {
+		return fmt.Errorf("intakes: guardando los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("intakes: confirmando los datos del comprador: %w", err)
+	}
+	return nil
 }
 
 // GetBuyerData lee y DESCIFRA el checklist de UNA solicitud (Plan 042 · Ola 3 ·
@@ -137,5 +194,71 @@ func (p *PostgresBuyerData) PutBuyerField(ctx context.Context, intakeID, key, va
 //     «intakes: los datos del comprador de la solicitud <id> no son un objeto
 //     JSON» (este último sin causa, para no citar el dato en claro).
 func (p *PostgresBuyerData) GetBuyerData(ctx context.Context, intakeID string) (BuyerData, bool, error) {
-	panic(pendiente.Implementar("intakes.PostgresBuyerData.GetBuyerData"))
+	var (
+		enc, dek []byte
+		kekID    string
+	)
+	err := p.db.QueryRowContext(ctx, `
+		SELECT data_enc, data_dek, data_kek_id
+		FROM public.intake_buyer_data
+		WHERE intake_id = $1
+	`, intakeID).Scan(&enc, &dek, &kekID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return BuyerData{}, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("intakes: leer los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+
+	// Misma regla que currentBuyerData: se descifra con la KEK que envolvió ESTA
+	// fila (data_kek_id), no con la current.
+	plain, err := p.cipher.Decrypt(enc, dek, kekID)
+	if err != nil {
+		return nil, false, fmt.Errorf("intakes: descifrando los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+	data := BuyerData{}
+	if err := json.Unmarshal([]byte(plain), &data); err != nil {
+		return nil, false, fmt.Errorf("intakes: los datos del comprador de la solicitud %s no son un objeto JSON", intakeID)
+	}
+	return data, true, nil
+}
+
+// currentBuyerData lee y DESCIFRA la fila dentro de la transacción, bloqueándola
+// (FOR UPDATE) para que la fusión sea atómica. Sin fila devuelve un mapa vacío y
+// existed=false.
+//
+// Un blob que no se puede descifrar o que no es un JSON de objeto devuelve ERROR y
+// no un mapa vacío: seguir adelante sobrescribiría con un solo campo lo que fuera
+// que hubiera ahí, y "no lo entiendo" nunca puede resolverse borrando.
+func (p *PostgresBuyerData) currentBuyerData(ctx context.Context, tx *sql.Tx, intakeID string) (BuyerData, bool, error) {
+	var (
+		enc, dek []byte
+		kekID    string
+	)
+	err := tx.QueryRowContext(ctx, `
+		SELECT data_enc, data_dek, data_kek_id
+		FROM public.intake_buyer_data
+		WHERE intake_id = $1
+		FOR UPDATE
+	`, intakeID).Scan(&enc, &dek, &kekID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return BuyerData{}, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("intakes: leer los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+
+	// Se descifra con la KEK que envolvió ESTA fila (data_kek_id), no con la
+	// current: tras una rotación parcial coexisten filas de varias KEK (Plan 012).
+	plain, err := p.cipher.Decrypt(enc, dek, kekID)
+	if err != nil {
+		return nil, false, fmt.Errorf("intakes: descifrando los datos del comprador de la solicitud %s: %w", intakeID, err)
+	}
+	data := BuyerData{}
+	if err := json.Unmarshal([]byte(plain), &data); err != nil {
+		// El error de unmarshal se DESCARTA (no se envuelve): su mensaje cita el
+		// fragmento que no supo leer, y ese fragmento es el dato en claro.
+		return nil, false, fmt.Errorf("intakes: los datos del comprador de la solicitud %s no son un objeto JSON", intakeID)
+	}
+	return data, true, nil
 }

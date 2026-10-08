@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // Los tests de fichero de PostgresBuyerData, con un driver de database/sql de mentira
