@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -372,6 +370,27 @@ func TestDiscard_InfrastructureFailureCutsTheBatch(t *testing.T) {
 	}
 	if !slices.Equal(st.asked, []string{"a", "b"}) {
 		t.Errorf("ids pedidos = %v, quería [a b]: tras el fallo no se sigue", st.asked)
+	}
+}
+
+// TestDiscard_WrappedNotFoundIsStillNotFound: un store que ENVUELVE ErrNotFound (con su
+// contexto) sigue siendo «no existe para este tenant»: se contesta `not_found` y el lote
+// sigue, no se corta como si fuera infraestructura.
+func TestDiscard_WrappedNotFoundIsStillNotFound(t *testing.T) {
+	t.Parallel()
+	st := &discardStore{
+		outcomes: map[string]DiscardOutcome{"b": {Discarded: true, Status: StatusOpen}},
+		errs:     map[string]error{"a": fmt.Errorf("leer la solicitud: %w", ErrNotFound)},
+	}
+	res, err := NewService(st).Discard(context.Background(), discardTenant, []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("Discard = %v, quería nil: un ErrNotFound envuelto no corta el lote", err)
+	}
+	if !slices.Equal(res.Skipped, []DiscardSkip{{IntakeID: "a", Reason: DiscardSkipNotFound}}) {
+		t.Errorf("Skipped = %+v, quería a con %q", res.Skipped, DiscardSkipNotFound)
+	}
+	if !slices.Equal(res.Discarded, []string{"b"}) {
+		t.Errorf("Discarded = %v, quería [b]: el lote sigue tras el not_found", res.Discarded)
 	}
 }
 
