@@ -10,6 +10,13 @@
 > nombraba con `…test` (`degradationtest`, `tenantllmtest`): se actualizó el sufijo, nada más.
 >
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
+>
+> ✎ **Estado al 2026-10-07 (F45-02): CONMUTADA, sin cerrar.** `internal/modulos/inferencia` entero en verde (F45-01); el
+> arranque nuevo construye el selector, los almacenes y la carga de prompts nuevos y la cara `apipublica` sirve las 4
+> rutas F1–F4 (`98b24c5`); `FaseActual = 4` (hoy `5`, por F5). El adaptador `internal/arranque/bridge_inferencia.go`
+> vive hasta **F8** (`llmConfigBridge` muere en F7; `turneroBridge`, y con él el fichero, en F8), así que `inferencia`
+> sigue fuera de `Conmutados`. `bridge_gateway.go` de F3 está borrado y, desde el cierre de la sesión, `edge` está en
+> `Conmutados` (`{"acceso","edge"}`, D-F3-14, hallazgo 15). **Queda el cierre F45-03** (T4.29–T4.31 = T9.25).
 
 ## Objetivo en tres líneas
 
@@ -75,9 +82,12 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 
 | Sesión | Entorno | Tareas de F4 | Punto de parada |
 |---|---|---|---|
-| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 🌐 | T4.1–T4.9, T4.11–T4.23 | Jhoan aprobó la tabla de niveles; `internal/modulos/inferencia` sin etiqueta `pendiente`; C2 nuevo y viejo verdes; `ci-local` rc=0 con 0 SKIP |
-| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · adaptador, conmutar y 4 rutas (y F5 entero) | 🌐 | T4.10, T4.24–T4.28 (+ TX.12–TX.14) | huella idéntica con `FaseActual = 4`; test de cableado de `bridge_inferencia.go` verde |
+| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 💻 | T4.1–T4.9, T4.11–T4.23 | Jhoan aprobó la tabla de niveles; `internal/modulos/inferencia` sin etiqueta `pendiente`; C2 nuevo y viejo verdes; `ci-local` rc=0 con 0 SKIP |
+| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · adaptador, conmutar y 4 rutas (y F5 entero) | 💻 | T4.10, T4.24–T4.28 (+ TX.12–TX.14) | huella idéntica con `FaseActual = 4`; test de cableado de `bridge_inferencia.go` verde |
 | [`F45-03`](../sesiones/F45-03-cli-cierre.md) · cierre local de las dos fases | 💻 | T4.29–T4.31 (+ T9.25) | definición de hecho de [`reglas.md`](reglas.md) §4; suites contra Postgres y procesos de F9 contra el binario nuevo |
+
+✎ **2026-10-07**: F45-01 y F45-02 figuraban como 🌐; las dos se hicieron en local (💻, D-R-8: desde el 2026-10-04 no hay
+sesiones web). El «web» del nombre de sus fichas es histórico.
 
 ## Decisiones que necesita (con recomendación)
 
@@ -154,3 +164,77 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
     Otras del código viejo que el contrato escribe tal cual: un marcador repetido dentro de su sección de plantilla no
     da error (`internal/prompts/prompts.go:278-287`); `Volcar` no es atómico (`volcar.go:55-70`); la rama «cerrar
     filas» de `degradation.List` solo es alcanzable con un driver que deja otro conjunto de resultados pendiente.
+
+### F45-02 (2026-10-07; rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`)
+
+12. **T4.24 no es separable de TX.14.** Al cambiar los tipos del contenedor, `internal/arranque/fase8_transporte.go`
+    (los campos `TenantLLM` y `DegradationNotices` de `publicapi.Deps`) deja de compilar, y ponerlos a `nil` sin montar
+    F1–F4 en la cara nueva rompe `TestHuella`. Se fundieron en `98b24c5`, con `FaseActual = 4` (lo exige `mudanzas.go`:
+    la fase sube en el commit que monta las rutas). La lista de ficheros de T4.24 omite `fase8_transporte.go`, `http.go`
+    y `mudanzas*.go`.
+13. **T4.28 quedó sin contenido propio.** `internal/modulos/edge/grpc/inference_test.go` ya no importa `degradation`
+    (vocabulario escrito a mano); no se crea la arista `edge → inferencia`; el `grep` de su «Hecho cuando» solo casa la
+    entrada del `Mapa` en `fronteras_test.go`. Su `FaseActual = 4` viajó en `98b24c5`.
+14. **`gateway_wiring_test.go` no estaba en la lista de T4.24** y se rompía al borrar `bridge_gateway.go` (exigía
+    `*gatewayBridge` por reflexión; lo avisaba el hallazgo 11): reescrito en `98b24c5`; añade el campo `router` del
+    selector al test de identidad.
+15. ✅ *(era 🟡; resuelto el 2026-10-07, nota ✎ al final)* **`edge` no entra en `Conmutados`** (decisión (a) de Jhoan, 2026-10-07: entraba en T4.24 **salvo** que obligara a
+    tocar aserciones de `session_identity_test.go`; la salvedad se cumplió). `internal/arranque/session_identity_test.go:7`
+    importa `internal/gateway/session` viejo y 3 de sus 4 aserciones nombran el centinela viejo `ErrSessionOffline`: la
+    regla 3 lo pondría rojo. `Conmutados` sigue `{"acceso"}`. El comentario de `internal/modulos/fronteras_test.go`
+    (antes «edge no entra hasta F4») se actualizó. Contradice [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7
+    (`:83-85`) — corregido el 2026-10-07 (nota fechada en ese §4.7). **Pendiente de Jhoan**: qué se hace con ese test
+    (muere, se mueve o excepción).
+    ✎ **Resuelto el 2026-10-07 (D-F3-14, Jhoan, al cierre de F45-02): test borrado, `edge` dentro.**
+    `internal/arranque/session_identity_test.go` ya no existe y `Conmutados` es `{"acceso","edge"}`. El test era
+    redundante: el centinela nuevo lo fijan `TestErrSessionOfflineIsThePlatformSentinel` y `TestPushOfflineSession`
+    (`internal/modulos/edge/session`) y `TestP1_EdgeFaceOverTheWire/offline_session_is_502`; el viejo,
+    `TestSendMessageHandler_Offline` y `TestSendMessageHandler_StreamCaido_NoPisaEl502DeOffline`
+    (`internal/platform/httpapi`). Con `edge` dentro y el test presente, `TestFronteras` daba una sola violación (ese
+    test); borrado, rc=0 y 0 SKIP. Porqué completo, alternativas y lo que se pierde:
+    [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7.
+16. **Forma del adaptador.** `llmConfigBridge` guarda una interfaz mínima no exportada (`llmConfigReader`, solo `Get`)
+    para probarse sin BD; `inference_wiring_test.go` afirma por reflexión que lo cableado es el `*tenantllm.Postgres`
+    nuevo. `turneroBridge` guarda el `*llmvia.Selector` concreto. El centinela se traduce reutilizando `bridgeError` de
+    `bridge_contact.go`. Dos alias de import en el adaptador (`legacyllm`, `legacytenantllm`).
+17. **Test de cableado completo** en `internal/arranque/inference_wiring_test.go` (nombres `TestCableado_…` /
+    `TestIdentidad_…`, seleccionables por el gate estrecho). Comprobado por mutación a mano por el orquestador: turnero
+    sin selector, adaptador de config sin almacén, selector sin `WithFrame` y `FaseActual` a 3 dan rojo las cuatro
+    (`TestIdentidad_TheBridgesWrapTheContainerInstances`, `TestIdentidad_EveryConsumerSharesTheOneSelector`,
+    `TestTurnoAcotadoCableado`, `TestIdentidad_EveryConsumerSharesTheOneGateway`, `TestMudanzas_FaseActual`,
+    `TestMudanzas_HuellaPorElCompuesto`).
+18. **`internal/arranque/prompts.go` no tenía test** (nace `prompts_test.go` en `0e532e4`). `prompts.Volcar` escribe en
+    el preámbulo el texto `"package_size": 0` (`internal/modulos/inferencia/prompts/volcar.go:138`): para fabricar la
+    plantilla inválida se reemplaza `"package_size": 30`.
+19. **De los tests de cableado copiados (T4.27) solo cambió `turno_acotado_cableado_test.go`.**
+    `pipeline_captacion_cableado_test.go:156` es la única aserción copiada sobre el selector compartido y es por nombre;
+    la identidad real la cubre ahora `inference_wiring_test.go`.
+20. **El `grep` literal de [`reglas.md`](reglas.md) §4.7 casa también constantes de texto en tests**: en
+    `inference_wiring_test.go` las rutas viejas se componen con un prefijo.
+21. **`apipublica`**: `tenantllm.go` nace partido (`tenantllm_body.go` + gemelo) por E-13; entrada nueva en el C2
+    (`internal/modulos/inferencia/llmvia/c2_via_test.go`); primer uso de `entitlements.RequireFeature` en la cara nueva
+    (el resolver llega por `Deps`, no por `Common`); orden de cadena reproducido: Authenticate → RequirePermission →
+    (escrituras) auditoría → gate de feature → handler, así que en PUT/DELETE el 403 del gate deja registro de auditoría
+    `failure` y en los GET no. `upsertDesde` → `upsertFrom` (E-11).
+22. 🟡 **Conservado del viejo y fijado por test, candidato a decisión**: el plazo vencido en
+    `GET /degradation-notices` responde 500, no 504 (`internal/publicapi/degradationnotices.go:150-153`);
+    PUT/DELETE/relectura de `tenant-llm` sin plazo de BD (`internal/publicapi/tenantllm.go:188,252,259,319`).
+    — Registrado el 2026-10-07 como deuda **D-24** y **D-25** en [`deuda.md`](../../../deuda.md), con veredicto: corregir tras F10.
+23. **No portado en `apipublica` (ramas inalcanzables)**: `ts == nil ⇒ 500` (`publicapi/tenantllm.go:184,237,315`),
+    `lister == nil ⇒ 500` (`degradationnotices.go:142`), `if offset < 0` (`:191-193`).
+24. **Restos en el arranque.** `internal/arranque/fase8_transporte.go:1-3`: la cabecera sigue diciendo «salvo acceso y
+    edge» (no actualizada para inferencia) — corregido el 2026-10-07. `internal/arranque/http.go:47`: `buildPublicAPIServer` va por 9 parámetros,
+    uno más por fase que muda rutas: conviene un struct antes de F6–F8.
+    — Resuelto el 2026-10-07 (`642eec9`): recibe un struct, `publicAPIDeps`, y las dependencias de la cara nueva viven
+    en un solo sitio, `newFaceDeps` (`mudanzas.go`), con un campo por módulo.
+25. **Lint.** `make lint` no ve los tests tras `//go:build pendiente`: los avisos aparecen al quitar la etiqueta
+    (hallazgo 8). Para verlos en rojo: `.bin/golangci-lint run --build-tags pendiente` (solo informativo). Y el candado
+    global de `golangci-lint` dio un `rc=2` espurio («parallel golangci-lint is running») con sub-agentes en paralelo:
+    reintentar (hallazgo 7).
+26. **Huella con `FaseActual = 4` y `5`: idéntica sin tocar la dorada**; perfiles `minimo` y `con-m2m`:
+    `:8100=22 :8103=73 rpc=2 metricas=11`. La cara nueva sirve 33 rutas (23 de acceso + 6 de edge + 4 de inferencia).
+
+**Decisiones de Jhoan en la sesión (2026-10-07)**: (a) `edge` y `Conmutados`, hallazgo 15 (cerrada el mismo día: test
+de identidad borrado, `edge` dentro); (b) `catalogo` no entra en
+`Conmutados` hasta F7 y (c) D-F5-2 sin ampliar el motor de fronteras, en el [README de F5](../F5-catalogo/README.md).
+Las tres, en [`DECISIONES.md`](../DECISIONES.md) §5 y §7.

@@ -182,10 +182,12 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // TODAS sus dependencias, FX diseño §6) sirve exactamente las filas del :8103 con fase ≤
 // FaseActual y no registra nada más (RX.3.a); el resto cae a la vieja. Desde F3
 // (conmutar(edge)), FaseActual = 3 y la cara sirve 29 rutas: las 23 de acceso (A1–A7, B1–B14,
-// C1–C2) y las 6 de edge (D1–D6).
+// C1–C2) y las 6 de edge (D1–D6). Desde F4 (conmutar(inferencia)), FaseActual = 4 y sirve 33:
+// además las 4 de inferencia (F1–F4). Desde F5 (conmutar(catalogo)), FaseActual = 5 y siguen
+// siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 3 {
-		t.Fatalf("FaseActual = %d; conmutar(edge) la deja en 3 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 5 {
+		t.Fatalf("FaseActual = %d; conmutar(catalogo) la deja en 5 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -201,8 +203,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 29 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2) y edge 6 (D1–D6): 29", len(esperadas), FaseActual)
+	if len(esperadas) != 33 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6) e inferencia 4 (F1–F4): 33", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -261,22 +263,38 @@ func newFaceDepsWithDoubles() newFaceDeps {
 		audit:        apipublica.AuditDeps{Audit: struct{ apipublica.AuditReader }{}},
 		entitlements: apipublica.EntitlementsDeps{Entitlements: entitlementshelpertest.NewFake()},
 		// F3 · edge: D1 se monta siempre; D2–D4 cada una con su almacén; D5–D6 con los tres.
-		messages: apipublica.MessagesDeps{
-			Sender:   struct{ apipublica.MessageSender }{},
-			Sessions: struct{ apipublica.SessionLister }{},
+		edge: edgeFaceDeps{
+			messages: apipublica.MessagesDeps{
+				Sender:   struct{ apipublica.MessageSender }{},
+				Sessions: struct{ apipublica.SessionLister }{},
+			},
+			sessions: apipublica.SessionsDeps{
+				Sessions:        struct{ apipublica.SessionLister }{},
+				SessionProfiles: struct{ apipublica.SessionProfileStore }{},
+				ProfilePush:     struct{ apipublica.ProfilePusher }{},
+				SessionStatus:   struct{ apipublica.SessionStatusStore }{},
+			},
+			diagnostics: apipublica.DiagnosticsDeps{
+				Diagnostics: struct{ apipublica.DiagnosticsStore }{},
+				DiagnosticsRequester: struct {
+					apipublica.DiagnosticsRequester
+				}{},
+				Sessions: struct{ apipublica.SessionLister }{},
+			},
 		},
-		sessions: apipublica.SessionsDeps{
-			Sessions:        struct{ apipublica.SessionLister }{},
-			SessionProfiles: struct{ apipublica.SessionProfileStore }{},
-			ProfilePush:     struct{ apipublica.ProfilePusher }{},
-			SessionStatus:   struct{ apipublica.SessionStatusStore }{},
-		},
-		diagnostics: apipublica.DiagnosticsDeps{
-			Diagnostics: struct{ apipublica.DiagnosticsStore }{},
-			DiagnosticsRequester: struct {
-				apipublica.DiagnosticsRequester
-			}{},
-			Sessions: struct{ apipublica.SessionLister }{},
+		// F4 · inferencia: F1–F3 con el almacén y el resolver de derechos; F4 con el lector y el
+		// resolver.
+		inference: inferenceFaceDeps{
+			tenantLLM: apipublica.TenantLLMDeps{
+				TenantLLM:    struct{ apipublica.TenantLLMStore }{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
+			degradationNotices: apipublica.DegradationNoticesDeps{
+				DegradationNotices: struct {
+					apipublica.DegradationNoticeLister
+				}{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
 		},
 	}
 }

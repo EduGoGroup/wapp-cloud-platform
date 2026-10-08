@@ -77,6 +77,11 @@ var allowed = map[string]string{
 
 	"internal/modulos/inferencia/tenantllm/tenantllmhelpertest/memoria.go": "El DOBLE del almacén: aplica la misma regla de persistencia que " +
 		"el adaptador Postgres (las guardas de Upsert y la negativa de APIKey), o los tests que se apoyan en él verían otra cosa.",
+
+	// Entrada de TX.13 (F45-02), la que el comentario de arriba anunciaba: la misma que el candado
+	// viejo le da a internal/publicapi/tenantllm.go, con el mismo motivo.
+	"internal/apipublica/tenantllm.go": "El CONTRATO HTTP del PUT: qué campos exige cada vía (REQ-33: elegir local no exige nada) y " +
+		"cómo se traduce el cuerpo a los argumentos del store. Valida la petición; no decide quién ejecuta la inferencia.",
 }
 
 // TestC2_TheRouteIsOnlyAskedInTheSelection recorre el AST del árbol nuevo y exige que la

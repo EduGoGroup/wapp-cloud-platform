@@ -1,5 +1,8 @@
 // Copia de internal/bootstrap/arranque/fase5_captacion.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge, e inferencia, que desde
+// F4 (T4.24, conmutar(inferencia)) es internal/modulos/inferencia: el selector de vía, su adaptador
+// local y el cargador de prompts son los nuevos. turnoacotado y reanalisis siguen viejos y reciben
+// el selector y el almacén nuevos detrás de bridge_inferencia.go.
 package arranque
 
 import (
@@ -13,8 +16,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/quotetext"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia/local"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
@@ -84,16 +87,17 @@ func construirSelectorDeVia(c *contenedor) error {
 	// proceso que pregunta `local` o `api`. Todo lo que necesita una inferencia le
 	// pide un provider a él y no vuelve a mirar la vía nunca más.
 	//
-	// El frame de la vía local ES el gateway, detrás de gatewayBridge (bridge_gateway.go):
-	// desde F3 (conmutar(edge)) el gateway es el NUEVO y local.Frame pide el InferRequest
-	// del paquete viejo, así que el adaptador convierte campo a campo y conserva PlazaDe
-	// (sin ella el aforo por Edge se apaga en silencio, T-1). Muere en F4.
+	// El frame de la vía local ES el gateway, SIN adaptador: desde F4 (conmutar(inferencia))
+	// el selector es el NUEVO y su local.Frame pide el InferRequest de internal/modulos/edge,
+	// así que el *edgegrpc.Server lo satisface tal cual. Del mismo valor saca el selector, por
+	// aserción de tipo, PlazaDe (sin ella el aforo por Edge se apaga en silencio, T-1). El
+	// adaptador que hizo falta en F3 (bridge_gateway.go) murió aquí.
 	plantillas, err := cargarPlantillasDePrompt(c.log, c.cfg.LLM.PromptsDir)
 	if err != nil {
 		return err
 	}
 	llmSelector, err := llmvia.NewSelector(c.tenantLLMStore, c.log,
-		llmvia.WithFrame(&gatewayBridge{gw: c.gw}),
+		llmvia.WithFrame(c.gw),
 		llmvia.WithNotifier(c.degradationNotifier),
 		// LOS PROMPTS AJUSTABLES DE P2–P5 (WAPP_LLM_PROMPTS_DIR). Sin directorio esto
 		// entrega las plantillas COMPILADAS y el proveedor se comporta igual que antes
@@ -120,10 +124,13 @@ func construirSelectorDeVia(c *contenedor) error {
 	c.llmSelector = llmSelector
 
 	// EL RESOLUTOR DEL TURNO ACOTADO (T3.5-2). Es un consumidor MÁS del selector, como
-	// las cinco etapas y el aforo — su único argumento ES el selector.
+	// las cinco etapas y el aforo — su único argumento ES el selector, detrás de
+	// turneroBridge (bridge_inferencia.go): turnoacotado sigue siendo el paquete viejo
+	// hasta F8 y pide el TurnoRequest y el centinela del llmvia viejo; el adaptador los
+	// traduce y delega en ESTE selector, no en uno aparte (R4.7.b, R4.7.c).
 	// Si falla es porque el selector vino nil, o sea un bug de este mismo arranque:
 	// se aborta en vez de arrancar con el tercer escalón del carrito apagado.
-	consultaResolver, err := turnoacotado.New(c.llmSelector)
+	consultaResolver, err := turnoacotado.New(&turneroBridge{sel: c.llmSelector})
 	if err != nil {
 		return fmt.Errorf("resolutor del turno acotado: %w", err)
 	}
@@ -314,6 +321,9 @@ func construirPuertasDelDueno(c *contenedor) error {
 	//   · tenantLLMStore  → la vía configurada y si hay credencial. Entra por el puerto
 	//                       recortado `reanalisis.ConfigLLM`, que NO tiene `APIKey`:
 	//                       esta puerta necesita saber SI hay clave, nunca cuál es.
+	//                       Desde F4 es el almacén NUEVO detrás de llmConfigBridge
+	//                       (bridge_inferencia.go), que copia su Config al tipo viejo
+	//                       que reanalisis pide hasta F7.
 	//
 	// ⚠️ Si esto devuelve error, el arranque MUERE en vez de montar la ruta a medias:
 	// un 500 a mitad de camino en una puerta que abre trabajo en la cola es peor que
@@ -321,7 +331,7 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// sencillamente no se monta y responde 404 — lo custodia el test de cableado de
 	// este paquete.
 	reanalysisSvc, err := reanalisis.NewServicio(c.log, c.intakeStore, c.eventStore, c.intakeJobStore,
-		c.intakeComposer, c.entResolver, c.tenantLLMStore)
+		c.intakeComposer, c.entResolver, &llmConfigBridge{store: c.tenantLLMStore})
 	if err != nil {
 		return fmt.Errorf("re-análisis desde el origen: %w", err)
 	}

@@ -1,6 +1,12 @@
 # Reorganización modular de `internal/` — portal
 
-> **Estado: PLAN ESCRITO · ejecución sin empezar** (2026-09-28). El análisis (01–06) está cerrado
+> **Estado: EN EJECUCIÓN** (resumen al 2026-10-07; **el estado al día vive en [`ESTADO.md`](ESTADO.md)**,
+> § «Avance de la ejecución», y este resumen no se mantiene sesión a sesión). **F0, F1, F2 y F3 cerradas** y en
+> `dev`. **F4** (`inferencia`) conmutada y **F5** (`catalogo`) con el código entero en verde y su conmutación
+> nominal (`FaseActual = 5`): las dos **sin cerrar**, a falta de la sesión F45-03, y lo último (F45-02) está en
+> el PR #44, aún sin integrar en `dev`. **F9** adelantada en parte: bloques A y B hechos y la pasada por
+> conmutación de `nucleo`, `acceso` y `edge`; falta la de F4 y F5 y el cierre (F9-D). **F6, F7, F8 y F10, sin
+> empezar.** El análisis (01–06) está cerrado (2026-09-28)
 > y el **plan de trabajo ejecutable** vive en [`plan/`](plan/README.md): una *spec* por fase
 > (historias de usuario, arquitectura, diseño, reglas y tareas), el registro de decisiones y las
 > **sesiones con su prompt** para Claude Code en la web y en local.

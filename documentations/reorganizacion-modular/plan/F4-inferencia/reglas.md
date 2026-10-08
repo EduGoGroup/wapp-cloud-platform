@@ -55,6 +55,10 @@ F4 está hecha cuando, **leído del log y sin pipe**:
 1. `GOWORK=off make ci-local` → `GATE_RC=0` (incluye el C2 viejo, el C2 nuevo y `fronteras_test`).
 2. `GOWORK=off go vet -tags pendiente ./...` → `rc=0`.
 3. `grep -rn 'pendiente.Implementar\|go:build pendiente\|t.Skip' internal/modulos/inferencia internal/arranque/bridge_inferencia*.go` → vacío.
+   ✎ 2026-10-07 (F45-02): ese `grep` casa **también los comentarios** (en F5 un comentario que nombraba `t.Skip` lo
+   puso rojo: `0977194`). La regla no cambia; no nombres ninguno de los tres textos ni en comentarios del árbol nuevo,
+   o afina el `grep` para que descarte las líneas de comentario. Detalle en
+   [`../F5-catalogo/reglas.md`](../F5-catalogo/reglas.md) §4.3.
 4. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Sin umbral de cobertura (P2):
    `make cobertura-ficheros` es informe (la tabla va al PR; no bloquea) e incluye `bridge_inferencia.go`.
 5. `GOWORK=off go test -v ./internal/modulos/inferencia/... 2>&1 | grep -c -- '--- SKIP'` → `0`.

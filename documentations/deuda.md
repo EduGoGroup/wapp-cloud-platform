@@ -262,6 +262,66 @@ deuda se marca con `DEUDA-NNN.N`, 🔴, ⚠️ y 🟡 en el propio comentario.
 - **Consecuencia**: «lo que hay aquí es el texto del design, no un texto verificado»: trátalo
   como **una hipótesis con formato de instrucción**.
 
+### Comportamientos heredados que la reconstrucción portó tal cual (F45-02, 2026-10-07)
+
+Los seis que siguen los destapó el corpus adversario de F4 y F5. El código nuevo (`internal/apipublica`,
+`internal/modulos/catalogo`) hace **lo mismo que el viejo** y lo deja **fijado por test**, porque la
+norma exige equivalencia viejo ↔ nuevo (`reorganizacion-modular/05` E-12) y los procesos de F9 comparan
+los dos binarios. **Ninguno se corrige antes del relevo (F10)**: arreglarlo solo en lo nuevo rompería
+esa equivalencia. Al corregir uno, cambia también el test que hoy lo fija. Detalle y evidencia en los
+hallazgos de F45-02 de `reorganizacion-modular/plan/F4-inferencia/README.md` y `…/F5-catalogo/README.md`.
+
+### D-24 · 🟡 `GET /api/v1/degradation-notices` responde 500, no 504, al vencer el plazo de BD
+
+- **Dónde**: `internal/publicapi/degradationnotices.go:150-153` (no usa `dbTimedOut504`); portado a
+  `internal/apipublica/degradationnotices.go` y fijado por `TestMountDegradationNotices_DBTimeout`.
+- **Consecuencia**: incoherente con las demás lecturas de la cara, que dan 504; quien consume la API
+  no distingue «BD lenta» de «error interno».
+- **Veredicto**: defecto. **Corregir tras F10.**
+
+### D-25 · 🟡 PUT y DELETE de `/api/v1/tenant-llm` no tienen plazo de BD
+
+- **Dónde**: `internal/publicapi/tenantllm.go:188,252,259,319` (llaman al store con `r.Context()` a
+  secas, incluida la relectura del PUT); portado a `internal/apipublica/tenantllm.go`, por eso
+  `TenantLLMDeps` no lleva `DBTimeout`.
+- **Consecuencia**: con la BD lenta la petición queda colgada hasta que corte el cliente o el servidor.
+- **Veredicto**: defecto. **Corregir tras F10.**
+
+### D-26 · 🟡 El prefijo reservado de SKU se esquiva con un espacio por JSON, pero no por planilla
+
+- **Dónde**: el validador estricto compara sin recortar (`internal/catalogimport/validator.go:558`),
+  la planilla recorta la celda antes (`internal/catalogimport/tabular.go`), y el runtime descarta con
+  `HasPrefix` sin recortar (`internal/flujos/modules/cart/catalog.go:342`). Portado a
+  `internal/modulos/catalogo/{catalog.go,catalogimport/validator_item.go}`.
+- **Consecuencia**: `" _shipping"` se acepta por JSON y se rechaza por planilla: los dos caminos de
+  importación no dicen lo mismo. Hoy no hace daño, porque el runtime tampoco trata ese SKU como de
+  sistema.
+- **Veredicto**: defecto leve; **si se recorta o no es decisión de producto**. No antes de F10.
+
+### D-27 · 🟡 Una subcategoría declarada con espacio final no se puede referenciar
+
+- **Dónde**: `internal/catalogimport/validator.go:475` (el código declarado no se recorta) frente a
+  `:572-575` (la referencia del artículo sí). Portado a `internal/modulos/catalogo/catalogimport/`.
+- **Consecuencia**: una subcategoría `"01a "` es irreferenciable aunque el artículo la escriba idéntica.
+  En la misma familia: `sku` y `code` del artículo viajan sin recortar (`:749-759`), así que `"CAFE"` y
+  `"CAFE "` son dos SKU válidos.
+- **Veredicto**: defecto. **Corregir tras F10.**
+
+### D-28 · 🟡 Los precios de planilla aceptan todo lo que lea `strconv.ParseFloat`
+
+- **Dónde**: `internal/catalogimport/tabular.go:452` (y `:428`, la cantidad con `strconv.Atoi`).
+  Portado a `internal/modulos/catalogo/catalogimport/tabular_cells.go:125` (y `:101`).
+- **Consecuencia**: `0x1p4` (16), `1_000`, `1e3`, `+5` y `.5` son precios válidos. Improbable que un
+  cliente lo escriba.
+- **Veredicto**: accidente, no defecto que duela. **Se deja**; se anota para que nadie lo descubra dos veces.
+
+### D-29 · 🟡 El desalojo de la caché del índice puede elegir mal la víctima con un tenant de id vacío
+
+- **Dónde**: `internal/intake/catalogo/cache.go:253` usa `victim == ""` como centinela de «aún no hay
+  víctima», y `Obtener` no rechaza el id vacío. Portado a `internal/modulos/catalogo/indice/cache.go:299`.
+- **Consecuencia**: teórica: no debería existir un tenant con id vacío.
+- **Veredicto**: **se deja**; como mucho, rechazar el id vacío en `Obtener` tras F10.
+
 ---
 
 ## 5 · Deudas con nombre heredadas de los planes

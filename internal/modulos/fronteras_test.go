@@ -24,6 +24,16 @@ var reglas = candados.Reglas{
 	// alias; platform no es un módulo), ni las aristas que solo sumarían los tests viejos
 	// (acceso→edge, edge→conversacion, edge→inferencia, solicitudes→captacion): los tests
 	// viejos no se portan (05 E-8).
+	//
+	// El índice del catálogo (D-F5-2, F5): la arista PROHIBIDA `conversacion/** →
+	// catalogo/indice` —el índice no entra en el turno conversacional, INV-02/T1.5; era el
+	// candado AST internal/intake/catalogo/frontera_test.go— vive en esta regla 1, sin ampliar el
+	// motor (decisión de Jhoan, 2026-10-07): Capas["conversacion"] no incluye "catalogo", y el
+	// motor solo distingue MÓDULOS, así que hoy nada de conversacion (producción ni tests) puede
+	// importar nada de catalogo. La arista permitida `catalogo → conversacion/model` es
+	// Capas["catalogo"]. ⚠️ F8: cuando el carrito nuevo necesite catalogo.ParseCatalog y añada
+	// "catalogo" a Capas["conversacion"], esta regla dejará de cubrir al índice y hará falta una
+	// prohibición por SUBPAQUETE (catalogo/indice), que el motor hoy no sabe expresar.
 	Capas: map[string][]string{
 		"acceso":      {},
 		"edge":        {"acceso"},       // gateway/grpc → iam/domain
@@ -90,9 +100,14 @@ var reglas = candados.Reglas{
 	// conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador, la
 	// regla 3 falla, porque el adaptador existe para importar lo viejo. Por eso nucleo, conmutado
 	// en F1 con bridge_contact.go, no está aquí: entra en F8, cuando muera ese adaptador. acceso
-	// (conmutado en F2) entra en F3, con el conmutar(edge) que borra bridge_iam.go; edge no entra
-	// hasta F4, cuando muera su adaptador bridge_gateway.go.
-	Conmutados: []string{"acceso"},
+	// (conmutado en F2) entra en F3, con el conmutar(edge) que borra bridge_iam.go. edge entra
+	// al cierre de F45-02 (D-F3-14): su adaptador bridge_gateway.go murió en F4 (conmutar(inferencia))
+	// y se borró internal/arranque/session_identity_test.go, que importaba internal/gateway/session
+	// viejo para afirmar que el centinela ErrSessionOffline viejo y el nuevo son la misma variable
+	// (D-F3-2). Era redundante: lo afirman edge/session/registry_test.go contra el de platform, los
+	// tests de platform/httpapi por comportamiento (502) y el proceso P1 por el cable.
+	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
+	Conmutados: []string{"acceso", "edge"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía en F0.
 	Puentes: []candados.Puente{},
 	// Fases cerradas: el commit que cierra cada fase añade aquí su id ("F0", "F1"…); un Puente

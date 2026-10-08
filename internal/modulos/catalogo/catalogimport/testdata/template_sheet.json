@@ -1,0 +1,82 @@
+{
+  "columns": [
+    "categoria",
+    "subcategoria",
+    "codigo",
+    "sku",
+    "nombre",
+    "precio",
+    "descripcion",
+    "tags",
+    "atributos",
+    "variantes",
+    "componentes"
+  ],
+  "rows": [
+    [
+      "1|Tortas",
+      "clasicas|Clásicas",
+      "1",
+      "TORTA-CHOC",
+      "Torta de chocolate",
+      18000,
+      "Bizcocho de chocolate con relleno de arequipe.",
+      "",
+      "",
+      "V1|10-12 porciones|18000; V2|25-30 porciones|32000",
+      ""
+    ],
+    [
+      "1|Tortas",
+      "infantiles|Infantiles",
+      "2",
+      "TORTA-UNICORNIO",
+      "Torta de unicornio",
+      26000,
+      "Decorada con crema de colores y figura de azúcar.",
+      "decorada; sin_lactosa",
+      "capas|3; porciones|10-12",
+      "",
+      ""
+    ],
+    [
+      "2|Salados",
+      "",
+      "1",
+      "TEQUENOS-15",
+      "Tequeños (15 unidades)",
+      26000,
+      "Congelados, listos para freír.",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "2|Salados",
+      "",
+      "2",
+      "REFRESCO-15L",
+      "Refresco 1.5 L",
+      4000,
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    [
+      "2|Salados",
+      "",
+      "3",
+      "COMBO-FIESTA",
+      "Combo fiesta",
+      32000,
+      "Se cobra como una sola línea; sus partes son informativas.",
+      "",
+      "",
+      "",
+      "TEQUENOS-15|1; REFRESCO-15L|2"
+    ]
+  ]
+}

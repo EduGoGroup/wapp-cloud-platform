@@ -87,7 +87,10 @@
   nuevo **DEBERÁ** conservar la identidad del centinela: con D-F3-2, los dos son el de `platform`
   (sin puente); con la alternativa D-FX-3, por un puente de identidad declarado. — Verifica:
   `errors.Is(nuevo.ErrSessionOffline, viejo.ErrSessionOffline)` en un test de `internal/arranque`
-  hasta F8.
+  hasta F8. ✎ 2026-10-07 (D-F3-14): ese test se borró al cierre de F45-02; verifican
+  `TestErrSessionOfflineIsThePlatformSentinel` (`internal/modulos/edge/session`), `TestSendMessageHandler_Offline`
+  (`internal/platform/httpapi`) y `TestP1_EdgeFaceOverTheWire/offline_session_is_502`
+  ([`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7).
 
 ## HX.5 · La cara nueva nace cubierta
 

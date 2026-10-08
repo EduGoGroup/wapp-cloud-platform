@@ -1,6 +1,7 @@
 // Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
-// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
+// salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
+// T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
+// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo.
 package arranque
 
 import (
@@ -13,7 +14,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/degradation"
 	flowadmin "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/admin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/engine"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/events"
@@ -28,7 +28,6 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/quotetext"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
@@ -39,12 +38,14 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/inferstats"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/lease"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/ratelimit"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantllm"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
 )
 
