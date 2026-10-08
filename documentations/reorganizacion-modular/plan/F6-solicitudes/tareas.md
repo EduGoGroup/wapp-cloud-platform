@@ -44,14 +44,32 @@ Para cuando: tabla del inventario E-12 **aprobada por Jhoan** · `sigv1` y `tena
 ## Bloque F6-02 · `intakes` (1/2): contratos del paquete y tipos puros en verde · 🌐 · T6.6–T6.8, T6.15
 Para cuando: los 24 ficheros de `S/intakes` con contrato y test + `intakeshelpertest` escrita · `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · `ci-local` rc=0 · PR.
 
-- [ ] **T6.6 · rojo(solicitudes): tipos puros de `intakes`** · 🌐 · dep. T6.5 · cumple R6.1.a–c, R6.1.e
+> **Recuento real de F6-02 (2026-10-08)**: `S/intakes` tiene **40** ficheros de producción, no 24 (`ls S/intakes/*.go | grep -v _test | wc -l`):
+> `note.go` + 9 tipos puros + 9 acciones + `service_metrics.go` + `service_revalidate.go` + `notifier.go` + `buyerdata.go` +
+> `buyerdata_postgres.go` + 4 `memory*.go` + 12 `postgres*.go`; **56** ficheros de test y **10** de la suite `intakeshelpertest`.
+> `PENDIENTES=108 · ROJOS=43` al cerrar (los pone en verde F6-03).
+>
+> **Correspondencias de nombres (E-11) de F6-02** (exportado viejo en español → nuevo; el valor de wire no cambia; los nombres
+> de **fichero** se conservan como los nombra el inventario): `ClaveLineaUnitPrice`/`ClaveLineaLabel` → `LineKeyUnitPrice`/`LineKeyLabel` ·
+> `TTLLiteralPorDefecto` → `DefaultLiteralTTL` · `ClavePayloadSourceText`/`ClavePayloadLines`/`ClaveLineaEvidence` →
+> `PayloadKeySourceText`/`PayloadKeyLines`/`LineKeyEvidence` · `SobreLiteral` (`.Completo`, `.Vacio`) → `LiteralEnvelope` (`.Complete`, `.Empty`) ·
+> `(LiteralRevision).Vacio` → `.Empty` · `PartirLiteral`/`FundirLiteral`/`LiteralVencido` → `SplitLiteral`/`MergeLiteral`/`LiteralExpired` ·
+> `EventoLineaCorregida`/`EventoAprobado`/`EventoInfoPedida` → `EventLineCorrected`/`EventApproved`/`EventInfoRequested` ·
+> `PublicadorDeMetricas` (`.PublicarMetrica`) → `MetricsPublisher` (`.PublishMetric`) · `ClaveAsCorrection`/`ClaveCorrectsRevisionNo`/`ClaveCorrectsKind` →
+> `KeyAsCorrection`/`KeyCorrectsRevisionNo`/`KeyCorrectsKind` · `OpciónPostgres`/`ConCifraDeLiteral`/`ConLogDeRetencion` →
+> `PostgresOption`/`WithLiteralCipher`/`WithRetentionLog` · `(*MemoryStore).SetLogDeRetencion`/`.RevisionesPersistidas` → `.SetRetentionLog`/`.PersistedRevisions`.
+> No exportados: `comoObjeto`/`comoLista` → `asObject`/`asList` · `instanteDelBorrador` → `draftInstant` · `recuentoDeCorrección` → `correctionCount` ·
+> `claveDeLínea`/`claveDe` → `lineKey`/`lineKeyOf` · `esLíneaDePlataforma` → `isPlatformLine`. **Nuevos**: `WithClock` (D-F6-5) y `(*MemoryStore).StoredStatus`.
+> ⚠️ Las tareas de F6-03…F6-05 y `arquitectura.md` siguen citando los nombres viejos (`ConCifraDeLiteral`, `PublicadorDeMetricas`…): léanse con esta tabla.
+
+- [x] **T6.6 · rojo(solicitudes): tipos puros de `intakes`** — `113912e` (son **9** ficheros puros, no 10: `customernote.go` no nace; + `edit.go`/`discard.go` mínimos, adelantados de T6.7 porque el puerto `Store` nombra `EditMode` y `DiscardOutcome`) · 🌐 · dep. T6.5 · cumple R6.1.a–c, R6.1.e
   - **Ficheros**: `status.go`, `intakes.go`, `revisions.go`, `shipping.go`, `literal.go`, `customernote.go`, `summary.go`, `crm.go`, `metricas.go`, `revalidate.go` + tests (10 + 10)
   - **Hecho cuando**: reglas R-06, R-09, R-10 y textos de §5 en los comentarios; 🔶 lectura E-8 de sus tests viejos (tabla §2.1) hecha y anotada en el commit · **Commit**: `rojo(solicitudes): contratos de los tipos de intakes`
-- [ ] **T6.15 · verde(solicitudes): `note.go` y los 10 tipos puros de `intakes`** · 🌐 · un commit por fichero; cabecera `// Porta internal/… @ <sha>` (E-10); `note.go` solo si no quedó en verde en T6.4
-- [ ] **T6.7 · rojo(solicitudes): acciones de la bandeja** · 🌐 · dep. T6.6 · cumple R6.2.a–b
+- [x] **T6.15 · verde(solicitudes): `note.go` y los 10 tipos puros de `intakes`** — `b45ad8d` (`status`), `0698426` (`intakes`), `7634ba7` (`summary`, simple, una pasada), `0426da5` (`revisions`), `eb26402` (`literal`), `090ee38` (`shipping`), `743d85d` (`revalidate`), `909c967` (`metricas`), `c4420eb` (`crm`); `2b8bf7a` (dos avisos de lint en tests); `note.go` ya estaba (`571482b`). 126 PASS con `-race -v`, 0 SKIP; 2–7 mutantes a mano por fichero · 🌐 · un commit por fichero; cabecera `// Porta internal/… @ <sha>` (E-10); `note.go` solo si no quedó en verde en T6.4
+- [x] **T6.7 · rojo(solicitudes): acciones de la bandeja** — `9f393c2` (las 9 + `service_metrics.go` y `service_revalidate.go`, que recogen lo de `*Service`/`Option` que el viejo tenía en `metricas.go` y `revalidate.go`; D-F6-5 = opción `WithClock`) · 🌐 · dep. T6.6 · cumple R6.2.a–b
   - **Ficheros**: `service.go`, `approve.go`, `aprobadas.go`, `edit.go`, `discard.go`, `deposit.go`, `requestinfo.go`, `vencimiento.go`, `reanalisis.go` + tests
   - **Hecho cuando**: R-01…R-06 en los contratos; reloj inyectado en `Summary` (D-F6-5); 🔶 `approve_contrato_test`, `correct_test`, `tres_puertas_crm_test`, `vencimiento_test` (16) leídos · **Commit**: `rojo(solicitudes): contratos de la bandeja`
-- [ ] **T6.8 · rojo(solicitudes): almacenes, comprador y notificador + suite** · 🌐 · dep. T6.7 · cumple R6.3.a, R6.3.d
+- [x] **T6.8 · rojo(solicitudes): almacenes, comprador y notificador + suite** — `c366c68` (`memory.go` en 4 ficheros, `postgres.go` en 12, suite de 50 casos en 10 ficheros; la invocación contra Postgres, escrita y compilada, **sin correr**, en `test/procesos/intakes_contrato_test.go`) · 🌐 · dep. T6.7 · cumple R6.3.a, R6.3.d
   - **Ficheros**: `memory.go`, `postgres.go`, `buyerdata.go` + `buyerdata_postgres.go` (D-F6-6), `notifier.go` + tests; `S/intakes/intakeshelpertest/contrato.go`
   - **Hecho cuando**: suite `Contrato(t, func(t) Montaje)` escrita, con la marca de estado vigilando **todas** las columnas que cada operación puede tocar (hallazgo 35); `memory_test.go` la invoca y la invocación contra Postgres con el arnés queda escrita (P4; la corre T6.27); T-1 (homónimo DEK) en el comentario de `buyerdata.go`; 🔶 plantillas de `notifier` inventariadas · **Commit**: `rojo(solicitudes): almacenes, comprador y notificador de intakes`
 
