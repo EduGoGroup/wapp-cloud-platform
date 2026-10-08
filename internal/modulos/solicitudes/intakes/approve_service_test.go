@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -327,8 +325,11 @@ func TestApprove_Preconditions(t *testing.T) {
 	}{
 		{
 			name: "no quote sender wins over everything else", status: StatusOpen, tenantID: svcTenantB, text: "",
-			prepare: func(_ *testing.T, sc *approveScene) { sc.svc = NewService(sc.store, WithCRMPusher(sc.crm)) },
-			check:   svcWantIs(ErrNoQuoteSender),
+			// El store tampoco sabe escribir revisiones: con las dos faltas a la vez manda la del canal.
+			prepare: func(_ *testing.T, sc *approveScene) {
+				sc.svc = NewService(struct{ Store }{sc.store}, WithCRMPusher(sc.crm))
+			},
+			check: svcWantIs(ErrNoQuoteSender),
 		},
 		{
 			name: "no revision writer wins over the empty text", status: StatusOpen, tenantID: svcTenantB, text: "",
