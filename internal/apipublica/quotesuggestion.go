@@ -38,8 +38,12 @@ package apipublica
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // QuoteSuggester es el puerto del generador de la cotización sugerida. Lo satisface
@@ -87,4 +91,97 @@ type QuoteSuggester interface {
 	// Suggest redacta la cotización sugerida de la solicitud intakeID de tenantID. No persiste,
 	// no transiciona y no envía nada.
 	Suggest(ctx context.Context, tenantID, intakeID string) (quotetext.Suggestion, error)
+}
+
+// quoteSuggestionResponse es el cuerpo del 200.
+//
+// `rendered_text` se llama EXACTAMENTE como el campo del cuerpo de la aprobación, y no es
+// una casualidad de nombres: es lo que la consola copia de una respuesta al siguiente
+// formulario, y dos nombres distintos para el mismo texto es como se introduce el
+// mapeo que un día se hace mal.
+type quoteSuggestionResponse struct {
+	// RenderedText es la cotización sugerida.
+	RenderedText string `json:"rendered_text"`
+	// Source es `llm` o `deterministic` (quotetext.Source…).
+	//
+	// Se publica y no se esconde porque el dueño tiene derecho a saber si lo que va a
+	// mandar lo redactó el modelo o es el respaldo sobrio, y porque sin él la consola
+	// no puede distinguir «no funciona» de «este tenant todavía no tiene historial».
+	Source string `json:"source"`
+	// FallbackReason dice POR QUÉ no fue el modelo. Se omite cuando sí lo fue.
+	//
+	// Es un vocabulario CERRADO (las constantes Reason… de quotetext) y no una frase
+	// libre: sale por la API, y una cadena arbitraria aquí sería un campo que nadie
+	// puede agregar ni traducir.
+	FallbackReason string `json:"fallback_reason,omitempty"`
+}
+
+// quotePendingPriceResponse es el cuerpo del 400 de una solicitud con líneas sin precio. Tiene
+// LA MISMA forma que el de la aprobación (`pendingPriceResponse` en la cara vieja, que este
+// fichero reusaba): aquí es un tipo propio para que G7 no dependa del fichero de la bandeja,
+// y que los dos cuerpos sigan siendo el mismo lo fija el test de cada uno, byte a byte.
+type quotePendingPriceResponse struct {
+	Error string                     `json:"error"`
+	Lines []intakes.PendingPriceLine `json:"lines"`
+}
+
+// quoteSuggestionHandler sirve POST /api/v1/intakes/{id}/quote-suggestion.
+//
+// NO LEE EL CUERPO, y es deliberado: todo lo que hace falta está en el token (el
+// tenant, INV-7) y en la ruta (la solicitud). Un cuerpo con parámetros —cuántos
+// ejemplos, qué tono, qué vía— sería dejar que una llamada suelta se saltara la
+// configuración del tenant, que es el mismo argumento por el que el re-análisis no acepta
+// `provider`.
+//
+// Códigos: 200 con el texto; 400 si la solicitud no tiene nada que cotizar o le faltan
+// precios; 404 si no es del tenant (nunca 403: confirmaría que existe, INV-8); 500 en
+// fallo del store.
+//
+// 🔴 NO HAY 502 NI 503 PARA EL PROVEEDOR CAÍDO, y no falta: con el modelo muerto este
+// endpoint responde 200 con el texto determinista y `fallback_reason`. Ésa es la
+// conducta que se quiere —el dueño obtiene una cotización utilizable igual— y por eso
+// el dominio no devuelve error por esa vía (ver quotetext, compose).
+func quoteSuggestionHandler(svc QuoteSuggester) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		out, err := svc.Suggest(r.Context(), id.TenantID, r.PathValue("id"))
+		if err != nil {
+			quoteWriteError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, quoteSuggestionResponse{
+			RenderedText:   out.Text,
+			Source:         out.Source,
+			FallbackReason: out.Reason,
+		})
+	})
+}
+
+// quoteWriteError (writeQuoteSuggestionError en la cara vieja) traduce el fallo del dominio al
+// código y al cuerpo.
+//
+// Los dos cuerpos de 400 son LOS MISMOS que los de la aprobación —`lines_without_price`
+// con su lista, y el texto que manda a `PUT …/items`— a propósito: son la misma
+// precondición sobre el mismo objeto, y que la consola tuviera que tratarlas distinto
+// según por qué puerta entró sería el duplicado que este plan ya pagó una vez.
+func quoteWriteError(w http.ResponseWriter, err error) {
+	var pending *intakes.PendingPriceError
+	switch {
+	case errors.Is(err, intakes.ErrNotFound):
+		writeError(w, http.StatusNotFound, "solicitud no encontrada")
+	case errors.As(err, &pending):
+		writeJSON(w, http.StatusBadRequest, quotePendingPriceResponse{
+			Error: "lines_without_price", Lines: pending.Lines,
+		})
+	case errors.Is(err, quotetext.ErrNoLines):
+		writeError(w, http.StatusBadRequest,
+			"la solicitud no tiene líneas que cotizar: guarda primero las líneas del borrador con PUT /api/v1/intakes/{id}/items")
+	default:
+		writeError(w, http.StatusInternalServerError, "no se pudo generar la cotización sugerida")
+	}
 }

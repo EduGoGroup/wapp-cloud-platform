@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // quotesuggestion_test.go — cubre G7, `POST /api/v1/intakes/{id}/quote-suggestion`, tal como lo

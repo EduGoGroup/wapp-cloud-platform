@@ -194,4 +194,38 @@ func MountIntakeReports(c *Cara, k Common, d IntakeReportsDeps) {
 		canExport(exportIntakesHandler(d.Intakes, now))))
 	c.Handle("GET /api/v1/intakes/summary.json", protectRead(k, "intakes.read",
 		canExport(summaryHandler(d.Intakes))))
+
+	// SUGERIR LA COTIZACIÓN con la voz de la dueña (Plan 044 · Ola 5 · T5.1, D-044.11): la
+	// máquina redacta el texto y lo DEVUELVE; el dueño lo edita y lo aprueba por su POST, que
+	// sigue exigiendo su `rendered_text`. Sin generador la ruta no existe.
+	if d.QuoteSuggestions == nil {
+		return
+	}
+	if d.QuoteWriteDeadline <= 0 {
+		// Un plazo cero dejaría a G7 escribiendo contra un plazo YA vencido, y la cara no tiene
+		// defecto que poner sin copiar el reloj de la llamada al modelo, que solo conoce el
+		// arranque. Fallo de cableado: se dice al montar, no en la primera petición.
+		panic("apipublica.MountIntakeReports: IntakeReportsDeps.QuoteWriteDeadline es <= 0 con QuoteSuggestions cableado; " +
+			"el arranque debe pasar el plazo de escritura de la sugerencia de cotización")
+	}
+
+	// 🔴 ES LA ÚNICA RUTA DE LA BANDEJA CON `llm_intake` EN LA CADENA, y no contradice a sus
+	// vecinas: aprobar, corregir y preguntar son del OBJETO (por eso van solo con `cart_basic`),
+	// y esto es literalmente «la máquina que redacta el borrador sola», que es lo que D-044.49
+	// §3 dice que se vende aparte. Van las DOS features porque también se opera sobre un pedido:
+	// un tenant con `llm_intake` y sin `cart_basic` no tiene bandeja donde poner el texto.
+	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
+	llmIntake := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureLLMIntake)
+
+	// Auditada como LECTURA (`intakes.read`, protectRead) y no como escritura, porque no lo es:
+	// no escribe una fila, no transiciona nada y no le manda nada al cliente. Lo que sí hace es
+	// gastar una inferencia, y por eso es POST — ver quotesuggestion.go.
+	//
+	// 🔴 ES LA ÚNICA RUTA CON PLAZO DE ESCRITURA PROPIO (writeDeadline), y es la única que lo
+	// necesita: es la única de la API pública que espera a un modelo dentro de la petición. El
+	// razonamiento entero está en writedeadline.go; aquí solo queda dicho que el envoltorio va
+	// POR FUERA de protectRead a propósito (T-6 de FX): dentro, el ResponseWriter de accessLog
+	// corta la cadena del ResponseController y el plazo no llegaría a la conexión.
+	c.Handle("POST /api/v1/intakes/{id}/quote-suggestion", writeDeadline(k.Log, now, d.QuoteWriteDeadline,
+		protectRead(k, "intakes.read", cartBasic(llmIntake(quoteSuggestionHandler(d.QuoteSuggestions))))))
 }
