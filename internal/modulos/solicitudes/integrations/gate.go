@@ -41,18 +41,21 @@ func NewEntitlementsGate(features FeatureResolver, store Store, feature string) 
 // no-resolución (sin feature, sin integración, o cualquier error de
 // infraestructura) — mismo criterio que entitlements.RequireFeature.
 //
-// Devuelve true SOLO si se cumplen las tres a la vez: el tenant tiene la feature
+// Devuelve true SOLO si se cumplen todas a la vez: el tenant tiene la feature
 // (se pregunta por features.Has con el tenant y la clave del constructor), tiene
-// fila de integración con Enabled=true, y su EventsAdapter es exactamente
-// «webhook». Si falta cualquiera devuelve (false, nil): un gate cerrado no es un
-// error.
+// fila de integración con Enabled=true, su EventsAdapter es exactamente
+// «webhook», y la integración tiene destino: endpoint y secreto de firma. Si
+// falta cualquiera devuelve (false, nil): un gate cerrado no es un error.
 //
 // Orden: primero la feature. Si no la tiene, o si preguntarla falla, el almacén
 // NO se consulta.
 //
-// No mira el endpoint ni el secreto: una integración encendida sin URL o sin
-// secreto abre el gate, y es el worker quien falla la entrega por falta de
-// destino (worker.go).
+// Exige el destino (decisión de Jhoan, 2026-10-08; el viejo no lo miraba): una
+// integración encendida sin endpoint o sin secreto NO abre el gate, así que no
+// se encola una entrega que el worker solo podría fallar hasta `dead`
+// (worker_delivery.go exige las mismas dos cosas al entregar). La API ya impide
+// encender un puente así; esto cubre la fila dejada a medias por fuera de ella.
+// Del secreto solo mira que exista (HasSecret): no lo lee ni lo descifra.
 //
 // Errores, envueltos con %w y siempre con false:
 //
@@ -74,5 +77,5 @@ func (g *EntitlementsGate) Enabled(ctx context.Context, tenantID string) (bool, 
 	if !found || !ti.Enabled || ti.EventsAdapter != "webhook" {
 		return false, nil
 	}
-	return true, nil
+	return ti.EndpointURL != "" && ti.HasSecret, nil
 }

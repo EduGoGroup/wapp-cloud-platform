@@ -322,19 +322,23 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     y el sondeo seguía recorriendo el lote. No se veían porque el espía de los tests respeta el contexto, como Postgres.
     Ahora `fail()` vuelve sin tocar la fila ni la métrica y `pollOnce` deja el lote: la fila queda `delivering` y la rescata
     el lease. Lo fija `TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt`, contra `Memoria` a pelo. Con el reloj
-    inyectado y el `null` del hallazgo 38a, son las **tres diferencias de comportamiento del worker respecto del viejo**. Para T6.27 y D-F9-10: esto arregla **solo** el
+    inyectado y el `null` del hallazgo 38a, son las **tres diferencias de comportamiento del worker respecto del viejo** (la cuarta de `integrations` es la del gate, hallazgo 38b, D-F6-11). Para T6.27 y D-F9-10: esto arregla **solo** el
     worker nuevo; el binario viejo y las otras tres goroutines de fondo siguen como estaban.
 38. 🟡 **Rarezas del viejo, para que decida Jhoan.** ✅ (a) **endurecida** en `af68fe3` (Jhoan, 2026-10-08: «si vamos a
     modificar algo, hagámoslo en este PR»): un payload JSON `null` en `webhook_outbox` dejaba el mapa en nil y
     `payload["buyer_data"] = …` entraba en **pánico en la goroutine del worker** (`internal/integrations/worker.go:323-335`);
     ahora es un motivo de fallo más, «plantilla del payload no es un objeto JSON», con backoff y `dead` como los demás, y
     el mutante que quita la guarda muere con el pánico original. Hoy inalcanzable; misma familia que el hallazgo 32.
-    **Las demás siguen portadas fieles**: (b) el gate da por habilitada una integración sin endpoint ni secreto (`gate.go:50`) y el worker los exige
-    (`worker.go:428,436`): encolaría entregas que fallan hasta `dead`; (c) `crmpush.Build` formatea el instante sin
+    ✅ (b) **cerrada** en `526ab4a` (Jhoan, 2026-10-08, **D-F6-11**): el gate daba por habilitada una integración sin endpoint ni
+    secreto (`internal/integrations/gate.go:50`) y el worker los exige (`worker.go:428,436`), así que encolaba entregas que
+    fallaban hasta `dead`; ahora `Enabled` exige también `EndpointURL` y `HasSecret` y no se encola. La API ya lo impedía
+    (`validateLiveBridge`): cubre la fila dejada a medias por fuera de ella. ⚠️ Para F6-05: la cara nueva tiene que portar
+    esa validación igualmente, que es la que **avisa** al cliente; el gate solo calla.
+    **Las demás siguen portadas fieles**: (c) `crmpush.Build` formatea el instante sin
     `.UTC()` (`push.go:185`): solo es UTC porque lo es el reloj por defecto; (d) el log del pánico de `RevisionPusher` no
     lleva `tenant`; (e) en `precios.go:185`, `soles?` no reconoce «sol» y `\s?` admite un solo blanco ASCII (con NBSP o dos
     espacios un texto correcto cae por `falta_precio_de_linea`: conservador, nunca acepta de más); (f)
-    `ParseSemilla("null")` devuelve `(nil, nil)`. (c), (e) y (f) quedan como promesa con su test; (b) y (d), dichas en
+    `ParseSemilla("null")` devuelve `(nil, nil)`. (c), (e) y (f) quedan como promesa con su test; (d), dicha en
     el contrato.
 39. **El `fakeStore` viejo incumplía el puerto en seis puntos** (`internal/integrations/worker_test.go:70, :91, :139,
     :144, :168`, y aceptaba JSON inválido): lote en orden de mapa, sello cero que casaba con fila sin sello, frontera del
