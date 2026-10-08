@@ -2,12 +2,15 @@
 // salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge, e inferencia, que desde
 // F4 (T4.24, conmutar(inferencia)) es internal/modulos/inferencia: el selector de vía, su adaptador
 // local y el cargador de prompts son los nuevos. turnoacotado y reanalisis siguen viejos y reciben
-// el selector y el almacén nuevos detrás de bridge_inferencia.go.
+// el selector y el almacén nuevos detrás de bridge_inferencia.go. Desde F6 (T6.24,
+// conmutar(solicitudes)) el generador de cotización es el de internal/modulos/solicitudes; draft,
+// las zonas de envío y el re-análisis, que siguen viejos, leen de c.intakeStoreViejo.
 package arranque
 
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/EduGoGroup/wapp-shared/textmatch"
 
@@ -15,11 +18,33 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/catalogo"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/stages"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/quotetext"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia/local"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/reanalisis"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/turnoacotado"
+)
+
+// EL PLAZO DE LA COTIZACIÓN SUGERIDA (G7), EN UN SOLO SITIO (FX mapa §4.3, reglas.md T-9).
+//
+// Son DOS relojes y el segundo sale del primero:
+//
+//   - quoteCallTimeout es el plazo de la llamada al modelo, el que recibe quotetext.WithTimeout:
+//     el MISMO suelo por llamada que P2–P4 (hasta F7, el del pipeline viejo);
+//   - quoteWriteDeadline es el plazo de ESCRITURA de la respuesta de G7, el que recibe la cara
+//     nueva (IntakeReportsDeps.QuoteWriteDeadline): ese plazo más quoteWriteMargin.
+//
+// 🔴 DERIVADO, NO COPIADO. En la cara vieja la suma vivía en publicapi/plazoescritura.go
+// (`pipeline.PlazoPorLlamadaSuelo + margenDeRedacción`, 48 s + 12 s) y la cara nueva no importa
+// el pipeline: recibe el resultado. Si el suelo se mueve, G7 lo sigue sola; dos literales
+// sueltos se separarían el primer día y la respuesta de una sugerencia que tarda se cortaría
+// con el modelo todavía dentro de plazo. Lo fija TestCableado_TheQuoteWriteDeadlineIsDerived.
+const (
+	quoteCallTimeout = pipeline.PlazoPorLlamadaSuelo
+	// quoteWriteMargin cubre lo que el handler de G7 hace fuera de la llamada al modelo: los
+	// 12 s de margenDeRedacción de la cara vieja, sin cambiar.
+	quoteWriteMargin   = 12 * time.Second
+	quoteWriteDeadline = quoteCallTimeout + quoteWriteMargin
 )
 
 // faseCaptacion arma TODO lo que el Plan 044 necesita para convertir una ventana de
@@ -211,10 +236,13 @@ func construirWorkerDelPipeline(c *contenedor) error {
 		return fmt.Errorf("pipeline de captación, etapa match: %w", err)
 	}
 	// `flowStore` satisface DOS de los tres puertos del draft (la cabecera de la
-	// solicitud y el outbox de efectos) e `intakeStore` el tercero (la revisión). El
+	// solicitud y el outbox de efectos) e `intakeStoreViejo` el tercero (la revisión). El
 	// reparto no es caprichoso: la revisión es lo único que lleva literal del cliente
-	// dentro del payload, y el único store con cipher del literal es `intakeStore`
+	// dentro del payload, y el store que la escribe lleva el cipher del literal
 	// (T3.5). Escribirla por el otro persistiría texto en claro.
+	//
+	// 🔀 F6 · conmutar(solicitudes): es la instancia VIEJA (D-F6-1), no c.intakeStore: el
+	// puerto EscritorRevision nombra intakes.Revision del paquete viejo. Muere en F7.
 	//
 	// 🔧 `stages.ConEmpujeCRM` ES DE T4.6 (Plan 044 · Ola 4), y cierra T4.10 mitad 2.
 	// Sin esta opción la etapa produce el borrador igual, pero un RE-ANÁLISIS pedido
@@ -235,7 +263,7 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// Cuando el pipeline llegue a empujar algo, el proceso lleva rato arrancado y
 	// `c.intakeService` hace mucho que existe; y aunque fuera nil, PushRevisionByID es
 	// nil-safe y calla.
-	etapaDraft, err := stages.NewDraft(c.log, c.intakeJobStore, c.flowStore, c.intakeStore, c.flowStore,
+	etapaDraft, err := stages.NewDraft(c.log, c.intakeJobStore, c.flowStore, c.intakeStoreViejo, c.flowStore,
 		stages.ConEmpujeCRM(stages.EmpujadorCRMFunc(
 			func(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
 				return c.intakeService.PushRevisionByID(ctx, tenantID, intakeID, revisionNo)
@@ -285,13 +313,16 @@ func construirWorkerDelPipeline(c *contenedor) error {
 	// Ola 3: sin ella TODO borrador saldría con la línea de envío sin precio, también
 	// el del tenant que tiene UNA zona configurada con su tarifa plana — y eso no da
 	// error, solo un renglón que el dueño precifica a mano sin saber que ya estaba
-	// puesto. Es el MISMO store que la bandeja y el carrito numérico, así que las tres
+	// puesto. Lee las MISMAS filas que la bandeja y el carrito numérico, así que las tres
 	// vías leen la misma configuración.
+	//
+	// 🔀 F6 · conmutar(solicitudes): recibe la instancia VIEJA (D-F6-1): el puerto
+	// ZonasDeEnvio devuelve []intakes.ShippingZone del paquete viejo. Muere en F7.
 	intakePipeline, err := pipeline.NewWorker(c.log, c.intakeJobStore,
 		etapaIdeas, etapaSpecs, etapaCantidades, etapaMatch, etapaDraft, catalogos,
 		c.flowDeps.cipher, pipeline.Config{},
 		pipeline.ConAforo(aforoLote, c.llmSelector),
-		pipeline.ConZonasDeEnvio(c.intakeStore))
+		pipeline.ConZonasDeEnvio(c.intakeStoreViejo))
 	if err != nil {
 		return fmt.Errorf("worker del pipeline de captación: %w", err)
 	}
@@ -306,7 +337,9 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// `POST /api/v1/intakes/{id}/reanalyze`. Seis dependencias y las SEIS son objetos
 	// que ya existen — no se construye ni un store nuevo:
 	//
-	//   · intakeStore     → de qué evento cuelga la solicitud y por qué revisión iba;
+	//   · intakeStoreViejo → de qué evento cuelga la solicitud y por qué revisión iba. Es
+	//                       la instancia VIEJA (D-F6-1): el puerto Solicitudes devuelve el
+	//                       intakes.ReanalysisTarget del paquete viejo. Muere en F7;
 	//   · eventStore      → el hilo cifrado del evento, descifrado en el borde, y la
 	//                       fila del texto que pega el dueño (origin='owner_pasted');
 	//   · intakeJobStore  → el MISMO *intake.Postgres del agregador y del worker: aquí
@@ -330,7 +363,7 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// no arrancar. Y si el servicio no llegara a `publicapi.Deps.Reanalysis`, la ruta
 	// sencillamente no se monta y responde 404 — lo custodia el test de cableado de
 	// este paquete.
-	reanalysisSvc, err := reanalisis.NewServicio(c.log, c.intakeStore, c.eventStore, c.intakeJobStore,
+	reanalysisSvc, err := reanalisis.NewServicio(c.log, c.intakeStoreViejo, c.eventStore, c.intakeJobStore,
 		c.intakeComposer, c.entResolver, &llmConfigBridge{store: c.tenantLLMStore})
 	if err != nil {
 		return fmt.Errorf("re-análisis desde el origen: %w", err)
@@ -352,10 +385,14 @@ func construirPuertasDelDueno(c *contenedor) error {
 	// El plazo es el MISMO suelo por llamada que reciben P2–P4, y por el mismo motivo
 	// escrito allí: sin él el adaptador cae a sus 30 s propios y envenena el umbral de
 	// lento del breaker. La diferencia con el pipeline es que aquí hay UNA llamada y
-	// hay una PERSONA esperando la respuesta.
-	quoteSvc, err := quotetext.NewServicio(c.log, c.intakeStore, c.intakeStore, c.llmSelector,
-		quotetext.ConSemilla(c.flowStore),
-		quotetext.ConPlazo(pipeline.PlazoPorLlamadaSuelo))
+	// hay una PERSONA esperando la respuesta. De ESTE valor sale el plazo de escritura de
+	// G7 (quoteWriteDeadline, arriba): no se escribe en dos sitios.
+	//
+	// 🔀 F6 · conmutar(solicitudes): el generador es el NUEVO y lee del almacén NUEVO
+	// (su IntakeReader devuelve el intakes.Detail de internal/modulos/solicitudes).
+	quoteSvc, err := quotetext.NewService(c.log, c.intakeStore, c.intakeStore, c.llmSelector,
+		quotetext.WithSeed(c.flowStore),
+		quotetext.WithTimeout(quoteCallTimeout))
 	if err != nil {
 		return fmt.Errorf("generador de cotización: %w", err)
 	}

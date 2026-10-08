@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 // inv1_aprobar_test.go — INV-1 SOBRE EL AST: NINGÚN CAMINO AUTOMÁTICO APRUEBA NI PREGUNTA.
@@ -26,10 +24,10 @@ package intakes_test
 // que cada directorio barrido tenga ficheros de producción que leer, que el control
 // POSITIVO encuentre la llamada legítima, y que la encuentre UNA sola vez.
 //
-// 🔴 POR QUÉ LLEVA `//go:build pendiente` (T6.9): el control positivo exige exactamente
-// una llamada en `internal/apipublica`, y la cara HTTP nueva todavía no sirve la
-// aprobación ni la pregunta (llegan con TX.16/TX.18). Hasta entonces el test FALLA en
-// su paso (1), que es lo que debe hacer; pierde la etiqueta en T6.25.
+// Nació tras `//go:build pendiente` (T6.9): el control positivo exige exactamente una
+// llamada en `internal/apipublica`, y la cara HTTP nueva no servía todavía la aprobación
+// ni la pregunta. Perdió la etiqueta en T6.25 (conmutar(solicitudes)), cuando G5 y G6
+// pasaron a servirse por ella.
 //
 // Las listas de directorios son las de la fase F6 y se re-tocan en F7 y F8 (D-F6-2),
 // con la guarda anti-hueco intacta.

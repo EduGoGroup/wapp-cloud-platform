@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	viejo "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/contact"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/objectstore"
@@ -20,13 +21,19 @@ import (
 // arranque tenga UNA sola rama de error (cualquier fallo aborta el proceso).
 type flowRuntimeDeps struct {
 	// contacts resuelve la identidad OPACA del contacto (cifra/descifra PII). Es el
-	// viejo.Resolver que piden flowruntime.New e intakes.NewNotifier, pero detrás hay
-	// el resolver NUEVO (nucleo/contact) envuelto en contactBridge (F1 · T1.16).
+	// viejo.Resolver que pide flowruntime.New, pero detrás hay el resolver NUEVO
+	// (nucleo/contact) envuelto en contactBridge (F1 · T1.16).
 	//
 	// ✎ F1 (T-8 de la spec de F1): la copia ya no tiene el campo contactsPG del viejo.
 	// Se escribía y no se leía en ningún sitio: su único motivo, el backfill de arranque
 	// BackfillPushName (T4.2), murió en 58e92a2 (T5.4).
 	contacts viejo.Resolver
+	// contactResolver es ESE MISMO resolver nuevo, sin envolver: la instancia en la que
+	// delega el contactBridge de arriba, no otra. Lo recibe el notificador de solicitudes
+	// (F6 · conmutar(solicitudes)), que es ya el de internal/modulos/solicitudes y pide el
+	// contact.Ref del núcleo. Deja de ser un campo aparte en F8, cuando muera el adaptador
+	// y contacts pase a ser de este tipo.
+	contactResolver contact.Resolver
 	// cipher y kp son el stack de cifrado de PII (Plan 011); el runtime los usa vía
 	// el resolver, y el endpoint admin /admin/crypto/rekey los necesita en crudo
 	// para la rotación de KEK (Plan 012).
@@ -82,9 +89,10 @@ func buildFlowRuntimeDeps(ctx context.Context, cfg config.AppConfig, db *sql.DB)
 	// calcularía otro value_bidx y duplicaría contactos en silencio.
 	contacts := newContactResolver(db, cipher, kp)
 	return flowRuntimeDeps{
-		contacts: contacts,
-		cipher:   cipher,
-		kp:       kp,
-		presign:  presignClient,
+		contacts:        contacts,
+		contactResolver: contacts.next,
+		cipher:          cipher,
+		kp:              kp,
+		presign:         presignClient,
 	}, nil
 }

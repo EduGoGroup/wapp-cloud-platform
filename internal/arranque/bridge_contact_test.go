@@ -658,10 +658,10 @@ func TestNewContactResolver_WrapsNewPostgresResolverWithSameInstances(t *testing
 }
 
 // TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys es la aserción de cableado del arranque
-// nuevo (T1.16): tras la fase 3 real (el contenedor de la huella), el resolver que reciben
-// flowruntime.New (fase 7) e intakes.NewNotifier (fase 6) es un contactBridge sobre el resolver
-// NUEVO, y ese resolver lleva EL MISMO cipher y EL MISMO KeyProvider que la fase guarda en
-// flowDeps y reparte al resto de almacenes. 🔴 Otro KeyProvider duplicaría contactos en silencio.
+// nuevo (T1.16): tras la fase 3 real (el contenedor de la huella), el resolver que recibe
+// flowruntime.New (fase 7) es un contactBridge sobre el resolver NUEVO, con EL MISMO cipher y EL
+// MISMO KeyProvider que la fase guarda en flowDeps. 🔴 Otro KeyProvider duplicaría contactos. Desde
+// F6 el notificador de solicitudes recibe ese resolver SIN envolver (solicitudes_cableado_identidad_test.go).
 func TestBuildFlowRuntimeDeps_WiresContactBridgeWithPhaseKeys(t *testing.T) {
 	c := contenedorDeHuella(t, "minimo")
 
@@ -693,7 +693,7 @@ const oldContactImportPath = "github.com/EduGoGroup/wapp-cloud-platform/internal
 //   - bridge_contact.go: es el adaptador (05 §4.2). Implementa viejo.Resolver, copia viejo.Ref
 //     campo a campo y empareja los tres centinelas viejos.
 //   - flows.go: solo el TIPO del campo flowRuntimeDeps.contacts, viejo.Resolver, que es lo que
-//     piden flowruntime.New (fase 7) e intakes.NewNotifier (fase 6).
+//     pide flowruntime.New (fase 7). (Hasta F6 lo pedía también intakes.NewNotifier, fase 6.)
 //
 // Los dos salen de aquí en F8, cuando muere el adaptador (y entonces nucleo entra en Conmutados).
 var oldContactImporters = map[string][]string{

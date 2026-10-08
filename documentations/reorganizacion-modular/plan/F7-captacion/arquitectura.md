@@ -163,7 +163,7 @@ re-análisis y store de intenciones de `modulos/captacion`; **y** grep por ruta 
 
 | # | Ruta | Fichero nuevo | Notas |
 |---|---|---|---|
-| H1 | `POST /api/v1/intakes/{id}/reanalyze` | `apipublica/reanalyze.go` (TX.19–TX.20) | W `intakes.write` (`intake`); **sin gate en la cadena**: los dos gates viven en el servicio; el 400 de forma va primero; usa `NoteTooLongError` de `solicitudes/intakes/note.go`; monta si `Reanalysis` ≠ nil (no depende de `Intakes`) |
+| H1 | `POST /api/v1/intakes/{id}/reanalyze` | `apipublica/reanalyze.go` (TX.19–TX.20) | W `intakes.write` (`intake`); **sin gate en la cadena**: los dos gates viven en el servicio; el 400 de forma va primero; usa `NoteTooLongError` de `solicitudes/intakes/note.go`; monta si `Reanalysis` ≠ nil (no depende de `Intakes`) ⚠️ *(F6-05, D-F6-13)*: en la cara **vieja** H1 sí depende de `Intakes` (`publicapi.go:648-651`); desde F6 lo sostiene el centinela `oldFaceIntakesMountSentinel` de `internal/arranque/fase8_transporte.go`, que **se retira al mudar H1**. |
 | E1 | `GET /api/v1/intents` | `apipublica/intents.go` | R `intents.read`; monta si `Intents` y `Entitlements` |
 | E2 | `PUT /api/v1/intents` | ídem | W `intents.write` (`intents`); gate `llm_intent` **dentro** del handler; `ConfigPush` por el gw nuevo, best-effort (su error solo se registra, `publicapi/intents.go:167`) |
 

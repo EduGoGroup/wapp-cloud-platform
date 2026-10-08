@@ -1,7 +1,8 @@
 // Copia de internal/bootstrap/arranque/contenedor.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
 // salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
 // T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
-// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo.
+// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo. Y solicitudes (F6,
+// T6.24, conmutar(solicitudes)), que es internal/modulos/solicitudes salvo intakeStoreViejo.
 package arranque
 
 import (
@@ -24,9 +25,7 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake/pipeline"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakeahead"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/quotetext"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
+	intakesviejo "github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
@@ -41,6 +40,10 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/llmvia"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/tenantvars"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/config"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics"
@@ -89,18 +92,29 @@ type contenedor struct {
 	jwksCfg edgegrpc.ConfigPayload
 
 	// ─── Fase 3 · almacenes ─────────────────────────────────────────────────
-	flowDeps            flowRuntimeDeps
-	receiptSink         *receipts.Sink
-	entResolver         *entitlements.Postgres
-	intentStore         *intentcfg.PostgresStore
-	diagStore           *diagnostics.Postgres
-	fleetRepo           *fleet.PostgresRepository
-	flowStore           *flowstore.PostgresRepository
-	flowResolver        *flowruntime.PostgresTenantResolver
-	triggerStore        *trigger.PostgresStore
-	intakeStore         *intakes.Postgres
-	buyerDataStore      *intakes.PostgresBuyerData
-	integrationsStore   *integrations.Postgres
+	flowDeps          flowRuntimeDeps
+	receiptSink       *receipts.Sink
+	entResolver       *entitlements.Postgres
+	intentStore       *intentcfg.PostgresStore
+	diagStore         *diagnostics.Postgres
+	fleetRepo         *fleet.PostgresRepository
+	flowStore         *flowstore.PostgresRepository
+	flowResolver      *flowruntime.PostgresTenantResolver
+	triggerStore      *trigger.PostgresStore
+	intakeStore       *intakes.Postgres
+	buyerDataStore    *intakes.PostgresBuyerData
+	integrationsStore *integrations.Postgres
+	// intakeStoreViejo es la SEGUNDA instancia, VIEJA, del almacén de solicitudes (D-F6-1,
+	// mantenida por Jhoan el 2026-10-07): internal/intakes sobre el mismo pool y el mismo cipher.
+	// No tiene estado propio. Existe porque cuatro puertos de paquetes viejos nombran tipos del
+	// intakes viejo en su firma y el almacén nuevo no los satisface: el proyector del carrito
+	// (cart.NewProjector, args 2 y 3), la etapa draft (stages.NewDraft), las zonas de envío del
+	// pipeline (pipeline.ConZonasDeEnvio) y el re-análisis (reanalisis.NewServicio). Muere en F7
+	// (los tres de captación) y F8 (el carrito). Nadie más lo lee: todo lo demás usa intakeStore.
+	intakeStoreViejo *intakesviejo.Postgres
+	// tenantVars es el único almacén de variables del tenant: lo leen G11–G12 de la cara nueva
+	// (fase 8) y el worker del puente CRM (fase 9), que antes construían uno cada una.
+	tenantVars          *tenantvars.Postgres
 	tenantLLMStore      *tenantllm.Postgres
 	degradationStore    *degradation.Postgres
 	degradationNotifier *degradation.Notifier
@@ -117,7 +131,7 @@ type contenedor struct {
 	intakePipeline   *pipeline.Worker
 	consultaResolver *turnoacotado.Resolver
 	reanalysisSvc    *reanalisis.Servicio
-	quoteSvc         *quotetext.Servicio
+	quoteSvc         *quotetext.Service
 
 	// ─── Fase 6 · solicitudes ───────────────────────────────────────────────
 	webhookGate     *integrations.EntitlementsGate

@@ -16,8 +16,9 @@ import (
 )
 
 // contactBridge presenta un contact.Resolver NUEVO como el viejo.Resolver que piden los paquetes
-// viejos que el arranque sigue cableando: flowruntime.New (fase 7) e intakes.NewNotifier
-// (fase 6, vía intakes.Destinations). Hace falta porque contact.Ref y viejo.Ref son tipos
+// viejos que el arranque sigue cableando: flowruntime.New (fase 7). Hasta F6 lo recibía también
+// intakes.NewNotifier (fase 6); el notificador nuevo recibe next directo (flowDeps.contactResolver).
+// Hace falta porque contact.Ref y viejo.Ref son tipos
 // distintos para Go aunque tengan los mismos campos: un *contact.PostgresResolver no satisface
 // viejo.Resolver. Las alternativas (un alias de tipo en cualquiera de los dos paquetes) editan lo
 // viejo o atan el núcleo a flujos; internal/arranque es el único sitio que ve a los dos por diseño.
@@ -49,8 +50,7 @@ type contactBridge struct {
 	next contact.Resolver
 }
 
-// contactBridge es un viejo.Resolver (y por tanto un intakes.Destinations): si alguna de las dos
-// firmas cambia, esto no compila.
+// contactBridge es un viejo.Resolver: si la firma cambia, esto no compila.
 var _ viejo.Resolver = (*contactBridge)(nil)
 
 // newContactResolver es la costura del arranque nuevo (T1.16): construye el resolver de contactos

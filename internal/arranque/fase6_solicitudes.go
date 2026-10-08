@@ -1,16 +1,18 @@
 // Copia de internal/bootstrap/arranque/fase6_solicitudes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
 // salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
-// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
+// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador. Desde
+// F6 (T6.24, conmutar(solicitudes)) TODO lo que construye esta fase es de
+// internal/modulos/solicitudes: ya no cablea ningún paquete viejo.
 package arranque
 
 import (
 	"context"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes/telemetria"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations/crmpush"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/telemetria"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations/crmpush"
 )
 
 // faseSolicitudes arma la bandeja del dueño: la salida hacia WhatsApp, los dos
@@ -42,7 +44,13 @@ func (faseSolicitudes) ejecutar(_ context.Context, c *contenedor) error {
 	// tiene tres disparadores y dos de ellos están en sitios distintos: el motor
 	// (cuando el cliente escribe) y las lecturas del dueño (en el Service, más abajo).
 	// Es un solo objeto: dos serían dos criterios de "ya recordé".
-	c.intakeNotifier = intakes.NewNotifier(c.gw, c.flowDeps.contacts, c.intakeStore, c.log)
+	//
+	// 🔀 F6 · conmutar(solicitudes): el notificador nuevo recibe el resolver de contactos del
+	// NÚCLEO sin envolver (flowDeps.contactResolver): su puerto Destinations devuelve el
+	// contact.Ref de internal/nucleo/contact. Es la MISMA instancia en la que delega el
+	// contactBridge que sigue recibiendo el motor (flowDeps.contacts): una sola vía custodiada
+	// de PII, y el adaptador deja de hacer falta aquí.
+	c.intakeNotifier = intakes.NewNotifier(c.gw, c.flowDeps.contactResolver, c.intakeStore, c.log)
 	c.depositReminder = intakes.NewDepositReminder(c.intakeNotifier, c.intakeStore)
 
 	// El recordatorio del PLAZO del presupuesto (Plan 044 · T4.5, D-044.50 §2). Es el
@@ -95,7 +103,7 @@ func (faseSolicitudes) ejecutar(_ context.Context, c *contenedor) error {
 		// El envoltorio `telemetria.New` NO es ceremonia: `intakes` no puede importar
 		// `flujos/store` —ciclo con el test in-package de aquel paquete— así que su
 		// puerto habla de tenant/contacto/nombre/payload y quien sabe firmar la fila es
-		// este adaptador. Ver internal/intakes/telemetria.
+		// este adaptador. Ver internal/modulos/solicitudes/intakes/telemetria.
 		//
 		// Sin esta línea el dominio funciona entero y NO publica nada — lo mismo que
 		// promete WithNotifier para el teléfono del cliente—, así que su ausencia no

@@ -223,7 +223,7 @@ func TestIdentidad_EveryConsumerSharesTheOneSelector(t *testing.T) {
 		{"la etapa P3 del pipeline", inner(t, field(t, c.intakePipeline, "p3"), "sel")},
 		{"la etapa P4 del pipeline", inner(t, field(t, c.intakePipeline, "p4"), "sel")},
 		{"el resolutor de plazas del aforo (pipeline.ConAforo)", field(t, c.intakePipeline, "plazas")},
-		{"el generador de cotización (quotetext.Servicio)", field(t, c.quoteSvc, "sel")},
+		{"el generador de cotización (quotetext.Service, el de solicitudes)", field(t, c.quoteSvc, "selector")},
 		{"el adelanto de ventana (intakeahead.Pool)", field(t, c.intakeAhead, "sel")},
 		{"el calentador del adelanto de ventana", field(t, c.intakeAhead, "calentador")},
 		{"el turno acotado, detrás de turneroBridge", inner(t, field(t, c.consultaResolver, "turnero"), "sel")},

@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — F6-05a hecha el 2026-10-08 (la cara HTTP de solicitudes en verde en `internal/apipublica`, **sin montar**: 19 ficheros de producción, `PENDIENTES=0`, `ROJOS=1`; falta cablear y conmutar G1–G18, F6-05b). Antes, F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: en curso** — F6-05b hecha el 2026-10-08 (**el arranque nuevo cablea `solicitudes` y G1–G18 se sirven por la cara nueva**: `FaseActual = 6`, huella igual, `PENDIENTES=0`, `ROJOS=0`; `solicitudes` fuera de `Conmutados` hasta F8; falta el cierre local, F6-06). Antes, F6-05a hecha el 2026-10-08 (la cara HTTP de solicitudes en verde en `internal/apipublica`, **sin montar**: 19 ficheros de producción, `PENDIENTES=0`, `ROJOS=1`; falta cablear y conmutar G1–G18, F6-05b). Antes, F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -79,7 +79,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 | [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
 | [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR ✅ hecha el 2026-10-08 (hallazgos 24–34) |
 | [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 💻 | T6.10–T6.13, T6.19–T6.21 | ✅ hecha el 2026-10-08 (`31b9343` … `af68fe3`; hallazgos 35–44): 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
-| [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 💻 | T6.22–T6.26 (= TX.16–TX.18) | 🔧 **en dos PR**: F6-05a ✅ hecha el 2026-10-08 (`2cc4cde` … `6675927`; hallazgos 45–54: la cara en verde, sin montar); F6-05b pendiente (T6.24–T6.25) · 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
+| [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 💻 | T6.22–T6.26 (= TX.16–TX.18) | 🔧 **en dos PR**: F6-05a ✅ hecha el 2026-10-08 (`2cc4cde` … `6675927`; hallazgos 45–54: la cara en verde, sin montar); F6-05b ✅ hecha el 2026-10-08 (`79f274e`; hallazgos 55–60: cableado y 18 rutas conmutadas, D-F6-13) · 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
 | [**F6-06**](../sesiones/F6-06-cli-cierre.md) · cierre local | 💻 | T6.27–T6.29 | suites en memoria y contra Postgres; procesos P5/P6 (T9.27) contra los dos binarios · `dev` integrado · `ESTADO.md` |
 
 Reparto de `intakes`: F6-02 escribe **todos** los contratos del paquete (las acciones y los almacenes dependen de los
@@ -415,3 +415,30 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 54. **Anotado, no tocado**: `endpoint_url` admite cualquier host http(s), incluidos `localhost` y direcciones internas
     (deliberado en el viejo, `publicapi/integrations.go:330-342`): superficie SSRF del worker, por si se quiere revisar. Y un
     comentario caducado en `publicapi/summary.go:105-110` dice que `customer_note` «sigue sin aparecer», pero el código la publica.
+
+### F6-05b (2026-10-08; rama `reorg/f6-05b-conmutar-solicitudes` desde `reorg/f6-05a-cara-solicitudes` @ `72ded2c`)
+
+55. **H1 depende de `Intakes` en la cara vieja, contra la spec (D-F6-13).** `registerIntakes` guarda toda su función tras
+    `d.Intakes == nil || d.Entitlements == nil` (`publicapi.go:648-651`) y la ruta de re-análisis se registra dentro (`:741-743`).
+    Con `Intakes = nil`, que es la letra de T6.25, la huella pierde `POST /api/v1/intakes/{id}/reanalyze` (73 → 72 rutas en
+    `:8103`) **sin un solo error**. Jhoan eligió el centinela de montaje (`oldFaceIntakesMountSentinel`,
+    `internal/arranque/fase8_transporte.go`). Lo vigilan `TestMudanzas_HuellaPorElCompuesto` (las nueve rutas tapadas, fila a
+    fila) y `TestCableado_TheOldFaceOnlyKeepsTheMountSentinel` (que además monta el `publicapi` real con y sin centinela: avisará
+    cuando sobre). **Para F7**: al mudar H1 se retira el centinela. Corregidas la letra de T6.25/TX.18 y la fila de H1 de
+    `F7-captacion/arquitectura.md`.
+56. **T6.24 y T6.25 son un solo commit** (`79f274e`): al cambiar el tipo de `c.intakeService` y compañía, los campos de
+    `publicapi.Deps` dejan de compilar. La lista de ficheros de T6.24 se quedaba corta en seis (`contenedor.go`,
+    `fase8_transporte.go`, `mudanzas.go`, `flows.go`, `http.go`, `bridge_contact.go`).
+57. **El notificador ya no pasa por `contactBridge`.** Recibe el resolver de `nucleo/contact` sin envolver
+    (`flowDeps.contactResolver`, la misma instancia que envuelve el adaptador; resuelve el hallazgo 6). Los errores del resolver
+    le llegan como centinelas de `nucleo`, sin la traducción a los viejos. La huella no lo ve: **a vigilar en P5 (F6-06)**.
+    `bridge_contact` sigue vivo por el motor hasta F8.
+58. **`reanalyze` lee por el almacén viejo y la bandeja por el nuevo**: dos instancias sin estado sobre el mismo pool y el mismo
+    cifrador (D-F6-1), la misma fila con distinto código SQL. La instancia vieja conserva sus **dos** opciones
+    (`ConCifraDeLiteral` y `ConLogDeRetencion`; la spec solo exigía la primera: con duda, manda el viejo). Y
+    `tenantvars.NewPostgres` pasa de dos instancias (fases 8 y 9) a **una**, en la fase 3.
+59. **El plazo de G7 sale de un sitio**: `quoteCallTimeout` (`pipeline.PlazoPorLlamadaSuelo`) va a `quotetext.WithTimeout` y
+    `quoteWriteDeadline` (+ 12 s) a la cara; lo fija `TestCableado_TheQuoteWriteDeadlineIsDerived`, por valor y por AST.
+    `apipublica` no puede importar `pipeline` (regla 4). En F7 pasará a leerse del `pipeline` nuevo.
+60. **`bridge_contact_test.go` está en su techo exacto** (809 líneas, lista `OversizedFiles`): una línea más rompe `TestFileSize`.
+    Y `make ci-local` no corre con `-v`: el «0 SKIP» se mide aparte, con `go test -v` sobre el código nuevo (8056 PASS, 0 SKIP).

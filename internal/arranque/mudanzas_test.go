@@ -184,10 +184,11 @@ func TestMudanzas_ElMapa(t *testing.T) {
 // (conmutar(edge)), FaseActual = 3 y la cara sirve 29 rutas: las 23 de acceso (A1–A7, B1–B14,
 // C1–C2) y las 6 de edge (D1–D6). Desde F4 (conmutar(inferencia)), FaseActual = 4 y sirve 33:
 // además las 4 de inferencia (F1–F4). Desde F5 (conmutar(catalogo)), FaseActual = 5 y siguen
-// siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8).
+// siendo 33: catalogo no muda ninguna ruta (I14–I17 se quedan en la vieja hasta F8). Desde F6
+// (conmutar(solicitudes)), FaseActual = 6 y sirve 51: además las 18 de solicitudes (G1–G18).
 func TestMudanzas_FaseActual(t *testing.T) {
-	if FaseActual != 5 {
-		t.Fatalf("FaseActual = %d; conmutar(catalogo) la deja en 5 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
+	if FaseActual != 6 {
+		t.Fatalf("FaseActual = %d; conmutar(solicitudes) la deja en 6 y solo la sube la tarea conmutar(<m>) de la fase siguiente", FaseActual)
 	}
 	filas := leerMapa(t)
 	cara := caraNueva(newFaceDepsWithDoubles())
@@ -203,8 +204,8 @@ func TestMudanzas_FaseActual(t *testing.T) {
 			esperadas = append(esperadas, f.patron)
 		}
 	}
-	if len(esperadas) != 33 {
-		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6) e inferencia 4 (F1–F4): 33", len(esperadas), FaseActual)
+	if len(esperadas) != 51 {
+		t.Errorf("el mapa da %d filas del :8103 con fase ≤ F%d; acceso muda 23 (A1–A7, B1–B14, C1–C2), edge 6 (D1–D6), inferencia 4 (F1–F4) y solicitudes 18 (G1–G18): 51", len(esperadas), FaseActual)
 	}
 	patrones := cara.Patrones()
 	slices.Sort(patrones)
@@ -294,6 +295,38 @@ func newFaceDepsWithDoubles() newFaceDeps {
 					apipublica.DegradationNoticeLister
 				}{},
 				Entitlements: entitlementshelpertest.NewFake(),
+			},
+		},
+		// F6 · solicitudes: la bandeja y los informes con su servicio y el resolver de derechos (G7
+		// además con el generador y un plazo de escritura > 0); las variables y la telemetría con su
+		// almacén; el puente CRM con el almacén y el resolver; el callback con sus tres puertos.
+		requests: requestsFaceDeps{
+			intakes: apipublica.IntakesDeps{
+				Intakes:      struct{ apipublica.IntakeService }{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
+			intakeReports: apipublica.IntakeReportsDeps{
+				Intakes:            struct{ apipublica.IntakeReportService }{},
+				Entitlements:       entitlementshelpertest.NewFake(),
+				QuoteSuggestions:   struct{ apipublica.QuoteSuggester }{},
+				QuoteWriteDeadline: quoteWriteDeadline,
+			},
+			tenantVariables: apipublica.TenantVariablesDeps{
+				TenantVariables: struct{ apipublica.TenantVariableStore }{},
+			},
+			integrations: apipublica.IntegrationsDeps{
+				Integrations: struct{ apipublica.IntegrationsStore }{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
+			crmCallback: apipublica.CRMCallbackDeps{
+				CRMSecrets: struct{ apipublica.CRMSecretReader }{},
+				CRMGate:    struct{ apipublica.CRMBridgeGate }{},
+				CRMReflect: struct{ apipublica.CRMReflector }{},
+			},
+			eventTelemetry: apipublica.EventTelemetryDeps{
+				EventTelemetry: struct {
+					apipublica.EventTelemetryReader
+				}{},
 			},
 		},
 	}

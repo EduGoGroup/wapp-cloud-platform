@@ -1,4 +1,7 @@
-// Copia de internal/bootstrap/arranque/reanalisis_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/reanalisis_cableado_test.go @ 80807ba (F0 · 05 §6): el
+// re-análisis y la etapa draft siguen siendo paquetes VIEJOS (hasta F7). Desde F6 (T6.24,
+// conmutar(solicitudes)) el c.intakeService cuya PushRevisionByID llama la clausura es el Service
+// de internal/modulos/solicitudes; el texto que este test busca no cambia (reglas.md T-6, T-7).
 package arranque
 
 // reanalisis_cableado_test.go — QUE EL RE-ANÁLISIS ESTÉ ENCHUFADO (Plan 044 · Ola 4 ·

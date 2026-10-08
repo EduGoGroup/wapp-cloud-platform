@@ -1,5 +1,7 @@
 // Copia de internal/bootstrap/arranque/fase7_flujos.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge.
+// salvo edge, que desde F3 (T3.28, conmutar(edge)) es internal/modulos/edge. Desde F6 (T6.24,
+// conmutar(solicitudes)) el motor viejo recibe los objetos NUEVOS de solicitudes por sus puertos
+// estructurales; solo el proyector del carrito sigue leyendo de c.intakeStoreViejo.
 package arranque
 
 import (
@@ -232,8 +234,13 @@ func construirRuntimeDeFlujos(c *contenedor) *flowruntime.Runtime {
 		// vida escribe las filas `decision` del hilo — el sink solo ve el puerto
 		// estrecho DecisionAppender. Una segunda instancia sería un segundo cipher
 		// y un segundo reloj sobre conversation_events.
+		//
+		// 🔀 F6 · conmutar(solicitudes): el proyector del carrito recibe en sus argumentos 2 y 3
+		// (escritor de revisiones y garante del envío) la instancia VIEJA del almacén (D-F6-1):
+		// esos dos puertos nombran intakes.Revision e intakes.ShippingPolicy del paquete viejo.
+		// Muere en F8. El 4.º, el escritor de datos del comprador, es de stdlib y recibe el NUEVO.
 		flowruntime.WithEventSink(flowruntime.NewPersistSink(c.flowStore,
-			cart.NewProjector(c.flowStore, c.intakeStore, c.intakeStore, c.buyerDataStore),
+			cart.NewProjector(c.flowStore, c.intakeStoreViejo, c.intakeStoreViejo, c.buyerDataStore),
 			survey.NewProjector(c.flowStore)).WithDecisionThread(c.eventStore)),
 		// Puente CRM (Plan 042 · Ola 3): SOLO encola (INV-02); el worker que
 		// entrega de verdad se arranca en la fase de fondo.
