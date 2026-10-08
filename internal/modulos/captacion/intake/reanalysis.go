@@ -49,8 +49,6 @@
 
 package intake
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-
 // ReanalysisRequest (antes `SolicitudReanalisis`) es lo que hace falta para abrir el job del re-análisis: la
 // clave de ventana del evento, la solicitud a la que se cuelga y el contexto de
 // D-044.15 que el `draft` necesitará al otro extremo.
@@ -78,5 +76,5 @@ type ReanalysisRequest struct {
 // `requested_by` vacío produciría un job que el `draft` trataría como del pipeline
 // normal pero que nadie habría agregado.
 func (s ReanalysisRequest) Valid() bool {
-	panic(pendiente.Implementar("intake.ReanalysisRequest.Valid"))
+	return s.Key.Valid() && s.IntakeID != "" && s.Context.IsFromOwner()
 }
