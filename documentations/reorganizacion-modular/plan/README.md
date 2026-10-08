@@ -12,7 +12,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-07): [`sesiones/F45-03`](sesiones/F45-03-cli-cierre.md) (cierre de F4 y F5).
+> **Siguiente paso** (al 2026-10-07, con F4 y F5 cerradas): [`sesiones/F6-01`](sesiones/F6-01-web-inventario-y-hojas.md) (inventario y hojas de `solicitudes`).
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
@@ -49,7 +49,7 @@ sesión te manda al protocolo, y el protocolo te dice qué leer: el marco, la *s
 
 Sesiones: 🌐 web · 🌐❓ web si queda saldo de la promoción, si no local · 💻 solo local (Docker, UAT, `main`).
 Al 2026-10-07 están hechas las sesiones de F0, F9-A/B, F1 (con F1-06), F2, F3 y las dos primeras de F4+F5
-(F45-01 y F45-02); la siguiente es F45-03. Qué sesión está hecha lo dice la tabla de
+(F45-01, F45-02 y F45-03); la siguiente es F6-01. Qué sesión está hecha lo dice la tabla de
 [`sesiones/README.md`](sesiones/README.md), no esta línea.
 
 Cifras de ficheros de producción medidas por cada *spec* sobre `dev` @ `1b18932` (con `ls`/`wc`/`go

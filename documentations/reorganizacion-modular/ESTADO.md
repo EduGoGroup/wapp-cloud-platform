@@ -409,7 +409,7 @@ código viejo, ni `go.mod`; `Conmutados` no cambia (`{"acceso","edge"}`).
   contradicción 8 de F7: `el job no trae literal que analizar`), en código de captación viejo que esta sesión no toca,
   y en un proceso distinto cada vez; repetidos `-count=4`: P6 8 de 8 (los dos binarios), P7 4 de 4 (nuevo). 0 SKIP en
   todas. 🟡 Sospecha nueva para F7: llegaron al sumar 34 bases clonadas a la corrida (hallazgo 30 de F4).
-- ⏱️ **D-R-6**: ≈ 45 min de pared (21:46 → 22:30, hora local) para las dos fases; 2 commits de test, 4 ficheros `.go`.
+- ⏱️ **D-R-6**: ≈ 45 min de pared (21:46 → 22:30, hora local) para las dos fases; 2 commits de test, 5 ficheros `.go` (3 nuevos y 2 modificados, todos de test o de suite de contrato).
 - **No corrido**: `make test-integration` (la integración vieja: no se tocó código viejo ni compartido). **UAT no es de
   esta sesión: es de F10** ([`plan/README.md`](plan/README.md)); el bloque de F45-02 la apuntaba aquí por error.
 - **Hallazgos 27–32** en el [README de F4](plan/F4-inferencia/README.md) y **25–27** en el

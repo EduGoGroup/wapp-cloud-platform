@@ -192,7 +192,7 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
 25. **Definición de hecho, punto a punto** (sobre `59a3e6b`, rc leído del log, sin pipe; `go1.26.5`, lint `v2.12.2`):
     (1) `GOWORK=off make ci-local` `GATE_RC=0`: 167 `ok`, 0 `FAIL`, lint `0 issues.`; (2) `make vet-pendiente` rc=0;
     (3) el `grep` da 0 líneas; `PENDIENTES=0 · ROJOS=0`; (4) cobertura (informe), los 15 ficheros de
-    `internal/modulos/catalogo`: 10 al 100,0 % y `diff.go` 98,9 %, `tabular.go` 98,0 %, `template.go` 97,7 %,
+    `internal/modulos/catalogo` (§4.4 dice 11: E-13 partió `catalogimport`, hallazgo 12): 10 al 100,0 % y `diff.go` 98,9 %, `tabular.go` 98,0 %, `template.go` 97,7 %,
     `validator_fields.go` 96,0 %, `normalizador.go` 98,9 %; ninguno entre los 7 `POR_DEBAJO`; (5) `go test -v` de
     `catalogo` y `conversacion/model` rc=0, 547 PASS, **0 SKIP**; (6) `fronteras_test.go` sin cambio desde `dec75e7`;
     (7) huella idéntica con `FaseActual = 5`; (8) esta documentación; (9) T9.26: `BINARIO=nuevo make test-procesos`

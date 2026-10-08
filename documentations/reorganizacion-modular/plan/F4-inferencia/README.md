@@ -300,8 +300,8 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
     `bridge_inferencia_test.go`; (8) `bridge_gateway.go` no existe; (9) esta documentación; (10) hallazgo 27 y
     `BINARIO=nuevo make test-procesos` `MAKE_RC=0`: `RC=0 · PASS=869 · FAIL=0 · SKIP=0`; (11) `Conmutados` =
     `{"acceso","edge"}`, sin cambio.
-32. **Coste (D-R-6) y lo no corrido.** F4 entera: tres sesiones (F45-01, F45-02, F45-03). Esta: 2 commits de test, 4
-    ficheros `.go` tocados (3 nuevos), ≈ 45 min de pared para las dos fases. **No corrido**: `make test-integration` (la
+32. **Coste (D-R-6) y lo no corrido.** F4 entera: tres sesiones (F45-01, F45-02, F45-03). Esta: 2 commits de test, 5
+    ficheros `.go` tocados (3 nuevos y 2 modificados; todos de test o de suite de contrato), ≈ 45 min de pared para las dos fases. **No corrido**: `make test-integration` (la
     integración vieja: la sesión no toca código viejo ni compartido; F45-02 la apuntó a esta sesión, pero el protocolo
     solo la pide si se toca) y **UAT, que no es de esta sesión: es de F10** ([`plan/README.md`](../README.md)). El
     «Pendientes: 5» del *hook* de `SessionStart` es ruido: cuenta `testdata/` y un comentario de `internal/candados`;
