@@ -104,7 +104,8 @@ func TestQuoteSuggestion_Body(t *testing.T) {
 			`{"rendered_text":"Total $1","source":"deterministic","fallback_reason":"proveedor_no_disponible"}`},
 		{"html_is_escaped_by_the_encoder",
 			quotetext.Suggestion{Text: `<b>"2 & 3"</b>`, Source: quotetext.SourceLLM},
-			`{"rendered_text":"<b>\"2 & 3\"</b>","source":"llm"}`},
+			// \x5c es la barra invertida: `<`, `>` y `&` salen escapados (u003c, u003e, u0026).
+			`{"rendered_text":"` + "\x5cu003cb\x5cu003e" + `\"2 ` + "\x5cu0026" + ` 3\"` + "\x5cu003c/b\x5cu003e" + `","source":"llm"}`},
 		{"empty_suggestion_keeps_its_keys",
 			quotetext.Suggestion{},
 			`{"rendered_text":"","source":""}`},

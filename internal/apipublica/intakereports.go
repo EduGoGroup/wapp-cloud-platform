@@ -192,4 +192,6 @@ func MountIntakeReports(c *Cara, k Common, d IntakeReportsDeps) {
 	canExport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureIntakesExport)
 	c.Handle("GET /api/v1/intakes/export", protectRead(k, "intakes.read",
 		canExport(exportIntakesHandler(d.Intakes, now))))
+	c.Handle("GET /api/v1/intakes/summary.json", protectRead(k, "intakes.read",
+		canExport(summaryHandler(d.Intakes))))
 }

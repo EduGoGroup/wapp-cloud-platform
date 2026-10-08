@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // summary_test.go — cubre G10, `GET /api/v1/intakes/summary.json`, tal como lo promete
@@ -84,7 +82,8 @@ func TestSummary_Body(t *testing.T) {
 		`{"sku":"_shipping","label":"Envío — Providencia","qty_total":2,"revenue":3001}],` +
 		`"intakes":[` +
 		`{"id":"11111111-1111-4111-8111-111111111111","status":"confirmed","created_at":"2026-08-01T12:00:00Z",` +
-		`"total":21001,"customer_note":"dejar en portería <sin timbre>","items":[` +
+		// El codificador de la casa escapa `<` y `>` (\x5c es la barra invertida).
+		`"total":21001,"customer_note":"dejar en portería ` + "\x5cu003csin timbre\x5cu003e" + `","items":[` +
 		`{"sku":"torta-v1","label":"Torta 10-12 porciones","customization":"sin sal","qty":1,"unit_price":18000},` +
 		`{"sku":"_shipping","label":"Envío — Providencia","customization":"","qty":2,"unit_price":1500.5}]},` +
 		`{"id":"22222222-2222-4222-8222-222222222222","status":"open","created_at":"2026-08-02T00:00:00Z",` +
