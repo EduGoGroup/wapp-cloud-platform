@@ -100,14 +100,14 @@ var reglas = candados.Reglas{
 	// conmutar(<m>) si nunca tuvo adaptador (05 §4.2, D-F1-15): mientras viva un adaptador, la
 	// regla 3 falla, porque el adaptador existe para importar lo viejo. Por eso nucleo, conmutado
 	// en F1 con bridge_contact.go, no está aquí: entra en F8, cuando muera ese adaptador. acceso
-	// (conmutado en F2) entra en F3, con el conmutar(edge) que borra bridge_iam.go. edge SIGUE
-	// FUERA aunque su adaptador bridge_gateway.go murió en F4 (conmutar(inferencia)): con edge
-	// aquí, la regla 3 muerde en internal/arranque/session_identity_test.go, que importa
-	// internal/gateway/session a propósito para afirmar que el centinela ErrSessionOffline viejo
-	// y el nuevo son la misma variable (D-F3-2), y no se puede reapuntar sin quitarle esas
-	// aserciones. Qué se hace con ese test (y cuándo entra edge) queda a decisión de Jhoan.
+	// (conmutado en F2) entra en F3, con el conmutar(edge) que borra bridge_iam.go. edge entra
+	// al cierre de F45-02 (D-F3-14): su adaptador bridge_gateway.go murió en F4 (conmutar(inferencia))
+	// y se borró internal/arranque/session_identity_test.go, que importaba internal/gateway/session
+	// viejo para afirmar que el centinela ErrSessionOffline viejo y el nuevo son la misma variable
+	// (D-F3-2). Era redundante: lo afirman edge/session/registry_test.go contra el de platform, los
+	// tests de platform/httpapi por comportamiento (502) y el proceso P1 por el cable.
 	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
-	Conmutados: []string{"acceso"},
+	Conmutados: []string{"acceso", "edge"},
 	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía en F0.
 	Puentes: []candados.Puente{},
 	// Fases cerradas: el commit que cierra cada fase añade aquí su id ("F0", "F1"…); un Puente

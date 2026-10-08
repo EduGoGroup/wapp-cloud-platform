@@ -15,7 +15,8 @@
 > arranque nuevo construye el selector, los almacenes y la carga de prompts nuevos y la cara `apipublica` sirve las 4
 > rutas F1–F4 (`98b24c5`); `FaseActual = 4` (hoy `5`, por F5). El adaptador `internal/arranque/bridge_inferencia.go`
 > vive hasta **F8** (`llmConfigBridge` muere en F7; `turneroBridge`, y con él el fichero, en F8), así que `inferencia`
-> sigue fuera de `Conmutados`. `bridge_gateway.go` de F3 está borrado. **Queda el cierre F45-03** (T4.29–T4.31 = T9.25).
+> sigue fuera de `Conmutados`. `bridge_gateway.go` de F3 está borrado y, desde el cierre de la sesión, `edge` está en
+> `Conmutados` (`{"acceso","edge"}`, D-F3-14, hallazgo 15). **Queda el cierre F45-03** (T4.29–T4.31 = T9.25).
 
 ## Objetivo en tres líneas
 
@@ -177,13 +178,21 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
 14. **`gateway_wiring_test.go` no estaba en la lista de T4.24** y se rompía al borrar `bridge_gateway.go` (exigía
     `*gatewayBridge` por reflexión; lo avisaba el hallazgo 11): reescrito en `98b24c5`; añade el campo `router` del
     selector al test de identidad.
-15. 🟡 **`edge` no entra en `Conmutados`** (decisión (a) de Jhoan, 2026-10-07: entraba en T4.24 **salvo** que obligara a
+15. ✅ *(era 🟡; resuelto el 2026-10-07, nota ✎ al final)* **`edge` no entra en `Conmutados`** (decisión (a) de Jhoan, 2026-10-07: entraba en T4.24 **salvo** que obligara a
     tocar aserciones de `session_identity_test.go`; la salvedad se cumplió). `internal/arranque/session_identity_test.go:7`
     importa `internal/gateway/session` viejo y 3 de sus 4 aserciones nombran el centinela viejo `ErrSessionOffline`: la
     regla 3 lo pondría rojo. `Conmutados` sigue `{"acceso"}`. El comentario de `internal/modulos/fronteras_test.go`
     (antes «edge no entra hasta F4») se actualizó. Contradice [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7
     (`:83-85`) — corregido el 2026-10-07 (nota fechada en ese §4.7). **Pendiente de Jhoan**: qué se hace con ese test
     (muere, se mueve o excepción).
+    ✎ **Resuelto el 2026-10-07 (D-F3-14, Jhoan, al cierre de F45-02): test borrado, `edge` dentro.**
+    `internal/arranque/session_identity_test.go` ya no existe y `Conmutados` es `{"acceso","edge"}`. El test era
+    redundante: el centinela nuevo lo fijan `TestErrSessionOfflineIsThePlatformSentinel` y `TestPushOfflineSession`
+    (`internal/modulos/edge/session`) y `TestP1_EdgeFaceOverTheWire/offline_session_is_502`; el viejo,
+    `TestSendMessageHandler_Offline` y `TestSendMessageHandler_StreamCaido_NoPisaEl502DeOffline`
+    (`internal/platform/httpapi`). Con `edge` dentro y el test presente, `TestFronteras` daba una sola violación (ese
+    test); borrado, rc=0 y 0 SKIP. Porqué completo, alternativas y lo que se pierde:
+    [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7.
 16. **Forma del adaptador.** `llmConfigBridge` guarda una interfaz mínima no exportada (`llmConfigReader`, solo `Get`)
     para probarse sin BD; `inference_wiring_test.go` afirma por reflexión que lo cableado es el `*tenantllm.Postgres`
     nuevo. `turneroBridge` guarda el `*llmvia.Selector` concreto. El centinela se traduce reutilizando `bridgeError` de
@@ -222,6 +231,7 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
 26. **Huella con `FaseActual = 4` y `5`: idéntica sin tocar la dorada**; perfiles `minimo` y `con-m2m`:
     `:8100=22 :8103=73 rpc=2 metricas=11`. La cara nueva sirve 33 rutas (23 de acceso + 6 de edge + 4 de inferencia).
 
-**Decisiones de Jhoan en la sesión (2026-10-07)**: (a) `edge` y `Conmutados`, hallazgo 15; (b) `catalogo` no entra en
+**Decisiones de Jhoan en la sesión (2026-10-07)**: (a) `edge` y `Conmutados`, hallazgo 15 (cerrada el mismo día: test
+de identidad borrado, `edge` dentro); (b) `catalogo` no entra en
 `Conmutados` hasta F7 y (c) D-F5-2 sin ampliar el motor de fronteras, en el [README de F5](../F5-catalogo/README.md).
 Las tres, en [`DECISIONES.md`](../DECISIONES.md) §5 y §7.
