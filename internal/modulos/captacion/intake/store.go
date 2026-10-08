@@ -19,8 +19,6 @@ package intake
 import (
 	"context"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Estados de `intake_jobs.status`, vocabulario CERRADO por el CHECK
@@ -73,7 +71,7 @@ type WindowKey struct {
 // NOT NULL en la 0072, así que una clave incompleta no es «una ventana rara»: es un
 // INSERT que revienta. Se comprueba en Go —barato, sin red— antes de escribir.
 func (k WindowKey) Valid() bool {
-	panic(pendiente.Implementar("intake.WindowKey.Valid"))
+	return k.TenantID != "" && k.SessionID != "" && k.ContactID != "" && k.EventID != ""
 }
 
 // Append es UN entrante entrando a su ventana: la clave, el instante del mensaje y
@@ -121,7 +119,7 @@ type SourceText struct {
 // Complete dice si el sobre está entero. Un sobre incompleto no se escribe: media
 // escritura deja una fila indescifrable, que es peor que una fila vacía.
 func (s SourceText) Complete() bool {
-	panic(pendiente.Implementar("intake.SourceText.Complete"))
+	return len(s.Enc) > 0 && len(s.DEK) > 0 && s.KEKID != ""
 }
 
 // OpenJob es una ventana VIVA tal como la ve el barrido de cierre. Es lo mínimo

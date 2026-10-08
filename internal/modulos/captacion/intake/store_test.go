@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intake
 
 import (
@@ -118,11 +116,11 @@ func TestJobStore_IsFourOperations_AndBothImplementationsSatisfyIt(t *testing.T)
 		ListAggregating(ctx context.Context, limit int) ([]OpenJob, error)
 		PutSourceText(ctx context.Context, k WindowKey, env SourceText) (bool, error)
 	}
-	var port JobStore = NewMemoryStore(nil)
-	var narrow four = port
-	port = narrow
-	if port == nil {
-		t.Fatal("el gemelo no satisface JobStore")
+	for name, port := range map[string]JobStore{"gemelo": (*MemoryStore)(nil), "adaptador": (*Postgres)(nil)} {
+		var narrow four = port
+		var back JobStore = narrow
+		if back == nil {
+			t.Errorf("el %s no satisface JobStore", name)
+		}
 	}
-	var _ JobStore = (*Postgres)(nil)
 }
