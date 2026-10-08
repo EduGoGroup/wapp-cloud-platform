@@ -384,8 +384,9 @@ Tras el cierre, Jhoan decidió una a una las siete 🟡 de F2; un commit por dec
 **F6-04 · F6, `quotetext`, `telemetria`, `integrations` y `crmpush` (2026-10-08, 💻, rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush` desde `dev` @ `36d5a04`).**
 
 T6.10–T6.13 y T6.19–T6.21. Los cuatro paquetes no existían: se crearon enteros —contrato, rojo y verde— orquestando un
-sub-agente por paquete, en paralelo y en directorios disjuntos, sin *worktrees*; **commiteó solo el orquestador**. 14
-commits, `31b9343` … `8ebc6eb` (11 de verde y 3 de rojo), y **los 14 compilan solos** (medido por SHA). Ni una línea del
+sub-agente por paquete, en paralelo y en directorios disjuntos, sin *worktrees*; **commiteó solo el orquestador**. 15
+commits, `31b9343` … `af68fe3` (11 de verde, 3 de rojo y 1 de fix), y **los 14 primeros compilan solos** (medido por SHA; el
+último se validó con `ci-local`). Ni una línea del
 código viejo, del arranque, de la cara HTTP ni de `docs/contracts/`.
 
 - **`telemetria`** (`31b9343`, simple, una pasada): `Publisher` satisface `intakes.MetricsPublisher`; su import de
@@ -401,12 +402,13 @@ código viejo, del arranque, de la cara HTTP ni de `docs/contracts/`.
   **`integrationshelpertest.Contrato`** nueva, 61 casos con marca de estado de fila entera, y el doble **`Memoria`**
   (R6.3.b), verdes desde el rojo. `postgres.go` con las 12 sentencias byte a byte y, por D-F6-6, `SecretFingerprint` y
   `CountOutbox`. El worker con reloj inyectado (`WithClock`) y **D-F6-7**: contexto cancelado → vuelve sin `ERROR`, sin
-  contar el intento y sin tocar la métrica. Esquema `wapp-crm-v1` (D-F6-3) en verde.
+  contar el intento y sin tocar la métrica. Esquema `wapp-crm-v1` (D-F6-3) en verde. Y, pedido por Jhoan tras el cierre
+  (`af68fe3`, hallazgo 38a): una plantilla `null` en el outbox es un fallo de entrega más y no un pánico de la goroutine.
 - **Mutantes** (a mano, por overlay): nivel complejo, `postgres.go` 37 (34 muertos, 3 equivalentes) y `worker*.go` 46
   (46 muertos); `Memoria` contra la suite 51 (50 y 1 equivalente); nivel medio y simple, 85 (84 y 1 equivalente).
   **219 sembrados · 214 muertos · 5 equivalentes · 0 vivos.** Seis sobrevivían al rojo y pidieron test nuevo (2 en
   `precios`, 2 en `quotetext`, 2 del worker: los de D-F6-7).
-- **Gates sobre `8ebc6eb`** (toolchain fijada `TOOLCHAIN=OK`, rc sin pipe): `make ci-local` rc=0 (183 `ok`, 0 FAIL, lint
+- **Gates sobre `8ebc6eb`** (repetidos sobre `af68fe3`: `make ci-local` rc=0, lint `0 issues.`) (toolchain fijada `TOOLCHAIN=OK`, rc sin pipe): `make ci-local` rc=0 (183 `ok`, 0 FAIL, lint
   `0 issues.`) · `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=1` · código nuevo
   `go test -count=1 -race -v ./internal/modulos/solicitudes/...` rc=0, 630 PASS de primer nivel (1977 con subtests),
   **0 SKIP**, 0 FAIL · 0 SKIP en `internal/modulos`, `internal/nucleo` e `internal/arranque` · grep de parada → 0 ·
@@ -417,7 +419,8 @@ código viejo, del arranque, de la cara HTTP ni de `docs/contracts/`.
   la integración vieja (no se tocó código compartido) y el arranque real de `cmd/server-modular` (nada nuevo se cablea
   hasta F6-05).
 - **Hallazgos 35–44** en el [README de F6](plan/F6-solicitudes/README.md); 🟡 el 38 trae rarezas del viejo portadas
-  fieles que esperan decisión de Jhoan (la principal: un payload `null` haría entrar en pánico al worker).
+  fieles que esperan decisión de Jhoan (la principal, el payload `null`, ya está endurecida; queda sobre todo la 38b:
+  el gate abre sin URL ni secreto y el worker los exige).
   **Siguiente paso: F6-05.** `main` sin tocar.
 
 **F6-03 · F6, `intakes` (2/2): almacenes, acciones, notificador y candados (2026-10-08, 💻, rama `reorg/f6-03-intakes-almacenes-acciones-candados` desde `dev` @ `5fd533e`).**
@@ -954,7 +957,7 @@ en paralelo (entitlements, iam/infra/postgres, transport/http, platformadmin en 
 | F3 | ✅ **cerrada** (2026-10-06, F3-05 💻: `8121564` … `876b096`, rama `reorg/f3-05-cierre-mtls`, por PR a `dev`) (F3-01 y F3-02 hechas e integradas el 2026-10-04 💻: PR #35 y PR #36, `dev` @ `c851591`; **F3-03, tanda 1 de 3** integrada, PR #37, `dev` @ `cbc5736`; **tanda 2 de 3** integrada, PR #38, `dev` @ `ec236b3`; **tanda 3 de 3, F3-03 hecha**, integrada, PR #39, `dev` @ `414b31b`; **F3-04 hecha** el 2026-10-06, rama `reorg/f3-04-bridge-conmutar-rutas`, por PR a `dev`: `dd4cbd2` … `0ebb743`; falta F3-05) | F3-01 · T3.1–T3.9, T3.15–T3.18 · F3-02 · T3.10, T3.11, T3.19, T3.20 · F3-03 · T3.12–T3.14, T3.21–T3.23 · F3-04 · T3.24–T3.26, T3.28 (T3.27 `[~]`) | `3ae565c` y `bcd0f4e` … `8a4dd34` (F3-01) · `d7323b7` y `532e62f` … `b86dd62` (F3-02, 12 commits de `edge`) · `b1a408b` y `dd4f984` … `a0baf00` (F3-03 tanda 1, 11 commits de `edge`) · `f0019af` … `84c83f6` (F3-03 tanda 2, 11 commits de `edge`) · `185dcbc` … `231c74b` (F3-03 tanda 3, 20 commits de `edge`) |
 | F4 | ✅ **cerrada** (2026-10-07, F45-03 💻: `ddb8baa`, `59a3e6b`, rama `reorg/f45-03-cierre`, por PR a `dev`; `inferencia` fuera de `Conmutados` hasta F8) (F45-02 hecha el 2026-10-07 💻: `bridge_inferencia.go`, el arranque nuevo cablea `inferencia`, 4 rutas mudadas, `FaseActual = 4`; rama `reorg/f45-02-conmutar-inferencia-catalogo`, por PR a `dev`; `inferencia` fuera de `Conmutados` hasta F8) (F45-01 hecha el 2026-10-07 💻: inventario E-12 aprobado e `internal/modulos/inferencia` entero en verde, **sin conmutar**; rama `reorg/f45-01-inventario-inferencia`, por PR a `dev`) | F45-03 · T4.29–T4.31 (= T9.25) · F45-02 · T4.10, T4.24–T4.28 (= TX.12–TX.14) · F45-01 · T4.1–T4.9, T4.11–T4.23 | `ddb8baa`, `59a3e6b` (F45-03) · `65f5348`, `fee3ed2`, `c619013`, `23a7d92`, `98b24c5`, `c2f469a`, `0e532e4`, `75298b8` (F45-02) · `2783172`, `bccfa4b` … `b8ae091` (rojo), `24c0782` … `24f6450` (verde) (F45-01) |
 | F5 | ✅ **cerrada** (2026-10-07, F45-03 💻: sin commit de código, T9.26 sobre `59a3e6b`; rama `reorg/f45-03-cierre`, por PR a `dev`; `catalogo` fuera de `Conmutados` hasta F7) (F45-02 hecha el 2026-10-07 💻: `conversacion/model`, `catalogo`, `catalogimport` e `indice` sin etiqueta `pendiente`; `FaseActual = 5`; ninguna ruta ni cableado; `catalogo` fuera de `Conmutados` hasta F7; rama `reorg/f45-02-conmutar-inferencia-catalogo`, por PR a `dev`) (inventario E-12 aprobado en F45-01, 2026-10-06; D-F5-1 = B) | F45-03 · T5.20–T5.21 (= T9.26) · F45-02 · T5.2–T5.19 (= TX.15) · F45-01 · T5.1 | `523ef63` … `13e869f` (F45-02, 21 commits) · `5ba9fed` (F45-01) |
-| F6 | 🔧 **en curso** (F6-04 hecha el 2026-10-08 💻: `quotetext`, `telemetria`, `integrations` y `crmpush` en verde, módulo sin pendientes, `PENDIENTES=0 · ROJOS=1`; rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush`, por PR a `dev`. Antes, F6-03 el 2026-10-08 💻: `intakes` entero en verde, `PENDIENTES=0 · ROJOS=1`; rama `reorg/f6-03-intakes-almacenes-acciones-candados`, por PR a `dev`. Antes, F6-02 el 2026-10-08 💻: `intakes` entero con contrato y test, 9 tipos puros en verde, `PENDIENTES=108`; rama `reorg/f6-02-intakes-contratos-y-tipos`, por PR a `dev`. Antes, F6-01 el 2026-10-07: inventario E-12 aprobado, `sigv1`, `intakes/note.go` y `tenantvars` en verde) | F6-01 · T6.1–T6.5, T6.14 · F6-02 · T6.6–T6.8, T6.15 · F6-03 · T6.9, T6.16–T6.18 · F6-04 · T6.10–T6.13, T6.19–T6.21 | `27a7924`, `98f9220`, `571482b`, `8c7ce8b`, `0108667`, `177f529`, `8cb2129`, `06879cb` · F6-02: `113912e` … `c366c68` · F6-03: `e8f1e10` … `4fcccc6` · F6-04: `31b9343` … `8ebc6eb` |
+| F6 | 🔧 **en curso** (F6-04 hecha el 2026-10-08 💻: `quotetext`, `telemetria`, `integrations` y `crmpush` en verde, módulo sin pendientes, `PENDIENTES=0 · ROJOS=1`; rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush`, por PR a `dev`. Antes, F6-03 el 2026-10-08 💻: `intakes` entero en verde, `PENDIENTES=0 · ROJOS=1`; rama `reorg/f6-03-intakes-almacenes-acciones-candados`, por PR a `dev`. Antes, F6-02 el 2026-10-08 💻: `intakes` entero con contrato y test, 9 tipos puros en verde, `PENDIENTES=108`; rama `reorg/f6-02-intakes-contratos-y-tipos`, por PR a `dev`. Antes, F6-01 el 2026-10-07: inventario E-12 aprobado, `sigv1`, `intakes/note.go` y `tenantvars` en verde) | F6-01 · T6.1–T6.5, T6.14 · F6-02 · T6.6–T6.8, T6.15 · F6-03 · T6.9, T6.16–T6.18 · F6-04 · T6.10–T6.13, T6.19–T6.21 | `27a7924`, `98f9220`, `571482b`, `8c7ce8b`, `0108667`, `177f529`, `8cb2129`, `06879cb` · F6-02: `113912e` … `c366c68` · F6-03: `e8f1e10` … `4fcccc6` · F6-04: `31b9343` … `af68fe3` |
 | F7–F8 | pendiente | — | — |
 | F9-D | pendiente | — | — |
 | F10 | pendiente | — | — |
@@ -1081,7 +1084,7 @@ La norma (`05`) **sigue mandando**; estas son erratas o precisiones medidas, no 
 
 ## Estado de git
 
-- **F6-04**: rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush`, partida de `dev` @ `36d5a04` (PR #48 dentro); `31b9343` … `8ebc6eb` (14 commits: 11 de verde y 3 de rojo) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
+- **F6-04**: rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush`, partida de `dev` @ `36d5a04` (PR #48 dentro); `31b9343` … `af68fe3` (15 commits: 11 de verde, 3 de rojo y 1 de fix) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
 - **F6-03** (integrada en `dev` @ `36d5a04`, PR #48): rama `reorg/f6-03-intakes-almacenes-acciones-candados`, partida de `dev` @ `5fd533e` (PR #47 dentro); `e8f1e10` … `4fcccc6` (28 commits: 22 de verde, 1 de rojo, 1 de refactor y 4 de test) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
 - **F6-02** (integrada en `dev` @ `5fd533e`, PR #47): rama `reorg/f6-02-intakes-contratos-y-tipos`, partida de `dev` @ `64c181a` (PR #46 dentro); `113912e` … `c366c68` (13 commits: 3 de rojo, 9 de verde y 1 de test) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.
 - **F6-01** (integrada en `dev` @ `64c181a`, PR #46): rama `reorg/f6-01-inventario-y-hojas`, partida de `dev` @ `3a21138` (PR #45 dentro); `27a7924` … `06879cb` (8 commits: 1 de inventario, 1 de rojo, 4 de verde, 1 de procesos y 1 de comentario) y el cierre documental; PR hacia `dev`, **integrar sin squash**. Sin *worktrees*. `origin/main` sin tocar.

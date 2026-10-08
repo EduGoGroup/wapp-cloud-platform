@@ -78,7 +78,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 | [**F6-01**](../sesiones/F6-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐 | T6.1–T6.5, T6.14 | inventario E-12 **aprobado por Jhoan** (antes no se escribe código) · `sigv1` y `tenantvars` en verde, `note.go` con contrato y test · `ci-local` rc=0 · PR |
 | [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
 | [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR ✅ hecha el 2026-10-08 (hallazgos 24–34) |
-| [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 💻 | T6.10–T6.13, T6.19–T6.21 | ✅ hecha el 2026-10-08 (`31b9343` … `8ebc6eb`; hallazgos 35–44): 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
+| [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 💻 | T6.10–T6.13, T6.19–T6.21 | ✅ hecha el 2026-10-08 (`31b9343` … `af68fe3`; hallazgos 35–44): 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
 | [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 🌐❓ | T6.22–T6.26 (= TX.16–TX.18) | 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
 | [**F6-06**](../sesiones/F6-06-cli-cierre.md) · cierre local | 💻 | T6.27–T6.29 | suites en memoria y contra Postgres; procesos P5/P6 (T9.27) contra los dos binarios · `dev` integrado · `ESTADO.md` |
 
@@ -321,18 +321,20 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     mutantes vivos: con el contexto cancelado, `fail()` seguía contando el POST cortado por la parada como intento fallido
     y el sondeo seguía recorriendo el lote. No se veían porque el espía de los tests respeta el contexto, como Postgres.
     Ahora `fail()` vuelve sin tocar la fila ni la métrica y `pollOnce` deja el lote: la fila queda `delivering` y la rescata
-    el lease. Lo fija `TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt`, contra `Memoria` a pelo. **Única diferencia
-    de comportamiento del worker respecto del viejo**, además del reloj. Para T6.27 y D-F9-10: esto arregla **solo** el
+    el lease. Lo fija `TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt`, contra `Memoria` a pelo. Con el reloj
+    inyectado y el `null` del hallazgo 38a, son las **tres diferencias de comportamiento del worker respecto del viejo**. Para T6.27 y D-F9-10: esto arregla **solo** el
     worker nuevo; el binario viejo y las otras tres goroutines de fondo siguen como estaban.
-38. 🟡 **Rarezas del viejo portadas fieles, para que decida Jhoan** (ninguna se fijó «arreglada»): (a) un payload JSON
-    `null` en `webhook_outbox` deja el mapa en nil y `payload["buyer_data"] = …` entra en **pánico en la goroutine del
-    worker** (`internal/integrations/worker.go:323-335`); hoy inalcanzable, misma familia que el hallazgo 32, y sin test
-    que lo fije; (b) el gate da por habilitada una integración sin endpoint ni secreto (`gate.go:50`) y el worker los exige
+38. 🟡 **Rarezas del viejo, para que decida Jhoan.** ✅ (a) **endurecida** en `af68fe3` (Jhoan, 2026-10-08: «si vamos a
+    modificar algo, hagámoslo en este PR»): un payload JSON `null` en `webhook_outbox` dejaba el mapa en nil y
+    `payload["buyer_data"] = …` entraba en **pánico en la goroutine del worker** (`internal/integrations/worker.go:323-335`);
+    ahora es un motivo de fallo más, «plantilla del payload no es un objeto JSON», con backoff y `dead` como los demás, y
+    el mutante que quita la guarda muere con el pánico original. Hoy inalcanzable; misma familia que el hallazgo 32.
+    **Las demás siguen portadas fieles**: (b) el gate da por habilitada una integración sin endpoint ni secreto (`gate.go:50`) y el worker los exige
     (`worker.go:428,436`): encolaría entregas que fallan hasta `dead`; (c) `crmpush.Build` formatea el instante sin
     `.UTC()` (`push.go:185`): solo es UTC porque lo es el reloj por defecto; (d) el log del pánico de `RevisionPusher` no
     lleva `tenant`; (e) en `precios.go:185`, `soles?` no reconoce «sol» y `\s?` admite un solo blanco ASCII (con NBSP o dos
     espacios un texto correcto cae por `falta_precio_de_linea`: conservador, nunca acepta de más); (f)
-    `ParseSemilla("null")` devuelve `(nil, nil)`. (c), (e) y (f) quedan como promesa con su test; (a), (b) y (d), dichas en
+    `ParseSemilla("null")` devuelve `(nil, nil)`. (c), (e) y (f) quedan como promesa con su test; (b) y (d), dichas en
     el contrato.
 39. **El `fakeStore` viejo incumplía el puerto en seis puntos** (`internal/integrations/worker_test.go:70, :91, :139,
     :144, :168`, y aceptaba JSON inválido): lote en orden de mapa, sello cero que casaba con fila sin sello, frontera del
