@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 import (
@@ -109,7 +107,7 @@ func TestPostgres_GetTenantSecret_DecryptsWithTheKEKOfTheRow(t *testing.T) {
 			if err != nil || !found || secret != pgSecret {
 				t.Errorf("GetTenantSecret = (found=%v, err=%v, igual=%v), quería el secreto sellado", found, err, secret == pgSecret)
 			}
-			got := only(t, fake, eventQuery, getSecretSQL)
+			got := only(t, fake, eventQuery, readEnvelopeSQL)
 			requireArgs(t, got.args, pgTenant)
 		})
 	}
@@ -198,7 +196,7 @@ func TestPostgres_UpsertTenantIntegration_WithoutSecret(t *testing.T) {
 			if err := store.UpsertTenantIntegration(context.Background(), ti, ""); err != nil {
 				t.Fatalf("UpsertTenantIntegration: error inesperado %v", err)
 			}
-			got := only(t, fake, eventExec, upsertKeepSecretSQL)
+			got := only(t, fake, eventExec, upsertConfigOnlySQL)
 			requireArgs(t, got.args, pgTenant, "http", "webhook", c.want, true)
 		})
 	}
@@ -213,7 +211,7 @@ func TestPostgres_UpsertTenantIntegration_WithSecret(t *testing.T) {
 	if err := store.UpsertTenantIntegration(context.Background(), ti, pgSecret); err != nil {
 		t.Fatalf("UpsertTenantIntegration: error inesperado %v", err)
 	}
-	got := only(t, fake, eventExec, upsertWithSecretSQL)
+	got := only(t, fake, eventExec, upsertWithEnvelopeSQL)
 	if len(got.args) != 8 {
 		t.Fatalf("la sentencia lleva %d argumentos, quería 8: %v", len(got.args), got.args)
 	}
@@ -334,7 +332,7 @@ func TestPostgres_SecretFingerprint(t *testing.T) {
 		if fp != integrations.Fingerprint(pgSecret) {
 			t.Errorf("la huella (%q) no es la de Fingerprint", fp)
 		}
-		got := only(t, fake, eventQuery, getSecretSQL)
+		got := only(t, fake, eventQuery, readEnvelopeSQL)
 		requireArgs(t, got.args, pgTenant)
 	})
 	t.Run("no row", func(t *testing.T) {

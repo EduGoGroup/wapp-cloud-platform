@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -39,8 +39,8 @@ import (
 // (internal/platform/crypto), NO la DEK del ADR-0007 que custodia el cliente. Se generan en el test
 // y mueren con él; el secreto que cifran es una cadena inventada de la suite.
 //
-// Lleva la etiqueta `pendiente` además de `integracion` mientras el adaptador esté en rojo: su
-// panic abortaría el binario ENTERO de los procesos. El verde de postgres.go se la quita. Escrito y
+// Llevó la etiqueta `pendiente` además de `integracion` mientras el adaptador estuvo en rojo (su
+// panic abortaría el binario ENTERO de los procesos); el verde de postgres.go se la quitó. Escrito y
 // compilado, NO corrido: lo corre F6-06 (T6.27).
 
 const (

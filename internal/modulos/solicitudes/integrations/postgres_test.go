@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // postgres.go se prueba en tres ficheros (E-13), con un driver de mentira (postgres_fakedb_test.go)
@@ -18,6 +16,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -281,5 +280,39 @@ func TestPostgres_ClaimWebhookBatch_Errors(t *testing.T) {
 				t.Errorf("con error el lote trae %d filas, quería nil (sin filas a medias)", len(batch))
 			}
 		})
+	}
+}
+
+// TestPostgres_ClaimWebhookBatch_ScanErrorThenCloseError_WarnsAndKeepsTheScanError: si tras un
+// error de escaneo además falla el cierre de las filas, el error devuelto sigue siendo el del
+// escaneo y el del cierre no se calla (T-13): queda en el log estándar con su texto literal.
+func TestPostgres_ClaimWebhookBatch_ScanErrorThenCloseError_WarnsAndKeepsTheScanError(t *testing.T) {
+	var out strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&out)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	at := time.Unix(1_700_000_000, 0).UTC()
+	bad := claimedRow(2, "tenant-a", 0, "", at, at, at)
+	bad[5] = "no soy un número" // attempts
+	store, fake := newPostgres(t)
+	fake.script(reply{rows: [][]driver.Value{bad}, closeErr: errDB})
+
+	batch, err := store.ClaimWebhookBatch(context.Background(), 20)
+	if err == nil || !strings.HasPrefix(err.Error(), "integrations: escanear fila del lote: ") {
+		t.Fatalf("err = %v, quería el del escaneo", err)
+	}
+	if errors.Is(err, errDB) {
+		t.Errorf("el error devuelto envuelve el del cierre (%v): tenía que ser el del escaneo", err)
+	}
+	if batch != nil {
+		t.Errorf("con error el lote trae %d filas, quería nil", len(batch))
+	}
+	if want := "[wapp][integrations][WARN] claim: cerrar filas tras error de escaneo: base caída\n"; out.String() != want {
+		t.Errorf("log estándar =\n%q\nquería, byte a byte:\n%q", out.String(), want)
 	}
 }

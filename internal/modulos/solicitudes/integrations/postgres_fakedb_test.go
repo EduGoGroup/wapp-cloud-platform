@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // El driver de database/sql de mentira sobre el que corren los postgres_*_test.go: apunta, en
@@ -194,9 +192,15 @@ func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.N
 	if r.err != nil {
 		return nil, r.err
 	}
+	return r.driverRows(), nil
+}
+
+// driverRows son las filas de la respuesta: las normales o, si su cierre tiene que fallar, las
+// que database/sql no cierra por su cuenta.
+func (r reply) driverRows() driver.Rows {
 	rows := &fakeRows{rows: r.rows, endErr: r.endErr}
 	if r.closeErr != nil {
-		return &fakeOpenRows{fakeRows: rows, closeErr: r.closeErr}, nil
+		return &fakeOpenRows{fakeRows: rows, closeErr: r.closeErr}
 	}
-	return rows, nil
+	return rows
 }

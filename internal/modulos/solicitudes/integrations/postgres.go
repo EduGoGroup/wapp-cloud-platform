@@ -8,9 +8,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -18,14 +20,15 @@ import (
 // que intakes.Postgres: SQL raw con placeholders $1..$n, sin ORM), sobre
 // public.webhook_outbox (0046, 0049, 0050) y public.tenant_integrations (0047).
 //
-// Las reglas del puerto las fija la suite integrationshelpertest.Contrato, que
-// corre contra él en los procesos de F9. Su test de fichero afirma, con un driver
-// de mentira, lo que se ve sin base: el SQL que emite y sus argumentos, el mapeo
-// de filas y el de errores.
+// Las reglas del puerto las fija la suite integrationshelpertest.Contrato (F9); su
+// test de fichero afirma, con un driver de mentira, lo que se ve sin base: el SQL
+// que emite y sus argumentos, y el mapeo de filas y de errores.
 //
-// Cada método es UNA sentencia sobre el pool, sin transacción explícita. Todos
-// los errores salen envueltos con %w.
-type Postgres struct{}
+// Cada método es UNA sentencia, sin transacción. Todo error sale envuelto con %w.
+type Postgres struct {
+	db     *sql.DB
+	cipher *crypto.FieldCipher
+}
 
 // NewPostgres construye el store con la conexión y el cifrador de campo que
 // custodia el secreto HMAC (mismo KeyProvider de los planes 011/012 que ya usa
@@ -35,7 +38,7 @@ type Postgres struct{}
 // 🔴 Homónimo: la «DEK» de las columnas secret_dek es la del envelope de dato de
 // negocio (crypto.FieldCipher), NO la DEK del ADR-0007 que custodia el cliente.
 func NewPostgres(db *sql.DB, cipher *crypto.FieldCipher) *Postgres {
-	panic(pendiente.Implementar("integrations.NewPostgres"))
+	return &Postgres{db: db, cipher: cipher}
 }
 
 var _ Store = (*Postgres)(nil)
@@ -46,8 +49,22 @@ var _ Store = (*Postgres)(nil)
 //
 // Error: «integrations: encolar entrega de <kind>: » (y el id devuelto es 0).
 func (p *Postgres) EnqueueWebhook(ctx context.Context, tenantID, kind string, payload json.RawMessage) (int64, error) {
-	panic(pendiente.Implementar("integrations.Postgres.EnqueueWebhook"))
+	var id int64
+	err := p.db.QueryRowContext(ctx, `
+		INSERT INTO public.webhook_outbox (tenant_id, kind, payload)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, tenantID, kind, []byte(payload)).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("integrations: encolar entrega de %s: %w", kind, err)
+	}
+	return id, nil
 }
+
+// orphanReason es el last_error que deja la recuperación por lease vencido. Es
+// diagnóstico, no un error del puente: distingue "el CRM respondió 500" de "nadie
+// resolvió esta entrega y hubo que rescatarla".
+const orphanReason = "claim vencido: el worker que reclamó la entrega no la resolvió dentro del lease"
 
 // ClaimWebhookBatch reclama hasta `limit` filas listas para entregar
 // (status='pending', next_attempt_at vencido) en UNA SOLA sentencia atómica:
@@ -64,8 +81,7 @@ func (p *Postgres) EnqueueWebhook(ctx context.Context, tenantID, kind string, pa
 // que leer en una tercera consulta.
 //
 // Mapeo de filas: last_error NULL llega como "" y claimed_at NULL como el instante
-// cero. Sin filas devuelve un slice vacío (nil) y ningún error. Las filas salen en
-// el orden en que las da la base: el adaptador no reordena.
+// cero. Sin filas, un slice nil sin error. No reordena lo que da la base.
 //
 // Errores (con cualquiera de ellos el slice devuelto es nil, sin filas a medias):
 //
@@ -73,8 +89,82 @@ func (p *Postgres) EnqueueWebhook(ctx context.Context, tenantID, kind string, pa
 //   - «integrations: escanear fila del lote: » — una fila no se puede escanear;
 //   - «integrations: iterar lote: » — falla el recorrido de las filas o, si lo
 //     demás fue bien, su cierre (un error del recorrido no se pisa con el del cierre).
+//
+// Si tras un error de escaneo ADEMÁS falla el cierre de las filas, se devuelve el
+// del escaneo y el del cierre va al log estándar (T-13: no se calla) como
+// «[wapp][integrations][WARN] claim: cerrar filas tras error de escaneo: <causa>».
 func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookOutbox, error) {
-	panic(pendiente.Implementar("integrations.Postgres.ClaimWebhookBatch"))
+	rows, err := p.db.QueryContext(ctx, `
+		UPDATE public.webhook_outbox AS o
+		SET status = $1, claimed_at = now()
+		FROM (
+			SELECT id
+			FROM public.webhook_outbox
+			WHERE status = $2 AND next_attempt_at <= now()
+			ORDER BY next_attempt_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		) AS c
+		WHERE o.id = c.id
+		RETURNING o.id, o.tenant_id, o.kind, o.payload, o.status, o.attempts,
+		          o.next_attempt_at, o.created_at, COALESCE(o.last_error, ''), o.claimed_at
+	`, StatusDelivering, StatusPending, limit)
+	if err != nil {
+		return nil, fmt.Errorf("integrations: reclamar lote: %w", err)
+	}
+	return scanWebhookRows(rows)
+}
+
+// scanWebhookRows agota y cierra rows, devolviendo las filas escaneadas. Extraído
+// de ClaimWebhookBatch para mantener su complejidad ciclomática razonable.
+func scanWebhookRows(rows *sql.Rows) ([]WebhookOutbox, error) {
+	var claimed []WebhookOutbox
+	for rows.Next() {
+		var (
+			w         WebhookOutbox
+			claimedAt sql.NullTime
+		)
+		if serr := rows.Scan(&w.ID, &w.TenantID, &w.Kind, &w.Payload, &w.Status, &w.Attempts,
+			&w.NextAttemptAt, &w.CreatedAt, &w.LastError, &claimedAt); serr != nil {
+			if cerr := rows.Close(); cerr != nil {
+				log.Printf("[wapp][integrations][WARN] claim: cerrar filas tras error de escaneo: %v", cerr)
+			}
+			return nil, fmt.Errorf("integrations: escanear fila del lote: %w", serr)
+		}
+		w.ClaimedAt = claimedAt.Time // NULL ⇒ cero (no hay claim vigente)
+		claimed = append(claimed, w)
+	}
+	rerr := rows.Err()
+	if cerr := rows.Close(); cerr != nil && rerr == nil {
+		rerr = cerr
+	}
+	if rerr != nil {
+		return nil, fmt.Errorf("integrations: iterar lote: %w", rerr)
+	}
+	return claimed, nil
+}
+
+// closeClaim ejecuta una transición que CIERRA el claim vigente de una entrega.
+// Centraliza la valla optimista de las tres: la sentencia siempre lleva
+// `WHERE id = $1 AND claimed_at = $2` con el testigo que devolvió el claim, así
+// que si el lease venció y otro worker reclamó la fila mientras tanto, el UPDATE
+// afecta 0 filas y esto devuelve ErrClaimLost en vez de pisar el resultado ajeno.
+//
+// Los argumentos propios de cada transición van a partir de $3.
+func (p *Postgres) closeClaim(ctx context.Context, claim WebhookOutbox, what, query string, args ...any) error {
+	full := append([]any{claim.ID, claim.ClaimedAt}, args...)
+	res, err := p.db.ExecContext(ctx, query, full...)
+	if err != nil {
+		return fmt.Errorf("integrations: marcar entrega %d %s: %w", claim.ID, what, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("integrations: filas afectadas al marcar la entrega %d %s: %w", claim.ID, what, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("integrations: entrega %d hacia %s: %w", claim.ID, what, ErrClaimLost)
+	}
+	return nil
 }
 
 // MarkWebhookDelivered implementa Store.MarkWebhookDelivered y, en la MISMA
@@ -100,12 +190,9 @@ func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookO
 // ADR-0043). Aquí no se borra ninguna fila ni se les pone TTL, y en ningún otro
 // sitio tampoco.
 //
-// La valla optimista, común a las tres transiciones que cierran un claim: la
-// sentencia lleva siempre `WHERE id = $1 AND claimed_at = $2 AND status =
-// 'delivering'`, con el id y el ClaimedAt de `claim` como $1 y $2 y los
-// argumentos propios de la transición a partir de $3. Si el lease venció y otro
-// worker reclamó la fila mientras tanto, el UPDATE afecta 0 filas y se devuelve
-// ErrClaimLost en vez de pisar el resultado ajeno.
+// La valla optimista es la de closeClaim, común a las tres transiciones: id y
+// ClaimedAt de `claim` como $1 y $2, `status = 'delivering'`, y 0 filas afectadas
+// es ErrClaimLost.
 //
 // Errores de las tres, con <qué> = «delivered» aquí, «reintento» en
 // MarkWebhookFailed y «dead» en MarkWebhookDead:
@@ -115,7 +202,11 @@ func (p *Postgres) ClaimWebhookBatch(ctx context.Context, limit int) ([]WebhookO
 //     driver no sabe decir cuántas filas tocó;
 //   - «integrations: entrega <id> hacia <qué>: » + ErrClaimLost — 0 filas afectadas.
 func (p *Postgres) MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox) error {
-	panic(pendiente.Implementar("integrations.Postgres.MarkWebhookDelivered"))
+	return p.closeClaim(ctx, claim, "delivered", `
+		UPDATE public.webhook_outbox
+		SET status = $3, claimed_at = NULL, payload = '{}'::jsonb
+		WHERE id = $1 AND claimed_at = $2 AND status = $4
+	`, StatusDelivered, StatusDelivering)
 }
 
 // MarkWebhookFailed implementa Store.MarkWebhookFailed: una sentencia con la
@@ -123,7 +214,11 @@ func (p *Postgres) MarkWebhookDelivered(ctx context.Context, claim WebhookOutbox
 // next_attempt_at = nextAttemptAt, last_error = lastErr y sin claim. Sus errores
 // son los de MarkWebhookDelivered con <qué> = «reintento».
 func (p *Postgres) MarkWebhookFailed(ctx context.Context, claim WebhookOutbox, nextAttemptAt time.Time, lastErr string) error {
-	panic(pendiente.Implementar("integrations.Postgres.MarkWebhookFailed"))
+	return p.closeClaim(ctx, claim, "reintento", `
+		UPDATE public.webhook_outbox
+		SET status = $3, attempts = attempts + 1, next_attempt_at = $4, last_error = $5, claimed_at = NULL
+		WHERE id = $1 AND claimed_at = $2 AND status = $6
+	`, StatusPending, nextAttemptAt, lastErr, StatusDelivering)
 }
 
 // MarkWebhookDead implementa Store.MarkWebhookDead: una sentencia con la valla de
@@ -131,7 +226,11 @@ func (p *Postgres) MarkWebhookFailed(ctx context.Context, claim WebhookOutbox, n
 // lastErr y sin claim; no toca el payload. Sus errores son los de
 // MarkWebhookDelivered con <qué> = «dead».
 func (p *Postgres) MarkWebhookDead(ctx context.Context, claim WebhookOutbox, lastErr string) error {
-	panic(pendiente.Implementar("integrations.Postgres.MarkWebhookDead"))
+	return p.closeClaim(ctx, claim, "dead", `
+		UPDATE public.webhook_outbox
+		SET status = $3, attempts = attempts + 1, last_error = $4, claimed_at = NULL
+		WHERE id = $1 AND claimed_at = $2 AND status = $5
+	`, StatusDead, lastErr, StatusDelivering)
 }
 
 // RecoverOrphanDeliveries devuelve a pending las entregas cuyo CLAIM VENCIÓ, y
@@ -165,7 +264,20 @@ func (p *Postgres) MarkWebhookDead(ctx context.Context, claim WebhookOutbox, las
 //   - «integrations: contar entregas recuperadas: » — el driver no sabe decir
 //     cuántas filas tocó.
 func (p *Postgres) RecoverOrphanDeliveries(ctx context.Context, lease time.Duration) (int, error) {
-	panic(pendiente.Implementar("integrations.Postgres.RecoverOrphanDeliveries"))
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE public.webhook_outbox
+		SET status = $1, attempts = attempts + 1, last_error = $2, claimed_at = NULL
+		WHERE status = $3
+		  AND (claimed_at IS NULL OR claimed_at < now() - make_interval(secs => $4::double precision))
+	`, StatusPending, orphanReason, StatusDelivering, lease.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("integrations: recuperar entregas huérfanas: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("integrations: contar entregas recuperadas: %w", err)
+	}
+	return int(n), nil
 }
 
 // GetTenantIntegration implementa Store.GetTenantIntegration. Sin fila devuelve
@@ -175,7 +287,25 @@ func (p *Postgres) RecoverOrphanDeliveries(ctx context.Context, lease time.Durat
 //
 // Error: «integrations: leer integración de <tenant>: » (con el valor cero y false).
 func (p *Postgres) GetTenantIntegration(ctx context.Context, tenantID string) (TenantIntegration, bool, error) {
-	panic(pendiente.Implementar("integrations.Postgres.GetTenantIntegration"))
+	var (
+		ti          TenantIntegration
+		endpointURL sql.NullString
+		secretEnc   []byte
+	)
+	err := p.db.QueryRowContext(ctx, `
+		SELECT tenant_id, catalog_adapter, events_adapter, endpoint_url, secret_enc, enabled, created_at, updated_at
+		FROM public.tenant_integrations
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&ti.TenantID, &ti.CatalogAdapter, &ti.EventsAdapter, &endpointURL, &secretEnc, &ti.Enabled, &ti.CreatedAt, &ti.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TenantIntegration{}, false, nil
+	}
+	if err != nil {
+		return TenantIntegration{}, false, fmt.Errorf("integrations: leer integración de %s: %w", tenantID, err)
+	}
+	ti.EndpointURL = endpointURL.String
+	ti.HasSecret = secretEnc != nil
+	return ti, true, nil
 }
 
 // GetTenantSecret descifra con la KEK QUE ENVOLVIÓ ESTA FILA (secret_kek_id), no
@@ -193,7 +323,27 @@ func (p *Postgres) GetTenantIntegration(ctx context.Context, tenantID string) (T
 //
 // Ningún error cita el secreto.
 func (p *Postgres) GetTenantSecret(ctx context.Context, tenantID string) (string, bool, error) {
-	panic(pendiente.Implementar("integrations.Postgres.GetTenantSecret"))
+	var enc, dek []byte
+	var kekID sql.NullString
+	err := p.db.QueryRowContext(ctx, `
+		SELECT secret_enc, secret_dek, secret_kek_id
+		FROM public.tenant_integrations
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&enc, &dek, &kekID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("integrations: leer secreto de %s: %w", tenantID, err)
+	}
+	if enc == nil || dek == nil || !kekID.Valid {
+		return "", false, nil
+	}
+	plain, err := p.cipher.Decrypt(enc, dek, kekID.String)
+	if err != nil {
+		return "", false, fmt.Errorf("integrations: descifrar secreto de %s: %w", tenantID, err)
+	}
+	return plain, true, nil
 }
 
 // UpsertTenantIntegration crea o actualiza la fila. secret == "" preserva el
@@ -218,7 +368,49 @@ func (p *Postgres) GetTenantSecret(ctx context.Context, tenantID string) (string
 //     se emite ninguna sentencia);
 //   - «integrations: upsert de <tenant>: » — falla la sentencia con secreto.
 func (p *Postgres) UpsertTenantIntegration(ctx context.Context, ti TenantIntegration, secret string) error {
-	panic(pendiente.Implementar("integrations.Postgres.UpsertTenantIntegration"))
+	var endpointURL sql.NullString
+	if ti.EndpointURL != "" {
+		endpointURL = sql.NullString{String: ti.EndpointURL, Valid: true}
+	}
+
+	if secret == "" {
+		_, err := p.db.ExecContext(ctx, `
+			INSERT INTO public.tenant_integrations (tenant_id, catalog_adapter, events_adapter, endpoint_url, enabled, updated_at)
+			VALUES ($1, $2, $3, $4, $5, now())
+			ON CONFLICT (tenant_id) DO UPDATE SET
+				catalog_adapter = EXCLUDED.catalog_adapter,
+				events_adapter  = EXCLUDED.events_adapter,
+				endpoint_url    = EXCLUDED.endpoint_url,
+				enabled         = EXCLUDED.enabled,
+				updated_at      = now()
+		`, ti.TenantID, ti.CatalogAdapter, ti.EventsAdapter, endpointURL, ti.Enabled)
+		if err != nil {
+			return fmt.Errorf("integrations: upsert de %s (sin tocar el secreto): %w", ti.TenantID, err)
+		}
+		return nil
+	}
+
+	enc, dek, kekID, err := p.cipher.Encrypt(secret)
+	if err != nil {
+		return fmt.Errorf("integrations: cifrar el secreto de %s: %w", ti.TenantID, err)
+	}
+	_, err = p.db.ExecContext(ctx, `
+		INSERT INTO public.tenant_integrations (tenant_id, catalog_adapter, events_adapter, endpoint_url, secret_enc, secret_dek, secret_kek_id, enabled, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+		ON CONFLICT (tenant_id) DO UPDATE SET
+			catalog_adapter = EXCLUDED.catalog_adapter,
+			events_adapter  = EXCLUDED.events_adapter,
+			endpoint_url    = EXCLUDED.endpoint_url,
+			secret_enc      = EXCLUDED.secret_enc,
+			secret_dek      = EXCLUDED.secret_dek,
+			secret_kek_id   = EXCLUDED.secret_kek_id,
+			enabled         = EXCLUDED.enabled,
+			updated_at      = now()
+	`, ti.TenantID, ti.CatalogAdapter, ti.EventsAdapter, endpointURL, enc, dek, kekID, ti.Enabled)
+	if err != nil {
+		return fmt.Errorf("integrations: upsert de %s: %w", ti.TenantID, err)
+	}
+	return nil
 }
 
 // DeleteTenantIntegration implementa Store.DeleteTenantIntegration: un DELETE
@@ -226,7 +418,12 @@ func (p *Postgres) UpsertTenantIntegration(ctx context.Context, ti TenantIntegra
 //
 // Error: «integrations: borrar integración de <tenant>: ».
 func (p *Postgres) DeleteTenantIntegration(ctx context.Context, tenantID string) error {
-	panic(pendiente.Implementar("integrations.Postgres.DeleteTenantIntegration"))
+	if _, err := p.db.ExecContext(ctx, `
+		DELETE FROM public.tenant_integrations WHERE tenant_id = $1
+	`, tenantID); err != nil {
+		return fmt.Errorf("integrations: borrar integración de %s: %w", tenantID, err)
+	}
+	return nil
 }
 
 // SecretFingerprint descifra el secreto del tenant y devuelve SOLO su huella
@@ -241,7 +438,14 @@ func (p *Postgres) DeleteTenantIntegration(ctx context.Context, tenantID string)
 // No es del puerto Store (lo usa solo la superficie HTTP del CRUD). Lee por
 // GetTenantSecret: sus errores son los de ese método, tal cual, con ("", false).
 func (p *Postgres) SecretFingerprint(ctx context.Context, tenantID string) (string, bool, error) {
-	panic(pendiente.Implementar("integrations.Postgres.SecretFingerprint"))
+	secret, found, err := p.GetTenantSecret(ctx, tenantID)
+	if err != nil {
+		return "", false, err
+	}
+	if !found {
+		return "", false, nil
+	}
+	return Fingerprint(secret), true, nil
 }
 
 // CountOutbox devuelve el estado agregado de la cola del tenant.
@@ -273,5 +477,24 @@ func (p *Postgres) SecretFingerprint(ctx context.Context, tenantID string) (stri
 //
 // Error: «integrations: contar la cola de entregas: » (con OutboxCounts{}).
 func (p *Postgres) CountOutbox(ctx context.Context, tenantID string) (OutboxCounts, error) {
-	panic(pendiente.Implementar("integrations.Postgres.CountOutbox"))
+	var (
+		counts OutboxCounts
+		oldest sql.NullTime
+	)
+	err := p.db.QueryRowContext(ctx, `
+		SELECT
+		    COUNT(*) FILTER (WHERE status = $2) AS pending,
+		    COUNT(*) FILTER (WHERE status = $3) AS delivering,
+		    COUNT(*) FILTER (WHERE status = $4) AS delivered,
+		    COUNT(*) FILTER (WHERE status = $5) AS dead,
+		    MIN(created_at) FILTER (WHERE status = $2) AS oldest_pending_at
+		FROM public.webhook_outbox
+		WHERE tenant_id = $1
+	`, tenantID, StatusPending, StatusDelivering, StatusDelivered, StatusDead).
+		Scan(&counts.Pending, &counts.Delivering, &counts.Delivered, &counts.Dead, &oldest)
+	if err != nil {
+		return OutboxCounts{}, fmt.Errorf("integrations: contar la cola de entregas: %w", err)
+	}
+	counts.OldestPendingAt = oldest.Time // NULL ⇒ cero (no hay nada en cola)
+	return counts, nil
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // Las doce sentencias del adaptador, byte a byte (con su sangría): son las de
@@ -61,14 +59,14 @@ const (
 		FROM public.tenant_integrations
 		WHERE tenant_id = $1
 	`
-	// getSecretSQL es la de GetTenantSecret (y SecretFingerprint, que lee por él).
-	getSecretSQL = `
+	// readEnvelopeSQL es la de GetTenantSecret (y SecretFingerprint, que lee por él).
+	readEnvelopeSQL = `
 		SELECT secret_enc, secret_dek, secret_kek_id
 		FROM public.tenant_integrations
 		WHERE tenant_id = $1
 	`
-	// upsertKeepSecretSQL es la de UpsertTenantIntegration sin secreto: no nombra las columnas del sobre.
-	upsertKeepSecretSQL = `
+	// upsertConfigOnlySQL es la de UpsertTenantIntegration sin secreto: no nombra las columnas del sobre.
+	upsertConfigOnlySQL = `
 			INSERT INTO public.tenant_integrations (tenant_id, catalog_adapter, events_adapter, endpoint_url, enabled, updated_at)
 			VALUES ($1, $2, $3, $4, $5, now())
 			ON CONFLICT (tenant_id) DO UPDATE SET
@@ -78,8 +76,8 @@ const (
 				enabled         = EXCLUDED.enabled,
 				updated_at      = now()
 		`
-	// upsertWithSecretSQL es la de UpsertTenantIntegration con secreto.
-	upsertWithSecretSQL = `
+	// upsertWithEnvelopeSQL es la de UpsertTenantIntegration con secreto.
+	upsertWithEnvelopeSQL = `
 		INSERT INTO public.tenant_integrations (tenant_id, catalog_adapter, events_adapter, endpoint_url, secret_enc, secret_dek, secret_kek_id, enabled, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
 		ON CONFLICT (tenant_id) DO UPDATE SET
