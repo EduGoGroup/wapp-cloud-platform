@@ -56,6 +56,8 @@ No se relaja en ningún nivel: equivalencia viejo ↔ nuevo, `make ci-local` rc=
 | T-12 | Los fallos de `intakeAhead.Run` y del worker son mudos (D-11) | `fase9_fondo.go:80,95` | No añadir supervisión de paso: es un frente con dueño |
 | T-13 | El plazo de G7 (F6) se deriva de `PlazoPorLlamadaSuelo`; al conmutar F7 cambia de **dónde** se lee | FX §4.3, TX.21 | Aserción de igualdad con el valor que recibe `quotetext.ConPlazo` |
 
+> ✎ **D-F9-10 (Jhoan, 2026-10-08), para la goroutine de fondo de esta fase**: al reconstruir el **pipeline** (`intake/pipeline/pipeline.go`, `Run` → `Drenar`, «pipeline: no se pudo reclamar trabajo»), su contrato promete «contexto cancelado → vuelve **sin** loguear a `ERROR`», con su caso, como el *webhook worker* de F6 (D-F6-7; `solicitudes/integrations/worker.go` y `TestRun_ContextCancelled_…` son el modelo). El test de P0 ya tolera esas líneas tras la parada; esto es para que el log de producción no las lleve.
+
 ## 3 · Prohibiciones
 
 - Importar desde `C/**` un paquete viejo fuera de los puentes (import) declarados (`stages → flujos/store`,

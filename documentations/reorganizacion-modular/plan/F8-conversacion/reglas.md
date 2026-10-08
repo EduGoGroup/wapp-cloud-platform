@@ -61,6 +61,8 @@
 | T-16 | **Leer un `rc` con pipe** o contar SKIP sin `-v` | `validar-antes-de-cerrar` | Siempre `…; echo rc=$?` sin pipe y `go test -v … \| grep -c -- '--- SKIP'` |
 | T-17 | **Variables por su nombre efectivo**: el loader compone `WAPP_`; `FLOW_INCOMING_TIMEOUT` es `WAPP_FLOW_INCOMING_TIMEOUT` | `internal/platform/config` | Nombrar siempre con `WAPP_` |
 
+> ✎ **D-F9-10 (Jhoan, 2026-10-08), para la goroutine de fondo de esta fase**: al reconstruir el **agregador** (`flujos/runtime/aggregator.go`, `Run` → `RecoverAtBoot` → `Sweep`, «agregador: no se pudieron listar las ventanas vivas»), su contrato promete «contexto cancelado → vuelve **sin** loguear a `ERROR`», con su caso, como el *webhook worker* de F6 (D-F6-7; `solicitudes/integrations/worker.go` y `TestRun_ContextCancelled_…` son el modelo). El test de P0 ya tolera esas líneas tras la parada; esto es para que el log de producción no las lleve.
+
 ## 3 · Prohibiciones
 
 - 🚫 `t.Skip` en código nuevo; 🚫 un Postgres vivo (`WAPP_TEST_DB_DSN`, `localhost:5432`, el
