@@ -37,6 +37,76 @@ Deducida de `arquitectura.md` §1, §2 y §5. No clasifica fichero a fichero don
 
 Qué se hace en cada nivel: [`reglas.md`](reglas.md) §5.
 
+### 1.2 · Inventario E-12 **aprobado** (T6.1 · Jhoan, 2026-10-07 · medido sobre `dev` @ `3a21138`)
+
+Manda sobre §1.1. **41** ficheros de producción (40 + `note.go`), **12.235** líneas, 404 exportados, 191 cuerpos.
+Columnas medidas con `grep -cE 'sync\.|atomic\.'` (estado), `go func|chan |NewTicker` (concurrencia),
+`\*sql\.(DB|Tx)|BeginTx|QueryContext|QueryRowContext|ExecContext|WithTx` (BD). **Consumidores** = ficheros de producción
+de fuera del paquete que usan un símbolo de primer nivel del fichero (cuenta las dos copias del arranque; no ve los
+usos solo por método, que salen como `—`).
+
+| Archivo | L | Estado en memoria | Concurrencia | BD / tx | Cons. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `intakes/status.go` | 228 | no | no | no | 5 | medio |
+| `intakes/intakes.go` | 453 | no | no | declara el puerto | 12 | medio |
+| `intakes/service.go` | 509 | no | no | por puerto | 11 | **complejo** ⬆ (instancia única, 11 consumidores en 6 paquetes, `time.Now()` directo) |
+| `intakes/approve.go` | 457 | no | no | por puerto | 4 | medio (mutantes en INV-1 y en el fallo parcial) |
+| `intakes/aprobadas.go` | 155 | no | no | SQL `:83` → `postgres_<tema>.go` | — | medio (lo puro; D-F6-6 ampliada) |
+| `intakes/edit.go` | 400 | no | no | por puerto | 2 | medio |
+| `intakes/discard.go` | 294 | no | no | por puerto | 1 | medio |
+| `intakes/deposit.go` | 315 | no | no | por puerto | 4 | medio |
+| `intakes/shipping.go` | 176 | no | no | no | 4 | medio |
+| `intakes/requestinfo.go` | 129 | no | no | por puerto | 1 | medio |
+| `intakes/vencimiento.go` | 383 | no | no | por puerto | 5 | medio |
+| `intakes/revisions.go` | 265 | no | no | no | 3 | medio |
+| `intakes/reanalisis.go` | 143 | no | no | SQL `:89` → `postgres_<tema>.go` | 1 | medio (lo puro; D-F6-6 ampliada) |
+| `intakes/revalidate.go` | 380 | no | no | no | 1 | medio |
+| `intakes/literal.go` | 311 | no | no | no | 1 | medio |
+| `intakes/customernote.go` | 75 | no | no | SQL `:46` → `postgres_<tema>.go` | — | **no nace** como fichero propio (solo llevaba el método; D-F6-6 ampliada) |
+| `intakes/summary.go` | 110 | no | no | no | 2 | **simple** ⬇ |
+| `intakes/crm.go` | 174 | no | no | SQL `:113` → `postgres_<tema>.go` | 1 | medio (lo puro; D-F6-6 ampliada) |
+| `intakes/metricas.go` | 342 | no | no | no | 2 | medio |
+| `intakes/notifier.go` | 574 | no | no | no (sale a WhatsApp) | 6 | **medio** ⬇ (plantillas con aserción byte a byte) |
+| `intakes/buyerdata.go` | 219 | no | no | SQL, `*sql.Tx`, cifrado | 6 | medio lo puro · **complejo** `buyerdata_postgres.go` (D-F6-6) |
+| `intakes/memory.go` | 907 | `sync.Mutex`, 12 mapas | mutex | no | 4 | complejo (nace partido, E-13) |
+| `intakes/postgres.go` | 1.734 | no | no | 21 métodos, `WithTx` ×5 | 11 | complejo (nace partido, E-13) |
+| `cart/note.go` → `intakes/note.go` | 150 | no | no | no | 5 | simple |
+| `quotetext/quotetext.go` | 587 | no | no | no (LLM por puerto) | 5 | medio |
+| `quotetext/precios.go` | 526 | no | no | no | 0 | medio |
+| `quotetext/borrador.go` | 143 | no | no | no | 0 | **simple** ⬇ |
+| `quotetext/render.go` | 145 | no | no | no | 0 | **simple** ⬇ |
+| `telemetria/telemetria.go` | 103 | no | no | por puerto | 2 | simple |
+| `integrations/store.go` | 140 | no | no | declara el puerto | 1 | medio |
+| `integrations/gate.go` | 54 | no | no | no | 4 | medio |
+| `integrations/crud.go` | 51 | no | no | método de `*Postgres` → `postgres.go` (D-F6-6) | — | medio |
+| `integrations/outbox_stats.go` | 90 | no | no | SQL `:69` → `postgres.go` (D-F6-6) | 1 | medio |
+| `integrations/postgres.go` | 327 | no | no | 11 métodos | 5 | complejo |
+| `integrations/worker.go` | 501 | no | 2 `time.NewTicker`, `select` | por puerto; HTTP saliente | 2 | complejo |
+| `crmpush/push.go` | 292 | no | no | no | 3 | medio |
+| `crmpush/desde_intakes.go` | 117 | no | no | no | 2 | medio |
+| `sigv1/sigv1.go` | 57 | no | no | no | 2 | simple |
+| `tenantvars/tenantvars.go` | 51 | no | no | no | 2 | simple |
+| `tenantvars/memory.go` | 69 | `sync.Mutex`, mapa | mutex | no | 1 | complejo |
+| `tenantvars/postgres.go` | 99 | no | no | `WithTx`, 3 sentencias | 5 | complejo |
+
+Respecto al provisional de §1.1: **sube** `service.go`; **bajan** `notifier.go`, `summary.go`, `borrador.go` y
+`render.go`. Jhoan **no aceptó** bajar `integrations/crud.go` ni `outbox_stats.go`: siguen en medio.
+
+**D-F6-6 ampliada (Jhoan, 2026-10-07).** El SQL fuera de `postgres.go` está en **siete** ficheros, no en tres: a
+`buyerdata.go`, `integrations/crud.go` e `integrations/outbox_stats.go` se suman `intakes/aprobadas.go`
+(`ApprovedRenderedTexts`), `crm.go` (`ReflectCRMStatus`), `customernote.go` (`GetCustomerNote`) y `reanalisis.go`
+(`ReanalysisTargetOf`). Sus métodos de `*Postgres` nacen en ficheros `postgres_<tema>.go` (que E-13 obliga a partir de
+todos modos: el viejo mide 1.734 líneas); lo puro se queda en su fichero. Nada observable cambia.
+
+**E-13.** Nacen partidos `postgres.go` y `memory.go`; quedan en la franja 500–600: `quotetext.go` 587, `notifier.go`
+574, `precios.go` 526, `service.go` 509, `worker.go` 501.
+
+**Adaptadores `bridge_<x>.go`.** Vivos hoy: `bridge_contact.go` (F1; muere F8) y `bridge_inferencia.go`
+(`turneroBridge` muere F8, `llmConfigBridge` muere F7). En F6 **nacen 0 y mueren 0**: Jhoan **mantiene D-F6-1**
+(2026-10-07, frente a P5) — segunda instancia **vieja** y sin estado de `intakes.Postgres` en `internal/arranque`,
+construida con `ConCifraDeLiteral`. Alcance corregido en [`arquitectura.md`](arquitectura.md) §4: sirve a **cuatro**
+puertos viejos (el carrito y tres de captación) y muere en F7 **y** F8.
+
 ## 2 · Por paquete: ficheros, exportados y contrato
 
 ### 2.1 · `S/intakes` (24 ficheros · 279 + 4 exportados)
@@ -132,10 +202,13 @@ del llamante; `event_history_id` omitido; no congela lo que rellena el worker; g
 ### 2.6 · `S/integrations/sigv1` y `S/tenantvars`
 
 - `sigv1.go` (3 exp.): `Sign`, `SignatureHeader`, verificación HMAC-SHA256 sobre el cuerpo **crudo**,
-  ventana ±300 s, comparación en **tiempo constante** (`:39`), reloj como parámetro. `sigv1_test` (7).
+  comparación en **tiempo constante** (`:39`); el timestamp es un **parámetro** (`int64`). ✎ 2026-10-07: `sigv1` **no**
+  tiene ventana ni reloj —la ventana ±300 s es de `publicapi/crmcallback.go:38,293` y la promete la cara nueva
+  (TX.16)—; el contrato nuevo es fiel al viejo (Jhoan, hallazgo 1). `sigv1_test` (7).
 - `tenantvars.go` (2: `Variable`, puerto `Store` `:44`), `memory.go` (5, `SetClock`), `postgres.go`
   (4, `Replace` en transacción). Suite `tenantvarshelpertest.Contrato`: `Replace` sustituye el conjunto
-  entero; `List` ordenado y por tenant. 🔶 `postgres_integration_test` (5).
+  entero (también el vaciado con `map{}`); `List` ordenado y por tenant; valores **verbatim** (incluido `""`);
+  `UpdatedAt` solo se mueve si el valor cambia. 🔶 `postgres_integration_test` (5; uno es de la migración, no del puerto).
 
 ## 3 · Dobles y suites (E-6)
 
@@ -182,6 +255,17 @@ vigila todas las columnas que la operación puede tocar (hallazgo 35).
 - 🔶 Todo `errors.New`/`fmt.Errorf` de los paquetes viejos que llegue a una respuesta HTTP o a un
   WhatsApp: inventario con `grep -rn 'errors.New("\|fmt.Errorf("' V --include='*.go' | grep -v _test`
   en T6.1, y cada uno con aserción literal en su test.
+- ✎ **Recuento de T6.1** (2026-10-07, ese comando): **156** — `intakes` 106 (83 con `%w`), `quotetext` 12 (3),
+  `integrations` 29 (26), `crmpush` 3 (3), `tenantvars` 6 (6), `telemetria`/`sigv1`/`note.go` 0. Son 121 envoltorios
+  `%w` y 35 textos propios (20 centinelas `errors.New`). El comando **no ve** tres familias, que también se asertan
+  literales: (a) errores tipados con `Sprintf` en `Error()` — `TransitionError` (`status.go:226`), `PendingPriceError`
+  y `NotApprovableError` (`approve.go:183,204`), `TooLargeBatchError` (`discard.go:94`), `InvalidItemsError`,
+  `TooManyItemsError` y `NotEditableError` (`edit.go:64,75,92`), además del de `note.go`; (b) las plantillas de
+  WhatsApp `statusTemplates` (`notifier.go:190`) y `crmStatusTemplates` (`:526`); (c) los `Motivo…` de
+  `quotetext/precios.go:218-228`.
+- Prefijos de `tenantvars/postgres.go` (todos con `%w`): `tenantvars: listar variables: `, `tenantvars: cerrar filas
+  de variables: `, `tenantvars: leer variable: `, `tenantvars: recorrer variables: `, `tenantvars: borrar variables
+  retiradas: `, `tenantvars: guardar variables: `.
 
 ## 6 · Candados de invariante (`05` §3.2) — dónde quedan
 

@@ -102,6 +102,19 @@ por el `crmpush` viejo del sink), igual que F1 dejó enlazado `flujos/contact` (
 contradicción 6). Es correcto: lo viejo que queda **no tiene estado**; las piezas con estado o con
 efecto único (Service, notificador, recordatorios, worker del outbox) son **una sola instancia nueva**.
 
+✎ **Inventario E-12 (2026-10-07, hallazgo 3): la costura no es solo con la conversación.** Tres puertos de la
+**captación vieja** (F7) exigen también tipos del `intakes` viejo y hoy reciben `c.intakeStore`:
+
+| Consumidor viejo (fase que lo rehace) | Puerto que exige (`fichero:línea`) | Cableado hoy | Salida | Muere |
+|---|---|---|---|---|
+| `stages` · etapa `draft` (F7) | `EscritorRevision.InsertRevision(ctx, intakes.Revision)` (`internal/intake/stages/draft.go:342`) | `fase5_captacion.go:238` | **(3)** la misma segunda instancia vieja | F7 |
+| `pipeline` (F7) | `ZonasDeEnvio.ShippingZones(…) ([]intakes.ShippingZone, error)` (`internal/intake/pipeline/pipeline.go:147`) | `fase5_captacion.go:294` | **(3)** ídem | F7 |
+| `reanalisis` (F7) | `Solicitudes.ReanalysisTargetOf(…) (intakes.ReanalysisTarget, error)` (`internal/reanalisis/reanalisis.go:245`) | `fase5_captacion.go:333` | **(3)** ídem | F7 |
+
+La segunda instancia vieja (D-F6-1, **mantenida** por Jhoan el 2026-10-07) sirve por tanto a **cuatro** puertos y
+muere en dos tiempos: F7 (estos tres) y F8 (el carrito). Se construye con `ConCifraDeLiteral`: `draft` escribe el
+literal cifrado por `InsertRevision` y, sin cipher, `intakes/postgres.go:728` lo rechaza.
+
 **Lo que NO puede duplicarse** (dos instancias = bug):
 
 | Objeto | Por qué | `fichero:línea` |
@@ -110,7 +123,7 @@ efecto único (Service, notificador, recordatorios, worker del outbox) son **una
 | `intakes.Service` | «dos serían dos máquinas de estados opinando sobre las mismas filas» (`fase6_solicitudes.go:14-18`); no tiene estado en memoria (medido: sin `sync.`), pero cablea notificador, recordatorios, CRM y telemetría: dos instancias con cables distintos darían efectos distintos por puerta | `service.go` |
 | Notificador y recordatorios | una sola salida hacia WhatsApp y un solo criterio de «ya recordé» (la marca vive en BD: `deposit_reminded_at`, `expiry_reminded_at`) | `fase6_solicitudes.go:28-50` |
 
-### 4.1 · Adaptadores de arranque `bridge_<x>.go` (`05` §4.2) — provisional, lo fija el inventario E-12 (T6.1)
+### 4.1 · Adaptadores de arranque `bridge_<x>.go` (`05` §4.2) — fijado por el inventario E-12 (2026-10-07): D-F6-1 se mantiene, `bridge_intakes.go` **no nace**
 
 Distintos del **puente (import)** del §2, que sigue siendo uno. El adaptador es nivel **simple** (traduce, sin estado,
 una pasada), lleva `bridge_<x>_test.go` y cuenta para `un_fichero_un_test` y para el informe de cobertura.
