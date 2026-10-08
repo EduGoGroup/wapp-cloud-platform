@@ -392,7 +392,7 @@ paquete (ficheros disjuntos, un solo commiteador, sin *worktrees*) y uno más pa
   `Summary` usa `WithClock`) y las acciones, un commit por fichero. Los auxiliares que comparten los dos almacenes,
   unificados en `edit.go` y `discard.go` (`141acfd`).
 - **T6.17 · notificador y comprador** (`cf61639`, `e8f1e10`): las 7 plantillas de estado y las 4 del CRM copiadas por rango
-  de líneas del viejo (`diff` vacío). El JSON `null` del comprador (hallazgo 18) se conserva como en el viejo (hallazgo 32, 🟡).
+  de líneas del viejo (`diff` vacío). El JSON `null` del comprador (hallazgo 18) se **endureció** tras el cierre, por orden de Jhoan: error con rollback en vez del pánico del viejo (hallazgo 32).
 - **T6.18 · adaptador Postgres** (`e8126b5` … `09872e6`): 13 trozos, SQL copiado por rangos y **afirmado byte a byte
   contra el texto del viejo** en el test de cada tema; el `diff` de `public\.[a-z_]*` viejo/nuevo solo difiere en
   `public.flow_events`, que en el viejo es una mención en un comentario. **Candado de la poda** (`ab2e4bb`, R6.2.d),
@@ -412,7 +412,7 @@ paquete (ficheros disjuntos, un solo commiteador, sin *worktrees*) y uno más pa
 - ⏱️ **D-R-6**: 25 min entre el primer commit y el último (09:33 → 09:58, fecha de autor); la pared, unos 35 min.
 - **No corrido**: `make test-procesos` completo (los dos binarios) ni `make test-integration` (no se tocó código viejo ni
   compartido).
-- **Hallazgos 24–34** en el [README de F6](plan/F6-solicitudes/README.md); queda una 🟡 (hallazgo 32). **Siguiente paso: F6-04.** `main` sin tocar.
+- **Hallazgos 24–34** en el [README de F6](plan/F6-solicitudes/README.md); ninguna 🟡 abierta. **Siguiente paso: F6-04.** `main` sin tocar.
 
 **F6-02 · F6, `intakes` (1/2): contratos del paquete y tipos puros (2026-10-08, 💻, rama `reorg/f6-02-intakes-contratos-y-tipos` desde `dev` @ `64c181a`).**
 Sesión completa (T6.6–T6.8, T6.15), orquestada con sub-agentes por grupo de ficheros (tres para los tipos puros —rojo y

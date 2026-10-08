@@ -276,11 +276,13 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 31. **El lint no había visto nunca los tests rojos**: `golangci-lint` no lee lo que va tras `//go:build pendiente`, así
     que al quitar la etiqueta salieron 31 avisos de golpe (19 `errcheck`, 6 `gocyclo`…), casi todos de tests escritos en
     F6-02. A 0 sin `//nolint` (`4fcccc6`). Candidato a mejora del gate: un `lint` con `--build-tags pendiente` en el rojo.
-32. 🟡 **JSON `null` en los datos del comprador (hallazgo 18), sin endurecer.** Medido: `PutBuyerField` entra en pánico
-    (`assignment to entry in nil map`) **y la transacción no se revierte** (el `defer` solo revierte con `err != nil`);
-    `GetBuyerData` devuelve `found=true` con mapa nil. Es idéntico al viejo y hoy inalcanzable (el blob lo escribe siempre
-    este código como objeto). Con el criterio del hallazgo 24, se conserva. Si se endurece: tratar `data == nil` tras el
-    `Unmarshal` como «no es un objeto» en los dos puntos.
+32. ✅ **JSON `null` en los datos del comprador (hallazgo 18): endurecido** (Jhoan, 2026-10-08: «si tienes todo claro
+    para resolverlo, hazlo»). Medido en el porte fiel: `PutBuyerField` entraba en pánico (`assignment to entry in nil
+    map`) **y la transacción no se revertía** (el `defer` solo revierte con `err != nil`); `GetBuyerData` devolvía
+    `found=true` con mapa nil. Ahora un `null` es, en los dos puntos, el mismo error que cualquier JSON que no sea un
+    objeto («…no son un objeto JSON»), con rollback. **Única diferencia de comportamiento del adaptador respecto del
+    viejo**, y solo en un caso que el viejo resolvía con un pánico; hoy inalcanzable (el blob lo escribe siempre este
+    código como objeto). Dos casos de test nuevos; el mutante que quita la guarda muere.
 33. **Tres mutantes que el rojo de F6-02 no mataba**, ahora con test: el orden `ErrNoQuoteSender` > `ErrNoRevisionWriter`
     (el caso usaba un store que sí escribía revisiones), el total de la revisión `approved` y `BuyerDataPresent` del
     detalle. En total, **253 mutantes a mano, 252 muertos y 1 equivalente** declarado en su commit (`7080179`).
