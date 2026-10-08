@@ -90,7 +90,8 @@ var p0Fases = []struct{ fase, nombre string }{
 //   - parada: SIGTERM → código 0, «señal de parada recibida, cerrando» y después «servidor
 //     detenido limpiamente».
 //   - sin_errores: ninguna línea de nivel ERROR en todo el log, arranque y parada incluidos
-//     (medido: cero; los únicos WARN son los cuatro de «identity sin configurar», diseñados).
+//     (medido: cero; los únicos WARN son los cuatro de «identity sin configurar», diseñados),
+//     salvo los ERROR de cancelación posteriores a la señal de parada (D-F9-10, p0CountedErrors).
 func TestP0_Arranque(t *testing.T) {
 	s := arrancar(t, opcionesServidor{Proceso: "p0"})
 	p0EsperarListeners(t, s)
@@ -352,15 +353,61 @@ func p0Parada(t *testing.T, s *servidor) {
 	}
 }
 
-// p0SinErrores comprueba que ninguna línea JSON del log, de todo el arranque y toda la parada, es de
-// nivel ERROR, y que el log no contiene ningún pánico de Go. Debe correr cuando el servidor ya
-// paró. Falla con t.Errorf por cada línea de error o por el pánico.
+// p0CancellationMarks son los textos con los que un error dice que lo cortó la cancelación del
+// contexto: el de context.Canceled y el del resolvedor de nombres cuando se le cancela a medias.
+var p0CancellationMarks = []string{"context canceled", "operation was canceled"}
+
+// p0IsCancellation dice si alguna cadena de la línea (el msg o cualquier atributo de texto) lleva
+// una de las p0CancellationMarks. Compara tal cual, sin plegar mayúsculas. No falla.
+func p0IsCancellation(linea map[string]any) bool {
+	for _, valor := range linea {
+		texto, ok := valor.(string)
+		if !ok {
+			continue
+		}
+		for _, marca := range p0CancellationMarks {
+			if strings.Contains(texto, marca) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// p0CountedErrors recibe las líneas JSON del log y separa las de nivel ERROR en dos, cada una
+// en su orden: las que cuentan como fallo y las toleradas. Se tolera SOLO la que cumple las dos
+// cosas a la vez (D-F9-10, Jhoan, 2026-10-08): viene después de la primera línea «señal de parada
+// recibida, cerrando» y es de cancelación (p0IsCancellation). Es la carrera de las goroutines de
+// fondo a las que la parada corta a mitad de una llamada a la BD: vale para los dos binarios y no
+// es una regresión. Todo lo demás cuenta: un ERROR anterior a la señal aunque sea de cancelación,
+// uno posterior que no lo sea, y cualquiera si la señal no aparece en el log. No falla.
+func p0CountedErrors(lineas []map[string]any) (cuentan, toleradas []map[string]any) {
+	senal := p0Indice(lineas, p0MsgSenal)
+	for i, l := range lineas {
+		if !strings.EqualFold(p0Cadena(l, "level"), "ERROR") {
+			continue
+		}
+		if senal >= 0 && i > senal && p0IsCancellation(l) {
+			toleradas = append(toleradas, l)
+			continue
+		}
+		cuentan = append(cuentan, l)
+	}
+	return cuentan, toleradas
+}
+
+// p0SinErrores comprueba que ninguna línea JSON del log, de todo el arranque y toda la parada, es
+// un ERROR que cuente (p0CountedErrors), y que el log no contiene ningún pánico de Go. Debe
+// correr cuando el servidor ya paró. Falla con t.Errorf por cada línea de error que cuenta o por
+// el pánico; las toleradas las deja dichas con t.Logf.
 func p0SinErrores(t *testing.T, s *servidor) {
 	t.Helper()
-	for _, l := range s.LineasLog() {
-		if strings.EqualFold(p0Cadena(l, "level"), "ERROR") {
-			t.Errorf("línea de nivel ERROR en el log: %v", l)
-		}
+	cuentan, toleradas := p0CountedErrors(s.LineasLog())
+	for _, l := range cuentan {
+		t.Errorf("línea de nivel ERROR en el log: %v", l)
+	}
+	for _, l := range toleradas {
+		t.Logf("ERROR de cancelación posterior a la señal de parada, tolerado (D-F9-10): %v", l)
 	}
 	if strings.Contains(s.Log(), "panic:") {
 		t.Errorf("el log contiene un pánico:\n%s", ultimasLineas(s.Log(), lineasDeLog))
