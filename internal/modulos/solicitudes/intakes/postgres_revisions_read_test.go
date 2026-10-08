@@ -291,3 +291,68 @@ func TestPostgres_Revisions_StoredSealWinsOverTheNewOne(t *testing.T) {
 		t.Errorf("LiteralPrunedAt = %v, quería el sello que ya tenía la fila (%v)", got, pgUpdated)
 	}
 }
+
+// wantSelectRevisionsSQL es la lectura de revisiones con su edad y su TTL (internal/intakes/postgres.go:484).
+const wantSelectRevisionsSQL = `
+	SELECT r.revision_no, r.kind, r.payload, r.rendered_text, r.created_by, r.created_at,
+	       r.literal_enc, r.literal_dek, r.literal_kek_id, r.literal_pruned_at,
+	       EXTRACT(EPOCH FROM (now() - r.created_at))::bigint AS edad_segundos,
+	       COALESCE(ts.intake_literal_ttl_seconds, $2) AS ttl_segundos
+	FROM public.intake_revisions r
+	JOIN public.intakes i ON i.id = r.intake_id
+	LEFT JOIN public.tenant_settings ts ON ts.tenant_id = i.tenant_id
+	WHERE r.intake_id = $1
+	ORDER BY r.revision_no`
+
+// wantPruneLiteralSQL es la poda del literal, con su guard y su RETURNING (internal/intakes/postgres.go:510).
+const wantPruneLiteralSQL = `
+	UPDATE public.intake_revisions
+	   SET literal_enc       = NULL,
+	       literal_dek       = NULL,
+	       literal_kek_id    = NULL,
+	       literal_pruned_at = now()
+	 WHERE intake_id = $1 AND revision_no = $2 AND literal_enc IS NOT NULL
+	RETURNING literal_pruned_at`
+
+// TestPostgres_Revisions_SQLIsTheOldOneByteForByte: la lectura de revisiones y la poda salen con
+// el texto del paquete viejo. La poda no nombra la columna payload.
+func TestPostgres_Revisions_SQLIsTheOldOneByteForByte(t *testing.T) {
+	store, fake := newFakePostgres(t, WithRetentionLog(&pgLogSink{}))
+	scriptExpiredRevisionRead(fake, pgAt)
+	if _, err := store.Get(t.Context(), pgTenant, pgIntakeID); err != nil {
+		t.Fatalf("Get: error inesperado %v", err)
+	}
+	requirePgSQL(t, fake, "", "", wantSelectRevisionsSQL, wantPruneLiteralSQL, "")
+	if strings.Contains(wantPruneLiteralSQL, "payload") {
+		t.Error("la poda nombra la columna payload: la interpretación estructurada no puede tocarse")
+	}
+}
+
+// TestSealPruned_PublishesTheSealOnlyWhereItBelongs: sealPruned es pura. El sello va a SU revisión
+// y a ninguna otra; un cero no escribe nada; un sello que ya estaba no se mueve; y una revisión
+// que no está en la lista no rompe ni toca nada.
+func TestSealPruned_PublishesTheSealOnlyWhereItBelongs(t *testing.T) {
+	cases := []struct {
+		name       string
+		revisionNo int
+		sealed     time.Time
+		want       []time.Time
+	}{
+		{"seals its own revision", 2, pgAt, []time.Time{{}, pgAt, pgUpdated}},
+		{"a zero instant writes nothing", 2, time.Time{}, []time.Time{{}, {}, pgUpdated}},
+		{"the stored seal wins", 3, pgAt, []time.Time{{}, {}, pgUpdated}},
+		{"a revision that is not there", 9, pgAt, []time.Time{{}, {}, pgUpdated}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := []Revision{{RevisionNo: 1}, {RevisionNo: 2}, {RevisionNo: 3, LiteralPrunedAt: pgUpdated}}
+			sealPruned(out, tc.revisionNo, tc.sealed)
+			for i, want := range tc.want {
+				if got := out[i].LiteralPrunedAt; !got.Equal(want) {
+					t.Errorf("revisión %d: LiteralPrunedAt = %v, quería %v", out[i].RevisionNo, got, want)
+				}
+			}
+		})
+	}
+	sealPruned(nil, 1, pgAt)
+}

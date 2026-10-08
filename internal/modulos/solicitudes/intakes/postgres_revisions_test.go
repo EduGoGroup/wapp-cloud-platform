@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -17,8 +15,8 @@ import (
 // Este fichero prueba la ESCRITURA de revisiones (InsertRevision). La lectura, con la retención
 // del literal, va en postgres_revisions_read_test.go.
 //
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte del INSERT numerador, y los tests de los
-// auxiliares no exportados que lleven regla (el que sella la poda en la revisión leída).
+// El texto byte a byte del INSERT numerador se afirma al final, contra el del paquete viejo. El
+// auxiliar que sella la poda en la revisión leída se prueba en postgres_revisions_read_test.go.
 
 // errPgUnique es la violación de unicidad (SQLSTATE 23505) con la que pierde un numerador concurrente.
 var errPgUnique = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
@@ -185,5 +183,50 @@ func TestPostgres_InsertRevision_EvidenceIsLiteralToo(t *testing.T) {
 	}
 	if enc, _ := args[5].([]byte); len(enc) == 0 {
 		t.Error("literal_enc viajó vacío con una evidence en el payload")
+	}
+}
+
+// wantInsertRevisionSQL es el INSERT numerador: el texto del viejo (internal/intakes/postgres.go:746) seguido de su
+// proyección (:461).
+const wantInsertRevisionSQL = `
+	INSERT INTO public.intake_revisions
+		(intake_id, revision_no, kind, payload, rendered_text, created_by,
+		 literal_enc, literal_dek, literal_kek_id)
+	SELECT $1::uuid, COALESCE(MAX(revision_no), 0) + 1, $2, $3::jsonb, $4, $5, $6, $7, $8
+	FROM public.intake_revisions WHERE intake_id = $1::uuid
+	RETURNING revision_no, kind, payload, rendered_text, created_by, created_at`
+
+// TestPostgres_InsertRevision_SQLIsTheOldOneByteForByte: el INSERT numerador sale con el texto del
+// paquete viejo, y es el MISMO dentro de una transacción (ReplaceItems) que suelto.
+func TestPostgres_InsertRevision_SQLIsTheOldOneByteForByte(t *testing.T) {
+	store, fake := newFakePostgres(t)
+	fake.script(pgInserted(1, RevisionKindCart, `{"v":1}`, nil, nil))
+	if _, err := store.InsertRevision(t.Context(), plainRevision()); err != nil {
+		t.Fatalf("InsertRevision: error inesperado %v", err)
+	}
+	requirePgSQL(t, fake, wantInsertRevisionSQL)
+}
+
+// TestPostgres_InsertRevision_LiteralEnvelopeTravelsWhole: con literal, las tres columnas del
+// sobre viajan con valor; sin literal y CON cifrador, las tres viajan a NULL (el cifrador ni se
+// toca: un sobre vacío escrito como bytes vacíos engañaría al guard de la poda).
+func TestPostgres_InsertRevision_LiteralEnvelopeTravelsWhole(t *testing.T) {
+	store, fake := newFakePostgres(t, WithLiteralCipher(newPgCipher(t)))
+	fake.script(pgInserted(1, RevisionKindInterpreted, `{"v":1}`, nil, nil), pgInserted(2, RevisionKindCart, `{"v":1}`, nil, nil))
+	sealed := Revision{IntakeID: pgIntakeID, Kind: RevisionKindInterpreted, Payload: []byte(`{"v":1,"source_text":"dos empanadas"}`)}
+	if _, err := store.InsertRevision(t.Context(), sealed); err != nil {
+		t.Fatalf("InsertRevision con literal: error inesperado %v", err)
+	}
+	if _, err := store.InsertRevision(t.Context(), plainRevision()); err != nil {
+		t.Fatalf("InsertRevision sin literal: error inesperado %v", err)
+	}
+	stmts := fake.statements()
+	for i, arg := range stmts[0].args[5:] {
+		if arg == nil {
+			t.Errorf("con literal, la columna %d del sobre viajó a NULL", i)
+		}
+	}
+	if got := stmts[1].args[5:]; !reflect.DeepEqual(got, []driver.Value{nil, nil, nil}) {
+		t.Errorf("sin literal, el sobre viajó como %v, quería tres NULL", got)
 	}
 }
