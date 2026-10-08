@@ -5,8 +5,8 @@ package intentcfg
 import (
 	"context"
 	"database/sql"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"errors"
+	"fmt"
 )
 
 // PostgresStore persiste el blob de intents en public.intent_configs (0033): una
@@ -14,11 +14,13 @@ import (
 // reglas del puerto las fija la suite intentcfghelpertest.Contrato, que corre
 // contra él en los procesos de F9; su test de fichero afirma, con un driver de
 // mentira, el SQL que emite, sus argumentos y el mapeo de la fila y de los errores.
-type PostgresStore struct{}
+type PostgresStore struct {
+	db *sql.DB
+}
 
 // NewPostgresStore construye el store sobre el *sql.DB ya abierto. No lo consulta.
 func NewPostgresStore(db *sql.DB) *PostgresStore {
-	panic(pendiente.Implementar("intentcfg.NewPostgresStore"))
+	return &PostgresStore{db: db}
 }
 
 var _ Store = (*PostgresStore)(nil)
@@ -33,7 +35,19 @@ var _ Store = (*PostgresStore)(nil)
 //     encontrada: tenant=<tenantID>" (errors.Is(err, ErrNotFound) es true);
 //   - "intentcfg: leer config: " + la causa (%w) — la consulta o el escaneo fallan.
 func (s *PostgresStore) Get(ctx context.Context, tenantID string) (Config, error) {
-	panic(pendiente.Implementar("intentcfg.PostgresStore.Get"))
+	var c Config
+	err := s.db.QueryRowContext(ctx, `
+		SELECT version, config::text, updated_at
+		FROM public.intent_configs
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&c.Version, &c.Blob, &c.UpdatedAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Config{}, fmt.Errorf("%w: tenant=%s", ErrNotFound, tenantID)
+	case err != nil:
+		return Config{}, fmt.Errorf("intentcfg: leer config: %w", err)
+	}
+	return c, nil
 }
 
 // Upsert persiste (o reemplaza) el blob del tenant con la version de entidad dada,
@@ -44,5 +58,14 @@ func (s *PostgresStore) Get(ctx context.Context, tenantID string) (Config, error
 // Error: "intentcfg: upsert config: " + la causa (%w). Un blob que no es JSON
 // válido lo rechaza la base (la columna es JSONB) y sale por aquí.
 func (s *PostgresStore) Upsert(ctx context.Context, tenantID, version string, blob []byte) error {
-	panic(pendiente.Implementar("intentcfg.PostgresStore.Upsert"))
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO public.intent_configs (tenant_id, version, config, updated_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (tenant_id) DO UPDATE
+		SET version = EXCLUDED.version, config = EXCLUDED.config, updated_at = now()
+	`, tenantID, version, blob)
+	if err != nil {
+		return fmt.Errorf("intentcfg: upsert config: %w", err)
+	}
+	return nil
 }
