@@ -97,7 +97,8 @@ func NewPostgresBuyerData(db *sql.DB, cipher *crypto.FieldCipher) *PostgresBuyer
 //  5. COMMIT.
 //
 // Cualquier fallo después del BEGIN revierte la transacción y NO escribe. En
-// particular, un blob que no se puede descifrar o que no es un objeto JSON
+// particular, un blob que no se puede descifrar o que no es un objeto JSON (un
+// `null` tampoco lo es: el viejo entraba en pánico con él)
 // devuelve ERROR y no un checklist vacío: seguir adelante sobrescribiría con un
 // solo campo lo que fuera que hubiera ahí, y «no lo entiendo» nunca puede
 // resolverse borrando.
@@ -217,7 +218,8 @@ func (p *PostgresBuyerData) GetBuyerData(ctx context.Context, intakeID string) (
 		return nil, false, fmt.Errorf("intakes: descifrando los datos del comprador de la solicitud %s: %w", intakeID, err)
 	}
 	data := BuyerData{}
-	if err := json.Unmarshal([]byte(plain), &data); err != nil {
+	// `|| data == nil`: misma guarda que currentBuyerData para el JSON `null`.
+	if err := json.Unmarshal([]byte(plain), &data); err != nil || data == nil {
 		return nil, false, fmt.Errorf("intakes: los datos del comprador de la solicitud %s no son un objeto JSON", intakeID)
 	}
 	return data, true, nil
@@ -255,7 +257,11 @@ func (p *PostgresBuyerData) currentBuyerData(ctx context.Context, tx *sql.Tx, in
 		return nil, false, fmt.Errorf("intakes: descifrando los datos del comprador de la solicitud %s: %w", intakeID, err)
 	}
 	data := BuyerData{}
-	if err := json.Unmarshal([]byte(plain), &data); err != nil {
+	// `|| data == nil`: un JSON `null` NO da error de unmarshal y deja el mapa en nil.
+	// El viejo lo dejaba pasar y PutBuyerField moría con un pánico al escribir en él,
+	// con la transacción y su FOR UPDATE abiertos (hallazgos 18 y 32 de F6). `null`
+	// no es un objeto: mismo error que cualquier otro JSON que no lo sea.
+	if err := json.Unmarshal([]byte(plain), &data); err != nil || data == nil {
 		// El error de unmarshal se DESCARTA (no se envuelve): su mensaje cita el
 		// fragmento que no supo leer, y ese fragmento es el dato en claro.
 		return nil, false, fmt.Errorf("intakes: los datos del comprador de la solicitud %s no son un objeto JSON", intakeID)
