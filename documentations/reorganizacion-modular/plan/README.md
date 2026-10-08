@@ -12,7 +12,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-08, con F6-01 … F6-04 hechas): [`sesiones/F6-05`](sesiones/F6-05-web-cara-http-y-conmutar.md) (la cara HTTP de solicitudes y conmutar G1–G18).
+> **Siguiente paso** (al 2026-10-08, con F6-01 … F6-05 hechas): [`sesiones/F6-06`](sesiones/F6-06-cli-cierre.md) (el cierre local de F6: suites contra Postgres y procesos P5/P6 contra los dos binarios).
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)
