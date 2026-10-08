@@ -5,8 +5,9 @@ package tenantvars
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // Postgres persiste las variables de empresa en public.tenant_variables (0043).
@@ -14,12 +15,12 @@ import (
 // contra él en los procesos de F9; su test de fichero afirma, con un driver de
 // mentira, el SQL que emite, sus argumentos, la transacción y el mapeo de filas y
 // errores.
-type Postgres struct{}
+type Postgres struct {
+	db *sql.DB
+}
 
 // NewPostgres construye el store sobre el *sql.DB ya abierto. No lo consulta.
-func NewPostgres(db *sql.DB) *Postgres {
-	panic(pendiente.Implementar("tenantvars.NewPostgres"))
-}
+func NewPostgres(db *sql.DB) *Postgres { return &Postgres{db: db} }
 
 var _ Store = (*Postgres)(nil)
 
@@ -35,8 +36,37 @@ var _ Store = (*Postgres)(nil)
 //   - "tenantvars: recorrer variables: " — el recorrido de las filas falla;
 //   - "tenantvars: cerrar filas de variables: " — falla el cierre de las filas
 //     cuando lo demás fue bien (un error anterior no se pisa).
-func (p *Postgres) List(ctx context.Context, tenantID string) ([]Variable, error) {
-	panic(pendiente.Implementar("tenantvars.Postgres.List"))
+func (p *Postgres) List(ctx context.Context, tenantID string) (out []Variable, err error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT key, value, updated_at
+		FROM public.tenant_variables
+		WHERE tenant_id = $1
+		ORDER BY key
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("tenantvars: listar variables: %w", err)
+	}
+	// El cierre se mira, no se calla: si es lo ÚNICO que falla, List falla con él; si ya había
+	// un error, ese es el que cuenta y no se pisa.
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			out, err = nil, fmt.Errorf("tenantvars: cerrar filas de variables: %w", cerr)
+		}
+	}()
+
+	// Vacío y NO nil: es lo que promete el puerto para un tenant sin variables.
+	out = []Variable{}
+	for rows.Next() {
+		var v Variable
+		if err := rows.Scan(&v.Key, &v.Value, &v.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("tenantvars: leer variable: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tenantvars: recorrer variables: %w", err)
+	}
+	return out, nil
 }
 
 // Replace deja el conjunto del tenant EXACTAMENTE igual a vars: inserta las
@@ -69,5 +99,37 @@ func (p *Postgres) List(ctx context.Context, tenantID string) ([]Variable, error
 //
 // Un fallo al abrir o confirmar la transacción sale con el texto de postgres.WithTx.
 func (p *Postgres) Replace(ctx context.Context, tenantID string, vars map[string]string) error {
-	panic(pendiente.Implementar("tenantvars.Postgres.Replace"))
+	// Slices NO-NIL a propósito: un []string nil viaja como NULL y `key <> ALL(NULL)`
+	// es NULL, con lo que el DELETE no borraría NADA y "dejar el tenant sin
+	// variables" quedaría silenciosamente sin efecto. Con make(...,0,n) viaja '{}'.
+	keys := make([]string, 0, len(vars))
+	values := make([]string, 0, len(vars))
+	for k, v := range vars {
+		keys = append(keys, k)
+		values = append(values, v)
+	}
+
+	return postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM public.tenant_variables
+			WHERE tenant_id = $1 AND key <> ALL($2::text[])
+		`, tenantID, keys); err != nil {
+			return fmt.Errorf("tenantvars: borrar variables retiradas: %w", err)
+		}
+		if len(keys) == 0 {
+			return nil
+		}
+		// Las claves salen de un map ⇒ son únicas; ON CONFLICT DO UPDATE no puede
+		// toparse dos veces con la misma fila.
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.tenant_variables (tenant_id, key, value)
+			SELECT $1, k, v FROM unnest($2::text[], $3::text[]) AS t(k, v)
+			ON CONFLICT (tenant_id, key) DO UPDATE
+			   SET value = EXCLUDED.value, updated_at = now()
+			 WHERE public.tenant_variables.value IS DISTINCT FROM EXCLUDED.value
+		`, tenantID, keys, values); err != nil {
+			return fmt.Errorf("tenantvars: guardar variables: %w", err)
+		}
+		return nil
+	})
 }

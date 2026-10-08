@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package tenantvars_test
 
 import (
@@ -7,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -179,23 +178,15 @@ func TestPostgres_Replace_DeletesAndUpsertsInOneTransaction(t *testing.T) {
 	if !del.inTx || !ups.inTx {
 		t.Errorf("sentencias en transacción: DELETE=%v, upsert=%v; quería las dos dentro", del.inTx, ups.inTx)
 	}
-
 	if del.query != deleteSQL {
 		t.Errorf("SQL del borrado:\n%q\nquería:\n%q", del.query, deleteSQL)
 	}
-	if len(del.args) != 2 || del.args[0] != "tenant-1" {
-		t.Fatalf("argumentos del DELETE = %v, quería [tenant-1, claves]", del.args)
-	}
-	delKeys := requireStrings(t, "$2 del DELETE", del.args[1])
-
 	if ups.query != upsertSQL {
 		t.Errorf("SQL del upsert:\n%q\nquería:\n%q", ups.query, upsertSQL)
 	}
-	if len(ups.args) != 3 || ups.args[0] != "tenant-1" {
-		t.Fatalf("argumentos del upsert = %v, quería [tenant-1, claves, valores]", ups.args)
-	}
-	keys := requireStrings(t, "$2 del upsert", ups.args[1])
-	values := requireStrings(t, "$3 del upsert", ups.args[2])
+	delKeys := requireArgs(t, "DELETE", del, "tenant-1", 1)[0]
+	sent := requireArgs(t, "upsert", ups, "tenant-1", 2)
+	keys, values := sent[0], sent[1]
 	if len(keys) != len(vars) || len(values) != len(vars) || len(delKeys) != len(vars) {
 		t.Fatalf("claves del DELETE %v, claves %v y valores %v del upsert: quería %d de cada", delKeys, keys, values, len(vars))
 	}
@@ -238,10 +229,7 @@ func TestPostgres_Replace_NoVariables_OnlyDeletes(t *testing.T) {
 			if del.query != deleteSQL || !del.inTx {
 				t.Errorf("la única sentencia (en transacción: %v) es:\n%q\nquería el DELETE en transacción", del.inTx, del.query)
 			}
-			if len(del.args) != 2 || del.args[0] != "tenant-1" {
-				t.Fatalf("argumentos del DELETE = %v, quería [tenant-1, claves]", del.args)
-			}
-			if keys := requireStrings(t, "$2 del DELETE", del.args[1]); len(keys) != 0 {
+			if keys := requireArgs(t, "DELETE", del, "tenant-1", 1)[0]; len(keys) != 0 {
 				t.Errorf("claves del DELETE = %v, quería ninguna", keys)
 			}
 		})
@@ -313,6 +301,20 @@ func requireKinds(t *testing.T, seen []event, want ...string) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("eventos en el driver = %v, quería %v", got, want)
 	}
+}
+
+// requireArgs afirma que la sentencia lleva el tenant como $1 y, detrás, exactamente lists
+// argumentos []string no nil, y los devuelve en orden.
+func requireArgs(t *testing.T, what string, e event, tenant string, lists int) [][]string {
+	t.Helper()
+	if len(e.args) != 1+lists || e.args[0] != tenant {
+		t.Fatalf("argumentos del %s = %v, quería [%s] y %d listas", what, e.args, tenant, lists)
+	}
+	out := make([][]string, 0, lists)
+	for i, arg := range e.args[1:] {
+		out = append(out, requireStrings(t, fmt.Sprintf("$%d del %s", i+2, what), arg))
+	}
+	return out
 }
 
 // requireStrings afirma que el argumento es un []string NO nil y lo devuelve.
