@@ -12,7 +12,7 @@
 > (eran 81: las 66 pendientes se reagruparon en 41 de tamaño medio, 45–90 min).
 > La norma de fondo sigue siendo `05`: si el plan choca con ella, manda `05` y el plan se corrige.
 >
-> **Siguiente paso** (al 2026-10-08, con F6-01, F6-02 y F6-03 hechas): [`sesiones/F6-04`](sesiones/F6-04-web-quotetext-integrations-crmpush.md) (`quotetext`, `telemetria`, `integrations` y `crmpush`).
+> **Siguiente paso** (al 2026-10-08, con F6-01 … F6-04 hechas): [`sesiones/F6-05`](sesiones/F6-05-web-cara-http-y-conmutar.md) (la cara HTTP de solicitudes y conmutar G1–G18).
 > Después, la tabla de [`sesiones/README.md`](sesiones/README.md), en orden: es ella la que dice cuál toca.
 
 ## Cómo está escrito (a lo *spec-driven*, estilo Kiro)

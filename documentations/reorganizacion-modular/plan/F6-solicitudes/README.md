@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — F6-03 hecha el 2026-10-08 (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: en curso** — F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -78,7 +78,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 | [**F6-01**](../sesiones/F6-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐 | T6.1–T6.5, T6.14 | inventario E-12 **aprobado por Jhoan** (antes no se escribe código) · `sigv1` y `tenantvars` en verde, `note.go` con contrato y test · `ci-local` rc=0 · PR |
 | [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
 | [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR ✅ hecha el 2026-10-08 (hallazgos 24–34) |
-| [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐❓ | T6.10–T6.13, T6.19–T6.21 | 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
+| [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 💻 | T6.10–T6.13, T6.19–T6.21 | ✅ hecha el 2026-10-08 (`31b9343` … `af68fe3`; hallazgos 35–44): 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
 | [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 🌐❓ | T6.22–T6.26 (= TX.16–TX.18) | 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
 | [**F6-06**](../sesiones/F6-06-cli-cierre.md) · cierre local | 💻 | T6.27–T6.29 | suites en memoria y contra Postgres; procesos P5/P6 (T9.27) contra los dos binarios · `dev` integrado · `ESTADO.md` |
 
@@ -293,3 +293,77 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     commit por fichero, cada verde se commiteó al llegar su agente, antes que los ficheros de los que dependía. Peor
     que los dos de F6-02 (hallazgo 22): `git bisect` no sirve dentro de ese tramo. Para la próxima, commitear al cerrar
     la ola, en orden de dependencias. Un solo commiteador, sin *worktrees*.
+
+### F6-04 (2026-10-08; rama `reorg/f6-04-quotetext-telemetria-integrations-crmpush` desde `dev` @ `36d5a04`)
+
+> Numeración: estos hallazgos son los **35–44 de F6**. Cuando la spec dice «hallazgo 35» u «hallazgo 39» a secas
+> (`diseno.md`, `requisitos.md`, `tareas.md`) habla de los de **F1**, no de estos.
+
+35. **Recuentos y descripciones de la spec que no cuadran con el código** (`diseno.md` no se corrige: léase con esto).
+    Los «nueve motivos» de `fallback_reason` son **13** (9 del verificador, `precios.go`, y 4 del generador,
+    `quotetext.go`). `precios.go` no es «precios pendientes» (`diseno.md` §2): es el verificador INV-2. El bloque nace con
+    **17** ficheros de producción, no 13: E-13 parte `precios.go`, `quotetext.go` y `worker.go` (viejos de 526, 587 y 501
+    líneas, que con sus contratos pasaban de 600). Los recuentos de exportados de §2.4 son anteriores a D-F6-6 (hoy `crud`
+    2, `outbox_stats` 1, `postgres` 14). `scanWebhookRows` y `closeClaim` no son «funciones puras»: usan `*sql.Rows` y la
+    base, y se prueban con el driver de mentira. §5 lista `X-Wapp-Tenant` como cabecera del worker (es del callback
+    entrante) y omite `X-Wapp-Delivery`, que sí manda. R6.4.d apunta a `worker_test.go`: tras E-13 está en
+    `worker_failure_test.go` y `worker_claim_test.go`.
+36. **Cuatro huecos de la spec, cerrados en la sesión.** (a) El reloj del worker: `NewWorker(…, opts ...WorkerOption)` y
+    `WithClock(now)`, como `intakes` y `crmpush`; la llamada de `fase9_fondo.go` no cambia de forma. (b) `CountOutbox` y
+    `SecretFingerprint` (D-F6-6: nacen en `postgres.go`) quedan **fuera** del puerto `Store`, de la suite y del doble, como
+    en el viejo. 🔴 Consecuencia: en el árbol nuevo **no tienen ningún test contra Postgres real**, solo con el driver de
+    mentira; los agregados `FILTER` y el aislamiento por tenant los tiene que cubrir P6 (F6-06/F9). (c) La regla de
+    `contract_body_test.go` (el cuerpo que entrega el worker valida contra `intake.push.schema.json`), que D-F6-3 dejaba sin
+    destino, va en `worker_contract_body_test.go`. (d) `contractDir` desde `crmpush/push_test.go` son **cinco** `..`; la
+    ruta del candado R-12 de `diseno.md` §6 (cuatro) sí es correcta.
+37. **D-F6-7: el worker nuevo corta, no solo calla.** La promesa se escribió general (los cinco `log.Error` de
+    `worker.go:209, :225, :283, :450, :463`, no solo los dos que nombra la decisión). Y al poner el verde aparecieron dos
+    mutantes vivos: con el contexto cancelado, `fail()` seguía contando el POST cortado por la parada como intento fallido
+    y el sondeo seguía recorriendo el lote. No se veían porque el espía de los tests respeta el contexto, como Postgres.
+    Ahora `fail()` vuelve sin tocar la fila ni la métrica y `pollOnce` deja el lote: la fila queda `delivering` y la rescata
+    el lease. Lo fija `TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt`, contra `Memoria` a pelo. Con el reloj
+    inyectado y el `null` del hallazgo 38a, son las **tres diferencias de comportamiento del worker respecto del viejo**. Para T6.27 y D-F9-10: esto arregla **solo** el
+    worker nuevo; el binario viejo y las otras tres goroutines de fondo siguen como estaban.
+38. 🟡 **Rarezas del viejo, para que decida Jhoan.** ✅ (a) **endurecida** en `af68fe3` (Jhoan, 2026-10-08: «si vamos a
+    modificar algo, hagámoslo en este PR»): un payload JSON `null` en `webhook_outbox` dejaba el mapa en nil y
+    `payload["buyer_data"] = …` entraba en **pánico en la goroutine del worker** (`internal/integrations/worker.go:323-335`);
+    ahora es un motivo de fallo más, «plantilla del payload no es un objeto JSON», con backoff y `dead` como los demás, y
+    el mutante que quita la guarda muere con el pánico original. Hoy inalcanzable; misma familia que el hallazgo 32.
+    **Las demás siguen portadas fieles**: (b) el gate da por habilitada una integración sin endpoint ni secreto (`gate.go:50`) y el worker los exige
+    (`worker.go:428,436`): encolaría entregas que fallan hasta `dead`; (c) `crmpush.Build` formatea el instante sin
+    `.UTC()` (`push.go:185`): solo es UTC porque lo es el reloj por defecto; (d) el log del pánico de `RevisionPusher` no
+    lleva `tenant`; (e) en `precios.go:185`, `soles?` no reconoce «sol» y `\s?` admite un solo blanco ASCII (con NBSP o dos
+    espacios un texto correcto cae por `falta_precio_de_linea`: conservador, nunca acepta de más); (f)
+    `ParseSemilla("null")` devuelve `(nil, nil)`. (c), (e) y (f) quedan como promesa con su test; (b) y (d), dichas en
+    el contrato.
+39. **El `fakeStore` viejo incumplía el puerto en seis puntos** (`internal/integrations/worker_test.go:70, :91, :139,
+    :144, :168`, y aceptaba JSON inválido): lote en orden de mapa, sello cero que casaba con fila sin sello, frontera del
+    lease no estricta, `last_error` distinto del literal, y guardaba `HasSecret` y las fechas del llamante. `Memoria` los
+    corrige y por eso **no** es una copia del doble viejo: manda la suite (61 casos; 51 mutantes sobre el doble, 50
+    muertos y 1 equivalente). ABA conocido y comentado: con el reloj parado, dos claims seguidos de una fila llevan el
+    mismo sello.
+40. **Escrito y sin correr contra Postgres** (lo corre F6-06, T6.27): `TestIntegrationsContrato_Postgres`. A vigilar
+    ahí: `EnqueueWebhook_InvalidJSON` (depende de cómo manda pgx `[]byte{}` y nil a `jsonb`), los casos `UnsealedRow`
+    (mandan `time.Time{}` como parámetro) y el `sha256(bytea)` de la marca del sobre. Lo que la suite no afirma a
+    propósito está en el comentario de `Contrato` (orden dentro del lote, ids consecutivos, texto exacto del payload,
+    frontera exacta del lease, NULL frente a `""` en `last_error`).
+41. **`make lint` entero no sirve mientras otro agente escribe**: un `typecheck` roto en un fichero a medias de
+    `integrations` hizo que el lint **callara** un `gocyclo` real de `crmpush`. Durante las olas se usó el lint por
+    paquete (`.bin/golangci-lint run ./…/<paquete>/...` con caché propia) como pre-chequeo, y `make lint` entero al cerrar
+    cada ola de `integrations`. Avisos al quitar etiquetas (hallazgo 31, otra vez): 14 en total (7 `prealloc`, 2
+    `gocyclo`, y uno de `staticcheck`, `errcheck`, `prealloc` de test, `gosec` G101 y `nilerr`), todos a 0 sin `//nolint`.
+42. **Las tres lecciones de F6-03, aplicadas y medidas.** Un sub-agente por paquete en directorios disjuntos, sin
+    *worktrees*, y **solo commitea el orquestador**, por ruta y en orden de dependencias: los **14 commits compilan
+    solos** (`go vet` con y sin `-tags pendiente`, y `-tags integracion` de `test/procesos`, en cada SHA, en un checkout
+    desechable). Donde un fichero partido no compila sin su trozo (E-13) o un test sin su doble, van en el mismo commit y
+    el mensaje lo dice. Ningún auxiliar duplicado: cada paquete tuvo un único dueño.
+43. **E-8, esta vez entero**: los 8 tests viejos de `quotetext`, los 6 de `integrations`, los 3 de `crmpush`,
+    `telemetria_test` y `contract_examples_test`. Reglas que **no** se mantienen, con motivo:
+    `TestPuerto_ExamplesVacio_EsValido` (prueba `llm.BuildGenerateQuoteTextPrompt` de `wapp-shared`, no este paquete), los
+    defaults de `PollInterval` y `Timeout` (no observables sin el reloj real), el motivo «re-serializar el payload
+    completo» (inalcanzable), el drenaje de 64 KiB de la respuesta y `TestMigración0050…` (es del runner). Y una promesa
+    que un sub-agente había puesto **más estricta que el viejo** se retiró: que `telemetria` pase «el mismo mapa, sin copia».
+44. **Para T6.25**: los renombres E-11 de `quotetext` (`NewServicio` → `NewService`, `ConSemilla` → `WithSeed`, `ConPlazo`
+    → `WithTimeout`) rompen el **texto** que buscan `internal/arranque/quotetext_cableado_test.go:57,59` (`reglas.md` T-6)
+    y R6.5.b. Hoy no fallan porque el arranque sigue cableando el `quotetext` viejo; al conmutar hay que reajustarlos. La
+    tabla completa está en `tareas.md`, bloque F6-04.
