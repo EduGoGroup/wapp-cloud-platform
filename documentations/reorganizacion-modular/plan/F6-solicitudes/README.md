@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — F6-02 hecha el 2026-10-08 (`intakes` entero con contrato y test; tipos puros en verde; `PENDIENTES=108`). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: en curso** — F6-03 hecha el 2026-10-08 (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -77,7 +77,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 |---|---|---|---|
 | [**F6-01**](../sesiones/F6-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐 | T6.1–T6.5, T6.14 | inventario E-12 **aprobado por Jhoan** (antes no se escribe código) · `sigv1` y `tenantvars` en verde, `note.go` con contrato y test · `ci-local` rc=0 · PR |
 | [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
-| [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR |
+| [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR ✅ hecha el 2026-10-08 (hallazgos 24–34) |
 | [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐❓ | T6.10–T6.13, T6.19–T6.21 | 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
 | [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 🌐❓ | T6.22–T6.26 (= TX.16–TX.18) | 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
 | [**F6-06**](../sesiones/F6-06-cli-cierre.md) · cierre local | 💻 | T6.27–T6.29 | suites en memoria y contra Postgres; procesos P5/P6 (T9.27) contra los dos binarios · `dev` integrado · `ESTADO.md` |
@@ -242,3 +242,49 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 23. **No leído entero (E-8)**: de los `*_integration_test.go` de `intakes` distintos de `postgres_integration_test.go`
     solo se leyeron las cabeceras de cada test, no los cuerpos. F6-03 los lee al poner en verde cada almacén.
 
+### F6-03 (2026-10-08; rama `reorg/f6-03-intakes-almacenes-acciones-candados` desde `dev` @ `5fd533e`)
+
+24. **La suite de F6-02 tenía dos errores, y los destapó ponerla contra algo real.** (a) `caseDiscard` esperaba
+    `from_status` con la clave **almacenada** (`closed`); el viejo normaliza en `DiscardedRevisionPayload` para los dos
+    almacenes, y el contrato nuevo y su test también: corregida (`7a70dfe`). (b) Los dos casos «no le toca» de los
+    recordatorios afirmaban `(false, nil)` para un id que no es UUID; el Postgres viejo devuelve `ErrNotFound` y el doble
+    `(false, nil)`. ✅ **Jhoan, 2026-10-08**: sin una mejora clara, manda el viejo; el caso sale de la suite compartida y lo
+    afirma el test de cada adaptador (`14393a6`). Con eso la suite da **50 de 50 contra Postgres real**.
+25. **Pre-chequeo contra Postgres, corrido** (no previsto: la sesión solo debía dejarlo escrito). Con el adaptador en verde,
+    `test/procesos/intakes_contrato_test.go` pierde `&& pendiente` (`8d6cfa8`, hallazgo 15) y
+    `TestIntakesContrato_Postgres` da rc=0, 50 PASS, 0 SKIP contra el binario viejo, una vez. **No cierra T6.27**: la
+    corrida que cuenta, con los dos binarios, es de F6-06.
+26. **`diseno.md` §6 da rutas que no existen para el candado INV-1**: `../../../../flujos/runtime` y las tres de `intake`
+    llevan cuatro `..` (saldrían del repo); son tres, como el control positivo `../../../apipublica`. El candado nace con
+    las correctas; con las del diseño, la guarda anti-hueco habría cortado siempre. `diseno.md` no se ha tocado.
+27. **Los nombres del candado de la poda nacieron en inglés** (`revisionsOf → runPrune → sealPruned`), no los
+    `ejecutarPoda`/`sellarPodada` que cita `diseno.md:277`: son identificadores nuevos (E-11). Tabla en `tareas.md`,
+    bloque F6-03. El candado nuevo caza además la asignación al identificador en blanco, que el viejo no cubría.
+28. **El `MemoryStore` nuevo se aparta del doble viejo en cinco puntos**, todos hacia lo que hace Postgres: `UpdatedAt` en
+    toda escritura de cabecera (D-F6-8); `AddedAt` del reloj inyectado; lo rechazado **no escribe nada** (el viejo mutaba
+    líneas antes de validar el texto de la revalidación); `ApprovedRenderedTexts` recorta como `btrim`, no `TrimSpace`
+    (un texto de solo NBSP ahora cuenta); y no se porta el segundo CAS del evento en `Discard`, inalcanzable.
+29. **El inventario se quedó corto en dos ficheros**: `postgres_revisions_read.go` (la lectura de revisiones, que `Get`
+    necesita; el adaptador queda en 13 trozos) y `notifier_templates.go` (sin él `notifier.go` pasaba de 600).
+    En la franja 500–600 quedan `notifier.go` 575, `service.go` 561, `vencimiento_test.go` 537 y
+    `approve_service_test.go` 503.
+30. **Portar en paralelo dentro de un paquete duplica los auxiliares compartidos.** Los que el viejo tenía una sola vez
+    para los dos almacenes (`señalDeCorrección`, `correctedRevision`, `revisionLinesOf`, `systemItems`,
+    `discardedRevision`) acabaron copiados tres veces con prefijos (`memory…`, `pg…`, `approved…`) porque el contrato en
+    rojo no los nombraba y nadie era su dueño. Unificados al final (`141acfd`). Para la próxima: el brief de la ola fija
+    **también** el dueño y el nombre de los no exportados compartidos.
+31. **El lint no había visto nunca los tests rojos**: `golangci-lint` no lee lo que va tras `//go:build pendiente`, así
+    que al quitar la etiqueta salieron 31 avisos de golpe (19 `errcheck`, 6 `gocyclo`…), casi todos de tests escritos en
+    F6-02. A 0 sin `//nolint` (`4fcccc6`). Candidato a mejora del gate: un `lint` con `--build-tags pendiente` en el rojo.
+32. 🟡 **JSON `null` en los datos del comprador (hallazgo 18), sin endurecer.** Medido: `PutBuyerField` entra en pánico
+    (`assignment to entry in nil map`) **y la transacción no se revierte** (el `defer` solo revierte con `err != nil`);
+    `GetBuyerData` devuelve `found=true` con mapa nil. Es idéntico al viejo y hoy inalcanzable (el blob lo escribe siempre
+    este código como objeto). Con el criterio del hallazgo 24, se conserva. Si se endurece: tratar `data == nil` tras el
+    `Unmarshal` como «no es un objeto» en los dos puntos.
+33. **Tres mutantes que el rojo de F6-02 no mataba**, ahora con test: el orden `ErrNoQuoteSender` > `ErrNoRevisionWriter`
+    (el caso usaba un store que sí escribía revisiones), el total de la revisión `approved` y `BuyerDataPresent` del
+    detalle. En total, **253 mutantes a mano, 252 muertos y 1 equivalente** declarado en su commit (`7080179`).
+34. **No leído entero (E-8), otra vez**: de los `*_integration_test.go` viejos de recordatorios, envío, descarte y lectura
+    solo se leyeron nombres o parte; `postgres_integration_test.go` no se leyó para lectura y estado. Lo compensa en parte
+    la corrida real del hallazgo 25. Commits que no compilan solos: `f0bc0d4` y `09872e6` usan auxiliares que entran en
+    `4c93249`, y `da756b7` necesita `cf61639` (ya dentro). Un solo commiteador, sin *worktrees*.
