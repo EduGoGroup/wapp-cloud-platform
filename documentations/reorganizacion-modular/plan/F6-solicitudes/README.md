@@ -302,7 +302,7 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 35. **Recuentos y descripciones de la spec que no cuadran con el código** (`diseno.md` no se corrige: léase con esto).
     Los «nueve motivos» de `fallback_reason` son **13** (9 del verificador, `precios.go`, y 4 del generador,
     `quotetext.go`). `precios.go` no es «precios pendientes» (`diseno.md` §2): es el verificador INV-2. El bloque nace con
-    **18** ficheros de producción, no 13: E-13 parte `precios.go`, `quotetext.go` y `worker.go` (viejos de 526, 587 y 501
+    **17** ficheros de producción, no 13: E-13 parte `precios.go`, `quotetext.go` y `worker.go` (viejos de 526, 587 y 501
     líneas, que con sus contratos pasaban de 600). Los recuentos de exportados de §2.4 son anteriores a D-F6-6 (hoy `crud`
     2, `outbox_stats` 1, `postgres` 14). `scanWebhookRows` y `closeClaim` no son «funciones puras»: usan `*sql.Rows` y la
     base, y se prueban con el driver de mentira. §5 lista `X-Wapp-Tenant` como cabecera del worker (es del callback

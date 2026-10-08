@@ -101,7 +101,7 @@ Para cuando: `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes/inta
 ## Bloque F6-04 · `quotetext`, `telemetria`, `integrations`, `crmpush` · 🌐❓ · T6.10–T6.13, T6.19–T6.21
 Para cuando: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` → 0 · puente (import) de `telemetria` declarado · suite `integrationshelpertest` verde con el doble · candado R-12 y esquema `wapp-crm-v1` verdes · `vet -tags integracion ./test/procesos/...` rc=0 · `ci-local` rc=0 · PR.
 
-> **Cierre de F6-04 (2026-10-08)**: `PENDIENTES=0 · ROJOS=1` (solo `inv1_aprobar_test.go`, hasta T6.25). Nacen **18** ficheros de producción, no 13:
+> **Cierre de F6-04 (2026-10-08)**: `PENDIENTES=0 · ROJOS=1` (solo `inv1_aprobar_test.go`, hasta T6.25). Nacen **17** ficheros de producción, no 13:
 > `telemetria` 1 · `quotetext` 6 (`precios_numbers.go` y `quotetext_fewshot.go` salen por E-13) · `integrations` 8 (`worker_delivery.go` y
 > `worker_failure.go`, ídem) · `crmpush` 2 · más el doble `integrationshelpertest/memoria.go` y los 6 ficheros de la suite (61 casos).
 > Los cuatro paquetes se escribieron en paralelo, uno por sub-agente, y commiteó solo el orquestador: los 14 commits compilan solos (medido).
