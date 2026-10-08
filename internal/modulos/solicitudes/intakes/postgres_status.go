@@ -4,10 +4,9 @@
 // compare-and-swap y los dos efectos que cuelgan de él, todo en una transacción.
 //
 // Lleva además los auxiliares de transacción que UpdateStatus comparte con otros
-// ficheros del adaptador: casStatusTx y recomputeTotalTx, y —porque UpdateStatus no
-// compila sin ellos y este fichero se pasó a verde antes que postgres_shipping.go—
-// ensureShippingTx y shippingZonesOf, que son la materialización de la línea de envío
-// que describe la cabecera de postgres_shipping.go.
+// ficheros del adaptador: casStatusTx y recomputeTotalTx. La materialización de la
+// línea de envío que UpdateStatus dispara (ensureShippingTx, shippingZonesOf) vive en
+// postgres_shipping.go.
 
 package intakes
 
@@ -182,84 +181,6 @@ func casStatusTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID, to string,
 		return Intake{}, err
 	}
 	return updated, nil
-}
-
-// ensureShippingTx deja EXACTAMENTE una línea de envío en la solicitud y dice si
-// escribió algo. No recalcula el total: eso lo hace el llamante, que es quien sabe
-// si necesita la cabecera de vuelta.
-//
-// El orden importa: primero la política —si no aplica no se toca nada y no se lee
-// una línea que no va a cambiar— y solo después la fila.
-func ensureShippingTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, policy ShippingPolicy) (bool, error) {
-	zones, err := shippingZonesOf(ctx, tx, tenantID)
-	if err != nil {
-		return false, err
-	}
-	if !policy.applies(zones) {
-		return false, nil
-	}
-	desired := DesiredShippingLine(zones)
-
-	var (
-		rowID  int64
-		stored Item
-	)
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, label, qty, unit_price
-		FROM public.intake_items
-		WHERE intake_id = $1 AND sku = $2
-	`, intakeID, ShippingSKU).Scan(&rowID, &stored.Label, &stored.Qty, &stored.UnitPrice)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		it := desired.item()
-		if _, ierr := tx.ExecContext(ctx, `
-			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
-			VALUES ($1, $2, $3, '', $4, $5)
-		`, intakeID, it.SKU, it.Label, it.Qty, it.UnitPrice); ierr != nil {
-			return false, fmt.Errorf("intakes: insertar la línea de envío: %w", ierr)
-		}
-		return true, nil
-	case err != nil:
-		return false, fmt.Errorf("intakes: leer la línea de envío: %w", err)
-	}
-
-	if !desired.Supersedes(stored) {
-		return false, nil
-	}
-	// Se ACTUALIZA la fila en vez de borrarla e insertar otra: así la línea conserva
-	// su added_at y su sitio en el pedido, y en ningún instante hay dos envíos.
-	it := desired.item()
-	if _, uerr := tx.ExecContext(ctx, `
-		UPDATE public.intake_items SET label = $2, qty = $3, unit_price = $4 WHERE id = $1
-	`, rowID, it.Label, it.Qty, it.UnitPrice); uerr != nil {
-		return false, fmt.Errorf("intakes: actualizar la línea de envío: %w", uerr)
-	}
-	return true, nil
-}
-
-// shippingZonesOf lee tenant_settings.shipping_zones. Un tenant SIN fila de config
-// no es un error: es un tenant que no configuró nada (mismo criterio que
-// GetTenantSettings del módulo de flujos) y por tanto no tiene zonas. Era
-// shippingZonesDe en el viejo.
-//
-// 🔴 TOMA UN `querier` Y NO UN `*sql.Tx` PARA QUE HAYA UNA SOLA SENTENCIA. Sus dos
-// llamantes leen la misma columna con propósitos distintos —EnsureShippingLine
-// dentro del CAS del carrito numérico, ShippingZones fuera de toda transacción para
-// el pipeline de captación— y con dos copias del SELECT bastaría con que alguien
-// añadiera un filtro a una para que el borrador y el pedido cerrado cotizaran envíos
-// distintos sin que nada diera error.
-func shippingZonesOf(ctx context.Context, q querier, tenantID string) ([]ShippingZone, error) {
-	var raw []byte
-	err := q.QueryRowContext(ctx,
-		`SELECT shipping_zones FROM public.tenant_settings WHERE tenant_id = $1`,
-		tenantID).Scan(&raw)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return nil, nil
-	case err != nil:
-		return nil, fmt.Errorf("intakes: leer las zonas de envío del tenant: %w", err)
-	}
-	return ParseShippingZones(raw)
 }
 
 // recomputeTotalTx recalcula el total de la cabecera como la SUMA de sus líneas y
