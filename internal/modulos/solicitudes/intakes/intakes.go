@@ -33,9 +33,8 @@ package intakes
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ErrNotFound lo devuelven Get y SetStatus cuando no hay ninguna solicitud del
@@ -257,7 +256,7 @@ const (
 // orden — el mismo criterio que `status desconocido`. La comparación es exacta: la
 // cadena vacía, `NEWEST`, ` newest`, `asc` y `desc` NO son órdenes.
 func IsSort(sort string) bool {
-	panic(pendiente.Implementar("intakes.IsSort"))
+	return sort == SortNewest || sort == SortOldest
 }
 
 // Normalized devuelve el filtro con la paginación saneada (página ≥ 1, tamaño en
@@ -284,7 +283,41 @@ func IsSort(sort string) bool {
 // recorta). Un Sort que no es ninguno de los dos —vacío, `OLDEST`, basura— cae a
 // SortNewest: fail-safe, no un ORDER BY inventado.
 func (f Filter) Normalized() Filter {
-	panic(pendiente.Implementar("intakes.Filter.Normalized"))
+	out := f
+	if out.Page < 1 {
+		out.Page = 1
+	}
+	switch {
+	case out.PageSize <= 0:
+		out.PageSize = DefaultPageSize
+	case out.PageSize > MaxPageSize:
+		out.PageSize = MaxPageSize
+	}
+	if !IsSort(out.Sort) {
+		out.Sort = SortNewest
+	}
+	out.Statuses = normalizeStatuses(out.Statuses)
+	return out
+}
+
+// normalizeStatuses normaliza, ordena y colapsa la lista de estados del filtro.
+// Devuelve nil —y no un slice vacío— cuando no queda ninguno, para que el store
+// distinguya «sin filtro por estado» con la misma prueba de siempre.
+func normalizeStatuses(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if canonical := NormalizeStatus(s); canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Offset es el desplazamiento SQL que corresponde a la página del filtro:
@@ -292,7 +325,7 @@ func (f Filter) Normalized() Filter {
 // crudo devuelve la cuenta tal cual, negativa incluida (Page 0 con PageSize 50 da
 // -50).
 func (f Filter) Offset() int {
-	panic(pendiente.Implementar("intakes.Filter.Offset"))
+	return (f.Page - 1) * f.PageSize
 }
 
 // Page es una página del listado con el total de coincidencias del filtro (no de
