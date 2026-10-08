@@ -5,9 +5,8 @@ package intake
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // machine.go — LA MÁQUINA DE ESTADOS de `intake_jobs` (Plan 044 · Ola 2 · T2.1).
@@ -72,18 +71,36 @@ const (
 	StageDraft = "draft" // borrador listo
 )
 
+// stageOrder es el ORDEN de la máquina, `p2→p3→p4→match→draft`, y no es
+// decorativo: es lo que impide que una reanudación RETROCEDA. El guard de
+// saveStageSQL compara posiciones en esta misma secuencia.
+//
+// 🔴 Está DUPLICADO en el SQL (`ARRAY['p2','p3','p4','match','draft']`) porque
+// `array_position` necesita el array dentro de la sentencia. La duplicación la
+// custodia TestSaveStageSQL_CarriesTheStageOrderTwice, que es un test de simetría
+// entre este slice y esa constante: si alguien añade una etapa aquí y no allí, el
+// guard dejaría de conocerla y `array_position` devolvería NULL — y una
+// comparación con NULL no es TRUE, así que el UPDATE afectaría 0 filas y el worker
+// vería «transición perdida» sin ninguna pista de por qué.
+var stageOrder = []string{StageP2, StageP3, StageP4, StageMatch, StageDraft}
+
 // StageIndex devuelve la posición de una etapa en la máquina, o -1 si no pertenece
 // al vocabulario. Es la forma de preguntar «¿esto es una etapa?» sin repetir la
 // lista por el código.
 func StageIndex(stage string) int {
-	panic(pendiente.Implementar("intake.StageIndex"))
+	for i, s := range stageOrder {
+		if s == stage {
+			return i
+		}
+	}
+	return -1
 }
 
 // IsTerminal dice si un estado es ABSORBENTE. Se nombra aquí y no se comprueba con
 // `status == "done" || status == "failed"` suelto por el código para que el día que
 // haya un tercer terminal no haya que buscarlos.
 func IsTerminal(status string) bool {
-	panic(pendiente.Implementar("intake.IsTerminal"))
+	return status == StatusDone || status == StatusFailed
 }
 
 // Artifact es la salida de UNA etapa, tal como se persiste en el objeto JSONB
@@ -130,7 +147,30 @@ type Artifact struct {
 // cinco causas distintas y el worker tiene que poder decir CUÁL en su log sin
 // volcar el payload.
 func (a Artifact) Validate() error {
-	panic(pendiente.Implementar("intake.Artifact.Validate"))
+	if StageIndex(a.Stage) < 0 {
+		return fmt.Errorf("intake: etapa %q fuera del vocabulario %v", a.Stage, stageOrder)
+	}
+	if len(a.Payload) == 0 {
+		return fmt.Errorf("intake: artefacto de la etapa %q vacío", a.Stage)
+	}
+	// Se decodifica a un mapa y no a `any`: eso comprueba de una vez que es JSON
+	// válido Y que es un objeto. Un array o un escalar fallan aquí con un error de
+	// tipo, no pasan a una segunda comprobación que alguien podría borrar.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(a.Payload, &obj); err != nil {
+		// 🔴 El error NO cita el payload: puede contener literal del cliente
+		// (ADR-0034). Solo dice la etapa y la causa.
+		return fmt.Errorf("intake: artefacto de la etapa %q no es un objeto JSON válido: %w", a.Stage, err)
+	}
+	raw, ok := obj["version"]
+	if !ok {
+		return fmt.Errorf("intake: artefacto de la etapa %q sin campo `version` (los artefactos son versionados, design §3.2)", a.Stage)
+	}
+	var version int
+	if err := json.Unmarshal(raw, &version); err != nil || version < 1 {
+		return fmt.Errorf("intake: artefacto de la etapa %q con `version` inválida: se espera un entero >= 1", a.Stage)
+	}
+	return nil
 }
 
 // ClaimedJob es un job TOMADO: todo lo que el worker necesita para seguir, y nada
@@ -229,9 +269,7 @@ type Reanalysis struct {
 // que gatea las tres diferencias de conducta de T4.6 —`created_by='owner'`, el
 // `payload.analysis` y el empuje al puente CRM— y se hace en un solo sitio para
 // que ninguna de las tres pueda quedarse con un criterio distinto.
-func (r Reanalysis) IsFromOwner() bool {
-	panic(pendiente.Implementar("intake.Reanalysis.IsFromOwner"))
-}
+func (r Reanalysis) IsFromOwner() bool { return r.RequestedBy == RequestedByOwner }
 
 // PipelineStore es el puerto del WORKER del pipeline (Ola 2), y es deliberadamente
 // distinto de JobStore: aquí sí se lee, aquí sí se bloquean filas y aquí sí viaja el
