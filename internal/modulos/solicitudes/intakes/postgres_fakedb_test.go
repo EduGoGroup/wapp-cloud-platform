@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // El driver de database/sql de mentira sobre el que corren los postgres*_test.go: apunta, en
