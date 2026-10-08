@@ -77,5 +77,5 @@ func (g *EntitlementsGate) Enabled(ctx context.Context, tenantID string) (bool, 
 	if !found || !ti.Enabled || ti.EventsAdapter != "webhook" {
 		return false, nil
 	}
-	return true, nil
+	return ti.EndpointURL != "" && ti.HasSecret, nil
 }

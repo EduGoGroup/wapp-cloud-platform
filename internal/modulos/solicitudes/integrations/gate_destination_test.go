@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 import (
@@ -10,8 +8,8 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations/integrationshelpertest"
 )
 
-// gateSecret es un secreto de firma cualquiera: al gate solo le importa que lo haya.
-const gateSecret = "secreto-de-firma-de-prueba-0123456789"
+// gateSigningKey es un secreto de firma cualquiera, de prueba: al gate solo le importa que lo haya.
+const gateSigningKey = "clave-de-firma-de-prueba-0123456789"
 
 // newGateWithSecret monta el gate sobre un tenant con la feature y esa integración, guardada con
 // ese secreto ("" es no tener ninguno).
@@ -37,8 +35,8 @@ func TestEnabled_RequiresADestination(t *testing.T) {
 		secret string
 		want   bool
 	}{
-		{"endpoint and secret", openConfig(), gateSecret, true},
-		{"no endpoint", noEndpoint, gateSecret, false},
+		{"endpoint and secret", openConfig(), gateSigningKey, true},
+		{"no endpoint", noEndpoint, gateSigningKey, false},
 		{"no secret", openConfig(), "", false},
 		{"neither endpoint nor secret", noEndpoint, "", false},
 	}

@@ -52,21 +52,22 @@ func (s *gateStore) GetTenantIntegration(ctx context.Context, tenantID string) (
 	return s.Store.GetTenantIntegration(ctx, tenantID)
 }
 
-// newGate monta el gate sobre un resolver que contesta has y un almacén con esa integración (o
-// sin ninguna, si cfg es nil).
+// newGate monta el gate sobre un resolver que contesta has y un almacén con esa integración,
+// guardada con secreto de firma (o sin ninguna integración, si cfg es nil).
 func newGate(t *testing.T, has bool, cfg *integrations.TenantIntegration) (*integrations.EntitlementsGate, *fakeFeatures, *gateStore) {
 	t.Helper()
 	features := &fakeFeatures{has: has}
 	store := &gateStore{Store: integrationshelpertest.NewMemoria()}
 	if cfg != nil {
-		if err := store.UpsertTenantIntegration(context.Background(), *cfg, ""); err != nil {
+		if err := store.UpsertTenantIntegration(context.Background(), *cfg, gateSigningKey); err != nil {
 			t.Fatalf("sembrar la integración: %v", err)
 		}
 	}
 	return integrations.NewEntitlementsGate(features, store, gateFeature), features, store
 }
 
-// openConfig es la integración que abre el gate: encendida y con los eventos por webhook.
+// openConfig es la integración que abre el gate una vez guardada con secreto: encendida, con los
+// eventos por webhook y con endpoint.
 func openConfig() *integrations.TenantIntegration {
 	return &integrations.TenantIntegration{
 		TenantID: gateTenant, CatalogAdapter: "local", EventsAdapter: "webhook",
@@ -87,12 +88,11 @@ func TestNewEntitlementsGate_AsksNothing(t *testing.T) {
 
 // TestEnabled_ThreeConditionsAtOnce: el gate abre SOLO con las tres a la vez —la feature, la
 // integración encendida y los eventos por webhook—; si falta cualquiera, cierra SIN error (un gate
-// cerrado no es un fallo). No mira el endpoint ni el secreto.
+// cerrado no es un fallo). El destino, la cuarta, la afirma gate_destination_test.go.
 func TestEnabled_ThreeConditionsAtOnce(t *testing.T) {
-	disabled, local, noEndpoint, otherCase := openConfig(), openConfig(), openConfig(), openConfig()
+	disabled, local, otherCase := openConfig(), openConfig(), openConfig()
 	disabled.Enabled = false
 	local.EventsAdapter = "local"
-	noEndpoint.EndpointURL = ""
 	otherCase.EventsAdapter = "Webhook"
 
 	cases := []struct {
@@ -102,7 +102,6 @@ func TestEnabled_ThreeConditionsAtOnce(t *testing.T) {
 		want bool
 	}{
 		{"feature, enabled and webhook", true, openConfig(), true},
-		{"open without endpoint nor secret", true, noEndpoint, true},
 		{"no feature", false, openConfig(), false},
 		{"no integration row", true, nil, false},
 		{"integration switched off", true, disabled, false},
