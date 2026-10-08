@@ -29,6 +29,117 @@ Deducida de `arquitectura.md` §1, §2 y §5. «Consumidores» = paquetes de pro
 | `apipublica/{reanalyze,intents}.go` | no | no | no | la cara | **medio** |
 | `internal/arranque/bridge_captacion.go` | no | no | no | el arranque | **simple** (`05` §4.2) |
 
+### 1.2 · Inventario E-12 — **aprobado por Jhoan el 2026-10-08** (sesión F7-01, T7.1)
+
+Medido sobre `dev` @ `8d875ab`. Recuento confirmado: **32 ficheros, 11.144 líneas**; con D-F7-3 resuelta quedan **31 de
+producción** y los dobles. «Consum.» = paquetes de producción distintos, fuera del propio, que usan un exportado del fichero
+(regla: `pkg.Exportado` atribuido al fichero que lo declara; los métodos, por `.Método(`, que cuenta también las llamadas
+por interfaz; se cuentan paquetes, no ficheros). En los paquetes de sesiones posteriores solo se midió el paquete entero.
+
+| Fichero | L | Estado en memoria | Concurrencia | BD | Consum. | Nivel |
+|---|---:|---|---|---|---:|---|
+| `evidence/evidence.go` | 80 | no | no | no | 3 | **simple** |
+| `anclaje/anclaje.go` | 441 | no | no | no | 2 | **medio** |
+| `intake/store.go` | 207 | no | no | no (tipos + puerto `JobStore`) | 7 | **medio** |
+| `intake/machine.go` | 385 | no | no | no (tipos + puerto `PipelineStore`) | 3 | **medio** |
+| `intake/memory.go` | 297 | sí, `sync.Mutex` | cerrojo | no | 0 | **complejo** |
+| `intake/postgres.go` | 260 | no | — | 4 sentencias únicas | 3 | **complejo** |
+| `intake/machine_postgres.go` | 431 | no | `FOR UPDATE SKIP LOCKED` ×2 | 7 operaciones, sentencias únicas | 2 (por el puerto) | **complejo** |
+| `intake/reanalisis.go` | 216 | no | no | 2 sentencias | 1 | **complejo** |
+| `intentcfg/store.go` | 78 | `MemoryStore`, `sync.Mutex` | cerrojo | no | 4 | **medio** (bajado: 78 líneas, dos operaciones) |
+| `intentcfg/store_postgres.go` | 50 | no | no | 2 sentencias | 2 | **medio** (bajado) |
+| `casebank/casebank.go` | 173 | no | no | no (puerto `Store`) | 1 | **medio** |
+| `casebank/anonimizar.go` | 386 | no | no | no | 1 | **medio** |
+| `casebank/semilla.go` | 152 | no | no | no (datos) | 1 | **simple** (bajado) |
+| `casebank/postgres.go` | 75 | no | no | 2 sentencias | 1 | **medio** (bajado) |
+| `stages/plazo.go`, `tope.go` | 99 · 184 | no | no | no | ≈2 | **simple** |
+| `stages/{p2,p3,p4,fechas,match,match_cascada,match_lineas}.go` | 252–481 | no | no | no (por puertos) | ≈2 | **medio** |
+| `stages/draft.go` | 1.038 | no | no | no (4 puertos) | ≈2 | **medio**; se parte (E-13, D-F7-6) |
+| `pipeline/pipeline.go` | 1.148 | canal | goroutine, ticker | por `PipelineStore` | ≈1 | **complejo**; se parte (E-13) |
+| `pipeline/plaza.go` | 243 | `sync`, canales | aforo K=1 | no | ≈1 | **complejo** |
+| `pipeline/backoff.go` | 186 | no | no | no | ≈1 | **medio** |
+| `pipeline/memoria.go` | 414 | doble de test | — | — | 0 | fuera de producción (D-F7-3, D-F7-5) |
+| `intakeahead/intakeahead.go` | 592 | marcas por clave, cola | 4 workers | no | ≈1 | **complejo** (592: tolerancia de E-13) |
+| `intakeahead/calentamiento.go` | 216 | no | goroutine suelta | no | ≈1 | **complejo** |
+| `intakeahead/saneo.go` | 147 | no | no | no | 0 (sin exportados) | **medio** |
+| `reanalisis/reanalisis.go` | 772 | no | no | no (seis puertos) | ≈1 | **medio**; se parte (E-13) |
+| `apipublica/{reanalyze,intents}.go` | — | no | no | no | la cara | **medio** |
+| `internal/arranque/bridge_captacion.go` | — | no | no | no | el arranque | **simple** (`05` §4.2) |
+
+Las cuatro bajadas (`intentcfg` entero, `casebank/postgres.go`, `casebank/semilla.go`) van contra el criterio literal de
+E-12 y las aprobó Jhoan: la verdad de esos adaptadores es su suite con `Montaje` en memoria y en Postgres, **un caso por
+método** (hallazgo 63 de F6).
+
+**Adaptadores y puentes** (1 nace, 1 muere, 2 puentes de import):
+
+- **Nace** `internal/arranque/bridge_captacion.go` (F7-04; muere F8): `aheadBridge`, `composerBridge`, la clausura del
+  sink y la segunda instancia vieja de `intake.Postgres` construida dentro (D-F7-1, D-R-3).
+- **Muere** (F7-04) `llmConfigBridge` de `bridge_inferencia.go`, con `llmConfigReader` y `toLegacyLLMConfig`;
+  `turneroBridge` sigue hasta F8.
+- **Muere** (F7-04, T7.24) el centinela `oldFaceIntakesMountSentinel` (`internal/arranque/fase8_transporte.go:293`,
+  hallazgo 55 de F6, D-F6-13), cuando H1 pase a la cara nueva.
+- **Cambia de origen** (T7.24) `quoteCallTimeout` (`internal/arranque/fase5_captacion.go:43`, hallazgo 59 de F6): pasa
+  a leer `PlazoPorLlamadaSuelo` del `pipeline` nuevo.
+- **Puentes de import**: `stages → flujos/store`, `reanalisis → flujos/events`; el tercero se evita pasando
+  `DefaultThreadLimit` por constructor.
+- **`Plazas` no necesita adaptador**: interfaz de un método (`PlazaDe(ctx, tenantID, originSessionID) (edgeID, ok, err)`,
+  `plaza.go:97`), consumida solo por el worker, que el `llmvia.Selector` **nuevo** satisface estructuralmente
+  (`modulos/inferencia/llmvia/llmvia.go:524`); el arranque nuevo ya lo entrega así.
+
+**🔶 resueltos**:
+
+- **Reloj de `machine_postgres.go`**: todo es `now()` de SQL; el único instante que viene de Go es el parámetro `next` de
+  `Retry` (lo calcula el worker con su reloj inyectado, `pipeline.go:1014`; se rechaza `IsZero()`). Sin transacciones
+  explícitas en ningún paquete hoja: sentencias únicas. `FOR UPDATE SKIP LOCKED` solo en las subconsultas de los dos
+  reclamos (`:90`, `:130`).
+- **`PipelineStore` tiene 7 métodos**: `ClaimNext`, `ClaimNextIgnorandoBackoff`, `SaveStage`, `Release`, `Retry`,
+  `Finish`, `Fail`. **`Despertar` no es del store** (contra §2.2): es `(*Worker).Despertar` (`pipeline.go:402`), un canal
+  en memoria que acaba en `ClaimNextIgnorandoBackoff`.
+- **Tablas**: `public.intent_configs` (`tenant_id` PK, `version`, `config` JSONB, `updated_at`; migración `0033`) y
+  `public.intake_case_bank` (`id`, `tenant_id`, `consented` con `CHECK`, `source_text`, `expected`, `created_at`; `0082`).
+- **Columnas de `intake_jobs` por operación** (lo que vigila la marca de estado de las suites, hallazgo 35):
+
+  | Operación | Columnas que toca | Guarda |
+  |---|---|---|
+  | `OpenOrAppend` | INSERT `tenant_id, session_id, contact_id, event_id, status='aggregating', message_ts, source_refs`; en conflicto `source_refs ‖`, `updated_at` | índice parcial `status='aggregating'` |
+  | `CloseWindow` | `status='pending'`, `updated_at` | `status='aggregating'` |
+  | `PutSourceText` | `source_text_enc`, `source_text_dek`, `source_text_kek_id`, `updated_at` | el `pending` más reciente con `source_text_enc IS NULL` |
+  | `ListAggregating` | ninguna (lectura) | `status='aggregating'` |
+  | `ClaimNext` / `ClaimNextIgnorandoBackoff` | `status='processing'`, `updated_at` | `pending` (+ `next_attempt_at <= now()` / + `tenant_id`) |
+  | `SaveStage` | `stage`, `artifacts ‖`, `updated_at` | `processing` y monotonía de etapa |
+  | `Release` | `status='pending'`, `updated_at` | `processing` |
+  | `Retry` | `status='pending'`, `attempts+1`, `next_attempt_at`, `updated_at` | `processing` |
+  | `Finish` | `status='done'`, `intake_id` (COALESCE), las tres del sobre a NULL, `updated_at` | `processing` |
+  | `Fail` | `status='failed'`, `error`, las tres del sobre a NULL, `updated_at` (`stage` se conserva) | `processing` |
+  | `JobNoTerminalDeEvento` | ninguna (lectura) | `status = ANY($3)` |
+  | `AbrirReanalisis` | INSERT `…, status='pending', message_ts` (COALESCE del primer job del evento, o `now()`), `source_refs='[]', intake_id, requested_by, reanalysis_via, reanalysis_source, reanalyzed_from` | no es idempotente |
+
+- **Textos observables de las hojas** (se copian literales; el identificador va en inglés, E-11): estados
+  `aggregating`·`pending`·`processing`·`done`·`failed`; etapas `p2`·`p3`·`p4`·`match`·`draft`; `RequestedByOwner="owner"`;
+  `Kind="intents"`; `ErrNotFound` = `config de intents no encontrada`; kinds de `anclaje` (`image`, `audio`, `ptt`,
+  `voice`, `video`, `document`) y `EtiquetaAudio`; marcas y clases del anonimizador (`[JID]`, `[TELEFONO]`, `[NOMBRE]`;
+  `jid`, `telefono`, `nombre`); los tres centinelas de `casebank` y `errIncompleteEnvelope`; y los ≈45 literales de
+  `fmt.Errorf`/`errors.New` de `V/intake/{machine,memory,postgres,reanalisis,machine_postgres}.go`,
+  `V/intentcfg/*.go` y `V/casebank/{casebank,postgres}.go`, que quien porta copia del fichero viejo. `evidence` y
+  `anclaje` no tienen ninguno.
+- **Textos de la cara vieja** (para F7-04; el cuerpo es `{"error":"…"}`, **sin** clave `code`):
+  - H1 `POST /api/v1/intakes/{id}/reanalyze` (`intakes.write`, auditada, sin middleware de feature: `llm_intake` y
+    `api_llm` viven en el dominio). Orden: forma → gate base → gate de vía → credencial → solicitud → job vivo → fuente.
+    401 `autenticación requerida` · 400 `cuerpo JSON inválido` · 400 `invalid_via` (+`via`, `configured_via`) · 400
+    `text_too_long` (+`runes`, `max`) · 403 `feature_not_enabled` (+`feature`) · 422 `llm_credentials_missing` (+`via`) ·
+    404 `solicitud no encontrada` · 422 `reanalysis_in_progress` (+`job_id`) · 422 `source_unavailable` (+`reason`:
+    `purged`/`never_stored`) · 500 `no se pudo pedir el re-análisis de la solicitud` · 200 `reanalyzeResponse`.
+  - E1 `GET /api/v1/intents` (`intents.read`): 401 · 500 `store de intents no configurado` · 404 `el tenant no tiene
+    config de intents` · 500 `no se pudo leer la config de intents` · 200 `{version, config}`.
+  - E2 `PUT /api/v1/intents` (`intents.write`, auditada; gate `llm_intent` dentro del handler): 401 · 500 `API de intents
+    no configurada` · 500 `no se pudo verificar el entitlement` · 403 `el plan del tenant no incluye la clasificación de
+    intenciones` (prosa, no `feature_not_enabled`) · 400 `no se pudo leer el cuerpo` · 413 `la config excede el tamaño
+    máximo de %d bytes` · 400 `config de intents inválida: …` · 400 `el cuerpo debe ser JSON válido` · 500 `no se pudo
+    persistir la config de intents` · 200 `{"version":"<12 hex>"}`; el push es best-effort.
+  - Tests viejos: `reanalyze_test` 16, `intents_test` 6, `intents_aditividad_test` 2.
+- **Tests viejos de las hojas**: `evidence` 2 · `intake` 39 (14 unitarios, 25 de integración que se saltan sin
+  `WAPP_TEST_DB_DSN`) · `anclaje` 19 · `intentcfg` 4 (3 + 1) · `casebank` 30 (25 + 5).
+
 ## 2 · Por paquete
 
 ### 2.1 · `C/evidence` (1 · 2 exp.) — primera hoja, y el ejemplo de `05` §10
@@ -46,7 +157,7 @@ Deducida de `arquitectura.md` §1, §2 y §5. «Consumidores» = paquetes de pro
 | `store.go` | 207 | 12 | Estados `aggregating`·`pending`·`processing`·`done`·`failed` (`:31-48`); `WindowKey{TenantID, SessionID, ContactID, EventID}` (`:60-65`, `Valid()`: las 4 NOT NULL en la 0072); `Append`, `OpenJob`, `SourceText`; puerto **`JobStore`** (`:163`: `OpenOrAppend`, `CloseWindow`, `ListAggregating`, `PutSourceText`) |
 | `machine.go` | 385 | 14 | Etapas `p2`·`p3`·`p4`·`match`·`draft` (`:65-69`); `ClaimedJob`, `Artifact`, `StageIndex`; puerto **`PipelineStore`** (`:280`); reintentos por calidad / por infra 🔶 |
 | `reanalisis.go` | 216 | 4 | `SolicitudReanalisis`, `AbrirReanalisis` (segundo productor de jobs), `RequestedByOwner` |
-| `memory.go` | 297 | 13 | `MemoryStore` (gemelo, `sync.Mutex` `:79`): **corre las dos suites** |
+| `memory.go` | 297 | 13 | `MemoryStore` (gemelo de `JobStore`, `sync.Mutex` `:79`): corre `ContratoCola`. ✎ **No** implementa `PipelineStore` (§1.2, D-F7-5): `ContratoMaquina` la corre en memoria el doble de `intakehelpertest` |
 | `postgres.go` | 260 | 6 | Adaptador de `JobStore` — **sin cipher a propósito** (D-044.26: lo que llega a `PutSourceText` son bytes ya cifrados; `fase3_almacenes.go:171-176`) |
 | `machine_postgres.go` | 431 | 7 | Adaptador de `PipelineStore` (reclamo, avance de etapa, castigo con causa, backoff, `Despertar`) 🔶 `FOR UPDATE SKIP LOCKED` y reloj |
 
@@ -78,8 +189,9 @@ llamante de producción** (deuda D-6: `ThreadEntry` no trae media refs ni instan
 | `match_lineas.go` | 404 | 0 | Solo no exportados (líneas, variantes en rango, envío): **no tiene contrato propio en el rojo** (patrón F1); su test nace con el verde de `match.go` y cubre solo sus reglas de negocio y ramas no triviales, no la fontanería ni los `if err != nil`; el resto lo cubre F9 (E-4) 🔶 |
 | `draft.go` | 1.038 | 27 | `NewDraft(log, store, solicitudes AlmacenSolicitudes, revision EscritorRevision, eventos EscritorEvento, …OpciónDraft)`; puertos `:330`, `:341`, `:347`, `EmpujadorCRM` `:367`; `ConEmpujeCRM`, `EmpujadorCRMFunc`; la revisión **solo** por `EscritorRevision` (el único store con cipher del literal: por el otro, texto en claro, `fase5_captacion.go:195-199`); empuje al CRM **solo** si `intake_jobs.requested_by` es de la dueña (D-044.19; el pipeline normal no empuja); eventos `intake_draft_created` (`:90`) e `intake_reanalyzed` (`:107`) 🔶 payload; `anclaje` importado sin `Repartir` (D-6); DEUDA-044.16 (`:259`) |
 
-Por tamaño, `draft.go` **no** se parte (cambiaría el árbol de `04` sin necesidad); su contrato se
-agrupa en el comentario por responsabilidad: cabecera · revisión · eventos · empuje.
+~~Por tamaño, `draft.go` **no** se parte~~ — ✎ **D-F7-6 (Jhoan, 2026-10-08)**: manda `05` E-13, que es posterior a esta
+spec: `draft.go` (1.038), `pipeline.go` (1.148) y `reanalisis.go` (772) **se parten por tema** al reconstruirlos; el
+contrato de `draft` se reparte por responsabilidad: cabecera · revisión · eventos · empuje.
 
 ### 2.5 · `C/pipeline` (4 · 57 exp.)
 
@@ -139,7 +251,8 @@ lista de columnas de `intake_jobs` por operación se fija en T7.3 🔶.
 
 | Puerto | Suite | En memoria | Postgres (arnés; T7.27 = T9.28) |
 |---|---|---|---|
-| `intake.JobStore`, `intake.PipelineStore` | `intakehelpertest.ContratoCola`, `ContratoMaquina` | `MemoryStore` | `Postgres`, `machine_postgres` |
+| `intake.JobStore` | `intakehelpertest.ContratoCola` | `MemoryStore` | `Postgres` |
+| `intake.PipelineStore` | `intakehelpertest.ContratoMaquina` | doble de `intakehelpertest` (porta `StoreEnMemoria` de `V/pipeline/memoria.go`, D-F7-5) | `machine_postgres` |
 | `casebank.Store` | `casebankhelpertest.Contrato` | `casebankhelpertest.Memoria` **nuevo** | `Postgres` |
 | `intentcfg.Store` | `intentcfghelpertest.Contrato` | `MemoryStore` | `PostgresStore` |
 | Puertos de etapas, selector, sink, compositor, hilo | — | dobles locales en el test del consumidor | — |

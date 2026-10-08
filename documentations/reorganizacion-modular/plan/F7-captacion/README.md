@@ -1,6 +1,7 @@
 # F7 · `captacion` — la cola que convierte una conversación en borrador (P2→P4, match, draft)
 
-> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
+> **Estado: en curso** — arrancada el 2026-10-08 (F7-01) sobre `dev` @ `8d875ab`; inventario E-12 **aprobado** por Jhoan
+> ese día ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.5 y §2.8
 > (H1, y E1–E2 por **D-FX-1** resuelta en su alternativa: las intenciones se mudan **aquí**).
@@ -116,11 +117,29 @@ aquí). 🌐❓ = web si queda saldo de la promoción; si no, local. Los bloques
    de portar `p2.go`, reproducir bajo carga (`TestP4_WindowRules` en bucle con la suite entera en paralelo) guardando el
    log del servidor.
 
+9. **`intake.MemoryStore` no implementa `PipelineStore`** (F7-01, T7.1), contra `diseno.md` §2.2 y §3 («corre las dos
+   suites»): es el gemelo de `JobStore` y nada más. El viejo lo declara a propósito (`internal/intake/machine.go:378`:
+   «NO hay doble en memoria de PipelineStore, y es una decisión»: los guards viven en SQL) y, aun así, el doble existe:
+   `StoreEnMemoria` de `pipeline/memoria.go:85`, con aserción de compilación (`:332`). Resuelto por **D-F7-5**.
+10. **`diseno.md` §2.4 decía que `draft.go` no se parte**; `05` E-13 (2026-10-04) es posterior y estricta por encima de
+    600 líneas. Afecta a `draft.go` (1.038), `pipeline.go` (1.148) y `reanalisis.go` (772). Resuelto por **D-F7-6**.
+11. **`Despertar` no es de `machine_postgres.go`** (contra `diseno.md` §2.2): es `(*Worker).Despertar`
+    (`pipeline.go:402`), un canal en memoria. `PipelineStore` tiene 7 métodos y el único instante que le llega de Go es
+    el `next` de `Retry`; lo demás es `now()` de SQL.
+12. **`Plazas` es estructural y ya está resuelta**: el `llmvia.Selector` nuevo (F4) la satisface sin importar `pipeline`,
+    y el arranque nuevo ya lo entrega: no hace falta adaptador.
+
 ## Decisiones que necesita (de Jhoan, con recomendación)
 
 | # | Pregunta | Recomendación |
 |---|---|---|
 | D-F7-1 | Costura con el agregador y el compositor viejos (F8): ¿segunda instancia **vieja** de `intake.Postgres` (sin estado) para ellos + adaptador de tipos para `Request`/`OnClassified`/`ComposeAtFlush`, o adaptar también la cola? | **Segunda instancia vieja** para `JobStore`/`SourceTextWriter` (solo `*sql.DB`, `grep -n 'sync\.' internal/intake/postgres.go` vacío) + **`bridge_captacion.go`** con las tres conversiones de `WindowKey` (struct idéntico de 4 `string`, `store.go:60-65`: conversión directa `intakeviejo.WindowKey(k)`). Todo muere en F8 |
 | D-F7-2 | `cmd/casebank` (CLI que siembra `intake_case_bank`) importa `internal/casebank`: ¿cambia a `modulos/captacion/casebank` en F7 o en F10? | **F10**, con `cmd/server`: `cmd/` no se toca durante la transición y el operador sigue usando el código de UAT. En F7 el paquete nuevo se prueba por su suite y su doble |
-| D-F7-3 | `pipeline/memoria.go` (414 l, `sync.Mutex` `:86`, construye `cart.Article`/`catalogo.Construir` `:371-380`) está entre los ficheros de producción: ¿es producción o un doble para los guiones de test? | Verificar en T7.1 (`grep -rn 'NuevaMemoria\|memoria\.' internal --include='*.go' \| grep -v _test`): si solo lo usan tests, **pasa a `pipelinehelpertest/`** (E-3, dobles); si no, se reconstruye como producción |
+| D-F7-3 ✅ | `pipeline/memoria.go` (414 l, `sync.Mutex` `:86`, construye `cart.Article`/`catalogo.Construir` `:371-380`) está entre los ficheros de producción: ¿es producción o un doble para los guiones de test? | Verificar en T7.1 (`grep -rn 'NuevaMemoria\|memoria\.' internal --include='*.go' \| grep -v _test`): si solo lo usan tests, **pasa a `pipelinehelpertest/`** (E-3, dobles); si no, se reconstruye como producción. **Verificado en T7.1 (2026-10-08): es un doble** — cero usos fuera de `_test.go` en `internal/`, `cmd/` y `test/`; F7 queda en 31 ficheros de producción |
 | D-F7-4 | Las rutas de intenciones E1–E2 | **F7** (D-FX-1 alternativa, confirmada por el orquestador): la cara vieja las sirve hasta aquí con el gw nuevo inyectado por `publicapi.ConfigPusher` (estructural) |
+| D-F7-5 | *(F7-01, contradicción 9)* ¿Quién corre `ContratoMaquina` en memoria, si `MemoryStore` no implementa `PipelineStore`? | **Decidida (Jhoan, 2026-10-08)**: el doble de `PipelineStore` se porta de `pipeline/memoria.go` (`StoreEnMemoria`) a `intake/intakehelpertest/`; `CatalogoEnMemoria` va a `pipelinehelpertest/` en F7-03. La verdad de los guards SQL sigue siendo la suite contra Postgres (F7-05) |
+| D-F7-6 | *(F7-01, contradicción 10)* ¿Manda E-13 sobre el «`draft.go` no se parte» de esta spec? | **Decidida (Jhoan, 2026-10-08)**: manda E-13; `draft.go`, `pipeline.go` y `reanalisis.go` se parten por tema al reconstruirlos |
+
+## Hallazgos de la ejecución
+
+*(Se numeran aparte de las contradicciones de la spec.)*
