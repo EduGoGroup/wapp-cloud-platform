@@ -2,6 +2,8 @@
 // salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
 // T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
 // el nuevo, que recibe acceso sin adaptador; de inferencia, aquí solo viajan sus almacenes hacia la cara nueva.
+// Desde F6 (T6.25, conmutar(solicitudes)) las 18 rutas de solicitudes (G1–G18) las sirve la cara nueva
+// con los objetos de internal/modulos/solicitudes que arma requestsDepsOfTheNewFace.
 package arranque
 
 import (
@@ -20,11 +22,11 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/platformadmin"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/enroll"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/filtercfg"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/publicapi"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
 
 // faseTransporte levanta los CUATRO listeners del proceso y les monta sus rutas:
@@ -100,6 +102,7 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 		newFace: newFaceDeps{
 			edge:      edgeDepsOfTheNewFace(c),
 			inference: inferenceDepsOfTheNewFace(c),
+			requests:  requestsDepsOfTheNewFace(c),
 		},
 		platformRepo: c.platformRepo,
 	})
@@ -203,6 +206,21 @@ func servidorAdmin(c *contenedor) *http.Server {
 // ni las tres rutas de /api/v1/tenant-llm ni GET /api/v1/degradation-notices, que sirve la
 // cara nueva con lo que arma inferenceDepsOfTheNewFace. No es solo orden: los almacenes del
 // contenedor son ya los de internal/modulos/inferencia y no satisfacen los puertos viejos.
+//
+// 🔀 F6 · conmutar(solicitudes) (FX TX.18): la cara VIEJA ya no sirve G1–G18. Intakes,
+// QuoteSuggestions, TenantVariables, Integrations, CRMSecrets, CRMGate, CRMReflect, CRMNotify y
+// EventTelemetry se quedan SIN asignar (nil) A PROPÓSITO: con nil, publicapi no registra ni la
+// cotización sugerida (G7), ni las variables (G11–G12), ni el puente CRM con su callback
+// (G13–G17), ni la telemetría de eventos (G18), que sirve la cara nueva con lo que arma
+// requestsDepsOfTheNewFace. Las 18 se mudan en el MISMO commit: G2 es un comodín
+// (`…/intakes/{id}`) que, sola en la cara nueva, taparía los literales G9 y G10 de la vieja (son
+// dos ServeMux; FX mapa §4.2). No es solo orden: el Service, los almacenes y el notificador del
+// contenedor son ya los de internal/modulos/solicitudes y no satisfacen los puertos viejos.
+// Reanalysis e Intents SIGUEN puestos: son de captación (F7). Entitlements y DBTimeout también:
+// los leen las rutas que la vieja conserva.
+//
+// 🔴 Intakes es la EXCEPCIÓN y NO va a nil: recibe oldFaceIntakesMountSentinel, un centinela sin
+// implementación (D-F6-13). Ver su comentario: sin él la cara vieja deja de registrar H1.
 func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 	return publicapi.Deps{
 		FlowDeps: publicapi.FlowDeps{
@@ -221,19 +239,13 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		TriggersDurableFlow: c.durableFlowChecker,
 		Intents:             c.intentStore,
 		Entitlements:        c.entResolver,
-		// El notificador (D-041.14 · T4.2) usa las MISMAS tres piezas que ya usa el
-		// motor para hablarle a un contacto: el Gateway como sender, el resolver
-		// custodiado de PII para el destino y el store de solicitudes para la config
-		// del tenant. No hay un segundo camino de salida hacia WhatsApp.
-		//
-		// El recordatorio de la seña (D-041.12 · T4.4) entra por su propia opción
-		// porque cuelga de otro sitio: no de la transición, sino de las LECTURAS del
-		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
-		Intakes: c.intakeService,
-		// El re-análisis va APARTE de Intakes y no como método suyo: cruza cinco
-		// fronteras que la bandeja no cruza (T4.6, ver internal/reanalisis).
-		Reanalysis:       c.reanalysisSvc,
-		QuoteSuggestions: c.quoteSvc,
+		// El re-análisis va APARTE de la bandeja y no como método suyo: cruza cinco
+		// fronteras que la bandeja no cruza (T4.6, ver internal/reanalisis). Se queda en la
+		// cara vieja hasta F7, aunque la bandeja (G1–G10) ya la sirva la nueva.
+		Reanalysis: c.reanalysisSvc,
+		// 🔴 NO es un servicio: es el centinela de montaje de H1 (D-F6-13). La bandeja la sirve
+		// la cara nueva; ver oldFaceIntakesMountSentinel.
+		Intakes: oldFaceIntakesMountSentinel{},
 		// La bandeja de EVENTOS conversacionales (Plan 043 · T3.9b) lee del MISMO
 		// store que el motor y el despachador: es la misma consulta de rescatables
 		// leída desde el lado del dueño, y una segunda instancia sería un segundo
@@ -244,35 +256,42 @@ func depsDeLaAPIPublica(c *contenedor) publicapi.Deps {
 		// guard del evento, puntero del flow_state y solicitud colgante. El runtime
 		// ya viene armado con WithEventStore y WithIntakeAbandoner; sin este cable la
 		// ruta POST …/{id}/cancel no se monta.
-		EventCanceller:  c.flowRuntime,
-		TenantVariables: tenantvars.NewPostgres(c.db),
-		// La VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
-		// existen y se reutilizan tal cual: el MISMO store que guarda el secreto
-		// de la ida, el MISMO gate que decide si se encola, el store de solicitudes y el
-		// notificador del Plan 041. Nada de esto es nuevo salvo el cable.
-		// La CONFIGURACIÓN del puente (Plan 042 · T5.1): el MISMO store, otra
-		// pregunta. El CRUD lee y escribe tenant_integrations; el secreto solo
-		// entra (write-only) y sale como huella.
-		Integrations: c.integrationsStore,
-		// La VUELTA del puente CRM y lo que cuelga de ella (Plan 042 · T4.2/T4.3/
-		// T4.4) más los umbrales de salud: piezas ya armadas, aquí solo el cable.
-		CRMSecrets: c.integrationsStore,
-		CRMGate:    c.webhookGate,
-		CRMReflect: c.intakeStore,
-		CRMNotify:  c.intakeNotifier,
+		EventCanceller: c.flowRuntime,
 		// El gateway NUEVO, el único del proceso: el PUT de intents (E2) empuja por él.
 		ConfigPush: c.gw,
 		// El plazo de las consultas a BD de estos handlers (Plan 050 · Ola 3): un
 		// solo valor de config para todos, porque lo que hay que respetar es la SUMA
 		// con el reloj del Ack, no cada consulta por separado.
 		DBTimeout: c.cfg.PublicAPIDBTimeout,
-		// Telemetría de ciclo de vida del evento conversacional (Plan 043 ·
-		// T6.5, cierra MD-043.17): SQL directo sobre el MISMO *sql.DB que ya
-		// comparte toda la plataforma — no una segunda conexión ni un segundo
-		// pool. Ver el comentario de propiedad en
-		// internal/publicapi/eventstelemetry_store.go.
-		EventTelemetry: publicapi.NewPostgresEventTelemetryStore(c.db),
 	}
+}
+
+// oldFaceIntakesMountSentinel es lo que recibe publicapi.Deps.Intakes desde F6: un valor NO nil
+// que NO implementa nada. Existe SOLO para que la cara vieja siga registrando H1
+// (`POST /api/v1/intakes/{id}/reanalyze`), que es de captación y no se muda hasta F7.
+//
+// Por qué hace falta: en el publicapi viejo, registerIntakes guarda TODA su función tras
+// `d.Intakes == nil || d.Entitlements == nil` (internal/publicapi/publicapi.go:648-651), y H1 se
+// registra DENTRO de ella (:741-743). Con Intakes a nil, que es lo que pedía la spec de F6, H1
+// desaparece del :8103 sin un solo error (medido: la huella baja de 73 a 72 rutas), contra lo que
+// dice F7-captacion/arquitectura.md:166 («monta si Reanalysis ≠ nil, no depende de Intakes»). El
+// código viejo no se toca (E-1) y H1 no puede adelantarse a F6, así que la condición se satisface
+// desde aquí. Decidido por Jhoan el 2026-10-08 (D-F6-13).
+//
+// Lo que arrastra: con un Intakes no nil la vieja vuelve a registrar también G1–G6 y G8–G10 (G7
+// no: QuoteSuggestions sigue a nil). Quedan TAPADAS por la cara nueva, que registra esos mismos
+// nueve patrones y va delante en el compuesto, igual que la D1 vieja desde F3; lo vigila el
+// candado de mudanzas fila a fila (TestMudanzas_HuellaPorElCompuesto) y
+// TestCableado_TheOldFaceOnlyKeepsTheMountSentinel.
+//
+// 🔴 Si una de esas nueve dejara de estar tapada, la petición llegaría a un handler viejo que
+// llamaría a un método de la interfaz embebida, que es nil: PÁNICO de puntero nil (net/http lo
+// contiene por conexión), no una respuesta equivocada. No se le escriben métodos con un pánico
+// legible porque sus firmas nombran tipos del intakes viejo y habría que importarlo aquí.
+//
+// Muere en F7, cuando H1 se mude a la cara nueva (TX.21) y Reanalysis pase a nil en la vieja.
+type oldFaceIntakesMountSentinel struct {
+	publicapi.IntakeService
 }
 
 // edgeDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir D1–D6 (F3 ·
@@ -343,4 +362,80 @@ func inferenceDepsOfTheNewFace(c *contenedor) inferenceFaceDeps {
 			DBTimeout: c.cfg.PublicAPIDBTimeout,
 		},
 	}
+}
+
+// requestsDepsOfTheNewFace reúne lo que la cara NUEVA necesita para servir G1–G18 (F6 ·
+// conmutar(solicitudes), FX TX.18), con los MISMOS objetos del contenedor que usa el resto del
+// arranque: el único Service de solicitudes (el que también recibe el motor para abandonar), el
+// generador de cotización de la fase 5, los almacenes de la fase 3, el gate y el notificador de la
+// fase 6 y el único resolver de derechos (una sola caché). Aquí no se construye dominio: la única
+// construcción es el adaptador de lectura de G18, que solo esta API usa.
+//
+// 🔴 Las condiciones de montaje no cambian respecto a la cara vieja: todos estos punteros se
+// construyen siempre en sus fases, así que las 18 rutas se montan siempre. Una ausencia NO da
+// error, y desde D-F6-13 es peor que un 404 en nueve de ellas: G1–G6 y G8–G10 caerían al
+// handler viejo que cuelga de oldFaceIntakesMountSentinel (pánico). Lo vigilan el candado de
+// mudanzas y solicitudes_cableado_test.go. Los Now se dejan en nil (time.Now).
+func requestsDepsOfTheNewFace(c *contenedor) requestsFaceDeps {
+	return requestsFaceDeps{
+		// G1–G6, G8 · la bandeja. El recordatorio de la seña y el del plazo (D-041.12 · T4.4,
+		// D-044.50) no entran por aquí: cuelgan del Service, que los dispara en las LECTURAS del
+		// dueño (listado y detalle), que es lo que en esta plataforma hace de reloj.
+		intakes: apipublica.IntakesDeps{
+			Intakes:      c.intakeService,
+			Entitlements: c.entResolver,
+		},
+		// G7, G9, G10 · cotización sugerida, export y resumen: el MISMO Service por su puerto de
+		// lectura en bloque, y el generador de la fase 5.
+		//
+		// 🔴 QuoteWriteDeadline es quoteWriteDeadline (fase5_captacion.go): sale del MISMO valor
+		// que recibe quotetext.WithTimeout, más su margen. No se escribe aquí ningún número.
+		intakeReports: apipublica.IntakeReportsDeps{
+			Intakes:            c.intakeService,
+			Entitlements:       c.entResolver,
+			QuoteSuggestions:   c.quoteSvc,
+			QuoteWriteDeadline: quoteWriteDeadline,
+		},
+		// G11–G12 · las variables del tenant: el MISMO almacén que lee el worker del puente CRM
+		// (c.tenantVars, fase 3). El plazo de la lectura es el de config (Plan 050 · Ola 3).
+		tenantVariables: apipublica.TenantVariablesDeps{
+			TenantVariables: c.tenantVars,
+			DBTimeout:       c.cfg.PublicAPIDBTimeout,
+		},
+		// G13–G16 · la CONFIGURACIÓN del puente CRM (Plan 042 · T5.1): el MISMO store que guarda
+		// el secreto de la ida. El secreto solo entra (write-only) y sale como huella.
+		integrations: apipublica.IntegrationsDeps{
+			Integrations: c.integrationsStore,
+			Entitlements: c.entResolver,
+		},
+		// G17 · la VUELTA del puente CRM (Plan 042 · T4.2/T4.3/T4.4). Las cuatro piezas ya
+		// existen: el MISMO store que guarda el secreto, el MISMO gate que decide si se encola,
+		// el almacén de solicitudes como reflector y el notificador de la fase 6 (una sola salida
+		// hacia WhatsApp).
+		crmCallback: apipublica.CRMCallbackDeps{
+			CRMSecrets: c.integrationsStore,
+			CRMGate:    c.webhookGate,
+			CRMReflect: c.intakeStore,
+			CRMNotify:  crmStatusNotifierPort(c.intakeNotifier),
+		},
+		// G18 · telemetría de ciclo de vida del evento conversacional (Plan 043 · T6.5, cierra
+		// MD-043.17): SQL directo sobre el MISMO *sql.DB que comparte toda la plataforma, no un
+		// segundo pool. El adaptador se queda en la cara (D-FX-4): ver
+		// internal/apipublica/eventstelemetry_store.go.
+		eventTelemetry: apipublica.EventTelemetryDeps{
+			EventTelemetry: apipublica.NewPostgresEventTelemetryStore(c.db),
+		},
+	}
+}
+
+// crmStatusNotifierPort entrega el notificador a G17 como su puerto, o un nil DE INTERFAZ si no
+// hay notificador. G17 decide «no aviso» comparando CRMNotify con nil, y un *intakes.Notifier nil
+// metido en la interfaz NO es nil: el aviso se intentaría sobre un receptor nil. Hoy la fase 6
+// construye siempre el notificador; la costura existe para que el día que sea opcional el cable
+// no cambie de significado sin que nadie lo vea.
+func crmStatusNotifierPort(n *intakes.Notifier) apipublica.CRMStatusNotifier {
+	if n == nil {
+		return nil
+	}
+	return n
 }

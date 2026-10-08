@@ -1,4 +1,7 @@
-// Copia de internal/bootstrap/arranque/quotetext_cableado_test.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/quotetext_cableado_test.go @ 80807ba (F0 · 05 §6). Reajustado
+// en F6 (T6.25, conmutar(solicitudes), reglas.md T-6): el generador es el de
+// internal/modulos/solicitudes (NewService, WithSeed) y QuoteSuggestions va en las deps de la cara
+// NUEVA (apipublica.IntakeReportsDeps), que es la que sirve G7.
 package arranque
 
 // quotetext_cableado_test.go — QUE EL GENERADOR DE COTIZACIÓN ESTÉ ENCHUFADO
@@ -10,11 +13,11 @@ package arranque
 // que nadie construye pasa igual sus propios tests. Y el modo de fallo de ÉSTA es
 // especialmente mudo:
 //
-//   - sin `quotetext.NewServicio` o sin `Deps.QuoteSuggestions`, la ruta
+//   - sin `quotetext.NewService` o sin `IntakeReportsDeps.QuoteSuggestions`, la ruta
 //     `POST /api/v1/intakes/{id}/quote-suggestion` NO SE MONTA y responde 404 de ruta
 //     inexistente. Nada falla y nada avisa; el botón «Sugerir texto» de la consola
 //     simplemente no hace nada;
-//   - sin `quotetext.ConSemilla`, el generador FUNCIONA —da textos, con el historial
+//   - sin `quotetext.WithSeed`, el generador FUNCIONA —da textos, con el historial
 //     aprobado— y lo único que se pierde en silencio es el arranque en frío: un tenant
 //     recién dado de alta que se molestó en escribir su `quote_style_examples` no lo
 //     vería usado nunca, y el síntoma sería «esto no imita mi voz», que nadie
@@ -44,9 +47,9 @@ func TestCableado_ElGeneradorDeCotizacionEstaEnchufado(t *testing.T) {
 }
 
 type cableadoDelGenerador struct {
-	servicio bool // (a) quotetext.NewServicio(...)
-	enDeps   bool // (b) publicapi.Deps{... QuoteSuggestions: ...}
-	semilla  bool // (c) quotetext.ConSemilla(<algo que no es nil>)
+	servicio bool // (a) quotetext.NewService(...)
+	enDeps   bool // (b) apipublica.IntakeReportsDeps{... QuoteSuggestions: ...} (cara nueva)
+	semilla  bool // (c) quotetext.WithSeed(<algo que no es nil>)
 }
 
 func (c *cableadoDelGenerador) anota(t *testing.T, fset *token.FileSet, n ast.Node) {
@@ -54,14 +57,14 @@ func (c *cableadoDelGenerador) anota(t *testing.T, fset *token.FileSet, n ast.No
 	switch v := n.(type) {
 	case *ast.CallExpr:
 		switch campoDe(v.Fun) {
-		case "quotetext.NewServicio":
+		case "quotetext.NewService":
 			c.servicio = true
-		case "quotetext.ConSemilla":
+		case "quotetext.WithSeed":
 			// 🔴 NO BASTA CON VER LA OPCIÓN ESCRITA: la opción es nil-safe a propósito
-			// (`ConSemilla(nil)` compila y se traga el nil), así que un cable roto no
+			// (`WithSeed(nil)` compila y se traga el nil), así que un cable roto no
 			// daría error de compilación ni pondría rojo ningún otro test.
 			if len(v.Args) != 1 || campoDe(v.Args[0]) == "nil" {
-				t.Fatalf("quotetext.ConSemilla no recibe un lector utilizable: la opción se traga el nil "+
+				t.Fatalf("quotetext.WithSeed no recibe un lector utilizable: la opción se traga el nil "+
 					"y los ejemplos semilla dejarían de leerse en silencio (%s)", fset.Position(v.Pos()))
 			}
 			c.semilla = true
@@ -69,7 +72,7 @@ func (c *cableadoDelGenerador) anota(t *testing.T, fset *token.FileSet, n ast.No
 	case *ast.KeyValueExpr:
 		if campoDe(v.Key) == "QuoteSuggestions" {
 			if campoDe(v.Value) == "nil" {
-				t.Fatalf("publicapi.Deps.QuoteSuggestions se cablea a nil: la ruta no se montaría (%s)",
+				t.Fatalf("QuoteSuggestions se cablea a nil: la ruta no se montaría (%s)",
 					fset.Position(v.Pos()))
 			}
 			c.enDeps = true
@@ -80,17 +83,17 @@ func (c *cableadoDelGenerador) anota(t *testing.T, fset *token.FileSet, n ast.No
 func (c *cableadoDelGenerador) exige(t *testing.T) {
 	t.Helper()
 	if !c.servicio {
-		t.Error("internal/bootstrap/bootstrap.go NO llama a quotetext.NewServicio.\n" +
-			"Sin el generador construido, Deps.QuoteSuggestions queda nil y la ruta " +
+		t.Error("internal/arranque NO llama a quotetext.NewService.\n" +
+			"Sin el generador construido, IntakeReportsDeps.QuoteSuggestions queda nil y la ruta " +
 			"POST /api/v1/intakes/{id}/quote-suggestion NO SE MONTA: responde 404 de ruta " +
 			"inexistente. Nada falla y nada avisa.")
 	}
 	if !c.enDeps {
-		t.Error("publicapi.Deps NO recibe el generador (campo QuoteSuggestions).\n" +
+		t.Error("las deps de la cara nueva NO reciben el generador (campo QuoteSuggestions).\n" +
 			"Construirlo y no pasarlo tiene el MISMO efecto que no construirlo: la ruta no se monta.")
 	}
 	if !c.semilla {
-		t.Error("quotetext.NewServicio se construye SIN quotetext.ConSemilla.\n" +
+		t.Error("quotetext.NewService se construye SIN quotetext.WithSeed.\n" +
 			"El generador sigue dando textos con el historial aprobado, así que ningún otro test se " +
 			"pone rojo. Lo que se pierde es el ARRANQUE EN FRÍO de D-044.11: un tenant sin historial " +
 			"que escribió su `quote_style_examples` no lo vería usado nunca, y el síntoma —«esto no " +

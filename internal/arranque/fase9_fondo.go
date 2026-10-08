@@ -1,12 +1,13 @@
-// Copia de internal/bootstrap/arranque/fase9_fondo.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS.
+// Copia de internal/bootstrap/arranque/fase9_fondo.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
+// salvo el worker del puente CRM, que desde F6 (T6.24, conmutar(solicitudes)) es el de
+// internal/modulos/solicitudes/integrations.
 package arranque
 
 import (
 	"context"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/metrics/flowlifecycle"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/tenantvars"
 )
 
 // faseFondo arranca las CINCO goroutines de larga vida del proceso.
@@ -41,10 +42,12 @@ func (faseFondo) ejecutar(ctx context.Context, c *contenedor) error {
 	// indicación del cliente ya no viaja congelada en webhook_outbox.payload —era
 	// PII en claro sobreviviendo a la entrega— y se lee de public.intakes justo
 	// antes del POST, igual que buyerDataStore descifra buyer_data. Es el MISMO
-	// store que ya usan el proyector y la API pública: uno solo, no dos nombres
-	// para lo mismo.
+	// store que ya usa la API pública: uno solo, no dos nombres para lo mismo.
+	//
+	// 🔀 F6 · conmutar(solicitudes): el worker es el NUEVO, con los tres almacenes nuevos y el
+	// único almacén de variables del tenant (c.tenantVars, fase 3). La MISMA goroutine, una sola.
 	webhookWorker := integrations.NewWorker(
-		c.integrationsStore, c.buyerDataStore, c.intakeStore, tenantvars.NewPostgres(c.db), c.log,
+		c.integrationsStore, c.buyerDataStore, c.intakeStore, c.tenantVars, c.log,
 		integrations.WorkerConfig{
 			PollInterval: c.cfg.Webhook.PollInterval,
 			MaxAttempts:  c.cfg.Webhook.MaxAttempts,

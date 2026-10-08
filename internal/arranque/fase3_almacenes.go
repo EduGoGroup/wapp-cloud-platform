@@ -1,7 +1,9 @@
 // Copia de internal/bootstrap/arranque/fase3_almacenes.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
 // salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
 // T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
-// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo.
+// el nuevo, que recibe acceso sin adaptador, y un solo selector de vía, el nuevo. Y solicitudes (F6,
+// T6.24, conmutar(solicitudes)): los almacenes de solicitudes, del puente CRM y de las variables son
+// los de internal/modulos/solicitudes; del intakes viejo queda una segunda instancia, intakeStoreViejo.
 package arranque
 
 import (
@@ -12,8 +14,7 @@ import (
 	flowstore "github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/store"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/flujos/trigger"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intake"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/integrations"
+	intakesviejo "github.com/EduGoGroup/wapp-cloud-platform/internal/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/intentcfg"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/diagnostics"
@@ -21,6 +22,9 @@ import (
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/edge/receipts"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/degradation"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/inferencia/tenantllm"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/integrations"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/tenantvars"
 )
 
 // faseAlmacenes construye el stack de cifrado de PII y TODOS los adaptadores de salida
@@ -138,8 +142,18 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	// claro la interpretación estructurada, que es lo que el negocio cuenta.
 	// Comparten keyring, que es lo que evita una tercera rotación.
 	c.intakeStore = intakes.NewPostgres(c.db,
-		intakes.ConCifraDeLiteral(c.flowDeps.cipher),
-		intakes.ConLogDeRetencion(c.log),
+		intakes.WithLiteralCipher(c.flowDeps.cipher),
+		intakes.WithRetentionLog(c.log),
+	)
+	// 🔀 F6 · conmutar(solicitudes) (D-F6-1): LA SEGUNDA INSTANCIA, VIEJA, y el único sitio del
+	// arranque nuevo que construye algo de internal/intakes. Va con las MISMAS dos opciones que
+	// llevaba el almacén hasta F6: la etapa draft escribe por ella el literal cifrado (sin cipher,
+	// InsertRevision lo rechaza) y con el mismo keyring no hay una rotación más. Sin estado: mismo
+	// pool, mismo SQL. Sirve a los cuatro puertos viejos que nombran tipos del intakes viejo
+	// (carrito, draft, zonas de envío, re-análisis) y a nadie más; muere en F7 y F8.
+	c.intakeStoreViejo = intakesviejo.NewPostgres(c.db,
+		intakesviejo.ConCifraDeLiteral(c.flowDeps.cipher),
+		intakesviejo.ConLogDeRetencion(c.log),
 	)
 	// Los DATOS DEL COMPRADOR van por su propio escritor y no por intakeStore (T4.5,
 	// D-041.13): es el único componente del dominio de solicitudes que necesita el
@@ -153,6 +167,10 @@ func (faseAlmacenes) ejecutar(ctx context.Context, c *contenedor) error {
 	// tenant_integrations y los datos del comprador comparten el stack de
 	// claves, no hay una tercera rotación que gestionar.
 	c.integrationsStore = integrations.NewPostgres(c.db, c.flowDeps.cipher)
+	// Las VARIABLES DEL TENANT (tenant_variables). Sin cipher: no guardan PII. Una sola
+	// instancia desde F6: hasta entonces la API pública (fase 8) y el worker del puente CRM
+	// (fase 9) construían una cada una sobre el mismo pool.
+	c.tenantVars = tenantvars.NewPostgres(c.db)
 	// La credencial de la vía LLM API (Plan 044 · T0.3) reusa EL MISMO cipher, y
 	// por tanto el mismo keyring versionado del Plan 012, que buyerDataStore y el
 	// puente CRM: tres sobres distintos, una sola rotación que gestionar. Es lo

@@ -46,8 +46,8 @@ type publicAPIDeps struct {
 	// oldFace son las dependencias del mux VIEJO (publicapi). Viaja por valor: los campos que
 	// buildPublicAPIServer deja a nil (los que ya sirve la cara nueva) no salen de él.
 	oldFace publicapi.Deps
-	// newFace llega con las áreas de los MÓDULOS ya armadas por la fase 8 (edge, inference y las
-	// que añadan F6–F8). Las cinco de acceso (common, auth, rolePlane, audit, entitlements) llegan
+	// newFace llega con las áreas de los MÓDULOS ya armadas por la fase 8 (edge, inference,
+	// requests y las que añadan F7–F8). Las cinco de acceso (common, auth, rolePlane, audit, entitlements) llegan
 	// vacías y las rellena buildPublicAPIServer, que es quien construye sus servicios.
 	newFace newFaceDeps
 	// platformRepo sirve el alta self-service (A7) como almacén de solicitudes de acceso.
@@ -152,7 +152,7 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	//
 	// 🔀 F0 · desviación de la copia (T0.16/TX.3, D-10): delante del mux viejo va la
 	// cara NUEVA (internal/apipublica) con las rutas de las fases ≤ FaseActual
-	// (caraNueva, mudanzas.go; desde F4, las 23 de acceso, las 6 de edge y las 4 de inferencia). El Compuesto sirve por la
+	// (caraNueva, mudanzas.go; desde F6, las 23 de acceso, las 6 de edge, las 4 de inferencia y las 18 de solicitudes). El Compuesto sirve por la
 	// nueva lo que ella registre y delega el resto en publicMux con el MISMO
 	// *http.Request, así que r.Pattern sigue llegando a la métrica. Rate-limit y métricas
 	// envuelven el COMPUESTO una sola vez (RX.2.c; lo vigila cara_nueva_cableado_test.go).
@@ -162,7 +162,7 @@ func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *api
 	// Common es el MISMO para todas las áreas y para las dos caras: el mismo middleware,
 	// el mismo auditor (que además sirve C1 como lector) y el mismo logger.
 	//
-	// Las áreas de los módulos (edge desde F3, inferencia desde F4) ya vienen en face, armadas
+	// Las áreas de los módulos (edge desde F3, inferencia desde F4, solicitudes desde F6) ya vienen en face, armadas
 	// por la fase 8; aquí solo se rellenan las de acceso, cuyos servicios se construyen arriba.
 	face.common = apipublica.Common{MW: authMW, Auditor: auditor, Log: log}
 	face.auth = apipublica.AuthDeps{

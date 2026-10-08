@@ -131,8 +131,8 @@ func field(t *testing.T, ptr any, name string) reflect.Value {
 }
 
 // TestIdentidad_EveryConsumerSharesTheOneGateway (FX TX.11, T-4): sobre el arranque real, todo el
-// que habla con un Edge lo hace por el MISMO puntero que c.gw: el notificador viejo de
-// solicitudes, el empuje de filtros nuevo, el ConfigPush de la cara vieja (E2), el selector LLM
+// que habla con un Edge lo hace por el MISMO puntero que c.gw: el notificador de solicitudes
+// (el nuevo desde F6), el empuje de filtros nuevo, el ConfigPush de la cara vieja (E2), el selector LLM
 // nuevo —que lo recibe como Frame y, del mismo valor, como enrutador de plazas—, y las deps de D1
 // y D5 de la cara nueva.
 func TestIdentidad_EveryConsumerSharesTheOneGateway(t *testing.T) {
