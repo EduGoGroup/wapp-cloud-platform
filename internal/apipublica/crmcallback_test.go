@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // crmcallback_test.go — cubre el contrato de crmcallback.go (CRMSecretReader, CRMBridgeGate,

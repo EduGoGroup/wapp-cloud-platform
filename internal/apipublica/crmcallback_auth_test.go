@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // crmcallback_auth_test.go — la CREDENCIAL de G17 del contrato de MountCRMCallback: el tenant

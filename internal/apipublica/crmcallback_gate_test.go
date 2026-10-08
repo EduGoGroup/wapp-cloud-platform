@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // crmcallback_gate_test.go — el GATE de G17 del contrato de MountCRMCallback: va después de la

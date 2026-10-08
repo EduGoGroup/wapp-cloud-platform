@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // crmcallback_schema_test.go — el CUERPO de G17 del contrato de MountCRMCallback: los motivos
