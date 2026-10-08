@@ -1,6 +1,7 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: por empezar** (spec escrita el 2026-09-28 sobre `dev` @ `1b18932`). Norma:
+> **Estado: en curso** — arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
 >
@@ -133,3 +134,30 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 | D-F6-5 | `Service.Summary` usa `time.Now()` directo (`service.go:318`) | **Inyectar el reloj** en el contrato nuevo (opción con defecto `time.Now`), para que el test no dependa del reloj real (skill `contrato-tdd`) |
 | D-F6-6 | Tres ficheros llevan SQL de un adaptador Postgres **sin** llamarse `*postgres*.go` (ya no hay umbral de cobertura, P2: la verdad de ese SQL la da la suite con `Montaje` corrida en memoria y contra Postgres): `intakes/buyerdata.go` (`PostgresBuyerData`), `integrations/crud.go` (`(*Postgres).SecretFingerprint`, `:42`) e `integrations/outbox_stats.go` (`(*Postgres).CountOutbox`, `:69`) | **Partirlos por la convención de nombres** (`estructura.md` §3): `buyerdata.go` (tipos, `Fingerprint` puro) + `buyerdata_postgres.go`; los dos métodos de `integrations` a `postgres.go`. Cambia el árbol de `04` §3 en tres nombres, sin cambiar nada observable |
 | D-F6-7 | **Heredado de F9-02 (H-1)**: el *webhook worker* viejo (`internal/integrations/worker.go:209` y `:225`) loguea a `ERROR` cuando se cancela el contexto a mitad de su primera llamada a BD, y `TestP0_Arranque/sin_errores` (que exige «cero `ERROR`», parada incluida) falló 1 de 161 arranques en frío. Jhoan **difirió a propósito** el arreglo (2026-10-01): el código viejo no se toca y el test probablemente se redefine al reconstruir. ¿Qué promete el worker nuevo, y cómo queda el criterio de P0? | **Evaluar aquí, sin gastar tiempo antes**: (1) el contrato de `integrations/worker.go` promete «contexto cancelado → vuelve **sin** loguear a `ERROR`», con su caso (se escribe en T6.12 y no se retoca al final); (2) en T6.27, con ese worker, P0 se vuelve a medir (`CUENTA=3`, en frío): si `sin_errores` deja de ser intermitente, se queda; si no, se **redefine** (comprobar el log antes de la parada, o aceptar solo cancelaciones posteriores a «señal de parada recibida») o lo sustituye un test más acorde. Cifras y salidas: README de F9, contradicción 19. ⚠️ **Revisión independiente (2026-10-01)** — hechos, sin tocar esta decisión: (i) el mismo patrón está en otras tres goroutines de fondo que **F6 no reconstruye** (`platform/metrics/flowlifecycle/collector.go`; `flujos/runtime/aggregator.go`, F8; `intake/pipeline/pipeline.go`, F7), y el binario `viejo` conserva el worker viejo hasta F10; (ii) `CUENTA=3` son 2 arranques en frío expuestos y da verde ≈ 98,8 % de las veces sin arreglar nada; (iii) regla de triaje hasta entonces: es esta carrera un rojo cuyas líneas `ERROR` sean todas de cancelación, de una goroutine de fondo y de la parada. Detalle en la nota de revisión de la [contradicción 19 del README de F9](../F9-procesos/README.md); el alcance y el criterio de remedición quedan como pregunta abierta **D-F9-10** |
+
+## Hallazgos
+
+### F6-01 (2026-10-07; rama `reorg/f6-01-inventario-y-hojas` desde `dev` @ `3a21138`)
+
+1. **`sigv1` no tiene ventana ±300 s ni reloj.** El timestamp es un parámetro `int64` de `Sign`/`Verify`; la ventana
+   vive en `internal/publicapi/crmcallback.go:38` (`crmCallbackWindow`) y se compara en `:293`. `diseno.md` §2.6 y T6.2
+   se la atribuían a `sigv1`. ✅ Jhoan (2026-10-07): el contrato nuevo es **fiel al viejo**; la ventana la promete y la
+   prueba `apipublica/crmcallback` (TX.16, F6-05). R6.4.c ya decía «la cara nueva»: no se toca.
+2. **El SQL fuera de `postgres.go` está en siete ficheros, no en tres.** D-F6-6 y T-11 no listaban
+   `intakes/aprobadas.go:83`, `crm.go:113`, `customernote.go:46` ni `reanalisis.go:89`, cada uno con un método de
+   `*Postgres`. ✅ Jhoan amplió D-F6-6: nacen en `postgres_<tema>.go` (`diseno.md` §1.2).
+3. **La costura viejo → nuevo no es solo con la conversación.** Tres puertos de la captación vieja exigen tipos del
+   `intakes` viejo (`stages/draft.go:342`, `pipeline/pipeline.go:147`, `reanalisis/reanalisis.go:245`) y la spec no los
+   recogía. La segunda instancia vieja de D-F6-1 sirve a **cuatro** puertos y muere en F7 **y** F8; necesita
+   `ConCifraDeLiteral`. ✅ Jhoan mantuvo D-F6-1 sabiéndolo (`arquitectura.md` §4). Afecta a T6.24 (F6-05) y a F7.
+4. **`diseno.md` §5 no enumeraba los textos observables.** Recuento: 156 `errors.New`/`fmt.Errorf` (121 envoltorios
+   `%w`, 35 propios), más tres familias que el comando no ve: siete errores tipados con `Sprintf`, las plantillas de
+   `notifier.go` y los `Motivo…` de `quotetext/precios.go`. Anotado en §5; lo asertan F6-02…F6-04.
+5. **Cifras y comandos de esta spec que no cuadran** (ninguno cambia el trabajo): son **12.235** líneas, no 12.236
+   (`arquitectura.md` §1 acierta); el comando de la entrada E3 sale vacío porque `FaseActual` vive en
+   `internal/arranque/mudanzas.go:23`, no en `internal/apipublica`; `grep -l 'go/parser' internal/intakes/*_test.go`
+   devuelve 3 candados y no 4 (`inv1_pedirinfo_ast_test.go` reusa el barrido sin importar `go/parser`); `note.go`
+   tiene **4** exportados con la regla del candado (`MaxNoteRunes`, `NoteTooLongError`, su `Error`, `SanitizeNote`);
+   de los 14 tests de `cart/notes_test.go` solo 2 son de `SanitizeNote`.
+6. **`bridge_contact` solo ofrece el resolver envuelto.** `newContactResolver` devuelve hoy el `contactBridge`; el
+   notificador nuevo necesitará el resolver de `nucleo/contact` sin envolver. Lo resuelve T6.24 (F6-05).

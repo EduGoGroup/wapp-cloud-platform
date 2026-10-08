@@ -31,7 +31,7 @@ Para cuando: tabla del inventario E-12 **aprobada por Jhoan** · `sigv1` y `tena
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.**
   - **Gate**: `make ci-local` rc=0 · **Commit**: `docs(reorganizacion-modular): F6 arranca — inventario E-12 aprobado`
 - [ ] **T6.2 · rojo(solicitudes): contrato de `integrations/sigv1`** · 🌐 · dep. T6.1 · cumple R6.4.c
-  - **Ficheros**: `S/integrations/sigv1/sigv1.go`, `sigv1_test.go` · **Hecho cuando**: 3 exportados con promesa (±300 s, tiempo constante, cuerpo crudo, reloj por parámetro); casos de `V/sigv1_test.go` (7) leídos
+  - **Ficheros**: `S/integrations/sigv1/sigv1.go`, `sigv1_test.go` · **Hecho cuando**: 3 exportados con promesa (tiempo constante, cuerpo crudo, timestamp por parámetro; ✎ 2026-10-07: la ventana ±300 s y el reloj **no** son de `sigv1` sino de la cara HTTP, hallazgo 1); casos de `V/sigv1_test.go` (7) leídos
   - **Gate**: rojo · **Commit**: `rojo(solicitudes): contrato de integrations/sigv1` (si el inventario lo fija *simple*: una pasada, y T6.14 se cierra con el mismo SHA)
 - [ ] **T6.3 · rojo(solicitudes): `tenantvars` + `tenantvarshelpertest`** · 🌐 · dep. T6.1 · cumple R6.3.c
   - **Ficheros**: `S/tenantvars/{tenantvars,memory,postgres}.go` + tests, `S/tenantvars/tenantvarshelpertest/contrato.go`
