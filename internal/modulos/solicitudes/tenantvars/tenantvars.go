@@ -15,7 +15,7 @@
 //
 // Quién la usa y quién NO: la consumen el CRUD público
 // (GET/PUT /api/v1/tenant-variables) y la pantalla de gestión del BFF, y el worker
-// de webhooks las congela en el snapshot de cada `intake.push` (D-18). El Motor
+// de webhooks las lee al ENTREGAR cada `intake.push` (D-18, D-042.11). El Motor
 // de Flujos y el módulo cart NO las leen: si algún día un módulo empieza a
 // interpretar una clave, se rompió D-041.1.
 //
