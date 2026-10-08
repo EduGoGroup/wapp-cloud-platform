@@ -201,11 +201,12 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
 14. 🟡 **`(*MemoryStore).StoredStatus` es un exportado nuevo**, fuera del API viejo: todas las lecturas del puerto
     normalizan el estado y, sin ese mirador, la marca de estado (hallazgo 35) no distingue `closed` de `confirmed`.
     Alternativa: quitar `Montaje.StoredStatus` y perder esa columna de la vigilancia. **Decide Jhoan.**
-15. 🟡 **El `Montaje` de Postgres no cablea el cifrador del literal.** La regla 3b del candado `ProcessImports` solo deja
-    usar los `New…` del paquete del puerto desde `test/procesos`: `intakes.WithLiteralCipher` muerde. Tal como está,
-    `InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead` **fallará contra Postgres en F6-06**. Salidas: que
-    `intakeshelpertest` reexporte la opción, o que el candado admita las opciones del constructor (tocar el candado es
-    de Jhoan, D-F2-9). Además, `test/procesos/intakes_contrato_test.go` lleva `integracion && pendiente` (el adaptador en
+15. ✅ **El `Montaje` de Postgres no cableaba el cifrador del literal** (decidido por Jhoan el 2026-10-08, **D-F6-10**: la
+    suite reexporta la opción; el candado no se toca). La regla 3b del candado `ProcessImports` solo deja usar los `New…`
+    del paquete del puerto desde `test/procesos`: `intakes.WithLiteralCipher` muerde, y sin cifrador
+    `InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead` habría fallado contra Postgres en F6-06. Ahora
+    `intakeshelpertest.WithLiteralCipher` la reexporta y el `Montaje` la cablea con un `crypto.FieldCipher` de keyring
+    propio, como `tenantllm_contrato_test.go`. Escrito y compilado, **no corrido** (lo corre F6-06). Además, `test/procesos/intakes_contrato_test.go` lleva `integracion && pendiente` (el adaptador en
     rojo hace `panic` y abortaría el binario de procesos): F6-03 quita `&& pendiente` al poner `postgres*.go` en verde.
 16. **D-F6-5 quedó en dos relojes independientes**: `WithClock` (nuevo, para `Summary`) y `WithMetricsClock` (viejo).
     Ninguno mueve al otro. Es lo fiel al viejo, donde el reloj de las métricas no tocaba `Summary`.

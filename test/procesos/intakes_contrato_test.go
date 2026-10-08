@@ -14,6 +14,7 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/intakeshelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
 // Este fichero corre la suite de contrato de la persistencia de solicitudes
@@ -22,19 +23,16 @@ import (
 // excepción de R9.4.d que decidió D-F1-8, y por eso solo importa la suite y el paquete del
 // adaptador (candado ProcessImports, regla 3).
 //
-// 🔴 DEL PAQUETE intakes SOLO SE NOMBRA NewPostgres (regla 3b del candado), y eso deja DOS cosas a
-// medias que tiene que resolver quien corra la suite (F6-06) o quien ponga el adaptador en verde:
+// Del paquete intakes SOLO se nombra NewPostgres (regla 3b del candado). La opción del cifrador
+// del literal no empieza por «New», así que llega por la suite: intakeshelpertest.WithLiteralCipher
+// la reexporta (hallazgo 15 de F6, decisión de Jhoan del 2026-10-08) y el Montaje la cablea con un
+// crypto.FieldCipher de keyring propio, como tenantllm_contrato_test.go. Sin ella el adaptador se
+// niega, con razón, a escribir el literal en claro y el caso
+// InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead no podría pasar.
 //
-//   - EL CIFRADOR DEL LITERAL NO ESTÁ CABLEADO. La opción que se lo da al adaptador no empieza por
-//     «New» y el candado la rechaza, así que este Montaje construye el store SIN ella. Mientras
-//     siga así, el caso InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead FALLARÁ contra
-//     Postgres (el adaptador se niega, con razón, a escribir el literal en claro). Hay que decidir
-//     cómo llega la opción hasta aquí —que la suite la reexporte, o que el candado admita las
-//     opciones del constructor (D-F2-9: tocar el candado es una decisión)— y cablearla con un
-//     crypto.FieldCipher de keyring propio, como tenantllm_contrato_test.go;
-//   - el tipo de las zonas de envío del Montaje no se nombra: intakesContractBindShippingZones lo
-//     deduce del propio campo. Si la suite publica un alias (el precedente es
-//     fleethelpertest.TenantProfiles, hallazgo 75 de F3), se nombra por él y sobra el rodeo.
+// Queda un rodeo: el tipo de las zonas de envío del Montaje no se nombra, y
+// intakesContractBindShippingZones lo deduce del propio campo. Si la suite publica un alias (el
+// precedente es fleethelpertest.TenantProfiles, hallazgo 75 de F3), se nombra por él y sobra.
 //
 // Es la que prueba de verdad contra public.intakes, public.intake_items, public.intake_revisions,
 // public.tenant_settings y public.conversation_events lo que los unitarios del adaptador, con su
@@ -57,6 +55,8 @@ const (
 	// intakesContractTimeout acota cada sentencia de la siembra y de la observación: la base es
 	// local al contenedor.
 	intakesContractTimeout = 15 * time.Second
+	// intakesContractKeyID es el key_id de la única KEK del keyring de un Montaje de la suite.
+	intakesContractKeyID = "intakes-contrato"
 	// intakesContractClockTries es el tope de lecturas del reloj en un Advance (ver
 	// tenantvarsClockTries: con una basta; el tope evita un bucle sin fin).
 	intakesContractClockTries = 1000
@@ -76,7 +76,9 @@ func TestIntakesContrato_Postgres(t *testing.T) {
 // intakesContractNewMontaje devuelve el Montaje limpio de un caso: clona una base con nuevaBase
 // (que la borra en el Cleanup del subtest), la abre con el arnés, siembra dos tenants en
 // public.tenants (conversation_events los exige por clave foránea) y construye el adaptador sobre
-// ese *sql.DB. 🔴 Sin cifrador del literal: ver la cabecera del fichero.
+// ese *sql.DB, con el cifrador del literal de un keyring propio (ver la cabecera del fichero). La
+// clave del índice ciego va EXPLÍCITA aunque este store no la use: sin IndexB64 el proveedor la
+// derivaría de la KEK current con un aviso (hallazgo 30 de F3).
 //
 // Los dos tenants nacen SIN fila en public.tenant_settings: es el «sin zonas de envío y sin
 // configuración de la seña» que pide el Montaje.
@@ -85,8 +87,17 @@ func intakesContractNewMontaje(t *testing.T) intakeshelpertest.Montaje {
 	n := intakesContractCases.Add(1)
 	db := nuevaBase(t, fmt.Sprintf("intakes_contrato_%02d", n)).Abrir(t)
 
+	kp, err := crypto.NewEnvKeyProvider(crypto.KeyringConfig{
+		KeyringB64: intakesContractKeyID + ":" + clavesSecretoB64(t),
+		CurrentID:  intakesContractKeyID,
+		IndexB64:   clavesSecretoB64(t),
+	})
+	if err != nil {
+		t.Fatalf("KeyProvider del contrato (current %q): %v", intakesContractKeyID, err)
+	}
+
 	m := intakeshelpertest.Montaje{
-		Store:   intakes.NewPostgres(db),
+		Store:   intakes.NewPostgres(db, intakeshelpertest.WithLiteralCipher(crypto.NewFieldCipher(kp))),
 		TenantA: intakesContractSeedTenant(t, db, fmt.Sprintf("intakes-contrato-%02d-a", n)),
 		TenantB: intakesContractSeedTenant(t, db, fmt.Sprintf("intakes-contrato-%02d-b", n)),
 		Seed: func(t *testing.T, tenantID string, s intakeshelpertest.Seed) string {

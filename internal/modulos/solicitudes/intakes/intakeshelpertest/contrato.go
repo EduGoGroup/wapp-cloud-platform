@@ -36,6 +36,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
 // Port es TODO lo que una persistencia de solicitudes ofrece: lo satisfacen *intakes.MemoryStore y
@@ -103,6 +104,19 @@ type Montaje struct {
 	// inyectado; contra Postgres espera, preguntándoselo a la base, a que su reloj pase del
 	// microsegundo en que estaba. La suite no duerme ni mira el reloj de pared.
 	Advance func(t *testing.T)
+}
+
+// WithLiteralCipher es intakes.WithLiteralCipher, reexportada: la opción que le da al adaptador
+// Postgres la llave del literal de nivel 2. Está aquí para el Montaje de test/procesos, que del
+// paquete del puerto solo puede nombrar los constructores `New…` (candado ProcessImports, regla
+// 3b) y sin ella construiría un store que se niega, con razón, a escribir un literal: el caso
+// InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead no podría pasar (hallazgo 15 de F6,
+// decidido por Jhoan el 2026-10-08: se reexporta y el candado no se toca).
+//
+// No añade nada a la opción: un Montaje la pasa a intakes.NewPostgres con un crypto.FieldCipher
+// de keyring propio. El de memoria no la usa (MemoryStore no cifra).
+func WithLiteralCipher(c *crypto.FieldCipher) intakes.PostgresOption {
+	return intakes.WithLiteralCipher(c)
 }
 
 // Contrato ejecuta las promesas de la persistencia de solicitudes contra la implementación que
