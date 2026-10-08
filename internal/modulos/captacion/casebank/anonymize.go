@@ -3,7 +3,11 @@
 package casebank
 
 import (
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"regexp"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // anonymize.go — retirar del literal del cliente lo que identifica a una persona,
@@ -85,7 +89,8 @@ import (
 //     conducta del viejo y se deja fijada en el corpus del test.
 //   - Un JID pegado a una letra o a un dígito por la derecha
 //     («…@s.whatsapp.netx», o dos JID sin separador): no es JID, y la pasada de
-//     teléfonos se lleva solo el número de delante, DEJANDO EL DOMINIO.
+//     teléfonos se lleva solo el número de delante, DEJANDO EL DOMINIO — y, con
+//     dos JID pegados, el segundo número entero (ver más abajo).
 //   - Un número partido por PALABRAS («cero cuatro uno dos…»), o por letras
 //     («0412 ext 1234567»).
 //
@@ -106,8 +111,17 @@ import (
 // # LOS DOS SENTIDOS: `Anonymize` REDACTA, `Remains` DELATA
 //
 // Comparten detectores a propósito, y eso tiene una consecuencia que hay que
-// decir en voz alta: `Remains(Anonymize(x))` está VACÍO SIEMPRE, para cualquier
-// `x`. Como comprobación es una tautología y no prueba nada.
+// decir en voz alta: `Remains(Anonymize(x))` está VACÍO para casi cualquier `x`.
+// Como comprobación es (casi) una tautología y no prueba nada.
+//
+// ⚠️ «Casi»: la cabecera del fichero viejo decía «VACÍO SIEMPRE» y no es verdad.
+// Las pasadas de `Anonymize` corren en cadena, y una marca puede dejar AL
+// DESCUBIERTO un límite de palabra que antes no existía. Con dos JID pegados
+// («584121234567@s.whatsapp.net584121234567@s.whatsapp.net») ninguno es JID, la
+// pasada de teléfonos tapa el primer número y el resto —el segundo número con su
+// dominio— SALE EN CLARO; barrido después, es un JID. Medido en F7 (hallazgo 40)
+// y fijado en `TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind`; se conserva la
+// conducta del viejo.
 //
 // `Remains` NO existe para auditar a `Anonymize`. Existe para auditar TEXTO QUE
 // NO PASÓ POR ÉL: el fixture escrito a mano (`seed.go`), el caso que alguien
@@ -128,6 +142,45 @@ const (
 	MarkPhone = "[TELEFONO]"
 	// MarkName (antes `MarcaNombre`) sustituye a un nombre propio de la lista.
 	MarkName = "[NOMBRE]"
+)
+
+// Los dos umbrales del teléfono, en DÍGITOS (no en longitud de la cadena: los
+// separadores no cuentan).
+//
+// 🔴 EL SUELO ES EL PARÁMETRO QUE IMPORTA. Con 8, «10 o 12 porciones», «paquete
+// de 30» y «22/07» sobreviven; con 6 se empezarían a comer cantidades del pedido
+// y el banco de casos dejaría de poder evaluar a P4, que es justo la etapa que
+// vive de esos números. El techo de 15 es el máximo de E.164: por encima ya no es
+// un teléfono, es un identificador de otra cosa, y este fichero no sabe de cuál.
+const (
+	minPhoneDigits = 8
+	maxPhoneDigits = 15
+)
+
+var (
+	// reJID exige uno de los CINCO dominios de WhatsApp. Ver «lo que no cubre».
+	reJID = regexp.MustCompile(`(?i)[0-9A-Za-z._:\-]+@(?:s\.whatsapp\.net|g\.us|c\.us|lid|broadcast)`)
+
+	// rePhoneCandidate (antes `reCandidatoTelefono`) es solo el CANDIDATO: empieza
+	// y acaba en dígito y admite separadores por medio. Quién es teléfono de
+	// verdad lo decide el conteo de dígitos, no este patrón — meterlo en la
+	// expresión regular obligaría a enumerar formatos y se escaparía el primero
+	// que no estuviera en la lista.
+	//
+	// 🔴 LA CLASE DE SEPARADORES ES EL PUNTO FRÁGIL DE TODO ESTE FICHERO, y hay
+	// que decirlo aquí porque no se ve: un separador que NO esté en la clase no
+	// produce un recorte parcial, produce un PASE ENTERO. `0412/1234567` con la
+	// barra fuera de la clase no casa por ningún lado —ni «0412» ni «1234567»
+	// llegan a 8 dígitos por separado— así que el número sale intacto Y `Remains`
+	// dice «cero hallazgos» sobre un teléfono completo. Ese fallo se midió el
+	// 2026-08-27 con `/`, `_` y el salto de línea, los tres a la vez.
+	//
+	// Por eso la clase es DELIBERADAMENTE ANCHA: barra, guion bajo, guion, punto,
+	// paréntesis, espacio, tabulador y los dos caracteres de fin de línea. El
+	// coste de meter uno de más es tapar alguna fecha (ver el falso positivo
+	// declarado arriba); el de dejar uno fuera es publicar un teléfono. No son
+	// errores del mismo tamaño y la clase se elige por el segundo.
+	rePhoneCandidate = regexp.MustCompile(`\+?[0-9][0-9 \t\r\n_/().\-]*[0-9]`)
 )
 
 // Class (antes `Clase`) es la clase de dato identificable que un detector
@@ -164,7 +217,15 @@ type Finding struct {
 // Anonymizer (antes `Anonimizador`) redacta y barre. Es un valor y no un puntero:
 // no tiene estado mutable y copiarlo es gratis. Su valor cero es un anonimizador
 // sin nombres, igual que `NewAnonymizer()`.
-type Anonymizer struct{}
+type Anonymizer struct {
+	names []string
+	// reNames es nil cuando la lista viene vacía, y ese caso es LEGÍTIMO: un texto
+	// sin nombres propios conocidos se anonimiza igual en sus otras dos mitades.
+	// Lo que no puede pasar es que un nil aquí haga creer que el barrido de
+	// nombres se ejecutó — por eso `Remains` no devuelve nada de clase `nombre` en
+	// ese caso, en vez de devolver «cero hallazgos» como si hubiera mirado.
+	reNames *regexp.Regexp
+}
 
 // NewAnonymizer (antes `NuevoAnonimizador`) arma el anonimizador con la lista de
 // nombres propios a retirar. A cada nombre se le recortan los espacios de los
@@ -176,7 +237,27 @@ type Anonymizer struct{}
 // el orden en que llegaron), y eso no es cosmético: con `["Ana","Ana María"]` en
 // ese orden se taparía «Ana» y quedaría « María» suelto detrás de la marca.
 func NewAnonymizer(names ...string) Anonymizer {
-	panic(pendiente.Implementar("casebank.NewAnonymizer"))
+	clean := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			clean = append(clean, n)
+		}
+	}
+	if len(clean) == 0 {
+		return Anonymizer{}
+	}
+	// De más largo a más corto: RE2 casa la alternativa que aparece ANTES en el
+	// patrón, no la más larga.
+	sort.SliceStable(clean, func(i, j int) bool { return len(clean[i]) > len(clean[j]) })
+
+	alternatives := make([]string, 0, len(clean))
+	for _, n := range clean {
+		alternatives = append(alternatives, regexp.QuoteMeta(n))
+	}
+	return Anonymizer{
+		names:   clean,
+		reNames: regexp.MustCompile(`(?i)` + strings.Join(alternatives, "|")),
+	}
 }
 
 // Anonymize (antes `Anonimizar`) devuelve el texto con JID, teléfonos y nombres
@@ -190,7 +271,9 @@ func NewAnonymizer(names ...string) Anonymizer {
 // las dos marcas anteriores no contienen letras que puedan casar con un nombre.
 // Cada pasada corre sobre lo que dejó la anterior.
 func (a Anonymizer) Anonymize(text string) string {
-	panic(pendiente.Implementar("casebank.Anonymizer.Anonymize"))
+	text = replaceSpans(text, findWithBoundaries(text, reJID), MarkJID)
+	text = replaceSpans(text, a.phonesIn(text), MarkPhone)
+	return replaceSpans(text, a.namesIn(text), MarkName)
 }
 
 // Remains (antes `Restos`) es EL BARRIDO: devuelve lo que sigue pareciendo
@@ -213,7 +296,34 @@ func (a Anonymizer) Anonymize(text string) string {
 // dice a la vez el número y que ese contacto es de WhatsApp. Un hallazgo que
 // pisa a otro de más prioridad se descarta entero.
 func (a Anonymizer) Remains(text string) []Finding {
-	panic(pendiente.Implementar("casebank.Anonymizer.Remains"))
+	out := make([]Finding, 0, 4)
+	candidates := []struct {
+		locs  [][]int
+		class Class
+	}{
+		{findWithBoundaries(text, reJID), ClassJID},
+		{a.phonesIn(text), ClassPhone},
+		{a.namesIn(text), ClassName},
+	}
+	for _, c := range candidates {
+		for _, f := range findings(text, c.locs, c.class) {
+			if !overlaps(out, f) {
+				out = append(out, f)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
+	return out
+}
+
+// overlaps (antes `solapa`) dice si el hallazgo pisa a alguno de los ya aceptados.
+func overlaps(accepted []Finding, f Finding) bool {
+	for _, v := range accepted {
+		if f.Start < v.End && v.Start < f.End {
+			return true
+		}
+	}
+	return false
 }
 
 // Names (antes `Nombres`) son los nombres que este anonimizador conoce, ya
@@ -227,5 +337,113 @@ func (a Anonymizer) Remains(text string) []Finding {
 // devuelve una copia para que el llamador pueda ordenarla sin tocar al
 // anonimizador.
 func (a Anonymizer) Names() []string {
-	panic(pendiente.Implementar("casebank.Anonymizer.Names"))
+	return append([]string(nil), a.names...)
+}
+
+// phonesIn (antes `telefonos`) filtra los candidatos por conteo de dígitos. Es
+// donde vive la decisión que separa un teléfono de una cantidad del pedido.
+func (a Anonymizer) phonesIn(text string) [][]int {
+	out := make([][]int, 0, 2)
+	for _, loc := range findWithBoundaries(text, rePhoneCandidate) {
+		n := countDigits(text[loc[0]:loc[1]])
+		if n >= minPhoneDigits && n <= maxPhoneDigits {
+			out = append(out, loc)
+		}
+	}
+	return out
+}
+
+// namesIn (antes `nombresEn`) localiza los nombres conocidos respetando límites
+// de palabra.
+func (a Anonymizer) namesIn(text string) [][]int {
+	if a.reNames == nil {
+		return nil
+	}
+	return findWithBoundaries(text, a.reNames)
+}
+
+// findWithBoundaries (antes `buscarConLimites`) devuelve las apariciones de `re`
+// que NO están pegadas a una letra o a un dígito por ninguno de sus dos lados.
+//
+// 🔴 EL LÍMITE SE COMPRUEBA AQUÍ Y NO EN LA EXPRESIÓN REGULAR, y las dos razones
+// son concretas:
+//
+//   - `\b` de Go es ASCII: con «José» o «Ñoño» el límite se evalúa mal en el
+//     borde acentuado. Aquí se decodifica la runa de verdad y se pregunta a
+//     `unicode`;
+//   - un patrón que CONSUMA el separador (`(^|[^\p{L}\p{N}])…`) se come el
+//     espacio, y en «Ambar Herminia» la segunda aparición se quedaría sin límite
+//     izquierdo que casar y NO se redactaría. RE2 no tiene lookahead con el que
+//     evitarlo.
+func findWithBoundaries(text string, re *regexp.Regexp) [][]int {
+	if re == nil {
+		return nil
+	}
+	all := re.FindAllStringIndex(text, -1)
+	out := make([][]int, 0, len(all))
+	for _, loc := range all {
+		if atBoundary(text, loc[0], loc[1]) {
+			out = append(out, loc)
+		}
+	}
+	return out
+}
+
+// atBoundary (antes `enLimite`) dice si [start,end) no está pegado a letra o
+// dígito por ningún lado.
+func atBoundary(text string, start, end int) bool {
+	if start > 0 {
+		r, _ := utf8.DecodeLastRuneInString(text[:start])
+		if isLetterOrDigit(r) {
+			return false
+		}
+	}
+	if end < len(text) {
+		r, _ := utf8.DecodeRuneInString(text[end:])
+		if isLetterOrDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLetterOrDigit(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// replaceSpans (antes `sustituir`) reemplaza los tramos por la marca. Recorre de
+// izquierda a derecha sobre tramos que `findWithBoundaries` devuelve YA ordenados
+// y sin solapes (RE2 no devuelve solapes).
+func replaceSpans(text string, locs [][]int, mark string) string {
+	if len(locs) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	prev := 0
+	for _, loc := range locs {
+		b.WriteString(text[prev:loc[0]])
+		b.WriteString(mark)
+		prev = loc[1]
+	}
+	b.WriteString(text[prev:])
+	return b.String()
+}
+
+func findings(text string, locs [][]int, class Class) []Finding {
+	out := make([]Finding, 0, len(locs))
+	for _, loc := range locs {
+		out = append(out, Finding{Class: class, Text: text[loc[0]:loc[1]], Start: loc[0], End: loc[1]})
+	}
+	return out
+}
+
+// countDigits (antes `digitos`) cuenta los dígitos ASCII: los de otros alfabetos
+// no cuentan (ver «lo que no cubre»).
+func countDigits(s string) int {
+	n := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			n++
+		}
+	}
+	return n
 }

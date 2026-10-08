@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package casebank_test
 
 import (
@@ -44,7 +42,9 @@ func TestNewAnonymizer_CorpusNames_TrimmedAndLongestFirst(t *testing.T) {
 
 // TestAnonymize_AdversarialCorpus_SameAsOld: cada entrada sale como salía del
 // viejo, y las dos mitades no se contradicen —el barrido delata algo si y solo si
-// la redacción cambia el texto— ni queda nada que barrer en lo ya redactado.
+// la redacción cambia el texto—. Tampoco queda nada que barrer en lo ya
+// redactado, salvo en el contraejemplo de
+// TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind.
 func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
 	corpus := []struct{ in, want string }{
 		// vacíos y solo espacios
@@ -177,10 +177,39 @@ func TestAnonymize_AdversarialCorpus_SameAsOld(t *testing.T) {
 				t.Errorf("las dos mitades se contradicen sobre %+q: Anonymize lo cambia = %t, Remains = %+v",
 					c.in, changed, remains)
 			}
-			if again := a.Remains(got); len(again) != 0 {
+			if again := a.Remains(got); len(again) != 0 && c.in != twoGluedJIDs {
 				t.Errorf("Remains(Anonymize(%+q)) = %+v; sobre lo ya redactado tiene que estar vacío", c.in, again)
 			}
 		})
+	}
+}
+
+// twoGluedJIDs son dos JID sin nada entre ellos.
+const twoGluedJIDs = "584121234567@s.whatsapp.net584121234567@s.whatsapp.net"
+
+// TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind fija, con los valores del viejo, el
+// contraejemplo de «Remains(Anonymize(x)) está vacío siempre», que la cabecera del
+// fichero viejo afirmaba y NO es verdad (medido en F7, hallazgo 40).
+//
+// 🔴 ES UNA FUGA, NO UNA CURIOSIDAD: ninguno de los dos JID pasa el límite de
+// palabra (el primero tiene un dígito detrás, y el patrón no vuelve a intentarlo
+// dentro de lo ya consumido), así que la pasada de JID no tapa nada; la de
+// teléfonos se lleva el número de delante, y lo que queda —el segundo número con
+// su dominio— sale EN CLARO de `Anonymize`. Al barrer esa salida, el `@` que
+// ahora precede al resto sí es un límite y el barrido lo delata. Se conserva la
+// conducta del viejo; cerrarlo es cambiar el alcance del anonimizador.
+func TestAnonymize_TwoGluedJIDs_LeavesAJIDBehind(t *testing.T) {
+	a := casebank.NewAnonymizer(corpusNames()...)
+	const wantOut = "[TELEFONO]@s.whatsapp.net584121234567@s.whatsapp.net"
+	out := a.Anonymize(twoGluedJIDs)
+	if out != wantOut {
+		t.Fatalf("Anonymize(%q) = %q; el viejo devolvía %q", twoGluedJIDs, out, wantOut)
+	}
+	want := []casebank.Finding{
+		{Class: casebank.ClassJID, Text: "s.whatsapp.net584121234567@s.whatsapp.net", Start: 11, End: 52},
+	}
+	if got := a.Remains(out); !reflect.DeepEqual(got, want) {
+		t.Errorf("Remains(%q) = %+v; el viejo devolvía %+v", out, got, want)
 	}
 }
 
