@@ -286,5 +286,8 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     detalle. En total, **253 mutantes a mano, 252 muertos y 1 equivalente** declarado en su commit (`7080179`).
 34. **No leído entero (E-8), otra vez**: de los `*_integration_test.go` viejos de recordatorios, envío, descarte y lectura
     solo se leyeron nombres o parte; `postgres_integration_test.go` no se leyó para lectura y estado. Lo compensa en parte
-    la corrida real del hallazgo 25. Commits que no compilan solos: `f0bc0d4` y `09872e6` usan auxiliares que entran en
-    `4c93249`, y `da756b7` necesita `cf61639` (ya dentro). Un solo commiteador, sin *worktrees*.
+    la corrida real del hallazgo 25. 🔴 **14 de los 28 commits no compilan solos** (medido: `go vet` del paquete en
+    cada SHA; fallan `bb50152` … `7a70dfe`, y desde `4c93249` todos pasan): con once agentes escribiendo a la vez y un
+    commit por fichero, cada verde se commiteó al llegar su agente, antes que los ficheros de los que dependía. Peor
+    que los dos de F6-02 (hallazgo 22): `git bisect` no sirve dentro de ese tramo. Para la próxima, commitear al cerrar
+    la ola, en orden de dependencias. Un solo commiteador, sin *worktrees*.
