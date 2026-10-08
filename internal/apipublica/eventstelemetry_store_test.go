@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // eventstelemetry_store_test.go — cubre el contrato de eventstelemetry_store.go

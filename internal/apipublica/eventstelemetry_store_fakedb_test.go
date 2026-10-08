@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // eventstelemetry_store_fakedb_test.go — el driver de database/sql de mentira de los tests de
