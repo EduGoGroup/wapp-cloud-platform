@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intake
 
 import (
@@ -7,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -421,4 +420,28 @@ func TestPostgres_Fail_EmptyReason_RejectedBeforeTheDatabase(t *testing.T) {
 		t.Errorf("Fail sin causa = (%v, %v), quería (false, %q)", ok, err, want)
 	}
 	fake.requireUntouched(t)
+}
+
+// TestSaveStageSQL_CarriesTheStageOrderTwice: el orden de la máquina está DUPLICADO —en
+// stageOrder y en el array de la sentencia, porque `array_position` lo necesita dentro— y este
+// test ata las dos copias. Si alguien añade una etapa en un lado y no en el otro,
+// `array_position` devolvería NULL para ella y SaveStage diría «no aplicó» sin ninguna pista.
+// Tienen que ser DOS apariciones: la comparación es entre dos posiciones del mismo array.
+func TestSaveStageSQL_CarriesTheStageOrderTwice(t *testing.T) {
+	quoted := make([]string, 0, len(stageOrder))
+	for _, s := range stageOrder {
+		quoted = append(quoted, "'"+s+"'")
+	}
+	fromGo := "ARRAY[" + strings.Join(quoted, ",") + "]"
+	if fromGo != sqlStageArray {
+		t.Fatalf("stageOrder da %s y sqlStageArray es %s: las dos copias del orden divergen", fromGo, sqlStageArray)
+	}
+	store, fake := newFakePostgres(t)
+	if _, err := store.SaveStage(context.Background(), pgJobID, validArtifact()); err != nil {
+		t.Fatalf("SaveStage: error inesperado %v", err)
+	}
+	emitted := fake.requireOnly(t, fakeExec).query
+	if n := strings.Count(emitted, fromGo); n != 2 {
+		t.Errorf("la sentencia de SaveStage lleva el orden de la máquina %d veces, quería 2 (dos posiciones que comparar)", n)
+	}
 }
