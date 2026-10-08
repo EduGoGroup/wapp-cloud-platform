@@ -5,20 +5,27 @@ import (
 	"testing"
 )
 
-// Rutas del único par que hoy promete ContractAdapterDirs (D-F2-9). Los casos de
-// ProcessImports las escriben literales, sin pasar por la función: así prueban el candado, no
-// la lista.
+// Rutas de los dos pares que hoy promete ContractAdapterDirs: el de iam (D-F2-9) y el del
+// adaptador SQL de la cara (D-FX-4; Jhoan, 2026-10-08, F6-05). Los casos de ProcessImports las
+// escriben literales, sin pasar por la función: así prueban el candado, no la lista.
 const (
-	iamOutHelperTest = "internal/modulos/acceso/iam/ports/out/outhelpertest"
-	iamPostgresDir   = "internal/modulos/acceso/iam/infra/postgres"
+	iamOutHelperTest   = "internal/modulos/acceso/iam/ports/out/outhelpertest"
+	iamPostgresDir     = "internal/modulos/acceso/iam/infra/postgres"
+	faceTelemetrySuite = "internal/apipublica/eventstelemetryhelpertest"
+	faceDir            = "internal/apipublica"
 )
 
-// TestContractAdapterDirsList: la lista es exactamente la de D-F2-9, ni más ni menos.
+// wantContractAdapterDirs es la lista cerrada entera.
+func wantContractAdapterDirs() map[string]string {
+	return map[string]string{iamOutHelperTest: iamPostgresDir, faceTelemetrySuite: faceDir}
+}
+
+// TestContractAdapterDirsList: la lista es exactamente la decidida (D-F2-9 y D-FX-4), ni más ni
+// menos.
 func TestContractAdapterDirsList(t *testing.T) {
 	got := ContractAdapterDirs()
-	want := map[string]string{iamOutHelperTest: iamPostgresDir}
-	if !maps.Equal(got, want) {
-		t.Errorf("ContractAdapterDirs() = %q; quiero exactamente %q (D-F2-9)", got, want)
+	if want := wantContractAdapterDirs(); !maps.Equal(got, want) {
+		t.Errorf("ContractAdapterDirs() = %q; quiero exactamente %q (D-F2-9 y D-FX-4)", got, want)
 	}
 }
 
@@ -32,7 +39,8 @@ func TestContractAdapterDirsCopy(t *testing.T) {
 	first[iamOutHelperTest] = "internal/modulos/acceso/iam/infra/memory"
 	first["internal/modulos/otro/ports/out/outhelpertest"] = "internal/modulos/otro/infra/postgres"
 	delete(first, iamOutHelperTest)
-	want := map[string]string{iamOutHelperTest: iamPostgresDir}
+	delete(first, faceTelemetrySuite)
+	want := wantContractAdapterDirs()
 	if got := ContractAdapterDirs(); !maps.Equal(got, want) {
 		t.Errorf("tras mutar el mapa devuelto, ContractAdapterDirs() = %q; quiero %q", got, want)
 	}
@@ -120,6 +128,82 @@ var _, _ = outhelpertest.Contrato, NewAuditRepo
 		"importa "+iamPostgresDir+"x:", "una suite de contrato solo importa")
 	exigeViolacion(t, vs, "test/procesos/dot_adapter_contrato_test.go",
 		"importa "+iamPostgresDir+" como «.»", "impórtalo con nombre")
+	if len(vs) != 7 {
+		t.Errorf("se esperaban 7 violaciones; hay %d: %v", len(vs), vs)
+	}
+	exigeOrdenadas(t, vs)
+}
+
+// TestProcessImportsFaceAdapter: la suite del adaptador SQL de la cara cuelga de
+// internal/apipublica, fuera de internal/modulos e internal/nucleo, y entra SOLO por estar en la
+// lista cerrada (D-FX-4; Jhoan, 2026-10-08, F6-05): con ella, el fichero de contrato puede usar
+// los constructores de internal/apipublica. Muerde si usa de la cara algo que no es constructor,
+// si importa la cara sin esa suite, con cualquier otro …helpertest de la cara (el arnés
+// apipublicahelpertest, un hermano con prefijo común o un subdirectorio de la suite listada) y
+// si la suite se importa desde un fichero que no es de contrato: la excepción es de UNA ruta,
+// no del árbol.
+func TestProcessImportsFaceAdapter(t *testing.T) {
+	const (
+		suite   = moduloWapp + "/" + faceTelemetrySuite
+		face    = moduloWapp + "/" + faceDir
+		harness = moduloWapp + "/internal/apipublica/apipublicahelpertest"
+		sibling = suite + "xhelpertest"
+		sub     = suite + "/subhelpertest"
+	)
+	fuentes := []Fuente{
+		fuenteEnMemoria(t, "test/procesos/eventstelemetry_contrato_test.go", `package procesos
+import (
+	"`+face+`"
+	"`+suite+`"
+)
+var _, _ = eventstelemetryhelpertest.Contrato, apipublica.NewPostgresEventTelemetryStore
+`),
+		fuenteEnMemoria(t, "test/procesos/face_symbol_contrato_test.go", `package procesos
+import (
+	"`+face+`"
+	"`+suite+`"
+)
+var _, _, _ = eventstelemetryhelpertest.Contrato, apipublica.NewPostgresEventTelemetryStore, apipublica.MountEventTelemetry
+`),
+		fuenteEnMemoria(t, "test/procesos/face_alone_contrato_test.go", `package procesos
+import "`+face+`"
+var _ = apipublica.NewPostgresEventTelemetryStore
+`),
+		fuenteEnMemoria(t, "test/procesos/face_harness_contrato_test.go", `package procesos
+import (
+	"`+face+`"
+	"`+harness+`"
+)
+var _, _ = apipublicahelpertest.New, apipublica.NewPostgresEventTelemetryStore
+`),
+		fuenteEnMemoria(t, "test/procesos/face_sibling_contrato_test.go", `package procesos
+import (
+	"`+sibling+`"
+	"`+sub+`"
+)
+var _, _ = eventstelemetryhelpertestxhelpertest.Contrato, subhelpertest.Contrato
+`),
+		fuenteEnMemoria(t, "test/procesos/p_face_process_test.go", `package procesos
+import "`+suite+`"
+var _ = eventstelemetryhelpertest.Contrato
+`),
+	}
+	vs := ProcessImports(moduloWapp, fuentes)
+	exigeNingunaEn(t, vs, "test/procesos/eventstelemetry_contrato_test.go")
+	exigeViolacion(t, vs, "test/procesos/face_symbol_contrato_test.go",
+		"usa apipublica.MountEventTelemetry de "+faceDir+":", "solo usa el constructor (New…)")
+	exigeViolacion(t, vs, "test/procesos/face_alone_contrato_test.go",
+		"importa "+faceDir+":", "una suite de contrato solo importa")
+	exigeViolacion(t, vs, "test/procesos/face_harness_contrato_test.go",
+		"importa internal/apipublica/apipublicahelpertest:", "una suite de contrato solo importa")
+	exigeViolacion(t, vs, "test/procesos/face_harness_contrato_test.go",
+		"importa "+faceDir+":", "una suite de contrato solo importa")
+	exigeViolacion(t, vs, "test/procesos/face_sibling_contrato_test.go",
+		"importa "+faceTelemetrySuite+"xhelpertest:", "una suite de contrato solo importa")
+	exigeViolacion(t, vs, "test/procesos/face_sibling_contrato_test.go",
+		"importa "+faceTelemetrySuite+"/subhelpertest:", "una suite de contrato solo importa")
+	exigeViolacion(t, vs, "test/procesos/p_face_process_test.go",
+		"importa "+faceTelemetrySuite+":", "un proceso entra por las puertas reales")
 	if len(vs) != 7 {
 		t.Errorf("se esperaban 7 violaciones; hay %d: %v", len(vs), vs)
 	}

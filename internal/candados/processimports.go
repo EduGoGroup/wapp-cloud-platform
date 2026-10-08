@@ -60,7 +60,9 @@ var helperTestRoots = []string{"internal/modulos", "internal/nucleo"}
 //  3. Un fichero cuyo nombre termina en «_contrato_test.go» (con algo delante) corre una suite
 //     de contrato contra Postgres (H9.5, D-F1-8) y puede importar SOLO:
 //     a. paquetes …helpertest: el último elemento de la ruta termina en «helpertest» con al
-//     menos un carácter delante (D-F1-10), bajo internal/modulos o internal/nucleo;
+//     menos un carácter delante (D-F1-10), bajo internal/modulos o internal/nucleo, o —fuera
+//     de esos dos árboles— uno que sea CLAVE de la lista cerrada ContractAdapterDirs (hoy
+//     solo la suite del adaptador SQL de la cara, D-FX-4);
 //     b. el paquete del PUERTO que prueba: el directorio padre de un …helpertest importado
 //     en ESE MISMO fichero o, si el par está en la lista cerrada ContractAdapterDirs
 //     (D-F2-9: la zona hexagonal de iam, cuyos adaptadores no viven en el padre de su
@@ -206,7 +208,9 @@ func isProcessContractFile(ruta string) bool {
 
 // isHelperTestImport dice si rel es un paquete de suite de contrato importable: su último
 // elemento cumple isHelperTestPackage (el sufijo compuesto de D-F1-10, con algo delante) y
-// cuelga de internal/modulos o de internal/nucleo, sin ser uno de los dos.
+// cuelga de internal/modulos o de internal/nucleo, sin ser uno de los dos. Fuera de esos dos
+// árboles solo vale el que es CLAVE de la lista cerrada de ContractAdapterDirs, por igualdad:
+// ni un hermano ni un subdirectorio suyo heredan la excepción.
 func isHelperTestImport(rel string) bool {
 	if !isHelperTestPackage(path.Base(rel)) {
 		return false
@@ -216,7 +220,8 @@ func isHelperTestImport(rel string) bool {
 			return true
 		}
 	}
-	return false
+	_, listed := contractAdapterDirs[rel]
+	return listed
 }
 
 // hasBuildConstraint dice si file lleva una etiqueta de compilación (//go:build o // +build)
