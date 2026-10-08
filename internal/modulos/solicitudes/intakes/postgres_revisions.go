@@ -261,7 +261,7 @@ func nullableBytes(b []byte) any {
 
 // lastRevisionTx (era últimaRevisiónTx en el viejo) es la consulta con la que ESTE
 // store contesta «¿qué revisión se está corrigiendo?» (T4.4). La REGLA —cuándo se
-// pregunta y qué se guarda— no está aquí sino en pgCorrectionSignal
+// pregunta y qué se guarda— no está aquí sino en correctionSignal
 // (postgres_items.go), que es la que decide si esta función llega a ejecutarse: en
 // el camino del 041 no se llama y la sentencia no se paga.
 //

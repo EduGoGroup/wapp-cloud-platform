@@ -336,7 +336,7 @@ func hasCustomerLines(items []Item) bool {
 // `created_by` es `owner` y no `system`: aquí sí decide una persona, y es el hecho
 // central de INV-1. Sigue siendo un ROL y jamás una persona (CERO PII).
 func approvedRevision(intakeID string, total float64, items []Item, renderedText string) (Revision, error) {
-	payload, err := ApprovedRevisionPayload(total, approvedRevisionLines(items))
+	payload, err := ApprovedRevisionPayload(total, revisionLinesOf(items))
 	if err != nil {
 		return Revision{}, err
 	}
@@ -347,18 +347,6 @@ func approvedRevision(intakeID string, total float64, items []Item, renderedText
 		RenderedText: renderedText,
 		CreatedBy:    RevisionByOwner,
 	}, nil
-}
-
-// approvedRevisionLines congela las líneas de la solicitud en la forma del payload.
-// No lleva added_at ni personalización: la revisión ya está fechada entera, y
-// RevisionLine es contrato versionado (añadirle un campo exige subir
-// RevisionPayloadVersion). Era revisionLinesOf (edit.go) en el viejo.
-func approvedRevisionLines(items []Item) []RevisionLine {
-	out := make([]RevisionLine, 0, len(items))
-	for _, it := range items {
-		out = append(out, RevisionLine{SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice})
-	}
-	return out
 }
 
 // Approve APRUEBA el presupuesto: le manda al cliente la cotización que escribió el

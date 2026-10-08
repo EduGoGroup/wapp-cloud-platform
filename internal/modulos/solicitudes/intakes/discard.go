@@ -278,3 +278,24 @@ func DiscardedRevisionPayload(fromStatus string, total float64) (json.RawMessage
 	}
 	return raw, nil
 }
+
+// discardedRevision arma la revisión que deja UN descarte efectivo. Vive aquí y no
+// en cada store para que las dos implementaciones no puedan divergir: un MemoryStore
+// que escribiera otra foto haría que los tests de handler dijeran algo falso sobre
+// producción (mismo criterio que correctedRevision).
+//
+// `created_by` es `owner` y no `system` porque esto es EXACTAMENTE lo contrario de
+// una muerte por reloj: es una persona decidiendo. Es un ROL, nunca un usuario
+// (CERO PII): quién lo hizo con nombre y apellidos vive en la bitácora de auditoría.
+func discardedRevision(intakeID, fromStatus string, total float64) (Revision, error) {
+	payload, err := DiscardedRevisionPayload(fromStatus, total)
+	if err != nil {
+		return Revision{}, err
+	}
+	return Revision{
+		IntakeID:  intakeID,
+		Kind:      RevisionKindDiscarded,
+		Payload:   payload,
+		CreatedBy: RevisionByOwner,
+	}, nil
+}

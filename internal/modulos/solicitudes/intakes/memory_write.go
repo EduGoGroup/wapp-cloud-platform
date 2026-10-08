@@ -155,7 +155,7 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 	// Las del sistema primero y en su orden: es lo que hace el store real, que
 	// las conserva con su added_at original mientras las nuevas se fechan ahora.
 	now := m.now()
-	lines := memorySystemItems(m.items[intakeID])
+	lines := systemItems(m.items[intakeID])
 	for _, it := range items {
 		it.AddedAt = now
 		lines = append(lines, it)
@@ -166,7 +166,7 @@ func (m *MemoryStore) ReplaceItems(_ context.Context, tenantID, intakeID string,
 	// nueva, y solo cuando el modo lo pide. Y la revisión se escribe ANTES de tocar
 	// líneas y cabecera: es el único paso que puede fallar, y lo que se rechaza no
 	// escribe nada.
-	rev, err := memoryCorrectedRevision(intakeID, total, lines, m.correctionSignalLocked(mode, intakeID))
+	rev, err := correctedRevision(intakeID, total, lines, m.correctionSignalLocked(mode, intakeID))
 	if err != nil {
 		return Detail{}, err
 	}
@@ -307,7 +307,7 @@ func (m *MemoryStore) Discard(_ context.Context, tenantID, intakeID string, disc
 	}
 
 	head := &m.rows[tenantID][i].intake
-	rev, err := memoryDiscardedRevision(intakeID, stored, head.Total)
+	rev, err := discardedRevision(intakeID, stored, head.Total)
 	if err != nil {
 		return DiscardOutcome{}, err
 	}
@@ -419,20 +419,20 @@ func (m *MemoryStore) saveRevisionLocked(rev Revision) (Revision, error) {
 // los funde sobre el payload, que son efectos que nadie pidió por escribir una línea.
 // Aquí solo hacen falta el número y la clase.
 //
-// 🔶 En el viejo eran dos piezas: últimaRevisiónLocked (la consulta, de este doble) y
-// señalDeCorrección (LA REGLA, en edit.go, compartida con Postgres para que la guarda
-// del modo viviera una sola vez). edit.go aún no tiene la regla; cuando la tenga, la
-// guarda del modo de aquí se va y esto queda en la consulta sola.
+// La REGLA —sin EditAsCorrection no hay señal y la consulta ni se hace— no vive aquí
+// sino en correctionSignal (edit.go), compartida con Postgres para que la guarda del
+// modo exista una sola vez. Esto es solo la consulta (era últimaRevisiónLocked).
 func (m *MemoryStore) correctionSignalLocked(mode EditMode, intakeID string) CorrectionSignal {
-	if mode != EditAsCorrection {
-		return CorrectionSignal{}
-	}
-	signal := CorrectionSignal{AsCorrection: true}
-	for _, rev := range m.revisions[intakeID] {
-		if rev.RevisionNo > signal.CorrectsRevisionNo {
-			signal.CorrectsRevisionNo, signal.CorrectsKind = rev.RevisionNo, rev.Kind
+	// La consulta de este doble no puede fallar: el error de correctionSignal es
+	// siempre el de la consulta, así que aquí es siempre nil.
+	signal, _ := correctionSignal(mode, func() (no int, kind string, err error) {
+		for _, rev := range m.revisions[intakeID] {
+			if rev.RevisionNo > no {
+				no, kind = rev.RevisionNo, rev.Kind
+			}
 		}
-	}
+		return no, kind, nil
+	})
 	return signal
 }
 
@@ -468,63 +468,4 @@ func (m *MemoryStore) ensureShippingLocked(tenantID string, i int, policy Shippi
 	m.items[intakeID] = append(items, line)
 	m.recomputeTotalLocked(tenantID, i)
 	m.rows[tenantID][i].intake.UpdatedAt = m.now()
-}
-
-// Las tres funciones que siguen son 🔶 PRESTADAS: en el viejo viven en edit.go
-// (systemItems, correctedRevision) y en discard.go (discardedRevision), y las
-// comparten los dos almacenes para que no puedan divergir sobre qué es una línea del
-// sistema ni sobre la foto que deja cada escritura. Al escribirse este fichero esos
-// dos todavía no las tenían; cuando las tengan, estas copias se borran y sus usos de
-// aquí pasan a llamar a las de allí.
-
-// memorySystemItems son las líneas que puso LA PLATAFORMA (prefijo reservado): las
-// que SOBREVIVEN a una edición manual. Es la contracara del `left(sku,1) <> '_'` del
-// DELETE del store Postgres.
-func memorySystemItems(items []Item) []Item {
-	out := make([]Item, 0, 1)
-	for _, it := range items {
-		if strings.HasPrefix(it.SKU, ReservedSKUPrefix) {
-			out = append(out, it)
-		}
-	}
-	return out
-}
-
-// memoryCorrectedRevision arma la revisión que deja UNA edición efectiva: la foto de
-// TODAS las líneas, también la de envío, y por eso `total` cuadra con la suma de
-// `items`. Las líneas se congelan sin added_at ni personalización: la revisión ya
-// está fechada entera, y RevisionLine es contrato versionado.
-func memoryCorrectedRevision(intakeID string, total float64, items []Item, signal CorrectionSignal) (Revision, error) {
-	lines := make([]RevisionLine, 0, len(items))
-	for _, it := range items {
-		lines = append(lines, RevisionLine{SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice})
-	}
-	payload, err := CorrectedRevisionPayload(total, lines, signal)
-	if err != nil {
-		return Revision{}, err
-	}
-	return Revision{
-		IntakeID: intakeID,
-		Kind:     RevisionKindCorrected,
-		Payload:  payload,
-		// Rol, nunca una persona (CERO PII): quién lo hizo con nombre y apellidos
-		// vive en la bitácora de auditoría, que es donde se pregunta eso.
-		CreatedBy: RevisionByOwner,
-	}, nil
-}
-
-// memoryDiscardedRevision arma la revisión que deja UN descarte efectivo.
-// `created_by` es `owner` y no `system` porque esto es EXACTAMENTE lo contrario de
-// una muerte por reloj: es una persona decidiendo. Es un ROL, nunca un usuario.
-func memoryDiscardedRevision(intakeID, fromStatus string, total float64) (Revision, error) {
-	payload, err := DiscardedRevisionPayload(fromStatus, total)
-	if err != nil {
-		return Revision{}, err
-	}
-	return Revision{
-		IntakeID:  intakeID,
-		Kind:      RevisionKindDiscarded,
-		Payload:   payload,
-		CreatedBy: RevisionByOwner,
-	}, nil
 }

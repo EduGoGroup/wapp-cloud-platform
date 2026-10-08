@@ -90,11 +90,11 @@ func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, 
 		if err != nil {
 			return err
 		}
-		signal, err := pgCorrectionSignal(mode, lastRevisionTx(ctx, tx, intakeID))
+		signal, err := correctionSignal(mode, lastRevisionTx(ctx, tx, intakeID))
 		if err != nil {
 			return err
 		}
-		rev, err := memoryCorrectedRevision(intakeID, head.Total, lines, signal)
+		rev, err := correctedRevision(intakeID, head.Total, lines, signal)
 		if err != nil {
 			return err
 		}
@@ -133,33 +133,6 @@ func lockEditableTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, 
 		return ErrConflict
 	}
 	return nil
-}
-
-// pgCorrectionSignal (era señalDeCorrección en el viejo, en edit.go) es LA REGLA de
-// la señal few-shot para este store: sin EditAsCorrection no hay señal y la consulta
-// NO se ejecuta; con él, la señal lleva el número y la clase de la última revisión
-// (cero y vacío si no hay ninguna).
-//
-// La consulta se resuelve CON EL CANDADO YA TOMADO y no antes: entre el Get del
-// Service y el `FOR UPDATE` del store cabe otra escritura, y una señal que apuntara a
-// la revisión equivocada sería peor que ninguna.
-//
-// 🔶 En el viejo la regla vivía UNA vez, en edit.go, compartida con el MemoryStore.
-// edit.go aún no la tiene y el doble lleva la suya (correctionSignalLocked): cuando
-// edit.go la tenga, ésta se va y aquí queda solo la consulta (lastRevisionTx).
-func pgCorrectionSignal(mode EditMode, last func() (no int, kind string, err error)) (CorrectionSignal, error) {
-	if mode != EditAsCorrection {
-		return CorrectionSignal{}, nil
-	}
-	no, kind, err := last()
-	if err != nil {
-		return CorrectionSignal{}, err
-	}
-	return CorrectionSignal{
-		AsCorrection:       true,
-		CorrectsRevisionNo: no,
-		CorrectsKind:       kind,
-	}, nil
 }
 
 // replaceClientItemsTx borra las líneas de CLIENTE y escribe las nuevas. Las del

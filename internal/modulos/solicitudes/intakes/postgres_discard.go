@@ -111,9 +111,9 @@ func (p *Postgres) Discard(ctx context.Context, tenantID, intakeID string, disca
 			return fmt.Errorf("intakes: descartar la solicitud: %w", err)
 		}
 
-		// memoryDiscardedRevision es el discardedRevision del viejo: la MISMA foto que
+		// discardedRevision es el discardedRevision del viejo: la MISMA foto que
 		// escribe el MemoryStore, para que los dos almacenes no puedan divergir.
-		rev, err := memoryDiscardedRevision(intakeID, stored, head.Total)
+		rev, err := discardedRevision(intakeID, stored, head.Total)
 		if err != nil {
 			return err
 		}

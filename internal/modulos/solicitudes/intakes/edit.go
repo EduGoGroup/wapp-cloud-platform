@@ -291,3 +291,69 @@ func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, i
 	s.publishCorrectionMetric(ctx, tenantID, detail.Intake, current.Items, items)
 	return detail, nil
 }
+
+// correctionSignal (era señalDeCorrección en el viejo) es LA REGLA de la señal
+// few-shot, y vive UNA vez aquí para los dos almacenes: sin EditAsCorrection no hay
+// señal y la consulta NO se ejecuta; con él, la señal lleva el número y la clase de
+// la última revisión (cero y vacío si no hay ninguna).
+//
+// `last` es la consulta de cada almacén, y se resuelve CON EL CANDADO YA TOMADO y no
+// antes: entre el Get del Service y el `FOR UPDATE` del store cabe otra escritura, y
+// una señal que apuntara a la revisión equivocada sería peor que ninguna.
+func correctionSignal(mode EditMode, last func() (no int, kind string, err error)) (CorrectionSignal, error) {
+	if mode != EditAsCorrection {
+		return CorrectionSignal{}, nil
+	}
+	no, kind, err := last()
+	if err != nil {
+		return CorrectionSignal{}, err
+	}
+	return CorrectionSignal{
+		AsCorrection:       true,
+		CorrectsRevisionNo: no,
+		CorrectsKind:       kind,
+	}, nil
+}
+
+// systemItems son las líneas que puso LA PLATAFORMA (prefijo reservado): las que
+// SOBREVIVEN a una edición manual. Es la contracara del `left(sku,1) <> '_'` del
+// DELETE del store Postgres.
+func systemItems(items []Item) []Item {
+	out := make([]Item, 0, 1)
+	for _, it := range items {
+		if strings.HasPrefix(it.SKU, ReservedSKUPrefix) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// revisionLinesOf congela las líneas de la solicitud en la forma del payload. No
+// lleva added_at ni personalización: la revisión ya está fechada entera, y
+// RevisionLine es contrato versionado (añadirle un campo exige subir
+// RevisionPayloadVersion). La comparten la corrección y la aprobación.
+func revisionLinesOf(items []Item) []RevisionLine {
+	out := make([]RevisionLine, 0, len(items))
+	for _, it := range items {
+		out = append(out, RevisionLine{SKU: it.SKU, Label: it.Label, Qty: it.Qty, UnitPrice: it.UnitPrice})
+	}
+	return out
+}
+
+// correctedRevision arma la revisión que deja UNA edición efectiva: la foto de TODAS
+// las líneas, también la de envío, y por eso `total` cuadra con la suma de `items`.
+// Vive aquí y no en cada store para que las dos implementaciones no puedan divergir.
+func correctedRevision(intakeID string, total float64, items []Item, signal CorrectionSignal) (Revision, error) {
+	payload, err := CorrectedRevisionPayload(total, revisionLinesOf(items), signal)
+	if err != nil {
+		return Revision{}, err
+	}
+	return Revision{
+		IntakeID: intakeID,
+		Kind:     RevisionKindCorrected,
+		Payload:  payload,
+		// Rol, nunca una persona (CERO PII): quién lo hizo con nombre y apellidos
+		// vive en la bitácora de auditoría, que es donde se pregunta eso.
+		CreatedBy: RevisionByOwner,
+	}, nil
+}
