@@ -22,11 +22,11 @@ package crmpush
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Satisface el puerto de verdad y no «de palabra»: sin esta línea, renombrar el
@@ -37,14 +37,17 @@ var _ intakes.CRMPusher = (*RevisionPusher)(nil)
 
 // RevisionPusher traduce una solicitud del dominio a la forma del contrato y la
 // encola. Satisface intakes.CRMPusher.
-type RevisionPusher struct{}
+type RevisionPusher struct {
+	pusher *Pusher
+	log    logger.Logger
+}
 
 // NewRevisionPusher construye el adaptador sobre el encolador y nunca devuelve nil.
 // Las dos dependencias son obligatorias y su ausencia se comprueba al empujar, no
 // aquí: un adaptador a medias tiene que APAGAR el empuje, nunca matar la escritura
 // del dueño que lo invocó.
 func NewRevisionPusher(p *Pusher, log logger.Logger) *RevisionPusher {
-	panic(pendiente.Implementar("crmpush.NewRevisionPusher"))
+	return &RevisionPusher{pusher: p, log: log}
 }
 
 // PushRevision implementa intakes.CRMPusher: encola la revisión `revisionNo` de la
@@ -82,5 +85,62 @@ func NewRevisionPusher(p *Pusher, log logger.Logger) *RevisionPusher {
 //     corrección que YA está escrita en la base, y el dueño la reintentaría creando
 //     una revisión de más. Se contiene el ALCANCE del daño, no la noticia.
 func (r *RevisionPusher) PushRevision(ctx context.Context, tenantID string, d intakes.Detail, revisionNo int) {
-	panic(pendiente.Implementar("crmpush.RevisionPusher.PushRevision"))
+	if r == nil || r.pusher == nil || r.log == nil {
+		return // adaptador a medias: no empuja, pero tampoco rompe nada
+	}
+	defer r.containPanic(d, revisionNo)
+
+	res, err := r.pusher.Push(ctx, Input{
+		TenantID:  tenantID,
+		ContactID: d.ContactID,
+		IntakeID:  d.ID,
+		// CRUDO: lo normaliza Build. Ver el doc del campo en Input.
+		LifecycleStatus: d.Status,
+		RevisionNo:      revisionNo,
+		Items:           toContractItems(d.Items),
+		Total:           d.Total,
+	})
+	log := r.log.With("tenant", tenantID, "intake_id", d.ID, "revision_no", revisionNo)
+	if err != nil {
+		log.Error("crmpush: la revisión del dueño no llegó a la cola del puente; "+
+			"la revisión SÍ está escrita y no se reintenta el encolado", "error", err)
+		return
+	}
+	if !res.Enqueued {
+		return // tenant sin puente CRM activo; crmpush ya lo dejó en debug
+	}
+	log.Debug("crmpush: revisión encolada para el puente CRM", "outbox_id", res.OutboxID)
+}
+
+// containPanic (era contenerPánico) es lo que hace ESTRUCTURAL la promesa de la
+// firma sin error, y no solo una convención: sin esto, un pánico en el store o en el
+// gate se llevaría por delante la respuesta de una corrección que YA está escrita en
+// la base, y el dueño la reintentaría creando una revisión de más. Se contiene el
+// ALCANCE del daño, no la noticia: el pánico entero queda en Error.
+func (r *RevisionPusher) containPanic(d intakes.Detail, revisionNo int) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	r.log.Error("crmpush: pánico empujando la revisión al puente; la revisión YA está escrita",
+		"intake_id", d.ID, "revision_no", revisionNo, "panic", fmt.Sprint(p))
+}
+
+// toContractItems (era líneas) traduce las líneas del dominio a las del contrato. La
+// personalización de LÍNEA sí viaja (D-041.17): es dato de producción y vive en
+// claro en intake_items. La indicación del PEDIDO (customer_note) no está aquí a
+// propósito — la completa el worker justo antes del POST, por exposición y no por
+// coste. Ver Payload.
+func toContractItems(items []intakes.Item) []Item {
+	out := make([]Item, 0, len(items))
+	for _, it := range items {
+		out = append(out, Item{
+			SKU:           it.SKU,
+			Label:         it.Label,
+			Customization: it.Customization,
+			Qty:           it.Qty,
+			UnitPrice:     it.UnitPrice,
+		})
+	}
+	return out
 }

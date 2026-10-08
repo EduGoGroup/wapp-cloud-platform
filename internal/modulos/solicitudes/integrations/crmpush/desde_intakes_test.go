@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package crmpush
 
 // desde_intakes_test.go — la SEGUNDA puerta arma el MISMO documento que la primera.
@@ -103,7 +101,15 @@ func TestRevisionPusher_EnqueuesTheNumberAndStatusItWasGiven(t *testing.T) {
 		t.Fatalf("esta puerta no rellena event_history_id y apareció: %v", body)
 	}
 
-	debug := f.log.at("debug")
+	assertEnqueuedLog(t, f.log)
+}
+
+// assertEnqueuedLog comprueba lo que el adaptador deja escrito tras encolar la
+// revisión 5: UNA línea de Debug con el mensaje literal y sus cuatro claves, y nada
+// en Error.
+func assertEnqueuedLog(t *testing.T, log *recordingLogger) {
+	t.Helper()
+	debug := log.at("debug")
 	if len(debug) != 1 || debug[0].msg != "crmpush: revisión encolada para el puente CRM" {
 		t.Fatalf("Debug del adaptador = %+v; quiero UNA línea con el mensaje literal", debug)
 	}
@@ -112,7 +118,7 @@ func TestRevisionPusher_EnqueuesTheNumberAndStatusItWasGiven(t *testing.T) {
 		got["outbox_id"] != int64(41) {
 		t.Fatalf("claves del Debug = %v; quiero tenant, intake_id, revision_no=5 y outbox_id=41", got)
 	}
-	if n := len(f.log.at("error")); n != 0 {
+	if n := len(log.at("error")); n != 0 {
 		t.Fatalf("un encolado correcto no deja Error y hubo %d", n)
 	}
 }
