@@ -6,11 +6,7 @@
 
 package intakes
 
-import (
-	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
-)
+import "context"
 
 // ApplyRevalidation ESCRIBE el resultado de una revalidación: deja las líneas como
 // dice el diff, cuadra el total de la cabecera y escribe UNA revisión `revalidated`
@@ -45,5 +41,11 @@ import (
 // del carrito en el motor de flujos— tiene que ir en la misma transacción del
 // rescate y no es de este paquete.
 func (s *Service) ApplyRevalidation(ctx context.Context, tenantID, intakeID string, rv Revalidation, renderedText string) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.ApplyRevalidation"))
+	if !rv.Changed() {
+		return s.store.Get(ctx, tenantID, intakeID)
+	}
+	if renderedText == "" {
+		return Detail{}, ErrEmptyRevalidationText
+	}
+	return s.store.ApplyRevalidation(ctx, tenantID, intakeID, rv, renderedText, StoredVariants(StatusOpen))
 }
