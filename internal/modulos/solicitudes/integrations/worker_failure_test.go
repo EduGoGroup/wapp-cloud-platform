@@ -61,6 +61,8 @@ func failureCases() []failureCase {
 	return []failureCase{
 		{name: "template is not a JSON object", template: `["no","soy","un","objeto"]`,
 			want: "plantilla del payload no es JSON válido: ", prefix: true},
+		{name: "template is a JSON null", template: `null`,
+			want: "plantilla del payload no es un objeto JSON"},
 		{name: "buyer data reader fails", sabotage: func(_ *testing.T, rig *workerRig, _ *bridge) { rig.buyer.err = errSource },
 			want: "leer buyer_data de " + rigIntake + ": fuente caída"},
 		{name: "customer note reader fails", sabotage: func(_ *testing.T, rig *workerRig, _ *bridge) { rig.notes.err = errSource },

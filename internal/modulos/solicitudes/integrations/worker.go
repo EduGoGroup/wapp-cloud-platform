@@ -269,6 +269,8 @@ func NewWorker(store Store, buyer BuyerDataReader, notes CustomerNoteReader, ten
 // causa):
 //
 //   - «plantilla del payload no es JSON válido: »
+//   - «plantilla del payload no es un objeto JSON» — un `null`, que sí es JSON
+//     válido; el viejo entraba en pánico (única diferencia de textos con él)
 //   - «leer buyer_data de <intake_id>: »
 //   - «leer la indicación del cliente de <intake_id>: » — nunca cita la nota
 //   - «leer tenant_variables de <tenant>: »

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,6 +93,14 @@ func (w *Worker) completePayload(ctx context.Context, item WebhookOutbox) (body 
 	var payload map[string]any
 	if err := json.Unmarshal(item.Payload, &payload); err != nil {
 		return nil, "", "", fmt.Errorf("plantilla del payload no es JSON válido: %w", err)
+	}
+	// Un `null` es JSON válido y jsonb lo guarda, pero deja el mapa en nil: escribir en
+	// él más abajo tumbaría la goroutine del worker, y con ella todas las entregas. El
+	// viejo entraba en pánico aquí; ahora es un motivo de fallo más (misma familia que el
+	// `null` de los datos del comprador, hallazgos 32 y 38 de F6). Hoy es inalcanzable:
+	// la plantilla la escribe siempre crmpush como objeto.
+	if payload == nil {
+		return nil, "", "", errors.New("plantilla del payload no es un objeto JSON")
 	}
 
 	intakeID, ok := payload["intake_id"].(string)
