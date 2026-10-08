@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -273,5 +271,23 @@ func TestPostgres_Revisions_EnvelopeErrors(t *testing.T) {
 				t.Errorf("error = %q, quería el prefijo %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// TestPostgres_Revisions_StoredSealWinsOverTheNewOne: LA COLUMNA MANDA. Si la fila ya traía sello
+// y aun así conserva un sobre vencido, la poda lo destruye pero el sello que sale es el que había:
+// el instante en que el texto se destruyó de verdad no se mueve con una lectura posterior.
+func TestPostgres_Revisions_StoredSealWinsOverTheNewOne(t *testing.T) {
+	store, fake := newFakePostgres(t, WithRetentionLog(&pgLogSink{}))
+	row := pgRevisionRow(1, `{"v":1}`, pgOldAge)
+	row[6], row[7], row[8], row[9] = []byte("enc"), []byte("dek"), pgKEKID, pgUpdated
+	scriptGetWithRevisions(fake, row)
+	fake.script(pgOne(pgAt), pgOne(false))
+	d, err := store.Get(t.Context(), pgTenant, pgIntakeID)
+	if err != nil {
+		t.Fatalf("Get: error inesperado %v", err)
+	}
+	if got := d.Revisions[0].LiteralPrunedAt; !got.Equal(pgUpdated) {
+		t.Errorf("LiteralPrunedAt = %v, quería el sello que ya tenía la fila (%v)", got, pgUpdated)
 	}
 }
