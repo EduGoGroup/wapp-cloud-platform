@@ -144,10 +144,32 @@ Para cuando: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos
 ## Bloque F6-05 · cara HTTP, cableado y conmutar G1–G18 · 🌐❓ · T6.22–T6.26 (= **TX.16–TX.18** de FX)
 Para cuando: 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` prueba lo nuevo · test de cableado completo verde · candados INV-1 sin `//go:build pendiente` y verdes · `FaseActual = 6` · `ci-local` rc=0 · PR.
 
-- [ ] **T6.22 = TX.16 · rojo(apipublica): solicitudes** · 🌐 · dep. T6.21, TX.15 · cumple R6.5.a
+> **F6-05 se entrega en dos PR** (Jhoan, 2026-10-08): **F6-05a** = la cara en rojo y verde, **sin montar** (T6.22–T6.23, rama
+> `reorg/f6-05a-cara-solicitudes`); **F6-05b** = cableado + conmutar + candados (T6.24–T6.25). Motivo: `intakes.go` viejo son 1073 líneas
+> (5 ficheros por E-13) y el cableado y la conmutación no compilan por separado.
+>
+> **Cierre de F6-05a (2026-10-08)**: `PENDIENTES=0 · ROJOS=1` (solo `inv1_aprobar_test.go`, hasta T6.25; pasa ya con `-tags pendiente`).
+> Nacen **19** ficheros de producción en `internal/apipublica`, no 12 (y 35 de test), y el paquete `eventstelemetryhelpertest` (suite de 13 casos + doble).
+> Cuatro sub-agentes en *worktrees*, uno por familia de rutas; commitean en su *worktree* y el orquestador integra por `cherry-pick`
+> (protocolo §2): los **23 commits compilan solos** (medido). Ningún `Mount*` está cableado todavía: las 18 rutas siguen en la cara vieja.
+>
+> **Correspondencias de nombres (E-11) de F6-05a** (spec → código): `instantes.go` → `instants.go` · `plazoescritura.go` → `writedeadline.go`
+> (`conPlazoDeRedacción` → `writeDeadline`) · `QuoteSuggester.Sugerir` → `.Suggest` · `aplicarGateLLMIntake`/`ocultarCamposLLM`/`comoObjetoJSON`/`comoListaJSON`
+> → `intakeApplyLLMGate`/`intakeHideLLMFields`/`intakeAsJSONObject`/`intakeAsJSONList` · `editModeDe` → `intakeEditModeOf` · goldens
+> `intake_detail_{con,sin}_llm_intake` → `…_{with,without}_llm_intake` · `registerEventTelemetry` → `MountEventTelemetry`. Los no exportados
+> ya en inglés ganan prefijo de área (`intake…`, `export…`, `summary…`, `quote…`, `tenantVar…`, `integration…`, `crm…`, `eventTelemetry…`):
+> el paquete es uno y lo escribieron cuatro manos; la lista completa va en el mensaje de cada commit.
+> **Ficheros fuera de los 12 de la spec**: `intakes_dto.go`, `intakes_filter.go`, `intakes_status.go`, `intakes_items.go`, `intakes_approve.go`
+> (los cinco trozos de `intakes.go`, E-13) · `intakereports.go` (puerto, `IntakeReportsDeps` y `MountIntakeReports` de G7·G9·G10) ·
+> `integrations_validate.go` (E-13).
+> **Montajes que cablea F6-05b**: `MountIntakes` (G1–G6, G8) · `MountIntakeReports` (G7, G9, G10; campo `QuoteSuggestions` y
+> `QuoteWriteDeadline`) · `MountTenantVariables` (G11–G12) · `MountIntegrations` (G13–G16) · `MountCRMCallback` (G17, no exige `MW`) ·
+> `MountEventTelemetry` (G18).
+
+- [x] **T6.22 = TX.16 · rojo(apipublica): solicitudes** — un rojo por familia: `6f40bb5` (bandeja) · `e71271f` (exportación, resumen y sugerencia) · `403ff97` (variables y puente CRM) · `3cddd86` (telemetría, con la suite y el doble) · 🌐 · dep. T6.21, TX.15 · cumple R6.5.a
   - **Ficheros** (autoridad FX `tareas.md` TX.16): `instantes.go`, `intakes.go`, `intakes_llm_gate.go`, `export.go`, `summary.go`, `quotesuggestion.go`, `plazoescritura.go`, `tenantvariables.go`, `integrations.go`, `crmcallback.go`, `eventstelemetry.go`, `eventstelemetry_store.go` y sus 12 tests
   - **Hecho cuando**: `plazoescritura.go` recibe el plazo por parámetro; G17 sin `Authenticate` y con access-log; el gate de G2 oculta los campos LLM igual que el viejo; `eventstelemetry_store.go` con test de mapeo; tests viejos de `arquitectura.md` §7 leídos (E-8) · **Commit**: `rojo(apipublica): solicitudes` (estado de la TX se lleva en FX)
-- [ ] **T6.23 = TX.17 · verde(apipublica): solicitudes, fichero a fichero** · 🌐 · `verde(apipublica): <fichero>`
+- [x] **T6.23 = TX.17 · verde(apipublica): solicitudes, fichero a fichero** — `2cc4cde` `instants` · `2b9c44d` `intakes_filter` · `4737bfd` `intakes_dto` · `4694d93` `intakes_llm_gate` · `c6986b4` `intakes_status` · `c1d1e14` `intakes_items` · `86588cf` `intakes_approve` · `aeb1cf7` `intakes` · `06830c5` `writedeadline` · `61814fc` `export` · `a1e7791` `summary` · `a1a9223` `quotesuggestion` · `472d9b6` `intakereports` · `2b09c2f` `tenantvariables` · `baf2c74` `integrations` (+ `integrations_validate`) · `a60f074` `crmcallback` · `2d1dde8` `eventstelemetry` · `d9afa10` `eventstelemetry_store` · `6675927` (invocación contra Postgres, **sin correr**, y el candado que la admite, D-F6-12). Mutantes: `eventstelemetry_store.go` y su doble 76 (73 muertos, 3 equivalentes; 8 del texto del SQL solo los mata Postgres, F6-06) · 🌐 · `verde(apipublica): <fichero>`
 - [ ] **T6.24 · conmutar(solicitudes): el arranque nuevo cablea solicitudes** · 🌐 · dep. T6.23 · cumple R6.6.a–c
   - **Ficheros**: `internal/arranque/{fase3_almacenes,fase5_captacion,fase6_solicitudes,fase7_flujos,fase9_fondo}.go`, `internal/arranque/solicitudes_cableado_test.go` (nuevo); si el inventario aprobado lo pide, `internal/arranque/bridge_intakes.go` + `bridge_intakes_test.go` (nivel simple, una pasada)
   - **Hecho cuando**: tabla de `arquitectura.md` §4 y §6 aplicada: una sola instancia nueva de `Service`, notificador, recordatorios, worker; para el carrito, la salida que fije el inventario (segunda instancia **vieja** de `intakes.Postgres`, D-F6-1, o `bridge_intakes.go`), con el comentario «muere F8»; alias `…viejo` en los imports viejos; **test de cableado completo** (hallazgo 39): afirma por tipo (`%T`) que el arranque construye lo **nuevo** *y*, con un grep por ruta de import, que ninguna fase de `internal/arranque` importa `internal/intakes`, `internal/integrations` ni `internal/tenantvars` viejos fuera del sitio declarado para el carrito
@@ -155,7 +177,7 @@ Para cuando: 12 ficheros de `apipublica` en verde · huella igual · `go list -d
 - [ ] **T6.25 = TX.18 · conmutar(solicitudes): 18 rutas** · 🌐 · dep. T6.24 · cumple R6.5.a–c
   - **Hecho cuando**: G1–G18 por la nueva (G2·G9·G10 en el mismo commit); en la vieja `Intakes`, `QuoteSuggestions`, `TenantVariables`, `Integrations`, `CRM*`, `EventTelemetry` = `nil`; G7 con `pipeline.PlazoPorLlamadaSuelo + 12 s` del **mismo** valor que `quotetext.ConPlazo` (aserción); `FaseActual = 6`; `solicitudes` **no** entra todavía en `Conmutados` (entra cuando muere su último adaptador, `reglas.md` §4); `quotetext_cableado_test`/`reanalisis_cableado_test` de `internal/arranque` reajustados (T-6); los candados INV-1 pierden `//go:build pendiente` (su control positivo ya encuentra `Approve`/`RequestInfo` en `apipublica`)
   - **Gate**: el de TX.7 + `make ci-local` rc=0 · **Commit**: parte del `conmutar(solicitudes)`
-- [ ] **T6.26 · Traspaso a la sesión local** · 🌐 · skill `traspaso-web-local` · **solo mientras existan los dos entornos** (si F6-05 corre en local, se tacha: no hay a quién traspasar)
+- [x] ~~**T6.26 · Traspaso a la sesión local**~~ — **tachada** (2026-10-08): F6-05 corre en local, no hay a quién traspasar · 🌐 · skill `traspaso-web-local` · **solo mientras existan los dos entornos** (si F6-05 corre en local, se tacha: no hay a quién traspasar)
   - **Ficheros**: `documentations/reorganizacion-modular/traspasos/TRASPASO-F6-solicitudes.md` · **Hecho cuando**: las 8 secciones; §7 con lo que no se comprobó (SQL nuevo no corrido contra Postgres; carrito viejo con su salida transitoria)
 
 ## Bloque F6-06 · cierre local · 💻 · T6.27–T6.29
