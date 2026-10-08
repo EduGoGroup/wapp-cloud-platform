@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakereports_test.go — cubre el contrato de intakereports.go (IntakeReportService,

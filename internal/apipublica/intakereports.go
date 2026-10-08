@@ -8,7 +8,9 @@
 // writedeadline.go. Este fichero no existía en la spec FX: nace porque la bandeja se monta por
 // frentes y cada frente trae su Mount* (el resto de G lo monta MountIntakes).
 //
-// En el rojo solo existían el puerto, IntakeReportsDeps y MountIntakeReports (05 E-4, P6).
+// En el rojo solo existían el puerto, IntakeReportsDeps y MountIntakeReports (05 E-4, P6). El
+// Mount se puso en verde ruta a ruta, con el fichero de cada handler; su test,
+// intakereports_test.go, perdió la etiqueta cuando entró la última.
 
 package apipublica
 
