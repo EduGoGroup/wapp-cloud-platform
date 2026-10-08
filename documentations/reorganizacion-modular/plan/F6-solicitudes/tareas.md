@@ -101,20 +101,45 @@ Para cuando: `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes/inta
 ## Bloque F6-04 · `quotetext`, `telemetria`, `integrations`, `crmpush` · 🌐❓ · T6.10–T6.13, T6.19–T6.21
 Para cuando: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` → 0 · puente (import) de `telemetria` declarado · suite `integrationshelpertest` verde con el doble · candado R-12 y esquema `wapp-crm-v1` verdes · `vet -tags integracion ./test/procesos/...` rc=0 · `ci-local` rc=0 · PR.
 
-- [ ] **T6.10 · rojo(solicitudes): `intakes/telemetria` y su puente (import)** · 🌐 · dep. T6.6 · cumple R6.6.d
+> **Cierre de F6-04 (2026-10-08)**: `PENDIENTES=0 · ROJOS=1` (solo `inv1_aprobar_test.go`, hasta T6.25). Nacen **18** ficheros de producción, no 13:
+> `telemetria` 1 · `quotetext` 6 (`precios_numbers.go` y `quotetext_fewshot.go` salen por E-13) · `integrations` 8 (`worker_delivery.go` y
+> `worker_failure.go`, ídem) · `crmpush` 2 · más el doble `integrationshelpertest/memoria.go` y los 6 ficheros de la suite (61 casos).
+> Los cuatro paquetes se escribieron en paralelo, uno por sub-agente, y commiteó solo el orquestador: los 14 commits compilan solos (medido).
+>
+> **Correspondencias de nombres (E-11) de F6-04** (exportado viejo → nuevo; el valor de wire y las etiquetas `json` no cambian; los ficheros del
+> inventario conservan su nombre). `integrations` y `crmpush` ya estaban en inglés: no cambia ningún exportado; nuevos `WorkerOption` y `WithClock`.
+> **`telemetria`**: `FlujoBandeja`/`VersionFlujoBandeja` → `InboxFlow`/`InboxFlowVersion` · `Publicador` (`.PublicarMetrica`) → `Publisher` (`.PublishMetric`).
+> **`quotetext`**: `BorradorVersion` → `DraftVersion` · `Linea` (`.PorConfirmar`) → `Line` (`.PendingPrice`) · `Borrador` (`.Lineas`) → `Draft` (`.Lines`) ·
+> `BorradorDe` → `DraftOf` · `TieneLineasDeCliente` → `HasCustomerLines` · `Importe` → `Amount` · `MaxRunasTexto` → `MaxTextRunes` ·
+> `Veredicto` (`.Motivo`, `.Detalle`) → `Verdict` (`.Reason`, `.Detail`) · `ValidarSalida`/`Verificar`/`SecuenciaEsperada` → `ValidateOutput`/`Verify`/`ExpectedSequence` ·
+> `EjemplosPorDefecto`/`MaxRunasEjemplo`/`MaxRunasFewShot` → `DefaultExamples`/`MaxExampleRunes`/`MaxFewShotRunes` · `RefEstiloSemilla` → `SeedStyleRef` ·
+> `OrigenLLM`/`OrigenDeterminista` → `SourceLLM`/`SourceDeterministic` · `ErrSinCablear`/`ErrSinLineas` → `ErrNotWired`/`ErrNoLines` ·
+> `Sugerencia` (`.Texto`, `.Origen`, `.Motivo`) → `Suggestion` (`.Text`, `.Source`, `.Reason`) · `LectorSolicitudes`/`LectorHistorial`/`LectorSemilla` →
+> `IntakeReader`/`HistoryReader`/`SeedReader` · `Servicio`/`Opción`/`NewServicio`/`(*Servicio).Sugerir` → `Service`/`Option`/`NewService`/`(*Service).Suggest` ·
+> `ConSemilla`/`ConEjemplos`/`ConPlazo` → `WithSeed`/`WithExamples`/`WithTimeout` · `ParseSemilla` → `ParseSeed`. `Render` y `ProviderSelector` se quedan.
+> Los 13 motivos de `fallback_reason` (`Motivo…` → `Reason…`): `SinImportes` → `DraftWithoutAmounts` · `TextoIlegible` → `UnreadableText` ·
+> `NumeroIlegible` → `UnreadableNumber` · `SinImportesEnTexto` → `TextWithoutAmounts` · `FaltaUnitario` → `MissingUnitPrice` · `FaltaTotal` → `MissingTotal` ·
+> `ImporteAjeno` → `ForeignAmount` · `NumeroAjeno` → `ForeignNumber` · `ImportesFueraDeSitio` → `AmountsOutOfPlace` · `SinEjemplos` → `NoExamples` ·
+> `ProveedorNoDisponible` → `ProviderUnavailable` · `LLMFallo` → `LLMFailed` · `SalidaIlegible` → `UnreadableOutput`.
+> Candado R-12: `TestContrato_NingunCampoClaveEsConstante` → `TestContract_NoKeyFieldIsConstant` (`camposVigilados`/`directoriosVigilados` → `watchedFields`/`watchedDirs`).
+> Los no exportados renombrados van en el mensaje del commit de cada fichero.
+> ⚠️ T6.25, `arquitectura.md` y `diseno.md` siguen citando `quotetext.NewServicio`, `ConSemilla` y `ConPlazo`: léanse con esta tabla
+> (y `internal/arranque/quotetext_cableado_test.go` busca hoy ese **texto**: se reajusta en T6.25, `reglas.md` T-6).
+
+- [x] **T6.10 · rojo(solicitudes): `intakes/telemetria` y su puente (import)** — `31b9343` (nivel simple, una pasada: nace en verde, con el puente declarado en el mismo commit) · 🌐 · dep. T6.6 · cumple R6.6.d
   - **Ficheros**: `S/intakes/telemetria/telemetria.go` + test; `internal/modulos/fronteras_test.go` (puente de import `telemetria → internal/flujos/store`, «muere F8»)
   - **Commit**: `rojo(solicitudes): contrato de telemetria y su puente a flujos/store`
-- [ ] **T6.11 · rojo(solicitudes): `intakes/quotetext` (P5)** · 🌐 · dep. T6.6
+- [x] **T6.11 · rojo(solicitudes): `intakes/quotetext` (P5)** — `0159604` (`precios.go` y `quotetext.go`); `borrador.go` `0d245b7` y `render.go` `d87a9f9` son simples y nacen en verde. Los motivos de `fallback_reason` son **13**, no nueve · 🌐 · dep. T6.6
   - **Ficheros**: 4 + 4 tests · **Hecho cuando**: 47 exportados; puertos `:192,:202,:210,:219` estructurales; 🔶 los nueve motivos de `fallback_reason` y los 8 tests viejos leídos · **Commit**: `rojo(solicitudes): contrato de quotetext`
-- [ ] **T6.12 · rojo(solicitudes): `integrations`, `crmpush`, suite y doble** · 🌐 · dep. T6.2, T6.3, T6.8 · cumple R6.3.b, R6.4.a–b, R6.4.d
+- [x] **T6.12 · rojo(solicitudes): `integrations`, `crmpush`, suite y doble** — `caa864a` (`crmpush` y el candado R-12) · `d42a5d6` (`integrations`: 4 contratos en rojo, `store.go` y `outbox_stats.go` en verde —solo tipos—, suite de 61 casos y `Memoria` en verde, esquema `wapp-crm-v1` en verde, invocación contra Postgres escrita **sin correr**) · 🌐 · dep. T6.2, T6.3, T6.8 · cumple R6.3.b, R6.4.a–b, R6.4.d
   - **Ficheros**: `S/integrations/{store,gate,worker,crud,outbox_stats,postgres}.go` + tests; `integrationshelpertest/{contrato,memoria}.go` (+ `memoria_test.go`: el doble tiene lógica); `integrations/contrato_wapp_crm_v1_test.go` (D-F6-3); `crmpush/{push,desde_intakes}.go` + tests; `crmpush/contrato_test.go` (candado R-12, dirs de `diseno.md` §6)
   - **Hecho cuando**: el doble `Memoria` nace **completo** y en verde (no es código de producción); la suite `Contrato(t, func(t) Montaje)` vigila todas las columnas que cada operación toca (hallazgo 35) y su invocación contra Postgres con el arnés queda escrita (P4; la corre T6.27); reloj inyectado en el worker · **Commit**: `rojo(solicitudes): contratos del puente CRM`
   - **Heredado de F9-02 (H-1, D-F6-7)**: el contrato de `integrations/worker.go` promete «contexto cancelado → vuelve **sin** loguear a `ERROR`» (hoy lo hacen `worker.go:209` y `:225`, y `TestP0_Arranque/sin_errores` falló por ello 1 de 161 veces); se escribe aquí, con su caso en `worker_test.go` (cancelar a mitad de la primera llamada), no al final
-- [ ] **T6.13 · Recuento de pendientes del módulo** · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` anotado tras los rojos de esta sesión (cota ≈191 con todo en rojo; aquí será menor, porque `sigv1`, `tenantvars` e `intakes` ya están en verde) y coincide con `make test-pendiente`
-- [ ] **T6.19 · verde(solicitudes): `telemetria`, `quotetext`** · 🌐
-- [ ] **T6.20 · verde(solicitudes): `crmpush`, `integrations`** · 🌐 · candado R-12 verde; esquema `wapp-crm-v1` verde
-  - **Heredado de F9-02 (D-F6-7)**: el verde del worker cumple esa promesa; no se porta el `w.log.Error` ante `ctx.Err() != nil`
-- [ ] **T6.21 · refactor(solicitudes) y medición** · 🌐 · pendientes = 0; mutantes en los ficheros de nivel complejo (inventario); tabla de cobertura por fichero en el PR (informe; no bloquea)
+- [x] **T6.13 · Recuento de pendientes del módulo** — sobre `d42a5d6`: el `grep` da **19** (`gate` 2, `crud` 1, `worker` 3, `postgres` 13) y `make test-pendiente` lo mismo (`PENDIENTES=19`, `ROJOS=15`); `quotetext` y `crmpush` ya estaban en verde · 🌐 · **Hecho cuando**: `grep -rn 'pendiente.Implementar' --include='*.go' internal/modulos/solicitudes | wc -l` anotado tras los rojos de esta sesión (cota ≈191 con todo en rojo; aquí será menor, porque `sigv1`, `tenantvars` e `intakes` ya están en verde) y coincide con `make test-pendiente`
+- [x] **T6.19 · verde(solicitudes): `telemetria`, `quotetext`** — `31b9343` (`telemetria`) · `0d245b7` (`borrador`) · `d87a9f9` (`render`) · `6a202b0` (`precios` + `precios_numbers`) · `ccd24a7` (`quotetext` + `quotetext_fewshot`) · 🌐
+- [x] **T6.20 · verde(solicitudes): `crmpush`, `integrations`** — `3a94b94` (`push`) · `b01d01c` (`desde_intakes`) · `afd3eed` (`crud`) · `cb9e36b` (`gate`) · `c2803b5` (`postgres`, con `SecretFingerprint` y `CountOutbox`) · `8ebc6eb` (`worker` + `worker_delivery` + `worker_failure`) · 🌐 · candado R-12 verde; esquema `wapp-crm-v1` verde
+  - **Heredado de F9-02 (D-F6-7)**: el verde del worker cumple esa promesa; no se porta el `w.log.Error` ante `ctx.Err() != nil` — ✅ `8ebc6eb`: y **corta**, no solo calla (no cuenta el intento ni toca la métrica; hallazgo 37)
+- [x] **T6.21 · refactor(solicitudes) y medición** — sin commit de `refactor` (nada que unificar: un dueño por paquete); pendientes = **0**; mutantes en lo complejo: `postgres.go` 37 (34 muertos, 3 equivalentes) y `worker*.go` 46 (46 muertos), más los de nivel medio; tabla de cobertura en el PR · 🌐 · pendientes = 0; mutantes en los ficheros de nivel complejo (inventario); tabla de cobertura por fichero en el PR (informe; no bloquea)
 
 ## Bloque F6-05 · cara HTTP, cableado y conmutar G1–G18 · 🌐❓ · T6.22–T6.26 (= **TX.16–TX.18** de FX)
 Para cuando: 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` prueba lo nuevo · test de cableado completo verde · candados INV-1 sin `//go:build pendiente` y verdes · `FaseActual = 6` · `ci-local` rc=0 · PR.
