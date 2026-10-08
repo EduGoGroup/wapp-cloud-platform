@@ -27,8 +27,14 @@ package intakes
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // ReplaceItems implementa Store.ReplaceItems: la edición manual del dueño (T4.10).
@@ -62,7 +68,129 @@ import (
 //   - los de las líneas (postgres_read.go) y los de las revisiones
 //     (postgres_revisions.go).
 func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, expected []string, mode EditMode) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Postgres.ReplaceItems"))
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Detail{}, ErrNotFound
+	}
+
+	// Fuera de la clausura: WithTx puede REEJECUTARLA ante un deadlock y vale el
+	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
+	var out Detail
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		if err := lockEditableTx(ctx, tx, tenantID, intakeID, expected); err != nil {
+			return err
+		}
+		if err := replaceClientItemsTx(ctx, tx, intakeID, items); err != nil {
+			return err
+		}
+		head, err := recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		if err != nil {
+			return err
+		}
+		lines, err := itemsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		signal, err := pgCorrectionSignal(mode, lastRevisionTx(ctx, tx, intakeID))
+		if err != nil {
+			return err
+		}
+		rev, err := memoryCorrectedRevision(intakeID, head.Total, lines, signal)
+		if err != nil {
+			return err
+		}
+		if _, err := p.insertRevisionOnce(ctx, tx, rev); err != nil {
+			return err
+		}
+		revs, err := p.revisionsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		out = Detail{Intake: head, Items: lines, Revisions: revs}
+		return nil
+	})
+	if err != nil {
+		return Detail{}, err
+	}
+	return out, nil
+}
+
+// lockEditableTx toma el candado de la cabecera y comprueba que su estado siga
+// siendo uno de los esperados. Distingue "no es del tenant" (ErrNotFound) de
+// "alguien la movió" (ErrConflict) porque son dos respuestas distintas para quien
+// llama: la primera no se reintenta nunca y la segunda se resuelve releyendo.
+func lockEditableTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, expected []string) error {
+	var status string
+	err := tx.QueryRowContext(ctx,
+		`SELECT status FROM public.intakes WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+		tenantID, intakeID).Scan(&status)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
+		return fmt.Errorf("intakes: bloquear la solicitud para editarla: %w", err)
+	}
+	if !slices.Contains(expected, status) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// pgCorrectionSignal (era señalDeCorrección en el viejo, en edit.go) es LA REGLA de
+// la señal few-shot para este store: sin EditAsCorrection no hay señal y la consulta
+// NO se ejecuta; con él, la señal lleva el número y la clase de la última revisión
+// (cero y vacío si no hay ninguna).
+//
+// La consulta se resuelve CON EL CANDADO YA TOMADO y no antes: entre el Get del
+// Service y el `FOR UPDATE` del store cabe otra escritura, y una señal que apuntara a
+// la revisión equivocada sería peor que ninguna.
+//
+// 🔶 En el viejo la regla vivía UNA vez, en edit.go, compartida con el MemoryStore.
+// edit.go aún no la tiene y el doble lleva la suya (correctionSignalLocked): cuando
+// edit.go la tenga, ésta se va y aquí queda solo la consulta (lastRevisionTx).
+func pgCorrectionSignal(mode EditMode, last func() (no int, kind string, err error)) (CorrectionSignal, error) {
+	if mode != EditAsCorrection {
+		return CorrectionSignal{}, nil
+	}
+	no, kind, err := last()
+	if err != nil {
+		return CorrectionSignal{}, err
+	}
+	return CorrectionSignal{
+		AsCorrection:       true,
+		CorrectsRevisionNo: no,
+		CorrectsKind:       kind,
+	}, nil
+}
+
+// replaceClientItemsTx borra las líneas de CLIENTE y escribe las nuevas. Las del
+// sistema (prefijo reservado: hoy la de envío, D-041.11) sobreviven intactas — con
+// su precio puesto a mano, su etiqueta y su sitio—, y por eso el DELETE las excluye
+// por el prefijo y no por el sku exacto: cuando la plataforma añada otra línea
+// suya, esta puerta seguirá sin tocarla.
+//
+// El INSERT no puede colar una segunda línea de envío ni por accidente: la
+// validación del dominio rechaza el prefijo reservado en la entrada y el índice
+// único parcial de la 0045 lo convertiría en un error de escritura.
+func replaceClientItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, items []Item) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM public.intake_items
+		WHERE intake_id = $1 AND left(sku, 1) <> $2
+	`, intakeID, ReservedSKUPrefix); err != nil {
+		return fmt.Errorf("intakes: retirar las líneas de la solicitud: %w", err)
+	}
+
+	// Una sentencia por línea: N está acotado por MaxEditableItems y van todas
+	// dentro de la misma transacción, así que el coste es un puñado de viajes y no
+	// una escritura parcial posible.
+	for _, it := range items {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, intakeID, it.SKU, it.Label, it.Customization, it.Qty, it.UnitPrice); err != nil {
+			return fmt.Errorf("intakes: escribir la línea %q de la solicitud: %w", it.SKU, err)
+		}
+	}
+	return nil
 }
 
 // ApplyRevalidation implementa Store.ApplyRevalidation: aplica a las líneas lo que
@@ -89,5 +217,80 @@ func (p *Postgres) ReplaceItems(ctx context.Context, tenantID, intakeID string, 
 //   - los de las líneas (postgres_read.go) y los de las revisiones
 //     (postgres_revisions.go).
 func (p *Postgres) ApplyRevalidation(ctx context.Context, tenantID, intakeID string, rv Revalidation, renderedText string, expected []string) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Postgres.ApplyRevalidation"))
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return Detail{}, ErrNotFound
+	}
+
+	// Fuera de la clausura: WithTx puede REEJECUTARLA ante un deadlock y vale el
+	// resultado del intento que confirmó (mismo criterio que UpdateStatus).
+	var out Detail
+	err := postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		if err := lockEditableTx(ctx, tx, tenantID, intakeID, expected); err != nil {
+			return err
+		}
+		if err := applyRevalidationItemsTx(ctx, tx, intakeID, rv); err != nil {
+			return err
+		}
+		head, err := recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		if err != nil {
+			return err
+		}
+		rev, err := revalidatedRevision(intakeID, rv, renderedText)
+		if err != nil {
+			return err
+		}
+		if _, err := p.insertRevisionOnce(ctx, tx, rev); err != nil {
+			return err
+		}
+		lines, err := itemsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		revs, err := p.revisionsOf(ctx, tx, intakeID)
+		if err != nil {
+			return err
+		}
+		out = Detail{Intake: head, Items: lines, Revisions: revs}
+		return nil
+	})
+	if err != nil {
+		return Detail{}, err
+	}
+	return out, nil
+}
+
+// applyRevalidationItemsTx aplica el diff sobre las líneas: UPDATE de lo repreciado
+// y DELETE de lo retirado. NUNCA un DELETE+INSERT del conjunto, y no es una
+// optimización: el orden en que el cliente ve su pedido es el `added_at` de sus
+// líneas (itemsOf ordena por él), así que reescribirlas todas le reordenaría el
+// pedido por dentro sin que nadie lo hubiera tocado.
+//
+// Los dos WHERE excluyen el prefijo reservado aunque el diff ya excluya las líneas
+// de la plataforma. Es redundante a propósito: en el propio SQL —no en una función
+// pura que hay que ir a buscar— queda dicho que por este camino la línea de envío no
+// se puede re-preciar ni borrar JAMÁS (criterio (d) del plan). Es la misma cerradura
+// doble, y con el mismo literal, que el DELETE de replaceClientItemsTx.
+//
+// El UPDATE va por SKU y no por id, y eso alcanza a las DOS líneas cuando una se
+// partió en dos por sus indicaciones (D-041.20). Es lo correcto: es el mismo
+// artículo y el precio nuevo es el mismo para las dos.
+func applyRevalidationItemsTx(ctx context.Context, tx *sql.Tx, intakeID string, rv Revalidation) error {
+	for _, c := range rv.Repriced() {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE public.intake_items
+			SET label = $3, unit_price = $4
+			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $5
+		`, intakeID, c.SKU, c.Label, c.To, ReservedSKUPrefix); err != nil {
+			return fmt.Errorf("intakes: re-preciar la línea %q de la solicitud: %w", c.SKU, err)
+		}
+	}
+	for _, c := range rv.Removed() {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM public.intake_items
+			WHERE intake_id = $1 AND sku = $2 AND left(sku, 1) <> $3
+		`, intakeID, c.SKU, ReservedSKUPrefix); err != nil {
+			return fmt.Errorf("intakes: retirar la línea %q de la solicitud: %w", c.SKU, err)
+		}
+	}
+	return nil
 }
