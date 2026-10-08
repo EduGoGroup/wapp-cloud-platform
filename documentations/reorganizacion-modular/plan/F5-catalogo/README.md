@@ -139,6 +139,7 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
     repetido en celda gana el último sin aviso (`:375`); el BOM solo se quita si es lo primero de la celda (`:201`);
     `null` como documento da dos defectos de cabecera. Rama inalcanzable desde `ParseTabular` en `tabularColumn`
     (`tabular.go:532-537`).
+    — Registrado el 2026-10-07 como deuda **D-26**, **D-27** y **D-28** en [`deuda.md`](../../../deuda.md), con su veredicto.
 17. **`indice`: 47 `Test*`. Mutantes de `cache.go` a mano: 42 aplicados, 41 muertos, 1 vivo equivalente** (`<=` por `<`
     al elegir víctima: el reloj no deja dos marcas iguales). Por grupo (aplicados/muertos): huella 8/8, reloj y
     contadores 5/5 (el «acierto que no avanza el reloj» estaba vivo y **no** era equivalente: lo mata `3a79ba8`),
@@ -152,6 +153,7 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
 19. 🟡 **`cache.go:249`** (viejo `internal/intake/catalogo/cache.go:253`): el desalojo usa `victim == ""` como centinela;
     con un tenant de id vacío la víctima puede no ser la menos usada, y `Obtener` no rechaza el id vacío. Portado tal
     cual.
+    — Registrado el 2026-10-07 como deuda **D-29** en [`deuda.md`](../../../deuda.md) (se deja); la línea en el código nuevo es `cache.go:299`.
 20. **D-F5-2 sin ampliar el motor de fronteras** (decisión (c) de Jhoan, 2026-10-07): la arista
     `conversacion → catalogo/indice` vive en la **regla 1**; comentario en la tabla y mutación documentada en `dec75e7`
     (test temporal en `conversacion/model` importando `catalogo/indice` ⇒

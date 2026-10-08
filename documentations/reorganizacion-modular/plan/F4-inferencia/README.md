@@ -219,11 +219,14 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
 22. 🟡 **Conservado del viejo y fijado por test, candidato a decisión**: el plazo vencido en
     `GET /degradation-notices` responde 500, no 504 (`internal/publicapi/degradationnotices.go:150-153`);
     PUT/DELETE/relectura de `tenant-llm` sin plazo de BD (`internal/publicapi/tenantllm.go:188,252,259,319`).
+    — Registrado el 2026-10-07 como deuda **D-24** y **D-25** en [`deuda.md`](../../../deuda.md), con veredicto: corregir tras F10.
 23. **No portado en `apipublica` (ramas inalcanzables)**: `ts == nil ⇒ 500` (`publicapi/tenantllm.go:184,237,315`),
     `lister == nil ⇒ 500` (`degradationnotices.go:142`), `if offset < 0` (`:191-193`).
 24. **Restos en el arranque.** `internal/arranque/fase8_transporte.go:1-3`: la cabecera sigue diciendo «salvo acceso y
     edge» (no actualizada para inferencia) — corregido el 2026-10-07. `internal/arranque/http.go:47`: `buildPublicAPIServer` va por 9 parámetros,
     uno más por fase que muda rutas: conviene un struct antes de F6–F8.
+    — Resuelto el 2026-10-07 (`642eec9`): recibe un struct, `publicAPIDeps`, y las dependencias de la cara nueva viven
+    en un solo sitio, `newFaceDeps` (`mudanzas.go`), con un campo por módulo.
 25. **Lint.** `make lint` no ve los tests tras `//go:build pendiente`: los avisos aparecen al quitar la etiqueta
     (hallazgo 8). Para verlos en rojo: `.bin/golangci-lint run --build-tags pendiente` (solo informativo). Y el candado
     global de `golangci-lint` dio un `rc=2` espurio («parallel golangci-lint is running») con sub-agentes en paralelo:
