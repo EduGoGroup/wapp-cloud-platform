@@ -20,10 +20,25 @@ package apipublica
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"time"
 
+	sharedlogger "github.com/EduGoGroup/wapp-shared/logger"
+
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/tenantvars"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
+)
+
+// Límites de FORMA del transporte (defensa DoS), NO interpretación del contenido (D-041.1).
+// Acotan cuántas variables y cuán larga es una clave; el VALOR solo lo acota el tamaño del
+// cuerpo, porque un valor legítimo puede ser largo (una plantilla, un JSON serializado como
+// cadena).
+const (
+	tenantVarMaxBodyBytes = 1 << 18 // 256 KiB de cuerpo
+	tenantVarMaxCount     = 500     // claves por tenant
+	tenantVarMaxKeyLen    = 200     // bytes de una clave
 )
 
 // TenantVariableStore es el puerto MÍNIMO de las variables de empresa que la cara consume. Lo
@@ -116,5 +131,162 @@ type TenantVariablesDeps struct {
 //
 // Fallo de cableado: k.MW nil con el almacén presente hace panic AL MONTAR (ver Common).
 func MountTenantVariables(c *Cara, k Common, d TenantVariablesDeps) {
-	panic(pendiente.Implementar("apipublica.MountTenantVariables"))
+	// Sin store cableado las rutas NO se montan: un 404 de ruta inexistente es mejor que un 500
+	// a medio camino.
+	if d.TenantVariables == nil {
+		return
+	}
+	mustHaveMW(k, "MountTenantVariables")
+
+	// SCOPES `content.read` / `content.write`, los MISMOS de tenant-content y a propósito: las
+	// variables son contenido del tenant y el reparto ya está resuelto por glob (tenant_admin
+	// las dos, viewer solo lee). No se estrena clave.
+	c.Handle("GET /api/v1/tenant-variables", protectRead(k, "content.read",
+		getTenantVariablesHandler(d.TenantVariables, d.DBTimeout, k.Log)))
+	c.Handle("PUT /api/v1/tenant-variables", protect(k, "content.write", "tenant_variables",
+		putTenantVariablesHandler(d.TenantVariables)))
+}
+
+// tenantVarsDTO es el contrato de GET y de la respuesta del PUT: el mapa clave→valor tal cual
+// está guardado, más la marca del cambio MÁS RECIENTE (se omite si el tenant no tiene
+// variables). El envoltorio `variables` —en vez del mapa desnudo— deja sitio a campos futuros
+// sin romper a los clientes.
+type tenantVarsDTO struct {
+	Variables map[string]string `json:"variables"`
+	UpdatedAt string            `json:"updated_at,omitempty"`
+}
+
+// tenantVarsRequest es el cuerpo del PUT. El puntero distingue «no mandaste el campo» (error: el
+// cliente probablemente se equivocó de forma) de «mandaste el conjunto vacío» (intención
+// explícita de dejar al tenant sin variables).
+type tenantVarsRequest struct {
+	Variables *map[string]string `json:"variables"`
+}
+
+// getTenantVariablesHandler sirve G11: las variables de empresa del tenant del token (INV-8),
+// VERBATIM.
+//
+// dbTimeout acota la lectura (Plan 050 · Ola 3 · T3.3, ver dbCtx). El PUT hermano queda FUERA:
+// reemplaza el conjunto entero en una transacción, y 1,5 s está calibrado para una lectura.
+//
+// La rama vieja «store nil ⇒ 500 store de variables no configurado» no se porta: la ruta solo
+// se monta con un almacén no nil (MountTenantVariables), así que era inalcanzable.
+func getTenantVariablesHandler(vs TenantVariableStore, dbTimeout time.Duration, log sharedlogger.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		ctx, cancel := dbCtx(r.Context(), dbTimeout)
+		defer cancel()
+		vars, err := vs.List(ctx, id.TenantID)
+		if err != nil {
+			if dbTimedOut504(w, log, err, "la lectura de las variables no respondió a tiempo, reintenta",
+				"op", "tenant_variables.list", "tenant_id", id.TenantID) {
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "no se pudieron leer las variables")
+			return
+		}
+		writeJSON(w, http.StatusOK, toTenantVarsDTO(vars))
+	})
+}
+
+// putTenantVariablesHandler sirve G12: reemplaza el conjunto ENTERO del tenant del token.
+//
+// Las tres razones del reemplazo total, en orden de peso:
+//
+//  1. Es la ÚNICA forma de borrar una variable. El contrato son dos rutas —GET y PUT—; sin
+//     DELETE, un upsert por clave dejaría al tenant sin poder quitar nunca lo que puso (y la
+//     pantalla del BFF necesita quitar).
+//  2. Es lo que PUT significa sobre una colección: sustituir el recurso por lo enviado. Un merge
+//     sería PATCH, y no es la ruta que el diseño fijó.
+//  3. El consumidor natural es una pantalla que ya tiene el conjunto completo a la vista, y el
+//     Plan 042 congela ese conjunto completo en cada `intake.push` (D-18): una foto coherente
+//     vale más que una acumulación de retoques.
+//
+// El precio, dicho sin rodeos: dos editores simultáneos se pisan (el último gana entero, y una
+// variable que el otro acababa de añadir desaparece). Es asumible en una pantalla de
+// administración del propio tenant, y el `updated_at` que solo se mueve al cambiar de verdad
+// deja rastro de qué cambió.
+//
+// SIN dbCtx, como el viejo: ni Replace ni la relectura llevan plazo propio.
+func putTenantVariablesHandler(vs TenantVariableStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		vars, code, errBody := decodeTenantVars(r.Body)
+		if errBody != nil {
+			writeJSON(w, code, errBody)
+			return
+		}
+		if err := vs.Replace(r.Context(), id.TenantID, vars); err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudieron guardar las variables")
+			return
+		}
+		saved, err := vs.List(r.Context(), id.TenantID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "variables guardadas, pero no se pudieron releer")
+			return
+		}
+		writeJSON(w, http.StatusOK, toTenantVarsDTO(saved))
+	})
+}
+
+// decodeTenantVars lee y valida la FORMA del cuerpo del PUT. Devuelve el conjunto y, si algo
+// falla, el status + el cuerpo de error ya armado (nil = todo bien). Se extrae del handler para
+// que la validación se lea de un vistazo y no infle su complejidad ciclomática.
+//
+// El cuerpo de error es `any` —y no un string— porque el techo de bytes responde
+// {error, max_bytes} (criterio único del 413, limits.go) y el resto de defectos, el {error} de
+// siempre.
+func decodeTenantVars(body io.Reader) (map[string]string, int, any) {
+	raw, err := io.ReadAll(io.LimitReader(body, tenantVarMaxBodyBytes+1))
+	if err != nil {
+		return nil, http.StatusBadRequest, errorBody("no se pudo leer el cuerpo")
+	}
+	if len(raw) > tenantVarMaxBodyBytes {
+		return nil, http.StatusRequestEntityTooLarge, tooLarge("el cuerpo", tenantVarMaxBodyBytes)
+	}
+	var req tenantVarsRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, http.StatusBadRequest, errorBody("el cuerpo debe ser un JSON {\"variables\":{clave:valor}} de cadenas")
+	}
+	if req.Variables == nil {
+		return nil, http.StatusBadRequest, errorBody("falta el objeto variables (usa {} para dejar el tenant sin variables)")
+	}
+	vars := *req.Variables
+	if len(vars) > tenantVarMaxCount {
+		return nil, http.StatusBadRequest, errorBody("demasiadas variables")
+	}
+	for k := range vars {
+		if k == "" {
+			return nil, http.StatusBadRequest, errorBody("hay una clave vacía")
+		}
+		if len(k) > tenantVarMaxKeyLen {
+			return nil, http.StatusBadRequest, errorBody("hay una clave demasiado larga")
+		}
+	}
+	return vars, 0, nil
+}
+
+// toTenantVarsDTO arma la respuesta: el mapa clave→valor y el updated_at MÁS reciente del
+// conjunto (vacío si no hay variables). El mapa se devuelve siempre inicializado para que el
+// cliente reciba `{}` y no `null`.
+func toTenantVarsDTO(vars []tenantvars.Variable) tenantVarsDTO {
+	out := tenantVarsDTO{Variables: make(map[string]string, len(vars))}
+	var latest time.Time
+	for _, v := range vars {
+		out.Variables[v.Key] = v.Value
+		if v.UpdatedAt.After(latest) {
+			latest = v.UpdatedAt
+		}
+	}
+	// formatInstant ya da "" para el cero, que con omitempty es «no hay variables».
+	out.UpdatedAt = formatInstant(latest)
+	return out
 }

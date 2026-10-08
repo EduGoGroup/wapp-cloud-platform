@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // tenantvariables_test.go — cubre el contrato de tenantvariables.go (TenantVariableStore,
