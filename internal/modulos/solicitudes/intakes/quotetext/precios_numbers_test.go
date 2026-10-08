@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package quotetext_test
 
 // precios_numbers_test.go — parte de precios_test.go: cómo LEE el verificador los
@@ -133,6 +131,8 @@ func TestVerify_Separators(t *testing.T) {
 		{"two digits after the only separator are decimals", 2100, "21,00", false},
 		{"en-US reading of a es-CL price", 2100, "2.10", false},
 		{"three decimals are thousands", 12.35, "12,345", false},
+		{"one cent off is another amount", 2100, "2100,01", false},
+		{"forty cents off is another amount", 2100, "2100,40", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -223,6 +223,20 @@ func TestVerify_NumbersOfTheDraftAreForgiven(t *testing.T) {
 				t.Fatalf("motivo = %q (OK=%v); un número grande ajeno al borrador tiene que caer por C4", v.Reason, v.OK)
 			}
 		})
+	}
+}
+
+// TestVerify_DraftNumberWithAMoneyMarkIsStillForeign: el perdón es para los números
+// DESNUDOS. Un número de la etiqueta escrito como importe no sale de ninguna línea, y
+// cae por C3 con su diagnóstico, no por la secuencia.
+func TestVerify_DraftNumberWithAMoneyMarkIsStillForeign(t *testing.T) {
+	draft := quotetext.DraftOf([]intakes.Item{
+		{SKU: "TEQ", Label: "Tequeños congelados paquete x30", Qty: 1, UnitPrice: 12},
+	})
+	verdict := quotetext.Verify(draft, "El paquete x30 te queda en $12, o $30 con salsa. Total $12")
+	if verdict.OK || verdict.Reason != quotetext.ReasonForeignAmount {
+		t.Fatalf("motivo = %q (OK=%v); un número del borrador con marca de dinero es un importe ajeno",
+			verdict.Reason, verdict.OK)
 	}
 }
 

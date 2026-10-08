@@ -2,28 +2,50 @@
 
 package quotetext
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // ════════════════════════════════════════════════════════════════════════════
 // 🔴 EL VERIFICADOR DE PRECIOS — INV-2: EL LLM NUNCA CALCULA PRECIOS
 // ════════════════════════════════════════════════════════════════════════════
 //
-// El prompt PIDE que los importes se copien del borrador; esto lo GARANTIZA. Y lo que
-// hay que garantizar no es «que no invente números»: un texto puede usar SOLO importes
-// legítimos y aun así mandarle al cliente un precio que no es el suyo (dos precios
-// intercambiados, un cargo nuevo con un importe reutilizado, una repetición). Por eso
-// la regla no pregunta si el importe EXISTE, sino si está DONDE LE TOCA y las veces
-// que le toca.
+// Éste es el corazón de T5.1, y no el prompt. El prompt PIDE que los importes se
+// copien del borrador; esto lo GARANTIZA.
+//
+// # LO QUE HAY QUE GARANTIZAR NO ES «QUE NO INVENTE NÚMEROS»
+//
+// La primera versión de esta regla comparaba CONJUNTOS: «¿este importe del texto sale
+// de alguna línea?». Cerraba el caso obvio —un monto nuevo— y dejaba abierto el que de
+// verdad le importa a la dueña, porque estos tres textos no inventan NADA y aun así le
+// mandan al cliente un precio que no es el suyo:
+//
+//	· SWAP           — los precios de dos líneas, intercambiados;
+//	· CARGO NUEVO    — «Seña por adelantado: $490», con un 490 que es el envío;
+//	· REPETICIÓN     — «y el segundo también a $2100».
+//
+// Los tres pasaban con OK. Por eso la regla ya no pregunta si el importe EXISTE, sino
+// si está DONDE LE TOCA y las veces que le toca.
 //
 // # LA REGLA, ENTERA
 //
-// Del Draft sale una SECUENCIA ESPERADA de importes (ExpectedSequence). De ella se
-// derivan ESPERADOS (su conjunto), PERMITIDOS (ESPERADOS más los números que ya viven
-// en las etiquetas, las personalizaciones y las cantidades del borrador) y el TECHO =
-// máx(ESPERADOS).
+// Del Draft sale una SECUENCIA ESPERADA de importes, en el orden en que un mensaje
+// los diría: por cada línea con precio, su `unit_price` y —solo si la cantidad es
+// mayor que uno— su `line_total`; y al final, el `total` del pedido. Es EXACTAMENTE lo
+// que escribe el render determinista, y esa coincidencia no es casual: la secuencia
+// define qué es una cotización bien puesta, y el render es la que siempre lo cumple.
+//
+// De ahí se derivan `ESPERADOS` (el conjunto de esa secuencia), `PERMITIDOS`
+// (ESPERADOS más los números que ya viven en las etiquetas, las personalizaciones y las
+// cantidades del borrador) y el `TECHO` = máx(ESPERADOS).
 //
 // Del texto se extraen todos los números —dígitos ASCII con puntos y comas dentro; el
-// guion NO forma parte, así que «10-12 porciones» son dos números— y cada uno es:
+// guion NO forma parte, así que «10-12 porciones» son dos números— y cada uno se
+// clasifica en dos clases:
 //
 //	MARCADO — lleva marca de dinero pegada: «$» delante, o detrás una palabra de
 //	          moneda sin distinguir mayúsculas («peso», «pesos», «clp», «usd», «bs»,
@@ -45,35 +67,66 @@ import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 // C1 y C2 están contenidas en C5 y se comprueban antes igualmente: dan el diagnóstico
 // útil («falta el precio de la línea 2») donde C5 solo diría «no cuadran».
 //
-// C5 es una secuencia y no un recuento porque contar apariciones NO cierra el
-// intercambio de dos precios. El precio que se paga: un texto correcto que enumere las
-// líneas en otro orden que el borrador se rechaza. Es conservador a propósito.
+// # POR QUÉ C5 ES UNA SECUENCIA Y NO UN RECUENTO
 //
-// C4 mira el TECHO y no el suelo: con una galleta de $2 en el carrito, un listón en el
-// importe más barato rechazaba «te llamo en 3 días». Por debajo del techo, un desnudo
-// no se juzga. 🔴 Eso deja un agujero DECLARADO: «el total sería 3000» —sin marca y por
-// debajo del techo— pasa.
+// Porque contar apariciones —un multiconjunto— NO cierra el SWAP: intercambiar dos
+// precios legítimos deja exactamente los mismos importes con las mismas
+// multiplicidades. Lo único que cambia es el ORDEN, así que el orden es lo que hay que
+// mirar. De paso, la igualdad de secuencias implica la de multiconjuntos, de modo que
+// el cargo inventado y la repetición caen también.
 //
-// # CÓMO SE LEE UN NÚMERO DEL TEXTO
+// EL PRECIO QUE SE PAGA, DICHO CLARO: un texto correcto que enumere las líneas en otro
+// orden que el borrador se rechaza y sale el determinista. Es conservador a propósito
+// —el prompt le da las líneas en orden y le prohíbe añadir o quitar— y el coste es un
+// texto más sobrio, nunca un precio equivocado.
 //
-//   - Los separadores del final se recortan primero («$1234,50.» al acabar una frase
-//     es 1234,50, no 123450).
-//   - Con punto Y coma, el ÚLTIMO de los dos manda como decimal y el otro es de miles
-//     («2.950,00» y «2,950.00» son 2950).
-//   - Con uno solo: es DECIMAL si aparece una vez y le siguen exactamente uno o dos
-//     dígitos («2100,50» ⇒ 2100,5); en cualquier otro caso es de MILES y se borra
-//     («2.100» ⇒ 2100, «1.234.567» ⇒ 1234567, y también un separador repetido:
-//     «2..100» ⇒ 2100).
-//   - Todo —los importes del borrador y los números leídos— se redondea a CÉNTIMOS
-//     antes de compararse, y dos importes son el mismo si difieren en menos de medio
-//     céntimo. Es la precisión con la que Amount escribe.
-//   - Un número que no se puede leer (desborda el float64, o deja de ser finito al
-//     pasarlo a céntimos) NO se salta: aborta la verificación con
-//     ReasonUnreadableNumber. Nunca un pánico ni un cero silencioso.
+// # LOS CASOS LEGÍTIMOS EN QUE UN IMPORTE SE REPITE, Y QUÉ SE DECIDIÓ
 //
-// CONSERVADOR ANTE LA DUDA: un `$2.10` de un modelo que quería decir 2100 se lee 2,10,
-// no estará en ESPERADOS y el texto se rechaza. No hay ninguna lectura del texto bajo
-// la cual se le mande al cliente un importe que no salió de las líneas.
+//   - **Dos líneas al mismo precio**: la secuencia lo espera dos veces y el texto tiene
+//     que decirlo dos veces. «Las dos a $2100» (una sola aparición) se rechaza ⇒
+//     determinista. Es el lado conservador y está probado.
+//   - **Una sola línea con cantidad uno**: su `unit_price` y el `total` son el mismo
+//     número, y la secuencia lo espera DOS veces, una como precio y otra como total. Un
+//     texto que solo lo diga una vez cae. También es deliberado: el cliente tiene que
+//     leer el total, y el render lo escribe siempre.
+//   - **`line_total` con cantidad uno**: NO entra en la secuencia, porque es idéntico
+//     al unitario y exigirlo obligaría a escribir el mismo número dos veces seguidas.
+//
+// # POR QUÉ C4 MIRA EL TECHO Y NO EL SUELO
+//
+// Distinguir un importe de una cantidad en prosa no se puede hacer con certeza: lo
+// único seguro es la marca de moneda. La primera versión de C4 rechazaba todo número
+// desnudo por encima del importe MÁS BARATO del pedido, y eso tenía una consecuencia
+// medida y silenciosa: con una galleta de $2 en el carrito, el listón caía a 2 y «te
+// llamo en 3 días», «es para el 30 de agosto» y «12 porciones» se rechazaban los tres.
+// El generador dejaba de funcionar de facto en cuanto el pedido llevara algo barato, y
+// el único síntoma era un `fallback_reason` en un log que nadie lee. Un fallo mudo.
+//
+// Ahora el listón es el TECHO —el importe más caro del pedido— y la lectura es otra: un
+// número desnudo por encima de todo lo que este pedido cuesta es un número que el
+// cliente puede leer como un precio mayor, y ninguna fecha, hora ni cantidad razonable
+// llega ahí. Por debajo del techo, un desnudo no se juzga.
+//
+// 🔴 ESO DEJA UN AGUJERO Y SE DECLARA: «el total sería 3000» —sin `$` y por debajo del
+// techo— pasa. La red fuerte contra los precios falsos son C3 y C5, que miran lo que el
+// cliente lee COMO PRECIO; C4 es una red estrecha, y estrecha es mejor que apagada.
+//
+// # LA PRECISIÓN ES LA DEL DINERO: CÉNTIMOS
+//
+// Todo —los importes del borrador y los números leídos del texto— se redondea a dos
+// decimales antes de compararse, que es la misma precisión con la que `Amount` los
+// escribe. Sin eso, un `unit_price` de 2100,005 se imprimiría como `$2100,01` y el
+// propio render determinista no pasaría su propio verificador. Dos importes que
+// redondeen al mismo céntimo se funden a propósito: si no se distinguen en el texto,
+// tampoco se pueden verificar por separado.
+//
+// # CONSERVADOR ANTE LA DUDA
+//
+// Un `$2.100` es 2100 en es-CL y 2,10 en en-US. `parseNumber` resuelve la ambigüedad con
+// una regla escrita, pero si la resuelve al revés de como lo pensó el modelo, el valor
+// que salga no estará en ESPERADOS y el texto se rechaza. Ése es el desenlace correcto:
+// no hay ninguna lectura del texto bajo la cual se le mande al cliente un importe que
+// no salió de las líneas.
 // ════════════════════════════════════════════════════════════════════════════
 
 // MaxTextRunes acota la salida del modelo: 4000 runas. No es una regla de negocio: es
@@ -159,7 +212,21 @@ type Verdict struct {
 //
 // Era `ValidarSalida` en el paquete viejo.
 func ValidateOutput(text string) error {
-	panic(pendiente.Implementar("quotetext.ValidateOutput"))
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("%s: la salida no es UTF-8", ReasonUnreadableText)
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("%s: la salida está vacía", ReasonUnreadableText)
+	}
+	if n := utf8.RuneCountInString(text); n > MaxTextRunes {
+		return fmt.Errorf("%s: la salida tiene %d runas y el tope es %d", ReasonUnreadableText, n, MaxTextRunes)
+	}
+	for _, r := range text {
+		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+			return fmt.Errorf("%s: la salida trae un carácter de control (U+%04X)", ReasonUnreadableText, r)
+		}
+	}
+	return nil
 }
 
 // Verify aplica C1–C5 (ver la cabecera del fichero) y dice si el texto se puede
@@ -211,7 +278,100 @@ func ValidateOutput(text string) error {
 //
 // Era `Verificar` en el paquete viejo.
 func Verify(draft Draft, text string) Verdict {
-	panic(pendiente.Implementar("quotetext.Verify"))
+	if err := ValidateOutput(text); err != nil {
+		return Verdict{Reason: ReasonUnreadableText, Detail: err.Error()}
+	}
+	want := ExpectedSequence(draft)
+	if len(want) == 0 {
+		return Verdict{Reason: ReasonDraftWithoutAmounts, Detail: "ninguna línea del borrador tiene importe"}
+	}
+	numbers, err := extractNumbers(text)
+	if err != nil {
+		return Verdict{Reason: ReasonUnreadableNumber, Detail: err.Error()}
+	}
+
+	expected := setOf(want)
+	ceiling := maxOf(expected)
+	allowed := append(append([]float64(nil), expected...), draftNumbers(draft)...)
+
+	marked := make([]float64, 0, len(numbers))
+	for _, n := range numbers {
+		if n.marked {
+			// C3 — el importe no sale de ninguna línea. Se comprueba antes que C5
+			// porque el diagnóstico es distinto y mucho más claro: «este número no
+			// existe» frente a «existe pero está mal puesto».
+			if !containsAmount(expected, n.value) {
+				return Verdict{Reason: ReasonForeignAmount,
+					Detail: fmt.Sprintf("el texto trae el importe %s y no sale de ninguna línea", Amount(n.value))}
+			}
+			marked = append(marked, n.value)
+			continue
+		}
+		// C4 — ver «por qué el techo y no el suelo» en la cabecera.
+		if n.value > ceiling && !containsAmount(allowed, n.value) {
+			return Verdict{Reason: ReasonForeignNumber,
+				Detail: fmt.Sprintf("el texto trae el número %s, por encima de lo más caro del pedido (%s), y no sale del borrador",
+					strconv.FormatFloat(n.value, 'f', -1, 64), Amount(ceiling))}
+		}
+	}
+	if len(marked) == 0 {
+		return Verdict{Reason: ReasonTextWithoutAmounts, Detail: "el texto no dice ni un precio"}
+	}
+	if verdict := coverage(draft, marked); !verdict.OK {
+		return verdict
+	}
+	return sameSequence(want, marked)
+}
+
+// coverage aplica C1 y C2: que estén TODOS los unitarios y el total.
+//
+// Está contenida en C5 —una secuencia igual los contiene por definición— y se conserva
+// porque el mensaje que produce es el que sirve para arreglar el prompt: «la línea 2
+// vale $2950 y ese importe no está en el texto» dice dónde mirar; «los importes no
+// cuadran» no.
+//
+// Era `cobertura` en el paquete viejo.
+func coverage(draft Draft, marked []float64) Verdict {
+	for i := range draft.Lines {
+		price := toCents(draft.Lines[i].UnitPrice)
+		if price <= 0 {
+			// Línea por confirmar: no tiene precio que exigir. El texto que la
+			// menciona sin importe es correcto —es lo que hace el render— y el que
+			// se inventara uno caería por C3, que sí la mira.
+			continue
+		}
+		if !containsAmount(marked, price) {
+			return Verdict{Reason: ReasonMissingUnitPrice,
+				Detail: fmt.Sprintf("la línea %d vale %s y ese importe no está en el texto", i+1, Amount(price))}
+		}
+	}
+	if !containsAmount(marked, toCents(draft.Total)) {
+		return Verdict{Reason: ReasonMissingTotal,
+			Detail: fmt.Sprintf("el total es %s y no está en el texto", Amount(draft.Total))}
+	}
+	return Verdict{OK: true}
+}
+
+// sameSequence aplica C5: los importes marcados del texto, en su orden de aparición,
+// tienen que ser EXACTAMENTE los esperados.
+//
+// El detalle nombra el PUESTO y los dos importes, que es lo que permite ver de un
+// vistazo si lo que pasó fue un swap (dos puestos cruzados) o un cargo de más (las
+// longitudes difieren). Nunca cita el texto.
+//
+// Era `mismaSecuencia` en el paquete viejo.
+func sameSequence(want, got []float64) Verdict {
+	if len(got) != len(want) {
+		return Verdict{Reason: ReasonAmountsOutOfPlace,
+			Detail: fmt.Sprintf("el texto dice %d importes y el presupuesto tiene %d", len(got), len(want))}
+	}
+	for i := range want {
+		if !sameAmount(got[i], want[i]) {
+			return Verdict{Reason: ReasonAmountsOutOfPlace,
+				Detail: fmt.Sprintf("el importe nº %d del texto es %s y ahí va %s", i+1, Amount(got[i]), Amount(want[i]))}
+		}
+	}
+	return Verdict{OK: true}
 }
 
 // ExpectedSequence es el orden en que los importes del borrador tienen que aparecer
@@ -231,5 +391,34 @@ func Verify(draft Draft, text string) Verdict {
 //
 // Era `SecuenciaEsperada` en el paquete viejo.
 func ExpectedSequence(draft Draft) []float64 {
-	panic(pendiente.Implementar("quotetext.ExpectedSequence"))
+	out := make([]float64, 0, 2*len(draft.Lines)+1)
+	for _, line := range draft.Lines {
+		price := toCents(line.UnitPrice)
+		if price <= 0 {
+			continue
+		}
+		out = append(out, price)
+		if line.Qty > 1 {
+			out = append(out, toCents(line.LineTotal))
+		}
+	}
+	if total := toCents(draft.Total); total > 0 {
+		out = append(out, total)
+	}
+	return out
+}
+
+// setOf deduplica una secuencia conservando el orden. Es la fuente ÚNICA de
+// ESPERADOS: derivarlo de la secuencia en vez de calcularlo aparte es lo que impide
+// que C3 y C5 acaben opinando cosas distintas sobre qué importes existen.
+//
+// Era `conjuntoDe` en el paquete viejo.
+func setOf(sequence []float64) []float64 {
+	out := make([]float64, 0, len(sequence))
+	for _, value := range sequence {
+		if !containsAmount(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }

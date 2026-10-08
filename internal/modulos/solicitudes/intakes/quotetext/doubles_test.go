@@ -34,14 +34,6 @@ var (
 	yesterday = today.Add(-24 * time.Hour)
 )
 
-// modelText es una respuesta BUENA para el caso Fusión: dice los tres precios y el
-// total, con marca de dinero, y no trae ningún número inventado.
-const modelText = "Hola! Te paso el presupuesto:\n" +
-	"Pastel para 15 personas, chocolate húmedo, relleno chocolate y oreo — $2100. Incluye impresiones no comestibles\n" +
-	"El otro para 25-30 personas, vainilla, ddl y merengue — $2950\n" +
-	"Envío — $490\n" +
-	"Total $5540"
-
 // Las dos cotizaciones de muestra del few-shot. NO son una transcripción: son la
 // descripción abreviada del caso Fusión rehidratada a un mensaje verosímil, con la
 // estructura producto + tamaño + specs + precio + qué incluye.

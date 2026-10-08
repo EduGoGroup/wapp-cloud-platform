@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package quotetext_test
 
 // precios_test.go — EL VERIFICADOR (INV-2: el LLM nunca calcula precios): el
