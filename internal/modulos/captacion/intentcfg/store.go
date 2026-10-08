@@ -23,9 +23,8 @@ package intentcfg
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // Kind es el `kind` del ConfigUpdate (ADR-0021) para la config de intenciones, el
@@ -76,11 +75,14 @@ type Store interface {
 // cada método es atómico. Marca UpdatedAt con el reloj del proceso (no se le
 // inyecta otro) y, a diferencia del Postgres, guarda y devuelve el blob BYTE A
 // BYTE, sea o no JSON.
-type MemoryStore struct{}
+type MemoryStore struct {
+	mu sync.Mutex
+	m  map[string]Config // tenant → su config
+}
 
 // NewMemoryStore construye un MemoryStore vacío: ningún tenant tiene config.
 func NewMemoryStore() *MemoryStore {
-	panic(pendiente.Implementar("intentcfg.NewMemoryStore"))
+	return &MemoryStore{m: make(map[string]Config)}
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -88,13 +90,27 @@ var _ Store = (*MemoryStore)(nil)
 // Get implementa Store sobre el mapa en memoria. Sin config devuelve ErrNotFound
 // tal cual, sin envolver. El blob devuelto es una COPIA: modificarlo no altera lo
 // guardado.
-func (s *MemoryStore) Get(ctx context.Context, tenantID string) (Config, error) {
-	panic(pendiente.Implementar("intentcfg.MemoryStore.Get"))
+func (s *MemoryStore) Get(_ context.Context, tenantID string) (Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.m[tenantID]
+	if !ok {
+		return Config{}, ErrNotFound
+	}
+	// Copia, para no aliasar: el llamante puede pisar lo que recibe.
+	blob := make([]byte, len(c.Blob))
+	copy(blob, c.Blob)
+	return Config{Version: c.Version, Blob: blob, UpdatedAt: c.UpdatedAt}, nil
 }
 
 // Upsert implementa Store sobre el mapa en memoria: guarda una COPIA del blob
 // (modificar después el slice del llamante no altera lo guardado; un blob nil se
 // guarda como vacío) y marca UpdatedAt con time.Now(). Nunca devuelve error.
-func (s *MemoryStore) Upsert(ctx context.Context, tenantID, version string, blob []byte) error {
-	panic(pendiente.Implementar("intentcfg.MemoryStore.Upsert"))
+func (s *MemoryStore) Upsert(_ context.Context, tenantID, version string, blob []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := make([]byte, len(blob))
+	copy(stored, blob)
+	s.m[tenantID] = Config{Version: version, Blob: stored, UpdatedAt: time.Now()}
+	return nil
 }

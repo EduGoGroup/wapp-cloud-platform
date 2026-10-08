@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intentcfg_test
 
 import (
