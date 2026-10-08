@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intake
 
 import (
@@ -113,6 +111,25 @@ func TestPostgres_LiveJobOfEvent_DatabaseFailure_IsWrapped(t *testing.T) {
 	}
 }
 
+// TestNonTerminalStatuses_AreExactlyTheComplementOfIsTerminal: la lista de «lo que todavía puede
+// producir una revisión» y IsTerminal dicen lo mismo desde dos sitios. Si divergieran, la
+// guarda del `reanalysis_in_progress` dejaría de ver jobs vivos.
+func TestNonTerminalStatuses_AreExactlyTheComplementOfIsTerminal(t *testing.T) {
+	live := map[string]bool{}
+	for _, s := range nonTerminalStatuses {
+		live[s] = true
+	}
+	all := []string{StatusAggregating, StatusPending, StatusProcessing, StatusDone, StatusFailed}
+	for _, s := range all {
+		if live[s] == IsTerminal(s) {
+			t.Errorf("el estado %q: en la lista de vivos = %v, IsTerminal = %v; tienen que ser contrarios", s, live[s], IsTerminal(s))
+		}
+	}
+	if len(nonTerminalStatuses) != 3 {
+		t.Errorf("nonTerminalStatuses = %v, quería exactamente los tres estados vivos", nonTerminalStatuses)
+	}
+}
+
 // TestPostgres_OpenReanalysis_IncompleteRequest_SaysWhatIsMissing: una petición incompleta se
 // rechaza antes de la base, y el error dice QUÉ falta sin volcar la clave (lleva el contacto).
 func TestPostgres_OpenReanalysis_IncompleteRequest_SaysWhatIsMissing(t *testing.T) {
@@ -176,6 +193,16 @@ func TestPostgres_OpenReanalysis_DatabaseFailure_IsWrapped(t *testing.T) {
 		requireWrapped(t, err, cause, prefix)
 		if id != "" {
 			t.Errorf("OpenReanalysis con error (%s) devolvió el id %q", name, id)
+		}
+	}
+}
+
+// TestNullableInt_ZeroIsNull: «no había revisión anterior» y «la anterior era la número cero» no
+// son lo mismo, y la segunda no existe: los correlativos empiezan en 1.
+func TestNullableInt_ZeroIsNull(t *testing.T) {
+	for n, want := range map[int]any{0: nil, -1: nil, 1: 1, 42: 42} {
+		if got := nullableInt(n); got != want {
+			t.Errorf("nullableInt(%d) = %#v, quería %#v", n, got, want)
 		}
 	}
 }
