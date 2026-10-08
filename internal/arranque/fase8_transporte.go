@@ -89,8 +89,20 @@ func (faseTransporte) ejecutar(_ context.Context, c *contenedor) error {
 	// cada vía pasan por separado. Si algún día se apaga, se apaga en los dos.
 	c.filtersPusher = filtercfg.NewPusher(c.fleetRepo, c.gw)
 
-	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(c.cfg, c.db, c.log, c.mtx, c.authStk,
-		depsDeLaAPIPublica(c), edgeDepsOfTheNewFace(c), inferenceDepsOfTheNewFace(c), c.platformRepo)
+	publicSrv, cara, compuesto, authMW, auditor, err := buildPublicAPIServer(publicAPIDeps{
+		cfg:       c.cfg,
+		db:        c.db,
+		log:       c.log,
+		mtx:       c.mtx,
+		authStack: c.authStk,
+		oldFace:   depsDeLaAPIPublica(c),
+		// Un campo por módulo mudado; la fase que mude rutas añade aquí el suyo (newFaceDeps).
+		newFace: newFaceDeps{
+			edge:      edgeDepsOfTheNewFace(c),
+			inference: inferenceDepsOfTheNewFace(c),
+		},
+		platformRepo: c.platformRepo,
+	})
 	if err != nil {
 		return err
 	}

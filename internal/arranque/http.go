@@ -27,34 +27,44 @@ const (
 	shutdownTimeout   = 10 * time.Second
 )
 
-// edgeFaceDeps es lo que la cara nueva necesita para D1–D6 (F3 · conmutar(edge)). Lo arma la
-// fase 8 (edgeDepsOfTheNewFace) con el gateway, la flota y el almacén de diagnóstico del
-// contenedor; buildPublicAPIServer solo le añade el presupuesto de envío, que deriva de su
-// propio writeTimeout.
-type edgeFaceDeps struct {
-	// messages enciende D1.
-	messages apipublica.MessagesDeps
-	// sessions enciende D2–D4.
-	sessions apipublica.SessionsDeps
-	// diagnostics enciende D5–D6.
-	diagnostics apipublica.DiagnosticsDeps
-}
-
-// inferenceFaceDeps es lo que la cara nueva necesita para F1–F4 (F4 · conmutar(inferencia)). Lo
-// arma la fase 8 (inferenceDepsOfTheNewFace) con los almacenes NUEVOS de tenant_llm y de avisos
-// de degradación y el resolver de derechos del contenedor; buildPublicAPIServer no le añade nada.
-type inferenceFaceDeps struct {
-	// tenantLLM enciende F1–F3.
-	tenantLLM apipublica.TenantLLMDeps
-	// degradationNotices enciende F4.
-	degradationNotices apipublica.DegradationNoticesDeps
+// publicAPIDeps es todo lo que buildPublicAPIServer recibe, con nombre. Existe porque la firma
+// iba por nueve parámetros posicionales y cada fase que muda rutas a la cara nueva le añadía uno
+// (edge en F3, inferencia en F4): con este struct la firma ya no crece. Y la fase tampoco añade
+// un campo AQUÍ: lo añade en newFaceDeps (mudanzas.go), que es el único sitio donde se agrupan
+// las dependencias de la cara nueva; este tipo solo lo transporta entero en newFace.
+//
+// Alternativa descartada: un campo por módulo en este struct (edge, inference, …) copiado luego a
+// newFaceDeps. Serían dos structs paralelos que cada fase tendría que tocar a la vez, y olvidar la
+// copia compila y deja las rutas del módulo sin montar (404 de ruta inexistente, sin ningún error).
+type publicAPIDeps struct {
+	cfg config.AppConfig
+	db  *sql.DB
+	log sharedlogger.Logger
+	mtx *metrics.Metrics
+	// authStack es el material de auth compartido con el gateway CloudLink (buildAuthStack).
+	authStack *authStack
+	// oldFace son las dependencias del mux VIEJO (publicapi). Viaja por valor: los campos que
+	// buildPublicAPIServer deja a nil (los que ya sirve la cara nueva) no salen de él.
+	oldFace publicapi.Deps
+	// newFace llega con las áreas de los MÓDULOS ya armadas por la fase 8 (edge, inference y las
+	// que añadan F6–F8). Las cinco de acceso (common, auth, rolePlane, audit, entitlements) llegan
+	// vacías y las rellena buildPublicAPIServer, que es quien construye sus servicios.
+	newFace newFaceDeps
+	// platformRepo sirve el alta self-service (A7) como almacén de solicitudes de acceso.
+	platformRepo *platformadmin.Repository
 }
 
 // buildPublicAPIServer arma el :8103: la cara NUEVA (internal/apipublica, con las rutas de las
 // fases ≤ FaseActual) delante del mux VIEJO (publicapi), compuestas una vez y envueltas una vez
 // con rate-limit y métricas. Devuelve también la cara y el compuesto, que el contenedor guarda
 // para el candado de mudanzas.
-func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Logger, mtx *metrics.Metrics, as *authStack, pub publicapi.Deps, edge edgeFaceDeps, inference inferenceFaceDeps, platformRepo *platformadmin.Repository) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+func buildPublicAPIServer(d publicAPIDeps) (*http.Server, *apipublica.Cara, *apipublica.Compuesto, *httpapi.Middleware, httpapi.AuditRecorder, error) {
+	// Los nombres locales son los de los parámetros de antes: el cuerpo no cambia. pub y face son
+	// COPIAS (como lo eran los parámetros por valor), así que lo que aquí se les escribe no vuelve
+	// al que llama.
+	cfg, db, log, mtx, as, platformRepo := d.cfg, d.db, d.log, d.mtx, d.authStack, d.platformRepo
+	pub, face := d.oldFace, d.newFace
+
 	// El material de auth (emisor/validador ES256, middleware, auditor) se
 	// construye UNA vez en buildAuthStack y se COMPARTE con el gateway CloudLink
 	// (Plan 033 · T2.2, ADR-0025): el mismo verificador acepta en el :8103
@@ -126,7 +136,7 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	// 🔀 F3 · conmutar(edge): D1 la sirve la cara nueva, así que el presupuesto va a SUS
 	// deps. La D1 del mux viejo sigue registrada (no tiene condición de montaje) pero
 	// queda tapada por la nueva y nunca atiende: no se le cablea nada.
-	edge.messages.SendBudget = apipublica.SendBudgetFrom(writeTimeout)
+	face.edge.messages.SendBudget = apipublica.SendBudgetFrom(writeTimeout)
 
 	// Operación pública (Plan 018 · T5): mensajes + flujos CRUD/arranque, cada ruta
 	// autenticada por Context Token + grants (mismo authMW) y las escrituras
@@ -151,37 +161,32 @@ func buildPublicAPIServer(cfg config.AppConfig, db *sql.DB, log sharedlogger.Log
 	//
 	// Common es el MISMO para todas las áreas y para las dos caras: el mismo middleware,
 	// el mismo auditor (que además sirve C1 como lector) y el mismo logger.
-	cara := caraNueva(newFaceDeps{
-		common: apipublica.Common{MW: authMW, Auditor: auditor, Log: log},
-		auth: apipublica.AuthDeps{
-			Verifier: as.contextTokens,
-			// Un nil DE VERDAD con el modo dual apagado: A2 responde 503 (authStack.exchanger).
-			Exchanger:      as.exchanger(),
-			Redeemer:       invitationRedeem,
-			TenantSelector: activeTenant,
-			TenantLister:   activeTenant,
-			// A7 (Plan 056 · T3.2): sin M2M (falta WAPP_IDENTITY_API_KEY) MountAuth la
-			// cablea a un 503 fijo y avisa con un Warn (C-02); con M2M, al handler real
-			// con su limitador propio por IP (A-06a).
-			SignupRequests:   platformRepo,
-			M2M:              as.m2mClient,
-			SignupTrustProxy: cfg.RateLimit.TrustProxy,
-		},
-		rolePlane: apipublica.RolePlaneDeps{
-			Roles:       rolesPlane.roles,
-			Members:     rolesPlane.members,
-			Invitations: rolesPlane.invitations,
-		},
-		audit:        apipublica.AuditDeps{Audit: auditor},
-		entitlements: apipublica.EntitlementsDeps{Entitlements: pub.Entitlements},
-		// 🔀 F3 · conmutar(edge) (FX TX.11): D1–D6, con lo que hasta F3 iba a la vieja.
-		messages:    edge.messages,
-		sessions:    edge.sessions,
-		diagnostics: edge.diagnostics,
-		// 🔀 F4 · conmutar(inferencia) (FX TX.14): F1–F4, con los almacenes NUEVOS.
-		tenantLLM:          inference.tenantLLM,
-		degradationNotices: inference.degradationNotices,
-	})
+	//
+	// Las áreas de los módulos (edge desde F3, inferencia desde F4) ya vienen en face, armadas
+	// por la fase 8; aquí solo se rellenan las de acceso, cuyos servicios se construyen arriba.
+	face.common = apipublica.Common{MW: authMW, Auditor: auditor, Log: log}
+	face.auth = apipublica.AuthDeps{
+		Verifier: as.contextTokens,
+		// Un nil DE VERDAD con el modo dual apagado: A2 responde 503 (authStack.exchanger).
+		Exchanger:      as.exchanger(),
+		Redeemer:       invitationRedeem,
+		TenantSelector: activeTenant,
+		TenantLister:   activeTenant,
+		// A7 (Plan 056 · T3.2): sin M2M (falta WAPP_IDENTITY_API_KEY) MountAuth la
+		// cablea a un 503 fijo y avisa con un Warn (C-02); con M2M, al handler real
+		// con su limitador propio por IP (A-06a).
+		SignupRequests:   platformRepo,
+		M2M:              as.m2mClient,
+		SignupTrustProxy: cfg.RateLimit.TrustProxy,
+	}
+	face.rolePlane = apipublica.RolePlaneDeps{
+		Roles:       rolesPlane.roles,
+		Members:     rolesPlane.members,
+		Invitations: rolesPlane.invitations,
+	}
+	face.audit = apipublica.AuditDeps{Audit: auditor}
+	face.entitlements = apipublica.EntitlementsDeps{Entitlements: pub.Entitlements}
+	cara := caraNueva(face)
 	compuesto := apipublica.Componer(cara, publicMux)
 	publicLim := httpapi.NewLimiter(rate.Limit(cfg.RateLimit.PublicRPS), cfg.RateLimit.PublicBurst)
 	var handler http.Handler = compuesto

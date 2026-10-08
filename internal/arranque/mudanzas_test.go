@@ -263,34 +263,38 @@ func newFaceDepsWithDoubles() newFaceDeps {
 		audit:        apipublica.AuditDeps{Audit: struct{ apipublica.AuditReader }{}},
 		entitlements: apipublica.EntitlementsDeps{Entitlements: entitlementshelpertest.NewFake()},
 		// F3 · edge: D1 se monta siempre; D2–D4 cada una con su almacén; D5–D6 con los tres.
-		messages: apipublica.MessagesDeps{
-			Sender:   struct{ apipublica.MessageSender }{},
-			Sessions: struct{ apipublica.SessionLister }{},
-		},
-		sessions: apipublica.SessionsDeps{
-			Sessions:        struct{ apipublica.SessionLister }{},
-			SessionProfiles: struct{ apipublica.SessionProfileStore }{},
-			ProfilePush:     struct{ apipublica.ProfilePusher }{},
-			SessionStatus:   struct{ apipublica.SessionStatusStore }{},
-		},
-		diagnostics: apipublica.DiagnosticsDeps{
-			Diagnostics: struct{ apipublica.DiagnosticsStore }{},
-			DiagnosticsRequester: struct {
-				apipublica.DiagnosticsRequester
-			}{},
-			Sessions: struct{ apipublica.SessionLister }{},
+		edge: edgeFaceDeps{
+			messages: apipublica.MessagesDeps{
+				Sender:   struct{ apipublica.MessageSender }{},
+				Sessions: struct{ apipublica.SessionLister }{},
+			},
+			sessions: apipublica.SessionsDeps{
+				Sessions:        struct{ apipublica.SessionLister }{},
+				SessionProfiles: struct{ apipublica.SessionProfileStore }{},
+				ProfilePush:     struct{ apipublica.ProfilePusher }{},
+				SessionStatus:   struct{ apipublica.SessionStatusStore }{},
+			},
+			diagnostics: apipublica.DiagnosticsDeps{
+				Diagnostics: struct{ apipublica.DiagnosticsStore }{},
+				DiagnosticsRequester: struct {
+					apipublica.DiagnosticsRequester
+				}{},
+				Sessions: struct{ apipublica.SessionLister }{},
+			},
 		},
 		// F4 · inferencia: F1–F3 con el almacén y el resolver de derechos; F4 con el lector y el
 		// resolver.
-		tenantLLM: apipublica.TenantLLMDeps{
-			TenantLLM:    struct{ apipublica.TenantLLMStore }{},
-			Entitlements: entitlementshelpertest.NewFake(),
-		},
-		degradationNotices: apipublica.DegradationNoticesDeps{
-			DegradationNotices: struct {
-				apipublica.DegradationNoticeLister
-			}{},
-			Entitlements: entitlementshelpertest.NewFake(),
+		inference: inferenceFaceDeps{
+			tenantLLM: apipublica.TenantLLMDeps{
+				TenantLLM:    struct{ apipublica.TenantLLMStore }{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
+			degradationNotices: apipublica.DegradationNoticesDeps{
+				DegradationNotices: struct {
+					apipublica.DegradationNoticeLister
+				}{},
+				Entitlements: entitlementshelpertest.NewFake(),
+			},
 		},
 	}
 }

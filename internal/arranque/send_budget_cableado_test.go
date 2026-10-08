@@ -42,8 +42,8 @@ func TestSendBudgetCableado(t *testing.T) {
 		if !ok || len(asig.Lhs) != 1 || len(asig.Rhs) != 1 {
 			return true
 		}
-		// ruta y no campo: el destino tiene dos niveles (edge.messages.SendBudget).
-		if ruta(asig.Lhs[0]) != "edge.messages.SendBudget" {
+		// ruta y no campo: el destino tiene tres niveles (face.edge.messages.SendBudget).
+		if ruta(asig.Lhs[0]) != "face.edge.messages.SendBudget" {
 			return true
 		}
 		// No basta con que se asigne ALGO: tiene que ser la derivación. Una constante
@@ -52,7 +52,7 @@ func TestSendBudgetCableado(t *testing.T) {
 		// pasaría sin decir nada.
 		llamada, ok := asig.Rhs[0].(*ast.CallExpr)
 		if !ok || campo(llamada.Fun) != "apipublica.SendBudgetFrom" {
-			t.Fatalf("edge.messages.SendBudget se asigna con algo que NO es apipublica.SendBudgetFrom: "+
+			t.Fatalf("face.edge.messages.SendBudget se asigna con algo que NO es apipublica.SendBudgetFrom: "+
 				"el presupuesto tiene que DERIVARSE del writeTimeout, no ser un número suelto "+
 				"(%s)", fset.Position(asig.Pos()))
 		}
@@ -66,7 +66,7 @@ func TestSendBudgetCableado(t *testing.T) {
 	})
 
 	if !asignado {
-		t.Fatal("internal/arranque/http.go NO cablea edge.messages.SendBudget.\n" +
+		t.Fatal("internal/arranque/http.go NO cablea face.edge.messages.SendBudget.\n" +
 			"Sin esa línea, MessagesDeps.SendBudget queda en cero, sendCtx no pone plazo y el " +
 			"handler de envío vuelve a poder pasarse del WriteTimeout: el cliente se queda " +
 			"con la conexión cerrada y sin cuerpo (incidente del 2026-08-06). Todos los " +
