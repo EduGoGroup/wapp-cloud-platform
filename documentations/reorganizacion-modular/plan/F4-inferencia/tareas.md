@@ -16,7 +16,7 @@
 > `puenteConfigLLM` → `llmConfigBridge`. Los puentes de **import** (`05` §4.1) siguen llamándose «puente».
 > **Sesiones**: F4 y F5 comparten las tres fichas `F45-*` de [`../sesiones/`](../sesiones/README.md).
 
-## Sesión F45-01 · inventario E-12 y F4 entero en verde · 🌐 · T4.1–T4.9, T4.11–T4.23
+## Sesión F45-01 · inventario E-12 y F4 entero en verde · 💻 · T4.1–T4.9, T4.11–T4.23
 Para cuando: Jhoan aprobó el inventario E-12; `internal/modulos/inferencia` entero sin etiqueta; C2 nuevo y viejo verdes; gate ci-local rc=0 con 0 SKIP.
 
 ### Inventario y candados viejos · T4.1–T4.2
@@ -91,7 +91,7 @@ Para cuando: `internal/modulos/inferencia` entero sin etiqueta; C2 nuevo en verd
   - **Hecho cuando**: sin etiqueta; lista = los 5 permitidos del módulo; barre `internal/{modulos,nucleo,arranque,apipublica}` y afirma `recorridos > 0`; mutación documentada en el commit (un `if x.Via == "api"` en `…/prompts/prompts.go` ⇒ rojo; revertida)
   - **Gate**: gate ci-local · **Commit**: `verde(inferencia): candado C2`
 
-## Sesión F45-02 · adaptador, conmutar y mudar las 4 rutas · 🌐 · T4.10, T4.24–T4.28 (+ TX.12–TX.14)
+## Sesión F45-02 · adaptador, conmutar y mudar las 4 rutas · 💻 · T4.10, T4.24–T4.28 (+ TX.12–TX.14)
 Para cuando: la huella del arranque nuevo es idéntica a la del viejo con `FaseActual = 4`; el test de cableado de `bridge_inferencia.go` verde; gate ci-local rc=0. (La misma sesión sigue con F5 entero.)
 
 > ✅ **Hecha el 2026-10-07** (💻, rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`). Orden real de los

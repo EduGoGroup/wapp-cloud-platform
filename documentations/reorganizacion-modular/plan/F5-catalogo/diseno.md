@@ -32,6 +32,17 @@ internal/modulos/catalogo/
 (fuentes falsas) y `rendimiento_test.go` se reparten en `cache_test.go` e `indice_test.go` (E-3: un
 fichero, un test). `frontera_test.go` → `fronteras_test.go` + aserción de tipo (D-F5-2).
 
+✎ **2026-10-07 (F45-02, hallazgos 14 y 22 del [README](README.md))**, sin reescribir el árbol:
+- El tipo `Normalizador` y sus dos errores (`ErrSinNormalizador`, `ErrNormalizadorInvalido`) viven en
+  `indice/indice.go`, no en `normalizador.go` (igual que en el viejo); `normalizador.go` solo tiene
+  `VerificarNormalizador` y su tabla de casos.
+- Los dobles y el rendimiento no quedaron en 2 ficheros de test: por E-13 el paquete `indice` tiene 8 `_test.go`
+  — `normalizador_test.go`, `indice_test.go`, `indice_performance_test.go` (el rendimiento), `cache_test.go` (las
+  fuentes falsas), `cache_errors_test.go`, `cache_eviction_test.go`, `cache_invalidation_test.go` y `helpers_test.go`
+  (el oráculo y los corpus compartidos).
+- De los «6 casos» de `limits_test.go` se portan 5: `TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo` (`:150`)
+  prueba `platform/config` y se queda en el viejo.
+
 ## 2 · Contratos, fichero a fichero
 
 ### `conversacion/model/model.go` (si D-F5-1 = B)

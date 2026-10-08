@@ -1,6 +1,7 @@
 // Copia de internal/bootstrap/arranque/fase8_transporte.go @ 80807ba (F0 · 05 §6): cablea paquetes VIEJOS,
-// salvo acceso (F2, T2.31, conmutar(acceso)) y edge (F3, T3.28, conmutar(edge)), que son
-// internal/modulos/{acceso,edge}: un solo gateway, el nuevo, que recibe acceso sin adaptador.
+// salvo acceso (F2, T2.31, conmutar(acceso)), edge (F3, T3.28, conmutar(edge)) e inferencia (F4,
+// T4.24, conmutar(inferencia)), que son internal/modulos/{acceso,edge,inferencia}: un solo gateway,
+// el nuevo, que recibe acceso sin adaptador; de inferencia, aquí solo viajan sus almacenes hacia la cara nueva.
 package arranque
 
 import (

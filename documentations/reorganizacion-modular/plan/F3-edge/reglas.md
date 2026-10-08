@@ -84,5 +84,9 @@ paquete está en [`arquitectura.md`](arquitectura.md) §1.1. Si un archivo sale 
    conmutar. En F3 **nace** `bridge_gateway.go` y **muere** `bridge_iam.go` (nacido en F2): **`acceso` entra** en
    `Conmutados` al cerrar F3; **`edge` no entra** hasta F4, cuando muere `bridge_gateway.go`. `FaseActual` sigue
    existiendo y no cambia.
+   ✎ **2026-10-07 (F45-02)**: `bridge_gateway.go` murió en `98b24c5` (T4.24), pero **`edge` no entró**:
+   `internal/arranque/session_identity_test.go:7` importa el `internal/gateway/session` viejo y la regla 3 lo pondría
+   rojo. `Conmutados` sigue `{"acceso"}`. Cuándo entra `edge` depende de qué se haga con ese test: D-F3-14 en
+   [`../DECISIONES.md`](../DECISIONES.md), pendiente de Jhoan.
 8. e2e local con mTLS real (T3.29); el proceso de enrolamiento corrido o anotado «no corrido» (T3.30).
 9. `ESTADO.md` y README de F3 al día; traspaso con `CERRADO` si lo hubo.

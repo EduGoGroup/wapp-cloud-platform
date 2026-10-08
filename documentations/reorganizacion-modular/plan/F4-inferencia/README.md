@@ -81,9 +81,12 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 
 | Sesión | Entorno | Tareas de F4 | Punto de parada |
 |---|---|---|---|
-| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 🌐 | T4.1–T4.9, T4.11–T4.23 | Jhoan aprobó la tabla de niveles; `internal/modulos/inferencia` sin etiqueta `pendiente`; C2 nuevo y viejo verdes; `ci-local` rc=0 con 0 SKIP |
-| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · adaptador, conmutar y 4 rutas (y F5 entero) | 🌐 | T4.10, T4.24–T4.28 (+ TX.12–TX.14) | huella idéntica con `FaseActual = 4`; test de cableado de `bridge_inferencia.go` verde |
+| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 💻 | T4.1–T4.9, T4.11–T4.23 | Jhoan aprobó la tabla de niveles; `internal/modulos/inferencia` sin etiqueta `pendiente`; C2 nuevo y viejo verdes; `ci-local` rc=0 con 0 SKIP |
+| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · adaptador, conmutar y 4 rutas (y F5 entero) | 💻 | T4.10, T4.24–T4.28 (+ TX.12–TX.14) | huella idéntica con `FaseActual = 4`; test de cableado de `bridge_inferencia.go` verde |
 | [`F45-03`](../sesiones/F45-03-cli-cierre.md) · cierre local de las dos fases | 💻 | T4.29–T4.31 (+ T9.25) | definición de hecho de [`reglas.md`](reglas.md) §4; suites contra Postgres y procesos de F9 contra el binario nuevo |
+
+✎ **2026-10-07**: F45-01 y F45-02 figuraban como 🌐; las dos se hicieron en local (💻, D-R-8: desde el 2026-10-04 no hay
+sesiones web). El «web» del nombre de sus fichas es histórico.
 
 ## Decisiones que necesita (con recomendación)
 
@@ -179,7 +182,8 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
     importa `internal/gateway/session` viejo y 3 de sus 4 aserciones nombran el centinela viejo `ErrSessionOffline`: la
     regla 3 lo pondría rojo. `Conmutados` sigue `{"acceso"}`. El comentario de `internal/modulos/fronteras_test.go`
     (antes «edge no entra hasta F4») se actualizó. Contradice [`../F3-edge/reglas.md`](../F3-edge/reglas.md) §4.7
-    (`:83-85`). **Pendiente de Jhoan**: qué se hace con ese test (muere, se mueve o excepción).
+    (`:83-85`) — corregido el 2026-10-07 (nota fechada en ese §4.7). **Pendiente de Jhoan**: qué se hace con ese test
+    (muere, se mueve o excepción).
 16. **Forma del adaptador.** `llmConfigBridge` guarda una interfaz mínima no exportada (`llmConfigReader`, solo `Get`)
     para probarse sin BD; `inference_wiring_test.go` afirma por reflexión que lo cableado es el `*tenantllm.Postgres`
     nuevo. `turneroBridge` guarda el `*llmvia.Selector` concreto. El centinela se traduce reutilizando `bridgeError` de
@@ -209,7 +213,7 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 23. **No portado en `apipublica` (ramas inalcanzables)**: `ts == nil ⇒ 500` (`publicapi/tenantllm.go:184,237,315`),
     `lister == nil ⇒ 500` (`degradationnotices.go:142`), `if offset < 0` (`:191-193`).
 24. **Restos en el arranque.** `internal/arranque/fase8_transporte.go:1-3`: la cabecera sigue diciendo «salvo acceso y
-    edge» (no actualizada para inferencia). `internal/arranque/http.go:47`: `buildPublicAPIServer` va por 9 parámetros,
+    edge» (no actualizada para inferencia) — corregido el 2026-10-07. `internal/arranque/http.go:47`: `buildPublicAPIServer` va por 9 parámetros,
     uno más por fase que muda rutas: conviene un struct antes de F6–F8.
 25. **Lint.** `make lint` no ve los tests tras `//go:build pendiente`: los avisos aparecen al quitar la etiqueta
     (hallazgo 8). Para verlos en rojo: `.bin/golangci-lint run --build-tags pendiente` (solo informativo). Y el candado

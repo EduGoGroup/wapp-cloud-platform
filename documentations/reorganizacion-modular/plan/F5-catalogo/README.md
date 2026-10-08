@@ -51,9 +51,12 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 
 | Sesión | Entorno | Tareas de F5 | Punto de parada |
 |---|---|---|---|
-| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 🌐 | T5.1 | Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada |
-| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · (conmutar F4 y) F5 entero + conmutación nominal | 🌐 | T5.2–T5.19 (+ TX.15) | todo sin etiqueta `pendiente`; huella idéntica con `FaseActual = 5`; `ci-local` rc=0 con 0 SKIP |
+| [`F45-01`](../sesiones/F45-01-web-inventario-e-inferencia.md) · inventario E-12 (de F4 y de F5) + F4 entero en verde | 💻 | T5.1 | Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada |
+| [`F45-02`](../sesiones/F45-02-web-conmutar-inferencia-y-catalogo.md) · (conmutar F4 y) F5 entero + conmutación nominal | 💻 | T5.2–T5.19 (+ TX.15) | todo sin etiqueta `pendiente`; huella idéntica con `FaseActual = 5`; `ci-local` rc=0 con 0 SKIP |
 | [`F45-03`](../sesiones/F45-03-cli-cierre.md) · cierre local de las dos fases | 💻 | T5.20–T5.21 (+ T9.26) | definición de hecho de [`reglas.md`](reglas.md) §4; procesos de F9 contra el binario nuevo |
+
+✎ **2026-10-07**: F45-01 y F45-02 figuraban como 🌐; las dos se hicieron en local (💻, D-R-8: desde el 2026-10-04 no hay
+sesiones web). El «web» del nombre de sus fichas es histórico.
 
 ## Decisiones que necesita (con recomendación)
 
@@ -88,7 +91,8 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 2. 🟡 **E-13 no está en esta spec y parte tres ficheros**: `validator.go` (876) y `tabular.go` (609) superan el tope de
    600, y `catalog_test.go` fusionaría 614 líneas de tres tests viejos. El árbol de `diseno.md` §1 crecerá.
 3. 🟡 **`limits_test.go:150`** (`TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo`) prueba `platform/config`, no
-   `Limits` ni `ReadLimited`: la spec reparte «sus 6 casos» sin decir dónde va este. Por decidir en F45-02.
+   `Limits` ni `ReadLimited`: la spec reparte «sus 6 casos» sin decir dónde va este. ~~Por decidir en F45-02.~~
+   ✎ **2026-10-07**: resuelto en F45-02 (hallazgo 14): **no** se porta; se queda en el viejo.
 4. **El índice viejo se cablea en las dos copias del arranque** (`internal/arranque/fase5_captacion.go:249` e
    `internal/bootstrap/arranque/fase5_captacion.go:245`); la spec solo cita la segunda.
 5. **Los ayudantes de test del carrito no viajan solos**: `rawFromFile`, `readTestdata`, `assertGolden`, `dumpCatalog`
@@ -124,7 +128,8 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
 14. **`limits_test.go:150`** (`TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo`) prueba `platform/config`: **no** se
     porta (resuelve el hallazgo 3). [`diseno.md`](diseno.md) dice 6 casos de `limits_test.go`; son 5 + el no portado.
 15. **Cifra de T5.8**: `catalogimport` medía 120 `Test*` pendientes en 12 ficheros etiquetados (`ROJOS=12`,
-    `PENDIENTES=11`); el «≈37» de [`tareas.md`](tareas.md) no cuadra con lo medido.
+    `PENDIENTES=11`); el «≈37» de [`tareas.md`](tareas.md) no cuadra con lo medido — corregido el 2026-10-07 (nota
+    fechada junto a la cifra).
 16. 🟡 **Corpus adversario en `catalogimport` (fijado tal cual)**: el prefijo reservado no se recorta en el camino JSON
     (`internal/catalogimport/validator.go:558`) pero la planilla sí recorta la celda ⇒ `" _shipping "` se rechaza por
     planilla y se acepta por JSON (decisión de producto, no tocado); `sku` y `code` viajan sin recortar (`:749-759`);
@@ -158,8 +163,8 @@ de tres cosas (tareas `[x]` con SHA, bloque en `ESTADO.md`, hallazgos en este RE
     no se pliegan; un documento roto no borra el índice anterior del tenant; mismos bytes con otro `Sello` son acierto y
     conservan el sello antiguo; `null` y `{}` dan el error de `ParseCatalog` sobre `ErrInvalidFlow`.
 22. **Erratas de la spec**: `diseno.md:18-20` sitúa `Normalizador` en `normalizador.go` (vive en `indice.go`, viejo y
-    nuevo); `diseno.md:32` prevé 2 ficheros de test para dobles y rendimiento (han salido 8 por E-13);
-    `reglas.md:44`: el `grep` del gate §4.3 casa comentarios (motivo de `0977194`). Los exportados en español del índice
+    nuevo); `diseno.md:32` prevé 2 ficheros de test para dobles y rendimiento (han salido 8 por E-13) — las dos, corregidas el 2026-10-07 (nota fechada en
+    `diseno.md` §1); `reglas.md:44`: el `grep` del gate §4.3 casa comentarios (motivo de `0977194`). Los exportados en español del índice
     (`Construir`, `Obtener`…) se conservan (precedente de F4); dobles y auxiliares, en inglés (E-11; la correspondencia,
     en la cabecera de la sesión en [`tareas.md`](tareas.md)).
 23. **`TestIndice_IsNotAFuente`** (sustituye la 2.ª mitad del `frontera_test.go` viejo) entró en `d84475c` porque

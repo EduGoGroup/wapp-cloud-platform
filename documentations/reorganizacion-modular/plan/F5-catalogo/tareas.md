@@ -17,7 +17,7 @@
 > F5 como `internal/modulos/conversacion/model`. No hay puente de import; T5.2 **se hace**. Inventario E-12 aprobado:
 > [`diseno.md`](diseno.md) §6.1.
 
-## Sesión F45-01 · inventario E-12 (junto al de F4) · 🌐 · T5.1
+## Sesión F45-01 · inventario E-12 (junto al de F4) · 💻 · T5.1
 Para cuando: Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada aquí.
 
 - [x] (`5ba9fed`) **T5.1 · docs: Inventario E-12 de F5** · 🌐 · dep. F3 cerrado (se hace con T4.1) · cumple —
@@ -25,7 +25,7 @@ Para cuando: Jhoan aprobó la tabla de niveles de F5 y D-F5-1 está anotada aqu�
   - **Hecho cuando**: **Jhoan aprueba la tabla. Antes de eso no se escribe código.** Si un archivo sale peor, sube de nivel
   - **Commit**: `docs(reorganizacion-modular): F5, inventario E-12 y D-F5-1`
 
-## Sesión F45-02 · F5 entero y conmutación nominal · 🌐 · T5.2–T5.19 (+ TX.15)
+## Sesión F45-02 · F5 entero y conmutación nominal · 💻 · T5.2–T5.19 (+ TX.15)
 Para cuando: todo sin etiqueta `pendiente`; huella idéntica con `FaseActual = 5`; gate ci-local rc=0 con 0 SKIP. (La misma sesión conmuta antes F4.)
 
 > ✅ **Hecha el 2026-10-07** (💻, rama `reorg/f45-02-conmutar-inferencia-catalogo` desde `dev` @ `3c74b80`). Orden real de los
@@ -66,6 +66,7 @@ Para cuando: gate rojo rc=0; gate ci-local rc=0; `make lint` sin `unused`.
 
 ### Rojo de `catalogimport` · T5.7–T5.8
 Para cuando: `make test-pendiente` cuenta **≈37** en `catalogo` + `conversacion/model` (cifra exacta anotada en T5.8); gate ci-local rc=0.
+✎ **2026-10-07 (F45-02)**: el «≈37» no cuadra con lo medido. Al cerrar el rojo de `catalogimport` (T5.8, `0b30c57`): `PENDIENTES=11`, `ROJOS=12` y 120 `Test*` pendientes, sin contar `catalogo/indice`.
 
 - [x] (`07f5c17`; `TestConfig_TechoDeTenantContent_SoloPorSuNombreNuevo` de `limits_test.go:150` **no** se porta: prueba `platform/config`) **T5.7 · rojo(catalogo): `catalogimport/contract.go` y `validator.go`** · 🌐 · dep. T5.3 · cumple R5.3.a, R5.3.b, R5.3.d–f
   - **Ficheros**: `…/catalogo/catalogimport/{contract,validator}.go` y tests
