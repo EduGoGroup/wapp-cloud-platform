@@ -108,8 +108,19 @@ var reglas = candados.Reglas{
 	// tests de platform/httpapi por comportamiento (502) y el proceso P1 por el cable.
 	// inferencia no entra hasta F8, cuando muera bridge_inferencia.go.
 	Conmutados: []string{"acceso", "edge"},
-	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía en F0.
-	Puentes: []candados.Puente{},
+	// Puentes: import de un paquete NUEVO a uno VIEJO, declarado (05 §4.1). Vacía de F0 a F5;
+	// el primero nace en F6 (F6-04).
+	Puentes: []candados.Puente{
+		{
+			Desde: "internal/modulos/solicitudes/intakes/telemetria",
+			Hacia: "internal/flujos/store",
+			Motivo: "flow_events lo escribe el almacén viejo de flujos (store.FlowEvent, InsertFlowEvent), " +
+				"que aún no tiene gemelo nuevo en conversacion; intakes no puede importarlo (ciclo con el " +
+				"test in-package del store), así que lo importa este adaptador",
+			Nace:  "F6",
+			Muere: "F8",
+		},
+	},
 	// Fases cerradas: el commit que cierra cada fase añade aquí su id ("F0", "F1"…); un Puente
 	// cuyo Muere está en esta lista debió borrarse (regla 6). F0 aún no está cerrada.
 	FasesCerradas: []string{},
