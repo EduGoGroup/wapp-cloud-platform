@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: en curso** — F6-02 hecha el 2026-10-08 (`intakes` entero con contrato y test; tipos puros en verde; `PENDIENTES=108`). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -76,7 +76,7 @@ promoción, si no local · 💻 solo local. Cada una cierra con tres cosas: tare
 | Sesión | Entorno | Tareas | Punto de parada |
 |---|---|---|---|
 | [**F6-01**](../sesiones/F6-01-web-inventario-y-hojas.md) · inventario E-12 + hojas | 🌐 | T6.1–T6.5, T6.14 | inventario E-12 **aprobado por Jhoan** (antes no se escribe código) · `sigv1` y `tenantvars` en verde, `note.go` con contrato y test · `ci-local` rc=0 · PR |
-| [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR |
+| [**F6-02**](../sesiones/F6-02-web-intakes-1.md) · `intakes` (1/2): contratos del paquete y tipos puros | 🌐 | T6.6–T6.8, T6.15 | los 24 ficheros de `intakes` con contrato y test + `intakeshelpertest`; `note.go` y los 10 tipos puros en verde · `vet -tags pendiente` rc=0 · PR ✅ hecha el 2026-10-08: son **40** ficheros y **9** tipos puros (hallazgo 11) |
 | [**F6-03**](../sesiones/F6-03-web-intakes-2.md) · `intakes` (2/2): almacenes, acciones, notificador y candados | 🌐 | T6.9, T6.16–T6.18 | 0 pendientes en `S/intakes`; suite verde en memoria; candados del plazo y de la poda verdes, INV-1 escritos tras `pendiente` · PR |
 | [**F6-04**](../sesiones/F6-04-web-quotetext-integrations-crmpush.md) · `quotetext`, `telemetria`, `integrations`, `crmpush` | 🌐❓ | T6.10–T6.13, T6.19–T6.21 | 0 pendientes en el módulo; puente (import) declarado; candado R-12 y esquema CRM verdes · PR |
 | [**F6-05**](../sesiones/F6-05-web-cara-http-y-conmutar.md) · cara HTTP, cableado y conmutar G1–G18 | 🌐❓ | T6.22–T6.26 (= TX.16–TX.18) | 12 ficheros de `apipublica` en verde · huella igual · `go list -deps` · test de cableado completo · `FaseActual = 6` · PR |
@@ -179,3 +179,66 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     descompuesto), convierte U+00A0 y U+3000 en espacio corriente, **deja pasar** U+2060, U+00AD, U+2065, U+206A y
     U+FEFE, y cuenta un U+FFFD por byte malformado; `NoteTooLongError.Runes` es el largo **saneado**. Mutante
     equivalente: quitar U+2029 de `isLayoutRune` no cambia nada (`strings.Fields` ya lo trata como espacio).
+
+### F6-02 (2026-10-08; rama `reorg/f6-02-intakes-contratos-y-tipos` desde `dev` @ `64c181a`)
+
+11. **`S/intakes` son 40 ficheros de producción, no 24.** La ficha contaba los del viejo. Con D-F6-6 ampliada y E-13 nacen
+    4 `memory*.go`, 12 `postgres*.go` (8 por tema + `approved`, `crm`, `customernote`, `reanalysis`), `buyerdata_postgres.go`
+    y dos que la spec no preveía: `service_metrics.go` y `service_revalidate.go`. El viejo colgaba métodos de `*Service` y
+    opciones (`WithMetrics`, `WithMetricsClock`, `ApplyRevalidation`) de `metricas.go` y `revalidate.go`, que aquí son
+    ficheros puros y se pusieron en verde antes de existir `Service`. Los tipos puros son **9**, no 10 (`customernote.go` no nace).
+12. **E-11 obliga a renombrar ~30 exportados del viejo** (`PartirLiteral` → `SplitLiteral`, `ConCifraDeLiteral` →
+    `WithLiteralCipher`, `PublicadorDeMetricas` → `MetricsPublisher`…). La spec, `arquitectura.md` y las tareas de F6-03…F6-05
+    los citan con el nombre viejo: la tabla está en [`tareas.md`](tareas.md), bloque F6-02. Los nombres de **fichero** en
+    español se conservaron (`metricas.go`, `vencimiento.go`, `aprobadas.go`, `reanalisis.go`), porque así los nombra el
+    inventario aprobado; los ficheros que no existían en el viejo nacen en inglés. 🟡 Criterio del orquestador: si Jhoan
+    prefiere los ficheros en inglés, es un `git mv` sin tocar contenido.
+13. ✅ **La suite exige que `UpdatedAt` se refresque en toda escritura de cabecera** (`UpdateStatus`, `EnsureShippingLine`
+    si cambia algo, `ReplaceItems`, `ApplyRevalidation`, `Discard`, `AbandonByEvent`; no en los dos recordatorios). Es lo
+    que hace el Postgres viejo (`updated_at = now()`); el `MemoryStore` viejo solo lo movía en `AbandonByEvent`. Memoria y
+    Postgres divergían ya en el viejo, y `UpdatedAt` es la base de `Overdue`. Se eligió Postgres, que es lo que corre en
+    UAT. Punto único donde vive la regla: `adoptRefreshedUpdatedAt` en `intakeshelpertest/snapshot_contrato.go`.
+    **Decidido por Jhoan el 2026-10-08 (D-F6-8): se mantiene.** El `MemoryStore` nuevo refresca `UpdatedAt` en toda
+    escritura de cabecera, a diferencia del doble viejo: lo escribe F6-03 (T6.16).
+14. ✅ **`(*MemoryStore).StoredStatus` es un exportado nuevo**, fuera del API viejo: todas las lecturas del puerto
+    normalizan el estado y, sin ese mirador, la marca de estado (hallazgo 35) no distingue `closed` de `confirmed`.
+    Alternativa: quitar `Montaje.StoredStatus` y perder esa columna de la vigilancia. **Decidido por Jhoan el
+    2026-10-08 (D-F6-9): se conserva.**
+15. ✅ **El `Montaje` de Postgres no cableaba el cifrador del literal** (decidido por Jhoan el 2026-10-08, **D-F6-10**: la
+    suite reexporta la opción; el candado no se toca). La regla 3b del candado `ProcessImports` solo deja usar los `New…`
+    del paquete del puerto desde `test/procesos`: `intakes.WithLiteralCipher` muerde, y sin cifrador
+    `InsertRevision_LiteralLeavesThePayloadAndReturnsOnRead` habría fallado contra Postgres en F6-06. Ahora
+    `intakeshelpertest.WithLiteralCipher` la reexporta y el `Montaje` la cablea con un `crypto.FieldCipher` de keyring
+    propio, como `tenantllm_contrato_test.go`. Escrito y compilado, **no corrido** (lo corre F6-06). Además, `test/procesos/intakes_contrato_test.go` lleva `integracion && pendiente` (el adaptador en
+    rojo hace `panic` y abortaría el binario de procesos): F6-03 quita `&& pendiente` al poner `postgres*.go` en verde.
+16. **D-F6-5 quedó en dos relojes independientes**: `WithClock` (nuevo, para `Summary`) y `WithMetricsClock` (viejo).
+    Ninguno mueve al otro. Es lo fiel al viejo, donde el reloj de las métricas no tocaba `Summary`.
+17. **Conductas incidentales del viejo, fijadas en test para que cambiarlas sea una decisión**: (a) `PushRevisionByID`
+    lee por `Service.Get`, así que con el puente CRM cableado el pipeline **dispara los recordatorios perezosos**
+    (`V/reanalisis.go:137`); (b) `Approve` y `RequestInfo` rechazan el texto vacío **antes** de resolver la solicitud,
+    al revés de lo que dice su propio comentario («el recurso antes que el cuerpo»); orden real de `Approve`:
+    `ErrNoQuoteSender` > `ErrNoRevisionWriter` > `ErrEmptyQuoteText` > `ErrNotFound` > `NotApprovableError` >
+    `PendingPriceError` > `ErrEmptyQuote`; (c) un texto que solo lleva U+200B **no** es vacío y se aprueba tal cual;
+    (d) `NotifyCRMStatus` exige el lector de configuración aunque no lo lee, y `SendQuote`/`SendQuestion` no.
+18. **Defecto latente del viejo, sin fijar en test**: si el contenido descifrado de una fila de datos del comprador fuera
+    el JSON `null`, `GetBuyerData` devuelve `(nil, true, nil)` y `PutBuyerField` entraría en pánico al asignar a un mapa
+    nil (`internal/intakes/buyerdata.go:107`, `:217`). Hoy es inalcanzable (solo se escriben objetos). F6-03 decide si se endurece.
+19. **Lo que el contrato dice ahora y el viejo callaba** (hallado con los corpus adversarios, T-15): la comparación de
+    estados es byte a byte (ni mayúsculas, ni espacios, ni U+200B, ni la `ｃ` de ancho completo son el alias `closed`);
+    `Offset` no sanea (página 0 → −50); `SplitLiteral` reserializa con claves en orden alfabético y escapa `<`, `>`, `&`
+    y U+2028; `MergeLiteral` acepta las posiciones `"+0"`, `"-0"` y `"01"`; `PriceList.Lookup` es exacto, sin plegar
+    mayúsculas; dentro del céntimo de tolerancia la línea se lleva igualmente el precio vigente.
+20. **`diseno.md` §2.1 atribuye mal dos símbolos**: `StatusNotice` vive en `notifier.go` (no en `status.go`) y
+    `LineChange` en `revalidate.go` (no en `revisions.go`). El candado de `approve_contrato_test` contra `stages.Linea`
+    no cabe en `S/intakes`: toca a quien reconstruya el productor (F7).
+21. **Los escapes `\uXXXX` llegan al disco como runa cruda** con las herramientas de escritura de los agentes (le pasó
+    a cinco de ocho). Un U+200B o un U+00A0 crudos en un literal de test son invisibles en la revisión. Barrido usado antes
+    de cada commit: `perl -CSD -ne 'print "$ARGV:$.\n" if /[\x{00A0}\x{00AD}\x{200B}-\x{200F}\x{2028}-\x{202E}\x{2060}-\x{206F}\x{3000}\x{FEFF}]/'`.
+    Candidato a candado (junto al de identificadores no ASCII que `05` E-11 deja por decidir).
+22. **Ocho sub-agentes a la vez en un mismo paquete funcionó**, con tres condiciones: ficheros disjuntos, el API
+    exportado fijado de antemano (copia fiel del viejo + tabla de renombres) y un solo commiteador. Cada agente validó
+    lo suyo con `go … -overlay` mientras los demás escribían. Coste: dos commits intermedios no compilan solos
+    (`743d85d` usa `ReservedSKUPrefix`, que entra en `9f393c2`; `9f393c2` con `-tags pendiente` necesita `c366c68`).
+23. **No leído entero (E-8)**: de los `*_integration_test.go` de `intakes` distintos de `postgres_integration_test.go`
+    solo se leyeron las cabeceras de cada test, no los cuerpos. F6-03 los lee al poner en verde cada almacén.
+
