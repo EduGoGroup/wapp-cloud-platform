@@ -33,9 +33,30 @@ package intakes
 import (
 	"context"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
+
+// depositReminderPreamble es la respuesta ENLATADA del recordatorio (D-041.12). Va
+// SEGUIDA de la plantilla de seña del tenant, y esa composición es la decisión:
+//
+//   - la parte de arriba es de la plataforma y por eso está en el código;
+//   - los datos para pagar son del tenant y no pueden vivir aquí (notifier.go), así
+//     que se reusa su plantilla en vez de mandar un recordatorio que obliga al
+//     cliente a rebuscar el mensaje anterior en el chat.
+const depositReminderPreamble = "⏰ Te recordamos que tu pedido sigue esperando la seña para quedar reservado. " +
+	"Si ya la pagaste, avísanos por aquí y lo confirmamos."
+
+// maxRemindersPerTouch acota cuántos recordatorios sale a mandar UN toque. Es 1, y
+// no es timidez: el toque es SÍNCRONO dentro de un GET del dueño, y cada envío
+// espera el Ack del Edge. Sin cota, la primera vez que un tenant abre su bandeja con
+// veinte señas vencidas su listado se quedaría colgado veinte round-trips —y si el
+// Edge está lento, el GET muere por timeout y la consola deja de funcionar por culpa
+// de una cortesía—.
+//
+// No se pierde nada: lo perezoso es eventual por definición. La solicitud que no
+// entró en este toque entra en el siguiente, y el dueño toca su bandeja muchas veces
+// al día. La cota es de LATENCIA, no de política. La comparte el recordatorio del
+// plazo (vencimiento.go).
+const maxRemindersPerTouch = 1
 
 // DepositStore es lo que el recordatorio necesita de la persistencia, y solo eso
 // (ISP): no ve el listado, ni el export, ni las transiciones. Lo satisfacen el
@@ -94,7 +115,11 @@ type DepositStore interface {
 // toque es SÍNCRONO dentro de una lectura del dueño y cada envío espera el Ack del
 // Edge. Es una cota de LATENCIA, no de política: la solicitud que no entró en este
 // toque entra en el siguiente.
-type DepositReminder struct{}
+type DepositReminder struct {
+	notifier *Notifier
+	store    DepositStore
+	now      func() time.Time
+}
 
 // ReminderOption configura el DepositReminder al construirlo.
 type ReminderOption func(*DepositReminder)
@@ -108,7 +133,11 @@ type ReminderOption func(*DepositReminder)
 // se compara contra deposit_due_at y el que se le pasa al store para escribir
 // deposit_reminded_at), así que un test no puede quedarse con medio tiempo falso.
 func WithReminderClock(now func() time.Time) ReminderOption {
-	panic(pendiente.Implementar("intakes.WithReminderClock"))
+	return func(r *DepositReminder) {
+		if now != nil {
+			r.now = now
+		}
+	}
 }
 
 // NewDepositReminder construye el recordatorio sobre el notificador y el store, y
@@ -117,7 +146,11 @@ func WithReminderClock(now func() time.Time) ReminderOption {
 // avisa UNA vez—, pero construirlo con alguna a `nil` NO falla: devuelve un
 // recordatorio que se calla (ver Remind).
 func NewDepositReminder(n *Notifier, store DepositStore, opts ...ReminderOption) *DepositReminder {
-	panic(pendiente.Implementar("intakes.NewDepositReminder"))
+	r := &DepositReminder{notifier: n, store: store, now: time.Now}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Remind evalúa el recordatorio sobre solicitudes YA LEÍDAS: es el toque del dueño
@@ -147,7 +180,27 @@ func NewDepositReminder(n *Notifier, store DepositStore, opts ...ReminderOption)
 // A diferencia de RemindContact, no devuelve los textos: este toque lo dispara una
 // pantalla de la consola, no una conversación, y no hay hilo al que pertenezcan.
 func (r *DepositReminder) Remind(ctx context.Context, tenantID string, touched []Intake) {
-	panic(pendiente.Implementar("intakes.DepositReminder.Remind"))
+	if !r.usable() {
+		return
+	}
+	defer r.containPanic("recordatorio de seña sobre solicitudes ya leídas")
+
+	at := r.now()
+	sent := 0
+	for _, in := range touched {
+		if !candidate(in, at) {
+			continue
+		}
+		// El texto se DESCARTA aquí a propósito: este toque lo dispara una pantalla
+		// de la consola del dueño, no una conversación, así que no hay hilo de evento
+		// al que pertenezca. Solo RemindContact lo propaga.
+		if _, ok := r.remindOne(ctx, tenantID, in.ID, at); ok {
+			sent++
+		}
+		if sent >= maxRemindersPerTouch {
+			return
+		}
+	}
 }
 
 // RemindContact evalúa el recordatorio de las solicitudes de un contacto: es el
@@ -179,5 +232,108 @@ func (r *DepositReminder) Remind(ctx context.Context, tenantID string, touched [
 // Por lo demás sigue la misma secuencia que Remind (config → marca → envío) y la
 // misma cota de uno por toque.
 func (r *DepositReminder) RemindContact(ctx context.Context, tenantID, contactID string) []string {
-	panic(pendiente.Implementar("intakes.DepositReminder.RemindContact"))
+	if !r.usable() || tenantID == "" || contactID == "" {
+		return nil
+	}
+	// 🔴 SIN retorno con nombre, a propósito: ante un pánico contenido la función
+	// devuelve nil y no lo acumulado (ver el comentario de arriba).
+	defer r.containPanic("recordatorio de seña por mensaje entrante")
+
+	at := r.now()
+	pending, err := r.store.PendingDepositReminders(ctx, tenantID, contactID, at, maxRemindersPerTouch)
+	if err != nil {
+		r.notifier.log.Error("recordatorio de seña: no se pudo consultar las señas vencidas del contacto",
+			"error", err, "tenant_id", tenantID, "contact_id", contactID)
+		return nil
+	}
+	var sent []string
+	for _, in := range pending {
+		text, ok := r.remindOne(ctx, tenantID, in.ID, at)
+		if ok {
+			sent = append(sent, text)
+		}
+		if len(sent) >= maxRemindersPerTouch {
+			return sent
+		}
+	}
+	return sent
+}
+
+// usable dice si el recordatorio puede operar. Un recordatorio a medias no avisa,
+// pero tampoco rompe al que lo invocó (mismo criterio que NotifyStatus).
+func (r *DepositReminder) usable() bool {
+	return r != nil && r.store != nil && r.notifier != nil && r.notifier.log != nil &&
+		r.notifier.sender != nil && r.notifier.contacts != nil && r.notifier.settings != nil
+}
+
+// containPanic hace ESTRUCTURAL la promesa de que tocar una solicitud no puede
+// reventar por culpa del recordatorio: sin esto, un pánico en el store, en el
+// resolver de PII o en el transporte subiría por la pila hasta el handler y
+// convertiría el LISTADO del dueño en un 500 — un listado que ni siquiera pidió
+// mandar mensajes. Se registra entero; lo que se contiene es el alcance. Era
+// contenerPánico en el viejo.
+func (r *DepositReminder) containPanic(where string) {
+	rec := recover()
+	if rec == nil {
+		return
+	}
+	r.notifier.log.Error("recordatorio de seña: pánico contenido; el toque de la solicitud sigue su curso",
+		"donde", where, "panic", rec)
+}
+
+// candidate es el PRE-FILTRO sobre una fila ya leída: ¿tiene sentido siquiera
+// preguntarle a la BD por esta solicitud? Reproduce la condición del
+// compare-and-swap y NO la sustituye — lo que decide es el UPDATE, esto solo evita
+// el viaje.
+//
+// Las cuatro condiciones son las de D-041.12: seña pedida (y no pagada ni
+// cancelada), con fecha, vencida, y sin recordar.
+func candidate(in Intake, at time.Time) bool {
+	return NormalizeStatus(in.Status) == StatusDepositRequested &&
+		!in.DepositDueAt.IsZero() &&
+		!in.DepositDueAt.After(at) &&
+		in.DepositRemindedAt.IsZero()
+}
+
+// remindOne intenta recordar UNA solicitud y devuelve el texto que mandó y si mandó
+// algo (D-044.24). Con el booleano en false la cadena no significa nada y está
+// vacía. Los tres pasos van en ESTE orden y ninguno es intercambiable:
+//
+//  1. ¿PUEDE decirse algo? Se lee la config del tenant. Va primero justamente para
+//     NO gastar la marca de un tenant sin plantilla de seña: si se marcara antes, ese
+//     cliente perdería su único recordatorio para siempre, incluso después de que su
+//     tenant configurara la plantilla. Este paso no escribe nada.
+//  2. GANAR la marca (compare-and-swap). A partir de aquí, este toque —y ningún
+//     otro— es el que recuerda esta solicitud.
+//  3. ENVIAR, y renderizar con la fila que devolvió el CAS: es la única versión de la
+//     solicitud que se sabe vigente, y de ella salen el total y la fecha del texto.
+//     Que el envío falle después de marcar es el error elegido (cabecera del
+//     fichero): antes un silencio que un goteo.
+func (r *DepositReminder) remindOne(ctx context.Context, tenantID, intakeID string, at time.Time) (string, bool) {
+	log := r.notifier.log.With("intake_id", intakeID, "tenant_id", tenantID)
+
+	cfg, ok := r.notifier.depositSettings(ctx, tenantID, log, noTemplateOnReminder)
+	if !ok {
+		return "", false // el silencio ya quedó registrado con su causa; la marca sigue libre
+	}
+
+	marked, won, err := r.store.MarkDepositReminded(ctx, tenantID, intakeID, at)
+	if err != nil {
+		log.Error("recordatorio de seña: no se pudo marcar la solicitud; no se envía", "error", err)
+		return "", false
+	}
+	if !won {
+		// Lo normal: la seña ya no está pendiente, no venció, o alguien recordó
+		// primero. No es una avería y no merece más que un debug.
+		log.Debug("recordatorio de seña: no procedía (ya recordada, no vencida o seña resuelta)")
+		return "", false
+	}
+
+	text := depositReminderPreamble + "\n\n" + render(cfg.DepositTemplate, marked, cfg.DepositDueDays)
+	r.notifier.deliver(ctx, tenantID, marked, text, log.With("motivo", "recordatorio_sena"))
+	// Se devuelve `true` (y el texto) tras la ENTREGA aunque `deliver` no diga si
+	// salió: «que el envío falle después de marcar es el error elegido», y el hilo
+	// hereda el mismo criterio que el resto de los salientes fuera de turno. La marca
+	// en BD ya se gastó: para todos los efectos, este recordatorio ocurrió.
+	return text, true
 }
