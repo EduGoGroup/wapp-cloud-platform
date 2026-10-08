@@ -77,6 +77,7 @@ Para cuando: los 24 ficheros de `S/intakes` con contrato y test + `intakeshelper
 Para cuando: `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes/intakes/*.go | wc -l` → 0 · suite `intakeshelpertest` verde en memoria con `-race` y 0 SKIP · candados de vencimiento y de la poda verdes; los dos INV-1 escritos tras `//go:build pendiente` · `ci-local` rc=0 · PR.
 
 - [ ] **T6.16 · verde(solicitudes): `memory.go` y las 9 acciones** · 🌐 · `memory.go` primero: la suite `intakeshelpertest` pasa entera con `-race`, 0 SKIP
+  - **D-F6-8 (2026-10-08)**: el `MemoryStore` nuevo refresca `UpdatedAt` en toda escritura de cabecera (el viejo solo en `AbandonByEvent`): aquí **no** se copia el doble viejo, manda la suite
 - [ ] **T6.17 · verde(solicitudes): `notifier.go`, `buyerdata.go`, `buyerdata_postgres.go`** · 🌐 · textos de plantilla asertados byte a byte
 - [ ] **T6.18 · verde(solicitudes): `postgres.go` + candado de la poda** · 🌐 · cumple R6.2.d
   - **Hecho cuando**: SQL copiado literal (`diff` de `grep -o 'public\.[a-z_]*'` viejo/nuevo vacío); funciones puras con test; candado AST `revisionsOf → ejecutarPoda → sellarPodada` añadido a `postgres_test.go`; su verdad la da la suite `intakeshelpertest` contra Postgres (P4, T6.27) y F9

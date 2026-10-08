@@ -193,11 +193,13 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     español se conservaron (`metricas.go`, `vencimiento.go`, `aprobadas.go`, `reanalisis.go`), porque así los nombra el
     inventario aprobado; los ficheros que no existían en el viejo nacen en inglés. 🟡 Criterio del orquestador: si Jhoan
     prefiere los ficheros en inglés, es un `git mv` sin tocar contenido.
-13. 🟡 **La suite exige que `UpdatedAt` se refresque en toda escritura de cabecera** (`UpdateStatus`, `EnsureShippingLine`
+13. ✅ **La suite exige que `UpdatedAt` se refresque en toda escritura de cabecera** (`UpdateStatus`, `EnsureShippingLine`
     si cambia algo, `ReplaceItems`, `ApplyRevalidation`, `Discard`, `AbandonByEvent`; no en los dos recordatorios). Es lo
     que hace el Postgres viejo (`updated_at = now()`); el `MemoryStore` viejo solo lo movía en `AbandonByEvent`. Memoria y
     Postgres divergían ya en el viejo, y `UpdatedAt` es la base de `Overdue`. Se eligió Postgres, que es lo que corre en
-    UAT. Punto único para cambiarlo: `adoptRefreshedUpdatedAt` en `intakeshelpertest/snapshot_contrato.go`. **Decide Jhoan.**
+    UAT. Punto único donde vive la regla: `adoptRefreshedUpdatedAt` en `intakeshelpertest/snapshot_contrato.go`.
+    **Decidido por Jhoan el 2026-10-08 (D-F6-8): se mantiene.** El `MemoryStore` nuevo refresca `UpdatedAt` en toda
+    escritura de cabecera, a diferencia del doble viejo: lo escribe F6-03 (T6.16).
 14. 🟡 **`(*MemoryStore).StoredStatus` es un exportado nuevo**, fuera del API viejo: todas las lecturas del puerto
     normalizan el estado y, sin ese mirador, la marca de estado (hallazgo 35) no distingue `closed` de `confirmed`.
     Alternativa: quitar `Montaje.StoredStatus` y perder esa columna de la vigilancia. **Decide Jhoan.**
