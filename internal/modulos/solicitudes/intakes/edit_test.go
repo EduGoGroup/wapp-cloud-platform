@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -249,11 +247,13 @@ func (s *editCRMSpy) PushRevision(_ context.Context, tenantID string, d Detail, 
 type editMetricSpy struct {
 	names    []string
 	contacts []string
+	payloads []map[string]any
 }
 
-func (s *editMetricSpy) PublishMetric(_ context.Context, _, contactID, name string, _ map[string]any) error {
+func (s *editMetricSpy) PublishMetric(_ context.Context, _, contactID, name string, payload map[string]any) error {
 	s.names = append(s.names, name)
 	s.contacts = append(s.contacts, contactID)
+	s.payloads = append(s.payloads, payload)
 	return nil
 }
 
@@ -456,7 +456,10 @@ func TestReplaceItems_NoRevisionNoPush(t *testing.T) {
 }
 
 // TestReplaceItems_PublishesTheCorrectionMetric: tras escribir sale UNA métrica de
-// corrección, a nombre del contacto de la solicitud.
+// corrección, a nombre del contacto de la solicitud, y contada contra las líneas de
+// ANTES (las que se leyeron), no contra las que mandó el dueño: había una hamburguesa
+// y el dueño añade el queso ⇒ 1 corregida de 2. Con las líneas nuevas en los dos lados
+// saldría 0 de 2.
 func TestReplaceItems_PublishesTheCorrectionMetric(t *testing.T) {
 	t.Parallel()
 	st := editPendingStore(1)
@@ -470,5 +473,8 @@ func TestReplaceItems_PublishesTheCorrectionMetric(t *testing.T) {
 	}
 	if metrics.contacts[0] != "contacto-opaco-1" {
 		t.Errorf("la métrica va a nombre de %q, quería el contacto de la solicitud", metrics.contacts[0])
+	}
+	if got := metrics.payloads[0]; got["lines_corrected"] != 1 || got["lines_total"] != 2 {
+		t.Errorf("payload de la métrica = %v, quería 1 línea corregida de 2 (antes contra después)", got)
 	}
 }

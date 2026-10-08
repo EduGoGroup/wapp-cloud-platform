@@ -15,8 +15,8 @@ package intakes
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"strings"
 )
 
 // ReservedSKUPrefix es el prefijo de los skus que pone LA PLATAFORMA (hoy solo la
@@ -86,7 +86,7 @@ type InvalidItemsError struct {
 // no pluraliza (con uno dice «1 líneas inválidas»). Es un texto observable y se
 // conserva byte a byte.
 func (e *InvalidItemsError) Error() string {
-	panic(pendiente.Implementar("intakes.InvalidItemsError.Error"))
+	return fmt.Sprintf("la edición tiene %d líneas inválidas", len(e.Defects))
 }
 
 // TooManyItemsError es el rechazo por pasarse de MaxEditableItems. Lleva cuántas
@@ -99,7 +99,7 @@ type TooManyItemsError struct {
 // Error devuelve "la edición trae <Count> líneas y el máximo es <Max>". Es un texto
 // observable y se conserva byte a byte.
 func (e *TooManyItemsError) Error() string {
-	panic(pendiente.Implementar("intakes.TooManyItemsError.Error"))
+	return fmt.Sprintf("la edición trae %d líneas y el máximo es %d", e.Count, e.Max)
 }
 
 // NotEditableError es el rechazo de una edición sobre una solicitud que NO está en
@@ -118,7 +118,7 @@ type NotEditableError struct {
 // estado entrecomillado con %q (comillas y saltos de línea salen escapados). Es un
 // texto observable y se conserva byte a byte.
 func (e *NotEditableError) Error() string {
-	panic(pendiente.Implementar("intakes.NotEditableError.Error"))
+	return fmt.Sprintf("una solicitud en %q no se puede editar a mano", e.Status)
 }
 
 // EditableStatus es el ÚNICO estado desde el que se editan líneas a mano: el
@@ -168,7 +168,44 @@ const EditableStatus = StatusPendingApproval
 //   - Dos líneas con el mismo sku. Son legítimas: D-041.20 parte una línea en dos
 //     cuando llevan personalizaciones distintas.
 func ValidateEditableItems(items []Item) error {
-	panic(pendiente.Implementar("intakes.ValidateEditableItems"))
+	if len(items) > MaxEditableItems {
+		return &TooManyItemsError{Count: len(items), Max: MaxEditableItems}
+	}
+
+	defects := make([]LineDefect, 0, len(items))
+	for i, it := range items {
+		defects = append(defects, lineDefects(i, it)...)
+	}
+	if len(defects) > 0 {
+		return &InvalidItemsError{Defects: defects}
+	}
+	return nil
+}
+
+// lineDefects reúne los defectos de UNA línea. Devuelve todos los que tenga, no el
+// primero: una línea con el sku vacío Y la cantidad en cero tiene dos problemas.
+func lineDefects(i int, it Item) []LineDefect {
+	var out []LineDefect
+	add := func(field, msg string) {
+		out = append(out, LineDefect{Index: i, Field: field, Message: msg})
+	}
+
+	switch {
+	case strings.TrimSpace(it.SKU) == "":
+		add("sku", "el sku es obligatorio: es lo que identifica al artículo en el pedido")
+	case strings.HasPrefix(it.SKU, ReservedSKUPrefix):
+		add("sku", "el sku empieza por "+ReservedSKUPrefix+", que está reservado para las líneas que pone wApp (el envío): esas no se editan por aquí")
+	}
+	if strings.TrimSpace(it.Label) == "" {
+		add("label", "la etiqueta es obligatoria: es lo que se lee en el pedido, en la comanda y en el CSV")
+	}
+	if it.Qty < 1 {
+		add("qty", "la cantidad tiene que ser 1 o más; para quitar la línea, mándala fuera de la lista")
+	}
+	if it.UnitPrice < 0 {
+		add("unit_price", "el precio no puede ser negativo (0 sí: es un artículo de regalo)")
+	}
+	return out
 }
 
 // ReplaceItems SUSTITUYE las líneas de cliente de una solicitud en
@@ -220,5 +257,37 @@ func ValidateEditableItems(items []Item) error {
 // Errores: *InvalidItemsError / *TooManyItemsError, ErrNotFound, *NotEditableError,
 // ErrConflict, o el fallo de infraestructura del store.
 func (s *Service) ReplaceItems(ctx context.Context, tenantID, intakeID string, items []Item, mode EditMode) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.ReplaceItems"))
+	if err := ValidateEditableItems(items); err != nil {
+		return Detail{}, err
+	}
+
+	// El recurso se resuelve ANTES que el estado, igual que en SetStatus: una
+	// solicitud ajena responde 404 y no revela por el código de error que existe.
+	current, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	if from := NormalizeStatus(current.Status); from != EditableStatus {
+		return Detail{}, &NotEditableError{Status: from}
+	}
+
+	detail, err := s.store.ReplaceItems(ctx, tenantID, intakeID, items, StoredVariants(EditableStatus), mode)
+	if err != nil {
+		return Detail{}, err
+	}
+
+	// El número REAL de la revisión que el store acaba de numerar, leído del detalle
+	// que ya está en la mano (los dos stores recargan las revisiones dentro de su
+	// unidad de trabajo). Sin revisión no se empuja: un push con revision_no 0 es el
+	// único valor que el schema del contrato rechaza, y el puente lo tiraría entero.
+	if rev, ok := LastRevision(detail.Revisions); ok {
+		s.PushRevisionToCRM(ctx, tenantID, detail, rev.RevisionNo)
+	}
+
+	// La métrica de design §10 (T5.2). Va con las líneas de ANTES —las que se acaban
+	// de leer para validar el estado— y las que mandó el dueño: es la única forma de
+	// saber cuántas cambiaron, porque el store devuelve el resultado, no el diff. Ver
+	// correctionCount para por qué el denominador no es `len(items)`.
+	s.publishCorrectionMetric(ctx, tenantID, detail.Intake, current.Items, items)
+	return detail, nil
 }
