@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package crmpush
 
 // push_test.go — la FORMA del `intake.push`: Build, los tipos del cable y el schema

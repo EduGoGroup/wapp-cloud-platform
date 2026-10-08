@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package crmpush
 
 // contrato_test.go — R-12 SOBRE EL AST: LOS CAMPOS CLAVE DEL CONTRATO NO PUEDEN SER
@@ -13,10 +11,9 @@ package crmpush
 // vigilando un sitio VACÍO: verde sin mirar nada. Por eso barre los DOS directorios
 // y por eso exige encontrar sitios en cada uno.
 //
-// 🔴 POR QUÉ LLEVA `//go:build pendiente`: mientras push.go y desde_intakes.go sean
-// contrato sin lógica, este paquete no fija ninguno de los dos campos y la guarda
-// anti-hueco CORTA —que es lo que debe hacer—. Pierde la etiqueta con el verde de
-// push.go.
+// Nació con `//go:build pendiente` (mientras push.go era contrato sin lógica, este
+// paquete no fijaba ninguno de los dos campos y la guarda anti-hueco cortaba) y la
+// perdió con el verde de push.go.
 //
 // La lista de directorios es la de la fase F6 y se re-toca en F8, cuando el motor
 // pase a `../../../conversacion/runtime` (diseno.md §6), con la guarda intacta.

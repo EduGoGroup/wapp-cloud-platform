@@ -30,11 +30,12 @@ package crmpush
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 )
 
 // Kind es el `kind` con el que la entrega viaja en webhook_outbox, y Verb el del
@@ -181,12 +182,44 @@ type Payload struct {
 // Los dos los vigila contrato_test.go sobre el AST, en ESTE paquete y en el motor
 // de flujos.
 func Build(in Input, now time.Time) Payload {
-	panic(pendiente.Implementar("crmpush.Build"))
+	// La slice se COPIA en vez de compartirse: el documento que sale de aquí se
+	// serializa y se persiste, y no puede cambiar porque el llamante siga tocando la
+	// suya. `make` con largo 0 —y no nil— porque el schema declara `items` requerido
+	// y un nil serializa como `null`, que el puente rechaza.
+	items := make([]Item, 0, len(in.Items))
+	items = append(items, in.Items...)
+	return Payload{
+		ContractVersion: ContractVersion,
+		Verb:            Verb,
+		Tenant:          in.TenantID,
+		Contact:         in.ContactID,
+		IntakeID:        in.IntakeID,
+		// El contrato PROHÍBE emitir `closed` (intake.push.md: «El contrato JAMÁS
+		// emite closed»), que es la clave legada con la que el carrito cierra la fila
+		// desde el Plan 016. Normalizar aquí —y no en cada puerta— es lo que garantiza
+		// que ninguna se lo salte: intakes.NormalizeStatus es el ÚNICO punto del
+		// sistema donde se resuelve ese alias.
+		LifecycleStatus: intakes.NormalizeStatus(in.LifecycleStatus),
+		RevisionNo:      in.RevisionNo,
+		Items:           items,
+		Total:           in.Total,
+		// Sin `.UTC()` a propósito (fiel al viejo): el reloj del Pusher ya lo entrega
+		// en UTC, y Build no decide la zona de quien la llama.
+		Timestamp:      now.Format(time.RFC3339),
+		EventHistoryID: in.EventHistoryID,
+	}
 }
 
 // Pusher evalúa el gate del tenant y encola el documento. Es seguro para uso
 // concurrente (no guarda estado propio que cambie tras construirlo).
-type Pusher struct{}
+type Pusher struct {
+	log    logger.Logger
+	queuer Queuer
+	gate   Gate
+	// now existe para que Result.Payload.Timestamp sea comprobable sin depender del
+	// reloj de la máquina. En producción es time.Now().UTC(), como lo era en el sink.
+	now func() time.Time
+}
 
 // Option configura el Pusher al construirlo (functional option de CONSTRUCCIÓN,
 // que es el único patrón de opciones que usa este repo).
@@ -197,7 +230,11 @@ type Option func(*Pusher)
 // nil, el Pusher usa time.Now().UTC(). Si se pasa más de una vez, manda la última
 // que no sea nil.
 func WithClock(now func() time.Time) Option {
-	panic(pendiente.Implementar("crmpush.WithClock"))
+	return func(p *Pusher) {
+		if now != nil {
+			p.now = now
+		}
+	}
 }
 
 // NewPusher construye el encolador y nunca devuelve nil. log/queuer/gate son
@@ -206,7 +243,11 @@ func WithClock(now func() time.Time) Option {
 // apagar el empuje —no matar el proceso ni, peor, colgar el mensaje del cliente.
 // Aplica las opciones en el orden dado.
 func NewPusher(log logger.Logger, queuer Queuer, gate Gate, opts ...Option) *Pusher {
-	panic(pendiente.Implementar("crmpush.NewPusher"))
+	p := &Pusher{log: log, queuer: queuer, gate: gate, now: func() time.Time { return time.Now().UTC() }}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Result cuenta qué pasó con un empuje.
@@ -268,5 +309,58 @@ type Result struct {
 // ruta HTTP puede querer contestar con un código. Tragarse el error aquí le quitaría
 // esa decisión a la segunda puerta.
 func (p *Pusher) Push(ctx context.Context, in Input) (Result, error) {
-	panic(pendiente.Implementar("crmpush.Pusher.Push"))
+	if p == nil || p.log == nil || p.queuer == nil || p.gate == nil {
+		// Pusher a medias (tests que solo ejercitan el camino "no entrega"): no-op
+		// seguro, exactamente como lo era el sink construido sin sender/gate.
+		return Result{}, nil
+	}
+
+	enabled, err := p.gate.Enabled(ctx, in.TenantID)
+	if err != nil {
+		return Result{}, fmt.Errorf("crmpush: evaluar el gate del puente CRM de %s: %w", in.TenantID, err)
+	}
+	if !enabled {
+		p.log.Debug("crmpush: tenant sin puente CRM activo, no se encola",
+			"tenant", in.TenantID, "intake_id", in.IntakeID)
+		return Result{}, nil
+	}
+
+	payload := Build(in, p.now())
+	p.reportWhatSchemaWillReject(payload)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Result{Payload: payload}, fmt.Errorf("crmpush: serializar intake.push de %s: %w", in.IntakeID, err)
+	}
+
+	id, err := p.queuer.EnqueueWebhook(ctx, in.TenantID, Kind, body)
+	if err != nil {
+		return Result{Payload: payload}, fmt.Errorf("crmpush: encolar intake.push de %s: %w", in.IntakeID, err)
+	}
+	return Result{Enqueued: true, OutboxID: id, Payload: payload}, nil
+}
+
+// reportWhatSchemaWillReject (era denunciaLoQueElSchemaVaARechazar) registra los dos
+// campos que una puerta puede dejar sin rellenar y que el puente rechazará al
+// validar.
+//
+// NO aborta el encolado, y esa es la decisión: dejar la entrega fuera cambiaría un
+// defecto VISIBLE —un push que el puente rechaza, con su fila en webhook_outbox y
+// su motivo— por la pérdida SILENCIOSA del pedido. El operador tiene que poder
+// encontrarlo por el intake_id antes de que el CRM se queje.
+//
+// Va aquí y no en cada puerta por lo mismo que el resto del fichero: es parte de la
+// regla, y una puerta nueva no puede nacer sin ella.
+func (p *Pusher) reportWhatSchemaWillReject(payload Payload) {
+	if payload.RevisionNo < 1 {
+		p.log.Error("crmpush: intake.push sin revision_no; se encola con un número que el contrato "+
+			"rechaza en vez de inventar uno (un número FALSO lo aplica el puente sin sospechar)",
+			"tenant", payload.Tenant, "intake_id", payload.IntakeID, "revision_no", payload.RevisionNo)
+	}
+	if payload.LifecycleStatus == "" {
+		p.log.Error("crmpush: intake.push sin lifecycle_status; se encola vacío en vez de inventar "+
+			"un estado (el literal `confirmed` que esto sustituye mentía en cuanto la solicitud no venía "+
+			"de un cierre de carrito)",
+			"tenant", payload.Tenant, "intake_id", payload.IntakeID)
+	}
 }

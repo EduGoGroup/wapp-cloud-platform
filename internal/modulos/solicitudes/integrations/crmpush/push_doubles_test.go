@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package crmpush
 
 // push_doubles_test.go — los dobles de los tests de este paquete: reloj fijo, log que

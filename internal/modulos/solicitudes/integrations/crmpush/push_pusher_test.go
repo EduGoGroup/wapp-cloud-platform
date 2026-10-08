@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package crmpush
 
 // push_pusher_test.go — la REGLA del `intake.push`: Pusher.Push, NewPusher y
@@ -11,6 +9,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -67,21 +66,28 @@ func TestPush_OpenGateEnqueuesOnce(t *testing.T) {
 	if f.gate.ctxs[0].Value(ctxKey{}) != "marca" || calls[0].ctx.Value(ctxKey{}) != "marca" {
 		t.Fatal("el contexto del llamante no llegó al gate o al almacén")
 	}
+	assertEnqueuedBody(t, calls[0].payload, want)
+	if n := len(f.log.at("error")); n != 0 {
+		t.Fatalf("un empuje completo no denuncia nada y hubo %d líneas de Error", n)
+	}
+}
+
+// assertEnqueuedBody comprueba que lo encolado es el JSON del documento, byte a byte,
+// y que lleva el estado y el número del llamante leídos por nombre de cable.
+func assertEnqueuedBody(t *testing.T, payload json.RawMessage, want Payload) {
+	t.Helper()
 	wantBody, _ := wireDoc(t, want)
-	if string(calls[0].payload) != string(wantBody) {
-		t.Fatalf("el cuerpo encolado no es el JSON del documento\n got: %s\nwant: %s", calls[0].payload, wantBody)
+	if string(payload) != string(wantBody) {
+		t.Fatalf("el cuerpo encolado no es el JSON del documento\n got: %s\nwant: %s", payload, wantBody)
 	}
 	// Por NOMBRE DE CABLE: un decode tipado taparía una etiqueta json renombrada.
 	var body map[string]any
-	if err := json.Unmarshal(calls[0].payload, &body); err != nil {
+	if err := json.Unmarshal(payload, &body); err != nil {
 		t.Fatalf("el cuerpo encolado no es JSON válido: %v", err)
 	}
 	if body["lifecycle_status"] != statusPendingApproval || body["revision_no"] != float64(4) {
 		t.Fatalf("lifecycle_status=%#v revision_no=%#v; quiero %q y 4 (los del llamante, R-12)",
 			body["lifecycle_status"], body["revision_no"], statusPendingApproval)
-	}
-	if n := len(f.log.at("error")); n != 0 {
-		t.Fatalf("un empuje completo no denuncia nada y hubo %d líneas de Error", n)
 	}
 }
 
@@ -255,7 +261,7 @@ func TestPush_DenouncesWhatTheSchemaWillRejectButStillEnqueues(t *testing.T) {
 				t.Fatalf("revision_no encolado = %d, quiero %d: no se inventa un número", res.Payload.RevisionNo, c.revision)
 			}
 			logged := f.log.at("error")
-			var msgs []string
+			msgs := make([]string, 0, len(logged))
 			for _, e := range logged {
 				msgs = append(msgs, e.msg)
 				if e.fields["tenant"] != sampleTenant || e.fields["intake_id"] != sampleIntake {
@@ -265,7 +271,7 @@ func TestPush_DenouncesWhatTheSchemaWillRejectButStillEnqueues(t *testing.T) {
 					t.Errorf("revision_no de la denuncia = %#v, quiero %d", e.fields["revision_no"], c.revision)
 				}
 			}
-			if !reflect.DeepEqual(msgs, c.want) {
+			if !slices.Equal(msgs, c.want) {
 				t.Fatalf("denuncias en Error\n got: %q\nwant: %q", msgs, c.want)
 			}
 		})
@@ -345,7 +351,10 @@ func TestPush_IsSafeForConcurrentUse(t *testing.T) {
 		if err := json.Unmarshal(c.payload, &body); err != nil {
 			t.Fatalf("el cuerpo encolado no es JSON válido: %v", err)
 		}
-		n, _ := body["revision_no"].(float64)
+		n, ok := body["revision_no"].(float64)
+		if !ok {
+			t.Fatalf("revision_no encolado no es un número: %#v", body["revision_no"])
+		}
 		seen[n] = true
 	}
 	if len(seen) != pushes {
