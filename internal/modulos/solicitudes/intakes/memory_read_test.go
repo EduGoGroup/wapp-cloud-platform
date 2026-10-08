@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
@@ -267,6 +265,19 @@ func TestMemoryStore_Reads_ReturnTheCallersCopies(t *testing.T) {
 	details[0].Items[1].Label = "pisada"
 	revs := store.Revisions("i-1")
 	revs[0].Kind = "pisada"
+	// El payload es un slice: pisar los BYTES de lo leído, de lo guardado que enseña el mirador o
+	// de lo que devolvió la escritura tampoco puede pisar lo guardado.
+	revs[0].Payload[0] = 'X'
+	store.PersistedRevisions("i-1")[0].Payload[0] = 'X'
+	written, err := store.InsertRevision(ctx, intakes.Revision{IntakeID: "i-1", Kind: intakes.RevisionKindCart, Payload: []byte(`{"version":1,"total":9}`)})
+	if err != nil {
+		t.Fatalf("InsertRevision: error inesperado %v", err)
+	}
+	written.Payload[0] = 'X'
+	if again := store.PersistedRevisions("i-1"); !equalJSON(again[0].Payload, []byte(`{"version":1,"total":4}`)) ||
+		!equalJSON(again[2].Payload, []byte(`{"version":1,"total":9}`)) {
+		t.Errorf("pisar los bytes de un payload devuelto cambió lo guardado: %s y %s", again[0].Payload, again[2].Payload)
+	}
 	if again := mustGet(t, store, tenant1, "i-2"); again.Items[0].Label != "Pan" || again.Items[1].Label != "Queso" {
 		t.Errorf("pisar lo leído cambió las líneas guardadas: %+v", again.Items)
 	}

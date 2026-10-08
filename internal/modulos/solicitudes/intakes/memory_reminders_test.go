@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
