@@ -1,4 +1,4 @@
-//go:build integracion && pendiente
+//go:build integracion
 
 package procesos
 
@@ -41,11 +41,9 @@ import (
 // casan justo las filas que prometen, que el total se recalcula con el envío dentro, que el
 // numerador de revisiones cuenta por solicitud y que el literal sale del payload y vuelve.
 //
-// 🔴 LLEVA LA ETIQUETA `pendiente` ADEMÁS DE `integracion` mientras el adaptador esté en rojo: sus
-// métodos son `panic(pendiente.Implementar…)` y un panic aborta el binario ENTERO de los procesos.
-// Quien ponga el adaptador en verde (F6-03) o corra la suite (F6-06) quita `&& pendiente` de la
-// primera línea. Hasta entonces este fichero se compila
-// (`go vet -tags 'integracion pendiente' ./test/procesos/...`) y no se corre.
+// Llevó la etiqueta `pendiente` además de `integracion` mientras el adaptador estuvo en rojo (un
+// panic aborta el binario ENTERO de los procesos). F6-03 lo puso en verde y se la quitó; la
+// corrida que cuenta, contra los dos binarios, es la de F6-06 (T6.27).
 //
 // El puerto no tiene alta de solicitudes —las pare el proyector del carrito o el pipeline—, así
 // que la siembra es SQL de este fichero: el evento padre (0051), la cabecera (0041 y siguientes)

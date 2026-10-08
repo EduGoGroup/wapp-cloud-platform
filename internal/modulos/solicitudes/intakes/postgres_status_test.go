@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -9,9 +7,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte del CAS, de su relectura, de la lectura
-// del plazo y del UPDATE de la fecha límite de la seña.
 
 // TestPostgres_UpdateStatus_InvalidID_NotFoundWithoutQuerying: un id que no es UUID no existe.
 func TestPostgres_UpdateStatus_InvalidID_NotFoundWithoutQuerying(t *testing.T) {
@@ -202,4 +197,91 @@ func TestPostgres_UpdateStatus_TxFailures(t *testing.T) {
 			t.Errorf("conversación = %v: se apuntó un commit que falló", fake.kinds())
 		}
 	})
+}
+
+// Las sentencias de la transición, escritas APARTE y byte a byte: son las del paquete viejo.
+
+// wantCASSQL es el compare-and-swap del estado.
+const wantCASSQL = `
+		UPDATE public.intakes
+		SET status = $3, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2 AND status = ANY($4)
+		RETURNING id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
+
+// wantCASRereadSQL es la relectura que distingue «no existe» de «conflicto».
+const wantCASRereadSQL = `SELECT true FROM public.intakes WHERE tenant_id = $1 AND id = $2`
+
+// wantDueDaysSQL es la lectura del plazo de la seña del tenant.
+const wantDueDaysSQL = `SELECT deposit_due_days FROM public.tenant_settings WHERE tenant_id = $1`
+
+// wantDueDateSQL fija la fecha límite de la seña y limpia el recordatorio.
+const wantDueDateSQL = `
+		UPDATE public.intakes
+		SET deposit_due_at = now() + make_interval(days => $3::int),
+		    deposit_reminded_at = NULL,
+		    updated_at = now()
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
+
+// wantShippingZonesSQL es la lectura de las zonas de envío.
+const wantShippingZonesSQL = `SELECT shipping_zones FROM public.tenant_settings WHERE tenant_id = $1`
+
+// wantShippingLineSQL es la lectura de la línea de envío almacenada.
+const wantShippingLineSQL = `
+		SELECT id, label, qty, unit_price
+		FROM public.intake_items
+		WHERE intake_id = $1 AND sku = $2
+	`
+
+// wantShippingInsertSQL es el alta de la línea de envío.
+const wantShippingInsertSQL = `
+			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+			VALUES ($1, $2, $3, '', $4, $5)
+		`
+
+// wantRecomputeTotalSQL recalcula el total entero desde las líneas.
+const wantRecomputeTotalSQL = `
+		UPDATE public.intakes i
+		SET total = COALESCE((
+			    SELECT SUM(it.qty * it.unit_price)
+			    FROM public.intake_items it
+			    WHERE it.intake_id = i.id), 0),
+		    updated_at = now()
+		WHERE i.tenant_id = $1 AND i.id = $2
+		RETURNING id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
+
+// TestPostgres_UpdateStatus_SQLIsTheOldOneByteForByte: el texto de cada sentencia de los tres
+// caminos de la transición, en su orden.
+func TestPostgres_UpdateStatus_SQLIsTheOldOneByteForByte(t *testing.T) {
+	cases := []struct {
+		name   string
+		to     string
+		script []pgReply
+		want   []string
+		// wantErr: el primer camino acaba en ErrConflict (el CAS no movió nada); los otros, bien.
+		wantErr error
+	}{
+		{"cas and reread", StatusConfirmed, []pgReply{{}, pgOne(true)}, []string{wantCASSQL, wantCASRereadSQL}, ErrConflict},
+		{"deposit requested", StatusDepositRequested,
+			[]pgReply{pgOne(pgIntakeRow(StatusDepositRequested, 30)...), {}, pgOne(pgIntakeRow(StatusDepositRequested, 30)...)},
+			[]string{wantCASSQL, wantDueDaysSQL, wantDueDateSQL}, nil},
+		{"pending approval", StatusPendingApproval,
+			[]pgReply{pgOne(pgIntakeRow(StatusPendingApproval, 30)...), {}, {}, {}, pgOne(pgIntakeRow(StatusPendingApproval, 33)...)},
+			[]string{wantCASSQL, wantShippingZonesSQL, wantShippingLineSQL, wantShippingInsertSQL, wantRecomputeTotalSQL}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, fake := newFakePostgres(t)
+			fake.script(tc.script...)
+			// Lo que se mira es el texto; el error solo se comprueba para saber que el camino
+			// recorrido es el que el caso dice.
+			if _, err := store.UpdateStatus(t.Context(), pgTenant, pgIntakeID, tc.to, []string{StatusOpen}); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("UpdateStatus: err = %v, quería %v", err, tc.wantErr)
+			}
+			requirePgSQL(t, fake, tc.want...)
+		})
+	}
 }

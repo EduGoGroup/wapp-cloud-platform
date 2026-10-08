@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // Los tests de fichero de notifier.go, con dobles de sus cuatro dependencias: sin Gateway, sin

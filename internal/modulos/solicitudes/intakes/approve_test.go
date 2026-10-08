@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -313,5 +311,56 @@ func TestLinesWithoutPrice(t *testing.T) {
 				t.Error("LinesWithoutPrice mutó el payload de entrada")
 			}
 		})
+	}
+}
+
+// svcRetotaledStore es un store cuya transición devuelve la solicitud con OTRO total: el caso en
+// que el total cambia en la propia escritura. Es lo único que separa «el total de la solicitud ya
+// transicionada» de «el total que se leyó antes». Su lectura dice además que hay datos del
+// comprador, para poder exigir que el detalle devuelto lo conserve.
+type svcRetotaledStore struct {
+	*MemoryStore
+	total float64
+}
+
+func (s *svcRetotaledStore) Get(ctx context.Context, tenantID, intakeID string) (Detail, error) {
+	d, err := s.MemoryStore.Get(ctx, tenantID, intakeID)
+	d.BuyerDataPresent = true
+	return d, err
+}
+
+func (s *svcRetotaledStore) UpdateStatus(ctx context.Context, tenantID, intakeID, to string, expected []string) (Intake, error) {
+	in, err := s.MemoryStore.UpdateStatus(ctx, tenantID, intakeID, to, expected)
+	in.Total = s.total
+	return in, err
+}
+
+// TestApprove_RevisionCarriesTheTransitionedTotal: la foto `approved` lleva el total de la
+// solicitud YA transicionada (el que devuelve la escritura ganadora), no el de la lectura previa.
+// Y el detalle devuelto conserva BuyerDataPresent tal como se leyó.
+func TestApprove_RevisionCarriesTheTransitionedTotal(t *testing.T) {
+	t.Parallel()
+	st := &svcRetotaledStore{MemoryStore: svcSeedStore(t, StatusPendingApproval), total: 99}
+	svc := NewService(st, WithQuoteSender(&svcQuoteSpy{trace: &svcTrace{}}))
+
+	detail, err := svc.Approve(context.Background(), svcTenantA, svcIntakeID, "cotiza")
+	if err != nil {
+		t.Fatalf("Approve devolvió el error %v", err)
+	}
+	if !detail.BuyerDataPresent {
+		t.Error("el detalle perdió BuyerDataPresent: se compone con lo leído, no se recalcula")
+	}
+	if detail.Total != 99 {
+		t.Errorf("total devuelto = %v, quería 99 (el de la solicitud transicionada)", detail.Total)
+	}
+	last, ok := LastRevision(st.Revisions(svcIntakeID))
+	if !ok || last.Kind != RevisionKindApproved {
+		t.Fatalf("última revisión = %+v, quería la approved", last)
+	}
+	var payload struct {
+		Total float64 `json:"total"`
+	}
+	if err := json.Unmarshal(last.Payload, &payload); err != nil || payload.Total != 99 {
+		t.Errorf("total de la revisión = %v (err %v), quería 99", payload.Total, err)
 	}
 }

@@ -76,12 +76,25 @@ Para cuando: los 24 ficheros de `S/intakes` con contrato y test + `intakeshelper
 ## Bloque F6-03 · `intakes` (2/2): almacenes, acciones, notificador y candados · 🌐 · T6.9, T6.16–T6.18
 Para cuando: `grep -rn 'pendiente.Implementar' internal/modulos/solicitudes/intakes/*.go | wc -l` → 0 · suite `intakeshelpertest` verde en memoria con `-race` y 0 SKIP · candados de vencimiento y de la poda verdes; los dos INV-1 escritos tras `//go:build pendiente` · `ci-local` rc=0 · PR.
 
-- [ ] **T6.16 · verde(solicitudes): `memory.go` y las 9 acciones** · 🌐 · `memory.go` primero: la suite `intakeshelpertest` pasa entera con `-race`, 0 SKIP
+> **Cierre de F6-03 (2026-10-08)**: `PENDIENTES=0 · ROJOS=1` (solo `inv1_aprobar_test.go`, hasta T6.25). `S/intakes` queda en **42** ficheros de
+> producción (nacen `notifier_templates.go` y `postgres_revisions_read.go`) y **59** de test.
+>
+> **Correspondencias de nombres (E-11) de F6-03** (no exportados y tests; viejo → nuevo): `ejecutarPoda`/`sellarPodada`/`podarLiteralQuery`/`abrirLiteral`/`cifrarLiteral`/`revisionPodada` →
+> `runPrune`/`sealPruned`/`pruneLiteralQuery`/`openLiteral`/`sealLiteral`/`prunedRevision` (el candado de la poda persigue `revisionsOf → runPrune → sealPruned`) ·
+> `últimaRevisiónTx` → `lastRevisionTx` · `shippingZonesDe` → `shippingZonesOf` · `esUUID` → `isUUID` · `señalDeCorrección` → `correctionSignal` ·
+> `guardarRevisiónLocked`/`leerRevisionesLocked`/`casaConElFiltroLocked`/`tieneEventoVivoLocked` → `saveRevisionLocked`/`readRevisionsLocked`/`matchesFilterLocked`/`hasLiveEventLocked` ·
+> `publicarMetrica`/`métricaDeCorrección`/`métricaDeAprobación`/`métricaDeInformación`/`desdeElBorrador` → `publishMetric`/`publishCorrectionMetric`/`publishApprovalMetric`/`publishInfoRequestMetric`/`elapsedFromDraft` ·
+> campos de `Service` `metricas`/`ahora` → `metrics`/`metricsNow` · `silencia` → `silences` · `contenerPánico`/`enviarComoElDueño` → `containPanic`/`sendAsOwner` ·
+> `sinPlantillaAl{PedirSeña,Recordar,Aprobar}` → `noTemplateOn{DepositRequest,Reminder,Approve}` · `yaAvisado`/`cutoffDelPlazo` → `alreadyNotified`/`deadlineCutoff` ·
+> `tienePrecio`/`etiquetaDeLínea`/`tieneLíneasDeCliente`/`conLaRevisión` → `hasPrice`/`lineLabel`/`hasCustomerLines`/`withRevision` ·
+> tests `TestINV1_SoloElPOSTDelDueñoAprueba`/`…Pregunta` → `TestINV1_OnlyTheOwnersPOSTApproves`/`…Asks` · `TestPoda_ElInstanteSelladoNoSeDescarta` → `TestPrune_TheSealedInstantIsNotDiscarded`.
+
+- [x] **T6.16 · verde(solicitudes): `memory.go` y las 9 acciones** — `4c93249` (`memory*.go`, los cuatro en un commit: comparten el struct) · `21438bb` (`service*.go`) · `80a8d59` `approve` · `abbdd91` `edit` · `99ad506` `discard` · `da756b7` `deposit` · `ff09931` `requestinfo` · `4c1258c` `vencimiento` · `0e330d2` `reanalisis` (`aprobadas.go` ya estaba en verde: su test pierde la etiqueta en `80a8d59`) · `141acfd` (una sola copia de los auxiliares compartidos por los dos almacenes) · 🌐 · `memory.go` primero: la suite `intakeshelpertest` pasa entera con `-race`, 0 SKIP
   - **D-F6-8 (2026-10-08)**: el `MemoryStore` nuevo refresca `UpdatedAt` en toda escritura de cabecera (el viejo solo en `AbandonByEvent`): aquí **no** se copia el doble viejo, manda la suite
-- [ ] **T6.17 · verde(solicitudes): `notifier.go`, `buyerdata.go`, `buyerdata_postgres.go`** · 🌐 · textos de plantilla asertados byte a byte
-- [ ] **T6.18 · verde(solicitudes): `postgres.go` + candado de la poda** · 🌐 · cumple R6.2.d
+- [x] **T6.17 · verde(solicitudes): `notifier.go`, `buyerdata.go`, `buyerdata_postgres.go`** — `cf61639` (`notifier.go` + `notifier_templates.go`, partido por E-13) · `e8f1e10` (`buyerdata_postgres.go`; `buyerdata.go` ya estaba en verde) · 🌐 · textos de plantilla asertados byte a byte
+- [x] **T6.18 · verde(solicitudes): `postgres.go` + candado de la poda** — `e8126b5` `postgres` · `bb50152` `postgres_revisions_read` (fichero 13, no previsto) · `ced6fac` `read` · `7080179` `status` · `53a051c` `revisions` · `f0bc0d4` `items` · `c8a0fe9` `shipping` · `2534efe` `reminders` · `c4cf4fc` `approved`, `crm`, `customernote`, `reanalysis` · `09872e6` `discard` · candado de la poda `ab2e4bb` · suite contra Postgres destapada en `8d6cfa8` · 🌐 · cumple R6.2.d
   - **Hecho cuando**: SQL copiado literal (`diff` de `grep -o 'public\.[a-z_]*'` viejo/nuevo vacío); funciones puras con test; candado AST `revisionsOf → ejecutarPoda → sellarPodada` añadido a `postgres_test.go`; su verdad la da la suite `intakeshelpertest` contra Postgres (P4, T6.27) y F9
-- [ ] **T6.9 · rojo(solicitudes): candados de invariante de `intakes`** · 🌐 · dep. T6.7 · cumple R6.2.a–c
+- [x] **T6.9 · rojo(solicitudes): candados de invariante de `intakes`** — `bd9ea5a` (los dos INV-1, tras `//go:build pendiente` hasta T6.25) · los dos del plazo, en verde, en `4c1258c` · 🌐 · dep. T6.7 · cumple R6.2.a–c
   - **Ficheros**: `S/intakes/inv1_aprobar_test.go` (aprobar + pedir info), candados de vencimiento en `vencimiento_test.go`
   - **Hecho cuando**: listas de `diseno.md` §6 (versión F6); el control positivo **falla hasta TX.16/TX.18** (no hay `Approve` en `apipublica` todavía) → el test va con `//go:build pendiente` hasta T6.25, y se dice en el commit · **Commit**: `rojo(solicitudes): candados INV-1 y del plazo`
 

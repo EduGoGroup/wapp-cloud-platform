@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -70,8 +68,9 @@ func newMetricsScene(t *testing.T, draftAt time.Time, opts ...Option) *metricsSc
 		sc.store.SetClock(svcFixedClock(draftAt))
 		svcSeedRevision(t, sc.store, RevisionKindInterpreted, svcDraftPayload)
 	}
-	base := []Option{WithQuoteSender(&svcQuoteSpy{}), WithMetrics(sc.metrics, sc.log), WithMetricsClock(svcFixedClock(svcDecisionAt))}
-	sc.svc = NewService(sc.store, append(base, opts...)...)
+	all := make([]Option, 0, 3+len(opts))
+	all = append(all, WithQuoteSender(&svcQuoteSpy{}), WithMetrics(sc.metrics, sc.log), WithMetricsClock(svcFixedClock(svcDecisionAt)))
+	sc.svc = NewService(sc.store, append(all, opts...)...)
 	return sc
 }
 

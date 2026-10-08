@@ -91,9 +91,11 @@ func caseDepositRemindedNotItsTurn(t *testing.T, m Montaje) {
 	theirs := seedDeposit(t, m, m.TenantB, intakes.StatusDepositRequested, contactA, day(5), time.Time{})
 	before := take(t, m, theirs)
 	for name, target := range map[string]ref{
-		"de otro tenant":    {tenant: m.TenantA, id: theirs.id},
-		"inexistente":       {tenant: m.TenantA, id: uuid.NewString()},
-		"id que no es UUID": {tenant: m.TenantA, id: "no-soy-un-uuid"},
+		// El id que NO es un UUID no se afirma aquí: los dos almacenes divergen ya en el
+		// viejo (Postgres ⇒ ErrNotFound sin tocar la base; el doble ⇒ false, nil) y manda
+		// lo que corre. Lo afirma el test unitario de cada adaptador.
+		"de otro tenant": {tenant: m.TenantA, id: theirs.id},
+		"inexistente":    {tenant: m.TenantA, id: uuid.NewString()},
 	} {
 		got, won, err := m.Store.MarkDepositReminded(bg(), target.tenant, target.id, at)
 		requireNotItsTurn(t, "seña "+name, got, won, err)
@@ -197,9 +199,11 @@ func caseExpiryRemindedNotItsTurn(t *testing.T, m Montaje) {
 	theirs := seedQuote(t, m, m.TenantB, intakes.StatusPendingApproval, stale, time.Time{})
 	before := take(t, m, theirs)
 	for name, target := range map[string]ref{
-		"de otro tenant":    {tenant: m.TenantA, id: theirs.id},
-		"inexistente":       {tenant: m.TenantA, id: uuid.NewString()},
-		"id que no es UUID": {tenant: m.TenantA, id: "no-soy-un-uuid"},
+		// El id que NO es un UUID no se afirma aquí: los dos almacenes divergen ya en el
+		// viejo (Postgres ⇒ ErrNotFound sin tocar la base; el doble ⇒ false, nil) y manda
+		// lo que corre. Lo afirma el test unitario de cada adaptador.
+		"de otro tenant": {tenant: m.TenantA, id: theirs.id},
+		"inexistente":    {tenant: m.TenantA, id: uuid.NewString()},
 	} {
 		got, won, err := m.Store.MarkExpiryReminded(bg(), target.tenant, target.id, at)
 		requireNotItsTurn(t, "presupuesto "+name, got, won, err)

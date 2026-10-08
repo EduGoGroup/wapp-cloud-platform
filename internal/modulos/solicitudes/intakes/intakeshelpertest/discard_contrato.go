@@ -26,7 +26,7 @@ func discard(t *testing.T, m Montaje, r ref) intakes.DiscardOutcome {
 }
 
 // caseDiscard: el descarte deja la solicitud en `abandoned` con UpdatedAt refrescado y UNA
-// revisión `discarded` de `owner` que guarda de dónde venía (la clave ALMACENADA) y su total. Las
+// revisión `discarded` de `owner` que guarda de dónde venía (NORMALIZADO, como el outcome) y su total. Las
 // líneas y el total no se tocan, y un evento ya terminal no se pisa. El outcome dice el estado del
 // que VENÍA, normalizado.
 func caseDiscard(t *testing.T, m Montaje) {
@@ -52,7 +52,7 @@ func caseDiscard(t *testing.T, m Montaje) {
 		adoptRefreshedUpdatedAt(t, what, got, &want)
 		rev := adoptNewRevision(t, what, got, &want, intakes.RevisionKindDiscarded, intakes.RevisionByOwner, "")
 		requireSame(t, what, got, want)
-		wantPayload := fmt.Sprintf(`{"version":1,"from_status":%q,"total":4508}`, c.stored)
+		wantPayload := fmt.Sprintf(`{"version":1,"from_status":%q,"total":4508}`, c.normalized)
 		if !sameJSON(rev.Payload, json.RawMessage(wantPayload)) {
 			t.Errorf("%s: payload de la revisión = %s, quería %s", what, rev.Payload, wantPayload)
 		}

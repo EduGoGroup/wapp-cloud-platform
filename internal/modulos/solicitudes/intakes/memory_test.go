@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
@@ -215,11 +213,11 @@ func TestMemoryStore_Add_StoresTheHeaderRawAndAppends(t *testing.T) {
 	if len(got.Items) != 2 || got.Items[0] != twoLines()[0] || got.Items[1] != twoLines()[1] {
 		t.Errorf("líneas leídas = %+v, quería las sembradas en su orden", got.Items)
 	}
-	if _, total, _ := store.List(ctx, tenant1, intakes.Filter{}); total != 2 {
-		t.Errorf("el tenant 1 tiene %d solicitudes, quería 2", total)
+	if _, total, err := store.List(ctx, tenant1, intakes.Filter{}); err != nil || total != 2 {
+		t.Errorf("el tenant 1 tiene %d solicitudes (err=%v), quería 2", total, err)
 	}
-	if _, total, _ := store.List(ctx, tenant1, intakes.Filter{Orphan: true}); total != 2 {
-		t.Errorf("sin BindEvent hay %d huérfanas, quería las 2: una fila sin ligadura no tiene evento vivo", total)
+	if _, total, err := store.List(ctx, tenant1, intakes.Filter{Orphan: true}); err != nil || total != 2 {
+		t.Errorf("sin BindEvent hay %d huérfanas (err=%v), quería las 2: una fila sin ligadura no tiene evento vivo", total, err)
 	}
 }
 
@@ -273,16 +271,19 @@ func TestMemoryStore_SetShippingZones_ReplacesAndCopies(t *testing.T) {
 	zones := []intakes.ShippingZone{{Code: "z1", Label: "Providencia", Price: 3000}, {Code: "z2", Label: "Macul", Price: 2000}}
 	store.SetShippingZones(tenant1, zones...)
 	zones[0].Label = "pisada"
-	got, _ := store.ShippingZones(ctx, tenant1)
+	got, err := store.ShippingZones(ctx, tenant1)
+	if err != nil {
+		t.Fatalf("ShippingZones: error inesperado %v", err)
+	}
 	if len(got) != 2 || got[0].Label != "Providencia" || got[1].Code != "z2" {
 		t.Errorf("zonas guardadas = %+v; cambiar el slice del llamante no debía cambiarlas", got)
 	}
-	if other, _ := store.ShippingZones(ctx, tenant2); other != nil {
-		t.Errorf("el otro tenant tiene zonas: %+v", other)
+	if other, err := store.ShippingZones(ctx, tenant2); err != nil || other != nil {
+		t.Errorf("el otro tenant tiene zonas: (%+v, %v)", other, err)
 	}
 	store.SetShippingZones(tenant1, intakes.ShippingZone{Code: "z3", Price: 1})
-	if got, _ := store.ShippingZones(ctx, tenant1); len(got) != 1 || got[0].Code != "z3" {
-		t.Errorf("tras sustituirlas = %+v, quería solo z3", got)
+	if got, err := store.ShippingZones(ctx, tenant1); err != nil || len(got) != 1 || got[0].Code != "z3" {
+		t.Errorf("tras sustituirlas = (%+v, %v), quería solo z3", got, err)
 	}
 }
 

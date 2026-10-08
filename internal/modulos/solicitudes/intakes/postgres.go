@@ -47,11 +47,13 @@
 package intakes
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/crypto"
 )
 
@@ -72,10 +74,23 @@ import (
 // esa la custodia el Edge del cliente, jamás llega a la nube y este paquete no sabe
 // nada de ella.
 //
-// En el rojo no lleva campos. El verde le pone tres: el *sql.DB, el cifrador del
-// literal (puede ser nil, ver WithLiteralCipher) y el logger del evento de poda
-// (nunca nil tras NewPostgres).
-type Postgres struct{}
+// Lleva los tres campos del viejo, ni uno más: el TTL del literal NO es un campo (lo
+// decide la base por tenant, con DefaultLiteralTTL como segundo argumento de la
+// lectura de revisiones).
+type Postgres struct {
+	db *sql.DB
+	// cipher cifra y descifra el LITERAL de nivel 2 de una revisión (Plan 044 ·
+	// T3.5, migración 0079). Puede ser nil: la mayoría de las revisiones —todas las
+	// del carrito numérico— no llevan literal y no lo necesitan. Lo que NO pasa con
+	// nil es degradar a texto en claro: una revisión CON literal y sin cipher se
+	// rechaza al escribir y se rechaza al leer (ver openLiteral, en
+	// postgres_revisions_read.go, y la escritura, en postgres_revisions.go).
+	cipher *crypto.FieldCipher
+	// log es por dónde sale el EVENTO DE PODA (T3.5). Nunca es nil tras
+	// NewPostgres: sin logger la poda destruiría el literal en silencio, y una
+	// destrucción de datos sin rastro no es aceptable ni en alpha.
+	log logger.Logger
+}
 
 // Los puertos que *Postgres satisface. Si un método cambia de firma, el paquete deja
 // de compilar aquí y no en el cableado.
@@ -104,7 +119,7 @@ type PostgresOption func(*Postgres)
 // en lo que sí: una revisión CON literal no se escribe en claro (InsertRevision) ni se
 // lee (Get). Lo que nunca pasa es degradar a texto en claro.
 func WithLiteralCipher(c *crypto.FieldCipher) PostgresOption {
-	panic(pendiente.Implementar("intakes.WithLiteralCipher"))
+	return func(p *Postgres) { p.cipher = c }
 }
 
 // WithRetentionLog sustituye el logger por el que sale el EVENTO DE PODA del literal.
@@ -115,7 +130,11 @@ func WithLiteralCipher(c *crypto.FieldCipher) PostgresOption {
 // puede observar no se puede verificar). Con nil NO hace nada: el store conserva el
 // logger que tenía, porque sin logger la poda destruiría el literal en silencio.
 func WithRetentionLog(l logger.Logger) PostgresOption {
-	panic(pendiente.Implementar("intakes.WithRetentionLog"))
+	return func(p *Postgres) {
+		if l != nil {
+			p.log = l
+		}
+	}
 }
 
 // NewPostgres construye el store sobre el pool dado y le aplica las opciones en orden
@@ -125,5 +144,70 @@ func WithRetentionLog(l logger.Logger) PostgresOption {
 // No abre ni comprueba la conexión, ni cifra nada: construir no emite ninguna
 // sentencia.
 func NewPostgres(db *sql.DB, opts ...PostgresOption) *Postgres {
-	panic(pendiente.Implementar("intakes.NewPostgres"))
+	p := &Postgres{db: db, log: logger.Default()}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+// Lo que sigue es lo que comparten TODOS los postgres_<tema>.go: la proyección de la
+// cabecera, su escáner y las dos abstracciones de «quién ejecuta».
+
+// intakeCols es la proyección de la cabecera. tenant_id NO se lee: quien consulta
+// ya es el dueño del tenant (INV-8) y repetirlo en la respuesta no informa de nada.
+//
+// customer_note (D-041.19) va al final y no en medio: el orden de esta lista es el
+// de los Scan de scanIntake y scanDetailRow, y meter una columna entre dos ya
+// existentes obligaría a mover los destinos de los dos escaneos a la vez —un
+// descuadre que compila y devuelve el estado en el total—. Las dos marcas de la
+// SEÑA (T4.4) y la del PLAZO del presupuesto (T4.5) se añaden al final por la misma
+// razón.
+const intakeCols = `id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at`
+
+// rowScanner abstrae *sql.Row y *sql.Rows para compartir el escaneo de cabecera.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// querier abstrae *sql.DB y *sql.Tx: las MISMAS lecturas (líneas, revisiones) se
+// hacen sueltas desde Get y dentro de la transacción de una edición, y duplicarlas
+// dejaría dos consultas que tendrían que envejecer juntas.
+//
+// ExecContext se añadió con T3.5 y hace que el nombre se quede a medias: la lectura
+// de revisiones ESCRIBE cuando poda. Se deja el nombre en vez de renombrar a
+// `ejecutor` en trece sitios por una tarea de retención — pero conviene saberlo:
+// esto ya no es solo un lector.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// scanIntake lee una cabecera y NORMALIZA su estado: el `closed` que sigue
+// escribiendo el módulo cart sale de aquí como `confirmed`, en un único punto.
+//
+// Las dos marcas de la seña son NULLables en la tabla (la inmensa mayoría de las
+// solicitudes no llega a pedir seña) y se leen por sql.NullTime: un NULL sale como
+// tiempo CERO, que es lo que el dominio entiende por "no se ha pedido" / "nunca se
+// recordó". No hay un tercer significado que distinguir. La marca del PLAZO (T4.5)
+// se lee igual y significa lo mismo: NULL ⇒ al dueño nunca se le recordó.
+func scanIntake(sc rowScanner) (Intake, error) {
+	var (
+		in                Intake
+		dueAt, remindedAt sql.NullTime
+		expiryRemindedAt  sql.NullTime
+	)
+	if err := sc.Scan(&in.ID, &in.ContactID, &in.SessionID, &in.Status, &in.Total,
+		&in.CreatedAt, &in.UpdatedAt, &in.CustomerNote, &dueAt, &remindedAt, &expiryRemindedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Intake{}, err // lo traduce el llamante (ErrNotFound)
+		}
+		return Intake{}, fmt.Errorf("intakes: leer solicitud: %w", err)
+	}
+	in.Status = NormalizeStatus(in.Status)
+	in.DepositDueAt, in.DepositRemindedAt = dueAt.Time, remindedAt.Time
+	in.ExpiryRemindedAt = expiryRemindedAt.Time
+	return in, nil
 }

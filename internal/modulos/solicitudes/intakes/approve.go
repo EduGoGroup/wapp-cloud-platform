@@ -78,8 +78,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 // ApprovableStatus es el ÚNICO estado desde el que se aprueba: el presupuesto por
@@ -167,7 +168,11 @@ type PendingPriceError struct {
 // ", " y en el orden de Lines. Sin concordancia de número («1 líneas») y sin
 // escapar la etiqueta: es un texto observable y se conserva byte a byte.
 func (e *PendingPriceError) Error() string {
-	panic(pendiente.Implementar("intakes.PendingPriceError.Error"))
+	names := make([]string, 0, len(e.Lines))
+	for _, l := range e.Lines {
+		names = append(names, strconv.Itoa(l.Index)+":"+l.Label)
+	}
+	return fmt.Sprintf("el borrador tiene %d líneas sin precio (%s)", len(e.Lines), strings.Join(names, ", "))
 }
 
 // NotApprovableError es el rechazo de una aprobación sobre una solicitud que no está
@@ -184,7 +189,7 @@ type NotApprovableError struct {
 // Error devuelve `una solicitud en "<Status>" no se puede aprobar`, con el estado
 // entre comillas al modo de %q (un estado raro sale escapado). Texto observable.
 func (e *NotApprovableError) Error() string {
-	panic(pendiente.Implementar("intakes.NotApprovableError.Error"))
+	return fmt.Sprintf("una solicitud en %q no se puede aprobar", e.Status)
 }
 
 // LastRevision devuelve la revisión de número MÁS ALTO, que es el borrador vigente.
@@ -196,7 +201,14 @@ func (e *NotApprovableError) Error() string {
 // decisión que dice qué se puede vender lo convertiría en contrato del dominio sin
 // que nadie lo hubiera declarado. No muta la entrada.
 func LastRevision(revisions []Revision) (Revision, bool) {
-	panic(pendiente.Implementar("intakes.LastRevision"))
+	var out Revision
+	found := false
+	for _, rev := range revisions {
+		if !found || rev.RevisionNo > out.RevisionNo {
+			out, found = rev, true
+		}
+	}
+	return out, found
 }
 
 // PendingPriceLines son las líneas SIN PRECIO del borrador vigente de la solicitud:
@@ -208,7 +220,11 @@ func LastRevision(revisions []Revision) (Revision, bool) {
 // precio en la rev 1 y que el dueño precificó en la rev 2 está resuelta, sea cual
 // sea el orden en que el store devuelva la lista.
 func PendingPriceLines(revisions []Revision) []PendingPriceLine {
-	panic(pendiente.Implementar("intakes.PendingPriceLines"))
+	last, ok := LastRevision(revisions)
+	if !ok {
+		return nil
+	}
+	return LinesWithoutPrice(last.Payload)
 }
 
 // LinesWithoutPrice recorre el payload de UNA revisión y devuelve, en orden, las
@@ -242,7 +258,95 @@ func PendingPriceLines(revisions []Revision) []PendingPriceLine {
 //     payload lo escribe un productor nuestro; si su forma cambió, lo que hay que
 //     arreglar no es esta función.
 func LinesWithoutPrice(payload json.RawMessage) []PendingPriceLine {
-	panic(pendiente.Implementar("intakes.LinesWithoutPrice"))
+	root, ok := asObject(payload)
+	if !ok {
+		return nil
+	}
+	lines, has := asList(root[PayloadKeyLines])
+	if !has {
+		return nil
+	}
+
+	var out []PendingPriceLine
+	for i, raw := range lines {
+		line, isObject := asObject(raw)
+		if !isObject {
+			continue
+		}
+		if hasPrice(line[LineKeyUnitPrice]) {
+			continue
+		}
+		out = append(out, PendingPriceLine{Index: i, Label: lineLabel(line)})
+	}
+	return out
+}
+
+// hasPrice responde si el valor crudo de `unit_price` es un número. `null`, la clave
+// ausente y cualquier cosa que no sea un número son «sin precio»: ante la duda, la
+// línea está pendiente. El error de esa elección es un rechazo que el dueño arregla
+// poniendo el precio; el de la contraria sería cotizarle al cliente una línea a 0.
+// Era tienePrecio en el viejo.
+func hasPrice(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var price *float64
+	if err := json.Unmarshal(raw, &price); err != nil {
+		return false
+	}
+	return price != nil
+}
+
+// lineLabel saca el `label` de una línea cruda. Vacío si no lo trae o no es una
+// cadena: el índice ya identifica la línea, y una etiqueta inventada sería peor que
+// ninguna. Era etiquetaDeLínea en el viejo.
+func lineLabel(line map[string]json.RawMessage) string {
+	raw, has := line[LineKeyLabel]
+	if !has {
+		return ""
+	}
+	var label string
+	if err := json.Unmarshal(raw, &label); err != nil {
+		return ""
+	}
+	return label
+}
+
+// hasCustomerLines responde si queda algo que cotizar. Las líneas de LA PLATAFORMA
+// (prefijo reservado: hoy el envío, D-041.11) NO cuentan: un presupuesto que solo
+// lleva la línea de envío no es un pedido, es un envío de nada. Era
+// tieneLíneasDeCliente en el viejo.
+func hasCustomerLines(items []Item) bool {
+	for _, it := range items {
+		if !isPlatformLine(it) {
+			return true
+		}
+	}
+	return false
+}
+
+// approvedRevision arma la revisión que deja una aprobación, con el texto EXACTO que
+// se le manda al cliente.
+//
+// La foto son las líneas PERSISTIDAS —todas, la de envío incluida—, así que `total`
+// cuadra con la suma de `items`. Es la misma forma que la revisión de la corrección
+// manual, y a propósito: quien lea la negociación entera compara revisión con
+// revisión sin cambiar de parser a media lista.
+//
+// `created_by` es `owner` y no `system`: aquí sí decide una persona, y es el hecho
+// central de INV-1. Sigue siendo un ROL y jamás una persona (CERO PII).
+func approvedRevision(intakeID string, total float64, items []Item, renderedText string) (Revision, error) {
+	payload, err := ApprovedRevisionPayload(total, revisionLinesOf(items))
+	if err != nil {
+		return Revision{}, err
+	}
+	return Revision{
+		IntakeID:     intakeID,
+		Kind:         RevisionKindApproved,
+		Payload:      payload,
+		RenderedText: renderedText,
+		CreatedBy:    RevisionByOwner,
+	}, nil
 }
 
 // Approve APRUEBA el presupuesto: le manda al cliente la cotización que escribió el
@@ -296,5 +400,89 @@ func LinesWithoutPrice(payload json.RawMessage) []PendingPriceLine {
 // nueva AL FINAL —sobre una lista nueva, sin escribir en la que entregó el store— y
 // BuyerDataPresent tal como se leyó. Es el mismo detalle que se empuja al CRM.
 func (s *Service) Approve(ctx context.Context, tenantID, intakeID, renderedText string) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.Approve"))
+	if s.quotes == nil {
+		return Detail{}, ErrNoQuoteSender
+	}
+	if s.revisions == nil {
+		return Detail{}, ErrNoRevisionWriter
+	}
+	// TrimSpace solo para DECIDIR si hay texto: lo que se compone, se guarda y se
+	// manda es el original byte a byte. Recortarlo sería reescribir lo que el dueño
+	// escribió, y la revisión dejaría de ser lo que salió por el cable.
+	if strings.TrimSpace(renderedText) == "" {
+		return Detail{}, ErrEmptyQuoteText
+	}
+
+	// El recurso se resuelve ANTES que el resto de las precondiciones: una solicitud
+	// ajena responde ErrNotFound y no revela por el código de error que existe (INV-8).
+	current, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	if from := NormalizeStatus(current.Status); from != ApprovableStatus {
+		return Detail{}, &NotApprovableError{Status: from}
+	}
+	if pending := PendingPriceLines(current.Revisions); len(pending) > 0 {
+		return Detail{}, &PendingPriceError{Lines: pending}
+	}
+	if !hasCustomerLines(current.Items) {
+		return Detail{}, ErrEmptyQuote
+	}
+
+	// (1) el texto ENTERO, antes de escribir nada. Ver la cabecera.
+	text := s.quotes.QuoteText(ctx, tenantID, current.Intake, renderedText)
+
+	// (2) la transición. NoticeByCaller: el aviso genérico del estado destino
+	// —«✅ Tu pedido quedó confirmado. Total $X»— NO sale por este camino (D-044.49
+	// §1). Ya lo dice la cotización del dueño, con su detalle línea a línea, y el
+	// genérico solo repetiría el número peor contado.
+	updated, err := s.SetStatus(ctx, tenantID, intakeID, StatusConfirmed, NoticeByCaller)
+	if err != nil {
+		return Detail{}, err
+	}
+
+	// (3) el rastro, con el texto que se va a mandar.
+	rev, err := approvedRevision(intakeID, updated.Total, current.Items, text)
+	if err != nil {
+		return Detail{}, err
+	}
+	rev, err = s.revisions.InsertRevision(ctx, rev)
+	if err != nil {
+		return Detail{}, fmt.Errorf("intakes: la solicitud quedó CONFIRMADA pero su revisión approved no se escribió, "+
+			"así que la cotización NO se envió y hay que mandarla a mano (intake_id=%s): %w", intakeID, err)
+	}
+
+	// (4) el mensaje al cliente. No devuelve error a propósito: una aprobación ya
+	// escrita no se deshace porque el teléfono esté apagado.
+	s.quotes.SendQuote(ctx, tenantID, updated, text)
+
+	// (5) el puente CRM, con el revision_no REAL de la revisión que se acaba de
+	// numerar. El detalle se compone con lo que ya está en la mano y NO con una
+	// relectura: releer podría fallar después de haber mandado el mensaje, y
+	// devolvería un error por una aprobación que ocurrió entera.
+	detail := Detail{
+		Intake:           updated,
+		Items:            current.Items,
+		Revisions:        withRevision(current.Revisions, rev),
+		BuyerDataPresent: current.BuyerDataPresent,
+	}
+	s.PushRevisionToCRM(ctx, tenantID, detail, rev.RevisionNo)
+
+	// (6) la métrica. Las revisiones que se le pasan son las de ANTES
+	// (`current.Revisions`) y no las del detalle: lo que hay que encontrar ahí es el
+	// BORRADOR —la primera revisión `interpreted`— y la que se acaba de escribir es la
+	// `approved` de este mismo acto. Con `detail.Revisions` daría lo mismo, pero pasar
+	// el histórico previo dice en la llamada qué se está buscando.
+	s.publishApprovalMetric(ctx, tenantID, updated, rev.RevisionNo, current.Revisions)
+	return detail, nil
+}
+
+// withRevision devuelve el histórico con la revisión nueva al final, sobre un slice
+// NUEVO. La copia no es ceremonia: `append` sobre el slice que devolvió el store
+// podría escribir en su array subyacente, y ese array es el que el store le entregó
+// al llamante. Era conLaRevisión en el viejo.
+func withRevision(history []Revision, added Revision) []Revision {
+	out := make([]Revision, 0, len(history)+1)
+	out = append(out, history...)
+	return append(out, added)
 }

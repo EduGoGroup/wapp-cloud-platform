@@ -8,8 +8,11 @@ package intakes
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
 )
 
 // GetCustomerNote lee la indicación del cliente (customer_note) de UNA solicitud del
@@ -32,5 +35,32 @@ import (
 // 🔴 La nota NO aparece en ningún error de este método: un error que la citara
 // acabaría en el log del worker, que es justo donde no puede estar.
 func (p *Postgres) GetCustomerNote(ctx context.Context, tenantID, intakeID string) (string, bool, error) {
-	panic(pendiente.Implementar("intakes.Postgres.GetCustomerNote"))
+	if !isUUID(intakeID) {
+		return "", false, nil
+	}
+
+	var note string
+	err := p.db.QueryRowContext(ctx, `
+		SELECT customer_note
+		FROM public.intakes
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, intakeID).Scan(&note)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("intakes: leer la indicación del cliente de la solicitud %s: %w", intakeID, err)
+	}
+	return note, true, nil
+}
+
+// isUUID envuelve uuid.Parse en un booleano. Existe por dos razones que apuntan al
+// mismo sitio: la pregunta que se hace arriba no es «¿qué error dio?» sino «¿esto
+// puede ser un id?», y con el error en el ámbito el `return nil` de la línea
+// siguiente parece —también para el linter, nilerr— que se está tragando un fallo.
+// No se traga ninguno: un id que no es UUID no puede existir en la tabla, y eso es
+// un 404, no un error. Era esUUID en el viejo.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
 }

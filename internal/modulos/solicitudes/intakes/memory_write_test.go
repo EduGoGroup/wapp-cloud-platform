@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
@@ -228,15 +226,7 @@ func TestMemoryStore_PutBuyerField_MergesAndFlagsThePresence(t *testing.T) {
 		}
 	}
 	want := intakes.BuyerData{"rut": "22.222.222-2", "direccion": "Av. Siempre Viva 742", "nota": ""}
-	got := store.BuyerDataOf("i-1")
-	if len(got) != len(want) {
-		t.Errorf("checklist = %v, quería %v", got, want)
-	}
-	for k, v := range want {
-		if gv, ok := got[k]; !ok || gv != v {
-			t.Errorf("checklist[%q] = %q (presente=%v), quería %q", k, gv, ok, v)
-		}
-	}
+	requireBuyerData(t, store.BuyerDataOf("i-1"), want)
 	if !mustGet(t, store, tenant1, "i-1").BuyerDataPresent {
 		t.Error("con datos guardados, Get no dice BuyerDataPresent")
 	}
@@ -250,6 +240,20 @@ func TestMemoryStore_PutBuyerField_MergesAndFlagsThePresence(t *testing.T) {
 	for _, d := range details {
 		if d.BuyerDataPresent {
 			t.Errorf("ListDetails publica BuyerDataPresent de %s: el export no dice nada del comprador", d.ID)
+		}
+	}
+}
+
+// requireBuyerData exige que el checklist guardado tenga exactamente las claves de `want`, cada
+// una con su valor.
+func requireBuyerData(t *testing.T, got, want intakes.BuyerData) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("checklist = %v, quería %v", got, want)
+	}
+	for k, v := range want {
+		if gv, ok := got[k]; !ok || gv != v {
+			t.Errorf("checklist[%q] = %q (presente=%v), quería %q", k, gv, ok, v)
 		}
 	}
 }

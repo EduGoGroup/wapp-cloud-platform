@@ -25,8 +25,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
+	"slices"
 )
 
 // MaxDiscardBatch acota cuántas solicitudes puede descartar UNA llamada: 200. No es
@@ -74,7 +74,7 @@ type TooLargeBatchError struct {
 // Error devuelve "el lote trae <Count> solicitudes y el máximo es <Max>". Es un
 // texto observable y se conserva byte a byte.
 func (e *TooLargeBatchError) Error() string {
-	panic(pendiente.Implementar("intakes.TooLargeBatchError.Error"))
+	return fmt.Sprintf("el lote trae %d solicitudes y el máximo es %d", e.Count, e.Max)
 }
 
 // DiscardSkip es UNA solicitud del lote que no se descartó, con el porqué (una de
@@ -119,7 +119,14 @@ type DiscardOutcome struct {
 // y sin repetidos —viaja a un `= ANY($n)` y a los tests—, y cada llamada devuelve
 // un slice propio: mutarlo no afecta a la siguiente.
 func DiscardableStatuses() []string {
-	panic(pendiente.Implementar("intakes.DiscardableStatuses"))
+	out := make([]string, 0, len(known))
+	for status := range known {
+		if CanDiscard(status) {
+			out = append(out, StoredVariants(status)...)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Discard DESCARTA a mano un lote de solicitudes del tenant, dejándolas en
@@ -167,7 +174,80 @@ func DiscardableStatuses() []string {
 // y avisar de eso sería una forma rara de despedirse. Por eso pasa por el store
 // directamente y no por SetStatus, que sí avisa. Tampoco empuja al CRM.
 func (s *Service) Discard(ctx context.Context, tenantID string, intakeIDs []string) (DiscardResult, error) {
-	panic(pendiente.Implementar("intakes.Service.Discard"))
+	switch {
+	case len(intakeIDs) == 0:
+		return DiscardResult{}, ErrEmptyDiscardBatch
+	case len(intakeIDs) > MaxDiscardBatch:
+		return DiscardResult{}, &TooLargeBatchError{Count: len(intakeIDs), Max: MaxDiscardBatch}
+	}
+
+	discardable := DiscardableStatuses()
+	res := DiscardResult{Discarded: []string{}, Skipped: []DiscardSkip{}}
+
+	for _, id := range uniqueInOrder(intakeIDs) {
+		out, err := s.store.Discard(ctx, tenantID, id, discardable)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			res.Skipped = append(res.Skipped, DiscardSkip{IntakeID: id, Reason: DiscardSkipNotFound})
+		case err != nil:
+			return DiscardResult{}, err
+		case out.Discarded:
+			res.Discarded = append(res.Discarded, id)
+		default:
+			res.Skipped = append(res.Skipped, DiscardSkip{IntakeID: id, Reason: discardSkipReason(out)})
+		}
+	}
+	return res, nil
+}
+
+// discardSkipReason traduce los HECHOS que devolvió el store a la razón que se le
+// cuenta al llamante. El orden de las ramas es el contrato:
+//
+//  1. `abandoned` gana a todo: ya está descartada, y decirle "hay conversación
+//     viva" a quien repite un lote sería mentirle sobre por qué no pasó nada.
+//  2. El estado manda sobre el evento: una `confirmed` cuyo evento siga vivo no se
+//     descarta porque está confirmada, no porque haya alguien hablando.
+//  3. Solo cuando el estado SÍ era descartable la razón es el evento vivo (el que
+//     ESTA solicitud declara — DT-043.2 saldada, ver DiscardOutcome.LiveEvent).
+func discardSkipReason(out DiscardOutcome) string {
+	switch {
+	case out.Status == StatusAbandoned:
+		return DiscardSkipAlreadyDiscarded
+	case !CanDiscard(out.Status):
+		return DiscardSkipNotOpen
+	case out.LiveEvent:
+		return DiscardSkipLiveEvent
+	default:
+		// El store no escribió y el estado era descartable sin evento vivo:
+		// alguien la movió entre el candado y la escritura y volvió a un estado
+		// descartable. No es alcanzable con el CAS de hoy, y si lo fuera, `not_open`
+		// es la respuesta que hace que el llamante relea en vez de dar por hecho.
+		return DiscardSkipNotOpen
+	}
+}
+
+// uniqueInOrder devuelve los ids sin repetir, conservando el ORDEN de llegada: la
+// respuesta se lee junto al lote que se mandó, así que reordenarla obligaría a
+// buscar cada id.
+func uniqueInOrder(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// discardRevisionPayload es la forma del payload de la revisión `discarded`. El
+// orden de sus campos es el orden de las claves en el JSON, que es contrato.
+type discardRevisionPayload struct {
+	Version    int     `json:"version"`
+	FromStatus string  `json:"from_status"`
+	Total      float64 `json:"total"`
 }
 
 // DiscardedRevisionPayload arma el payload de la revisión de DESCARTE MANUAL:
@@ -188,5 +268,34 @@ func (s *Service) Discard(ctx context.Context, tenantID string, intakeIDs []stri
 // Si el total no es serializable (NaN, ±Inf) devuelve un error que envuelve al de
 // JSON con el prefijo "intakes: serializar payload de la revisión de descarte: ".
 func DiscardedRevisionPayload(fromStatus string, total float64) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.DiscardedRevisionPayload"))
+	raw, err := json.Marshal(discardRevisionPayload{
+		Version:    RevisionPayloadVersion,
+		FromStatus: NormalizeStatus(fromStatus),
+		Total:      total,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("intakes: serializar payload de la revisión de descarte: %w", err)
+	}
+	return raw, nil
+}
+
+// discardedRevision arma la revisión que deja UN descarte efectivo. Vive aquí y no
+// en cada store para que las dos implementaciones no puedan divergir: un MemoryStore
+// que escribiera otra foto haría que los tests de handler dijeran algo falso sobre
+// producción (mismo criterio que correctedRevision).
+//
+// `created_by` es `owner` y no `system` porque esto es EXACTAMENTE lo contrario de
+// una muerte por reloj: es una persona decidiendo. Es un ROL, nunca un usuario
+// (CERO PII): quién lo hizo con nombre y apellidos vive en la bitácora de auditoría.
+func discardedRevision(intakeID, fromStatus string, total float64) (Revision, error) {
+	payload, err := DiscardedRevisionPayload(fromStatus, total)
+	if err != nil {
+		return Revision{}, err
+	}
+	return Revision{
+		IntakeID:  intakeID,
+		Kind:      RevisionKindDiscarded,
+		Payload:   payload,
+		CreatedBy: RevisionByOwner,
+	}, nil
 }

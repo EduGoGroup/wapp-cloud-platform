@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // El INVENTARIO de lo que ve el cliente por WhatsApp, byte a byte (notifier.go, 🔶): las 7

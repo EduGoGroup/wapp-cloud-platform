@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
@@ -110,6 +108,22 @@ func TestMemoryStore_MarkExpiryReminded_OneWinnerUnderConcurrency(t *testing.T) 
 func TestMemoryStore_Reminders_UseTheCallersInstantNotTheClock(t *testing.T) {
 	store, clock, at := reminderStore()
 	clock.Advance(5 * 365 * 24 * time.Hour)
+	requireNothingDueBefore(t, store, at)
+
+	in, won, err := store.MarkDepositReminded(ctx, tenant1, "deposit", at)
+	if err != nil || !won || !in.DepositRemindedAt.Equal(at) || in.Status != intakes.StatusDepositRequested {
+		t.Errorf("seña con `at` posterior = (%+v, %v, %v), quería ganar con la marca en %v", in, won, err, at)
+	}
+	in, won, err = store.MarkExpiryReminded(ctx, tenant1, "quote", at)
+	if err != nil || !won || !in.ExpiryRemindedAt.Equal(at) {
+		t.Errorf("presupuesto con `at` posterior = (%+v, %v, %v), quería ganar con la marca en %v", in, won, err, at)
+	}
+}
+
+// requireNothingDueBefore exige que con un `at` anterior al vencimiento ni la seña ni el
+// presupuesto ganan y no hay pendientes; y que con límite 0 tampoco los hay ni en `at`.
+func requireNothingDueBefore(t *testing.T, store *intakes.MemoryStore, at time.Time) {
+	t.Helper()
 	early := at.Add(-48 * time.Hour)
 	if _, won, err := store.MarkDepositReminded(ctx, tenant1, "deposit", early); won || err != nil {
 		t.Errorf("seña con `at` anterior al vencimiento: (ganó=%v, err=%v), quería no ganar", won, err)
@@ -122,14 +136,5 @@ func TestMemoryStore_Reminders_UseTheCallersInstantNotTheClock(t *testing.T) {
 	}
 	if none, err := store.PendingDepositReminders(ctx, tenant1, "contact-1", at, 0); err != nil || none == nil || len(none) != 0 {
 		t.Errorf("pendientes con límite 0 = (%#v, %v), quería un slice vacío no nil", none, err)
-	}
-
-	in, won, err := store.MarkDepositReminded(ctx, tenant1, "deposit", at)
-	if err != nil || !won || !in.DepositRemindedAt.Equal(at) || in.Status != intakes.StatusDepositRequested {
-		t.Errorf("seña con `at` posterior = (%+v, %v, %v), quería ganar con la marca en %v", in, won, err, at)
-	}
-	in, won, err = store.MarkExpiryReminded(ctx, tenant1, "quote", at)
-	if err != nil || !won || !in.ExpiryRemindedAt.Equal(at) {
-		t.Errorf("presupuesto con `at` posterior = (%+v, %v, %v), quería ganar con la marca en %v", in, won, err, at)
 	}
 }

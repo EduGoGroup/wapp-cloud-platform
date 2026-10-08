@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // El driver de database/sql de mentira sobre el que corre buyerdata_postgres_test.go: apunta, en

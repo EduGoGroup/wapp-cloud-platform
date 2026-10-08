@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -127,7 +125,13 @@ func TestApprove_StoresExactlyWhatItSends(t *testing.T) {
 		t.Errorf("SendQuote recibió (%q, %q, %q), quería el texto compuesto y la solicitud confirmada", sent.text, sent.in.ID, sent.in.Status)
 	}
 
-	// La revisión es la 2 (había un borrador), la escribe el dueño y lleva ese mismo texto.
+	requireApprovedRevision(t, sc, sent.text)
+}
+
+// requireApprovedRevision: la revisión es la 2 (había un borrador), la escribe el dueño y lleva
+// ese mismo texto.
+func requireApprovedRevision(t *testing.T, sc *approveScene, sentText string) {
+	t.Helper()
 	stored := sc.store.Revisions(svcIntakeID)
 	if len(stored) != 2 {
 		t.Fatalf("revisiones guardadas = %d, quería 2", len(stored))
@@ -136,8 +140,8 @@ func TestApprove_StoresExactlyWhatItSends(t *testing.T) {
 	if rev.RevisionNo != 2 || rev.Kind != RevisionKindApproved || rev.CreatedBy != RevisionByOwner || rev.IntakeID != svcIntakeID {
 		t.Errorf("revisión = (no %d, %q, por %q), quería (2, approved, owner)", rev.RevisionNo, rev.Kind, rev.CreatedBy)
 	}
-	if rev.RenderedText != sent.text {
-		t.Errorf("RenderedText = %q y se envió %q: lo guardado no es lo enviado", rev.RenderedText, sent.text)
+	if rev.RenderedText != sentText {
+		t.Errorf("RenderedText = %q y se envió %q: lo guardado no es lo enviado", rev.RenderedText, sentText)
 	}
 	if string(rev.Payload) != svcApprovedPayload {
 		t.Errorf("payload = %s, quería %s", rev.Payload, svcApprovedPayload)
@@ -327,8 +331,11 @@ func TestApprove_Preconditions(t *testing.T) {
 	}{
 		{
 			name: "no quote sender wins over everything else", status: StatusOpen, tenantID: svcTenantB, text: "",
-			prepare: func(_ *testing.T, sc *approveScene) { sc.svc = NewService(sc.store, WithCRMPusher(sc.crm)) },
-			check:   svcWantIs(ErrNoQuoteSender),
+			// El store tampoco sabe escribir revisiones: con las dos faltas a la vez manda la del canal.
+			prepare: func(_ *testing.T, sc *approveScene) {
+				sc.svc = NewService(struct{ Store }{sc.store}, WithCRMPusher(sc.crm))
+			},
+			check: svcWantIs(ErrNoQuoteSender),
 		},
 		{
 			name: "no revision writer wins over the empty text", status: StatusOpen, tenantID: svcTenantB, text: "",

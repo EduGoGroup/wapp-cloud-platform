@@ -24,8 +24,7 @@ package intakes
 
 import (
 	"context"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"fmt"
 )
 
 // ReanalysisTarget es la foto de una solicitud vista por la puerta de re-análisis:
@@ -89,5 +88,13 @@ type ReanalysisTarget struct {
 // Service.Get, así que —como en el paquete viejo— cuenta como un TOQUE de los
 // recordatorios perezosos cuando hay puente cableado.
 func (s *Service) PushRevisionByID(ctx context.Context, tenantID, intakeID string, revisionNo int) error {
-	panic(pendiente.Implementar("intakes.Service.PushRevisionByID"))
+	if s == nil || s.crm == nil {
+		return nil
+	}
+	detail, err := s.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return fmt.Errorf("intakes: leer la solicitud %s para empujarla al CRM: %w", intakeID, err)
+	}
+	s.PushRevisionToCRM(ctx, tenantID, detail, revisionNo)
+	return nil
 }

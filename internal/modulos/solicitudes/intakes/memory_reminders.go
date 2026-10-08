@@ -9,9 +9,8 @@ package intakes
 
 import (
 	"context"
+	"slices"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // MarkDepositReminded implementa DepositStore con el MISMO compare-and-swap que el
@@ -27,7 +26,21 @@ import (
 // Las condiciones se evalúan y la marca se escribe sin soltar el candado: de N toques
 // simultáneos gana exactamente uno («un solo recordatorio», D-041.12).
 func (m *MemoryStore) MarkDepositReminded(_ context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
-	panic(pendiente.Implementar("intakes.MemoryStore.MarkDepositReminded"))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	i := m.indexLocked(tenantID, intakeID)
+	if i < 0 {
+		return Intake{}, false, nil
+	}
+	in := m.rows[tenantID][i].intake
+	in.Status = NormalizeStatus(m.rows[tenantID][i].status)
+	if !candidate(in, at) {
+		return Intake{}, false, nil
+	}
+	m.rows[tenantID][i].intake.DepositRemindedAt = at
+	in.DepositRemindedAt = at
+	return in, true, nil
 }
 
 // MarkExpiryReminded implementa ExpiryStore con el MISMO compare-and-swap que el
@@ -43,7 +56,24 @@ func (m *MemoryStore) MarkDepositReminded(_ context.Context, tenantID, intakeID 
 //
 // 🔴 La marca NO mata nada: la solicitud sigue en `pending_approval`.
 func (m *MemoryStore) MarkExpiryReminded(_ context.Context, tenantID, intakeID string, at time.Time) (Intake, bool, error) {
-	panic(pendiente.Implementar("intakes.MemoryStore.MarkExpiryReminded"))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	i := m.indexLocked(tenantID, intakeID)
+	if i < 0 {
+		return Intake{}, false, nil
+	}
+	in := m.rows[tenantID][i].intake
+	in.Status = NormalizeStatus(m.rows[tenantID][i].status)
+	// Reusa Overdue —la MISMA función que pinta la marca en la bandeja y que hace de
+	// pre-filtro— en vez de reescribir la comparación de fechas: tres copias de la
+	// regla serían tres sitios donde el plazo puede divergir.
+	if !Overdue(in, at) || alreadyNotified(in) {
+		return Intake{}, false, nil
+	}
+	m.rows[tenantID][i].intake.ExpiryRemindedAt = at
+	in.ExpiryRemindedAt = at
+	return in, true, nil
 }
 
 // PendingDepositReminders implementa DepositStore: las señas del CONTACTO `contactID`
@@ -54,5 +84,26 @@ func (m *MemoryStore) MarkExpiryReminded(_ context.Context, tenantID, intakeID s
 // Sin candidatas devuelve un slice vacío no nil; con `limit` ≤ 0 también, sin mirar
 // nada. Nunca devuelve error. Las cabeceras salen con el Status normalizado.
 func (m *MemoryStore) PendingDepositReminders(_ context.Context, tenantID, contactID string, at time.Time, limit int) ([]Intake, error) {
-	panic(pendiente.Implementar("intakes.MemoryStore.PendingDepositReminders"))
+	if limit <= 0 {
+		return []Intake{}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := []Intake{}
+	for _, r := range m.rows[tenantID] {
+		if r.intake.ContactID != contactID {
+			continue
+		}
+		in := r.intake
+		in.Status = NormalizeStatus(r.status)
+		if candidate(in, at) {
+			out = append(out, in)
+		}
+	}
+	slices.SortFunc(out, func(a, b Intake) int { return a.DepositDueAt.Compare(b.DepositDueAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

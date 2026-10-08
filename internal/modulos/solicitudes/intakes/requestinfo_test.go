@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -190,5 +188,21 @@ func TestRequestInfo_LostTransitionSendsNothing(t *testing.T) {
 	}
 	if len(sc.quotes.questions) != 0 {
 		t.Errorf("preguntas enviadas = %d, quería 0", len(sc.quotes.questions))
+	}
+}
+
+// TestRequestInfo_DetailKeepsBuyerDataPresent: el detalle devuelto conserva BuyerDataPresent tal
+// como se leyó (el doble svcRetotaledStore, de approve_test.go, lee siempre «hay datos»).
+func TestRequestInfo_DetailKeepsBuyerDataPresent(t *testing.T) {
+	t.Parallel()
+	st := &svcRetotaledStore{MemoryStore: svcSeedStore(t, StatusPendingApproval), total: 21500}
+	svc := NewService(st, WithQuoteSender(&svcQuoteSpy{trace: &svcTrace{}}))
+
+	detail, err := svc.RequestInfo(context.Background(), svcTenantA, svcIntakeID, "¿Para cuántas personas?")
+	if err != nil {
+		t.Fatalf("RequestInfo devolvió el error %v", err)
+	}
+	if !detail.BuyerDataPresent || detail.Status != StatusNeedsInfo {
+		t.Errorf("detalle = (datos del comprador %v, estado %q), quería (true, needs_info)", detail.BuyerDataPresent, detail.Status)
 	}
 }

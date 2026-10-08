@@ -4,12 +4,14 @@ package intakes
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	cloudlinkv1 "github.com/EduGoGroup/wapp-cloudlink/gen/wapp/cloudlink/v1"
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/nucleo/contact"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // ============================================================================
@@ -150,6 +152,12 @@ const (
 	NoticeByCaller
 )
 
+// silences responde si esta política deja el aviso en manos del llamante. Está
+// escrito como método —y no como `notice == NoticeByCaller` suelto en Service—
+// para que la regla viva junto al tipo, igual que ShippingPolicy.applies.
+// Era silencia en el viejo.
+func (n StatusNotice) silences() bool { return n == NoticeByCaller }
+
 // MessageSender empuja un texto por una sesión viva del Edge y espera su Ack. La
 // firma es la del SendText del Gateway —la misma que ya declaran el runtime y la
 // API pública—, así que el Gateway la satisface sin adaptador.
@@ -198,6 +206,12 @@ type SettingsReader interface {
 	NotifySettings(ctx context.Context, tenantID string) (NotifySettings, error)
 }
 
+// commandIDCarrier lo satisface el error de un envío que ya tenía command_id
+// asignado (el SendError del Gateway). Se pide por duck-typing y no por el tipo
+// concreto para no acoplar el dominio al Gateway: cualquier transporte que sepa
+// decir «este comando se llamaba así» encaja.
+type commandIDCarrier interface{ CommandID() string }
+
 // DefaultDepositDueDays espeja el DEFAULT de tenant_settings.deposit_due_days
 // (migración 0045): 3. Vale cuando el tenant no tiene fila de config —un tenant
 // sin configurar no es un error, es un tenant recién nacido— y cuando el plazo
@@ -211,7 +225,12 @@ const DefaultDepositDueDays = 3
 // Un *Notifier nil, o uno construido sin alguna dependencia que la salida
 // necesita, NO rompe nada: no avisa, no registra y no entra en pánico. Qué
 // dependencias necesita cada salida lo dice su comentario.
-type Notifier struct{}
+type Notifier struct {
+	sender   MessageSender
+	contacts Destinations
+	settings SettingsReader
+	log      logger.Logger
+}
 
 // NewNotifier construye el notificador sobre sus cuatro dependencias. Las cuatro
 // son obligatorias para avisar: sin cualquiera de ellas no hay mensaje que mandar
@@ -219,7 +238,7 @@ type Notifier struct{}
 // Notifier a medias se construye igual y simplemente calla (el servicio acepta
 // además un notificador nil y en ese caso no notifica).
 func NewNotifier(sender MessageSender, contacts Destinations, settings SettingsReader, log logger.Logger) *Notifier {
-	panic(pendiente.Implementar("intakes.NewNotifier"))
+	return &Notifier{sender: sender, contacts: contacts, settings: settings, log: log}
 }
 
 // NotifyStatus despacha el aviso de la transición `from` → `in.Status`. No
@@ -263,8 +282,129 @@ func NewNotifier(sender MessageSender, contacts Destinations, settings SettingsR
 //
 // El éxito se registra en Info con el command_id del Ack.
 func (n *Notifier) NotifyStatus(ctx context.Context, tenantID string, in Intake, from string) {
-	panic(pendiente.Implementar("intakes.Notifier.NotifyStatus"))
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil || n.settings == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.containPanic(in)
+
+	to := NormalizeStatus(in.Status)
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"status_from", NormalizeStatus(from),
+		"status_to", to,
+	)
+
+	text, ok := n.text(ctx, tenantID, in, to, log)
+	if !ok {
+		return
+	}
+	n.deliver(ctx, tenantID, in, text, log)
 }
+
+// containPanic es lo que hace ESTRUCTURAL la regla 1, y no solo una convención de
+// firmas (ver la cabecera). NO es tragarse el defecto: se registra en Error con el
+// pánico entero, que es donde hay que ir a buscarlo. Lo que se contiene es el
+// ALCANCE del daño, no la noticia. Era contenerPánico en el viejo.
+func (n *Notifier) containPanic(in Intake) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	n.log.Error("notificación: pánico avisando del cambio de estado; la transición YA está aplicada",
+		"intake_id", in.ID, "panic", fmt.Sprint(r))
+}
+
+// text arma el mensaje del estado destino, o dice que no hay ninguno que mandar.
+// El booleano NO es «hubo error»: es «hay algo que decirle al cliente», y los dos
+// casos en que vale false —estado sin plantilla, tenant sin plantilla de seña— son
+// silencios NORMALES, no averías.
+func (n *Notifier) text(ctx context.Context, tenantID string, in Intake, to string, log logger.Logger) (string, bool) {
+	if to == StatusDepositRequested {
+		return n.depositText(ctx, tenantID, in, log)
+	}
+	tpl, ok := statusTemplates[to]
+	if !ok {
+		// Silencio deliberado: ver el comentario de statusTemplates. Queda en debug
+		// porque es el camino normal de `abandoned`, no una anomalía.
+		log.Debug("notificación: el estado no le dice nada al cliente, no se envía")
+		return "", false
+	}
+	return render(tpl, in, DefaultDepositDueDays), true
+}
+
+// depositText resuelve el texto de la SEÑA, que es el único que NO puede vivir en
+// el código: lleva los datos de la cuenta del tenant, que solo el tenant conoce.
+// La decisión de producto (sin plantilla NO se manda nada) está en NotifyStatus.
+func (n *Notifier) depositText(ctx context.Context, tenantID string, in Intake, log logger.Logger) (string, bool) {
+	cfg, ok := n.depositSettings(ctx, tenantID, log, noTemplateOnDepositRequest)
+	if !ok {
+		return "", false
+	}
+	return render(cfg.DepositTemplate, in, cfg.DepositDueDays), true
+}
+
+// depositSettings resuelve la config de la seña y responde a UNA pregunta: ¿puede
+// este tenant decirle algo al cliente sobre la seña? Está separada del render porque
+// el recordatorio (deposit.go) necesita preguntarlo ANTES de gastar la marca de «ya
+// recordado»: si se marcara primero, un tenant que todavía no configuró su plantilla
+// dejaría a ese cliente sin recordatorio para siempre, incluso después de
+// configurarla.
+//
+// Los dos `false` son los de siempre: sin plantilla es un silencio NORMAL (Warn con
+// la causa) y un fallo de lectura es una avería (Error) que también acaba en
+// silencio, porque mandar un texto con marcadores sin rellenar es peor que no mandar.
+//
+// `consequence` es la CONSECUENCIA, y la trae el llamante porque no es la misma en
+// los dos caminos: al pedir la seña, sin plantilla no sale NADA; al aprobar (T4.3),
+// sale la cotización del dueño sola. Un texto fijo aquí le contaría al log de uno la
+// consecuencia del otro — y un log que afirma lo que no pasó es la misma clase de
+// defecto que un mensaje que afirma un estado que no es.
+func (n *Notifier) depositSettings(ctx context.Context, tenantID string, log logger.Logger, consequence string) (NotifySettings, bool) {
+	cfg, err := n.settings.NotifySettings(ctx, tenantID)
+	if err != nil {
+		log.Error("notificación: no se pudo leer la config del tenant", "error", err, "consecuencia", consequence)
+		return NotifySettings{}, false
+	}
+	if strings.TrimSpace(cfg.DepositTemplate) == "" {
+		log.Warn("notificación: el tenant no tiene plantilla de seña (tenant_settings.deposit_template); " +
+			consequence)
+		return NotifySettings{}, false
+	}
+	return cfg, true
+}
+
+// --- la cotización del DUEÑO (Plan 044 · T4.3, D-044.49 §1) ------------------
+//
+// Las salidas de abajo satisfacen QuoteSender y son la MISMA salida hacia WhatsApp
+// que el aviso automático, con otro dueño del texto: aquí las palabras las pone la
+// dueña del negocio y la plataforma solo adjunta lo que solo ella sabe (sus datos
+// de pago) y lo entrega. Por eso reusan `deliver` entero —vía custodiada de PII,
+// Ack y cero PII en los logs— en vez de abrir una segunda puerta hacia el Gateway.
+
+// Las consecuencias de que un tenant no tenga configurada su plantilla de seña,
+// una por camino. Ver depositSettings. Eran sinPlantillaAlPedirSeña,
+// sinPlantillaAlRecordar y sinPlantillaAlAprobar en el viejo.
+const (
+	noTemplateOnDepositRequest = "la transición se aplicó pero al cliente no se le manda nada"
+	noTemplateOnReminder       = "no se manda el recordatorio y la marca de «ya recordado» sigue libre"
+	noTemplateOnApprove        = "se le manda la cotización del dueño sola, sin instrucciones de pago"
+)
+
+// Las dos ACCIONES del dueño que hablan por su cuenta, tal como se registran en el
+// log. Son etiquetas de observabilidad y no del wire: lo que separan es «¿por qué
+// salió este mensaje?» cuando alguien lea el log buscando un envío que no llegó.
+// Eran accionAprobar, accionPedirInfo y claveAcciónDelLog en el viejo.
+const (
+	actionApprove     = "approve"
+	actionRequestInfo = "request_info"
+	logKeyAction      = "accion"
+)
+
+// quoteDepositSeparator es lo que va entre la cotización del dueño y la plantilla
+// de seña: un renglón en blanco. Era separadorDeSeña (approve.go) en el viejo.
+const quoteDepositSeparator = "\n\n"
 
 // QuoteText compone la cotización ENTERA que va a salir —el texto del dueño más
 // la plantilla de seña del tenant— y la devuelve para que el llamante la GUARDE
@@ -285,7 +425,20 @@ func (n *Notifier) NotifyStatus(ctx context.Context, tenantID string, in Intake,
 // presupuesto; lo que falta es el «cómo pagar la seña», que este tenant no ha
 // escrito.
 func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ownerText string) string {
-	panic(pendiente.Implementar("intakes.Notifier.QuoteText"))
+	if n == nil || n.log == nil || n.settings == nil {
+		return ownerText
+	}
+	log := n.log.With("intake_id", in.ID, "tenant_id", tenantID, logKeyAction, actionApprove)
+	cfg, ok := n.depositSettings(ctx, tenantID, log, noTemplateOnApprove)
+	if !ok {
+		return ownerText
+	}
+	// render rellena {total} y {plazo}; {fecha_limite} se queda SIN sustituir a
+	// propósito, porque al aprobar todavía no hay seña pedida y por tanto no hay
+	// deposit_due_at (ver la constante placeholderDueDate): un marcador visible
+	// delata que la plantilla promete una fecha que este momento no tiene, y eso es
+	// estrictamente mejor que estamparle al cliente una fecha inventada.
+	return ownerText + quoteDepositSeparator + render(cfg.DepositTemplate, in, cfg.DepositDueDays)
 }
 
 // SendQuote entrega el texto YA compuesto (el de QuoteText) por la sesión de la
@@ -296,14 +449,84 @@ func (n *Notifier) QuoteText(ctx context.Context, tenantID string, in Intake, ow
 // Necesita log, MessageSender y Destinations; NO necesita el lector de config. En
 // el log el motivo va como accion=approve.
 func (n *Notifier) SendQuote(ctx context.Context, tenantID string, in Intake, text string) {
-	panic(pendiente.Implementar("intakes.Notifier.SendQuote"))
+	n.sendAsOwner(ctx, tenantID, in, text, actionApprove)
 }
 
 // SendQuestion entrega la PREGUNTA del dueño (T4.4). Es la misma entrega que
 // SendQuote con otro motivo (accion=request_info), y no compone NADA: a una
 // pregunta no se le adjunta la plantilla de seña.
 func (n *Notifier) SendQuestion(ctx context.Context, tenantID string, in Intake, question string) {
-	panic(pendiente.Implementar("intakes.Notifier.SendQuestion"))
+	n.sendAsOwner(ctx, tenantID, in, question, actionRequestInfo)
+}
+
+// sendAsOwner es lo COMÚN de las dos salidas en las que habla la dueña: las
+// guardas del notificador a medias, la contención del pánico, el contexto del log y la
+// bajada a `deliver`. Existe como función porque lo único que distingue a las dos es
+// la etiqueta del motivo, y dos copias del mismo bloque habrían divergido en el primer
+// campo de log que alguien añadiera a una de ellas. Era enviarComoElDueño en el viejo.
+func (n *Notifier) sendAsOwner(ctx context.Context, tenantID string, in Intake, text, action string) {
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.containPanic(in)
+
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"status_to", NormalizeStatus(in.Status),
+		logKeyAction, action,
+	)
+	n.deliver(ctx, tenantID, in, text, log)
+}
+
+// deliver resuelve el destino por la vía custodiada y despacha. Es la parte que
+// toca PII y la que no puede fallar hacia arriba.
+//
+// Un Ack con Ok=false NO es un éxito: el Edge acusó recibo del comando y avisó de
+// que el envío falló (por ejemplo, un destino que WhatsApp rechaza). Se loguea como
+// error con su command_id, igual que un fallo de transporte, porque para el cliente
+// la consecuencia es la misma: no le llegó nada.
+func (n *Notifier) deliver(ctx context.Context, tenantID string, in Intake, text string, log logger.Logger) {
+	dst, err := n.contacts.Destino(ctx, tenantID, in.ContactID)
+	if err != nil {
+		// El error del resolver nombra el contact_id OPACO y el kind, nunca el valor.
+		log.Error("notificación: no se pudo resolver el destino del contacto", "error", err)
+		return
+	}
+	to, err := dst.Sendable()
+	if err != nil {
+		log.Error("notificación: el contacto no tiene destino direccionable", "error", err)
+		return
+	}
+
+	// A partir de aquí `to` es PII en memoria: se pasa al Sender y NO se loguea.
+	ack, err := n.sender.SendText(ctx, in.SessionID, to, text)
+	if err != nil {
+		log.Error("notificación: el envío falló; la transición ya está aplicada",
+			"command_id", commandIDOf(err), "error", err)
+		return
+	}
+	if !ack.GetOk() {
+		log.Error("notificación: el Edge rechazó el envío; la transición ya está aplicada",
+			"command_id", ack.GetAckedCommandId(), "edge_error", ack.GetError())
+		return
+	}
+	log.Info("notificación de cambio de estado enviada al cliente",
+		"command_id", ack.GetAckedCommandId())
+}
+
+// commandIDOf extrae el command_id de un error de envío, si lo lleva. Devuelve
+// cadena vacía cuando el fallo ocurrió ANTES de que hubiera comando (o cuando el
+// transporte no sabe decirlo): un command_id inventado sería peor que ninguno,
+// porque quien lo busque en los acuses del Edge no encontrará nada y creerá que el
+// mensaje se perdió en el camino.
+func commandIDOf(err error) string {
+	var carrier commandIDCarrier
+	if !errors.As(err, &carrier) {
+		return ""
+	}
+	return carrier.CommandID()
 }
 
 // NotifyCRMStatus avisa al cliente de que su pedido cambió de estado EN EL CRM
@@ -325,5 +548,28 @@ func (n *Notifier) SendQuestion(ctx context.Context, tenantID string, in Intake,
 // Necesita las CUATRO dependencias, igual que NotifyStatus, aunque NO lee la
 // config del tenant (se conserva la guarda del paquete viejo).
 func (n *Notifier) NotifyCRMStatus(ctx context.Context, tenantID string, in Intake, crmStatus string) {
-	panic(pendiente.Implementar("intakes.Notifier.NotifyCRMStatus"))
+	if n == nil || n.log == nil || n.sender == nil || n.contacts == nil || n.settings == nil {
+		return // un notificador a medias no avisa, pero tampoco rompe nada
+	}
+	defer n.containPanic(in)
+
+	log := n.log.With(
+		"intake_id", in.ID,
+		"tenant_id", tenantID,
+		"session_id", in.SessionID,
+		"crm_status", crmStatus,
+	)
+
+	tpl, ok := crmStatusTemplates[crmStatus]
+	if !ok {
+		// Un estado canónico SIN plantilla no debería existir —hay un test que lo
+		// vigila—, así que esto no es el silencio normal de statusTemplates: es una
+		// anomalía y se registra como tal.
+		log.Warn("notificación CRM: estado canónico sin texto, el cliente no se entera")
+		return
+	}
+	// render con dueDays en cero: ninguna de estas plantillas usa {plazo} ni
+	// {fecha_limite} —son del cobro que gestiona el dueño, no del CRM— y el {total}
+	// se resuelve igual que en el resto de los avisos.
+	n.deliver(ctx, tenantID, in, render(tpl, in, 0), log)
 }

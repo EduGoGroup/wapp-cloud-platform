@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // Los tests de fichero de PostgresBuyerData, con un driver de database/sql de mentira
@@ -298,6 +296,12 @@ func TestPutBuyerField_Failures(t *testing.T) {
 			arrange:   func(t *testing.T, fake *bdFakeDB) { fake.script(bdSealedRow(t, bdKEKNewID, bdRUT)) },
 			wantText:  jsonErr,
 			wantKinds: []string{bdEventBegin, bdEventQuery, bdEventRollback}},
+		// El viejo entraba en pánico aquí, con la transacción abierta: `null` no da error
+		// de unmarshal y deja el mapa en nil.
+		{name: "plaintext is JSON null",
+			arrange:   func(t *testing.T, fake *bdFakeDB) { fake.script(bdSealedRow(t, bdKEKNewID, `null`)) },
+			wantText:  jsonErr,
+			wantKinds: []string{bdEventBegin, bdEventQuery, bdEventRollback}},
 		{name: "encrypt fails", broken: true, wantCause: true,
 			arrange:   func(*testing.T, *bdFakeDB) {},
 			wantText:  "intakes: cifrando los datos del comprador: WrapDEK de la DEK por-valor: causa-del-driver",
@@ -421,6 +425,9 @@ func TestGetBuyerData_Failures(t *testing.T) {
 			wantText: "intakes: descifrando los datos del comprador de la solicitud " + bdIntake + ": "},
 		{name: "plaintext is not a JSON object",
 			reply:    func(t *testing.T) bdReply { return bdSealedRow(t, bdKEKNewID, `"`+bdRUT+`"`) },
+			wantText: "intakes: los datos del comprador de la solicitud " + bdIntake + " no son un objeto JSON"},
+		{name: "plaintext is JSON null",
+			reply:    func(t *testing.T) bdReply { return bdSealedRow(t, bdKEKNewID, `null`) },
 			wantText: "intakes: los datos del comprador de la solicitud " + bdIntake + " no son un objeto JSON"},
 	}
 	for _, c := range cases {

@@ -27,14 +27,40 @@ import (
 	"context"
 	"time"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-shared/logger"
 )
 
 // Service es la capa de dominio de las solicitudes: aplica las reglas (paginación
 // acotada, normalización de estados, máquina de estados) sobre un Store. Se
 // construye con NewService y es seguro compartirlo: no guarda estado propio entre
 // llamadas, solo sus colaboradores.
-type Service struct{}
+type Service struct {
+	store    Store
+	notifier StatusNotifier
+	deposits DepositTouch
+	expiry   ExpiryTouch
+	crm      CRMPusher
+	quotes   QuoteSender
+	// metrics es por donde la bandeja publica su telemetría. OPCIONAL: nil es «no se
+	// publica nada» y el dominio funciona entero. Era `metricas` en el viejo.
+	metrics MetricsPublisher
+	// log es dónde avisa lo BEST-EFFORT de este servicio cuando falla (hoy, la
+	// telemetría). Nunca es nil: NewService pone logger.Default() y WithMetrics lo
+	// sustituye por el del proceso.
+	log logger.Logger
+	// metricsNow es el reloj con el que se mide `elapsed_from_draft_ms`. Inyectable
+	// con WithMetricsClock, que existe para los tests (ver service_metrics.go). Era
+	// `ahora` en el viejo.
+	metricsNow func() time.Time
+	// now es el reloj con el que Summary fecha su resultado (D-F6-5). Inyectable con
+	// WithClock. Es OTRO que metricsNow y ninguno mueve al otro. No existía en el
+	// viejo, que llamaba a time.Now() directo.
+	now func() time.Time
+	// revisions es el MISMO store, visto por su puerto de escritura de revisiones.
+	// No es una dependencia aparte y no se cablea: sale de una aserción de tipo en
+	// NewService (ver allí por qué no es un Option ni un método más de Store).
+	revisions RevisionWriter
+}
 
 // StatusNotifier avisa al CLIENTE de que su solicitud cambió de estado (D-041.14).
 // Lo satisface *Notifier.
@@ -152,7 +178,7 @@ type Option func(*Service)
 // SetStatus. Sin esta opción el servicio funciona igual y NO manda nada: es lo que
 // hace que un test de dominio no le haga sonar el teléfono a nadie por accidente.
 func WithNotifier(n StatusNotifier) Option {
-	panic(pendiente.Implementar("intakes.WithNotifier"))
+	return func(s *Service) { s.notifier = n }
 }
 
 // WithDepositReminder cablea el recordatorio PEREZOSO de la seña a las LECTURAS del
@@ -168,7 +194,7 @@ func WithNotifier(n StatusNotifier) Option {
 // SetStatus con su notificador: colaborador opcional, no puede devolver error, no
 // puede tumbar al llamante, y sin cablear no existe.
 func WithDepositReminder(d DepositTouch) Option {
-	panic(pendiente.Implementar("intakes.WithDepositReminder"))
+	return func(s *Service) { s.deposits = d }
 }
 
 // WithExpiryReminder cablea el recordatorio PEREZOSO del plazo del presupuesto a las
@@ -187,7 +213,7 @@ func WithDepositReminder(d DepositTouch) Option {
 // derivada, se calcula al leer (Overdue) y no necesita cableado; esto solo enciende
 // el RECORDATORIO.
 func WithExpiryReminder(e ExpiryTouch) Option {
-	panic(pendiente.Implementar("intakes.WithExpiryReminder"))
+	return func(s *Service) { s.expiry = e }
 }
 
 // WithCRMPusher cablea el empuje al puente CRM de las revisiones que se escriben
@@ -201,7 +227,7 @@ func WithExpiryReminder(e ExpiryTouch) Option {
 // escritura y una puerta nueva lo hereda sin copiar una línea; «acordarse en cada
 // sitio» es exactamente cómo nacen los empujes olvidados.
 func WithCRMPusher(p CRMPusher) Option {
-	panic(pendiente.Implementar("intakes.WithCRMPusher"))
+	return func(s *Service) { s.crm = p }
 }
 
 // WithQuoteSender cablea la salida por la que el DUEÑO le responde al cliente. Se le
@@ -213,7 +239,7 @@ func WithCRMPusher(p CRMPusher) Option {
 // responder» y pedir información es «preguntar»; un servicio que no puede hablar no
 // puede hacer ninguna de las dos.
 func WithQuoteSender(q QuoteSender) Option {
-	panic(pendiente.Implementar("intakes.WithQuoteSender"))
+	return func(s *Service) { s.quotes = q }
 }
 
 // WithClock sustituye el reloj con el que Summary fecha su resultado
@@ -227,7 +253,11 @@ func WithQuoteSender(q QuoteSender) Option {
 // NO es el reloj de la telemetría: `elapsed_from_draft_ms` se mide con el de
 // WithMetricsClock, que es otro y no se mueve con esta opción (ni al revés).
 func WithClock(now func() time.Time) Option {
-	panic(pendiente.Implementar("intakes.WithClock"))
+	return func(s *Service) {
+		if now != nil {
+			s.now = now
+		}
+	}
 }
 
 // NewService construye el servicio sobre el store dado y aplica las opciones en
@@ -249,7 +279,18 @@ func WithClock(now func() time.Time) Option {
 // ErrNoRevisionWriter en vez de aprobar sin rastro; todo lo demás funciona. Los dos
 // stores reales —*Postgres y *MemoryStore— lo satisfacen.
 func NewService(store Store, opts ...Option) *Service {
-	panic(pendiente.Implementar("intakes.NewService"))
+	// El log y los dos relojes nacen con un default utilizable y NO se exigen por
+	// parámetro: un servicio sin ellos tendría que ramificar por nil en cada aviso y
+	// en cada fecha. El mismo criterio que ya usan *Postgres y *MemoryStore con su
+	// logger.Default().
+	s := &Service{store: store, log: logger.Default(), metricsNow: time.Now, now: time.Now}
+	if w, ok := store.(RevisionWriter); ok {
+		s.revisions = w
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // List devuelve la página de solicitudes del tenant que casan con el filtro, con el
@@ -270,7 +311,16 @@ func NewService(store Store, opts ...Option) *Service {
 //   - R-05: se pregunta por CADA colaborador por separado; el orden entre los dos no
 //     significa nada (hablan con personas distintas y escriben marcas distintas).
 func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, error) {
-	panic(pendiente.Implementar("intakes.Service.List"))
+	f = f.Normalized()
+	items, total, err := s.store.List(ctx, tenantID, f)
+	if err != nil {
+		return Page{}, err
+	}
+	if items == nil {
+		items = []Intake{} // la UI itera sin ramificar por el nulo
+	}
+	s.touch(ctx, tenantID, items)
+	return Page{Intakes: items, Page: f.Page, PageSize: f.PageSize, Total: total}, nil
 }
 
 // ListDetails devuelve TODAS las solicitudes del filtro con sus líneas, sin paginar:
@@ -287,7 +337,14 @@ func (s *Service) List(ctx context.Context, tenantID string, f Filter) (Page, er
 // que el dueño dispara para llevarse una hoja de cálculo. Que descargar un CSV le
 // mande WhatsApps a sus clientes sería una sorpresa desagradable, y sin cota útil.
 func (s *Service) ListDetails(ctx context.Context, tenantID string, f Filter) ([]Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.ListDetails"))
+	details, err := s.store.ListDetails(ctx, tenantID, f, MaxExportIntakes+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(details) > MaxExportIntakes {
+		return nil, ErrTooLarge
+	}
+	return details, nil
 }
 
 // Summary agrega las solicitudes del filtro (totales, desglose por estado, ranking
@@ -300,7 +357,11 @@ func (s *Service) ListDetails(ctx context.Context, tenantID string, f Filter) ([
 //
 // Como ListDetails, NO es un toque de los recordatorios.
 func (s *Service) Summary(ctx context.Context, tenantID string, f Filter) (Summary, error) {
-	panic(pendiente.Implementar("intakes.Service.Summary"))
+	details, err := s.ListDetails(ctx, tenantID, f)
+	if err != nil {
+		return Summary{}, err
+	}
+	return BuildSummary(details, f.Normalized(), s.now()), nil
 }
 
 // Get devuelve la solicitud con sus líneas. ErrNotFound si no es del tenant (404
@@ -311,7 +372,45 @@ func (s *Service) Summary(ctx context.Context, tenantID string, f Filter) (Summa
 // esa es justo la que tiene la seña o el plazo vencidos, es donde antes se nota. El
 // colaborador recibe esa única solicitud.
 func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.Get"))
+	detail, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	s.touch(ctx, tenantID, []Intake{detail.Intake})
+	return detail, nil
+}
+
+// touch evalúa los recordatorios PEREZOSOS sobre lo que una lectura acaba de leer.
+// Sin ninguna opción cableada (el default, y lo que usan todos los tests de dominio)
+// no hace nada: la lectura sigue siendo pura.
+//
+// NO se llama desde ListDetails ni Summary a propósito, aunque también leen
+// solicitudes: son el EXPORT y el resumen, caminos de datos masivos que un dueño
+// dispara para llevarse una hoja de cálculo. Que descargar un CSV le mande WhatsApps
+// a sus clientes sería una sorpresa desagradable, y encima sin cota útil (ahí no hay
+// página: son hasta MaxExportIntakes solicitudes).
+//
+// 🔴 SON DOS COLABORADORES INDEPENDIENTES (R-05), y la guarda tiene que preguntarlo
+// dos veces. Hasta que nació el recordatorio del plazo esto era
+// `if s.deposits == nil || len(touched) == 0 { return }`, y ese `return` habría
+// dejado el recordatorio del plazo MUDO Y EN VERDE en cualquier despliegue sin el
+// recordatorio de la seña: el colaborador nuevo ni siquiera llegaba a mirar. Lo
+// único COMPARTIDO es el corte por lista vacía, que no es de nadie: sin filas leídas
+// no hay nada que evaluar.
+//
+// El ORDEN entre los dos no significa nada y no debe significarlo: hablan con
+// personas distintas (el cliente y el dueño), escriben marcas distintas y ninguno
+// puede ver lo que hizo el otro.
+func (s *Service) touch(ctx context.Context, tenantID string, touched []Intake) {
+	if len(touched) == 0 {
+		return
+	}
+	if s.deposits != nil {
+		s.deposits.Remind(ctx, tenantID, touched)
+	}
+	if s.expiry != nil {
+		s.expiry.RemindOverdue(ctx, tenantID, touched)
+	}
 }
 
 // SetStatus aplica una transición del ciclo de vida y devuelve la solicitud ya
@@ -353,7 +452,23 @@ func (s *Service) Get(ctx context.Context, tenantID, intakeID string) (Detail, e
 // Al notificador se le pasa la solicitud transicionada y el origen normalizado.
 // R-03: SetStatus NO empuja al puente CRM.
 func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string, notice StatusNotice) (Intake, error) {
-	panic(pendiente.Implementar("intakes.Service.SetStatus"))
+	to = NormalizeStatus(to)
+
+	current, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Intake{}, err
+	}
+	from := NormalizeStatus(current.Status)
+	if !CanTransition(from, to) {
+		return Intake{}, &TransitionError{From: from, To: to, Allowed: AllowedTransitions(from)}
+	}
+
+	updated, err := s.store.UpdateStatus(ctx, tenantID, intakeID, to, StoredVariants(from))
+	if err != nil {
+		return Intake{}, err
+	}
+	s.notify(ctx, tenantID, updated, from, notice)
+	return updated, nil
 }
 
 // AbandonByEvent deja en `abandoned` la solicitud que colgaba del evento `eventID`
@@ -372,7 +487,40 @@ func (s *Service) SetStatus(ctx context.Context, tenantID, intakeID, to string, 
 // ⚠️ LEGADO REGISTRADO: una solicitud sin evento declarado (anterior a la inversión
 // de la FK) es INALCANZABLE por esta puerta: ningún eventID la encuentra.
 func (s *Service) AbandonByEvent(ctx context.Context, tenantID, eventID string) error {
-	panic(pendiente.Implementar("intakes.Service.AbandonByEvent"))
+	return s.store.AbandonByEvent(ctx, tenantID, eventID)
+}
+
+// notify dispara el aviso al cliente de UNA transición efectivamente aplicada.
+//
+// Es el punto donde se sostiene «como mucho un mensaje por transición», y lo hace
+// colgando el aviso de la ESCRITURA y no de la petición:
+//
+//   - la transición ya pasó por CanTransition, que rechaza from == to: pedir dos
+//     veces `confirmed` sobre algo ya confirmado no llega hasta aquí;
+//   - UpdateStatus es un compare-and-swap sobre el estado leído, así que de dos
+//     operadores que piden lo mismo a la vez solo UNO escribe; el otro se lleva
+//     ErrConflict y sale por el `return` de SetStatus sin avisar a nadie;
+//   - y si aun así el store devolviera algo que no es el destino, la guarda de
+//     abajo calla. Es defensa barata contra un store futuro que "arregle" una
+//     transición imposible devolviendo el estado actual: al cliente le llegaría un
+//     WhatsApp que no corresponde a ningún cambio.
+//
+// El CUARTO motivo para callar lo trae el llamante (D-044.49): con NoticeByCaller
+// la transición se aplica y el aviso genérico no sale, porque quien la pidió ya le
+// escribió al cliente con su propio texto. Va PRIMERO —antes del notificador y
+// antes de la guarda del destino— porque es una decisión de producto y no una
+// defensa: si el llamante habla, aquí no hay nada que evaluar.
+func (s *Service) notify(ctx context.Context, tenantID string, updated Intake, from string, notice StatusNotice) {
+	if notice.silences() {
+		return
+	}
+	if s.notifier == nil {
+		return
+	}
+	if NormalizeStatus(updated.Status) == from {
+		return
+	}
+	s.notifier.NotifyStatus(ctx, tenantID, updated, from)
 }
 
 // PushRevisionToCRM encola para el puente CRM del tenant la revisión `revisionNo`
@@ -394,7 +542,10 @@ func (s *Service) AbandonByEvent(ctx context.Context, tenantID, eventID string) 
 // idempotencia es del receptor). Lo que lo impide es colgar esta llamada de la
 // escritura que numeró la revisión, una vez por revisión.
 func (s *Service) PushRevisionToCRM(ctx context.Context, tenantID string, d Detail, revisionNo int) {
-	panic(pendiente.Implementar("intakes.Service.PushRevisionToCRM"))
+	if s.crm == nil {
+		return
+	}
+	s.crm.PushRevision(ctx, tenantID, d, revisionNo)
 }
 
 // EnsureShippingLine garantiza la línea estándar de envío de una solicitud
@@ -406,5 +557,5 @@ func (s *Service) PushRevisionToCRM(ctx context.Context, tenantID string, d Deta
 // carrito, que va directo a `confirmed`. Ese llamante usa ShippingOnlyIfZones; el
 // del presupuesto, ShippingAlways.
 func (s *Service) EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error {
-	panic(pendiente.Implementar("intakes.Service.EnsureShippingLine"))
+	return s.store.EnsureShippingLine(ctx, tenantID, intakeID, policy)
 }

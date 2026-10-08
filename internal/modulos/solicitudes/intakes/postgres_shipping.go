@@ -34,8 +34,13 @@ package intakes
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/google/uuid"
+
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/storage/postgres"
 )
 
 // EnsureShippingLine implementa Store.EnsureShippingLine: deja la línea de envío
@@ -62,7 +67,106 @@ import (
 //   - "intakes: leer solicitud: " — la fila del total recalculado no se puede leer;
 //   - los de postgres.WithTx al abrir o confirmar la transacción.
 func (p *Postgres) EnsureShippingLine(ctx context.Context, tenantID, intakeID string, policy ShippingPolicy) error {
-	panic(pendiente.Implementar("intakes.Postgres.EnsureShippingLine"))
+	if _, err := uuid.Parse(intakeID); err != nil {
+		return ErrNotFound
+	}
+	return postgres.WithTx(ctx, p.db, func(tx *sql.Tx) error {
+		var exists bool
+		err := tx.QueryRowContext(ctx,
+			`SELECT true FROM public.intakes WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			tenantID, intakeID).Scan(&exists)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("intakes: bloquear la solicitud: %w", err)
+		}
+
+		changed, err := ensureShippingTx(ctx, tx, tenantID, intakeID, policy)
+		if err != nil || !changed {
+			return err
+		}
+		_, err = recomputeTotalTx(ctx, tx, tenantID, intakeID)
+		return err
+	})
+}
+
+// ensureShippingTx deja EXACTAMENTE una línea de envío en la solicitud y dice si
+// escribió algo. No recalcula el total: eso lo hace el llamante, que es quien sabe
+// si necesita la cabecera de vuelta.
+//
+// El orden importa: primero la política —si no aplica no se toca nada y no se lee
+// una línea que no va a cambiar— y solo después la fila.
+func ensureShippingTx(ctx context.Context, tx *sql.Tx, tenantID, intakeID string, policy ShippingPolicy) (bool, error) {
+	zones, err := shippingZonesOf(ctx, tx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if !policy.applies(zones) {
+		return false, nil
+	}
+	desired := DesiredShippingLine(zones)
+
+	var (
+		rowID  int64
+		stored Item
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, label, qty, unit_price
+		FROM public.intake_items
+		WHERE intake_id = $1 AND sku = $2
+	`, intakeID, ShippingSKU).Scan(&rowID, &stored.Label, &stored.Qty, &stored.UnitPrice)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		it := desired.item()
+		if _, ierr := tx.ExecContext(ctx, `
+			INSERT INTO public.intake_items (intake_id, sku, label, customization, qty, unit_price)
+			VALUES ($1, $2, $3, '', $4, $5)
+		`, intakeID, it.SKU, it.Label, it.Qty, it.UnitPrice); ierr != nil {
+			return false, fmt.Errorf("intakes: insertar la línea de envío: %w", ierr)
+		}
+		return true, nil
+	case err != nil:
+		return false, fmt.Errorf("intakes: leer la línea de envío: %w", err)
+	}
+
+	if !desired.Supersedes(stored) {
+		return false, nil
+	}
+	// Se ACTUALIZA la fila en vez de borrarla e insertar otra: así la línea conserva
+	// su added_at y su sitio en el pedido, y en ningún instante hay dos envíos.
+	it := desired.item()
+	if _, uerr := tx.ExecContext(ctx, `
+		UPDATE public.intake_items SET label = $2, qty = $3, unit_price = $4 WHERE id = $1
+	`, rowID, it.Label, it.Qty, it.UnitPrice); uerr != nil {
+		return false, fmt.Errorf("intakes: actualizar la línea de envío: %w", uerr)
+	}
+	return true, nil
+}
+
+// shippingZonesOf lee tenant_settings.shipping_zones. Un tenant SIN fila de config
+// no es un error: es un tenant que no configuró nada (mismo criterio que
+// GetTenantSettings del módulo de flujos) y por tanto no tiene zonas. Era
+// shippingZonesDe en el viejo.
+//
+// 🔴 TOMA UN `querier` Y NO UN `*sql.Tx` PARA QUE HAYA UNA SOLA SENTENCIA. Sus dos
+// llamantes leen la misma columna con propósitos distintos —EnsureShippingLine
+// dentro del CAS del carrito numérico, ShippingZones fuera de toda transacción para
+// el pipeline de captación— y con dos copias del SELECT bastaría con que alguien
+// añadiera un filtro a una para que el borrador y el pedido cerrado cotizaran envíos
+// distintos sin que nada diera error.
+func shippingZonesOf(ctx context.Context, q querier, tenantID string) ([]ShippingZone, error) {
+	var raw []byte
+	err := q.QueryRowContext(ctx,
+		`SELECT shipping_zones FROM public.tenant_settings WHERE tenant_id = $1`,
+		tenantID).Scan(&raw)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("intakes: leer las zonas de envío del tenant: %w", err)
+	}
+	return ParseShippingZones(raw)
 }
 
 // ShippingZones devuelve las zonas de envío que el tenant tiene configuradas en
@@ -75,5 +179,5 @@ func (p *Postgres) EnsureShippingLine(ctx context.Context, tenantID, intakeID st
 //   - JSON guardado que ParseShippingZones rechaza ⇒ su error tal cual;
 //   - fallo de la base ⇒ (nil, err) con "intakes: leer las zonas de envío del tenant: ".
 func (p *Postgres) ShippingZones(ctx context.Context, tenantID string) ([]ShippingZone, error) {
-	panic(pendiente.Implementar("intakes.Postgres.ShippingZones"))
+	return shippingZonesOf(ctx, p.db, tenantID)
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes_test
 
 import (
@@ -168,11 +166,26 @@ func TestMemoryStore_Revisions_PrunesTheLiteralPastTheTTL(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("la poda se anunció %d veces, quería 1: %v", len(entries), entries)
 	}
-	e := entries[0]
+	requirePruneAnnouncement(t, entries[0], int64(prunedAt.Sub(written).Seconds()))
+
+	// Releer no repite el anuncio ni mueve la fecha: es «cuándo se destruyó», no «cuándo se miró».
+	clock.Advance(72 * time.Hour)
+	again := store.Revisions("i-1")
+	if !again[1].LiteralPrunedAt.Equal(prunedAt) || !equalJSON(again[1].Payload, []byte(noLiteral)) {
+		t.Errorf("la segunda lectura dejó el sello en %v y el payload en %s", again[1].LiteralPrunedAt, again[1].Payload)
+	}
+	if n := len(log.snapshot()); n != 1 {
+		t.Errorf("tras releer hay %d anuncios, quería seguir en 1", n)
+	}
+}
+
+// requirePruneAnnouncement exige el anuncio de la poda de la revisión 2 de "i-1": su nivel y su
+// texto, las cuatro claves con su valor y nada más, y ni rastro del contenido del cliente.
+func requirePruneAnnouncement(t *testing.T, e logEntry, wantAge int64) {
+	t.Helper()
 	if e.level != "info" || e.msg != "retención: literal de la revisión podado por TTL vencido" {
 		t.Errorf("anuncio de la poda = %s", e)
 	}
-	wantAge := int64(prunedAt.Sub(written).Seconds())
 	for key, want := range map[string]any{
 		"intake_id": "i-1", "revision_no": 2, "edad_segundos": wantAge,
 		"ttl_segundos": int64(intakes.DefaultLiteralTTL.Seconds()),
@@ -186,16 +199,6 @@ func TestMemoryStore_Revisions_PrunesTheLiteralPastTheTTL(t *testing.T) {
 	}
 	if s := e.String(); strings.Contains(s, "Marta") || strings.Contains(s, "dos panes") {
 		t.Errorf("el anuncio de la poda lleva contenido del cliente: %s", s)
-	}
-
-	// Releer no repite el anuncio ni mueve la fecha: es «cuándo se destruyó», no «cuándo se miró».
-	clock.Advance(72 * time.Hour)
-	again := store.Revisions("i-1")
-	if !again[1].LiteralPrunedAt.Equal(prunedAt) || !equalJSON(again[1].Payload, []byte(noLiteral)) {
-		t.Errorf("la segunda lectura dejó el sello en %v y el payload en %s", again[1].LiteralPrunedAt, again[1].Payload)
-	}
-	if n := len(log.snapshot()); n != 1 {
-		t.Errorf("tras releer hay %d anuncios, quería seguir en 1", n)
 	}
 }
 
@@ -267,6 +270,19 @@ func TestMemoryStore_Reads_ReturnTheCallersCopies(t *testing.T) {
 	details[0].Items[1].Label = "pisada"
 	revs := store.Revisions("i-1")
 	revs[0].Kind = "pisada"
+	// El payload es un slice: pisar los BYTES de lo leído, de lo guardado que enseña el mirador o
+	// de lo que devolvió la escritura tampoco puede pisar lo guardado.
+	revs[0].Payload[0] = 'X'
+	store.PersistedRevisions("i-1")[0].Payload[0] = 'X'
+	written, err := store.InsertRevision(ctx, intakes.Revision{IntakeID: "i-1", Kind: intakes.RevisionKindCart, Payload: []byte(`{"version":1,"total":9}`)})
+	if err != nil {
+		t.Fatalf("InsertRevision: error inesperado %v", err)
+	}
+	written.Payload[0] = 'X'
+	if again := store.PersistedRevisions("i-1"); !equalJSON(again[0].Payload, []byte(`{"version":1,"total":4}`)) ||
+		!equalJSON(again[2].Payload, []byte(`{"version":1,"total":9}`)) {
+		t.Errorf("pisar los bytes de un payload devuelto cambió lo guardado: %s y %s", again[0].Payload, again[2].Payload)
+	}
 	if again := mustGet(t, store, tenant1, "i-2"); again.Items[0].Label != "Pan" || again.Items[1].Label != "Queso" {
 		t.Errorf("pisar lo leído cambió las líneas guardadas: %+v", again.Items)
 	}

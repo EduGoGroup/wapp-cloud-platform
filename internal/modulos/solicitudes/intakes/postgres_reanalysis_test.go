@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -8,9 +6,6 @@ import (
 	"reflect"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte de la lectura, con su COALESCE del evento
-// y su subconsulta de la última revisión.
 
 // TestPostgres_ReanalysisTargetOf_NotFoundWithoutQuerying: un receptor nil y un id que no es UUID
 // son ErrNotFound sin tocar la base (y sin panic).
@@ -68,4 +63,28 @@ func TestPostgres_ReanalysisTargetOf_NoRowAndFailure(t *testing.T) {
 	if got != (ReanalysisTarget{}) {
 		t.Errorf("con error devolvió %+v, quería ReanalysisTarget{}", got)
 	}
+}
+
+// Las sentencias, escritas APARTE y byte a byte (sangría y saltos de línea incluidos): son las
+// del paquete viejo, y un cambio en el SQL de producción tiene que romper aquí.
+
+// wantReanalysisTargetSQL es la lectura de la foto: el COALESCE del evento y la subconsulta de la última revisión.
+const wantReanalysisTargetSQL = `
+	SELECT i.session_id, i.contact_id, COALESCE(i.event_id::text, ''), i.status,
+	       COALESCE((SELECT MAX(r.revision_no)
+	                   FROM public.intake_revisions r
+	                  WHERE r.intake_id = i.id), 0)
+	  FROM public.intakes i
+	 WHERE i.tenant_id = $1 AND i.id = $2
+`
+
+// TestPostgres_ReanalysisTargetOf_SQLIsTheOldOneByteForByte: la lectura sale con el texto del
+// paquete viejo.
+func TestPostgres_ReanalysisTargetOf_SQLIsTheOldOneByteForByte(t *testing.T) {
+	store, fake := newFakePostgres(t)
+	fake.script(pgOne(pgSession, pgContact, "", StatusOpen, int64(0)))
+	if _, err := store.ReanalysisTargetOf(t.Context(), pgTenant, pgIntakeID); err != nil {
+		t.Fatalf("ReanalysisTargetOf: error inesperado %v", err)
+	}
+	requirePgSQL(t, fake, wantReanalysisTargetSQL)
 }

@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -9,9 +7,6 @@ import (
 	"reflect"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte del bloqueo, de la consulta del evento
-// vivo, del UPDATE a abandoned, del cierre del contenedor y del CAS de AbandonByEvent.
 
 // pgDiscardable son los estados almacenados desde los que estos tests dejan descartar.
 var pgDiscardable = []string{StatusOpen, StatusPendingApproval}
@@ -165,3 +160,67 @@ func TestPostgres_AbandonByEvent(t *testing.T) {
 	err := store.AbandonByEvent(t.Context(), pgTenant, pgEventID)
 	requirePgWrapped(t, err, "intakes: abandonar la solicitud del evento "+pgEventID+": ", errPgBoom)
 }
+
+// TestPostgres_Discard_SQLIsTheOldOneByteForByte: las cuatro sentencias propias del descarte (la
+// de la revisión es de postgres_revisions.go y la afirma su test) y el CAS del abandono llegan a
+// la base con el texto del paquete viejo.
+func TestPostgres_Discard_SQLIsTheOldOneByteForByte(t *testing.T) {
+	t.Run("discard", func(t *testing.T) {
+		store, fake := newFakePostgres(t)
+		fake.script(pgOne(StatusOpen, pgEventID), pgOne(false), pgOne(pgIntakeRow(StatusAbandoned, 30)...),
+			pgInserted(2, RevisionKindDiscarded, `{"v":1}`, nil, RevisionByOwner), pgReply{})
+		if _, err := store.Discard(t.Context(), pgTenant, pgIntakeID, pgDiscardable); err != nil {
+			t.Fatalf("Discard: error inesperado %v", err)
+		}
+		requirePgSQL(t, fake, wantDiscardLockSQL, wantDiscardLiveEventSQL, wantDiscardUpdateSQL, "",
+			wantDiscardCloseContainerSQL)
+	})
+	t.Run("abandon by event", func(t *testing.T) {
+		store, fake := newFakePostgres(t)
+		if err := store.AbandonByEvent(t.Context(), pgTenant, pgEventID); err != nil {
+			t.Fatalf("AbandonByEvent: error inesperado %v", err)
+		}
+		requirePgSQL(t, fake, wantAbandonByEventSQL)
+	})
+}
+
+// Las sentencias del descarte y del abandono, escritas APARTE y byte a byte (sangría y saltos de
+// línea incluidos): son las de internal/intakes/postgres.go, y un cambio en el SQL de producción
+// tiene que romper aquí.
+
+// wantDiscardLockSQL es el bloqueo de la cabecera, acotado por tenant.
+const wantDiscardLockSQL = `
+			SELECT status, event_id::text
+			FROM public.intakes
+			WHERE tenant_id = $1 AND id = $2
+			FOR UPDATE
+		`
+
+// wantDiscardLiveEventSQL pregunta si el evento que la solicitud declara sigue open.
+const wantDiscardLiveEventSQL = `
+		SELECT EXISTS (
+			SELECT 1 FROM public.conversation_events e
+			WHERE e.id = $1 AND e.status = 'open'
+		)
+	`
+
+// wantDiscardUpdateSQL es el UPDATE a abandoned, con su guarda de estados en el propio SQL.
+const wantDiscardUpdateSQL = `
+			UPDATE public.intakes
+			SET status = $3, updated_at = now()
+			WHERE tenant_id = $1 AND id = $2 AND status = ANY($4)
+			RETURNING ` + intakeCols
+
+// wantDiscardCloseContainerSQL cierra el evento padre solo si seguía open.
+const wantDiscardCloseContainerSQL = `
+		UPDATE public.conversation_events
+		SET status = 'cancelled', closed_at = now()
+		WHERE id = $1 AND status = 'open'
+	`
+
+// wantAbandonByEventSQL es el CAS suelto de open a abandoned por evento y tenant.
+const wantAbandonByEventSQL = `
+		UPDATE public.intakes
+		SET status = $3, updated_at = now()
+		WHERE tenant_id = $1 AND event_id = $2 AND status = $4
+	`
