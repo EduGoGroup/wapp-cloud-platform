@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // Lo que hace ESTRUCTURAL la regla 1 de notifier.go —notificar no puede tumbar la transición—:

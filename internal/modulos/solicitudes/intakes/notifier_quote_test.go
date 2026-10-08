@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 // La cotización del DUEÑO (Plan 044 · T4.3/T4.4, D-044.49): QuoteText compone, SendQuote y
