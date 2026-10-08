@@ -55,8 +55,7 @@ package intakes
 import (
 	"context"
 	"errors"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"strings"
 )
 
 // ErrEmptyQuestion es la petición de información SIN pregunta. Es el criterio
@@ -103,5 +102,44 @@ var ErrEmptyQuestion = errors.New("la petición de información no trae la pregu
 // BuyerDataPresent que ya estaban — esta puerta no toca ninguna de las tres. No
 // escribe revisión y no empuja al CRM.
 func (s *Service) RequestInfo(ctx context.Context, tenantID, intakeID, question string) (Detail, error) {
-	panic(pendiente.Implementar("intakes.Service.RequestInfo"))
+	if s.quotes == nil {
+		return Detail{}, ErrNoQuoteSender
+	}
+	// TrimSpace solo para DECIDIR si hay pregunta: lo que sale por el cable es el
+	// original byte a byte, igual que la cotización de Approve. Recortarlo sería
+	// reescribir lo que el dueño escribió.
+	if strings.TrimSpace(question) == "" {
+		return Detail{}, ErrEmptyQuestion
+	}
+
+	// El recurso se resuelve ANTES que el cuerpo (mismo criterio que SetStatus,
+	// ReplaceItems y Approve): una solicitud ajena responde ErrNotFound y no revela
+	// por el código de error que existe (INV-8). Se lee aquí y no solo dentro de
+	// SetStatus porque el detalle de la respuesta necesita las líneas y el histórico.
+	current, err := s.store.Get(ctx, tenantID, intakeID)
+	if err != nil {
+		return Detail{}, err
+	}
+
+	updated, err := s.SetStatus(ctx, tenantID, intakeID, StatusNeedsInfo, NoticeByCaller)
+	if err != nil {
+		return Detail{}, err
+	}
+
+	// El mensaje al cliente. No devuelve error a propósito: una transición ya escrita
+	// no se deshace porque el teléfono esté apagado.
+	s.quotes.SendQuestion(ctx, tenantID, updated, question)
+
+	// La métrica. Va DESPUÉS del envío y no entre la transición y él: lo que el
+	// evento afirma es que se le pidió información al cliente, y eso ocurre cuando la
+	// pregunta sale. El payload no lleva la pregunta —ni un trozo—, solo cuántas
+	// fueron (ver publishInfoRequestMetric).
+	s.publishInfoRequestMetric(ctx, tenantID, updated)
+
+	return Detail{
+		Intake:           updated,
+		Items:            current.Items,
+		Revisions:        current.Revisions,
+		BuyerDataPresent: current.BuyerDataPresent,
+	}, nil
 }
