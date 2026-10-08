@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -9,9 +7,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte del count, de la página (con sus dos
-// ORDER BY), de la CTE del export y de las cuatro lecturas de Get.
 
 // pgItemRow es una fila de línea con sus seis columnas.
 func pgItemRow(sku string, qty int64, price float64) []driver.Value {
@@ -339,5 +334,113 @@ func TestPostgres_ListDetails_Errors(t *testing.T) {
 		if err == nil || !strings.HasPrefix(err.Error(), "intakes: leer fila del export: ") {
 			t.Errorf("error = %v, quería el prefijo %q", err, "intakes: leer fila del export: ")
 		}
+	})
+}
+
+// Las sentencias de lectura, escritas APARTE y byte a byte (sangría y saltos de línea incluidos):
+// son las del paquete viejo, y un cambio en el SQL de producción tiene que romper aquí.
+
+// wantCountSQL es el count de la bandeja.
+const wantCountSQL = `SELECT count(*) FROM public.intakes
+	WHERE tenant_id = $1
+	  AND ($2::timestamptz IS NULL OR created_at >= $2)
+	  AND ($3::timestamptz IS NULL OR created_at <  $3)
+	  AND ($4::text[]      IS NULL OR status = ANY($4))
+	  AND ($5::text        IS NULL OR session_id = $5)
+	  AND ($6::boolean     IS NULL OR NOT EXISTS (
+	          SELECT 1 FROM public.conversation_events e
+	          WHERE e.id = public.intakes.event_id AND e.status = 'open'))`
+
+// wantPageNewestSQL es la página de la bandeja con el orden por defecto.
+const wantPageNewestSQL = `SELECT id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at FROM public.intakes
+	WHERE tenant_id = $1
+	  AND ($2::timestamptz IS NULL OR created_at >= $2)
+	  AND ($3::timestamptz IS NULL OR created_at <  $3)
+	  AND ($4::text[]      IS NULL OR status = ANY($4))
+	  AND ($5::text        IS NULL OR session_id = $5)
+	  AND ($6::boolean     IS NULL OR NOT EXISTS (
+	          SELECT 1 FROM public.conversation_events e
+	          WHERE e.id = public.intakes.event_id AND e.status = 'open')) ORDER BY created_at DESC, id DESC
+	LIMIT $7 OFFSET $8`
+
+// wantExportOldestSQL es el export con sort=oldest: los DOS órdenes giran juntos y el de las líneas no.
+const wantExportOldestSQL = `
+	WITH page AS (
+		SELECT id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at FROM public.intakes
+	WHERE tenant_id = $1
+	  AND ($2::timestamptz IS NULL OR created_at >= $2)
+	  AND ($3::timestamptz IS NULL OR created_at <  $3)
+	  AND ($4::text[]      IS NULL OR status = ANY($4))
+	  AND ($5::text        IS NULL OR session_id = $5)
+	  AND ($6::boolean     IS NULL OR NOT EXISTS (
+	          SELECT 1 FROM public.conversation_events e
+	          WHERE e.id = public.intakes.event_id AND e.status = 'open')) ORDER BY created_at ASC, id ASC
+		LIMIT $7
+	)
+	SELECT p.id, p.contact_id, p.session_id, p.status, p.total, p.created_at, p.updated_at,
+	       p.customer_note, p.deposit_due_at, p.deposit_reminded_at, p.expiry_reminded_at,
+	       it.sku, it.label, it.customization, it.qty, it.unit_price, it.added_at
+	FROM page p
+	LEFT JOIN public.intake_items it ON it.intake_id = p.id::uuid ORDER BY p.created_at ASC, p.id ASC, it.added_at, it.id`
+
+// wantGetHeaderSQL es la cabecera del detalle.
+const wantGetHeaderSQL = `SELECT id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at FROM public.intakes WHERE tenant_id = $1 AND id = $2`
+
+// wantGetItemsSQL son las líneas del detalle.
+const wantGetItemsSQL = `
+		SELECT sku, label, customization, qty, unit_price, added_at
+		FROM public.intake_items
+		WHERE intake_id = $1
+		ORDER BY added_at, id
+	`
+
+// wantGetBuyerDataSQL es la existencia de datos del comprador.
+const wantGetBuyerDataSQL = `
+		SELECT EXISTS (SELECT 1 FROM public.intake_buyer_data WHERE intake_id = $1)
+	`
+
+// requirePgSQL exige el texto exacto de las sentencias que llegaron a la base, en orden. Un want
+// vacío deja pasar esa posición (la sentencia es de otro fichero y la afirma su test).
+func requirePgSQL(t *testing.T, fake *pgFake, want ...string) {
+	t.Helper()
+	stmts := fake.statements()
+	if len(stmts) != len(want) {
+		t.Fatalf("llegaron %d sentencias, quería %d", len(stmts), len(want))
+	}
+	for i, w := range want {
+		if w != "" && stmts[i].query != w {
+			t.Errorf("sentencia %d:\n%s\nquería:\n%s", i, stmts[i].query, w)
+		}
+	}
+}
+
+// TestPostgres_Read_SQLIsTheOldOneByteForByte: el count y la página comparten predicado, el export
+// es una sola CTE y Get lanza sus cuatro lecturas con el texto del paquete viejo.
+func TestPostgres_Read_SQLIsTheOldOneByteForByte(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		store, fake := newFakePostgres(t)
+		fake.script(pgOne(int64(1)), pgOne(pgIntakeRow(StatusOpen, 1)...))
+		if _, _, err := store.List(t.Context(), pgTenant, Filter{}); err != nil {
+			t.Fatalf("List: error inesperado %v", err)
+		}
+		requirePgSQL(t, fake, wantCountSQL, wantPageNewestSQL)
+	})
+	t.Run("export", func(t *testing.T) {
+		store, fake := newFakePostgres(t)
+		if _, err := store.ListDetails(t.Context(), pgTenant, Filter{Sort: SortOldest}, 5); err != nil {
+			t.Fatalf("ListDetails: error inesperado %v", err)
+		}
+		requirePgSQL(t, fake, wantExportOldestSQL)
+	})
+	t.Run("get", func(t *testing.T) {
+		store, fake := newFakePostgres(t)
+		fake.script(pgOne(pgIntakeRow(StatusOpen, 1)...), pgReply{}, pgReply{}, pgOne(true))
+		if _, err := store.Get(t.Context(), pgTenant, pgIntakeID); err != nil {
+			t.Fatalf("Get: error inesperado %v", err)
+		}
+		requirePgSQL(t, fake, wantGetHeaderSQL, wantGetItemsSQL, "", wantGetBuyerDataSQL)
 	})
 }
