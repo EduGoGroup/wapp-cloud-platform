@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_items_test.go — G4 (PUT /api/v1/intakes/{id}/items) del contrato de MountIntakes: la

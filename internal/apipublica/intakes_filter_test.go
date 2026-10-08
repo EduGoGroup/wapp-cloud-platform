@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_filter_test.go — LA QUERY de G1 (GET /api/v1/intakes) del contrato de MountIntakes: qué

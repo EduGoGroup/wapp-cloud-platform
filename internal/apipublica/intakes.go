@@ -18,11 +18,13 @@ package apipublica
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"time"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/platform/httpapi"
 )
 
 // IntakeService es el puerto de SOLICITUDES que consume la bandeja de la cara (G1–G6 y G8). Lo
@@ -256,5 +258,177 @@ type IntakesDeps struct {
 // Fallo de cableado: k.MW nil con las dos dependencias presentes hace panic AL MONTAR (ver
 // Common).
 func MountIntakes(c *Cara, k Common, d IntakesDeps) {
-	panic(pendiente.Implementar("apipublica.MountIntakes"))
+	// Sin el servicio o sin el resolver de features las rutas NO se montan: es
+	// preferible un 404 de ruta inexistente a una bandeja que responde 500 a medio
+	// camino (o, peor, que se abre sin poder comprobar el plan).
+	if d.Intakes == nil || d.Entitlements == nil {
+		return
+	}
+	mustHaveMW(k, "MountIntakes")
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+
+	// La bandeja de SOLICITUDES (Plan 041 · T1.1/T1.4/T4.10, ADR-0031): listado con filtros y
+	// paginación, detalle con líneas, transición del ciclo de vida (D-041.10) y edición manual
+	// de las líneas del presupuesto (D-041.26). Todo acotado al tenant del token (INV-8): una
+	// solicitud ajena responde 404, nunca 403 — un 403 confirmaría que el id existe.
+	//
+	// DOS guardias por ruta, y ninguno sustituye al otro: el scope
+	// (intakes.read/intakes.write) dice "puedes operar esto"; la feature dice "tu plan
+	// lo incluye". RequireFeature se compone SIEMPRE después de Authenticate y
+	// RequirePermission — antes no habría identidad de la que sacar el tenant y el
+	// gate cortaría fail-closed a todo el mundo.
+	//
+	// `cart_basic` abre la bandeja (ver y operar los pedidos). Sacarlos del sistema —el export
+	// y summary.json, G9 y G10— es otra feature (`intakes_export`) y la gatea su propio Mount:
+	// un tenant puede tener la primera y no la segunda.
+	//
+	// Las rutas literales (…/discard aquí; …/export y …/summary.json allí) conviven con …/{id}
+	// sin ambigüedad: el mux de Go 1.22+ prefiere el patrón MÁS específico, y un segmento
+	// literal lo es más que un comodín. 🔴 Eso vale DENTRO de un mux y no entre la cara nueva y
+	// la vieja: por eso G2, G9 y G10 se mudan juntas (mapa §4.2, trampa T-1).
+	cartBasic := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureCartBasic)
+
+	c.Handle("GET /api/v1/intakes", protectRead(k,
+		"intakes.read", cartBasic(intakeListHandler(d.Intakes, now))))
+	c.Handle("GET /api/v1/intakes/{id}", protectRead(k,
+		"intakes.read", cartBasic(intakeGetHandler(d.Intakes, d.Entitlements, now))))
+	c.Handle("POST /api/v1/intakes/{id}/status", protect(k,
+		"intakes.write", "intake", cartBasic(intakeSetStatusHandler(d.Intakes, now))))
+
+	// Edición MANUAL de las líneas del presupuesto (Plan 041 · T4.10, REQ-36 /
+	// D-041.26): el dueño añade, quita o corrige líneas de una solicitud en
+	// `pending_approval` SIN LLM de por medio, y cada edición deja su revisión
+	// `corrected`. Va con `cart_basic` y NO con la feature del pipeline del 044:
+	// re-presupuestar es del OBJETO, no de la máquina que lo redacta sola — un
+	// tenant sin LLM que llegara a `pending_approval` sin poder editar se quedaría
+	// encerrado en un estado editable que nadie puede editar.
+	c.Handle("PUT /api/v1/intakes/{id}/items", protect(k,
+		"intakes.write", "intake", cartBasic(intakePutItemsHandler(d.Intakes, d.Entitlements, now))))
+
+	// APROBAR el presupuesto (Plan 044 · Ola 4 · T4.3, D-044.49): el dueño manda su
+	// cotización, el cliente la recibe por WhatsApp y la solicitud queda `confirmed`
+	// con su revisión `approved`.
+	//
+	// Va con `cart_basic` y NO con `llm_intake`, y es la MISMA razón que el 041 dejó
+	// escrita tres líneas más arriba para el `PUT …/items` (D-044.49 §3): cobrar
+	// aprobar con la feature del pipeline dejaría a un tenant `Basic` —plan REAL en
+	// UAT— corrigiendo líneas que después no puede aprobar. Re-presupuestar y aprobar
+	// son del OBJETO; la máquina que redacta el borrador sola es lo que se vende
+	// aparte, y eso ya lo cubre el gate POR CAMPO de T4.1 (intakes_llm_gate.go).
+	//
+	// Auditada como escritura (`intakes.write`), como sus hermanas: es la escritura
+	// que le habla al cliente, así que tiene que constar quién la disparó.
+	c.Handle("POST /api/v1/intakes/{id}/approve", protect(k,
+		"intakes.write", "intake", cartBasic(intakeApproveHandler(d.Intakes, d.Entitlements, now))))
+
+	// PEDIR MÁS INFORMACIÓN (Plan 044 · Ola 4 · T4.4, D-044.49 §2): el dueño manda su
+	// pregunta —la que el sistema le sugirió, editada por él— y la solicitud queda en
+	// `needs_info` esperando la respuesta del cliente.
+	//
+	// Mismo gate `cart_basic` que `approve` y por el MISMO argumento (D-044.49 §3):
+	// preguntarle algo al cliente es del objeto, no de la máquina que redacta el
+	// borrador. Cobrarlo con `llm_intake` dejaría a un tenant Basic con un presupuesto
+	// que no entiende y sin poder preguntar por qué.
+	//
+	// La ACCIÓN «Corregir» de esa misma tarea NO tiene ruta aquí, y no falta: es el
+	// `PUT …/items` de arriba con `"as_correction": true` (D-044.48 §1). Dos rutas
+	// dejando la misma revisión `corrected` era el duplicado que este plan ya pagó.
+	c.Handle("POST /api/v1/intakes/{id}/request-info", protect(k,
+		"intakes.write", "intake", cartBasic(intakeRequestInfoHandler(d.Intakes, d.Entitlements, now))))
+
+	// DESCARTE MANUAL por lotes del pedido huérfano (Plan 041 · T4.8, REQ-32 /
+	// D-041.18). Ruta LITERAL bajo /intakes y no bajo /intakes/{id}: la operación es
+	// del LOTE, no de una solicitud, y colgarla de un id obligaría a N llamadas —
+	// justo lo que la tarea existe para evitar. El mux de Go 1.22+ prefiere el
+	// segmento literal, así que no compite con …/{id}/… (que además usan otros verbos).
+	//
+	// Mismo scope y misma feature que el resto de la bandeja: descartar es operar
+	// SOBRE la bandeja, no una capacidad que se venda aparte. Auditado como escritura
+	// (`intakes.write`) — y es la escritura de esta ola que MÁS falta hace en la
+	// bitácora, porque no se puede deshacer.
+	c.Handle("POST /api/v1/intakes/discard", protect(k,
+		"intakes.write", "intake", cartBasic(intakeDiscardHandler(d.Intakes))))
+}
+
+// intakeListResponse es el contrato de GET /api/v1/intakes (design §4): la página
+// más el TOTAL de coincidencias del filtro, que es lo que la UI necesita para
+// pintar el paginador.
+type intakeListResponse struct {
+	Intakes  []intakeDTO `json:"intakes"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
+	Total    int         `json:"total"`
+}
+
+// intakeListHandler (listIntakesHandler en la cara vieja) sirve GET /api/v1/intakes: las
+// solicitudes del tenant del token (INV-8), con filtros from/to/status/session, orden `sort`
+// (más recientes primero por defecto) y paginación page/page_size (default 50, máx 200).
+//
+// `status` se REPITE para pedir varios estados a la vez; ver parseIntakeFilter.
+func intakeListHandler(svc IntakeService, now func() time.Time) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+		filter, msg := parseIntakeFilter(r)
+		if msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+
+		page, err := svc.List(r.Context(), id.TenantID, filter)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "no se pudieron listar las solicitudes")
+			return
+		}
+
+		// UN solo instante para toda la página, y no un now() por fila: la marca
+		// `overdue` de dos solicitudes con el mismo plazo tiene que salir igual en la
+		// misma respuesta. Con el reloj dentro del bucle, una página que cruce el
+		// segundo exacto del plazo marcaría a unas sí y a otras no.
+		at := now()
+		out := make([]intakeDTO, 0, len(page.Intakes))
+		for _, in := range page.Intakes {
+			out = append(out, intakeToDTO(in, at))
+		}
+		writeJSON(w, http.StatusOK, intakeListResponse{
+			Intakes: out, Page: page.Page, PageSize: page.PageSize, Total: page.Total,
+		})
+	})
+}
+
+// intakeGetHandler (getIntakeHandler en la cara vieja) sirve GET /api/v1/intakes/{id}: cabecera
+// + líneas. Una solicitud de OTRO tenant responde 404, no 403: un 403 confirmaría que el id
+// existe, y el aislamiento entre tenants no puede filtrar ni eso (INV-8).
+//
+// Recibe el resolver de features APARTE del middleware que ya gatea la ruta, y no
+// es una duplicación: el middleware decide si se ENTRA (`cart_basic`), y esto
+// decide qué CAMPOS salen (`llm_intake`, T4.1 / D-044.48 §2). Son dos preguntas
+// distintas y la segunda no se puede contestar desde un middleware, que no ve el
+// cuerpo.
+func intakeGetHandler(svc IntakeService, feats entitlements.Resolver, now func() time.Time) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httpapi.IdentityFromContext(r.Context())
+		if !ok || id.TenantID == "" {
+			writeError(w, http.StatusUnauthorized, "autenticación requerida")
+			return
+		}
+
+		detail, err := svc.Get(r.Context(), id.TenantID, r.PathValue("id"))
+		switch {
+		case errors.Is(err, intakes.ErrNotFound):
+			writeError(w, http.StatusNotFound, "solicitud no encontrada")
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "no se pudo leer la solicitud")
+			return
+		}
+
+		intakeWriteDetail(r.Context(), w, feats, id.TenantID, detail, now())
+	})
 }

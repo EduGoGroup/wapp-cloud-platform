@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_status_test.go — G3 (POST …/{id}/status) y G8 (POST /api/v1/intakes/discard) del

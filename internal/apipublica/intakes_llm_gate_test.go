@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_llm_gate_test.go — EL GATE POR CAMPO del detalle (Plan 044 · T4.1) del contrato de

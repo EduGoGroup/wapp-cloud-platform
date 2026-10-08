@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_approve_test.go — G5 (POST …/{id}/approve) y G6 (POST …/{id}/request-info) del contrato

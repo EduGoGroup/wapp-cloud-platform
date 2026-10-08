@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // intakes_dto_test.go — LOS CUERPOS de la bandeja del contrato de MountIntakes: la cabecera que
