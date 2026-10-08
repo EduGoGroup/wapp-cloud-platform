@@ -11,7 +11,13 @@
 >
 > Recalibrado el 2026-10-03 tras la parada de F1 (`05` E-12, §4.2, E-9, E-4; `plan/DECISIONES.md` §3).
 >
-> ✎ **Estado al 2026-10-07 (F45-02): CONMUTADA, sin cerrar.** `internal/modulos/inferencia` entero en verde (F45-01); el
+> ✅ **Estado al 2026-10-07 (F45-03): CERRADA.** La definición de hecho de [`reglas.md`](reglas.md) §4 se cumple en sus
+> 11 puntos, con números (hallazgo 31): las suites de `tenantllm` y `degradation` pasan contra Postgres (`ddb8baa`), las
+> tres rutas de `tenant-llm` tienen proceso por el cable (`59a3e6b`), `make test-procesos` contra el binario nuevo da
+> `RC=0 · PASS=869 · FAIL=0 · SKIP=0` y el arranque real de `cmd/server-modular` levanta 9/9 con inferencia cableada.
+> `inferencia` sigue **fuera** de `Conmutados` hasta F8 (§4.11): su adaptador `bridge_inferencia.go` vive.
+>
+> ✎ **Estado anterior, al 2026-10-07 (F45-02): CONMUTADA, sin cerrar.** `internal/modulos/inferencia` entero en verde (F45-01); el
 > arranque nuevo construye el selector, los almacenes y la carga de prompts nuevos y la cara `apipublica` sirve las 4
 > rutas F1–F4 (`98b24c5`); `FaseActual = 4` (hoy `5`, por F5). El adaptador `internal/arranque/bridge_inferencia.go`
 > vive hasta **F8** (`llmConfigBridge` muere en F7; `turneroBridge`, y con él el fichero, en F8), así que `inferencia`
@@ -233,6 +239,73 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
     reintentar (hallazgo 7).
 26. **Huella con `FaseActual = 4` y `5`: idéntica sin tocar la dorada**; perfiles `minimo` y `con-m2m`:
     `:8100=22 :8103=73 rpc=2 metricas=11`. La cara nueva sirve 33 rutas (23 de acceso + 6 de edge + 4 de inferencia).
+
+**De la sesión F45-03 (2026-10-07, cierre local, rama `reorg/f45-03-cierre`):**
+
+27. **T4.31 = T9.25 · las dos suites contra Postgres, sin divergencia con los dobles** (`ddb8baa`).
+    `TestTenantLLMContrato_Postgres` (16 casos) y `TestDegradationContrato_Postgres` (18) en `test/procesos/`, una base
+    clonada por caso: 34 PASS, 0 FAIL, 0 SKIP con `WAPP_PROCESOS_BINARIO=viejo` y con `nuevo` (el binario no cambia nada
+    aquí: el test construye el adaptador en proceso; la variable solo la exige el `TestMain`). El montaje de `degradation`
+    no puede nombrar `degradation.Notice` (candado `ProcessImports`, regla 3b: del puerto, solo el constructor), así que
+    `degradationhelpertest` gana el alias `Notice`, junto a `Montaje`, como `fleethelpertest.TenantProfiles` (hallazgo 75
+    de F3). El candado no se tocó. `Reason` se escanea directo al campo: `database/sql` convierte el tipo con nombre.
+    Sigue sin cubrir lo que anotó el hallazgo 10: los `CHECK` de las dos tablas por SQL crudo (no son conducta del puerto)
+    y el **éxito** de `For` por la vía `api` (cero gasto, T-16).
+28. 🟡 **Refutación 1 · «las 4 rutas las sirve la cara nueva por el cable»: cierta, pero no estaba probada por el
+    cable.** Ningún proceso ejercía `GET`/`PUT`/`DELETE /api/v1/tenant-llm` contra el servidor real (solo
+    `degradation-notices`, en `p4NoticeAPI`; el PUT de `clientes_selftest_http_test.go` va contra un servidor eco). Nace
+    el paso `via_llm` de `TestP4_MessageToDraft` (`test/procesos/p4_borrador_tenantllm_test.go`, `59a3e6b`): código y
+    cuerpo exactos del gate del plan, las guardias (401, 403), los cuerpos inválidos y el recorrido sin fila → PUT → GET →
+    fila en `public.tenant_llm` → PUT repetido → DELETE → DELETE repetido. **31 intercambios HTTP, idénticos en el viejo y
+    en el nuevo**; 5 `--- PASS` más por binario; una mutación de un cuerpo lo pone rojo. Solo viaja la vía `local`.
+    Que en el binario nuevo las sirve `apipublica` y no `publicapi` no lo distingue la caja negra (hallazgo 48 de F2): lo
+    afirman `depsDeLaAPIPublica` (`fase8_transporte.go`: `TenantLLM` y `DegradationNotices` en nil, y `publicapi` no
+    registra con nil), `inference_wiring_test.go` y `mapa.tsv:33-36`. En el arranque real, sin token, las cuatro dan 401 y
+    una ruta inexistente 404.
+    Dos conductas heredadas que el paso fija tal cual, iguales en los dos binarios: (i) sin la *feature* `api_llm` el gate
+    cierra las **tres** rutas, también el `GET` y un `PUT` de `via=local` (el plan `advisor_ai_local` no puede ni leer su
+    vía por API); (ii) los cuerpos JSON salen sin salto de línea final. No se probó D-25 (plazos de BD), la auditoría de
+    PUT/DELETE ni el 413.
+29. **Refutaciones 2 y 3: no refutadas.** (2) El 502 de sesión offline sale por el cable en los dos binarios:
+    `TestP1_EdgeFaceOverTheWire/offline_session_is_502` y `session_that_never_existed` PASS en todas las pasadas (las
+    cuatro puertas). Tras D-F3-14 ningún test afirma ya que el alias viejo y el nuevo de `ErrSessionOffline` sean la
+    misma variable **entre sí**: cada uno queda ligado al de `platform/httpapi` por separado, que es lo que basta.
+    (3) Arranque real de `cmd/server-modular` (sin commit; Postgres `17-alpine` efímero en puerto libre, puertos `181xx`,
+    identity apagado, R2 de desarrollo, claves generadas en el momento): con `WAPP_LLM_PROMPTS_DIR` apuntando al volcado
+    de `cmd/prompts -volcar`, **9/9** fases, `/healthz` 200, 0 `ERROR`, la línea `prompts: plantillas de las etapas
+    ajustables` y SIGINT → `servidor detenido limpiamente`, `EXIT=0`. Con `"package_size": 0` en el ejemplo de P4,
+    **`EXIT=1`** tras la fase 4/9: `fallo fatal del arranque: arranque: fase 5/9 "captación (stack LLM)": prompts
+    ajustables de P2-P5: … el ejemplo que p4 le enseña al modelo lo rechaza su propio validador`, sin ningún listener
+    abierto. A nivel de proceso sigue sin cobertura (el arnés prohíbe la variable): lo fija
+    `TestLoadPromptTemplates_InvalidTemplateAbortsTheBoot`.
+30. 🟡 **La intermitencia del compositor del *flush* (hallazgo 52 de F2, contradicción 8 del README de F7) aparece en
+    dos procesos más y en los dos binarios.** Sobre `59a3e6b`: pasada 1, **viejo** `RC=1 · PASS=854 · FAIL=15`
+    (`TestP6_CRMBridge/push_gate_closed` y, en cascada, 14 subpasos); pasada 2, **nuevo** `RC=1 · PASS=866 · FAIL=3`
+    (`TestP7_Catalog/index_cache`). En las dos, el mismo `ERROR` del servidor: `pipeline: job FAILED … causa:job_invalido
+    … el job no trae literal que analizar (el compositor del flush no llegó a escribir el sobre)`, y el test ve el job en
+    `failed`. Repetidos: `TestP6_CRMBridge` `-count=4` por binario, 8 de 8; `TestP7_Catalog` `-count=4` contra el nuevo,
+    4 de 4. **Cuenta del día** (pasadas enteras): línea base sobre `6d53966`, 2 de 2 verdes (828); sobre `59a3e6b`, viejo
+    1 verde de 2 y nuevo 2 verdes de 3 (869). Ya son cuatro los procesos donde se ha visto (P4 ventanas, P5, P6, P7):
+    cualquiera que mande una ráfaga y espere su borrador. Código de captación viejo, el mismo en los dos binarios, que
+    esta sesión no toca. **Sin causa medida**, y con una sospecha nueva que F7 debe mirar: las pasadas rojas llegaron al
+    añadir 34 bases clonadas más (`CREATE DATABASE … TEMPLATE`) a la corrida en paralelo; más carga en el Postgres del
+    contenedor ensancharía la ventana entre el *flush* y el sobre. No es D-24…D-29.
+31. **Definición de hecho, punto a punto** (sobre `59a3e6b`, rc leído del log, sin pipe; `go1.26.5`, lint `v2.12.2`):
+    (1) `GOWORK=off make ci-local` `GATE_RC=0`: 167 `ok`, 0 `FAIL`, lint `0 issues.`; (2) `make vet-pendiente` rc=0;
+    (3) el `grep` da 0 líneas; `make test-pendiente` `PENDIENTES=0 · ROJOS=0`; (4) cobertura (informe):
+    `FICHEROS_EVALUADOS=170`, `POR_DEBAJO=7` (los siete adaptadores Postgres de `acceso` y `nucleo/contact`, ninguno de
+    F4), `bridge_inferencia.go` 100,0 %; (5) `go test -v ./internal/modulos/inferencia/...` rc=0, 558 PASS, **0 SKIP**
+    (árbol nuevo entero: 4.935 PASS, 0 SKIP); (6) huella idéntica, con `FaseActual = 5`, no `4`: la fijó F5 en `13e869f`
+    y la huella es la misma con los dos valores (hallazgo 26); (7) el `grep` devuelve solo `bridge_inferencia.go` y
+    `bridge_inferencia_test.go`; (8) `bridge_gateway.go` no existe; (9) esta documentación; (10) hallazgo 27 y
+    `BINARIO=nuevo make test-procesos` `MAKE_RC=0`: `RC=0 · PASS=869 · FAIL=0 · SKIP=0`; (11) `Conmutados` =
+    `{"acceso","edge"}`, sin cambio.
+32. **Coste (D-R-6) y lo no corrido.** F4 entera: tres sesiones (F45-01, F45-02, F45-03). Esta: 2 commits de test, 4
+    ficheros `.go` tocados (3 nuevos), ≈ 45 min de pared para las dos fases. **No corrido**: `make test-integration` (la
+    integración vieja: la sesión no toca código viejo ni compartido; F45-02 la apuntó a esta sesión, pero el protocolo
+    solo la pide si se toca) y **UAT, que no es de esta sesión: es de F10** ([`plan/README.md`](../README.md)). El
+    «Pendientes: 5» del *hook* de `SessionStart` es ruido: cuenta `testdata/` y un comentario de `internal/candados`;
+    la cifra de `make test-pendiente` es 0.
 
 **Decisiones de Jhoan en la sesión (2026-10-07)**: (a) `edge` y `Conmutados`, hallazgo 15 (cerrada el mismo día: test
 de identidad borrado, `edge` dentro); (b) `catalogo` no entra en

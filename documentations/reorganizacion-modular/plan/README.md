@@ -2,8 +2,8 @@
 
 > **Estado: EN EJECUCIÓN** — resumen al 2026-10-07 (**el estado al día vive en [`../ESTADO.md`](../ESTADO.md)**,
 > § «Avance de la ejecución», y en la tabla de [`sesiones/README.md`](sesiones/README.md)): F0, F1 (el piloto), F2 y
-> F3 cerradas y en `dev`; F4 conmutada y F5 con el código entero en verde y su conmutación nominal
-> (`FaseActual = 5`), las dos sin cerrar (falta F45-03) y con lo de F45-02 en el PR #44, aún sin integrar en `dev`;
+> F3 cerradas y en `dev`; F4 y F5 cerradas el 2026-10-07 (F45-03, por PR a `dev`; `FaseActual = 5`, las dos fuera de
+> `Conmutados`);
 > F9-A y F9-B hechos, F9-D pendiente; F6, F7, F8 y F10 sin empezar. **Recalibrado el 2026-10-03** tras la parada
 > de F1 ([`DECISIONES.md`](DECISIONES.md) §3; `05` E-12, §4.2, E-9, E-4). Escrito el 2026-09-28. Es el plan **ejecutable** que pedía
 > [`../ESTADO.md`](../ESTADO.md): convierte las fases F0–F10 de
