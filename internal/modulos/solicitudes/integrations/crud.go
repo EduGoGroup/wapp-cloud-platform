@@ -2,7 +2,10 @@
 
 package integrations
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
 
 // crud.go lleva lo ÚNICO puro que la superficie HTTP del CRUD (Plan 042 · T5.1)
 // necesita y el Store no tenía: enseñar que hay un secreto sin enseñarlo. El método
@@ -29,5 +32,9 @@ const FingerprintHexLen = 8
 // es otro secreto y da otra huella. Es una función pura: el mismo secreto da
 // siempre la misma huella.
 func Fingerprint(secret string) string {
-	panic(pendiente.Implementar("integrations.Fingerprint"))
+	if secret == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])[:FingerprintHexLen]
 }
