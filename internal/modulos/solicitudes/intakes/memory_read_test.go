@@ -166,11 +166,26 @@ func TestMemoryStore_Revisions_PrunesTheLiteralPastTheTTL(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("la poda se anunció %d veces, quería 1: %v", len(entries), entries)
 	}
-	e := entries[0]
+	requirePruneAnnouncement(t, entries[0], int64(prunedAt.Sub(written).Seconds()))
+
+	// Releer no repite el anuncio ni mueve la fecha: es «cuándo se destruyó», no «cuándo se miró».
+	clock.Advance(72 * time.Hour)
+	again := store.Revisions("i-1")
+	if !again[1].LiteralPrunedAt.Equal(prunedAt) || !equalJSON(again[1].Payload, []byte(noLiteral)) {
+		t.Errorf("la segunda lectura dejó el sello en %v y el payload en %s", again[1].LiteralPrunedAt, again[1].Payload)
+	}
+	if n := len(log.snapshot()); n != 1 {
+		t.Errorf("tras releer hay %d anuncios, quería seguir en 1", n)
+	}
+}
+
+// requirePruneAnnouncement exige el anuncio de la poda de la revisión 2 de "i-1": su nivel y su
+// texto, las cuatro claves con su valor y nada más, y ni rastro del contenido del cliente.
+func requirePruneAnnouncement(t *testing.T, e logEntry, wantAge int64) {
+	t.Helper()
 	if e.level != "info" || e.msg != "retención: literal de la revisión podado por TTL vencido" {
 		t.Errorf("anuncio de la poda = %s", e)
 	}
-	wantAge := int64(prunedAt.Sub(written).Seconds())
 	for key, want := range map[string]any{
 		"intake_id": "i-1", "revision_no": 2, "edad_segundos": wantAge,
 		"ttl_segundos": int64(intakes.DefaultLiteralTTL.Seconds()),
@@ -184,16 +199,6 @@ func TestMemoryStore_Revisions_PrunesTheLiteralPastTheTTL(t *testing.T) {
 	}
 	if s := e.String(); strings.Contains(s, "Marta") || strings.Contains(s, "dos panes") {
 		t.Errorf("el anuncio de la poda lleva contenido del cliente: %s", s)
-	}
-
-	// Releer no repite el anuncio ni mueve la fecha: es «cuándo se destruyó», no «cuándo se miró».
-	clock.Advance(72 * time.Hour)
-	again := store.Revisions("i-1")
-	if !again[1].LiteralPrunedAt.Equal(prunedAt) || !equalJSON(again[1].Payload, []byte(noLiteral)) {
-		t.Errorf("la segunda lectura dejó el sello en %v y el payload en %s", again[1].LiteralPrunedAt, again[1].Payload)
-	}
-	if n := len(log.snapshot()); n != 1 {
-		t.Errorf("tras releer hay %d anuncios, quería seguir en 1", n)
 	}
 }
 

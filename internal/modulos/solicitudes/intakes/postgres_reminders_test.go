@@ -14,10 +14,9 @@ import (
 // (solicitud marcada, true); sin fila, (cero, false) y sin error: no le tocaba. Un id que no es
 // UUID es ErrNotFound sin tocar la base.
 func TestPostgres_MarkReminded_CompareAndSwap(t *testing.T) {
-	type mark func(*Postgres, context.Context, string, string, time.Time) (Intake, bool, error)
 	cases := []struct {
 		name     string
-		call     mark
+		call     pgMark
 		column   int
 		wantArgs []driver.Value
 	}{
@@ -28,22 +27,7 @@ func TestPostgres_MarkReminded_CompareAndSwap(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/wins the reminder", func(t *testing.T) {
-			store, fake := newFakePostgres(t)
-			row := pgIntakeRow(StatusDepositRequested, 30)
-			row[tc.column] = pgAt
-			fake.script(pgOne(row...))
-			got, ok, err := tc.call(store, t.Context(), pgTenant, pgIntakeID, pgAt)
-			if err != nil || !ok || got.ID != pgIntakeID {
-				t.Fatalf("Mark = (%+v, %v, %v), quería la solicitud marcada y true", got, ok, err)
-			}
-			if marks := []time.Time{got.DepositRemindedAt, got.ExpiryRemindedAt}; !marks[tc.column-9].Equal(pgAt) {
-				t.Errorf("la marca no salió en su campo: %+v", got)
-			}
-			stmts := fake.statements()
-			if len(stmts) != 1 || stmts[0].inTx || !reflect.DeepEqual(stmts[0].args, tc.wantArgs) {
-				t.Errorf("sentencias = %+v, quería una suelta con argumentos %v", stmts, tc.wantArgs)
-			}
-			requirePgKinds(t, fake, pgQuery)
+			requireMarkWins(t, tc.call, tc.column, tc.wantArgs)
 		})
 		t.Run(tc.name+"/not its turn", func(t *testing.T) {
 			store, _ := newFakePostgres(t)
@@ -70,6 +54,31 @@ func TestPostgres_MarkReminded_CompareAndSwap(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pgMark es la forma común de los dos «Mark» del store.
+type pgMark func(*Postgres, context.Context, string, string, time.Time) (Intake, bool, error)
+
+// requireMarkWins: con fila, el «Mark» devuelve (solicitud marcada, true), con la marca en su
+// campo (`column` es la columna de la fila que la lleva), y fue UNA consulta suelta con `wantArgs`.
+func requireMarkWins(t *testing.T, call pgMark, column int, wantArgs []driver.Value) {
+	t.Helper()
+	store, fake := newFakePostgres(t)
+	row := pgIntakeRow(StatusDepositRequested, 30)
+	row[column] = pgAt
+	fake.script(pgOne(row...))
+	got, ok, err := call(store, t.Context(), pgTenant, pgIntakeID, pgAt)
+	if err != nil || !ok || got.ID != pgIntakeID {
+		t.Fatalf("Mark = (%+v, %v, %v), quería la solicitud marcada y true", got, ok, err)
+	}
+	if marks := []time.Time{got.DepositRemindedAt, got.ExpiryRemindedAt}; !marks[column-9].Equal(pgAt) {
+		t.Errorf("la marca no salió en su campo: %+v", got)
+	}
+	stmts := fake.statements()
+	if len(stmts) != 1 || stmts[0].inTx || !reflect.DeepEqual(stmts[0].args, wantArgs) {
+		t.Errorf("sentencias = %+v, quería una suelta con argumentos %v", stmts, wantArgs)
+	}
+	requirePgKinds(t, fake, pgQuery)
 }
 
 // TestPostgres_SatisfiesTheReminderPorts: los puertos estrechos de los recordatorios.

@@ -241,11 +241,28 @@ func (c *pgConn) QueryContext(_ context.Context, query string, args []driver.Nam
 	if r.err != nil {
 		return nil, r.err
 	}
+	return r.driverRows(), nil
+}
+
+// driverRows son las filas de la respuesta: las normales o, si su cierre tiene que fallar, las
+// que database/sql no cierra por su cuenta.
+func (r pgReply) driverRows() driver.Rows {
 	rows := &pgRows{rows: r.rows, endErr: r.endErr}
 	if r.closeErr != nil {
-		return &pgOpenRows{pgRows: rows, closeErr: r.closeErr}, nil
+		return &pgOpenRows{pgRows: rows, closeErr: r.closeErr}
 	}
-	return rows, nil
+	return rows
+}
+
+// pgBytesArg es el argumento de una sentencia leído como []byte; si viajó con otro tipo, el test
+// falla y sigue con nil.
+func pgBytesArg(t *testing.T, arg driver.Value) []byte {
+	t.Helper()
+	b, ok := arg.([]byte)
+	if !ok {
+		t.Errorf("el argumento viajó como %T, quería []byte", arg)
+	}
+	return b
 }
 
 // pgTx es la transacción abierta en una conexión.

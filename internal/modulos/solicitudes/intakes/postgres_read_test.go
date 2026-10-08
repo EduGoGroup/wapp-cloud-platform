@@ -292,11 +292,17 @@ func TestPostgres_ListDetails_GroupsRowsByIntake(t *testing.T) {
 	if got[0].Revisions != nil || got[0].BuyerDataPresent {
 		t.Errorf("el export rellenó Revisions o BuyerDataPresent: %+v", got[0])
 	}
+	requirePgExportQuery(t, fake, []driver.Value{pgTenant, nil, nil, nil, nil, nil, 50})
+}
+
+// requirePgExportQuery exige que el export fue UNA consulta suelta, con esos argumentos.
+func requirePgExportQuery(t *testing.T, fake *pgFake, want []driver.Value) {
+	t.Helper()
 	stmts := fake.statements()
 	if len(stmts) != 1 || stmts[0].kind != pgQuery || stmts[0].inTx {
 		t.Fatalf("sentencias = %+v, quería una consulta suelta", stmts)
 	}
-	if want := []driver.Value{pgTenant, nil, nil, nil, nil, nil, 50}; !reflect.DeepEqual(stmts[0].args, want) {
+	if !reflect.DeepEqual(stmts[0].args, want) {
 		t.Errorf("argumentos del export = %v, quería %v", stmts[0].args, want)
 	}
 }

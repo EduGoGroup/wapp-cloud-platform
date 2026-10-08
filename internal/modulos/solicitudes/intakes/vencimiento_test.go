@@ -365,7 +365,7 @@ func TestRemindOverdue_StoreFailureNotifiesNobody(t *testing.T) {
 // UNO. Y una candidata que pierde la marca no cuenta: se sigue con la siguiente.
 func TestRemindOverdue_OneNoticePerTouch(t *testing.T) {
 	t.Parallel()
-	var touched []Intake
+	touched := make([]Intake, 0, 5)
 	for _, id := range []string{"a", "b", "c", "d", "e"} {
 		touched = append(touched, expiryWaiting(id, 72*time.Hour))
 	}

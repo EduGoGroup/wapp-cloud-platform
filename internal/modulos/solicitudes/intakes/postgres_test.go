@@ -160,7 +160,7 @@ func requirePgUntouched(t *testing.T, fake *pgFake) {
 
 // TestNewPostgres_DoesNotQuery: construir el store, con o sin opciones, no toca la base.
 func TestNewPostgres_DoesNotQuery(t *testing.T) {
-	var option PostgresOption = WithRetentionLog(&pgLogSink{})
+	option := WithRetentionLog(&pgLogSink{})
 	store, fake := newFakePostgres(t, WithLiteralCipher(newPgCipher(t)), option)
 	if store == nil {
 		t.Fatal("NewPostgres devolvió nil")
@@ -221,10 +221,9 @@ func TestWithLiteralCipher_SealsTheLiteralOutOfThePayload(t *testing.T) {
 	if !ok || strings.Contains(string(payload), "empanadas") {
 		t.Errorf("el payload que va a la base lleva el literal en claro: %q", payload)
 	}
-	enc, _ := args[5].([]byte)
-	dek, _ := args[6].([]byte)
-	kekID, _ := args[7].(string)
-	if kekID != pgKEKID {
+	enc, dek := pgBytesArg(t, args[5]), pgBytesArg(t, args[6])
+	kekID, ok := args[7].(string)
+	if !ok || kekID != pgKEKID {
 		t.Errorf("literal_kek_id = %q, quería %q", kekID, pgKEKID)
 	}
 	plain, derr := cipher.Decrypt(enc, dek, kekID)

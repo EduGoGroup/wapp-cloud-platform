@@ -423,9 +423,7 @@ func (m *MemoryStore) saveRevisionLocked(rev Revision) (Revision, error) {
 // sino en correctionSignal (edit.go), compartida con Postgres para que la guarda del
 // modo exista una sola vez. Esto es solo la consulta (era últimaRevisiónLocked).
 func (m *MemoryStore) correctionSignalLocked(mode EditMode, intakeID string) CorrectionSignal {
-	// La consulta de este doble no puede fallar: el error de correctionSignal es
-	// siempre el de la consulta, así que aquí es siempre nil.
-	signal, _ := correctionSignal(mode, func() (no int, kind string, err error) {
+	signal, err := correctionSignal(mode, func() (no int, kind string, err error) {
 		for _, rev := range m.revisions[intakeID] {
 			if rev.RevisionNo > no {
 				no, kind = rev.RevisionNo, rev.Kind
@@ -433,6 +431,12 @@ func (m *MemoryStore) correctionSignalLocked(mode EditMode, intakeID string) Cor
 		}
 		return no, kind, nil
 	})
+	if err != nil {
+		// Inalcanzable: el único error de correctionSignal es el de la consulta, y la
+		// de este doble —un recorrido en memoria— devuelve siempre nil. Si un día
+		// dejara de serlo, sin número ni clase que citar no hay señal que dar.
+		return CorrectionSignal{}
+	}
 	return signal
 }
 

@@ -115,37 +115,54 @@ func TestService_Touch_OnlyWhatThePageRead(t *testing.T) {
 // lectura que falla no evalúan ningún recordatorio.
 func TestService_Touch_NothingReadTouchesNobody(t *testing.T) {
 	t.Parallel()
+	errDown := errors.New("base caída")
+	list := func(tenantID string) func(*Service) error {
+		return func(s *Service) error {
+			_, err := s.List(context.Background(), tenantID, Filter{})
+			return err
+		}
+	}
+	get := func(tenantID string) func(*Service) error {
+		return func(s *Service) error {
+			_, err := s.Get(context.Background(), tenantID, svcIntakeID)
+			return err
+		}
+	}
 	cases := []struct {
 		name  string
 		store func(t *testing.T) Store
-		read  func(*Service)
+		read  func(*Service) error
+		// wantErr: el error con que acaba la lectura (nil si va bien).
+		wantErr error
 	}{
 		{
 			name:  "empty page",
 			store: func(t *testing.T) Store { return svcSeedStore(t, StatusOpen) },
-			read:  func(s *Service) { _, _ = s.List(context.Background(), svcTenantB, Filter{}) },
+			read:  list(svcTenantB),
 		},
 		{
 			name:  "intake of another tenant",
 			store: func(t *testing.T) Store { return svcSeedStore(t, StatusOpen) },
-			read:  func(s *Service) { _, _ = s.Get(context.Background(), svcTenantB, svcIntakeID) },
+			read:  get(svcTenantB), wantErr: ErrNotFound,
 		},
 		{
 			name:  "failed list",
-			store: func(*testing.T) Store { return svcFailingStore{err: errors.New("base caída")} },
-			read:  func(s *Service) { _, _ = s.List(context.Background(), svcTenantA, Filter{}) },
+			store: func(*testing.T) Store { return svcFailingStore{err: errDown} },
+			read:  list(svcTenantA), wantErr: errDown,
 		},
 		{
 			name:  "failed get",
-			store: func(*testing.T) Store { return svcFailingStore{err: errors.New("base caída")} },
-			read:  func(s *Service) { _, _ = s.Get(context.Background(), svcTenantA, svcIntakeID) },
+			store: func(*testing.T) Store { return svcFailingStore{err: errDown} },
+			read:  get(svcTenantA), wantErr: errDown,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			opts, deposit, expiry := svcTouchOptions(true, true)
-			c.read(NewService(c.store(t), opts...))
+			if err := c.read(NewService(c.store(t), opts...)); !errors.Is(err, c.wantErr) {
+				t.Fatalf("la lectura acabó con el error %v, quería %v", err, c.wantErr)
+			}
 			if len(deposit.calls) != 0 || len(expiry.calls) != 0 {
 				t.Errorf("toques = (seña %d, plazo %d), quería (0, 0): sin filas leídas no hay nada que evaluar", len(deposit.calls), len(expiry.calls))
 			}

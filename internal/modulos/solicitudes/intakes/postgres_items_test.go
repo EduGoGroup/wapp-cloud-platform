@@ -99,7 +99,7 @@ func TestPostgres_ReplaceItems_PlainEdit(t *testing.T) {
 		t.Errorf("la segunda línea escrita es %v, quería B (orden recibido)", got)
 	}
 	revision := stmts[6].args
-	payload, _ := revision[2].([]byte)
+	payload := pgBytesArg(t, revision[2])
 	if revision[1] != RevisionKindCorrected || strings.Contains(string(payload), KeyAsCorrection) {
 		t.Errorf("revisión escrita: kind %v y payload %s, quería corrected y sin señal", revision[1], payload)
 	}
@@ -123,7 +123,7 @@ func TestPostgres_ReplaceItems_AsCorrection_ReadsTheLastRevisionUnderTheLock(t *
 	if !stmts[6].inTx || !reflect.DeepEqual(stmts[6].args, []driver.Value{pgIntakeID}) {
 		t.Errorf("lectura de la última revisión = %+v, quería la solicitud dentro de la transacción", stmts[6])
 	}
-	payload, _ := stmts[7].args[2].([]byte)
+	payload := pgBytesArg(t, stmts[7].args[2])
 	for _, want := range []string{`"` + KeyAsCorrection + `":true`, `"` + KeyCorrectsRevisionNo + `":1`, `"` + KeyCorrectsKind + `":"` + RevisionKindInterpreted + `"`} {
 		if !strings.Contains(string(payload), want) {
 			t.Errorf("el payload de la revisión no lleva %s: %s", want, payload)
@@ -139,7 +139,7 @@ func TestPostgres_ReplaceItems_AsCorrection_WithoutRevisions_MarksWithoutThePair
 	if _, err := store.ReplaceItems(t.Context(), pgTenant, pgIntakeID, pgNewItems, pgEditable, EditAsCorrection); err != nil {
 		t.Fatalf("ReplaceItems: error inesperado %v", err)
 	}
-	payload, _ := fake.statements()[7].args[2].([]byte)
+	payload := pgBytesArg(t, fake.statements()[7].args[2])
 	if !strings.Contains(string(payload), `"`+KeyAsCorrection+`":true`) {
 		t.Errorf("el payload de la revisión no lleva la marca: %s", payload)
 	}

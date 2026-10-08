@@ -261,21 +261,26 @@ func TestPostgres_UpdateStatus_SQLIsTheOldOneByteForByte(t *testing.T) {
 		to     string
 		script []pgReply
 		want   []string
+		// wantErr: el primer camino acaba en ErrConflict (el CAS no movió nada); los otros, bien.
+		wantErr error
 	}{
-		{"cas and reread", StatusConfirmed, []pgReply{{}, pgOne(true)}, []string{wantCASSQL, wantCASRereadSQL}},
+		{"cas and reread", StatusConfirmed, []pgReply{{}, pgOne(true)}, []string{wantCASSQL, wantCASRereadSQL}, ErrConflict},
 		{"deposit requested", StatusDepositRequested,
 			[]pgReply{pgOne(pgIntakeRow(StatusDepositRequested, 30)...), {}, pgOne(pgIntakeRow(StatusDepositRequested, 30)...)},
-			[]string{wantCASSQL, wantDueDaysSQL, wantDueDateSQL}},
+			[]string{wantCASSQL, wantDueDaysSQL, wantDueDateSQL}, nil},
 		{"pending approval", StatusPendingApproval,
 			[]pgReply{pgOne(pgIntakeRow(StatusPendingApproval, 30)...), {}, {}, {}, pgOne(pgIntakeRow(StatusPendingApproval, 33)...)},
-			[]string{wantCASSQL, wantShippingZonesSQL, wantShippingLineSQL, wantShippingInsertSQL, wantRecomputeTotalSQL}},
+			[]string{wantCASSQL, wantShippingZonesSQL, wantShippingLineSQL, wantShippingInsertSQL, wantRecomputeTotalSQL}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store, fake := newFakePostgres(t)
 			fake.script(tc.script...)
-			// El error no importa aquí (el primer caso acaba en ErrConflict): se mira el texto.
-			_, _ = store.UpdateStatus(t.Context(), pgTenant, pgIntakeID, tc.to, []string{StatusOpen})
+			// Lo que se mira es el texto; el error solo se comprueba para saber que el camino
+			// recorrido es el que el caso dice.
+			if _, err := store.UpdateStatus(t.Context(), pgTenant, pgIntakeID, tc.to, []string{StatusOpen}); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("UpdateStatus: err = %v, quería %v", err, tc.wantErr)
+			}
 			requirePgSQL(t, fake, tc.want...)
 		})
 	}

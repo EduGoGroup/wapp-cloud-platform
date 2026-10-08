@@ -23,7 +23,7 @@ func (s *svcRacingStore) Get(ctx context.Context, tenantID, intakeID string) (De
 	d, err := s.MemoryStore.Get(ctx, tenantID, intakeID)
 	if err == nil && !s.raced {
 		s.raced = true
-		if _, uerr := s.MemoryStore.UpdateStatus(ctx, tenantID, intakeID, StatusCancelled, StoredVariants(d.Status)); uerr != nil {
+		if _, uerr := s.UpdateStatus(ctx, tenantID, intakeID, StatusCancelled, StoredVariants(d.Status)); uerr != nil {
 			return Detail{}, uerr
 		}
 	}
@@ -35,7 +35,7 @@ func (s *svcRacingStore) Get(ctx context.Context, tenantID, intakeID string) (De
 type svcUnmovedStore struct{ *MemoryStore }
 
 func (s svcUnmovedStore) UpdateStatus(ctx context.Context, tenantID, intakeID, _ string, _ []string) (Intake, error) {
-	d, err := s.MemoryStore.Get(ctx, tenantID, intakeID)
+	d, err := s.Get(ctx, tenantID, intakeID)
 	return d.Intake, err
 }
 

@@ -178,10 +178,10 @@ func TestPostgres_InsertRevision_EvidenceIsLiteralToo(t *testing.T) {
 		t.Fatalf("InsertRevision: error inesperado %v", err)
 	}
 	args := fake.statements()[0].args
-	if payload, _ := args[2].([]byte); strings.Contains(string(payload), "la de carne") {
+	if payload := pgBytesArg(t, args[2]); strings.Contains(string(payload), "la de carne") {
 		t.Errorf("el payload que va a la base lleva la evidence en claro: %q", payload)
 	}
-	if enc, _ := args[5].([]byte); len(enc) == 0 {
+	if enc := pgBytesArg(t, args[5]); len(enc) == 0 {
 		t.Error("literal_enc viajó vacío con una evidence en el payload")
 	}
 }
