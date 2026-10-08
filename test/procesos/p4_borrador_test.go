@@ -64,6 +64,8 @@ type p4Run struct {
 //     repetidos, espacios Unicode y dígitos no ASCII.
 //   - degradación: P2 falla con OLLAMA_DOWN → aviso al dueño, contador, job en cola con backoff; el
 //     flujo estático sigue respondiendo; al volver el Edge a READY el job se reanuda sin esperar.
+//   - vía LLM: GET, PUT y DELETE de /api/v1/tenant-llm por el cable (p4_borrador_tenantllm_test.go): el
+//     gate del plan, las guardias, los cuerpos inválidos y el recorrido sobre una segunda empresa.
 //   - otro borrador: createDraft, el helper que reutilizan P5–P8, sobre la misma empresa.
 //   - puerta: qué primer mensaje abre ventana y cuál no.
 func TestP4_MessageToDraft(t *testing.T) {
@@ -75,6 +77,7 @@ func TestP4_MessageToDraft(t *testing.T) {
 	t.Run("borrador", func(t *testing.T) { main = p4HappyPath(t, sc) })
 	t.Run("adversarios", func(t *testing.T) { p4Adversarial(t, sc) })
 	t.Run("degradacion", func(t *testing.T) { p4Degradation(t, sc) })
+	t.Run("via_llm", func(t *testing.T) { p4TenantLLM(t, sc) })
 	t.Run("otro_borrador", func(t *testing.T) { p4AnotherDraft(t, sc, main) })
 	t.Run("puerta", func(t *testing.T) { p4Door(t, sc) })
 	t.Run("cierre", func(t *testing.T) { p4Closing(t, sc, main) })
