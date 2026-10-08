@@ -4,9 +4,9 @@ package intakes
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"time"
-
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // literal.go — EL MATERIAL DE NIVEL 2 DE UNA REVISIÓN (Plan 044 · Ola 3 · T3.5).
@@ -97,7 +97,7 @@ type LiteralRevision struct {
 //
 // Era `Vacio` en el paquete viejo.
 func (l LiteralRevision) Empty() bool {
-	panic(pendiente.Implementar("intakes.LiteralRevision.Empty"))
+	return l.SourceText == "" && len(l.Evidence) == 0
 }
 
 // LiteralEnvelope son las TRES piezas del envelope, tal como salen de
@@ -126,7 +126,7 @@ type LiteralEnvelope struct {
 //
 // Era `Completo` en el paquete viejo.
 func (s LiteralEnvelope) Complete() bool {
-	panic(pendiente.Implementar("intakes.LiteralEnvelope.Complete"))
+	return len(s.Enc) > 0 && len(s.DEK) > 0 && s.KEKID != ""
 }
 
 // Empty dice si no hay sobre: las TRES piezas vacías (un slice nil y uno de largo
@@ -138,7 +138,7 @@ func (s LiteralEnvelope) Complete() bool {
 //
 // Era `Vacio` en el paquete viejo.
 func (s LiteralEnvelope) Empty() bool {
-	panic(pendiente.Implementar("intakes.LiteralEnvelope.Empty"))
+	return len(s.Enc) == 0 && len(s.DEK) == 0 && s.KEKID == ""
 }
 
 // SplitLiteral saca del payload lo que es de nivel 2 y devuelve el payload SIN ello
@@ -191,7 +191,76 @@ func (s LiteralEnvelope) Empty() bool {
 //
 // Era `PartirLiteral` en el paquete viejo.
 func SplitLiteral(payload json.RawMessage) (clean json.RawMessage, lit LiteralRevision, err error) {
-	panic(pendiente.Implementar("intakes.SplitLiteral"))
+	root, ok := asObject(payload)
+	if !ok {
+		return payload, LiteralRevision{}, nil
+	}
+
+	touched := false
+
+	if raw, present := root[PayloadKeySourceText]; present {
+		var text string
+		if uerr := json.Unmarshal(raw, &text); uerr != nil {
+			// La clave existe pero no es una cadena: el payload no es del contrato
+			// §7.4. Se falla en vez de dejarlo pasar — dejarlo pasar significaría
+			// persistir en claro algo que se llama `source_text`.
+			return nil, LiteralRevision{}, fmt.Errorf("intakes: %s del payload no es una cadena: %w", PayloadKeySourceText, uerr)
+		}
+		delete(root, PayloadKeySourceText)
+		touched = true
+		lit.SourceText = text
+	}
+
+	lines, hasLines := asList(root[PayloadKeyLines])
+	for i, rawLine := range lines {
+		line, isObject := asObject(rawLine)
+		if !isObject {
+			continue
+		}
+		raw, present := line[LineKeyEvidence]
+		if !present {
+			continue
+		}
+		var phrase string
+		if uerr := json.Unmarshal(raw, &phrase); uerr != nil {
+			return nil, LiteralRevision{}, fmt.Errorf("intakes: %s de la línea %d no es una cadena: %w", LineKeyEvidence, i, uerr)
+		}
+		delete(line, LineKeyEvidence)
+		rebuilt, merr := json.Marshal(line)
+		if merr != nil {
+			return nil, LiteralRevision{}, fmt.Errorf("intakes: reserializar la línea %d sin %s: %w", i, LineKeyEvidence, merr)
+		}
+		lines[i] = rebuilt
+		touched = true
+		if phrase == "" {
+			// La clave estaba pero venía vacía: se quita del payload igual (para que
+			// el lector no vea un campo que el escritor considera ausente) y NO se
+			// mete en el sobre, que no tiene nada que guardar.
+			continue
+		}
+		if lit.Evidence == nil {
+			lit.Evidence = make(map[string]string, len(lines))
+		}
+		lit.Evidence[strconv.Itoa(i)] = phrase
+	}
+
+	if !touched {
+		return payload, LiteralRevision{}, nil
+	}
+
+	if hasLines {
+		relisted, merr := json.Marshal(lines)
+		if merr != nil {
+			return nil, LiteralRevision{}, fmt.Errorf("intakes: reserializar %s: %w", PayloadKeyLines, merr)
+		}
+		root[PayloadKeyLines] = relisted
+	}
+
+	clean, err = json.Marshal(root)
+	if err != nil {
+		return nil, LiteralRevision{}, fmt.Errorf("intakes: reserializar el payload sin el literal: %w", err)
+	}
+	return clean, lit, nil
 }
 
 // MergeLiteral es el INVERSO de SplitLiteral: devuelve el literal a su sitio dentro
@@ -232,7 +301,92 @@ func SplitLiteral(payload json.RawMessage) (clean json.RawMessage, lit LiteralRe
 //
 // Era `FundirLiteral` en el paquete viejo.
 func MergeLiteral(payload json.RawMessage, lit LiteralRevision) (json.RawMessage, error) {
-	panic(pendiente.Implementar("intakes.MergeLiteral"))
+	if lit.Empty() {
+		return payload, nil
+	}
+	root, ok := asObject(payload)
+	if !ok {
+		// No hay dónde devolverlo. Se falla en vez de tirar el texto en silencio:
+		// perder el literal de una revisión es perder la única defensa del dueño
+		// contra una clasificación mala (ADR-0034 §Decisión 2).
+		return nil, fmt.Errorf("intakes: el payload de la revisión no es un objeto JSON: no hay dónde devolver el literal")
+	}
+
+	if lit.SourceText != "" {
+		raw, err := json.Marshal(lit.SourceText)
+		if err != nil {
+			return nil, fmt.Errorf("intakes: serializar %s: %w", PayloadKeySourceText, err)
+		}
+		root[PayloadKeySourceText] = raw
+	}
+
+	if len(lit.Evidence) > 0 {
+		lines, _ := asList(root[PayloadKeyLines])
+		for pos, phrase := range lit.Evidence {
+			i, cerr := strconv.Atoi(pos)
+			if cerr != nil || i < 0 || i >= len(lines) {
+				// La revisión cambió de forma bajo el sobre (o el sobre es de otra).
+				// Se falla: devolver la evidencia a la línea EQUIVOCADA sería peor
+				// que no devolverla — el dueño leería como prueba de una línea una
+				// frase que sostiene otra.
+				return nil, fmt.Errorf("intakes: la evidencia %q no corresponde a ninguna de las %d líneas de la revisión", pos, len(lines))
+			}
+			line, isObject := asObject(lines[i])
+			if !isObject {
+				return nil, fmt.Errorf("intakes: la línea %d de la revisión no es un objeto JSON", i)
+			}
+			raw, merr := json.Marshal(phrase)
+			if merr != nil {
+				return nil, fmt.Errorf("intakes: serializar la %s de la línea %d: %w", LineKeyEvidence, i, merr)
+			}
+			line[LineKeyEvidence] = raw
+			rebuilt, merr := json.Marshal(line)
+			if merr != nil {
+				return nil, fmt.Errorf("intakes: reserializar la línea %d con su %s: %w", i, LineKeyEvidence, merr)
+			}
+			lines[i] = rebuilt
+		}
+		relisted, merr := json.Marshal(lines)
+		if merr != nil {
+			return nil, fmt.Errorf("intakes: reserializar %s con las evidencias: %w", PayloadKeyLines, merr)
+		}
+		root[PayloadKeyLines] = relisted
+	}
+
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("intakes: reserializar el payload con el literal: %w", err)
+	}
+	return out, nil
+}
+
+// asObject decodifica un JSON a objeto SIN interpretar sus valores (quedan en
+// json.RawMessage). Devuelve false —y no error— cuando no es un objeto: los
+// llamantes de aquí tratan «no es de esta forma» como un caso normal, no como un
+// fallo. Era `comoObjeto` en el paquete viejo.
+func asObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, false
+	}
+	return obj, true
+}
+
+// asList es asObject para arrays. El bool distingue «no hay lista» de «hay una
+// lista vacía», que es la diferencia entre no tocar la clave y reescribirla con [].
+// Era `comoLista` en el paquete viejo.
+func asList(raw json.RawMessage) ([]json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(raw, &list); err != nil || list == nil {
+		return nil, false
+	}
+	return list, true
 }
 
 // LiteralExpired dice si un literal de edad `age` ya pasó su plazo de retención
@@ -254,5 +408,8 @@ func MergeLiteral(payload json.RawMessage, lit LiteralRevision) (json.RawMessage
 //
 // Era `LiteralVencido` en el paquete viejo.
 func LiteralExpired(age, ttl time.Duration) bool {
-	panic(pendiente.Implementar("intakes.LiteralExpired"))
+	if ttl <= 0 {
+		return false
+	}
+	return age >= ttl
 }
