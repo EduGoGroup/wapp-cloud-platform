@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package tenantvars_test
 
 import (
