@@ -13,7 +13,10 @@
 
 package intakes
 
-import "github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+import (
+	"fmt"
+	"slices"
+)
 
 // Claves del ciclo de vida de una solicitud (design §D-041.10). Los
 // IDENTIFICADORES van en inglés (INV-09, I-CP-8; regla R-09): el nombre de negocio
@@ -55,6 +58,73 @@ const (
 	StatusClosedLegacy = "closed"
 )
 
+// aliases mapea cada clave LEGADA a su clave canónica. Es el ÚNICO punto donde se
+// resuelve el alias en todo el sistema: si algún día hay que migrar las filas, se
+// migran y esta tabla se vacía sin tocar nada más.
+var aliases = map[string]string{
+	StatusClosedLegacy: StatusConfirmed,
+}
+
+// transitions es el mapa COMPLETO de destinos válidos por estado de origen
+// (D-041.10; son 18). Las claves ausentes son estados TERMINALES: settled, cancelled,
+// rejected, abandoned y el legado expired no transicionan a ninguna parte.
+//
+// `confirmed → pending_approval` es la vuelta a un estado editable para
+// RE-PRESUPUESTAR un pedido ya cerrado al que hay que ponerle precio (D-041.26).
+// Sin ella, cobrar un añadido sin precio obligaría a cancelar y a que el cliente
+// empezara de cero.
+var transitions = map[string][]string{
+	StatusOpen:             {StatusConfirmed, StatusPendingApproval, StatusCancelled, StatusAbandoned},
+	StatusPendingApproval:  {StatusConfirmed, StatusRejected, StatusNeedsInfo, StatusCancelled},
+	StatusNeedsInfo:        {StatusPendingApproval, StatusCancelled},
+	StatusConfirmed:        {StatusPendingApproval, StatusDepositRequested, StatusSettled, StatusCancelled},
+	StatusDepositRequested: {StatusDepositPaid, StatusCancelled},
+	StatusDepositPaid:      {StatusSettled, StatusCancelled},
+}
+
+// discardable es el conjunto de estados desde los que el DUEÑO puede descartar
+// una solicitud a mano (D-041.18, decisión de Jhoan del 2026-08-06). Es un mapa
+// APARTE de `transitions` a propósito, y esa separación es la tarea entera:
+//
+//   - `transitions` responde «¿adónde puede ir esta solicitud?» y es lo que se
+//     publica en allowed_transitions y lo que pinta el <select> de la consola. Meter
+//     ahí expired → abandoned abriría esa transición en la API y en la pantalla,
+//     que es justo lo que el dueño del producto cerró.
+//   - `discardable` responde «¿es descartable?». Un destino (abandoned), dos
+//     orígenes, y una sola puerta: el descarte manual por lotes.
+//
+// `expired` está aquí y NO en transitions porque es el legado del reloj derogado
+// (D-041.16): nadie entra ya en él, pero las filas históricas que quedaron dentro
+// tienen que poder limpiarse de la bandeja — si no, serían las únicas inmortales
+// del sistema.
+//
+// ⚠️ Nace SIN LLAMANTES: su primer y único cliente es POST /api/v1/intakes/discard
+// (T4.8), que consulta ESTO y jamás CanTransition. El riesgo es futuro: que alguien
+// «unifique» el descarte sobre SetStatus y abra la transición en la API sin que
+// nadie lo note. Lo que lo detiene no es este comentario sino el test de handler
+// que exige 422 al pedir abandoned sobre una fila expired.
+var discardable = map[string]bool{
+	StatusOpen:    true,
+	StatusExpired: true,
+}
+
+// known es el conjunto de claves de estado que el sistema reconoce como origen
+// legible (incluye los terminales y el legado expired, que siguen siendo
+// filtrables y exportables aunque nadie pueda entrar ni salir de ellos).
+var known = map[string]bool{
+	StatusOpen:             true,
+	StatusPendingApproval:  true,
+	StatusConfirmed:        true,
+	StatusDepositRequested: true,
+	StatusDepositPaid:      true,
+	StatusSettled:          true,
+	StatusCancelled:        true,
+	StatusExpired:          true,
+	StatusAbandoned:        true,
+	StatusRejected:         true,
+	StatusNeedsInfo:        true,
+}
+
 // NormalizeStatus resuelve la clave canónica de un estado: traduce los alias
 // legados (hoy uno solo, `closed` → `confirmed`) y deja el resto tal cual. Es el
 // ÚNICO punto del sistema donde se resuelve el alias.
@@ -64,7 +134,10 @@ const (
 // la rechaza. La comparación es exacta: `CLOSED`, `Closed`, ` closed`, `closed `
 // y `closed\n` NO son el alias y salen como entraron.
 func NormalizeStatus(status string) string {
-	panic(pendiente.Implementar("intakes.NormalizeStatus"))
+	if canonical, ok := aliases[status]; ok {
+		return canonical
+	}
+	return status
 }
 
 // StoredVariants devuelve TODAS las formas en que un estado canónico puede estar
@@ -76,7 +149,15 @@ func NormalizeStatus(status string) string {
 // [closed confirmed]. Un estado sin alias devuelve solo su clave. No valida: una
 // clave desconocida —o la vacía— devuelve una lista con esa sola clave.
 func StoredVariants(canonical string) []string {
-	panic(pendiente.Implementar("intakes.StoredVariants"))
+	canonical = NormalizeStatus(canonical)
+	variants := []string{canonical}
+	for legacy, target := range aliases {
+		if target == canonical {
+			variants = append(variants, legacy)
+		}
+	}
+	slices.Sort(variants)
+	return variants
 }
 
 // StoredVariantsOf expande TODOS los estados de un filtro a sus claves tal como
@@ -95,7 +176,15 @@ func StoredVariants(canonical string) []string {
 // bandeja saldría en blanco. Como StoredVariants, no valida ni descarta: una clave
 // vacía o desconocida dentro de la lista viaja tal cual al resultado.
 func StoredVariantsOf(canonicals []string) []string {
-	panic(pendiente.Implementar("intakes.StoredVariantsOf"))
+	if len(canonicals) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(canonicals))
+	for _, status := range canonicals {
+		out = append(out, StoredVariants(status)...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // IsStatus indica si la clave es un estado conocido del ciclo de vida, tras
@@ -104,7 +193,7 @@ func StoredVariantsOf(canonicals []string) []string {
 // aunque nadie pueda entrar ni salir de ellos. La vacía, una clave inventada y una
 // clave válida en mayúsculas (`CONFIRMED`) NO lo son.
 func IsStatus(status string) bool {
-	panic(pendiente.Implementar("intakes.IsStatus"))
+	return known[NormalizeStatus(status)]
 }
 
 // CanTransition responde si la solicitud puede pasar de `from` a `to`. Normaliza
@@ -138,7 +227,17 @@ func IsStatus(status string) bool {
 // Sin ella, cobrar un añadido sin precio obligaría a cancelar y a que el cliente
 // empezara de cero.
 func CanTransition(from, to string) bool {
-	panic(pendiente.Implementar("intakes.CanTransition"))
+	from, to = NormalizeStatus(from), NormalizeStatus(to)
+	if from == to {
+		return false // una transición a sí mismo no es una transición
+	}
+	// expired NO es destino de nada (D-041.16: nada vence por tiempo). La guarda
+	// es explícita y no solo la ausencia en el mapa: es la clase de invariante que
+	// alguien "arregla" añadiendo una entrada, y aquí queda dicho por qué no.
+	if to == StatusExpired {
+		return false
+	}
+	return slices.Contains(transitions[from], to)
 }
 
 // AllowedTransitions devuelve los destinos válidos desde `from` (normalizado: una
@@ -148,7 +247,16 @@ func CanTransition(from, to string) bool {
 //
 // Un estado terminal o desconocido devuelve una lista VACÍA, nunca nil.
 func AllowedTransitions(from string) []string {
-	panic(pendiente.Implementar("intakes.AllowedTransitions"))
+	dest := transitions[NormalizeStatus(from)]
+	out := make([]string, 0, len(dest))
+	for _, d := range dest {
+		if d == StatusExpired {
+			continue // coherencia con la guarda de CanTransition
+		}
+		out = append(out, d)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // CanDiscard responde si una solicitud en el estado `from` puede ser DESCARTADA a
@@ -168,7 +276,7 @@ func AllowedTransitions(from string) []string {
 // AllowedTransitions: se ejecuta por su propio endpoint por lotes
 // (POST /api/v1/intakes/discard), que consulta ESTO y jamás CanTransition.
 func CanDiscard(from string) bool {
-	panic(pendiente.Implementar("intakes.CanDiscard"))
+	return discardable[NormalizeStatus(from)]
 }
 
 // TransitionError es el rechazo de una transición inválida: dice DESDE dónde
@@ -186,5 +294,5 @@ type TransitionError struct {
 // entra en el texto: viaja aparte en el cuerpo del 422. Es un texto observable y se
 // conserva byte a byte.
 func (e *TransitionError) Error() string {
-	panic(pendiente.Implementar("intakes.TransitionError.Error"))
+	return fmt.Sprintf("transición inválida de %q a %q", e.From, e.To)
 }
