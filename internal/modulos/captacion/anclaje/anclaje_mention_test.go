@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package anclaje_test
 
 // Trozo de anclaje_test.go (E-13): la REGLA 2, la mención textual.
@@ -70,6 +68,19 @@ func TestDistribute_Mention_SharedTokenDoesNotDistinguish(t *testing.T) {
 	d := anclaje.Distribute(turns, sampleLines, []anclaje.MediaRef{photo}, anclaje.Options{})
 	requireRequest(t, d, "wapp/media/torta.jpg")
 	requireOnlyLines(t, d)
+}
+
+func TestDistribute_Mention_SharedTokenNextToADistinctiveOneDoesNotSpoilIt(t *testing.T) {
+	// La otra mitad del filtro de frecuencia: «la torta de chocolate» trae «torta», que
+	// es de las dos líneas, y «chocolate», que es solo de una. Si el token compartido
+	// contara, el pie nombraría a las dos y se perdería un anclaje bueno. El mensaje no
+	// sostiene ninguna evidencia: solo la mención puede anclarlo.
+	turns := []anclaje.Turn{{Seq: 1, At: at(9, 55, 0), Text: "Mirá la torta de chocolate"}}
+	photo := image("wapp/media/torta.jpg", 1, at(9, 55, 0))
+	d := anclaje.Distribute(turns, sampleLines, []anclaje.MediaRef{photo}, anclaje.Options{})
+	requireLine(t, d, 0, "wapp/media/torta.jpg")
+	requireRequest(t, d)
+	requireOnlyLines(t, d, 0)
 }
 
 func TestDistribute_Mention_ComparesByTokenNotBySubstring(t *testing.T) {

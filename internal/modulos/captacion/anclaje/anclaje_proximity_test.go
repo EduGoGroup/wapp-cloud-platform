@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package anclaje_test
 
 // Trozo de anclaje_test.go (E-13): la REGLA 3, la proximidad, con sus dos topes.

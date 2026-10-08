@@ -79,9 +79,13 @@
 package anclaje
 
 import (
+	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/captacion/evidence"
 )
 
 // Clases de adjunto que este paquete distingue. El vocabulario NO es un CHECK de
@@ -220,6 +224,16 @@ const (
 	DefaultWindow          = 5 * time.Minute
 )
 
+func (o Options) withDefaults() Options {
+	if o.MaxMessagesBack <= 0 {
+		o.MaxMessagesBack = DefaultMaxMessagesBack
+	}
+	if o.Window <= 0 {
+		o.Window = DefaultWindow
+	}
+	return o
+}
+
 // Distribute (antes `Repartir`) reparte `refs` entre las líneas y la cabecera. Es
 // PURA: no lee, no escribe, no consulta reloj, no registra nada y no modifica ninguna
 // de sus entradas (los turnos se ordenan por Seq en una COPIA; pueden llegar
@@ -257,5 +271,213 @@ const (
 // afirmar el reparto en un test en vez de contarlo. Sin refs devuelve un reparto
 // vacío y usable: ByLine no es nil.
 func Distribute(turns []Turn, lines []Line, refs []MediaRef, opts Options) Distribution {
-	panic(pendiente.Implementar("anclaje.Distribute"))
+	opts = opts.withDefaults()
+
+	ordered := slices.Clone(turns)
+	slices.SortStableFunc(ordered, func(a, b Turn) int { return a.Seq - b.Seq })
+
+	distinctive := distinctiveTokens(lines)
+	out := Distribution{ByLine: make(map[int][]MediaRef, len(lines))}
+
+	for _, ref := range refs {
+		// REGLA 1, y va primera. Un audio no llega a las otras dos reglas: no es que
+		// «no encuentre ancla», es que no se le busca.
+		if isAudio(ref.Kind) {
+			ref.Label = AudioLabel
+			out.Request = append(out.Request, ref)
+			continue
+		}
+		// REGLA 2.
+		if idx, ok := anchorByMention(ref, ordered, distinctive); ok {
+			out.ByLine[idx] = append(out.ByLine[idx], ref)
+			continue
+		}
+		// REGLA 3.
+		if idx, ok := anchorByProximity(ref, ordered, lines, opts); ok {
+			out.ByLine[idx] = append(out.ByLine[idx], ref)
+			continue
+		}
+		// LA CLÁUSULA DE CIERRE: sin certeza, a la cabecera. Nunca se inventa el ancla.
+		out.Request = append(out.Request, ref)
+	}
+	return out
+}
+
+// isAudio (antes `esAudio`) reconoce las TRES formas con las que llega una nota de
+// voz o un audio. La comparación es en minúsculas porque el `kind` viene del entrante
+// y no de un CHECK.
+func isAudio(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case KindAudio, KindPTT, KindVoice:
+		return true
+	default:
+		return false
+	}
+}
+
+// anchorByMention (antes `anclaPorMencion`) mira el texto del MENSAJE QUE TRAE el
+// adjunto y busca en él un token distintivo de UNA sola línea.
+//
+// Dos líneas nombradas en la misma frase («te mando fotos de las dos tortas») NO
+// anclan a ninguna: son la ambigüedad que la regla 2 manda a la solicitud.
+func anchorByMention(ref MediaRef, turns []Turn, distinctive map[int][]string) (int, bool) {
+	i, found := slices.BinarySearchFunc(turns, ref.Seq, func(t Turn, seq int) int { return t.Seq - seq })
+	if !found {
+		return 0, false
+	}
+	caption := tokenSet(turns[i].Text)
+	if len(caption) == 0 {
+		return 0, false
+	}
+	// El recorrido del mapa no tiene orden, y no importa: solo se devuelve una línea
+	// cuando la nombrada es EXACTAMENTE una.
+	match, n := 0, 0
+	for idx, tokens := range distinctive {
+		for _, token := range tokens {
+			if _, ok := caption[token]; ok {
+				match, n = idx, n+1
+				break
+			}
+		}
+	}
+	if n != 1 {
+		return 0, false
+	}
+	return match, true
+}
+
+// anchorByProximity (antes `anclaPorProximidad`) camina hacia atrás desde el mensaje
+// del adjunto —incluido él mismo, que es el más cercano de todos— hasta encontrar un
+// mensaje que sostenga la evidencia de UNA sola línea.
+//
+// Tres formas de terminar SIN ancla, y las tres son deliberadas:
+//
+//   - un mensaje sostiene evidencia de DOS o más líneas ⇒ ambigüedad, se para ahí. No
+//     se sigue mirando hacia atrás: lo más cercano ya fue ambiguo, y lo de más atrás
+//     no puede aclararlo.
+//   - se agotó el presupuesto de mensajes o la ventana temporal ⇒ demasiado lejos.
+//   - se acabó la conversación hacia atrás ⇒ el adjunto llegó antes de que se hablara
+//     de nada.
+func anchorByProximity(ref MediaRef, turns []Turn, lines []Line, opts Options) (int, bool) {
+	budget := opts.MaxMessagesBack
+	for i := len(turns) - 1; i >= 0; i-- {
+		turn := turns[i]
+		if turn.Seq > ref.Seq {
+			continue
+		}
+		// LA VENTANA. Solo muerde con los dos instantes conocidos: ver el bloque de los
+		// dos relojes en el comentario del paquete.
+		if !ref.At.IsZero() && !turn.At.IsZero() && ref.At.Sub(turn.At) > opts.Window {
+			return 0, false
+		}
+		text := evidence.Normalize(turn.Text)
+		if text == "" {
+			// Otro adjunto de la misma ráfaga. No aporta y no cobra.
+			continue
+		}
+		if budget <= 0 {
+			return 0, false
+		}
+		budget--
+		candidates := linesHeldBy(text, lines)
+		switch len(candidates) {
+		case 0:
+			continue
+		case 1:
+			return candidates[0], true
+		default:
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+// linesHeldBy (antes `lineasSostenidasPor`) devuelve los índices de las líneas cuya
+// evidencia aparece en `normalizedText`. Usa la MISMA regla que P2/P3 para decidir si
+// una frase aparece de verdad en lo que escribió el cliente: el paquete `evidence`.
+//
+// Una evidencia que cruza DOS mensajes no la sostiene ninguno por separado, y
+// entonces esa línea no participa. Es el lado seguro: se pierde un anclaje, no se
+// inventa uno.
+func linesHeldBy(normalizedText string, lines []Line) []int {
+	var out []int
+	for _, line := range lines {
+		if evidence.Contains(normalizedText, line.Evidence) {
+			out = append(out, line.Idx)
+		}
+	}
+	return out
+}
+
+// distinctiveTokens (antes `distintivos`) saca, por línea, los tokens de su etiqueta
+// que NO comparte con ninguna otra línea.
+//
+// Es lo que hace utilizable la mención textual en el caso de Ambar: las dos tortas
+// comparten «torta», así que «torta» no distingue nada y se cae; lo que queda es
+// «chocolate» frente a «vainilla», que sí. Sin este filtro, una foto con el pie «la
+// torta de chocolate» nombraría a las dos líneas y se perdería un anclaje bueno.
+func distinctiveTokens(lines []Line) map[int][]string {
+	frequency := make(map[string]int)
+	raw := make(map[int][]string, len(lines))
+	for _, line := range lines {
+		for token := range tokenSet(line.Label) {
+			frequency[token]++
+			raw[line.Idx] = append(raw[line.Idx], token)
+		}
+	}
+	out := make(map[int][]string, len(raw))
+	for idx, tokens := range raw {
+		var own []string
+		for _, token := range tokens {
+			if frequency[token] == 1 {
+				own = append(own, token)
+			}
+		}
+		if len(own) > 0 {
+			slices.Sort(own) // determinismo: el mapa no ordena, esto sí
+			out[idx] = own
+		}
+	}
+	return out
+}
+
+// stopWords (antes `palabrasVacias`) son las que sobreviven al filtro de longitud y
+// no distinguen nada. La lista es corta a propósito: el filtro que hace el trabajo
+// pesado es el de frecuencia (un token que aparece en dos etiquetas ya se cae solo).
+var stopWords = map[string]struct{}{
+	"para": {}, "este": {}, "esta": {}, "unos": {}, "unas": {},
+	"como": {}, "todo": {}, "toda": {}, "otro": {}, "otra": {},
+}
+
+// minTokenRunes (antes `minRunasToken`) descarta los tokens cortos («de», «con»,
+// «sin», «x», «10»), que aparecen en cualquier etiqueta y no identifican un producto.
+// Se cuenta en RUNAS, no en bytes: «frío» entra y «ñúñ» no.
+const minTokenRunes = 4
+
+// tokenSet parte un texto en tokens comparables: minúsculas, sin puntuación, sin
+// palabras cortas y sin las vacías.
+//
+// 🔴 Se compara por TOKEN y no por subcadena, y es la misma lección que dejó escrita
+// T3.2 con «sin sal» contra un catálogo que tiene «salsa»: `strings.Contains` casaría
+// «sal» dentro de «salsa» y colgaría la foto de la línea equivocada.
+//
+// Nota de consolidación: `wapp-shared/textmatch` (T3.1) trae `Normalize` y
+// `SplitTokens` con esta misma forma. NO se importa todavía porque ese módulo aún no
+// tiene tag publicado y meterlo en el `go.mod` de este repo rompería la compilación
+// sin workspace. El día que se publique, esta función se sustituye por la suya.
+func tokenSet(s string) map[string]struct{} {
+	fields := strings.FieldsFunc(evidence.Normalize(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if utf8.RuneCountInString(field) < minTokenRunes {
+			continue
+		}
+		if _, stop := stopWords[field]; stop {
+			continue
+		}
+		out[field] = struct{}{}
+	}
+	return out
 }

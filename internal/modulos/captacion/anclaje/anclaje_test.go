@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package anclaje_test
 
 import (
@@ -361,6 +359,20 @@ func TestDistribute_DoesNotMutateItsInputs(t *testing.T) {
 	if !slices.Equal(lines, sampleLines) {
 		t.Fatalf("Distribute cambió las líneas del llamante: %v", lines)
 	}
+}
+
+func TestDistribute_UnorderedTurnsAreSortedBySeq(t *testing.T) {
+	// El orden que manda es el de Seq, no el de llegada del slice. La torta 1 (seq 2)
+	// viene la ÚLTIMA en la entrada: quien caminara el slice tal cual la tomaría por el
+	// mensaje más cercano a la foto del turno 6, cuando el más cercano es la torta 2
+	// (seq 5). Y la mención de photo4 necesita encontrar su turno entre los demás.
+	turns := []anclaje.Turn{sampleTurns[8], sampleTurns[4], sampleTurns[5], sampleTurns[1]}
+	near := image("wapp/media/seis.jpg", 6, at(9, 56, 30))
+
+	d := anclaje.Distribute(turns, sampleLines, []anclaje.MediaRef{near, photo4}, anclaje.Options{})
+	requireLine(t, d, 1, "wapp/media/seis.jpg", "wapp/media/foto4.jpg")
+	requireRequest(t, d)
+	requireOnlyLines(t, d, 1)
 }
 
 func TestDistribute_EmptyInputs(t *testing.T) {
