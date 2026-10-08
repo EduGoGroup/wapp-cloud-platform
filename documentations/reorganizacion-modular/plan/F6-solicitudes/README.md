@@ -1,6 +1,6 @@
 # F6 · `solicitudes` — la solicitud, su bandeja, P5 y el puente CRM
 
-> **Estado: en curso** — F6-05b hecha el 2026-10-08 (**el arranque nuevo cablea `solicitudes` y G1–G18 se sirven por la cara nueva**: `FaseActual = 6`, huella igual, `PENDIENTES=0`, `ROJOS=0`; `solicitudes` fuera de `Conmutados` hasta F8; falta el cierre local, F6-06). Antes, F6-05a hecha el 2026-10-08 (la cara HTTP de solicitudes en verde en `internal/apipublica`, **sin montar**: 19 ficheros de producción, `PENDIENTES=0`, `ROJOS=1`; falta cablear y conmutar G1–G18, F6-05b). Antes, F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
+> **Estado: cerrada** el 2026-10-08 (sesión F6-06 💻, cierre local sobre `dev` @ `68e68a4`, PR #52 y #53 integrados; último commit de código de la fase `79f274e`; `solicitudes` sigue fuera de `Conmutados` hasta F8; informe de fase al final). Antes, en curso — F6-05b hecha el 2026-10-08 (**el arranque nuevo cablea `solicitudes` y G1–G18 se sirven por la cara nueva**: `FaseActual = 6`, huella igual, `PENDIENTES=0`, `ROJOS=0`; `solicitudes` fuera de `Conmutados` hasta F8; falta el cierre local, F6-06). Antes, F6-05a hecha el 2026-10-08 (la cara HTTP de solicitudes en verde en `internal/apipublica`, **sin montar**: 19 ficheros de producción, `PENDIENTES=0`, `ROJOS=1`; falta cablear y conmutar G1–G18, F6-05b). Antes, F6-04 hecha el 2026-10-08 (`quotetext`, `telemetria`, `integrations` y `crmpush` en verde: el módulo queda **sin pendientes**, `PENDIENTES=0`, `ROJOS=1`; falta la cara HTTP y conmutar, F6-05). Antes, F6-03 el mismo día (`intakes` entero en verde: almacenes, las 9 acciones, notificador y candados; `PENDIENTES=0`, `ROJOS=1`). Antes, F6-02 el mismo día (contratos y tipos puros). Arrancada el 2026-10-07 (F6-01) sobre `dev` @ `3a21138`; inventario E-12 **aprobado** por
 > Jhoan ([`diseno.md`](diseno.md) §1.2). Spec escrita el 2026-09-28 sobre `dev` @ `1b18932`. Norma:
 > [`05`](../../05-metodo-contratos-y-tdd.md). Forma: [`00-marco/plantilla-de-fase.md`](../00-marco/plantilla-de-fase.md).
 > Rutas: **autoridad** [`FX-cara-http/mapa-de-rutas.md`](../FX-cara-http/mapa-de-rutas.md) §2.7 (G1–G18).
@@ -442,3 +442,67 @@ si una no cabe en ~90 min, para en un punto limpio y se relanza.
     `apipublica` no puede importar `pipeline` (regla 4). En F7 pasará a leerse del `pipeline` nuevo.
 60. **`bridge_contact_test.go` está en su techo exacto** (809 líneas, lista `OversizedFiles`): una línea más rompe `TestFileSize`.
     Y `make ci-local` no corre con `-v`: el «0 SKIP» se mide aparte, con `go test -v` sobre el código nuevo (8056 PASS, 0 SKIP).
+
+### F6-06 (2026-10-08; cierre local, rama `reorg/f6-06-cierre-local` desde `dev` @ `68e68a4`)
+
+Medido contra lo que corre. Ni una línea de código en la sesión: solo este cierre documental. Lo que pide decisión, 🟡.
+
+61. **Las cuatro suites, por primera vez contra Postgres: sin divergencias.** `TestIntakesContrato_Postgres` (50 casos),
+    `TestIntegrationsContrato_Postgres` (61), `TestTenantvarsContrato_Postgres` (12) y `TestEventTelemetryContrato_Postgres`
+    (13): rc=0, **140 PASS, 0 SKIP** con `WAPP_PROCESOS_BINARIO=viejo` y con `=nuevo`. Los **136** nombres de caso son los
+    mismos, uno a uno, que en memoria (`TestMemoryStore_Contrato` ×2, `TestMemoria_Contrato`, `TestMemory_Contrato`; con `-race`,
+    0 SKIP). Lo que se vigilaba no apareció: ni el `InsertRevision_Literal…` del hallazgo 15, ni la suite de `integrations`
+    del 40, ni las claves de `tenantvars` del 8. Y la suite entera: `RC=0 · PASS=1018 · FAIL=0 · SKIP=0` contra cada binario, los
+    mismos 97 tests de nivel superior; P5 y P6 verdes en los dos (hallazgos 48, 49 y 57: `callback_window`, el 403 con el
+    puente apagado y el notificador sin `contactBridge` pasan igual en viejo y nuevo). La intermitencia de
+    `TestP5_OwnerInbox/sugerencia_con_plazo` contra el viejo (hallazgo 50 de F2) **no** se reprodujo (una corrida).
+62. **Mutantes contra Postgres (a mano, dos sub-agentes en *worktrees* sobre `68e68a4`): 74 sembrados, ninguno vivo que no
+    fuera ya un equivalente declarado.** `intakes/postgres*.go` + `buyerdata_postgres.go` 32 · `integrations/postgres.go` 20 ·
+    `tenantvars/postgres.go` 8 · `apipublica/eventstelemetry_store.go` 14. Vivos contra unitarios **y** Postgres: 2, los dos
+    equivalentes ya anotados y que **siguen siéndolo** con BD real (`switch NormalizeStatus(to)` de `7080179`; el error de
+    `Close` que pisa al del recorrido, de `c2803b5`). `tenantvars`: 8 de 8 mueren también por comportamiento. De los 11 del
+    **texto** del SQL de telemetría (hallazgo 47; el commit no enumeraba los 8, se eligieron 11), **10 mueren por
+    comportamiento** contra Postgres.
+63. 🟡 **19 mutantes solo los mata el test que compara el texto del SQL; la suite contra Postgres no los ve.** No están
+    vivos (el unitario los mata), pero su comportamiento no lo juzga ninguna BD. Por familias:
+    (a) **bloqueos**: los cinco `FOR UPDATE` de `intakes` (`lockEditableTx`, `EnsureShippingLine`, el CTE de
+    `ReflectCRMStatus`, `Discard`, `currentBuyerData`) y el `FOR UPDATE SKIP LOCKED` del *claim* del outbox. Este último es el
+    serio: sin él, `ClaimWebhookBatch_ConcurrentClaimsNeverShareARow` **pasa igual** (30 de 30 repeticiones), y con dos
+    sesiones a mano la segunda devuelve **la misma fila** (doble entrega). El caso concurrente no produce solape real de
+    transacciones; haría falta uno determinista (una transacción que retenga el *claim* mientras otra reclama), que pide un
+    gancho nuevo en `Montaje`, solo de Postgres. (b) **métodos que la suite no ejerce**: `ReflectCRMStatus`,
+    `GetCustomerNote`, `ReanalysisTargetOf` y todo `PostgresBuyerData` (entre ellos, el `UPDATE` de datos del comprador sin su
+    `WHERE`, que pisaría todas las filas), y `CountOutbox` (fuera del puerto a propósito, hallazgo 36b: en la suite, su filtro por tenant y su `MIN` solo los afirma
+    el texto). ✎ Parte de (b) **sí** lo cubre P6 por caja negra, en los dos binarios: `callback_reflects`,
+    `callback_idempotent` y `callback_isolation` (el reflejo) y `outbox_view` (los cuatro contadores de G14, y a cero para la otra
+    empresa); no medido con mutantes contra los procesos. (c) **la poda del literal por TTL** (`literal_enc IS NOT
+    NULL` y el TTL del tenant): ningún caso con una revisión vencida. (d) **el `ORDER BY` de telemetría**: quitarlo, o quitarle
+    el desempate por `id`, no cambia nada con el montaje actual (lectura del sub-agente, sin `EXPLAIN`: el índice parcial ya
+    entrega ese orden). (e) Dos más son equivalentes también con BD (el cero de `Since`/`CursorAt` como año 1).
+    **No se arregla aquí**: ninguno está vivo, y cerrar (a) cambia la forma de `Montaje`. **Para Jhoan**: ¿se escriben los
+    casos (al menos el del *claim* y el de `PutBuyerField` entre dos solicitudes) antes de F10, o los cubre un proceso?
+64. **G18 no tiene proceso que mire su contenido.** `GET /api/v1/events/telemetry` solo aparece en P10 (permiso → 200). Lo que
+    devuelve lo cubren la suite contra Postgres (13 casos) y los unitarios de la cara, no una caja negra. G1–G17 sí los
+    ejercitan P4, P5 y P6. Anotado; un paso nuevo de proceso queda a criterio de Jhoan (precedente: `via_llm` en F45-03).
+65. **Gates sobre `68e68a4`** (rc leído del log): `make toolchain` `TOOLCHAIN=OK` (`go1.26.5`, lint `v2.12.2`);
+    `GOWORK=off make ci-local` **`GATE_RC=0`** (185 `ok`, 0 `FAIL`, `0 issues.`; cobertura, informe: `FICHEROS_EVALUADOS=249`,
+    `POR_DEBAJO=7`, **ninguno de F6**: los siete son adaptadores Postgres de `acceso` y `nucleo/contact`); `make vet-pendiente`
+    rc=0; `make test-pendiente` rc=0, `PENDIENTES=0 · ROJOS=0` (con los *worktrees* ya borrados, hallazgo 53);
+    `go test -count=1 -v` de `internal/{modulos,nucleo,arranque,apipublica}` rc=0, **7.800 PASS, 0 SKIP** (F6-05b anotó 8.056
+    con otra lista de paquetes: no se persiguió la diferencia); gate del arranque
+    (`-run 'Mudanzas|Huella|Cableado|BootWiring'`) rc=0, 47 PASS. **No corrido**: la integración vieja
+    (`make test-integration`: no se tocó código compartido), el arranque real suelto de `cmd/server-modular` (lo levantan los
+    procesos, 97 tests) y UAT (F10).
+
+### Informe de fase (al cerrar F6)
+
+- **Sesiones**: F6-01 (2026-10-07) · F6-02, F6-03, F6-04, F6-05a, F6-05b y F6-06 (2026-10-08). F6-06 ≈ 35 min de pared
+  (D-R-6); el cuello, los mutantes contra Postgres (dos sub-agentes: 14 y 17 min). Los minutos de F6-01…F6-05 son los de sus
+  bloques de `ESTADO.md`.
+- **Pendientes en cada cierre**: `PENDIENTES=0` desde F6-04; `ROJOS=0` desde F6-05b y en F6-06.
+- **Lo que no cuadró con la spec**: 19 ficheros de producción en la cara, no 12 (hallazgo 45); F6-05 en dos PR; T6.24 y
+  T6.25 en un commit (56); `Intakes` con centinela, no `nil` (55, D-F6-13); `apipublica` fuera del inventario E-12 (47).
+- **Mutantes**: los de cada sesión, en sus hallazgos (33, 39, 47 y T6.21); contra Postgres, hallazgos 62 y 63.
+- **Lo que queda abierto de F6**: las 🟡 de los hallazgos 38 y 63, G18 sin proceso (64), el centinela de H1 (muere en F7) y
+  la segunda instancia vieja de `intakes.Postgres` para el carrito (muere en F8, D-F6-1).
+
