@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // worker.go se prueba en cuatro ficheros (E-13; el worker_test.go viejo medía 774 líneas):
@@ -208,7 +206,7 @@ func TestRun_DeliversTheBatchInOrderOneAtATime(t *testing.T) {
 	rig := newWorkerRig()
 	crm := newBridge(t)
 	rig.integrate(t, rigTenant, crm.srv.URL)
-	var want []string
+	want := make([]string, 0, 4)
 	for range 4 {
 		want = append(want, strconv.FormatInt(rig.enqueueTemplate(t), 10))
 		rig.clock.Advance(time.Second)

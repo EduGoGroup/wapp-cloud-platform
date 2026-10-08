@@ -4,18 +4,24 @@ package integrations
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/EduGoGroup/wapp-shared/logger"
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/tenantvars"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
-// Es el ÚNICO archivo del paquete que importa net/http: el store y el sink que
-// encola (runtime.WebhookSink) NUNCA hacen POST — es la garantía estructural de
-// INV-02 (design.md D-042.4, handoff §7.2).
+// El worker es el ÚNICO sitio del paquete que importa net/http (este fichero y
+// worker_delivery.go, que es su trozo): el store y el sink que encola
+// (runtime.WebhookSink) NUNCA hacen POST — es la garantía estructural de INV-02
+// (design.md D-042.4, handoff §7.2).
+//
+// Está partido en tres por tamaño (E-13), solo moviendo declaraciones:
+//   - worker.go: los puertos, la configuración, el constructor y el ciclo de Run.
+//   - worker_delivery.go: la entrega de una fila (completar, firmar, POST).
+//   - worker_failure.go: el fallo (backoff o dead), el claim perdido y la parada.
 
 // BuyerDataReader es lo mínimo que el worker necesita del dominio de solicitudes
 // para completar `buyer_data` justo antes del POST (D-042.9: "el builder la
@@ -78,6 +84,26 @@ type WorkerConfig struct {
 	ClaimLease time.Duration
 }
 
+func (c WorkerConfig) withDefaults() WorkerConfig {
+	if c.PollInterval <= 0 {
+		c.PollInterval = 5 * time.Second
+	}
+	if c.MaxAttempts <= 0 {
+		c.MaxAttempts = 10
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = 10 * time.Second
+	}
+	if c.BatchSize <= 0 {
+		c.BatchSize = 20
+	}
+	// Se calcula DESPUÉS de Timeout a propósito: el lease se deriva de él.
+	if c.ClaimLease <= 0 {
+		c.ClaimLease = max(3*c.Timeout, time.Minute)
+	}
+	return c
+}
+
 // Worker es el entregador en proceso del puente CRM (D-042.4): loop de poll,
 // claim con SKIP LOCKED, POST firmado, backoff exponencial con jitter, y
 // recuperación de huérfanos al arrancar. Es la primera goroutine de polling de
@@ -87,7 +113,17 @@ type WorkerConfig struct {
 //
 // Hay UNO por proceso (reglas.md §3): con más de una réplica del proceso, lo que
 // reparte el trabajo es el claim del almacén, no este tipo.
-type Worker struct{}
+type Worker struct {
+	store    Store
+	buyer    BuyerDataReader
+	notes    CustomerNoteReader
+	tenvars  TenantVariablesReader
+	http     *http.Client
+	log      logger.Logger
+	cfg      WorkerConfig
+	onRecord func(status string)
+	now      func() time.Time
+}
 
 // WorkerOption ajusta un Worker al construirlo (NewWorker). Hoy solo existe
 // WithClock. Es NUEVA: el constructor viejo no tenía opciones.
@@ -102,7 +138,11 @@ type WorkerOption func(*Worker)
 // NO gobierna la cadencia del poll ni la del rescate (son tickers del runtime) ni
 // el timeout HTTP de cada entrega.
 func WithClock(now func() time.Time) WorkerOption {
-	panic(pendiente.Implementar("integrations.WithClock"))
+	return func(w *Worker) {
+		if now != nil {
+			w.now = now
+		}
+	}
 }
 
 // NewWorker construye el worker. onRecord es el callback de métricas (T3.4,
@@ -131,7 +171,21 @@ func WithClock(now func() time.Time) WorkerOption {
 //
 // Si el cierre de la fila falla por otra causa, no se cuenta nada.
 func NewWorker(store Store, buyer BuyerDataReader, notes CustomerNoteReader, tenvars TenantVariablesReader, log logger.Logger, cfg WorkerConfig, onRecord func(status string), opts ...WorkerOption) *Worker {
-	panic(pendiente.Implementar("integrations.NewWorker"))
+	w := &Worker{
+		store:    store,
+		buyer:    buyer,
+		notes:    notes,
+		tenvars:  tenvars,
+		http:     &http.Client{},
+		log:      log,
+		cfg:      cfg.withDefaults(),
+		onRecord: onRecord,
+		now:      time.Now,
+	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 // Run bloquea hasta que ctx se cancele (D-042.4). Se arranca con `go worker.Run(ctx)`
@@ -264,13 +318,84 @@ func NewWorker(store Store, buyer BuyerDataReader, notes CustomerNoteReader, ten
 //
 // # La parada no es un error (D-F6-7)
 //
-// Contexto cancelado → Run vuelve SIN loguear a ERROR. Si ctx ya está cancelado
-// cuando falla una llamada al almacén —el rescate, el reclamo o cualquiera de los
-// tres cierres—, ese fallo no se registra en ERROR: no es una avería, es el
-// proceso apagándose. La fila que estuviera en vuelo queda en `delivering` y la
-// rescata el lease. (El worker viejo sí lo registraba —worker.go:209, :225, :283,
+// Contexto cancelado → Run vuelve SIN loguear a ERROR, y SIN dar por fallido lo
+// que la parada cortó. Con ctx ya cancelado:
+//
+//   - un fallo del almacén —el rescate, el reclamo o cualquiera de los tres
+//     cierres— no se registra en ERROR: no es una avería, es el proceso apagándose;
+//   - una entrega que no llegó a buen fin (el POST cortado, una lectura abortada)
+//     NO cuenta como intento: no se llama a MarkWebhookFailed ni a MarkWebhookDead
+//     y no se toca la métrica;
+//   - las filas del lote que aún no se habían empezado no se intentan.
+//
+// En los tres casos la fila queda en `delivering` con su claim y la rescata el
+// lease. (El worker viejo sí registraba esos fallos —worker.go:209, :225, :283,
 // :450 y :463—, y un proceso que se para no puede prometer «cero ERROR».) Con el
 // contexto vivo, esos mismos fallos SÍ van a ERROR, como arriba.
 func (w *Worker) Run(ctx context.Context) {
-	panic(pendiente.Implementar("integrations.Worker.Run"))
+	w.recoverOrphans(ctx)
+
+	poll := time.NewTicker(w.cfg.PollInterval)
+	defer poll.Stop()
+	reclaim := time.NewTicker(w.cfg.ClaimLease)
+	defer reclaim.Stop()
+
+	w.pollOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			w.log.Info("webhook worker: apagando (contexto cancelado)")
+			return
+		case <-reclaim.C:
+			w.recoverOrphans(ctx)
+		case <-poll.C:
+			w.pollOnce(ctx)
+		}
+	}
+}
+
+// record llama a onRecord si está inyectado (nil-safe, patrón de todo el
+// paquete metrics).
+func (w *Worker) record(status string) {
+	if w.onRecord != nil {
+		w.onRecord(status)
+	}
+}
+
+// recoverOrphans devuelve a pending las entregas cuyo claim venció. Se avisa a
+// nivel WARN y no INFO a propósito: en régimen normal esto no rescata nada, así
+// que una línea aquí significa que un worker murió a medias o que el lease se
+// quedó corto — las dos cosas que alguien querría ver en el log.
+func (w *Worker) recoverOrphans(ctx context.Context) {
+	n, err := w.store.RecoverOrphanDeliveries(ctx, w.cfg.ClaimLease)
+	if err != nil {
+		w.logStoreError(ctx, "webhook worker: rescatar entregas con el claim vencido", "error", err)
+		return
+	}
+	if n > 0 {
+		w.log.Warn("webhook worker: entregas con el claim vencido devueltas a pending",
+			"count", n, "lease", w.cfg.ClaimLease)
+	}
+}
+
+// pollOnce reclama un lote y entrega cada fila de forma SECUENCIAL: D-042.4 no
+// pide concurrencia dentro de un lote (el paralelismo real, si hiciera falta,
+// vendría de correr varias réplicas del proceso — para eso está SKIP LOCKED, no
+// para goroutines dentro de un mismo poll).
+//
+// Si el contexto se cancela a mitad de lote, las filas que quedan NO se intentan
+// (D-F6-7): siguen en `delivering` con su claim y las rescata el lease. Empezar
+// una entrega con el proceso apagándose solo podría acabar en un POST cortado.
+func (w *Worker) pollOnce(ctx context.Context) {
+	batch, err := w.store.ClaimWebhookBatch(ctx, w.cfg.BatchSize)
+	if err != nil {
+		w.logStoreError(ctx, "webhook worker: reclamar lote", "error", err)
+		return
+	}
+	for _, item := range batch {
+		if ctx.Err() != nil {
+			return
+		}
+		w.deliver(ctx, item)
+	}
 }

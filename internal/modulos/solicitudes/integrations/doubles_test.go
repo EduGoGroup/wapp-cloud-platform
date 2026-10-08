@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // Los dobles que comparten los worker_*_test.go: el reloj, el almacén espía, el log de prueba y

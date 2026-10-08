@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // worker_contract_body_test.go cierra el círculo que ni el sink ni el worker cierran por separado:

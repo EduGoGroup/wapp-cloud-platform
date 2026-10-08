@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 // El banco de pruebas de los worker_*_test.go: un worker de verdad, cableado al doble Memoria por
@@ -43,6 +41,9 @@ type workerRig struct {
 	cfg   integrations.WorkerConfig
 	// noCallback construye el worker con onRecord nil.
 	noCallback bool
+	// bareStore le da al worker el doble Memoria SIN el espía: un almacén que, al revés que
+	// Postgres, no mira el contexto y aceptaría un cierre con el proceso ya parándose.
+	bareStore bool
 	// opts son las opciones del worker; por defecto, el reloj de prueba.
 	opts []integrations.WorkerOption
 
@@ -86,7 +87,11 @@ func (r *workerRig) build() *integrations.Worker {
 			r.records = append(r.records, status)
 		}
 	}
-	return integrations.NewWorker(r.store, r.buyer, r.notes, r.vars, r.log, r.cfg, onRecord, r.opts...)
+	var store integrations.Store = r.store
+	if r.bareStore {
+		store = r.mem
+	}
+	return integrations.NewWorker(store, r.buyer, r.notes, r.vars, r.log, r.cfg, onRecord, r.opts...)
 }
 
 // start arranca Run en una goroutine y devuelve la función que lo para: cancela el contexto y

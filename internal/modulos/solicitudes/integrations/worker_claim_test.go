@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package integrations_test
 
 import (
@@ -9,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,13 +150,15 @@ func TestRun_StoreErrors_LoggedAtErrorAndTheWorkerGoesOn(t *testing.T) {
 		wantMetric []string
 	}
 	nothing := func(*testing.T, *workerRig) {}
-	sites := []errorSite{
+	closes := closeSites()
+	sites := make([]errorSite, 0, 2+len(closes))
+	sites = append(sites,
 		// Un rescate fallido no impide el poll: la entrega (sin integración) se intenta y falla.
-		{"rescue", opRecover, "webhook worker: rescatar entregas con el claim vencido", nothing, false, []string{"failed"}},
+		errorSite{"rescue", opRecover, "webhook worker: rescatar entregas con el claim vencido", nothing, false, []string{"failed"}},
 		// Un reclamo fallido deja el poll sin lote: no hay entrega ni cuenta.
-		{"claim", opClaim, "webhook worker: reclamar lote", nothing, false, nil},
-	}
-	for _, site := range closeSites() {
+		errorSite{"claim", opClaim, "webhook worker: reclamar lote", nothing, false, nil},
+	)
+	for _, site := range closes {
 		// Un cierre fallido no cuenta nada: la entrega no quedó resuelta.
 		sites = append(sites, errorSite{site.transition, site.op, site.logMsg, site.prepare, true, nil})
 	}
@@ -201,11 +202,13 @@ func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 		blockOn string
 		prepare func(t *testing.T, rig *workerRig)
 	}
-	sites := []site{
-		{"during the startup rescue", opRecover, func(*testing.T, *workerRig) {}},
-		{"during the claim", opClaim, func(*testing.T, *workerRig) {}},
-	}
-	for _, s := range closeSites() {
+	closes := closeSites()
+	sites := make([]site, 0, 2+len(closes))
+	sites = append(sites,
+		site{"during the startup rescue", opRecover, func(*testing.T, *workerRig) {}},
+		site{"during the claim", opClaim, func(*testing.T, *workerRig) {}},
+	)
+	for _, s := range closes {
 		sites = append(sites, site{"while marking " + s.transition, s.op, s.prepare})
 	}
 	for _, s := range sites {
@@ -257,4 +260,49 @@ func TestRun_ContextCancelled_ReturnsWithoutLoggingAtError(t *testing.T) {
 			t.Errorf("métrica = %v, quería nada: la entrega no quedó resuelta", got)
 		}
 	})
+}
+
+// TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt es la otra mitad de D-F6-7: la parada no
+// solo no se loguea, tampoco se da por fallido lo que cortó. Con un almacén que NO mira el contexto
+// (el doble Memoria a pelo: aceptaría el cierre aunque el proceso se esté parando), un POST
+// cortado por la cancelación no cuenta como intento ni toca la métrica, y las filas del lote que
+// aún no se habían empezado ni se leen ni se intentan. Todas quedan en vuelo, para el lease.
+func TestRun_ContextCancelled_TheCutDeliveryIsNotAnAttempt(t *testing.T) {
+	rig := newWorkerRig()
+	rig.bareStore = true
+	crm := newBridge(t)
+	arrived := make(chan struct{})
+	var once sync.Once
+	crm.onPost = func(r *http.Request) {
+		once.Do(func() { close(arrived) })
+		<-r.Context().Done() // no contesta: el POST muere con la cancelación
+	}
+	rig.integrate(t, rigTenant, crm.srv.URL)
+	ids := []int64{rig.enqueueTemplate(t), rig.enqueueTemplate(t), rig.enqueueTemplate(t)}
+
+	stop := rig.start(t)
+	select {
+	case <-arrived:
+	case <-time.After(waitLimit):
+		t.Fatalf("el primer POST no llegó al puente en %v", waitLimit)
+	}
+	stop()
+
+	for _, id := range ids {
+		row := rig.row(t, id)
+		if row.Status != integrations.StatusDelivering || row.Attempts != 0 || row.LastError != "" || row.ClaimedAt.IsZero() {
+			t.Errorf("entrega %d = (status=%q, attempts=%d, last_error=%q, claimed_at=%v), quería en vuelo, con su claim y sin intento contado",
+				id, row.Status, row.Attempts, row.LastError, row.ClaimedAt)
+		}
+	}
+	if got := rig.recorded(); len(got) != 0 {
+		t.Errorf("métrica = %v, quería nada: la parada no resuelve ninguna entrega", got)
+	}
+	if got := len(crm.received()); got != 1 {
+		t.Errorf("el puente recibió %d POST, quería 1: el resto del lote no se intenta con el proceso parándose", got)
+	}
+	if got := rig.buyer.calls(); len(got) != 1 {
+		t.Errorf("se leyeron los datos del comprador %d veces, quería 1: las filas no empezadas ni se leen", len(got))
+	}
+	rig.log.requireNoErrors(t)
 }
