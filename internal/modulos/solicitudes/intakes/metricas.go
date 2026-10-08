@@ -23,12 +23,18 @@
 // publica nada, que no es un error: ni siquiera se calcula el KPI que no se iba a
 // publicar.
 //
-// Este fichero lleva los nombres de los eventos y el puerto. Quien PUBLICA —las
-// opciones `WithMetrics`/`WithMetricsClock` y los recuentos— nace con el `Service`.
+// Este fichero lleva los nombres de los eventos, el puerto y los dos cálculos PUROS
+// de los que salen los KPI (draftInstant y correctionCount). Quien PUBLICA —las
+// opciones `WithMetrics`/`WithMetricsClock` y los métodos del servicio— vive con el
+// `Service`.
 
 package intakes
 
-import "context"
+import (
+	"context"
+	"strings"
+	"time"
+)
 
 // EventLineCorrected, EventApproved y EventInfoRequested son los `flow_events.name`
 // de las tres acciones del dueño (design §10). Los literales se declaran AQUÍ porque
@@ -91,4 +97,120 @@ const (
 // bandeja del dueño, y la bandeja no tiene por qué saber que existen.
 type MetricsPublisher interface {
 	PublishMetric(ctx context.Context, tenantID, contactID, name string, payload map[string]any) error
+}
+
+// draftInstant devuelve el `created_at` de la revisión `interpreted` de número MÁS
+// BAJO, y false si no hay ninguna. Se busca por `RevisionNo` y no por la posición en
+// el slice: el orden del slice es cosa de cada store y este cálculo no puede
+// depender de él. Era `instanteDelBorrador` en el paquete viejo.
+//
+// Se toma la PRIMERA y no la última a propósito: un re-análisis escribe una segunda
+// revisión `interpreted` horas después, y medir desde ella diría que el dueño aprobó
+// en dos minutos un pedido que llevaba dos días en su bandeja.
+//
+// Una revisión `interpreted` sin fecha (`created_at` cero) no cuenta: no hay
+// instante que restar.
+func draftInstant(revisions []Revision) (time.Time, bool) {
+	var (
+		best  Revision
+		found bool
+	)
+	for _, rev := range revisions {
+		if rev.Kind != RevisionKindInterpreted || rev.CreatedAt.IsZero() {
+			continue
+		}
+		if !found || rev.RevisionNo < best.RevisionNo {
+			best, found = rev, true
+		}
+	}
+	return best.CreatedAt, found
+}
+
+// correctionCount compara las líneas de CLIENTE de antes y de después de una
+// edición manual y devuelve cuántas cambiaron sobre cuántas hubo implicadas. Era
+// `recuentoDeCorrección` en el paquete viejo.
+//
+// LA DEFINICIÓN, QUE ES LA TAREA ENTERA (el KPI es «% de líneas corregidas»):
+//
+//	lines_total     = max(|antes|, |después|) — las líneas IMPLICADAS en el acto.
+//	lines_corrected = lines_total − |intersección| — las que no sobrevivieron iguales.
+//
+// La intersección es de MULTICONJUNTOS sobre (sku, etiqueta, personalización,
+// cantidad, precio): dos líneas pueden compartir sku y diferenciarse solo por la
+// personalización (D-041.20), así que no hay clave por línea y comparar por índice
+// sería inventarse una.
+//
+// Con esa forma, los tres actos de REQ-36 cuentan y ninguno se sale del denominador:
+//
+//   - CORREGIR una de 4 líneas ⇒ 1 de 4 (la vieja no está en el conjunto nuevo);
+//   - QUITAR una de 4 ⇒ 1 de 4 (el total lo pone el lado grande, el de antes);
+//   - AÑADIR una a 3 ⇒ 1 de 4 (el total lo pone el lado grande, el de después).
+//
+// Tomar `len(después)` como denominador —lo primero que uno escribe— rompería el
+// segundo caso: un dueño que borra una línea daría `1/3`, o peor, `lines_corrected`
+// mayor que `lines_total` si borrara dos. Un porcentaje por encima de 100 en un panel
+// no se lee como «esta métrica está mal definida», se lee como un dato roto.
+//
+// LA LÍNEA DE ENVÍO NO CUENTA por ninguno de los dos lados: es de la plataforma
+// (ReservedSKUPrefix, D-041.11), sobrevive intacta a toda edición y contarla metería
+// en el KPI una línea que el LLM nunca interpretó ni el dueño puede corregir. Del
+// lado de `después` ya no puede llegar —la validación rechaza el prefijo reservado—,
+// pero se filtra igual: el filtro tiene que decir lo mismo en los dos lados o el
+// recuento dependería de una validación que vive en otro fichero.
+func correctionCount(before, after []Item) (corrected, total int) {
+	pending := map[lineKey]int{}
+	var beforeCount int
+	for _, it := range before {
+		if isPlatformLine(it) {
+			continue
+		}
+		beforeCount++
+		pending[lineKeyOf(it)]++
+	}
+
+	var afterCount, unchanged int
+	for _, it := range after {
+		if isPlatformLine(it) {
+			continue
+		}
+		afterCount++
+		if k := lineKeyOf(it); pending[k] > 0 {
+			pending[k]--
+			unchanged++
+		}
+	}
+
+	total = max(beforeCount, afterCount)
+	return total - unchanged, total
+}
+
+// lineKey es la identidad de una línea A EFECTOS DE ESTE RECUENTO: los cinco campos
+// que el dueño puede tocar desde su consola. Era `claveDeLínea` en el paquete viejo.
+//
+// 🔴 `AddedAt` NO ENTRA, y no es un olvido: las líneas que llegan del PUT vienen con
+// el cero-valor y las que están guardadas traen su fecha real, así que incluirla haría
+// que NINGUNA línea casara nunca y el evento publicaría siempre «todo corregido».
+type lineKey struct {
+	sku           string
+	label         string
+	customization string
+	qty           int
+	unitPrice     float64
+}
+
+// lineKeyOf arma la clave de recuento de una línea. Era `claveDe` en el paquete viejo.
+func lineKeyOf(it Item) lineKey {
+	return lineKey{
+		sku:           it.SKU,
+		label:         it.Label,
+		customization: it.Customization,
+		qty:           it.Qty,
+		unitPrice:     it.UnitPrice,
+	}
+}
+
+// isPlatformLine dice si la línea la puso wApp y no el cliente (hoy, el envío). Era
+// `esLíneaDePlataforma` en el paquete viejo.
+func isPlatformLine(it Item) bool {
+	return strings.HasPrefix(it.SKU, ReservedSKUPrefix)
 }
