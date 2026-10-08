@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	summaryTarget = "/api/v1/intakes/summary.json"
+
 	msgSummaryFailed = "no se pudo resumir las solicitudes"
 
 	summaryEmpty = `{"generated_at":"2026-10-08T09:30:05Z","range":{"from":"","to":""},` +

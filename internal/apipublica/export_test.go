@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package apipublica_test
 
 // export_test.go — cubre G9, `GET /api/v1/intakes/export`, tal como lo promete
@@ -29,6 +27,8 @@ import (
 )
 
 const (
+	exportTarget = "/api/v1/intakes/export"
+
 	exportBOM    = "\xef\xbb\xbf"
 	exportHeader = "intake_id,created_at,status,session_id,contact_ref,intake_total,customer_note," +
 		"sku,label,customization,qty,unit_price,line_total"
@@ -167,7 +167,9 @@ func TestExport_CSVEscapesFormulas(t *testing.T) {
 		{"minus", "-sin cebolla", "'-sin cebolla"},
 		{"at", "@sospechoso", "'@sospechoso"},
 		{"tab", "\t=cmd|' /C calc'!A0", "'\t=cmd|' /C calc'!A0"},
-		{"carriage_return", "\r=1+1", "'\r=1+1"},
+		// El escritor CSV (CRLF) se come el retorno de carro suelto: sin el escape, de «\r=1+1»
+		// quedaría «=1+1» a secas, una fórmula. Por eso el `\r` inicial también dispara.
+		{"carriage_return", "\r=1+1", "'=1+1"},
 		{"lone_equals", "=", "'="},
 		{"lone_minus", "-", "'-"},
 		{"dde_payload", `=HYPERLINK("http://x","y")`, `'=HYPERLINK("http://x","y")`},

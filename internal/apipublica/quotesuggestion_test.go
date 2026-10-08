@@ -8,6 +8,7 @@ package apipublica_test
 // envoltorio del plazo, a solas, en writedeadline_test.go.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,17 +19,64 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/apipublica/apipublicahelpertest"
+	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes/quotetext"
 )
 
 const (
+	quoteIntakeID = "33333333-3333-4333-8333-333333333333"
+	quoteTarget   = "/api/v1/intakes/" + quoteIntakeID + "/quote-suggestion"
+
+	// reportQuoteDeadline es un plazo cualquiera, distinto del de producción a propósito: la
+	// cara no conoce ninguna cifra, usa la que le cablean.
+	reportQuoteDeadline = 37 * time.Second
+
 	msgQuoteNotFound = "solicitud no encontrada"
 	msgQuoteNoLines  = "la solicitud no tiene líneas que cotizar: guarda primero las líneas del borrador con PUT /api/v1/intakes/{id}/items"
 	msgQuoteFailed   = "no se pudo generar la cotización sugerida"
 	msgQuoteDeadline = "no se pudo extender el plazo de escritura de la sugerencia de cotización: " +
 		"la respuesta larga volverá a no caber por el cable"
 )
+
+// quoteSuggesterSpy es QuoteSuggester: devuelve out o err y apunta lo que recibió, el plazo de
+// su contexto (-1 = sin plazo) y lo que diga probe en el momento de la llamada.
+type quoteSuggesterSpy struct {
+	out       quotetext.Suggestion
+	err       error
+	calls     int
+	tenant    string
+	intake    string
+	remaining time.Duration
+	probe     func() int
+	probed    int
+}
+
+var _ apipublica.QuoteSuggester = (*quoteSuggesterSpy)(nil)
+
+func (s *quoteSuggesterSpy) Suggest(ctx context.Context, tenantID, intakeID string) (quotetext.Suggestion, error) {
+	s.calls++
+	s.tenant, s.intake, s.remaining = tenantID, intakeID, -1
+	if dl, ok := ctx.Deadline(); ok {
+		s.remaining = time.Until(dl)
+	}
+	if s.probe != nil {
+		s.probed = s.probe()
+	}
+	return s.out, s.err
+}
+
+// quoteDeps son las dependencias de G7 (y de G9/G10) con las tres features encendidas.
+func quoteDeps(suggester apipublica.QuoteSuggester) apipublica.IntakeReportsDeps {
+	return apipublica.IntakeReportsDeps{
+		Intakes: &reportServiceSpy{},
+		Entitlements: withFeatures(entitlements.FeatureIntakesExport,
+			entitlements.FeatureCartBasic, entitlements.FeatureLLMIntake),
+		QuoteSuggestions:   suggester,
+		QuoteWriteDeadline: reportQuoteDeadline,
+		Now:                reportNow,
+	}
+}
 
 // quotePost hace el POST de G7 como tenantA con el permiso de lectura.
 func quotePost(t *testing.T, suggester apipublica.QuoteSuggester, target, body string) (*apipublicahelpertest.Harness, *httptest.ResponseRecorder) {

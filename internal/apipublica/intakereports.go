@@ -18,7 +18,6 @@ import (
 
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/acceso/entitlements"
 	"github.com/EduGoGroup/wapp-cloud-platform/internal/modulos/solicitudes/intakes"
-	"github.com/EduGoGroup/wapp-cloud-platform/internal/pendiente"
 )
 
 // IntakeReportService es el puerto de LECTURA EN BLOQUE de la bandeja que consumen el export y
@@ -176,5 +175,21 @@ type IntakeReportsDeps struct {
 //     valor por defecto que poner sin copiar el reloj que solo el arranque conoce. Sin
 //     QuoteSuggestions, un QuoteWriteDeadline cero no es un error.
 func MountIntakeReports(c *Cara, k Common, d IntakeReportsDeps) {
-	panic(pendiente.Implementar("apipublica.MountIntakeReports"))
+	// Sin servicio o sin resolver de features NADA de esto se monta: un 404 de ruta inexistente es
+	// más honesto que un export que responde 500 (T-11). Es la guarda de registerIntakes en la
+	// cara vieja.
+	if d.Intakes == nil || d.Entitlements == nil {
+		return
+	}
+	mustHaveMW(k, "MountIntakeReports")
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+
+	// Export y resumen (Plan 041 · T1.2/T1.3, REQ-03/REQ-04). El gate es `intakes_export`, no
+	// `cart_basic`: sacar la bandeja a un fichero es una capacidad que se vende aparte.
+	canExport := entitlements.RequireFeature(d.Entitlements, entitlements.FeatureIntakesExport)
+	c.Handle("GET /api/v1/intakes/export", protectRead(k, "intakes.read",
+		canExport(exportIntakesHandler(d.Intakes, now))))
 }

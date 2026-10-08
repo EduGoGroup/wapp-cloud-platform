@@ -7,14 +7,13 @@ package apipublica_test
 // comportamiento de cada ruta lo cubren export_test.go (G9), summary_test.go (G10) y
 // quotesuggestion_test.go (G7).
 //
-// Aquí viven también los dobles y auxiliares que comparten esos tres (report…).
+// Los dobles y auxiliares que comparten los cuatro (report…) están en
+// intakereports_helpers_test.go.
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,13 +27,6 @@ import (
 )
 
 const (
-	reportPerm = "intakes.read"
-
-	exportTarget  = "/api/v1/intakes/export"
-	summaryTarget = "/api/v1/intakes/summary.json"
-	quoteIntakeID = "33333333-3333-4333-8333-333333333333"
-	quoteTarget   = "/api/v1/intakes/" + quoteIntakeID + "/quote-suggestion"
-
 	patternExport  = "GET /api/v1/intakes/export"
 	patternSummary = "GET /api/v1/intakes/summary.json"
 	patternQuote   = "POST /api/v1/intakes/{id}/quote-suggestion"
@@ -42,11 +34,6 @@ const (
 	reportExportDenied = `{"error":"feature_not_enabled","feature":"intakes_export"}`
 	reportCartDenied   = `{"error":"feature_not_enabled","feature":"cart_basic"}`
 	reportLLMDenied    = `{"error":"feature_not_enabled","feature":"llm_intake"}`
-	reportTooLarge     = "el filtro abarca más de 5000 solicitudes: acótalo con from/to"
-
-	// reportQuoteDeadline es un plazo cualquiera, distinto del de producción a propósito: la
-	// cara no conoce ninguna cifra, usa la que le cablean.
-	reportQuoteDeadline = 37 * time.Second
 )
 
 // Los puertos los cumplen las piezas REALES del módulo solicitudes nuevo: sin estas líneas, los
@@ -55,106 +42,6 @@ var (
 	_ apipublica.IntakeReportService = (*intakes.Service)(nil)
 	_ apipublica.QuoteSuggester      = (*quotetext.Service)(nil)
 )
-
-// reportNow es el reloj inyectado de los tests: un instante fijo, en una zona que NO es UTC para
-// que la normalización se vea.
-func reportNow() time.Time {
-	return time.Date(2026, 10, 8, 6, 30, 5, 0, time.FixedZone("-03", -3*3600))
-}
-
-// reportServiceSpy es IntakeReportService: devuelve lo sembrado o err y apunta lo que recibió,
-// incluido el plazo de su contexto (-1 = sin plazo).
-type reportServiceSpy struct {
-	details   []intakes.Detail
-	summary   intakes.Summary
-	err       error
-	calls     int
-	tenant    string
-	filter    intakes.Filter
-	remaining time.Duration
-}
-
-var _ apipublica.IntakeReportService = (*reportServiceSpy)(nil)
-
-func (s *reportServiceSpy) note(ctx context.Context, tenantID string, f intakes.Filter) {
-	s.calls++
-	s.tenant, s.filter, s.remaining = tenantID, f, -1
-	if dl, ok := ctx.Deadline(); ok {
-		s.remaining = time.Until(dl)
-	}
-}
-
-func (s *reportServiceSpy) ListDetails(ctx context.Context, tenantID string, f intakes.Filter) ([]intakes.Detail, error) {
-	s.note(ctx, tenantID, f)
-	return s.details, s.err
-}
-
-func (s *reportServiceSpy) Summary(ctx context.Context, tenantID string, f intakes.Filter) (intakes.Summary, error) {
-	s.note(ctx, tenantID, f)
-	return s.summary, s.err
-}
-
-// quoteSuggesterSpy es QuoteSuggester: devuelve out o err y apunta lo que recibió, el plazo de
-// su contexto (-1 = sin plazo) y lo que diga probe en el momento de la llamada.
-type quoteSuggesterSpy struct {
-	out       quotetext.Suggestion
-	err       error
-	calls     int
-	tenant    string
-	intake    string
-	remaining time.Duration
-	probe     func() int
-	probed    int
-}
-
-var _ apipublica.QuoteSuggester = (*quoteSuggesterSpy)(nil)
-
-func (s *quoteSuggesterSpy) Suggest(ctx context.Context, tenantID, intakeID string) (quotetext.Suggestion, error) {
-	s.calls++
-	s.tenant, s.intake, s.remaining = tenantID, intakeID, -1
-	if dl, ok := ctx.Deadline(); ok {
-		s.remaining = time.Until(dl)
-	}
-	if s.probe != nil {
-		s.probed = s.probe()
-	}
-	return s.out, s.err
-}
-
-// reportDeps son las dependencias de G9 y G10 con `intakes_export` encendida y el reloj fijo.
-func reportDeps(svc apipublica.IntakeReportService) apipublica.IntakeReportsDeps {
-	return apipublica.IntakeReportsDeps{
-		Intakes:      svc,
-		Entitlements: withFeatures(entitlements.FeatureIntakesExport),
-		Now:          reportNow,
-	}
-}
-
-// quoteDeps son las dependencias de G7 (y de G9/G10) con las tres features encendidas.
-func quoteDeps(suggester apipublica.QuoteSuggester) apipublica.IntakeReportsDeps {
-	return apipublica.IntakeReportsDeps{
-		Intakes: &reportServiceSpy{},
-		Entitlements: withFeatures(entitlements.FeatureIntakesExport,
-			entitlements.FeatureCartBasic, entitlements.FeatureLLMIntake),
-		QuoteSuggestions:   suggester,
-		QuoteWriteDeadline: reportQuoteDeadline,
-		Now:                reportNow,
-	}
-}
-
-// reportCara monta G7, G9 y G10 con k y d.
-func reportCara(k apipublica.Common, d apipublica.IntakeReportsDeps) *apipublica.Cara {
-	c := apipublica.Nueva()
-	apipublica.MountIntakeReports(c, k, d)
-	return c
-}
-
-// reportGet hace un GET como tenantA con el permiso de lectura.
-func reportGet(t *testing.T, d apipublica.IntakeReportsDeps, target string) *httptest.ResponseRecorder {
-	t.Helper()
-	h := apipublicahelpertest.New(t)
-	return h.Call(reportCara(h.Common(), d), h.With(tenantA, reportPerm), http.MethodGet, target, "")
-}
 
 func TestMountIntakeReports_Chain(t *testing.T) {
 	h := apipublicahelpertest.New(t)
