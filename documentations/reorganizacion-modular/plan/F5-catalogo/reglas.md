@@ -42,6 +42,10 @@
 1. `GOWORK=off make ci-local` → `GATE_RC=0`, leído del log.
 2. `GOWORK=off go vet -tags pendiente ./...` → `rc=0`.
 3. `grep -rn 'pendiente.Implementar\|go:build pendiente\|t.Skip' internal/modulos/catalogo internal/modulos/conversacion/model` → vacío.
+   ✎ 2026-10-07 (F45-02): ese `grep` casa **también los comentarios**. Un comentario del test de rendimiento que
+   nombraba `t.Skip` lo puso rojo y costó un commit solo para reescribirlo (`0977194`). La regla no cambia; en la
+   práctica: no nombres ninguno de los tres textos **ni en comentarios** del árbol nuevo (di «el salto», «la etiqueta
+   de pendientes»), o afina el `grep` para que descarte las líneas de comentario antes de leerlo.
 4. Un test por promesa del contrato; mutantes en el nivel complejo; procesos de F9. Sin umbral de cobertura (P2):
    `make cobertura-ficheros` es informe (la tabla de los 11 ficheros va al PR; no bloquea).
 5. `GOWORK=off go test -v ./internal/modulos/catalogo/... 2>&1 | grep -c -- '--- SKIP'` → `0`.

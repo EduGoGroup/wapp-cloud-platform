@@ -164,7 +164,8 @@ sesiones web). El «web» del nombre de sus fichas es histórico.
     conservan el sello antiguo; `null` y `{}` dan el error de `ParseCatalog` sobre `ErrInvalidFlow`.
 22. **Erratas de la spec**: `diseno.md:18-20` sitúa `Normalizador` en `normalizador.go` (vive en `indice.go`, viejo y
     nuevo); `diseno.md:32` prevé 2 ficheros de test para dobles y rendimiento (han salido 8 por E-13) — las dos, corregidas el 2026-10-07 (nota fechada en
-    `diseno.md` §1); `reglas.md:44`: el `grep` del gate §4.3 casa comentarios (motivo de `0977194`). Los exportados en español del índice
+    `diseno.md` §1); `reglas.md:44`: el `grep` del gate §4.3 casa comentarios (motivo de `0977194`) — corregido el 2026-10-07 (nota fechada
+    junto a la regla, en [`reglas.md`](reglas.md) §4.3, y la misma en la de F4; la regla no cambia). Los exportados en español del índice
     (`Construir`, `Obtener`…) se conservan (precedente de F4); dobles y auxiliares, en inglés (E-11; la correspondencia,
     en la cabecera de la sesión en [`tareas.md`](tareas.md)).
 23. **`TestIndice_IsNotAFuente`** (sustituye la 2.ª mitad del `frontera_test.go` viejo) entró en `d84475c` porque
