@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -8,8 +6,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte de la lectura.
 
 // TestPostgres_GetCustomerNote_FoundAndNotFound: la nota de una solicitud del tenant sale con
 // found=true aunque esté vacía; sin fila —no existe o es de otro tenant— es found=false SIN error.
@@ -68,4 +64,24 @@ func TestPostgres_GetCustomerNote_Error_NamesTheIntakeNotTheNote(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "cebolla") {
 		t.Errorf("error = %v, quería un fallo que no cite la nota", err)
 	}
+}
+
+// Las sentencias, escritas APARTE y byte a byte (sangría y saltos de línea incluidos): son las
+// del paquete viejo, y un cambio en el SQL de producción tiene que romper aquí.
+
+// wantCustomerNoteSQL es la lectura de la indicación del cliente, acotada por tenant e id.
+const wantCustomerNoteSQL = `
+		SELECT customer_note
+		FROM public.intakes
+		WHERE tenant_id = $1 AND id = $2
+	`
+
+// TestPostgres_GetCustomerNote_SQLIsTheOldOneByteForByte: la lectura sale con el texto del paquete
+// viejo.
+func TestPostgres_GetCustomerNote_SQLIsTheOldOneByteForByte(t *testing.T) {
+	store, fake := newFakePostgres(t)
+	if _, _, err := store.GetCustomerNote(t.Context(), pgTenant, pgIntakeID); err != nil {
+		t.Fatalf("GetCustomerNote: error inesperado %v", err)
+	}
+	requirePgSQL(t, fake, wantCustomerNoteSQL)
 }

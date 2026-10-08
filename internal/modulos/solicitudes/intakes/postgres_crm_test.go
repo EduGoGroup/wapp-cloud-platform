@@ -1,5 +1,3 @@
-//go:build pendiente
-
 package intakes
 
 import (
@@ -10,9 +8,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// LO QUE EL VERDE AÑADIRÁ (F6-03): el texto byte a byte de la sentencia del reflejo (la CTE que
-// bloquea, escribe y dice si cambió) y de la relectura.
 
 // TestPostgres_ReflectCRMStatus_UnknownStatus_DoesNotQuery: un estado fuera del vocabulario
 // canónico se rechaza con su texto exacto sin tocar la base.
@@ -138,4 +133,47 @@ func TestPostgres_ReflectCRMStatus_RollbackFailureIsJoined(t *testing.T) {
 			t.Errorf("el error %q no lleva %q", err, want)
 		}
 	}
+}
+
+// Las sentencias, escritas APARTE y byte a byte (sangría y saltos de línea incluidos): son las
+// del paquete viejo, y un cambio en el SQL de producción tiene que romper aquí.
+
+// wantReflectCRMSQL es la sentencia del reflejo: bloquea, escribe y dice si cambió.
+const wantReflectCRMSQL = `
+	WITH prev AS (
+		SELECT id, crm_status, crm_external_ref
+		FROM public.intakes
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	), upd AS (
+		UPDATE public.intakes i
+		SET crm_status       = $3,
+		    crm_external_ref = CASE WHEN $4 <> '' THEN $4 ELSE i.crm_external_ref END,
+		    crm_synced_at    = $5,
+		    updated_at       = CASE
+		                         WHEN p.crm_status IS DISTINCT FROM $3
+		                           OR ($4 <> '' AND p.crm_external_ref IS DISTINCT FROM $4)
+		                         THEN now() ELSE i.updated_at
+		                       END
+		FROM prev p
+		WHERE i.id = p.id
+		RETURNING (p.crm_status IS DISTINCT FROM $3
+		           OR ($4 <> '' AND p.crm_external_ref IS DISTINCT FROM $4)) AS changed
+	)
+	SELECT (SELECT count(*) FROM prev), COALESCE((SELECT changed FROM upd), false)
+`
+
+// wantReflectCRMRereadSQL es la relectura de la cabecera en la misma transacción.
+const wantReflectCRMRereadSQL = `SELECT id::text, contact_id, session_id, status, total, created_at, updated_at, customer_note,
+	deposit_due_at, deposit_reminded_at, expiry_reminded_at FROM public.intakes WHERE tenant_id = $1 AND id = $2`
+
+// TestPostgres_ReflectCRMStatus_SQLIsTheOldOneByteForByte: el reflejo y su relectura salen con el
+// texto del paquete viejo.
+func TestPostgres_ReflectCRMStatus_SQLIsTheOldOneByteForByte(t *testing.T) {
+	store, fake := newFakePostgres(t)
+	fake.script(pgOne(int64(1), true), pgOne(pgIntakeRow(StatusOpen, 1)...))
+	if _, err := store.ReflectCRMStatus(t.Context(), pgTenant, pgIntakeID, CRMStatusPaid, "ref-1", pgAt); err != nil {
+		t.Fatalf("ReflectCRMStatus: error inesperado %v", err)
+	}
+	requirePgSQL(t, fake, wantReflectCRMSQL, wantReflectCRMRereadSQL)
 }
